@@ -1,124 +1,72 @@
 <template>
-  <header class="flex flex-col gap-4 border-b border-white/[0.06] px-6 py-5">
-    <div class="flex flex-wrap items-center justify-between gap-4">
-      <div class="space-y-2">
-        <div class="flex items-center gap-2">
-          <StatusBadge
-            :label="isDirty ? '草稿已变更' : '已保存'"
-            :tone="isDirty ? 'warning' : 'success'"
-          />
-          <StatusBadge
-            :label="environmentStatusLabel"
-            :tone="environmentStatusTone"
-          />
-        </div>
-        <div>
-          <h1 class="text-[30px] font-medium tracking-[-0.04em] text-[var(--text-primary)]">
-            {{ title }}
-          </h1>
-          <p class="mt-1 text-sm text-[var(--text-tertiary)]">
-            编码 {{ encoding.toUpperCase() }} · 执行器 {{ executorLabel }}
-          </p>
-        </div>
-      </div>
+  <header class="editor-tabbar flex h-10 items-center justify-between border-b border-[var(--shell-divider)] px-1">
+    <div class="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto overflow-y-hidden pr-2">
+      <button
+        v-for="item in documents"
+        :key="item.id"
+        type="button"
+        class="editor-file-tab app-tooltip-target"
+        :class="{
+          'is-active': item.id === activeDocumentId,
+          'is-dirty': item.isDirty,
+        }"
+        :data-tooltip="item.name"
+        data-tooltip-placement="bottom"
+        @click="$emit('select-tab', item.id)"
+      >
+        <svg
+          viewBox="0 0 24 24"
+          class="editor-file-tab-icon"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.8"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <path d="M14 3H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V9z" />
+          <path d="M14 3v6h6" />
+        </svg>
+        <span class="editor-file-tab-name truncate">{{ item.name }}</span>
+        <span class="editor-file-tab-action" aria-hidden="true">
+          <span class="editor-file-tab-indicator" />
+          <span
+            class="editor-file-tab-close"
+            @click.stop="$emit('close-tab', item.id)"
+          >
+            ×
+          </span>
+        </span>
+      </button>
+    </div>
 
-      <div class="flex flex-wrap items-center gap-2">
-        <button
-          class="linear-button px-4 py-2 text-sm"
-          @click="$emit('new')"
-        >
-          新建
-        </button>
-        <button
-          class="linear-button px-4 py-2 text-sm"
-          :disabled="!isDesktopRuntime"
-          @click="$emit('open')"
-        >
-          打开
-        </button>
-        <button
-          class="linear-button px-4 py-2 text-sm"
-          :disabled="!isDesktopRuntime"
-          @click="$emit('save')"
-        >
-          保存
-        </button>
-        <button
-          class="linear-button px-4 py-2 text-sm"
-          :disabled="!isDesktopRuntime"
-          @click="$emit('save-as')"
-        >
-          另存为
-        </button>
-        <button
-          class="linear-button px-4 py-2 text-sm"
-          :disabled="!isDesktopRuntime"
-          @click="$emit('chmod')"
-        >
-          chmod +x
-        </button>
-        <button
-          class="linear-button linear-button-primary flex items-center gap-2 px-4 py-2 text-sm"
-          :disabled="isRunning || !isDesktopRuntime"
-          @click="$emit('run')"
-        >
-          <span>{{ isRunning ? '执行中...' : '运行脚本' }}</span>
-        </button>
-      </div>
+    <div class="flex min-w-0 items-center gap-3 px-3 text-[11px] text-[var(--text-quaternary)]">
+      <span class="truncate">{{ breadcrumbText }}</span>
     </div>
   </header>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue';
-import StatusBadge from '@/components/common/StatusBadge.vue';
-import type { TDocumentEncoding, TExecutorKind } from '@/types/editor';
+import type { IEditorDocument } from '@/types/editor';
 
 const props = defineProps<{
-  title: string;
-  isDirty: boolean;
-  encoding: TDocumentEncoding;
-  executor: TExecutorKind;
-  hasEnvironment: boolean;
-  isDesktopRuntime: boolean;
-  isRunning: boolean;
+  documents: IEditorDocument[];
+  activeDocumentId: string;
+  filePath: string | null;
 }>();
 
 defineEmits<{
-  new: [];
-  open: [];
-  save: [];
-  'save-as': [];
-  run: [];
-  chmod: [];
+  'select-tab': [documentId: string];
+  'close-tab': [documentId: string];
 }>();
 
-const executorLabel = computed(() => {
-  switch (props.executor) {
-    case 'wsl':
-      return 'WSL';
-    case 'git-bash':
-      return 'Git Bash / sh';
-    case 'bash':
-      return 'Windows Bash';
-    default:
-      return '自动选择';
-  }
-});
-
-const environmentStatusLabel = computed(() => {
-  if (!props.isDesktopRuntime) {
-    return '浏览器预览模式';
+const breadcrumbText = computed(() => {
+  if (!props.filePath) {
+    return '未保存到本地文件';
   }
 
-  return props.hasEnvironment ? '可执行环境已就绪' : '未检测到执行环境';
-});
-
-const environmentStatusTone = computed(() => {
-  if (!props.isDesktopRuntime) {
-    return 'warning';
-  }
-
-  return props.hasEnvironment ? 'success' : 'danger';
+  const normalizedPath = props.filePath.replace(/\\/g, '/');
+  const segments = normalizedPath.split('/');
+  return segments.slice(Math.max(0, segments.length - 4)).join(' / ');
 });
 </script>

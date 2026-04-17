@@ -10,10 +10,13 @@ export type TExecutorKind = 'auto' | 'wsl' | 'git-bash' | 'bash';
 export type TLogLevel = 'info' | 'success' | 'error';
 
 export interface IEditorDocument {
+  id: string;
   path: string | null;
   name: string;
   content: string;
   encoding: TDocumentEncoding;
+  savedContent: string;
+  savedEncoding: TDocumentEncoding;
   isDirty: boolean;
   lineCount: number;
   charCount: number;
@@ -48,6 +51,19 @@ export interface IRunLogEntry {
   title: string;
   detail: string;
   createdAt: string;
+}
+
+export interface IWorkspaceEntry {
+  path: string;
+  name: string;
+  kind: 'directory' | 'file';
+  hasChildren: boolean;
+}
+
+export interface IWorkspaceDirectoryPayload {
+  rootPath: string;
+  rootName: string;
+  entries: IWorkspaceEntry[];
 }
 
 export interface IRunResult {

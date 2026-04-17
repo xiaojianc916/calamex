@@ -1,31 +1,15 @@
 <template>
-  <div class="flex h-full min-h-0 flex-col">
-    <div class="flex items-center justify-between border-b border-white/[0.06] px-5 py-3">
-      <div class="flex items-center gap-2 text-sm text-[var(--text-tertiary)]">
-        <span class="inline-flex h-2.5 w-2.5 rounded-full bg-rose-400/80" />
-        <span class="inline-flex h-2.5 w-2.5 rounded-full bg-amber-300/80" />
-        <span class="inline-flex h-2.5 w-2.5 rounded-full bg-emerald-400/80" />
-      </div>
-      <div class="flex items-center gap-2">
-        <span class="linear-pill mono-text text-[11px]">fallback editor</span>
-        <span class="text-xs text-amber-300">Monaco 初始化失败，已切换到基础编辑器</span>
-      </div>
-    </div>
-    <div class="min-h-0 flex-1 px-5 py-5">
-      <textarea
-        ref="textareaRef"
-        class="mono-text h-full w-full resize-none rounded-2xl border border-white/[0.08] bg-white/[0.03] px-4 py-4 text-[14px] leading-6 text-[var(--text-primary)] outline-none placeholder:text-[var(--text-quaternary)]"
-        :value="modelValue"
-        spellcheck="false"
-        placeholder="# 编辑器回退到基础模式，你仍然可以继续编写、保存与运行 shell 脚本。"
-        @input="handleInput"
-      />
-    </div>
+  <div class="h-full min-h-0 bg-[var(--editor-bg)] px-0 py-0">
+    <textarea ref="textareaRef"
+      class="mono-text h-full w-full resize-none border-0 bg-transparent px-6 py-5 text-[13px] leading-6 text-[var(--text-primary)] outline-none placeholder:text-[var(--text-quaternary)]"
+      :value="modelValue" spellcheck="false" placeholder="# 在这里编写 shell 脚本。&#10;# 运行前请确认编码为 UTF-8（无 BOM）。"
+      @input="handleInput" @click="handleCursorActivity" @focus="handleCursorActivity" @keyup="handleCursorActivity"
+      @mouseup="handleCursorActivity" @select="handleCursorActivity" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
+import { onMounted, ref } from 'vue';
 
 interface IEditorExpose {
   focusEditor: () => void;
@@ -39,13 +23,42 @@ defineProps<{
 
 const emit = defineEmits<{
   'update:modelValue': [value: string];
+  'cursor-position-change': [line: number, column: number];
 }>();
 
 const textareaRef = ref<HTMLTextAreaElement | null>(null);
 
+const resolveCursorPosition = (
+  content: string,
+  selectionStart: number,
+): { line: number; column: number } => {
+  const safeIndex = Math.max(0, Math.min(selectionStart, content.length));
+  const textBeforeCursor = content.slice(0, safeIndex);
+  const lines = textBeforeCursor.split('\n');
+
+  return {
+    line: Math.max(1, lines.length),
+    column: (lines.at(-1)?.length ?? 0) + 1,
+  };
+};
+
+const syncCursorPosition = (element: HTMLTextAreaElement): void => {
+  const { line, column } = resolveCursorPosition(
+    element.value,
+    element.selectionStart ?? element.value.length,
+  );
+  emit('cursor-position-change', line, column);
+};
+
 const handleInput = (event: Event): void => {
   const target = event.target as HTMLTextAreaElement;
   emit('update:modelValue', target.value);
+  syncCursorPosition(target);
+};
+
+const handleCursorActivity = (event: Event): void => {
+  const target = event.target as HTMLTextAreaElement;
+  syncCursorPosition(target);
 };
 
 const focusEditor = (): void => {
@@ -67,8 +80,15 @@ const insertSnippet = (snippet: string): void => {
     element.focus();
     const caret = start + snippet.length;
     element.setSelectionRange(caret, caret);
+    syncCursorPosition(element);
   });
 };
+
+onMounted(() => {
+  if (textareaRef.value) {
+    syncCursorPosition(textareaRef.value);
+  }
+});
 
 defineExpose<IEditorExpose>({
   focusEditor,

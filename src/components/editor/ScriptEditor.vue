@@ -1,15 +1,5 @@
 <template>
-  <div class="flex h-full min-h-0 flex-col">
-    <div class="flex items-center justify-between border-b border-white/[0.06] px-5 py-3">
-      <div class="flex items-center gap-2 text-sm text-[var(--text-tertiary)]">
-        <span class="inline-flex h-2.5 w-2.5 rounded-full bg-rose-400/80" />
-        <span class="inline-flex h-2.5 w-2.5 rounded-full bg-amber-300/80" />
-        <span class="inline-flex h-2.5 w-2.5 rounded-full bg-emerald-400/80" />
-      </div>
-      <div class="linear-pill mono-text text-[11px]">bash / shell</div>
-    </div>
-    <div ref="containerRef" class="min-h-0 flex-1" />
-  </div>
+  <div ref="containerRef" class="h-full min-h-0 w-full bg-[var(--editor-bg)]" />
 </template>
 
 <script setup lang="ts">
@@ -35,10 +25,17 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   'update:modelValue': [value: string];
+  'cursor-position-change': [line: number, column: number];
 }>();
 
 const containerRef = ref<HTMLElement | null>(null);
 let editorInstance: monaco.editor.IStandaloneCodeEditor | null = null;
+let suppressModelValueEmit = false;
+let resizeObserver: ResizeObserver | null = null;
+
+const layoutEditor = (): void => {
+  editorInstance?.layout();
+};
 
 const setTheme = (theme: TThemeMode): void => {
   monaco.editor.setTheme(theme === 'dark' ? 'sh-dark' : 'sh-light');
@@ -54,15 +51,17 @@ const createEditor = (): void => {
   editorInstance = monaco.editor.create(containerRef.value, {
     value: props.modelValue,
     language: 'shell',
-    automaticLayout: true,
+    automaticLayout: false,
     minimap: { enabled: false },
     lineNumbers: 'on',
-    fontSize: 14,
+    lineDecorationsWidth: 10,
+    lineNumbersMinChars: 3,
+    fontSize: 13,
     fontWeight: '400',
     fontFamily: `Berkeley Mono, JetBrains Mono, Consolas, 'Courier New', monospace`,
     padding: {
-      top: 20,
-      bottom: 20,
+      top: 18,
+      bottom: 24,
     },
     roundedSelection: false,
     scrollBeyondLastLine: false,
@@ -76,13 +75,15 @@ const createEditor = (): void => {
     autoIndent: 'advanced',
     folding: true,
     foldingStrategy: 'auto',
-    smoothScrolling: true,
+    smoothScrolling: false,
     cursorBlinking: 'smooth',
     overviewRulerBorder: false,
     glyphMargin: false,
+    fixedOverflowWidgets: true,
     scrollbar: {
       verticalScrollbarSize: 10,
       horizontalScrollbarSize: 10,
+      useShadows: false,
     },
   });
 
@@ -91,7 +92,27 @@ const createEditor = (): void => {
       return;
     }
 
+    if (suppressModelValueEmit) {
+      return;
+    }
+
     emit('update:modelValue', editorInstance.getValue());
+  });
+
+  editorInstance.onDidChangeCursorPosition((event) => {
+    emit('cursor-position-change', event.position.lineNumber, event.position.column);
+  });
+
+  const initialPosition = editorInstance.getPosition();
+  if (initialPosition) {
+    emit('cursor-position-change', initialPosition.lineNumber, initialPosition.column);
+  }
+
+  requestAnimationFrame(() => {
+    layoutEditor();
+    requestAnimationFrame(() => {
+      layoutEditor();
+    });
   });
 };
 
@@ -103,7 +124,9 @@ watch(
     }
 
     if (editorInstance.getValue() !== value) {
+      suppressModelValueEmit = true;
       editorInstance.setValue(value);
+      suppressModelValueEmit = false;
     }
   },
 );
@@ -117,9 +140,18 @@ watch(
 
 onMounted(() => {
   createEditor();
+
+  if (typeof ResizeObserver !== 'undefined' && containerRef.value) {
+    resizeObserver = new ResizeObserver(() => {
+      layoutEditor();
+    });
+    resizeObserver.observe(containerRef.value);
+  }
 });
 
 onBeforeUnmount(() => {
+  resizeObserver?.disconnect();
+  resizeObserver = null;
   editorInstance?.dispose();
   editorInstance = null;
 });

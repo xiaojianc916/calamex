@@ -4,7 +4,9 @@
     ref="innerEditorRef"
     :model-value="modelValue"
     :theme="theme"
-    @update:model-value="$emit('update:modelValue', $event)" />
+    @update:model-value="handleModelValueChange"
+    @cursor-position-change="handleCursorPositionChange"
+  />
 </template>
 
 <script setup lang="ts">
@@ -29,21 +31,23 @@ withDefaults(
   },
 );
 
-defineEmits<{
+const emit = defineEmits<{
   'update:modelValue': [value: string];
+  'cursor-position-change': [line: number, column: number];
 }>();
 
 const innerEditorRef = ref<IEditorExpose | null>(null);
 const resolvedComponent = shallowRef<Component>(markRaw(PlainScriptEditor));
+const scriptEditorModulePromise = import('@/components/editor/ScriptEditor.vue');
 
 const currentComponent = computed(() => resolvedComponent.value);
 
 onMounted(async () => {
   try {
-    const module = await import('@/components/editor/ScriptEditor.vue');
+    const module = await scriptEditorModulePromise;
     resolvedComponent.value = markRaw(module.default);
   } catch (error) {
-    console.error('Monaco 编辑器初始化失败，已回退到基础编辑器。', error);
+    console.error('Monaco editor failed to initialize, fallback to plain editor.', error);
   }
 });
 
@@ -53,6 +57,14 @@ const focusEditor = (): void => {
 
 const insertSnippet = (snippet: string): void => {
   innerEditorRef.value?.insertSnippet(snippet);
+};
+
+const handleModelValueChange = (value: string): void => {
+  emit('update:modelValue', value);
+};
+
+const handleCursorPositionChange = (line: number, column: number): void => {
+  emit('cursor-position-change', line, column);
 };
 
 defineExpose<IEditorExpose>({

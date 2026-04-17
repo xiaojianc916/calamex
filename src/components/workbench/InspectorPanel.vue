@@ -8,33 +8,35 @@
       <div class="space-y-3">
         <div>
           <p class="mb-2 text-xs text-[var(--text-tertiary)]">字符编码</p>
-          <el-select
+          <Select
             class="w-full"
             :model-value="encoding"
-            @change="$emit('change-encoding', $event)"
+            @update:model-value="$emit('change-encoding', $event)"
           >
-            <el-option
+            <SelectItem
               v-for="item in encodingOptions"
               :key="item.value"
-              :label="item.label"
               :value="item.value"
-            />
-          </el-select>
+            >
+              {{ item.label }}
+            </SelectItem>
+          </Select>
         </div>
         <div>
           <p class="mb-2 text-xs text-[var(--text-tertiary)]">执行环境</p>
-          <el-select
+          <Select
             class="w-full"
             :model-value="executor"
-            @change="$emit('change-executor', $event)"
+            @update:model-value="$emit('change-executor', $event)"
           >
-            <el-option
+            <SelectItem
               v-for="item in executorOptions"
               :key="item.value"
-              :label="item.label"
               :value="item.value"
-            />
-          </el-select>
+            >
+              {{ item.label }}
+            </SelectItem>
+          </Select>
         </div>
         <button
           class="linear-button flex w-full items-center justify-between px-4 py-3 text-sm"
@@ -86,17 +88,10 @@
       >
         {{
           isDesktopRuntime
-            ? '暂未检测到可用的 bash / sh 运行环境，可安装 WSL 或 Git Bash 后重新打开应用。'
-            : '当前为浏览器预览模式，执行器探测、脚本运行与 chmod +x 仅支持 Tauri 桌面端。'
+            ? '暂未检测到可用的 shell 运行环境，建议优先安装或启用 WSL2，Git Bash 可作为备用方案。'
+            : '当前为浏览器预览模式，执行器探测与脚本运行仅支持 Tauri 桌面端。'
         }}
       </div>
-      <button
-        class="linear-button w-full px-4 py-2 text-sm"
-        :disabled="!isDesktopRuntime"
-        @click="$emit('chmod')"
-      >
-        当前脚本一键 chmod +x
-      </button>
     </section>
 
     <section class="linear-card-soft min-h-0 flex-1 space-y-4 p-4">
@@ -139,14 +134,15 @@
 </template>
 
 <script setup lang="ts">
-import { ENCODING_OPTIONS, EXECUTOR_OPTIONS } from '@/utils/templates';
-import type {
-  ICommandTemplate,
-  IExecutionEnvironment,
-  TDocumentEncoding,
-  TExecutorKind,
-} from '@/types/editor';
+import { Select, SelectItem } from '@/components/ui';
 import type { TThemeMode } from '@/types/app';
+import type {
+    ICommandTemplate,
+    IExecutionEnvironment,
+    TDocumentEncoding,
+    TExecutorKind,
+} from '@/types/editor';
+import { ENCODING_OPTIONS, EXECUTOR_OPTIONS } from '@/utils/templates';
 
 defineProps<{
   encoding: TDocumentEncoding;
@@ -162,7 +158,6 @@ defineEmits<{
   'change-encoding': [value: TDocumentEncoding];
   'change-executor': [value: TExecutorKind];
   'toggle-theme': [];
-  chmod: [];
   'insert-template': [value: ICommandTemplate];
   'insert-comment': [value: ICommandTemplate];
 }>();

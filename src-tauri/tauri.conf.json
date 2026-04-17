@@ -19,8 +19,12 @@
         "minWidth": 1220,
         "minHeight": 760,
         "decorations": false,
+        "backgroundColor": "#00000000",
+        "transparent": true,
         "shadow": true,
         "resizable": true,
+        "center": true,
+        "visible": false,
         "fullscreen": false
       }
     ],
@@ -30,6 +34,9 @@
   },
   "bundle": {
     "active": true,
-    "targets": "nsis"
+    "targets": "nsis",
+    "icon": [
+      "icons/app-generated.ico"
+    ]
   }
 }

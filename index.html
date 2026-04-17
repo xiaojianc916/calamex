@@ -1,15 +1,452 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" class="splash-window-mode">
   <head>
     <meta charset="UTF-8" />
     <meta
       name="viewport"
       content="width=device-width, initial-scale=1.0"
     />
+    <meta name="color-scheme" content="dark" />
     <title>SH 编辑器</title>
+    <style>
+      html,
+      body,
+      #app {
+        min-height: 100%;
+        margin: 0;
+        background: transparent;
+      }
+
+      html:not(.splash-window-mode),
+      html:not(.splash-window-mode) body,
+      html:not(.splash-window-mode) #app {
+        background: #0b0c0e;
+      }
+
+      body {
+        overflow: hidden;
+      }
+
+      #bootstrap-splash,
+      #bootstrap-splash * {
+        box-sizing: border-box;
+      }
+
+      #bootstrap-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+        background: transparent;
+        color: #d1d5db;
+        font-family: Inter, 'JetBrains Mono', Consolas, monospace;
+      }
+
+      #bootstrap-splash::before {
+        position: absolute;
+        inset: 0;
+        background:
+          radial-gradient(circle at 50% 42%, rgba(94, 106, 210, 0.16), transparent 42%),
+          radial-gradient(circle at 50% 54%, rgba(255, 255, 255, 0.05), transparent 38%);
+        content: '';
+        pointer-events: none;
+      }
+
+      #bootstrap-splash .editor {
+        position: relative;
+        z-index: 1;
+        display: flex;
+        width: min(780px, 100vw);
+        height: min(520px, 100vh);
+        min-height: 0;
+        flex-direction: column;
+        flex-shrink: 0;
+        overflow: hidden;
+        border: 1px solid #23262b;
+        border-radius: 10px;
+        background: #15171a;
+        box-shadow:
+          0 24px 72px rgba(0, 0, 0, 0.36),
+          0 1px 0 rgba(255, 255, 255, 0.04) inset;
+      }
+
+      #bootstrap-splash .top {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        border-bottom: 1px solid #23262b;
+        background: #111215;
+        padding: 14px 20px;
+      }
+
+      #bootstrap-splash .dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 999px;
+      }
+
+      #bootstrap-splash .red {
+        background: #da5555;
+      }
+
+      #bootstrap-splash .yellow {
+        background: #e6b349;
+      }
+
+      #bootstrap-splash .green {
+        background: #49c085;
+      }
+
+      #bootstrap-splash .title {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-left: 16px;
+        color: #a1a8b3;
+        font-size: 13px;
+        font-weight: 400;
+      }
+
+      #bootstrap-splash .code {
+        flex: 1;
+        padding: 32px;
+        background: #15171a;
+        color: #d1d5db;
+        font-size: 15px;
+        line-height: 1.9;
+      }
+
+      #bootstrap-splash .line {
+        min-height: 28.5px;
+        margin-bottom: 10px;
+        white-space: pre;
+      }
+
+      #bootstrap-splash .keyword {
+        color: #b39ddb;
+      }
+
+      #bootstrap-splash .func {
+        color: #81c7e8;
+      }
+
+      #bootstrap-splash .str {
+        color: #ffd180;
+      }
+
+      #bootstrap-splash .comment {
+        color: #5c6370;
+      }
+
+      #bootstrap-splash .var {
+        color: #ffab91;
+      }
+
+      #bootstrap-splash .cursor {
+        display: inline-block;
+        width: 2px;
+        height: 1.3em;
+        margin: 0 2px;
+        border-radius: 1px;
+        background: #fff;
+        vertical-align: text-bottom;
+        animation: bootstrapCaret 1s step-end infinite;
+      }
+
+      #bootstrap-splash .progress-wrap {
+        padding: 0 32px 28px;
+      }
+
+      #bootstrap-splash .progress-bar {
+        width: 100%;
+        height: 5px;
+        overflow: hidden;
+        border-radius: 6px;
+        background: #23262b;
+      }
+
+      #bootstrap-splash .progress {
+        height: 100%;
+        width: 0%;
+        border-radius: 6px;
+        background: #5e6ad2;
+        transition: width 0.18s ease;
+      }
+
+      #bootstrap-splash .status {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        padding-bottom: 20px;
+        color: #6e7681;
+        font-size: 12px;
+      }
+
+      #bootstrap-splash .spinner {
+        width: 13px;
+        height: 13px;
+        border: 2px solid rgba(94, 106, 210, 0.24);
+        border-top-color: #5e6ad2;
+        border-radius: 999px;
+        animation: bootstrapSpin 1s linear infinite;
+      }
+
+      @keyframes bootstrapCaret {
+        50% {
+          opacity: 0;
+        }
+      }
+
+      @keyframes bootstrapSpin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+    </style>
   </head>
   <body>
-    <div id="app"></div>
+    <div id="app">
+      <section id="bootstrap-splash">
+        <div class="editor">
+          <div class="top">
+            <span class="dot red"></span>
+            <span class="dot yellow"></span>
+            <span class="dot green"></span>
+            <div class="title">&lt;/&gt; system-loader.js</div>
+          </div>
+          <div class="code">
+            <div id="bootstrap-line-0" class="line"><span class="cursor"></span></div>
+            <div id="bootstrap-line-1" class="line"></div>
+            <div id="bootstrap-line-2" class="line"></div>
+            <div id="bootstrap-line-3" class="line"></div>
+          </div>
+          <div class="progress-wrap">
+            <div class="progress-bar"><div id="bootstrap-progress" class="progress"></div></div>
+          </div>
+          <div class="status">
+            <span class="spinner"></span>
+            <span>正在初始化资源，请稍候...</span>
+          </div>
+        </div>
+      </section>
+    </div>
+    <script>
+      (() => {
+        const codeLines = [
+          [
+            { text: 'import', className: 'keyword' },
+            { text: ' { System } ' },
+            { text: 'from', className: 'keyword' },
+            { text: " '@core/system'", className: 'str' },
+            { text: ';' },
+          ],
+          [
+            { text: 'const', className: 'keyword' },
+            { text: ' ' },
+            { text: 'engine', className: 'var' },
+            { text: ' = ' },
+            { text: 'new', className: 'keyword' },
+            { text: ' ' },
+            { text: 'CoreEngine', className: 'func' },
+            { text: '();' },
+          ],
+          [{ text: '// Initializing core modules and rendering', className: 'comment' }],
+          [
+            { text: 'await', className: 'keyword' },
+            { text: ' ' },
+            { text: 'engine', className: 'var' },
+            { text: '.' },
+            { text: 'startup', className: 'func' },
+            { text: '();' },
+          ],
+        ];
+        const lineLengths = codeLines.map((line) =>
+          line.reduce((total, fragment) => total + fragment.text.length, 0),
+        );
+        const totalCharacters = lineLengths.reduce((total, length) => total + length, 0);
+        const splashState = {
+          startedAt: performance.now(),
+          visibleCharacters: 0,
+          progress: 0,
+          handoff: false,
+        };
+        let progressTarget = 0;
+        window.__SH_SPLASH_BOOTSTRAP_STATE__ = splashState;
+
+        const escapeHtml = (value) =>
+          value
+            .replaceAll('&', '&amp;')
+            .replaceAll('<', '&lt;')
+            .replaceAll('>', '&gt;')
+            .replaceAll('"', '&quot;')
+            .replaceAll("'", '&#39;');
+
+        const resolveCharacterAt = (position) => {
+          let remaining = position;
+          for (const line of codeLines) {
+            for (const fragment of line) {
+              if (remaining < fragment.text.length) {
+                return fragment.text[remaining] || '';
+              }
+              remaining -= fragment.text.length;
+            }
+          }
+          return '';
+        };
+
+        const hasCompletedLineAt = (characterCount) => {
+          if (characterCount >= totalCharacters) {
+            return false;
+          }
+
+          let cumulativeLength = 0;
+          return lineLengths.some((length) => {
+            cumulativeLength += length;
+            return cumulativeLength === characterCount;
+          });
+        };
+
+        const randomBetween = (min, max) => min + Math.random() * (max - min);
+
+        const getTypingDelay = (character, completedLine) => {
+          if (completedLine) {
+            return randomBetween(150, 260);
+          }
+
+          let minDelay = 24;
+          let maxDelay = 58;
+          if (character === ' ') {
+            minDelay *= 0.45;
+            maxDelay *= 0.64;
+          } else if (/[,.;()]/.test(character)) {
+            minDelay += 16;
+            maxDelay += 38;
+          }
+
+          return randomBetween(minDelay, maxDelay);
+        };
+
+        const renderCode = () => {
+          let remainingCharacters = splashState.visibleCharacters;
+          let activeLineIndex = 0;
+
+          for (let index = 0; index < lineLengths.length; index += 1) {
+            if (remainingCharacters <= lineLengths[index]) {
+              activeLineIndex = index;
+              break;
+            }
+            remainingCharacters -= lineLengths[index];
+            activeLineIndex = index;
+          }
+
+          let remaining = splashState.visibleCharacters;
+          codeLines.forEach((line, lineIndex) => {
+            const lineElement = document.getElementById(`bootstrap-line-${lineIndex}`);
+            if (!lineElement) {
+              return;
+            }
+
+            let lineHtml = '';
+            line.forEach((fragment) => {
+              const visibleLength = Math.max(0, Math.min(fragment.text.length, remaining));
+              remaining -= visibleLength;
+              if (visibleLength <= 0) {
+                return;
+              }
+
+              const text = escapeHtml(fragment.text.slice(0, visibleLength));
+              lineHtml += fragment.className
+                ? `<span class="${fragment.className}">${text}</span>`
+                : text;
+            });
+
+            if (lineIndex === activeLineIndex) {
+              lineHtml += '<span class="cursor"></span>';
+            }
+            lineElement.innerHTML = lineHtml;
+          });
+        };
+
+        const renderProgress = () => {
+          const progressElement = document.getElementById('bootstrap-progress');
+          if (progressElement) {
+            progressElement.style.width = `${splashState.progress.toFixed(1)}%`;
+          }
+        };
+
+        const typeNextCharacter = () => {
+          if (splashState.handoff || splashState.visibleCharacters >= totalCharacters) {
+            return;
+          }
+
+          const nextCharacterCount = splashState.visibleCharacters + 1;
+          const character = resolveCharacterAt(nextCharacterCount - 1);
+          splashState.visibleCharacters = nextCharacterCount;
+          progressTarget = Math.max(progressTarget, (nextCharacterCount / totalCharacters) * 74);
+          renderCode();
+          window.setTimeout(
+            typeNextCharacter,
+            getTypingDelay(character, hasCompletedLineAt(nextCharacterCount)),
+          );
+        };
+
+        const updateProgress = (now) => {
+          if (splashState.handoff) {
+            return;
+          }
+
+          const elapsed = now - splashState.startedAt;
+          const timelineRatio = Math.min(1, elapsed / 2000);
+          const typingRatio = splashState.visibleCharacters / totalCharacters;
+          const target = Math.min(
+            88,
+            Math.max(
+              typingRatio * 76,
+              6 + timelineRatio * 44 + Math.log1p(elapsed / 260) * 5,
+            ),
+          );
+          progressTarget = Math.max(progressTarget, target);
+
+          const remainingProgress = progressTarget - splashState.progress;
+          if (remainingProgress > 0) {
+            splashState.progress = Math.min(
+              progressTarget,
+              splashState.progress + Math.max(0.06, remainingProgress * 0.14),
+            );
+            renderProgress();
+          }
+
+          window.requestAnimationFrame(updateProgress);
+        };
+
+        const showStartupWindow = (attempt = 0) => {
+          const invoke = window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke;
+          if (typeof invoke !== 'function') {
+            if (attempt < 30) {
+              window.setTimeout(() => showStartupWindow(attempt + 1), 16);
+            }
+            return;
+          }
+
+          Promise.resolve(invoke('show_startup_window')).catch(() => {
+            if (attempt < 30) {
+              window.setTimeout(() => showStartupWindow(attempt + 1), 16);
+            }
+          });
+        };
+
+        renderCode();
+        renderProgress();
+        window.setTimeout(typeNextCharacter, 120);
+        window.requestAnimationFrame(updateProgress);
+        showStartupWindow();
+      })();
+    </script>
     <script
       type="module"
       src="/src/main.ts"

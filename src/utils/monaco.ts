@@ -1,4 +1,6 @@
-import * as monaco from 'monaco-editor';
+import * as monaco from 'monaco-editor/esm/vs/editor/editor.api';
+import 'monaco-editor/esm/vs/basic-languages/shell/shell.contribution';
+import 'monaco-editor/min/vs/editor/editor.main.css';
 import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker';
 
 type TMonacoEnvironment = {

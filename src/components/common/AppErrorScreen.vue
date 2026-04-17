@@ -7,7 +7,7 @@
           {{ errorState?.title ?? '工作台加载失败' }}
         </h2>
         <p class="mt-2 text-sm text-[var(--text-secondary)]">
-          已捕获到前端运行错误，请把下面错误信息发给我，我可以继续直接修。
+          已捕获到前端运行错误，请把下面的错误信息发给我，我可以继续直接修复。
         </p>
       </div>
       <div class="space-y-4 px-6 py-5">
