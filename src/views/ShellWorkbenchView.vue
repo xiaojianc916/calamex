@@ -9,8 +9,11 @@
       <WindowTitleBar
         :document-name="editorStore.document.name"
         :is-dirty="editorStore.document.isDirty"
+        :document-kind="editorStore.document.kind"
         :theme="appStore.theme"
         :is-running="editorStore.isRunning"
+        :can-run="canRun"
+        :can-save="canSave"
         :is-desktop-runtime="isDesktopRuntime"
         :is-terminal-visible="isTerminalVisible"
         :command-templates="commandTemplates"
@@ -54,11 +57,22 @@
 
     <div class="h-full">
       <SmartScriptEditor
+        v-if="editorStore.document.kind === 'text'"
         ref="editorRef"
+        :document-id="editorStore.document.id"
+        :document-path="editorStore.document.path"
+        :document-name="editorStore.document.name"
         :model-value="editorStore.document.content"
         :theme="appStore.theme"
         @update:model-value="updateContent"
         @cursor-position-change="handleCursorPositionChange"
+        @diagnostics-change="handleDiagnosticsChange"
+      />
+
+      <ImageAssetPreview
+        v-else-if="editorStore.document.path"
+        :path="editorStore.document.path"
+        :name="editorStore.document.name"
       />
     </div>
 
@@ -70,30 +84,36 @@
         :is-running="editorStore.isRunning"
         :executor="editorStore.selectedExecutor"
         :theme="appStore.theme"
-        :workspace-root-path="editorStore.workspaceRootPath"
         :visible="isTerminalVisible"
         @hide="hideTerminal"
+        @terminal-output="appendTerminalOutput"
+        @terminal-run-complete="handleIntegratedTerminalRunComplete"
       />
     </template>
 
     <template #statusbar>
       <WorkbenchStatusBar
+        :document-kind="editorStore.document.kind"
         :is-running="editorStore.isRunning"
         :encoding="editorStore.document.encoding"
         :executor="editorStore.selectedExecutor"
         :cursor-line="editorStore.cursorLine"
         :cursor-column="editorStore.cursorColumn"
         :char-count="editorStore.document.charCount"
+        :diagnostic-available="editorStore.activeScriptAnalysis.available"
+        :diagnostic-message="editorStore.activeScriptAnalysis.message"
+        :diagnostic-errors="editorStore.activeDiagnosticErrors"
+        :diagnostic-warnings="editorStore.activeDiagnosticWarnings"
+        :diagnostic-infos="editorStore.activeDiagnosticInfos"
         @change-encoding="updateEncoding"
-        @change-executor="updateExecutor"
       />
     </template>
   </AppShellLayout>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
 import WindowTitleBar from '@/components/common/WindowTitleBar.vue';
+import ImageAssetPreview from '@/components/editor/ImageAssetPreview.vue';
 import SmartScriptEditor from '@/components/editor/SmartScriptEditor.vue';
 import ActivityRail from '@/components/workbench/ActivityRail.vue';
 import AppSidebar from '@/components/workbench/AppSidebar.vue';
@@ -102,7 +122,8 @@ import WorkbenchHeader from '@/components/workbench/WorkbenchHeader.vue';
 import WorkbenchStatusBar from '@/components/workbench/WorkbenchStatusBar.vue';
 import { useWorkbench } from '@/composables/useWorkbench';
 import AppShellLayout from '@/layouts/AppShellLayout.vue';
-import type { ICommandTemplate } from '@/types/editor';
+import type { IAnalyzeScriptPayload, ICommandTemplate } from '@/types/editor';
+import { onMounted, ref } from 'vue';
 
 type TEditorExpose = {
   focusEditor: () => void;
@@ -117,6 +138,8 @@ const {
   appStore,
   editorStore,
   isDesktopRuntime,
+  canRun,
+  canSave,
   commandTemplates,
   commentTemplates,
   initialize,
@@ -131,8 +154,9 @@ const {
   activateDocument,
   runScript,
   updateContent,
+  appendTerminalOutput,
+  handleIntegratedTerminalRunComplete,
   updateEncoding,
-  updateExecutor,
   toggleTheme,
   notifyTemplateInserted,
 } = useWorkbench();
@@ -145,6 +169,10 @@ const handleInsertTemplate = (template: ICommandTemplate): void => {
 
 const handleCursorPositionChange = (line: number, column: number): void => {
   editorStore.setCursorPosition(line, column);
+};
+
+const handleDiagnosticsChange = (documentId: string, payload: IAnalyzeScriptPayload): void => {
+  editorStore.setDocumentAnalysis(documentId, payload);
 };
 
 const openTerminal = (): void => {

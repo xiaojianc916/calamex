@@ -333,6 +333,4 @@ services/
 
     - build cache
     - deps optimization
-
-- monaco-editor 单独 chunk 懒加载
 - Shadcn Vue 全局主题集中配置管理

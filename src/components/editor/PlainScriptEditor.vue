@@ -1,10 +1,18 @@
 <template>
   <div class="h-full min-h-0 bg-[var(--editor-bg)] px-0 py-0">
-    <textarea ref="textareaRef"
+    <textarea
+      ref="textareaRef"
       class="mono-text h-full w-full resize-none border-0 bg-transparent px-6 py-5 text-[13px] leading-6 text-[var(--text-primary)] outline-none placeholder:text-[var(--text-quaternary)]"
-      :value="modelValue" spellcheck="false" placeholder="# 在这里编写 shell 脚本。&#10;# 运行前请确认编码为 UTF-8（无 BOM）。"
-      @input="handleInput" @click="handleCursorActivity" @focus="handleCursorActivity" @keyup="handleCursorActivity"
-      @mouseup="handleCursorActivity" @select="handleCursorActivity" />
+      :value="modelValue"
+      spellcheck="false"
+      placeholder="# 在这里编写 shell 脚本。&#10;# 运行前请确认编码为 UTF-8（无 BOM）。"
+      @input="handleInput"
+      @click="handleCursorActivity"
+      @focus="handleCursorActivity"
+      @keyup="handleCursorActivity"
+      @mouseup="handleCursorActivity"
+      @select="handleCursorActivity"
+    />
   </div>
 </template>
 
@@ -38,7 +46,7 @@ const resolveCursorPosition = (
 
   return {
     line: Math.max(1, lines.length),
-    column: (lines.at(-1)?.length ?? 0) + 1,
+    column: (lines.length > 0 ? (lines[lines.length - 1]?.length ?? 0) : 0) + 1,
   };
 };
 

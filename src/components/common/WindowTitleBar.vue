@@ -3,35 +3,77 @@
     class="window-titlebar border-b border-[var(--shell-divider)]"
     @mousedown="handleStartWindowDrag"
   >
-    <div class="grid h-10 grid-cols-[minmax(0,1fr)_minmax(240px,420px)_minmax(0,1fr)] items-center gap-3 px-3">
+    <div
+      class="grid h-10 grid-cols-[minmax(0,1fr)_minmax(240px,420px)_minmax(0,1fr)] items-center gap-3 px-3"
+    >
       <div class="flex min-w-0 items-center gap-3">
-        <div class="flex h-6 w-6 items-center justify-center rounded-md bg-[var(--accent-muted)] text-[var(--accent-strong)]">
-          <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <div
+          class="flex h-6 w-6 items-center justify-center rounded-md bg-[var(--accent-muted)] text-[var(--accent-strong)]"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            class="h-4 w-4"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
             <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
             <path d="M14 3v5h5" />
           </svg>
         </div>
 
         <nav class="flex min-w-0 items-center gap-1 text-[12px] text-[var(--text-tertiary)]">
-          <AppDropdownMenu :items="fileMenuItems" align="left" :min-width="140" @select="handleFileAction">
+          <AppDropdownMenu
+            :items="fileMenuItems"
+            align="left"
+            :min-width="140"
+            @select="handleFileAction"
+          >
             <template #trigger="{ open, toggle }">
-              <button type="button" class="titlebar-menu-button" :class="{ 'is-open': open }" @click="toggle">
+              <button
+                type="button"
+                class="titlebar-menu-button"
+                :class="{ 'is-open': open }"
+                @click="toggle"
+              >
                 文件
               </button>
             </template>
           </AppDropdownMenu>
 
-          <AppDropdownMenu :items="editMenuItems" align="left" :min-width="152" @select="handleEditAction">
+          <AppDropdownMenu
+            :items="editMenuItems"
+            align="left"
+            :min-width="152"
+            @select="handleEditAction"
+          >
             <template #trigger="{ open, toggle }">
-              <button type="button" class="titlebar-menu-button" :class="{ 'is-open': open }" @click="toggle">
+              <button
+                type="button"
+                class="titlebar-menu-button"
+                :class="{ 'is-open': open }"
+                @click="toggle"
+              >
                 编辑
               </button>
             </template>
           </AppDropdownMenu>
 
-          <AppDropdownMenu :items="viewMenuItems" align="left" :min-width="140" @select="handleViewAction">
+          <AppDropdownMenu
+            :items="viewMenuItems"
+            align="left"
+            :min-width="140"
+            @select="handleViewAction"
+          >
             <template #trigger="{ open, toggle }">
-              <button type="button" class="titlebar-menu-button" :class="{ 'is-open': open }" @click="toggle">
+              <button
+                type="button"
+                class="titlebar-menu-button"
+                :class="{ 'is-open': open }"
+                @click="toggle"
+              >
                 查看
               </button>
             </template>
@@ -62,7 +104,15 @@
 
       <div class="flex justify-center" data-tauri-drag-region @dblclick="handleToggleMaximize">
         <div class="window-command-bar w-full justify-center text-[12px]">
-          <svg viewBox="0 0 24 24" class="h-4 w-4 text-[var(--text-quaternary)]" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <svg
+            viewBox="0 0 24 24"
+            class="h-4 w-4 text-[var(--text-quaternary)]"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
             <circle cx="11" cy="11" r="6.5" />
             <path d="M20 20l-3.5-3.5" />
           </svg>
@@ -73,13 +123,13 @@
       <div class="flex min-w-0 items-center justify-end gap-2">
         <span
           class="app-tooltip-target inline-flex"
-          :data-tooltip="isRunning ? '脚本执行中' : '运行脚本'"
+          :data-tooltip="runButtonTooltip"
           data-tooltip-placement="bottom"
         >
           <button
             type="button"
             class="titlebar-run-button"
-            :disabled="isRunning || !isDesktopRuntime"
+            :disabled="isRunning || !isDesktopRuntime || !canRun"
             aria-label="运行脚本"
             @click="$emit('run')"
           >
@@ -99,6 +149,34 @@
           </button>
         </span>
 
+        <button
+          v-if="!isTerminalVisible"
+          type="button"
+          class="icon-button app-tooltip-target"
+          :disabled="!isDesktopRuntime"
+          :data-tooltip="terminalToggleTooltip"
+          data-tooltip-placement="bottom"
+          :aria-label="terminalToggleTooltip"
+          @click="toggleTerminalVisibility"
+        >
+          <svg
+            viewBox="0 0 16 16"
+            aria-hidden="true"
+            class="h-4 w-4"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path
+              d="M2.5 3.5h11a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1Z"
+            />
+            <path d="m5.2 7 1.6 1.4-1.6 1.4" />
+            <path d="M8.8 10h2" />
+          </svg>
+        </button>
+
         <span class="max-w-[220px] truncate text-[11px] text-[var(--text-quaternary)]">
           {{ currentDocumentLabel }}
         </span>
@@ -113,7 +191,13 @@
             @click="handleMinimize"
           >
             <svg viewBox="0 0 10 10" aria-hidden="true" class="h-3.5 w-3.5">
-              <path d="M1 5h8" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.2" />
+              <path
+                d="M1 5h8"
+                fill="none"
+                stroke="currentColor"
+                stroke-linecap="round"
+                stroke-width="1.2"
+              />
             </svg>
           </button>
 
@@ -126,10 +210,25 @@
             @click="handleToggleMaximize"
           >
             <svg v-if="!isMaximized" viewBox="0 0 10 10" aria-hidden="true" class="h-3.5 w-3.5">
-              <rect x="1.5" y="1.5" width="7" height="7" fill="none" rx="0.5" stroke="currentColor" stroke-width="1.1" />
+              <rect
+                x="1.5"
+                y="1.5"
+                width="7"
+                height="7"
+                fill="none"
+                rx="0.5"
+                stroke="currentColor"
+                stroke-width="1.1"
+              />
             </svg>
             <svg v-else viewBox="0 0 10 10" aria-hidden="true" class="h-3.5 w-3.5">
-              <path d="M3 1.5h5.5V7M7 3H1.5v5.5H7z" fill="none" stroke="currentColor" stroke-linejoin="round" stroke-width="1.1" />
+              <path
+                d="M3 1.5h5.5V7M7 3H1.5v5.5H7z"
+                fill="none"
+                stroke="currentColor"
+                stroke-linejoin="round"
+                stroke-width="1.1"
+              />
             </svg>
           </button>
 
@@ -142,7 +241,13 @@
             @click="$emit('close-request')"
           >
             <svg viewBox="0 0 10 10" aria-hidden="true" class="h-3.5 w-3.5">
-              <path d="M2 2l6 6M8 2L2 8" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.2" />
+              <path
+                d="M2 2l6 6M8 2L2 8"
+                fill="none"
+                stroke="currentColor"
+                stroke-linecap="round"
+                stroke-width="1.2"
+              />
             </svg>
           </button>
         </div>
@@ -162,8 +267,11 @@ import type { ICommandTemplate } from '@/types/editor';
 const props = defineProps<{
   documentName: string;
   isDirty: boolean;
+  documentKind: 'text' | 'image';
   theme: TThemeMode;
   isRunning: boolean;
+  canRun: boolean;
+  canSave: boolean;
   isDesktopRuntime: boolean;
   isTerminalVisible: boolean;
   commandTemplates: ICommandTemplate[];
@@ -205,12 +313,12 @@ const fileMenuItems = computed(() => [
   {
     key: 'save',
     label: '保存',
-    disabled: !props.isDesktopRuntime,
+    disabled: !props.isDesktopRuntime || !props.canSave,
   },
   {
     key: 'save-as',
     label: '另存为...',
-    disabled: !props.isDesktopRuntime,
+    disabled: !props.isDesktopRuntime || !props.canSave,
   },
 ]);
 
@@ -235,11 +343,34 @@ const viewMenuItems = computed(() => [
 
 const terminalMenuItems = computed(() => [
   {
-    key: 'open-terminal',
-    label: '打开终端',
-    disabled: props.isTerminalVisible,
+    key: 'toggle-terminal',
+    label: props.isTerminalVisible ? '隐藏终端' : '打开终端',
   },
 ]);
+
+const runButtonTooltip = computed(() => {
+  if (props.isRunning) {
+    return '脚本执行中';
+  }
+
+  if (!props.isDesktopRuntime) {
+    return '当前仅浏览器预览，无法直接执行';
+  }
+
+  if (!props.canRun) {
+    return props.documentKind === 'image' ? '图片预览不支持执行' : '当前脚本内容不可执行';
+  }
+
+  return '运行脚本';
+});
+
+const terminalToggleTooltip = computed(() => {
+  if (!props.isDesktopRuntime) {
+    return '仅桌面端可用';
+  }
+
+  return '打开终端';
+});
 
 let unlistenResize: UnlistenFn | null = null;
 
@@ -305,9 +436,27 @@ const handleViewAction = (key: string): void => {
 };
 
 const handleTerminalAction = (key: string): void => {
-  if (key === 'open-terminal') {
+  if (key === 'toggle-terminal') {
+    if (props.isTerminalVisible) {
+      emit('hide-terminal');
+      return;
+    }
+
     emit('open-terminal');
   }
+};
+
+const toggleTerminalVisibility = (): void => {
+  if (!props.isDesktopRuntime) {
+    return;
+  }
+
+  if (props.isTerminalVisible) {
+    emit('hide-terminal');
+    return;
+  }
+
+  emit('open-terminal');
 };
 
 const handleMinimize = async (): Promise<void> => {
@@ -337,7 +486,9 @@ const handleStartWindowDrag = async (event: MouseEvent): Promise<void> => {
   const target = event.target;
   if (
     target instanceof Element &&
-    target.closest('button, a, input, textarea, select, [role="button"], [role="menu"], [data-no-window-drag]')
+    target.closest(
+      'button, a, input, textarea, select, [role="button"], [role="menu"], [data-no-window-drag]',
+    )
   ) {
     return;
   }

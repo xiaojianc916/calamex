@@ -19,6 +19,7 @@ export interface IDispatchTerminalScriptRequest {
   path: string | null;
   content: string;
   isDirty: boolean;
+  runId: string;
 }
 
 export interface IResizeTerminalSessionRequest {
@@ -44,6 +45,8 @@ export interface IDispatchTerminalScriptPayload {
   commandLine: string;
   usedTempFile: boolean;
   startedAt: string;
+  statusPath: string;
+  outputPath: string;
 }
 
 export interface ITerminalDataEvent {
@@ -59,4 +62,23 @@ export interface ITerminalExitEvent {
 export interface ITerminalStatusChangePayload {
   state: TTerminalConnectionState;
   message: string;
+}
+
+export interface ITerminalRunCompletePayload {
+  sessionId: string;
+  runId: string;
+  exitCode: number | null;
+  output: string;
+  finishedAt: string;
+}
+
+export interface IWaitTerminalRunRequest {
+  statusPath: string;
+  outputPath: string;
+}
+
+export interface IWaitTerminalRunPayload {
+  exitCode: number | null;
+  finishedAt: string;
+  output: string;
 }

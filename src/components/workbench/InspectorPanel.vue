@@ -24,19 +24,10 @@
         </div>
         <div>
           <p class="mb-2 text-xs text-[var(--text-tertiary)]">执行环境</p>
-          <Select
-            class="w-full"
-            :model-value="executor"
-            @update:model-value="$emit('change-executor', $event)"
-          >
-            <SelectItem
-              v-for="item in executorOptions"
-              :key="item.value"
-              :value="item.value"
-            >
-              {{ item.label }}
-            </SelectItem>
-          </Select>
+          <div class="linear-button flex w-full items-center justify-between px-4 py-3 text-sm">
+            <span>WSL2</span>
+            <span class="text-[var(--text-quaternary)]">固定</span>
+          </div>
         </div>
         <button
           class="linear-button flex w-full items-center justify-between px-4 py-3 text-sm"
@@ -88,7 +79,7 @@
       >
         {{
           isDesktopRuntime
-            ? '暂未检测到可用的 shell 运行环境，建议优先安装或启用 WSL2，Git Bash 可作为备用方案。'
+            ? '暂未检测到可用的 WSL2 运行环境，建议先安装或启用 WSL2。'
             : '当前为浏览器预览模式，执行器探测与脚本运行仅支持 Tauri 桌面端。'
         }}
       </div>
@@ -142,7 +133,7 @@ import type {
     TDocumentEncoding,
     TExecutorKind,
 } from '@/types/editor';
-import { ENCODING_OPTIONS, EXECUTOR_OPTIONS } from '@/utils/templates';
+import { ENCODING_OPTIONS } from '@/utils/templates';
 
 defineProps<{
   encoding: TDocumentEncoding;
@@ -156,12 +147,10 @@ defineProps<{
 
 defineEmits<{
   'change-encoding': [value: TDocumentEncoding];
-  'change-executor': [value: TExecutorKind];
   'toggle-theme': [];
   'insert-template': [value: ICommandTemplate];
   'insert-comment': [value: ICommandTemplate];
 }>();
 
 const encodingOptions = ENCODING_OPTIONS;
-const executorOptions = EXECUTOR_OPTIONS;
 </script>

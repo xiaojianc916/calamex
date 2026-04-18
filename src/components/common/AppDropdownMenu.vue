@@ -32,7 +32,15 @@
             </span>
           </span>
           <span v-if="item.selected" class="dropdown-menu-item-check" aria-hidden="true">
-            <svg viewBox="0 0 16 16" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <svg
+              viewBox="0 0 16 16"
+              class="h-3.5 w-3.5"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
               <path d="m3.5 8.2 2.7 2.7 6.3-6.4" />
             </svg>
           </span>
@@ -55,7 +63,7 @@ interface IDropdownMenuItem {
   tone?: 'default' | 'danger';
 }
 
-const props = withDefaults(
+withDefaults(
   defineProps<{
     items: IDropdownMenuItem[];
     align?: 'left' | 'right';

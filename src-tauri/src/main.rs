@@ -1,10 +1,10 @@
 mod commands;
 
 use commands::{
-    apply_window_stage, close_terminal_session, detect_execution_environment,
-    dispatch_script_to_terminal, ensure_terminal_session, list_workspace_entries, load_script,
-    resize_terminal_session, run_script, save_script, show_startup_window, write_terminal_input,
-    TerminalSessionState,
+    analyze_script, apply_window_stage, close_terminal_session, detect_execution_environment,
+    dispatch_script_to_terminal, ensure_terminal_session, list_workspace_entries, load_image_asset,
+    load_script, resize_terminal_session, run_script, save_script, show_startup_window,
+    wait_for_terminal_run, write_terminal_input, TerminalSessionState,
 };
 use tauri::Manager;
 
@@ -23,10 +23,13 @@ fn main() {
             apply_window_stage,
             show_startup_window,
             load_script,
+            load_image_asset,
             save_script,
+            analyze_script,
             detect_execution_environment,
             run_script,
             dispatch_script_to_terminal,
+            wait_for_terminal_run,
             list_workspace_entries,
             ensure_terminal_session,
             write_terminal_input,

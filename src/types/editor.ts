@@ -6,13 +6,16 @@ export type TDocumentEncoding =
   | 'utf-16le'
   | 'utf-16be';
 
-export type TExecutorKind = 'auto' | 'wsl' | 'git-bash' | 'bash';
+export type TDocumentKind = 'text' | 'image';
+export type TExecutorKind = 'wsl';
 export type TLogLevel = 'info' | 'success' | 'error';
+export type TScriptDiagnosticSeverity = 'error' | 'warning' | 'info' | 'style';
 
 export interface IEditorDocument {
   id: string;
   path: string | null;
   name: string;
+  kind: TDocumentKind;
   content: string;
   encoding: TDocumentEncoding;
   savedContent: string;
@@ -32,7 +35,7 @@ export interface ICommandTemplate {
 }
 
 export interface IExecutionOption {
-  type: Exclude<TExecutorKind, 'auto'>;
+  type: TExecutorKind;
   label: string;
   available: boolean;
   description: string;
@@ -80,6 +83,37 @@ export interface IRunResult {
   commandLine: string;
   logPath: string | null;
   usedTempFile: boolean;
+}
+
+export interface IScriptDiagnostic {
+  line: number;
+  endLine: number;
+  column: number;
+  endColumn: number;
+  level: TScriptDiagnosticSeverity;
+  code: string;
+  message: string;
+}
+
+export interface IAnalyzeScriptRequest {
+  path: string | null;
+  name?: string | null;
+  content: string;
+}
+
+export interface IAnalyzeScriptPayload {
+  available: boolean;
+  message: string | null;
+  dialect: string;
+  diagnostics: IScriptDiagnostic[];
+}
+
+export interface IImageAssetPayload {
+  path: string;
+  name: string;
+  mimeType: string;
+  dataUrl: string;
+  byteSize: number;
 }
 
 export interface IScriptFilePayload {

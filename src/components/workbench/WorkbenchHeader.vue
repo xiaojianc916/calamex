@@ -15,6 +15,22 @@
         @click="$emit('select-tab', item.id)"
       >
         <svg
+          v-if="item.kind === 'image'"
+          viewBox="0 0 24 24"
+          class="editor-file-tab-icon"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.8"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <rect x="4" y="5" width="16" height="14" rx="2" />
+          <path d="m7.5 15 3.4-3.4a1 1 0 0 1 1.4 0L16.5 16" />
+          <path d="m14.5 14 1.5-1.5a1 1 0 0 1 1.4 0L19 14" />
+          <circle cx="9" cy="9" r="1.2" />
+        </svg>
+        <svg
+          v-else
           viewBox="0 0 24 24"
           class="editor-file-tab-icon"
           fill="none"

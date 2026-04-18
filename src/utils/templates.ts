@@ -1,6 +1,5 @@
 import type {
   ICommandTemplate,
-  IExecutionEnvironment,
   TDocumentEncoding,
   TExecutorKind,
 } from '@/types/editor';
@@ -27,35 +26,7 @@ export const ENCODING_OPTIONS: Array<{ label: string; value: TDocumentEncoding }
 
 export const DEFAULT_EXECUTOR: TExecutorKind = 'wsl';
 
-export const EXECUTOR_OPTIONS: Array<{ label: string; value: TExecutorKind }> = [
-  { label: '自动选择', value: 'auto' },
-  { label: 'WSL2', value: 'wsl' },
-  { label: 'Git Bash / sh', value: 'git-bash' },
-  { label: 'Windows Bash', value: 'bash' },
-];
-
-const isSpecificExecutorAvailable = (
-  environment: IExecutionEnvironment,
-  executor: Exclude<TExecutorKind, 'auto'>,
-): boolean => environment.executors.some((item) => item.type === executor && item.available);
-
-export const getExecutorLabel = (executor: TExecutorKind): string =>
-  EXECUTOR_OPTIONS.find((item) => item.value === executor)?.label ?? executor;
-
-export const resolvePreferredExecutor = (environment: IExecutionEnvironment): TExecutorKind => {
-  if (isSpecificExecutorAvailable(environment, 'wsl')) {
-    return 'wsl';
-  }
-
-  if (
-    environment.recommended !== 'auto' &&
-    isSpecificExecutorAvailable(environment, environment.recommended)
-  ) {
-    return environment.recommended;
-  }
-
-  return environment.executors.find((item) => item.available)?.type ?? DEFAULT_EXECUTOR;
-};
+export const getExecutorLabel = (_executor: TExecutorKind): string => 'WSL2';
 
 export const COMMAND_TEMPLATES: ICommandTemplate[] = [
   {

@@ -1,9 +1,13 @@
 import type {
+  IAnalyzeScriptPayload,
+  IAnalyzeScriptRequest,
   IExecutionEnvironment,
+  IImageAssetPayload,
   IRunResult,
   IScriptFilePayload,
   IWorkspaceDirectoryPayload,
 } from '@/types/editor';
+import type { ITauriService } from '@/types/tauri';
 import type {
   ICloseTerminalSessionRequest,
   IDispatchTerminalScriptPayload,
@@ -11,12 +15,24 @@ import type {
   IEnsureTerminalSessionRequest,
   IResizeTerminalSessionRequest,
   ITerminalSessionPayload,
+  IWaitTerminalRunPayload,
+  IWaitTerminalRunRequest,
   IWriteTerminalInputRequest,
 } from '@/types/terminal';
-import type { ITauriService } from '@/types/tauri';
 import { assertDesktopRuntime } from '@/utils/desktop-runtime';
 
-const fileFilters = [
+const openFileFilters = [
+  {
+    name: 'Shell Script',
+    extensions: ['sh', 'bash'],
+  },
+  {
+    name: 'Images',
+    extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'ico'],
+  },
+];
+
+const saveFileFilters = [
   {
     name: 'Shell Script',
     extensions: ['sh', 'bash'],
@@ -28,13 +44,18 @@ export const tauriService: ITauriService & {
   pickOpenFolderPath(): Promise<string | null>;
   pickSavePath(defaultPath: string): Promise<string | null>;
 } = {
+  async analyzeScript(payload: IAnalyzeScriptRequest) {
+    await assertDesktopRuntime('执行 ShellCheck 实时诊断');
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke<IAnalyzeScriptPayload>('analyze_script', { payload });
+  },
   async pickOpenPath() {
     await assertDesktopRuntime('打开本地脚本');
     const { open } = await import('@tauri-apps/plugin-dialog');
     const path = await open({
       multiple: false,
       directory: false,
-      filters: fileFilters,
+      filters: openFileFilters,
     });
 
     return typeof path === 'string' ? path : null;
@@ -54,7 +75,7 @@ export const tauriService: ITauriService & {
     const { save } = await import('@tauri-apps/plugin-dialog');
     const path = await save({
       defaultPath,
-      filters: fileFilters,
+      filters: saveFileFilters,
     });
 
     return typeof path === 'string' ? path : null;
@@ -63,6 +84,11 @@ export const tauriService: ITauriService & {
     await assertDesktopRuntime('读取脚本文件');
     const { invoke } = await import('@tauri-apps/api/core');
     return invoke<IScriptFilePayload>('load_script', { path });
+  },
+  async loadImageAsset(path) {
+    await assertDesktopRuntime('读取图片资源');
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke<IImageAssetPayload>('load_image_asset', { path });
   },
   async saveScript(payload) {
     await assertDesktopRuntime('写入脚本文件');
@@ -93,6 +119,11 @@ export const tauriService: ITauriService & {
     await assertDesktopRuntime('在终端中执行脚本');
     const { invoke } = await import('@tauri-apps/api/core');
     return invoke<IDispatchTerminalScriptPayload>('dispatch_script_to_terminal', { payload });
+  },
+  async waitForTerminalRun(payload: IWaitTerminalRunRequest) {
+    await assertDesktopRuntime('等待终端脚本执行完成');
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke<IWaitTerminalRunPayload>('wait_for_terminal_run', { payload });
   },
   async writeTerminalInput(payload: IWriteTerminalInputRequest) {
     await assertDesktopRuntime('写入终端输入');

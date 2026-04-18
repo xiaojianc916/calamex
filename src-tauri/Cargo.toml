@@ -9,6 +9,7 @@ build = "build.rs"
 tauri-build = { version = "2.5.6", features = [] }
 
 [dependencies]
+base64 = "0.22.1"
 chrono = { version = "0.4.44", features = ["serde"] }
 encoding_rs = "0.8.35"
 portable-pty = "0.9.0"
