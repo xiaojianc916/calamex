@@ -7,8 +7,8 @@ use commands::{
     dispatch_script_to_terminal, ensure_terminal_session, format_script, get_git_file_baseline,
     get_git_repository_status, get_startup_workspace, list_workspace_entries, load_image_asset,
     load_script, resize_terminal_session, run_script, save_script, show_startup_window,
-    stage_git_paths, unstage_git_paths, wait_for_terminal_run, write_terminal_input,
-    commit_git_index, TerminalSessionState,
+    stage_git_paths, unstage_git_paths, write_terminal_input, commit_git_index,
+    TerminalSessionState,
 };
 use tauri::Manager;
 
@@ -35,7 +35,6 @@ fn main() {
             detect_execution_environment,
             run_script,
             dispatch_script_to_terminal,
-            wait_for_terminal_run,
             list_workspace_entries,
             get_git_repository_status,
             get_git_file_baseline,

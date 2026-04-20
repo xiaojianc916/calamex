@@ -81,7 +81,6 @@ type TResizeDirection =
 const TERMINAL_MIN_HEIGHT = 140;
 const EDITOR_MIN_HEIGHT = 220;
 const SPLITTER_HEIGHT = 0;
-const SIDEBAR_WIDTH = 240;
 
 const props = withDefaults(
   defineProps<{
@@ -89,12 +88,14 @@ const props = withDefaults(
     sidebarVisible?: boolean;
     terminalVisible?: boolean;
     terminalHeight?: number;
+    sidebarWidth?: number;
   }>(),
   {
     isDesktopRuntime: false,
     sidebarVisible: true,
     terminalVisible: true,
     terminalHeight: 236,
+    sidebarWidth: 240,
   },
 );
 
@@ -157,7 +158,7 @@ const mainGridStyle = computed(() => {
 });
 
 const shellGridStyle = computed(() => ({
-  gridTemplateColumns: `52px ${props.sidebarVisible ? SIDEBAR_WIDTH : 0}px minmax(0, 1fr)`,
+  gridTemplateColumns: `52px ${props.sidebarVisible ? props.sidebarWidth : 0}px minmax(0, 1fr)`,
 }));
 
 const layoutGridTransitionClass =

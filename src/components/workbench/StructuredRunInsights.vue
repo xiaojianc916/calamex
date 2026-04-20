@@ -1,101 +1,204 @@
 <template>
-  <div v-if="displayedReport.hasContent" class="run-log-shell">
-    <div class="run-log-wrap">
-      <header class="run-log-header">
-        <span class="run-log-header-title">
-          <span class="run-log-header-prefix">{{ displayedReport.session.pathPrefix }} /</span>
-          {{ displayedReport.session.fileLabel }}
-        </span>
-        <span class="mono-text run-log-header-meta">{{ displayedReport.session.meta }}</span>
-      </header>
+  <section class="terminal-log-shell">
+    <div class="terminal-log-header">
+      <div class="terminal-log-run-indicator" :class="`tone-${summaryTone}`">
+        <span class="terminal-log-run-pulse"></span>
+        <span>{{ runIndicatorLabel }}</span>
+      </div>
 
-      <section class="run-log-summary-card">
-        <div class="run-log-summary-top">
-          <span class="run-log-led" :class="toneClass(displayedReport.summary.tone)"></span>
-          <span class="run-log-summary-label">{{ displayedReport.summary.statusLabel }}</span>
-          <span class="run-log-summary-sep">·</span>
-          <span class="run-log-summary-sub">{{ displayedReport.summary.phaseLabel }}</span>
-          <span class="mono-text run-log-summary-elapsed">
-            <b>{{ displayedReport.summary.elapsedLabel }}</b>
-            已耗时
-          </span>
-        </div>
+      <span class="terminal-log-run-path mono-text">{{ commandPreview }}</span>
 
-        <div class="run-log-progress-track" aria-hidden="true">
-          <div class="run-log-progress-fill" :style="{ width: `${displayedReport.summary.progress}%` }"></div>
-          <div v-if="displayedReport.summary.tone === 'running'" class="run-log-progress-shimmer"></div>
-        </div>
+      <div class="terminal-log-header-spacer" />
 
-        <div class="mono-text run-log-stats">
-          <span class="run-log-stat is-success">成功 <span class="run-log-stat-value">{{
-            displayedReport.summary.counts.success }}</span></span>
-          <span class="run-log-stat is-warning">警告 <span class="run-log-stat-value">{{
-            displayedReport.summary.counts.warning }}</span></span>
-          <span class="run-log-stat is-error">错误 <span class="run-log-stat-value">{{
-            displayedReport.summary.counts.error }}</span></span>
-          <span class="run-log-stat is-running">进行中 <span class="run-log-stat-value">{{
-            displayedReport.summary.counts.running }}</span></span>
-        </div>
-      </section>
+      <div class="terminal-log-env-badge mono-text">
+        <span>{{ environmentParts[0] }}</span>
+        <span class="terminal-log-env-sep">·</span>
+        <span>{{ environmentParts[1] }}</span>
+      </div>
 
-      <div class="run-log-timeline">
+      <div class="terminal-log-header-actions">
+        <button
+          type="button"
+          class="icon-button app-tooltip-target terminal-log-icon-button"
+          :class="{ 'is-selected': isAutoScrollEnabled }"
+          :data-tooltip="isAutoScrollEnabled ? '关闭自动滚动' : '开启自动滚动'"
+          data-tooltip-placement="top"
+          :aria-label="isAutoScrollEnabled ? '关闭自动滚动' : '开启自动滚动'"
+          @click="isAutoScrollEnabled = !isAutoScrollEnabled"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="12" y1="5" x2="12" y2="15" />
+            <polyline points="7 13 12 18 17 13" />
+            <line x1="5" y1="20" x2="19" y2="20" />
+          </svg>
+        </button>
+
+        <button
+          type="button"
+          class="icon-button app-tooltip-target terminal-log-icon-button"
+          data-tooltip="复制全部输出"
+          data-tooltip-placement="top"
+          aria-label="复制全部输出"
+          :disabled="!hasCopyableOutput"
+          @click="void handleCopyAllOutput()"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="9" y="9" width="13" height="13" rx="2" />
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+          </svg>
+        </button>
+
+        <button
+          type="button"
+          class="icon-button app-tooltip-target terminal-log-icon-button"
+          data-tooltip="清空日志"
+          data-tooltip-placement="top"
+          aria-label="清空日志"
+          :disabled="!displayedReport.hasContent"
+          @click="handleClearLogs"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 6h18" />
+            <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="terminal-log-meta">
+      <div class="terminal-log-meta-item">
+        <span class="terminal-log-meta-value">{{ stepProgress.current }}</span>/ {{ stepProgress.total }} 步
+      </div>
+      <span class="terminal-log-meta-sep">·</span>
+      <div class="terminal-log-meta-item is-success">
+        <span class="terminal-log-meta-value">{{ displayedReport.summary.counts.success }}</span>成功
+      </div>
+      <div class="terminal-log-meta-item is-warning">
+        <span class="terminal-log-meta-value">{{ displayedReport.summary.counts.warning }}</span>警告
+      </div>
+      <div class="terminal-log-meta-item is-error">
+        <span class="terminal-log-meta-value">{{ displayedReport.summary.counts.error }}</span>错误
+      </div>
+      <div class="terminal-log-meta-item is-running">
+        <span class="terminal-log-meta-value">{{ displayedReport.summary.counts.running }}</span>进行中
+      </div>
+      <div class="terminal-log-header-spacer" />
+      <div class="terminal-log-elapsed mono-text">
+        {{ elapsedLabel }}
+        <span class="terminal-log-elapsed-label">已耗时</span>
+      </div>
+    </div>
+
+    <div class="terminal-log-progress-track" aria-hidden="true">
+      <div
+        class="terminal-log-progress-fill"
+        :class="{ 'is-live': summaryTone === 'running' }"
+        :style="{ width: `${displayedReport.summary.progress}%` }"
+      />
+    </div>
+
+    <div ref="timelineRef" class="terminal-log-timeline">
+      <div v-if="displayedReport.hasContent" class="terminal-log-timeline-list">
         <article
-v-for="item in displayedReport.timeline" :key="item.id" class="run-log-item"
-          :class="[`accent-${item.accent}`, { 'is-live': item.status === 'running' }]"
-          :style="{ '--run-log-gap': String(item.gapWeight) }">
-          <div class="run-log-row">
-            <span class="mono-text run-log-time">{{ item.timestamp }}</span>
-            <span class="run-log-tag" :class="`accent-${item.accent}`">{{ item.tag }}</span>
+          v-for="(item, index) in displayedReport.timeline"
+          :key="item.id"
+          class="terminal-log-event-row"
+          :style="{
+            '--terminal-log-gap': String(item.gapWeight),
+            '--terminal-log-index': String(index),
+          }"
+        >
+          <div class="terminal-log-event-icon" :class="`is-${resolveEventTone(item)}`">
+            <span class="terminal-log-event-dot"></span>
           </div>
 
-          <p class="run-log-item-title">{{ item.title }}</p>
-          <p class="run-log-item-desc">{{ item.description }}</p>
+          <div class="terminal-log-event-time" :class="{ 'is-live': item.status === 'running' }">
+            {{ item.timestamp }}
+          </div>
 
-          <div v-if="item.details?.length" class="run-log-item-details">
-            <Button variant="ghost" size="sm" class="run-log-details-toggle" @click="toggleExpanded(item.id)">
-              {{ isExpanded(item.id) ? '隐藏输出' : item.detailsLabel ?? '查看输出' }}
-              <span class="run-log-chevron" :class="{ 'is-open': isExpanded(item.id) }">▸</span>
-            </Button>
+          <div class="terminal-log-event-kind" :class="`is-${resolveKindTone(item)}`">
+            {{ resolveKindLabel(item) }}
+          </div>
 
-            <Transition name="run-log-expand">
-              <div v-if="isExpanded(item.id)" class="run-log-output mono-text">
-                <p
-v-for="detail in item.details" :key="`${item.id}-${detail.text}`" class="run-log-output-line"
-                  :class="`tone-${detail.tone}`">
-                  {{ detail.text }}
-                </p>
-              </div>
-            </Transition>
+          <div class="terminal-log-event-body">
+            <div class="terminal-log-event-title">{{ item.title }}</div>
+            <div class="terminal-log-event-desc">{{ item.description }}</div>
+
+            <code v-if="resolveInlineCode(item)" class="terminal-log-event-code">
+              {{ resolveInlineCode(item) }}
+            </code>
+
+            <button
+              v-if="resolveOutputLines(item).length"
+              type="button"
+              class="terminal-log-event-toggle"
+              :class="{ 'is-expanded': isExpanded(item.id) }"
+              @click="toggleExpanded(item.id)"
+            >
+              <svg class="terminal-log-event-chevron" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="9 6 15 12 9 18" />
+              </svg>
+              {{ resolveToggleLabel(item) }}
+            </button>
+
+            <div
+              class="terminal-log-event-output"
+              :class="{ 'is-expanded': isExpanded(item.id) }"
+            >
+              <pre v-if="resolveOutputLines(item).length"><span
+                v-for="(detail, detailIndex) in resolveOutputLines(item)"
+                :key="`${item.id}-${detailIndex}-${detail.text}`"
+                class="terminal-log-output-line"
+                :class="`is-${detail.tone}`"
+              >{{ detail.text }}
+</span></pre>
+            </div>
           </div>
         </article>
       </div>
-    </div>
-  </div>
 
-  <div v-else class="run-log-empty-state">
-    <div class="run-log-empty-copy">
-      <p class="run-log-empty-title">暂无运行日志</p>
-      <p class="run-log-empty-text">
-        运行脚本后，这里会整理为时间线视图，展示状态总览、阶段节点和可展开输出。
-      </p>
+      <div v-else class="terminal-log-empty-state">
+        <p class="terminal-log-empty-title">暂无运行日志</p>
+        <p class="terminal-log-empty-text">
+          运行脚本后，这里会整理为时间线视图，展示执行状态、阶段节点和可展开输出。
+        </p>
+      </div>
     </div>
-  </div>
+
+    <footer class="terminal-log-footer" :class="{ 'is-disabled': !props.isTerminalReady }">
+      <span class="terminal-log-prompt mono-text">&gt;</span>
+      <input
+        v-model="commandInput"
+        class="terminal-log-command-input mono-text"
+        type="text"
+        :disabled="!props.isTerminalReady"
+        placeholder="输入命令，按 Enter 发送到终端"
+        autocomplete="off"
+        spellcheck="false"
+        @keydown.enter.prevent="submitCommand"
+      >
+    </footer>
+  </section>
 </template>
 
 <script setup lang="ts">
-import { Button } from '@/components/ui/button';
+import { useMessage } from '@/composables/useMessage';
 import type { IRunLogEntry, IRunResult, TExecutorKind } from '@/types/editor';
 import {
-  buildStructuredRunReport,
-  type IStructuredRunReport,
+    buildStructuredRunReport,
+    type IStructuredRunDetailLine,
+    type IStructuredRunReport,
+    type IStructuredRunTimelineItem,
 } from '@/utils/structured-run-report';
-import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 
 const MAX_REPORT_CACHE_ENTRIES = 8;
-const REPORT_REBUILD_DELAY_MS = 180;
+const REPORT_REBUILD_DELAY_MS = 240;
 
 const props = defineProps<{
   active: boolean;
+  terminalOutputLength: number;
   terminalOutputVersion: number;
   resolveTerminalOutput: () => string;
   runLogs: IRunLogEntry[];
@@ -105,14 +208,25 @@ const props = defineProps<{
   documentName: string;
   documentPath: string | null;
   workspaceRootPath: string | null;
+  isTerminalReady: boolean;
 }>();
+
+const emit = defineEmits<{
+  clear: [];
+  'submit-command': [command: string];
+}>();
+
+const message = useMessage();
+const commandInput = ref('');
+const timelineRef = ref<HTMLElement | null>(null);
+const isAutoScrollEnabled = ref(true);
 
 const EMPTY_REPORT: IStructuredRunReport = {
   hasContent: false,
   session: {
     pathPrefix: 'builtin-workspace',
     fileLabel: 'startup.sh',
-    meta: 'WSL · terminal',
+    meta: 'WSL · bash',
   },
   summary: {
     tone: 'neutral',
@@ -135,6 +249,8 @@ const currentReportKey = computed(
 );
 
 const reportCache = ref<Map<string, IStructuredRunReport>>(new Map());
+const liveReport = ref<IStructuredRunReport>(EMPTY_REPORT);
+const expandedItemIds = ref<Set<string>>(new Set());
 
 let reportBuildTimerId: number | null = null;
 
@@ -157,8 +273,6 @@ const buildReportSafely = (): IStructuredRunReport => {
     return EMPTY_REPORT;
   }
 };
-
-const liveReport = ref<IStructuredRunReport>(EMPTY_REPORT);
 
 const clearPendingReportBuild = (): void => {
   if (reportBuildTimerId === null) {
@@ -267,16 +381,185 @@ const displayedReport = computed<IStructuredRunReport>(() => {
   return reportCache.value.get(currentReportKey.value) ?? liveReport.value;
 });
 
-const expandedItemIds = ref<Set<string>>(new Set());
+const summaryTone = computed(() => displayedReport.value.summary.tone);
+
+const runIndicatorLabel = computed(() => {
+  switch (summaryTone.value) {
+    case 'running':
+      return '运行中';
+    case 'success':
+      return '已完成';
+    case 'warning':
+      return '有警告';
+    case 'error':
+      return '执行异常';
+    default:
+      return '待执行';
+  }
+});
+
+const commandPreview = computed(() => {
+  if (props.lastRunResult?.commandLine) {
+    return props.lastRunResult.commandLine;
+  }
+
+  const dispatchLog = [...props.runLogs]
+    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
+    .find((item) => item.title === '已发送到集成终端');
+
+  if (dispatchLog?.detail) {
+    return dispatchLog.detail;
+  }
+
+  const pathPrefix = displayedReport.value.session.pathPrefix.trim();
+  return pathPrefix
+    ? `${pathPrefix} / ${displayedReport.value.session.fileLabel}`
+    : displayedReport.value.session.fileLabel;
+});
+
+const environmentParts = computed(() => {
+  const [executorLabel, shellLabel] = displayedReport.value.session.meta
+    .split('·')
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  return [executorLabel ?? 'WSL', shellLabel ?? 'bash'] as const;
+});
+
+const stepProgress = computed(() => {
+  const total = displayedReport.value.timeline.length;
+  return {
+    current: total,
+    total,
+  };
+});
+
+const elapsedLabel = computed(() => displayedReport.value.summary.elapsedLabel.replace(/s$/, ''));
+
+const hasCopyableOutput = computed(() => {
+  return props.terminalOutputLength > 0 || displayedReport.value.timeline.length > 0;
+});
+
+const resolveKindLabel = (item: IStructuredRunTimelineItem): string => {
+  if (item.status === 'running') {
+    return 'Run';
+  }
+
+  switch (item.tag) {
+    case 'start':
+      return 'Start';
+    case 'exec':
+      return 'Exec';
+    case 'error':
+      return 'Error';
+    case 'warn':
+      return 'Hint';
+    case 'done':
+      return 'Done';
+    case 'load':
+      return 'Temp';
+    default:
+      return 'Info';
+  }
+};
+
+const resolveEventTone = (item: IStructuredRunTimelineItem): 'info' | 'exec' | 'ok' | 'warn' | 'err' | 'live' => {
+  if (item.status === 'running') {
+    return 'live';
+  }
+
+  if (item.status === 'error') {
+    return 'err';
+  }
+
+  if (item.status === 'warning') {
+    return 'warn';
+  }
+
+  if (item.tag === 'exec' || item.tag === 'load') {
+    return 'exec';
+  }
+
+  if (item.tag === 'done') {
+    return 'ok';
+  }
+
+  return 'info';
+};
+
+const resolveKindTone = (item: IStructuredRunTimelineItem): 'info' | 'exec' | 'err' | 'warn' | 'live' | 'ok' => {
+  if (item.status === 'running') {
+    return 'live';
+  }
+
+  if (item.status === 'error') {
+    return 'err';
+  }
+
+  if (item.status === 'warning') {
+    return 'warn';
+  }
+
+  if (item.tag === 'exec' || item.tag === 'load') {
+    return 'exec';
+  }
+
+  if (item.tag === 'done') {
+    return 'ok';
+  }
+
+  return 'info';
+};
+
+const resolveInlineCode = (item: IStructuredRunTimelineItem): string | null => {
+  if (item.status !== 'error') {
+    return null;
+  }
+
+  return item.details?.[0]?.text ?? item.description ?? null;
+};
+
+const resolveOutputLines = (item: IStructuredRunTimelineItem): IStructuredRunDetailLine[] => {
+  const detailLines = item.details ?? [];
+
+  if (item.status === 'error' && detailLines.length > 1) {
+    return detailLines.slice(1);
+  }
+
+  if (item.status === 'error' && detailLines.length === 1) {
+    return [];
+  }
+
+  return detailLines;
+};
+
+const resolveToggleLabel = (item: IStructuredRunTimelineItem): string => {
+  if (isExpanded(item.id)) {
+    return item.status === 'running' ? '收起实时输出' : '隐藏输出';
+  }
+
+  if (item.status === 'running') {
+    return '查看实时输出';
+  }
+
+  return item.detailsLabel ?? '查看输出';
+};
 
 watch(
-  () => displayedReport.value.timeline.map((item) => item.id),
-  (ids) => {
+  () => displayedReport.value.timeline,
+  (items) => {
+    const visibleIds = items.map((item) => item.id);
     const nextExpandedIds = new Set<string>();
 
-    for (const id of expandedItemIds.value) {
-      if (ids.includes(id)) {
-        nextExpandedIds.add(id);
+    for (const itemId of expandedItemIds.value) {
+      if (visibleIds.includes(itemId)) {
+        nextExpandedIds.add(itemId);
+      }
+    }
+
+    for (const item of items) {
+      if (item.status === 'running') {
+        nextExpandedIds.add(item.id);
       }
     }
 
@@ -298,8 +581,95 @@ const toggleExpanded = (itemId: string): void => {
 
 const isExpanded = (itemId: string): boolean => expandedItemIds.value.has(itemId);
 
-const toneClass = (tone: 'neutral' | 'success' | 'warning' | 'error' | 'running'): string =>
-  `tone-${tone}`;
+const scrollTimelineToBottom = async (behavior: ScrollBehavior): Promise<void> => {
+  await nextTick();
+  const timelineElement = timelineRef.value;
+  if (!timelineElement) {
+    return;
+  }
+
+  timelineElement.scrollTo({
+    top: timelineElement.scrollHeight,
+    behavior,
+  });
+};
+
+watch(
+  () => [
+    props.active,
+    isAutoScrollEnabled.value,
+    displayedReport.value.timeline.map((item) => item.id).join('|'),
+  ],
+  ([nextActive, nextAutoScroll]) => {
+    if (!nextActive || !nextAutoScroll) {
+      return;
+    }
+
+    void scrollTimelineToBottom(props.isRunning ? 'smooth' : 'auto');
+  },
+  { flush: 'post' },
+);
+
+const copyText = async (value: string): Promise<void> => {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+
+  const textarea = document.createElement('textarea');
+  textarea.value = value;
+  textarea.setAttribute('readonly', 'true');
+  textarea.style.position = 'absolute';
+  textarea.style.opacity = '0';
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand('copy');
+  document.body.removeChild(textarea);
+};
+
+const buildFallbackCopyPayload = (): string => {
+  return displayedReport.value.timeline
+    .map((item) => {
+      const output = resolveOutputLines(item)
+        .map((detail) => detail.text)
+        .join('\n');
+      return [item.timestamp, item.title, item.description, output].filter(Boolean).join('\n');
+    })
+    .join('\n\n');
+};
+
+const handleCopyAllOutput = async (): Promise<void> => {
+  const rawOutput = props.resolveTerminalOutput().trim();
+  const payload = rawOutput || buildFallbackCopyPayload();
+
+  if (!payload) {
+    message.warning('暂无可复制的终端输出');
+    return;
+  }
+
+  try {
+    await copyText(payload);
+    message.success('已复制终端输出');
+  } catch (error) {
+    const nextMessage = error instanceof Error ? error.message : '复制终端输出失败';
+    message.error(nextMessage);
+  }
+};
+
+const handleClearLogs = (): void => {
+  emit('clear');
+  message.success('已清空运行日志');
+};
+
+const submitCommand = (): void => {
+  const normalizedCommand = commandInput.value.trim();
+  if (!normalizedCommand || !props.isTerminalReady) {
+    return;
+  }
+
+  emit('submit-command', normalizedCommand);
+  commandInput.value = '';
+};
 
 onBeforeUnmount(() => {
   clearPendingReportBuild();
@@ -307,495 +677,683 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.run-log-shell {
-  min-height: 100%;
-  background:
-    radial-gradient(circle at top, color-mix(in srgb, var(--accent-strong) 14%, transparent), transparent 36%),
-    linear-gradient(180deg, color-mix(in srgb, var(--panel-bg) 88%, transparent), var(--panel-bg));
+.terminal-log-shell {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--panel-bg) 98%, transparent), var(--panel-bg));
 }
 
-.run-log-wrap {
-  width: min(820px, 100%);
-  margin: 0 auto;
-  padding: 36px 20px 72px;
+.terminal-log-header,
+.terminal-log-meta,
+.terminal-log-footer {
+  flex-shrink: 0;
 }
 
-.run-log-header {
+.terminal-log-header {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-bottom: 20px;
+  padding: 14px 24px 0;
+  user-select: none;
 }
 
-.run-log-header-title {
-  min-width: 0;
-  font-size: 14px;
-  font-weight: 500;
-  letter-spacing: -0.01em;
-  color: var(--text-primary);
-}
-
-.run-log-header-prefix {
-  color: var(--text-quaternary);
-  font-weight: 400;
-}
-
-.run-log-header-meta {
-  margin-left: auto;
-  flex-shrink: 0;
-  font-size: 11.5px;
-  color: var(--text-quaternary);
-}
-
-.run-log-summary-card {
-  border: 1px solid var(--border-subtle);
-  border-radius: calc(var(--radius) + 4px);
-  background: color-mix(in srgb, var(--panel-bg) 94%, transparent);
-  box-shadow: 0 22px 48px rgba(0, 0, 0, 0.22);
-  padding: 16px 18px;
-  margin-bottom: 30px;
-}
-
-.run-log-summary-top {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 14px;
-}
-
-.run-log-led {
-  position: relative;
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  background: var(--accent-strong);
-  box-shadow: 0 0 12px color-mix(in srgb, var(--accent-strong) 60%, transparent);
-}
-
-.run-log-led::after {
-  content: '';
-  position: absolute;
-  inset: -4px;
-  border-radius: 999px;
-  border: 1px solid color-mix(in srgb, currentColor 45%, transparent);
-  opacity: 0.45;
-  animation: run-log-pulse 1.8s infinite ease-out;
-}
-
-.run-log-led.tone-success {
-  background: var(--success);
-  color: var(--success);
-}
-
-.run-log-led.tone-warning {
-  background: var(--warning);
-  color: var(--warning);
-}
-
-.run-log-led.tone-error {
-  background: var(--danger);
-  color: var(--danger);
-}
-
-.run-log-led.tone-running,
-.run-log-led.tone-neutral {
-  background: var(--accent-strong);
-  color: var(--accent-strong);
-}
-
-.run-log-summary-label {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-primary);
-}
-
-.run-log-summary-sep {
-  color: var(--text-quaternary);
-}
-
-.run-log-summary-sub {
-  font-size: 11.5px;
-  color: var(--text-quaternary);
-}
-
-.run-log-summary-elapsed {
-  margin-left: auto;
-  font-size: 11.5px;
-  color: var(--text-tertiary);
-}
-
-.run-log-summary-elapsed b {
-  margin-right: 4px;
-  color: var(--text-primary);
-  font-weight: 500;
-}
-
-.run-log-progress-track {
-  position: relative;
-  height: 2px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--border-subtle) 90%, transparent);
-}
-
-.run-log-progress-fill {
-  position: absolute;
-  inset: 0 auto 0 0;
-  height: 100%;
-  border-radius: inherit;
-  background: linear-gradient(90deg,
-      var(--success),
-      color-mix(in srgb, var(--success) 58%, var(--accent-strong) 42%),
-      var(--accent-strong));
-}
-
-.run-log-progress-shimmer {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 72px;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.28), transparent);
-  animation: run-log-slide 1.8s linear infinite;
-}
-
-.run-log-stats {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 14px;
-  margin-top: 12px;
-  font-size: 11.5px;
-  color: var(--text-quaternary);
-}
-
-.run-log-stat {
-  color: var(--text-quaternary);
-}
-
-.run-log-stat-value {
-  margin-left: 2px;
-  font-weight: 500;
-}
-
-.run-log-stat.is-success .run-log-stat-value {
-  color: color-mix(in srgb, var(--success) 82%, white 18%);
-}
-
-.run-log-stat.is-warning .run-log-stat-value {
-  color: color-mix(in srgb, var(--warning) 84%, white 16%);
-}
-
-.run-log-stat.is-error .run-log-stat-value {
-  color: color-mix(in srgb, var(--danger) 84%, white 16%);
-}
-
-.run-log-stat.is-running .run-log-stat-value {
-  color: color-mix(in srgb, var(--accent-strong) 84%, white 16%);
-}
-
-.run-log-timeline {
-  position: relative;
-  padding-left: 24px;
-}
-
-.run-log-timeline::before {
-  content: '';
-  position: absolute;
-  left: 6px;
-  top: 6px;
-  bottom: 6px;
-  width: 2px;
-  border-radius: 999px;
-  background: linear-gradient(to bottom,
-      var(--danger) 0%,
-      color-mix(in srgb, var(--danger) 48%, var(--warning) 52%) 18%,
-      var(--warning) 38%,
-      color-mix(in srgb, var(--warning) 46%, var(--success) 54%) 58%,
-      color-mix(in srgb, var(--success) 55%, var(--accent-strong) 45%) 76%,
-      var(--accent-strong) 100%);
-  box-shadow: 0 0 14px rgba(122, 132, 201, 0.14);
-  mask-image: linear-gradient(to bottom, transparent 0, black 4%, black 96%, transparent 100%);
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0, black 4%, black 96%, transparent 100%);
-}
-
-.run-log-item {
-  position: relative;
-  padding-bottom: calc(var(--run-log-gap) * 26px + 6px);
-}
-
-.run-log-item:last-child {
-  padding-bottom: 0;
-}
-
-.run-log-item::before {
-  content: '';
-  position: absolute;
-  left: -24px;
-  top: 4px;
-  width: 12px;
-  height: 12px;
-  border-radius: 999px;
-  background: var(--app-bg);
-  border: 2px solid var(--text-quaternary);
-}
-
-.run-log-item.accent-red::before {
-  border-color: var(--danger);
-  background: var(--danger);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 18%, transparent), 0 0 12px color-mix(in srgb, var(--danger) 36%, transparent);
-}
-
-.run-log-item.accent-orange::before {
-  border-color: color-mix(in srgb, var(--danger) 42%, var(--warning) 58%);
-  background: color-mix(in srgb, var(--danger) 42%, var(--warning) 58%);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warning) 18%, transparent), 0 0 12px color-mix(in srgb, var(--warning) 32%, transparent);
-}
-
-.run-log-item.accent-yellow::before {
-  border-color: var(--warning);
-  background: var(--warning);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warning) 18%, transparent), 0 0 12px color-mix(in srgb, var(--warning) 30%, transparent);
-}
-
-.run-log-item.accent-green::before {
-  border-color: var(--success);
-  background: var(--success);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 18%, transparent), 0 0 12px color-mix(in srgb, var(--success) 32%, transparent);
-}
-
-.run-log-item.accent-teal::before {
-  border-color: color-mix(in srgb, var(--success) 52%, var(--accent-strong) 48%);
-  background: color-mix(in srgb, var(--success) 52%, var(--accent-strong) 48%);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-strong) 16%, transparent), 0 0 12px color-mix(in srgb, var(--accent-strong) 28%, transparent);
-}
-
-.run-log-item.accent-blue::before {
-  border-color: var(--accent-strong);
-  background: var(--app-bg);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-strong) 18%, transparent), 0 0 14px color-mix(in srgb, var(--accent-strong) 40%, transparent);
-}
-
-.run-log-item.is-live::after {
-  content: '';
-  position: absolute;
-  left: -30px;
-  top: -2px;
-  width: 24px;
-  height: 24px;
-  border-radius: 999px;
-  border: 1.5px solid var(--accent-strong);
-  opacity: 0.45;
-  animation: run-log-pulse 1.8s infinite ease-out;
-}
-
-.run-log-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 6px;
-}
-
-.run-log-time {
-  min-width: 64px;
-  font-size: 11px;
-  color: var(--text-quaternary);
-}
-
-.run-log-tag {
+.terminal-log-run-indicator {
   display: inline-flex;
   align-items: center;
+  gap: 8px;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.terminal-log-run-pulse {
+  position: relative;
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
   border-radius: 999px;
-  padding: 2px 9px;
-  font-size: 10.5px;
-  font-weight: 500;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
+  background: var(--accent-strong);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--accent-strong) 60%, transparent);
 }
 
-.run-log-tag.accent-red {
-  color: color-mix(in srgb, var(--danger) 82%, white 18%);
-  background: color-mix(in srgb, var(--danger) 14%, transparent);
+.terminal-log-run-indicator.tone-success .terminal-log-run-pulse {
+  background: var(--success);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--success) 54%, transparent);
 }
 
-.run-log-tag.accent-orange {
-  color: color-mix(in srgb, var(--warning) 84%, white 16%);
-  background: color-mix(in srgb, var(--warning) 12%, transparent);
+.terminal-log-run-indicator.tone-warning .terminal-log-run-pulse {
+  background: var(--warning);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--warning) 54%, transparent);
 }
 
-.run-log-tag.accent-yellow {
-  color: color-mix(in srgb, var(--warning) 84%, white 16%);
-  background: color-mix(in srgb, var(--warning) 14%, transparent);
+.terminal-log-run-indicator.tone-error .terminal-log-run-pulse {
+  background: var(--danger);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--danger) 56%, transparent);
 }
 
-.run-log-tag.accent-green {
-  color: color-mix(in srgb, var(--success) 82%, white 18%);
-  background: color-mix(in srgb, var(--success) 14%, transparent);
+.terminal-log-run-indicator.tone-running .terminal-log-run-pulse::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border: 1px solid color-mix(in srgb, var(--accent-strong) 84%, transparent);
+  border-radius: 999px;
+  opacity: 0.55;
+  animation: terminal-log-ring 1.6s ease-out infinite;
 }
 
-.run-log-tag.accent-teal {
-  color: color-mix(in srgb, var(--accent-strong) 82%, white 18%);
-  background: color-mix(in srgb, var(--accent-strong) 16%, transparent);
-}
-
-.run-log-tag.accent-blue {
-  color: color-mix(in srgb, var(--accent-strong) 82%, white 18%);
-  background: color-mix(in srgb, var(--accent-strong) 18%, transparent);
-}
-
-.run-log-item-title {
-  margin: 0;
-  color: var(--text-primary);
-  font-size: 13px;
-  font-weight: 500;
-}
-
-.run-log-item-desc {
-  margin: 4px 0 0;
-  color: var(--text-secondary);
-  font-size: 12.5px;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.run-log-item-details {
-  margin-top: 10px;
-}
-
-.run-log-details-toggle {
-  gap: 6px;
-  padding-inline: 0;
-  color: var(--text-quaternary);
-}
-
-.run-log-details-toggle:hover {
-  color: var(--text-secondary);
-}
-
-.run-log-chevron {
-  font-size: 10px;
-  transition: transform 0.15s ease;
-}
-
-.run-log-chevron.is-open {
-  transform: rotate(90deg);
-}
-
-.run-log-output {
-  margin-top: 8px;
-  border: 1px solid var(--border-subtle);
-  border-radius: calc(var(--radius) + 1px);
-  background: color-mix(in srgb, var(--app-bg) 86%, transparent);
-  padding: 12px 13px;
-  font-size: 11.5px;
-  line-height: 1.7;
-}
-
-.run-log-output-line {
-  margin: 0;
-  color: var(--text-secondary);
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.run-log-output-line+.run-log-output-line {
-  margin-top: 4px;
-}
-
-.run-log-output-line.tone-muted {
-  color: var(--text-quaternary);
-}
-
-.run-log-output-line.tone-success {
-  color: color-mix(in srgb, var(--success) 82%, white 18%);
-}
-
-.run-log-output-line.tone-warning {
-  color: color-mix(in srgb, var(--warning) 84%, white 16%);
-}
-
-.run-log-output-line.tone-error {
-  color: color-mix(in srgb, var(--danger) 82%, white 18%);
-}
-
-.run-log-empty-state {
-  display: flex;
-  min-height: 100%;
-  align-items: center;
-  justify-content: center;
-  padding: 32px;
-}
-
-.run-log-empty-copy {
-  max-width: 320px;
-  border: 1px solid var(--border-subtle);
-  border-radius: calc(var(--radius) + 4px);
-  background: color-mix(in srgb, var(--panel-bg) 96%, transparent);
-  padding: 18px 20px;
-}
-
-.run-log-empty-title {
-  margin: 0 0 6px;
-  color: var(--text-primary);
-  font-size: 13px;
-  font-weight: 500;
-}
-
-.run-log-empty-text {
-  margin: 0;
-  color: var(--text-quaternary);
-  font-size: 12px;
-  line-height: 1.6;
-}
-
-.run-log-expand-enter-active,
-.run-log-expand-leave-active {
-  transition:
-    opacity 0.16s ease,
-    transform 0.16s ease;
-}
-
-.run-log-expand-enter-from,
-.run-log-expand-leave-to {
-  opacity: 0;
-  transform: translateY(-4px);
-}
-
-@keyframes run-log-pulse {
+@keyframes terminal-log-ring {
   0% {
-    transform: scale(0.72);
+    transform: scale(0.6);
     opacity: 0.6;
   }
 
   100% {
-    transform: scale(1.72);
+    transform: scale(2);
     opacity: 0;
   }
 }
 
-@keyframes run-log-slide {
+.terminal-log-run-path {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-log-header-spacer {
+  flex: 1;
+}
+
+.terminal-log-env-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 22px;
+  padding: 0 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.terminal-log-env-sep {
+  color: var(--text-quaternary);
+}
+
+.terminal-log-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.terminal-log-icon-button {
+  height: 26px;
+  width: 26px;
+}
+
+.terminal-log-icon-button svg {
+  width: 13px;
+  height: 13px;
+}
+
+.terminal-log-icon-button.is-selected {
+  color: var(--text-primary);
+}
+
+.terminal-log-icon-button.is-selected:hover {
+  background: transparent;
+}
+
+.terminal-log-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  padding: 10px 24px 0;
+}
+
+.terminal-log-meta-item {
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+.terminal-log-meta-value {
+  margin-right: 4px;
+  color: var(--text-primary);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.terminal-log-meta-item.is-success .terminal-log-meta-value {
+  color: var(--success);
+}
+
+.terminal-log-meta-item.is-warning .terminal-log-meta-value {
+  color: var(--warning);
+}
+
+.terminal-log-meta-item.is-error .terminal-log-meta-value {
+  color: var(--danger);
+}
+
+.terminal-log-meta-item.is-running .terminal-log-meta-value {
+  color: var(--accent-strong);
+}
+
+.terminal-log-meta-sep {
+  color: var(--text-quaternary);
+}
+
+.terminal-log-elapsed {
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.terminal-log-elapsed-label {
+  margin-left: 4px;
+  color: var(--text-quaternary);
+}
+
+.terminal-log-progress-track {
+  position: relative;
+  margin: 10px 24px 0;
+  height: 2px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--shell-divider) 80%, transparent);
+}
+
+.terminal-log-progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent-strong) 0%, #8b5cf6 16%, #ec4899 32%, #f97316 48%, #eab308 64%, #10b981 80%, #06b6d4 92%, var(--accent-strong) 100%);
+  background-size: 220% 100%;
+  box-shadow: 0 0 10px rgba(139, 92, 246, 0.22);
+}
+
+.terminal-log-progress-fill.is-live {
+  animation: terminal-log-rainbow-slide 4.5s linear infinite;
+}
+
+@keyframes terminal-log-rainbow-slide {
   0% {
-    transform: translateX(-100%);
+    background-position: 0% 0%;
   }
 
   100% {
-    transform: translateX(760px);
+    background-position: -220% 0%;
   }
 }
 
-@media (max-width: 720px) {
-  .run-log-wrap {
-    padding-inline: 14px;
-    padding-top: 24px;
+.terminal-log-timeline {
+  flex: 1;
+  min-height: 0;
+  margin-top: 14px;
+  padding: 4px 14px 20px;
+  overflow-y: auto;
+}
+
+.terminal-log-timeline::-webkit-scrollbar {
+  width: 10px;
+}
+
+.terminal-log-timeline::-webkit-scrollbar-thumb {
+  border: 2px solid var(--panel-bg);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--shell-divider) 90%, transparent);
+}
+
+.terminal-log-timeline-list {
+  position: relative;
+}
+
+.terminal-log-timeline-list::before {
+  content: '';
+  position: absolute;
+  left: 15.5px;
+  top: 14px;
+  bottom: 14px;
+  width: 1px;
+  background: linear-gradient(180deg, transparent 0%, color-mix(in srgb, var(--shell-divider) 90%, transparent) 6%, color-mix(in srgb, var(--shell-divider) 90%, transparent) 94%, transparent 100%);
+}
+
+.terminal-log-event-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 12px 64px 56px minmax(0, 1fr);
+  column-gap: 14px;
+  padding: 8px 10px calc(8px + (var(--terminal-log-gap, 1) * 4px)) 10px;
+  animation: terminal-log-fade-up 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  animation-delay: calc(var(--terminal-log-index, 0) * 0.04s);
+}
+
+@keyframes terminal-log-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
   }
 
-  .run-log-header,
-  .run-log-summary-top {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.terminal-log-event-icon {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  width: 12px;
+  height: 12px;
+  margin-top: 4px;
+  place-items: center;
+}
+
+.terminal-log-event-dot {
+  position: relative;
+  width: 9px;
+  height: 9px;
+  border: 1.5px solid var(--accent-strong);
+  border-radius: 999px;
+  background: var(--accent-strong);
+  box-shadow: 0 0 0 3px var(--panel-bg), 0 0 0 5px color-mix(in srgb, var(--accent-strong) 20%, transparent), 0 0 14px color-mix(in srgb, var(--accent-strong) 50%, transparent);
+}
+
+.terminal-log-event-dot::before {
+  content: '';
+  position: absolute;
+  inset: 1.2px;
+  border-radius: 999px;
+  background: radial-gradient(circle at 30% 28%, rgba(255, 255, 255, 0.52) 0%, transparent 60%);
+}
+
+.terminal-log-event-icon.is-exec .terminal-log-event-dot {
+  border-color: #b084eb;
+  background: #b084eb;
+  box-shadow: 0 0 0 3px var(--panel-bg), 0 0 0 5px rgba(176, 132, 235, 0.22), 0 0 14px rgba(176, 132, 235, 0.52);
+}
+
+.terminal-log-event-icon.is-ok .terminal-log-event-dot {
+  border-color: var(--success);
+  background: var(--success);
+  box-shadow: 0 0 0 3px var(--panel-bg), 0 0 0 5px color-mix(in srgb, var(--success) 24%, transparent), 0 0 14px color-mix(in srgb, var(--success) 52%, transparent);
+}
+
+.terminal-log-event-icon.is-warn .terminal-log-event-dot {
+  border-color: var(--warning);
+  background: var(--warning);
+  box-shadow: 0 0 0 3px var(--panel-bg), 0 0 0 5px color-mix(in srgb, var(--warning) 26%, transparent), 0 0 14px color-mix(in srgb, var(--warning) 52%, transparent);
+}
+
+.terminal-log-event-icon.is-err .terminal-log-event-dot {
+  border-color: var(--danger);
+  background: var(--danger);
+  box-shadow: 0 0 0 3px var(--panel-bg), 0 0 0 5px color-mix(in srgb, var(--danger) 26%, transparent), 0 0 16px color-mix(in srgb, var(--danger) 55%, transparent);
+}
+
+.terminal-log-event-icon.is-live .terminal-log-event-dot {
+  width: 10px;
+  height: 10px;
+  border: none;
+  background: radial-gradient(circle at 32% 30%, #b4bcef 0%, #7a86ea 35%, var(--accent-strong) 65%, #3b4499 100%);
+  box-shadow: 0 0 0 3px var(--panel-bg), 0 0 0 5px color-mix(in srgb, var(--accent-strong) 25%, transparent), 0 0 20px color-mix(in srgb, var(--accent-strong) 70%, transparent), inset 0 0 4px rgba(255, 255, 255, 0.15);
+  animation: terminal-log-live-core 2s ease-in-out infinite;
+}
+
+.terminal-log-event-icon.is-live::before,
+.terminal-log-event-icon.is-live::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 1px solid var(--accent-strong);
+  border-radius: 999px;
+  opacity: 0;
+  animation: terminal-log-live-ripple 2.4s cubic-bezier(0.2, 0.8, 0.2, 1) infinite;
+}
+
+.terminal-log-event-icon.is-live::after {
+  animation-delay: 1.2s;
+}
+
+@keyframes terminal-log-live-core {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+
+  50% {
+    transform: scale(1.08);
+  }
+}
+
+@keyframes terminal-log-live-ripple {
+  0% {
+    transform: scale(0.7);
+    opacity: 0.85;
+  }
+
+  70% {
+    opacity: 0;
+  }
+
+  100% {
+    transform: scale(3.2);
+    opacity: 0;
+  }
+}
+
+.terminal-log-event-time {
+  color: var(--text-quaternary);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.terminal-log-event-time.is-live {
+  color: var(--accent-strong);
+}
+
+.terminal-log-event-kind {
+  padding-top: 1px;
+  color: var(--text-quaternary);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.terminal-log-event-kind.is-info {
+  color: #4ec9ff;
+}
+
+.terminal-log-event-kind.is-exec {
+  color: #b084eb;
+}
+
+.terminal-log-event-kind.is-ok {
+  color: var(--success);
+}
+
+.terminal-log-event-kind.is-warn {
+  color: var(--warning);
+}
+
+.terminal-log-event-kind.is-err {
+  color: var(--danger);
+}
+
+.terminal-log-event-kind.is-live {
+  color: #7a86ea;
+}
+
+.terminal-log-event-body {
+  min-width: 0;
+}
+
+.terminal-log-event-title {
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+.terminal-log-event-desc {
+  margin-top: 3px;
+  color: var(--text-tertiary);
+  font-size: 12.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.terminal-log-event-code {
+  display: block;
+  margin-top: 8px;
+  padding: 7px 10px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--shell-divider) 74%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--panel-muted) 92%, transparent);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.55;
+  text-overflow: ellipsis;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.terminal-log-event-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 7px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-quaternary);
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: color 0.14s ease;
+}
+
+.terminal-log-event-toggle:hover {
+  color: color-mix(in srgb, var(--accent-strong) 84%, white 8%);
+}
+
+.terminal-log-event-chevron {
+  width: 9px;
+  height: 9px;
+  transition: transform 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.terminal-log-event-toggle.is-expanded .terminal-log-event-chevron {
+  transform: rotate(90deg);
+}
+
+.terminal-log-event-output {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.28s cubic-bezier(0.4, 0, 0.2, 1), margin-top 0.22s ease;
+}
+
+.terminal-log-event-output.is-expanded {
+  max-height: 360px;
+  margin-top: 8px;
+}
+
+.terminal-log-event-output pre {
+  margin: 0;
+  padding: 10px 12px;
+  overflow: auto;
+  border: 1px solid color-mix(in srgb, var(--shell-divider) 72%, transparent);
+  border-radius: 6px;
+  background: #0a0b0d;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+
+.terminal-log-event-output pre::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.terminal-log-event-output pre::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--shell-divider) 88%, transparent);
+}
+
+.terminal-log-output-line {
+  display: block;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.terminal-log-output-line.is-default {
+  color: var(--text-secondary);
+}
+
+.terminal-log-output-line.is-muted {
+  color: var(--text-quaternary);
+}
+
+.terminal-log-output-line.is-warning {
+  color: var(--warning);
+}
+
+.terminal-log-output-line.is-error {
+  color: var(--danger);
+}
+
+.terminal-log-output-line.is-success {
+  color: var(--success);
+}
+
+.terminal-log-empty-state {
+  display: grid;
+  min-height: 100%;
+  place-items: center;
+  padding: 32px 24px;
+  text-align: center;
+}
+
+.terminal-log-empty-title {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.terminal-log-empty-text {
+  max-width: 420px;
+  margin: 10px 0 0;
+  color: var(--text-tertiary);
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+
+.terminal-log-footer {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 20px;
+  border-top: 1px solid var(--shell-divider);
+  background: color-mix(in srgb, var(--panel-bg) 98%, transparent);
+}
+
+.terminal-log-footer::before {
+  content: '';
+  position: absolute;
+  top: -1px;
+  left: 0;
+  right: 0;
+  height: 1px;
+  opacity: 0;
+  background: linear-gradient(90deg, transparent 0%, color-mix(in srgb, var(--accent-strong) 28%, transparent) 20%, rgba(236, 72, 153, 0.22) 40%, rgba(245, 158, 11, 0.22) 60%, rgba(16, 185, 129, 0.22) 80%, transparent 100%);
+  transition: opacity 0.25s ease;
+}
+
+.terminal-log-footer:focus-within::before {
+  opacity: 1;
+}
+
+.terminal-log-footer.is-disabled {
+  opacity: 0.7;
+}
+
+.terminal-log-prompt {
+  flex-shrink: 0;
+  color: var(--accent-strong);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.terminal-log-command-input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 12.5px;
+  outline: none;
+  caret-color: var(--accent-strong);
+}
+
+.terminal-log-command-input::placeholder {
+  color: var(--text-quaternary);
+  font-family: var(--font-sans);
+}
+
+.terminal-log-command-input:disabled {
+  cursor: not-allowed;
+}
+
+@media (max-width: 880px) {
+  .terminal-log-header,
+  .terminal-log-meta {
     flex-wrap: wrap;
   }
 
-  .run-log-header-meta,
-  .run-log-summary-elapsed {
-    margin-left: 0;
+  .terminal-log-header-spacer {
+    display: none;
+  }
+
+  .terminal-log-run-path {
+    order: 3;
+    flex-basis: 100%;
+  }
+
+  .terminal-log-meta {
+    gap: 12px;
+  }
+
+  .terminal-log-event-row {
+    grid-template-columns: 12px 56px 48px minmax(0, 1fr);
+    column-gap: 12px;
+  }
+}
+
+@media (max-width: 640px) {
+  .terminal-log-header,
+  .terminal-log-meta {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .terminal-log-progress-track {
+    margin-left: 16px;
+    margin-right: 16px;
+  }
+
+  .terminal-log-timeline {
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+
+  .terminal-log-event-row {
+    grid-template-columns: 12px 1fr;
+    row-gap: 4px;
+  }
+
+  .terminal-log-event-time,
+  .terminal-log-event-kind,
+  .terminal-log-event-body {
+    grid-column: 2;
+  }
+
+  .terminal-log-footer {
+    padding-left: 16px;
+    padding-right: 16px;
   }
 }
 </style>

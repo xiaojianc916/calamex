@@ -3,15 +3,15 @@
   "identifier": "default",
   "description": "SH 编辑器默认能力",
   "windows": [
-    "main"
+  "main"
   ],
   "permissions": [
-    "core:default",
-    "dialog:default",
-    "core:window:allow-start-dragging",
-    "core:window:allow-minimize",
-    "core:window:allow-toggle-maximize",
-    "core:window:allow-close",
-    "core:window:allow-destroy"
+  "core:default",
+  "dialog:default",
+  "core:window:allow-start-dragging",
+  "core:window:allow-minimize",
+  "core:window:allow-toggle-maximize",
+  "core:window:allow-close",
+  "core:window:allow-destroy"
   ]
 }

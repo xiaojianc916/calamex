@@ -4,5 +4,8 @@ export {
   DropdownMenuPortal,
   DropdownMenuRoot,
   DropdownMenuSeparator,
-  DropdownMenuTrigger,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger
 } from 'reka-ui';

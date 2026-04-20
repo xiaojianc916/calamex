@@ -52,7 +52,11 @@
 import { Skeleton } from '@/components/ui/skeleton';
 import { useIntegratedTerminal } from '@/composables/useIntegratedTerminal';
 import type { TThemeMode } from '@/types/app';
-import type { ITerminalRunCompletePayload, ITerminalStatusChangePayload } from '@/types/terminal';
+import type {
+  ITerminalRunCompletePayload,
+  ITerminalRunOutputEvent,
+  ITerminalStatusChangePayload,
+} from '@/types/terminal';
 import '@xterm/xterm/css/xterm.css';
 import { computed } from 'vue';
 
@@ -63,7 +67,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'status-change': [payload: ITerminalStatusChangePayload];
-  output: [value: string];
+  output: [payload: ITerminalRunOutputEvent];
   'run-complete': [payload: ITerminalRunCompletePayload];
 }>();
 

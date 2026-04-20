@@ -181,21 +181,27 @@
                 </span>
               </button>
 
-              <div v-if="section.actionKind" class="source-control-file-actions">
+              <div v-if="resolveEntryActions(section.key, entry).length > 0" class="source-control-file-actions">
                 <button
+                  v-for="action in resolveEntryActions(section.key, entry)"
+                  :key="`${section.key}:${entry.path}:${action.key}`"
                   type="button"
                   class="source-control-icon-btn"
                   :disabled="isBusy"
-                  :aria-label="resolveEntryActionTitle(section.key, entry)"
-                  :title="resolveEntryActionTitle(section.key, entry)"
-                  @click.stop="handleSectionAction(section.key, entry)"
+                  :aria-label="action.title"
+                  :title="action.title"
+                  @click.stop="handleEntryAction(action.key, section.key, entry)"
                 >
-                  <svg v-if="section.actionKind === 'stage'" viewBox="0 0 24 24" aria-hidden="true">
+                  <svg v-if="action.icon === 'plus'" viewBox="0 0 24 24" aria-hidden="true">
                     <path d="M12 5v14" />
                     <path d="M5 12h14" />
                   </svg>
-                  <svg v-else viewBox="0 0 24 24" aria-hidden="true">
+                  <svg v-else-if="action.icon === 'minus'" viewBox="0 0 24 24" aria-hidden="true">
                     <path d="M5 12h14" />
+                  </svg>
+                  <svg v-else viewBox="0 0 24 24" aria-hidden="true">
+                    <polyline points="3 6 5 6 21 6" />
+                    <path d="M19 6l-2 14H7L5 6" />
                   </svg>
                 </button>
               </div>
@@ -256,14 +262,19 @@ import { computed, reactive, ref, watch } from 'vue';
 
 type TGitSectionKey = 'conflicts' | 'staged' | 'changes' | 'untracked';
 type TGitNavKey = 'changes' | 'history' | 'branches' | 'pull-requests' | 'stash';
-type TGitSectionAction = 'stage' | 'unstage' | null;
+type TGitEntryActionKey = 'stage' | 'unstage' | 'discard';
 type TStatusTone = 'success' | 'warning' | 'danger' | 'loading';
 
 interface IGitSection {
   key: TGitSectionKey;
   title: string;
-  actionKind: TGitSectionAction;
   entries: IGitFileStatusPayload[];
+}
+
+interface IGitEntryAction {
+  key: TGitEntryActionKey;
+  title: string;
+  icon: 'plus' | 'minus' | 'trash';
 }
 
 interface IGitNavItem {
@@ -391,7 +402,6 @@ const sections = computed<IGitSection[]>(() => {
     nextSections.push({
       key: 'conflicts',
       title: '冲突',
-      actionKind: null,
       entries: conflictedEntries.value,
     });
   }
@@ -400,7 +410,6 @@ const sections = computed<IGitSection[]>(() => {
     nextSections.push({
       key: 'staged',
       title: '已暂存',
-      actionKind: 'unstage',
       entries: stagedEntries.value,
     });
   }
@@ -409,7 +418,6 @@ const sections = computed<IGitSection[]>(() => {
     nextSections.push({
       key: 'changes',
       title: '变更',
-      actionKind: 'stage',
       entries: changedEntries.value,
     });
   }
@@ -418,7 +426,6 @@ const sections = computed<IGitSection[]>(() => {
     nextSections.push({
       key: 'untracked',
       title: '未跟踪',
-      actionKind: 'stage',
       entries: untrackedEntries.value,
     });
   }
@@ -665,6 +672,38 @@ const resolveEntryActionTitle = (
   return `暂存 ${entry.fileName}`;
 };
 
+const resolveEntryActions = (
+  sectionKey: TGitSectionKey,
+  entry: IGitFileStatusPayload,
+): IGitEntryAction[] => {
+  if (sectionKey === 'conflicts') {
+    return [];
+  }
+
+  if (sectionKey === 'staged') {
+    return [
+      {
+        key: 'unstage',
+        title: resolveEntryActionTitle(sectionKey, entry),
+        icon: 'minus',
+      },
+    ];
+  }
+
+  return [
+    {
+      key: 'discard',
+      title: `放弃更改 ${entry.fileName}`,
+      icon: 'trash',
+    },
+    {
+      key: 'stage',
+      title: resolveEntryActionTitle(sectionKey, entry),
+      icon: 'plus',
+    },
+  ];
+};
+
 const isActivePath = (path: string): boolean => normalizePath(path) === normalizePath(props.activePath);
 
 const toggleSectionCollapse = (key: TGitSectionKey): void => {
@@ -731,6 +770,23 @@ const handleCommit = async (): Promise<void> => {
 
 const handleMoreActions = (): void => {
   message.info('更多 Git 操作待接入');
+};
+
+const handleDiscardEntry = (entry: IGitFileStatusPayload): void => {
+  message.info(`放弃更改 ${entry.fileName} 待接入`);
+};
+
+const handleEntryAction = async (
+  actionKey: TGitEntryActionKey,
+  sectionKey: TGitSectionKey,
+  entry: IGitFileStatusPayload,
+): Promise<void> => {
+  if (actionKey === 'discard') {
+    handleDiscardEntry(entry);
+    return;
+  }
+
+  await handleSectionAction(sectionKey, entry);
 };
 
 const handleSectionAction = async (

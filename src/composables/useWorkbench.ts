@@ -40,7 +40,7 @@ const EMPTY_ENVIRONMENT: IExecutionEnvironment = {
 };
 const DEFAULT_TERMINAL_COLS = 120;
 const DEFAULT_TERMINAL_ROWS = 28;
-const TERMINAL_OUTPUT_BATCH_INTERVAL_MS = 16;
+const TERMINAL_OUTPUT_BATCH_INTERVAL_MS = 120;
 const TERMINAL_RUN_COMPLETION_TIMEOUT_MS = 30 * 60 * 1000;
 
 const formatShellScriptWithWasm = async (
@@ -129,7 +129,6 @@ export const useWorkbench = () => {
     startedAt: string;
     commandLine: string;
     usedTempFile: boolean;
-    receivedLiveOutput: boolean;
   } | null = null;
 
   const canRun = computed(() => {
@@ -745,7 +744,7 @@ export const useWorkbench = () => {
 
   const runScriptInIntegratedTerminal = async (document: IEditorDocument): Promise<void> => {
     if (!isTextDocument(document)) {
-      throw new Error('当前内容不是可执行脚本。');
+      throw new Error('当前文档不是可执行脚本文本。');
     }
 
     const runId = `terminal-run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -762,7 +761,6 @@ export const useWorkbench = () => {
       startedAt: dispatchResult.startedAt,
       commandLine: dispatchResult.commandLine,
       usedTempFile: dispatchResult.usedTempFile,
-      receivedLiveOutput: false,
     };
 
     resetBufferedTerminalOutput();
@@ -774,51 +772,12 @@ export const useWorkbench = () => {
       editorStore.appendLog(
         'info',
         '临时脚本文件',
-        '当前未保存内容已通过临时 shell 文件发送到集成终端执行。',
+        '当前内容已写入临时 shell 脚本文件后执行。',
       );
     }
 
-    void tauriService
-      .waitForTerminalRun({
-        statusPath: dispatchResult.statusPath,
-        outputPath: dispatchResult.outputPath,
-      })
-      .then(async (result) => {
-        if (isDisposed) {
-          return;
-        }
-
-        await new Promise((resolve) => {
-          window.setTimeout(resolve, 120);
-        });
-
-        if (isDisposed) {
-          return;
-        }
-
-        handleIntegratedTerminalRunComplete({
-          sessionId: DEFAULT_TERMINAL_SESSION_ID,
-          runId,
-          exitCode: result.exitCode,
-          output: result.output,
-          finishedAt: result.finishedAt,
-        });
-      })
-      .catch((error) => {
-        if (isDisposed || editorStore.pendingTerminalRunId !== runId) {
-          return;
-        }
-
-        resetBufferedTerminalOutput();
-        const message = error instanceof Error ? error.message : '等待终端执行完成失败';
-        editorStore.isRunning = false;
-        editorStore.setPendingTerminalRunId(null);
-        activeTerminalRunMeta = null;
-        editorStore.appendLog('error', '终端执行状态异常', message);
-        useMessage().error(message);
-      });
-
-    useMessage().success('脚本已发送到集成终端');
+    scheduleTerminalRunCompletionTimeout(runId);
+    useMessage().success('脚本已发送到集成终端。');
   };
 
   const handleIntegratedTerminalRunComplete = (payload: ITerminalRunCompletePayload): void => {
@@ -831,22 +790,12 @@ export const useWorkbench = () => {
       return;
     }
 
+    clearTerminalRunFallbackTimer();
     flushBufferedTerminalOutput();
-    const activeRun = activeTerminalRunMeta;
-    const safeOutput = payload.output;
-    const hadLiveTerminalOutput =
-      Boolean(activeRun?.receivedLiveOutput) || editorStore.terminalOutputLength > 0;
-    if (safeOutput) {
-      editorStore.setTerminalOutput(safeOutput);
-    }
 
-    if (!hadLiveTerminalOutput) {
-      editorStore.queueTerminalReplayOutput({
-        runId: payload.runId,
-        content: safeOutput,
-        restorePrompt: true,
-      });
-    }
+    const activeRun = activeTerminalRunMeta;
+    const safeOutput = editorStore.getTerminalOutputSnapshot();
+
     const durationMs = activeRun
       ? Math.max(
         0,
@@ -881,9 +830,9 @@ export const useWorkbench = () => {
     );
 
     if (runResult.success) {
-      useMessage().success('脚本执行完成');
+      useMessage().success('脚本执行完成。');
     } else {
-      useMessage().error('脚本执行失败，请查看下方日志输出。');
+      useMessage().error('脚本执行失败，请检查终端输出。');
     }
   };
 
@@ -914,6 +863,7 @@ export const useWorkbench = () => {
       await runScriptInIntegratedTerminal(currentDocument);
     } catch (error) {
       resetBufferedTerminalOutput();
+      clearTerminalRunFallbackTimer();
       editorStore.setPendingTerminalRunId(null);
       activeTerminalRunMeta = null;
       editorStore.isRunning = false;
@@ -928,21 +878,17 @@ export const useWorkbench = () => {
     editorStore.updateActiveDocumentContent(value);
   };
 
-  const appendTerminalOutput = (value: string): void => {
-    if (isDisposed || !value) {
+  const appendTerminalOutput = (payload: ITerminalRunOutputEvent): void => {
+    if (isDisposed || !payload.data) {
       return;
     }
 
-    // 运行日志只记录脚本执行期的终端输出，避免把 shell 欢迎词、提示符等常驻内容误当成一次运行。
-    if (!activeTerminalRunMeta && !editorStore.pendingTerminalRunId) {
+    const pendingRunId = editorStore.pendingTerminalRunId;
+    if (payload.runId !== pendingRunId && payload.runId !== activeTerminalRunMeta?.runId) {
       return;
     }
 
-    if (activeTerminalRunMeta) {
-      activeTerminalRunMeta.receivedLiveOutput = true;
-    }
-
-    bufferedTerminalOutput += value;
+    bufferedTerminalOutput += payload.data;
     if (bufferedTerminalOutputTimerId !== null) {
       return;
     }
@@ -973,6 +919,7 @@ export const useWorkbench = () => {
   onScopeDispose(() => {
     isDisposed = true;
     resetBufferedTerminalOutput();
+    clearTerminalRunFallbackTimer();
     activeTerminalRunMeta = null;
   });
 

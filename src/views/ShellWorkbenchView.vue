@@ -1,8 +1,8 @@
 <template>
   <AppShellLayout
 :is-desktop-runtime="isDesktopRuntime" :sidebar-visible="isSidebarVisible"
-    :terminal-visible="isTerminalVisible" :terminal-height="terminalHeight"
-    @update:terminal-height="terminalHeight = $event">
+    :terminal-visible="isTerminalVisible" :terminal-height="terminalHeight" :sidebar-width="sidebarWidth"
+    @update:terminal-height="handleTerminalHeightChange">
     <template #titlebar>
       <WindowTitleBar
 :document-name="editorStore.document.name" :is-dirty="editorStore.document.isDirty"
@@ -15,7 +15,8 @@
         @close-workspace="requestCloseWorkspace" @save="saveDocument" @save-as="saveDocumentAs"
         @close-request="requestCloseApplication" @run="handleRunScript" @format-document="handleFormatDocument"
         @open-terminal="openTerminal" @hide-terminal="hideTerminal" @toggle-diagnostics="toggleDiagnosticsPanel"
-        @toggle-theme="toggleTheme" @insert-template="handleInsertTemplate" />
+        @toggle-theme="toggleTheme" @select-sidebar-view="handleSelectSidebarView"
+        @insert-template="handleInsertTemplate" />
     </template>
 
     <template #activity>
@@ -77,12 +78,14 @@ v-if="shouldRenderDiagnosticsPanel"
 
     <template #terminal>
       <RunPanel
-:terminal-output-version="editorStore.terminalOutputVersion"
+        :terminal-output-length="editorStore.terminalOutputLength"
+        :terminal-output-version="editorStore.terminalOutputVersion"
         :resolve-terminal-output="editorStore.getTerminalOutputSnapshot" :run-logs="editorStore.runLogs"
         :last-run-result="editorStore.lastRunResult" :is-running="editorStore.isRunning"
         :executor="editorStore.selectedExecutor" :document-name="editorStore.document.name"
         :document-path="editorStore.document.path" :workspace-root-path="editorStore.workspaceRootPath"
-        :theme="appStore.theme" :visible="isTerminalVisible" @hide="hideTerminal"
+        :theme="appStore.theme" :visible="isTerminalVisible" :is-maximized="isTerminalMaximized"
+        @hide="hideTerminal" @toggle-maximize="toggleTerminalMaximize" @clear-logs="clearTerminalLogs"
         @terminal-output="appendTerminalOutput" @terminal-run-complete="handleIntegratedTerminalRunComplete" />
     </template>
 
@@ -112,9 +115,9 @@ import { useWorkbench } from '@/composables/useWorkbench';
 import AppShellLayout from '@/layouts/AppShellLayout.vue';
 import type { TWorkbenchSidebarView } from '@/types/app';
 import type {
-  IAnalyzeScriptPayload,
-  ICommandTemplate,
-  IWorkspaceDirectoryPayload,
+    IAnalyzeScriptPayload,
+    ICommandTemplate,
+    IWorkspaceDirectoryPayload,
 } from '@/types/editor';
 import { waitForDesktopRuntime } from '@/utils/desktop-runtime';
 import { consumeProgrammaticWindowCloseAllowance } from '@/utils/window-close';
@@ -137,7 +140,16 @@ const isSidebarVisible = ref(true);
 const isDiagnosticsPanelVisible = ref(false);
 const terminalVisibilityBeforeDiagnostics = ref(false);
 const terminalHeight = ref(236);
+const terminalHeightBeforeMaximize = ref(236);
+const isTerminalMaximized = ref(false);
 const activeSidebarView = ref<TWorkbenchSidebarView>('explorer');
+const sidebarWidth = computed(() =>
+  activeSidebarView.value === 'source-control'
+    || activeSidebarView.value === 'explorer'
+    || activeSidebarView.value === 'search'
+    ? 280
+    : 240,
+);
 const editorViewportWidth = ref(0);
 const diagnosticsTransitionsEnabled = ref(true);
 const startupWorkspaceRoot = ref<IWorkspaceDirectoryPayload | null>(null);
@@ -363,6 +375,29 @@ const openTerminal = (): void => {
   isTerminalVisible.value = true;
 };
 
+const handleTerminalHeightChange = (value: number): void => {
+  terminalHeight.value = value;
+  if (!isTerminalMaximized.value) {
+    terminalHeightBeforeMaximize.value = value;
+  }
+};
+
+const toggleTerminalMaximize = (): void => {
+  if (!isTerminalVisible.value) {
+    isTerminalVisible.value = true;
+  }
+
+  if (isTerminalMaximized.value) {
+    isTerminalMaximized.value = false;
+    terminalHeight.value = Math.max(160, terminalHeightBeforeMaximize.value);
+    return;
+  }
+
+  terminalHeightBeforeMaximize.value = terminalHeight.value;
+  isTerminalMaximized.value = true;
+  terminalHeight.value = 100000;
+};
+
 const toggleSidebar = (): void => {
   isSidebarVisible.value = !isSidebarVisible.value;
 };
@@ -393,6 +428,10 @@ const handleSelectSidebarView = (view: TWorkbenchSidebarView): void => {
 const hideTerminal = (): void => {
   resetDiagnosticsTerminalLink();
   isTerminalVisible.value = false;
+};
+
+const clearTerminalLogs = (): void => {
+  editorStore.clearLogs();
 };
 
 const emitWorkbenchReady = async (): Promise<void> => {

@@ -78,12 +78,6 @@ const EMPTY_DOCUMENT: Readonly<IEditorDocument> = Object.freeze({
   charCount: 0,
 });
 
-type TTerminalReplayRequest = {
-  runId: string;
-  content: string;
-  restorePrompt: boolean;
-};
-
 const createEmptyScriptAnalysis = (): IAnalyzeScriptPayload => ({
   available: true,
   message: null,
@@ -172,7 +166,6 @@ export const useEditorStore = defineStore('editor', () => {
   const protectedWorkspaceRootPaths = ref<string[]>([]);
   const activeDocumentId = ref('');
   const pendingTerminalRunId = ref<string | null>(null);
-  const terminalReplayOutput = ref<TTerminalReplayRequest | null>(null);
   const documentAnalysis = ref<Record<string, IAnalyzeScriptPayload>>({});
 
   /**
@@ -502,17 +495,12 @@ export const useEditorStore = defineStore('editor', () => {
     pendingTerminalRunId.value = value;
   };
 
-  const queueTerminalReplayOutput = (value: TTerminalReplayRequest | null): void => {
-    terminalReplayOutput.value = value;
-  };
-
   const clearWorkspaceSession = (): void => {
     clearDocuments();
     workspaceRootPath.value = null;
     clearLogs();
     isRunning.value = false;
     pendingTerminalRunId.value = null;
-    terminalReplayOutput.value = null;
   };
 
   return {
@@ -532,7 +520,6 @@ export const useEditorStore = defineStore('editor', () => {
     workspaceRootPath,
     protectedWorkspaceRootPaths,
     pendingTerminalRunId,
-    terminalReplayOutput,
     documentAnalysis,
     documentTitle,
     dirtyDocuments,
@@ -563,7 +550,6 @@ export const useEditorStore = defineStore('editor', () => {
     setWorkspaceRootPath,
     setProtectedWorkspaceRootPaths,
     setPendingTerminalRunId,
-    queueTerminalReplayOutput,
     setDocumentAnalysis,
     clearDocumentAnalysis,
     clearDocuments,

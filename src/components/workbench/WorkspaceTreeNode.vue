@@ -1,5 +1,5 @@
 <template>
-  <div>
+  <div class="explorer-node" :class="{ 'is-open': shouldShowChildren }">
     <button
       type="button"
       class="explorer-tree-row w-full text-left"
@@ -7,15 +7,12 @@
       :style="rowStyle"
       @click="handleClick"
     >
-      <span
-        class="explorer-chevron"
-        :class="{ 'is-placeholder': !isDirectory || (!entry.hasChildren && !isExpanded) }"
-      >
+      <span class="explorer-chevron" :class="{ 'is-placeholder': !showChevron }">
         <svg
-          v-if="isDirectory"
+          v-if="showChevron"
           viewBox="0 0 12 12"
           class="h-3 w-3 transition-transform"
-          :class="isExpanded ? 'rotate-90' : ''"
+          :class="shouldShowChildren ? 'rotate-90' : ''"
           fill="none"
           stroke="currentColor"
           stroke-width="1.4"
@@ -26,22 +23,31 @@
         </svg>
       </span>
 
-      <FileEntryIcon
+      <ExplorerEntryIcon
         :kind="entry.kind"
         :path="entry.path"
-        :expanded="isExpanded"
+        :expanded="shouldShowChildren"
         class="h-4 w-4 shrink-0"
       />
 
-      <span class="min-w-0 flex-1 truncate">{{ entry.name }}</span>
+      <span class="explorer-tree-name">{{ entry.name }}</span>
+      <span v-if="showDirtyMarker" class="explorer-tree-meta">M</span>
     </button>
 
-    <div v-if="isDirectory && isExpanded">
-      <div v-if="isLoading" class="explorer-helper-text" :style="childStateStyle">正在读取目录...</div>
-      <div v-else-if="childEntries.length === 0" class="explorer-helper-text" :style="childStateStyle">空文件夹</div>
+    <div v-if="shouldShowChildren" class="explorer-tree-children">
+      <div v-if="isLoading" class="explorer-helper-text explorer-helper-text-padded" :style="childStateStyle">
+        正在读取目录...
+      </div>
+      <div
+        v-else-if="visibleChildEntries.length === 0 && !hasActiveSearch"
+        class="explorer-helper-text explorer-helper-text-padded"
+        :style="childStateStyle"
+      >
+        空文件夹
+      </div>
 
       <WorkspaceTreeNode
-        v-for="child in childEntries"
+        v-for="child in visibleChildEntries"
         :key="child.path"
         :entry="child"
         :level="level + 1"
@@ -50,6 +56,7 @@
         :loading-paths="loadingPaths"
         :active-path="activePath"
         :active-dirty="activeDirty"
+        :search-query="searchQuery"
         @toggle-directory="$emit('toggle-directory', $event)"
         @open-file="$emit('open-file', $event)"
       />
@@ -58,7 +65,7 @@
 </template>
 
 <script setup lang="ts">
-import FileEntryIcon from '@/components/common/FileEntryIcon.vue';
+import ExplorerEntryIcon from '@/components/workbench/ExplorerEntryIcon.vue';
 import type { IWorkspaceEntry } from '@/types/editor';
 import type { CSSProperties } from 'vue';
 import { computed } from 'vue';
@@ -75,6 +82,7 @@ const props = defineProps<{
   loadingPaths: Record<string, boolean>;
   activePath: string | null;
   activeDirty: boolean;
+  searchQuery?: string;
 }>();
 
 const emit = defineEmits<{
@@ -92,12 +100,56 @@ const childEntries = computed(() => props.childrenMap[props.entry.path] ?? []);
 const isActive = computed(
   () => normalizePath(props.entry.path) === normalizePath(props.activePath),
 );
+const normalizedSearchQuery = computed(() => (props.searchQuery ?? '').trim().toLowerCase());
+const hasActiveSearch = computed(() => normalizedSearchQuery.value.length > 0);
+const showChevron = computed(() => isDirectory.value && props.entry.hasChildren);
+const showDirtyMarker = computed(
+  () => props.entry.kind === 'file' && isActive.value && props.activeDirty,
+);
 const rowStyle = computed<CSSProperties>(() => ({
-  paddingLeft: `${12 + props.level * 14}px`,
+  '--explorer-indent': `${18 + props.level * 18}px`,
 }));
 const childStateStyle = computed<CSSProperties>(() => ({
-  paddingLeft: `${40 + props.level * 14}px`,
+  paddingLeft: `${44 + props.level * 18}px`,
 }));
+
+const entryMatchesSearch = (entry: IWorkspaceEntry, query: string): boolean => {
+  if (!query) {
+    return true;
+  }
+
+  return (
+    entry.name.toLowerCase().includes(query) ||
+    normalizePath(entry.path).includes(query)
+  );
+};
+
+const entryMatchesTree = (entry: IWorkspaceEntry, query: string): boolean => {
+  if (!query || entryMatchesSearch(entry, query)) {
+    return true;
+  }
+
+  if (entry.kind !== 'directory') {
+    return false;
+  }
+
+  const descendants = props.childrenMap[entry.path] ?? [];
+  return descendants.some((child) => entryMatchesTree(child, query));
+};
+
+const visibleChildEntries = computed(() => {
+  if (!hasActiveSearch.value) {
+    return childEntries.value;
+  }
+
+  return childEntries.value.filter((child) => entryMatchesTree(child, normalizedSearchQuery.value));
+});
+
+const shouldShowChildren = computed(
+  () =>
+    isDirectory.value &&
+    (isExpanded.value || (hasActiveSearch.value && visibleChildEntries.value.length > 0)),
+);
 
 const handleClick = (): void => {
   if (isDirectory.value) {

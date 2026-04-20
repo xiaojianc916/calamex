@@ -1,27 +1,122 @@
 <template>
-  <aside class="flex h-full min-h-0 flex-col overflow-hidden">
-    <div class="border-b border-(--shell-divider) px-3 py-3">
-      <p class="sidebar-section-title">{{ panelMeta.title }}</p>
-    </div>
+  <aside
+    class="app-sidebar-shell flex h-full min-h-0 min-w-0 flex-col overflow-hidden"
+    :class="{
+      'source-control-sidebar-host': isSourceControlView,
+      'explorer-sidebar-host': isExplorerView,
+      'search-sidebar-host': isSearchView,
+    }"
+  >
+    <SourceControlPanel
+      v-if="isSourceControlView"
+      class="h-full min-h-0 w-full flex-1"
+      :is-desktop-runtime="isDesktopRuntime"
+      :workspace-root-path="workspaceRootPath"
+      :active-path="document.path"
+      @open-file="handleOpenFile"
+    />
 
-    <div class="workbench-scroll-region min-h-0 flex-1 overflow-auto py-2">
-      <template v-if="isExplorerView">
-        <div v-if="!isDesktopRuntime" class="explorer-helper-text px-3 py-2">
+    <section v-else-if="isExplorerView" class="explorer-sidebar" aria-label="资源管理器">
+      <header class="explorer-title-bar">
+        <span class="explorer-title">资源管理器</span>
+
+        <div class="explorer-title-actions">
+          <button
+            type="button"
+            class="explorer-icon-btn"
+            aria-label="新建文件"
+            title="新建文件"
+            @click="handleCreatePlaceholder('file')"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="12" y1="12" x2="12" y2="18" />
+              <line x1="9" y1="15" x2="15" y2="15" />
+            </svg>
+          </button>
+
+          <button
+            type="button"
+            class="explorer-icon-btn"
+            aria-label="新建文件夹"
+            title="新建文件夹"
+            @click="handleCreatePlaceholder('directory')"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+              <line x1="12" y1="11" x2="12" y2="17" />
+              <line x1="9" y1="14" x2="15" y2="14" />
+            </svg>
+          </button>
+
+          <button
+            type="button"
+            class="explorer-icon-btn"
+            aria-label="刷新"
+            title="刷新"
+            @click="handleRefreshExplorer"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="23 4 23 10 17 10" />
+              <polyline points="1 20 1 14 7 14" />
+              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10" />
+              <path d="M20.49 15A9 9 0 0 1 5.64 18.36L1 14" />
+            </svg>
+          </button>
+
+          <button
+            type="button"
+            class="explorer-icon-btn"
+            aria-label="折叠全部"
+            title="折叠全部"
+            @click="handleCollapseAll"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="4 14 10 14 10 20" />
+              <polyline points="20 10 14 10 14 4" />
+              <line x1="14" y1="10" x2="21" y2="3" />
+              <line x1="3" y1="21" x2="10" y2="14" />
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <div class="explorer-search">
+        <label class="explorer-search-box">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="11" cy="11" r="7" />
+            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+          </svg>
+          <input v-model="explorerSearchQuery" type="text" placeholder="搜索文件……" />
+        </label>
+      </div>
+
+      <div class="explorer-tree">
+        <div v-if="!isDesktopRuntime" class="explorer-empty-state">
           浏览器预览模式下不显示本地目录树，请在 Tauri 桌面端查看资源文件。
         </div>
 
-        <template v-else-if="root">
+        <div v-else-if="loadError" class="explorer-empty-state">{{ loadError }}</div>
+
+        <div v-else-if="rootLoading && !root" class="explorer-empty-state">正在读取资源目录...</div>
+
+        <div v-else-if="!workspaceRootPath" class="explorer-empty-state">尚未打开工作区</div>
+
+        <div v-else-if="!root" class="explorer-empty-state">正在准备资源树...</div>
+
+        <template v-else>
           <button
             type="button"
             class="explorer-root-row w-full text-left"
-            :class="{ 'is-expanded': rootExpanded }"
+            :class="{ 'is-open': isRootOpen }"
             @click="toggleRoot"
           >
             <span class="explorer-chevron">
               <svg
                 viewBox="0 0 12 12"
                 class="h-3 w-3 transition-transform"
-                :class="rootExpanded ? 'rotate-90' : ''"
+                :class="isRootOpen ? 'rotate-90' : ''"
                 fill="none"
                 stroke="currentColor"
                 stroke-width="1.4"
@@ -31,22 +126,41 @@
                 <path d="M4 2.5 8 6 4 9.5" />
               </svg>
             </span>
-            <FileEntryIcon
+
+            <ExplorerEntryIcon
               kind="directory"
               :path="root.rootPath"
-              :expanded="rootExpanded"
+              :expanded="isRootOpen"
               class="h-4 w-4 shrink-0"
             />
-            <span class="truncate">{{ rootLabel }}</span>
+
+            <span class="explorer-tree-name">{{ rootLabel }}</span>
           </button>
 
-          <div v-if="rootExpanded" class="pb-2">
-            <div v-if="rootLoading" class="explorer-helper-text px-3 py-2">正在读取资源目录...</div>
-            <div v-else-if="rootEntries.length === 0" class="explorer-helper-text px-3 py-2">
+          <div v-if="isRootOpen" class="explorer-tree-children">
+            <div
+              v-if="rootLoading"
+              class="explorer-helper-text explorer-helper-text-padded"
+            >
+              正在读取资源目录...
+            </div>
+
+            <div
+              v-else-if="hasExplorerSearch && !hasVisibleRootEntries"
+              class="explorer-empty-state is-inline"
+            >
+              未找到匹配的文件
+            </div>
+
+            <div
+              v-else-if="!hasExplorerSearch && filteredRootEntries.length === 0"
+              class="explorer-empty-state is-inline"
+            >
               当前目录暂无文件。
             </div>
+
             <WorkspaceTreeNode
-              v-for="entry in rootEntries"
+              v-for="entry in filteredRootEntries"
               :key="entry.path"
               :entry="entry"
               :level="0"
@@ -55,69 +169,79 @@
               :loading-paths="loadingPaths"
               :active-path="document.path"
               :active-dirty="document.isDirty"
+              :search-query="explorerSearchQuery"
               @toggle-directory="toggleDirectory"
               @open-file="handleOpenFile"
             />
           </div>
         </template>
-
-        <div v-else-if="rootLoading" class="explorer-helper-text px-3 py-2">
-          正在读取资源目录...
-        </div>
-        <div v-else-if="loadError" class="explorer-helper-text px-3 py-2">{{ loadError }}</div>
-        <div v-else class="h-full" />
-      </template>
-
-      <SourceControlPanel
-        v-else-if="isSourceControlView"
-        :is-desktop-runtime="isDesktopRuntime"
-        :workspace-root-path="workspaceRootPath"
-        :active-path="document.path"
-        @open-file="handleOpenFile"
-      />
-
-      <div v-else class="space-y-3 px-3 py-2">
-        <section class="rounded-xl border border-(--border-subtle) bg-white/3 p-3">
-          <p class="text-[10px] font-semibold uppercase tracking-[0.12em] text-(--text-quaternary)">
-            侧边栏页面
-          </p>
-          <h3 class="mt-2 text-[13px] font-semibold text-(--text-primary)">
-            {{ panelMeta.headline }}
-          </h3>
-          <p class="mt-2 text-[12px] leading-6 text-(--text-secondary)">
-            {{ panelMeta.description }}
-          </p>
-          <div class="mt-3 flex items-center gap-2">
-            <Button variant="outline" size="sm">{{ panelMeta.actionLabel }}</Button>
-            <span class="text-[11px] text-(--text-quaternary)">交互面板预留位</span>
-          </div>
-        </section>
-
-        <section class="rounded-xl border border-(--border-subtle) bg-(--panel-muted)/50 p-3">
-          <p class="text-[10px] font-semibold uppercase tracking-[0.12em] text-(--text-quaternary)">
-            将展示
-          </p>
-          <div class="mt-3 space-y-2">
-            <article
-              v-for="item in panelMeta.items"
-              :key="item.title"
-              class="rounded-lg border border-white/5 bg-white/3 px-3 py-2"
-            >
-              <p class="text-[12px] font-medium text-(--text-primary)">{{ item.title }}</p>
-              <p class="mt-1 text-[11px] leading-5 text-(--text-secondary)">
-                {{ item.description }}
-              </p>
-            </article>
-          </div>
-        </section>
       </div>
-    </div>
+
+      <footer class="explorer-statusbar">
+        <span class="explorer-status-dot"></span>
+        <span>{{ explorerStatusText }}</span>
+      </footer>
+    </section>
+
+    <SearchSidebarPanel
+      v-else-if="isSearchView"
+      :document-path="document.path"
+      :is-desktop-runtime="isDesktopRuntime"
+      :workspace-root-path="workspaceRootPath"
+      :preloaded-workspace-root="preloadedWorkspaceRoot"
+      @open-file="handleOpenFile"
+    />
+
+    <template v-else>
+      <div class="border-b border-(--shell-divider) px-3 py-3">
+        <p class="sidebar-section-title">{{ panelMeta.title }}</p>
+      </div>
+
+      <div class="workbench-scroll-region min-h-0 flex-1 overflow-auto py-2">
+        <div class="space-y-3 px-3 py-2">
+          <section class="rounded-xl border border-(--border-subtle) bg-white/3 p-3">
+            <p class="text-[10px] font-semibold uppercase tracking-[0.12em] text-(--text-quaternary)">
+              侧边栏页面
+            </p>
+            <h3 class="mt-2 text-[13px] font-semibold text-(--text-primary)">
+              {{ panelMeta.headline }}
+            </h3>
+            <p class="mt-2 text-[12px] leading-6 text-(--text-secondary)">
+              {{ panelMeta.description }}
+            </p>
+            <div class="mt-3 flex items-center gap-2">
+              <Button variant="outline" size="sm">{{ panelMeta.actionLabel }}</Button>
+              <span class="text-[11px] text-(--text-quaternary)">交互面板预留位</span>
+            </div>
+          </section>
+
+          <section class="rounded-xl border border-(--border-subtle) bg-(--panel-muted)/50 p-3">
+            <p class="text-[10px] font-semibold uppercase tracking-[0.12em] text-(--text-quaternary)">
+              将展示
+            </p>
+            <div class="mt-3 space-y-2">
+              <article
+                v-for="item in panelMeta.items"
+                :key="item.title"
+                class="rounded-lg border border-white/5 bg-white/3 px-3 py-2"
+              >
+                <p class="text-[12px] font-medium text-(--text-primary)">{{ item.title }}</p>
+                <p class="mt-1 text-[11px] leading-5 text-(--text-secondary)">
+                  {{ item.description }}
+                </p>
+              </article>
+            </div>
+          </section>
+        </div>
+      </div>
+    </template>
   </aside>
 </template>
 
 <script setup lang="ts">
-import FileEntryIcon from '@/components/common/FileEntryIcon.vue';
 import { Button } from '@/components/ui/button';
+import ExplorerEntryIcon from '@/components/workbench/ExplorerEntryIcon.vue';
+import SearchSidebarPanel from '@/components/workbench/SearchSidebarPanel.vue';
 import SourceControlPanel from '@/components/workbench/SourceControlPanel.vue';
 import WorkspaceTreeNode from '@/components/workbench/WorkspaceTreeNode.vue';
 import { useMessage } from '@/composables/useMessage';
@@ -138,15 +262,19 @@ const emit = defineEmits<{
   'open-file': [path: string];
 }>();
 
+const message = useMessage();
 const root = ref<IWorkspaceDirectoryPayload | null>(null);
 const rootExpanded = ref(true);
 const rootLoading = ref(false);
 const loadError = ref('');
+const explorerSearchQuery = ref('');
 const childrenMap = reactive<Record<string, IWorkspaceEntry[]>>({});
 const expandedPaths = reactive<Record<string, boolean>>({});
 const loadingPaths = reactive<Record<string, boolean>>({});
 const loadedWorkspaceKey = ref<string | null>(null);
 let rootRequestId = 0;
+
+const normalizePath = (value: string): string => value.replace(/\\/g, '/').toLowerCase();
 
 const SIDEBAR_META: Record<
   TWorkbenchSidebarView,
@@ -212,8 +340,12 @@ const SIDEBAR_META: Record<
 };
 
 const isExplorerView = computed(() => props.view === 'explorer');
+const isSearchView = computed(() => props.view === 'search');
 const isSourceControlView = computed(() => props.view === 'source-control');
 const panelMeta = computed(() => SIDEBAR_META[props.view]);
+const normalizedExplorerSearchQuery = computed(() => explorerSearchQuery.value.trim().toLowerCase());
+const hasExplorerSearch = computed(() => normalizedExplorerSearchQuery.value.length > 0);
+const isRootOpen = computed(() => rootExpanded.value || hasExplorerSearch.value);
 
 const rootEntries = computed(() => {
   if (!root.value) {
@@ -224,6 +356,67 @@ const rootEntries = computed(() => {
 });
 
 const rootLabel = computed(() => root.value?.rootName ?? 'workspace');
+
+const countLoadedEntries = (entries: IWorkspaceEntry[]): number =>
+  entries.reduce((total, entry) => {
+    const descendantCount =
+      entry.kind === 'directory' ? countLoadedEntries(childrenMap[entry.path] ?? []) : 0;
+    return total + 1 + descendantCount;
+  }, 0);
+
+const entryMatchesSearch = (entry: IWorkspaceEntry, query: string): boolean => {
+  if (!query) {
+    return true;
+  }
+
+  return (
+    entry.name.toLowerCase().includes(query) ||
+    normalizePath(entry.path).includes(query)
+  );
+};
+
+const entryMatchesTree = (entry: IWorkspaceEntry, query: string): boolean => {
+  if (!query || entryMatchesSearch(entry, query)) {
+    return true;
+  }
+
+  if (entry.kind !== 'directory') {
+    return false;
+  }
+
+  const descendants = childrenMap[entry.path] ?? [];
+  return descendants.some((child) => entryMatchesTree(child, query));
+};
+
+const filteredRootEntries = computed(() => {
+  if (!hasExplorerSearch.value) {
+    return rootEntries.value;
+  }
+
+  return rootEntries.value.filter((entry) => entryMatchesTree(entry, normalizedExplorerSearchQuery.value));
+});
+
+const hasVisibleRootEntries = computed(() => filteredRootEntries.value.length > 0);
+const indexedEntryCount = computed(() => countLoadedEntries(rootEntries.value));
+const explorerStatusText = computed(() => {
+  if (!props.isDesktopRuntime) {
+    return '桌面端可用';
+  }
+
+  if (loadError.value) {
+    return loadError.value;
+  }
+
+  if (rootLoading.value) {
+    return '正在索引工作区…';
+  }
+
+  if (!props.workspaceRootPath) {
+    return '未打开工作区';
+  }
+
+  return `${indexedEntryCount.value} 个项目 · 已索引`;
+});
 
 const getErrorMessage = (error: unknown, fallback: string): string =>
   error instanceof Error ? error.message : fallback;
@@ -325,8 +518,8 @@ const loadDirectoryEntries = async (path: string): Promise<void> => {
     const payload = await tauriService.listWorkspaceEntries(path, root.value?.rootPath);
     childrenMap[path] = payload.entries;
   } catch (error) {
-    const message = getErrorMessage(error, '读取目录失败');
-    useMessage().error(message);
+    const errorMessage = getErrorMessage(error, '读取目录失败');
+    message.error(errorMessage);
     childrenMap[path] = [];
   } finally {
     loadingPaths[path] = false;
@@ -352,6 +545,22 @@ const handleOpenFile = (path: string): void => {
   emit('open-file', path);
 };
 
+const handleCreatePlaceholder = (kind: 'file' | 'directory'): void => {
+  message.info(kind === 'file' ? '新建文件待接入' : '新建文件夹待接入');
+};
+
+const handleRefreshExplorer = async (): Promise<void> => {
+  const workspaceKey = props.workspaceRootPath ?? '__empty_workspace__';
+  await loadWorkspaceRoot(workspaceKey);
+};
+
+const handleCollapseAll = (): void => {
+  Object.keys(expandedPaths).forEach((path) => {
+    delete expandedPaths[path];
+  });
+  rootExpanded.value = true;
+};
+
 watch(
   [
     () => props.isDesktopRuntime,
@@ -372,5 +581,12 @@ watch(
     void loadWorkspaceRoot(workspaceKey);
   },
   { immediate: true },
+);
+
+watch(
+  () => props.workspaceRootPath,
+  () => {
+    explorerSearchQuery.value = '';
+  },
 );
 </script>

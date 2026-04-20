@@ -25,8 +25,6 @@ import type {
   IEnsureTerminalSessionRequest,
   IResizeTerminalSessionRequest,
   ITerminalSessionPayload,
-  IWaitTerminalRunPayload,
-  IWaitTerminalRunRequest,
   IWriteTerminalInputRequest,
 } from '@/types/terminal';
 import { assertDesktopRuntime } from '@/utils/desktop-runtime';
@@ -240,14 +238,6 @@ export const tauriService: ITauriService & {
     return runTauriCommand<IDispatchTerminalScriptPayload>(
       '在终端中执行脚本',
       'dispatch_script_to_terminal',
-      { payload },
-    );
-  },
-
-  waitForTerminalRun(payload: IWaitTerminalRunRequest) {
-    return runTauriCommand<IWaitTerminalRunPayload>(
-      '等待终端脚本执行完成',
-      'wait_for_terminal_run',
       { payload },
     );
   },

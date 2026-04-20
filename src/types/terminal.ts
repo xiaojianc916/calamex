@@ -45,8 +45,6 @@ export interface IDispatchTerminalScriptPayload {
   commandLine: string;
   usedTempFile: boolean;
   startedAt: string;
-  statusPath: string;
-  outputPath: string;
 }
 
 export interface ITerminalDataEvent {
@@ -74,17 +72,5 @@ export interface ITerminalRunCompletePayload {
   sessionId: string;
   runId: string;
   exitCode: number | null;
-  output: string;
   finishedAt: string;
-}
-
-export interface IWaitTerminalRunRequest {
-  statusPath: string;
-  outputPath: string;
-}
-
-export interface IWaitTerminalRunPayload {
-  exitCode: number | null;
-  finishedAt: string;
-  output: string;
 }

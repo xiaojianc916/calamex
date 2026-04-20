@@ -5,6 +5,7 @@ import type {
   ITerminalDataEvent,
   ITerminalExitEvent,
   ITerminalRunCompletePayload,
+  ITerminalRunOutputEvent,
   ITerminalSessionPayload,
   ITerminalStatusChangePayload,
   TTerminalConnectionState,
@@ -32,30 +33,10 @@ const MIN_RENDERABLE_TERMINAL_WIDTH = 24;
 const MIN_RENDERABLE_TERMINAL_HEIGHT = 24;
 const TERMINAL_ENABLE_WEBGL_RENDERER = false;
 const TERMINAL_WEBGL_RECOVERY_DELAY_MS = 180;
-const TERMINAL_STREAM_MARKER_PREFIX = '\u001b]SH_EDITOR:';
-const TERMINAL_STREAM_MARKER_SUFFIX = '\u0007';
-const TERMINAL_STREAM_START_MARKER_PREFIX = 'SH_EDITOR_RUN_BEGIN:';
-const TERMINAL_STREAM_END_MARKER_PREFIX = 'SH_EDITOR_RUN_END:';
-const TERMINAL_RUN_START_MARKER_WAIT_TIMEOUT_MS = 4200;
 const TERMINAL_LAYOUT_SETTLE_DELAY_MS = 72;
 const TERMINAL_OUTPUT_FLUSH_DELAY_MS = 16;
 const TERMINAL_SCROLL_RECOVERY_DELAY_MS = 64;
-const TERMINAL_SCROLLBACK_LIMIT = 12000;
-const POST_RUN_PROMPT_DETECTION_BUFFER_LIMIT = 512;
-const POST_RUN_PROMPT_CHECK_DELAY_MS = 180;
-const POST_RUN_PROMPT_CHECK_RETRY_MS = 260;
-const POST_RUN_PROMPT_MAX_REFRESH_ATTEMPTS = 2;
-const MAX_PENDING_MARKER_BODY_LENGTH = 512;
-
-const ANSI_ESCAPE_PATTERN = new RegExp(
-  String.raw`\u001b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])`,
-  'g',
-);
-const SHELL_PROMPT_PATTERN = /[\r\n][^\r\n]{0,200}[#$>]\s*$/;
-const TERMINAL_STREAM_HIDDEN_MARKER_PATTERN = new RegExp(
-  String.raw`\u001b\]SH_EDITOR:SH_EDITOR_RUN_(?:BEGIN|END):[^\u0007]*\u0007`,
-  'g',
-);
+const TERMINAL_SCROLLBACK_LIMIT = 8000;
 
 const createTerminalTheme = (theme: TThemeMode) =>
   theme === 'light'
@@ -115,96 +96,6 @@ const createTerminalTheme = (theme: TThemeMode) =>
 const resolveErrorMessage = (error: unknown, fallback: string): string =>
   error instanceof Error ? error.message : fallback;
 
-const escapeRegExp = (value: string): string =>
-  value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-const stripTerminalHiddenMarkers = (value: string): string =>
-  value.replace(TERMINAL_STREAM_HIDDEN_MARKER_PATTERN, '');
-
-const resolveTerminalMarkerSearchTailLength = (value: string): number => {
-  const maxTailLength = Math.min(value.length, TERMINAL_STREAM_MARKER_PREFIX.length - 1);
-  for (let tailLength = maxTailLength; tailLength > 0; tailLength -= 1) {
-    if (TERMINAL_STREAM_MARKER_PREFIX.startsWith(value.slice(-tailLength))) {
-      return tailLength;
-    }
-  }
-  return 0;
-};
-
-const splitTerminalMarkerChunk = (
-  value: string,
-): {
-  before: string;
-  markerToken: string | null;
-  remainder: string;
-} => {
-  const markerStartIndex = value.indexOf(TERMINAL_STREAM_MARKER_PREFIX);
-  if (markerStartIndex === -1) {
-    const tailLength = resolveTerminalMarkerSearchTailLength(value);
-    return {
-      before: value.slice(0, value.length - tailLength),
-      markerToken: null,
-      remainder: value.slice(value.length - tailLength),
-    };
-  }
-  const markerContentStartIndex = markerStartIndex + TERMINAL_STREAM_MARKER_PREFIX.length;
-  const markerEndIndex = value.indexOf(TERMINAL_STREAM_MARKER_SUFFIX, markerContentStartIndex);
-  if (markerEndIndex === -1) {
-    if (value.length - markerContentStartIndex > MAX_PENDING_MARKER_BODY_LENGTH) {
-      return {
-        before: value,
-        markerToken: null,
-        remainder: '',
-      };
-    }
-    return {
-      before: value.slice(0, markerStartIndex),
-      markerToken: null,
-      remainder: value.slice(markerStartIndex),
-    };
-  }
-  return {
-    before: value.slice(0, markerStartIndex),
-    markerToken: value.slice(markerContentStartIndex, markerEndIndex),
-    remainder: value.slice(markerEndIndex + TERMINAL_STREAM_MARKER_SUFFIX.length),
-  };
-};
-
-const sanitizeCapturedTerminalNoise = (value: string, runId: string | null): string => {
-  if (!value) {
-    return value;
-  }
-  const sanitizedValue = stripTerminalHiddenMarkers(value);
-  if (!runId) {
-    return sanitizedValue;
-  }
-  const escapedRunId = escapeRegExp(runId);
-  return sanitizedValue
-    .replace(
-      new RegExp(
-        `(^|[\\r\\n])([^\\r\\n]*[#$>]\\s+)(?:__sh_editor_out=|i=['"]${escapedRunId}['"]).*?(?=$|[\\r\\n])`,
-        'g',
-      ),
-      '$1$2',
-    )
-    .replace(
-      new RegExp(
-        `(^|[\\r\\n])(?:__sh_editor_out=|i=['"]${escapedRunId}['"]).*?(?=$|[\\r\\n])`,
-        'g',
-      ),
-      '$1',
-    )
-    .replace(
-      new RegExp(
-        `(^|[\\r\\n])([^\\r\\n]*[#$>]\\s+)?bash\\s+['"][^\\r\\n]*sh-editor-dispatch-${escapedRunId}\\.sh['"]?(?=$|[\\r\\n])`,
-        'g',
-      ),
-      '$1',
-    )
-    .replace(new RegExp(`SH_EDITOR_RUN_BEGIN:${escapedRunId}`, 'g'), '')
-    .replace(new RegExp(`SH_EDITOR_RUN_END:${escapedRunId}:-?\\d+`, 'g'), '');
-};
-
 const resolveInteger = (
   value: number | null | undefined,
   fallback: number,
@@ -236,7 +127,7 @@ type TUseIntegratedTerminalOptions = {
   theme: Ref<TThemeMode>;
   sessionId?: string;
   onStatusChange?: (payload: ITerminalStatusChangePayload) => void;
-  onOutput?: (value: string) => void;
+  onOutput?: (payload: ITerminalRunOutputEvent) => void;
   onRunComplete?: (payload: ITerminalRunCompletePayload) => void;
 };
 
@@ -258,8 +149,30 @@ export const useIntegratedTerminalStatus = () => ({
 
 let sharedVisibleRef: Ref<boolean> | null = null;
 let sharedStatusListener: ((payload: ITerminalStatusChangePayload) => void) | null = null;
-let sharedOutputListener: ((value: string) => void) | null = null;
+let sharedOutputListener: ((payload: ITerminalRunOutputEvent) => void) | null = null;
 let sharedRunCompleteListener: ((payload: ITerminalRunCompletePayload) => void) | null = null;
+let sharedRetryHandler: (() => Promise<void>) | null = null;
+let sharedClearScreenHandler: (() => Promise<void>) | null = null;
+let sharedInterruptHandler: (() => Promise<void>) | null = null;
+let sharedSendCommandHandler: ((command: string) => Promise<void>) | null = null;
+
+export const useIntegratedTerminalControls = () => ({
+  status: readonly(sharedStatus),
+  statusMessage: readonly(sharedStatusMessage),
+  session: readonly(sharedSession),
+  retry: async (): Promise<void> => {
+    await sharedRetryHandler?.();
+  },
+  clearScreen: async (): Promise<void> => {
+    await sharedClearScreenHandler?.();
+  },
+  interrupt: async (): Promise<void> => {
+    await sharedInterruptHandler?.();
+  },
+  sendCommand: async (command: string): Promise<void> => {
+    await sharedSendCommandHandler?.(command);
+  },
+});
 
 let fontLoadingCleanup: (() => void) | null = null;
 let visibilityChangeCleanup: (() => void) | null = null;
@@ -278,10 +191,11 @@ let shouldRefreshViewportOnViewportSync = false;
 let shouldScrollToBottomOnViewportSync = false;
 
 let dataUnlisten: UnlistenFn | null = null;
+let runOutputUnlisten: UnlistenFn | null = null;
+let runCompleteUnlisten: UnlistenFn | null = null;
 let exitUnlisten: UnlistenFn | null = null;
 let eventListenerRegistration: Promise<void> | null = null;
 
-let runStartMarkerTimeoutId: number | null = null;
 let programmaticScrollReleaseFrameId: number | null = null;
 let terminalWriteFrameId: number | null = null;
 let terminalWriteTimeoutId: number | null = null;
@@ -291,21 +205,13 @@ let isTerminalWriteInFlight = false;
 let isProgrammaticScrollSync = false;
 let isAutoFollowEnabled = true;
 let bufferedTerminalWrite = '';
+let hiddenTerminalWriteBacklog = '';
 let pendingScrollToBottomAfterWrite = false;
+let pendingHiddenScrollToBottom = false;
 let shouldFitBeforeNextVisibleWrite = false;
 
 const pendingTerminalWriteCallbacks: Array<() => void> = [];
-const replaySuppressedRunIds = new Set<string>();
-
-let terminalStreamBuffer = '';
-let expectedRunId: string | null = null;
 let activeRunId: string | null = null;
-let capturedRunOutput = '';
-
-let pendingPromptRestoreRunId: string | null = null;
-let pendingPromptRestoreBuffer = '';
-let promptRestoreAttemptCount = 0;
-let promptRestoreTimeoutId: number | null = null;
 
 let webglRendererBlocked = false;
 let previousHostSize = { width: 0, height: 0 };
@@ -382,13 +288,11 @@ export const useIntegratedTerminal = ({
   const buildRunCompletePayload = (
     runId: string,
     exitCode: number | null,
-    output: string,
   ): ITerminalRunCompletePayload =>
   ({
     sessionId,
     runId,
     exitCode,
-    output,
     finishedAt: new Date().toISOString(),
   } as ITerminalRunCompletePayload);
 
@@ -398,8 +302,8 @@ export const useIntegratedTerminal = ({
     sharedStatusListener?.({ state, message });
   };
 
-  const emitOutput = (value: string): void => {
-    sharedOutputListener?.(value);
+  const emitOutput = (payload: ITerminalRunOutputEvent): void => {
+    sharedOutputListener?.(payload);
   };
 
   const emitRunComplete = (payload: ITerminalRunCompletePayload): void => {
@@ -471,8 +375,27 @@ export const useIntegratedTerminal = ({
       }
       return;
     }
+    if (!isTerminalVisible()) {
+      if (bufferedTerminalWrite) {
+        hiddenTerminalWriteBacklog += bufferedTerminalWrite;
+        bufferedTerminalWrite = '';
+      }
+      if (pendingScrollToBottomAfterWrite) {
+        pendingHiddenScrollToBottom = true;
+        pendingScrollToBottomAfterWrite = false;
+      }
+      return;
+    }
     if (isTerminalWriteInFlight) {
       return;
+    }
+    if (hiddenTerminalWriteBacklog) {
+      bufferedTerminalWrite = `${hiddenTerminalWriteBacklog}${bufferedTerminalWrite}`;
+      hiddenTerminalWriteBacklog = '';
+      if (pendingHiddenScrollToBottom) {
+        pendingScrollToBottomAfterWrite = true;
+        pendingHiddenScrollToBottom = false;
+      }
     }
     if (!bufferedTerminalWrite) {
       if (options?.forceLayout || shouldFitBeforeNextVisibleWrite) {
@@ -526,6 +449,13 @@ export const useIntegratedTerminal = ({
     },
   ): void => {
     if (!value) {
+      return;
+    }
+    if (!isTerminalVisible()) {
+      hiddenTerminalWriteBacklog += value;
+      if (options?.scrollToBottom) {
+        pendingHiddenScrollToBottom = true;
+      }
       return;
     }
     bufferedTerminalWrite += value;
@@ -624,20 +554,6 @@ export const useIntegratedTerminal = ({
     if (programmaticScrollReleaseFrameId !== null) {
       cancelAnimationFrame(programmaticScrollReleaseFrameId);
       programmaticScrollReleaseFrameId = null;
-    }
-  };
-
-  const clearPromptRestoreTimeout = (): void => {
-    if (promptRestoreTimeoutId !== null) {
-      window.clearTimeout(promptRestoreTimeoutId);
-      promptRestoreTimeoutId = null;
-    }
-  };
-
-  const clearRunStartMarkerTimeout = (): void => {
-    if (runStartMarkerTimeoutId !== null) {
-      window.clearTimeout(runStartMarkerTimeoutId);
-      runStartMarkerTimeoutId = null;
     }
   };
 
@@ -747,210 +663,62 @@ export const useIntegratedTerminal = ({
     terminalRef.value?.focus();
   };
 
-  const scheduleRunStartMarkerTimeout = (runId: string): void => {
-    clearRunStartMarkerTimeout();
-    runStartMarkerTimeoutId = window.setTimeout(() => {
-      runStartMarkerTimeoutId = null;
-      if (expectedRunId !== runId || activeRunId === runId) {
-        return;
-      }
-      clearTrackedRunState(runId);
-    }, TERMINAL_RUN_START_MARKER_WAIT_TIMEOUT_MS);
+  const clearTerminalScreen = async (): Promise<void> => {
+    terminalRef.value?.clear();
+    isAutoFollowEnabled = true;
+    scheduleViewportSync({ scrollToBottom: true, refresh: true });
+
+    if (!session.value) {
+      return;
+    }
+
+    await tauriService.writeTerminalInput({ sessionId, data: '\u000c' });
+    focusTerminal();
+  };
+
+  const interruptTerminalExecution = async (): Promise<void> => {
+    if (!session.value) {
+      return;
+    }
+
+    await tauriService.writeTerminalInput({ sessionId, data: '\u0003' });
+    isAutoFollowEnabled = true;
+    scheduleViewportSync({ scrollToBottom: true });
+    focusTerminal();
+  };
+
+  const sendCommandToTerminal = async (command: string): Promise<void> => {
+    const normalizedCommand = command.trim();
+    if (!normalizedCommand) {
+      return;
+    }
+
+    if (!session.value) {
+      await ensureSession();
+    }
+
+    if (!session.value) {
+      throw new Error('WSL2 终端尚未就绪。');
+    }
+
+    await tauriService.writeTerminalInput({
+      sessionId,
+      data: `${normalizedCommand}\n`,
+    });
+    isAutoFollowEnabled = true;
+    scheduleViewportSync({ scrollToBottom: true });
+    focusTerminal();
   };
 
   const clearTrackedRunState = (runId?: string): void => {
-    const matchesExpectedRun = !runId || expectedRunId === runId;
-    const matchesActiveRun = !runId || activeRunId === runId;
-    if (!matchesExpectedRun && !matchesActiveRun) {
+    if (runId && activeRunId !== runId) {
       return;
     }
-    clearRunStartMarkerTimeout();
-    terminalStreamBuffer = '';
-    const affectedRunId = runId ?? expectedRunId ?? activeRunId;
-    if (matchesExpectedRun) {
-      expectedRunId = null;
-    }
-    if (matchesActiveRun) {
-      activeRunId = null;
-    }
-    if (affectedRunId) {
-      replaySuppressedRunIds.delete(affectedRunId);
-    }
-    capturedRunOutput = '';
+    activeRunId = null;
   };
 
   const resetTerminalRunCapture = (): void => {
     clearTrackedRunState();
-    pendingPromptRestoreRunId = null;
-    pendingPromptRestoreBuffer = '';
-    promptRestoreAttemptCount = 0;
-    clearPromptRestoreTimeout();
-  };
-
-  const normalizeTerminalOutputForPromptCheck = (value: string): string =>
-    `\n${value.replace(ANSI_ESCAPE_PATTERN, '')}`;
-
-  const clearPendingPromptRestore = (): void => {
-    pendingPromptRestoreRunId = null;
-    pendingPromptRestoreBuffer = '';
-    promptRestoreAttemptCount = 0;
-    clearPromptRestoreTimeout();
-  };
-
-  const schedulePromptRestoreCheck = (): void => {
-    clearPromptRestoreTimeout();
-    if (!pendingPromptRestoreRunId || !session.value) {
-      return;
-    }
-    const delay =
-      promptRestoreAttemptCount === 0
-        ? POST_RUN_PROMPT_CHECK_DELAY_MS
-        : POST_RUN_PROMPT_CHECK_RETRY_MS;
-    promptRestoreTimeoutId = window.setTimeout(() => {
-      promptRestoreTimeoutId = null;
-      if (!pendingPromptRestoreRunId || !session.value) {
-        return;
-      }
-      if (
-        SHELL_PROMPT_PATTERN.test(normalizeTerminalOutputForPromptCheck(pendingPromptRestoreBuffer))
-      ) {
-        clearPendingPromptRestore();
-        return;
-      }
-      if (promptRestoreAttemptCount >= POST_RUN_PROMPT_MAX_REFRESH_ATTEMPTS) {
-        void tauriService.writeTerminalInput({ sessionId, data: '\u0003' }).catch(() => {
-          // Ignore recovery failures when the shell has already detached.
-        });
-        clearPendingPromptRestore();
-        return;
-      }
-      promptRestoreAttemptCount += 1;
-      void tauriService.writeTerminalInput({ sessionId, data: '\n' }).catch(() => {
-        clearPendingPromptRestore();
-      });
-      schedulePromptRestoreCheck();
-    }, delay);
-  };
-
-  const trackPostRunPrompt = (output: string): void => {
-    if (!pendingPromptRestoreRunId || !output) {
-      return;
-    }
-    pendingPromptRestoreBuffer = `${pendingPromptRestoreBuffer}${output}`.slice(
-      -POST_RUN_PROMPT_DETECTION_BUFFER_LIMIT,
-    );
-    if (
-      SHELL_PROMPT_PATTERN.test(normalizeTerminalOutputForPromptCheck(pendingPromptRestoreBuffer))
-    ) {
-      clearPendingPromptRestore();
-    }
-  };
-
-  const beginPromptRestore = (runId: string): void => {
-    pendingPromptRestoreRunId = runId;
-    pendingPromptRestoreBuffer = '';
-    promptRestoreAttemptCount = 0;
-    schedulePromptRestoreCheck();
-  };
-
-  const processTerminalData = (
-    chunk: string,
-  ): {
-    visibleOutput: string;
-    capturedOutput: string;
-    completedRuns: ITerminalRunCompletePayload[];
-  } => {
-    terminalStreamBuffer += chunk;
-    const visibleChunks: string[] = [];
-    const capturedChunks: string[] = [];
-    const completedRuns: ITerminalRunCompletePayload[] = [];
-
-    const appendRunOutput = (value: string): void => {
-      if (!value) {
-        return;
-      }
-      if (activeRunId && replaySuppressedRunIds.has(activeRunId)) {
-        return;
-      }
-      visibleChunks.push(value);
-      capturedChunks.push(value);
-      capturedRunOutput += value;
-    };
-
-    while (terminalStreamBuffer.length > 0) {
-      if (activeRunId) {
-        const markerChunk = splitTerminalMarkerChunk(terminalStreamBuffer);
-        if (markerChunk.before) {
-          appendRunOutput(markerChunk.before);
-        }
-        terminalStreamBuffer = markerChunk.remainder;
-        if (!markerChunk.markerToken) {
-          break;
-        }
-        const completedRunId = activeRunId;
-        const endMarkerPrefix = `${TERMINAL_STREAM_END_MARKER_PREFIX}${completedRunId}:`;
-        if (markerChunk.markerToken.startsWith(endMarkerPrefix)) {
-          const exitCodeRaw = markerChunk.markerToken.slice(endMarkerPrefix.length);
-          const parsedExitCode = Number.parseInt(exitCodeRaw, 10);
-          const wasSuppressed = replaySuppressedRunIds.has(completedRunId);
-          const completedRun = buildRunCompletePayload(
-            completedRunId,
-            Number.isFinite(parsedExitCode) ? parsedExitCode : null,
-            capturedRunOutput,
-          );
-          activeRunId = null;
-          capturedRunOutput = '';
-          if (wasSuppressed) {
-            replaySuppressedRunIds.delete(completedRunId);
-          } else {
-            completedRuns.push(completedRun);
-          }
-        }
-        continue;
-      }
-
-      if (expectedRunId) {
-        const markerChunk = splitTerminalMarkerChunk(terminalStreamBuffer);
-        if (markerChunk.before) {
-          visibleChunks.push(markerChunk.before);
-          capturedChunks.push(markerChunk.before);
-        }
-        terminalStreamBuffer = markerChunk.remainder;
-        if (!markerChunk.markerToken) {
-          break;
-        }
-        if (markerChunk.markerToken === `${TERMINAL_STREAM_START_MARKER_PREFIX}${expectedRunId}`) {
-          clearRunStartMarkerTimeout();
-          activeRunId = expectedRunId;
-          expectedRunId = null;
-          capturedRunOutput = '';
-        }
-        continue;
-      }
-
-      const markerChunk = splitTerminalMarkerChunk(terminalStreamBuffer);
-      if (markerChunk.before) {
-        visibleChunks.push(markerChunk.before);
-        capturedChunks.push(markerChunk.before);
-      }
-      terminalStreamBuffer = markerChunk.remainder;
-      if (!markerChunk.markerToken) {
-        break;
-      }
-    }
-
-    const noiseSuppressionRunId =
-      pendingPromptRestoreRunId ??
-      activeRunId ??
-      expectedRunId ??
-      completedRuns[completedRuns.length - 1]?.runId ??
-      null;
-
-    return {
-      visibleOutput: stripTerminalHiddenMarkers(visibleChunks.join('')),
-      capturedOutput: sanitizeCapturedTerminalNoise(capturedChunks.join(''), noiseSuppressionRunId),
-      completedRuns,
-    };
   };
 
   const bindResizeObserver = (): void => {
@@ -1087,39 +855,41 @@ export const useIntegratedTerminal = ({
     if (event.payload.sessionId !== sessionId) {
       return;
     }
-    const terminal = terminalRef.value;
-    if (!terminal) {
+    if (!event.payload.data) {
       return;
     }
-    const processed = processTerminalData(event.payload.data);
+    queueTerminalWrite(event.payload.data, { scrollToBottom: true });
+  };
 
-    if (processed.completedRuns.length > 0) {
-      beginPromptRestore(processed.completedRuns[processed.completedRuns.length - 1].runId);
+  const handleTerminalRunOutputEvent = (event: { payload: ITerminalRunOutputEvent }): void => {
+    if (event.payload.sessionId !== sessionId || !event.payload.data) {
+      return;
+    }
+    emitOutput(event.payload);
+  };
+
+  const emitTerminalRunComplete = (payload: ITerminalRunCompletePayload): void => {
+    clearTrackedRunState(payload.runId);
+    if (!isTerminalVisible()) {
+      emitRunComplete(payload);
+      return;
     }
 
-    if (processed.visibleOutput) {
-      queueTerminalWrite(processed.visibleOutput, { scrollToBottom: true });
-      trackPostRunPrompt(processed.visibleOutput);
-    }
+    focusTerminal();
+    flushTerminalWriteBufferNow({
+      afterWrite: () => {
+        scheduleViewportSync({ scrollToBottom: true });
+        emitRunComplete(payload);
+      },
+      forceLayout: true,
+    });
+  };
 
-    if (processed.capturedOutput) {
-      emitOutput(processed.capturedOutput);
+  const handleTerminalRunCompleteEvent = (event: { payload: ITerminalRunCompletePayload }): void => {
+    if (event.payload.sessionId !== sessionId) {
+      return;
     }
-
-    if (processed.completedRuns.length > 0) {
-      if (isTerminalVisible()) {
-        focusTerminal();
-      }
-      for (const completedRun of processed.completedRuns) {
-        flushTerminalWriteBufferNow({
-          afterWrite: () => {
-            scheduleViewportSync({ scrollToBottom: true });
-            emitRunComplete(completedRun);
-          },
-          forceLayout: true,
-        });
-      }
-    }
+    emitTerminalRunComplete(event.payload);
   };
 
   const handleTerminalExitEvent = (event: { payload: ITerminalExitEvent }): void => {
@@ -1132,12 +902,8 @@ export const useIntegratedTerminal = ({
         ? 'WSL2 终端已断开。'
         : `WSL2 终端已退出（代码 ${event.payload.exitCode}）。`;
     if (activeRunId) {
-      emitRunComplete(
-        buildRunCompletePayload(activeRunId, event.payload.exitCode ?? -1, capturedRunOutput),
-      );
+      emitRunComplete(buildRunCompletePayload(activeRunId, event.payload.exitCode ?? -1));
       resetTerminalRunCapture();
-    } else {
-      clearPendingPromptRestore();
     }
     queueTerminalWrite(`\r\n\x1b[90m${message}\x1b[0m\r\n`, { scrollToBottom: true });
     flushTerminalWriteBufferNow();
@@ -1146,18 +912,30 @@ export const useIntegratedTerminal = ({
   };
 
   const registerEventListeners = (): Promise<void> => {
-    if (dataUnlisten && exitUnlisten) {
+    if (dataUnlisten && runOutputUnlisten && runCompleteUnlisten && exitUnlisten) {
       return Promise.resolve();
     }
     if (eventListenerRegistration) {
       return eventListenerRegistration;
     }
     eventListenerRegistration = (async () => {
-      const [nextDataUnlisten, nextExitUnlisten] = await Promise.all([
+      const [
+        nextDataUnlisten,
+        nextRunOutputUnlisten,
+        nextRunCompleteUnlisten,
+        nextExitUnlisten,
+      ] = await Promise.all([
         listen<ITerminalDataEvent>('terminal:data', handleTerminalDataEvent),
+        listen<ITerminalRunOutputEvent>('terminal:run-output', handleTerminalRunOutputEvent),
+        listen<ITerminalRunCompletePayload>(
+          'terminal:run-complete',
+          handleTerminalRunCompleteEvent,
+        ),
         listen<ITerminalExitEvent>('terminal:exit', handleTerminalExitEvent),
       ]);
       dataUnlisten = nextDataUnlisten;
+      runOutputUnlisten = nextRunOutputUnlisten;
+      runCompleteUnlisten = nextRunCompleteUnlisten;
       exitUnlisten = nextExitUnlisten;
     })().finally(() => {
       eventListenerRegistration = null;
@@ -1201,9 +979,9 @@ export const useIntegratedTerminal = ({
         drawBoldTextInBrightColors: true,
         fontFamily:
           "Berkeley Mono, JetBrains Mono, 'SFMono-Regular', Consolas, 'Courier New', monospace",
-        fontSize: 13,
+        fontSize: 12.5,
         letterSpacing: 0,
-        lineHeight: 1.38,
+        lineHeight: 1.46,
         rows: DEFAULT_ROWS,
         cols: DEFAULT_COLS,
         scrollOnUserInput: true,
@@ -1275,6 +1053,11 @@ export const useIntegratedTerminal = ({
     await ensureSession();
   };
 
+  sharedRetryHandler = retry;
+  sharedClearScreenHandler = clearTerminalScreen;
+  sharedInterruptHandler = interruptTerminalExecution;
+  sharedSendCommandHandler = sendCommandToTerminal;
+
   onMounted(async () => {
     createTerminal();
     bindRenderRecoveryListeners();
@@ -1307,6 +1090,10 @@ export const useIntegratedTerminal = ({
       syncTerminalSurfaceTone();
       scheduleLayoutSync({ settle: true });
       scheduleViewportSync({ clearTextureAtlas: true, refresh: true, scrollToBottom: true });
+      if (hiddenTerminalWriteBacklog) {
+        shouldFitBeforeNextVisibleWrite = true;
+        flushTerminalWriteBufferNow({ forceLayout: true });
+      }
       focusTerminal();
     },
   );
@@ -1314,58 +1101,20 @@ export const useIntegratedTerminal = ({
   watch(
     () => editorStore.pendingTerminalRunId,
     (nextRunId) => {
+      if (activeRunId && activeRunId !== nextRunId) {
+        emitRunComplete(buildRunCompletePayload(activeRunId, -1));
+      }
       if (!nextRunId) {
+        clearTrackedRunState();
         return;
       }
-      if (activeRunId && activeRunId !== nextRunId) {
-        emitRunComplete(buildRunCompletePayload(activeRunId, -1, capturedRunOutput));
-      }
-      clearTrackedRunState();
-      expectedRunId = nextRunId;
-      activeRunId = null;
-      capturedRunOutput = '';
-      terminalStreamBuffer = '';
+      activeRunId = nextRunId;
       isAutoFollowEnabled = true;
       shouldFitBeforeNextVisibleWrite = true;
-      replaySuppressedRunIds.delete(nextRunId);
-      scheduleRunStartMarkerTimeout(nextRunId);
       scheduleLayoutSync();
       scheduleViewportSync({ scrollToBottom: true });
     },
     { flush: 'sync' },
-  );
-
-  watch(
-    () => editorStore.terminalReplayOutput,
-    (nextReplayRequest) => {
-      if (!nextReplayRequest) {
-        return;
-      }
-      replaySuppressedRunIds.add(nextReplayRequest.runId);
-      if (expectedRunId !== nextReplayRequest.runId && activeRunId !== nextReplayRequest.runId) {
-        expectedRunId = nextReplayRequest.runId;
-        activeRunId = null;
-        capturedRunOutput = '';
-        terminalStreamBuffer = '';
-        scheduleRunStartMarkerTimeout(nextReplayRequest.runId);
-      }
-      if (nextReplayRequest.content) {
-        shouldFitBeforeNextVisibleWrite = true;
-        queueTerminalWrite(nextReplayRequest.content, { scrollToBottom: true });
-        flushTerminalWriteBufferNow({
-          afterWrite: () => {
-            if (nextReplayRequest.restorePrompt) {
-              beginPromptRestore(nextReplayRequest.runId);
-            }
-            scheduleViewportSync({ scrollToBottom: true });
-          },
-          forceLayout: true,
-        });
-      } else if (nextReplayRequest.restorePrompt) {
-        beginPromptRestore(nextReplayRequest.runId);
-      }
-      editorStore.queueTerminalReplayOutput(null);
-    },
   );
 
   onBeforeUnmount(() => {
@@ -1373,6 +1122,10 @@ export const useIntegratedTerminal = ({
     sharedStatusListener = null;
     sharedOutputListener = null;
     sharedRunCompleteListener = null;
+    sharedRetryHandler = null;
+    sharedClearScreenHandler = null;
+    sharedInterruptHandler = null;
+    sharedSendCommandHandler = null;
 
     resizeObserver?.disconnect();
     resizeObserver = null;
@@ -1382,8 +1135,12 @@ export const useIntegratedTerminal = ({
     fontLoadingCleanup?.();
 
     dataUnlisten?.();
+    runOutputUnlisten?.();
+    runCompleteUnlisten?.();
     exitUnlisten?.();
     dataUnlisten = null;
+    runOutputUnlisten = null;
+    runCompleteUnlisten = null;
     exitUnlisten = null;
 
     clearLayoutFrame();
@@ -1393,14 +1150,14 @@ export const useIntegratedTerminal = ({
     clearTerminalWriteFrame();
     clearTerminalWriteTimeout();
     clearScrollRecoveryTimeout();
-    clearRunStartMarkerTimeout();
-    clearPromptRestoreTimeout();
 
     resetTerminalRunCapture();
     bufferedTerminalWrite = '';
+    hiddenTerminalWriteBacklog = '';
     pendingTerminalWriteCallbacks.length = 0;
     isTerminalWriteInFlight = false;
     pendingScrollToBottomAfterWrite = false;
+    pendingHiddenScrollToBottom = false;
     shouldFitBeforeNextVisibleWrite = false;
     previousHostSize = { width: 0, height: 0 };
 

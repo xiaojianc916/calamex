@@ -26,8 +26,6 @@ import type {
   IEnsureTerminalSessionRequest,
   IResizeTerminalSessionRequest,
   ITerminalSessionPayload,
-  IWaitTerminalRunPayload,
-  IWaitTerminalRunRequest,
   IWriteTerminalInputRequest,
 } from './terminal';
 
@@ -50,7 +48,6 @@ export interface ITauriService {
   dispatchScriptToTerminal(
     payload: IDispatchTerminalScriptRequest,
   ): Promise<IDispatchTerminalScriptPayload>;
-  waitForTerminalRun(payload: IWaitTerminalRunRequest): Promise<IWaitTerminalRunPayload>;
   writeTerminalInput(payload: IWriteTerminalInputRequest): Promise<void>;
   resizeTerminalSession(payload: IResizeTerminalSessionRequest): Promise<void>;
   closeTerminalSession(payload: ICloseTerminalSessionRequest): Promise<void>;
