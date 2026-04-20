@@ -273,6 +273,8 @@ const startTerminalResize = (event: MouseEvent): void => {
     return;
   }
 
+  terminalResizeCleanup?.();
+
   const startY = event.clientY;
   const startHeight = clampTerminalHeight(props.terminalHeight);
   layoutTransitionsEnabled.value = false;
@@ -285,6 +287,7 @@ const startTerminalResize = (event: MouseEvent): void => {
   const stopResize = (): void => {
     window.removeEventListener('mousemove', handleMouseMove);
     window.removeEventListener('mouseup', stopResize);
+    window.removeEventListener('blur', stopResize);
     if (terminalResizeFrameId !== null) {
       window.cancelAnimationFrame(terminalResizeFrameId);
       flushPendingTerminalResizeHeight();
@@ -296,6 +299,7 @@ const startTerminalResize = (event: MouseEvent): void => {
   terminalResizeCleanup = stopResize;
   window.addEventListener('mousemove', handleMouseMove);
   window.addEventListener('mouseup', stopResize, { once: true });
+  window.addEventListener('blur', stopResize, { once: true });
 };
 
 const startWindowResize = async (direction: TResizeDirection, event: MouseEvent): Promise<void> => {

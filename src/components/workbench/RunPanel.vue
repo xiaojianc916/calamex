@@ -35,7 +35,7 @@ viewBox="0 0 16 16" aria-hidden="true" class="h-4 w-4" fill="none" stroke="curre
           @run-complete="$emit('terminal-run-complete', $event)" />
       </div>
 
-      <div v-show="activeTab === 'logs'" class="workbench-scroll-region h-full overflow-auto px-4 py-3">
+      <div v-if="activeTab === 'logs'" class="workbench-scroll-region h-full overflow-auto px-4 py-3">
         <StructuredRunInsights
 :active="activeTab === 'logs'" :terminal-output-version="props.terminalOutputVersion"
           :resolve-terminal-output="props.resolveTerminalOutput" :run-logs="props.runLogs"

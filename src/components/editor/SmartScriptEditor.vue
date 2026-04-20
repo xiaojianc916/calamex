@@ -1,5 +1,6 @@
 <template>
-  <ScriptEditor ref="innerEditorRef" :model-value="modelValue" :theme="theme" :analysis="analysisState"
+  <ScriptEditor
+ref="innerEditorRef" :model-value="modelValue" :theme="theme" :analysis="analysisState"
     @update:model-value="handleModelValueChange" @cursor-position-change="handleCursorPositionChange"
     @format-request="emit('format-request')" />
 </template>
