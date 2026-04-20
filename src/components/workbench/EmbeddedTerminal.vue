@@ -52,10 +52,11 @@
 import { Skeleton } from '@/components/ui/skeleton';
 import { useIntegratedTerminal } from '@/composables/useIntegratedTerminal';
 import type { TThemeMode } from '@/types/app';
+import type { ITerminalSettings } from '@/types/settings';
 import type {
-  ITerminalRunCompletePayload,
-  ITerminalRunOutputEvent,
-  ITerminalStatusChangePayload,
+    ITerminalRunCompletePayload,
+    ITerminalRunOutputEvent,
+    ITerminalStatusChangePayload,
 } from '@/types/terminal';
 import '@xterm/xterm/css/xterm.css';
 import { computed } from 'vue';
@@ -63,6 +64,7 @@ import { computed } from 'vue';
 const props = defineProps<{
   visible: boolean;
   theme: TThemeMode;
+  terminalSettings: ITerminalSettings;
 }>();
 
 const emit = defineEmits<{
@@ -73,11 +75,13 @@ const emit = defineEmits<{
 
 const visible = computed(() => props.visible);
 const theme = computed(() => props.theme);
+const terminalSettings = computed(() => props.terminalSettings);
 const loadingRows = ['is-w100', 'is-w85', 'is-w70', 'is-w92', 'is-w60'] as const;
 
 const { hostRef, status, statusMessage, retry, focusTerminal } = useIntegratedTerminal({
   visible,
   theme,
+  settings: terminalSettings,
   onStatusChange: (payload) => emit('status-change', payload),
   onOutput: (value) => emit('output', value),
   onRunComplete: (payload) => emit('run-complete', payload),

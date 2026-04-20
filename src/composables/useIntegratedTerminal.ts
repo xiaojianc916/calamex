@@ -1,6 +1,7 @@
 import { tauriService } from '@/services/tauri';
 import { useEditorStore } from '@/store/editor';
 import type { TThemeMode } from '@/types/app';
+import type { ITerminalSettings } from '@/types/settings';
 import type {
   ITerminalDataEvent,
   ITerminalExitEvent,
@@ -36,7 +37,10 @@ const TERMINAL_WEBGL_RECOVERY_DELAY_MS = 180;
 const TERMINAL_LAYOUT_SETTLE_DELAY_MS = 72;
 const TERMINAL_OUTPUT_FLUSH_DELAY_MS = 16;
 const TERMINAL_SCROLL_RECOVERY_DELAY_MS = 64;
-const TERMINAL_SCROLLBACK_LIMIT = 8000;
+const DEFAULT_TERMINAL_FONT_FAMILY =
+  "Berkeley Mono, JetBrains Mono, 'SFMono-Regular', Consolas, 'Courier New', monospace";
+
+type TTerminalBellStyle = 'none' | 'sound' | 'visual';
 
 const createTerminalTheme = (theme: TThemeMode) =>
   theme === 'light'
@@ -113,6 +117,48 @@ const resolveInteger = (
   return Math.min(max, Math.max(min, integer));
 };
 
+const resolveTerminalBellStyle = (
+  bellMode: ITerminalSettings['bellMode'],
+): TTerminalBellStyle => {
+  switch (bellMode) {
+    case 'sound':
+      return 'sound';
+    case 'flash':
+      return 'visual';
+    case 'off':
+    default:
+      return 'none';
+  }
+};
+
+const resolveTerminalFontFamily = (fontFamily: string): string => {
+  const normalizedFontFamily = fontFamily.trim();
+  return normalizedFontFamily.length > 0
+    ? `${normalizedFontFamily}, ${DEFAULT_TERMINAL_FONT_FAMILY}`
+    : DEFAULT_TERMINAL_FONT_FAMILY;
+};
+
+const buildTerminalOptions = (theme: TThemeMode, terminalSettings: ITerminalSettings) => ({
+  allowTransparency: false,
+  bellStyle: resolveTerminalBellStyle(terminalSettings.bellMode),
+  cols: DEFAULT_COLS,
+  convertEol: true,
+  cursorBlink: terminalSettings.cursorBlink,
+  cursorStyle: terminalSettings.cursorStyle,
+  drawBoldTextInBrightColors: true,
+  fastScrollSensitivity: 1,
+  fontFamily: resolveTerminalFontFamily(terminalSettings.fontFamily),
+  fontSize: terminalSettings.fontSize,
+  letterSpacing: 0,
+  lineHeight: Number(terminalSettings.lineHeight),
+  rows: DEFAULT_ROWS,
+  scrollback: terminalSettings.scrollback,
+  scrollOnUserInput: true,
+  scrollSensitivity: 1,
+  smoothScrollDuration: 0,
+  theme: createTerminalTheme(theme),
+});
+
 const isPrintableTerminalInput = (data: string): boolean => {
   if (data.length === 0) {
     return false;
@@ -123,6 +169,7 @@ const isPrintableTerminalInput = (data: string): boolean => {
 };
 
 type TUseIntegratedTerminalOptions = {
+  settings: Ref<ITerminalSettings>;
   visible: Ref<boolean>;
   theme: Ref<TThemeMode>;
   sessionId?: string;
@@ -264,6 +311,7 @@ const didTerminalSizeChange = (cols: number, rows: number): boolean => {
 };
 
 export const useIntegratedTerminal = ({
+  settings,
   visible,
   theme,
   sessionId = DEFAULT_TERMINAL_SESSION_ID,
@@ -663,6 +711,59 @@ export const useIntegratedTerminal = ({
     terminalRef.value?.focus();
   };
 
+  const writeSelectionToClipboard = async (): Promise<void> => {
+    const terminal = terminalRef.value;
+    if (
+      !terminal ||
+      !settings.value.copyOnSelect ||
+      typeof navigator === 'undefined' ||
+      typeof navigator.clipboard?.writeText !== 'function'
+    ) {
+      return;
+    }
+
+    const selection = terminal.getSelection();
+    if (!selection) {
+      return;
+    }
+
+    const nextSelection = settings.value.trimFinalNewlineOnCopy
+      ? selection.replace(/[\r\n]+$/u, '')
+      : selection;
+
+    if (!nextSelection) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(nextSelection);
+    } catch {
+      // ignore clipboard write failures in preview or restricted contexts
+    }
+  };
+
+  const applyTerminalSettings = (): void => {
+    const terminal = terminalRef.value;
+    if (!terminal) {
+      return;
+    }
+
+    const nextOptions = buildTerminalOptions(theme.value, settings.value);
+
+    terminal.options.theme = nextOptions.theme;
+    terminal.options.fontFamily = nextOptions.fontFamily;
+    terminal.options.fontSize = nextOptions.fontSize;
+    terminal.options.lineHeight = nextOptions.lineHeight;
+    terminal.options.cursorBlink = nextOptions.cursorBlink;
+    terminal.options.cursorStyle = nextOptions.cursorStyle;
+    terminal.options.scrollback = nextOptions.scrollback;
+    terminal.options.bellStyle = nextOptions.bellStyle;
+
+    syncTerminalSurfaceTone();
+    scheduleLayoutSync({ settle: true });
+    scheduleViewportSync({ clearTextureAtlas: true, refresh: true });
+  };
+
   const clearTerminalScreen = async (): Promise<void> => {
     terminalRef.value?.clear();
     isAutoFollowEnabled = true;
@@ -971,26 +1072,7 @@ export const useIntegratedTerminal = ({
     }
 
     if (!terminalRef.value) {
-      const terminal = new Terminal({
-        allowTransparency: false,
-        convertEol: true,
-        cursorBlink: false,
-        cursorStyle: 'bar',
-        drawBoldTextInBrightColors: true,
-        fontFamily:
-          "Berkeley Mono, JetBrains Mono, 'SFMono-Regular', Consolas, 'Courier New', monospace",
-        fontSize: 12.5,
-        letterSpacing: 0,
-        lineHeight: 1.46,
-        rows: DEFAULT_ROWS,
-        cols: DEFAULT_COLS,
-        scrollOnUserInput: true,
-        scrollback: TERMINAL_SCROLLBACK_LIMIT,
-        scrollSensitivity: 1,
-        fastScrollSensitivity: 1,
-        smoothScrollDuration: 0,
-        theme: createTerminalTheme(theme.value),
-      });
+      const terminal = new Terminal(buildTerminalOptions(theme.value, settings.value));
       const fitAddon = new FitAddon();
       terminal.loadAddon(fitAddon);
       terminalRef.value = terminal;
@@ -1041,6 +1123,9 @@ export const useIntegratedTerminal = ({
           // 终端在关闭或窗口隐藏时可能触发瞬时 resize，这里忽略即可。
         });
       });
+      terminal.onSelectionChange(() => {
+        void writeSelectionToClipboard();
+      });
     }
 
     attachTerminalToHost();
@@ -1066,16 +1151,14 @@ export const useIntegratedTerminal = ({
   });
 
   watch(
-    () => theme.value,
-    (nextTheme) => {
-      const terminal = terminalRef.value;
-      if (!terminal) {
-        return;
-      }
-      terminal.options.theme = createTerminalTheme(nextTheme);
-      syncTerminalSurfaceTone();
-      scheduleViewportSync({ clearTextureAtlas: true, refresh: true });
+    () => ({
+      settings: settings.value,
+      theme: theme.value,
+    }),
+    () => {
+      applyTerminalSettings();
     },
+    { deep: true },
   );
 
   watch(

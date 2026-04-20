@@ -7,6 +7,10 @@
         {{ isRunning ? '运行中' : '就绪' }}
       </span>
 
+      <span v-if="statusMessage" class="statusbar-segment statusbar-segment-passive statusbar-segment-flash">
+        {{ statusMessage }}
+      </span>
+
       <span v-if="!hasActiveDocument" class="statusbar-segment statusbar-segment-passive">
         未打开文件
       </span>
@@ -68,6 +72,7 @@ const props = defineProps<{
   hasActiveDocument: boolean;
   documentKind: 'text' | 'image';
   isRunning: boolean;
+  statusMessage?: string | null;
   encoding: TDocumentEncoding;
   executor: TExecutorKind;
   cursorLine: number;

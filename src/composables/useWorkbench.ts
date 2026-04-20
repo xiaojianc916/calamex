@@ -51,6 +51,12 @@ const formatShellScriptWithWasm = async (
   return formatShellScript(source, path);
 };
 
+const trimTrailingWhitespace = (content: string): string =>
+  content
+    .split('\n')
+    .map((line) => line.replace(/[\t ]+$/u, ''))
+    .join('\n');
+
 const isTextDocument = (document: IEditorDocument): boolean => document.kind === 'text';
 
 const getPathName = (path: string): string => {
@@ -160,6 +166,65 @@ export const useWorkbench = () => {
       const message = error instanceof Error ? error.message : '刷新 Git 状态失败';
       editorStore.appendLog('error', '刷新 Git 状态失败', message);
     }
+  };
+
+  const buildDefaultScriptContent = (): string => {
+    const normalizedShebang = appStore.settings.editor.defaultShebang.trim() || '#!/usr/bin/env bash';
+    const strictModeBlock = appStore.settings.editor.strictModeByDefault
+      ? 'set -euo pipefail\n\n'
+      : '';
+
+    return `${normalizedShebang}\n\n${strictModeBlock}main() {\n  echo "Hello SH Editor"\n}\n\nmain "$@"\n`;
+  };
+
+  const normalizeDocumentContentForSave = (content: string): string => {
+    let nextContent = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
+    if (appStore.settings.editor.trimTrailingWhitespace) {
+      nextContent = trimTrailingWhitespace(nextContent);
+    }
+
+    if (appStore.settings.editor.insertFinalNewline) {
+      nextContent = nextContent.length > 0 ? nextContent.replace(/[\r\n]*$/u, '\n') : '';
+    } else {
+      nextContent = nextContent.replace(/[\r\n]+$/u, '');
+    }
+
+    return nextContent;
+  };
+
+  const applySaveConventionsToDocument = (documentId: string): IEditorDocument | null => {
+    const targetDocument = editorStore.getDocumentById(documentId);
+    if (!targetDocument || !isTextDocument(targetDocument)) {
+      return null;
+    }
+
+    const normalizedContent = normalizeDocumentContentForSave(targetDocument.content);
+    if (normalizedContent !== targetDocument.content) {
+      editorStore.updateDocumentContent(documentId, normalizedContent);
+    }
+
+    return editorStore.getDocumentById(documentId);
+  };
+
+  const prepareDocumentForSave = async (documentId: string): Promise<IEditorDocument | null> => {
+    const preparedDocument = applySaveConventionsToDocument(documentId);
+    if (!preparedDocument || !isTextDocument(preparedDocument)) {
+      return preparedDocument;
+    }
+
+    if (appStore.settings.editor.formatOnSave) {
+      const formatted = await formatDocumentWithShfmt(documentId, {
+        suppressSuccessMessage: true,
+      });
+      if (!formatted) {
+        return null;
+      }
+
+      return applySaveConventionsToDocument(documentId);
+    }
+
+    return preparedDocument;
   };
 
   const getAppWindow = async () => {
@@ -414,7 +479,9 @@ export const useWorkbench = () => {
   };
 
   const createNewDocument = (): void => {
-    const nextDocument = editorStore.createDocumentTab();
+    const nextDocument = editorStore.createDocumentTab({
+      content: buildDefaultScriptContent(),
+    });
     editorStore.appendLog('info', '新建脚本', `已创建新的脚本草稿：${nextDocument.name}。`);
     useMessage().success('已创建新的脚本草稿');
   };
@@ -485,6 +552,9 @@ export const useWorkbench = () => {
 
   const formatDocumentWithShfmt = async (
     documentId = editorStore.document.id,
+    options?: {
+      suppressSuccessMessage?: boolean;
+    },
   ): Promise<boolean> => {
     const targetDocument = editorStore.getDocumentById(documentId);
     if (!targetDocument) {
@@ -505,16 +575,20 @@ export const useWorkbench = () => {
       const hasChanges = formattedContent !== targetDocument.content;
 
       editorStore.updateDocumentContent(documentId, formattedContent);
-      editorStore.appendLog(
-        'success',
-        'shfmt 格式化',
-        hasChanges
-          ? `已格式化当前文件：${targetDocument.name}。`
-          : `当前文件已符合 shfmt 格式：${targetDocument.name}。`,
-      );
-      useMessage().success(
-        hasChanges ? '已通过 shfmt 格式化当前文件' : '当前文件已符合 shfmt 格式',
-      );
+
+      if (!options?.suppressSuccessMessage) {
+        editorStore.appendLog(
+          'success',
+          'shfmt 格式化',
+          hasChanges
+            ? `已格式化当前文件：${targetDocument.name}。`
+            : `当前文件已符合 shfmt 格式：${targetDocument.name}。`,
+        );
+        useMessage().success(
+          hasChanges ? '已通过 shfmt 格式化当前文件' : '当前文件已符合 shfmt 格式',
+        );
+      }
+
       return true;
     } catch (error) {
       const message = error instanceof Error ? error.message : 'shfmt 格式化失败';
@@ -579,7 +653,7 @@ export const useWorkbench = () => {
   };
 
   const saveDocumentAs = async (documentId = editorStore.document.id): Promise<boolean> => {
-    const targetDocument = editorStore.getDocumentById(documentId);
+    const targetDocument = await prepareDocumentForSave(documentId);
     if (!targetDocument) {
       return false;
     }
@@ -617,7 +691,7 @@ export const useWorkbench = () => {
   };
 
   const saveDocument = async (documentId = editorStore.document.id): Promise<boolean> => {
-    const targetDocument = editorStore.getDocumentById(documentId);
+    const targetDocument = await prepareDocumentForSave(documentId);
     if (!targetDocument) {
       return false;
     }

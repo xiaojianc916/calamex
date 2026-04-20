@@ -1,5 +1,7 @@
 <template>
-  <ScriptEditor ref="innerEditorRef" :model-value="modelValue" :theme="theme" :analysis="analysisState"
+  <ScriptEditor
+ref="innerEditorRef" :model-value="modelValue" :theme="theme" :analysis="analysisState"
+    :editor-settings="editorSettings"
     :git-baseline="gitBaseline" @update:model-value="handleModelValueChange"
     @cursor-position-change="handleCursorPositionChange" @format-request="emit('format-request')" />
 </template>
@@ -11,6 +13,7 @@ import { useGitStore } from '@/store/git';
 import type { TThemeMode } from '@/types/app';
 import type { IAnalyzeScriptPayload } from '@/types/editor';
 import type { IGitFileBaselinePayload } from '@/types/git';
+import type { IEditorSettings } from '@/types/settings';
 import { waitForDesktopRuntime } from '@/utils/desktop-runtime';
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
@@ -21,6 +24,7 @@ interface IEditorExpose {
   focusEditor: () => void;
   insertSnippet: (snippet: string) => void;
   revealPosition: (line: number, column: number) => void;
+  rerunDiagnostics: () => void;
 }
 
 const props = withDefaults(
@@ -30,6 +34,7 @@ const props = withDefaults(
     documentName?: string;
     modelValue?: string;
     theme?: TThemeMode;
+    editorSettings: IEditorSettings;
   }>(),
   {
     documentPath: null,
@@ -209,6 +214,12 @@ const scheduleAnalysis = (delayMs = ANALYSIS_TYPING_DELAY_MS): void => {
   }, delayMs);
 };
 
+const rerunDiagnostics = (): void => {
+  clearPendingAnalysisTimer();
+  latestAnalysisRequestId += 1;
+  void drainAnalysisQueue();
+};
+
 onMounted(() => {
   isUnmounted = false;
   scheduleAnalysis(ANALYSIS_INITIAL_DELAY_MS);
@@ -270,5 +281,6 @@ defineExpose<IEditorExpose>({
   focusEditor,
   insertSnippet,
   revealPosition,
+  rerunDiagnostics,
 });
 </script>

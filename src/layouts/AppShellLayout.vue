@@ -13,7 +13,7 @@ v-for="handle in resizeHandles" :key="handle.direction" class="window-resize-han
       <slot name="titlebar" />
 
       <div
-class="grid min-h-0 flex-1 overflow-hidden"
+class="relative grid min-h-0 flex-1 overflow-hidden"
         :class="layoutTransitionsEnabled ? layoutGridTransitionClass : 'transition-none'" :style="shellGridStyle">
         <div class="border-r border-(--shell-divider) bg-(--activity-bg)">
           <slot name="activity" />
@@ -60,6 +60,14 @@ class="app-shell-pane min-h-0 overflow-hidden bg-(--panel-bg)" :class="[
           </main>
           <slot name="statusbar" />
         </div>
+
+        <div
+v-if="props.contentOverlayVisible" class="pointer-events-none absolute inset-y-0 right-0 z-35"
+          :style="contentOverlayStyle">
+          <div class="pointer-events-auto h-full min-h-0">
+            <slot name="overlay" />
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -81,6 +89,8 @@ type TResizeDirection =
 const TERMINAL_MIN_HEIGHT = 140;
 const EDITOR_MIN_HEIGHT = 220;
 const SPLITTER_HEIGHT = 0;
+const ACTIVITY_RAIL_WIDTH = 52;
+const STATUSBAR_HEIGHT = 28;
 
 const props = withDefaults(
   defineProps<{
@@ -89,6 +99,7 @@ const props = withDefaults(
     terminalVisible?: boolean;
     terminalHeight?: number;
     sidebarWidth?: number;
+    contentOverlayVisible?: boolean;
   }>(),
   {
     isDesktopRuntime: false,
@@ -96,6 +107,7 @@ const props = withDefaults(
     terminalVisible: true,
     terminalHeight: 236,
     sidebarWidth: 240,
+    contentOverlayVisible: false,
   },
 );
 
@@ -159,6 +171,11 @@ const mainGridStyle = computed(() => {
 
 const shellGridStyle = computed(() => ({
   gridTemplateColumns: `52px ${props.sidebarVisible ? props.sidebarWidth : 0}px minmax(0, 1fr)`,
+}));
+
+const contentOverlayStyle = computed(() => ({
+  left: `${ACTIVITY_RAIL_WIDTH}px`,
+  bottom: `${STATUSBAR_HEIGHT}px`,
 }));
 
 const layoutGridTransitionClass =

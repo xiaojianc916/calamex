@@ -108,6 +108,7 @@
         <EmbeddedTerminal
           :visible="props.visible && activeTab === 'terminal'"
           :theme="props.theme"
+          :terminal-settings="props.terminalSettings"
           @status-change="handleTerminalStatusChange"
           @output="$emit('terminal-output', $event)"
           @run-complete="$emit('terminal-run-complete', $event)"
@@ -143,10 +144,11 @@ import { useIntegratedTerminalControls } from '@/composables/useIntegratedTermin
 import { useMessage } from '@/composables/useMessage';
 import type { TThemeMode } from '@/types/app';
 import type { IRunLogEntry, IRunResult, TExecutorKind } from '@/types/editor';
+import type { ITerminalSettings } from '@/types/settings';
 import type {
-  ITerminalRunCompletePayload,
-  ITerminalRunOutputEvent,
-  ITerminalStatusChangePayload,
+    ITerminalRunCompletePayload,
+    ITerminalRunOutputEvent,
+    ITerminalStatusChangePayload,
 } from '@/types/terminal';
 import { computed, ref, watch } from 'vue';
 
@@ -162,6 +164,7 @@ const props = defineProps<{
   documentPath: string | null;
   workspaceRootPath: string | null;
   theme: TThemeMode;
+  terminalSettings: ITerminalSettings;
   visible: boolean;
   isMaximized: boolean;
 }>();

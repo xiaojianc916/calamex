@@ -1,14 +1,49 @@
 export type TGitLineChangeType = 'added' | 'modified' | 'deleted';
 
+export type TGitDiffPreviewLineType = 'context' | 'added' | 'deleted';
+
 export interface IGitLineChange {
   type: TGitLineChangeType;
   startLine: number;
   endLine: number;
 }
 
+export interface IGitDiffPreviewLine {
+  key: string;
+  type: TGitDiffPreviewLineType;
+  content: string;
+  oldLineNumber: number | null;
+  newLineNumber: number | null;
+  displayLineNumber: number | null;
+}
+
+export interface IGitDiffPreviewHunk {
+  key: string;
+  header: string;
+  oldStart: number;
+  oldLineCount: number;
+  newStart: number;
+  newLineCount: number;
+  lines: IGitDiffPreviewLine[];
+}
+
+export interface IGitDiffPreview {
+  hunks: IGitDiffPreviewHunk[];
+  addedLineCount: number;
+  deletedLineCount: number;
+}
+
 type TDiffOperation = 'equal' | 'insert' | 'delete';
 
+interface IDiffOperationRecord {
+  type: TDiffOperation;
+  content: string;
+  oldLineNumber: number | null;
+  newLineNumber: number | null;
+}
+
 const MAX_DIFF_MATRIX_CELLS = 1_200_000;
+const DEFAULT_DIFF_PREVIEW_CONTEXT_LINES = 3;
 
 const splitLines = (content: string): string[] => (content.length === 0 ? [] : content.split('\n'));
 
@@ -120,6 +155,268 @@ const buildDiffOperations = (
   }
 
   return operations;
+};
+
+const appendOperationRecord = (
+  operations: IDiffOperationRecord[],
+  type: TDiffOperation,
+  content: string,
+  oldLineNumber: number | null,
+  newLineNumber: number | null,
+): void => {
+  operations.push({
+    type,
+    content,
+    oldLineNumber,
+    newLineNumber,
+  });
+};
+
+const buildDiffOperationRecords = (
+  baselineLines: string[],
+  currentLines: string[],
+): IDiffOperationRecord[] => {
+  const operations: IDiffOperationRecord[] = [];
+
+  if (baselineLines.length === 0) {
+    currentLines.forEach((content, index) => {
+      appendOperationRecord(operations, 'insert', content, null, index + 1);
+    });
+    return operations;
+  }
+
+  if (currentLines.length === 0) {
+    baselineLines.forEach((content, index) => {
+      appendOperationRecord(operations, 'delete', content, index + 1, null);
+    });
+    return operations;
+  }
+
+  let prefixLineCount = 0;
+  while (
+    prefixLineCount < baselineLines.length &&
+    prefixLineCount < currentLines.length &&
+    baselineLines[prefixLineCount] === currentLines[prefixLineCount]
+  ) {
+    appendOperationRecord(
+      operations,
+      'equal',
+      baselineLines[prefixLineCount],
+      prefixLineCount + 1,
+      prefixLineCount + 1,
+    );
+    prefixLineCount += 1;
+  }
+
+  let baselineSuffixIndex = baselineLines.length - 1;
+  let currentSuffixIndex = currentLines.length - 1;
+
+  while (
+    baselineSuffixIndex >= prefixLineCount &&
+    currentSuffixIndex >= prefixLineCount &&
+    baselineLines[baselineSuffixIndex] === currentLines[currentSuffixIndex]
+  ) {
+    baselineSuffixIndex -= 1;
+    currentSuffixIndex -= 1;
+  }
+
+  const middleBaselineLines = baselineLines.slice(prefixLineCount, baselineSuffixIndex + 1);
+  const middleCurrentLines = currentLines.slice(prefixLineCount, currentSuffixIndex + 1);
+
+  if (middleBaselineLines.length === 0) {
+    middleCurrentLines.forEach((content, index) => {
+      appendOperationRecord(operations, 'insert', content, null, prefixLineCount + index + 1);
+    });
+  } else if (middleCurrentLines.length === 0) {
+    middleBaselineLines.forEach((content, index) => {
+      appendOperationRecord(operations, 'delete', content, prefixLineCount + index + 1, null);
+    });
+  } else if (middleBaselineLines.length * middleCurrentLines.length > MAX_DIFF_MATRIX_CELLS) {
+    middleBaselineLines.forEach((content, index) => {
+      appendOperationRecord(operations, 'delete', content, prefixLineCount + index + 1, null);
+    });
+    middleCurrentLines.forEach((content, index) => {
+      appendOperationRecord(operations, 'insert', content, null, prefixLineCount + index + 1);
+    });
+  } else {
+    const matrix = buildLcsMatrix(middleBaselineLines, middleCurrentLines);
+    const middleOperations = buildDiffOperations(middleBaselineLines, middleCurrentLines, matrix);
+
+    let baselineIndex = 0;
+    let currentIndex = 0;
+
+    for (const operation of middleOperations) {
+      if (operation === 'equal') {
+        appendOperationRecord(
+          operations,
+          'equal',
+          middleBaselineLines[baselineIndex],
+          prefixLineCount + baselineIndex + 1,
+          prefixLineCount + currentIndex + 1,
+        );
+        baselineIndex += 1;
+        currentIndex += 1;
+        continue;
+      }
+
+      if (operation === 'insert') {
+        appendOperationRecord(
+          operations,
+          'insert',
+          middleCurrentLines[currentIndex],
+          null,
+          prefixLineCount + currentIndex + 1,
+        );
+        currentIndex += 1;
+        continue;
+      }
+
+      appendOperationRecord(
+        operations,
+        'delete',
+        middleBaselineLines[baselineIndex],
+        prefixLineCount + baselineIndex + 1,
+        null,
+      );
+      baselineIndex += 1;
+    }
+  }
+
+  const suffixStart = baselineSuffixIndex + 1;
+  for (let index = suffixStart; index < baselineLines.length; index += 1) {
+    const newLineNumber = currentSuffixIndex + 1 + (index - suffixStart) + 1;
+    appendOperationRecord(operations, 'equal', baselineLines[index], index + 1, newLineNumber);
+  }
+
+  return operations;
+};
+
+const buildLineCountPrefix = (
+  operations: IDiffOperationRecord[],
+  predicate: (operation: IDiffOperationRecord) => boolean,
+): number[] => {
+  const prefix = new Array<number>(operations.length + 1);
+  prefix[0] = 0;
+
+  for (let index = 0; index < operations.length; index += 1) {
+    prefix[index + 1] = prefix[index] + (predicate(operations[index]) ? 1 : 0);
+  }
+
+  return prefix;
+};
+
+const formatUnifiedRange = (start: number, lineCount: number): string => {
+  if (lineCount === 0) {
+    return `${start},0`;
+  }
+
+  if (lineCount === 1) {
+    return `${start}`;
+  }
+
+  return `${start},${lineCount}`;
+};
+
+const buildDiffPreviewHunk = (
+  operations: IDiffOperationRecord[],
+  oldLinePrefix: number[],
+  newLinePrefix: number[],
+  firstChangeIndex: number,
+  lastChangeIndex: number,
+  contextLineCount: number,
+): IGitDiffPreviewHunk => {
+  const hunkStartIndex = Math.max(0, firstChangeIndex - contextLineCount);
+  const hunkEndIndex = Math.min(operations.length - 1, lastChangeIndex + contextLineCount);
+  const hunkOperations = operations.slice(hunkStartIndex, hunkEndIndex + 1);
+
+  const oldLineCount = oldLinePrefix[hunkEndIndex + 1] - oldLinePrefix[hunkStartIndex];
+  const newLineCount = newLinePrefix[hunkEndIndex + 1] - newLinePrefix[hunkStartIndex];
+  const oldStart = oldLineCount > 0 ? oldLinePrefix[hunkStartIndex] + 1 : oldLinePrefix[hunkStartIndex];
+  const newStart = newLineCount > 0 ? newLinePrefix[hunkStartIndex] + 1 : newLinePrefix[hunkStartIndex];
+
+  return {
+    key: `${oldStart}:${newStart}:${oldLineCount}:${newLineCount}`,
+    header: `@@ -${formatUnifiedRange(oldStart, oldLineCount)} +${formatUnifiedRange(newStart, newLineCount)} @@`,
+    oldStart,
+    oldLineCount,
+    newStart,
+    newLineCount,
+    lines: hunkOperations.map((operation, index) => ({
+      key: `${hunkStartIndex + index}:${operation.type}:${operation.oldLineNumber ?? 'none'}:${operation.newLineNumber ?? 'none'}`,
+      type:
+        operation.type === 'equal'
+          ? 'context'
+          : operation.type === 'insert'
+            ? 'added'
+            : 'deleted',
+      content: operation.content,
+      oldLineNumber: operation.oldLineNumber,
+      newLineNumber: operation.newLineNumber,
+      displayLineNumber:
+        operation.type === 'delete'
+          ? operation.oldLineNumber
+          : operation.newLineNumber ?? operation.oldLineNumber,
+    })),
+  };
+};
+
+const buildDiffPreviewHunks = (
+  operations: IDiffOperationRecord[],
+  contextLineCount: number,
+): IGitDiffPreviewHunk[] => {
+  const changeIndices = operations.reduce<number[]>((indices, operation, index) => {
+    if (operation.type !== 'equal') {
+      indices.push(index);
+    }
+    return indices;
+  }, []);
+
+  if (changeIndices.length === 0) {
+    return [];
+  }
+
+  const oldLinePrefix = buildLineCountPrefix(operations, (operation) => operation.type !== 'insert');
+  const newLinePrefix = buildLineCountPrefix(operations, (operation) => operation.type !== 'delete');
+  const hunks: IGitDiffPreviewHunk[] = [];
+
+  let firstChangeIndex = changeIndices[0];
+  let lastChangeIndex = changeIndices[0];
+
+  for (let index = 1; index < changeIndices.length; index += 1) {
+    const nextChangeIndex = changeIndices[index];
+    const gapLineCount = nextChangeIndex - lastChangeIndex - 1;
+
+    if (gapLineCount <= contextLineCount * 2) {
+      lastChangeIndex = nextChangeIndex;
+      continue;
+    }
+
+    hunks.push(
+      buildDiffPreviewHunk(
+        operations,
+        oldLinePrefix,
+        newLinePrefix,
+        firstChangeIndex,
+        lastChangeIndex,
+        contextLineCount,
+      ),
+    );
+    firstChangeIndex = nextChangeIndex;
+    lastChangeIndex = nextChangeIndex;
+  }
+
+  hunks.push(
+    buildDiffPreviewHunk(
+      operations,
+      oldLinePrefix,
+      newLinePrefix,
+      firstChangeIndex,
+      lastChangeIndex,
+      contextLineCount,
+    ),
+  );
+
+  return hunks;
 };
 
 const buildChangesFromOperations = (
@@ -259,4 +556,26 @@ export const computeGitLineChanges = (
   const operations = buildDiffOperations(middleBaselineLines, middleCurrentLines, matrix);
 
   return buildChangesFromOperations(operations, prefixLineCount, currentLines.length);
+};
+
+export const buildGitDiffPreview = (
+  baselineContent: string,
+  currentContent: string,
+  contextLineCount = DEFAULT_DIFF_PREVIEW_CONTEXT_LINES,
+): IGitDiffPreview => {
+  if (baselineContent === currentContent) {
+    return {
+      hunks: [],
+      addedLineCount: 0,
+      deletedLineCount: 0,
+    };
+  }
+
+  const operations = buildDiffOperationRecords(splitLines(baselineContent), splitLines(currentContent));
+
+  return {
+    hunks: buildDiffPreviewHunks(operations, contextLineCount),
+    addedLineCount: operations.filter((operation) => operation.type === 'insert').length,
+    deletedLineCount: operations.filter((operation) => operation.type === 'delete').length,
+  };
 };

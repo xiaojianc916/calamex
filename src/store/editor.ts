@@ -300,8 +300,8 @@ export const useEditorStore = defineStore('editor', () => {
     cursorColumn.value = 1;
   };
 
-  const createDocumentTab = (): IEditorDocument => {
-    const nextDocument = createDocument(documents.value);
+  const createDocumentTab = (overrides: Partial<IEditorDocument> = {}): IEditorDocument => {
+    const nextDocument = createDocument(documents.value, overrides);
     documents.value.push(nextDocument);
     setActiveDocument(nextDocument.id);
     return nextDocument;

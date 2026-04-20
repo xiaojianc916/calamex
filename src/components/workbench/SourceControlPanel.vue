@@ -165,7 +165,7 @@
               v-for="entry in section.entries"
               :key="`${section.key}:${entry.path}`"
               class="source-control-file"
-              :class="{ 'is-active': isActivePath(entry.path) }"
+              :class="{ 'is-active': isActivePath(entry.path) || isSelectedDiffPath(entry.path) }"
             >
               <button type="button" class="source-control-file-main" @click="handleOpenFile(entry.path)">
                 <span
@@ -209,6 +209,18 @@
           </div>
         </section>
       </div>
+
+      <GitDiffPreview
+        :entry="selectedDiffEntry"
+        :section-title="selectedDiffSectionTitle"
+        :status-tag="selectedDiffTag"
+        :status-tone="selectedDiffTone"
+        :baseline-content="selectedDiffBaselineContent"
+        :current-content="selectedDiffCurrentContent"
+        :is-loading="isDiffPreviewLoading"
+        :error-message="diffPreviewErrorMessage"
+        @open-file="handleOpenFile"
+      />
 
       <footer class="source-control-commit">
         <textarea
@@ -255,7 +267,9 @@
 </template>
 
 <script setup lang="ts">
+import GitDiffPreview from '@/components/workbench/GitDiffPreview.vue';
 import { useMessage } from '@/composables/useMessage';
+import { tauriService } from '@/services/tauri';
 import { useGitStore } from '@/store/git';
 import type { IGitFileStatusPayload, TGitChangeKind } from '@/types/git';
 import { computed, reactive, ref, watch } from 'vue';
@@ -284,10 +298,17 @@ interface IGitNavItem {
   active: boolean;
 }
 
+interface ISelectedDiffRecord {
+  sectionKey: TGitSectionKey;
+  sectionTitle: string;
+  entry: IGitFileStatusPayload;
+}
+
 const props = defineProps<{
   isDesktopRuntime: boolean;
   workspaceRootPath: string | null;
   activePath: string | null;
+  activeContent: string | null;
 }>();
 
 const emit = defineEmits<{
@@ -300,12 +321,19 @@ const commitMessage = ref('');
 const searchQuery = ref('');
 const pendingAction = ref<string | null>(null);
 const lastSyncedAt = ref<number | null>(null);
+const selectedDiffPath = ref<string | null>(null);
+const selectedDiffBaselineContent = ref<string | null>(null);
+const selectedDiffCurrentContent = ref<string | null>(null);
+const diffPreviewErrorMessage = ref<string | null>(null);
+const isDiffPreviewLoading = ref(false);
 const collapsedSections = reactive<Record<TGitSectionKey, boolean>>({
   conflicts: false,
   staged: false,
   changes: false,
   untracked: false,
 });
+
+let diffPreviewRequestId = 0;
 
 const status = computed(() => gitStore.status);
 const isLoading = computed(() => gitStore.isLoading);
@@ -333,6 +361,13 @@ const normalizePath = (value: string | null | undefined): string => {
 
 const getErrorMessage = (error: unknown, fallback: string): string =>
   error instanceof Error ? error.message : fallback;
+
+const clearDiffPreview = (): void => {
+  selectedDiffBaselineContent.value = null;
+  selectedDiffCurrentContent.value = null;
+  diffPreviewErrorMessage.value = null;
+  isDiffPreviewLoading.value = false;
+};
 
 const resetSectionCollapse = (): void => {
   collapsedSections.conflicts = false;
@@ -464,6 +499,67 @@ const filteredSections = computed<IGitSection[]>(() => {
       };
     })
     .filter((section) => section.entries.length > 0);
+});
+
+const visibleDiffEntries = computed<ISelectedDiffRecord[]>(() =>
+  filteredSections.value.flatMap((section) =>
+    section.entries.map((entry) => ({
+      sectionKey: section.key,
+      sectionTitle: section.title,
+      entry,
+    })),
+  ),
+);
+
+const visibleDiffEntryPaths = computed(() =>
+  visibleDiffEntries.value.map((record) => normalizePath(record.entry.path)).join('|'),
+);
+
+const selectedDiffRecord = computed<ISelectedDiffRecord | null>(() => {
+  const targetPath = normalizePath(selectedDiffPath.value);
+  if (!targetPath) {
+    return null;
+  }
+
+  return (
+    visibleDiffEntries.value.find((record) => normalizePath(record.entry.path) === targetPath) ?? null
+  );
+});
+
+const selectedDiffDescriptor = computed(() => {
+  const record = selectedDiffRecord.value;
+  if (!record) {
+    return '';
+  }
+
+  return [
+    record.sectionKey,
+    normalizePath(record.entry.path),
+    record.entry.indexStatus ?? '',
+    record.entry.worktreeStatus ?? '',
+    record.entry.isConflicted ? '1' : '0',
+    record.entry.isUntracked ? '1' : '0',
+  ].join('|');
+});
+
+const selectedDiffEntry = computed(() => selectedDiffRecord.value?.entry ?? null);
+const selectedDiffSectionTitle = computed(() => selectedDiffRecord.value?.sectionTitle ?? '');
+const selectedDiffTag = computed(() => {
+  const record = selectedDiffRecord.value;
+  if (!record) {
+    return 'M';
+  }
+
+  return resolveEntryTag(record.sectionKey, record.entry);
+});
+
+const selectedDiffTone = computed(() => {
+  const record = selectedDiffRecord.value;
+  if (!record) {
+    return 'modified';
+  }
+
+  return resolveEntryTagTone(record.sectionKey, record.entry);
 });
 
 const hasVisibleChanges = computed(() => filteredSections.value.some((section) => section.entries.length > 0));
@@ -705,6 +801,108 @@ const resolveEntryActions = (
 };
 
 const isActivePath = (path: string): boolean => normalizePath(path) === normalizePath(props.activePath);
+const isSelectedDiffPath = (path: string): boolean =>
+  normalizePath(path) === normalizePath(selectedDiffPath.value);
+
+const syncSelectedDiffPath = (): void => {
+  const entries = visibleDiffEntries.value;
+  if (entries.length === 0) {
+    selectedDiffPath.value = null;
+    return;
+  }
+
+  const normalizedSelectedPath = normalizePath(selectedDiffPath.value);
+  if (normalizedSelectedPath) {
+    const existingSelection = entries.some(
+      (record) => normalizePath(record.entry.path) === normalizedSelectedPath,
+    );
+    if (existingSelection) {
+      return;
+    }
+  }
+
+  const normalizedActivePath = normalizePath(props.activePath);
+  const activeEntry = normalizedActivePath
+    ? entries.find((record) => normalizePath(record.entry.path) === normalizedActivePath)
+    : null;
+
+  selectedDiffPath.value = activeEntry?.entry.path ?? entries[0].entry.path;
+};
+
+const loadDiffPreview = async (requestId: number): Promise<void> => {
+  const selectedRecord = selectedDiffRecord.value;
+  if (!selectedRecord) {
+    clearDiffPreview();
+    return;
+  }
+
+  const { entry, sectionKey } = selectedRecord;
+  const changeKind = resolveEntryKind(sectionKey, entry);
+
+  isDiffPreviewLoading.value = true;
+  diffPreviewErrorMessage.value = null;
+  selectedDiffBaselineContent.value = null;
+  selectedDiffCurrentContent.value = null;
+
+  try {
+    const baselinePayload = await gitStore.getFileBaseline(entry.path);
+    if (requestId !== diffPreviewRequestId) {
+      return;
+    }
+
+    if (!baselinePayload.available) {
+      throw new Error(baselinePayload.message ?? '当前文件的 Git 基线不可用。');
+    }
+
+    if (baselinePayload.isTracked && baselinePayload.content === null) {
+      throw new Error(baselinePayload.message ?? '当前文件不是可直接比较的文本内容。');
+    }
+
+    let currentContent = '';
+    const isActiveTextDocument =
+      normalizePath(entry.path) === normalizePath(props.activePath) && props.activeContent !== null;
+
+    if (changeKind === 'deleted') {
+      currentContent = '';
+    } else if (isActiveTextDocument) {
+      currentContent = props.activeContent ?? '';
+    } else {
+      const payload = await tauriService.loadScript(entry.path);
+      if (requestId !== diffPreviewRequestId) {
+        return;
+      }
+
+      currentContent = payload.content;
+    }
+
+    if (requestId !== diffPreviewRequestId) {
+      return;
+    }
+
+    selectedDiffBaselineContent.value = baselinePayload.isTracked
+      ? (baselinePayload.content ?? '')
+      : '';
+    selectedDiffCurrentContent.value = currentContent;
+    diffPreviewErrorMessage.value = null;
+  } catch (error) {
+    if (requestId !== diffPreviewRequestId) {
+      return;
+    }
+
+    selectedDiffBaselineContent.value = null;
+    selectedDiffCurrentContent.value = null;
+    diffPreviewErrorMessage.value = getErrorMessage(error, '读取 Git diff 预览失败');
+  } finally {
+    if (requestId === diffPreviewRequestId) {
+      isDiffPreviewLoading.value = false;
+    }
+  }
+};
+
+const scheduleDiffPreviewLoad = (): void => {
+  diffPreviewRequestId += 1;
+  void loadDiffPreview(diffPreviewRequestId);
+};
 
 const toggleSectionCollapse = (key: TGitSectionKey): void => {
   collapsedSections[key] = !collapsedSections[key];
@@ -722,6 +920,7 @@ const handleRefresh = async (showSuccessMessage = false): Promise<void> => {
 };
 
 const handleOpenFile = (path: string): void => {
+  selectedDiffPath.value = path;
   emit('open-file', path);
 };
 
@@ -823,7 +1022,37 @@ watch(
     commitMessage.value = '';
     searchQuery.value = '';
     lastSyncedAt.value = null;
+    selectedDiffPath.value = null;
+    diffPreviewRequestId += 1;
+    clearDiffPreview();
     resetSectionCollapse();
+  },
+);
+
+watch(
+  () => [visibleDiffEntryPaths.value, props.activePath],
+  () => {
+    syncSelectedDiffPath();
+  },
+  { immediate: true },
+);
+
+watch(
+  () => [selectedDiffDescriptor.value, gitStore.baselineEpoch],
+  () => {
+    scheduleDiffPreviewLoad();
+  },
+  { immediate: true },
+);
+
+watch(
+  () => [props.activePath, props.activeContent],
+  () => {
+    if (normalizePath(selectedDiffPath.value) !== normalizePath(props.activePath)) {
+      return;
+    }
+
+    scheduleDiffPreviewLoad();
   },
 );
 
@@ -833,6 +1062,8 @@ watch(
     if (!ready || !workspaceRootPath) {
       gitStore.reset();
       lastSyncedAt.value = null;
+      diffPreviewRequestId += 1;
+      clearDiffPreview();
       return;
     }
 

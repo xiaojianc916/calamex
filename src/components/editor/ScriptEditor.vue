@@ -8,6 +8,7 @@
 import type { TThemeMode } from '@/types/app';
 import type { IAnalyzeScriptPayload, TScriptDiagnosticSeverity } from '@/types/editor';
 import type { IGitFileBaselinePayload } from '@/types/git';
+import type { IEditorSettings } from '@/types/settings';
 import { computeGitLineChanges } from '@/utils/git-diff';
 import { applyMonacoTheme, monaco } from '@/utils/monaco';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
@@ -31,6 +32,7 @@ const props = withDefaults(
     theme?: TThemeMode;
     analysis?: IAnalyzeScriptPayload;
     gitBaseline?: IGitFileBaselinePayload | null;
+    editorSettings: IEditorSettings;
   }>(),
   {
     modelValue: '',
@@ -48,6 +50,77 @@ const emit = defineEmits<{
 
 const containerRef = ref<HTMLElement | null>(null);
 const analysisState = computed(() => props.analysis ?? createEmptyAnalysis());
+
+const DEFAULT_EDITOR_FONT_FAMILY =
+  "Berkeley Mono, JetBrains Mono, Consolas, 'Courier New', monospace";
+
+const resolveEditorFontFamily = (fontFamily: string): string => {
+  const normalizedFontFamily = fontFamily.trim();
+  return normalizedFontFamily.length > 0
+    ? `${normalizedFontFamily}, ${DEFAULT_EDITOR_FONT_FAMILY}`
+    : DEFAULT_EDITOR_FONT_FAMILY;
+};
+
+const resolveEditorLineHeight = (
+  fontSize: number,
+  lineHeight: IEditorSettings['lineHeight'],
+): number => Math.max(fontSize + 4, Math.round(fontSize * Number(lineHeight)));
+
+const resolveEditorWhitespace = (
+  whitespace: IEditorSettings['whitespace'],
+): 'all' | 'none' | 'selection' => {
+  switch (whitespace) {
+    case 'always':
+      return 'all';
+    case 'selection':
+      return 'selection';
+    case 'never':
+    default:
+      return 'none';
+  }
+};
+
+const resolveWordWrap = (wordWrap: IEditorSettings['wordWrap']): 'off' | 'on' =>
+  wordWrap === 'viewport' ? 'on' : 'off';
+
+const resolveLineNumbers = (enabled: boolean): 'off' | 'on' => (enabled ? 'on' : 'off');
+
+const resolveInsertSpaces = (indentation: IEditorSettings['indentation']): boolean =>
+  indentation === 'spaces';
+
+const resolveQuickSuggestions = (
+  enabled: boolean,
+): false | { comments: false; other: true; strings: true } =>
+  enabled
+    ? {
+      other: true,
+      comments: false,
+      strings: true,
+    }
+    : false;
+
+const resolveAutoClosingStrategy = (
+  enabled: boolean,
+): 'languageDefined' | 'never' => (enabled ? 'languageDefined' : 'never');
+
+const resolveEditorRuntimeOptions = (editorSettings: IEditorSettings) => ({
+  minimap: { enabled: editorSettings.minimap },
+  lineNumbers: resolveLineNumbers(editorSettings.lineNumbers),
+  fontSize: editorSettings.fontSize,
+  fontFamily: resolveEditorFontFamily(editorSettings.fontFamily),
+  fontLigatures: editorSettings.fontLigatures,
+  lineHeight: resolveEditorLineHeight(editorSettings.fontSize, editorSettings.lineHeight),
+  wordWrap: resolveWordWrap(editorSettings.wordWrap),
+  renderWhitespace: resolveEditorWhitespace(editorSettings.whitespace),
+  quickSuggestions: resolveQuickSuggestions(editorSettings.commandCompletion),
+  quickSuggestionsDelay: editorSettings.suggestionDelay,
+  suggestOnTriggerCharacters: editorSettings.commandCompletion,
+  autoClosingBrackets: resolveAutoClosingStrategy(editorSettings.autoClosingPairs),
+  autoClosingQuotes: resolveAutoClosingStrategy(editorSettings.autoClosingPairs),
+  guides: {
+    indentation: editorSettings.indentGuides,
+  },
+});
 
 let editorInstance: monaco.editor.IStandaloneCodeEditor | null = null;
 let suppressModelValueEmit = false;
@@ -214,6 +287,35 @@ const scheduleShellCompletionRegistration = (): void => {
   }, 0);
 };
 
+const applyEditorSettings = (): void => {
+  const editor = editorInstance;
+  const model = editor?.getModel();
+
+  if (!editor || !model) {
+    return;
+  }
+
+  const { editorSettings } = props;
+
+  editor.updateOptions(resolveEditorRuntimeOptions(editorSettings));
+
+  model.updateOptions({
+    trimAutoWhitespace: editorSettings.trimTrailingWhitespace,
+  });
+
+  if (editorSettings.detectIndentation) {
+    model.detectIndentation(resolveInsertSpaces(editorSettings.indentation), editorSettings.tabSize);
+  } else {
+    model.updateOptions({
+      insertSpaces: resolveInsertSpaces(editorSettings.indentation),
+      tabSize: editorSettings.tabSize,
+      trimAutoWhitespace: editorSettings.trimTrailingWhitespace,
+    });
+  }
+
+  scheduleEditorLayout();
+};
+
 const createEditor = (): void => {
   if (!containerRef.value) {
     return;
@@ -225,32 +327,15 @@ const createEditor = (): void => {
     value: props.modelValue,
     language: 'shell',
     automaticLayout: false,
-    minimap: { enabled: false },
-    lineNumbers: 'on',
     lineDecorationsWidth: 16,
     lineNumbersMinChars: 3,
-    fontSize: 13,
     fontWeight: '400',
-    fontFamily: "Berkeley Mono, JetBrains Mono, Consolas, 'Courier New', monospace",
     padding: {
       top: 18,
       bottom: 24,
     },
     roundedSelection: false,
     scrollBeyondLastLine: false,
-    wordWrap: 'on',
-    tabSize: 2,
-    insertSpaces: true,
-    guides: {
-      indentation: true,
-    },
-    renderWhitespace: 'selection',
-    quickSuggestions: {
-      other: true,
-      comments: false,
-      strings: true,
-    },
-    suggestOnTriggerCharacters: true,
     autoIndent: 'advanced',
     folding: true,
     foldingStrategy: 'auto',
@@ -265,7 +350,10 @@ const createEditor = (): void => {
       horizontalScrollbarSize: 10,
       useShadows: false,
     },
+    ...resolveEditorRuntimeOptions(props.editorSettings),
   });
+
+  applyEditorSettings();
 
   editorInstance.addAction({
     id: 'sh-editor.format-with-shfmt',
@@ -342,6 +430,14 @@ watch(
   () => props.gitBaseline,
   () => {
     syncGitDecorations();
+  },
+  { deep: true },
+);
+
+watch(
+  () => props.editorSettings,
+  () => {
+    applyEditorSettings();
   },
   { deep: true },
 );

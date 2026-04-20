@@ -13,6 +13,7 @@
       :is-desktop-runtime="isDesktopRuntime"
       :workspace-root-path="workspaceRootPath"
       :active-path="document.path"
+      :active-content="document.kind === 'text' ? document.content : null"
       @open-file="handleOpenFile"
     />
 
