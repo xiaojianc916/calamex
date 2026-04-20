@@ -12,7 +12,10 @@ use std::{
     io::{Read, Write},
     path::{Path, PathBuf},
     process::{Command as StdCommand, Stdio},
-    sync::{Arc, Mutex, OnceLock},
+    sync::{
+        atomic::{AtomicU64, Ordering as AtomicOrdering},
+        Arc, Mutex, OnceLock,
+    },
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -47,6 +50,7 @@ const DEFAULT_WORKSPACE_SCRIPT_CONTENT: &str = "#!/bin/bash\n\nset -euo pipefail
 const SHELLCHECK_ZH_MESSAGES_JSON: &str = include_str!("../../../resources/Messages_zh.json");
 
 static SHELLCHECK_ZH_MESSAGES: OnceLock<HashMap<String, String>> = OnceLock::new();
+static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1038,18 +1042,25 @@ fn build_terminal_dispatch_runner_path() -> String {
     TERMINAL_DISPATCH_RUNNER_PATH.to_string()
 }
 
-fn build_terminal_temp_script_path(original_name: &str) -> Result<String, String> {
+fn build_temp_file_suffix() -> Result<String, String> {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|error| error.to_string())?
-        .as_millis();
+        .as_micros();
+    let sequence = TEMP_FILE_SEQUENCE.fetch_add(1, AtomicOrdering::Relaxed);
+
+    Ok(format!("{stamp}-{sequence}"))
+}
+
+fn build_terminal_temp_script_path(original_name: &str) -> Result<String, String> {
+    let suffix = build_temp_file_suffix()?;
     let stem = Path::new(original_name)
         .file_stem()
         .and_then(|value| value.to_str())
         .filter(|value| !value.is_empty())
         .unwrap_or("untitled");
 
-    Ok(format!("{WSL_TEMP_DIRECTORY}/{stem}-{stamp}.tmp.sh"))
+    Ok(format!("{WSL_TEMP_DIRECTORY}/{stem}-{suffix}.tmp.sh"))
 }
 
 fn emit_terminal_data(app: &AppHandle, payload: TerminalDataEvent) {
@@ -2156,22 +2167,16 @@ fn create_temp_script(
     content: &str,
     encoding: &str,
 ) -> Result<PathBuf, String> {
-    let directory = if preferred_directory.exists() {
-        preferred_directory.to_path_buf()
-    } else {
-        env::temp_dir()
-    };
+    let directory = preferred_directory.to_path_buf();
     fs::create_dir_all(&directory).map_err(|error| format!("创建临时目录失败：{error}"))?;
 
-    let stamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|error| error.to_string())?
-        .as_millis();
+    let suffix = build_temp_file_suffix()?;
     let stem = Path::new(original_name)
         .file_stem()
         .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
         .unwrap_or("untitled");
-    let temp_path = directory.join(format!("{stem}-{stamp}.tmp.sh"));
+    let temp_path = directory.join(format!("{stem}-{suffix}.tmp.sh"));
     let bytes = encode_script_content(content, encoding)?;
     fs::write(&temp_path, bytes).map_err(|error| format!("写入临时脚本失败：{error}"))?;
     Ok(temp_path)

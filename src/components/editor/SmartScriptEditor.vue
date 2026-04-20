@@ -1,6 +1,5 @@
 <template>
-  <ScriptEditor
-ref="innerEditorRef" :model-value="modelValue" :theme="theme" :analysis="analysisState"
+  <ScriptEditor ref="innerEditorRef" :model-value="modelValue" :theme="theme" :analysis="analysisState"
     @update:model-value="handleModelValueChange" @cursor-position-change="handleCursorPositionChange"
     @format-request="emit('format-request')" />
 </template>
@@ -55,6 +54,15 @@ const analysisState = ref<IAnalyzeScriptPayload>({
 
 let pendingAnalysisTimerId: number | null = null;
 let latestAnalysisRequestId = 0;
+let lastCompletedAnalysisRequestId = 0;
+let isAnalysisInFlight = false;
+let isUnmounted = false;
+
+type TAnalysisSnapshot = {
+  path: string | null;
+  name: string | null;
+  content: string;
+};
 
 const clearPendingAnalysisTimer = (): void => {
   if (pendingAnalysisTimerId !== null) {
@@ -77,18 +85,25 @@ const clearAnalysis = (): void => {
   });
 };
 
-const runAnalysis = async (): Promise<void> => {
-  const requestId = ++latestAnalysisRequestId;
-  const content = props.modelValue ?? '';
+const captureAnalysisSnapshot = (): TAnalysisSnapshot => ({
+  path: props.documentPath ?? null,
+  name: props.documentName ?? null,
+  content: props.modelValue ?? '',
+});
 
-  if (!content.trim()) {
-    clearAnalysis();
+const runAnalysis = async (requestId: number): Promise<void> => {
+  const snapshot = captureAnalysisSnapshot();
+
+  if (!snapshot.content.trim()) {
+    if (!isUnmounted && requestId === latestAnalysisRequestId) {
+      clearAnalysis();
+    }
     return;
   }
 
   const runtimeReady = await waitForDesktopRuntime(160);
   if (!runtimeReady) {
-    if (requestId === latestAnalysisRequestId) {
+    if (!isUnmounted && requestId === latestAnalysisRequestId) {
       clearAnalysis();
     }
     return;
@@ -96,18 +111,18 @@ const runAnalysis = async (): Promise<void> => {
 
   try {
     const payload = await tauriService.analyzeScript({
-      path: props.documentPath ?? null,
-      name: props.documentName ?? null,
-      content,
+      path: snapshot.path,
+      name: snapshot.name,
+      content: snapshot.content,
     });
 
-    if (requestId !== latestAnalysisRequestId) {
+    if (isUnmounted || requestId !== latestAnalysisRequestId) {
       return;
     }
 
     emitAnalysis(payload);
   } catch (error) {
-    if (requestId !== latestAnalysisRequestId) {
+    if (isUnmounted || requestId !== latestAnalysisRequestId) {
       return;
     }
 
@@ -120,15 +135,39 @@ const runAnalysis = async (): Promise<void> => {
   }
 };
 
+const drainAnalysisQueue = async (): Promise<void> => {
+  if (isAnalysisInFlight) {
+    return;
+  }
+
+  isAnalysisInFlight = true;
+
+  try {
+    while (!isUnmounted && lastCompletedAnalysisRequestId < latestAnalysisRequestId) {
+      const requestId = latestAnalysisRequestId;
+      await runAnalysis(requestId);
+      lastCompletedAnalysisRequestId = requestId;
+    }
+  } finally {
+    isAnalysisInFlight = false;
+
+    if (!isUnmounted && lastCompletedAnalysisRequestId < latestAnalysisRequestId) {
+      void drainAnalysisQueue();
+    }
+  }
+};
+
 const scheduleAnalysis = (delayMs = ANALYSIS_TYPING_DELAY_MS): void => {
   clearPendingAnalysisTimer();
   pendingAnalysisTimerId = window.setTimeout(() => {
     pendingAnalysisTimerId = null;
-    void runAnalysis();
+    latestAnalysisRequestId += 1;
+    void drainAnalysisQueue();
   }, delayMs);
 };
 
 onMounted(() => {
+  isUnmounted = false;
   scheduleAnalysis(ANALYSIS_INITIAL_DELAY_MS);
 });
 
@@ -148,6 +187,7 @@ watch(
 );
 
 onBeforeUnmount(() => {
+  isUnmounted = true;
   latestAnalysisRequestId += 1;
   clearPendingAnalysisTimer();
 });
