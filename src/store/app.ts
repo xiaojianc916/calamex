@@ -1,8 +1,7 @@
-import { getThemeManager } from '@/themes';
+import { applyResolvedThemeEffect } from '@/themes/effects';
 import {
   ACCENT_COLORS,
   RADIUS_PRESETS,
-  THEME_MODES,
   THEME_PREFERENCES,
   UI_DENSITIES,
   type TAccentColor,
@@ -17,87 +16,10 @@ import {
   type TAppSettingsSectionKey,
 } from '@/types/settings';
 import { defineStore } from 'pinia';
-import { computed, ref, watch } from 'vue';
+import { computed, onScopeDispose, ref, watch } from 'vue';
+import { APP_STORE_KEY } from './index';
 
-const STORAGE_KEY = 'sh-editor-app-settings';
-const LEGACY_THEME_STORAGE_KEY = 'sh-editor-theme';
 const DEFAULT_THEME: TThemeMode = 'dark';
-
-const ACCENT_STYLE_MAP: Record<
-  TAccentColor,
-  {
-    accent: string;
-    accentStrong: string;
-    accentMuted: string;
-    accentSoft: string;
-    statusbarAccent: string;
-  }
-> = {
-  indigo: {
-    accent: '#5e6ad2',
-    accentStrong: '#6f7cff',
-    accentMuted: 'rgba(94, 106, 210, 0.16)',
-    accentSoft: 'rgba(94, 106, 210, 0.35)',
-    statusbarAccent: '#4c6fff',
-  },
-  violet: {
-    accent: '#7c3aed',
-    accentStrong: '#9462ff',
-    accentMuted: 'rgba(124, 58, 237, 0.18)',
-    accentSoft: 'rgba(124, 58, 237, 0.34)',
-    statusbarAccent: '#7c3aed',
-  },
-  blue: {
-    accent: '#2f80ed',
-    accentStrong: '#4295ff',
-    accentMuted: 'rgba(47, 128, 237, 0.18)',
-    accentSoft: 'rgba(47, 128, 237, 0.34)',
-    statusbarAccent: '#2f80ed',
-  },
-  teal: {
-    accent: '#14b8a6',
-    accentStrong: '#1ecfbc',
-    accentMuted: 'rgba(20, 184, 166, 0.18)',
-    accentSoft: 'rgba(20, 184, 166, 0.34)',
-    statusbarAccent: '#14b8a6',
-  },
-  gold: {
-    accent: '#e5b800',
-    accentStrong: '#f4c91c',
-    accentMuted: 'rgba(229, 184, 0, 0.18)',
-    accentSoft: 'rgba(229, 184, 0, 0.34)',
-    statusbarAccent: '#c99f00',
-  },
-  red: {
-    accent: '#e5484d',
-    accentStrong: '#ff6468',
-    accentMuted: 'rgba(229, 72, 77, 0.18)',
-    accentSoft: 'rgba(229, 72, 77, 0.34)',
-    statusbarAccent: '#d93c42',
-  },
-};
-
-const RADIUS_VALUE_MAP: Record<TRadiusPreset, string> = {
-  sharp: '0.375rem',
-  default: '0.625rem',
-  rounded: '0.95rem',
-};
-
-const UI_DENSITY_SCALE_MAP: Record<TUiDensity, string> = {
-  compact: '0.94',
-  default: '1',
-  comfortable: '1.08',
-};
-
-declare global {
-  interface Window {
-    __SH_APP_SETTINGS_STORAGE_SYNC_CLEANUP__?: (() => void) | undefined;
-    __SH_SYSTEM_THEME_SYNC_CLEANUP__?: (() => void) | undefined;
-  }
-}
-
-const isKnownTheme = (value: unknown): value is TThemeMode =>
-  typeof value === 'string' && THEME_MODES.some((theme) => theme === value);
 
 const isKnownThemePreference = (value: unknown): value is TThemePreference =>
   typeof value === 'string' && THEME_PREFERENCES.some((theme) => theme === value);
@@ -112,7 +34,6 @@ const isKnownRadiusPreset = (value: unknown): value is TRadiusPreset =>
   typeof value === 'string' && RADIUS_PRESETS.some((preset) => preset === value);
 
 const hasWindow = (): boolean => typeof window !== 'undefined';
-const hasDocument = (): boolean => typeof document !== 'undefined';
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
   Object.prototype.toString.call(value) === '[object Object]';
@@ -222,253 +143,96 @@ const normalizeSettings = (value: unknown): IAppSettings => {
   return merged;
 };
 
-const readLegacyTheme = (): TThemePreference | null => {
-  if (!hasWindow()) return null;
+export const useAppStore = defineStore(
+  'app',
+  () => {
+    // 初始值：由 pinia-plugin-persistedstate 在 hydrate 阶段从 localStorage 恢复；
+    // 此处使用默认值，afterHydrate 钩子会完成 normalize。
+    const settings = ref<IAppSettings>(createDefaultAppSettings());
+    const systemTheme = ref<TThemeMode>(resolveSystemTheme());
 
-  try {
-    const raw = window.localStorage.getItem(LEGACY_THEME_STORAGE_KEY);
-    return isKnownTheme(raw) ? raw : null;
-  } catch {
-    // localStorage 可能被禁用；保持 null 让后续逻辑继续走默认主题分支。
-    return null;
-  }
-};
+    const themePreference = computed(() => settings.value.appearance.themePreference);
+    const theme = computed<TThemeMode>(() =>
+      resolveEffectiveTheme(themePreference.value, systemTheme.value),
+    );
+    const effectiveTheme = computed(() => theme.value);
 
-const readStoredSettings = (): IAppSettings => {
-  const defaults = createDefaultAppSettings();
+    const isDark = computed(() => theme.value === 'dark');
 
-  if (!hasWindow()) {
-    return defaults;
-  }
+    // ── 系统主题监听（媒体查询，非 localStorage）──────────────────────────────
+    if (hasWindow() && typeof window.matchMedia === 'function') {
+      const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+      const handleChange = (event: MediaQueryListEvent): void => {
+        const next: TThemeMode = event.matches ? 'dark' : 'light';
+        if (next !== systemTheme.value) {
+          systemTheme.value = next;
+        }
+      };
 
-  let raw: string | null = null;
-
-  try {
-    raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
-      const legacyTheme = readLegacyTheme();
-      if (legacyTheme) {
-        defaults.appearance.themePreference = legacyTheme;
+      if (typeof mediaQuery.addEventListener === 'function') {
+        mediaQuery.addEventListener('change', handleChange);
+        onScopeDispose(() => {
+          mediaQuery.removeEventListener('change', handleChange);
+        });
       }
-      return defaults;
     }
 
-    return normalizeSettings(JSON.parse(raw));
-  } catch (error) {
-    console.warn('读取应用设置失败，已回退默认设置', {
-      error,
-      storageKey: STORAGE_KEY,
-      sample: raw?.slice(0, 180) ?? null,
-    });
-    return defaults;
-  }
-};
+    // ── DOM 副作用：主题变化时刷新 CSS 变量（写入由 effects.ts 完成）──────────
+    watch(
+      () => ({
+        settings: settings.value,
+        effectiveTheme: effectiveTheme.value,
+      }),
+      ({ settings: nextSettings, effectiveTheme: nextTheme }) => {
+        applyResolvedThemeEffect(nextSettings, nextTheme);
+      },
+      { deep: true, immediate: true },
+    );
 
-const writeStoredSettings = (value: IAppSettings): void => {
-  if (!hasWindow()) return;
+    const applyTheme = (value: TThemePreference): void => {
+      if (!isKnownThemePreference(value)) {
+        return;
+      }
 
-  try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(value));
-  } catch {
-    // 隐私模式 / 存储配额满 / 被策略禁用时忽略
-  }
-};
-
-const applyThemeToDocument = (settings: IAppSettings, effectiveTheme: TThemeMode): void => {
-  if (!hasDocument()) return;
-
-  const root = document.documentElement;
-  if (!root) return;
-
-  // ── 主题系统管道 ────────────────────────────────────────────────────────────
-  // 委托主题管理器完成基础颜色令牌注入（CSS 变量 + html class 切换）。
-  // main.ts 已在启动时调用 init()；此处的 set() 只处理运行时切换。
-  getThemeManager().set(effectiveTheme);
-
-  // ── 用户偏好覆盖（在管道结果之上叠加）──────────────────────────────────────
-  // 以下变量由用户设置动态控制，不进入主题变体文件
-  const accentStyle = ACCENT_STYLE_MAP[settings.appearance.accentColor];
-  root.dataset['themePreference'] = settings.appearance.themePreference;
-  root.dataset['uiDensity'] = settings.appearance.uiDensity;
-  root.classList.toggle('reduce-motion', settings.appearance.reduceMotion);
-
-  // accent 系列：覆盖主题管理器注入的默认值
-  root.style.setProperty('--accent', accentStyle.accent);
-  root.style.setProperty('--accent-strong', accentStyle.accentStrong);
-  root.style.setProperty('--accent-muted', accentStyle.accentMuted);
-  root.style.setProperty('--settings-accent', accentStyle.accent);
-  root.style.setProperty('--settings-accent-soft', accentStyle.accentSoft);
-  root.style.setProperty('--settings-accent-muted', accentStyle.accentMuted);
-  root.style.setProperty('--statusbar-accent', accentStyle.statusbarAccent);
-  root.style.setProperty('--radius', RADIUS_VALUE_MAP[settings.appearance.radiusPreset]);
-  root.style.setProperty('--app-ui-font-size', `${settings.appearance.interfaceFontSize}px`);
-  root.style.setProperty('--app-density-scale', UI_DENSITY_SCALE_MAP[settings.appearance.uiDensity]);
-};
-
-const disposeSettingsStorageSync = (): void => {
-  if (!hasWindow()) {
-    return;
-  }
-
-  const cleanup = window.__SH_APP_SETTINGS_STORAGE_SYNC_CLEANUP__;
-  if (!cleanup) {
-    return;
-  }
-
-  cleanup();
-  if (window.__SH_APP_SETTINGS_STORAGE_SYNC_CLEANUP__ === cleanup) {
-    window.__SH_APP_SETTINGS_STORAGE_SYNC_CLEANUP__ = undefined;
-  }
-};
-
-const bindSettingsStorageSync = (onSettingsChange: (value: IAppSettings) => void): void => {
-  if (!hasWindow()) {
-    return;
-  }
-
-  disposeSettingsStorageSync();
-
-  const handleStorage = (event: StorageEvent): void => {
-    if (event.key !== STORAGE_KEY) {
-      return;
-    }
-
-    if (!event.newValue) {
-      return;
-    }
-
-    try {
-      onSettingsChange(normalizeSettings(JSON.parse(event.newValue)));
-    } catch (error) {
-      console.warn('跨窗口同步应用设置失败，已忽略损坏的存储内容', {
-        error,
-        storageKey: STORAGE_KEY,
-        sample: event.newValue.slice(0, 180),
-      });
-    }
-  };
-
-  window.addEventListener('storage', handleStorage);
-  window.__SH_APP_SETTINGS_STORAGE_SYNC_CLEANUP__ = () => {
-    window.removeEventListener('storage', handleStorage);
-  };
-};
-
-const disposeSystemThemeSync = (): void => {
-  if (!hasWindow()) {
-    return;
-  }
-
-  const cleanup = window.__SH_SYSTEM_THEME_SYNC_CLEANUP__;
-  if (!cleanup) {
-    return;
-  }
-
-  cleanup();
-  if (window.__SH_SYSTEM_THEME_SYNC_CLEANUP__ === cleanup) {
-    window.__SH_SYSTEM_THEME_SYNC_CLEANUP__ = undefined;
-  }
-};
-
-const bindSystemThemeSync = (onThemeChange: (value: TThemeMode) => void): void => {
-  if (!hasWindow() || typeof window.matchMedia !== 'function') {
-    return;
-  }
-
-  disposeSystemThemeSync();
-
-  const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-  const handleChange = (event: MediaQueryListEvent): void => {
-    onThemeChange(event.matches ? 'dark' : 'light');
-  };
-
-  if (typeof mediaQuery.addEventListener === 'function') {
-    mediaQuery.addEventListener('change', handleChange);
-    window.__SH_SYSTEM_THEME_SYNC_CLEANUP__ = () => {
-      mediaQuery.removeEventListener('change', handleChange);
+      settings.value.appearance.themePreference = value;
     };
-    return;
-  }
 
-  mediaQuery.addListener(handleChange);
-  window.__SH_SYSTEM_THEME_SYNC_CLEANUP__ = () => {
-    mediaQuery.removeListener(handleChange);
-  };
-};
+    const toggleTheme = (): void => {
+      applyTheme(isDark.value ? 'light' : 'dark');
+    };
 
-export const useAppStore = defineStore('app', () => {
-  const settings = ref<IAppSettings>(readStoredSettings());
-  const systemTheme = ref<TThemeMode>(resolveSystemTheme());
+    const replaceSettings = (nextSettings: IAppSettings): void => {
+      settings.value = normalizeSettings(nextSettings);
+    };
 
-  settings.value = normalizeSettings(settings.value);
+    const resetSettingsSection = (section: TAppSettingsSectionKey): void => {
+      settings.value[section] = createDefaultAppSettings()[section];
+    };
 
-  const themePreference = computed(() => settings.value.appearance.themePreference);
-  const theme = computed<TThemeMode>(() =>
-    resolveEffectiveTheme(themePreference.value, systemTheme.value),
-  );
-  const effectiveTheme = computed(() => theme.value);
-
-  const isDark = computed(() => theme.value === 'dark');
-
-  const applyTheme = (value: TThemePreference): void => {
-    if (!isKnownThemePreference(value)) {
-      return;
-    }
-
-    settings.value.appearance.themePreference = value;
-  };
-
-  const toggleTheme = (): void => {
-    applyTheme(isDark.value ? 'light' : 'dark');
-  };
-
-  const replaceSettings = (nextSettings: IAppSettings): void => {
-    settings.value = normalizeSettings(nextSettings);
-  };
-
-  const resetSettingsSection = (section: TAppSettingsSectionKey): void => {
-    settings.value[section] = createDefaultAppSettings()[section];
-  };
-
-  watch(
-    () => ({
-      settings: settings.value,
-      effectiveTheme: effectiveTheme.value,
-    }),
-    ({ settings: nextSettings, effectiveTheme: nextTheme }) => {
-      writeStoredSettings(nextSettings);
-      applyThemeToDocument(nextSettings, nextTheme);
+    return {
+      settings,
+      systemTheme,
+      themePreference,
+      theme,
+      effectiveTheme,
+      isDark,
+      applyTheme,
+      toggleTheme,
+      replaceSettings,
+      resetSettingsSection,
+    };
+  },
+  {
+    persist: {
+      key: APP_STORE_KEY,
+      // 只持久化用户设置，排除派生状态（systemTheme 来自系统，不需持久化）
+      pick: ['settings'],
+      // hydrate 完成后 normalize 确保存储数据合法
+      afterHydrate(ctx) {
+        // ctx.store.settings 是 pinia setup store 中返回的 ref 的值
+        const store = ctx.store as { settings: IAppSettings };
+        store.settings = normalizeSettings(store.settings);
+      },
     },
-    { deep: true, immediate: true },
-  );
-
-  bindSettingsStorageSync((nextSettings) => {
-    settings.value = nextSettings;
-  });
-
-  bindSystemThemeSync((nextTheme) => {
-    if (nextTheme !== systemTheme.value) {
-      systemTheme.value = nextTheme;
-    }
-  });
-
-  return {
-    settings,
-    systemTheme,
-    themePreference,
-    theme,
-    effectiveTheme,
-    isDark,
-    applyTheme,
-    toggleTheme,
-    replaceSettings,
-    resetSettingsSection,
-  };
-});
-
-if (import.meta.hot) {
-  import.meta.hot.dispose(() => {
-    disposeSettingsStorageSync();
-    disposeSystemThemeSync();
-  });
-}
+  },
+);

@@ -1,7 +1,6 @@
 <template>
-  <div class="splash-screen" :class="{ 'is-leaving': isLeaving }">
-    <div
-class="splash-editor" :class="{ 'is-error': Boolean(error) }" :role="error ? 'alert' : 'status'"
+  <div data-testid="splash-screen" class="splash-screen" :class="{ 'is-leaving': isLeaving }">
+    <div class="splash-editor" :class="{ 'is-error': Boolean(error) }" :role="error ? 'alert' : 'status'"
       aria-live="polite">
       <div class="splash-editor-top">
         <span class="splash-dot splash-dot-red" />
@@ -33,8 +32,7 @@ class="splash-editor" :class="{ 'is-error': Boolean(error) }" :role="error ? 'al
       </div>
 
       <div class="splash-progress-wrap">
-        <div
-class="splash-progress-bar" :class="{ 'is-error': Boolean(error) }" role="progressbar"
+        <div class="splash-progress-bar" :class="{ 'is-error': Boolean(error) }" role="progressbar"
           :aria-valuenow="Math.round(roundedProgress)" aria-valuemin="0" aria-valuemax="100">
           <div class="splash-progress" :style="{ transform: `scaleX(${progressScale})` }" />
         </div>
@@ -50,8 +48,8 @@ class="splash-progress-bar" :class="{ 'is-error': Boolean(error) }" role="progre
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { IRuntimeErrorState } from '@/utils/runtime-diagnostics';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 interface ICodeFragment {
   text: string;

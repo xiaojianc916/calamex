@@ -5,6 +5,7 @@
  * 持有全部会话状态；与 UI 层完全解耦，可通过构造参数注入 fake 服务用于单测（R-20.2.6）。
  * UI 层（useIntegratedTerminal.ts）仅负责 DOM 挂载 / Vue 生命周期 / 响应式 watcher。
  */
+import { getThemeManager } from '@/themes';
 import type { TThemeMode } from '@/types/app';
 import type { ITerminalSettings } from '@/types/settings';
 import type {
@@ -44,62 +45,14 @@ const DEFAULT_TERMINAL_FONT_FAMILY =
 type TTerminalBellStyle = 'none' | 'sound' | 'visual';
 type TTerminalLayoutSyncOptions = { settle?: boolean };
 
-// ─── 主题 helpers（纯函数） ────────────────────────────────────────────────────
+// ─── 终端主题 helper ───────────────────────────────────────────────────────────
 
-const createTerminalTheme = (theme: TThemeMode) =>
-    theme === 'light'
-        ? {
-            background: '#f5f7fb',
-            foreground: '#111827',
-            cursor: '#335cff',
-            cursorAccent: '#f5f7fb',
-            selectionBackground: 'rgba(76, 111, 255, 0.18)',
-            scrollbarSliderBackground: 'rgba(15, 23, 42, 0.12)',
-            scrollbarSliderHoverBackground: 'rgba(15, 23, 42, 0.22)',
-            scrollbarSliderActiveBackground: 'rgba(51, 92, 255, 0.32)',
-            black: '#15181d',
-            red: '#c2415b',
-            green: '#15803d',
-            yellow: '#a16207',
-            blue: '#335cff',
-            magenta: '#7c3aed',
-            cyan: '#0f766e',
-            white: '#475569',
-            brightBlack: '#64748b',
-            brightRed: '#e11d48',
-            brightGreen: '#16a34a',
-            brightYellow: '#ca8a04',
-            brightBlue: '#4f46e5',
-            brightMagenta: '#9333ea',
-            brightCyan: '#0891b2',
-            brightWhite: '#0f172a',
-        }
-        : {
-            background: '#15191e',
-            foreground: '#d7dce5',
-            cursor: '#7c89ff',
-            cursorAccent: '#15191e',
-            selectionBackground: 'rgba(94, 106, 210, 0.26)',
-            scrollbarSliderBackground: 'rgba(255, 255, 255, 0.1)',
-            scrollbarSliderHoverBackground: 'rgba(255, 255, 255, 0.18)',
-            scrollbarSliderActiveBackground: 'rgba(124, 137, 255, 0.34)',
-            black: '#111318',
-            red: '#ff7b88',
-            green: '#5dd39e',
-            yellow: '#f3c969',
-            blue: '#7c89ff',
-            magenta: '#c792ea',
-            cyan: '#89ddff',
-            white: '#d7dce5',
-            brightBlack: '#656b76',
-            brightRed: '#ff9aa5',
-            brightGreen: '#74e2ad',
-            brightYellow: '#f8d88b',
-            brightBlue: '#9aa6ff',
-            brightMagenta: '#d7a6ff',
-            brightCyan: '#a9e7ff',
-            brightWhite: '#f5f7fb',
-        };
+/**
+ * 从 ThemeManager 获取当前 xterm 主题。
+ * ThemeManager.init() 在 main.ts 同步调用，运行时永远非 null；
+ * 单测中若未初始化则返回空对象，xterm 使用内置默认色。
+ */
+const getXtermTheme = () => getThemeManager().getTerminalTheme() ?? {};
 
 const resolveInteger = (
     value: number | null | undefined,
@@ -132,7 +85,7 @@ const resolveTerminalFontFamily = (fontFamily: string): string => {
         : DEFAULT_TERMINAL_FONT_FAMILY;
 };
 
-const buildTerminalOptions = (theme: TThemeMode, s: ITerminalSettings) => ({
+const buildTerminalOptions = (s: ITerminalSettings) => ({
     allowTransparency: false,
     bellStyle: resolveTerminalBellStyle(s.bellMode),
     cols: DEFAULT_COLS,
@@ -150,7 +103,7 @@ const buildTerminalOptions = (theme: TThemeMode, s: ITerminalSettings) => ({
     scrollOnUserInput: true,
     scrollSensitivity: 1,
     smoothScrollDuration: 0,
-    theme: createTerminalTheme(theme),
+    theme: getXtermTheme(),
 });
 
 const isPrintableTerminalInput = (data: string): boolean => {
@@ -1076,7 +1029,7 @@ export class TerminalSession {
     // ── 私有：外观同步 ────────────────────────────────────────────────────────────
 
     private _syncTerminalSurfaceTone(): void {
-        const background = createTerminalTheme(this._theme).background;
+        const background = getXtermTheme().background ?? '#15191e';
         if (this._hostEl) {
             this._hostEl.style.setProperty('--terminal-fill', background);
             this._hostEl.style.backgroundColor = background;
@@ -1090,7 +1043,7 @@ export class TerminalSession {
     private _applyTerminalSettings(): void {
         const terminal = this._terminalRef.value;
         if (!terminal || !this._settings) return;
-        const opts = buildTerminalOptions(this._theme, this._settings);
+        const opts = buildTerminalOptions(this._settings);
         terminal.options.theme = opts.theme;
         terminal.options.fontFamily = opts.fontFamily;
         terminal.options.fontSize = opts.fontSize;
@@ -1204,7 +1157,7 @@ export class TerminalSession {
         if (!this._hostEl) return;
         if (!this._terminalRef.value) {
             const terminal = new Terminal(
-                buildTerminalOptions(this._theme, this._settings ?? this._fallbackSettings()),
+                buildTerminalOptions(this._settings ?? this._fallbackSettings()),
             );
             const fitAddon = new FitAddon();
             terminal.loadAddon(fitAddon);

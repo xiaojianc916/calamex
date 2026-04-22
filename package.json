@@ -15,6 +15,7 @@
     "lint": "eslint . --ext .ts,.vue",
     "typecheck": "vue-tsc --noEmit",
     "test": "vitest run",
+    "test:e2e": "playwright test",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "guard": "node_modules/.bin/tsx scripts/run-all-guards.ts",

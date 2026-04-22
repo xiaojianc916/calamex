@@ -1,14 +1,13 @@
 <template>
-  <div class="app-root-stage" :class="{ 'is-splash-mode': isWindowSplashMode }">
+  <div data-testid="app-root-stage" class="app-root-stage" :class="{ 'is-splash-mode': isWindowSplashMode }">
     <AppDialogHost />
-    <div v-if="isStartupVeilVisible" class="startup-veil" :class="{ 'is-leaving': isStartupVeilLeaving }" />
-    <div
-v-if="isContentMounted && workbenchComponent && !runtimeErrorState" class="app-content-entry"
-      :class="{ 'is-visible': isAppContentVisible }">
+    <div v-if="isStartupVeilVisible" data-testid="startup-veil" class="startup-veil"
+      :class="{ 'is-leaving': isStartupVeilLeaving }" />
+    <div v-if="isContentMounted && workbenchComponent && !runtimeErrorState" data-testid="app-content-entry"
+      class="app-content-entry" :class="{ 'is-visible': isAppContentVisible }">
       <component :is="workbenchComponent" @ready="handleWorkbenchReady" />
     </div>
-    <SplashScreen
-v-if="isSplashVisible" :ready="isApplicationReady" :error="runtimeErrorState"
+    <SplashScreen v-if="isSplashVisible" :ready="isApplicationReady" :error="runtimeErrorState"
       @leave-start="handleSplashLeaveStart" @after-leave="handleSplashAfterLeave" />
   </div>
 </template>

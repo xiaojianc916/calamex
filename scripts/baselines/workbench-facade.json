@@ -1,14 +1,5 @@
 {
     "$schema": "../baselines-schema.json",
     "description": "workbench façade 多 store 直接 import 守卫豁免清单（R-18.11.1 / R-20.1.5）",
-    "exemptions": [
-        {
-            "path": "src/views/ShellWorkbenchView.vue",
-            "rule": "no-multi-business-store-import",
-            "reason": "存量违规：当前直接 import useGitStore，计划在 iteration 2 T-2.6 收归 useWorkbench façade",
-            "owner": "@xiaojianc",
-            "adrRef": "ADR-0003",
-            "expiresAt": "2026-06-30"
-        }
-    ]
+    "exemptions": []
 }
