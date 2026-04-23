@@ -14,7 +14,7 @@ use windows::{
     Graphics::{
       Direct3D::D3D_DRIVER_TYPE_HARDWARE,
       Direct3D11::{
-        D3D11CreateDevice, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION, ID3D11Device,
+        D3D11CreateDevice, ID3D11Device, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION,
       },
       DirectComposition::{
         DCompositionCreateDevice, IDCompositionDevice, IDCompositionRectangleClip,
@@ -24,8 +24,11 @@ use windows::{
       Gdi::ScreenToClient,
     },
     UI::{
-      Input::Pointer::{GetPointerInfo, GetPointerPenInfo, GetPointerTouchInfo, POINTER_INFO,
-        POINTER_PEN_INFO, POINTER_TOUCH_INFO},
+      Accessibility::IRawElementProviderSimple,
+      Input::Pointer::{
+        GetPointerInfo, GetPointerPenInfo, GetPointerTouchInfo, POINTER_INFO, POINTER_PEN_INFO,
+        POINTER_TOUCH_INFO,
+      },
       WindowsAndMessaging::{GetClientRect, PT_PEN, PT_TOUCH, PT_TOUCHPAD},
     },
   },
@@ -50,6 +53,7 @@ pub(crate) struct VisualHost {
   pub env3: ICoreWebView2Environment3,
   pub comp_controller: ICoreWebView2CompositionController,
   pub controller: ICoreWebView2Controller,
+  pub automation_provider: Option<IRawElementProviderSimple>,
 }
 
 impl VisualHost {
@@ -89,10 +93,14 @@ impl VisualHost {
     root_visual.AddVisual(&webview_visual, true, None)?;
 
     let env3 = env.cast::<ICoreWebView2Environment3>()?;
-    let comp_controller =
-      create_composition_controller(env, hwnd, incognito, background_color)?;
+    let comp_controller = create_composition_controller(env, hwnd, incognito, background_color)?;
     let controller: ICoreWebView2Controller = comp_controller.cast()?;
     comp_controller.SetRootVisualTarget(&webview_visual.cast::<windows::core::IUnknown>()?)?;
+    let automation_provider = comp_controller
+      .cast::<ICoreWebView2CompositionController2>()
+      .ok()
+      .and_then(|controller2| controller2.AutomationProvider().ok())
+      .and_then(|provider| provider.cast::<IRawElementProviderSimple>().ok());
 
     let host = Self {
       hwnd,
@@ -105,6 +113,7 @@ impl VisualHost {
       env3,
       comp_controller,
       controller,
+      automation_provider,
     };
 
     host.set_bounds(bounds)?;
@@ -133,6 +142,7 @@ impl VisualHost {
     self.clip.SetRight2(width)?;
     self.clip.SetBottom2(height)?;
     self.dcomp.Commit()?;
+    let _ = self.controller.NotifyParentWindowPositionChanged();
 
     Ok(())
   }
@@ -141,11 +151,15 @@ impl VisualHost {
     if let Ok(controller3) = self.controller.cast::<ICoreWebView2Controller3>() {
       controller3.SetRasterizationScale(util::dpi_to_scale_factor(util::hwnd_dpi(self.hwnd)))?;
     }
+    let _ = self.controller.NotifyParentWindowPositionChanged();
 
     Ok(())
   }
 
-  pub(crate) unsafe fn create_pointer_info(&self, pointer_id: u32) -> Result<ICoreWebView2PointerInfo> {
+  pub(crate) unsafe fn create_pointer_info(
+    &self,
+    pointer_id: u32,
+  ) -> Result<ICoreWebView2PointerInfo> {
     let mut info = POINTER_INFO::default();
     GetPointerInfo(pointer_id, &mut info)?;
 

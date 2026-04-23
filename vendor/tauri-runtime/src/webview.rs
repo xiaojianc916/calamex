@@ -443,7 +443,8 @@ impl From<&WindowConfig> for WebviewAttributes {
     }
     #[cfg(windows)]
     {
-      builder.visual_hosting = config.visual_hosting;
+      builder.visual_hosting =
+        config.visual_hosting || (cfg!(feature = "visual-hosting") && config.label == "main");
     }
     #[cfg(target_os = "macos")]
     {

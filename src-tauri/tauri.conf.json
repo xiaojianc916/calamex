@@ -22,7 +22,6 @@
         "transparent": false,
         "backgroundColor": "#0D0F12",
         "shadow": false,
-        "visualHosting": true,
         "resizable": true,
         "center": true,
         "visible": false,

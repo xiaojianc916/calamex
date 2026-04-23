@@ -23,6 +23,8 @@
 | [ADR-0006](./ADR-0006-router-dormant.md) | `src/router/` 休眠处置 | `accepted` | 2026-04-21 | T-1.8 |
 | [ADR-0007](./ADR-0007-ipc-acl-contract.md) | IPC 反腐层契约 | `proposed` | 2026-04-21 | T-3.1 / T-3.2 |
 | [ADR-0008](./ADR-0008-session-restore.md) | Session Restore（SR）落地 | `proposed` | 2026-04-22 | SR |
+| [ADR-20260422](./ADR-20260422-window-resize-tearing.md) | 窗口 resize 底色与重绘抑制缓解 | `proposed` | 2026-04-22 | Window resize |
+| [ADR-20260423](./ADR-20260423-vendor-wry-visual-hosting.md) | Vendor Wry/Tauri runtime 接入 WebView2 visual hosting | `accepted` | 2026-04-23 | Window resize |
 
 ---
 

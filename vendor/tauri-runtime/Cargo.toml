@@ -49,6 +49,7 @@ targets = [
 [features]
 devtools = []
 macos-private-api = []
+visual-hosting = []
 
 [lib]
 name = "tauri_runtime"

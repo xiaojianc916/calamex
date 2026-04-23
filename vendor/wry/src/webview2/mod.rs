@@ -17,6 +17,15 @@ use http::{Request, Response as HttpResponse, StatusCode};
 use once_cell::sync::Lazy;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use webview2_com::{Microsoft::Web::WebView2::Win32::*, *};
+#[cfg(feature = "visual-hosting")]
+use windows::Win32::UI::Accessibility::UiaReturnRawElementProvider;
+#[cfg(feature = "visual-hosting")]
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+  GetCapture, ReleaseCapture, SetCapture, TrackMouseEvent, TME_CANCEL, TME_LEAVE, TRACKMOUSEEVENT,
+  TRACKMOUSEEVENT_FLAGS,
+};
+#[cfg(feature = "visual-hosting")]
+use windows::Win32::UI::Input::Pointer::{GetPointerInfo, POINTER_INFO};
 use windows::{
   core::{s, w, Interface, BOOL, HSTRING, PCWSTR, PWSTR},
   Win32::{
@@ -25,17 +34,12 @@ use windows::{
     Graphics::Gdi::*,
     System::{Com::*, LibraryLoader::GetModuleHandleW},
     UI::{
-      Input::KeyboardAndMouse::{
-        GetCapture, ReleaseCapture, SetCapture, SetFocus, TME_CANCEL, TME_LEAVE,
-        TRACKMOUSEEVENT, TRACKMOUSEEVENT_FLAGS, TrackMouseEvent,
-      },
+      Input::KeyboardAndMouse::SetFocus,
       Shell::*,
       WindowsAndMessaging::*,
     },
   },
 };
-#[cfg(feature = "visual-hosting")]
-use windows::Win32::UI::Input::Pointer::{GetPointerInfo, POINTER_INFO};
 
 use self::drag_drop::DragDropController;
 use super::Theme;
@@ -163,6 +167,17 @@ impl VisualParentSubclassData {
     }
   }
 
+  unsafe fn move_focus_to_webview(&self) {
+    let _ = self
+      .host
+      .controller
+      .MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
+  }
+
+  unsafe fn notify_parent_position_changed(&self) {
+    let _ = self.host.controller.NotifyParentWindowPositionChanged();
+  }
+
   unsafe fn on_mouse_message(
     &mut self,
     hwnd: HWND,
@@ -251,7 +266,10 @@ impl VisualParentSubclassData {
     if InnerWebView::point_in_client(hwnd, point) || pointer_started_in_webview {
       if !pointer_started_in_webview && (msg == WM_POINTERENTER || msg == WM_POINTERDOWN) {
         self.pointer_ids_starting_in_webview.insert(pointer_id);
-      } else if matches!(msg, WM_POINTERUP | WM_POINTERLEAVE | WM_POINTERCAPTURECHANGED) {
+      } else if matches!(
+        msg,
+        WM_POINTERUP | WM_POINTERLEAVE | WM_POINTERCAPTURECHANGED
+      ) {
         self.pointer_ids_starting_in_webview.remove(&pointer_id);
       }
 
@@ -806,7 +824,12 @@ impl InnerWebView {
     if !is_child {
       #[cfg(feature = "visual-hosting")]
       if let Some(visual_host) = visual_host {
-        unsafe { Self::attach_parent_subclass(parent, ParentSubclassData::Visual(VisualParentSubclassData::new(visual_host.clone()))) };
+        unsafe {
+          Self::attach_parent_subclass(
+            parent,
+            ParentSubclassData::Visual(VisualParentSubclassData::new(visual_host.clone())),
+          )
+        };
       } else {
         unsafe {
           Self::attach_parent_subclass(
@@ -1584,7 +1607,9 @@ impl InnerWebView {
       WM_SIZE => {
         if wparam.0 != SIZE_MINIMIZED as usize {
           match data {
-            ParentSubclassData::Windowed { controller } => Self::handle_windowed_resize(controller, hwnd),
+            ParentSubclassData::Windowed { controller } => {
+              Self::handle_windowed_resize(controller, hwnd)
+            }
             #[cfg(feature = "visual-hosting")]
             ParentSubclassData::Visual(state) => Self::handle_visual_resize(&state.host, hwnd),
           }
@@ -1597,46 +1622,68 @@ impl InnerWebView {
         }
         #[cfg(feature = "visual-hosting")]
         ParentSubclassData::Visual(state) => {
-          let _ = state
-            .host
-            .controller
-            .MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
+          state.move_focus_to_webview();
         }
       },
 
-      msg if msg == WM_MOVE || msg == WM_MOVING => match data {
-        ParentSubclassData::Windowed { controller } => {
-          let _ = controller.NotifyParentWindowPositionChanged();
+      WM_ACTIVATE => {
+        if (wparam.0 & 0xFFFF) != WA_INACTIVE as usize {
+          match data {
+            ParentSubclassData::Windowed { controller } => {
+              let _ = controller.MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
+            }
+            #[cfg(feature = "visual-hosting")]
+            ParentSubclassData::Visual(state) => {
+              state.move_focus_to_webview();
+              state.notify_parent_position_changed();
+            }
+          }
         }
-        #[cfg(feature = "visual-hosting")]
-        ParentSubclassData::Visual(state) => {
-          let _ = state.host.controller.NotifyParentWindowPositionChanged();
+      }
+
+      msg
+        if msg == WM_MOVE
+          || msg == WM_MOVING
+          || msg == WM_WINDOWPOSCHANGED
+          || msg == WM_INPUTLANGCHANGE
+          || msg == WM_IME_SETCONTEXT
+          || msg == WM_IME_STARTCOMPOSITION
+          || msg == WM_IME_COMPOSITION
+          || msg == WM_IME_ENDCOMPOSITION
+          || msg == WM_EXITSIZEMOVE =>
+      {
+        match data {
+          ParentSubclassData::Windowed { controller } => {
+            let _ = controller.NotifyParentWindowPositionChanged();
+          }
+          #[cfg(feature = "visual-hosting")]
+          ParentSubclassData::Visual(state) => {
+            state.notify_parent_position_changed();
+          }
         }
-      },
+      }
 
       #[cfg(feature = "visual-hosting")]
       WM_DPICHANGED => {
         if let ParentSubclassData::Visual(state) = data {
           let _ = state.host.on_dpi_changed();
+          state.notify_parent_position_changed();
         }
       }
 
       #[cfg(feature = "visual-hosting")]
-      WM_MOUSEMOVE
-      | WM_MOUSELEAVE
-      | WM_LBUTTONDOWN
-      | WM_LBUTTONUP
-      | WM_LBUTTONDBLCLK
-      | WM_MBUTTONDOWN
-      | WM_MBUTTONUP
-      | WM_MBUTTONDBLCLK
-      | WM_RBUTTONDOWN
-      | WM_RBUTTONUP
-      | WM_RBUTTONDBLCLK
-      | WM_MOUSEWHEEL
-      | WM_MOUSEHWHEEL
-      | WM_XBUTTONDOWN
-      | WM_XBUTTONUP
+      WM_GETOBJECT => {
+        if let ParentSubclassData::Visual(state) = data {
+          if let Some(provider) = &state.host.automation_provider {
+            return UiaReturnRawElementProvider(hwnd, wparam, lparam, provider);
+          }
+        }
+      }
+
+      #[cfg(feature = "visual-hosting")]
+      WM_MOUSEMOVE | WM_MOUSELEAVE | WM_LBUTTONDOWN | WM_LBUTTONUP | WM_LBUTTONDBLCLK
+      | WM_MBUTTONDOWN | WM_MBUTTONUP | WM_MBUTTONDBLCLK | WM_RBUTTONDOWN | WM_RBUTTONUP
+      | WM_RBUTTONDBLCLK | WM_MOUSEWHEEL | WM_MOUSEHWHEEL | WM_XBUTTONDOWN | WM_XBUTTONUP
       | WM_XBUTTONDBLCLK => {
         if let ParentSubclassData::Visual(state) = data {
           if state.on_mouse_message(hwnd, msg, wparam, lparam) {
