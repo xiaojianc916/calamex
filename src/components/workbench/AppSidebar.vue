@@ -255,8 +255,6 @@
 
     <SshSidebarPanel v-else-if="isSshView" @open-terminal="emit('open-terminal')" />
 
-    <AiSidebarPanel v-else-if="isAiView" :document="document" :active-run="activeRun" />
-
     <template v-else>
       <div class="border-b border-(--shell-divider) px-3 py-3">
         <p class="sidebar-section-title">{{ panelMeta.title }}</p>
@@ -311,7 +309,6 @@
 import type { ILinearContextMenuGroup, ILinearContextMenuItem } from '@/components/common/linear-context-menu.types';
 import LinearContextMenu from '@/components/common/LinearContextMenu.vue';
 import { Button } from '@/components/ui/button';
-import AiSidebarPanel from '@/components/workbench/AiSidebarPanel.vue';
 import ExplorerEntryIcon from '@/components/workbench/ExplorerEntryIcon.vue';
 import RunSidebarPanel from '@/components/workbench/RunSidebarPanel.vue';
 import SearchSidebarPanel from '@/components/workbench/SearchSidebarPanel.vue';
@@ -559,7 +556,6 @@ const isExplorerView = computed(() => props.view === 'explorer');
 const isSearchView = computed(() => props.view === 'search');
 const isSourceControlView = computed(() => props.view === 'source-control');
 const isRunView = computed(() => props.view === 'run');
-const isAiView = computed(() => props.view === 'ai');
 const isSshView = computed(() => props.view === 'extensions');
 const panelMeta = computed(() => SIDEBAR_META[props.view]);
 const normalizedExplorerSearchQuery = computed(() =>

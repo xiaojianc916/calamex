@@ -136,18 +136,36 @@
           :terminal-output-version="props.terminalOutputVersion"
         />
       </div>
+
+      <div v-show="activeTab === 'shellcheck'" class="run-panel-view is-shellcheck">
+        <DiagnosticsPanel
+          :analysis="props.scriptAnalysis"
+          :content="props.documentContent"
+          :document-name="props.documentName"
+          @select-diagnostic="handleSelectDiagnostic"
+          @rerun-analysis="emit('rerun-analysis')"
+          @ai-fix-diagnostic="emit('ai-fix-diagnostic', $event)"
+        />
+      </div>
     </div>
   </section>
 </template>
 
 <script setup lang="ts">
+import DiagnosticsPanel from '@/components/workbench/DiagnosticsPanel.vue';
 import EmbeddedTerminal from '@/components/workbench/EmbeddedTerminal.vue';
 import StructuredRunInsights from '@/components/workbench/StructuredRunInsights.vue';
 import TerminalFlowPanel from '@/components/workbench/TerminalFlowPanel.vue';
 import { useIntegratedTerminalControls } from '@/composables/useIntegratedTerminal';
 import { useMessage } from '@/composables/useMessage';
 import type { TThemeMode } from '@/types/app';
-import type { IRunLogEntry, IRunResult, TExecutorKind } from '@/types/editor';
+import type {
+  IAnalyzeScriptPayload,
+  IRunLogEntry,
+  IRunResult,
+  IScriptDiagnostic,
+  TExecutorKind,
+} from '@/types/editor';
 import type { ITerminalSettings } from '@/types/settings';
 import type {
     ITerminalRunCompletedPayload,
@@ -166,7 +184,9 @@ const props = defineProps<{
   isRunning: boolean;
   executor: TExecutorKind;
   documentName: string;
+  documentContent: string;
   documentPath: string | null;
+  scriptAnalysis: IAnalyzeScriptPayload;
   workspaceRootPath: string | null;
   theme: TThemeMode;
   terminalSettings: ITerminalSettings;
@@ -180,14 +200,20 @@ const emit = defineEmits<{
   'terminal-run-completed': [payload: ITerminalRunCompletedPayload];
   'toggle-maximize': [];
   'clear-logs': [];
+  'select-diagnostic': [line: number, column: number];
+  'rerun-analysis': [];
+  'ai-fix-diagnostic': [diagnostic: IScriptDiagnostic];
 }>();
 
 const message = useMessage();
-const activeTab = ref<'terminal' | 'logs' | 'flow'>('terminal');
+type TRunPanelTab = 'terminal' | 'logs' | 'flow' | 'shellcheck';
+
+const activeTab = ref<TRunPanelTab>('terminal');
 const tabs = [
   { label: '终端', value: 'terminal' },
   { label: '运行日志', value: 'logs' },
   { label: '事件流', value: 'flow' },
+  { label: 'ShellCheck', value: 'shellcheck' },
 ] as const;
 
 const terminalStatus = ref<ITerminalStatusChangePayload>({
@@ -240,4 +266,16 @@ const handleClearLogs = async (): Promise<void> => {
     // 忽略终端清屏失败，日志清空已单独完成。
   }
 };
+
+const handleSelectDiagnostic = (line: number, column: number): void => {
+  emit('select-diagnostic', line, column);
+};
+
+const openShellCheck = (): void => {
+  activeTab.value = 'shellcheck';
+};
+
+defineExpose({
+  openShellCheck,
+});
 </script>

@@ -1,4 +1,17 @@
 import { z } from 'zod';
+import {
+  aiAgentPlanPayloadSchema,
+  aiAgentPlanRequestSchema,
+  aiChatPayloadSchema,
+  aiChatRequestSchema,
+  aiChatStreamPayloadSchema,
+  aiCodeActionPayloadSchema,
+  aiCodeActionRequestSchema,
+  aiConfigPayloadSchema,
+  aiPatchSetSchema,
+  aiProviderTypeSchema,
+  aiToolDefinitionPayloadSchema,
+} from '@/types/ai.schema';
 
 export const zTauriVoid = z
   .union([z.null(), z.undefined(), z.void()])
@@ -62,11 +75,6 @@ const sshConnectionInputSchema = z.object({
   username: z.string().min(1),
   authMode: z.enum(['key', 'password']),
   identityPath: z.string().nullable(),
-});
-
-const aiChatMessageSchema = z.object({
-  role: z.enum(['system', 'user', 'assistant']),
-  content: z.string().min(1),
 });
 
 const executionOptionSchema = z.object({
@@ -463,18 +471,131 @@ export const tauriContracts = {
       remotePath: z.string(),
     }),
   },
-  sendAiChat: {
+  aiGetConfig: {
+    inSchema: z.void(),
+    outSchema: aiConfigPayloadSchema,
+  },
+  aiSaveConfig: {
     inSchema: z.object({
-      endpoint: z.string().min(1),
+      providerType: aiProviderTypeSchema,
+      selectedModel: z.string().nullable(),
+      baseUrl: z.string().nullable(),
+      inlineCompletionEnabled: z.boolean(),
+      chatEnabled: z.boolean(),
+      agentEnabled: z.boolean(),
+    }),
+    outSchema: aiConfigPayloadSchema,
+  },
+  aiSaveCredentials: {
+    inSchema: z.object({
+      providerType: aiProviderTypeSchema,
       apiKey: z.string().min(1),
-      model: z.string().min(1),
-      systemPrompt: z.string(),
-      messages: z.array(aiChatMessageSchema).min(1),
+    }),
+    outSchema: aiConfigPayloadSchema,
+  },
+  aiClearCredentials: {
+    inSchema: z.void(),
+    outSchema: zTauriVoid,
+  },
+  aiTestProvider: {
+    inSchema: z.void(),
+    outSchema: z.object({
+      ok: z.boolean(),
+      code: z.string(),
+      message: z.string(),
+    }),
+  },
+  aiChat: {
+    inSchema: aiChatRequestSchema,
+    outSchema: aiChatPayloadSchema,
+  },
+  aiChatStream: {
+    inSchema: aiChatRequestSchema,
+    outSchema: aiChatStreamPayloadSchema,
+  },
+  aiCancel: {
+    inSchema: z.object({
+      streamId: z.string().min(1),
+    }),
+    outSchema: zTauriVoid,
+  },
+  aiInlineComplete: {
+    inSchema: z.object({
+      filePath: z.string(),
+      language: z.string(),
+      cursorOffset: z.number().int().nonnegative(),
+      prefix: z.string(),
+      suffix: z.string(),
+      recentEdits: z.array(z.string()).optional(),
     }),
     outSchema: z.object({
-      content: z.string(),
-      model: z.string(),
+      insertText: z.string(),
+      range: z.object({
+        startOffset: z.number().int().nonnegative(),
+        endOffset: z.number().int().nonnegative(),
+      }),
+      confidence: z.enum(['low', 'medium', 'high']),
     }),
+  },
+  aiCodeAction: {
+    inSchema: aiCodeActionRequestSchema,
+    outSchema: aiCodeActionPayloadSchema,
+  },
+  aiPlanTask: {
+    inSchema: aiAgentPlanRequestSchema,
+    outSchema: aiAgentPlanPayloadSchema,
+  },
+  aiBuildIndex: {
+    inSchema: z.object({
+      workspaceRootPath: z.string().min(1),
+    }),
+    outSchema: z.object({
+      rootPath: z.string(),
+      indexedFileCount: z.number().int().nonnegative(),
+      skippedFileCount: z.number().int().nonnegative(),
+    }),
+  },
+  aiQueryIndex: {
+    inSchema: z.object({
+      workspaceRootPath: z.string().min(1),
+      query: z.string(),
+      limit: z.number().int().positive().max(80).optional(),
+    }),
+    outSchema: z.object({
+      rootPath: z.string(),
+      results: z.array(z.object({
+        path: z.string(),
+        lineNumber: z.number().int().positive().nullable(),
+        preview: z.string(),
+        score: z.number(),
+      })),
+    }),
+  },
+  aiProposePatch: {
+    inSchema: z.object({
+      path: z.string().min(1),
+      originalContent: z.string(),
+      updatedContent: z.string(),
+      summary: z.string(),
+    }),
+    outSchema: z.object({
+      patch: aiPatchSetSchema,
+    }),
+  },
+  aiApplyPatch: {
+    inSchema: z.object({
+      patch: aiPatchSetSchema,
+    }),
+    outSchema: z.object({
+      appliedFiles: z.array(z.object({
+        path: z.string(),
+        byteSize: z.number().int().nonnegative(),
+      })),
+    }),
+  },
+  aiListTools: {
+    inSchema: z.void(),
+    outSchema: z.array(aiToolDefinitionPayloadSchema),
   },
   ensureTerminalSession: {
     inSchema: z.object({

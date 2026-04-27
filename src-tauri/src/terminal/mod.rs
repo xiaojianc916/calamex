@@ -3,13 +3,18 @@
 #![allow(dead_code)]
 
 pub mod ansi;
+pub mod command_contracts;
+pub mod dispatch;
 pub mod event_bus;
 pub mod interactive_pty;
 pub mod multiplexer;
+pub mod prompt;
 pub mod pty;
 pub mod registry;
 pub mod run_supervisor;
+pub mod snapshot;
 pub mod state_machine;
+pub mod tauri_events;
 pub mod types;
 pub mod utf8_decoder;
 pub mod visual;

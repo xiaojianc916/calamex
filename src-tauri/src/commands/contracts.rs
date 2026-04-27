@@ -311,21 +311,269 @@ pub struct SshConfigHostPayload {
 pub struct AiChatMessagePayload {
     pub(crate) role: String,
     pub(crate) content: String,
+    pub(crate) id: String,
+    pub(crate) created_at: String,
+    pub(crate) references: Vec<AiContextReferencePayload>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiContextRangePayload {
+    pub(crate) start_line: u32,
+    pub(crate) end_line: u32,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiContextReferencePayload {
+    pub(crate) id: String,
+    pub(crate) kind: String,
+    pub(crate) label: String,
+    pub(crate) path: Option<String>,
+    pub(crate) range: Option<AiContextRangePayload>,
+    pub(crate) content_preview: String,
+    pub(crate) redacted: bool,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AiChatRequest {
-    pub(crate) endpoint: String,
-    pub(crate) api_key: String,
-    pub(crate) model: String,
-    pub(crate) system_prompt: String,
+    pub(crate) thread_id: Option<String>,
     pub(crate) messages: Vec<AiChatMessagePayload>,
+    pub(crate) references: Vec<AiContextReferencePayload>,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AiChatPayload {
-    pub(crate) content: String,
+    pub(crate) message: AiChatMessagePayload,
+    pub(crate) provider_type: String,
     pub(crate) model: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiChatStreamPayload {
+    pub(crate) stream_id: String,
+    pub(crate) assistant_message_id: String,
+    pub(crate) provider_type: String,
+    pub(crate) model: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiCancelRequest {
+    pub(crate) stream_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiSaveConfigRequest {
+    pub(crate) provider_type: String,
+    pub(crate) selected_model: Option<String>,
+    pub(crate) base_url: Option<String>,
+    pub(crate) inline_completion_enabled: bool,
+    pub(crate) chat_enabled: bool,
+    pub(crate) agent_enabled: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiSaveCredentialsRequest {
+    pub(crate) provider_type: String,
+    pub(crate) api_key: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiConfigPayload {
+    pub(crate) provider_type: String,
+    pub(crate) selected_model: Option<String>,
+    pub(crate) base_url: Option<String>,
+    pub(crate) is_base_url_configured: bool,
+    pub(crate) has_credentials: bool,
+    pub(crate) is_configured: bool,
+    pub(crate) inline_completion_enabled: bool,
+    pub(crate) chat_enabled: bool,
+    pub(crate) agent_enabled: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiProviderTestPayload {
+    pub(crate) ok: bool,
+    pub(crate) code: String,
+    pub(crate) message: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiInlineCompletionRequest {
+    pub(crate) file_path: String,
+    pub(crate) language: String,
+    pub(crate) cursor_offset: u32,
+    pub(crate) prefix: String,
+    pub(crate) suffix: String,
+    pub(crate) recent_edits: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiInlineCompletionRangePayload {
+    pub(crate) start_offset: u32,
+    pub(crate) end_offset: u32,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiInlineCompletionResult {
+    pub(crate) insert_text: String,
+    pub(crate) range: AiInlineCompletionRangePayload,
+    pub(crate) confidence: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiCodeActionRequest {
+    pub(crate) kind: String,
+    pub(crate) file_path: Option<String>,
+    pub(crate) language: String,
+    pub(crate) selection: String,
+    pub(crate) diagnostics: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiPatchHunkPayload {
+    pub(crate) old_start: u32,
+    pub(crate) old_lines: u32,
+    pub(crate) new_start: u32,
+    pub(crate) new_lines: u32,
+    pub(crate) lines: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiPatchFilePayload {
+    pub(crate) path: String,
+    pub(crate) original_hash: String,
+    pub(crate) hunks: Vec<AiPatchHunkPayload>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiPatchSetPayload {
+    pub(crate) summary: String,
+    pub(crate) files: Vec<AiPatchFilePayload>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiCodeActionPayload {
+    pub(crate) explanation: String,
+    pub(crate) suggested_patch: Option<AiPatchSetPayload>,
+    pub(crate) test_suggestion: Option<String>,
+    pub(crate) follow_up_questions: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiProposePatchRequest {
+    pub(crate) path: String,
+    pub(crate) original_content: String,
+    pub(crate) updated_content: String,
+    pub(crate) summary: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiProposePatchPayload {
+    pub(crate) patch: AiPatchSetPayload,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiApplyPatchRequest {
+    pub(crate) patch: AiPatchSetPayload,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiApplyPatchFilePayload {
+    pub(crate) path: String,
+    pub(crate) byte_size: u64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiApplyPatchPayload {
+    pub(crate) applied_files: Vec<AiApplyPatchFilePayload>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiToolDefinitionPayload {
+    pub(crate) name: String,
+    pub(crate) read_only: bool,
+    pub(crate) destructive: bool,
+    pub(crate) requires_confirmation: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiAgentPlanRequest {
+    pub(crate) goal: String,
+    pub(crate) context: Vec<AiContextReferencePayload>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiTaskPlanStepPayload {
+    pub(crate) id: String,
+    pub(crate) title: String,
+    pub(crate) status: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiAgentPlanPayload {
+    pub(crate) steps: Vec<AiTaskPlanStepPayload>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiBuildIndexRequest {
+    pub(crate) workspace_root_path: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiBuildIndexPayload {
+    pub(crate) root_path: String,
+    pub(crate) indexed_file_count: usize,
+    pub(crate) skipped_file_count: usize,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiQueryIndexRequest {
+    pub(crate) workspace_root_path: String,
+    pub(crate) query: String,
+    pub(crate) limit: Option<usize>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiIndexResultPayload {
+    pub(crate) path: String,
+    pub(crate) line_number: Option<usize>,
+    pub(crate) preview: String,
+    pub(crate) score: i64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiQueryIndexPayload {
+    pub(crate) root_path: String,
+    pub(crate) results: Vec<AiIndexResultPayload>,
 }

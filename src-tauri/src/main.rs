@@ -1,20 +1,28 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod ai;
+mod ai_agent;
+mod ai_context;
+mod ai_index;
+mod ai_patch;
+mod ai_tools;
 mod commands;
 mod error;
 mod terminal;
 
 use commands::{
-    analyze_script, apply_window_stage, begin_startup_transition, cancel_terminal_run,
-    close_terminal_session, commit_git_index, create_ssh_directory, create_workspace_path,
-    delete_ssh_path, delete_workspace_path, detect_execution_environment, discard_git_paths,
-    dispatch_script_to_terminal, download_ssh_file, ensure_terminal_session,
-    finalize_startup_transition, format_script, get_git_file_baseline, get_git_repository_status,
-    init_git_repository, list_ssh_config_hosts, list_ssh_directory, list_workspace_entries,
-    load_image_asset, load_script, rename_ssh_path, rename_workspace_path, resize_terminal_session,
-    save_script, search_workspace, send_ai_chat, set_window_background,
-    shutdown_all_terminal_sessions, stage_git_paths, test_ssh_connection, unstage_git_paths,
-    upload_ssh_file, write_terminal_input, TerminalSessionState,
+    ai_apply_patch, ai_build_index, ai_cancel, ai_chat, ai_chat_stream, ai_clear_credentials, ai_code_action, ai_get_config,
+    ai_inline_complete, ai_list_tools, ai_plan_task, ai_propose_patch, ai_query_index,
+    ai_save_config, ai_save_credentials, ai_test_provider, analyze_script, apply_window_stage,
+    begin_startup_transition, cancel_terminal_run, close_terminal_session, commit_git_index,
+    create_ssh_directory, create_workspace_path, delete_ssh_path, delete_workspace_path,
+    detect_execution_environment, discard_git_paths, dispatch_script_to_terminal,
+    download_ssh_file, ensure_terminal_session, finalize_startup_transition, format_script,
+    get_git_file_baseline, get_git_repository_status, init_git_repository, list_ssh_config_hosts,
+    list_ssh_directory, list_workspace_entries, load_image_asset, load_script, rename_ssh_path,
+    rename_workspace_path, resize_terminal_session, save_script, search_workspace,
+    set_window_background, shutdown_all_terminal_sessions, stage_git_paths, test_ssh_connection,
+    unstage_git_paths, upload_ssh_file, write_terminal_input, TerminalSessionState,
 };
 use std::time::Duration;
 use tauri::{Manager, WindowEvent};
@@ -144,7 +152,22 @@ fn main() {
             delete_ssh_path,
             rename_ssh_path,
             create_ssh_directory,
-            send_ai_chat
+            ai_get_config,
+            ai_save_config,
+            ai_save_credentials,
+            ai_clear_credentials,
+            ai_test_provider,
+            ai_chat,
+            ai_chat_stream,
+            ai_cancel,
+            ai_inline_complete,
+            ai_code_action,
+            ai_plan_task,
+            ai_build_index,
+            ai_query_index,
+            ai_propose_patch,
+            ai_apply_patch,
+            ai_list_tools
         ]);
 
     if let Err(error) = app.run(tauri::generate_context!()) {

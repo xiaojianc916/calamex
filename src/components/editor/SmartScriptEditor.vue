@@ -3,6 +3,7 @@
 ref="innerEditorRef" :document-path="documentPath" :model-value="modelValue" :theme="theme" :can-run="canRun"
     :analysis="analysisState" :editor-settings="editorSettings" :git-baseline="gitBaseline"
     @update:model-value="handleModelValueChange" @cursor-position-change="handleCursorPositionChange"
+    @selection-change="emit('selection-change', $event)"
     @format-request="emit('format-request')" @command-palette-request="emit('command-palette-request')"
     @run-request="emit('run-request')" />
 </template>
@@ -12,8 +13,9 @@ import ScriptEditor from '@/components/editor/ScriptEditor.vue';
 import { tauriService } from '@/services/tauri';
 import { useGitStore } from '@/store/git';
 import type { TThemeMode } from '@/types/app';
-import type { IAnalyzeScriptPayload } from '@/types/editor';
+import type { IAnalyzeScriptPayload, IEditorSelectionSummary } from '@/types/editor';
 import type { IGitFileBaselinePayload } from '@/types/git';
+import type { IAiCodeActionRequest } from '@/types/ai';
 import type { IEditorSettings } from '@/types/settings';
 import { waitForDesktopRuntime } from '@/utils/desktop-runtime';
 import { toErrorMessage } from '@/utils/error';
@@ -28,6 +30,7 @@ interface IEditorExpose {
   revealPosition: (line: number, column: number) => void;
   rerunDiagnostics: () => void;
   layoutEditor: () => void;
+  runAiCodeAction: (kind: IAiCodeActionRequest['kind']) => Promise<void>;
 }
 
 const props = withDefaults(
@@ -52,6 +55,7 @@ const props = withDefaults(
 const emit = defineEmits<{
   'update:modelValue': [value: string];
   'cursor-position-change': [line: number, column: number];
+  'selection-change': [selection: IEditorSelectionSummary | null];
   'diagnostics-change': [documentId: string, payload: IAnalyzeScriptPayload];
   'format-request': [];
   'command-palette-request': [];
@@ -292,6 +296,10 @@ const layoutEditor = (): void => {
   innerEditorRef.value?.layoutEditor();
 };
 
+const runAiCodeAction = async (kind: IAiCodeActionRequest['kind']): Promise<void> => {
+  await innerEditorRef.value?.runAiCodeAction(kind);
+};
+
 const handleModelValueChange = (value: string): void => {
   emit('update:modelValue', value);
 };
@@ -306,5 +314,6 @@ defineExpose<IEditorExpose>({
   revealPosition,
   rerunDiagnostics,
   layoutEditor,
+  runAiCodeAction,
 });
 </script>

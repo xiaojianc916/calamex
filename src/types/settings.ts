@@ -14,6 +14,7 @@ export type TSettingsSectionId =
     | 'style'
     | 'keybinds'
     | 'integrations'
+    | 'ai'
     | 'about';
 
 export type TStartupBehavior = 'restore' | 'empty';

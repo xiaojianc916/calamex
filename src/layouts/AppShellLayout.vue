@@ -62,6 +62,19 @@ ref="terminalPaneRef" class="app-shell-pane min-h-0 overflow-hidden bg-(--panel-
           </main>
         </div>
 
+        <aside
+          class="app-shell-pane min-h-0 overflow-hidden bg-(--sidebar-bg)"
+          :style="rightSidebarStyle"
+          :class="[
+            layoutTransitionsEnabled ? surfaceTransitionClass : 'transition-none',
+            props.rightSidebarVisible
+              ? 'translate-x-0 border-l border-(--shell-divider) opacity-100'
+              : 'translate-x-3 opacity-0 pointer-events-none',
+          ]"
+        >
+          <slot name="right-sidebar" />
+        </aside>
+
         <div
 v-if="props.contentOverlayVisible" class="pointer-events-none absolute inset-y-0 right-0 z-35"
           :style="contentOverlayStyle">
@@ -107,6 +120,8 @@ const props = withDefaults(
     terminalVisible?: boolean;
     terminalHeight?: number;
     sidebarWidth?: number;
+    rightSidebarVisible?: boolean;
+    rightSidebarWidth?: number;
     contentOverlayVisible?: boolean;
   }>(),
   {
@@ -115,6 +130,8 @@ const props = withDefaults(
     terminalVisible: true,
     terminalHeight: 236,
     sidebarWidth: 240,
+    rightSidebarVisible: false,
+    rightSidebarWidth: 350,
     contentOverlayVisible: false,
   },
 );
@@ -182,11 +199,16 @@ const mainGridStyle = computed(() => {
 });
 
 const shellGridStyle = computed(() => ({
-  gridTemplateColumns: `52px ${props.sidebarVisible ? props.sidebarWidth : 0}px minmax(0, 1fr)`,
+  gridTemplateColumns: `52px ${props.sidebarVisible ? props.sidebarWidth : 0}px minmax(0, 1fr) ${props.rightSidebarVisible ? props.rightSidebarWidth : 0}px`,
 }));
 
 const contentOverlayStyle = computed(() => ({
   left: `${ACTIVITY_RAIL_WIDTH}px`,
+}));
+
+const rightSidebarStyle = computed(() => ({
+  width: `${props.rightSidebarVisible ? props.rightSidebarWidth : 0}px`,
+  minWidth: `${props.rightSidebarVisible ? props.rightSidebarWidth : 0}px`,
 }));
 
 const layoutRowsTransitionClass =

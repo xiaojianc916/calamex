@@ -3,10 +3,12 @@ import { AppError, isAppError } from '@/types/app-error';
 import { assertDesktopRuntime } from '@/utils/desktop-runtime';
 import { toErrorMessage } from '@/utils/error';
 import { z } from 'zod';
+import { aiChatStreamEventPayloadSchema } from '@/types/ai.schema';
 import { tauriContracts } from './tauri.contracts';
 
 type TauriCoreModule = typeof import('@tauri-apps/api/core');
 type TauriDialogModule = typeof import('@tauri-apps/plugin-dialog');
+type TauriEventModule = typeof import('@tauri-apps/api/event');
 
 export type TIpcAuditLevel = 'none' | 'info' | 'sensitive';
 
@@ -93,6 +95,7 @@ const saveFileFilters = [
 
 let tauriCorePromise: Promise<TauriCoreModule> | null = null;
 let tauriDialogPromise: Promise<TauriDialogModule> | null = null;
+let tauriEventPromise: Promise<TauriEventModule> | null = null;
 
 const loadTauriCore = (): Promise<TauriCoreModule> => {
   if (!tauriCorePromise) {
@@ -106,6 +109,13 @@ const loadTauriDialog = (): Promise<TauriDialogModule> => {
     tauriDialogPromise = import('@tauri-apps/plugin-dialog');
   }
   return tauriDialogPromise;
+};
+
+const loadTauriEvent = (): Promise<TauriEventModule> => {
+  if (!tauriEventPromise) {
+    tauriEventPromise = import('@tauri-apps/api/event');
+  }
+  return tauriEventPromise;
 };
 
 const createTraceId = (): string => {
@@ -184,7 +194,12 @@ const measureScriptContentInput = <T extends { content: string }>(value: T): IPa
   );
 
 const measureAiChatInput = <T extends Record<string, unknown>>(value: T): IPayloadMetrics =>
-  buildPayloadMetricsOmittingTextFields(value, ['apiKey', 'messages', 'systemPrompt']);
+  buildPayloadMetricsOmittingTextFields(value, ['messages', 'references']);
+
+const measureAiInlineCompletionInput = <T extends Record<string, unknown>>(
+  value: T,
+): IPayloadMetrics =>
+  buildPayloadMetricsOmittingTextFields(value, ['prefix', 'suffix', 'recentEdits']);
 
 const emitIpcLog = (record: IIpcLogRecord): void => {
   const serialized = JSON.stringify(record);
@@ -697,11 +712,110 @@ const createSshDirectoryIpc = definePayloadIpc(
   { audit: 'sensitive', timeoutMs: 30_000 },
 );
 
-const sendAiChatIpc = definePayloadIpc(
-  'send_ai_chat',
+const aiGetConfigIpc = defineContractIpc(
+  'ai_get_config',
+  '读取 AI 配置',
+  tauriContracts.aiGetConfig,
+  { idempotent: true, audit: 'sensitive' },
+);
+
+const aiSaveConfigIpc = definePayloadIpc(
+  'ai_save_config',
+  '保存 AI 配置',
+  tauriContracts.aiSaveConfig,
+  { audit: 'sensitive' },
+);
+
+const aiSaveCredentialsIpc = definePayloadIpc(
+  'ai_save_credentials',
+  '保存 AI 凭证',
+  tauriContracts.aiSaveCredentials,
+  {
+    audit: 'sensitive',
+    measureInput: (value) => buildPayloadMetricsOmittingTextFields(value, ['apiKey']),
+  },
+);
+
+const aiClearCredentialsIpc = defineContractIpc(
+  'ai_clear_credentials',
+  '清除 AI 凭证',
+  tauriContracts.aiClearCredentials,
+  { audit: 'sensitive' },
+);
+
+const aiTestProviderIpc = defineContractIpc(
+  'ai_test_provider',
+  '测试 AI Provider',
+  tauriContracts.aiTestProvider,
+  { idempotent: true, audit: 'sensitive' },
+);
+
+const aiChatIpc = definePayloadIpc(
+  'ai_chat',
   '发送 AI 对话请求',
-  tauriContracts.sendAiChat,
+  tauriContracts.aiChat,
   { audit: 'sensitive', timeoutMs: 60_000, measureInput: measureAiChatInput },
+);
+
+const aiInlineCompleteIpc = definePayloadIpc(
+  'ai_inline_complete',
+  '请求 AI 内联补全',
+  tauriContracts.aiInlineComplete,
+  { audit: 'sensitive', timeoutMs: 15_000, measureInput: measureAiInlineCompletionInput },
+);
+
+const aiCodeActionIpc = definePayloadIpc(
+  'ai_code_action',
+  '请求 AI Code Action',
+  tauriContracts.aiCodeAction,
+  { audit: 'sensitive', timeoutMs: 60_000, measureInput: buildPayloadMetrics },
+);
+
+const aiPlanTaskIpc = definePayloadIpc(
+  'ai_plan_task',
+  '规划 AI Agent 任务',
+  tauriContracts.aiPlanTask,
+  { audit: 'sensitive', timeoutMs: 30_000, measureInput: measureAiChatInput },
+);
+
+const aiBuildIndexIpc = definePayloadIpc(
+  'ai_build_index',
+  '构建 AI 代码索引',
+  tauriContracts.aiBuildIndex,
+  { audit: 'sensitive', timeoutMs: 60_000 },
+);
+
+const aiQueryIndexIpc = definePayloadIpc(
+  'ai_query_index',
+  '查询 AI 代码索引',
+  tauriContracts.aiQueryIndex,
+  { audit: 'sensitive', timeoutMs: 30_000 },
+);
+
+const aiProposePatchIpc = definePayloadIpc(
+  'ai_propose_patch',
+  '生成 AI Patch 预览',
+  tauriContracts.aiProposePatch,
+  {
+    audit: 'sensitive',
+    timeoutMs: 30_000,
+    measureInput: (value) =>
+      buildPayloadMetricsOmittingTextFields(value, ['originalContent', 'updatedContent']),
+  },
+);
+
+const aiApplyPatchIpc = definePayloadIpc(
+  'ai_apply_patch',
+  '应用 AI Patch',
+  tauriContracts.aiApplyPatch,
+  { audit: 'sensitive', timeoutMs: 30_000, measureInput: measureAiChatInput },
+);
+
+const aiListToolsIpc = defineContractIpc(
+  'ai_list_tools',
+  '读取 AI 工具白名单',
+  tauriContracts.aiListTools,
+  { idempotent: true, audit: 'sensitive' },
 );
 
 const ensureTerminalSessionIpc = definePayloadIpc(
@@ -865,5 +979,47 @@ export const tauriService: ITauriService & {
 
   createSshDirectory: createSshDirectoryIpc,
 
-  sendAiChat: sendAiChatIpc,
+  aiGetConfig: () => aiGetConfigIpc(undefined),
+
+  aiSaveConfig: aiSaveConfigIpc,
+
+  aiSaveCredentials: aiSaveCredentialsIpc,
+
+  aiClearCredentials: () => aiClearCredentialsIpc(undefined),
+
+  aiTestProvider: () => aiTestProviderIpc(undefined),
+
+  aiChat: aiChatIpc,
+
+  aiChatStream: aiChatStreamIpc,
+
+  aiCancel: aiCancelIpc,
+
+  async onAiChatStream(handler) {
+    await assertDesktopRuntime('?? AI ????');
+    const { listen } = await loadTauriEvent();
+    return listen('ai:chat-stream', (event) => {
+      const parsed = aiChatStreamEventPayloadSchema.safeParse(event.payload);
+      if (!parsed.success) {
+        return;
+      }
+      handler(parsed.data);
+    });
+  },
+
+  aiInlineComplete: aiInlineCompleteIpc,
+
+  aiCodeAction: aiCodeActionIpc,
+
+  aiPlanTask: aiPlanTaskIpc,
+
+  aiBuildIndex: aiBuildIndexIpc,
+
+  aiQueryIndex: aiQueryIndexIpc,
+
+  aiProposePatch: aiProposePatchIpc,
+
+  aiApplyPatch: aiApplyPatchIpc,
+
+  aiListTools: () => aiListToolsIpc(undefined),
 };

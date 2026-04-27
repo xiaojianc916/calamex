@@ -1,6 +1,24 @@
 <template>
   <div class="shell-editor-surface relative h-full min-h-0 w-full bg-(--editor-bg)">
     <div ref="containerRef" class="h-full min-h-0 w-full bg-(--editor-bg)" />
+    <section v-if="aiActionResult || isAiActionRunning || aiActionError" class="ai-code-action-card">
+      <div class="ai-code-action-head">
+        <span>{{ isAiActionRunning ? 'AI 正在分析…' : 'AI Code Action' }}</span>
+        <button type="button" aria-label="关闭 AI 结果" @click="clearAiActionResult">×</button>
+      </div>
+      <p v-if="aiActionError" class="is-error">{{ aiActionError }}</p>
+      <template v-else-if="aiActionResult">
+        <p>{{ aiActionResult.explanation }}</p>
+        <ul v-if="aiActionResult.followUpQuestions.length">
+          <li v-for="question in aiActionResult.followUpQuestions" :key="question">
+            {{ question }}
+          </li>
+        </ul>
+        <p v-if="aiActionResult.testSuggestion" class="ai-code-action-note">
+          {{ aiActionResult.testSuggestion }}
+        </p>
+      </template>
+    </section>
     <EditorContextMenu
       :open="contextMenuState.open"
       :x="contextMenuState.x"
@@ -17,11 +35,14 @@
 import type { IEditorContextMenuItem } from '@/components/editor/editor-context-menu.types';
 import EditorContextMenu from '@/components/editor/EditorContextMenu.vue';
 import { useEditorContextMenu } from '@/composables/useEditorContextMenu';
+import { aiService } from '@/services/modules/ai';
 import { useEditorStore } from '@/store/editor';
 import type { TThemeMode } from '@/types/app';
 import type { IAnalyzeScriptPayload, TScriptDiagnosticSeverity } from '@/types/editor';
+import type { IEditorSelectionSummary } from '@/types/editor';
 import type { IGitFileBaselinePayload } from '@/types/git';
 import type { IEditorSettings } from '@/types/settings';
+import type { IAiCodeActionRequest, IAiCodeActionResult } from '@/types/ai';
 import { computeGitLineChanges } from '@/utils/git-diff';
 import { applyMonacoTheme, monaco } from '@/utils/monaco';
 import {
@@ -36,6 +57,7 @@ interface IEditorExpose {
   insertSnippet: (snippet: string) => void;
   revealPosition: (line: number, column: number) => void;
   layoutEditor: () => void;
+  runAiCodeAction: (kind: IAiCodeActionRequest['kind']) => Promise<void>;
 }
 
 const VIEW_STATE_SAVE_DEBOUNCE_MS = 500;
@@ -70,6 +92,7 @@ const props = withDefaults(
 const emit = defineEmits<{
   'update:modelValue': [value: string];
   'cursor-position-change': [line: number, column: number];
+  'selection-change': [selection: IEditorSelectionSummary | null];
   'format-request': [];
   'command-palette-request': [];
   'run-request': [];
@@ -79,6 +102,9 @@ let editorInstance: monaco.editor.IStandaloneCodeEditor | null = null;
 
 const containerRef = ref<HTMLElement | null>(null);
 const analysisState = computed(() => props.analysis ?? createEmptyAnalysis());
+const aiActionResult = ref<IAiCodeActionResult | null>(null);
+const aiActionError = ref('');
+const isAiActionRunning = ref(false);
 const editorStore = useEditorStore();
 const {
   contextMenuState,
@@ -99,10 +125,101 @@ const {
   onRunCurrentScriptRequest: () => {
     emit('run-request');
   },
+  onAiCodeActionRequest: async (kind, selection) => {
+    await runAiCodeAction(kind, selection);
+  },
 });
 
 const handleContextMenuItemSelect = (item: IEditorContextMenuItem): void => {
   void executeContextMenuItem(item);
+};
+
+const clearAiActionResult = (): void => {
+  aiActionResult.value = null;
+  aiActionError.value = '';
+  isAiActionRunning.value = false;
+};
+
+const runAiCodeAction = async (
+  kind: IAiCodeActionRequest['kind'],
+  selection: string,
+): Promise<void> => {
+  if (isAiActionRunning.value) {
+    return;
+  }
+
+  isAiActionRunning.value = true;
+  aiActionError.value = '';
+  aiActionResult.value = null;
+
+  try {
+    aiActionResult.value = await aiService.codeAction({
+      kind,
+      filePath: props.documentPath ?? null,
+      language: 'shell',
+      selection,
+      diagnostics: analysisState.value.diagnostics.map(
+        (item) => `${item.code}: ${item.message}`,
+      ),
+    });
+  } catch (error) {
+    aiActionError.value = error instanceof Error ? error.message : String(error);
+  } finally {
+    isAiActionRunning.value = false;
+  }
+};
+
+const resolveCurrentSelectionText = (): string => {
+  const editor = editorInstance;
+  const model = editor?.getModel();
+  const selection = editor?.getSelection();
+  if (!model || !selection) {
+    return '';
+  }
+
+  const selectedText = model.getValueInRange(selection);
+  if (selectedText.trim()) {
+    return selectedText;
+  }
+
+  const position = editor.getPosition();
+  if (!position) {
+    return '';
+  }
+
+  return model.getLineContent(position.lineNumber);
+};
+
+const resolveCurrentSelectionSummary = (): IEditorSelectionSummary | null => {
+  const editor = editorInstance;
+  const model = editor?.getModel();
+  const selection = editor?.getSelection();
+  if (!model || !selection || selection.isEmpty()) {
+    return null;
+  }
+
+  const selectedText = model.getValueInRange(selection);
+  if (!selectedText.trim()) {
+    return null;
+  }
+
+  const chars = [...selectedText];
+  return {
+    text: chars.length > 4_000 ? `${chars.slice(0, 4_000).join('')}\n[已截断]` : selectedText,
+    startLine: selection.startLineNumber,
+    endLine: selection.endLineNumber,
+  };
+};
+
+const emitSelectionSummary = (): void => {
+  emit('selection-change', resolveCurrentSelectionSummary());
+};
+
+const runAiCodeActionFromEditor = async (
+  kind: IAiCodeActionRequest['kind'],
+): Promise<void> => {
+  const selection = resolveCurrentSelectionText();
+  await runAiCodeAction(kind, selection);
 };
 
 const DEFAULT_EDITOR_FONT_FAMILY =
@@ -181,6 +298,8 @@ let resizeObserver: ResizeObserver | null = null;
 let editorLayoutFrameId: number | null = null;
 let shellCompletionRegistrationTimerId: number | null = null;
 let shellCompletionRegistrationPromise: Promise<void> | null = null;
+let aiInlineCompletionDisposable: monaco.IDisposable | null = null;
+let aiInlineCompletionRequestId = 0;
 let previousContainerSize = { width: 0, height: 0 };
 let gitDecorationsCollection: monaco.editor.IEditorDecorationsCollection | null = null;
 let viewStateSaveTimerId: number | null = null;
@@ -411,6 +530,68 @@ const scheduleShellCompletionRegistration = (): void => {
   }, 0);
 };
 
+const clipInlineContext = (value: string, limit: number): string => {
+  const chars = [...value];
+  return chars.length <= limit ? value : chars.slice(chars.length - limit).join('');
+};
+
+const registerAiInlineCompletionProvider = (): void => {
+  if (aiInlineCompletionDisposable) {
+    return;
+  }
+
+  aiInlineCompletionDisposable = monaco.languages.registerInlineCompletionsProvider('shell', {
+    async provideInlineCompletions(model, position, _context, token) {
+      const requestId = ++aiInlineCompletionRequestId;
+      const config = await aiService.getConfig();
+      if (
+        token.isCancellationRequested ||
+        requestId !== aiInlineCompletionRequestId ||
+        !config.inlineCompletionEnabled
+      ) {
+        return { items: [] };
+      }
+
+      const cursorOffset = model.getOffsetAt(position);
+      const fullText = model.getValue();
+      const prefix = clipInlineContext(fullText.slice(0, cursorOffset), 8_000);
+      const suffix = fullText.slice(cursorOffset, cursorOffset + 8_000);
+      const result = await aiService.inlineComplete({
+        filePath: props.documentPath ?? 'untitled.sh',
+        language: 'shell',
+        cursorOffset,
+        prefix,
+        suffix,
+      });
+
+      if (
+        token.isCancellationRequested ||
+        requestId !== aiInlineCompletionRequestId ||
+        !result.insertText.trim()
+      ) {
+        return { items: [] };
+      }
+
+      return {
+        items: [
+          {
+            insertText: result.insertText,
+            range: new monaco.Range(
+              position.lineNumber,
+              position.column,
+              position.lineNumber,
+              position.column,
+            ),
+          },
+        ],
+      };
+    },
+    disposeInlineCompletions() {
+      // Monaco 0.55 要求提供释放入口；当前没有额外资源需要释放。
+    },
+  });
+};
+
 const applyEditorSettings = (): void => {
   const editor = editorInstance;
   const model = editor?.getModel();
@@ -515,6 +696,10 @@ const createEditor = (): void => {
     scheduleViewStatePersist();
   });
 
+  editorInstance.onDidChangeCursorSelection(() => {
+    emitSelectionSummary();
+  });
+
   editorInstance.onDidScrollChange(() => {
     closeContextMenu();
     scheduleViewStatePersist();
@@ -533,6 +718,7 @@ const createEditor = (): void => {
   syncGitDecorations();
   restoreViewStateForPath(props.documentPath);
   scheduleShellCompletionRegistration();
+  registerAiInlineCompletionProvider();
 
   requestAnimationFrame(() => {
     scheduleEditorLayout();
@@ -669,6 +855,10 @@ onBeforeUnmount(() => {
     shellCompletionRegistrationTimerId = null;
   }
 
+  aiInlineCompletionRequestId += 1;
+  aiInlineCompletionDisposable?.dispose();
+  aiInlineCompletionDisposable = null;
+
   closeContextMenu();
   editorInstance?.dispose();
   editorInstance = null;
@@ -718,5 +908,66 @@ defineExpose<IEditorExpose>({
   insertSnippet,
   revealPosition,
   layoutEditor,
+  runAiCodeAction: runAiCodeActionFromEditor,
 });
 </script>
+
+<style scoped>
+.ai-code-action-card {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  z-index: 8;
+  display: grid;
+  width: min(420px, calc(100% - 28px));
+  max-height: 280px;
+  gap: 8px;
+  overflow: auto;
+  border: 1px solid color-mix(in srgb, var(--shell-divider) 100%, rgba(255, 255, 255, 0.1));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel-bg) 96%, var(--sidebar-bg));
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.36), 0 0 0 0.5px rgba(255, 255, 255, 0.06);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+  padding: 10px;
+}
+
+.ai-code-action-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.ai-code-action-head button {
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  color: var(--text-quaternary);
+}
+
+.ai-code-action-head button:hover {
+  background: var(--surface-soft);
+  color: var(--text-primary);
+}
+
+.ai-code-action-card p,
+.ai-code-action-card ul {
+  margin: 0;
+}
+
+.ai-code-action-card ul {
+  padding-left: 18px;
+}
+
+.ai-code-action-card .is-error {
+  color: var(--danger);
+}
+
+.ai-code-action-note {
+  color: var(--text-tertiary);
+}
+</style>

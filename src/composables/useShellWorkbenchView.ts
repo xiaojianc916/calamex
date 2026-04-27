@@ -4,6 +4,7 @@ import type { TWorkbenchSidebarView } from '@/types/app';
 import type {
   IAnalyzeScriptPayload,
   ICommandTemplate,
+  IEditorSelectionSummary,
   IWorkspaceDirectoryPayload,
 } from '@/types/editor';
 import type { ITerminalRunCompletedPayload } from '@/types/terminal';
@@ -38,6 +39,7 @@ const WIDE_SIDEBAR_VIEWS: readonly TWorkbenchSidebarView[] = [
   'search',
   'run',
   'extensions',
+  'ai',
 ];
 
 const clampNumber = (value: number, min: number, max: number): number =>
@@ -84,6 +86,7 @@ export const useShellWorkbenchView = (onReady: () => void) => {
 
   const isTerminalVisible = ref(true);
   const isSidebarVisible = ref(true);
+  const isAiPanelVisible = ref(false);
   const isDiagnosticsPanelVisible = ref(false);
   const activeSurfaceMode = ref<TWorkbenchSurfaceMode>('workbench');
   const terminalHeight = ref(236);
@@ -108,6 +111,7 @@ export const useShellWorkbenchView = (onReady: () => void) => {
   let editorLayoutAfterSidebarFrameId: number | null = null;
   let focusBeforeSettingsOpen: HTMLElement | null = null;
   let globalKeydownCleanup: (() => void) | null = null;
+  let previousSidebarView: TWorkbenchSidebarView = 'explorer';
 
   const sidebarWidth = computed(() =>
     WIDE_SIDEBAR_VIEWS.includes(activeSidebarView.value) ? 280 : 240,
@@ -259,6 +263,10 @@ export const useShellWorkbenchView = (onReady: () => void) => {
     workbench.editorStore.setCursorPosition(line, column);
   };
 
+  const handleSelectionChange = (selection: IEditorSelectionSummary | null): void => {
+    workbench.editorStore.setActiveSelectionSummary(selection);
+  };
+
   const handleDiagnosticsChange = (documentId: string, payload: IAnalyzeScriptPayload): void => {
     workbench.editorStore.setDocumentAnalysis(documentId, payload);
   };
@@ -333,6 +341,11 @@ export const useShellWorkbenchView = (onReady: () => void) => {
 
   const openTerminal = async (): Promise<void> => {
     await runAfterClosingSettings(() => {
+      isAiPanelVisible.value = false;
+      if (activeSidebarView.value === 'ai') {
+        activeSidebarView.value = previousSidebarView;
+        isSidebarVisible.value = true;
+      }
       isTerminalVisible.value = true;
     });
   };
@@ -345,6 +358,8 @@ export const useShellWorkbenchView = (onReady: () => void) => {
   };
 
   const toggleTerminalMaximize = (): void => {
+    isAiPanelVisible.value = false;
+
     if (!isTerminalVisible.value) {
       isTerminalVisible.value = true;
     }
@@ -473,11 +488,42 @@ export const useShellWorkbenchView = (onReady: () => void) => {
 
   const showSidebarView = (view: TWorkbenchSidebarView): void => {
     activeSidebarView.value = view;
+    previousSidebarView = view;
+    isAiPanelVisible.value = false;
     isSidebarVisible.value = true;
     scheduleEditorLayoutAfterSidebarChange();
   };
 
+  const openAiPanel = (): void => {
+    activeSidebarView.value = 'ai';
+    isAiPanelVisible.value = true;
+    isTerminalVisible.value = false;
+    isSidebarVisible.value = false;
+    scheduleEditorLayoutAfterSidebarChange();
+  };
+
+  const closeAiPanel = (): void => {
+    isAiPanelVisible.value = false;
+    if (activeSidebarView.value === 'ai') {
+      activeSidebarView.value = previousSidebarView;
+      isSidebarVisible.value = true;
+    }
+    scheduleEditorLayoutAfterSidebarChange();
+  };
+
   const handleSelectSidebarView = async (view: TWorkbenchSidebarView): Promise<void> => {
+    if (view === 'ai') {
+      await runAfterClosingSettings(() => {
+        if (isAiPanelVisible.value) {
+          closeAiPanel();
+          return;
+        }
+
+        openAiPanel();
+      });
+      return;
+    }
+
     if (isSettingsView.value) {
       await runAfterClosingSettings(() => {
         showSidebarView(view);
@@ -568,6 +614,11 @@ export const useShellWorkbenchView = (onReady: () => void) => {
   const handleRunScript = async (): Promise<void> => {
     await runAfterClosingSettings(async () => {
       closeDiagnosticsPanel();
+      isAiPanelVisible.value = false;
+      if (activeSidebarView.value === 'ai') {
+        activeSidebarView.value = previousSidebarView;
+        isSidebarVisible.value = true;
+      }
       isTerminalVisible.value = true;
       await workbench.runScript();
     });
@@ -648,11 +699,13 @@ export const useShellWorkbenchView = (onReady: () => void) => {
 
   return {
     ...workbench,
+    gitStore,
     editorRef,
     editorViewportRef,
     settingsOverlayRef,
     isTerminalVisible,
     isSidebarVisible,
+    isAiPanelVisible,
     isDiagnosticsPanelVisible,
     isSettingsView,
     isWorkbenchContentVisible,
@@ -674,6 +727,7 @@ export const useShellWorkbenchView = (onReady: () => void) => {
     handleInsertTemplate,
     handleFormatDocument,
     handleCursorPositionChange,
+    handleSelectionChange,
     handleDiagnosticsChange,
     handleSelectDiagnostic,
     handleRerunDiagnostics,
@@ -687,6 +741,7 @@ export const useShellWorkbenchView = (onReady: () => void) => {
     handleSelectSidebarView,
     hideTerminal,
     openTerminal,
+    closeAiPanel,
     clearTerminalLogs,
     handleRunScript,
     handleIntegratedTerminalRunCompleted,

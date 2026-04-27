@@ -6,6 +6,7 @@ import type {
 import { tryReadClipboardText, writeClipboardText } from '@/utils/clipboard';
 import { monaco } from '@/utils/monaco';
 import { onBeforeUnmount, reactive, ref } from 'vue';
+import type { IAiCodeActionRequest } from '@/types/ai';
 
 const MENU_WIDTH = 224;
 const SUBMENU_SAFE_WIDTH = 224;
@@ -55,6 +56,10 @@ interface IUseEditorContextMenuOptions {
   onFormatRequest: () => void;
   onCommandPaletteRequest: () => void;
   onRunCurrentScriptRequest: () => void;
+  onAiCodeActionRequest?: (
+    kind: IAiCodeActionRequest['kind'],
+    selection: string,
+  ) => Promise<void> | void;
 }
 
 interface IEditorContextMenuState {
@@ -293,6 +298,8 @@ export const useEditorContextMenu = (options: IUseEditorContextMenuOptions) => {
     const supportsCommentLine = supportsAction(editor, 'editor.action.commentLine');
     const hasModel = editor.getModel() !== null;
     const canRunCurrentScript = options.canRunCurrentScript();
+    const selectedText = resolveEditorSelectionText(editor)?.trim() ?? '';
+    const canRunAiAction = hasModel && selectedText.length > 0 && Boolean(options.onAiCodeActionRequest);
 
     const formatChildren: IEditorContextMenuItem[] = [
       {
@@ -333,6 +340,33 @@ export const useEditorContextMenu = (options: IUseEditorContextMenuOptions) => {
     ];
 
     return [
+      {
+        key: 'ai-actions',
+        title: 'AI',
+        items: [
+          {
+            key: 'ai-explain-selection',
+            label: 'AI 解释选区',
+            icon: 'command',
+            action: 'ai-explain-selection',
+            disabled: !canRunAiAction,
+          },
+          {
+            key: 'ai-fix-diagnostic',
+            label: 'AI 修复诊断',
+            icon: 'command',
+            action: 'ai-fix-diagnostic',
+            disabled: !canRunAiAction,
+          },
+          {
+            key: 'ai-generate-tests',
+            label: 'AI 生成测试',
+            icon: 'command',
+            action: 'ai-generate-tests',
+            disabled: !canRunAiAction,
+          },
+        ],
+      },
       {
         key: 'run-actions',
         title: 'RUN',
@@ -483,6 +517,27 @@ export const useEditorContextMenu = (options: IUseEditorContextMenuOptions) => {
     editor.focus();
 
     switch (item.action) {
+      case 'ai-explain-selection': {
+        const selection = resolveEditorSelectionText(editor);
+        if (selection) {
+          await options.onAiCodeActionRequest?.('explain_selection', selection);
+        }
+        return;
+      }
+      case 'ai-fix-diagnostic': {
+        const selection = resolveEditorSelectionText(editor);
+        if (selection) {
+          await options.onAiCodeActionRequest?.('fix_diagnostic', selection);
+        }
+        return;
+      }
+      case 'ai-generate-tests': {
+        const selection = resolveEditorSelectionText(editor);
+        if (selection) {
+          await options.onAiCodeActionRequest?.('generate_tests', selection);
+        }
+        return;
+      }
       case 'undo':
         triggerEditorCommand(editor, 'undo');
         return;

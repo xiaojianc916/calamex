@@ -33,6 +33,30 @@ import type {
   IWriteTerminalInputRequest,
 } from './terminal';
 import type { IWorkspaceSearchPayload, IWorkspaceSearchRequest } from './search';
+import type {
+  IAiChatPayload,
+  IAiChatRequest,
+  IAiChatStreamEventPayload,
+  IAiChatStreamPayload,
+  IAiAgentPlanPayload,
+  IAiAgentPlanRequest,
+  IAiApplyPatchPayload,
+  IAiApplyPatchRequest,
+  IAiBuildIndexPayload,
+  IAiBuildIndexRequest,
+  IAiCodeActionRequest,
+  IAiCodeActionResult,
+  IAiConfigPayload,
+  IAiInlineCompletionRequest,
+  IAiInlineCompletionResult,
+  IAiProviderTestPayload,
+  IAiProposePatchPayload,
+  IAiProposePatchRequest,
+  IAiQueryIndexPayload,
+  IAiQueryIndexRequest,
+  IAiSaveCredentialsRequest,
+  IAiSaveConfigRequest,
+} from './ai';
 
 export interface ISshConnectionTestRequest {
   host: string;
@@ -123,24 +147,6 @@ export interface ISshConfigHostPayload {
   lastUsedLabel: string;
 }
 
-export interface IAiChatMessagePayload {
-  role: 'system' | 'user' | 'assistant';
-  content: string;
-}
-
-export interface IAiChatRequest {
-  endpoint: string;
-  apiKey: string;
-  model: string;
-  systemPrompt: string;
-  messages: IAiChatMessagePayload[];
-}
-
-export interface IAiChatPayload {
-  content: string;
-  model: string;
-}
-
 export interface ITauriService {
   analyzeScript(payload: IAnalyzeScriptRequest): Promise<IAnalyzeScriptPayload>;
   formatScript(payload: IFormatScriptRequest): Promise<IFormatScriptPayload>;
@@ -176,5 +182,20 @@ export interface ITauriService {
   deleteSshPath(payload: ISshPathDeleteRequest): Promise<ISshPathDeletePayload>;
   renameSshPath(payload: ISshPathRenameRequest): Promise<ISshPathRenamePayload>;
   createSshDirectory(payload: ISshDirectoryCreateRequest): Promise<ISshDirectoryCreatePayload>;
-  sendAiChat(payload: IAiChatRequest): Promise<IAiChatPayload>;
+  aiGetConfig(): Promise<IAiConfigPayload>;
+  aiSaveConfig(payload: IAiSaveConfigRequest): Promise<IAiConfigPayload>;
+  aiSaveCredentials(payload: IAiSaveCredentialsRequest): Promise<IAiConfigPayload>;
+  aiClearCredentials(): Promise<void>;
+  aiTestProvider(): Promise<IAiProviderTestPayload>;
+  aiChat(payload: IAiChatRequest, options?: { signal?: AbortSignal }): Promise<IAiChatPayload>;
+  aiChatStream(payload: IAiChatRequest): Promise<IAiChatStreamPayload>;
+  aiCancel(payload: { streamId: string }): Promise<void>;
+  onAiChatStream(handler: (payload: IAiChatStreamEventPayload) => void): Promise<() => void>;
+  aiInlineComplete(payload: IAiInlineCompletionRequest): Promise<IAiInlineCompletionResult>;
+  aiCodeAction(payload: IAiCodeActionRequest): Promise<IAiCodeActionResult>;
+  aiPlanTask(payload: IAiAgentPlanRequest): Promise<IAiAgentPlanPayload>;
+  aiBuildIndex(payload: IAiBuildIndexRequest): Promise<IAiBuildIndexPayload>;
+  aiQueryIndex(payload: IAiQueryIndexRequest): Promise<IAiQueryIndexPayload>;
+  aiProposePatch(payload: IAiProposePatchRequest): Promise<IAiProposePatchPayload>;
+  aiApplyPatch(payload: IAiApplyPatchRequest): Promise<IAiApplyPatchPayload>;
 }

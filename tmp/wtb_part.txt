@@ -1,0 +1,400 @@
+const menubarMenus = computed<ITitlebarMenuDefinition[]>(() => [
+  { key: 'file', label: '文件', minWidth: 220, items: fileMenuItems.value },
+  { key: 'edit', label: '编辑', minWidth: 240, items: editMenuItems.value },
+  { key: 'view', label: '查看', minWidth: 220, items: viewMenuItems.value },
+  { key: 'select', label: '选择', minWidth: 240, items: selectMenuItems.value },
+  { key: 'goto', label: '转到', minWidth: 220, items: gotoMenuItems.value },
+  { key: 'terminal', label: '终端', minWidth: 240, items: terminalMenuItems.value },
+  { key: 'help', label: '帮助', minWidth: 220, items: helpMenuItems.value },
+]);
+
+
+const DEFAULT_COMMAND_PALETTE_SHORTCUT = 'Enter';
+
+const resolveCommandPaletteIcon = (menuKey: TTitlebarMenuKey, itemKey: string): TLinearContextMenuIcon => {
+  if (itemKey.includes('undo')) return 'undo';
+  if (itemKey.includes('redo')) return 'redo';
+  if (itemKey.includes('format')) return 'format';
+  if (itemKey.includes('find') || itemKey.includes('search')) return 'search';
+  if (itemKey.includes('goto') || itemKey.includes('navigate') || itemKey.includes('problem')) return 'goto';
+  if (itemKey.includes('terminal')) return 'command';
+  if (itemKey.includes('run') || itemKey.includes('task')) return 'command';
+  if (itemKey.includes('theme')) return 'check';
+  if (itemKey.includes('save')) return 'check';
+  if (itemKey.includes('open')) return 'open-external';
+  if (itemKey.includes('new')) return 'plus';
+  if (itemKey.includes('close')) return 'minus';
+  if (itemKey.includes('cut')) return 'cut';
+  if (itemKey.includes('copy')) return 'copy';
+  if (itemKey.includes('paste')) return 'paste';
+  if (itemKey.includes('select')) return 'select-all';
+  if (itemKey.includes('template') || itemKey.includes('comment')) return 'comment';
+  if (menuKey === 'help') return 'link';
+  return 'command';
+};
+
+const resolveCommandPaletteShortcut = (shortcut: string | undefined): string =>
+  shortcut && shortcut.trim().length > 0 ? shortcut : DEFAULT_COMMAND_PALETTE_SHORTCUT;
+
+const commandPaletteActions = computed<ICommandPaletteAction[]>(() =>
+  menubarMenus.value.flatMap((menu) =>
+    menu.items.flatMap((item) => {
+      if (item.children?.length) {
+        return item.children.map((child) => ({
+          id: `${menu.key}:${child.key}`,
+          menuKey: menu.key,
+          itemKey: child.key,
+          label: child.label,
+          groupLabel: `${menu.label} / ${item.label}`,
+          shortcut: child.shortcut,
+          disabled: Boolean(item.disabled || child.disabled),
+          icon: resolveCommandPaletteIcon(menu.key, child.key),
+          shortcutLabel: resolveCommandPaletteShortcut(child.shortcut),
+          searchText: `${child.label} ${item.label} ${menu.label} ${child.shortcut ?? ''}`.toLowerCase(),
+        }));
+      }
+
+      return [{
+        id: `${menu.key}:${item.key}`,
+        menuKey: menu.key,
+        itemKey: item.key,
+        label: item.label,
+        groupLabel: menu.label,
+        shortcut: item.shortcut,
+        disabled: Boolean(item.disabled),
+        icon: resolveCommandPaletteIcon(menu.key, item.key),
+        shortcutLabel: resolveCommandPaletteShortcut(item.shortcut),
+        searchText: `${item.label} ${menu.label} ${item.shortcut ?? ''}`.toLowerCase(),
+      }];
+    }),
+  ),
+);
+
+const normalizedCommandPaletteQuery = computed(() => commandPaletteQuery.value.trim().toLowerCase());
+
+const filteredCommandPaletteActions = computed(() => {
+  const query = normalizedCommandPaletteQuery.value;
+  if (!query) {
+    return commandPaletteActions.value;
+  }
+
+  return commandPaletteActions.value.filter((action) => action.searchText.includes(query));
+});
+const openCommandPalette = (): void => {
+  closeMenubarMenus();
+  isCommandPaletteOpen.value = true;
+};
+
+const closeCommandPalette = (): void => {
+  isCommandPaletteOpen.value = false;
+  commandPaletteQuery.value = '';
+  commandPaletteActiveIndex.value = 0;
+};
+
+const moveCommandPaletteActive = (delta: number): void => {
+  const enabledActions = filteredCommandPaletteActions.value.filter((action) => !action.disabled);
+  if (enabledActions.length === 0) {
+    commandPaletteActiveIndex.value = 0;
+    return;
+  }
+
+  const currentAction = filteredCommandPaletteActions.value[commandPaletteActiveIndex.value];
+  const currentEnabledIndex = currentAction
+    ? enabledActions.findIndex((action) => action.id === currentAction.id)
+    : -1;
+  const nextEnabledIndex = (currentEnabledIndex + delta + enabledActions.length) % enabledActions.length;
+  const nextAction = enabledActions[nextEnabledIndex];
+  const nextIndex = nextAction
+    ? filteredCommandPaletteActions.value.findIndex((action) => action.id === nextAction.id)
+    : 0;
+  commandPaletteActiveIndex.value = Math.max(nextIndex, 0);
+};
+
+const executeCommandPaletteAction = (action: ICommandPaletteAction): void => {
+  if (action.disabled) {
+    return;
+  }
+
+  closeCommandPalette();
+  handleMenuSelect(action.menuKey, action.itemKey);
+};
+
+const executeActiveCommandPaletteAction = (): void => {
+  const action = filteredCommandPaletteActions.value[commandPaletteActiveIndex.value];
+  if (!action) {
+    return;
+  }
+
+  executeCommandPaletteAction(action);
+};
+
+const handleDocumentPointerDown = (event: PointerEvent): void => {
+  if (!isCommandPaletteOpen.value) {
+    return;
+  }
+
+  const target = event.target;
+  if (target instanceof Node && commandPaletteRef.value?.contains(target)) {
+    return;
+  }
+
+  closeCommandPalette();
+};
+
+const handleDocumentKeyDown = (event: KeyboardEvent): void => {
+  const isCommandPaletteShortcut = (event.metaKey || event.ctrlKey) && (event.key === 'k' || event.key === 'p');
+  if (!isCommandPaletteShortcut) {
+    return;
+  }
+
+  event.preventDefault();
+  openCommandPalette();
+};
+
+const resolveMenuItemLabel = (menuKey: TTitlebarMenuKey, itemKey: string): string =>
+  menubarMenus.value.find((menu) => menu.key === menuKey)?.items.find((item) => item.key === itemKey)?.label ?? itemKey;
+
+const runButtonTooltip = computed(() => {
+  if (props.isRunning) {
+    return '脚本正在执行';
+  }
+
+  if (!props.isDesktopRuntime) {
+    return '当前为浏览器预览，无法直接执�?;
+  }
+
+  if (!props.hasActiveDocument) {
+    return '请先打开脚本';
+  }
+
+  if (!props.canRun) {
+    return props.documentKind === 'image' ? '图片预览不支持执�? : '当前脚本内容不可执行';
+  }
+
+  return '运行脚本';
+});
+
+const terminalToggleTooltip = computed(() => {
+  if (!props.isDesktopRuntime) {
+    return '仅桌面端可用';
+  }
+
+  return props.isTerminalVisible ? '隐藏终端' : '打开终端';
+});
+
+let unlistenResize: UnlistenFn | null = null;
+let isTitlebarUnmounted = false;
+
+const getAppWindow = async () => {
+  const runtimeReady = await waitForDesktopRuntime();
+  if (!runtimeReady) {
+    return null;
+  }
+
+  const { getCurrentWindow } = await import('@tauri-apps/api/window');
+  return getCurrentWindow();
+};
+
+const syncWindowState = async (): Promise<void> => {
+  const appWindow = await getAppWindow();
+  if (!appWindow || isTitlebarUnmounted) {
+    return;
+  }
+
+  try {
+    const nextIsMaximized = await appWindow.isMaximized();
+    if (!isTitlebarUnmounted) {
+      isMaximized.value = nextIsMaximized;
+    }
+  } catch (error) {
+    console.warn('读取窗口最大化状态失�?, error);
+  }
+};
+
+const handleMenuOpenChange = (menuKey: TTitlebarMenuKey, open: boolean): void => {
+  if (open) {
+    openMenuKey.value = menuKey;
+    return;
+  }
+
+  if (openMenuKey.value === menuKey) {
+    openMenuKey.value = null;
+  }
+};
+
+const handleMenuTriggerMouseEnter = (menuKey: TTitlebarMenuKey): void => {
+  if (openMenuKey.value && openMenuKey.value !== menuKey) {
+    openMenuKey.value = menuKey;
+  }
+};
+
+const closeMenubarMenus = (): void => {
+  openMenuKey.value = null;
+};
+
+const showPendingMessage = (label: string): void => {
+  message.info(`${label} 待接入`);
+};
+
+const handleFileAction = (key: string): void => {
+  switch (key) {
+    case 'new':
+      emit('new');
+      break;
+    case 'open':
+      emit('open');
+      break;
+    case 'open-folder':
+      emit('open-folder');
+      break;
+    case 'close-workspace':
+      emit('close-workspace');
+      break;
+    case 'save':
+      emit('save');
+      break;
+    case 'save-as':
+      emit('save-as');
+      break;
+    default:
+      break;
+  }
+};
+
+const handleEditAction = (key: string): void => {
+  switch (key) {
+    case 'format-document':
+      emit('format-document');
+      return;
+    case 'undo':
+    case 'redo':
+    case 'cut':
+    case 'copy':
+    case 'paste':
+    case 'find':
+    case 'replace':
+      showPendingMessage(resolveMenuItemLabel('edit', key));
+      return;
+    default:
+      break;
+  }
+
+  const templateId = key.replace('template:', '');
+  const targetTemplate = [...props.commandTemplates, ...props.commentTemplates].find((item) => item.id === templateId);
+  if (targetTemplate) {
+    emit('insert-template', targetTemplate);
+  }
+};
+
+const handleViewAction = (key: string): void => {
+  if (key.startsWith('sidebar:')) {
+    emit('select-sidebar-view', key.replace('sidebar:', '') as TWorkbenchSidebarView);
+    return;
+  }
+
+  switch (key) {
+    case 'command-palette':
+      openCommandPalette();
+      return;
+    case 'toggle-terminal':
+      toggleTerminalVisibility();
+      return;
+    case 'toggle-diagnostics':
+      emit('toggle-diagnostics');
+      return;
+    case 'toggle-theme':
+      emit('toggle-theme');
+      return;
+    case 'toggle-fullscreen':
+      void handleToggleFullscreen();
+      return;
+    default:
+      showPendingMessage(resolveMenuItemLabel('view', key));
+  }
+};
+
+const handleTerminalAction = (key: string): void => {
+  switch (key) {
+    case 'new-terminal':
+      emit('open-terminal');
+      return;
+    case 'run-active-file':
+      emit('run');
+      return;
+    default:
+      showPendingMessage(resolveMenuItemLabel('terminal', key));
+  }
+};
+
+const handleHelpAction = (key: string): void => {
+  showPendingMessage(resolveMenuItemLabel('help', key));
+};
+
+const handleSelectAction = (key: string): void => {
+  showPendingMessage(resolveMenuItemLabel('select', key));
+};
+
+const handleGotoAction = (key: string): void => {
+  showPendingMessage(resolveMenuItemLabel('goto', key));
+};
+
+const handleMenuSelect = (menuKey: TTitlebarMenuKey, itemKey: string): void => {
+  closeMenubarMenus();
+
+  switch (menuKey) {
+    case 'file':
+      handleFileAction(itemKey);
+      break;
+    case 'edit':
+      handleEditAction(itemKey);
+      break;
+    case 'view':
+      handleViewAction(itemKey);
+      break;
+    case 'select':
+      handleSelectAction(itemKey);
+      break;
+    case 'goto':
+      handleGotoAction(itemKey);
+      break;
+    case 'terminal':
+      handleTerminalAction(itemKey);
+      break;
+    case 'help':
+      handleHelpAction(itemKey);
+      break;
+    default:
+      break;
+  }
+};
+
+const toggleTerminalVisibility = (): void => {
+  if (!props.isDesktopRuntime) {
+    return;
+  }
+
+  if (props.isTerminalVisible) {
+    emit('hide-terminal');
+    return;
+  }
+
+  emit('open-terminal');
+};
+
+const handleMinimize = async (): Promise<void> => {
+  const appWindow = await getAppWindow();
+  if (!appWindow) {
+    return;
+  }
+
+  await appWindow.minimize();
+};
+
+const handleToggleFullscreen = async (): Promise<void> => {
+  const appWindow = await getAppWindow();
+  if (!appWindow) {
+    return;
+  }
+
+  try {
+    const isFullscreen = await appWindow.isFullscreen();

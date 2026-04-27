@@ -2,6 +2,7 @@ import type {
   IActiveRunSummary,
   IAnalyzeScriptPayload,
   IEditorDocument,
+  IEditorSelectionSummary,
   IExecutionEnvironment,
   IRunHistoryEntry,
   IRunLogEntry,
@@ -165,6 +166,7 @@ export const useEditorStore = defineStore('editor', () => {
   });
   const cursorLine = ref(1);
   const cursorColumn = ref(1);
+  const activeSelectionSummary = ref<IEditorSelectionSummary | null>(null);
   const selectedExecutor = ref<TExecutorKind>(DEFAULT_EXECUTOR);
   const terminalOutputChunks = ref<string[]>([]);
   const terminalOutputLength = ref(0);
@@ -399,6 +401,7 @@ export const useEditorStore = defineStore('editor', () => {
     touchSessionSnapshot();
     cursorLine.value = 1;
     cursorColumn.value = 1;
+    activeSelectionSummary.value = null;
   };
 
   const createDocumentTab = (overrides: Partial<IEditorDocument> = {}): IEditorDocument => {
@@ -546,6 +549,7 @@ export const useEditorStore = defineStore('editor', () => {
       sessionSnapshot.value.activeTabPath = null;
       cursorLine.value = 1;
       cursorColumn.value = 1;
+      activeSelectionSummary.value = null;
       return null;
     }
     if (wasActive) {
@@ -553,6 +557,7 @@ export const useEditorStore = defineStore('editor', () => {
       activeDocumentId.value = fallbackDocument.id;
       cursorLine.value = 1;
       cursorColumn.value = 1;
+      activeSelectionSummary.value = null;
       return fallbackDocument;
     }
     return getDocumentById();
@@ -575,6 +580,10 @@ export const useEditorStore = defineStore('editor', () => {
   const setCursorPosition = (line: number, column: number): void => {
     cursorLine.value = Math.max(1, Math.floor(line));
     cursorColumn.value = Math.max(1, Math.floor(column));
+  };
+
+  const setActiveSelectionSummary = (selection: IEditorSelectionSummary | null): void => {
+    activeSelectionSummary.value = selection;
   };
 
   const appendLog = (
@@ -640,6 +649,7 @@ export const useEditorStore = defineStore('editor', () => {
     sessionSnapshot.value.activeTabPath = null;
     cursorLine.value = 1;
     cursorColumn.value = 1;
+    activeSelectionSummary.value = null;
     documentAnalysis.value = {};
     touchSessionSnapshot();
   };
@@ -674,6 +684,7 @@ export const useEditorStore = defineStore('editor', () => {
     environment,
     cursorLine,
     cursorColumn,
+    activeSelectionSummary,
     selectedExecutor,
     terminalOutputLength,
     terminalOutputVersion,
@@ -716,6 +727,7 @@ export const useEditorStore = defineStore('editor', () => {
     appendTerminalOutput,
     getTerminalOutputSnapshot,
     setCursorPosition,
+    setActiveSelectionSummary,
     appendLog,
     appendRunHistory,
     setWorkspaceRootPath,

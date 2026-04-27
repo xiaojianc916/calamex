@@ -72,6 +72,12 @@ export interface IActiveRunSummary {
   usedTempFile: boolean;
 }
 
+export interface IEditorSelectionSummary {
+  text: string;
+  startLine: number;
+  endLine: number;
+}
+
 export interface IRunHistoryEntry {
   id: string;
   status: TRunHistoryStatus;

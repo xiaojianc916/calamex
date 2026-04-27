@@ -21,6 +21,9 @@ export type TEditorContextMenuIcon = Extract<
 >;
 
 export type TEditorContextMenuAction =
+  | 'ai-explain-selection'
+  | 'ai-fix-diagnostic'
+  | 'ai-generate-tests'
   | 'undo'
   | 'redo'
   | 'format-with-shfmt'

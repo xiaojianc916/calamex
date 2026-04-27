@@ -101,21 +101,29 @@
           </button>
         </span>
 
+        <button type="button" class="icon-button app-tooltip-target border border-transparent"
+          data-tooltip="AI 助手" data-tooltip-placement="bottom" aria-label="AI 助手"
+          @click="$emit('select-sidebar-view', 'ai')">
+          <svg viewBox="0 0 24 24" aria-hidden="true" class="h-4 w-4" fill="none" stroke="currentColor"
+            stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3z" />
+            <path d="M18 15l.9 2.1L21 18l-2.1.9L18 21l-.9-2.1L15 18l2.1-.9L18 15z" />
+          </svg>
+        </button>
+
         <span class="max-w-55 truncate text-[11px] text-(--text-quaternary)">
           {{ currentDocumentLabel }}
         </span>
 
         <div v-if="isDesktopRuntime" class="ml-1 flex items-center gap-0.5">
-          <button class="window-control-button app-tooltip-target" type="button" aria-label="最小化" data-tooltip="最小化"
-            data-tooltip-placement="bottom" @click="handleMinimize">
+          <button class="window-control-button" type="button" aria-label="最小化" @click="handleMinimize">
             <svg viewBox="0 0 10 10" aria-hidden="true" class="h-3.5 w-3.5">
               <path d="M1 5h8" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.2" />
             </svg>
           </button>
 
-          <button class="window-control-button app-tooltip-target" type="button"
-            :aria-label="isMaximized ? '向下还原' : '最大化'" :data-tooltip="isMaximized ? '向下还原' : '最大化'"
-            data-tooltip-placement="bottom" @click="handleToggleMaximize">
+          <button class="window-control-button" type="button"
+            :aria-label="isMaximized ? '向下还原' : '最大化'" @click="handleToggleMaximize">
             <svg v-if="!isMaximized" viewBox="0 0 10 10" aria-hidden="true" class="h-3.5 w-3.5">
               <rect x="1.5" y="1.5" width="7" height="7" fill="none" rx="0.5" stroke="currentColor"
                 stroke-width="1.1" />
@@ -149,7 +157,7 @@ import { waitForDesktopRuntime } from '@/utils/desktop-runtime';
 import type { UnlistenFn } from '@tauri-apps/api/event';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
-type TTitlebarMenuKey = 'file' | 'edit' | 'view' | 'select' | 'goto' | 'terminal' | 'help';
+type TTitlebarMenuKey = 'file' | 'edit' | 'view' | 'select' | 'goto' | 'terminal' | 'ai' | 'help';
 const RESIZE_EDGE_PX = 4;
 
 interface ITitlebarMenuItem {
@@ -219,6 +227,7 @@ const emit = defineEmits<{
   'toggle-theme': [];
   'select-sidebar-view': [view: TWorkbenchSidebarView];
   'insert-template': [value: ICommandTemplate];
+  'ai-code-action': [kind: 'explain_selection' | 'fix_diagnostic' | 'generate_tests'];
 }>();
 
 const message = useMessage();
@@ -507,6 +516,24 @@ const terminalMenuItems = computed(() => [
   },
 ]);
 
+const aiMenuItems = computed(() => [
+  {
+    key: 'ai-explain-selection',
+    label: 'AI 解释选区',
+    disabled: !props.hasActiveDocument || props.documentKind !== 'text',
+  },
+  {
+    key: 'ai-fix-diagnostic',
+    label: 'AI 修复诊断',
+    disabled: !props.hasActiveDocument || props.documentKind !== 'text',
+  },
+  {
+    key: 'ai-generate-tests',
+    label: 'AI 生成测试',
+    disabled: !props.hasActiveDocument || props.documentKind !== 'text',
+  },
+]);
+
 const helpMenuItems = computed(() => [
   { key: 'welcome', label: '欢迎' },
   { key: 'walkthrough', label: '交互式演练' },
@@ -525,6 +552,7 @@ const menubarMenus = computed<ITitlebarMenuDefinition[]>(() => [
   { key: 'select', label: '选择', minWidth: 240, items: selectMenuItems.value },
   { key: 'goto', label: '转到', minWidth: 220, items: gotoMenuItems.value },
   { key: 'terminal', label: '终端', minWidth: 240, items: terminalMenuItems.value },
+  { key: 'ai', label: 'AI', minWidth: 220, items: aiMenuItems.value },
   { key: 'help', label: '帮助', minWidth: 220, items: helpMenuItems.value },
 ]);
 
@@ -850,6 +878,22 @@ const handleHelpAction = (key: string): void => {
   showPendingMessage(resolveMenuItemLabel('help', key));
 };
 
+const handleAiAction = (key: string): void => {
+  switch (key) {
+    case 'ai-explain-selection':
+      emit('ai-code-action', 'explain_selection');
+      return;
+    case 'ai-fix-diagnostic':
+      emit('ai-code-action', 'fix_diagnostic');
+      return;
+    case 'ai-generate-tests':
+      emit('ai-code-action', 'generate_tests');
+      return;
+    default:
+      showPendingMessage(resolveMenuItemLabel('ai', key));
+  }
+};
+
 const handleSelectAction = (key: string): void => {
   showPendingMessage(resolveMenuItemLabel('select', key));
 };
@@ -879,6 +923,9 @@ const handleMenuSelect = (menuKey: TTitlebarMenuKey, itemKey: string): void => {
       break;
     case 'terminal':
       handleTerminalAction(itemKey);
+      break;
+    case 'ai':
+      handleAiAction(itemKey);
       break;
     case 'help':
       handleHelpAction(itemKey);

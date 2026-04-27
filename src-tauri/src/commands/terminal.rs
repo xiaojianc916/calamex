@@ -1,11 +1,10 @@
 use super::{configure_std_command_for_background, find_command_path};
 use chrono::Utc;
 use portable_pty::{native_pty_system, Child, ChildKiller, CommandBuilder, MasterPty};
-use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     io::{Read, Write},
-    path::{Path, PathBuf},
+    path::PathBuf,
     process::{Command as StdCommand, Stdio},
     sync::{
         atomic::{AtomicU64, Ordering as AtomicOrdering},
@@ -17,8 +16,26 @@ use std::{
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::terminal::{
+    command_contracts::{
+        CancelTerminalRunRequest, CloseTerminalSessionRequest, DispatchTerminalScriptPayload,
+        DispatchTerminalScriptRequest, EnsureTerminalSessionRequest, TerminalInputRequest,
+        TerminalResizeRequest, TerminalSessionPayload,
+    },
+    dispatch::{build_terminal_run_command, TerminalDispatchCommand},
+    prompt::{build_terminal_prompt_fallback, resolve_wsl_home_directory},
     pty::normalize_pty_size,
+    snapshot::{
+        contains_alt_screen_switch, is_likely_interactive_resize_repaint_frame,
+        resolve_alt_screen_state_after_data, trim_terminal_snapshot,
+        TerminalInteractiveVisualState,
+    },
     state_machine::StateMachine,
+    tauri_events::{
+        emit_terminal_data, emit_terminal_exit, emit_terminal_run_chunk,
+        emit_terminal_run_completed, emit_terminal_run_started, emit_terminal_state_changed,
+        TerminalDataEvent, TerminalDataSource, TerminalExitEvent, TerminalRunChunkEvent,
+        TerminalRunCompletedEvent, TerminalRunStartedEvent, TerminalStateChangedEvent,
+    },
     types::TerminalState,
     utf8_decoder::Utf8ChunkDecoder,
     visual::{
@@ -29,166 +46,14 @@ use crate::terminal::{
     wsl as terminal_wsl,
 };
 
-const WSL_TEMP_DIRECTORY: &str = "/tmp";
 const TERMINAL_READ_BUFFER_SIZE: usize = 64 * 1024;
 const TERMINAL_EVENT_FLUSH_INTERVAL: Duration = Duration::from_millis(16);
 const TERMINAL_EVENT_FLUSH_THRESHOLD: usize = 64 * 1024;
 const TERMINAL_RESIZE_REPAINT_SUPPRESSION: Duration = Duration::from_millis(240);
-const TERMINAL_SNAPSHOT_MAX_LENGTH: usize = 160 * 1024;
-const TERMINAL_PROMPT_MAX_LENGTH: usize = 240;
-static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 static TERMINAL_DATA_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 static TERMINAL_RUN_CHUNK_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 static TERMINAL_RUN_VISUAL_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 static WSL_COMMAND_PATH_CACHE: Mutex<Option<PathBuf>> = Mutex::new(None);
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct EnsureTerminalSessionRequest {
-    session_id: String,
-    cwd: Option<String>,
-    cols: u16,
-    rows: u16,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TerminalSessionPayload {
-    session_id: String,
-    cwd: String,
-    shell_label: String,
-    created: bool,
-    initial_output: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DispatchTerminalScriptRequest {
-    session_id: String,
-    path: Option<String>,
-    workspace_root_path: Option<String>,
-    content: String,
-    is_dirty: bool,
-    run_id: String,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DispatchTerminalScriptPayload {
-    session_id: String,
-    cwd: String,
-    command_line: String,
-    used_temp_file: bool,
-    started_at: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TerminalInputRequest {
-    session_id: String,
-    data: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TerminalResizeRequest {
-    session_id: String,
-    cols: u16,
-    rows: u16,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CloseTerminalSessionRequest {
-    session_id: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CancelTerminalRunRequest {
-    run_id: String,
-    mode: Option<String>,
-}
-
-#[derive(Debug, Serialize, Clone)]
-#[serde(rename_all = "snake_case")]
-enum TerminalDataSource {
-    Interactive,
-    Run,
-    InjectedReset,
-    InjectedSeparator,
-}
-
-#[derive(Debug, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct TerminalDataEvent {
-    session_id: String,
-    data: String,
-    source: TerminalDataSource,
-    seq: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    run_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    run_seq: Option<u64>,
-}
-
-#[derive(Debug, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct TerminalRunChunkEvent {
-    session_id: String,
-    run_id: String,
-    data: String,
-    seq: u64,
-}
-
-#[derive(Debug, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct TerminalExitEvent {
-    session_id: String,
-    exit_code: Option<i32>,
-}
-
-#[derive(Debug, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct TerminalRunCompletedEvent {
-    session_id: String,
-    run_id: String,
-    exit_code: Option<i32>,
-    finished_at: String,
-}
-
-#[derive(Debug, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct TerminalRunStartedEvent {
-    session_id: String,
-    run_id: String,
-    started_at_ms: i64,
-    pid: u32,
-}
-
-#[derive(Debug, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct TerminalStateChangedEvent {
-    from: TerminalState,
-    to: TerminalState,
-    at_ms: i64,
-}
-
-struct TerminalPreparedScript {
-    execution_path: String,
-    working_directory: String,
-    used_temp_file: bool,
-    should_cleanup_execution_path: bool,
-    should_materialize_inline_content: bool,
-}
-
-struct TerminalDispatchCommand {
-    display_command: String,
-    used_temp_file: bool,
-    execution_path: String,
-    working_directory: String,
-    cleanup_paths: Vec<String>,
-}
 
 struct TerminalSession {
     master: Mutex<Box<dyn MasterPty + Send>>,
@@ -211,12 +76,6 @@ enum ActiveRunInputTarget {
 struct TerminalActiveRunGuard {
     state: TerminalSessionState,
     run_id: String,
-}
-
-#[derive(Clone, Copy, Default)]
-struct TerminalInteractiveVisualState {
-    resize_repaint_suppress_until: Option<Instant>,
-    alt_screen_active: bool,
 }
 
 impl TerminalActiveRunGuard {
@@ -450,12 +309,15 @@ pub fn dispatch_script_to_terminal(
     let session = get_terminal_session(&terminal_state, &payload.session_id)?
         .ok_or_else(|| "目标终端会话不存在，请先打开集成终端。".to_string())?;
     let started_at = Utc::now();
-    let command = build_terminal_run_command(&payload, &session.working_directory)?;
+    let command = build_terminal_run_command(&payload, &session.working_directory, write_wsl_file)?;
     let command_line = command.display_command.clone();
     let used_temp_file = command.used_temp_file;
     let prompt_snapshot = get_terminal_snapshot(&terminal_state, &payload.session_id)?;
-    let prompt = extract_prompt_from_terminal_snapshot(&prompt_snapshot)
-        .or_else(|| build_terminal_prompt_fallback(&session.working_directory));
+    let prompt = extract_prompt_from_terminal_snapshot(&prompt_snapshot).or_else(|| {
+        resolve_wsl_command_path()
+            .ok()
+            .and_then(|path| build_terminal_prompt_fallback(&path, &session.working_directory))
+    });
     try_mark_active_terminal_run(&terminal_state, &payload.run_id)?;
     if let Err(error) = transition_terminal_state(&app, TerminalState::SwitchingToRun) {
         clear_active_terminal_run(&terminal_state, &payload.run_id);
@@ -544,6 +406,21 @@ fn set_terminal_snapshot(
 fn remove_terminal_snapshot(state: &TerminalSessionState, session_id: &str) -> Result<(), String> {
     let mut snapshots = lock_terminal_snapshots(state)?;
     snapshots.remove(session_id);
+    Ok(())
+}
+
+fn append_terminal_snapshot(
+    state: &TerminalSessionState,
+    session_id: &str,
+    chunk: &str,
+) -> Result<(), String> {
+    if chunk.is_empty() {
+        return Ok(());
+    }
+    let mut snapshots = lock_terminal_snapshots(state)?;
+    let snapshot = snapshots.entry(session_id.to_string()).or_default();
+    snapshot.push_str(chunk);
+    trim_terminal_snapshot(snapshot);
     Ok(())
 }
 
@@ -676,170 +553,6 @@ fn get_active_terminal_run_input_target(
         .unwrap_or(ActiveRunInputTarget::Pending))
 }
 
-fn advance_char_boundary(value: &str, index: usize) -> usize {
-    if index >= value.len() {
-        return value.len();
-    }
-
-    let mut next_index = index;
-    while next_index < value.len() && !value.is_char_boundary(next_index) {
-        next_index += 1;
-    }
-    next_index
-}
-
-fn trim_terminal_snapshot(snapshot: &mut String) {
-    if snapshot.len() <= TERMINAL_SNAPSHOT_MAX_LENGTH {
-        return;
-    }
-
-    let overflow = snapshot.len() - TERMINAL_SNAPSHOT_MAX_LENGTH;
-    let trim_index = snapshot[overflow..]
-        .find('\n')
-        .map(|index| overflow + index + 1)
-        .unwrap_or(overflow);
-    let safe_trim_index = advance_char_boundary(snapshot, trim_index);
-    snapshot.drain(..safe_trim_index);
-}
-
-fn append_terminal_snapshot(
-    state: &TerminalSessionState,
-    session_id: &str,
-    chunk: &str,
-) -> Result<(), String> {
-    if chunk.is_empty() {
-        return Ok(());
-    }
-
-    let mut snapshots = lock_terminal_snapshots(state)?;
-    let snapshot = snapshots.entry(session_id.to_string()).or_default();
-    snapshot.push_str(chunk);
-    trim_terminal_snapshot(snapshot);
-    Ok(())
-}
-
-fn contains_csi_final(data: &str, final_bytes: &[u8]) -> bool {
-    let bytes = data.as_bytes();
-    let mut index = 0;
-
-    while index + 2 < bytes.len() {
-        if bytes[index] != 0x1b || bytes[index + 1] != b'[' {
-            index += 1;
-            continue;
-        }
-
-        let mut cursor = index + 2;
-        while cursor < bytes.len() {
-            let byte = bytes[cursor];
-            if (0x40..=0x7e).contains(&byte) {
-                if final_bytes.contains(&byte) {
-                    return true;
-                }
-                index = cursor + 1;
-                break;
-            }
-            cursor += 1;
-        }
-
-        if cursor >= bytes.len() {
-            break;
-        }
-    }
-
-    false
-}
-
-fn contains_alt_screen_switch(data: &str) -> bool {
-    let bytes = data.as_bytes();
-    let mut index = 0;
-
-    while index + 5 < bytes.len() {
-        if bytes[index] != 0x1b || bytes[index + 1] != b'[' || bytes[index + 2] != b'?' {
-            index += 1;
-            continue;
-        }
-
-        let params_start = index + 3;
-        let mut cursor = params_start;
-        while cursor < bytes.len() {
-            let byte = bytes[cursor];
-            if byte == b'h' || byte == b'l' {
-                if let Ok(params) = std::str::from_utf8(&bytes[params_start..cursor]) {
-                    if params
-                        .split(';')
-                        .filter_map(|value| value.parse::<u16>().ok())
-                        .any(|value| matches!(value, 47 | 1047 | 1049))
-                    {
-                        return true;
-                    }
-                }
-                index = cursor + 1;
-                break;
-            }
-            if (0x40..=0x7e).contains(&byte) {
-                index = cursor + 1;
-                break;
-            }
-            cursor += 1;
-        }
-
-        if cursor >= bytes.len() {
-            break;
-        }
-    }
-
-    false
-}
-
-fn resolve_alt_screen_state_after_data(current: bool, data: &str) -> bool {
-    let bytes = data.as_bytes();
-    let mut index = 0;
-    let mut next = current;
-
-    while index + 5 < bytes.len() {
-        if bytes[index] != 0x1b || bytes[index + 1] != b'[' || bytes[index + 2] != b'?' {
-            index += 1;
-            continue;
-        }
-
-        let params_start = index + 3;
-        let mut cursor = params_start;
-        while cursor < bytes.len() {
-            let byte = bytes[cursor];
-            if byte == b'h' || byte == b'l' {
-                if let Ok(params) = std::str::from_utf8(&bytes[params_start..cursor]) {
-                    if params
-                        .split(';')
-                        .filter_map(|value| value.parse::<u16>().ok())
-                        .any(|value| matches!(value, 47 | 1047 | 1049))
-                    {
-                        next = byte == b'h';
-                    }
-                }
-                index = cursor + 1;
-                break;
-            }
-            if (0x40..=0x7e).contains(&byte) {
-                index = cursor + 1;
-                break;
-            }
-            cursor += 1;
-        }
-
-        if cursor >= bytes.len() {
-            break;
-        }
-    }
-
-    next
-}
-
-fn is_likely_interactive_resize_repaint_frame(data: &str) -> bool {
-    contains_csi_final(data, &[b'H'])
-        && contains_csi_final(data, &[b'J', b'K'])
-        && (data.contains("\x1b[?25l") || data.contains("\x1b[H"))
-}
-
 fn should_skip_snapshot_for_interactive_resize_repaint(
     state: &TerminalSessionState,
     session_id: &str,
@@ -926,73 +639,6 @@ fn resolve_terminal_start_directory(path: Option<&str>) -> Result<Option<PathBuf
     Ok(None)
 }
 
-fn resolve_wsl_home_directory(wsl_command_path: &Path) -> Option<String> {
-    let mut command = StdCommand::new(wsl_command_path);
-    configure_std_command_for_background(&mut command);
-    let output = command.args(["--cd", "~", "--", "pwd"]).output().ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if value.is_empty() {
-        None
-    } else {
-        Some(value)
-    }
-}
-
-fn build_terminal_prompt_fallback(terminal_cwd: &str) -> Option<String> {
-    let wsl_command_path = resolve_wsl_command_path().ok()?;
-    let mut command = StdCommand::new(wsl_command_path);
-    configure_std_command_for_background(&mut command);
-    let output = command
-        .args([
-            "--cd",
-            terminal_cwd,
-            "--",
-            "/bin/bash",
-            "--noprofile",
-            "--norc",
-            "-lc",
-            terminal_prompt_fallback_script(),
-        ])
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    let prompt = String::from_utf8_lossy(&output.stdout).to_string();
-    if prompt.len() > TERMINAL_PROMPT_MAX_LENGTH
-        || !prompt
-            .chars()
-            .any(|character| matches!(character, '$' | '#'))
-    {
-        return None;
-    }
-
-    Some(prompt)
-}
-
-fn terminal_prompt_fallback_script() -> &'static str {
-    r#"user_name="\$(id -un)"
-host_name="\$(hostname)"
-display_pwd="\$(pwd)"
-home_dir="\$(printf '%s' ~)"
-if [ "\$display_pwd" = "\$home_dir" ]; then
-  display_pwd='~'
-fi
-prompt_char="\$(printf '\\044')"
-if [ "\$(id -u)" = "0" ]; then
-  prompt_char='#'
-fi
-printf '[%s@%s %s]%s ' "\$user_name" "\$host_name" "\$display_pwd" "\$prompt_char"
-"#
-}
-
 fn resolve_wsl_command_path() -> Result<PathBuf, String> {
     {
         let cached_path = WSL_COMMAND_PATH_CACHE
@@ -1013,102 +659,11 @@ fn resolve_wsl_command_path() -> Result<PathBuf, String> {
 }
 
 fn write_wsl_file(path: &str, content: &[u8]) -> Result<(), String> {
-    let wsl_command_path = resolve_wsl_command_path()?;
-    let shell_command = format!(
-        "umask 077 && cat > {} && chmod 600 {}",
-        bash_quote(path),
-        bash_quote(path),
-    );
-    let mut command = StdCommand::new(wsl_command_path);
-    configure_std_command_for_background(&mut command);
-    command
-        .args(["--", "sh", "-lc", &shell_command])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped());
-
-    let mut child = command
-        .spawn()
-        .map_err(|error| format!("写入 WSL 临时文件失败：{error}"))?;
-    let mut stdin = child
-        .stdin
-        .take()
-        .ok_or_else(|| "WSL 写入通道不可用。".to_string())?;
-    stdin
-        .write_all(content)
-        .map_err(|error| format!("写入 WSL 临时文件失败：{error}"))?;
-    drop(stdin);
-
-    let output = child
-        .wait_with_output()
-        .map_err(|error| format!("等待 WSL 临时文件写入完成失败：{error}"))?;
-    if output.status.success() {
-        return Ok(());
-    }
-
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    if stderr.is_empty() {
-        Err("写入 WSL 临时文件失败。".into())
-    } else {
-        Err(format!("写入 WSL 临时文件失败：{stderr}"))
-    }
+    terminal_wsl::write_wsl_file(resolve_wsl_command_path()?, path, content)
 }
 
 pub(crate) fn build_temp_file_suffix() -> Result<String, String> {
-    let stamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|error| error.to_string())?
-        .as_micros();
-    let sequence = TEMP_FILE_SEQUENCE.fetch_add(1, AtomicOrdering::Relaxed);
-
-    Ok(format!("{stamp}-{sequence}"))
-}
-
-fn build_terminal_temp_script_path(original_name: &str) -> Result<String, String> {
-    let suffix = build_temp_file_suffix()?;
-    let stem = Path::new(original_name)
-        .file_stem()
-        .and_then(|value| value.to_str())
-        .filter(|value| !value.is_empty())
-        .unwrap_or("untitled");
-
-    Ok(format!("{WSL_TEMP_DIRECTORY}/{stem}-{suffix}.tmp.sh"))
-}
-
-fn emit_terminal_data(app: &AppHandle, payload: TerminalDataEvent) {
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.emit("terminal:data", payload);
-    }
-}
-
-fn emit_terminal_run_chunk(app: &AppHandle, payload: TerminalRunChunkEvent) {
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.emit("terminal:run-chunk", payload);
-    }
-}
-
-fn emit_terminal_exit(app: &AppHandle, payload: TerminalExitEvent) {
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.emit("terminal:interactive-exited", payload);
-    }
-}
-
-fn emit_terminal_run_completed(app: &AppHandle, payload: TerminalRunCompletedEvent) {
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.emit("terminal:run-completed", payload);
-    }
-}
-
-fn emit_terminal_run_started(app: &AppHandle, payload: TerminalRunStartedEvent) {
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.emit("terminal:run-started", payload);
-    }
-}
-
-fn emit_terminal_state_changed(app: &AppHandle, payload: TerminalStateChangedEvent) {
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.emit("terminal:state-changed", payload);
-    }
+    terminal_wsl::build_temp_file_suffix()
 }
 
 fn terminal_now_ms() -> i64 {
@@ -1454,7 +1009,7 @@ fn cleanup_terminal_child_run_files(paths: &[String]) {
         "rm -f {}",
         paths
             .iter()
-            .map(|path| bash_quote(path))
+            .map(|path| terminal_wsl::bash_quote(path))
             .collect::<Vec<_>>()
             .join(" ")
     );
@@ -1614,93 +1169,8 @@ fn spawn_terminal_run(
     });
 }
 
-fn prepare_terminal_dispatch_script(
-    payload: &DispatchTerminalScriptRequest,
-    terminal_working_directory: &str,
-) -> Result<TerminalPreparedScript, String> {
-    let preferred_path = payload.path.as_ref().map(PathBuf::from);
-    let workspace_working_directory = payload
-        .workspace_root_path
-        .as_ref()
-        .map(|path| path.trim())
-        .filter(|path| !path.is_empty())
-        .map(PathBuf::from)
-        .map(|path| to_wsl_path(&path))
-        .transpose()?;
-    let script_working_directory = preferred_path
-        .as_ref()
-        .and_then(|path| path.parent().map(Path::to_path_buf))
-        .map(|path| to_wsl_path(&path))
-        .transpose()?;
-    let working_directory = workspace_working_directory
-        .or(script_working_directory)
-        .unwrap_or_else(|| terminal_working_directory.to_string());
-
-    let has_existing_preferred_path = preferred_path
-        .as_ref()
-        .map(|path| path.exists())
-        .unwrap_or(false);
-    let should_use_temp = payload.is_dirty || !has_existing_preferred_path;
-
-    if should_use_temp {
-        if !payload.is_dirty && preferred_path.is_some() && payload.content.is_empty() {
-            return Err("脚本文件不存在或不可访问，请保存后再运行。".to_string());
-        }
-
-        let file_name = preferred_path
-            .as_ref()
-            .and_then(|path| path.file_name().and_then(|value| value.to_str()))
-            .unwrap_or("untitled.sh");
-        let temp_path = build_terminal_temp_script_path(file_name)?;
-        return Ok(TerminalPreparedScript {
-            execution_path: temp_path,
-            working_directory,
-            used_temp_file: true,
-            should_cleanup_execution_path: true,
-            should_materialize_inline_content: true,
-        });
-    }
-
-    let execution_path = preferred_path.ok_or_else(|| "脚本路径无效。".to_string())?;
-    Ok(TerminalPreparedScript {
-        execution_path: to_wsl_path(&execution_path)?,
-        working_directory,
-        used_temp_file: false,
-        should_cleanup_execution_path: false,
-        should_materialize_inline_content: false,
-    })
-}
-
-fn build_terminal_run_command(
-    payload: &DispatchTerminalScriptRequest,
-    terminal_working_directory: &str,
-) -> Result<TerminalDispatchCommand, String> {
-    let prepared = prepare_terminal_dispatch_script(payload, terminal_working_directory)?;
-    if prepared.should_materialize_inline_content {
-        write_wsl_file(&prepared.execution_path, payload.content.as_bytes())
-            .map_err(|error| format!("写入临时脚本失败：{error}"))?;
-    }
-    let cleanup_paths = if prepared.should_cleanup_execution_path {
-        vec![prepared.execution_path.clone()]
-    } else {
-        Vec::new()
-    };
-
-    Ok(TerminalDispatchCommand {
-        display_command: format!("/bin/bash {}", bash_quote(&prepared.execution_path)),
-        used_temp_file: prepared.used_temp_file,
-        execution_path: prepared.execution_path,
-        working_directory: prepared.working_directory,
-        cleanup_paths,
-    })
-}
-
-pub(crate) fn to_wsl_path(path: &Path) -> Result<String, String> {
+pub(crate) fn to_wsl_path(path: &std::path::Path) -> Result<String, String> {
     terminal_wsl::to_wsl_path(path)
-}
-
-fn bash_quote(value: &str) -> String {
-    terminal_wsl::bash_quote(value)
 }
 
 #[cfg(test)]
@@ -1875,8 +1345,8 @@ mod tests {
         let terminal_cwd =
             resolve_wsl_home_directory(&wsl_command_path).unwrap_or_else(|| "~".to_string());
 
-        let prompt =
-            build_terminal_prompt_fallback(&terminal_cwd).expect("prompt fallback should build");
+        let prompt = build_terminal_prompt_fallback(&wsl_command_path, &terminal_cwd)
+            .expect("prompt fallback should build");
 
         assert!(prompt.starts_with('['));
         assert!(prompt.ends_with("$ ") || prompt.ends_with("# "));
@@ -1940,8 +1410,10 @@ mod tests {
             is_dirty: false,
             run_id: "dispatch-cwd-run".to_string(),
         };
-        let command =
-            build_terminal_run_command(&payload, "/tmp").expect("dispatch command should build");
+        let command = build_terminal_run_command(&payload, "/tmp", |_, _| {
+            Err("clean file dispatch should not materialize content".to_string())
+        })
+        .expect("dispatch command should build");
 
         assert_eq!(
             command.working_directory,
@@ -1989,8 +1461,8 @@ mod tests {
             is_dirty: true,
             run_id: run_id.to_string(),
         };
-        let command =
-            build_terminal_run_command(&payload, "/tmp").expect("dispatch command should build");
+        let command = build_terminal_run_command(&payload, "/tmp", write_wsl_file)
+            .expect("dispatch command should build");
         let output = Arc::new(Mutex::new(String::new()));
         let seqs = Arc::new(Mutex::new(Vec::<u64>::new()));
         let output_ref = Arc::clone(&output);

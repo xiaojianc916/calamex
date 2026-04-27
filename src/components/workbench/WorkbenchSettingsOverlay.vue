@@ -1416,6 +1416,47 @@
                 </section>
               </section>
 
+              <section v-else-if="sectionId === 'ai'" class="workbench-settings-page">
+                <header class="workbench-settings-page-head">
+                  <h1>AI</h1>
+                  <p>配置通用 IDE AI、内联补全和受控 Agent。API Key 只写入系统凭证存储。</p>
+                </header>
+
+                <section class="workbench-settings-block">
+                  <div class="workbench-settings-block-title">Provider</div>
+                  <div class="workbench-settings-rows">
+                    <div class="workbench-settings-row">
+                      <div class="workbench-settings-label">
+                        <div class="title">当前模型</div>
+                        <div class="desc">
+                          {{ aiConfig.providerType }} · {{ aiConfig.selectedModel ?? '未选择模型' }}
+                        </div>
+                      </div>
+                      <div class="workbench-settings-control">
+                        <span class="workbench-settings-pill" :class="{ 'is-success': aiConfig.isConfigured }">
+                          {{ aiConfig.isConfigured ? '已配置' : '未完成' }}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div class="workbench-settings-row">
+                      <div class="workbench-settings-label">
+                        <div class="title">能力开关</div>
+                        <div class="desc">
+                          Chat {{ aiConfig.chatEnabled ? '开启' : '关闭' }} · Inline {{ aiConfig.inlineCompletionEnabled ? '开启' : '关闭' }} · Agent {{ aiConfig.agentEnabled ? '开启' : '关闭' }}
+                        </div>
+                      </div>
+                      <div class="workbench-settings-control">
+                        <button type="button" class="workbench-settings-button" @click="openAiSettingsDialog">
+                          <Settings2 class="h-3.5 w-3.5" />
+                          <span>配置 AI</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+              </section>
+
               <section v-else-if="sectionId === 'about'" class="workbench-settings-page">
                 <header class="workbench-settings-page-head">
                   <h1>关于</h1>
@@ -1480,12 +1521,26 @@
         </div>
       </main>
     </div>
+
+    <AiProviderSettings
+      v-model:draft="aiSettingsDraft"
+      v-model:api-key="aiSettingsApiKey"
+      :open="isAiSettingsOpen"
+      :config="aiConfig"
+      @close="isAiSettingsOpen = false"
+      @save="saveAiSettings"
+      @save-credentials="saveAiCredentials"
+      @test-provider="testAiProvider"
+    />
   </section>
 </template>
 
 <script setup lang="ts">
 import { useDialog } from '@/composables/useDialog';
+import AiProviderSettings from '@/components/business/ai/AiProviderSettings.vue';
+import { aiService } from '@/services/modules/ai';
 import { useAppStore } from '@/store/app';
+import type { IAiConfigPayload } from '@/types/ai';
 import { tryWriteClipboardText } from '@/utils/clipboard';
 import {
     createSettingsEnvironmentVariable,
@@ -1508,6 +1563,7 @@ import {
     TerminalSquare,
     Trash2,
     Waypoints,
+    Bot,
     X,
 } from 'lucide-vue-next';
 import { computed, nextTick, ref, watch, type Component } from 'vue';
@@ -1598,6 +1654,12 @@ const NAV_GROUPS: TNavGroup[] = [
         title: '集成',
         icon: Waypoints,
         searchTerms: ['集成', 'git', 'ssh', '邮箱', '分支', '密钥'],
+      },
+      {
+        id: 'ai',
+        title: 'AI',
+        icon: Bot,
+        searchTerms: ['AI', '模型', 'Provider', 'OpenAI', '补全', 'Agent', 'API Key'],
       },
       {
         id: 'about',
@@ -1766,6 +1828,20 @@ const gitTextFields = [
 
 const appStore = useAppStore();
 const { confirm } = useDialog();
+const aiConfig = ref<IAiConfigPayload>({
+  providerType: 'mock',
+  selectedModel: 'mock-ide-assistant',
+  baseUrl: null,
+  isBaseUrlConfigured: true,
+  hasCredentials: true,
+  isConfigured: true,
+  inlineCompletionEnabled: false,
+  chatEnabled: true,
+  agentEnabled: false,
+});
+const aiSettingsDraft = ref<IAiConfigPayload>({ ...aiConfig.value });
+const aiSettingsApiKey = ref('');
+const isAiSettingsOpen = ref(false);
 const searchQuery = ref('');
 const activeSection = ref<TSettingsSectionId>('editor');
 const searchInputRef = ref<HTMLInputElement | null>(null);
@@ -1974,6 +2050,69 @@ const copyVersionInfo = async (): Promise<void> => {
   emitSaved(copied ? '版本信息已复制' : '当前环境不支持剪贴板写入');
 };
 
+const loadAiConfig = async (): Promise<void> => {
+  aiConfig.value = await aiService.getConfig();
+  aiSettingsDraft.value = { ...aiConfig.value };
+};
+
+const openAiSettingsDialog = async (): Promise<void> => {
+  await loadAiConfig();
+  isAiSettingsOpen.value = true;
+};
+
+const saveAiSettings = async (config: IAiConfigPayload): Promise<void> => {
+  aiConfig.value = await aiService.saveConfig({
+    providerType: config.providerType,
+    selectedModel: config.selectedModel,
+    baseUrl: config.baseUrl,
+    inlineCompletionEnabled: config.inlineCompletionEnabled,
+    chatEnabled: config.chatEnabled,
+    agentEnabled: config.agentEnabled,
+  });
+  if (aiSettingsApiKey.value.trim()) {
+    aiConfig.value = await aiService.saveCredentials({
+      providerType: config.providerType,
+      apiKey: aiSettingsApiKey.value,
+    });
+    aiSettingsApiKey.value = '';
+  }
+  aiSettingsDraft.value = { ...aiConfig.value };
+  isAiSettingsOpen.value = false;
+  emitSaved('AI 设置已保存');
+};
+
+const saveAiCredentials = async (apiKey: string): Promise<void> => {
+  aiConfig.value = await aiService.saveCredentials({
+    providerType: aiSettingsDraft.value.providerType,
+    apiKey,
+  });
+  aiSettingsDraft.value = { ...aiConfig.value };
+  aiSettingsApiKey.value = '';
+  emitSaved('AI 凭证已保存');
+};
+
+const testAiProvider = async (): Promise<string> => {
+  aiConfig.value = await aiService.saveConfig({
+    providerType: aiSettingsDraft.value.providerType,
+    selectedModel: aiSettingsDraft.value.selectedModel,
+    baseUrl: aiSettingsDraft.value.baseUrl,
+    inlineCompletionEnabled: aiSettingsDraft.value.inlineCompletionEnabled,
+    chatEnabled: aiSettingsDraft.value.chatEnabled,
+    agentEnabled: aiSettingsDraft.value.agentEnabled,
+  });
+  if (aiSettingsApiKey.value.trim()) {
+    aiConfig.value = await aiService.saveCredentials({
+      providerType: aiSettingsDraft.value.providerType,
+      apiKey: aiSettingsApiKey.value,
+    });
+    aiSettingsApiKey.value = '';
+  }
+  aiSettingsDraft.value = { ...aiConfig.value };
+  const result = await aiService.testProvider();
+  emitSaved(result.message);
+  return result.message;
+};
+
 const requestClose = async (): Promise<boolean> => {
   if (!props.open) {
     return true;
@@ -2031,6 +2170,7 @@ watch(
   (isOpen, wasOpen) => {
     if (isOpen && !wasOpen) {
       syncInitialSettingsSnapshot();
+      void loadAiConfig();
     }
   },
   { immediate: true },

@@ -50,18 +50,6 @@ viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-wid
       </svg>
     </button>
     <button
-type="button" class="activity-button app-tooltip-target" :class="{ 'is-active': activeView === 'ai' }"
-      data-tooltip="AI 助手" data-tooltip-placement="right" data-tooltip-lock-placement="true" aria-label="AI 助手"
-      :aria-pressed="activeView === 'ai'" @click="emit('select-view', 'ai')">
-      <svg
-viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.7"
-        stroke-linecap="round" stroke-linejoin="round">
-        <path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3z" />
-        <path d="M5 14l.8 2.2L8 17l-2.2.8L5 20l-.8-2.2L2 17l2.2-.8L5 14z" />
-        <path d="M18 15l.9 2.1L21 18l-2.1.9L18 21l-.9-2.1L15 18l2.1-.9L18 15z" />
-      </svg>
-    </button>
-    <button
 type="button" class="activity-button app-tooltip-target"
       :class="{ 'is-active': activeView === 'extensions' }" data-tooltip="SSH 连接" data-tooltip-placement="right"
       data-tooltip-lock-placement="true" aria-label="SSH 连接" :aria-pressed="activeView === 'extensions'"

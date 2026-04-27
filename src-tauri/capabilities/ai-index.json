@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "ai-index",
+  "description": "AI Code Index 能力占位：文件/文本/符号索引。Phase 0 不执行外部模型 embedding。",
+  "windows": ["main"],
+  "permissions": []
+}

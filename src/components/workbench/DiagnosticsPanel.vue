@@ -69,6 +69,7 @@ const props = defineProps<{
 const emit = defineEmits<{
     'select-diagnostic': [line: number, column: number];
     'rerun-analysis': [];
+    'ai-fix-diagnostic': [diagnostic: IScriptDiagnostic];
 }>();
 
 const activeFilter = ref<TDiagnosticFilter>('all');
@@ -578,6 +579,16 @@ v-for="(fragment, index) in previewLine.fragments"
                         </div>
 
                         <div class="diagnostics-panel__item-actions">
+                            <button type="button" class="diagnostics-panel__action" @click.stop="emit('ai-fix-diagnostic', item)">
+                                <svg
+viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                                    stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                    <path d="M12 3v18" />
+                                    <path d="M3 12h18" />
+                                </svg>
+                                AI 修复
+                            </button>
+
                             <button type="button" class="diagnostics-panel__action" @click.stop="handleSelect(item)">
                                 <svg
 viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"

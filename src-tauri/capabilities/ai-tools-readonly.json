@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "ai-tools-readonly",
+  "description": "AI 只读工具能力：读取当前文件、选区、诊断、Git diff、终端日志、搜索结果。",
+  "windows": ["main"],
+  "permissions": []
+}

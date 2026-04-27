@@ -1,5 +1,5 @@
 mod ai;
-mod contracts;
+pub(crate) mod contracts;
 mod git;
 mod script_run;
 mod search;
@@ -13,7 +13,11 @@ mod workspace_fs;
 #[cfg(windows)]
 const CREATE_NO_WINDOW_FLAG: u32 = 0x0800_0000;
 
-pub use ai::send_ai_chat;
+pub use ai::{
+    ai_apply_patch, ai_build_index, ai_cancel, ai_chat, ai_chat_stream, ai_clear_credentials, ai_code_action, ai_get_config,
+    ai_inline_complete, ai_list_tools, ai_plan_task, ai_propose_patch, ai_query_index,
+    ai_save_config, ai_save_credentials, ai_test_provider,
+};
 pub use contracts::{
     AnalyzeScriptPayload, AnalyzeScriptRequest, ExecutionEnvironment, ExecutionOption,
     FormatScriptPayload, FormatScriptRequest, ImageAssetPayload, SaveScriptRequest,

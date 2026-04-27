@@ -1,142 +1,159 @@
-use super::contracts::{AiChatPayload, AiChatRequest};
-use serde::Deserialize;
-use serde_json::json;
-use std::time::Duration;
+use super::contracts::{
+    AiAgentPlanPayload, AiAgentPlanRequest, AiApplyPatchPayload, AiApplyPatchRequest,
+    AiBuildIndexPayload, AiBuildIndexRequest, AiCancelRequest, AiChatMessagePayload, AiChatPayload, AiChatRequest, AiChatStreamPayload,
+    AiCodeActionPayload, AiCodeActionRequest, AiConfigPayload, AiInlineCompletionRangePayload,
+    AiInlineCompletionRequest, AiInlineCompletionResult, AiProposePatchPayload,
+    AiProposePatchRequest, AiProviderTestPayload, AiQueryIndexPayload, AiQueryIndexRequest,
+    AiSaveConfigRequest, AiSaveCredentialsRequest, AiToolDefinitionPayload,
+};
+use crate::ai::audit::{self, AiAuditEventKind};
+use crate::ai::gateway;
+use crate::ai::stream_manager;
+use tauri::AppHandle;
+use crate::ai_index;
+use crate::ai_patch;
+use crate::ai_tools::registry;
 
-const AI_CHAT_TIMEOUT: Duration = Duration::from_secs(45);
-const MAX_AI_MESSAGES: usize = 32;
-const MAX_MESSAGE_CHARS: usize = 16_000;
-
-#[derive(Debug, Deserialize)]
-struct ChatCompletionResponse {
-    choices: Vec<ChatCompletionChoice>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ChatCompletionChoice {
-    message: ChatCompletionMessage,
-}
-
-#[derive(Debug, Deserialize)]
-struct ChatCompletionMessage {
-    content: String,
+#[tauri::command]
+pub fn ai_get_config() -> Result<AiConfigPayload, String> {
+    Ok(gateway::get_config())
 }
 
 #[tauri::command]
-pub async fn send_ai_chat(payload: AiChatRequest) -> Result<AiChatPayload, String> {
-    let endpoint = payload.endpoint.trim().trim_end_matches('/');
-    let api_key = payload.api_key.trim();
-    let model = payload.model.trim();
+pub fn ai_save_config(payload: AiSaveConfigRequest) -> Result<AiConfigPayload, String> {
+    gateway::save_config(
+        &payload.provider_type,
+        payload.selected_model,
+        payload.base_url,
+        payload.inline_completion_enabled,
+        payload.chat_enabled,
+        payload.agent_enabled,
+    )
+}
 
-    if endpoint.is_empty() {
-        return Err("请填写 AI 服务 API 地址。".into());
-    }
-    if !(endpoint.starts_with("https://") || endpoint.starts_with("http://localhost")) {
-        return Err("AI 服务地址必须使用 HTTPS；本地调试仅允许 http://localhost。".into());
-    }
-    if api_key.is_empty() {
-        return Err("请填写 AI 服务 API Key。".into());
-    }
-    if model.is_empty() {
-        return Err("请填写模型名称。".into());
-    }
-    if payload.messages.is_empty() {
-        return Err("请输入要发送给 AI 的内容。".into());
-    }
-    if payload.messages.len() > MAX_AI_MESSAGES {
-        return Err("对话轮次过多，请清空部分历史后重试。".into());
-    }
+#[tauri::command]
+pub fn ai_save_credentials(payload: AiSaveCredentialsRequest) -> Result<AiConfigPayload, String> {
+    gateway::save_credentials(&payload.provider_type, &payload.api_key)
+}
 
-    let mut messages = Vec::new();
-    let system_prompt = payload.system_prompt.trim();
-    if !system_prompt.is_empty() {
-        messages.push(json!({
-            "role": "system",
-            "content": clamp_message(system_prompt),
-        }));
+#[tauri::command]
+pub fn ai_clear_credentials() -> Result<(), String> {
+    gateway::clear_credentials()?;
+    audit::emit(AiAuditEventKind::CredentialCleared);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn ai_test_provider() -> Result<AiProviderTestPayload, String> {
+    match gateway::test_provider().await {
+        Ok(()) => Ok(AiProviderTestPayload {
+            ok: true,
+            code: "AI_PROVIDER_READY".to_string(),
+            message: "AI Provider 可用。".to_string(),
+        }),
+        Err(error) => Ok(AiProviderTestPayload {
+            ok: false,
+            code: "AI_PROVIDER_UNAVAILABLE".to_string(),
+            message: error,
+        }),
     }
+}
 
-    for message in payload.messages {
-        let role = normalize_role(&message.role)?;
-        let content = clamp_message(&message.content);
-        if content.trim().is_empty() {
-            continue;
-        }
-
-        messages.push(json!({
-            "role": role,
-            "content": content,
-        }));
-    }
-
-    if messages.is_empty() {
-        return Err("请输入要发送给 AI 的内容。".into());
-    }
-
-    let client = reqwest::Client::builder()
-        .timeout(AI_CHAT_TIMEOUT)
-        .build()
-        .map_err(|error| format!("初始化 AI HTTP 客户端失败：{error}"))?;
-    let url = format!("{endpoint}/chat/completions");
-    let response = client
-        .post(url)
-        .bearer_auth(api_key)
-        .json(&json!({
-            "model": model,
-            "messages": messages,
-            "temperature": 0.2,
-        }))
-        .send()
-        .await
-        .map_err(|error| format!("AI 请求失败：{error}"))?;
-
-    let status = response.status();
-    let body = response
-        .text()
-        .await
-        .map_err(|error| format!("读取 AI 响应失败：{error}"))?;
-
-    if !status.is_success() {
-        return Err(format!(
-            "AI 服务返回错误 {status}：{}",
-            summarize_body(&body)
-        ));
-    }
-
-    let parsed = serde_json::from_str::<ChatCompletionResponse>(&body)
-        .map_err(|error| format!("解析 AI 响应失败：{error}"))?;
-    let content = parsed
-        .choices
-        .into_iter()
-        .next()
-        .map(|choice| choice.message.content)
-        .unwrap_or_default()
-        .trim()
-        .to_string();
-
-    if content.is_empty() {
-        return Err("AI 服务未返回有效内容。".into());
-    }
-
+#[tauri::command]
+pub async fn ai_chat(payload: AiChatRequest) -> Result<AiChatPayload, String> {
+    let response = gateway::chat(payload).await?;
     Ok(AiChatPayload {
-        content,
-        model: model.into(),
+        message: AiChatMessagePayload {
+            id: format!("assistant-{}", chrono::Utc::now().timestamp_millis()),
+            role: "assistant".to_string(),
+            content: response.content,
+            created_at: chrono::Utc::now().to_rfc3339(),
+            references: Vec::new(),
+        },
+        provider_type: gateway::get_config().provider_type,
+        model: response.model,
     })
 }
 
-fn normalize_role(role: &str) -> Result<&'static str, String> {
-    match role {
-        "user" => Ok("user"),
-        "assistant" => Ok("assistant"),
-        "system" => Ok("system"),
-        _ => Err("AI 消息角色不受支持。".into()),
+
+#[tauri::command]
+pub async fn ai_chat_stream(
+    app: AppHandle,
+    payload: AiChatRequest,
+) -> Result<AiChatStreamPayload, String> {
+    let started = gateway::chat_stream(app, payload).await?;
+    Ok(AiChatStreamPayload {
+        stream_id: started.stream_id,
+        assistant_message_id: started.assistant_message_id,
+        provider_type: started.provider_type,
+        model: started.model,
+    })
+}
+
+#[tauri::command]
+pub fn ai_cancel(payload: AiCancelRequest) -> Result<(), String> {
+    let stream_id = payload.stream_id.trim();
+    if stream_id.is_empty() {
+        return Err("AI_REQUEST_CANCELLED: streamId ?????".to_string());
     }
+    stream_manager::cancel(stream_id);
+    Ok(())
 }
 
-fn clamp_message(value: &str) -> String {
-    value.chars().take(MAX_MESSAGE_CHARS).collect()
+#[tauri::command]
+pub async fn ai_inline_complete(
+    payload: AiInlineCompletionRequest,
+) -> Result<AiInlineCompletionResult, String> {
+    let result = gateway::inline_complete(payload).await?;
+    Ok(AiInlineCompletionResult {
+        insert_text: result.insert_text,
+        range: AiInlineCompletionRangePayload {
+            start_offset: result.range.start_offset,
+            end_offset: result.range.end_offset,
+        },
+        confidence: result.confidence,
+    })
 }
 
-fn summarize_body(value: &str) -> String {
-    value.chars().take(600).collect()
+#[tauri::command]
+pub async fn ai_code_action(payload: AiCodeActionRequest) -> Result<AiCodeActionPayload, String> {
+    gateway::code_action(payload).await
+}
+
+#[tauri::command]
+pub async fn ai_plan_task(payload: AiAgentPlanRequest) -> Result<AiAgentPlanPayload, String> {
+    gateway::plan_task(payload).await
+}
+
+#[tauri::command]
+pub fn ai_build_index(payload: AiBuildIndexRequest) -> Result<AiBuildIndexPayload, String> {
+    ai_index::build_index(payload)
+}
+
+#[tauri::command]
+pub fn ai_query_index(payload: AiQueryIndexRequest) -> Result<AiQueryIndexPayload, String> {
+    ai_index::query_index(payload)
+}
+
+#[tauri::command]
+pub fn ai_propose_patch(payload: AiProposePatchRequest) -> Result<AiProposePatchPayload, String> {
+    ai_patch::propose_patch(payload)
+}
+
+#[tauri::command]
+pub fn ai_apply_patch(payload: AiApplyPatchRequest) -> Result<AiApplyPatchPayload, String> {
+    ai_patch::apply_patch(payload)
+}
+
+#[tauri::command]
+pub fn ai_list_tools() -> Result<Vec<AiToolDefinitionPayload>, String> {
+    Ok(registry::list_tools()
+        .into_iter()
+        .map(|tool| AiToolDefinitionPayload {
+            name: tool.name.to_string(),
+            read_only: tool.read_only,
+            destructive: tool.destructive,
+            requires_confirmation: tool.requires_confirmation,
+        })
+        .collect())
 }
