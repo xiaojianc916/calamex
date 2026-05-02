@@ -1,22 +1,40 @@
-﻿import type { IAiChatMessage } from '@/types/ai';
+import type { IAiChatMessage } from '@/types/ai';
 import { aiChatMessageSchema } from '@/types/ai.schema';
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 import { z } from 'zod';
 
 export const AI_CONVERSATION_HISTORY_LIMIT = 20;
+const TEMPORARY_TITLE_MAX_CHARS = 24;
+const GENERATED_TITLE_MAX_CHARS = 10;
+
+export type TAiConversationTitleStatus = 'temporary' | 'generating' | 'generated' | 'failed';
+
+export interface IAiConversationFirstRound {
+  userMessage: string;
+  assistantMessage: string;
+}
 
 export interface IAiConversationThread {
   id: string;
   title: string;
+  titleStatus: TAiConversationTitleStatus;
   updatedAt: string;
   createdAt: string;
   messages: IAiChatMessage[];
 }
 
+const aiConversationTitleStatusSchema = z.enum([
+  'temporary',
+  'generating',
+  'generated',
+  'failed',
+]);
+
 const aiConversationThreadSchema = z.object({
   id: z.string().min(1),
   title: z.string().min(1),
+  titleStatus: aiConversationTitleStatusSchema.catch('temporary'),
   updatedAt: z.string().min(1),
   createdAt: z.string().min(1),
   messages: z.array(aiChatMessageSchema),
@@ -49,30 +67,89 @@ const normalizeHydratedMessage = (message: IAiChatMessage): IAiChatMessage => {
 const normalizeMessages = (messages: IAiChatMessage[]): IAiChatMessage[] =>
   messages.map(normalizeHydratedMessage);
 
-const getThreadTitle = (messages: IAiChatMessage[]): string => {
+const normalizeTitleSource = (value: string): string =>
+  value
+    .normalize('NFC')
+    .replace(/\s+/gu, ' ')
+    .trim();
+
+const clipUnicodeText = (value: string, maxChars: number): string => {
+  const characters = Array.from(value);
+
+  if (characters.length <= maxChars) {
+    return value;
+  }
+
+  return `${characters.slice(0, maxChars).join('')}…`;
+};
+
+export const deriveTemporaryConversationTitle = (messages: IAiChatMessage[]): string => {
   const firstUserMessage = messages.find((message) => message.role === 'user' && message.content.trim());
   const source = firstUserMessage?.content.trim() ?? messages[0]?.content.trim() ?? '';
   if (!source) return '新对话';
-  const normalized = source.replace(/\s+/g, ' ').trim();
-  return normalized.length > 24 ? `${normalized.slice(0, 24)}…` : normalized;
+  return clipUnicodeText(normalizeTitleSource(source), TEMPORARY_TITLE_MAX_CHARS);
+};
+
+const normalizeGeneratedTitle = (title: string): string => {
+  const normalized = normalizeTitleSource(title)
+    .replace(/^["'“”‘’《》【】「」『』\s]+/gu, '')
+    .replace(/["'“”‘’《》【】「」『』\s]+$/gu, '');
+
+  return clipUnicodeText(normalized, GENERATED_TITLE_MAX_CHARS).replace(/…$/u, '');
 };
 
 const createThread = (messages: IAiChatMessage[] = []): IAiConversationThread => {
   const timestamp = new Date().toISOString();
   return {
     id: createThreadId(),
-    title: getThreadTitle(messages),
+    title: deriveTemporaryConversationTitle(messages),
+    titleStatus: 'temporary',
     updatedAt: messages.at(-1)?.createdAt ?? timestamp,
     createdAt: timestamp,
     messages,
   };
 };
 
-const syncThreadMeta = (thread: IAiConversationThread): IAiConversationThread => ({
-  ...thread,
-  title: getThreadTitle(thread.messages),
-  updatedAt: thread.messages.at(-1)?.createdAt ?? thread.updatedAt,
-});
+const syncThreadMeta = (thread: IAiConversationThread): IAiConversationThread => {
+  const titleStatus = thread.titleStatus ?? 'temporary';
+  const generatedTitle = titleStatus === 'generated'
+    ? normalizeGeneratedTitle(thread.title)
+    : '';
+
+  return {
+    ...thread,
+    title: generatedTitle || deriveTemporaryConversationTitle(thread.messages),
+    titleStatus: generatedTitle ? 'generated' : titleStatus,
+    updatedAt: thread.messages.at(-1)?.createdAt ?? thread.updatedAt,
+  };
+};
+
+const getFirstRoundFromMessages = (messages: IAiChatMessage[]): IAiConversationFirstRound | null => {
+  const firstUserIndex = messages.findIndex((message) =>
+    message.role === 'user' && message.content.trim().length > 0,
+  );
+
+  if (firstUserIndex < 0) {
+    return null;
+  }
+
+  const firstUserMessage = messages[firstUserIndex];
+  const firstAssistantMessage = messages.slice(firstUserIndex + 1).find((message) =>
+    message.role === 'assistant' &&
+    message.content.trim().length > 0 &&
+    message.stream?.status !== 'streaming' &&
+    message.stream?.status !== 'cancelled',
+  );
+
+  if (!firstUserMessage || !firstAssistantMessage) {
+    return null;
+  }
+
+  return {
+    userMessage: normalizeTitleSource(firstUserMessage.content),
+    assistantMessage: normalizeTitleSource(firstAssistantMessage.content),
+  };
+};
 
 const trimThreads = (
   threads: IAiConversationThread[],
@@ -192,6 +269,20 @@ export const useAiConversationStore = defineStore('ai-conversation', () => {
     });
   };
 
+  const patchThread = (
+    threadId: string,
+    updater: (thread: IAiConversationThread) => IAiConversationThread,
+  ): void => {
+    if (!threads.value.some((thread) => thread.id === threadId)) return;
+
+    replaceThreadsState({
+      activeThreadId: activeThreadId.value,
+      threads: threads.value.map((thread) =>
+        thread.id === threadId ? updater(thread) : thread,
+      ),
+    });
+  };
+
   const appendMessage = (message: IAiChatMessage): void => {
     patchActiveThread((thread) => ({
       ...thread,
@@ -234,6 +325,49 @@ export const useAiConversationStore = defineStore('ai-conversation', () => {
     });
   };
 
+  const getThreadTitleStatus = (threadId: string): TAiConversationTitleStatus => {
+    const thread = threads.value.find((item) => item.id === threadId);
+    return thread?.titleStatus ?? 'temporary';
+  };
+
+  const getFirstRoundForTitle = (threadId: string): IAiConversationFirstRound | null => {
+    const thread = threads.value.find((item) => item.id === threadId);
+    return thread ? getFirstRoundFromMessages(thread.messages) : null;
+  };
+
+  const markThreadTitleGenerating = (threadId: string): void => {
+    patchThread(threadId, (thread) => ({
+      ...thread,
+      titleStatus: thread.titleStatus === 'generated' ? 'generated' : 'generating',
+    }));
+  };
+
+  const completeThreadTitleGeneration = (threadId: string, title: string): void => {
+    const normalizedTitle = normalizeGeneratedTitle(title);
+
+    patchThread(threadId, (thread) => {
+      if (!normalizedTitle) {
+        return {
+          ...thread,
+          titleStatus: 'failed',
+        };
+      }
+
+      return {
+        ...thread,
+        title: normalizedTitle,
+        titleStatus: 'generated',
+      };
+    });
+  };
+
+  const failThreadTitleGeneration = (threadId: string): void => {
+    patchThread(threadId, (thread) => ({
+      ...thread,
+      titleStatus: thread.titleStatus === 'generated' ? 'generated' : 'failed',
+    }));
+  };
+
   return {
     activeThreadId,
     threads,
@@ -246,6 +380,11 @@ export const useAiConversationStore = defineStore('ai-conversation', () => {
     switchThread,
     startNewThread,
     clearActiveThread,
+    getThreadTitleStatus,
+    getFirstRoundForTitle,
+    markThreadTitleGenerating,
+    completeThreadTitleGeneration,
+    failThreadTitleGeneration,
   };
 }, {
   persist: {

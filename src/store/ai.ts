@@ -23,6 +23,7 @@ const createDefaultConfig = (): IAiConfigPayload => ({
   providerType: DEFAULT_PROVIDER_TYPE,
   selectedModel: DEFAULT_LITELLM_MODEL_ID,
   baseUrl: DEFAULT_LITELLM_BASE_URL,
+  activeProfileId: null,
   isBaseUrlConfigured: true,
   hasCredentials: false,
   isConfigured: false,

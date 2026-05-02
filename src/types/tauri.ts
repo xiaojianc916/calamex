@@ -33,6 +33,8 @@ import type {
   IAiCodeActionRequest,
   IAiCodeActionResult,
   IAiConfigPayload,
+  IAiConversationTitlePayload,
+  IAiConversationTitleRequest,
   TAiAgentStreamEvent,
   IAiInlineCompletionRequest,
   IAiInlineCompletionResult,
@@ -40,6 +42,9 @@ import type {
   IAiProposePatchRequest,
   IAiProviderConnectionPayload,
   IAiProviderConnectionRequest,
+  IAiProviderProfileDetailPayload,
+  IAiProviderProfilePayload,
+  IAiProviderProfileSwitchRequest,
   IAiProviderTestPayload,
   IAiQueryIndexPayload,
   IAiQueryIndexRequest,
@@ -248,10 +253,20 @@ export interface ITauriService {
   aiSaveConfig(payload: IAiSaveConfigRequest): Promise<IAiConfigPayload>;
   aiSaveCredentials(payload: IAiSaveCredentialsRequest): Promise<IAiConfigPayload>;
   aiClearCredentials(): Promise<void>;
+  aiListProviderProfiles(): Promise<IAiProviderProfilePayload[]>;
+  aiGetProviderProfileDetail(
+    payload: IAiProviderProfileSwitchRequest,
+  ): Promise<IAiProviderProfileDetailPayload>;
+  aiSwitchProviderProfile(
+    payload: IAiProviderProfileSwitchRequest,
+  ): Promise<IAiConfigPayload>;
   aiTestProvider(): Promise<IAiProviderTestPayload>;
   aiTestProviderConfig(payload: IAiProviderConnectionRequest): Promise<IAiProviderTestPayload>;
   aiConnectProvider(payload: IAiProviderConnectionRequest): Promise<IAiProviderConnectionPayload>;
   aiChat(payload: IAiChatRequest, options?: { signal?: AbortSignal }): Promise<IAiChatPayload>;
+  aiGenerateConversationTitle(
+    payload: IAiConversationTitleRequest,
+  ): Promise<IAiConversationTitlePayload>;
   aiChatStream(payload: IAiChatRequest): Promise<IAiChatStreamPayload>;
   aiCancel(payload: { streamId: string }): Promise<void>;
   onAiChatStream(handler: (payload: IAiChatStreamEventPayload) => void): Promise<() => void>;

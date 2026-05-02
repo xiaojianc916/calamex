@@ -27,6 +27,8 @@ import type {
   IAiContextReference,
   IAiPatchSet,
   IAiProviderConnectionRequest,
+  IAiProviderProfileDetailPayload,
+  IAiProviderProfilePayload,
   IAiToolDefinitionPayload,
   TAiChatMessageActionId,
   TAiToolConfirmationDecision,
@@ -40,6 +42,7 @@ import type {
 import type { IGitRepositoryStatusPayload } from '@/types/git';
 
 import { toErrorMessage } from '@/utils/error';
+import { logger } from '@/utils/logger';
 import { areFileSystemPathsEqual, normalizeFileSystemPath } from '@/utils/path';
 
 // ---------------------------------------------------------------------------
@@ -342,6 +345,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     providerType: 'litellm',
     selectedModel: DEFAULT_LITELLM_MODEL_ID,
     baseUrl: DEFAULT_LITELLM_BASE_URL,
+    activeProfileId: null,
     isBaseUrlConfigured: true,
     hasCredentials: false,
     isConfigured: false,
@@ -371,6 +375,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
   const activeMode = ref<TAiAssistantMode>('agent');
   const agentSteps = ref<IAgentExecutionStep[]>([]);
   const toolDefinitions = ref<IAiToolDefinitionPayload[]>([]);
+  const providerProfiles = ref<IAiProviderProfilePayload[]>([]);
   const attachedFiles = ref<IAiAttachedFile[]>([]);
   const activeAbortController = ref<AbortController | null>(null);
   const activeStreamId = ref<string | null>(null);
@@ -379,10 +384,46 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
   const activeAssistantMessage = ref<IAiChatMessage | null>(null);
   const activeAssistantBaseMessages = ref<IAiChatMessage[]>([]);
   const activeSidecarAgentSession = ref<ISidecarAgentSession | null>(null);
+  const pendingTitleThreadIds = new Set<string>();
 
   const aiStream = useAiStream();
   const agentPlan = useAiAgentPlan();
   const { refreshSidecarChangedDocuments } = useSidecarChangedDocumentRefresh();
+
+  const maybeGenerateConversationTitle = async (threadId: string | null): Promise<void> => {
+    if (!threadId || pendingTitleThreadIds.has(threadId)) {
+      return;
+    }
+
+    const titleStatus = conversationStore.getThreadTitleStatus(threadId);
+
+    if (titleStatus !== 'temporary') {
+      return;
+    }
+
+    const firstRound = conversationStore.getFirstRoundForTitle(threadId);
+
+    if (!firstRound) {
+      return;
+    }
+
+    pendingTitleThreadIds.add(threadId);
+    conversationStore.markThreadTitleGenerating(threadId);
+
+    try {
+      const payload = await aiService.generateConversationTitle(firstRound);
+      conversationStore.completeThreadTitleGeneration(threadId, payload.title);
+    } catch (error) {
+      conversationStore.failThreadTitleGeneration(threadId);
+      logger.warn({
+        event: 'ai.conversation_title.failed',
+        err: error,
+        threadId,
+      });
+    } finally {
+      pendingTitleThreadIds.delete(threadId);
+    }
+  };
 
   const resolveActiveAgentPatchTarget = (): IActiveAgentPatchTarget | null => {
     const activeRun = agentPlan.store.activeRun;
@@ -997,6 +1038,15 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     toolDefinitions.value = await aiService.listTools();
   };
 
+  const loadProviderProfiles = async (): Promise<void> => {
+    providerProfiles.value = await aiService.listProviderProfiles();
+  };
+
+  const getProviderProfileDetail = (
+    profileId: string,
+  ): Promise<IAiProviderProfileDetailPayload> =>
+    aiService.getProviderProfileDetail({ profileId });
+
   const saveConfig = async (nextConfig: IAiConfigPayload): Promise<void> => {
     config.value = await aiService.saveConfig({
       providerType: nextConfig.providerType,
@@ -1056,8 +1106,14 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     );
 
     config.value = result.config;
+    await loadProviderProfiles();
 
     return result.test.message;
+  };
+
+  const switchProviderProfile = async (profileId: string): Promise<void> => {
+    config.value = await aiService.switchProviderProfile({ profileId });
+    await loadProviderProfiles();
   };
 
   const testProvider = async (): Promise<string> => {
@@ -1436,6 +1492,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     }
 
     const messageContent = content || '请分析我添加的附件内容。';
+    const titleThreadId = activeConversationId.value;
     const userMessage: IAiChatMessage = {
       id: createMessageId('user'),
       role: 'user',
@@ -1492,6 +1549,10 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
         references,
       );
 
+      if (!errorMessage.value) {
+        void maybeGenerateConversationTitle(titleThreadId);
+      }
+
       return;
     }
 
@@ -1524,6 +1585,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
         ];
 
         isSending.value = false;
+        void maybeGenerateConversationTitle(titleThreadId);
         return;
       } catch (error) {
         const message = toErrorMessage(error, '生成计划失败。');
@@ -1551,6 +1613,9 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
         messageContent,
         references,
       );
+      if (!errorMessage.value) {
+        void maybeGenerateConversationTitle(titleThreadId);
+      }
     } catch (error) {
       errorMessage.value = toErrorMessage(error, MSG_CALL_FAILED);
     }
@@ -1726,16 +1791,20 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     activeMode,
     agentSteps,
     toolDefinitions,
+    providerProfiles,
     attachedFiles,
     providerLabel,
     sendButtonLabel,
     canPreviewPatch,
     loadConfig,
     loadTools,
+    loadProviderProfiles,
+    getProviderProfileDetail,
     saveConfig,
     saveCredentials,
     testProviderConfig,
     connectProvider,
+    switchProviderProfile,
     testProvider,
     applyQuickAction,
     attachFile,

@@ -48,7 +48,11 @@ import {
   aiCodeActionPayloadSchema,
   aiCodeActionRequestSchema,
   aiConfigPayloadSchema,
+  aiConversationTitlePayloadSchema,
+  aiConversationTitleRequestSchema,
   aiPatchSetSchema,
+  aiProviderProfileDetailPayloadSchema,
+  aiProviderProfilePayloadSchema,
   aiProviderConnectionPayloadSchema,
   aiProviderConnectionRequestSchema,
   aiProviderTestPayloadSchema,
@@ -593,6 +597,22 @@ export const tauriContracts = {
     inSchema: z.void(),
     outSchema: zTauriVoid,
   },
+  aiListProviderProfiles: {
+    inSchema: z.void(),
+    outSchema: z.array(aiProviderProfilePayloadSchema),
+  },
+  aiGetProviderProfileDetail: {
+    inSchema: z.object({
+      profileId: z.string().min(1),
+    }),
+    outSchema: aiProviderProfileDetailPayloadSchema,
+  },
+  aiSwitchProviderProfile: {
+    inSchema: z.object({
+      profileId: z.string().min(1),
+    }),
+    outSchema: aiConfigPayloadSchema,
+  },
   aiTestProvider: {
     inSchema: z.void(),
     outSchema: aiProviderTestPayloadSchema,
@@ -600,6 +620,10 @@ export const tauriContracts = {
   aiChat: {
     inSchema: aiChatRequestSchema,
     outSchema: aiChatPayloadSchema,
+  },
+  aiGenerateConversationTitle: {
+    inSchema: aiConversationTitleRequestSchema,
+    outSchema: aiConversationTitlePayloadSchema,
   },
   aiChatStream: {
     inSchema: aiChatRequestSchema,

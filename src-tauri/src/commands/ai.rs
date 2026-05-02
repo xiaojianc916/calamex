@@ -9,18 +9,20 @@ use super::contracts::{
     AiAgentToolConfirmationStreamEventPayload, AiApplyPatchPayload, AiApplyPatchRequest,
     AiBuildIndexPayload, AiBuildIndexRequest, AiCancelRequest, AiChatMessagePayload, AiChatPayload,
     AiChatRequest, AiChatStreamPayload, AiCodeActionPayload, AiCodeActionRequest, AiConfigPayload,
-    AiEditAuthStatePayload, AiEditCreateSnapshotPayload, AiEditCreateSnapshotRequest,
-    AiEditGetDiffPayload, AiEditGetDiffRequest, AiEditListTimelinePayload,
-    AiEditListTimelineRequest, AiEditRestoreSnapshotPayload, AiEditRestoreSnapshotRequest,
-    AiEditRevertFilePayload, AiEditRevertFileRequest, AiEditRevertHunkPayload,
-    AiEditRevertHunkRequest, AiEditRevertTaskPayload, AiEditRevertTaskRequest,
-    AiEditSetAuthLevelRequest, AiEditUndoOperationPayload, AiEditUndoOperationRequest,
-    AiInlineCompletionRangePayload, AiInlineCompletionRequest, AiInlineCompletionResult,
-    AiProposePatchPayload, AiProposePatchRequest, AiProviderConnectionPayload,
-    AiProviderConnectionRequest, AiProviderTestPayload, AiQueryIndexPayload, AiQueryIndexRequest,
-    AiSaveConfigRequest, AiSaveCredentialsRequest, AiTaskPlanStepPayload,
-    AiToolActivityInlinePayload, AiToolDefinitionPayload, AiWebFetchInput, AiWebFetchPayload,
-    AiWebSearchInput, AiWebSearchPayload,
+    AiConversationTitlePayload, AiConversationTitleRequest, AiEditAuthStatePayload,
+    AiEditCreateSnapshotPayload, AiEditCreateSnapshotRequest, AiEditGetDiffPayload,
+    AiEditGetDiffRequest, AiEditListTimelinePayload, AiEditListTimelineRequest,
+    AiEditRestoreSnapshotPayload, AiEditRestoreSnapshotRequest, AiEditRevertFilePayload,
+    AiEditRevertFileRequest, AiEditRevertHunkPayload, AiEditRevertHunkRequest,
+    AiEditRevertTaskPayload, AiEditRevertTaskRequest, AiEditSetAuthLevelRequest,
+    AiEditUndoOperationPayload, AiEditUndoOperationRequest, AiInlineCompletionRangePayload,
+    AiInlineCompletionRequest, AiInlineCompletionResult, AiProposePatchPayload,
+    AiProposePatchRequest, AiProviderConnectionPayload, AiProviderConnectionRequest,
+    AiProviderProfileDetailPayload, AiProviderProfilePayload, AiProviderProfileSwitchRequest,
+    AiProviderTestPayload, AiQueryIndexPayload, AiQueryIndexRequest, AiSaveConfigRequest,
+    AiSaveCredentialsRequest, AiTaskPlanStepPayload, AiToolActivityInlinePayload,
+    AiToolDefinitionPayload, AiWebFetchInput, AiWebFetchPayload, AiWebSearchInput,
+    AiWebSearchPayload,
 };
 use crate::ai::audit::{self, AiAuditEventKind};
 use crate::ai::gateway;
@@ -189,6 +191,25 @@ pub fn ai_clear_credentials() -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn ai_list_provider_profiles() -> Result<Vec<AiProviderProfilePayload>, String> {
+    gateway::list_provider_profiles()
+}
+
+#[tauri::command]
+pub fn ai_get_provider_profile_detail(
+    payload: AiProviderProfileSwitchRequest,
+) -> Result<AiProviderProfileDetailPayload, String> {
+    gateway::get_provider_profile_detail(payload)
+}
+
+#[tauri::command]
+pub fn ai_switch_provider_profile(
+    payload: AiProviderProfileSwitchRequest,
+) -> Result<AiConfigPayload, String> {
+    gateway::switch_provider_profile(payload)
+}
+
+#[tauri::command]
 pub async fn ai_test_provider() -> Result<AiProviderTestPayload, String> {
     match gateway::test_provider().await {
         Ok(()) => Ok(AiProviderTestPayload {
@@ -218,6 +239,13 @@ pub async fn ai_chat(payload: AiChatRequest) -> Result<AiChatPayload, String> {
         provider_type: gateway::get_config().provider_type,
         model: response.model,
     })
+}
+
+#[tauri::command]
+pub async fn ai_generate_conversation_title(
+    payload: AiConversationTitleRequest,
+) -> Result<AiConversationTitlePayload, String> {
+    gateway::generate_conversation_title(payload).await
 }
 
 #[tauri::command]

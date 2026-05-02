@@ -133,6 +133,7 @@ export interface IAiConfigPayload {
   providerType: TAiProviderType;
   selectedModel: string | null;
   baseUrl: string | null;
+  activeProfileId: string | null;
   isBaseUrlConfigured: boolean;
   hasCredentials: boolean;
   isConfigured: boolean;
@@ -176,6 +177,16 @@ export interface IAiChatPayload {
   model: string;
 }
 
+export interface IAiConversationTitleRequest {
+  userMessage: string;
+  assistantMessage: string;
+}
+
+export interface IAiConversationTitlePayload {
+  title: string;
+  model: string;
+}
+
 export interface IAiChatStreamPayload {
   streamId: string;
   assistantMessageId: string;
@@ -205,6 +216,30 @@ export interface IAiProviderTestPayload {
 export interface IAiProviderConnectionPayload {
   config: IAiConfigPayload;
   test: IAiProviderTestPayload;
+}
+
+export interface IAiProviderProfilePayload {
+  id: string;
+  name: string;
+  providerType: TAiProviderType;
+  selectedModel: string | null;
+  baseUrl: string | null;
+  inlineCompletionEnabled: boolean;
+  chatEnabled: boolean;
+  agentEnabled: boolean;
+  hasCredentials: boolean;
+  createdAt: string;
+  updatedAt: string;
+  lastUsedAt: string | null;
+}
+
+export interface IAiProviderProfileDetailPayload {
+  profile: IAiProviderProfilePayload;
+  apiKey: string | null;
+}
+
+export interface IAiProviderProfileSwitchRequest {
+  profileId: string;
 }
 
 export interface IAiInlineCompletionRequest {

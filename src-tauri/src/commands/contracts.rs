@@ -465,6 +465,20 @@ pub struct AiChatPayload {
     pub(crate) model: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiConversationTitleRequest {
+    pub(crate) user_message: String,
+    pub(crate) assistant_message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiConversationTitlePayload {
+    pub(crate) title: String,
+    pub(crate) model: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AiChatStreamPayload {
@@ -520,18 +534,49 @@ pub struct AiProviderConnectionRequest {
     pub(crate) api_key: Option<SecretString>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiProviderProfileSwitchRequest {
+    pub(crate) profile_id: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AiConfigPayload {
     pub(crate) provider_type: String,
     pub(crate) selected_model: Option<String>,
     pub(crate) base_url: Option<String>,
+    pub(crate) active_profile_id: Option<String>,
     pub(crate) is_base_url_configured: bool,
     pub(crate) has_credentials: bool,
     pub(crate) is_configured: bool,
     pub(crate) inline_completion_enabled: bool,
     pub(crate) chat_enabled: bool,
     pub(crate) agent_enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiProviderProfilePayload {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) provider_type: String,
+    pub(crate) selected_model: Option<String>,
+    pub(crate) base_url: Option<String>,
+    pub(crate) inline_completion_enabled: bool,
+    pub(crate) chat_enabled: bool,
+    pub(crate) agent_enabled: bool,
+    pub(crate) has_credentials: bool,
+    pub(crate) created_at: String,
+    pub(crate) updated_at: String,
+    pub(crate) last_used_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiProviderProfileDetailPayload {
+    pub(crate) profile: AiProviderProfilePayload,
+    pub(crate) api_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

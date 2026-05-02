@@ -38,6 +38,8 @@ import type {
   IAiCodeActionRequest,
   IAiCodeActionResult,
   IAiConfigPayload,
+  IAiConversationTitlePayload,
+  IAiConversationTitleRequest,
   TAiAgentStreamEvent,
   IAiInlineCompletionRequest,
   IAiInlineCompletionResult,
@@ -45,6 +47,9 @@ import type {
   IAiProposePatchRequest,
   IAiProviderConnectionPayload,
   IAiProviderConnectionRequest,
+  IAiProviderProfileDetailPayload,
+  IAiProviderProfilePayload,
+  IAiProviderProfileSwitchRequest,
   IAiProviderTestPayload,
   IAiQueryIndexPayload,
   IAiQueryIndexRequest,
@@ -92,6 +97,17 @@ export const aiService = {
   clearCredentials(): Promise<void> {
     return tauriService.aiClearCredentials();
   },
+  listProviderProfiles(): Promise<IAiProviderProfilePayload[]> {
+    return tauriService.aiListProviderProfiles();
+  },
+  getProviderProfileDetail(
+    payload: IAiProviderProfileSwitchRequest,
+  ): Promise<IAiProviderProfileDetailPayload> {
+    return tauriService.aiGetProviderProfileDetail(payload);
+  },
+  switchProviderProfile(payload: IAiProviderProfileSwitchRequest): Promise<IAiConfigPayload> {
+    return tauriService.aiSwitchProviderProfile(payload);
+  },
   testProvider(): Promise<IAiProviderTestPayload> {
     return tauriService.aiTestProvider();
   },
@@ -103,6 +119,11 @@ export const aiService = {
   },
   chat(payload: IAiChatRequest, options: { signal?: AbortSignal } = {}): Promise<IAiChatPayload> {
     return tauriService.aiChat(payload, options);
+  },
+  generateConversationTitle(
+    payload: IAiConversationTitleRequest,
+  ): Promise<IAiConversationTitlePayload> {
+    return tauriService.aiGenerateConversationTitle(payload);
   },
   chatStream(payload: IAiChatRequest): Promise<IAiChatStreamPayload> {
     return tauriService.aiChatStream(payload);

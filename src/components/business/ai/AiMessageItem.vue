@@ -114,7 +114,11 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <article v-if="shouldRenderMessage" class="ai-message" :class="`is-${message.role}`">
+  <article
+    v-if="shouldRenderMessage"
+    class="ai-message"
+    :class="[`is-${message.role}`, { 'is-inline-loading': shouldShowInlineLoader }]"
+  >
     <AiProviderIcon v-if="message.role !== 'user'" class="ai-logo" :platform-id="platformId" :title="providerLabel" />
     <div class="ai-message-main">
       <AiToolActivityInline v-if="message.toolCalls?.length" :tool-calls="message.toolCalls" />
@@ -160,11 +164,19 @@ onBeforeUnmount(() => {
   justify-content: flex-end;
 }
 
+.ai-message.is-inline-loading {
+  align-items: center;
+}
+
 .ai-logo {
   width: 22px;
   height: 22px;
   flex: 0 0 auto;
   margin-top: 1px;
+}
+
+.ai-message.is-inline-loading .ai-logo {
+  margin-top: 0;
 }
 
 .ai-message-main {
@@ -194,6 +206,8 @@ onBeforeUnmount(() => {
 .ai-message-status-line {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  min-height: 22px;
   gap: 6px;
   color: var(--text-quaternary);
   font-size: 12px;
@@ -204,6 +218,7 @@ onBeforeUnmount(() => {
   width: 13px;
   height: 13px;
   flex: 0 0 auto;
+  align-self: center;
   animation: ai-message-status-spin 900ms linear infinite;
   color: var(--text-tertiary);
   stroke-width: 2;

@@ -1,4 +1,4 @@
-﻿import { createPinia, setActivePinia } from 'pinia';
+import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ref } from 'vue';
 
@@ -106,6 +106,11 @@ const aiServiceMock = vi.hoisted(() => {
             references: [],
         },
         providerType: 'mock',
+        model: MOCK_MODEL,
+    }));
+
+    const generateConversationTitle = vi.fn(async () => ({
+        title: '生成会话标题',
         model: MOCK_MODEL,
     }));
 
@@ -271,6 +276,7 @@ const aiServiceMock = vi.hoisted(() => {
     return {
         onChatStream,
         chat,
+        generateConversationTitle,
         chatStream,
         cancel,
         queryIndex,
@@ -316,6 +322,7 @@ const aiServiceMock = vi.hoisted(() => {
             queuedStreamResponses.length = 0;
             onChatStream.mockClear();
             chat.mockClear();
+            generateConversationTitle.mockClear();
             chatStream.mockClear();
             cancel.mockClear();
             queryIndex.mockClear();
@@ -336,6 +343,7 @@ vi.mock('@/services/modules/ai', () => ({
     aiService: {
         onChatStream: aiServiceMock.onChatStream,
         chat: aiServiceMock.chat,
+        generateConversationTitle: aiServiceMock.generateConversationTitle,
         chatStream: aiServiceMock.chatStream,
         cancel: aiServiceMock.cancel,
         queryIndex: aiServiceMock.queryIndex,
@@ -702,6 +710,25 @@ describe('useAiAssistant streaming integration', () => {
             role: 'user',
             content: userQuestion,
         });
+    });
+
+    it('后台只用第一轮问答生成正式会话标题', async () => {
+        const assistant = createAssistantHarness();
+        const conversationStore = useAiConversationStore();
+
+        aiServiceMock.queueStreamResponse('第一轮 AI 回答');
+        assistant.activeMode.value = 'chat';
+        assistant.draft.value = '如何修复会话记录弹窗？';
+
+        await assistant.sendMessage();
+        await flushMicrotasks();
+
+        expect(aiServiceMock.generateConversationTitle).toHaveBeenCalledWith({
+            userMessage: '如何修复会话记录弹窗？',
+            assistantMessage: '第一轮 AI 回答',
+        });
+        expect(conversationStore.activeThread?.title).toBe('生成会话标题');
+        expect(conversationStore.activeThread?.titleStatus).toBe('generated');
     });
 
     it('starts a new conversation by clearing draft and transient state', () => {

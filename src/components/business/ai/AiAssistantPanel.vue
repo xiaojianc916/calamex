@@ -37,9 +37,14 @@ import type {
 } from '@/types/editor';
 import type { IGitRepositoryStatusPayload } from '@/types/git';
 import { toErrorMessage } from '@/utils/error';
-import { computed, onMounted, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, type CSSProperties } from 'vue';
 
 const MAX_HISTORY_MESSAGES = 20;
+const HISTORY_POPOVER_WIDTH = 332;
+const HISTORY_POPOVER_MAX_HEIGHT = 452;
+const HISTORY_POPOVER_MIN_HEIGHT = 220;
+const HISTORY_POPOVER_VIEWPORT_MARGIN = 12;
+const HISTORY_POPOVER_TRIGGER_GAP = 8;
 type TAiAssistantViewMode = 'chat' | 'agent' | 'plan';
 
 const props = defineProps<{
@@ -76,6 +81,8 @@ const isModeMenuOpen = ref(false);
 const isNetworkMenuOpen = ref(false);
 const isNetworkPermissionPending = ref(false);
 const isHistoryOpen = ref(false);
+const historyButtonRef = ref<HTMLButtonElement | null>(null);
+const historyPopoverStyle = ref<CSSProperties>({});
 const currentServicePlatform = computed(() =>
   findAiServicePlatformByModel(assistant.config.value.selectedModel),
 );
@@ -251,7 +258,79 @@ const submitLabel = computed(() => {
 const openSettings = (): void => {
   settingsDraft.value = { ...assistant.config.value };
   isNetworkMenuOpen.value = false;
+  isHistoryOpen.value = false;
   assistant.isSettingsOpen.value = true;
+  assistant.loadProviderProfiles().catch(() => undefined);
+};
+
+const updateHistoryPopoverPosition = (): void => {
+  if (!historyButtonRef.value || typeof window === 'undefined') {
+    return;
+  }
+
+  const triggerRect = historyButtonRef.value.getBoundingClientRect();
+  const viewportWidth = window.innerWidth;
+  const viewportHeight = window.innerHeight;
+  const width = Math.min(
+    HISTORY_POPOVER_WIDTH,
+    Math.max(0, viewportWidth - HISTORY_POPOVER_VIEWPORT_MARGIN * 2),
+  );
+  const preferredRight = viewportWidth - triggerRect.right;
+  const right = Math.min(
+    Math.max(preferredRight, HISTORY_POPOVER_VIEWPORT_MARGIN),
+    Math.max(HISTORY_POPOVER_VIEWPORT_MARGIN, viewportWidth - width - HISTORY_POPOVER_VIEWPORT_MARGIN),
+  );
+  const availableBelow = viewportHeight -
+    triggerRect.bottom -
+    HISTORY_POPOVER_TRIGGER_GAP -
+    HISTORY_POPOVER_VIEWPORT_MARGIN;
+  const availableAbove = triggerRect.top -
+    HISTORY_POPOVER_TRIGGER_GAP -
+    HISTORY_POPOVER_VIEWPORT_MARGIN;
+  const shouldOpenAbove = availableBelow < HISTORY_POPOVER_MIN_HEIGHT && availableAbove > availableBelow;
+  const availableHeight = shouldOpenAbove ? availableAbove : availableBelow;
+  const maxHeight = Math.min(
+    HISTORY_POPOVER_MAX_HEIGHT,
+    Math.max(HISTORY_POPOVER_MIN_HEIGHT, availableHeight),
+  );
+  const top = shouldOpenAbove
+    ? Math.max(
+        HISTORY_POPOVER_VIEWPORT_MARGIN,
+        triggerRect.top - HISTORY_POPOVER_TRIGGER_GAP - maxHeight,
+      )
+    : Math.min(
+        triggerRect.bottom + HISTORY_POPOVER_TRIGGER_GAP,
+        viewportHeight - HISTORY_POPOVER_VIEWPORT_MARGIN - maxHeight,
+      );
+
+  historyPopoverStyle.value = {
+    top: `${top}px`,
+    right: `${right}px`,
+    width: `${width}px`,
+    maxHeight: `${maxHeight}px`,
+  };
+};
+
+const handleToggleHistoryPopover = async (): Promise<void> => {
+  if (isHistoryOpen.value) {
+    isHistoryOpen.value = false;
+    return;
+  }
+
+  isModeMenuOpen.value = false;
+  isNetworkMenuOpen.value = false;
+  updateHistoryPopoverPosition();
+  isHistoryOpen.value = true;
+  await nextTick();
+  updateHistoryPopoverPosition();
+};
+
+const handleHistoryViewportChange = (): void => {
+  if (!isHistoryOpen.value) {
+    return;
+  }
+
+  updateHistoryPopoverPosition();
 };
 
 const startNewConversation = (): void => {
@@ -636,6 +715,20 @@ const saveSettings = async (
   }
 };
 
+const switchProviderProfile = async (
+  profileId: string,
+  feedback: IAiProviderSettingsActionFeedback,
+): Promise<void> => {
+  try {
+    await assistant.switchProviderProfile(profileId);
+    settingsApiKey.value = '';
+    settingsDraft.value = { ...assistant.config.value };
+    feedback.onSuccess('AI 配置已切换');
+  } catch (error) {
+    feedback.onError(toErrorMessage(error, 'AI 配置切换失败'));
+  }
+};
+
 const saveCredentials = async (
   apiKey: string,
   feedback: IAiProviderSettingsActionFeedback,
@@ -674,7 +767,18 @@ onMounted(() => {
     settingsDraft.value = { ...assistant.config.value };
   }).catch(() => undefined);
   assistant.loadTools().catch(() => undefined);
+  assistant.loadProviderProfiles().catch(() => undefined);
   agentStream.start().catch(() => undefined);
+
+  if (typeof window !== 'undefined') {
+    window.addEventListener('resize', handleHistoryViewportChange);
+  }
+});
+
+onBeforeUnmount(() => {
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('resize', handleHistoryViewportChange);
+  }
 });
 </script>
 
@@ -746,41 +850,21 @@ onMounted(() => {
         </svg>
       </button>
       <div class="ai-history-anchor">
-        <button type="button" class="ai-icon-button" aria-label="对话记录" aria-haspopup="dialog"
-          :aria-expanded="isHistoryOpen" @click="isHistoryOpen = !isHistoryOpen">
+        <button
+          ref="historyButtonRef"
+          type="button"
+          class="ai-icon-button"
+          aria-label="对话记录"
+          aria-haspopup="dialog"
+          :aria-expanded="isHistoryOpen"
+          @click="handleToggleHistoryPopover"
+        >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
             <path d="M3 3v5h5" />
             <path d="M3.05 13A9 9 0 1 0 6 5.3L3 8" />
             <path d="M12 7v5l4 2" />
           </svg>
         </button>
-        <section v-if="isHistoryOpen" class="ai-history-popover" role="dialog" aria-label="最近 20 组对话记录">
-          <header class="ai-history-header">
-            <div class="ai-history-title-group">
-              <strong>对话记录</strong>
-              <span>{{ historyCountLabel }}</span>
-            </div>
-          </header>
-          <div v-if="historyThreads.length" class="ai-history-list">
-            <article v-for="thread in historyThreads" :key="thread.id" class="ai-history-item"
-              :class="{ 'is-active': thread.id === assistant.activeConversationId.value }">
-              <button type="button" class="ai-history-button" @click="openHistoryThread(thread.id)">
-                <div class="ai-history-meta">
-                  <strong class="ai-history-title">{{ thread.title }}</strong>
-                  <time>{{ getHistoryTimeLabel(thread.updatedAt) }}</time>
-                </div>
-                <p class="ai-history-content">{{ getHistoryPreview(thread.messages) }}</p>
-                <div class="ai-history-subtitle">{{ getHistoryMessageCountLabel(thread.messages) }}</div>
-              </button>
-            </article>
-          </div>
-          <div v-else class="ai-history-empty">最近 20 组对话会显示在这里</div>
-          <footer v-if="assistant.messages.value.length" class="ai-history-footer">
-            <button type="button" @click="assistant.isClearDialogOpen.value = true; isHistoryOpen = false">
-              清空当前对话
-            </button>
-          </footer>
-        </section>
       </div>
     </header>
 
@@ -824,8 +908,50 @@ onMounted(() => {
 
     <AiProviderSettings v-model:draft="settingsDraft" v-model:api-key="settingsApiKey"
       :open="assistant.isSettingsOpen.value" :config="assistant.config.value"
+      :profiles="assistant.providerProfiles.value"
+      :load-profile-detail="assistant.getProviderProfileDetail"
       @close="assistant.isSettingsOpen.value = false" @save="saveSettings" @save-credentials="saveCredentials"
-      @test-provider="testProvider" />
+      @test-provider="testProvider" @switch-profile="switchProviderProfile" />
+
+    <Teleport to="body">
+      <section
+        v-if="isHistoryOpen"
+        class="ai-history-popover"
+        :style="historyPopoverStyle"
+        role="dialog"
+        aria-label="最近 20 组对话记录"
+      >
+        <header class="ai-history-header">
+          <div class="ai-history-title-group">
+            <strong>对话记录</strong>
+            <span>{{ historyCountLabel }}</span>
+          </div>
+        </header>
+        <div v-if="historyThreads.length" class="ai-history-list">
+          <article
+            v-for="thread in historyThreads"
+            :key="thread.id"
+            class="ai-history-item"
+            :class="{ 'is-active': thread.id === assistant.activeConversationId.value }"
+          >
+            <button type="button" class="ai-history-button" @click="openHistoryThread(thread.id)">
+              <div class="ai-history-meta">
+                <strong class="ai-history-title">{{ thread.title }}</strong>
+                <time>{{ getHistoryTimeLabel(thread.updatedAt) }}</time>
+              </div>
+              <p class="ai-history-content">{{ getHistoryPreview(thread.messages) }}</p>
+              <div class="ai-history-subtitle">{{ getHistoryMessageCountLabel(thread.messages) }}</div>
+            </button>
+          </article>
+        </div>
+        <div v-else class="ai-history-empty">最近 20 组对话会显示在这里</div>
+        <footer v-if="assistant.messages.value.length" class="ai-history-footer">
+          <button type="button" @click="assistant.isClearDialogOpen.value = true; isHistoryOpen = false">
+            清空当前对话
+          </button>
+        </footer>
+      </section>
+    </Teleport>
 
     <Teleport to="body">
       <div v-if="assistant.isClearDialogOpen.value" class="ai-dialog-backdrop"
@@ -1075,10 +1201,8 @@ onMounted(() => {
 }
 
 .ai-history-popover {
-  position: absolute;
-  top: 32px;
-  right: 0;
-  z-index: 10;
+  position: fixed;
+  z-index: 1200;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   width: 332px;
@@ -1129,6 +1253,7 @@ onMounted(() => {
   padding: 8px;
   scrollbar-width: thin;
   scrollbar-color: color-mix(in srgb, var(--shell-divider) 88%, transparent) transparent;
+  -webkit-overflow-scrolling: touch;
 }
 
 .ai-history-list::-webkit-scrollbar {
@@ -1144,6 +1269,7 @@ onMounted(() => {
 
 .ai-history-item {
   display: block;
+  flex: 0 0 auto;
   min-width: 0;
   border: 1px solid color-mix(in srgb, var(--shell-divider) 78%, transparent);
   border-radius: 10px;

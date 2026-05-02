@@ -10,7 +10,9 @@ use crate::commands::contracts::{
     AiAgentApprovePlanPayload, AiAgentApprovePlanRequest, AiAgentClassifyTaskPayload,
     AiAgentClassifyTaskRequest, AiAgentPlanPayload, AiAgentPlanRequest, AiChatRequest,
     AiCodeActionPayload, AiCodeActionRequest, AiConfigPayload, AiContextReferencePayload,
-    AiInlineCompletionRangePayload, AiInlineCompletionRequest, AiInlineCompletionResult,
+    AiConversationTitlePayload, AiConversationTitleRequest, AiInlineCompletionRangePayload,
+    AiInlineCompletionRequest, AiInlineCompletionResult, AiProviderProfileDetailPayload,
+    AiProviderProfilePayload, AiProviderProfileSwitchRequest,
 };
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -26,6 +28,9 @@ const MAX_MESSAGE_CHARS: usize = 16_000;
 const MAX_CONTEXT_REFERENCES: usize = 8;
 const MAX_CONTEXT_BLOCK_CHARS: usize = 12_000;
 const MAX_REFERENCE_PREVIEW_CHARS: usize = 4_000;
+const MAX_TITLE_SOURCE_CHARS: usize = 1_200;
+const MIN_GENERATED_TITLE_CHARS: usize = 5;
+const MAX_GENERATED_TITLE_CHARS: usize = 10;
 
 const DEFAULT_LITELLM_BASE_URL: &str = "http://127.0.0.1:4000/v1";
 const DEFAULT_LITELLM_MODEL: &str = "openai/gpt-5.5";
@@ -45,9 +50,30 @@ struct AiRuntimeConfig {
     provider_type: String,
     selected_model: Option<String>,
     base_url: Option<String>,
+    #[serde(default)]
+    active_profile_id: Option<String>,
+    #[serde(default)]
+    profiles: Vec<AiProviderProfile>,
     inline_completion_enabled: bool,
     chat_enabled: bool,
     agent_enabled: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AiProviderProfile {
+    id: String,
+    name: String,
+    provider_type: String,
+    selected_model: Option<String>,
+    base_url: Option<String>,
+    inline_completion_enabled: bool,
+    chat_enabled: bool,
+    agent_enabled: bool,
+    created_at: String,
+    updated_at: String,
+    #[serde(default)]
+    last_used_at: Option<String>,
 }
 
 impl Default for AiRuntimeConfig {
@@ -56,6 +82,8 @@ impl Default for AiRuntimeConfig {
             provider_type: "litellm".to_string(),
             selected_model: Some(DEFAULT_LITELLM_MODEL.to_string()),
             base_url: Some(DEFAULT_LITELLM_BASE_URL.to_string()),
+            active_profile_id: None,
+            profiles: Vec::new(),
             inline_completion_enabled: false,
             chat_enabled: true,
             agent_enabled: false,
@@ -128,6 +156,7 @@ pub fn save_config(
     guard.provider_type = provider_type.to_string();
     guard.selected_model = model;
     guard.base_url = normalized_base_url;
+    guard.active_profile_id = None;
     guard.inline_completion_enabled = inline_completion_enabled;
     guard.chat_enabled = chat_enabled;
     guard.agent_enabled = agent_enabled;
@@ -149,14 +178,107 @@ pub fn save_credentials(provider_type: &str, api_key: &str) -> Result<AiConfigPa
         return Err(errors::error("AI_PROVIDER_AUTH_FAILED", "请填写 API Key。"));
     }
 
+    let active_profile_id = current_config()
+        .map(|config| {
+            (config.provider_type == provider_type)
+                .then_some(config.active_profile_id)
+                .flatten()
+        })?;
+
     CredentialStore::save(provider_type, trimmed)?;
+
+    if let Some(profile_id) = active_profile_id {
+        CredentialStore::save_profile_secret(&profile_id, trimmed)?;
+    }
+
     audit::emit(AiAuditEventKind::ConfigUpdated);
 
     Ok(get_config())
 }
 
 pub fn clear_credentials() -> Result<(), String> {
-    CredentialStore::clear()
+    let profile_ids = current_config()
+        .map(|config| {
+            config
+                .profiles
+                .into_iter()
+                .map(|profile| profile.id)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    CredentialStore::clear()?;
+
+    for profile_id in profile_ids {
+        CredentialStore::delete_profile_secret(&profile_id)?;
+    }
+
+    Ok(())
+}
+
+pub fn list_provider_profiles() -> Result<Vec<AiProviderProfilePayload>, String> {
+    let config = current_config()?;
+
+    Ok(config
+        .profiles
+        .into_iter()
+        .map(profile_to_payload)
+        .collect())
+}
+
+pub fn get_provider_profile_detail(
+    payload: AiProviderProfileSwitchRequest,
+) -> Result<AiProviderProfileDetailPayload, String> {
+    let config = current_config()?;
+    let profile = config
+        .profiles
+        .into_iter()
+        .find(|item| item.id == payload.profile_id)
+        .ok_or_else(|| errors::error("AI_PROVIDER_NOT_CONFIGURED", "未找到该 AI 配置记录。"))?;
+    let api_key = CredentialStore::get_profile_secret(&profile.id).ok();
+
+    Ok(AiProviderProfileDetailPayload {
+        profile: profile_to_payload(profile),
+        api_key,
+    })
+}
+
+pub fn switch_provider_profile(
+    payload: AiProviderProfileSwitchRequest,
+) -> Result<AiConfigPayload, String> {
+    let mut guard = config_state()
+        .lock()
+        .map_err(|_| errors::error("AI_PROVIDER_UNAVAILABLE", "AI 配置状态已损坏。"))?;
+    let now = chrono::Utc::now().to_rfc3339();
+    let profile_index = guard
+        .profiles
+        .iter()
+        .position(|profile| profile.id == payload.profile_id)
+        .ok_or_else(|| errors::error("AI_PROVIDER_NOT_CONFIGURED", "未找到该 AI 配置记录。"))?;
+    let profile = guard.profiles[profile_index].clone();
+
+    if !CredentialStore::has_profile_secret(&profile.id) {
+        return Err(errors::error(
+            "AI_PROVIDER_AUTH_FAILED",
+            "该配置记录缺少 API Key，请重新连接后保存。",
+        ));
+    }
+
+    guard.provider_type = profile.provider_type.clone();
+    guard.selected_model = profile.selected_model.clone();
+    guard.base_url = profile.base_url.clone();
+    guard.inline_completion_enabled = profile.inline_completion_enabled;
+    guard.chat_enabled = profile.chat_enabled;
+    guard.agent_enabled = profile.agent_enabled;
+    guard.active_profile_id = Some(profile.id.clone());
+    guard.profiles[profile_index].last_used_at = Some(now.clone());
+    guard.profiles[profile_index].updated_at = now;
+
+    let payload = to_payload(guard.clone());
+    persist_config(&guard)?;
+    audit::emit(AiAuditEventKind::ConfigUpdated);
+
+    Ok(payload)
 }
 
 fn build_provider_connection_candidate(
@@ -183,7 +305,11 @@ fn build_provider_connection_candidate(
 
     let api_key_for_test = match provided_api_key.clone() {
         Some(value) => value,
-        None => CredentialStore::get(provider_type)?,
+        None => get_saved_api_key_for_candidate(
+            provider_type,
+            model.as_deref(),
+            normalized_base_url.as_deref(),
+        )?,
     };
 
     if api_key_for_test.trim().is_empty() {
@@ -205,9 +331,10 @@ fn build_provider_connection_candidate(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_identity_system_prompt, default_base_url, default_model,
-        resolve_direct_upstream_endpoint, should_try_direct_upstream_fallback, validate_provider,
-        with_identity_system_message, DEFAULT_LITELLM_BASE_URL,
+        build_conversation_title_prompt, build_identity_system_prompt, default_base_url,
+        default_model, normalize_conversation_title, resolve_direct_upstream_endpoint,
+        should_try_direct_upstream_fallback, validate_provider, with_identity_system_message,
+        DEFAULT_LITELLM_BASE_URL, MAX_GENERATED_TITLE_CHARS,
     };
     use crate::ai::provider::AiProviderMessage;
 
@@ -283,6 +410,24 @@ mod tests {
         assert_eq!(messages[0].role, "system");
         assert!(messages[0].content.contains("身份："));
         assert_eq!(messages[1].role, "user");
+    }
+
+    #[test]
+    fn conversation_title_prompt_uses_only_first_round() {
+        let prompt = build_conversation_title_prompt("第一轮用户问题", "第一轮 AI 回答");
+
+        assert!(prompt.contains("第一轮用户问题"));
+        assert!(prompt.contains("第一轮 AI 回答"));
+        assert!(prompt.contains("只依据下面第一轮问答"));
+        assert!(!prompt.contains("第二轮"));
+    }
+
+    #[test]
+    fn conversation_title_normalization_limits_length_and_removes_wrappers() {
+        let title = normalize_conversation_title("标题：《修复弹窗滚动与标题生成》");
+
+        assert!(title.chars().count() <= MAX_GENERATED_TITLE_CHARS);
+        assert_eq!(title, "修复弹窗滚动与标题生");
     }
 }
 
@@ -483,7 +628,7 @@ pub async fn test_provider() -> Result<(), String> {
     let config = current_config()?;
 
     let base_url = resolve_base_url(&config)?;
-    let api_key = CredentialStore::get(&config.provider_type)?;
+    let api_key = get_api_key_for_config(&config)?;
     let model = config
         .selected_model
         .as_deref()
@@ -539,14 +684,88 @@ pub async fn connect_provider(
         CredentialStore::save(&candidate.provider_type, api_key_to_save)?;
     }
 
-    save_config(
-        &candidate.provider_type,
+    save_connected_profile(
+        candidate.provider_type,
         candidate.selected_model,
         candidate.base_url,
         candidate.inline_completion_enabled,
         candidate.chat_enabled,
         candidate.agent_enabled,
+        candidate.api_key_for_test.as_deref(),
     )
+}
+
+fn save_connected_profile(
+    provider_type: String,
+    selected_model: Option<String>,
+    base_url: Option<String>,
+    inline_completion_enabled: bool,
+    chat_enabled: bool,
+    agent_enabled: bool,
+    api_key: Option<&str>,
+) -> Result<AiConfigPayload, String> {
+    validate_provider(&provider_type)?;
+
+    let mut guard = config_state()
+        .lock()
+        .map_err(|_| errors::error("AI_PROVIDER_UNAVAILABLE", "AI 配置状态已损坏。"))?;
+    let now = chrono::Utc::now().to_rfc3339();
+    let profile_index = find_matching_profile_index(
+        &guard.profiles,
+        &provider_type,
+        selected_model.as_deref(),
+        base_url.as_deref(),
+    );
+    let profile_id = profile_index
+        .and_then(|index| guard.profiles.get(index).map(|profile| profile.id.clone()))
+        .unwrap_or_else(generate_profile_id);
+    let profile_name = build_profile_name(selected_model.as_deref(), base_url.as_deref());
+
+    if let Some(api_key_to_save) = api_key {
+        CredentialStore::save_profile_secret(&profile_id, api_key_to_save)?;
+    }
+
+    match profile_index {
+        Some(index) => {
+            let profile = &mut guard.profiles[index];
+            profile.name = profile_name;
+            profile.provider_type = provider_type.clone();
+            profile.selected_model = selected_model.clone();
+            profile.base_url = base_url.clone();
+            profile.inline_completion_enabled = inline_completion_enabled;
+            profile.chat_enabled = chat_enabled;
+            profile.agent_enabled = agent_enabled;
+            profile.updated_at = now.clone();
+            profile.last_used_at = Some(now.clone());
+        }
+        None => guard.profiles.push(AiProviderProfile {
+            id: profile_id.clone(),
+            name: profile_name,
+            provider_type: provider_type.clone(),
+            selected_model: selected_model.clone(),
+            base_url: base_url.clone(),
+            inline_completion_enabled,
+            chat_enabled,
+            agent_enabled,
+            created_at: now.clone(),
+            updated_at: now.clone(),
+            last_used_at: Some(now.clone()),
+        }),
+    }
+
+    guard.provider_type = provider_type;
+    guard.selected_model = selected_model;
+    guard.base_url = base_url;
+    guard.inline_completion_enabled = inline_completion_enabled;
+    guard.chat_enabled = chat_enabled;
+    guard.agent_enabled = agent_enabled;
+    guard.active_profile_id = Some(profile_id);
+
+    let payload = to_payload(guard.clone());
+    persist_config(&guard)?;
+    audit::emit(AiAuditEventKind::ConfigUpdated);
+
+    Ok(payload)
 }
 
 pub async fn chat(payload: AiChatRequest) -> Result<AiProviderResponse, String> {
@@ -569,7 +788,7 @@ pub async fn chat(payload: AiChatRequest) -> Result<AiProviderResponse, String> 
         let request = AiProviderChatRequest::new(messages);
 
         let base_url = resolve_base_url(&config)?;
-        let api_key = CredentialStore::get(&config.provider_type)?;
+        let api_key = get_api_key_for_config(&config)?;
 
         chat_with_litellm_fallback(base_url, &api_key, model, request).await
     }
@@ -585,6 +804,53 @@ pub async fn chat(payload: AiChatRequest) -> Result<AiProviderResponse, String> 
             Err(error)
         }
     }
+}
+
+pub async fn generate_conversation_title(
+    payload: AiConversationTitleRequest,
+) -> Result<AiConversationTitlePayload, String> {
+    let config = current_config()?;
+    ensure_chat_enabled(&config)?;
+
+    let user_message = clip_title_source(&payload.user_message);
+    let assistant_message = clip_title_source(&payload.assistant_message);
+
+    if user_message.trim().is_empty() || assistant_message.trim().is_empty() {
+        return Err(errors::error(
+            "AI_RESPONSE_INVALID",
+            "第一轮问答内容为空，无法生成会话标题。",
+        ));
+    }
+
+    let model = config
+        .selected_model
+        .as_deref()
+        .unwrap_or(DEFAULT_LITELLM_MODEL);
+    let request = AiProviderChatRequest::new(vec![
+        AiProviderMessage::system(
+            "你是会话标题生成器。只输出 5 到 10 个中文字符的标题，不要解释。",
+        ),
+        AiProviderMessage::user(build_conversation_title_prompt(
+            &user_message,
+            &assistant_message,
+        )),
+    ]);
+    let base_url = resolve_base_url(&config)?;
+    let api_key = get_api_key_for_config(&config)?;
+    let response = chat_with_litellm_fallback(base_url, &api_key, model, request).await?;
+    let title = normalize_conversation_title(&response.content);
+
+    if title.chars().count() < MIN_GENERATED_TITLE_CHARS {
+        return Err(errors::error(
+            "AI_RESPONSE_INVALID",
+            "AI 生成的会话标题不符合 5 到 10 个字要求。",
+        ));
+    }
+
+    Ok(AiConversationTitlePayload {
+        title,
+        model: response.model,
+    })
 }
 
 pub async fn chat_stream(
@@ -633,7 +899,7 @@ pub async fn chat_stream(
 
         let result = async {
             let base_url = resolve_base_url(&task_config)?.to_string();
-            let api_key = CredentialStore::get(&task_config.provider_type)?;
+            let api_key = get_api_key_for_config(&task_config)?;
 
             chat_stream_with_litellm_fallback(
                 &base_url,
@@ -747,7 +1013,7 @@ pub async fn inline_complete(
     }]);
 
     let base_url = resolve_base_url(&config)?;
-    let api_key = CredentialStore::get(&config.provider_type)?;
+    let api_key = get_api_key_for_config(&config)?;
     let model = config
         .selected_model
         .as_deref()
@@ -791,7 +1057,7 @@ pub async fn code_action(payload: AiCodeActionRequest) -> Result<AiCodeActionPay
     }]);
 
     let base_url = resolve_base_url(&config)?;
-    let api_key = CredentialStore::get(&config.provider_type)?;
+    let api_key = get_api_key_for_config(&config)?;
     let model = config
         .selected_model
         .as_deref()
@@ -1046,6 +1312,74 @@ fn build_code_action_prompt(payload: &AiCodeActionRequest) -> String {
     )
 }
 
+fn clip_title_source(value: &str) -> String {
+    value.trim().chars().take(MAX_TITLE_SOURCE_CHARS).collect()
+}
+
+fn build_conversation_title_prompt(user_message: &str, assistant_message: &str) -> String {
+    format!(
+        "请只依据下面第一轮问答生成中文会话标题。\n规则：\n- 只输出标题本身，不要解释、引号或标点\n- 标题必须为 5 到 10 个中文字符\n- 不要使用后续对话，因为后续对话未提供\n\n用户第一句：\n```text\n{}\n```\n\nAI 第一句：\n```text\n{}\n```",
+        sanitize_fenced_text(user_message),
+        sanitize_fenced_text(assistant_message)
+    )
+}
+
+fn normalize_conversation_title(value: &str) -> String {
+    let first_line = value
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .unwrap_or("")
+        .trim();
+    let mut title = first_line
+        .trim_start_matches(|item: char| item == '-' || item == '*' || item == '#')
+        .trim()
+        .to_string();
+
+    for prefix in [
+        "会话标题：",
+        "会话标题:",
+        "正式标题：",
+        "正式标题:",
+        "标题：",
+        "标题:",
+    ] {
+        if title.starts_with(prefix) {
+            title = title[prefix.len()..].trim().to_string();
+            break;
+        }
+    }
+
+    let trimmed = title.trim_matches(|item: char| {
+        item.is_whitespace()
+            || matches!(
+                item,
+                '"' | '\''
+                    | '“'
+                    | '”'
+                    | '‘'
+                    | '’'
+                    | '《'
+                    | '》'
+                    | '【'
+                    | '】'
+                    | '「'
+                    | '」'
+                    | '『'
+                    | '』'
+                    | '。'
+                    | '，'
+                    | ','
+                    | '.'
+                    | ':'
+                    | '：'
+                    | '-'
+                    | '—'
+            )
+    });
+
+    trimmed.chars().take(MAX_GENERATED_TITLE_CHARS).collect()
+}
+
 fn current_config() -> Result<AiRuntimeConfig, String> {
     config_state()
         .lock()
@@ -1065,7 +1399,7 @@ fn ensure_chat_enabled(config: &AiRuntimeConfig) -> Result<(), String> {
 }
 
 fn to_payload(config: AiRuntimeConfig) -> AiConfigPayload {
-    let has_credentials = CredentialStore::has_provider_secret(&config.provider_type);
+    let has_credentials = has_credentials_for_config(&config);
 
     let is_base_url_configured = config
         .base_url
@@ -1077,6 +1411,7 @@ fn to_payload(config: AiRuntimeConfig) -> AiConfigPayload {
         provider_type: config.provider_type.clone(),
         selected_model: config.selected_model,
         base_url: config.base_url,
+        active_profile_id: config.active_profile_id,
         is_base_url_configured,
         has_credentials,
         is_configured: has_credentials && is_base_url_configured,
@@ -1084,6 +1419,95 @@ fn to_payload(config: AiRuntimeConfig) -> AiConfigPayload {
         chat_enabled: config.chat_enabled,
         agent_enabled: config.agent_enabled,
     }
+}
+
+fn has_credentials_for_config(config: &AiRuntimeConfig) -> bool {
+    if let Some(profile_id) = config.active_profile_id.as_deref() {
+        return CredentialStore::has_profile_secret(profile_id);
+    }
+
+    CredentialStore::has_provider_secret(&config.provider_type)
+}
+
+fn get_api_key_for_config(config: &AiRuntimeConfig) -> Result<String, String> {
+    if let Some(profile_id) = config.active_profile_id.as_deref() {
+        return CredentialStore::get_profile_secret(profile_id);
+    }
+
+    CredentialStore::get(&config.provider_type)
+}
+
+fn get_saved_api_key_for_candidate(
+    provider_type: &str,
+    selected_model: Option<&str>,
+    base_url: Option<&str>,
+) -> Result<String, String> {
+    let config = current_config()?;
+
+    if let Some(index) =
+        find_matching_profile_index(&config.profiles, provider_type, selected_model, base_url)
+    {
+        return CredentialStore::get_profile_secret(&config.profiles[index].id);
+    }
+
+    CredentialStore::get(provider_type)
+}
+
+fn profile_to_payload(profile: AiProviderProfile) -> AiProviderProfilePayload {
+    let has_profile_credentials = CredentialStore::has_profile_secret(&profile.id);
+
+    AiProviderProfilePayload {
+        id: profile.id,
+        name: profile.name,
+        provider_type: profile.provider_type,
+        selected_model: profile.selected_model,
+        base_url: profile.base_url,
+        inline_completion_enabled: profile.inline_completion_enabled,
+        chat_enabled: profile.chat_enabled,
+        agent_enabled: profile.agent_enabled,
+        has_credentials: has_profile_credentials,
+        created_at: profile.created_at,
+        updated_at: profile.updated_at,
+        last_used_at: profile.last_used_at,
+    }
+}
+
+fn find_matching_profile_index(
+    profiles: &[AiProviderProfile],
+    provider_type: &str,
+    selected_model: Option<&str>,
+    base_url: Option<&str>,
+) -> Option<usize> {
+    profiles.iter().position(|profile| {
+        profile.provider_type == provider_type
+            && profile.selected_model.as_deref() == selected_model
+            && profile.base_url.as_deref() == base_url
+    })
+}
+
+fn generate_profile_id() -> String {
+    format!(
+        "ai-profile-{}-{}",
+        chrono::Utc::now().timestamp_millis(),
+        STREAM_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    )
+}
+
+fn build_profile_name(selected_model: Option<&str>, base_url: Option<&str>) -> String {
+    let model = selected_model
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("未选择模型");
+    let base_url = base_url
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(DEFAULT_LITELLM_BASE_URL);
+
+    if base_url == DEFAULT_LITELLM_BASE_URL {
+        return model.to_string();
+    }
+
+    format!("{model} · {base_url}")
 }
 
 fn validate_provider(provider_type: &str) -> Result<(), String> {
@@ -1194,8 +1618,53 @@ fn normalize_runtime_config(mut config: AiRuntimeConfig) -> AiRuntimeConfig {
 
     config.selected_model = selected_model;
     config.base_url = base_url;
+    config.profiles = config
+        .profiles
+        .into_iter()
+        .filter_map(normalize_provider_profile)
+        .collect();
+
+    if config
+        .active_profile_id
+        .as_deref()
+        .is_some_and(|profile_id| {
+            !config
+                .profiles
+                .iter()
+                .any(|profile| profile.id == profile_id)
+        })
+    {
+        config.active_profile_id = None;
+    }
 
     config
+}
+
+fn normalize_provider_profile(mut profile: AiProviderProfile) -> Option<AiProviderProfile> {
+    if profile.id.trim().is_empty() || validate_provider(&profile.provider_type).is_err() {
+        return None;
+    }
+
+    profile.id = profile.id.trim().to_string();
+    profile.name = profile.name.trim().to_string();
+    profile.selected_model = profile
+        .selected_model
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    profile.base_url = profile
+        .base_url
+        .map(|value| value.trim().trim_end_matches('/').to_string())
+        .filter(|value| !value.is_empty())
+        .or_else(|| default_base_url(&profile.provider_type));
+
+    if profile.name.is_empty() {
+        profile.name = build_profile_name(
+            profile.selected_model.as_deref(),
+            profile.base_url.as_deref(),
+        );
+    }
+
+    Some(profile)
 }
 
 fn persist_config(config: &AiRuntimeConfig) -> Result<(), String> {

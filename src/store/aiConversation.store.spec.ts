@@ -81,4 +81,74 @@ describe('useAiConversationStore', () => {
         expect(store.historyThreads[0]?.messages[0]?.id).toBe('message-1');
         expect(store.activeMessages).toHaveLength(0);
     });
+
+    it('用用户第一条消息作为临时标题', () => {
+        const store = useAiConversationStore();
+
+        store.replaceMessages([
+            {
+                ...createMessage(1),
+                content: '  修复 AI 会话记录弹窗的滚动和布局  ',
+            },
+            {
+                ...createMessage(2),
+                content: '我来检查弹窗布局。',
+            },
+            {
+                ...createMessage(3),
+                content: '后续追问不应影响标题',
+            },
+        ]);
+
+        expect(store.activeThread?.title).toBe('修复 AI 会话记录弹窗的滚动和布局');
+        expect(store.activeThread?.titleStatus).toBe('temporary');
+    });
+
+    it('正式标题生成后不会被后续消息覆盖', () => {
+        const store = useAiConversationStore();
+
+        store.replaceMessages([createMessage(1), createMessage(2)]);
+        const threadId = store.activeThreadId;
+
+        expect(threadId).toBeTruthy();
+        store.completeThreadTitleGeneration(threadId ?? '', '弹窗滚动修复');
+        store.replaceMessages([...store.activeMessages, createMessage(3)]);
+
+        expect(store.activeThread?.title).toBe('弹窗滚动修复');
+        expect(store.activeThread?.titleStatus).toBe('generated');
+    });
+
+    it('只提取第一轮问答用于后台标题生成', () => {
+        const store = useAiConversationStore();
+
+        store.replaceMessages([
+            {
+                ...createMessage(1),
+                role: 'user',
+                content: '第一句用户问题',
+            },
+            {
+                ...createMessage(2),
+                role: 'assistant',
+                content: '第一句 AI 回答',
+            },
+            {
+                ...createMessage(3),
+                role: 'user',
+                content: '第二轮用户追问',
+            },
+            {
+                ...createMessage(4),
+                role: 'assistant',
+                content: '第二轮 AI 回答',
+            },
+        ]);
+
+        const firstRound = store.getFirstRoundForTitle(store.activeThreadId ?? '');
+
+        expect(firstRound).toEqual({
+            userMessage: '第一句用户问题',
+            assistantMessage: '第一句 AI 回答',
+        });
+    });
 });

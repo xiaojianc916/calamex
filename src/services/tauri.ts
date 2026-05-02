@@ -819,6 +819,27 @@ const aiClearCredentialsIpc = defineContractIpc(
   { audit: 'sensitive' },
 );
 
+const aiListProviderProfilesIpc = defineContractIpc(
+  'ai_list_provider_profiles',
+  '读取 AI 配置记录',
+  tauriContracts.aiListProviderProfiles,
+  { idempotent: true, audit: 'sensitive' },
+);
+
+const aiGetProviderProfileDetailIpc = definePayloadIpc(
+  'ai_get_provider_profile_detail',
+  '读取 AI 配置记录详情',
+  tauriContracts.aiGetProviderProfileDetail,
+  { idempotent: true, audit: 'none' },
+);
+
+const aiSwitchProviderProfileIpc = definePayloadIpc(
+  'ai_switch_provider_profile',
+  '切换 AI 配置记录',
+  tauriContracts.aiSwitchProviderProfile,
+  { audit: 'sensitive' },
+);
+
 const aiTestProviderIpc = defineContractIpc(
   'ai_test_provider',
   '测试 AI Provider',
@@ -831,6 +852,13 @@ const aiChatIpc = definePayloadIpc(
   '发送 AI 对话请求',
   tauriContracts.aiChat,
   { audit: 'sensitive', timeoutMs: 60_000, measureInput: measureAiChatInput },
+);
+
+const aiGenerateConversationTitleIpc = definePayloadIpc(
+  'ai_generate_conversation_title',
+  '生成 AI 对话标题',
+  tauriContracts.aiGenerateConversationTitle,
+  { audit: 'sensitive', timeoutMs: 30_000, measureInput: buildPayloadMetrics },
 );
 
 const aiChatStreamIpc = definePayloadIpc(
@@ -1249,6 +1277,12 @@ export const tauriService: ITauriService & {
 
   aiClearCredentials: () => aiClearCredentialsIpc(undefined),
 
+  aiListProviderProfiles: () => aiListProviderProfilesIpc(undefined),
+
+  aiGetProviderProfileDetail: aiGetProviderProfileDetailIpc,
+
+  aiSwitchProviderProfile: aiSwitchProviderProfileIpc,
+
   aiTestProvider: () => aiTestProviderIpc(undefined),
 
   aiTestProviderConfig: aiTestProviderConfigIpc,
@@ -1258,6 +1292,8 @@ export const tauriService: ITauriService & {
   aiChat(payload, options) {
     return aiChatIpc(payload, options) as ReturnType<ITauriService['aiChat']>;
   },
+
+  aiGenerateConversationTitle: aiGenerateConversationTitleIpc,
 
   aiChatStream: aiChatStreamIpc,
 

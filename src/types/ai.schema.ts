@@ -103,12 +103,33 @@ export const aiConfigPayloadSchema = z.object({
   providerType: aiProviderTypeSchema,
   selectedModel: z.string().nullable(),
   baseUrl: z.string().nullable(),
+  activeProfileId: z.string().nullable().default(null),
   isBaseUrlConfigured: z.boolean(),
   hasCredentials: z.boolean(),
   isConfigured: z.boolean(),
   inlineCompletionEnabled: z.boolean(),
   chatEnabled: z.boolean(),
   agentEnabled: z.boolean(),
+});
+
+export const aiProviderProfilePayloadSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  providerType: aiProviderTypeSchema,
+  selectedModel: z.string().nullable(),
+  baseUrl: z.string().nullable(),
+  inlineCompletionEnabled: z.boolean(),
+  chatEnabled: z.boolean(),
+  agentEnabled: z.boolean(),
+  hasCredentials: z.boolean(),
+  createdAt: z.string().min(1),
+  updatedAt: z.string().min(1),
+  lastUsedAt: z.string().min(1).nullable(),
+});
+
+export const aiProviderProfileDetailPayloadSchema = z.object({
+  profile: aiProviderProfilePayloadSchema,
+  apiKey: z.string().nullable(),
 });
 
 export const aiChatRequestSchema = z.object({
@@ -121,6 +142,16 @@ export const aiChatPayloadSchema = z.object({
   message: aiChatMessageSchema,
   providerType: aiProviderTypeSchema,
   model: z.string(),
+});
+
+export const aiConversationTitleRequestSchema = z.object({
+  userMessage: z.string().min(1),
+  assistantMessage: z.string().min(1),
+});
+
+export const aiConversationTitlePayloadSchema = z.object({
+  title: z.string().min(1).max(10),
+  model: z.string().min(1),
 });
 
 export const aiChatStreamPayloadSchema = z.object({

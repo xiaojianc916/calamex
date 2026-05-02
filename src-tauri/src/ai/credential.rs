@@ -69,6 +69,60 @@ impl CredentialStore {
         Ok(())
     }
 
+    pub fn save_profile_secret(profile_id: &str, api_key: &str) -> Result<(), String> {
+        let account = profile_account(profile_id)?;
+        let trimmed_api_key = api_key.trim();
+
+        if trimmed_api_key.is_empty() {
+            return Err(errors::error("AI_PROVIDER_AUTH_FAILED", "请填写 API Key。"));
+        }
+
+        keyring::Entry::new(SERVICE_NAME, &account)
+            .map_err(|error| errors::error("AI_PROVIDER_UNAVAILABLE", error.to_string()))?
+            .set_password(trimmed_api_key)
+            .map_err(|error| errors::error("AI_PROVIDER_UNAVAILABLE", error.to_string()))
+    }
+
+    pub fn get_profile_secret(profile_id: &str) -> Result<String, String> {
+        let account = profile_account(profile_id)?;
+
+        let password = keyring::Entry::new(SERVICE_NAME, &account)
+            .map_err(|error| errors::error("AI_PROVIDER_UNAVAILABLE", error.to_string()))?
+            .get_password()
+            .map_err(|_| {
+                errors::error(
+                    "AI_PROVIDER_AUTH_FAILED",
+                    "未找到当前配置记录的 API Key，请重新连接并保存。",
+                )
+            })?;
+
+        let trimmed = password.trim();
+
+        if trimmed.is_empty() {
+            return Err(errors::error(
+                "AI_PROVIDER_AUTH_FAILED",
+                "当前配置记录的 API Key 为空，请重新连接并保存。",
+            ));
+        }
+
+        Ok(trimmed.to_string())
+    }
+
+    pub fn has_profile_secret(profile_id: &str) -> bool {
+        Self::get_profile_secret(profile_id).is_ok()
+    }
+
+    pub fn delete_profile_secret(profile_id: &str) -> Result<(), String> {
+        let account = profile_account(profile_id)?;
+
+        let entry = keyring::Entry::new(SERVICE_NAME, &account)
+            .map_err(|error| errors::error("AI_PROVIDER_UNAVAILABLE", error.to_string()))?;
+
+        let _ = entry.delete_credential();
+
+        Ok(())
+    }
+
     pub fn clear() -> Result<(), String> {
         for (_, account) in PROVIDER_ACCOUNTS {
             let entry = keyring::Entry::new(SERVICE_NAME, account)
@@ -108,9 +162,26 @@ fn provider_account(provider_type: &str) -> Result<&'static str, String> {
         })
 }
 
+fn profile_account(profile_id: &str) -> Result<String, String> {
+    let normalized_profile_id = profile_id.trim();
+
+    if normalized_profile_id.is_empty()
+        || !normalized_profile_id
+            .chars()
+            .all(|item| item.is_ascii_alphanumeric() || item == '-' || item == '_')
+    {
+        return Err(errors::error(
+            "AI_PROVIDER_NOT_CONFIGURED",
+            "AI 配置记录 ID 无效。",
+        ));
+    }
+
+    Ok(format!("profile:{normalized_profile_id}"))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{provider_account, LITELLM_USER};
+    use super::{profile_account, provider_account, LITELLM_USER};
 
     #[test]
     fn provider_account_resolves_supported_providers() {
@@ -131,5 +202,19 @@ mod tests {
     #[test]
     fn provider_account_rejects_unknown_provider() {
         assert!(provider_account("unknown-provider").is_err());
+    }
+
+    #[test]
+    fn profile_account_accepts_generated_ids() {
+        assert_eq!(
+            profile_account("ai-profile-123_abc").unwrap(),
+            "profile:ai-profile-123_abc"
+        );
+    }
+
+    #[test]
+    fn profile_account_rejects_unsafe_ids() {
+        assert!(profile_account("../token").is_err());
+        assert!(profile_account("profile:abc").is_err());
     }
 }
