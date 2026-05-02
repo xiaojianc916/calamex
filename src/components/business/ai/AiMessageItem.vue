@@ -5,6 +5,7 @@ import AiToolActivityInline from '@/components/business/ai/AiToolActivityInline.
 import { useMessage } from '@/composables/useMessage';
 import type { TAiServicePlatformId } from '@/constants/ai-providers';
 import type { IAiChatMessage, IAiContextReference, TAiChatMessageActionId } from '@/types/ai';
+import { materializeAgentActivities } from '@/utils/agent-activity';
 import { tryWriteClipboardText } from '@/utils/clipboard';
 import { LoaderCircle } from 'lucide-vue-next';
 import { computed, onBeforeUnmount, ref } from 'vue';
@@ -49,7 +50,25 @@ const hasToolCalls = computed(() => Boolean(props.message.toolCalls?.length));
 
 const hasActivityTrail = computed(() => Boolean(props.message.stream?.activityTrail?.length));
 
-const hasActivities = computed(() => Boolean(props.message.stream?.activities?.length));
+const streamActivities = computed(() => {
+  const stream = props.message.stream;
+
+  if (!stream) {
+    return [];
+  }
+
+  if (stream.activities?.length) {
+    return stream.activities;
+  }
+
+  if (stream.activityEvents?.length) {
+    return materializeAgentActivities(stream.activityEvents);
+  }
+
+  return [];
+});
+
+const hasActivities = computed(() => Boolean(streamActivities.value.length));
 
 const shouldShowActivityTimeline = computed(
   () => props.message.role === 'assistant'
@@ -72,7 +91,7 @@ const activityOnlyTexts = computed(() => {
   values.push(stream.activityText ?? '');
   values.push(...(stream.activityTrail ?? []));
 
-  for (const activity of stream.activities ?? []) {
+  for (const activity of streamActivities.value) {
     if (activity.kind !== 'reasoning_summary' && activity.kind !== 'llm') {
       continue;
     }
@@ -200,13 +219,9 @@ onBeforeUnmount(() => {
         <LoaderCircle class="ai-message-status-icon" aria-hidden="true" />
         <span>{{ inlineLoaderLabel }}</span>
       </div>
-      <AiToolActivityInline
-        v-if="shouldShowActivityTimeline"
-        :tool-calls="message.toolCalls ?? []"
-        :activity-text="message.stream?.activityText"
-        :activity-trail="message.stream?.activityTrail"
-        :activities="message.stream?.activities"
-      />
+      <AiToolActivityInline v-if="shouldShowActivityTimeline" :tool-calls="message.toolCalls ?? []"
+        :activity-text="message.stream?.activityText" :activity-trail="message.stream?.activityTrail"
+        :activities="message.stream?.activities" :activity-events="message.stream?.activityEvents" />
       <div v-if="userAttachmentReferences.length" class="ai-message-attachments" aria-label="已发送附件">
         <span v-for="reference in userAttachmentReferences" :key="reference.id" class="ai-message-attachment-chip">
           <svg v-if="reference.kind === 'image-attachment'" viewBox="0 0 24 24" fill="none" stroke="currentColor"

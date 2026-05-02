@@ -2,12 +2,15 @@ import { z } from 'zod';
 
 import {
   AGENT_ACTIVITY_KINDS,
+  AGENT_ACTIVITY_SNAPSHOT_KINDS,
   AGENT_ACTIVITY_STATUSES,
 } from '@/types/agent-activity';
 
 export const agentActivityStatusSchema = z.enum(AGENT_ACTIVITY_STATUSES);
 
 export const agentActivityKindSchema = z.enum(AGENT_ACTIVITY_KINDS);
+
+export const agentActivitySnapshotKindSchema = z.enum(AGENT_ACTIVITY_SNAPSHOT_KINDS);
 
 export const agentActivityDetailSchema = z.object({
   label: z.string().min(1),
@@ -71,3 +74,37 @@ export const agentActivitySchema = z.object({
     z.null(),
   ])).optional(),
 });
+
+export const agentActivityPatchOperationSchema = z.union([
+  z.object({
+    op: z.enum(['add', 'replace']),
+    path: z.string().min(1),
+    value: z.unknown(),
+  }),
+  z.object({
+    op: z.literal('remove'),
+    path: z.string().min(1),
+  }),
+]);
+
+export const agentActivitySnapshotEventSchema = z.object({
+  type: z.literal('ACTIVITY_SNAPSHOT'),
+  timestamp: z.number().int().nonnegative(),
+  messageId: z.string().min(1),
+  activityType: agentActivitySnapshotKindSchema,
+  replace: z.boolean().optional(),
+  content: agentActivitySchema,
+});
+
+export const agentActivityDeltaEventSchema = z.object({
+  type: z.literal('ACTIVITY_DELTA'),
+  timestamp: z.number().int().nonnegative(),
+  messageId: z.string().min(1),
+  activityType: agentActivitySnapshotKindSchema,
+  patch: z.array(agentActivityPatchOperationSchema),
+});
+
+export const agentActivityEventSchema = z.union([
+  agentActivitySnapshotEventSchema,
+  agentActivityDeltaEventSchema,
+]);

@@ -1,5 +1,5 @@
+import type { IAgentActivity, TAgentActivityEvent } from '@/types/agent-activity';
 import type { IAiContextReference } from '@/types/ai-context';
-import type { IAgentActivity } from '@/types/agent-activity';
 
 export type TAiProviderType =
   | 'litellm';
@@ -8,33 +8,25 @@ export type TAiChatRole = 'user' | 'assistant' | 'system' | 'tool';
 export type {
   IAiContextRange,
   IAiContextReference,
-  TAiContextKind,
+  TAiContextKind
 } from '@/types/ai-context';
 
 export type {
-  IAiWebFetchInput,
+  IAiWebActivity, IAiWebFetchInput,
   IAiWebFetchPayload,
-  IAiWebFetchResult,
-  IAiWebActivity,
-  IAiWebSearchInput,
+  IAiWebFetchResult, IAiWebSearchInput,
   IAiWebSearchPayload,
   IAiWebSearchResult,
-  IAiWebSourceEntry,
-  TAiWebSearchIntent,
-  TAiWebSearchRecency,
-  TAiWebActivityState,
-  TAiWebSourceEntryStatus,
-  TAiWebSourceType,
+  IAiWebSourceEntry, TAiWebActivityState, TAiWebSearchIntent,
+  TAiWebSearchRecency, TAiWebSourceEntryStatus,
+  TAiWebSourceType
 } from '@/types/ai-web';
 
 export type {
   IAiAgentChangedFile,
-  IAiAgentPatchSummary,
-  IAiDiffHunkPreview,
-  IAiDiffEditorPreview,
-  IAiDiffPreviewLine,
+  IAiAgentPatchSummary, IAiDiffEditorPreview, IAiDiffHunkPreview, IAiDiffPreviewLine,
   TAiAgentChangedFileStatus,
-  TAiDiffPreviewLineKind,
+  TAiDiffPreviewLineKind
 } from '@/types/ai-patch';
 
 export type {
@@ -42,34 +34,27 @@ export type {
   IAiToolActivityInline,
   TAiAgentStreamEndReason,
   TAiAgentStreamEvent,
-  TAiToolActivityState,
+  TAiToolActivityState
 } from '@/types/ai-stream';
 
 export type {
   IAiAgentApprovePlanPayload,
   IAiAgentApprovePlanRequest,
   IAiAgentClassifyTaskPayload,
-  IAiAgentClassifyTaskRequest,
-  IAiAgentNetworkPermissionPayload,
+  IAiAgentClassifyTaskRequest, IAiAgentListRunsPayload, IAiAgentNetworkPermissionPayload,
   IAiAgentPermissionState,
   IAiAgentPlanPayload,
   IAiAgentPlanReference,
-  IAiAgentPlanRequest,
-  IAiAgentListRunsPayload,
-  IAiTaskPlanStep,
-  IAiAgentRun,
+  IAiAgentPlanRequest, IAiAgentResolveToolConfirmationRequest, IAiAgentRun,
   IAiAgentRunIdRequest,
   IAiAgentRunPayload,
   IAiAgentRunPlanRequest,
-  IAiAgentRunStepRequest,
-  IAiAgentResolveToolConfirmationRequest,
-  IAiAgentSetNetworkPermissionRequest,
+  IAiAgentRunStepRequest, IAiAgentSetNetworkPermissionRequest,
   IAiAgentStepDetail,
   IAiAgentStepFinalAnswer,
   IAiAgentStepToolResultSummary,
   IAiAgentStepWebSourceSummary,
-  IAiAgentTimelineItem,
-  IAiToolConfirmationOption,
+  IAiAgentTimelineItem, IAiTaskPlanStep, IAiToolConfirmationOption,
   IAiToolConfirmationRequest,
   TAiAgentNetworkPermission,
   TAiAgentPlanRiskLevel,
@@ -81,7 +66,7 @@ export type {
   TAiAgentTimelineItemType,
   TAiToolConfirmationDecision,
   TAiToolConfirmationOptionId,
-  TAiToolConfirmationOptionTone,
+  TAiToolConfirmationOptionTone
 } from '@/types/ai-agent';
 
 export interface IAiChatStreamRenderState {
@@ -89,6 +74,7 @@ export interface IAiChatStreamRenderState {
   activityText?: string;
   activityTrail?: string[];
   activities?: IAgentActivity[];
+  activityEvents?: TAgentActivityEvent[];
 }
 
 export type TAiChatMessageActionId = 'allow-agent-execution';

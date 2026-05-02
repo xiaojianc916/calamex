@@ -1,4 +1,9 @@
-import { buildAgentActivitiesFromSidecarState } from '@/utils/agent-activity';
+import {
+  appendAgentActivityEvents,
+  buildAgentActivitiesFromSidecarState,
+  buildAgentActivityEvents,
+  materializeAgentActivities,
+} from '@/utils/agent-activity';
 import { describe, expect, it } from 'vitest';
 
 describe('agent-activity', () => {
@@ -83,5 +88,79 @@ describe('agent-activity', () => {
       description: 'D:/repo/assets/news.png',
     });
     expect(activities.map((activity) => activity.title).join('\n')).not.toContain('read_media_file');
+  });
+
+  it('能把 Activity 树投影成 AG-UI snapshot/delta event log 并还原当前状态', () => {
+    const initialActivities = buildAgentActivitiesFromSidecarState({
+      runId: 'assistant-3',
+      rootTitle: '联网搜索「AI Agent Activity Feed」',
+      status: 'running',
+      activityTrail: [
+        '正在读取活动协议定义',
+      ],
+      toolCalls: [
+        {
+          id: 'tool-search-1',
+          name: 'search_project_files',
+          status: 'running',
+          summary: 'AgentActivityFeed · src/components',
+          targetPreview: 'AgentActivityFeed · src/components',
+          detailItems: [
+            '搜索：AgentActivityFeed',
+            '范围：src/components',
+          ],
+        },
+      ],
+    });
+    const nextActivities = buildAgentActivitiesFromSidecarState({
+      runId: 'assistant-3',
+      rootTitle: '联网搜索「AI Agent Activity Feed」',
+      status: 'success',
+      activityTrail: [
+        '正在读取活动协议定义',
+        '已确认活动流组件入口',
+      ],
+      toolCalls: [
+        {
+          id: 'tool-search-1',
+          name: 'search_project_files',
+          status: 'succeeded',
+          summary: '已找到 3 个相关组件',
+          targetPreview: 'AgentActivityFeed · src/components',
+          detailItems: [
+            '搜索：AgentActivityFeed',
+            '范围：src/components',
+            '结果：3 个组件',
+          ],
+        },
+      ],
+    });
+
+    const initialEvents = buildAgentActivityEvents([], initialActivities, 1_746_217_200_000);
+    const eventLog = appendAgentActivityEvents(initialEvents, nextActivities, 1_746_217_201_000);
+    const deltaEvents = eventLog.slice(initialEvents.length);
+
+    expect(initialEvents).toHaveLength(initialActivities.length);
+    expect(initialEvents.every((event) => event.type === 'ACTIVITY_SNAPSHOT')).toBe(true);
+    expect(deltaEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'ACTIVITY_DELTA',
+        messageId: 'assistant-3:activity-root',
+        patch: expect.arrayContaining([
+          expect.objectContaining({
+            path: '/status',
+            value: 'success',
+          }),
+        ]),
+      }),
+      expect.objectContaining({
+        type: 'ACTIVITY_DELTA',
+        messageId: 'assistant-3:tool:tool-search-1',
+      }),
+    ]));
+    const materializedActivities = materializeAgentActivities(eventLog);
+
+    expect(materializedActivities).toHaveLength(nextActivities.length);
+    expect(materializedActivities).toEqual(expect.arrayContaining(nextActivities));
   });
 });

@@ -22,6 +22,18 @@ export const AGENT_ACTIVITY_KINDS = [
 
 export type TAgentActivityKind = (typeof AGENT_ACTIVITY_KINDS)[number];
 
+export const AGENT_ACTIVITY_SNAPSHOT_KINDS = [
+  'RUN',
+  'SEARCH',
+  'READ_FILE',
+  'EDIT_FILE',
+  'TOOL_CALL',
+  'COMMAND',
+  'REASONING_SUMMARY',
+  'LLM',
+  'ERROR',
+] as const;
+
 export interface IAgentActivityDetail {
   label: string;
   value: string;
@@ -80,7 +92,7 @@ export interface IAgentActivity {
   metadata?: Record<string, string | number | boolean | null>;
 }
 
-export type TAgentActivitySnapshotKind = Uppercase<TAgentActivityKind>;
+export type TAgentActivitySnapshotKind = (typeof AGENT_ACTIVITY_SNAPSHOT_KINDS)[number];
 
 export interface IAgentActivitySnapshotEvent {
   type: 'ACTIVITY_SNAPSHOT';

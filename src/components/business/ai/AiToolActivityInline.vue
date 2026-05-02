@@ -15,17 +15,24 @@ import {
   Terminal,
   XCircle,
 } from 'lucide-vue-next';
-import { computed } from 'vue';
 import type { Component } from 'vue';
+import { computed } from 'vue';
 
-import type { IAgentActivity, IAgentActivityDetail, TAgentActivityStatus } from '@/types/agent-activity';
+import type {
+  IAgentActivity,
+  IAgentActivityDetail,
+  TAgentActivityEvent,
+  TAgentActivityStatus,
+} from '@/types/agent-activity';
 import type { IAiToolCall } from '@/types/ai';
+import { materializeAgentActivities } from '@/utils/agent-activity';
 
 const props = defineProps<{
   toolCalls: IAiToolCall[];
   activityText?: string;
   activityTrail?: string[];
   activities?: IAgentActivity[];
+  activityEvents?: TAgentActivityEvent[];
 }>();
 
 type TToolActionKind =
@@ -555,8 +562,20 @@ const buildTimelineItemFromActivity = (activity: IAgentActivity): IToolTimelineI
   };
 };
 
+const resolvedActivities = computed(() => {
+  if (props.activities?.length) {
+    return props.activities;
+  }
+
+  if (props.activityEvents?.length) {
+    return materializeAgentActivities(props.activityEvents);
+  }
+
+  return [];
+});
+
 const activityRoot = computed(() =>
-  props.activities?.find((activity) => !activity.parentId) ?? null,
+  resolvedActivities.value.find((activity) => !activity.parentId) ?? null,
 );
 
 const activityChildren = computed(() => {
@@ -566,7 +585,7 @@ const activityChildren = computed(() => {
     return [];
   }
 
-  return (props.activities ?? []).filter((activity) => activity.parentId === root.id);
+  return resolvedActivities.value.filter((activity) => activity.parentId === root.id);
 });
 
 const items = computed(() => {
@@ -665,63 +684,43 @@ const activityRow = computed<IToolActivityRow | null>(() => {
 </script>
 
 <template>
-  <section
-    v-if="activityRow"
-    class="ai-tool-activity-inline ai-tool-run-timeline"
-    :class="`is-${activityRow.status}`"
-    aria-label="工具调用树"
-  >
+  <section v-if="activityRow" class="ai-tool-activity-inline ai-tool-run-timeline" :class="`is-${activityRow.status}`"
+    aria-label="工具调用树">
     <ol class="ai-tool-tree">
-      <li
-        class="ai-tool-tree-node ai-tool-run-item ai-tool-run-current"
-        :class="`is-${activityRow.status}`"
-        aria-live="polite"
-      >
+      <li class="ai-tool-tree-node ai-tool-run-item ai-tool-run-current" :class="`is-${activityRow.status}`"
+        aria-live="polite">
         <details class="ai-tool-node-details ai-tool-root-details" open>
           <summary class="ai-tool-tree-row ai-tool-tree-root-row">
             <span class="ai-tool-run-status-node">
-              <component
-                :is="activityRow.statusIcon"
-                class="ai-tool-status-icon"
-                :class="{ 'is-spinning': activityRow.isSpinning }"
-              />
+              <component :is="activityRow.statusIcon" class="ai-tool-status-icon"
+                :class="{ 'is-spinning': activityRow.isSpinning }" />
             </span>
             <span class="ai-tool-run-title" :title="activityRow.title">{{ activityRow.title }}</span>
             <ChevronRight class="ai-tool-run-chevron" aria-hidden="true" />
           </summary>
 
           <ol v-if="processItems.length || items.length" class="ai-tool-subtree ai-tool-tool-list">
-            <li
-              v-for="process in processItems"
-              :key="`process:${process}`"
-              class="ai-tool-tree-node ai-tool-detail-node ai-tool-process-node"
-            >
+            <li v-for="process in processItems" :key="`process:${process}`"
+              class="ai-tool-tree-node ai-tool-detail-node ai-tool-process-node">
               <span class="ai-tool-leaf-dot" aria-hidden="true" />
               <span class="ai-tool-run-fact" :title="process">{{ process }}</span>
             </li>
-            <li
-              v-for="item in items"
-              :key="item.id"
-              class="ai-tool-tree-node ai-tool-run-item"
-              :class="`is-${item.status}`"
-            >
+            <li v-for="item in items" :key="item.id" class="ai-tool-tree-node ai-tool-run-item"
+              :class="`is-${item.status}`">
               <details class="ai-tool-node-details">
                 <summary class="ai-tool-tree-row ai-tool-run-summary">
                   <span class="ai-tool-run-dot" aria-hidden="true" />
                   <span class="ai-tool-run-main">
                     <component :is="item.toolIcon" class="ai-tool-kind-icon" aria-hidden="true" />
-                  <span class="ai-tool-run-action">{{ item.actionLabel }}</span>
-                  <span class="ai-tool-run-target" :title="item.target">{{ item.target }}</span>
-                </span>
+                    <span class="ai-tool-run-action">{{ item.actionLabel }}</span>
+                    <span class="ai-tool-run-target" :title="item.target">{{ item.target }}</span>
+                  </span>
                   <span class="ai-tool-run-status">{{ item.statusLabel }}</span>
                   <ChevronRight class="ai-tool-run-chevron" aria-hidden="true" />
                 </summary>
                 <ol class="ai-tool-subtree ai-tool-detail-list">
-                  <li
-                    v-for="leaf in item.leafItems"
-                    :key="`${item.id}:leaf:${leaf}`"
-                    class="ai-tool-tree-node ai-tool-detail-node"
-                  >
+                  <li v-for="leaf in item.leafItems" :key="`${item.id}:leaf:${leaf}`"
+                    class="ai-tool-tree-node ai-tool-detail-node">
                     <span class="ai-tool-leaf-dot" aria-hidden="true" />
                     <span class="ai-tool-run-fact" :title="leaf">{{ leaf }}</span>
                   </li>
@@ -808,7 +807,7 @@ const activityRow = computed<IToolActivityRow | null>(() => {
   animation: ai-tool-row-enter 180ms cubic-bezier(0.23, 1, 0.32, 1) both;
 }
 
-.ai-tool-subtree > .ai-tool-tree-node::before {
+.ai-tool-subtree>.ai-tool-tree-node::before {
   position: absolute;
   top: 16px;
   left: -16px;
@@ -983,11 +982,12 @@ const activityRow = computed<IToolActivityRow | null>(() => {
   transition: transform 140ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 
-.ai-tool-node-details[open] > .ai-tool-tree-row .ai-tool-run-chevron {
+.ai-tool-node-details[open]>.ai-tool-tree-row .ai-tool-run-chevron {
   transform: rotate(90deg);
 }
 
 @media (hover: hover) and (pointer: fine) {
+
   .ai-tool-tree-root-row:hover,
   .ai-tool-run-summary:hover {
     background: color-mix(in srgb, var(--surface-hover) 48%, transparent);
@@ -1020,6 +1020,7 @@ const activityRow = computed<IToolActivityRow | null>(() => {
 }
 
 @media (prefers-reduced-motion: reduce) {
+
   .ai-tool-status-icon.is-spinning,
   .ai-tool-run-item,
   .ai-tool-run-chevron {

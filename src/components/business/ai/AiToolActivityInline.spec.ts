@@ -3,14 +3,15 @@ import { describe, expect, it } from 'vitest';
 
 import AiToolActivityInline from '@/components/business/ai/AiToolActivityInline.vue';
 
+import type { IAgentActivity, TAgentActivityEvent } from '@/types/agent-activity';
 import type { IAiToolCall } from '@/types/ai';
-import type { IAgentActivity } from '@/types/agent-activity';
 
 const mountActivity = (
   toolCalls: IAiToolCall[],
   activityText?: string,
   activityTrail?: string[],
   activities?: IAgentActivity[],
+  activityEvents?: TAgentActivityEvent[],
 ) =>
   mount(AiToolActivityInline, {
     props: {
@@ -18,6 +19,7 @@ const mountActivity = (
       ...(activityText ? { activityText } : {}),
       ...(activityTrail ? { activityTrail } : {}),
       ...(activities ? { activities } : {}),
+      ...(activityEvents ? { activityEvents } : {}),
     },
   });
 
@@ -229,5 +231,67 @@ describe('AiToolActivityInline', () => {
     expect(wrapper.text()).toContain('平台：Tavily');
     expect(wrapper.text()).toContain('查询：伊朗 核设施 战争 2026年最新');
     expect(wrapper.text()).toContain('站点：understandingwar.org');
+  });
+
+  it('没有预构建 activities 时也能从 activityEvents 还原活动树', () => {
+    const wrapper = mountActivity([], undefined, undefined, undefined, [
+      {
+        type: 'ACTIVITY_SNAPSHOT',
+        timestamp: 1_746_217_200_000,
+        messageId: 'run-root',
+        activityType: 'RUN',
+        replace: true,
+        content: {
+          id: 'run-root',
+          runId: 'run-1',
+          kind: 'run',
+          status: 'running',
+          title: '验证内部 AG-UI event log',
+        },
+      },
+      {
+        type: 'ACTIVITY_SNAPSHOT',
+        timestamp: 1_746_217_200_001,
+        messageId: 'summary-1',
+        activityType: 'REASONING_SUMMARY',
+        replace: true,
+        content: {
+          id: 'summary-1',
+          runId: 'run-1',
+          parentId: 'run-root',
+          kind: 'reasoning_summary',
+          status: 'running',
+          title: '正在从 event log 还原活动树',
+        },
+      },
+      {
+        type: 'ACTIVITY_SNAPSHOT',
+        timestamp: 1_746_217_200_002,
+        messageId: 'tool-1',
+        activityType: 'SEARCH',
+        replace: true,
+        content: {
+          id: 'tool-1',
+          runId: 'run-1',
+          parentId: 'run-root',
+          kind: 'search',
+          status: 'running',
+          title: '文件搜索',
+          description: 'AgentActivityFeed · src/components',
+          details: [
+            {
+              label: '搜索',
+              value: 'AgentActivityFeed',
+              priority: 96,
+            },
+          ],
+        },
+      },
+    ]);
+
+    expect(wrapper.text()).toContain('验证内部 AG-UI event log');
+    expect(wrapper.text()).toContain('正在从 event log 还原活动树');
+    expect(wrapper.text()).toContain('文件搜索');
+    expect(wrapper.text()).toContain('AgentActivityFeed · src/components');
   });
 });

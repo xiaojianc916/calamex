@@ -1,7 +1,22 @@
 import { AI_AGENT_TOOL_NAMES, type TAiAgentToolName } from '@/types/ai-tools';
+import {
+  appendAgentActivityEvents,
+  buildAgentActivitiesFromSidecarState,
+  materializeAgentActivities,
+} from '@/utils/agent-activity';
 import { normalizeFileSystemPath } from '@/utils/path';
-import { clipTextPreview } from '@/utils/text-preview';
+import {
+  clipTextPreview,
+  formatPrioritizedFieldPreview,
+  normalizePreviewText,
+  type IPrioritizedPreviewField,
+} from '@/utils/text-preview';
 
+import type {
+  IAgentActivity,
+  TAgentActivityEvent,
+  TAgentActivityStatus,
+} from '@/types/agent-activity';
 import type {
   IAgentPlan,
   IAgentPlanStep,
@@ -12,8 +27,8 @@ import type {
 } from '@/types/agent-sidecar';
 import type {
   IAiTaskPlanStep,
-  IAiToolConfirmationRequest,
   IAiToolCall,
+  IAiToolConfirmationRequest,
   TAiAgentPlanStepKind,
   TAiAgentPlanStepStatus,
 } from '@/types/ai';
@@ -35,6 +50,16 @@ export interface IAgentSidecarExecuteProjection {
   hasFileMutations: boolean;
 }
 
+export interface IAgentSidecarActivityProjection {
+  toolCalls: IAiToolCall[];
+  activityText: string;
+  activityTrail: string[];
+  activities: IAgentActivity[];
+  activityEvents: TAgentActivityEvent[];
+}
+
+export type TAgentSidecarActivityStreamStatus = 'streaming' | 'completed' | 'cancelled';
+
 const AI_AGENT_TOOL_NAME_SET = new Set<string>(AI_AGENT_TOOL_NAMES);
 
 const SIDECAR_FILE_MUTATION_TOOL_NAMES = new Set<string>([
@@ -44,6 +69,26 @@ const SIDECAR_FILE_MUTATION_TOOL_NAMES = new Set<string>([
   'move_file',
   'delete_file',
 ]);
+
+const AGENT_ACTIVITY_TRAIL_LIMIT = 6;
+const AGENT_ACTIVITY_PREVIEW_CHARS = 96;
+
+const ACTIVITY_JSON_FIELD_RULES = [
+  { key: 'query', label: '查询', priority: 100, minGraphemes: 16, maxGraphemes: 48 },
+  { key: 'pattern', label: '搜索', priority: 96, minGraphemes: 14, maxGraphemes: 44 },
+  { key: 'site', label: '站点', priority: 86, minGraphemes: 8, maxGraphemes: 28 },
+  { key: 'domain', label: '站点', priority: 84, minGraphemes: 8, maxGraphemes: 28 },
+  { key: 'url', label: '网址', priority: 78, minGraphemes: 12, maxGraphemes: 42 },
+  { key: 'path', label: '路径', priority: 70, minGraphemes: 14, maxGraphemes: 44 },
+  { key: 'file', label: '文件', priority: 70, minGraphemes: 14, maxGraphemes: 44 },
+  { key: 'filePath', label: '文件', priority: 70, minGraphemes: 14, maxGraphemes: 44 },
+  { key: 'summary', label: '摘要', priority: 36, minGraphemes: 12, maxGraphemes: 40 },
+  { key: 'message', label: '信息', priority: 32, minGraphemes: 12, maxGraphemes: 40 },
+  { key: 'title', label: '标题', priority: 28, minGraphemes: 12, maxGraphemes: 36 },
+] as const;
+
+type TActivityJsonFieldRule = (typeof ACTIVITY_JSON_FIELD_RULES)[number];
+type TActivityJsonRecord = Record<string, unknown>;
 
 const SIDECAR_FILE_PATH_KEYS = new Set<string>([
   'path',
@@ -348,6 +393,84 @@ const parseJsonString = (value: string): TJsonValue | null => {
   } catch {
     return null;
   }
+};
+
+const isActivityRecord = (value: unknown): value is TActivityJsonRecord =>
+  Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+
+const clipActivityText = (value: string): string =>
+  clipTextPreview(normalizePreviewText(value), { maxGraphemes: AGENT_ACTIVITY_PREVIEW_CHARS });
+
+const createActivityPreviewField = (
+  rule: TActivityJsonFieldRule | undefined,
+  value: string,
+): IPrioritizedPreviewField => ({
+  value,
+  priority: rule?.priority ?? 1,
+  ...(rule ? { label: rule.label } : {}),
+  ...(rule?.minGraphemes !== undefined ? { minGraphemes: rule.minGraphemes } : {}),
+  ...(rule?.maxGraphemes !== undefined ? { maxGraphemes: rule.maxGraphemes } : {}),
+});
+
+const collectActivityPreviewFields = (
+  value: unknown,
+  fields: IPrioritizedPreviewField[],
+  sourceRule?: TActivityJsonFieldRule,
+  depth = 0,
+): void => {
+  if (depth > 3 || fields.length >= 8 || value === null || value === undefined) {
+    return;
+  }
+
+  if (typeof value === 'string' && value.trim()) {
+    fields.push(createActivityPreviewField(sourceRule, value.trim()));
+    return;
+  }
+
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    fields.push(createActivityPreviewField(sourceRule, String(value)));
+    return;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectActivityPreviewFields(item, fields, sourceRule, depth + 1);
+      if (fields.length >= 8) {
+        return;
+      }
+    }
+    return;
+  }
+
+  if (!isActivityRecord(value)) {
+    return;
+  }
+
+  for (const rule of ACTIVITY_JSON_FIELD_RULES) {
+    if (Object.hasOwn(value, rule.key)) {
+      collectActivityPreviewFields(value[rule.key], fields, rule, depth + 1);
+    }
+  }
+};
+
+const normalizeRuntimePreviewText = (value: string | undefined): string | null => {
+  if (!value?.trim()) {
+    return null;
+  }
+
+  const parsed = parseJsonString(value);
+  if (parsed !== null) {
+    const fields: IPrioritizedPreviewField[] = [];
+    collectActivityPreviewFields(parsed, fields);
+    const preview = formatPrioritizedFieldPreview(fields, {
+      maxFields: 3,
+      maxGraphemes: AGENT_ACTIVITY_PREVIEW_CHARS,
+    });
+
+    return preview || null;
+  }
+
+  return clipActivityText(value) || null;
 };
 
 const clipSummary = (value: string, limit = 96): string => {
@@ -1000,6 +1123,266 @@ const applyRuntimeToolEventToToolCalls = (
   }
 };
 
+const WEB_TOOL_NAME_PATTERN = /(?:web|tavily)/iu;
+const FILE_SEARCH_TOOL_NAME_PATTERN = /(?:search_(?:project_)?files|search_text|search_symbols)/iu;
+const DIRECTORY_TOOL_NAME_PATTERN = /(?:list_directory|directory_tree|get_project_tree|list_project_files)/iu;
+const FILE_READ_TOOL_NAME_PATTERN = /(?:read_|get_file_info|open_nodes)/iu;
+
+const getToolDetailValue = (toolCall: IAiToolCall, label: string): string | null => {
+  const prefix = `${label}：`;
+  const item = toolCall.detailItems?.find((detail) => detail.startsWith(prefix));
+
+  return item ? item.slice(prefix.length).trim() || null : null;
+};
+
+const buildToolActivityText = (toolCall: IAiToolCall): string => {
+  const target = toolCall.targetPreview?.trim() || toolCall.summary.trim();
+  const query = getToolDetailValue(toolCall, '查询') ?? getToolDetailValue(toolCall, '搜索');
+  const scope = getToolDetailValue(toolCall, '范围');
+  const file = getToolDetailValue(toolCall, '文件');
+  const directory = getToolDetailValue(toolCall, '目录');
+  const site = getToolDetailValue(toolCall, '站点');
+  const url = getToolDetailValue(toolCall, '网址');
+
+  if (WEB_TOOL_NAME_PATTERN.test(toolCall.name)) {
+    const searchTarget = query ?? url ?? site ?? target;
+    const isFetch = Boolean(url && !query);
+    const verb = isFetch ? '读取网页' : '联网搜索';
+    const siteHint = site && query ? `，站点 ${site}` : '';
+
+    return searchTarget ? `${verb}「${searchTarget}」${siteHint}` : verb;
+  }
+
+  if (FILE_SEARCH_TOOL_NAME_PATTERN.test(toolCall.name)) {
+    const searchTarget = query ?? target;
+    const scopeHint = scope ?? '工作区';
+
+    return searchTarget ? `在 ${scopeHint} 搜索「${searchTarget}」` : `搜索 ${scopeHint}`;
+  }
+
+  if (DIRECTORY_TOOL_NAME_PATTERN.test(toolCall.name)) {
+    return `查看目录 ${directory ?? target}`;
+  }
+
+  if (FILE_READ_TOOL_NAME_PATTERN.test(toolCall.name)) {
+    return `查看文件 ${file ?? target}`;
+  }
+
+  return target ? `处理 ${target}` : '处理任务';
+};
+
+const buildSidecarLiveActivityText = (
+  toolCalls: readonly IAiToolCall[],
+  fallback: string,
+): string => {
+  const activeToolCall = [...toolCalls]
+    .reverse()
+    .find((toolCall) => toolCall.status === 'running' || toolCall.status === 'pending');
+
+  if (activeToolCall) {
+    return buildToolActivityText(activeToolCall);
+  }
+
+  const completedToolCall = [...toolCalls]
+    .reverse()
+    .find((toolCall) => toolCall.status === 'succeeded');
+
+  if (completedToolCall) {
+    return buildToolActivityText(completedToolCall);
+  }
+
+  return fallback || '请求处理中';
+};
+
+const buildCompletedSidecarActivityText = (
+  toolCalls: readonly IAiToolCall[],
+  fallback: string,
+): string => {
+  const lastToolCall = [...toolCalls]
+    .reverse()
+    .find((toolCall) =>
+      toolCall.status === 'succeeded' ||
+      toolCall.status === 'failed' ||
+      toolCall.status === 'denied' ||
+      toolCall.status === 'pending' ||
+      toolCall.status === 'running'
+    );
+
+  return lastToolCall ? buildToolActivityText(lastToolCall) : fallback || '请求处理中';
+};
+
+const appendActivityTrail = (
+  currentTrail: readonly string[] | undefined,
+  nextText: string | undefined,
+): string[] => {
+  const normalized = nextText ? normalizePreviewText(nextText) : '';
+
+  if (!normalized) {
+    return currentTrail?.length ? [...currentTrail] : [];
+  }
+
+  const nextTrail = [...(currentTrail ?? []), normalized];
+  const seen = new Set<string>();
+  const uniqueTrail: string[] = [];
+
+  for (const item of nextTrail) {
+    if (seen.has(item)) {
+      continue;
+    }
+
+    seen.add(item);
+    uniqueTrail.push(item);
+  }
+
+  return uniqueTrail.slice(-AGENT_ACTIVITY_TRAIL_LIMIT);
+};
+
+const formatRuntimeActivityText = (prefix: string, value: string | undefined): string => {
+  const normalized = normalizeRuntimePreviewText(value);
+
+  return normalized ? `${prefix}：${normalized}` : prefix;
+};
+
+const getRollbackActivityText = (
+  event: Extract<
+    TAgentRuntimeEvent,
+    {
+      type:
+      | 'rollback.checkpoint.created'
+      | 'rollback.checkpoint.failed'
+      | 'rollback.restore.started'
+      | 'rollback.restore.completed'
+      | 'rollback.restore.failed';
+    }
+  >,
+): string | null => {
+  switch (event.type) {
+    case 'rollback.checkpoint.created':
+      return event.snapshotId
+        ? `已创建回滚检查点：${clipActivityText(event.snapshotId)}`
+        : '已创建回滚检查点';
+    case 'rollback.checkpoint.failed':
+      return formatRuntimeActivityText('回滚检查点创建失败', event.errorMessage);
+    case 'rollback.restore.started':
+      return event.snapshotId
+        ? `正在恢复回滚检查点：${clipActivityText(event.snapshotId)}`
+        : '正在恢复回滚检查点';
+    case 'rollback.restore.completed':
+      return normalizeRuntimePreviewText(event.message)
+        ?? (event.snapshotId
+          ? `已恢复回滚检查点：${clipActivityText(event.snapshotId)}`
+          : '已恢复回滚检查点');
+    case 'rollback.restore.failed':
+      return formatRuntimeActivityText('回滚恢复失败', event.errorMessage);
+  }
+};
+
+const getSideEffectActivityText = (
+  event: Extract<TAgentRuntimeEvent, { type: 'side_effect.recorded' | 'side_effect.warning' }>,
+): string | null =>
+  normalizeRuntimePreviewText(event.message)
+  ?? (event.type === 'side_effect.recorded'
+    ? '已记录外部副作用风险'
+    : '外部副作用需要人工确认');
+
+const getRuntimeActivityText = (event: TAgentRuntimeEvent): string | null => {
+  if (event.visibility !== 'user') {
+    return null;
+  }
+
+  switch (event.type) {
+    case 'agent.run.started':
+      return normalizeRuntimePreviewText(event.inputPreview);
+    case 'agent.text.delta':
+      return normalizeRuntimePreviewText(event.text);
+    case 'agent.tool.progress':
+      return normalizeRuntimePreviewText(event.dataPreview);
+    case 'rollback.checkpoint.created':
+    case 'rollback.checkpoint.failed':
+    case 'rollback.restore.started':
+    case 'rollback.restore.completed':
+    case 'rollback.restore.failed':
+      return getRollbackActivityText(event);
+    case 'side_effect.recorded':
+    case 'side_effect.warning':
+      return getSideEffectActivityText(event);
+    case 'agent.run.completed':
+      return normalizeRuntimePreviewText(event.outputPreview);
+    case 'agent.run.error':
+      return normalizeRuntimePreviewText(event.errorMessage);
+    default:
+      return null;
+  }
+};
+
+const buildSidecarActivityTrail = (events: readonly TAgentUiEvent[]): string[] => {
+  let trail: string[] = [];
+  let latestPublicDelta: string | null = null;
+  let hasActivityContext = false;
+
+  for (const event of events) {
+    if (event.type === 'tool_start' || event.type === 'tool_result') {
+      hasActivityContext = true;
+      continue;
+    }
+
+    if (event.type === 'message_delta') {
+      latestPublicDelta = normalizeRuntimePreviewText(event.text);
+      continue;
+    }
+
+    if (event.type === 'agent_event') {
+      const activityText = getRuntimeActivityText(event.event);
+      if (activityText) {
+        hasActivityContext = true;
+        trail = appendActivityTrail(trail, activityText);
+      }
+    }
+  }
+
+  if (hasActivityContext && latestPublicDelta) {
+    trail = appendActivityTrail(trail, latestPublicDelta);
+  }
+
+  return trail;
+};
+
+const mapStreamStatusToActivityStatus = (
+  status: TAgentSidecarActivityStreamStatus,
+  hasError: boolean,
+): TAgentActivityStatus => {
+  if (hasError) {
+    return 'error';
+  }
+
+  if (status === 'cancelled') {
+    return 'cancelled';
+  }
+
+  return status === 'streaming' ? 'running' : 'success';
+};
+
+const buildSidecarActivities = (params: {
+  assistantMessageId: string;
+  activityText: string;
+  toolCalls: readonly IAiToolCall[];
+  activityTrail: readonly string[];
+  streamStatus: TAgentSidecarActivityStreamStatus;
+  hasError: boolean;
+}): IAgentActivity[] => {
+  if (!params.toolCalls.length && !params.activityTrail.length) {
+    return [];
+  }
+
+  return buildAgentActivitiesFromSidecarState({
+    runId: params.assistantMessageId,
+    rootTitle: params.activityText,
+    status: mapStreamStatusToActivityStatus(params.streamStatus, params.hasError),
+    toolCalls: params.toolCalls,
+    activityTrail: params.activityTrail,
+  });
+};
+
 export const mapSidecarEventsToToolCalls = (events: readonly TAgentUiEvent[]): IAiToolCall[] => {
   const toolCalls: IAiToolCall[] = [];
 
@@ -1072,6 +1455,38 @@ export const mapSidecarEventsToToolCalls = (events: readonly TAgentUiEvent[]): I
   }
 
   return toolCalls;
+};
+
+export const projectSidecarEventsToActivityState = (params: {
+  assistantMessageId: string;
+  events: readonly TAgentUiEvent[];
+  fallbackActivityText: string;
+  streamStatus: TAgentSidecarActivityStreamStatus;
+  hasError?: boolean;
+  currentActivityEvents?: readonly TAgentActivityEvent[];
+}): IAgentSidecarActivityProjection => {
+  const toolCalls = mapSidecarEventsToToolCalls(params.events);
+  const activityText = params.streamStatus === 'streaming'
+    ? buildSidecarLiveActivityText(toolCalls, params.fallbackActivityText)
+    : buildCompletedSidecarActivityText(toolCalls, params.fallbackActivityText);
+  const activityTrail = buildSidecarActivityTrail(params.events);
+  const activities = buildSidecarActivities({
+    assistantMessageId: params.assistantMessageId,
+    activityText,
+    toolCalls,
+    activityTrail,
+    streamStatus: params.streamStatus,
+    hasError: Boolean(params.hasError),
+  });
+  const activityEvents = appendAgentActivityEvents(params.currentActivityEvents ?? [], activities);
+
+  return {
+    toolCalls,
+    activityText,
+    activityTrail,
+    activities: activityEvents.length ? materializeAgentActivities(activityEvents) : activities,
+    activityEvents,
+  };
 };
 
 const extractPlan = (events: readonly TAgentUiEvent[]): IAgentPlan | null =>

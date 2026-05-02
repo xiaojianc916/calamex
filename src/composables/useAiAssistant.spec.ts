@@ -16,6 +16,7 @@ import type { IAiAgentRun, IAiChatStreamEventPayload, IAiTaskPlanStep } from '@/
 import type { IAiEditOperation, IAiSnapshot } from '@/types/ai-edit';
 import type { IAnalyzeScriptPayload, IEditorDocument } from '@/types/editor';
 import type { IGitRepositoryStatusPayload } from '@/types/git';
+import { materializeAgentActivities } from '@/utils/agent-activity';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -1171,7 +1172,9 @@ describe('useAiAssistant streaming integration', () => {
             },
         });
 
-        releaseSidecar?.();
+        if (releaseSidecar) {
+            releaseSidecar();
+        }
         await sendPromise;
 
         expect(assistant.messages.value[1]?.content).toBe('已整理今日热点新闻。');
@@ -1384,6 +1387,226 @@ describe('useAiAssistant streaming integration', () => {
 
         releaseSidecar?.();
         await sendPromise;
+    });
+
+    it('把 user-visible side_effect 和 rollback runtime event 投影到同一棵 Activity 树', async () => {
+        const { assistant } = createAssistantHarnessContext();
+        let releaseSidecar: (() => void) | null = null;
+        const sidecarGate = new Promise<void>((resolve) => {
+            releaseSidecar = resolve;
+        });
+
+        aiServiceMock.sidecarExecute.mockImplementationOnce(async (payload: IAgentSidecarExecuteRequest) => {
+            const sessionId = payload.sessionId ?? 'sidecar-runtime-activity-session';
+
+            aiServiceMock.emitSidecar({
+                sessionId,
+                seq: 0,
+                event: {
+                    type: 'agent_event',
+                    event: {
+                        id: 'runtime-side-effect-recorded',
+                        type: 'side_effect.recorded',
+                        runId: 'run-activity-1',
+                        sessionId,
+                        agentId: 'agent-activity-1',
+                        timestamp: '2026-05-02T10:00:00.000Z',
+                        seq: 0,
+                        schemaVersion: 1,
+                        redacted: true,
+                        visibility: 'user',
+                        level: 'warn',
+                        toolName: 'write_file',
+                        riskLevel: 'high',
+                        undoAvailable: false,
+                        message: '已记录文件写入副作用风险，后续需要人工确认。',
+                    },
+                },
+            });
+            aiServiceMock.emitSidecar({
+                sessionId,
+                seq: 1,
+                event: {
+                    type: 'agent_event',
+                    event: {
+                        id: 'runtime-rollback-started',
+                        type: 'rollback.restore.started',
+                        runId: 'run-activity-1',
+                        sessionId,
+                        agentId: 'agent-activity-1',
+                        timestamp: '2026-05-02T10:00:01.000Z',
+                        seq: 1,
+                        schemaVersion: 1,
+                        redacted: true,
+                        visibility: 'user',
+                        level: 'info',
+                        snapshotId: 'snapshot-42',
+                    },
+                },
+            });
+            aiServiceMock.emitSidecar({
+                sessionId,
+                seq: 2,
+                event: {
+                    type: 'agent_event',
+                    event: {
+                        id: 'runtime-rollback-failed',
+                        type: 'rollback.restore.failed',
+                        runId: 'run-activity-1',
+                        sessionId,
+                        agentId: 'agent-activity-1',
+                        timestamp: '2026-05-02T10:00:02.000Z',
+                        seq: 2,
+                        schemaVersion: 1,
+                        redacted: true,
+                        visibility: 'user',
+                        level: 'error',
+                        snapshotId: 'snapshot-42',
+                        errorMessage: '未找到可恢复的 checkpoint。',
+                    },
+                },
+            });
+
+            await sidecarGate;
+
+            return {
+                sessionId,
+                events: [
+                    {
+                        type: 'agent_event',
+                        event: {
+                            id: 'runtime-side-effect-recorded',
+                            type: 'side_effect.recorded',
+                            runId: 'run-activity-1',
+                            sessionId,
+                            agentId: 'agent-activity-1',
+                            timestamp: '2026-05-02T10:00:00.000Z',
+                            seq: 0,
+                            schemaVersion: 1,
+                            redacted: true,
+                            visibility: 'user',
+                            level: 'warn',
+                            toolName: 'write_file',
+                            riskLevel: 'high',
+                            undoAvailable: false,
+                            message: '已记录文件写入副作用风险，后续需要人工确认。',
+                        },
+                    },
+                    {
+                        type: 'agent_event',
+                        event: {
+                            id: 'runtime-rollback-started',
+                            type: 'rollback.restore.started',
+                            runId: 'run-activity-1',
+                            sessionId,
+                            agentId: 'agent-activity-1',
+                            timestamp: '2026-05-02T10:00:01.000Z',
+                            seq: 1,
+                            schemaVersion: 1,
+                            redacted: true,
+                            visibility: 'user',
+                            level: 'info',
+                            snapshotId: 'snapshot-42',
+                        },
+                    },
+                    {
+                        type: 'agent_event',
+                        event: {
+                            id: 'runtime-rollback-failed',
+                            type: 'rollback.restore.failed',
+                            runId: 'run-activity-1',
+                            sessionId,
+                            agentId: 'agent-activity-1',
+                            timestamp: '2026-05-02T10:00:02.000Z',
+                            seq: 2,
+                            schemaVersion: 1,
+                            redacted: true,
+                            visibility: 'user',
+                            level: 'error',
+                            snapshotId: 'snapshot-42',
+                            errorMessage: '未找到可恢复的 checkpoint。',
+                        },
+                    },
+                    {
+                        type: 'done',
+                        result: '已结束回滚验证。',
+                    },
+                ],
+                result: '已结束回滚验证。',
+            };
+        });
+
+        assistant.activeMode.value = 'agent';
+        assistant.draft.value = '执行带回滚保护的修改';
+
+        const sendPromise = assistant.sendMessage();
+        for (let attempt = 0; attempt < 8; attempt += 1) {
+            if ((assistant.messages.value[1]?.stream?.activityTrail?.length ?? 0) >= 3) {
+                break;
+            }
+            await Promise.resolve();
+        }
+
+        expect(assistant.messages.value[1]?.stream?.activityTrail).toEqual(expect.arrayContaining([
+            '已记录文件写入副作用风险，后续需要人工确认。',
+            '正在恢复回滚检查点：snapshot-42',
+            '回滚恢复失败：未找到可恢复的 checkpoint。',
+        ]));
+        expect(assistant.messages.value[1]?.stream?.activities).toBeUndefined();
+        const runningActivities = materializeAgentActivities(
+            assistant.messages.value[1]?.stream?.activityEvents ?? [],
+        );
+        expect(runningActivities).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                kind: 'run',
+                status: 'running',
+            }),
+            expect.objectContaining({
+                kind: 'reasoning_summary',
+                status: 'running',
+                title: '已记录文件写入副作用风险，后续需要人工确认。',
+            }),
+            expect.objectContaining({
+                kind: 'reasoning_summary',
+                status: 'running',
+                title: '正在恢复回滚检查点：snapshot-42',
+            }),
+            expect.objectContaining({
+                kind: 'reasoning_summary',
+                status: 'running',
+                title: '回滚恢复失败：未找到可恢复的 checkpoint。',
+            }),
+        ]));
+        expect(assistant.messages.value[1]?.stream?.activityEvents?.some((event) =>
+            event.type === 'ACTIVITY_SNAPSHOT')).toBe(true);
+
+        releaseSidecar?.();
+        await sendPromise;
+
+        expect(assistant.messages.value[1]?.stream?.status).toBe('completed');
+        expect(assistant.messages.value[1]?.stream?.activities).toBeUndefined();
+        const completedActivities = materializeAgentActivities(
+            assistant.messages.value[1]?.stream?.activityEvents ?? [],
+        );
+        expect(completedActivities).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                kind: 'reasoning_summary',
+                status: 'success',
+                title: '已记录文件写入副作用风险，后续需要人工确认。',
+            }),
+            expect.objectContaining({
+                kind: 'reasoning_summary',
+                status: 'success',
+                title: '正在恢复回滚检查点：snapshot-42',
+            }),
+            expect.objectContaining({
+                kind: 'reasoning_summary',
+                status: 'success',
+                title: '回滚恢复失败：未找到可恢复的 checkpoint。',
+            }),
+        ]));
+        expect(assistant.messages.value[1]?.stream?.activityEvents?.some((event) =>
+            event.type === 'ACTIVITY_DELTA')).toBe(true);
     });
 
     it('preserves cumulative sidecar markdown exactly while a code fence is still streaming', async () => {

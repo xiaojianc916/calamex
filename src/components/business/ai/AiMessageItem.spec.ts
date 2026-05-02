@@ -138,6 +138,63 @@ describe('AiMessageItem', () => {
     expect(wrapper.find('.markdown-stub').exists()).toBe(false);
   });
 
+  it('只有 activityEvents 也会直接渲染活动流，不把公开过程放进回答气泡', () => {
+    const wrapper = mount(AiMessageItem, {
+      props: {
+        message: createMessage({
+          content: '正在从 event log 还原活动树',
+          stream: {
+            status: 'streaming',
+            activityEvents: [
+              {
+                type: 'ACTIVITY_SNAPSHOT',
+                timestamp: 1_746_217_200_000,
+                messageId: 'run-root',
+                activityType: 'RUN',
+                replace: true,
+                content: {
+                  id: 'run-root',
+                  runId: 'run-1',
+                  kind: 'run',
+                  status: 'running',
+                  title: '验证内部 AG-UI event log',
+                },
+              },
+              {
+                type: 'ACTIVITY_SNAPSHOT',
+                timestamp: 1_746_217_200_001,
+                messageId: 'summary-1',
+                activityType: 'REASONING_SUMMARY',
+                replace: true,
+                content: {
+                  id: 'summary-1',
+                  runId: 'run-1',
+                  parentId: 'run-root',
+                  kind: 'reasoning_summary',
+                  status: 'running',
+                  title: '正在从 event log 还原活动树',
+                },
+              },
+            ],
+          },
+        }),
+        platformId: 'deepseek',
+        providerLabel: 'DeepSeek',
+      },
+      global: {
+        stubs: {
+          AiMarkdown: { template: '<div class="markdown-stub">正在从 event log 还原活动树</div>' },
+        },
+      },
+    });
+
+    expect(wrapper.find('.ai-tool-activity-inline').exists()).toBe(true);
+    expect(wrapper.text()).toContain('验证内部 AG-UI event log');
+    expect(wrapper.text()).toContain('正在从 event log 还原活动树');
+    expect(wrapper.find('.ai-message-bubble').exists()).toBe(false);
+    expect(wrapper.find('.markdown-stub').exists()).toBe(false);
+  });
+
   it('does not render a blank non-streaming assistant placeholder', () => {
     const wrapper = mount(AiMessageItem, {
       props: {

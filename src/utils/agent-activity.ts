@@ -1,6 +1,9 @@
 import type {
   IAgentActivity,
+  IAgentActivityDeltaEvent,
   IAgentActivityDetail,
+  IAgentActivitySnapshotEvent,
+  TAgentActivityEvent,
   TAgentActivityKind,
   TAgentActivityStatus,
 } from '@/types/agent-activity';
@@ -301,7 +304,6 @@ const createToolActivity = (
   return {
     id: `${runId}:tool:${toolCall.id}`,
     runId,
-    parentId,
     kind: inferToolActivityKind(toolCall.name),
     status: mapToolStatusToActivityStatus(toolCall.status),
     title,
@@ -312,6 +314,349 @@ const createToolActivity = (
       name: toolCall.name,
     },
   };
+};
+
+const cloneJsonValue = <T>(value: T): T => {
+  if (Array.isArray(value)) {
+    return value.map((item) => cloneJsonValue(item)) as T;
+  }
+
+  if (value && typeof value === 'object') {
+    return Object.entries(value as Record<string, unknown>)
+      .reduce<Record<string, unknown>>((result, [key, item]) => {
+        result[key] = cloneJsonValue(item);
+        return result;
+      }, {}) as T;
+  }
+
+  return value;
+};
+
+const cloneActivity = (activity: IAgentActivity): IAgentActivity =>
+  cloneJsonValue(activity);
+
+const cloneEvent = (event: TAgentActivityEvent): TAgentActivityEvent =>
+  cloneJsonValue(event);
+
+const normalizeComparableValue = (value: unknown): unknown => {
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeComparableValue(item));
+  }
+
+  if (value && typeof value === 'object') {
+    return Object.keys(value as Record<string, unknown>)
+      .sort()
+      .reduce<Record<string, unknown>>((result, key) => {
+        result[key] = normalizeComparableValue((value as Record<string, unknown>)[key]);
+        return result;
+      }, {});
+  }
+
+  return value;
+};
+
+const areActivityValuesEqual = (left: unknown, right: unknown): boolean => {
+  if (left === undefined && right === undefined) {
+    return true;
+  }
+
+  if (left === undefined || right === undefined) {
+    return false;
+  }
+
+  return JSON.stringify(normalizeComparableValue(left))
+    === JSON.stringify(normalizeComparableValue(right));
+};
+
+const escapeJsonPointerSegment = (segment: string): string =>
+  segment.replace(/~/gu, '~0').replace(/\//gu, '~1');
+
+const unescapeJsonPointerSegment = (segment: string): string =>
+  segment.replace(/~1/gu, '/').replace(/~0/gu, '~');
+
+const toActivityType = (kind: TAgentActivityKind): IAgentActivitySnapshotEvent['activityType'] =>
+  kind.toUpperCase() as IAgentActivitySnapshotEvent['activityType'];
+
+const setPointerValue = (
+  target: Record<string, unknown> | unknown[],
+  pointer: string,
+  value: unknown,
+): void => {
+  const segments = pointer
+    .split('/')
+    .slice(1)
+    .map(unescapeJsonPointerSegment);
+
+  if (segments.length === 0) {
+    return;
+  }
+
+  let current: Record<string, unknown> | unknown[] = target;
+
+  for (let index = 0; index < segments.length - 1; index += 1) {
+    const segment = segments[index];
+    const nextSegment = segments[index + 1];
+
+    if (segment === undefined || nextSegment === undefined) {
+      return;
+    }
+
+    if (Array.isArray(current)) {
+      const arrayIndex = Number.parseInt(segment, 10);
+      const nextValue = current[arrayIndex];
+
+      if (nextValue && typeof nextValue === 'object') {
+        current = nextValue as Record<string, unknown> | unknown[];
+        continue;
+      }
+
+      const created = /^\d+$/u.test(nextSegment) ? [] : {};
+      current[arrayIndex] = created;
+      current = created;
+      continue;
+    }
+
+    const existing = current[segment];
+
+    if (existing && typeof existing === 'object') {
+      current = existing as Record<string, unknown> | unknown[];
+      continue;
+    }
+
+    const created = /^\d+$/u.test(nextSegment) ? [] : {};
+    current[segment] = created;
+    current = created;
+  }
+
+  const lastSegment = segments.at(-1);
+
+  if (!lastSegment) {
+    return;
+  }
+
+  if (Array.isArray(current)) {
+    const arrayIndex = Number.parseInt(lastSegment, 10);
+    current[arrayIndex] = cloneJsonValue(value);
+    return;
+  }
+
+  current[lastSegment] = cloneJsonValue(value);
+};
+
+const removePointerValue = (
+  target: Record<string, unknown> | unknown[],
+  pointer: string,
+): void => {
+  const segments = pointer
+    .split('/')
+    .slice(1)
+    .map(unescapeJsonPointerSegment);
+
+  if (segments.length === 0) {
+    return;
+  }
+
+  let current: Record<string, unknown> | unknown[] = target;
+
+  for (let index = 0; index < segments.length - 1; index += 1) {
+    const segment = segments[index];
+
+    if (segment === undefined) {
+      return;
+    }
+
+    if (Array.isArray(current)) {
+      const arrayIndex = Number.parseInt(segment, 10);
+      const nextValue = current[arrayIndex];
+
+      if (!nextValue || typeof nextValue !== 'object') {
+        return;
+      }
+
+      current = nextValue as Record<string, unknown> | unknown[];
+      continue;
+    }
+
+    const nextValue = current[segment];
+    if (!nextValue || typeof nextValue !== 'object') {
+      return;
+    }
+
+    current = nextValue as Record<string, unknown> | unknown[];
+  }
+
+  const lastSegment = segments.at(-1);
+
+  if (!lastSegment) {
+    return;
+  }
+
+  if (Array.isArray(current)) {
+    const arrayIndex = Number.parseInt(lastSegment, 10);
+    current.splice(arrayIndex, 1);
+    return;
+  }
+
+  delete current[lastSegment];
+};
+
+const applyActivityDelta = (
+  activity: IAgentActivity,
+  event: IAgentActivityDeltaEvent,
+): IAgentActivity => {
+  const nextActivity = cloneActivity(activity) as Record<string, unknown>;
+
+  for (const operation of event.patch) {
+    if (operation.op === 'remove') {
+      removePointerValue(nextActivity, operation.path);
+      continue;
+    }
+
+    setPointerValue(nextActivity, operation.path, operation.value);
+  }
+
+  return nextActivity as IAgentActivity;
+};
+
+const buildActivityDeltaEvent = (
+  previousActivity: IAgentActivity,
+  nextActivity: IAgentActivity,
+  timestamp: number,
+): IAgentActivityDeltaEvent | null => {
+  const keys = new Set<string>([
+    ...Object.keys(previousActivity),
+    ...Object.keys(nextActivity),
+  ]);
+  const patch: IAgentActivityDeltaEvent['patch'] = [];
+
+  keys.delete('id');
+
+  for (const key of keys) {
+    const previousValue = previousActivity[key as keyof IAgentActivity];
+    const nextValue = nextActivity[key as keyof IAgentActivity];
+
+    if (areActivityValuesEqual(previousValue, nextValue)) {
+      continue;
+    }
+
+    const path = `/${escapeJsonPointerSegment(key)}`;
+
+    if (nextValue === undefined) {
+      patch.push({
+        op: 'remove',
+        path,
+      });
+      continue;
+    }
+
+    patch.push({
+      op: previousValue === undefined ? 'add' : 'replace',
+      path,
+      value: cloneJsonValue(nextValue),
+    });
+  }
+
+  if (patch.length === 0) {
+    return null;
+  }
+
+  return {
+    type: 'ACTIVITY_DELTA',
+    timestamp,
+    messageId: nextActivity.id,
+    activityType: toActivityType(nextActivity.kind),
+    patch,
+  };
+};
+
+export const buildAgentActivityEvents = (
+  previousActivities: readonly IAgentActivity[],
+  nextActivities: readonly IAgentActivity[],
+  timestamp = Date.now(),
+): TAgentActivityEvent[] => {
+  const previousById = new Map(previousActivities.map((activity) => [activity.id, activity]));
+  const events: TAgentActivityEvent[] = [];
+
+  for (const activity of nextActivities) {
+    const previousActivity = previousById.get(activity.id);
+
+    if (!previousActivity) {
+      events.push({
+        type: 'ACTIVITY_SNAPSHOT',
+        timestamp,
+        messageId: activity.id,
+        activityType: toActivityType(activity.kind),
+        replace: true,
+        content: cloneActivity(activity),
+      });
+      continue;
+    }
+
+    const deltaEvent = buildActivityDeltaEvent(previousActivity, activity, timestamp);
+
+    if (deltaEvent) {
+      events.push(deltaEvent);
+    }
+  }
+
+  return events;
+};
+
+export const materializeAgentActivities = (
+  activityEvents: readonly TAgentActivityEvent[],
+  currentActivities: readonly IAgentActivity[] = [],
+): IAgentActivity[] => {
+  const activities = currentActivities.map((activity) => cloneActivity(activity));
+  const indexById = new Map(activities.map((activity, index) => [activity.id, index]));
+
+  for (const event of activityEvents) {
+    if (event.type === 'ACTIVITY_SNAPSHOT') {
+      const existingIndex = indexById.get(event.messageId);
+      const snapshot = cloneActivity(event.content);
+
+      if (existingIndex === undefined) {
+        indexById.set(snapshot.id, activities.length);
+        activities.push(snapshot);
+        continue;
+      }
+
+      activities[existingIndex] = snapshot;
+      continue;
+    }
+
+    const existingIndex = indexById.get(event.messageId);
+
+    if (existingIndex === undefined) {
+      continue;
+    }
+
+    const currentActivity = activities[existingIndex];
+    if (!currentActivity) {
+      continue;
+    }
+
+    activities[existingIndex] = applyActivityDelta(currentActivity, event);
+  }
+
+  return activities;
+};
+
+export const appendAgentActivityEvents = (
+  currentEvents: readonly TAgentActivityEvent[],
+  nextActivities: readonly IAgentActivity[],
+  timestamp = Date.now(),
+): TAgentActivityEvent[] => {
+  const previousActivities = materializeAgentActivities(currentEvents);
+  const nextEvents = buildAgentActivityEvents(previousActivities, nextActivities, timestamp);
+
+  if (nextEvents.length === 0) {
+    return currentEvents.map((event) => cloneEvent(event));
+  }
+
+  return [
+    ...currentEvents.map((event) => cloneEvent(event)),
+    ...nextEvents,
+  ];
 };
 
 export const buildAgentActivitiesFromSidecarState = (

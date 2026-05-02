@@ -2,6 +2,7 @@ import {
   extractSidecarChangedFilePaths,
   hasSidecarFileMutationEvent,
   mapSidecarEventsToToolCalls,
+  projectSidecarEventsToActivityState,
 } from '@/utils/agent-sidecar-events';
 import { describe, expect, it } from 'vitest';
 
@@ -193,5 +194,112 @@ describe('agent-sidecar-events', () => {
     expect(extractSidecarChangedFilePaths(events)).toEqual([
       'D:/repo/src/App.vue',
     ]);
+  });
+
+  it('把 sidecar 事件统一投影成活动文案、活动轨迹和增量 event log', () => {
+    const runningProjection = projectSidecarEventsToActivityState({
+      assistantMessageId: 'assistant-1',
+      fallbackActivityText: '检查工作区',
+      streamStatus: 'streaming',
+      events: [
+        {
+          type: 'tool_start',
+          toolName: 'search_files',
+          input: {
+            path: 'D:/repo/src',
+            pattern: 'useAiAssistant',
+          },
+        },
+        {
+          type: 'agent_event',
+          event: {
+            id: 'side-effect-1',
+            type: 'side_effect.recorded',
+            runId: 'run-1',
+            sessionId: 'session-1',
+            agentId: 'agent-1',
+            timestamp: '2026-05-02T10:00:00.000Z',
+            seq: 1,
+            schemaVersion: 1,
+            redacted: true,
+            visibility: 'user',
+            level: 'warn',
+            message: '将修改 2 个文件',
+          },
+        },
+      ],
+    });
+
+    expect(runningProjection.activityText).toBe('在 D:/repo/src 搜索「useAiAssistant」');
+    expect(runningProjection.activityTrail).toEqual(['将修改 2 个文件']);
+    expect(runningProjection.activityEvents.map((event) => event.type)).toContain('ACTIVITY_SNAPSHOT');
+
+    const completedProjection = projectSidecarEventsToActivityState({
+      assistantMessageId: 'assistant-1',
+      fallbackActivityText: '检查工作区',
+      streamStatus: 'completed',
+      currentActivityEvents: runningProjection.activityEvents,
+      events: [
+        {
+          type: 'tool_start',
+          toolName: 'search_files',
+          input: {
+            path: 'D:/repo/src',
+            pattern: 'useAiAssistant',
+          },
+        },
+        {
+          type: 'tool_result',
+          toolName: 'search_files',
+          output: {
+            summary: '找到 3 个命中',
+          },
+        },
+        {
+          type: 'agent_event',
+          event: {
+            id: 'side-effect-1',
+            type: 'side_effect.recorded',
+            runId: 'run-1',
+            sessionId: 'session-1',
+            agentId: 'agent-1',
+            timestamp: '2026-05-02T10:00:00.000Z',
+            seq: 1,
+            schemaVersion: 1,
+            redacted: true,
+            visibility: 'user',
+            level: 'warn',
+            message: '将修改 2 个文件',
+          },
+        },
+        {
+          type: 'agent_event',
+          event: {
+            id: 'rollback-restore-failed',
+            type: 'rollback.restore.failed',
+            runId: 'run-1',
+            sessionId: 'session-1',
+            agentId: 'agent-1',
+            timestamp: '2026-05-02T10:00:02.000Z',
+            seq: 2,
+            schemaVersion: 1,
+            redacted: true,
+            visibility: 'user',
+            level: 'error',
+            errorMessage: '权限不足',
+          },
+        },
+      ],
+    });
+
+    expect(completedProjection.activityTrail).toEqual([
+      '将修改 2 个文件',
+      '回滚恢复失败：权限不足',
+    ]);
+    expect(completedProjection.activityEvents.some((event) => event.type === 'ACTIVITY_DELTA')).toBe(true);
+    expect(completedProjection.activities[0]).toMatchObject({
+      kind: 'run',
+      title: '在 D:/repo/src 搜索「useAiAssistant」',
+    });
   });
 });
