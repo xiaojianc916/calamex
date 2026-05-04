@@ -665,15 +665,18 @@ onBeforeUnmount(() => {
                         <h2>{{ settingsTitle }}</h2>
                         <span>{{ settingsSubtitle }}</span>
                     </div>
-                    <button type="button" class="profile-icon-action" :title="settingsView === 'form' ? '进入配置记录' : '返回'"
+                    <button
+type="button" class="profile-icon-action" :title="settingsView === 'form' ? '进入配置记录' : '返回'"
                         :aria-label="settingsView === 'form' ? '进入配置记录' : '返回'" @click="handleHeaderNavigation">
-                        <svg v-if="settingsView === 'form'" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        <svg
+v-if="settingsView === 'form'" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                             stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                             <rect x="4" y="5" width="16" height="4" rx="1.5" />
                             <rect x="4" y="11" width="16" height="4" rx="1.5" />
                             <rect x="4" y="17" width="16" height="2" rx="1" />
                         </svg>
-                        <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                        <svg
+v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                             <path d="m15 18-6-6 6-6" />
                         </svg>
@@ -682,7 +685,8 @@ onBeforeUnmount(() => {
 
                 <div v-if="settingsView === 'form'" class="modal-body">
                     <section class="model-role-section" aria-label="模型用途">
-                        <button v-for="option in modelRoleOptions" :key="option.value" type="button"
+                        <button
+v-for="option in modelRoleOptions" :key="option.value" type="button"
                             class="model-role-card" :class="{ 'is-selected': option.value === activeModelRole }"
                             @click="updateModelRole(option.value)">
                             <span class="model-role-card__label">{{ option.label }}</span>
@@ -694,22 +698,27 @@ onBeforeUnmount(() => {
                         <div class="form-item">
                             <label class="form-label">AI 服务平台</label>
                             <div class="lr-select" :class="{ open: isPlatformOpen }" data-key="platform">
-                                <button type="button" class="lr-select-trigger" aria-haspopup="listbox"
+                                <button
+type="button" class="lr-select-trigger" aria-haspopup="listbox"
                                     @click.stop="isPlatformOpen = !isPlatformOpen; isModelOpen = false">
-                                    <AiProviderIcon class="lr-select-icon" :platform-id="activeServicePlatformId"
+                                    <AiProviderIcon
+class="lr-select-icon" :platform-id="activeServicePlatformId"
                                         :title="selectedPlatformLabel" decorative />
                                     <span class="lr-select-value">{{ selectedPlatformLabel }}</span>
-                                    <svg class="lr-select-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    <svg
+class="lr-select-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                         stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                         <polyline points="6 9 12 15 18 9" />
                                     </svg>
                                 </button>
                                 <div class="lr-select-menu" role="listbox" @click.stop>
-                                    <div v-for="option in platformOptions" :key="option.value"
+                                    <div
+v-for="option in platformOptions" :key="option.value"
                                         :data-provider-id="option.value" class="lr-option"
                                         :class="{ selected: option.value === activeServicePlatformId }" role="option"
                                         @click="updatePlatform(option.value)">
-                                        <AiProviderIcon class="lr-option-icon" :platform-id="option.value"
+                                        <AiProviderIcon
+class="lr-option-icon" :platform-id="option.value"
                                             :title="option.label" decorative />
                                         <span class="lr-option-main">{{ option.label }}</span>
                                     </div>
@@ -720,16 +729,19 @@ onBeforeUnmount(() => {
                         <div class="form-item">
                             <label class="form-label">模型名称</label>
                             <div class="lr-select" :class="{ open: isModelOpen }" data-key="model">
-                                <button type="button" class="lr-select-trigger" aria-haspopup="listbox"
+                                <button
+type="button" class="lr-select-trigger" aria-haspopup="listbox"
                                     @click.stop="isModelOpen = !isModelOpen; isPlatformOpen = false">
                                     <span class="lr-select-value">{{ selectedModelLabel }}</span>
-                                    <svg class="lr-select-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    <svg
+class="lr-select-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                         stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                         <polyline points="6 9 12 15 18 9" />
                                     </svg>
                                 </button>
                                 <div class="lr-select-menu" role="listbox" @click.stop>
-                                    <div v-for="option in modelOptions" :key="option.value" class="lr-option"
+                                    <div
+v-for="option in modelOptions" :key="option.value" class="lr-option"
                                         :class="{ selected: option.value === activeRoleConfig.selectedModel }"
                                         role="option" @click="updateModel(option.value)">
                                         <span class="lr-option-main">{{ option.label }}</span>
@@ -742,11 +754,13 @@ onBeforeUnmount(() => {
                     <div class="form-item">
                         <label class="form-label">API Key</label>
                         <div class="key-wrapper">
-                            <input v-model="apiKey" type="password" class="form-input"
+                            <input
+v-model="apiKey" type="password" class="form-input"
                                 :placeholder="activePreset.apiKeyHint || 'sk-xxxx'" />
                             <div class="key-actions">
                                 <button class="key-btn" aria-label="复制" @click="copyKey">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                    <svg
+viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                                         stroke-linecap="round" stroke-linejoin="round">
                                         <rect x="9" y="9" width="13" height="13" rx="2" />
                                         <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
@@ -759,19 +773,22 @@ onBeforeUnmount(() => {
 
                     <div class="form-item">
                         <label class="form-label">API Base URL</label>
-                        <input :value="activeRoleConfig.baseUrl ?? ''" class="form-input" @input="updateBaseUrl"
-                            :readonly="!activePreset.isEndpointEditable" :placeholder="activePreset.baseUrl ?? ''" />
+                        <input
+:value="activeRoleConfig.baseUrl ?? ''" class="form-input" :readonly="!activePreset.isEndpointEditable"
+                            :placeholder="activePreset.baseUrl ?? ''" @input="updateBaseUrl" />
                     </div>
 
                     <div class="form-row">
                         <div class="form-item">
                             <label class="form-label">请求超时（秒）</label>
-                            <input v-model.number="advancedDraft.timeoutSeconds" type="number" class="form-input"
+                            <input
+v-model.number="advancedDraft.timeoutSeconds" type="number" class="form-input"
                                 min="5" max="120" />
                         </div>
                         <div class="form-item">
                             <label class="form-label">代理地址（可选）</label>
-                            <input v-model="advancedDraft.proxyUrl" class="form-input"
+                            <input
+v-model="advancedDraft.proxyUrl" class="form-input"
                                 placeholder="http://127.0.0.1:7890" />
                         </div>
                     </div>
@@ -792,7 +809,8 @@ onBeforeUnmount(() => {
                     <div class="form-row">
                         <div class="form-item" style="flex: 0 0 200px;">
                             <label class="form-label">最大输出 Tokens</label>
-                            <input v-model.number="advancedDraft.maxTokens" type="number" class="form-input" min="256"
+                            <input
+v-model.number="advancedDraft.maxTokens" type="number" class="form-input" min="256"
                                 max="128000" />
                         </div>
                         <div class="form-item" style="flex: 1;">
@@ -809,7 +827,8 @@ onBeforeUnmount(() => {
 
                 <div v-else-if="settingsView === 'profiles'" class="modal-body profile-switcher">
                     <div class="profile-role-switch" aria-label="配置记录模型类型切换">
-                        <button v-for="option in profileRoleOptions" :key="option.value" type="button"
+                        <button
+v-for="option in profileRoleOptions" :key="option.value" type="button"
                             class="profile-role-switch__button"
                             :class="{ 'is-selected': option.value === activeProfileRole }"
                             :aria-pressed="option.value === activeProfileRole"
@@ -819,14 +838,16 @@ onBeforeUnmount(() => {
                     </div>
 
                     <div v-if="hasFilteredProfiles" class="profile-list" aria-label="AI 配置记录列表">
-                        <article v-for="profile in filteredProfiles" :key="profile.id" class="profile-card"
+                        <article
+v-for="profile in filteredProfiles" :key="profile.id" class="profile-card"
                             :class="{ 'is-active': profile.isConnected }">
                             <span class="profile-drag" aria-hidden="true">
                                 <span></span>
                                 <span></span>
                                 <span></span>
                             </span>
-                            <AiProviderIcon class="profile-provider-icon" :platform-id="getProfilePlatformId(profile)"
+                            <AiProviderIcon
+class="profile-provider-icon" :platform-id="getProfilePlatformId(profile)"
                                 :title="getProfilePlatformLabel(profile)" decorative />
                             <div class="profile-main">
                                 <div class="profile-title-row">
@@ -834,7 +855,8 @@ onBeforeUnmount(() => {
                                     <span class="profile-role-badge" :class="getProfileRoleToneClass(profile)">
                                         {{ getProfileRoleLabel(profile) }}
                                     </span>
-                                    <span class="profile-connection-badge"
+                                    <span
+class="profile-connection-badge"
                                         :class="getProfileConnectionToneClass(profile)">
                                         {{ getProfileConnectionLabel(profile) }}
                                     </span>
@@ -860,19 +882,23 @@ onBeforeUnmount(() => {
                                 </dl>
                             </div>
                             <div class="profile-actions">
-                                <button type="button" class="profile-action-button" title="查看配置" aria-label="查看配置"
+                                <button
+type="button" class="profile-action-button" title="查看配置" aria-label="查看配置"
                                     @click="showProfileDetail(profile)">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                    <svg
+viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                                         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                                         <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z" />
                                         <circle cx="12" cy="12" r="3" />
                                     </svg>
                                 </button>
-                                <button type="button" class="profile-action-button"
+                                <button
+type="button" class="profile-action-button"
                                     :disabled="profile.isConnected || isSaving"
                                     :title="profile.isConnected ? '已连接' : '快速切换'"
                                     :aria-label="profile.isConnected ? '已连接' : '快速切换'" @click="switchProfile(profile)">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                    <svg
+viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                                         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                                         <path d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z" />
                                     </svg>
@@ -894,7 +920,8 @@ onBeforeUnmount(() => {
                     </div>
                     <section v-else-if="detailProfile" class="profile-detail-card">
                         <div class="profile-detail-head">
-                            <AiProviderIcon class="profile-detail-icon"
+                            <AiProviderIcon
+class="profile-detail-icon"
                                 :platform-id="getProfilePlatformId(detailProfile)"
                                 :title="getProfilePlatformLabel(detailProfile)" decorative />
                             <div>
@@ -916,7 +943,8 @@ onBeforeUnmount(() => {
                             <div>
                                 <dt>连接状态</dt>
                                 <dd>
-                                    <span class="profile-connection-badge"
+                                    <span
+class="profile-connection-badge"
                                         :class="getProfileConnectionToneClass(detailProfile)">
                                         {{ getProfileConnectionLabel(detailProfile) }}
                                     </span>
@@ -942,11 +970,13 @@ onBeforeUnmount(() => {
                                 <dt>API Key</dt>
                                 <dd>
                                     <code :class="{ 'is-visible': isApiKeyVisible }">{{ maskedDetailApiKey }}</code>
-                                    <button type="button" class="profile-action-button" :disabled="!detailApiKey"
+                                    <button
+type="button" class="profile-action-button" :disabled="!detailApiKey"
                                         :title="isApiKeyVisible ? '隐藏 API Key' : '查看 API Key'"
                                         :aria-label="isApiKeyVisible ? '隐藏 API Key' : '查看 API Key'"
                                         @click="isApiKeyVisible = !isApiKeyVisible">
-                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                        <svg
+viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                                             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                                             <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z" />
                                             <circle cx="12" cy="12" r="3" />
@@ -970,11 +1000,13 @@ onBeforeUnmount(() => {
 
             <div v-if="statusMessage" class="status" :class="[`status-${statusTone}`, 'show']">
                 <span class="status-icon">
-                    <svg v-if="statusTone === 'success'" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    <svg
+v-if="statusTone === 'success'" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                         stroke-linecap="round" stroke-linejoin="round">
                         <polyline points="20 6 9 17 4 12" />
                     </svg>
-                    <svg v-else-if="statusTone === 'error'" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    <svg
+v-else-if="statusTone === 'error'" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                         stroke-linecap="round" stroke-linejoin="round">
                         <circle cx="12" cy="12" r="10" />
                         <line x1="12" y1="8" x2="12" y2="12" />

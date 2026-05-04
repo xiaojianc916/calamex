@@ -3,7 +3,8 @@
     <!-- Row 1: Tabs + right action buttons -->
     <div class="flex h-9 items-stretch pr-0">
       <div class="flex min-w-0 flex-1 items-stretch gap-0 overflow-x-auto overflow-y-hidden">
-        <button v-for="item in documents" :key="item.id" type="button" class="editor-file-tab app-tooltip-target"
+        <button
+v-for="item in documents" :key="item.id" type="button" class="editor-file-tab app-tooltip-target"
           :class="{
             'is-active': item.id === activeDocumentId,
             'is-dirty': item.isDirty,
@@ -14,7 +15,8 @@
           <span class="editor-file-tab-dirty" aria-hidden="true" />
           <!-- 关闭按钮 -->
           <span class="editor-file-tab-close" aria-hidden="true" @click.stop="$emit('close-tab', item.id)">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+            <svg
+viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
               stroke-linejoin="round">
               <line x1="18" y1="6" x2="6" y2="18" />
               <line x1="6" y1="6" x2="18" y2="18" />
@@ -25,29 +27,35 @@
 
       <!-- Right action buttons -->
       <div class="tabbar-actions flex items-center gap-0.5 px-1.5">
-        <button type="button" class="tabbar-action-btn" title="导航后退" aria-label="导航后退" :disabled="!canNavigateBack"
+        <button
+type="button" class="tabbar-action-btn" title="导航后退" aria-label="导航后退" :disabled="!canNavigateBack"
           @click="$emit('navigate-back')">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+          <svg
+viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
             stroke-linejoin="round">
             <polyline points="15 18 9 12 15 6" />
           </svg>
         </button>
-        <button type="button" class="tabbar-action-btn" title="导航前进" aria-label="导航前进" :disabled="!canNavigateForward"
+        <button
+type="button" class="tabbar-action-btn" title="导航前进" aria-label="导航前进" :disabled="!canNavigateForward"
           @click="$emit('navigate-forward')">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+          <svg
+viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
             stroke-linejoin="round">
             <polyline points="9 18 15 12 9 6" />
           </svg>
         </button>
         <button type="button" class="tabbar-action-btn" title="拆分编辑器" aria-label="拆分编辑器">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+          <svg
+viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
             stroke-linejoin="round">
             <rect x="3" y="3" width="18" height="18" rx="2" />
             <line x1="12" y1="3" x2="12" y2="21" />
           </svg>
         </button>
         <button type="button" class="tabbar-action-btn" title="更多操作" aria-label="更多操作">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+          <svg
+viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
             stroke-linejoin="round">
             <circle cx="5" cy="12" r="1" />
             <circle cx="12" cy="12" r="1" />

@@ -167,7 +167,8 @@ onBeforeUnmount(() => {
   <div class="app-root-stage" :class="{ 'is-welcome-window': isWelcomeWindow }">
     <AppDialogHost v-if="!isWelcomeWindow" />
     <BrowserContextMenuHost v-if="!isWelcomeWindow" />
-    <div v-if="isStartupVeilVisible && !isWelcomeWindow" data-testid="startup-veil" class="startup-veil"
+    <div
+v-if="isStartupVeilVisible && !isWelcomeWindow" data-testid="startup-veil" class="startup-veil"
       :class="{ 'is-leaving': isStartupVeilLeaving }">
       <!-- eslint-disable vue/no-v-html -->
       <div ref="startupBridgeWrapRef" class="startup-veil__welcome-bridge" v-html="startupWelcomeSvgRaw" />

@@ -591,6 +591,18 @@ const flushMicrotasks = async (): Promise<void> => {
     await Promise.resolve();
 };
 
+const readReactiveValue = <T>(value: { value: T } | T): T => {
+    if (typeof value === 'object' && value !== null && 'value' in value) {
+        return Reflect.get(value, 'value') as T;
+    }
+
+    return value;
+};
+
+const writeReactiveValue = <T>(target: object, value: T): void => {
+    Reflect.set(target, 'value', value);
+};
+
 const createDeferred = <T>() => {
     let resolveValue: ((value: T) => void) | undefined;
     let rejectValue: ((reason?: unknown) => void) | undefined;
@@ -959,21 +971,21 @@ describe('useAiAssistant streaming integration', () => {
             userMessage: '如何修复会话记录弹窗？',
             assistantMessage: '第一轮 AI 回答',
         });
-        expect(conversationStore.activeThread?.title).toBe('生成会话标题');
-        expect(conversationStore.activeThread?.titleStatus).toBe('generated');
+        expect(readReactiveValue(conversationStore.activeThread)?.title).toBe('生成会话标题');
+        expect(readReactiveValue(conversationStore.activeThread)?.titleStatus).toBe('generated');
     });
 
     it('starts a new conversation by clearing draft and transient state', () => {
         const assistant = createAssistantHarness();
 
         assistant.draft.value = '杩樻病鍙戦€佺殑鍐呭';
-        assistant.messages.value = [{
+        writeReactiveValue(assistant.messages, [{
             id: 'assistant-1',
             role: 'assistant',
             content: '旧会话消息',
             createdAt: '2026-04-28T10:00:00.000Z',
             references: [],
-        }];
+        }]);
         assistant.currentReferences.value = [{
             id: 'ref-1',
             kind: 'current-file',
@@ -989,8 +1001,8 @@ describe('useAiAssistant streaming integration', () => {
 
         expect(assistant.draft.value).toBe('');
         expect(assistant.messages.value).toHaveLength(0);
-        expect(assistant.historyThreads.value).toHaveLength(1);
-        expect(assistant.historyThreads.value[0]?.messages[0]?.id).toBe('assistant-1');
+        expect(readReactiveValue(assistant.historyThreads)).toHaveLength(1);
+        expect(readReactiveValue(assistant.historyThreads)[0]?.messages[0]?.id).toBe('assistant-1');
         expect(assistant.currentReferences.value).toHaveLength(0);
         expect(assistant.errorMessage.value).toBe('');
     });
@@ -1145,8 +1157,8 @@ describe('useAiAssistant streaming integration', () => {
         expect(aiServiceMock.planTask).toHaveBeenCalledTimes(0);
         expect(aiServiceMock.chatStream).toHaveBeenCalledTimes(0);
         expect(assistant.agentSteps.value).toHaveLength(3);
-        expect(assistant.agentPlan.store.steps).toHaveLength(3);
-        expect(assistant.agentPlan.store.steps[1]?.requiresUserApproval).toBe(true);
+        expect(readReactiveValue(assistant.agentPlan.store.steps)).toHaveLength(3);
+        expect(readReactiveValue(assistant.agentPlan.store.steps)[1]?.requiresUserApproval).toBe(true);
     });
 
     it('鍙戦€佽鍒掕姹傚墠鎶婄己澶辩殑褰撳墠鏂囦欢璺緞褰掍竴涓?null锛岄伩鍏?IPC 鍏ュ弬鏍￠獙澶辫触', async () => {
@@ -1178,7 +1190,7 @@ describe('useAiAssistant streaming integration', () => {
         const userQuestion = '@current-file 淇敼瀹屽杽杩欎釜鏂囦欢';
 
         planStore.setPlan('旧计划', staleSteps);
-        planStore.approvedAt = '2026-04-29T00:00:00.000Z';
+        Reflect.set(planStore, 'approvedAt', '2026-04-29T00:00:00.000Z');
         planStore.upsertRun(createAgentRun(staleSteps));
         assistant.agentSteps.value = staleSteps.map((step) => ({
             id: step.id,
@@ -1199,10 +1211,10 @@ describe('useAiAssistant streaming integration', () => {
 
         await assistant.sendMessage();
 
-        expect(planStore.steps).toHaveLength(0);
-        expect(planStore.activeRunId).toBeNull();
-        expect(planStore.approvedAt).toBeNull();
-        expect(planStore.errorMessage).toContain('IPC 请求参数无效');
+        expect(readReactiveValue(planStore.steps)).toHaveLength(0);
+        expect(readReactiveValue(planStore.activeRunId)).toBeNull();
+        expect(readReactiveValue(planStore.approvedAt)).toBeNull();
+        expect(readReactiveValue(planStore.errorMessage)).toContain('IPC 请求参数无效');
         expect(assistant.agentSteps.value).toHaveLength(0);
         expect(assistant.draft.value).toBe('');
     });
@@ -1641,6 +1653,119 @@ describe('useAiAssistant streaming integration', () => {
         expect(assistant.messages.value[1]?.stream?.status).toBe('completed');
         expect(assistant.messages.value[1]?.stream?.activityText).toBe('在 工作区 搜索「实时工具」');
         expect(assistant.messages.value[1]?.stream?.activityTrail).toBeUndefined();
+    });
+
+    it('batches synchronous sidecar live events into a single frame commit without changing the final result', async () => {
+        const { assistant } = createAssistantHarnessContext();
+        const conversationStore = useAiConversationStore();
+        const replaceMessagesSpy = vi.spyOn(conversationStore, 'replaceMessages');
+        const sidecarGate = createDeferred<void>();
+        const queuedFrames = new Map<number, FrameRequestCallback>();
+        let nextFrameId = 0;
+
+        vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback): number => {
+            nextFrameId += 1;
+            queuedFrames.set(nextFrameId, callback);
+            return nextFrameId;
+        });
+        vi.stubGlobal('cancelAnimationFrame', (frameId: number): void => {
+            queuedFrames.delete(frameId);
+        });
+
+        aiServiceMock.sidecarExecute.mockImplementationOnce(async (payload: IAgentSidecarExecuteRequest) => {
+            const sessionId = payload.sessionId ?? 'sidecar-batched-frame-session';
+
+            aiServiceMock.emitSidecar({
+                sessionId,
+                seq: 0,
+                event: {
+                    type: 'tool_start',
+                    toolName: 'search_project_files',
+                    input: { query: '批量刷新' },
+                },
+            });
+            aiServiceMock.emitSidecar({
+                sessionId,
+                seq: 1,
+                event: {
+                    type: 'message_delta',
+                    text: '第一段实时回答',
+                    phase: 'final',
+                },
+            });
+            aiServiceMock.emitSidecar({
+                sessionId,
+                seq: 2,
+                event: {
+                    type: 'message_delta',
+                    text: '第二段实时回答',
+                    phase: 'final',
+                },
+            });
+
+            await sidecarGate.promise;
+
+            return {
+                sessionId,
+                events: [
+                    {
+                        type: 'tool_start',
+                        toolName: 'search_project_files',
+                        input: { query: '批量刷新' },
+                    },
+                    {
+                        type: 'tool_result',
+                        toolName: 'search_project_files',
+                        output: { query: '批量刷新', summary: '搜索完成' },
+                    },
+                    {
+                        type: 'done',
+                        result: '批量刷新完成',
+                    },
+                ],
+                result: '批量刷新完成',
+            };
+        });
+
+        assistant.activeMode.value = 'agent';
+        assistant.draft.value = '测试批量刷新';
+
+        const sendPromise = assistant.sendMessage();
+
+        for (let attempt = 0; attempt < 8; attempt += 1) {
+            if (queuedFrames.size > 0) {
+                break;
+            }
+            await Promise.resolve();
+        }
+
+        const replaceCallCountBeforeFrame = replaceMessagesSpy.mock.calls.length;
+
+        expect(queuedFrames.size).toBe(1);
+        expect(assistant.messages.value[1]?.content).toBe('');
+        expect(assistant.messages.value[1]?.toolCalls ?? []).toHaveLength(0);
+
+        const pendingFrames = [...queuedFrames.values()];
+        queuedFrames.clear();
+
+        for (const callback of pendingFrames) {
+            callback(16);
+        }
+
+        await flushMicrotasks();
+
+        expect(replaceMessagesSpy).toHaveBeenCalledTimes(replaceCallCountBeforeFrame + 1);
+        expect(assistant.messages.value[1]?.content).toContain('第二段实时回答');
+        expect(assistant.messages.value[1]?.toolCalls?.[0]).toMatchObject({
+            name: 'search_project_files',
+            status: 'running',
+        });
+
+        sidecarGate.resolve(undefined);
+        await sendPromise;
+
+        expect(assistant.messages.value[1]?.content).toBe('批量刷新完成');
+        expect(assistant.messages.value[1]?.stream?.status).toBe('completed');
     });
 
     it('收到空的 sidecar message_delta 时清空非最终阶段说明，等待后续最终回答流', async () => {
@@ -2352,7 +2477,7 @@ describe('useAiAssistant streaming integration', () => {
 
     it('exposes a rollback prompt after an AED operation is available and can undo it', async () => {
         const { assistant, document } = createAssistantHarnessContext();
-        const taskId = assistant.activeConversationId.value ?? 'thread-rollback';
+        const taskId = readReactiveValue(assistant.activeConversationId) ?? 'thread-rollback';
 
         document.value.path = 'D:/test/xiaojianc.sh';
         document.value.name = 'xiaojianc.sh';

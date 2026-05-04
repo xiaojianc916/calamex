@@ -5,7 +5,8 @@
         <section v-for="group in filteredNavGroups" :key="group.label" class="workbench-settings-nav-group">
           <p class="workbench-settings-nav-label">{{ group.label }}</p>
 
-          <button v-for="item in group.items" :key="item.id" type="button" class="workbench-settings-nav-item"
+          <button
+v-for="item in group.items" :key="item.id" type="button" class="workbench-settings-nav-item"
             :class="{ 'is-active': !isSearching && activeSection === item.id }" @click="selectSection(item.id)">
             <component :is="item.icon" class="h-3.5 w-3.5" />
             <span>{{ item.title }}</span>
@@ -58,7 +59,8 @@
                         <div class="title">界面语言</div>
                       </div>
                       <div class="workbench-settings-control">
-                        <select class="workbench-settings-select" :value="appStore.settings.general.language"
+                        <select
+class="workbench-settings-select" :value="appStore.settings.general.language"
                           @change="patchSection('general', { language: 'zh-CN' }, '界面语言已保存')">
                           <option value="zh-CN">简体中文</option>
                         </select>
@@ -70,7 +72,8 @@
                         <div class="title">日期格式</div>
                       </div>
                       <div class="workbench-settings-control">
-                        <select class="workbench-settings-select" :value="appStore.settings.general.dateFormat"
+                        <select
+class="workbench-settings-select" :value="appStore.settings.general.dateFormat"
                           @change="patchSection('general', { dateFormat: 'YYYY-MM-DD' }, '日期格式已保存')">
                           <option value="YYYY-MM-DD">YYYY-MM-DD</option>
                         </select>
@@ -82,7 +85,8 @@
                         <div class="title">使用 24 小时制</div>
                       </div>
                       <div class="workbench-settings-control">
-                        <button type="button" class="workbench-settings-switch"
+                        <button
+type="button" class="workbench-settings-switch"
                           :class="{ 'is-on': appStore.settings.general.use24HourClock }"
                           :aria-pressed="appStore.settings.general.use24HourClock"
                           @click="toggleSetting('general', 'use24HourClock', '时间格式已保存')">
@@ -102,7 +106,8 @@
                       </div>
                       <div class="workbench-settings-control">
                         <div class="workbench-settings-segmented">
-                          <button v-for="mode in startupOptions" :key="mode.value" type="button" class="segment"
+                          <button
+v-for="mode in startupOptions" :key="mode.value" type="button" class="segment"
                             :class="{ 'is-active': appStore.settings.general.startupBehavior === mode.value }"
                             @click="patchSection('general', { startupBehavior: mode.value }, '启动方式已保存')">
                             {{ mode.label }}
@@ -116,7 +121,8 @@
                         <div class="title">最近文件数量</div>
                       </div>
                       <div class="workbench-settings-control">
-                        <input class="workbench-settings-number" type="number" min="5" max="100"
+                        <input
+class="workbench-settings-number" type="number" min="5" max="100"
                           :value="appStore.settings.general.recentFileLimit"
                           @change="handleNumberFieldChange('general', 'recentFileLimit', $event, 5, 100, '最近文件数量已保存')" />
                       </div>
@@ -133,7 +139,8 @@
                         <div class="desc">默认只检查，不自动安装。</div>
                       </div>
                       <div class="workbench-settings-control">
-                        <button type="button" class="workbench-settings-switch"
+                        <button
+type="button" class="workbench-settings-switch"
                           :class="{ 'is-on': appStore.settings.general.autoCheckUpdates }"
                           :aria-pressed="appStore.settings.general.autoCheckUpdates"
                           @click="toggleSetting('general', 'autoCheckUpdates', '更新策略已保存')">
@@ -148,7 +155,8 @@
                       </div>
                       <div class="workbench-settings-control">
                         <div class="workbench-settings-segmented">
-                          <button v-for="channel in updateChannelOptions" :key="channel.value" type="button"
+                          <button
+v-for="channel in updateChannelOptions" :key="channel.value" type="button"
                             class="segment"
                             :class="{ 'is-active': appStore.settings.general.updateChannel === channel.value }"
                             @click="patchSection('general', { updateChannel: channel.value }, '更新渠道已保存')">
@@ -163,7 +171,8 @@
                         <div class="title">匿名使用统计</div>
                       </div>
                       <div class="workbench-settings-control">
-                        <button type="button" class="workbench-settings-switch"
+                        <button
+type="button" class="workbench-settings-switch"
                           :class="{ 'is-on': appStore.settings.general.telemetryEnabled }"
                           :aria-pressed="appStore.settings.general.telemetryEnabled"
                           @click="toggleSetting('general', 'telemetryEnabled', '隐私设置已保存')">
@@ -177,7 +186,8 @@
                         <div class="title">崩溃报告</div>
                       </div>
                       <div class="workbench-settings-control">
-                        <button type="button" class="workbench-settings-switch"
+                        <button
+type="button" class="workbench-settings-switch"
                           :class="{ 'is-on': appStore.settings.general.crashReportsEnabled }"
                           :aria-pressed="appStore.settings.general.crashReportsEnabled"
                           @click="toggleSetting('general', 'crashReportsEnabled', '隐私设置已保存')">
@@ -205,7 +215,8 @@
                       </div>
                       <div class="workbench-settings-control">
                         <div class="workbench-settings-segmented">
-                          <button v-for="themeOption in themePreferenceOptions" :key="themeOption.value" type="button"
+                          <button
+v-for="themeOption in themePreferenceOptions" :key="themeOption.value" type="button"
                             class="segment"
                             :class="{ 'is-active': appStore.settings.appearance.themePreference === themeOption.value }"
                             @click="patchSection('appearance', { themePreference: themeOption.value }, '主题偏好已保存')">
@@ -222,7 +233,8 @@
                       </div>
                       <div class="workbench-settings-control">
                         <div class="workbench-settings-swatches">
-                          <button v-for="swatch in accentSwatches" :key="swatch.value" type="button" class="swatch"
+                          <button
+v-for="swatch in accentSwatches" :key="swatch.value" type="button" class="swatch"
                             :class="{ 'is-active': appStore.settings.appearance.accentColor === swatch.value }"
                             :style="{ background: swatch.color }" :aria-label="swatch.label"
                             @click="patchSection('appearance', { accentColor: swatch.value }, '强调色已保存')" />
@@ -236,7 +248,8 @@
                       </div>
                       <div class="workbench-settings-control">
                         <div class="workbench-settings-segmented">
-                          <button v-for="density in densityOptions" :key="density.value" type="button" class="segment"
+                          <button
+v-for="density in densityOptions" :key="density.value" type="button" class="segment"
                             :class="{ 'is-active': appStore.settings.appearance.uiDensity === density.value }"
                             @click="patchSection('appearance', { uiDensity: density.value }, '界面密度已保存')">
                             {{ density.label }}
@@ -250,7 +263,8 @@
                         <div class="title">界面字号</div>
                       </div>
                       <div class="workbench-settings-control">
-                        <input class="workbench-settings-number" type="number" min="12" max="16"
+                        <input
+class="workbench-settings-number" type="number" min="12" max="16"
                           :value="appStore.settings.appearance.interfaceFontSize"
                           @change="handleNumberFieldChange('appearance', 'interfaceFontSize', $event, 12, 16, '界面字号已保存')" />
                       </div>
@@ -262,7 +276,8 @@
                       </div>
                       <div class="workbench-settings-control">
                         <div class="workbench-settings-segmented">
-                          <button v-for="radius in radiusOptions" :key="radius.value" type="button" class="segment"
+                          <button
+v-for="radius in radiusOptions" :key="radius.value" type="button" class="segment"
                             :class="{ 'is-active': appStore.settings.appearance.radiusPreset === radius.value }"
                             @click="patchSection('appearance', { radiusPreset: radius.value }, '圆角设置已保存')">
                             {{ radius.label }}
@@ -277,7 +292,8 @@
                         <div class="desc">关闭设置页和工作台中的大部分过渡。</div>
                       </div>
                       <div class="workbench-settings-control">
-                        <button type="button" class="workbench-settings-switch"
+                        <button
+type="button" class="workbench-settings-switch"
                           :class="{ 'is-on': appStore.settings.appearance.reduceMotion }"
                           :aria-pressed="appStore.settings.appearance.reduceMotion"
                           @click="toggleSetting('appearance', 'reduceMotion', '动画设置已保存')">
@@ -303,7 +319,8 @@
                         <div class="title">字体</div>
                       </div>
                       <div class="workbench-settings-control">
-                        <input class="workbench-settings-text-input" type="text"
+                        <input
+class="workbench-settings-text-input" type="text"
                           :value="appStore.settings.editor.fontFamily"
                           @change="handleTextFieldChange('editor', 'fontFamily', $event, '编辑器字体已保存')" />
                       </div>
@@ -314,7 +331,8 @@
                         <div class="title">字号</div>
                       </div>
                       <div class="workbench-settings-control">
-                        <input class="workbench-settings-number" type="number" min="11" max="20"
+                        <input
+class="workbench-settings-number" type="number" min="11" max="20"
                           :value="appStore.settings.editor.fontSize"
                           @change="handleNumberFieldChange('editor', 'fontSize', $event, 11, 20, '编辑器字号已保存')" />
                       </div>
@@ -325,7 +343,8 @@
                         <div class="title">行高</div>
                       </div>
                       <div class="workbench-settings-control">
-                        <select class="workbench-settings-select" :value="appStore.settings.editor.lineHeight"
+                        <select
+class="workbench-settings-select" :value="appStore.settings.editor.lineHeight"
                           @change="handleSelectFieldChange('editor', 'lineHeight', $event, '编辑器行高已保存')">
                           <option value="1.4">1.4 倍</option>
                           <option value="1.6">1.6 倍</option>
@@ -339,7 +358,8 @@
                         <div class="title">启用字体连字</div>
                       </div>
                       <div class="workbench-settings-control">
-                        <button type="button" class="workbench-settings-switch"
+                        <button
+type="button" class="workbench-settings-switch"
                           :class="{ 'is-on': appStore.settings.editor.fontLigatures }"
                           :aria-pressed="appStore.settings.editor.fontLigatures"
                           @click="toggleSetting('editor', 'fontLigatures', '编辑器字体设置已保存')">
@@ -359,7 +379,8 @@
                       </div>
                       <div class="workbench-settings-control">
                         <div class="workbench-settings-segmented">
-                          <button v-for="indentation in indentationOptions" :key="indentation.value" type="button"
+                          <button
+v-for="indentation in indentationOptions" :key="indentation.value" type="button"
                             class="segment"
                             :class="{ 'is-active': appStore.settings.editor.indentation === indentation.value }"
                             @click="patchSection('editor', { indentation: indentation.value }, '缩进设置已保存')">
@@ -374,7 +395,8 @@
                         <div class="title">Tab 大小</div>
                       </div>
                       <div class="workbench-settings-control">
-                        <input class="workbench-settings-number" type="number" min="2" max="8"
+                        <input
+class="workbench-settings-number" type="number" min="2" max="8"
                           :value="appStore.settings.editor.tabSize"
                           @change="handleNumberFieldChange('editor', 'tabSize', $event, 2, 8, '缩进设置已保存')" />
                       </div>
@@ -385,7 +407,8 @@
                         <div class="title">根据文件自动检测</div>
                       </div>
                       <div class="workbench-settings-control">
-                        <button type="button" class="workbench-settings-switch"
+                        <button
+type="button" class="workbench-settings-switch"
                           :class="{ 'is-on': appStore.settings.editor.detectIndentation }"
                           :aria-pressed="appStore.settings.editor.detectIndentation"
                           @click="toggleSetting('editor', 'detectIndentation', '缩进设置已保存')">
@@ -404,7 +427,8 @@
                         <div class="title">自动保存</div>
                       </div>
                       <div class="workbench-settings-control">
-                        <select class="workbench-settings-select" :value="appStore.settings.editor.autoSave"
+                        <select
+class="workbench-settings-select" :value="appStore.settings.editor.autoSave"
                           @change="handleSelectFieldChange('editor', 'autoSave', $event, '自动保存策略已保存')">
                           <option value="off">关闭</option>
                           <option value="focus">失去焦点时</option>
@@ -418,7 +442,8 @@
                         <div v-if="item.description" class="desc">{{ item.description }}</div>
                       </div>
                       <div class="workbench-settings-control">
-                        <button type="button" class="workbench-settings-switch"
+                        <button
+type="button" class="workbench-settings-switch"
                           :class="{ 'is-on': appStore.settings.editor[item.key] }"
                           :aria-pressed="appStore.settings.editor[item.key]"
                           @click="toggleSetting('editor', item.key, '编辑器行为已保存')">
@@ -437,7 +462,8 @@
                         <div class="title">自动换行</div>
                       </div>
                       <div class="workbench-settings-control">
-                        <select class="workbench-settings-select" :value="appStore.settings.editor.wordWrap"
+                        <select
+class="workbench-settings-select" :value="appStore.settings.editor.wordWrap"
                           @change="handleSelectFieldChange('editor', 'wordWrap', $event, '显示设置已保存')">
                           <option value="off">关闭</option>
                           <option value="viewport">按视口宽度</option>
@@ -451,7 +477,8 @@
                       </div>
                       <div class="workbench-settings-control">
                         <div class="workbench-settings-segmented">
-                          <button v-for="whitespace in whitespaceOptions" :key="whitespace.value" type="button"
+                          <button
+v-for="whitespace in whitespaceOptions" :key="whitespace.value" type="button"
                             class="segment"
                             :class="{ 'is-active': appStore.settings.editor.whitespace === whitespace.value }"
                             @click="patchSection('editor', { whitespace: whitespace.value }, '显示设置已保存')">
@@ -466,7 +493,8 @@
                         <div class="title">{{ item.title }}</div>
                       </div>
                       <div class="workbench-settings-control">
-                        <button type="button" class="workbench-settings-switch"
+                        <button
+type="button" class="workbench-settings-switch"
                           :class="{ 'is-on': appStore.settings.editor[item.key] }"
                           :aria-pressed="appStore.settings.editor[item.key]"
                           @click="toggleSetting('editor', item.key, '显示设置已保存')">
@@ -480,7 +508,8 @@
                         <div class="title">补全触发字符</div>
                       </div>
                       <div class="workbench-settings-control control-grow">
-                        <input class="workbench-settings-text-input is-mono" type="text"
+                        <input
+class="workbench-settings-text-input is-mono" type="text"
                           :value="editorCompletionTriggersText"
                           @change="handleCsvFieldChange('editor', 'completionTriggers', $event, '补全触发字符已保存')" />
                       </div>
@@ -491,7 +520,8 @@
                         <div class="title">建议延迟</div>
                       </div>
                       <div class="workbench-settings-control">
-                        <input class="workbench-settings-number" type="number" min="0" max="2000"
+                        <input
+class="workbench-settings-number" type="number" min="0" max="2000"
                           :value="appStore.settings.editor.suggestionDelay"
                           @change="handleNumberFieldChange('editor', 'suggestionDelay', $event, 0, 2000, '补全延迟已保存')" />
                       </div>
@@ -507,7 +537,8 @@
                         <div class="title">默认 shebang</div>
                       </div>
                       <div class="workbench-settings-control control-grow">
-                        <input class="workbench-settings-text-input is-mono" type="text"
+                        <input
+class="workbench-settings-text-input is-mono" type="text"
                           :value="appStore.settings.editor.defaultShebang"
                           @change="handleTextFieldChange('editor', 'defaultShebang', $event, '默认脚本模板已保存')" />
                       </div>
@@ -518,7 +549,8 @@
                         <div class="title">默认严格模式</div>
                       </div>
                       <div class="workbench-settings-control">
-                        <button type="button" class="workbench-settings-switch"
+                        <button
+type="button" class="workbench-settings-switch"
                           :class="{ 'is-on': appStore.settings.editor.strictModeByDefault }"
                           :aria-pressed="appStore.settings.editor.strictModeByDefault"
                           @click="toggleSetting('editor', 'strictModeByDefault', '默认脚本模板已保存')">
@@ -533,7 +565,8 @@
                         <div class="desc">仅恢复本分类，不影响其他设置。</div>
                       </div>
                       <div class="workbench-settings-control">
-                        <button type="button" class="workbench-settings-button"
+                        <button
+type="button" class="workbench-settings-button"
                           @click="resetSection('editor', '编辑器设置已恢复默认')">
                           重置为默认
                         </button>
@@ -557,7 +590,8 @@
                         <div class="title">默认 shell</div>
                       </div>
                       <div class="workbench-settings-control control-grow">
-                        <input class="workbench-settings-text-input is-mono" type="text"
+                        <input
+class="workbench-settings-text-input is-mono" type="text"
                           :value="appStore.settings.terminal.defaultShell"
                           @change="handleTextFieldChange('terminal', 'defaultShell', $event, '终端 shell 已保存')" />
                       </div>
@@ -568,7 +602,8 @@
                         <div class="title">启动参数</div>
                       </div>
                       <div class="workbench-settings-control control-grow">
-                        <input class="workbench-settings-text-input is-mono" type="text"
+                        <input
+class="workbench-settings-text-input is-mono" type="text"
                           :value="appStore.settings.terminal.shellArgs"
                           @change="handleTextFieldChange('terminal', 'shellArgs', $event, '终端 shell 已保存')" />
                       </div>
@@ -579,7 +614,8 @@
                         <div class="title">默认工作目录</div>
                       </div>
                       <div class="workbench-settings-control">
-                        <select class="workbench-settings-select" :value="appStore.settings.terminal.workingDirectory"
+                        <select
+class="workbench-settings-select" :value="appStore.settings.terminal.workingDirectory"
                           @change="handleSelectFieldChange('terminal', 'workingDirectory', $event, '终端目录策略已保存')">
                           <option value="current-file">跟随当前文件</option>
                           <option value="workspace-root">工作区根目录</option>
@@ -592,7 +628,8 @@
                         <div class="title">继承环境变量</div>
                       </div>
                       <div class="workbench-settings-control">
-                        <button type="button" class="workbench-settings-switch"
+                        <button
+type="button" class="workbench-settings-switch"
                           :class="{ 'is-on': appStore.settings.terminal.inheritEnvironment }"
                           :aria-pressed="appStore.settings.terminal.inheritEnvironment"
                           @click="toggleSetting('terminal', 'inheritEnvironment', '终端目录策略已保存')">
@@ -611,7 +648,8 @@
                         <div class="title">字体</div>
                       </div>
                       <div class="workbench-settings-control">
-                        <input class="workbench-settings-text-input" type="text"
+                        <input
+class="workbench-settings-text-input" type="text"
                           :value="appStore.settings.terminal.fontFamily"
                           @change="handleTextFieldChange('terminal', 'fontFamily', $event, '终端字体已保存')" />
                       </div>
@@ -622,7 +660,8 @@
                         <div class="title">字号</div>
                       </div>
                       <div class="workbench-settings-control">
-                        <input class="workbench-settings-number" type="number" min="11" max="20"
+                        <input
+class="workbench-settings-number" type="number" min="11" max="20"
                           :value="appStore.settings.terminal.fontSize"
                           @change="handleNumberFieldChange('terminal', 'fontSize', $event, 11, 20, '终端字体已保存')" />
                       </div>
@@ -633,7 +672,8 @@
                         <div class="title">行高</div>
                       </div>
                       <div class="workbench-settings-control">
-                        <select class="workbench-settings-select" :value="appStore.settings.terminal.lineHeight"
+                        <select
+class="workbench-settings-select" :value="appStore.settings.terminal.lineHeight"
                           @change="handleSelectFieldChange('terminal', 'lineHeight', $event, '终端外观已保存')">
                           <option value="1.2">1.2 倍</option>
                           <option value="1.4">1.4 倍</option>
@@ -648,7 +688,8 @@
                       </div>
                       <div class="workbench-settings-control">
                         <div class="workbench-settings-segmented">
-                          <button v-for="cursorStyle in cursorStyleOptions" :key="cursorStyle.value" type="button"
+                          <button
+v-for="cursorStyle in cursorStyleOptions" :key="cursorStyle.value" type="button"
                             class="segment"
                             :class="{ 'is-active': appStore.settings.terminal.cursorStyle === cursorStyle.value }"
                             @click="patchSection('terminal', { cursorStyle: cursorStyle.value }, '终端外观已保存')">
@@ -664,7 +705,8 @@
                         <div v-if="item.description" class="desc">{{ item.description }}</div>
                       </div>
                       <div class="workbench-settings-control">
-                        <button type="button" class="workbench-settings-switch"
+                        <button
+type="button" class="workbench-settings-switch"
                           :class="{ 'is-on': appStore.settings.terminal[item.key] }"
                           :aria-pressed="appStore.settings.terminal[item.key]"
                           @click="toggleSetting('terminal', item.key, '终端交互设置已保存')">
@@ -678,7 +720,8 @@
                         <div class="title">回看缓冲区</div>
                       </div>
                       <div class="workbench-settings-control">
-                        <input class="workbench-settings-number" type="number" min="1000" max="20000" step="500"
+                        <input
+class="workbench-settings-number" type="number" min="1000" max="20000" step="500"
                           :value="appStore.settings.terminal.scrollback"
                           @change="handleNumberFieldChange('terminal', 'scrollback', $event, 1000, 20000, '终端交互设置已保存')" />
                       </div>
@@ -690,7 +733,8 @@
                       </div>
                       <div class="workbench-settings-control">
                         <div class="workbench-settings-segmented">
-                          <button v-for="behavior in rightClickOptions" :key="behavior.value" type="button"
+                          <button
+v-for="behavior in rightClickOptions" :key="behavior.value" type="button"
                             class="segment"
                             :class="{ 'is-active': appStore.settings.terminal.rightClickBehavior === behavior.value }"
                             @click="patchSection('terminal', { rightClickBehavior: behavior.value }, '终端交互设置已保存')">
@@ -706,7 +750,8 @@
                       </div>
                       <div class="workbench-settings-control">
                         <div class="workbench-settings-segmented">
-                          <button v-for="bell in bellOptions" :key="bell.value" type="button" class="segment"
+                          <button
+v-for="bell in bellOptions" :key="bell.value" type="button" class="segment"
                             :class="{ 'is-active': appStore.settings.terminal.bellMode === bell.value }"
                             @click="patchSection('terminal', { bellMode: bell.value }, '终端交互设置已保存')">
                             {{ bell.label }}
@@ -721,7 +766,8 @@
                         <div class="desc">保活逻辑不受影响，只恢复界面与行为偏好。</div>
                       </div>
                       <div class="workbench-settings-control">
-                        <button type="button" class="workbench-settings-button"
+                        <button
+type="button" class="workbench-settings-button"
                           @click="resetSection('terminal', '终端设置已恢复默认')">
                           重置为默认
                         </button>
@@ -745,7 +791,8 @@
                         <div class="title">默认解释器</div>
                       </div>
                       <div class="workbench-settings-control control-grow">
-                        <input class="workbench-settings-text-input is-mono" type="text"
+                        <input
+class="workbench-settings-text-input is-mono" type="text"
                           :value="appStore.settings.run.defaultInterpreter"
                           @change="handleTextFieldChange('run', 'defaultInterpreter', $event, '运行设置已保存')" />
                       </div>
@@ -756,7 +803,8 @@
                         <div class="title">工作目录</div>
                       </div>
                       <div class="workbench-settings-control">
-                        <select class="workbench-settings-select" :value="appStore.settings.run.workingDirectory"
+                        <select
+class="workbench-settings-select" :value="appStore.settings.run.workingDirectory"
                           @change="handleSelectFieldChange('run', 'workingDirectory', $event, '运行设置已保存')">
                           <option value="script-dir">脚本所在目录</option>
                           <option value="workspace-root">工作区根目录</option>
@@ -770,7 +818,8 @@
                         <div v-if="item.description" class="desc">{{ item.description }}</div>
                       </div>
                       <div class="workbench-settings-control">
-                        <button type="button" class="workbench-settings-switch"
+                        <button
+type="button" class="workbench-settings-switch"
                           :class="{ 'is-on': appStore.settings.run[item.key] }"
                           :aria-pressed="appStore.settings.run[item.key]"
                           @click="toggleSetting('run', item.key, '运行设置已保存')">
@@ -784,7 +833,8 @@
                         <div class="title">停止超时</div>
                       </div>
                       <div class="workbench-settings-control">
-                        <input class="workbench-settings-number" type="number" min="1" max="30"
+                        <input
+class="workbench-settings-number" type="number" min="1" max="30"
                           :value="appStore.settings.run.stopTimeoutSeconds"
                           @change="handleNumberFieldChange('run', 'stopTimeoutSeconds', $event, 1, 30, '运行设置已保存')" />
                       </div>
@@ -801,13 +851,17 @@
                       <span class="cell-action">操作</span>
                     </div>
 
-                    <div v-for="envItem in runEnvironmentVariables" :key="envItem.id"
+                    <div
+v-for="envItem in runEnvironmentVariables" :key="envItem.id"
                       class="workbench-settings-list-row env-grid">
-                      <input class="workbench-settings-text-input is-mono" type="text" :value="envItem.key"
+                      <input
+class="workbench-settings-text-input is-mono" type="text" :value="envItem.key"
                         @change="handleEnvironmentVariableChange(envItem.id, 'key', $event)" />
-                      <input class="workbench-settings-text-input is-mono" type="text" :value="envItem.value"
+                      <input
+class="workbench-settings-text-input is-mono" type="text" :value="envItem.value"
                         @change="handleEnvironmentVariableChange(envItem.id, 'value', $event)" />
-                      <button type="button" class="workbench-settings-icon-button" aria-label="删除环境变量"
+                      <button
+type="button" class="workbench-settings-icon-button" aria-label="删除环境变量"
                         @click="removeEnvironmentVariable(envItem.id)">
                         <Trash2 class="h-3.5 w-3.5" />
                       </button>
@@ -830,7 +884,8 @@
                         <div class="title">保留已结束的终端</div>
                       </div>
                       <div class="workbench-settings-control">
-                        <input class="workbench-settings-number" type="number" min="1" max="20"
+                        <input
+class="workbench-settings-number" type="number" min="1" max="20"
                           :value="appStore.settings.run.preservedTerminalCount"
                           @change="handleNumberFieldChange('run', 'preservedTerminalCount', $event, 1, 20, '运行设置已保存')" />
                       </div>
@@ -842,7 +897,8 @@
                         <div class="desc">不会影响当前已经在运行的终端任务。</div>
                       </div>
                       <div class="workbench-settings-control">
-                        <button type="button" class="workbench-settings-button"
+                        <button
+type="button" class="workbench-settings-button"
                           @click="resetSection('run', '运行设置已恢复默认')">
                           重置为默认
                         </button>
@@ -866,7 +922,8 @@
                         <div class="title">启用 shfmt</div>
                       </div>
                       <div class="workbench-settings-control">
-                        <button type="button" class="workbench-settings-switch"
+                        <button
+type="button" class="workbench-settings-switch"
                           :class="{ 'is-on': appStore.settings.style.enableShfmt }"
                           :aria-pressed="appStore.settings.style.enableShfmt"
                           @click="toggleSetting('style', 'enableShfmt', '格式化设置已保存')">
@@ -880,7 +937,8 @@
                         <div class="title">缩进大小</div>
                       </div>
                       <div class="workbench-settings-control">
-                        <input class="workbench-settings-number" type="number" min="2" max="8"
+                        <input
+class="workbench-settings-number" type="number" min="2" max="8"
                           :value="appStore.settings.style.shfmtIndentSize"
                           @change="handleNumberFieldChange('style', 'shfmtIndentSize', $event, 2, 8, '格式化设置已保存')" />
                       </div>
@@ -892,7 +950,8 @@
                       </div>
                       <div class="workbench-settings-control">
                         <div class="workbench-settings-segmented">
-                          <button v-for="brace in braceStyleOptions" :key="brace.value" type="button" class="segment"
+                          <button
+v-for="brace in braceStyleOptions" :key="brace.value" type="button" class="segment"
                             :class="{ 'is-active': appStore.settings.style.functionBraceStyle === brace.value }"
                             @click="patchSection('style', { functionBraceStyle: brace.value }, '格式化设置已保存')">
                             {{ brace.label }}
@@ -907,7 +966,8 @@
                         <div v-if="item.description" class="desc">{{ item.description }}</div>
                       </div>
                       <div class="workbench-settings-control">
-                        <button type="button" class="workbench-settings-switch"
+                        <button
+type="button" class="workbench-settings-switch"
                           :class="{ 'is-on': appStore.settings.style[item.key] }"
                           :aria-pressed="appStore.settings.style[item.key]"
                           @click="toggleSetting('style', item.key, '格式化设置已保存')">
@@ -921,7 +981,8 @@
                         <div class="title">语言变体</div>
                       </div>
                       <div class="workbench-settings-control">
-                        <select class="workbench-settings-select" :value="appStore.settings.style.languageVariant"
+                        <select
+class="workbench-settings-select" :value="appStore.settings.style.languageVariant"
                           @change="handleSelectFieldChange('style', 'languageVariant', $event, '格式化设置已保存')">
                           <option value="bash">bash</option>
                           <option value="posix">posix</option>
@@ -939,7 +1000,8 @@
                         <div class="title">启用 ShellCheck</div>
                       </div>
                       <div class="workbench-settings-control">
-                        <button type="button" class="workbench-settings-switch"
+                        <button
+type="button" class="workbench-settings-switch"
                           :class="{ 'is-on': appStore.settings.style.enableShellcheck }"
                           :aria-pressed="appStore.settings.style.enableShellcheck"
                           @click="toggleSetting('style', 'enableShellcheck', 'ShellCheck 设置已保存')">
@@ -954,7 +1016,8 @@
                       </div>
                       <div class="workbench-settings-control">
                         <div class="workbench-settings-segmented is-wide">
-                          <button v-for="level in diagnosticLevelOptions" :key="level.value" type="button"
+                          <button
+v-for="level in diagnosticLevelOptions" :key="level.value" type="button"
                             class="segment"
                             :class="{ 'is-active': appStore.settings.style.minimumDiagnosticLevel === level.value }"
                             @click="patchSection('style', { minimumDiagnosticLevel: level.value }, 'ShellCheck 设置已保存')">
@@ -969,7 +1032,8 @@
                         <div class="title">默认 shell</div>
                       </div>
                       <div class="workbench-settings-control">
-                        <select class="workbench-settings-select" :value="appStore.settings.style.shellDialect"
+                        <select
+class="workbench-settings-select" :value="appStore.settings.style.shellDialect"
                           @change="handleSelectFieldChange('style', 'shellDialect', $event, 'ShellCheck 设置已保存')">
                           <option value="bash">bash</option>
                           <option value="sh">sh</option>
@@ -983,7 +1047,8 @@
                         <div class="title">忽略规则</div>
                       </div>
                       <div class="workbench-settings-control control-grow">
-                        <input class="workbench-settings-text-input is-mono" type="text" :value="styleIgnoredRulesText"
+                        <input
+class="workbench-settings-text-input is-mono" type="text" :value="styleIgnoredRulesText"
                           @change="handleCsvFieldChange('style', 'ignoredRules', $event, 'ShellCheck 设置已保存')" />
                       </div>
                     </div>
@@ -993,7 +1058,8 @@
                         <div class="title">显示行宽参考线</div>
                       </div>
                       <div class="workbench-settings-control">
-                        <input class="workbench-settings-number" type="number" min="60" max="240"
+                        <input
+class="workbench-settings-number" type="number" min="60" max="240"
                           :value="appStore.settings.style.rulerColumn"
                           @change="handleNumberFieldChange('style', 'rulerColumn', $event, 60, 240, '行宽设置已保存')" />
                       </div>
@@ -1004,7 +1070,8 @@
                         <div class="title">重置代码风格设置</div>
                       </div>
                       <div class="workbench-settings-control">
-                        <button type="button" class="workbench-settings-button"
+                        <button
+type="button" class="workbench-settings-button"
                           @click="resetSection('style', '代码风格设置已恢复默认')">
                           重置为默认
                         </button>
@@ -1029,7 +1096,8 @@
                       <span>作用域</span>
                     </div>
 
-                    <div v-for="item in filteredKeybindingItems" :key="item.command"
+                    <div
+v-for="item in filteredKeybindingItems" :key="item.command"
                       class="workbench-settings-list-row keybind-grid">
                       <div>
                         <div class="workbench-settings-list-title">{{ item.title }}</div>
@@ -1052,7 +1120,8 @@
                         <div class="desc">用于描述展示用的修饰键，而不是修改系统级快捷键。</div>
                       </div>
                       <div class="workbench-settings-control">
-                        <select class="workbench-settings-select"
+                        <select
+class="workbench-settings-select"
                           :value="appStore.settings.keybinds.keyboardLayoutPreset"
                           @change="handleSelectFieldChange('keybinds', 'keyboardLayoutPreset', $event, '键位布局已保存')">
                           <option value="windows">Windows / Linux</option>
@@ -1091,7 +1160,8 @@
                         <div class="title">启用 Git 集成</div>
                       </div>
                       <div class="workbench-settings-control">
-                        <button type="button" class="workbench-settings-switch"
+                        <button
+type="button" class="workbench-settings-switch"
                           :class="{ 'is-on': appStore.settings.integrations.gitEnabled }"
                           :aria-pressed="appStore.settings.integrations.gitEnabled"
                           @click="toggleSetting('integrations', 'gitEnabled', 'Git 设置已保存')">
@@ -1105,7 +1175,8 @@
                         <div class="title">{{ field.title }}</div>
                       </div>
                       <div class="workbench-settings-control control-grow">
-                        <input class="workbench-settings-text-input" type="text"
+                        <input
+class="workbench-settings-text-input" type="text"
                           :value="appStore.settings.integrations[field.key]"
                           @change="handleTextFieldChange('integrations', field.key, $event, 'Git 设置已保存')" />
                       </div>
@@ -1116,7 +1187,8 @@
                         <div class="title">自动获取</div>
                       </div>
                       <div class="workbench-settings-control">
-                        <button type="button" class="workbench-settings-switch"
+                        <button
+type="button" class="workbench-settings-switch"
                           :class="{ 'is-on': appStore.settings.integrations.gitAutoFetch }"
                           :aria-pressed="appStore.settings.integrations.gitAutoFetch"
                           @click="toggleSetting('integrations', 'gitAutoFetch', 'Git 设置已保存')">
@@ -1130,7 +1202,8 @@
                         <div class="title">签名提交</div>
                       </div>
                       <div class="workbench-settings-control">
-                        <button type="button" class="workbench-settings-switch"
+                        <button
+type="button" class="workbench-settings-switch"
                           :class="{ 'is-on': appStore.settings.integrations.gitSignedCommit }"
                           :aria-pressed="appStore.settings.integrations.gitSignedCommit"
                           @click="toggleSetting('integrations', 'gitSignedCommit', 'Git 设置已保存')">
@@ -1149,7 +1222,8 @@
                         <div class="title">默认私钥路径</div>
                       </div>
                       <div class="workbench-settings-control control-grow">
-                        <input class="workbench-settings-text-input is-mono" type="text"
+                        <input
+class="workbench-settings-text-input is-mono" type="text"
                           :value="appStore.settings.integrations.sshIdentityPath"
                           @change="handleTextFieldChange('integrations', 'sshIdentityPath', $event, 'SSH 设置已保存')" />
                       </div>
@@ -1160,7 +1234,8 @@
                         <div class="title">使用 ssh-agent</div>
                       </div>
                       <div class="workbench-settings-control">
-                        <button type="button" class="workbench-settings-switch"
+                        <button
+type="button" class="workbench-settings-switch"
                           :class="{ 'is-on': appStore.settings.integrations.sshUseAgent }"
                           :aria-pressed="appStore.settings.integrations.sshUseAgent"
                           @click="toggleSetting('integrations', 'sshUseAgent', 'SSH 设置已保存')">
@@ -1174,7 +1249,8 @@
                         <div class="title">连接超时</div>
                       </div>
                       <div class="workbench-settings-control">
-                        <input class="workbench-settings-number" type="number" min="3" max="60"
+                        <input
+class="workbench-settings-number" type="number" min="3" max="60"
                           :value="appStore.settings.integrations.sshConnectTimeoutSeconds"
                           @change="handleNumberFieldChange('integrations', 'sshConnectTimeoutSeconds', $event, 3, 60, 'SSH 设置已保存')" />
                       </div>
@@ -1290,7 +1366,8 @@
       </main>
     </div>
 
-    <AiProviderSettings v-model:draft="aiSettingsDraft" v-model:api-key="aiSettingsApiKey" :open="isAiSettingsOpen"
+    <AiProviderSettings
+v-model:draft="aiSettingsDraft" v-model:api-key="aiSettingsApiKey" :open="isAiSettingsOpen"
       :config="aiConfig" :profiles="aiProviderProfiles" :load-profile-detail="loadAiProviderProfileDetail"
       @close="isAiSettingsOpen = false" @save="saveAiSettings" @save-credentials="saveAiCredentials"
       @test-provider="testAiProvider" @switch-profile="switchAiProviderProfile" />

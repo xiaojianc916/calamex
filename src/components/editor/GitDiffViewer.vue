@@ -282,7 +282,7 @@ watch(
   overflow: hidden;
 }
 
-.git-diff-viewer-surface :deep(.monaco-diff-editor) {
+.git-diff-viewer-surface :global(.monaco-diff-editor) {
   width: 100%;
   height: 100%;
   outline: none;

@@ -14,15 +14,12 @@ import { useAiWebSources } from '@/composables/useAiWebSources';
 import { findAiServicePlatformByModel } from '@/constants/ai-providers';
 import type {
   IAiAgentRun,
-  IAiAgentStepToolResultSummary,
-  IAiAgentStepWebSourceSummary,
   IAiChatMessage,
   IAiConfigPayload,
   IAiProviderSettingsActionFeedback,
   IAiTaskPlanStep,
   IAiToolActivityInline,
   IAiToolCall,
-  IAiWebSourceEntry,
   TAiChatMessageActionId,
   TAiModelRole,
   TAiToolConfirmationDecision,
@@ -105,12 +102,38 @@ const aiProviderSummaryTitle = computed(() => {
 const historyThreads = computed(() => assistant.historyThreads.value.slice(-MAX_HISTORY_MESSAGES).reverse());
 const historyCountLabel = computed(() => `最近 ${historyThreads.value.length} 组`);
 const planStore = computed(() => assistant.agentPlan.store);
+const readPlanStoreValue = <T,>(value: T | { value: T }): T => {
+  if (typeof value === 'object' && value !== null && 'value' in value) {
+    return value.value;
+  }
+
+  return value;
+};
+const planHasPlan = computed(() => readPlanStoreValue(planStore.value.hasPlan));
+const planIsClassifying = computed(() => readPlanStoreValue(planStore.value.isClassifying));
+const planIsPlanning = computed(() => readPlanStoreValue(planStore.value.isPlanning));
+const planClassificationReason = computed(() => readPlanStoreValue(planStore.value.classificationReason));
+const planErrorMessage = computed(() => readPlanStoreValue(planStore.value.errorMessage));
+const planIsApproving = computed(() => readPlanStoreValue(planStore.value.isApproving));
+const planApprovedAt = computed(() => readPlanStoreValue(planStore.value.approvedAt));
+const planActiveRun = computed<IAiAgentRun | null>(() => readPlanStoreValue(planStore.value.activeRun));
+const planActiveToolActivity = computed<IAiToolActivityInline | null>(() =>
+  readPlanStoreValue(planStore.value.activeToolActivity),
+);
+const planPendingToolConfirmation = computed(() => readPlanStoreValue(planStore.value.pendingToolConfirmation));
+const planSteps = computed<IAiTaskPlanStep[]>(() => readPlanStoreValue(planStore.value.steps));
+const planActiveGoal = computed(() => readPlanStoreValue(planStore.value.activeGoal));
+const planActiveRunId = computed<string | null>(() => readPlanStoreValue(planStore.value.activeRunId));
+const networkPermission = computed(() => readPlanStoreValue(agentNetwork.store.networkPermission));
+const setPlanErrorMessage = (message: string): void => {
+  Reflect.set(planStore.value, 'errorMessage', message);
+};
 const hasPlannedAgentState = computed(() =>
-  planStore.value.hasPlan ||
-  planStore.value.isClassifying ||
-  planStore.value.isPlanning ||
-  Boolean(planStore.value.errorMessage) ||
-  Boolean(planStore.value.activeRun),
+  planHasPlan.value ||
+  planIsClassifying.value ||
+  planIsPlanning.value ||
+  Boolean(planErrorMessage.value) ||
+  Boolean(planActiveRun.value),
 );
 const planVisible = computed(() => {
   if (assistant.activeMode.value !== 'plan') {
@@ -118,9 +141,9 @@ const planVisible = computed(() => {
   }
 
   return hasPlannedAgentState.value ||
-    Boolean(planStore.value.pendingToolConfirmation && (
-      planStore.value.hasPlan ||
-      planStore.value.activeRun
+    Boolean(planPendingToolConfirmation.value && (
+      planHasPlan.value ||
+      planActiveRun.value
     ));
 });
 const directToolConfirmationVisible = computed(() => {
@@ -128,16 +151,16 @@ const directToolConfirmationVisible = computed(() => {
     return false;
   }
 
-  return Boolean(planStore.value.pendingToolConfirmation) && !planVisible.value;
+  return Boolean(planPendingToolConfirmation.value) && !planVisible.value;
 });
 const activePlanStep = computed(() => {
-  const currentStepId = planStore.value.activeRun?.currentStepId;
+  const currentStepId = planActiveRun.value?.currentStepId;
 
   if (currentStepId) {
-    return planStore.value.steps.find((step) => step.id === currentStepId) ?? null;
+    return planSteps.value.find((step) => step.id === currentStepId) ?? null;
   }
 
-  return planStore.value.steps.find((step) => step.isActive) ?? null;
+  return planSteps.value.find((step) => step.isActive) ?? null;
 });
 const webSourcesVisible = computed(() => {
   if (assistant.activeMode.value === 'chat') {
@@ -200,7 +223,7 @@ const activeAgentFlowMessage = computed<IAiChatMessage | null>(() => {
     return null;
   }
 
-  const run = planStore.value.activeRun;
+  const run = planActiveRun.value;
   const toolCalls = buildAgentFlowToolCalls(run);
   const latestAnswer = run
     ? planStore.value.getStepFinalAnswers(run.id).at(-1) ?? null
@@ -395,81 +418,8 @@ const getHistoryTimeLabel = (timestampText: string): string => {
 
 const getHistoryMessageCountLabel = (messages: IAiChatMessage[]): string => `${messages.length} 条消息`;
 
-const clipQueryPreview = (value: string): string => {
-  const characters = Array.from(value.replace(/\s+/g, ' ').trim());
-
-  if (characters.length <= 48) {
-    return characters.join('');
-  }
-
-  return `${characters.slice(0, 48).join('')}…`;
-};
-
-const toStepWebSourceSummaries = (
-  sources: readonly IAiWebSourceEntry[],
-): IAiAgentStepWebSourceSummary[] =>
-  sources.map((source) => ({
-    id: source.id,
-    title: source.result.title,
-    url: source.result.url,
-    sourceType: source.result.sourceType,
-    status: source.status,
-    queryPreview: clipQueryPreview(source.query),
-    fetchedAt: source.fetchedSource?.fetchedAt ?? source.result.fetchedAt,
-    ...(source.fetchedSource?.textRef ? { textRef: source.fetchedSource.textRef } : {}),
-    ...(source.fetchedSource?.excerpt ? { excerpt: source.fetchedSource.excerpt } : {}),
-  }));
-
-const buildWebToolResults = (
-  runId: string,
-  step: IAiTaskPlanStep,
-  sources: readonly IAiWebSourceEntry[],
-  status: 'succeeded' | 'failed',
-  startedAt: string,
-  endedAt: string,
-  errorMessage?: string,
-): IAiAgentStepToolResultSummary[] => {
-  const resultIdBase = `${runId}:${step.id}:${endedAt}`;
-  const results: IAiAgentStepToolResultSummary[] = [];
-
-  if (step.tools.includes('web_search')) {
-    results.push({
-      id: `${resultIdBase}:web_search`,
-      runId,
-      stepId: step.id,
-      toolName: 'web_search',
-      status,
-      summary: status === 'succeeded'
-        ? `搜索到 ${sources.length} 个来源`
-        : errorMessage ?? '网络搜索失败',
-      startedAt,
-      endedAt,
-    });
-  }
-
-  if (step.tools.includes('web_fetch')) {
-    const fetchedCount = sources.filter((source) => source.status === 'fetched').length;
-    const fetchedRef = sources.find((source) => source.fetchedSource?.textRef)?.fetchedSource?.textRef;
-    results.push({
-      id: `${resultIdBase}:web_fetch`,
-      runId,
-      stepId: step.id,
-      toolName: 'web_fetch',
-      status,
-      summary: status === 'succeeded'
-        ? `读取 ${fetchedCount} 个网页正文引用`
-        : errorMessage ?? '网页读取失败',
-      startedAt,
-      endedAt,
-      ...(fetchedRef ? { outputRef: fetchedRef } : {}),
-    });
-  }
-
-  return results;
-};
-
 const setPlanError = (error: unknown, fallback: string): void => {
-  planStore.value.errorMessage = toErrorMessage(error, fallback);
+  setPlanErrorMessage(toErrorMessage(error, fallback));
 };
 
 const handleSearchWebSources = async (query: string): Promise<void> => {
@@ -498,7 +448,7 @@ const handleFetchWebSource = async (sourceId: string): Promise<void> => {
 };
 
 const getActiveAgentRunId = (): string | null =>
-  planStore.value.activeRunId ?? planStore.value.activeRun?.id ?? null;
+  planActiveRunId.value ?? planActiveRun.value?.id ?? null;
 
 const withAgentRunAction = async <T,>(
   action: (runId: string) => Promise<T>,
@@ -507,12 +457,12 @@ const withAgentRunAction = async <T,>(
   const runId = getActiveAgentRunId();
 
   if (!runId) {
-    planStore.value.errorMessage = '当前没有可执行的 Agent run。';
+    setPlanErrorMessage('当前没有可执行的 Agent run。');
     return null;
   }
 
   isAgentRunActionPending.value = true;
-  planStore.value.errorMessage = '';
+  setPlanErrorMessage('');
 
   try {
     return await action(runId);
@@ -521,57 +471,6 @@ const withAgentRunAction = async <T,>(
     return null;
   } finally {
     isAgentRunActionPending.value = false;
-  }
-};
-
-const findRunningStep = (run: IAiAgentRun | null): IAiTaskPlanStep | null => {
-  if (!run) {
-    return null;
-  }
-
-  if (run.currentStepId) {
-    return run.steps.find((step) => step.id === run.currentStepId && step.status === 'running') ?? null;
-  }
-
-  return run.steps.find((step) => step.status === 'running') ?? null;
-};
-
-const runWebToolsForStep = async (step: IAiTaskPlanStep): Promise<boolean> => {
-  if (!webSources.shouldRunWebToolsForStep(step)) {
-    return false;
-  }
-
-  const runId = getActiveAgentRunId();
-  const startedAt = new Date().toISOString();
-
-  if (!runId) {
-    planStore.value.errorMessage = '当前没有可记录工具结果的 Agent run。';
-    return true;
-  }
-
-  try {
-    const sources = await webSources.runStepWebTools(step);
-    const endedAt = new Date().toISOString();
-    planStore.value.setStepWebSources(runId, step.id, toStepWebSourceSummaries(sources));
-    planStore.value.appendStepToolResults(
-      runId,
-      step.id,
-      buildWebToolResults(runId, step, sources, 'succeeded', startedAt, endedAt),
-    );
-    return true;
-  } catch (error) {
-    const endedAt = new Date().toISOString();
-    const message = toErrorMessage(error, '执行 Web 工具失败。');
-    const currentSources = webSources.sources.value.filter((source) => source.stepId === step.id);
-
-    planStore.value.setStepWebSources(runId, step.id, toStepWebSourceSummaries(currentSources));
-    planStore.value.appendStepToolResults(
-      runId,
-      step.id,
-      buildWebToolResults(runId, step, currentSources, 'failed', startedAt, endedAt, message),
-    );
-    setPlanError(error, '执行 Web 工具失败。');
-    return true;
   }
 };
 const handleUpdatePlanStepTitle = (stepId: string, title: string): void => {
@@ -598,8 +497,8 @@ const handleApprovePlan = async (): Promise<void> => {
   try {
     await assistant.agentPlan.approvePlan();
     await agentRun.runPlan(
-      planStore.value.activeGoal,
-      planStore.value.steps,
+      planActiveGoal.value,
+      planSteps.value,
       assistant.currentReferences.value,
     );
   } catch (error) {
@@ -614,7 +513,7 @@ const handleResetPlan = (): void => {
 const handleRunStep = async (): Promise<void> => {
   await withAgentRunAction(
     (runId) => agentRun.runStepWithSidecar(runId, {
-      goal: planStore.value.activeGoal,
+      goal: planActiveGoal.value,
       context: assistant.currentReferences.value,
       workspaceRootPath: props.workspaceRootPath,
     }),
@@ -645,16 +544,16 @@ const handleCancelRun = async (): Promise<void> => {
 const handleResolveToolConfirmation = async (
   decision: TAiToolConfirmationDecision,
 ): Promise<void> => {
-  const confirmation = planStore.value.pendingToolConfirmation;
+  const confirmation = planPendingToolConfirmation.value;
 
   if (!confirmation) {
-    planStore.value.errorMessage = '当前没有待处理的工具确认。';
+    setPlanErrorMessage('当前没有待处理的工具确认。');
     return;
   }
 
-  if (!planStore.value.activeRun) {
+  if (!planActiveRun.value) {
     isAgentRunActionPending.value = true;
-    planStore.value.errorMessage = '';
+    setPlanErrorMessage('');
 
     try {
       await assistant.resolveSidecarToolConfirmation(decision);
@@ -669,7 +568,7 @@ const handleResolveToolConfirmation = async (
 
   if (agentRun.hasSidecarStepToolConfirmation(confirmation.id)) {
     isAgentRunActionPending.value = true;
-    planStore.value.errorMessage = '';
+    setPlanErrorMessage('');
 
     try {
       await agentRun.resolveSidecarStepToolConfirmation(confirmation.id, decision);
@@ -682,7 +581,7 @@ const handleResolveToolConfirmation = async (
     return;
   }
 
-  planStore.value.errorMessage = 'Legacy Agent 工具确认链已移除，请使用官方 sidecar 审批链。';
+  setPlanErrorMessage('Legacy Agent 工具确认链已移除，请使用官方 sidecar 审批链。');
 };
 
 const saveSettings = async (
@@ -847,22 +746,20 @@ onBeforeUnmount(() => {
     </div>
     <AiWebSourcesPanel v-if="webSourcesVisible" :sources="webSources.sources.value"
       :activity="planVisible ? null : webSources.activity.value" :error-message="webSources.errorMessage.value"
-      :is-searching="webSources.isSearching.value" :network-permission="agentNetwork.store.networkPermission"
+      :is-searching="webSources.isSearching.value" :network-permission="networkPermission"
       @search="handleSearchWebSources" @fetch-source="handleFetchWebSource" @clear="webSources.clear" />
     <div class="ai-composer-shell" :class="{ 'has-plan': planVisible }">
-      <AiPlanModePanel v-if="planVisible" :goal="planStore.activeGoal" :steps="planStore.steps"
-        :classification-reason="planStore.classificationReason" :error-message="planStore.errorMessage"
-        :is-classifying="planStore.isClassifying" :is-planning="planStore.isPlanning"
-        :is-approving="planStore.isApproving" :approved-at="planStore.approvedAt" :active-run="planStore.activeRun"
-        :is-run-action-pending="isAgentRunActionPending" :web-activity="webSources.activity.value"
-        :tool-activity="planStore.activeToolActivity" :tool-confirmation="planStore.pendingToolConfirmation"
-        @update-step-title="handleUpdatePlanStepTitle" @remove-step="handleRemovePlanStep"
-        @regenerate="handleRegeneratePlan" @approve="handleApprovePlan" @reset="handleResetPlan"
-        @run-step="handleRunStep" @pause-run="handlePauseRun" @resume-run="handleResumeRun"
+      <AiPlanModePanel v-if="planVisible" :goal="planActiveGoal" :steps="planSteps"
+        :classification-reason="planClassificationReason" :error-message="planErrorMessage"
+        :is-classifying="planIsClassifying" :is-planning="planIsPlanning" :is-approving="planIsApproving"
+        :approved-at="planApprovedAt" :active-run="planActiveRun" :is-run-action-pending="isAgentRunActionPending"
+        :web-activity="webSources.activity.value" :tool-activity="planActiveToolActivity"
+        :tool-confirmation="planPendingToolConfirmation" @update-step-title="handleUpdatePlanStepTitle"
+        @remove-step="handleRemovePlanStep" @regenerate="handleRegeneratePlan" @approve="handleApprovePlan"
+        @reset="handleResetPlan" @run-step="handleRunStep" @pause-run="handlePauseRun" @resume-run="handleResumeRun"
         @cancel-run="handleCancelRun" @resolve-tool-confirmation="handleResolveToolConfirmation" />
-      <div v-if="directToolConfirmationVisible && planStore.pendingToolConfirmation"
-        class="ai-direct-tool-confirmation">
-        <AiToolConfirmationCard :confirmation="planStore.pendingToolConfirmation" :disabled="isAgentRunActionPending"
+      <div v-if="directToolConfirmationVisible && planPendingToolConfirmation" class="ai-direct-tool-confirmation">
+        <AiToolConfirmationCard :confirmation="planPendingToolConfirmation" :disabled="isAgentRunActionPending"
           @resolve="handleResolveToolConfirmation" />
       </div>
       <AiPromptInput v-model="assistant.draft.value" :disabled="assistant.isSending.value"
@@ -1265,7 +1162,7 @@ onBeforeUnmount(() => {
       color-mix(in srgb, var(--panel-bg) 90%, var(--sidebar-bg)));
 }
 
-.ai-composer-shell :deep(.ai-plan-mode-panel) {
+.ai-composer-shell :global(.ai-plan-mode-panel) {
   border-top: 0;
   background: transparent;
   padding: 8px 10px 0;
@@ -1275,7 +1172,7 @@ onBeforeUnmount(() => {
   padding: 8px 10px 0;
 }
 
-.ai-composer-shell :deep(.ai-composer) {
+.ai-composer-shell :global(.ai-composer) {
   padding: 0 10px 10px;
 }
 

@@ -24,7 +24,8 @@ const handleRemoveStep = (stepId: string): void => {
 
 <template>
     <ol class="ai-plan-step-list">
-        <AiPlanStepItem v-for="step in steps" :key="step.id" :step="step" :can-remove="steps.length > MIN_STEP_COUNT"
+        <AiPlanStepItem
+v-for="step in steps" :key="step.id" :step="step" :can-remove="steps.length > MIN_STEP_COUNT"
             @update-title="handleUpdateTitle" @remove="handleRemoveStep" />
     </ol>
 </template>

@@ -304,7 +304,8 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="code-block-container ai-code-block" :class="{
+  <div
+class="code-block-container ai-code-block" :class="{
     'is-loading': loading,
     'is-light-surface': !isDark,
     'is-collapsed': !isExpanded,
@@ -318,7 +319,8 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="code-header-actions ai-code-block__actions">
-        <button type="button" class="code-action-btn ai-code-block__icon-button ai-code-block__toggle"
+        <button
+type="button" class="code-action-btn ai-code-block__icon-button ai-code-block__toggle"
           :aria-label="isExpanded ? '折叠代码块' : '展开代码块'" :title="isExpanded ? '折叠代码块' : '展开代码块'"
           :aria-expanded="isExpanded" :aria-controls="codeBlockBodyId" @click="toggleExpanded">
           <svg v-if="isExpanded" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
@@ -329,7 +331,8 @@ onBeforeUnmount(() => {
           </svg>
         </button>
 
-        <button type="button" class="code-action-btn ai-code-block__icon-button ai-code-block__copy"
+        <button
+type="button" class="code-action-btn ai-code-block__icon-button ai-code-block__copy"
           :aria-label="isCopied ? '已复制代码' : '复制代码'" :title="isCopied ? '已复制代码' : '复制代码'" :disabled="!canCopy"
           @click="handleCopy">
           <svg v-if="isCopied" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
@@ -424,7 +427,7 @@ onBeforeUnmount(() => {
 }
 
 /* Shiki 输出结构：pre.shiki > code > span */
-.ai-code-block :deep(pre.shiki) {
+.ai-code-block :global(pre.shiki) {
   margin: 0;
   padding: 14px 16px 16px;
   overflow: auto;
@@ -441,7 +444,7 @@ onBeforeUnmount(() => {
   scrollbar-color: rgb(255 255 255 / 0.18) transparent;
 }
 
-.ai-code-block :deep(pre.shiki code) {
+.ai-code-block :global(pre.shiki code) {
   display: block;
   min-inline-size: max-content;
   padding: 0;
@@ -453,44 +456,44 @@ onBeforeUnmount(() => {
   white-space: pre;
 }
 
-.ai-code-block :deep(pre.shiki span) {
+.ai-code-block :global(pre.shiki span) {
   font-family: inherit;
 }
 
 /* Chrome / Edge / Safari：滚动条变小 */
-.ai-code-block :deep(pre.shiki)::-webkit-scrollbar {
+.ai-code-block :global(pre.shiki)::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 
-.ai-code-block :deep(pre.shiki)::-webkit-scrollbar-track {
+.ai-code-block :global(pre.shiki)::-webkit-scrollbar-track {
   background: transparent;
 }
 
-.ai-code-block :deep(pre.shiki)::-webkit-scrollbar-thumb {
+.ai-code-block :global(pre.shiki)::-webkit-scrollbar-thumb {
   border-radius: 999px;
   background: rgb(255 255 255 / 0.18);
 }
 
-.ai-code-block :deep(pre.shiki)::-webkit-scrollbar-thumb:hover {
+.ai-code-block :global(pre.shiki)::-webkit-scrollbar-thumb:hover {
   background: rgb(255 255 255 / 0.28);
 }
 
 /* 去掉横向滚动条两侧像箭头一样的按钮 */
-.ai-code-block :deep(pre.shiki)::-webkit-scrollbar-button {
+.ai-code-block :global(pre.shiki)::-webkit-scrollbar-button {
   display: none;
   width: 0;
   height: 0;
   background: transparent;
 }
 
-.ai-code-block :deep(pre.shiki)::-webkit-scrollbar-button:single-button {
+.ai-code-block :global(pre.shiki)::-webkit-scrollbar-button:single-button {
   display: none;
   width: 0;
   height: 0;
 }
 
-.ai-code-block :deep(pre.shiki)::-webkit-scrollbar-corner {
+.ai-code-block :global(pre.shiki)::-webkit-scrollbar-corner {
   background: transparent;
 }
 
@@ -499,14 +502,14 @@ onBeforeUnmount(() => {
   padding: 7px 12px;
 }
 
-.ai-code-block.is-single-line :deep(pre.shiki) {
+.ai-code-block.is-single-line :global(pre.shiki) {
   padding: 10px 16px;
   overflow-x: auto;
   overflow-y: hidden;
   line-height: 1.45;
 }
 
-.ai-code-block.is-single-line :deep(pre.shiki code) {
+.ai-code-block.is-single-line :global(pre.shiki code) {
   line-height: inherit;
 }
 

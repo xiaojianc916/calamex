@@ -90,7 +90,8 @@ onMounted(() => {
     <slot name="before-messages"></slot>
     <template v-for="message in messages" :key="message.id">
       <slot v-if="message.id === lastAssistantMessageId" name="before-last-assistant" :message="message"></slot>
-      <AiMessageItem :message="message" :platform-id="platformId" :provider-label="providerLabel"
+      <AiMessageItem
+:message="message" :platform-id="platformId" :provider-label="providerLabel"
         @message-action="handleMessageAction" />
     </template>
     <slot name="after-messages"></slot>

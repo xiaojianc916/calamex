@@ -1,6 +1,8 @@
+import { unref } from 'vue';
+
 import { useSidecarChangedDocumentRefresh } from '@/composables/useSidecarChangedDocumentRefresh';
 import { aiService } from '@/services/modules/ai';
-import { useAiAgentStore } from '@/store/aiAgent';
+import { type TAiAgentPanelMode, useAiAgentStore } from '@/store/aiAgent';
 import {
   mapSidecarEventsToToolCalls,
   mapSidecarToolNameToAiToolName,
@@ -162,15 +164,25 @@ export const useAiAgentRun = () => {
   const { refreshSidecarChangedDocuments } = useSidecarChangedDocumentRefresh();
   const sidecarStepLoopSessions = new Map<string, ISidecarStepLoopSession>();
 
+  const getRuns = (): IAiAgentRun[] => unref(store.runs);
+  const getActiveRun = (): IAiAgentRun | null => unref(store.activeRun);
+  const getPendingToolConfirmation = () => unref(store.pendingToolConfirmation);
+  const setMode = (nextMode: TAiAgentPanelMode): void => {
+    Reflect.set(store, 'mode', nextMode);
+  };
+  const setErrorMessage = (message: string): void => {
+    Reflect.set(store, 'errorMessage', message);
+  };
+
   const applyRunPayload = (run: IAiAgentRun): IAiAgentRun => {
     store.upsertRun(run);
-    store.mode = 'agent';
-    store.errorMessage = '';
+    setMode('agent');
+    setErrorMessage('');
     return run;
   };
 
   const getRunOrThrow = (runId: string): IAiAgentRun => {
-    const run = store.runs.find((item) => item.id === runId) ?? null;
+    const run = getRuns().find((item) => item.id === runId) ?? null;
 
     if (!run) {
       throw new Error('当前没有可执行的 Agent run。');
@@ -245,12 +257,12 @@ export const useAiAgentRun = () => {
     });
 
     if (refreshResult.skippedDirtyNames.length > 0) {
-      store.errorMessage = `Agent 已修改文件，但 ${refreshResult.skippedDirtyNames.join('、')} 有未保存改动，已跳过自动刷新。`;
+      setErrorMessage(`Agent 已修改文件，但 ${refreshResult.skippedDirtyNames.join('、')} 有未保存改动，已跳过自动刷新。`);
       return;
     }
 
     if (refreshResult.failedNames.length > 0) {
-      store.errorMessage = `Agent 已修改文件，但刷新 ${refreshResult.failedNames.join('、')} 失败，请手动重新打开。`;
+      setErrorMessage(`Agent 已修改文件，但刷新 ${refreshResult.failedNames.join('、')} 失败，请手动重新打开。`);
     }
   };
 
@@ -277,7 +289,7 @@ export const useAiAgentRun = () => {
       store.clearPendingToolConfirmation();
       return applyRunPayload(run);
     } catch (error) {
-      store.errorMessage = toErrorMessage(error, '启动 Agent run 失败。');
+      setErrorMessage(toErrorMessage(error, '启动 Agent run 失败。'));
       throw error;
     }
   };
@@ -408,7 +420,7 @@ export const useAiAgentRun = () => {
     }
 
     if (projection.errorMessage) {
-      store.errorMessage = projection.errorMessage;
+      setErrorMessage(projection.errorMessage);
       return finishRunWithStepStatus(
         session.runId,
         session.stepId,
@@ -442,7 +454,7 @@ export const useAiAgentRun = () => {
     try {
       return markStepRunning(runId, stepId);
     } catch (error) {
-      store.errorMessage = toErrorMessage(error, '执行 Agent step 失败。');
+      setErrorMessage(toErrorMessage(error, '执行 Agent step 失败。'));
       throw error;
     }
   };
@@ -452,7 +464,7 @@ export const useAiAgentRun = () => {
     options: ISidecarStepLoopOptions,
   ): Promise<IAiAgentRun> => {
     try {
-      let run = store.activeRun?.id === runId ? store.activeRun : null;
+      let run = getActiveRun()?.id === runId ? getActiveRun() : null;
       let step = findRunningStep(run);
 
       if (!step) {
@@ -475,7 +487,7 @@ export const useAiAgentRun = () => {
 
       return await executeSidecarStepLoop(session);
     } catch (error) {
-      store.errorMessage = toErrorMessage(error, '执行 Agent step 失败。');
+      setErrorMessage(toErrorMessage(error, '执行 Agent step 失败。'));
       throw error;
     }
   };
@@ -557,7 +569,7 @@ export const useAiAgentRun = () => {
     }
 
     if (projection.errorMessage) {
-      store.errorMessage = projection.errorMessage;
+      setErrorMessage(projection.errorMessage);
       return finishRunWithStepStatus(
         session.runId,
         session.stepId,
@@ -593,7 +605,7 @@ export const useAiAgentRun = () => {
         };
       });
     } catch (error) {
-      store.errorMessage = toErrorMessage(error, '暂停 Agent run 失败。');
+      setErrorMessage(toErrorMessage(error, '暂停 Agent run 失败。'));
       throw error;
     }
   };
@@ -606,13 +618,13 @@ export const useAiAgentRun = () => {
         updatedAt: new Date().toISOString(),
       }));
     } catch (error) {
-      store.errorMessage = toErrorMessage(error, '继续 Agent run 失败。');
+      setErrorMessage(toErrorMessage(error, '继续 Agent run 失败。'));
       throw error;
     }
   };
 
   const cancelRun = async (runId: string): Promise<IAiAgentRun> => {
-    const confirmation = store.pendingToolConfirmation;
+    const confirmation = getPendingToolConfirmation();
     if (confirmation?.runId === runId && hasSidecarStepToolConfirmation(confirmation.id)) {
       return resolveSidecarStepToolConfirmation(confirmation.id, 'stop');
     }
@@ -622,7 +634,7 @@ export const useAiAgentRun = () => {
       store.clearPendingToolConfirmation();
       return updateRun(runId, (run) => {
         const now = new Date().toISOString();
-        const nextSteps = clearStepActivityFlags(run.steps).map((step) => (
+        const nextSteps: IAiTaskPlanStep[] = clearStepActivityFlags(run.steps).map((step): IAiTaskPlanStep => (
           step.id === run.currentStepId && step.status !== 'done'
             ? {
               ...step,
@@ -642,7 +654,7 @@ export const useAiAgentRun = () => {
         };
       });
     } catch (error) {
-      store.errorMessage = toErrorMessage(error, '取消 Agent run 失败。');
+      setErrorMessage(toErrorMessage(error, '取消 Agent run 失败。'));
       throw error;
     }
   };
@@ -661,7 +673,7 @@ export const useAiAgentRun = () => {
 
   const refreshRun = async (runId: string): Promise<IAiAgentRun> => getRunOrThrow(runId);
 
-  const loadRuns = async (): Promise<IAiAgentRun[]> => store.runs;
+  const loadRuns = async (): Promise<IAiAgentRun[]> => getRuns();
 
   return {
     store,

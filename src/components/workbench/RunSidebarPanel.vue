@@ -315,9 +315,11 @@ const handleHistoryClick = (): void => {
                 <span class="run-sidebar-title">运行</span>
 
                 <div class="run-sidebar-actions">
-                    <button type="button" class="run-sidebar-icon-button" aria-label="新建脚本" title="新建脚本"
+                    <button
+type="button" class="run-sidebar-icon-button" aria-label="新建脚本" title="新建脚本"
                         @click="emit('create-document')">
-                        <svg viewBox="0 0 16 16" class="run-sidebar-icon run-sidebar-icon-sm" fill="none"
+                        <svg
+viewBox="0 0 16 16" class="run-sidebar-icon run-sidebar-icon-sm" fill="none"
                             stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
                             aria-hidden="true">
                             <path d="M8 3.5v9" />
@@ -325,9 +327,11 @@ const handleHistoryClick = (): void => {
                         </svg>
                     </button>
 
-                    <button type="button" class="run-sidebar-icon-button" aria-label="打开终端" title="打开终端"
+                    <button
+type="button" class="run-sidebar-icon-button" aria-label="打开终端" title="打开终端"
                         @click="emit('open-terminal')">
-                        <svg viewBox="0 0 16 16" class="run-sidebar-icon run-sidebar-icon-sm" fill="none"
+                        <svg
+viewBox="0 0 16 16" class="run-sidebar-icon run-sidebar-icon-sm" fill="none"
                             stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
                             aria-hidden="true">
                             <circle cx="3.5" cy="8" r="0.9" fill="currentColor" stroke="none" />
@@ -339,7 +343,8 @@ const handleHistoryClick = (): void => {
             </div>
 
             <label class="run-sidebar-search" aria-label="搜索运行项">
-                <svg viewBox="0 0 16 16" class="run-sidebar-icon run-sidebar-icon-sm" fill="none" stroke="currentColor"
+                <svg
+viewBox="0 0 16 16" class="run-sidebar-icon run-sidebar-icon-sm" fill="none" stroke="currentColor"
                     stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                     <circle cx="7" cy="7" r="4.5" />
                     <path d="M10.5 10.5L13.5 13.5" />
@@ -353,18 +358,22 @@ const handleHistoryClick = (): void => {
         </header>
 
         <div class="run-sidebar-scroll">
-            <RunSidebarConfigsSection :collapsed="collapsedSections.configs" :rows="filteredConfigRows as IConfigRow[]"
+            <RunSidebarConfigsSection
+:collapsed="collapsedSections.configs" :rows="filteredConfigRows as IConfigRow[]"
                 :has-query="Boolean(normalizedSearchQuery)" :active-elapsed-label="activeElapsedLabel"
                 @toggle="toggleSection('configs')" @action="(row) => void handleConfigAction(row as IConfigRow)" />
 
-            <RunSidebarQuickSection :collapsed="collapsedSections.quick" :rows="filteredQuickRows as IQuickRow[]"
+            <RunSidebarQuickSection
+:collapsed="collapsedSections.quick" :rows="filteredQuickRows as IQuickRow[]"
                 @toggle="toggleSection('quick')" @action="(row) => void handleQuickAction(row as IQuickRow)" />
 
-            <RunSidebarTemplatesSection :collapsed="collapsedSections.templates" :templates="templateItems"
+            <RunSidebarTemplatesSection
+:collapsed="collapsedSections.templates" :templates="templateItems"
                 :has-query="Boolean(normalizedSearchQuery)" @toggle="toggleSection('templates')"
                 @select="handleTemplateSelect" />
 
-            <RunSidebarHistorySection :collapsed="collapsedSections.history" :entries="historyItems"
+            <RunSidebarHistorySection
+:collapsed="collapsedSections.history" :entries="historyItems"
                 :has-query="Boolean(normalizedSearchQuery)" @toggle="toggleSection('history')"
                 @open="handleHistoryClick" />
         </div>

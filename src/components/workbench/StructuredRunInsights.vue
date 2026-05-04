@@ -21,11 +21,13 @@
       </div>
 
       <div class="terminal-log-header-actions">
-        <button type="button" class="icon-button app-tooltip-target terminal-log-icon-button"
+        <button
+type="button" class="icon-button app-tooltip-target terminal-log-icon-button"
           :class="{ 'is-selected': isAutoScrollEnabled }" :data-tooltip="isAutoScrollEnabled ? '关闭自动滚动' : '开启自动滚动'"
           data-tooltip-placement="top" :aria-label="isAutoScrollEnabled ? '关闭自动滚动' : '开启自动滚动'"
           @click="isAutoScrollEnabled = !isAutoScrollEnabled">
-          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2"
+          <svg
+viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2"
             stroke-linecap="round" stroke-linejoin="round">
             <line x1="12" y1="5" x2="12" y2="15" />
             <polyline points="7 13 12 18 17 13" />
@@ -33,20 +35,24 @@
           </svg>
         </button>
 
-        <button type="button" class="icon-button app-tooltip-target terminal-log-icon-button" data-tooltip="复制全部输出"
+        <button
+type="button" class="icon-button app-tooltip-target terminal-log-icon-button" data-tooltip="复制全部输出"
           data-tooltip-placement="top" aria-label="复制全部输出" :disabled="!hasCopyableOutput"
           @click="void handleCopyAllOutput()">
-          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2"
+          <svg
+viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2"
             stroke-linecap="round" stroke-linejoin="round">
             <rect x="9" y="9" width="13" height="13" rx="2" />
             <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
           </svg>
         </button>
 
-        <button type="button" class="icon-button app-tooltip-target terminal-log-icon-button" data-tooltip="清空日志"
+        <button
+type="button" class="icon-button app-tooltip-target terminal-log-icon-button" data-tooltip="清空日志"
           data-tooltip-placement="top" aria-label="清空日志" :disabled="!displayedReport.hasContent"
           @click="handleClearLogs">
-          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2"
+          <svg
+viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2"
             stroke-linecap="round" stroke-linejoin="round">
             <path d="M3 6h18" />
             <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
@@ -81,13 +87,15 @@
     </div>
 
     <div class="terminal-log-progress-track" aria-hidden="true">
-      <div class="terminal-log-progress-fill" :class="{ 'is-live': summaryTone === 'running' }"
+      <div
+class="terminal-log-progress-fill" :class="{ 'is-live': summaryTone === 'running' }"
         :style="{ width: `${displayedReport.summary.progress}%` }" />
     </div>
 
     <div ref="timelineRef" class="terminal-log-timeline">
       <div v-if="displayedReport.hasContent" class="terminal-log-timeline-list">
-        <article v-for="(item, index) in displayedReport.timeline" :key="item.id" class="terminal-log-event-row" :style="{
+        <article
+v-for="(item, index) in displayedReport.timeline" :key="item.id" class="terminal-log-event-row" :style="{
           '--terminal-log-gap': String(item.gapWeight),
           '--terminal-log-index': String(index),
         }">
@@ -111,9 +119,11 @@
               {{ resolveInlineCode(item) }}
             </code>
 
-            <button v-if="resolveOutputLines(item).length" type="button" class="terminal-log-event-toggle"
+            <button
+v-if="resolveOutputLines(item).length" type="button" class="terminal-log-event-toggle"
               :class="{ 'is-expanded': isExpanded(item.id) }" @click="toggleExpanded(item.id)">
-              <svg class="terminal-log-event-chevron" viewBox="0 0 24 24" aria-hidden="true" fill="none"
+              <svg
+class="terminal-log-event-chevron" viewBox="0 0 24 24" aria-hidden="true" fill="none"
                 stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                 <polyline points="9 6 15 12 9 18" />
               </svg>
@@ -143,7 +153,8 @@
 
     <footer class="terminal-log-footer" :class="{ 'is-disabled': !props.isTerminalReady }">
       <span class="terminal-log-prompt mono-text">&gt;</span>
-      <input v-model="commandInput" class="terminal-log-command-input mono-text" type="text"
+      <input
+v-model="commandInput" class="terminal-log-command-input mono-text" type="text"
         :disabled="!props.isTerminalReady" placeholder="输入命令，按 Enter 发送到终端" autocomplete="off" spellcheck="false"
         @keydown.enter.prevent="submitCommand">
     </footer>

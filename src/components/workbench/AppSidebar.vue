@@ -1,11 +1,13 @@
 <template>
-  <aside class="app-sidebar-shell flex h-full min-h-0 min-w-0 flex-col overflow-hidden" :class="{
+  <aside
+class="app-sidebar-shell flex h-full min-h-0 min-w-0 flex-col overflow-hidden" :class="{
     'source-control-sidebar-host': isSourceControlView,
     'explorer-sidebar-host': isExplorerView,
     'search-sidebar-host': isSearchView,
     'ssh-sidebar-host': isSshView,
   }">
-    <SourceControlPanel v-if="isSourceControlView" class="h-full min-h-0 w-full flex-1"
+    <SourceControlPanel
+v-if="isSourceControlView" class="h-full min-h-0 w-full flex-1"
       :is-desktop-runtime="isDesktopRuntime" :workspace-root-path="workspaceRootPath" :active-path="document.path"
       @open-file="handleOpenFile" @open-diff="handleOpenGitDiff" />
 
@@ -14,9 +16,11 @@
         <span class="explorer-title">资源管理器</span>
 
         <div class="explorer-title-actions">
-          <button type="button" class="explorer-icon-btn" aria-label="新建文件" title="新建文件"
+          <button
+type="button" class="explorer-icon-btn" aria-label="新建文件" title="新建文件"
             @click="handleCreatePlaceholder('file')">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+            <svg
+viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
               stroke-linejoin="round">
               <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
               <polyline points="14 2 14 8 20 8" />
@@ -25,9 +29,11 @@
             </svg>
           </button>
 
-          <button type="button" class="explorer-icon-btn" aria-label="新建文件夹" title="新建文件夹"
+          <button
+type="button" class="explorer-icon-btn" aria-label="新建文件夹" title="新建文件夹"
             @click="handleCreatePlaceholder('directory')">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+            <svg
+viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
               stroke-linejoin="round">
               <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
               <line x1="12" y1="11" x2="12" y2="17" />
@@ -36,7 +42,8 @@
           </button>
 
           <button type="button" class="explorer-icon-btn" aria-label="刷新" title="刷新" @click="handleRefreshExplorer">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+            <svg
+viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
               stroke-linejoin="round">
               <polyline points="23 4 23 10 17 10" />
               <polyline points="1 20 1 14 7 14" />
@@ -46,7 +53,8 @@
           </button>
 
           <button type="button" class="explorer-icon-btn" aria-label="折叠全部" title="折叠全部" @click="handleCollapseAll">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+            <svg
+viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
               stroke-linejoin="round">
               <polyline points="4 14 10 14 10 20" />
               <polyline points="20 10 14 10 14 4" />
@@ -59,7 +67,8 @@
 
       <div class="explorer-search">
         <label class="explorer-search-box">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+          <svg
+viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
             stroke-linejoin="round" aria-hidden="true">
             <circle cx="11" cy="11" r="7" />
             <line x1="21" y1="21" x2="16.65" y2="16.65" />
@@ -82,10 +91,12 @@
         <div v-else-if="!root" class="explorer-empty-state">正在准备资源树...</div>
 
         <template v-else>
-          <button type="button" class="explorer-root-row w-full text-left" :class="{ 'is-open': isRootOpen }"
+          <button
+type="button" class="explorer-root-row w-full text-left" :class="{ 'is-open': isRootOpen }"
             @click="toggleRoot" @contextmenu.prevent.stop="handleRootContextMenu">
             <span class="explorer-chevron">
-              <svg viewBox="0 0 12 12" class="h-3 w-3 transition-transform" :class="isRootOpen ? 'rotate-90' : ''"
+              <svg
+viewBox="0 0 12 12" class="h-3 w-3 transition-transform" :class="isRootOpen ? 'rotate-90' : ''"
                 fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M4 2.5 8 6 4 9.5" />
               </svg>
@@ -105,26 +116,31 @@
               未找到匹配的文件
             </div>
 
-            <div v-else-if="!hasExplorerSearch && filteredRootEntries.length === 0"
+            <div
+v-else-if="!hasExplorerSearch && filteredRootEntries.length === 0"
               class="explorer-empty-state is-inline">
               当前目录暂无文件。
             </div>
 
-            <div v-if="showRootInlineCreateDraft" class="explorer-tree-row explorer-tree-inline-create"
+            <div
+v-if="showRootInlineCreateDraft" class="explorer-tree-row explorer-tree-inline-create"
               style="padding-left: 18px">
               <span class="explorer-chevron is-placeholder"></span>
 
-              <ExplorerEntryIcon :kind="inlineCreateDraft.kind === 'directory' ? 'directory' : 'file'"
+              <ExplorerEntryIcon
+:kind="inlineCreateDraft.kind === 'directory' ? 'directory' : 'file'"
                 :path="root.rootPath" class="h-4 w-4 shrink-0" />
 
-              <input ref="rootInlineCreateInputRef" class="explorer-inline-create-input"
+              <input
+ref="rootInlineCreateInputRef" class="explorer-inline-create-input"
                 :value="inlineCreateDraft.value" :placeholder="inlineCreateDraft.placeholder"
                 @input="handleInlineCreateInput" @blur="handleInlineCreateBlur"
                 @keydown.enter.prevent.stop="void confirmInlineCreateWorkspaceEntry()"
                 @keydown.esc.prevent.stop="cancelInlineCreateWorkspaceEntry" />
             </div>
 
-            <WorkspaceTreeNode v-for="entry in filteredRootEntries" :key="entry.path" :entry="entry" :level="0"
+            <WorkspaceTreeNode
+v-for="entry in filteredRootEntries" :key="entry.path" :entry="entry" :level="0"
               :children-map="childrenMap" :expanded-paths="expandedPaths" :loading-paths="loadingPaths"
               :active-path="document.path" :active-dirty="document.isDirty" :search-query="explorerSearchQuery"
               :root-path="root.rootPath" :inline-create-draft="inlineCreateDraft" @toggle-directory="toggleDirectory"
@@ -136,24 +152,29 @@
         </template>
       </div>
 
-      <LinearContextMenu :open="explorerContextMenu.open" :x="explorerContextMenu.x" :y="explorerContextMenu.y"
+      <LinearContextMenu
+:open="explorerContextMenu.open" :x="explorerContextMenu.x" :y="explorerContextMenu.y"
         :groups="explorerContextMenuGroups" :theme="appStore.theme"
         :submenu-direction="explorerContextMenu.x > 280 ? 'left' : 'right'" @select="handleExplorerContextMenuSelect" />
 
-      <div v-if="workspaceEntryNameDialog.open" class="explorer-entry-dialog-backdrop"
+      <div
+v-if="workspaceEntryNameDialog.open" class="explorer-entry-dialog-backdrop"
         @click.self="handleWorkspaceEntryNameCancel">
         <section class="explorer-entry-dialog" role="dialog" aria-modal="true" aria-label="输入名称">
           <p class="explorer-entry-dialog-title">{{ workspaceEntryNameDialog.title }}</p>
-          <input ref="workspaceEntryNameInputRef" v-model="workspaceEntryNameDialog.value"
+          <input
+ref="workspaceEntryNameInputRef" v-model="workspaceEntryNameDialog.value"
             class="explorer-entry-dialog-input" type="text" :placeholder="workspaceEntryNameDialog.placeholder"
             @keydown.enter.prevent="handleWorkspaceEntryNameConfirm"
             @keydown.esc.prevent="handleWorkspaceEntryNameCancel" />
           <div class="explorer-entry-dialog-actions">
-            <button type="button" class="explorer-entry-dialog-button is-secondary"
+            <button
+type="button" class="explorer-entry-dialog-button is-secondary"
               @click="handleWorkspaceEntryNameCancel">
               取消
             </button>
-            <button type="button" class="explorer-entry-dialog-button is-primary"
+            <button
+type="button" class="explorer-entry-dialog-button is-primary"
               @click="handleWorkspaceEntryNameConfirm">
               {{ workspaceEntryNameDialog.confirmText }}
             </button>
@@ -162,11 +183,13 @@
       </div>
     </section>
 
-    <SearchSidebarPanel v-else-if="isSearchView" :document-path="document.path" :is-desktop-runtime="isDesktopRuntime"
+    <SearchSidebarPanel
+v-else-if="isSearchView" :document-path="document.path" :is-desktop-runtime="isDesktopRuntime"
       :workspace-root-path="workspaceRootPath" :preloaded-workspace-root="preloadedWorkspaceRoot"
       @open-file="handleOpenFile" />
 
-    <RunSidebarPanel v-else-if="isRunView" :document="document" :has-active-document="Boolean(document.id)"
+    <RunSidebarPanel
+v-else-if="isRunView" :document="document" :has-active-document="Boolean(document.id)"
       :is-desktop-runtime="isDesktopRuntime" :can-run="canRun" :is-running="isRunning"
       :has-run-artifacts="hasRunArtifacts" :active-run="activeRun" :run-history="runHistory"
       :command-templates="commandTemplates" :executor="executor" @run="emit('run')"
@@ -203,7 +226,8 @@
               将展示
             </p>
             <div class="mt-3 space-y-2">
-              <article v-for="item in panelMeta.items" :key="item.title"
+              <article
+v-for="item in panelMeta.items" :key="item.title"
                 class="rounded-lg border border-white/5 bg-white/3 px-3 py-2">
                 <p class="text-[12px] font-medium text-(--text-primary)">{{ item.title }}</p>
                 <p class="mt-1 text-[11px] leading-5 text-(--text-secondary)">

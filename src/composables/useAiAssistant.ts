@@ -1,4 +1,4 @@
-import { computed, ref, type Ref } from 'vue';
+import { computed, ref, shallowRef, unref, type Ref } from 'vue';
 
 import { useAiAgentPlan } from '@/composables/useAiAgentPlan';
 import { useAiStream } from '@/composables/useAiStream';
@@ -450,6 +450,17 @@ interface ILatestSidecarLiveEvents {
   finalMessageEvent: Extract<TAgentUiEvent, { type: 'message_delta' }> | null;
 }
 
+type TUiFlushHandle =
+  | { kind: 'raf'; id: number }
+  | { kind: 'timeout'; id: ReturnType<typeof setTimeout> };
+
+interface ISidecarLiveEventBuffer {
+  readonly events: readonly TAgentUiEvent[];
+  push: (event: TAgentUiEvent) => void;
+  flush: () => void;
+  dispose: () => void;
+}
+
 const getLatestSidecarLiveEvents = (
   events: readonly TAgentUiEvent[],
 ): ILatestSidecarLiveEvents => {
@@ -500,6 +511,85 @@ const getLatestSidecarLiveEvents = (
 
 const processedRuntimeEventCountsByEvents = new WeakMap<readonly TAgentUiEvent[], number>();
 
+const scheduleUiFlush = (flush: () => void): TUiFlushHandle => {
+  if (typeof globalThis.requestAnimationFrame === 'function') {
+    return {
+      kind: 'raf',
+      id: globalThis.requestAnimationFrame(() => {
+        flush();
+      }),
+    };
+  }
+
+  return {
+    kind: 'timeout',
+    id: setTimeout(flush, 0),
+  };
+};
+
+const cancelUiFlush = (handle: TUiFlushHandle | null): void => {
+  if (!handle) {
+    return;
+  }
+
+  if (handle.kind === 'raf') {
+    globalThis.cancelAnimationFrame?.(handle.id);
+    return;
+  }
+
+  clearTimeout(handle.id);
+};
+
+const createSidecarLiveEventBuffer = (
+  onFlush: (events: readonly TAgentUiEvent[], freshEvents: readonly TAgentUiEvent[]) => void,
+): ISidecarLiveEventBuffer => {
+  const events: TAgentUiEvent[] = [];
+  let pendingEvents: TAgentUiEvent[] = [];
+  let scheduledFlush: TUiFlushHandle | null = null;
+  let isFlushScheduled = false;
+
+  const flush = (): void => {
+    scheduledFlush = null;
+    isFlushScheduled = false;
+
+    if (pendingEvents.length === 0) {
+      return;
+    }
+
+    const freshEvents = pendingEvents;
+    pendingEvents = [];
+    events.push(...freshEvents);
+    onFlush(events, freshEvents);
+  };
+
+  return {
+    get events() {
+      return events;
+    },
+    push: (event) => {
+      pendingEvents.push(event);
+
+      if (isFlushScheduled) {
+        return;
+      }
+
+      isFlushScheduled = true;
+      scheduledFlush = scheduleUiFlush(flush);
+
+      if (!isFlushScheduled) {
+        scheduledFlush = null;
+      }
+    },
+    flush,
+    dispose: () => {
+      cancelUiFlush(scheduledFlush);
+      scheduledFlush = null;
+      isFlushScheduled = false;
+      pendingEvents = [];
+    },
+  };
+};
+
 const extractNewVisibleRuntimeEvents = (
   events: readonly TAgentUiEvent[],
 ): TAgentRuntimeEvent[] | undefined => {
@@ -541,14 +631,14 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
   const config = ref<IAiConfigPayload>(createDefaultAiConfigPayload());
 
   const messages = computed<IAiChatMessage[]>({
-    get: () => conversationStore.activeMessages,
-    set: (nextMessages) => {
+    get: () => unref(conversationStore.activeMessages),
+    set: (nextMessages: IAiChatMessage[]) => {
       conversationStore.replaceMessages(nextMessages);
     },
   });
 
-  const historyThreads = computed(() => conversationStore.historyThreads);
-  const activeConversationId = computed(() => conversationStore.activeThreadId);
+  const historyThreads = computed(() => unref(conversationStore.historyThreads));
+  const activeConversationId = computed(() => unref(conversationStore.activeThreadId));
 
   const draft = ref('');
   const isSending = ref(false);
@@ -559,18 +649,18 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
   const proposedPatch = ref<IAiPatchSet | null>(null);
   const isApplyingPatch = ref(false);
   const fileRollbackPrompt = ref<IAiFileRollbackPrompt | null>(null);
-  const runtimeTimelineEvents = ref<TAgentRuntimeEvent[]>([]);
+  const runtimeTimelineEvents = shallowRef<TAgentRuntimeEvent[]>([]);
   const activeMode = ref<TAiAssistantMode>('agent');
-  const agentSteps = ref<IAgentExecutionStep[]>([]);
-  const toolDefinitions = ref<IAiToolDefinitionPayload[]>([]);
-  const providerProfiles = ref<IAiProviderProfilePayload[]>([]);
-  const attachedFiles = ref<IAiAttachedFile[]>([]);
+  const agentSteps = shallowRef<IAgentExecutionStep[]>([]);
+  const toolDefinitions = shallowRef<IAiToolDefinitionPayload[]>([]);
+  const providerProfiles = shallowRef<IAiProviderProfilePayload[]>([]);
+  const attachedFiles = shallowRef<IAiAttachedFile[]>([]);
   const activeAbortController = ref<AbortController | null>(null);
   const activeStreamId = ref<string | null>(null);
   const activeAgentMessageId = ref<string | null>(null);
   const activeStreamResolve = ref<(() => void) | null>(null);
   const activeAssistantMessage = ref<IAiChatMessage | null>(null);
-  const activeAssistantBaseMessages = ref<IAiChatMessage[]>([]);
+  const activeAssistantBaseMessages = shallowRef<IAiChatMessage[]>([]);
   const activeSidecarAgentSession = ref<ISidecarAgentSession | null>(null);
   const pendingTitleThreadIds = new Set<string>();
   const activityNarratorStates = new Map<string, IActivityNarratorRunState>();
@@ -615,7 +705,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
   };
 
   const resolveActiveAgentPatchTarget = (): IActiveAgentPatchTarget | null => {
-    const activeRun = agentPlan.store.activeRun;
+    const activeRun = unref(agentPlan.store.activeRun);
 
     if (!activeRun) {
       return null;
@@ -656,12 +746,34 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     };
   };
 
+  const findMessageIndexById = (
+    currentMessages: readonly IAiChatMessage[],
+    messageId: string,
+  ): number => {
+    const lastIndex = currentMessages.length - 1;
+
+    if (lastIndex >= 0 && currentMessages[lastIndex]?.id === messageId) {
+      return lastIndex;
+    }
+
+    return currentMessages.findIndex((message) => message.id === messageId);
+  };
+
+  const findMessageById = (
+    messageId: string,
+  ): IAiChatMessage | null => {
+    const currentMessages = messages.value;
+    const messageIndex = findMessageIndexById(currentMessages, messageId);
+
+    return messageIndex >= 0 ? currentMessages[messageIndex] ?? null : null;
+  };
+
   const replaceMessageById = (
     messageId: string,
     updater: (message: IAiChatMessage) => IAiChatMessage,
   ): IAiChatMessage[] => {
     const currentMessages = messages.value;
-    const messageIndex = currentMessages.findIndex((message) => message.id === messageId);
+    const messageIndex = findMessageIndexById(currentMessages, messageId);
 
     if (messageIndex < 0) {
       return currentMessages;
@@ -1320,7 +1432,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     fallbackContent: string,
     events: readonly TAgentUiEvent[],
   ): void => {
-    const currentMessage = messages.value.find((message) => message.id === assistantMessageId);
+    const currentMessage = findMessageById(assistantMessageId);
     const {
       errorEvent,
       doneEvent,
@@ -1387,19 +1499,17 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
   };
 
 
-  const appendRuntimeTimelineEvents = (
-    events: readonly TAgentUiEvent[],
+  const appendVisibleRuntimeTimelineEvents = (
+    events: readonly TAgentRuntimeEvent[],
   ): void => {
-    const visibleEvents = extractVisibleAgentRuntimeEvents(events);
-
-    if (visibleEvents.length === 0) {
+    if (events.length === 0) {
       return;
     }
 
     const nextEvents = [...runtimeTimelineEvents.value];
     const seenIds = new Set(nextEvents.map((event) => event.id));
 
-    for (const event of visibleEvents) {
+    for (const event of events) {
       if (seenIds.has(event.id)) {
         continue;
       }
@@ -1409,6 +1519,12 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     }
 
     runtimeTimelineEvents.value = nextEvents.slice(-AGENT_RUNTIME_TIMELINE_LIMIT);
+  };
+
+  const appendRuntimeTimelineEvents = (
+    events: readonly TAgentUiEvent[],
+  ): void => {
+    appendVisibleRuntimeTimelineEvents(extractVisibleAgentRuntimeEvents(events));
   };
 
   const buildSidecarContextMessage = (
@@ -1483,7 +1599,17 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     activeAbortController.value = new AbortController();
     const sidecarSessionId = `sidecar:${assistantMessageId}`;
     ensureActivityNarratorState(assistantMessageId, sidecarSessionId, turnId);
-    const liveEvents: TAgentUiEvent[] = [];
+    const liveEventBuffer = createSidecarLiveEventBuffer((events, freshEvents) => {
+      appendVisibleRuntimeTimelineEvents(extractVisibleAgentRuntimeEvents(freshEvents));
+      applySidecarLiveEventsToAgentMessage(
+        assistantMessageId,
+        sidecarSessionId,
+        turnId,
+        messageContent,
+        '',
+        events,
+      );
+    });
     let unlistenSidecarStream: (() => void) | null = null;
 
     try {
@@ -1492,16 +1618,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
           return;
         }
 
-        liveEvents.push(payload.event);
-        appendRuntimeTimelineEvents([payload.event]);
-        applySidecarLiveEventsToAgentMessage(
-          assistantMessageId,
-          sidecarSessionId,
-          turnId,
-          messageContent,
-          '',
-          liveEvents,
-        );
+        liveEventBuffer.push(payload.event);
       });
       const payload = await aiService.sidecarExecute({
         sessionId: sidecarSessionId,
@@ -1510,10 +1627,12 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
         workspaceRootPath: options.workspaceRootPath.value,
         context: references,
       });
+      liveEventBuffer.flush();
+      unlistenSidecarStream?.();
+      unlistenSidecarStream = null;
       appendRuntimeTimelineEvents(payload.events);
       const projection = projectSidecarExecuteResponse(payload);
-      const currentActivityEvents = messages.value.find((message) => message.id === assistantMessageId)
-        ?.stream?.activityEvents;
+      const currentActivityEvents = findMessageById(assistantMessageId)?.stream?.activityEvents;
       const activityProjection = projectSidecarEventsToActivityState({
         assistantMessageId,
         events: payload.events,
@@ -1598,6 +1717,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
         errorMessage.value = message;
       }
     } finally {
+      liveEventBuffer.dispose();
       unlistenSidecarStream?.();
       activeAbortController.value = null;
       activeAgentMessageId.value = null;
@@ -1609,7 +1729,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     decision: TAiToolConfirmationDecision,
   ): Promise<void> => {
     const session = activeSidecarAgentSession.value;
-    const confirmation = agentPlan.store.pendingToolConfirmation;
+    const confirmation = unref(agentPlan.store.pendingToolConfirmation);
 
     if (!session || !confirmation) {
       errorMessage.value = '当前没有可继续的 Agent 工具确认。';
@@ -1632,7 +1752,17 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
 
     isSending.value = true;
     activeAgentMessageId.value = session.assistantMessageId;
-    const liveEvents: TAgentUiEvent[] = [];
+    const liveEventBuffer = createSidecarLiveEventBuffer((events, freshEvents) => {
+      appendVisibleRuntimeTimelineEvents(extractVisibleAgentRuntimeEvents(freshEvents));
+      applySidecarLiveEventsToAgentMessage(
+        session.assistantMessageId,
+        session.sessionId,
+        session.turnId,
+        session.messageContent,
+        '',
+        events,
+      );
+    });
     let unlistenSidecarStream: (() => void) | null = null;
 
     try {
@@ -1641,26 +1771,19 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
           return;
         }
 
-        liveEvents.push(payload.event);
-        appendRuntimeTimelineEvents([payload.event]);
-        applySidecarLiveEventsToAgentMessage(
-          session.assistantMessageId,
-          session.sessionId,
-          session.turnId,
-          session.messageContent,
-          '',
-          liveEvents,
-        );
+        liveEventBuffer.push(payload.event);
       });
       const payload = await aiService.sidecarResolveApproval({
         sessionId: session.sessionId,
         requestId: confirmation.id,
         decision,
       });
+      liveEventBuffer.flush();
+      unlistenSidecarStream?.();
+      unlistenSidecarStream = null;
       appendRuntimeTimelineEvents(payload.events);
       const projection = projectSidecarExecuteResponse(payload);
-      const currentActivityEvents = messages.value.find((message) => message.id === session.assistantMessageId)
-        ?.stream?.activityEvents;
+      const currentActivityEvents = findMessageById(session.assistantMessageId)?.stream?.activityEvents;
       const activityProjection = projectSidecarEventsToActivityState({
         assistantMessageId: session.assistantMessageId,
         events: payload.events,
@@ -1726,6 +1849,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       );
       errorMessage.value = message;
     } finally {
+      liveEventBuffer.dispose();
       unlistenSidecarStream?.();
       activeAgentMessageId.value = null;
       isSending.value = false;

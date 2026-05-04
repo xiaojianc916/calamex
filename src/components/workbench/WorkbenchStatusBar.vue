@@ -3,9 +3,11 @@
     class="workbench-statusbar flex h-7 w-full min-w-0 shrink-0 items-center justify-between border-t border-(--shell-divider) px-1 text-[11px]">
     <div class="flex h-full items-center gap-0.5">
       <!-- Git branch + changes -->
-      <button v-if="gitBranchName" type="button" class="statusbar-segment statusbar-segment-button statusbar-git-branch"
+      <button
+v-if="gitBranchName" type="button" class="statusbar-segment statusbar-segment-button statusbar-git-branch"
         :title="`分支 ${gitBranchName}，点击打开源代码管理`" @click="$emit('open-source-control')">
-        <svg class="inline-block" style="width:10px;height:10px;margin-right:4px;vertical-align:-1px"
+        <svg
+class="inline-block" style="width:10px;height:10px;margin-right:4px;vertical-align:-1px"
           viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"
           stroke-linejoin="round" aria-hidden="true">
           <circle cx="4" cy="3" r="1.5" />
@@ -34,39 +36,46 @@
 
     <div class="flex h-full items-center gap-0.5">
       <template v-if="hasActiveDocument && documentKind === 'text'">
-        <span class="statusbar-segment statusbar-segment-button app-tooltip-target"
+        <span
+class="statusbar-segment statusbar-segment-button app-tooltip-target"
           :data-tooltip="cursorPositionTooltip" data-tooltip-placement="top">
           {{ cursorLine }}:{{ cursorColumn }}
         </span>
-        <span class="statusbar-segment statusbar-segment-button app-tooltip-target" :data-tooltip="charCountTooltip"
+        <span
+class="statusbar-segment statusbar-segment-button app-tooltip-target" :data-tooltip="charCountTooltip"
           data-tooltip-placement="top">
           {{ charCount }} char
         </span>
-        <span class="statusbar-segment statusbar-segment-button app-tooltip-target" data-tooltip="LF 行尾序列"
+        <span
+class="statusbar-segment statusbar-segment-button app-tooltip-target" data-tooltip="LF 行尾序列"
           data-tooltip-placement="top">
           LF
         </span>
 
         <AppDropdownMenu :items="encodingItems" align="right" :min-width="118" @select="handleEncodingChange">
           <template #trigger="{ open }">
-            <button type="button" class="statusbar-segment statusbar-segment-button app-tooltip-target"
+            <button
+type="button" class="statusbar-segment statusbar-segment-button app-tooltip-target"
               :class="{ 'is-open': open }" :data-tooltip="encodingTooltip" data-tooltip-placement="top">
               {{ encodingLabel }}
             </button>
           </template>
         </AppDropdownMenu>
 
-        <span class="statusbar-segment app-tooltip-target" :class="{ 'statusbar-segment-passive': !isTerminalReady }"
+        <span
+class="statusbar-segment app-tooltip-target" :class="{ 'statusbar-segment-passive': !isTerminalReady }"
           :data-tooltip="executorTooltip" data-tooltip-placement="top">
           {{ executorLabel }}
         </span>
 
-        <button type="button"
+        <button
+type="button"
           class="statusbar-segment statusbar-segment-button statusbar-diagnostics app-tooltip-target"
           :data-tooltip="diagnosticStatusTooltip" data-tooltip-placement="top" :aria-label="diagnosticStatusAriaLabel"
           @click="$emit('open-diagnostics')">
           <span v-if="!scriptAnalysis.available" class="statusbar-diagnostics-item is-warning">
-            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
+            <svg
+viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
               stroke-linejoin="round" aria-hidden="true">
               <path d="M8 2.5 14 13H2L8 2.5Z" />
               <path d="M8 6.2v3.1M8 11.6h.01" />
@@ -75,7 +84,8 @@
           </span>
 
           <span v-else-if="diagnosticStatusSummary.issueCount === 0" class="statusbar-diagnostics-item is-ok">
-            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
+            <svg
+viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
               stroke-linejoin="round" aria-hidden="true">
               <circle cx="8" cy="8" r="5.5" />
               <path d="m5 8.2 2 2 4.2-4.4" />
@@ -85,7 +95,8 @@
 
           <template v-else>
             <span v-if="diagnosticStatusSummary.errorCount > 0" class="statusbar-diagnostics-item is-error">
-              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
+              <svg
+viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
                 stroke-linejoin="round" aria-hidden="true">
                 <circle cx="8" cy="8" r="5.5" />
                 <path d="m5.8 5.8 4.4 4.4M10.2 5.8 5.8 10.2" />
@@ -94,7 +105,8 @@
             </span>
 
             <span v-if="diagnosticStatusSummary.warningCount > 0" class="statusbar-diagnostics-item is-warning">
-              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
+              <svg
+viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
                 stroke-linejoin="round" aria-hidden="true">
                 <path d="M8 2.5 14 13H2L8 2.5Z" />
                 <path d="M8 6.2v3.1M8 11.6h.01" />
@@ -103,7 +115,8 @@
             </span>
 
             <span v-if="diagnosticStatusSummary.infoCount > 0" class="statusbar-diagnostics-item is-info">
-              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
+              <svg
+viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
                 stroke-linejoin="round" aria-hidden="true">
                 <circle cx="8" cy="8" r="5.5" />
                 <path d="M8 7.2v3.6M8 5.1h.01" />

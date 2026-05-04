@@ -1,16 +1,19 @@
 <template>
   <div class="explorer-node" :class="{ 'is-open': shouldShowChildren }">
-    <button type="button" class="explorer-tree-row w-full text-left" :class="{ 'is-active': isActive }"
+    <button
+type="button" class="explorer-tree-row w-full text-left" :class="{ 'is-active': isActive }"
       :style="rowStyle" @click="handleClick" @contextmenu.prevent.stop="handleContextMenu">
       <span class="explorer-chevron" :class="{ 'is-placeholder': !showChevron }">
-        <svg v-if="showChevron" viewBox="0 0 12 12" class="h-3 w-3 transition-transform"
+        <svg
+v-if="showChevron" viewBox="0 0 12 12" class="h-3 w-3 transition-transform"
           :class="shouldShowChildren ? 'rotate-90' : ''" fill="none" stroke="currentColor" stroke-width="1.4"
           stroke-linecap="round" stroke-linejoin="round">
           <path d="M4 2.5 8 6 4 9.5" />
         </svg>
       </span>
 
-      <ExplorerEntryIcon :kind="entry.kind" :path="entry.path" :expanded="shouldShowChildren"
+      <ExplorerEntryIcon
+:kind="entry.kind" :path="entry.path" :expanded="shouldShowChildren"
         class="h-4 w-4 shrink-0" />
 
       <span class="explorer-tree-name">{{ entry.name }}</span>
@@ -21,12 +24,14 @@
       <div v-if="isLoading" class="explorer-helper-text explorer-helper-text-padded" :style="childStateStyle">
         正在读取目录...
       </div>
-      <div v-else-if="visibleChildEntries.length === 0 && !hasActiveSearch"
+      <div
+v-else-if="visibleChildEntries.length === 0 && !hasActiveSearch"
         class="explorer-helper-text explorer-helper-text-padded" :style="childStateStyle">
         空文件夹
       </div>
 
-      <WorkspaceTreeNode v-for="child in visibleChildEntries" :key="child.path" :entry="child" :level="level + 1"
+      <WorkspaceTreeNode
+v-for="child in visibleChildEntries" :key="child.path" :entry="child" :level="level + 1"
         :children-map="childrenMap" :expanded-paths="expandedPaths" :loading-paths="loadingPaths"
         :active-path="activePath" :active-dirty="activeDirty" :search-query="searchQuery"
         :inline-create-draft="inlineCreateDraft" :root-path="rootPath"
@@ -35,14 +40,17 @@
         @inline-create-blur="$emit('inline-create-blur')" @inline-create-confirm="$emit('inline-create-confirm')"
         @inline-create-cancel="$emit('inline-create-cancel')" />
 
-      <div v-if="showInlineCreateDraft" class="explorer-tree-row explorer-tree-inline-create"
+      <div
+v-if="showInlineCreateDraft" class="explorer-tree-row explorer-tree-inline-create"
         :style="inlineCreateRowStyle">
         <span class="explorer-chevron is-placeholder"></span>
 
-        <ExplorerEntryIcon :kind="inlineCreateDraft?.kind === 'directory' ? 'directory' : 'file'" :path="entry.path"
+        <ExplorerEntryIcon
+:kind="inlineCreateDraft?.kind === 'directory' ? 'directory' : 'file'" :path="entry.path"
           class="h-4 w-4 shrink-0" />
 
-        <input class="explorer-inline-create-input" :value="inlineCreateDraft?.value ?? ''"
+        <input
+class="explorer-inline-create-input" :value="inlineCreateDraft?.value ?? ''"
           :placeholder="inlineCreateDraft?.placeholder ?? ''" @input="handleInlineCreateInput"
           @blur="$emit('inline-create-confirm')" @keydown.enter.prevent.stop="$emit('inline-create-confirm')"
           @keydown.esc.prevent.stop="$emit('inline-create-cancel')" />

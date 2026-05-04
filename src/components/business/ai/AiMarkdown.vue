@@ -6,11 +6,11 @@ import type { IAiChatStreamRenderState } from '@/types/ai';
 import { normalizeAiMath } from '@/utils/normalize-ai-math';
 import type { CustomComponents } from 'markstream-vue';
 import MarkdownRender, {
-    enableKatex,
-    isKatexEnabled,
-    removeCustomComponents,
-    setCustomComponents,
-    setDefaultI18nMap,
+  enableKatex,
+  isKatexEnabled,
+  removeCustomComponents,
+  setCustomComponents,
+  setDefaultI18nMap,
 } from 'markstream-vue';
 import { computed, onBeforeUnmount, watch } from 'vue';
 
@@ -83,19 +83,9 @@ onBeforeUnmount(() => {
 <template>
   <div class="ai-markdown">
     <MarkdownRender
-      :content="renderContent"
-      :custom-id="rendererId"
-      :final="isFinal"
-      :defer-nodes-until-visible="false"
-      :max-live-nodes="320"
-      :live-node-buffer="80"
-      :initial-render-batch-size="64"
-      :render-batch-size="96"
-      :render-batch-delay="0"
-      :render-batch-budget-ms="8"
-      :show-tooltips="false"
-      :typewriter="false"
-    />
+:content="renderContent" :custom-id="rendererId" :final="isFinal" :defer-nodes-until-visible="false"
+      :max-live-nodes="320" :live-node-buffer="80" :initial-render-batch-size="64" :render-batch-size="96"
+      :render-batch-delay="0" :render-batch-budget-ms="8" :show-tooltips="false" :typewriter="false" />
   </div>
 </template>
 
@@ -104,7 +94,7 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 
-.ai-markdown :deep(.markstream-vue) {
+.ai-markdown :global(.markstream-vue) {
   --ms-font-sans: var(--font-sans);
   --ms-font-mono: var(--font-mono);
   --ms-radius: var(--radius-sm);
@@ -136,83 +126,83 @@ onBeforeUnmount(() => {
   line-height: inherit;
 }
 
-.ai-markdown :deep(.markdown-renderer) {
+.ai-markdown :global(.markdown-renderer) {
   min-width: 0;
   font-size: inherit;
   line-height: inherit;
 }
 
-.ai-markdown :deep(.paragraph-node:first-child),
-.ai-markdown :deep(.heading-node:first-child),
-.ai-markdown :deep(.list-node:first-child),
-.ai-markdown :deep(.blockquote:first-child),
-.ai-markdown :deep(.code-block-container:first-child) {
+.ai-markdown :global(.paragraph-node:first-child),
+.ai-markdown :global(.heading-node:first-child),
+.ai-markdown :global(.list-node:first-child),
+.ai-markdown :global(.blockquote:first-child),
+.ai-markdown :global(.code-block-container:first-child) {
   margin-top: 0;
 }
 
-.ai-markdown :deep(.paragraph-node:last-child),
-.ai-markdown :deep(.heading-node:last-child),
-.ai-markdown :deep(.list-node:last-child),
-.ai-markdown :deep(.blockquote:last-child),
-.ai-markdown :deep(.code-block-container:last-child) {
+.ai-markdown :global(.paragraph-node:last-child),
+.ai-markdown :global(.heading-node:last-child),
+.ai-markdown :global(.list-node:last-child),
+.ai-markdown :global(.blockquote:last-child),
+.ai-markdown :global(.code-block-container:last-child) {
   margin-bottom: 0;
 }
 
-.ai-markdown :deep(.paragraph-node) {
+.ai-markdown :global(.paragraph-node) {
   color: inherit;
   font-size: inherit;
   line-height: inherit;
 }
 
-.ai-markdown :deep(.heading-node) {
+.ai-markdown :global(.heading-node) {
   color: var(--text-primary);
   font-size: 1em;
   line-height: inherit;
   letter-spacing: 0;
 }
 
-.ai-markdown :deep(.list-node),
-.ai-markdown :deep(.list-node li),
-.ai-markdown :deep(.blockquote),
-.ai-markdown :deep(.table-node) {
+.ai-markdown :global(.list-node),
+.ai-markdown :global(.list-node li),
+.ai-markdown :global(.blockquote),
+.ai-markdown :global(.table-node) {
   font-size: inherit;
   line-height: inherit;
 }
 
-.ai-markdown :deep(.inline-code) {
+.ai-markdown :global(.inline-code) {
   border: 1px solid color-mix(in srgb, var(--shell-divider) 80%, transparent);
   font-size: 0.92em;
 }
 
-.ai-markdown :deep(.link-node) {
+.ai-markdown :global(.link-node) {
   text-decoration: none;
 }
 
-.ai-markdown :deep(.link-node:hover) {
+.ai-markdown :global(.link-node:hover) {
   text-decoration: underline;
   text-underline-offset: 2px;
 }
 
-.ai-markdown :deep(.blockquote) {
+.ai-markdown :global(.blockquote) {
   color: var(--blockquote-fg);
 }
 
-.ai-markdown :deep(.table-node-wrapper) {
+.ai-markdown :global(.table-node-wrapper) {
   border-radius: var(--ms-radius);
 }
 
-.ai-markdown :deep(.table-node) {
+.ai-markdown :global(.table-node) {
   border-color: var(--shell-divider);
   box-shadow: none;
 }
 
-.ai-markdown :deep(.table-node th),
-.ai-markdown :deep(.table-node td) {
+.ai-markdown :global(.table-node th),
+.ai-markdown :global(.table-node td) {
   border-color: var(--shell-divider);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .ai-markdown :deep(.markstream-vue *) {
+  .ai-markdown :global(.markstream-vue *) {
     animation: none;
     transition-duration: 0ms;
   }

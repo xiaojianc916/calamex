@@ -17,12 +17,14 @@
     </div>
 
     <div class="min-h-0 flex-1 overflow-auto p-5">
-      <div v-if="isLoading"
+      <div
+v-if="isLoading"
         class="flex h-full min-h-60 items-center justify-center rounded-xl border border-white/6 bg-white/2 text-[12px] text-(--text-quaternary)">
         正在加载图片资源…
       </div>
 
-      <div v-else-if="errorMessage"
+      <div
+v-else-if="errorMessage"
         class="flex h-full min-h-60 items-center justify-center rounded-xl border border-rose-400/20 bg-rose-500/6 px-6 text-center">
         <div class="max-w-md space-y-2">
           <p class="text-[13px] font-medium text-rose-200">图片预览失败</p>
@@ -32,10 +34,12 @@
         </div>
       </div>
 
-      <div v-else
+      <div
+v-else
         class="flex min-h-full items-center justify-center rounded-[20px] border border-white/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.03),rgba(255,255,255,0.015))] p-6">
         <div class="image-preview-frame">
-          <img v-if="assetMeta" :src="assetMeta.dataUrl" :alt="props.name" class="image-preview-asset"
+          <img
+v-if="assetMeta" :src="assetMeta.dataUrl" :alt="props.name" class="image-preview-asset"
             @load="handleImageLoad" />
         </div>
       </div>

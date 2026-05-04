@@ -52,29 +52,47 @@ conflict_priority: [security, type-safety, testability, maintainability, perform
 ## 0.1 Baseline
 
 ```yaml
-Strands Agents TypeScript SDK :
 tauri: ^2
-vue: ~3.5
-typescript: 6.0.2
-vite: 8.0.8
-tailwindcss: 4.2.2
-shadcn-vue: cli-latest-stable
-reka-ui: peer-of-shadcn-vue
-pinia: ">=2.2"
-pinia-plugin-persistedstate: latest-compat
-vue-router: ">=4.4"
-eslint: 10.2.0
-"@eslint/js": 10.0.1
-"eslint-plugin-vue": 10.8.0
-"vue-eslint-parser": 10.4.0
-"typescript-eslint": ">=8"
-vue-tsc: 3.2.6
-"@types/node": 25.6.0
-"@vue/tsconfig": 0.9.1
-monaco-editor: 0.55.1
-globals: 17.5.0
-pnpm: ">=9"
-node: ">=20"
+dependencies:
+@formkit/auto-animate 0.9.0        monaco-editor 0.55.1               
+@icon-park/vue-next 1.4.2          motion-v 2.2.1                     
+@tauri-apps/api 2.11.0             pinia 3.0.4                        
+@tauri-apps/plugin-dialog 2.7.1    pinia-plugin-persistedstate 4.7.1  
+@tauri-apps/plugin-store 2.4.3     reka-ui 2.9.6                      
+@wasm-fmt/shfmt 0.2.7              shiki 4.0.2                        
+@xterm/addon-fit 0.11.0            stream-markdown 0.0.15             
+@xterm/addon-search 0.16.0         tailwind-merge 3.5.0               
+@xterm/addon-web-links 0.12.0      tree-sitter-bash 0.25.1            
+@xterm/addon-webgl 0.19.0          vue 3.5.33                         
+@xterm/xterm 6.0.0                 vue-markdown-design 0.3.2          
+class-variance-authority 0.7.1     vue-router 5.0.6                   
+clsx 2.1.1                         vue-virtual-scroller 3.0.2         
+katex 0.16.45                      web-tree-sitter 0.26.8             
+lucide-vue-next 1.0.0              zod 4.4.3                          
+markstream-vue 0.0.14-beta.2       
+
+devDependencies:
+@axe-core/playwright 4.11.3             eslint-plugin-vue 10.9.0                
+@commitlint/cli 20.5.3                  globals 17.6.0                          
+@commitlint/config-conventional 20.5.3  husky 9.1.7                             
+@eslint/js 10.0.1                       jsdom 29.1.1                            
+@playwright/test 1.59.1                 lint-staged 16.4.0                      
+@size-limit/file 12.1.0                 postcss 8.5.13                          
+@tailwindcss/postcss 4.2.4              prettier 3.8.3                          
+@tauri-apps/cli 2.11.0                  shellcheck 4.1.0                        
+@types/node 25.6.0                      size-limit 12.1.0                       
+@vitejs/plugin-vue 6.0.6                stylelint 17.10.0                       
+@vitest/coverage-v8 4.1.5               stylelint-config-tailwindcss 1.0.1      
+@vue/test-utils 2.4.10                  tailwindcss 4.2.4                       
+@vue/tsconfig 0.9.1                     tsx 4.21.0                              
+@withfig/autocomplete 2.692.3           typescript 6.0.3                        
+@withfig/autocomplete-tools 2.11.0      typescript-eslint 8.59.1                
+autoprefixer 10.5.0                     vite 8.0.10                             
+dpdm 4.0.1                              vitest 4.1.5                            
+esbuild 0.28.0                          vue-eslint-parser 10.4.0                
+eslint 10.3.0                           vue-tsc 3.2.8                           
+eslint-config-prettier 10.1.8           
+node: ">=24"
 ```
 
 > 基线版本与真实 registry 冲突时 MUST 先走 ADR 更新本表，再动依赖。

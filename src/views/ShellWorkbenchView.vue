@@ -1,11 +1,13 @@
 <template>
-  <AppShellLayout :is-desktop-runtime="isDesktopRuntime" :sidebar-visible="isSidebarVisible"
+  <AppShellLayout
+:is-desktop-runtime="isDesktopRuntime" :sidebar-visible="isSidebarVisible"
     :terminal-visible="isTerminalVisible" :terminal-height="terminalHeight" :sidebar-width="sidebarWidth"
     :right-sidebar-visible="isAiPanelVisible" :right-sidebar-width="aiPanelWidth" :right-sidebar-min-width="350"
     :right-sidebar-max-width="550" :content-overlay-visible="isSettingsView"
     @update:terminal-height="handleTerminalHeightChange" @update:right-sidebar-width="handleAiPanelWidthChange">
     <template #titlebar>
-      <WindowTitleBar ref="titlebarRef" :document-name="editorStore.document.name"
+      <WindowTitleBar
+ref="titlebarRef" :document-name="editorStore.document.name"
         :is-dirty="editorStore.document.isDirty" :has-active-document="editorStore.hasActiveDocument"
         :document-kind="editorStore.document.kind" :theme="appStore.theme" :is-running="editorStore.isRunning"
         :can-run="canRun" :can-save="canSave" :is-desktop-runtime="isDesktopRuntime"
@@ -21,12 +23,14 @@
     </template>
 
     <template #activity>
-      <ActivityRail :active-view="activeSidebarView" :settings-active="isSettingsView"
+      <ActivityRail
+:active-view="activeSidebarView" :settings-active="isSettingsView"
         @select-view="handleSelectSidebarView" @toggle-settings="toggleSettingsView" />
     </template>
 
     <template #sidebar>
-      <DeferredAppSidebar v-show="isWorkbenchContentVisible" :document="editorStore.document" :view="activeSidebarView"
+      <DeferredAppSidebar
+v-show="isWorkbenchContentVisible" :document="editorStore.document" :view="activeSidebarView"
         :is-desktop-runtime="isDesktopRuntime" :workspace-root-path="editorStore.workspaceRootPath"
         :preloaded-workspace-root="startupWorkspaceRoot" :can-run="canRun" :is-running="editorStore.isRunning"
         :has-run-artifacts="editorStore.hasRunArtifacts" :active-run="editorStore.activeRunSummary"
@@ -37,7 +41,8 @@
     </template>
 
     <template #header>
-      <WorkbenchHeader v-show="isWorkbenchContentVisible" :documents="editorStore.documents"
+      <WorkbenchHeader
+v-show="isWorkbenchContentVisible" :documents="editorStore.documents"
         :active-document-id="editorStore.activeDocumentId"
         :file-path="editorStore.hasActiveDocument ? editorStore.document.path : null"
         :show-breadcrumb="editorStore.document.kind !== 'git-diff'" :can-navigate-back="canNavigateDocumentBack"
@@ -46,15 +51,18 @@
         @navigate-forward="navigateDocumentForward" />
     </template>
 
-    <div v-show="isWorkbenchContentVisible" ref="editorViewportRef" data-testid="workbench-root"
+    <div
+v-show="isWorkbenchContentVisible" ref="editorViewportRef" data-testid="workbench-root"
       class="workbench-editor-viewport relative h-full min-h-0 overflow-hidden bg-(--editor-bg)"
       :data-diagnostics-resizing="diagnosticsTransitionsEnabled ? 'false' : 'true'">
       <div class="h-full min-h-0">
-        <EmptyEditorState v-if="!editorStore.hasActiveDocument" :has-workspace="Boolean(editorStore.workspaceRootPath)"
+        <EmptyEditorState
+v-if="!editorStore.hasActiveDocument" :has-workspace="Boolean(editorStore.workspaceRootPath)"
           :is-desktop-runtime="isDesktopRuntime" @create="createNewDocument" @open="openDocument"
           @open-folder="openFolder" />
 
-        <DeferredSmartScriptEditor v-else-if="editorStore.document.kind === 'text'" ref="editorRef"
+        <DeferredSmartScriptEditor
+v-else-if="editorStore.document.kind === 'text'" ref="editorRef"
           :document-id="editorStore.document.id" :document-path="editorStore.document.path"
           :document-name="editorStore.document.name" :model-value="editorStore.document.content" :theme="appStore.theme"
           :editor-settings="appStore.settings.editor" :can-run="canRun" @update:model-value="updateContent"
@@ -62,20 +70,24 @@
           @selection-change="handleSelectionChange" @format-request="handleFormatDocument"
           @command-palette-request="handleOpenCommandPalette" @run-request="handleRunScript" />
 
-        <AiDiffPreviewEditor v-else-if="editorStore.document.kind === 'ai-diff' && editorStore.document.aiDiffPreview"
+        <AiDiffPreviewEditor
+v-else-if="editorStore.document.kind === 'ai-diff' && editorStore.document.aiDiffPreview"
           :preview="editorStore.document.aiDiffPreview" />
 
-        <GitDiffViewer v-else-if="editorStore.document.kind === 'git-diff' && editorStore.document.gitDiffPreview"
+        <GitDiffViewer
+v-else-if="editorStore.document.kind === 'git-diff' && editorStore.document.gitDiffPreview"
           :preview="editorStore.document.gitDiffPreview" :theme="appStore.theme"
           :editor-settings="appStore.settings.editor" />
 
-        <ImageAssetPreview v-else-if="editorStore.document.path" :path="editorStore.document.path"
+        <ImageAssetPreview
+v-else-if="editorStore.document.path" :path="editorStore.document.path"
           :name="editorStore.document.name" />
       </div>
     </div>
 
     <template #terminal>
-      <DeferredRunPanel v-show="isWorkbenchContentVisible" ref="runPanelRef"
+      <DeferredRunPanel
+v-show="isWorkbenchContentVisible" ref="runPanelRef"
         :terminal-output-length="editorStore.terminalOutputLength"
         :terminal-output-version="editorStore.terminalOutputVersion"
         :resolve-terminal-output="editorStore.getTerminalOutputSnapshot" :run-logs="editorStore.runLogs"
@@ -91,14 +103,16 @@
     </template>
 
     <template #right-sidebar>
-      <DeferredAiAssistantPanel v-show="isWorkbenchContentVisible" :document="editorStore.document"
+      <DeferredAiAssistantPanel
+v-show="isWorkbenchContentVisible" :document="editorStore.document"
         :active-run="editorStore.activeRunSummary" :analysis="editorStore.activeScriptAnalysis"
         :selection="editorStore.activeSelectionSummary" :git-status="gitStore.status"
         :workspace-root-path="editorStore.workspaceRootPath" @open-patch-diff="openGitDiffPreviewPayload" />
     </template>
 
     <template #statusbar>
-      <DeferredWorkbenchStatusBar :has-active-document="editorStore.hasActiveDocument"
+      <DeferredWorkbenchStatusBar
+:has-active-document="editorStore.hasActiveDocument"
         :document-kind="editorStore.document.kind" :status-message="statusbarMessage"
         :script-analysis="editorStore.activeScriptAnalysis" :encoding="editorStore.document.encoding"
         :executor="editorStore.selectedExecutor" :cursor-line="editorStore.cursorLine"
@@ -109,7 +123,8 @@
     </template>
 
     <template #overlay>
-      <WorkbenchSettingsOverlay ref="settingsOverlayRef" :open="isSettingsView" @close="closeSettingsView"
+      <WorkbenchSettingsOverlay
+ref="settingsOverlayRef" :open="isSettingsView" @close="closeSettingsView"
         @saved="handleSettingsSaved" />
     </template>
   </AppShellLayout>

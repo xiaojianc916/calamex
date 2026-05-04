@@ -5,14 +5,17 @@
     </DropdownMenuTrigger>
 
     <DropdownMenuPortal>
-      <DropdownMenuContent class="dropdown-menu-panel motion-dropdown-surface z-1250 overflow-hidden outline-none"
+      <DropdownMenuContent
+class="dropdown-menu-panel motion-dropdown-surface z-1250 overflow-hidden outline-none"
         :class="[{ 'is-menubar': props.variant === 'menubar' }, props.contentClass]" :align="contentAlign"
         :side-offset="8" :collision-padding="8" :style="{ minWidth: `${props.minWidth}px` }">
         <template v-for="item in props.items" :key="item.key">
-          <DropdownMenuSeparator v-if="item.separatorBefore" class="dropdown-menu-separator"
+          <DropdownMenuSeparator
+v-if="item.separatorBefore" class="dropdown-menu-separator"
             :class="{ 'is-menubar': props.variant === 'menubar' }" />
           <DropdownMenuSub v-if="item.children?.length">
-            <DropdownMenuSubTrigger class="dropdown-menu-item dropdown-menu-sub-trigger w-full text-left outline-none"
+            <DropdownMenuSubTrigger
+class="dropdown-menu-item dropdown-menu-sub-trigger w-full text-left outline-none"
               :class="{
                 'is-danger': item.tone === 'danger',
                 'is-disabled': item.disabled,
@@ -33,7 +36,8 @@
               <span class="dropdown-menu-item-trailing">
                 <span v-if="item.shortcut" class="dropdown-menu-item-shortcut">{{ item.shortcut }}</span>
 
-                <svg class="dropdown-menu-item-submenu-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                <svg
+class="dropdown-menu-item-submenu-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                   stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                   <polyline points="9 6 15 12 9 18" />
                 </svg>
@@ -46,9 +50,11 @@
                 :class="[{ 'is-menubar': props.variant === 'menubar' }, props.contentClass]" :side-offset="6"
                 :collision-padding="8" :style="{ minWidth: `${props.minWidth}px` }">
                 <template v-for="child in item.children" :key="child.key">
-                  <DropdownMenuSeparator v-if="child.separatorBefore" class="dropdown-menu-separator"
+                  <DropdownMenuSeparator
+v-if="child.separatorBefore" class="dropdown-menu-separator"
                     :class="{ 'is-menubar': props.variant === 'menubar' }" />
-                  <DropdownMenuItem class="dropdown-menu-item w-full text-left outline-none" :class="{
+                  <DropdownMenuItem
+class="dropdown-menu-item w-full text-left outline-none" :class="{
                     'is-danger': child.tone === 'danger',
                     'is-disabled': child.disabled,
                     'is-selected': child.selected,
@@ -69,7 +75,8 @@
                       <span v-if="child.shortcut" class="dropdown-menu-item-shortcut">{{ child.shortcut }}</span>
 
                       <span v-if="child.selected" class="dropdown-menu-item-check" aria-hidden="true">
-                        <svg viewBox="0 0 16 16" class="h-3.5 w-3.5" fill="none" stroke="currentColor"
+                        <svg
+viewBox="0 0 16 16" class="h-3.5 w-3.5" fill="none" stroke="currentColor"
                           stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                           <path d="m3.5 8.2 2.7 2.7 6.3-6.4" />
                         </svg>
@@ -81,7 +88,8 @@
             </DropdownMenuPortal>
           </DropdownMenuSub>
 
-          <DropdownMenuItem v-else class="dropdown-menu-item w-full text-left outline-none" :class="{
+          <DropdownMenuItem
+v-else class="dropdown-menu-item w-full text-left outline-none" :class="{
             'is-danger': item.tone === 'danger',
             'is-disabled': item.disabled,
             'is-selected': item.selected,
@@ -102,13 +110,15 @@
               <span v-if="item.shortcut" class="dropdown-menu-item-shortcut">{{ item.shortcut }}</span>
 
               <span v-if="item.selected" class="dropdown-menu-item-check" aria-hidden="true">
-                <svg viewBox="0 0 16 16" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.8"
+                <svg
+viewBox="0 0 16 16" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.8"
                   stroke-linecap="round" stroke-linejoin="round">
                   <path d="m3.5 8.2 2.7 2.7 6.3-6.4" />
                 </svg>
               </span>
 
-              <svg v-if="item.hasSubmenu" class="dropdown-menu-item-submenu-arrow" viewBox="0 0 24 24" fill="none"
+              <svg
+v-if="item.hasSubmenu" class="dropdown-menu-item-submenu-arrow" viewBox="0 0 24 24" fill="none"
                 stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"
                 aria-hidden="true">
                 <polyline points="9 6 15 12 9 18" />

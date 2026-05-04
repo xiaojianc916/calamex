@@ -1,10 +1,12 @@
 <template>
   <div class="app-surface h-screen">
-    <div ref="shellRef"
+    <div
+ref="shellRef"
       class="app-window-shell relative flex h-full flex-col overflow-hidden border border-(--shell-divider)"
       :data-layout-resizing="layoutTransitionsEnabled ? 'false' : 'true'" :data-workbench-motion-state="motionState">
       <template v-if="isDesktopRuntime">
-        <div v-for="handle in resizeHandles" :key="handle.direction" class="window-resize-handle"
+        <div
+v-for="handle in resizeHandles" :key="handle.direction" class="window-resize-handle"
           :class="handle.className" @mousedown.prevent.stop="startWindowResize(handle.direction, $event)" />
       </template>
 
@@ -15,7 +17,8 @@
           <slot name="activity" />
         </div>
 
-        <div ref="sidebarRef" class="app-shell-pane workbench-sidebar-pane min-w-0 overflow-hidden bg-(--sidebar-bg)"
+        <div
+ref="sidebarRef" class="app-shell-pane workbench-sidebar-pane min-w-0 overflow-hidden bg-(--sidebar-bg)"
           :class="[
             layoutTransitionsEnabled ? sidebarSurfaceTransitionClass : 'transition-none',
             props.sidebarVisible
@@ -27,13 +30,15 @@
 
         <div class="app-shell-pane flex min-h-0 flex-col bg-(--editor-bg)">
           <slot name="header" />
-          <main ref="mainRef" class="grid min-h-0 flex-1"
+          <main
+ref="mainRef" class="grid min-h-0 flex-1"
             :class="layoutTransitionsEnabled ? layoutRowsTransitionClass : 'transition-none'" :style="mainGridStyle">
             <section class="app-shell-pane min-h-0 editor-surface">
               <slot />
             </section>
 
-            <button type="button" class="terminal-resize-handle" :class="[
+            <button
+type="button" class="terminal-resize-handle" :class="[
               layoutTransitionsEnabled ? surfaceTransitionClass : 'transition-none',
               props.terminalVisible
                 ? 'translate-y-0 opacity-100'
@@ -42,7 +47,8 @@
               <span class="terminal-resize-handle-bar" />
             </button>
 
-            <section ref="terminalPaneRef" class="app-shell-pane min-h-0 overflow-hidden bg-(--panel-bg)" :class="[
+            <section
+ref="terminalPaneRef" class="app-shell-pane min-h-0 overflow-hidden bg-(--panel-bg)" :class="[
               layoutTransitionsEnabled ? surfaceTransitionClass : 'transition-none',
               props.terminalVisible
                 ? 'translate-y-0 opacity-100'
@@ -53,14 +59,16 @@
           </main>
         </div>
 
-        <aside ref="rightSidebarRef" class="app-shell-pane relative min-h-0 overflow-hidden bg-(--sidebar-bg)"
+        <aside
+ref="rightSidebarRef" class="app-shell-pane relative min-h-0 overflow-hidden bg-(--sidebar-bg)"
           :style="rightSidebarStyle" :class="[
             layoutTransitionsEnabled ? surfaceTransitionClass : 'transition-none',
             props.rightSidebarVisible
               ? 'translate-x-0 border-l border-(--shell-divider) opacity-100'
               : 'translate-x-3 opacity-0 pointer-events-none',
           ]">
-          <button v-if="props.rightSidebarVisible" type="button" class="right-sidebar-resize-handle"
+          <button
+v-if="props.rightSidebarVisible" type="button" class="right-sidebar-resize-handle"
             :class="layoutTransitionsEnabled ? surfaceTransitionClass : 'transition-none'" aria-label="调整 AI 面板宽度"
             @mousedown.prevent.stop="startRightSidebarResize">
             <span class="right-sidebar-resize-handle-bar" />
@@ -69,7 +77,8 @@
           <slot name="right-sidebar" />
         </aside>
 
-        <div v-if="props.contentOverlayVisible" class="pointer-events-none absolute inset-y-0 right-0 z-35"
+        <div
+v-if="props.contentOverlayVisible" class="pointer-events-none absolute inset-y-0 right-0 z-35"
           :style="contentOverlayStyle">
           <div class="pointer-events-auto h-full min-h-0">
             <slot name="overlay" />

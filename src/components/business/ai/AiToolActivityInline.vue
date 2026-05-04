@@ -337,14 +337,16 @@ const getGroupDisplayTitle = (group: IActivityFeedGroup): string => {
       <li v-for="block in blocks" :key="block.id" class="ai-tool-feed-entry" :class="`is-${block.kind}`">
         <span class="ai-tool-entry-rail" aria-hidden="true">
           <span class="ai-tool-entry-marker" :class="getBlockMarkerClasses(block)">
-            <component :is="getBlockMarkerIcon(block)" class="ai-tool-entry-marker-icon"
+            <component
+:is="getBlockMarkerIcon(block)" class="ai-tool-entry-marker-icon"
               :class="{ 'is-spinning': isBlockMarkerSpinning(block) }" />
           </span>
         </span>
 
         <div class="ai-tool-entry-main">
           <div v-if="block.kind === 'assistant_note'" class="ai-tool-note-line">
-            <p class="ai-tool-note-text" :class="[
+            <p
+class="ai-tool-note-text" :class="[
               `is-source-${block.note.source}`,
               `is-tone-${block.note.tone}`,
               block.note.status ? `is-status-${block.note.status}` : '',
@@ -354,14 +356,17 @@ const getGroupDisplayTitle = (group: IActivityFeedGroup): string => {
             </p>
           </div>
 
-          <CollapsibleRoot v-else class="ai-tool-group ai-tool-group-shell" :open="isGroupOpen(block.group)"
+          <CollapsibleRoot
+v-else class="ai-tool-group ai-tool-group-shell" :open="isGroupOpen(block.group)"
             @update:open="(open) => updateGroupOpen(block.group.id, open)">
             <template v-if="isSingleRowGroup(block.group)">
               <CollapsibleTrigger as-child>
-                <button type="button" class="ai-tool-group-header ai-tool-single-row-header"
+                <button
+type="button" class="ai-tool-group-header ai-tool-single-row-header"
                   :class="`is-${block.group.status}`">
                   <span class="ai-tool-row-icon-shell" aria-hidden="true">
-                    <component :is="getRowIcon(getGroupPrimaryRow(block.group) ?? block.group.rows[0])"
+                    <component
+:is="getRowIcon(getGroupPrimaryRow(block.group) ?? block.group.rows[0])"
                       class="ai-tool-row-icon" :class="{
                         'is-spinning': getGroupPrimaryRow(block.group)?.status === 'running',
                         [`is-${getGroupPrimaryRowStatus(block.group)}`]: true,
@@ -373,9 +378,11 @@ const getGroupDisplayTitle = (group: IActivityFeedGroup): string => {
                     </span>
                     <span class="ai-tool-row-subtitle">{{ getGroupPrimaryRowSubtitle(block.group) }}</span>
                   </span>
-                  <span v-if="shouldShowStatusText(getGroupPrimaryRowStatus(block.group))
+                  <span
+v-if="shouldShowStatusText(getGroupPrimaryRowStatus(block.group))
                     || getGroupPrimaryRowDurationLabel(block.group)" class="ai-tool-row-meta">
-                    <span v-if="shouldShowStatusText(getGroupPrimaryRowStatus(block.group))" class="ai-tool-status-text"
+                    <span
+v-if="shouldShowStatusText(getGroupPrimaryRowStatus(block.group))" class="ai-tool-status-text"
                       :class="`is-${getGroupPrimaryRowStatus(block.group)}`">
                       {{ getStatusLabel(getGroupPrimaryRowStatus(block.group)) }}
                     </span>
@@ -391,12 +398,14 @@ const getGroupDisplayTitle = (group: IActivityFeedGroup): string => {
 
               <CollapsibleContent v-if="getGroupPrimaryRowSections(block.group).length" as-child>
                 <div class="ai-tool-detail-panel is-standalone">
-                  <section v-for="section in getGroupPrimaryRowSections(block.group)"
+                  <section
+v-for="section in getGroupPrimaryRowSections(block.group)"
                     :key="`${block.group.id}:section:${section.title}`" class="ai-tool-detail-section"
                     :class="section.tone ? `is-${section.tone}` : ''">
                     <h4 class="ai-tool-detail-heading">{{ section.title }}</h4>
                     <ol class="ai-tool-detail-points">
-                      <li v-for="detail in section.items" :key="`${block.group.id}:detail:${section.title}:${detail}`"
+                      <li
+v-for="detail in section.items" :key="`${block.group.id}:detail:${section.title}:${detail}`"
                         class="ai-tool-detail-point" :title="detail">
                         {{ detail }}
                       </li>
@@ -421,7 +430,8 @@ const getGroupDisplayTitle = (group: IActivityFeedGroup): string => {
                     </span>
                   </span>
                   <span class="ai-tool-group-header-trailing">
-                    <span v-if="shouldShowStatusText(block.group.status)" class="ai-tool-status-text"
+                    <span
+v-if="shouldShowStatusText(block.group.status)" class="ai-tool-status-text"
                       :class="`is-${block.group.status}`">
                       {{ getStatusLabel(block.group.status) }}
                     </span>
@@ -438,12 +448,14 @@ const getGroupDisplayTitle = (group: IActivityFeedGroup): string => {
                     <span class="ai-tool-row-branch" aria-hidden="true">
                       <span class="ai-tool-row-branch-node" :class="`is-${row.status}`"></span>
                     </span>
-                    <CollapsibleRoot class="ai-tool-row-details" :open="isRowOpen(row)"
+                    <CollapsibleRoot
+class="ai-tool-row-details" :open="isRowOpen(row)"
                       @update:open="(open) => updateRowOpen(row.id, open)">
                       <CollapsibleTrigger as-child>
                         <button type="button" class="ai-tool-row-summary">
                           <span class="ai-tool-row-icon-shell" aria-hidden="true">
-                            <component :is="getRowIcon(row)" class="ai-tool-row-icon"
+                            <component
+:is="getRowIcon(row)" class="ai-tool-row-icon"
                               :class="{ 'is-spinning': row.status === 'running', [`is-${row.status}`]: true }" />
                           </span>
                           <span class="ai-tool-row-main">
@@ -451,7 +463,8 @@ const getGroupDisplayTitle = (group: IActivityFeedGroup): string => {
                             <span class="ai-tool-row-subtitle">{{ getRowSubtitle(row) }}</span>
                           </span>
                           <span v-if="shouldShowStatusText(row.status) || row.durationLabel" class="ai-tool-row-meta">
-                            <span v-if="shouldShowStatusText(row.status)" class="ai-tool-status-text"
+                            <span
+v-if="shouldShowStatusText(row.status)" class="ai-tool-status-text"
                               :class="`is-${row.status}`">
                               {{ getStatusLabel(row.status) }}
                             </span>
@@ -465,11 +478,13 @@ const getGroupDisplayTitle = (group: IActivityFeedGroup): string => {
 
                       <CollapsibleContent v-if="row.sections.length" as-child>
                         <div class="ai-tool-detail-panel">
-                          <section v-for="section in row.sections" :key="`${row.id}:section:${section.title}`"
+                          <section
+v-for="section in row.sections" :key="`${row.id}:section:${section.title}`"
                             class="ai-tool-detail-section" :class="section.tone ? `is-${section.tone}` : ''">
                             <h4 class="ai-tool-detail-heading">{{ section.title }}</h4>
                             <ol class="ai-tool-detail-points">
-                              <li v-for="detail in section.items" :key="`${row.id}:detail:${section.title}:${detail}`"
+                              <li
+v-for="detail in section.items" :key="`${row.id}:detail:${section.title}:${detail}`"
                                 class="ai-tool-detail-point" :title="detail">
                                 {{ detail }}
                               </li>

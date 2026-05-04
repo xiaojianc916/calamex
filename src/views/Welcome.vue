@@ -61,20 +61,21 @@ onBeforeUnmount(() => {
   will-change: transform, opacity;
 }
 
-.welcome-svg-wrap :deep(svg) {
+.welcome-svg-wrap :global(svg) {
   display: block;
   width: 100%;
   height: 100%;
 }
 
-.welcome-svg-wrap :deep(text) {
+.welcome-svg-wrap :global(text) {
   text-rendering: geometricPrecision;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .welcome-svg-wrap :deep(animate),
-  .welcome-svg-wrap :deep(animateTransform),
-  .welcome-svg-wrap :deep(animateMotion) {
+
+  .welcome-svg-wrap :global(animate),
+  .welcome-svg-wrap :global(animateTransform),
+  .welcome-svg-wrap :global(animateMotion) {
     display: none;
   }
 }

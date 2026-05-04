@@ -113,7 +113,8 @@ const handleModeSelect = (key: string): void => {
     <div class="ai-composer-surface" :class="{ 'is-disabled': disabled, 'has-attachments': attachments.length > 0 }">
       <div v-if="attachments.length" class="ai-attachment-strip" aria-label="已添加附件">
         <span v-for="attachment in attachments" :key="attachment.id" class="ai-attachment-chip">
-          <svg v-if="attachment.kind === 'image'" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          <svg
+v-if="attachment.kind === 'image'" viewBox="0 0 24 24" fill="none" stroke="currentColor"
             aria-hidden="true">
             <rect x="3" y="4" width="18" height="16" rx="2" />
             <circle cx="8.5" cy="9" r="1.5" />
@@ -136,7 +137,8 @@ const handleModeSelect = (key: string): void => {
       </div>
 
       <div class="ai-textarea-shell">
-        <textarea ref="textareaRef" v-model="modelValue" rows="4" placeholder="输入消息…" aria-label="输入消息"
+        <textarea
+ref="textareaRef" v-model="modelValue" rows="4" placeholder="输入消息…" aria-label="输入消息"
           :disabled="disabled" @keydown="handleKeydown" @paste="handlePaste" />
       </div>
 
@@ -152,14 +154,16 @@ const handleModeSelect = (key: string): void => {
         </div>
 
         <div class="ai-toolbar-group is-end">
-          <AppDropdownMenu :items="modeMenuItems" align="right" :min-width="136"
+          <AppDropdownMenu
+:items="modeMenuItems" align="right" :min-width="136"
             content-class="ai-prompt-mode-menu-panel" @select="handleModeSelect">
             <template #trigger="{ open }">
               <button type="button" class="ai-mode-button" :aria-label="modeLabel" :title="providerLabel">
                 <span class="ai-mode-button-copy">
                   <span class="ai-mode-button-mode">{{ modeLabel }}</span>
                 </span>
-                <svg class="ai-mode-button-chevron" :class="{ 'is-open': open }" viewBox="0 0 24 24" fill="none"
+                <svg
+class="ai-mode-button-chevron" :class="{ 'is-open': open }" viewBox="0 0 24 24" fill="none"
                   stroke="currentColor" aria-hidden="true">
                   <path d="m6 9 6 6 6-6" />
                 </svg>
@@ -167,13 +171,15 @@ const handleModeSelect = (key: string): void => {
             </template>
           </AppDropdownMenu>
 
-          <button v-if="disabled" type="button" class="ai-send-button is-stop" aria-label="停止" title="停止"
+          <button
+v-if="disabled" type="button" class="ai-send-button is-stop" aria-label="停止" title="停止"
             @click="emit('stop')">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
               <rect x="7" y="7" width="10" height="10" rx="1" />
             </svg>
           </button>
-          <button v-else type="button" class="ai-send-button" :aria-label="submitLabel" :title="submitLabel"
+          <button
+v-else type="button" class="ai-send-button" :aria-label="submitLabel" :title="submitLabel"
             :disabled="!modelValue.trim() && !hasAttachments" @click="emit('submit')">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
               <path d="M21.5 2.5L11 13" />

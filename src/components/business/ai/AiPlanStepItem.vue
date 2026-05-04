@@ -70,7 +70,8 @@ const commitTitle = (): void => {
     <li class="ai-plan-step-item" :class="[`is-${step.status}`, { 'is-active': step.isActive }]">
         <header class="ai-plan-step-header">
             <span class="ai-plan-step-index" :aria-label="statusLabel">{{ statusDotLabel }}</span>
-            <input v-model="draftTitle" class="ai-plan-step-title" type="text" aria-label="编辑计划步骤标题" @blur="commitTitle"
+            <input
+v-model="draftTitle" class="ai-plan-step-title" type="text" aria-label="编辑计划步骤标题" @blur="commitTitle"
                 @keydown.enter.prevent="commitTitle" />
             <span class="ai-plan-step-status">{{ statusLabel }}</span>
             <button type="button" class="ai-plan-step-remove" :disabled="!canRemove" @click="emit('remove', step.id)">

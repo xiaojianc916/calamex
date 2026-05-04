@@ -19,7 +19,8 @@
         </p>
       </template>
     </section>
-    <EditorContextMenu :open="contextMenuState.open" :x="contextMenuState.x" :y="contextMenuState.y"
+    <EditorContextMenu
+:open="contextMenuState.open" :x="contextMenuState.x" :y="contextMenuState.y"
       :groups="contextMenuGroups" :theme="props.theme" :submenu-direction="submenuDirection"
       @select="handleContextMenuItemSelect" />
   </div>

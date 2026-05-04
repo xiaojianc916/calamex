@@ -231,7 +231,8 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <article v-if="shouldRenderMessage" class="ai-message"
+  <article
+v-if="shouldRenderMessage" class="ai-message"
     :class="[`is-${message.role}`, { 'is-inline-loading': shouldShowInlineLoader }]">
     <AiProviderIcon v-if="message.role !== 'user'" class="ai-logo" :platform-id="platformId" :title="providerLabel" />
     <div class="ai-message-main">
@@ -240,13 +241,15 @@ onBeforeUnmount(() => {
         <span>{{ inlineLoaderLabel }}</span>
       </div>
       <AiAgentRuntimeTimeline v-if="shouldShowRuntimeTimeline" :events="message.stream?.runtimeEvents ?? []" />
-      <AiToolActivityInline v-if="shouldShowActivityTimeline" :tool-calls="message.toolCalls ?? []"
+      <AiToolActivityInline
+v-if="shouldShowActivityTimeline" :tool-calls="message.toolCalls ?? []"
         :activity-text="message.stream?.activityText" :activity-trail="message.stream?.activityTrail"
         :activity-notes="message.stream?.activityNotes" :activities="message.stream?.activities"
         :activity-events="message.stream?.activityEvents" />
       <div v-if="userAttachmentReferences.length" class="ai-message-attachments" aria-label="已发送附件">
         <span v-for="reference in userAttachmentReferences" :key="reference.id" class="ai-message-attachment-chip">
-          <svg v-if="reference.kind === 'image-attachment'" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          <svg
+v-if="reference.kind === 'image-attachment'" viewBox="0 0 24 24" fill="none" stroke="currentColor"
             aria-hidden="true">
             <rect x="3" y="4" width="18" height="16" rx="2" />
             <circle cx="8.5" cy="9" r="1.5" />
@@ -263,14 +266,16 @@ onBeforeUnmount(() => {
         <AiMarkdown :message-id="message.id" :content="message.content" :stream-status="message.stream?.status" />
       </div>
       <div v-if="hasMessageActions" class="ai-message-options" aria-label="AI 选项">
-        <button v-for="action in message.actions" :key="`${message.id}:${action.id}`" type="button"
+        <button
+v-for="action in message.actions" :key="`${message.id}:${action.id}`" type="button"
           class="ai-message-option-button" :disabled="action.disabled"
           @click.stop="emit('messageAction', message.id, action.id)">
           {{ action.label }}
         </button>
       </div>
       <div v-if="canCopyContent" class="ai-message-actions">
-        <button type="button" class="ai-message-copy-button" :class="{ 'is-copied': isCopied }"
+        <button
+type="button" class="ai-message-copy-button" :class="{ 'is-copied': isCopied }"
           :aria-label="isCopied ? '已复制对话内容' : '复制对话内容'" :title="isCopied ? '已复制' : '复制对话内容'"
           @click.stop="copyMessageContent">
           <svg v-if="isCopied" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">

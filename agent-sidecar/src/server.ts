@@ -5,14 +5,41 @@ import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
 import { StrandsEngine } from './engines/strands-engine.js';
-import type { IStrandsEngineInput, TAgentMode } from './engines/strands-engine.js';
+import type {
+  IApprovalResolutionInput,
+  IStrandsEngineInput,
+  IStrandsEngineRunOptions,
+  TAgentMode,
+} from './engines/strands-engine.js';
 import { agentSidecarResponseSchema } from './schemas/events.js';
 import type { TAgentSidecarResponse, TAgentUiEvent } from './schemas/events.js';
 import { getMcpRuntimeStatus } from './tools/mcp.js';
 
 const DEFAULT_PORT = 39871;
 const MAX_REQUEST_BYTES = 2 * 1024 * 1024;
+export const SIDECAR_VERSION = '0.1.0';
 export const SIDECAR_PROTOCOL_VERSION = '5';
+
+export interface IAgentSidecarRuntime {
+  readonly name: string;
+  readonly version?: string;
+  chat(
+    input: IStrandsEngineInput,
+    options?: IStrandsEngineRunOptions,
+  ): Promise<TAgentSidecarResponse>;
+  plan(
+    input: IStrandsEngineInput,
+    options?: IStrandsEngineRunOptions,
+  ): Promise<TAgentSidecarResponse>;
+  execute(
+    input: IStrandsEngineInput,
+    options?: IStrandsEngineRunOptions,
+  ): Promise<TAgentSidecarResponse>;
+  resolveApproval(
+    input: IApprovalResolutionInput,
+    options?: IStrandsEngineRunOptions,
+  ): Promise<TAgentSidecarResponse>;
+}
 
 const agentModeSchema = z.enum(['ask', 'plan', 'agent', 'patch', 'review']);
 
@@ -97,7 +124,18 @@ const approvalResolutionSchema = z.object({
   decision: z.string().min(1),
 });
 
-const engine = new StrandsEngine();
+const createDefaultRuntime = (): IAgentSidecarRuntime => {
+  const engine = new StrandsEngine();
+
+  return {
+    name: 'strands',
+    version: SIDECAR_VERSION,
+    chat: engine.chat.bind(engine),
+    plan: engine.plan.bind(engine),
+    execute: engine.execute.bind(engine),
+    resolveApproval: engine.resolveApproval.bind(engine),
+  };
+};
 
 const writeJson = (response: ServerResponse, statusCode: number, payload: unknown): void => {
   response.writeHead(statusCode, {
@@ -232,16 +270,20 @@ const handlePostStream = async (
   }
 };
 
-export const createAgentSidecarServer = () =>
-  createServer((request, response) => {
+export const createAgentSidecarServer = (
+  options: { runtime?: IAgentSidecarRuntime } = {},
+) => {
+  const runtime = options.runtime ?? createDefaultRuntime();
+
+  return createServer((request, response) => {
     const url = request.url ?? '/';
 
     if (request.method === 'GET' && url === '/health') {
       writeJson(response, 200, {
         ok: true,
         status: 'ready',
-        engine: 'strands',
-        version: '0.1.0',
+        engine: runtime.name,
+        version: runtime.version ?? null,
         protocolVersion: SIDECAR_PROTOCOL_VERSION,
         mcp: getMcpRuntimeStatus(),
       });
@@ -251,7 +293,7 @@ export const createAgentSidecarServer = () =>
     if (request.method === 'POST' && url === '/agent/chat') {
       void handlePost(request, response, async (body) => {
         const payload = agentSidecarChatRequestSchema.parse(body);
-        return agentSidecarResponseSchema.parse(await engine.chat(toAgentInput(payload, 'ask')));
+        return agentSidecarResponseSchema.parse(await runtime.chat(toAgentInput(payload, 'ask')));
       });
       return;
     }
@@ -259,7 +301,7 @@ export const createAgentSidecarServer = () =>
     if (request.method === 'POST' && url === '/agent/chat/stream') {
       void handlePostStream(request, response, async (body, onEvent) => {
         const payload = agentSidecarChatRequestSchema.parse(body);
-        return engine.chat(toAgentInput(payload, 'ask'), { onEvent });
+        return runtime.chat(toAgentInput(payload, 'ask'), { onEvent });
       });
       return;
     }
@@ -267,7 +309,7 @@ export const createAgentSidecarServer = () =>
     if (request.method === 'POST' && url === '/agent/plan') {
       void handlePost(request, response, async (body) => {
         const payload = agentSidecarPlanRequestSchema.parse(body);
-        return agentSidecarResponseSchema.parse(await engine.plan(toAgentInput(payload, 'plan')));
+        return agentSidecarResponseSchema.parse(await runtime.plan(toAgentInput(payload, 'plan')));
       });
       return;
     }
@@ -275,7 +317,7 @@ export const createAgentSidecarServer = () =>
     if (request.method === 'POST' && url === '/agent/plan/stream') {
       void handlePostStream(request, response, async (body, onEvent) => {
         const payload = agentSidecarPlanRequestSchema.parse(body);
-        return engine.plan(toAgentInput(payload, 'plan'), { onEvent });
+        return runtime.plan(toAgentInput(payload, 'plan'), { onEvent });
       });
       return;
     }
@@ -283,7 +325,7 @@ export const createAgentSidecarServer = () =>
     if (request.method === 'POST' && url === '/agent/execute') {
       void handlePost(request, response, async (body) => {
         const payload = agentSidecarExecuteRequestSchema.parse(body);
-        return agentSidecarResponseSchema.parse(await engine.execute(toAgentInput(payload, 'agent')));
+        return agentSidecarResponseSchema.parse(await runtime.execute(toAgentInput(payload, 'agent')));
       });
       return;
     }
@@ -291,7 +333,7 @@ export const createAgentSidecarServer = () =>
     if (request.method === 'POST' && url === '/agent/execute/stream') {
       void handlePostStream(request, response, async (body, onEvent) => {
         const payload = agentSidecarExecuteRequestSchema.parse(body);
-        return engine.execute(toAgentInput(payload, 'agent'), { onEvent });
+        return runtime.execute(toAgentInput(payload, 'agent'), { onEvent });
       });
       return;
     }
@@ -299,7 +341,7 @@ export const createAgentSidecarServer = () =>
     if (request.method === 'POST' && url === '/approval/resolve') {
       void handlePost(request, response, async (body) => {
         const payload = approvalResolutionSchema.parse(body);
-        return agentSidecarResponseSchema.parse(await engine.resolveApproval(payload));
+        return agentSidecarResponseSchema.parse(await runtime.resolveApproval(payload));
       });
       return;
     }
@@ -307,7 +349,7 @@ export const createAgentSidecarServer = () =>
     if (request.method === 'POST' && url === '/approval/resolve/stream') {
       void handlePostStream(request, response, async (body, onEvent) => {
         const payload = approvalResolutionSchema.parse(body);
-        return engine.resolveApproval(payload, { onEvent });
+        return runtime.resolveApproval(payload, { onEvent });
       });
       return;
     }
@@ -316,6 +358,7 @@ export const createAgentSidecarServer = () =>
       error: '未知 sidecar 路由。',
     });
   });
+};
 
 const resolvePort = (): number => {
   const rawPort = process.env.AGENT_SIDECAR_PORT?.trim();

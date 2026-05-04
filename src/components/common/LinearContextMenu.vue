@@ -1,35 +1,20 @@
 <template>
   <Teleport to="body">
     <div
-      class="linear-context-menu-root"
-      :class="{
-        'is-light': props.theme === 'light',
-        'is-submenu-left': props.submenuDirection === 'left',
-      }"
-      @contextmenu.prevent
-    >
-      <MotionDropdown
-        class="cmx linear-context-menu"
-        :open="props.open"
-        :origin="motionOrigin"
-        :style="rootStyle"
-      >
+class="linear-context-menu-root" :class="{
+      'is-light': props.theme === 'light',
+      'is-submenu-left': props.submenuDirection === 'left',
+    }" @contextmenu.prevent>
+      <MotionDropdown class="cmx linear-context-menu" :open="props.open" :origin="motionOrigin" :style="rootStyle">
         <template v-for="(group, groupIndex) in props.groups" :key="group.key">
           <div class="cmx-hd">{{ group.title }}</div>
 
           <template v-for="item in group.items" :key="item.key">
-            <div
-              v-if="item.children?.length"
-              class="cmx-sub"
-              @mouseenter="handleItemMouseEnter(item)"
-            >
+            <div v-if="item.children?.length" class="cmx-sub" @mouseenter="handleItemMouseEnter(item)">
               <button
-                type="button"
-                class="cmx-i"
-                :class="{ disabled: item.disabled, active: activeSubmenuKey === item.key }"
-                :disabled="item.disabled"
-                @pointerdown.prevent.stop="handleItemSelect(item)"
-              >
+type="button" class="cmx-i"
+                :class="{ disabled: item.disabled, active: activeSubmenuKey === item.key }" :disabled="item.disabled"
+                @pointerdown.prevent.stop="handleItemSelect(item)">
                 <span class="ic">
                   <LinearContextMenuIcon :icon="item.icon" />
                 </span>
@@ -44,14 +29,9 @@
               <div v-if="activeSubmenuKey === item.key" class="cmx-fly">
                 <div class="cmx">
                   <button
-                    v-for="child in item.children"
-                    :key="child.key"
-                    type="button"
-                    class="cmx-i"
-                    :class="{ disabled: child.disabled }"
-                    :disabled="child.disabled"
-                    @pointerdown.prevent.stop="handleItemSelect(child)"
-                  >
+v-for="child in item.children" :key="child.key" type="button" class="cmx-i"
+                    :class="{ disabled: child.disabled }" :disabled="child.disabled"
+                    @pointerdown.prevent.stop="handleItemSelect(child)">
                     <span class="ic">
                       <LinearContextMenuIcon :icon="child.icon" />
                     </span>
@@ -65,14 +45,8 @@
             </div>
 
             <button
-              v-else
-              type="button"
-              class="cmx-i"
-              :class="{ disabled: item.disabled }"
-              :disabled="item.disabled"
-              @mouseenter="handleItemMouseEnter(item)"
-              @pointerdown.prevent.stop="handleItemSelect(item)"
-            >
+v-else type="button" class="cmx-i" :class="{ disabled: item.disabled }" :disabled="item.disabled"
+              @mouseenter="handleItemMouseEnter(item)" @pointerdown.prevent.stop="handleItemSelect(item)">
               <span class="ic">
                 <LinearContextMenuIcon :icon="item.icon" />
               </span>
@@ -93,8 +67,8 @@
 <script setup lang="ts">
 import MotionDropdown from '@/components/business/MotionDropdown.vue';
 import type {
-    ILinearContextMenuGroup,
-    ILinearContextMenuItem,
+  ILinearContextMenuGroup,
+  ILinearContextMenuItem,
 } from '@/components/common/linear-context-menu.types';
 import LinearContextMenuIcon from '@/components/common/LinearContextMenuIcon.vue';
 import type { TThemeMode } from '@/types/app';
@@ -296,7 +270,7 @@ watch(
   color: currentColor;
 }
 
-.ic :deep(svg) {
+.ic :global(svg) {
   width: 14px;
   height: 14px;
 }
