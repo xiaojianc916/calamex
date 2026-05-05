@@ -4,7 +4,11 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { describe, it } from 'node:test';
 
-import { createMcpClientBundle, getMcpRuntimeStatus, loadMcpServerConfigs } from './mcp.js';
+import {
+  createMastraMcpClientBundle,
+  getMcpRuntimeStatus,
+  loadMcpServerConfigs,
+} from './mcp.js';
 
 const WORKSPACE_ROOT = resolve('D:/com.xiaojianc/my_desktop_app');
 const MEMORY_FILE_PATH = join(WORKSPACE_ROOT, 'tmp', 'mcp-memory-test.jsonl');
@@ -219,16 +223,21 @@ describe('MCP sidecar config', () => {
     });
   });
 
-  it('keeps healthy MCP tools when one configured server closes', async () => {
-    const bundle = await createMcpClientBundle({
+  it('builds a Mastra-ready MCP bundle from the official SDK and keeps healthy tools when one configured server closes', async () => {
+    const bundle = await createMastraMcpClientBundle({
       workspaceRootPath: WORKSPACE_ROOT,
       env: defaultEnv,
       platform: 'win32',
     });
 
     try {
-      assert.equal(bundle.tools.some((tool) => tool.name === 'read_file'), true);
-      assert.equal(bundle.tools.some((tool) => tool.name === 'sequentialthinking'), true);
+      const readFileTool = bundle.tools.find((tool) => tool.name === 'read_file');
+      const sequentialThinkingTool = bundle.tools.find((tool) => tool.name === 'sequentialthinking');
+
+      assert.ok(readFileTool);
+      assert.ok(sequentialThinkingTool);
+      assert.equal(typeof readFileTool.mcpClient.callTool, 'function');
+      assert.equal(typeof readFileTool.toolSpec.inputSchema, 'object');
       assert.equal(
         bundle.errors.some((error) => error.includes('git') || error.includes('time')),
         true,

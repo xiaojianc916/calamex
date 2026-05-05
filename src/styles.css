@@ -1,3 +1,6 @@
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
 /* ============================================================
  * Tailwind v4 + shadcn-vue  |  .dark class-driven theme
  * ============================================================ */
@@ -5,6 +8,7 @@
 @import 'tailwindcss';
 @import './assets/css/tailwind.css';
 @import 'markstream-vue/index.css';
+@import "tw-animate-css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -5347,5 +5351,14 @@ button:disabled,
   .splash-cursor,
   .splash-spinner {
     animation: none;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
   }
 }

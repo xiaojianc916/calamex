@@ -1,11 +1,12 @@
-import type { TAgentUiEvent, TJsonValue } from '../schemas/events.js';
+import type { TAgentRuntimeOutputEvent } from '../engines/runtime-contracts.js';
+import type { TJsonValue } from '../schemas/events.js';
 import type { AgentStreamEventBus } from './stream-event-bus.js';
-import { extractModelTextDelta, normalizeStrandsStreamEvent } from './stream-normalizer.js';
+import { extractRuntimeModelTextDelta, normalizeAgentRuntimeStreamEvent } from './stream-normalizer.js';
 import type { TAgentRuntimeEvent } from './stream-types.js';
 
 interface IAgentStreamAdapterParams {
     eventBus: AgentStreamEventBus;
-    emitLegacyEvent: (event: TAgentUiEvent) => void;
+    emitOutputEvent: (event: TAgentRuntimeOutputEvent) => void;
     toJsonValue: (value: unknown) => TJsonValue;
 }
 
@@ -73,7 +74,7 @@ const shouldStreamFinalAnswerText = (capture: IAgentStreamCapture): boolean =>
 
 const emitVisibleTextDelta = (
     text: string,
-    params: Pick<IAgentStreamAdapterParams, 'emitLegacyEvent'>,
+    params: Pick<IAgentStreamAdapterParams, 'emitOutputEvent'>,
     capture: IAgentStreamCapture,
     phase: 'stage' | 'final',
 ): void => {
@@ -82,7 +83,7 @@ const emitVisibleTextDelta = (
     }
 
     capture.emittedVisibleText = text;
-    params.emitLegacyEvent({
+    params.emitOutputEvent({
         type: 'message_delta',
         text,
         phase,
@@ -100,7 +101,7 @@ const createStreamCapture = (): IAgentStreamCapture => ({
 
 const appendLegacySidecarEvent = (
     event: unknown,
-    params: Pick<IAgentStreamAdapterParams, 'emitLegacyEvent' | 'toJsonValue'>,
+    params: Pick<IAgentStreamAdapterParams, 'emitOutputEvent' | 'toJsonValue'>,
     capture: IAgentStreamCapture,
 ): void => {
     if (getModelEventType(event) === 'modelContentBlockStopEvent') {
@@ -119,7 +120,7 @@ const appendLegacySidecarEvent = (
         return;
     }
 
-    const textDelta = extractModelTextDelta(event);
+    const textDelta = extractRuntimeModelTextDelta(event);
 
     if (textDelta) {
         capture.activeModelBlock = 'text';
@@ -144,7 +145,7 @@ const appendLegacySidecarEvent = (
             emitVisibleTextDelta('', params, capture, 'stage');
         }
 
-        params.emitLegacyEvent({
+        params.emitOutputEvent({
             type: 'tool_start',
             toolName: getToolUseName(event),
             input: params.toJsonValue(getToolUseInput(event)),
@@ -154,7 +155,7 @@ const appendLegacySidecarEvent = (
 
     if (eventType === 'afterToolCallEvent') {
         capture.activeModelBlock = null;
-        params.emitLegacyEvent({
+        params.emitOutputEvent({
             type: 'tool_result',
             toolName: getToolUseName(event),
             output: params.toJsonValue(getToolResultOutput(event)),
@@ -175,7 +176,7 @@ export const createAgentStreamAdapter = (
 
     return {
         consume(event) {
-            const runtimeEvents = normalizeStrandsStreamEvent(event).map((draft) =>
+            const runtimeEvents = normalizeAgentRuntimeStreamEvent(event).map((draft) =>
                 params.eventBus.emitDraft(draft),
             );
 

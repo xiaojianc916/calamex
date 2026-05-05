@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-import type { JSONValue } from '@strands-agents/sdk';
+import type { JSONValue } from '../types/json-value.js';
 
 export const ACONTEXT_STATE_KEY = 'acontext';
 

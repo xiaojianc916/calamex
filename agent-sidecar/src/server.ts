@@ -1,45 +1,27 @@
+import { randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { z } from 'zod';
 
-import { StrandsEngine } from './engines/strands-engine.js';
-import type {
-  IApprovalResolutionInput,
-  IStrandsEngineInput,
-  IStrandsEngineRunOptions,
-  TAgentMode,
-} from './engines/strands-engine.js';
+import {
+  toAgentSidecarResponse,
+  toAgentUiEvent,
+  type IAgentRuntimeResponse,
+  type IAgentRuntimeRunOptions,
+  type TAgentRuntimeOutputEvent,
+} from './engines/runtime-contracts.js';
+import type { IAgentRuntimeInput, TAgentMode } from './engines/runtime-input.js';
+import { createConfiguredRuntime, type IAgentSidecarRuntime } from './engines/runtime.js';
+import type { TAgentSidecarResponse } from './schemas/events.js';
 import { agentSidecarResponseSchema } from './schemas/events.js';
-import type { TAgentSidecarResponse, TAgentUiEvent } from './schemas/events.js';
 import { getMcpRuntimeStatus } from './tools/mcp.js';
 
 const DEFAULT_PORT = 39871;
 const MAX_REQUEST_BYTES = 2 * 1024 * 1024;
-export const SIDECAR_VERSION = '0.1.0';
+const DEFAULT_RUNTIME_TIMEOUT_MS = 30 * 60 * 1000;
 export const SIDECAR_PROTOCOL_VERSION = '5';
-
-export interface IAgentSidecarRuntime {
-  readonly name: string;
-  readonly version?: string;
-  chat(
-    input: IStrandsEngineInput,
-    options?: IStrandsEngineRunOptions,
-  ): Promise<TAgentSidecarResponse>;
-  plan(
-    input: IStrandsEngineInput,
-    options?: IStrandsEngineRunOptions,
-  ): Promise<TAgentSidecarResponse>;
-  execute(
-    input: IStrandsEngineInput,
-    options?: IStrandsEngineRunOptions,
-  ): Promise<TAgentSidecarResponse>;
-  resolveApproval(
-    input: IApprovalResolutionInput,
-    options?: IStrandsEngineRunOptions,
-  ): Promise<TAgentSidecarResponse>;
-}
 
 const agentModeSchema = z.enum(['ask', 'plan', 'agent', 'patch', 'review']);
 
@@ -124,19 +106,6 @@ const approvalResolutionSchema = z.object({
   decision: z.string().min(1),
 });
 
-const createDefaultRuntime = (): IAgentSidecarRuntime => {
-  const engine = new StrandsEngine();
-
-  return {
-    name: 'strands',
-    version: SIDECAR_VERSION,
-    chat: engine.chat.bind(engine),
-    plan: engine.plan.bind(engine),
-    execute: engine.execute.bind(engine),
-    resolveApproval: engine.resolveApproval.bind(engine),
-  };
-};
-
 const writeJson = (response: ServerResponse, statusCode: number, payload: unknown): void => {
   response.writeHead(statusCode, {
     'content-type': 'application/json; charset=utf-8',
@@ -178,11 +147,11 @@ const readBody = async (request: IncomingMessage): Promise<unknown> =>
 const toAgentInput = (
   payload: z.infer<typeof baseAgentRequestSchema>,
   mode: TAgentMode,
-): IStrandsEngineInput => {
+): IAgentRuntimeInput => {
   const lastUserMessage = [...payload.messages]
     .reverse()
     .find((message) => message.role === 'user');
-  const input: IStrandsEngineInput = {
+  const input: IAgentRuntimeInput = {
     mode: payload.mode ?? mode,
     goal: payload.goal ?? lastUserMessage?.content ?? '继续当前任务',
     messages: payload.messages,
@@ -203,11 +172,15 @@ const toAgentInput = (
 const handlePost = async (
   request: IncomingMessage,
   response: ServerResponse,
-  handler: (body: unknown) => Promise<unknown>,
+  handler: (body: unknown, options: IAgentRuntimeRunOptions) => Promise<IAgentRuntimeResponse>,
 ): Promise<void> => {
   try {
     const body = await readBody(request);
-    writeJson(response, 200, await handler(body));
+    writeJson(
+      response,
+      200,
+      toValidatedSidecarResponse(await handler(body, createRuntimeRunOptions(request))),
+    );
   } catch (error) {
     writeJson(response, 400, {
       error: error instanceof Error ? error.message : String(error),
@@ -234,24 +207,52 @@ const writeStreamHeaders = (response: ServerResponse): void => {
   response.flushHeaders();
 };
 
+const createRuntimeRunOptions = (
+  request: IncomingMessage,
+  onEvent?: (event: TAgentRuntimeOutputEvent) => void,
+): IAgentRuntimeRunOptions => {
+  const controller = new AbortController();
+
+  request.once('aborted', () => {
+    controller.abort();
+  });
+
+  return {
+    context: {
+      requestId: randomUUID(),
+      signal: controller.signal,
+      timeoutMs: DEFAULT_RUNTIME_TIMEOUT_MS,
+    },
+    ...(onEvent ? { onEvent } : {}),
+  };
+};
+
+const toValidatedSidecarResponse = (
+  response: IAgentRuntimeResponse,
+): TAgentSidecarResponse => {
+  const payload = toAgentSidecarResponse(response);
+  agentSidecarResponseSchema.parse(payload);
+  return payload;
+};
+
 const handlePostStream = async (
   request: IncomingMessage,
   response: ServerResponse,
-  handler: (body: unknown, onEvent: (event: TAgentUiEvent) => void) => Promise<TAgentSidecarResponse>,
+  handler: (body: unknown, options: IAgentRuntimeRunOptions) => Promise<IAgentRuntimeResponse>,
 ): Promise<void> => {
   try {
     const body = await readBody(request);
     writeStreamHeaders(response);
-    const payload = await handler(body, (event) => {
+    const payload = await handler(body, createRuntimeRunOptions(request, (event) => {
       writeNdjsonFrame(response, {
         type: 'event',
-        event,
+        event: toAgentUiEvent(event),
       });
-    });
+    }));
 
     writeNdjsonFrame(response, {
       type: 'response',
-      response: agentSidecarResponseSchema.parse(payload),
+      response: toValidatedSidecarResponse(payload),
     });
     response.end();
   } catch (error) {
@@ -273,7 +274,7 @@ const handlePostStream = async (
 export const createAgentSidecarServer = (
   options: { runtime?: IAgentSidecarRuntime } = {},
 ) => {
-  const runtime = options.runtime ?? createDefaultRuntime();
+  const runtime = options.runtime ?? createConfiguredRuntime();
 
   return createServer((request, response) => {
     const url = request.url ?? '/';
@@ -291,65 +292,65 @@ export const createAgentSidecarServer = (
     }
 
     if (request.method === 'POST' && url === '/agent/chat') {
-      void handlePost(request, response, async (body) => {
+      void handlePost(request, response, async (body, options) => {
         const payload = agentSidecarChatRequestSchema.parse(body);
-        return agentSidecarResponseSchema.parse(await runtime.chat(toAgentInput(payload, 'ask')));
+        return runtime.chat(toAgentInput(payload, 'ask'), options);
       });
       return;
     }
 
     if (request.method === 'POST' && url === '/agent/chat/stream') {
-      void handlePostStream(request, response, async (body, onEvent) => {
+      void handlePostStream(request, response, async (body, options) => {
         const payload = agentSidecarChatRequestSchema.parse(body);
-        return runtime.chat(toAgentInput(payload, 'ask'), { onEvent });
+        return runtime.chat(toAgentInput(payload, 'ask'), options);
       });
       return;
     }
 
     if (request.method === 'POST' && url === '/agent/plan') {
-      void handlePost(request, response, async (body) => {
+      void handlePost(request, response, async (body, options) => {
         const payload = agentSidecarPlanRequestSchema.parse(body);
-        return agentSidecarResponseSchema.parse(await runtime.plan(toAgentInput(payload, 'plan')));
+        return runtime.plan(toAgentInput(payload, 'plan'), options);
       });
       return;
     }
 
     if (request.method === 'POST' && url === '/agent/plan/stream') {
-      void handlePostStream(request, response, async (body, onEvent) => {
+      void handlePostStream(request, response, async (body, options) => {
         const payload = agentSidecarPlanRequestSchema.parse(body);
-        return runtime.plan(toAgentInput(payload, 'plan'), { onEvent });
+        return runtime.plan(toAgentInput(payload, 'plan'), options);
       });
       return;
     }
 
     if (request.method === 'POST' && url === '/agent/execute') {
-      void handlePost(request, response, async (body) => {
+      void handlePost(request, response, async (body, options) => {
         const payload = agentSidecarExecuteRequestSchema.parse(body);
-        return agentSidecarResponseSchema.parse(await runtime.execute(toAgentInput(payload, 'agent')));
+        return runtime.execute(toAgentInput(payload, 'agent'), options);
       });
       return;
     }
 
     if (request.method === 'POST' && url === '/agent/execute/stream') {
-      void handlePostStream(request, response, async (body, onEvent) => {
+      void handlePostStream(request, response, async (body, options) => {
         const payload = agentSidecarExecuteRequestSchema.parse(body);
-        return runtime.execute(toAgentInput(payload, 'agent'), { onEvent });
+        return runtime.execute(toAgentInput(payload, 'agent'), options);
       });
       return;
     }
 
     if (request.method === 'POST' && url === '/approval/resolve') {
-      void handlePost(request, response, async (body) => {
+      void handlePost(request, response, async (body, options) => {
         const payload = approvalResolutionSchema.parse(body);
-        return agentSidecarResponseSchema.parse(await runtime.resolveApproval(payload));
+        return runtime.resolveApproval(payload, options);
       });
       return;
     }
 
     if (request.method === 'POST' && url === '/approval/resolve/stream') {
-      void handlePostStream(request, response, async (body, onEvent) => {
+      void handlePostStream(request, response, async (body, options) => {
         const payload = approvalResolutionSchema.parse(body);
-        return runtime.resolveApproval(payload, { onEvent });
+        return runtime.resolveApproval(payload, options);
       });
       return;
     }

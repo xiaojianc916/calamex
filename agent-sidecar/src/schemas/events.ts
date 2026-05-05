@@ -1,12 +1,12 @@
 import { z } from 'zod';
-import type { JSONValue } from '@strands-agents/sdk';
 
-import { agentPlanSchema } from './plan.js';
 import {
   AGENT_RUNTIME_EVENT_SCHEMA_VERSION,
   AGENT_RUNTIME_EVENT_TYPES,
   type TAgentRuntimeEvent,
 } from '../streaming/stream-types.js';
+import type { JSONValue } from '../types/json-value.js';
+import { agentPlanSchema } from './plan.js';
 
 export type TJsonValue = JSONValue;
 

@@ -1,27 +1,25 @@
-import type { Agent, AgentResult, InvokeOptions } from '@strands-agents/sdk';
-
-import type { TAgentUiEvent, TJsonValue } from '../schemas/events.js';
+import type { TAgentRuntimeOutputEvent } from '../engines/runtime-contracts.js';
+import type { TJsonValue } from '../schemas/events.js';
 import { createAgentStreamAdapter } from './stream-adapter.js';
 import type { AgentStreamEventBus } from './stream-event-bus.js';
 import { redactForStream } from './stream-redaction.js';
+import type {
+  IAgentEventStreamSource,
+  IAgentStreamResult,
+  TAgentStreamOptions,
+} from './stream-runtime-contract.js';
 
-export interface ICompletedAgentStream {
-  agentResult: AgentResult;
+export interface ICompletedAgentStream<TResult extends IAgentStreamResult = IAgentStreamResult> {
+  agentResult: TResult;
   visibleText: string;
 }
 
-type TAgentStreamArgs = Parameters<Agent['stream']>;
-
-interface IAgentEventStreamSource {
-  stream(...args: TAgentStreamArgs): AsyncGenerator<unknown, AgentResult, undefined>;
-}
-
-export interface IRunAgentStreamParams {
-  agent: IAgentEventStreamSource;
+export interface IRunAgentStreamParams<TResult extends IAgentStreamResult = IAgentStreamResult> {
+  agent: IAgentEventStreamSource<TResult>;
   prompt: string;
-  streamOptions: InvokeOptions;
+  streamOptions: TAgentStreamOptions;
   eventBus: AgentStreamEventBus;
-  emitLegacyEvent: (event: TAgentUiEvent) => void;
+  emitOutputEvent: (event: TAgentRuntimeOutputEvent) => void;
   toJsonValue: (value: unknown) => TJsonValue;
 }
 
@@ -38,12 +36,12 @@ const clipPreview = (value: string, limit: number): string => {
   return `${characters.slice(0, limit).join('')}...`;
 };
 
-export const runAgentStream = async (
-  params: IRunAgentStreamParams,
-): Promise<ICompletedAgentStream> => {
+export const runAgentStream = async <TResult extends IAgentStreamResult>(
+  params: IRunAgentStreamParams<TResult>,
+): Promise<ICompletedAgentStream<TResult>> => {
   const adapter = createAgentStreamAdapter({
     eventBus: params.eventBus,
-    emitLegacyEvent: params.emitLegacyEvent,
+    emitOutputEvent: params.emitOutputEvent,
     toJsonValue: params.toJsonValue,
   });
 
@@ -69,7 +67,7 @@ export const runAgentStream = async (
           type: 'agent.run.completed',
           visibility: 'user',
           level: 'info',
-          stopReason: next.value.stopReason,
+          ...(next.value.stopReason ? { stopReason: next.value.stopReason } : {}),
           ...(outputPreview ? { outputPreview } : {}),
         });
 

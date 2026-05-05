@@ -51,9 +51,10 @@ describe('AiAgentRuntimeTimeline', () => {
             },
         });
 
+        expect(wrapper.text()).toContain('Chain of Thought');
         expect(wrapper.findAll('.agent-line')).toHaveLength(1);
         expect(wrapper.text()).toContain('我先确认 sidecar 是否是旧进程。');
-        expect(wrapper.findAll('.tree-node')).toHaveLength(2);
+        expect(wrapper.findAll('.ai-runtime-task')).toHaveLength(2);
         expect(wrapper.text()).toContain('开始调用 grep_search');
         expect(wrapper.text()).toContain('完成调用 grep_search');
     });
@@ -70,7 +71,7 @@ describe('AiAgentRuntimeTimeline', () => {
             },
         });
 
-        expect(wrapper.find('.tree-node').exists()).toBe(true);
+        expect(wrapper.find('.ai-runtime-task').exists()).toBe(true);
         expect(wrapper.text()).toContain('开始调用 read_file');
     });
 
@@ -102,12 +103,12 @@ describe('AiAgentRuntimeTimeline', () => {
             },
         });
 
-        const icons = wrapper.findAll('.node-icon');
+        const icons = wrapper.findAll('.ai-runtime-step-icon');
 
-        expect(icons[0]?.classes()).toContain('icon-files');
-        expect(icons[1]?.classes()).toContain('icon-folder');
-        expect(icons[2]?.classes()).toContain('icon-book');
-        expect(icons[3]?.classes()).toContain('icon-play');
+        expect(icons.some((icon) => icon.classes().includes('is-icon-files'))).toBe(true);
+        expect(icons.some((icon) => icon.classes().includes('is-icon-folder'))).toBe(true);
+        expect(icons.some((icon) => icon.classes().includes('is-icon-book'))).toBe(true);
+        expect(icons.some((icon) => icon.classes().includes('is-icon-play'))).toBe(true);
     });
 
     it('会合并连续 reasoning delta，避免一词一行', () => {

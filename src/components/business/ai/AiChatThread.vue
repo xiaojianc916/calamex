@@ -1,8 +1,14 @@
 <script setup lang="ts">
 import type { TAiServicePlatformId } from '@/constants/ai-providers';
 import type { IAiChatMessage, TAiChatMessageActionId } from '@/types/ai';
+import {
+  Conversation,
+  ConversationContent,
+  ConversationEmptyState,
+  ConversationScrollButton,
+} from '@/components/ai-elements/conversation';
 import { LoaderCircle } from 'lucide-vue-next';
-import { computed, nextTick, onMounted, ref, watch } from 'vue';
+import { computed } from 'vue';
 import AiMessageItem from './AiMessageItem.vue';
 import AiProviderIcon from './AiProviderIcon.vue';
 
@@ -12,8 +18,6 @@ const props = defineProps<{
   platformId: TAiServicePlatformId;
   providerLabel: string;
 }>();
-
-const listRef = ref<HTMLElement | null>(null);
 
 const emit = defineEmits<{
   messageAction: [messageId: string, actionId: TAiChatMessageActionId];
@@ -66,54 +70,76 @@ const handleMessageAction = (
   emit('messageAction', messageId, actionId);
 };
 
-const scrollToBottom = async (): Promise<void> => {
-  await nextTick();
-  const list = listRef.value;
-  if (!list) return;
-  list.scrollTop = list.scrollHeight;
-};
-
-watch(
-  () => [props.messages.length, props.isTyping],
-  () => {
-    void scrollToBottom();
-  },
-);
-
-onMounted(() => {
-  void scrollToBottom();
-});
 </script>
 
 <template>
-  <div ref="listRef" class="ai-chat-list" aria-label="AI 对话记录">
-    <slot name="before-messages"></slot>
-    <template v-for="message in messages" :key="message.id">
-      <slot v-if="message.id === lastAssistantMessageId" name="before-last-assistant" :message="message"></slot>
-      <AiMessageItem
-:message="message" :platform-id="platformId" :provider-label="providerLabel"
-        @message-action="handleMessageAction" />
+  <Conversation class="ai-chat-list" aria-label="AI 对话记录">
+    <ConversationContent
+      v-if="messages.length > 0 || shouldRenderStandaloneTyping"
+      class="ai-chat-list__content"
+    >
+      <slot name="before-messages" />
+      <template v-for="message in messages" :key="message.id">
+        <slot
+          v-if="message.id === lastAssistantMessageId"
+          name="before-last-assistant"
+          :message="message"
+        />
+        <AiMessageItem
+          :message="message"
+          :platform-id="platformId"
+          :provider-label="providerLabel"
+          @message-action="handleMessageAction"
+        />
+      </template>
+      <slot name="after-messages" />
+      <article
+        v-if="shouldRenderStandaloneTyping"
+        class="ai-message-typing"
+        aria-label="AI 正在准备回复"
+      >
+        <AiProviderIcon class="ai-logo" :platform-id="platformId" :title="providerLabel" />
+        <div class="typing-status" role="status" aria-live="polite">
+          <LoaderCircle class="typing-status-icon" aria-hidden="true" />
+          <span>AI 正在准备回复</span>
+        </div>
+      </article>
+    </ConversationContent>
+    <ConversationEmptyState
+      v-else
+      class="ai-chat-empty-state"
+      title="开始一段 AI 对话"
+      description="输入你的问题，AI 会结合当前文件、选择区和工作区上下文给出回答。"
+    />
+    <template #overlay>
+      <ConversationScrollButton class="ai-chat-scroll-button" />
     </template>
-    <slot name="after-messages"></slot>
-    <article v-if="shouldRenderStandaloneTyping" class="ai-message-typing" aria-label="AI 正在准备回复">
-      <AiProviderIcon class="ai-logo" :platform-id="platformId" :title="providerLabel" />
-      <div class="typing-status" role="status" aria-live="polite">
-        <LoaderCircle class="typing-status-icon" aria-hidden="true" />
-        <span>AI 正在准备回复</span>
-      </div>
-    </article>
-  </div>
+  </Conversation>
 </template>
 
 <style scoped>
 .ai-chat-list {
-  display: flex;
   min-height: 0;
   flex: 1 1 0;
-  flex-direction: column;
+}
+
+.ai-chat-list__content {
   gap: 14px;
-  overflow-y: auto;
   padding: 14px 12px;
+}
+
+.ai-chat-empty-state {
+  color: var(--text-tertiary);
+}
+
+.ai-chat-scroll-button {
+  bottom: 14px;
+  left: 50%;
+  z-index: 1;
+  transform: translateX(-50%);
+}
+
+.ai-chat-list {
   scrollbar-color: color-mix(in srgb, var(--text-primary) 10%, transparent) transparent;
   scrollbar-width: thin;
 }

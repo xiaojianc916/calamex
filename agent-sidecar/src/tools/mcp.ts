@@ -3,9 +3,10 @@ import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { McpClient } from '@strands-agents/sdk';
+import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 
 export interface IMcpServerConfig {
   name: string;
@@ -18,11 +19,23 @@ export interface IMcpServerConfig {
   headers?: Record<string, string>;
 }
 
-export interface IMcpClientBundle {
-  clients: McpClient[];
+export interface IMastraMcpTool {
+  name: string;
+  description: string;
+  toolSpec: {
+    inputSchema?: unknown;
+    outputSchema?: unknown;
+  };
+  mcpClient: {
+    callTool: (targetTool: unknown, args: Record<string, unknown>) => Promise<unknown>;
+  };
+}
+
+export interface IMastraMcpClientBundle {
+  clients: Client[];
   configs: IMcpServerConfig[];
   errors: string[];
-  tools: TMcpTool[];
+  tools: IMastraMcpTool[];
   disconnectAll: () => Promise<void>;
 }
 
@@ -48,7 +61,8 @@ const PROBE_MCP_NPX_SPEC = '@probelabs/probe@0.6.0-rc315';
 const MCP_LIST_TOOLS_TIMEOUT_MS = 10_000;
 const MCP_STDERR_SUMMARY_LIMIT = 1_000;
 
-type TMcpTool = Awaited<ReturnType<McpClient['listTools']>>[number];
+type TMcpSdkTool = Awaited<ReturnType<Client['listTools']>>['tools'][number];
+type TMcpTransport = StreamableHTTPClientTransport | StdioClientTransport;
 
 const trimToNull = (value: string | null | undefined): string | null => {
   const trimmed = value?.trim();
@@ -258,12 +272,24 @@ const formatMcpError = (config: IMcpServerConfig, error: unknown, stderrText: st
     : `MCP server ${config.name} 不可用，已跳过：${message}`;
 };
 
-const createMcpClient = (
+const toCallToolArguments = (value: unknown): Record<string, unknown> => {
+  if (value === null || value === undefined) {
+    return {};
+  }
+
+  if (typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+
+  throw new Error('MCP tool 参数必须是对象。');
+};
+
+const createMcpTransport = (
   config: IMcpServerConfig,
   safeBaseEnv: Record<string, string>,
-): { client: McpClient; stderrText: () => string } => {
+): { transport: TMcpTransport; stderrText: () => string } => {
   let stderrBuffer = '';
-  let transport: StreamableHTTPClientTransport | StdioClientTransport;
+  let transport: TMcpTransport;
 
   if (config.transportType === 'http') {
     transport = new StreamableHTTPClientTransport(new URL(config.url ?? DEFAULT_GITHUB_MCP_URL), {
@@ -293,15 +319,49 @@ const createMcpClient = (
   }
 
   return {
-    client: new McpClient({
-      applicationName: 'xiaojianc-agent-sidecar',
-      applicationVersion: '0.1.0',
-      transport,
-      disableMcpInstrumentation: true,
-    }),
+    transport,
     stderrText: () => stderrBuffer,
   };
 };
+
+const createMastraMcpClient = (
+  config: IMcpServerConfig,
+  safeBaseEnv: Record<string, string>,
+): {
+  client: Client;
+  connect: () => Promise<void>;
+  stderrText: () => string;
+} => {
+  const { transport, stderrText } = createMcpTransport(config, safeBaseEnv);
+  const client = new Client({
+    name: 'xiaojianc-agent-sidecar',
+    version: '0.1.0',
+  });
+
+  return {
+    client,
+    connect: async (): Promise<void> => client.connect(transport as Transport),
+    stderrText,
+  };
+};
+
+const createMastraMcpTool = (
+  tool: TMcpSdkTool,
+  client: Client,
+): IMastraMcpTool => ({
+  name: tool.name,
+  description: tool.description ?? '',
+  toolSpec: {
+    inputSchema: tool.inputSchema,
+    ...(tool.outputSchema ? { outputSchema: tool.outputSchema } : {}),
+  },
+  mcpClient: {
+    callTool: async (_targetTool: unknown, args: Record<string, unknown>): Promise<unknown> => client.callTool({
+      name: tool.name,
+      arguments: toCallToolArguments(args),
+    }),
+  },
+});
 
 export const loadMcpServerConfigs = (
   options: IMcpConfigOptions = {},
@@ -514,29 +574,34 @@ export const loadMcpServerConfigs = (
   };
 };
 
-export const createMcpClientBundle = async (
+export const createMastraMcpClientBundle = async (
   options: IMcpConfigOptions = {},
-): Promise<IMcpClientBundle> => {
+): Promise<IMastraMcpClientBundle> => {
   const { configs, errors } = loadMcpServerConfigs(options);
-  const clients: McpClient[] = [];
-  const tools: TMcpTool[] = [];
+  const clients: Client[] = [];
+  const tools: IMastraMcpTool[] = [];
   const safeBaseEnv = getDefaultEnvironment();
 
   await Promise.all(configs.map(async (config) => {
-    const { client, stderrText } = createMcpClient(config, safeBaseEnv);
+    const { client, connect, stderrText } = createMastraMcpClient(config, safeBaseEnv);
 
     try {
-      const clientTools = await withTimeout(
+      await withTimeout(
+        connect(),
+        MCP_LIST_TOOLS_TIMEOUT_MS,
+        `MCP server ${config.name} connect 超时`,
+      );
+      const { tools: clientTools } = await withTimeout(
         client.listTools(),
         MCP_LIST_TOOLS_TIMEOUT_MS,
         `MCP server ${config.name} listTools 超时`,
       );
 
       clients.push(client);
-      tools.push(...clientTools);
+      tools.push(...clientTools.map((tool) => createMastraMcpTool(tool, client)));
     } catch (error) {
       errors.push(formatMcpError(config, error, stderrText()));
-      await client.disconnect().catch(() => undefined);
+      await client.close().catch(() => undefined);
     }
   }));
 
@@ -546,7 +611,7 @@ export const createMcpClientBundle = async (
     errors,
     tools,
     disconnectAll: async (): Promise<void> => {
-      await Promise.allSettled(clients.map((client) => client.disconnect()));
+      await Promise.allSettled(clients.map((client) => client.close()));
     },
   };
 };

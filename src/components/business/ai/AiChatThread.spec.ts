@@ -1,8 +1,18 @@
 ﻿import { mount } from '@vue/test-utils';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import AiChatThread from '@/components/business/ai/AiChatThread.vue';
 import type { IAiChatMessage } from '@/types/ai';
+
+class ResizeObserverMock {
+  observe(): void {}
+
+  unobserve(): void {}
+
+  disconnect(): void {}
+}
+
+vi.stubGlobal('ResizeObserver', ResizeObserverMock);
 
 const createMessage = (overrides: Partial<IAiChatMessage>): IAiChatMessage => ({
   id: 'message-1',

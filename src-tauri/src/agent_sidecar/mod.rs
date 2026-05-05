@@ -36,8 +36,21 @@ enum SidecarHealthStatus {
 #[serde(rename_all = "camelCase")]
 struct SidecarHealthProbePayload {
     ok: bool,
-    engine: Option<String>,
+    #[serde(rename = "engine")]
+    _engine: Option<String>,
     protocol_version: Option<String>,
+}
+
+fn classify_sidecar_health(payload: &SidecarHealthProbePayload) -> SidecarHealthStatus {
+    if !payload.ok {
+        return SidecarHealthStatus::Unavailable;
+    }
+
+    if payload.protocol_version.as_deref() == Some(SIDECAR_PROTOCOL_VERSION) {
+        SidecarHealthStatus::Ready
+    } else {
+        SidecarHealthStatus::Stale
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -347,16 +360,7 @@ async fn probe_sidecar_health(base_url: &str) -> SidecarHealthStatus {
         return SidecarHealthStatus::Unavailable;
     };
 
-    let is_sidecar = payload.ok && payload.engine.as_deref() == Some("strands");
-    if !is_sidecar {
-        return SidecarHealthStatus::Unavailable;
-    }
-
-    if payload.protocol_version.as_deref() == Some(SIDECAR_PROTOCOL_VERSION) {
-        SidecarHealthStatus::Ready
-    } else {
-        SidecarHealthStatus::Stale
-    }
+    classify_sidecar_health(&payload)
 }
 
 fn restart_stale_default_sidecar() -> Result<(), String> {
@@ -750,8 +754,9 @@ pub async fn resolve_approval(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_sidecar_url, is_default_local_sidecar_url, normalize_base_url,
-        parse_netstat_listening_pids, strip_litellm_model_provider_prefix, DEFAULT_SIDECAR_URL,
+        build_sidecar_url, classify_sidecar_health, is_default_local_sidecar_url,
+        normalize_base_url, parse_netstat_listening_pids, strip_litellm_model_provider_prefix,
+        SidecarHealthProbePayload, SidecarHealthStatus, DEFAULT_SIDECAR_URL,
     };
 
     #[test]
@@ -809,6 +814,38 @@ mod tests {
         assert_eq!(
             strip_litellm_model_provider_prefix("openai/gpt-5.5", "deepseek"),
             None
+        );
+    }
+
+    #[test]
+    fn sidecar_health_is_runtime_name_agnostic() {
+        let ready_payload = SidecarHealthProbePayload {
+            ok: true,
+            _engine: Some("mastra".to_string()),
+            protocol_version: Some("5".to_string()),
+        };
+        let stale_payload = SidecarHealthProbePayload {
+            ok: true,
+            _engine: Some("custom-runtime".to_string()),
+            protocol_version: Some("4".to_string()),
+        };
+        let unavailable_payload = SidecarHealthProbePayload {
+            ok: false,
+            _engine: Some("strands".to_string()),
+            protocol_version: Some("5".to_string()),
+        };
+
+        assert_eq!(
+            classify_sidecar_health(&ready_payload),
+            SidecarHealthStatus::Ready
+        );
+        assert_eq!(
+            classify_sidecar_health(&stale_payload),
+            SidecarHealthStatus::Stale
+        );
+        assert_eq!(
+            classify_sidecar_health(&unavailable_payload),
+            SidecarHealthStatus::Unavailable
         );
     }
 }

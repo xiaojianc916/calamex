@@ -3,6 +3,7 @@ import AiAgentRuntimeTimeline from '@/components/business/ai/AiAgentRuntimeTimel
 import AiMarkdown from '@/components/business/ai/AiMarkdown.vue';
 import AiProviderIcon from '@/components/business/ai/AiProviderIcon.vue';
 import AiToolActivityInline from '@/components/business/ai/AiToolActivityInline.vue';
+import { Message, MessageContent } from '@/components/ai-elements/message';
 import { useMessage } from '@/composables/useMessage';
 import type { TAiServicePlatformId } from '@/constants/ai-providers';
 import type { IAiChatMessage, IAiContextReference, TAiChatMessageActionId } from '@/types/ai';
@@ -231,16 +232,23 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <article
-v-if="shouldRenderMessage" class="ai-message"
-    :class="[`is-${message.role}`, { 'is-inline-loading': shouldShowInlineLoader }]">
+  <Message
+    v-if="shouldRenderMessage"
+    :from="message.role"
+    class="ai-message"
+    :class="[`is-${message.role}`, { 'is-inline-loading': shouldShowInlineLoader }]"
+  >
     <AiProviderIcon v-if="message.role !== 'user'" class="ai-logo" :platform-id="platformId" :title="providerLabel" />
     <div class="ai-message-main">
       <div v-if="shouldShowInlineLoader" class="ai-message-status-line" role="status" aria-live="polite">
         <LoaderCircle class="ai-message-status-icon" aria-hidden="true" />
         <span>{{ inlineLoaderLabel }}</span>
       </div>
-      <AiAgentRuntimeTimeline v-if="shouldShowRuntimeTimeline" :events="message.stream?.runtimeEvents ?? []" />
+      <AiAgentRuntimeTimeline
+        v-if="shouldShowRuntimeTimeline"
+        :events="message.stream?.runtimeEvents ?? []"
+        :is-streaming="message.stream?.status === 'streaming'"
+      />
       <AiToolActivityInline
 v-if="shouldShowActivityTimeline" :tool-calls="message.toolCalls ?? []"
         :activity-text="message.stream?.activityText" :activity-trail="message.stream?.activityTrail"
@@ -262,9 +270,9 @@ v-if="reference.kind === 'image-attachment'" viewBox="0 0 24 24" fill="none" str
           <span>{{ resolveAttachmentLabel(reference) }}</span>
         </span>
       </div>
-      <div v-if="shouldShowMessageBubble" class="ai-message-bubble">
+      <MessageContent v-if="shouldShowMessageBubble" class="ai-message-bubble">
         <AiMarkdown :message-id="message.id" :content="message.content" :stream-status="message.stream?.status" />
-      </div>
+      </MessageContent>
       <div v-if="hasMessageActions" class="ai-message-options" aria-label="AI 选项">
         <button
 v-for="action in message.actions" :key="`${message.id}:${action.id}`" type="button"
@@ -288,7 +296,7 @@ type="button" class="ai-message-copy-button" :class="{ 'is-copied': isCopied }"
         </button>
       </div>
     </div>
-  </article>
+  </Message>
 </template>
 
 <style scoped>

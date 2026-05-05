@@ -1,16 +1,16 @@
-import { AgentResult, Message, TextBlock } from '@strands-agents/sdk';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import type { TAgentUiEvent, TJsonValue } from '../schemas/events.js';
+import type { TAgentRuntimeOutputEvent } from '../engines/runtime-contracts.js';
+import type { TJsonValue } from '../schemas/events.js';
 import { AgentStreamEventBus } from './stream-event-bus.js';
-import { normalizeStrandsStreamEvent } from './stream-normalizer.js';
+import { normalizeAgentRuntimeStreamEvent } from './stream-normalizer.js';
 import { redactForStream } from './stream-redaction.js';
 import { runAgentStream } from './stream-runner.js';
 
 describe('streaming event layer', () => {
   it('normalizes model text and reasoning delta events', () => {
-    const drafts = normalizeStrandsStreamEvent({
+    const drafts = normalizeAgentRuntimeStreamEvent({
       type: 'modelStreamUpdateEvent',
       event: {
         type: 'modelContentBlockDeltaEvent',
@@ -27,7 +27,7 @@ describe('streaming event layer', () => {
       level: 'debug',
       text: 'hello',
     }]);
-    assert.deepEqual(normalizeStrandsStreamEvent({
+    assert.deepEqual(normalizeAgentRuntimeStreamEvent({
       type: 'modelStreamUpdateEvent',
       event: {
         type: 'modelContentBlockDeltaEvent',
@@ -45,7 +45,7 @@ describe('streaming event layer', () => {
   });
 
   it('normalizes tool lifecycle events with redacted previews', () => {
-    const started = normalizeStrandsStreamEvent({
+    const started = normalizeAgentRuntimeStreamEvent({
       type: 'beforeToolCallEvent',
       toolUse: {
         name: 'mcp.fs.read_file',
@@ -56,7 +56,7 @@ describe('streaming event layer', () => {
         },
       },
     });
-    const completed = normalizeStrandsStreamEvent({
+    const completed = normalizeAgentRuntimeStreamEvent({
       type: 'afterToolCallEvent',
       toolUse: {
         name: 'mcp.fs.read_file',
@@ -87,7 +87,7 @@ describe('streaming event layer', () => {
   });
 
   it('handles unavailable projected input tokens explicitly', () => {
-    const drafts = normalizeStrandsStreamEvent({
+    const drafts = normalizeAgentRuntimeStreamEvent({
       type: 'beforeModelCallEvent',
     });
 
@@ -146,7 +146,7 @@ describe('streaming event layer', () => {
   });
 
   it('clears pre-tool visible text and streams the final answer segment after tool calls', async () => {
-    const emittedEvents: TAgentUiEvent[] = [];
+    const emittedEvents: TAgentRuntimeOutputEvent[] = [];
     const runtimeEvents = new AgentStreamEventBus({
       runId: 'run-1',
       sessionId: 'session-1',
@@ -197,16 +197,17 @@ describe('streaming event layer', () => {
           },
         };
 
-        return new AgentResult({
+        return {
           stopReason: 'endTurn',
-          lastMessage: new Message({
-            role: 'assistant',
+          lastMessage: {
             content: [
-              new TextBlock('最终回答第一段。'),
+              {
+                type: 'textBlock',
+                text: '最终回答第一段。',
+              },
             ],
-          }),
-          invocationState: {},
-        });
+          },
+        };
       },
     };
 
@@ -215,7 +216,7 @@ describe('streaming event layer', () => {
       prompt: '检查文件',
       streamOptions: {},
       eventBus: runtimeEvents,
-      emitLegacyEvent: (event) => {
+      emitOutputEvent: (event) => {
         emittedEvents.push(event);
       },
       toJsonValue: (value): TJsonValue => JSON.parse(JSON.stringify(value)) as TJsonValue,
@@ -232,7 +233,7 @@ describe('streaming event layer', () => {
   });
 
   it('flushes the final visible text on completion when no tool call occurred', async () => {
-    const emittedEvents: TAgentUiEvent[] = [];
+    const emittedEvents: TAgentRuntimeOutputEvent[] = [];
     const runtimeEvents = new AgentStreamEventBus({
       runId: 'run-plain',
       sessionId: 'session-plain',
@@ -252,16 +253,17 @@ describe('streaming event layer', () => {
           },
         };
 
-        return new AgentResult({
+        return {
           stopReason: 'endTurn',
-          lastMessage: new Message({
-            role: 'assistant',
+          lastMessage: {
             content: [
-              new TextBlock('直接回答。'),
+              {
+                type: 'textBlock',
+                text: '直接回答。',
+              },
             ],
-          }),
-          invocationState: {},
-        });
+          },
+        };
       },
     };
 
@@ -270,7 +272,7 @@ describe('streaming event layer', () => {
       prompt: '直接回答',
       streamOptions: {},
       eventBus: runtimeEvents,
-      emitLegacyEvent: (event) => {
+      emitOutputEvent: (event) => {
         emittedEvents.push(event);
       },
       toJsonValue: (value): TJsonValue => JSON.parse(JSON.stringify(value)) as TJsonValue,

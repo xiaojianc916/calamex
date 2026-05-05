@@ -71,7 +71,7 @@ const extractModelReasoningDelta = (event: unknown): string | null => {
   return text.length > 0 ? text : null;
 };
 
-export const extractModelTextDelta = (event: unknown): string | null => {
+export const extractRuntimeModelTextDelta = (event: unknown): string | null => {
   if (getEventType(event) !== 'modelStreamUpdateEvent') {
     return null;
   }
@@ -112,7 +112,7 @@ const getErrorMessage = (event: unknown): string | undefined => {
 const getToolResultStatus = (event: unknown): string | undefined =>
   getStringValue(getRecordValue(event, 'result'), 'status');
 
-export const normalizeStrandsStreamEvent = (
+export const normalizeAgentRuntimeStreamEvent = (
   event: unknown,
 ): TAgentRuntimeEventDraft[] => {
   const type = getEventType(event);
@@ -165,7 +165,7 @@ export const normalizeStrandsStreamEvent = (
         }];
       }
 
-      const text = extractModelTextDelta(event);
+      const text = extractRuntimeModelTextDelta(event);
 
       return text
         ? [{
@@ -255,7 +255,7 @@ export const normalizeStrandsStreamEvent = (
         type: 'agent.debug',
         visibility: 'debug',
         level: 'debug',
-        name: 'unhandled_strands_event',
+        name: 'unhandled_runtime_event',
         data: {
           eventType: type,
         },

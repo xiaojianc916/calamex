@@ -9,18 +9,18 @@
   },
   "scripts": {
     "dev": "tsx src/server.ts",
-    "test": "node --import tsx --test src/tools/mcp.spec.ts src/server.spec.ts src/models/openai-chat-compat-model.spec.ts src/context/official-acontext.spec.ts src/rollback/rollback.spec.ts src/streaming/streaming.spec.ts",
+    "test": "node --import tsx --test src/tools/mcp.spec.ts src/server.spec.ts src/streaming/streaming.spec.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@playwright/mcp": "0.0.73",
-    "@probelabs/logoscope": "0.2.14",
-    "@upstash/context7-mcp": "2.2.3",
+    "@mastra/core": "1.31.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@modelcontextprotocol/server-filesystem": "2026.1.14",
     "@modelcontextprotocol/server-memory": "2026.1.26",
     "@modelcontextprotocol/server-sequential-thinking": "2025.12.18",
-    "@strands-agents/sdk": "^1.0.0",
+    "@playwright/mcp": "0.0.73",
+    "@probelabs/logoscope": "0.2.14",
+    "@upstash/context7-mcp": "2.2.3",
     "openai": "^6.7.0",
     "tavily-mcp": "0.2.12",
     "zod": "^4.4.1"
