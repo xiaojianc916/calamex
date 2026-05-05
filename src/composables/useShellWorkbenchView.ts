@@ -42,13 +42,7 @@ const MAX_DOCUMENT_NAV_HISTORY = 120;
 const AI_PANEL_DEFAULT_WIDTH = 450;
 const AI_PANEL_MIN_WIDTH = 350;
 const AI_PANEL_MAX_WIDTH = 550;
-const WIDE_SIDEBAR_VIEWS: readonly TWorkbenchSidebarView[] = [
-  'source-control',
-  'explorer',
-  'search',
-  'run',
-  'extensions',
-];
+const DASHBOARD_SIDEBAR_WIDTH = 288;
 
 const isPrimaryModifierShortcut = (event: KeyboardEvent, code: string, key: string): boolean =>
   (event.ctrlKey || event.metaKey) &&
@@ -127,9 +121,7 @@ export const useShellWorkbenchView = (onReady: () => void) => {
   let focusBeforeSettingsOpen: HTMLElement | null = null;
   let globalKeydownCleanup: (() => void) | null = null;
 
-  const sidebarWidth = computed(() =>
-    WIDE_SIDEBAR_VIEWS.includes(activeSidebarView.value) ? 280 : 240,
-  );
+  const sidebarWidth = computed(() => DASHBOARD_SIDEBAR_WIDTH);
 
   const clampAiPanelWidth = (value: number): number =>
     Math.min(AI_PANEL_MAX_WIDTH, Math.max(AI_PANEL_MIN_WIDTH, Math.round(value)));
@@ -405,6 +397,7 @@ export const useShellWorkbenchView = (onReady: () => void) => {
   };
 
   const openAiMode = (): void => {
+    isSidebarVisible.value = true;
     activePrimaryMode.value = 'ai';
     closeDiagnosticsPanel();
   };
