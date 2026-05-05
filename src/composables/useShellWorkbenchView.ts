@@ -34,6 +34,7 @@ export type TSettingsOverlayExpose = {
 };
 
 type TWorkbenchSurfaceMode = 'workbench' | 'settings';
+type TWorkbenchPrimaryMode = 'editor' | 'ai';
 
 const SETTINGS_STATUS_MESSAGE_DURATION_MS = 2200;
 const READY_PAINT_FALLBACK_TIMEOUT_MS = 96;
@@ -47,7 +48,6 @@ const WIDE_SIDEBAR_VIEWS: readonly TWorkbenchSidebarView[] = [
   'search',
   'run',
   'extensions',
-  'ai',
 ];
 
 const isPrimaryModifierShortcut = (event: KeyboardEvent, code: string, key: string): boolean =>
@@ -105,9 +105,9 @@ export const useShellWorkbenchView = (onReady: () => void) => {
 
   const isTerminalVisible = ref(true);
   const isSidebarVisible = ref(true);
-  const isAiPanelVisible = ref(false);
   const aiPanelWidth = ref(AI_PANEL_DEFAULT_WIDTH);
   const isDiagnosticsPanelVisible = ref(false);
+  const activePrimaryMode = ref<TWorkbenchPrimaryMode>('editor');
   const activeSurfaceMode = ref<TWorkbenchSurfaceMode>('workbench');
   const terminalHeight = ref(236);
   const terminalHeightBeforeMaximize = ref(236);
@@ -282,7 +282,15 @@ export const useShellWorkbenchView = (onReady: () => void) => {
   );
   const isSettingsView = computed(() => activeSurfaceMode.value === 'settings');
   const isWorkbenchContentVisible = computed(() => activeSurfaceMode.value === 'workbench');
-  const canToggleDiagnosticsPanel = computed(() => shouldRenderDiagnosticsPanel.value);
+  const isEditorMode = computed(
+    () => isWorkbenchContentVisible.value && activePrimaryMode.value === 'editor',
+  );
+  const isAiMode = computed(
+    () => isWorkbenchContentVisible.value && activePrimaryMode.value === 'ai',
+  );
+  const canToggleDiagnosticsPanel = computed(
+    () => isEditorMode.value && shouldRenderDiagnosticsPanel.value,
+  );
   const diagnosticIssueCount = computed(() => workbench.editorStore.activeDiagnostics.length);
   const {
     diagnosticsTransitionsEnabled,
@@ -381,6 +389,7 @@ export const useShellWorkbenchView = (onReady: () => void) => {
     }
 
     await runAfterClosingSettings(() => {
+      activePrimaryMode.value = 'editor';
       isDiagnosticsPanelVisible.value = true;
     });
   };
@@ -389,6 +398,15 @@ export const useShellWorkbenchView = (onReady: () => void) => {
     await runAfterClosingSettings(() => {
       isTerminalVisible.value = true;
     });
+  };
+
+  const openEditorMode = (): void => {
+    activePrimaryMode.value = 'editor';
+  };
+
+  const openAiMode = (): void => {
+    activePrimaryMode.value = 'ai';
+    closeDiagnosticsPanel();
   };
 
   const handleTerminalHeightChange = (value: number): void => {
@@ -552,28 +570,16 @@ export const useShellWorkbenchView = (onReady: () => void) => {
   };
 
   const showSidebarView = (view: TWorkbenchSidebarView): void => {
+    openEditorMode();
     activeSidebarView.value = view;
     isSidebarVisible.value = true;
     scheduleEditorLayoutAfterSidebarChange();
   };
 
-  const openAiPanel = (): void => {
-    isAiPanelVisible.value = true;
-  };
-
-  const closeAiPanel = (): void => {
-    isAiPanelVisible.value = false;
-  };
-
   const handleSelectSidebarView = async (view: TWorkbenchSidebarView): Promise<void> => {
     if (view === 'ai') {
       await runAfterClosingSettings(() => {
-        if (isAiPanelVisible.value) {
-          closeAiPanel();
-          return;
-        }
-
-        openAiPanel();
+        openAiMode();
       });
       return;
     }
@@ -680,6 +686,7 @@ export const useShellWorkbenchView = (onReady: () => void) => {
 
   const handleRunScript = async (): Promise<void> => {
     await runAfterClosingSettings(async () => {
+      openEditorMode();
       closeDiagnosticsPanel();
       isTerminalVisible.value = true;
       await workbench.runScript();
@@ -719,6 +726,8 @@ export const useShellWorkbenchView = (onReady: () => void) => {
       if (!nextDocumentId || nextDocumentId === previousDocumentId) {
         return;
       }
+
+      openEditorMode();
 
       if (isApplyingDocumentNavigation) {
         isApplyingDocumentNavigation = false;
@@ -787,8 +796,9 @@ export const useShellWorkbenchView = (onReady: () => void) => {
     settingsOverlayRef,
     isTerminalVisible,
     isSidebarVisible,
-    isAiPanelVisible,
     aiPanelWidth,
+    isEditorMode,
+    isAiMode,
     isDiagnosticsPanelVisible,
     isSettingsView,
     isWorkbenchContentVisible,
@@ -823,13 +833,14 @@ export const useShellWorkbenchView = (onReady: () => void) => {
     toggleTerminalMaximize,
     closeSettingsView,
     toggleSettingsView,
+    openEditorMode,
+    openAiMode,
     handleSettingsSaved,
     handleRequestCloseApplication,
     toggleDiagnosticsPanel,
     handleSelectSidebarView,
     hideTerminal,
     openTerminal,
-    closeAiPanel,
     clearTerminalLogs,
     handleRunScript,
     handleIntegratedTerminalRunCompleted,

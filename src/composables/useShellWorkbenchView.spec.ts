@@ -75,6 +75,7 @@ vi.mock('@/composables/useWorkbench', () => ({
             lastRunResult: null,
             isRunning: false,
             activeScriptAnalysis: { diagnostics: [] },
+            activeSelectionSummary: null,
             workspaceRootPath: null,
             activeRunSummary: null,
             cursorLine: 1,
@@ -163,7 +164,10 @@ const TestHost = defineComponent({
             isSidebarVisible,
             activeSidebarView,
             aiPanelWidth,
+            isEditorMode,
+            isAiMode,
             terminalHeight,
+            openEditorMode,
         } = useShellWorkbenchView(props.onReady);
         return {
             editorViewportRef,
@@ -173,7 +177,10 @@ const TestHost = defineComponent({
             isSidebarVisible,
             activeSidebarView,
             aiPanelWidth,
+            isEditorMode,
+            isAiMode,
             terminalHeight,
+            openEditorMode,
         };
     },
     template: '<div ref="editorViewportRef"></div>',
@@ -197,6 +204,22 @@ describe('useShellWorkbenchView', () => {
         initializeMock.mockResolvedValue({ startupWorkspaceDirectory: null });
         saveDocumentMock.mockResolvedValue(true);
         waitForDesktopRuntimeMock.mockResolvedValue(false);
+
+        if (typeof window.requestAnimationFrame !== 'function') {
+            Object.defineProperty(window, 'requestAnimationFrame', {
+                configurable: true,
+                writable: true,
+                value: (callback: FrameRequestCallback) => window.setTimeout(() => callback(0), 0),
+            });
+        }
+
+        if (typeof window.cancelAnimationFrame !== 'function') {
+            Object.defineProperty(window, 'cancelAnimationFrame', {
+                configurable: true,
+                writable: true,
+                value: (handle: number) => window.clearTimeout(handle),
+            });
+        }
 
         vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback: FrameRequestCallback) => {
             callback(0);
@@ -313,6 +336,30 @@ describe('useShellWorkbenchView', () => {
 
         await wrapper.vm.handleSelectSidebarView('source-control');
         expect(wrapper.vm.isSidebarVisible).toBe(false);
+
+        wrapper.unmount();
+    });
+
+    it('选择 AI 入口会切换到 AI 主界面', async () => {
+        const wrapper = mount(TestHost, {
+            props: { onReady: vi.fn() },
+        });
+        await flushPromises();
+
+        expect(wrapper.vm.isEditorMode).toBe(true);
+        expect(wrapper.vm.isAiMode).toBe(false);
+
+        await wrapper.vm.handleSelectSidebarView('ai');
+
+        expect(wrapper.vm.isEditorMode).toBe(false);
+        expect(wrapper.vm.isAiMode).toBe(true);
+        expect(wrapper.vm.activeSidebarView).toBe('explorer');
+
+        wrapper.vm.openEditorMode();
+        await flushPromises();
+
+        expect(wrapper.vm.isEditorMode).toBe(true);
+        expect(wrapper.vm.isAiMode).toBe(false);
 
         wrapper.unmount();
     });

@@ -4,12 +4,10 @@
       <div class="flex min-w-0 items-center"></div>
 
       <div ref="commandPaletteRef" class="relative flex justify-center" data-no-window-drag @dblclick.stop>
-        <button
-v-if="!isCommandPaletteOpen" type="button" class="window-command-bar w-full justify-center text-[12px]"
+        <button v-if="!isCommandPaletteOpen" type="button" class="window-command-bar w-full justify-center text-[12px]"
           aria-label="打开命令面板" aria-haspopup="dialog" :aria-expanded="isCommandPaletteOpen" data-no-window-drag
           @click="openCommandPalette">
-          <svg
-viewBox="0 0 24 24" class="h-4 w-4 text-(--text-quaternary)" fill="none" stroke="currentColor"
+          <svg viewBox="0 0 24 24" class="h-4 w-4 text-(--text-quaternary)" fill="none" stroke="currentColor"
             stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="11" cy="11" r="6.5" />
             <path d="M20 20l-3.5-3.5" />
@@ -19,14 +17,12 @@ viewBox="0 0 24 24" class="h-4 w-4 text-(--text-quaternary)" fill="none" stroke=
 
         <div v-else class="titlebar-command-palette" role="dialog" aria-label="命令面板" data-no-window-drag>
           <label class="titlebar-command-palette-search">
-            <svg
-viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8"
+            <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8"
               stroke-linecap="round" stroke-linejoin="round">
               <circle cx="11" cy="11" r="6.5" />
               <path d="M20 20l-3.5-3.5" />
             </svg>
-            <input
-ref="commandPaletteInputRef" v-model="commandPaletteQuery" type="text" placeholder="输入命令或搜索…"
+            <input ref="commandPaletteInputRef" v-model="commandPaletteQuery" type="text" placeholder="输入命令或搜索…"
               autocomplete="off" @keydown.down.prevent="moveCommandPaletteActive(1)"
               @keydown.up.prevent="moveCommandPaletteActive(-1)"
               @keydown.enter.prevent="executeActiveCommandPaletteAction" @keydown.esc.prevent="closeCommandPalette" />
@@ -34,8 +30,7 @@ ref="commandPaletteInputRef" v-model="commandPaletteQuery" type="text" placehold
 
           <div class="titlebar-command-palette-body" role="listbox" aria-label="可用命令">
             <template v-if="filteredCommandPaletteActions.length > 0">
-              <button
-v-for="(action, index) in filteredCommandPaletteActions" :key="action.id" type="button"
+              <button v-for="(action, index) in filteredCommandPaletteActions" :key="action.id" type="button"
                 class="titlebar-command-palette-item"
                 :class="{ 'is-active': index === commandPaletteActiveIndex, 'is-disabled': action.disabled }"
                 role="option" :aria-selected="index === commandPaletteActiveIndex" :disabled="action.disabled"
@@ -61,13 +56,11 @@ v-for="(action, index) in filteredCommandPaletteActions" :key="action.id" type="
       </div>
 
       <div class="flex min-w-0 items-center justify-end gap-2">
-        <button
-type="button" class="icon-button relative app-tooltip-target border border-transparent"
+        <button type="button" class="icon-button relative app-tooltip-target border border-transparent"
           :class="terminalToggleButtonClass" :disabled="!isDesktopRuntime"
           :data-tooltip="isTerminalToggleDisabled ? undefined : terminalToggleTooltip" data-tooltip-placement="bottom"
           :aria-label="terminalToggleTooltip" @click="toggleTerminalVisibility">
-          <svg
-viewBox="0 0 16 16" aria-hidden="true" class="h-4 w-4" fill="none" stroke="currentColor"
+          <svg viewBox="0 0 16 16" aria-hidden="true" class="h-4 w-4" fill="none" stroke="currentColor"
             stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
             <path d="M2.5 3.5h11a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1Z" />
             <path d="m5.2 7 1.6 1.4-1.6 1.4" />
@@ -75,27 +68,22 @@ viewBox="0 0 16 16" aria-hidden="true" class="h-4 w-4" fill="none" stroke="curre
           </svg>
         </button>
 
-        <span
-class="app-tooltip-target inline-flex" :data-tooltip="isRunButtonDisabled ? undefined : runButtonTooltip"
+        <span class="app-tooltip-target inline-flex" :data-tooltip="isRunButtonDisabled ? undefined : runButtonTooltip"
           data-tooltip-placement="bottom">
-          <button
-type="button" class="titlebar-run-button" :disabled="isRunButtonDisabled" aria-label="运行脚本"
+          <button type="button" class="titlebar-run-button" :disabled="isRunButtonDisabled" aria-label="运行脚本"
             @click="$emit('run')">
-            <svg
-xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 16 16"
+            <svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 16 16"
               class="titlebar-run-icon h-5 w-5" aria-hidden="true">
-              <path
-fill="currentColor"
+              <path fill="currentColor"
                 d="M4.506 3.503L12.501 8l-8 4.5zm-.004-1.505C3.718 1.998 3 2.626 3 3.5v9c0 .874.718 1.502 1.502 1.502c.245 0 .496-.061.733-.195l8-4.5c1.019-.573 1.019-2.041 0-2.615l-8-4.499a1.5 1.5 0 0 0-.733-.195" />
             </svg>
           </button>
         </span>
 
-        <button
-type="button" class="icon-button app-tooltip-target border border-transparent" data-tooltip="AI 助手"
-          data-tooltip-placement="bottom" aria-label="AI 助手" @click="$emit('select-sidebar-view', 'ai')">
-          <svg
-viewBox="0 0 24 24" aria-hidden="true" class="h-4 w-4" fill="none" stroke="currentColor"
+        <button type="button" class="icon-button app-tooltip-target border border-transparent" :class="aiButtonClass"
+          data-tooltip="AI 助手" data-tooltip-placement="bottom" aria-label="AI 助手"
+          @click="$emit('select-sidebar-view', 'ai')">
+          <svg viewBox="0 0 24 24" aria-hidden="true" class="h-4 w-4" fill="none" stroke="currentColor"
             stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3z" />
             <path d="M18 15l.9 2.1L21 18l-2.1.9L18 21l-.9-2.1L15 18l2.1-.9L18 15z" />
@@ -113,23 +101,19 @@ viewBox="0 0 24 24" aria-hidden="true" class="h-4 w-4" fill="none" stroke="curre
             </svg>
           </button>
 
-          <button
-class="window-control-button" type="button" :aria-label="isMaximized ? '向下还原' : '最大化'"
+          <button class="window-control-button" type="button" :aria-label="isMaximized ? '向下还原' : '最大化'"
             @click="handleToggleMaximize">
             <svg v-if="!isMaximized" viewBox="0 0 10 10" aria-hidden="true" class="h-3.5 w-3.5">
-              <rect
-x="1.5" y="1.5" width="7" height="7" fill="none" rx="0.5" stroke="currentColor"
+              <rect x="1.5" y="1.5" width="7" height="7" fill="none" rx="0.5" stroke="currentColor"
                 stroke-width="1.1" />
             </svg>
             <svg v-else viewBox="0 0 10 10" aria-hidden="true" class="h-3.5 w-3.5">
-              <path
-d="M3 1.5h5.5V7M7 3H1.5v5.5H7z" fill="none" stroke="currentColor" stroke-linejoin="round"
+              <path d="M3 1.5h5.5V7M7 3H1.5v5.5H7z" fill="none" stroke="currentColor" stroke-linejoin="round"
                 stroke-width="1.1" />
             </svg>
           </button>
 
-          <button
-class="window-control-button app-tooltip-target" type="button" aria-label="关闭" data-tooltip="关闭"
+          <button class="window-control-button app-tooltip-target" type="button" aria-label="关闭" data-tooltip="关闭"
             data-tooltip-placement="bottom" @click="$emit('close-request')">
             <svg viewBox="0 0 10 10" aria-hidden="true" class="h-3.5 w-3.5">
               <path d="M2 2l6 6M8 2L2 8" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.2" />
@@ -203,6 +187,7 @@ const props = defineProps<{
   diagnosticIssueCount: number;
   commandTemplates: ICommandTemplate[];
   commentTemplates: ICommandTemplate[];
+  primaryMode?: 'editor' | 'ai';
 }>();
 
 const emit = defineEmits<{
@@ -256,6 +241,12 @@ const terminalToggleButtonClass = computed(() => {
 
   return '';
 });
+
+const aiButtonClass = computed(() =>
+  props.primaryMode === 'ai'
+    ? 'border-white/10 bg-white/[0.06] text-[var(--text-primary)]'
+    : '',
+);
 
 const fileMenuItems = computed(() => [
   { key: 'new', label: '新建脚本', shortcut: 'N' },
