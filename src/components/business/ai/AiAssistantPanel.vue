@@ -1253,14 +1253,11 @@ onBeforeUnmount(() => {
 
 .ai-composer-shell {
   flex: 0 0 auto;
-  background: color-mix(in srgb, var(--panel-bg) 92%, var(--sidebar-bg));
+  background: #ffffff;
 }
 
 .ai-composer-shell.has-plan {
-  background:
-    linear-gradient(180deg,
-      color-mix(in srgb, var(--panel-bg) 96%, transparent),
-      color-mix(in srgb, var(--panel-bg) 90%, var(--sidebar-bg)));
+  background: #ffffff;
 }
 
 .ai-composer-shell :global(.ai-plan-mode-panel) {
@@ -1274,6 +1271,7 @@ onBeforeUnmount(() => {
 }
 
 .ai-composer-shell :global(.ai-composer) {
+  background: #ffffff;
   padding: 0 10px 10px;
 }
 

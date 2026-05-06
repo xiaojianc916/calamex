@@ -18,7 +18,10 @@ export type TLinearContextMenuIcon =
   | 'undo'
   | 'redo'
   | 'link'
-  | 'open-external';
+  | 'open-external'
+  | 'rename'
+  | 'upload'
+  | 'download';
 
 export interface ILinearContextMenuItem {
   key: string;
@@ -26,6 +29,7 @@ export interface ILinearContextMenuItem {
   icon: TLinearContextMenuIcon;
   shortcut?: string[];
   disabled?: boolean;
+  variant?: 'default' | 'destructive';
   children?: ILinearContextMenuItem[];
 }
 

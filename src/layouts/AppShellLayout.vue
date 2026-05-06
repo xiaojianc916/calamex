@@ -1,5 +1,5 @@
 <template>
-    <div class="app-surface h-screen">
+    <div class="app-surface h-screen" :style="shellThemeStyle">
         <div class="app-window-shell relative flex h-full flex-col overflow-hidden border border-(--shell-divider)">
             <template v-if="isDesktopRuntime">
                 <div v-for="handle in resizeHandles" :key="handle.direction" class="window-resize-handle"
@@ -8,15 +8,15 @@
 
             <slot name="titlebar" />
 
-            <div class="relative flex min-h-0 flex-1 overflow-hidden bg-(--editor-bg)">
+            <div class="relative flex min-h-0 flex-1 overflow-hidden bg-(--app-bg)">
                 <aside
-                    class="app-shell-pane min-h-0 overflow-hidden border-r border-(--shell-divider) bg-(--sidebar-bg) transition-[width,opacity] duration-200"
+                    class="app-shell-pane min-h-0 overflow-hidden bg-(--sidebar-bg) transition-[width,opacity] duration-200"
                     :class="props.sidebarVisible ? 'opacity-100' : 'pointer-events-none opacity-0'"
                     :style="sidebarStyle">
                     <slot name="sidebar" />
                 </aside>
 
-                <div class="app-shell-pane flex min-h-0 flex-1 flex-col overflow-hidden bg-(--editor-bg)">
+                <div class="app-shell-pane flex min-h-0 flex-1 flex-col overflow-hidden bg-(--app-bg)">
                     <slot name="header" />
 
                     <main ref="mainRef" class="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -135,6 +135,26 @@ const sidebarStyle = computed(() => ({
 
 const terminalPaneStyle = computed(() => ({
     height: `${resolvedTerminalHeight.value}px`,
+}));
+
+const shellThemeStyle = computed(() => ({
+    '--app-bg': '#fafafa',
+    '--titlebar-bg': '#fafafa',
+    '--sidebar-bg': '#fafafa',
+    '--panel-bg': '#fafafa',
+    '--statusbar-bg': '#fafafa',
+    '--editor-bg': '#f6f8fa',
+    '--editor-surface': '#f6f8fa',
+    '--shell-divider': '#d1d9e0b3',
+    '--border-strong': '#d1d9e0',
+    '--border-subtle': '#d1d9e0b3',
+    '--text-primary': '#1f2328',
+    '--text-secondary': '#59636e',
+    '--text-tertiary': '#818b98',
+    '--text-quaternary': '#818b98',
+    '--surface-hover': '#818b981f',
+    '--surface-soft': '#818b981f',
+    '--surface-soft-strong': '#d1d9e0b3',
 }));
 
 const startTerminalResize = (event: MouseEvent): void => {

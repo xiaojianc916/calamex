@@ -1,9 +1,11 @@
+export { usePromptInput, usePromptInputProvider } from './context';
 export { default as PromptInput } from './PromptInput.vue';
 export { default as PromptInputActionAddAttachments } from './PromptInputActionAddAttachments.vue';
 export { default as PromptInputActionMenu } from './PromptInputActionMenu.vue';
 export { default as PromptInputActionMenuContent } from './PromptInputActionMenuContent.vue';
 export { default as PromptInputActionMenuItem } from './PromptInputActionMenuItem.vue';
 export { default as PromptInputActionMenuTrigger } from './PromptInputActionMenuTrigger.vue';
+export { default as PromptInputAttachmentsDisplay } from './PromptInputAttachmentsDisplay.vue';
 export { default as PromptInputBody } from './PromptInputBody.vue';
 export { default as PromptInputButton } from './PromptInputButton.vue';
 export { default as PromptInputFooter } from './PromptInputFooter.vue';
@@ -25,5 +27,5 @@ export { default as PromptInputTabLabel } from './PromptInputTabLabel.vue';
 export { default as PromptInputTabsList } from './PromptInputTabsList.vue';
 export { default as PromptInputTextarea } from './PromptInputTextarea.vue';
 export { default as PromptInputTools } from './PromptInputTools.vue';
-export { usePromptInput, usePromptInputProvider } from './context';
 export type { AttachmentFile, PromptInputContext, PromptInputMessage } from './types';
+

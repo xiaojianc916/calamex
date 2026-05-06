@@ -165,7 +165,7 @@ describe('buildComponentTokens / light', () => {
         expect(lightTokens.layout.app.background).toBe(light.surface.app);
     });
 
-    it('编辑器令牌：background 等于 light.surface.editor（白色）', () => {
+    it('编辑器令牌：background 等于 light.surface.editor（muted）', () => {
         expect(lightTokens.editor.background).toBe(light.surface.editor);
     });
 

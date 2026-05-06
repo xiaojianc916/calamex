@@ -85,9 +85,7 @@ const handleMessageAction = (messageId: string, actionId: TAiChatMessageActionId
         </div>
       </article>
     </ConversationContent>
-    <ConversationEmptyState v-else class="ai-chat-empty-state" title="开始一段 AI 对话"
-      description="输入你的问题，AI 会结合当前文件、选择区和工作区上下文给出回答。" />
-    <ConversationScrollButton class="ai-chat-scroll-button" />
+    
   </Conversation>
 </template>
 

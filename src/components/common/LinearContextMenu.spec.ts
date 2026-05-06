@@ -28,7 +28,9 @@ describe('LinearContextMenu', () => {
       attachTo: document.body,
     });
 
-    const button = document.body.querySelector('button.cmx-i');
+    await wrapper.vm.$nextTick();
+
+    const button = document.body.querySelector('[data-slot="dropdown-menu-item"]');
     if (!(button instanceof HTMLElement)) {
       throw new Error('menu button was not rendered');
     }

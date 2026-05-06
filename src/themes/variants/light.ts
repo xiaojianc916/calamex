@@ -14,7 +14,7 @@ export const light: IRoles = {
         chrome: P.lightBgDefault,
         activity: P.lightBgMuted,
         sidebar: P.lightBgMuted,
-        editor: P.lightBgDefault,
+        editor: P.lightBgMuted,
         editorGutter: P.lightBgMuted,
         editorWidget: P.lightControlBgRest,
         panel: P.lightBgMuted,

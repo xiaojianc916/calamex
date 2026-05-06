@@ -387,6 +387,10 @@ export const useShellWorkbenchView = (onReady: () => void) => {
   };
 
   const openTerminal = async (): Promise<void> => {
+    if (activePrimaryMode.value !== 'editor') {
+      return;
+    }
+
     await runAfterClosingSettings(() => {
       isTerminalVisible.value = true;
     });
@@ -398,6 +402,7 @@ export const useShellWorkbenchView = (onReady: () => void) => {
 
   const openAiMode = (): void => {
     isSidebarVisible.value = true;
+    isTerminalVisible.value = false;
     activePrimaryMode.value = 'ai';
     closeDiagnosticsPanel();
   };
@@ -418,6 +423,10 @@ export const useShellWorkbenchView = (onReady: () => void) => {
   };
 
   const toggleTerminalMaximize = (): void => {
+    if (activePrimaryMode.value !== 'editor') {
+      return;
+    }
+
     if (!isTerminalVisible.value) {
       isTerminalVisible.value = true;
     }

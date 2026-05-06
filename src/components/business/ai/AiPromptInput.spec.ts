@@ -81,16 +81,6 @@ describe('AiPromptInput', () => {
     expect(wrapper.emitted('fileSelected')?.[0]?.[0]).toBe(file);
   });
 
-  it('switches to plan mode from chain of thought shortcut', async () => {
-    const wrapper = mountPromptInput({
-      activeMode: 'agent',
-    });
-
-    await wrapper.get('.ai-tool-button-thought').trigger('click');
-
-    expect(wrapper.emitted('selectMode')).toEqual([['plan']]);
-  });
-
   it('hides image metadata inside attachment chips', () => {
     const wrapper = mountPromptInput({
       attachments: [
@@ -143,24 +133,23 @@ describe('AiPromptInput', () => {
     expect(element.style.height).toBe('');
   });
 
-  it('renders the shortcut controls without old provider description copy', () => {
+  it('renders the rewritten input-group shell with auto mode label and provider meta', () => {
     const wrapper = mountPromptInput();
 
-    expect(wrapper.text()).toContain('Attachments');
-    expect(wrapper.text()).toContain('Chain of Thought');
+    expect(wrapper.find('.ai-prompt-shell').exists()).toBe(true);
+    expect(wrapper.find('.ai-attachment-button').exists()).toBe(true);
+    expect(wrapper.text()).not.toContain('Attachments');
     expect(wrapper.text()).not.toContain('Auto Apply');
     expect(wrapper.text()).not.toContain('deepseek/deepseek-v4-pro');
-    expect(wrapper.text()).not.toContain('直接对话与问答');
-    expect(wrapper.text()).not.toContain('执行工具链与改动');
-    expect(wrapper.find('.ai-mode-button-icon').exists()).toBe(false);
-    expect(wrapper.text()).toContain('Agent');
+    expect(wrapper.text()).toContain('DeepSeek');
+    expect(wrapper.text()).toContain('Auto');
   });
 
-  it('uses the official prompt select for chat agent plan modes', () => {
+  it('uses the dropdown mode trigger for chat agent plan modes', () => {
     const wrapper = mountPromptInput();
 
     expect(wrapper.find('.ai-mode-button').exists()).toBe(true);
-    expect(wrapper.find('.app-dropdown-menu-stub').exists()).toBe(false);
-    expect(wrapper.text()).toContain('Agent');
+    expect(wrapper.find('[data-slot="input-group"]').exists()).toBe(true);
+    expect(wrapper.text()).toContain('Auto');
   });
 });

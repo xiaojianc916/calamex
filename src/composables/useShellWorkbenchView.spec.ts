@@ -162,12 +162,14 @@ const TestHost = defineComponent({
             handleAiPanelWidthChange,
             handleTerminalHeightChange,
             isSidebarVisible,
+            isTerminalVisible,
             activeSidebarView,
             aiPanelWidth,
             isEditorMode,
             isAiMode,
             terminalHeight,
             openEditorMode,
+            openTerminal,
         } = useShellWorkbenchView(props.onReady);
         return {
             editorViewportRef,
@@ -175,12 +177,14 @@ const TestHost = defineComponent({
             handleAiPanelWidthChange,
             handleTerminalHeightChange,
             isSidebarVisible,
+            isTerminalVisible,
             activeSidebarView,
             aiPanelWidth,
             isEditorMode,
             isAiMode,
             terminalHeight,
             openEditorMode,
+            openTerminal,
         };
     },
     template: '<div ref="editorViewportRef"></div>',
@@ -360,6 +364,31 @@ describe('useShellWorkbenchView', () => {
 
         expect(wrapper.vm.isEditorMode).toBe(true);
         expect(wrapper.vm.isAiMode).toBe(false);
+
+        wrapper.unmount();
+    });
+
+    it('切到 AI 主界面后会隐藏终端，且无法再次打开', async () => {
+        const wrapper = mount(TestHost, {
+            props: { onReady: vi.fn() },
+        });
+        await flushPromises();
+
+        expect(wrapper.vm.isTerminalVisible).toBe(true);
+
+        await wrapper.vm.handleSelectSidebarView('ai');
+
+        expect(wrapper.vm.isAiMode).toBe(true);
+        expect(wrapper.vm.isTerminalVisible).toBe(false);
+
+        await wrapper.vm.openTerminal();
+
+        expect(wrapper.vm.isTerminalVisible).toBe(false);
+
+        wrapper.vm.openEditorMode();
+        await wrapper.vm.openTerminal();
+
+        expect(wrapper.vm.isTerminalVisible).toBe(true);
 
         wrapper.unmount();
     });

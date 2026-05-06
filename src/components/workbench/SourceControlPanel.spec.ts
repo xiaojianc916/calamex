@@ -296,7 +296,7 @@ describe('SourceControlPanel', () => {
     });
     await flushPromises();
 
-    const diffMenuItem = Array.from(document.body.querySelectorAll<HTMLButtonElement>('.cmx-i'))
+    const diffMenuItem = Array.from(document.body.querySelectorAll<HTMLElement>('[data-slot="dropdown-menu-item"]'))
       .find((button) => button.textContent?.includes('查看 Diff'));
     expect(diffMenuItem).toBeDefined();
 
@@ -337,7 +337,7 @@ describe('SourceControlPanel', () => {
     });
     await flushPromises();
 
-    const copyPathMenuItem = Array.from(document.body.querySelectorAll<HTMLButtonElement>('.cmx-i'))
+    const copyPathMenuItem = Array.from(document.body.querySelectorAll<HTMLElement>('[data-slot="dropdown-menu-item"]'))
       .find((button) => button.textContent?.includes('复制路径'));
     expect(copyPathMenuItem).toBeDefined();
 
