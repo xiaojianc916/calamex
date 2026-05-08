@@ -1,4 +1,17 @@
 <script setup lang="ts">
+import type { IAiTokenContextProps } from '@/composables/useAiTokenContext';
+import {
+    Context,
+    ContextCacheUsage,
+    ContextContent,
+    ContextContentBody,
+    ContextContentFooter,
+    ContextContentHeader,
+    ContextInputUsage,
+    ContextOutputUsage,
+    ContextReasoningUsage,
+    ContextTrigger,
+} from '@/components/ai-elements/context';
 import { PromptInputAttachmentsDisplay } from '@/components/ai-elements/prompt-input';
 import {
     InputGroup,
@@ -42,6 +55,7 @@ const props = defineProps<{
         detailLabel?: string;
     }[];
     hasAttachments: boolean;
+    tokenContext?: IAiTokenContextProps;
 }>();
 
 const emit = defineEmits<{
@@ -59,6 +73,27 @@ const modeOptions: IAiPromptModeOption[] = [
     { key: 'agent', label: 'Agent' },
     { key: 'plan', label: 'Plan' },
 ];
+const emptyTokenContext: IAiTokenContextProps = {
+    usedTokens: 0,
+    maxTokens: 0,
+    usage: {
+        inputTokens: 0,
+        inputTokenDetails: {
+            noCacheTokens: 0,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+        },
+        outputTokens: 0,
+        outputTokenDetails: {
+            textTokens: 0,
+            reasoningTokens: 0,
+        },
+        totalTokens: 0,
+        cachedInputTokens: 0,
+        reasoningTokens: 0,
+    },
+};
+const resolvedTokenContext = computed(() => props.tokenContext ?? emptyTokenContext);
 
 const isPromptInputMode = (value: unknown): value is TAiPromptInputMode =>
     value === 'chat' || value === 'agent' || value === 'plan';
@@ -180,15 +215,30 @@ aria-label="选择模式"
                         </SelectContent>
                     </Select>
 
+                    <Context v-bind="resolvedTokenContext">
+                        <ContextTrigger class="ai-token-trigger ml-auto" aria-label="Token 消耗" />
+
+                        <ContextContent side="top" align="end" :side-offset="8" class="ai-token-content">
+                            <ContextContentHeader />
+                            <ContextContentBody>
+                                <ContextInputUsage />
+                                <ContextOutputUsage />
+                                <ContextReasoningUsage />
+                                <ContextCacheUsage />
+                            </ContextContentBody>
+                            <ContextContentFooter />
+                        </ContextContent>
+                    </Context>
+
                     <InputGroupButton
 v-if="disabled" type="button" variant="outline"
-                        class="ai-send-button rounded-full ml-auto" size="icon-xs" aria-label="停止"
+                        class="ai-send-button rounded-full" size="icon-xs" aria-label="停止"
                         @click="handleStop">
                         <SquareIcon class="size-4" />
                         <span class="sr-only">Stop</span>
                     </InputGroupButton>
                     <InputGroupButton
-v-else type="submit" variant="default" class="ai-send-button rounded-full ml-auto"
+v-else type="submit" variant="default" class="ai-send-button rounded-full"
                         size="icon-xs" :disabled="!canSubmit" :aria-label="submitLabel">
                         <ArrowUpIcon class="size-4" />
                         <span class="sr-only">Send</span>
@@ -320,6 +370,26 @@ v-else type="submit" variant="default" class="ai-send-button rounded-full ml-aut
     border-color: rgba(15, 23, 42, 0.16);
     background: #ffffff;
     color: #374151;
+}
+
+.ai-token-trigger {
+    min-width: 64px;
+    height: 24px;
+    gap: 6px;
+    border-radius: 999px;
+    padding: 0 8px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1;
+    box-shadow: none;
+}
+
+.ai-token-trigger:hover {
+    color: var(--text-primary);
+}
+
+.ai-token-content {
+    color: var(--text-primary);
 }
 
 .ai-send-button {

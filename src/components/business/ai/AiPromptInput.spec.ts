@@ -1,4 +1,5 @@
 import AiPromptInput from '@/components/business/ai/AiPromptInput.vue';
+import type { IAiTokenContextProps } from '@/composables/useAiTokenContext';
 import { mount } from '@vue/test-utils';
 import { describe, expect, it } from 'vitest';
 import { nextTick } from 'vue';
@@ -20,6 +21,7 @@ interface IAiPromptInputTestProps {
   providerLabel: string;
   attachments: IAiPromptInputTestAttachment[];
   hasAttachments: boolean;
+  tokenContext?: IAiTokenContextProps;
   'onUpdate:modelValue': (value: string) => void;
 }
 
@@ -147,5 +149,39 @@ describe('AiPromptInput', () => {
 
     expect(wrapper.find('[aria-label="选择模式"]').exists()).toBe(true);
     expect(wrapper.find('[data-slot="input-group"]').exists()).toBe(true);
+  });
+
+  it('renders token usage before the send button', () => {
+    const wrapper = mountPromptInput({
+      tokenContext: {
+        usedTokens: 32000,
+        maxTokens: 128000,
+        modelId: 'openai:gpt-5',
+        usage: {
+          inputTokens: 32000,
+          inputTokenDetails: {
+            noCacheTokens: 32000,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+          },
+          outputTokens: 0,
+          outputTokenDetails: {
+            textTokens: 0,
+            reasoningTokens: 0,
+          },
+          totalTokens: 32000,
+          cachedInputTokens: 0,
+          reasoningTokens: 0,
+        },
+      },
+    });
+
+    const tokenTrigger = wrapper.get('[aria-label="Token 消耗"]');
+    const sendButton = wrapper.get('[aria-label="发送"]');
+
+    expect(tokenTrigger.text()).toContain('25%');
+    expect(tokenTrigger.element.compareDocumentPosition(sendButton.element)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
   });
 });

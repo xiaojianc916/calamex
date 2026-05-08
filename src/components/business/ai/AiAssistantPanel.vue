@@ -19,6 +19,7 @@ import { useAiAgentNetwork } from '@/composables/useAiAgentNetwork';
 import { useAiAgentRun } from '@/composables/useAiAgentRun';
 import { useAiAssistant, type IAiConversationCheckpoint } from '@/composables/useAiAssistant';
 import { useAiSuggestionPool } from '@/composables/useAiSuggestionPool';
+import { useAiTokenContext } from '@/composables/useAiTokenContext';
 import { useAiWebSources } from '@/composables/useAiWebSources';
 import { findAiServicePlatformByModel } from '@/constants/ai-providers';
 import type {
@@ -71,6 +72,10 @@ const assistant = useAiAssistant({
   selection: selectionRef,
   gitStatus: gitStatusRef,
   workspaceRootPath: workspaceRootPathRef,
+});
+const tokenContext = useAiTokenContext({
+  modelId: computed(() => assistant.config.value.selectedModel),
+  runtimeEvents: computed(() => assistant.runtimeTimelineEvents.value),
 });
 const agentRun = useAiAgentRun();
 const agentNetwork = useAiAgentNetwork();
@@ -757,7 +762,8 @@ onMounted(() => {
       <AiPromptInput v-model="assistant.draft.value" v-model:active-mode="assistant.activeMode.value"
         :disabled="assistant.isSending.value" :error-message="assistant.errorMessage.value" :submit-label="submitLabel"
         :provider-label="aiIconTitle" :attachments="assistant.attachedFiles.value"
-        :has-attachments="assistant.attachedFiles.value.length > 0" @submit="assistant.sendMessage"
+        :has-attachments="assistant.attachedFiles.value.length > 0" :token-context="tokenContext.contextProps"
+        @submit="assistant.sendMessage"
         @stop="assistant.stopCurrentRequest" @file-selected="assistant.attachFile"
         @remove-file="assistant.removeAttachedFile" />
     </div>
