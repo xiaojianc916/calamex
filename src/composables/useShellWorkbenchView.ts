@@ -12,6 +12,7 @@ import type {
 import type { ITerminalRunCompletedPayload } from '@/types/terminal';
 import { waitForDesktopRuntime } from '@/utils/desktop-runtime';
 import { createStartupShellState } from '@/utils/startup-shell';
+import { markStartup } from '@/utils/startup-profiler';
 import { consumeProgrammaticWindowCloseAllowance } from '@/utils/window-close';
 import {
   SHELL_WINDOW_RESIZE_END_EVENT,
@@ -522,14 +523,18 @@ export const useShellWorkbenchView = (onReady: () => void) => {
     }
 
     hasEmittedReady.value = true;
+    markStartup('workbench-initial-paint-ready');
     onReady();
   };
 
   const restoreWorkbenchSession = async (): Promise<void> => {
     isRestoringWorkbenchSession.value = true;
+    markStartup('restore-session-start');
     try {
       await workbench.restoreSession();
+      markStartup('restore-session-done');
     } catch (error) {
+      markStartup('restore-session-failed');
       if (isUnmounted) {
         return;
       }
@@ -546,13 +551,23 @@ export const useShellWorkbenchView = (onReady: () => void) => {
   };
 
   const initializeWorkbench = async (): Promise<void> => {
-    const result = await workbench.initialize();
+    markStartup('workbench-initialize-start');
+    isStartupShellPrimed.value = true;
+
+    let result: Awaited<ReturnType<typeof workbench.initialize>>;
+    try {
+      result = await workbench.initialize();
+      markStartup('workbench-initialize-done');
+    } catch (error) {
+      markStartup('workbench-initialize-failed');
+      throw error;
+    }
+
     if (isUnmounted) {
       return;
     }
 
     startupWorkspaceRoot.value = result.startupWorkspaceDirectory;
-    isStartupShellPrimed.value = true;
     await emitWorkbenchReady();
 
     if (isUnmounted) {
@@ -674,6 +689,8 @@ export const useShellWorkbenchView = (onReady: () => void) => {
 
   onMounted(() => {
     isUnmounted = false;
+    isStartupShellPrimed.value = true;
+    markStartup('shell-workbench-mounted');
     window.addEventListener(SHELL_WINDOW_RESIZE_START_EVENT, handleShellWindowResizeStart);
     window.addEventListener(SHELL_WINDOW_RESIZE_END_EVENT, handleShellWindowResizeEnd);
     window.addEventListener(SHELL_WINDOW_RESIZE_SETTLED_EVENT, handleShellWindowResizeSettled);

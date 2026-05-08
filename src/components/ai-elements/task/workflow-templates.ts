@@ -703,12 +703,6 @@ const TOOL_COPY_MATCHERS: readonly IToolCopyMatcher[] = [
         }),
     },
     {
-        pattern: /^(?:get_vscode_api|vscode_searchextensions_internal|install_extension|run_vscode_command)$/u,
-        definition: defineToolCopy('处理 VS Code 集成', '正在处理 VS Code 集成', '已完成 VS Code 集成操作', 'VS Code 集成操作失败', {
-            defaultTarget: 'VS Code 能力',
-        }),
-    },
-    {
         pattern: /^(?:memory|resolve_memory_file_uri)$/u,
         definition: defineToolCopy('读写记忆', '正在读写记忆', '已完成记忆操作', '记忆操作失败', {
             defaultTarget: '记忆条目',

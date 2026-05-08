@@ -3,6 +3,7 @@ import AppDialogHost from '@/components/common/AppDialogHost.vue';
 import BrowserContextMenuHost from '@/components/common/BrowserContextMenuHost.vue';
 import { applyWindowStage } from '@/services/modules/window';
 import { runtimeErrorState } from '@/utils/runtime-diagnostics';
+import { markStartup, reportStartupTimings } from '@/utils/startup-profiler';
 import { watch } from 'vue';
 
 interface ITauriInternals {
@@ -23,22 +24,33 @@ const canApplyNativeWindowStage = (): boolean => {
 };
 
 const revealMainWindow = async (): Promise<void> => {
-  if (hasAppliedMainWindowStage || isApplyingMainWindowStage || !canApplyNativeWindowStage()) {
+  if (hasAppliedMainWindowStage || isApplyingMainWindowStage) {
+    return;
+  }
+
+  if (!canApplyNativeWindowStage()) {
+    markStartup('window-stage-main-skipped');
+    reportStartupTimings();
     return;
   }
 
   isApplyingMainWindowStage = true;
+  markStartup('window-stage-main-start');
   try {
     await applyWindowStage({ stage: 'main' });
+    markStartup('window-stage-main-done');
     hasAppliedMainWindowStage = true;
   } catch (error) {
+    markStartup('window-stage-main-failed');
     console.error('主窗口显示阶段应用失败', error);
   } finally {
+    reportStartupTimings();
     isApplyingMainWindowStage = false;
   }
 };
 
 const handleWorkbenchReady = (): void => {
+  markStartup('workbench-ready-event');
   void revealMainWindow();
 };
 

@@ -27,6 +27,7 @@ const EMPTY_ENVIRONMENT: IExecutionEnvironment = {
   hasAny: false,
   executors: [],
 };
+const WORKBENCH_RUNTIME_WAIT_MS = 160;
 
 const isTextDocument = (document: { kind: string }): boolean => document.kind === 'text';
 
@@ -154,7 +155,7 @@ export const useWorkbench = () => {
   }> => {
     const startupWorkspaceDirectory: IWorkspaceDirectoryPayload | null = null;
 
-    const runtimeReady = await waitForDesktopRuntime();
+    const runtimeReady = await waitForDesktopRuntime(WORKBENCH_RUNTIME_WAIT_MS);
     if (!runtimeReady) {
       gitStore.reset();
       editorStore.setEnvironment(EMPTY_ENVIRONMENT);

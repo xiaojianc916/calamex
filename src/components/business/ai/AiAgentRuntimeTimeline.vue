@@ -39,7 +39,7 @@ import {
   Terminal,
   Workflow,
 } from 'lucide-vue-next';
-import { computed, ref, type Component } from 'vue';
+import { computed, type Component } from 'vue';
 
 const REASONING_SEGMENT_CHARS = 420;
 const PREVIEW_TAG_LIMIT = 96;
@@ -66,10 +66,21 @@ interface ITaskNodeItem {
   id: string;
   kind: TAiRuntimeToolKind;
   icon: TTaskIcon;
+  toolName?: string;
+  toolUseId?: string;
+  resourceLabel?: string;
+  suppressMeta?: boolean;
+  webSearchSources?: IWebSearchSourceChip[];
   action: string;
   tags: string[];
   status: TTaskStatus;
   tail?: string;
+}
+
+interface IWebSearchSourceChip {
+  url: string;
+  host: string;
+  displayUrl: string;
 }
 
 type TTimelineItem =
@@ -116,7 +127,6 @@ const props = withDefaults(defineProps<{
   isStreaming: false,
 });
 
-const collapsedReasoningMap = ref<Record<string, boolean>>({});
 const inlineMarkdownTokenCache = new Map<string, IInlineMarkdownToken[]>();
 
 const TOOL_ICON_MATCHERS: readonly IToolIconMatcher[] = [
@@ -377,16 +387,6 @@ const splitReasoningSegments = (value: string): string[] => {
   return segments;
 };
 
-const isReasoningCollapsed = (itemId: string): boolean =>
-  Boolean(collapsedReasoningMap.value[itemId]);
-
-const toggleReasoningCollapsed = (itemId: string): void => {
-  collapsedReasoningMap.value = {
-    ...collapsedReasoningMap.value,
-    [itemId]: !isReasoningCollapsed(itemId),
-  };
-};
-
 const clipTag = (value: string, limit = PREVIEW_TAG_LIMIT): string => {
   const normalized = value.replace(/\s+/gu, ' ').trim();
 
@@ -499,6 +499,353 @@ const parsePreviewValue = (value: string | undefined): string[] => {
   return clipped ? [clipped] : [];
 };
 
+const parsePreviewRecord = (value: string | undefined): Record<string, unknown> | null => {
+  if (!isNonEmptyString(value)) {
+    return null;
+  }
+
+  try {
+    const parsed: unknown = JSON.parse(value.trim());
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
+};
+
+const parsePreviewJson = (value: string | undefined): unknown | null => {
+  if (!isNonEmptyString(value)) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(value.trim()) as unknown;
+  } catch {
+    return null;
+  }
+};
+
+const PREVIEW_PATH_KEYS = ['path', 'filePath', 'file_path', 'targetPath', 'target_path'] as const;
+
+const WEB_SEARCH_TOOL_NAMES = new Set([
+  'web_search',
+  'tavily-search',
+  'tavily_search',
+  'tavily-map',
+  'tavily_map',
+  'tavily-research',
+  'tavily_research',
+]);
+
+const collectPreviewPathCandidate = (value: unknown, depth = 0): string | null => {
+  if (depth > 4 || value == null) {
+    return null;
+  }
+
+  if (isNonEmptyString(value)) {
+    return value.trim();
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const candidate = collectPreviewPathCandidate(item, depth + 1);
+
+      if (candidate) {
+        return candidate;
+      }
+    }
+
+    return null;
+  }
+
+  if (typeof value !== 'object') {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+
+  for (const key of PREVIEW_PATH_KEYS) {
+    const candidate = collectPreviewPathCandidate(record[key], depth + 1);
+
+    if (candidate) {
+      return candidate;
+    }
+  }
+
+  for (const nestedValue of Object.values(record)) {
+    const candidate = collectPreviewPathCandidate(nestedValue, depth + 1);
+
+    if (candidate) {
+      return candidate;
+    }
+  }
+
+  return null;
+};
+
+const extractPathFromTextPreview = (value: string): string | null => {
+  const normalized = value.trim();
+  const windowsMatch = normalized.match(/[A-Za-z]:[\\/][^"'\n\r\t]+/u);
+
+  if (windowsMatch?.[0]) {
+    return windowsMatch[0].trim();
+  }
+
+  const unixMatch = normalized.match(/(?:^|[\s"'])((?:\.{1,2}[\\/]|[\\/])[^"]+?\.[A-Za-z0-9_-]{1,12})/u);
+
+  if (unixMatch?.[1]) {
+    return unixMatch[1].trim();
+  }
+
+  return null;
+};
+
+const resolvePreviewPath = (value: string | undefined): string | null => {
+  const parsed = parsePreviewJson(value);
+  const structuredCandidate = collectPreviewPathCandidate(parsed);
+
+  if (structuredCandidate) {
+    return structuredCandidate;
+  }
+
+  if (!isNonEmptyString(value)) {
+    return null;
+  }
+
+  return extractPathFromTextPreview(value);
+};
+
+const resolveWebSearchQuery = (value: string | undefined): string | null => {
+  const record = parsePreviewRecord(value);
+  const candidate = record?.query;
+
+  return isNonEmptyString(candidate) ? candidate.trim() : null;
+};
+
+const getHostname = (url: string): string => {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url.trim();
+  }
+};
+
+const getDisplayWebSearchUrl = (url: string): string => {
+  const hostname = getHostname(url);
+
+  if (!hostname) {
+    return url.trim();
+  }
+
+  return hostname.startsWith('www.') ? hostname : `www.${hostname}`;
+};
+
+const resolveWebSearchSources = (value: string | undefined): IWebSearchSourceChip[] => {
+  const seen = new Set<string>();
+  const sources: IWebSearchSourceChip[] = [];
+
+  const appendSource = (url: string): void => {
+    const trimmedUrl = url.trim();
+    const host = getHostname(trimmedUrl);
+
+    if (!trimmedUrl || !host || seen.has(trimmedUrl)) {
+      return;
+    }
+
+    seen.add(trimmedUrl);
+    sources.push({
+      url: trimmedUrl,
+      host,
+      displayUrl: getDisplayWebSearchUrl(trimmedUrl),
+    });
+  };
+
+  const parseStringAsJson = (text: string): unknown | null => {
+    const trimmed = text.trim();
+
+    if (!(trimmed.startsWith('{') || trimmed.startsWith('['))) {
+      return null;
+    }
+
+    return parsePreviewJson(trimmed);
+  };
+
+  const collectWebSearchSources = (payload: unknown, depth = 0): void => {
+    if (depth > 6 || payload == null || sources.length >= 6) {
+      return;
+    }
+
+    if (isNonEmptyString(payload)) {
+      const parsedNested = parseStringAsJson(payload);
+
+      if (parsedNested) {
+        collectWebSearchSources(parsedNested, depth + 1);
+      }
+
+      const urlMatches = payload.match(/https?:\/\/[^\s"'<>]+/giu) ?? [];
+
+      for (const match of urlMatches) {
+        appendSource(match.replace(/[),.;]+$/u, ''));
+      }
+
+      return;
+    }
+
+    if (Array.isArray(payload)) {
+      for (const item of payload) {
+        collectWebSearchSources(item, depth + 1);
+
+        if (sources.length >= 6) {
+          return;
+        }
+      }
+
+      return;
+    }
+
+    if (typeof payload !== 'object') {
+      return;
+    }
+
+    const record = payload as Record<string, unknown>;
+
+    const directUrl = record.url ?? record.link ?? record.href;
+    if (isNonEmptyString(directUrl)) {
+      appendSource(directUrl);
+    }
+
+    const priorityKeys = [
+      'results',
+      'items',
+      'data',
+      'sources',
+      'source',
+      'toolResult',
+      'result',
+      'output',
+      'content',
+      'value',
+      'payload',
+    ];
+
+    for (const key of priorityKeys) {
+      if (!(key in record)) {
+        continue;
+      }
+
+      collectWebSearchSources(record[key], depth + 1);
+
+      if (sources.length >= 6) {
+        return;
+      }
+    }
+
+    for (const nestedValue of Object.values(record)) {
+      collectWebSearchSources(nestedValue, depth + 1);
+
+      if (sources.length >= 6) {
+        return;
+      }
+    }
+  };
+
+  collectWebSearchSources(parsePreviewJson(value));
+
+  if (!sources.length && isNonEmptyString(value)) {
+    collectWebSearchSources(value);
+  }
+
+  return sources.slice(0, 6);
+};
+
+interface IToolActionDescriptor {
+  action: string;
+  resourceLabel?: string;
+  suppressMeta?: boolean;
+  webSearchSources?: IWebSearchSourceChip[];
+}
+
+const describeToolAction = (
+  event: Extract<TToolRuntimeEvent, { type: 'agent.tool.started' | 'agent.tool.completed' }>,
+  toolName: string,
+  fallbackResourceLabel?: string,
+): IToolActionDescriptor => {
+  const resourceLabel = fallbackResourceLabel
+    ?? resolvePreviewPath(event.type === 'agent.tool.started' ? event.inputPreview : event.resultPreview)
+    ?? undefined;
+
+  if (toolName === 'read_text_file' && resourceLabel) {
+    if (event.type === 'agent.tool.completed' && !event.ok) {
+      return {
+        action: `读取失败 ${resourceLabel}`,
+        resourceLabel,
+        suppressMeta: true,
+      };
+    }
+
+    return {
+      action: event.type === 'agent.tool.started'
+        ? `正在读取 ${resourceLabel}`
+        : `读取完成 ${resourceLabel}`,
+      resourceLabel,
+      suppressMeta: true,
+    };
+  }
+
+  if (toolName === 'write_file' && resourceLabel) {
+    if (event.type === 'agent.tool.completed' && !event.ok) {
+      return {
+        action: `编辑失败 ${resourceLabel}`,
+        resourceLabel,
+        suppressMeta: true,
+      };
+    }
+
+    return {
+      action: event.type === 'agent.tool.started'
+        ? `正在编辑 ${resourceLabel}`
+        : `编辑完成 ${resourceLabel}`,
+      resourceLabel,
+      suppressMeta: true,
+    };
+  }
+
+  if (WEB_SEARCH_TOOL_NAMES.has(toolName)) {
+    const query = resolveWebSearchQuery(event.type === 'agent.tool.started' ? event.inputPreview : undefined)
+      ?? fallbackResourceLabel
+      ?? undefined;
+    const webSearchSources = resolveWebSearchSources(
+      event.type === 'agent.tool.completed' ? event.resultPreview : undefined,
+    );
+
+    if (event.type === 'agent.tool.completed' && !event.ok) {
+      return {
+        action: 'Search Failed',
+        resourceLabel: query,
+        suppressMeta: true,
+        webSearchSources,
+      };
+    }
+
+    return {
+      action: event.type === 'agent.tool.started'
+        ? `Searching for ${query ?? 'web results'}`
+        : 'Complete Search',
+      resourceLabel: query,
+      suppressMeta: true,
+      webSearchSources,
+    };
+  }
+
+  return {
+    action: event.type === 'agent.tool.started'
+      ? `开始调用 ${toolName}`
+      : `完成调用 ${toolName}`,
+    resourceLabel,
+  };
+};
+
 const describeRunEvent = (event: TAgentRuntimeEvent): string | null => {
   switch (event.type) {
     case 'agent.run.started':
@@ -540,7 +887,11 @@ const isToolEvent = (event: TAgentRuntimeEvent): event is TToolRuntimeEvent =>
   || event.type === 'agent.tool.completed'
   || event.type === 'agent.tool.progress';
 
-const createToolNode = (event: TToolRuntimeEvent, eventIndex: number): ITaskNodeItem => {
+const createToolNode = (
+  event: TToolRuntimeEvent,
+  eventIndex: number,
+  previousNode?: ITaskNodeItem,
+): ITaskNodeItem => {
   const id = createEventKey(event, eventIndex);
 
   if (event.type === 'agent.tool.progress') {
@@ -557,28 +908,78 @@ const createToolNode = (event: TToolRuntimeEvent, eventIndex: number): ITaskNode
   const kind = classifyRuntimeToolKind(event.toolName);
   const toolName = normalizeRuntimeToolName(event.toolName);
   const icon = resolveRuntimeToolIcon(event.toolName, kind);
+  const actionDescriptor = describeToolAction(event, toolName, previousNode?.resourceLabel);
 
   if (event.type === 'agent.tool.started') {
     return {
-      id,
+      id: previousNode?.id ?? id,
       kind,
       icon,
-      action: `开始调用 ${toolName}`,
-      tags: [toolName, ...parsePreviewValue(event.inputPreview)].slice(0, MAX_TOOL_TAGS),
+      toolName,
+      toolUseId: event.toolUseId,
+      resourceLabel: actionDescriptor.resourceLabel,
+      suppressMeta: actionDescriptor.suppressMeta,
+      webSearchSources: actionDescriptor.webSearchSources,
+      action: actionDescriptor.action,
+      tags: actionDescriptor.suppressMeta
+        ? []
+        : [toolName, ...parsePreviewValue(event.inputPreview)].slice(0, MAX_TOOL_TAGS),
       status: 'running',
-      tail: '执行中',
+      tail: actionDescriptor.suppressMeta ? undefined : '执行中',
     };
   }
 
   return {
-    id,
+    id: previousNode?.id ?? id,
     kind,
     icon,
-    action: `完成调用 ${toolName}`,
-    tags: [toolName, ...parsePreviewValue(event.resultPreview)].slice(0, MAX_TOOL_TAGS),
+    toolName,
+    toolUseId: event.toolUseId ?? previousNode?.toolUseId,
+    resourceLabel: actionDescriptor.resourceLabel,
+    suppressMeta: actionDescriptor.suppressMeta,
+    webSearchSources: actionDescriptor.webSearchSources ?? previousNode?.webSearchSources,
+    action: actionDescriptor.action,
+    tags: actionDescriptor.suppressMeta
+      ? []
+      : [toolName, ...parsePreviewValue(event.resultPreview)].slice(0, MAX_TOOL_TAGS),
     status: event.ok ? 'succeeded' : 'failed',
-    tail: event.ok ? '成功' : `失败：${event.errorMessage ?? '未知错误'}`,
+    tail: actionDescriptor.suppressMeta
+      ? undefined
+      : event.ok
+        ? '成功'
+        : `失败：${event.errorMessage ?? '未知错误'}`,
   };
+};
+
+const findPendingToolTaskIndex = (
+  items: readonly TTimelineItem[],
+  event: Extract<TToolRuntimeEvent, { type: 'agent.tool.completed' }>,
+): number => {
+  const normalizedToolName = normalizeRuntimeToolName(event.toolName);
+
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index];
+
+    if (item.type !== 'task') {
+      continue;
+    }
+
+    const { node } = item;
+
+    if (node.status !== 'running' || !node.toolName) {
+      continue;
+    }
+
+    if (event.toolUseId && node.toolUseId === event.toolUseId) {
+      return index;
+    }
+
+    if (!event.toolUseId && node.toolName === normalizedToolName) {
+      return index;
+    }
+  }
+
+  return -1;
 };
 
 const buildTimelineItems = (events: readonly TAgentRuntimeEvent[]): TTimelineItem[] => {
@@ -660,6 +1061,20 @@ const buildTimelineItems = (events: readonly TAgentRuntimeEvent[]): TTimelineIte
 
     if (isToolEvent(event)) {
       flushReasoningLine();
+
+      if (event.type === 'agent.tool.completed') {
+        const pendingTaskIndex = findPendingToolTaskIndex(items, event);
+
+        if (pendingTaskIndex >= 0) {
+          const pendingTask = items[pendingTaskIndex];
+
+          if (pendingTask.type === 'task') {
+            pendingTask.node = createToolNode(event, eventIndex, pendingTask.node);
+            return;
+          }
+        }
+      }
+
       const node = createToolNode(event, eventIndex);
       items.push({
         type: 'task',
@@ -698,9 +1113,30 @@ const chainHeaderLabel = computed(() => props.isStreaming ? '正在思考' : '�
 const getTaskIcon = (node: ITaskNodeItem): Component =>
   TASK_ICON_MAP[node.icon];
 
+const getFaviconSource = (host: string): string =>
+  `favicon://localhost/${encodeURIComponent(host)}`;
+
+const buildWebSourceFallbackSvg = (label: string): string => {
+  const text = (label.trim().charAt(0) || '?').toUpperCase();
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><rect width="24" height="24" rx="12" fill="#d4d4d8"/><text x="12" y="16" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" font-size="12" fill="#27272a">${text}</text></svg>`;
+
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+};
+
+const handleWebSourceIconError = (event: Event, label: string): void => {
+  const target = event.target;
+
+  if (!(target instanceof HTMLImageElement)) {
+    return;
+  }
+
+  target.onerror = null;
+  target.src = buildWebSourceFallbackSvg(label);
+};
+
 const getTaskStepStatus = (node: ITaskNodeItem): 'complete' | 'active' | 'pending' => {
   if (node.status === 'running') {
-    return 'active';
+    return 'complete';
   }
 
   if (node.status === 'pending') {
@@ -829,26 +1265,16 @@ const tokenizeInlineMarkdown = (value: string): IInlineMarkdownToken[] => {
           </template>
 
           <div class="agent-line">
-            <p v-for="(segment, segmentIndex) in (
-              isReasoningCollapsed(item.id)
-                ? item.segments.slice(0, 1)
-                : item.segments
-            )" :key="`${item.id}:segment:${segmentIndex}`" class="agent-line__segment">
-              <template
-                v-for="(token, tokenIndex) in tokenizeInlineMarkdown(segment)"
-                :key="`${item.id}:segment:${segmentIndex}:token:${tokenIndex}`"
-              >
+            <p v-for="(segment, segmentIndex) in item.segments" :key="`${item.id}:segment:${segmentIndex}`"
+              class="agent-line__segment">
+              <template v-for="(token, tokenIndex) in tokenizeInlineMarkdown(segment)"
+                :key="`${item.id}:segment:${segmentIndex}:token:${tokenIndex}`">
                 <strong v-if="token.kind === 'strong'" class="agent-line__strong">{{ token.text }}</strong>
                 <em v-else-if="token.kind === 'emphasis'" class="agent-line__emphasis">{{ token.text }}</em>
                 <code v-else-if="token.kind === 'code'" class="agent-line__code">{{ token.text }}</code>
                 <span v-else>{{ token.text }}</span>
               </template>
             </p>
-
-            <button v-if="item.isLong" type="button" class="agent-line__toggle"
-              @click="toggleReasoningCollapsed(item.id)">
-              {{ isReasoningCollapsed(item.id) ? '展开全部推理' : '收起长推理' }}
-            </button>
           </div>
         </ChainOfThoughtStep>
 
@@ -866,8 +1292,19 @@ const tokenizeInlineMarkdown = (value: string): IInlineMarkdownToken[] => {
               aria-hidden="true" />
           </template>
 
-          <Task v-if="item.node.tags.length || item.node.tail" class="ai-runtime-task">
-            <TaskContent v-if="item.node.tags.length || item.node.tail" class="ai-runtime-task-content">
+          <Task v-if="item.node.tags.length || item.node.tail || item.node.webSearchSources?.length"
+            class="ai-runtime-task">
+            <TaskContent v-if="item.node.tags.length || item.node.tail || item.node.webSearchSources?.length"
+              class="ai-runtime-task-content">
+              <div v-if="item.node.webSearchSources?.length" class="ai-runtime-web-search-sources">
+                <div v-for="source in item.node.webSearchSources" :key="`${item.node.id}:source:${source.url}`"
+                  class="ai-runtime-web-source-pill" :title="source.url">
+                  <img class="ai-runtime-web-source-icon" :src="getFaviconSource(source.host)" alt="" loading="lazy"
+                    decoding="async" @error="handleWebSourceIconError($event, source.displayUrl)" />
+                  <span class="ai-runtime-web-source-label">{{ source.displayUrl }}</span>
+                </div>
+              </div>
+
               <ChainOfThoughtSearchResults v-if="item.node.tags.length" class="ai-runtime-task-search-results">
                 <ChainOfThoughtSearchResult v-for="tag in item.node.tags" :key="`${item.node.id}:tag:${tag}`"
                   class="ai-runtime-task-file" :title="tag">
@@ -975,36 +1412,13 @@ const tokenizeInlineMarkdown = (value: string): IInlineMarkdownToken[] => {
   padding: 0 4px;
 }
 
-.agent-line__toggle {
-  margin-top: 6px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  background: var(--surface-soft);
-  padding: 2px 8px;
-  color: var(--text-quaternary);
-  font-size: 12px;
-  line-height: 18px;
-  text-align: left;
-  cursor: pointer;
-}
-
-.agent-line__toggle:hover {
-  color: var(--text-primary);
-}
-
-.agent-line__toggle:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--accent-strong) 46%, transparent);
-  outline-offset: 2px;
-}
-
 .ai-runtime-task {
   min-width: 0;
 }
 
 .ai-runtime-task-content :deep(> div) {
   margin-top: 0;
-  border-left-width: 1px;
-  border-color: var(--border);
+  border-left-width: 0;
   padding-left: 24px;
 }
 
@@ -1016,6 +1430,37 @@ const tokenizeInlineMarkdown = (value: string): IInlineMarkdownToken[] => {
 
 .ai-runtime-task-item.is-failed {
   color: color-mix(in srgb, var(--danger) 84%, var(--text-tertiary));
+}
+
+.ai-runtime-web-search-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ai-runtime-web-source-pill {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  background: #f4f4f5;
+  color: #27272a;
+  padding: 4px 12px;
+}
+
+.ai-runtime-web-source-icon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  stroke-width: 2;
+}
+
+.ai-runtime-web-source-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ai-runtime-task-file {

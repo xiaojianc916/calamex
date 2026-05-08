@@ -11,8 +11,8 @@
                 :active-run="editorStore.activeRunSummary" :run-history="editorStore.runHistory"
                 :command-templates="commandTemplates" :executor="editorStore.selectedExecutor"
                 @select-view="handleSelectSidebarView" @toggle-primary-mode="handleTogglePrimaryMode"
-                @open-file="handleSidebarOpenFile" @open-git-diff="handleSidebarOpenGitDiff" @run="handleRunScript"
-                @create-document="createNewDocument" @open-terminal="openTerminal"
+                @open-file="handleSidebarOpenFile" @open-folder="openFolder" @open-git-diff="handleSidebarOpenGitDiff"
+                @run="handleRunScript" @create-document="createNewDocument" @open-terminal="openTerminal"
                 @insert-template="handleInsertTemplate" @clear-run-history="handleClearRunHistory"
                 @explorer-state-change="handleExplorerSessionStateChange" />
         </template>
@@ -22,7 +22,7 @@
             :data-diagnostics-resizing="diagnosticsTransitionsEnabled ? 'false' : 'true'">
             <div class="@container/main workbench-content-stage">
                 <div class="workbench-content-dock">
-                    <AiWorkspaceSurface v-if="isAiMode" class="min-w-0 flex-1" :document="editorStore.document"
+                    <DeferredAiWorkspaceSurface v-if="isAiMode" class="min-w-0 flex-1" :document="editorStore.document"
                         :active-run="editorStore.activeRunSummary" :analysis="editorStore.activeScriptAnalysis"
                         :selection="editorStore.activeSelectionSummary" :git-status="gitStore.status"
                         :workspace-root-path="editorStore.workspaceRootPath"
@@ -57,18 +57,18 @@
                                             @command-palette-request="handleOpenCommandPalette"
                                             @open-terminal-request="openTerminal" @run-request="handleRunScript" />
 
-                                        <AiDiffPreviewEditor v-else-if="
+                                        <DeferredAiDiffPreviewEditor v-else-if="
                                             editorStore.document.kind === 'ai-diff' &&
                                             editorStore.document.aiDiffPreview
                                         " :preview="editorStore.document.aiDiffPreview" />
 
-                                        <GitDiffViewer v-else-if="
+                                        <DeferredGitDiffViewer v-else-if="
                                             editorStore.document.kind === 'git-diff' &&
                                             editorStore.document.gitDiffPreview
                                         " :preview="editorStore.document.gitDiffPreview" theme="light"
                                             :editor-settings="appStore.settings.editor" />
 
-                                        <ImageAssetPreview v-else-if="editorStore.document.path"
+                                        <DeferredImageAssetPreview v-else-if="editorStore.document.path"
                                             :path="editorStore.document.path" :name="editorStore.document.name" />
                                     </div>
                                 </CardContent>
@@ -139,17 +139,17 @@
                                     @command-palette-request="handleOpenCommandPalette"
                                     @open-terminal-request="openTerminal" @run-request="handleRunScript" />
 
-                                <AiDiffPreviewEditor v-else-if="
+                                <DeferredAiDiffPreviewEditor v-else-if="
                                     editorStore.document.kind === 'ai-diff' && editorStore.document.aiDiffPreview
                                 " :preview="editorStore.document.aiDiffPreview" />
 
-                                <GitDiffViewer v-else-if="
+                                <DeferredGitDiffViewer v-else-if="
                                     editorStore.document.kind === 'git-diff' &&
                                     editorStore.document.gitDiffPreview
                                 " :preview="editorStore.document.gitDiffPreview" theme="light"
                                     :editor-settings="appStore.settings.editor" />
 
-                                <ImageAssetPreview v-else-if="editorStore.document.path"
+                                <DeferredImageAssetPreview v-else-if="editorStore.document.path"
                                     :path="editorStore.document.path" :name="editorStore.document.name" />
                             </div>
                         </CardContent>
@@ -162,11 +162,7 @@
 </template>
 
 <script setup lang="ts">
-import AiWorkspaceSurface from '@/components/business/ai/AiWorkspaceSurface.vue';
-import AiDiffPreviewEditor from '@/components/editor/AiDiffPreviewEditor.vue';
 import EmptyEditorState from '@/components/editor/EmptyEditorState.vue';
-import GitDiffViewer from '@/components/editor/GitDiffViewer.vue';
-import ImageAssetPreview from '@/components/editor/ImageAssetPreview.vue';
 import { Card, CardContent } from '@/components/ui/card';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import StartupWorkbenchShell from '@/components/workbench/StartupWorkbenchShell.vue';
@@ -175,6 +171,26 @@ import { useShellWorkbenchView } from '@/composables/useShellWorkbenchView';
 import AppShellLayout from '@/layouts/AppShellLayout.vue';
 import type { IGitDiffPreviewRequest } from '@/types/git';
 import { computed, defineAsyncComponent } from 'vue';
+
+const DeferredAiWorkspaceSurface = defineAsyncComponent({
+    loader: () => import('@/components/business/ai/AiWorkspaceSurface.vue'),
+    suspensible: false,
+});
+
+const DeferredAiDiffPreviewEditor = defineAsyncComponent({
+    loader: () => import('@/components/editor/AiDiffPreviewEditor.vue'),
+    suspensible: false,
+});
+
+const DeferredGitDiffViewer = defineAsyncComponent({
+    loader: () => import('@/components/editor/GitDiffViewer.vue'),
+    suspensible: false,
+});
+
+const DeferredImageAssetPreview = defineAsyncComponent({
+    loader: () => import('@/components/editor/ImageAssetPreview.vue'),
+    suspensible: false,
+});
 
 const DeferredSmartScriptEditor = defineAsyncComponent({
     loader: () => import('@/components/editor/SmartScriptEditor.vue'),

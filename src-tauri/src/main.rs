@@ -41,7 +41,10 @@ use commands::{
     start_wsl_link_agent, start_wsl_link_supervisor, stop_wsl_link_supervisor, test_ssh_connection,
     unstage_git_paths, upload_ssh_file, write_terminal_input, TerminalSessionState,
 };
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::{
+    sync::atomic::{AtomicBool, Ordering},
+    time::Instant,
+};
 use tauri::{
     menu::MenuBuilder,
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -53,6 +56,35 @@ const MAIN_WINDOW_LABEL: &str = "main";
 const TRAY_ICON_ID: &str = "main-tray";
 const TRAY_MENU_SHOW_ID: &str = "tray.show-main-window";
 const TRAY_MENU_QUIT_ID: &str = "tray.quit-app";
+
+fn startup_elapsed_ms(started_at: Instant) -> f64 {
+    started_at.elapsed().as_secs_f64() * 1000.0
+}
+
+fn emit_startup_event(event: &str, app_started_at: Instant) {
+    eprintln!(
+        "{}",
+        serde_json::json!({
+            "level": "info",
+            "scope": "startup",
+            "event": event,
+            "elapsedMs": startup_elapsed_ms(app_started_at),
+        })
+    );
+}
+
+fn emit_startup_step(event: &str, app_started_at: Instant, step_started_at: Instant) {
+    eprintln!(
+        "{}",
+        serde_json::json!({
+            "level": "info",
+            "scope": "startup",
+            "event": event,
+            "elapsedMs": startup_elapsed_ms(app_started_at),
+            "durationMs": startup_elapsed_ms(step_started_at),
+        })
+    );
+}
 
 #[derive(Default)]
 struct AppLifecycleState {
@@ -169,7 +201,18 @@ fn disable_webview_default_context_menu<R: tauri::Runtime>(
 }
 
 fn main() {
+    let app_started_at = Instant::now();
+    emit_startup_event("tauri.main.start", app_started_at);
+
+    let builder_started_at = Instant::now();
     let app = tauri::Builder::default()
+        .register_asynchronous_uri_scheme_protocol("favicon", |context, request, responder| {
+            let app_handle = context.app_handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let response = ai::favicon::handle_protocol_request(&app_handle, request).await;
+                responder.respond(response);
+            });
+        })
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .manage(AiEditState::default())
@@ -192,20 +235,45 @@ fn main() {
                 }
             }
         })
-        .setup(|app| {
+        .setup(move |app| {
+            let setup_started_at = Instant::now();
+            emit_startup_event("tauri.setup.start", app_started_at);
+
+            let terminal_events_started_at = Instant::now();
             terminal::registry::registry()
                 .event_bus
                 .attach_app(app.handle().clone());
+            emit_startup_step(
+                "tauri.setup.terminal-events-attached",
+                app_started_at,
+                terminal_events_started_at,
+            );
 
+            let tray_started_at = Instant::now();
             setup_system_tray(app)?;
+            emit_startup_step("tauri.setup.tray-ready", app_started_at, tray_started_at);
 
+            let webview_settings_started_at = Instant::now();
             for webview_window in app.webview_windows().into_values() {
                 disable_webview_default_context_menu(&webview_window);
             }
+            emit_startup_step(
+                "tauri.setup.webview-settings-ready",
+                app_started_at,
+                webview_settings_started_at,
+            );
 
+            let window_state_started_at = Instant::now();
             if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
                 let _ = window.unminimize();
             }
+            emit_startup_step(
+                "tauri.setup.window-state-ready",
+                app_started_at,
+                window_state_started_at,
+            );
+
+            emit_startup_step("tauri.setup.done", app_started_at, setup_started_at);
 
             Ok(())
         })
@@ -309,6 +377,8 @@ fn main() {
             ai_edit_revert_task,
             ai_list_tools
         ]);
+    emit_startup_step("tauri.builder.ready", app_started_at, builder_started_at);
+    emit_startup_event("tauri.run.start", app_started_at);
 
     if let Err(error) = app.run(tauri::generate_context!()) {
         eprintln!("failed to run SH editor: {error}");

@@ -19,9 +19,39 @@
 
         <div v-else-if="rootLoading && !root" class="explorer-empty-state">正在读取资源目录...</div>
 
-        <div v-else-if="!workspaceRootPath" class="explorer-empty-state">尚未打开工作区</div>
+        <Empty v-else-if="!workspaceRootPath" class="explorer-empty-state explorer-empty-state--raised">
+          <EmptyHeader class="gap-1.5">
+            <EmptyMedia class="h-auto w-auto rounded-none border-0 bg-transparent p-0 shadow-none">
+              <FolderOpen class="h-14 w-14" />
+            </EmptyMedia>
+            <EmptyTitle class="text-[12px] font-medium">尚未打开工作区</EmptyTitle>
+            <EmptyDescription class="text-[11px] leading-5">
+              点击
+              <button type="button" class="explorer-empty-action" @click="emit('open-folder')">
+                adding files
+              </button>
+              <span> 打开一个文件夹。</span>
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
 
         <div v-else-if="!root" class="explorer-empty-state">正在准备资源树...</div>
+
+        <Empty v-else-if="isExplorerWorkspaceEmpty" class="explorer-empty-state explorer-empty-state--raised">
+          <EmptyHeader class="gap-1.5">
+            <EmptyMedia class="h-auto w-auto rounded-none border-0 bg-transparent p-0 shadow-none">
+              <FolderOpen class="h-14 w-14" />
+            </EmptyMedia>
+            <EmptyTitle class="text-[12px] font-medium">This folder is empty</EmptyTitle>
+            <EmptyDescription class="text-[11px] leading-5">
+              Start by
+              <button type="button" class="explorer-empty-action" @click="emit('open-folder')">
+                adding files
+              </button>
+              <span> or creating new folders.</span>
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
 
         <template v-else>
           <FileTree class="explorer-file-tree" :expanded="effectiveExplorerExpandedPaths"
@@ -42,23 +72,24 @@
         </template>
       </div>
 
-      <LinearContextMenu :open="explorerContextMenu.open" :x="explorerContextMenu.x" :y="explorerContextMenu.y"
-        :groups="explorerContextMenuGroups" :theme="appStore.theme"
-        :submenu-direction="explorerContextMenu.x > 280 ? 'left' : 'right'" @select="handleExplorerContextMenuSelect" />
+      <DeferredLinearContextMenu v-if="explorerContextMenu.open" :open="explorerContextMenu.open"
+        :x="explorerContextMenu.x" :y="explorerContextMenu.y" :groups="explorerContextMenuGroups"
+        :theme="appStore.theme" :submenu-direction="explorerContextMenu.x > 280 ? 'left' : 'right'"
+        @select="handleExplorerContextMenuSelect" />
     </section>
 
-    <SearchSidebarPanel v-else-if="isSearchView" :document-path="document.path" :is-desktop-runtime="isDesktopRuntime"
-      :workspace-root-path="workspaceRootPath" :preloaded-workspace-root="preloadedWorkspaceRoot"
-      @open-file="handleOpenFile" />
+    <DeferredSearchSidebarPanel v-else-if="isSearchView" :document-path="document.path"
+      :is-desktop-runtime="isDesktopRuntime" :workspace-root-path="workspaceRootPath"
+      :preloaded-workspace-root="preloadedWorkspaceRoot" @open-file="handleOpenFile" />
 
-    <RunSidebarPanel v-else-if="isRunView" :document="document" :has-active-document="Boolean(document.id)"
+    <DeferredRunSidebarPanel v-else-if="isRunView" :document="document" :has-active-document="Boolean(document.id)"
       :is-desktop-runtime="isDesktopRuntime" :can-run="canRun" :is-running="isRunning"
       :has-run-artifacts="hasRunArtifacts" :active-run="activeRun" :run-history="runHistory"
       :command-templates="commandTemplates" :executor="executor" @run="emit('run')"
       @create-document="emit('create-document')" @open-terminal="emit('open-terminal')"
       @insert-template="emit('insert-template', $event)" @clear-run-history="emit('clear-run-history')" />
 
-    <SshSidebarPanel v-else-if="isSshView" @open-terminal="emit('open-terminal')" />
+    <DeferredSshSidebarPanel v-else-if="isSshView" @open-terminal="emit('open-terminal')" />
 
     <template v-else>
       <div class="border-b border-(--shell-divider) px-3 py-3">
@@ -106,12 +137,14 @@
 <script setup lang="ts">
 import { FileTree } from '@/components/ai-elements/file-tree';
 import type { ILinearContextMenuGroup, ILinearContextMenuItem } from '@/components/common/linear-context-menu.types';
-import LinearContextMenu from '@/components/common/LinearContextMenu.vue';
 import { Button } from '@/components/ui/button';
-import RunSidebarPanel from '@/components/workbench/RunSidebarPanel.vue';
-import SearchSidebarPanel from '@/components/workbench/SearchSidebarPanel.vue';
-import SourceControlPanel from '@/components/workbench/SourceControlPanel.vue';
-import SshSidebarPanel from '@/components/workbench/SshSidebarPanel.vue';
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from '@/components/ui/empty';
 import WorkspaceTreeNode from '@/components/workbench/WorkspaceTreeNode.vue';
 import { useDialog } from '@/composables/useDialog';
 import { useMessage } from '@/composables/useMessage';
@@ -136,7 +169,33 @@ import {
   resolveWorkspaceKey,
   resolveWorkspaceRootPayload,
 } from '@/utils/workspace';
-import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue';
+import { FolderOpen } from 'lucide-vue-next';
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue';
+
+const DeferredLinearContextMenu = defineAsyncComponent({
+  loader: () => import('@/components/common/LinearContextMenu.vue'),
+  suspensible: false,
+});
+
+const SourceControlPanel = defineAsyncComponent({
+  loader: () => import('@/components/workbench/SourceControlPanel.vue'),
+  suspensible: false,
+});
+
+const DeferredSearchSidebarPanel = defineAsyncComponent({
+  loader: () => import('@/components/workbench/SearchSidebarPanel.vue'),
+  suspensible: false,
+});
+
+const DeferredRunSidebarPanel = defineAsyncComponent({
+  loader: () => import('@/components/workbench/RunSidebarPanel.vue'),
+  suspensible: false,
+});
+
+const DeferredSshSidebarPanel = defineAsyncComponent({
+  loader: () => import('@/components/workbench/SshSidebarPanel.vue'),
+  suspensible: false,
+});
 
 const props = defineProps<{
   document: IEditorDocument;
@@ -157,6 +216,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'open-file': [path: string];
+  'open-folder': [];
   'open-git-diff': [payload: IGitDiffPreviewRequest];
   run: [];
   'create-document': [];
@@ -377,6 +437,14 @@ const normalizedExplorerSearchQuery = computed(() =>
   explorerSearchQuery.value.trim().toLowerCase(),
 );
 const hasExplorerSearch = computed(() => normalizedExplorerSearchQuery.value.length > 0);
+const isExplorerWorkspaceEmpty = computed(() => {
+  if (!root.value) {
+    return false;
+  }
+
+  const rootEntries = childrenMap[root.value.rootPath] ?? root.value.entries;
+  return rootEntries.length === 0;
+});
 
 const rootEntry = computed<IWorkspaceEntry | null>(() => {
   if (!root.value) {
@@ -1080,5 +1148,27 @@ watch(
 .explorer-inline-create-input:focus {
   border-color: color-mix(in srgb, var(--accent-strong) 70%, transparent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-strong) 28%, transparent);
+}
+
+.explorer-empty-action {
+  color: var(--accent-strong);
+  font-weight: 500;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+.explorer-empty-action:hover {
+  color: color-mix(in srgb, var(--accent-strong) 84%, white);
+}
+
+.explorer-empty-action:focus-visible {
+  outline: none;
+  border-radius: 4px;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ring) 32%, transparent);
+}
+
+.explorer-empty-state--raised {
+  transform: translateY(-52px);
 }
 </style>

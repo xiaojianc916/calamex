@@ -10,12 +10,36 @@
     :root {
       --startup-bg: #fafafa;
       --startup-fg: #111827;
+      --startup-panel: #ffffff;
+      --startup-sidebar: #fafafa;
+      --startup-border: #d1d9e0b3;
+      --startup-skeleton: #e6e8eb;
+      --startup-skeleton-soft: #f0f1f3;
+      --startup-sidebar-width: clamp(240px, 20vw, 320px);
+      --startup-toolbar-height: 58px;
+      --startup-input-width: min(42vw, 640px);
     }
 
     .light,
     [data-theme='light'] {
       --startup-bg: #fafafa;
       --startup-fg: #111827;
+      --startup-panel: #ffffff;
+      --startup-sidebar: #fafafa;
+      --startup-border: #d1d9e0b3;
+      --startup-skeleton: #e6e8eb;
+      --startup-skeleton-soft: #f0f1f3;
+    }
+
+    .dark,
+    [data-theme='dark'] {
+      --startup-bg: #0f1011;
+      --startup-fg: #f4f4f5;
+      --startup-panel: #151618;
+      --startup-sidebar: #101113;
+      --startup-border: #2a2b2f;
+      --startup-skeleton: #292b30;
+      --startup-skeleton-soft: #1d1f23;
     }
 
     html,
@@ -33,15 +57,112 @@
     body {
       overflow: hidden;
     }
+
+    #app:empty::before {
+      position: fixed;
+      inset: 0;
+      content: '';
+      background:
+        linear-gradient(var(--startup-panel), var(--startup-panel))
+          calc(var(--startup-sidebar-width) + 1px) 0 / calc(100% - var(--startup-sidebar-width) - 1px) 100% no-repeat,
+        linear-gradient(var(--startup-sidebar), var(--startup-sidebar))
+          0 0 / var(--startup-sidebar-width) 100% no-repeat,
+        linear-gradient(var(--startup-border), var(--startup-border))
+          var(--startup-sidebar-width) 0 / 1px 100% no-repeat,
+        linear-gradient(var(--startup-border), var(--startup-border))
+          var(--startup-sidebar-width) var(--startup-toolbar-height) / calc(100% - var(--startup-sidebar-width)) 1px no-repeat,
+        linear-gradient(var(--startup-border), var(--startup-border))
+          var(--startup-sidebar-width) calc(100% - 112px) / calc(100% - var(--startup-sidebar-width)) 1px no-repeat,
+        var(--startup-bg);
+    }
+
+    #app:empty::after {
+      position: fixed;
+      inset: 0;
+      content: '';
+      background:
+        radial-gradient(circle at 32px 28px, var(--startup-skeleton) 0 10px, transparent 10.5px),
+        linear-gradient(90deg, var(--startup-skeleton), var(--startup-skeleton))
+          58px 21px / min(150px, calc(var(--startup-sidebar-width) - 92px)) 14px no-repeat,
+        linear-gradient(90deg, var(--startup-skeleton-soft), var(--startup-skeleton-soft))
+          24px 78px / calc(var(--startup-sidebar-width) - 48px) 34px no-repeat,
+        linear-gradient(90deg, var(--startup-skeleton-soft), var(--startup-skeleton-soft))
+          24px 126px / calc(var(--startup-sidebar-width) - 72px) 14px no-repeat,
+        linear-gradient(90deg, var(--startup-skeleton-soft), var(--startup-skeleton-soft))
+          24px 156px / calc(var(--startup-sidebar-width) - 96px) 14px no-repeat,
+        linear-gradient(90deg, var(--startup-skeleton-soft), var(--startup-skeleton-soft))
+          24px 218px / calc(var(--startup-sidebar-width) - 68px) 34px no-repeat,
+        linear-gradient(90deg, var(--startup-skeleton), var(--startup-skeleton))
+          calc(var(--startup-sidebar-width) + 28px) 22px / min(180px, 24vw) 14px no-repeat,
+        linear-gradient(90deg, var(--startup-skeleton-soft), var(--startup-skeleton-soft))
+          calc(var(--startup-sidebar-width) + 28px) 112px / min(46vw, 680px) 16px no-repeat,
+        linear-gradient(90deg, var(--startup-skeleton-soft), var(--startup-skeleton-soft))
+          calc(var(--startup-sidebar-width) + 28px) 150px / min(62vw, 860px) 12px no-repeat,
+        linear-gradient(90deg, var(--startup-skeleton-soft), var(--startup-skeleton-soft))
+          calc(var(--startup-sidebar-width) + 28px) 180px / min(54vw, 760px) 12px no-repeat,
+        linear-gradient(90deg, var(--startup-skeleton-soft), var(--startup-skeleton-soft))
+          calc(50% - var(--startup-input-width) / 2) calc(100% - 62px) / var(--startup-input-width) 44px no-repeat;
+      background-repeat: no-repeat;
+      border-radius: 0;
+    }
+
+    @media (prefers-reduced-motion: no-preference) {
+      #app:empty::after {
+        animation: startup-pulse 1500ms ease-in-out infinite;
+      }
+    }
+
+    @media (max-width: 820px) {
+      :root {
+        --startup-sidebar-width: clamp(0px, 34vw, 240px);
+      }
+
+      #app:empty::after {
+        background:
+          linear-gradient(90deg, var(--startup-skeleton), var(--startup-skeleton))
+            20px 22px / 112px 14px no-repeat,
+          linear-gradient(90deg, var(--startup-skeleton-soft), var(--startup-skeleton-soft))
+            20px 92px / min(78vw, 520px) 16px no-repeat,
+          linear-gradient(90deg, var(--startup-skeleton-soft), var(--startup-skeleton-soft))
+            20px 130px / min(86vw, 640px) 12px no-repeat,
+          linear-gradient(90deg, var(--startup-skeleton-soft), var(--startup-skeleton-soft))
+            20px 160px / min(62vw, 460px) 12px no-repeat,
+          linear-gradient(90deg, var(--startup-skeleton-soft), var(--startup-skeleton-soft))
+            20px calc(100% - 62px) / calc(100vw - 40px) 44px no-repeat;
+        background-repeat: no-repeat;
+      }
+    }
+
+    @keyframes startup-pulse {
+      0%,
+      100% {
+        opacity: 0.54;
+      }
+
+      50% {
+        opacity: 1;
+      }
+    }
   </style>
   <script>
     (function () {
+      var markStartup = function (name) {
+        try {
+          performance.mark('calamex:startup:' + name);
+        } catch (_) {
+          // 忽略打点失败，避免影响主题预设。
+        }
+      };
+
+      markStartup('index-theme-start');
+
       try {
         var saved = localStorage.getItem('ide.theme');
         if (saved === 'dark' || saved === 'light') {
           document.documentElement.dataset.theme = saved;
           document.documentElement.classList.toggle('dark', saved === 'dark');
           document.documentElement.classList.toggle('light', saved === 'light');
+          markStartup('index-theme-ready');
           return;
         }
 
@@ -49,10 +170,12 @@
         document.documentElement.dataset.theme = systemDark ? 'dark' : 'light';
         document.documentElement.classList.toggle('dark', systemDark);
         document.documentElement.classList.toggle('light', !systemDark);
+        markStartup('index-theme-ready');
       } catch (_) {
         document.documentElement.dataset.theme = 'dark';
         document.documentElement.classList.add('dark');
         document.documentElement.classList.remove('light');
+        markStartup('index-theme-ready');
       }
     })();
   </script>

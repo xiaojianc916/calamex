@@ -51,6 +51,7 @@ const emit = defineEmits<{
     'select-view': [view: TWorkbenchSidebarView];
     'toggle-primary-mode': [];
     'open-file': [path: string];
+    'open-folder': [];
     'open-git-diff': [payload: IGitDiffPreviewRequest];
     run: [];
     'create-document': [];
@@ -92,7 +93,8 @@ watch(
     <aside class="workbench-dashboard-sidebar flex h-full min-h-0 flex-col overflow-hidden bg-(--sidebar-bg)">
         <div class="workbench-dashboard-sidebar__brand-slot">
             <button type="button" class="workbench-dashboard-sidebar__brand-button"
-                :aria-label="props.isAiMode ? '切换到编辑区' : '切换到 AI 界面'" @click="emit('toggle-primary-mode')">
+                :aria-label="props.isAiMode ? '切换到编辑区' : '切换到 AI 界面'" :title="props.isAiMode ? '切换到编辑区' : '切换到 AI 界面'"
+                @click="emit('toggle-primary-mode')">
                 <img class="workbench-dashboard-sidebar__brand-icon" :src="appBrandIcon" alt="软件图标">
             </button>
         </div>
@@ -131,8 +133,9 @@ watch(
                     :is-running="props.isRunning" :has-run-artifacts="props.hasRunArtifacts"
                     :active-run="props.activeRun" :run-history="props.runHistory"
                     :command-templates="props.commandTemplates" :executor="props.executor"
-                    @open-file="emit('open-file', $event)" @open-git-diff="emit('open-git-diff', $event)"
-                    @run="emit('run')" @create-document="emit('create-document')" @open-terminal="emit('open-terminal')"
+                    @open-file="emit('open-file', $event)" @open-folder="emit('open-folder')"
+                    @open-git-diff="emit('open-git-diff', $event)" @run="emit('run')"
+                    @create-document="emit('create-document')" @open-terminal="emit('open-terminal')"
                     @insert-template="emit('insert-template', $event)" @clear-run-history="emit('clear-run-history')"
                     @explorer-state-change="emit('explorer-state-change', $event)" />
             </Transition>

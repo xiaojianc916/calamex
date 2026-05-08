@@ -1,6 +1,7 @@
 ﻿pub mod audit;
 pub mod credential;
 pub mod errors;
+pub mod favicon;
 pub mod gateway;
 pub mod network_permission;
 pub mod openai_compatible;
