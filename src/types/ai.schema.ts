@@ -1,9 +1,5 @@
 import { z } from 'zod';
 
-import {
-  agentActivityEventSchema,
-  agentActivitySchema,
-} from '@/types/agent-activity.schema';
 import { agentRuntimeEventSchema } from '@/types/agent-sidecar.schema';
 import {
   aiAgentApprovePlanPayloadSchema,
@@ -73,9 +69,7 @@ export const aiProviderTypeSchema = z.enum([
   'litellm',
 ]);
 export const aiModelRoleSchema = z.enum(['main', 'narrator']);
-export const activityNoteSourceSchema = z.enum(['trail', 'reasoning_summary', 'narrator']);
 export const activityNoteToneSchema = z.enum(['plan', 'progress', 'decision', 'repair', 'warning', 'summary']);
-export const activityNoteStatusSchema = z.enum(['streaming', 'completed']);
 export const activityNoteTriggerSchema = z.enum([
   'run_started',
   'plan_ready',
@@ -99,18 +93,6 @@ export const activityNoteTriggerSchema = z.enum([
   'verification_done',
   'final_summary',
 ]);
-export const activityNoteSchema = z.object({
-  id: z.string().min(1),
-  runId: z.string().min(1),
-  source: activityNoteSourceSchema,
-  trigger: activityNoteTriggerSchema,
-  text: z.string().min(1),
-  tone: activityNoteToneSchema,
-  status: activityNoteStatusSchema.optional(),
-  relatedActionIds: z.array(z.string().min(1)),
-  factsHash: z.string().min(1),
-  createdAt: z.number().int().nonnegative(),
-});
 
 export const aiChatMessageActionSchema = z.object({
   id: z.enum(['allow-agent-execution']),
@@ -144,10 +126,6 @@ export const aiChatMessageSchema = z.object({
   stream: z.object({
     status: z.enum(['streaming', 'completed', 'cancelled']),
     activityText: z.string().min(1).optional(),
-    activityTrail: z.array(z.string().min(1)).optional(),
-    activityNotes: z.array(activityNoteSchema).optional(),
-    activities: z.array(agentActivitySchema).optional(),
-    activityEvents: z.array(agentActivityEventSchema).optional(),
     runtimeEvents: z.array(agentRuntimeEventSchema).optional(),
     finalAnswerStarted: z.boolean().optional(),
   }).optional(),

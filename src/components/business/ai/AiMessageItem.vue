@@ -9,11 +9,9 @@ import {
 } from '@/components/ai-elements/message';
 import AiAgentRuntimeTimeline from '@/components/business/ai/AiAgentRuntimeTimeline.vue';
 import AiMarkdown from '@/components/business/ai/AiMarkdown.vue';
-import AiToolActivityInline from '@/components/business/ai/AiToolActivityInline.vue';
 import { useMessage } from '@/composables/useMessage';
 import type { TAiServicePlatformId } from '@/constants/ai-providers';
 import type { IAiChatMessage, IAiContextReference, TAiChatMessageActionId } from '@/types/ai';
-import { materializeAgentActivities } from '@/utils/agent-activity';
 import { tryWriteClipboardText } from '@/utils/clipboard';
 import { Check, Copy, FileText, Image as ImageIcon } from 'lucide-vue-next';
 import { computed, onBeforeUnmount, ref } from 'vue';
@@ -54,10 +52,6 @@ const hasRenderableContent = computed(() => Boolean(props.message.content.trim()
 
 const hasToolCalls = computed(() => Boolean(props.message.toolCalls?.length));
 
-const hasActivityTrail = computed(() => Boolean(props.message.stream?.activityTrail?.length));
-
-const hasActivityNotes = computed(() => Boolean(props.message.stream?.activityNotes?.length));
-
 const hasRuntimeTimeline = computed(() => Boolean(props.message.stream?.runtimeEvents?.length));
 
 const isAgentRuntimePending = computed(
@@ -68,39 +62,8 @@ const isAgentRuntimePending = computed(
     && Array.isArray(props.message.stream?.runtimeEvents),
 );
 
-const streamActivities = computed(() => {
-  const stream = props.message.stream;
-
-  if (!stream) {
-    return [];
-  }
-
-  if (stream.activities?.length) {
-    return stream.activities;
-  }
-
-  if (stream.activityEvents?.length) {
-    return materializeAgentActivities(stream.activityEvents);
-  }
-
-  return [];
-});
-
-const hasActivities = computed(() => Boolean(streamActivities.value.length));
-
-const hasActivityTimelineData = computed(
-  () => hasToolCalls.value || hasActivityTrail.value || hasActivityNotes.value || hasActivities.value,
-);
-
 const shouldShowRuntimeTimeline = computed(
   () => props.message.role === 'assistant' && (hasRuntimeTimeline.value || isAgentRuntimePending.value),
-);
-
-const shouldShowActivityTimeline = computed(
-  () =>
-    props.message.role === 'assistant' &&
-    !shouldShowRuntimeTimeline.value &&
-    hasActivityTimelineData.value,
 );
 
 const hasStreamingRuntimeBeforeFinalAnswer = computed(
@@ -120,33 +83,6 @@ const canShowRuntimeMessageBubble = computed(
 
 const hasMessageActions = computed(() => Boolean(props.message.actions?.length));
 
-const normalizeMessageDisplayText = (value: string | undefined): string =>
-  value?.normalize('NFC').replace(/\s+/gu, ' ').trim() ?? '';
-
-const activityOnlyTexts = computed(() => {
-  const stream = props.message.stream;
-  const values: string[] = [];
-
-  if (!stream) {
-    return new Set<string>();
-  }
-
-  values.push(stream.activityText ?? '');
-  values.push(...(stream.activityTrail ?? []));
-  values.push(...(stream.activityNotes ?? []).map((note) => note.text));
-
-  for (const activity of streamActivities.value) {
-    if (activity.kind !== 'reasoning_summary' && activity.kind !== 'llm') {
-      continue;
-    }
-
-    values.push(activity.title);
-    values.push(activity.description ?? '');
-  }
-
-  return new Set(values.map(normalizeMessageDisplayText).filter((value) => value.length > 0));
-});
-
 const isToolProgressContent = computed(() => {
   if (props.message.role !== 'assistant' || !hasToolCalls.value) {
     return false;
@@ -161,19 +97,10 @@ const isToolProgressContent = computed(() => {
   ].some((prefix) => content.startsWith(prefix));
 });
 
-const isActivityOnlyContent = computed(
-  () =>
-    props.message.role === 'assistant' &&
-    props.message.stream?.status === 'streaming' &&
-    shouldShowActivityTimeline.value &&
-    activityOnlyTexts.value.has(normalizeMessageDisplayText(props.message.content)),
-);
-
 const shouldShowMessageBubble = computed(
   () =>
     hasRenderableContent.value &&
     !isToolProgressContent.value &&
-    !isActivityOnlyContent.value &&
     canShowRuntimeMessageBubble.value,
 );
 
@@ -215,8 +142,7 @@ const shouldShowInlineLoader = computed(
     props.message.stream?.status === 'streaming' &&
     (!hasRenderableContent.value || isToolProgressContent.value) &&
     !hasToolCalls.value &&
-    !shouldShowRuntimeTimeline.value &&
-    !shouldShowActivityTimeline.value,
+    !shouldShowRuntimeTimeline.value,
 );
 
 const shouldRenderMessage = computed(
@@ -224,7 +150,6 @@ const shouldRenderMessage = computed(
     props.message.role === 'user' ||
     shouldShowMessageBubble.value ||
     shouldShowRuntimeTimeline.value ||
-    shouldShowActivityTimeline.value ||
     shouldShowInlineLoader.value ||
     hasMessageActions.value,
 );
@@ -276,41 +201,75 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <Message v-if="shouldRenderMessage" :from="message.role" class="ai-message"
-    :class="[`is-${message.role}`, { 'is-inline-loading': shouldShowInlineLoader }]">
-    <div v-if="shouldShowInlineLoader" class="ai-message-status-line" role="status" aria-live="polite">
+  <Message
+    v-if="shouldRenderMessage"
+    :from="message.role"
+    class="ai-message"
+    :class="[`is-${message.role}`, { 'is-inline-loading': shouldShowInlineLoader }]"
+  >
+    <div
+      v-if="shouldShowInlineLoader"
+      class="ai-message-status-line"
+      role="status"
+      aria-live="polite"
+    >
       <Loader class="ai-message-status-icon" :size="13" />
       <span>{{ inlineLoaderLabel }}</span>
     </div>
-    <AiAgentRuntimeTimeline v-if="shouldShowRuntimeTimeline" :events="message.stream?.runtimeEvents ?? []"
-      :is-streaming="message.stream?.status === 'streaming'" />
-    <AiToolActivityInline v-if="shouldShowActivityTimeline" :tool-calls="message.toolCalls ?? []"
-      :activity-text="message.stream?.activityText" :activity-trail="message.stream?.activityTrail"
-      :activity-notes="message.stream?.activityNotes" :activities="message.stream?.activities"
-      :activity-events="message.stream?.activityEvents" />
-    <div v-if="userAttachmentReferences.length" class="ai-message-attachments" aria-label="已发送附件">
-      <span v-for="reference in userAttachmentReferences" :key="reference.id" class="ai-message-attachment-chip">
+    <AiAgentRuntimeTimeline
+      v-if="shouldShowRuntimeTimeline"
+      :events="message.stream?.runtimeEvents ?? []"
+      :is-streaming="message.stream?.status === 'streaming'"
+    />
+    <div
+      v-if="userAttachmentReferences.length"
+      class="ai-message-attachments"
+      aria-label="已发送附件"
+    >
+      <span
+        v-for="reference in userAttachmentReferences"
+        :key="reference.id"
+        class="ai-message-attachment-chip"
+      >
         <ImageIcon v-if="reference.kind === 'image-attachment'" aria-hidden="true" />
         <FileText v-else aria-hidden="true" />
         <span>{{ resolveAttachmentLabel(reference) }}</span>
       </span>
     </div>
-    <MessageContent v-if="shouldShowMessageBubble" class="ai-message-bubble"
-      :class="{ 'is-assistant-flat': message.role !== 'user' }">
+    <MessageContent
+      v-if="shouldShowMessageBubble"
+      class="ai-message-bubble"
+      :class="{ 'is-assistant-flat': message.role !== 'user' }"
+    >
       <AiMarkdown :message-id="message.id" :content="message.content" :stream-status="message.stream?.status" />
     </MessageContent>
     <MessageActions v-if="hasMessageActions" class="ai-message-options" aria-label="AI 选项">
-      <MessageAction v-for="action in message.actions" :key="`${message.id}:${action.id}`"
-        class="ai-message-option-button" :disabled="action.disabled" :label="action.label" size="sm"
-        :tooltip="action.label" variant="outline" @click.stop="emit('messageAction', message.id, action.id)">
+      <MessageAction
+        v-for="action in message.actions"
+        :key="`${message.id}:${action.id}`"
+        class="ai-message-option-button"
+        :disabled="action.disabled"
+        :label="action.label"
+        size="sm"
+        :tooltip="action.label"
+        variant="outline"
+        @click.stop="emit('messageAction', message.id, action.id)"
+      >
         {{ action.label }}
       </MessageAction>
     </MessageActions>
-    <MessageToolbar v-if="shouldRenderCopyButton" class="ai-message-toolbar"
-      :class="[`is-copy-mode-${copyButtonVisibilityMode}`]">
+    <MessageToolbar
+      v-if="shouldRenderCopyButton"
+      class="ai-message-toolbar"
+      :class="[`is-copy-mode-${copyButtonVisibilityMode}`]"
+    >
       <MessageActions class="ai-message-actions">
-        <MessageAction class="ai-message-copy-button" :class="{ 'is-copied': isCopied }"
-          :label="isCopied ? '已复制对话内容' : '复制对话内容'" @click.stop="copyMessageContent">
+        <MessageAction
+          class="ai-message-copy-button"
+          :class="{ 'is-copied': isCopied }"
+          :label="isCopied ? '已复制对话内容' : '复制对话内容'"
+          @click.stop="copyMessageContent"
+        >
           <Check v-if="isCopied" aria-hidden="true" />
           <Copy v-else aria-hidden="true" />
         </MessageAction>
@@ -343,20 +302,18 @@ onBeforeUnmount(() => {
   justify-content: center;
 }
 
-.ai-message.is-assistant>.ai-runtime-timeline,
-.ai-message.is-assistant>.ai-tool-activity-inline {
+.ai-message.is-assistant>.ai-runtime-timeline {
   width: 100%;
   max-width: 100%;
   min-width: 0;
   overflow-x: hidden;
 }
 
-.ai-message.is-assistant> :not(.ai-runtime-timeline):not(.ai-tool-activity-inline) {
+.ai-message.is-assistant> :not(.ai-runtime-timeline) {
   min-width: 0;
   max-width: 100%;
 }
 
-.ai-message>.ai-tool-activity-inline+.ai-message-bubble,
 .ai-message>.ai-runtime-timeline+.ai-message-bubble,
 .ai-message>.ai-message-status-line+.ai-message-bubble {
   margin-top: 6px;

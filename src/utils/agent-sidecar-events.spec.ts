@@ -2,7 +2,7 @@ import {
   extractSidecarChangedFilePaths,
   hasSidecarFileMutationEvent,
   mapSidecarEventsToToolCalls,
-  projectSidecarEventsToActivityState,
+  projectSidecarEventsToToolState,
 } from '@/utils/agent-sidecar-events';
 import { describe, expect, it } from 'vitest';
 
@@ -72,7 +72,7 @@ describe('agent-sidecar-events', () => {
         toolName: 'search_files',
         input: {
           path: 'D:/repo/src',
-          pattern: 'AiToolActivityInline',
+          pattern: 'AiAgentRuntimeTimeline',
         },
       },
     ]);
@@ -80,9 +80,9 @@ describe('agent-sidecar-events', () => {
     expect(toolCalls[0]).toMatchObject({
       name: 'search_files',
       status: 'running',
-      targetPreview: 'AiToolActivityInline · D:/repo/src',
+      targetPreview: 'AiAgentRuntimeTimeline · D:/repo/src',
       detailItems: [
-        '搜索：AiToolActivityInline',
+        '搜索：AiAgentRuntimeTimeline',
         '范围：D:/repo/src',
       ],
     });
@@ -167,6 +167,71 @@ describe('agent-sidecar-events', () => {
     expect(toolCalls[0]?.summary).not.toContain('toolResult');
   });
 
+  it('同一工具同时有 legacy 事件和 runtime 事件时优先保留 runtime 工具事件', () => {
+    const toolCalls = mapSidecarEventsToToolCalls([
+      {
+        type: 'agent_event',
+        event: {
+          id: 'runtime-search-started',
+          type: 'agent.tool.started',
+          runId: 'run-1',
+          sessionId: 'session-1',
+          agentId: 'agent-1',
+          timestamp: '2026-05-02T10:00:00.000Z',
+          seq: 0,
+          schemaVersion: 1,
+          redacted: true,
+          visibility: 'user',
+          level: 'info',
+          toolUseId: 'tool-use-search',
+          toolName: 'web_search',
+          inputPreview: '{"query":"全球矿产最新动态"}',
+        },
+      },
+      {
+        type: 'tool_start',
+        toolName: 'web_search',
+        input: {
+          query: '全球矿产最新动态',
+        },
+      },
+      {
+        type: 'agent_event',
+        event: {
+          id: 'runtime-search-completed',
+          type: 'agent.tool.completed',
+          runId: 'run-1',
+          sessionId: 'session-1',
+          agentId: 'agent-1',
+          timestamp: '2026-05-02T10:00:01.000Z',
+          seq: 1,
+          schemaVersion: 1,
+          redacted: true,
+          visibility: 'user',
+          level: 'info',
+          toolUseId: 'tool-use-search',
+          toolName: 'web_search',
+          ok: true,
+          resultPreview: '{"summary":"搜索完成"}',
+        },
+      },
+      {
+        type: 'tool_result',
+        toolName: 'web_search',
+        output: {
+          summary: '搜索完成',
+        },
+      },
+    ]);
+
+    expect(toolCalls).toHaveLength(1);
+    expect(toolCalls[0]).toMatchObject({
+      id: 'runtime-tool:tool-use-search',
+      name: 'web_search',
+      status: 'succeeded',
+    });
+  });
+
   it('新版 Streaming Events 文件写入工具也参与变更路径检测', () => {
     const events = [
       {
@@ -196,29 +261,11 @@ describe('agent-sidecar-events', () => {
     ]);
   });
 
-  it('把 sidecar 事件统一投影成活动文案、活动轨迹和增量 event log', () => {
-    const runningProjection = projectSidecarEventsToActivityState({
-      assistantMessageId: 'assistant-1',
+  it('把 sidecar 事件统一投影成新时间线需要的工具状态和活动文案', () => {
+    const runningProjection = projectSidecarEventsToToolState({
       fallbackActivityText: '检查工作区',
       streamStatus: 'streaming',
       events: [
-        {
-          type: 'agent_event',
-          event: {
-            id: 'run-start-1',
-            type: 'agent.run.started',
-            runId: 'run-1',
-            sessionId: 'session-1',
-            agentId: 'agent-1',
-            timestamp: '2026-05-02T09:59:59.000Z',
-            seq: 0,
-            schemaVersion: 1,
-            redacted: true,
-            visibility: 'user',
-            level: 'info',
-            inputPreview: '{"nextThoughtNeeded":true,"thought":"检查工作区"}',
-          },
-        },
         {
           type: 'tool_start',
           toolName: 'search_files',
@@ -227,35 +274,20 @@ describe('agent-sidecar-events', () => {
             pattern: 'useAiAssistant',
           },
         },
-        {
-          type: 'agent_event',
-          event: {
-            id: 'side-effect-1',
-            type: 'side_effect.recorded',
-            runId: 'run-1',
-            sessionId: 'session-1',
-            agentId: 'agent-1',
-            timestamp: '2026-05-02T10:00:00.000Z',
-            seq: 1,
-            schemaVersion: 1,
-            redacted: true,
-            visibility: 'user',
-            level: 'warn',
-            message: '将修改 2 个文件',
-          },
-        },
       ],
     });
 
     expect(runningProjection.activityText).toBe('正在搜索「useAiAssistant」，范围 D:/repo/src');
-    expect(runningProjection.activityTrail).toEqual(['将修改 2 个文件']);
-    expect(runningProjection.activityEvents.map((event) => event.type)).toContain('ACTIVITY_SNAPSHOT');
+    expect(runningProjection.toolCalls).toHaveLength(1);
+    expect(runningProjection.toolCalls[0]).toMatchObject({
+      name: 'search_files',
+      status: 'running',
+      targetPreview: 'useAiAssistant · D:/repo/src',
+    });
 
-    const completedProjection = projectSidecarEventsToActivityState({
-      assistantMessageId: 'assistant-1',
+    const completedProjection = projectSidecarEventsToToolState({
       fallbackActivityText: '检查工作区',
       streamStatus: 'completed',
-      currentActivityEvents: runningProjection.activityEvents,
       events: [
         {
           type: 'tool_start',
@@ -272,57 +304,19 @@ describe('agent-sidecar-events', () => {
             summary: '找到 3 个命中',
           },
         },
-        {
-          type: 'agent_event',
-          event: {
-            id: 'side-effect-1',
-            type: 'side_effect.recorded',
-            runId: 'run-1',
-            sessionId: 'session-1',
-            agentId: 'agent-1',
-            timestamp: '2026-05-02T10:00:00.000Z',
-            seq: 1,
-            schemaVersion: 1,
-            redacted: true,
-            visibility: 'user',
-            level: 'warn',
-            message: '将修改 2 个文件',
-          },
-        },
-        {
-          type: 'agent_event',
-          event: {
-            id: 'rollback-restore-failed',
-            type: 'rollback.restore.failed',
-            runId: 'run-1',
-            sessionId: 'session-1',
-            agentId: 'agent-1',
-            timestamp: '2026-05-02T10:00:02.000Z',
-            seq: 2,
-            schemaVersion: 1,
-            redacted: true,
-            visibility: 'user',
-            level: 'error',
-            errorMessage: '权限不足',
-          },
-        },
       ],
     });
 
-    expect(completedProjection.activityTrail).toEqual([
-      '将修改 2 个文件',
-      '回滚恢复失败：权限不足',
-    ]);
-    expect(completedProjection.activityEvents.some((event) => event.type === 'ACTIVITY_DELTA')).toBe(true);
-    expect(completedProjection.activities[0]).toMatchObject({
-      kind: 'run',
-      title: '检查工作区',
+    expect(completedProjection.activityText).toBe('在 D:/repo/src 搜索「useAiAssistant」');
+    expect(completedProjection.toolCalls[0]).toMatchObject({
+      name: 'search_files',
+      status: 'succeeded',
+      summary: '找到 3 个命中',
     });
   });
 
-  it('有工具事件时不会把逐字增长的文本 delta 堆进 activityTrail', () => {
-    const projection = projectSidecarEventsToActivityState({
-      assistantMessageId: 'assistant-delta-1',
+  it('有工具事件时只产出工具投影，不把逐字增长的文本 delta 当成工具状态', () => {
+    const projection = projectSidecarEventsToToolState({
       fallbackActivityText: '请求处理中',
       streamStatus: 'streaming',
       events: [
@@ -379,14 +373,12 @@ describe('agent-sidecar-events', () => {
       name: 'tavily_search',
       status: 'running',
     });
-    expect(projection.activityTrail).toEqual(['已搜索 7 个 AI 领域参与者']);
   });
 
-  it('把连续 reasoning delta 聚合进活动树，而不是当成最终回答文本', () => {
+  it('没有工具事件时保留 fallback 文案，reasoning delta 交给 runtime timeline 渲染', () => {
     const reasoningText =
       'The user wants raw reasoning inside the activity tree, preserving the natural sentence instead of rendering it as final answer content.';
-    const projection = projectSidecarEventsToActivityState({
-      assistantMessageId: 'assistant-reasoning-1',
+    const projection = projectSidecarEventsToToolState({
       fallbackActivityText: '检查工作区',
       streamStatus: 'streaming',
       events: [
@@ -424,87 +416,11 @@ describe('agent-sidecar-events', () => {
             text: reasoningText.slice(58),
           },
         },
-        {
-          type: 'tool_start',
-          toolName: 'list_directory_with_sizes',
-          input: {
-            path: 'D:\\test',
-          },
-        },
       ],
     });
 
-    expect(projection.activityTrail).toEqual([reasoningText]);
-    expect(projection.activities.some((activity) =>
-      activity.kind === 'reasoning_summary' &&
-      activity.description === reasoningText
-    )).toBe(true);
-    expect(projection.toolCalls[0]).toMatchObject({
-      name: 'list_directory_with_sizes',
-      status: 'running',
-    });
-  });
-
-  it('兼容累计快照式 reasoning，活动轨只保留最新完整语句', () => {
-    const projection = projectSidecarEventsToActivityState({
-      assistantMessageId: 'assistant-reasoning-cumulative-1',
-      fallbackActivityText: '检查工作区',
-      streamStatus: 'streaming',
-      events: [
-        {
-          type: 'agent_event',
-          event: {
-            id: 'reasoning-cumulative-1',
-            type: 'agent.reasoning.delta',
-            runId: 'run-1',
-            sessionId: 'session-1',
-            agentId: 'agent-1',
-            timestamp: '2026-05-07T00:00:00.000Z',
-            seq: 1,
-            schemaVersion: 1,
-            redacted: true,
-            visibility: 'user',
-            level: 'info',
-            text: '用户',
-          },
-        },
-        {
-          type: 'agent_event',
-          event: {
-            id: 'reasoning-cumulative-2',
-            type: 'agent.reasoning.delta',
-            runId: 'run-1',
-            sessionId: 'session-1',
-            agentId: 'agent-1',
-            timestamp: '2026-05-07T00:00:00.050Z',
-            seq: 2,
-            schemaVersion: 1,
-            redacted: true,
-            visibility: 'user',
-            level: 'info',
-            text: '用户让我',
-          },
-        },
-        {
-          type: 'agent_event',
-          event: {
-            id: 'reasoning-cumulative-3',
-            type: 'agent.reasoning.delta',
-            runId: 'run-1',
-            sessionId: 'session-1',
-            agentId: 'agent-1',
-            timestamp: '2026-05-07T00:00:00.100Z',
-            seq: 3,
-            schemaVersion: 1,
-            redacted: true,
-            visibility: 'user',
-            level: 'info',
-            text: '用户让我自己选一个其他的意象。',
-          },
-        },
-      ],
-    });
-
-    expect(projection.activityTrail).toEqual(['用户让我自己选一个其他的意象。']);
+    expect(projection.activityText).toBe('检查工作区');
+    expect(projection.toolCalls).toEqual([]);
+    expect(Object.hasOwn(projection, 'activities')).toBe(false);
   });
 });

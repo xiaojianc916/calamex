@@ -5,6 +5,7 @@ import { Agent, type ToolsInput } from '@mastra/core/agent';
 import { createDurableAgent, DurableStepIds } from '@mastra/core/agent/durable';
 import type { OpenAICompatibleConfig } from '@mastra/core/llm';
 import { Mastra } from '@mastra/core/mastra';
+import { RequestContext } from '@mastra/core/request-context';
 import { toStandardSchema } from '@mastra/core/schema';
 import type {
     TextDeltaPayload,
@@ -24,6 +25,7 @@ import {
     type IAgentRuntimeEventContext,
     type TAgentRuntimeEventDraft,
 } from '../streaming/stream-types.js';
+import { redactForStream } from '../streaming/stream-redaction.js';
 import { createMastraMcpClientBundle } from '../tools/mcp.js';
 import { buildSystemPrompt } from './agent-runtime-helpers.js';
 import type {
@@ -43,12 +45,14 @@ const DEFAULT_MASTRA_STORAGE_DIRECTORY = '.agent-sidecar';
 const DEFAULT_MASTRA_STORAGE_URL = `file:./${DEFAULT_MASTRA_STORAGE_DIRECTORY}/mastra.db`;
 const DEFAULT_EXECUTION_AGENT_ID = 'calamex-agent-sidecar';
 const DEFAULT_EXECUTION_AGENT_NAME = 'Calamex Agent Sidecar';
+const RUNTIME_TOOL_PREVIEW_CHARS = 1200;
 const DEFAULT_ROLLBACK_STEP: TRollbackStepPath = [
     DurableStepIds.AGENTIC_EXECUTION,
     DurableStepIds.LLM_EXECUTION,
 ];
 
-type TMastraRequestContext = Record<string, unknown>;
+type TMastraRequestContextValues = Record<string, unknown>;
+type TMastraRequestContext = RequestContext<TMastraRequestContextValues>;
 
 type TMastraChatMessage = {
     role: 'user' | 'assistant';
@@ -229,6 +233,44 @@ const toNonEmptyString = (value: unknown): string | null => {
     return trimmed.length > 0 ? trimmed : null;
 };
 
+const isRequestContextLike = (value: unknown): value is {
+    all?: unknown;
+    entries?: () => Iterable<readonly [string, unknown]>;
+    toJSON?: () => unknown;
+} => Boolean(value && typeof value === 'object');
+
+const requestContextToRecord = (value: unknown): Record<string, unknown> | null => {
+    if (!value) {
+        return null;
+    }
+
+    if (isRequestContextLike(value)) {
+        if (typeof value.toJSON === 'function') {
+            const jsonValue = toRecord(value.toJSON());
+            if (jsonValue) {
+                return jsonValue;
+            }
+        }
+
+        const allValue = toRecord(value.all);
+        if (allValue) {
+            return allValue;
+        }
+
+        if (typeof value.entries === 'function') {
+            return Object.fromEntries(value.entries());
+        }
+    }
+
+    return toRecord(value);
+};
+
+const createMastraRequestContext = (
+    values: Record<string, unknown>,
+): TMastraRequestContext => new RequestContext<TMastraRequestContextValues>(
+    Object.entries(values),
+);
+
 const toJsonValue = (value: unknown): TJsonValue => {
     if (
         value === null
@@ -251,6 +293,38 @@ const toJsonValue = (value: unknown): TJsonValue => {
     return Object.fromEntries(
         Object.entries(record).map(([key, item]) => [key, toJsonValue(item)]),
     );
+};
+
+const stringifyJsonValue = (value: TJsonValue): string => {
+    if (typeof value === 'string') {
+        return value;
+    }
+
+    try {
+        return JSON.stringify(value) ?? String(value);
+    } catch {
+        return String(value);
+    }
+};
+
+const createRuntimePreview = (
+    value: unknown,
+    limit = RUNTIME_TOOL_PREVIEW_CHARS,
+): string => {
+    const normalized = stringifyJsonValue(toJsonValue(value))
+        .replace(/\s+/gu, ' ')
+        .trim();
+
+    if (!normalized) {
+        return '';
+    }
+
+    const characters = Array.from(normalized);
+    const clipped = characters.length <= limit
+        ? normalized
+        : `${characters.slice(0, limit).join('')}...`;
+
+    return redactForStream(clipped);
 };
 
 const pushUiEvent = (
@@ -276,7 +350,7 @@ const createRuntimeEventFactory = (
 const createExecutionRequestContext = (
     input: IAgentRuntimeInput,
     systemPrompt: string,
-): TMastraRequestContext => ({
+): TMastraRequestContext => createMastraRequestContext({
     mode: input.mode,
     goal: input.goal,
     systemPrompt,
@@ -286,12 +360,12 @@ const createExecutionRequestContext = (
 
 const resolveSystemPromptFromSnapshot = (
     snapshot: IMastraWorkflowSnapshotLike,
-): string | null => toNonEmptyString(toRecord(snapshot.requestContext)?.systemPrompt);
+): string | null => toNonEmptyString(requestContextToRecord(snapshot.requestContext)?.systemPrompt);
 
 const resolveWorkspaceRootPathFromSnapshot = (
     snapshot: IMastraWorkflowSnapshotLike,
 ): string | undefined => {
-    const value = toNonEmptyString(toRecord(snapshot.requestContext)?.workspaceRootPath);
+    const value = toNonEmptyString(requestContextToRecord(snapshot.requestContext)?.workspaceRootPath);
     return value ?? undefined;
 };
 
@@ -861,7 +935,7 @@ export class MastraRuntime {
                         type: 'agent.reasoning.delta',
                         visibility: 'user',
                         level: 'info',
-                        text: reasoningDelta,
+                        text: redactForStream(reasoningDelta),
                     }), options);
                 }
                 continue;
@@ -887,19 +961,51 @@ export class MastraRuntime {
             }
 
             if (isChunkWithType(chunk, 'tool-call') && isToolCallChunk(chunk)) {
+                const input = chunk.payload.args === undefined ? null : toJsonValue(chunk.payload.args);
+
+                if (createRuntimeEvent) {
+                    const inputPreview = chunk.payload.args === undefined
+                        ? ''
+                        : createRuntimePreview(chunk.payload.args);
+
+                    pushUiEvent(events, createRuntimeEvent({
+                        type: 'agent.tool.started',
+                        visibility: 'user',
+                        level: 'info',
+                        toolName: chunk.payload.toolName,
+                        toolUseId: chunk.payload.toolCallId,
+                        ...(inputPreview ? { inputPreview } : {}),
+                    }), options);
+                }
+
                 pushUiEvent(events, {
                     type: 'tool_start',
                     toolName: chunk.payload.toolName,
-                    input: chunk.payload.args === undefined ? null : toJsonValue(chunk.payload.args),
+                    input,
                 }, options);
                 continue;
             }
 
             if (isToolResultChunk(chunk)) {
+                const output = toJsonValue(chunk.payload.result);
+
+                if (createRuntimeEvent) {
+                    const resultPreview = createRuntimePreview(chunk.payload.result);
+
+                    pushUiEvent(events, createRuntimeEvent({
+                        type: 'agent.tool.completed',
+                        visibility: 'user',
+                        level: 'info',
+                        toolName: chunk.payload.toolName,
+                        ok: true,
+                        ...(resultPreview ? { resultPreview } : {}),
+                    }), options);
+                }
+
                 pushUiEvent(events, {
                     type: 'tool_result',
                     toolName: chunk.payload.toolName,
-                    output: toJsonValue(chunk.payload.result),
+                    output,
                 }, options);
                 continue;
             }
@@ -937,11 +1043,24 @@ export class MastraRuntime {
             }
 
             if (isToolErrorChunk(chunk)) {
+                const errorMessage = normalizeMastraError(chunk.payload.error);
+
+                if (createRuntimeEvent) {
+                    pushUiEvent(events, createRuntimeEvent({
+                        type: 'agent.tool.completed',
+                        visibility: 'user',
+                        level: 'error',
+                        toolName: chunk.payload.toolName,
+                        ok: false,
+                        errorMessage,
+                    }), options);
+                }
+
                 pushUiEvent(events, {
                     type: 'tool_result',
                     toolName: chunk.payload.toolName,
                     output: toJsonValue({
-                        error: normalizeMastraError(chunk.payload.error),
+                        error: errorMessage,
                     }),
                 }, options);
                 continue;
@@ -1512,7 +1631,10 @@ export class MastraRuntime {
                     ...(hasTools ? { tools: mastraTools } : {}),
                 });
                 const run = await executionHandle.workflow.createRun({ runId: input.runId });
-                const requestContext = toRecord(snapshot.requestContext) ?? undefined;
+                const requestContextRecord = requestContextToRecord(snapshot.requestContext);
+                const requestContext = requestContextRecord
+                    ? createMastraRequestContext(requestContextRecord)
+                    : undefined;
 
                 pushUiEvent(events, createRuntimeEvent({
                     type: 'rollback.restore.started',

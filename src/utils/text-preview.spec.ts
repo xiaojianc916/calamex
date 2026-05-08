@@ -22,7 +22,7 @@ describe('text-preview', () => {
     const preview = formatPrioritizedFieldPreview([
       {
         label: '路径',
-        value: 'D:/repo/src/components/business/ai/AiToolActivityInline.vue',
+        value: 'D:/repo/src/components/business/ai/AiAgentRuntimeTimeline.vue',
         priority: 60,
         minGraphemes: 10,
       },

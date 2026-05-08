@@ -1,22 +1,7 @@
 import { AI_AGENT_TOOL_NAMES, type TAiAgentToolName } from '@/types/ai-tools';
-import {
-  appendAgentActivityEvents,
-  buildAgentActivitiesFromSidecarState,
-  materializeAgentActivities,
-} from '@/utils/agent-activity';
 import { normalizeFileSystemPath } from '@/utils/path';
-import {
-  clipTextPreview,
-  formatPrioritizedFieldPreview,
-  normalizePreviewText,
-  type IPrioritizedPreviewField,
-} from '@/utils/text-preview';
+import { clipTextPreview } from '@/utils/text-preview';
 
-import type {
-  IAgentActivity,
-  TAgentActivityEvent,
-  TAgentActivityStatus,
-} from '@/types/agent-activity';
 import type {
   IAgentPlan,
   IAgentPlanStep,
@@ -50,15 +35,12 @@ export interface IAgentSidecarExecuteProjection {
   hasFileMutations: boolean;
 }
 
-export interface IAgentSidecarActivityProjection {
+export interface IAgentSidecarToolProjection {
   toolCalls: IAiToolCall[];
   activityText: string;
-  activityTrail: string[];
-  activities: IAgentActivity[];
-  activityEvents: TAgentActivityEvent[];
 }
 
-export type TAgentSidecarActivityStreamStatus = 'streaming' | 'completed' | 'cancelled';
+export type TAgentSidecarToolStreamStatus = 'streaming' | 'completed' | 'cancelled';
 
 type TAgentRuntimeToolEvent = Extract<
   TAgentRuntimeEvent,
@@ -78,26 +60,6 @@ const SIDECAR_FILE_MUTATION_TOOL_NAMES = new Set<string>([
   'move_file',
   'delete_file',
 ]);
-
-const AGENT_ACTIVITY_TRAIL_LIMIT = 6;
-const AGENT_ACTIVITY_PREVIEW_CHARS = 96;
-
-const ACTIVITY_JSON_FIELD_RULES = [
-  { key: 'query', label: '查询', priority: 100, minGraphemes: 16, maxGraphemes: 48 },
-  { key: 'pattern', label: '搜索', priority: 96, minGraphemes: 14, maxGraphemes: 44 },
-  { key: 'site', label: '站点', priority: 86, minGraphemes: 8, maxGraphemes: 28 },
-  { key: 'domain', label: '站点', priority: 84, minGraphemes: 8, maxGraphemes: 28 },
-  { key: 'url', label: '网址', priority: 78, minGraphemes: 12, maxGraphemes: 42 },
-  { key: 'path', label: '路径', priority: 70, minGraphemes: 14, maxGraphemes: 44 },
-  { key: 'file', label: '文件', priority: 70, minGraphemes: 14, maxGraphemes: 44 },
-  { key: 'filePath', label: '文件', priority: 70, minGraphemes: 14, maxGraphemes: 44 },
-  { key: 'summary', label: '摘要', priority: 36, minGraphemes: 12, maxGraphemes: 40 },
-  { key: 'message', label: '信息', priority: 32, minGraphemes: 12, maxGraphemes: 40 },
-  { key: 'title', label: '标题', priority: 28, minGraphemes: 12, maxGraphemes: 36 },
-] as const;
-
-type TActivityJsonFieldRule = (typeof ACTIVITY_JSON_FIELD_RULES)[number];
-type TActivityJsonRecord = Record<string, unknown>;
 
 const SIDECAR_FILE_PATH_KEYS = new Set<string>([
   'path',
@@ -402,84 +364,6 @@ const parseJsonString = (value: string): TJsonValue | null => {
   } catch {
     return null;
   }
-};
-
-const isActivityRecord = (value: unknown): value is TActivityJsonRecord =>
-  Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-
-const clipActivityText = (value: string): string =>
-  clipTextPreview(normalizePreviewText(value), { maxGraphemes: AGENT_ACTIVITY_PREVIEW_CHARS });
-
-const createActivityPreviewField = (
-  rule: TActivityJsonFieldRule | undefined,
-  value: string,
-): IPrioritizedPreviewField => ({
-  value,
-  priority: rule?.priority ?? 1,
-  ...(rule ? { label: rule.label } : {}),
-  ...(rule?.minGraphemes !== undefined ? { minGraphemes: rule.minGraphemes } : {}),
-  ...(rule?.maxGraphemes !== undefined ? { maxGraphemes: rule.maxGraphemes } : {}),
-});
-
-const collectActivityPreviewFields = (
-  value: unknown,
-  fields: IPrioritizedPreviewField[],
-  sourceRule?: TActivityJsonFieldRule,
-  depth = 0,
-): void => {
-  if (depth > 3 || fields.length >= 8 || value === null || value === undefined) {
-    return;
-  }
-
-  if (typeof value === 'string' && value.trim()) {
-    fields.push(createActivityPreviewField(sourceRule, value.trim()));
-    return;
-  }
-
-  if (typeof value === 'number' || typeof value === 'boolean') {
-    fields.push(createActivityPreviewField(sourceRule, String(value)));
-    return;
-  }
-
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      collectActivityPreviewFields(item, fields, sourceRule, depth + 1);
-      if (fields.length >= 8) {
-        return;
-      }
-    }
-    return;
-  }
-
-  if (!isActivityRecord(value)) {
-    return;
-  }
-
-  for (const rule of ACTIVITY_JSON_FIELD_RULES) {
-    if (Object.hasOwn(value, rule.key)) {
-      collectActivityPreviewFields(value[rule.key], fields, rule, depth + 1);
-    }
-  }
-};
-
-const normalizeRuntimePreviewText = (value: string | undefined): string | null => {
-  if (!value?.trim()) {
-    return null;
-  }
-
-  const parsed = parseJsonString(value);
-  if (parsed !== null) {
-    const fields: IPrioritizedPreviewField[] = [];
-    collectActivityPreviewFields(parsed, fields);
-    const preview = formatPrioritizedFieldPreview(fields, {
-      maxFields: 3,
-      maxGraphemes: AGENT_ACTIVITY_PREVIEW_CHARS,
-    });
-
-    return preview || null;
-  }
-
-  return clipActivityText(value) || null;
 };
 
 const clipSummary = (value: string, limit = 96): string => {
@@ -1280,259 +1164,22 @@ const buildCompletedSidecarActivityText = (
   return lastToolCall ? buildToolActivityText(lastToolCall) : fallback || '请求处理中';
 };
 
-const appendActivityTrail = (
-  currentTrail: readonly string[] | undefined,
-  nextText: string | undefined,
-): string[] => {
-  const normalized = nextText ? normalizePreviewText(nextText) : '';
-
-  if (!normalized) {
-    return currentTrail?.length ? [...currentTrail] : [];
-  }
-
-  const previous = currentTrail?.[currentTrail.length - 1] ?? '';
-
-  if (previous) {
-    if (normalized.startsWith(previous)) {
-      return [...(currentTrail ?? []).slice(0, -1), normalized].slice(-AGENT_ACTIVITY_TRAIL_LIMIT);
-    }
-
-    if (previous.startsWith(normalized)) {
-      return [...(currentTrail ?? [])].slice(-AGENT_ACTIVITY_TRAIL_LIMIT);
-    }
-  }
-
-  const nextTrail = [...(currentTrail ?? []), normalized];
-  const seen = new Set<string>();
-  const uniqueTrail: string[] = [];
-
-  for (const item of nextTrail) {
-    if (seen.has(item)) {
-      continue;
-    }
-
-    seen.add(item);
-    uniqueTrail.push(item);
-  }
-
-  return uniqueTrail.slice(-AGENT_ACTIVITY_TRAIL_LIMIT);
-};
-
-const formatRuntimeActivityText = (prefix: string, value: string | undefined): string => {
-  const normalized = normalizeRuntimePreviewText(value);
-
-  return normalized ? `${prefix}：${normalized}` : prefix;
-};
-
-const getRollbackActivityText = (
-  event: Extract<
-    TAgentRuntimeEvent,
-    {
-      type:
-      | 'rollback.checkpoint.created'
-      | 'rollback.checkpoint.failed'
-      | 'rollback.restore.started'
-      | 'rollback.restore.completed'
-      | 'rollback.restore.failed';
-    }
-  >,
-): string | null => {
-  switch (event.type) {
-    case 'rollback.checkpoint.created':
-      return event.snapshotId
-        ? `已创建回滚检查点：${clipActivityText(event.snapshotId)}`
-        : '已创建回滚检查点';
-    case 'rollback.checkpoint.failed':
-      return formatRuntimeActivityText('回滚检查点创建失败', event.errorMessage);
-    case 'rollback.restore.started':
-      return event.snapshotId
-        ? `正在恢复回滚检查点：${clipActivityText(event.snapshotId)}`
-        : '正在恢复回滚检查点';
-    case 'rollback.restore.completed':
-      return normalizeRuntimePreviewText(event.message)
-        ?? (event.snapshotId
-          ? `已恢复回滚检查点：${clipActivityText(event.snapshotId)}`
-          : '已恢复回滚检查点');
-    case 'rollback.restore.failed':
-      return formatRuntimeActivityText('回滚恢复失败', event.errorMessage);
-  }
-};
-
-const getSideEffectActivityText = (
-  event: Extract<TAgentRuntimeEvent, { type: 'side_effect.recorded' | 'side_effect.warning' }>,
-): string | null =>
-  normalizeRuntimePreviewText(event.message)
-  ?? (event.type === 'side_effect.recorded'
-    ? '已记录外部副作用风险'
-    : '外部副作用需要人工确认');
-
-const getRuntimeActivityText = (event: TAgentRuntimeEvent): string | null => {
-  if (event.visibility !== 'user') {
-    return null;
-  }
-
-  switch (event.type) {
-    case 'agent.run.started':
-      return null;
-    case 'agent.tool.progress':
-      return normalizeRuntimePreviewText(event.dataPreview);
-    case 'rollback.checkpoint.created':
-    case 'rollback.checkpoint.failed':
-    case 'rollback.restore.started':
-    case 'rollback.restore.completed':
-    case 'rollback.restore.failed':
-      return getRollbackActivityText(event);
-    case 'side_effect.recorded':
-    case 'side_effect.warning':
-      return getSideEffectActivityText(event);
-    case 'agent.run.completed':
-      return normalizeRuntimePreviewText(event.outputPreview);
-    case 'agent.run.error':
-      return normalizeRuntimePreviewText(event.errorMessage);
-    default:
-      return null;
-  }
-};
-
-const appendReasoningActivityTrail = (
-  currentTrail: readonly string[] | undefined,
-  reasoningText: string,
-): string[] => appendActivityTrail(currentTrail, reasoningText);
-
-const buildSidecarActivityTrail = (events: readonly TAgentUiEvent[]): string[] => {
-  let trail: string[] = [];
-  let reasoningBuffer = '';
-
-  const getReasoningOverlapLength = (previous: string, incoming: string): number => {
-    const maxLength = Math.min(previous.length, incoming.length);
-
-    for (let length = maxLength; length > 0; length -= 1) {
-      if (previous.slice(-length) === incoming.slice(0, length)) {
-        return length;
-      }
-    }
-
-    return 0;
-  };
-
-  const appendReasoningText = (incomingText: string): void => {
-    if (!incomingText) {
-      return;
-    }
-
-    if (!reasoningBuffer) {
-      reasoningBuffer = incomingText;
-      return;
-    }
-
-    if (incomingText.startsWith(reasoningBuffer)) {
-      reasoningBuffer = incomingText;
-      return;
-    }
-
-    if (reasoningBuffer.startsWith(incomingText)) {
-      return;
-    }
-
-    const overlapLength = getReasoningOverlapLength(reasoningBuffer, incomingText);
-    reasoningBuffer += incomingText.slice(overlapLength);
-  };
-
-  const flushReasoningBuffer = (): void => {
-    if (!reasoningBuffer) {
-      return;
-    }
-
-    trail = appendReasoningActivityTrail(trail, reasoningBuffer);
-    reasoningBuffer = '';
-  };
-
-  for (const event of events) {
-    if (event.type === 'tool_start' || event.type === 'tool_result') {
-      flushReasoningBuffer();
-      continue;
-    }
-
-    if (event.type === 'agent_event') {
-      if (event.event.type === 'agent.reasoning.delta' && event.event.visibility === 'user') {
-        appendReasoningText(event.event.text);
-        continue;
-      }
-
-      const activityText = getRuntimeActivityText(event.event);
-      if (activityText) {
-        flushReasoningBuffer();
-        trail = appendActivityTrail(trail, activityText);
-      }
-    }
-  }
-
-  flushReasoningBuffer();
-
-  return trail;
-};
-
-const mapStreamStatusToActivityStatus = (
-  status: TAgentSidecarActivityStreamStatus,
-  hasError: boolean,
-): TAgentActivityStatus => {
-  if (hasError) {
-    return 'error';
-  }
-
-  if (status === 'cancelled') {
-    return 'cancelled';
-  }
-
-  return status === 'streaming' ? 'running' : 'success';
-};
-
-const buildSidecarActivities = (params: {
-  assistantMessageId: string;
-  rootTitle: string;
-  toolCalls: readonly IAiToolCall[];
-  activityTrail: readonly string[];
-  streamStatus: TAgentSidecarActivityStreamStatus;
-  hasError: boolean;
-}): IAgentActivity[] => {
-  if (!params.toolCalls.length && !params.activityTrail.length) {
-    return [];
-  }
-
-  return buildAgentActivitiesFromSidecarState({
-    runId: params.assistantMessageId,
-    rootTitle: params.rootTitle,
-    status: mapStreamStatusToActivityStatus(params.streamStatus, params.hasError),
-    toolCalls: params.toolCalls,
-    activityTrail: params.activityTrail,
-  });
-};
-
-const resolveStableActivityRootTitle = (params: {
-  currentActivityEvents?: readonly TAgentActivityEvent[];
-  rootActivityText?: string;
-  fallbackActivityText: string;
-  activityText: string;
-}): string => {
-  if (params.currentActivityEvents?.length) {
-    const currentRootTitle = materializeAgentActivities(params.currentActivityEvents)
-      .find((activity) => activity.kind === 'run' && !activity.parentId)?.title;
-
-    if (currentRootTitle) {
-      return currentRootTitle;
-    }
-  }
-
-  return (params.rootActivityText ? normalizePreviewText(params.rootActivityText) : '')
-    || (params.fallbackActivityText ? normalizePreviewText(params.fallbackActivityText) : '')
-    || params.activityText;
-};
-
 export const mapSidecarEventsToToolCalls = (events: readonly TAgentUiEvent[]): IAiToolCall[] => {
   const toolCalls: IAiToolCall[] = [];
+  const runtimeToolNames = new Set<string>();
+
+  for (const event of events) {
+    if (event.type === 'agent_event' && isAgentRuntimeToolEvent(event.event)) {
+      runtimeToolNames.add(event.event.toolName);
+    }
+  }
 
   for (const [index, event] of events.entries()) {
     if (event.type === 'tool_start') {
+      if (runtimeToolNames.has(event.toolName)) {
+        continue;
+      }
+
       const descriptor = describeToolPayload(event.toolName, event.input);
       toolCalls.push({
         id: createToolCallId(event, index),
@@ -1546,6 +1193,10 @@ export const mapSidecarEventsToToolCalls = (events: readonly TAgentUiEvent[]): I
     }
 
     if (event.type === 'tool_result') {
+      if (runtimeToolNames.has(event.toolName)) {
+        continue;
+      }
+
       let existingIndex = -1;
       for (let itemIndex = toolCalls.length - 1; itemIndex >= 0; itemIndex -= 1) {
         const toolCall = toolCalls[itemIndex];
@@ -1602,42 +1253,19 @@ export const mapSidecarEventsToToolCalls = (events: readonly TAgentUiEvent[]): I
   return toolCalls;
 };
 
-export const projectSidecarEventsToActivityState = (params: {
-  assistantMessageId: string;
+export const projectSidecarEventsToToolState = (params: {
   events: readonly TAgentUiEvent[];
   fallbackActivityText: string;
-  rootActivityText?: string;
-  streamStatus: TAgentSidecarActivityStreamStatus;
-  hasError?: boolean;
-  currentActivityEvents?: readonly TAgentActivityEvent[];
-}): IAgentSidecarActivityProjection => {
+  streamStatus: TAgentSidecarToolStreamStatus;
+}): IAgentSidecarToolProjection => {
   const toolCalls = mapSidecarEventsToToolCalls(params.events);
   const activityText = params.streamStatus === 'streaming'
     ? buildSidecarLiveActivityText(toolCalls, params.fallbackActivityText)
     : buildCompletedSidecarActivityText(toolCalls, params.fallbackActivityText);
-  const activityTrail = buildSidecarActivityTrail(params.events);
-  const rootTitle = resolveStableActivityRootTitle({
-    currentActivityEvents: params.currentActivityEvents,
-    rootActivityText: params.rootActivityText,
-    fallbackActivityText: params.fallbackActivityText,
-    activityText,
-  });
-  const activities = buildSidecarActivities({
-    assistantMessageId: params.assistantMessageId,
-    rootTitle,
-    toolCalls,
-    activityTrail,
-    streamStatus: params.streamStatus,
-    hasError: Boolean(params.hasError),
-  });
-  const activityEvents = appendAgentActivityEvents(params.currentActivityEvents ?? [], activities);
 
   return {
     toolCalls,
     activityText,
-    activityTrail,
-    activities: activityEvents.length ? materializeAgentActivities(activityEvents) : activities,
-    activityEvents,
   };
 };
 

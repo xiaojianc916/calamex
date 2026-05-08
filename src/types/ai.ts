@@ -1,4 +1,3 @@
-import type { IAgentActivity, TAgentActivityEvent } from '@/types/agent-activity';
 import type { TAgentRuntimeEvent } from '@/types/agent-sidecar';
 import type { IAiContextReference } from '@/types/ai-context';
 
@@ -7,9 +6,7 @@ export type TAiProviderType =
 export type TAiModelRole = 'main' | 'narrator';
 export type TAiStatus = 'idle' | 'generating' | 'streaming' | 'error';
 export type TAiChatRole = 'user' | 'assistant' | 'system' | 'tool';
-export type TActivityNoteSource = 'trail' | 'reasoning_summary' | 'narrator';
 export type TActivityNoteTone = 'plan' | 'progress' | 'decision' | 'repair' | 'warning' | 'summary';
-export type TActivityNoteStatus = 'streaming' | 'completed';
 export type TActivityNoteTrigger =
   | 'run_started'
   | 'plan_ready'
@@ -99,25 +96,8 @@ export type {
 export interface IAiChatStreamRenderState {
   status: 'streaming' | 'completed' | 'cancelled';
   activityText?: string;
-  activityTrail?: string[];
-  activityNotes?: IActivityNote[];
-  activities?: IAgentActivity[];
-  activityEvents?: TAgentActivityEvent[];
   runtimeEvents?: TAgentRuntimeEvent[];
   finalAnswerStarted?: boolean;
-}
-
-export interface IActivityNote {
-  id: string;
-  runId: string;
-  source: TActivityNoteSource;
-  trigger: TActivityNoteTrigger;
-  text: string;
-  tone: TActivityNoteTone;
-  status?: TActivityNoteStatus;
-  relatedActionIds: string[];
-  factsHash: string;
-  createdAt: number;
 }
 
 export type TAiChatMessageActionId = 'allow-agent-execution';

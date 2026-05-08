@@ -34,6 +34,35 @@ const unsupportedApprovalResolution = async (
   throw new Error('Not implemented in test runtime.');
 };
 
+const isMastraRequestContextLike = (value: unknown): value is {
+  get: (key: string) => unknown;
+  toJSON: () => unknown;
+} => Boolean(
+  value
+  && typeof value === 'object'
+  && 'get' in value
+  && typeof value.get === 'function'
+  && 'toJSON' in value
+  && typeof value.toJSON === 'function',
+);
+
+const assertMastraRequestContext = (
+  value: unknown,
+  expected: Record<string, unknown>,
+): void => {
+  assert.equal(isMastraRequestContextLike(value), true);
+
+  if (!isMastraRequestContextLike(value)) {
+    return;
+  }
+
+  for (const [key, expectedValue] of Object.entries(expected)) {
+    assert.deepEqual(value.get(key), expectedValue);
+  }
+
+  assert.deepEqual(value.toJSON(), expected);
+};
+
 const unsupportedRollbackRestore = async (
   ...args: Parameters<IAgentSidecarRuntime['restoreCheckpoint']>
 ): Promise<Awaited<ReturnType<IAgentSidecarRuntime['restoreCheckpoint']>>> => {
@@ -521,6 +550,116 @@ describe('Mastra runtime chat', () => {
     assert.equal(disconnectCalls, 1);
   });
 
+  it('streams Mastra tool calls into the new runtime activity timeline', async () => {
+    let disconnectCalls = 0;
+    const runtime = new MastraRuntime({
+      readModelConfig: () => ({
+        apiKey: 'test-key',
+        baseUrl: 'https://example.com/v1',
+        model: 'deepseek-chat',
+      }),
+      createMcpClientBundle: async () => ({
+        clients: [],
+        configs: [],
+        errors: [],
+        tools: [],
+        disconnectAll: async () => {
+          disconnectCalls += 1;
+        },
+      }),
+      createAgent: () => ({
+        stream: async () => ({
+          runId: 'run-tool-activity',
+          fullStream: (async function* () {
+            yield {
+              type: 'tool-call',
+              runId: 'run-tool-activity',
+              payload: {
+                toolName: 'web_search',
+                toolCallId: 'tool-call-1',
+                args: {
+                  query: '全球矿产最新动态',
+                  apiKey: 'secret-value',
+                },
+              },
+            };
+            yield {
+              type: 'tool-result',
+              runId: 'run-tool-activity',
+              payload: {
+                toolName: 'web_search',
+                result: {
+                  status: 'success',
+                  summary: '搜索完成',
+                },
+              },
+            };
+            yield {
+              type: 'text-delta',
+              runId: 'run-tool-activity',
+              payload: {
+                id: 'text-tool-activity',
+                text: '已完成搜索。',
+              },
+            };
+          })(),
+        }),
+        generate: async () => {
+          throw new Error('generate should not be used in Mastra tool runtime test');
+        },
+      }),
+    });
+    const streamedEvents: unknown[] = [];
+
+    const response = await runtime.chat({
+      mode: 'ask',
+      goal: '搜索全球矿产',
+      messages: [{ role: 'user', content: '搜索全球矿产' }],
+      context: [],
+    }, {
+      onEvent: (event) => {
+        streamedEvents.push(event);
+      },
+    });
+    const runtimeToolEvents = streamedEvents.filter((event) => {
+      const candidate = event as { type?: unknown; event?: { type?: unknown } };
+      return candidate.type === 'agent_event'
+        && (
+          candidate.event?.type === 'agent.tool.started'
+          || candidate.event?.type === 'agent.tool.completed'
+        );
+    });
+    const startedEvent = runtimeToolEvents[0] as {
+      event?: {
+        type?: unknown;
+        toolName?: unknown;
+        toolUseId?: unknown;
+        inputPreview?: unknown;
+      };
+    };
+    const completedEvent = runtimeToolEvents[1] as {
+      event?: {
+        type?: unknown;
+        toolName?: unknown;
+        resultPreview?: unknown;
+        ok?: unknown;
+      };
+    };
+
+    assert.equal(runtimeToolEvents.length, 2);
+    assert.equal(startedEvent.event?.type, 'agent.tool.started');
+    assert.equal(startedEvent.event?.toolName, 'web_search');
+    assert.equal(startedEvent.event?.toolUseId, 'tool-call-1');
+    assert.match(String(startedEvent.event?.inputPreview ?? ''), /全球矿产最新动态/u);
+    assert.doesNotMatch(String(startedEvent.event?.inputPreview ?? ''), /secret-value/u);
+    assert.equal(completedEvent.event?.type, 'agent.tool.completed');
+    assert.equal(completedEvent.event?.toolName, 'web_search');
+    assert.equal(completedEvent.event?.ok, true);
+    assert.match(String(completedEvent.event?.resultPreview ?? ''), /搜索完成/u);
+    assert.equal(response.result, '已完成搜索。');
+    assert.equal(disconnectCalls, 1);
+  });
+
   it('normalizes Mastra stream errors into the existing error event shape', async () => {
     let disconnectCalls = 0;
     const runtime = new MastraRuntime({
@@ -698,18 +837,21 @@ describe('Mastra runtime execute', () => {
       { role: 'user', content: '请直接执行' },
     ]);
     assert.deepEqual(capturedToolNames, ['read_file']);
-    assert.equal(typeof (capturedStreamOptions as { runId?: unknown }).runId, 'string');
-    assert.deepEqual(capturedStreamOptions, {
-      ...(capturedStreamOptions as { runId: string }),
-      maxSteps: 10,
-      toolChoice: 'auto',
-      requestContext: {
-        mode: 'agent',
-        goal: '请直接执行',
-        systemPrompt: capturedInstructions,
-        workspaceRootPath: null,
-        context: [],
-      },
+    const streamOptions = capturedStreamOptions as {
+      runId?: unknown;
+      maxSteps?: unknown;
+      toolChoice?: unknown;
+      requestContext?: unknown;
+    };
+    assert.equal(typeof streamOptions.runId, 'string');
+    assert.equal(streamOptions.maxSteps, 10);
+    assert.equal(streamOptions.toolChoice, 'auto');
+    assertMastraRequestContext(streamOptions.requestContext, {
+      mode: 'agent',
+      goal: '请直接执行',
+      systemPrompt: capturedInstructions,
+      workspaceRootPath: null,
+      context: [],
     });
     assert.deepEqual(streamedEvents, [
       {
@@ -732,10 +874,52 @@ describe('Mastra runtime execute', () => {
         },
       },
       {
+        type: 'agent_event',
+        event: {
+          id: streamedEvents[1] && typeof streamedEvents[1] === 'object' && streamedEvents[1] !== null && 'event' in streamedEvents[1]
+            ? (streamedEvents[1] as { event: { id: string } }).event.id
+            : '',
+          type: 'agent.tool.started',
+          runId: 'run-execute',
+          sessionId: response.sessionId,
+          agentId: 'calamex-agent-sidecar',
+          timestamp: '2026-05-03T00:00:00.000Z',
+          seq: 1,
+          schemaVersion: 1,
+          redacted: true,
+          visibility: 'user',
+          level: 'info',
+          toolName: 'read_file',
+          toolUseId: 'tool-1',
+          inputPreview: '{"path":"README.md"}',
+        },
+      },
+      {
         type: 'tool_start',
         toolName: 'read_file',
         input: {
           path: 'README.md',
+        },
+      },
+      {
+        type: 'agent_event',
+        event: {
+          id: streamedEvents[3] && typeof streamedEvents[3] === 'object' && streamedEvents[3] !== null && 'event' in streamedEvents[3]
+            ? (streamedEvents[3] as { event: { id: string } }).event.id
+            : '',
+          type: 'agent.tool.completed',
+          runId: 'run-execute',
+          sessionId: response.sessionId,
+          agentId: 'calamex-agent-sidecar',
+          timestamp: '2026-05-03T00:00:00.000Z',
+          seq: 2,
+          schemaVersion: 1,
+          redacted: true,
+          visibility: 'user',
+          level: 'info',
+          toolName: 'read_file',
+          ok: true,
+          resultPreview: '{"content":[{"type":"text","text":"README 内容"}],"isError":false}',
         },
       },
       {
@@ -883,6 +1067,27 @@ describe('Mastra runtime approval resolution', () => {
       toolCallId: 'tool-approval-1',
     });
     assert.deepEqual(resumed.events, [
+      {
+        type: 'agent_event',
+        event: {
+          id: resumed.events[0] && resumed.events[0].type === 'agent_event'
+            ? resumed.events[0].event.id
+            : '',
+          type: 'agent.tool.completed',
+          runId: 'approval-run-1',
+          sessionId: initial.sessionId,
+          agentId: 'calamex-agent-sidecar',
+          timestamp: '2026-05-03T00:00:00.000Z',
+          seq: 0,
+          schemaVersion: 1,
+          redacted: true,
+          visibility: 'user',
+          level: 'info',
+          toolName: 'write_file',
+          ok: true,
+          resultPreview: '{"ok":true}',
+        },
+      },
       {
         type: 'tool_result',
         toolName: 'write_file',
@@ -1184,12 +1389,14 @@ describe('Mastra runtime plan', () => {
       snapshotId: 'run-restore-1',
     });
 
-    assert.deepEqual(capturedRollbackOptions, {
-      step: ['durable-agentic-execution', 'durable-llm-execution'],
-      requestContext: {
-        systemPrompt: '恢复前的 system prompt',
-        workspaceRootPath: 'D:/com.xiaojianc/my_desktop_app',
-      },
+    const rollbackOptions = capturedRollbackOptions as {
+      step?: unknown;
+      requestContext?: unknown;
+    };
+    assert.deepEqual(rollbackOptions.step, ['durable-agentic-execution', 'durable-llm-execution']);
+    assertMastraRequestContext(rollbackOptions.requestContext, {
+      systemPrompt: '恢复前的 system prompt',
+      workspaceRootPath: 'D:/com.xiaojianc/my_desktop_app',
     });
     assert.deepEqual(response.events, [
       {

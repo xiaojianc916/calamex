@@ -1286,7 +1286,6 @@ describe('useAiAssistant streaming integration', () => {
         await flushMicrotasks();
 
         expect(aiServiceMock.narrateActivityStream).toHaveBeenCalledTimes(0);
-        expect(assistant.messages.value[1]?.stream?.activityNotes).toBeUndefined();
     });
 
     it('raw sidecar event 模式下编辑完成时不会再启动 narrator', async () => {
@@ -1319,7 +1318,6 @@ describe('useAiAssistant streaming integration', () => {
         await flushMicrotasks();
 
         expect(aiServiceMock.narrateActivityStream).toHaveBeenCalledTimes(0);
-        expect(assistant.messages.value[1]?.stream?.activityNotes).toBeUndefined();
     });
 
     it('raw sidecar event 模式下重复编辑事件也不会创建 narrator 请求', async () => {
@@ -1358,7 +1356,6 @@ describe('useAiAssistant streaming integration', () => {
         await flushMicrotasks();
 
         expect(aiServiceMock.narrateActivityStream).toHaveBeenCalledTimes(0);
-        expect(assistant.messages.value[1]?.stream?.activityNotes).toBeUndefined();
     });
 
     it('raw sidecar event 模式下不会监听 narrator turn 结果', async () => {
@@ -1390,7 +1387,6 @@ describe('useAiAssistant streaming integration', () => {
         await flushMicrotasks();
 
         expect(aiServiceMock.narrateActivityStream).toHaveBeenCalledTimes(0);
-        expect(assistant.messages.value[1]?.stream?.activityNotes).toBeUndefined();
     });
 
     it('raw sidecar event 模式下连续序列更新不会创建 narrator 序列', async () => {
@@ -1455,7 +1451,6 @@ describe('useAiAssistant streaming integration', () => {
         await flushMicrotasks();
 
         expect(aiServiceMock.narrateActivityStream).toHaveBeenCalledTimes(0);
-        expect(assistant.messages.value[1]?.stream?.activityNotes).toBeUndefined();
     });
 
     it('raw sidecar event 模式下不会再发送 narrator facts', async () => {
@@ -1497,7 +1492,6 @@ describe('useAiAssistant streaming integration', () => {
         await flushMicrotasks();
 
         expect(aiServiceMock.narrateActivityStream).toHaveBeenCalledTimes(0);
-        expect(assistant.messages.value[1]?.stream?.activityNotes).toBeUndefined();
     });
 
     it('sidecar 首个事件到达前就显示上下文相关的运行状态', async () => {
@@ -1648,7 +1642,6 @@ describe('useAiAssistant streaming integration', () => {
         expect(assistant.messages.value[1]?.content).toContain('第二段继续到达');
         expect(assistant.messages.value[1]?.stream?.status).toBe('streaming');
         expect(assistant.messages.value[1]?.stream?.activityText).toBe('正在搜索「实时工具」，范围 工作区');
-        expect(assistant.messages.value[1]?.stream?.activityTrail).toBeUndefined();
         expect(assistant.messages.value[1]?.stream?.runtimeEvents).toEqual(expect.arrayContaining([
             expect.objectContaining({
                 type: 'agent.tool.started',
@@ -1668,7 +1661,12 @@ describe('useAiAssistant streaming integration', () => {
         expect(assistant.messages.value[1]?.toolCalls?.[0]?.status).toBe('succeeded');
         expect(assistant.messages.value[1]?.stream?.status).toBe('completed');
         expect(assistant.messages.value[1]?.stream?.activityText).toBe('在 工作区 搜索「实时工具」');
-        expect(assistant.messages.value[1]?.stream?.activityTrail).toBeUndefined();
+        expect(assistant.messages.value[1]?.stream?.runtimeEvents).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                type: 'agent.tool.started',
+                toolName: 'search_project_files',
+            }),
+        ]));
     });
 
     it('sidecar message_delta 即时冲刷，保持真实到达节奏且不改变最终结果', async () => {
@@ -1957,9 +1955,6 @@ describe('useAiAssistant streaming integration', () => {
             }
             await Promise.resolve();
         }
-        const activityTrail = assistant.messages.value[1]?.stream?.activityTrail ?? [];
-
-        expect(activityTrail).toEqual([]);
         expect(assistant.runtimeTimelineEvents.value).toEqual(expect.arrayContaining([
             expect.objectContaining({
                 type: 'agent.run.started',
@@ -1971,7 +1966,7 @@ describe('useAiAssistant streaming integration', () => {
         await sendPromise;
     });
 
-    it('把 user-visible side_effect 和 rollback runtime event 投影到同一棵 Activity 树', async () => {
+    it('把 user-visible side_effect 和 rollback runtime event 保留到新 runtime 时间线', async () => {
         const { assistant } = createAssistantHarnessContext();
         const sidecarGate = createDeferred<void>();
 
@@ -1988,7 +1983,7 @@ describe('useAiAssistant streaming integration', () => {
                         type: 'side_effect.recorded',
                         runId: 'run-activity-1',
                         sessionId,
-                        agentId: 'agent-activity-1',
+                        agentId: 'agent-runtime-1',
                         timestamp: '2026-05-02T10:00:00.000Z',
                         seq: 0,
                         schemaVersion: 1,
@@ -2012,7 +2007,7 @@ describe('useAiAssistant streaming integration', () => {
                         type: 'rollback.restore.started',
                         runId: 'run-activity-1',
                         sessionId,
-                        agentId: 'agent-activity-1',
+                        agentId: 'agent-runtime-1',
                         timestamp: '2026-05-02T10:00:01.000Z',
                         seq: 1,
                         schemaVersion: 1,
@@ -2033,7 +2028,7 @@ describe('useAiAssistant streaming integration', () => {
                         type: 'rollback.restore.failed',
                         runId: 'run-activity-1',
                         sessionId,
-                        agentId: 'agent-activity-1',
+                        agentId: 'agent-runtime-1',
                         timestamp: '2026-05-02T10:00:02.000Z',
                         seq: 2,
                         schemaVersion: 1,
@@ -2058,7 +2053,7 @@ describe('useAiAssistant streaming integration', () => {
                             type: 'side_effect.recorded',
                             runId: 'run-activity-1',
                             sessionId,
-                            agentId: 'agent-activity-1',
+                            agentId: 'agent-runtime-1',
                             timestamp: '2026-05-02T10:00:00.000Z',
                             seq: 0,
                             schemaVersion: 1,
@@ -2078,7 +2073,7 @@ describe('useAiAssistant streaming integration', () => {
                             type: 'rollback.restore.started',
                             runId: 'run-activity-1',
                             sessionId,
-                            agentId: 'agent-activity-1',
+                            agentId: 'agent-runtime-1',
                             timestamp: '2026-05-02T10:00:01.000Z',
                             seq: 1,
                             schemaVersion: 1,
@@ -2095,7 +2090,7 @@ describe('useAiAssistant streaming integration', () => {
                             type: 'rollback.restore.failed',
                             runId: 'run-activity-1',
                             sessionId,
-                            agentId: 'agent-activity-1',
+                            agentId: 'agent-runtime-1',
                             timestamp: '2026-05-02T10:00:02.000Z',
                             seq: 2,
                             schemaVersion: 1,
@@ -2126,9 +2121,6 @@ describe('useAiAssistant streaming integration', () => {
             await Promise.resolve();
         }
 
-        expect(assistant.messages.value[1]?.stream?.activityTrail).toBeUndefined();
-        expect(assistant.messages.value[1]?.stream?.activities).toBeUndefined();
-        expect(assistant.messages.value[1]?.stream?.activityEvents).toBeUndefined();
         expect(assistant.messages.value[1]?.stream?.runtimeEvents).toEqual(expect.arrayContaining([
             expect.objectContaining({
                 type: 'side_effect.recorded',
@@ -2148,9 +2140,6 @@ describe('useAiAssistant streaming integration', () => {
         await sendPromise;
 
         expect(assistant.messages.value[1]?.stream?.status).toBe('completed');
-        expect(assistant.messages.value[1]?.stream?.activityTrail).toBeUndefined();
-        expect(assistant.messages.value[1]?.stream?.activities).toBeUndefined();
-        expect(assistant.messages.value[1]?.stream?.activityEvents).toBeUndefined();
         expect(assistant.messages.value[1]?.stream?.runtimeEvents).toEqual(expect.arrayContaining([
             expect.objectContaining({
                 type: 'side_effect.recorded',

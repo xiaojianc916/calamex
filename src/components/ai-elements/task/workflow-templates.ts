@@ -16,7 +16,7 @@ import {
     normalizeText as normalizePreviewText,
     parseTarget,
     stripTargetNoise,
-} from '@/utils/agent-activity-inline-formatters'
+} from '@/utils/tool-preview-formatters'
 import { resolveFileIconAsset, resolveFileIconKey } from '@/utils/file-icons'
 import { getPathBaseName } from '@/utils/path'
 
