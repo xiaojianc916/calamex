@@ -4,6 +4,8 @@ import { computed, ref } from 'vue';
 import type {
     IAiAgentPatchSummary,
     IAiAgentClassifyTaskPayload,
+    IAiAgentPlanMetadata,
+    IAiAgentPlanVersionSummary,
     IAiAgentRun,
     IAiAgentStepDetail,
     IAiAgentStepFinalAnswer,
@@ -30,6 +32,18 @@ export const useAiAgentStore = defineStore('ai-agent', () => {
     const isPlanning = ref<boolean>(false);
     const isApproving = ref<boolean>(false);
     const approvedAt = ref<string | null>(null);
+    const planId = ref<string | null>(null);
+    const planVersion = ref<number | null>(null);
+    const planStatus = ref<IAiAgentPlanMetadata['status'] | null>(null);
+    const planSummary = ref<string>('');
+    const planRequiresApproval = ref<boolean>(true);
+    const planThreadId = ref<string | null>(null);
+    const planCreatedAt = ref<string | null>(null);
+    const planUpdatedAt = ref<string | null>(null);
+    const planExecutedAt = ref<string | null>(null);
+    const planRejectionReason = ref<string | null>(null);
+    const planErrorMessage = ref<string | null>(null);
+    const planVersions = ref<IAiAgentPlanVersionSummary[]>([]);
     const activeRunId = ref<string | null>(null);
     const runs = ref<IAiAgentRun[]>([]);
     const stepDetails = ref<Record<string, IAiAgentStepDetail>>({});
@@ -90,6 +104,18 @@ export const useAiAgentStore = defineStore('ai-agent', () => {
         activeGoal.value = goal;
         steps.value = [];
         approvedAt.value = null;
+        planId.value = null;
+        planVersion.value = null;
+        planStatus.value = null;
+        planSummary.value = '';
+        planRequiresApproval.value = true;
+        planThreadId.value = null;
+        planCreatedAt.value = null;
+        planUpdatedAt.value = null;
+        planExecutedAt.value = null;
+        planRejectionReason.value = null;
+        planErrorMessage.value = null;
+        planVersions.value = [];
         activeRunId.value = null;
         classification.value = null;
         classificationReason.value = '';
@@ -102,6 +128,18 @@ export const useAiAgentStore = defineStore('ai-agent', () => {
         activeGoal.value = goal;
         steps.value = [];
         approvedAt.value = null;
+        planId.value = null;
+        planVersion.value = null;
+        planStatus.value = null;
+        planSummary.value = '';
+        planRequiresApproval.value = true;
+        planThreadId.value = null;
+        planCreatedAt.value = null;
+        planUpdatedAt.value = null;
+        planExecutedAt.value = null;
+        planRejectionReason.value = null;
+        planErrorMessage.value = null;
+        planVersions.value = [];
         activeRunId.value = null;
         shouldEnterPlanMode.value = false;
         pendingToolConfirmation.value = null;
@@ -113,22 +151,73 @@ export const useAiAgentStore = defineStore('ai-agent', () => {
         networkPermission.value = permission;
     };
 
-    const setPlan = (goal: string, nextSteps: IAiTaskPlanStep[]): void => {
+    const setPlan = (
+        goal: string,
+        nextSteps: IAiTaskPlanStep[],
+        metadata: IAiAgentPlanMetadata | null = null,
+    ): void => {
         activeGoal.value = goal;
         steps.value = nextSteps;
         approvedAt.value = null;
+        planId.value = metadata?.planId ?? null;
+        planVersion.value = metadata?.version ?? null;
+        planStatus.value = metadata?.status ?? null;
+        planSummary.value = metadata?.summary ?? '';
+        planRequiresApproval.value = metadata?.requiresApproval ?? true;
+        planThreadId.value = metadata?.threadId ?? null;
+        planCreatedAt.value = metadata?.createdAt ?? null;
+        planUpdatedAt.value = metadata?.updatedAt ?? null;
+        planExecutedAt.value = metadata?.executedAt ?? null;
+        planRejectionReason.value = metadata?.rejectionReason ?? null;
+        planErrorMessage.value = metadata?.errorMessage ?? null;
+        planVersions.value = metadata ? [{
+            ...metadata,
+        }] : [];
         activeRunId.value = null;
+    };
+
+    const applyPlanMetadata = (
+        metadata: IAiAgentPlanMetadata,
+        versions: IAiAgentPlanVersionSummary[] = planVersions.value,
+    ): void => {
+        planId.value = metadata.planId;
+        planVersion.value = metadata.version;
+        planStatus.value = metadata.status;
+        planSummary.value = metadata.summary ?? planSummary.value;
+        planRequiresApproval.value = metadata.requiresApproval ?? planRequiresApproval.value;
+        planThreadId.value = metadata.threadId ?? planThreadId.value;
+        planCreatedAt.value = metadata.createdAt ?? planCreatedAt.value;
+        planUpdatedAt.value = metadata.updatedAt ?? planUpdatedAt.value;
+        approvedAt.value = metadata.approvedAt !== undefined ? metadata.approvedAt : approvedAt.value;
+        planExecutedAt.value = metadata.executedAt !== undefined ? metadata.executedAt : planExecutedAt.value;
+        planRejectionReason.value = metadata.rejectionReason !== undefined
+            ? metadata.rejectionReason
+            : planRejectionReason.value;
+        planErrorMessage.value = metadata.errorMessage !== undefined
+            ? metadata.errorMessage
+            : planErrorMessage.value;
+        planVersions.value = versions;
+    };
+
+    const setPlanStatus = (
+        status: IAiAgentPlanMetadata['status'],
+        nextApprovedAt: string | null = approvedAt.value,
+    ): void => {
+        planStatus.value = status;
+        approvedAt.value = nextApprovedAt;
     };
 
     const replaceStep = (stepId: string, nextStep: IAiTaskPlanStep): void => {
         steps.value = steps.value.map((step) => (step.id === stepId ? nextStep : step));
         approvedAt.value = null;
+        planStatus.value = planStatus.value === 'approved' ? 'pending_approval' : planStatus.value;
         activeRunId.value = null;
     };
 
     const removeStep = (stepId: string): void => {
         steps.value = steps.value.filter((step) => step.id !== stepId);
         approvedAt.value = null;
+        planStatus.value = planStatus.value === 'approved' ? 'pending_approval' : planStatus.value;
         activeRunId.value = null;
     };
 
@@ -136,6 +225,18 @@ export const useAiAgentStore = defineStore('ai-agent', () => {
         activeGoal.value = '';
         steps.value = [];
         approvedAt.value = null;
+        planId.value = null;
+        planVersion.value = null;
+        planStatus.value = null;
+        planSummary.value = '';
+        planRequiresApproval.value = true;
+        planThreadId.value = null;
+        planCreatedAt.value = null;
+        planUpdatedAt.value = null;
+        planExecutedAt.value = null;
+        planRejectionReason.value = null;
+        planErrorMessage.value = null;
+        planVersions.value = [];
         classificationReason.value = '';
         classification.value = null;
         shouldEnterPlanMode.value = false;
@@ -291,6 +392,18 @@ export const useAiAgentStore = defineStore('ai-agent', () => {
         isPlanning,
         isApproving,
         approvedAt,
+        planId,
+        planVersion,
+        planStatus,
+        planSummary,
+        planRequiresApproval,
+        planThreadId,
+        planCreatedAt,
+        planUpdatedAt,
+        planExecutedAt,
+        planRejectionReason,
+        planErrorMessage,
+        planVersions,
         activeRunId,
         runs,
         stepDetails,
@@ -311,6 +424,8 @@ export const useAiAgentStore = defineStore('ai-agent', () => {
         beginPlanning,
         failPlanning,
         setPlan,
+        applyPlanMetadata,
+        setPlanStatus,
         replaceStep,
         removeStep,
         clearPlan,

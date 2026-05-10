@@ -24,16 +24,8 @@
         正在加载图片资源…
       </div>
 
-      <div
-        v-else-if="errorMessage"
-        class="flex h-full min-h-60 items-center justify-center rounded-xl border border-rose-400/20 bg-rose-500/6 px-6 text-center"
-      >
-        <div class="max-w-md space-y-2">
-          <p class="text-[13px] font-medium text-rose-200">图片预览失败</p>
-          <p class="text-[12px] leading-6 text-(--text-secondary)">
-            {{ errorMessage }}
-          </p>
-        </div>
+      <div v-else-if="errorMessage" class="flex h-full min-h-60 items-center justify-center px-6">
+        <InlineError class="max-w-md" title="图片预览失败" :message="errorMessage" />
       </div>
 
       <div
@@ -55,6 +47,7 @@
 </template>
 
 <script setup lang="ts">
+import InlineError from '@/components/common/InlineError.vue';
 import { tauriService } from '@/services/tauri';
 import type { IImageAssetPayload } from '@/types/editor';
 import { toErrorMessage } from '@/utils/error';

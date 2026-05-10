@@ -4,8 +4,13 @@
       <span class="search-panel-title">搜索</span>
 
       <button
-type="button" class="search-panel-icon-btn" :disabled="!canApplyReplacement" aria-label="应用替换内容"
-        title="应用替换内容" @click="applyReplacementToSearch">
+        type="button"
+        class="search-panel-icon-btn"
+        :disabled="!canApplyReplacement"
+        aria-label="应用替换内容"
+        title="应用替换内容"
+        @click="applyReplacementToSearch"
+      >
         <LoaderCircle v-if="replaceRunning" class="search-panel-spin" aria-hidden="true" />
         <Replace v-else aria-hidden="true" />
       </button>
@@ -18,12 +23,23 @@ type="button" class="search-panel-icon-btn" :disabled="!canApplyReplacement" ari
         </span>
 
         <Input
-v-model="searchQuery" class="search-panel-input" type="text" aria-label="搜索关键字"
-          placeholder="输入关键字搜索…" autocomplete="off" spellcheck="false" />
+          v-model="searchQuery"
+          class="search-panel-input"
+          type="text"
+          aria-label="搜索关键字"
+          placeholder="输入关键字搜索…"
+          autocomplete="off"
+          spellcheck="false"
+        />
 
         <button
-v-if="hasSearchQuery" type="button" class="search-panel-clear-btn" aria-label="清空搜索" title="清空搜索"
-          @click.stop="searchQuery = ''">
+          v-if="hasSearchQuery"
+          type="button"
+          class="search-panel-clear-btn"
+          aria-label="清空搜索"
+          title="清空搜索"
+          @click.stop="searchQuery = ''"
+        >
           <X aria-hidden="true" />
         </button>
       </div>
@@ -34,13 +50,24 @@ v-if="hasSearchQuery" type="button" class="search-panel-clear-btn" aria-label="�
         </span>
 
         <Input
-v-model="replacementQuery" class="search-panel-input" type="text" aria-label="替换内容"
-          placeholder="输入替换内容…" autocomplete="off" spellcheck="false"
-          @keydown.enter="applyReplacementToSearch" />
+          v-model="replacementQuery"
+          class="search-panel-input"
+          type="text"
+          aria-label="替换内容"
+          placeholder="输入替换内容…"
+          autocomplete="off"
+          spellcheck="false"
+          @keydown.enter="applyReplacementToSearch"
+        />
 
         <button
-type="button" class="search-panel-apply-btn" :disabled="!canApplyReplacement" aria-label="应用替换内容"
-          title="应用替换内容" @click.stop="applyReplacementToSearch">
+          type="button"
+          class="search-panel-apply-btn"
+          :disabled="!canApplyReplacement"
+          aria-label="应用替换内容"
+          title="应用替换内容"
+          @click.stop="applyReplacementToSearch"
+        >
           <LoaderCircle v-if="replaceRunning" class="search-panel-spin" aria-hidden="true" />
           <Check v-else aria-hidden="true" />
         </button>
@@ -49,9 +76,14 @@ type="button" class="search-panel-apply-btn" :disabled="!canApplyReplacement" ar
 
     <div class="search-panel-chip-row">
       <button
-v-for="chip in scopeChips" :key="chip.key" type="button" class="search-panel-chip"
-        :class="{ 'is-active': activeScope === chip.key }" :aria-pressed="activeScope === chip.key"
-        @click="activeScope = chip.key">
+        v-for="chip in scopeChips"
+        :key="chip.key"
+        type="button"
+        class="search-panel-chip"
+        :class="{ 'is-active': activeScope === chip.key }"
+        :aria-pressed="activeScope === chip.key"
+        @click="activeScope = chip.key"
+      >
         <span>{{ chip.label }}</span>
         <span class="search-panel-chip-count">{{ chip.count }}</span>
       </button>
@@ -59,11 +91,21 @@ v-for="chip in scopeChips" :key="chip.key" type="button" class="search-panel-chi
 
     <div class="search-panel-option-row" aria-label="搜索选项">
       <button
-type="button" class="search-panel-option-btn" :class="{ 'is-active': matchCase }"
-        :aria-pressed="matchCase" title="区分大小写" @click="matchCase = !matchCase">
+        type="button"
+        class="search-panel-option-btn"
+        :class="{ 'is-active': matchCase }"
+        :aria-pressed="matchCase"
+        title="区分大小写"
+        @click="matchCase = !matchCase"
+      >
         <svg
-viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
-          stroke-linejoin="round">
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.8"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
           <path d="M4 18 8 6l4 12" />
           <path d="M5.5 14h5" />
           <path d="M14 12a3 3 0 1 1 5 2v2" />
@@ -71,11 +113,21 @@ viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-
       </button>
 
       <button
-type="button" class="search-panel-option-btn" :class="{ 'is-active': wholeWord }"
-        :aria-pressed="wholeWord" title="全字匹配" @click="wholeWord = !wholeWord">
+        type="button"
+        class="search-panel-option-btn"
+        :class="{ 'is-active': wholeWord }"
+        :aria-pressed="wholeWord"
+        title="全字匹配"
+        @click="wholeWord = !wholeWord"
+      >
         <svg
-viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
-          stroke-linejoin="round">
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.8"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
           <rect x="3" y="7" width="18" height="10" rx="1.5" />
           <path d="M3 10v4" />
           <path d="M21 10v4" />
@@ -86,11 +138,21 @@ viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-
       </button>
 
       <button
-type="button" class="search-panel-option-btn" :class="{ 'is-active': useRegex }" :aria-pressed="useRegex"
-        title="正则表达式" @click="useRegex = !useRegex">
+        type="button"
+        class="search-panel-option-btn"
+        :class="{ 'is-active': useRegex }"
+        :aria-pressed="useRegex"
+        title="正则表达式"
+        @click="useRegex = !useRegex"
+      >
         <svg
-viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
-          stroke-linejoin="round">
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.8"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
           <path d="M12 4v10" />
           <path d="M7.3 6.5 16.7 11.5" />
           <path d="M16.7 6.5 7.3 11.5" />
@@ -99,11 +161,21 @@ viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-
       </button>
 
       <button
-type="button" class="search-panel-option-btn" :class="{ 'is-active': showPathFilters }"
-        :aria-pressed="showPathFilters" title="包含 / 排除路径" @click="showPathFilters = !showPathFilters">
+        type="button"
+        class="search-panel-option-btn"
+        :class="{ 'is-active': showPathFilters }"
+        :aria-pressed="showPathFilters"
+        title="包含 / 排除路径"
+        @click="showPathFilters = !showPathFilters"
+      >
         <svg
-viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
-          stroke-linejoin="round">
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.8"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
           <path d="M4 7h10" />
           <path d="M4 12h10" />
           <path d="M4 17h6" />
@@ -117,18 +189,31 @@ viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-
       <label class="search-panel-path-filter">
         <span>包含</span>
         <input
-v-model="includePattern" type="text" placeholder="例如 src/**/*.vue" autocomplete="off"
-          spellcheck="false" />
+          v-model="includePattern"
+          type="text"
+          placeholder="例如 src/**/*.vue"
+          autocomplete="off"
+          spellcheck="false"
+        />
       </label>
 
       <label class="search-panel-path-filter">
         <span>排除</span>
-        <input v-model="excludePattern" type="text" placeholder="例如 target/**" autocomplete="off" spellcheck="false" />
+        <input
+          v-model="excludePattern"
+          type="text"
+          placeholder="例如 target/**"
+          autocomplete="off"
+          spellcheck="false"
+        />
       </label>
     </div>
 
     <div class="search-panel-results" role="listbox">
-      <div v-if="hasSearchQuery && !searchError && !activeScopeIsPending" class="search-panel-summary">
+      <div
+        v-if="hasSearchQuery && !searchError && !activeScopeIsPending"
+        class="search-panel-summary"
+      >
         <b>{{ activeResults.length }}</b> 条结果 · 来自 <b>{{ matchedFileCount }}</b> 个文件
       </div>
 
@@ -148,13 +233,11 @@ v-model="includePattern" type="text" placeholder="例如 src/**/*.vue" autocompl
       </div>
 
       <div v-else-if="searchError" class="search-panel-empty-state">
-        <p class="search-panel-empty-title">无法完成搜索</p>
-        <p class="search-panel-empty-text">{{ searchError }}</p>
+        <InlineError title="无法完成搜索" :message="searchError" />
       </div>
 
       <div v-else-if="matcherError" class="search-panel-empty-state">
-        <p class="search-panel-empty-title">正则表达式无效</p>
-        <p class="search-panel-empty-text">{{ matcherError }}</p>
+        <InlineError title="正则表达式无效" :message="matcherError" severity="warning" />
       </div>
 
       <div v-else-if="activeScopeIsPending" class="search-panel-empty-state">
@@ -162,22 +245,34 @@ v-model="includePattern" type="text" placeholder="例如 src/**/*.vue" autocompl
         <p class="search-panel-empty-text">当前已接入文件名与路径搜索，符号与内容结果稍后补齐。</p>
       </div>
 
-      <div v-else-if="hasSearchQuery && activeResults.length === 0" class="search-panel-empty-state">
+      <div
+        v-else-if="hasSearchQuery && activeResults.length === 0"
+        class="search-panel-empty-state"
+      >
         <p class="search-panel-empty-title">没有匹配结果</p>
         <p class="search-panel-empty-text">试试更短的关键字，或调整大小写、正则和路径过滤条件。</p>
       </div>
 
       <button
-v-for="result in activeResults" :key="result.resultKey" type="button" class="search-panel-result"
-        :class="{ 'is-selected': selectedResultPath === result.path }" role="option"
-        :aria-selected="selectedResultPath === result.path" @click="handleResultClick(result.path)">
+        v-for="result in activeResults"
+        :key="result.resultKey"
+        type="button"
+        class="search-panel-result"
+        :class="{ 'is-selected': selectedResultPath === result.path }"
+        role="option"
+        :aria-selected="selectedResultPath === result.path"
+        @click="handleResultClick(result.path)"
+      >
         <span class="search-panel-result-icon" aria-hidden="true">
           <ExplorerEntryIcon kind="file" :path="result.path" />
         </span>
 
         <span class="search-panel-result-body">
           <span class="search-panel-result-snippet">
-            <template v-for="(segment, index) in result.snippetSegments" :key="`${result.resultKey}-snippet-${index}`">
+            <template
+              v-for="(segment, index) in result.snippetSegments"
+              :key="`${result.resultKey}-snippet-${index}`"
+            >
               <mark v-if="segment.matched">{{ segment.text }}</mark>
               <span v-else>{{ segment.text }}</span>
             </template>
@@ -185,8 +280,9 @@ v-for="result in activeResults" :key="result.resultKey" type="button" class="sea
 
           <span class="search-panel-result-loc">
             <template
-v-for="(segment, index) in result.locationSegments"
-              :key="`${result.resultKey}-location-${index}`">
+              v-for="(segment, index) in result.locationSegments"
+              :key="`${result.resultKey}-location-${index}`"
+            >
               <mark v-if="segment.matched">{{ segment.text }}</mark>
               <span v-else>{{ segment.text }}</span>
             </template>
@@ -200,6 +296,7 @@ v-for="(segment, index) in result.locationSegments"
 </template>
 
 <script setup lang="ts">
+import InlineError from '@/components/common/InlineError.vue';
 import { Input } from '@/components/ui/input';
 import ExplorerEntryIcon from '@/components/workbench/ExplorerEntryIcon.vue';
 import { useMessage } from '@/composables/useMessage';
@@ -485,9 +582,7 @@ const contentReplacementTargets = computed(() => {
 
   return Array.from(paths.values());
 });
-const canApplyReplacement = computed(
-  () => !replaceRunning.value,
-);
+const canApplyReplacement = computed(() => !replaceRunning.value);
 
 const cancelPendingSearch = (): void => {
   if (searchTimer) {
@@ -658,15 +753,14 @@ const applyReplacementToSearch = async (): Promise<void> => {
     });
     const failedEvent = payload.events.find(
       (event) =>
-        event.type === 'agent.run.error' ||
-        (event.type === 'agent.tool.completed' && !event.ok),
+        event.type === 'agent.run.error' || (event.type === 'agent.tool.completed' && !event.ok),
     );
 
     if (failedEvent) {
       const errorMessage =
         failedEvent.type === 'agent.run.error'
           ? failedEvent.errorMessage
-          : failedEvent.errorMessage ?? '替换工具执行失败。';
+          : (failedEvent.errorMessage ?? '替换工具执行失败。');
       throw new Error(errorMessage);
     }
 

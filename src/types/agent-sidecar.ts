@@ -12,6 +12,18 @@ export type TAgentSidecarMode = (typeof AGENT_SIDECAR_MODES)[number];
 
 export type TAgentSidecarMessageRole = 'user' | 'assistant' | 'system' | 'tool';
 
+export const AGENT_PLAN_STATUSES = [
+  'draft',
+  'pending_approval',
+  'approved',
+  'rejected',
+  'executing',
+  'completed',
+  'failed',
+] as const;
+
+export type TAgentPlanStatus = (typeof AGENT_PLAN_STATUSES)[number];
+
 export type TJsonValue =
   | string
   | number
@@ -29,8 +41,13 @@ export interface IAgentPlanStep {
   id: string;
   title: string;
   goal: string;
+  description?: string;
   status: 'pending' | 'running' | 'done' | 'failed' | 'skipped' | 'cancelled';
   tools: string[];
+  files?: string[];
+  commands?: string[];
+  risks?: string[];
+  acceptanceCriteria?: string[];
   riskLevel: 'low' | 'medium' | 'high';
   requiresApproval: boolean;
   expectedOutput: string;
@@ -38,7 +55,24 @@ export interface IAgentPlanStep {
 
 export interface IAgentPlan {
   goal: string;
+  summary?: string;
+  requiresApproval?: boolean;
   steps: IAgentPlanStep[];
+}
+
+export interface IAgentPlanRecord {
+  planId: string;
+  threadId: string;
+  version: number;
+  status: TAgentPlanStatus;
+  userRequest: string;
+  plan: IAgentPlan;
+  createdAt: string;
+  updatedAt: string;
+  approvedAt: string | null;
+  executedAt: string | null;
+  rejectionReason: string | null;
+  errorMessage: string | null;
 }
 
 export interface IApprovalRequest {
@@ -256,7 +290,21 @@ export type TAgentRuntimeEvent =
 export type TAgentUiEvent =
   | { type: 'message_delta'; text: string; phase?: 'stage' | 'final' }
   | { type: 'agent_event'; event: TAgentRuntimeEvent }
-  | { type: 'plan_ready'; plan: IAgentPlan }
+  | {
+    type: 'plan_ready';
+    planId: string;
+    threadId?: string;
+    version: number;
+    status: TAgentPlanStatus;
+    createdAt?: string;
+    updatedAt?: string;
+    approvedAt?: string | null;
+    executedAt?: string | null;
+    rejectionReason?: string | null;
+    errorMessage?: string | null;
+    plan: IAgentPlan;
+  }
+  | { type: 'plan_record'; record: IAgentPlanRecord; versions: IAgentPlanRecord[] }
   | { type: 'tool_start'; toolName: string; input: TJsonValue }
   | { type: 'tool_result'; toolName: string; output: TJsonValue }
   | { type: 'approval_required'; request: IApprovalRequest }
@@ -270,6 +318,10 @@ export interface IAgentSidecarBaseRequest {
   messages: IAgentSidecarMessage[];
   workspaceRootPath?: string | null;
   context: IAiContextReference[];
+  threadId?: string;
+  planId?: string;
+  planVersion?: number;
+  planStepId?: string;
 }
 
 export interface IAgentSidecarChatRequest extends IAgentSidecarBaseRequest {
@@ -282,6 +334,30 @@ export interface IAgentSidecarPlanRequest extends Omit<IAgentSidecarBaseRequest,
 
 export interface IAgentSidecarExecuteRequest extends Omit<IAgentSidecarBaseRequest, 'goal'> {
   goal: string;
+  planId: string;
+  planVersion: number;
+  planStepId: string;
+}
+
+export interface IAgentSidecarPlanApproveRequest {
+  sessionId?: string;
+  planId: string;
+  version: number;
+}
+
+export interface IAgentSidecarPlanQueryRequest {
+  sessionId?: string;
+  planId: string;
+  version?: number;
+}
+
+export interface IAgentSidecarPlanRejectRequest extends IAgentSidecarPlanApproveRequest {
+  reason?: string;
+}
+
+export interface IAgentSidecarPlanFinishRequest extends IAgentSidecarPlanApproveRequest {
+  status: Extract<TAgentPlanStatus, 'completed' | 'failed'>;
+  errorMessage?: string;
 }
 
 export interface IAgentSidecarApprovalResolveRequest {

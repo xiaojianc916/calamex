@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 
+import InlineError from '@/components/common/InlineError.vue';
 import AiWebSearchActivity from '@/components/business/ai/AiWebSearchActivity.vue';
 import AiWebSourceCard from '@/components/business/ai/AiWebSourceCard.vue';
 import type { IAiWebActivity, IAiWebSourceEntry, TAiAgentNetworkPermission } from '@/types/ai';
@@ -68,7 +69,12 @@ const handleSearch = (): void => {
     </p>
 
     <AiWebSearchActivity :activity="activity" />
-    <p v-if="errorMessage" class="ai-web-sources-error">{{ errorMessage }}</p>
+    <InlineError
+      v-if="errorMessage"
+      title="Web Sources 请求失败"
+      :message="errorMessage"
+      class="ai-web-sources-error"
+    />
 
     <div v-if="sources.length" class="ai-web-source-list">
       <AiWebSourceCard
@@ -177,8 +183,7 @@ const handleSearch = (): void => {
   cursor: not-allowed;
 }
 
-.ai-web-sources-hint,
-.ai-web-sources-error {
+.ai-web-sources-hint {
   margin: 0;
   font-size: 11px;
   line-height: 16px;
@@ -189,7 +194,7 @@ const handleSearch = (): void => {
 }
 
 .ai-web-sources-error {
-  color: var(--danger);
+  padding: 8px 10px;
 }
 
 .ai-web-source-list {

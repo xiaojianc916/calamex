@@ -1,13 +1,22 @@
 <template>
-  <aside class="app-sidebar-shell flex h-full min-h-0 min-w-0 flex-col overflow-hidden" :class="{
-    'source-control-sidebar-host': isSourceControlView,
-    'explorer-sidebar-host': isExplorerView,
-    'search-sidebar-host': isSearchView,
-    'ssh-sidebar-host': isSshView,
-  }">
-    <SourceControlPanel v-if="isSourceControlView" class="h-full min-h-0 w-full flex-1"
-      :is-desktop-runtime="isDesktopRuntime" :workspace-root-path="workspaceRootPath" :active-path="document.path"
-      @open-file="handleOpenFile" @open-diff="handleOpenGitDiff" />
+  <aside
+    class="app-sidebar-shell flex h-full min-h-0 min-w-0 flex-col overflow-hidden"
+    :class="{
+      'source-control-sidebar-host': isSourceControlView,
+      'explorer-sidebar-host': isExplorerView,
+      'search-sidebar-host': isSearchView,
+      'ssh-sidebar-host': isSshView,
+    }"
+  >
+    <SourceControlPanel
+      v-if="isSourceControlView"
+      class="h-full min-h-0 w-full flex-1"
+      :is-desktop-runtime="isDesktopRuntime"
+      :workspace-root-path="workspaceRootPath"
+      :active-path="document.path"
+      @open-file="handleOpenFile"
+      @open-diff="handleOpenGitDiff"
+    />
 
     <section v-else-if="isExplorerView" class="explorer-sidebar" aria-label="资源管理器">
       <div class="explorer-tree">
@@ -15,11 +24,16 @@
           浏览器预览模式下不显示本地目录树，请在 Tauri 桌面端查看资源文件。
         </div>
 
-        <div v-else-if="loadError" class="explorer-empty-state">{{ loadError }}</div>
+        <div v-else-if="loadError" class="explorer-empty-state">
+          <InlineError title="无法读取工作区目录" :message="loadError" />
+        </div>
 
         <div v-else-if="rootLoading && !root" class="explorer-empty-state">正在读取资源目录...</div>
 
-        <Empty v-else-if="!workspaceRootPath" class="explorer-empty-state explorer-empty-state--raised">
+        <Empty
+          v-else-if="!workspaceRootPath"
+          class="explorer-empty-state explorer-empty-state--raised"
+        >
           <EmptyHeader class="gap-1.5">
             <EmptyMedia class="h-auto w-auto rounded-none border-0 bg-transparent p-0 shadow-none">
               <FolderOpen class="h-14 w-14" />
@@ -37,7 +51,10 @@
 
         <div v-else-if="!root" class="explorer-empty-state">正在准备资源树...</div>
 
-        <Empty v-else-if="isExplorerWorkspaceEmpty" class="explorer-empty-state explorer-empty-state--raised">
+        <Empty
+          v-else-if="isExplorerWorkspaceEmpty"
+          class="explorer-empty-state explorer-empty-state--raised"
+        >
           <EmptyHeader class="gap-1.5">
             <EmptyMedia class="h-auto w-auto rounded-none border-0 bg-transparent p-0 shadow-none">
               <FolderOpen class="h-14 w-14" />
@@ -54,40 +71,80 @@
         </Empty>
 
         <template v-else>
-          <FileTree class="explorer-file-tree" :expanded="effectiveExplorerExpandedPaths"
-            :selected-path="selectedExplorerPath" @expanded-change="void handleExplorerExpandedChange($event)"
-            @update:selected-path="handleExplorerSelection">
-            <WorkspaceTreeNode v-if="rootEntry" :entry="rootEntry" :level="0" :children-map="childrenMap"
-              :expanded-paths="effectiveExplorerExpandedPaths" :loading-paths="loadingPaths"
-              :active-path="document.path" :active-dirty="document.isDirty" :search-query="explorerSearchQuery"
-              :inline-create-draft="inlineCreateDraft" :root-path="root.rootPath"
-              :inline-rename-draft="inlineRenameDraft" @toggle-directory="void toggleExplorerPath($event)"
-              @open-file="handleOpenFile" @context-menu="handleEntryContextMenu"
-              @inline-create-input="handleInlineCreateInputValue" @inline-create-blur="handleInlineCreateBlur"
+          <FileTree
+            class="explorer-file-tree"
+            :expanded="effectiveExplorerExpandedPaths"
+            :selected-path="selectedExplorerPath"
+            @expanded-change="void handleExplorerExpandedChange($event)"
+            @update:selected-path="handleExplorerSelection"
+          >
+            <WorkspaceTreeNode
+              v-if="rootEntry"
+              :entry="rootEntry"
+              :level="0"
+              :children-map="childrenMap"
+              :expanded-paths="effectiveExplorerExpandedPaths"
+              :loading-paths="loadingPaths"
+              :active-path="document.path"
+              :active-dirty="document.isDirty"
+              :search-query="explorerSearchQuery"
+              :inline-create-draft="inlineCreateDraft"
+              :root-path="root.rootPath"
+              :inline-rename-draft="inlineRenameDraft"
+              @toggle-directory="void toggleExplorerPath($event)"
+              @open-file="handleOpenFile"
+              @context-menu="handleEntryContextMenu"
+              @inline-create-input="handleInlineCreateInputValue"
+              @inline-create-blur="handleInlineCreateBlur"
               @inline-create-confirm="void confirmInlineCreateWorkspaceEntry()"
               @inline-create-cancel="cancelInlineCreateWorkspaceEntry"
               @inline-rename-input="inlineRenameDraft.value = $event"
-              @inline-rename-confirm="void confirmInlineRename()" @inline-rename-cancel="cancelInlineRename" />
+              @inline-rename-confirm="void confirmInlineRename()"
+              @inline-rename-cancel="cancelInlineRename"
+            />
           </FileTree>
         </template>
       </div>
 
-      <DeferredLinearContextMenu v-if="explorerContextMenu.open" :open="explorerContextMenu.open"
-        :x="explorerContextMenu.x" :y="explorerContextMenu.y" :groups="explorerContextMenuGroups"
-        :theme="appStore.theme" :submenu-direction="explorerContextMenu.x > 280 ? 'left' : 'right'"
-        @select="handleExplorerContextMenuSelect" />
+      <DeferredLinearContextMenu
+        v-if="explorerContextMenu.open"
+        :open="explorerContextMenu.open"
+        :x="explorerContextMenu.x"
+        :y="explorerContextMenu.y"
+        :groups="explorerContextMenuGroups"
+        :theme="appStore.theme"
+        :submenu-direction="explorerContextMenu.x > 280 ? 'left' : 'right'"
+        @select="handleExplorerContextMenuSelect"
+      />
     </section>
 
-    <DeferredSearchSidebarPanel v-else-if="isSearchView" :document-path="document.path"
-      :is-desktop-runtime="isDesktopRuntime" :workspace-root-path="workspaceRootPath"
-      :preloaded-workspace-root="preloadedWorkspaceRoot" @open-file="handleOpenFile" />
+    <DeferredSearchSidebarPanel
+      v-else-if="isSearchView"
+      :document-path="document.path"
+      :is-desktop-runtime="isDesktopRuntime"
+      :workspace-root-path="workspaceRootPath"
+      :preloaded-workspace-root="preloadedWorkspaceRoot"
+      @open-file="handleOpenFile"
+    />
 
-    <DeferredRunSidebarPanel v-else-if="isRunView" :document="document" :has-active-document="Boolean(document.id)"
-      :is-desktop-runtime="isDesktopRuntime" :can-run="canRun" :is-running="isRunning"
-      :has-run-artifacts="hasRunArtifacts" :active-run="activeRun" :run-history="runHistory"
-      :command-templates="commandTemplates" :executor="executor" @run="emit('run')"
-      @create-document="emit('create-document')" @open-terminal="emit('open-terminal')"
-      @insert-template="emit('insert-template', $event)" @clear-run-history="emit('clear-run-history')" />
+    <DeferredRunSidebarPanel
+      v-else-if="isRunView"
+      :document="document"
+      :has-active-document="Boolean(document.id)"
+      :is-desktop-runtime="isDesktopRuntime"
+      :can-run="canRun"
+      :is-running="isRunning"
+      :has-run-artifacts="hasRunArtifacts"
+      :active-run="activeRun"
+      :run-history="runHistory"
+      :command-templates="commandTemplates"
+      :executor="executor"
+      @run="emit('run')"
+      @create-document="emit('create-document')"
+      @open-terminal="emit('open-terminal')"
+      @insert-template="emit('insert-template', $event)"
+      @clear-run-history="emit('clear-run-history')"
+    />
 
     <DeferredSshSidebarPanel v-else-if="isSshView" @open-terminal="emit('open-terminal')" />
 
@@ -99,7 +156,9 @@
       <div class="workbench-scroll-region min-h-0 flex-1 overflow-auto py-2">
         <div class="space-y-3 px-3 py-2">
           <section class="rounded-xl border border-(--border-subtle) bg-white/3 p-3">
-            <p class="text-[10px] font-semibold uppercase tracking-[0.12em] text-(--text-quaternary)">
+            <p
+              class="text-[10px] font-semibold uppercase tracking-[0.12em] text-(--text-quaternary)"
+            >
               侧边栏页面
             </p>
             <h3 class="mt-2 text-[13px] font-semibold text-(--text-primary)">
@@ -115,12 +174,17 @@
           </section>
 
           <section class="rounded-xl border border-(--border-subtle) bg-(--panel-muted)/50 p-3">
-            <p class="text-[10px] font-semibold uppercase tracking-[0.12em] text-(--text-quaternary)">
+            <p
+              class="text-[10px] font-semibold uppercase tracking-[0.12em] text-(--text-quaternary)"
+            >
               将展示
             </p>
             <div class="mt-3 space-y-2">
-              <article v-for="item in panelMeta.items" :key="item.title"
-                class="rounded-lg border border-white/5 bg-white/3 px-3 py-2">
+              <article
+                v-for="item in panelMeta.items"
+                :key="item.title"
+                class="rounded-lg border border-white/5 bg-white/3 px-3 py-2"
+              >
                 <p class="text-[12px] font-medium text-(--text-primary)">{{ item.title }}</p>
                 <p class="mt-1 text-[11px] leading-5 text-(--text-secondary)">
                   {{ item.description }}
@@ -135,8 +199,12 @@
 </template>
 
 <script setup lang="ts">
+import InlineError from '@/components/common/InlineError.vue';
 import { FileTree } from '@/components/ai-elements/file-tree';
-import type { ILinearContextMenuGroup, ILinearContextMenuItem } from '@/components/common/linear-context-menu.types';
+import type {
+  ILinearContextMenuGroup,
+  ILinearContextMenuItem,
+} from '@/components/common/linear-context-menu.types';
 import { Button } from '@/components/ui/button';
 import {
   Empty,
@@ -170,7 +238,15 @@ import {
   resolveWorkspaceRootPayload,
 } from '@/utils/workspace';
 import { FolderOpen } from 'lucide-vue-next';
-import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue';
+import {
+  computed,
+  defineAsyncComponent,
+  nextTick,
+  onBeforeUnmount,
+  reactive,
+  ref,
+  watch,
+} from 'vue';
 
 const DeferredLinearContextMenu = defineAsyncComponent({
   loader: () => import('@/components/common/LinearContextMenu.vue'),
@@ -280,85 +356,87 @@ const inlineRenameDraft = reactive({
 const isInlineCreateSubmitting = ref(false);
 const isInlineRenamePriming = ref(false);
 
-const explorerContextMenuGroups = computed<ILinearContextMenuGroup<IExplorerContextMenuItem>[]>(() => {
-  const target = explorerContextTarget.value;
-  const canCreate = target?.kind === 'directory';
-  const canMutate = Boolean(target && !target.isRoot);
+const explorerContextMenuGroups = computed<ILinearContextMenuGroup<IExplorerContextMenuItem>[]>(
+  () => {
+    const target = explorerContextTarget.value;
+    const canCreate = target?.kind === 'directory';
+    const canMutate = Boolean(target && !target.isRoot);
 
-  return [
-    {
-      key: 'primary',
-      items: [
-        {
-          key: 'open',
-          label: '打开',
-          icon: 'goto',
-          shortcut: ['Enter'],
-          action: 'open',
-          disabled: !target,
-        },
-        {
-          key: 'new-file',
-          label: '新建文件',
-          icon: 'plus',
-          shortcut: ['Ctrl', 'N'],
-          action: 'new-file',
-          disabled: !canCreate,
-        },
-        {
-          key: 'new-directory',
-          label: '新建文件夹',
-          icon: 'plus',
-          shortcut: ['Ctrl', 'Shift', 'N'],
-          action: 'new-directory',
-          disabled: !canCreate,
-        },
-        {
-          key: 'rename',
-          label: '重命名',
-          icon: 'comment',
-          shortcut: ['F2'],
-          action: 'rename',
-          disabled: !canMutate,
-        },
-      ],
-    },
-    {
-      key: 'secondary',
-      items: [
-        {
-          key: 'delete',
-          label: '删除',
-          icon: 'trash',
-          shortcut: ['Del'],
-          action: 'delete',
-          disabled: !canMutate,
-        },
-        {
-          key: 'copy-path',
-          label: '复制路径',
-          icon: 'copy',
-          shortcut: ['Ctrl', 'Shift', 'C'],
-          action: 'copy-path',
-          disabled: !target,
-        },
-        {
-          key: 'refresh',
-          label: '刷新',
-          icon: 'refresh',
-          shortcut: ['F5'],
-          action: 'refresh',
-        },
-        {
-          key: 'open-folder',
-          label: '打开文件夹',
-          icon: 'open-external',
-          action: 'open-folder',
-        },
-      ],
-    },
-  ];
-});
+    return [
+      {
+        key: 'primary',
+        items: [
+          {
+            key: 'open',
+            label: '打开',
+            icon: 'goto',
+            shortcut: ['Enter'],
+            action: 'open',
+            disabled: !target,
+          },
+          {
+            key: 'new-file',
+            label: '新建文件',
+            icon: 'plus',
+            shortcut: ['Ctrl', 'N'],
+            action: 'new-file',
+            disabled: !canCreate,
+          },
+          {
+            key: 'new-directory',
+            label: '新建文件夹',
+            icon: 'plus',
+            shortcut: ['Ctrl', 'Shift', 'N'],
+            action: 'new-directory',
+            disabled: !canCreate,
+          },
+          {
+            key: 'rename',
+            label: '重命名',
+            icon: 'comment',
+            shortcut: ['F2'],
+            action: 'rename',
+            disabled: !canMutate,
+          },
+        ],
+      },
+      {
+        key: 'secondary',
+        items: [
+          {
+            key: 'delete',
+            label: '删除',
+            icon: 'trash',
+            shortcut: ['Del'],
+            action: 'delete',
+            disabled: !canMutate,
+          },
+          {
+            key: 'copy-path',
+            label: '复制路径',
+            icon: 'copy',
+            shortcut: ['Ctrl', 'Shift', 'C'],
+            action: 'copy-path',
+            disabled: !target,
+          },
+          {
+            key: 'refresh',
+            label: '刷新',
+            icon: 'refresh',
+            shortcut: ['F5'],
+            action: 'refresh',
+          },
+          {
+            key: 'open-folder',
+            label: '打开文件夹',
+            icon: 'open-external',
+            action: 'open-folder',
+          },
+        ],
+      },
+    ];
+  },
+);
 
 const SIDEBAR_META: Record<
   TWorkbenchSidebarView,
@@ -459,7 +537,9 @@ const rootEntry = computed<IWorkspaceEntry | null>(() => {
   }
 
   const rootEntries = childrenMap[root.value.rootPath] ?? root.value.entries;
-  const displayRootPath = formatFileSystemPathForDisplay(root.value.rootName || root.value.rootPath);
+  const displayRootPath = formatFileSystemPathForDisplay(
+    root.value.rootName || root.value.rootPath,
+  );
   const displayRootName = getPathBaseName(displayRootPath) || displayRootPath;
 
   return {
@@ -470,8 +550,8 @@ const rootEntry = computed<IWorkspaceEntry | null>(() => {
   };
 });
 
-const selectedExplorerPath = computed(() =>
-  props.document.path ?? props.startupExplorerSelectedPath ?? undefined,
+const selectedExplorerPath = computed(
+  () => props.document.path ?? props.startupExplorerSelectedPath ?? undefined,
 );
 
 const searchExpandedPaths = computed(() => {
@@ -694,10 +774,7 @@ const closeExplorerContextMenu = (): void => {
   explorerContextTarget.value = null;
 };
 
-const openExplorerContextMenu = (
-  event: MouseEvent,
-  target: IExplorerContextTarget,
-): void => {
+const openExplorerContextMenu = (event: MouseEvent, target: IExplorerContextTarget): void => {
   explorerContextMenu.x = Math.min(event.clientX, Math.max(12, window.innerWidth - 236));
   explorerContextMenu.y = Math.min(event.clientY, Math.max(12, window.innerHeight - 300));
   explorerContextTarget.value = target;
@@ -726,7 +803,9 @@ const handleExplorerSelection = (path: string): void => {
   }
 };
 
-const emitExplorerStateChange = (selectedPath: string | null | undefined = selectedExplorerPath.value ?? null): void => {
+const emitExplorerStateChange = (
+  selectedPath: string | null | undefined = selectedExplorerPath.value ?? null,
+): void => {
   emit('explorer-state-change', {
     expandedPaths: [...manualExpandedPaths.value],
     selectedPath: selectedPath ?? null,
@@ -830,10 +909,7 @@ const confirmInlineCreateWorkspaceEntry = async (): Promise<void> => {
   } catch (error) {
     isInlineCreateSubmitting.value = false;
     message.error(
-      toErrorMessage(
-        error,
-        inlineCreateDraft.kind === 'file' ? '创建文件失败' : '创建文件夹失败',
-      ),
+      toErrorMessage(error, inlineCreateDraft.kind === 'file' ? '创建文件失败' : '创建文件夹失败'),
     );
   }
 };
@@ -999,9 +1075,7 @@ const handleDeleteWorkspaceEntry = async (target: IExplorerContextTarget): Promi
   }
 };
 
-const handleExplorerContextMenuSelect = async (
-  item: ILinearContextMenuItem,
-): Promise<void> => {
+const handleExplorerContextMenuSelect = async (item: ILinearContextMenuItem): Promise<void> => {
   const actionItem = item as IExplorerContextMenuItem;
   const target = explorerContextTarget.value;
   closeExplorerContextMenu();

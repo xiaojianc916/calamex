@@ -7,6 +7,7 @@ import {
   mapSidecarEventsToToolCalls,
   mapSidecarToolNameToAiToolName,
   projectSidecarExecuteResponse,
+  projectSidecarPlanRecordResponse,
 } from '@/utils/agent-sidecar-events';
 import { toErrorMessage } from '@/utils/error';
 
@@ -30,6 +31,8 @@ interface ISidecarStepLoopOptions {
 interface ISidecarStepLoopSession {
   runId: string;
   stepId: string;
+  planId: string;
+  planVersion: number;
   goal: string;
   messages: IAgentSidecarMessage[];
   context: IAiContextReference[];
@@ -174,6 +177,13 @@ export const useAiAgentRun = () => {
     Reflect.set(store, 'errorMessage', message);
   };
 
+  const setPlanStatus = (
+    status: Parameters<typeof store.setPlanStatus>[0],
+    approvedAt = store.approvedAt,
+  ): void => {
+    store.setPlanStatus(status, approvedAt);
+  };
+
   const applyRunPayload = (run: IAiAgentRun): IAiAgentRun => {
     store.upsertRun(run);
     setMode('agent');
@@ -201,6 +211,38 @@ export const useAiAgentRun = () => {
       if (session.runId === runId) {
         sidecarStepLoopSessions.delete(confirmationId);
       }
+    }
+  };
+
+  const finishSidecarPlanIfTerminal = async (
+    run: IAiAgentRun,
+    fallbackErrorMessage: string | null = null,
+  ): Promise<void> => {
+    if (!isTerminalRunStatus(run.status) || !store.planId || !store.planVersion) {
+      return;
+    }
+
+    const status = run.status === 'completed' ? 'completed' : 'failed';
+
+    try {
+      const payload = await aiService.sidecarPlanFinish({
+        planId: store.planId,
+        version: store.planVersion,
+        status,
+        ...(status === 'failed'
+          ? { errorMessage: run.errorMessage ?? fallbackErrorMessage ?? 'Agent run 未完成。' }
+          : {}),
+      });
+      const projection = projectSidecarPlanRecordResponse(payload);
+
+      if (projection.metadata) {
+        store.applyPlanMetadata(projection.metadata, projection.versions);
+        return;
+      }
+
+      setPlanStatus(status, store.approvedAt);
+    } catch (error) {
+      setErrorMessage(toErrorMessage(error, '收口 Agent 计划状态失败。'));
     }
   };
 
@@ -391,6 +433,9 @@ export const useAiAgentRun = () => {
         messages: session.messages,
         context: session.context,
         workspaceRootPath: session.workspaceRootPath ?? null,
+        planId: session.planId,
+        planVersion: session.planVersion,
+        planStepId: session.stepId,
       });
     } finally {
       unlistenSidecarStream();
@@ -422,13 +467,15 @@ export const useAiAgentRun = () => {
 
     if (projection.errorMessage) {
       setErrorMessage(projection.errorMessage);
-      return finishRunWithStepStatus(
+      const failedRun = finishRunWithStepStatus(
         session.runId,
         session.stepId,
         'failed',
         'failed',
         projection.errorMessage,
       );
+      await finishSidecarPlanIfTerminal(failedRun, projection.errorMessage);
+      return failedRun;
     }
 
     const finalContent = projection.assistantContent.trim();
@@ -445,7 +492,9 @@ export const useAiAgentRun = () => {
       );
     }
 
-    return finishRunWithStepStatus(session.runId, session.stepId, 'done');
+    const nextRun = finishRunWithStepStatus(session.runId, session.stepId, 'done');
+    await finishSidecarPlanIfTerminal(nextRun);
+    return nextRun;
   };
 
   const runStep = async (
@@ -477,9 +526,20 @@ export const useAiAgentRun = () => {
         throw new Error('当前没有可执行的 Agent step。');
       }
 
+      const planId = store.planId;
+      const planVersion = store.planVersion;
+
+      if (!planId || !planVersion) {
+        throw new Error('当前 Agent run 缺少已批准计划的 planId 或 version。');
+      }
+
+      setPlanStatus('executing', store.approvedAt);
+
       const session: ISidecarStepLoopSession = {
         runId,
         stepId: step.id,
+        planId,
+        planVersion,
         goal: options.goal || run.goal,
         messages: buildStepSidecarMessages(run, step, options.goal),
         context: options.context ?? [],
@@ -571,25 +631,31 @@ export const useAiAgentRun = () => {
 
     if (projection.errorMessage) {
       setErrorMessage(projection.errorMessage);
-      return finishRunWithStepStatus(
+      const failedRun = finishRunWithStepStatus(
         session.runId,
         session.stepId,
         decision === 'stop' ? 'cancelled' : 'failed',
         decision === 'stop' ? 'cancelled' : 'failed',
         projection.errorMessage,
       );
+      await finishSidecarPlanIfTerminal(failedRun, projection.errorMessage);
+      return failedRun;
     }
 
     if (decision === 'stop') {
-      return finishRunWithStepStatus(
+      const cancelledRun = finishRunWithStepStatus(
         session.runId,
         session.stepId,
         'cancelled',
         'cancelled',
       );
+      await finishSidecarPlanIfTerminal(cancelledRun, '用户停止了工具审批。');
+      return cancelledRun;
     }
 
-    return finishRunWithStepStatus(session.runId, session.stepId, 'done');
+    const nextRun = finishRunWithStepStatus(session.runId, session.stepId, 'done');
+    await finishSidecarPlanIfTerminal(nextRun);
+    return nextRun;
   };
 
   const pauseRun = async (runId: string): Promise<IAiAgentRun> => {
@@ -633,7 +699,7 @@ export const useAiAgentRun = () => {
     try {
       clearRunSessions(runId);
       store.clearPendingToolConfirmation();
-      return updateRun(runId, (run) => {
+      const cancelledRun = updateRun(runId, (run) => {
         const now = new Date().toISOString();
         const nextSteps: IAiTaskPlanStep[] = clearStepActivityFlags(run.steps).map((step): IAiTaskPlanStep => (
           step.id === run.currentStepId && step.status !== 'done'
@@ -654,6 +720,8 @@ export const useAiAgentRun = () => {
           steps: nextSteps,
         };
       });
+      await finishSidecarPlanIfTerminal(cancelledRun, '用户取消了 Agent run。');
+      return cancelledRun;
     } catch (error) {
       setErrorMessage(toErrorMessage(error, '取消 Agent run 失败。'));
       throw error;

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, realpathSync, statSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { existsSync, realpathSync, statSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { Agent, type ToolsInput } from '@mastra/core/agent';
@@ -55,7 +55,9 @@ import { buildSystemPrompt } from './agent-runtime-helpers.js';
 import {
     createMastraMemoryReference,
     createMastraMemoryScope,
+    resolveMastraStorageUrl,
 } from './mastra-memory.js';
+import { createAgentPlanStore, type IAgentPlanStore, type TAgentPlanRecord } from './plan-store.js';
 import type {
     IAgentRuntimeResponse,
     IAgentRuntimeRunOptions,
@@ -67,12 +69,14 @@ import type {
     IAgentRuntimeInput,
     IApprovalResolutionInput,
     ICheckpointRestoreInput,
+    IPlanApprovalInput,
+    IPlanFinishInput,
+    IPlanQueryInput,
+    IPlanRejectInput,
     TRollbackStepPath,
 } from './runtime-input.js';
 
-const DEFAULT_MASTRA_STORAGE_DIRECTORY = '.agent-sidecar';
-const DEFAULT_MASTRA_STORAGE_URL = `file:./${DEFAULT_MASTRA_STORAGE_DIRECTORY}/mastra.db`;
-const DEFAULT_MASTRA_LOG_FILE = `./${DEFAULT_MASTRA_STORAGE_DIRECTORY}/mastra.log`;
+const DEFAULT_MASTRA_LOG_FILE = './.agent-sidecar/mastra.log';
 const DEFAULT_EXECUTION_AGENT_ID = 'calamex-agent-sidecar';
 const DEFAULT_EXECUTION_AGENT_NAME = 'Calamex Agent Sidecar';
 const RUNTIME_TOOL_PREVIEW_CHARS = 1200;
@@ -207,6 +211,7 @@ interface IMastraRuntimeDeps {
     createMcpClientBundle?: (
         options?: { workspaceRootPath?: string | null },
     ) => Promise<IMastraMcpBundle>;
+    createPlanStore?: () => IAgentPlanStore;
     now?: () => string;
 }
 
@@ -227,6 +232,7 @@ interface IMastraTextStreamSummary {
 }
 
 type TRuntimeEventFactory = (draft: TAgentRuntimeEventDraft) => TAgentRuntimeOutputEvent;
+type TMastraToolProfile = 'readonly' | 'write';
 
 interface IMastraDurableAgentLike {
     stream(
@@ -409,6 +415,7 @@ const createExecutionRequestContext = (
     input: IAgentRuntimeInput,
     systemPrompt: string,
     memory: { thread: string; resource: string },
+    approvedPlanRecord?: TAgentPlanRecord,
 ): TMastraRequestContext => createMastraRequestContext({
     mode: input.mode,
     goal: input.goal,
@@ -417,6 +424,12 @@ const createExecutionRequestContext = (
     context: input.context ?? [],
     memoryThreadId: memory.thread,
     memoryResourceId: memory.resource,
+    ...(approvedPlanRecord ? {
+        planId: approvedPlanRecord.planId,
+        planVersion: approvedPlanRecord.version,
+        planStepId: input.planStepId ?? null,
+        approvedPlan: toJsonValue(approvedPlanRecord.plan),
+    } : {}),
 });
 
 const resolveSystemPromptFromSnapshot = (
@@ -435,17 +448,6 @@ const extractRestoreResultText = (result: unknown): string | null => {
     const nestedResult = toRecord(topLevel?.result);
     const output = toRecord(nestedResult?.output) ?? toRecord(topLevel?.output);
     return toNonEmptyString(output?.text);
-};
-
-const resolveMastraStorageUrl = (env: NodeJS.ProcessEnv = process.env): string => {
-    const configured = toNonEmptyString(env.AGENT_SIDECAR_LIBSQL_URL);
-
-    if (configured) {
-        return configured;
-    }
-
-    mkdirSync(join(process.cwd(), DEFAULT_MASTRA_STORAGE_DIRECTORY), { recursive: true });
-    return DEFAULT_MASTRA_STORAGE_URL;
 };
 
 const resolveWorkspaceDirectory = (workspaceRootPath?: string | null): string | null => {
@@ -491,7 +493,7 @@ const createWorkspaceLspConfig = (workspaceRoot: string): LSPConfig => ({
     searchPaths: createWorkspaceSearchPaths(workspaceRoot),
 });
 
-const createWorkspaceToolsConfig = (): WorkspaceToolsConfig => ({
+const createWorkspaceToolsConfig = (profile: TMastraToolProfile): WorkspaceToolsConfig => ({
     enabled: false,
     requireApproval: false,
     [WORKSPACE_TOOLS.FILESYSTEM.READ_FILE]: {
@@ -502,26 +504,31 @@ const createWorkspaceToolsConfig = (): WorkspaceToolsConfig => ({
     [WORKSPACE_TOOLS.FILESYSTEM.GREP]: {
         enabled: true,
     },
-    [WORKSPACE_TOOLS.FILESYSTEM.EDIT_FILE]: {
-        enabled: true,
-        name: 'string_replace_lsp',
-        requireReadBeforeWrite: true,
-    },
-    [WORKSPACE_TOOLS.FILESYSTEM.WRITE_FILE]: {
-        enabled: true,
-        name: 'write_file',
-        requireReadBeforeWrite: true,
-    },
-    [WORKSPACE_TOOLS.FILESYSTEM.AST_EDIT]: {
-        enabled: true,
-        requireReadBeforeWrite: true,
-    },
+    ...(profile === 'write' ? {
+        [WORKSPACE_TOOLS.FILESYSTEM.EDIT_FILE]: {
+            enabled: true,
+            name: 'string_replace_lsp',
+            requireReadBeforeWrite: true,
+        },
+        [WORKSPACE_TOOLS.FILESYSTEM.WRITE_FILE]: {
+            enabled: true,
+            name: 'write_file',
+            requireReadBeforeWrite: true,
+        },
+        [WORKSPACE_TOOLS.FILESYSTEM.AST_EDIT]: {
+            enabled: true,
+            requireReadBeforeWrite: true,
+        },
+    } : {}),
     [WORKSPACE_TOOLS.LSP.LSP_INSPECT]: {
         enabled: true,
     },
 });
 
-const createMastraWorkspace = (workspaceRootPath?: string | null): AnyWorkspace | undefined => {
+const createMastraWorkspace = (
+    workspaceRootPath?: string | null,
+    profile: TMastraToolProfile = 'write',
+): AnyWorkspace | undefined => {
     const workspaceRoot = resolveWorkspaceDirectory(workspaceRootPath);
 
     if (!workspaceRoot) {
@@ -542,7 +549,7 @@ const createMastraWorkspace = (workspaceRootPath?: string | null): AnyWorkspace 
             timeout: WORKSPACE_OPERATION_TIMEOUT_MS,
         }),
         lsp: createWorkspaceLspConfig(workspaceRoot),
-        tools: createWorkspaceToolsConfig(),
+        tools: createWorkspaceToolsConfig(profile),
         operationTimeout: WORKSPACE_OPERATION_TIMEOUT_MS,
     });
 };
@@ -720,6 +727,9 @@ const FILESYSTEM_MCP_TOOL_NAMES = new Set([
     'list_allowed_directories',
 ]);
 
+const READONLY_MCP_TOOL_DENY_PATTERN =
+    /(?:^|[_-])(write|edit|create|move|delete|remove|run|exec|execute|shell|install|apply|commit|checkout|reset|add|stage|unstage|discard|drop|push|pull|merge|rebase|stash|upload|send|post|put|patch|update|insert|replace)(?:$|[_-])/iu;
+
 const filterMcpToolsForWorkspace = (
     tools: readonly IMcpToolLike[],
     workspace: AnyWorkspace | undefined,
@@ -729,6 +739,17 @@ const filterMcpToolsForWorkspace = (
     }
 
     return tools.filter((tool) => !FILESYSTEM_MCP_TOOL_NAMES.has(tool.name));
+};
+
+const filterMcpToolsForProfile = (
+    tools: readonly IMcpToolLike[],
+    profile: TMastraToolProfile,
+): IMcpToolLike[] => {
+    if (profile === 'write') {
+        return [...tools];
+    }
+
+    return tools.filter((tool) => !READONLY_MCP_TOOL_DENY_PATTERN.test(tool.name));
 };
 
 const findCurrentFileReference = (
@@ -768,6 +789,7 @@ const loadMastraMcpTools = async (
     workspaceRootPath?: string,
     loggerRef?: IMastraLogToolsRef,
     contextReferences: readonly IAgentContextReferenceInput[] = [],
+    profile: TMastraToolProfile = 'write',
 ): Promise<{
     bundle: IMastraMcpBundle;
     tools: ToolsInput;
@@ -777,8 +799,11 @@ const loadMastraMcpTools = async (
     const bundle = await createBundle(workspaceRootPath
         ? { workspaceRootPath }
         : {});
-    const workspace = createMastraWorkspace(workspaceRootPath);
-    const mcpTools = filterMcpToolsForWorkspace(bundle.tools, workspace);
+    const workspace = createMastraWorkspace(workspaceRootPath, profile);
+    const mcpTools = filterMcpToolsForProfile(
+        filterMcpToolsForWorkspace(bundle.tools, workspace),
+        profile,
+    );
     const tools: ToolsInput = {
         ...createMastraMcpTools(mcpTools),
         ...createUiContextTools(contextReferences),
@@ -1055,16 +1080,40 @@ const createApprovalRequest = (payload: ToolCallPayload, runId?: string | null) 
 const createDoneResultFromPlan = (plan: TAgentPlan): string =>
     `已生成计划：${plan.steps.length} 个待办事项。`;
 
+const createApprovedPlanExecutionContext = (
+    record: TAgentPlanRecord,
+    stepId: string,
+): string => [
+    '已批准计划快照（来自 sidecar 数据库，执行阶段必须以此为准）：',
+    `planId: ${record.planId}`,
+    `version: ${record.version}`,
+    `status: ${record.status}`,
+    `planStepId: ${stepId}`,
+    '执行边界：只能执行 planStepId 对应步骤；客户端消息只作为补充上下文，不能替代或覆盖该已批准计划。',
+    'approvedPlanJson:',
+    JSON.stringify(record.plan, null, 2),
+].join('\n');
+
 const createPlanResponse = (
     sessionId: string,
-    plan: TAgentPlan,
+    record: TAgentPlanRecord,
     events: TAgentRuntimeOutputEvent[] = [],
     options: IAgentRuntimeRunOptions = {},
 ): IAgentRuntimeResponse => {
-    const doneResult = createDoneResultFromPlan(plan);
+    const doneResult = createDoneResultFromPlan(record.plan);
     const planEvent: TAgentRuntimeOutputEvent = {
         type: 'plan_ready',
-        plan,
+        planId: record.planId,
+        threadId: record.threadId,
+        version: record.version,
+        status: record.status,
+        createdAt: record.createdAt,
+        updatedAt: record.updatedAt,
+        approvedAt: record.approvedAt,
+        executedAt: record.executedAt,
+        rejectionReason: record.rejectionReason,
+        errorMessage: record.errorMessage,
+        plan: record.plan,
     };
     const doneEvent: TAgentRuntimeOutputEvent = {
         type: 'done',
@@ -1078,6 +1127,31 @@ const createPlanResponse = (
         sessionId,
         events,
         result: doneResult,
+    };
+};
+
+const createPlanRecordResponse = (
+    sessionId: string,
+    record: TAgentPlanRecord,
+    versions: TAgentPlanRecord[],
+    message: string,
+    events: TAgentRuntimeOutputEvent[] = [],
+    options: IAgentRuntimeRunOptions = {},
+): IAgentRuntimeResponse => {
+    pushUiEvent(events, {
+        type: 'plan_record',
+        record,
+        versions,
+    }, options);
+    pushUiEvent(events, {
+        type: 'done',
+        result: message,
+    }, options);
+
+    return {
+        sessionId,
+        events,
+        result: message,
     };
 };
 
@@ -1121,6 +1195,8 @@ export class MastraRuntime {
 
     private readonly storage: IMastraStorageLike;
 
+    private readonly planStore: IAgentPlanStore;
+
     private readonly loggerRef: IMastraLogToolsRef;
 
     private readonly pendingApprovals = new Map<string, IMastraPendingApproval>();
@@ -1130,6 +1206,7 @@ export class MastraRuntime {
     constructor(deps: IMastraRuntimeDeps = {}) {
         this.createAgent = deps.createAgent ?? defaultCreateAgent;
         this.storage = deps.createStorage ? deps.createStorage() : defaultCreateStorage();
+        this.planStore = deps.createPlanStore ? deps.createPlanStore() : createAgentPlanStore();
         this.loggerRef = createMastraLoggerRef();
         this.createExecutionHandle = deps.createExecutionHandle
             ?? ((config) => defaultCreateExecutionHandle(config, this.storage, this.loggerRef));
@@ -1547,6 +1624,7 @@ export class MastraRuntime {
             input.workspaceRootPath,
             this.loggerRef,
             input.context ?? [],
+            'readonly',
         );
         const hasAgentTools = hasTools || Boolean(workspace);
         const requestedRunId = options.context?.requestId ?? createSessionId('mastra-plan-run');
@@ -1591,7 +1669,14 @@ export class MastraRuntime {
                     );
                 }
 
-                return createPlanResponse(sessionId, parsedPlan.data, [], options);
+                const record = await this.planStore.createPendingPlan({
+                    ...(input.planId ? { planId: input.planId } : {}),
+                    threadId: input.threadId ?? sessionId,
+                    userRequest: input.goal,
+                    plan: parsedPlan.data,
+                });
+
+                return createPlanResponse(sessionId, record, [], options);
             });
         } catch (error) {
             return createErrorResponse(
@@ -1607,6 +1692,115 @@ export class MastraRuntime {
         }
     }
 
+    async approvePlan(
+        input: IPlanApprovalInput,
+        options: IAgentRuntimeRunOptions = {},
+    ): Promise<IAgentRuntimeResponse> {
+        const sessionId = input.sessionId ?? createSessionId('mastra-plan-approve');
+
+        try {
+            const record = await this.planStore.approvePlan(input);
+            const versions = await this.planStore.listPlanVersions(record.planId);
+            return createPlanRecordResponse(
+                sessionId,
+                record,
+                versions,
+                `计划 ${record.planId}@v${record.version} 已批准。`,
+                [],
+                options,
+            );
+        } catch (error) {
+            return createErrorResponse(
+                sessionId,
+                `批准计划失败：${normalizeMastraError(error)}`,
+                [],
+                options,
+            );
+        }
+    }
+
+    async getPlan(
+        input: IPlanQueryInput,
+        options: IAgentRuntimeRunOptions = {},
+    ): Promise<IAgentRuntimeResponse> {
+        const sessionId = input.sessionId ?? createSessionId('mastra-plan-query');
+
+        try {
+            const record = await this.planStore.getPlan(input);
+            const versions = await this.planStore.listPlanVersions(record.planId);
+            return createPlanRecordResponse(
+                sessionId,
+                record,
+                versions,
+                `已读取计划 ${record.planId}@v${record.version}。`,
+                [],
+                options,
+            );
+        } catch (error) {
+            return createErrorResponse(
+                sessionId,
+                `读取计划失败：${normalizeMastraError(error)}`,
+                [],
+                options,
+            );
+        }
+    }
+
+    async rejectPlan(
+        input: IPlanRejectInput,
+        options: IAgentRuntimeRunOptions = {},
+    ): Promise<IAgentRuntimeResponse> {
+        const sessionId = input.sessionId ?? createSessionId('mastra-plan-reject');
+
+        try {
+            const record = await this.planStore.rejectPlan(input);
+            const versions = await this.planStore.listPlanVersions(record.planId);
+            return createPlanRecordResponse(
+                sessionId,
+                record,
+                versions,
+                `计划 ${record.planId}@v${record.version} 已拒绝。`,
+                [],
+                options,
+            );
+        } catch (error) {
+            return createErrorResponse(
+                sessionId,
+                `拒绝计划失败：${normalizeMastraError(error)}`,
+                [],
+                options,
+            );
+        }
+    }
+
+    async finishPlan(
+        input: IPlanFinishInput,
+        options: IAgentRuntimeRunOptions = {},
+    ): Promise<IAgentRuntimeResponse> {
+        const sessionId = input.sessionId ?? createSessionId('mastra-plan-finish');
+
+        try {
+            const record = await this.planStore.finishPlan(input);
+            const versions = await this.planStore.listPlanVersions(record.planId);
+            const statusLabel = input.status === 'completed' ? '已完成' : '已失败';
+            return createPlanRecordResponse(
+                sessionId,
+                record,
+                versions,
+                `计划 ${record.planId}@v${record.version} ${statusLabel}。`,
+                [],
+                options,
+            );
+        } catch (error) {
+            return createErrorResponse(
+                sessionId,
+                `更新计划状态失败：${normalizeMastraError(error)}`,
+                [],
+                options,
+            );
+        }
+    }
+
     async execute(
         input: IAgentRuntimeInput,
         options: IAgentRuntimeRunOptions = {},
@@ -1617,6 +1811,36 @@ export class MastraRuntime {
         };
         const sessionId = normalizedInput.sessionId ?? createSessionId('mastra-execute');
         const events: TAgentRuntimeOutputEvent[] = [];
+        const planId = toNonEmptyString(normalizedInput.planId);
+        const planStepId = toNonEmptyString(normalizedInput.planStepId);
+        const planVersion = normalizedInput.planVersion;
+
+        if (!planId || !planStepId || !Number.isInteger(planVersion) || Number(planVersion) <= 0) {
+            return createErrorResponse(
+                sessionId,
+                'Agent 执行需要已批准计划的 planId、planVersion 和 planStepId。',
+                events,
+                options,
+            );
+        }
+
+        let approvedPlanRecord: TAgentPlanRecord;
+        try {
+            const gate = await this.planStore.prepareExecution({
+                planId,
+                version: Number(planVersion),
+                stepId: planStepId,
+            });
+            approvedPlanRecord = gate.record;
+        } catch (error) {
+            return createErrorResponse(
+                sessionId,
+                `Plan 执行门禁失败：${normalizeMastraError(error)}`,
+                events,
+                options,
+            );
+        }
+
         const modelConfig = this.readModelConfig();
 
         if (!modelConfig) {
@@ -1648,7 +1872,10 @@ export class MastraRuntime {
             agentId: DEFAULT_EXECUTION_AGENT_ID,
             ...(this.now ? { now: this.now } : {}),
         });
-        const systemPrompt = buildSystemPrompt(normalizedInput, modelConfig.modelId);
+        const systemPrompt = [
+            buildSystemPrompt(normalizedInput, modelConfig.modelId),
+            createApprovedPlanExecutionContext(approvedPlanRecord, planStepId),
+        ].join('\n\n');
         let shouldDisconnectBundle = true;
         let streamCleanup: (() => void) | undefined;
 
@@ -1671,7 +1898,12 @@ export class MastraRuntime {
                         memory,
                         ...(options.context?.signal ? { abortSignal: options.context.signal } : {}),
                         runId: requestedRunId,
-                        requestContext: createExecutionRequestContext(normalizedInput, systemPrompt, memory),
+                        requestContext: createExecutionRequestContext(
+                            normalizedInput,
+                            systemPrompt,
+                            memory,
+                            approvedPlanRecord,
+                        ),
                     },
                 );
                 streamCleanup = stream.cleanup;

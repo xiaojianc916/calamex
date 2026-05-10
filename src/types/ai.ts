@@ -77,6 +77,8 @@ export type {
   IAiAgentClassifyTaskRequest,
   IAiAgentListRunsPayload,
   IAiAgentNetworkPermissionPayload,
+  IAiAgentPlanMetadata,
+  IAiAgentPlanVersionSummary,
   IAiAgentPermissionState,
   IAiAgentPlanPayload,
   IAiAgentPlanReference,

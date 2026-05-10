@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 
+import InlineError from '@/components/common/InlineError.vue';
 import type { IAiWebSourceEntry } from '@/types/ai';
 
 const props = defineProps<{
@@ -72,7 +73,12 @@ const handleFetch = (): void => {
     <p v-if="source.fetchedSource" class="ai-web-source-ref">
       textRef: {{ source.fetchedSource.textRef }}
     </p>
-    <p v-if="source.errorMessage" class="ai-web-source-error">{{ source.errorMessage }}</p>
+    <InlineError
+      v-if="source.errorMessage"
+      class="ai-web-source-error"
+      title="网页读取失败"
+      :message="source.errorMessage"
+    />
   </article>
 </template>
 
@@ -157,8 +163,7 @@ const handleFetch = (): void => {
 .ai-web-source-url,
 .ai-web-source-step,
 .ai-web-source-excerpt,
-.ai-web-source-ref,
-.ai-web-source-error {
+.ai-web-source-ref {
   margin: 0;
   font-size: 11px;
   line-height: 16px;
@@ -182,6 +187,6 @@ const handleFetch = (): void => {
 }
 
 .ai-web-source-error {
-  color: var(--danger);
+  margin-top: 2px;
 }
 </style>

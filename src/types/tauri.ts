@@ -4,7 +4,11 @@ import type {
   IAgentSidecarCheckpointRestoreRequest,
   IAgentSidecarExecuteRequest,
   IAgentSidecarHealthPayload,
+  IAgentSidecarPlanApproveRequest,
+  IAgentSidecarPlanFinishRequest,
+  IAgentSidecarPlanQueryRequest,
   IAgentSidecarPlanRequest,
+  IAgentSidecarPlanRejectRequest,
   IAgentSidecarResponsePayload,
   IAgentSidecarStreamEventPayload,
 } from './agent-sidecar';
@@ -258,6 +262,18 @@ export interface ITauriService {
   agentSidecarHealth(): Promise<IAgentSidecarHealthPayload>;
   agentSidecarChat(payload: IAgentSidecarChatRequest): Promise<IAgentSidecarResponsePayload>;
   agentSidecarPlan(payload: IAgentSidecarPlanRequest): Promise<IAgentSidecarResponsePayload>;
+  agentSidecarPlanApprove(
+    payload: IAgentSidecarPlanApproveRequest,
+  ): Promise<IAgentSidecarResponsePayload>;
+  agentSidecarPlanQuery(
+    payload: IAgentSidecarPlanQueryRequest,
+  ): Promise<IAgentSidecarResponsePayload>;
+  agentSidecarPlanReject(
+    payload: IAgentSidecarPlanRejectRequest,
+  ): Promise<IAgentSidecarResponsePayload>;
+  agentSidecarPlanFinish(
+    payload: IAgentSidecarPlanFinishRequest,
+  ): Promise<IAgentSidecarResponsePayload>;
   agentSidecarExecute(payload: IAgentSidecarExecuteRequest): Promise<IAgentSidecarResponsePayload>;
   agentSidecarResolveApproval(
     payload: IAgentSidecarApprovalResolveRequest,

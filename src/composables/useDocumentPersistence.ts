@@ -90,7 +90,9 @@ export const useDocumentPersistence = ({
   ): false => {
     const message = toErrorMessage(error, fallbackMessage);
     editorStore.appendLog('error', title, message);
-    notifier.error(message);
+    notifier.error(title, {
+      ...(message === title ? {} : { description: message }),
+    });
     return false;
   };
 

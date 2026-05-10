@@ -2,11 +2,18 @@ import { ref } from 'vue';
 
 import { aiService } from '@/services/modules/ai';
 import { useAiAgentStore } from '@/store/aiAgent';
-import { projectSidecarPlanResponse } from '@/utils/agent-sidecar-events';
+import {
+  mapSidecarPlanToTaskSteps,
+  projectSidecarPlanRecordResponse,
+  projectSidecarPlanResponse,
+} from '@/utils/agent-sidecar-events';
 import { toErrorMessage } from '@/utils/error';
+import { logger } from '@/utils/logger';
 
+import type { IAgentSidecarResponsePayload } from '@/types/agent-sidecar';
 import type {
   IAiContextReference,
+  IAiAgentPlanMetadata,
   IAiTaskPlanStep,
   IAiToolCall,
 } from '@/types/ai';
@@ -16,8 +23,15 @@ const MAX_PLAN_STEPS = 6;
 
 export interface IAiAgentPlanCreationResult {
   steps: IAiTaskPlanStep[];
+  planMetadata: IAiAgentPlanMetadata;
+  summary: string | null;
   toolCalls: IAiToolCall[];
   assistantContent: string;
+}
+
+interface IAiAgentCreatePlanOptions {
+  planId?: string;
+  threadId?: string;
 }
 
 const cloneContext = (
@@ -36,11 +50,56 @@ const assertValidPlanSteps = (steps: IAiTaskPlanStep[]): void => {
   }
 };
 
+const getSidecarErrorMessage = (payload: IAgentSidecarResponsePayload): string | null =>
+  payload.events.find((event): event is Extract<(typeof payload.events)[number], { type: 'error' }> =>
+    event.type === 'error'
+  )?.message ?? null;
+
+const assertSidecarSuccess = (
+  payload: IAgentSidecarResponsePayload,
+  fallback: string,
+): void => {
+  const errorMessage = getSidecarErrorMessage(payload);
+
+  if (errorMessage) {
+    throw new Error(errorMessage);
+  }
+
+  if (payload.result === null) {
+    throw new Error(fallback);
+  }
+};
+
 export const useAiAgentPlan = () => {
   const store = useAiAgentStore();
 
   const latestContext = ref<IAiContextReference[]>([]);
   const latestWorkspaceRootPath = ref<string | null>(null);
+
+  const applyPlanRecordPayload = (
+    payload: IAgentSidecarResponsePayload,
+    options: { replacePlanSnapshot?: boolean } = {},
+  ): void => {
+    const projection = projectSidecarPlanRecordResponse(payload);
+
+    if (projection.errorMessage) {
+      throw new Error(projection.errorMessage);
+    }
+
+    if (!projection.metadata) {
+      throw new Error('sidecar 未返回计划记录，无法同步计划状态。');
+    }
+
+    if (options.replacePlanSnapshot && projection.record) {
+      store.setPlan(
+        projection.record.plan.goal,
+        mapSidecarPlanToTaskSteps(projection.record.plan),
+        projection.metadata,
+      );
+    }
+
+    store.applyPlanMetadata(projection.metadata, projection.versions);
+  };
 
   const classifyTask = async (
     goal: string,
@@ -71,6 +130,7 @@ export const useAiAgentPlan = () => {
     goal: string,
     context: IAiContextReference[],
     workspaceRootPath: string | null = null,
+    options: IAiAgentCreatePlanOptions = {},
   ): Promise<IAiAgentPlanCreationResult> => {
     store.beginPlanning(goal);
     store.isPlanning = true;
@@ -89,6 +149,8 @@ export const useAiAgentPlan = () => {
         ],
         workspaceRootPath,
         context: contextSnapshot,
+        ...(options.threadId ? { threadId: options.threadId } : {}),
+        ...(options.planId ? { planId: options.planId } : {}),
       });
       const projection = projectSidecarPlanResponse(payload, goal);
 
@@ -96,13 +158,31 @@ export const useAiAgentPlan = () => {
         throw new Error(projection.errorMessage);
       }
 
+      if (!projection.planMetadata) {
+        throw new Error('sidecar 未返回计划元数据，无法进入审批流程。');
+      }
+
       latestContext.value = contextSnapshot;
       latestWorkspaceRootPath.value = workspaceRootPath;
       store.mode = 'plan';
-      store.setPlan(projection.goal, projection.steps);
+      store.setPlan(projection.goal, projection.steps, projection.planMetadata);
+
+      await refreshPlanRecord(
+        projection.planMetadata.planId,
+        projection.planMetadata.version,
+      ).catch((error: unknown) => {
+        logger.warn({
+          event: 'ai-agent-plan-record-refresh-failed',
+          err: error,
+          planId: projection.planMetadata.planId,
+          planVersion: projection.planMetadata.version,
+        });
+      });
 
       return {
         steps: projection.steps,
+        planMetadata: projection.planMetadata,
+        summary: projection.summary,
         toolCalls: projection.toolCalls,
         assistantContent: projection.assistantContent,
       };
@@ -121,7 +201,29 @@ export const useAiAgentPlan = () => {
       store.activeGoal,
       latestContext.value,
       latestWorkspaceRootPath.value,
+      store.planId
+        ? {
+          planId: store.planId,
+          ...(store.planThreadId ? { threadId: store.planThreadId } : {}),
+        }
+        : {},
     )).steps;
+  };
+
+  const refreshPlanRecord = async (
+    planId = store.planId,
+    version = store.planVersion ?? undefined,
+  ): Promise<void> => {
+    if (!planId) {
+      throw new Error('当前没有可查询的计划记录。');
+    }
+
+    const payload = await aiService.sidecarPlanQuery({
+      planId,
+      ...(version ? { version } : {}),
+    });
+
+    applyPlanRecordPayload(payload, { replacePlanSnapshot: true });
   };
 
   const updateStep = (
@@ -157,10 +259,49 @@ export const useAiAgentPlan = () => {
     store.errorMessage = '';
 
     try {
-      store.approvedAt = new Date().toISOString();
+      if (!store.planId || !store.planVersion) {
+        throw new Error('当前计划缺少 planId 或 version，不能批准。');
+      }
+
+      const approvedAt = new Date().toISOString();
+      const payload = await aiService.sidecarPlanApprove({
+        planId: store.planId,
+        version: store.planVersion,
+      });
+
+      assertSidecarSuccess(payload, 'sidecar 未确认计划审批结果。');
+      applyPlanRecordPayload(payload);
+      store.setPlanStatus('approved', store.approvedAt ?? approvedAt);
       store.mode = 'agent';
     } catch (error) {
       store.errorMessage = toErrorMessage(error, '批准计划失败。');
+      throw error;
+    } finally {
+      store.isApproving = false;
+    }
+  };
+
+  const rejectPlan = async (reason?: string): Promise<void> => {
+    if (!store.planId || !store.planVersion) {
+      resetPlan();
+      return;
+    }
+
+    store.isApproving = true;
+    store.errorMessage = '';
+
+    try {
+      const payload = await aiService.sidecarPlanReject({
+        planId: store.planId,
+        version: store.planVersion,
+        ...(reason ? { reason } : {}),
+      });
+
+      assertSidecarSuccess(payload, 'sidecar 未确认计划拒绝结果。');
+      applyPlanRecordPayload(payload);
+      store.mode = 'plan';
+    } catch (error) {
+      store.errorMessage = toErrorMessage(error, '拒绝计划失败。');
       throw error;
     } finally {
       store.isApproving = false;
@@ -178,9 +319,11 @@ export const useAiAgentPlan = () => {
     classifyTask,
     createPlan,
     regeneratePlan,
+    refreshPlanRecord,
     updateStep,
     removeStep,
     approvePlan,
+    rejectPlan,
     resetPlan,
   };
 };

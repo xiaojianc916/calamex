@@ -2,11 +2,14 @@
 import { ChevronDown, LoaderCircle } from 'lucide-vue-next';
 import { computed, ref } from 'vue';
 
-import AiPlanApprovalBar from '@/components/business/ai/AiPlanApprovalBar.vue';
-import AiPlanStepList from '@/components/business/ai/AiPlanStepList.vue';
 import AiToolConfirmationCard from '@/components/business/ai/AiToolConfirmationCard.vue';
 import AiWebSearchActivity from '@/components/business/ai/AiWebSearchActivity.vue';
+import { AiPlan } from '@/components/ai-elements/plan';
+import { AiQueue, type IAiQueueItem } from '@/components/ai-elements/queue';
+import InlineError from '@/components/common/InlineError.vue';
+import type { TAgentPlanStatus } from '@/types/agent-sidecar';
 import type {
+    IAiAgentPlanVersionSummary,
     IAiAgentRun,
     IAiToolConfirmationRequest,
     IAiToolActivityInline,
@@ -18,6 +21,17 @@ import type {
 
 const props = defineProps<{
     goal: string;
+    planSummary?: string | null;
+    planStatus?: TAgentPlanStatus | null;
+    planId?: string | null;
+    planVersion?: number | null;
+    planThreadId?: string | null;
+    planCreatedAt?: string | null;
+    planUpdatedAt?: string | null;
+    planExecutedAt?: string | null;
+    planRejectionReason?: string | null;
+    planErrorMessage?: string | null;
+    planVersions?: IAiAgentPlanVersionSummary[];
     steps: IAiTaskPlanStep[];
     classificationReason: string;
     errorMessage: string;
@@ -35,10 +49,21 @@ const props = defineProps<{
 const isCollapsed = ref(false);
 const planContentId = 'ai-plan-mode-panel-content';
 
+const PLAN_STATUS_LABELS: Record<TAgentPlanStatus, string> = {
+    draft: '草稿',
+    pending_approval: '待审批',
+    approved: '已批准',
+    rejected: '已拒绝',
+    executing: '执行中',
+    completed: '已完成',
+    failed: '失败',
+};
+
 const emit = defineEmits<{
     updateStepTitle: [stepId: string, title: string];
     removeStep: [stepId: string];
     regenerate: [];
+    reject: [];
     reset: [];
     approve: [];
     runStep: [];
@@ -49,7 +74,27 @@ const emit = defineEmits<{
 }>();
 
 const canApprove = computed(() =>
-    props.steps.length >= 2 && props.steps.length <= 6 && !props.activeRun,
+    props.steps.length >= 2 &&
+    props.steps.length <= 6 &&
+    !props.activeRun &&
+    !props.approvedAt &&
+    (
+        props.planStatus === 'pending_approval' ||
+        props.planStatus === 'draft' ||
+        !props.planStatus
+    ),
+);
+
+const canEditPlan = computed(() =>
+    !props.activeRun &&
+    !props.approvedAt &&
+    !props.isPlanning &&
+    !props.isApproving &&
+    !props.isClassifying &&
+    (
+        props.planStatus === 'draft' ||
+        !props.planStatus
+    ),
 );
 
 const isTerminalRunStatus = (status: TAiAgentRunStatus): boolean =>
@@ -136,6 +181,159 @@ const loadingLabel = computed(() =>
     props.isClassifying ? '正在判断是否需要计划…' : '正在生成计划…',
 );
 
+const formatDateTime = (value: string | null | undefined): string | null => {
+    if (!value) {
+        return null;
+    }
+
+    const timestamp = Date.parse(value);
+    if (!Number.isFinite(timestamp)) {
+        return value;
+    }
+
+    return new Intl.DateTimeFormat('zh-CN', {
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+    }).format(new Date(timestamp));
+};
+
+const formatStatus = (status: TAgentPlanStatus | null | undefined): string | null =>
+    status ? PLAN_STATUS_LABELS[status] : null;
+
+const shortIdentifier = (value: string): string =>
+    value.length > 12 ? `${value.slice(0, 6)}…${value.slice(-4)}` : value;
+
+const planAuditItems = computed(() => {
+    const items: Array<{ id: string; label: string; value: string; title?: string }> = [];
+
+    if (props.planId) {
+        items.push({
+            id: 'plan-id',
+            label: '计划',
+            value: shortIdentifier(props.planId),
+            title: props.planId,
+        });
+    }
+
+    if (props.planVersion) {
+        items.push({
+            id: 'version',
+            label: '版本',
+            value: `v${props.planVersion}`,
+        });
+    }
+
+    const status = formatStatus(props.planStatus);
+    if (status) {
+        items.push({
+            id: 'status',
+            label: '状态',
+            value: status,
+        });
+    }
+
+    const updatedAt = formatDateTime(props.planUpdatedAt);
+    if (updatedAt) {
+        items.push({
+            id: 'updated-at',
+            label: '更新',
+            value: updatedAt,
+        });
+    }
+
+    const approvedAtLabel = formatDateTime(props.approvedAt);
+    if (approvedAtLabel) {
+        items.push({
+            id: 'approved-at',
+            label: '批准',
+            value: approvedAtLabel,
+        });
+    }
+
+    const executedAt = formatDateTime(props.planExecutedAt);
+    if (executedAt) {
+        items.push({
+            id: 'executed-at',
+            label: '执行',
+            value: executedAt,
+        });
+    }
+
+    return items;
+});
+
+const hasPlanAudit = computed(() =>
+    planAuditItems.value.length > 0 ||
+    Boolean(props.planRejectionReason) ||
+    Boolean(props.planErrorMessage) ||
+    Boolean(props.planVersions?.length),
+);
+
+const visiblePlanVersions = computed(() =>
+    (props.planVersions ?? []).slice(0, 4).map((version) => ({
+        key: `${version.planId}:${version.version}`,
+        label: `v${version.version}`,
+        status: formatStatus(version.status) ?? version.status,
+        title: version.userRequest ?? version.summary ?? '',
+    })),
+);
+
+const queueItems = computed<IAiQueueItem[]>(() => {
+    const hasPlan = props.steps.length > 0;
+    const hasError = Boolean(props.errorMessage);
+    const executionStatus = props.activeRun?.status;
+    const isExecuting = executionStatus === 'running-plan' ||
+        executionStatus === 'running-step' ||
+        executionStatus === 'waiting-for-tool-confirmation';
+    const isPlanRejected = props.planStatus === 'rejected';
+    const isPlanCompleted = props.planStatus === 'completed';
+    const isPlanFailed = props.planStatus === 'failed';
+
+    return [
+        {
+            id: 'reading',
+            label: '读取上下文',
+            status: props.isClassifying
+                ? 'running'
+                : (props.isPlanning || hasPlan || Boolean(props.activeRun) ? 'done' : 'pending'),
+            detail: props.isClassifying ? '判断任务类型' : undefined,
+        },
+        {
+            id: 'planning',
+            label: '生成计划',
+            status: props.isPlanning ? 'running' : hasError && !hasPlan ? 'failed' : hasPlan ? 'done' : 'pending',
+            detail: props.isPlanning ? '结构化输出' : undefined,
+        },
+        {
+            id: 'approval',
+            label: '等待审批',
+            status: props.isApproving
+                ? 'running'
+                : isPlanRejected
+                    ? 'failed'
+                : (props.approvedAt || props.planStatus === 'approved' || props.planStatus === 'executing'
+                    ? 'done'
+                    : hasPlan ? 'pending' : 'pending'),
+            detail: isPlanRejected ? '已拒绝' : props.approvedAt ? '已批准' : undefined,
+        },
+        {
+            id: 'executing',
+            label: '执行计划',
+            status: isExecuting
+                ? 'running'
+                : executionStatus === 'completed' || isPlanCompleted
+                    ? 'done'
+                    : executionStatus === 'failed' || executionStatus === 'cancelled' || isPlanFailed
+                        ? 'failed'
+                        : 'pending',
+            detail: runStatusLabel.value || undefined,
+        },
+    ];
+});
+
 const collapseLabel = computed(() =>
     isCollapsed.value ? '展开待办事项' : '收起待办事项',
 );
@@ -213,21 +411,59 @@ const toggleCollapsed = (): void => {
                 {{ goal || classificationReason }}
             </p>
             <p v-if="approvedAt && !activeRun" class="ai-plan-approved">计划已批准，正在等待启动 Agent run。</p>
-            <p v-if="errorMessage" class="ai-plan-error">
-                <strong>计划生成失败</strong>
-                <span>{{ errorMessage }}</span>
-            </p>
+            <InlineError v-if="errorMessage" title="计划生成失败" :message="errorMessage" />
+
+            <section v-if="hasPlanAudit" class="ai-plan-audit" aria-label="计划审计信息">
+                <dl v-if="planAuditItems.length" class="ai-plan-audit-list">
+                    <div v-for="item in planAuditItems" :key="item.id" class="ai-plan-audit-item" :title="item.title">
+                        <dt>{{ item.label }}</dt>
+                        <dd>{{ item.value }}</dd>
+                    </div>
+                </dl>
+                <div v-if="visiblePlanVersions.length" class="ai-plan-version-list" aria-label="计划版本">
+                    <span
+                        v-for="version in visiblePlanVersions"
+                        :key="version.key"
+                        class="ai-plan-version-pill"
+                        :title="version.title"
+                    >
+                        {{ version.label }} · {{ version.status }}
+                    </span>
+                </div>
+                <p v-if="planRejectionReason" class="ai-plan-audit-message">
+                    拒绝原因：{{ planRejectionReason }}
+                </p>
+                <p v-if="planErrorMessage" class="ai-plan-audit-message is-error">
+                    执行错误：{{ planErrorMessage }}
+                </p>
+            </section>
 
             <div v-if="isClassifying || isPlanning" class="ai-plan-loading">
                 <LoaderCircle class="ai-plan-status-icon is-spinning" aria-hidden="true" />
                 <span>{{ loadingLabel }}</span>
             </div>
 
-            <AiPlanStepList
+            <AiQueue
+                v-if="steps.length || isClassifying || isPlanning || activeRun"
+                :items="queueItems"
+            />
+
+            <AiPlan
                 v-if="steps.length"
+                :goal="goal"
+                :summary="planSummary ?? null"
+                :status="planStatus ?? null"
                 :steps="steps"
+                :is-planning="Boolean(isClassifying) || isPlanning"
+                :is-approving="isApproving"
+                :can-edit="canEditPlan"
+                :can-approve="canApprove"
+                :approved-at="approvedAt"
                 @update-title="handleUpdateStepTitle"
                 @remove-step="handleRemoveStep"
+                @regenerate="emit('regenerate')"
+                @reject="emit('reject')"
+                @approve="emit('approve')"
             />
 
             <AiWebSearchActivity :activity="webActivity ?? null" />
@@ -251,7 +487,7 @@ const toggleCollapsed = (): void => {
                     <span>{{ completedStepCount }}/{{ activeRun.steps.length }} 步</span>
                 </header>
                 <p v-if="currentStepTitle" class="ai-plan-run-current">当前步骤：{{ currentStepTitle }}</p>
-                <p v-if="activeRun.errorMessage" class="ai-plan-error">{{ activeRun.errorMessage }}</p>
+                <InlineError v-if="activeRun.errorMessage" title="Agent run 失败" :message="activeRun.errorMessage" />
                 <footer class="ai-plan-run-actions">
                     <button
                         v-if="canResumeRun"
@@ -290,15 +526,14 @@ const toggleCollapsed = (): void => {
                 </footer>
             </section>
 
-            <AiPlanApprovalBar
-                :is-planning="Boolean(isClassifying) || isPlanning"
-                :is-approving="isApproving"
-                :can-approve="canApprove"
-                :approved-at="approvedAt"
-                @regenerate="emit('regenerate')"
-                @reset="emit('reset')"
-                @approve="emit('approve')"
-            />
+            <button
+                v-if="!steps.length && !isClassifying && !isPlanning"
+                type="button"
+                class="ai-plan-button"
+                @click="emit('reset')"
+            >
+                清空
+            </button>
         </div>
     </section>
 </template>
@@ -372,7 +607,6 @@ const toggleCollapsed = (): void => {
 .ai-plan-goal,
 .ai-plan-reason,
 .ai-plan-approved,
-.ai-plan-error,
 .ai-plan-loading {
     margin: 0;
     font-size: 12px;
@@ -387,23 +621,6 @@ const toggleCollapsed = (): void => {
     color: var(--text-tertiary);
 }
 
-.ai-plan-error {
-    display: grid;
-    gap: 2px;
-    color: var(--danger);
-}
-
-.ai-plan-error strong {
-    font-size: 12px;
-    font-weight: 600;
-}
-
-.ai-plan-error span {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
 .ai-plan-approved {
     color: var(--text-tertiary);
 }
@@ -413,6 +630,82 @@ const toggleCollapsed = (): void => {
     align-items: center;
     gap: 7px;
     color: var(--text-quaternary);
+}
+
+.ai-plan-audit {
+    --ai-plan-audit-gap: calc(var(--app-density-scale) * 0.375rem);
+    --ai-plan-audit-padding-block: calc(var(--app-density-scale) * 0.375rem);
+    --ai-plan-audit-padding-inline: calc(var(--app-density-scale) * 0.5rem);
+    --ai-plan-audit-font-xs: calc(var(--app-ui-font-size) * 0.77);
+    --ai-plan-audit-font-sm: calc(var(--app-ui-font-size) * 0.85);
+    display: grid;
+    gap: var(--ai-plan-audit-gap);
+    border: thin solid color-mix(in srgb, var(--shell-divider) 82%, transparent);
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--surface-soft) 52%, transparent);
+    padding: var(--ai-plan-audit-padding-block) var(--ai-plan-audit-padding-inline);
+}
+
+.ai-plan-audit-list {
+    display: flex;
+    min-width: 0;
+    flex-wrap: wrap;
+    gap: var(--ai-plan-audit-gap);
+    margin: 0;
+}
+
+.ai-plan-audit-item {
+    display: inline-flex;
+    min-width: 0;
+    align-items: center;
+    gap: calc(var(--ai-plan-audit-gap) / 1.5);
+    color: var(--text-quaternary);
+    font-size: var(--ai-plan-audit-font-xs);
+    line-height: 1.45;
+}
+
+.ai-plan-audit-item dt,
+.ai-plan-audit-item dd {
+    margin: 0;
+}
+
+.ai-plan-audit-item dd {
+    max-width: calc(var(--app-density-scale) * 10rem);
+    overflow: hidden;
+    color: var(--text-secondary);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ai-plan-version-list {
+    display: flex;
+    min-width: 0;
+    flex-wrap: wrap;
+    gap: calc(var(--ai-plan-audit-gap) / 1.25);
+}
+
+.ai-plan-version-pill {
+    max-width: 100%;
+    overflow: hidden;
+    border: thin solid color-mix(in srgb, var(--shell-divider) 82%, transparent);
+    border-radius: var(--radius-sm);
+    color: var(--text-tertiary);
+    font-size: var(--ai-plan-audit-font-xs);
+    line-height: 1.45;
+    padding: 0 calc(var(--ai-plan-audit-padding-inline) / 1.25);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ai-plan-audit-message {
+    margin: 0;
+    color: var(--text-tertiary);
+    font-size: var(--ai-plan-audit-font-sm);
+    line-height: 1.5;
+}
+
+.ai-plan-audit-message.is-error {
+    color: var(--danger);
 }
 
 .ai-plan-tool-activity {

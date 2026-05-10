@@ -588,6 +588,34 @@ const agentSidecarPlanIpc = definePayloadIpc(
   },
 );
 
+const agentSidecarPlanApproveIpc = definePayloadIpc(
+  'agent_sidecar_plan_approve',
+  '批准 Agent sidecar 计划',
+  tauriContracts.agentSidecarPlanApprove,
+  { audit: 'sensitive', timeoutMs: AGENT_SIDECAR_TASK_TIMEOUT_MS },
+);
+
+const agentSidecarPlanQueryIpc = definePayloadIpc(
+  'agent_sidecar_plan_query',
+  '读取 Agent sidecar 计划记录',
+  tauriContracts.agentSidecarPlanQuery,
+  { idempotent: true, audit: 'sensitive', timeoutMs: AGENT_SIDECAR_TASK_TIMEOUT_MS },
+);
+
+const agentSidecarPlanRejectIpc = definePayloadIpc(
+  'agent_sidecar_plan_reject',
+  '拒绝 Agent sidecar 计划',
+  tauriContracts.agentSidecarPlanReject,
+  { audit: 'sensitive', timeoutMs: AGENT_SIDECAR_TASK_TIMEOUT_MS },
+);
+
+const agentSidecarPlanFinishIpc = definePayloadIpc(
+  'agent_sidecar_plan_finish',
+  '收口 Agent sidecar 计划状态',
+  tauriContracts.agentSidecarPlanFinish,
+  { audit: 'sensitive', timeoutMs: AGENT_SIDECAR_TASK_TIMEOUT_MS },
+);
+
 const agentSidecarExecuteIpc = definePayloadIpc(
   'agent_sidecar_execute',
   '通过 Node sidecar 执行 Agent 任务',
@@ -1270,6 +1298,14 @@ export const tauriService: ITauriService & {
   agentSidecarChat: agentSidecarChatIpc,
 
   agentSidecarPlan: agentSidecarPlanIpc,
+
+  agentSidecarPlanApprove: agentSidecarPlanApproveIpc,
+
+  agentSidecarPlanQuery: agentSidecarPlanQueryIpc,
+
+  agentSidecarPlanReject: agentSidecarPlanRejectIpc,
+
+  agentSidecarPlanFinish: agentSidecarPlanFinishIpc,
 
   agentSidecarExecute: agentSidecarExecuteIpc,
 

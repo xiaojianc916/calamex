@@ -42,7 +42,9 @@ const buildModeInstruction = (mode: TAgentMode): string => (mode === 'plan'
     ? [
         'Plan 模式要求：使用 structured output 返回 AgentPlan，不要输出 Markdown 或额外解释。',
         'steps 必须依据用户的真实任务制定，2 到 6 步，避免“分析/实现/测试”这类模板标题。',
-        '每个 step 必须包含 id、title、goal、status、tools、riskLevel、requiresApproval、expectedOutput。',
+        '顶层可以包含 summary 和 requiresApproval；每个 step 必须包含 id、title、goal、status、tools、riskLevel、requiresApproval、expectedOutput。',
+        'step 可补充 description、files、commands、risks、acceptanceCriteria，用于 UI 展示和执行验收。',
+        'Plan 阶段只有只读工具，绝不能尝试写文件、运行命令、安装依赖或执行 Git 变更。',
         '如果使用 MCP 工具读取上下文，请先读取真实信息再生成计划。',
         '联网搜索必须优先使用 Tavily MCP 官方工具名：tavily-search 用于搜索，tavily-extract 用于读取网页内容，tavily-map / tavily-crawl 用于站点映射或抓取；不要在 Mastra sidecar 中生成旧的 web_search / web_fetch 伪工具名。',
         'Tavily 查询参数 query 请使用英文或中英混合自然语言；用户用中文提问时，先把检索词转成英文再调用 Tavily，最终回答仍使用中文。',

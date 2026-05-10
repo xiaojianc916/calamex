@@ -1,4 +1,5 @@
 import type { IAiContextReference } from './ai-context';
+import type { TAgentPlanStatus } from './agent-sidecar';
 import type { TAiAgentPermissionLevel, TAiAgentToolName } from './ai-tools';
 import type { IAiWebFetchInput, IAiWebSearchInput } from './ai-web';
 import type { TAiWebSourceEntryStatus, TAiWebSourceType } from './ai-web';
@@ -179,10 +180,15 @@ export interface IAiTaskPlanStep {
   index: number;
   title: string;
   goal: string;
+  description?: string;
   kind: TAiAgentPlanStepKind;
   status: TAiAgentPlanStepStatus;
   expectedOutput: string;
   tools: TAiAgentToolName[];
+  files?: string[];
+  commands?: string[];
+  risks?: string[];
+  acceptanceCriteria?: string[];
   toolInputs?: IAiAgentToolInputs;
   references?: IAiAgentPlanReference[];
   isActive?: boolean;
@@ -198,6 +204,25 @@ export interface IAiAgentPlanRequest {
 
 export interface IAiAgentPlanPayload {
   steps: IAiTaskPlanStep[];
+}
+
+export interface IAiAgentPlanMetadata {
+  planId: string;
+  threadId?: string;
+  version: number;
+  status: TAgentPlanStatus;
+  createdAt?: string;
+  updatedAt?: string;
+  approvedAt?: string | null;
+  executedAt?: string | null;
+  rejectionReason?: string | null;
+  errorMessage?: string | null;
+  summary?: string;
+  requiresApproval?: boolean;
+}
+
+export interface IAiAgentPlanVersionSummary extends IAiAgentPlanMetadata {
+  userRequest?: string;
 }
 
 export interface IAiAgentClassifyTaskRequest {

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import FieldError from '@/components/common/FieldError.vue'
 import LinearContextMenu from '@/components/common/LinearContextMenu.vue'
 import type {
   ILinearContextMenuGroup,
@@ -86,6 +87,7 @@ const SSH_AUTH_OPTIONS: ISshAuthOption[] = [
 type TSshBreadcrumbItem =
   | (ISshPathSegment & { type: 'segment' })
   | { id: 'ssh-path-ellipsis'; type: 'ellipsis'; segments: ISshPathSegment[] }
+type TSshConnectionField = 'host' | 'port' | 'username' | 'identityPath' | 'password'
 
 const FALLBACK_SELECTED_FILE: ISshFileItem = {
   id: DEFAULT_SELECTED_FILE_ID,
@@ -141,6 +143,13 @@ const contextMenu = reactive({
   open: false,
   x: 0,
   y: 0,
+})
+const connectionFieldErrors = reactive<Record<TSshConnectionField, string>>({
+  host: '',
+  port: '',
+  username: '',
+  identityPath: '',
+  password: '',
 })
 const isExplorerActive = computed(() => activeContentTab.value === 'explorer')
 const isTransferActive = computed(() => activeContentTab.value === 'transfer')
@@ -209,7 +218,20 @@ const toggleAuthSelect = (): void => {
 
 const selectAuthMode = (authMode: TSshAuthMode): void => {
   connectionForm.authMode = authMode
+  connectionFieldErrors.identityPath = ''
+  connectionFieldErrors.password = ''
   closeAuthSelect()
+}
+
+const clearConnectionFieldError = (field: TSshConnectionField): void => {
+  connectionFieldErrors[field] = ''
+  connectionErrorText.value = ''
+}
+
+const clearConnectionFieldErrors = (): void => {
+  for (const field of Object.keys(connectionFieldErrors) as TSshConnectionField[]) {
+    connectionFieldErrors[field] = ''
+  }
 }
 
 const setContentTab = (tab: TSshContentTab): void => {
@@ -720,45 +742,51 @@ const confirmDeletePath = async (): Promise<void> => {
   }
 }
 
-const validateConnectionForm = (): string | null => {
+const setConnectionFieldError = (field: TSshConnectionField, message: string): false => {
+  connectionFieldErrors[field] = message
+  return false
+}
+
+const validateConnectionForm = (): boolean => {
+  clearConnectionFieldErrors()
   const host = connectionForm.host.trim()
   const username = connectionForm.username.trim()
   const port = Number.parseInt(connectionForm.port.trim(), 10)
   const identityPath = connectionForm.identityPath.trim()
 
   if (!host) {
-    return '请填写主机地址。'
+    return setConnectionFieldError('host', '请填写主机地址。')
   }
 
   if (!HOST_PATTERN.test(host)) {
-    return '主机地址只能包含字母、数字、点、短横线、下划线或冒号。'
+    return setConnectionFieldError('host', '主机地址只能包含字母、数字、点、短横线、下划线或冒号。')
   }
 
   if (!username) {
-    return '请填写用户名。'
+    return setConnectionFieldError('username', '请填写用户名。')
   }
 
   if (!USER_PATTERN.test(username)) {
-    return '用户名只能包含字母、数字、点、短横线或下划线。'
+    return setConnectionFieldError('username', '用户名只能包含字母、数字、点、短横线或下划线。')
   }
 
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    return '端口必须是 1 到 65535 之间的整数。'
+    return setConnectionFieldError('port', '端口必须是 1 到 65535 之间的整数。')
   }
 
   if (connectionForm.authMode === 'password' && !connectionForm.password) {
-    return '请填写登录密码。'
+    return setConnectionFieldError('password', '请填写登录密码。')
   }
 
   if (identityPath && !SAFE_PATH_PATTERN.test(identityPath)) {
-    return '私钥路径不能包含换行符。'
+    return setConnectionFieldError('identityPath', '私钥路径不能包含换行符。')
   }
 
   if (connectionForm.authMode === 'password' && !SAFE_PATH_PATTERN.test(connectionForm.password)) {
-    return '登录密码不能包含换行符。'
+    return setConnectionFieldError('password', '登录密码不能包含换行符。')
   }
 
-  return null
+  return true
 }
 
 const buildSshCommand = (): string => {
@@ -808,10 +836,7 @@ const openTerminalSessionBestEffort = async (): Promise<void> => {
 const handleConnect = async (connectionId = MANUAL_CONNECTION_ID): Promise<void> => {
   connectionErrorText.value = ''
   connectionStatusText.value = ''
-  const validationError = validateConnectionForm()
-  if (validationError) {
-    connectionErrorText.value = validationError
-    message.error(validationError)
+  if (!validateConnectionForm()) {
     return
   }
 
@@ -1108,18 +1133,43 @@ onBeforeUnmount(() => {
         <div class="ssh-form-row">
           <label class="ssh-form-group">
             <span>主机地址</span>
-            <input v-model="connectionForm.host" type="text" placeholder="192.168.1.100" autocomplete="off" />
+            <input
+              v-model="connectionForm.host"
+              type="text"
+              placeholder="192.168.1.100"
+              autocomplete="off"
+              :aria-invalid="Boolean(connectionFieldErrors.host)"
+              @input="clearConnectionFieldError('host')"
+            />
+            <FieldError v-if="connectionFieldErrors.host" :message="connectionFieldErrors.host" />
           </label>
 
           <label class="ssh-form-group is-compact">
             <span>端口</span>
-            <input v-model="connectionForm.port" type="text" placeholder="22" inputmode="numeric" autocomplete="off" />
+            <input
+              v-model="connectionForm.port"
+              type="text"
+              placeholder="22"
+              inputmode="numeric"
+              autocomplete="off"
+              :aria-invalid="Boolean(connectionFieldErrors.port)"
+              @input="clearConnectionFieldError('port')"
+            />
+            <FieldError v-if="connectionFieldErrors.port" :message="connectionFieldErrors.port" />
           </label>
         </div>
 
         <label class="ssh-form-group">
           <span>用户名</span>
-          <input v-model="connectionForm.username" type="text" placeholder="root" autocomplete="off" />
+          <input
+            v-model="connectionForm.username"
+            type="text"
+            placeholder="root"
+            autocomplete="off"
+            :aria-invalid="Boolean(connectionFieldErrors.username)"
+            @input="clearConnectionFieldError('username')"
+          />
+          <FieldError v-if="connectionFieldErrors.username" :message="connectionFieldErrors.username" />
         </label>
 
         <div ref="authSelectRef" class="ssh-form-group ssh-auth-field">
@@ -1164,12 +1214,30 @@ onBeforeUnmount(() => {
 
         <label v-if="connectionForm.authMode === 'key'" class="ssh-form-group">
           <span>私钥路径</span>
-          <input v-model="connectionForm.identityPath" type="text" placeholder="~/.ssh/id_rsa" autocomplete="off" />
+          <input
+            v-model="connectionForm.identityPath"
+            type="text"
+            placeholder="~/.ssh/id_rsa"
+            autocomplete="off"
+            :aria-invalid="Boolean(connectionFieldErrors.identityPath)"
+            @input="clearConnectionFieldError('identityPath')"
+          />
+          <FieldError
+            v-if="connectionFieldErrors.identityPath"
+            :message="connectionFieldErrors.identityPath"
+          />
         </label>
         <label v-else class="ssh-form-group">
           <span>登录密码</span>
-          <input v-model="connectionForm.password" type="password" placeholder="输入 SSH 登录密码"
-            autocomplete="current-password" />
+          <input
+            v-model="connectionForm.password"
+            type="password"
+            placeholder="输入 SSH 登录密码"
+            autocomplete="current-password"
+            :aria-invalid="Boolean(connectionFieldErrors.password)"
+            @input="clearConnectionFieldError('password')"
+          />
+          <FieldError v-if="connectionFieldErrors.password" :message="connectionFieldErrors.password" />
         </label>
 
         <div class="ssh-form-actions">

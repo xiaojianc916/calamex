@@ -1,28 +1,29 @@
 <script setup lang="ts">
 import {
-    Context,
-    ContextContent,
-    ContextContentBody,
-    ContextContentFooter,
-    ContextContentHeader,
-    ContextInputUsage,
-    ContextOutputUsage,
-    ContextTrigger,
+  Context,
+  ContextContent,
+  ContextContentBody,
+  ContextContentFooter,
+  ContextContentHeader,
+  ContextInputUsage,
+  ContextOutputUsage,
+  ContextTrigger,
 } from '@/components/ai-elements/context';
 import { PromptInputAttachmentsDisplay } from '@/components/ai-elements/prompt-input';
+import FieldError from '@/components/common/FieldError.vue';
 import {
-    InputGroup,
-    InputGroupAddon,
-    InputGroupButton,
-    InputGroupTextarea,
+  InputGroup,
+  InputGroupAddon,
+  InputGroupButton,
+  InputGroupTextarea,
 } from '@/components/ui/input-group';
 import {
-    Select,
-    SelectContent,
-    SelectGroup,
-    SelectItem,
-    SelectTrigger,
-    SelectValue,
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from '@/components/ui/select';
 import type { IAiTokenContextProps } from '@/composables/useAiTokenContext';
 import type { IAiAttachedFile } from '@/types/ai';
@@ -32,8 +33,8 @@ import { computed, ref } from 'vue';
 type TAiPromptInputMode = 'chat' | 'agent' | 'plan';
 
 interface IAiPromptModeOption {
-    key: TAiPromptInputMode;
-    label: string;
+  key: TAiPromptInputMode;
+  label: string;
 }
 
 /** 输入框文本 */
@@ -43,400 +44,437 @@ const modelValue = defineModel<string>({ required: true });
 const activeMode = defineModel<TAiPromptInputMode>('activeMode', { required: true });
 
 const props = defineProps<{
-    disabled: boolean;
-    errorMessage: string;
-    submitLabel: string;
-    attachments: readonly IAiAttachedFile[];
-    hasAttachments: boolean;
-    tokenContext?: IAiTokenContextProps;
+  disabled: boolean;
+  errorMessage: string;
+  submitLabel: string;
+  attachments: readonly IAiAttachedFile[];
+  hasAttachments: boolean;
+  tokenContext?: IAiTokenContextProps;
 }>();
 
 const emit = defineEmits<{
-    submit: [];
-    stop: [];
-    fileSelected: [file: File];
-    removeFile: [id: string];
+  submit: [];
+  stop: [];
+  fileSelected: [file: File];
+  removeFile: [id: string];
 }>();
 
 const fileInputRef = ref<HTMLInputElement | null>(null);
 const isComposing = ref(false);
 
 const modeOptions: IAiPromptModeOption[] = [
-    { key: 'chat', label: 'Chat' },
-    { key: 'agent', label: 'Agent' },
-    { key: 'plan', label: 'Plan' },
+  { key: 'chat', label: 'Chat' },
+  { key: 'agent', label: 'Agent' },
+  { key: 'plan', label: 'Plan' },
 ];
 const emptyTokenContext: IAiTokenContextProps = {
-    usedTokens: 0,
-    maxTokens: 0,
-    usage: {
-        inputTokens: 0,
-        inputTokenDetails: {
-            noCacheTokens: 0,
-            cacheReadTokens: 0,
-            cacheWriteTokens: 0,
-        },
-        outputTokens: 0,
-        outputTokenDetails: {
-            textTokens: 0,
-            reasoningTokens: 0,
-        },
-        totalTokens: 0,
-        cachedInputTokens: 0,
-        reasoningTokens: 0,
+  usedTokens: 0,
+  maxTokens: 0,
+  usage: {
+    inputTokens: 0,
+    inputTokenDetails: {
+      noCacheTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
     },
+    outputTokens: 0,
+    outputTokenDetails: {
+      textTokens: 0,
+      reasoningTokens: 0,
+    },
+    totalTokens: 0,
+    cachedInputTokens: 0,
+    reasoningTokens: 0,
+  },
 };
 const resolvedTokenContext = computed(() => props.tokenContext ?? emptyTokenContext);
 
 const isPromptInputMode = (value: unknown): value is TAiPromptInputMode =>
-    value === 'chat' || value === 'agent' || value === 'plan';
+  value === 'chat' || value === 'agent' || value === 'plan';
 
 const canSubmit = computed(() => modelValue.value.trim().length > 0 || props.hasAttachments);
 
 const handleSubmit = (): void => {
-    if (props.disabled || !canSubmit.value) {
-        return;
-    }
-    emit('submit');
+  if (props.disabled || !canSubmit.value) {
+    return;
+  }
+  emit('submit');
 };
 
 const handleModeChange = (value: unknown): void => {
-    if (!isPromptInputMode(value)) {
-        return;
-    }
-    activeMode.value = value;
+  if (!isPromptInputMode(value)) {
+    return;
+  }
+  activeMode.value = value;
 };
 
 const handleRemoveAttachment = (id: string): void => {
-    emit('removeFile', id);
+  emit('removeFile', id);
 };
 
 const handleOpenFileDialog = (): void => {
-    if (props.disabled) {
-        return;
-    }
-    fileInputRef.value?.click();
+  if (props.disabled) {
+    return;
+  }
+  fileInputRef.value?.click();
 };
 
 const handleFileChange = (event: Event): void => {
-    const input = event.target;
-    if (!(input instanceof HTMLInputElement)) {
-        return;
-    }
-    const fileList = input.files;
-    if (!fileList?.length) {
-        input.value = '';
-        return;
-    }
-    for (const file of Array.from(fileList)) {
-        emit('fileSelected', file);
-    }
+  const input = event.target;
+  if (!(input instanceof HTMLInputElement)) {
+    return;
+  }
+  const fileList = input.files;
+  if (!fileList?.length) {
     input.value = '';
+    return;
+  }
+  for (const file of Array.from(fileList)) {
+    emit('fileSelected', file);
+  }
+  input.value = '';
 };
 
 const handlePaste = (event: ClipboardEvent): void => {
-    const items = event.clipboardData?.items;
-    if (!items) {
-        return;
+  const items = event.clipboardData?.items;
+  if (!items) {
+    return;
+  }
+  const pastedFiles: File[] = [];
+  for (const item of Array.from(items)) {
+    if (item.kind !== 'file') {
+      continue;
     }
-    const pastedFiles: File[] = [];
-    for (const item of Array.from(items)) {
-        if (item.kind !== 'file') {
-            continue;
-        }
-        const file = item.getAsFile();
-        if (file) {
-            pastedFiles.push(file);
-        }
+    const file = item.getAsFile();
+    if (file) {
+      pastedFiles.push(file);
     }
-    if (!pastedFiles.length) {
-        return;
-    }
-    event.preventDefault();
-    pastedFiles.forEach((file) => emit('fileSelected', file));
+  }
+  if (!pastedFiles.length) {
+    return;
+  }
+  event.preventDefault();
+  pastedFiles.forEach((file) => emit('fileSelected', file));
 };
 
 const handleKeyDown = (event: KeyboardEvent): void => {
-    if (event.key !== 'Enter' || event.shiftKey || isComposing.value || event.isComposing) {
-        return;
-    }
-    event.preventDefault();
-    if (props.disabled) {
-        return;
-    }
-    handleSubmit();
+  if (event.key !== 'Enter' || event.shiftKey || isComposing.value || event.isComposing) {
+    return;
+  }
+  event.preventDefault();
+  if (props.disabled) {
+    return;
+  }
+  handleSubmit();
 };
 
 const handleStop = (): void => {
-    emit('stop');
+  emit('stop');
 };
 </script>
 
 <template>
-    <footer class="ai-composer">
-        <p v-if="errorMessage" class="ai-error" v-text="errorMessage" />
-        <form class="ai-composer-surface" @submit.prevent="handleSubmit">
-            <input ref="fileInputRef" type="file" class="hidden" multiple @change="handleFileChange" />
-            <div v-if="attachments.length" class="ai-attachments">
-                <PromptInputAttachmentsDisplay :attachments="attachments" @remove="handleRemoveAttachment" />
-            </div>
-            <InputGroup class="ai-prompt-shell">
-                <InputGroupTextarea v-model="modelValue" class="ai-prompt-textarea" placeholder="输入消息" aria-label="输入消息"
-                    :disabled="disabled" @keydown="handleKeyDown" @paste="handlePaste"
-                    @compositionstart="isComposing = true" @compositionend="isComposing = false" />
-                <InputGroupAddon align="block-end" class="ai-toolbar-row">
-                    <InputGroupButton type="button" variant="outline" class="ai-attachment-button rounded-full"
-                        size="icon-xs" :disabled="disabled" aria-label="添加附件" @click="handleOpenFileDialog">
-                        <PlusIcon class="size-4" />
-                    </InputGroupButton>
+  <footer class="ai-composer">
+    <FieldError v-if="errorMessage" class="ai-error" :message="errorMessage" />
+    <form class="ai-composer-surface" @submit.prevent="handleSubmit">
+      <input ref="fileInputRef" type="file" class="hidden" multiple @change="handleFileChange" />
+      <div v-if="attachments.length" class="ai-attachments">
+        <PromptInputAttachmentsDisplay
+          :attachments="attachments"
+          @remove="handleRemoveAttachment"
+        />
+      </div>
+      <InputGroup class="ai-prompt-shell">
+        <InputGroupTextarea
+          v-model="modelValue"
+          class="ai-prompt-textarea"
+          placeholder="输入消息"
+          aria-label="输入消息"
+          :disabled="disabled"
+          @keydown="handleKeyDown"
+          @paste="handlePaste"
+          @compositionstart="isComposing = true"
+          @compositionend="isComposing = false"
+        />
+        <InputGroupAddon align="block-end" class="ai-toolbar-row">
+          <InputGroupButton
+            type="button"
+            variant="outline"
+            class="ai-attachment-button rounded-full"
+            size="icon-xs"
+            :disabled="disabled"
+            aria-label="添加附件"
+            @click="handleOpenFileDialog"
+          >
+            <PlusIcon class="size-4" />
+          </InputGroupButton>
 
-                    <Select :model-value="activeMode" :disabled="disabled" @update:model-value="handleModeChange">
-                        <SelectTrigger aria-label="选择模式"
-                            class="h-auto! min-h-0! w-auto! border-0! bg-transparent! text-slate-400! hover:text-slate-500! shadow-none! px-1! py-0.5! text-xs! font-medium! gap-1! ring-0! focus:ring-0! focus-visible:ring-0! [&>svg]:size-3! [&>svg]:opacity-60!">
-                            <SelectValue placeholder="Chat" />
-                        </SelectTrigger>
-                        <SelectContent side="top" align="start" class="ai-mode-content">
-                            <SelectGroup>
-                                <SelectItem v-for="option in modeOptions" :key="option.key" :value="option.key">
-                                    {{ option.label }}
-                                </SelectItem>
-                            </SelectGroup>
-                        </SelectContent>
-                    </Select>
+          <Select
+            :model-value="activeMode"
+            :disabled="disabled"
+            @update:model-value="handleModeChange"
+          >
+            <SelectTrigger
+              aria-label="选择模式"
+              class="h-auto! min-h-0! w-auto! border-0! bg-transparent! text-slate-400! hover:text-slate-500! shadow-none! px-1! py-0.5! text-xs! font-medium! gap-1! ring-0! focus:ring-0! focus-visible:ring-0! [&>svg]:size-3! [&>svg]:opacity-60!"
+            >
+              <SelectValue placeholder="Chat" />
+            </SelectTrigger>
+            <SelectContent side="top" align="start" class="ai-mode-content">
+              <SelectGroup>
+                <SelectItem v-for="option in modeOptions" :key="option.key" :value="option.key">
+                  {{ option.label }}
+                </SelectItem>
+              </SelectGroup>
+            </SelectContent>
+          </Select>
 
-                    <Context v-bind="resolvedTokenContext">
-                        <ContextTrigger class="ai-token-trigger ml-auto" aria-label="Token 消耗" />
+          <Context v-bind="resolvedTokenContext">
+            <ContextTrigger class="ai-token-trigger ml-auto" aria-label="Token 消耗" />
 
-                        <ContextContent side="top" align="end" :side-offset="8"
-                            class="ai-token-content border border-[#f1f2f4] divide-[#f1f2f4] bg-[#ffffff] !shadow-[0_0_0_1px_rgba(15,23,42,0.02),0_8px_20px_rgba(15,23,42,0.05)]">
-                            <ContextContentHeader />
-                            <ContextContentBody>
-                                <ContextInputUsage />
-                                <ContextOutputUsage />
-                            </ContextContentBody>
-                            <ContextContentFooter class="bg-[#f4f4f5]" />
-                        </ContextContent>
-                    </Context>
+            <ContextContent
+              side="top"
+              align="end"
+              :side-offset="8"
+              class="ai-token-content border border-[#f1f2f4] divide-[#f1f2f4] bg-[#ffffff] !shadow-[0_0_0_1px_rgba(15,23,42,0.02),0_8px_20px_rgba(15,23,42,0.05)]"
+            >
+              <ContextContentHeader />
+              <ContextContentBody>
+                <ContextInputUsage />
+                <ContextOutputUsage />
+              </ContextContentBody>
+              <ContextContentFooter class="bg-[#f4f4f5]" />
+            </ContextContent>
+          </Context>
 
-                    <InputGroupButton v-if="disabled" type="button" variant="outline"
-                        class="ai-send-button rounded-full" size="icon-xs" aria-label="停止" @click="handleStop">
-                        <SquareIcon class="size-4" />
-                        <span class="sr-only">Stop</span>
-                    </InputGroupButton>
-                    <InputGroupButton v-else type="submit" variant="default" class="ai-send-button rounded-full"
-                        size="icon-xs" :disabled="!canSubmit" :aria-label="submitLabel">
-                        <ArrowUpIcon class="size-4" />
-                        <span class="sr-only">Send</span>
-                    </InputGroupButton>
-                </InputGroupAddon>
-            </InputGroup>
-        </form>
-    </footer>
+          <InputGroupButton
+            v-if="disabled"
+            type="button"
+            variant="outline"
+            class="ai-send-button rounded-full"
+            size="icon-xs"
+            aria-label="停止"
+            @click="handleStop"
+          >
+            <SquareIcon class="size-4" />
+            <span class="sr-only">Stop</span>
+          </InputGroupButton>
+          <InputGroupButton
+            v-else
+            type="submit"
+            variant="default"
+            class="ai-send-button rounded-full"
+            size="icon-xs"
+            :disabled="!canSubmit"
+            :aria-label="submitLabel"
+          >
+            <ArrowUpIcon class="size-4" />
+            <span class="sr-only">Send</span>
+          </InputGroupButton>
+        </InputGroupAddon>
+      </InputGroup>
+    </form>
+  </footer>
 </template>
 
 <style scoped>
 .ai-composer {
-    flex: 0 0 auto;
-    display: grid;
-    align-self: stretch;
-    gap: 6px;
-    min-width: 0;
-    width: min(100%, 620px);
-    max-width: 620px;
-    box-sizing: border-box;
-    margin-inline: auto;
-    padding: 0 8px 8px;
-}
-
-.ai-error {
-    margin: 0 4px;
-    color: var(--danger);
-    font-size: 12px;
-    line-height: 18px;
+  flex: 0 0 auto;
+  display: grid;
+  align-self: stretch;
+  gap: 6px;
+  min-width: 0;
+  width: min(100%, 620px);
+  max-width: 620px;
+  box-sizing: border-box;
+  margin-inline: auto;
+  padding: 0 8px 8px;
 }
 
 .ai-composer-surface {
-    width: 100%;
-    min-width: 0;
-    display: grid;
-    gap: 8px;
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  gap: 8px;
 }
 
 .ai-prompt-shell {
-    width: 100%;
-    background: #ffffff;
-    border: 1px solid rgba(15, 23, 42, 0.08);
-    border-radius: 1rem;
-    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
-    overflow: hidden;
-    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  width: 100%;
+  background: #ffffff;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 1rem;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+  overflow: hidden;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
 }
 
 .ai-prompt-shell:focus-within {
-    border-color: rgba(15, 23, 42, 0.16);
-    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  border-color: rgba(15, 23, 42, 0.16);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
 }
 
 .ai-prompt-shell:has([data-slot='input-group-control']:focus-visible),
 .ai-prompt-shell:has(button:focus-visible) {
-    border-color: rgba(15, 23, 42, 0.16);
-    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  border-color: rgba(15, 23, 42, 0.16);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
 }
 
 .ai-prompt-shell :deep([data-slot='input-group-control']:focus-visible),
 .ai-prompt-shell :deep(button:focus-visible) {
-    outline: none;
-    box-shadow: none;
+  outline: none;
+  box-shadow: none;
 }
 
 .ai-attachments {
-    min-width: 0;
-    padding: 0 2px;
+  min-width: 0;
+  padding: 0 2px;
 }
 
 .ai-prompt-textarea {
-    --ai-prompt-line-box: 20.4px;
-    --ai-prompt-scrollbar-thumb: color-mix(in srgb, var(--text-primary) 12%, transparent);
-    min-height: 60px;
-    max-height: 116px;
-    border: 0;
-    background: #ffffff;
-    padding: 12px 16px 2px;
-    color: var(--text-primary);
-    font-size: 15px;
-    line-height: var(--ai-prompt-line-box);
-    box-shadow: none;
-    outline: none;
-    resize: none;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    scrollbar-width: thin;
-    scrollbar-color: var(--ai-prompt-scrollbar-thumb) transparent;
-    text-align: left;
+  --ai-prompt-line-box: 20.4px;
+  --ai-prompt-scrollbar-thumb: color-mix(in srgb, var(--text-primary) 12%, transparent);
+  min-height: 60px;
+  max-height: 116px;
+  border: 0;
+  background: #ffffff;
+  padding: 12px 16px 2px;
+  color: var(--text-primary);
+  font-size: 15px;
+  line-height: var(--ai-prompt-line-box);
+  box-shadow: none;
+  outline: none;
+  resize: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ai-prompt-scrollbar-thumb) transparent;
+  text-align: left;
 }
 
 .ai-prompt-textarea::-webkit-scrollbar {
-    width: 6px;
+  width: 6px;
 }
 
 .ai-prompt-textarea::-webkit-scrollbar-track {
-    background: transparent;
+  background: transparent;
 }
 
 .ai-prompt-textarea::-webkit-scrollbar-thumb {
-    border: 2px solid transparent;
-    border-radius: 999px;
-    background: var(--ai-prompt-scrollbar-thumb);
-    background-clip: content-box;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: var(--ai-prompt-scrollbar-thumb);
+  background-clip: content-box;
 }
 
 .ai-prompt-textarea::-webkit-scrollbar-thumb:hover {
-    background: color-mix(in srgb, var(--text-primary) 18%, transparent);
-    background-clip: content-box;
+  background: color-mix(in srgb, var(--text-primary) 18%, transparent);
+  background-clip: content-box;
 }
 
 .ai-prompt-textarea::placeholder {
-    color: #9aa9bc;
-    opacity: 1;
+  color: #9aa9bc;
+  opacity: 1;
 }
 
 .ai-toolbar-row {
-    gap: 12px;
-    padding: 0 14px 12px;
-    background: #ffffff;
+  gap: 12px;
+  padding: 0 14px 12px;
+  background: #ffffff;
 }
 
 .ai-attachment-button {
-    border-color: rgba(15, 23, 42, 0.1);
-    background: #ffffff;
-    color: #6b7280;
-    box-shadow: none;
+  border-color: rgba(15, 23, 42, 0.1);
+  background: #ffffff;
+  color: #6b7280;
+  box-shadow: none;
 }
 
 .ai-attachment-button:hover {
-    border-color: rgba(15, 23, 42, 0.16);
-    background: #ffffff;
-    color: #374151;
+  border-color: rgba(15, 23, 42, 0.16);
+  background: #ffffff;
+  color: #374151;
 }
 
 .ai-token-trigger {
-    width: 28px;
-    height: 24px;
-    min-width: 28px;
-    gap: 0;
-    border-radius: 999px;
-    padding: 0;
-    color: var(--text-secondary);
-    font-size: 12px;
-    line-height: 1;
-    box-shadow: none;
+  width: 28px;
+  height: 24px;
+  min-width: 28px;
+  gap: 0;
+  border-radius: 999px;
+  padding: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1;
+  box-shadow: none;
 }
 
 .ai-token-trigger:hover {
-    color: var(--text-primary);
+  color: var(--text-primary);
 }
 
 .ai-token-content {
-    color: var(--text-primary);
+  color: var(--text-primary);
 }
 
 .ai-send-button {
-    border: 0;
-    background: #79cfbe;
-    color: #ffffff;
-    box-shadow: none;
+  border: 0;
+  background: #79cfbe;
+  color: #ffffff;
+  box-shadow: none;
 }
 
 .ai-send-button:hover:not(:disabled) {
-    background: #68c2b1;
-    color: #ffffff;
+  background: #68c2b1;
+  color: #ffffff;
 }
 
 .ai-send-button:disabled {
-    opacity: 0.55;
+  opacity: 0.55;
 }
 
 .ai-send-button[data-variant='outline'] {
-    background: #f97373;
-    color: #ffffff;
+  background: #f97373;
+  color: #ffffff;
 }
 
 @media (max-width: 960px) {
-    .ai-toolbar-row {
-        gap: 10px;
-    }
+  .ai-toolbar-row {
+    gap: 10px;
+  }
 }
 </style>
 
 <style>
 .ai-mode-content {
-    background-color: #ffffff !important;
-    color: #0f172a !important;
-    border: 1px solid rgba(15, 23, 42, 0.08) !important;
-    box-shadow:
-        0 8px 24px rgba(15, 23, 42, 0.08),
-        0 2px 6px rgba(15, 23, 42, 0.04) !important;
-    border-radius: 10px !important;
-    padding: 4px !important;
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  border: 1px solid rgba(15, 23, 42, 0.08) !important;
+  box-shadow:
+    0 8px 24px rgba(15, 23, 42, 0.08),
+    0 2px 6px rgba(15, 23, 42, 0.04) !important;
+  border-radius: 10px !important;
+  padding: 4px !important;
 }
 
 .ai-mode-content [role='option'],
 .ai-mode-content [data-slot='select-item'] {
-    color: #334155 !important;
-    font-size: 13px !important;
-    padding-block: 6px !important;
-    border-radius: 6px !important;
+  color: #334155 !important;
+  font-size: 13px !important;
+  padding-block: 6px !important;
+  border-radius: 6px !important;
 }
 
 .ai-mode-content [role='option'][data-highlighted],
 .ai-mode-content [data-slot='select-item'][data-highlighted] {
-    background-color: rgba(15, 23, 42, 0.05) !important;
-    color: #0f172a !important;
+  background-color: rgba(15, 23, 42, 0.05) !important;
+  color: #0f172a !important;
 }
 
 .ai-mode-content [role='option'][data-state='checked'],
 .ai-mode-content [data-slot='select-item'][data-state='checked'] {
-    color: #0f172a !important;
-    font-weight: 500;
+  color: #0f172a !important;
+  font-weight: 500;
 }
 </style>

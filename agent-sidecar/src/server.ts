@@ -21,8 +21,8 @@ import { getMcpRuntimeStatus } from './tools/mcp.js';
 const DEFAULT_PORT = 39871;
 const MAX_REQUEST_BYTES = 2 * 1024 * 1024;
 const DEFAULT_RUNTIME_TIMEOUT_MS = 30 * 60 * 1000;
-export const SIDECAR_PROTOCOL_VERSION = '5';
-export const SIDECAR_IMPLEMENTATION_VERSION = 'deepseek-reasoning-transport-v4-workspace-tools';
+export const SIDECAR_PROTOCOL_VERSION = '7';
+export const SIDECAR_IMPLEMENTATION_VERSION = 'deepseek-reasoning-transport-v6-plan-history';
 
 const agentModeSchema = z.enum(['ask', 'plan', 'agent', 'patch', 'review']);
 
@@ -89,6 +89,10 @@ export const baseAgentRequestSchema = z.object({
   messages: z.array(agentMessageInputSchema).default([]),
   workspaceRootPath: optionalWorkspaceRootPathSchema,
   context: z.array(agentContextReferenceSchema).default([]),
+  threadId: optionalNonEmptyStringSchema,
+  planId: optionalNonEmptyStringSchema,
+  planVersion: z.number().int().positive().optional(),
+  planStepId: optionalNonEmptyStringSchema,
 });
 
 export const agentSidecarChatRequestSchema = baseAgentRequestSchema;
@@ -99,6 +103,32 @@ export const agentSidecarPlanRequestSchema = baseAgentRequestSchema.extend({
 
 export const agentSidecarExecuteRequestSchema = baseAgentRequestSchema.extend({
   goal: requiredNonEmptyStringSchema,
+  planId: requiredNonEmptyStringSchema,
+  planVersion: z.number().int().positive(),
+  planStepId: requiredNonEmptyStringSchema,
+});
+
+const planVersionRequestSchema = z.object({
+  sessionId: optionalNonEmptyStringSchema,
+  planId: requiredNonEmptyStringSchema,
+  version: z.number().int().positive(),
+});
+
+export const agentSidecarPlanApproveRequestSchema = planVersionRequestSchema;
+
+export const agentSidecarPlanRejectRequestSchema = planVersionRequestSchema.extend({
+  reason: optionalNonEmptyStringSchema,
+});
+
+export const agentSidecarPlanFinishRequestSchema = planVersionRequestSchema.extend({
+  status: z.enum(['completed', 'failed']),
+  errorMessage: optionalNonEmptyStringSchema,
+});
+
+export const agentSidecarPlanQueryRequestSchema = z.object({
+  sessionId: optionalNonEmptyStringSchema,
+  planId: requiredNonEmptyStringSchema,
+  version: z.number().int().positive().optional(),
 });
 
 const approvalResolutionSchema = z.object({
@@ -179,6 +209,22 @@ const toAgentInput = (
     input.workspaceRootPath = payload.workspaceRootPath;
   }
 
+  if (payload.threadId) {
+    input.threadId = payload.threadId;
+  }
+
+  if (payload.planId) {
+    input.planId = payload.planId;
+  }
+
+  if (payload.planVersion) {
+    input.planVersion = payload.planVersion;
+  }
+
+  if (payload.planStepId) {
+    input.planStepId = payload.planStepId;
+  }
+
   return input;
 };
 
@@ -193,6 +239,24 @@ const handlePost = async (
       response,
       200,
       toValidatedSidecarResponse(await handler(body, createRuntimeRunOptions(request))),
+    );
+  } catch (error) {
+    writeJson(response, 400, {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+};
+
+const handleRuntimeResponse = async (
+  request: IncomingMessage,
+  response: ServerResponse,
+  handler: (options: IAgentRuntimeRunOptions) => Promise<IAgentRuntimeResponse>,
+): Promise<void> => {
+  try {
+    writeJson(
+      response,
+      200,
+      toValidatedSidecarResponse(await handler(createRuntimeRunOptions(request))),
     );
   } catch (error) {
     writeJson(response, 400, {
@@ -291,8 +355,9 @@ export const createAgentSidecarServer = (
 
   return createServer((request, response) => {
     const url = request.url ?? '/';
+    const parsedUrl = new URL(url, 'http://127.0.0.1');
 
-    if (request.method === 'GET' && url === '/health') {
+    if (request.method === 'GET' && parsedUrl.pathname === '/health') {
       writeJson(response, 200, {
         ok: true,
         status: 'ready',
@@ -302,6 +367,28 @@ export const createAgentSidecarServer = (
         implementationVersion: SIDECAR_IMPLEMENTATION_VERSION,
         mcp: getMcpRuntimeStatus(),
       });
+      return;
+    }
+
+    if (request.method === 'GET' && parsedUrl.pathname.startsWith('/agent/plan/')) {
+      const planId = decodeURIComponent(parsedUrl.pathname.slice('/agent/plan/'.length));
+      const rawVersion = parsedUrl.searchParams.get('version');
+      const version = rawVersion ? Number(rawVersion) : undefined;
+      const payload = agentSidecarPlanQueryRequestSchema.safeParse({
+        planId,
+        ...(version !== undefined ? { version } : {}),
+      });
+
+      if (!payload.success) {
+        writeJson(response, 400, {
+          error: '计划查询参数无效。',
+        });
+        return;
+      }
+
+      void handleRuntimeResponse(request, response, async (options) =>
+        runtime.getPlan(payload.data, options)
+      );
       return;
     }
 
@@ -333,6 +420,38 @@ export const createAgentSidecarServer = (
       void handlePostStream(request, response, async (body, options) => {
         const payload = agentSidecarPlanRequestSchema.parse(body);
         return runtime.plan(toAgentInput(payload, 'plan'), options);
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && url === '/agent/plan/approve') {
+      void handlePost(request, response, async (body, options) => {
+        const payload = agentSidecarPlanApproveRequestSchema.parse(body);
+        return runtime.approvePlan(payload, options);
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && url === '/agent/plan/reject') {
+      void handlePost(request, response, async (body, options) => {
+        const payload = agentSidecarPlanRejectRequestSchema.parse(body);
+        return runtime.rejectPlan(payload, options);
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && url === '/agent/plan/finish') {
+      void handlePost(request, response, async (body, options) => {
+        const payload = agentSidecarPlanFinishRequestSchema.parse(body);
+        return runtime.finishPlan(payload, options);
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && url === '/agent/plan/query') {
+      void handlePost(request, response, async (body, options) => {
+        const payload = agentSidecarPlanQueryRequestSchema.parse(body);
+        return runtime.getPlan(payload, options);
       });
       return;
     }

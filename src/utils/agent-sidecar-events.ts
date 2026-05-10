@@ -4,6 +4,7 @@ import { clipTextPreview } from '@/utils/text-preview';
 
 import type {
   IAgentPlan,
+  IAgentPlanRecord,
   IAgentPlanStep,
   IAgentSidecarResponsePayload,
   TAgentRuntimeEvent,
@@ -14,15 +15,26 @@ import type {
   IAiTaskPlanStep,
   IAiToolCall,
   IAiToolConfirmationRequest,
+  IAiAgentPlanMetadata,
+  IAiAgentPlanVersionSummary,
   TAiAgentPlanStepKind,
   TAiAgentPlanStepStatus,
 } from '@/types/ai';
 
 export interface IAgentSidecarPlanProjection {
   goal: string;
+  summary: string | null;
+  planMetadata: IAiAgentPlanMetadata | null;
   steps: IAiTaskPlanStep[];
   toolCalls: IAiToolCall[];
   assistantContent: string;
+  errorMessage: string | null;
+}
+
+export interface IAgentSidecarPlanRecordProjection {
+  record: IAgentPlanRecord | null;
+  versions: IAiAgentPlanVersionSummary[];
+  metadata: IAiAgentPlanMetadata | null;
   errorMessage: string | null;
 }
 
@@ -314,10 +326,15 @@ export const mapSidecarPlanToTaskSteps = (plan: IAgentPlan): IAiTaskPlanStep[] =
     index,
     title: step.title,
     goal: step.goal,
+    ...(step.description ? { description: step.description } : {}),
     kind: inferStepKind(step.tools),
     status: normalizeStatus(step.status),
     expectedOutput: step.expectedOutput,
     tools: step.tools.map(mapSidecarToolNameToAiToolName),
+    ...(step.files?.length ? { files: step.files } : {}),
+    ...(step.commands?.length ? { commands: step.commands } : {}),
+    ...(step.risks?.length ? { risks: step.risks } : {}),
+    ...(step.acceptanceCriteria?.length ? { acceptanceCriteria: step.acceptanceCriteria } : {}),
     requiresUserApproval: step.requiresApproval,
     riskLevel: step.riskLevel,
     ...(step.requiresApproval
@@ -1274,10 +1291,65 @@ const extractPlan = (events: readonly TAgentUiEvent[]): IAgentPlan | null =>
     event.type === 'plan_ready'
   )?.plan ?? null;
 
+const extractPlanReadyEvent = (
+  events: readonly TAgentUiEvent[],
+): Extract<TAgentUiEvent, { type: 'plan_ready' }> | null =>
+  events.find((event): event is Extract<TAgentUiEvent, { type: 'plan_ready' }> =>
+    event.type === 'plan_ready'
+  ) ?? null;
+
+const extractPlanRecordEvent = (
+  events: readonly TAgentUiEvent[],
+): Extract<TAgentUiEvent, { type: 'plan_record' }> | null =>
+  events.find((event): event is Extract<TAgentUiEvent, { type: 'plan_record' }> =>
+    event.type === 'plan_record'
+  ) ?? null;
+
 const extractErrorMessage = (events: readonly TAgentUiEvent[]): string | null =>
   events.find((event): event is Extract<TAgentUiEvent, { type: 'error' }> =>
     event.type === 'error'
   )?.message ?? null;
+
+const planReadyToMetadata = (
+  event: Extract<TAgentUiEvent, { type: 'plan_ready' }>,
+): IAiAgentPlanMetadata => ({
+  planId: event.planId,
+  ...(event.threadId ? { threadId: event.threadId } : {}),
+  version: event.version,
+  status: event.status,
+  ...(event.createdAt ? { createdAt: event.createdAt } : {}),
+  ...(event.updatedAt ? { updatedAt: event.updatedAt } : {}),
+  ...(event.approvedAt !== undefined ? { approvedAt: event.approvedAt } : {}),
+  ...(event.executedAt !== undefined ? { executedAt: event.executedAt } : {}),
+  ...(event.rejectionReason !== undefined ? { rejectionReason: event.rejectionReason } : {}),
+  ...(event.errorMessage !== undefined ? { errorMessage: event.errorMessage } : {}),
+  ...(event.plan.summary ? { summary: event.plan.summary } : {}),
+  ...(event.plan.requiresApproval !== undefined ? { requiresApproval: event.plan.requiresApproval } : {}),
+});
+
+const planRecordToMetadata = (
+  record: IAgentPlanRecord,
+): IAiAgentPlanMetadata => ({
+  planId: record.planId,
+  threadId: record.threadId,
+  version: record.version,
+  status: record.status,
+  createdAt: record.createdAt,
+  updatedAt: record.updatedAt,
+  approvedAt: record.approvedAt,
+  executedAt: record.executedAt,
+  rejectionReason: record.rejectionReason,
+  errorMessage: record.errorMessage,
+  ...(record.plan.summary ? { summary: record.plan.summary } : {}),
+  ...(record.plan.requiresApproval !== undefined ? { requiresApproval: record.plan.requiresApproval } : {}),
+});
+
+const planRecordToVersionSummary = (
+  record: IAgentPlanRecord,
+): IAiAgentPlanVersionSummary => ({
+  ...planRecordToMetadata(record),
+  userRequest: record.userRequest,
+});
 
 const hasMeaningfulText = (value: string | null | undefined): value is string =>
   typeof value === 'string' && value.trim().length > 0;
@@ -1328,16 +1400,34 @@ export const projectSidecarPlanResponse = (
   response: IAgentSidecarResponsePayload,
   fallbackGoal: string,
 ): IAgentSidecarPlanProjection => {
-  const plan = extractPlan(response.events);
+  const planReady = extractPlanReadyEvent(response.events);
+  const plan = planReady?.plan ?? extractPlan(response.events);
   const errorMessage = extractErrorMessage(response.events);
   const goal = plan?.goal ?? fallbackGoal;
 
   return {
     goal,
+    summary: plan?.summary ?? null,
+    planMetadata: plan && planReady
+      ? planReadyToMetadata(planReady)
+      : null,
     steps: plan ? mapSidecarPlanToTaskSteps(plan) : [],
     toolCalls: mapSidecarEventsToToolCalls(response.events),
     assistantContent: buildAssistantContent(goal, plan, extractDoneResult(response.events)),
     errorMessage: errorMessage ?? (plan ? null : 'sidecar 未返回 plan_ready 事件，计划没有生成。'),
+  };
+};
+
+export const projectSidecarPlanRecordResponse = (
+  response: IAgentSidecarResponsePayload,
+): IAgentSidecarPlanRecordProjection => {
+  const event = extractPlanRecordEvent(response.events);
+
+  return {
+    record: event?.record ?? null,
+    versions: event?.versions.map(planRecordToVersionSummary) ?? [],
+    metadata: event ? planRecordToMetadata(event.record) : null,
+    errorMessage: extractErrorMessage(response.events),
   };
 };
 

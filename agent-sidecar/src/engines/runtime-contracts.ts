@@ -6,6 +6,7 @@ export type TAgentRuntimeOutputEvent =
     | TRuntimeUiEvent<'message_delta'>
     | TRuntimeUiEvent<'agent_event'>
     | TRuntimeUiEvent<'plan_ready'>
+    | TRuntimeUiEvent<'plan_record'>
     | TRuntimeUiEvent<'tool_start'>
     | TRuntimeUiEvent<'tool_result'>
     | TRuntimeUiEvent<'approval_required'>

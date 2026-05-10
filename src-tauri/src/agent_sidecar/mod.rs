@@ -11,7 +11,8 @@ use crate::ai::credential::CredentialStore;
 use crate::commands::contracts::{
     AgentSidecarApprovalResolveRequest, AgentSidecarChatRequest,
     AgentSidecarCheckpointRestoreRequest, AgentSidecarExecuteRequest, AgentSidecarHealthPayload,
-    AgentSidecarPlanRequest, AgentSidecarResponsePayload,
+    AgentSidecarPlanApproveRequest, AgentSidecarPlanFinishRequest, AgentSidecarPlanQueryRequest,
+    AgentSidecarPlanRejectRequest, AgentSidecarPlanRequest, AgentSidecarResponsePayload,
 };
 
 const DEFAULT_SIDECAR_URL: &str = "http://127.0.0.1:39871";
@@ -24,8 +25,8 @@ const SIDECAR_HEALTH_TIMEOUT_SECONDS: u64 = 2;
 const SIDECAR_STARTUP_TIMEOUT_SECONDS: u64 = 15;
 const SIDECAR_STARTUP_RETRY_MS: u64 = 250;
 const DEFAULT_DEEPSEEK_BASE_URL: &str = "https://api.deepseek.com";
-const SIDECAR_PROTOCOL_VERSION: &str = "5";
-const SIDECAR_IMPLEMENTATION_VERSION: &str = "deepseek-reasoning-transport-v4-workspace-tools";
+const SIDECAR_PROTOCOL_VERSION: &str = "7";
+const SIDECAR_IMPLEMENTATION_VERSION: &str = "deepseek-reasoning-transport-v6-plan-history";
 const DEFAULT_SIDECAR_PORT: u16 = 39871;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -796,6 +797,30 @@ pub async fn plan(
     .await
 }
 
+pub async fn approve_plan(
+    payload: AgentSidecarPlanApproveRequest,
+) -> Result<AgentSidecarResponsePayload, String> {
+    post_json("/agent/plan/approve", &payload).await
+}
+
+pub async fn query_plan(
+    payload: AgentSidecarPlanQueryRequest,
+) -> Result<AgentSidecarResponsePayload, String> {
+    post_json("/agent/plan/query", &payload).await
+}
+
+pub async fn reject_plan(
+    payload: AgentSidecarPlanRejectRequest,
+) -> Result<AgentSidecarResponsePayload, String> {
+    post_json("/agent/plan/reject", &payload).await
+}
+
+pub async fn finish_plan(
+    payload: AgentSidecarPlanFinishRequest,
+) -> Result<AgentSidecarResponsePayload, String> {
+    post_json("/agent/plan/finish", &payload).await
+}
+
 pub async fn execute(
     app: AppHandle,
     mut payload: AgentSidecarExecuteRequest,
@@ -975,23 +1000,23 @@ mod tests {
         let ready_payload = SidecarHealthProbePayload {
             ok: true,
             _engine: Some("mastra".to_string()),
-            protocol_version: Some("5".to_string()),
+            protocol_version: Some("7".to_string()),
             implementation_version: Some(
-                "deepseek-reasoning-transport-v4-workspace-tools".to_string(),
+                "deepseek-reasoning-transport-v6-plan-history".to_string(),
             ),
         };
         let stale_payload = SidecarHealthProbePayload {
             ok: true,
             _engine: Some("custom-runtime".to_string()),
-            protocol_version: Some("5".to_string()),
+            protocol_version: Some("6".to_string()),
             implementation_version: None,
         };
         let unavailable_payload = SidecarHealthProbePayload {
             ok: false,
             _engine: Some("legacy-runtime".to_string()),
-            protocol_version: Some("5".to_string()),
+            protocol_version: Some("7".to_string()),
             implementation_version: Some(
-                "deepseek-reasoning-transport-v4-workspace-tools".to_string(),
+                "deepseek-reasoning-transport-v6-plan-history".to_string(),
             ),
         };
 

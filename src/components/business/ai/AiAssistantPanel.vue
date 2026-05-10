@@ -133,6 +133,17 @@ const planClassificationReason = computed(() => readPlanStoreValue(planStore.val
 const planErrorMessage = computed(() => readPlanStoreValue(planStore.value.errorMessage));
 const planIsApproving = computed(() => readPlanStoreValue(planStore.value.isApproving));
 const planApprovedAt = computed(() => readPlanStoreValue(planStore.value.approvedAt));
+const planSummary = computed(() => readPlanStoreValue(planStore.value.planSummary));
+const planStatus = computed(() => readPlanStoreValue(planStore.value.planStatus));
+const planId = computed(() => readPlanStoreValue(planStore.value.planId));
+const planVersion = computed(() => readPlanStoreValue(planStore.value.planVersion));
+const planThreadId = computed(() => readPlanStoreValue(planStore.value.planThreadId));
+const planCreatedAt = computed(() => readPlanStoreValue(planStore.value.planCreatedAt));
+const planUpdatedAt = computed(() => readPlanStoreValue(planStore.value.planUpdatedAt));
+const planExecutedAt = computed(() => readPlanStoreValue(planStore.value.planExecutedAt));
+const planRejectionReason = computed(() => readPlanStoreValue(planStore.value.planRejectionReason));
+const planExecutionErrorMessage = computed(() => readPlanStoreValue(planStore.value.planErrorMessage));
+const planVersions = computed(() => readPlanStoreValue(planStore.value.planVersions));
 const planActiveRun = computed<IAiAgentRun | null>(() => readPlanStoreValue(planStore.value.activeRun));
 const planActiveToolActivity = computed<IAiToolActivityInline | null>(() =>
   readPlanStoreValue(planStore.value.activeToolActivity),
@@ -542,6 +553,14 @@ const handleResetPlan = (): void => {
   assistant.agentPlan.resetPlan();
 };
 
+const handleRejectPlan = async (): Promise<void> => {
+  try {
+    await assistant.agentPlan.rejectPlan('用户拒绝当前计划。');
+  } catch (error) {
+    setPlanError(error, '拒绝计划失败。');
+  }
+};
+
 const handleRunStep = async (): Promise<void> => {
   await withAgentRunAction(
     (runId) => agentRun.runStepWithSidecar(runId, {
@@ -808,13 +827,17 @@ onMounted(() => {
       :is-searching="webSources.isSearching.value" :network-permission="networkPermission"
       @search="handleSearchWebSources" @fetch-source="handleFetchWebSource" @clear="webSources.clear" />
     <div class="ai-composer-shell" :class="{ 'has-plan': planVisible }">
-      <AiPlanModePanel v-if="planVisible" :goal="planActiveGoal" :steps="planSteps"
+      <AiPlanModePanel v-if="planVisible" :goal="planActiveGoal" :plan-summary="planSummary"
+        :plan-status="planStatus" :plan-id="planId" :plan-version="planVersion" :plan-thread-id="planThreadId"
+        :plan-created-at="planCreatedAt" :plan-updated-at="planUpdatedAt" :plan-executed-at="planExecutedAt"
+        :plan-rejection-reason="planRejectionReason" :plan-error-message="planExecutionErrorMessage"
+        :plan-versions="planVersions" :steps="planSteps"
         :classification-reason="planClassificationReason" :error-message="planErrorMessage"
         :is-classifying="planIsClassifying" :is-planning="planIsPlanning" :is-approving="planIsApproving"
         :approved-at="planApprovedAt" :active-run="planActiveRun" :is-run-action-pending="isAgentRunActionPending"
         :web-activity="webSources.activity.value" :tool-activity="planActiveToolActivity"
         :tool-confirmation="planPendingToolConfirmation" @update-step-title="handleUpdatePlanStepTitle"
-        @remove-step="handleRemovePlanStep" @regenerate="handleRegeneratePlan" @approve="handleApprovePlan"
+        @remove-step="handleRemovePlanStep" @regenerate="handleRegeneratePlan" @reject="handleRejectPlan" @approve="handleApprovePlan"
         @reset="handleResetPlan" @run-step="handleRunStep" @pause-run="handlePauseRun" @resume-run="handleResumeRun"
         @cancel-run="handleCancelRun" @resolve-tool-confirmation="handleResolveToolConfirmation" />
       <div v-if="directToolConfirmationVisible && planPendingToolConfirmation" class="ai-direct-tool-confirmation">

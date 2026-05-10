@@ -135,7 +135,7 @@ export const resolveProjectUuid = (workspaceRootPath: string): string => {
             JSON.stringify({ uuid: newUuid, createdAt: new Date().toISOString() }, null, 2),
             'utf8',
         );
-    } catch (error) {
+    } catch {
         // If write fails, still return the UUID (memory will be per-session)
     }
     return newUuid;

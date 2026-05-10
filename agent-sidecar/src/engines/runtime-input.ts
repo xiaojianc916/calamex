@@ -25,6 +25,10 @@ export interface IAgentRuntimeInput {
     messages: IAgentMessageInput[];
     workspaceRootPath?: string;
     context?: IAgentContextReferenceInput[];
+    threadId?: string;
+    planId?: string;
+    planVersion?: number;
+    planStepId?: string;
 }
 
 export interface IApprovalResolutionInput {
@@ -40,4 +44,25 @@ export interface ICheckpointRestoreInput {
     snapshotId?: string | undefined;
     step?: TRollbackStepPath | undefined;
     sessionId?: string | undefined;
+}
+
+export interface IPlanApprovalInput {
+    planId: string;
+    version: number;
+    sessionId?: string | undefined;
+}
+
+export interface IPlanQueryInput {
+    planId: string;
+    version?: number | undefined;
+    sessionId?: string | undefined;
+}
+
+export interface IPlanRejectInput extends IPlanApprovalInput {
+    reason?: string | undefined;
+}
+
+export interface IPlanFinishInput extends IPlanApprovalInput {
+    status: 'completed' | 'failed';
+    errorMessage?: string | undefined;
 }

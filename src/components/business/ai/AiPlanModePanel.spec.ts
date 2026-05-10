@@ -2,7 +2,7 @@ import { mount } from '@vue/test-utils';
 import { describe, expect, it } from 'vitest';
 
 import AiPlanModePanel from '@/components/business/ai/AiPlanModePanel.vue';
-import type { IAiAgentRun, IAiTaskPlanStep } from '@/types/ai';
+import type { IAiAgentPlanVersionSummary, IAiAgentRun, IAiTaskPlanStep } from '@/types/ai';
 
 const createStep = (index: number): IAiTaskPlanStep => ({
   id: `plan-step-${index + 1}`,
@@ -32,6 +32,25 @@ const createRun = (
   completedAt: null,
   errorMessage: null,
   ...overrides,
+});
+
+const createPlanVersion = (
+  version: number,
+  status: IAiAgentPlanVersionSummary['status'],
+): IAiAgentPlanVersionSummary => ({
+  planId: 'plan-audit-1',
+  threadId: 'thread-audit-1',
+  version,
+  status,
+  createdAt: '2026-04-29T10:00:00.000Z',
+  updatedAt: `2026-04-29T10:0${version}:00.000Z`,
+  approvedAt: status === 'approved' ? '2026-04-29T10:02:00.000Z' : null,
+  executedAt: null,
+  rejectionReason: status === 'rejected' ? '需要调整范围' : null,
+  errorMessage: null,
+  summary: `第 ${version} 版计划`,
+  requiresApproval: true,
+  userRequest: '接入 Agent Plan Mode',
 });
 
 const mountPanel = (overrides: Partial<InstanceType<typeof AiPlanModePanel>['$props']> = {}) =>
@@ -143,6 +162,37 @@ describe('AiPlanModePanel', () => {
     expect(wrapper.emitted('removeStep')).toEqual([
       ['plan-step-1'],
     ]);
+  });
+
+  it('持久化后的待审批计划禁用本地编辑以避免审批快照偏离', () => {
+    const wrapper = mountPanel({
+      planStatus: 'pending_approval',
+    });
+    const input = wrapper.find('input[aria-label="编辑计划步骤标题"]');
+
+    expect(input.attributes('disabled')).toBeDefined();
+    expect(wrapper.find('.ai-plan-step-remove').attributes('disabled')).toBeDefined();
+  });
+
+  it('展示计划审计元数据和版本记录', () => {
+    const wrapper = mountPanel({
+      planId: 'plan-audit-123456789',
+      planVersion: 2,
+      planThreadId: 'thread-audit-1',
+      planStatus: 'rejected',
+      planUpdatedAt: '2026-04-29T10:02:00.000Z',
+      planRejectionReason: '需要调整范围',
+      planVersions: [
+        createPlanVersion(2, 'rejected'),
+        createPlanVersion(1, 'approved'),
+      ],
+    });
+
+    expect(wrapper.text()).toContain('计划');
+    expect(wrapper.text()).toContain('v2');
+    expect(wrapper.text()).toContain('已拒绝');
+    expect(wrapper.text()).toContain('拒绝原因：需要调整范围');
+    expect(wrapper.text()).toContain('v1 · 已批准');
   });
 
   it('展示运行状态并支持推进、暂停、取消 run', async () => {

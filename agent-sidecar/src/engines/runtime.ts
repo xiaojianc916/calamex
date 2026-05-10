@@ -7,6 +7,10 @@ import type {
     IAgentRuntimeInput,
     IApprovalResolutionInput,
     ICheckpointRestoreInput,
+    IPlanApprovalInput,
+    IPlanFinishInput,
+    IPlanQueryInput,
+    IPlanRejectInput,
 } from './runtime-input.js';
 
 export type {
@@ -35,6 +39,22 @@ export interface IAgentSidecarRuntime {
     ): Promise<IAgentRuntimeResponse>;
     execute(
         input: IAgentRuntimeInput,
+        options?: IAgentRuntimeRunOptions,
+    ): Promise<IAgentRuntimeResponse>;
+    approvePlan(
+        input: IPlanApprovalInput,
+        options?: IAgentRuntimeRunOptions,
+    ): Promise<IAgentRuntimeResponse>;
+    getPlan(
+        input: IPlanQueryInput,
+        options?: IAgentRuntimeRunOptions,
+    ): Promise<IAgentRuntimeResponse>;
+    rejectPlan(
+        input: IPlanRejectInput,
+        options?: IAgentRuntimeRunOptions,
+    ): Promise<IAgentRuntimeResponse>;
+    finishPlan(
+        input: IPlanFinishInput,
         options?: IAgentRuntimeRunOptions,
     ): Promise<IAgentRuntimeResponse>;
     resolveApproval(

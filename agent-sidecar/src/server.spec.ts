@@ -26,6 +26,11 @@ import {
   type IAgentSidecarRuntime,
 } from './engines/runtime.js';
 import {
+  LibsqlAgentPlanStore,
+  type IAgentPlanStore,
+  type TAgentPlanRecord,
+} from './engines/plan-store.js';
+import {
   clearDeepSeekReasoningStoreForTest,
   deepseekReasoningFetch,
   runWithDeepSeekReasoningContext,
@@ -110,6 +115,34 @@ const unsupportedRollbackRestore = async (
   throw new Error('Not implemented in test runtime.');
 };
 
+const unsupportedPlanApproval = async (
+  ...args: Parameters<IAgentSidecarRuntime['approvePlan']>
+): Promise<Awaited<ReturnType<IAgentSidecarRuntime['approvePlan']>>> => {
+  void args;
+  throw new Error('Not implemented in test runtime.');
+};
+
+const unsupportedPlanQuery = async (
+  ...args: Parameters<IAgentSidecarRuntime['getPlan']>
+): Promise<Awaited<ReturnType<IAgentSidecarRuntime['getPlan']>>> => {
+  void args;
+  throw new Error('Not implemented in test runtime.');
+};
+
+const unsupportedPlanReject = async (
+  ...args: Parameters<IAgentSidecarRuntime['rejectPlan']>
+): Promise<Awaited<ReturnType<IAgentSidecarRuntime['rejectPlan']>>> => {
+  void args;
+  throw new Error('Not implemented in test runtime.');
+};
+
+const unsupportedPlanFinish = async (
+  ...args: Parameters<IAgentSidecarRuntime['finishPlan']>
+): Promise<Awaited<ReturnType<IAgentSidecarRuntime['finishPlan']>>> => {
+  void args;
+  throw new Error('Not implemented in test runtime.');
+};
+
 const createFakeRuntime = (
   overrides: Partial<IAgentSidecarRuntime> = {},
 ): IAgentSidecarRuntime => ({
@@ -118,9 +151,305 @@ const createFakeRuntime = (
   chat: unsupportedRuntimeResponse,
   plan: unsupportedRuntimeResponse,
   execute: unsupportedRuntimeResponse,
+  approvePlan: unsupportedPlanApproval,
+  getPlan: unsupportedPlanQuery,
+  rejectPlan: unsupportedPlanReject,
+  finishPlan: unsupportedPlanFinish,
   resolveApproval: unsupportedApprovalResolution,
   restoreCheckpoint: unsupportedRollbackRestore,
   ...overrides,
+});
+
+const createPlanRecordForTest = (
+  overrides: Partial<TAgentPlanRecord> = {},
+): TAgentPlanRecord => {
+  const plan = agentPlanSchema.parse({
+    goal: '请直接执行',
+    summary: '执行已批准步骤。',
+    requiresApproval: true,
+    steps: [
+      {
+        id: 'step-1',
+        title: '执行步骤',
+        goal: '执行已批准计划中的第一步。',
+        status: 'pending',
+        tools: ['read_file'],
+        riskLevel: 'low',
+        requiresApproval: false,
+        expectedOutput: '步骤完成。',
+      },
+    ],
+  });
+
+  return {
+    planId: 'plan-1',
+    threadId: 'thread-1',
+    version: 1,
+    status: 'approved',
+    userRequest: '请直接执行',
+    plan,
+    createdAt: '2026-05-03T00:00:00.000Z',
+    updatedAt: '2026-05-03T00:00:00.000Z',
+    approvedAt: '2026-05-03T00:00:00.000Z',
+    executedAt: null,
+    rejectionReason: null,
+    errorMessage: null,
+    ...overrides,
+  };
+};
+
+const createFakePlanStore = (
+  record: TAgentPlanRecord = createPlanRecordForTest(),
+): IAgentPlanStore => ({
+  createPendingPlan: async (input) => ({
+    ...record,
+    ...(input.planId ? { planId: input.planId } : {}),
+    threadId: input.threadId,
+    userRequest: input.userRequest,
+    plan: input.plan,
+    status: 'pending_approval',
+    version: input.planId ? record.version + 1 : 1,
+    approvedAt: null,
+    executedAt: null,
+    rejectionReason: null,
+    errorMessage: null,
+  }),
+  getPlan: async (input) => ({
+    ...record,
+    planId: input.planId,
+    version: input.version ?? record.version,
+  }),
+  listPlanVersions: async (planId) => [
+    {
+      ...record,
+      planId,
+    },
+  ],
+  approvePlan: async (input) => ({
+    ...record,
+    planId: input.planId,
+    version: input.version,
+    status: 'approved',
+  }),
+  rejectPlan: async (input) => ({
+    ...record,
+    planId: input.planId,
+    version: input.version,
+    status: 'rejected',
+    rejectionReason: input.reason ?? null,
+  }),
+  finishPlan: async (input) => ({
+    ...record,
+    planId: input.planId,
+    version: input.version,
+    status: input.status,
+    errorMessage: input.errorMessage ?? null,
+  }),
+  prepareExecution: async (input) => {
+    const step = record.plan.steps.find((item) => item.id === input.stepId);
+
+    if (!step) {
+      throw new Error(`计划中不存在步骤 ${input.stepId}。`);
+    }
+
+    if (record.status !== 'approved' && record.status !== 'executing') {
+      throw new Error(`计划当前状态为 ${record.status}。`);
+    }
+
+    return {
+      record: {
+        ...record,
+        planId: input.planId,
+        version: input.version,
+        status: 'executing',
+      },
+      step,
+    };
+  },
+});
+
+describe('LibSQL agent plan store', () => {
+  const createStore = (): {
+    cleanup: () => void;
+    store: LibsqlAgentPlanStore;
+  } => {
+    const directory = mkdtempSync(join(tmpdir(), 'agent-plan-store-'));
+    let tick = 0;
+    const store = new LibsqlAgentPlanStore({
+      url: pathToFileURL(join(directory, 'plans.db')).href,
+      now: () => `2026-05-03T00:00:0${tick++}.000Z`,
+    });
+
+    return {
+      cleanup: () => rmSync(directory, { force: true, recursive: true }),
+      store,
+    };
+  };
+
+  it('stores pending plans and increments versions for regeneration', async () => {
+    const { cleanup, store } = createStore();
+    const plan = createPlanRecordForTest().plan;
+
+    try {
+      const first = await store.createPendingPlan({
+        threadId: 'thread-store-1',
+        userRequest: '生成计划',
+        plan,
+      });
+      const second = await store.createPendingPlan({
+        planId: first.planId,
+        threadId: 'thread-store-1',
+        userRequest: '重新生成计划',
+        plan,
+      });
+
+      assert.equal(first.status, 'pending_approval');
+      assert.equal(first.version, 1);
+      assert.equal(first.threadId, 'thread-store-1');
+      assert.equal(first.plan.summary, '执行已批准步骤。');
+      assert.equal(second.planId, first.planId);
+      assert.equal(second.version, 2);
+      assert.equal(second.status, 'pending_approval');
+      assert.deepEqual((await store.getPlan({ planId: first.planId })).version, 2);
+      assert.deepEqual(
+        (await store.listPlanVersions(first.planId)).map((item) => item.version),
+        [2, 1],
+      );
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('enforces approve, execute, finish, and reject state transitions idempotently', async () => {
+    const { cleanup, store } = createStore();
+    const plan = createPlanRecordForTest().plan;
+
+    try {
+      const pending = await store.createPendingPlan({
+        threadId: 'thread-store-2',
+        userRequest: '执行计划',
+        plan,
+      });
+
+      await assert.rejects(
+        () => store.prepareExecution({
+          planId: pending.planId,
+          version: pending.version,
+          stepId: 'step-1',
+        }),
+        /必须批准后才能执行/u,
+      );
+
+      const approved = await store.approvePlan({
+        planId: pending.planId,
+        version: pending.version,
+      });
+      const approvedAgain = await store.approvePlan({
+        planId: pending.planId,
+        version: pending.version,
+      });
+      const execution = await store.prepareExecution({
+        planId: approved.planId,
+        version: approved.version,
+        stepId: 'step-1',
+      });
+      const completed = await store.finishPlan({
+        planId: approved.planId,
+        version: approved.version,
+        status: 'completed',
+      });
+
+      assert.equal(approved.status, 'approved');
+      assert.equal(approvedAgain.status, 'approved');
+      assert.equal(execution.record.status, 'executing');
+      assert.equal(execution.step.id, 'step-1');
+      assert.equal(completed.status, 'completed');
+      assert.ok(completed.executedAt);
+      assert.equal(
+        (await store.finishPlan({
+          planId: approved.planId,
+          version: approved.version,
+          status: 'completed',
+        })).status,
+        'completed',
+      );
+      await assert.rejects(
+        () => store.rejectPlan({
+          planId: approved.planId,
+          version: approved.version,
+          reason: '用户拒绝',
+        }),
+        /不能拒绝/u,
+      );
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('rejects mismatched versions, missing steps, and rejected plans before execution', async () => {
+    const { cleanup, store } = createStore();
+    const plan = createPlanRecordForTest().plan;
+
+    try {
+      const pending = await store.createPendingPlan({
+        threadId: 'thread-store-3',
+        userRequest: '校验门禁',
+        plan,
+      });
+
+      await assert.rejects(
+        () => store.approvePlan({
+          planId: pending.planId,
+          version: pending.version + 1,
+        }),
+        /当前最新版本/u,
+      );
+
+      const approved = await store.approvePlan({
+        planId: pending.planId,
+        version: pending.version,
+      });
+
+      await assert.rejects(
+        () => store.prepareExecution({
+          planId: approved.planId,
+          version: approved.version,
+          stepId: 'missing-step',
+        }),
+        /不存在步骤/u,
+      );
+
+      const rejectedPending = await store.createPendingPlan({
+        threadId: 'thread-store-3',
+        userRequest: '拒绝计划',
+        plan,
+      });
+      await store.rejectPlan({
+        planId: rejectedPending.planId,
+        version: rejectedPending.version,
+        reason: '不执行',
+      });
+      const rejectedAgain = await store.rejectPlan({
+        planId: rejectedPending.planId,
+        version: rejectedPending.version,
+        reason: '重复拒绝',
+      });
+
+      assert.equal(rejectedAgain.status, 'rejected');
+      assert.equal(rejectedAgain.rejectionReason, '不执行');
+
+      await assert.rejects(
+        () => store.prepareExecution({
+          planId: rejectedPending.planId,
+          version: rejectedPending.version,
+          stepId: 'step-1',
+        }),
+        /必须批准后才能执行/u,
+      );
+    } finally {
+      cleanup();
+    }
+  });
 });
 
 const startServer = async (runtime: IAgentSidecarRuntime): Promise<{
@@ -324,7 +653,7 @@ describe('Agent sidecar request schema', () => {
   });
 
   it('accepts omitted optional fields from current Tauri clients', () => {
-    const payload = agentSidecarExecuteRequestSchema.parse({
+    const payload = agentSidecarPlanRequestSchema.parse({
       goal: 'run',
       messages: [{ role: 'user', content: 'run' }],
       context: [],
@@ -370,6 +699,16 @@ describe('Agent sidecar request schema', () => {
         goal: null,
         messages: [],
         context: [],
+        planId: 'plan-1',
+        planVersion: 1,
+        planStepId: 'step-1',
+      }),
+    );
+    assert.throws(() =>
+      agentSidecarExecuteRequestSchema.parse({
+        goal: 'run',
+        messages: [],
+        context: [],
       }),
     );
   });
@@ -382,6 +721,9 @@ describe('Agent sidecar request schema', () => {
       messages: [{ role: 'user', content: 'run' }],
       workspaceRootPath: 'D:/com.xiaojianc/my_desktop_app',
       context: [],
+      planId: 'plan-1',
+      planVersion: 2,
+      planStepId: 'step-1',
     });
 
     assert.equal(payload.sessionId, undefined);
@@ -389,6 +731,9 @@ describe('Agent sidecar request schema', () => {
     assert.equal(payload.goal, 'run');
     assert.equal(payload.messages.length, 1);
     assert.equal(payload.workspaceRootPath, 'D:/com.xiaojianc/my_desktop_app');
+    assert.equal(payload.planId, 'plan-1');
+    assert.equal(payload.planVersion, 2);
+    assert.equal(payload.planStepId, 'step-1');
   });
 
   it('accepts rollback restore requests with optional nested step paths', () => {
@@ -1152,6 +1497,7 @@ describe('Mastra runtime chat', () => {
       event?: {
         type?: unknown;
         toolName?: unknown;
+        toolUseId?: unknown;
         resultPreview?: unknown;
         ok?: unknown;
       };
@@ -1507,8 +1853,10 @@ describe('Mastra runtime execute', () => {
     let capturedStreamOptions: unknown;
     let capturedToolNames: string[] = [];
     let disconnectCalls = 0;
+    const executionRecord = createPlanRecordForTest();
     const runtime = new MastraRuntime({
       readModelConfig: () => new ModelRouterLanguageModel({ providerId: 'deepseek', modelId: 'deepseek-chat', apiKey: 'test-key', url: 'https://example.com/v1' }),
+      createPlanStore: () => createFakePlanStore(executionRecord),
       createMcpClientBundle: async () => ({
         clients: [],
         configs: [],
@@ -1610,6 +1958,9 @@ describe('Mastra runtime execute', () => {
       goal: '请直接执行',
       messages: [{ role: 'user', content: '请直接执行' }],
       context: [],
+      planId: executionRecord.planId,
+      planVersion: executionRecord.version,
+      planStepId: 'step-1',
     }, {
       onEvent: (event) => {
         streamedEvents.push(event);
@@ -1650,6 +2001,10 @@ describe('Mastra runtime execute', () => {
       context: [],
       memoryThreadId: executeMemoryScope.thread,
       memoryResourceId: executeMemoryScope.resource,
+      planId: executionRecord.planId,
+      planVersion: executionRecord.version,
+      planStepId: 'step-1',
+      approvedPlan: executionRecord.plan,
     });
     assert.deepEqual(streamedEvents, [
       {
@@ -1808,8 +2163,26 @@ describe('Mastra runtime approval resolution', () => {
   it('resumes a pending approval on the original agent instance while keeping the approval request id opaque to the client', async () => {
     let capturedApprovalOptions: unknown;
     let disconnectCalls = 0;
+    const executionRecord = createPlanRecordForTest({
+      plan: agentPlanSchema.parse({
+        goal: '请修改 README',
+        steps: [
+          {
+            id: 'step-1',
+            title: '修改 README',
+            goal: '按用户要求修改 README。',
+            status: 'pending',
+            tools: ['write_file'],
+            riskLevel: 'medium',
+            requiresApproval: true,
+            expectedOutput: 'README 已更新。',
+          },
+        ],
+      }),
+    });
     const runtime = new MastraRuntime({
       readModelConfig: () => new ModelRouterLanguageModel({ providerId: 'deepseek', modelId: 'deepseek-chat', apiKey: 'test-key', url: 'https://example.com/v1' }),
+      createPlanStore: () => createFakePlanStore(executionRecord),
       createMcpClientBundle: async () => ({
         clients: [],
         configs: [],
@@ -1891,6 +2264,9 @@ describe('Mastra runtime approval resolution', () => {
       goal: '请修改 README',
       messages: [{ role: 'user', content: '请修改 README' }],
       context: [],
+      planId: executionRecord.planId,
+      planVersion: executionRecord.version,
+      planStepId: 'step-1',
     });
 
     assert.equal(initial.result, null);
@@ -2001,7 +2377,7 @@ describe('Mastra runtime approval resolution', () => {
 });
 
 describe('Mastra runtime plan', () => {
-  it('keeps plan_ready plus done unchanged while exposing MCP tools to Mastra plan mode', async () => {
+  it('stores a pending plan, emits plan metadata, and keeps plan tools read-only', async () => {
     let capturedMessages: unknown;
     let capturedGenerateOptions: unknown;
     let capturedModel: MastraModelConfig | null = null;
@@ -2009,6 +2385,8 @@ describe('Mastra runtime plan', () => {
     let disconnectCalls = 0;
     const plan = agentPlanSchema.parse({
       goal: '完成迁移',
+      summary: '迁移 runtime 并补充协议回归。',
+      requiresApproval: true,
       steps: [
         {
           id: 'step-1',
@@ -2056,11 +2434,36 @@ describe('Mastra runtime plan', () => {
               }),
             },
           },
+          {
+            name: 'write_file',
+            description: '写入文件内容',
+            toolSpec: {
+              inputSchema: {
+                type: 'object',
+                properties: {
+                  path: { type: 'string' },
+                  content: { type: 'string' },
+                },
+                required: ['path', 'content'],
+                additionalProperties: false,
+              },
+            },
+            mcpClient: {
+              callTool: async () => ({
+                content: [{ type: 'text', text: '写入完成' }],
+                isError: false,
+              }),
+            },
+          },
         ],
         disconnectAll: async () => {
           disconnectCalls += 1;
         },
       }),
+      createPlanStore: () => createFakePlanStore(createPlanRecordForTest({
+        plan,
+        status: 'pending_approval',
+      })),
       createAgent: (config) => {
         capturedModel = config.model;
         capturedToolNames = Object.keys(config.tools ?? {});
@@ -2104,6 +2507,7 @@ describe('Mastra runtime plan', () => {
     assert.equal((capturedModel as { provider?: unknown } | null)?.provider, 'deepseek');
     assert.equal((capturedModel as { modelId?: unknown } | null)?.modelId, 'deepseek-chat');
     assert.equal(capturedToolNames.includes('read_file'), true);
+    assert.equal(capturedToolNames.includes('write_file'), false);
     assert.equal(capturedToolNames.includes('read_current_file'), false);
     assert.equal(capturedToolNames.includes('get_current_time'), true);
     assert.equal(capturedToolNames.includes('convert_time'), true);
@@ -2127,6 +2531,16 @@ describe('Mastra runtime plan', () => {
     assert.deepEqual(streamedEvents, [
       {
         type: 'plan_ready',
+        planId: 'plan-1',
+        threadId: response.sessionId,
+        version: 1,
+        status: 'pending_approval',
+        createdAt: '2026-05-03T00:00:00.000Z',
+        updatedAt: '2026-05-03T00:00:00.000Z',
+        approvedAt: null,
+        executedAt: null,
+        rejectionReason: null,
+        errorMessage: null,
         plan,
       },
       {
@@ -2410,6 +2824,87 @@ describe('Agent sidecar protocol golden tests', () => {
     }
   });
 
+  it('returns persisted plan records through POST and GET query routes', async () => {
+    const record = createPlanRecordForTest({
+      planId: 'plan-query-1',
+      version: 2,
+      status: 'approved',
+    });
+    const capturedInputs: unknown[] = [];
+    const runtime = createFakeRuntime({
+      getPlan: async (input) => {
+        capturedInputs.push(input);
+
+        return {
+          sessionId: 'plan-query-session',
+          events: [
+            {
+              type: 'plan_record',
+              record: {
+                ...record,
+                planId: input.planId,
+                version: input.version ?? record.version,
+              },
+              versions: [
+                {
+                  ...record,
+                  version: 2,
+                },
+                {
+                  ...record,
+                  version: 1,
+                },
+              ],
+            },
+            {
+              type: 'done',
+              result: '计划记录已加载。',
+            },
+          ],
+          result: '计划记录已加载。',
+        };
+      },
+    });
+    const server = await startServer(runtime);
+
+    try {
+      const postResponse = await fetch(`${server.baseUrl}/agent/plan/query`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          planId: 'plan-query-1',
+          version: 2,
+        }),
+      });
+      const getResponse = await fetch(`${server.baseUrl}/agent/plan/plan-query-1?version=2`);
+
+      assert.equal(postResponse.status, 200);
+      assert.equal(getResponse.status, 200);
+      assert.deepEqual(capturedInputs, [
+        {
+          planId: 'plan-query-1',
+          version: 2,
+        },
+        {
+          planId: 'plan-query-1',
+          version: 2,
+        },
+      ]);
+
+      const postPayload = await postResponse.json();
+      const getPayload = await getResponse.json();
+
+      assert.equal(postPayload.events[0].type, 'plan_record');
+      assert.equal(postPayload.events[0].record.planId, 'plan-query-1');
+      assert.equal(postPayload.events[0].versions.length, 2);
+      assert.deepEqual(getPayload, postPayload);
+    } finally {
+      await server.close();
+    }
+  });
+
   it('reports injected runtime metadata on health without changing the protocol field', async () => {
     const server = await startServer(createFakeRuntime());
 
@@ -2423,8 +2918,8 @@ describe('Agent sidecar protocol golden tests', () => {
       assert.equal(payload.status, 'ready');
       assert.equal(payload.engine, 'fake-runtime');
       assert.equal(payload.version, 'test-version');
-      assert.equal(payload.protocolVersion, '5');
-      assert.equal(payload.implementationVersion, 'deepseek-reasoning-transport-v4-workspace-tools');
+      assert.equal(payload.protocolVersion, '7');
+      assert.equal(payload.implementationVersion, 'deepseek-reasoning-transport-v6-plan-history');
       assert.equal(typeof payload.mcp?.configuredServers, 'number');
       assert.equal(Array.isArray(payload.mcp?.serverNames), true);
       assert.equal(Array.isArray(payload.mcp?.errors), true);

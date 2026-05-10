@@ -58,6 +58,20 @@ describe('AiWebSourcesPanel', () => {
     ]);
   });
 
+  it('单个网页读取失败时在来源卡片内展示局部错误', () => {
+    const wrapper = mountPanel({
+      sources: [
+        createSource({
+          status: 'failed',
+          errorMessage: '网页读取超时。',
+        }),
+      ],
+    });
+
+    expect(wrapper.text()).toContain('网页读取失败');
+    expect(wrapper.text()).toContain('网页读取超时。');
+  });
+
   it('网络未授权时展示提示并渲染活动状态', () => {
     const wrapper = mountPanel({
       networkPermission: 'ask',

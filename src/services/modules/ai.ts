@@ -5,7 +5,11 @@ import type {
   IAgentSidecarCheckpointRestoreRequest,
   IAgentSidecarExecuteRequest,
   IAgentSidecarHealthPayload,
+  IAgentSidecarPlanApproveRequest,
+  IAgentSidecarPlanFinishRequest,
+  IAgentSidecarPlanQueryRequest,
   IAgentSidecarPlanRequest,
+  IAgentSidecarPlanRejectRequest,
   IAgentSidecarResponsePayload,
   IAgentSidecarStreamEventPayload,
 } from '@/types/agent-sidecar';
@@ -67,6 +71,18 @@ export const aiService = {
   },
   sidecarPlan(payload: IAgentSidecarPlanRequest): Promise<IAgentSidecarResponsePayload> {
     return tauriService.agentSidecarPlan(payload);
+  },
+  sidecarPlanApprove(payload: IAgentSidecarPlanApproveRequest): Promise<IAgentSidecarResponsePayload> {
+    return tauriService.agentSidecarPlanApprove(payload);
+  },
+  sidecarPlanQuery(payload: IAgentSidecarPlanQueryRequest): Promise<IAgentSidecarResponsePayload> {
+    return tauriService.agentSidecarPlanQuery(payload);
+  },
+  sidecarPlanReject(payload: IAgentSidecarPlanRejectRequest): Promise<IAgentSidecarResponsePayload> {
+    return tauriService.agentSidecarPlanReject(payload);
+  },
+  sidecarPlanFinish(payload: IAgentSidecarPlanFinishRequest): Promise<IAgentSidecarResponsePayload> {
+    return tauriService.agentSidecarPlanFinish(payload);
   },
   sidecarExecute(payload: IAgentSidecarExecuteRequest): Promise<IAgentSidecarResponsePayload> {
     return tauriService.agentSidecarExecute(payload);

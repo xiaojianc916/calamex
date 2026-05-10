@@ -8,6 +8,7 @@ import { useAiConversationStore } from '@/store/aiConversation';
 import type {
   IAgentSidecarCheckpointRestoreRequest,
   IAgentSidecarExecuteRequest,
+  IAgentSidecarPlanQueryRequest,
   IAgentSidecarPlanRequest,
   IAgentSidecarResponsePayload,
   IAgentSidecarStreamEventPayload,
@@ -308,8 +309,20 @@ const aiServiceMock = vi.hoisted(() => {
       },
       {
         type: 'plan_ready',
+        planId: 'sidecar-plan-1',
+        threadId: 'sidecar-thread-1',
+        version: 1,
+        status: 'pending_approval',
+        createdAt: '2026-04-29T10:00:00.000Z',
+        updatedAt: '2026-04-29T10:00:00.000Z',
+        approvedAt: null,
+        executedAt: null,
+        rejectionReason: null,
+        errorMessage: null,
         plan: {
           goal,
+          summary: 'sidecar plan summary',
+          requiresApproval: true,
           steps: [
             {
               id: 'sidecar-plan-step-1',
@@ -345,6 +358,59 @@ const aiServiceMock = vi.hoisted(() => {
   const sidecarPlan = vi.fn(async (payload: IAgentSidecarPlanRequest) =>
     createSidecarPlanResponse(payload.goal),
   );
+
+  const sidecarPlanQuery = vi.fn(async (payload: IAgentSidecarPlanQueryRequest) => {
+    const planResponse = createSidecarPlanResponse('接入 Agent Plan Mode');
+    const planReady = planResponse.events.find((event) => event.type === 'plan_ready');
+
+    if (!planReady || planReady.type !== 'plan_ready') {
+      throw new Error('测试计划响应缺少 plan_ready。');
+    }
+
+    return {
+      sessionId: 'sidecar-plan-query-session-1',
+      events: [
+        {
+          type: 'plan_record',
+          record: {
+            planId: payload.planId,
+            threadId: planReady.threadId ?? 'sidecar-thread-1',
+            version: payload.version ?? planReady.version,
+            status: planReady.status,
+            userRequest: planReady.plan.goal,
+            plan: planReady.plan,
+            createdAt: planReady.createdAt ?? '2026-04-29T10:00:00.000Z',
+            updatedAt: planReady.updatedAt ?? '2026-04-29T10:00:00.000Z',
+            approvedAt: planReady.approvedAt ?? null,
+            executedAt: planReady.executedAt ?? null,
+            rejectionReason: planReady.rejectionReason ?? null,
+            errorMessage: planReady.errorMessage ?? null,
+          },
+          versions: [
+            {
+              planId: payload.planId,
+              threadId: planReady.threadId ?? 'sidecar-thread-1',
+              version: payload.version ?? planReady.version,
+              status: planReady.status,
+              userRequest: planReady.plan.goal,
+              plan: planReady.plan,
+              createdAt: planReady.createdAt ?? '2026-04-29T10:00:00.000Z',
+              updatedAt: planReady.updatedAt ?? '2026-04-29T10:00:00.000Z',
+              approvedAt: planReady.approvedAt ?? null,
+              executedAt: planReady.executedAt ?? null,
+              rejectionReason: planReady.rejectionReason ?? null,
+              errorMessage: planReady.errorMessage ?? null,
+            },
+          ],
+        },
+        {
+          type: 'done',
+          result: 'sidecar plan record ready',
+        },
+      ],
+      result: 'sidecar plan record ready',
+    };
+  });
 
   const createSidecarExecuteResponse = (goal: string): IAgentSidecarResponsePayload => ({
     sessionId: 'sidecar-execute-session-1',
@@ -423,6 +489,7 @@ const aiServiceMock = vi.hoisted(() => {
     classifyTask,
     planTask,
     sidecarPlan,
+    sidecarPlanQuery,
     sidecarExecute,
     sidecarResolveApproval,
     sidecarRestoreCheckpoint,
@@ -483,6 +550,7 @@ const aiServiceMock = vi.hoisted(() => {
       classifyTask.mockClear();
       planTask.mockClear();
       sidecarPlan.mockClear();
+      sidecarPlanQuery.mockClear();
       sidecarExecute.mockClear();
       sidecarResolveApproval.mockClear();
       sidecarRestoreCheckpoint.mockClear();
@@ -508,6 +576,7 @@ vi.mock('@/services/modules/ai', () => ({
     planTask: aiServiceMock.planTask,
     onNarratorStream: aiServiceMock.onNarratorStream,
     sidecarPlan: aiServiceMock.sidecarPlan,
+    sidecarPlanQuery: aiServiceMock.sidecarPlanQuery,
     sidecarExecute: aiServiceMock.sidecarExecute,
     sidecarResolveApproval: aiServiceMock.sidecarResolveApproval,
     sidecarRestoreCheckpoint: aiServiceMock.sidecarRestoreCheckpoint,

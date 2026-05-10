@@ -3,6 +3,7 @@ import { z } from 'zod';
 import {
   AGENT_RUNTIME_EVENT_SCHEMA_VERSION,
   AGENT_RUNTIME_EVENT_TYPES,
+  AGENT_PLAN_STATUSES,
   AGENT_SIDECAR_MODES,
   type TJsonValue,
 } from '@/types/agent-sidecar';
@@ -20,6 +21,7 @@ export const jsonValueSchema: z.ZodType<TJsonValue> = z.lazy(() =>
 );
 
 export const agentSidecarModeSchema = z.enum(AGENT_SIDECAR_MODES);
+export const agentPlanStatusSchema = z.enum(AGENT_PLAN_STATUSES);
 
 const optionalNonEmptyStringSchema = z.preprocess((value) => {
   if (value === null || value === undefined) {
@@ -68,8 +70,13 @@ export const agentPlanStepSchema = z.object({
   id: z.string().min(1),
   title: z.string().min(1),
   goal: z.string().min(1),
+  description: z.string().min(1).optional(),
   status: z.enum(['pending', 'running', 'done', 'failed', 'skipped', 'cancelled']),
   tools: z.array(z.string().min(1)),
+  files: z.array(z.string().min(1)).optional(),
+  commands: z.array(z.string().min(1)).optional(),
+  risks: z.array(z.string().min(1)).optional(),
+  acceptanceCriteria: z.array(z.string().min(1)).optional(),
   riskLevel: z.enum(['low', 'medium', 'high']),
   requiresApproval: z.boolean(),
   expectedOutput: z.string().min(1),
@@ -77,7 +84,24 @@ export const agentPlanStepSchema = z.object({
 
 export const agentPlanSchema = z.object({
   goal: z.string().min(1),
+  summary: z.string().min(1).optional(),
+  requiresApproval: z.boolean().optional(),
   steps: z.array(agentPlanStepSchema).min(1),
+});
+
+export const agentPlanRecordSchema = z.object({
+  planId: z.string().min(1),
+  threadId: z.string().min(1),
+  version: z.number().int().positive(),
+  status: agentPlanStatusSchema,
+  userRequest: z.string(),
+  plan: agentPlanSchema,
+  createdAt: z.string().min(1),
+  updatedAt: z.string().min(1),
+  approvedAt: z.string().min(1).nullable(),
+  executedAt: z.string().min(1).nullable(),
+  rejectionReason: z.string().min(1).nullable(),
+  errorMessage: z.string().min(1).nullable(),
 });
 
 export const approvalRequestSchema = z.object({
@@ -129,7 +153,22 @@ export const agentUiEventSchema = z.discriminatedUnion('type', [
   }),
   z.object({
     type: z.literal('plan_ready'),
+    planId: z.string().min(1),
+    threadId: z.string().min(1).optional(),
+    version: z.number().int().positive(),
+    status: agentPlanStatusSchema,
+    createdAt: z.string().min(1).optional(),
+    updatedAt: z.string().min(1).optional(),
+    approvedAt: z.string().min(1).nullable().optional(),
+    executedAt: z.string().min(1).nullable().optional(),
+    rejectionReason: z.string().min(1).nullable().optional(),
+    errorMessage: z.string().min(1).nullable().optional(),
     plan: agentPlanSchema,
+  }),
+  z.object({
+    type: z.literal('plan_record'),
+    record: agentPlanRecordSchema,
+    versions: z.array(agentPlanRecordSchema),
   }),
   z.object({
     type: z.literal('tool_start'),
@@ -179,6 +218,10 @@ const agentSidecarBaseRequestSchema = z.object({
   messages: z.array(agentSidecarMessageSchema),
   workspaceRootPath: optionalWorkspaceRootPathSchema,
   context: z.array(aiContextReferenceSchema).default([]),
+  threadId: optionalNonEmptyStringSchema,
+  planId: optionalNonEmptyStringSchema,
+  planVersion: z.number().int().positive().optional(),
+  planStepId: optionalNonEmptyStringSchema,
 });
 
 export const agentSidecarChatRequestSchema = agentSidecarBaseRequestSchema.extend({
@@ -191,6 +234,32 @@ export const agentSidecarPlanRequestSchema = agentSidecarBaseRequestSchema.exten
 
 export const agentSidecarExecuteRequestSchema = agentSidecarBaseRequestSchema.extend({
   goal: requiredNonEmptyStringSchema,
+  planId: requiredNonEmptyStringSchema,
+  planVersion: z.number().int().positive(),
+  planStepId: requiredNonEmptyStringSchema,
+});
+
+const agentSidecarPlanVersionRequestSchema = z.object({
+  sessionId: optionalNonEmptyStringSchema,
+  planId: requiredNonEmptyStringSchema,
+  version: z.number().int().positive(),
+});
+
+export const agentSidecarPlanApproveRequestSchema = agentSidecarPlanVersionRequestSchema;
+
+export const agentSidecarPlanQueryRequestSchema = z.object({
+  sessionId: optionalNonEmptyStringSchema,
+  planId: requiredNonEmptyStringSchema,
+  version: z.number().int().positive().optional(),
+});
+
+export const agentSidecarPlanRejectRequestSchema = agentSidecarPlanVersionRequestSchema.extend({
+  reason: optionalNonEmptyStringSchema,
+});
+
+export const agentSidecarPlanFinishRequestSchema = agentSidecarPlanVersionRequestSchema.extend({
+  status: z.enum(['completed', 'failed']),
+  errorMessage: optionalNonEmptyStringSchema,
 });
 
 export const agentSidecarApprovalResolveRequestSchema = z.object({

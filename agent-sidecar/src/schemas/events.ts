@@ -6,7 +6,7 @@ import {
   type TAgentRuntimeEvent,
 } from '../streaming/stream-types.js';
 import type { JSONValue } from '../types/json-value.js';
-import { agentPlanSchema } from './plan.js';
+import { agentPlanRecordSchema, agentPlanSchema, agentPlanStatusSchema } from './plan.js';
 
 export type TJsonValue = JSONValue;
 
@@ -70,7 +70,22 @@ export const agentUiEventSchema = z.discriminatedUnion('type', [
   }),
   z.object({
     type: z.literal('plan_ready'),
+    planId: z.string().min(1),
+    threadId: z.string().min(1).optional(),
+    version: z.number().int().positive(),
+    status: agentPlanStatusSchema,
+    createdAt: z.string().min(1).optional(),
+    updatedAt: z.string().min(1).optional(),
+    approvedAt: z.string().min(1).nullable().optional(),
+    executedAt: z.string().min(1).nullable().optional(),
+    rejectionReason: z.string().min(1).nullable().optional(),
+    errorMessage: z.string().min(1).nullable().optional(),
     plan: agentPlanSchema,
+  }),
+  z.object({
+    type: z.literal('plan_record'),
+    record: agentPlanRecordSchema,
+    versions: z.array(agentPlanRecordSchema),
   }),
   z.object({
     type: z.literal('tool_start'),

@@ -287,66 +287,79 @@ describe('tauriService', () => {
     }
   });
 
-  it('aiPlanTask accepts Rust plan payload with null optional fields', async () => {
+  it('agentSidecarPlan accepts persisted plan_ready payload', async () => {
     invokeMock.mockResolvedValue({
-      steps: [
+      sessionId: 'sidecar-plan-session-1',
+      events: [
         {
-          id: 'plan-step-1',
-          index: 0,
-          title: '收集现有上下文与影响面',
-          goal: '读取当前文件、诊断与项目搜索结果',
-          kind: 'inspect',
-          status: 'pending',
-          expectedOutput: '产出受影响文件、相关符号与边界说明',
-          tools: ['search_text', 'read_current_file', 'get_diagnostics'],
-          toolInputs: null,
-          references: null,
-          isActive: null,
-          requiresUserApproval: false,
-          riskLevel: 'low',
-          rollbackStrategy: '只读步骤无需回滚',
+          type: 'plan_ready',
+          planId: 'plan-tauri-1',
+          threadId: 'thread-tauri-1',
+          version: 1,
+          status: 'pending_approval',
+          createdAt: '2026-05-01T10:00:00.000Z',
+          updatedAt: '2026-05-01T10:00:00.000Z',
+          approvedAt: null,
+          executedAt: null,
+          rejectionReason: null,
+          errorMessage: null,
+          plan: {
+            goal: '你修改一下',
+            summary: '先确认影响面，再输出执行计划。',
+            requiresApproval: true,
+            steps: [
+              {
+                id: 'plan-step-1',
+                title: '收集现有上下文与影响面',
+                goal: '读取当前文件、诊断与项目搜索结果',
+                status: 'pending',
+                expectedOutput: '产出受影响文件、相关符号与边界说明',
+                tools: ['search_text', 'read_current_file', 'get_diagnostics'],
+                requiresApproval: false,
+                riskLevel: 'low',
+              },
+              {
+                id: 'plan-step-2',
+                title: '输出结果摘要',
+                goal: '基于已收集上下文回答用户',
+                status: 'pending',
+                expectedOutput: '输出简要结论与必要后续建议',
+                tools: ['get_diagnostics'],
+                requiresApproval: false,
+                riskLevel: 'low',
+              },
+            ],
+          },
         },
         {
-          id: 'plan-step-2',
-          index: 1,
-          title: '输出结果摘要',
-          goal: '基于已收集上下文回答用户',
-          kind: 'summarize',
-          status: 'pending',
-          expectedOutput: '输出简要结论与必要后续建议',
-          tools: ['get_diagnostics'],
-          toolInputs: {
-            webSearch: null,
-            webFetch: null,
-            proposePatch: null,
-            autoApplyPatch: null,
-            runCommand: null,
-            stageFile: null,
-            createCommit: null,
-          },
-          references: null,
-          isActive: null,
-          requiresUserApproval: false,
-          riskLevel: 'low',
-          rollbackStrategy: null,
+          type: 'done',
+          result: 'sidecar plan ready',
         },
       ],
+      result: 'sidecar plan ready',
     });
 
-    await expect(tauriService.aiPlanTask({
+    await expect(tauriService.agentSidecarPlan({
       goal: '你修改一下',
+      messages: [{ role: 'user', content: '你修改一下' }],
       context: [],
     })).resolves.toMatchObject({
-      steps: [
-        {
-          id: 'plan-step-1',
-          title: '收集现有上下文与影响面',
-        },
-        {
-          id: 'plan-step-2',
-          title: '输出结果摘要',
-        },
+      events: [
+        expect.objectContaining({
+          type: 'plan_ready',
+          planId: 'plan-tauri-1',
+        }),
+        expect.objectContaining({
+          type: 'done',
+        }),
       ],
+    });
+    expect(invokeMock).toHaveBeenCalledWith('agent_sidecar_plan', {
+      payload: {
+        goal: '你修改一下',
+        messages: [{ role: 'user', content: '你修改一下' }],
+        context: [],
+      },
     });
   });
 });

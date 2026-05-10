@@ -70,8 +70,20 @@ describe('agent sidecar event contract', () => {
         },
         {
           type: 'plan_ready',
+          planId: 'plan-complex-1',
+          threadId: 'thread-complex-1',
+          version: 1,
+          status: 'pending_approval',
+          createdAt: '2026-05-01T10:00:00.000Z',
+          updatedAt: '2026-05-01T10:00:00.000Z',
+          approvedAt: null,
+          executedAt: null,
+          rejectionReason: null,
+          errorMessage: null,
           plan: {
             goal: userQuestion,
+            summary: '迁移 AI 面板调用链并保留审批边界。',
+            requiresApproval: true,
             steps: [
               {
                 id: 'step-1',
@@ -189,7 +201,7 @@ describe('agent sidecar event contract', () => {
   });
 
   it('accepts omitted optional sidecar request fields before IPC', () => {
-    const parsed = agentSidecarExecuteRequestSchema.parse({
+    const parsed = agentSidecarChatRequestSchema.parse({
       goal: 'run',
       messages: [],
       context: [],
@@ -198,6 +210,16 @@ describe('agent sidecar event contract', () => {
     expect(parsed.sessionId).toBeUndefined();
     expect(parsed.workspaceRootPath).toBeUndefined();
     expect(parsed.goal).toBe('run');
+  });
+
+  it('requires approved plan gate fields for sidecar execute requests', () => {
+    expect(() =>
+      agentSidecarExecuteRequestSchema.parse({
+        goal: 'run',
+        messages: [],
+        context: [],
+      }),
+    ).toThrow();
   });
 
   it('keeps plan and execute goals non-empty after trimming', () => {
@@ -213,6 +235,9 @@ describe('agent sidecar event contract', () => {
         goal: ' run ',
         messages: [],
         context: [],
+        planId: 'plan-1',
+        planVersion: 1,
+        planStepId: 'step-1',
       }).goal,
     ).toBe('run');
   });
