@@ -13,15 +13,25 @@ import { MessageSquareIcon } from 'lucide-vue-next';
 import { computed } from 'vue';
 import AiMessageItem from './AiMessageItem.vue';
 
+interface IAiChatScrollState {
+  scrollTop: number;
+  scrollHeight: number;
+  clientHeight: number;
+  distanceFromBottom: number;
+}
+
 const props = defineProps<{
   messages: IAiChatMessage[];
   isTyping: boolean;
   platformId: TAiServicePlatformId;
   providerLabel: string;
+  conversationId: string | null;
+  scrollState: IAiChatScrollState | null;
 }>();
 
 const emit = defineEmits<{
   messageAction: [messageId: string, actionId: TAiChatMessageActionId];
+  scrollStateChange: [state: IAiChatScrollState];
 }>();
 
 const TOOL_PROGRESS_PREFIXES = [
@@ -66,14 +76,23 @@ const lastAssistantMessageId = computed(() => {
 
   return null;
 });
+const conversationInitialScroll = computed(() => props.scrollState ? false : 'instant');
 
 const handleMessageAction = (messageId: string, actionId: TAiChatMessageActionId): void => {
   emit('messageAction', messageId, actionId);
 };
+
+const handleScrollStateChange = (state: IAiChatScrollState): void => {
+  emit('scrollStateChange', state);
+};
 </script>
 
 <template>
-  <Conversation class="relative size-full overflow-x-hidden ai-chat-list" aria-label="AI 对话记录">
+  <Conversation class="relative size-full overflow-x-hidden ai-chat-list" aria-label="AI 对话记录"
+    :initial="conversationInitialScroll" :restore-key="conversationId"
+    :initial-scroll-top="scrollState?.scrollTop ?? null"
+    :initial-distance-from-bottom="scrollState?.distanceFromBottom ?? null"
+    @scroll-state-change="handleScrollStateChange">
     <ConversationContent class="ai-chat-list__content" :class="{ 'is-empty': shouldRenderEmptyState }">
       <slot v-if="shouldRenderEmptyState" name="empty">
         <ConversationEmptyState class="ai-chat-empty-state" title="还没有对话" description="选择一个提示词，或直接输入你的问题。">

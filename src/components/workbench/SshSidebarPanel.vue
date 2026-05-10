@@ -4,6 +4,19 @@ import type {
   ILinearContextMenuGroup,
   ILinearContextMenuItem,
 } from '@/components/common/linear-context-menu.types'
+import {
+  Breadcrumb,
+  BreadcrumbEllipsis,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from '@/components/ui/breadcrumb'
+import DropdownMenu from '@/components/ui/dropdown-menu/DropdownMenu.vue'
+import DropdownMenuContent from '@/components/ui/dropdown-menu/DropdownMenuContent.vue'
+import DropdownMenuItem from '@/components/ui/dropdown-menu/DropdownMenuItem.vue'
+import DropdownMenuTrigger from '@/components/ui/dropdown-menu/DropdownMenuTrigger.vue'
 import { useIntegratedTerminalControls } from '@/composables/useIntegratedTerminal'
 import { useMessage } from '@/composables/useMessage'
 import { tauriService } from '@/services/tauri'
@@ -21,12 +34,14 @@ import type {
   TSshPanelTab,
   TSshTransferDirection,
 } from '@/types/ssh'
-import { Server } from 'lucide-vue-next'
+import { RefreshCw, Server, Unplug } from 'lucide-vue-next'
 import { storeToRefs } from 'pinia'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 
 const CONTEXT_MENU_WIDTH = 172
 const CONTEXT_MENU_HEIGHT = 252
+const SSH_BREADCRUMB_COLLAPSE_THRESHOLD = 4
+const SSH_BREADCRUMB_TAIL_COUNT = 2
 const DEFAULT_SELECTED_FILE_ID = 'ssh-client'
 const MANUAL_CONNECTION_ID = 'manual'
 const DEFAULT_SSH_PORT = '22'
@@ -67,6 +82,10 @@ const SSH_AUTH_OPTIONS: ISshAuthOption[] = [
     label: '密码认证',
   },
 ]
+
+type TSshBreadcrumbItem =
+  | (ISshPathSegment & { type: 'segment' })
+  | { id: 'ssh-path-ellipsis'; type: 'ellipsis'; segments: ISshPathSegment[] }
 
 const FALLBACK_SELECTED_FILE: ISshFileItem = {
   id: DEFAULT_SELECTED_FILE_ID,
@@ -114,6 +133,10 @@ const isPreviewLoading = ref(false)
 const isCreateDirectoryDialogOpen = ref(false)
 const renameInputValue = ref('')
 const createDirectoryName = ref('')
+const remoteDirectoryRequestVersion = ref(0)
+const activeSshConnectionRequest = ref<ReturnType<typeof createSshConnectionTestRequest> | null>(
+  null,
+)
 const contextMenu = reactive({
   open: false,
   x: 0,
@@ -127,6 +150,24 @@ const selectedFile = computed<ISshFileItem>(
 )
 const sshCommandPreview = computed(() => buildSshCommand())
 const sshPathSegments = computed<ISshPathSegment[]>(() => buildRemotePathSegments(currentRemotePath.value))
+const sshBreadcrumbItems = computed<TSshBreadcrumbItem[]>(() => {
+  const segments = sshPathSegments.value
+  if (segments.length <= SSH_BREADCRUMB_COLLAPSE_THRESHOLD) {
+    return segments.map((segment) => ({ ...segment, type: 'segment' as const }))
+  }
+
+  return [
+    { ...segments[0], type: 'segment' as const },
+    {
+      id: 'ssh-path-ellipsis',
+      type: 'ellipsis',
+      segments: segments.slice(1, -SSH_BREADCRUMB_TAIL_COUNT),
+    },
+    ...segments
+      .slice(-SSH_BREADCRUMB_TAIL_COUNT)
+      .map((segment) => ({ ...segment, type: 'segment' as const })),
+  ]
+})
 const selectedAuthOption = computed(
   () =>
     SSH_AUTH_OPTIONS.find((option) => option.value === connectionForm.authMode) ??
@@ -282,80 +323,6 @@ const buildRemotePathSegments = (path: string): ISshPathSegment[] => {
   return segments.length > 0 ? segments : [{ id: '.', label: '.', path: '.' }]
 }
 
-const createSshDirectoryRequest = (path: string) => ({
-  host: connectionForm.host.trim(),
-  port: Number.parseInt(connectionForm.port.trim(), 10),
-  username: connectionForm.username.trim(),
-  authMode: connectionForm.authMode,
-  identityPath: connectionForm.authMode === 'key' ? connectionForm.identityPath.trim() || null : null,
-  password: connectionForm.authMode === 'password' ? connectionForm.password : null,
-  path,
-})
-
-const createSshFileTransferRequest = (remotePath: string, localPath: string) => ({
-  host: connectionForm.host.trim(),
-  port: Number.parseInt(connectionForm.port.trim(), 10),
-  username: connectionForm.username.trim(),
-  authMode: connectionForm.authMode,
-  identityPath: connectionForm.authMode === 'key' ? connectionForm.identityPath.trim() || null : null,
-  password: connectionForm.authMode === 'password' ? connectionForm.password : null,
-  remotePath,
-  localPath,
-})
-
-const createSshFileUploadRequest = (localPath: string, remoteDirectory: string) => ({
-  host: connectionForm.host.trim(),
-  port: Number.parseInt(connectionForm.port.trim(), 10),
-  username: connectionForm.username.trim(),
-  authMode: connectionForm.authMode,
-  identityPath: connectionForm.authMode === 'key' ? connectionForm.identityPath.trim() || null : null,
-  password: connectionForm.authMode === 'password' ? connectionForm.password : null,
-  localPath,
-  remoteDirectory,
-})
-
-const createSshPathDeleteRequest = (remotePath: string) => ({
-  host: connectionForm.host.trim(),
-  port: Number.parseInt(connectionForm.port.trim(), 10),
-  username: connectionForm.username.trim(),
-  authMode: connectionForm.authMode,
-  identityPath: connectionForm.authMode === 'key' ? connectionForm.identityPath.trim() || null : null,
-  password: connectionForm.authMode === 'password' ? connectionForm.password : null,
-  remotePath,
-})
-
-const createSshPathRenameRequest = (remotePath: string, newName: string) => ({
-  host: connectionForm.host.trim(),
-  port: Number.parseInt(connectionForm.port.trim(), 10),
-  username: connectionForm.username.trim(),
-  authMode: connectionForm.authMode,
-  identityPath: connectionForm.authMode === 'key' ? connectionForm.identityPath.trim() || null : null,
-  password: connectionForm.authMode === 'password' ? connectionForm.password : null,
-  remotePath,
-  newName,
-})
-
-const createSshDirectoryCreateRequest = (remoteDirectory: string, name: string) => ({
-  host: connectionForm.host.trim(),
-  port: Number.parseInt(connectionForm.port.trim(), 10),
-  username: connectionForm.username.trim(),
-  authMode: connectionForm.authMode,
-  identityPath: connectionForm.authMode === 'key' ? connectionForm.identityPath.trim() || null : null,
-  password: connectionForm.authMode === 'password' ? connectionForm.password : null,
-  remoteDirectory,
-  name,
-})
-
-const createSshFileReadRequest = (remotePath: string) => ({
-  host: connectionForm.host.trim(),
-  port: Number.parseInt(connectionForm.port.trim(), 10),
-  username: connectionForm.username.trim(),
-  authMode: connectionForm.authMode,
-  identityPath: connectionForm.authMode === 'key' ? connectionForm.identityPath.trim() || null : null,
-  password: connectionForm.authMode === 'password' ? connectionForm.password : null,
-  remotePath,
-})
-
 const createSshConnectionTestRequest = () => ({
   host: connectionForm.host.trim(),
   port: Number.parseInt(connectionForm.port.trim(), 10),
@@ -365,6 +332,65 @@ const createSshConnectionTestRequest = () => ({
     connectionForm.authMode === 'key' ? connectionForm.identityPath.trim() || null : null,
   password: connectionForm.authMode === 'password' ? connectionForm.password : null,
 })
+
+const createSshConnectionRequest = (): ReturnType<typeof createSshConnectionTestRequest> =>
+  activeSshConnectionRequest.value ?? createSshConnectionTestRequest()
+
+const createSshDirectoryRequest = (path: string) => ({
+  ...createSshConnectionRequest(),
+  path,
+})
+
+const createSshFileTransferRequest = (remotePath: string, localPath: string) => ({
+  ...createSshConnectionRequest(),
+  remotePath,
+  localPath,
+})
+
+const createSshFileUploadRequest = (localPath: string, remoteDirectory: string) => ({
+  ...createSshConnectionRequest(),
+  localPath,
+  remoteDirectory,
+})
+
+const createSshPathDeleteRequest = (remotePath: string) => ({
+  ...createSshConnectionRequest(),
+  remotePath,
+})
+
+const createSshPathRenameRequest = (remotePath: string, newName: string) => ({
+  ...createSshConnectionRequest(),
+  remotePath,
+  newName,
+})
+
+const createSshDirectoryCreateRequest = (remoteDirectory: string, name: string) => ({
+  ...createSshConnectionRequest(),
+  remoteDirectory,
+  name,
+})
+
+const createSshFileReadRequest = (remotePath: string) => ({
+  ...createSshConnectionRequest(),
+  remotePath,
+})
+
+const createSshPasswordIdentityRequest = () => ({
+  host: connectionForm.host.trim(),
+  port: Number.parseInt(connectionForm.port.trim(), 10),
+  username: connectionForm.username.trim(),
+})
+
+const saveCurrentSshPassword = async (): Promise<void> => {
+  if (connectionForm.authMode !== 'password') {
+    return
+  }
+
+  await tauriService.saveSshPassword({
+    ...createSshPasswordIdentityRequest(),
+    password: connectionForm.password,
+  })
+}
 
 const createTransferItem = (
   direction: TSshTransferDirection,
@@ -393,10 +419,15 @@ const updateTransferItem = (
 }
 
 const loadRemoteDirectorySnapshot = async (path: string): Promise<void> => {
+  const requestVersion = remoteDirectoryRequestVersion.value + 1
+  remoteDirectoryRequestVersion.value = requestVersion
   isRemoteDirectoryLoading.value = true
 
   try {
     const result = await tauriService.listSshDirectory(createSshDirectoryRequest(path))
+    if (requestVersion !== remoteDirectoryRequestVersion.value) {
+      return
+    }
     currentRemotePath.value = result.path
     sshFileItems.value = result.entries.map((entry) => {
       const isDirectory = entry.kind === 'directory'
@@ -411,7 +442,9 @@ const loadRemoteDirectorySnapshot = async (path: string): Promise<void> => {
     })
     selectedFileId.value = sshFileItems.value[0]?.id ?? ''
   } finally {
-    isRemoteDirectoryLoading.value = false
+    if (requestVersion === remoteDirectoryRequestVersion.value) {
+      isRemoteDirectoryLoading.value = false
+    }
   }
 }
 
@@ -786,7 +819,8 @@ const handleConnect = async (connectionId = MANUAL_CONNECTION_ID): Promise<void>
   connectionStatusText.value = '正在验证 SSH 连接…'
 
   try {
-    const testResult = await tauriService.testSshConnection(createSshConnectionTestRequest())
+    const connectionRequest = createSshConnectionTestRequest()
+    const testResult = await tauriService.testSshConnection(connectionRequest)
 
     if (!testResult.ok) {
       connectionErrorText.value = testResult.message
@@ -795,12 +829,20 @@ const handleConnect = async (connectionId = MANUAL_CONNECTION_ID): Promise<void>
     }
 
     connectionStatusText.value = '正在读取远端目录…'
+    activeSshConnectionRequest.value = connectionRequest
     await loadRemoteDirectorySnapshot('.')
+    try {
+      await saveCurrentSshPassword()
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : '保存 SSH 密码失败。'
+      message.error(`连接已成功，但保存密码失败：${errorMessage}`)
+    }
     const rememberedConnectionId = sshStore.rememberCurrentConnection(connectionId)
     applyConnectionState(rememberedConnectionId)
     message.success('SSH 连接验证成功，已打开远端会话。')
     void openTerminalSessionBestEffort()
   } catch (error) {
+    activeSshConnectionRequest.value = null
     const errorMessage = error instanceof Error ? error.message : 'SSH 连接失败。'
     connectionErrorText.value = errorMessage
     message.error(errorMessage)
@@ -847,8 +889,16 @@ const handleImportConfig = async (): Promise<void> => {
 const handleSelectRecentConnection = async (connection: ISshRecentConnection): Promise<void> => {
   sshStore.setConnectionFormFromProfile(connection)
   if (connection.authMode === 'password') {
-    isConnectFormVisible.value = true
-    message.info('请输入该主机的 SSH 密码后继续连接。')
+    try {
+      const savedCredential = await tauriService.getSshPassword(createSshPasswordIdentityRequest())
+      connectionForm.password = savedCredential.password
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : '未找到已保存的 SSH 密码。'
+      isConnectFormVisible.value = true
+      message.info(errorMessage)
+      return
+    }
+    await handleConnect(connection.id)
     return
   }
 
@@ -869,6 +919,20 @@ const refreshCurrentRemoteDirectory = (): void => {
   }
 
   void loadRemoteDirectory(currentRemotePath.value)
+}
+
+const disconnectSshSession = (): void => {
+  remoteDirectoryRequestVersion.value += 1
+  isRemoteDirectoryLoading.value = false
+  isPathMutating.value = false
+  activeSshConnectionRequest.value = null
+  resetRenameDialog(true)
+  resetDeleteDialog(true)
+  resetCreateDirectoryDialog(true)
+  closeContextMenu()
+  closeAuthSelect()
+  sshStore.clearConnectionState()
+  message.info('已断开 SSH 文件会话。')
 }
 
 const handleSelectFile = (fileId: string): void => {
@@ -1186,21 +1250,81 @@ onBeforeUnmount(() => {
       </section>
 
       <template v-else>
-        <div v-if="isExplorerActive" class="ssh-path-bar" aria-label="远端路径">
-          <template v-for="(segment, index) in sshPathSegments" :key="segment.id">
-            <button type="button" class="ssh-path-segment" :class="{ 'is-current': segment.path === currentRemotePath }"
-              @click="handlePathSegmentClick(segment)">
-              {{ segment.label }}
+        <div v-if="isExplorerActive" class="ssh-path-bar">
+          <Breadcrumb class="ssh-path-breadcrumb" aria-label="远端路径">
+            <BreadcrumbList class="ssh-path-list">
+              <template v-for="(item, index) in sshBreadcrumbItems" :key="item.id">
+                <BreadcrumbItem v-if="item.type === 'ellipsis'">
+                  <DropdownMenu>
+                    <DropdownMenuTrigger as-child>
+                      <button
+                        type="button"
+                        class="ssh-path-ellipsis"
+                        :disabled="isRemoteDirectoryLoading"
+                        aria-label="展开中间路径"
+                      >
+                        <BreadcrumbEllipsis class="ssh-path-ellipsis-icon" />
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start" class="ssh-path-menu">
+                      <DropdownMenuItem
+                        v-for="segment in item.segments"
+                        :key="segment.id"
+                        class="ssh-path-menu-item"
+                        :disabled="isRemoteDirectoryLoading"
+                        @select="handlePathSegmentClick(segment)"
+                      >
+                        {{ segment.label }}
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </BreadcrumbItem>
+                <BreadcrumbItem v-else>
+                  <BreadcrumbPage
+                    v-if="item.path === currentRemotePath"
+                    class="ssh-path-segment is-current"
+                  >
+                    {{ item.label }}
+                  </BreadcrumbPage>
+                  <BreadcrumbLink v-else as-child>
+                    <button
+                      type="button"
+                      class="ssh-path-segment"
+                      :disabled="isRemoteDirectoryLoading"
+                      @click="handlePathSegmentClick(item)"
+                    >
+                      {{ item.label }}
+                    </button>
+                  </BreadcrumbLink>
+                </BreadcrumbItem>
+                <BreadcrumbSeparator
+                  v-if="index < sshBreadcrumbItems.length - 1"
+                  class="ssh-path-separator"
+                />
+              </template>
+            </BreadcrumbList>
+          </Breadcrumb>
+          <div class="ssh-path-actions">
+            <button
+              type="button"
+              class="ssh-path-action"
+              aria-label="断开 SSH 连接"
+              title="断开连接"
+              @click="disconnectSshSession"
+            >
+              <Unplug aria-hidden="true" />
             </button>
-            <span v-if="index < sshPathSegments.length - 1" class="ssh-path-separator">/</span>
-          </template>
-          <button type="button" class="ssh-path-refresh" :disabled="isRemoteDirectoryLoading" aria-label="刷新远端目录"
-            @click="refreshCurrentRemoteDirectory">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
-              <polyline points="23 4 23 10 17 10" />
-              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
-            </svg>
-          </button>
+            <button
+              type="button"
+              class="ssh-path-action"
+              :disabled="isRemoteDirectoryLoading"
+              aria-label="刷新远端目录"
+              title="刷新远端目录"
+              @click="refreshCurrentRemoteDirectory"
+            >
+              <RefreshCw aria-hidden="true" />
+            </button>
+          </div>
         </div>
 
         <div v-if="isExplorerActive" class="ssh-file-list" role="list" aria-label="远端文件列表">
@@ -2107,22 +2231,42 @@ onBeforeUnmount(() => {
 .ssh-path-bar {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   padding: 8px 12px;
   border-bottom: 1px solid var(--shell-divider);
   font-size: 11px;
   color: var(--text-tertiary);
 }
 
+.ssh-path-breadcrumb {
+  min-width: 0;
+  flex: 1;
+}
+
+.ssh-path-list {
+  min-width: 0;
+  flex-wrap: nowrap;
+  gap: 3px;
+  overflow: hidden;
+  font-size: 11px;
+}
+
 .ssh-path-segment {
+  display: inline-flex;
+  max-width: 96px;
+  min-width: 0;
+  align-items: center;
   background: transparent;
   padding: 0;
   color: inherit;
   cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   transition: color 0.15s ease;
 }
 
-.ssh-path-segment:hover {
+.ssh-path-segment:hover:not(:disabled) {
   color: var(--text-secondary);
 }
 
@@ -2132,15 +2276,66 @@ onBeforeUnmount(() => {
   cursor: default;
 }
 
-.ssh-path-separator {
-  opacity: 0.32;
+.ssh-path-segment:disabled {
+  cursor: default;
+  opacity: 0.58;
 }
 
-.ssh-path-refresh {
+.ssh-path-separator {
+  opacity: 0.32;
+  color: var(--text-quaternary);
+}
+
+.ssh-path-ellipsis {
+  display: inline-grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease;
+}
+
+.ssh-path-ellipsis:hover:not(:disabled) {
+  background: var(--surface-soft);
+  color: var(--text-primary);
+}
+
+.ssh-path-ellipsis:disabled {
+  cursor: default;
+  opacity: 0.58;
+}
+
+.ssh-path-ellipsis-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.ssh-path-menu {
+  max-width: 180px;
+}
+
+.ssh-path-menu-item {
+  max-width: 172px;
+  font-size: 12px;
+}
+
+.ssh-path-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.ssh-path-action {
   display: inline-grid;
   width: 22px;
   height: 22px;
-  margin-left: auto;
   place-items: center;
   border-radius: 5px;
   background: transparent;
@@ -2151,17 +2346,17 @@ onBeforeUnmount(() => {
     color 0.12s ease;
 }
 
-.ssh-path-refresh:hover:not(:disabled) {
+.ssh-path-action:hover:not(:disabled) {
   background: var(--surface-soft);
   color: var(--text-primary);
 }
 
-.ssh-path-refresh:disabled {
+.ssh-path-action:disabled {
   cursor: default;
   opacity: 0.48;
 }
 
-.ssh-path-refresh svg {
+.ssh-path-action svg {
   width: 13px;
   height: 13px;
   stroke-width: 2;

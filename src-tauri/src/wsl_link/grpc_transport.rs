@@ -27,6 +27,8 @@ pub enum WslLinkGrpcTransportError {
     UnsupportedPlatform(WslLinkTransportKind),
     #[error("WSL Link gRPC 主通道建立失败：{0}")]
     Transport(#[from] tonic::transport::Error),
+    #[error("WSL Link gRPC 主通道连接器失败：{0}")]
+    Connector(String),
     #[error("WSL Link OpenSession RPC 失败：{0}")]
     Status(#[from] tonic::Status),
     #[error("WSL Link Noise 密钥材料不可用：{0}")]
@@ -264,8 +266,20 @@ async fn platform_connect_primary_grpc_channel(
     config: WslLinkTransportConfig,
 ) -> Result<Channel, WslLinkGrpcTransportError> {
     let endpoint = config.grpc_client_endpoint()?;
-    let connector = windows::WslLinkHypervGrpcConnector::new(config.connect_timeout);
-    Ok(endpoint.connect_with_connector(connector).await?)
+    let connector_error = windows::new_connector_error_slot();
+    let connector = windows::WslLinkHypervGrpcConnector::new(
+        config.vsock_grpc_port,
+        config.connect_timeout,
+        connector_error.clone(),
+    );
+    endpoint
+        .connect_with_connector(connector)
+        .await
+        .map_err(|error| {
+            windows::take_connector_error(&connector_error)
+                .map(WslLinkGrpcTransportError::Connector)
+                .unwrap_or_else(|| WslLinkGrpcTransportError::Transport(error))
+        })
 }
 
 #[cfg(not(windows))]
@@ -282,6 +296,7 @@ mod windows {
     use std::{
         future::Future,
         pin::Pin,
+        sync::{Arc, Mutex},
         task::{Context, Poll},
         time::Duration,
     };
@@ -293,18 +308,50 @@ mod windows {
         connect_wsl_vsock_grpc_stream, WslLinkHypervConnectError,
     };
 
-    #[derive(Debug, Clone, Copy)]
+    pub(super) type ConnectorErrorSlot = Arc<Mutex<Option<String>>>;
+
+    pub(super) fn new_connector_error_slot() -> ConnectorErrorSlot {
+        Arc::new(Mutex::new(None))
+    }
+
+    pub(super) fn record_connector_error(slot: &ConnectorErrorSlot, error: String) {
+        if let Ok(mut last_error) = slot.lock() {
+            *last_error = Some(error);
+        }
+    }
+
+    pub(super) fn take_connector_error(slot: &ConnectorErrorSlot) -> Option<String> {
+        slot.lock()
+            .ok()
+            .and_then(|mut last_error| last_error.take())
+    }
+
+    #[derive(Debug, Clone)]
     pub struct WslLinkHypervGrpcConnector {
+        vsock_grpc_port: u32,
         connect_timeout: Duration,
+        last_error: ConnectorErrorSlot,
     }
 
     impl WslLinkHypervGrpcConnector {
-        pub fn new(connect_timeout: Duration) -> Self {
-            Self { connect_timeout }
+        pub fn new(
+            vsock_grpc_port: u32,
+            connect_timeout: Duration,
+            last_error: ConnectorErrorSlot,
+        ) -> Self {
+            Self {
+                vsock_grpc_port,
+                connect_timeout,
+                last_error,
+            }
         }
 
         pub fn connect_timeout(&self) -> Duration {
             self.connect_timeout
+        }
+
+        pub fn vsock_grpc_port(&self) -> u32 {
+            self.vsock_grpc_port
         }
     }
 
@@ -320,9 +367,16 @@ mod windows {
 
         fn call(&mut self, _request: Uri) -> Self::Future {
             let timeout = self.connect_timeout;
+            let vsock_grpc_port = self.vsock_grpc_port;
+            let last_error = self.last_error.clone();
             Box::pin(async move {
-                let stream = connect_wsl_vsock_grpc_stream(timeout).await?;
-                Ok(TokioIo::new(stream))
+                match connect_wsl_vsock_grpc_stream(vsock_grpc_port, timeout).await {
+                    Ok(stream) => Ok(TokioIo::new(stream)),
+                    Err(error) => {
+                        record_connector_error(&last_error, error.to_string());
+                        Err(error)
+                    }
+                }
             })
         }
     }
@@ -420,13 +474,34 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn windows_connector_keeps_configured_timeout() {
-        let connector =
-            super::windows::WslLinkHypervGrpcConnector::new(std::time::Duration::from_millis(123));
+        let connector = super::windows::WslLinkHypervGrpcConnector::new(
+            crate::wsl_link::types::DEFAULT_VSOCK_GRPC_PORT,
+            std::time::Duration::from_millis(123),
+            super::windows::new_connector_error_slot(),
+        );
 
         assert_eq!(
             connector.connect_timeout(),
             std::time::Duration::from_millis(123)
         );
+        assert_eq!(
+            connector.vsock_grpc_port(),
+            crate::wsl_link::types::DEFAULT_VSOCK_GRPC_PORT
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_connector_error_slot_is_consumed_once() {
+        let slot = super::windows::new_connector_error_slot();
+
+        super::windows::record_connector_error(&slot, "WSL Link 连接失败".to_string());
+
+        assert_eq!(
+            super::windows::take_connector_error(&slot),
+            Some("WSL Link 连接失败".to_string())
+        );
+        assert_eq!(super::windows::take_connector_error(&slot), None);
     }
 
     #[cfg(not(windows))]

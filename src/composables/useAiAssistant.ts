@@ -18,7 +18,7 @@ import {
   buildCurrentFileReference,
 } from '@/services/modules/ai-context';
 import { aiEditService } from '@/services/modules/ai-edit';
-import { useAiConversationStore } from '@/store/aiConversation';
+import { useAiConversationStore, type IAiConversationScrollState } from '@/store/aiConversation';
 import {
   extractVisibleAgentRuntimeEvents,
   projectSidecarEventsToToolState,
@@ -451,11 +451,6 @@ const formatImageDimensions = (dimensions: IAiImageDimensions | null): string | 
   return `${dimensions.width} × ${dimensions.height}`;
 };
 
-const canUseObjectUrl = (): boolean =>
-  typeof URL !== 'undefined' &&
-  typeof URL.createObjectURL === 'function' &&
-  typeof URL.revokeObjectURL === 'function';
-
 const readFileAsDataUrl = async (file: File): Promise<string | null> => {
   if (typeof FileReader === 'undefined') {
     return null;
@@ -472,10 +467,6 @@ const readFileAsDataUrl = async (file: File): Promise<string | null> => {
 };
 
 const createImagePreviewSource = async (file: File): Promise<string | null> => {
-  if (canUseObjectUrl()) {
-    return URL.createObjectURL(file);
-  }
-
   return readFileAsDataUrl(file);
 };
 
@@ -974,6 +965,9 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
 
   const historyThreads = computed(() => unref(conversationStore.historyThreads));
   const activeConversationId = computed(() => unref(conversationStore.activeThreadId));
+  const activeConversationScrollState = computed<IAiConversationScrollState | null>(
+    () => conversationStore.activeThread?.scrollState ?? null,
+  );
   const conversationCheckpoints = computed<IAiConversationCheckpoint[]>(() =>
     buildConversationCheckpoints(messages.value),
   );
@@ -2716,6 +2710,23 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     resetConversationUiState();
   };
 
+  const deleteConversation = (threadId: string): boolean => {
+    const wasActiveThread = unref(conversationStore.activeThreadId) === threadId;
+    const deleted = conversationStore.deleteThread(threadId);
+
+    if (!deleted) {
+      return false;
+    }
+
+    if (wasActiveThread) {
+      resetConversationUiState();
+    } else {
+      syncDisplayMessagesFromActiveThread();
+    }
+
+    return true;
+  };
+
   const startNewConversation = (): void => {
     conversationStore.startNewThread();
     resetConversationUiState();
@@ -2724,6 +2735,16 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
   const switchConversation = (threadId: string): void => {
     conversationStore.switchThread(threadId);
     resetConversationUiState();
+  };
+
+  const updateConversationScrollState = (scrollState: IAiConversationScrollState): void => {
+    const threadId = activeConversationId.value;
+
+    if (!threadId) {
+      return;
+    }
+
+    conversationStore.updateThreadScrollState(threadId, scrollState);
   };
 
   const previewPatchFromLastAnswer = async (): Promise<void> => {
@@ -2895,6 +2916,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     messages,
     historyThreads,
     activeConversationId,
+    activeConversationScrollState,
     draft,
     isSending,
     errorMessage,
@@ -2937,7 +2959,9 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     rollbackLatestFileChange,
     restoreConversationCheckpoint,
     clearConversation,
+    deleteConversation,
     startNewConversation,
     switchConversation,
+    updateConversationScrollState,
   };
 };

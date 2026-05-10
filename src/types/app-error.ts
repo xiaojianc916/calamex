@@ -1,5 +1,29 @@
 export type TAppErrorScope = 'http' | 'ipc' | 'validation' | 'unknown';
 
+export type TErrorPresentation = 'field' | 'toast' | 'inline' | 'dialog' | 'page' | 'fatal';
+
+export type TErrorSeverity = 'info' | 'warning' | 'error' | 'fatal';
+
+export type TErrorActionVariant = 'default' | 'outline' | 'ghost';
+
+export interface IErrorPresentationAction {
+  id: string;
+  label: string;
+  variant?: TErrorActionVariant;
+  onSelect: () => void;
+}
+
+export interface IResolvedErrorPresentation {
+  code?: string;
+  title: string;
+  message: string;
+  presentation: TErrorPresentation;
+  severity: TErrorSeverity;
+  traceId?: string;
+  technicalDetails?: string;
+  actions: IErrorPresentationAction[];
+}
+
 export interface IAppError extends Error {
   code: string;
   scope: TAppErrorScope;

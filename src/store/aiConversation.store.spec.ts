@@ -15,6 +15,43 @@ const createMessage = (index: number): IAiChatMessage => ({
     references: [],
 });
 
+const createImageMessage = (index: number): IAiChatMessage => ({
+    ...createMessage(index),
+    role: 'user',
+    references: [
+        {
+            id: `image-reference-${index}-1`,
+            kind: 'image-attachment',
+            label: `图片附件 · image-${index}-1.png`,
+            path: `image-${index}-1.png`,
+            range: null,
+            contentPreview: `第 ${index} 个会话的第 1 张图片`,
+            redacted: false,
+            attachmentPreview: {
+                src: `data:image/png;base64,thread-${index}-image-1`,
+                width: 320,
+                height: 200,
+                mimeType: 'image/png',
+            },
+        },
+        {
+            id: `image-reference-${index}-2`,
+            kind: 'image-attachment',
+            label: `图片附件 · image-${index}-2.png`,
+            path: `image-${index}-2.png`,
+            range: null,
+            contentPreview: `第 ${index} 个会话的第 2 张图片`,
+            redacted: false,
+            attachmentPreview: {
+                src: `data:image/png;base64,thread-${index}-image-2`,
+                width: 640,
+                height: 480,
+                mimeType: 'image/png',
+            },
+        },
+    ],
+});
+
 describe('useAiConversationStore', () => {
     beforeEach(() => {
         setActivePinia(createPinia());
@@ -50,6 +87,32 @@ describe('useAiConversationStore', () => {
         expect(store.historyThreads.at(-1)?.messages[0]?.id).toBe('message-22');
     });
 
+    it('裁剪过期会话时会连同会话内全部图片预览一起移除', () => {
+        const store = useAiConversationStore();
+
+        store.replaceMessages([createImageMessage(1)]);
+
+        for (let index = 2; index <= 22; index += 1) {
+            store.startNewThread();
+            store.replaceMessages([createImageMessage(index)]);
+        }
+
+        const retainedPreviewSources = store.historyThreads.flatMap((thread) =>
+            thread.messages.flatMap((message) =>
+                message.references
+                    .map((reference) => reference.attachmentPreview?.src ?? null)
+                    .filter((src): src is string => src !== null),
+            ),
+        );
+
+        expect(store.historyThreads).toHaveLength(AI_CONVERSATION_HISTORY_LIMIT);
+        expect(retainedPreviewSources).toHaveLength(AI_CONVERSATION_HISTORY_LIMIT * 2);
+        expect(retainedPreviewSources).not.toContain('data:image/png;base64,thread-1-image-1');
+        expect(retainedPreviewSources).not.toContain('data:image/png;base64,thread-2-image-2');
+        expect(retainedPreviewSources).toContain('data:image/png;base64,thread-3-image-1');
+        expect(retainedPreviewSources).toContain('data:image/png;base64,thread-22-image-2');
+    });
+
     it('当前空白新会话不占用 20 个历史会话名额', () => {
         const store = useAiConversationStore();
 
@@ -80,6 +143,61 @@ describe('useAiConversationStore', () => {
         expect(store.historyThreads).toHaveLength(1);
         expect(store.historyThreads[0]?.messages[0]?.id).toBe('message-1');
         expect(store.activeMessages).toHaveLength(0);
+    });
+
+    it('删除指定历史会话时不会影响当前会话', () => {
+        const store = useAiConversationStore();
+
+        store.replaceMessages([createMessage(1)]);
+        const firstThreadId = store.activeThreadId;
+        store.startNewThread();
+        store.replaceMessages([createMessage(2)]);
+
+        const deleted = store.deleteThread(firstThreadId ?? '');
+
+        expect(deleted).toBe(true);
+        expect(store.activeMessages[0]?.id).toBe('message-2');
+        expect(store.historyThreads).toHaveLength(1);
+        expect(store.historyThreads[0]?.messages[0]?.id).toBe('message-2');
+    });
+
+    it('删除当前历史会话后切到剩余最近会话', () => {
+        const store = useAiConversationStore();
+
+        store.replaceMessages([createMessage(1)]);
+        const firstThreadId = store.activeThreadId;
+        store.startNewThread();
+        store.replaceMessages([createMessage(2)]);
+
+        const deleted = store.deleteThread(store.activeThreadId ?? '');
+
+        expect(deleted).toBe(true);
+        expect(store.activeThreadId).toBe(firstThreadId);
+        expect(store.activeMessages[0]?.id).toBe('message-1');
+        expect(store.historyThreads).toHaveLength(1);
+    });
+
+    it('按会话保存滚动高度状态', () => {
+        const store = useAiConversationStore();
+
+        store.replaceMessages([createMessage(1)]);
+        const threadId = store.activeThreadId;
+
+        store.updateThreadScrollState(threadId ?? '', {
+            scrollTop: 320,
+            scrollHeight: 1280,
+            clientHeight: 640,
+            distanceFromBottom: 320,
+            updatedAt: '2026-05-10T12:00:00.000Z',
+        });
+
+        expect(store.activeThread?.scrollState).toEqual({
+            scrollTop: 320,
+            scrollHeight: 1280,
+            clientHeight: 640,
+            distanceFromBottom: 320,
+            updatedAt: '2026-05-10T12:00:00.000Z',
+        });
     });
 
     it('用用户第一条消息作为临时标题', () => {

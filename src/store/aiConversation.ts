@@ -22,6 +22,15 @@ export interface IAiConversationThread {
   updatedAt: string;
   createdAt: string;
   messages: IAiChatMessage[];
+  scrollState?: IAiConversationScrollState;
+}
+
+export interface IAiConversationScrollState {
+  scrollTop: number;
+  scrollHeight: number;
+  clientHeight: number;
+  distanceFromBottom: number;
+  updatedAt: string;
 }
 
 const aiConversationTitleStatusSchema = z.enum([
@@ -38,6 +47,13 @@ const aiConversationThreadSchema = z.object({
   updatedAt: z.string().min(1),
   createdAt: z.string().min(1),
   messages: z.array(aiChatMessageSchema),
+  scrollState: z.object({
+    scrollTop: z.number().finite().nonnegative(),
+    scrollHeight: z.number().finite().nonnegative(),
+    clientHeight: z.number().finite().nonnegative(),
+    distanceFromBottom: z.number().finite().nonnegative(),
+    updatedAt: z.string().min(1),
+  }).optional(),
 });
 
 const aiConversationPersistSchema = z.object({
@@ -334,6 +350,34 @@ export const useAiConversationStore = defineStore('ai-conversation', () => {
     });
   };
 
+  const updateThreadScrollState = (
+    threadId: string,
+    scrollState: IAiConversationScrollState,
+  ): void => {
+    patchThread(threadId, (thread) => ({
+      ...thread,
+      scrollState,
+    }));
+  };
+
+  const deleteThread = (threadId: string): boolean => {
+    if (!threads.value.some((thread) => thread.id === threadId)) {
+      return false;
+    }
+
+    const remainingThreads = threads.value.filter((thread) => thread.id !== threadId);
+    const nextActiveThreadId = activeThreadId.value === threadId
+      ? remainingThreads.at(-1)?.id ?? null
+      : activeThreadId.value;
+
+    replaceThreadsState({
+      activeThreadId: nextActiveThreadId,
+      threads: [...remainingThreads],
+    });
+
+    return true;
+  };
+
   const getThreadTitleStatus = (threadId: string): TAiConversationTitleStatus => {
     const thread = threads.value.find((item) => item.id === threadId);
     return thread?.titleStatus ?? 'temporary';
@@ -390,6 +434,8 @@ export const useAiConversationStore = defineStore('ai-conversation', () => {
     switchThread,
     startNewThread,
     clearActiveThread,
+    updateThreadScrollState,
+    deleteThread,
     getThreadTitleStatus,
     getFirstRoundForTitle,
     markThreadTitleGenerating,

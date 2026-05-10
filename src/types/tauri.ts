@@ -148,6 +148,27 @@ export interface ISshConnectionTestPayload {
   message: string;
 }
 
+export interface ISshPasswordSaveRequest {
+  host: string;
+  port: number;
+  username: string;
+  password: string;
+}
+
+export interface ISshPasswordGetRequest {
+  host: string;
+  port: number;
+  username: string;
+}
+
+export interface ISshPasswordStatusPayload {
+  hasPassword: boolean;
+}
+
+export interface ISshPasswordPayload {
+  password: string;
+}
+
 export interface ISshDirectoryListRequest extends ISshConnectionTestRequest {
   path: string;
 }
@@ -297,6 +318,8 @@ export interface ITauriService {
   closeTerminalSession(payload: ICloseTerminalSessionRequest): Promise<void>;
   cancelTerminalRun(payload: ICancelTerminalRunRequest): Promise<void>;
   testSshConnection(payload: ISshConnectionTestRequest): Promise<ISshConnectionTestPayload>;
+  saveSshPassword(payload: ISshPasswordSaveRequest): Promise<ISshPasswordStatusPayload>;
+  getSshPassword(payload: ISshPasswordGetRequest): Promise<ISshPasswordPayload>;
   listSshConfigHosts(): Promise<ISshConfigHostPayload[]>;
   listSshDirectory(payload: ISshDirectoryListRequest): Promise<ISshDirectoryListPayload>;
   downloadSshFile(payload: ISshFileDownloadRequest): Promise<ISshFileDownloadPayload>;

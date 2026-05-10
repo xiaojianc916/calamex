@@ -3,16 +3,17 @@ use super::{
     SshDirectoryCreatePayload, SshDirectoryCreateRequest, SshDirectoryEntryPayload,
     SshDirectoryListPayload, SshDirectoryListRequest, SshFileDownloadPayload,
     SshFileDownloadRequest, SshFileReadPayload, SshFileReadRequest, SshFileUploadPayload,
-    SshFileUploadRequest, SshPathDeletePayload, SshPathDeleteRequest, SshPathRenamePayload,
+    SshFileUploadRequest, SshPasswordGetRequest, SshPasswordPayload, SshPasswordSaveRequest,
+    SshPasswordStatusPayload, SshPathDeletePayload, SshPathDeleteRequest, SshPathRenamePayload,
     SshPathRenameRequest,
 };
-use ssh2::{FileStat, OpenFlags, OpenType, Session, Sftp};
+use ssh2::{FileStat, OpenFlags, OpenType, RenameFlags, Session, Sftp};
 use std::{
     env, fs as std_fs,
-    io::{Read, Write},
+    io::{Read, Seek, SeekFrom, Write},
     net::{SocketAddr, TcpStream, ToSocketAddrs},
     path::{Path, PathBuf},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::Duration,
 };
 use tokio::{fs as tokio_fs, task, time::timeout};
 
@@ -23,8 +24,10 @@ const SSH_FILE_TRANSFER_TIMEOUT: Duration = Duration::from_secs(300);
 const SSH_FILE_PREVIEW_TIMEOUT: Duration = Duration::from_secs(60);
 const SSH_FILE_PREVIEW_MAX_BYTES: u64 = 2 * 1024 * 1024;
 const DEFAULT_SSH_PORT: u16 = 22;
+const SSH_KEYRING_SERVICE: &str = "calamex.ssh";
 const SSH_CONFIG_IMPORTED_LABEL: &str = "SSH config";
-const SSH_DOWNLOAD_TEMP_SUFFIX: &str = "calamex-download";
+const SFTP_PARTIAL_SUFFIX: &str = ".aster.partial";
+const SFTP_TRANSFER_CHUNK_BYTES: usize = 256 * 1024;
 const S_IFMT: u32 = 0o170000;
 const S_IFDIR: u32 = 0o040000;
 
@@ -191,6 +194,39 @@ pub async fn list_ssh_config_hosts() -> Result<Vec<SshConfigHostPayload>, String
     };
 
     Ok(parse_ssh_config_hosts(&content))
+}
+
+#[tauri::command]
+pub fn save_ssh_password(
+    payload: SshPasswordSaveRequest,
+) -> Result<SshPasswordStatusPayload, String> {
+    let account = ssh_password_account(&payload.host, payload.port, &payload.username)?;
+    let password = payload.password.expose();
+    if password.is_empty() {
+        return Err("SSH 密码不能为空。".into());
+    }
+
+    keyring::Entry::new(SSH_KEYRING_SERVICE, &account)
+        .map_err(|error| format!("打开系统凭据库失败：{error}"))?
+        .set_password(password)
+        .map_err(|error| format!("保存 SSH 密码失败：{error}"))?;
+
+    Ok(SshPasswordStatusPayload { has_password: true })
+}
+
+#[tauri::command]
+pub fn get_ssh_password(payload: SshPasswordGetRequest) -> Result<SshPasswordPayload, String> {
+    let account = ssh_password_account(&payload.host, payload.port, &payload.username)?;
+    let password = keyring::Entry::new(SSH_KEYRING_SERVICE, &account)
+        .map_err(|error| format!("打开系统凭据库失败：{error}"))?
+        .get_password()
+        .map_err(|_| "未找到该 SSH 连接的已保存密码，请重新输入并连接一次。".to_string())?;
+
+    if password.is_empty() {
+        return Err("该 SSH 连接的已保存密码为空，请重新输入并连接一次。".into());
+    }
+
+    Ok(SshPasswordPayload { password })
 }
 
 #[tauri::command]
@@ -574,12 +610,13 @@ fn list_sftp_directory(
     let sftp = session
         .sftp()
         .map_err(|error| format!("打开 SFTP 会话失败：{error}"))?;
+    let resolved_remote_path = resolve_sftp_realpath(&sftp, remote_path)?;
     let entries = sftp
-        .readdir(Path::new(remote_path))
+        .readdir(Path::new(&resolved_remote_path))
         .map_err(|error| format_ssh_directory_error(&error.to_string()))?;
     let mut payload_entries = entries
         .into_iter()
-        .filter_map(|(path, stat)| sftp_entry_to_payload(remote_path, &path, &stat))
+        .filter_map(|(path, stat)| sftp_entry_to_payload(&resolved_remote_path, &path, &stat))
         .collect::<Vec<_>>();
     payload_entries.sort_by(|left, right| {
         (left.kind.as_str() != "directory", left.name.to_lowercase()).cmp(&(
@@ -589,9 +626,30 @@ fn list_sftp_directory(
     });
 
     Ok(SshDirectoryListPayload {
-        path: remote_path.into(),
+        path: resolved_remote_path,
         entries: payload_entries,
     })
+}
+
+fn resolve_sftp_realpath(sftp: &Sftp, remote_path: &str) -> Result<String, String> {
+    let realpath = sftp
+        .realpath(Path::new(remote_path))
+        .map_err(|error| format!("解析远端真实路径失败：{error}"))?;
+
+    Ok(path_to_remote_string(&realpath))
+}
+
+fn path_to_remote_string(path: &Path) -> String {
+    let normalized = path.to_string_lossy().replace('\\', "/");
+    if normalized.is_empty() {
+        return "/".into();
+    }
+
+    if normalized.starts_with('/') {
+        normalized
+    } else {
+        format!("/{normalized}")
+    }
 }
 
 fn sftp_entry_to_payload(
@@ -632,30 +690,70 @@ fn download_sftp_file(
     if is_directory_stat(&stat) {
         return Err("暂不支持下载目录，请选择一个文件。".into());
     }
+    let byte_size = stat.size.unwrap_or(0);
+
+    if let Ok(local_metadata) = std_fs::metadata(local_path) {
+        if local_metadata.is_dir() {
+            return Err("本地保存路径已存在为目录，无法写入文件。".into());
+        }
+        if local_metadata.len() == byte_size {
+            let _ = std_fs::remove_file(local_partial_path(local_path));
+            return Ok(byte_size);
+        }
+    }
+
+    let partial_path = local_partial_path(local_path);
+    let mut resume_offset = match std_fs::metadata(&partial_path) {
+        Ok(metadata) if metadata.is_file() => metadata.len(),
+        Ok(_) => return Err("本地临时下载路径已存在但不是文件。".into()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => 0,
+        Err(error) => return Err(format!("读取本地临时下载文件失败：{error}")),
+    };
+
+    if resume_offset > byte_size {
+        std_fs::remove_file(&partial_path)
+            .map_err(|error| format!("清理过期本地临时下载文件失败：{error}"))?;
+        resume_offset = 0;
+    }
+
+    if resume_offset == byte_size {
+        if partial_path.exists() {
+            finalize_local_download(&partial_path, local_path)?;
+        } else {
+            create_empty_local_download(local_path)?;
+        }
+        return Ok(byte_size);
+    }
 
     let mut remote_file = sftp
         .open(Path::new(remote_path))
         .map_err(|error| format_ssh_download_error(&error.to_string()))?;
-    let temp_path = temporary_download_path(local_path);
+    remote_file
+        .seek(SeekFrom::Start(resume_offset))
+        .map_err(|error| format!("定位远端下载断点失败：{error}"))?;
     let result = (|| {
-        let mut local_file = std_fs::File::create(&temp_path)
-            .map_err(|error| format!("创建本地临时文件失败：{error}"))?;
-        let byte_size = std::io::copy(&mut remote_file, &mut local_file)
-            .map_err(|error| format!("写入本地临时文件失败：{error}"))?;
+        let expected_remaining = byte_size.saturating_sub(resume_offset);
+        let mut local_file = std_fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&partial_path)
+            .map_err(|error| format!("打开本地临时下载文件失败：{error}"))?;
+        let mut limited_remote_file = (&mut remote_file).take(expected_remaining);
+        let copied = copy_stream_with_buffer(
+            &mut limited_remote_file,
+            &mut local_file,
+            "下载远端文件失败",
+        )?;
+        ensure_expected_transfer_size(copied, expected_remaining, "下载远端文件")?;
         local_file
             .flush()
             .map_err(|error| format!("刷新本地临时文件失败：{error}"))?;
-        if local_path.exists() {
-            std_fs::remove_file(local_path)
-                .map_err(|error| format!("覆盖本地文件失败：{error}"))?;
-        }
-        std_fs::rename(&temp_path, local_path)
-            .map_err(|error| format!("保存本地文件失败：{error}"))?;
+        local_file
+            .sync_all()
+            .map_err(|error| format!("同步本地临时文件失败：{error}"))?;
+        finalize_local_download(&partial_path, local_path)?;
         Ok::<u64, String>(byte_size)
     })();
-    if result.is_err() {
-        let _ = std_fs::remove_file(&temp_path);
-    }
 
     result
 }
@@ -669,25 +767,72 @@ fn upload_sftp_file(
     let sftp = session
         .sftp()
         .map_err(|error| format!("打开 SFTP 会话失败：{error}"))?;
-    if sftp.stat(Path::new(remote_path)).is_ok() {
-        return Err("远端已存在同名文件，已取消上传以避免覆盖。".into());
+    let local_size = std_fs::metadata(local_path)
+        .map_err(|error| format!("读取本地文件信息失败：{error}"))?
+        .len();
+    let partial_remote_path = remote_partial_path(remote_path);
+
+    if let Ok(remote_stat) = sftp.stat(Path::new(remote_path)) {
+        if is_directory_stat(&remote_stat) {
+            return Err("远端已存在同名目录，已取消上传。".into());
+        }
+        if remote_stat.size.unwrap_or(0) == local_size {
+            let _ = sftp.unlink(Path::new(&partial_remote_path));
+            return Ok(());
+        }
+
+        return Err("远端已存在同名文件且大小不一致，已取消上传以避免覆盖。".into());
+    }
+
+    let resume_offset = match sftp.stat(Path::new(&partial_remote_path)) {
+        Ok(stat) if is_directory_stat(&stat) => {
+            return Err("远端临时上传路径已存在为目录，无法续传。".into());
+        }
+        Ok(stat) => stat.size.unwrap_or(0),
+        Err(_) => 0,
+    };
+
+    if resume_offset > local_size {
+        return Err("远端临时上传文件大于本地文件，已取消上传以避免写坏目标。".into());
+    }
+
+    if resume_offset == local_size && local_size > 0 {
+        finalize_remote_upload(&sftp, &partial_remote_path, remote_path)?;
+        return Ok(());
     }
 
     let mut local_file =
         std_fs::File::open(local_path).map_err(|error| format!("打开本地文件失败：{error}"))?;
+    local_file
+        .seek(SeekFrom::Start(resume_offset))
+        .map_err(|error| format!("定位本地上传断点失败：{error}"))?;
     let mut remote_file = sftp
         .open_mode(
-            Path::new(remote_path),
-            OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::EXCLUSIVE,
+            Path::new(&partial_remote_path),
+            OpenFlags::WRITE | OpenFlags::CREATE,
             0o644,
             OpenType::File,
         )
         .map_err(|error| format_ssh_upload_error(&error.to_string()))?;
-    std::io::copy(&mut local_file, &mut remote_file)
-        .map_err(|error| format!("上传本地文件失败：{error}"))?;
+    remote_file
+        .seek(SeekFrom::Start(resume_offset))
+        .map_err(|error| format!("定位远端上传断点失败：{error}"))?;
+    let expected_remaining = local_size.saturating_sub(resume_offset);
+    let mut limited_local_file = (&mut local_file).take(expected_remaining);
+    let copied = copy_stream_with_buffer(
+        &mut limited_local_file,
+        &mut remote_file,
+        "上传本地文件失败",
+    )?;
+    ensure_expected_transfer_size(copied, expected_remaining, "上传本地文件")?;
     remote_file
         .flush()
         .map_err(|error| format!("刷新远端文件失败：{error}"))?;
+    remote_file
+        .fsync()
+        .map_err(|error| format!("同步远端临时文件失败：{error}"))?;
+    drop(remote_file);
+    finalize_remote_upload(&sftp, &partial_remote_path, remote_path)?;
 
     Ok(())
 }
@@ -873,6 +1018,22 @@ fn validate_remote_path(path: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn ssh_password_account(host: &str, port: u16, username: &str) -> Result<String, String> {
+    let normalized_host = host.trim();
+    let normalized_username = username.trim();
+    if normalized_host.is_empty() {
+        return Err("请填写主机地址。".into());
+    }
+    if normalized_username.is_empty() {
+        return Err("请填写用户名。".into());
+    }
+    validate_ssh_endpoint(normalized_host, normalized_username)?;
+
+    Ok(format!(
+        "password:{normalized_username}@{normalized_host}:{port}"
+    ))
+}
+
 fn validate_local_file_path(path: &str, empty_message: &str) -> Result<PathBuf, String> {
     let trimmed = path.trim();
     if trimmed.is_empty() {
@@ -885,24 +1046,100 @@ fn validate_local_file_path(path: &str, empty_message: &str) -> Result<PathBuf, 
     Ok(PathBuf::from(trimmed))
 }
 
-fn temporary_download_path(local_path: &Path) -> PathBuf {
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |duration| duration.as_nanos());
+fn copy_stream_with_buffer<R: Read, W: Write>(
+    reader: &mut R,
+    writer: &mut W,
+    error_message: &str,
+) -> Result<u64, String> {
+    let mut buffer = vec![0_u8; SFTP_TRANSFER_CHUNK_BYTES];
+    let mut copied = 0_u64;
+
+    loop {
+        let bytes_read = reader
+            .read(&mut buffer)
+            .map_err(|error| format!("{error_message}：{error}"))?;
+        if bytes_read == 0 {
+            break;
+        }
+
+        writer
+            .write_all(&buffer[..bytes_read])
+            .map_err(|error| format!("{error_message}：{error}"))?;
+        copied += bytes_read as u64;
+    }
+
+    Ok(copied)
+}
+
+fn ensure_expected_transfer_size(copied: u64, expected: u64, action: &str) -> Result<(), String> {
+    if copied == expected {
+        return Ok(());
+    }
+
+    Err(format!(
+        "{action}未完整完成，预期剩余 {expected} 字节，实际写入 {copied} 字节。"
+    ))
+}
+
+fn remote_partial_path(remote_path: &str) -> String {
+    format!("{remote_path}{SFTP_PARTIAL_SUFFIX}")
+}
+
+fn local_partial_path(local_path: &Path) -> PathBuf {
     let file_name = local_path
         .file_name()
         .and_then(|value| value.to_str())
         .filter(|value| !value.is_empty())
         .unwrap_or("download");
-    let temp_file_name = format!(
-        ".{file_name}.{SSH_DOWNLOAD_TEMP_SUFFIX}-{}-{timestamp}.tmp",
-        std::process::id()
-    );
+    let partial_file_name = format!("{file_name}{SFTP_PARTIAL_SUFFIX}");
 
     match local_path.parent() {
-        Some(parent) => parent.join(temp_file_name),
-        None => PathBuf::from(temp_file_name),
+        Some(parent) => parent.join(partial_file_name),
+        None => PathBuf::from(partial_file_name),
     }
+}
+
+fn finalize_local_download(partial_path: &Path, local_path: &Path) -> Result<(), String> {
+    if let Ok(metadata) = std_fs::metadata(local_path) {
+        if metadata.is_dir() {
+            return Err("本地保存路径已存在为目录，无法覆盖。".into());
+        }
+        std_fs::remove_file(local_path).map_err(|error| format!("覆盖本地文件失败：{error}"))?;
+    }
+
+    std_fs::rename(partial_path, local_path).map_err(|error| format!("保存本地文件失败：{error}"))
+}
+
+fn create_empty_local_download(local_path: &Path) -> Result<(), String> {
+    if let Ok(metadata) = std_fs::metadata(local_path) {
+        if metadata.is_dir() {
+            return Err("本地保存路径已存在为目录，无法覆盖。".into());
+        }
+        std_fs::remove_file(local_path).map_err(|error| format!("覆盖本地文件失败：{error}"))?;
+    }
+
+    let local_file =
+        std_fs::File::create(local_path).map_err(|error| format!("创建本地文件失败：{error}"))?;
+    local_file
+        .sync_all()
+        .map_err(|error| format!("同步本地文件失败：{error}"))
+}
+
+fn finalize_remote_upload(
+    sftp: &Sftp,
+    partial_remote_path: &str,
+    remote_path: &str,
+) -> Result<(), String> {
+    if sftp.stat(Path::new(remote_path)).is_ok() {
+        return Err("远端目标文件已存在，已取消提交临时上传文件。".into());
+    }
+
+    sftp.rename(
+        Path::new(partial_remote_path),
+        Path::new(remote_path),
+        Some(RenameFlags::ATOMIC | RenameFlags::NATIVE),
+    )
+    .map_err(|error| format!("提交远端临时上传文件失败：{error}"))
 }
 
 #[cfg(test)]
@@ -1271,6 +1508,44 @@ Host * !blocked concrete-host
         assert_eq!(entries[0].path, "/home/app/src");
         assert_eq!(entries[1].name, "z.log");
         assert_eq!(entries[2].name, "你好.txt");
+    }
+
+    #[test]
+    fn path_to_remote_string_normalizes_sftp_absolute_path() {
+        assert_eq!(path_to_remote_string(Path::new("/home/app")), "/home/app");
+        assert_eq!(path_to_remote_string(Path::new(r"\home\app")), "/home/app");
+    }
+
+    #[test]
+    fn transfer_partial_paths_use_stable_suffix() {
+        assert_eq!(
+            remote_partial_path("/home/app/0.txt"),
+            "/home/app/0.txt.aster.partial"
+        );
+        assert_eq!(
+            local_partial_path(Path::new("0.txt")),
+            PathBuf::from("0.txt.aster.partial")
+        );
+    }
+
+    #[test]
+    fn ensure_expected_transfer_size_rejects_short_copy() {
+        assert!(ensure_expected_transfer_size(8, 8, "上传本地文件").is_ok());
+        assert!(ensure_expected_transfer_size(7, 8, "上传本地文件").is_err());
+    }
+
+    #[test]
+    fn ssh_password_account_trims_and_scopes_connection() {
+        assert_eq!(
+            ssh_password_account(" 192.168.1.10 ", 22, " root ").unwrap(),
+            "password:root@192.168.1.10:22"
+        );
+    }
+
+    #[test]
+    fn ssh_password_account_rejects_unsafe_identity() {
+        assert!(ssh_password_account("example.com", 22, "root@other").is_err());
+        assert!(ssh_password_account("example.com\nbad", 22, "root").is_err());
     }
 
     #[test]

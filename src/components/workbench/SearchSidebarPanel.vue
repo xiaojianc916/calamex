@@ -3,42 +3,48 @@
     <header class="search-panel-header">
       <span class="search-panel-title">搜索</span>
 
-      <button type="button" class="search-panel-icon-btn" aria-label="切换到替换" title="切换到替换" @click="handleReplaceAction">
-        <svg
-viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"
-          stroke-linejoin="round">
-          <path d="M3 7h11" />
-          <path d="M3 17h8" />
-          <path d="m16 14 4 3-4 3" />
-          <path d="m20 4-4 3 4 3" />
-        </svg>
+      <button
+type="button" class="search-panel-icon-btn" :disabled="!canApplyReplacement" aria-label="应用替换内容"
+        title="应用替换内容" @click="applyReplacementToSearch">
+        <LoaderCircle v-if="replaceRunning" class="search-panel-spin" aria-hidden="true" />
+        <Replace v-else aria-hidden="true" />
       </button>
     </header>
 
-    <div class="search-panel-search">
-      <label class="search-panel-input-shell">
+    <div class="search-panel-query-stack">
+      <div class="search-panel-input-shell">
         <span class="search-panel-input-icon" aria-hidden="true">
-          <svg
-viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
-            stroke-linejoin="round">
-            <circle cx="11" cy="11" r="7" />
-            <path d="m20 20-3.5-3.5" />
-          </svg>
+          <Search />
         </span>
 
-        <input v-model="searchQuery" type="text" placeholder="输入关键字搜索…" autocomplete="off" spellcheck="false" />
+        <Input
+v-model="searchQuery" class="search-panel-input" type="text" aria-label="搜索关键字"
+          placeholder="输入关键字搜索…" autocomplete="off" spellcheck="false" />
 
         <button
 v-if="hasSearchQuery" type="button" class="search-panel-clear-btn" aria-label="清空搜索" title="清空搜索"
           @click.stop="searchQuery = ''">
-          <svg
-viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
-            stroke-linejoin="round">
-            <path d="M6 6l12 12" />
-            <path d="M18 6 6 18" />
-          </svg>
+          <X aria-hidden="true" />
         </button>
-      </label>
+      </div>
+
+      <div class="search-panel-input-shell search-panel-replace-shell">
+        <span class="search-panel-input-icon" aria-hidden="true">
+          <Replace />
+        </span>
+
+        <Input
+v-model="replacementQuery" class="search-panel-input" type="text" aria-label="替换内容"
+          placeholder="输入替换内容…" autocomplete="off" spellcheck="false"
+          @keydown.enter="applyReplacementToSearch" />
+
+        <button
+type="button" class="search-panel-apply-btn" :disabled="!canApplyReplacement" aria-label="应用替换内容"
+          title="应用替换内容" @click.stop="applyReplacementToSearch">
+          <LoaderCircle v-if="replaceRunning" class="search-panel-spin" aria-hidden="true" />
+          <Check v-else aria-hidden="true" />
+        </button>
+      </div>
     </div>
 
     <div class="search-panel-chip-row">
@@ -194,8 +200,11 @@ v-for="(segment, index) in result.locationSegments"
 </template>
 
 <script setup lang="ts">
+import { Input } from '@/components/ui/input';
 import ExplorerEntryIcon from '@/components/workbench/ExplorerEntryIcon.vue';
 import { useMessage } from '@/composables/useMessage';
+import { useSidecarChangedDocumentRefresh } from '@/composables/useSidecarChangedDocumentRefresh';
+import { aiService } from '@/services/modules/ai';
 import { tauriService } from '@/services/tauri';
 import type { IWorkspaceDirectoryPayload } from '@/types/editor';
 import type {
@@ -204,6 +213,7 @@ import type {
   TWorkspaceSearchScope,
 } from '@/types/search';
 import { toErrorMessage } from '@/utils/error';
+import { Check, LoaderCircle, Replace, Search, X } from 'lucide-vue-next';
 import { computed, onScopeDispose, ref, watch } from 'vue';
 
 type TSearchReason = TWorkspaceSearchResultKind;
@@ -215,6 +225,7 @@ interface IHighlightedSegment {
 
 interface ISearchResultItem {
   path: string;
+  relativePath: string;
   resultKey: string;
   reason: TSearchReason;
   reasonLabel: string;
@@ -251,8 +262,8 @@ const SEARCH_SCOPE_LABELS: Record<TWorkspaceSearchScope, string> = {
 const SEARCH_DEBOUNCE_MS = 180;
 const SEARCH_RESULT_LIMIT = 200;
 
-const message = useMessage();
 const searchQuery = ref('');
+const replacementQuery = ref('');
 const includePattern = ref('');
 const excludePattern = ref('');
 const activeScope = ref<TWorkspaceSearchScope>('all');
@@ -262,12 +273,15 @@ const useRegex = ref(false);
 const showPathFilters = ref(false);
 const searchIndexing = ref(false);
 const searchError = ref('');
+const replaceRunning = ref(false);
 const selectedResultPath = ref<string | null>(null);
 const scannedFileCount = ref(0);
 const backendResults = ref<IWorkspaceSearchResult[]>([]);
 let searchRequestId = 0;
 let searchTimer: ReturnType<typeof setTimeout> | null = null;
 let activeAbortController: AbortController | null = null;
+const message = useMessage();
+const { refreshSidecarChangedDocuments } = useSidecarChangedDocumentRefresh();
 
 const isWordCharacter = (value: string | undefined): boolean =>
   Boolean(value) && /[A-Za-z0-9_\-\u4E00-\u9FFF]/u.test(value);
@@ -421,6 +435,7 @@ const toResultItem = (result: IWorkspaceSearchResult): ISearchResultItem => {
 
   return {
     path: result.path,
+    relativePath: result.relativePath,
     resultKey: `${result.kind}:${result.path}:${result.lineNumber ?? 0}`,
     reason: result.kind,
     reasonLabel: reasonLabels[result.kind],
@@ -455,6 +470,23 @@ const activeScopeIsPending = computed(() => false);
 const activeResults = computed(() => searchResultsByScope.value[activeScope.value]);
 const matchedFileCount = computed(
   () => new Set(activeResults.value.map((result) => result.path)).size,
+);
+const contentReplacementTargets = computed(() => {
+  const paths = new Map<string, { path: string; relativePath: string }>();
+
+  for (const result of searchResultsByScope.value.content) {
+    if (!paths.has(result.path)) {
+      paths.set(result.path, {
+        path: result.path,
+        relativePath: result.relativePath,
+      });
+    }
+  }
+
+  return Array.from(paths.values());
+});
+const canApplyReplacement = computed(
+  () => !replaceRunning.value,
 );
 
 const cancelPendingSearch = (): void => {
@@ -538,8 +570,130 @@ const scheduleSearch = (): void => {
   }, SEARCH_DEBOUNCE_MS);
 };
 
-const handleReplaceAction = (): void => {
-  message.info('替换面板待接入');
+const buildReplacementGoal = (
+  targets: Array<{ relativePath: string }>,
+  oldString: string,
+  newString: string,
+): string => {
+  const fileList = targets.map((target) => `- ${target.relativePath}`).join('\n');
+
+  return [
+    '在当前工作区执行一次搜索替换。',
+    '必须只使用 Mastra Workspace 工具 string_replace_lsp，不要使用 shell 命令，不要手写文件 IO。',
+    '每个文件调用一次 string_replace_lsp，参数固定为 replace_all: true。',
+    `old_string: ${JSON.stringify(oldString)}`,
+    `new_string: ${JSON.stringify(newString)}`,
+    '只处理以下文件：',
+    fileList,
+    '完成后用一句中文总结实际替换结果。',
+  ].join('\n');
+};
+
+const assertReplacementOptionsSupported = (): boolean => {
+  if (useRegex.value) {
+    message.warning('替换暂不支持正则表达式，请关闭正则后重试。');
+    return false;
+  }
+
+  if (wholeWord.value) {
+    message.warning('替换暂不支持全字匹配，请关闭全字匹配后重试。');
+    return false;
+  }
+
+  return true;
+};
+
+const applyReplacementToSearch = async (): Promise<void> => {
+  if (replaceRunning.value) {
+    return;
+  }
+
+  if (!hasSearchQuery.value) {
+    message.warning('请先输入搜索内容。');
+    return;
+  }
+
+  if (searchQuery.value === replacementQuery.value) {
+    message.warning('替换内容与搜索内容相同，无需替换。');
+    return;
+  }
+
+  if (!props.isDesktopRuntime) {
+    message.warning('浏览器预览不支持写入文件，请在 Tauri 桌面端使用替换。');
+    return;
+  }
+
+  if (!props.workspaceRootPath) {
+    message.warning('请先打开工作区后再替换。');
+    return;
+  }
+
+  if (!assertReplacementOptionsSupported()) {
+    return;
+  }
+
+  const targets = contentReplacementTargets.value;
+  if (targets.length === 0) {
+    message.warning('当前没有可替换的内容匹配结果。');
+    return;
+  }
+
+  const workspaceRootPath = props.workspaceRootPath;
+
+  replaceRunning.value = true;
+  try {
+    const oldString = searchQuery.value.trim();
+    const goal = buildReplacementGoal(targets, oldString, replacementQuery.value);
+    const payload = await aiService.sidecarExecute({
+      sessionId: `search-replace:${Date.now().toString(36)}`,
+      goal,
+      messages: [
+        {
+          role: 'user',
+          content: goal,
+        },
+      ],
+      workspaceRootPath,
+      context: [],
+    });
+    const failedEvent = payload.events.find(
+      (event) =>
+        event.type === 'agent.run.error' ||
+        (event.type === 'agent.tool.completed' && !event.ok),
+    );
+
+    if (failedEvent) {
+      const errorMessage =
+        failedEvent.type === 'agent.run.error'
+          ? failedEvent.errorMessage
+          : failedEvent.errorMessage ?? '替换工具执行失败。';
+      throw new Error(errorMessage);
+    }
+
+    const refreshResult = await refreshSidecarChangedDocuments({
+      changedFilePaths: targets.map((target) => target.path),
+      hasFileMutations: true,
+      workspaceRootPath,
+    });
+
+    if (refreshResult.skippedDirtyNames.length > 0) {
+      message.warning(
+        `已完成替换，但 ${refreshResult.skippedDirtyNames.join('、')} 有未保存改动，已跳过自动刷新。`,
+      );
+    } else if (refreshResult.failedNames.length > 0) {
+      message.warning(
+        `已完成替换，但 ${refreshResult.failedNames.join('、')} 刷新失败，请手动重新打开。`,
+      );
+    } else {
+      message.success(`已提交 ${targets.length} 个文件的替换。`);
+    }
+
+    void runSearch();
+  } catch (error) {
+    message.error(toErrorMessage(error, '替换失败。'));
+  } finally {
+    replaceRunning.value = false;
+  }
 };
 
 const handleResultClick = (path: string): void => {
@@ -569,6 +723,7 @@ watch(
   () => props.workspaceRootPath,
   () => {
     searchQuery.value = '';
+    replacementQuery.value = '';
     includePattern.value = '';
     excludePattern.value = '';
     activeScope.value = 'all';

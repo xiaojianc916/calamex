@@ -141,6 +141,12 @@ const sshConnectionInputSchema = z.object({
   password: z.string().nullable(),
 });
 
+const sshPasswordIdentitySchema = z.object({
+  host: z.string().min(1),
+  port: z.number().int().min(1).max(65535),
+  username: z.string().min(1),
+});
+
 const executionOptionSchema = z.object({
   type: executorKindSchema,
   label: z.string(),
@@ -657,6 +663,20 @@ export const tauriContracts = {
       ok: z.boolean(),
       code: z.string(),
       message: z.string(),
+    }),
+  },
+  saveSshPassword: {
+    inSchema: sshPasswordIdentitySchema.extend({
+      password: z.string().min(1),
+    }),
+    outSchema: z.object({
+      hasPassword: z.boolean(),
+    }),
+  },
+  getSshPassword: {
+    inSchema: sshPasswordIdentitySchema,
+    outSchema: z.object({
+      password: z.string().min(1),
     }),
   },
   listSshConfigHosts: {

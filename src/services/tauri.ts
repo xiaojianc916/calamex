@@ -860,6 +860,20 @@ const testSshConnectionIpc = definePayloadIpc(
   { idempotent: true, timeoutMs: 15_000, audit: 'sensitive' },
 );
 
+const saveSshPasswordIpc = definePayloadIpc(
+  'save_ssh_password',
+  '保存 SSH 密码',
+  tauriContracts.saveSshPassword,
+  { audit: 'sensitive' },
+);
+
+const getSshPasswordIpc = definePayloadIpc(
+  'get_ssh_password',
+  '读取 SSH 密码',
+  tauriContracts.getSshPassword,
+  { idempotent: true, audit: 'sensitive' },
+);
+
 const listSshConfigHostsIpc = defineContractIpc(
   'list_ssh_config_hosts',
   '读取 SSH 配置主机',
@@ -1397,6 +1411,10 @@ export const tauriService: ITauriService & {
   cancelTerminalRun: cancelTerminalRunIpc,
 
   testSshConnection: testSshConnectionIpc,
+
+  saveSshPassword: saveSshPasswordIpc,
+
+  getSshPassword: getSshPasswordIpc,
 
   listSshConfigHosts: () => listSshConfigHostsIpc(undefined),
 

@@ -307,19 +307,31 @@ impl WslLinkAgentDistributionPlan {
              test -r \"$config\"\n\
              mkdir -p {install_dir}\n\
              chmod 700 {install_dir}\n\
-             if [ -f \"$pid_file\" ]; then\n\
-               old_pid=$(cat \"$pid_file\" 2>/dev/null || true)\n\
-               if [ -n \"$old_pid\" ] && kill -0 \"$old_pid\" 2>/dev/null; then\n\
-                 kill \"$old_pid\" 2>/dev/null || true\n\
+             stop_agent_pid() {{\n\
+               target_pid=\"$1\"\n\
+               if [ -z \"$target_pid\" ] || [ \"$target_pid\" = \"$$\" ]; then\n\
+                 return 0\n\
+               fi\n\
+               if kill -0 \"$target_pid\" 2>/dev/null; then\n\
+                 kill \"$target_pid\" 2>/dev/null || true\n\
                  j=0\n\
-                 while [ \"$j\" -lt 20 ] && kill -0 \"$old_pid\" 2>/dev/null; do\n\
+                 while [ \"$j\" -lt 20 ] && kill -0 \"$target_pid\" 2>/dev/null; do\n\
                    j=$((j + 1))\n\
                    sleep 0.1\n\
                  done\n\
-                 if kill -0 \"$old_pid\" 2>/dev/null; then\n\
-                   kill -KILL \"$old_pid\" 2>/dev/null || true\n\
+                 if kill -0 \"$target_pid\" 2>/dev/null; then\n\
+                   kill -KILL \"$target_pid\" 2>/dev/null || true\n\
                  fi\n\
                fi\n\
+             }}\n\
+             if [ -f \"$pid_file\" ]; then\n\
+               old_pid=$(cat \"$pid_file\" 2>/dev/null || true)\n\
+               stop_agent_pid \"$old_pid\"\n\
+             fi\n\
+             if command -v pgrep >/dev/null 2>&1; then\n\
+               for old_pid in $(pgrep -f \"$binary --noise-config $config\" 2>/dev/null || true); do\n\
+                 stop_agent_pid \"$old_pid\"\n\
+               done\n\
              fi\n\
              rm -f \"$pid_file\"\n\
              nohup \"$binary\" --noise-config \"$config\" </dev/null >>\"$log_file\" 2>&1 &\n\

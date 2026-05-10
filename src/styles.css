@@ -1675,6 +1675,7 @@ button:disabled,
 
 .search-panel-icon-btn,
 .search-panel-clear-btn,
+.search-panel-apply-btn,
 .search-panel-option-btn {
   border: 0;
   background: transparent;
@@ -1698,12 +1699,24 @@ button:disabled,
   color: var(--search-icon-hover);
 }
 
+.search-panel-icon-btn:disabled {
+  color: var(--search-text-subtle);
+  opacity: 0.55;
+}
+
+.search-panel-icon-btn:disabled:hover {
+  background: transparent;
+  color: var(--search-text-subtle);
+}
+
 .search-panel-icon-btn svg {
   width: 14px;
   height: 14px;
 }
 
-.search-panel-search {
+.search-panel-query-stack {
+  display: grid;
+  gap: 6px;
   padding: 10px 12px 8px;
 }
 
@@ -1745,7 +1758,7 @@ button:disabled,
   height: 14px;
 }
 
-.search-panel-input-shell input {
+.search-panel-input-shell .search-panel-input {
   min-width: 0;
   flex: 1;
   border: 0;
@@ -1753,13 +1766,20 @@ button:disabled,
   color: var(--search-text);
   font: inherit;
   outline: 0;
+  box-shadow: none;
 }
 
-.search-panel-input-shell input::placeholder {
+.search-panel-input-shell .search-panel-input:focus-visible {
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.search-panel-input-shell .search-panel-input::placeholder {
   color: var(--search-text-subtle);
 }
 
-.search-panel-clear-btn {
+.search-panel-clear-btn,
+.search-panel-apply-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1772,14 +1792,36 @@ button:disabled,
     color 0.12s ease;
 }
 
-.search-panel-clear-btn:hover {
+.search-panel-clear-btn:hover,
+.search-panel-apply-btn:hover {
   background: var(--search-bg-hover);
   color: var(--search-text);
 }
 
-.search-panel-clear-btn svg {
+.search-panel-apply-btn:disabled {
+  color: var(--search-text-subtle);
+  opacity: 0.55;
+}
+
+.search-panel-apply-btn:disabled:hover {
+  background: transparent;
+  color: var(--search-text-subtle);
+}
+
+.search-panel-clear-btn svg,
+.search-panel-apply-btn svg {
   width: 12px;
   height: 12px;
+}
+
+.search-panel-spin {
+  animation: search-panel-spin 0.8s linear infinite;
+}
+
+@keyframes search-panel-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .search-panel-chip-row {

@@ -188,10 +188,11 @@ pub mod windows_hyperv {
     }
 
     pub async fn connect_wsl_vsock_grpc_stream(
+        port: u32,
         timeout: Duration,
     ) -> Result<tokio::net::TcpStream, WslLinkHypervConnectError> {
         let vm_id = resolve_running_wsl_vm_guid_with_hcsdiag()?;
-        let address = WslHypervSocketAddress::new(vm_id, super::DEFAULT_VSOCK_GRPC_PORT)?;
+        let address = WslHypervSocketAddress::new(vm_id, port)?;
         connect_hyperv_stream(address, timeout).await
     }
 

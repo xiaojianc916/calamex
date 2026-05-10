@@ -284,6 +284,35 @@ pub struct SshConnectionTestPayload {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SshPasswordSaveRequest {
+    pub(crate) host: String,
+    pub(crate) port: u16,
+    pub(crate) username: String,
+    pub(crate) password: SecretString,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SshPasswordGetRequest {
+    pub(crate) host: String,
+    pub(crate) port: u16,
+    pub(crate) username: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SshPasswordStatusPayload {
+    pub(crate) has_password: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SshPasswordPayload {
+    pub(crate) password: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SshDirectoryListRequest {
     pub(crate) host: String,
     pub(crate) port: u16,

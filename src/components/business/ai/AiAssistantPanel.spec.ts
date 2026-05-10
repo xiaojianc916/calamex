@@ -72,6 +72,7 @@ const createAssistantMock = (
     const messages = ref<IAiChatMessage[]>(messagesList);
     const historyThreads = ref<IAiConversationThreadMock[]>(historyThreadsList);
     const activeConversationId = ref<string | null>(historyThreadsList.at(-1)?.id ?? null);
+    const activeConversationScrollState = ref(null);
     const activeMode = ref<'chat' | 'agent' | 'plan'>('agent');
     const isSettingsOpen = ref(false);
     const isClearDialogOpen = ref(false);
@@ -134,6 +135,7 @@ const createAssistantMock = (
         messages,
         historyThreads,
         activeConversationId,
+        activeConversationScrollState,
         activeMode,
         isSettingsOpen,
         isClearDialogOpen,
@@ -181,6 +183,8 @@ const createAssistantMock = (
         stopCurrentRequest: vi.fn(),
         startNewConversation: vi.fn(),
         switchConversation: vi.fn(),
+        deleteConversation: vi.fn().mockReturnValue(true),
+        updateConversationScrollState: vi.fn(),
         attachFile: vi.fn(),
         removeAttachedFile: vi.fn(),
         buildSidecarContextReferences: vi.fn(() => currentReferences.value),
@@ -1046,6 +1050,50 @@ describe('AiAssistantPanel', () => {
         await wrapper.findAll('.ai-history-button')[1]?.trigger('click');
 
         expect(assistantMock.switchConversation).toHaveBeenCalledWith('thread-1');
+    });
+
+    it('删除历史记录时只删除选中的一条并一次关闭确认弹窗', async () => {
+        const historyThreads = [createThread(1), createThread(2)];
+        const assistantMock = createAssistantMock(historyThreads[1]?.messages ?? [], historyThreads);
+        useAiAssistantMock.mockReturnValue(assistantMock);
+
+        const wrapper = mount(AiAssistantPanel, {
+            props: {
+                document: createDocument(),
+                activeRun: null as IActiveRunSummary | null,
+                analysis: createAnalysis(),
+                selection: null as IEditorSelectionSummary | null,
+                gitStatus: createGitStatus(),
+                workspaceRootPath: 'd:/com.xiaojianc/my_desktop_app',
+            },
+            global: {
+                stubs: {
+                    AiChatThread: { template: '<div />' },
+                    AiContextChips: { template: '<div />' },
+                    AiPatchPreview: { template: '<div />' },
+                    AiPlanModePanel: { template: '<div />' },
+                    AiPromptInput: { template: '<div />' },
+                    AiProviderSettings: { template: '<div />' },
+                    DropdownMenu: { template: '<div><slot /></div>' },
+                    DropdownMenuTrigger: { template: '<div><slot /></div>' },
+                    DropdownMenuContent: { template: '<section><slot /></section>' },
+                    teleport: true,
+                },
+            },
+        });
+
+        await wrapper.findAll('.ai-history-delete-button')[1]?.trigger('click');
+
+        expect(assistantMock.switchConversation).not.toHaveBeenCalled();
+        expect(wrapper.text()).toContain('删除“第 1 组对话”？');
+        expect(wrapper.text()).toContain('只会删除这条对话记录（1 条消息）');
+
+        await wrapper.get('.ai-dialog .ai-button.is-danger').trigger('click');
+        await nextTick();
+
+        expect(assistantMock.deleteConversation).toHaveBeenCalledTimes(1);
+        expect(assistantMock.deleteConversation).toHaveBeenCalledWith('thread-1');
+        expect(wrapper.find('.ai-dialog').exists()).toBe(false);
     });
 
     it('点击弹窗外部时自动关闭对话记录', async () => {

@@ -1,3 +1,4 @@
+import { isAppError } from '@/types/app-error';
 import { toErrorMessage } from '@/utils/error';
 import { ref } from 'vue';
 
@@ -5,6 +6,8 @@ export interface IRuntimeErrorState {
   title: string;
   message: string;
   detail: string;
+  code?: string;
+  traceId?: string;
 }
 
 declare global {
@@ -72,6 +75,8 @@ export const setRuntimeError = (title: string, error: unknown): void => {
     title,
     message: toErrorMessage(error, '发生未知错误'),
     detail: normalizeErrorDetail(error),
+    code: isAppError(error) ? error.code : undefined,
+    traceId: isAppError(error) ? error.traceId : undefined,
   };
 };
 
@@ -99,10 +104,7 @@ export const registerRuntimeDiagnostics = (): void => {
   disposeRuntimeDiagnostics();
 
   const handleError = (event: ErrorEvent): void => {
-    if (
-      isBenignResizeObserverError(event.error) ||
-      isBenignResizeObserverError(event.message)
-    ) {
+    if (isBenignResizeObserverError(event.error) || isBenignResizeObserverError(event.message)) {
       event.preventDefault();
       return;
     }

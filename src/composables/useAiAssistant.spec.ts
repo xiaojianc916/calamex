@@ -989,11 +989,12 @@ describe('useAiAssistant streaming integration', () => {
     expect(assistant.attachedFiles.value[0]?.kind).toBe('image');
     expect(assistant.attachedFiles.value[0]?.detailLabel).toBe('640 × 480');
     expect(assistant.attachedFiles.value[0]?.preview).toMatchObject({
-      src: 'blob:attachment-preview-1',
+      src: expect.stringMatching(/^data:image\/png;base64,/),
       width: 640,
       height: 480,
       mimeType: 'image/png',
     });
+    expect(createObjectURL).not.toHaveBeenCalled();
     expect(assistant.attachedFiles.value[0]?.reference.kind).toBe('image-attachment');
 
     assistant.activeMode.value = 'chat';
@@ -1011,7 +1012,7 @@ describe('useAiAssistant streaming integration', () => {
             kind: 'image-attachment',
             label: '图片附件 · pasted-image.png',
             attachmentPreview: expect.objectContaining({
-              src: 'blob:attachment-preview-1',
+              src: expect.stringMatching(/^data:image\/png;base64,/),
               width: 640,
               height: 480,
               mimeType: 'image/png',
@@ -1020,12 +1021,18 @@ describe('useAiAssistant streaming integration', () => {
         ]),
       }),
     );
+    expect(assistant.messages.value[0]?.references?.[0]?.attachmentPreview).toMatchObject({
+      src: expect.stringMatching(/^data:image\/png;base64,/),
+      width: 640,
+      height: 480,
+      mimeType: 'image/png',
+    });
 
     assistant.stopCurrentRequest();
     await sendPromise;
   });
 
-  it('revokes image preview urls when removing attachments', async () => {
+  it('keeps durable image preview sources when removing attachments', async () => {
     const createObjectURL = vi.fn(() => 'blob:attachment-preview-2');
     const revokeObjectURL = vi.fn();
 
@@ -1048,11 +1055,13 @@ describe('useAiAssistant streaming integration', () => {
     await assistant.attachFile(image);
 
     const attachmentId = assistant.attachedFiles.value[0]?.id;
+    expect(assistant.attachedFiles.value[0]?.preview?.src).toMatch(/^data:image\/png;base64,/);
     expect(attachmentId).toBeTruthy();
 
     assistant.removeAttachedFile(attachmentId as string);
 
-    expect(revokeObjectURL).toHaveBeenCalledWith('blob:attachment-preview-2');
+    expect(createObjectURL).not.toHaveBeenCalled();
+    expect(revokeObjectURL).not.toHaveBeenCalled();
   });
 
   it('清空草稿并展示用户消息时，不再等待 @project 上下文查询', async () => {

@@ -83,6 +83,7 @@ const settingsDraft = ref<IAiConfigPayload>(cloneAiConfigPayload(assistant.confi
 const settingsApiKey = ref('');
 const isAgentRunActionPending = ref(false);
 const isHistoryOpen = ref(false);
+const pendingDeleteThreadId = ref<string | null>(null);
 const currentServicePlatform = computed(() =>
   findAiServicePlatformByModel(assistant.config.value.selectedModel),
 );
@@ -98,6 +99,12 @@ const aiModelName = computed(() => {
   return selectedModel.split('/').filter(Boolean).at(-1) ?? selectedModel;
 });
 const historyThreads = computed(() => assistant.historyThreads.value.slice(-MAX_HISTORY_MESSAGES).reverse());
+const activeHistoryThread = computed(() =>
+  assistant.historyThreads.value.find((thread) => thread.id === assistant.activeConversationId.value) ?? null,
+);
+const pendingDeleteThread = computed(() =>
+  assistant.historyThreads.value.find((thread) => thread.id === pendingDeleteThreadId.value) ?? null,
+);
 const conversationCheckpointByMessageId = computed<Record<string, IAiConversationCheckpoint>>(() => {
   const checkpointMap: Record<string, IAiConversationCheckpoint> = {};
 
@@ -332,16 +339,31 @@ const openHistoryThread = (threadId: string): void => {
   isHistoryOpen.value = false;
 };
 
-const openClearConversationDialog = (): void => {
+const openDeleteConversationDialog = (threadId: string): void => {
+  pendingDeleteThreadId.value = threadId;
+  isHistoryOpen.value = false;
   assistant.isClearDialogOpen.value = true;
 };
 
 const cancelClearConversation = (): void => {
+  pendingDeleteThreadId.value = null;
   assistant.isClearDialogOpen.value = false;
 };
 
 const confirmClearConversation = (): void => {
-  assistant.clearConversation();
+  const threadId = pendingDeleteThreadId.value;
+  pendingDeleteThreadId.value = null;
+  assistant.isClearDialogOpen.value = false;
+
+  if (!threadId) {
+    return;
+  }
+
+  if (assistant.isSending.value && threadId === assistant.activeConversationId.value) {
+    assistant.stopCurrentRequest();
+  }
+
+  assistant.deleteConversation(threadId);
   isHistoryOpen.value = false;
 };
 
@@ -398,6 +420,35 @@ const handleRestoreConversationCheckpoint = async (messageId: string): Promise<v
 };
 
 const getHistoryMessageCountLabel = (messages: IAiChatMessage[]): string => `${messages.length} 条消息`;
+
+const handleConversationScrollStateChange = (state: {
+  scrollTop: number;
+  scrollHeight: number;
+  clientHeight: number;
+  distanceFromBottom: number;
+}): void => {
+  assistant.updateConversationScrollState({
+    ...state,
+    updatedAt: new Date().toISOString(),
+  });
+};
+
+const getDeleteDialogTitle = (): string => {
+  const thread = pendingDeleteThread.value;
+
+  if (!thread) {
+    return '删除对话记录？';
+  }
+
+  return `删除“${thread.title}”？`;
+};
+
+const getDeleteDialogDescription = (): string => {
+  const thread = pendingDeleteThread.value;
+  const messageCountLabel = thread ? getHistoryMessageCountLabel(thread.messages) : '这条记录';
+
+  return `只会删除这条对话记录（${messageCountLabel}），不会删除文件或其他对话。`;
+};
 
 const setPlanError = (error: unknown, fallback: string): void => {
   setPlanErrorMessage(toErrorMessage(error, fallback));
@@ -673,8 +724,8 @@ onMounted(() => {
               <div class="ai-history-title-group">
                 <strong>对话记录</strong>
               </div>
-              <button v-if="assistant.messages.value.length" type="button" class="ai-history-clear-icon"
-                aria-label="清空当前对话" @click="openClearConversationDialog">
+              <button v-if="activeHistoryThread" type="button" class="ai-history-clear-icon"
+                aria-label="删除当前对话记录" @click="openDeleteConversationDialog(activeHistoryThread.id)">
                 <Trash2 aria-hidden="true" />
               </button>
             </header>
@@ -689,6 +740,10 @@ onMounted(() => {
                     </div>
                     <div class="ai-history-subtitle">{{ getHistoryMessageCountLabel(thread.messages) }}</div>
                   </button>
+                  <button type="button" class="ai-history-delete-button" aria-label="删除这条对话记录"
+                    @click.stop="openDeleteConversationDialog(thread.id)">
+                    <Trash2 aria-hidden="true" />
+                  </button>
                 </article>
               </div>
             </div>
@@ -700,7 +755,9 @@ onMounted(() => {
     </header>
 
     <AiChatThread :messages="threadMessages" :is-typing="assistant.isSending.value" :platform-id="aiIconPlatformId"
-      :provider-label="aiIconTitle">
+      :provider-label="aiIconTitle" :conversation-id="assistant.activeConversationId.value"
+      :scroll-state="assistant.activeConversationScrollState.value"
+      @scroll-state-change="handleConversationScrollStateChange">
       <template #empty>
         <AiFloatingSuggestions :suggestions="suggestionPool.suggestions.value" :disabled="assistant.isSending.value"
           @select="handleSuggestionSelect" />
@@ -782,12 +839,12 @@ onMounted(() => {
       <div v-if="assistant.isClearDialogOpen.value" class="ai-dialog-backdrop" @click.self="cancelClearConversation">
         <section class="ai-dialog is-compact" role="alertdialog" aria-modal="true">
           <div class="ai-dialog-copy">
-            <h3>清空当前对话？</h3>
-            <p>这只会清空面板里的临时对话记录，不会删除任何文件。</p>
+            <h3>{{ getDeleteDialogTitle() }}</h3>
+            <p>{{ getDeleteDialogDescription() }}</p>
           </div>
           <div class="ai-dialog-actions">
             <button type="button" class="ai-button is-ghost" @click="cancelClearConversation">取消</button>
-            <button type="button" class="ai-button is-danger" @click="confirmClearConversation">清空</button>
+            <button type="button" class="ai-button is-danger" @click="confirmClearConversation">删除</button>
           </div>
         </section>
       </div>
@@ -977,7 +1034,9 @@ onMounted(() => {
 }
 
 .ai-history-item {
-  display: block;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 30px;
+  align-items: stretch;
   flex: 0 0 auto;
   min-width: 0;
   border: 0;
@@ -1004,6 +1063,26 @@ onMounted(() => {
   color: inherit;
   text-align: left;
   padding: 10px;
+}
+
+.ai-history-delete-button {
+  display: grid;
+  width: 30px;
+  min-width: 30px;
+  place-items: center;
+  border: 0;
+  padding: 0;
+  color: var(--text-quaternary);
+}
+
+.ai-history-delete-button:hover {
+  color: var(--danger);
+}
+
+.ai-history-delete-button svg {
+  width: 13px;
+  height: 13px;
+  stroke-width: 1.9;
 }
 
 .ai-history-meta {

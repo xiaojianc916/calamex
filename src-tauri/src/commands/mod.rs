@@ -38,7 +38,8 @@ pub use contracts::{
     SshConnectionTestRequest, SshDirectoryCreatePayload, SshDirectoryCreateRequest,
     SshDirectoryEntryPayload, SshDirectoryListPayload, SshDirectoryListRequest,
     SshFileDownloadPayload, SshFileDownloadRequest, SshFileReadPayload, SshFileReadRequest,
-    SshFileUploadPayload, SshFileUploadRequest, SshPathDeletePayload, SshPathDeleteRequest,
+    SshFileUploadPayload, SshFileUploadRequest, SshPasswordGetRequest, SshPasswordPayload,
+    SshPasswordSaveRequest, SshPasswordStatusPayload, SshPathDeletePayload, SshPathDeleteRequest,
     SshPathRenamePayload, SshPathRenameRequest, WorkspaceDirectoryPayload, WorkspaceEntry,
     WorkspacePathCreatePayload, WorkspacePathCreateRequest, WorkspacePathDeletePayload,
     WorkspacePathDeleteRequest, WorkspacePathRenamePayload, WorkspacePathRenameRequest,
@@ -54,8 +55,9 @@ pub(crate) use script_run::{create_temp_script, find_command_path, line_count};
 pub use search::search_workspace;
 pub use shell_tools::{analyze_script, format_script};
 pub use ssh::{
-    create_ssh_directory, delete_ssh_path, download_ssh_file, list_ssh_config_hosts,
-    list_ssh_directory, read_ssh_file, rename_ssh_path, test_ssh_connection, upload_ssh_file,
+    create_ssh_directory, delete_ssh_path, download_ssh_file, get_ssh_password,
+    list_ssh_config_hosts, list_ssh_directory, read_ssh_file, rename_ssh_path, save_ssh_password,
+    test_ssh_connection, upload_ssh_file,
 };
 pub(crate) use terminal::{build_temp_file_suffix, to_wsl_path};
 pub use terminal::{
