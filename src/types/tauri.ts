@@ -115,7 +115,14 @@ import type {
   IGitStashListPayload,
   IGitStashSaveRequest,
 } from './git';
-import type { IWorkspaceSearchPayload, IWorkspaceSearchRequest } from './search';
+import type {
+  IWorkspaceReplacementApplyPayload,
+  IWorkspaceReplacementApplyRequest,
+  IWorkspaceReplacementPreviewPayload,
+  IWorkspaceReplacementRequest,
+  IWorkspaceSearchPayload,
+  IWorkspaceSearchRequest,
+} from './search';
 import type {
   ICancelTerminalRunRequest,
   ICloseTerminalSessionRequest,
@@ -146,6 +153,10 @@ export interface ISshConnectionTestRequest {
   authMode: 'key' | 'password';
   identityPath: string | null;
   password: string | null;
+}
+
+export interface ITauriCallOptions {
+  signal?: AbortSignal;
 }
 
 export interface ISshConnectionTestPayload {
@@ -314,7 +325,16 @@ export interface ITauriService {
   createWorkspacePath(payload: IWorkspacePathCreateRequest): Promise<IWorkspacePathCreatePayload>;
   renameWorkspacePath(payload: IWorkspacePathRenameRequest): Promise<IWorkspacePathRenamePayload>;
   deleteWorkspacePath(payload: IWorkspacePathDeleteRequest): Promise<IWorkspacePathDeletePayload>;
-  searchWorkspace(payload: IWorkspaceSearchRequest): Promise<IWorkspaceSearchPayload>;
+  searchWorkspace(
+    payload: IWorkspaceSearchRequest,
+    options?: ITauriCallOptions,
+  ): Promise<IWorkspaceSearchPayload>;
+  previewWorkspaceReplacement(
+    payload: IWorkspaceReplacementRequest,
+  ): Promise<IWorkspaceReplacementPreviewPayload>;
+  applyWorkspaceReplacement(
+    payload: IWorkspaceReplacementApplyRequest,
+  ): Promise<IWorkspaceReplacementApplyPayload>;
   getGitRepositoryStatus(workspaceRootPath?: string | null): Promise<IGitRepositoryStatusPayload>;
   initGitRepository(workspaceRootPath?: string | null): Promise<IGitRepositoryStatusPayload>;
   listGitCommitHistory(payload: IGitCommitHistoryRequest): Promise<IGitCommitHistoryPayload>;

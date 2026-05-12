@@ -291,6 +291,7 @@ where
 
     let mut buffer: Vec<u8> = Vec::new();
     let mut completion_tokens_estimate = Some(0_u64);
+    let mut completion_text = String::new();
 
     while let Some(chunk) = response
         .chunk()
@@ -308,8 +309,13 @@ where
                 return Err(errors::error("AI_REQUEST_CANCELLED", "AI 请求已取消。"));
             }
 
-            let should_finish =
-                handle_sse_line(model, &line, &mut completion_tokens_estimate, &mut on_event)?;
+            let should_finish = handle_sse_line(
+                model,
+                &line,
+                &mut completion_text,
+                &mut completion_tokens_estimate,
+                &mut on_event,
+            )?;
 
             if should_finish {
                 return Ok(());
@@ -323,8 +329,13 @@ where
 
     if has_non_whitespace_bytes(&buffer) {
         let line = decode_stream_line_bytes(buffer)?;
-        let should_finish =
-            handle_sse_line(model, &line, &mut completion_tokens_estimate, &mut on_event)?;
+        let should_finish = handle_sse_line(
+            model,
+            &line,
+            &mut completion_text,
+            &mut completion_tokens_estimate,
+            &mut on_event,
+        )?;
 
         if should_finish {
             return Ok(());
@@ -722,6 +733,7 @@ fn normalize_stream_tool_calls(
 fn handle_sse_line<F>(
     model: &str,
     line: &str,
+    completion_text: &mut String,
     completion_tokens_estimate: &mut Option<u64>,
     on_event: &mut F,
 ) -> Result<bool, String>
@@ -736,8 +748,12 @@ where
 
     if let Some(delta) = delta {
         if !delta.is_empty() {
-            let completion_tokens_estimate =
-                update_completion_tokens_estimate(model, &delta, completion_tokens_estimate)?;
+            let completion_tokens_estimate = update_completion_tokens_estimate(
+                model,
+                &delta,
+                completion_text,
+                completion_tokens_estimate,
+            )?;
             on_event(AiProviderStreamEvent::Delta {
                 delta,
                 completion_tokens_estimate,
@@ -801,16 +817,19 @@ fn parse_stream_line(
 fn update_completion_tokens_estimate(
     model: &str,
     delta: &str,
+    completion_text: &mut String,
     completion_tokens_estimate: &mut Option<u64>,
 ) -> Result<Option<u64>, String> {
-    let Some(current_tokens) = completion_tokens_estimate.as_mut() else {
+    if completion_tokens_estimate.is_none() {
         return Ok(None);
-    };
+    }
 
-    match token_budget::estimate_text_tokens(model, delta) {
-        Ok(chunk_tokens) => {
-            *current_tokens += chunk_tokens;
-            Ok(Some(*current_tokens))
+    completion_text.push_str(delta);
+
+    match token_budget::estimate_text_tokens(model, completion_text) {
+        Ok(tokens) => {
+            *completion_tokens_estimate = Some(tokens);
+            Ok(Some(tokens))
         }
         Err(error) if error.contains("AI_TOKENIZER_UNSUPPORTED") => {
             *completion_tokens_estimate = None;
@@ -908,10 +927,11 @@ mod tests {
     use super::{
         apply_stream_line, build_chat_request_body, chat, drain_complete_utf8_lines,
         parse_chat_completion_response, response_body_bytes_to_string,
-        stream_accumulator_to_response, summarize_body, validate_base_url,
-        StreamResponseAccumulator,
+        stream_accumulator_to_response, summarize_body, update_completion_tokens_estimate,
+        validate_base_url, StreamResponseAccumulator,
     };
     use crate::ai::provider::{AiProviderChatRequest, AiProviderMessage, AiProviderToolSpec};
+    use crate::ai::token_budget;
     use serde_json::json;
     use std::io::{BufRead, BufReader, Read, Write};
     use std::net::TcpListener;
@@ -1142,6 +1162,25 @@ mod tests {
         assert_eq!(usage.input_tokens, 10);
         assert_eq!(usage.output_tokens, 4);
         assert_eq!(usage.total_tokens, 14);
+    }
+
+    #[test]
+    fn completion_token_estimate_retokenizes_accumulated_text() {
+        let model = "deepseek/deepseek-v4-flash";
+        let mut visible_text = String::new();
+        let mut estimate = Some(0_u64);
+
+        let first =
+            update_completion_tokens_estimate(model, "你", &mut visible_text, &mut estimate)
+                .expect("first chunk should estimate");
+        let second =
+            update_completion_tokens_estimate(model, "好", &mut visible_text, &mut estimate)
+                .expect("second chunk should estimate");
+        let full_tokens = token_budget::estimate_text_tokens(model, "你好").expect("full tokens");
+
+        assert!(first.unwrap_or_default() > 0);
+        assert_eq!(second, Some(full_tokens));
+        assert_eq!(visible_text, "你好");
     }
 
     #[test]

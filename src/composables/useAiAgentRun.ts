@@ -39,6 +39,7 @@ interface ISidecarStepLoopSession {
   messages: IAgentSidecarMessage[];
   context: IAiContextReference[];
   workspaceRootPath?: string | null;
+  threadId?: string;
   sessionId?: string;
   pendingRequestId?: string;
 }
@@ -297,6 +298,7 @@ export const useAiAgentRun = () => {
         workspaceRootPath: session.workspaceRootPath ?? null,
         planId: session.planId,
         planVersion: session.planVersion,
+        ...(session.threadId ? { threadId: session.threadId } : {}),
       });
       const validation = projectSidecarPlanValidationResponse(validationPayload);
 
@@ -313,6 +315,7 @@ export const useAiAgentRun = () => {
           workspaceRootPath: session.workspaceRootPath ?? null,
           planId: session.planId,
           planVersion: session.planVersion,
+          ...(session.threadId ? { threadId: session.threadId } : {}),
         });
 
         applyReplannedPlanPayload(replanPayload, session.goal || run.goal);
@@ -522,6 +525,7 @@ export const useAiAgentRun = () => {
         planId: session.planId,
         planVersion: session.planVersion,
         planStepId: session.stepId,
+        ...(session.threadId ? { threadId: session.threadId } : {}),
       });
     } finally {
       unlistenSidecarStream();
@@ -630,6 +634,7 @@ export const useAiAgentRun = () => {
         messages: buildStepSidecarMessages(run, step, options.goal),
         context: options.context ?? [],
         workspaceRootPath: options.workspaceRootPath ?? null,
+        ...(store.planThreadId ? { threadId: store.planThreadId } : {}),
       };
 
       return await executeSidecarStepLoop(session);

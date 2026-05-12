@@ -26,10 +26,7 @@
           aria-label="重连终端"
           @click="void handleRestartTerminal()"
         >
-          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="12" y1="5" x2="12" y2="19" />
-            <line x1="5" y1="12" x2="19" y2="12" />
-          </svg>
+          <RefreshCcw aria-hidden="true" />
         </button>
 
         <button
@@ -41,27 +38,7 @@
           :disabled="!isTerminalReady"
           @click="void handleClearTerminal()"
         >
-          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M21 4H8l-7 8 7 8h13a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2z" />
-            <line x1="18" y1="9" x2="12" y2="15" />
-            <line x1="12" y1="9" x2="18" y2="15" />
-          </svg>
-        </button>
-
-        <button
-          type="button"
-          class="icon-button app-tooltip-target run-panel-action-button"
-          data-tooltip="终止"
-          data-tooltip-placement="top"
-          aria-label="终止"
-          :disabled="!isTerminalReady"
-          @click="void handleInterruptTerminal()"
-        >
-          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M3 6h18" />
-            <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-          </svg>
+          <Eraser aria-hidden="true" />
         </button>
 
         <button
@@ -73,12 +50,8 @@
           :aria-pressed="props.isMaximized"
           @click="$emit('toggle-maximize')"
         >
-          <svg v-if="!props.isMaximized" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="18 15 12 9 6 15" />
-          </svg>
-          <svg v-else viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="6 9 12 15 18 9" />
-          </svg>
+          <Maximize2 v-if="!props.isMaximized" aria-hidden="true" />
+          <Minimize2 v-else aria-hidden="true" />
         </button>
 
         <button
@@ -89,10 +62,7 @@
           aria-label="关闭终端面板"
           @click="$emit('hide')"
         >
-          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="18" y1="6" x2="6" y2="18" />
-            <line x1="6" y1="6" x2="18" y2="18" />
-          </svg>
+          <X aria-hidden="true" />
         </button>
       </div>
     </header>
@@ -173,6 +143,7 @@ import type {
     ITerminalStatusChangePayload,
 } from '@/types/terminal';
 import { toErrorMessage } from '@/utils/error';
+import { Eraser, Maximize2, Minimize2, RefreshCcw, X } from 'lucide-vue-next';
 import { computed, ref } from 'vue';
 
 const props = defineProps<{
@@ -221,7 +192,7 @@ const terminalStatus = ref<ITerminalStatusChangePayload>({
   message: '正在连接 WSL2 终端…',
 });
 
-const { retry, clearScreen, interrupt, sendCommand } = useIntegratedTerminalControls();
+const { retry, clearScreen, sendCommand } = useIntegratedTerminalControls();
 
 const isTerminalReady = computed(() => terminalStatus.value.state === 'ready');
 
@@ -245,9 +216,6 @@ const runTerminalAction = async (
 const handleRestartTerminal = (): Promise<void> => runTerminalAction(retry, '重连终端失败');
 
 const handleClearTerminal = (): Promise<void> => runTerminalAction(clearScreen, '清屏失败');
-
-const handleInterruptTerminal = (): Promise<void> =>
-  runTerminalAction(interrupt, '终止终端执行失败');
 
 const handleSubmitCommand = (command: string): Promise<void> =>
   runTerminalAction(

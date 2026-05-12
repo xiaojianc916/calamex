@@ -8,6 +8,7 @@ import type {
     IRunHistoryEntry,
     IWorkspaceDirectoryPayload,
     TExecutorKind,
+    TWorkbenchOpenFilePayload,
 } from '@/types/editor';
 import type { IGitDiffPreviewRequest } from '@/types/git';
 import {
@@ -50,7 +51,7 @@ const props = defineProps<{
 const emit = defineEmits<{
     'select-view': [view: TWorkbenchSidebarView];
     'toggle-primary-mode': [];
-    'open-file': [path: string];
+    'open-file': [payload: TWorkbenchOpenFilePayload];
     'open-folder': [];
     'open-git-diff': [payload: IGitDiffPreviewRequest];
     run: [];

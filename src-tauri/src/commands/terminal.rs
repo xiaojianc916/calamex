@@ -38,13 +38,16 @@ use crate::terminal::{
     wsl as terminal_wsl,
 };
 use crate::wsl_link::{
+    agent_distribution::{start_installed_agent, WslLinkAgentDistributionPlan},
+    grpc_transport::WslLinkGrpcTransportError,
     noise_material::{
         KeyringWslLinkNoiseMaterialStore, WslLinkDesktopNoiseMaterial, WslLinkNoiseMaterialStore,
     },
+    primary_supervisor::WslLinkPrimarySupervisorError,
     terminal_client::{
         open_interactive_terminal_over_wsl_link, run_terminal_script_over_wsl_link,
         signal_terminal_process_over_wsl_link, write_terminal_run_input_over_wsl_link,
-        WslLinkInteractiveTerminalHandle,
+        WslLinkInteractiveTerminalHandle, WslLinkTerminalClientError,
     },
     terminal_exec::{
         WslLinkTerminalOpenInteractiveRequest, WslLinkTerminalRunInput,
@@ -153,24 +156,16 @@ pub fn ensure_terminal_session(
             .ok_or_else(|| {
                 "WSL Link Noise 桌面密钥材料不存在，请先安装并启动 WSL Link agent。".to_string()
             })?;
-        let event_app = app.clone();
-        let event_state = terminal_state.clone();
-        let event_session_id = payload.session_id.clone();
-        let handle = tauri::async_runtime::block_on(open_interactive_terminal_over_wsl_link(
+        let handle = tauri::async_runtime::block_on(open_interactive_terminal_with_agent_retry(
+            app.clone(),
+            terminal_state.clone(),
+            payload.session_id.clone(),
             &desktop_material,
             WslLinkTerminalOpenInteractiveRequest {
                 session_id: payload.session_id.clone(),
                 working_directory: terminal_cwd.clone(),
                 cols: payload.cols,
                 rows: payload.rows,
-            },
-            move |event| {
-                handle_wsl_link_interactive_terminal_event(
-                    &event_app,
-                    &event_state,
-                    &event_session_id,
-                    event,
-                );
             },
         ))
         .map_err(|error| error.to_string())?;
@@ -287,6 +282,82 @@ pub fn shutdown_all_terminal_sessions(state: &TerminalSessionState) -> Result<()
     }
 
     Ok(())
+}
+
+async fn open_interactive_terminal_with_agent_retry(
+    app: AppHandle,
+    terminal_state: TerminalSessionState,
+    session_id: String,
+    desktop_material: &WslLinkDesktopNoiseMaterial,
+    request: WslLinkTerminalOpenInteractiveRequest,
+) -> Result<WslLinkInteractiveTerminalHandle, String> {
+    match open_interactive_terminal_attempt(
+        app.clone(),
+        terminal_state.clone(),
+        session_id.clone(),
+        desktop_material,
+        request.clone(),
+    )
+    .await
+    {
+        Ok(handle) => Ok(handle),
+        Err(first_error) if should_retry_terminal_after_agent_start(&first_error) => {
+            start_installed_agent(&WslLinkAgentDistributionPlan::user_default())
+                .await
+                .map_err(|start_error| {
+                    format!(
+                        "WSL Link agent 自动启动失败：{start_error}；首次连接错误：{first_error}"
+                    )
+                })?;
+            open_interactive_terminal_attempt(
+                app,
+                terminal_state,
+                session_id,
+                desktop_material,
+                request,
+            )
+            .await
+            .map_err(|retry_error| {
+                format!(
+                    "WSL Link agent 已自动启动，但终端连接仍失败：{retry_error}；首次连接错误：{first_error}"
+                )
+            })
+        }
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+async fn open_interactive_terminal_attempt(
+    app: AppHandle,
+    terminal_state: TerminalSessionState,
+    session_id: String,
+    desktop_material: &WslLinkDesktopNoiseMaterial,
+    request: WslLinkTerminalOpenInteractiveRequest,
+) -> Result<WslLinkInteractiveTerminalHandle, WslLinkTerminalClientError> {
+    open_interactive_terminal_over_wsl_link(desktop_material, request, move |event| {
+        handle_wsl_link_interactive_terminal_event(&app, &terminal_state, &session_id, event);
+    })
+    .await
+}
+
+fn should_retry_terminal_after_agent_start(error: &WslLinkTerminalClientError) -> bool {
+    match error {
+        WslLinkTerminalClientError::Grpc(error) => is_wsl_link_connection_error(error),
+        WslLinkTerminalClientError::Supervisor(WslLinkPrimarySupervisorError::Grpc(error)) => {
+            is_wsl_link_connection_error(error)
+        }
+        WslLinkTerminalClientError::Status(_)
+        | WslLinkTerminalClientError::Payload(_)
+        | WslLinkTerminalClientError::SessionMismatch
+        | WslLinkTerminalClientError::CommandChannelClosed => false,
+    }
+}
+
+fn is_wsl_link_connection_error(error: &WslLinkGrpcTransportError) -> bool {
+    matches!(
+        error,
+        WslLinkGrpcTransportError::Transport(_) | WslLinkGrpcTransportError::Connector(_)
+    )
 }
 
 #[tauri::command]
@@ -1033,6 +1104,21 @@ mod tests {
             .write()
             .expect("terminal state lock should be healthy");
         *machine_state = state;
+    }
+
+    #[test]
+    fn terminal_agent_retry_is_limited_to_connection_errors() {
+        let connector_error = WslLinkTerminalClientError::Grpc(
+            WslLinkGrpcTransportError::Connector("WSL Link agent 未监听。".to_string()),
+        );
+        let payload_error = WslLinkTerminalClientError::Payload(
+            crate::wsl_link::terminal_exec::WslLinkTerminalExecError::Payload(
+                "session_id 不能为空。".to_string(),
+            ),
+        );
+
+        assert!(should_retry_terminal_after_agent_start(&connector_error));
+        assert!(!should_retry_terminal_after_agent_start(&payload_error));
     }
 
     #[test]

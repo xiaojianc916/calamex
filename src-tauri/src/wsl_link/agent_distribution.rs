@@ -389,7 +389,7 @@ impl WslLinkAgentDistributionPlan {
             "--".to_string(),
             "sh".to_string(),
             "-lc".to_string(),
-            escape_wsl_shell_dollars(&script),
+            script,
         ]);
 
         WslLinkWslCommandSpec {
@@ -808,10 +808,6 @@ fn sh_double_quote_body(value: &str) -> String {
         .replace('$', "\\$")
 }
 
-fn escape_wsl_shell_dollars(script: &str) -> String {
-    script.replace('$', "\\$")
-}
-
 fn decode_command_output(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).trim().to_string()
 }
@@ -982,7 +978,7 @@ mod tests {
             command.stdin_payload,
             Some(WslLinkDistributionPayload::AgentBinary)
         );
-        assert!(script.contains("chmod 700 \"\\$tmp\""));
+        assert!(script.contains("chmod 700 \"$tmp\""));
         assert!(script.contains("wsl-link-agent"));
     }
 
@@ -996,7 +992,7 @@ mod tests {
             command.stdin_payload,
             Some(WslLinkDistributionPayload::NoiseConfig)
         );
-        assert!(script.contains("chmod 600 \"\\$tmp\""));
+        assert!(script.contains("chmod 600 \"$tmp\""));
         assert!(script.contains("agent-noise.json"));
     }
 
@@ -1007,10 +1003,10 @@ mod tests {
         let script = command.args.last().expect("script should exist");
 
         assert_eq!(command.stdin_payload, None);
-        assert!(script.contains("nohup \"\\$binary\" --noise-config \"\\$config\""));
+        assert!(script.contains("nohup \"$binary\" --noise-config \"$config\""));
         assert!(script.contains("agent.pid"));
-        assert!(script.contains("kill -0 \"\\$pid\""));
-        assert!(script.contains("tail -n 40 \"\\$log_file\""));
+        assert!(script.contains("kill -0 \"$pid\""));
+        assert!(script.contains("tail -n 40 \"$log_file\""));
     }
 
     #[test]
@@ -1038,8 +1034,9 @@ mod tests {
         let command = plan.prepare_command();
         let script = command.args.last().expect("script should exist");
 
-        assert!(script.contains("\"\\$HOME/.local/share/calamex/wsl-link\""));
+        assert!(script.contains("\"$HOME/.local/share/calamex/wsl-link\""));
         assert!(!script.contains("'${HOME}/"));
+        assert!(!script.contains("\\$HOME"));
     }
 
     #[test]

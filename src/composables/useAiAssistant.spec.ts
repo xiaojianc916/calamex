@@ -2906,6 +2906,35 @@ describe('useAiAssistant streaming integration', () => {
     ]);
   });
 
+  it('Agent 模式携带当前对话 threadId，并只向 Mastra 发送当前用户消息', async () => {
+    const { assistant } = createAssistantHarnessContext();
+    const threadId = readReactiveValue(assistant.activeConversationId);
+
+    assistant.messages.value = [
+      {
+        id: 'assistant-history-1',
+        role: 'assistant',
+        content: '上一轮已经解释过背景。',
+        createdAt: '2026-05-03T09:00:00.000Z',
+        references: [],
+      },
+    ];
+    assistant.activeMode.value = 'agent';
+    assistant.draft.value = '继续总结当前状态';
+
+    await assistant.sendMessage();
+
+    const request = aiServiceMock.sidecarExecute.mock.calls[0]?.[0];
+
+    expect(request?.threadId).toBe(threadId);
+    expect(request?.messages).toEqual([
+      expect.objectContaining({
+        role: 'user',
+        content: '继续总结当前状态',
+      }),
+    ]);
+  });
+
   it('普通 Chat 请求不附加当前文件引用', async () => {
     const { assistant } = createAssistantHarnessContext();
 

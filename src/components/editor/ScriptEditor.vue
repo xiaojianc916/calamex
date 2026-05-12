@@ -845,8 +845,8 @@ const revealPosition = (line: number, column: number): void => {
     column: Math.max(1, column),
   };
 
-  editorInstance.revealPositionInCenter(position);
   editorInstance.setPosition(position);
+  editorInstance.revealPositionInCenter(position, monaco.editor.ScrollType.Immediate);
   editorInstance.focus();
 };
 

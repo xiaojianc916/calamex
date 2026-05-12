@@ -794,6 +794,20 @@ const searchWorkspaceIpc = definePayloadIpc(
   { idempotent: true, timeoutMs: 30_000 },
 );
 
+const previewWorkspaceReplacementIpc = definePayloadIpc(
+  'preview_workspace_replacement',
+  '预览工作区替换',
+  tauriContracts.previewWorkspaceReplacement,
+  { idempotent: true, audit: 'sensitive', timeoutMs: 30_000 },
+);
+
+const applyWorkspaceReplacementIpc = definePayloadIpc(
+  'apply_workspace_replacement',
+  '应用工作区替换',
+  tauriContracts.applyWorkspaceReplacement,
+  { audit: 'sensitive', timeoutMs: 30_000 },
+);
+
 const getGitRepositoryStatusIpc = defineContractIpc(
   'get_git_repository_status',
   '读取 Git 仓库状态',
@@ -1428,6 +1442,10 @@ export const tauriService: ITauriService & {
   deleteWorkspacePath: deleteWorkspacePathIpc,
 
   searchWorkspace: searchWorkspaceIpc,
+
+  previewWorkspaceReplacement: previewWorkspaceReplacementIpc,
+
+  applyWorkspaceReplacement: applyWorkspaceReplacementIpc,
 
   getGitRepositoryStatus(workspaceRootPath) {
     return getGitRepositoryStatusIpc({ workspaceRootPath });

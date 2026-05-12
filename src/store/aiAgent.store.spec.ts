@@ -135,5 +135,7 @@ describe('aiAgent store step details', () => {
     expect(restored.steps).toHaveLength(2);
     expect(restored.activeRun?.status).toBe('paused');
     expect(restored.activeRun?.currentStepId).toBe('plan-step-1');
+    expect(restored.activeRun?.steps[0]?.status).toBe('pending');
+    expect(restored.activeRun?.steps[0]?.isActive).toBe(false);
   });
 });

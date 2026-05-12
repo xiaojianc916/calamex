@@ -111,6 +111,7 @@ export const AGENT_RUNTIME_EVENT_TYPES = [
   'acontext.envelope.replaced',
   'acontext.token.checked',
   'acontext.tool_summary.recorded',
+  'acontext.memory.compressed',
   'rollback.checkpoint.created',
   'rollback.checkpoint.failed',
   'rollback.restore.started',
@@ -209,6 +210,22 @@ export interface IAgentAcontextTokenEvent extends IAgentRuntimeEventBase {
   type: 'acontext.token.checked';
   projectedInputTokens?: number;
   projectedInputTokensAvailable: boolean;
+  inputCharCount?: number;
+  systemPromptCharCount?: number;
+  messageCharCount?: number;
+  contextCharCount?: number;
+  toolSchemaCharCount?: number;
+  toolCount?: number;
+  mcpToolCount?: number;
+  uiContextToolCount?: number;
+  nativeToolCount?: number;
+  logToolCount?: number;
+  workspaceEnabled?: boolean;
+  browserEnabled?: boolean;
+  memoryEnabled?: boolean;
+  maxSteps?: number;
+  toolChoice?: 'auto' | 'none';
+  tokenEstimateMethod?: 'char_heuristic';
 }
 
 export interface IAgentAcontextToolSummaryEvent extends IAgentRuntimeEventBase {
@@ -216,6 +233,17 @@ export interface IAgentAcontextToolSummaryEvent extends IAgentRuntimeEventBase {
   toolName: string;
   summaryCharCount: number;
   largeResult: boolean;
+}
+
+export interface IAgentAcontextMemoryCompressedEvent extends IAgentRuntimeEventBase {
+  type: 'acontext.memory.compressed';
+  operationType: 'observation' | 'reflection';
+  tokensActivated?: number;
+  observationTokens?: number;
+  messagesActivated?: number;
+  chunksActivated?: number;
+  durationMs?: number;
+  triggeredBy?: 'threshold' | 'ttl' | 'provider_change';
 }
 
 export interface IAgentCheckpointEvent extends IAgentRuntimeEventBase {
@@ -279,6 +307,7 @@ export type TAgentRuntimeEvent =
   | IAgentAcontextEnvelopeEvent
   | IAgentAcontextTokenEvent
   | IAgentAcontextToolSummaryEvent
+  | IAgentAcontextMemoryCompressedEvent
   | IAgentCheckpointEvent
   | IAgentRollbackEvent
   | IAgentSideEffectEvent

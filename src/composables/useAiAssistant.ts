@@ -1601,47 +1601,16 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     appendVisibleRuntimeTimelineEvents(extractVisibleAgentRuntimeEvents(events));
   };
 
-  const buildSidecarContextMessage = (
-    references: IAiContextReference[],
-  ): IAgentSidecarMessage | null => {
-    const visibleReferences = references.filter((reference) => reference.kind !== 'current-file');
-
-    if (!visibleReferences.length) {
-      return null;
-    }
-
-    return {
-      role: 'system',
-      content: [
-        '当前 UI 已收集到这些上下文，请在需要时结合它们判断任务：',
-        ...visibleReferences.map((reference, index) =>
-          [
-            `#${index + 1} ${reference.label}`,
-            `类型：${reference.kind}`,
-            `路径：${reference.path ?? '无'}`,
-            reference.range
-              ? `范围：${reference.range.startLine}-${reference.range.endLine}`
-              : '范围：无',
-            `已脱敏：${reference.redacted ? '是' : '否'}`,
-            '内容：',
-            reference.contentPreview,
-          ].join('\n'),
-        ),
-      ].join('\n\n'),
-    };
-  };
-
   const toSidecarMessages = (
     visibleMessages: IAiChatMessage[],
-    references: IAiContextReference[],
   ): IAgentSidecarMessage[] => {
-    const contextMessage = buildSidecarContextMessage(references);
-    const historyMessages = visibleMessages.map((message) => ({
-      role: message.role,
-      content: message.content,
-    }));
+    const latestUserMessage = [...visibleMessages]
+      .reverse()
+      .find((message) => message.role === 'user');
 
-    return contextMessage ? [contextMessage, ...historyMessages] : historyMessages;
+    return latestUserMessage
+      ? [{ role: 'user', content: latestUserMessage.content }]
+      : [];
   };
 
   const executeSidecarAgentRequest = async (
@@ -1699,9 +1668,10 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       const payload = await aiService.sidecarChat({
         sessionId: sidecarSessionId,
         goal: messageContent,
-        messages: toSidecarMessages(visibleMessages, references),
+        messages: toSidecarMessages(visibleMessages),
         workspaceRootPath: options.workspaceRootPath.value,
         context: sidecarContextReferences,
+        ...(targetThreadId ? { threadId: targetThreadId } : {}),
       });
       liveEventBuffer.flush();
       unlistenSidecarStream?.();
@@ -2621,6 +2591,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
           messageContent,
           buildSidecarContextReferences(references),
           options.workspaceRootPath.value,
+          titleThreadId ? { threadId: titleThreadId } : {},
         );
 
         agentSteps.value = planResult.steps.map((step) => ({

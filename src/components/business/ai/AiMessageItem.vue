@@ -59,7 +59,9 @@ const hasRenderableContent = computed(() => Boolean(props.message.content.trim()
 
 const hasToolCalls = computed(() => Boolean(props.message.toolCalls?.length));
 
-const hasRuntimeTimeline = computed(() => Boolean(props.message.stream?.runtimeEvents?.length));
+const hasRuntimeTimeline = computed(() =>
+  Boolean(props.message.stream?.runtimeEvents?.some((event) => event.type !== 'acontext.memory.compressed')),
+);
 
 const isAgentRuntimePending = computed(
   () =>
@@ -153,7 +155,7 @@ const streamTokenProgressLabel = computed(() => {
     return '';
   }
 
-  return `已生成 ${tokenNumberFormatter.format(tokens)} token`;
+  return `约已生成 ${tokenNumberFormatter.format(tokens)} token`;
 });
 
 const shouldShowInlineLoader = computed(

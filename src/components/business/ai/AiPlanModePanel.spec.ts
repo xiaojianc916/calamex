@@ -183,6 +183,24 @@ describe('AiPlanModePanel', () => {
     expect(wrapper.emitted('cancelRun')).toBeUndefined();
   });
 
+  it('暂停态展示可继续状态并触发继续执行', async () => {
+    const steps = [createStep(0), createStep(1), createStep(2)];
+    const wrapper = mountPanel({
+      steps,
+      approvedAt: '2026-04-29T10:00:00.000Z',
+      activeRun: createRun(steps, {
+        status: 'paused',
+        currentStepId: steps[0]?.id ?? null,
+      }),
+    });
+
+    expect(wrapper.text()).toContain('可继续');
+
+    await wrapper.get('button[aria-label="继续执行计划"]').trigger('click');
+
+    expect(wrapper.emitted('resumeRun')).toHaveLength(1);
+  });
+
   it('有工具确认待处理时仍不把确认卡塞进执行队列', () => {
     const steps = [createStep(0), createStep(1), createStep(2)];
     const wrapper = mountPanel({

@@ -448,13 +448,6 @@ export const useEditorContextMenu = (options: IUseEditorContextMenuOptions) => {
 
         items: [
           {
-            key: 'ai-tools',
-            label: 'AI',
-            icon: 'sparkles',
-            children: aiChildren,
-            disabled: aiChildren.every((item) => item.disabled),
-          },
-          {
             key: 'format-tools',
             label: '格式与注释',
             icon: 'format',

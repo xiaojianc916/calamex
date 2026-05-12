@@ -54,7 +54,7 @@ pub use git::{
 };
 pub use script_run::detect_execution_environment;
 pub(crate) use script_run::{create_temp_script, find_command_path, line_count};
-pub use search::search_workspace;
+pub use search::{apply_workspace_replacement, preview_workspace_replacement, search_workspace};
 pub use shell_tools::{analyze_script, format_script};
 pub use ssh::{
     create_ssh_directory, delete_ssh_path, download_ssh_file, get_ssh_password,

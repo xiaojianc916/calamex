@@ -1,4 +1,4 @@
-﻿import { mount } from '@vue/test-utils';
+import { mount } from '@vue/test-utils';
 import { describe, expect, it, vi } from 'vitest';
 import { h } from 'vue';
 
@@ -244,5 +244,50 @@ describe('AiChatThread', () => {
     });
 
     expect(wrapper.find('.ai-message-typing').exists()).toBe(false);
+  });
+
+  it('renders a Codex-like marker when Mastra compresses context automatically', () => {
+    const wrapper = mount(AiChatThread, {
+      props: {
+        messages: [
+          createMessage({
+            id: 'assistant-memory-1',
+            content: '已继续处理。',
+            stream: {
+              status: 'completed',
+              runtimeEvents: [
+                {
+                  id: 'memory-compressed-1',
+                  type: 'acontext.memory.compressed',
+                  runId: 'run-1',
+                  sessionId: 'session-1',
+                  agentId: 'agent-1',
+                  timestamp: '2026-05-03T10:00:00.000Z',
+                  seq: 0,
+                  schemaVersion: 1,
+                  redacted: true,
+                  visibility: 'user',
+                  level: 'info',
+                  operationType: 'observation',
+                  tokensActivated: 32_000,
+                  observationTokens: 900,
+                },
+              ],
+            },
+          }),
+        ],
+        isTyping: false,
+        platformId: 'deepseek',
+        providerLabel: 'DeepSeek',
+      },
+      global: {
+        stubs: {
+          AiMessageItem: { template: '<div class="message-item-stub" />' },
+        },
+      },
+    });
+
+    expect(wrapper.find('.ai-context-compression-divider').exists()).toBe(true);
+    expect(wrapper.text()).toContain('上下文已自动压缩');
   });
 });

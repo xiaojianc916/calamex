@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { ModelRouterEmbeddingModel } from '@mastra/core/llm';
+import { ModelRouterEmbeddingModel, type MastraModelConfig } from '@mastra/core/llm';
 import { LibSQLStore, LibSQLVector } from '@mastra/libsql';
 import { Memory } from '@mastra/memory';
 import { z } from 'zod';
@@ -154,14 +154,15 @@ const resolveSemanticRecallEmbedder = (
 };
 
 export const createMastraMemoryScope = (
-    input: Pick<IAgentRuntimeInput, 'workspaceRootPath'>,
+    input: Pick<IAgentRuntimeInput, 'workspaceRootPath' | 'threadId'>,
     sessionId: string,
 ): IMastraMemoryScope => {
     const workspaceRootPath = toNonEmptyString(input.workspaceRootPath ?? null);
+    const threadId = toNonEmptyString(input.threadId ?? null) ?? sessionId;
 
     if (!workspaceRootPath) {
         return {
-            thread: sessionId,
+            thread: threadId,
             resource: DEFAULT_MEMORY_RESOURCE_ID,
         };
     }
@@ -169,7 +170,7 @@ export const createMastraMemoryScope = (
     const projectUuid = resolveProjectUuid(workspaceRootPath);
 
     return {
-        thread: sessionId,
+        thread: threadId,
         resource: `workspace:${projectUuid}`,
     };
 };
@@ -183,6 +184,7 @@ export const createMastraMemoryReference = (
 
 export const createMastraAgentMemory = (
     storageUrl: string,
+    observationalMemoryModel: MastraModelConfig,
     env: NodeJS.ProcessEnv = process.env,
 ): Memory => {
     const embedder = resolveSemanticRecallEmbedder(env);
@@ -202,6 +204,10 @@ export const createMastraAgentMemory = (
         } : {}),
         options: {
             lastMessages: DEFAULT_MEMORY_LAST_MESSAGES,
+            observationalMemory: {
+                model: observationalMemoryModel,
+                scope: 'thread',
+            },
             workingMemory: {
                 enabled: true,
                 scope: 'resource',

@@ -21,6 +21,8 @@ desktop = [
   "dep:grep-matcher",
   "dep:grep-regex",
   "dep:grep-searcher",
+  "dep:ast-grep-core",
+  "dep:ast-grep-language",
   "dep:hyper-util",
   "dep:ignore",
   "dep:keyring",
@@ -28,6 +30,8 @@ desktop = [
   "dep:nucleo-matcher",
   "dep:portable-pty",
   "dep:reqwest",
+  "dep:regex",
+  "dep:similar",
   "dep:tauri",
   "dep:tauri-build",
   "dep:tauri-plugin-dialog",
@@ -42,6 +46,8 @@ tokenizers = ["dep:tokenizers"]
 
 [dependencies]
 base64 = "0.22.1"
+ast-grep-core = { version = "0.42.2", default-features = false, features = ["tree-sitter"], optional = true }
+ast-grep-language = { version = "0.42.2", default-features = false, features = ["tree-sitter-bash"], optional = true }
 chrono = { version = "0.4.44", features = ["serde"], optional = true }
 encoding_rs = { version = "0.8.35", optional = true }
 git2 = { version = "0.20.2", features = ["vendored-libgit2", "vendored-openssl"], optional = true }
@@ -55,8 +61,10 @@ nucleo-matcher = { version = "0.3.1", optional = true }
 portable-pty = { version = "0.9.0", optional = true }
 keyring = { version = "3.6.3", features = ["windows-native"], optional = true }
 reqwest = { version = "0.12.24", default-features = false, features = ["json", "rustls-tls"], optional = true }
+regex = { version = "1.12.3", optional = true }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
+similar = { version = "3.1.0", optional = true }
 tauri = { version = "2.10.3", features = ["tray-icon"], optional = true }
 tauri-plugin-dialog = { version = "2.7.0", optional = true }
 tauri-plugin-store = { version = "~2", optional = true }

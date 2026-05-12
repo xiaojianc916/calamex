@@ -32,6 +32,14 @@ export interface IEditorDocument {
   gitDiffPreview?: IGitDiffPreviewPayload;
 }
 
+export interface IWorkbenchOpenFileRequest {
+  path: string;
+  lineNumber?: number | null;
+  column?: number | null;
+}
+
+export type TWorkbenchOpenFilePayload = string | IWorkbenchOpenFileRequest;
+
 export interface ICommandTemplate {
   id: string;
   title: string;

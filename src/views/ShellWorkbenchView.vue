@@ -26,13 +26,14 @@
             <div class="@container/main workbench-content-stage">
                 <div class="workbench-content-dock">
                     <DeferredAiWorkspaceSurface
-v-if="isAiMode" class="min-w-0 flex-1" :document="editorStore.document"
+v-if="isAiMode || hasPinnedAiWorkspace" v-show="isAiMode" class="min-w-0 flex-1"
+                        :aria-hidden="!isAiMode" :document="editorStore.document"
                         :active-run="editorStore.activeRunSummary" :analysis="editorStore.activeScriptAnalysis"
                         :selection="editorStore.activeSelectionSummary" :git-status="gitStore.status"
                         :workspace-root-path="editorStore.workspaceRootPath"
                         @open-patch-diff="openGitDiffPreviewPayload" />
 
-                    <Card v-else class="workbench-content-card flex h-full min-h-0 flex-1 flex-col gap-0 py-0">
+                    <Card v-show="!isAiMode" class="workbench-content-card flex h-full min-h-0 flex-1 flex-col gap-0 py-0">
                         <StartupWorkbenchShell
 v-if="isStartupShellVisible && startupShellState"
                             :state="startupShellState" :show-terminal="isTerminalPanelVisible"
@@ -188,8 +189,10 @@ import StartupWorkbenchShell from '@/components/workbench/StartupWorkbenchShell.
 import WorkbenchDashboardSidebar from '@/components/workbench/WorkbenchDashboardSidebar.vue';
 import { useShellWorkbenchView } from '@/composables/useShellWorkbenchView';
 import AppShellLayout from '@/layouts/AppShellLayout.vue';
+import { useAiAgentStore } from '@/store/aiAgent';
+import type { TWorkbenchOpenFilePayload } from '@/types/editor';
 import type { IGitDiffPreviewRequest } from '@/types/git';
-import { computed, defineAsyncComponent } from 'vue';
+import { computed, defineAsyncComponent, nextTick } from 'vue';
 
 const DeferredAiWorkspaceSurface = defineAsyncComponent({
     loader: () => import('@/components/business/ai/AiWorkspaceSurface.vue'),
@@ -282,10 +285,37 @@ const isTerminalPanelVisible = computed(() => isTerminalAllowed.value && isTermi
 const isTerminalSplitVisible = computed(
     () => isTerminalPanelVisible.value && !isTerminalMaximized.value,
 );
+const aiAgentStore = useAiAgentStore();
+const terminalAgentRunStatuses = new Set(['completed', 'failed', 'cancelled']);
+const terminalPlanStatuses = new Set(['completed', 'failed', 'rejected']);
+const hasPinnedAiWorkspace = computed(() => {
+    const activeRun = aiAgentStore.activeRun;
 
-const handleSidebarOpenFile = async (path: string): Promise<void> => {
+    if (activeRun && !terminalAgentRunStatuses.has(activeRun.status)) {
+        return true;
+    }
+
+    if (aiAgentStore.isClassifying || aiAgentStore.isPlanning) {
+        return true;
+    }
+
+    if (aiAgentStore.hasPlan && !aiAgentStore.planStatus) {
+        return true;
+    }
+
+    return Boolean(aiAgentStore.planId && aiAgentStore.planStatus && !terminalPlanStatuses.has(aiAgentStore.planStatus));
+});
+
+const handleSidebarOpenFile = async (payload: TWorkbenchOpenFilePayload): Promise<void> => {
+    const request = typeof payload === 'string' ? { path: payload } : payload;
+
     openEditorMode();
-    await openDocumentByPath(path);
+    await openDocumentByPath(request.path);
+
+    if (typeof request.lineNumber === 'number') {
+        await nextTick();
+        editorRef.value?.revealPosition(request.lineNumber, request.column ?? 1);
+    }
 };
 
 const handleSidebarOpenGitDiff = async (payload: IGitDiffPreviewRequest): Promise<void> => {

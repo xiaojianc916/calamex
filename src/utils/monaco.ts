@@ -1,4 +1,4 @@
-﻿import { buildMonacoThemeForVariant, getThemeManager, onThemeChanged } from '@/themes';
+import { buildMonacoThemeForVariant, getThemeManager, onThemeChanged } from '@/themes';
 import type { TThemeMode } from '@/types/app';
 
 import 'monaco-editor/esm/nls.messages.zh-cn.js';
@@ -87,6 +87,7 @@ import { Selection } from 'monaco-editor/esm/vs/editor/common/core/selection.js'
 import {
   EditorOption,
   MarkerSeverity,
+  ScrollType,
 } from 'monaco-editor/esm/vs/editor/common/standalone/standaloneEnums.js';
 import 'monaco-editor/esm/vs/editor/contrib/clipboard/browser/clipboard';
 import 'monaco-editor/esm/vs/editor/contrib/comment/browser/comment';
@@ -151,6 +152,7 @@ const monaco = {
     setModelMarkers: setStandaloneModelMarkers,
     setTheme: setStandaloneTheme,
     EditorOption,
+    ScrollType,
   },
   languages,
   MarkerSeverity,

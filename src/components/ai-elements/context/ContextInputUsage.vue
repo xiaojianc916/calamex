@@ -28,7 +28,7 @@ const inputCostText = computed(() => {
   <slot v-if="$slots.default" />
 
   <div :class="cn('flex items-center justify-between text-xs', props.class)" v-bind="$attrs">
-    <span class="text-[var(--text-secondary)]">输入</span>
+    <span class="text-[var(--text-secondary)]">预计输入</span>
     <TokensWithCost :cost-text="inputCostText" :tokens="inputTokens" />
   </div>
 </template>

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {
     ChevronDown,
+    Play,
 } from 'lucide-vue-next';
 import { computed, ref } from 'vue';
 
@@ -75,7 +76,7 @@ const runStatusLabel = computed(() => {
         case 'waiting-for-tool-confirmation':
             return '等待工具确认';
         case 'paused':
-            return '已暂停';
+            return '可继续';
         case 'completed':
             return '已完成';
         case 'failed':
@@ -145,6 +146,10 @@ const collapseLabel = computed(() =>
     isCollapsed.value ? '展开执行进度' : '收起执行进度',
 );
 
+const canResumeRun = computed(() =>
+    props.activeRun?.status === 'paused',
+);
+
 const toggleCollapsed = (): void => {
     isCollapsed.value = !isCollapsed.value;
 };
@@ -164,7 +169,20 @@ const toggleCollapsed = (): void => {
                 <ChevronDown class="ai-plan-caret" :class="{ 'is-collapsed': isCollapsed }" aria-hidden="true" />
                 <h3>{{ todoTitle }}</h3>
             </button>
-            <span class="ai-plan-state-label">{{ planStateLabel }}</span>
+            <div class="ai-plan-header-actions">
+                <button
+                    v-if="canResumeRun"
+                    type="button"
+                    class="ai-plan-resume-button"
+                    :disabled="isRunActionPending"
+                    aria-label="继续执行计划"
+                    @click="emit('resumeRun')"
+                >
+                    <Play aria-hidden="true" />
+                    <span>继续</span>
+                </button>
+                <span class="ai-plan-state-label">{{ planStateLabel }}</span>
+            </div>
         </header>
 
         <Transition name="ai-plan-queue-expand">
@@ -196,7 +214,7 @@ const toggleCollapsed = (): void => {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 8px;
+    gap: calc(var(--app-density-scale) * 0.5rem);
 }
 
 .ai-plan-title-button {
@@ -238,6 +256,58 @@ const toggleCollapsed = (): void => {
     color: var(--text-primary);
     font-size: calc(var(--app-ui-font-size) * 0.85);
     font-weight: 600;
+}
+
+.ai-plan-header-actions {
+    display: inline-flex;
+    min-width: 0;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: calc(var(--app-density-scale) * 0.5rem);
+}
+
+.ai-plan-resume-button {
+    display: inline-flex;
+    height: calc(var(--app-density-scale) * 1.5rem);
+    align-items: center;
+    gap: calc(var(--app-density-scale) * 0.25rem);
+    border: 1px solid color-mix(in srgb, var(--accent-strong) 28%, transparent);
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--accent-strong) 9%, transparent);
+    color: var(--accent-strong);
+    padding: 0 calc(var(--app-density-scale) * 0.5rem);
+    font-size: calc(var(--app-ui-font-size) * 0.77);
+    font-weight: 600;
+    line-height: 1;
+    white-space: nowrap;
+    transition:
+        background-color var(--motion-duration-fast) var(--motion-easing-standard),
+        border-color var(--motion-duration-fast) var(--motion-easing-standard),
+        color var(--motion-duration-fast) var(--motion-easing-standard),
+        opacity var(--motion-duration-fast) var(--motion-easing-standard),
+        transform var(--motion-duration-fast) var(--motion-easing-standard);
+}
+
+.ai-plan-resume-button:hover:not(:disabled) {
+    border-color: color-mix(in srgb, var(--accent-strong) 42%, transparent);
+    background: color-mix(in srgb, var(--accent-strong) 14%, transparent);
+    color: var(--accent-strong);
+}
+
+.ai-plan-resume-button:active:not(:disabled) {
+    transform: scale(0.98);
+}
+
+.ai-plan-resume-button:disabled {
+    cursor: default;
+    opacity: 0.58;
+}
+
+.ai-plan-resume-button svg {
+    width: calc(var(--app-density-scale) * 0.75rem);
+    height: calc(var(--app-density-scale) * 0.75rem);
+    flex: 0 0 auto;
+    stroke-width: 2.2;
 }
 
 .ai-plan-state-label {
@@ -302,6 +372,7 @@ const toggleCollapsed = (): void => {
 
 @media (prefers-reduced-motion: reduce) {
     .ai-plan-title-button,
+    .ai-plan-resume-button,
     .ai-plan-caret,
     .ai-plan-queue-expand-enter-active,
     .ai-plan-queue-expand-leave-active {

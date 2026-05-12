@@ -8,7 +8,7 @@ import {
 import { Message } from '@/components/ai-elements/message';
 import type { TAiServicePlatformId } from '@/constants/ai-providers';
 import type { IAiChatMessage, TAiChatMessageActionId } from '@/types/ai';
-import { MessageSquareIcon } from 'lucide-vue-next';
+import { ArchiveIcon, MessageSquareIcon } from 'lucide-vue-next';
 import { computed } from 'vue';
 import AiMessageItem from './AiMessageItem.vue';
 import AiThinkingStatus from './AiThinkingStatus.vue';
@@ -47,6 +47,7 @@ const TOOL_PROGRESS_PREFIXES = [
   'Agent 正在调用工具…',
   'Agent 正在根据你的确认继续执行…',
 ] as const;
+const CONTEXT_COMPRESSION_EVENT_TYPE = 'acontext.memory.compressed';
 
 const hasInlineProgressMessage = computed(() => {
   const lastMessage = props.messages.at(-1);
@@ -92,6 +93,9 @@ const handleMessageAction = (messageId: string, actionId: TAiChatMessageActionId
 const handleScrollStateChange = (state: IAiChatScrollState): void => {
   emit('scrollStateChange', state);
 };
+
+const hasContextCompressionMarker = (message: IAiChatMessage): boolean =>
+  Boolean(message.stream?.runtimeEvents?.some((event) => event.type === CONTEXT_COMPRESSION_EVENT_TYPE));
 </script>
 
 <template>
@@ -122,6 +126,17 @@ const handleScrollStateChange = (state: IAiChatScrollState): void => {
             :provider-label="providerLabel"
             @message-action="handleMessageAction"
           />
+          <div
+            v-if="hasContextCompressionMarker(message)"
+            class="ai-context-compression-divider"
+            role="status"
+            aria-label="上下文已自动压缩"
+          >
+            <span class="ai-context-compression-divider__label">
+              <ArchiveIcon class="ai-context-compression-divider__icon" aria-hidden="true" />
+              <span>上下文已自动压缩</span>
+            </span>
+          </div>
           <slot name="after-message" :message="message" />
         </template>
         <slot name="after-messages" />
@@ -188,6 +203,41 @@ const handleScrollStateChange = (state: IAiChatScrollState): void => {
   display: flex;
   min-width: 0;
   align-items: flex-start;
+}
+
+.ai-context-compression-divider {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+}
+
+.ai-context-compression-divider::before,
+.ai-context-compression-divider::after {
+  height: 1px;
+  min-width: 24px;
+  flex: 1 1 0;
+  background: color-mix(in srgb, var(--shell-divider) 86%, transparent);
+  content: '';
+}
+
+.ai-context-compression-divider__label {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.ai-context-compression-divider__icon {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  stroke-width: 1.8;
 }
 
 </style>

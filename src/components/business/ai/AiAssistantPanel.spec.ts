@@ -1131,6 +1131,88 @@ describe('AiAssistantPanel', () => {
         expect(wrapper.find('[data-testid="agent-run-timeline"]').exists()).toBe(false);
     });
 
+    it('恢复到暂停态时不把刷新前的工具活动继续显示成运行中', () => {
+        const userQuestion = '切换界面后继续执行计划';
+        const assistantMock = createAssistantMock([
+            {
+                id: 'message-user-paused',
+                role: 'user',
+                content: userQuestion,
+                createdAt: '2026-04-29T10:00:00.000Z',
+                references: [],
+            },
+        ]);
+        const steps = [
+            createPlanStep('plan-step-1', '定位持久化链路', 'pending'),
+            createPlanStep('plan-step-2', '补齐继续入口', 'pending'),
+        ];
+        const activeRun: IAiAgentRun = {
+            ...createAgentRun(steps, 'plan-step-1'),
+            status: 'paused',
+            completedAt: null,
+        };
+
+        assistantMock.activeMode.value = 'plan';
+        assistantMock.agentPlan.store.hasPlan = true;
+        assistantMock.agentPlan.store.activeGoal = userQuestion;
+        assistantMock.agentPlan.store.steps = steps;
+        assistantMock.agentPlan.store.activeRunId = activeRun.id;
+        assistantMock.agentPlan.store.activeRun = activeRun;
+        assistantMock.agentPlan.store.getToolActivities = vi.fn((): IAiToolActivityInline[] => [
+            {
+                id: 'activity-read-file',
+                stepId: 'plan-step-1',
+                toolName: 'read_file',
+                state: 'running',
+                label: '正在读取 AiAssistantPanel.vue…',
+                startedAt: '2026-04-29T10:00:01.000Z',
+            },
+        ]);
+        useAiAssistantMock.mockReturnValue(assistantMock);
+
+        const wrapper = mount(AiAssistantPanel, {
+            props: {
+                document: createDocument(),
+                activeRun: null as IActiveRunSummary | null,
+                analysis: createAnalysis(),
+                selection: null as IEditorSelectionSummary | null,
+                gitStatus: createGitStatus(),
+                workspaceRootPath: 'd:/com.xiaojianc/my_desktop_app',
+            },
+            global: {
+                stubs: {
+                    AiChatThread: {
+                        props: ['messages'],
+                        template: `
+                            <section data-testid="chat-thread">
+                                <article v-for="message in messages" :key="message.id">
+                                    <p>{{ message.content }}</p>
+                                    <ol v-if="message.toolCalls?.length">
+                                        <li v-for="toolCall in message.toolCalls" :key="toolCall.id">
+                                            {{ toolCall.name }}:{{ toolCall.status }}:{{ toolCall.summary }}
+                                        </li>
+                                    </ol>
+                                </article>
+                            </section>
+                        `,
+                    },
+                    AiContextChips: { template: '<div />' },
+                    AiPatchPreview: { template: '<div />' },
+                    AiPromptInput: { template: '<div />' },
+                    AiProviderSettings: { template: '<div />' },
+                    AiPlanModePanel: { template: '<div data-testid="plan-mode-panel" />' },
+                    teleport: true,
+                },
+            },
+        });
+
+        const chatThread = wrapper.get('[data-testid="chat-thread"]');
+
+        expect(chatThread.text()).toContain('计划已暂停，点击继续后会从未完成步骤恢复执行。');
+        expect(chatThread.text()).not.toContain('AI 正在自动使用工具');
+        expect(chatThread.text()).not.toContain('read_file:running');
+    });
+
     it('renders a scrollable history view with the latest 20 conversations', async () => {
         const historyThreads = Array.from({ length: 25 }, (_value, index) => createThread(index + 1));
         useAiAssistantMock.mockReturnValue(

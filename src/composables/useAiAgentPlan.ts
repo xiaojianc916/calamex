@@ -91,11 +91,18 @@ export const useAiAgentPlan = () => {
     }
 
     if (options.replacePlanSnapshot && projection.record) {
-      store.setPlan(
-        projection.record.plan.goal,
-        mapSidecarPlanToTaskSteps(projection.record.plan),
-        projection.metadata,
-      );
+      const activeRun = store.activeRun;
+
+      if (activeRun) {
+        store.activeGoal = projection.record.plan.goal;
+        store.steps = activeRun.steps;
+      } else {
+        store.setPlan(
+          projection.record.plan.goal,
+          mapSidecarPlanToTaskSteps(projection.record.plan),
+          projection.metadata,
+        );
+      }
     }
 
     store.applyPlanMetadata(projection.metadata, projection.versions);

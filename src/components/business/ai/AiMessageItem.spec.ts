@@ -183,7 +183,7 @@ describe('AiMessageItem', () => {
     });
 
     expect(wrapper.find('.ai-message-token-progress').exists()).toBe(true);
-    expect(wrapper.text()).toContain('已生成 387 token');
+    expect(wrapper.text()).toContain('约已生成 387 token');
   });
 
   it('sidecar 占位流开始时立即显示新 runtime 时间线，不显示加载行', () => {

@@ -44,6 +44,7 @@ import { computed, type Component } from 'vue';
 const REASONING_SEGMENT_CHARS = 420;
 const PREVIEW_TAG_LIMIT = 96;
 const MAX_TOOL_TAGS = 3;
+const tokenNumberFormatter = new Intl.NumberFormat('zh-CN');
 
 type TTaskIcon =
   | TAiRuntimeToolKind
@@ -973,6 +974,11 @@ const describeRunEvent = (event: TAgentRuntimeEvent): string | null => {
       return event.ok
         ? `模型调用完成${event.stopReason ? `（${event.stopReason}）` : ''}`
         : `模型调用失败：${event.errorMessage ?? '未知错误'}`;
+
+    case 'acontext.token.checked':
+      return event.projectedInputTokensAvailable
+        ? `上下文预算检查，预计输入 token：${tokenNumberFormatter.format(event.projectedInputTokens ?? 0)}`
+        : '上下文预算检查完成';
 
     case 'agent.text.delta':
     case 'agent.tool.progress':

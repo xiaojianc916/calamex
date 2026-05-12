@@ -27,7 +27,7 @@ const totalCost = computed(() => {
     <slot v-if="$slots.default" />
 
     <template v-else>
-      <span class="text-[var(--text-secondary)]">总成本</span>
+      <span class="text-[var(--text-secondary)]">预计成本</span>
       <span class="text-[#09090b]">{{ totalCost }}</span>
     </template>
   </div>

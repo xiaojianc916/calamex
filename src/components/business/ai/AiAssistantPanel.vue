@@ -272,6 +272,11 @@ const mapActivityToToolCallStatus = (
   }
 };
 
+const isLiveToolActivity = (activity: IAiToolActivityInline): boolean =>
+  activity.state === 'starting' ||
+  activity.state === 'running' ||
+  activity.state === 'waiting-confirmation';
+
 const normalizeToolActivitySummary = (activity: IAiToolActivityInline): string => {
   const source = activity.targetPreview?.trim() || activity.label.trim();
   const withoutEllipsis = source.replace(/…+$/u, '').trim();
@@ -290,6 +295,7 @@ const buildAgentFlowToolCalls = (run: IAiAgentRun | null): IAiToolCall[] => {
 
   return planStore.value
     .getToolActivities(run.id)
+    .filter((activity) => run.status !== 'paused' || !isLiveToolActivity(activity))
     .map((activity) => ({
       id: activity.id,
       name: activity.toolName,
@@ -346,11 +352,15 @@ const activeAgentFlowMessage = computed<IAiChatMessage | null>(() => {
   const isTerminalRun = run
     ? run.status === 'completed' || run.status === 'failed' || run.status === 'cancelled'
     : false;
-  const content = run && isTerminalRun
-    ? buildPlanRunFinalAnswer(run, stepFinalAnswers)
-    : (latestToolCall
-      ? `AI 正在自动使用工具：${latestToolCall.summary}`
-      : 'Agent 正在执行计划。');
+  let content = 'Agent 正在执行计划。';
+
+  if (run?.status === 'paused') {
+    content = '计划已暂停，点击继续后会从未完成步骤恢复执行。';
+  } else if (run && isTerminalRun) {
+    content = buildPlanRunFinalAnswer(run, stepFinalAnswers);
+  } else if (latestToolCall) {
+    content = `AI 正在自动使用工具：${latestToolCall.summary}`;
+  }
 
   return {
     id: run ? `agent-flow:${run.id}` : `agent-flow:${latestToolCall?.id ?? 'activity'}`,

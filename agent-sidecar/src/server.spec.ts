@@ -749,6 +749,56 @@ const toRecordForTest = (value: unknown): Record<string, unknown> | null => (
     : null
 );
 
+const isRuntimeEventType = (event: unknown, type: string): boolean => {
+  const record = toRecordForTest(event);
+  const runtimeEvent = toRecordForTest(record?.event);
+
+  return record?.type === 'agent_event' && runtimeEvent?.type === type;
+};
+
+const stripTokenBudgetEvents = <T>(events: readonly T[]): T[] =>
+  events.filter((event) => !isRuntimeEventType(event, 'acontext.token.checked'));
+
+const findTokenBudgetEvent = (events: readonly unknown[]): Record<string, unknown> | null => {
+  const event = events.find((candidate) => isRuntimeEventType(candidate, 'acontext.token.checked'));
+  const record = toRecordForTest(event);
+
+  return toRecordForTest(record?.event);
+};
+
+const assertTokenBudgetEvent = (
+  events: readonly unknown[],
+  expected: {
+    runId?: string;
+    toolCount?: number;
+    mcpToolCount?: number;
+    uiContextToolCount?: number;
+    nativeToolCount?: number;
+    logToolCount?: number;
+    workspaceEnabled?: boolean;
+    browserEnabled?: boolean;
+    memoryEnabled?: boolean;
+    maxSteps?: number;
+    toolChoice?: 'auto' | 'none';
+  } = {},
+): void => {
+  const event = findTokenBudgetEvent(events);
+
+  assert.ok(event, 'token budget event should be emitted');
+  assert.equal(event?.projectedInputTokensAvailable, true);
+  assert.equal(event?.tokenEstimateMethod, 'char_heuristic');
+  assert.equal(typeof event?.projectedInputTokens, 'number');
+  assert.equal(typeof event?.inputCharCount, 'number');
+  assert.equal(typeof event?.systemPromptCharCount, 'number');
+  assert.equal(typeof event?.messageCharCount, 'number');
+  assert.equal(typeof event?.toolSchemaCharCount, 'number');
+  assert.equal(event?.visibility, 'debug');
+
+  for (const [key, value] of Object.entries(expected)) {
+    assert.equal(event?.[key], value);
+  }
+};
+
 describe('DeepSeek reasoning fetch middleware', () => {
   it('captures non-stream reasoning_content and injects it by sorted tool call ids', async () => {
     clearDeepSeekReasoningStoreForTest();
@@ -879,6 +929,73 @@ describe('DeepSeek reasoning fetch middleware', () => {
     const assistantMessage = toRecordForTest(messages[0]);
     assert.equal(assistantMessage?.reasoning_content, '我需要查时间');
   });
+
+  it('persists streaming reasoning_content when the upstream stream is canceled after tool calls', async () => {
+    clearDeepSeekReasoningStoreForTest();
+    const originalFetch = globalThis.fetch;
+    const encoder = new TextEncoder();
+    const capturedBodies: unknown[] = [];
+    let callCount = 0;
+
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      callCount += 1;
+
+      if (callCount === 1) {
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(encoder.encode(
+              'data: {"choices":[{"delta":{"reasoning_content":"先调用工具。","tool_calls":[{"id":"call-cancel-1"}]}}]}\n\n',
+            ));
+          },
+        });
+
+        return new Response(body, {
+          headers: { 'content-type': 'text/event-stream; charset=utf-8' },
+        });
+      }
+
+      capturedBodies.push(JSON.parse(String(init?.body)) as unknown);
+      return new Response(JSON.stringify({ choices: [{ message: { role: 'assistant', content: '完成' } }] }), {
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as typeof fetch;
+
+    try {
+      await runWithDeepSeekReasoningContext({ sessionId: 'session-cancel', runId: 'run-cancel' }, async () => {
+        const streamResponse = await deepseekReasoningFetch('https://example.com/chat/completions', {
+          method: 'POST',
+          body: JSON.stringify({
+            messages: [{ role: 'user', content: '需要工具' }],
+          }),
+        });
+        const reader = streamResponse.body?.getReader();
+        assert.ok(reader);
+        const firstChunk = await reader.read();
+        assert.equal(firstChunk.done, false);
+        await reader.cancel('tool loop advanced');
+
+        const nextResponse = await deepseekReasoningFetch('https://example.com/chat/completions', {
+          method: 'POST',
+          body: JSON.stringify({
+            messages: [{
+              role: 'assistant',
+              tool_calls: [{ id: 'call-cancel-1' }],
+            }],
+          }),
+        });
+        await nextResponse.text();
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      clearDeepSeekReasoningStoreForTest();
+    }
+
+    const body = toRecordForTest(capturedBodies[0]);
+    const messages = Array.isArray(body?.messages) ? body.messages : [];
+    const assistantMessage = toRecordForTest(messages[0]);
+    assert.equal(assistantMessage?.reasoning_content, '先调用工具。');
+  });
+
 });
 
 describe('Agent sidecar request schema', () => {
@@ -1166,6 +1283,15 @@ describe('Mastra memory helpers', () => {
       rmSync(workspaceRoot, { recursive: true });
     }
   });
+
+  it('uses explicit UI thread id as the Mastra memory thread', () => {
+    const scope = createMastraMemoryScope({
+      threadId: 'ui-thread-1',
+    }, 'session-123');
+
+    assert.equal(scope.thread, 'ui-thread-1');
+    assert.equal(scope.resource, 'agent-sidecar:global');
+  });
 });
 
 describe('Mastra file logger helpers', () => {
@@ -1253,7 +1379,7 @@ describe('Agent runtime configuration', () => {
 });
 
 describe('Mastra runtime chat', () => {
-  it('maps Mastra text chunks to cumulative message_delta events without changing the sidecar contract', async () => {
+  it('maps Mastra text chunks and lets Mastra memory manage stored history', async () => {
     let capturedMessages: unknown;
     let capturedStreamOptions: unknown;
     let capturedModel: MastraModelConfig | null = null;
@@ -1355,7 +1481,6 @@ describe('Mastra runtime chat', () => {
     assert.equal((capturedModel as { provider?: unknown } | null)?.provider, 'deepseek');
     assert.equal((capturedModel as { modelId?: unknown } | null)?.modelId, 'deepseek-chat');
     assert.deepEqual(capturedMessages, [
-      { role: 'assistant', content: '你好，我可以帮你做什么？' },
       { role: 'user', content: '请打招呼' },
     ]);
     const chatMemoryScope = createMastraMemoryScope({}, response.sessionId);
@@ -1369,7 +1494,20 @@ describe('Mastra runtime chat', () => {
         resource: chatMemoryScope.resource,
       },
     });
-    assert.deepEqual(streamedEvents, [
+    assertTokenBudgetEvent(streamedEvents, {
+      runId: 'req-123',
+      toolCount: 4,
+      mcpToolCount: 0,
+      uiContextToolCount: 0,
+      nativeToolCount: 2,
+      logToolCount: 2,
+      workspaceEnabled: false,
+      browserEnabled: true,
+      memoryEnabled: true,
+      maxSteps: 10,
+      toolChoice: 'auto',
+    });
+    assert.deepEqual(stripTokenBudgetEvents(streamedEvents), [
       {
         type: 'message_delta',
         text: '你好',
@@ -1391,6 +1529,155 @@ describe('Mastra runtime chat', () => {
       result: '你好，世界',
     });
     assert.match(response.sessionId, /^mastra-chat-/u);
+    assert.equal(disconnectCalls, 1);
+  });
+
+  it('uses stored memory history for UI threads and surfaces OM compression events', async () => {
+    let capturedMessages: unknown;
+    let capturedStreamOptions: unknown;
+    let capturedAgentMemoryEnabled = false;
+    let disconnectCalls = 0;
+    const runtime = new MastraRuntime({
+      now: () => '2026-05-03T00:00:00.000Z',
+      readModelConfig: () => new ModelRouterLanguageModel({ providerId: 'deepseek', modelId: 'deepseek-chat', apiKey: 'test-key', url: 'https://example.com/v1' }),
+      createMcpClientBundle: async () => ({
+        clients: [],
+        configs: [],
+        errors: [],
+        tools: {},
+        disconnectAll: async () => {
+          disconnectCalls += 1;
+        },
+      }),
+      createAgent: (config) => {
+        capturedAgentMemoryEnabled = Boolean(config.memory);
+
+        return {
+          stream: async (messages, streamOptions) => {
+            capturedMessages = messages;
+            capturedStreamOptions = streamOptions;
+
+            return {
+              runId: 'run-om-1',
+              fullStream: (async function* () {
+                yield {
+                  type: 'data-om-activation',
+                  data: {
+                    cycleId: 'om-cycle-1',
+                    operationType: 'observation',
+                    activatedAt: '2026-05-03T00:00:00.000Z',
+                    chunksActivated: 3,
+                    tokensActivated: 32_000,
+                    observationTokens: 900,
+                    messagesActivated: 12,
+                    recordId: 'om-record-1',
+                    threadId: 'ui-thread-1',
+                    generationCount: 0,
+                    triggeredBy: 'threshold',
+                    config: {
+                      messageTokens: 30_000,
+                      observationTokens: 40_000,
+                      scope: 'thread',
+                    },
+                  },
+                };
+                yield {
+                  type: 'text-delta',
+                  runId: 'run-om-1',
+                  payload: {
+                    id: 'text-om-1',
+                    text: '上下文已续上。',
+                  },
+                };
+              })(),
+            };
+          },
+          generate: async () => {
+            throw new Error('generate should not be used in OM chat test');
+          },
+        };
+      },
+    });
+    const abortController = new AbortController();
+
+    const response = await runtime.chat({
+      mode: 'agent',
+      goal: '请总结最新状态',
+      threadId: 'ui-thread-1',
+      messages: [
+        { role: 'assistant', content: '上一轮回复。' },
+        { role: 'user', content: '请总结最新状态' },
+      ],
+      context: [],
+    }, {
+      context: {
+        requestId: 'req-om-1',
+        signal: abortController.signal,
+      },
+    });
+
+    assert.equal(capturedAgentMemoryEnabled, true);
+    assert.deepEqual(capturedMessages, [
+      { role: 'user', content: '请总结最新状态' },
+    ]);
+    const chatMemoryScope = createMastraMemoryScope({ threadId: 'ui-thread-1' }, response.sessionId);
+    assert.deepEqual(capturedStreamOptions, {
+      runId: 'req-om-1',
+      abortSignal: abortController.signal,
+      maxSteps: 10,
+      toolChoice: 'auto',
+      memory: {
+        thread: chatMemoryScope.thread,
+        resource: chatMemoryScope.resource,
+      },
+    });
+    assertTokenBudgetEvent(response.events, {
+      runId: 'run-om-1',
+      toolCount: 4,
+      mcpToolCount: 0,
+      uiContextToolCount: 0,
+      nativeToolCount: 2,
+      logToolCount: 2,
+      workspaceEnabled: false,
+      browserEnabled: true,
+      memoryEnabled: true,
+      maxSteps: 10,
+      toolChoice: 'auto',
+    });
+    assert.deepEqual(stripTokenBudgetEvents(response.events), [
+      {
+        type: 'agent_event',
+        event: {
+          id: response.events[1] && response.events[1].type === 'agent_event' ? response.events[1].event.id : '',
+          type: 'acontext.memory.compressed',
+          runId: 'run-om-1',
+          sessionId: response.sessionId,
+          agentId: 'calamex-agent-sidecar',
+          timestamp: '2026-05-03T00:00:00.000Z',
+          seq: 1,
+          schemaVersion: 1,
+          redacted: true,
+          visibility: 'user',
+          level: 'info',
+          operationType: 'observation',
+          tokensActivated: 32_000,
+          observationTokens: 900,
+          messagesActivated: 12,
+          chunksActivated: 3,
+          triggeredBy: 'threshold',
+        },
+      },
+      {
+        type: 'message_delta',
+        text: '上下文已续上。',
+        phase: 'final',
+      },
+      {
+        type: 'done',
+        result: '上下文已续上。',
+      },
+    ]);
+    assert.equal(response.result, '上下文已续上。');
     assert.equal(disconnectCalls, 1);
   });
 
@@ -1691,7 +1978,21 @@ describe('Mastra runtime chat', () => {
         streamedEvents.push(event);
       },
     });
-    const reasoningEvent = streamedEvents[0];
+    assertTokenBudgetEvent(streamedEvents, {
+      runId: 'req-reasoning',
+      toolCount: 4,
+      mcpToolCount: 0,
+      uiContextToolCount: 0,
+      nativeToolCount: 2,
+      logToolCount: 2,
+      workspaceEnabled: false,
+      browserEnabled: true,
+      memoryEnabled: true,
+      maxSteps: 10,
+      toolChoice: 'auto',
+    });
+    const reasoningEvent = streamedEvents.find((event) =>
+      isRuntimeEventType(event, 'agent.reasoning.delta'));
 
     assert.equal(typeof reasoningEvent, 'object');
     assert.notEqual(reasoningEvent, null);
@@ -1864,7 +2165,19 @@ describe('Mastra runtime chat', () => {
       context: [],
     });
 
-    assert.deepEqual(response.events, [{
+    assertTokenBudgetEvent(response.events, {
+      toolCount: 4,
+      mcpToolCount: 0,
+      uiContextToolCount: 0,
+      nativeToolCount: 2,
+      logToolCount: 2,
+      workspaceEnabled: false,
+      browserEnabled: true,
+      memoryEnabled: true,
+      maxSteps: 10,
+      toolChoice: 'auto',
+    });
+    assert.deepEqual(stripTokenBudgetEvents(response.events), [{
       type: 'error',
       message: 'Mastra Agent 执行失败：mastra exploded',
     }]);
@@ -2285,7 +2598,7 @@ describe('Mastra runtime execute', () => {
         resource?: unknown;
       };
     };
-    const executeMemoryScope = createMastraMemoryScope({}, response.sessionId);
+    const executeMemoryScope = createMastraMemoryScope({ threadId: executionRecord.threadId }, response.sessionId);
     assert.equal(typeof streamOptions.runId, 'string');
     assert.equal(streamOptions.maxSteps, 10);
     assert.equal(streamOptions.toolChoice, 'auto');
@@ -2306,19 +2619,32 @@ describe('Mastra runtime execute', () => {
       planStepId: 'step-1',
       approvedPlan: executionRecord.plan,
     });
-    assert.deepEqual(streamedEvents, [
+    assertTokenBudgetEvent(streamedEvents, {
+      runId: 'run-execute',
+      toolCount: 5,
+      mcpToolCount: 1,
+      uiContextToolCount: 0,
+      nativeToolCount: 2,
+      logToolCount: 2,
+      workspaceEnabled: false,
+      browserEnabled: true,
+      memoryEnabled: true,
+      maxSteps: 10,
+      toolChoice: 'auto',
+    });
+    assert.deepEqual(stripTokenBudgetEvents(streamedEvents), [
       {
         type: 'agent_event',
         event: {
-          id: streamedEvents[0] && typeof streamedEvents[0] === 'object' && streamedEvents[0] !== null && 'event' in streamedEvents[0]
-            ? (streamedEvents[0] as { event: { id: string } }).event.id
+          id: streamedEvents[1] && typeof streamedEvents[1] === 'object' && streamedEvents[1] !== null && 'event' in streamedEvents[1]
+            ? (streamedEvents[1] as { event: { id: string } }).event.id
             : '',
           type: 'rollback.checkpoint.created',
           runId: 'run-execute',
           sessionId: response.sessionId,
           agentId: 'calamex-agent-sidecar',
           timestamp: '2026-05-03T00:00:00.000Z',
-          seq: 0,
+          seq: 1,
           schemaVersion: 1,
           redacted: true,
           visibility: 'user',
@@ -2329,15 +2655,15 @@ describe('Mastra runtime execute', () => {
       {
         type: 'agent_event',
         event: {
-          id: streamedEvents[1] && typeof streamedEvents[1] === 'object' && streamedEvents[1] !== null && 'event' in streamedEvents[1]
-            ? (streamedEvents[1] as { event: { id: string } }).event.id
+          id: streamedEvents[2] && typeof streamedEvents[2] === 'object' && streamedEvents[2] !== null && 'event' in streamedEvents[2]
+            ? (streamedEvents[2] as { event: { id: string } }).event.id
             : '',
           type: 'agent.tool.started',
           runId: 'run-execute',
           sessionId: response.sessionId,
           agentId: 'calamex-agent-sidecar',
           timestamp: '2026-05-03T00:00:00.000Z',
-          seq: 1,
+          seq: 2,
           schemaVersion: 1,
           redacted: true,
           visibility: 'user',
@@ -2357,15 +2683,15 @@ describe('Mastra runtime execute', () => {
       {
         type: 'agent_event',
         event: {
-          id: streamedEvents[3] && typeof streamedEvents[3] === 'object' && streamedEvents[3] !== null && 'event' in streamedEvents[3]
-            ? (streamedEvents[3] as { event: { id: string } }).event.id
+          id: streamedEvents[4] && typeof streamedEvents[4] === 'object' && streamedEvents[4] !== null && 'event' in streamedEvents[4]
+            ? (streamedEvents[4] as { event: { id: string } }).event.id
             : '',
           type: 'agent.tool.completed',
           runId: 'run-execute',
           sessionId: response.sessionId,
           agentId: 'calamex-agent-sidecar',
           timestamp: '2026-05-03T00:00:00.000Z',
-          seq: 2,
+          seq: 3,
           schemaVersion: 1,
           redacted: true,
           visibility: 'user',
@@ -2573,16 +2899,30 @@ describe('Mastra runtime approval resolution', () => {
     });
 
     assert.equal(initial.result, null);
-    assert.equal(initial.events.length, 2);
+    assert.equal(initial.events.length, 3);
+    assertTokenBudgetEvent(initial.events, {
+      runId: 'approval-run-1',
+      toolCount: 4,
+      mcpToolCount: 0,
+      uiContextToolCount: 0,
+      nativeToolCount: 2,
+      logToolCount: 2,
+      workspaceEnabled: false,
+      browserEnabled: true,
+      memoryEnabled: true,
+      maxSteps: 10,
+      toolChoice: 'auto',
+    });
     assert.equal(initial.events[0]?.type, 'agent_event');
-    assert.equal(initial.events[1]?.type, 'approval_required');
+    assert.equal(initial.events[1]?.type, 'agent_event');
+    assert.equal(initial.events[2]?.type, 'approval_required');
     assert.equal(disconnectCalls, 0);
 
-    if (initial.events[1]?.type !== 'approval_required') {
+    if (initial.events[2]?.type !== 'approval_required') {
       throw new Error('expected approval_required event');
     }
 
-    const approvalRequestId = initial.events[1].request.id;
+    const approvalRequestId = initial.events[2].request.id;
     assert.match(approvalRequestId, /^mastra-approval\./u);
 
     const resumed = await runtime.resolveApproval({
@@ -2817,9 +3157,23 @@ describe('Mastra runtime plan', () => {
       },
       structuredOutput: {
         schema: agentPlanGenerationSchema,
+        jsonPromptInjection: true,
       },
     });
-    assert.deepEqual(streamedEvents, [
+    assertTokenBudgetEvent(streamedEvents, {
+      runId: 'plan-req-1',
+      toolCount: 5,
+      mcpToolCount: 1,
+      uiContextToolCount: 0,
+      nativeToolCount: 2,
+      logToolCount: 2,
+      workspaceEnabled: false,
+      browserEnabled: true,
+      memoryEnabled: true,
+      maxSteps: 10,
+      toolChoice: 'auto',
+    });
+    assert.deepEqual(stripTokenBudgetEvents(streamedEvents), [
       {
         type: 'plan_ready',
         planId: 'plan-1',
@@ -2845,6 +3199,82 @@ describe('Mastra runtime plan', () => {
       result: '已生成计划：2 个待办事项。',
     });
     assert.match(response.sessionId, /^mastra-plan-/u);
+    assert.equal(disconnectCalls, 1);
+  });
+
+  it('uses JSON prompt injection for plan structured output when readonly tools are available', async () => {
+    let disconnectCalls = 0;
+    let capturedJsonPromptInjection: unknown;
+    const generatedPlan = agentPlanSchema.parse({
+      goal: '讲解人类发展历史',
+      summary: '先确定讲解脉络，再分阶段展开。',
+      steps: [
+        {
+          id: 'step-1',
+          title: '梳理历史分期',
+          goal: '按时间线整理人类发展关键阶段。',
+          status: 'pending',
+          tools: [],
+          riskLevel: 'low',
+          requiresApproval: false,
+          expectedOutput: '得到清晰的人类发展历史分期。',
+        },
+      ],
+    });
+    const runtime = new MastraRuntime({
+      readModelConfig: () => new ModelRouterLanguageModel({ providerId: 'deepseek', modelId: 'deepseek-chat', apiKey: 'test-key', url: 'https://example.com/v1' }),
+      createMcpClientBundle: async () => ({
+        tools: {
+          git_read_file: createTool({
+            id: 'git_read_file',
+            description: '读取文件内容',
+            inputSchema: z.object({
+              path: z.string(),
+            }),
+            execute: async () => ({
+              content: [{ type: 'text', text: 'README 内容' }],
+              isError: false,
+            }),
+          }),
+        },
+        disconnectAll: async () => {
+          disconnectCalls += 1;
+        },
+      }),
+      createAgent: () => ({
+        stream: async () => ({
+          fullStream: (async function* () { })(),
+        }),
+        generate: async (_messages, generateOptions) => {
+          capturedJsonPromptInjection = generateOptions?.structuredOutput?.jsonPromptInjection;
+
+          if (capturedJsonPromptInjection !== true) {
+            throw new Error('Structured output validation failed: - root: Invalid input: expected object, received undefined');
+          }
+
+          return {
+            object: generatedPlan,
+            text: '',
+          };
+        },
+      }),
+    });
+
+    const response = await runtime.plan({
+      mode: 'plan',
+      goal: '讲解人类发展历史',
+      messages: [{ role: 'user', content: '讲解人类发展历史' }],
+      context: [],
+    });
+    const planReadyEvent = response.events.find((event) => event.type === 'plan_ready');
+
+    if (planReadyEvent?.type !== 'plan_ready') {
+      throw new Error('expected plan_ready event');
+    }
+
+    assert.equal(capturedJsonPromptInjection, true);
+    assert.equal(planReadyEvent.plan.goal, '讲解人类发展历史');
+    assert.equal(response.result, '已生成计划：1 个待办事项。');
     assert.equal(disconnectCalls, 1);
   });
 
@@ -2998,7 +3428,19 @@ describe('Mastra runtime plan', () => {
       context: [],
     });
 
-    assert.deepEqual(response.events, [{
+    assertTokenBudgetEvent(response.events, {
+      toolCount: 4,
+      mcpToolCount: 0,
+      uiContextToolCount: 0,
+      nativeToolCount: 2,
+      logToolCount: 2,
+      workspaceEnabled: false,
+      browserEnabled: true,
+      memoryEnabled: true,
+      maxSteps: 10,
+      toolChoice: 'auto',
+    });
+    assert.deepEqual(stripTokenBudgetEvents(response.events), [{
       type: 'error',
       message: 'Mastra structured output 没有返回有效 AgentPlan，计划未生成。',
     }]);
@@ -3089,8 +3531,8 @@ describe('Mastra runtime plan', () => {
         schema: agentPlanValidationReportSchema,
       },
       memory: {
-        thread: createMastraMemoryScope({}, response.sessionId).thread,
-        resource: createMastraMemoryScope({}, response.sessionId).resource,
+        thread: createMastraMemoryScope({ threadId: executionRecord.threadId }, response.sessionId).thread,
+        resource: createMastraMemoryScope({ threadId: executionRecord.threadId }, response.sessionId).resource,
       },
     });
     assert.equal(response.result, '验证完成：缺少验证证据。，需要重新规划。');

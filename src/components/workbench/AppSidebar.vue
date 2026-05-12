@@ -227,6 +227,7 @@ import type {
   IWorkspaceDirectoryPayload,
   IWorkspaceEntry,
   TExecutorKind,
+  TWorkbenchOpenFilePayload,
 } from '@/types/editor';
 import type { IGitDiffPreviewRequest } from '@/types/git';
 import { writeFileSystemPathToClipboard } from '@/utils/clipboard';
@@ -291,7 +292,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  'open-file': [path: string];
+  'open-file': [payload: TWorkbenchOpenFilePayload];
   'open-folder': [];
   'open-git-diff': [payload: IGitDiffPreviewRequest];
   run: [];
@@ -790,8 +791,8 @@ const handleEntryContextMenu = (payload: { event: MouseEvent; entry: IWorkspaceE
   });
 };
 
-const handleOpenFile = (path: string): void => {
-  emit('open-file', path);
+const handleOpenFile = (payload: TWorkbenchOpenFilePayload): void => {
+  emit('open-file', payload);
 };
 
 const handleExplorerSelection = (path: string): void => {

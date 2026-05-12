@@ -125,7 +125,68 @@ const workspaceSearchResultSchema = z.object({
   kind: z.enum(['file-name', 'content', 'symbol']),
   lineNumber: z.number().int().positive().nullable(),
   lineText: z.string().nullable(),
+  matchStart: z.number().int().nonnegative().nullable(),
+  matchEnd: z.number().int().nonnegative().nullable(),
   score: z.number(),
+});
+
+const workspaceReplacementRequestSchema = z.object({
+  workspaceRootPath: z.string().min(1),
+  query: z.string(),
+  replacement: z.string(),
+  matchCase: z.boolean(),
+  wholeWord: z.boolean(),
+  useRegex: z.boolean(),
+  useStructural: z.boolean(),
+  includePatterns: z.array(z.string()),
+  excludePatterns: z.array(z.string()),
+  limit: z.number().int().positive().max(500).optional(),
+});
+
+const workspaceReplacementLinePreviewSchema = z.object({
+  id: z.string(),
+  lineNumber: z.number().int().positive(),
+  beforeLine: z.string(),
+  afterLine: z.string(),
+  replacementCount: z.number().int().positive(),
+});
+
+const workspaceReplacementFilePreviewSchema = z.object({
+  path: z.string(),
+  relativePath: z.string(),
+  replacementCount: z.number().int().positive(),
+  beforeHash: z.string(),
+  afterHash: z.string(),
+  diff: z.string(),
+  diffTruncated: z.boolean(),
+  linePreviews: z.array(workspaceReplacementLinePreviewSchema),
+});
+
+const workspaceReplacementPreviewPayloadSchema = z.object({
+  rootPath: z.string(),
+  fileCount: z.number().int().nonnegative(),
+  replacementCount: z.number().int().nonnegative(),
+  files: z.array(workspaceReplacementFilePreviewSchema),
+});
+
+const workspaceReplacementExpectedFileSchema = z.object({
+  path: z.string().min(1),
+  beforeHash: z.string().min(1),
+  includedMatchIds: z.array(z.string().min(1)).optional(),
+});
+
+const workspaceReplacementApplyPayloadSchema = z.object({
+  rootPath: z.string(),
+  changedFileCount: z.number().int().nonnegative(),
+  replacementCount: z.number().int().nonnegative(),
+  files: z.array(
+    z.object({
+      path: z.string(),
+      relativePath: z.string(),
+      replacementCount: z.number().int().positive(),
+      byteSize: z.number().int().nonnegative(),
+    }),
+  ),
 });
 
 const sshConfigHostPayloadSchema = z.object({
@@ -542,6 +603,7 @@ export const tauriContracts = {
       matchCase: z.boolean(),
       wholeWord: z.boolean(),
       useRegex: z.boolean(),
+      useStructural: z.boolean(),
       includePatterns: z.array(z.string()),
       excludePatterns: z.array(z.string()),
       limit: z.number().int().positive().max(500).optional(),
@@ -551,6 +613,17 @@ export const tauriContracts = {
       scannedFileCount: z.number().int().nonnegative(),
       results: z.array(workspaceSearchResultSchema),
     }),
+  },
+  previewWorkspaceReplacement: {
+    inSchema: workspaceReplacementRequestSchema,
+    outSchema: workspaceReplacementPreviewPayloadSchema,
+  },
+  applyWorkspaceReplacement: {
+    inSchema: z.object({
+      request: workspaceReplacementRequestSchema,
+      expectedFiles: z.array(workspaceReplacementExpectedFileSchema).min(1),
+    }),
+    outSchema: workspaceReplacementApplyPayloadSchema,
   },
   getGitRepositoryStatus: {
     inSchema: z.object({

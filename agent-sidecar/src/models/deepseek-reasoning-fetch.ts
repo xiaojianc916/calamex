@@ -10,6 +10,7 @@ type TJsonRecord = Record<string, unknown>;
 interface IReasoningStoreEntry {
   createdAt: number;
   reasoning: string;
+  toolCallIds: string[];
 }
 
 const textEncoder = new TextEncoder();
@@ -64,12 +65,23 @@ export const createDeepSeekReasoningKey = (
 ): string => {
   const sessionId = context?.sessionId ?? 'anon';
   const runId = context?.runId ?? 'anon';
-  const normalizedIds = [...toolCallIds]
+
+  return `${sessionId}::${runId}::${normalizeToolCallIds(toolCallIds).join('|')}`;
+};
+
+const normalizeToolCallIds = (toolCallIds: readonly string[]): string[] =>
+  [...new Set(toolCallIds
     .map((id) => id.trim())
-    .filter((id) => id.length > 0)
+    .filter((id) => id.length > 0))]
     .sort();
 
-  return `${sessionId}::${runId}::${normalizedIds.join('|')}`;
+const createDeepSeekReasoningContextPrefix = (
+  context: IDeepSeekReasoningContext | undefined,
+): string => {
+  const sessionId = context?.sessionId ?? 'anon';
+  const runId = context?.runId ?? 'anon';
+
+  return `${sessionId}::${runId}::`;
 };
 
 export const evictDeepSeekReasoningByPrefix = (prefix: string): void => {
@@ -99,9 +111,12 @@ export const setDeepSeekReasoningForTest = (
   toolCallIds: readonly string[],
   reasoning: string,
 ): void => {
-  reasoningStore.set(createDeepSeekReasoningKey(context, toolCallIds), {
+  const normalizedToolCallIds = normalizeToolCallIds(toolCallIds);
+
+  reasoningStore.set(createDeepSeekReasoningKey(context, normalizedToolCallIds), {
     createdAt: Date.now(),
     reasoning,
+    toolCallIds: normalizedToolCallIds,
   });
 };
 
@@ -121,20 +136,61 @@ const storeReasoning = (
   toolCallIds: readonly string[],
   reasoning: string,
 ): void => {
-  if (toolCallIds.length === 0 || reasoning.length === 0) {
+  const normalizedToolCallIds = normalizeToolCallIds(toolCallIds);
+
+  if (normalizedToolCallIds.length === 0 || reasoning.length === 0) {
     return;
   }
 
-  const key = createDeepSeekReasoningKey(context, toolCallIds);
+  const key = createDeepSeekReasoningKey(context, normalizedToolCallIds);
   reasoningStore.set(key, {
     createdAt: Date.now(),
     reasoning,
+    toolCallIds: normalizedToolCallIds,
   });
   logReasoningDebug('capture', {
     sessionId: context?.sessionId ?? null,
     runId: context?.runId ?? null,
-    toolCallCount: toolCallIds.length,
+    toolCallCount: normalizedToolCallIds.length,
   });
+};
+
+const getReasoningText = (value: TJsonRecord | null): string => {
+  if (typeof value?.reasoning_content === 'string' && value.reasoning_content.length > 0) {
+    return value.reasoning_content;
+  }
+
+  return '';
+};
+
+const hasReasoningContent = (message: TJsonRecord): boolean =>
+  typeof message.reasoning_content === 'string' && message.reasoning_content.length > 0;
+
+const findStoredReasoning = (
+  context: IDeepSeekReasoningContext | undefined,
+  toolCallIds: readonly string[],
+): IReasoningStoreEntry | null => {
+  const normalizedToolCallIds = normalizeToolCallIds(toolCallIds);
+  const exact = reasoningStore.get(createDeepSeekReasoningKey(context, normalizedToolCallIds));
+
+  if (exact) {
+    return exact;
+  }
+
+  const requestedIds = new Set(normalizedToolCallIds);
+  const candidates = [...reasoningStore.entries()]
+    .filter(([key, entry]) =>
+      key.startsWith(createDeepSeekReasoningContextPrefix(context))
+      && entry.toolCallIds.some((id) => requestedIds.has(id)),
+    )
+    .map(([, entry]) => entry);
+  const uniqueReasonings = new Set(candidates.map((entry) => entry.reasoning));
+
+  if (uniqueReasonings.size !== 1) {
+    return null;
+  }
+
+  return candidates[0] ?? null;
 };
 
 const injectReasoningIntoMessages = (
@@ -159,17 +215,25 @@ const injectReasoningIntoMessages = (
       continue;
     }
 
-    const key = createDeepSeekReasoningKey(context, toolCallIds);
-    const stored = reasoningStore.get(key);
+    if (hasReasoningContent(message)) {
+      continue;
+    }
+
+    const existingReasoning = getReasoningText(message);
+    if (existingReasoning.length > 0) {
+      message.reasoning_content = existingReasoning;
+      changed = true;
+      continue;
+    }
+
+    const stored = findStoredReasoning(context, toolCallIds);
 
     if (!stored) {
-      if (typeof message.reasoning_content !== 'string') {
-        logReasoningWarning('miss', {
-          sessionId: context?.sessionId ?? null,
-          runId: context?.runId ?? null,
-          toolCallCount: toolCallIds.length,
-        });
-      }
+      logReasoningWarning('miss', {
+        sessionId: context?.sessionId ?? null,
+        runId: context?.runId ?? null,
+        toolCallCount: toolCallIds.length,
+      });
       continue;
     }
 
@@ -195,9 +259,7 @@ const captureReasoningFromJson = (
   const choices = Array.isArray(record?.choices) ? record.choices : [];
   const firstChoice = isRecord(choices[0]) ? choices[0] : null;
   const message = isRecord(firstChoice?.message) ? firstChoice.message : null;
-  const reasoning = typeof message?.reasoning_content === 'string'
-    ? message.reasoning_content
-    : '';
+  const reasoning = getReasoningText(message);
   const toolCallIds = getToolCallIds(message?.tool_calls);
 
   storeReasoning(context, toolCallIds, reasoning);
@@ -269,8 +331,14 @@ const finalizeStreamingCapture = (
     pending: string;
     reasoning: string;
     toolCallIds: Set<string>;
+    finalized: boolean;
   },
 ): void => {
+  if (state.finalized) {
+    return;
+  }
+
+  state.finalized = true;
   const flushed = decoder.decode();
   if (flushed) {
     processStreamingText(flushed, state);
@@ -403,6 +471,7 @@ const captureStreamingResponse = (
     pending: '',
     reasoning: '',
     toolCallIds: new Set<string>(),
+    finalized: false,
   };
 
   const body = new ReadableStream<Uint8Array>({
@@ -437,6 +506,15 @@ const captureStreamingResponse = (
       controller.enqueue(result.value);
     },
     async cancel(reason) {
+      try {
+        finalizeStreamingCapture(context, decoder, state);
+      } catch (error) {
+        logReasoningWarning('stream-cancel-capture-failed', {
+          sessionId: context?.sessionId ?? null,
+          runId: context?.runId ?? null,
+          toolCallCount: state.toolCallIds.size,
+        }, error);
+      }
       await reader.cancel(reason);
     },
   });

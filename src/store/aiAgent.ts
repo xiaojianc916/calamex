@@ -84,6 +84,11 @@ const normalizeHydratedRun = (run: IAiAgentRun): IAiAgentRun => {
     return {
         ...run,
         status: 'paused',
+        steps: run.steps.map((step) => ({
+            ...step,
+            status: step.status === 'running' ? 'pending' : step.status,
+            isActive: false,
+        })),
         updatedAt: new Date().toISOString(),
     };
 };
