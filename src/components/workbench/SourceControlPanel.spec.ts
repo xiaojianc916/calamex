@@ -205,13 +205,17 @@ const pullRequestSupportPayload = {
   createPullRequestUrl: 'https://github.com/owner/repo/compare',
 };
 
-const mountPanel = async (status = createStatus()) => {
+const mountPanel = async (
+  status = createStatus(),
+  propsOverrides: Partial<{ activePath: string | null }> = {},
+) => {
   tauriServiceMock.getGitRepositoryStatus.mockResolvedValue(status);
   const wrapper = mount(SourceControlPanel, {
     props: {
       isDesktopRuntime: true,
       workspaceRootPath: 'D:/repo',
       activePath: null,
+      ...propsOverrides,
     },
     global: {
       stubs: {
@@ -316,6 +320,14 @@ describe('SourceControlPanel', () => {
     expect(wrapper.emitted('open-diff')).toBeUndefined();
   });
 
+  it('工作区干净且未搜索时不显示默认空状态文案', async () => {
+    const wrapper = await mountPanel(cleanStatus);
+
+    expect(wrapper.find('.source-control-empty-card-inline').exists()).toBe(false);
+    expect(wrapper.text()).not.toContain('当前没有可显示的变更');
+    expect(wrapper.text()).not.toContain('工作区已经和 HEAD 保持一致');
+  });
+
   it('右键菜单的查看 Diff 会打开独立 Git Diff 预览', async () => {
     const wrapper = await mountPanel();
 
@@ -342,6 +354,44 @@ describe('SourceControlPanel', () => {
         },
       ],
     ]);
+  });
+
+  it('右键未选中的 Git 文件时会保留临时高亮，菜单关闭后清除', async () => {
+    const wrapper = await mountPanel();
+
+    const row = wrapper.find('.source-control-file');
+
+    await row.trigger('contextmenu', {
+      clientX: 160,
+      clientY: 180,
+    });
+    await flushPromises();
+
+    expect(row.classes()).toContain('is-context-target');
+    expect(row.classes()).not.toContain('is-active');
+
+    document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    await flushPromises();
+
+    expect(row.classes()).not.toContain('is-context-target');
+  });
+
+  it('右键当前选中的 Git 文件时不叠加临时高亮类', async () => {
+    const wrapper = await mountPanel(createStatus(), {
+      activePath: 'D:/repo/src/app.sh',
+    });
+
+    const row = wrapper.find('.source-control-file');
+    expect(row.classes()).toContain('is-active');
+
+    await row.trigger('contextmenu', {
+      clientX: 160,
+      clientY: 180,
+    });
+    await flushPromises();
+
+    expect(row.classes()).toContain('is-active');
+    expect(row.classes()).not.toContain('is-context-target');
   });
 
   it('右键菜单的复制路径会走文件系统路径剪贴板封装', async () => {
@@ -444,6 +494,12 @@ describe('SourceControlPanel', () => {
       offset: 0,
       limit: undefined,
     });
+    expect(wrapper.find('.source-control-history-timeline').exists()).toBe(true);
+    expect(wrapper.find('.source-control-history-refresh').exists()).toBe(true);
+    expect(wrapper.find('.source-control-history-toolbar').exists()).toBe(false);
+    expect(wrapper.findAll('.source-control-history-item')).toHaveLength(2);
+    expect(wrapper.find('.source-control-history-item').classes()).toContain('is-active');
+    expect(wrapper.find('.source-control-history-hash').text()).toBe('def5678');
     expect(wrapper.text()).toContain('fix: 修正边界处理');
   });
 

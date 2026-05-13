@@ -1,13 +1,16 @@
 //! AED 行级 diff 与 hunk 反向应用工具。
 //!
 //! 设计要点：
-//! - `render_patch_hunks` 基于 LCS 生成稳定的 hunk 序列，连续的增删聚合为一个 hunk。
-//! - `apply_reverse_hunk` 在严格内容校验通过后，将单个 hunk 反向作用到「应用后」文本上。
+//! - `render_patch_hunks` 基于 `diffy` 生成标准 unified diff hunk。
+//! - `apply_reverse_hunk` 将单个 hunk 转为 `diffy` patch 后反向作用到「应用后」文本上。
 //! - 多 hunk 反向请使用 `apply_reverse_hunks`（内部按 `new_start` 逆序作用），
 //!   避免前一个 hunk 的撤销改变后续 hunk 的行偏移。
 //! - 行号约定：1-based；`old_lines = 0` 表示纯插入，`new_lines = 0` 表示纯删除。
 
 use crate::commands::contracts::AiPatchHunkPayload;
+use diffy::{DiffOptions, Line, Patch};
+
+const NO_NEWLINE_AT_EOF: &str = "\\ No newline at end of file";
 
 #[derive(Debug, Clone)]
 pub struct RenderedDiff {
@@ -16,68 +19,42 @@ pub struct RenderedDiff {
     pub hunks: Vec<AiPatchHunkPayload>,
 }
 
-#[derive(Debug, Clone)]
-enum DiffStep {
-    Equal,
-    Delete(String),
-    Insert(String),
-}
-
-/// 渲染 before → after 的行级 diff，按 Equal 切分聚合 hunk。
+/// 渲染 before → after 的行级 diff。
 pub fn render_patch_hunks(before: &str, after: &str) -> RenderedDiff {
-    let before_lines = split_text_lines(before);
-    let after_lines = split_text_lines(after);
-    let steps = build_diff_steps(&before_lines, &after_lines);
-
     let mut additions = 0u32;
     let mut deletions = 0u32;
     let mut hunks = Vec::new();
-    let mut old_line = 1u32;
-    let mut new_line = 1u32;
-    let mut cursor = 0usize;
 
-    while cursor < steps.len() {
-        match &steps[cursor] {
-            DiffStep::Equal => {
-                old_line += 1;
-                new_line += 1;
-                cursor += 1;
-            }
-            DiffStep::Delete(_) | DiffStep::Insert(_) => {
-                let old_start = old_line;
-                let new_start = new_line;
-                let mut old_lines = 0u32;
-                let mut new_lines = 0u32;
-                let mut lines = Vec::new();
+    let mut options = DiffOptions::new();
+    options.set_context_len(0);
+    let patch = options.create_patch(before, after);
 
-                while cursor < steps.len() {
-                    match &steps[cursor] {
-                        DiffStep::Equal => break,
-                        DiffStep::Delete(line) => {
-                            deletions += 1;
-                            old_lines += 1;
-                            old_line += 1;
-                            lines.push(format!("-{line}"));
-                        }
-                        DiffStep::Insert(line) => {
-                            additions += 1;
-                            new_lines += 1;
-                            new_line += 1;
-                            lines.push(format!("+{line}"));
-                        }
-                    }
-                    cursor += 1;
+    for hunk in patch.hunks() {
+        let old_range = hunk.old_range();
+        let new_range = hunk.new_range();
+        let mut lines = Vec::new();
+
+        for line in hunk.lines() {
+            match line {
+                Line::Context(value) => push_payload_line(&mut lines, ' ', value),
+                Line::Delete(value) => {
+                    deletions += 1;
+                    push_payload_line(&mut lines, '-', value);
                 }
-
-                hunks.push(AiPatchHunkPayload {
-                    old_start,
-                    old_lines,
-                    new_start,
-                    new_lines,
-                    lines,
-                });
+                Line::Insert(value) => {
+                    additions += 1;
+                    push_payload_line(&mut lines, '+', value);
+                }
             }
         }
+
+        hunks.push(AiPatchHunkPayload {
+            old_start: to_payload_line_start(old_range.start()),
+            old_lines: old_range.len() as u32,
+            new_start: to_payload_line_start(new_range.start()),
+            new_lines: new_range.len() as u32,
+            lines,
+        });
     }
 
     RenderedDiff {
@@ -92,47 +69,13 @@ pub fn render_patch_hunks(before: &str, after: &str) -> RenderedDiff {
 /// 严格校验：当前文件 `[new_start, new_start + new_lines)` 区段必须与 hunk
 /// 中的 `+` 行完全一致，否则报错而不是静默写坏。
 pub fn apply_reverse_hunk(after: &str, hunk: &AiPatchHunkPayload) -> Result<String, String> {
-    let mut lines = split_text_lines(after);
-    let start = hunk.new_start.saturating_sub(1) as usize;
-    let new_lines_count = hunk.new_lines as usize;
-    let end = start.saturating_add(new_lines_count);
-
-    if start > lines.len() {
-        return Err(format!("hunk 起点越界：start={start}, len={}", lines.len()));
-    }
-    if end > lines.len() {
-        return Err(format!(
-            "hunk 范围越界：start={start}, end={end}, len={}",
-            lines.len()
-        ));
-    }
-
-    let expected_new_lines = hunk
-        .lines
-        .iter()
-        .filter_map(|line| line.strip_prefix('+').map(ToOwned::to_owned))
-        .collect::<Vec<_>>();
-
-    if expected_new_lines.len() != new_lines_count {
-        return Err(format!(
-            "hunk 自身不一致：new_lines={new_lines_count}，但 + 行数={}",
-            expected_new_lines.len()
-        ));
-    }
-
-    let current_segment = &lines[start..end];
-    if current_segment != expected_new_lines.as_slice() {
-        return Err("当前文件片段与目标 hunk 不一致。".to_string());
-    }
-
-    let restored_lines = hunk
-        .lines
-        .iter()
-        .filter_map(|line| line.strip_prefix('-').map(ToOwned::to_owned))
-        .collect::<Vec<_>>();
-
-    lines.splice(start..end, restored_lines);
-    Ok(lines.join("\n"))
+    let patch_text = build_single_hunk_patch(hunk)?;
+    let patch = Patch::from_str(&patch_text).map_err(|error| {
+        format!("解析 hunk 失败：{error}")
+    })?;
+    diffy::apply(after, &patch.reverse()).map_err(|error| {
+        format!("当前文件片段与目标 hunk 不一致：{error}")
+    })
 }
 
 /// 将一组 hunk 一次性反向作用到「应用后」文本上。
@@ -150,56 +93,48 @@ pub fn apply_reverse_hunks(after: &str, hunks: &[AiPatchHunkPayload]) -> Result<
     Ok(current)
 }
 
-fn split_text_lines(value: &str) -> Vec<String> {
-    if value.is_empty() {
-        return Vec::new();
+fn build_single_hunk_patch(hunk: &AiPatchHunkPayload) -> Result<String, String> {
+    let mut patch = String::from("--- original\n+++ modified\n");
+    patch.push_str(&format!(
+        "@@ -{},{} +{},{} @@\n",
+        hunk.old_start, hunk.old_lines, hunk.new_start, hunk.new_lines
+    ));
+
+    for line in &hunk.lines {
+        validate_patch_line(line)?;
+        patch.push_str(line);
+        patch.push('\n');
     }
-    value.split('\n').map(ToOwned::to_owned).collect()
+
+    Ok(patch)
 }
 
-fn build_diff_steps(before: &[String], after: &[String]) -> Vec<DiffStep> {
-    let before_len = before.len();
-    let after_len = after.len();
-    let mut lcs = vec![vec![0usize; after_len + 1]; before_len + 1];
+fn validate_patch_line(line: &str) -> Result<(), String> {
+    if line.contains('\n') {
+        return Err("hunk 行不能包含换行符。".to_string());
+    }
+    if line == NO_NEWLINE_AT_EOF {
+        return Ok(());
+    }
+    if matches!(line.as_bytes().first(), Some(b' ' | b'+' | b'-')) {
+        return Ok(());
+    }
+    Err("hunk 行必须以空格、+ 或 - 开头。".to_string())
+}
 
-    for before_index in (0..before_len).rev() {
-        for after_index in (0..after_len).rev() {
-            lcs[before_index][after_index] = if before[before_index] == after[after_index] {
-                lcs[before_index + 1][after_index + 1] + 1
-            } else {
-                lcs[before_index + 1][after_index].max(lcs[before_index][after_index + 1])
-            };
-        }
+fn push_payload_line(lines: &mut Vec<String>, prefix: char, value: &str) {
+    lines.push(format!("{prefix}{}", strip_diffy_line(value)));
+    if !value.ends_with('\n') {
+        lines.push(NO_NEWLINE_AT_EOF.to_string());
     }
+}
 
-    let mut before_index = 0usize;
-    let mut after_index = 0usize;
-    let mut steps = Vec::new();
+fn strip_diffy_line(value: &str) -> &str {
+    value.strip_suffix('\n').unwrap_or(value)
+}
 
-    while before_index < before_len && after_index < after_len {
-        if before[before_index] == after[after_index] {
-            steps.push(DiffStep::Equal);
-            before_index += 1;
-            after_index += 1;
-            continue;
-        }
-        if lcs[before_index + 1][after_index] >= lcs[before_index][after_index + 1] {
-            steps.push(DiffStep::Delete(before[before_index].clone()));
-            before_index += 1;
-        } else {
-            steps.push(DiffStep::Insert(after[after_index].clone()));
-            after_index += 1;
-        }
-    }
-    while before_index < before_len {
-        steps.push(DiffStep::Delete(before[before_index].clone()));
-        before_index += 1;
-    }
-    while after_index < after_len {
-        steps.push(DiffStep::Insert(after[after_index].clone()));
-        after_index += 1;
-    }
-    steps
+fn to_payload_line_start(start: usize) -> u32 {
+    start.saturating_add(1) as u32
 }
 
 #[cfg(test)]

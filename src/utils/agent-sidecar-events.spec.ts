@@ -1,12 +1,70 @@
 import {
+  extractVisibleAgentRuntimeEvents,
   extractSidecarChangedFilePaths,
   hasSidecarFileMutationEvent,
   mapSidecarEventsToToolCalls,
   projectSidecarEventsToToolState,
 } from '@/utils/agent-sidecar-events';
+import type { TAgentUiEvent } from '@/types/agent-sidecar';
 import { describe, expect, it } from 'vitest';
 
 describe('agent-sidecar-events', () => {
+  it('保留 token 诊断事件给时间线和上下文预算读取，但不放开普通 debug 事件', () => {
+    const events: TAgentUiEvent[] = [
+      {
+        type: 'agent_event',
+        event: {
+          id: 'provider-payload',
+          type: 'acontext.provider_payload.checked',
+          runId: 'run-1',
+          sessionId: 'session-1',
+          agentId: 'agent-1',
+          timestamp: '2026-05-02T10:00:00.000Z',
+          seq: 0,
+          schemaVersion: 1,
+          redacted: true,
+          visibility: 'debug',
+          provider: 'deepseek',
+          requestIndex: 1,
+          requestBodyCharCount: 1200,
+          projectedInputTokens: 300,
+          projectedInputTokensAvailable: true,
+          messageCharCount: 800,
+          systemMessageCharCount: 100,
+          userMessageCharCount: 200,
+          assistantMessageCharCount: 300,
+          toolMessageCharCount: 200,
+          reasoningReplayCharCount: 0,
+          toolSchemaCharCount: 200,
+          toolCount: 2,
+          responseFormatCharCount: 0,
+          reasoningInjected: false,
+          tokenEstimateMethod: 'char_heuristic',
+        },
+      },
+      {
+        type: 'agent_event',
+        event: {
+          id: 'debug-noise',
+          type: 'agent.debug',
+          runId: 'run-1',
+          sessionId: 'session-1',
+          agentId: 'agent-1',
+          timestamp: '2026-05-02T10:00:01.000Z',
+          seq: 1,
+          schemaVersion: 1,
+          redacted: true,
+          visibility: 'debug',
+          name: 'internal.metric',
+        },
+      },
+    ];
+
+    expect(extractVisibleAgentRuntimeEvents(events).map((event) => event.id)).toEqual([
+      'provider-payload',
+    ]);
+  });
+
   it('把嵌套 toolResult 文本清洗成可读摘要，避免把 raw JSON 暴露给聊天 UI', () => {
     const toolCalls = mapSidecarEventsToToolCalls([
       {
@@ -85,6 +143,43 @@ describe('agent-sidecar-events', () => {
         '搜索：AiAgentRuntimeTimeline',
         '范围：D:/repo/src',
       ],
+    });
+  });
+
+  it('识别原生 Symbol 搜索和 AED Patch 工具', () => {
+    const toolCalls = mapSidecarEventsToToolCalls([
+      {
+        type: 'tool_start',
+        toolName: 'search_symbols',
+        input: {
+          query: 'useAiAssistant',
+          paths: { include: ['src/**/*.ts'] },
+        },
+      },
+      {
+        type: 'tool_result',
+        toolName: 'propose_file_patch',
+        output: {
+          path: 'D:/repo/src/app.ts',
+          summary: '更新入口',
+          patchReady: true,
+        },
+      },
+    ]);
+
+    expect(toolCalls[0]).toMatchObject({
+      name: 'search_symbols',
+      status: 'running',
+      targetPreview: 'useAiAssistant · 工作区',
+      detailItems: [
+        '搜索：useAiAssistant',
+        '范围：工作区',
+      ],
+    });
+    expect(toolCalls[1]).toMatchObject({
+      name: 'propose_file_patch',
+      status: 'succeeded',
+      targetPreview: 'D:/repo/src/app.ts',
     });
   });
 

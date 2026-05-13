@@ -73,8 +73,8 @@ describe('AiAgentRuntimeTimeline', () => {
             },
         });
 
-        expect(wrapper.find('.ai-runtime-task').exists()).toBe(true);
-        expect(wrapper.text()).toContain('开始调用 read_file');
+        expect(wrapper.find('.ai-runtime-step.is-task').exists()).toBe(true);
+        expect(wrapper.text()).toContain('正在读取 src/main.ts');
     });
 
     it('read_text_file 在完成后原地替换为读取完成文案', () => {
@@ -93,6 +93,48 @@ describe('AiAgentRuntimeTimeline', () => {
                         type: 'agent.tool.completed',
                         toolUseId: 'read-1',
                         toolName: 'read_text_file',
+
+                        it('shellcheck 通过时显示通过结果和校验图标', () => {
+                            const wrapper = mount(AiAgentRuntimeTimeline, {
+                                props: {
+                                    events: [
+                                        createEvent({
+                                            id: 'shellcheck-pass',
+                                            type: 'agent.tool.completed',
+                                            toolName: 'shellcheck',
+                                            ok: true,
+                                            resultPreview: 'D:/test/test.sh：ShellCheck 通过（bash）',
+                                        }),
+                                    ],
+                                },
+                            });
+
+                            expect(wrapper.findAll('.ai-runtime-step.is-task')).toHaveLength(1);
+                            expect(wrapper.text()).toContain('语法校验已通过');
+                            expect(wrapper.text()).not.toContain('完成调用 shellcheck');
+                            expect(wrapper.find('.ai-runtime-step-icon.is-icon-check').exists()).toBe(true);
+                        });
+
+                        it('shellcheck 有问题时显示问题编号和告警图标', () => {
+                            const wrapper = mount(AiAgentRuntimeTimeline, {
+                                props: {
+                                    events: [
+                                        createEvent({
+                                            id: 'shellcheck-warning',
+                                            type: 'agent.tool.completed',
+                                            toolName: 'shellcheck',
+                                            ok: true,
+                                            resultPreview: 'D:/test/test.sh：ShellCheck 1 警告、1 提示；问题编号 SC2086、SC1091；首个问题 L1:1 Double quote to prevent globbing',
+                                        }),
+                                    ],
+                                },
+                            });
+
+                            expect(wrapper.findAll('.ai-runtime-step.is-task')).toHaveLength(1);
+                            expect(wrapper.text()).toContain('语法存在一些问题：SC2086、SC1091');
+                            expect(wrapper.text()).not.toContain('完成调用 shellcheck');
+                            expect(wrapper.find('.ai-runtime-step-icon.is-icon-alert').exists()).toBe(true);
+                        });
                         ok: true,
                         resultPreview: '{"content":"echo 1"}',
                     }),
@@ -435,6 +477,174 @@ describe('AiAgentRuntimeTimeline', () => {
         expect(wrapper.text()).not.toContain('当前时间读取完成');
     });
 
+    it('read_current_file 完成后原地替换为当前文件读取完成', () => {
+        const wrapper = mount(AiAgentRuntimeTimeline, {
+            props: {
+                events: [
+                    createEvent({
+                        id: 'current-file-start',
+                        type: 'agent.tool.started',
+                        toolUseId: 'current-file-1',
+                        toolName: 'read_current_file',
+                        inputPreview: '{}',
+                    }),
+                    createEvent({
+                        id: 'current-file-complete',
+                        type: 'agent.tool.completed',
+                        toolUseId: 'current-file-1',
+                        toolName: 'read_current_file',
+                        ok: true,
+                        resultPreview: '{"path":"D:\\\\test\\\\xiaojianc.sh"}',
+                    }),
+                ],
+            },
+        });
+
+        expect(wrapper.findAll('.ai-runtime-step.is-task')).toHaveLength(1);
+        expect(wrapper.text()).toContain('当前文件读取完成');
+        expect(wrapper.text()).not.toContain('正在读取当前文件');
+        expect(wrapper.text()).not.toContain('完成调用 read_current_file');
+    });
+
+    it('list_dir 完成后原地替换为工作区目录读取完成', () => {
+        const wrapper = mount(AiAgentRuntimeTimeline, {
+            props: {
+                events: [
+                    createEvent({
+                        id: 'list-dir-start',
+                        type: 'agent.tool.started',
+                        toolUseId: 'list-dir-1',
+                        toolName: 'list_dir',
+                        inputPreview: '{"path":"D:\\\\test"}',
+                    }),
+                    createEvent({
+                        id: 'list-dir-complete',
+                        type: 'agent.tool.completed',
+                        toolUseId: 'list-dir-1',
+                        toolName: 'list_dir',
+                        ok: true,
+                        resultPreview: '{"entries":["test.sh"]}',
+                    }),
+                ],
+            },
+        });
+
+        expect(wrapper.findAll('.ai-runtime-step.is-task')).toHaveLength(1);
+        expect(wrapper.text()).toContain('工作区目录读取完成');
+        expect(wrapper.text()).not.toContain('正在读取工作区目录');
+    });
+
+    it('grep_in_files 根据结果原地显示读取到或未读取到搜索词', () => {
+        const wrapper = mount(AiAgentRuntimeTimeline, {
+            props: {
+                events: [
+                    createEvent({
+                        id: 'grep-start',
+                        type: 'agent.tool.started',
+                        toolUseId: 'grep-1',
+                        toolName: 'grep_in_files',
+                        inputPreview: '{"pattern":"test.sh"}',
+                    }),
+                    createEvent({
+                        id: 'grep-complete',
+                        type: 'agent.tool.completed',
+                        toolUseId: 'grep-1',
+                        toolName: 'grep_in_files',
+                        ok: true,
+                        resultPreview: '{"matches":[{"path":"test.sh","line":30}]}',
+                    }),
+                ],
+            },
+        });
+
+        expect(wrapper.findAll('.ai-runtime-step.is-task')).toHaveLength(1);
+        expect(wrapper.text()).toContain('成功读取到 test.sh');
+        expect(wrapper.text()).not.toContain('正在搜索 test.sh');
+    });
+
+    it('grep_in_files 无结果时原地显示未读取到搜索词', () => {
+        const wrapper = mount(AiAgentRuntimeTimeline, {
+            props: {
+                events: [
+                    createEvent({
+                        id: 'grep-empty-start',
+                        type: 'agent.tool.started',
+                        toolUseId: 'grep-empty-1',
+                        toolName: 'grep_in_files',
+                        inputPreview: '{"query":"missing"}',
+                    }),
+                    createEvent({
+                        id: 'grep-empty-complete',
+                        type: 'agent.tool.completed',
+                        toolUseId: 'grep-empty-1',
+                        toolName: 'grep_in_files',
+                        ok: true,
+                        resultPreview: '{"matches":[]}',
+                    }),
+                ],
+            },
+        });
+
+        expect(wrapper.findAll('.ai-runtime-step.is-task')).toHaveLength(1);
+        expect(wrapper.text()).toContain('未读取到 missing');
+    });
+
+    it('apply_file_edits 完成后显示编辑完成和文件名', () => {
+        const wrapper = mount(AiAgentRuntimeTimeline, {
+            props: {
+                events: [
+                    createEvent({
+                        id: 'apply-edits-start',
+                        type: 'agent.tool.started',
+                        toolUseId: 'apply-edits-1',
+                        toolName: 'apply_file_edits',
+                        inputPreview: '{"path":"D:\\\\test\\\\test.sh"}',
+                    }),
+                    createEvent({
+                        id: 'apply-edits-complete',
+                        type: 'agent.tool.completed',
+                        toolUseId: 'apply-edits-1',
+                        toolName: 'apply_file_edits',
+                        ok: true,
+                        resultPreview: '{"ok":true}',
+                    }),
+                ],
+            },
+        });
+
+        expect(wrapper.findAll('.ai-runtime-step.is-task')).toHaveLength(1);
+        expect(wrapper.text()).toContain('编辑完成 test.sh');
+        expect(wrapper.text()).not.toContain('正在编辑 test.sh');
+    });
+
+    it('search_symbols 根据结构化搜索结果原地显示搜索状态', () => {
+        const wrapper = mount(AiAgentRuntimeTimeline, {
+            props: {
+                events: [
+                    createEvent({
+                        id: 'symbol-start',
+                        type: 'agent.tool.started',
+                        toolUseId: 'symbol-1',
+                        toolName: 'search_symbols',
+                        inputPreview: '{"query":"main"}',
+                    }),
+                    createEvent({
+                        id: 'symbol-complete',
+                        type: 'agent.tool.completed',
+                        toolUseId: 'symbol-1',
+                        toolName: 'search_symbols',
+                        ok: true,
+                        resultPreview: '{"symbols":[{"name":"main"}]}',
+                    }),
+                ],
+            },
+        });
+
+        expect(wrapper.findAll('.ai-runtime-step.is-task')).toHaveLength(1);
+        expect(wrapper.text()).toContain('成功搜索到 main');
+        expect(wrapper.text()).not.toContain('正在结构化搜索 main');
+    });
+
     it('按具体工具名选择更贴合的图标，而不是只用通用分类图标', () => {
         const wrapper = mount(AiAgentRuntimeTimeline, {
             props: {
@@ -621,6 +831,60 @@ describe('AiAgentRuntimeTimeline', () => {
 
         expect(wrapper.findAll('.agent-line__segment').length).toBeGreaterThan(1);
         expect(wrapper.find('.agent-line__toggle').exists()).toBe(false);
+    });
+
+    it('上下文预算事件不再暴露到用户时间线', () => {
+        const wrapper = mount(AiAgentRuntimeTimeline, {
+            props: {
+                events: [createEvent({
+                    id: 'token-budget-1',
+                    type: 'acontext.token.checked',
+                    visibility: 'debug',
+                    projectedInputTokensAvailable: true,
+                    projectedInputTokens: 12_345,
+                    systemPromptCharCount: 1_200,
+                    messageCharCount: 2_400,
+                    contextCharCount: 800,
+                    toolSchemaCharCount: 9_900,
+                    toolCount: 19,
+                    mcpToolCount: 15,
+                })],
+            },
+        });
+
+        expect(wrapper.find('.ai-runtime-timeline').exists()).toBe(false);
+        expect(wrapper.text()).toBe('');
+    });
+
+    it('provider payload 诊断事件不再暴露到用户时间线', () => {
+        const wrapper = mount(AiAgentRuntimeTimeline, {
+            props: {
+                events: [createEvent({
+                    id: 'provider-payload-1',
+                    type: 'acontext.provider_payload.checked',
+                    visibility: 'debug',
+                    provider: 'deepseek',
+                    requestIndex: 2,
+                    requestBodyCharCount: 4_800,
+                    projectedInputTokens: 1_240,
+                    projectedInputTokensAvailable: true,
+                    messageCharCount: 3_100,
+                    systemMessageCharCount: 600,
+                    userMessageCharCount: 900,
+                    assistantMessageCharCount: 1_000,
+                    toolMessageCharCount: 600,
+                    reasoningReplayCharCount: 120,
+                    toolSchemaCharCount: 900,
+                    toolCount: 2,
+                    responseFormatCharCount: 300,
+                    reasoningInjected: true,
+                    tokenEstimateMethod: 'char_heuristic',
+                })],
+            },
+        });
+
+        expect(wrapper.find('.ai-runtime-timeline').exists()).toBe(false);
+        expect(wrapper.text()).toBe('');
     });
 
     it('对 reasoning 文本做轻量行内 Markdown 渲染', () => {

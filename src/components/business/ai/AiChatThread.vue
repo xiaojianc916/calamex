@@ -27,17 +27,22 @@ const props = withDefaults(defineProps<{
   providerLabel: string;
   typingLabel?: string;
   conversationId?: string | null;
+  workspaceRootPath?: string | null;
   scrollState?: IAiChatScrollState | null;
   hasExtraContent?: boolean;
+  revertingChangedFilesSummaryId?: string | null;
 }>(), {
   typingLabel: '正在准备回复',
   conversationId: null,
+  workspaceRootPath: null,
   scrollState: null,
   hasExtraContent: false,
+  revertingChangedFilesSummaryId: null,
 });
 
 const emit = defineEmits<{
   messageAction: [messageId: string, actionId: TAiChatMessageActionId];
+  changedFilesRollback: [messageId: string, summaryId: string];
   scrollStateChange: [state: IAiChatScrollState];
 }>();
 
@@ -85,9 +90,14 @@ const lastAssistantMessageId = computed(() => {
   return null;
 });
 const conversationInitialScroll = computed(() => props.scrollState ? false : true);
+const conversationResizeMode = computed(() => props.isTyping ? undefined : 'instant');
 
 const handleMessageAction = (messageId: string, actionId: TAiChatMessageActionId): void => {
   emit('messageAction', messageId, actionId);
+};
+
+const handleChangedFilesRollback = (messageId: string, summaryId: string): void => {
+  emit('changedFilesRollback', messageId, summaryId);
 };
 
 const handleScrollStateChange = (state: IAiChatScrollState): void => {
@@ -103,6 +113,7 @@ const hasContextCompressionMarker = (message: IAiChatMessage): boolean =>
     class="relative size-full overflow-x-hidden ai-chat-list"
     aria-label="AI 对话记录"
     :initial="conversationInitialScroll"
+    :resize="conversationResizeMode"
     :restore-key="conversationId"
     :initial-scroll-top="scrollState?.scrollTop ?? null"
     :initial-distance-from-bottom="scrollState?.distanceFromBottom ?? null"
@@ -124,7 +135,10 @@ const hasContextCompressionMarker = (message: IAiChatMessage): boolean =>
             :message="message"
             :platform-id="platformId"
             :provider-label="providerLabel"
+            :workspace-root-path="workspaceRootPath"
+            :reverting-changed-files-summary-id="revertingChangedFilesSummaryId"
             @message-action="handleMessageAction"
+            @changed-files-rollback="handleChangedFilesRollback"
           />
           <div
             v-if="hasContextCompressionMarker(message)"
@@ -158,6 +172,12 @@ const hasContextCompressionMarker = (message: IAiChatMessage): boolean =>
 .ai-chat-list {
   min-height: 0;
   flex: 1 1 0;
+}
+
+.ai-chat-list :deep(> div > div) {
+  overscroll-behavior: contain;
+  scroll-behavior: auto;
+  overflow-anchor: none;
 }
 
 .ai-chat-list__content {

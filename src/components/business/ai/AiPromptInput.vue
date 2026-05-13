@@ -70,6 +70,7 @@ const modeOptions: IAiPromptModeOption[] = [
 const emptyTokenContext: IAiTokenContextProps = {
   usedTokens: 0,
   maxTokens: 0,
+  usageSource: 'estimated',
   usage: {
     inputTokens: 0,
     inputTokenDetails: {

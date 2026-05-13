@@ -7,9 +7,10 @@ import {
   mapSidecarEventsToToolCalls,
   mapSidecarToolNameToAiToolName,
   projectSidecarExecuteResponse,
-  projectSidecarPlanResponse,
   projectSidecarPlanRecordResponse,
+  projectSidecarPlanResponse,
   projectSidecarPlanValidationResponse,
+  resolveSidecarOfficialUsage,
 } from '@/utils/agent-sidecar-events';
 import { toErrorMessage } from '@/utils/error';
 
@@ -300,6 +301,12 @@ export const useAiAgentRun = () => {
         planVersion: session.planVersion,
         ...(session.threadId ? { threadId: session.threadId } : {}),
       });
+      const validationUsageResolution = resolveSidecarOfficialUsage(validationPayload);
+
+      if (validationUsageResolution.resolved) {
+        store.setLatestOfficialUsage(validationUsageResolution.usage);
+      }
+
       const validation = projectSidecarPlanValidationResponse(validationPayload);
 
       if (validation.errorMessage) {
@@ -317,6 +324,12 @@ export const useAiAgentRun = () => {
           planVersion: session.planVersion,
           ...(session.threadId ? { threadId: session.threadId } : {}),
         });
+
+        const replanUsageResolution = resolveSidecarOfficialUsage(replanPayload);
+
+        if (replanUsageResolution.resolved) {
+          store.setLatestOfficialUsage(replanUsageResolution.usage);
+        }
 
         applyReplannedPlanPayload(replanPayload, session.goal || run.goal);
         return;
@@ -531,6 +544,12 @@ export const useAiAgentRun = () => {
       unlistenSidecarStream();
     }
 
+    const executeUsageResolution = resolveSidecarOfficialUsage(payload);
+
+    if (executeUsageResolution.resolved) {
+      store.setLatestOfficialUsage(executeUsageResolution.usage);
+    }
+
     const projection = projectSidecarExecuteResponse(payload);
     appendSidecarToolState(session.runId, session.stepId, projection.toolCalls);
     await refreshChangedDocumentsAfterSidecarRun(projection, session.workspaceRootPath);
@@ -708,6 +727,12 @@ export const useAiAgentRun = () => {
       });
     } finally {
       unlistenSidecarStream();
+    }
+
+    const approvalUsageResolution = resolveSidecarOfficialUsage(payload);
+
+    if (approvalUsageResolution.resolved) {
+      store.setLatestOfficialUsage(approvalUsageResolution.usage);
     }
 
     const projection = projectSidecarExecuteResponse(payload);

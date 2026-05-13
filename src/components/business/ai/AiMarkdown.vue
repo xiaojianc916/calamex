@@ -62,6 +62,7 @@ const props = defineProps<{
 
 const renderContent = computed(() => normalizeAiMath(props.content));
 const isFinal = computed(() => props.streamStatus !== 'streaming');
+const shouldFadeStreamDeltas = computed(() => props.streamStatus === 'streaming');
 const rendererId = computed(() => `ai-message-${props.messageId}`);
 
 const stopCodeBlockMapping = watch(
@@ -85,9 +86,20 @@ onBeforeUnmount(() => {
 <template>
   <div class="ai-markdown">
     <MarkdownRender
-:content="renderContent" :custom-id="rendererId" :final="isFinal" :defer-nodes-until-visible="false"
-      :max-live-nodes="320" :live-node-buffer="80" :initial-render-batch-size="64" :render-batch-size="96"
-      :render-batch-delay="0" :render-batch-budget-ms="8" :show-tooltips="false" :typewriter="false" />
+      :content="renderContent"
+      :custom-id="rendererId"
+      :final="isFinal"
+      :defer-nodes-until-visible="false"
+      :fade="shouldFadeStreamDeltas"
+      :max-live-nodes="320"
+      :live-node-buffer="80"
+      :initial-render-batch-size="64"
+      :render-batch-size="96"
+      :render-batch-delay="0"
+      :render-batch-budget-ms="8"
+      :show-tooltips="false"
+      :typewriter="false"
+    />
   </div>
 </template>
 
@@ -147,6 +159,8 @@ onBeforeUnmount(() => {
   --hr-border: var(--shell-divider);
   --focus-ring: color-mix(in srgb, var(--accent-strong) 60%, transparent);
   --ms-flow-codeblock-y: var(--ms-space-3);
+  --stream-update-fade-duration: var(--motion-duration-slow);
+  --stream-update-fade-ease: var(--motion-easing-standard);
   --markstream-code-font-family: var(--font-mono);
   --markstream-code-padding-x: var(--ms-space-3);
   --markstream-code-padding-y: var(--ms-space-2);
@@ -309,12 +323,6 @@ onBeforeUnmount(() => {
 
 .ai-markdown .boxpad {
   padding: 0;
-}
-
-.ai-markdown .text-node-stream-delta,
-.ai-markdown .inline-code-stream-delta {
-  animation: none !important;
-  will-change: auto !important;
 }
 
 .ai-markdown .table-node--loading tbody td>* {

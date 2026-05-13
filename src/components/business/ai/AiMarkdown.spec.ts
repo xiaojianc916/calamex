@@ -68,6 +68,7 @@ describe('AiMarkdown rendering', () => {
 
     const streamingRenderer = wrapper.getComponent(MarkdownRender);
     expect(streamingRenderer.props('typewriter')).toBe(false);
+    expect(streamingRenderer.props('fade')).toBe(true);
     expect(streamingRenderer.props('maxLiveNodes')).toBe(320);
     expect(streamingRenderer.props('initialRenderBatchSize')).toBe(64);
     expect(streamingRenderer.props('renderBatchSize')).toBe(96);
@@ -80,6 +81,7 @@ describe('AiMarkdown rendering', () => {
 
     const finalRenderer = wrapper.getComponent(MarkdownRender);
     expect(finalRenderer.props('typewriter')).toBe(false);
+    expect(finalRenderer.props('fade')).toBe(false);
     expect(finalRenderer.props('maxLiveNodes')).toBe(320);
     expect(finalRenderer.props('initialRenderBatchSize')).toBe(64);
     expect(finalRenderer.props('renderBatchSize')).toBe(96);

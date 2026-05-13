@@ -1,8 +1,25 @@
+import type { LanguageModelUsage } from 'ai';
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 import { z } from 'zod';
 
 import { AGENT_PLAN_STATUSES } from '@/types/agent-sidecar';
+import type {
+    IAiAgentClassifyTaskPayload,
+    IAiAgentPatchSummary,
+    IAiAgentPlanMetadata,
+    IAiAgentPlanVersionSummary,
+    IAiAgentRun,
+    IAiAgentStepDetail,
+    IAiAgentStepFinalAnswer,
+    IAiAgentStepToolResultSummary,
+    IAiAgentStepWebSourceSummary,
+    IAiTaskPlanStep,
+    IAiToolActivityInline,
+    IAiToolConfirmationRequest,
+    TAiAgentNetworkPermission,
+    TAiAgentTaskClassification,
+} from '@/types/ai';
 import {
     aiAgentNetworkPermissionSchema,
     aiAgentRunSchema,
@@ -11,22 +28,7 @@ import {
     aiTaskPlanStepSchema,
 } from '@/types/ai-agent.schema';
 import { aiToolActivityInlineSchema } from '@/types/ai-stream.schema';
-import type {
-    IAiAgentPatchSummary,
-    IAiAgentClassifyTaskPayload,
-    IAiAgentPlanMetadata,
-    IAiAgentPlanVersionSummary,
-    IAiAgentRun,
-    IAiAgentStepDetail,
-    IAiAgentStepFinalAnswer,
-    IAiAgentStepToolResultSummary,
-    IAiAgentStepWebSourceSummary,
-    IAiToolConfirmationRequest,
-    IAiToolActivityInline,
-    IAiTaskPlanStep,
-    TAiAgentNetworkPermission,
-    TAiAgentTaskClassification,
-} from '@/types/ai';
+import { aiLanguageModelUsageSchema } from '@/types/ai.schema';
 
 export type TAiAgentPanelMode = 'chat' | 'plan' | 'agent';
 
@@ -64,6 +66,10 @@ const aiAgentPersistSchema = z.object({
     planErrorMessage: nullablePersistedTextSchema,
     activeRunId: nullablePersistedTextSchema,
     runs: z.array(aiAgentRunSchema).max(20),
+    latestOfficialUsageResolved: z.boolean(),
+    latestOfficialUsage: aiLanguageModelUsageSchema.nullable(),
+    totalOfficialUsageResolved: z.boolean().default(false),
+    totalOfficialUsage: aiLanguageModelUsageSchema.nullable().default(null),
     stepDetails: z.record(z.string(), aiAgentStepDetailSchema),
     stepFinalAnswers: z.record(z.string(), z.array(aiAgentStepFinalAnswerSchema).max(50)),
     toolActivities: z.record(z.string(), z.array(aiToolActivityInlineSchema).max(50)),
@@ -131,14 +137,76 @@ const applyHydratedAgentState = (
     target.planErrorMessage = source.planErrorMessage;
     target.activeRunId = source.activeRunId;
     target.runs = source.runs;
+    target.latestOfficialUsageResolved = source.latestOfficialUsageResolved;
+    target.latestOfficialUsage = source.latestOfficialUsage;
+    target.totalOfficialUsageResolved = source.totalOfficialUsageResolved;
+    target.totalOfficialUsage = source.totalOfficialUsage;
     target.stepDetails = source.stepDetails;
     target.stepFinalAnswers = source.stepFinalAnswers;
     target.toolActivities = source.toolActivities;
     target.errorMessage = source.errorMessage;
 };
 
+const addTokenCounts = (
+    left: number | undefined,
+    right: number | undefined,
+): number | undefined => {
+    if (left === undefined && right === undefined) {
+        return undefined;
+    }
+
+    return (left ?? 0) + (right ?? 0);
+};
+
+const addRequiredTokenCounts = (
+    left: number | undefined,
+    right: number | undefined,
+): number => (left ?? 0) + (right ?? 0);
+
+const addOfficialUsage = (
+    current: LanguageModelUsage | null,
+    next: LanguageModelUsage,
+): LanguageModelUsage => {
+    const inputTokenDetails = {
+        noCacheTokens: addTokenCounts(
+            current?.inputTokenDetails?.noCacheTokens,
+            next.inputTokenDetails?.noCacheTokens,
+        ) ?? 0,
+        cacheReadTokens: addTokenCounts(
+            current?.inputTokenDetails?.cacheReadTokens,
+            next.inputTokenDetails?.cacheReadTokens,
+        ) ?? 0,
+        cacheWriteTokens: addTokenCounts(
+            current?.inputTokenDetails?.cacheWriteTokens,
+            next.inputTokenDetails?.cacheWriteTokens,
+        ) ?? 0,
+    };
+    const outputTokenDetails = {
+        textTokens: addTokenCounts(
+            current?.outputTokenDetails?.textTokens,
+            next.outputTokenDetails?.textTokens,
+        ) ?? 0,
+        reasoningTokens: addTokenCounts(
+            current?.outputTokenDetails?.reasoningTokens,
+            next.outputTokenDetails?.reasoningTokens,
+        ) ?? 0,
+    };
+    const cachedInputTokens = addTokenCounts(current?.cachedInputTokens, next.cachedInputTokens);
+    const reasoningTokens = addTokenCounts(current?.reasoningTokens, next.reasoningTokens);
+
+    return {
+        inputTokens: addRequiredTokenCounts(current?.inputTokens, next.inputTokens),
+        inputTokenDetails,
+        outputTokens: addRequiredTokenCounts(current?.outputTokens, next.outputTokens),
+        outputTokenDetails,
+        totalTokens: addRequiredTokenCounts(current?.totalTokens, next.totalTokens),
+        ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
+        ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
+    };
+};
+
 export const useAiAgentStore = defineStore('ai-agent', () => {
-    const mode = ref<TAiAgentPanelMode>('chat');
+    const mode = ref<TAiAgentPanelMode>('agent');
     const networkPermission = ref<TAiAgentNetworkPermission>('ask');
     const activeGoal = ref<string>('');
     const steps = ref<IAiTaskPlanStep[]>([]);
@@ -163,6 +231,10 @@ export const useAiAgentStore = defineStore('ai-agent', () => {
     const planVersions = ref<IAiAgentPlanVersionSummary[]>([]);
     const activeRunId = ref<string | null>(null);
     const runs = ref<IAiAgentRun[]>([]);
+    const latestOfficialUsageResolved = ref<boolean>(false);
+    const latestOfficialUsage = ref<LanguageModelUsage | null>(null);
+    const totalOfficialUsageResolved = ref<boolean>(false);
+    const totalOfficialUsage = ref<LanguageModelUsage | null>(null);
     const stepDetails = ref<Record<string, IAiAgentStepDetail>>({});
     const stepFinalAnswers = ref<Record<string, IAiAgentStepFinalAnswer[]>>({});
     const patchSummaries = ref<Record<string, IAiAgentPatchSummary[]>>({});
@@ -234,6 +306,10 @@ export const useAiAgentStore = defineStore('ai-agent', () => {
         planErrorMessage.value = null;
         planVersions.value = [];
         activeRunId.value = null;
+        latestOfficialUsageResolved.value = false;
+        latestOfficialUsage.value = null;
+        totalOfficialUsageResolved.value = false;
+        totalOfficialUsage.value = null;
         classification.value = null;
         classificationReason.value = '';
         shouldEnterPlanMode.value = false;
@@ -258,6 +334,10 @@ export const useAiAgentStore = defineStore('ai-agent', () => {
         planErrorMessage.value = null;
         planVersions.value = [];
         activeRunId.value = null;
+        latestOfficialUsageResolved.value = false;
+        latestOfficialUsage.value = null;
+        totalOfficialUsageResolved.value = false;
+        totalOfficialUsage.value = null;
         shouldEnterPlanMode.value = false;
         pendingToolConfirmation.value = null;
         errorMessage.value = message;
@@ -291,6 +371,23 @@ export const useAiAgentStore = defineStore('ai-agent', () => {
             ...metadata,
         }] : [];
         activeRunId.value = null;
+    };
+
+    const setLatestOfficialUsage = (usage: LanguageModelUsage | null): void => {
+        latestOfficialUsageResolved.value = true;
+        latestOfficialUsage.value = usage;
+
+        if (usage) {
+            totalOfficialUsageResolved.value = true;
+            totalOfficialUsage.value = addOfficialUsage(totalOfficialUsage.value, usage);
+        }
+    };
+
+    const clearLatestOfficialUsage = (): void => {
+        latestOfficialUsageResolved.value = false;
+        latestOfficialUsage.value = null;
+        totalOfficialUsageResolved.value = false;
+        totalOfficialUsage.value = null;
     };
 
     const applyPlanMetadata = (
@@ -362,6 +459,10 @@ export const useAiAgentStore = defineStore('ai-agent', () => {
         isApproving.value = false;
         errorMessage.value = '';
         activeRunId.value = null;
+        latestOfficialUsageResolved.value = false;
+        latestOfficialUsage.value = null;
+        totalOfficialUsageResolved.value = false;
+        totalOfficialUsage.value = null;
     };
 
     const upsertRun = (run: IAiAgentRun): void => {
@@ -523,6 +624,10 @@ export const useAiAgentStore = defineStore('ai-agent', () => {
         planVersions,
         activeRunId,
         runs,
+        latestOfficialUsageResolved,
+        latestOfficialUsage,
+        totalOfficialUsageResolved,
+        totalOfficialUsage,
         stepDetails,
         stepFinalAnswers,
         patchSummaries,
@@ -548,6 +653,8 @@ export const useAiAgentStore = defineStore('ai-agent', () => {
         clearPlan,
         upsertRun,
         upsertRunStep,
+        setLatestOfficialUsage,
+        clearLatestOfficialUsage,
         setRuns,
         upsertStepDetail,
         setStepWebSources,
@@ -583,6 +690,10 @@ export const useAiAgentStore = defineStore('ai-agent', () => {
             'planErrorMessage',
             'activeRunId',
             'runs',
+            'latestOfficialUsageResolved',
+            'latestOfficialUsage',
+            'totalOfficialUsageResolved',
+            'totalOfficialUsage',
             'stepDetails',
             'stepFinalAnswers',
             'toolActivities',
@@ -612,6 +723,10 @@ export const useAiAgentStore = defineStore('ai-agent', () => {
                 planErrorMessage: store.planErrorMessage,
                 activeRunId: store.activeRunId,
                 runs: store.runs,
+                latestOfficialUsageResolved: store.latestOfficialUsageResolved,
+                latestOfficialUsage: store.latestOfficialUsage,
+                totalOfficialUsageResolved: store.totalOfficialUsageResolved,
+                totalOfficialUsage: store.totalOfficialUsage,
                 stepDetails: store.stepDetails,
                 stepFinalAnswers: store.stepFinalAnswers,
                 toolActivities: store.toolActivities,

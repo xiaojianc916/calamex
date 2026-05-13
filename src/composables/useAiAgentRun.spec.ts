@@ -166,6 +166,22 @@ describe('useAiAgentRun', () => {
                 {
                     type: 'done',
                     result: '步骤已完成。',
+                    usage: {
+                        inputTokens: 11,
+                        inputTokenDetails: {
+                            noCacheTokens: 11,
+                            cacheReadTokens: 0,
+                            cacheWriteTokens: 0,
+                        },
+                        outputTokens: 4,
+                        outputTokenDetails: {
+                            textTokens: 4,
+                            reasoningTokens: 0,
+                        },
+                        totalTokens: 15,
+                        cachedInputTokens: 0,
+                        reasoningTokens: 0,
+                    },
                 },
             ],
             result: '步骤已完成。',
@@ -195,6 +211,12 @@ describe('useAiAgentRun', () => {
         expect(store.getStepDetail(run.id, 'plan-step-1')?.toolResults[0]?.summary)
             .toBe('已检索上下文。');
         expect(store.getStepFinalAnswers(run.id)[0]?.content).toBe('步骤已完成。');
+        expect(store.latestOfficialUsageResolved).toBe(true);
+        expect(store.latestOfficialUsage).toMatchObject({
+            inputTokens: 11,
+            outputTokens: 4,
+            totalTokens: 15,
+        });
     });
 
     it('最后一步完成后用 sidecar plan_record 同步计划收口状态', async () => {

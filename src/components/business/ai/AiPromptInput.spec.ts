@@ -178,6 +178,7 @@ describe('AiPromptInput', () => {
         usedTokens: 32000,
         maxTokens: 128000,
         modelId: 'openai:gpt-5',
+        usageSource: 'estimated',
         usage: {
           inputTokens: 32000,
           inputTokenDetails: {
@@ -212,6 +213,7 @@ describe('AiPromptInput', () => {
       tokenContext: {
         usedTokens: 0,
         maxTokens: 0,
+        usageSource: 'estimated',
         usage: {
           inputTokens: 0,
           inputTokenDetails: {

@@ -18,6 +18,8 @@ import {
   buildCurrentFileReference,
 } from '@/services/modules/ai-context';
 import { aiEditService } from '@/services/modules/ai-edit';
+import { tauriService } from '@/services/tauri';
+import { useAiAgentStore } from '@/store/aiAgent';
 import { useAiConversationStore, type IAiConversationScrollState } from '@/store/aiConversation';
 import {
   extractVisibleAgentRuntimeEvents,
@@ -25,19 +27,28 @@ import {
   projectSidecarExecuteResponse,
 } from '@/utils/agent-sidecar-events';
 import { createDefaultAiConfigPayload } from '@/utils/ai-config';
+import {
+  buildAiAgentPatchSummaryFromAedDiffs,
+  buildAiAgentPatchSummaryFromApplyResult,
+  buildAiPatchSetFromAedDiff,
+  mergeAiAgentPatchSummaries,
+  parseAiAedPatchRef,
+} from '@/utils/ai-patch-summary';
 
-import type {
-  IAgentCheckpointEvent,
-  IAgentSidecarMessage,
-  TAgentRuntimeEvent,
-  TAgentUiEvent,
+import {
+  AGENT_RUNTIME_EVENT_SCHEMA_VERSION,
+  type IAgentCheckpointEvent,
+  type IAgentSidecarMessage,
+  type TAgentRuntimeEvent,
+  type TAgentUiEvent,
 } from '@/types/agent-sidecar';
 import type {
+  IAiAgentPatchSummary,
   IAiApplyPatchMetadata,
   IAiAttachedFile,
   IAiChatMessage,
-  IAiChatStreamRenderState,
   IAiChatStreamEventPayload,
+  IAiChatStreamRenderState,
   IAiConfigPayload,
   IAiContextReference,
   IAiImageAttachmentPreview,
@@ -49,7 +60,11 @@ import type {
   TAiModelRole,
   TAiToolConfirmationDecision,
 } from '@/types/ai';
-import type { IAiEditOperation, IAiEditTimelineEntry } from '@/types/ai-edit';
+import type {
+  IAiEditGetDiffPayload,
+  IAiEditOperation,
+  IAiEditTimelineEntry,
+} from '@/types/ai-edit';
 import type {
   IActiveRunSummary,
   IAnalyzeScriptPayload,
@@ -71,6 +86,8 @@ type TAiQuickActionId = 'explain' | 'fix' | 'review';
 type TAiAssistantMode = 'chat' | 'agent' | 'plan';
 
 type TAiFileRollbackStatus = 'ready' | 'reverting' | 'reverted';
+
+const SIDECAR_EXPLICIT_CONTEXT_MESSAGE_LIMIT = 12;
 
 type TAgentExecutionStepStatus =
   | 'pending'
@@ -104,6 +121,28 @@ interface IAgentExecutionStep {
 interface IActiveAgentPatchTarget {
   runId: string;
   stepId: string;
+}
+
+interface ISidecarPatchApplyResult {
+  appliedPaths: string[];
+  runtimeEvents: TAgentRuntimeEvent[];
+  patches: IAiPatchSet[];
+  summaries: IAiAgentPatchSummary[];
+}
+
+interface ISidecarPatchEntry {
+  patch: IAiPatchSet;
+  alreadyApplied: boolean;
+}
+
+interface IAgentExecutionMessagePatchState {
+  patches?: readonly IAiPatchSet[];
+  changedFilesSummary?: IAiAgentPatchSummary | null;
+}
+
+interface IAedDiffPatchState {
+  patches: IAiPatchSet[];
+  changedFilesSummary: IAiAgentPatchSummary | null;
 }
 
 export type { IAiAttachedFile, IAiImageAttachmentPreview } from '@/types/ai';
@@ -161,6 +200,8 @@ const IMAGE_ATTACHMENT_PATTERN = /^image\//i;
 const IMAGE_ATTACHMENT_EXTENSION_PATTERN = /\.(avif|bmp|gif|ico|jpe?g|png|svg|webp)$/i;
 
 const CODE_BLOCK_PATTERN = /```[a-zA-Z0-9_-]*\n([\s\S]*?)```/;
+const SIDECAR_PATCH_TOOL_NAMES = new Set(['apply_file_edits', 'propose_file_patch']);
+const SHELL_SCRIPT_FILE_PATTERN = /\.(?:sh|bash|dash|ksh|bats)$/iu;
 
 const MSG_STREAM_ERROR = 'AI 响应出错';
 const MSG_CALL_FAILED = 'AI 调用失败';
@@ -297,6 +338,65 @@ const buildConversationCheckpoints = (
   return checkpoints;
 };
 
+const getLatestCheckpointEvent = (message: IAiChatMessage): IAgentCheckpointEvent | null => {
+  const runtimeEvents = message.stream?.runtimeEvents ?? [];
+
+  for (let index = runtimeEvents.length - 1; index >= 0; index -= 1) {
+    const event = runtimeEvents[index];
+
+    if (event && isCheckpointCreatedRuntimeEvent(event)) {
+      return event;
+    }
+  }
+
+  return null;
+};
+
+const reversePatchLine = (line: string): string => {
+  if (line.startsWith('+++') || line.startsWith('---')) {
+    return line;
+  }
+
+  if (line.startsWith('+')) {
+    return `-${line.slice(1)}`;
+  }
+
+  if (line.startsWith('-')) {
+    return `+${line.slice(1)}`;
+  }
+
+  return line;
+};
+
+const buildReversePatchSet = (
+  patches: readonly IAiPatchSet[] | undefined,
+  summary: IAiAgentPatchSummary,
+): IAiPatchSet | null => {
+  const files = (patches ?? [])
+    .flatMap((patch) => patch.files)
+    .filter((patchFile) =>
+      summary.files.some((file) => areFileSystemPathsEqual(file.path, patchFile.path)),
+    )
+    .map((file) => ({
+      path: file.path,
+      originalHash: file.originalHash,
+      hunks: file.hunks.map((hunk) => ({
+        oldStart: hunk.newStart,
+        oldLines: hunk.newLines,
+        newStart: hunk.oldStart,
+        newLines: hunk.oldLines,
+        lines: hunk.lines.map(reversePatchLine),
+      })),
+    }));
+
+  return files.length > 0
+    ? {
+      summary: `回滚 ${summary.files.length} 个文件的 AI 修改`,
+      files,
+    }
+    : null;
+};
+
 const collectConversationRuntimeEvents = (
   currentMessages: readonly IAiChatMessage[],
 ): TAgentRuntimeEvent[] => {
@@ -348,6 +448,122 @@ const countDocumentLines = (content: string): number => {
   return content.split('\n').length;
 };
 
+const getPathFileName = (path: string): string => {
+  const normalized = path.replace(/\\/gu, '/');
+  const fileName = normalized.split('/').filter((part) => part.length > 0).at(-1);
+
+  return fileName ?? path;
+};
+
+const hasShellShebang = (content: string): boolean => {
+  const firstLine = content.split(/\r?\n/u, 1)[0]?.toLocaleLowerCase() ?? '';
+
+  return firstLine.startsWith('#!') && /\b(?:ba|da|k)?sh\b/u.test(firstLine);
+};
+
+const shouldRunShellCheckForPatchFile = (
+  path: string,
+  content: string,
+): boolean => SHELL_SCRIPT_FILE_PATTERN.test(path) || hasShellShebang(content);
+
+const countShellCheckDiagnostics = (
+  diagnostics: readonly (IAnalyzeScriptPayload['diagnostics'][number])[],
+): { errors: number; warnings: number; infos: number } => {
+  let errors = 0;
+  let warnings = 0;
+  let infos = 0;
+
+  for (const diagnostic of diagnostics) {
+    if (diagnostic.level === 'error') {
+      errors += 1;
+    } else if (diagnostic.level === 'warning') {
+      warnings += 1;
+    } else {
+      infos += 1;
+    }
+  }
+
+  return { errors, warnings, infos };
+};
+
+const collectShellCheckDiagnosticCodes = (
+  diagnostics: readonly (IAnalyzeScriptPayload['diagnostics'][number])[],
+): string[] => {
+  const codes = new Set<string>();
+
+  for (const diagnostic of diagnostics) {
+    const code = diagnostic.code.trim().toUpperCase();
+
+    if (code) {
+      codes.add(code);
+    }
+  }
+
+  return [...codes];
+};
+
+const formatShellCheckCounts = (
+  counts: { errors: number; warnings: number; infos: number },
+): string => [
+  counts.errors > 0 ? `${counts.errors} 错误` : '',
+  counts.warnings > 0 ? `${counts.warnings} 警告` : '',
+  counts.infos > 0 ? `${counts.infos} 提示` : '',
+].filter((item) => item.length > 0).join('、');
+
+const summarizeShellCheckAnalysis = (
+  path: string,
+  analysis: IAnalyzeScriptPayload,
+): string => {
+  const displayPath = normalizePatchDisplayPath(path);
+
+  if (!analysis.available) {
+    return `${displayPath}：ShellCheck 不可用${analysis.message ? `，${analysis.message}` : ''}`;
+  }
+
+  if (analysis.diagnostics.length === 0) {
+    return `${displayPath}：ShellCheck 通过（${analysis.dialect}）`;
+  }
+
+  const counts = countShellCheckDiagnostics(analysis.diagnostics);
+  const diagnosticCodes = collectShellCheckDiagnosticCodes(analysis.diagnostics);
+  const firstDiagnostic = analysis.diagnostics[0];
+  const diagnosticCodesText = diagnosticCodes.length > 0
+    ? `；问题编号 ${diagnosticCodes.join('、')}`
+    : '';
+  const firstDiagnosticText = firstDiagnostic
+    ? `；首个问题 L${firstDiagnostic.line}:${firstDiagnostic.column} ${firstDiagnostic.message}`
+    : '';
+
+  return `${displayPath}：ShellCheck ${formatShellCheckCounts(counts)}${diagnosticCodesText}${firstDiagnosticText}`;
+};
+
+const createHostToolCompletedRuntimeEvent = (input: {
+  runId: string;
+  sessionId: string;
+  seq: number;
+  toolName: string;
+  ok: boolean;
+  resultPreview?: string;
+  errorMessage?: string;
+  level?: TAgentRuntimeEvent['level'];
+}): TAgentRuntimeEvent => ({
+  id: createScopedId(`host-${input.toolName}`),
+  type: 'agent.tool.completed',
+  runId: input.runId,
+  sessionId: input.sessionId,
+  agentId: 'host',
+  timestamp: new Date().toISOString(),
+  seq: input.seq,
+  schemaVersion: AGENT_RUNTIME_EVENT_SCHEMA_VERSION,
+  redacted: true,
+  visibility: 'user',
+  ...(input.level ? { level: input.level } : {}),
+  toolName: input.toolName,
+  ok: input.ok,
+  ...(input.resultPreview ? { resultPreview: input.resultPreview } : {}),
+  ...(input.errorMessage ? { errorMessage: input.errorMessage } : {}),
+});
+
 const syncPatchedDocument = (
   document: IEditorDocument,
   patch: IAiPatchSet,
@@ -382,6 +598,147 @@ const syncPatchedDocument = (
   document.lineCount = countDocumentLines(nextContent);
   document.charCount = [...nextContent].length;
 };
+
+const runShellCheckForAppliedPatch = async (input: {
+  patch: IAiPatchSet;
+  appliedPaths: readonly string[];
+  runId: string;
+  sessionId: string;
+  seqStart: number;
+}): Promise<TAgentRuntimeEvent[]> => {
+  const events: TAgentRuntimeEvent[] = [];
+  let seq = input.seqStart;
+
+  for (const file of input.patch.files) {
+    const wasApplied = input.appliedPaths.some((path) => areFileSystemPathsEqual(path, file.path));
+
+    if (!wasApplied) {
+      continue;
+    }
+
+    const content = materializePatchedContent(file);
+
+    if (content === null || !shouldRunShellCheckForPatchFile(file.path, content)) {
+      continue;
+    }
+
+    try {
+      const analysis = await tauriService.analyzeScript({
+        path: file.path,
+        name: getPathFileName(file.path),
+        content,
+      });
+      const counts = countShellCheckDiagnostics(analysis.diagnostics);
+      const hasErrors = counts.errors > 0;
+      const hasWarnings = counts.warnings > 0 || counts.infos > 0;
+
+      events.push(createHostToolCompletedRuntimeEvent({
+        runId: input.runId,
+        sessionId: input.sessionId,
+        seq,
+        toolName: 'shellcheck',
+        ok: analysis.available && !hasErrors,
+        level: !analysis.available || hasErrors ? 'error' : hasWarnings ? 'warn' : 'info',
+        resultPreview: summarizeShellCheckAnalysis(file.path, analysis),
+        ...(!analysis.available && analysis.message ? { errorMessage: analysis.message } : {}),
+      }));
+      seq += 1;
+    } catch (error) {
+      const message = toErrorMessage(error, 'ShellCheck 诊断失败。');
+
+      events.push(createHostToolCompletedRuntimeEvent({
+        runId: input.runId,
+        sessionId: input.sessionId,
+        seq,
+        toolName: 'shellcheck',
+        ok: false,
+        level: 'error',
+        errorMessage: message,
+        resultPreview: `${normalizePatchDisplayPath(file.path)}：${message}`,
+      }));
+      seq += 1;
+    }
+  }
+
+  return events;
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === 'object' && !Array.isArray(value);
+
+const parseJsonObject = (value: string): Record<string, unknown> | null => {
+  try {
+    const parsed: unknown = JSON.parse(value);
+
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+
+const isPatchHunk = (value: unknown): value is IAiPatchSet['files'][number]['hunks'][number] => {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  return typeof value.oldStart === 'number'
+    && typeof value.oldLines === 'number'
+    && typeof value.newStart === 'number'
+    && typeof value.newLines === 'number'
+    && Array.isArray(value.lines)
+    && value.lines.every((line) => typeof line === 'string');
+};
+
+const isPatchFile = (value: unknown): value is IAiPatchSet['files'][number] => {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  return typeof value.path === 'string'
+    && typeof value.originalHash === 'string'
+    && Array.isArray(value.hunks)
+    && value.hunks.every(isPatchHunk);
+};
+
+const isPatchSet = (value: unknown): value is IAiPatchSet => {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  return typeof value.summary === 'string'
+    && Array.isArray(value.files)
+    && value.files.every(isPatchFile);
+};
+
+const extractPatchEntryFromToolOutput = (output: unknown): ISidecarPatchEntry | null => {
+  const normalizedOutput = typeof output === 'string'
+    ? parseJsonObject(output)
+    : output;
+
+  if (!isRecord(normalizedOutput)) {
+    return null;
+  }
+
+  const patch = normalizedOutput.patch;
+
+  return isPatchSet(patch)
+    ? {
+      patch,
+      alreadyApplied: normalizedOutput.applied === true,
+    }
+    : null;
+};
+
+const extractSidecarPatchEntries = (events: readonly TAgentUiEvent[]): ISidecarPatchEntry[] =>
+  events.flatMap((event) => {
+    if (event.type !== 'tool_result' || !SIDECAR_PATCH_TOOL_NAMES.has(event.toolName)) {
+      return [];
+    }
+
+    const patchEntry = extractPatchEntryFromToolOutput(event.output);
+
+    return patchEntry ? [patchEntry] : [];
+  });
 
 const clipText = (value: string, limit: number): string => {
   const chars = [...value];
@@ -613,6 +970,11 @@ interface ISidecarLiveEventBuffer {
   dispose: () => void;
 }
 
+type TSidecarStreamTokenSnapshot = Pick<
+  IAiChatStreamRenderState,
+  'promptTokens' | 'completionTokens' | 'totalTokens' | 'usage'
+>;
+
 interface ISidecarAnswerStreamMetadata {
   messageId: string;
   threadId: string | null;
@@ -621,6 +983,7 @@ interface ISidecarAnswerStreamMetadata {
   activityText: string | undefined;
   runtimeEvents: NonNullable<IAiChatMessage['stream']>['runtimeEvents'] | undefined;
   finalAnswerStarted: boolean | undefined;
+  streamTokenSnapshot?: TSidecarStreamTokenSnapshot;
 }
 
 interface ISidecarAnswerStreamState extends ISidecarAnswerStreamMetadata {
@@ -666,6 +1029,41 @@ const getLatestSidecarLiveEvents = (events: readonly TAgentUiEvent[]): ILatestSi
   }
 
   return latest;
+};
+
+const resolveSidecarDoneStreamTokenSnapshot = (
+  event: Extract<TAgentUiEvent, { type: 'done' }> | null | undefined,
+): TSidecarStreamTokenSnapshot | undefined => {
+  if (!event) {
+    return undefined;
+  }
+
+  const usage = event.usage ?? undefined;
+  const promptTokens = isNonNegativeFiniteNumber(event.promptTokens)
+    ? event.promptTokens
+    : usage?.inputTokens;
+  const completionTokens = isNonNegativeFiniteNumber(event.completionTokens)
+    ? event.completionTokens
+    : usage?.outputTokens;
+  const totalTokens = isNonNegativeFiniteNumber(event.totalTokens)
+    ? event.totalTokens
+    : usage?.totalTokens;
+
+  if (
+    !isNonNegativeFiniteNumber(promptTokens) &&
+    !isNonNegativeFiniteNumber(completionTokens) &&
+    !isNonNegativeFiniteNumber(totalTokens) &&
+    usage === undefined
+  ) {
+    return undefined;
+  }
+
+  return {
+    ...(isNonNegativeFiniteNumber(promptTokens) ? { promptTokens } : {}),
+    ...(isNonNegativeFiniteNumber(completionTokens) ? { completionTokens } : {}),
+    ...(isNonNegativeFiniteNumber(totalTokens) ? { totalTokens } : {}),
+    ...(usage ? { usage } : {}),
+  };
 };
 
 const processedRuntimeEventCountsByEvents = new WeakMap<readonly TAgentUiEvent[], number>();
@@ -836,6 +1234,7 @@ export const AI_QUICK_ACTIONS: IAiQuickAction[] = [
 // ---------------------------------------------------------------------------
 
 export const useAiAssistant = (options: IUseAiAssistantOptions) => {
+  const agentStore = useAiAgentStore();
   const conversationStore = useAiConversationStore();
 
   const config = ref<IAiConfigPayload>(createDefaultAiConfigPayload());
@@ -846,10 +1245,17 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
   const isClearDialogOpen = ref(false);
   const currentReferences = ref<IAiContextReference[]>([]);
   const proposedPatch = ref<IAiPatchSet | null>(null);
+  const appliedPatchPreview = ref<IAiPatchSet | null>(null);
   const isApplyingPatch = ref(false);
   const fileRollbackPrompt = ref<IAiFileRollbackPrompt | null>(null);
+  const revertingChangedFilesSummaryId = ref<string | null>(null);
   const runtimeTimelineEvents = shallowRef<TAgentRuntimeEvent[]>([]);
-  const activeMode = ref<TAiAssistantMode>('agent');
+  const activeMode = computed<TAiAssistantMode>({
+    get: () => agentStore.mode,
+    set: (nextMode) => {
+      agentStore.mode = nextMode;
+    },
+  });
   const agentSteps = shallowRef<IAgentExecutionStep[]>([]);
   const toolDefinitions = shallowRef<IAiToolDefinitionPayload[]>([]);
   const providerProfiles = shallowRef<IAiProviderProfilePayload[]>([]);
@@ -1170,6 +1576,8 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     activityText?: string,
     runtimeEvents?: NonNullable<IAiChatMessage['stream']>['runtimeEvents'],
     finalAnswerStarted?: boolean,
+    streamTokenSnapshot?: TSidecarStreamTokenSnapshot,
+    patchState?: IAgentExecutionMessagePatchState,
   ): void => {
     replaceMessageById(messageId, (message) => {
       const nextActivityText = activityText ?? message.stream?.activityText;
@@ -1178,19 +1586,28 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
         finalAnswerStarted ??
         message.stream?.finalAnswerStarted ??
         (streamStatus === 'completed' && hasMeaningfulAssistantText(content));
+      const nextPromptTokens = isNonNegativeFiniteNumber(streamTokenSnapshot?.promptTokens)
+        ? streamTokenSnapshot.promptTokens
+        : message.stream?.promptTokens;
+      const nextCompletionTokens = isNonNegativeFiniteNumber(streamTokenSnapshot?.completionTokens)
+        ? streamTokenSnapshot.completionTokens
+        : message.stream?.completionTokens;
+      const nextTotalTokens = isNonNegativeFiniteNumber(streamTokenSnapshot?.totalTokens)
+        ? streamTokenSnapshot.totalTokens
+        : message.stream?.totalTokens;
+      const nextUsage = streamTokenSnapshot?.usage ?? message.stream?.usage;
       const stream = streamStatus
-        ? nextActivityText
-          ? {
-              status: streamStatus,
-              activityText: nextActivityText,
-              ...(nextRuntimeEvents?.length ? { runtimeEvents: nextRuntimeEvents } : {}),
-              ...(nextFinalAnswerStarted ? { finalAnswerStarted: true } : {}),
-            }
-          : {
-              status: streamStatus,
-              ...(nextRuntimeEvents?.length ? { runtimeEvents: nextRuntimeEvents } : {}),
-              ...(nextFinalAnswerStarted ? { finalAnswerStarted: true } : {}),
-            }
+        ? {
+          ...(message.stream ?? {}),
+          status: streamStatus,
+          ...(nextActivityText !== undefined ? { activityText: nextActivityText } : {}),
+          ...(nextRuntimeEvents?.length ? { runtimeEvents: nextRuntimeEvents } : {}),
+          ...(nextFinalAnswerStarted ? { finalAnswerStarted: true } : {}),
+          ...(isNonNegativeFiniteNumber(nextPromptTokens) ? { promptTokens: nextPromptTokens } : {}),
+          ...(isNonNegativeFiniteNumber(nextCompletionTokens) ? { completionTokens: nextCompletionTokens } : {}),
+          ...(isNonNegativeFiniteNumber(nextTotalTokens) ? { totalTokens: nextTotalTokens } : {}),
+          ...(nextUsage ? { usage: nextUsage } : {}),
+        }
         : message.stream;
 
       return {
@@ -1198,6 +1615,10 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
         content,
         toolCalls,
         stream,
+        ...(patchState?.patches ? { patches: [...patchState.patches] } : {}),
+        ...(patchState?.changedFilesSummary !== undefined
+          ? { changedFilesSummary: patchState.changedFilesSummary ?? undefined }
+          : {}),
       };
     });
   };
@@ -1247,6 +1668,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       state.activityText,
       state.runtimeEvents,
       state.finalAnswerStarted,
+      state.streamTokenSnapshot,
     );
     commitDisplayMessagesToStore(state.threadId);
     state.runtimeEvents = undefined;
@@ -1490,6 +1912,95 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     }
   };
 
+  const collectUniqueAedDiffPaths = (
+    changedFilePaths: readonly string[],
+    excludedPaths: readonly string[],
+  ): string[] => {
+    const paths: string[] = [];
+    const seen = new Set<string>();
+
+    for (const path of changedFilePaths) {
+      const trimmedPath = path.trim();
+
+      if (!trimmedPath) {
+        continue;
+      }
+
+      if (excludedPaths.some((excludedPath) => areFileSystemPathsEqual(excludedPath, trimmedPath))) {
+        continue;
+      }
+
+      const normalized = normalizeFileSystemPath(trimmedPath, {
+        collapseDuplicateSeparators: true,
+        trimTrailingSeparator: true,
+      });
+
+      if (!normalized || seen.has(normalized)) {
+        continue;
+      }
+
+      seen.add(normalized);
+      paths.push(trimmedPath);
+    }
+
+    return paths;
+  };
+
+  const loadAedDiffPatchStateForChangedFiles = async (input: {
+    changedFilePaths: readonly string[];
+    excludedPaths: readonly string[];
+    fallbackTaskId: string;
+    runId: string;
+    stepId: string;
+  }): Promise<IAedDiffPatchState | null> => {
+    const taskId = activeConversationId.value ?? input.fallbackTaskId;
+    const paths = collectUniqueAedDiffPaths(input.changedFilePaths, input.excludedPaths);
+
+    if (!taskId.trim() || paths.length === 0) {
+      return null;
+    }
+
+    const diffs: IAiEditGetDiffPayload[] = [];
+
+    for (const path of paths) {
+      try {
+        const diff = await aiEditService.getDiff({ taskId, path });
+
+        if (diff.hunks.length > 0) {
+          diffs.push(diff);
+        }
+      } catch (error) {
+        logger.warn({
+          event: 'ai.aed_diff_preview.load_failed',
+          path,
+          err: error,
+        });
+      }
+    }
+
+    if (diffs.length === 0) {
+      return null;
+    }
+
+    const patches = diffs
+      .map(buildAiPatchSetFromAedDiff)
+      .filter((patch): patch is IAiPatchSet => patch !== null);
+    const changedFilesSummary = buildAiAgentPatchSummaryFromAedDiffs({
+      diffs,
+      taskId,
+      runId: input.runId,
+      stepId: input.stepId,
+      appliedAt: new Date().toISOString(),
+    });
+
+    return patches.length > 0 || changedFilesSummary
+      ? {
+        patches,
+        changedFilesSummary,
+      }
+      : null;
+  };
+
   const mapSidecarToolCallStatusToStepStatus = (
     status: NonNullable<IAiChatMessage['toolCalls']>[number]['status'],
   ): TAgentExecutionStepStatus => {
@@ -1538,6 +2049,9 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       streamStatus,
     });
     const runtimeEvents = extractNewVisibleRuntimeEvents(events);
+    const livePatchState = buildLiveAppliedPatchState(
+      extractSidecarPatchEntries(events),
+    );
 
     for (const toolCall of toolProjection.toolCalls) {
       updateAgentStep(
@@ -1555,6 +2069,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       activityText: toolProjection.activityText,
       runtimeEvents,
       finalAnswerStarted,
+      streamTokenSnapshot: resolveSidecarDoneStreamTokenSnapshot(doneEvent),
     };
     const displayContent = (() => {
       if (errorEvent) {
@@ -1585,6 +2100,8 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       toolProjection.activityText,
       runtimeEvents,
       finalAnswerStarted,
+      streamMetadata.streamTokenSnapshot,
+      livePatchState,
     );
     commitDisplayMessagesToStore(threadId);
   };
@@ -1604,13 +2121,110 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
   const toSidecarMessages = (
     visibleMessages: IAiChatMessage[],
   ): IAgentSidecarMessage[] => {
-    const latestUserMessage = [...visibleMessages]
-      .reverse()
-      .find((message) => message.role === 'user');
+    return visibleMessages
+      .filter((message) => message.role === 'user' || message.role === 'assistant')
+      .map((message) => ({
+        role: message.role,
+        content: message.content.trim(),
+      }))
+      .filter((message) => message.content.length > 0)
+      .slice(-SIDECAR_EXPLICIT_CONTEXT_MESSAGE_LIMIT);
+  };
 
-    return latestUserMessage
-      ? [{ role: 'user', content: latestUserMessage.content }]
-      : [];
+  const applySidecarPatchSets = async (
+    patchEntries: readonly ISidecarPatchEntry[],
+    turnId: string,
+    sessionId: string,
+  ): Promise<ISidecarPatchApplyResult> => {
+    const appliedPaths: string[] = [];
+    const runtimeEvents: TAgentRuntimeEvent[] = [];
+    const appliedPatches: IAiPatchSet[] = [];
+    const summaries: IAiAgentPatchSummary[] = [];
+
+    for (const patchEntry of patchEntries) {
+      const patch = patchEntry.patch;
+      const patchMetadata = buildActiveAgentPatchMetadata();
+      const result = patchEntry.alreadyApplied
+        ? {
+          appliedFiles: patch.files.map((file) => ({
+            path: file.path,
+            byteSize: 0,
+          })),
+        }
+        : await aiService.applyPatch({
+          patch,
+          metadata: {
+            taskId: activeConversationId.value,
+            turnId,
+            reason: patch.summary,
+            toolCallId: 'apply_file_edits',
+            confirmedByUser: true,
+            ...(patchMetadata ?? {}),
+          },
+        });
+      const currentAppliedPaths = result.appliedFiles.map((file) => file.path);
+
+      syncPatchedDocument(options.document.value, patch, currentAppliedPaths);
+      appliedPaths.push(...currentAppliedPaths);
+      if (currentAppliedPaths.length > 0) {
+        appliedPatches.push(patch);
+      }
+      runtimeEvents.push(...await runShellCheckForAppliedPatch({
+        patch,
+        appliedPaths: currentAppliedPaths,
+        runId: patchMetadata?.agentRunId ?? `sidecar:${turnId}`,
+        sessionId,
+        seqStart: runtimeEvents.length + 1,
+      }));
+
+      const taskId = activeConversationId.value ?? turnId;
+      const summary = buildAiAgentPatchSummaryFromApplyResult({
+        patch,
+        applyResult: result,
+        taskId,
+        runId: patchMetadata?.agentRunId ?? `sidecar:${turnId}`,
+        stepId: patchMetadata?.agentStepId ?? 'agent',
+        appliedAt: new Date().toISOString(),
+      });
+
+      if (summary) {
+        summaries.push(summary);
+        if (patchMetadata?.agentRunId && patchMetadata.agentStepId) {
+          agentPlan.store.appendPatchSummary(summary);
+        }
+      }
+    }
+
+    return {
+      appliedPaths,
+      runtimeEvents,
+      patches: appliedPatches,
+      summaries,
+    };
+  };
+
+  const buildLiveAppliedPatchState = (
+    patchEntries: readonly ISidecarPatchEntry[],
+  ): IAgentExecutionMessagePatchState | undefined => {
+    const appliedEntries = patchEntries.filter((entry) => entry.alreadyApplied);
+
+    if (appliedEntries.length === 0) {
+      return undefined;
+    }
+
+    for (const entry of appliedEntries) {
+      const appliedPaths = entry.patch.files.map((file) => file.path);
+
+      syncPatchedDocument(options.document.value, entry.patch, appliedPaths);
+    }
+
+    const patches = appliedEntries.map((entry) => entry.patch);
+
+    return patches.length > 0
+      ? {
+        patches,
+      }
+      : undefined;
   };
 
   const executeSidecarAgentRequest = async (
@@ -1626,6 +2240,8 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     runtimeTimelineEvents.value = [];
     agentPlan.store.clearPendingToolConfirmation();
     activeSidecarAgentSession.value = null;
+    proposedPatch.value = null;
+    appliedPatchPreview.value = null;
 
     const assistantMessageId = createMessageId('assistant');
     const targetThreadId = threadId;
@@ -1667,6 +2283,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       });
       const payload = await aiService.sidecarChat({
         sessionId: sidecarSessionId,
+        mode: 'agent',
         goal: messageContent,
         messages: toSidecarMessages(visibleMessages),
         workspaceRootPath: options.workspaceRootPath.value,
@@ -1691,6 +2308,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
         activityText: toolProjection.activityText,
         runtimeEvents: compactRuntimeEvents(extractVisibleAgentRuntimeEvents(payload.events)),
         finalAnswerStarted: hasMeaningfulAssistantText(projection.assistantContent),
+        streamTokenSnapshot: resolveSidecarDoneStreamTokenSnapshot(getLatestSidecarLiveEvents(payload.events).doneEvent),
       };
       if (projection.errorMessage) {
         disposeSidecarAnswerStream(assistantMessageId);
@@ -1703,6 +2321,45 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
         projection.errorMessage || projection.pendingConfirmation
           ? Promise.resolve()
           : waitForSidecarAnswerStreamCompletion(assistantMessageId);
+      const sidecarPatchEntries = projection.errorMessage
+        ? []
+        : extractSidecarPatchEntries(payload.events);
+      const sidecarPatchResult = sidecarPatchEntries.length > 0
+        ? await applySidecarPatchSets(sidecarPatchEntries, turnId, sidecarSessionId)
+        : { appliedPaths: [], runtimeEvents: [], patches: [], summaries: [] };
+      const sidecarAppliedPaths = sidecarPatchResult.appliedPaths;
+      const aedDiffPatchState = projection.errorMessage
+        ? null
+        : await loadAedDiffPatchStateForChangedFiles({
+          changedFilePaths: projection.changedFilePaths,
+          excludedPaths: sidecarAppliedPaths,
+          fallbackTaskId: turnId,
+          runId: `sidecar:${turnId}`,
+          stepId: 'agent',
+        });
+      const patchSummaries = [
+        ...sidecarPatchResult.summaries,
+        ...(aedDiffPatchState?.changedFilesSummary ? [aedDiffPatchState.changedFilesSummary] : []),
+      ];
+      const displayedPatches = [
+        ...sidecarPatchResult.patches,
+        ...(aedDiffPatchState?.patches ?? []),
+      ];
+      const changedFilesSummary = mergeAiAgentPatchSummaries(patchSummaries);
+      const patchState = displayedPatches.length > 0 || changedFilesSummary
+        ? {
+          patches: displayedPatches,
+          changedFilesSummary,
+        }
+        : undefined;
+
+      if (sidecarPatchResult.runtimeEvents.length > 0) {
+        streamMetadata.runtimeEvents = compactRuntimeEvents([
+          ...(streamMetadata.runtimeEvents ?? []),
+          ...sidecarPatchResult.runtimeEvents,
+        ]);
+        appendVisibleRuntimeTimelineEvents(sidecarPatchResult.runtimeEvents);
+      }
 
       for (const toolCall of toolProjection.toolCalls) {
         updateAgentStep(
@@ -1720,13 +2377,18 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
         toolProjection.activityText,
         streamMetadata.runtimeEvents,
         streamMetadata.finalAnswerStarted,
+        streamMetadata.streamTokenSnapshot,
+        patchState,
       );
 
       await refreshChangedDocumentsAfterSidecarRun(
-        projection.changedFilePaths,
-        projection.hasFileMutations,
+        [...projection.changedFilePaths, ...sidecarAppliedPaths],
+        projection.hasFileMutations || sidecarAppliedPaths.length > 0,
       );
-      await updateFileRollbackPrompt(projection.changedFilePaths, projection.hasFileMutations);
+      await updateFileRollbackPrompt(
+        [...projection.changedFilePaths, ...sidecarAppliedPaths],
+        projection.hasFileMutations || sidecarAppliedPaths.length > 0,
+      );
       await sidecarAnswerCompletion;
 
       if (projection.pendingConfirmation) {
@@ -1852,6 +2514,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
         activityText: toolProjection.activityText,
         runtimeEvents: compactRuntimeEvents(extractVisibleAgentRuntimeEvents(payload.events)),
         finalAnswerStarted: hasMeaningfulAssistantText(projection.assistantContent),
+        streamTokenSnapshot: resolveSidecarDoneStreamTokenSnapshot(getLatestSidecarLiveEvents(payload.events).doneEvent),
       };
       if (projection.errorMessage) {
         disposeSidecarAnswerStream(session.assistantMessageId);
@@ -1864,6 +2527,50 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
         projection.errorMessage || projection.pendingConfirmation
           ? Promise.resolve()
           : waitForSidecarAnswerStreamCompletion(session.assistantMessageId);
+      const sidecarPatchEntries = projection.errorMessage
+        ? []
+        : extractSidecarPatchEntries(payload.events);
+      const sidecarPatchResult = sidecarPatchEntries.length > 0
+        ? await applySidecarPatchSets(
+          sidecarPatchEntries,
+          session.turnId ?? session.assistantMessageId,
+          payload.sessionId,
+        )
+        : { appliedPaths: [], runtimeEvents: [], patches: [], summaries: [] };
+      const sidecarAppliedPaths = sidecarPatchResult.appliedPaths;
+      const fallbackTaskId = session.turnId ?? session.assistantMessageId;
+      const aedDiffPatchState = projection.errorMessage
+        ? null
+        : await loadAedDiffPatchStateForChangedFiles({
+          changedFilePaths: projection.changedFilePaths,
+          excludedPaths: sidecarAppliedPaths,
+          fallbackTaskId,
+          runId: `sidecar:${fallbackTaskId}`,
+          stepId: 'agent',
+        });
+      const patchSummaries = [
+        ...sidecarPatchResult.summaries,
+        ...(aedDiffPatchState?.changedFilesSummary ? [aedDiffPatchState.changedFilesSummary] : []),
+      ];
+      const displayedPatches = [
+        ...sidecarPatchResult.patches,
+        ...(aedDiffPatchState?.patches ?? []),
+      ];
+      const changedFilesSummary = mergeAiAgentPatchSummaries(patchSummaries);
+      const patchState = displayedPatches.length > 0 || changedFilesSummary
+        ? {
+          patches: displayedPatches,
+          changedFilesSummary,
+        }
+        : undefined;
+
+      if (sidecarPatchResult.runtimeEvents.length > 0) {
+        streamMetadata.runtimeEvents = compactRuntimeEvents([
+          ...(streamMetadata.runtimeEvents ?? []),
+          ...sidecarPatchResult.runtimeEvents,
+        ]);
+        appendVisibleRuntimeTimelineEvents(sidecarPatchResult.runtimeEvents);
+      }
 
       updateAgentExecutionMessage(
         session.assistantMessageId,
@@ -1873,13 +2580,18 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
         toolProjection.activityText,
         streamMetadata.runtimeEvents,
         streamMetadata.finalAnswerStarted,
+        streamMetadata.streamTokenSnapshot,
+        patchState,
       );
 
       await refreshChangedDocumentsAfterSidecarRun(
-        projection.changedFilePaths,
-        projection.hasFileMutations,
+        [...projection.changedFilePaths, ...sidecarAppliedPaths],
+        projection.hasFileMutations || sidecarAppliedPaths.length > 0,
       );
-      await updateFileRollbackPrompt(projection.changedFilePaths, projection.hasFileMutations);
+      await updateFileRollbackPrompt(
+        [...projection.changedFilePaths, ...sidecarAppliedPaths],
+        projection.hasFileMutations || sidecarAppliedPaths.length > 0,
+      );
       await sidecarAnswerCompletion;
 
       if (projection.pendingConfirmation) {
@@ -2211,11 +2923,11 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       const id = `attachment:${normalizedName}:${file.lastModified}:${file.size}`;
       const preview: IAiImageAttachmentPreview | undefined = previewSource
         ? {
-            src: previewSource,
-            width: dimensions?.width ?? null,
-            height: dimensions?.height ?? null,
-            mimeType: file.type || 'image/*',
-          }
+          src: previewSource,
+          width: dimensions?.width ?? null,
+          height: dimensions?.height ?? null,
+          mimeType: file.type || 'image/*',
+        }
         : undefined;
 
       const reference: IAiContextReference = {
@@ -2477,6 +3189,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       messages.value = nextMessages;
       runtimeTimelineEvents.value = collectConversationRuntimeEvents(nextMessages);
       proposedPatch.value = null;
+      appliedPatchPreview.value = null;
       fileRollbackPrompt.value = null;
       agentSteps.value = [];
       activeSidecarAgentSession.value = null;
@@ -2526,6 +3239,8 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     messages.value = visibleMessages;
     draft.value = '';
     errorMessage.value = '';
+    proposedPatch.value = null;
+    appliedPatchPreview.value = null;
     isSending.value = true;
     activeBufferedThreadId.value = titleThreadId;
 
@@ -2558,9 +3273,9 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     const nextMessages = visibleMessages.map((message) =>
       message.id === userMessage.id
         ? {
-            ...message,
-            references,
-          }
+          ...message,
+          references,
+        }
         : message,
     );
 
@@ -2651,6 +3366,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     proposedPatch.value = null;
     agentSteps.value = [];
     fileRollbackPrompt.value = null;
+    revertingChangedFilesSummaryId.value = null;
     runtimeTimelineEvents.value = [];
 
     agentPlan.resetPlan();
@@ -2725,6 +3441,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     });
 
     proposedPatch.value = payload.patch;
+    appliedPatchPreview.value = null;
     errorMessage.value = '';
   };
 
@@ -2769,6 +3486,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       ];
 
       proposedPatch.value = null;
+      appliedPatchPreview.value = patch;
       errorMessage.value = '';
     } catch (error) {
       errorMessage.value = toErrorMessage(error, 'Patch 应用失败');
@@ -2814,6 +3532,136 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
         updatedAt: new Date().toISOString(),
       };
       errorMessage.value = toErrorMessage(error, '回滚 AI 文件修改失败');
+    }
+  };
+
+  const rollbackChangedFilesSummary = async (
+    messageId: string,
+    summaryId: string,
+  ): Promise<void> => {
+    if (isSending.value || revertingChangedFilesSummaryId.value) {
+      return;
+    }
+
+    const message = findMessageById(messageId);
+    const summary = message?.changedFilesSummary;
+
+    if (!message || !summary || summary.id !== summaryId) {
+      errorMessage.value = '未找到可回滚的文件变更。';
+      return;
+    }
+
+    if (summary.revertedAt) {
+      return;
+    }
+
+    revertingChangedFilesSummaryId.value = summaryId;
+    errorMessage.value = '';
+
+    const restoredFilePaths: string[] = [];
+
+    try {
+      const checkpointEvent = getLatestCheckpointEvent(message);
+
+      if (checkpointEvent) {
+        try {
+          const restorePayload = await aiService.sidecarRestoreCheckpoint({
+            sessionId: createScopedId('mastra-rollback'),
+            runId: checkpointEvent.runId,
+            snapshotId: checkpointEvent.snapshotId?.trim() || checkpointEvent.runId,
+          });
+          const restoreRuntimeEvents = compactRuntimeEvents(
+            extractVisibleAgentRuntimeEvents(restorePayload.events),
+          );
+
+          if (restoreRuntimeEvents.length > 0) {
+            appendVisibleRuntimeTimelineEvents(restoreRuntimeEvents);
+            messages.value = messages.value.map((item) =>
+              item.id === messageId
+                ? {
+                  ...item,
+                  stream: {
+                    ...(item.stream ?? { status: 'completed' }),
+                    runtimeEvents: mergeRuntimeEvents(
+                      item.stream?.runtimeEvents,
+                      restoreRuntimeEvents,
+                    ),
+                  },
+                }
+                : item,
+            );
+          }
+        } catch (error) {
+          logger.warn({
+            event: 'ai.changed_files_summary.mastra_rollback_failed',
+            summaryId,
+            err: error,
+          });
+        }
+      }
+
+      const taskId = parseAiAedPatchRef(summary.patchRef);
+
+      if (taskId) {
+        try {
+          const revertResult = await aiEditService.revertTask({ taskId });
+
+          restoredFilePaths.push(...revertResult.restoredFiles);
+        } catch (error) {
+          logger.warn({
+            event: 'ai.changed_files_summary.aed_revert_task_failed',
+            summaryId,
+            taskId,
+            err: error,
+          });
+        }
+      }
+
+      if (restoredFilePaths.length === 0) {
+        const reversePatch = buildReversePatchSet(message.patches, summary);
+
+        if (!reversePatch) {
+          throw new Error('没有可用于回滚的 AED task 或反向 patch。');
+        }
+
+        const reverseResult = await aiService.applyPatch({
+          patch: reversePatch,
+          metadata: {
+            taskId: activeConversationId.value,
+            turnId: messageId,
+            reason: reversePatch.summary,
+            toolCallId: 'rollback_changed_files_summary',
+            confirmedByUser: true,
+          },
+        });
+
+        restoredFilePaths.push(...reverseResult.appliedFiles.map((file) => file.path));
+      }
+
+      await refreshChangedDocumentsAfterSidecarRun(
+        restoredFilePaths,
+        restoredFilePaths.length > 0,
+      );
+
+      const revertedAt = new Date().toISOString();
+
+      messages.value = messages.value.map((item) =>
+        item.id === messageId && item.changedFilesSummary?.id === summaryId
+          ? {
+            ...item,
+            changedFilesSummary: {
+              ...item.changedFilesSummary,
+              revertedAt,
+            },
+          }
+          : item,
+      );
+      fileRollbackPrompt.value = null;
+      commitDisplayMessagesToStore();
+    } catch (error) {
+      errorMessage.value = toErrorMessage(error, '回滚文件变更失败');
+    } finally {
+      revertingChangedFilesSummaryId.value = null;
     }
   };
 
@@ -2885,11 +3733,13 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     isClearDialogOpen,
     currentReferences,
     proposedPatch,
+    appliedPatchPreview,
     isApplyingPatch,
     fileRollbackPrompt,
     runtimeTimelineEvents,
     conversationCheckpoints,
     restoringCheckpointId,
+    revertingChangedFilesSummaryId,
     activeMode,
     agentSteps,
     toolDefinitions,
@@ -2918,6 +3768,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     previewPatchFromLastAnswer,
     applyProposedPatch,
     rollbackLatestFileChange,
+    rollbackChangedFilesSummary,
     restoreConversationCheckpoint,
     clearConversation,
     deleteConversation,

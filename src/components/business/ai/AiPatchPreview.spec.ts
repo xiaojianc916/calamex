@@ -32,8 +32,9 @@ describe('AiPatchPreview', () => {
       },
     });
 
-    expect(wrapper.text()).toContain('D:/test/demo.c');
-    expect(wrapper.text()).not.toContain('\\\\?\\');
+    expect(wrapper.find('.ai-patch-file-name').text()).toContain('demo.c');
+    expect(wrapper.find('.ai-patch-file-name').attributes('title')).toContain('D:/test/demo.c');
+    expect(wrapper.find('.ai-patch-file-name').attributes('title')).not.toContain('\\\\?\\');
   });
 
   it('复用现有 Diff hunk 组件渲染增删行', () => {
@@ -49,6 +50,20 @@ describe('AiPatchPreview', () => {
     expect(wrapper.find('.ai-diff-hunk-line.is-add').text()).toContain('#include <stdbool.h>');
   });
 
+  it('默认以 Codex 风格折叠文件 diff', () => {
+    const wrapper = mount(AiPatchPreview, {
+      props: {
+        patch: createPatch(),
+        variant: 'message',
+      },
+    });
+
+    expect(wrapper.find('.ai-patch-file').attributes('open')).toBeUndefined();
+    expect(wrapper.find('.ai-patch-file-summary').text()).toContain('demo.c');
+    expect(wrapper.find('.ai-patch-file-summary').text()).toContain('+1');
+    expect(wrapper.find('.ai-patch-file-summary').text()).toContain('-1');
+  });
+
   it('点击按钮会输出可由独立 Git Diff 面板打开的预览数据', async () => {
     const wrapper = mount(AiPatchPreview, {
       props: {
@@ -57,7 +72,7 @@ describe('AiPatchPreview', () => {
       },
     });
 
-    await wrapper.find('.ai-patch-file-diff-button').trigger('click');
+    await wrapper.find('.ai-patch-diff-button').trigger('click');
 
     const payload = wrapper.emitted('open-diff')?.[0]?.[0];
 

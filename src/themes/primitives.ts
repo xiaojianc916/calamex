@@ -67,7 +67,7 @@ export const P = {
     darkBgInset: '#010409',                 // --bgColor-inset
     darkBgEmphasis: '#3d444d',              // --bgColor-emphasis
     darkBgNeutralMuted: '#656c7633',        // --bgColor-neutral-muted
-    darkBgAccentEmphasis: '#1f6feb',        // --bgColor-accent-emphasis
+    darkBgAccentEmphasis: '#dcdee0',        // --bgColor-accent-emphasis
     darkBgAccentMuted: '#388bfd1a',         // --bgColor-accent-muted
     darkBgSuccessEmphasis: '#238636',       // --bgColor-success-emphasis
     darkBgSuccessMuted: '#2ea04326',        // --bgColor-success-muted

@@ -255,4 +255,32 @@ describe('agent sidecar event contract', () => {
       step: ['durable-agentic-execution', 'durable-llm-execution'],
     });
   });
+
+  it('accepts done events with token usage snapshots', () => {
+    const parsed = agentSidecarResponsePayloadSchema.parse({
+      sessionId: 'agent-session-usage',
+      events: [
+        {
+          type: 'done',
+          result: '完成',
+          promptTokens: 13,
+          completionTokens: 5,
+          totalTokens: 18,
+          usage: {
+            inputTokens: 13,
+            outputTokens: 5,
+            totalTokens: 18,
+          },
+        },
+      ],
+      result: '完成',
+    });
+
+    expect(parsed.events[0]).toMatchObject({
+      type: 'done',
+      promptTokens: 13,
+      completionTokens: 5,
+      totalTokens: 18,
+    });
+  });
 });

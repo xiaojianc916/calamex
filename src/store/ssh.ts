@@ -70,7 +70,7 @@ export const useSshStore = defineStore('ssh', () => {
     host: '',
     port: DEFAULT_SSH_PORT,
     username: '',
-    authMode: 'key',
+    authMode: 'password',
     identityPath: '',
     password: '',
   })

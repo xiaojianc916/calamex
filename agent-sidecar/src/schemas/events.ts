@@ -58,6 +58,30 @@ export const agentRuntimeEventSchema = z.object({
   spanId: z.string().min(1).optional(),
 }).passthrough();
 
+const languageModelUsageSchema = z
+  .object({
+    inputTokens: z.number().nonnegative(),
+    inputTokenDetails: z
+      .object({
+        noCacheTokens: z.number().nonnegative(),
+        cacheReadTokens: z.number().nonnegative(),
+        cacheWriteTokens: z.number().nonnegative(),
+      })
+      .optional(),
+    outputTokens: z.number().nonnegative(),
+    outputTokenDetails: z
+      .object({
+        textTokens: z.number().nonnegative(),
+        reasoningTokens: z.number().nonnegative(),
+      })
+      .optional(),
+    totalTokens: z.number().nonnegative(),
+    cachedInputTokens: z.number().nonnegative().optional(),
+    reasoningTokens: z.number().nonnegative().optional(),
+    raw: z.unknown().optional(),
+  })
+  .passthrough();
+
 export const agentUiEventSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('message_delta'),
@@ -108,6 +132,10 @@ export const agentUiEventSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('done'),
     result: z.string(),
+    promptTokens: z.number().nonnegative().optional(),
+    completionTokens: z.number().nonnegative().optional(),
+    totalTokens: z.number().nonnegative().optional(),
+    usage: languageModelUsageSchema.nullable().optional(),
   }),
   z.object({
     type: z.literal('error'),

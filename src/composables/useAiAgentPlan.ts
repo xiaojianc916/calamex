@@ -6,14 +6,15 @@ import {
   mapSidecarPlanToTaskSteps,
   projectSidecarPlanRecordResponse,
   projectSidecarPlanResponse,
+  resolveSidecarOfficialUsage,
 } from '@/utils/agent-sidecar-events';
 import { toErrorMessage } from '@/utils/error';
 import { logger } from '@/utils/logger';
 
 import type { IAgentSidecarResponsePayload } from '@/types/agent-sidecar';
 import type {
-  IAiContextReference,
   IAiAgentPlanMetadata,
+  IAiContextReference,
   IAiTaskPlanStep,
   IAiToolCall,
 } from '@/types/ai';
@@ -159,6 +160,12 @@ export const useAiAgentPlan = () => {
         ...(options.threadId ? { threadId: options.threadId } : {}),
         ...(options.planId ? { planId: options.planId } : {}),
       });
+      const usageResolution = resolveSidecarOfficialUsage(payload);
+
+      if (usageResolution.resolved) {
+        store.setLatestOfficialUsage(usageResolution.usage);
+      }
+
       const projection = projectSidecarPlanResponse(payload, goal);
 
       if (projection.errorMessage) {

@@ -17,6 +17,7 @@ import {
 import type { TAgentRuntimeEvent } from '@/types/agent-sidecar';
 import {
   Activity,
+  BadgeCheck,
   BookOpen,
   Brain,
   ChartColumn,
@@ -45,6 +46,10 @@ const REASONING_SEGMENT_CHARS = 420;
 const PREVIEW_TAG_LIMIT = 96;
 const MAX_TOOL_TAGS = 3;
 const tokenNumberFormatter = new Intl.NumberFormat('zh-CN');
+const HIDDEN_RUNTIME_EVENT_TYPES = new Set<TAgentRuntimeEvent['type']>([
+  'acontext.token.checked',
+  'acontext.provider_payload.checked',
+]);
 
 type TTaskIcon =
   | TAiRuntimeToolKind
@@ -59,6 +64,7 @@ type TTaskIcon =
   | 'brain'
   | 'image'
   | 'clock'
+  | 'check'
   | 'alert';
 
 type TTaskStatus = 'pending' | 'running' | 'succeeded' | 'failed';
@@ -108,6 +114,8 @@ type TToolRuntimeEvent = Extract<
     type: 'agent.tool.started' | 'agent.tool.completed' | 'agent.tool.progress';
   }
 >;
+type TTokenBudgetRuntimeEvent = Extract<TAgentRuntimeEvent, { type: 'acontext.token.checked' }>;
+type TProviderPayloadRuntimeEvent = Extract<TAgentRuntimeEvent, { type: 'acontext.provider_payload.checked' }>;
 
 interface IToolIconMatcher {
   icon: TTaskIcon;
@@ -144,6 +152,7 @@ const TOOL_ICON_MATCHERS: readonly IToolIconMatcher[] = [
     icon: 'folder',
     patterns: [
       /directory_tree/u,
+      /list_dir/u,
       /list_directory/u,
       /list_workspace_entries/u,
       /list_project_files/u,
@@ -169,6 +178,7 @@ const TOOL_ICON_MATCHERS: readonly IToolIconMatcher[] = [
     icon: 'file',
     patterns: [
       /read_file/u,
+      /read_file_window/u,
       /read_text_file/u,
       /read_current_file/u,
       /read_project_file/u,
@@ -182,9 +192,12 @@ const TOOL_ICON_MATCHERS: readonly IToolIconMatcher[] = [
     icon: 'patch',
     patterns: [
       /apply_patch/u,
+      /apply_file_edits/u,
       /edit_file/u,
       /propose_patch/u,
+      /propose_file_patch/u,
       /auto_apply_patch/u,
+      /mastra_workspace_ast_edit/u,
       /vscode_renamesymbol/u,
     ],
   },
@@ -247,6 +260,8 @@ const TOOL_ICON_MATCHERS: readonly IToolIconMatcher[] = [
       /search_text/u,
       /search_symbols/u,
       /search_files/u,
+      /grep_in_files/u,
+      /mastra_workspace_grep/u,
       /tavily/u,
       /web_search/u,
     ],
@@ -348,6 +363,7 @@ const TASK_ICON_MAP: Record<TTaskIcon, Component> = {
   brain: Brain,
   image: ImageIcon,
   clock: Clock3,
+  check: BadgeCheck,
   alert: CircleAlert,
 };
 
@@ -537,7 +553,40 @@ const parsePreviewJson = (value: string | undefined): unknown | null => {
   }
 };
 
+const SHELLCHECK_CODE_PATTERN = /\bSC\d{4}\b/giu;
+
+const extractShellcheckDiagnosticCodes = (value: string | undefined): string[] => {
+  if (!isNonEmptyString(value)) {
+    return [];
+  }
+
+  const matches = value.toUpperCase().match(SHELLCHECK_CODE_PATTERN) ?? [];
+  return [...new Set(matches)];
+};
+
+const hasShellcheckPassSummary = (value: string | undefined): boolean =>
+  isNonEmptyString(value) && value.includes('ShellCheck 通过');
+
+const hasShellcheckUnavailableSummary = (value: string | undefined): boolean =>
+  isNonEmptyString(value) && value.includes('ShellCheck 不可用');
+
+const formatShellcheckIssueAction = (codes: readonly string[]): string => (
+  codes.length > 0
+    ? `语法存在一些问题：${codes.join('、')}`
+    : '语法存在一些问题'
+);
+
 const PREVIEW_PATH_KEYS = ['path', 'filePath', 'file_path', 'targetPath', 'target_path'] as const;
+const PREVIEW_QUERY_KEYS = [
+  'query',
+  'q',
+  'pattern',
+  'keyword',
+  'keywords',
+  'search',
+  'searchTerm',
+  'search_term',
+] as const;
 
 const WEB_SEARCH_TOOL_NAMES = new Set([
   'web_search',
@@ -550,15 +599,40 @@ const WEB_SEARCH_TOOL_NAMES = new Set([
 ]);
 
 const READ_FILE_TOOL_NAMES = new Set([
+  'read_file',
   'read_text_file',
+  'read_file_window',
   'mastra_workspace_read_file',
+  'mastra_workspace_lsp_inspect',
+]);
+
+const CURRENT_FILE_TOOL_NAMES = new Set([
+  'read_current_file',
+]);
+
+const DIRECTORY_READ_TOOL_NAMES = new Set([
+  'list_dir',
+]);
+
+const TEXT_SEARCH_TOOL_NAMES = new Set([
+  'grep_in_files',
+]);
+
+const SYMBOL_SEARCH_TOOL_NAMES = new Set([
+  'search_symbols',
 ]);
 
 const WRITE_FILE_TOOL_NAMES = new Set([
   'write_file',
   'string_replace_lsp',
+  'propose_file_patch',
   'mastra_workspace_write_file',
   'mastra_workspace_edit_file',
+  'mastra_workspace_ast_edit',
+]);
+
+const APPLY_FILE_EDIT_TOOL_NAMES = new Set([
+  'apply_file_edits',
 ]);
 
 const WEB_SEARCH_SOURCE_URL_KEYS = [
@@ -654,6 +728,121 @@ const resolvePreviewPath = (value: string | undefined): string | null => {
   }
 
   return extractPathFromTextPreview(value);
+};
+
+const collectPreviewQueryCandidate = (value: unknown, depth = 0): string | null => {
+  if (depth > 4 || value == null) {
+    return null;
+  }
+
+  if (isNonEmptyString(value)) {
+    return value.trim();
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const candidate = collectPreviewQueryCandidate(item, depth + 1);
+
+      if (candidate) {
+        return candidate;
+      }
+    }
+
+    return null;
+  }
+
+  if (typeof value !== 'object') {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+
+  for (const key of PREVIEW_QUERY_KEYS) {
+    const candidate = collectPreviewQueryCandidate(record[key], depth + 1);
+
+    if (candidate) {
+      return candidate;
+    }
+  }
+
+  return null;
+};
+
+const resolvePreviewQuery = (value: string | undefined): string | null => {
+  const parsed = parsePreviewJson(value);
+  const structuredCandidate = collectPreviewQueryCandidate(parsed);
+
+  if (structuredCandidate) {
+    return structuredCandidate;
+  }
+
+  return isNonEmptyString(value) ? value.trim() : null;
+};
+
+const extractFileNameFromPath = (value: string | undefined): string | null => {
+  const path = resolvePreviewPath(value);
+
+  if (!path) {
+    return null;
+  }
+
+  const normalized = path.replace(/\\/gu, '/').replace(/\/+$/u, '');
+  const fileName = normalized.split('/').filter(Boolean).at(-1)?.trim();
+
+  return fileName || path;
+};
+
+const previewValueHasResultItems = (value: unknown, depth = 0): boolean => {
+  if (depth > 4 || value == null) {
+    return false;
+  }
+
+  if (Array.isArray(value)) {
+    return value.length > 0;
+  }
+
+  if (typeof value !== 'object') {
+    return Boolean(value);
+  }
+
+  const record = value as Record<string, unknown>;
+  const directCounts = [
+    record.count,
+    record.total,
+    record.totalCount,
+    record.matchCount,
+    record.matchesCount,
+  ];
+
+  if (directCounts.some((item) => typeof item === 'number' && item > 0)) {
+    return true;
+  }
+
+  for (const key of ['results', 'matches', 'items', 'symbols', 'files', 'entries']) {
+    const candidate = record[key];
+
+    if (Array.isArray(candidate) && candidate.length > 0) {
+      return true;
+    }
+  }
+
+  for (const key of ['result', 'toolResult', 'data', 'output']) {
+    if (previewValueHasResultItems(record[key], depth + 1)) {
+      return true;
+    }
+  }
+
+  return false;
+};
+
+const previewHasResultItems = (value: string | undefined): boolean => {
+  const parsed = parsePreviewJson(value);
+
+  if (parsed == null) {
+    return isNonEmptyString(value);
+  }
+
+  return previewValueHasResultItems(parsed);
 };
 
 const resolveWebSearchQuery = (value: string | undefined): string | null => {
@@ -867,6 +1056,145 @@ const describeToolAction = (
     ?? resolvePreviewPath(event.type === 'agent.tool.started' ? event.inputPreview : event.resultPreview)
     ?? undefined;
 
+  if (toolName === 'shellcheck') {
+    if (event.type !== 'agent.tool.completed') {
+      return {
+        action: '语法校验',
+        suppressMeta: true,
+      };
+    }
+
+    if (hasShellcheckPassSummary(event.resultPreview)) {
+      return {
+        action: '语法校验已通过',
+        suppressMeta: true,
+      };
+    }
+
+    const diagnosticCodes = extractShellcheckDiagnosticCodes(event.resultPreview);
+
+    if (diagnosticCodes.length > 0) {
+      return {
+        action: formatShellcheckIssueAction(diagnosticCodes),
+        suppressMeta: true,
+      };
+    }
+
+    if (hasShellcheckUnavailableSummary(event.resultPreview) || !event.ok) {
+      return {
+        action: '语法校验未完成',
+        suppressMeta: true,
+      };
+    }
+
+    return {
+      action: '语法校验已完成',
+      suppressMeta: true,
+    };
+  }
+
+  if (CURRENT_FILE_TOOL_NAMES.has(toolName)) {
+    if (event.type === 'agent.tool.completed' && !event.ok) {
+      return {
+        action: '当前文件读取失败',
+        suppressMeta: true,
+      };
+    }
+
+    return {
+      action: event.type === 'agent.tool.started'
+        ? '正在读取当前文件'
+        : '当前文件读取完成',
+      suppressMeta: true,
+    };
+  }
+
+  if (DIRECTORY_READ_TOOL_NAMES.has(toolName)) {
+    if (event.type === 'agent.tool.completed' && !event.ok) {
+      return {
+        action: '工作区目录读取失败',
+        suppressMeta: true,
+      };
+    }
+
+    return {
+      action: event.type === 'agent.tool.started'
+        ? '正在读取工作区目录'
+        : '工作区目录读取完成',
+      suppressMeta: true,
+    };
+  }
+
+  if (TEXT_SEARCH_TOOL_NAMES.has(toolName)) {
+    const query = fallbackResourceLabel
+      ?? (event.type === 'agent.tool.started' ? resolvePreviewQuery(event.inputPreview) : null)
+      ?? '搜索词';
+
+    if (event.type === 'agent.tool.completed' && !event.ok) {
+      return {
+        action: `未读取到 ${query}`,
+        resourceLabel: query,
+        suppressMeta: true,
+      };
+    }
+
+    return {
+      action: event.type === 'agent.tool.started'
+        ? `正在搜索 ${query}`
+        : previewHasResultItems(event.resultPreview)
+          ? `成功读取到 ${query}`
+          : `未读取到 ${query}`,
+      resourceLabel: query,
+      suppressMeta: true,
+    };
+  }
+
+  if (SYMBOL_SEARCH_TOOL_NAMES.has(toolName)) {
+    const query = fallbackResourceLabel
+      ?? (event.type === 'agent.tool.started' ? resolvePreviewQuery(event.inputPreview) : null)
+      ?? '搜索词';
+
+    if (event.type === 'agent.tool.completed' && !event.ok) {
+      return {
+        action: '当前文件读取失败',
+        resourceLabel: query,
+        suppressMeta: true,
+      };
+    }
+
+    return {
+      action: event.type === 'agent.tool.started'
+        ? `正在结构化搜索 ${query}`
+        : previewHasResultItems(event.resultPreview)
+          ? `成功搜索到 ${query}`
+          : `未搜索到 ${query}`,
+      resourceLabel: query,
+      suppressMeta: true,
+    };
+  }
+
+  if (APPLY_FILE_EDIT_TOOL_NAMES.has(toolName)) {
+    const fileName = fallbackResourceLabel
+      ?? (event.type === 'agent.tool.started' ? extractFileNameFromPath(event.inputPreview) : null)
+      ?? '文件';
+
+    if (event.type === 'agent.tool.completed' && !event.ok) {
+      return {
+        action: `编辑失败 ${fileName}`,
+        resourceLabel: fileName,
+        suppressMeta: true,
+      };
+    }
+
+    return {
+      action: event.type === 'agent.tool.started'
+        ? `正在编辑 ${fileName}`
+        : `编辑完成 ${fileName}`,
+      resourceLabel: fileName,
+      suppressMeta: true,
+    };
+  }
+
   if (READ_FILE_TOOL_NAMES.has(toolName) && resourceLabel) {
     if (event.type === 'agent.tool.completed' && !event.ok) {
       return {
@@ -954,6 +1282,94 @@ const describeToolAction = (
   };
 };
 
+const resolveToolEventIcon = (
+  event: Extract<TToolRuntimeEvent, { type: 'agent.tool.started' | 'agent.tool.completed' }>,
+  toolName: string,
+  fallbackIcon: TTaskIcon,
+): TTaskIcon => {
+  if (toolName !== 'shellcheck') {
+    return fallbackIcon;
+  }
+
+  if (
+    event.type === 'agent.tool.completed'
+    && (
+      extractShellcheckDiagnosticCodes(event.resultPreview).length > 0
+      || hasShellcheckUnavailableSummary(event.resultPreview)
+      || !event.ok
+    )
+  ) {
+    return 'alert';
+  }
+
+  return 'check';
+};
+
+const formatOptionalNumber = (value: number | undefined): string | null => (
+  typeof value === 'number' && Number.isFinite(value)
+    ? tokenNumberFormatter.format(value)
+    : null
+);
+
+const describeLargestTokenBudgetSource = (event: TTokenBudgetRuntimeEvent): string | null => {
+  const candidates = [
+    { label: '工具 schema', value: event.toolSchemaCharCount },
+    { label: '消息', value: event.messageCharCount },
+    { label: '系统提示', value: event.systemPromptCharCount },
+    { label: 'UI 上下文', value: event.contextCharCount },
+  ]
+    .filter((candidate): candidate is { label: string; value: number } =>
+      typeof candidate.value === 'number' && Number.isFinite(candidate.value) && candidate.value > 0,
+    )
+    .sort((left, right) => right.value - left.value);
+
+  const largest = candidates[0];
+
+  if (!largest) {
+    return null;
+  }
+
+  return `最大来源：${largest.label} ${tokenNumberFormatter.format(largest.value)} 字符`;
+};
+
+const describeTokenBudgetEvent = (event: TTokenBudgetRuntimeEvent): string => {
+  const segments = [
+    event.projectedInputTokensAvailable
+      ? `上下文预算检查，预计输入 token：${formatOptionalNumber(event.projectedInputTokens) ?? '未知'}`
+      : '上下文预算检查完成',
+    describeLargestTokenBudgetSource(event),
+  ];
+  const toolCount = formatOptionalNumber(event.toolCount);
+  const mcpToolCount = formatOptionalNumber(event.mcpToolCount);
+
+  if (toolCount) {
+    segments.push(mcpToolCount
+      ? `工具 ${toolCount} 个（MCP ${mcpToolCount} 个）`
+      : `工具 ${toolCount} 个`);
+  }
+
+  return segments.filter((segment): segment is string => Boolean(segment)).join('；');
+};
+
+const describeProviderPayloadEvent = (event: TProviderPayloadRuntimeEvent): string => {
+  const segments = [
+    `DeepSeek 实际请求 #${event.requestIndex}，预计输入 token：${formatOptionalNumber(event.projectedInputTokens) ?? '未知'}`,
+    `body ${formatOptionalNumber(event.requestBodyCharCount) ?? '未知'} 字符`,
+    `消息 ${formatOptionalNumber(event.messageCharCount) ?? '0'} 字符`,
+    event.toolCount > 0
+      ? `工具 schema ${formatOptionalNumber(event.toolSchemaCharCount) ?? '0'} 字符（${formatOptionalNumber(event.toolCount) ?? '0'} 个）`
+      : null,
+    event.responseFormatCharCount > 0
+      ? `结构化输出 ${formatOptionalNumber(event.responseFormatCharCount) ?? '0'} 字符`
+      : null,
+    event.reasoningReplayCharCount > 0
+      ? `reasoning 回填 ${formatOptionalNumber(event.reasoningReplayCharCount) ?? '0'} 字符`
+      : null,
+  ];
+
+  return segments.filter((segment): segment is string => Boolean(segment)).join('；');
+};
+
 const describeRunEvent = (event: TAgentRuntimeEvent): string | null => {
   switch (event.type) {
     case 'agent.run.started':
@@ -976,9 +1392,10 @@ const describeRunEvent = (event: TAgentRuntimeEvent): string | null => {
         : `模型调用失败：${event.errorMessage ?? '未知错误'}`;
 
     case 'acontext.token.checked':
-      return event.projectedInputTokensAvailable
-        ? `上下文预算检查，预计输入 token：${tokenNumberFormatter.format(event.projectedInputTokens ?? 0)}`
-        : '上下文预算检查完成';
+      return describeTokenBudgetEvent(event);
+
+    case 'acontext.provider_payload.checked':
+      return describeProviderPayloadEvent(event);
 
     case 'agent.text.delta':
     case 'agent.tool.progress':
@@ -1033,8 +1450,8 @@ const createToolNode = (
 
   const kind = classifyRuntimeToolKind(event.toolName);
   const toolName = normalizeRuntimeToolName(event.toolName);
-  const icon = resolveRuntimeToolIcon(event.toolName, kind);
   const actionDescriptor = describeToolAction(event, toolName, previousNode?.resourceLabel);
+  const icon = resolveToolEventIcon(event, toolName, resolveRuntimeToolIcon(event.toolName, kind));
 
   if (event.type === 'agent.tool.started') {
     return {
@@ -1216,6 +1633,10 @@ const buildTimelineItems = (events: readonly TAgentRuntimeEvent[]): TTimelineIte
     }
 
     if (event.type === 'agent.text.delta' || event.type === 'agent.debug') {
+      return;
+    }
+
+    if (HIDDEN_RUNTIME_EVENT_TYPES.has(event.type)) {
       return;
     }
 

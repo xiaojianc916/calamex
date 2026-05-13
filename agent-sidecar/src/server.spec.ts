@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,7 +9,6 @@ import { pathToFileURL } from 'node:url';
 import type { MastraModelConfig } from '@mastra/core/llm';
 import { ModelRouterLanguageModel } from '@mastra/core/llm';
 import { createTool } from '@mastra/core/tools';
-import { createWorkspaceTools, WORKSPACE_TOOLS, type AnyWorkspace } from '@mastra/core/workspace';
 import { z } from 'zod';
 
 import { buildSystemPrompt, extractVisibleAgentResultText } from './engines/agent-runtime-helpers.js';
@@ -18,15 +17,15 @@ import {
   mastraWorkingMemorySchema,
   resolveMastraStorageDirectory,
   resolveMastraStorageUrl,
+  resolveMemoryLastMessages,
+  resolveObservationalMemoryBufferingEnabled,
+  resolveObservationalMemoryEnabled,
   resolveProjectUuid,
   resolveSemanticRecallEnabled,
 } from './engines/mastra-memory.js';
-import { MastraRuntime } from './engines/mastra-runtime.js';
 import {
-  createConfiguredRuntime,
-  resolveConfiguredRuntimeName,
-  type IAgentSidecarRuntime,
-} from './engines/runtime.js';
+  MastraRuntime,
+} from './engines/mastra-runtime.js';
 import {
   LibsqlAgentPlanStore,
   type IAgentPlanStore,
@@ -34,15 +33,21 @@ import {
 } from './engines/plan-store.js';
 import { LibsqlAgentPlanWorkflowStore } from './engines/plan-workflow-store.js';
 import {
+  createConfiguredRuntime,
+  resolveConfiguredRuntimeName,
+  type IAgentSidecarRuntime,
+} from './engines/runtime.js';
+import {
   clearDeepSeekReasoningStoreForTest,
   deepseekReasoningFetch,
   runWithDeepSeekReasoningContext,
 } from './models/deepseek-reasoning-fetch.js';
-import { agentPlanGenerationSchema, agentPlanSchema } from './schemas/plan.js';
+import { compactModelOutput } from './models/model-output-budget.js';
 import {
   agentPlanDeltaSchema,
   agentPlanValidationReportSchema,
 } from './schemas/plan-workflow.js';
+import { agentPlanGenerationSchema, agentPlanSchema } from './schemas/plan.js';
 import {
   agentSidecarChatRequestSchema,
   agentSidecarExecuteRequestSchema,
@@ -50,8 +55,9 @@ import {
   agentSidecarRollbackRestoreRequestSchema,
   createAgentSidecarServer,
 } from './server.js';
-import { createMastraTimeTools } from './tools/time.js';
+import { createMastraFileTools } from './tools/file-primitives.js';
 import { ensureMastraLogFile } from './tools/log.js';
+import { createMastraTimeTools } from './tools/time.js';
 
 const unsupportedRuntimeResponse = async (
   ...args: Parameters<IAgentSidecarRuntime['chat']>
@@ -749,6 +755,28 @@ const toRecordForTest = (value: unknown): Record<string, unknown> | null => (
     : null
 );
 
+type TExecutableToolForTest = {
+  execute?: (inputData: unknown, context: unknown) => Promise<unknown> | unknown;
+  toModelOutput?: (output: unknown) => unknown;
+};
+
+const getExecutableToolForTest = (
+  tools: Record<string, unknown>,
+  name: string,
+): TExecutableToolForTest => {
+  const tool = tools[name];
+
+  assert.equal(Boolean(tool && typeof tool === 'object'), true);
+  return tool as TExecutableToolForTest;
+};
+
+const readJsonModelOutputValueForTest = (value: unknown): Record<string, unknown> | null => {
+  const output = toRecordForTest(value);
+
+  assert.equal(output?.type, 'json');
+  return toRecordForTest(output?.value);
+};
+
 const isRuntimeEventType = (event: unknown, type: string): boolean => {
   const record = toRecordForTest(event);
   const runtimeEvent = toRecordForTest(record?.event);
@@ -772,6 +800,7 @@ const assertTokenBudgetEvent = (
     runId?: string;
     toolCount?: number;
     mcpToolCount?: number;
+    mcpServerCount?: number;
     uiContextToolCount?: number;
     nativeToolCount?: number;
     logToolCount?: number;
@@ -780,6 +809,7 @@ const assertTokenBudgetEvent = (
     memoryEnabled?: boolean;
     maxSteps?: number;
     toolChoice?: 'auto' | 'none';
+    toolLoadStrategy?: string;
   } = {},
 ): void => {
   const event = findTokenBudgetEvent(events);
@@ -858,7 +888,123 @@ describe('DeepSeek reasoning fetch middleware', () => {
     const body = toRecordForTest(capturedBodies[0]);
     const messages = Array.isArray(body?.messages) ? body.messages : [];
     const assistantMessage = toRecordForTest(messages[0]);
+    assert.equal(assistantMessage?.content, '');
     assert.equal(assistantMessage?.reasoning_content, '需要先读取时间。');
+  });
+
+  it('normalizes missing DeepSeek message content before sending tool-call history', async () => {
+    clearDeepSeekReasoningStoreForTest();
+    const originalFetch = globalThis.fetch;
+    const capturedBodies: unknown[] = [];
+
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      capturedBodies.push(JSON.parse(String(init?.body)) as unknown);
+      return new Response(JSON.stringify({ choices: [{ message: { role: 'assistant', content: '完成' } }] }), {
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as typeof fetch;
+
+    try {
+      await runWithDeepSeekReasoningContext({ sessionId: 'session-content', runId: 'run-content' }, async () => {
+        const response = await deepseekReasoningFetch('https://example.com/chat/completions', {
+          method: 'POST',
+          body: JSON.stringify({
+            messages: [
+              { role: 'system', content: '系统提示' },
+              { role: 'user', content: '读取文件' },
+              {
+                role: 'assistant',
+                tool_calls: [{ id: 'tool-content-1' }],
+              },
+              {
+                role: 'tool',
+                tool_call_id: 'tool-content-1',
+                content: null,
+              },
+            ],
+          }),
+        });
+        await response.text();
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      clearDeepSeekReasoningStoreForTest();
+    }
+
+    const body = toRecordForTest(capturedBodies[0]);
+    const messages = Array.isArray(body?.messages) ? body.messages : [];
+    const assistantMessage = toRecordForTest(messages[2]);
+    const toolMessage = toRecordForTest(messages[3]);
+
+    assert.equal(assistantMessage?.content, '');
+    assert.equal(toolMessage?.content, '');
+  });
+
+  it('emits sanitized stats from the actual DeepSeek request payload', async () => {
+    const originalFetch = globalThis.fetch;
+    const payloadStats: unknown[] = [];
+
+    globalThis.fetch = (async (): Promise<Response> =>
+      new Response(JSON.stringify({ choices: [{ message: { role: 'assistant', content: '完成' } }] }), {
+        headers: { 'content-type': 'application/json' },
+      })) as typeof fetch;
+
+    try {
+      await runWithDeepSeekReasoningContext({
+        sessionId: 'session-payload',
+        runId: 'run-payload',
+        onRequestPayload: (stats) => {
+          payloadStats.push(stats);
+        },
+      }, async () => {
+        const response = await deepseekReasoningFetch('https://example.com/chat/completions', {
+          method: 'POST',
+          body: JSON.stringify({
+            model: 'deepseek-reasoner',
+            stream: true,
+            messages: [
+              { role: 'system', content: '系统提示' },
+              { role: 'user', content: '请读取文件' },
+              { role: 'assistant', content: '', reasoning_content: '需要工具' },
+            ],
+            tools: [{
+              type: 'function',
+              function: {
+                name: 'mcp_call_tool',
+                description: '调用 MCP 工具',
+                parameters: {
+                  type: 'object',
+                  properties: {
+                    toolName: { type: 'string' },
+                  },
+                },
+              },
+            }],
+            response_format: {
+              type: 'json_object',
+            },
+          }),
+        });
+        await response.text();
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    const stats = toRecordForTest(payloadStats[0]);
+
+    assert.equal(stats?.provider, 'deepseek');
+    assert.equal(stats?.model, 'deepseek-reasoner');
+    assert.equal(stats?.stream, true);
+    assert.equal(stats?.toolCount, 1);
+    assert.equal(stats?.reasoningInjected, false);
+    assert.equal(stats?.reasoningReplayCharCount, 4);
+    assert.equal(typeof stats?.requestBodyCharCount, 'number');
+    assert.equal(typeof stats?.projectedInputTokens, 'number');
+    assert.ok(Number(stats?.messageCharCount) > 0);
+    assert.ok(Number(stats?.toolSchemaCharCount) > 0);
+    assert.ok(Number(stats?.responseFormatCharCount) > 0);
+    assert.doesNotMatch(JSON.stringify(stats), /系统提示|请读取文件|需要工具/u);
   });
 
   it('captures streaming reasoning_content across SSE chunks without changing the stream body', async () => {
@@ -1189,6 +1335,29 @@ describe('Agent sidecar system prompt', () => {
     assert.doesNotMatch(prompt, /const hidden = true/u);
     assert.doesNotMatch(prompt, /src\/app\.ts/u);
   });
+
+  it('caps visible UI context previews before they enter the system prompt', () => {
+    const longPreview = `${'上下文'.repeat(800)}TAIL_SHOULD_NOT_ENTER_PROMPT`;
+    const prompt = buildSystemPrompt({
+      mode: 'agent',
+      goal: '解释选中的上下文',
+      messages: [{ role: 'user', content: '解释选中的上下文' }],
+      context: [
+        {
+          id: 'selection:src/app.ts',
+          kind: 'selection',
+          label: 'app.ts selection',
+          path: 'src/app.ts',
+          range: { startLine: 1, endLine: 200 },
+          contentPreview: longPreview,
+          redacted: false,
+        },
+      ],
+    }, 'deepseek-v4-pro');
+
+    assert.match(prompt, /内容已截断/u);
+    assert.doesNotMatch(prompt, /TAIL_SHOULD_NOT_ENTER_PROMPT/u);
+  });
 });
 
 describe('Mastra memory helpers', () => {
@@ -1216,6 +1385,31 @@ describe('Mastra memory helpers', () => {
 
     assert.equal(resolveSemanticRecallEnabled({
       AGENT_SIDECAR_MEMORY_EMBEDDER_MODEL: 'openai/text-embedding-3-small',
+    } as NodeJS.ProcessEnv), true);
+  });
+
+  it('keeps memory replay small by default with a bounded override', () => {
+    assert.equal(resolveMemoryLastMessages({} as NodeJS.ProcessEnv), 6);
+    assert.equal(resolveMemoryLastMessages({
+      AGENT_SIDECAR_MEMORY_LAST_MESSAGES: '12',
+    } as NodeJS.ProcessEnv), 12);
+    assert.equal(resolveMemoryLastMessages({
+      AGENT_SIDECAR_MEMORY_LAST_MESSAGES: '200',
+    } as NodeJS.ProcessEnv), 12);
+    assert.equal(resolveMemoryLastMessages({
+      AGENT_SIDECAR_MEMORY_LAST_MESSAGES: '1',
+    } as NodeJS.ProcessEnv), 2);
+  });
+
+  it('keeps observational memory opt-in to avoid hidden background model calls', () => {
+    assert.equal(resolveObservationalMemoryEnabled({} as NodeJS.ProcessEnv), false);
+
+    assert.equal(resolveObservationalMemoryEnabled({
+      AGENT_SIDECAR_MEMORY_ENABLE_OBSERVATIONAL: '1',
+    } as NodeJS.ProcessEnv), true);
+
+    assert.equal(resolveObservationalMemoryBufferingEnabled({
+      AGENT_SIDECAR_MEMORY_ENABLE_OBSERVATIONAL_BUFFERING: 'true',
     } as NodeJS.ProcessEnv), true);
   });
 
@@ -1291,6 +1485,432 @@ describe('Mastra memory helpers', () => {
 
     assert.equal(scope.thread, 'ui-thread-1');
     assert.equal(scope.resource, 'agent-sidecar:global');
+  });
+});
+
+describe('Model output budget helpers', () => {
+  it('compacts large structured tool outputs before replaying them to the model', () => {
+    const compacted = compactModelOutput({
+      result: {
+        content: '工具输出'.repeat(2_000),
+        rows: Array.from({ length: 40 }, (_, index) => ({ index })),
+      },
+    }, {
+      maxTotalChars: 1_000,
+      maxStringChars: 300,
+      maxArrayItems: 5,
+      maxObjectKeys: 10,
+      maxDepth: 5,
+    });
+    const serialized = JSON.stringify(compacted) ?? '';
+
+    assert.equal(typeof serialized, 'string');
+    assert.match(serialized, /内容已截断|modelOutputTruncated/u);
+    assert.ok(serialized.length < '工具输出'.repeat(2_000).length);
+    assert.match(serialized, /modelOutputOmittedItems/u);
+  });
+});
+
+describe('Mastra file primitive tools', () => {
+  it('reads a bounded 1-indexed file window with navigation metadata', async () => {
+    const workspaceRoot = createTemporaryWorkspace();
+
+    try {
+      mkdirSync(join(workspaceRoot, 'src'), { recursive: true });
+      writeFileSync(
+        join(workspaceRoot, 'src', 'app.ts'),
+        ['alpha', 'beta', 'gamma', 'delta'].join('\n'),
+        'utf8',
+      );
+
+      const tools = createMastraFileTools(workspaceRoot);
+      const readTool = getExecutableToolForTest(tools, 'read_file_window');
+
+      if (!readTool.execute) {
+        throw new Error('read_file_window execute 不可用。');
+      }
+
+      const result = toRecordForTest(await readTool.execute({
+        path: 'src/app.ts',
+        startLine: 2,
+        limit: 2,
+      }, {}));
+
+      assert.notEqual(result, null);
+      assert.equal(result?.path, 'src/app.ts');
+      assert.equal(result?.totalLines, 4);
+      assert.equal(result?.totalLinesKnown, true);
+      assert.equal(result?.encoding, 'utf8');
+      assert.equal(result?.startLine, 2);
+      assert.equal(result?.endLine, 3);
+      assert.equal(result?.truncated, true);
+      assert.equal(result?.nextStartLine, 4);
+      assert.match(String(result?.content), /2 \| beta/u);
+      assert.match(String(result?.content), /3 \| gamma/u);
+    } finally {
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('preserves read_file_window content payload when projecting output to the model', async () => {
+    const workspaceRoot = createTemporaryWorkspace();
+    const sentinel = 'READ_WINDOW_PAYLOAD_MUST_SURVIVE_MODEL_OUTPUT';
+
+    try {
+      mkdirSync(join(workspaceRoot, 'src'), { recursive: true });
+      writeFileSync(
+        join(workspaceRoot, 'src', 'payload.ts'),
+        Array.from({ length: 120 }, (_, index) => {
+          if (index === 119) {
+            return `export const marker = '${sentinel}';`;
+          }
+
+          return `export const value${index} = '${String(index).padStart(3, '0')}-abcdefghijklmnopqrstuvwxyz';`;
+        }).join('\n'),
+        'utf8',
+      );
+
+      const tools = createMastraFileTools(workspaceRoot);
+      const readTool = getExecutableToolForTest(tools, 'read_file_window');
+
+      if (!readTool.execute || !readTool.toModelOutput) {
+        throw new Error('read_file_window execute/toModelOutput 不可用。');
+      }
+
+      const rawResult = await readTool.execute({
+        path: 'src/payload.ts',
+        startLine: 1,
+        limit: 120,
+      }, {});
+      const rawRecord = toRecordForTest(rawResult);
+      const modelRecord = readJsonModelOutputValueForTest(readTool.toModelOutput(rawResult));
+      const modelSerialized = JSON.stringify(modelRecord) ?? '';
+
+      assert.equal(rawRecord?.contentTruncated, false);
+      assert.match(String(modelRecord?.content), new RegExp(sentinel, 'u'));
+      assert.equal(modelRecord?.encoding, 'utf8');
+      assert.equal(modelRecord?.startLine, 1);
+      assert.equal(modelRecord?.endLine, 120);
+      assert.doesNotMatch(modelSerialized, /modelOutputTruncated|内容已截断/u);
+    } finally {
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('does not full-scan large files just to report totalLines', async () => {
+    const workspaceRoot = createTemporaryWorkspace();
+
+    try {
+      mkdirSync(join(workspaceRoot, 'src'), { recursive: true });
+      writeFileSync(
+        join(workspaceRoot, 'src', 'large.log'),
+        Array.from({ length: 40_000 }, (_, index) => `line-${index} abcdefghijklmnopqrstuvwxyz`).join('\n'),
+        'utf8',
+      );
+
+      const tools = createMastraFileTools(workspaceRoot);
+      const readTool = getExecutableToolForTest(tools, 'read_file_window');
+
+      if (!readTool.execute) {
+        throw new Error('read_file_window execute 不可用。');
+      }
+
+      const result = toRecordForTest(await readTool.execute({
+        path: 'src/large.log',
+        startLine: 1,
+        limit: 2,
+      }, {}));
+
+      assert.equal(result?.totalLines, -1);
+      assert.equal(result?.totalLinesKnown, false);
+      assert.equal(result?.startLine, 1);
+      assert.equal(result?.endLine, 2);
+      assert.equal(result?.truncated, true);
+      assert.equal(result?.nextStartLine, 3);
+    } finally {
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('returns structured errors instead of throwing for invalid file reads', async () => {
+    const workspaceRoot = createTemporaryWorkspace();
+
+    try {
+      const tools = createMastraFileTools(workspaceRoot);
+      const readTool = getExecutableToolForTest(tools, 'read_file_window');
+
+      if (!readTool.execute) {
+        throw new Error('read_file_window execute 不可用。');
+      }
+
+      const result = toRecordForTest(await readTool.execute({
+        path: '../outside.ts',
+      }, {}));
+      const error = toRecordForTest(result?.error);
+
+      assert.equal(error?.code, 'INVALID_PATH');
+    } finally {
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects file reads through symlinks that resolve outside the workspace', async (context) => {
+    const workspaceRoot = createTemporaryWorkspace();
+    const outsideRoot = mkdtempSync(join(tmpdir(), 'mastra-outside-'));
+
+    try {
+      writeFileSync(join(outsideRoot, 'secret.txt'), 'secret', 'utf8');
+
+      try {
+        symlinkSync(
+          outsideRoot,
+          join(workspaceRoot, 'escape'),
+          process.platform === 'win32' ? 'junction' : 'dir',
+        );
+      } catch (error) {
+        const code = error && typeof error === 'object' && 'code' in error
+          && typeof error.code === 'string'
+          ? error.code
+          : null;
+
+        if (code === 'EPERM' || code === 'EACCES') {
+          context.skip('当前系统不允许创建 symlink/junction，跳过真实路径逃逸测试。');
+          return;
+        }
+
+        throw error;
+      }
+
+      const tools = createMastraFileTools(workspaceRoot);
+      const readTool = getExecutableToolForTest(tools, 'read_file_window');
+
+      if (!readTool.execute) {
+        throw new Error('read_file_window execute 不可用。');
+      }
+
+      const result = toRecordForTest(await readTool.execute({
+        path: 'escape/secret.txt',
+      }, {}));
+      const error = toRecordForTest(result?.error);
+
+      assert.equal(error?.code, 'INVALID_PATH');
+    } finally {
+      rmSync(workspaceRoot, { recursive: true, force: true });
+      rmSync(outsideRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('searches files with a global match cap and reports truncation', async () => {
+    const workspaceRoot = createTemporaryWorkspace();
+
+    try {
+      writeFileSync(join(workspaceRoot, 'a.txt'), ['foo one', 'bar', 'foo two'].join('\n'), 'utf8');
+      writeFileSync(join(workspaceRoot, 'b.txt'), ['foo three', 'foo four'].join('\n'), 'utf8');
+
+      const tools = createMastraFileTools(workspaceRoot);
+      const grepTool = getExecutableToolForTest(tools, 'grep_in_files');
+
+      if (!grepTool.execute) {
+        throw new Error('grep_in_files execute 不可用。');
+      }
+
+      const result = toRecordForTest(await grepTool.execute({
+        pattern: 'foo',
+        paths: { include: ['**/*.txt'] },
+        contextLines: 0,
+        maxMatches: 2,
+        maxFilesScanned: 20,
+        caseSensitive: true,
+      }, {}));
+
+      assert.notEqual(result, null);
+      assert.equal(result?.matchesReturned, 2);
+      assert.equal(result?.totalMatches, -1);
+      assert.equal(result?.truncated, true);
+      assert.equal(toRecordForTest(result?.scanStats)?.filesScanned, 2);
+      assert.equal(Array.isArray(result?.files), true);
+    } finally {
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('lists directories with bounded entries and default heavy-folder exclusions', async () => {
+    const workspaceRoot = createTemporaryWorkspace();
+
+    try {
+      mkdirSync(join(workspaceRoot, 'src'), { recursive: true });
+      mkdirSync(join(workspaceRoot, 'node_modules', 'pkg'), { recursive: true });
+      writeFileSync(join(workspaceRoot, 'src', 'app.ts'), ['one', 'two'].join('\n'), 'utf8');
+      writeFileSync(join(workspaceRoot, 'node_modules', 'pkg', 'ignored.js'), 'ignored', 'utf8');
+
+      const tools = createMastraFileTools(workspaceRoot);
+      const listTool = getExecutableToolForTest(tools, 'list_dir');
+
+      if (!listTool.execute) {
+        throw new Error('list_dir execute 不可用。');
+      }
+
+      const result = toRecordForTest(await listTool.execute({
+        path: '.',
+        recursive: true,
+        maxEntries: 20,
+      }, {}));
+      const entries = Array.isArray(result?.entries) ? result.entries : [];
+      const paths = entries
+        .map((entry) => toRecordForTest(entry)?.path)
+        .filter((path): path is string => typeof path === 'string');
+      const appEntry = entries
+        .map((entry) => toRecordForTest(entry))
+        .find((entry) => entry?.path === 'src/app.ts');
+
+      assert.equal(paths.includes('src/app.ts'), true);
+      assert.equal(paths.some((path) => path.includes('node_modules')), false);
+      assert.equal(appEntry?.lines, 2);
+    } finally {
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('searches TypeScript and Vue script symbols without returning file payloads', async () => {
+    const workspaceRoot = createTemporaryWorkspace();
+
+    try {
+      mkdirSync(join(workspaceRoot, 'src'), { recursive: true });
+      writeFileSync(
+        join(workspaceRoot, 'src', 'app.ts'),
+        [
+          'export function loadUser() { return null; }',
+          'export class UserStore {',
+          '  refresh() { return loadUser(); }',
+          '}',
+        ].join('\n'),
+        'utf8',
+      );
+      writeFileSync(
+        join(workspaceRoot, 'src', 'Panel.vue'),
+        [
+          '<template><div /></template>',
+          '<script setup lang="ts">',
+          'const panelTitle = "设置";',
+          'function renderPanel() { return panelTitle; }',
+          '</script>',
+        ].join('\n'),
+        'utf8',
+      );
+
+      const tools = createMastraFileTools(workspaceRoot);
+      const symbolTool = getExecutableToolForTest(tools, 'search_symbols');
+
+      if (!symbolTool.execute) {
+        throw new Error('search_symbols execute 不可用。');
+      }
+
+      const result = toRecordForTest(await symbolTool.execute({
+        query: 'panel',
+        paths: { include: ['src/**/*'] },
+        maxSymbols: 20,
+        maxFilesScanned: 20,
+      }, {}));
+      const symbols = Array.isArray(result?.symbols) ? result.symbols.map(toRecordForTest) : [];
+
+      assert.equal(result?.query, 'panel');
+      assert.equal(symbols.some((symbol) => symbol?.name === 'panelTitle'), true);
+      assert.equal(symbols.some((symbol) => symbol?.name === 'renderPanel'), true);
+      assert.equal(symbols.some((symbol) => String(symbol?.preview).includes('<template>')), false);
+    } finally {
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('searches Bash symbols through ast-grep dynamic language registration', async () => {
+    const workspaceRoot = createTemporaryWorkspace();
+
+    try {
+      mkdirSync(join(workspaceRoot, 'scripts'), { recursive: true });
+      writeFileSync(
+        join(workspaceRoot, 'scripts', 'deploy'),
+        [
+          '#!/usr/bin/env bash',
+          'APP_ENV=production',
+          'deploy_app() {',
+          '  echo "$APP_ENV"',
+          '}',
+        ].join('\n'),
+        'utf8',
+      );
+
+      const tools = createMastraFileTools(workspaceRoot);
+      const symbolTool = getExecutableToolForTest(tools, 'search_symbols');
+
+      if (!symbolTool.execute) {
+        throw new Error('search_symbols execute 不可用。');
+      }
+
+      const result = toRecordForTest(await symbolTool.execute({
+        query: 'deploy',
+        paths: { include: ['scripts/*'] },
+        maxSymbols: 20,
+        maxFilesScanned: 20,
+      }, {}));
+      const symbols = Array.isArray(result?.symbols) ? result.symbols.map(toRecordForTest) : [];
+
+      assert.equal(symbols.some((symbol) =>
+        symbol?.name === 'deploy_app' &&
+        symbol?.kind === 'function' &&
+        symbol?.path === 'scripts/deploy'
+      ), true);
+    } finally {
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('exposes AED direct edit intent only in write profile', async () => {
+    const workspaceRoot = createTemporaryWorkspace();
+
+    try {
+      mkdirSync(join(workspaceRoot, 'src'), { recursive: true });
+      const filePath = join(workspaceRoot, 'src', 'app.ts');
+      writeFileSync(filePath, 'export const label = "old";', 'utf8');
+
+      const readonlyTools = createMastraFileTools(workspaceRoot, 'readonly');
+      const writeTools = createMastraFileTools(workspaceRoot, 'write');
+
+      assert.equal(Object.keys(readonlyTools).includes('apply_file_edits'), false);
+      assert.equal(Object.keys(writeTools).includes('apply_file_edits'), true);
+
+      const patchTool = getExecutableToolForTest(writeTools, 'apply_file_edits');
+
+      if (!patchTool.execute || !patchTool.toModelOutput) {
+        throw new Error('apply_file_edits execute/toModelOutput 不可用。');
+      }
+
+      const rawResult = await patchTool.execute({
+        path: 'src/app.ts',
+        edits: [{
+          oldString: '"old"',
+          newString: '"new"',
+        }],
+        summary: '更新 label',
+      }, {});
+      const result = toRecordForTest(rawResult);
+      const patch = toRecordForTest(result?.patch);
+      const files = Array.isArray(patch?.files) ? patch.files.map(toRecordForTest) : [];
+      const modelOutput = JSON.stringify(patchTool.toModelOutput(rawResult)) ?? '';
+
+      assert.equal(result?.path, 'src/app.ts');
+      assert.equal(result?.editCount, 1);
+      assert.equal(result?.replacements, 1);
+      assert.equal(result?.applied, true);
+      assert.match(String(result?.beforeHash), /^fnv64:/u);
+      assert.match(String(result?.afterHash), /^fnv64:/u);
+      assert.equal(files[0]?.path, filePath);
+      assert.equal(readFileSync(filePath, 'utf8'), 'export const label = "new";');
+      assert.equal(modelOutput.includes('export const label'), false);
+      assert.equal(modelOutput.includes('patchReady'), true);
+      assert.equal(modelOutput.includes('"applied":true'), true);
+    } finally {
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    }
   });
 });
 
@@ -1379,22 +1999,27 @@ describe('Agent runtime configuration', () => {
 });
 
 describe('Mastra runtime chat', () => {
-  it('maps Mastra text chunks and lets Mastra memory manage stored history', async () => {
+  it('maps Mastra text chunks and keeps explicit thread context', async () => {
     let capturedMessages: unknown;
     let capturedStreamOptions: unknown;
+    let capturedMcpOptions: unknown;
     let capturedModel: MastraModelConfig | null = null;
     let disconnectCalls = 0;
     const runtime = new MastraRuntime({
       readModelConfig: () => new ModelRouterLanguageModel({ providerId: 'deepseek', modelId: 'deepseek-chat', apiKey: 'test-key', url: 'https://example.com/v1' }),
-      createMcpClientBundle: async () => ({
-        clients: [],
-        configs: [],
-        errors: [],
-        tools: {},
-        disconnectAll: async () => {
-          disconnectCalls += 1;
-        },
-      }),
+      createMcpClientBundle: async (options) => {
+        capturedMcpOptions = options;
+
+        return {
+          clients: [],
+          configs: [],
+          errors: [],
+          tools: {},
+          disconnectAll: async () => {
+            disconnectCalls += 1;
+          },
+        };
+      },
       createAgent: (config) => {
         capturedModel = config.model;
 
@@ -1481,8 +2106,10 @@ describe('Mastra runtime chat', () => {
     assert.equal((capturedModel as { provider?: unknown } | null)?.provider, 'deepseek');
     assert.equal((capturedModel as { modelId?: unknown } | null)?.modelId, 'deepseek-chat');
     assert.deepEqual(capturedMessages, [
+      { role: 'assistant', content: '你好，我可以帮你做什么？' },
       { role: 'user', content: '请打招呼' },
     ]);
+    assert.equal(capturedMcpOptions, undefined);
     const chatMemoryScope = createMastraMemoryScope({}, response.sessionId);
     assert.deepEqual(capturedStreamOptions, {
       abortSignal: abortController.signal,
@@ -1496,16 +2123,18 @@ describe('Mastra runtime chat', () => {
     });
     assertTokenBudgetEvent(streamedEvents, {
       runId: 'req-123',
-      toolCount: 4,
-      mcpToolCount: 0,
+      toolCount: 6,
+      mcpToolCount: 2,
+      mcpServerCount: 0,
       uiContextToolCount: 0,
       nativeToolCount: 2,
       logToolCount: 2,
       workspaceEnabled: false,
-      browserEnabled: true,
+      browserEnabled: false,
       memoryEnabled: true,
       maxSteps: 10,
       toolChoice: 'auto',
+      toolLoadStrategy: 'gateway',
     });
     assert.deepEqual(stripTokenBudgetEvents(streamedEvents), [
       {
@@ -1521,6 +2150,14 @@ describe('Mastra runtime chat', () => {
       {
         type: 'done',
         result: '你好，世界',
+        promptTokens: 1,
+        completionTokens: 2,
+        totalTokens: 3,
+        usage: {
+          inputTokens: 1,
+          outputTokens: 2,
+          totalTokens: 3,
+        },
       },
     ]);
     assert.deepEqual(response, {
@@ -1529,10 +2166,132 @@ describe('Mastra runtime chat', () => {
       result: '你好，世界',
     });
     assert.match(response.sessionId, /^mastra-chat-/u);
-    assert.equal(disconnectCalls, 1);
+    assert.equal(disconnectCalls, 0);
   });
 
-  it('uses stored memory history for UI threads and surfaces OM compression events', async () => {
+  it('sums official usage across multiple model finish chunks', async () => {
+    const runtime = new MastraRuntime({
+      readModelConfig: () => new ModelRouterLanguageModel({ providerId: 'deepseek', modelId: 'deepseek-chat', apiKey: 'test-key', url: 'https://example.com/v1' }),
+      createMcpClientBundle: async () => ({
+        clients: [],
+        configs: [],
+        errors: [],
+        tools: {},
+        disconnectAll: async () => {},
+      }),
+      createAgent: () => ({
+        stream: async () => ({
+          fullStream: (async function* () {
+            yield {
+              type: 'finish',
+              runId: 'run-usage',
+              from: 'AGENT',
+              payload: {
+                output: {
+                  usage: {
+                    inputTokens: 10,
+                    outputTokens: 5,
+                    outputTokenDetails: {
+                      textTokens: 3,
+                      reasoningTokens: 2,
+                    },
+                    totalTokens: 15,
+                    reasoningTokens: 2,
+                    raw: {
+                      prompt_tokens: 10,
+                      completion_tokens: 5,
+                      total_tokens: 15,
+                      prompt_cache_hit_tokens: 2,
+                      prompt_cache_miss_tokens: 8,
+                      completion_tokens_details: {
+                        reasoning_tokens: 2,
+                      },
+                    },
+                  },
+                },
+              },
+            };
+            yield {
+              type: 'text-delta',
+              runId: 'run-usage',
+              from: 'AGENT',
+              payload: {
+                id: 'text-usage',
+                text: '完成',
+              },
+            };
+            yield {
+              type: 'finish',
+              runId: 'run-usage',
+              from: 'AGENT',
+              payload: {
+                output: {
+                  usage: {
+                    inputTokens: 20,
+                    outputTokens: 7,
+                    outputTokenDetails: {
+                      textTokens: 6,
+                      reasoningTokens: 1,
+                    },
+                    totalTokens: 27,
+                    reasoningTokens: 1,
+                    raw: {
+                      prompt_tokens: 20,
+                      completion_tokens: 7,
+                      total_tokens: 27,
+                      prompt_cache_hit_tokens: 1,
+                      prompt_cache_miss_tokens: 19,
+                      completion_tokens_details: {
+                        reasoning_tokens: 1,
+                      },
+                    },
+                  },
+                },
+              },
+            };
+          })(),
+        }),
+        generate: async () => {
+          throw new Error('generate should not be used in Mastra usage aggregation test');
+        },
+      }),
+    });
+
+    const response = await runtime.chat({
+      mode: 'ask',
+      goal: '汇总 token',
+      messages: [
+        { role: 'user', content: '汇总 token' },
+      ],
+      context: [],
+    });
+    const doneEvent = stripTokenBudgetEvents(response.events).find((event) => event.type === 'done');
+
+    assert.deepEqual(doneEvent, {
+      type: 'done',
+      result: '完成',
+      promptTokens: 30,
+      completionTokens: 12,
+      totalTokens: 42,
+      usage: {
+        inputTokens: 30,
+        inputTokenDetails: {
+          noCacheTokens: 27,
+          cacheReadTokens: 3,
+          cacheWriteTokens: 0,
+        },
+        outputTokens: 12,
+        outputTokenDetails: {
+          textTokens: 9,
+          reasoningTokens: 3,
+        },
+        totalTokens: 42,
+        reasoningTokens: 3,
+      },
+    });
+  });
+
+  it('uses UI thread context and surfaces OM compression events', async () => {
     let capturedMessages: unknown;
     let capturedStreamOptions: unknown;
     let capturedAgentMemoryEnabled = false;
@@ -1618,6 +2377,7 @@ describe('Mastra runtime chat', () => {
 
     assert.equal(capturedAgentMemoryEnabled, true);
     assert.deepEqual(capturedMessages, [
+      { role: 'assistant', content: '上一轮回复。' },
       { role: 'user', content: '请总结最新状态' },
     ]);
     const chatMemoryScope = createMastraMemoryScope({ threadId: 'ui-thread-1' }, response.sessionId);
@@ -1633,13 +2393,13 @@ describe('Mastra runtime chat', () => {
     });
     assertTokenBudgetEvent(response.events, {
       runId: 'run-om-1',
-      toolCount: 4,
-      mcpToolCount: 0,
+      toolCount: 6,
+      mcpToolCount: 2,
       uiContextToolCount: 0,
       nativeToolCount: 2,
       logToolCount: 2,
       workspaceEnabled: false,
-      browserEnabled: true,
+      browserEnabled: false,
       memoryEnabled: true,
       maxSteps: 10,
       toolChoice: 'auto',
@@ -1678,15 +2438,13 @@ describe('Mastra runtime chat', () => {
       },
     ]);
     assert.equal(response.result, '上下文已续上。');
-    assert.equal(disconnectCalls, 1);
+    assert.equal(disconnectCalls, 0);
   });
 
-  it('enables Mastra workspace AST edit and LSP inspect tools for workspace-backed chats', async () => {
+  it('uses native file primitives instead of Mastra Workspace tools for workspace-backed chats', async () => {
     const workspaceRoot = createTemporaryWorkspace();
-    let capturedWorkspace: AnyWorkspace | undefined;
-    let capturedWorkspaceHasLsp = false;
-    let capturedToolsConfig: ReturnType<AnyWorkspace['getToolsConfig']> | undefined;
-    let capturedWorkspaceToolNames: string[] = [];
+    let capturedWorkspace: unknown;
+    let capturedToolNames: string[] = [];
     let capturedStreamOptions: unknown;
     let disconnectCalls = 0;
     const runtime = new MastraRuntime({
@@ -1702,15 +2460,11 @@ describe('Mastra runtime chat', () => {
       }),
       createAgent: (config) => {
         capturedWorkspace = config.workspace;
-        capturedWorkspaceHasLsp = Boolean(config.workspace?.lsp);
-        capturedToolsConfig = config.workspace?.getToolsConfig();
+        capturedToolNames = Object.keys(config.tools ?? {});
 
         return {
           stream: async (_messages, streamOptions) => {
             capturedStreamOptions = streamOptions;
-            capturedWorkspaceToolNames = config.workspace
-              ? Object.keys(await createWorkspaceTools(config.workspace))
-              : [];
 
             return {
               fullStream: (async function* () {
@@ -1734,7 +2488,7 @@ describe('Mastra runtime chat', () => {
 
     try {
       const response = await runtime.chat({
-        mode: 'ask',
+        mode: 'agent',
         goal: '检查 workspace tools',
         messages: [{ role: 'user', content: '检查 workspace tools' }],
         workspaceRootPath: workspaceRoot,
@@ -1742,21 +2496,15 @@ describe('Mastra runtime chat', () => {
       });
 
       assert.equal(response.result, 'Workspace tools ready.');
-      assert.equal(capturedWorkspace?.status, 'destroyed');
-      assert.equal(capturedWorkspaceHasLsp, true);
-      assert.equal(capturedToolsConfig?.enabled, false);
-      assert.equal(capturedToolsConfig?.[WORKSPACE_TOOLS.FILESYSTEM.READ_FILE]?.enabled, true);
-      assert.equal(capturedToolsConfig?.[WORKSPACE_TOOLS.FILESYSTEM.GREP]?.enabled, true);
-      assert.equal(capturedToolsConfig?.[WORKSPACE_TOOLS.FILESYSTEM.AST_EDIT]?.enabled, true);
-      assert.equal(
-        capturedToolsConfig?.[WORKSPACE_TOOLS.FILESYSTEM.AST_EDIT]?.requireReadBeforeWrite,
-        true,
-      );
-      assert.equal(capturedToolsConfig?.[WORKSPACE_TOOLS.LSP.LSP_INSPECT]?.enabled, true);
-      assert.equal(capturedWorkspaceToolNames.includes(WORKSPACE_TOOLS.FILESYSTEM.AST_EDIT), true);
-      assert.equal(capturedWorkspaceToolNames.includes(WORKSPACE_TOOLS.LSP.LSP_INSPECT), true);
-      assert.equal(capturedWorkspaceToolNames.includes(WORKSPACE_TOOLS.FILESYSTEM.DELETE), false);
-      assert.equal(capturedWorkspaceToolNames.includes(WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND), false);
+      assert.equal(capturedWorkspace, undefined);
+      assert.equal(capturedToolNames.includes('read_file_window'), true);
+      assert.equal(capturedToolNames.includes('grep_in_files'), true);
+      assert.equal(capturedToolNames.includes('list_dir'), true);
+      assert.equal(capturedToolNames.includes('search_symbols'), true);
+      assert.equal(capturedToolNames.includes('apply_file_edits'), true);
+      assert.equal(capturedToolNames.includes('read_file'), false);
+      assert.equal(capturedToolNames.includes('grep'), false);
+      assert.equal(capturedToolNames.includes('lsp_inspect'), false);
       const workspaceMemoryScope = createMastraMemoryScope({ workspaceRootPath: workspaceRoot }, response.sessionId);
       assert.deepEqual(capturedStreamOptions, {
         maxSteps: 10,
@@ -1766,13 +2514,13 @@ describe('Mastra runtime chat', () => {
           resource: workspaceMemoryScope.resource,
         },
       });
-      assert.equal(disconnectCalls, 1);
+      assert.equal(disconnectCalls, 0);
     } finally {
       rmSync(workspaceRoot, { recursive: true, force: true });
     }
   });
 
-  it('uses Workspace filesystem tools instead of exposing duplicate filesystem MCP tools', async () => {
+  it('uses native file primitives without exposing raw MCP tool schemas', async () => {
     const workspaceRoot = createTemporaryWorkspace();
     let capturedToolNames: string[] = [];
     const runtime = new MastraRuntime({
@@ -1852,23 +2600,30 @@ describe('Mastra runtime chat', () => {
     try {
       await runtime.chat({
         mode: 'ask',
-        goal: '科学原理如何解释',
-        messages: [{ role: 'user', content: '科学原理如何解释' }],
+        goal: '请搜索项目代码里的 useAiAssistant',
+        messages: [{ role: 'user', content: '请搜索项目代码里的 useAiAssistant' }],
         workspaceRootPath: workspaceRoot,
         context: [],
       });
 
       assert.equal(capturedToolNames.includes('read_text_file'), false);
       assert.equal(capturedToolNames.includes('probe_grep'), false);
-      assert.equal(capturedToolNames.includes('probe_search_code'), true);
-      assert.equal(capturedToolNames.includes('probe_extract_code'), true);
-      assert.equal(capturedToolNames.includes('tavily_mcp_tavily_search'), true);
+      assert.equal(capturedToolNames.includes('probe_search_code'), false);
+      assert.equal(capturedToolNames.includes('probe_extract_code'), false);
+      assert.equal(capturedToolNames.includes('tavily_mcp_tavily_search'), false);
+      assert.equal(capturedToolNames.includes('read_file_window'), true);
+      assert.equal(capturedToolNames.includes('grep_in_files'), true);
+      assert.equal(capturedToolNames.includes('list_dir'), true);
+      assert.equal(capturedToolNames.includes('search_symbols'), true);
+      assert.equal(capturedToolNames.includes('apply_file_edits'), false);
+      assert.equal(capturedToolNames.includes('mcp_list_tools'), true);
+      assert.equal(capturedToolNames.includes('mcp_call_tool'), true);
     } finally {
       rmSync(workspaceRoot, { recursive: true, force: true });
     }
   });
 
-  it('keeps Probe grep when no Mastra workspace is available', async () => {
+  it('keeps MCP access behind the gateway when no Mastra workspace is available', async () => {
     let capturedToolNames: string[] = [];
     const runtime = new MastraRuntime({
       readModelConfig: () => new ModelRouterLanguageModel({ providerId: 'deepseek', modelId: 'deepseek-chat', apiKey: 'test-key', url: 'https://example.com/v1' }),
@@ -1920,7 +2675,8 @@ describe('Mastra runtime chat', () => {
       context: [],
     });
 
-    assert.equal(capturedToolNames.includes('probe_grep'), true);
+    assert.equal(capturedToolNames.includes('probe_grep'), false);
+    assert.equal(capturedToolNames.includes('mcp_call_tool'), true);
   });
 
   it('routes Mastra reasoning chunks into agent runtime events instead of final text', async () => {
@@ -1980,13 +2736,13 @@ describe('Mastra runtime chat', () => {
     });
     assertTokenBudgetEvent(streamedEvents, {
       runId: 'req-reasoning',
-      toolCount: 4,
-      mcpToolCount: 0,
+      toolCount: 6,
+      mcpToolCount: 2,
       uiContextToolCount: 0,
       nativeToolCount: 2,
       logToolCount: 2,
       workspaceEnabled: false,
-      browserEnabled: true,
+      browserEnabled: false,
       memoryEnabled: true,
       maxSteps: 10,
       toolChoice: 'auto',
@@ -2015,7 +2771,7 @@ describe('Mastra runtime chat', () => {
       },
     ]);
     assert.equal(response.result, '这是最终回答。');
-    assert.equal(disconnectCalls, 1);
+    assert.equal(disconnectCalls, 0);
   });
 
   it('streams Mastra tool calls into the new runtime activity timeline', async () => {
@@ -2123,7 +2879,7 @@ describe('Mastra runtime chat', () => {
     assert.equal(completedEvent.event?.ok, true);
     assert.match(String(completedEvent.event?.resultPreview ?? ''), /搜索完成/u);
     assert.equal(response.result, '已完成搜索。');
-    assert.equal(disconnectCalls, 1);
+    assert.equal(disconnectCalls, 0);
   });
 
   it('normalizes Mastra stream errors into the existing error event shape', async () => {
@@ -2166,13 +2922,13 @@ describe('Mastra runtime chat', () => {
     });
 
     assertTokenBudgetEvent(response.events, {
-      toolCount: 4,
-      mcpToolCount: 0,
+      toolCount: 6,
+      mcpToolCount: 2,
       uiContextToolCount: 0,
       nativeToolCount: 2,
       logToolCount: 2,
       workspaceEnabled: false,
-      browserEnabled: true,
+      browserEnabled: false,
       memoryEnabled: true,
       maxSteps: 10,
       toolChoice: 'auto',
@@ -2182,7 +2938,7 @@ describe('Mastra runtime chat', () => {
       message: 'Mastra Agent 执行失败：mastra exploded',
     }]);
     assert.equal(response.result, null);
-    assert.equal(disconnectCalls, 1);
+    assert.equal(disconnectCalls, 0);
   });
 });
 
@@ -2413,6 +3169,18 @@ describe('Mastra runtime built-in tools', () => {
 
   it('exposes read_current_file only when UI provides current-file tool context', async () => {
     let capturedToolNames: string[] = [];
+    const capturedReadCurrentFileTool: {
+      current: {
+        execute?: (inputData: unknown, context: unknown) => Promise<unknown> | unknown;
+        toModelOutput?: (output: unknown) => unknown;
+      } | null;
+    } = { current: null };
+    const setCapturedReadCurrentFileTool = (tool: {
+      execute?: (inputData: unknown, context: unknown) => Promise<unknown> | unknown;
+      toModelOutput?: (output: unknown) => unknown;
+    }): void => {
+      capturedReadCurrentFileTool.current = tool;
+    };
     const runtime = new MastraRuntime({
       readModelConfig: () => new ModelRouterLanguageModel({ providerId: 'deepseek', modelId: 'deepseek-chat', apiKey: 'test-key', url: 'https://example.com/v1' }),
       createMcpClientBundle: async () => ({
@@ -2424,6 +3192,14 @@ describe('Mastra runtime built-in tools', () => {
       }),
       createAgent: (config) => {
         capturedToolNames = Object.keys(config.tools ?? {});
+        const readCurrentFileTool = config.tools?.read_current_file;
+
+        if (readCurrentFileTool && typeof readCurrentFileTool === 'object') {
+          setCapturedReadCurrentFileTool(readCurrentFileTool as {
+            execute?: (inputData: unknown, context: unknown) => Promise<unknown> | unknown;
+            toModelOutput?: (output: unknown) => unknown;
+          });
+        }
 
         return {
           stream: async () => ({
@@ -2456,18 +3232,34 @@ describe('Mastra runtime built-in tools', () => {
           label: 'app.ts',
           path: 'src/app.ts',
           range: null,
-          contentPreview: 'const enabled = true;',
+          contentPreview: `${'const enabled = true;\n'.repeat(300)}CURRENT_FILE_TAIL_SHOULD_NOT_REPLAY`,
           redacted: false,
         },
       ],
     });
 
     assert.equal(capturedToolNames.includes('read_current_file'), true);
+    const readCurrentFileTool = capturedReadCurrentFileTool.current;
+
+    if (!readCurrentFileTool?.execute || !readCurrentFileTool.toModelOutput) {
+      throw new Error('read_current_file tool 未正确暴露执行和模型输出压缩入口。');
+    }
+
+    assert.equal(typeof readCurrentFileTool.execute, 'function');
+    assert.equal(typeof readCurrentFileTool.toModelOutput, 'function');
+
+    const rawOutput = await readCurrentFileTool.execute({}, {});
+    const rawSerialized = JSON.stringify(rawOutput) ?? '';
+    const modelSerialized = JSON.stringify(readCurrentFileTool.toModelOutput(rawOutput)) ?? '';
+
+    assert.doesNotMatch(rawSerialized, /CURRENT_FILE_TAIL_SHOULD_NOT_REPLAY/u);
+    assert.match(rawSerialized, /内容已截断/u);
+    assert.doesNotMatch(modelSerialized, /CURRENT_FILE_TAIL_SHOULD_NOT_REPLAY/u);
   });
 });
 
 describe('Mastra runtime execute', () => {
-  it('exposes MCP tools to Mastra execute, keeps the sidecar event contract, and releases the bundle after the run', async () => {
+  it('exposes MCP gateway tools to Mastra execute and keeps the sidecar event contract', async () => {
     let capturedInstructions = '';
     let capturedMessages: unknown;
     let capturedStreamOptions: unknown;
@@ -2584,7 +3376,9 @@ describe('Mastra runtime execute', () => {
     assert.deepEqual(capturedMessages, [
       { role: 'user', content: '请直接执行' },
     ]);
-    assert.equal(capturedToolNames.includes('git_read_file'), true);
+    assert.equal(capturedToolNames.includes('git_read_file'), false);
+    assert.equal(capturedToolNames.includes('mcp_call_tool'), true);
+    assert.equal(capturedToolNames.includes('mcp_list_tools'), true);
     assert.equal(capturedToolNames.includes('read_current_file'), false);
     assert.equal(capturedToolNames.includes('get_current_time'), true);
     assert.equal(capturedToolNames.includes('convert_time'), true);
@@ -2621,13 +3415,13 @@ describe('Mastra runtime execute', () => {
     });
     assertTokenBudgetEvent(streamedEvents, {
       runId: 'run-execute',
-      toolCount: 5,
-      mcpToolCount: 1,
+      toolCount: 6,
+      mcpToolCount: 2,
       uiContextToolCount: 0,
       nativeToolCount: 2,
       logToolCount: 2,
       workspaceEnabled: false,
-      browserEnabled: true,
+      browserEnabled: false,
       memoryEnabled: true,
       maxSteps: 10,
       toolChoice: 'auto',
@@ -2726,7 +3520,7 @@ describe('Mastra runtime execute', () => {
       result: '执行完成',
     });
     assert.match(response.sessionId, /^mastra-execute-/u);
-    assert.equal(disconnectCalls, 1);
+    assert.equal(disconnectCalls, 0);
     workflowStore.cleanup();
   });
 
@@ -2782,7 +3576,7 @@ describe('Mastra runtime execute', () => {
       '我需要调用时间工具。',
     );
     assert.equal(response.result, '今天是星期五。');
-    assert.equal(disconnectCalls, 1);
+    assert.equal(disconnectCalls, 0);
   });
 });
 
@@ -2902,13 +3696,13 @@ describe('Mastra runtime approval resolution', () => {
     assert.equal(initial.events.length, 3);
     assertTokenBudgetEvent(initial.events, {
       runId: 'approval-run-1',
-      toolCount: 4,
-      mcpToolCount: 0,
+      toolCount: 6,
+      mcpToolCount: 2,
       uiContextToolCount: 0,
       nativeToolCount: 2,
       logToolCount: 2,
       workspaceEnabled: false,
-      browserEnabled: true,
+      browserEnabled: false,
       memoryEnabled: true,
       maxSteps: 10,
       toolChoice: 'auto',
@@ -2975,7 +3769,7 @@ describe('Mastra runtime approval resolution', () => {
       },
     ]);
     assert.equal(resumed.result, '审批后继续执行');
-    assert.equal(disconnectCalls, 1);
+    assert.equal(disconnectCalls, 0);
     workflowStore.cleanup();
   });
 
@@ -3134,8 +3928,10 @@ describe('Mastra runtime plan', () => {
     assert.equal(typeof capturedModel, 'object');
     assert.equal((capturedModel as { provider?: unknown } | null)?.provider, 'deepseek');
     assert.equal((capturedModel as { modelId?: unknown } | null)?.modelId, 'deepseek-chat');
-    assert.equal(capturedToolNames.includes('git_read_file'), true);
+    assert.equal(capturedToolNames.includes('git_read_file'), false);
     assert.equal(capturedToolNames.includes('git_write_file'), false);
+    assert.equal(capturedToolNames.includes('mcp_call_tool'), true);
+    assert.equal(capturedToolNames.includes('mcp_list_tools'), true);
     assert.equal(capturedToolNames.includes('read_current_file'), false);
     assert.equal(capturedToolNames.includes('get_current_time'), true);
     assert.equal(capturedToolNames.includes('convert_time'), true);
@@ -3162,13 +3958,13 @@ describe('Mastra runtime plan', () => {
     });
     assertTokenBudgetEvent(streamedEvents, {
       runId: 'plan-req-1',
-      toolCount: 5,
-      mcpToolCount: 1,
+      toolCount: 6,
+      mcpToolCount: 2,
       uiContextToolCount: 0,
       nativeToolCount: 2,
       logToolCount: 2,
       workspaceEnabled: false,
-      browserEnabled: true,
+      browserEnabled: false,
       memoryEnabled: true,
       maxSteps: 10,
       toolChoice: 'auto',
@@ -3199,7 +3995,7 @@ describe('Mastra runtime plan', () => {
       result: '已生成计划：2 个待办事项。',
     });
     assert.match(response.sessionId, /^mastra-plan-/u);
-    assert.equal(disconnectCalls, 1);
+    assert.equal(disconnectCalls, 0);
   });
 
   it('uses JSON prompt injection for plan structured output when readonly tools are available', async () => {
@@ -3275,7 +4071,7 @@ describe('Mastra runtime plan', () => {
     assert.equal(capturedJsonPromptInjection, true);
     assert.equal(planReadyEvent.plan.goal, '讲解人类发展历史');
     assert.equal(response.result, '已生成计划：1 个待办事项。');
-    assert.equal(disconnectCalls, 1);
+    assert.equal(disconnectCalls, 0);
   });
 
   it('fills the request goal when structured plan output omits the top-level goal', async () => {
@@ -3338,7 +4134,7 @@ describe('Mastra runtime plan', () => {
     assert.deepEqual(planReadyEvent.plan.steps[0]?.files, ['agent-sidecar/src/engines/mastra-runtime.ts']);
     assert.deepEqual(planReadyEvent.plan.steps[0]?.acceptanceCriteria, ['runtime contract 抽象清晰，并且协议回归通过。']);
     assert.equal(response.result, '已生成计划：1 个待办事项。');
-    assert.equal(disconnectCalls, 1);
+    assert.equal(disconnectCalls, 0);
   });
 
   it('unwraps common structured plan envelope fields before strict persistence validation', async () => {
@@ -3395,7 +4191,7 @@ describe('Mastra runtime plan', () => {
     assert.equal(planReadyEvent.plan.goal, '完成迁移');
     assert.equal(planReadyEvent.plan.steps[0]?.id, 'step-1');
     assert.equal(response.result, '已生成计划：1 个待办事项。');
-    assert.equal(disconnectCalls, 1);
+    assert.equal(disconnectCalls, 0);
   });
 
   it('returns the existing sidecar error shape when Mastra plan output is invalid', async () => {
@@ -3429,13 +4225,13 @@ describe('Mastra runtime plan', () => {
     });
 
     assertTokenBudgetEvent(response.events, {
-      toolCount: 4,
-      mcpToolCount: 0,
+      toolCount: 6,
+      mcpToolCount: 2,
       uiContextToolCount: 0,
       nativeToolCount: 2,
       logToolCount: 2,
       workspaceEnabled: false,
-      browserEnabled: true,
+      browserEnabled: false,
       memoryEnabled: true,
       maxSteps: 10,
       toolChoice: 'auto',
@@ -3445,7 +4241,7 @@ describe('Mastra runtime plan', () => {
       message: 'Mastra structured output 没有返回有效 AgentPlan，计划未生成。',
     }]);
     assert.equal(response.result, null);
-    assert.equal(disconnectCalls, 1);
+    assert.equal(disconnectCalls, 0);
   });
 
   it('runs a readonly validator agent and persists structured validation reports', async () => {
@@ -3544,7 +4340,7 @@ describe('Mastra runtime plan', () => {
       'ValidatorReported',
       'Suspended',
     ]);
-    assert.equal(disconnectCalls, 1);
+    assert.equal(disconnectCalls, 0);
     workflowStore.cleanup();
   });
 
@@ -3635,7 +4431,7 @@ describe('Mastra runtime plan', () => {
       'Resumed',
       'ReplanIssued',
     ]);
-    assert.equal(disconnectCalls, 1);
+    assert.equal(disconnectCalls, 0);
     workflowStore.cleanup();
   });
 
@@ -3743,7 +4539,7 @@ describe('Mastra runtime plan', () => {
       },
     ]);
     assert.equal(response.result, '已恢复到最近 checkpoint。');
-    assert.equal(disconnectCalls, 1);
+    assert.equal(disconnectCalls, 0);
   });
 });
 

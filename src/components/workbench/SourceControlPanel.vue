@@ -52,15 +52,13 @@
             </p>
 
             <div class="source-control-setup-actions">
-              <button
-type="button" class="source-control-setup-btn source-control-setup-btn-primary"
+              <button type="button" class="source-control-setup-btn source-control-setup-btn-primary"
                 :disabled="isBusy || isLoading" :aria-busy="pendingAction === 'init-repository'"
                 @click="handleInitRepository">
                 {{ initRepositoryButtonLabel }}
               </button>
 
-              <button
-type="button" class="source-control-setup-btn source-control-setup-btn-secondary"
+              <button type="button" class="source-control-setup-btn source-control-setup-btn-secondary"
                 :disabled="isBusy || isLoading" @click="handleOpenCloneGuide">
                 从远程克隆...
               </button>
@@ -103,8 +101,7 @@ type="button" class="source-control-setup-btn source-control-setup-btn-secondary
       </div>
 
       <nav class="source-control-nav" aria-label="源代码管理导航">
-        <button
-v-for="item in navItems" :key="item.key" type="button" class="source-control-nav-item"
+        <button v-for="item in navItems" :key="item.key" type="button" class="source-control-nav-item"
           :class="{ 'is-active': item.active, 'is-inactive': !item.active }" :aria-pressed="item.active"
           @click="selectNavItem(item.key)">
           <svg v-if="item.key === 'changes'" viewBox="0 0 24 24" aria-hidden="true">
@@ -144,13 +141,13 @@ v-for="item in navItems" :key="item.key" type="button" class="source-control-nav
 
       <div class="source-control-scroll">
         <template v-if="activeTab === 'changes'">
-          <section v-if="!hasVisibleChanges" class="source-control-empty-card source-control-empty-card-inline">
+          <section v-if="!hasVisibleChanges && searchQuery.trim()"
+            class="source-control-empty-card source-control-empty-card-inline">
             <p class="source-control-empty-title">{{ emptyChangesTitle }}</p>
             <p class="source-control-empty-text">{{ emptyChangesText }}</p>
           </section>
 
-          <section
-v-for="section in filteredSections" :key="section.key" class="source-control-section"
+          <section v-for="section in filteredSections" :key="section.key" class="source-control-section"
             :class="{ 'is-collapsed': collapsedSections[section.key] }">
             <button type="button" class="source-control-section-header" @click="toggleSectionCollapse(section.key)">
               <svg class="source-control-section-chevron" viewBox="0 0 24 24" aria-hidden="true">
@@ -161,10 +158,11 @@ v-for="section in filteredSections" :key="section.key" class="source-control-sec
             </button>
 
             <div class="source-control-file-list">
-              <article
-v-for="entry in section.entries" :key="section.key + ':' + entry.path"
-                class="source-control-file" :class="{ 'is-active': isActivePath(entry.path) }"
-                @contextmenu.prevent.stop="handleEntryContextMenu($event, section.key, entry)">
+              <article v-for="entry in section.entries" :key="section.key + ':' + entry.path"
+                class="source-control-file" :class="{
+                  'is-active': isActivePath(entry.path),
+                  'is-context-target': isContextTargetPath(entry.path),
+                }" @contextmenu.prevent.stop="handleEntryContextMenu($event, section.key, entry)">
                 <button type="button" class="source-control-file-main" @click="handleOpenFile(entry.path)">
                   <span class="source-control-file-tag" :class="'is-' + resolveEntryTagTone(section.key, entry)">
                     {{ resolveEntryTag(section.key, entry) }}
@@ -177,8 +175,7 @@ v-for="entry in section.entries" :key="section.key + ':' + entry.path"
                 </button>
 
                 <div v-if="resolveEntryActions(section.key, entry).length > 0" class="source-control-file-actions">
-                  <button
-v-for="action in resolveEntryActions(section.key, entry)"
+                  <button v-for="action in resolveEntryActions(section.key, entry)"
                     :key="section.key + ':' + entry.path + ':' + action.key" type="button"
                     class="source-control-icon-btn" :disabled="isBusy" :aria-label="action.title" :title="action.title"
                     @click.stop="handleEntryAction(action.key, section.key, entry)">
@@ -200,45 +197,46 @@ v-for="action in resolveEntryActions(section.key, entry)"
           </section>
         </template>
 
-        <section v-else-if="activeTab === 'history'" class="source-control-info-panel">
-          <p class="source-control-info-eyebrow">History</p>
-          <p class="source-control-info-title">{{ historyPanelTitle }}</p>
-          <p class="source-control-info-text">{{ historyPanelText }}</p>
+        <section v-else-if="activeTab === 'history'" class="source-control-info-panel source-control-history-panel">
+          <div class="source-control-history-header">
+            <p class="source-control-history-heading">History</p>
+            <div class="source-control-history-header-actions">
+              <button type="button" class="source-control-history-refresh" aria-label="刷新历史" title="刷新历史"
+                :disabled="isCommitHistoryLoading || isBusy" @click="handleReloadCommitHistory">
+                <RefreshCw aria-hidden="true" />
+              </button>
+              <p class="source-control-history-summary">{{ historyPanelTitle }}</p>
+            </div>
+          </div>
 
-          <div v-if="isCommitHistoryLoading && filteredCommitHistory.length === 0" class="source-control-info-note">
+          <div v-if="isCommitHistoryLoading && filteredCommitHistory.length === 0"
+            class="source-control-info-note source-control-history-note">
             正在读取 Git 提交历史…
           </div>
 
-          <div v-else-if="filteredCommitHistory.length > 0" class="source-control-file-list">
-            <article v-for="entry in filteredCommitHistory" :key="entry.id" class="source-control-file">
-              <div class="source-control-file-main">
-                <span class="source-control-file-tag is-modified">C</span>
-                <span class="source-control-file-path">
-                  <span class="source-control-file-name">{{ entry.summary }}</span>
-                  <span class="source-control-file-dir">
-                    {{ entry.shortId }} · {{ entry.authorName }} · {{ formatCommitTime(entry.authoredAt) }}
-                  </span>
-                </span>
+          <div v-else-if="filteredCommitHistory.length > 0" class="source-control-history-timeline">
+            <article v-for="(entry, index) in filteredCommitHistory" :key="entry.id" class="source-control-history-item"
+              :class="{ 'is-active': index === 0 }">
+              <div class="source-control-history-node" aria-hidden="true">
+                <span class="source-control-history-node-dot"></span>
               </div>
+
+              <div class="source-control-history-body">
+                <p class="source-control-history-message">{{ entry.summary }}</p>
+
+                <div class="source-control-history-meta">
+                  <span class="source-control-history-hash">{{ entry.shortId }}</span>
+                  <span class="source-control-history-author">{{ entry.authorName }}</span>
+                </div>
+              </div>
+
+              <time class="source-control-history-time" :datetime="entry.authoredAt">
+                {{ formatCommitTime(entry.authoredAt) }}
+              </time>
             </article>
           </div>
 
-          <p v-else class="source-control-info-note">{{ historyEmptyText }}</p>
-
-          <div class="source-control-toolbar">
-            <button
-type="button" class="source-control-toolbar-btn" :disabled="isCommitHistoryLoading || isBusy"
-              @click="handleReloadCommitHistory">
-              刷新历史
-            </button>
-
-            <button
-type="button" class="source-control-toolbar-btn"
-              :disabled="!canLoadMoreCommitHistory || isCommitHistoryLoading || isBusy"
-              @click="handleLoadMoreCommitHistory">
-              {{ isCommitHistoryLoading ? '加载中…' : '加载更多' }}
-            </button>
-          </div>
+          <p v-else class="source-control-info-note source-control-history-note">{{ historyEmptyText }}</p>
         </section>
 
         <section v-else-if="activeTab === 'branches'" class="source-control-info-panel">
@@ -247,14 +245,12 @@ type="button" class="source-control-toolbar-btn"
           <p class="source-control-info-text">{{ branchesPanelText }}</p>
 
           <div class="source-control-toolbar">
-            <button
-type="button" class="source-control-toolbar-btn" :disabled="isBranchesLoading || isBusy"
+            <button type="button" class="source-control-toolbar-btn" :disabled="isBranchesLoading || isBusy"
               @click="handleReloadBranches">
               刷新分支
             </button>
 
-            <button
-type="button" class="source-control-toolbar-btn" :disabled="isBranchesLoading || isBusy"
+            <button type="button" class="source-control-toolbar-btn" :disabled="isBranchesLoading || isBusy"
               @click="handleCreateBranch">
               新建并切换
             </button>
@@ -265,8 +261,7 @@ type="button" class="source-control-toolbar-btn" :disabled="isBranchesLoading ||
           </div>
 
           <div v-else-if="filteredBranchEntries.length > 0" class="source-control-file-list">
-            <article
-v-for="entry in filteredBranchEntries" :key="entry.name" class="source-control-file"
+            <article v-for="entry in filteredBranchEntries" :key="entry.name" class="source-control-file"
               :class="{ 'is-active': entry.isCurrent }">
               <div class="source-control-file-main">
                 <span class="source-control-file-tag" :class="'is-' + resolveBranchTagTone(entry)">
@@ -279,8 +274,7 @@ v-for="entry in filteredBranchEntries" :key="entry.name" class="source-control-f
               </div>
 
               <div v-if="!entry.isCurrent" class="source-control-file-actions">
-                <button
-type="button" class="source-control-btn" :disabled="isBusy"
+                <button type="button" class="source-control-btn" :disabled="isBusy"
                   @click.stop="handleCheckoutBranch(entry)">
                   {{ entry.kind === 'remote' ? '检出' : '切换' }}
                 </button>
@@ -300,91 +294,115 @@ type="button" class="source-control-btn" :disabled="isBusy"
           </p>
 
           <div class="source-control-toolbar">
-            <button
-type="button" class="source-control-toolbar-btn"
+            <button type="button" class="source-control-toolbar-btn"
               :disabled="!canOpenPullRequestList || isPullRequestSupportLoading" @click="handleOpenPullRequestList">
               查看列表
             </button>
 
-            <button
-type="button" class="source-control-toolbar-btn"
+            <button type="button" class="source-control-toolbar-btn"
               :disabled="!canOpenPullRequestCreate || isPullRequestSupportLoading" @click="handleOpenCreatePullRequest">
               创建 PR
             </button>
           </div>
         </section>
 
-        <section v-else class="source-control-info-panel">
-          <p class="source-control-info-eyebrow">Stash</p>
-          <p class="source-control-info-title">{{ stashPanelTitle }}</p>
-          <p class="source-control-info-text">{{ stashPanelText }}</p>
+        <section v-else class="source-control-info-panel source-control-stash-panel">
+          <div class="source-control-stash-header">
+            <p class="source-control-stash-heading">贮藏</p>
+            <p class="source-control-stash-summary">{{ stashPanelTitle }}</p>
+          </div>
 
-          <div class="source-control-toolbar">
-            <button
-type="button" class="source-control-toolbar-btn"
+          <div class="source-control-stash-toolbar">
+            <button type="button" class="source-control-btn source-control-btn-primary source-control-stash-toolbar-btn"
               :disabled="isStashesLoading || isBusy || totalChangeCount === 0" @click="handleSaveStash">
-              贮藏当前改动
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M19 14V6a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v8" />
+                <path d="m5 14 7 4 7-4" />
+              </svg>
+              <span>贮藏当前改动</span>
             </button>
 
-            <button
-type="button" class="source-control-toolbar-btn" :disabled="isStashesLoading || isBusy"
-              @click="handleReloadStashes">
-              刷新贮藏
+            <button type="button" class="source-control-btn source-control-stash-toolbar-btn"
+              :disabled="isStashesLoading || isBusy" @click="handleReloadStashes">
+              <RefreshCw aria-hidden="true" />
+              <span>刷新</span>
             </button>
           </div>
 
-          <div v-if="isStashesLoading && filteredStashEntries.length === 0" class="source-control-info-note">
+          <div v-if="isStashesLoading && filteredStashEntries.length === 0"
+            class="source-control-info-note source-control-stash-note">
             正在读取 Git 贮藏…
           </div>
 
-          <div v-else-if="filteredStashEntries.length > 0" class="source-control-file-list">
-            <article v-for="entry in filteredStashEntries" :key="entry.stashId" class="source-control-file">
-              <div class="source-control-file-main">
-                <span class="source-control-file-tag is-renamed">S</span>
-                <span class="source-control-file-path">
-                  <span class="source-control-file-name">{{ entry.summary }}</span>
-                  <span class="source-control-file-dir">{{ resolveStashMeta(entry) }}</span>
-                </span>
-              </div>
+          <div v-else-if="filteredStashEntries.length > 0" class="source-control-stash-list">
+            <article v-for="entry in filteredStashEntries" :key="entry.stashId" class="source-control-stash-item"
+              :class="{ 'is-open': isStashOpen(entry.stashId) }">
+              <button type="button" class="source-control-stash-head" :aria-expanded="isStashOpen(entry.stashId)"
+                @click="toggleStashOpen(entry.stashId)">
+                <span class="source-control-stash-ref">{{ resolveStashIndexLabel(entry) }}</span>
 
-              <div class="source-control-file-actions">
-                <button
-type="button" class="source-control-btn" :disabled="isBusy"
-                  @click.stop="handleApplyStash(entry, false)">
-                  应用
-                </button>
-                <button
-type="button" class="source-control-btn" :disabled="isBusy"
-                  @click.stop="handleApplyStash(entry, true)">
-                  弹出
-                </button>
-                <button
-type="button" class="source-control-btn" :disabled="isBusy"
-                  @click.stop="handleDropStash(entry)">
-                  删除
-                </button>
+                <span class="source-control-stash-info">
+                  <span class="source-control-stash-title">{{ resolveStashTitle(entry) }}</span>
+                  <span class="source-control-stash-meta">{{ resolveStashMeta(entry) }}</span>
+                </span>
+
+                <svg class="source-control-stash-chevron" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="m9 18 6-6-6-6" />
+                </svg>
+              </button>
+
+              <div v-if="isStashOpen(entry.stashId)" class="source-control-stash-body">
+                <div class="source-control-stash-details">
+                  <div class="source-control-stash-detail">
+                    <span class="source-control-stash-detail-label">引用</span>
+                    <span class="source-control-stash-detail-value">{{ entry.stashId }}</span>
+                  </div>
+
+                  <div v-if="entry.branchName" class="source-control-stash-detail">
+                    <span class="source-control-stash-detail-label">分支</span>
+                    <span class="source-control-stash-detail-value">{{ entry.branchName }}</span>
+                  </div>
+
+                  <div v-if="entry.commitShortId" class="source-control-stash-detail">
+                    <span class="source-control-stash-detail-label">基线</span>
+                    <span class="source-control-stash-detail-value">{{ entry.commitShortId }}</span>
+                  </div>
+                </div>
+
+                <div class="source-control-stash-actions">
+                  <button type="button" class="source-control-btn source-control-stash-action-btn" :disabled="isBusy"
+                    @click.stop="handleApplyStash(entry, false)">
+                    应用
+                  </button>
+                  <button type="button" class="source-control-btn source-control-stash-action-btn" :disabled="isBusy"
+                    @click.stop="handleApplyStash(entry, true)">
+                    应用并删除
+                  </button>
+                  <button type="button"
+                    class="source-control-btn source-control-stash-action-btn source-control-stash-action-btn-danger"
+                    :disabled="isBusy" @click.stop="handleDropStash(entry)">
+                    丢弃
+                  </button>
+                </div>
               </div>
             </article>
           </div>
 
-          <p v-else class="source-control-info-note">{{ stashEmptyText }}</p>
+          <p v-else class="source-control-info-note source-control-stash-note">{{ stashEmptyText }}</p>
         </section>
       </div>
 
       <footer v-if="activeTab === 'changes'" class="source-control-commit">
-        <textarea
-v-model="commitMessage" class="source-control-commit-input" rows="3" placeholder="Ctrl+Enter 提交"
+        <textarea v-model="commitMessage" class="source-control-commit-input" rows="3" placeholder="Ctrl+Enter 提交"
           :disabled="isBusy" @keydown.ctrl.enter.prevent="handleCommit" @keydown.meta.enter.prevent="handleCommit" />
 
         <div class="source-control-commit-actions">
-          <button
-type="button" class="source-control-btn source-control-btn-primary" :disabled="!canCommit"
+          <button type="button" class="source-control-btn source-control-btn-primary" :disabled="!canCommit"
             @click="handleCommit">
             {{ commitButtonLabel }}
           </button>
 
-          <button
-type="button" class="source-control-btn source-control-btn-icon" :disabled="isBusy"
+          <button type="button" class="source-control-btn source-control-btn-icon" :disabled="isBusy"
             aria-label="更多 Git 操作" title="更多 Git 操作" @click="handleMoreActions">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <polyline points="6 9 12 15 18 9" />
@@ -393,8 +411,7 @@ type="button" class="source-control-btn source-control-btn-icon" :disabled="isBu
         </div>
       </footer>
 
-      <LinearContextMenu
-:open="scmMenuState.open" :x="scmMenuState.x" :y="scmMenuState.y" :groups="scmMenuGroups"
+      <LinearContextMenu :open="scmMenuState.open" :x="scmMenuState.x" :y="scmMenuState.y" :groups="scmMenuGroups"
         theme="dark" submenu-direction="right" @select="handleContextMenuSelect" />
     </template>
   </aside>
@@ -433,6 +450,7 @@ import {
   getPathBaseName,
   getPathDirectory,
 } from '@/utils/path';
+import { RefreshCw } from 'lucide-vue-next';
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue';
 
 const GIT_GETTING_STARTED_URL = 'https://git-scm.com/book/zh/v2';
@@ -493,6 +511,7 @@ const scmMenuState = reactive<ISourceControlMenuState>({
   x: 0,
   y: 0,
 });
+const scmContextTargetPath = ref<string | null>(null);
 const scmMenuGroups = ref<TSourceControlMenuGroup[]>([]);
 const collapsedSections = reactive<Record<TGitSectionKey, boolean>>({
   conflicts: false,
@@ -575,18 +594,21 @@ const clampMenuPosition = (clientX: number, clientY: number): { x: number; y: nu
 
 const closeSourceControlMenu = (): void => {
   scmMenuState.open = false;
+  scmContextTargetPath.value = null;
   scmMenuGroups.value = [];
 };
 
 const openSourceControlMenu = (
   point: { x: number; y: number },
   groups: TSourceControlMenuGroup[],
+  contextTargetPath: string | null = null,
 ): void => {
   const nextPoint = clampMenuPosition(point.x, point.y);
   scmMenuState.x = nextPoint.x;
   scmMenuState.y = nextPoint.y;
   scmMenuGroups.value = groups;
   scmMenuState.open = groups.some((group) => group.items.length > 0);
+  scmContextTargetPath.value = scmMenuState.open ? contextTargetPath : null;
 };
 
 const syncRepositoryStatus = async (
@@ -683,7 +705,6 @@ const canUnstageAll = computed(() => stagedPaths.value.length > 0 && !isBusy.val
 const canDiscardAll = computed(() => discardableEntries.value.length > 0 && !isBusy.value);
 const commitHistoryEntries = computed<IGitCommitSummaryPayload[]>(() => gitStore.commitHistory);
 const isCommitHistoryLoading = computed(() => gitStore.isCommitHistoryLoading);
-const canLoadMoreCommitHistory = computed(() => gitStore.canLoadMoreCommitHistory);
 const branchEntries = computed<IGitBranchPayload[]>(() => gitStore.branches);
 const isBranchesLoading = computed(() => gitStore.isBranchesLoading);
 const stashEntries = computed<IGitStashEntryPayload[]>(() => gitStore.stashes);
@@ -823,15 +844,9 @@ const navItems = computed<IGitNavItem[]>(() => [
   },
 ]);
 
-const emptyChangesTitle = computed(() =>
-  searchQuery.value.trim() ? '没有匹配的变更' : '当前没有可显示的变更',
-);
+const emptyChangesTitle = computed(() => '没有匹配的变更');
 
-const emptyChangesText = computed(() =>
-  searchQuery.value.trim()
-    ? '试试搜索文件名、目录、状态，或者清空搜索关键字。'
-    : '工作区已经和 HEAD 保持一致。保存新的文件改动后，这里会显示最新变更。',
-);
+const emptyChangesText = computed(() => '试试搜索文件名、目录、状态，或者清空搜索关键字。');
 
 const commitButtonLabel = computed(() =>
   pendingAction.value === 'commit' ? '提交中...' : '提交更改',
@@ -896,25 +911,49 @@ const filteredStashEntries = computed(() =>
   ),
 );
 
-const historyPanelTitle = computed(() => {
-  if (commitHistoryEntries.value.length > 0) {
-    return `最近 ${commitHistoryEntries.value.length} 条提交`;
+const activeStashId = ref<string | null | undefined>(undefined);
+
+const resolvedOpenStashId = computed(() => {
+  const firstEntry = filteredStashEntries.value[0];
+
+  if (!firstEntry) {
+    return null;
   }
 
-  return status.value.lastCommit?.summary ?? '当前仓库还没有提交记录';
+  if (activeStashId.value === undefined) {
+    return firstEntry.stashId;
+  }
+
+  return activeStashId.value;
 });
 
-const historyPanelText = computed(() => {
-  if (commitHistoryEntries.value.length > 0) {
-    const latestEntry = commitHistoryEntries.value[0];
-    if (!latestEntry) {
-      return '提交历史已同步。';
+watch(
+  () => filteredStashEntries.value.map((entry) => entry.stashId),
+  (stashIds) => {
+    if (stashIds.length === 0) {
+      activeStashId.value = undefined;
+      return;
     }
 
-    return `${latestEntry.shortId} · ${latestEntry.authorName} · ${formatCommitTime(latestEntry.authoredAt)}`;
+    if (activeStashId.value && !stashIds.includes(activeStashId.value)) {
+      activeStashId.value = undefined;
+    }
+  },
+  { immediate: true },
+);
+
+const historyPanelTitle = computed(() => {
+  if (searchQuery.value.trim()) {
+    return `匹配 ${filteredCommitHistory.value.length} 条`;
   }
 
-  return '按时间倒序展示本地提交历史，支持继续分页加载。';
+  const visibleCount = commitHistoryEntries.value.length || (status.value.lastCommit ? 1 : 0);
+
+  if (visibleCount > 0) {
+    return `最近 ${visibleCount} 条`;
+  }
+
+  return isCommitHistoryLoading.value ? '正在同步' : '暂无提交';
 });
 
 const historyEmptyText = computed(() =>
@@ -933,15 +972,13 @@ const branchesEmptyText = computed(() =>
   searchQuery.value.trim() ? '没有匹配的分支。' : '当前仓库没有可显示的分支。',
 );
 
-const stashPanelTitle = computed(() =>
-  stashEntries.value.length > 0 ? `共有 ${stashEntries.value.length} 条贮藏` : '当前没有 Git 贮藏',
-);
+const stashPanelTitle = computed(() => {
+  if (searchQuery.value.trim()) {
+    return `匹配 ${filteredStashEntries.value.length} 条`;
+  }
 
-const stashPanelText = computed(() =>
-  totalChangeCount.value > 0
-    ? '可将当前改动保存为 stash，并按需应用、弹出或删除。'
-    : '工作区当前没有未提交改动，保存 stash 按钮会保持禁用。',
-);
+  return stashEntries.value.length > 0 ? `共 ${stashEntries.value.length} 条` : '暂无贮藏';
+});
 
 const stashEmptyText = computed(() =>
   searchQuery.value.trim() ? '没有匹配的贮藏记录。' : '当前仓库没有 Git 贮藏。',
@@ -1031,7 +1068,8 @@ const resolveBranchMeta = (entry: IGitBranchPayload): string => {
 };
 
 const resolveStashMeta = (entry: IGitStashEntryPayload): string => {
-  const segments = [entry.stashId];
+  const segments: string[] = [];
+
   if (entry.branchName) {
     segments.push(entry.branchName);
   }
@@ -1039,7 +1077,28 @@ const resolveStashMeta = (entry: IGitStashEntryPayload): string => {
     segments.push(entry.commitShortId);
   }
 
+  if (segments.length === 0) {
+    segments.push(entry.stashId);
+  }
+
   return segments.join(' · ');
+};
+
+const STASH_SUMMARY_PREFIX_PATTERN = /^(?:On|WIP on)\s+[^:]+:\s*/u;
+
+const resolveStashTitle = (entry: IGitStashEntryPayload): string => {
+  const summary = entry.summary.trim();
+  const normalized = summary.replace(STASH_SUMMARY_PREFIX_PATTERN, '').trim();
+
+  return normalized || summary;
+};
+
+const resolveStashIndexLabel = (entry: IGitStashEntryPayload): string => `@${entry.index}`;
+
+const isStashOpen = (stashId: string): boolean => resolvedOpenStashId.value === stashId;
+
+const toggleStashOpen = (stashId: string): void => {
+  activeStashId.value = isStashOpen(stashId) ? null : stashId;
 };
 
 const resolveEntryKind = (
@@ -1157,6 +1216,9 @@ const resolveEntryActions = (
 
 const isActivePath = (path: string): boolean => areFileSystemPathsEqual(path, props.activePath);
 
+const isContextTargetPath = (path: string): boolean =>
+  !isActivePath(path) && areFileSystemPathsEqual(path, scmContextTargetPath.value);
+
 const toggleSectionCollapse = (key: TGitSectionKey): void => {
   collapsedSections[key] = !collapsedSections[key];
 };
@@ -1231,14 +1293,6 @@ const handleReloadCommitHistory = async (): Promise<void> => {
     await gitStore.loadCommitHistory();
   } catch (error) {
     message.error(toErrorMessage(error, '读取 Git 提交历史失败'));
-  }
-};
-
-const handleLoadMoreCommitHistory = async (): Promise<void> => {
-  try {
-    await gitStore.loadCommitHistory({ append: true });
-  } catch (error) {
-    message.error(toErrorMessage(error, '继续加载 Git 提交历史失败'));
   }
 };
 
@@ -1467,6 +1521,7 @@ const handleMoreActions = (event: MouseEvent): void => {
       y: rect ? rect.bottom + 6 : event.clientY,
     },
     buildRepositoryMenuGroups(),
+    null,
   );
 };
 
@@ -1481,6 +1536,7 @@ const handleEntryContextMenu = (
       y: event.clientY,
     },
     buildEntryMenuGroups(sectionKey, entry),
+    entry.path,
   );
 };
 
@@ -1537,6 +1593,7 @@ watch(
     searchQuery.value = '';
     activeTab.value = 'changes';
     sourceControlActionError.value = null;
+    activeStashId.value = undefined;
     closeSourceControlMenu();
     resetSectionCollapse();
   },

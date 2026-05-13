@@ -36,10 +36,26 @@ export interface IMcpRuntimeStatus {
   errors: string[];
 }
 
+export const MCP_SERVER_NAMES = [
+  'git',
+  'probe',
+  'memory',
+  'sequential-thinking',
+  'github',
+  'context7',
+  'logoscope',
+  'hooks-mcp',
+  'sqlite-mcp',
+  'tavily-mcp',
+] as const;
+
+export type TMcpServerName = typeof MCP_SERVER_NAMES[number];
+
 export interface IMcpConfigOptions {
   workspaceRootPath?: string | null;
   env?: Record<string, string | undefined>;
   platform?: NodeJS.Platform;
+  serverNames?: readonly TMcpServerName[];
 }
 
 const SIDECAR_ROOT = resolve(fileURLToPath(new URL('../../', import.meta.url)));
@@ -58,6 +74,11 @@ const trimToNull = (value: string | null | undefined): string | null => {
 
 const resolveWorkspaceRoot = (workspaceRootPath: string | null | undefined): string =>
   resolve(trimToNull(workspaceRootPath) ?? PROJECT_ROOT);
+
+const shouldLoadServer = (
+  requestedServers: ReadonlySet<TMcpServerName> | null,
+  serverName: TMcpServerName,
+): boolean => !requestedServers || requestedServers.has(serverName);
 
 const normalizeEnv = (
   env: Record<string, string | undefined> | undefined,
@@ -313,6 +334,9 @@ export const loadMcpServerConfigs = (
   const workspaceRoot = resolveWorkspaceRoot(options.workspaceRootPath);
   const errors: string[] = [];
   const configs: IMcpServerConfig[] = [];
+  const requestedServers = options.serverNames
+    ? new Set(options.serverNames)
+    : null;
   const uvxCommand = resolveWindowsUvxCommand(env, platform);
   const npxCommand = resolveNpxCommand(platform);
   const gitExecutable = resolveWindowsGitExecutable(env, platform);
@@ -321,7 +345,9 @@ export const loadMcpServerConfigs = (
   const githubMcpUrl = trimToNull(env.GITHUB_MCP_URL) ?? DEFAULT_GITHUB_MCP_URL;
   const sqliteDbPath = trimToNull(env.SQLITE_DB_PATH);
 
-  if (uvxCommand && gitExecutable) {
+  if (!shouldLoadServer(requestedServers, 'git')) {
+    // 当前请求不需要 Git MCP。
+  } else if (uvxCommand && gitExecutable) {
     configs.push({
       name: 'git',
       transportType: 'stdio',
@@ -338,16 +364,18 @@ export const loadMcpServerConfigs = (
     errors.push('未找到 Windows uvx.exe 绝对路径，已跳过 Git MCP。请设置 AGENT_MCP_UVX_PATH。');
   }
 
-  configs.push({
-    name: 'probe',
-    transportType: 'stdio',
-    command: npxCommand,
-    args: ['-y', PROBE_MCP_NPX_SPEC, 'mcp'],
-    env: {},
-    cwd: workspaceRoot,
-  });
+  if (shouldLoadServer(requestedServers, 'probe')) {
+    configs.push({
+      name: 'probe',
+      transportType: 'stdio',
+      command: npxCommand,
+      args: ['-y', PROBE_MCP_NPX_SPEC, 'mcp'],
+      env: {},
+      cwd: workspaceRoot,
+    });
+  }
 
-  if (ensureParentDirectory(memoryFilePath, errors)) {
+  if (shouldLoadServer(requestedServers, 'memory') && ensureParentDirectory(memoryFilePath, errors)) {
     const memory = nodeServerConfig(
       'memory',
       'mcp-server-memory',
@@ -364,19 +392,23 @@ export const loadMcpServerConfigs = (
     }
   }
 
-  const sequentialThinking = nodeServerConfig(
-    'sequential-thinking',
-    'mcp-server-sequential-thinking',
-    [],
-    workspaceRoot,
-    platform,
-    errors,
-  );
-  if (sequentialThinking) {
-    configs.push(sequentialThinking);
+  if (shouldLoadServer(requestedServers, 'sequential-thinking')) {
+    const sequentialThinking = nodeServerConfig(
+      'sequential-thinking',
+      'mcp-server-sequential-thinking',
+      [],
+      workspaceRoot,
+      platform,
+      errors,
+    );
+    if (sequentialThinking) {
+      configs.push(sequentialThinking);
+    }
   }
 
-  if (githubMcpPat) {
+  if (!shouldLoadServer(requestedServers, 'github')) {
+    // 当前请求不需要 GitHub MCP。
+  } else if (githubMcpPat) {
     configs.push({
       name: 'github',
       transportType: 'http',
@@ -389,44 +421,52 @@ export const loadMcpServerConfigs = (
     errors.push('GITHUB_MCP_PAT 未配置，已跳过 github-mcp-server。');
   }
 
-  const context7 = nodeServerConfig(
-    'context7',
-    'context7-mcp',
-    [],
-    workspaceRoot,
-    platform,
-    errors,
-  );
-  if (context7) {
-    configs.push(context7);
+  if (shouldLoadServer(requestedServers, 'context7')) {
+    const context7 = nodeServerConfig(
+      'context7',
+      'context7-mcp',
+      [],
+      workspaceRoot,
+      platform,
+      errors,
+    );
+    if (context7) {
+      configs.push(context7);
+    }
   }
 
-  const logoscope = nodeServerConfig(
-    'logoscope',
-    'logoscope',
-    ['mcp'],
-    workspaceRoot,
-    platform,
-    errors,
-  );
-  if (logoscope) {
-    configs.push(logoscope);
+  if (shouldLoadServer(requestedServers, 'logoscope')) {
+    const logoscope = nodeServerConfig(
+      'logoscope',
+      'logoscope',
+      ['mcp'],
+      workspaceRoot,
+      platform,
+      errors,
+    );
+    if (logoscope) {
+      configs.push(logoscope);
+    }
   }
 
-  const hooksMcp = uvxServerConfig(
-    'hooks-mcp',
-    uvxCommand,
-    'hooks-mcp==0.2.4',
-    ['--working-directory', workspaceRoot],
-    workspaceRoot,
-    errors,
-    '未找到 Windows uvx.exe 绝对路径，已跳过 hooks-mcp。请设置 AGENT_MCP_UVX_PATH。',
-  );
-  if (hooksMcp) {
-    configs.push(hooksMcp);
+  if (shouldLoadServer(requestedServers, 'hooks-mcp')) {
+    const hooksMcp = uvxServerConfig(
+      'hooks-mcp',
+      uvxCommand,
+      'hooks-mcp==0.2.4',
+      ['--working-directory', workspaceRoot],
+      workspaceRoot,
+      errors,
+      '未找到 Windows uvx.exe 绝对路径，已跳过 hooks-mcp。请设置 AGENT_MCP_UVX_PATH。',
+    );
+    if (hooksMcp) {
+      configs.push(hooksMcp);
+    }
   }
 
-  if (sqliteDbPath) {
+  if (!shouldLoadServer(requestedServers, 'sqlite-mcp')) {
+    // 当前请求不需要 SQLite MCP。
+  } else if (sqliteDbPath) {
     const sqlite = uvxServerConfig(
       'sqlite-mcp',
       uvxCommand,
@@ -449,7 +489,9 @@ export const loadMcpServerConfigs = (
   }
 
   const tavilyApiKey = trimToNull(env.TAVILY_API_KEY);
-  if (tavilyApiKey) {
+  if (!shouldLoadServer(requestedServers, 'tavily-mcp')) {
+    // 当前请求不需要 Tavily MCP。
+  } else if (tavilyApiKey) {
     const tavily = nodeServerConfig(
       'tavily-mcp',
       'tavily-mcp',
@@ -479,24 +521,31 @@ export const createMastraMcpClientBundle = async (
 ): Promise<IMastraMcpClientBundle> => {
   const { configs, errors } = loadMcpServerConfigs(options);
   const servers = createMastraMcpServers(configs, errors);
-  const client = Object.keys(servers).length > 0
-    ? new MCPClient({
-      id: `xiaojianc-agent-sidecar-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
-      servers,
-      timeout: MCP_LIST_TOOLS_TIMEOUT_MS,
-    })
-    : null;
-  const tools = client ? await client.listTools() : {};
+  let client: MCPClient | null = null;
 
-  return {
-    client,
-    configs,
-    errors,
-    tools,
-    disconnectAll: async (): Promise<void> => {
-      await client?.disconnect().catch(() => undefined);
-    },
-  };
+  try {
+    client = Object.keys(servers).length > 0
+      ? new MCPClient({
+        id: `xiaojianc-agent-sidecar-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+        servers,
+        timeout: MCP_LIST_TOOLS_TIMEOUT_MS,
+      })
+      : null;
+    const tools = client ? await client.listTools() : {};
+
+    return {
+      client,
+      configs,
+      errors,
+      tools,
+      disconnectAll: async (): Promise<void> => {
+        await client?.disconnect().catch(() => undefined);
+      },
+    };
+  } catch (error) {
+    await client?.disconnect().catch(() => undefined);
+    throw error;
+  }
 };
 
 export const getMcpRuntimeStatus = (options: IMcpConfigOptions = {}): IMcpRuntimeStatus => {

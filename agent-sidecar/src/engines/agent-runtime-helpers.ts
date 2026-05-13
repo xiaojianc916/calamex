@@ -4,6 +4,9 @@ import type {
     IAgentRuntimeInput,
     TAgentMode,
 } from './runtime-input.js';
+import { truncateModelOutputText } from '../models/model-output-budget.js';
+
+const CONTEXT_REFERENCE_PREVIEW_MAX_CHARS = 1_200;
 
 const inferModelProviderLabel = (modelId: string): string => {
     const normalized = modelId.trim().toLowerCase();
@@ -79,7 +82,10 @@ const buildContextInstruction = (context: IAgentContextReferenceInput[] = []): s
                 : '范围：无',
             `已脱敏：${reference.redacted ? '是' : '否'}`,
             '内容：',
-            reference.contentPreview,
+            truncateModelOutputText(
+                reference.contentPreview,
+                CONTEXT_REFERENCE_PREVIEW_MAX_CHARS,
+            ).text,
         ].join('\n')),
     ].join('\n\n');
 };

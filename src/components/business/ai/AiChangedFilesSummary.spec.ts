@@ -2,16 +2,8 @@ import { mount, type VueWrapper } from '@vue/test-utils';
 import { describe, expect, it } from 'vitest';
 
 import AiChangedFilesSummary from '@/components/business/ai/AiChangedFilesSummary.vue';
-import type { IAiAgentPatchSummary } from '@/types/ai';
+import type { IAiAgentPatchSummary, IAiPatchSet } from '@/types/ai';
 
-// ---------------------------------------------------------------------------
-// Fixtures
-// ---------------------------------------------------------------------------
-
-/**
- * 构造一个带有单文件 modified 的 patch summary。
- * 保持与原测试一致的字段与取值，作为「黄金路径」基线。
- */
 const createPatchSummary = (
   overrides: Partial<IAiAgentPatchSummary> = {},
 ): IAiAgentPatchSummary => ({
@@ -35,9 +27,6 @@ const createPatchSummary = (
   ...overrides,
 });
 
-/**
- * 构造一个多文件、多状态的 patch summary，用于覆盖列表渲染与按文件 emit。
- */
 const createMultiFilePatchSummary = (): IAiAgentPatchSummary =>
   createPatchSummary({
     id: 'patch-summary-2',
@@ -74,69 +63,84 @@ const createMultiFilePatchSummary = (): IAiAgentPatchSummary =>
 
 const mountSummary = (
   summary: IAiAgentPatchSummary,
+  variant: 'panel' | 'message' = 'message',
+  patches: readonly IAiPatchSet[] = [],
+  options: { isReverting?: boolean } = {},
 ): VueWrapper<InstanceType<typeof AiChangedFilesSummary>> =>
   mount(AiChangedFilesSummary, {
-    props: { summary },
+    props: { summary, variant, patches, ...options },
   });
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 describe('AiChangedFilesSummary', () => {
-  // —— 原始用例：保持不变，确保可完美替换 ——
-  it('展示 changed files 统计并通过 ref 触发查看 diff', async () => {
-    const wrapper = mount(AiChangedFilesSummary, {
-      props: {
-        summary: createPatchSummary(),
-      },
-    });
+  it('默认以 Codex 风格折叠展示最终变更汇总', () => {
+    const wrapper = mountSummary(createPatchSummary());
 
-    expect(wrapper.text()).toContain('Files changed');
-    expect(wrapper.text()).toContain('src/agent/runtime.ts');
-    expect(wrapper.text()).toContain('+12');
-    expect(wrapper.text()).toContain('-4');
-    expect(wrapper.text()).toContain('patch:run-1:step-1');
-
-    await wrapper.find('.ai-changed-file-action').trigger('click');
-    expect(wrapper.emitted('viewDiff')).toEqual([
-      ['diff:runtime', 'src/agent/runtime.ts'],
-    ]);
+    expect(wrapper.find('section.ai-changed-files-summary').exists()).toBe(true);
+    expect(wrapper.find('.ai-changed-file-item').classes()).not.toContain('is-open');
+    expect(wrapper.find('.ai-changed-files-header').text()).toContain('1 个文件已更改');
+    expect(wrapper.find('.ai-changed-files-header').text()).toContain('+12');
+    expect(wrapper.find('.ai-changed-files-header').text()).toContain('-4');
+    expect(wrapper.find('.ai-changed-files-actions').text()).toContain('撤销');
+    expect(wrapper.find('.ai-changed-files-actions').text()).toContain('审核');
+    expect(wrapper.text()).not.toContain('patch:run-1:step-1');
   });
 
-  // —— 以下为补充用例，仅新增、不修改既有断言 ——
-
-  it('当 files 为空时，仍应展示 Files changed 标题且不渲染任何文件行', () => {
-    const wrapper = mountSummary(
-      createPatchSummary({
-        totalAdditions: 0,
-        totalDeletions: 0,
-        files: [],
-      }),
-    );
-
-    expect(wrapper.text()).toContain('Files changed');
-    expect(wrapper.findAll('.ai-changed-file-action')).toHaveLength(0);
-    expect(wrapper.emitted('viewDiff')).toBeUndefined();
-  });
-
-  it('多文件场景下，应按顺序渲染每个文件并在点击时按文件 emit viewDiff', async () => {
+  it('展示每个文件路径与新增删除统计', () => {
     const summary = createMultiFilePatchSummary();
     const wrapper = mountSummary(summary);
 
-    // 标题与每个文件路径都应被渲染
-    expect(wrapper.text()).toContain('Files changed');
+    expect(wrapper.find('.ai-changed-files-header').text()).toContain('3 个文件已更改');
+    expect(wrapper.find('.ai-changed-files-header').text()).toContain('+20');
+    expect(wrapper.find('.ai-changed-files-header').text()).toContain('-7');
     for (const file of summary.files) {
       expect(wrapper.text()).toContain(file.path);
+      expect(wrapper.text()).toContain(`+${file.additions}`);
+      expect(wrapper.text()).toContain(`-${file.deletions}`);
     }
+  });
 
-    // 渲染顺序应与 props.files 一致
-    const actions = wrapper.findAll('.ai-changed-file-action');
-    expect(actions).toHaveLength(summary.files.length);
+  it('展开文件行时用真实 patch hunk 渲染下拉 diff', async () => {
+    const summary = createPatchSummary();
+    const wrapper = mountSummary(summary, 'message', [
+      {
+        summary: '更新 runtime',
+        files: [
+          {
+            path: 'src/agent/runtime.ts',
+            originalHash: 'fnv64:test',
+            hunks: [
+              {
+                oldStart: 110,
+                oldLines: 2,
+                newStart: 110,
+                newLines: 2,
+                lines: [
+                  " const mode = 'chat';",
+                  "+const mode = 'agent';",
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ]);
 
-    // 依次点击每个文件，验证 emit 顺序与负载
-    for (let i = 0; i < actions.length; i++) {
-      await actions[i].trigger('click');
+    await wrapper.find('.ai-changed-file-summary').trigger('click');
+
+    expect(wrapper.find('.ai-changed-file-diff').exists()).toBe(true);
+    expect(wrapper.text()).toContain('110');
+    expect(wrapper.text()).toContain("const mode = 'agent';");
+  });
+
+  it('panel 形态点击文件行时按文件 emit viewDiff', async () => {
+    const summary = createMultiFilePatchSummary();
+    const wrapper = mountSummary(summary, 'panel');
+
+    const rows = wrapper.findAll('.ai-changed-file-summary');
+    expect(rows).toHaveLength(summary.files.length);
+
+    for (const row of rows) {
+      await row.trigger('click');
     }
 
     expect(wrapper.emitted('viewDiff')).toEqual(
@@ -144,36 +148,40 @@ describe('AiChangedFilesSummary', () => {
     );
   });
 
-  it('应展示文件级的新增/删除行数（含 added 与 deleted 状态）', () => {
-    const summary = createMultiFilePatchSummary();
-    const wrapper = mountSummary(summary);
-    const text = wrapper.text();
+  it('message 形态文件行不触发查看 diff', async () => {
+    const wrapper = mountSummary(createPatchSummary(), 'message');
 
-    // modified 文件
-    expect(text).toContain('+12');
-    expect(text).toContain('-4');
-    // added 文件
-    expect(text).toContain('+8');
-    // deleted 文件
-    expect(text).toContain('-3');
+    await wrapper.find('.ai-changed-file-summary').trigger('click');
+    expect(wrapper.emitted('viewDiff')).toBeUndefined();
   });
 
-  it('应展示 patchRef 作为可追溯的引用标识', () => {
-    const summary = createMultiFilePatchSummary();
-    const wrapper = mountSummary(summary);
+  it('点击撤销时 emit 当前 summary id，回滚中或已回滚时禁用', async () => {
+    const wrapper = mountSummary(createPatchSummary());
 
-    expect(wrapper.text()).toContain(summary.patchRef);
+    await wrapper.find('button.ai-changed-files-action').trigger('click');
+
+    expect(wrapper.emitted('undo')).toEqual([['patch-summary-1']]);
+
+    await wrapper.setProps({ isReverting: true });
+    expect(wrapper.find('button.ai-changed-files-action').attributes('disabled')).toBeDefined();
+
+    await wrapper.setProps({
+      isReverting: false,
+      summary: createPatchSummary({ revertedAt: '2026-05-03T10:02:00.000Z' }),
+    });
+    expect(wrapper.find('button.ai-changed-files-action').text()).toContain('已撤销');
+    expect(wrapper.find('button.ai-changed-files-action').attributes('disabled')).toBeDefined();
   });
 
-  it('summary props 变更后，组件应响应式地刷新展示内容', async () => {
+  it('summary props 变更后响应式刷新展示内容', async () => {
     const wrapper = mountSummary(createPatchSummary());
 
     expect(wrapper.text()).toContain('src/agent/runtime.ts');
-    expect(wrapper.text()).toContain('patch:run-1:step-1');
 
     await wrapper.setProps({
       summary: createPatchSummary({
-        patchRef: 'patch:run-1:step-9',
+        totalAdditions: 1,
+        totalDeletions: 1,
         files: [
           {
             path: 'src/agent/another.ts',
@@ -187,8 +195,9 @@ describe('AiChangedFilesSummary', () => {
       }),
     });
 
+    expect(wrapper.find('.ai-changed-files-header').text()).toContain('+1');
+    expect(wrapper.find('.ai-changed-files-header').text()).toContain('-1');
     expect(wrapper.text()).toContain('src/agent/another.ts');
-    expect(wrapper.text()).toContain('patch:run-1:step-9');
     expect(wrapper.text()).not.toContain('src/agent/runtime.ts');
   });
 });

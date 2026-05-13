@@ -138,6 +138,39 @@ describe('AiMessageItem', () => {
     expect(wrapper.text()).toContain('正在准备回复');
   });
 
+  it('预算诊断事件不会渲染到用户消息时间线，而是继续显示准备回复状态', () => {
+    const wrapper = mount(AiMessageItem, {
+      props: {
+        message: createMessage({
+          stream: {
+            status: 'streaming',
+            runtimeEvents: [
+              createRuntimeEvent({
+                id: 'token-budget-1',
+                type: 'acontext.token.checked',
+                visibility: 'debug',
+                projectedInputTokensAvailable: true,
+                projectedInputTokens: 3_865,
+              }),
+            ],
+          },
+        }),
+        platformId: 'deepseek',
+        providerLabel: 'DeepSeek',
+      },
+      global: {
+        stubs: {
+          AiMarkdown: { template: '<div class="markdown-stub" />' },
+        },
+      },
+    });
+
+    expect(wrapper.find('.ai-runtime-timeline').exists()).toBe(false);
+    expect(wrapper.find('.ai-message-status-line').exists()).toBe(true);
+    expect(wrapper.text()).toContain('正在准备回复');
+    expect(wrapper.text()).not.toContain('上下文预算检查');
+  });
+
   it('最终回答开始后不再显示准备回复状态', () => {
     const wrapper = mount(AiMessageItem, {
       props: {
@@ -317,10 +350,96 @@ describe('AiMessageItem', () => {
     expect(messageBubble.exists()).toBe(true);
     expect(wrapper.text()).toContain('我先确认真实工具列表。');
     expect(wrapper.text()).toContain('grep_search');
+    expect(wrapper.find('.ai-tool-call-list').exists()).toBe(false);
     expect(
       runtimeTimeline.element.compareDocumentPosition(messageBubble.element) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
+      Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
+  });
+
+  it('runtime 时间线出现时隐藏底部工具摘要列表', () => {
+    const wrapper = mount(AiMessageItem, {
+      props: {
+        message: createMessage({
+          toolCalls: [
+            {
+              id: 'tool-call-read-file',
+              name: 'read_file',
+              status: 'succeeded',
+              summary: 'D:/test/heatmap.py',
+            },
+          ],
+          stream: {
+            status: 'completed',
+            runtimeEvents: [
+              createRuntimeEvent({
+                id: 'reasoning-1',
+                text: '我先确认文件内容。',
+              }),
+              createRuntimeEvent({
+                id: 'tool-start-1',
+                type: 'agent.tool.started',
+                toolUseId: 'tool-use-1',
+                toolName: 'read_file',
+                inputPreview: '{"path":"D:/test/heatmap.py"}',
+              }),
+              createRuntimeEvent({
+                id: 'tool-complete-1',
+                type: 'agent.tool.completed',
+                toolUseId: 'tool-use-1',
+                toolName: 'read_file',
+                ok: true,
+                resultPreview: '{"content":"print(1)"}',
+              }),
+            ],
+            finalAnswerStarted: true,
+          },
+        }),
+        platformId: 'deepseek',
+        providerLabel: 'DeepSeek',
+      },
+      global: {
+        stubs: {
+          AiMarkdown: { template: '<div class="markdown-stub" />' },
+        },
+      },
+    });
+
+    expect(wrapper.find('.ai-runtime-timeline').exists()).toBe(true);
+    expect(wrapper.text()).toContain('读取完成 D:/test/heatmap.py');
+    expect(wrapper.find('.ai-tool-call-list').exists()).toBe(false);
+    expect(wrapper.text()).not.toContain('已读取 D:/test/heatmap.py');
+  });
+
+  it('没有 runtime 时间线时仍显示底部工具摘要列表', () => {
+    const wrapper = mount(AiMessageItem, {
+      props: {
+        message: createMessage({
+          toolCalls: [
+            {
+              id: 'tool-call-read-file-only',
+              name: 'read_file',
+              status: 'succeeded',
+              summary: 'D:/test/heatmap.py',
+            },
+          ],
+          stream: {
+            status: 'completed',
+          },
+        }),
+        platformId: 'deepseek',
+        providerLabel: 'DeepSeek',
+      },
+      global: {
+        stubs: {
+          AiMarkdown: { template: '<div class="markdown-stub" />' },
+        },
+      },
+    });
+
+    expect(wrapper.find('.ai-runtime-timeline').exists()).toBe(false);
+    expect(wrapper.find('.ai-tool-call-list').exists()).toBe(true);
+    expect(wrapper.text()).toContain('已读取 D:/test/heatmap.py');
   });
 
   it('不渲染空的非流式助手占位消息', () => {
@@ -340,6 +459,112 @@ describe('AiMessageItem', () => {
     expect(wrapper.find('.ai-message').exists()).toBe(false);
     expect(wrapper.find('.ai-message-status-line').exists()).toBe(false);
     expect(wrapper.find('.ai-message-bubble').exists()).toBe(false);
+  });
+
+  it('在助手消息内联渲染 AED diff 和最终变更摘要，不显示外部 Diff 面板入口', () => {
+    const wrapper = mount(AiMessageItem, {
+      props: {
+        message: createMessage({
+          content: '已完成修改。',
+          patches: [
+            {
+              summary: '更新启动提示',
+              files: [
+                {
+                  path: 'D:/repo/src/app.ts',
+                  originalHash: 'fnv64:test',
+                  hunks: [
+                    {
+                      oldStart: 1,
+                      oldLines: 1,
+                      newStart: 1,
+                      newLines: 1,
+                      lines: ['-const start = true;', '+const start = false;'],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          changedFilesSummary: {
+            id: 'patch-summary-1',
+            runId: 'sidecar:turn-1',
+            stepId: 'agent',
+            files: [
+              {
+                path: 'D:/repo/src/app.ts',
+                status: 'modified',
+                additions: 1,
+                deletions: 1,
+                diffRef: 'diff:src-app',
+              },
+            ],
+            totalAdditions: 1,
+            totalDeletions: 1,
+            patchRef: 'aed-patch:thread-1',
+            appliedAt: '2026-05-12T10:00:00.000Z',
+          },
+        }),
+        platformId: 'deepseek',
+        providerLabel: 'DeepSeek',
+        workspaceRootPath: 'D:/repo',
+      },
+      global: {
+        stubs: {
+          AiMarkdown: { template: '<div class="markdown-stub">已完成修改。</div>' },
+        },
+      },
+    });
+
+    expect(wrapper.find('.ai-message-patch-list').exists()).toBe(false);
+    expect(wrapper.find('.ai-message-changed-files').exists()).toBe(true);
+    expect(wrapper.text()).toContain('1 个文件已更改');
+    expect(wrapper.text()).toContain('D:/repo/src/app.ts');
+    expect(wrapper.text()).toContain('+1');
+    expect(wrapper.text()).toContain('-1');
+    expect(wrapper.text()).not.toContain('打开 Diff 面板');
+    expect(wrapper.text()).not.toContain('查看 Diff');
+  });
+
+  it('点击最终变更摘要撤销时向外 emit 消息和 summary id', async () => {
+    const wrapper = mount(AiMessageItem, {
+      props: {
+        message: createMessage({
+          content: '已完成修改。',
+          changedFilesSummary: {
+            id: 'patch-summary-1',
+            runId: 'sidecar:turn-1',
+            stepId: 'agent',
+            files: [
+              {
+                path: 'D:/repo/src/app.ts',
+                status: 'modified',
+                additions: 1,
+                deletions: 1,
+                diffRef: 'diff:src-app',
+              },
+            ],
+            totalAdditions: 1,
+            totalDeletions: 1,
+            patchRef: 'aed-patch:thread-1',
+            appliedAt: '2026-05-12T10:00:00.000Z',
+          },
+        }),
+        platformId: 'deepseek',
+        providerLabel: 'DeepSeek',
+      },
+      global: {
+        stubs: {
+          AiMarkdown: { template: '<div class="markdown-stub">已完成修改。</div>' },
+        },
+      },
+    });
+
+    await wrapper.find('button.ai-changed-files-action').trigger('click');
+
+    expect(wrapper.emitted('changedFilesRollback')).toEqual([
+      ['assistant-message', 'patch-summary-1'],
+    ]);
   });
 
   it('流式内容到达后复用同一条回答气泡', async () => {

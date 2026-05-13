@@ -10,12 +10,18 @@ import { z } from 'zod';
 
 import type { IAgentRuntimeInput } from './runtime-input.js';
 
-const DEFAULT_MEMORY_LAST_MESSAGES = 12;
+const DEFAULT_MEMORY_LAST_MESSAGES = 6;
+const MIN_MEMORY_LAST_MESSAGES = 2;
+const MAX_MEMORY_LAST_MESSAGES = 12;
 const DEFAULT_SEMANTIC_RECALL_TOP_K = 4;
 const DEFAULT_MEMORY_RESOURCE_ID = 'agent-sidecar:global';
 const DEFAULT_APP_IDENTIFIER = 'com.xiaojianc.Calamex';
 const DEFAULT_STORAGE_DIRECTORY = 'agent-sidecar';
 const DEFAULT_STORAGE_FILENAME = 'mastra.db';
+const MEMORY_LAST_MESSAGES_ENV = 'AGENT_SIDECAR_MEMORY_LAST_MESSAGES';
+const ENABLE_OBSERVATIONAL_MEMORY_ENV = 'AGENT_SIDECAR_MEMORY_ENABLE_OBSERVATIONAL';
+const ENABLE_OBSERVATIONAL_MEMORY_BUFFERING_ENV =
+    'AGENT_SIDECAR_MEMORY_ENABLE_OBSERVATIONAL_BUFFERING';
 
 const optionalTrimmedStringSchema = z.string().trim().min(1).optional();
 
@@ -58,6 +64,24 @@ const isTruthyEnv = (value: string | undefined | null): boolean => {
         || normalized === 'true'
         || normalized === 'yes'
         || normalized === 'on';
+};
+
+export const resolveMemoryLastMessages = (
+    env: NodeJS.ProcessEnv = process.env,
+): number => {
+    const configured = toNonEmptyString(env[MEMORY_LAST_MESSAGES_ENV]);
+
+    if (!configured) {
+        return DEFAULT_MEMORY_LAST_MESSAGES;
+    }
+
+    const parsed = Number.parseInt(configured, 10);
+
+    if (!Number.isFinite(parsed)) {
+        return DEFAULT_MEMORY_LAST_MESSAGES;
+    }
+
+    return Math.min(MAX_MEMORY_LAST_MESSAGES, Math.max(MIN_MEMORY_LAST_MESSAGES, parsed));
 };
 
 const resolveSemanticRecallEmbedderModel = (
@@ -109,6 +133,14 @@ export const resolveSemanticRecallEnabled = (
 
     return resolveSemanticRecallEmbedderModel(env) !== null;
 };
+
+export const resolveObservationalMemoryEnabled = (
+    env: NodeJS.ProcessEnv = process.env,
+): boolean => isTruthyEnv(env[ENABLE_OBSERVATIONAL_MEMORY_ENV]);
+
+export const resolveObservationalMemoryBufferingEnabled = (
+    env: NodeJS.ProcessEnv = process.env,
+): boolean => isTruthyEnv(env[ENABLE_OBSERVATIONAL_MEMORY_BUFFERING_ENV]);
 
 export const resolveProjectUuid = (workspaceRootPath: string): string => {
     const mastraCodeDir = join(workspaceRootPath, '.mastracode');
@@ -189,6 +221,8 @@ export const createMastraAgentMemory = (
 ): Memory => {
     const embedder = resolveSemanticRecallEmbedder(env);
     const semanticRecallEnabled = embedder !== null;
+    const observationalMemoryEnabled = resolveObservationalMemoryEnabled(env);
+    const observationalMemoryBufferingEnabled = resolveObservationalMemoryBufferingEnabled(env);
 
     return new Memory({
         storage: new LibSQLStore({
@@ -203,11 +237,18 @@ export const createMastraAgentMemory = (
             embedder,
         } : {}),
         options: {
-            lastMessages: DEFAULT_MEMORY_LAST_MESSAGES,
-            observationalMemory: {
-                model: observationalMemoryModel,
-                scope: 'thread',
-            },
+            lastMessages: resolveMemoryLastMessages(env),
+            ...(observationalMemoryEnabled ? {
+                observationalMemory: {
+                    model: observationalMemoryModel,
+                    scope: 'thread' as const,
+                    ...(observationalMemoryBufferingEnabled ? {} : {
+                        observation: {
+                            bufferTokens: false,
+                        },
+                    }),
+                },
+            } : {}),
             workingMemory: {
                 enabled: true,
                 scope: 'resource',

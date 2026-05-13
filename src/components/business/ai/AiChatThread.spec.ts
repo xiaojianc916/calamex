@@ -2,6 +2,7 @@ import { mount } from '@vue/test-utils';
 import { describe, expect, it, vi } from 'vitest';
 import { h } from 'vue';
 
+import { Conversation } from '@/components/ai-elements/conversation';
 import AiChatThread from '@/components/business/ai/AiChatThread.vue';
 import type { IAiChatMessage } from '@/types/ai';
 
@@ -104,6 +105,42 @@ describe('AiChatThread', () => {
     });
 
     expect(wrapper.find('.ai-chat-list').classes()).toContain('overflow-x-hidden');
+  });
+
+  it('keeps resize following responsive while the assistant is typing', () => {
+    const wrapper = mount(AiChatThread, {
+      props: {
+        messages: [createMessage({ content: '正在生成' })],
+        isTyping: true,
+        platformId: 'deepseek',
+        providerLabel: 'DeepSeek',
+      },
+      global: {
+        stubs: {
+          AiMessageItem: { template: '<div class="message-item-stub" />' },
+        },
+      },
+    });
+
+    expect(wrapper.findComponent(Conversation).props('resize')).toBeUndefined();
+  });
+
+  it('uses instant resize after typing ends so late layout changes do not animate the viewport', () => {
+    const wrapper = mount(AiChatThread, {
+      props: {
+        messages: [createMessage({ content: '生成完成' })],
+        isTyping: false,
+        platformId: 'deepseek',
+        providerLabel: 'DeepSeek',
+      },
+      global: {
+        stubs: {
+          AiMessageItem: { template: '<div class="message-item-stub" />' },
+        },
+      },
+    });
+
+    expect(wrapper.findComponent(Conversation).props('resize')).toBe('instant');
   });
 
   it('forwards message actions with both payload arguments intact', async () => {

@@ -1,25 +1,25 @@
 <script setup lang="ts">
 import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
+    Collapsible,
+    CollapsibleContent,
+    CollapsibleTrigger,
 } from '@/components/ui/collapsible';
 import {
-  RUN_OPS_TEMPLATE_BLUEPRINTS,
-  RUN_OPS_TEMPLATE_CATEGORIES,
-  type IRunOpsTemplateBlueprint,
-  type TRunOpsTemplateCategoryId,
-  type TRunOpsTemplateRisk,
+    RUN_OPS_TEMPLATE_BLUEPRINTS,
+    RUN_OPS_TEMPLATE_CATEGORIES,
+    type IRunOpsTemplateBlueprint,
+    type TRunOpsTemplateCategoryId,
+    type TRunOpsTemplateRisk,
 } from '@/components/workbench/run-sidebar/runOpsTemplateCatalog';
 import {
-  ChevronRight,
-  Clock3,
-  FileCode,
-  FolderClosed,
-  FolderOpen,
-  Layers3,
-  Search,
-  ShieldCheck,
+    ChevronRight,
+    Clock3,
+    FileCode,
+    FolderClosed,
+    FolderOpen,
+    Layers3,
+    Search,
+    ShieldCheck,
 } from 'lucide-vue-next';
 import { computed, ref, watch } from 'vue';
 
@@ -30,9 +30,7 @@ interface ICategoryFolder {
   templates: IRunOpsTemplateBlueprint[];
 }
 
-const expandedCategoryIds = ref<Set<TRunOpsTemplateCategoryId>>(
-  new Set(RUN_OPS_TEMPLATE_CATEGORIES.slice(0, 2).map((category) => category.id)),
-);
+const expandedCategoryIds = ref<Set<TRunOpsTemplateCategoryId>>(new Set());
 const searchQuery = ref('');
 const selectedTemplateId = ref(RUN_OPS_TEMPLATE_BLUEPRINTS[0]?.id ?? '');
 
@@ -175,7 +173,6 @@ v-for="category in categoryFolders" :key="category.id" :open="isCategoryOpen(cat
 
             <span class="ops-template-folder-main">
               <span class="ops-template-folder-title">{{ category.title }}</span>
-              <span class="ops-template-folder-summary">{{ category.summary }}</span>
             </span>
 
             <span class="ops-template-folder-count">{{ category.templates.length }}</span>
@@ -192,7 +189,6 @@ v-for="template in category.templates" :key="template.id" type="button"
 
               <span class="ops-template-file-main">
                 <span class="ops-template-file-title">{{ template.title }}</span>
-                <span class="ops-template-file-desc">{{ template.summary }}</span>
               </span>
 
               <span class="ops-template-file-meta">
@@ -405,15 +401,6 @@ v-for="template in category.templates" :key="template.id" type="button"
   white-space: nowrap;
 }
 
-.ops-template-folder-summary {
-  overflow: hidden;
-  color: var(--text-quaternary);
-  font-size: var(--ops-font-xs);
-  line-height: 1.35;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .ops-template-folder-count {
   display: inline-flex;
   align-items: center;
@@ -485,20 +472,6 @@ v-for="template in category.templates" :key="template.id" type="button"
   font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.ops-template-file-desc {
-  margin: 0;
-  color: var(--text-tertiary);
-  font-size: var(--ops-font-sm);
-  line-height: 1.55;
-}
-
-.ops-template-file-desc {
-  display: -webkit-box;
-  overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
 }
 
 .ops-template-file-meta {

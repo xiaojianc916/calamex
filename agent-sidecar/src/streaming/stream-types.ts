@@ -14,6 +14,7 @@ export const AGENT_RUNTIME_EVENT_TYPES = [
   'acontext.envelope.injected',
   'acontext.envelope.replaced',
   'acontext.token.checked',
+  'acontext.provider_payload.checked',
   'acontext.tool_summary.recorded',
   'acontext.memory.compressed',
   'rollback.checkpoint.created',
@@ -121,15 +122,40 @@ export interface IAgentAcontextTokenEvent extends IAgentRuntimeEventBase {
   toolSchemaCharCount?: number;
   toolCount?: number;
   mcpToolCount?: number;
+  mcpServerCount?: number;
+  mcpServerNames?: string[];
   uiContextToolCount?: number;
   nativeToolCount?: number;
   logToolCount?: number;
+  toolLoadStrategy?: string;
   workspaceEnabled?: boolean;
   browserEnabled?: boolean;
   memoryEnabled?: boolean;
   maxSteps?: number;
   toolChoice?: 'auto' | 'none';
   tokenEstimateMethod?: 'char_heuristic';
+}
+
+export interface IAgentAcontextProviderPayloadEvent extends IAgentRuntimeEventBase {
+  type: 'acontext.provider_payload.checked';
+  provider: 'deepseek';
+  model?: string;
+  stream?: boolean;
+  requestIndex: number;
+  requestBodyCharCount: number;
+  projectedInputTokens: number;
+  projectedInputTokensAvailable: true;
+  messageCharCount: number;
+  systemMessageCharCount: number;
+  userMessageCharCount: number;
+  assistantMessageCharCount: number;
+  toolMessageCharCount: number;
+  reasoningReplayCharCount: number;
+  toolSchemaCharCount: number;
+  toolCount: number;
+  responseFormatCharCount: number;
+  reasoningInjected: boolean;
+  tokenEstimateMethod: 'char_heuristic';
 }
 
 export interface IAgentAcontextToolSummaryEvent extends IAgentRuntimeEventBase {
@@ -210,6 +236,7 @@ export type TAgentRuntimeEvent =
   | IAgentToolCompletedEvent
   | IAgentAcontextEnvelopeEvent
   | IAgentAcontextTokenEvent
+  | IAgentAcontextProviderPayloadEvent
   | IAgentAcontextToolSummaryEvent
   | IAgentAcontextMemoryCompressedEvent
   | IAgentCheckpointEvent

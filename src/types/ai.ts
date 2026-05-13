@@ -1,5 +1,6 @@
 import type { TAgentRuntimeEvent } from '@/types/agent-sidecar';
 import type { IAiContextReference, IAiImageAttachmentPreview } from '@/types/ai-context';
+import type { IAiAgentPatchSummary } from '@/types/ai-patch';
 import type { LanguageModelUsage } from 'ai';
 
 export type TAiProviderType = 'litellm';
@@ -155,6 +156,8 @@ export interface IAiChatMessage {
   toolCalls?: IAiToolCall[];
   actions?: IAiChatMessageAction[];
   agentConfirmation?: IAiAgentConfirmationState;
+  patches?: IAiPatchSet[];
+  changedFilesSummary?: IAiAgentPatchSummary;
   stream?: IAiChatStreamRenderState;
 }
 

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { AiImageAttachmentPreviewGrid } from '@/components/ai-elements/image';
 import {
   Message,
   MessageAction,
@@ -6,11 +7,13 @@ import {
   MessageContent,
   MessageToolbar,
 } from '@/components/ai-elements/message';
-import { AiImageAttachmentPreviewGrid } from '@/components/ai-elements/image';
 import AiAgentRuntimeTimeline from '@/components/business/ai/AiAgentRuntimeTimeline.vue';
+import AiChangedFilesSummary from '@/components/business/ai/AiChangedFilesSummary.vue';
 import AiMarkdown from '@/components/business/ai/AiMarkdown.vue';
+import AiPatchPreview from '@/components/business/ai/AiPatchPreview.vue';
 import { useMessage } from '@/composables/useMessage';
 import type { TAiServicePlatformId } from '@/constants/ai-providers';
+import type { TAgentRuntimeEvent } from '@/types/agent-sidecar';
 import type {
   IAiChatMessage,
   IAiContextReference,
@@ -26,10 +29,18 @@ const props = defineProps<{
   message: IAiChatMessage;
   platformId: TAiServicePlatformId;
   providerLabel: string;
+  workspaceRootPath?: string | null;
+  revertingChangedFilesSummaryId?: string | null;
 }>();
+
+const HIDDEN_RUNTIME_TIMELINE_EVENT_TYPES = new Set<TAgentRuntimeEvent['type']>([
+  'acontext.token.checked',
+  'acontext.provider_payload.checked',
+]);
 
 const emit = defineEmits<{
   messageAction: [messageId: string, actionId: TAiChatMessageActionId];
+  changedFilesRollback: [messageId: string, summaryId: string];
 }>();
 
 const notifier = useMessage();
@@ -60,7 +71,16 @@ const hasRenderableContent = computed(() => Boolean(props.message.content.trim()
 const hasToolCalls = computed(() => Boolean(props.message.toolCalls?.length));
 
 const hasRuntimeTimeline = computed(() =>
-  Boolean(props.message.stream?.runtimeEvents?.some((event) => event.type !== 'acontext.memory.compressed')),
+  Boolean(props.message.stream?.runtimeEvents?.some((event) =>
+    event.type !== 'acontext.memory.compressed' &&
+    !HIDDEN_RUNTIME_TIMELINE_EVENT_TYPES.has(event.type)
+  )),
+);
+
+const hasRuntimeEventBuffer = computed(() => Array.isArray(props.message.stream?.runtimeEvents));
+
+const hasEmptyRuntimeTimelinePlaceholder = computed(
+  () => hasRuntimeEventBuffer.value && (props.message.stream?.runtimeEvents?.length ?? 0) === 0,
 );
 
 const isAgentRuntimePending = computed(
@@ -68,12 +88,16 @@ const isAgentRuntimePending = computed(
     props.message.role === 'assistant' &&
     props.message.stream?.status === 'streaming' &&
     props.message.stream?.finalAnswerStarted !== true &&
-    Array.isArray(props.message.stream?.runtimeEvents),
+    (hasEmptyRuntimeTimelinePlaceholder.value || hasRuntimeTimeline.value),
 );
 
 const shouldShowRuntimeTimeline = computed(
   () =>
     props.message.role === 'assistant' && (hasRuntimeTimeline.value || isAgentRuntimePending.value),
+);
+
+const shouldShowToolCallList = computed(
+  () => hasToolCalls.value && !shouldShowRuntimeTimeline.value,
 );
 
 const hasStreamingRuntimeBeforeFinalAnswer = computed(
@@ -92,6 +116,10 @@ const canShowRuntimeMessageBubble = computed(
 );
 
 const hasMessageActions = computed(() => Boolean(props.message.actions?.length));
+const hasChangedFilesSummary = computed(() => Boolean(props.message.changedFilesSummary));
+const hasInlinePatches = computed(() =>
+  Boolean(props.message.patches?.length) && !hasChangedFilesSummary.value,
+);
 
 const isToolProgressContent = computed(() => {
   if (props.message.role !== 'assistant' || !hasToolCalls.value) {
@@ -188,6 +216,8 @@ const shouldRenderMessage = computed(
     hasToolCalls.value ||
     shouldShowMessageBubble.value ||
     shouldShowRuntimeTimeline.value ||
+    hasInlinePatches.value ||
+    hasChangedFilesSummary.value ||
     shouldShowThinkingStatus.value ||
     shouldShowStreamTokenProgress.value ||
     hasMessageActions.value,
@@ -310,83 +340,49 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <Message
-    v-if="shouldRenderMessage"
-    :from="message.role"
-    class="ai-message"
-    :class="[`is-${message.role}`, { 'is-inline-loading': shouldShowInlineLoader }]"
-  >
-    <div
-      v-if="shouldShowThinkingStatus"
-      class="ai-message-status-line"
-    >
+  <Message v-if="shouldRenderMessage" :from="message.role" class="ai-message"
+    :class="[`is-${message.role}`, { 'is-inline-loading': shouldShowInlineLoader }]">
+    <div v-if="shouldShowThinkingStatus" class="ai-message-status-line">
       <AiThinkingStatus :label="inlineLoaderLabel" />
     </div>
-    <AiAgentRuntimeTimeline
-      v-if="shouldShowRuntimeTimeline"
-      :events="message.stream?.runtimeEvents ?? []"
-      :is-streaming="message.stream?.status === 'streaming'"
-    />
-    <div v-if="hasToolCalls" class="ai-tool-call-list" aria-label="工具活动">
-      <div
-        v-for="toolCall in message.toolCalls"
-        :key="toolCall.id"
-        class="ai-tool-call"
-        :data-status="toolCall.status"
-      >
+    <AiAgentRuntimeTimeline v-if="shouldShowRuntimeTimeline" :events="message.stream?.runtimeEvents ?? []"
+      :is-streaming="message.stream?.status === 'streaming'" />
+    <div v-if="shouldShowToolCallList" class="ai-tool-call-list" aria-label="工具活动">
+      <div v-for="toolCall in message.toolCalls" :key="toolCall.id" class="ai-tool-call" :data-status="toolCall.status">
         <span class="ai-tool-call__indicator" aria-hidden="true"></span>
         <span class="ai-tool-call__label">{{ formatToolCallLabel(toolCall) }}</span>
         <span class="ai-tool-call__status">{{ getToolCallStatusLabel(toolCall) }}</span>
       </div>
     </div>
-    <AiImageAttachmentPreviewGrid
-      v-if="userAttachmentItems.length"
-      class="ai-message-image-attachments"
-      :items="userAttachmentItems"
-      aria-label="已发送附件"
-      variant="message"
-    />
-    <MessageContent
-      v-if="shouldShowMessageBubble"
-      class="ai-message-bubble"
-      :class="{ 'is-assistant-flat': message.role !== 'user' }"
-    >
-      <AiMarkdown
-        :message-id="message.id"
-        :content="message.content"
-        :stream-status="message.stream?.status"
-      />
+    <AiImageAttachmentPreviewGrid v-if="userAttachmentItems.length" class="ai-message-image-attachments"
+      :items="userAttachmentItems" aria-label="已发送附件" variant="message" />
+    <div v-if="hasInlinePatches" class="ai-message-patch-list" aria-label="已编辑的文件">
+      <AiPatchPreview v-for="(patch, index) in message.patches" :key="`${message.id}:patch:${index}`" :patch="patch"
+        :workspace-root-path="workspaceRootPath" variant="message" />
+    </div>
+    <MessageContent v-if="shouldShowMessageBubble" class="ai-message-bubble"
+      :class="{ 'is-assistant-flat': message.role !== 'user' }">
+      <AiMarkdown :message-id="message.id" :content="message.content" :stream-status="message.stream?.status" />
     </MessageContent>
+    <AiChangedFilesSummary v-if="message.changedFilesSummary" class="ai-message-changed-files"
+      :summary="message.changedFilesSummary" :patches="message.patches ?? []" :workspace-root-path="workspaceRootPath"
+      :is-reverting="revertingChangedFilesSummaryId === message.changedFilesSummary.id" variant="message"
+      @undo="emit('changedFilesRollback', message.id, $event)" />
     <div v-if="shouldShowStreamTokenProgress" class="ai-message-token-progress" aria-live="polite">
       {{ streamTokenProgressLabel }}
     </div>
     <MessageActions v-if="hasMessageActions" class="ai-message-options" aria-label="AI 选项">
-      <MessageAction
-        v-for="action in message.actions"
-        :key="`${message.id}:${action.id}`"
-        class="ai-message-option-button"
-        :disabled="action.disabled"
-        :label="action.label"
-        size="sm"
-        :tooltip="action.label"
-        variant="outline"
-        @click.stop="emit('messageAction', message.id, action.id)"
-      >
+      <MessageAction v-for="action in message.actions" :key="`${message.id}:${action.id}`"
+        class="ai-message-option-button" :disabled="action.disabled" :label="action.label" size="sm"
+        :tooltip="action.label" variant="outline" @click.stop="emit('messageAction', message.id, action.id)">
         {{ action.label }}
       </MessageAction>
     </MessageActions>
-    <MessageToolbar
-      v-if="shouldRenderCopyButton"
-      class="ai-message-toolbar"
-      :class="[`is-copy-mode-${copyButtonVisibilityMode}`]"
-    >
+    <MessageToolbar v-if="shouldRenderCopyButton" class="ai-message-toolbar"
+      :class="[`is-copy-mode-${copyButtonVisibilityMode}`]">
       <MessageActions class="ai-message-actions">
-        <MessageAction
-          class="ai-message-copy-button"
-          :class="{ 'is-copied': isCopied }"
-          :label="isCopied ? '已复制对话内容' : '复制对话内容'"
-          @click.stop="copyMessageContent"
-        >
+        <MessageAction class="ai-message-copy-button" :class="{ 'is-copied': isCopied }"
+          :label="isCopied ? '已复制对话内容' : '复制对话内容'" @click.stop="copyMessageContent">
           <Check v-if="isCopied" aria-hidden="true" />
           <Copy v-else aria-hidden="true" />
         </MessageAction>
@@ -419,14 +415,14 @@ onBeforeUnmount(() => {
   justify-content: center;
 }
 
-.ai-message.is-assistant > .ai-runtime-timeline {
+.ai-message.is-assistant>.ai-runtime-timeline {
   width: 100%;
   max-width: 100%;
   min-width: 0;
   overflow-x: hidden;
 }
 
-.ai-message.is-assistant > :not(.ai-runtime-timeline) {
+.ai-message.is-assistant> :not(.ai-runtime-timeline) {
   min-width: 0;
   max-width: 100%;
 }
@@ -486,8 +482,8 @@ onBeforeUnmount(() => {
   font-size: 11px;
 }
 
-.ai-message > .ai-runtime-timeline + .ai-message-bubble,
-.ai-message > .ai-message-status-line + .ai-message-bubble {
+.ai-message>.ai-runtime-timeline+.ai-message-bubble,
+.ai-message>.ai-message-status-line+.ai-message-bubble {
   margin-top: 6px;
 }
 
@@ -501,6 +497,16 @@ onBeforeUnmount(() => {
 .ai-message-image-attachments {
   max-width: min(520px, 100%);
   padding-bottom: 4px;
+}
+
+.ai-message-patch-list {
+  display: grid;
+  width: min(100%, 680px);
+  gap: 8px;
+}
+
+.ai-message-changed-files {
+  width: min(100%, 640px);
 }
 
 .ai-message.is-user .ai-message-attachments {
@@ -733,5 +739,4 @@ onBeforeUnmount(() => {
   pointer-events: auto;
   transform: translateY(0);
 }
-
 </style>

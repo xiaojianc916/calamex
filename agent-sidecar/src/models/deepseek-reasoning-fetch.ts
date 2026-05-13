@@ -1,11 +1,30 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 
+type TJsonRecord = Record<string, unknown>;
+
+export interface IDeepSeekRequestPayloadStats {
+  provider: 'deepseek';
+  model?: string;
+  stream?: boolean;
+  requestBodyCharCount: number;
+  projectedInputTokens: number;
+  messageCharCount: number;
+  systemMessageCharCount: number;
+  userMessageCharCount: number;
+  assistantMessageCharCount: number;
+  toolMessageCharCount: number;
+  reasoningReplayCharCount: number;
+  toolSchemaCharCount: number;
+  toolCount: number;
+  responseFormatCharCount: number;
+  reasoningInjected: boolean;
+}
+
 interface IDeepSeekReasoningContext {
   sessionId: string;
   runId: string;
+  onRequestPayload?: (stats: IDeepSeekRequestPayloadStats) => void;
 }
-
-type TJsonRecord = Record<string, unknown>;
 
 interface IReasoningStoreEntry {
   createdAt: number;
@@ -23,6 +42,45 @@ const isRecord = (value: unknown): value is TJsonRecord => (
   && typeof value === 'object'
   && !Array.isArray(value)
 );
+
+const countTextChars = (value: string): number => Array.from(value).length;
+
+const stringifyForStats = (value: unknown): string => {
+  try {
+    return JSON.stringify(value) ?? '';
+  } catch {
+    return '';
+  }
+};
+
+const countJsonChars = (value: unknown): number => countTextChars(stringifyForStats(value));
+
+const estimateInputTokensByChars = (value: string): number => {
+  let asciiRunLength = 0;
+  let tokens = 0;
+
+  for (const char of Array.from(value)) {
+    const codePoint = char.codePointAt(0) ?? 0;
+
+    if (codePoint <= 0x7f) {
+      asciiRunLength += 1;
+      continue;
+    }
+
+    if (asciiRunLength > 0) {
+      tokens += Math.ceil(asciiRunLength / 4);
+      asciiRunLength = 0;
+    }
+
+    tokens += 1;
+  }
+
+  if (asciiRunLength > 0) {
+    tokens += Math.ceil(asciiRunLength / 4);
+  }
+
+  return Math.max(tokens, 1);
+};
 
 const toNonEmptyString = (value: unknown): string | null => {
   if (typeof value !== 'string') {
@@ -166,6 +224,78 @@ const getReasoningText = (value: TJsonRecord | null): string => {
 const hasReasoningContent = (message: TJsonRecord): boolean =>
   typeof message.reasoning_content === 'string' && message.reasoning_content.length > 0;
 
+const readMessageContentCharCount = (message: TJsonRecord): number =>
+  countJsonChars(message.content);
+
+const readToolCount = (tools: unknown): number =>
+  Array.isArray(tools) ? tools.length : 0;
+
+const createRequestPayloadStats = (
+  body: TJsonRecord,
+  reasoningInjected: boolean,
+): IDeepSeekRequestPayloadStats => {
+  const bodyText = stringifyForStats(body);
+  const messages = Array.isArray(body.messages) ? body.messages : [];
+  let systemMessageCharCount = 0;
+  let userMessageCharCount = 0;
+  let assistantMessageCharCount = 0;
+  let toolMessageCharCount = 0;
+  let reasoningReplayCharCount = 0;
+
+  for (const message of messages) {
+    if (!isRecord(message)) {
+      continue;
+    }
+
+    const contentCharCount = readMessageContentCharCount(message);
+
+    if (message.role === 'system') {
+      systemMessageCharCount += contentCharCount;
+    } else if (message.role === 'user') {
+      userMessageCharCount += contentCharCount;
+    } else if (message.role === 'assistant') {
+      assistantMessageCharCount += contentCharCount;
+      reasoningReplayCharCount += countTextChars(getReasoningText(message));
+    } else if (message.role === 'tool') {
+      toolMessageCharCount += contentCharCount;
+    }
+  }
+
+  return {
+    provider: 'deepseek',
+    ...(typeof body.model === 'string' && body.model.trim().length > 0 ? { model: body.model.trim() } : {}),
+    ...(typeof body.stream === 'boolean' ? { stream: body.stream } : {}),
+    requestBodyCharCount: countTextChars(bodyText),
+    projectedInputTokens: estimateInputTokensByChars(bodyText),
+    messageCharCount: countJsonChars(body.messages),
+    systemMessageCharCount,
+    userMessageCharCount,
+    assistantMessageCharCount,
+    toolMessageCharCount,
+    reasoningReplayCharCount,
+    toolSchemaCharCount: countJsonChars(body.tools),
+    toolCount: readToolCount(body.tools),
+    responseFormatCharCount: countJsonChars(body.response_format),
+    reasoningInjected,
+  };
+};
+
+const emitRequestPayloadStats = (
+  context: IDeepSeekReasoningContext | undefined,
+  body: TJsonRecord,
+  reasoningInjected: boolean,
+): void => {
+  try {
+    context?.onRequestPayload?.(createRequestPayloadStats(body, reasoningInjected));
+  } catch (error) {
+    logReasoningWarning('request-payload-metric-failed', {
+      sessionId: context?.sessionId ?? null,
+      runId: context?.runId ?? null,
+      toolCallCount: 0,
+    }, error);
+  }
+};
+
 const findStoredReasoning = (
   context: IDeepSeekReasoningContext | undefined,
   toolCallIds: readonly string[],
@@ -193,6 +323,29 @@ const findStoredReasoning = (
   return candidates[0] ?? null;
 };
 
+const normalizeMessageContentFields = (body: TJsonRecord): boolean => {
+  const messages = body.messages;
+
+  if (!Array.isArray(messages)) {
+    return false;
+  }
+
+  let changed = false;
+
+  for (const message of messages) {
+    if (!isRecord(message)) {
+      continue;
+    }
+
+    if (!('content' in message) || message.content === undefined || message.content === null) {
+      message.content = '';
+      changed = true;
+    }
+  }
+
+  return changed;
+};
+
 const injectReasoningIntoMessages = (
   body: TJsonRecord,
   context: IDeepSeekReasoningContext | undefined,
@@ -216,13 +369,6 @@ const injectReasoningIntoMessages = (
     }
 
     if (hasReasoningContent(message)) {
-      continue;
-    }
-
-    const existingReasoning = getReasoningText(message);
-    if (existingReasoning.length > 0) {
-      message.reasoning_content = existingReasoning;
-      changed = true;
       continue;
     }
 
@@ -418,7 +564,11 @@ const prepareOutboundRequest = async (
       return [input, init];
     }
 
-    const changed = injectReasoningIntoMessages(body, context);
+    const contentNormalized = normalizeMessageContentFields(body);
+    const reasoningInjected = injectReasoningIntoMessages(body, context);
+    const changed = contentNormalized || reasoningInjected;
+
+    emitRequestPayloadStats(context, body, reasoningInjected);
     return changed ? createRequestWithJsonBody(input, init, body) : [input, init];
   } catch (error) {
     logReasoningWarning('outbound-failed', {

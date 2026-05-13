@@ -13,9 +13,6 @@ import AiProviderIcon from '@/components/business/ai/AiProviderIcon.vue';
 import AiProviderSettings from '@/components/business/ai/AiProviderSettings.vue';
 import AiToolConfirmationCard from '@/components/business/ai/AiToolConfirmationCard.vue';
 import AiWebSourcesPanel from '@/components/business/ai/AiWebSourcesPanel.vue';
-import DropdownMenu from '@/components/ui/dropdown-menu/DropdownMenu.vue';
-import DropdownMenuContent from '@/components/ui/dropdown-menu/DropdownMenuContent.vue';
-import DropdownMenuTrigger from '@/components/ui/dropdown-menu/DropdownMenuTrigger.vue';
 import { useAiAgentNetwork } from '@/composables/useAiAgentNetwork';
 import { useAiAgentRun } from '@/composables/useAiAgentRun';
 import { useAiAssistant, type IAiConversationCheckpoint } from '@/composables/useAiAssistant';
@@ -45,7 +42,7 @@ import type { IGitDiffPreviewPayload, IGitRepositoryStatusPayload } from '@/type
 import { cloneAiConfigPayload } from '@/utils/ai-config';
 import { toErrorMessage } from '@/utils/error';
 import { SquarePen, Trash2 } from 'lucide-vue-next';
-import { computed, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 
 const MAX_HISTORY_MESSAGES = 20;
 const props = defineProps<{
@@ -86,6 +83,8 @@ const settingsApiKey = ref('');
 const isAgentRunActionPending = ref(false);
 const isHistoryOpen = ref(false);
 const pendingDeleteThreadId = ref<string | null>(null);
+const historyAnchorRef = ref<HTMLElement | null>(null);
+const historyPopoverRef = ref<HTMLElement | null>(null);
 const currentServicePlatform = computed(() =>
   findAiServicePlatformByModel(assistant.config.value.selectedModel),
 );
@@ -213,6 +212,12 @@ const canEditPlan = computed(() =>
     !planStatus.value
   ),
 );
+const visiblePatchPreview = computed(() =>
+  assistant.proposedPatch.value ?? assistant.appliedPatchPreview.value,
+);
+const isVisiblePatchApplied = computed(() =>
+  !assistant.proposedPatch.value && Boolean(assistant.appliedPatchPreview.value),
+);
 const planProgressVisible = computed(() => {
   if (assistant.activeMode.value !== 'plan') {
     return false;
@@ -333,6 +338,62 @@ const buildPlanRunFinalAnswer = (
   ].join('\n');
 };
 
+const isAgentTokenMessage = (message: IAiChatMessage): boolean =>
+  message.role !== 'assistant' ||
+  Boolean(message.toolCalls?.length) ||
+  Boolean(message.stream?.runtimeEvents?.length);
+
+const resolvePlanTokenStep = (run: IAiAgentRun | null): IAiTaskPlanStep | null => {
+  if (!run) {
+    return null;
+  }
+
+  if (run.currentStepId) {
+    return run.steps.find((step) => step.id === run.currentStepId) ?? null;
+  }
+
+  return run.steps.find((step) => step.status === 'running')
+    ?? run.steps.find((step) => step.status === 'pending')
+    ?? null;
+};
+
+const buildPlanTokenEstimationMessages = (
+  goal: string,
+  step: IAiTaskPlanStep,
+  createdAt: string,
+): IAiChatMessage[] => {
+  const toolList = step.tools.length ? step.tools.join(', ') : '未限定，按任务需要选择可用工具';
+
+  return [
+    {
+      id: `plan-token-system:${step.id}`,
+      role: 'system',
+      content: [
+        '你正在执行 IDE Agent Plan 的单个步骤。',
+        '必须围绕当前步骤目标调用可用工具；不要执行与当前步骤无关的操作。',
+        '如果需要高风险工具，请通过 sidecar approval 事件等待用户确认。',
+        '写盘、删除、命令、安装依赖和 Git 操作都必须保留可回滚语义。',
+      ].join('\n'),
+      createdAt,
+      references: [],
+    },
+    {
+      id: `plan-token-user:${step.id}`,
+      role: 'user',
+      content: [
+        `任务目标：${goal}`,
+        `当前步骤：${step.title}`,
+        `步骤目标：${step.goal}`,
+        `预期产物：${step.expectedOutput}`,
+        `建议工具：${toolList}`,
+        '请执行这个步骤，并在完成后给出简短结论。',
+      ].join('\n'),
+      createdAt,
+      references: [],
+    },
+  ];
+};
+
 const activeAgentFlowMessage = computed<IAiChatMessage | null>(() => {
   if (assistant.activeMode.value !== 'plan') {
     return null;
@@ -384,11 +445,84 @@ const threadMessages = computed<IAiChatMessage[]>(() => {
     flowMessage,
   ];
 });
+const tokenUsageMessages = computed<IAiChatMessage[]>(() => {
+  if (assistant.activeMode.value === 'plan') {
+    return activeAgentFlowMessage.value ? [activeAgentFlowMessage.value] : [];
+  }
+
+  if (assistant.activeMode.value === 'agent') {
+    return assistant.messages.value.filter(isAgentTokenMessage);
+  }
+
+  return threadMessages.value;
+});
+const tokenEstimationMessages = computed<IAiChatMessage[]>(() => {
+  if (assistant.activeMode.value === 'chat') {
+    return threadMessages.value;
+  }
+
+  if (assistant.activeMode.value !== 'plan') {
+    return [];
+  }
+
+  const hasManualInput = assistant.draft.value.trim().length > 0 || assistant.attachedFiles.value.length > 0;
+
+  if (hasManualInput) {
+    return [];
+  }
+
+  const step = resolvePlanTokenStep(planActiveRun.value);
+
+  if (!step) {
+    return [];
+  }
+
+  return buildPlanTokenEstimationMessages(
+    planActiveGoal.value,
+    step,
+    planActiveRun.value?.updatedAt ?? new Date().toISOString(),
+  );
+});
+const tokenContextReferences = computed(() => {
+  const attachmentReferences = assistant.attachedFiles.value.map((file) => file.reference);
+
+  if (assistant.activeMode.value === 'chat') {
+    return attachmentReferences;
+  }
+
+  const hasManualInput = assistant.draft.value.trim().length > 0 || attachmentReferences.length > 0;
+  const hasPlanExecutionEstimate = assistant.activeMode.value === 'plan' && tokenEstimationMessages.value.length > 0;
+
+  if (!hasManualInput && !hasPlanExecutionEstimate) {
+    return [];
+  }
+
+  return assistant.buildSidecarContextReferences(attachmentReferences);
+});
+const hasPendingTokenRequest = computed(() =>
+  assistant.draft.value.trim().length > 0 ||
+  assistant.attachedFiles.value.length > 0 ||
+  (assistant.activeMode.value === 'plan' && tokenEstimationMessages.value.length > 0),
+);
+const tokenOfficialUsage = computed(() => {
+  if (assistant.activeMode.value !== 'plan') {
+    return null;
+  }
+
+  return readPlanStoreValue(planStore.value.totalOfficialUsageResolved)
+    ? readPlanStoreValue(planStore.value.totalOfficialUsage)
+    : null;
+});
 const { contextProps: tokenContextProps } = useAiTokenContext({
+  mode: computed(() => assistant.activeMode.value),
   modelId: computed(() => assistant.config.value.selectedModel),
   runtimeEvents: computed(() => assistant.runtimeTimelineEvents.value),
-  messages: threadMessages,
+  messages: tokenUsageMessages,
+  estimationMessages: tokenEstimationMessages,
+  contextReferences: tokenContextReferences,
+  hasPendingRequest: hasPendingTokenRequest,
   draft: computed(() => assistant.draft.value),
+  officialUsage: tokenOfficialUsage,
 });
 const submitLabel = computed(() => {
   if (assistant.activeMode.value === 'plan') {
@@ -436,6 +570,35 @@ const fileRollbackLabel = computed(() => {
 });
 const isFileRollbackDisabled = computed(() => fileRollbackPrompt.value?.status !== 'ready');
 
+const isHistoryEventInside = (eventTarget: EventTarget | null): boolean => {
+  const targetNode = eventTarget instanceof Node ? eventTarget : null;
+
+  if (!targetNode) {
+    return false;
+  }
+
+  return Boolean(
+    historyAnchorRef.value?.contains(targetNode) ||
+    historyPopoverRef.value?.contains(targetNode),
+  );
+};
+
+const handleHistoryPointerDown = (event: PointerEvent): void => {
+  if (!isHistoryOpen.value || assistant.isClearDialogOpen.value) {
+    return;
+  }
+
+  if (isHistoryEventInside(event.target)) {
+    return;
+  }
+
+  isHistoryOpen.value = false;
+};
+
+const toggleHistoryPopover = (): void => {
+  isHistoryOpen.value = !isHistoryOpen.value;
+};
+
 const openSettings = (): void => {
   settingsDraft.value = cloneAiConfigPayload(assistant.config.value);
   isHistoryOpen.value = false;
@@ -461,7 +624,6 @@ const openHistoryThread = (threadId: string): void => {
 
 const openDeleteConversationDialog = (threadId: string): void => {
   pendingDeleteThreadId.value = threadId;
-  isHistoryOpen.value = false;
   assistant.isClearDialogOpen.value = true;
 };
 
@@ -484,7 +646,6 @@ const confirmClearConversation = (): void => {
   }
 
   assistant.deleteConversation(threadId);
-  isHistoryOpen.value = false;
 };
 
 const handleSuggestionSelect = async (suggestion: string): Promise<void> => {
@@ -845,6 +1006,7 @@ const restorePersistedPlanUiState = async (): Promise<void> => {
 };
 
 onMounted(() => {
+  document.addEventListener('pointerdown', handleHistoryPointerDown);
   restorePersistedPlanUiState().catch((error) => {
     setPlanError(error, '恢复计划状态失败。');
   });
@@ -853,6 +1015,10 @@ onMounted(() => {
   }).catch(() => undefined);
   assistant.loadTools().catch(() => undefined);
   assistant.loadProviderProfiles().catch(() => undefined);
+});
+
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', handleHistoryPointerDown);
 });
 </script>
 
@@ -877,21 +1043,28 @@ onMounted(() => {
             <circle cx="7" cy="7" r="3" />
           </svg>
         </button>
-        <DropdownMenu v-model:open="isHistoryOpen">
-          <DropdownMenuTrigger as-child>
-            <button
-type="button" class="ai-icon-button" aria-label="对话记录" aria-haspopup="dialog"
-              :aria-expanded="isHistoryOpen">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
-                <path d="M3 3v5h5" />
-                <path d="M3.05 13A9 9 0 1 0 6 5.3L3 8" />
-                <path d="M12 7v5l4 2" />
-              </svg>
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent
-class="ai-history-popover border-0! outline-none! ring-0!" align="end" side="bottom"
-            :side-offset="8" :collision-padding="12">
+        <div ref="historyAnchorRef" class="ai-history-anchor">
+          <button
+            type="button"
+            class="ai-icon-button"
+            aria-label="对话记录"
+            aria-haspopup="dialog"
+            :aria-expanded="isHistoryOpen"
+            @click="toggleHistoryPopover"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+              <path d="M3 3v5h5" />
+              <path d="M3.05 13A9 9 0 1 0 6 5.3L3 8" />
+              <path d="M12 7v5l4 2" />
+            </svg>
+          </button>
+          <section
+            v-if="isHistoryOpen"
+            ref="historyPopoverRef"
+            class="ai-history-popover"
+            role="dialog"
+            aria-label="对话记录"
+          >
             <header class="ai-history-header">
               <div class="ai-history-title-group">
                 <strong>对话记录</strong>
@@ -923,8 +1096,8 @@ type="button" class="ai-history-delete-button" aria-label="删除这条对话记
               </div>
             </div>
             <div v-else class="ai-history-empty">暂无对话记录</div>
-          </DropdownMenuContent>
-        </DropdownMenu>
+          </section>
+        </div>
         <slot name="header-actions-after" />
       </div>
     </header>
@@ -935,10 +1108,13 @@ type="button" class="ai-history-delete-button" aria-label="删除这条对话记
       :platform-id="aiIconPlatformId"
       :provider-label="aiIconTitle"
       :conversation-id="assistant.activeConversationId.value"
+      :workspace-root-path="workspaceRootPath"
       :scroll-state="assistant.activeConversationScrollState.value"
       :typing-label="assistantTypingLabel"
       :has-extra-content="planConfirmationVisible"
+      :reverting-changed-files-summary-id="assistant.revertingChangedFilesSummaryId.value"
       @scroll-state-change="handleConversationScrollStateChange"
+      @changed-files-rollback="assistant.rollbackChangedFilesSummary"
     >
       <template #empty>
         <AiFloatingSuggestions
@@ -993,9 +1169,11 @@ type="button" class="ai-file-rollback-entry__button" :disabled="isFileRollbackDi
       <span class="ai-file-rollback-entry__line" aria-hidden="true"></span>
     </div>
     <AiPatchPreview
-:patch="assistant.proposedPatch.value" :is-applying="assistant.isApplyingPatch.value"
-      :workspace-root-path="workspaceRootPath" @apply="assistant.applyProposedPatch"
-      @close="assistant.proposedPatch.value = null" @open-diff="emit('open-patch-diff', $event)" />
+      :patch="visiblePatchPreview" :is-applying="assistant.isApplyingPatch.value"
+      :is-applied="isVisiblePatchApplied" :workspace-root-path="workspaceRootPath"
+      @apply="assistant.applyProposedPatch"
+      @close="assistant.proposedPatch.value = null; assistant.appliedPatchPreview.value = null"
+      @open-diff="emit('open-patch-diff', $event)" />
     <div v-if="assistant.canPreviewPatch.value" class="ai-patch-entry">
       <span class="ai-patch-entry__line" aria-hidden="true"></span>
       <button type="button" class="ai-patch-entry__button" @click="assistant.previewPatchFromLastAnswer">
@@ -1170,7 +1348,11 @@ v-model:draft="settingsDraft" v-model:api-key="settingsApiKey"
   place-items: center;
 }
 
-:deep(.ai-history-popover) {
+.ai-history-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 1301;
   display: flex;
   flex-direction: column;
   width: 332px;
@@ -1489,22 +1671,22 @@ v-model:draft="settingsDraft" v-model:api-key="settingsApiKey"
   min-inline-size: min(380px, calc(100vw - 32px));
   max-inline-size: min(460px, calc(100vw - 32px));
   gap: 12px;
-  border: 1px solid color-mix(in srgb, var(--shell-divider) 100%, rgba(255, 255, 255, 0.1));
+  border: 1px solid #e5e5e5;
   border-radius: 12px;
-  background: color-mix(in srgb, var(--panel-bg) 96%, var(--sidebar-bg));
+  background: #ffffff;
   padding: 16px;
 }
 
 .ai-dialog-copy h3 {
   margin: 0;
-  color: var(--text-primary);
+  color: #000000;
   font-size: 13px;
   font-weight: 600;
 }
 
 .ai-dialog-copy p {
   margin: 4px 0 0;
-  color: var(--text-tertiary);
+  color: #737373;
   font-size: 12px;
   line-height: 1.55;
 }
@@ -1516,14 +1698,14 @@ v-model:draft="settingsDraft" v-model:api-key="settingsApiKey"
 }
 
 .ai-button.is-ghost {
-  border: 1px solid color-mix(in srgb, var(--shell-divider) 88%, transparent);
-  background: transparent;
-  color: var(--text-tertiary);
+  border: 1px solid #d4d4d4;
+  background: #ffffff;
+  color: #000000;
 }
 
 .ai-button.is-danger {
   border: 0;
-  background: var(--danger);
-  color: #fff;
+  background: #ea1a24;
+  color: #ffffff;
 }
 </style>

@@ -1,6 +1,7 @@
 import { AI_AGENT_TOOL_NAMES, type TAiAgentToolName } from '@/types/ai-tools';
 import { normalizeFileSystemPath } from '@/utils/path';
 import { clipTextPreview } from '@/utils/text-preview';
+import type { LanguageModelUsage } from 'ai';
 
 import type {
   IAgentPlan,
@@ -12,11 +13,11 @@ import type {
   TJsonValue,
 } from '@/types/agent-sidecar';
 import type {
+  IAiAgentPlanMetadata,
+  IAiAgentPlanVersionSummary,
   IAiTaskPlanStep,
   IAiToolCall,
   IAiToolConfirmationRequest,
-  IAiAgentPlanMetadata,
-  IAiAgentPlanVersionSummary,
   TAiAgentPlanStepKind,
   TAiAgentPlanStepStatus,
 } from '@/types/ai';
@@ -75,6 +76,11 @@ export interface IAgentSidecarPlanValidationProjection {
   errorMessage: string | null;
 }
 
+export interface ISidecarOfficialUsageResolution {
+  resolved: boolean;
+  usage: LanguageModelUsage | null;
+}
+
 export interface IAgentSidecarToolProjection {
   toolCalls: IAiToolCall[];
   activityText: string;
@@ -96,6 +102,11 @@ const AI_AGENT_TOOL_NAME_SET = new Set<string>(AI_AGENT_TOOL_NAMES);
 const SIDECAR_FILE_MUTATION_TOOL_NAMES = new Set<string>([
   'write_file',
   'edit_file',
+  'apply_file_edits',
+  'propose_file_patch',
+  'mastra_workspace_edit_file',
+  'mastra_workspace_write_file',
+  'mastra_workspace_ast_edit',
   'create_directory',
   'move_file',
   'delete_file',
@@ -110,6 +121,11 @@ const SIDECAR_FILE_PATH_KEYS = new Set<string>([
   'sourcePath',
   'destinationPath',
   'newPath',
+]);
+
+const TIMELINE_DEBUG_EVENT_TYPES: ReadonlySet<TAgentRuntimeEvent['type']> = new Set([
+  'acontext.token.checked',
+  'acontext.provider_payload.checked',
 ]);
 
 const SIDECAR_QUERY_KEYS = new Set<string>([
@@ -182,6 +198,8 @@ const FILE_SEARCH_TOOL_NAMES = new Set<string>([
   'search_symbols',
   'search_project_files',
   'search_nodes',
+  'grep_in_files',
+  'mastra_workspace_grep',
 ]);
 
 const FILE_READ_TOOL_NAMES = new Set<string>([
@@ -189,14 +207,18 @@ const FILE_READ_TOOL_NAMES = new Set<string>([
   'read_media_file',
   'read_multiple_files',
   'read_current_file',
+  'read_file_window',
   'read_selected_text',
   'read_file',
   'read_project_file',
   'get_file_info',
   'open_nodes',
+  'mastra_workspace_read_file',
+  'mastra_workspace_lsp_inspect',
 ]);
 
 const DIRECTORY_TOOL_NAMES = new Set<string>([
+  'list_dir',
   'list_directory',
   'list_directory_with_sizes',
   'directory_tree',
@@ -234,13 +256,25 @@ const SIDECAR_TOOL_TO_AI_TOOL: Readonly<Record<string, TAiAgentToolName>> = {
   read_multiple_files: 'read_file',
   list_directory: 'get_project_tree',
   list_directory_with_sizes: 'get_project_tree',
+  list_dir: 'get_project_tree',
   directory_tree: 'get_project_tree',
   search_files: 'search_text',
+  grep_in_files: 'search_text',
+  search_symbols: 'search_symbols',
   get_file_info: 'read_file',
+  read_file_window: 'read_file',
   list_allowed_directories: 'get_project_tree',
   list_project_files: 'get_project_tree',
   read_project_file: 'read_file',
   search_project_files: 'search_text',
+  apply_file_edits: 'auto_apply_patch',
+  propose_file_patch: 'auto_apply_patch',
+  mastra_workspace_edit_file: 'auto_apply_patch',
+  mastra_workspace_write_file: 'auto_apply_patch',
+  mastra_workspace_ast_edit: 'auto_apply_patch',
+  mastra_workspace_lsp_inspect: 'get_diagnostics',
+  mastra_workspace_grep: 'search_text',
+  mastra_workspace_read_file: 'read_file',
   write_file: 'auto_apply_patch',
   edit_file: 'auto_apply_patch',
   create_directory: 'auto_apply_patch',
@@ -301,6 +335,8 @@ const inferStepKind = (tools: readonly string[]): TAiAgentPlanStepKind => {
     tool === 'search_files' ||
     tool === 'search_text' ||
     tool === 'search_symbols' ||
+    tool === 'grep_in_files' ||
+    tool === 'mastra_workspace_grep' ||
     tool === 'tavily-search' ||
     tool === 'tavily-map' ||
     tool === 'tavily_search' ||
@@ -314,6 +350,11 @@ const inferStepKind = (tools: readonly string[]): TAiAgentPlanStepKind => {
   if (tools.some((tool) =>
     tool === 'write_file' ||
     tool === 'edit_file' ||
+    tool === 'apply_file_edits' ||
+    tool === 'propose_file_patch' ||
+    tool === 'mastra_workspace_edit_file' ||
+    tool === 'mastra_workspace_write_file' ||
+    tool === 'mastra_workspace_ast_edit' ||
     tool === 'create_directory' ||
     tool === 'move_file' ||
     tool === 'delete_file' ||
@@ -917,7 +958,10 @@ export const extractVisibleAgentRuntimeEvents = (
 ): TAgentRuntimeEvent[] =>
   events
     .filter((event): event is Extract<TAgentUiEvent, { type: 'agent_event' }> =>
-      event.type === 'agent_event' && event.event.visibility === 'user'
+      event.type === 'agent_event' && (
+        event.event.visibility === 'user' ||
+        TIMELINE_DEBUG_EVENT_TYPES.has(event.event.type)
+      )
     )
     .map((event) => event.event);
 
@@ -1145,10 +1189,10 @@ const applyRuntimeToolEventToToolCalls = (
 };
 
 const WEB_TOOL_NAME_PATTERN = /(?:web|tavily)/iu;
-const FILE_SEARCH_TOOL_NAME_PATTERN = /(?:search_(?:project_)?files|search_text|search_symbols)/iu;
-const DIRECTORY_TOOL_NAME_PATTERN = /(?:list_directory|directory_tree|get_project_tree|list_project_files)/iu;
-const FILE_READ_TOOL_NAME_PATTERN = /(?:read_|get_file_info|open_nodes)/iu;
-const FILE_MUTATION_TOOL_NAME_PATTERN = /(?:write_file|edit_file|create_directory|move_file|delete_file|patch)/iu;
+const FILE_SEARCH_TOOL_NAME_PATTERN = /(?:search_(?:project_)?files|search_text|search_symbols|grep_in_files|mastra_workspace_grep)/iu;
+const DIRECTORY_TOOL_NAME_PATTERN = /(?:list_dir|list_directory|directory_tree|get_project_tree|list_project_files)/iu;
+const FILE_READ_TOOL_NAME_PATTERN = /(?:read_|get_file_info|open_nodes|mastra_workspace_lsp_inspect)/iu;
+const FILE_MUTATION_TOOL_NAME_PATTERN = /(?:write_file|edit_file|create_directory|move_file|delete_file|patch|mastra_workspace_ast_edit)/iu;
 const COMMAND_TOOL_NAME_PATTERN = /(?:run_|shell|command|install_package)/iu;
 const GIT_TOOL_NAME_PATTERN = /(?:^git_|get_git_|create_commit|stage_file)/iu;
 const TIME_TOOL_NAME_PATTERN = /(?:time)/iu;
@@ -1478,6 +1522,25 @@ const extractDoneResult = (events: readonly TAgentUiEvent[]): string | null => {
 
   return null;
 };
+
+const extractLatestDoneUsage = (events: readonly TAgentUiEvent[]): LanguageModelUsage | null => {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+
+    if (event?.type === 'done') {
+      return event.usage ?? null;
+    }
+  }
+
+  return null;
+};
+
+export const resolveSidecarOfficialUsage = (
+  response: IAgentSidecarResponsePayload,
+): ISidecarOfficialUsageResolution => ({
+  resolved: response.events.some((event) => event.type === 'done' || event.type === 'error'),
+  usage: extractLatestDoneUsage(response.events),
+});
 
 const extractLatestMessageDelta = (events: readonly TAgentUiEvent[]): string | null => {
   for (let index = events.length - 1; index >= 0; index -= 1) {

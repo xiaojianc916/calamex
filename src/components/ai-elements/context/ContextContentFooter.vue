@@ -9,7 +9,8 @@ const props = defineProps<{
   class?: HTMLAttributes['class'];
 }>();
 
-const { modelId, usage } = useContextValue();
+const { modelId, usage, usageSource } = useContextValue();
+const costLabel = computed(() => (usageSource.value === 'official' ? '按官方 usage 估算' : '预计成本'));
 
 const totalCost = computed(() => {
   const pricing = computeDeepSeekCostBreakdown(modelId.value, usage.value);
@@ -27,7 +28,7 @@ const totalCost = computed(() => {
     <slot v-if="$slots.default" />
 
     <template v-else>
-      <span class="text-[var(--text-secondary)]">预计成本</span>
+      <span class="text-[var(--text-secondary)]">{{ costLabel }}</span>
       <span class="text-[#09090b]">{{ totalCost }}</span>
     </template>
   </div>

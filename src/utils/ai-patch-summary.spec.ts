@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 
 import type { IAiPatchSet } from '@/types/ai';
 import {
+  buildAiAgentPatchSummaryFromAedDiffs,
   buildAiAgentPatchSummaryFromApplyResult,
   buildAiAedPatchRef,
   countAiPatchFileLineStats,
+  parseAiAedPatchRef,
 } from '@/utils/ai-patch-summary';
 
 const createPatch = (): IAiPatchSet => ({
@@ -64,6 +66,82 @@ describe('ai-patch-summary utils', () => {
 
   it('builds an AED patch ref without storing patch body', () => {
     expect(buildAiAedPatchRef('thread:1')).toBe('aed-patch:thread%3A1');
+    expect(parseAiAedPatchRef('aed-patch:thread%3A1')).toBe('thread:1');
+    expect(parseAiAedPatchRef('patch:thread%3A1')).toBeNull();
+  });
+
+  it('converts AED create, delete and modify diffs into the same changed-files summary', () => {
+    const summary = buildAiAgentPatchSummaryFromAedDiffs({
+      taskId: 'thread:1',
+      runId: 'run-1',
+      stepId: 'step-2',
+      appliedAt: '2026-04-29T10:00:00.000Z',
+      diffs: [
+        {
+          taskId: 'thread:1',
+          path: 'D:/workspace/src/new.ts',
+          operationId: 'op-create',
+          kind: 'create',
+          additions: 2,
+          deletions: 0,
+          hunks: [
+            {
+              hunkIndex: 0,
+              oldStart: 0,
+              oldLines: 0,
+              newStart: 1,
+              newLines: 2,
+              lines: ['+export const created = true;', '+export const ready = true;'],
+            },
+          ],
+        },
+        {
+          taskId: 'thread:1',
+          path: 'D:/workspace/src/old.ts',
+          operationId: 'op-delete',
+          kind: 'delete',
+          additions: 0,
+          deletions: 1,
+          hunks: [
+            {
+              hunkIndex: 0,
+              oldStart: 1,
+              oldLines: 1,
+              newStart: 0,
+              newLines: 0,
+              lines: ['-export const removed = true;'],
+            },
+          ],
+        },
+        {
+          taskId: 'thread:1',
+          path: 'D:/workspace/src/app.ts',
+          operationId: 'op-modify',
+          kind: 'modify',
+          additions: 1,
+          deletions: 1,
+          hunks: [
+            {
+              hunkIndex: 0,
+              oldStart: 1,
+              oldLines: 1,
+              newStart: 1,
+              newLines: 1,
+              lines: ['-const oldValue = true;', '+const nextValue = true;'],
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(summary).toMatchObject({
+      runId: 'run-1',
+      stepId: 'step-2',
+      totalAdditions: 3,
+      totalDeletions: 2,
+      patchRef: 'aed-patch:thread%3A1',
+    });
+    expect(summary?.files.map((file) => file.status)).toEqual(['added', 'deleted', 'modified']);
   });
 
   it('converts successful apply result into an Agent patch summary', () => {

@@ -12,6 +12,7 @@ import type {
   IAgentSidecarPlanRequest,
   IAgentSidecarResponsePayload,
   IAgentSidecarStreamEventPayload,
+  TJsonValue,
 } from '@/types/agent-sidecar';
 import { agentSidecarPlanRequestSchema } from '@/types/agent-sidecar.schema';
 import type {
@@ -24,12 +25,16 @@ import type {
   IAiNarratorResponse,
   IAiNarratorStreamEventPayload,
   IAiNarratorStreamPayload,
+  IAiPatchSet,
   IAiTaskPlanStep,
 } from '@/types/ai';
 import type {
+  IAiEditGetDiffPayload,
   IAiEditListTimelinePayload,
   IAiEditListTimelineRequest,
   IAiEditOperation,
+  IAiEditRevertTaskPayload,
+  IAiEditRevertTaskRequest,
   IAiEditUndoOperationPayload,
   IAiEditUndoOperationRequest,
   IAiSnapshot,
@@ -625,6 +630,17 @@ const createUndoOperationPayload = (
   restoredSnapshot: createAiEditSnapshot('snapshot-restored', restoredFiles),
 });
 
+const createRevertTaskPayload = (
+  taskId: string,
+  restoredFiles: string[] = [],
+): IAiEditRevertTaskPayload => ({
+  taskId,
+  revertedOperationIds: restoredFiles.length > 0 ? ['operation-rollback-1'] : [],
+  restoredFiles,
+  preRevertSnapshots: [createAiEditSnapshot('snapshot-pre-revert', restoredFiles)],
+  restoredSnapshots: [createAiEditSnapshot('snapshot-restored', restoredFiles)],
+});
+
 const aiEditServiceMock = vi.hoisted(() => {
   const listTimeline = vi.fn<
     (payload?: IAiEditListTimelineRequest) => Promise<IAiEditListTimelinePayload>
@@ -634,19 +650,49 @@ const aiEditServiceMock = vi.hoisted(() => {
   const undoOperation = vi.fn<
     (payload: IAiEditUndoOperationRequest) => Promise<IAiEditUndoOperationPayload>
   >(async (payload) => createUndoOperationPayload(payload.operationId));
+  const revertTask = vi.fn<
+    (payload: IAiEditRevertTaskRequest) => Promise<IAiEditRevertTaskPayload>
+  >(async (payload) => createRevertTaskPayload(payload.taskId));
+  const getDiff = vi.fn<
+    (payload: { taskId: string; path: string }) => Promise<IAiEditGetDiffPayload>
+  >(async (payload) => ({
+    taskId: payload.taskId,
+    path: payload.path,
+    operationId: 'operation-diff-1',
+    kind: 'modify',
+    additions: 0,
+    deletions: 0,
+    hunks: [],
+  }));
 
   return {
     listTimeline,
     undoOperation,
+    revertTask,
+    getDiff,
     reset(): void {
       listTimeline.mockClear();
       undoOperation.mockClear();
+      revertTask.mockClear();
+      getDiff.mockClear();
       listTimeline.mockResolvedValue({
         entries: [],
       });
       undoOperation.mockImplementation(async (payload: IAiEditUndoOperationRequest) =>
         createUndoOperationPayload(payload.operationId),
       );
+      revertTask.mockImplementation(async (payload: IAiEditRevertTaskRequest) =>
+        createRevertTaskPayload(payload.taskId),
+      );
+      getDiff.mockImplementation(async (payload: { taskId: string; path: string }) => ({
+        taskId: payload.taskId,
+        path: payload.path,
+        operationId: 'operation-diff-1',
+        kind: 'modify',
+        additions: 0,
+        deletions: 0,
+        hunks: [],
+      }));
     },
   };
 });
@@ -654,7 +700,9 @@ const aiEditServiceMock = vi.hoisted(() => {
 vi.mock('@/services/modules/ai-edit', () => ({
   aiEditService: {
     listTimeline: aiEditServiceMock.listTimeline,
+    getDiff: aiEditServiceMock.getDiff,
     undoOperation: aiEditServiceMock.undoOperation,
+    revertTask: aiEditServiceMock.revertTask,
   },
 }));
 
@@ -667,11 +715,19 @@ const tauriServiceMock = vi.hoisted(() => {
     lineCount: 1,
     charCount: 14,
   }));
+  const analyzeScript = vi.fn(async () => ({
+    available: true,
+    message: null,
+    dialect: 'bash',
+    diagnostics: [],
+  }));
 
   return {
     loadScript,
+    analyzeScript,
     reset(): void {
       loadScript.mockClear();
+      analyzeScript.mockClear();
     },
   };
 });
@@ -679,6 +735,7 @@ const tauriServiceMock = vi.hoisted(() => {
 vi.mock('@/services/tauri', () => ({
   tauriService: {
     loadScript: tauriServiceMock.loadScript,
+    analyzeScript: tauriServiceMock.analyzeScript,
   },
 }));
 
@@ -876,6 +933,19 @@ describe('useAiAssistant streaming integration', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it('proxies activeMode through the persisted ai agent store mode', () => {
+    const assistant = createAssistantHarness();
+    const agentStore = useAiAgentStore();
+
+    expect(assistant.activeMode.value).toBe('agent');
+
+    assistant.activeMode.value = 'plan';
+    expect(agentStore.mode).toBe('plan');
+
+    agentStore.mode = 'chat';
+    expect(assistant.activeMode.value).toBe('chat');
   });
 
   it('pipes streaming delta through the fence parser into message.stream', async () => {
@@ -1317,6 +1387,16 @@ describe('useAiAssistant streaming integration', () => {
         },
         {
           type: 'plan_ready',
+          planId: 'complex-plan-1',
+          threadId: 'complex-thread-1',
+          version: 1,
+          status: 'pending_approval',
+          createdAt: '2026-04-29T00:00:00.000Z',
+          updatedAt: '2026-04-29T00:00:00.000Z',
+          approvedAt: null,
+          executedAt: null,
+          rejectionReason: null,
+          errorMessage: null,
           plan: {
             goal: userQuestion,
             steps: [
@@ -1383,7 +1463,7 @@ describe('useAiAssistant streaming integration', () => {
     expect(aiServiceMock.planTask).toHaveBeenCalledTimes(0);
     expect(aiServiceMock.chatStream).toHaveBeenCalledTimes(0);
     expect(assistant.agentSteps.value).toHaveLength(3);
-    expect(readReactiveValue(assistant.agentPlan.store.steps)).toHaveLength(3);
+    expect(readReactiveValue(assistant.agentPlan.store.steps)).toHaveLength(2);
     expect(readReactiveValue(assistant.agentPlan.store.steps)[1]?.requiresUserApproval).toBe(true);
   });
 
@@ -1411,6 +1491,15 @@ describe('useAiAssistant streaming integration', () => {
       events: [
         {
           type: 'plan_ready',
+          planId: 'sidecar-plan-with-image',
+          version: 1,
+          status: 'pending_approval',
+          createdAt: '2026-04-29T00:00:00.000Z',
+          updatedAt: '2026-04-29T00:00:00.000Z',
+          approvedAt: null,
+          executedAt: null,
+          rejectionReason: null,
+          errorMessage: null,
           plan: {
             goal: userQuestion,
             steps: [
@@ -1975,6 +2064,57 @@ describe('useAiAssistant streaming integration', () => {
         }),
       ]),
     );
+  });
+
+  it('stores sidecar done token usage on the assistant message stream', async () => {
+    const { assistant } = createAssistantHarnessContext();
+
+    aiServiceMock.sidecarExecute.mockResolvedValueOnce({
+      sessionId: 'sidecar-usage-session',
+      events: [
+        {
+          type: 'done',
+          result: '已统计 token。',
+          promptTokens: 13,
+          completionTokens: 5,
+          totalTokens: 18,
+          usage: {
+            inputTokens: 13,
+            inputTokenDetails: {
+              noCacheTokens: 13,
+              cacheReadTokens: 0,
+              cacheWriteTokens: 0,
+            },
+            outputTokens: 5,
+            outputTokenDetails: {
+              textTokens: 4,
+              reasoningTokens: 1,
+            },
+            totalTokens: 18,
+            cachedInputTokens: 0,
+            reasoningTokens: 1,
+          },
+        },
+      ],
+      result: '已统计 token。',
+    });
+
+    assistant.activeMode.value = 'agent';
+    assistant.draft.value = '统计 token';
+
+    await assistant.sendMessage();
+
+    expect(assistant.messages.value[1]?.stream).toMatchObject({
+      status: 'completed',
+      promptTokens: 13,
+      completionTokens: 5,
+      totalTokens: 18,
+      usage: expect.objectContaining({
+        inputTokens: 13,
+        outputTokens: 5,
+        totalTokens: 18,
+      }),
+    });
   });
 
   it('工具校验失败但 sidecar 返回 done 时不保持思考中', async () => {
@@ -2815,6 +2955,285 @@ describe('useAiAssistant streaming integration', () => {
     expect(document.value.isDirty).toBe(false);
   });
 
+  it('把 sidecar 已自动落盘的编辑结果挂到对应助手消息，供对话内联 diff 渲染', async () => {
+    const { assistant, document } = createAssistantHarnessContext();
+    const patch: IAiPatchSet = {
+      summary: '更新启动提示',
+      files: [
+        {
+          path: 'src/app.ts',
+          originalHash: 'fnv64:test',
+          hunks: [
+            {
+              oldStart: 1,
+              oldLines: 1,
+              newStart: 1,
+              newLines: 1,
+              lines: ['-const start = true;', '+const start = false;'],
+            },
+          ],
+        },
+      ],
+    };
+    const patchToolOutput: TJsonValue = {
+      patch: {
+        summary: patch.summary,
+        files: patch.files.map((file) => ({
+          path: file.path,
+          originalHash: file.originalHash,
+          hunks: file.hunks.map((hunk) => ({
+            oldStart: hunk.oldStart,
+            oldLines: hunk.oldLines,
+            newStart: hunk.newStart,
+            newLines: hunk.newLines,
+            lines: [...hunk.lines],
+          })),
+        })),
+      },
+      applied: true,
+    };
+
+    document.value.path = 'src/app.ts';
+    document.value.content = 'const start = true;';
+    document.value.savedContent = 'const start = true;';
+    tauriServiceMock.loadScript.mockResolvedValueOnce({
+      path: 'src/app.ts',
+      name: 'app.ts',
+      content: 'const start = false;',
+      encoding: 'utf-8',
+      lineCount: 1,
+      charCount: 20,
+    });
+    aiServiceMock.sidecarExecute.mockResolvedValueOnce({
+      sessionId: 'sidecar-aed-session',
+      events: [
+        {
+          type: 'tool_start',
+          toolName: 'apply_file_edits',
+          input: { path: 'src/app.ts' },
+        },
+        {
+          type: 'tool_result',
+          toolName: 'apply_file_edits',
+          output: patchToolOutput,
+        },
+        {
+          type: 'done',
+          result: '已完成文件修改。',
+        },
+      ],
+      result: '已完成文件修改。',
+    });
+
+    assistant.activeMode.value = 'agent';
+    assistant.draft.value = '把启动提示改一下';
+
+    await assistant.sendMessage();
+
+    const assistantMessage = assistant.messages.value[1];
+    expect(aiServiceMock.applyPatch).not.toHaveBeenCalled();
+    expect(assistantMessage?.patches).toEqual([patch]);
+    expect(assistantMessage?.changedFilesSummary).toMatchObject({
+      files: [
+        expect.objectContaining({
+          path: 'src/app.ts',
+          additions: 1,
+          deletions: 1,
+          status: 'modified',
+        }),
+      ],
+      totalAdditions: 1,
+      totalDeletions: 1,
+    });
+    expect(document.value.content).toBe('const start = false;');
+    expect(assistant.appliedPatchPreview.value).toBeNull();
+  });
+
+  it('在 apply_file_edits 完成事件到达时立刻挂载折叠 diff，不等待整轮 Agent 结束', async () => {
+    const { assistant, document } = createAssistantHarnessContext();
+    const executeDeferred = createDeferred<Awaited<ReturnType<typeof aiServiceMock.sidecarExecute>>>();
+    const patch: IAiPatchSet = {
+      summary: '更新启动提示',
+      files: [
+        {
+          path: 'src/app.ts',
+          originalHash: 'fnv64:test',
+          hunks: [
+            {
+              oldStart: 1,
+              oldLines: 1,
+              newStart: 1,
+              newLines: 1,
+              lines: ['-const start = true;', '+const start = false;'],
+            },
+          ],
+        },
+      ],
+    };
+    const patchToolOutput: TJsonValue = {
+      patch: {
+        summary: patch.summary,
+        files: patch.files.map((file) => ({
+          path: file.path,
+          originalHash: file.originalHash,
+          hunks: file.hunks.map((hunk) => ({
+            oldStart: hunk.oldStart,
+            oldLines: hunk.oldLines,
+            newStart: hunk.newStart,
+            newLines: hunk.newLines,
+            lines: [...hunk.lines],
+          })),
+        })),
+      },
+      applied: true,
+    };
+
+    document.value.path = 'src/app.ts';
+    document.value.content = 'const start = true;';
+    document.value.savedContent = 'const start = true;';
+    aiServiceMock.sidecarExecute.mockImplementationOnce(async (payload) => {
+      const sessionId = payload.sessionId ?? 'sidecar-live-patch';
+
+      queueMicrotask(() => {
+        aiServiceMock.emitSidecar({
+          sessionId,
+          seq: 0,
+          event: {
+            type: 'tool_result',
+            toolName: 'apply_file_edits',
+            output: patchToolOutput,
+          },
+        });
+      });
+
+      return executeDeferred.promise.then(() => ({
+        sessionId,
+        events: [
+          {
+            type: 'tool_result',
+            toolName: 'apply_file_edits',
+            output: patchToolOutput,
+          },
+          {
+            type: 'done',
+            result: '已完成文件修改。',
+          },
+        ],
+        result: `已完成：${payload.goal}`,
+      }));
+    });
+
+    assistant.activeMode.value = 'agent';
+    assistant.draft.value = '把启动提示改一下';
+
+    const sendPromise = assistant.sendMessage();
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const liveAssistantMessage = assistant.messages.value[1];
+
+    expect(liveAssistantMessage?.patches).toEqual([patch]);
+    expect(liveAssistantMessage?.changedFilesSummary).toBeUndefined();
+    expect(document.value.content).toBe('const start = false;');
+
+    executeDeferred.resolve({
+      sessionId: 'sidecar-live-patch',
+      events: [],
+      result: '已完成文件修改。',
+    });
+    await sendPromise;
+  });
+
+  it('把已有 AED 记录的旧写入事件转换成对话内联 diff', async () => {
+    const { assistant } = createAssistantHarnessContext();
+
+    aiEditServiceMock.getDiff.mockResolvedValueOnce({
+      taskId: 'thread-aed-diff',
+      path: 'D:/test/test.sh',
+      operationId: 'operation-aed-diff-1',
+      kind: 'modify',
+      additions: 1,
+      deletions: 1,
+      hunks: [
+        {
+          hunkIndex: 0,
+          oldStart: 1,
+          oldLines: 1,
+          newStart: 1,
+          newLines: 1,
+          lines: ['-echo old', '+echo new'],
+        },
+      ],
+    });
+    aiServiceMock.sidecarExecute.mockResolvedValueOnce({
+      sessionId: 'sidecar-aed-diff-session',
+      events: [
+        {
+          type: 'tool_start',
+          toolName: 'write_file',
+          input: { path: 'D:/test/test.sh' },
+        },
+        {
+          type: 'tool_result',
+          toolName: 'write_file',
+          output: {
+            path: 'D:/test/test.sh',
+            summary: 'updated',
+          },
+        },
+        {
+          type: 'done',
+          result: '文件已修改成功。',
+        },
+      ],
+      result: '文件已修改成功。',
+    });
+
+    assistant.activeMode.value = 'agent';
+    assistant.draft.value = '修改脚本';
+
+    await assistant.sendMessage();
+
+    const assistantMessage = assistant.messages.value[1];
+
+    expect(aiEditServiceMock.getDiff).toHaveBeenCalledWith({
+      taskId: expect.any(String),
+      path: 'D:/test/test.sh',
+    });
+    expect(assistantMessage?.patches).toEqual([
+      {
+        summary: '已修改 D:/test/test.sh',
+        files: [
+          {
+            path: 'D:/test/test.sh',
+            originalHash: 'aed:operation-aed-diff-1',
+            hunks: [
+              {
+                oldStart: 1,
+                oldLines: 1,
+                newStart: 1,
+                newLines: 1,
+                lines: ['-echo old', '+echo new'],
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+    expect(assistantMessage?.changedFilesSummary).toMatchObject({
+      files: [
+        expect.objectContaining({
+          path: 'D:/test/test.sh',
+          additions: 1,
+          deletions: 1,
+          status: 'modified',
+        }),
+      ],
+      totalAdditions: 1,
+      totalDeletions: 1,
+    });
+  });
+
   it('does not overwrite dirty document content when sidecar writes the same path', async () => {
     const { assistant, document } = createAssistantHarnessContext();
 
@@ -2906,7 +3325,7 @@ describe('useAiAssistant streaming integration', () => {
     ]);
   });
 
-  it('Agent 模式携带当前对话 threadId，并只向 Mastra 发送当前用户消息', async () => {
+  it('Agent 模式携带当前对话 threadId，并向 Mastra 发送当前线程上下文', async () => {
     const { assistant } = createAssistantHarnessContext();
     const threadId = readReactiveValue(assistant.activeConversationId);
 
@@ -2928,6 +3347,10 @@ describe('useAiAssistant streaming integration', () => {
 
     expect(request?.threadId).toBe(threadId);
     expect(request?.messages).toEqual([
+      expect.objectContaining({
+        role: 'assistant',
+        content: '上一轮已经解释过背景。',
+      }),
       expect.objectContaining({
         role: 'user',
         content: '继续总结当前状态',
@@ -3154,6 +3577,123 @@ describe('useAiAssistant streaming integration', () => {
     expect(assistant.conversationCheckpoints.value).toEqual([]);
     expect(assistant.restoringCheckpointId.value).toBeNull();
     expect(assistant.errorMessage.value).toBe('');
+  });
+
+  it('点击最终变更汇总撤销时回滚 AED task 并触发 Mastra checkpoint 恢复', async () => {
+    const { assistant, document } = createAssistantHarnessContext();
+
+    document.value.path = 'D:/test/xiaojianc.sh';
+    document.value.name = 'xiaojianc.sh';
+    document.value.content = 'echo new';
+    document.value.savedContent = 'echo new';
+    document.value.lineCount = 1;
+    document.value.charCount = 8;
+    assistant.messages.value = [
+      {
+        id: 'assistant-summary',
+        role: 'assistant',
+        content: '已完成修改。',
+        createdAt: '2026-05-03T10:01:00.000Z',
+        references: [],
+        changedFilesSummary: {
+          id: 'patch-summary-rollback',
+          runId: 'run-checkpoint-1',
+          stepId: 'agent',
+          files: [
+            {
+              path: 'D:/test/xiaojianc.sh',
+              status: 'modified',
+              additions: 1,
+              deletions: 1,
+              diffRef: 'diff:xiaojianc',
+            },
+          ],
+          totalAdditions: 1,
+          totalDeletions: 1,
+          patchRef: 'aed-patch:thread-rollback',
+          appliedAt: '2026-05-03T10:01:00.000Z',
+        },
+        stream: {
+          status: 'completed',
+          runtimeEvents: [
+            {
+              id: 'checkpoint-created-1',
+              type: 'rollback.checkpoint.created',
+              runId: 'run-checkpoint-1',
+              sessionId: 'session-checkpoint-1',
+              agentId: 'agent-checkpoint-1',
+              timestamp: '2026-05-03T10:01:00.000Z',
+              seq: 0,
+              schemaVersion: 1,
+              redacted: true,
+              visibility: 'user',
+              level: 'info',
+              snapshotId: 'snapshot-checkpoint-1',
+            },
+          ],
+        },
+      },
+    ];
+    aiServiceMock.sidecarRestoreCheckpoint.mockResolvedValueOnce({
+      sessionId: 'mastra-rollback-session',
+      events: [
+        {
+          type: 'agent_event',
+          event: {
+            id: 'runtime-rollback-completed',
+            type: 'rollback.restore.completed',
+            runId: 'run-checkpoint-1',
+            sessionId: 'mastra-rollback-session',
+            agentId: 'agent-checkpoint-1',
+            timestamp: '2026-05-03T10:02:00.000Z',
+            seq: 1,
+            schemaVersion: 1,
+            redacted: true,
+            visibility: 'user',
+            level: 'info',
+            snapshotId: 'snapshot-checkpoint-1',
+            savedAsLatest: true,
+            message: '已恢复到最近 checkpoint。',
+          },
+        },
+        {
+          type: 'done',
+          result: '已恢复到最近 checkpoint。',
+        },
+      ],
+      result: '已恢复到最近 checkpoint。',
+    });
+    aiEditServiceMock.revertTask.mockResolvedValueOnce(
+      createRevertTaskPayload('thread-rollback', ['D:/test/xiaojianc.sh']),
+    );
+    tauriServiceMock.loadScript.mockResolvedValueOnce({
+      path: 'D:/test/xiaojianc.sh',
+      name: 'xiaojianc.sh',
+      content: 'echo old',
+      encoding: 'utf-8',
+      lineCount: 1,
+      charCount: 8,
+    });
+
+    await assistant.rollbackChangedFilesSummary('assistant-summary', 'patch-summary-rollback');
+
+    expect(aiServiceMock.sidecarRestoreCheckpoint).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: 'run-checkpoint-1',
+        snapshotId: 'snapshot-checkpoint-1',
+      }),
+    );
+    expect(aiEditServiceMock.revertTask).toHaveBeenCalledWith({
+      taskId: 'thread-rollback',
+    });
+    expect(document.value.content).toBe('echo old');
+    expect(assistant.messages.value[0]?.changedFilesSummary?.revertedAt).toEqual(expect.any(String));
+    expect(assistant.messages.value[0]?.stream?.runtimeEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: 'rollback.restore.completed' }),
+      ]),
+    );
+    expect(assistant.revertingChangedFilesSummaryId.value).toBeNull();
   });
 
   it('exposes a rollback prompt after an AED operation is available and can undo it', async () => {

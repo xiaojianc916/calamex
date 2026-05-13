@@ -13,6 +13,7 @@ use crate::commands::contracts::{
     AiApplyPatchFilePayload, AiApplyPatchPayload, AiApplyPatchRequest, AiPatchFilePayload,
     AiPatchHunkPayload, AiPatchSetPayload, AiProposePatchPayload, AiProposePatchRequest,
 };
+use diffy::Patch;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -81,7 +82,7 @@ pub fn apply_patch(
                 format!("文件已变化，拒绝应用 Patch：{}", file.path),
             ));
         }
-        let updated = apply_file_patch(file)?;
+        let updated = apply_file_patch(&original, file)?;
         pending_files.push(PendingPatchFile {
             payload_path: file.path.clone(),
             original_hash: file.original_hash.clone(),
@@ -199,25 +200,48 @@ fn validate_writable_path(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn apply_file_patch(file: &AiPatchFilePayload) -> Result<String, String> {
-    let mut output = Vec::new();
+fn apply_file_patch(original: &str, file: &AiPatchFilePayload) -> Result<String, String> {
+    let patch_text = build_unified_patch(file)?;
+    let patch = Patch::from_str(&patch_text).map_err(|error| {
+        errors::error("AI_PATCH_INVALID", format!("解析 Patch 失败：{error}"))
+    })?;
+
+    diffy::apply(original, &patch).map_err(|error| {
+        errors::error("AI_PATCH_CONFLICT", format!("应用 Patch 失败：{error}"))
+    })
+}
+
+fn build_unified_patch(file: &AiPatchFilePayload) -> Result<String, String> {
+    let mut patch = String::from("--- original\n+++ modified\n");
     for hunk in &file.hunks {
+        patch.push_str(&format!(
+            "@@ -{},{} +{},{} @@\n",
+            hunk.old_start, hunk.old_lines, hunk.new_start, hunk.new_lines
+        ));
         for line in &hunk.lines {
-            if let Some(rest) = line.strip_prefix('+') {
-                output.push(rest.to_string());
-            } else if let Some(rest) = line.strip_prefix(' ') {
-                output.push(rest.to_string());
-            } else if line.starts_with('-') {
-                continue;
-            } else {
-                return Err(errors::error(
-                    "AI_PATCH_INVALID",
-                    "Patch 行必须以空格、+ 或 - 开头。",
-                ));
-            }
+            validate_patch_line(line)?;
+            patch.push_str(line);
+            patch.push('\n');
         }
     }
-    Ok(output.join("\n"))
+
+    Ok(patch)
+}
+
+fn validate_patch_line(line: &str) -> Result<(), String> {
+    if line.contains('\n') {
+        return Err(errors::error(
+            "AI_PATCH_INVALID",
+            "Patch 行不能包含换行符。",
+        ));
+    }
+    if matches!(line.as_bytes().first(), Some(b' ' | b'+' | b'-')) {
+        return Ok(());
+    }
+    Err(errors::error(
+        "AI_PATCH_INVALID",
+        "Patch 行必须以空格、+ 或 - 开头。",
+    ))
 }
 
 fn build_full_replace_lines(original: &str, updated: &str) -> Vec<String> {

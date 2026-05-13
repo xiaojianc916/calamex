@@ -18,6 +18,16 @@ use tokio::{io::AsyncWriteExt, process::Command, time::timeout};
 const SHELLCHECK_ZH_MESSAGES_JSON: &str = include_str!("../../../resources/Messages_zh.json");
 const SHELLCHECK_TIMEOUT: Duration = Duration::from_secs(12);
 const SHFMT_TIMEOUT: Duration = Duration::from_secs(12);
+const SHELLCHECK_SCRIPT_EXTENSIONS: &[&str] = &["sh", "bash", "dash", "ksh", "bats"];
+const SHELLCHECK_SCRIPT_NAMES: &[&str] = &[
+    ".bashrc",
+    ".bash_profile",
+    ".bash_login",
+    ".profile",
+    ".kshrc",
+    "bashrc",
+    "profile",
+];
 
 static SHELLCHECK_ZH_MESSAGES: OnceLock<HashMap<String, String>> = OnceLock::new();
 
@@ -51,9 +61,12 @@ struct ShellCheckComment {
 
 #[tauri::command]
 pub async fn analyze_script(payload: AnalyzeScriptRequest) -> Result<AnalyzeScriptPayload, String> {
-    let should_check_with_shellcheck =
-        should_run_shellcheck(payload.path.as_deref(), payload.name.as_deref());
     let normalized_content = normalize_shellcheck_content(&payload.content);
+    let should_check_with_shellcheck = should_run_shellcheck(
+        payload.path.as_deref(),
+        payload.name.as_deref(),
+        &normalized_content,
+    );
     let dialect = detect_shellcheck_dialect(
         payload.path.as_deref(),
         payload.name.as_deref(),
@@ -195,14 +208,51 @@ fn resolve_analysis_script_name(path: Option<&str>, name: Option<&str>) -> Strin
         .to_string()
 }
 
-fn should_run_shellcheck(path: Option<&str>, name: Option<&str>) -> bool {
-    let inferred_name = path
+fn infer_script_name(path: Option<&str>, name: Option<&str>) -> String {
+    path
         .and_then(|value| Path::new(value).file_name())
         .and_then(|value| value.to_str())
         .or(name)
-        .unwrap_or_default();
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+}
 
-    inferred_name.to_ascii_lowercase().ends_with(".sh")
+fn shell_from_shebang(content: &str) -> Option<&'static str> {
+    let first_line = content.lines().next()?.trim_start().to_ascii_lowercase();
+
+    if !first_line.starts_with("#!") {
+        return None;
+    }
+
+    let normalized = first_line.replace('\\', "/");
+    let tokens = normalized
+        .split(|character: char| character.is_whitespace() || character == '/')
+        .filter(|token| !token.is_empty());
+
+    for token in tokens {
+        match token {
+            "bash" => return Some("bash"),
+            "dash" => return Some("dash"),
+            "ksh" | "ksh93" => return Some("ksh"),
+            "sh" => return Some("sh"),
+            _ => {}
+        }
+    }
+
+    None
+}
+
+fn should_run_shellcheck(path: Option<&str>, name: Option<&str>, content: &str) -> bool {
+    let inferred_name = infer_script_name(path, name);
+    let extension_matches = Path::new(&inferred_name)
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|extension| SHELLCHECK_SCRIPT_EXTENSIONS.contains(&extension))
+        .unwrap_or(false);
+
+    extension_matches
+        || SHELLCHECK_SCRIPT_NAMES.contains(&inferred_name.as_str())
+        || shell_from_shebang(content).is_some()
 }
 
 fn normalize_shellcheck_content(content: &str) -> String {
@@ -220,26 +270,12 @@ fn detect_shellcheck_dialect(
         .unwrap_or_default()
         .to_ascii_lowercase();
     if first_line.starts_with("#!") {
-        if first_line.contains("bash") {
-            return "bash";
-        }
-        if first_line.contains("dash") {
-            return "dash";
-        }
-        if first_line.contains("ksh") {
-            return "ksh";
-        }
-        if first_line.contains("sh") {
-            return "sh";
+        if let Some(shell) = shell_from_shebang(content) {
+            return shell;
         }
     }
 
-    let inferred_name = path
-        .and_then(|value| Path::new(value).file_name())
-        .and_then(|value| value.to_str())
-        .or(name)
-        .unwrap_or_default()
-        .to_ascii_lowercase();
+    let inferred_name = infer_script_name(path, name);
 
     if inferred_name.ends_with(".dash") {
         return "dash";
@@ -538,4 +574,51 @@ async fn run_shfmt(
     }
 
     Err(format!("shfmt 执行失败：{stderr}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{detect_shellcheck_dialect, shell_from_shebang, should_run_shellcheck};
+
+    #[test]
+    fn shellcheck_runs_for_common_shell_extensions() {
+        assert!(should_run_shellcheck(Some("scripts/install.sh"), None, "echo ok"));
+        assert!(should_run_shellcheck(Some("scripts/install.bash"), None, "echo ok"));
+        assert!(should_run_shellcheck(Some("scripts/install.dash"), None, "echo ok"));
+        assert!(should_run_shellcheck(Some("scripts/install.ksh"), None, "echo ok"));
+        assert!(should_run_shellcheck(Some("tests/install.bats"), None, "echo ok"));
+    }
+
+    #[test]
+    fn shellcheck_runs_for_shell_dotfiles_and_shebangs() {
+        assert!(should_run_shellcheck(Some("C:/Users/me/.bashrc"), None, "alias ll='ls -la'"));
+        assert!(should_run_shellcheck(None, Some(".profile"), "export PATH=\"$PATH:/opt/bin\""));
+        assert!(should_run_shellcheck(None, Some("run"), "#!/usr/bin/env bash\necho ok"));
+        assert!(should_run_shellcheck(None, Some("run"), "#!/bin/sh -e\necho ok"));
+    }
+
+    #[test]
+    fn shellcheck_skips_non_shell_files_without_shell_shebang() {
+        assert!(!should_run_shellcheck(Some("src/main.rs"), None, "fn main() {}"));
+        assert!(!should_run_shellcheck(
+            Some("README.md"),
+            None,
+            "#!/usr/bin/env node\nconsole.log(1)"
+        ));
+    }
+
+    #[test]
+    fn shellcheck_dialect_prefers_shebang_then_filename() {
+        assert_eq!(shell_from_shebang("#!/usr/bin/env bash\necho ok"), Some("bash"));
+        assert_eq!(shell_from_shebang("#!/bin/dash\necho ok"), Some("dash"));
+        assert_eq!(
+            detect_shellcheck_dialect(Some("scripts/install.sh"), None, "#!/bin/ksh\necho ok"),
+            "ksh"
+        );
+        assert_eq!(
+            detect_shellcheck_dialect(Some("scripts/install.dash"), None, "echo ok"),
+            "dash"
+        );
+        assert_eq!(detect_shellcheck_dialect(Some(".bashrc"), None, "alias ll='ls -la'"), "bash");
+    }
 }

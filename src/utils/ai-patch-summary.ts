@@ -3,6 +3,7 @@ import type {
   IAiPatchFile,
   IAiPatchSet,
 } from '@/types/ai';
+import type { IAiEditGetDiffPayload, TAiEditOperationKind } from '@/types/ai-edit';
 import type {
   IAiAgentChangedFile,
   IAiAgentPatchSummary,
@@ -29,8 +30,36 @@ export interface IBuildAiAgentPatchSummaryInput {
   appliedAt: string;
 }
 
+export interface IBuildAiAgentPatchSummaryFromDiffsInput {
+  diffs: readonly IAiEditGetDiffPayload[];
+  taskId: string;
+  runId: string;
+  stepId: string;
+  appliedAt: string;
+}
+
 export const buildAiAedPatchRef = (taskId: string): string =>
   `${AED_PATCH_REF_PREFIX}${encodeURIComponent(taskId)}`;
+
+export const parseAiAedPatchRef = (patchRef: string): string | null => {
+  if (!patchRef.startsWith(AED_PATCH_REF_PREFIX)) {
+    return null;
+  }
+
+  const encodedTaskId = patchRef.slice(AED_PATCH_REF_PREFIX.length);
+
+  if (!encodedTaskId) {
+    return null;
+  }
+
+  try {
+    const taskId = decodeURIComponent(encodedTaskId).trim();
+
+    return taskId || null;
+  } catch {
+    return null;
+  }
+};
 
 const hashString = (value: string): string => {
   let hash = HASH_OFFSET_BASIS;
@@ -91,6 +120,22 @@ const inferChangedFileStatus = (
   }
 
   return 'modified';
+};
+
+const inferChangedFileStatusFromAedKind = (
+  kind: TAiEditOperationKind,
+): TAiAgentChangedFileStatus => {
+  switch (kind) {
+    case 'create':
+      return 'added';
+    case 'delete':
+      return 'deleted';
+    case 'rename':
+      return 'renamed';
+    case 'modify':
+    default:
+      return 'modified';
+  }
 };
 
 const isAppliedPatchFile = (
@@ -164,5 +209,139 @@ export const buildAiAgentPatchSummaryFromApplyResult = (
     totalDeletions,
     patchRef: buildAiAedPatchRef(taskId),
     appliedAt,
+  };
+};
+
+export const buildAiPatchSetFromAedDiff = (
+  diff: IAiEditGetDiffPayload,
+): IAiPatchSet | null => {
+  if (diff.hunks.length === 0) {
+    return null;
+  }
+
+  return {
+    summary: `已修改 ${diff.path}`,
+    files: [
+      {
+        path: diff.path,
+        originalHash: `aed:${diff.operationId}`,
+        hunks: diff.hunks.map((hunk) => ({
+          oldStart: hunk.oldStart,
+          oldLines: hunk.oldLines,
+          newStart: hunk.newStart,
+          newLines: hunk.newLines,
+          lines: hunk.lines,
+        })),
+      },
+    ],
+  };
+};
+
+export const buildAiAgentPatchSummaryFromAedDiffs = (
+  input: IBuildAiAgentPatchSummaryFromDiffsInput,
+): IAiAgentPatchSummary | null => {
+  const taskId = input.taskId.trim();
+  const runId = input.runId.trim();
+  const stepId = input.stepId.trim();
+  const appliedAt = input.appliedAt.trim();
+
+  if (!taskId || !runId || !stepId || !appliedAt || input.diffs.length === 0) {
+    return null;
+  }
+
+  const files = input.diffs
+    .filter((diff) => diff.hunks.length > 0)
+    .map<IAiAgentChangedFile>((diff) => ({
+      path: diff.path,
+      status: inferChangedFileStatusFromAedKind(diff.kind),
+      additions: diff.additions,
+      deletions: diff.deletions,
+      diffRef: buildAiAedDiffRef({ taskId, path: diff.path }),
+    }));
+
+  if (files.length === 0) {
+    return null;
+  }
+
+  const totalAdditions = files.reduce((total, file) => total + file.additions, 0);
+  const totalDeletions = files.reduce((total, file) => total + file.deletions, 0);
+  const idPayload = [
+    runId,
+    stepId,
+    taskId,
+    appliedAt,
+    ...files.map((file) =>
+      [
+        file.path,
+        file.status,
+        file.additions,
+        file.deletions,
+        file.diffRef,
+      ].join('|'),
+    ),
+  ].join('\n');
+
+  return {
+    id: `patch-summary:aed-diff:${hashString(idPayload)}`,
+    runId,
+    stepId,
+    files,
+    totalAdditions,
+    totalDeletions,
+    patchRef: buildAiAedPatchRef(taskId),
+    appliedAt,
+  };
+};
+
+export const mergeAiAgentPatchSummaries = (
+  summaries: readonly IAiAgentPatchSummary[],
+): IAiAgentPatchSummary | null => {
+  const firstSummary = summaries[0];
+
+  if (!firstSummary) {
+    return null;
+  }
+
+  const files: IAiAgentChangedFile[] = [];
+
+  for (const summary of summaries) {
+    for (const file of summary.files) {
+      const existingIndex = files.findIndex((item) => areFileSystemPathsEqual(item.path, file.path));
+      const existingFile = existingIndex >= 0 ? files[existingIndex] : undefined;
+
+      if (!existingFile) {
+        files.push({ ...file });
+        continue;
+      }
+
+      files[existingIndex] = {
+        ...existingFile,
+        status: existingFile.status === file.status ? existingFile.status : 'modified',
+        additions: existingFile.additions + file.additions,
+        deletions: existingFile.deletions + file.deletions,
+        diffRef: file.diffRef,
+        ...(file.rollbackRef ? { rollbackRef: file.rollbackRef } : {}),
+      };
+    }
+  }
+
+  if (files.length === 0) {
+    return null;
+  }
+
+  const lastSummary = summaries[summaries.length - 1] ?? firstSummary;
+  const totalAdditions = files.reduce((total, file) => total + file.additions, 0);
+  const totalDeletions = files.reduce((total, file) => total + file.deletions, 0);
+
+  return {
+    id: `patch-summary:merged:${hashString(summaries.map((summary) => summary.id).join('\n'))}`,
+    runId: firstSummary.runId,
+    stepId: firstSummary.stepId,
+    files,
+    totalAdditions,
+    totalDeletions,
+    patchRef: firstSummary.patchRef,
+    ...(lastSummary.appliedAt ? { appliedAt: lastSummary.appliedAt } : {}),
+    ...(lastSummary.revertedAt ? { revertedAt: lastSummary.revertedAt } : {}),
   };
 };

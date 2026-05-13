@@ -1,22 +1,13 @@
 <template>
-  <aside
-    class="app-sidebar-shell flex h-full min-h-0 min-w-0 flex-col overflow-hidden"
-    :class="{
-      'source-control-sidebar-host': isSourceControlView,
-      'explorer-sidebar-host': isExplorerView,
-      'search-sidebar-host': isSearchView,
-      'ssh-sidebar-host': isSshView,
-    }"
-  >
-    <SourceControlPanel
-      v-if="isSourceControlView"
-      class="h-full min-h-0 w-full flex-1"
-      :is-desktop-runtime="isDesktopRuntime"
-      :workspace-root-path="workspaceRootPath"
-      :active-path="document.path"
-      @open-file="handleOpenFile"
-      @open-diff="handleOpenGitDiff"
-    />
+  <aside class="app-sidebar-shell flex h-full min-h-0 min-w-0 flex-col overflow-hidden" :class="{
+    'source-control-sidebar-host': isSourceControlView,
+    'explorer-sidebar-host': isExplorerView,
+    'search-sidebar-host': isSearchView,
+    'ssh-sidebar-host': isSshView,
+  }">
+    <SourceControlPanel v-if="isSourceControlView" class="h-full min-h-0 w-full flex-1"
+      :is-desktop-runtime="isDesktopRuntime" :workspace-root-path="workspaceRootPath" :active-path="document.path"
+      @open-file="handleOpenFile" @open-diff="handleOpenGitDiff" />
 
     <section v-else-if="isExplorerView" class="explorer-sidebar" aria-label="资源管理器">
       <div class="explorer-tree">
@@ -30,10 +21,7 @@
 
         <div v-else-if="rootLoading && !root" class="explorer-empty-state">正在读取资源目录...</div>
 
-        <Empty
-          v-else-if="!workspaceRootPath"
-          class="explorer-empty-state explorer-empty-state--raised"
-        >
+        <Empty v-else-if="!workspaceRootPath" class="explorer-empty-state explorer-empty-state--raised">
           <EmptyHeader class="gap-1.5">
             <EmptyMedia class="h-auto w-auto rounded-none border-0 bg-transparent p-0 shadow-none">
               <FolderOpen class="h-14 w-14" />
@@ -51,10 +39,7 @@
 
         <div v-else-if="!root" class="explorer-empty-state">正在准备资源树...</div>
 
-        <Empty
-          v-else-if="isExplorerWorkspaceEmpty"
-          class="explorer-empty-state explorer-empty-state--raised"
-        >
+        <Empty v-else-if="isExplorerWorkspaceEmpty" class="explorer-empty-state explorer-empty-state--raised">
           <EmptyHeader class="gap-1.5">
             <EmptyMedia class="h-auto w-auto rounded-none border-0 bg-transparent p-0 shadow-none">
               <FolderOpen class="h-14 w-14" />
@@ -71,80 +56,41 @@
         </Empty>
 
         <template v-else>
-          <FileTree
-            class="explorer-file-tree"
-            :expanded="effectiveExplorerExpandedPaths"
-            :selected-path="selectedExplorerPath"
-            @expanded-change="void handleExplorerExpandedChange($event)"
-            @update:selected-path="handleExplorerSelection"
-          >
-            <WorkspaceTreeNode
-              v-if="rootEntry"
-              :entry="rootEntry"
-              :level="0"
-              :children-map="childrenMap"
-              :expanded-paths="effectiveExplorerExpandedPaths"
-              :loading-paths="loadingPaths"
-              :active-path="document.path"
-              :active-dirty="document.isDirty"
-              :search-query="explorerSearchQuery"
-              :inline-create-draft="inlineCreateDraft"
-              :root-path="root.rootPath"
-              :inline-rename-draft="inlineRenameDraft"
-              @toggle-directory="void toggleExplorerPath($event)"
-              @open-file="handleOpenFile"
-              @context-menu="handleEntryContextMenu"
-              @inline-create-input="handleInlineCreateInputValue"
-              @inline-create-blur="handleInlineCreateBlur"
+          <FileTree class="explorer-file-tree" :expanded="effectiveExplorerExpandedPaths"
+            :selected-path="selectedExplorerPath" @expanded-change="void handleExplorerExpandedChange($event)"
+            @update:selected-path="handleExplorerSelection">
+            <WorkspaceTreeNode v-if="rootEntry" :entry="rootEntry" :level="0" :children-map="childrenMap"
+              :expanded-paths="effectiveExplorerExpandedPaths" :loading-paths="loadingPaths"
+              :active-path="document.path" :active-dirty="document.isDirty"
+              :context-menu-path="explorerContextMenuHighlightPath" :search-query="explorerSearchQuery"
+              :inline-create-draft="inlineCreateDraft" :root-path="root.rootPath"
+              :inline-rename-draft="inlineRenameDraft" @toggle-directory="void toggleExplorerPath($event)"
+              @open-file="handleOpenFile" @context-menu="handleEntryContextMenu"
+              @inline-create-input="handleInlineCreateInputValue" @inline-create-blur="handleInlineCreateBlur"
               @inline-create-confirm="void confirmInlineCreateWorkspaceEntry()"
               @inline-create-cancel="cancelInlineCreateWorkspaceEntry"
               @inline-rename-input="inlineRenameDraft.value = $event"
-              @inline-rename-confirm="void confirmInlineRename()"
-              @inline-rename-cancel="cancelInlineRename"
-            />
+              @inline-rename-confirm="void confirmInlineRename()" @inline-rename-cancel="cancelInlineRename" />
           </FileTree>
         </template>
       </div>
 
-      <DeferredLinearContextMenu
-        v-if="explorerContextMenu.open"
-        :open="explorerContextMenu.open"
-        :x="explorerContextMenu.x"
-        :y="explorerContextMenu.y"
-        :groups="explorerContextMenuGroups"
-        :theme="appStore.theme"
-        :submenu-direction="explorerContextMenu.x > 280 ? 'left' : 'right'"
-        @select="handleExplorerContextMenuSelect"
-      />
+      <DeferredLinearContextMenu v-if="explorerContextMenu.open" :open="explorerContextMenu.open"
+        :x="explorerContextMenu.x" :y="explorerContextMenu.y" :groups="explorerContextMenuGroups"
+        :theme="appStore.theme" :submenu-direction="explorerContextMenu.x > 280 ? 'left' : 'right'"
+        @select="handleExplorerContextMenuSelect" />
     </section>
 
-    <DeferredSearchSidebarPanel
-      v-else-if="isSearchView"
-      :document-path="document.path"
-      :is-desktop-runtime="isDesktopRuntime"
-      :workspace-root-path="workspaceRootPath"
-      :preloaded-workspace-root="preloadedWorkspaceRoot"
-      @open-file="handleOpenFile"
-    />
+    <DeferredSearchSidebarPanel v-else-if="isSearchView" :document-path="document.path"
+      :is-desktop-runtime="isDesktopRuntime" :workspace-root-path="workspaceRootPath"
+      :preloaded-workspace-root="preloadedWorkspaceRoot" @open-file="handleOpenFile" />
 
-    <DeferredRunSidebarPanel
-      v-else-if="isRunView"
-      :document="document"
-      :has-active-document="Boolean(document.id)"
-      :is-desktop-runtime="isDesktopRuntime"
-      :can-run="canRun"
-      :is-running="isRunning"
-      :has-run-artifacts="hasRunArtifacts"
-      :active-run="activeRun"
-      :run-history="runHistory"
-      :command-templates="commandTemplates"
-      :executor="executor"
-      @run="emit('run')"
-      @create-document="emit('create-document')"
-      @open-terminal="emit('open-terminal')"
-      @insert-template="emit('insert-template', $event)"
-      @clear-run-history="emit('clear-run-history')"
-    />
+    <DeferredRunSidebarPanel v-else-if="isRunView" :document="document" :has-active-document="Boolean(document.id)"
+      :is-desktop-runtime="isDesktopRuntime" :can-run="canRun" :is-running="isRunning"
+      :has-run-artifacts="hasRunArtifacts" :active-run="activeRun" :run-history="runHistory"
+      :command-templates="commandTemplates" :executor="executor" @run="emit('run')"
+      @create-document="emit('create-document')" @open-terminal="emit('open-terminal')"
+      @insert-template="emit('insert-template', $event)" @clear-run-history="emit('clear-run-history')" />
 
     <DeferredSshSidebarPanel v-else-if="isSshView" @open-terminal="emit('open-terminal')" />
 
@@ -156,9 +102,7 @@
       <div class="workbench-scroll-region min-h-0 flex-1 overflow-auto py-2">
         <div class="space-y-3 px-3 py-2">
           <section class="rounded-xl border border-(--border-subtle) bg-white/3 p-3">
-            <p
-              class="text-[10px] font-semibold uppercase tracking-[0.12em] text-(--text-quaternary)"
-            >
+            <p class="text-[10px] font-semibold uppercase tracking-[0.12em] text-(--text-quaternary)">
               侧边栏页面
             </p>
             <h3 class="mt-2 text-[13px] font-semibold text-(--text-primary)">
@@ -174,17 +118,12 @@
           </section>
 
           <section class="rounded-xl border border-(--border-subtle) bg-(--panel-muted)/50 p-3">
-            <p
-              class="text-[10px] font-semibold uppercase tracking-[0.12em] text-(--text-quaternary)"
-            >
+            <p class="text-[10px] font-semibold uppercase tracking-[0.12em] text-(--text-quaternary)">
               将展示
             </p>
             <div class="mt-3 space-y-2">
-              <article
-                v-for="item in panelMeta.items"
-                :key="item.title"
-                class="rounded-lg border border-white/5 bg-white/3 px-3 py-2"
-              >
+              <article v-for="item in panelMeta.items" :key="item.title"
+                class="rounded-lg border border-white/5 bg-white/3 px-3 py-2">
                 <p class="text-[12px] font-medium text-(--text-primary)">{{ item.title }}</p>
                 <p class="mt-1 text-[11px] leading-5 text-(--text-secondary)">
                   {{ item.description }}
@@ -199,8 +138,8 @@
 </template>
 
 <script setup lang="ts">
-import InlineError from '@/components/common/InlineError.vue';
 import { FileTree } from '@/components/ai-elements/file-tree';
+import InlineError from '@/components/common/InlineError.vue';
 import type {
   ILinearContextMenuGroup,
   ILinearContextMenuItem,
@@ -553,6 +492,9 @@ const rootEntry = computed<IWorkspaceEntry | null>(() => {
 
 const selectedExplorerPath = computed(
   () => props.document.path ?? props.startupExplorerSelectedPath ?? undefined,
+);
+const explorerContextMenuHighlightPath = computed(
+  () => (explorerContextMenu.open ? explorerContextTarget.value?.path ?? null : null),
 );
 
 const searchExpandedPaths = computed(() => {

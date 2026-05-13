@@ -26,15 +26,13 @@ const createHunk = (): IAiDiffHunkPreview => ({
 });
 
 describe('AiDiffHunkViewer', () => {
-  it('渲染小段 hunk 预览与 diffRef', () => {
+  it('渲染小段 hunk 预览', () => {
     const wrapper = mount(AiDiffHunkViewer, {
       props: {
         hunk: createHunk(),
       },
     });
 
-    expect(wrapper.text()).toContain('src/agent/runtime.ts');
-    expect(wrapper.text()).toContain('diff:runtime');
     expect(wrapper.text()).toContain('@@ -1,1 +1,1 @@');
     expect(wrapper.find('.ai-diff-hunk-line.is-add').exists()).toBe(true);
     expect(wrapper.find('.ai-diff-hunk-line.is-delete').exists()).toBe(true);

@@ -30,6 +30,8 @@ const TOOL_KIND_MATCHERS: readonly IToolKindMatcher[] = [
             /search_project_files/u,
             /search_text/u,
             /search_symbols/u,
+            /grep_in_files/u,
+            /mastra_workspace_grep/u,
             /list_workspace_entries/u,
             /directory_tree/u,
             /sequentialthinking/u,
@@ -39,6 +41,7 @@ const TOOL_KIND_MATCHERS: readonly IToolKindMatcher[] = [
         kind: 'read',
         patterns: [
             /read_file/u,
+            /read_file_window/u,
             /read_multiple_files/u,
             /get_file_info/u,
             /open_nodes/u,
@@ -55,6 +58,8 @@ const TOOL_KIND_MATCHERS: readonly IToolKindMatcher[] = [
         kind: 'write',
         patterns: [
             /apply_patch/u,
+            /apply_file_edits/u,
+            /propose_file_patch/u,
             /create_file/u,
             /create_directory/u,
             /edit_notebook_file/u,
@@ -133,6 +138,8 @@ const TOOL_KIND_MATCHERS: readonly IToolKindMatcher[] = [
         kind: 'symbol',
         patterns: [
             /vscode_listcodeusages/u,
+            /search_symbols/u,
+            /mastra_workspace_lsp_inspect/u,
             /vscode_renamesymbol/u,
             /mcp_pylance_mcp_s_pylancedocstring/u,
             /mcp_pylance_mcp_s_pylancefilesyntaxerrors/u,

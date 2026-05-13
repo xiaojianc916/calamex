@@ -14,10 +14,14 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from '@/components/ui/breadcrumb'
+import { Button } from '@/components/ui/button'
 import DropdownMenu from '@/components/ui/dropdown-menu/DropdownMenu.vue'
 import DropdownMenuContent from '@/components/ui/dropdown-menu/DropdownMenuContent.vue'
 import DropdownMenuItem from '@/components/ui/dropdown-menu/DropdownMenuItem.vue'
 import DropdownMenuTrigger from '@/components/ui/dropdown-menu/DropdownMenuTrigger.vue'
+import { Field, FieldGroup, FieldLabel, FieldSet } from '@/components/ui/field'
+import { Input } from '@/components/ui/input'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useIntegratedTerminalControls } from '@/composables/useIntegratedTerminal'
 import { useMessage } from '@/composables/useMessage'
 import { tauriService } from '@/services/tauri'
@@ -28,13 +32,12 @@ import type {
   ISshPathSegment,
   ISshRecentConnection,
   ISshTransferItem,
-  TSshAuthMode,
   TSshContentTab,
   TSshFileKind,
   TSshPanelTab,
-  TSshTransferDirection,
+  TSshTransferDirection
 } from '@/types/ssh'
-import { Clock3, RefreshCw, Server, Unplug } from 'lucide-vue-next'
+import { Clock3, Eye, EyeOff, RefreshCw, Server, Unplug } from 'lucide-vue-next'
 import { storeToRefs } from 'pinia'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 
@@ -74,12 +77,12 @@ const SSH_CONTEXT_MENU_GROUPS: ILinearContextMenuGroup[] = [
 
 const SSH_AUTH_OPTIONS: ISshAuthOption[] = [
   {
-    value: 'key',
-    label: '密钥认证',
-  },
-  {
     value: 'password',
     label: '密码认证',
+  },
+  {
+    value: 'key',
+    label: '密钥认证',
   },
 ]
 
@@ -115,13 +118,12 @@ const {
   currentRemotePath,
 } = storeToRefs(sshStore)
 const connectionForm = sshStore.connectionForm
-const authSelectRef = ref<HTMLElement | null>(null)
 const renameInputRef = ref<HTMLInputElement | null>(null)
 const createDirectoryInputRef = ref<HTMLInputElement | null>(null)
 const isConnecting = ref(false)
+const isPasswordVisible = ref(false)
 const connectionStatusText = ref('')
 const connectionErrorText = ref('')
-const isAuthSelectOpen = ref(false)
 const isRemoteDirectoryLoading = ref(false)
 const isUploading = ref(false)
 const isDownloading = ref(false)
@@ -176,12 +178,6 @@ const sshBreadcrumbItems = computed<TSshBreadcrumbItem[]>(() => {
       .map((segment) => ({ ...segment, type: 'segment' as const })),
   ]
 })
-const selectedAuthOption = computed(
-  () =>
-    SSH_AUTH_OPTIONS.find((option) => option.value === connectionForm.authMode) ??
-    SSH_AUTH_OPTIONS[0],
-)
-const isTransferBusy = computed(() => isUploading.value || isDownloading.value)
 const normalizedRenameInput = computed(() => renameInputValue.value.trim())
 const normalizedCreateDirectoryName = computed(() => createDirectoryName.value.trim())
 const canConfirmRename = computed(() => {
@@ -193,6 +189,7 @@ const canConfirmCreateDirectory = computed(() => {
   const nextName = normalizedCreateDirectoryName.value
   return Boolean(nextName && nextName !== '.' && nextName !== '..' && !nextName.includes('/') && !nextName.includes('\\'))
 })
+const passwordInputType = computed(() => (isPasswordVisible.value ? 'text' : 'password'))
 
 const isTabActive = (tab: TSshPanelTab): boolean => {
   if (tab === 'connect') {
@@ -206,20 +203,16 @@ const closeContextMenu = (): void => {
   contextMenu.open = false
 }
 
-const closeAuthSelect = (): void => {
-  isAuthSelectOpen.value = false
-}
+const handleAuthModeChange = (authMode: unknown): void => {
+  if (authMode !== 'key' && authMode !== 'password') {
+    return
+  }
 
-const toggleAuthSelect = (): void => {
-  isAuthSelectOpen.value = !isAuthSelectOpen.value
-  closeContextMenu()
-}
-
-const selectAuthMode = (authMode: TSshAuthMode): void => {
   connectionForm.authMode = authMode
+  isPasswordVisible.value = false
   connectionFieldErrors.identityPath = ''
   connectionFieldErrors.password = ''
-  closeAuthSelect()
+  connectionErrorText.value = ''
 }
 
 const clearConnectionFieldError = (field: TSshConnectionField): void => {
@@ -241,13 +234,11 @@ const setContentTab = (tab: TSshContentTab): void => {
   activeContentTab.value = tab
   isConnectFormVisible.value = false
   closeContextMenu()
-  closeAuthSelect()
 }
 
 const openConnectForm = (): void => {
   isConnectFormVisible.value = true
   closeContextMenu()
-  closeAuthSelect()
 }
 
 const toggleConnectForm = (): void => {
@@ -258,12 +249,10 @@ const toggleConnectForm = (): void => {
   }
 
   closeContextMenu()
-  closeAuthSelect()
 }
 
 const handleCancelConnect = (): void => {
   isConnectFormVisible.value = false
-  closeAuthSelect()
 
   if (isConnected.value) {
     activeContentTab.value = 'explorer'
@@ -927,7 +916,6 @@ const disconnectSshSession = (): void => {
   resetDeleteDialog(true)
   resetCreateDirectoryDialog(true)
   closeContextMenu()
-  closeAuthSelect()
   sshStore.clearConnectionState()
   message.info('已断开 SSH 文件会话。')
 }
@@ -1009,12 +997,6 @@ const handleWindowClick = (event: MouseEvent): void => {
 
     closeContextMenu()
   }
-
-  if (target instanceof Node && authSelectRef.value?.contains(target)) {
-    return
-  }
-
-  closeAuthSelect()
 }
 
 const handleWindowContextMenu = (event: MouseEvent): void => {
@@ -1032,7 +1014,6 @@ const handleWindowContextMenu = (event: MouseEvent): void => {
 const handleWindowKeydown = (event: KeyboardEvent): void => {
   if (event.key === 'Escape') {
     closeContextMenu()
-    closeAuthSelect()
     closeRenameDialog()
     closeDeleteDialog()
     closeCreateDirectoryDialog()
@@ -1084,91 +1065,98 @@ onBeforeUnmount(() => {
     <div class="ssh-panel-body" :class="isDisconnected ? 'ssh-panel-body--disconnected' : 'ssh-panel-body--connected'">
       <form v-if="isConnectFormVisible" class="ssh-connect-form"
         :class="{ 'ssh-connect-form--disconnected': isDisconnected }" @submit.prevent="handleConnectSubmit">
-        <div class="ssh-form-row">
-          <label class="ssh-form-group">
-            <span>主机地址</span>
-            <input v-model="connectionForm.host" type="text" placeholder="192.168.1.100" autocomplete="off"
-              :aria-invalid="Boolean(connectionFieldErrors.host)" @input="clearConnectionFieldError('host')" />
-            <FieldError v-if="connectionFieldErrors.host" :message="connectionFieldErrors.host" />
-          </label>
+        <FieldSet class="ssh-connect-fieldset">
+          <FieldGroup class="ssh-connect-fields">
+            <div class="ssh-connect-grid">
+              <Field class="ssh-connect-field">
+                <FieldLabel for="ssh-connect-host" class="ssh-connect-label">
+                  主机地址
+                </FieldLabel>
+                <Input id="ssh-connect-host" v-model="connectionForm.host" type="text" placeholder="192.168.217.129"
+                  autocomplete="off" class="ssh-connect-input" :aria-invalid="Boolean(connectionFieldErrors.host)"
+                  @input="clearConnectionFieldError('host')" />
+                <FieldError v-if="connectionFieldErrors.host" :message="connectionFieldErrors.host" />
+              </Field>
 
-          <label class="ssh-form-group is-compact">
-            <span>端口</span>
-            <input v-model="connectionForm.port" type="text" placeholder="22" inputmode="numeric" autocomplete="off"
-              :aria-invalid="Boolean(connectionFieldErrors.port)" @input="clearConnectionFieldError('port')" />
-            <FieldError v-if="connectionFieldErrors.port" :message="connectionFieldErrors.port" />
-          </label>
-        </div>
+              <Field class="ssh-connect-field ssh-connect-field--port">
+                <FieldLabel for="ssh-connect-port" class="ssh-connect-label">
+                  端口
+                </FieldLabel>
+                <Input id="ssh-connect-port" v-model="connectionForm.port" type="text" placeholder="22"
+                  inputmode="numeric" autocomplete="off" class="ssh-connect-input"
+                  :aria-invalid="Boolean(connectionFieldErrors.port)" @input="clearConnectionFieldError('port')" />
+                <FieldError v-if="connectionFieldErrors.port" :message="connectionFieldErrors.port" />
+              </Field>
+            </div>
 
-        <label class="ssh-form-group">
-          <span>用户名</span>
-          <input v-model="connectionForm.username" type="text" placeholder="root" autocomplete="off"
-            :aria-invalid="Boolean(connectionFieldErrors.username)" @input="clearConnectionFieldError('username')" />
-          <FieldError v-if="connectionFieldErrors.username" :message="connectionFieldErrors.username" />
-        </label>
+            <Field class="ssh-connect-field">
+              <FieldLabel for="ssh-connect-username" class="ssh-connect-label">
+                用户名
+              </FieldLabel>
+              <Input id="ssh-connect-username" v-model="connectionForm.username" type="text" placeholder="root"
+                autocomplete="off" class="ssh-connect-input" :aria-invalid="Boolean(connectionFieldErrors.username)"
+                @input="clearConnectionFieldError('username')" />
+              <FieldError v-if="connectionFieldErrors.username" :message="connectionFieldErrors.username" />
+            </Field>
 
-        <div ref="authSelectRef" class="ssh-form-group ssh-auth-field">
-          <span>认证方式</span>
-          <button type="button" class="ssh-auth-select-trigger" :class="{ 'is-open': isAuthSelectOpen }"
-            :aria-expanded="isAuthSelectOpen" aria-haspopup="listbox" @click.stop="toggleAuthSelect">
-            <span class="ssh-auth-select-leading" aria-hidden="true">
-              <svg v-if="connectionForm.authMode === 'key'" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                <circle cx="7.5" cy="15.5" r="3.5" />
-                <path d="M10 13l8-8" />
-                <path d="M16 7l2 2" />
-              </svg>
-              <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                <rect x="4" y="10" width="16" height="10" rx="2" />
-                <path d="M8 10V7a4 4 0 0 1 8 0v3" />
-              </svg>
-            </span>
-            <span class="ssh-auth-select-copy">
-              <span class="ssh-auth-select-label">{{ selectedAuthOption.label }}</span>
-            </span>
-            <svg class="ssh-auth-select-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-              aria-hidden="true">
-              <polyline points="6 9 12 15 18 9" />
-            </svg>
-          </button>
+            <Field class="ssh-connect-field">
+              <FieldLabel for="ssh-connect-auth-mode" class="ssh-connect-label">
+                认证方式
+              </FieldLabel>
+              <Select :model-value="connectionForm.authMode" @update:model-value="handleAuthModeChange">
+                <SelectTrigger id="ssh-connect-auth-mode" aria-label="选择 SSH 认证方式" class="ssh-connect-select-trigger">
+                  <SelectValue placeholder="选择认证方式" />
+                </SelectTrigger>
+                <SelectContent
+                  class="ssh-connect-select-content data-[state=open]:animate-none data-[state=closed]:animate-none data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-100 data-[state=open]:zoom-in-100 data-[side=bottom]:slide-in-from-top-0 data-[side=left]:slide-in-from-right-0 data-[side=right]:slide-in-from-left-0 data-[side=top]:slide-in-from-bottom-0">
+                  <SelectItem v-for="option in SSH_AUTH_OPTIONS" :key="option.value" :value="option.value"
+                    class="ssh-connect-select-item">
+                    {{ option.label }}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
 
-          <div v-if="isAuthSelectOpen" class="ssh-auth-select-menu" role="listbox">
-            <div class="ssh-auth-select-group">认证方式</div>
-            <button v-for="option in SSH_AUTH_OPTIONS" :key="option.value" type="button" class="ssh-auth-option"
-              :class="{ 'is-selected': connectionForm.authMode === option.value }" role="option"
-              :aria-selected="connectionForm.authMode === option.value" @click.stop="selectAuthMode(option.value)">
-              <span class="ssh-auth-option-copy">
-                <span class="ssh-auth-option-label">{{ option.label }}</span>
-              </span>
-              <svg v-if="connectionForm.authMode === option.value" class="ssh-auth-option-check" viewBox="0 0 24 24"
-                fill="none" stroke="currentColor" aria-hidden="true">
-                <polyline points="20 6 9 17 4 12" />
-              </svg>
-            </button>
-          </div>
-        </div>
+            <Field v-if="connectionForm.authMode === 'key'" class="ssh-connect-field">
+              <FieldLabel for="ssh-connect-identity-path" class="ssh-connect-label">
+                私钥路径
+              </FieldLabel>
+              <Input id="ssh-connect-identity-path" v-model="connectionForm.identityPath" type="text"
+                placeholder="~/.ssh/id_rsa" autocomplete="off" class="ssh-connect-input"
+                :aria-invalid="Boolean(connectionFieldErrors.identityPath)"
+                @input="clearConnectionFieldError('identityPath')" />
+              <FieldError v-if="connectionFieldErrors.identityPath" :message="connectionFieldErrors.identityPath" />
+            </Field>
 
-        <label v-if="connectionForm.authMode === 'key'" class="ssh-form-group">
-          <span>私钥路径</span>
-          <input v-model="connectionForm.identityPath" type="text" placeholder="~/.ssh/id_rsa" autocomplete="off"
-            :aria-invalid="Boolean(connectionFieldErrors.identityPath)"
-            @input="clearConnectionFieldError('identityPath')" />
-          <FieldError v-if="connectionFieldErrors.identityPath" :message="connectionFieldErrors.identityPath" />
-        </label>
-        <label v-else class="ssh-form-group">
-          <span>登录密码</span>
-          <input v-model="connectionForm.password" type="password" placeholder="输入 SSH 登录密码"
-            autocomplete="current-password" :aria-invalid="Boolean(connectionFieldErrors.password)"
-            @input="clearConnectionFieldError('password')" />
-          <FieldError v-if="connectionFieldErrors.password" :message="connectionFieldErrors.password" />
-        </label>
+            <Field v-else class="ssh-connect-field">
+              <FieldLabel for="ssh-connect-password" class="ssh-connect-label">
+                登录密码
+              </FieldLabel>
+              <div class="ssh-password-input-wrap">
+                <Input id="ssh-connect-password" v-model="connectionForm.password" :type="passwordInputType"
+                  placeholder="输入 SSH 登录密码" autocomplete="current-password"
+                  class="ssh-connect-input ssh-connect-input--password"
+                  :aria-invalid="Boolean(connectionFieldErrors.password)"
+                  @input="clearConnectionFieldError('password')" />
+                <button type="button" class="ssh-password-toggle" :aria-label="isPasswordVisible ? '隐藏密码' : '显示密码'"
+                  :title="isPasswordVisible ? '隐藏密码' : '显示密码'" @click="isPasswordVisible = !isPasswordVisible">
+                  <Eye v-if="isPasswordVisible" aria-hidden="true" />
+                  <EyeOff v-else aria-hidden="true" />
+                </button>
+              </div>
+              <FieldError v-if="connectionFieldErrors.password" :message="connectionFieldErrors.password" />
+            </Field>
+          </FieldGroup>
+        </FieldSet>
 
         <div class="ssh-form-actions">
-          <button type="submit" class="ssh-button ssh-button--primary" :disabled="isConnecting"
-            @click.prevent="handleConnectSubmit">
+          <Button type="submit" class="ssh-connect-action ssh-connect-action--submit" :disabled="isConnecting">
             {{ isConnecting ? '连接中…' : '连接' }}
-          </button>
-          <button type="button" class="ssh-button ssh-button--ghost" :disabled="isConnecting"
-            @click="handleCancelConnect">取消</button>
+          </Button>
+          <Button type="button" variant="outline" class="ssh-connect-action ssh-connect-action--cancel"
+            :disabled="isConnecting" @click="handleCancelConnect">
+            取消
+          </Button>
         </div>
 
         <div v-if="connectionStatusText || connectionErrorText" class="ssh-connect-feedback"
@@ -1531,6 +1519,7 @@ onBeforeUnmount(() => {
   flex: 1;
   min-height: 0;
   flex-direction: column;
+  background: #fafafa;
 }
 
 .ssh-panel-body--disconnected {
@@ -1818,215 +1807,160 @@ onBeforeUnmount(() => {
 
 .ssh-connect-form {
   display: grid;
-  gap: 8px;
-  padding: 12px;
-  border-bottom: 1px solid var(--shell-divider);
+  gap: 10px;
+  padding: 10px 12px 12px;
+  border-bottom: 0;
+  background: #fafafa;
 }
 
 .ssh-connect-form--disconnected {
-  padding: 16px 12px 12px;
+  padding-top: 12px;
   border-bottom: 0;
 }
 
-.ssh-form-row {
-  display: flex;
-  gap: 6px;
+.ssh-connect-fieldset {
+  min-width: 0;
 }
 
-.ssh-form-group {
+.ssh-connect-fields {
   display: grid;
-  flex: 1;
+  gap: 10px;
+}
+
+.ssh-connect-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 82px;
+  gap: 8px;
+  align-items: start;
+}
+
+.ssh-connect-field {
+  min-width: 0;
   gap: 4px;
 }
 
-.ssh-form-group.is-compact {
-  flex: 0 0 70px;
+.ssh-connect-label {
+  color: #111827;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.4;
 }
 
-.ssh-auth-field {
+.ssh-connect-input,
+.ssh-connect-select-trigger {
+  width: 100%;
+  height: 34px;
+  align-items: center;
+  border: 1px solid #d8dee6;
+  border-radius: 7px;
+  background: #ffffff;
+  padding: 0 11px;
+  color: #111827;
+  font-size: 12px;
+  line-height: 1.25;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  transition: border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+}
+
+.ssh-connect-input::placeholder {
+  color: #9ca3af;
+}
+
+.ssh-connect-input:hover,
+.ssh-connect-select-trigger:hover {
+  border-color: #c8d0db;
+  background: #ffffff;
+}
+
+.ssh-connect-input:focus,
+.ssh-connect-input:focus-visible,
+.ssh-connect-select-trigger:focus-visible,
+.ssh-connect-select-trigger[data-state='open'] {
+  border-color: #009966;
+  background: #ffffff;
+  box-shadow: 0 0 0 4px rgba(0, 153, 102, 0.12);
+}
+
+:deep(.ssh-connect-select-trigger > span) {
+  color: #111827;
+}
+
+:deep(.ssh-connect-select-trigger > svg) {
+  color: #6b7280;
+  opacity: 1;
+  width: 14px;
+  height: 14px;
+}
+
+:deep(.ssh-connect-select-content) {
+  border-color: #d8dee6;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 4px;
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.12);
+}
+
+:deep(.ssh-connect-select-item) {
+  min-height: 32px;
+  border-radius: 6px;
+  padding: 0 30px 0 9px;
+  color: #111827;
+  font-size: 12px;
+}
+
+:deep(.ssh-connect-select-item:focus),
+:deep(.ssh-connect-select-item[data-highlighted]) {
+  background: #dcdee0;
+  color: #111827;
+}
+
+:deep(.ssh-connect-select-item[data-state='checked']) {
+  background: #ffffff;
+  color: #111827;
+}
+
+:deep(.ssh-connect-select-item[data-state='checked'] svg),
+:deep(.ssh-connect-select-item:focus svg),
+:deep(.ssh-connect-select-item[data-highlighted] svg) {
+  color: #111827;
+}
+
+.ssh-password-input-wrap {
   position: relative;
 }
 
-.ssh-auth-select-trigger {
-  display: flex;
-  width: 100%;
-  min-height: 32px;
-  align-items: center;
-  gap: 8px;
-  border: 1px solid color-mix(in srgb, var(--shell-divider) 88%, transparent);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--surface-soft) 100%, transparent);
-  padding: 0 8px;
-  color: var(--text-primary);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-  outline: none;
-  transition:
-    border-color 120ms cubic-bezier(0.16, 1, 0.3, 1),
-    background-color 120ms cubic-bezier(0.16, 1, 0.3, 1),
-    box-shadow 120ms cubic-bezier(0.16, 1, 0.3, 1),
-    transform 120ms cubic-bezier(0.16, 1, 0.3, 1);
+.ssh-connect-input--password {
+  padding-right: 36px;
 }
 
-.ssh-auth-select-trigger:hover {
-  border-color: color-mix(in srgb, var(--shell-divider) 70%, var(--text-quaternary));
-  background: color-mix(in srgb, var(--surface-soft-strong) 100%, transparent);
-}
-
-.ssh-auth-select-trigger:active {
-  transform: scale(0.99);
-}
-
-.ssh-auth-select-trigger:focus-visible,
-.ssh-auth-select-trigger.is-open {
-  border-color: color-mix(in srgb, var(--accent-strong) 72%, transparent);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-strong) 30%, transparent);
-}
-
-.ssh-auth-select-leading {
+.ssh-password-toggle {
+  position: absolute;
+  top: 50%;
+  right: 6px;
   display: inline-flex;
-  width: 14px;
-  height: 14px;
-  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
   align-items: center;
   justify-content: center;
-  color: var(--text-tertiary);
-}
-
-.ssh-auth-select-leading svg {
-  width: 14px;
-  height: 14px;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 1.75;
-}
-
-.ssh-auth-select-copy,
-.ssh-auth-option-copy {
-  min-width: 0;
-  flex: 1;
-}
-
-.ssh-auth-select-label,
-.ssh-auth-option-label {
-  overflow: hidden;
-  color: var(--text-primary);
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 1.2;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.ssh-auth-select-chevron {
-  width: 14px;
-  height: 14px;
-  flex-shrink: 0;
-  color: var(--text-tertiary);
-  stroke-width: 2;
-  transition: transform 150ms cubic-bezier(0.16, 1, 0.3, 1), color 150ms cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.ssh-auth-select-trigger.is-open .ssh-auth-select-chevron {
-  color: var(--text-secondary);
-  transform: rotate(180deg);
-}
-
-.ssh-auth-select-menu {
-  position: absolute;
-  z-index: 30;
-  top: calc(100% + 6px);
-  right: 0;
-  left: 0;
-  display: flex;
-  flex-direction: column;
-  border: 1px solid color-mix(in srgb, var(--shell-divider) 76%, var(--text-quaternary));
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--panel-bg) 94%, var(--sidebar-bg));
-  padding: 5px;
-  box-shadow:
-    0 8px 24px rgba(0, 0, 0, 0.36),
-    0 0 0 0.5px color-mix(in srgb, var(--text-primary) 6%, transparent),
-    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 4%, transparent);
-  transform-origin: top center;
-}
-
-.ssh-auth-select-group {
-  padding: 5px 8px 6px;
-  color: var(--text-quaternary);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-}
-
-.ssh-auth-option {
-  display: flex;
-  width: 100%;
-  min-height: 28px;
-  align-items: center;
-  gap: 8px;
   border: 0;
   border-radius: 6px;
   background: transparent;
-  padding: 5px 8px;
-  color: var(--text-secondary);
-  font: inherit;
-  text-align: left;
+  color: #6b7280;
+  transform: translateY(-50%);
+  transition: background-color 120ms ease, color 120ms ease;
   cursor: pointer;
+}
+
+.ssh-password-toggle:hover,
+.ssh-password-toggle:focus-visible {
+  background: #dcdee0;
+  color: #111827;
   outline: none;
-  transition:
-    background-color 80ms cubic-bezier(0, 0, 0.2, 1),
-    color 80ms cubic-bezier(0, 0, 0.2, 1);
 }
 
-.ssh-auth-option:hover,
-.ssh-auth-option:focus-visible {
-  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
-  color: var(--text-primary);
-}
-
-.ssh-auth-option.is-selected {
-  background: color-mix(in srgb, var(--accent-strong) 10%, transparent);
-  color: var(--text-primary);
-}
-
-.ssh-auth-option-check {
+.ssh-password-toggle svg {
   width: 14px;
   height: 14px;
-  flex-shrink: 0;
-  color: var(--accent-strong);
-  stroke-width: 2.2;
-}
-
-.ssh-form-group>span {
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--text-tertiary);
-}
-
-.ssh-form-group input,
-.ssh-form-group select {
-  width: 100%;
-  border: 1px solid color-mix(in srgb, var(--shell-divider) 88%, transparent);
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--surface-soft) 100%, transparent);
-  padding: 6px 8px;
-  color: var(--text-primary);
-  font-size: 12px;
-  transition:
-    border-color 0.15s ease,
-    background-color 0.15s ease;
-}
-
-.ssh-form-group input::placeholder {
-  color: color-mix(in srgb, var(--text-quaternary) 82%, transparent);
-}
-
-.ssh-form-group input:focus,
-.ssh-form-group select:focus {
-  border-color: color-mix(in srgb, var(--accent-strong) 72%, transparent);
-  background: color-mix(in srgb, var(--surface-soft-strong) 100%, transparent);
 }
 
 .ssh-command-preview {
@@ -2053,9 +1987,10 @@ onBeforeUnmount(() => {
 }
 
 .ssh-form-actions {
-  display: flex;
-  gap: 6px;
-  margin-top: 2px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: stretch;
 }
 
 .ssh-button {
@@ -2108,20 +2043,65 @@ onBeforeUnmount(() => {
   opacity: 0.62;
 }
 
+.ssh-connect-action {
+  height: 36px;
+  border-radius: 8px;
+  padding: 0 14px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  box-shadow: none;
+}
+
+.ssh-connect-action--submit {
+  border: 1px solid #009966;
+  background: #009966;
+  color: #ffffff;
+}
+
+.ssh-connect-action--submit:hover {
+  border-color: #00865a;
+  background: #00865a;
+}
+
+.ssh-connect-action--cancel {
+  border: 1px solid #d8dee6;
+  background: #ffffff;
+  color: #6b7280;
+}
+
+.ssh-connect-action--cancel:hover {
+  background: #f8fafc;
+  color: #374151;
+}
+
+.ssh-connect-action:disabled {
+  cursor: default;
+  opacity: 0.58;
+}
+
 .ssh-connect-feedback {
-  border: 1px solid color-mix(in srgb, var(--accent-strong) 28%, var(--shell-divider));
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--accent-strong) 8%, transparent);
-  padding: 7px 8px;
-  color: var(--text-secondary);
+  border: 1px solid rgba(0, 153, 102, 0.18);
+  border-radius: 8px;
+  background: rgba(0, 153, 102, 0.08);
+  padding: 8px 10px;
+  color: #0f5132;
   font-size: 11px;
   line-height: 1.5;
 }
 
 .ssh-connect-feedback.is-error {
-  border-color: color-mix(in srgb, var(--danger) 38%, var(--shell-divider));
-  background: color-mix(in srgb, var(--danger) 8%, transparent);
-  color: var(--danger);
+  border-color: rgba(220, 38, 38, 0.18);
+  background: rgba(220, 38, 38, 0.08);
+  color: #b91c1c;
+}
+
+@media (max-width: 360px) {
+
+  .ssh-connect-grid,
+  .ssh-form-actions {
+    grid-template-columns: 1fr;
+  }
 }
 
 .ssh-path-bar {

@@ -1,7 +1,7 @@
 import { createPinia, setActivePinia } from 'pinia';
 import piniaPluginPersistedstate from 'pinia-plugin-persistedstate';
-import { createApp, nextTick } from 'vue';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { createApp, nextTick } from 'vue';
 
 import { useAiAgentStore } from '@/store/aiAgent';
 import type { IAiAgentRun, IAiTaskPlanStep } from '@/types/ai';
@@ -44,6 +44,21 @@ describe('aiAgent store step details', () => {
   beforeEach(() => {
     localStorage.clear();
     setActivePinia(createPinia());
+  });
+
+  it('默认使用 agent 模式，并在刷新后恢复用户上次切换的模式', async () => {
+    createPersistedPinia();
+    const store = useAiAgentStore();
+
+    expect(store.mode).toBe('agent');
+
+    store.mode = 'plan';
+    await nextTick();
+
+    createPersistedPinia();
+    const restored = useAiAgentStore();
+
+    expect(restored.mode).toBe('plan');
   });
 
   it('保存 step 的 Web Sources 摘要与工具结果，不保存网页全文', () => {
@@ -106,6 +121,65 @@ describe('aiAgent store step details', () => {
     expect(summaries).toHaveLength(1);
     expect(summaries[0]?.files[0]?.diffRef).toBe('diff:runtime');
     expect(JSON.stringify(summaries)).not.toContain("- const mode = 'chat'");
+  });
+
+  it('累计官方 usage 用于多步 Agent token 汇总，同时保留最近一次 usage', () => {
+    const store = useAiAgentStore();
+
+    store.setLatestOfficialUsage({
+      inputTokens: 10,
+      inputTokenDetails: {
+        noCacheTokens: 8,
+        cacheReadTokens: 2,
+        cacheWriteTokens: 0,
+      },
+      outputTokens: 5,
+      outputTokenDetails: {
+        textTokens: 3,
+        reasoningTokens: 2,
+      },
+      totalTokens: 15,
+      cachedInputTokens: 2,
+      reasoningTokens: 2,
+    });
+    store.setLatestOfficialUsage({
+      inputTokens: 20,
+      inputTokenDetails: {
+        noCacheTokens: 19,
+        cacheReadTokens: 1,
+        cacheWriteTokens: 0,
+      },
+      outputTokens: 7,
+      outputTokenDetails: {
+        textTokens: 6,
+        reasoningTokens: 1,
+      },
+      totalTokens: 27,
+      cachedInputTokens: 1,
+      reasoningTokens: 1,
+    });
+
+    expect(store.latestOfficialUsage).toMatchObject({
+      inputTokens: 20,
+      outputTokens: 7,
+      totalTokens: 27,
+    });
+    expect(store.totalOfficialUsage).toMatchObject({
+      inputTokens: 30,
+      inputTokenDetails: {
+        noCacheTokens: 27,
+        cacheReadTokens: 3,
+        cacheWriteTokens: 0,
+      },
+      outputTokens: 12,
+      outputTokenDetails: {
+        textTokens: 9,
+        reasoningTokens: 3,
+      },
+      totalTokens: 42,
+      cachedInputTokens: 3,
+      reasoningTokens: 3,
+    });
   });
 
   it('持久化计划快照并在刷新恢复时将运行中状态转为可继续的暂停态', async () => {

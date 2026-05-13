@@ -1,7 +1,5 @@
-import { createHash } from 'node:crypto';
 import { existsSync, realpathSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 import { AgentBrowser } from '@mastra/agent-browser';
 import { Agent, type ToolsInput } from '@mastra/core/agent';
@@ -15,15 +13,7 @@ import type {
     ToolCallPayload,
 } from '@mastra/core/stream';
 import { createTool } from '@mastra/core/tools';
-import {
-    LocalFilesystem,
-    LocalSandbox,
-    Workspace,
-    WORKSPACE_TOOLS,
-    type AnyWorkspace,
-    type LSPConfig,
-    type WorkspaceToolsConfig,
-} from '@mastra/core/workspace';
+import type { AnyWorkspace } from '@mastra/core/workspace';
 import { LibSQLStore } from '@mastra/libsql';
 import { z } from 'zod';
 
@@ -35,15 +25,13 @@ import {
     createDeepSeekReasoningRunPrefix,
     evictDeepSeekReasoningByPrefix,
     runWithDeepSeekReasoningContext,
+    type IDeepSeekRequestPayloadStats,
 } from '../models/deepseek-reasoning-fetch.js';
-import type { TJsonValue } from '../schemas/events.js';
 import {
-    agentPlanGenerationSchema,
-    agentPlanSchema,
-    agentPlanStepSchema,
-    type TAgentPlan,
-    type TAgentPlanStep,
-} from '../schemas/plan.js';
+    compactModelOutput,
+    truncateModelOutputText,
+} from '../models/model-output-budget.js';
+import type { TJsonValue } from '../schemas/events.js';
 import {
     agentPlanDeltaSchema,
     agentPlanValidationReportSchema,
@@ -51,19 +39,36 @@ import {
     type TAgentPlanStepPatch,
     type TAgentPlanValidationReport,
 } from '../schemas/plan-workflow.js';
+import {
+    agentPlanGenerationSchema,
+    agentPlanSchema,
+    agentPlanStepSchema,
+    type TAgentPlan,
+    type TAgentPlanStep,
+} from '../schemas/plan.js';
 import { redactForStream } from '../streaming/stream-redaction.js';
 import {
     createAgentRuntimeEvent,
     type IAgentRuntimeEventContext,
     type TAgentRuntimeEventDraft,
 } from '../streaming/stream-types.js';
+import { createMastraFileTools } from '../tools/file-primitives.js';
 import {
     createMastraFileLogger,
     createMastraLoggerRef,
     createMastraLogTools,
     type IMastraLogToolsRef,
 } from '../tools/log.js';
-import { createMastraMcpClientBundle } from '../tools/mcp.js';
+import {
+    createMcpGatewayRunBundle,
+    createMcpGatewayWarmPool,
+    type IMcpGatewayBundle,
+    type McpGatewayMetricBuffer,
+    type McpGatewayWarmPool,
+    type TMcpGatewayMetric,
+    type TMcpGatewayToolProfile,
+} from '../tools/mcp-gateway.js';
+import { createMastraMcpClientBundle, type TMcpServerName } from '../tools/mcp.js';
 import { createMastraTimeTools } from '../tools/time.js';
 import { buildSystemPrompt } from './agent-runtime-helpers.js';
 import {
@@ -101,19 +106,13 @@ const DEFAULT_EXECUTION_AGENT_NAME = 'Calamex Agent Sidecar';
 const DEFAULT_VALIDATOR_AGENT_ID = 'calamex-agent-sidecar-validator';
 const DEFAULT_REPLANNER_AGENT_ID = 'calamex-agent-sidecar-replanner';
 const RUNTIME_TOOL_PREVIEW_CHARS = 1200;
-const WORKSPACE_OPERATION_TIMEOUT_MS = 30_000;
-const WORKSPACE_LSP_DIAGNOSTIC_TIMEOUT_MS = 5_000;
-const WORKSPACE_LSP_INIT_TIMEOUT_MS = 15_000;
-const SIDECAR_ROOT = resolve(fileURLToPath(new URL('../../', import.meta.url)));
-const PROJECT_ROOT = resolve(SIDECAR_ROOT, '..');
+const CURRENT_FILE_TOOL_CONTENT_MAX_CHARS = 2_000;
+const CURRENT_FILE_TOOL_MODEL_OUTPUT_MAX_CHARS = 2_600;
+const EXPLICIT_CONTEXT_MESSAGE_LIMIT = 12;
 const DEFAULT_ROLLBACK_STEP: TRollbackStepPath = [
     DurableStepIds.AGENTIC_EXECUTION,
     DurableStepIds.LLM_EXECUTION,
 ];
-const MCP_TOOLS_REPLACED_BY_MASTRA_WORKSPACE = new Set([
-    'probe_grep',
-]);
-
 type TMastraRequestContextValues = Record<string, unknown>;
 type TMastraRequestContext = RequestContext<TMastraRequestContextValues>;
 
@@ -213,10 +212,7 @@ interface IMastraAgentConfig {
     browser?: MastraBrowser;
 }
 
-interface IMastraMcpBundle {
-    tools: ToolsInput;
-    disconnectAll: () => Promise<void>;
-}
+type IMastraMcpBundle = IMcpGatewayBundle;
 
 interface IMastraRuntimeDeps {
     createAgent?: (config: IMastraAgentConfig) => IMastraAgentLike;
@@ -228,7 +224,7 @@ interface IMastraRuntimeDeps {
     ) => Promise<IMastraWorkflowSnapshotLike | null>;
     readModelConfig?: () => TDeepSeekModelConfig | null;
     createMcpClientBundle?: (
-        options?: { workspaceRootPath?: string | null },
+        options?: { workspaceRootPath?: string | null; serverNames?: readonly TMcpServerName[] },
     ) => Promise<IMastraMcpBundle>;
     createPlanStore?: () => IAgentPlanStore;
     createPlanWorkflowStore?: () => IAgentPlanWorkflowStore;
@@ -250,7 +246,12 @@ interface IMastraTextStreamSummary {
     releaseResources: boolean;
     streamErrorMessage: string | null;
     visibleText: string;
+    doneTokenSnapshot?: TDoneTokenSnapshot;
 }
+
+type TDoneTokenSnapshot = Pick<Extract<TAgentRuntimeOutputEvent, {
+    type: 'done';
+}>, 'promptTokens' | 'completionTokens' | 'totalTokens' | 'usage'>;
 
 interface IPlanWorkflowStepTracker {
     planId: string;
@@ -265,15 +266,27 @@ type TOmMemoryCompressedEventDraft = Extract<TAgentRuntimeEventDraft, {
 type TAcontextTokenEventDraft = Extract<TAgentRuntimeEventDraft, {
     type: 'acontext.token.checked';
 }>;
-type TMastraToolProfile = 'readonly' | 'write';
+type TAcontextProviderPayloadEventDraft = Extract<TAgentRuntimeEventDraft, {
+    type: 'acontext.provider_payload.checked';
+}>;
+type TMastraToolProfile = TMcpGatewayToolProfile;
+
+interface IMastraToolLoadPlan {
+    workspaceEnabled: boolean;
+    browserEnabled: boolean;
+    strategy: string;
+}
 
 interface IMastraToolBudgetStats {
     toolCount: number;
     mcpToolCount: number;
+    mcpServerCount: number;
     uiContextToolCount: number;
     nativeToolCount: number;
     logToolCount: number;
     toolSchemaCharCount: number;
+    mcpServerNames: string[];
+    toolLoadStrategy: string;
 }
 
 interface IMastraDurableAgentLike {
@@ -300,6 +313,8 @@ const createSessionId = (prefix: string): string =>
     `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
 const APPROVAL_TOKEN_PREFIX = 'mastra-approval.';
+
+const isNodeTestProcess = (): boolean => Boolean(process.env.NODE_TEST_CONTEXT);
 
 const toRecord = (value: unknown): Record<string, unknown> | null => (
     value && typeof value === 'object' && !Array.isArray(value)
@@ -430,6 +445,52 @@ const createRuntimeEventFactory = (
     });
 };
 
+const createMcpGatewayMetricData = (
+    metric: TMcpGatewayMetric,
+): Record<string, string | number | boolean | null> => {
+    const data: Record<string, string | number | boolean | null> = {
+        serverName: metric.serverName,
+        durationMs: metric.durationMs,
+        activeBundleCount: metric.activeBundleCount,
+        warmBundleCount: metric.warmBundleCount,
+        errorCount: metric.errorCount,
+    };
+
+    if ('toolCount' in metric) {
+        data.toolCount = metric.toolCount;
+    }
+
+    if ('profile' in metric) {
+        data.profile = metric.profile;
+        data.cacheHit = metric.cacheHit;
+    }
+
+    if ('requestedToolName' in metric) {
+        data.requestedToolName = metric.requestedToolName;
+        data.resolvedToolName = metric.resolvedToolName;
+        data.toolCallCount = metric.toolCallCount;
+    }
+
+    return data;
+};
+
+const attachMcpGatewayMetrics = (
+    metricBuffer: McpGatewayMetricBuffer,
+    events: TAgentRuntimeOutputEvent[],
+    options: IAgentRuntimeRunOptions,
+    createRuntimeEvent: TRuntimeEventFactory,
+): void => {
+    metricBuffer.setListener((metric) => {
+        pushUiEvent(events, createRuntimeEvent({
+            type: 'agent.debug',
+            visibility: 'debug',
+            level: 'debug',
+            name: metric.type,
+            data: createMcpGatewayMetricData(metric),
+        }), options);
+    });
+};
+
 const countTextChars = (value: string): number => Array.from(value).length;
 
 const stringifyForBudget = (value: unknown): string => {
@@ -441,6 +502,75 @@ const stringifyForBudget = (value: unknown): string => {
 };
 
 const countJsonChars = (value: unknown): number => countTextChars(stringifyForBudget(value));
+
+const createJsonToolModelOutput = (value: unknown): { type: 'json'; value: unknown } => ({
+    type: 'json',
+    value,
+});
+
+const EMPTY_TOOL_PARAMETERS = {
+    type: 'object',
+    properties: {},
+    additionalProperties: false,
+} as const;
+
+const isZodSchemaLike = (value: unknown): value is z.ZodType<unknown> => {
+    const record = toRecord(value);
+
+    return typeof record?.parse === 'function'
+        && typeof record?.safeParse === 'function';
+};
+
+const convertToolInputSchemaForBudget = (schema: unknown): unknown => {
+    if (!schema) {
+        return EMPTY_TOOL_PARAMETERS;
+    }
+
+    const schemaRecord = toRecord(schema);
+    if (schemaRecord && 'jsonSchema' in schemaRecord) {
+        return schemaRecord.jsonSchema;
+    }
+
+    if (isZodSchemaLike(schema)) {
+        try {
+            return z.toJSONSchema(schema);
+        } catch {
+            return EMPTY_TOOL_PARAMETERS;
+        }
+    }
+
+    return schema;
+};
+
+const createProviderToolBudgetShape = (
+    name: string,
+    tool: unknown,
+): {
+    type: 'function';
+    name: string;
+    description?: string;
+    parameters: unknown;
+} => {
+    const toolRecord = toRecord(tool);
+    const description = typeof toolRecord?.description === 'string'
+        ? toolRecord.description
+        : undefined;
+    const inputSchema = toolRecord && 'inputSchema' in toolRecord
+        ? toolRecord.inputSchema
+        : toolRecord?.parameters;
+
+    return {
+        type: 'function',
+        name,
+        ...(description ? { description } : {}),
+        parameters: convertToolInputSchemaForBudget(inputSchema),
+    };
+};
+
+const countProviderToolSchemaChars = (tools: ToolsInput): number =>
+    countJsonChars(Object.entries(tools).map(([name, tool]) =>
+        createProviderToolBudgetShape(name, tool),
+    ));
 
 const estimateInputTokensByChars = (value: string): number => {
     let asciiRunLength = 0;
@@ -482,7 +612,9 @@ const createAcontextTokenEventDraft = (input: {
     toolChoice: 'auto' | 'none';
 }): TAcontextTokenEventDraft => {
     const messagesText = stringifyForBudget(input.messages);
-    const toolsText = stringifyForBudget(input.tools);
+    const toolsText = stringifyForBudget(Object.entries(input.tools).map(([name, tool]) =>
+        createProviderToolBudgetShape(name, tool),
+    ));
     const systemPromptCharCount = countTextChars(input.systemPrompt);
     const messageCharCount = countTextChars(messagesText);
     const toolSchemaCharCount = input.toolStats.toolSchemaCharCount;
@@ -506,15 +638,84 @@ const createAcontextTokenEventDraft = (input: {
         toolSchemaCharCount,
         toolCount: input.toolStats.toolCount,
         mcpToolCount: input.toolStats.mcpToolCount,
+        mcpServerCount: input.toolStats.mcpServerCount,
         uiContextToolCount: input.toolStats.uiContextToolCount,
         nativeToolCount: input.toolStats.nativeToolCount,
         logToolCount: input.toolStats.logToolCount,
+        mcpServerNames: input.toolStats.mcpServerNames,
+        toolLoadStrategy: input.toolStats.toolLoadStrategy,
         workspaceEnabled: input.workspaceEnabled,
         browserEnabled: input.browserEnabled,
         memoryEnabled: input.memoryEnabled,
         maxSteps: input.maxSteps,
         toolChoice: input.toolChoice,
         tokenEstimateMethod: 'char_heuristic',
+    };
+};
+
+const createAcontextProviderPayloadEventDraft = (
+    stats: IDeepSeekRequestPayloadStats,
+    requestIndex: number,
+): TAcontextProviderPayloadEventDraft => ({
+    type: 'acontext.provider_payload.checked',
+    visibility: 'debug',
+    level: 'info',
+    provider: stats.provider,
+    ...(stats.model ? { model: stats.model } : {}),
+    ...(stats.stream !== undefined ? { stream: stats.stream } : {}),
+    requestIndex,
+    requestBodyCharCount: stats.requestBodyCharCount,
+    projectedInputTokens: stats.projectedInputTokens,
+    projectedInputTokensAvailable: true,
+    messageCharCount: stats.messageCharCount,
+    systemMessageCharCount: stats.systemMessageCharCount,
+    userMessageCharCount: stats.userMessageCharCount,
+    assistantMessageCharCount: stats.assistantMessageCharCount,
+    toolMessageCharCount: stats.toolMessageCharCount,
+    reasoningReplayCharCount: stats.reasoningReplayCharCount,
+    toolSchemaCharCount: stats.toolSchemaCharCount,
+    toolCount: stats.toolCount,
+    responseFormatCharCount: stats.responseFormatCharCount,
+    reasoningInjected: stats.reasoningInjected,
+    tokenEstimateMethod: 'char_heuristic',
+});
+
+const createDeepSeekPayloadEventSink = (
+    events: TAgentRuntimeOutputEvent[],
+    options: IAgentRuntimeRunOptions,
+): {
+    onRequestPayload: (stats: IDeepSeekRequestPayloadStats) => void;
+    attachRuntimeEventFactory: (factory: TRuntimeEventFactory) => void;
+} => {
+    const pending: TAcontextProviderPayloadEventDraft[] = [];
+    let runtimeEventFactory: TRuntimeEventFactory | null = null;
+    let requestIndex = 0;
+
+    const pushDraft = (draft: TAcontextProviderPayloadEventDraft): void => {
+        if (!runtimeEventFactory) {
+            pending.push(draft);
+            return;
+        }
+
+        pushUiEvent(events, runtimeEventFactory(draft), options);
+    };
+
+    return {
+        onRequestPayload: (stats) => {
+            requestIndex += 1;
+            pushDraft(createAcontextProviderPayloadEventDraft(stats, requestIndex));
+        },
+        attachRuntimeEventFactory: (factory) => {
+            runtimeEventFactory = factory;
+
+            while (pending.length > 0) {
+                const draft = pending.shift();
+
+                if (draft) {
+                    pushUiEvent(events, runtimeEventFactory(draft), options);
+                }
+            }
+        },
     };
 };
 
@@ -577,87 +778,6 @@ const resolveWorkspaceDirectory = (workspaceRootPath?: string | null): string | 
     }
 };
 
-const createWorkspaceSearchPaths = (workspaceRoot: string): string[] => {
-    const searchPaths = [workspaceRoot, SIDECAR_ROOT, PROJECT_ROOT, process.cwd()];
-    const seen = new Set<string>();
-
-    return searchPaths.flatMap((path) => {
-        const resolvedPath = resolveWorkspaceDirectory(path);
-
-        if (!resolvedPath || seen.has(resolvedPath)) {
-            return [];
-        }
-
-        seen.add(resolvedPath);
-        return [resolvedPath];
-    });
-};
-
-const createWorkspaceLspConfig = (workspaceRoot: string): LSPConfig => ({
-    root: workspaceRoot,
-    diagnosticTimeout: WORKSPACE_LSP_DIAGNOSTIC_TIMEOUT_MS,
-    initTimeout: WORKSPACE_LSP_INIT_TIMEOUT_MS,
-    searchPaths: createWorkspaceSearchPaths(workspaceRoot),
-});
-
-const createWorkspaceToolsConfig = (profile: TMastraToolProfile): WorkspaceToolsConfig => ({
-    enabled: false,
-    requireApproval: false,
-    [WORKSPACE_TOOLS.FILESYSTEM.READ_FILE]: {
-        enabled: true,
-        maxOutputTokens: 6_000,
-    },
-    [WORKSPACE_TOOLS.FILESYSTEM.GREP]: {
-        enabled: true,
-    },
-    ...(profile === 'write' ? {
-        [WORKSPACE_TOOLS.FILESYSTEM.EDIT_FILE]: {
-            enabled: true,
-            requireReadBeforeWrite: true,
-        },
-        [WORKSPACE_TOOLS.FILESYSTEM.WRITE_FILE]: {
-            enabled: true,
-            requireReadBeforeWrite: true,
-        },
-        [WORKSPACE_TOOLS.FILESYSTEM.AST_EDIT]: {
-            enabled: true,
-            requireReadBeforeWrite: true,
-        },
-    } : {}),
-    [WORKSPACE_TOOLS.LSP.LSP_INSPECT]: {
-        enabled: true,
-    },
-});
-
-const createMastraWorkspace = (
-    workspaceRootPath?: string | null,
-    profile: TMastraToolProfile = 'write',
-): AnyWorkspace | undefined => {
-    const workspaceRoot = resolveWorkspaceDirectory(workspaceRootPath);
-
-    if (!workspaceRoot) {
-        return undefined;
-    }
-
-    const workspaceId = createHash('sha256').update(workspaceRoot).digest('hex').slice(0, 24);
-
-    return new Workspace({
-        id: `sidecar-${workspaceId}`,
-        name: 'Xiaojianc Agent Workspace',
-        filesystem: new LocalFilesystem({
-            basePath: workspaceRoot,
-            contained: true,
-        }),
-        sandbox: new LocalSandbox({
-            workingDirectory: workspaceRoot,
-            timeout: WORKSPACE_OPERATION_TIMEOUT_MS,
-        }),
-        lsp: createWorkspaceLspConfig(workspaceRoot),
-        tools: createWorkspaceToolsConfig(profile),
-        operationTimeout: WORKSPACE_OPERATION_TIMEOUT_MS,
-    });
-};
-
 const destroyMastraWorkspace = async (workspace: AnyWorkspace | undefined): Promise<void> => {
     if (!workspace || workspace.status === 'destroyed') {
         return;
@@ -678,16 +798,20 @@ const destroyMastraBrowser = async (browser: MastraBrowser | undefined): Promise
     await browser.close().catch(() => undefined);
 };
 
-const removeMcpToolsDuplicatedByMastraWorkspace = (tools: ToolsInput): ToolsInput => {
-    const filteredTools: ToolsInput = {};
+const createMastraToolLoadPlan = (
+    input: Pick<IAgentRuntimeInput, 'goal' | 'messages' | 'mode' | 'planId' | 'planStepId'>,
+    workspaceRootPath: string | undefined,
+    contextReferences: readonly IAgentContextReferenceInput[] = [],
+): IMastraToolLoadPlan => {
+    const workspaceAvailable = resolveWorkspaceDirectory(workspaceRootPath) !== null;
+    void input;
+    void contextReferences;
 
-    for (const [toolName, tool] of Object.entries(tools)) {
-        if (!MCP_TOOLS_REPLACED_BY_MASTRA_WORKSPACE.has(toolName)) {
-            filteredTools[toolName] = tool;
-        }
-    }
-
-    return filteredTools;
+    return {
+        workspaceEnabled: false,
+        browserEnabled: false,
+        strategy: workspaceAvailable ? 'gateway+file-primitives' : 'gateway',
+    };
 };
 
 const createMastraModelConfig = (
@@ -807,28 +931,6 @@ const defaultCreateExecutionHandle = async (
     };
 };
 
-const READONLY_MCP_TOOL_DENY_PATTERN =
-    /(?:^|[_-])(write|edit|create|move|delete|remove|run|exec|execute|shell|install|apply|commit|checkout|reset|add|stage|unstage|discard|drop|push|pull|merge|rebase|stash|upload|send|post|put|patch|update|insert|replace)(?:$|[_-])/iu;
-
-const filterMcpToolsForProfile = (
-    tools: ToolsInput,
-    profile: TMastraToolProfile,
-): ToolsInput => {
-    if (profile === 'write') {
-        return tools;
-    }
-
-    const filteredTools: ToolsInput = {};
-
-    for (const [name, tool] of Object.entries(tools)) {
-        if (!READONLY_MCP_TOOL_DENY_PATTERN.test(name)) {
-            filteredTools[name] = tool;
-        }
-    }
-
-    return filteredTools;
-};
-
 const findCurrentFileReference = (
     contextReferences: readonly IAgentContextReferenceInput[] = [],
 ): IAgentContextReferenceInput | null =>
@@ -846,50 +948,73 @@ const createUiContextTools = (
     return {
         read_current_file: createTool({
             id: 'read_current_file',
-            description: 'Read the current editor file only when the user asks about the current file. Takes no arguments.',
+            description: 'Read the current editor file preview only when the user asks about the current file. Takes no arguments; output is capped, use read_file_window with line ranges when more content is needed.',
             inputSchema: z.object({}).passthrough(),
-            execute: async () => ({
-                path: currentFile.path,
-                label: currentFile.label,
-                range: currentFile.range,
-                redacted: currentFile.redacted,
-                content: currentFile.contentPreview,
-            }),
+            execute: async () => {
+                const content = truncateModelOutputText(
+                    currentFile.contentPreview,
+                    CURRENT_FILE_TOOL_CONTENT_MAX_CHARS,
+                );
+
+                return {
+                    path: currentFile.path,
+                    label: currentFile.label,
+                    range: currentFile.range,
+                    redacted: currentFile.redacted,
+                    content: content.text,
+                    truncated: content.truncated,
+                    originalCharCount: content.originalCharCount,
+                };
+            },
+            toModelOutput: (output) => createJsonToolModelOutput(compactModelOutput(output, {
+                maxTotalChars: CURRENT_FILE_TOOL_MODEL_OUTPUT_MAX_CHARS,
+                maxStringChars: CURRENT_FILE_TOOL_CONTENT_MAX_CHARS,
+                maxArrayItems: 10,
+                maxObjectKeys: 20,
+                maxDepth: 4,
+            })),
         }),
     };
 };
 
 const loadMastraMcpTools = async (
-    createBundle: (
-        options?: { workspaceRootPath?: string | null },
-    ) => Promise<IMastraMcpBundle>,
+    mcpGatewayPool: McpGatewayWarmPool,
     workspaceRootPath?: string,
     loggerRef?: IMastraLogToolsRef,
     contextReferences: readonly IAgentContextReferenceInput[] = [],
     profile: TMastraToolProfile = 'write',
+    input: Pick<IAgentRuntimeInput, 'goal' | 'messages' | 'mode' | 'planId' | 'planStepId'> = {
+        mode: 'ask',
+        goal: '',
+        messages: [],
+    },
 ): Promise<{
     bundle: IMastraMcpBundle;
     tools: ToolsInput;
     hasTools: boolean;
     toolStats: IMastraToolBudgetStats;
+    mcpGatewayMetrics: McpGatewayMetricBuffer;
     workspace: AnyWorkspace | undefined;
     browser: MastraBrowser | undefined;
 }> => {
-    const bundle = await createBundle(workspaceRootPath
-        ? { workspaceRootPath }
-        : {});
-    const workspace = createMastraWorkspace(workspaceRootPath, profile);
-    const browser = createMastraBrowser();
-    const profileFilteredMcpTools = filterMcpToolsForProfile(bundle.tools, profile);
-    const mcpTools = workspace
-        ? removeMcpToolsDuplicatedByMastraWorkspace(profileFilteredMcpTools)
-        : profileFilteredMcpTools;
+    const toolLoadPlan = createMastraToolLoadPlan(input, workspaceRootPath, contextReferences);
+    const bundle = createMcpGatewayRunBundle();
+    const workspace = undefined;
+    const browser = toolLoadPlan.browserEnabled ? createMastraBrowser() : undefined;
+    const mcpGatewayMetrics = mcpGatewayPool.createMetricBuffer();
+    const mcpGatewayTools = mcpGatewayPool.createTools({
+        ...(workspaceRootPath ? { workspaceRootPath } : {}),
+        profile,
+        metricSink: mcpGatewayMetrics,
+    });
     const uiContextTools = createUiContextTools(contextReferences);
+    const nativeFileTools = createMastraFileTools(workspaceRootPath, profile);
     const nativeTimeTools = createMastraTimeTools();
     const logTools = loggerRef ? createMastraLogTools(loggerRef) : {};
     const tools: ToolsInput = {
-        ...mcpTools,
+        ...mcpGatewayTools,
         ...uiContextTools,
+        ...nativeFileTools,
         ...nativeTimeTools,
         ...logTools,
     };
@@ -900,12 +1025,16 @@ const loadMastraMcpTools = async (
         hasTools: Object.keys(tools).length > 0,
         toolStats: {
             toolCount: Object.keys(tools).length,
-            mcpToolCount: Object.keys(mcpTools).length,
+            mcpToolCount: Object.keys(mcpGatewayTools).length,
+            mcpServerCount: 0,
+            mcpServerNames: [],
             uiContextToolCount: Object.keys(uiContextTools).length,
-            nativeToolCount: Object.keys(nativeTimeTools).length,
+            nativeToolCount: Object.keys(nativeTimeTools).length + Object.keys(nativeFileTools).length,
             logToolCount: Object.keys(logTools).length,
-            toolSchemaCharCount: countJsonChars(tools),
+            toolSchemaCharCount: countProviderToolSchemaChars(tools),
+            toolLoadStrategy: toolLoadPlan.strategy,
         },
+        mcpGatewayMetrics,
         workspace,
         browser,
     };
@@ -942,13 +1071,40 @@ const buildMastraUserPrompt = (input: IAgentRuntimeInput): string => {
 
 const buildMastraMessages = (input: IAgentRuntimeInput): TMastraChatMessage[] => {
     const userPrompt = buildMastraUserPrompt(input).trim();
+    const conversationMessages = input.messages
+        .filter((message): message is IAgentMessageInput & { role: TMastraChatMessage['role'] } =>
+            (message.role === 'user' || message.role === 'assistant')
+            && message.content.trim().length > 0)
+        .map((message) => ({
+            role: message.role,
+            content: message.content.trim(),
+        }))
+        .slice(-EXPLICIT_CONTEXT_MESSAGE_LIMIT);
 
-    return [{
-        role: 'user',
-        content: userPrompt.length > 0
-            ? userPrompt
-            : (input.goal.trim().length > 0 ? input.goal : '继续。'),
-    }];
+    if (conversationMessages.length === 0) {
+        return [{
+            role: 'user',
+            content: userPrompt.length > 0
+                ? userPrompt
+                : (input.goal.trim().length > 0 ? input.goal : '继续。'),
+        }];
+    }
+
+    if (userPrompt.length === 0) {
+        return conversationMessages;
+    }
+
+    for (let index = conversationMessages.length - 1; index >= 0; index -= 1) {
+        if (conversationMessages[index]?.role === 'user') {
+            return conversationMessages.map((message, messageIndex) =>
+                messageIndex === index ? { ...message, content: userPrompt } : message);
+        }
+    }
+
+    return [
+        ...conversationMessages,
+        { role: 'user', content: userPrompt },
+    ];
 };
 
 const formatApprovalSummary = (payload: ToolCallPayload): string => {
@@ -1358,6 +1514,219 @@ const isOmActivationTrigger = (
 const toFiniteNumber = (value: unknown): number | undefined =>
     typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 
+const toNonNegativeFiniteNumber = (value: unknown): number | undefined => {
+    const candidate = toFiniteNumber(value);
+    return candidate !== undefined && candidate >= 0 ? candidate : undefined;
+};
+
+const sumTokenCounts = (
+    left: number | undefined,
+    right: number | undefined,
+): number | undefined => {
+    if (left === undefined && right === undefined) {
+        return undefined;
+    }
+
+    return (left ?? 0) + (right ?? 0);
+};
+
+const sumRequiredTokenCounts = (
+    left: number | undefined,
+    right: number | undefined,
+): number => (left ?? 0) + (right ?? 0);
+
+const readRawTokenValue = (
+    raw: Record<string, unknown> | null,
+    key: string,
+): number | undefined => toNonNegativeFiniteNumber(raw?.[key]);
+
+const parseInputTokenDetails = (
+    record: Record<string, unknown>,
+    inputTokens: number,
+): NonNullable<NonNullable<TDoneTokenSnapshot['usage']>['inputTokenDetails']> | undefined => {
+    const inputTokenDetailsRecord = toRecord(record.inputTokenDetails);
+    const raw = toRecord(record.raw);
+    const rawCacheHitTokens = readRawTokenValue(raw, 'prompt_cache_hit_tokens');
+    const rawCacheMissTokens = readRawTokenValue(raw, 'prompt_cache_miss_tokens');
+    const cacheReadTokens = toNonNegativeFiniteNumber(inputTokenDetailsRecord?.cacheReadTokens)
+        ?? toNonNegativeFiniteNumber(record.cachedInputTokens)
+        ?? rawCacheHitTokens;
+    const noCacheTokens = toNonNegativeFiniteNumber(inputTokenDetailsRecord?.noCacheTokens)
+        ?? rawCacheMissTokens;
+    const cacheWriteTokens = toNonNegativeFiniteNumber(inputTokenDetailsRecord?.cacheWriteTokens);
+
+    if (
+        cacheReadTokens === undefined
+        && noCacheTokens === undefined
+        && cacheWriteTokens === undefined
+    ) {
+        return undefined;
+    }
+
+    const resolvedCacheReadTokens = cacheReadTokens ?? 0;
+    const resolvedNoCacheTokens = noCacheTokens ?? Math.max(0, inputTokens - resolvedCacheReadTokens);
+
+    return {
+        noCacheTokens: resolvedNoCacheTokens,
+        cacheReadTokens: resolvedCacheReadTokens,
+        cacheWriteTokens: cacheWriteTokens ?? 0,
+    };
+};
+
+const parseOutputTokenDetails = (
+    record: Record<string, unknown>,
+    outputTokens: number,
+): NonNullable<NonNullable<TDoneTokenSnapshot['usage']>['outputTokenDetails']> | undefined => {
+    const outputTokenDetailsRecord = toRecord(record.outputTokenDetails);
+    const raw = toRecord(record.raw);
+    const rawCompletionTokenDetails = toRecord(raw?.completion_tokens_details);
+    const textTokens = toNonNegativeFiniteNumber(outputTokenDetailsRecord?.textTokens);
+    const reasoningTokens = toNonNegativeFiniteNumber(outputTokenDetailsRecord?.reasoningTokens)
+        ?? toNonNegativeFiniteNumber(record.reasoningTokens)
+        ?? toNonNegativeFiniteNumber(rawCompletionTokenDetails?.reasoning_tokens);
+
+    if (textTokens === undefined && reasoningTokens === undefined) {
+        return undefined;
+    }
+
+    const resolvedReasoningTokens = reasoningTokens ?? 0;
+
+    return {
+        textTokens: textTokens ?? Math.max(0, outputTokens - resolvedReasoningTokens),
+        reasoningTokens: resolvedReasoningTokens,
+    };
+};
+
+const aggregateDoneTokenSnapshot = (
+    current: TDoneTokenSnapshot | undefined,
+    next: TDoneTokenSnapshot,
+): TDoneTokenSnapshot => {
+    if (!current) {
+        return next;
+    }
+
+    const promptTokens = sumTokenCounts(current.promptTokens, next.promptTokens);
+    const completionTokens = sumTokenCounts(current.completionTokens, next.completionTokens);
+    const totalTokens = sumTokenCounts(current.totalTokens, next.totalTokens);
+    const currentUsage = current.usage ?? undefined;
+    const nextUsage = next.usage ?? undefined;
+    const inputTokenDetails = currentUsage?.inputTokenDetails || nextUsage?.inputTokenDetails
+        ? {
+            noCacheTokens: sumTokenCounts(
+                currentUsage?.inputTokenDetails?.noCacheTokens,
+                nextUsage?.inputTokenDetails?.noCacheTokens,
+            ) ?? 0,
+            cacheReadTokens: sumTokenCounts(
+                currentUsage?.inputTokenDetails?.cacheReadTokens,
+                nextUsage?.inputTokenDetails?.cacheReadTokens,
+            ) ?? 0,
+            cacheWriteTokens: sumTokenCounts(
+                currentUsage?.inputTokenDetails?.cacheWriteTokens,
+                nextUsage?.inputTokenDetails?.cacheWriteTokens,
+            ) ?? 0,
+        }
+        : undefined;
+    const outputTokenDetails = currentUsage?.outputTokenDetails || nextUsage?.outputTokenDetails
+        ? {
+            textTokens: sumTokenCounts(
+                currentUsage?.outputTokenDetails?.textTokens,
+                nextUsage?.outputTokenDetails?.textTokens,
+            ) ?? 0,
+            reasoningTokens: sumTokenCounts(
+                currentUsage?.outputTokenDetails?.reasoningTokens,
+                nextUsage?.outputTokenDetails?.reasoningTokens,
+            ) ?? 0,
+        }
+        : undefined;
+    const cachedInputTokens = sumTokenCounts(
+        currentUsage?.cachedInputTokens,
+        nextUsage?.cachedInputTokens,
+    );
+    const reasoningTokens = sumTokenCounts(
+        currentUsage?.reasoningTokens,
+        nextUsage?.reasoningTokens,
+    );
+
+    return {
+        ...(promptTokens !== undefined ? { promptTokens } : {}),
+        ...(completionTokens !== undefined ? { completionTokens } : {}),
+        ...(totalTokens !== undefined ? { totalTokens } : {}),
+        usage: {
+            inputTokens: sumRequiredTokenCounts(currentUsage?.inputTokens, nextUsage?.inputTokens),
+            ...(inputTokenDetails ? { inputTokenDetails } : {}),
+            outputTokens: sumRequiredTokenCounts(currentUsage?.outputTokens, nextUsage?.outputTokens),
+            ...(outputTokenDetails ? { outputTokenDetails } : {}),
+            totalTokens: sumRequiredTokenCounts(currentUsage?.totalTokens, nextUsage?.totalTokens),
+            ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
+            ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
+        },
+    };
+};
+
+const parseDoneTokenSnapshot = (value: unknown): TDoneTokenSnapshot | undefined => {
+    const record = toRecord(value);
+
+    if (!record) {
+        return undefined;
+    }
+
+    const inputTokens = toNonNegativeFiniteNumber(record.inputTokens);
+    const outputTokens = toNonNegativeFiniteNumber(record.outputTokens);
+    const totalTokens = toNonNegativeFiniteNumber(record.totalTokens);
+
+    if (
+        inputTokens === undefined
+        || outputTokens === undefined
+        || totalTokens === undefined
+    ) {
+        return undefined;
+    }
+
+    const inputTokenDetails = parseInputTokenDetails(record, inputTokens);
+    const outputTokenDetails = parseOutputTokenDetails(record, outputTokens);
+    const cachedInputTokens = toNonNegativeFiniteNumber(record.cachedInputTokens);
+    const reasoningTokens = toNonNegativeFiniteNumber(record.reasoningTokens);
+
+    return {
+        promptTokens: inputTokens,
+        completionTokens: outputTokens,
+        totalTokens,
+        usage: {
+            inputTokens,
+            outputTokens,
+            totalTokens,
+            ...(inputTokenDetails ? { inputTokenDetails } : {}),
+            ...(outputTokenDetails ? { outputTokenDetails } : {}),
+            ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
+            ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
+            ...('raw' in record ? { raw: record.raw } : {}),
+        },
+    };
+};
+
+const extractFinishTokenSnapshot = (chunk: unknown): TDoneTokenSnapshot | undefined => {
+    if (!isChunkWithType(chunk, 'finish')) {
+        return undefined;
+    }
+
+    const payload = toRecord(chunk.payload);
+    const output = toRecord(payload?.output);
+
+    return parseDoneTokenSnapshot(output?.usage);
+};
+
+const createDoneOutputEvent = (
+    result: string,
+    tokenSnapshot?: TDoneTokenSnapshot,
+): Extract<TAgentRuntimeOutputEvent, { type: 'done' }> => ({
+    type: 'done',
+    result,
+    ...(tokenSnapshot?.promptTokens !== undefined ? { promptTokens: tokenSnapshot.promptTokens } : {}),
+    ...(tokenSnapshot?.completionTokens !== undefined ? { completionTokens: tokenSnapshot.completionTokens } : {}),
+    ...(tokenSnapshot?.totalTokens !== undefined ? { totalTokens: tokenSnapshot.totalTokens } : {}),
+    ...(tokenSnapshot?.usage ? { usage: tokenSnapshot.usage } : {}),
+});
+
 const createOmMemoryCompressedEventDraft = (chunk: unknown): TOmMemoryCompressedEventDraft | null => {
     const record = toRecord(chunk);
     const chunkType = record?.type;
@@ -1518,8 +1887,10 @@ export class MastraRuntime {
     private readonly readModelConfig: () => TDeepSeekModelConfig | null;
 
     private readonly createMcpClientBundle: (
-        options?: { workspaceRootPath?: string | null },
+        options?: { workspaceRootPath?: string | null; serverNames?: readonly TMcpServerName[] },
     ) => Promise<IMastraMcpBundle>;
+
+    private readonly mcpGatewayPool: McpGatewayWarmPool;
 
     private readonly now: (() => string) | undefined;
 
@@ -1552,6 +1923,12 @@ export class MastraRuntime {
             });
         this.readModelConfig = deps.readModelConfig ?? createDeepSeekModelConfigFromEnv;
         this.createMcpClientBundle = deps.createMcpClientBundle ?? createMastraMcpClientBundle;
+        this.mcpGatewayPool = createMcpGatewayWarmPool({
+            createBundle: this.createMcpClientBundle,
+        });
+        if (!deps.createMcpClientBundle && !isNodeTestProcess()) {
+            void this.mcpGatewayPool.primeCatalog().catch(() => undefined);
+        }
         this.now = deps.now;
     }
 
@@ -1604,9 +1981,16 @@ export class MastraRuntime {
         let streamErrorMessage: string | null = null;
         let pendingApproval = false;
         let releaseResources = true;
+        let doneTokenSnapshot: TDoneTokenSnapshot | undefined;
         const pendingToolCallIdsByName = new Map<string, string[]>();
 
         for await (const chunk of stream.fullStream) {
+            const finishTokenSnapshot = extractFinishTokenSnapshot(chunk);
+            if (finishTokenSnapshot) {
+                doneTokenSnapshot = aggregateDoneTokenSnapshot(doneTokenSnapshot, finishTokenSnapshot);
+                continue;
+            }
+
             const memoryCompressedEvent = createOmMemoryCompressedEventDraft(chunk);
             if (memoryCompressedEvent) {
                 if (createRuntimeEvent) {
@@ -1799,6 +2183,7 @@ export class MastraRuntime {
             releaseResources,
             streamErrorMessage,
             visibleText,
+            ...(doneTokenSnapshot ? { doneTokenSnapshot } : {}),
         };
     }
 
@@ -1858,26 +2243,35 @@ export class MastraRuntime {
             tools: mastraTools,
             hasTools,
             toolStats,
+            mcpGatewayMetrics,
             workspace,
             browser,
         } = await loadMastraMcpTools(
-            this.createMcpClientBundle,
+            this.mcpGatewayPool,
             normalizedInput.workspaceRootPath,
             this.loggerRef,
             normalizedInput.context ?? [],
+            normalizedInput.mode === 'agent' ? 'write' : 'readonly',
+            normalizedInput,
         );
         const hasAgentTools = hasTools || Boolean(workspace) || Boolean(browser);
         const requestedRunId = options.context?.requestId ?? createSessionId(`${sessionPrefix}-run`);
         const memory = createMastraMemoryReference(createMastraMemoryScope(normalizedInput, sessionId));
         const agentMemory = createMastraMemoryForModel(modelConfig);
+        const systemPrompt = buildSystemPrompt(normalizedInput, modelConfig.modelId);
+        const payloadEventSink = createDeepSeekPayloadEventSink(events, options);
         let shouldDisconnectBundle = true;
 
         try {
-            return await runWithDeepSeekReasoningContext({ sessionId, runId: requestedRunId }, async () => {
+            return await runWithDeepSeekReasoningContext({
+                sessionId,
+                runId: requestedRunId,
+                onRequestPayload: payloadEventSink.onRequestPayload,
+            }, async () => {
                 const agent = this.createAgent({
                     id: 'calamex-agent-sidecar',
                     name: 'Calamex Agent Sidecar',
-                    instructions: buildSystemPrompt(normalizedInput, modelConfig.modelId),
+                    instructions: systemPrompt,
                     model: createMastraModelConfig(modelConfig),
                     memory: agentMemory,
                     ...(hasTools ? { tools: mastraTools } : {}),
@@ -1902,8 +2296,10 @@ export class MastraRuntime {
                     agentId: DEFAULT_EXECUTION_AGENT_ID,
                     ...(this.now ? { now: this.now } : {}),
                 });
+                payloadEventSink.attachRuntimeEventFactory(createRuntimeEvent);
+                attachMcpGatewayMetrics(mcpGatewayMetrics, events, options, createRuntimeEvent);
                 pushUiEvent(events, createRuntimeEvent(createAcontextTokenEventDraft({
-                    systemPrompt: buildSystemPrompt(normalizedInput, modelConfig.modelId),
+                    systemPrompt,
                     messages: mastraMessages,
                     contextReferences: normalizedInput.context ?? [],
                     tools: mastraTools,
@@ -1947,10 +2343,10 @@ export class MastraRuntime {
                 const result = streamSummary.visibleText.trim().length > 0
                     ? streamSummary.visibleText
                     : 'Agent 已完成。';
-                const doneEvent: TAgentRuntimeOutputEvent = {
-                    type: 'done',
+                const doneEvent: TAgentRuntimeOutputEvent = createDoneOutputEvent(
                     result,
-                };
+                    streamSummary.doneTokenSnapshot,
+                );
 
                 pushUiEvent(events, doneEvent, options);
 
@@ -2001,31 +2397,38 @@ export class MastraRuntime {
             );
         }
 
+        const planInput: IAgentRuntimeInput = {
+            ...input,
+            mode: 'plan',
+        };
         const {
             bundle: mcpBundle,
             tools: mastraTools,
             hasTools,
             toolStats,
+            mcpGatewayMetrics,
             workspace,
             browser,
         } = await loadMastraMcpTools(
-            this.createMcpClientBundle,
+            this.mcpGatewayPool,
             input.workspaceRootPath,
             this.loggerRef,
             input.context ?? [],
             'readonly',
+            planInput,
         );
         const hasAgentTools = hasTools || Boolean(workspace) || Boolean(browser);
         const requestedRunId = options.context?.requestId ?? createSessionId('mastra-plan-run');
         const memory = createMastraMemoryReference(createMastraMemoryScope(input, sessionId));
         const agentMemory = createMastraMemoryForModel(modelConfig);
+        const payloadEventSink = createDeepSeekPayloadEventSink(events, options);
 
         try {
-            return await runWithDeepSeekReasoningContext({ sessionId, runId: requestedRunId }, async () => {
-                const planInput: IAgentRuntimeInput = {
-                    ...input,
-                    mode: 'plan',
-                };
+            return await runWithDeepSeekReasoningContext({
+                sessionId,
+                runId: requestedRunId,
+                onRequestPayload: payloadEventSink.onRequestPayload,
+            }, async () => {
                 const systemPrompt = buildSystemPrompt(planInput, modelConfig.modelId);
                 const agent = this.createAgent({
                     id: 'calamex-agent-sidecar-plan',
@@ -2056,6 +2459,8 @@ export class MastraRuntime {
                     agentId: DEFAULT_EXECUTION_AGENT_ID,
                     ...(this.now ? { now: this.now } : {}),
                 });
+                payloadEventSink.attachRuntimeEventFactory(createRuntimeEvent);
+                attachMcpGatewayMetrics(mcpGatewayMetrics, events, options, createRuntimeEvent);
                 pushUiEvent(events, createRuntimeEvent(createAcontextTokenEventDraft({
                     systemPrompt,
                     messages: mastraMessages,
@@ -2272,21 +2677,28 @@ export class MastraRuntime {
             tools: mastraTools,
             hasTools,
             toolStats,
+            mcpGatewayMetrics,
             workspace,
             browser,
         } = await loadMastraMcpTools(
-            this.createMcpClientBundle,
+            this.mcpGatewayPool,
             input.workspaceRootPath,
             this.loggerRef,
             input.context ?? [],
             'readonly',
+            memoryInput,
         );
         const requestedRunId = options.context?.requestId ?? createSessionId('mastra-plan-validator-run');
         const memory = createMastraMemoryReference(createMastraMemoryScope(memoryInput, sessionId));
         const agentMemory = createMastraMemoryForModel(modelConfig);
+        const payloadEventSink = createDeepSeekPayloadEventSink(events, options);
 
         try {
-            return await runWithDeepSeekReasoningContext({ sessionId, runId: requestedRunId }, async () => {
+            return await runWithDeepSeekReasoningContext({
+                sessionId,
+                runId: requestedRunId,
+                onRequestPayload: payloadEventSink.onRequestPayload,
+            }, async () => {
                 const systemPrompt = [
                     '你是 Plan Mode 的 Validator Agent。',
                     '你只能验证已批准计划的执行结果，不允许修改文件，不允许提出无关重构。',
@@ -2332,6 +2744,8 @@ export class MastraRuntime {
                     agentId: DEFAULT_VALIDATOR_AGENT_ID,
                     ...(this.now ? { now: this.now } : {}),
                 });
+                payloadEventSink.attachRuntimeEventFactory(createRuntimeEvent);
+                attachMcpGatewayMetrics(mcpGatewayMetrics, events, options, createRuntimeEvent);
                 pushUiEvent(events, createRuntimeEvent(createAcontextTokenEventDraft({
                     systemPrompt,
                     messages: mastraMessages,
@@ -2374,10 +2788,7 @@ export class MastraRuntime {
                         workflowStatus: projectedWorkflow.status,
                     }),
                 }, options);
-                pushUiEvent(events, {
-                    type: 'done',
-                    result,
-                }, options);
+                pushUiEvent(events, createDoneOutputEvent(result), options);
 
                 return {
                     sessionId,
@@ -2450,21 +2861,28 @@ export class MastraRuntime {
             tools: mastraTools,
             hasTools,
             toolStats,
+            mcpGatewayMetrics,
             workspace,
             browser,
         } = await loadMastraMcpTools(
-            this.createMcpClientBundle,
+            this.mcpGatewayPool,
             input.workspaceRootPath,
             this.loggerRef,
             input.context ?? [],
             'readonly',
+            memoryInput,
         );
         const requestedRunId = options.context?.requestId ?? createSessionId('mastra-plan-replanner-run');
         const memory = createMastraMemoryReference(createMastraMemoryScope(memoryInput, sessionId));
         const agentMemory = createMastraMemoryForModel(modelConfig);
+        const payloadEventSink = createDeepSeekPayloadEventSink(events, options);
 
         try {
-            return await runWithDeepSeekReasoningContext({ sessionId, runId: requestedRunId }, async () => {
+            return await runWithDeepSeekReasoningContext({
+                sessionId,
+                runId: requestedRunId,
+                onRequestPayload: payloadEventSink.onRequestPayload,
+            }, async () => {
                 const systemPrompt = [
                     '你是 Plan Mode 的 Replanner Agent。',
                     '你只输出最小 delta plan，不重写已完成且仍然有效的步骤。',
@@ -2510,6 +2928,8 @@ export class MastraRuntime {
                     agentId: DEFAULT_REPLANNER_AGENT_ID,
                     ...(this.now ? { now: this.now } : {}),
                 });
+                payloadEventSink.attachRuntimeEventFactory(createRuntimeEvent);
+                attachMcpGatewayMetrics(mcpGatewayMetrics, events, options, createRuntimeEvent);
                 pushUiEvent(events, createRuntimeEvent(createAcontextTokenEventDraft({
                     systemPrompt,
                     messages: mastraMessages,
@@ -2660,13 +3080,16 @@ export class MastraRuntime {
             tools: mastraTools,
             hasTools,
             toolStats,
+            mcpGatewayMetrics,
             workspace,
             browser,
         } = await loadMastraMcpTools(
-            this.createMcpClientBundle,
+            this.mcpGatewayPool,
             normalizedInput.workspaceRootPath,
             this.loggerRef,
             normalizedInput.context ?? [],
+            'write',
+            memoryInput,
         );
         const hasAgentTools = hasTools || Boolean(workspace) || Boolean(browser);
         const memory = createMastraMemoryReference(createMastraMemoryScope(memoryInput, sessionId));
@@ -2681,11 +3104,16 @@ export class MastraRuntime {
             buildSystemPrompt(memoryInput, modelConfig.modelId),
             createApprovedPlanExecutionContext(approvedPlanRecord, planStepId),
         ].join('\n\n');
+        const payloadEventSink = createDeepSeekPayloadEventSink(events, options);
         let shouldDisconnectBundle = true;
         let streamCleanup: (() => void) | undefined;
 
         try {
-            return await runWithDeepSeekReasoningContext({ sessionId, runId: requestedRunId }, async () => {
+            return await runWithDeepSeekReasoningContext({
+                sessionId,
+                runId: requestedRunId,
+                onRequestPayload: payloadEventSink.onRequestPayload,
+            }, async () => {
                 const toolChoice: IMastraGenerateOptions['toolChoice'] = hasAgentTools ? 'auto' : 'none';
                 const executionHandle = await this.createExecutionHandle({
                     id: DEFAULT_EXECUTION_AGENT_ID,
@@ -2724,6 +3152,8 @@ export class MastraRuntime {
                         ...(this.now ? { now: this.now } : {}),
                     });
 
+                payloadEventSink.attachRuntimeEventFactory(createCheckpointEvent);
+                attachMcpGatewayMetrics(mcpGatewayMetrics, events, options, createCheckpointEvent);
                 pushUiEvent(events, createCheckpointEvent(createAcontextTokenEventDraft({
                     systemPrompt,
                     messages: buildMastraMessages(memoryInput),
@@ -2806,10 +3236,7 @@ export class MastraRuntime {
                     resultRef: checkpointRunId,
                 });
 
-                pushUiEvent(events, {
-                    type: 'done',
-                    result,
-                }, options);
+                pushUiEvent(events, createDoneOutputEvent(result, streamSummary.doneTokenSnapshot), options);
 
                 return {
                     sessionId,
@@ -2876,17 +3303,29 @@ export class MastraRuntime {
         }
 
         const events: TAgentRuntimeOutputEvent[] = [];
+        const payloadEventSink = createDeepSeekPayloadEventSink(events, options);
         let shouldDisconnectBundle = true;
         let streamCleanup: (() => void) | undefined;
 
         try {
-            return await runWithDeepSeekReasoningContext({ sessionId, runId: decodedRequest.runId }, async () => {
+            return await runWithDeepSeekReasoningContext({
+                sessionId,
+                runId: decodedRequest.runId,
+                onRequestPayload: payloadEventSink.onRequestPayload,
+            }, async () => {
                 const stream = await continueStream({
                     runId: decodedRequest.runId,
                     toolCallId: decodedRequest.toolCallId,
                     ...(options.context?.signal ? { abortSignal: options.context.signal } : {}),
                 });
                 streamCleanup = stream.cleanup;
+                const createRuntimeEvent = createRuntimeEventFactory({
+                    runId: stream.runId ?? decodedRequest.runId,
+                    sessionId,
+                    agentId: DEFAULT_EXECUTION_AGENT_ID,
+                    ...(this.now ? { now: this.now } : {}),
+                });
+                payloadEventSink.attachRuntimeEventFactory(createRuntimeEvent);
                 const streamSummary = await this.consumeTextStream(
                     pending.agent,
                     pending.bundle,
@@ -2894,12 +3333,7 @@ export class MastraRuntime {
                     stream,
                     events,
                     options,
-                    createRuntimeEventFactory({
-                        runId: stream.runId ?? decodedRequest.runId,
-                        sessionId,
-                        agentId: DEFAULT_EXECUTION_AGENT_ID,
-                        ...(this.now ? { now: this.now } : {}),
-                    }),
+                    createRuntimeEvent,
                     pending.workspace,
                     pending.browser,
                 );
@@ -3044,7 +3478,18 @@ export class MastraRuntime {
                 hasTools,
                 workspace,
                 browser,
-            } = await loadMastraMcpTools(this.createMcpClientBundle, workspaceRootPath, this.loggerRef);
+            } = await loadMastraMcpTools(
+                this.mcpGatewayPool,
+                workspaceRootPath,
+                this.loggerRef,
+                [],
+                'write',
+                {
+                    mode: 'agent',
+                    goal: '恢复 Mastra checkpoint',
+                    messages: [],
+                },
+            );
 
             try {
                 const executionHandle = await this.createExecutionHandle({

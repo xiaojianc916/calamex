@@ -20,7 +20,7 @@ const noHash = (color: string): string => color.replace(/^#/, '');
 /**
  * 将一个 6 位 hex 颜色叠加指定 alpha（2 位 hex），返回 8 位 hex。
  * 仅用于 Monaco colors 对象（不用于 rules）。
- * @example withAlpha('#1f6feb', '45') → '#1f6feb45'
+ * @example withAlpha('#dcdee0', '45') → '#dcdee045'
  */
 const withAlpha = (hex6: string, alphaHex: string): string => `${hex6}${alphaHex}`;
 

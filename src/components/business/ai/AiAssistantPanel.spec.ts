@@ -2,6 +2,7 @@ import AiAssistantPanel from '@/components/business/ai/AiAssistantPanel.vue';
 import type { TAgentRuntimeEvent } from '@/types/agent-sidecar';
 import type {
     IAiAgentRun,
+    IAiAgentPlanMetadata,
     IAiAgentStepFinalAnswer,
     IAiChatMessage,
     IAiConfigPayload,
@@ -177,6 +178,7 @@ const createAssistantMock = (
     const agentSteps = ref<IAiTaskPlanStep[]>([]);
     const attachedFiles = ref([] as Array<{ id: string; name: string; sizeLabel: string; kind: 'text' | 'image' }>);
     const proposedPatch = ref<IAiPatchSet | null>(null);
+    const appliedPatchPreview = ref<IAiPatchSet | null>(null);
     const isApplyingPatch = ref(false);
     const runtimeTimelineEvents = ref<TAgentRuntimeEvent[]>([]);
     const conversationCheckpoints = ref<Array<{
@@ -188,6 +190,7 @@ const createAssistantMock = (
         createdAt: string;
     }>>([]);
     const restoringCheckpointId = ref<string | null>(null);
+    const revertingChangedFilesSummaryId = ref<string | null>(null);
     const fileRollbackPrompt = ref<{
         operationId: string;
         fileCount: number;
@@ -207,6 +210,9 @@ const createAssistantMock = (
         approvedAt: null,
         errorMessage: '',
         hasPlan: false,
+        planId: null as string | null,
+        planVersion: null as number | null,
+        planStatus: null as IAiAgentPlanMetadata['status'] | null,
         isClassifying: false,
         activeRunId: null as string | null,
         activeRun: null as IAiAgentRun | null,
@@ -215,7 +221,7 @@ const createAssistantMock = (
         patchSummaries: {},
         toolActivities: {},
         pendingToolConfirmation: null as IAiToolConfirmationRequest | null,
-        activeToolActivity: null,
+        activeToolActivity: null as IAiToolActivityInline | null,
         getToolActivities: vi.fn((): IAiToolActivityInline[] => []),
         getStepFinalAnswers: vi.fn((): IAiAgentStepFinalAnswer[] => []),
         getPatchSummaries: vi.fn(() => []),
@@ -240,10 +246,12 @@ const createAssistantMock = (
         agentSteps,
         attachedFiles,
         proposedPatch,
+        appliedPatchPreview,
         isApplyingPatch,
         runtimeTimelineEvents,
         conversationCheckpoints,
         restoringCheckpointId,
+        revertingChangedFilesSummaryId,
         fileRollbackPrompt,
         agentPlan: {
             store: agentPlanStore,
@@ -270,6 +278,7 @@ const createAssistantMock = (
         previewPatchFromLastAnswer: vi.fn(),
         applyProposedPatch: vi.fn(),
         rollbackLatestFileChange: vi.fn(),
+        rollbackChangedFilesSummary: vi.fn(),
         restoreConversationCheckpoint: vi.fn().mockResolvedValue(undefined),
         resolveSidecarToolConfirmation: vi.fn(),
         sendMessage: vi.fn(),
@@ -939,7 +948,7 @@ describe('AiAssistantPanel', () => {
             createdAt: '2026-04-29T00:00:00.000Z',
             options: [
                 { id: 'allow-once', label: '允许一次', tone: 'primary' },
-                { id: 'deny', label: '拒绝' },
+                { id: 'skip', label: '跳过' },
                 { id: 'stop', label: '停止', tone: 'danger' },
             ],
         };
@@ -1329,7 +1338,7 @@ describe('AiAssistantPanel', () => {
         expect(assistantMock.switchConversation).toHaveBeenCalledWith('thread-1');
     });
 
-    it('删除历史记录时只删除选中的一条并一次关闭确认弹窗', async () => {
+    it('删除历史记录时保留对话记录弹层，并只删除选中的一条', async () => {
         const historyThreads = [createThread(1), createThread(2)];
         const assistantMock = createAssistantMock(historyThreads[1]?.messages ?? [], historyThreads);
         useAiAssistantMock.mockReturnValue(assistantMock);
@@ -1351,19 +1360,24 @@ describe('AiAssistantPanel', () => {
                     AiPlanModePanel: { template: '<div />' },
                     AiPromptInput: { template: '<div />' },
                     AiProviderSettings: { template: '<div />' },
-                    DropdownMenu: { template: '<div><slot /></div>' },
-                    DropdownMenuTrigger: { template: '<div><slot /></div>' },
-                    DropdownMenuContent: { template: '<section><slot /></section>' },
+                    ...historyDropdownStubs,
                     teleport: true,
                 },
             },
         });
 
+        await wrapper.get('[aria-label="对话记录"]').trigger('click', { button: 0, ctrlKey: false });
+        await nextTick();
+
+        expect(wrapper.find('.ai-history-popover').exists()).toBe(true);
+
         await wrapper.findAll('.ai-history-delete-button')[1]?.trigger('click');
+        await nextTick();
 
         expect(assistantMock.switchConversation).not.toHaveBeenCalled();
         expect(wrapper.text()).toContain('删除“第 1 组对话”？');
         expect(wrapper.text()).toContain('只会删除这条对话记录（1 条消息）');
+        expect(wrapper.find('.ai-history-popover').exists()).toBe(true);
 
         await wrapper.get('.ai-dialog .ai-button.is-danger').trigger('click');
         await nextTick();
@@ -1371,6 +1385,7 @@ describe('AiAssistantPanel', () => {
         expect(assistantMock.deleteConversation).toHaveBeenCalledTimes(1);
         expect(assistantMock.deleteConversation).toHaveBeenCalledWith('thread-1');
         expect(wrapper.find('.ai-dialog').exists()).toBe(false);
+        expect(wrapper.find('.ai-history-popover').exists()).toBe(true);
     });
 
     it('点击弹窗外部时自动关闭对话记录', async () => {

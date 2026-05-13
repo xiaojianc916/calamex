@@ -1,33 +1,16 @@
 <template>
   <section class="search-sidebar" aria-label="搜索">
-    <header class="search-panel-header">
-      <span class="search-panel-title">搜索</span>
-    </header>
-
     <div class="search-panel-query-stack">
       <div class="search-panel-input-shell">
         <span class="search-panel-input-icon" aria-hidden="true">
           <Search />
         </span>
 
-        <Input
-          v-model="searchQuery"
-          class="search-panel-input"
-          type="text"
-          aria-label="搜索关键字"
-          :placeholder="useStructural ? '输入 ast-grep Bash 模式…' : '输入关键字搜索…'"
-          autocomplete="off"
-          spellcheck="false"
-        />
+        <Input v-model="searchQuery" class="search-panel-input" type="text" aria-label="搜索关键字"
+          :placeholder="useStructural ? '输入 ast-grep Bash 模式…' : '输入关键字搜索…'" autocomplete="off" spellcheck="false" />
 
-        <button
-          v-if="hasSearchQuery"
-          type="button"
-          class="search-panel-clear-btn"
-          aria-label="清空搜索"
-          title="清空搜索"
-          @click.stop="searchQuery = ''"
-        >
+        <button v-if="hasSearchQuery" type="button" class="search-panel-clear-btn" aria-label="清空搜索" title="清空搜索"
+          @click.stop="searchQuery = ''">
           <X aria-hidden="true" />
         </button>
       </div>
@@ -37,25 +20,12 @@
           <Replace />
         </span>
 
-        <Input
-          v-model="replacementQuery"
-          class="search-panel-input"
-          type="text"
-          aria-label="替换内容"
-          :placeholder="useStructural ? '输入 ast-grep 替换模板…' : '输入替换内容…'"
-          autocomplete="off"
-          spellcheck="false"
-          @keydown.enter="handleReplacementAction"
-        />
+        <Input v-model="replacementQuery" class="search-panel-input" type="text" aria-label="替换内容"
+          :placeholder="useStructural ? '输入 ast-grep 替换模板…' : '输入替换内容…'" autocomplete="off" spellcheck="false"
+          @keydown.enter="handleReplacementAction" />
 
-        <button
-          type="button"
-          class="search-panel-apply-btn"
-          :disabled="!canApplyReplacement"
-          aria-label="全部替换"
-          title="全部替换"
-          @click.stop="handleReplacementAction"
-        >
+        <button type="button" class="search-panel-apply-btn" :disabled="!canApplyReplacement" aria-label="全部替换"
+          title="全部替换" @click.stop="handleReplacementAction">
           <LoaderCircle v-if="replaceRunning" class="search-panel-spin" aria-hidden="true" />
           <Check v-else aria-hidden="true" />
         </button>
@@ -63,73 +33,38 @@
     </div>
 
     <div class="search-panel-chip-row">
-      <button
-        v-for="chip in scopeChips"
-        :key="chip.key"
-        type="button"
-        class="search-panel-chip"
-        :class="{ 'is-active': activeScope === chip.key }"
-        :aria-pressed="activeScope === chip.key"
-        @click="activeScope = chip.key"
-      >
+      <button v-for="chip in scopeChips" :key="chip.key" type="button" class="search-panel-chip"
+        :class="{ 'is-active': activeScope === chip.key }" :aria-pressed="activeScope === chip.key"
+        @click="activeScope = chip.key">
         <span>{{ chip.label }}</span>
         <span class="search-panel-chip-count">{{ chip.count }}</span>
       </button>
     </div>
 
     <div class="search-panel-option-row" aria-label="搜索选项">
-      <button
-        type="button"
-        class="search-panel-option-btn"
-        :class="{ 'is-active': matchCase }"
-        :aria-pressed="matchCase"
-        title="区分大小写"
-        @click="toggleSearchOption('matchCase')"
-      >
+      <button type="button" class="search-panel-option-btn" :class="{ 'is-active': matchCase }"
+        :aria-pressed="matchCase" title="区分大小写" @click="toggleSearchOption('matchCase')">
         <CaseSensitive aria-hidden="true" />
       </button>
 
-      <button
-        type="button"
-        class="search-panel-option-btn"
-        :class="{ 'is-active': wholeWord }"
-        :aria-pressed="wholeWord"
-        title="全字匹配"
-        @click="toggleSearchOption('wholeWord')"
-      >
+      <button type="button" class="search-panel-option-btn" :class="{ 'is-active': wholeWord }"
+        :aria-pressed="wholeWord" title="全字匹配" @click="toggleSearchOption('wholeWord')">
         <WholeWord aria-hidden="true" />
       </button>
 
-      <button
-        type="button"
-        class="search-panel-option-btn"
-        :class="{ 'is-active': useRegex }"
-        :aria-pressed="useRegex"
-        title="正则表达式"
-        @click="toggleSearchOption('useRegex')"
-      >
+      <button type="button" class="search-panel-option-btn" :class="{ 'is-active': useRegex }" :aria-pressed="useRegex"
+        title="正则表达式" @click="toggleSearchOption('useRegex')">
         <Regex aria-hidden="true" />
       </button>
 
-      <button
-        type="button"
-        class="search-panel-option-btn"
-        :class="{ 'is-active': showPathFilters }"
-        :aria-pressed="showPathFilters"
-        title="包含 / 排除路径"
-        @click="toggleSearchOption('showPathFilters')"
-      >
+      <button type="button" class="search-panel-option-btn" :class="{ 'is-active': showPathFilters }"
+        :aria-pressed="showPathFilters" title="包含 / 排除路径" @click="toggleSearchOption('showPathFilters')">
         <ListFilter aria-hidden="true" />
       </button>
 
-      <button
-        type="button"
-        class="search-panel-option-btn search-panel-option-structural"
-        :class="{ 'is-active': useStructural }"
-        :aria-pressed="useStructural"
-        title="结构化搜索与替换"
-        @click="toggleStructuralSearch"
-      >
+      <button type="button" class="search-panel-option-btn search-panel-option-structural"
+        :class="{ 'is-active': useStructural }" :aria-pressed="useStructural" title="结构化搜索与替换"
+        @click="toggleStructuralSearch">
         <Braces aria-hidden="true" />
       </button>
     </div>
@@ -137,24 +72,13 @@
     <div v-if="showPathFilters && !useStructural" class="search-panel-path-filter-row">
       <label class="search-panel-path-filter">
         <span>包含</span>
-        <input
-          v-model="includePattern"
-          type="text"
-          placeholder="例如 src/**/*.vue"
-          autocomplete="off"
-          spellcheck="false"
-        />
+        <input v-model="includePattern" type="text" placeholder="例如 src/**/*.vue" autocomplete="off"
+          spellcheck="false" />
       </label>
 
       <label class="search-panel-path-filter">
         <span>排除</span>
-        <input
-          v-model="excludePattern"
-          type="text"
-          placeholder="例如 target/**"
-          autocomplete="off"
-          spellcheck="false"
-        />
+        <input v-model="excludePattern" type="text" placeholder="例如 target/**" autocomplete="off" spellcheck="false" />
       </label>
     </div>
 
@@ -171,18 +95,10 @@
         </div>
 
         <template v-else>
-          <article
-            v-for="file in visibleReplacementFiles"
-            :key="file.path"
-            class="search-replace-inline-file"
-          >
+          <article v-for="file in visibleReplacementFiles" :key="file.path" class="search-replace-inline-file">
             <header class="search-replace-inline-file-header">
-              <button
-                type="button"
-                class="search-replace-inline-file-open"
-                :aria-expanded="!isReplacementFileCollapsed(file.path)"
-                @click="toggleReplacementFile(file.path)"
-              >
+              <button type="button" class="search-replace-inline-file-open"
+                :aria-expanded="!isReplacementFileCollapsed(file.path)" @click="toggleReplacementFile(file.path)">
                 <span class="search-replace-inline-chevron" aria-hidden="true">
                   {{ isReplacementFileCollapsed(file.path) ? '›' : '⌄' }}
                 </span>
@@ -196,55 +112,27 @@
             </header>
 
             <template v-if="!isReplacementFileCollapsed(file.path)">
-              <div
-                v-for="line in file.visibleLinePreviews"
-                :key="line.id"
-                class="search-replace-inline-line"
-                role="option"
-                tabindex="0"
-                @click="handleReplacementLineOpen(file.path, line.lineNumber)"
+              <div v-for="line in file.visibleLinePreviews" :key="line.id" class="search-replace-inline-line"
+                role="option" tabindex="0" @click="handleReplacementLineOpen(file.path, line.lineNumber)"
                 @keydown.enter="handleReplacementLineOpen(file.path, line.lineNumber)"
-                @keydown.space.prevent="handleReplacementLineOpen(file.path, line.lineNumber)"
-              >
+                @keydown.space.prevent="handleReplacementLineOpen(file.path, line.lineNumber)">
                 <span class="search-replace-inline-line-number">{{ line.lineNumber }}</span>
                 <span class="search-replace-inline-code">
-                  <template
-                    v-for="(segment, segmentIndex) in line.segments"
-                    :key="`${line.id}-${segmentIndex}`"
-                  >
-                    <span
-                      v-if="segment.kind !== 'empty'"
-                      class="search-replace-inline-segment"
-                      :class="[`is-${segment.kind}`, `is-${segment.part}`]"
-                      v-text="segment.text"
-                    />
+                  <template v-for="(segment, segmentIndex) in line.segments" :key="`${line.id}-${segmentIndex}`">
+                    <span v-if="segment.kind !== 'empty'" class="search-replace-inline-segment"
+                      :class="[`is-${segment.kind}`, `is-${segment.part}`]" v-text="segment.text" />
                   </template>
                 </span>
 
                 <span class="search-replace-inline-line-actions">
-                  <button
-                    type="button"
-                    class="search-replace-inline-icon-btn"
-                    :disabled="replacementApplying"
-                    aria-label="替换此处"
-                    title="替换此处"
-                    @click.stop="replaceReplacementLine(file, line)"
-                  >
-                    <LoaderCircle
-                      v-if="replacementApplyingLineId === line.id"
-                      class="search-panel-spin"
-                      aria-hidden="true"
-                    />
+                  <button type="button" class="search-replace-inline-icon-btn" :disabled="replacementApplying"
+                    aria-label="替换此处" title="替换此处" @click.stop="replaceReplacementLine(file, line)">
+                    <LoaderCircle v-if="replacementApplyingLineId === line.id" class="search-panel-spin"
+                      aria-hidden="true" />
                     <Replace v-else aria-hidden="true" />
                   </button>
-                  <button
-                    type="button"
-                    class="search-replace-inline-icon-btn"
-                    :disabled="replacementApplying"
-                    aria-label="跳过此处"
-                    title="跳过此处"
-                    @click.stop="skipReplacementLine(line.id)"
-                  >
+                  <button type="button" class="search-replace-inline-icon-btn" :disabled="replacementApplying"
+                    aria-label="跳过此处" title="跳过此处" @click.stop="skipReplacementLine(line.id)">
                     <X aria-hidden="true" />
                   </button>
                 </span>
@@ -282,27 +170,16 @@
         <p class="search-panel-empty-text">当前已接入文件名与路径搜索，符号与内容结果稍后补齐。</p>
       </div>
 
-      <div
-        v-else-if="hasSearchQuery && activeResults.length === 0"
-        class="search-panel-empty-state"
-      >
+      <div v-else-if="hasSearchQuery && activeResults.length === 0" class="search-panel-empty-state">
         <p class="search-panel-empty-title">没有匹配结果</p>
         <p class="search-panel-empty-text">试试更短的关键字，或调整大小写、正则和路径过滤条件。</p>
       </div>
 
       <template v-else>
-        <article
-          v-for="group in searchResultGroups"
-          :key="group.path"
-          class="search-panel-result-group"
-        >
+        <article v-for="group in searchResultGroups" :key="group.path" class="search-panel-result-group">
           <header class="search-panel-result-group-header">
-            <button
-              type="button"
-              class="search-panel-result-group-open"
-              :aria-expanded="!isSearchResultGroupCollapsed(group.path)"
-              @click="toggleSearchResultGroup(group.path)"
-            >
+            <button type="button" class="search-panel-result-group-open"
+              :aria-expanded="!isSearchResultGroupCollapsed(group.path)" @click="toggleSearchResultGroup(group.path)">
               <span class="search-panel-result-group-chevron" aria-hidden="true">
                 {{ isSearchResultGroupCollapsed(group.path) ? '›' : '⌄' }}
               </span>
@@ -316,36 +193,20 @@
           </header>
 
           <template v-if="!isSearchResultGroupCollapsed(group.path)">
-            <button
-              v-for="result in group.results"
-              :key="result.resultKey"
-              type="button"
-              class="search-panel-result-line"
-              :class="{ 'is-selected': selectedResultKey === result.resultKey }"
-              role="option"
-              :aria-selected="selectedResultKey === result.resultKey"
-              @click="handleSearchResultOpen(result)"
-            >
+            <button v-for="result in group.results" :key="result.resultKey" type="button"
+              class="search-panel-result-line" :class="{ 'is-selected': selectedResultKey === result.resultKey }"
+              role="option" :aria-selected="selectedResultKey === result.resultKey"
+              @click="handleSearchResultOpen(result)">
               <span class="search-panel-result-line-number">
                 {{ result.lineNumber ?? '' }}
               </span>
 
               <span class="search-panel-result-line-body">
                 <span class="search-panel-result-snippet">
-                  <template
-                    v-for="(segment, index) in result.snippetSegments"
-                    :key="`${result.resultKey}-snippet-${index}`"
-                  >
-                    <mark
-                      v-if="segment.matched"
-                      class="search-panel-result-snippet-match"
-                      v-text="segment.text"
-                    />
-                    <span
-                      v-else
-                      class="search-panel-result-snippet-context"
-                      v-text="segment.text"
-                    />
+                  <template v-for="(segment, index) in result.snippetSegments"
+                    :key="`${result.resultKey}-snippet-${index}`">
+                    <mark v-if="segment.matched" class="search-panel-result-snippet-match" v-text="segment.text" />
+                    <span v-else class="search-panel-result-snippet-context" v-text="segment.text" />
                   </template>
                 </span>
               </span>
@@ -666,9 +527,8 @@ const buildCompactHighlightedSegments = (
     .slice(previewStart, safeStart)
     .join('')}`;
   const matchText = characters.slice(safeStart, safeEnd).join('');
-  const suffixText = `${characters.slice(safeEnd, previewEnd).join('')}${
-    previewEnd < characters.length ? COMPACT_PREVIEW_ELLIPSIS : ''
-  }`;
+  const suffixText = `${characters.slice(safeEnd, previewEnd).join('')}${previewEnd < characters.length ? COMPACT_PREVIEW_ELLIPSIS : ''
+    }`;
   const segments: IHighlightedSegment[] = [];
 
   if (prefixText) {
@@ -859,7 +719,7 @@ const buildReplacementLineSegments = (
     suffixLength < beforeCharacters.length - prefixLength &&
     suffixLength < afterCharacters.length - prefixLength &&
     beforeCharacters[beforeCharacters.length - 1 - suffixLength] ===
-      afterCharacters[afterCharacters.length - 1 - suffixLength]
+    afterCharacters[afterCharacters.length - 1 - suffixLength]
   ) {
     suffixLength += 1;
   }

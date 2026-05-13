@@ -172,4 +172,56 @@ describe('useAiAgentPlan', () => {
     expect(store.steps).toEqual(runSteps);
     expect(store.planStatus).toBe('executing');
   });
+
+  it('生成计划后记录 sidecar 返回的官方 usage', async () => {
+    const store = useAiAgentStore();
+    const agentPlan = useAiAgentPlan();
+
+    aiServiceMock.sidecarPlan.mockResolvedValueOnce({
+      sessionId: 'sidecar-plan-session-1',
+      events: [
+        {
+          type: 'plan_ready',
+          planId: 'plan-runtime-1',
+          threadId: 'thread-runtime-1',
+          version: 1,
+          status: 'pending_approval',
+          createdAt: '2026-05-11T10:00:00.000Z',
+          updatedAt: '2026-05-11T10:01:00.000Z',
+          plan: createPlan(),
+        },
+        {
+          type: 'done',
+          result: '计划已生成。',
+          usage: {
+            inputTokens: 23,
+            inputTokenDetails: {
+              noCacheTokens: 23,
+              cacheReadTokens: 0,
+              cacheWriteTokens: 0,
+            },
+            outputTokens: 7,
+            outputTokenDetails: {
+              textTokens: 6,
+              reasoningTokens: 1,
+            },
+            totalTokens: 30,
+            cachedInputTokens: 0,
+            reasoningTokens: 1,
+          },
+        },
+      ],
+      result: '计划已生成。',
+    });
+    aiServiceMock.sidecarPlanQuery.mockResolvedValueOnce(createPlanRecordResponse());
+
+    await agentPlan.createPlan('实现计划模式持久化', [], 'd:/com.xiaojianc/my_desktop_app');
+
+    expect(store.latestOfficialUsageResolved).toBe(true);
+    expect(store.latestOfficialUsage).toMatchObject({
+      inputTokens: 23,
+      outputTokens: 7,
+      totalTokens: 30,
+    });
+  });
 });
