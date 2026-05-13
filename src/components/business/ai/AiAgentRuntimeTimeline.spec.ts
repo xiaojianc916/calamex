@@ -935,4 +935,33 @@ describe('AiAgentRuntimeTimeline', () => {
         ]);
         expect(listItems.at(-1)?.text()).not.toContain('- Oct 2024');
     });
+
+    it('对 reasoning fenced code block 使用与 AI 回复一致的代码块外观', () => {
+        const wrapper = mount(AiAgentRuntimeTimeline, {
+            props: {
+                events: [createEvent({
+                    id: 'reasoning-code-block',
+                    type: 'agent.reasoning.delta',
+                    text: [
+                        '先检查脚本：',
+                        '',
+                        '```bash path:scripts/check.sh',
+                        'echo "start"',
+                        'pnpm exec vitest --run src/components/business/ai/AiAgentRuntimeTimeline.spec.ts',
+                        '```',
+                    ].join('\n'),
+                })],
+            },
+        });
+
+        const codeBlock = wrapper.get('.ai-reasoning-code-block');
+
+        expect(wrapper.text()).toContain('先检查脚本：');
+        expect(wrapper.text()).not.toContain('```bash');
+        expect(codeBlock.text()).toContain('scripts/check.sh');
+        expect(codeBlock.text()).toContain('Bash');
+        expect(codeBlock.text()).toContain('echo "start"');
+        expect(codeBlock.find('button[aria-label="复制代码"]').exists()).toBe(true);
+        expect(codeBlock.find('button[aria-label="折叠代码块"]').exists()).toBe(true);
+    });
 });

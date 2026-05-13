@@ -191,12 +191,28 @@ pub struct GitCommitResultPayload {
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
+pub struct GitStashFilePayload {
+    relative_path: String,
+    file_name: String,
+    previous_relative_path: Option<String>,
+    status: String,
+    additions: u32,
+    deletions: u32,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct GitStashEntryPayload {
     index: usize,
     stash_id: String,
     summary: String,
     branch_name: Option<String>,
     commit_short_id: Option<String>,
+    created_at: String,
+    file_count: usize,
+    additions: u32,
+    deletions: u32,
+    files: Vec<GitStashFilePayload>,
 }
 
 #[derive(Debug, Serialize, Clone)]

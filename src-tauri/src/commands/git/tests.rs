@@ -354,6 +354,16 @@ fn save_git_stash_and_list_git_stashes_round_trip() -> Result<(), String> {
 
     assert_eq!(stashes.entries.len(), 1);
     assert!(stashes.entries[0].summary.contains("demo stash"));
+    assert_eq!(stashes.entries[0].file_count, 1);
+    assert_eq!(stashes.entries[0].additions, 1);
+    assert_eq!(stashes.entries[0].deletions, 1);
+    assert_eq!(stashes.entries[0].files.len(), 1);
+    assert_eq!(stashes.entries[0].files[0].relative_path, "src/app.sh");
+    assert_eq!(stashes.entries[0].files[0].file_name, "app.sh");
+    assert_eq!(stashes.entries[0].files[0].status, "modified");
+    assert_eq!(stashes.entries[0].files[0].additions, 1);
+    assert_eq!(stashes.entries[0].files[0].deletions, 1);
+    assert!(!stashes.entries[0].created_at.is_empty());
     Ok(())
 }
 

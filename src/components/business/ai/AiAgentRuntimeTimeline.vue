@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import AiReasoningCodeBlock from '@/components/business/ai/AiReasoningCodeBlock.vue';
 import {
   ChainOfThought,
   ChainOfThoughtContent,
@@ -123,7 +124,13 @@ interface IToolIconMatcher {
 }
 
 type TInlineMarkdownTokenKind = 'text' | 'strong' | 'emphasis' | 'code';
-type TReasoningMarkdownBlockKind = 'paragraph' | 'heading' | 'unordered-list' | 'ordered-list' | 'quote';
+type TReasoningMarkdownBlockKind =
+  | 'paragraph'
+  | 'heading'
+  | 'unordered-list'
+  | 'ordered-list'
+  | 'quote'
+  | 'code-block';
 
 interface IInlineMarkdownToken {
   kind: TInlineMarkdownTokenKind;
@@ -135,6 +142,9 @@ interface IReasoningMarkdownBlock {
   id: string;
   text?: string;
   items?: string[];
+  code?: string;
+  language?: string;
+  info?: string;
 }
 
 const props = withDefaults(defineProps<{
@@ -389,6 +399,10 @@ const splitReasoningSegments = (value: string): string[] => {
 
   if (!normalized) {
     return [];
+  }
+
+  if (/^\s{0,3}(```+|~~~+)/mu.test(normalized)) {
+    return [normalized];
   }
 
   const paragraphs = normalized
@@ -1879,6 +1893,19 @@ const normalizeReasoningHeadingText = (line: string): string =>
     .replace(/^\s{0,3}#{1,6}\s+/u, '')
     .replace(/\s+#*\s*$/u, '');
 
+const resolveFenceLanguage = (info: string): string =>
+  info.trim().split(/\s+/u, 1)[0] ?? '';
+
+const isClosingFenceLine = (line: string, openingFence: string): boolean => {
+  const match = /^\s{0,3}(```+|~~~+)\s*$/u.exec(line);
+
+  return Boolean(
+    match
+    && match[1][0] === openingFence[0]
+    && match[1].length >= openingFence.length,
+  );
+};
+
 const parseReasoningMarkdownBlocks = (segment: string): IReasoningMarkdownBlock[] => {
   const cached = reasoningMarkdownBlockCache.get(segment);
   if (cached) {
@@ -1889,6 +1916,9 @@ const parseReasoningMarkdownBlocks = (segment: string): IReasoningMarkdownBlock[
   const paragraphLines: string[] = [];
   let listType: 'ordered-list' | 'unordered-list' | undefined;
   let listItems: string[] = [];
+  let codeFence: string | null = null;
+  let codeFenceInfo = '';
+  let codeLines: string[] = [];
 
   const pushBlock = (block: Omit<IReasoningMarkdownBlock, 'id'>): void => {
     blocks.push({
@@ -1920,7 +1950,43 @@ const parseReasoningMarkdownBlocks = (segment: string): IReasoningMarkdownBlock[
     flushList();
   };
 
+  const flushCodeBlock = (): void => {
+    if (!codeFence) {
+      return;
+    }
+
+    pushBlock({
+      type: 'code-block',
+      code: codeLines.join('\n'),
+      language: resolveFenceLanguage(codeFenceInfo),
+      info: codeFenceInfo,
+    });
+
+    codeFence = null;
+    codeFenceInfo = '';
+    codeLines = [];
+  };
+
   for (const line of segment.replace(/\r\n?/gu, '\n').split('\n')) {
+    if (codeFence) {
+      if (isClosingFenceLine(line, codeFence)) {
+        flushCodeBlock();
+        continue;
+      }
+
+      codeLines.push(line);
+      continue;
+    }
+
+    const codeFenceMatch = /^\s{0,3}(```+|~~~+)(.*)$/u.exec(line);
+    if (codeFenceMatch) {
+      flushInlineBlocks();
+      codeFence = codeFenceMatch[1];
+      codeFenceInfo = codeFenceMatch[2].trim();
+      codeLines = [];
+      continue;
+    }
+
     const trimmed = line.trim();
 
     if (!trimmed) {
@@ -1972,6 +2038,7 @@ const parseReasoningMarkdownBlocks = (segment: string): IReasoningMarkdownBlock[
   }
 
   flushInlineBlocks();
+  flushCodeBlock();
 
   if (reasoningMarkdownBlockCache.size > 240) {
     reasoningMarkdownBlockCache.clear();
@@ -2009,7 +2076,15 @@ v-if="item.type === 'reasoning'" class="ai-runtime-step is-reasoning" label="Rea
               <template
 v-for="block in parseReasoningMarkdownBlocks(segment)"
                 :key="`${item.id}:segment:${segmentIndex}:block:${block.id}`">
-                <p v-if="block.type === 'paragraph'" class="agent-line__segment agent-line__paragraph">
+                <AiReasoningCodeBlock
+                  v-if="block.type === 'code-block'"
+                  class="agent-line__segment agent-line__code-block"
+                  :code="block.code ?? ''"
+                  :language="block.language"
+                  :fence-info="block.info"
+                />
+
+                <p v-else-if="block.type === 'paragraph'" class="agent-line__segment agent-line__paragraph">
                   <template
 v-for="(token, tokenIndex) in tokenizeInlineMarkdown(block.text ?? '')"
                     :key="`${item.id}:segment:${segmentIndex}:block:${block.id}:token:${tokenIndex}`">
@@ -2201,6 +2276,11 @@ v-if="shouldShowTaskStatus(item.node) && item.node.tail" class="ai-runtime-task-
 
 .agent-line__segment+.agent-line__segment {
   margin-top: 6px;
+}
+
+.agent-line__code-block {
+  width: 100%;
+  white-space: normal;
 }
 
 .agent-line__heading {
