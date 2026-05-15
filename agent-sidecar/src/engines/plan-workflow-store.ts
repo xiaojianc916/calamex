@@ -1,65 +1,63 @@
 import { createHash, randomUUID } from 'node:crypto';
 
-import { createClient, type Client, type Row } from '@libsql/client';
+import { createClient, type Client, type Row, type Transaction } from '@libsql/client';
 
-import {
-    agentPlanSchema,
-    type TAgentPlanRecord,
-} from '../schemas/plan.js';
 import {
     agentPlanWorkflowEventRecordSchema,
     agentPlanWorkflowEventSchema,
     agentPlanWorkflowRecordSchema,
     agentPlanWorkflowStateSchema,
+    type TAgentPlanDelta,
+    type TAgentPlanValidationReport,
     type TAgentPlanWorkflowEvent,
     type TAgentPlanWorkflowEventRecord,
     type TAgentPlanWorkflowRecord,
     type TAgentPlanWorkflowState,
     type TAgentPlanWorkflowStatus,
     type TAgentPlanWorkflowSuspendReason,
-    type TAgentPlanDelta,
-    type TAgentPlanValidationReport,
 } from '../schemas/plan-workflow.js';
+import {
+    agentPlanSchema,
+    type TAgentPlanRecord,
+} from '../schemas/plan.js';
 import type { JSONValue } from '../types/json-value.js';
+
 import { resolveMastraStorageUrl } from './mastra-memory.js';
+
+// -----------------------------------------------------------------------------
+// Schema constants
+// -----------------------------------------------------------------------------
 
 const WORKFLOW_RUN_TABLE = 'agent_plan_workflow_runs';
 const WORKFLOW_EVENT_TABLE = 'agent_plan_workflow_events';
+const WORKFLOW_META_TABLE = 'agent_plan_workflow_meta';
+const WORKFLOW_SCHEMA_VERSION = 1;
 
 const WORKFLOW_RUN_SELECT_FIELDS = [
-    'workflow_run_id',
-    'plan_id',
-    'plan_version',
-    'thread_id',
-    'status',
-    'phase',
-    'current_step_id',
-    'execution_cursor',
-    'approved_plan_hash',
-    'last_heartbeat_at',
-    'parent_run_id',
-    'replan_of_version',
-    'suspend_reason',
-    'suspend_token',
-    'mastra_run_id',
-    'created_at',
-    'updated_at',
-    'suspended_at',
-    'resumed_at',
-    'finished_at',
-    'error_message',
-    'state_json',
+    'workflow_run_id', 'plan_id', 'plan_version', 'thread_id',
+    'status', 'phase', 'current_step_id', 'execution_cursor',
+    'approved_plan_hash', 'last_heartbeat_at',
+    'parent_run_id', 'replan_of_version',
+    'suspend_reason', 'suspend_token', 'mastra_run_id',
+    'created_at', 'updated_at',
+    'suspended_at', 'resumed_at', 'finished_at',
+    'error_message', 'state_json', 'revision',
 ].join(', ');
 
 const WORKFLOW_EVENT_SELECT_FIELDS = [
-    'event_id',
-    'workflow_run_id',
-    'plan_id',
-    'plan_version',
-    'seq',
-    'created_at',
-    'event_json',
+    'event_id', 'workflow_run_id', 'plan_id', 'plan_version',
+    'seq', 'created_at', 'event_json',
 ].join(', ');
+
+const ACTIVE_STATUSES: ReadonlySet<TAgentPlanWorkflowStatus> = new Set([
+    'waiting_approval',
+    'approved',
+    'executing',
+]);
+
+// -----------------------------------------------------------------------------
+// Public types
+// -----------------------------------------------------------------------------
 
 export interface IPlanWorkflowVersionInput {
     planId: string;
@@ -129,90 +127,63 @@ export interface IAgentPlanWorkflowStore {
     reportValidator(input: IReportPlanValidatorInput): Promise<TAgentPlanWorkflowRecord>;
     issueReplan(input: IIssuePlanReplanInput): Promise<TAgentPlanWorkflowRecord>;
     finishPlan(input: IFinishPlanWorkflowInput): Promise<TAgentPlanWorkflowRecord>;
+    close(): Promise<void>;
 }
 
-const toNonEmptyString = (value: unknown): string | null => {
-    if (typeof value !== 'string') {
-        return null;
-    }
+// -----------------------------------------------------------------------------
+// Helpers
+// -----------------------------------------------------------------------------
 
+const toNonEmptyString = (value: unknown): string | null => {
+    if (typeof value !== 'string') return null;
     const trimmed = value.trim();
     return trimmed.length > 0 ? trimmed : null;
 };
 
 const rowString = (row: Row, key: string): string => {
     const value = row[key];
-
     if (typeof value !== 'string') {
         throw new Error(`计划 workflow 字段 ${key} 不是字符串。`);
     }
-
     return value;
 };
 
 const rowNullableString = (row: Row, key: string): string | null => {
     const value = row[key];
-
-    if (value === null) {
-        return null;
-    }
-
+    if (value === null) return null;
     if (typeof value !== 'string') {
         throw new Error(`计划 workflow 字段 ${key} 不是字符串或 null。`);
     }
-
     return value;
 };
 
-const rowPositiveInteger = (row: Row, key: string): number => {
+const rowInteger = (row: Row, key: string, { min }: { min: number }): number => {
     const value = row[key];
-
-    if (typeof value === 'number' && Number.isInteger(value) && value > 0) {
+    if (typeof value === 'number' && Number.isInteger(value) && value >= min) {
         return value;
     }
-
-    if (typeof value === 'bigint' && value > 0n && value <= BigInt(Number.MAX_SAFE_INTEGER)) {
+    if (typeof value === 'bigint' && value >= BigInt(min) && value <= BigInt(Number.MAX_SAFE_INTEGER)) {
         return Number(value);
     }
-
-    throw new Error(`计划 workflow 字段 ${key} 不是正整数。`);
-};
-
-const rowNonNegativeInteger = (row: Row, key: string): number => {
-    const value = row[key];
-
-    if (typeof value === 'number' && Number.isInteger(value) && value >= 0) {
-        return value;
-    }
-
-    if (typeof value === 'bigint' && value >= 0n && value <= BigInt(Number.MAX_SAFE_INTEGER)) {
-        return Number(value);
-    }
-
-    throw new Error(`计划 workflow 字段 ${key} 不是非负整数。`);
+    throw new Error(`计划 workflow 字段 ${key} 不是 >= ${min} 的整数。`);
 };
 
 const parseJsonValue = (value: string): unknown => JSON.parse(value) as unknown;
 
 const toRecord = (value: unknown): Record<string, unknown> | null =>
     value && typeof value === 'object' && !Array.isArray(value)
-        ? value as Record<string, unknown>
+        ? (value as Record<string, unknown>)
         : null;
 
 const normalizeWorkflowStateInput = (value: unknown): unknown => {
     const record = toRecord(value);
     const validator = toRecord(record?.validator);
-
     if (!record || !validator || 'needsReplan' in validator) {
         return value;
     }
-
     return {
         ...record,
-        validator: {
-            ...validator,
-            needsReplan: false,
-        },
+        validator: { ...validator, needsReplan: false },
     };
 };
 
@@ -228,21 +199,27 @@ const parseWorkflowEvent = (value: string): TAgentPlanWorkflowEvent =>
 const serializeWorkflowEvent = (event: TAgentPlanWorkflowEvent): string =>
     JSON.stringify(agentPlanWorkflowEventSchema.parse(event));
 
-const hashApprovedPlan = (record: TAgentPlanRecord): string => createHash('sha256')
-    .update(JSON.stringify(agentPlanSchema.parse(record.plan)))
-    .digest('hex');
+const hashApprovedPlan = (record: TAgentPlanRecord): string =>
+    createHash('sha256')
+        .update(JSON.stringify(agentPlanSchema.parse(record.plan)))
+        .digest('hex');
 
 const createStepIdempotencyKey = (input: IPlanWorkflowVersionInput & { stepId: string }): string =>
     `${input.planId}:v${input.version}:step:${input.stepId}`;
 
-const createSuspendToken = (input: IPlanWorkflowVersionInput & { reason: TAgentPlanWorkflowSuspendReason }): string =>
-    `${input.planId}:v${input.version}:suspend:${input.reason}:${randomUUID()}`;
+const createSuspendToken = (
+    input: IPlanWorkflowVersionInput & { reason: TAgentPlanWorkflowSuspendReason },
+): string => `${input.planId}:v${input.version}:suspend:${input.reason}:${randomUUID()}`;
+
+const buildDefaultResumeContract = (): { allowedFields: string[] } => ({
+    allowedFields: ['decision', 'approvedBy', 'reason'],
+});
 
 const toWorkflowRecord = (row: Row): TAgentPlanWorkflowRecord =>
     agentPlanWorkflowRecordSchema.parse({
         workflowRunId: rowString(row, 'workflow_run_id'),
         planId: rowString(row, 'plan_id'),
-        planVersion: rowPositiveInteger(row, 'plan_version'),
+        planVersion: rowInteger(row, 'plan_version', { min: 1 }),
         threadId: rowString(row, 'thread_id'),
         status: rowString(row, 'status'),
         phase: rowString(row, 'phase'),
@@ -262,8 +239,8 @@ const toWorkflowEventRecord = (row: Row): TAgentPlanWorkflowEventRecord =>
         eventId: rowString(row, 'event_id'),
         workflowRunId: rowString(row, 'workflow_run_id'),
         planId: rowString(row, 'plan_id'),
-        planVersion: rowPositiveInteger(row, 'plan_version'),
-        seq: rowNonNegativeInteger(row, 'seq'),
+        planVersion: rowInteger(row, 'plan_version', { min: 1 }),
+        seq: rowInteger(row, 'seq', { min: 0 }),
         createdAt: rowString(row, 'created_at'),
         event: parseWorkflowEvent(rowString(row, 'event_json')),
     });
@@ -276,11 +253,14 @@ const createInitialState = (
 ): TAgentPlanWorkflowState => {
     const stepIds = record.plan.steps.map((step) => step.id);
     const stepIdempotencyKeys = Object.fromEntries(
-        stepIds.map((stepId) => [stepId, createStepIdempotencyKey({
-            planId: record.planId,
-            version: record.version,
+        stepIds.map((stepId) => [
             stepId,
-        })]),
+            createStepIdempotencyKey({
+                planId: record.planId,
+                version: record.version,
+                stepId,
+            }),
+        ]),
     );
 
     return agentPlanWorkflowStateSchema.parse({
@@ -318,27 +298,19 @@ const createInitialState = (
     });
 };
 
-const defaultResumeContract = {
-    allowedFields: ['decision', 'approvedBy', 'reason'],
-};
+// -----------------------------------------------------------------------------
+// Projection
+// -----------------------------------------------------------------------------
 
 class WorkflowProjection {
     status: TAgentPlanWorkflowStatus = 'waiting_approval';
-
     phase: TAgentPlanWorkflowRecord['phase'] = 'approval_gate';
-
     currentStepId: string | null = null;
-
     mastraRunId: string | null = null;
-
     suspendedAt: string | null = null;
-
     resumedAt: string | null = null;
-
     finishedAt: string | null = null;
-
     errorMessage: string | null = null;
-
     state: TAgentPlanWorkflowState;
 
     constructor(initialState: TAgentPlanWorkflowState) {
@@ -351,10 +323,8 @@ const projectWorkflow = (
     events: TAgentPlanWorkflowEventRecord[],
 ): WorkflowProjection => {
     const projection = new WorkflowProjection(initialState);
-
     for (const eventRecord of events) {
         const { event } = eventRecord;
-
         switch (event.type) {
             case 'PlanGenerated':
                 projection.status = 'waiting_approval';
@@ -381,16 +351,21 @@ const projectWorkflow = (
                 projection.state.completedStepIds = [
                     ...new Set([...projection.state.completedStepIds, event.stepId]),
                 ];
-                projection.state.failedStepIds = projection.state.failedStepIds.filter((stepId) => stepId !== event.stepId);
-                projection.state.executionCursor = projection.state.stepIds.reduce((cursor, stepId, index) =>
-                    projection.state.completedStepIds.includes(stepId) ? Math.max(cursor, index + 1) : cursor, 0);
+                projection.state.failedStepIds = projection.state.failedStepIds.filter(
+                    (stepId) => stepId !== event.stepId,
+                );
+                projection.state.executionCursor = projection.state.stepIds.reduce(
+                    (cursor, stepId, index) =>
+                        projection.state.completedStepIds.includes(stepId)
+                            ? Math.max(cursor, index + 1)
+                            : cursor,
+                    0,
+                );
                 projection.state.lastHeartbeatAt = eventRecord.createdAt;
-
                 if (projection.currentStepId === event.stepId) {
                     projection.currentStepId = null;
                     projection.state.currentStepId = null;
                 }
-
                 if (projection.state.executionCursor >= projection.state.stepIds.length) {
                     projection.phase = 'validate_result';
                 }
@@ -416,8 +391,12 @@ const projectWorkflow = (
                 projection.state.replanOfVersion = event.fromVersion;
                 break;
             case 'Suspended':
-                projection.status = event.reason === 'plan_approval' ? 'waiting_approval' : projection.status;
-                projection.phase = event.reason === 'validator_needs_replan' ? 'replan' : projection.phase;
+                // status 不变：suspend 是与生命周期正交的暂停标记，由
+                // state.suspend.reason 表达。plan_approval 的"初始暂停"由
+                // PlanGenerated 设置的 waiting_approval 状态自然承担。
+                if (event.reason === 'validator_needs_replan') {
+                    projection.phase = 'replan';
+                }
                 projection.suspendedAt = eventRecord.createdAt;
                 projection.state.suspend = {
                     reason: event.reason,
@@ -449,32 +428,40 @@ const projectWorkflow = (
                 break;
         }
     }
-
     return projection;
 };
 
+// -----------------------------------------------------------------------------
+// Store implementation
+// -----------------------------------------------------------------------------
+
 export class LibsqlAgentPlanWorkflowStore implements IAgentPlanWorkflowStore {
     private readonly client: Client;
-
+    private readonly ownsClient: boolean;
     private readonly now: () => string;
-
     private initialized: Promise<void> | null = null;
+    private closed = false;
 
     constructor(options: { client?: Client; url?: string; now?: () => string } = {}) {
-        this.client = options.client ?? createClient({ url: options.url ?? resolveMastraStorageUrl() });
+        if (options.client) {
+            this.client = options.client;
+            this.ownsClient = false;
+        } else {
+            this.client = createClient({ url: options.url ?? resolveMastraStorageUrl() });
+            this.ownsClient = true;
+        }
         this.now = options.now ?? (() => new Date().toISOString());
     }
 
     async createForPlan(input: ICreatePlanWorkflowInput): Promise<TAgentPlanWorkflowRecord> {
+        this.assertOpen();
         await this.ensureInitialized();
+
         const existing = await this.getWorkflowOrNull({
             planId: input.record.planId,
             version: input.record.version,
         });
-
-        if (existing) {
-            return existing;
-        }
+        if (existing) return existing;
 
         const workflowRunId = randomUUID();
         const createdAt = this.now();
@@ -490,35 +477,20 @@ export class LibsqlAgentPlanWorkflowStore implements IAgentPlanWorkflowStore {
             version: input.record.version,
             reason: 'plan_approval',
         });
-        const transaction = await this.client.transaction('write');
 
-        try {
+        await this.runInTransaction(async (transaction) => {
             await transaction.execute({
                 sql: `
                     INSERT INTO ${WORKFLOW_RUN_TABLE} (
-                        workflow_run_id,
-                        plan_id,
-                        plan_version,
-                        thread_id,
-                        status,
-                        phase,
-                        current_step_id,
-                        execution_cursor,
-                        approved_plan_hash,
-                        last_heartbeat_at,
-                        parent_run_id,
-                        replan_of_version,
-                        suspend_reason,
-                        suspend_token,
-                        mastra_run_id,
-                        created_at,
-                        updated_at,
-                        suspended_at,
-                        resumed_at,
-                        finished_at,
-                        error_message,
-                        state_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, NULL, 0, ?, NULL, ?, ?, NULL, NULL, NULL, ?, ?, NULL, NULL, NULL, NULL, ?)
+                        workflow_run_id, plan_id, plan_version, thread_id,
+                        status, phase, current_step_id, execution_cursor,
+                        approved_plan_hash, last_heartbeat_at,
+                        parent_run_id, replan_of_version,
+                        suspend_reason, suspend_token, mastra_run_id,
+                        created_at, updated_at,
+                        suspended_at, resumed_at, finished_at,
+                        error_message, state_json, revision
+                    ) VALUES (?, ?, ?, ?, ?, ?, NULL, 0, ?, NULL, ?, ?, NULL, NULL, NULL, ?, ?, NULL, NULL, NULL, NULL, ?, 0)
                 `,
                 args: [
                     workflowRunId,
@@ -535,34 +507,45 @@ export class LibsqlAgentPlanWorkflowStore implements IAgentPlanWorkflowStore {
                     serializeWorkflowState(initialState),
                 ],
             });
-            await this.appendEventWithTransaction(transaction, workflowRunId, input.record.planId, input.record.version, 0, createdAt, {
-                type: 'PlanGenerated',
-                planId: input.record.planId,
-                version: input.record.version,
-                threadId: input.record.threadId,
-                planHash,
-                stepIds: initialState.stepIds,
-            });
-            await this.appendEventWithTransaction(transaction, workflowRunId, input.record.planId, input.record.version, 1, createdAt, {
-                type: 'Suspended',
-                reason: 'plan_approval',
-                token: suspendToken,
-                payload: {
+
+            await this.appendEventInTransaction(
+                transaction,
+                workflowRunId,
+                input.record.planId,
+                input.record.version,
+                0,
+                createdAt,
+                {
+                    type: 'PlanGenerated',
                     planId: input.record.planId,
                     version: input.record.version,
+                    threadId: input.record.threadId,
+                    planHash,
+                    stepIds: initialState.stepIds,
                 },
-                expiresAt: null,
-                resumeContract: defaultResumeContract,
-            });
-            await transaction.commit();
-        } catch (error) {
-            await transaction.rollback().catch(() => undefined);
-            throw error;
-        } finally {
-            transaction.close();
-        }
+            );
+            await this.appendEventInTransaction(
+                transaction,
+                workflowRunId,
+                input.record.planId,
+                input.record.version,
+                1,
+                createdAt,
+                {
+                    type: 'Suspended',
+                    reason: 'plan_approval',
+                    token: suspendToken,
+                    payload: {
+                        planId: input.record.planId,
+                        version: input.record.version,
+                    },
+                    expiresAt: null,
+                    resumeContract: buildDefaultResumeContract(),
+                },
+            );
+        });
 
-        return await this.reproject({
+        return this.reproject({
             planId: input.record.planId,
             version: input.record.version,
         });
@@ -570,16 +553,14 @@ export class LibsqlAgentPlanWorkflowStore implements IAgentPlanWorkflowStore {
 
     async getWorkflow(input: IPlanWorkflowVersionInput): Promise<TAgentPlanWorkflowRecord> {
         const record = await this.getWorkflowOrNull(input);
-
-        if (record) {
-            return record;
-        }
-
+        if (record) return record;
         throw new Error(`未找到计划 workflow ${input.planId}@v${input.version}。`);
     }
 
     async listEvents(input: IPlanWorkflowVersionInput): Promise<TAgentPlanWorkflowEventRecord[]> {
+        this.assertOpen();
         await this.ensureInitialized();
+
         const result = await this.client.execute({
             sql: `
                 SELECT ${WORKFLOW_EVENT_SELECT_FIELDS}
@@ -589,54 +570,59 @@ export class LibsqlAgentPlanWorkflowStore implements IAgentPlanWorkflowStore {
             `,
             args: [input.planId, input.version],
         });
-
         return result.rows.map(toWorkflowEventRecord);
     }
 
-    async approvePlan(record: TAgentPlanRecord, approvedBy?: string | undefined): Promise<TAgentPlanWorkflowRecord> {
+    async approvePlan(
+        record: TAgentPlanRecord,
+        approvedBy?: string | undefined,
+    ): Promise<TAgentPlanWorkflowRecord> {
         await this.createForPlan({ record });
         const workflow = await this.getWorkflow({
             planId: record.planId,
             version: record.version,
         });
-        const approvedHash = hashApprovedPlan(record);
 
+        const approvedHash = hashApprovedPlan(record);
         if (workflow.state.approvedPlanHash !== approvedHash) {
             throw new Error(`批准计划哈希不一致：${record.planId}@v${record.version}。`);
         }
 
-        if (workflow.status === 'approved' || workflow.status === 'executing' || workflow.status === 'completed') {
+        if (
+            workflow.status === 'approved' ||
+            workflow.status === 'executing' ||
+            workflow.status === 'completed'
+        ) {
             return workflow;
         }
 
-        await this.appendEvents({
-            planId: record.planId,
-            version: record.version,
-        }, [
-            {
-                type: 'PlanApproved',
-                version: record.version,
-                approvedHash,
-                approvedBy: toNonEmptyString(approvedBy),
-            },
-            ...(workflow.state.suspend.token
-                ? [{
-                    type: 'Resumed' as const,
-                    token: workflow.state.suspend.token,
-                }]
-                : []),
-        ]);
+        await this.appendEvents(
+            { planId: record.planId, version: record.version },
+            [
+                {
+                    type: 'PlanApproved',
+                    version: record.version,
+                    approvedHash,
+                    approvedBy: toNonEmptyString(approvedBy),
+                },
+                ...(workflow.state.suspend.token
+                    ? [{
+                        type: 'Resumed' as const,
+                        token: workflow.state.suspend.token,
+                    }]
+                    : []),
+            ],
+        );
 
-        return await this.reproject({
-            planId: record.planId,
-            version: record.version,
-        });
+        return this.reproject({ planId: record.planId, version: record.version });
     }
 
-    async rejectPlan(record: TAgentPlanRecord, reason?: string | undefined): Promise<TAgentPlanWorkflowRecord> {
+    async rejectPlan(
+        record: TAgentPlanRecord,
+        reason?: string | undefined,
+    ): Promise<TAgentPlanWorkflowRecord> {
         await this.createForPlan({ record });
-
-        return await this.finishPlan({
+        return this.finishPlan({
             planId: record.planId,
             version: record.version,
             status: 'rejected',
@@ -645,9 +631,9 @@ export class LibsqlAgentPlanWorkflowStore implements IAgentPlanWorkflowStore {
     }
 
     async startStep(input: IStartPlanWorkflowStepInput): Promise<TAgentPlanWorkflowRecord> {
-        const workflow = await this.getWorkflow(input);
-        const idempotencyKey = workflow.state.stepIdempotencyKeys[input.stepId]
-            ?? createStepIdempotencyKey(input);
+        const workflow = await this.getActiveWorkflow(input, '启动步骤');
+        const idempotencyKey =
+            workflow.state.stepIdempotencyKeys[input.stepId] ?? createStepIdempotencyKey(input);
 
         if (workflow.state.completedStepIds.includes(input.stepId)) {
             return workflow;
@@ -667,14 +653,13 @@ export class LibsqlAgentPlanWorkflowStore implements IAgentPlanWorkflowStore {
                 phase: 'step_start',
             },
         ]);
-
-        return await this.reproject(input);
+        return this.reproject(input);
     }
 
     async completeStep(input: ICompletePlanWorkflowStepInput): Promise<TAgentPlanWorkflowRecord> {
-        const workflow = await this.getWorkflow(input);
-        const idempotencyKey = workflow.state.stepIdempotencyKeys[input.stepId]
-            ?? createStepIdempotencyKey(input);
+        const workflow = await this.getActiveWorkflow(input, '完成步骤');
+        const idempotencyKey =
+            workflow.state.stepIdempotencyKeys[input.stepId] ?? createStepIdempotencyKey(input);
 
         if (workflow.state.completedStepIds.includes(input.stepId)) {
             return workflow;
@@ -693,14 +678,13 @@ export class LibsqlAgentPlanWorkflowStore implements IAgentPlanWorkflowStore {
                 phase: 'step_end',
             },
         ]);
-
-        return await this.reproject(input);
+        return this.reproject(input);
     }
 
     async failStep(input: IFailPlanWorkflowStepInput): Promise<TAgentPlanWorkflowRecord> {
-        const workflow = await this.getWorkflow(input);
-        const idempotencyKey = workflow.state.stepIdempotencyKeys[input.stepId]
-            ?? createStepIdempotencyKey(input);
+        const workflow = await this.getActiveWorkflow(input, '失败步骤');
+        const idempotencyKey =
+            workflow.state.stepIdempotencyKeys[input.stepId] ?? createStepIdempotencyKey(input);
 
         await this.appendEvents(input, [{
             type: 'StepFailed',
@@ -709,21 +693,21 @@ export class LibsqlAgentPlanWorkflowStore implements IAgentPlanWorkflowStore {
             error: input.error,
             retryable: input.retryable,
         }]);
-
-        return await this.reproject(input);
+        return this.reproject(input);
     }
 
     async heartbeat(input: IHeartbeatPlanWorkflowInput): Promise<TAgentPlanWorkflowRecord> {
+        await this.getActiveWorkflow(input, '发送心跳');
         await this.appendEvents(input, [{
             type: 'Heartbeat',
             stepId: toNonEmptyString(input.stepId),
             phase: input.phase,
         }]);
-
-        return await this.reproject(input);
+        return this.reproject(input);
     }
 
     async suspend(input: ISuspendPlanWorkflowInput): Promise<TAgentPlanWorkflowRecord> {
+        await this.getActiveWorkflow(input, '挂起 workflow');
         await this.appendEvents(input, [{
             type: 'Suspended',
             reason: input.reason,
@@ -731,14 +715,15 @@ export class LibsqlAgentPlanWorkflowStore implements IAgentPlanWorkflowStore {
             payload: input.payload ?? null,
             expiresAt: toNonEmptyString(input.expiresAt),
             resumeContract: {
-                allowedFields: input.allowedFields ?? defaultResumeContract.allowedFields,
+                allowedFields: input.allowedFields ?? buildDefaultResumeContract().allowedFields,
             },
         }]);
-
-        return await this.reproject(input);
+        return this.reproject(input);
     }
 
     async reportValidator(input: IReportPlanValidatorInput): Promise<TAgentPlanWorkflowRecord> {
+        await this.getActiveWorkflow(input, '上报 validator');
+
         const events: TAgentPlanWorkflowEvent[] = [{
             type: 'ValidatorReported',
             report: input.report,
@@ -753,9 +738,7 @@ export class LibsqlAgentPlanWorkflowStore implements IAgentPlanWorkflowStore {
                     version: input.version,
                     reason: 'validator_needs_replan',
                 }),
-                payload: {
-                    report: input.report,
-                },
+                payload: { report: input.report },
                 expiresAt: null,
                 resumeContract: {
                     allowedFields: ['decision', 'replanInstruction'],
@@ -764,11 +747,14 @@ export class LibsqlAgentPlanWorkflowStore implements IAgentPlanWorkflowStore {
         }
 
         await this.appendEvents(input, events);
-
-        return await this.reproject(input);
+        return this.reproject(input);
     }
 
     async issueReplan(input: IIssuePlanReplanInput): Promise<TAgentPlanWorkflowRecord> {
+        await this.getActiveWorkflow(input, '触发重新规划');
+
+        // NOTE: 这里只在事件流中记录 fromVersion → toVersion，**不**切换当前 workflow
+        // 行的 plan_version。新的版本需要由上层调用 createForPlan 创建独立的 workflow。
         await this.appendEvents(input, [{
             type: 'ReplanIssued',
             fromVersion: input.version,
@@ -776,28 +762,53 @@ export class LibsqlAgentPlanWorkflowStore implements IAgentPlanWorkflowStore {
             deltaRef: toNonEmptyString(input.deltaRef),
             delta: input.delta,
         }]);
-
-        return await this.reproject(input);
+        return this.reproject(input);
     }
 
     async finishPlan(input: IFinishPlanWorkflowInput): Promise<TAgentPlanWorkflowRecord> {
         const workflow = await this.getWorkflow(input);
-
-        if (workflow.status === input.status) {
-            return workflow;
-        }
+        if (workflow.status === input.status) return workflow;
 
         await this.appendEvents(input, [{
             type: 'PlanFinished',
             status: input.status,
             errorMessage: toNonEmptyString(input.errorMessage),
         }]);
-
-        return await this.reproject(input);
+        return this.reproject(input);
     }
 
-    private async ensureInitialized(): Promise<void> {
-        this.initialized ??= this.client.executeMultiple(`
+    async close(): Promise<void> {
+        if (this.closed) return;
+        this.closed = true;
+        if (this.ownsClient) this.client.close();
+    }
+
+    // ---------------------------------------------------------------------
+    // Private
+    // ---------------------------------------------------------------------
+
+    private assertOpen(): void {
+        if (this.closed) {
+            throw new Error('LibsqlAgentPlanWorkflowStore 已关闭，无法再使用。');
+        }
+    }
+
+    private ensureInitialized(): Promise<void> {
+        if (this.initialized) return this.initialized;
+        const init = this.runMigrations().catch((error) => {
+            this.initialized = null;
+            throw error;
+        });
+        this.initialized = init;
+        return init;
+    }
+
+    private async runMigrations(): Promise<void> {
+        await this.client.executeMultiple(`
+            CREATE TABLE IF NOT EXISTS ${WORKFLOW_META_TABLE} (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS ${WORKFLOW_RUN_TABLE} (
                 workflow_run_id TEXT PRIMARY KEY,
                 plan_id TEXT NOT NULL,
@@ -821,6 +832,7 @@ export class LibsqlAgentPlanWorkflowStore implements IAgentPlanWorkflowStore {
                 finished_at TEXT,
                 error_message TEXT,
                 state_json TEXT NOT NULL,
+                revision INTEGER NOT NULL DEFAULT 0,
                 UNIQUE (plan_id, plan_version)
             );
             CREATE TABLE IF NOT EXISTS ${WORKFLOW_EVENT_TABLE} (
@@ -842,11 +854,18 @@ export class LibsqlAgentPlanWorkflowStore implements IAgentPlanWorkflowStore {
                 ON ${WORKFLOW_RUN_TABLE} (status, last_heartbeat_at);
         `);
 
-        await this.initialized;
+        await this.client.execute({
+            sql: `INSERT OR IGNORE INTO ${WORKFLOW_META_TABLE} (key, value) VALUES ('schema_version', ?)`,
+            args: [String(WORKFLOW_SCHEMA_VERSION)],
+        });
     }
 
-    private async getWorkflowOrNull(input: IPlanWorkflowVersionInput): Promise<TAgentPlanWorkflowRecord | null> {
+    private async getWorkflowOrNull(
+        input: IPlanWorkflowVersionInput,
+    ): Promise<TAgentPlanWorkflowRecord | null> {
+        this.assertOpen();
         await this.ensureInitialized();
+
         const result = await this.client.execute({
             sql: `
                 SELECT ${WORKFLOW_RUN_SELECT_FIELDS}
@@ -857,23 +876,50 @@ export class LibsqlAgentPlanWorkflowStore implements IAgentPlanWorkflowStore {
             args: [input.planId, input.version],
         });
         const row = result.rows[0];
-
         return row ? toWorkflowRecord(row) : null;
     }
 
+    private async getActiveWorkflow(
+        input: IPlanWorkflowVersionInput,
+        action: string,
+    ): Promise<TAgentPlanWorkflowRecord> {
+        const workflow = await this.getWorkflow(input);
+        if (!ACTIVE_STATUSES.has(workflow.status)) {
+            throw new Error(
+                `计划 workflow ${input.planId}@v${input.version} 当前状态为 ${workflow.status}，无法${action}。`,
+            );
+        }
+        return workflow;
+    }
+
+    /**
+     * Append events atomically. seq 计算和写入都在同一事务里，避免并发拿到相同 seq
+     * 撞 UNIQUE 约束。
+     */
     private async appendEvents(
         input: IPlanWorkflowVersionInput,
         events: TAgentPlanWorkflowEvent[],
     ): Promise<void> {
-        const workflow = await this.getWorkflow(input);
-        const existingEvents = await this.listEvents(input);
-        let nextSeq = existingEvents.length;
-        const createdAt = this.now();
-        const transaction = await this.client.transaction('write');
+        if (events.length === 0) return;
 
-        try {
+        const workflow = await this.getWorkflow(input);
+        const createdAt = this.now();
+
+        await this.runInTransaction(async (transaction) => {
+            const maxResult = await transaction.execute({
+                sql: `
+                    SELECT COALESCE(MAX(seq), -1) AS max_seq
+                    FROM ${WORKFLOW_EVENT_TABLE}
+                    WHERE workflow_run_id = ?
+                `,
+                args: [workflow.workflowRunId],
+            });
+            const maxSeqRow = maxResult.rows[0];
+            const maxSeq = maxSeqRow ? rowInteger(maxSeqRow, 'max_seq', { min: -1 }) : -1;
+
+            let nextSeq = maxSeq + 1;
             for (const event of events) {
-                await this.appendEventWithTransaction(
+                await this.appendEventInTransaction(
                     transaction,
                     workflow.workflowRunId,
                     input.planId,
@@ -884,17 +930,11 @@ export class LibsqlAgentPlanWorkflowStore implements IAgentPlanWorkflowStore {
                 );
                 nextSeq += 1;
             }
-            await transaction.commit();
-        } catch (error) {
-            await transaction.rollback().catch(() => undefined);
-            throw error;
-        } finally {
-            transaction.close();
-        }
+        });
     }
 
-    private async appendEventWithTransaction(
-        transaction: Awaited<ReturnType<Client['transaction']>>,
+    private async appendEventInTransaction(
+        transaction: Transaction,
         workflowRunId: string,
         planId: string,
         planVersion: number,
@@ -906,14 +946,8 @@ export class LibsqlAgentPlanWorkflowStore implements IAgentPlanWorkflowStore {
         await transaction.execute({
             sql: `
                 INSERT INTO ${WORKFLOW_EVENT_TABLE} (
-                    event_id,
-                    workflow_run_id,
-                    plan_id,
-                    plan_version,
-                    seq,
-                    type,
-                    event_json,
-                    created_at
+                    event_id, workflow_run_id, plan_id, plan_version,
+                    seq, type, event_json, created_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             `,
             args: [
@@ -929,14 +963,18 @@ export class LibsqlAgentPlanWorkflowStore implements IAgentPlanWorkflowStore {
         });
     }
 
+    /**
+ * Recompute projection from events and persist it. Uses a `revision` CAS column
+ * so concurrent reprojections don't silently overwrite each other.
+ */
     private async reproject(input: IPlanWorkflowVersionInput): Promise<TAgentPlanWorkflowRecord> {
         const workflow = await this.getWorkflow(input);
         const events = await this.listEvents(input);
-        const initialState = workflow.state;
-        const projection = projectWorkflow(initialState, events);
+        const projection = projectWorkflow(workflow.state, events);
         const updatedAt = this.now();
+        const expectedRevision = await this.readRevision(workflow.workflowRunId);
 
-        await this.client.execute({
+        const updateResult = await this.client.execute({
             sql: `
                 UPDATE ${WORKFLOW_RUN_TABLE}
                 SET
@@ -956,8 +994,9 @@ export class LibsqlAgentPlanWorkflowStore implements IAgentPlanWorkflowStore {
                     resumed_at = ?,
                     finished_at = ?,
                     error_message = ?,
-                    state_json = ?
-                WHERE workflow_run_id = ?
+                    state_json = ?,
+                    revision = revision + 1
+                WHERE workflow_run_id = ? AND revision = ?
             `,
             args: [
                 projection.status,
@@ -978,10 +1017,50 @@ export class LibsqlAgentPlanWorkflowStore implements IAgentPlanWorkflowStore {
                 projection.errorMessage,
                 serializeWorkflowState(projection.state),
                 workflow.workflowRunId,
+                expectedRevision,
             ],
         });
 
-        return await this.getWorkflow(input);
+        if (updateResult.rowsAffected !== 1) {
+            // 另一个并发流程刚好抢先写了一版；重新读最新结果即可。事件流是单调追加，
+            // 任何并发的 reproject 最终都会收敛到同一状态。
+            return this.getWorkflow(input);
+        }
+        return this.getWorkflow(input);
+    }
+
+    private async readRevision(workflowRunId: string): Promise<number> {
+        const result = await this.client.execute({
+            sql: `SELECT revision FROM ${WORKFLOW_RUN_TABLE} WHERE workflow_run_id = ? LIMIT 1`,
+            args: [workflowRunId],
+        });
+        const row = result.rows[0];
+        if (!row) {
+            throw new Error(`workflow run ${workflowRunId} 不存在，无法读取 revision。`);
+        }
+        return rowInteger(row, 'revision', { min: 0 });
+    }
+
+    private async runInTransaction<T>(
+        fn: (transaction: Transaction) => Promise<T>,
+    ): Promise<T> {
+        const transaction = await this.client.transaction('write');
+        try {
+            const result = await fn(transaction);
+            await transaction.commit();
+            return result;
+        } catch (error) {
+            try {
+                await transaction.rollback();
+            } catch (rollbackError) {
+                console.warn(
+                    `[agent-plan-workflow-store] 事务回滚失败：${(rollbackError as Error).message}`,
+                );
+            }
+            throw error;
+        } finally {
+            transaction.close();
+        }
     }
 }
 

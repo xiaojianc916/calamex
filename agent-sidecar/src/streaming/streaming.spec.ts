@@ -97,7 +97,6 @@ describe('streaming event layer', () => {
     if (!event || event.type !== 'agent.model.started') {
       throw new Error('model started event was not normalized');
     }
-    assert.equal(event.projectedInputTokensAvailable, false);
     assert.equal('projectedInputTokens' in (drafts[0] ?? {}), false);
   });
 

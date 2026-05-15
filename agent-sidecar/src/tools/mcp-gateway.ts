@@ -1,18 +1,16 @@
-import { resolve } from 'node:path';
-
 import type { ToolsInput } from '@mastra/core/agent';
 import { createTool } from '@mastra/core/tools';
+import { resolve } from 'node:path';
 import { z } from 'zod';
-
+import {
+  compactModelOutput,
+  truncateModelOutputText,
+} from '../models/model-output-budget.js';
 import {
   MCP_SERVER_NAMES,
   type IMcpServerConfig,
   type TMcpServerName,
 } from './mcp.js';
-import {
-  compactModelOutput,
-  truncateModelOutputText,
-} from '../models/model-output-budget.js';
 
 export type TMcpGatewayToolProfile = 'readonly' | 'write';
 
@@ -38,6 +36,12 @@ export type TMcpGatewayMetric =
     errorCount: number;
   }
   | {
+    type: 'mcp_gateway.boot_failed';
+    serverName: TMcpServerName;
+    durationMs: number;
+    errorMessage: string;
+  }
+  | {
     type: 'mcp_gateway.catalog';
     serverName: TMcpServerName;
     profile: TMcpGatewayToolProfile;
@@ -58,6 +62,10 @@ export type TMcpGatewayMetric =
     warmBundleCount: number;
     toolCallCount: number;
     errorCount: number;
+  }
+  | {
+    type: 'mcp_gateway.metric_buffer_dropped';
+    droppedCount: number;
   };
 
 export interface IMcpGatewayMetricSink {
@@ -83,6 +91,8 @@ interface IMcpGatewayPoolOptions {
   maxWarm?: number;
   ttlIdleMs?: number;
   pinnedServers?: readonly TMcpServerName[];
+  pinnedServersIgnoreWorkspace?: readonly TMcpServerName[];
+  callTimeoutMs?: number;
   now?: () => number;
 }
 
@@ -109,6 +119,10 @@ interface IMcpGatewayExecutableTool {
 const DEFAULT_MCP_GATEWAY_MAX_WARM = 4;
 const DEFAULT_MCP_GATEWAY_TTL_IDLE_MS = 5 * 60_000;
 const DEFAULT_MCP_GATEWAY_PINNED_SERVERS: readonly TMcpServerName[] = ['memory'];
+const DEFAULT_MCP_GATEWAY_PINNED_SERVERS_IGNORE_WORKSPACE: readonly TMcpServerName[] = ['memory'];
+const DEFAULT_MCP_CALL_TIMEOUT_MS = 60_000;
+const METRIC_BUFFER_MAX = 1_000;
+
 const MCP_GATEWAY_TOOL_DESCRIPTION_MAX_CHARS = 240;
 const MCP_GATEWAY_CATALOG_MODEL_OUTPUT_MAX_CHARS = 2_500;
 const MCP_GATEWAY_MODEL_OUTPUT_MAX_CHARS = 4_000;
@@ -117,19 +131,43 @@ const MCP_GATEWAY_MODEL_OUTPUT_MAX_ARRAY_ITEMS = 20;
 const MCP_GATEWAY_MODEL_OUTPUT_MAX_OBJECT_KEYS = 40;
 const MCP_GATEWAY_MODEL_OUTPUT_MAX_DEPTH = 6;
 
-const READONLY_MCP_TOOL_DENY_PATTERN =
-  /(?:^|[_*-])(write|edit|create|move|delete|remove|run|exec|execute|shell|install|apply|commit|checkout|reset|add|stage|unstage|discard|drop|push|pull|merge|rebase|stash|upload|send|post|put|patch|update|insert|replace)(?:$|[_*-])/iu;
+// Readonly profile 拒绝清单：只拦截**前缀就是写动词**的 tool，避免误伤 *_list / *_get 这类名词性 tool。
+// 歧义动词（commit/merge/pull/...）只通过 exact set 命中已知的写操作。
+const READONLY_MCP_TOOL_DENY_PREFIX_PATTERN =
+  /^(?:write|edit|create|delete|remove|move|install|apply|drop|upload|insert|replace|update|reset|patch|put|post)(?:[_-]|$)/iu;
+
+const READONLY_MCP_TOOL_DENY_EXACT: ReadonlySet<string> = new Set<string>([
+  // 单动词
+  'commit', 'push', 'merge', 'pull', 'rebase', 'stash', 'add', 'checkout',
+  'send', 'run', 'exec', 'execute',
+  // Git 风格
+  'git_commit', 'git_push', 'git_merge', 'git_pull', 'git_rebase',
+  'git_stash', 'git_add', 'git_checkout', 'git_reset',
+  // PR / MR 合并
+  'merge_pr', 'merge_pull_request', 'merge_merge_request',
+  'close_pr', 'close_pull_request', 'close_merge_request',
+  // 消息发送
+  'send_message', 'send_email', 'send_request', 'send_notification',
+  'post_message', 'post_comment', 'reply',
+  // Shell / exec
+  'run_command', 'run_shell', 'exec_command', 'execute_command',
+  'shell_exec', 'shell_run', 'bash', 'sh',
+]);
+
 const GIT_NATIVE_FILE_DUPLICATE_TOOL_PATTERN =
   /(?:^|[_*-])(?:read_file|write_file|edit_file|create_directory|move_file|delete_file|grep)(?:$|[_*-])/iu;
+
 const PROBE_NATIVE_FILE_DUPLICATE_TOOL_PATTERN =
   /(?:^|[_*-])(?:grep|search_code|search_files|extract_code|read_file|list_files)(?:$|[_*-])/iu;
 
 export const MCP_GATEWAY_TOOL_NAMES = ['mcp_list_tools', 'mcp_call_tool'] as const;
 
 const mcpGatewayServerNameSchema = z.enum(MCP_SERVER_NAMES);
+
 const mcpGatewayListInputSchema = z.object({
   serverName: mcpGatewayServerNameSchema,
 });
+
 const mcpGatewayCallInputSchema = z.object({
   serverName: mcpGatewayServerNameSchema,
   toolName: z.string().trim().min(1),
@@ -151,27 +189,29 @@ const toRecord = (value: unknown): Record<string, unknown> | null => (
     : null
 );
 
+let unwrapConflictWarningEmitted = false;
+
 const unwrapGatewayToolInput = (value: unknown): unknown => {
   const record = toRecord(value);
-
   if (!record) {
     return {};
   }
-
   if ('serverName' in record || 'toolName' in record) {
     return record;
   }
-
   const input = toRecord(record.input);
+  const args = toRecord(record.arguments);
+  // 优先级：input > arguments；若两者并存，告警一次（生产期检测异常模型输出）
+  if (input && args && !unwrapConflictWarningEmitted) {
+    unwrapConflictWarningEmitted = true;
+    console.warn('[mcp-gateway] tool input wrapped with both `input` and `arguments`; using `input`.');
+  }
   if (input) {
     return input;
   }
-
-  const args = toRecord(record.arguments);
   if (args) {
     return args;
   }
-
   return record;
 };
 
@@ -183,18 +223,17 @@ const createJsonToolModelOutput = (value: unknown): { type: 'json'; value: unkno
 const getToolDescription = (tool: unknown): string => {
   const record = toRecord(tool);
   const description = record?.description;
-
   return typeof description === 'string' ? description : '';
 };
 
-const createCompactToolDescription = (tool: unknown): string => {
-  const normalized = getToolDescription(tool).replace(/\s+/gu, ' ').trim();
+const createCompactToolDescription = (tool: unknown, toolName: string): string => {
+  const raw = getToolDescription(tool).replace(/\s+/gu, ' ').trim();
+  const fallback = raw || `(no description for ${toolName})`;
   const truncated = truncateModelOutputText(
-    normalized,
+    fallback,
     MCP_GATEWAY_TOOL_DESCRIPTION_MAX_CHARS,
     { includeNotice: false },
   );
-
   return truncated.truncated ? `${truncated.text}...` : truncated.text;
 };
 
@@ -220,14 +259,20 @@ const filterNativeFilePrimitiveDuplicates = (
   tools: ToolsInput,
 ): ToolsInput => {
   const filteredTools: ToolsInput = {};
-
   for (const [name, tool] of Object.entries(tools)) {
     if (!isNativeFilePrimitiveDuplicateTool(serverName, name)) {
       filteredTools[name] = tool;
     }
   }
-
   return filteredTools;
+};
+
+const isWriteishToolName = (toolName: string): boolean => {
+  const lower = toolName.toLowerCase();
+  if (READONLY_MCP_TOOL_DENY_EXACT.has(lower)) {
+    return true;
+  }
+  return READONLY_MCP_TOOL_DENY_PREFIX_PATTERN.test(toolName);
 };
 
 const filterMcpToolsForProfile = (
@@ -236,19 +281,15 @@ const filterMcpToolsForProfile = (
   profile: TMcpGatewayToolProfile,
 ): ToolsInput => {
   const nativeFilteredTools = filterNativeFilePrimitiveDuplicates(serverName, tools);
-
   if (profile === 'write') {
     return nativeFilteredTools;
   }
-
   const filteredTools: ToolsInput = {};
-
   for (const [name, tool] of Object.entries(nativeFilteredTools)) {
-    if (!READONLY_MCP_TOOL_DENY_PATTERN.test(name)) {
+    if (!isWriteishToolName(name)) {
       filteredTools[name] = tool;
     }
   }
-
   return filteredTools;
 };
 
@@ -258,50 +299,82 @@ const resolveMcpGatewayTool = (
   toolName: string,
 ): IMcpGatewayResolvedTool | null => {
   const direct = tools[toolName];
-
   if (direct) {
     return { name: toolName, tool: direct };
   }
-
   const prefixedName = `${normalizeMcpServerToolPrefix(serverName)}_${toolName}`;
   const prefixed = tools[prefixedName];
-
   if (prefixed) {
     return { name: prefixedName, tool: prefixed };
   }
-
   const suffix = `_${toolName}`;
   const matches = Object.entries(tools).filter(([name]) => name.endsWith(suffix));
-
   if (matches.length !== 1) {
     return null;
   }
-
   const match = matches[0];
-
   return match ? { name: match[0], tool: match[1] } : null;
 };
 
 const isExecutableTool = (tool: unknown): tool is IMcpGatewayExecutableTool => {
   const record = toRecord(tool);
-
   return typeof record?.execute === 'function';
 };
 
-const executeMcpGatewayTool = async (tool: unknown, input: unknown): Promise<unknown> => {
+// Mastra createTool 的 execute 签名是 (args: { context, runtimeContext, ... }) → 输入参数在 args.context
+// 部分 MCP 适配器可能直接传 raw args → 输入参数就是 args 自身
+// 双路兼容：先试 Mastra 风格，捕获到 context-相关错误则回退原始参数
+const isContextSignatureError = (error: unknown): boolean => {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  return /\b(?:context|runtimeContext|undefined is not an object|cannot read propert)/iu.test(error.message);
+};
+
+const executeMcpGatewayToolWithTimeout = async (
+  tool: unknown,
+  args: Record<string, unknown>,
+  timeoutMs: number,
+): Promise<unknown> => {
   if (!isExecutableTool(tool)) {
     throw new Error('目标 MCP tool 没有可执行入口。');
   }
-
-  return await tool.execute(input);
+  const invoke = async (): Promise<unknown> => {
+    try {
+      return await tool.execute({ context: args, runtimeContext: undefined });
+    } catch (error) {
+      if (isContextSignatureError(error)) {
+        return await tool.execute(args);
+      }
+      throw error;
+    }
+  };
+  let timeoutHandle: NodeJS.Timeout | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutHandle = setTimeout(
+      () => reject(new Error(`MCP tool 调用超时（${timeoutMs}ms）。`)),
+      timeoutMs,
+    );
+    timeoutHandle.unref();
+  });
+  try {
+    return await Promise.race([invoke(), timeoutPromise]);
+  } finally {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+    }
+  }
 };
 
 const createPoolKey = (
   workspaceRootPath: string | undefined,
   serverName: TMcpServerName,
+  pinnedIgnoreWorkspace: ReadonlySet<TMcpServerName>,
 ): string => {
+  if (pinnedIgnoreWorkspace.has(serverName)) {
+    return `<global>::${serverName}`;
+  }
   const workspaceKey = workspaceRootPath ? resolve(workspaceRootPath) : '<default>';
-
   return `${workspaceKey}::${serverName}`;
 };
 
@@ -311,7 +384,6 @@ const createCatalogKey = (
 ): string => `${serverName}::${profile}`;
 
 const readErrors = (bundle: IMcpGatewayBundle): string[] => bundle.errors ?? [];
-
 const readConfigs = (bundle: IMcpGatewayBundle): IMcpServerConfig[] => bundle.configs ?? [];
 
 const createUnavailableReason = (
@@ -324,23 +396,18 @@ const createUnavailableReason = (
   const nativeFilteredToolCount = Object.keys(
     filterNativeFilePrimitiveDuplicates(serverName, bundle.tools),
   ).length;
-
   if (rawToolCount > 0 && nativeFilteredToolCount === 0) {
     return `MCP server ${serverName} 的本地文件读写/搜索工具已由内置 file primitives 接管。`;
   }
-
   if (nativeFilteredToolCount > 0 && filteredToolCount === 0 && profile === 'readonly') {
-    return `当前 profile 不允许使用 ${serverName} 的任何 MCP tool。`;
+    return `当前 readonly profile 不允许使用 ${serverName} 的任何 MCP tool。`;
   }
-
   if (rawToolCount === 0 && readConfigs(bundle).length === 0 && readErrors(bundle).length > 0) {
     return `当前 MCP 配置未启用 ${serverName}。`;
   }
-
   if (rawToolCount === 0) {
     return `MCP server ${serverName} 未返回工具。`;
   }
-
   return undefined;
 };
 
@@ -352,7 +419,7 @@ const createCatalogFromBundle = (
   const tools = filterMcpToolsForProfile(serverName, bundle.tools, profile);
   const toolEntries = Object.entries(tools).map(([name, tool]) => ({
     name,
-    description: createCompactToolDescription(tool),
+    description: createCompactToolDescription(tool, name),
   }));
   const unavailableReason = createUnavailableReason(
     serverName,
@@ -360,7 +427,6 @@ const createCatalogFromBundle = (
     profile,
     toolEntries.length,
   );
-
   return {
     serverName,
     profile,
@@ -379,57 +445,58 @@ const createToolUnavailableError = (
   availableTools: string[],
 ): Error => {
   const unavailableReason = createUnavailableReason(serverName, bundle, profile, availableTools.length);
+  const errors = readErrors(bundle);
   const details = [
     `MCP tool 不可用：${serverName}/${toolName}`,
-    availableTools.length > 0 ? `可用工具：${availableTools.join(', ')}` : unavailableReason,
-    ...(readErrors(bundle).length > 0 ? [`错误：${readErrors(bundle).join('；')}`] : []),
+    availableTools.length > 0 ? `可用工具：${availableTools.join(', ')}` : null,
+    unavailableReason ?? null,
+    errors.length > 0 ? `错误：${errors.join('；')}` : null,
   ].filter((line): line is string => typeof line === 'string' && line.length > 0);
-
   return new Error(details.join('\n'));
 };
 
 export class McpGatewayMetricBuffer implements IMcpGatewayMetricSink {
   private readonly metrics: TMcpGatewayMetric[] = [];
-
   private listener: ((metric: TMcpGatewayMetric) => void) | null = null;
+  private droppedCount = 0;
 
   emit(metric: TMcpGatewayMetric): void {
     if (this.listener) {
       this.listener(metric);
       return;
     }
-
     this.metrics.push(metric);
+    if (this.metrics.length > METRIC_BUFFER_MAX) {
+      this.metrics.shift();
+      this.droppedCount += 1;
+    }
   }
 
   setListener(listener: (metric: TMcpGatewayMetric) => void): void {
     this.listener = listener;
-
     while (this.metrics.length > 0) {
       const metric = this.metrics.shift();
-
       if (metric) {
         listener(metric);
       }
+    }
+    if (this.droppedCount > 0) {
+      listener({ type: 'mcp_gateway.metric_buffer_dropped', droppedCount: this.droppedCount });
+      this.droppedCount = 0;
     }
   }
 }
 
 export class McpGatewayWarmPool {
   private readonly createBundle: TMcpGatewayCreateBundle;
-
   private readonly maxWarm: number;
-
   private readonly ttlIdleMs: number;
-
   private readonly pinnedServers: ReadonlySet<TMcpServerName>;
-
+  private readonly pinnedServersIgnoreWorkspace: ReadonlySet<TMcpServerName>;
+  private readonly callTimeoutMs: number;
   private readonly now: () => number;
-
   private readonly entries = new Map<string, IMcpGatewayPoolEntry>();
-
   private readonly catalog = new Map<string, IMcpGatewayCatalog>();
-
   private readonly toolCallCounts = new Map<string, number>();
 
   constructor(options: IMcpGatewayPoolOptions) {
@@ -437,6 +504,10 @@ export class McpGatewayWarmPool {
     this.maxWarm = options.maxWarm ?? DEFAULT_MCP_GATEWAY_MAX_WARM;
     this.ttlIdleMs = options.ttlIdleMs ?? DEFAULT_MCP_GATEWAY_TTL_IDLE_MS;
     this.pinnedServers = new Set(options.pinnedServers ?? DEFAULT_MCP_GATEWAY_PINNED_SERVERS);
+    this.pinnedServersIgnoreWorkspace = new Set(
+      options.pinnedServersIgnoreWorkspace ?? DEFAULT_MCP_GATEWAY_PINNED_SERVERS_IGNORE_WORKSPACE,
+    );
+    this.callTimeoutMs = options.callTimeoutMs ?? DEFAULT_MCP_CALL_TIMEOUT_MS;
     this.now = options.now ?? Date.now;
   }
 
@@ -452,11 +523,15 @@ export class McpGatewayWarmPool {
     return {
       mcp_list_tools: createTool({
         id: 'mcp_list_tools',
-        description: '列出指定 MCP server 的工具目录；仅在不确定 tool 名称时用于探索。目录来自 sidecar 缓存，只返回工具名和描述，不暴露完整 schema。',
+        description: [
+          '列出指定 MCP server 的工具目录；仅在不确定 tool 名称时用于探索。',
+          '目录来自 sidecar 缓存，只返回工具名和描述，不暴露完整 schema。',
+          '首次调用某 server 时会触发冷启动（可能数秒），后续调用走缓存。',
+          '已知 tool 名称时应直接用 mcp_call_tool 调用，避免不必要的目录浏览。',
+        ].join('\n'),
         inputSchema: mcpGatewayListInputSchema,
         execute: async (inputData) => {
           const { serverName } = mcpGatewayListInputSchema.parse(unwrapGatewayToolInput(inputData));
-
           return await this.listTools({
             serverName,
             profile: options.profile,
@@ -474,11 +549,13 @@ export class McpGatewayWarmPool {
       }),
       mcp_call_tool: createTool({
         id: 'mcp_call_tool',
-        description: '直接按 serverName 和 toolName 调用 MCP 工具；已知道 tool 名称时应直接调用，只有不确定名称时才先用 mcp_list_tools 探索。',
+        description: [
+          '直接按 serverName 和 toolName 调用 MCP 工具。',
+          '已知道 tool 名称时应直接调用，只有不确定名称时才先用 mcp_list_tools 探索。',
+        ].join('\n'),
         inputSchema: mcpGatewayCallInputSchema,
         execute: async (inputData) => {
           const parsed = mcpGatewayCallInputSchema.parse(unwrapGatewayToolInput(inputData));
-
           return await this.callTool({
             serverName: parsed.serverName,
             toolName: parsed.toolName,
@@ -502,16 +579,26 @@ export class McpGatewayWarmPool {
   async primeCatalog(options: {
     workspaceRootPath?: string;
     serverNames?: readonly TMcpServerName[];
+    metricSink?: IMcpGatewayMetricSink;
   } = {}): Promise<void> {
     const serverNames = options.serverNames ?? MCP_SERVER_NAMES;
-
     for (const serverName of serverNames) {
+      const startedAt = this.now();
       await this.withServer({
         serverName,
         ...(options.workspaceRootPath ? { workspaceRootPath: options.workspaceRootPath } : {}),
+        ...(options.metricSink ? { metricSink: options.metricSink } : {}),
       }, (bundle) => {
         this.cacheCatalogVariants(serverName, bundle);
-      }).catch(() => undefined);
+      }).catch((error: unknown) => {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        options.metricSink?.emit({
+          type: 'mcp_gateway.boot_failed',
+          serverName,
+          durationMs: this.now() - startedAt,
+          errorMessage,
+        });
+      });
     }
   }
 
@@ -524,17 +611,14 @@ export class McpGatewayWarmPool {
     const startedAt = this.now();
     const catalogKey = createCatalogKey(input.serverName, input.profile);
     const cached = this.catalog.get(catalogKey);
-
     if (cached) {
       this.emitCatalogMetric(input, true, startedAt, cached);
       return cached;
     }
-
     const catalog = await this.withServer(input, (bundle) => {
       this.cacheCatalogVariants(input.serverName, bundle);
       return this.catalog.get(catalogKey) ?? createCatalogFromBundle(input.serverName, input.profile, bundle);
     });
-
     this.emitCatalogMetric(input, false, startedAt, catalog);
     return catalog;
   }
@@ -552,11 +636,9 @@ export class McpGatewayWarmPool {
     result: unknown;
   }> {
     const startedAt = this.now();
-
     return await this.withServer(input, async (bundle) => {
       const tools = filterMcpToolsForProfile(input.serverName, bundle.tools, input.profile);
       const resolvedTool = resolveMcpGatewayTool(tools, input.serverName, input.toolName);
-
       if (!resolvedTool) {
         throw createToolUnavailableError(
           input.serverName,
@@ -566,12 +648,14 @@ export class McpGatewayWarmPool {
           Object.keys(tools),
         );
       }
-
+      const frequencyKey = `${input.serverName}/${resolvedTool.name}`;
       try {
-        const result = await executeMcpGatewayTool(resolvedTool.tool, input.arguments);
-        const frequencyKey = `${input.serverName}/${resolvedTool.name}`;
+        const result = await executeMcpGatewayToolWithTimeout(
+          resolvedTool.tool,
+          input.arguments,
+          this.callTimeoutMs,
+        );
         const toolCallCount = (this.toolCallCounts.get(frequencyKey) ?? 0) + 1;
-
         this.toolCallCounts.set(frequencyKey, toolCallCount);
         input.metricSink?.emit({
           type: 'mcp_gateway.call',
@@ -584,7 +668,6 @@ export class McpGatewayWarmPool {
           toolCallCount,
           errorCount: readErrors(bundle).length,
         });
-
         return {
           serverName: input.serverName,
           toolName: resolvedTool.name,
@@ -599,7 +682,7 @@ export class McpGatewayWarmPool {
           durationMs: this.now() - startedAt,
           activeBundleCount: this.countActiveBundles(),
           warmBundleCount: this.countWarmBundles(),
-          toolCallCount: this.toolCallCounts.get(`${input.serverName}/${resolvedTool.name}`) ?? 0,
+          toolCallCount: this.toolCallCounts.get(frequencyKey) ?? 0,
           errorCount: readErrors(bundle).length + 1,
         });
         throw error;
@@ -612,7 +695,6 @@ export class McpGatewayWarmPool {
     this.entries.clear();
     this.catalog.clear();
     this.toolCallCounts.clear();
-
     await Promise.all(entries.map(async (entry) => {
       this.clearIdleTimer(entry);
       await entry.bundle?.disconnectAll().catch(() => undefined);
@@ -624,23 +706,19 @@ export class McpGatewayWarmPool {
     action: (bundle: IMcpGatewayBundle) => T | Promise<T>,
   ): Promise<T> {
     const entry = await this.ensureEntry(input);
-
     entry.activeCount += 1;
     this.clearIdleTimer(entry);
-
     try {
       const bundle = entry.bundle;
-
       if (!bundle) {
         throw new Error(`MCP server ${input.serverName} 未完成初始化。`);
       }
-
       return await action(bundle);
     } finally {
       entry.activeCount = Math.max(0, entry.activeCount - 1);
       entry.lastUsedAt = this.now();
       this.scheduleIdleDisconnect(entry);
-      void this.evictOverflow();
+      void this.evictOverflow().catch(() => undefined);
     }
   }
 
@@ -650,19 +728,15 @@ export class McpGatewayWarmPool {
     metricSink?: IMcpGatewayMetricSink;
   }): Promise<IMcpGatewayPoolEntry> {
     await this.evictExpired();
-
-    const key = createPoolKey(input.workspaceRootPath, input.serverName);
+    const key = createPoolKey(input.workspaceRootPath, input.serverName, this.pinnedServersIgnoreWorkspace);
     const existing = this.entries.get(key);
-
     if (existing?.bundle) {
       existing.lastUsedAt = this.now();
       return existing;
     }
-
     if (existing?.creating) {
       return await existing.creating;
     }
-
     const entry: IMcpGatewayPoolEntry = {
       key,
       serverName: input.serverName,
@@ -671,7 +745,6 @@ export class McpGatewayWarmPool {
       lastUsedAt: this.now(),
     };
     const startedAt = this.now();
-
     entry.creating = this.createBundle({
       ...(input.workspaceRootPath ? { workspaceRootPath: input.workspaceRootPath } : {}),
       serverNames: [input.serverName],
@@ -680,7 +753,6 @@ export class McpGatewayWarmPool {
       delete entry.creating;
       entry.lastUsedAt = this.now();
       this.cacheCatalogVariants(input.serverName, bundle);
-      this.entries.set(key, entry);
       this.scheduleIdleDisconnect(entry);
       input.metricSink?.emit({
         type: 'mcp_gateway.boot',
@@ -691,14 +763,13 @@ export class McpGatewayWarmPool {
         toolCount: Object.keys(bundle.tools).length,
         errorCount: readErrors(bundle).length,
       });
-      void this.evictOverflow();
+      void this.evictOverflow().catch(() => undefined);
       return entry;
     }).catch((error: unknown) => {
       this.entries.delete(key);
       delete entry.creating;
       throw error;
     });
-
     this.entries.set(key, entry);
     return await entry.creating;
   }
@@ -743,33 +814,24 @@ export class McpGatewayWarmPool {
     if (!entry.idleTimer) {
       return;
     }
-
     clearTimeout(entry.idleTimer);
     delete entry.idleTimer;
   }
 
   private scheduleIdleDisconnect(entry: IMcpGatewayPoolEntry): void {
     this.clearIdleTimer(entry);
-
     if (!entry.bundle || this.pinnedServers.has(entry.serverName)) {
       return;
     }
-
     entry.idleTimer = setTimeout(() => {
       if (entry.activeCount > 0 || !entry.bundle) {
         return;
       }
-
       if (this.now() - entry.lastUsedAt < this.ttlIdleMs) {
         this.scheduleIdleDisconnect(entry);
         return;
       }
-
-      const bundle = entry.bundle;
-
-      this.entries.delete(entry.key);
-      delete entry.bundle;
-      void bundle.disconnectAll().catch(() => undefined);
+      void this.disconnectEntry(entry).catch(() => undefined);
     }, this.ttlIdleMs);
     entry.idleTimer.unref();
   }
@@ -782,7 +844,6 @@ export class McpGatewayWarmPool {
       && !this.pinnedServers.has(entry.serverName)
       && now - entry.lastUsedAt >= this.ttlIdleMs
     ));
-
     await Promise.all(expiredEntries.map((entry) => this.disconnectEntry(entry)));
   }
 
@@ -794,10 +855,8 @@ export class McpGatewayWarmPool {
         && !this.pinnedServers.has(entry.serverName)
       ))
       .sort((left, right) => left.lastUsedAt - right.lastUsedAt);
-
     while (this.countWarmBundles() > this.maxWarm && candidates.length > 0) {
       const entry = candidates.shift();
-
       if (entry) {
         await this.disconnectEntry(entry);
       }
@@ -807,8 +866,11 @@ export class McpGatewayWarmPool {
   private async disconnectEntry(entry: IMcpGatewayPoolEntry): Promise<void> {
     this.clearIdleTimer(entry);
     this.entries.delete(entry.key);
-    await entry.bundle?.disconnectAll().catch(() => undefined);
+    const bundle = entry.bundle;
     delete entry.bundle;
+    if (bundle) {
+      await bundle.disconnectAll().catch(() => undefined);
+    }
   }
 }
 

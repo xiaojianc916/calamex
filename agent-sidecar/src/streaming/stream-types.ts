@@ -1,5 +1,11 @@
 import { randomUUID } from 'node:crypto';
 
+/**
+ * 内部 runtime event 协议版本。
+ *
+ * 这是 sidecar 内部事件契约（`TAgentRuntimeEvent`），
+ * 不是 UI wire envelope（后者由 `events.ts.AGENT_SIDECAR_RESPONSE_SCHEMA_VERSION` 管）。
+ */
 export const AGENT_RUNTIME_EVENT_SCHEMA_VERSION = 1 as const;
 
 export const AGENT_RUNTIME_EVENT_TYPES = [
@@ -54,10 +60,29 @@ export interface IAgentRuntimeEventBase {
   spanId?: string;
 }
 
+// -----------------------------------------------------------------------
+// Run lifecycle
+// -----------------------------------------------------------------------
+
 export interface IAgentRunStartedEvent extends IAgentRuntimeEventBase {
   type: 'agent.run.started';
   inputPreview?: string;
 }
+
+export interface IAgentRunCompletedEvent extends IAgentRuntimeEventBase {
+  type: 'agent.run.completed';
+  stopReason?: string;
+  outputPreview?: string;
+}
+
+export interface IAgentRunErrorEvent extends IAgentRuntimeEventBase {
+  type: 'agent.run.error';
+  errorMessage: string;
+}
+
+// -----------------------------------------------------------------------
+// Streaming output
+// -----------------------------------------------------------------------
 
 export interface IAgentTextDeltaEvent extends IAgentRuntimeEventBase {
   type: 'agent.text.delta';
@@ -69,10 +94,14 @@ export interface IAgentReasoningDeltaEvent extends IAgentRuntimeEventBase {
   text: string;
 }
 
+// -----------------------------------------------------------------------
+// Model
+// -----------------------------------------------------------------------
+
 export interface IAgentModelStartedEvent extends IAgentRuntimeEventBase {
   type: 'agent.model.started';
+  /** 仅在 Mastra 提供该字段时存在。可用性判定：`event.projectedInputTokens !== undefined`。 */
   projectedInputTokens?: number;
-  projectedInputTokensAvailable: boolean;
 }
 
 export interface IAgentModelCompletedEvent extends IAgentRuntimeEventBase {
@@ -81,6 +110,10 @@ export interface IAgentModelCompletedEvent extends IAgentRuntimeEventBase {
   stopReason?: string;
   errorMessage?: string;
 }
+
+// -----------------------------------------------------------------------
+// Tools
+// -----------------------------------------------------------------------
 
 export interface IAgentToolStartedEvent extends IAgentRuntimeEventBase {
   type: 'agent.tool.started';
@@ -92,7 +125,8 @@ export interface IAgentToolStartedEvent extends IAgentRuntimeEventBase {
 
 export interface IAgentToolProgressEvent extends IAgentRuntimeEventBase {
   type: 'agent.tool.progress';
-  dataPreview: string;
+  /** Mastra `toolStreamUpdateEvent.event.data` 的 redact + 截断预览；进度心跳无 data 时可能缺省。 */
+  dataPreview?: string;
 }
 
 export interface IAgentToolCompletedEvent extends IAgentRuntimeEventBase {
@@ -102,7 +136,13 @@ export interface IAgentToolCompletedEvent extends IAgentRuntimeEventBase {
   ok: boolean;
   resultPreview?: string;
   errorMessage?: string;
+  /** Mastra `result.status` 的原始字符串（如 `'success'` / `'error'` / `'cancelled'`）。 */
+  status?: string;
 }
+
+// -----------------------------------------------------------------------
+// Adaptive context (acontext)
+// -----------------------------------------------------------------------
 
 export interface IAgentAcontextEnvelopeEvent extends IAgentRuntimeEventBase {
   type: 'acontext.envelope.injected' | 'acontext.envelope.replaced';
@@ -113,8 +153,8 @@ export interface IAgentAcontextEnvelopeEvent extends IAgentRuntimeEventBase {
 
 export interface IAgentAcontextTokenEvent extends IAgentRuntimeEventBase {
   type: 'acontext.token.checked';
+  /** 仅在估算可用时存在。 */
   projectedInputTokens?: number;
-  projectedInputTokensAvailable: boolean;
   inputCharCount?: number;
   systemPromptCharCount?: number;
   messageCharCount?: number;
@@ -143,8 +183,8 @@ export interface IAgentAcontextProviderPayloadEvent extends IAgentRuntimeEventBa
   stream?: boolean;
   requestIndex: number;
   requestBodyCharCount: number;
+  /** Payload 阶段已构建完请求体，tokens 必算得出。 */
   projectedInputTokens: number;
-  projectedInputTokensAvailable: true;
   messageCharCount: number;
   systemMessageCharCount: number;
   userMessageCharCount: number;
@@ -176,6 +216,10 @@ export interface IAgentAcontextMemoryCompressedEvent extends IAgentRuntimeEventB
   triggeredBy?: 'threshold' | 'ttl' | 'provider_change';
 }
 
+// -----------------------------------------------------------------------
+// Rollback
+// -----------------------------------------------------------------------
+
 export interface IAgentCheckpointEvent extends IAgentRuntimeEventBase {
   type: 'rollback.checkpoint.created' | 'rollback.checkpoint.failed';
   snapshotId?: string;
@@ -194,6 +238,10 @@ export interface IAgentRollbackEvent extends IAgentRuntimeEventBase {
   errorMessage?: string;
 }
 
+// -----------------------------------------------------------------------
+// Side effects
+// -----------------------------------------------------------------------
+
 export interface IAgentSideEffectEvent extends IAgentRuntimeEventBase {
   type: 'side_effect.recorded' | 'side_effect.warning';
   toolName: string;
@@ -202,21 +250,14 @@ export interface IAgentSideEffectEvent extends IAgentRuntimeEventBase {
   message: string;
 }
 
+// -----------------------------------------------------------------------
+// Misc
+// -----------------------------------------------------------------------
+
 export interface IAgentMessageEvent extends IAgentRuntimeEventBase {
   type: 'agent.message.added';
   role?: string;
   messageKind?: string;
-}
-
-export interface IAgentRunCompletedEvent extends IAgentRuntimeEventBase {
-  type: 'agent.run.completed';
-  stopReason?: string;
-  outputPreview?: string;
-}
-
-export interface IAgentRunErrorEvent extends IAgentRuntimeEventBase {
-  type: 'agent.run.error';
-  errorMessage: string;
 }
 
 export interface IAgentDebugEvent extends IAgentRuntimeEventBase {
@@ -224,6 +265,10 @@ export interface IAgentDebugEvent extends IAgentRuntimeEventBase {
   name: string;
   data?: Record<string, string | number | boolean | null>;
 }
+
+// -----------------------------------------------------------------------
+// Union + draft
+// -----------------------------------------------------------------------
 
 export type TAgentRuntimeEvent =
   | IAgentRunStartedEvent
@@ -246,6 +291,27 @@ export type TAgentRuntimeEvent =
   | IAgentRunCompletedEvent
   | IAgentRunErrorEvent
   | IAgentDebugEvent;
+
+// -----------------------------------------------------------------------
+// 编译期穷尽性检查：
+// AGENT_RUNTIME_EVENT_TYPES 数组与 TAgentRuntimeEvent 联合任一边漏写都会编译失败。
+// -----------------------------------------------------------------------
+
+type _MissingInUnion = Exclude<TAgentRuntimeEventType, TAgentRuntimeEvent['type']>;
+type _MissingInArray = Exclude<TAgentRuntimeEvent['type'], TAgentRuntimeEventType>;
+type _AssertExhaustive =
+  [_MissingInUnion, _MissingInArray] extends [never, never]
+  ? true
+  : {
+    missingInUnion: _MissingInUnion;
+    missingInArray: _MissingInArray;
+  };
+const _assertExhaustive: _AssertExhaustive = true;
+void _assertExhaustive;
+
+// -----------------------------------------------------------------------
+// Draft + factory
+// -----------------------------------------------------------------------
 
 type TAgentRuntimeEventBaseKey =
   | 'id'
@@ -270,11 +336,24 @@ export interface IAgentRuntimeEventContext {
   now?: () => string;
 }
 
-export const createAgentRuntimeEvent = (
+/**
+ * 构造一个 `TAgentRuntimeEvent`。
+ *
+ * 使用泛型保留调用方处的具体子类型：
+ * ```ts
+ * const ev = createAgentRuntimeEvent(ctx, 1, {
+ *   type: 'agent.tool.started',
+ *   visibility: 'user',
+ *   toolName: 'x',
+ * });
+ * // ev 推断为 IAgentToolStartedEvent & IAgentRuntimeEventBase
+ * ```
+ */
+export const createAgentRuntimeEvent = <T extends TAgentRuntimeEventDraft>(
   context: IAgentRuntimeEventContext,
   seq: number,
-  draft: TAgentRuntimeEventDraft,
-): TAgentRuntimeEvent => ({
+  draft: T,
+): T & IAgentRuntimeEventBase => ({
   id: randomUUID(),
   runId: context.runId,
   sessionId: context.sessionId,
@@ -284,4 +363,4 @@ export const createAgentRuntimeEvent = (
   schemaVersion: AGENT_RUNTIME_EVENT_SCHEMA_VERSION,
   redacted: true,
   ...draft,
-}) as TAgentRuntimeEvent;
+} as T & IAgentRuntimeEventBase);

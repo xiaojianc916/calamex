@@ -2,9 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-
 import { z } from 'zod';
-
 import {
   toAgentSidecarResponse,
   toAgentUiEvent,
@@ -24,17 +22,21 @@ const DEFAULT_RUNTIME_TIMEOUT_MS = 30 * 60 * 1000;
 export const SIDECAR_PROTOCOL_VERSION = '7';
 export const SIDECAR_IMPLEMENTATION_VERSION = 'deepseek-reasoning-transport-v6-plan-history';
 
+// -----------------------------------------------------------------------
+// 基础 schema 工具
+// -----------------------------------------------------------------------
+
 const agentModeSchema = z.enum(['ask', 'plan', 'agent', 'patch', 'review']);
+
+const approvalDecisionSchema = z.enum(['approve', 'reject', 'cancel', 'modify']);
 
 const optionalNonEmptyStringSchema = z.preprocess((value) => {
   if (value === null || value === undefined) {
     return undefined;
   }
-
   if (typeof value === 'string' && value.trim().length === 0) {
     return undefined;
   }
-
   return value;
 }, z.string().trim().min(1).optional()).optional();
 
@@ -44,11 +46,9 @@ const optionalAgentModeSchema = z.preprocess((value) => {
   if (value === null || value === undefined) {
     return undefined;
   }
-
   if (typeof value === 'string' && value.trim().length === 0) {
     return undefined;
   }
-
   return value;
 }, agentModeSchema.optional()).optional();
 
@@ -56,11 +56,9 @@ const optionalWorkspaceRootPathSchema = z.preprocess((value) => {
   if (value === null || value === undefined) {
     return value;
   }
-
   if (typeof value === 'string' && value.trim().length === 0) {
     return undefined;
   }
-
   return value;
 }, z.string().trim().min(1).nullable().optional()).optional();
 
@@ -81,6 +79,10 @@ const agentContextReferenceSchema = z.object({
   contentPreview: z.string(),
   redacted: z.boolean(),
 });
+
+// -----------------------------------------------------------------------
+// Request schemas
+// -----------------------------------------------------------------------
 
 export const baseAgentRequestSchema = z.object({
   sessionId: optionalNonEmptyStringSchema,
@@ -145,13 +147,17 @@ export const agentSidecarPlanQueryRequestSchema = z.object({
 const approvalResolutionSchema = z.object({
   sessionId: optionalNonEmptyStringSchema,
   requestId: z.string().min(1),
-  decision: z.string().min(1),
+  decision: approvalDecisionSchema,
 });
 
-const rollbackStepSchema = z.union([
-  requiredNonEmptyStringSchema,
+/**
+ * 把单字符串归一为单元素数组；输出永远是 `string[]`，
+ * 结构上兼容 `TRollbackStepPath = readonly string[]`。
+ */
+const rollbackStepSchema = z.preprocess(
+  (value) => (typeof value === 'string' ? [value] : value),
   z.array(requiredNonEmptyStringSchema).min(1),
-]);
+);
 
 export const agentSidecarRollbackRestoreRequestSchema = z.object({
   sessionId: optionalNonEmptyStringSchema,
@@ -159,6 +165,10 @@ export const agentSidecarRollbackRestoreRequestSchema = z.object({
   snapshotId: optionalNonEmptyStringSchema,
   step: rollbackStepSchema.optional(),
 });
+
+// -----------------------------------------------------------------------
+// HTTP utilities
+// -----------------------------------------------------------------------
 
 const writeJson = (response: ServerResponse, statusCode: number, payload: unknown): void => {
   response.writeHead(statusCode, {
@@ -171,7 +181,6 @@ const readBody = async (request: IncomingMessage): Promise<unknown> =>
   new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let totalBytes = 0;
-
     request.on('data', (chunk: Buffer) => {
       totalBytes += chunk.byteLength;
       if (totalBytes > MAX_REQUEST_BYTES) {
@@ -181,7 +190,6 @@ const readBody = async (request: IncomingMessage): Promise<unknown> =>
       }
       chunks.push(chunk);
     });
-
     request.on('error', reject);
     request.on('end', () => {
       const rawBody = Buffer.concat(chunks).toString('utf8').trim();
@@ -189,7 +197,6 @@ const readBody = async (request: IncomingMessage): Promise<unknown> =>
         resolve({});
         return;
       }
-
       try {
         resolve(JSON.parse(rawBody));
       } catch {
@@ -211,31 +218,24 @@ const toAgentInput = (
     messages: payload.messages,
     context: payload.context,
   };
-
   if (payload.sessionId) {
     input.sessionId = payload.sessionId;
   }
-
   if (payload.workspaceRootPath) {
     input.workspaceRootPath = payload.workspaceRootPath;
   }
-
   if (payload.threadId) {
     input.threadId = payload.threadId;
   }
-
   if (payload.planId) {
     input.planId = payload.planId;
   }
-
   if (payload.planVersion) {
     input.planVersion = payload.planVersion;
   }
-
   if (payload.planStepId) {
     input.planStepId = payload.planStepId;
   }
-
   return input;
 };
 
@@ -280,7 +280,6 @@ const writeNdjsonFrame = (response: ServerResponse, payload: unknown): void => {
   if (response.writableEnded || response.destroyed) {
     return;
   }
-
   response.write(`${JSON.stringify(payload)}\n`);
 };
 
@@ -300,11 +299,9 @@ const createRuntimeRunOptions = (
   onEvent?: (event: TAgentRuntimeOutputEvent) => void,
 ): IAgentRuntimeRunOptions => {
   const controller = new AbortController();
-
   request.once('aborted', () => {
     controller.abort();
   });
-
   return {
     context: {
       requestId: randomUUID(),
@@ -337,7 +334,6 @@ const handlePostStream = async (
         event: toAgentUiEvent(event),
       });
     }));
-
     writeNdjsonFrame(response, {
       type: 'response',
       response: toValidatedSidecarResponse(payload),
@@ -350,7 +346,6 @@ const handlePostStream = async (
       });
       return;
     }
-
     writeNdjsonFrame(response, {
       type: 'error',
       error: error instanceof Error ? error.message : String(error),
@@ -359,11 +354,14 @@ const handlePostStream = async (
   }
 };
 
+// -----------------------------------------------------------------------
+// Server
+// -----------------------------------------------------------------------
+
 export const createAgentSidecarServer = (
   options: { runtime?: IAgentSidecarRuntime } = {},
 ) => {
   const runtime = options.runtime ?? createConfiguredRuntime();
-
   return createServer((request, response) => {
     const url = request.url ?? '/';
     const parsedUrl = new URL(url, 'http://127.0.0.1');
@@ -389,14 +387,12 @@ export const createAgentSidecarServer = (
         planId,
         ...(version !== undefined ? { version } : {}),
       });
-
       if (!payload.success) {
         writeJson(response, 400, {
           error: '计划查询参数无效。',
         });
         return;
       }
-
       void handleRuntimeResponse(request, response, async (options) =>
         runtime.getPlan(payload.data, options)
       );
@@ -542,7 +538,6 @@ const resolvePort = (): number => {
   if (!rawPort) {
     return DEFAULT_PORT;
   }
-
   const parsed = Number(rawPort);
   return Number.isInteger(parsed) && parsed > 0 && parsed <= 65_535 ? parsed : DEFAULT_PORT;
 };

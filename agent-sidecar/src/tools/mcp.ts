@@ -11,16 +11,27 @@ import {
   type MastraMCPServerDefinition,
 } from '@mastra/mcp';
 
-export interface IMcpServerConfig {
-  name: string;
-  transportType: 'stdio' | 'http';
-  command?: string;
-  args?: string[];
-  env?: Record<string, string>;
-  cwd?: string | null;
-  url?: string;
-  headers?: Record<string, string>;
-}
+// ─────────────────────────────────────────────────────────────────────────────
+// Types
+
+/**
+ * MCP server 配置；transportType 区分 stdio / http，对应字段在各分支下变必填。
+ */
+export type IMcpServerConfig =
+  | {
+    name: string;
+    transportType: 'stdio';
+    command: string;
+    args?: string[];
+    env?: Record<string, string>;
+    cwd?: string | null;
+  }
+  | {
+    name: string;
+    transportType: 'http';
+    url: string;
+    headers?: Record<string, string>;
+  };
 
 export interface IMastraMcpClientBundle {
   client: MCPClient | null;
@@ -58,17 +69,38 @@ export interface IMcpConfigOptions {
   serverNames?: readonly TMcpServerName[];
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Constants
+
 const SIDECAR_ROOT = resolve(fileURLToPath(new URL('../../', import.meta.url)));
 const PROJECT_ROOT = resolve(SIDECAR_ROOT, '..');
 const NODE_BIN_DIRECTORY = join(SIDECAR_ROOT, 'node_modules', '.bin');
+
 const DEFAULT_MEMORY_FILE_PATH = join(homedir(), '.xiaojianc', 'mcp-memory.jsonl');
 const DEFAULT_GITHUB_MCP_URL = 'https://api.githubcopilot.com/mcp/';
-const PROBE_MCP_NPX_SPEC = '@probelabs/probe@0.6.0-rc315';
-const MCP_LIST_TOOLS_TIMEOUT_MS = 10_000;
+
+/** 第三方 MCP 包版本统一管理；升级时改这里一处。 */
+const MCP_PACKAGE_SPECS = {
+  mcpServerGit: 'mcp-server-git==2026.1.14',
+  hooksMcp: 'hooks-mcp==0.2.4',
+  sqliteMcp: 'sqlite-mcp==0.1.0',
+  probe: '@probelabs/probe@0.6.0-rc315', // NOTE: pre-release；首次启动需联网拉包
+} as const;
+
+/** MCPClient 单次 RPC 超时（listTools 之外的常规调用）。 */
+const MCP_RPC_TIMEOUT_MS = 10_000;
+/** 启动时 listTools 超时（包含 spawn + 握手，通常比常规 RPC 慢）。 */
+const MCP_LIST_TOOLS_TIMEOUT_MS = 30_000;
+/** disconnect 超时；超过则放弃等待。 */
+const MCP_DISCONNECT_TIMEOUT_MS = 5_000;
+/** 每个 MCP server 最多收集多少条 error 进 errors[]，超过丢弃。 */
+const MCP_RUNTIME_ERROR_LIMIT_PER_SERVER = 3;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
 
 const trimToNull = (value: string | null | undefined): string | null => {
   const trimmed = value?.trim();
-
   return trimmed ? trimmed : null;
 };
 
@@ -103,11 +135,9 @@ const resolveNodeServerCommand = (
   errors: string[],
 ): string | null => {
   const command = localBinPath(binName, platform);
-
   if (existsSync(command)) {
     return command;
   }
-
   errors.push(`MCP server 可执行文件不存在：${command}`);
   return null;
 };
@@ -116,7 +146,6 @@ const normalizeAbsoluteExecutablePath = (value: string | null): string | null =>
   if (!value) {
     return null;
   }
-
   const normalized = resolve(value);
   return existsSync(normalized) ? normalized : null;
 };
@@ -132,11 +161,9 @@ const resolveWindowsUvxCommand = (
   if (configured) {
     return configured;
   }
-
   if (platform !== 'win32') {
     return null;
   }
-
   const candidates = [
     join(trimToNull(env.USERPROFILE) ?? '', '.local', 'bin', 'uvx.exe'),
     join(trimToNull(env.USERPROFILE) ?? '', '.cargo', 'bin', 'uvx.exe'),
@@ -145,14 +172,12 @@ const resolveWindowsUvxCommand = (
     join(trimToNull(env.ProgramFiles) ?? '', 'uv', 'uvx.exe'),
     join(trimToNull(env['ProgramFiles(x86)']) ?? '', 'uv', 'uvx.exe'),
   ];
-
   for (const candidate of candidates) {
     const resolved = normalizeAbsoluteExecutablePath(candidate);
     if (resolved) {
       return resolved;
     }
   }
-
   return null;
 };
 
@@ -164,11 +189,9 @@ const resolveWindowsGitExecutable = (
   if (configured) {
     return configured;
   }
-
   if (platform !== 'win32') {
     return null;
   }
-
   const programFiles = trimToNull(env.ProgramFiles) ?? 'C:\\Program Files';
   const programFilesX86 = trimToNull(env['ProgramFiles(x86)']) ?? 'C:\\Program Files (x86)';
   const localAppData = trimToNull(env.LOCALAPPDATA);
@@ -180,14 +203,12 @@ const resolveWindowsGitExecutable = (
     localAppData ? join(localAppData, 'Programs', 'Git', 'cmd', 'git.exe') : '',
     localAppData ? join(localAppData, 'Programs', 'Git', 'bin', 'git.exe') : '',
   ];
-
   for (const candidate of candidates) {
     const resolved = normalizeAbsoluteExecutablePath(candidate);
     if (resolved) {
       return resolved;
     }
   }
-
   return null;
 };
 
@@ -204,7 +225,6 @@ const nodeServerConfig = (
   if (!command) {
     return null;
   }
-
   return {
     name,
     transportType: 'stdio',
@@ -229,7 +249,6 @@ const uvxServerConfig = (
     errors.push(missingUvxError);
     return null;
   }
-
   return {
     name,
     transportType: 'stdio',
@@ -243,29 +262,34 @@ const uvxServerConfig = (
 const appendMcpRuntimeError = (
   errors: string[],
   knownMessages: Set<string>,
+  serverErrorCounts: Map<string, number>,
   logMessage: LogMessage,
 ): void => {
   if (logMessage.level !== 'error') {
     return;
   }
-
-  const message = `MCP server ${logMessage.serverName} 不可用，已跳过：${logMessage.message}`;
-  if (!knownMessages.has(message)) {
-    knownMessages.add(message);
-    errors.push(message);
+  const currentCount = serverErrorCounts.get(logMessage.serverName) ?? 0;
+  if (currentCount >= MCP_RUNTIME_ERROR_LIMIT_PER_SERVER) {
+    return;
   }
+  const message = `MCP server ${logMessage.serverName} 不可用，已跳过：${logMessage.message}`;
+  if (knownMessages.has(message)) {
+    return;
+  }
+  knownMessages.add(message);
+  errors.push(message);
+  serverErrorCounts.set(logMessage.serverName, currentCount + 1);
 };
 
 const mergeHeaders = (
   baseHeaders: HeadersInit | undefined,
+  // extraHeaders 优先于 baseHeaders（用于注入 Authorization 等覆盖头）。
   extraHeaders: Record<string, string>,
 ): Headers => {
   const headers = new Headers(baseHeaders);
-
   for (const [key, value] of Object.entries(extraHeaders)) {
     headers.set(key, value);
   }
-
   return headers;
 };
 
@@ -279,36 +303,36 @@ const toMastraMcpServerDefinition = (
   config: IMcpServerConfig,
   errors: string[],
   knownMessages: Set<string>,
+  serverErrorCounts: Map<string, number>,
 ): MastraMCPServerDefinition | null => {
-  const logger = (message: LogMessage): void => appendMcpRuntimeError(errors, knownMessages, message);
-
+  const logger = (message: LogMessage): void =>
+    appendMcpRuntimeError(errors, knownMessages, serverErrorCounts, message);
   if (config.transportType === 'http') {
     const url = trimToNull(config.url);
     if (!url) {
       errors.push(`MCP server ${config.name} 缺少 URL，已跳过。`);
       return null;
     }
-
     return {
       url: new URL(url),
       logger,
       ...(config.headers ? { fetch: createHeaderFetch(config.headers) } : {}),
     };
   }
-
   const command = trimToNull(config.command);
   if (!command) {
     errors.push(`MCP server ${config.name} 缺少启动命令，已跳过。`);
     return null;
   }
-
   return {
     command,
     ...(config.args ? { args: config.args } : {}),
     ...(config.env ? { env: config.env } : {}),
     ...(config.cwd ? { cwd: config.cwd } : {}),
     logger,
-    stderr: 'pipe',
+    // 'ignore' 避免 stderr pipe buffer 占满后子进程 write() 阻塞导致死锁。
+    // 如确认 MCPClient 内部已消费 stderr，可改回 'pipe' 以保留诊断信息。
+    stderr: 'ignore',
   };
 };
 
@@ -317,14 +341,23 @@ const createMastraMcpServers = (
   errors: string[],
 ): Record<string, MastraMCPServerDefinition> => {
   const knownMessages = new Set(errors);
-  const entries = configs.flatMap((config): Array<[string, MastraMCPServerDefinition]> => {
-    const server = toMastraMcpServerDefinition(config, errors, knownMessages);
-
-    return server ? [[config.name, server]] : [];
-  });
-
-  return Object.fromEntries(entries);
+  const serverErrorCounts = new Map<string, number>();
+  const result: Record<string, MastraMCPServerDefinition> = {};
+  for (const config of configs) {
+    if (Object.prototype.hasOwnProperty.call(result, config.name)) {
+      errors.push(`MCP server 名称重复：${config.name}，已忽略后续配置。`);
+      continue;
+    }
+    const server = toMastraMcpServerDefinition(config, errors, knownMessages, serverErrorCounts);
+    if (server) {
+      result[config.name] = server;
+    }
+  }
+  return result;
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Public surface
 
 export const loadMcpServerConfigs = (
   options: IMcpConfigOptions = {},
@@ -337,6 +370,7 @@ export const loadMcpServerConfigs = (
   const requestedServers = options.serverNames
     ? new Set(options.serverNames)
     : null;
+
   const uvxCommand = resolveWindowsUvxCommand(env, platform);
   const npxCommand = resolveNpxCommand(platform);
   const gitExecutable = resolveWindowsGitExecutable(env, platform);
@@ -352,7 +386,7 @@ export const loadMcpServerConfigs = (
       name: 'git',
       transportType: 'stdio',
       command: uvxCommand,
-      args: ['mcp-server-git==2026.1.14', '--repository', workspaceRoot],
+      args: [MCP_PACKAGE_SPECS.mcpServerGit, '--repository', workspaceRoot],
       env: {
         GIT_PYTHON_GIT_EXECUTABLE: gitExecutable,
       },
@@ -369,7 +403,7 @@ export const loadMcpServerConfigs = (
       name: 'probe',
       transportType: 'stdio',
       command: npxCommand,
-      args: ['-y', PROBE_MCP_NPX_SPEC, 'mcp'],
+      args: ['-y', MCP_PACKAGE_SPECS.probe, 'mcp'],
       env: {},
       cwd: workspaceRoot,
     });
@@ -453,7 +487,7 @@ export const loadMcpServerConfigs = (
     const hooksMcp = uvxServerConfig(
       'hooks-mcp',
       uvxCommand,
-      'hooks-mcp==0.2.4',
+      MCP_PACKAGE_SPECS.hooksMcp,
       ['--working-directory', workspaceRoot],
       workspaceRoot,
       errors,
@@ -470,7 +504,7 @@ export const loadMcpServerConfigs = (
     const sqlite = uvxServerConfig(
       'sqlite-mcp',
       uvxCommand,
-      'sqlite-mcp==0.1.0',
+      MCP_PACKAGE_SPECS.sqliteMcp,
       [],
       workspaceRoot,
       errors,
@@ -522,35 +556,68 @@ export const createMastraMcpClientBundle = async (
   const { configs, errors } = loadMcpServerConfigs(options);
   const servers = createMastraMcpServers(configs, errors);
   let client: MCPClient | null = null;
+  let tools: ToolsInput = {};
 
   try {
     client = Object.keys(servers).length > 0
       ? new MCPClient({
         id: `xiaojianc-agent-sidecar-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
         servers,
-        timeout: MCP_LIST_TOOLS_TIMEOUT_MS,
+        timeout: MCP_RPC_TIMEOUT_MS,
       })
       : null;
-    const tools = client ? await client.listTools() : {};
 
-    return {
-      client,
-      configs,
-      errors,
-      tools,
-      disconnectAll: async (): Promise<void> => {
-        await client?.disconnect().catch(() => undefined);
-      },
-    };
+    if (client) {
+      try {
+        tools = await Promise.race([
+          client.listTools(),
+          new Promise<ToolsInput>((_, reject) => {
+            const timer = setTimeout(
+              () => reject(new Error(`MCP listTools 超过 ${MCP_LIST_TOOLS_TIMEOUT_MS}ms 未完成`)),
+              MCP_LIST_TOOLS_TIMEOUT_MS,
+            );
+            timer.unref();
+          }),
+        ]);
+      } catch (error) {
+        errors.push(`MCP listTools 失败：${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
   } catch (error) {
-    await client?.disconnect().catch(() => undefined);
+    if (client) {
+      await client.disconnect().catch(() => undefined);
+    }
     throw error;
   }
+
+  const disconnectAll = async (): Promise<void> => {
+    if (!client) {
+      return;
+    }
+    try {
+      await Promise.race([
+        client.disconnect(),
+        new Promise<void>((resolve) => {
+          const timer = setTimeout(() => resolve(), MCP_DISCONNECT_TIMEOUT_MS);
+          timer.unref();
+        }),
+      ]);
+    } catch (error) {
+      console.warn(`[mcp] disconnect failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+
+  return {
+    client,
+    configs,
+    errors,
+    tools,
+    disconnectAll,
+  };
 };
 
 export const getMcpRuntimeStatus = (options: IMcpConfigOptions = {}): IMcpRuntimeStatus => {
   const { configs, errors } = loadMcpServerConfigs(options);
-
   return {
     configuredServers: configs.length,
     serverNames: configs.map((config) => config.name),

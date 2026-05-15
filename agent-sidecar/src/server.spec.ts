@@ -2697,13 +2697,18 @@ describe('Mastra runtime chat', () => {
         stream: async () => ({
           fullStream: (async function* () {
             yield {
-              type: 'reasoning',
+              type: 'reasoning-delta',
               runId: 'run-reasoning',
-              textDelta: 'The user wants the raw reasoning in the activity tree.',
+              from: 'AGENT',
+              payload: {
+                id: 'reasoning-1',
+                text: 'The user wants the raw reasoning in the activity tree.',
+              },
             };
             yield {
               type: 'text-delta',
               runId: 'run-reasoning',
+              from: 'AGENT',
               payload: {
                 id: 'text-1',
                 text: '这是最终回答。',
@@ -3540,8 +3545,24 @@ describe('Mastra runtime execute', () => {
       createAgent: () => ({
         stream: async () => ({
           fullStream: (async function* () {
-            yield { type: 'reasoning-delta', payload: { reasoning: '我需要调用时间工具。' } };
-            yield { type: 'text-delta', payload: { text: '今天是星期五。' } };
+            yield {
+              type: 'reasoning-delta',
+              runId: 'test-run-id',
+              from: 'AGENT',
+              payload: {
+                id: 'reasoning-2',
+                text: '我需要调用时间工具。',
+              },
+            };
+            yield {
+              type: 'text-delta',
+              runId: 'test-run-id',
+              from: 'AGENT',
+              payload: {
+                id: 'text-2',
+                text: '今天是星期五。',
+              },
+            };
           })(),
           runId: 'test-run-id',
         }),

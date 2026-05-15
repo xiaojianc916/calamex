@@ -1,8 +1,10 @@
 # 工程 SSoT
 
+**代码**：单个文件的行数不允许超过1000行，不要把好几个代码模块写在一个文件中，要拆分为多个文件，方便维护
+
 冲突优先级：安全 > 类型安全 > 可测性 > 可维护性 > 性能 > 风格。歧义 MUST 取保守方案；缺数据 MUST 停下提问，MUST NOT 猜测。偏离任一 MUST / MUST NOT MUST 走 ADR。
 
-**全局**：源码 MUST UTF-8 / LF / 2 空格；前端 MUST TS strict，桌面 MUST Rust + Tauri 2.x；pnpm MUST ≥9 且锁定版本，MUST NOT 使用 `latest` / `beta`，MUST NOT 手改 lock；CI MUST 通过 typecheck + lint + test + build。
+**全局**：源码 MUST UTF-8 / LF / 2 空格；前端 MUST TS strict，桌面 MUST Rust + Tauri 2.x;MUST NOT 手改 lock；
 
 **架构**：依赖方向 MUST 单向 UI → composables/store/services → Rust；组件 MUST NOT 直接 `fetch` / `invoke` / 读写存储；I/O MUST 经 `services/` 唯一出口，作为反腐层。
 

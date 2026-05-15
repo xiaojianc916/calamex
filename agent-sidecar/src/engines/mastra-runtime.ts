@@ -1,5 +1,6 @@
 import { existsSync, realpathSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { SIDECAR_VERSION } from './runtime.js';
 
 import { AgentBrowser } from '@mastra/agent-browser';
 import { Agent, type ToolsInput } from '@mastra/core/agent';
@@ -9,8 +10,14 @@ import type { MastraModelConfig } from '@mastra/core/llm';
 import { Mastra } from '@mastra/core/mastra';
 import { RequestContext } from '@mastra/core/request-context';
 import type {
-    TextDeltaPayload,
+    AgentChunkType,
+    DataChunkType,
+    DynamicToolResultPayload,
+    ReasoningDeltaPayload,
+    ToolCallChunk,
     ToolCallPayload,
+    ToolResultChunk,
+    ToolResultPayload,
 } from '@mastra/core/stream';
 import { createTool } from '@mastra/core/tools';
 import type { AnyWorkspace } from '@mastra/core/workspace';
@@ -65,8 +72,7 @@ import {
     type IMcpGatewayBundle,
     type McpGatewayMetricBuffer,
     type McpGatewayWarmPool,
-    type TMcpGatewayMetric,
-    type TMcpGatewayToolProfile,
+    type TMcpGatewayToolProfile
 } from '../tools/mcp-gateway.js';
 import { createMastraMcpClientBundle, type TMcpServerName } from '../tools/mcp.js';
 import { createMastraTimeTools } from '../tools/time.js';
@@ -115,11 +121,36 @@ const DEFAULT_ROLLBACK_STEP: TRollbackStepPath = [
 ];
 type TMastraRequestContextValues = Record<string, unknown>;
 type TMastraRequestContext = RequestContext<TMastraRequestContextValues>;
-
+type IMcpGatewayMetricLogger = {
+    info(data: object, msg?: string): void;
+    warn(data: object, msg?: string): void;
+};
 type TMastraChatMessage = {
     role: 'user' | 'assistant';
     content: string;
 };
+
+type TMastraAgentChunk = AgentChunkType<undefined>;
+type TMastraStreamChunk = TMastraAgentChunk | DataChunkType;
+type TMastraTextDeltaChunk = Extract<TMastraAgentChunk, { type: 'text-delta' }>;
+type TMastraReasoningDeltaChunk = Extract<TMastraAgentChunk, { type: 'reasoning-delta' }>;
+type TMastraToolCallApprovalChunk = Extract<TMastraAgentChunk, { type: 'tool-call-approval' }>;
+type TMastraToolCallSuspendedChunk = Extract<TMastraAgentChunk, { type: 'tool-call-suspended' }>;
+type TMastraToolErrorChunk = Extract<TMastraAgentChunk, { type: 'tool-error' }>;
+type TMastraErrorChunk = Extract<TMastraAgentChunk, { type: 'error' }>;
+type TMastraFinishChunk = Extract<TMastraAgentChunk, { type: 'finish' }>;
+type TOmDataChunk = DataChunkType & {
+    type: 'data-om-activation' | 'data-om-observation-end';
+};
+type TCompatibleReasoningDeltaChunk = TMastraReasoningDeltaChunk & {
+    payload: ReasoningDeltaPayload & {
+        reasoning?: string;
+        delta?: string;
+        reasoning_content?: string;
+        reasoningContent?: string;
+    };
+};
+type TCompatibleToolResultPayload = ToolResultPayload | DynamicToolResultPayload;
 
 interface IMastraAgentStreamLike {
     fullStream: AsyncIterable<unknown>;
@@ -445,49 +476,55 @@ const createRuntimeEventFactory = (
     });
 };
 
-const createMcpGatewayMetricData = (
-    metric: TMcpGatewayMetric,
-): Record<string, string | number | boolean | null> => {
-    const data: Record<string, string | number | boolean | null> = {
-        serverName: metric.serverName,
-        durationMs: metric.durationMs,
-        activeBundleCount: metric.activeBundleCount,
-        warmBundleCount: metric.warmBundleCount,
-        errorCount: metric.errorCount,
-    };
-
-    if ('toolCount' in metric) {
-        data.toolCount = metric.toolCount;
-    }
-
-    if ('profile' in metric) {
-        data.profile = metric.profile;
-        data.cacheHit = metric.cacheHit;
-    }
-
-    if ('requestedToolName' in metric) {
-        data.requestedToolName = metric.requestedToolName;
-        data.resolvedToolName = metric.resolvedToolName;
-        data.toolCallCount = metric.toolCallCount;
-    }
-
-    return data;
-};
-
 const attachMcpGatewayMetrics = (
     metricBuffer: McpGatewayMetricBuffer,
-    events: TAgentRuntimeOutputEvent[],
-    options: IAgentRuntimeRunOptions,
-    createRuntimeEvent: TRuntimeEventFactory,
+    logger: IMcpGatewayMetricLogger,
 ): void => {
     metricBuffer.setListener((metric) => {
-        pushUiEvent(events, createRuntimeEvent({
-            type: 'agent.debug',
-            visibility: 'debug',
-            level: 'debug',
-            name: metric.type,
-            data: createMcpGatewayMetricData(metric),
-        }), options);
+        switch (metric.type) {
+            case 'mcp_gateway.boot':
+            case 'mcp_gateway.catalog':
+                logger.info({
+                    type: metric.type,
+                    serverName: metric.serverName,
+                    durationMs: metric.durationMs,
+                    activeBundleCount: metric.activeBundleCount,
+                    warmBundleCount: metric.warmBundleCount,
+                    toolCount: metric.toolCount,
+                    errorCount: metric.errorCount,
+                    ...(metric.type === 'mcp_gateway.catalog'
+                        ? { profile: metric.profile, cacheHit: metric.cacheHit }
+                        : {}),
+                }, '[mcp-gateway] metric');
+                return;
+            case 'mcp_gateway.call':
+                logger.info({
+                    type: metric.type,
+                    serverName: metric.serverName,
+                    requestedToolName: metric.requestedToolName,
+                    resolvedToolName: metric.resolvedToolName,
+                    durationMs: metric.durationMs,
+                    activeBundleCount: metric.activeBundleCount,
+                    warmBundleCount: metric.warmBundleCount,
+                    toolCallCount: metric.toolCallCount,
+                    errorCount: metric.errorCount,
+                }, '[mcp-gateway] metric');
+                return;
+            case 'mcp_gateway.boot_failed':
+                logger.warn({
+                    type: metric.type,
+                    serverName: metric.serverName,
+                    durationMs: metric.durationMs,
+                    errorMessage: metric.errorMessage,
+                }, '[mcp-gateway] boot failed');
+                return;
+            case 'mcp_gateway.metric_buffer_dropped':
+                logger.warn({
+                    type: metric.type,
+                    droppedCount: metric.droppedCount,
+                }, '[mcp-gateway] metric buffer overflow');
+                return;
+        }
     });
 };
 
@@ -629,7 +666,6 @@ const createAcontextTokenEventDraft = (input: {
         type: 'acontext.token.checked',
         visibility: 'debug',
         level: 'info',
-        projectedInputTokensAvailable: true,
         projectedInputTokens: estimateInputTokensByChars(inputText),
         inputCharCount: systemPromptCharCount + messageCharCount + toolSchemaCharCount,
         systemPromptCharCount,
@@ -666,7 +702,6 @@ const createAcontextProviderPayloadEventDraft = (
     requestIndex,
     requestBodyCharCount: stats.requestBodyCharCount,
     projectedInputTokens: stats.projectedInputTokens,
-    projectedInputTokensAvailable: true,
     messageCharCount: stats.messageCharCount,
     systemMessageCharCount: stats.systemMessageCharCount,
     userMessageCharCount: stats.userMessageCharCount,
@@ -900,7 +935,7 @@ const defaultCreateExecutionHandle = async (
                 });
 
                 return {
-                    fullStream: streamResult.fullStream as unknown as AsyncIterable<unknown>,
+                    fullStream: streamResult.fullStream as unknown as AsyncIterable<TMastraStreamChunk>,
                     runId: streamResult.runId,
                     cleanup: streamResult.cleanup,
                 };
@@ -912,7 +947,7 @@ const defaultCreateExecutionHandle = async (
                 const streamResult = await registeredAgent.resume(runId, { approved: true });
 
                 return {
-                    fullStream: streamResult.fullStream as unknown as AsyncIterable<unknown>,
+                    fullStream: streamResult.fullStream as unknown as AsyncIterable<TMastraStreamChunk>,
                     runId: streamResult.runId,
                     cleanup: streamResult.cleanup,
                 };
@@ -921,7 +956,7 @@ const defaultCreateExecutionHandle = async (
                 const streamResult = await registeredAgent.resume(runId, { approved: false });
 
                 return {
-                    fullStream: streamResult.fullStream as unknown as AsyncIterable<unknown>,
+                    fullStream: streamResult.fullStream as unknown as AsyncIterable<TMastraStreamChunk>,
                     runId: streamResult.runId,
                     cleanup: streamResult.cleanup,
                 };
@@ -1373,24 +1408,6 @@ const getChunkRunId = (chunk: unknown): string | null => {
     return typeof runId === 'string' && runId.trim().length > 0 ? runId : null;
 };
 
-const getStringField = (
-    record: Record<string, unknown> | null,
-    fields: readonly string[],
-): string | null => {
-    if (!record) {
-        return null;
-    }
-
-    for (const field of fields) {
-        const value = record[field];
-        if (typeof value === 'string' && value.length > 0) {
-            return value;
-        }
-    }
-
-    return null;
-};
-
 const isApprovedDecision = (decision: string): boolean => {
     const normalizedDecision = decision.trim().toLowerCase();
 
@@ -1405,103 +1422,59 @@ const isApprovedDecision = (decision: string): boolean => {
     ].includes(normalizedDecision);
 };
 
-const getTextDelta = (payload: TextDeltaPayload): string => payload.text;
+const getTextDelta = (chunk: TMastraTextDeltaChunk): string => chunk.payload.text;
 
-const getReasoningDelta = (chunk: unknown): string | null => {
-    const record = toRecord(chunk);
-    const chunkType = getStringField(record, ['type']);
-    const reasoningFields = [
-        'textDelta',
-        'text',
-        'delta',
-        'reasoning',
-        'reasoning_content',
-        'reasoningContent',
-    ] as const;
+const isReasoningDeltaChunk = (
+    chunk: TMastraStreamChunk,
+): chunk is TCompatibleReasoningDeltaChunk => chunk.type === 'reasoning-delta';
 
-    if (
-        chunkType !== 'reasoning'
-        && chunkType !== 'reasoning-delta'
-        && chunkType !== 'reasoning_delta'
-    ) {
-        return null;
+const getReasoningDelta = (chunk: TMastraStreamChunk): string | null => {
+    if (isReasoningDeltaChunk(chunk)) {
+        return chunk.payload.text
+            ?? chunk.payload.reasoning
+            ?? chunk.payload.delta
+            ?? chunk.payload.reasoning_content
+            ?? chunk.payload.reasoningContent
+            ?? null;
     }
 
-    return getStringField(record, reasoningFields)
-        ?? getStringField(toRecord(record?.payload), reasoningFields)
-        ?? getStringField(toRecord(record?.delta), reasoningFields);
+    return null;
 };
-
-const isChunkWithType = <TType extends string>(
-    chunk: unknown,
-    type: TType,
-): chunk is { type: TType; payload?: unknown } => toRecord(chunk)?.type === type;
 
 const isTextDeltaChunk = (
-    chunk: unknown,
-): chunk is { type: 'text-delta'; payload: TextDeltaPayload } => {
-    if (!isChunkWithType(chunk, 'text-delta')) {
-        return false;
-    }
-
-    const payload = toRecord(chunk.payload);
-    return typeof payload?.text === 'string';
-};
+    chunk: TMastraStreamChunk,
+): chunk is TMastraTextDeltaChunk => chunk.type === 'text-delta';
 
 const isToolCallChunk = (
-    chunk: unknown,
-): chunk is { type: 'tool-call' | 'tool-call-approval'; payload: ToolCallPayload } => {
-    if (!isChunkWithType(chunk, 'tool-call') && !isChunkWithType(chunk, 'tool-call-approval')) {
-        return false;
-    }
-
-    const payload = toRecord(chunk.payload);
-    return typeof payload?.toolName === 'string' && typeof payload?.toolCallId === 'string';
-};
+    chunk: TMastraStreamChunk,
+): chunk is ToolCallChunk | TMastraToolCallApprovalChunk =>
+    (chunk.type === 'tool-call' || chunk.type === 'tool-call-approval')
+    && typeof chunk.payload.toolName === 'string'
+    && typeof chunk.payload.toolCallId === 'string';
 
 const isToolResultChunk = (
-    chunk: unknown,
-): chunk is { type: 'tool-result'; payload: { toolName: string; toolCallId?: string; result: unknown } } => {
-    if (!isChunkWithType(chunk, 'tool-result')) {
-        return false;
-    }
-
-    const payload = toRecord(chunk.payload);
-    return typeof payload?.toolName === 'string' && 'result' in payload;
-};
+    chunk: TMastraStreamChunk,
+): chunk is ToolResultChunk & { payload: TCompatibleToolResultPayload } =>
+    chunk.type === 'tool-result'
+    && typeof chunk.payload.toolName === 'string'
+    && 'result' in chunk.payload;
 
 const isToolCallSuspendedChunk = (
-    chunk: unknown,
-): chunk is { type: 'tool-call-suspended'; payload: { toolCallId: string; toolName: string; suspendPayload: unknown } } => {
-    if (!isChunkWithType(chunk, 'tool-call-suspended')) {
-        return false;
-    }
-
-    const payload = toRecord(chunk.payload);
-    return typeof payload?.toolCallId === 'string' && typeof payload?.toolName === 'string';
-};
+    chunk: TMastraStreamChunk,
+): chunk is TMastraToolCallSuspendedChunk =>
+    chunk.type === 'tool-call-suspended'
+    && typeof chunk.payload.toolCallId === 'string'
+    && typeof chunk.payload.toolName === 'string';
 
 const isToolErrorChunk = (
-    chunk: unknown,
-): chunk is { type: 'tool-error'; payload: { toolName: string; error: unknown } } => {
-    if (!isChunkWithType(chunk, 'tool-error')) {
-        return false;
-    }
-
-    const payload = toRecord(chunk.payload);
-    return typeof payload?.toolName === 'string' && 'error' in payload;
-};
+    chunk: TMastraStreamChunk,
+): chunk is TMastraToolErrorChunk =>
+    chunk.type === 'tool-error'
+    && typeof chunk.payload.toolName === 'string';
 
 const isErrorChunk = (
-    chunk: unknown,
-): chunk is { type: 'error'; payload: { error: unknown } } => {
-    if (!isChunkWithType(chunk, 'error')) {
-        return false;
-    }
-
-    const payload = toRecord(chunk.payload);
-    return payload !== null && 'error' in payload;
-};
+    chunk: TMastraStreamChunk,
+): chunk is TMastraErrorChunk => chunk.type === 'error';
 
 const isOmOperationType = (value: unknown): value is TOmMemoryCompressedEventDraft['operationType'] =>
     value === 'observation' || value === 'reflection';
@@ -1704,16 +1677,12 @@ const parseDoneTokenSnapshot = (value: unknown): TDoneTokenSnapshot | undefined 
     };
 };
 
-const extractFinishTokenSnapshot = (chunk: unknown): TDoneTokenSnapshot | undefined => {
-    if (!isChunkWithType(chunk, 'finish')) {
-        return undefined;
-    }
+const isFinishChunk = (chunk: TMastraStreamChunk): chunk is TMastraFinishChunk => chunk.type === 'finish';
 
-    const payload = toRecord(chunk.payload);
-    const output = toRecord(payload?.output);
-
-    return parseDoneTokenSnapshot(output?.usage);
-};
+const extractFinishTokenSnapshot = (chunk: TMastraStreamChunk): TDoneTokenSnapshot | undefined =>
+    isFinishChunk(chunk)
+        ? parseDoneTokenSnapshot(chunk.payload.output?.usage)
+        : undefined;
 
 const createDoneOutputEvent = (
     result: string,
@@ -1727,22 +1696,22 @@ const createDoneOutputEvent = (
     ...(tokenSnapshot?.usage ? { usage: tokenSnapshot.usage } : {}),
 });
 
-const createOmMemoryCompressedEventDraft = (chunk: unknown): TOmMemoryCompressedEventDraft | null => {
-    const record = toRecord(chunk);
-    const chunkType = record?.type;
+const isOmDataChunk = (chunk: TMastraStreamChunk): chunk is TOmDataChunk =>
+    chunk.type === 'data-om-activation' || chunk.type === 'data-om-observation-end';
 
-    if (chunkType !== 'data-om-activation' && chunkType !== 'data-om-observation-end') {
+const createOmMemoryCompressedEventDraft = (chunk: TMastraStreamChunk): TOmMemoryCompressedEventDraft | null => {
+    if (!isOmDataChunk(chunk)) {
         return null;
     }
 
-    const data = toRecord(record?.data) ?? toRecord(record?.payload);
+    const data = toRecord(chunk.data);
     const operationType = data?.operationType;
 
     if (!data || !isOmOperationType(operationType)) {
         return null;
     }
 
-    const tokensActivated = chunkType === 'data-om-activation'
+    const tokensActivated = chunk.type === 'data-om-activation'
         ? toFiniteNumber(data.tokensActivated)
         : toFiniteNumber(data.tokensObserved);
     const observationTokens = toFiniteNumber(data.observationTokens);
@@ -1875,6 +1844,8 @@ const createErrorResponse = (
 };
 
 export class MastraRuntime {
+    readonly name = 'mastra' as const;
+    readonly version: string = SIDECAR_VERSION;
     private readonly createAgent: (config: IMastraAgentConfig) => IMastraAgentLike;
 
     private readonly createExecutionHandle: (config: IMastraAgentConfig) => Promise<IMastraExecutionHandle>;
@@ -1903,8 +1874,6 @@ export class MastraRuntime {
     private readonly loggerRef: IMastraLogToolsRef;
 
     private readonly pendingApprovals = new Map<string, IMastraPendingApproval>();
-
-    readonly name = 'mastra';
 
     constructor(deps: IMastraRuntimeDeps = {}) {
         this.createAgent = deps.createAgent ?? defaultCreateAgent;
@@ -1936,7 +1905,7 @@ export class MastraRuntime {
         sessionId: string,
         agent: IMastraAgentLike,
         bundle: IMastraMcpBundle,
-        chunk: { type: 'tool-call-approval'; payload: ToolCallPayload },
+        chunk: TMastraToolCallApprovalChunk,
         workspace?: AnyWorkspace,
         browser?: MastraBrowser,
     ): string | null {
@@ -1984,7 +1953,8 @@ export class MastraRuntime {
         let doneTokenSnapshot: TDoneTokenSnapshot | undefined;
         const pendingToolCallIdsByName = new Map<string, string[]>();
 
-        for await (const chunk of stream.fullStream) {
+        for await (const rawChunk of stream.fullStream) {
+            const chunk = rawChunk as TMastraStreamChunk;
             const finishTokenSnapshot = extractFinishTokenSnapshot(chunk);
             if (finishTokenSnapshot) {
                 doneTokenSnapshot = aggregateDoneTokenSnapshot(doneTokenSnapshot, finishTokenSnapshot);
@@ -2013,7 +1983,7 @@ export class MastraRuntime {
             }
 
             if (isTextDeltaChunk(chunk)) {
-                const nextText = getTextDelta(chunk.payload);
+                const nextText = getTextDelta(chunk);
                 if (!nextText) {
                     continue;
                 }
@@ -2031,7 +2001,7 @@ export class MastraRuntime {
                 continue;
             }
 
-            if (isChunkWithType(chunk, 'tool-call') && isToolCallChunk(chunk)) {
+            if (chunk.type === 'tool-call' && isToolCallChunk(chunk)) {
                 if (workflowTracker) {
                     await this.planWorkflowStore.heartbeat({
                         planId: workflowTracker.planId,
@@ -2105,7 +2075,7 @@ export class MastraRuntime {
                 continue;
             }
 
-            if (isChunkWithType(chunk, 'tool-call-approval') && isToolCallChunk(chunk)) {
+            if (chunk.type === 'tool-call-approval' && isToolCallChunk(chunk)) {
                 pendingApproval = true;
                 const pendingRequestId = this.registerPendingApproval(
                     sessionId,
@@ -2173,7 +2143,7 @@ export class MastraRuntime {
                 continue;
             }
 
-            if (isChunkWithType(chunk, 'abort')) {
+            if (chunk.type === 'abort') {
                 streamErrorMessage = 'Mastra Agent 执行已中止。';
             }
         }
@@ -2297,7 +2267,7 @@ export class MastraRuntime {
                     ...(this.now ? { now: this.now } : {}),
                 });
                 payloadEventSink.attachRuntimeEventFactory(createRuntimeEvent);
-                attachMcpGatewayMetrics(mcpGatewayMetrics, events, options, createRuntimeEvent);
+                attachMcpGatewayMetrics(mcpGatewayMetrics, console);
                 pushUiEvent(events, createRuntimeEvent(createAcontextTokenEventDraft({
                     systemPrompt,
                     messages: mastraMessages,
@@ -2460,7 +2430,7 @@ export class MastraRuntime {
                     ...(this.now ? { now: this.now } : {}),
                 });
                 payloadEventSink.attachRuntimeEventFactory(createRuntimeEvent);
-                attachMcpGatewayMetrics(mcpGatewayMetrics, events, options, createRuntimeEvent);
+                attachMcpGatewayMetrics(mcpGatewayMetrics, console);
                 pushUiEvent(events, createRuntimeEvent(createAcontextTokenEventDraft({
                     systemPrompt,
                     messages: mastraMessages,
@@ -2745,7 +2715,7 @@ export class MastraRuntime {
                     ...(this.now ? { now: this.now } : {}),
                 });
                 payloadEventSink.attachRuntimeEventFactory(createRuntimeEvent);
-                attachMcpGatewayMetrics(mcpGatewayMetrics, events, options, createRuntimeEvent);
+                attachMcpGatewayMetrics(mcpGatewayMetrics, console);
                 pushUiEvent(events, createRuntimeEvent(createAcontextTokenEventDraft({
                     systemPrompt,
                     messages: mastraMessages,
@@ -2929,7 +2899,7 @@ export class MastraRuntime {
                     ...(this.now ? { now: this.now } : {}),
                 });
                 payloadEventSink.attachRuntimeEventFactory(createRuntimeEvent);
-                attachMcpGatewayMetrics(mcpGatewayMetrics, events, options, createRuntimeEvent);
+                attachMcpGatewayMetrics(mcpGatewayMetrics, console);
                 pushUiEvent(events, createRuntimeEvent(createAcontextTokenEventDraft({
                     systemPrompt,
                     messages: mastraMessages,
@@ -3153,7 +3123,7 @@ export class MastraRuntime {
                     });
 
                 payloadEventSink.attachRuntimeEventFactory(createCheckpointEvent);
-                attachMcpGatewayMetrics(mcpGatewayMetrics, events, options, createCheckpointEvent);
+                attachMcpGatewayMetrics(mcpGatewayMetrics, console);
                 pushUiEvent(events, createCheckpointEvent(createAcontextTokenEventDraft({
                     systemPrompt,
                     messages: buildMastraMessages(memoryInput),

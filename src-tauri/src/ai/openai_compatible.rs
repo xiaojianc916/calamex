@@ -1,3 +1,11 @@
+use async_openai::config::OpenAIConfig;
+use async_openai::error::OpenAIError;
+use async_openai::traits::RequestOptionsBuilder;
+use async_openai::types::chat::{
+    ChatCompletionStreamOptions, ChatCompletionTool, ChatCompletionToolChoiceOption,
+    ChatCompletionTools, FunctionObject, ToolChoiceOptions,
+};
+use async_openai::Client;
 use super::errors;
 use super::provider::{
     AiProviderChatRequest, AiProviderMessage, AiProviderResponse, AiProviderTokenEstimate,
@@ -5,13 +13,12 @@ use super::provider::{
 };
 use super::redaction::redact_text;
 use super::token_budget;
-use reqwest::header::{ACCEPT, ACCEPT_ENCODING};
-use reqwest::StatusCode;
-use serde::Deserialize;
+use reqwest13::Client as Reqwest13Client;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
 use std::time::Duration;
+use tokio_stream::StreamExt;
 
 const PROVIDER_REQUEST_TIMEOUT: Duration = Duration::from_secs(45);
 const PROVIDER_STREAM_TIMEOUT: Duration = Duration::from_secs(180);
@@ -20,70 +27,83 @@ const PROVIDER_POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(90);
 const PROVIDER_POOL_MAX_IDLE_PER_HOST: usize = 8;
 const MAX_PROVIDER_ERROR_BODY_CHARS: usize = 600;
 
-static PROVIDER_CLIENT: OnceLock<Result<reqwest::Client, String>> = OnceLock::new();
+static PROVIDER_REQUEST_CLIENT: OnceLock<Result<Reqwest13Client, String>> = OnceLock::new();
+static PROVIDER_STREAM_CLIENT: OnceLock<Result<Reqwest13Client, String>> = OnceLock::new();
 
-#[derive(Debug, Deserialize)]
-struct ChatCompletionResponse {
-    choices: Vec<ChatCompletionChoice>,
+#[derive(Debug, Clone, serde::Deserialize)]
+struct ByotChatCompletionResponse {
+    #[serde(default)]
+    choices: Vec<ByotChatChoice>,
+    #[serde(default)]
     usage: Option<Value>,
 }
 
-#[derive(Debug, Deserialize)]
-struct ChatCompletionChoice {
-    message: ChatCompletionMessage,
+#[derive(Debug, Clone, serde::Deserialize)]
+struct ByotChatChoice {
+    message: ByotChatMessage,
 }
 
-#[derive(Debug, Deserialize)]
-struct ChatCompletionMessage {
+#[derive(Debug, Clone, serde::Deserialize)]
+struct ByotChatMessage {
+    #[serde(default)]
     content: Option<String>,
     #[serde(default)]
-    tool_calls: Vec<OpenAiToolCall>,
+    tool_calls: Vec<ByotToolCall>,
 }
 
-#[derive(Debug, Deserialize)]
-struct OpenAiToolCall {
+#[derive(Debug, Clone, serde::Deserialize)]
+struct ByotToolCall {
+    #[serde(default)]
     id: Option<String>,
     #[serde(default)]
-    r#type: String,
-    function: Option<OpenAiToolCallFunction>,
+    r#type: Option<String>,
+    #[serde(default)]
+    function: Option<ByotToolFunction>,
 }
 
-#[derive(Debug, Deserialize)]
-struct OpenAiToolCallFunction {
+#[derive(Debug, Clone, serde::Deserialize)]
+struct ByotToolFunction {
     name: String,
     arguments: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct ChatCompletionStreamChunk {
+#[derive(Debug, Clone, serde::Deserialize)]
+struct ByotChatCompletionStreamResponse {
     #[serde(default)]
-    choices: Vec<ChatCompletionStreamChoice>,
+    choices: Vec<ByotStreamChoice>,
+    #[serde(default)]
     usage: Option<Value>,
 }
 
-#[derive(Debug, Deserialize)]
-struct ChatCompletionStreamChoice {
+#[derive(Debug, Clone, serde::Deserialize)]
+struct ByotStreamChoice {
     #[serde(default)]
-    delta: Option<ChatCompletionStreamDelta>,
+    delta: ByotStreamDelta,
 }
 
-#[derive(Debug, Deserialize)]
-struct ChatCompletionStreamDelta {
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+struct ByotStreamDelta {
+    #[serde(default)]
     content: Option<String>,
     #[serde(default)]
-    tool_calls: Vec<OpenAiStreamToolCall>,
+    tool_calls: Vec<ByotStreamToolCall>,
 }
 
-#[derive(Debug, Deserialize)]
-struct OpenAiStreamToolCall {
+#[derive(Debug, Clone, serde::Deserialize)]
+struct ByotStreamToolCall {
+    #[serde(default)]
     index: Option<usize>,
+    #[serde(default)]
     id: Option<String>,
-    function: Option<OpenAiStreamToolCallFunction>,
+    #[serde(default)]
+    function: Option<ByotPartialToolFunction>,
 }
 
-#[derive(Debug, Deserialize)]
-struct OpenAiStreamToolCallFunction {
+#[derive(Debug, Clone, serde::Deserialize)]
+struct ByotPartialToolFunction {
+    #[serde(default)]
     name: Option<String>,
+    #[serde(default)]
     arguments: Option<String>,
 }
 
@@ -99,6 +119,14 @@ struct PartialStreamToolCall {
     id: Option<String>,
     name: String,
     arguments: String,
+}
+
+type ProviderClient = Client<OpenAIConfig>;
+
+#[derive(Debug, Clone)]
+struct ParsedStreamChunk {
+    raw_usage: Option<Value>,
+    chunk: ByotChatCompletionStreamResponse,
 }
 
 #[derive(Debug, Clone)]
@@ -157,27 +185,17 @@ async fn chat_non_streaming(
     request: AiProviderChatRequest,
     prompt_estimate: Option<AiProviderTokenEstimate>,
 ) -> Result<AiProviderResponse, String> {
-    let client = provider_client()?;
-
-    let body = build_chat_request_body(model, request, false);
-
-    let response = client
-        .post(format!("{base_url}/chat/completions"))
-        .timeout(PROVIDER_REQUEST_TIMEOUT)
-        .bearer_auth(api_key)
-        .header(ACCEPT, "application/json")
-        .header(ACCEPT_ENCODING, "identity")
-        .json(&body)
-        .send()
+    let body = build_chat_request_body(model, request, false)?;
+    let client = provider_chat_client(base_url, api_key, PROVIDER_REQUEST_TIMEOUT)?;
+    let response: ByotChatCompletionResponse = client
+        .chat()
+        .header("accept", "application/json")
+        .map_err(map_openai_error)?
+        .create_byot(body)
         .await
-        .map_err(|error| errors::error("AI_PROVIDER_UNAVAILABLE", error.to_string()))?;
+        .map_err(map_openai_error)?;
 
-    let status = response.status();
-    let body = read_response_body_lossy(response).await?;
-
-    ensure_success_status(status, &body)?;
-
-    parse_chat_completion_response(&body, model, prompt_estimate)
+    parse_chat_completion_response(response, model, prompt_estimate)
 }
 
 async fn chat_stream_response(
@@ -187,59 +205,26 @@ async fn chat_stream_response(
     request: AiProviderChatRequest,
     prompt_estimate: Option<AiProviderTokenEstimate>,
 ) -> Result<AiProviderResponse, String> {
-    let client = provider_client()?;
-
-    let body = build_chat_request_body(model, request, true);
-
-    let mut response = client
-        .post(format!("{base_url}/chat/completions"))
-        .timeout(PROVIDER_STREAM_TIMEOUT)
-        .bearer_auth(api_key)
-        .header(ACCEPT, "text/event-stream")
-        .header(ACCEPT_ENCODING, "identity")
-        .json(&body)
-        .send()
+    let body = build_chat_request_body(model, request, true)?;
+    let client = provider_chat_client(&base_url, api_key, PROVIDER_STREAM_TIMEOUT)?;
+    let mut stream = client
+        .chat()
+        .header("accept", "text/event-stream")
+        .map_err(map_openai_error)?
+        .create_stream_byot::<_, ByotChatCompletionStreamResponse>(body)
         .await
-        .map_err(|error| errors::error("AI_PROVIDER_UNAVAILABLE", error.to_string()))?;
-
-    let status = response.status();
-
-    if !status.is_success() {
-        let body = read_response_body_lossy(response).await?;
-
-        return match ensure_success_status(status, &body) {
-            Ok(()) => Err(errors::error(
-                "AI_PROVIDER_UNAVAILABLE",
-                "AI Provider 流式响应状态异常。",
-            )),
-            Err(error) => Err(error),
-        };
-    }
-
-    let mut buffer: Vec<u8> = Vec::new();
+        .map_err(map_openai_error)?;
     let mut accumulator = StreamResponseAccumulator::default();
 
-    while let Some(chunk) = response.chunk().await.map_err(|error| {
-        errors::error(
-            "AI_PROVIDER_UNAVAILABLE",
-            format!(
-                "读取 AI Provider 流式响应失败：{}",
-                provider_body_read_error_message(&error)
-            ),
-        )
-    })? {
-        buffer.extend_from_slice(&chunk);
-
-        for line in drain_complete_utf8_lines(&mut buffer)? {
-            if apply_stream_line(&line, &mut accumulator)? {
-                return stream_accumulator_to_response(accumulator, model, prompt_estimate.clone());
-            }
-        }
-    }
-
-    if has_non_whitespace_bytes(&buffer) {
-        let line = decode_stream_line_bytes(buffer)?;
-        apply_stream_line(&line, &mut accumulator)?;
+    while let Some(event) = stream.next().await {
+        let chunk = event.map_err(map_openai_error)?;
+        apply_stream_chunk(
+            ParsedStreamChunk {
+                raw_usage: chunk.usage.clone(),
+                chunk,
+            },
+            &mut accumulator,
+        )?;
     }
 
     stream_accumulator_to_response(accumulator, model, prompt_estimate)
@@ -266,80 +251,36 @@ where
         return Err(errors::error("AI_REQUEST_CANCELLED", "AI 请求已取消。"));
     }
 
-    let client = provider_client()?;
-
-    let body = build_chat_request_body(model, request, true);
-
-    let mut response = client
-        .post(format!("{base_url}/chat/completions"))
-        .timeout(PROVIDER_STREAM_TIMEOUT)
-        .bearer_auth(api_key)
-        .header(ACCEPT, "text/event-stream")
-        .header(ACCEPT_ENCODING, "identity")
-        .json(&body)
-        .send()
+    let body = build_chat_request_body(model, request, true)?;
+    let client = provider_chat_client(&base_url, api_key, PROVIDER_STREAM_TIMEOUT)?;
+    let mut stream = client
+        .chat()
+        .header("accept", "text/event-stream")
+        .map_err(map_openai_error)?
+        .create_stream_byot::<_, ByotChatCompletionStreamResponse>(body)
         .await
-        .map_err(|error| errors::error("AI_PROVIDER_UNAVAILABLE", error.to_string()))?;
-
-    let status = response.status();
-
-    if !status.is_success() {
-        let body = read_response_body_lossy(response).await?;
-
-        return ensure_success_status(status, &body);
-    }
-
-    let mut buffer: Vec<u8> = Vec::new();
+        .map_err(map_openai_error)?;
     let mut completion_tokens_estimate = Some(0_u64);
     let mut completion_text = String::new();
 
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|error| errors::error("AI_PROVIDER_UNAVAILABLE", error.to_string()))?
-    {
+    while let Some(event) = stream.next().await {
         if is_cancelled() {
             return Err(errors::error("AI_REQUEST_CANCELLED", "AI 请求已取消。"));
         }
 
-        buffer.extend_from_slice(&chunk);
-
-        for line in drain_complete_utf8_lines(&mut buffer)? {
-            if is_cancelled() {
-                return Err(errors::error("AI_REQUEST_CANCELLED", "AI 请求已取消。"));
-            }
-
-            let should_finish = handle_sse_line(
-                model,
-                &line,
-                &mut completion_text,
-                &mut completion_tokens_estimate,
-                &mut on_event,
-            )?;
-
-            if should_finish {
-                return Ok(());
-            }
-        }
-    }
-
-    if is_cancelled() {
-        return Err(errors::error("AI_REQUEST_CANCELLED", "AI 请求已取消。"));
-    }
-
-    if has_non_whitespace_bytes(&buffer) {
-        let line = decode_stream_line_bytes(buffer)?;
-        let should_finish = handle_sse_line(
+        handle_stream_chunk(
             model,
-            &line,
+            {
+                let chunk = event.map_err(map_openai_error)?;
+                ParsedStreamChunk {
+                    raw_usage: chunk.usage.clone(),
+                    chunk,
+                }
+            },
             &mut completion_text,
             &mut completion_tokens_estimate,
             &mut on_event,
         )?;
-
-        if should_finish {
-            return Ok(());
-        }
     }
 
     Ok(())
@@ -354,19 +295,39 @@ pub async fn test(base_url: &str, api_key: &str, model: &str) -> Result<(), Stri
     chat(base_url, api_key, model, request).await.map(|_| ())
 }
 
-fn provider_client() -> Result<reqwest::Client, String> {
-    PROVIDER_CLIENT
-        .get_or_init(build_provider_client)
-        .as_ref()
-        .map(reqwest::Client::clone)
-        .map_err(String::clone)
+fn provider_chat_client(
+    base_url: &str,
+    api_key: &str,
+    timeout: Duration,
+) -> Result<ProviderClient, String> {
+    let http_client = provider_http_client(timeout)?;
+    let config = OpenAIConfig::new()
+        .with_api_base(base_url)
+        .with_api_key(api_key)
+        .with_header("accept-encoding", "identity")
+        .map_err(map_openai_error)?;
+
+    Ok(Client::build(http_client, config))
 }
 
-fn build_provider_client() -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
+fn provider_http_client(timeout: Duration) -> Result<Reqwest13Client, String> {
+    if timeout == PROVIDER_STREAM_TIMEOUT {
+        return PROVIDER_STREAM_CLIENT
+            .get_or_init(|| build_provider_client(PROVIDER_STREAM_TIMEOUT))
+            .clone();
+    }
+
+    PROVIDER_REQUEST_CLIENT
+        .get_or_init(|| build_provider_client(PROVIDER_REQUEST_TIMEOUT))
+        .clone()
+}
+
+fn build_provider_client(timeout: Duration) -> Result<Reqwest13Client, String> {
+    Reqwest13Client::builder()
         .connect_timeout(PROVIDER_CONNECT_TIMEOUT)
         .pool_idle_timeout(PROVIDER_POOL_IDLE_TIMEOUT)
         .pool_max_idle_per_host(PROVIDER_POOL_MAX_IDLE_PER_HOST)
+        .timeout(timeout)
         .tcp_nodelay(true)
         .http1_only()
         .no_gzip()
@@ -389,74 +350,17 @@ fn build_chat_messages(messages: Vec<AiProviderMessage>) -> Vec<Value> {
         .collect()
 }
 
-async fn read_response_body_lossy(response: reqwest::Response) -> Result<String, String> {
-    let bytes = response.bytes().await.map_err(|error| {
-        errors::error(
-            "AI_PROVIDER_UNAVAILABLE",
-            format!(
-                "读取 AI Provider 响应体失败：{}",
-                provider_body_read_error_message(&error)
-            ),
-        )
-    })?;
-
-    Ok(response_body_bytes_to_string(bytes.as_ref()))
-}
-
 fn response_body_bytes_to_string(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes)
         .trim_start_matches('\u{feff}')
         .to_string()
 }
 
-fn drain_complete_utf8_lines(buffer: &mut Vec<u8>) -> Result<Vec<String>, String> {
-    let mut lines = Vec::new();
-
-    while let Some(line_end) = buffer.iter().position(|byte| *byte == b'\n') {
-        let line_bytes = buffer.drain(..=line_end).collect::<Vec<u8>>();
-        lines.push(decode_stream_line_bytes(line_bytes)?);
-    }
-
-    Ok(lines)
-}
-
-fn decode_stream_line_bytes(mut line_bytes: Vec<u8>) -> Result<String, String> {
-    if line_bytes.ends_with(b"\n") {
-        line_bytes.pop();
-    }
-
-    if line_bytes.ends_with(b"\r") {
-        line_bytes.pop();
-    }
-
-    String::from_utf8(line_bytes).map_err(|error| {
-        errors::error(
-            "AI_PROVIDER_UNAVAILABLE",
-            format!("AI Provider 流式响应包含非法 UTF-8：{error}"),
-        )
-    })
-}
-
-fn has_non_whitespace_bytes(bytes: &[u8]) -> bool {
-    bytes
-        .iter()
-        .any(|byte| !matches!(*byte, b' ' | b'\t' | b'\r' | b'\n'))
-}
-
-fn provider_body_read_error_message(error: &reqwest::Error) -> String {
-    if error.is_decode() {
-        return "Provider 返回体解码失败。已请求 identity 编码，请检查该兼容网关是否返回了损坏压缩、错误 Content-Encoding 或被中途截断的响应。"
-            .to_string();
-    }
-
-    error.to_string()
-}
-
 fn build_chat_request_body(
     model: &str,
     request: AiProviderChatRequest,
     stream: bool,
-) -> serde_json::Value {
+) -> Result<Value, String> {
     let mut body = json!({
         "model": model,
         "messages": build_chat_messages(request.messages),
@@ -465,50 +369,58 @@ fn build_chat_request_body(
     });
 
     if stream {
-        body["stream_options"] = json!({
-            "include_usage": true,
-        });
+        body["stream_options"] = to_json_value(ChatCompletionStreamOptions {
+            include_usage: Some(true),
+            include_obfuscation: None,
+        })?;
     }
 
     if request.force_tool_choice_none {
-        body["tool_choice"] = json!("none");
+        body["tool_choice"] =
+            to_json_value(ChatCompletionToolChoiceOption::Mode(ToolChoiceOptions::None))?;
     } else if !request.tools.is_empty() {
-        body["tools"] = json!(build_chat_tools(request.tools));
-        body["tool_choice"] = json!("auto");
+        body["tools"] = to_json_value(build_chat_tools(request.tools))?;
+        body["tool_choice"] =
+            to_json_value(ChatCompletionToolChoiceOption::Mode(ToolChoiceOptions::Auto))?;
     }
 
-    body
+    Ok(body)
 }
 
-fn build_chat_tools(tools: Vec<AiProviderToolSpec>) -> Vec<Value> {
+fn build_chat_tools(tools: Vec<AiProviderToolSpec>) -> Vec<ChatCompletionTools> {
     tools
         .into_iter()
         .map(|tool| {
-            json!({
-                "type": "function",
-                "function": {
-                    "name": tool.name,
-                    "description": tool.description,
-                    "parameters": tool.parameters,
-                }
+            ChatCompletionTools::Function(ChatCompletionTool {
+                function: FunctionObject {
+                    name: tool.name,
+                    description: Some(tool.description),
+                    parameters: Some(tool.parameters),
+                    strict: None,
+                },
             })
         })
         .collect()
 }
 
+fn to_json_value<T>(value: T) -> Result<Value, String>
+where
+    T: serde::Serialize,
+{
+    serde_json::to_value(value).map_err(|error| {
+        errors::error(
+            "AI_RESPONSE_INVALID",
+            format!("AI Provider 请求体序列化失败：{error}"),
+        )
+    })
+}
+
 fn parse_chat_completion_response(
-    body: &str,
+    response: ByotChatCompletionResponse,
     model: &str,
     prompt_estimate: Option<AiProviderTokenEstimate>,
 ) -> Result<AiProviderResponse, String> {
-    let parsed = serde_json::from_str::<ChatCompletionResponse>(body).map_err(|error| {
-        errors::error(
-            "AI_RESPONSE_INVALID",
-            format!("AI Provider 非流式响应 JSON 解析失败：{error}"),
-        )
-    })?;
-
-    let Some(choice) = parsed.choices.into_iter().next() else {
+    let Some(choice) = response.choices.into_iter().next() else {
         return Err(errors::error(
             "AI_RESPONSE_INVALID",
             "AI Provider did not return a completion choice.",
@@ -534,19 +446,29 @@ fn parse_chat_completion_response(
         content,
         model.to_string(),
         tool_calls,
-        parsed.usage.map(AiProviderUsage::from_openai_usage),
+        response.usage.map(AiProviderUsage::from_openai_usage),
         prompt_estimate,
     ))
 }
 
 fn normalize_openai_tool_calls(
-    tool_calls: Vec<OpenAiToolCall>,
+    tool_calls: Vec<ByotToolCall>,
 ) -> Result<Vec<AiProviderToolCall>, String> {
     tool_calls
         .into_iter()
         .enumerate()
-        .filter(|(_, call)| call.r#type.is_empty() || call.r#type == "function")
         .map(|(index, call)| {
+            let is_function = call
+                .r#type
+                .as_deref()
+                .map(|value| value == "function")
+                .unwrap_or(true);
+            if !is_function {
+                return Err(errors::error(
+                    "AI_RESPONSE_INVALID",
+                    "暂不支持非 function tool call。",
+                ));
+            }
             let function = call.function.ok_or_else(|| {
                 errors::error(
                     "AI_RESPONSE_INVALID",
@@ -560,19 +482,13 @@ fn normalize_openai_tool_calls(
                     "Tool call function name is empty.",
                 ));
             }
-            let arguments = if function.arguments.trim().is_empty() {
-                Value::Object(serde_json::Map::new())
-            } else {
-                serde_json::from_str::<Value>(&function.arguments).map_err(|error| {
-                    errors::error(
-                        "AI_RESPONSE_INVALID",
-                        format!("Tool call arguments are not valid JSON: {error}"),
-                    )
-                })?
-            };
+            let arguments = parse_tool_call_arguments(
+                &function.arguments,
+                "Tool call arguments are not valid JSON",
+            )?;
 
             Ok(AiProviderToolCall {
-                id: call.id.unwrap_or_else(|| format!("tool-call-{index}")),
+                id: tool_call_id_or_default(call.id.as_deref(), index),
                 name: name.to_string(),
                 arguments,
             })
@@ -580,68 +496,66 @@ fn normalize_openai_tool_calls(
         .collect()
 }
 
+fn parse_tool_call_arguments(arguments: &str, error_message: &str) -> Result<Value, String> {
+    if arguments.trim().is_empty() {
+        return Ok(Value::Object(serde_json::Map::new()));
+    }
+
+    serde_json::from_str::<Value>(arguments).map_err(|error| {
+        errors::error(
+            "AI_RESPONSE_INVALID",
+            format!("{error_message}: {error}"),
+        )
+    })
+}
+
+fn tool_call_id_or_default(id: Option<&str>, index: usize) -> String {
+    let trimmed = id.unwrap_or_default().trim();
+
+    if trimmed.is_empty() {
+        return format!("tool-call-{index}");
+    }
+
+    trimmed.to_string()
+}
+
 fn should_retry_chat_as_stream(error: &str) -> bool {
     error.contains("读取 AI Provider 响应体失败")
         || error.contains("响应体解码失败")
         || error.contains("Provider 返回体解码失败")
         || error.contains("AI Provider 非流式响应 JSON 解析失败")
+        || error.contains("AI Provider 响应解析失败")
         || error.to_ascii_lowercase().contains("decode")
 }
 
-fn apply_stream_line(
-    line: &str,
-    accumulator: &mut StreamResponseAccumulator,
-) -> Result<bool, String> {
-    let trimmed = line.trim();
-
-    if trimmed.is_empty() || trimmed.starts_with(':') {
-        return Ok(false);
-    }
-
-    let Some(data) = trimmed.strip_prefix("data:") else {
-        return Ok(false);
-    };
-
-    let payload = data.trim();
-
-    if payload.is_empty() {
-        return Ok(false);
-    }
-
-    if payload == "[DONE]" {
-        return Ok(true);
-    }
-
-    apply_stream_payload(payload, accumulator)?;
-
-    Ok(false)
+fn parse_stream_chunk_payload(payload: &str) -> Result<ParsedStreamChunk, String> {
+    serde_json::from_str::<ByotChatCompletionStreamResponse>(payload)
+        .map(|chunk| ParsedStreamChunk {
+            raw_usage: chunk.usage.clone(),
+            chunk,
+        })
+        .map_err(|error| {
+            errors::error(
+                "AI_RESPONSE_INVALID",
+                format!("AI Provider 流式响应 chunk 解析失败：{error}"),
+            )
+        })
 }
 
-fn apply_stream_payload(
-    payload: &str,
+fn apply_stream_chunk(
+    parsed_chunk: ParsedStreamChunk,
     accumulator: &mut StreamResponseAccumulator,
 ) -> Result<(), String> {
-    let parsed = serde_json::from_str::<ChatCompletionStreamChunk>(payload).map_err(|error| {
-        errors::error(
-            "AI_RESPONSE_INVALID",
-            format!("AI Provider 流式响应 chunk 解析失败：{error}"),
-        )
-    })?;
-
-    if let Some(usage) = parsed.usage {
+    if let Some(usage) = parsed_chunk.raw_usage {
         accumulator.usage = Some(AiProviderUsage::from_openai_usage(usage));
     }
 
-    for choice in parsed.choices {
-        let Some(delta) = choice.delta else {
-            continue;
-        };
-
-        if let Some(content) = delta.content {
+    for choice in parsed_chunk.chunk.choices {
+        if let Some(content) = choice.delta.content {
             accumulator.content.push_str(&content);
         }
 
-        for tool_call in delta.tool_calls {
+        for tool_call in choice.delta.tool_calls {
             let index = tool_call.index.unwrap_or(accumulator.tool_calls.len());
             let partial = accumulator.tool_calls.entry(index).or_default();
 
@@ -665,6 +579,45 @@ fn apply_stream_payload(
                 partial.arguments.push_str(&arguments);
             }
         }
+    }
+
+    Ok(())
+}
+
+fn handle_stream_chunk<F>(
+    model: &str,
+    parsed_chunk: ParsedStreamChunk,
+    completion_text: &mut String,
+    completion_tokens_estimate: &mut Option<u64>,
+    on_event: &mut F,
+) -> Result<(), String>
+where
+    F: FnMut(AiProviderStreamEvent) -> Result<(), String>,
+{
+    if let Some(usage) = parsed_chunk.raw_usage {
+        on_event(AiProviderStreamEvent::Usage {
+            usage: AiProviderUsage::from_openai_usage(usage),
+        })?;
+    }
+
+    let delta = parsed_chunk
+        .chunk
+        .choices
+        .into_iter()
+        .filter_map(|choice| choice.delta.content)
+        .collect::<String>();
+
+    if !delta.is_empty() {
+        let completion_tokens_estimate = update_completion_tokens_estimate(
+            model,
+            &delta,
+            completion_text,
+            completion_tokens_estimate,
+        )?;
+        on_event(AiProviderStreamEvent::Delta {
+            delta,
+            completion_tokens_estimate,
+        })?;
     }
 
     Ok(())
@@ -710,16 +663,10 @@ fn normalize_stream_tool_calls(
                 ));
             }
 
-            let arguments = if call.arguments.trim().is_empty() {
-                Value::Object(serde_json::Map::new())
-            } else {
-                serde_json::from_str::<Value>(&call.arguments).map_err(|error| {
-                    errors::error(
-                        "AI_RESPONSE_INVALID",
-                        format!("流式工具调用参数不是合法 JSON：{error}"),
-                    )
-                })?
-            };
+            let arguments = parse_tool_call_arguments(
+                &call.arguments,
+                "流式工具调用参数不是合法 JSON",
+            )?;
 
             Ok(AiProviderToolCall {
                 id: call.id.unwrap_or_else(|| format!("tool-call-{index}")),
@@ -730,88 +677,91 @@ fn normalize_stream_tool_calls(
         .collect()
 }
 
-fn handle_sse_line<F>(
-    model: &str,
-    line: &str,
-    completion_text: &mut String,
-    completion_tokens_estimate: &mut Option<u64>,
-    on_event: &mut F,
-) -> Result<bool, String>
-where
-    F: FnMut(AiProviderStreamEvent) -> Result<(), String>,
-{
-    let (outcome, delta, usage) = parse_stream_line(line)?;
+fn map_openai_error(error: OpenAIError) -> String {
+    match error {
+        OpenAIError::ApiError(api_error) => {
+            let message = summarize_body(&api_error.message);
+            let code = api_error.code.as_deref().unwrap_or_default();
+            let kind = api_error.r#type.as_deref().unwrap_or_default();
+            let lower_message = api_error.message.to_ascii_lowercase();
 
-    if let Some(usage) = usage {
-        on_event(AiProviderStreamEvent::Usage { usage })?;
-    }
+            if matches!(code, "invalid_api_key" | "authentication_error")
+                || kind == "invalid_request_error" && lower_message.contains("api key")
+                || lower_message.contains("unauthorized")
+                || lower_message.contains("authentication")
+            {
+                return errors::error("AI_PROVIDER_AUTH_FAILED", format!("AI Provider 鉴权失败：{message}"));
+            }
 
-    if let Some(delta) = delta {
-        if !delta.is_empty() {
-            let completion_tokens_estimate = update_completion_tokens_estimate(
-                model,
-                &delta,
-                completion_text,
-                completion_tokens_estimate,
-            )?;
-            on_event(AiProviderStreamEvent::Delta {
-                delta,
-                completion_tokens_estimate,
-            })?;
+            if matches!(code, "rate_limit_exceeded" | "insufficient_quota")
+                || kind == "rate_limit_error"
+                || lower_message.contains("rate limit")
+                || lower_message.contains("quota")
+            {
+                return errors::error("AI_PROVIDER_RATE_LIMITED", format!("AI Provider 触发限流：{message}"));
+            }
+
+            if kind == "server_error" || lower_message.contains("server error") {
+                return errors::error(
+                    "AI_PROVIDER_UNAVAILABLE",
+                    format!("AI Provider 服务暂不可用：{message}"),
+                );
+            }
+
+            errors::error(
+                "AI_PROVIDER_UNAVAILABLE",
+                format!("AI Provider 返回错误：{message}"),
+            )
         }
-    }
-
-    Ok(matches!(outcome, StreamLineOutcome::Done))
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum StreamLineOutcome {
-    Continue,
-    Done,
-}
-
-fn parse_stream_line(
-    line: &str,
-) -> Result<(StreamLineOutcome, Option<String>, Option<AiProviderUsage>), String> {
-    let trimmed = line.trim();
-
-    if trimmed.is_empty() || trimmed.starts_with(':') {
-        return Ok((StreamLineOutcome::Continue, None, None));
-    }
-
-    let Some(data) = trimmed.strip_prefix("data:") else {
-        return Ok((StreamLineOutcome::Continue, None, None));
-    };
-
-    let payload = data.trim();
-
-    if payload.is_empty() {
-        return Ok((StreamLineOutcome::Continue, None, None));
-    }
-
-    if payload == "[DONE]" {
-        return Ok((StreamLineOutcome::Done, None, None));
-    }
-
-    let parsed = serde_json::from_str::<ChatCompletionStreamChunk>(payload).map_err(|error| {
-        errors::error(
+        OpenAIError::JSONDeserialize(_, content) => errors::error(
             "AI_RESPONSE_INVALID",
-            format!("AI stream chunk 解析失败：{error}"),
-        )
-    })?;
-    let usage = parsed.usage.map(AiProviderUsage::from_openai_usage);
-    let delta = parsed
-        .choices
-        .into_iter()
-        .filter_map(|choice| choice.delta)
-        .filter_map(|delta| delta.content)
-        .collect::<String>();
+            format!(
+                "AI Provider 非流式响应 JSON 解析失败：{}",
+                summarize_body(&response_body_bytes_to_string(content.as_bytes()))
+            ),
+        ),
+        OpenAIError::InvalidArgument(message) => errors::error(
+            "AI_RESPONSE_INVALID",
+            format!("AI Provider 请求无效：{}", summarize_body(&message)),
+        ),
+        OpenAIError::StreamError(error) => errors::error(
+            "AI_PROVIDER_UNAVAILABLE",
+            format!("AI Provider 流式响应失败：{}", summarize_body(&error.to_string())),
+        ),
+        OpenAIError::Reqwest(error) => {
+            let message = error.to_string();
+            if error.is_status() {
+                return errors::error(
+                    "AI_PROVIDER_UNAVAILABLE",
+                    format!("AI Provider 请求失败：{}", summarize_body(&message)),
+                );
+            }
 
-    Ok((
-        StreamLineOutcome::Continue,
-        (!delta.is_empty()).then_some(delta),
-        usage,
-    ))
+            if error.is_timeout() {
+                return errors::error(
+                    "AI_PROVIDER_UNAVAILABLE",
+                    format!("AI Provider 请求超时：{}", summarize_body(&message)),
+                );
+            }
+
+            if error.is_decode() {
+                return errors::error(
+                    "AI_PROVIDER_UNAVAILABLE",
+                    "Provider 返回体解码失败。已请求 identity 编码，请检查该兼容网关是否返回了损坏压缩、错误 Content-Encoding 或被中途截断的响应。",
+                );
+            }
+
+            errors::error(
+                "AI_PROVIDER_UNAVAILABLE",
+                format!("AI Provider 请求失败：{}", summarize_body(&message)),
+            )
+        }
+        #[allow(unreachable_patterns)]
+        other => errors::error(
+            "AI_PROVIDER_UNAVAILABLE",
+            format!("AI Provider 请求失败：{}", summarize_body(&other.to_string())),
+        ),
+    }
 }
 
 fn update_completion_tokens_estimate(
@@ -837,31 +787,6 @@ fn update_completion_tokens_estimate(
         }
         Err(error) => Err(error),
     }
-}
-
-fn ensure_success_status(status: StatusCode, body: &str) -> Result<(), String> {
-    if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
-        return Err(errors::error(
-            "AI_PROVIDER_AUTH_FAILED",
-            "AI Provider 鉴权失败。",
-        ));
-    }
-
-    if status == StatusCode::TOO_MANY_REQUESTS {
-        return Err(errors::error(
-            "AI_PROVIDER_RATE_LIMITED",
-            "AI Provider 触发限流。",
-        ));
-    }
-
-    if !status.is_success() {
-        return Err(errors::error(
-            "AI_PROVIDER_UNAVAILABLE",
-            format!("AI Provider 返回错误 {status}: {}", summarize_body(body)),
-        ));
-    }
-
-    Ok(())
 }
 
 fn validate_base_url(value: &str) -> Result<String, String> {
@@ -925,10 +850,10 @@ fn summarize_body(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_stream_line, build_chat_request_body, chat, drain_complete_utf8_lines,
-        parse_chat_completion_response, response_body_bytes_to_string,
-        stream_accumulator_to_response, summarize_body, update_completion_tokens_estimate,
-        validate_base_url, StreamResponseAccumulator,
+        apply_stream_chunk, build_chat_request_body, chat, parse_chat_completion_response,
+        parse_stream_chunk_payload, response_body_bytes_to_string, stream_accumulator_to_response,
+        summarize_body, update_completion_tokens_estimate, validate_base_url,
+        ByotChatCompletionResponse, StreamResponseAccumulator,
     };
     use crate::ai::provider::{AiProviderChatRequest, AiProviderMessage, AiProviderToolSpec};
     use crate::ai::token_budget;
@@ -980,8 +905,11 @@ mod tests {
             }
           }]
         }"#;
+        let parsed: ByotChatCompletionResponse =
+            serde_json::from_str(body).expect("body should parse");
 
-        let response = parse_chat_completion_response(body, "gpt-test", None).expect("response");
+        let response =
+            parse_chat_completion_response(parsed, "gpt-test", None).expect("response");
 
         assert_eq!(response.content, "");
         assert_eq!(response.model, "gpt-test");
@@ -1003,7 +931,7 @@ mod tests {
                 }),
             }]);
 
-        let body = build_chat_request_body("gpt-test", request, false);
+        let body = build_chat_request_body("gpt-test", request, false).expect("body");
 
         assert_eq!(body["tool_choice"], "auto");
         assert_eq!(
@@ -1018,7 +946,7 @@ mod tests {
         let request = AiProviderChatRequest::new(vec![AiProviderMessage::user("answer now")])
             .with_tool_choice_none();
 
-        let body = build_chat_request_body("gpt-test", request, false);
+        let body = build_chat_request_body("gpt-test", request, false).expect("body");
 
         assert_eq!(body["tool_choice"], "none");
         assert!(body["tools"].is_null());
@@ -1028,7 +956,7 @@ mod tests {
     fn stream_request_body_enables_usage_frames() {
         let request = AiProviderChatRequest::new(vec![AiProviderMessage::user("stream")]);
 
-        let body = build_chat_request_body("gpt-test", request, true);
+        let body = build_chat_request_body("gpt-test", request, true).expect("body");
 
         assert_eq!(body["stream"], true);
         assert_eq!(body["stream_options"]["include_usage"], true);
@@ -1046,15 +974,19 @@ mod tests {
             "prompt_tokens": 11,
             "completion_tokens": 7,
             "total_tokens": 18,
-            "prompt_cache_hit_tokens": 3,
-            "prompt_cache_miss_tokens": 8,
+            "prompt_tokens_details": {
+              "cached_tokens": 3
+            },
             "completion_tokens_details": {
               "reasoning_tokens": 2
             }
           }
         }"#;
+        let parsed: ByotChatCompletionResponse =
+            serde_json::from_str(body).expect("body should parse");
 
-        let response = parse_chat_completion_response(body, "gpt-test", None).expect("response");
+        let response =
+            parse_chat_completion_response(parsed, "gpt-test", None).expect("response");
         let usage = response.usage.expect("usage");
 
         assert_eq!(usage.input_tokens, 11);
@@ -1077,86 +1009,65 @@ mod tests {
     }
 
     #[test]
-    fn stream_line_buffer_waits_for_complete_utf8_line_before_decoding() {
-        let line = "data: {\"choices\":[{\"delta\":{\"content\":\"你好🙂\"}}]}\n";
-        let split_at = line.find('你').expect("line should contain chinese") + 2;
-        let bytes = line.as_bytes();
-        let mut buffer = Vec::new();
+    fn parses_stream_chunk_payload_with_unicode_content() {
+        let parsed = parse_stream_chunk_payload(
+            r#"{"id":"chatcmpl-1","object":"chat.completion.chunk","created":1,"model":"gpt-test","choices":[{"index":0,"delta":{"content":"你好🙂"},"finish_reason":null}]}"#,
+        )
+        .expect("chunk should parse");
 
-        buffer.extend_from_slice(&bytes[..split_at]);
-        let lines = drain_complete_utf8_lines(&mut buffer).expect("partial chunk should parse");
-        assert!(lines.is_empty());
-
-        buffer.extend_from_slice(&bytes[split_at..]);
-        let lines = drain_complete_utf8_lines(&mut buffer).expect("full line should parse");
-
-        assert_eq!(lines, vec![line.trim_end_matches('\n').to_string()]);
-        assert!(!lines[0].contains('�'));
-        assert!(buffer.is_empty());
-    }
-
-    #[test]
-    fn stream_line_buffer_supports_lf_and_crlf_line_endings() {
-        let mut buffer =
-            b"data: {\"choices\":[{\"delta\":{\"content\":\"a\"}}]}\r\ndata: [DONE]\n".to_vec();
-
-        let lines = drain_complete_utf8_lines(&mut buffer).expect("lines should decode");
-
-        assert_eq!(lines.len(), 2);
+        assert_eq!(parsed.chunk.choices.len(), 1);
         assert_eq!(
-            lines[0],
-            "data: {\"choices\":[{\"delta\":{\"content\":\"a\"}}]}"
+            parsed.chunk.choices[0].delta.content.as_deref(),
+            Some("你好🙂")
         );
-        assert_eq!(lines[1], "data: [DONE]");
-        assert!(buffer.is_empty());
+        assert!(parsed.raw_usage.is_none());
     }
 
     #[test]
-    fn stream_line_done_marker_returns_finish_without_waiting_more_chunks() {
+    fn stream_chunk_ignores_empty_and_role_only_delta() {
         let mut accumulator = StreamResponseAccumulator::default();
 
-        let should_finish =
-            apply_stream_line("data: [DONE]", &mut accumulator).expect("done should parse");
-
-        assert!(should_finish);
-        assert!(accumulator.content.is_empty());
-        assert!(accumulator.tool_calls.is_empty());
-    }
-
-    #[test]
-    fn stream_payload_ignores_empty_and_role_only_delta() {
-        let mut accumulator = StreamResponseAccumulator::default();
-
-        let empty_delta =
-            apply_stream_line(r#"data: {"choices":[{"delta":{}}]}"#, &mut accumulator)
-                .expect("empty delta should parse");
-        let role_delta = apply_stream_line(
-            r#"data: {"choices":[{"delta":{"role":"assistant"}}]}"#,
+        apply_stream_chunk(
+            parse_stream_chunk_payload(
+                r#"{"id":"chatcmpl-1","object":"chat.completion.chunk","created":1,"model":"gpt-test","choices":[{"index":0,"delta":{},"finish_reason":null}]}"#,
+            )
+            .expect("empty delta should parse"),
             &mut accumulator,
         )
-        .expect("role-only delta should parse");
-        let content_delta = apply_stream_line(
-            r#"data: {"choices":[{"delta":{"content":"ok"}}]}"#,
+        .expect("empty delta should apply");
+        apply_stream_chunk(
+            parse_stream_chunk_payload(
+                r#"{"id":"chatcmpl-1","object":"chat.completion.chunk","created":1,"model":"gpt-test","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}"#,
+            )
+            .expect("role-only delta should parse"),
             &mut accumulator,
         )
-        .expect("content delta should parse");
+        .expect("role-only delta should apply");
+        apply_stream_chunk(
+            parse_stream_chunk_payload(
+                r#"{"id":"chatcmpl-1","object":"chat.completion.chunk","created":1,"model":"gpt-test","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":null}]}"#,
+            )
+            .expect("content delta should parse"),
+            &mut accumulator,
+        )
+        .expect("content delta should apply");
 
-        assert!(!empty_delta);
-        assert!(!role_delta);
-        assert!(!content_delta);
         assert_eq!(accumulator.content, "ok");
         assert!(accumulator.tool_calls.is_empty());
     }
 
     #[test]
-    fn stream_payload_records_usage_frame() {
+    fn stream_chunk_records_usage_frame() {
         let mut accumulator = StreamResponseAccumulator::default();
 
-        apply_stream_line(
-            r#"data: {"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":4,"total_tokens":14}}"#,
+        apply_stream_chunk(
+            parse_stream_chunk_payload(
+                r#"{"id":"chatcmpl-1","object":"chat.completion.chunk","created":1,"model":"gpt-test","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":4,"total_tokens":14}}"#,
+            )
+            .expect("usage chunk should parse"),
             &mut accumulator,
         )
-        .expect("usage chunk should parse");
+        .expect("usage chunk should apply");
 
         let usage = accumulator.usage.expect("usage");
         assert_eq!(usage.input_tokens, 10);
@@ -1233,10 +1144,18 @@ mod tests {
             }]
         });
 
-        apply_stream_line(&format!("data: {first_chunk}"), &mut accumulator)
-            .expect("first fragmented tool call chunk should parse");
-        apply_stream_line(&format!("data: {second_chunk}"), &mut accumulator)
-            .expect("second fragmented tool call chunk should parse");
+        apply_stream_chunk(
+            parse_stream_chunk_payload(&first_chunk.to_string())
+                .expect("first fragmented tool call chunk should parse"),
+            &mut accumulator,
+        )
+        .expect("first fragmented tool call chunk should apply");
+        apply_stream_chunk(
+            parse_stream_chunk_payload(&second_chunk.to_string())
+                .expect("second fragmented tool call chunk should parse"),
+            &mut accumulator,
+        )
+        .expect("second fragmented tool call chunk should apply");
 
         let response = stream_accumulator_to_response(accumulator, "test-model", None)
             .expect("tool calls should parse only after all fragments");
@@ -1518,8 +1437,10 @@ mod tests {
             }
           }]
         }"#;
+        let parsed: ByotChatCompletionResponse =
+            serde_json::from_str(body).expect("body should parse");
 
-        let error = parse_chat_completion_response(body, "gpt-test", None)
+        let error = parse_chat_completion_response(parsed, "gpt-test", None)
             .expect_err("invalid arguments should fail");
 
         assert!(error.contains("AI_RESPONSE_INVALID"));

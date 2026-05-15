@@ -1,8 +1,13 @@
+import { Lang, parse, registerDynamicLanguage, type SgNode } from '@ast-grep/napi';
+import type { ToolsInput } from '@mastra/core/agent';
+import { createTool } from '@mastra/core/tools';
+import { rgPath } from '@vscode/ripgrep';
+import { structuredPatch } from 'diff';
 import { spawn } from 'node:child_process';
-import { createReadStream } from 'node:fs';
+import { createHash } from 'node:crypto';
 import {
-  existsSync,
-  realpathSync,
+  createReadStream, existsSync,
+  realpathSync
 } from 'node:fs';
 import {
   lstat,
@@ -22,15 +27,13 @@ import {
   resolve,
 } from 'node:path';
 import { createInterface } from 'node:readline';
-
-import { Lang, parse, registerDynamicLanguage, type SgNode } from '@ast-grep/napi';
-import type { ToolsInput } from '@mastra/core/agent';
-import { createTool } from '@mastra/core/tools';
-import { rgPath } from '@vscode/ripgrep';
 import { z } from 'zod';
-
 import { compactModelOutput, truncateModelOutputText } from '../models/model-output-budget.js';
 import type { TMcpGatewayToolProfile } from './mcp-gateway.js';
+
+// ----------------------------------------------------------------------
+// 类型定义
+// ----------------------------------------------------------------------
 
 type TFileToolErrorCode =
   | 'NO_WORKSPACE'
@@ -167,6 +170,11 @@ interface IApplyFileEditsResult {
       }>;
     }>;
   } | null;
+  /** 文件 EOL 与请求 oldString 不匹配时填这里，agent 可以感知到归一化已经发生。 */
+  eolNormalized?: {
+    fileEol: 'lf' | 'crlf' | 'mixed' | 'none';
+    hadBom: boolean;
+  };
   error?: IFileToolError;
 }
 
@@ -207,6 +215,10 @@ interface IJsonToolModelOutput {
   value: unknown;
 }
 
+// ----------------------------------------------------------------------
+// 常量
+// ----------------------------------------------------------------------
+
 const DEFAULT_READ_FILE_WINDOW_LIMIT = 200;
 const MAX_READ_FILE_WINDOW_LIMIT = 500;
 const READ_FILE_WINDOW_CONTENT_MAX_CHARS = 12_000;
@@ -239,12 +251,19 @@ const DEFAULT_EXCLUDE_PATTERNS = ['node_modules', '.git', 'dist', 'target'] as c
 const LIST_DIR_LINE_COUNT_MAX_BYTES = 128 * 1024;
 const BINARY_SAMPLE_BYTES = 8 * 1024;
 const RG_MAX_FILE_SIZE = '1M';
-const FNV64_OFFSET = 0xcbf29ce484222325n;
-const FNV64_PRIME = 0x100000001b3n;
-const FNV64_MASK = 0xffffffffffffffffn;
+const PATCH_CONTEXT_LINES = 3;
+
+// ----------------------------------------------------------------------
+// 模块级状态
+// ----------------------------------------------------------------------
+
 const lineCountCache = new Map<string, ILineCountCacheEntry>();
 const require = createRequire(import.meta.url);
 let bashLanguageRegistrationState: 'pending' | 'registered' | 'unavailable' = 'pending';
+
+// ----------------------------------------------------------------------
+// Zod schemas
+// ----------------------------------------------------------------------
 
 const readFileWindowInputSchema = z.object({
   path: z.string().trim().min(1),
@@ -309,6 +328,10 @@ type TListDirInput = z.infer<typeof listDirInputSchema>;
 type TSearchSymbolsInput = z.infer<typeof searchSymbolsInputSchema>;
 type TApplyFileEditsInput = z.infer<typeof applyFileEditsInputSchema>;
 
+// ----------------------------------------------------------------------
+// 错误 / 路径 helper
+// ----------------------------------------------------------------------
+
 const toFileToolError = (code: TFileToolErrorCode, message: string): IFileToolError => ({
   code,
   message,
@@ -322,11 +345,9 @@ const getErrorCode = (error: unknown): string | null => (
 
 const normalizeFsError = (error: unknown): IFileToolError => {
   const code = getErrorCode(error);
-
   if (code === 'ENOENT' || code === 'EACCES' || code === 'ENOTDIR' || code === 'EISDIR') {
     return toFileToolError(code, error instanceof Error ? error.message : code);
   }
-
   return toFileToolError('INVALID_PATH', error instanceof Error ? error.message : String(error));
 };
 
@@ -334,7 +355,6 @@ const normalizePathForModel = (value: string): string => value.replace(/\\/gu, '
 
 const isPathInsideRoot = (workspaceRoot: string, targetPath: string): boolean => {
   const relativePath = relative(workspaceRoot, targetPath);
-
   return relativePath === ''
     || (!relativePath.startsWith('..') && !isAbsolute(relativePath));
 };
@@ -345,18 +365,14 @@ const createWorkspacePathResolver = (
   if (!workspaceRootPath) {
     return () => ({ error: toFileToolError('NO_WORKSPACE', '当前没有可用 workspaceRootPath。') });
   }
-
   if (!existsSync(workspaceRootPath)) {
     return () => ({ error: toFileToolError('NO_WORKSPACE', 'workspaceRootPath 不存在。') });
   }
-
   const workspaceRoot = realpathSync(resolve(workspaceRootPath));
-
   return (inputPath: string) => {
     const candidatePath = isAbsolute(inputPath)
       ? resolve(inputPath)
       : resolve(workspaceRoot, inputPath);
-
     if (!isPathInsideRoot(workspaceRoot, candidatePath)) {
       return {
         error: toFileToolError(
@@ -365,13 +381,10 @@ const createWorkspacePathResolver = (
         ),
       };
     }
-
     const relativePath = normalizePathForModel(relative(workspaceRoot, candidatePath) || '.');
     let operationPath = candidatePath;
-
     try {
       operationPath = realpathSync(candidatePath);
-
       if (!isPathInsideRoot(workspaceRoot, operationPath)) {
         return {
           error: toFileToolError(
@@ -385,7 +398,6 @@ const createWorkspacePathResolver = (
         return { error: normalizeFsError(error) };
       }
     }
-
     return {
       absolutePath: operationPath,
       relativePath,
@@ -397,19 +409,20 @@ const isResolvedPath = (
   value: IResolvedWorkspacePath | { error: IFileToolError },
 ): value is IResolvedWorkspacePath => !('error' in value);
 
+// ----------------------------------------------------------------------
+// 文件 I/O helper
+// ----------------------------------------------------------------------
+
 const isBinaryFile = async (filePath: string): Promise<boolean> => {
   const handle = await open(filePath, 'r');
-
   try {
     const sample = Buffer.alloc(BINARY_SAMPLE_BYTES);
     const { bytesRead } = await handle.read(sample, 0, sample.length, 0);
-
     for (let index = 0; index < bytesRead; index += 1) {
       if (sample[index] === 0) {
         return true;
       }
     }
-
     return false;
   } finally {
     await handle.close();
@@ -420,7 +433,6 @@ const countFileLines = async (filePath: string): Promise<number> => {
   let totalLines = 0;
   const stream = createReadStream(filePath, { encoding: 'utf8' });
   const rl = createInterface({ input: stream, crlfDelay: Infinity });
-
   try {
     for await (const _line of rl) {
       totalLines += 1;
@@ -428,7 +440,6 @@ const countFileLines = async (filePath: string): Promise<number> => {
   } finally {
     rl.close();
   }
-
   return totalLines;
 };
 
@@ -438,11 +449,9 @@ const readCachedLineCount = (
   mtimeMs: number,
 ): number | null => {
   const cached = lineCountCache.get(filePath);
-
   if (!cached || cached.sizeBytes !== sizeBytes || cached.mtimeMs !== mtimeMs) {
     return null;
   }
-
   return cached.totalLines;
 };
 
@@ -457,14 +466,11 @@ const writeCachedLineCount = (
     mtimeMs,
     totalLines,
   });
-
   while (lineCountCache.size > READ_FILE_LINE_COUNT_CACHE_MAX_ENTRIES) {
     const firstKey = lineCountCache.keys().next().value;
-
     if (typeof firstKey !== 'string') {
       return;
     }
-
     lineCountCache.delete(firstKey);
   }
 };
@@ -475,17 +481,13 @@ const resolveExactLineCount = async (
   mtimeMs: number,
 ): Promise<number | null> => {
   const cached = readCachedLineCount(filePath, sizeBytes, mtimeMs);
-
   if (cached !== null) {
     return cached;
   }
-
   if (sizeBytes > READ_FILE_EXACT_LINE_COUNT_MAX_BYTES) {
     return null;
   }
-
   const totalLines = await countFileLines(filePath);
-
   writeCachedLineCount(filePath, sizeBytes, mtimeMs, totalLines);
   return totalLines;
 };
@@ -504,20 +506,16 @@ const readWindowLines = async (
   let reachedEnd = true;
   const stream = createReadStream(filePath, { encoding: 'utf8' });
   const rl = createInterface({ input: stream, crlfDelay: Infinity });
-
   try {
     for await (const line of rl) {
       lastReadLine += 1;
-
       if (lastReadLine < startLine) {
         continue;
       }
-
       if (lines.length < limit) {
         lines.push(line);
         continue;
       }
-
       reachedEnd = false;
       break;
     }
@@ -525,7 +523,6 @@ const readWindowLines = async (
     rl.close();
     stream.destroy();
   }
-
   return {
     lines,
     lastReadLine,
@@ -541,18 +538,20 @@ const formatWindowContent = (
   if (!includeLineNumbers) {
     return lines.join('\n');
   }
-
   return lines
     .map((line, index) => `${String(startLine + index).padStart(5)} | ${line}`)
     .join('\n');
 };
+
+// ----------------------------------------------------------------------
+// Tool: read_file_window
+// ----------------------------------------------------------------------
 
 const readFileWindow = async (
   resolveWorkspacePath: (inputPath: string) => IResolvedWorkspacePath | { error: IFileToolError },
   input: TReadFileWindowInput,
 ): Promise<IReadFileWindowResult> => {
   const resolved = resolveWorkspacePath(input.path);
-
   if (!isResolvedPath(resolved)) {
     return {
       path: input.path,
@@ -569,10 +568,8 @@ const readFileWindow = async (
       error: resolved.error,
     };
   }
-
   try {
     const fileStat = await stat(resolved.absolutePath);
-
     if (!fileStat.isFile()) {
       return {
         path: resolved.relativePath,
@@ -589,7 +586,6 @@ const readFileWindow = async (
         error: toFileToolError('EISDIR', '目标路径不是普通文本文件。'),
       };
     }
-
     if (await isBinaryFile(resolved.absolutePath)) {
       return {
         path: resolved.relativePath,
@@ -606,7 +602,6 @@ const readFileWindow = async (
         error: toFileToolError('BINARY_FILE', '检测到二进制文件，已拒绝读取。'),
       };
     }
-
     const exactTotalLines = await resolveExactLineCount(
       resolved.absolutePath,
       fileStat.size,
@@ -616,13 +611,11 @@ const readFileWindow = async (
     const lines = window.lines;
     let totalLines = exactTotalLines ?? -1;
     let totalLinesKnown = exactTotalLines !== null;
-
     if (!totalLinesKnown && window.reachedEnd) {
       totalLines = window.lastReadLine;
       totalLinesKnown = true;
       writeCachedLineCount(resolved.absolutePath, fileStat.size, fileStat.mtimeMs, totalLines);
     }
-
     const startLine = lines.length > 0
       ? input.startLine
       : totalLinesKnown
@@ -636,7 +629,6 @@ const readFileWindow = async (
     );
     const content = formatWindowContent(lines, startLine, input.includeLineNumbers);
     const contentPreview = truncateModelOutputText(content, READ_FILE_WINDOW_CONTENT_MAX_CHARS);
-
     return {
       path: resolved.relativePath,
       totalLines,
@@ -668,6 +660,10 @@ const readFileWindow = async (
   }
 };
 
+// ----------------------------------------------------------------------
+// Tool: list_dir
+// ----------------------------------------------------------------------
+
 const matchesPattern = (
   relativePath: string,
   name: string,
@@ -675,13 +671,11 @@ const matchesPattern = (
 ): boolean => {
   const normalizedPattern = normalizePathForModel(pattern);
   const normalizedPath = normalizePathForModel(relativePath);
-
   if (!normalizedPattern.includes('*') && !normalizedPattern.includes('?')) {
     return name === normalizedPattern
       || normalizedPath === normalizedPattern
       || normalizedPath.split('/').includes(normalizedPattern);
   }
-
   return matchesGlob(normalizedPath, normalizedPattern) || matchesGlob(name, normalizedPattern);
 };
 
@@ -695,7 +689,6 @@ const getEntryType = (entry: { isDirectory: () => boolean; isSymbolicLink: () =>
   if (entry.isSymbolicLink()) {
     return 'symlink';
   }
-
   return entry.isDirectory() ? 'dir' : 'file';
 };
 
@@ -706,11 +699,9 @@ const countLinesIfSmallTextFile = async (
   if (sizeBytes > LIST_DIR_LINE_COUNT_MAX_BYTES) {
     return undefined;
   }
-
   if (await isBinaryFile(absolutePath)) {
     return undefined;
   }
-
   return await countFileLines(absolutePath);
 };
 
@@ -719,7 +710,6 @@ const listDir = async (
   input: TListDirInput,
 ): Promise<IListDirResult> => {
   const resolved = resolveWorkspacePath(input.path);
-
   if (!isResolvedPath(resolved)) {
     return {
       path: input.path,
@@ -729,10 +719,8 @@ const listDir = async (
       error: resolved.error,
     };
   }
-
   try {
     const rootStat = await stat(resolved.absolutePath);
-
     if (!rootStat.isDirectory()) {
       return {
         path: resolved.relativePath,
@@ -742,20 +730,15 @@ const listDir = async (
         error: toFileToolError('ENOTDIR', '目标路径不是目录。'),
       };
     }
-
     const entries: IListDirEntry[] = [];
     let totalEntries = 0;
     const queue: IResolvedWorkspacePath[] = [resolved];
-
     while (queue.length > 0) {
       const current = queue.shift();
-
       if (!current) {
         continue;
       }
-
       const dir = await opendir(current.absolutePath);
-
       try {
         for await (const dirent of dir) {
           const absolutePath = resolve(current.absolutePath, dirent.name);
@@ -766,11 +749,9 @@ const listDir = async (
               : `${resolved.relativePath}/${relativePath}`,
           );
           const type = getEntryType(dirent);
-
           if (matchesAnyPattern(workspaceRelativePath, dirent.name, input.excludePatterns)) {
             continue;
           }
-
           if (
             input.includePatterns
             && !matchesAnyPattern(workspaceRelativePath, dirent.name, input.includePatterns)
@@ -778,29 +759,23 @@ const listDir = async (
           ) {
             continue;
           }
-
           totalEntries += 1;
-
           if (entries.length < input.maxEntries) {
             const entry: IListDirEntry = {
               name: dirent.name,
               path: workspaceRelativePath,
               type,
             };
-
             if (type === 'file') {
               const fileStat = await lstat(absolutePath);
               const lines = await countLinesIfSmallTextFile(absolutePath, fileStat.size);
-
               entry.sizeBytes = fileStat.size;
               if (lines !== undefined) {
                 entry.lines = lines;
               }
             }
-
             entries.push(entry);
           }
-
           if (input.recursive && type === 'dir' && entries.length < input.maxEntries) {
             queue.push({
               absolutePath,
@@ -811,12 +786,10 @@ const listDir = async (
       } finally {
         await dir.close().catch(() => undefined);
       }
-
       if (!input.recursive || entries.length >= input.maxEntries) {
         break;
       }
     }
-
     return {
       path: resolved.relativePath,
       entries,
@@ -833,6 +806,10 @@ const listDir = async (
     };
   }
 };
+
+// ----------------------------------------------------------------------
+// rg helpers + Tool: grep_in_files
+// ----------------------------------------------------------------------
 
 const spawnRg = (
   args: readonly string[],
@@ -852,7 +829,6 @@ const readProcessLines = async (
     let stdoutBuffer = '';
     let stderr = '';
     let truncated = false;
-
     proc.on('error', (error) => {
       resolvePromise({
         lines,
@@ -862,43 +838,35 @@ const readProcessLines = async (
           : normalizeFsError(error),
       });
     });
-
     proc.stdout.on('data', (chunk: Buffer) => {
       stdoutBuffer += chunk.toString('utf8');
       const parts = stdoutBuffer.split(/\r?\n/u);
       stdoutBuffer = parts.pop() ?? '';
-
       for (const line of parts) {
         if (!line) {
           continue;
         }
-
         if (lines.length >= options.maxLines) {
           truncated = true;
           proc.kill();
           return;
         }
-
         lines.push(line);
       }
     });
-
     proc.stderr.on('data', (chunk: Buffer) => {
       stderr += chunk.toString('utf8');
     });
-
     proc.on('close', (code) => {
       if (stdoutBuffer && lines.length < options.maxLines) {
         lines.push(stdoutBuffer);
       } else if (stdoutBuffer) {
         truncated = true;
       }
-
       if (code === 0 || code === 1 || truncated) {
         resolvePromise({ lines, truncated });
         return;
       }
-
       resolvePromise({
         lines,
         truncated,
@@ -914,10 +882,10 @@ const createRgFileArgsForPath = (
 const createRgFileArgsForGlob = (
   input: IGrepGlobPaths,
 ): string[] => [
-  ...(input.include ?? ['**/*']).flatMap((pattern) => ['--glob', pattern]),
-  ...(input.exclude ?? [...DEFAULT_EXCLUDE_PATTERNS]).flatMap((pattern) => ['--glob', `!${pattern}`]),
-  '.',
-];
+    ...(input.include ?? ['**/*']).flatMap((pattern) => ['--glob', pattern]),
+    ...(input.exclude ?? [...DEFAULT_EXCLUDE_PATTERNS]).flatMap((pattern) => ['--glob', `!${pattern}`]),
+    '.',
+  ];
 
 const resolveGrepFiles = async (
   resolveWorkspacePath: (inputPath: string) => IResolvedWorkspacePath | { error: IFileToolError },
@@ -933,19 +901,14 @@ const resolveGrepFiles = async (
   const maxLines = input.maxFilesScanned + 1;
   const fileCandidates: IResolvedWorkspacePath[] = [];
   let truncated = false;
-
   if (typeof paths === 'string' || Array.isArray(paths)) {
     const rawPaths = Array.isArray(paths) ? paths : [paths];
-
     for (const rawPath of rawPaths) {
       const resolved = resolveWorkspacePath(rawPath);
-
       if (!isResolvedPath(resolved)) {
         return { files: [], truncated: false, bytesScanned: 0, error: resolved.error };
       }
-
       const targetStat = await stat(resolved.absolutePath).catch(() => null);
-
       if (!targetStat) {
         return {
           files: [],
@@ -954,29 +917,23 @@ const resolveGrepFiles = async (
           error: toFileToolError('ENOENT', `路径不存在：${rawPath}`),
         };
       }
-
       if (targetStat.isFile()) {
         fileCandidates.push(resolved);
         continue;
       }
-
       if (!targetStat.isDirectory()) {
         continue;
       }
-
       const fileList = await readProcessLines(
         ['--files', '--max-filesize', RG_MAX_FILE_SIZE, ...createRgFileArgsForPath(resolved)],
         { maxLines },
       );
-
       if (fileList.error) {
         return { files: [], truncated: false, bytesScanned: 0, error: fileList.error };
       }
-
       truncated ||= fileList.truncated;
       for (const filePath of fileList.lines) {
         const resolvedFile = resolveWorkspacePath(filePath);
-
         if (isResolvedPath(resolvedFile)) {
           fileCandidates.push(resolvedFile);
         }
@@ -987,38 +944,30 @@ const resolveGrepFiles = async (
       ['--files', '--max-filesize', RG_MAX_FILE_SIZE, ...createRgFileArgsForGlob(paths)],
       { cwd: workspaceRootPath, maxLines },
     );
-
     if (fileList.error) {
       return { files: [], truncated: false, bytesScanned: 0, error: fileList.error };
     }
-
     truncated = fileList.truncated;
     for (const filePath of fileList.lines) {
       const resolvedFile = resolveWorkspacePath(filePath);
-
       if (isResolvedPath(resolvedFile)) {
         fileCandidates.push(resolvedFile);
       }
     }
   }
-
   const uniqueFiles = new Map<string, IResolvedWorkspacePath>();
-
   for (const file of fileCandidates) {
     if (uniqueFiles.size >= input.maxFilesScanned) {
       truncated = true;
       break;
     }
-
     uniqueFiles.set(file.absolutePath, file);
   }
-
   let bytesScanned = 0;
   for (const file of uniqueFiles.values()) {
     const fileStat = await stat(file.absolutePath).catch(() => null);
     bytesScanned += fileStat?.size ?? 0;
   }
-
   return {
     files: [...uniqueFiles.values()],
     truncated,
@@ -1031,16 +980,13 @@ const getOrCreateGrepFile = (
   filePath: string,
 ): IGrepFileMatches => {
   const existing = files.get(filePath);
-
   if (existing) {
     return existing;
   }
-
   const created: IGrepFileMatches = {
     path: filePath,
     matches: [],
   };
-
   files.set(filePath, created);
   return created;
 };
@@ -1068,7 +1014,6 @@ const grepInResolvedFiles = async (
       });
       return;
     }
-
     const relativePathByAbsolutePath = new Map(
       filesToScan.map((file) => [file.absolutePath, file.relativePath]),
     );
@@ -1099,59 +1044,46 @@ const grepInResolvedFiles = async (
       timedOut = true;
       proc.kill();
     }, GREP_TIMEOUT_MS);
-
     const settle = (result: Pick<IGrepInFilesResult, 'files' | 'matchesReturned' | 'truncated' | 'error'>): void => {
       if (settled) {
         return;
       }
-
       settled = true;
       clearTimeout(timeout);
       resolvePromise(result);
     };
-
     const handleContext = (event: IRgJsonEvent): void => {
       const pathText = event.data?.path?.text;
       const lineNumber = event.data?.line_number;
-
       if (!pathText || typeof lineNumber !== 'number') {
         return;
       }
-
       const relativePath = relativePathByAbsolutePath.get(resolve(pathText))
         ?? normalizePathForModel(pathText);
       const line = readRgText(event.data?.lines);
       const recentMatch = lastMatch.get(relativePath);
-
       if (recentMatch && lineNumber > recentMatch.line) {
         recentMatch.contextAfter ??= [];
-
         if (recentMatch.contextAfter.length < input.contextLines) {
           recentMatch.contextAfter.push(line);
         }
-
         return;
       }
-
       const context = beforeContext.get(relativePath) ?? [];
       context.push(line);
       beforeContext.set(relativePath, context.slice(-input.contextLines));
     };
-
     const handleMatch = (event: IRgJsonEvent): void => {
       const pathText = event.data?.path?.text;
       const lineNumber = event.data?.line_number;
-
       if (!pathText || typeof lineNumber !== 'number') {
         return;
       }
-
       if (matchesReturned >= input.maxMatches) {
         truncated = true;
         proc.kill();
         return;
       }
-
       const relativePath = relativePathByAbsolutePath.get(resolve(pathText))
         ?? normalizePathForModel(pathText);
       const file = getOrCreateGrepFile(files, relativePath);
@@ -1162,34 +1094,27 @@ const grepInResolvedFiles = async (
         content: readRgText(event.data?.lines),
       };
       const contextBefore = beforeContext.get(relativePath);
-
       if (contextBefore && contextBefore.length > 0) {
         match.contextBefore = contextBefore;
       }
-
       file.matches.push(match);
       lastMatch.set(relativePath, match);
       beforeContext.set(relativePath, []);
       matchesReturned += 1;
     };
-
     const handleLine = (line: string): void => {
       const event = parseRgJsonLine(line);
-
       if (!event) {
         return;
       }
-
       if (event.type === 'context') {
         handleContext(event);
         return;
       }
-
       if (event.type === 'match') {
         handleMatch(event);
       }
     };
-
     proc.on('error', (error) => {
       settle({
         files: [...files.values()],
@@ -1200,23 +1125,19 @@ const grepInResolvedFiles = async (
           : normalizeFsError(error),
       });
     });
-
     proc.stdout.on('data', (chunk: Buffer) => {
       stdoutBuffer += chunk.toString('utf8');
       const lines = stdoutBuffer.split(/\r?\n/u);
       stdoutBuffer = lines.pop() ?? '';
       lines.filter((line) => line.length > 0).forEach(handleLine);
     });
-
     proc.stderr.on('data', (chunk: Buffer) => {
       stderr += chunk.toString('utf8');
     });
-
     proc.on('close', (code) => {
       if (stdoutBuffer) {
         handleLine(stdoutBuffer);
       }
-
       if (timedOut) {
         settle({
           files: [...files.values()],
@@ -1226,7 +1147,6 @@ const grepInResolvedFiles = async (
         });
         return;
       }
-
       if (code === 0 || code === 1 || truncated) {
         settle({
           files: [...files.values()],
@@ -1235,7 +1155,6 @@ const grepInResolvedFiles = async (
         });
         return;
       }
-
       settle({
         files: [...files.values()],
         matchesReturned,
@@ -1251,7 +1170,6 @@ const grepInFiles = async (
   input: TGrepInFilesInput,
 ): Promise<IGrepInFilesResult> => {
   const resolvedFiles = await resolveGrepFiles(resolveWorkspacePath, workspaceRootPath, input);
-
   if (resolvedFiles.error) {
     return {
       totalMatches: 0,
@@ -1266,9 +1184,7 @@ const grepInFiles = async (
       error: resolvedFiles.error,
     };
   }
-
   const grepResult = await grepInResolvedFiles(input, resolvedFiles.files);
-
   return {
     totalMatches: resolvedFiles.truncated || grepResult.truncated ? -1 : grepResult.matchesReturned,
     matchesReturned: grepResult.matchesReturned,
@@ -1283,6 +1199,10 @@ const grepInFiles = async (
   };
 };
 
+// ----------------------------------------------------------------------
+// AST-grep helpers + Tool: search_symbols
+// ----------------------------------------------------------------------
+
 const resolveTreeSitterBashLibraryPath = (): string | null => {
   try {
     const packageJsonPath = require.resolve('tree-sitter-bash/package.json');
@@ -1293,7 +1213,6 @@ const resolveTreeSitterBashLibraryPath = (): string | null => {
       `${process.platform}-${process.arch}`,
       'tree-sitter-bash.node',
     );
-
     return existsSync(libraryPath) ? libraryPath : null;
   } catch {
     return null;
@@ -1304,18 +1223,14 @@ const ensureBashAstGrepLanguageRegistered = (): boolean => {
   if (bashLanguageRegistrationState === 'registered') {
     return true;
   }
-
   if (bashLanguageRegistrationState === 'unavailable') {
     return false;
   }
-
   const libraryPath = resolveTreeSitterBashLibraryPath();
-
   if (!libraryPath) {
     bashLanguageRegistrationState = 'unavailable';
     return false;
   }
-
   try {
     registerDynamicLanguage({
       [BASH_AST_GREP_LANGUAGE]: {
@@ -1334,20 +1249,17 @@ const ensureBashAstGrepLanguageRegistered = (): boolean => {
 
 const hasShellShebang = (content: string): boolean => {
   const firstLine = content.split(/\r?\n/u, 1)[0]?.toLocaleLowerCase() ?? '';
-
   return firstLine.startsWith('#!') && /\b(?:ba|da|k)?sh\b/u.test(firstLine);
 };
 
 const isShellSymbolPath = (path: string): boolean => {
   const normalizedPath = path.toLowerCase().replace(/\\/gu, '/');
   const fileName = normalizedPath.split('/').filter((part) => part.length > 0).at(-1) ?? normalizedPath;
-
   return SHELL_SYMBOL_FILE_PATTERN.test(normalizedPath) || SHELL_SYMBOL_FILE_NAMES.has(fileName);
 };
 
 const getAstGrepLanguageFromPath = (path: string): TAstGrepLanguage | null => {
   const normalizedPath = path.toLowerCase();
-
   if (
     normalizedPath.endsWith('.ts')
     || normalizedPath.endsWith('.mts')
@@ -1355,11 +1267,9 @@ const getAstGrepLanguageFromPath = (path: string): TAstGrepLanguage | null => {
   ) {
     return Lang.TypeScript;
   }
-
   if (normalizedPath.endsWith('.tsx') || normalizedPath.endsWith('.jsx')) {
     return Lang.Tsx;
   }
-
   if (
     normalizedPath.endsWith('.js')
     || normalizedPath.endsWith('.mjs')
@@ -1367,21 +1277,17 @@ const getAstGrepLanguageFromPath = (path: string): TAstGrepLanguage | null => {
   ) {
     return Lang.JavaScript;
   }
-
   if (isShellSymbolPath(path) && ensureBashAstGrepLanguageRegistered()) {
     return BASH_AST_GREP_LANGUAGE;
   }
-
   return null;
 };
 
 const getAstGrepLanguage = (path: string, content: string): TAstGrepLanguage | null => {
   const language = getAstGrepLanguageFromPath(path);
-
   if (language) {
     return language;
   }
-
   return hasShellShebang(content) && ensureBashAstGrepLanguageRegistered()
     ? BASH_AST_GREP_LANGUAGE
     : null;
@@ -1402,7 +1308,6 @@ const extractVueScriptBlocks = (content: string): Array<{
     language: TAstGrepLanguage;
   }> = [];
   const scriptPattern = /<script\b(?<attrs>[^>]*)>(?<content>[\s\S]*?)<\/script>/giu;
-
   for (const match of content.matchAll(scriptPattern)) {
     const body = match.groups?.content ?? '';
     const attrs = match.groups?.attrs ?? '';
@@ -1413,18 +1318,15 @@ const extractVueScriptBlocks = (content: string): Array<{
     const language = /lang\s*=\s*["']tsx["']/iu.test(attrs)
       ? Lang.Tsx
       : Lang.TypeScript;
-
     if (body.trim().length === 0) {
       continue;
     }
-
     blocks.push({
       content: body,
       startLineOffset: countLineBreaks(content.slice(0, bodyIndex)),
       language,
     });
   }
-
   return blocks;
 };
 
@@ -1437,7 +1339,6 @@ const firstChildTextByKind = (
       return child.text();
     }
   }
-
   return null;
 };
 
@@ -1466,19 +1367,15 @@ const getSymbolName = (node: SgNode, kind: TSymbolKind): string | null => {
   if (String(node.kind()) === 'function_definition') {
     return firstChildTextByKind(node, ['word']);
   }
-
   if (String(node.kind()) === 'variable_assignment') {
     return firstChildTextByKind(node, ['variable_name', 'subscript']);
   }
-
   if (kind === 'class' || kind === 'interface' || kind === 'type') {
     return firstChildTextByKind(node, ['type_identifier']);
   }
-
   if (kind === 'method') {
     return firstChildTextByKind(node, ['property_identifier', 'identifier']);
   }
-
   return firstChildTextByKind(node, ['identifier']);
 };
 
@@ -1497,7 +1394,6 @@ const collectSymbolsFromNode = (
   symbols: ISymbolEntry[],
 ): void => {
   const symbolKind = getSymbolKind(String(node.kind()));
-
   if (symbolKind) {
     const name = getSymbolName(node, symbolKind);
     if (name) {
@@ -1512,7 +1408,6 @@ const collectSymbolsFromNode = (
       });
     }
   }
-
   for (const child of node.children()) {
     collectSymbolsFromNode(child, path, lineOffset, symbols);
   }
@@ -1525,17 +1420,15 @@ const parseSymbolsFromContent = (
   const parseTargets = isVueFilePath(path)
     ? extractVueScriptBlocks(content)
     : [{
-        content,
-        startLineOffset: 0,
-        language: getAstGrepLanguage(path, content),
-      }];
+      content,
+      startLineOffset: 0,
+      language: getAstGrepLanguage(path, content),
+    }];
   const symbols: ISymbolEntry[] = [];
-
   for (const target of parseTargets) {
     if (!target.language) {
       return toFileToolError('UNSUPPORTED_LANGUAGE', '当前文件类型暂不支持 Symbol 导航。');
     }
-
     try {
       collectSymbolsFromNode(
         parse(target.language, target.content).root(),
@@ -1550,7 +1443,6 @@ const parseSymbolsFromContent = (
       );
     }
   }
-
   return symbols;
 };
 
@@ -1558,9 +1450,7 @@ const matchesSymbolQuery = (symbol: ISymbolEntry, query: string | undefined): bo
   if (!query) {
     return true;
   }
-
   const normalizedQuery = query.toLocaleLowerCase();
-
   return symbol.name.toLocaleLowerCase().includes(normalizedQuery)
     || symbol.preview.toLocaleLowerCase().includes(normalizedQuery);
 };
@@ -1578,7 +1468,6 @@ const searchSymbols = async (
     maxFilesScanned: input.maxFilesScanned,
     caseSensitive: false,
   });
-
   if (resolvedFiles.error) {
     return {
       query: input.query ?? null,
@@ -1593,60 +1482,39 @@ const searchSymbols = async (
       error: resolvedFiles.error,
     };
   }
-
   const symbols: ISymbolEntry[] = [];
   let filesMatched = 0;
   let bytesScanned = 0;
   let truncated = resolvedFiles.truncated;
-
   for (const file of resolvedFiles.files) {
     const fileStat = await stat(file.absolutePath).catch(() => null);
-
     if (!fileStat || !fileStat.isFile()) {
       continue;
     }
-
     bytesScanned += fileStat.size;
-
     if (fileStat.size > SYMBOL_FILE_MAX_BYTES || await isBinaryFile(file.absolutePath)) {
       continue;
     }
-
     const content = await readFile(file.absolutePath, 'utf8');
-    const language = isVueFilePath(file.relativePath)
-      ? Lang.TypeScript
-      : getAstGrepLanguage(file.relativePath, content);
-
-    if (!language) {
-      continue;
-    }
-
     const parsedSymbols = parseSymbolsFromContent(file.relativePath, content);
-
     if (!Array.isArray(parsedSymbols)) {
       continue;
     }
-
     const matchedSymbols = parsedSymbols.filter((symbol) => matchesSymbolQuery(symbol, input.query));
-
     if (matchedSymbols.length > 0) {
       filesMatched += 1;
     }
-
     for (const symbol of matchedSymbols) {
       if (symbols.length >= input.maxSymbols) {
         truncated = true;
         break;
       }
-
       symbols.push(symbol);
     }
-
     if (symbols.length >= input.maxSymbols) {
       break;
     }
   }
-
   return {
     query: input.query ?? null,
     symbols,
@@ -1660,59 +1528,82 @@ const searchSymbols = async (
   };
 };
 
-const hashText = (value: string): string => {
-  let hash = FNV64_OFFSET;
+// ----------------------------------------------------------------------
+// Hash + EOL/BOM 归一 + Tool: apply_file_edits
+// ----------------------------------------------------------------------
 
-  for (const byte of Buffer.from(value, 'utf8')) {
-    hash ^= BigInt(byte);
-    hash = (hash * FNV64_PRIME) & FNV64_MASK;
+type TEolStyle = 'lf' | 'crlf' | 'mixed' | 'none';
+
+/** SHA1 走原生 OpenSSL，对大文件远快于纯 JS FNV-1a。 */
+const hashText = (value: string): string =>
+  `sha1:${createHash('sha1').update(value, 'utf8').digest('hex')}`;
+
+const stripBom = (content: string): { content: string; hadBom: boolean } => {
+  if (content.charCodeAt(0) === 0xfeff) {
+    return { content: content.slice(1), hadBom: true };
   }
-
-  return `fnv64:${hash.toString(16).padStart(16, '0')}`;
+  return { content, hadBom: false };
 };
 
-const splitPatchLines = (value: string): string[] => {
-  const normalized = value.replace(/\r\n/gu, '\n').replace(/\r/gu, '\n');
-  const withoutTrailingLineBreak = normalized.endsWith('\n')
-    ? normalized.slice(0, -1)
-    : normalized;
-
-  return withoutTrailingLineBreak.length > 0 ? withoutTrailingLineBreak.split('\n') : [];
+const detectEol = (content: string): TEolStyle => {
+  let crlfCount = 0;
+  let loneLfCount = 0;
+  for (let index = 0; index < content.length; index += 1) {
+    if (content.charCodeAt(index) !== 0x0a) {
+      continue;
+    }
+    if (index > 0 && content.charCodeAt(index - 1) === 0x0d) {
+      crlfCount += 1;
+    } else {
+      loneLfCount += 1;
+    }
+  }
+  if (crlfCount === 0 && loneLfCount === 0) {
+    return 'none';
+  }
+  if (crlfCount > 0 && loneLfCount === 0) {
+    return 'crlf';
+  }
+  if (loneLfCount > 0 && crlfCount === 0) {
+    return 'lf';
+  }
+  return 'mixed';
 };
 
-const countLines = (value: string): number => Math.max(splitPatchLines(value).length, 1);
+const toLf = (content: string): string => content.replace(/\r\n/gu, '\n');
 
-const buildFullReplaceLines = (original: string, updated: string): string[] => [
-  ...splitPatchLines(original).map((line) => `-${line}`),
-  ...splitPatchLines(updated).map((line) => `+${line}`),
-  ...(updated.endsWith('\n') ? ['+'] : []),
-];
+/**
+ * 把归一后的 LF 内容恢复成原文件的 EOL 风格。
+ * - 'crlf' → 全部转回 CRLF。
+ * - 'lf' / 'none' → 原样保留。
+ * - 'mixed' → 不强制恢复，统一为 LF（写回时即标准化）。Agent 可以在 result.eolNormalized 看到这件事。
+ */
+const restoreEol = (content: string, style: TEolStyle): string => {
+  if (style === 'crlf') {
+    return content.replace(/\n/gu, '\r\n');
+  }
+  return content;
+};
 
 const countOccurrences = (content: string, needle: string): number => {
   let count = 0;
   let offset = 0;
-
   while (offset <= content.length) {
     const nextIndex = content.indexOf(needle, offset);
-
     if (nextIndex < 0) {
       break;
     }
-
     count += 1;
     offset = nextIndex + needle.length;
   }
-
   return count;
 };
 
 const replaceOnce = (content: string, oldString: string, newString: string): string => {
   const index = content.indexOf(oldString);
-
   if (index < 0) {
     return content;
   }
-
   return `${content.slice(0, index)}${newString}${content.slice(index + oldString.length)}`;
 };
 
@@ -1735,49 +1626,82 @@ const applyFileEdits = async (
     patch: null,
     error,
   });
-
   if (!isResolvedPath(resolved)) {
     return emptyResult(input.path, resolved.error);
   }
-
   try {
     const fileStat = await stat(resolved.absolutePath);
-
     if (!fileStat.isFile()) {
       return emptyResult(resolved.relativePath, toFileToolError('EISDIR', '目标路径不是普通文本文件。'));
     }
-
     if (await isBinaryFile(resolved.absolutePath)) {
       return emptyResult(resolved.relativePath, toFileToolError('BINARY_FILE', '检测到二进制文件，已拒绝生成 Patch。'));
     }
 
-    const original = await readFile(resolved.absolutePath, 'utf8');
-    let updated = original;
+    const rawOriginal = await readFile(resolved.absolutePath, 'utf8');
+    const beforeHash = hashText(rawOriginal);
+
+    // EOL / BOM 归一：内部全部以 LF 处理，写回时恢复。
+    const { content: bomlessOriginal, hadBom } = stripBom(rawOriginal);
+    const eolStyle = detectEol(bomlessOriginal);
+    const lfOriginal = toLf(bomlessOriginal);
+
+    // oldString / newString 也归一为 LF，匹配 EOL 无关。
+    let lfUpdated = lfOriginal;
     let replacements = 0;
-
     for (const edit of input.edits) {
-      const occurrences = countOccurrences(updated, edit.oldString);
-
+      const lfOldString = toLf(edit.oldString);
+      const lfNewString = toLf(edit.newString);
+      const occurrences = countOccurrences(lfUpdated, lfOldString);
       if (occurrences === 0) {
         return emptyResult(resolved.relativePath, toFileToolError('PATCH_CONFLICT', 'oldString 与当前文件内容不匹配。'));
       }
-
       if (occurrences > 1 && !edit.replaceAll) {
         return emptyResult(
           resolved.relativePath,
           toFileToolError('PATCH_CONFLICT', 'oldString 在当前文件中出现多次，请扩大上下文或设置 replaceAll。'),
         );
       }
-
-      updated = edit.replaceAll
-        ? updated.split(edit.oldString).join(edit.newString)
-        : replaceOnce(updated, edit.oldString, edit.newString);
+      lfUpdated = edit.replaceAll
+        ? lfUpdated.split(lfOldString).join(lfNewString)
+        : replaceOnce(lfUpdated, lfOldString, lfNewString);
       replacements += edit.replaceAll ? occurrences : 1;
     }
 
-    const beforeHash = hashText(original);
-    const afterHash = hashText(updated);
-    await writeFile(resolved.absolutePath, updated, 'utf8');
+    // 内容真的没变（如 oldString === newString）→ 不写盘。
+    if (lfUpdated === lfOriginal) {
+      return {
+        path: resolved.relativePath,
+        summary: input.summary,
+        editCount: input.edits.length,
+        replacements: 0,
+        applied: false,
+        beforeHash,
+        afterHash: beforeHash,
+        patch: null,
+        ...(eolStyle === 'crlf' || hadBom ? {
+          eolNormalized: { fileEol: eolStyle, hadBom },
+        } : {}),
+      };
+    }
+
+    // 恢复 EOL 与 BOM，写回磁盘。
+    const restoredUpdated = restoreEol(lfUpdated, eolStyle);
+    const finalContent = hadBom ? `\uFEFF${restoredUpdated}` : restoredUpdated;
+    const afterHash = hashText(finalContent);
+
+    await writeFile(resolved.absolutePath, finalContent, 'utf8');
+
+    // 用 `diff` 算最小 hunks；输入用 LF 内容，这样 diff 行为不受 EOL 干扰。
+    const unifiedPatch = structuredPatch(
+      resolved.relativePath,
+      resolved.relativePath,
+      lfOriginal,
+      lfUpdated,
+      '',
+      '',
+      { context: PATCH_CONTEXT_LINES },
+    );
 
     return {
       path: resolved.relativePath,
@@ -1792,20 +1716,27 @@ const applyFileEdits = async (
         files: [{
           path: resolved.absolutePath,
           originalHash: beforeHash,
-          hunks: [{
-            oldStart: 1,
-            oldLines: countLines(original),
-            newStart: 1,
-            newLines: countLines(updated),
-            lines: buildFullReplaceLines(original, updated),
-          }],
+          hunks: unifiedPatch.hunks.map((hunk) => ({
+            oldStart: hunk.oldStart,
+            oldLines: hunk.oldLines,
+            newStart: hunk.newStart,
+            newLines: hunk.newLines,
+            lines: [...hunk.lines],
+          })),
         }],
       },
+      ...(eolStyle === 'crlf' || eolStyle === 'mixed' || hadBom ? {
+        eolNormalized: { fileEol: eolStyle, hadBom },
+      } : {}),
     };
   } catch (error) {
     return emptyResult(resolved.relativePath, normalizeFsError(error));
   }
 };
+
+// ----------------------------------------------------------------------
+// Model output formatters
+// ----------------------------------------------------------------------
 
 const createJsonToolModelOutput = (value: unknown): IJsonToolModelOutput => ({
   type: 'json',
@@ -1829,11 +1760,9 @@ const createPatchToolModelOutput = (output: unknown): IJsonToolModelOutput => {
   const result = output && typeof output === 'object'
     ? output as IApplyFileEditsResult
     : null;
-
   if (!result) {
     return createJsonToolModelOutput(output);
   }
-
   return createJsonToolModelOutput(compactModelOutput({
     path: result.path,
     summary: result.summary,
@@ -1842,8 +1771,10 @@ const createPatchToolModelOutput = (output: unknown): IJsonToolModelOutput => {
     applied: result.applied,
     beforeHash: result.beforeHash,
     afterHash: result.afterHash,
-    patchReady: result.patch !== null,
+    patchGenerated: result.patch !== null,
     fileCount: result.patch?.files.length ?? 0,
+    hunkCount: result.patch?.files.reduce((sum, file) => sum + file.hunks.length, 0) ?? 0,
+    ...(result.eolNormalized ? { eolNormalized: result.eolNormalized } : {}),
     ...(result.error ? { error: result.error } : {}),
   }, {
     maxTotalChars: FILE_PRIMITIVE_MODEL_OUTPUT_MAX_CHARS,
@@ -1854,6 +1785,10 @@ const createPatchToolModelOutput = (output: unknown): IJsonToolModelOutput => {
   }));
 };
 
+// ----------------------------------------------------------------------
+// 工具注册
+// ----------------------------------------------------------------------
+
 export const createMastraFileTools = (
   workspaceRootPath?: string,
   profile: TMcpGatewayToolProfile = 'readonly',
@@ -1861,10 +1796,8 @@ export const createMastraFileTools = (
   if (!workspaceRootPath || !existsSync(workspaceRootPath)) {
     return {};
   }
-
   const workspaceRoot = realpathSync(resolve(workspaceRootPath));
   const resolveWorkspacePath = createWorkspacePathResolver(workspaceRoot);
-
   return {
     read_file_window: createTool({
       id: 'read_file_window',
@@ -1911,7 +1844,7 @@ export const createMastraFileTools = (
     ...(profile === 'write' ? {
       apply_file_edits: createTool({
         id: 'apply_file_edits',
-        description: 'Immediately edit one workspace text file using exact string replacements. Returns the applied patch so the host can render a diff preview, ShellCheck diagnostics, and change summary.',
+        description: 'Immediately edit one workspace text file using exact string replacements. CRLF/LF and BOM are auto-normalized; oldString matching is EOL-agnostic. Returns the applied patch with minimal hunks so the host can render a diff preview and change summary.',
         inputSchema: applyFileEditsInputSchema,
         execute: async (inputData) => await applyFileEdits(
           resolveWorkspacePath,
