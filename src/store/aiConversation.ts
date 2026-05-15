@@ -99,7 +99,7 @@ const clipUnicodeText = (value: string, maxChars: number): string => {
   return `${characters.slice(0, maxChars).join('')}…`;
 };
 
-export const deriveTemporaryConversationTitle = (messages: IAiChatMessage[]): string => {
+const deriveTemporaryConversationTitle = (messages: IAiChatMessage[]): string => {
   const firstUserMessage = messages.find((message) => message.role === 'user' && message.content.trim());
   const source = firstUserMessage?.content.trim() ?? messages[0]?.content.trim() ?? '';
   if (!source) return '新对话';

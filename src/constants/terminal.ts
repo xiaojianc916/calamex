@@ -1,4 +1,4 @@
-export const DEFAULT_TERMINAL_FONT_FAMILY =
+const DEFAULT_TERMINAL_FONT_FAMILY =
   "Berkeley Mono, JetBrains Mono, 'SFMono-Regular', Consolas, 'Courier New', monospace";
 
 export const resolveTerminalFontFamily = (fontFamily: string): string => {

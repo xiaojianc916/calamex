@@ -1,6 +1,5 @@
 export type TThemeMode = 'dark' | 'light';
 
-export const THEME_MODES = ['dark', 'light'] as const satisfies ReadonlyArray<TThemeMode>;
 
 export type TThemePreference = TThemeMode | 'system';
 

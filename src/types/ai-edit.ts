@@ -288,12 +288,3 @@ export interface IAiEditStorageBudget {
     maxRetentionDays: number;
     warnTaskSizeBytes: number;
 }
-
-/**
- * AED 快照保留策略默认值。
- */
-export const DEFAULT_AI_EDIT_STORAGE_BUDGET: IAiEditStorageBudget = {
-    maxTaskCount: 50,
-    maxRetentionDays: 14,
-    warnTaskSizeBytes: 256 * 1024 * 1024,
-};

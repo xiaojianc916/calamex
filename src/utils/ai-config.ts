@@ -10,7 +10,7 @@ import type {
 } from '@/types/ai';
 
 const DEFAULT_PROVIDER_TYPE: TAiProviderType = 'litellm';
-export const DEFAULT_NARRATOR_MODEL_ID = 'zhipu/glm-4-flash';
+const DEFAULT_NARRATOR_MODEL_ID = 'zhipu/glm-4-flash';
 
 export const createDefaultAiModelEndpointConfig = (
   selectedModel = DEFAULT_LITELLM_MODEL_ID,

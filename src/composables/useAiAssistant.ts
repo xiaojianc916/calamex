@@ -1296,15 +1296,6 @@ const extractNewVisibleRuntimeEvents = (
 // Public quick actions
 // ---------------------------------------------------------------------------
 
-export const AI_QUICK_ACTIONS: IAiQuickAction[] = [
-  { id: 'explain', label: '解释当前脚本' },
-  { id: 'fix', label: '修复报错' },
-  { id: 'review', label: '代码审查' },
-];
-
-// ---------------------------------------------------------------------------
-// Composable
-// ---------------------------------------------------------------------------
 
 export const useAiAssistant = (options: IUseAiAssistantOptions) => {
   const agentStore = useAiAgentStore();

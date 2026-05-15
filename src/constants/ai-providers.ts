@@ -35,7 +35,7 @@ export interface IAiProviderPreset {
   isAvailable: boolean;
 }
 
-export const DEFAULT_AI_SERVICE_PLATFORM_ID: TAiServicePlatformId = 'openai';
+const DEFAULT_AI_SERVICE_PLATFORM_ID: TAiServicePlatformId = 'openai';
 export const DEFAULT_LITELLM_MODEL_ID = 'openai/gpt-5.5';
 export const DEFAULT_LITELLM_BASE_URL = 'http://127.0.0.1:4000/v1';
 
@@ -238,7 +238,7 @@ export const AI_SERVICE_PLATFORM_PRESETS = [
   },
 ] as const satisfies readonly IAiServicePlatformPreset[];
 
-export const LITELLM_PROVIDER_PRESET = {
+const LITELLM_PROVIDER_PRESET = {
   id: 'litellm',
   label: 'LiteLLM Proxy',
   description: 'LiteLLM Proxy / LLM Gateway，统一通过 OpenAI-compatible API 调用和切换模型。',
@@ -253,9 +253,6 @@ export const LITELLM_PROVIDER_PRESET = {
   isAvailable: true,
 } as const satisfies IAiProviderPreset;
 
-export const AI_PROVIDER_PRESETS = [
-  LITELLM_PROVIDER_PRESET,
-] as const satisfies readonly IAiProviderPreset[];
 
 export const findAiProviderPreset = (
   providerType: TAiProviderType,

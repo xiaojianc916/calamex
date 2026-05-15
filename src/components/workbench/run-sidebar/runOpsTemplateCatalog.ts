@@ -104,14 +104,6 @@ export const RUN_OPS_TEMPLATE_CATEGORIES: readonly IRunOpsTemplateCategory[] = [
   },
 ] as const;
 
-export const RUN_OPS_READINESS_ITEMS: readonly IRunOpsReadinessItem[] = [
-  { id: 'safety', title: '安全' },
-  { id: 'idempotency', title: '幂等' },
-  { id: 'reversibility', title: '可撤销' },
-  { id: 'observability', title: '可观测' },
-  { id: 'controllability', title: '可控' },
-  { id: 'portability', title: '可移植' },
-] as const;
 
 const BASE_LAYERS: readonly IRunOpsTemplateLayer[] = [
   { id: 'L0', title: 'Meta / Safety', summary: '先收紧运行边界，失败必须可见。' },

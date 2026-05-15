@@ -1,4 +1,4 @@
-﻿export const AI_AGENT_TOOL_NAMES = [
+export const AI_AGENT_TOOL_NAMES = [
   'read_current_file',
   'read_selected_text',
   'search_files',
@@ -22,7 +22,7 @@
   'get_test_targets',
 ] as const;
 
-export const AI_TOOL_RISKS = ['read', 'network', 'write', 'command', 'git'] as const;
+const AI_TOOL_RISKS = ['read', 'network', 'write', 'command', 'git'] as const;
 
 export const AI_AGENT_PERMISSION_LEVELS = ['standard', 'elevated'] as const;
 
@@ -43,29 +43,3 @@ export interface IAiToolDefinition {
   emitsAuditEvent: boolean;
 }
 
-export const AI_READONLY_TOOL_NAMES = [
-  'read_current_file',
-  'read_selected_text',
-  'search_files',
-  'search_text',
-  'search_symbols',
-  'get_diagnostics',
-  'get_git_diff',
-  'get_terminal_log',
-  'get_project_tree',
-  'read_file',
-  'list_open_files',
-  'get_package_scripts',
-  'get_test_targets',
-] as const;
-
-export const AI_CONFIRMATION_TOOL_NAMES = [
-  'web_search',
-  'web_fetch',
-  'propose_patch',
-  'auto_apply_patch',
-  'run_test',
-  'run_command',
-  'stage_file',
-  'create_commit',
-] as const;

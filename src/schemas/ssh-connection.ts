@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-export const SSH_AUTH_MODES = ['password', 'key'] as const
+const SSH_AUTH_MODES = ['password', 'key'] as const
 export type SshAuthMode = (typeof SSH_AUTH_MODES)[number]
 
 // 跟旧代码完全一致的字符规则

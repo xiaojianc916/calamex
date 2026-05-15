@@ -186,9 +186,6 @@ importers:
       globals:
         specifier: ^17.6.0
         version: 17.6.0
-      globby:
-        specifier: ^16.2.0
-        version: 16.2.0
       happy-dom:
         specifier: ^20.9.0
         version: 20.9.0
