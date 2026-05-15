@@ -95,7 +95,7 @@ export const UI_DENSITY_SCALE_MAP: Record<TUiDensity, string> = {
  * 给定用户选择的强调色，返回对应 CSS 变量 key-value 对。
  * 纯函数：无副作用，不写 DOM。
  */
-export function buildAccentCssVars(accentColor: TAccentColor): Record<string, string> {
+function buildAccentCssVars(accentColor: TAccentColor): Record<string, string> {
     const s = ACCENT_STYLE_MAP[accentColor];
     return {
         '--accent': s.accent,
@@ -112,7 +112,7 @@ export function buildAccentCssVars(accentColor: TAccentColor): Record<string, st
  * 给定用户完整的外观偏好，返回所有需要覆盖的 CSS 变量 key-value 对。
  * 纯函数：无副作用，不写 DOM。
  */
-export function buildUserOverrideCssVars(opts: {
+function buildUserOverrideCssVars(opts: {
     accentColor: TAccentColor;
     radiusPreset: TRadiusPreset;
     uiDensity: TUiDensity;
