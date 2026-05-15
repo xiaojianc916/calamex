@@ -1,6 +1,5 @@
 import type {
   ICommandTemplate,
-  TDocumentEncoding,
   TExecutorKind,
 } from '@/types/editor';
 
@@ -15,14 +14,6 @@ main() {
 main "$@"
 `;
 
-export const ENCODING_OPTIONS: Array<{ label: string; value: TDocumentEncoding }> = [
-  { label: 'UTF-8', value: 'utf-8' },
-  { label: 'UTF-8 BOM', value: 'utf-8-bom' },
-  { label: 'GBK', value: 'gbk' },
-  { label: 'GB18030', value: 'gb18030' },
-  { label: 'UTF-16 LE', value: 'utf-16le' },
-  { label: 'UTF-16 BE', value: 'utf-16be' },
-];
 
 export const DEFAULT_EXECUTOR: TExecutorKind = 'wsl';
 

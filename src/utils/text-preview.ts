@@ -214,10 +214,6 @@ const segmentText = (
   return splitGraphemesFallback(value);
 };
 
-export const splitTextGraphemes = (
-  value: string,
-  locale?: TTextPreviewLocale,
-): string[] => segmentText(value.normalize('NFC'), 'grapheme', locale);
 
 const normalizePreviewText = (value: string): string =>
   value.normalize('NFC').replace(/\s+/gu, ' ').trim();
@@ -230,8 +226,6 @@ const normalizeOptionalPreviewText = (value: string | undefined): string | undef
 const countSegmentedGraphemes = (value: string, locale?: TTextPreviewLocale): number =>
   segmentText(value, 'grapheme', locale).length;
 
-export const countPreviewGraphemes = (value: string): number =>
-  countSegmentedGraphemes(normalizePreviewText(value));
 
 const countRenderedGraphemes = (value: string, locale?: TTextPreviewLocale): number =>
   countSegmentedGraphemes(value.normalize('NFC'), locale);

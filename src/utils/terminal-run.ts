@@ -48,8 +48,6 @@ export const TERMINAL_RUN_LOG_CODES = {
   timeout: 'terminal-run/timeout',
 } as const;
 
-export type TTerminalRunLogCode =
-  (typeof TERMINAL_RUN_LOG_CODES)[keyof typeof TERMINAL_RUN_LOG_CODES];
 export type TTerminalRunLogKind =
   | 'start'
   | 'dispatched'
