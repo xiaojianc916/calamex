@@ -21,7 +21,7 @@ const emit = defineEmits<{
 const isDetailExpanded = ref(false);
 
 const visibleOptions = computed(() =>
-  props.confirmation.options.filter((option) => option.id !== 'view-details'),
+  props.confirmation.options.filter((option) => option.id === 'allow-once' || option.id === 'stop'),
 );
 
 const canToggleDetails = computed(() => Boolean(props.confirmation.impact?.trim()));
@@ -151,12 +151,12 @@ const handleOptionClick = (option: IAiToolConfirmationOption): void => {
 <style scoped>
 .ai-tool-confirmation-card {
   display: grid;
-  gap: 18px;
-  width: min(100%, 720px);
+  gap: 12px;
+  width: min(100%, 504px);
   border-color: color-mix(in srgb, var(--border-subtle) 72%, transparent);
-  border-radius: 16px;
+  border-radius: 12px;
   background: var(--panel-bg);
-  padding: 28px 30px 24px;
+  padding: 20px 21px 17px;
   box-shadow: 0 1px 2px color-mix(in srgb, var(--text-primary) 5%, transparent);
   transition:
     opacity 160ms cubic-bezier(0.23, 1, 0.32, 1),
@@ -165,14 +165,14 @@ const handleOptionClick = (option: IAiToolConfirmationOption): void => {
 
 .ai-tool-confirmation-risk-mark {
   position: relative;
-  width: 40px;
-  height: 36px;
+  width: 28px;
+  height: 25px;
   color: var(--text-secondary);
 }
 
 .ai-tool-confirmation-risk-mark__umbrella {
-  width: 29px;
-  height: 29px;
+  width: 20px;
+  height: 20px;
   stroke: currentColor;
   stroke-linecap: round;
   stroke-linejoin: round;
@@ -181,20 +181,20 @@ const handleOptionClick = (option: IAiToolConfirmationOption): void => {
 
 .ai-tool-confirmation-risk-mark__shield {
   position: absolute;
-  right: 2px;
-  bottom: 1px;
+  right: 1px;
+  bottom: 0;
   display: grid;
-  width: 20px;
-  height: 20px;
+  width: 14px;
+  height: 14px;
   place-items: center;
-  border-radius: 6px;
+  border-radius: 4px;
   background: var(--danger);
   color: var(--panel-bg);
 }
 
 .ai-tool-confirmation-risk-mark__shield svg {
-  width: 13px;
-  height: 13px;
+  width: 9px;
+  height: 9px;
   stroke: currentColor;
   stroke-linecap: round;
   stroke-linejoin: round;
@@ -204,28 +204,28 @@ const handleOptionClick = (option: IAiToolConfirmationOption): void => {
 .ai-tool-confirmation-copy {
   display: grid;
   min-width: 0;
-  gap: 10px;
+  gap: 7px;
 }
 
 .ai-tool-confirmation-title {
   margin: 0;
   color: var(--text-primary);
-  font-size: 17px;
+  font-size: 12px;
   font-weight: 450;
   letter-spacing: -0.02em;
-  line-height: 26px;
+  line-height: 18px;
 }
 
 .ai-tool-confirmation-summary {
   margin: 0;
   color: var(--text-secondary);
-  font-size: 15px;
-  line-height: 24px;
+  font-size: 11px;
+  line-height: 17px;
 }
 
 .ai-tool-confirmation-learn-more {
   border: 0;
-  padding: 0 0 0 8px;
+  padding: 0 0 0 6px;
   color: var(--accent-strong);
 }
 
@@ -238,7 +238,7 @@ const handleOptionClick = (option: IAiToolConfirmationOption): void => {
   min-width: 0;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: start;
-  gap: 14px;
+  gap: 10px;
 }
 
 .ai-tool-confirmation-detail {
@@ -246,9 +246,9 @@ const handleOptionClick = (option: IAiToolConfirmationOption): void => {
   overflow: hidden;
   color: var(--text-tertiary);
   font-family: var(--font-mono);
-  font-size: 14px;
+  font-size: 10px;
   font-weight: 400;
-  line-height: 22px;
+  line-height: 16px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -264,8 +264,8 @@ const handleOptionClick = (option: IAiToolConfirmationOption): void => {
   border: 0;
   padding: 0;
   color: var(--text-secondary);
-  font-size: 15px;
-  line-height: 22px;
+  font-size: 11px;
+  line-height: 16px;
   white-space: nowrap;
 }
 
@@ -276,16 +276,16 @@ const handleOptionClick = (option: IAiToolConfirmationOption): void => {
 .ai-tool-confirmation-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
-  padding-top: 4px;
+  gap: 8px;
+  padding-top: 3px;
 }
 
 .ai-tool-confirmation-option {
-  min-width: 108px;
+  min-width: 76px;
   border-color: transparent;
   background: var(--surface-soft);
   color: var(--text-primary);
-  font-size: 15px;
+  font-size: 11px;
   font-weight: 400;
 }
 
@@ -311,7 +311,7 @@ const handleOptionClick = (option: IAiToolConfirmationOption): void => {
 
 @media (max-width: 720px) {
   .ai-tool-confirmation-card {
-    padding: 22px 20px 20px;
+    padding: 16px 14px 14px;
   }
 
   .ai-tool-confirmation-detail-row {

@@ -61,7 +61,9 @@ const props = defineProps<{
 }>();
 
 const renderContent = computed(() => normalizeAiMath(props.content));
-const isFinal = computed(() => props.streamStatus !== 'streaming');
+const isFinal = computed(() =>
+  props.streamStatus !== 'streaming' && props.streamStatus !== 'waiting-confirmation',
+);
 const shouldFadeStreamDeltas = computed(() => props.streamStatus === 'streaming');
 const rendererId = computed(() => `ai-message-${props.messageId}`);
 

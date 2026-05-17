@@ -84,10 +84,16 @@ const hasEmptyRuntimeTimelinePlaceholder = computed(
   () => hasRuntimeEventBuffer.value && (props.message.stream?.runtimeEvents?.length ?? 0) === 0,
 );
 
+const isRuntimeActive = computed(
+  () =>
+    props.message.stream?.status === 'streaming' ||
+    props.message.stream?.status === 'waiting-confirmation',
+);
+
 const isAgentRuntimePending = computed(
   () =>
     props.message.role === 'assistant' &&
-    props.message.stream?.status === 'streaming' &&
+    isRuntimeActive.value &&
     props.message.stream?.finalAnswerStarted !== true &&
     (hasEmptyRuntimeTimelinePlaceholder.value || hasRuntimeTimeline.value),
 );
@@ -105,14 +111,14 @@ const hasStreamingRuntimeBeforeFinalAnswer = computed(
   () =>
     props.message.role === 'assistant' &&
     hasRuntimeTimeline.value &&
-    props.message.stream?.status === 'streaming' &&
+    isRuntimeActive.value &&
     props.message.stream?.finalAnswerStarted !== true,
 );
 
 const canShowRuntimeMessageBubble = computed(
   () =>
     !hasStreamingRuntimeBeforeFinalAnswer.value ||
-    props.message.stream?.status !== 'streaming' ||
+    !isRuntimeActive.value ||
     props.message.stream?.finalAnswerStarted === true,
 );
 
@@ -161,7 +167,7 @@ const copyButtonVisibilityMode = computed(() => {
   }
 
   if (props.message.role === 'assistant') {
-    return props.message.stream?.status === 'streaming' ? 'hidden' : 'ready';
+    return isRuntimeActive.value ? 'hidden' : 'ready';
   }
 
   return 'hidden';
@@ -190,7 +196,7 @@ const streamTokenProgressLabel = computed(() => {
 const shouldShowInlineLoader = computed(
   () =>
     props.message.role === 'assistant' &&
-    props.message.stream?.status === 'streaming' &&
+    isRuntimeActive.value &&
     (!hasRenderableContent.value || isToolProgressContent.value) &&
     !hasToolCalls.value &&
     !shouldShowRuntimeTimeline.value,
@@ -199,7 +205,7 @@ const shouldShowInlineLoader = computed(
 const shouldShowThinkingStatus = computed(
   () =>
     props.message.role === 'assistant' &&
-    props.message.stream?.status === 'streaming' &&
+    isRuntimeActive.value &&
     props.message.stream?.finalAnswerStarted !== true &&
     (shouldShowInlineLoader.value || hasToolCalls.value),
 );
@@ -207,7 +213,7 @@ const shouldShowThinkingStatus = computed(
 const shouldShowStreamTokenProgress = computed(
   () =>
     props.message.role === 'assistant' &&
-    props.message.stream?.status === 'streaming' &&
+    isRuntimeActive.value &&
     streamTokenProgressLabel.value.length > 0,
 );
 

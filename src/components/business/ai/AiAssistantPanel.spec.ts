@@ -567,7 +567,7 @@ describe('AiAssistantPanel', () => {
             },
             global: {
                 stubs: {
-                    AiChatThread: { template: '<div />' },
+                    AiChatThread: { template: '<div data-testid="chat-thread"><slot name="after-messages" /></div>' },
                     AiContextChips: { template: '<div />' },
                     AiPatchPreview: { template: '<div class="patch-preview-stub" />' },
                     AiPromptInput: { template: '<div />' },
@@ -946,9 +946,8 @@ describe('AiAssistantPanel', () => {
             reversible: false,
             createdAt: '2026-04-29T00:00:00.000Z',
             options: [
-                { id: 'allow-once', label: '允许一次', tone: 'primary' },
-                { id: 'skip', label: '跳过' },
-                { id: 'stop', label: '停止', tone: 'danger' },
+                { id: 'allow-once', label: '允许', tone: 'primary' },
+                { id: 'stop', label: '拒绝', tone: 'danger' },
             ],
         };
         useAiAssistantMock.mockReturnValue(assistantMock);
@@ -977,7 +976,9 @@ describe('AiAssistantPanel', () => {
 
         expect(wrapper.find('[data-testid="plan-mode-panel"]').exists()).toBe(false);
         expect(wrapper.text()).toContain('允许 Agent 执行 pnpm test 吗？');
-        expect(wrapper.text()).toContain('允许一次');
+        expect(wrapper.text()).toContain('允许');
+        expect(wrapper.text()).toContain('拒绝');
+        expect(wrapper.text()).not.toContain('跳过');
     });
 
     it('简单任务的工具活动只留在对话流，不触发计划框', () => {

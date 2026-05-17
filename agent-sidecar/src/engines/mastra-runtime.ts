@@ -166,6 +166,7 @@ type TMastraToolCallSuspendedChunk = Extract<TMastraAgentChunk, { type: 'tool-ca
 type TMastraToolErrorChunk = Extract<TMastraAgentChunk, { type: 'tool-error' }>;
 type TMastraErrorChunk = Extract<TMastraAgentChunk, { type: 'error' }>;
 type TMastraFinishChunk = Extract<TMastraAgentChunk, { type: 'finish' }>;
+type TMastraToolResumeData = { approved: boolean };
 type TOmDataChunk = DataChunkType & {
     type: 'data-om-activation' | 'data-om-observation-end';
 };
@@ -221,6 +222,10 @@ interface IMastraAgentLike {
         messages: TMastraChatMessage[],
         options?: IMastraGenerateOptions,
     ): Promise<IMastraGenerateResultLike>;
+    resumeStream?: (
+        resumeData: TMastraToolResumeData,
+        options: IMastraApprovalOptions,
+    ) => Promise<IMastraAgentStreamLike>;
     approveToolCall?: (options: IMastraApprovalOptions) => Promise<IMastraAgentStreamLike>;
     declineToolCall?: (options: IMastraApprovalOptions) => Promise<IMastraAgentStreamLike>;
 }
@@ -297,6 +302,7 @@ interface IMastraPendingApproval {
     runId: string;
     sessionId: string;
     toolCallId: string;
+    kind: 'approval' | 'suspended';
     workspace?: AnyWorkspace;
     browser?: MastraBrowser;
 }
@@ -1062,16 +1068,24 @@ const defaultCreateAgent = (config: IMastraAgentConfig): IMastraAgentLike => {
         ...(config.outputProcessors ? { outputProcessors: config.outputProcessors } : {}),
     });
     const bridge = agent as unknown as IMastraAgentLike;
-    const approveToolCall = typeof bridge.approveToolCall === 'function'
-        ? async (options: IMastraApprovalOptions): Promise<IMastraAgentStreamLike> => bridge.approveToolCall!(options)
+    const approveToolCallBridge = bridge.approveToolCall;
+    const approveToolCall = typeof approveToolCallBridge === 'function'
+        ? async (options: IMastraApprovalOptions): Promise<IMastraAgentStreamLike> => approveToolCallBridge(options)
         : undefined;
-    const declineToolCall = typeof bridge.declineToolCall === 'function'
-        ? async (options: IMastraApprovalOptions): Promise<IMastraAgentStreamLike> => bridge.declineToolCall!(options)
+    const declineToolCallBridge = bridge.declineToolCall;
+    const declineToolCall = typeof declineToolCallBridge === 'function'
+        ? async (options: IMastraApprovalOptions): Promise<IMastraAgentStreamLike> => declineToolCallBridge(options)
+        : undefined;
+    const resumeStreamBridge = bridge.resumeStream;
+    const resumeStream = typeof resumeStreamBridge === 'function'
+        ? async (resumeData: TMastraToolResumeData, options: IMastraApprovalOptions): Promise<IMastraAgentStreamLike> =>
+            resumeStreamBridge(resumeData, options)
         : undefined;
 
     return {
         stream: async (messages, options) => bridge.stream(messages, options),
         generate: async (messages, options) => bridge.generate(messages, options),
+        ...(resumeStream ? { resumeStream } : {}),
         ...(approveToolCall ? { approveToolCall } : {}),
         ...(declineToolCall ? { declineToolCall } : {}),
     };
@@ -1149,6 +1163,15 @@ const defaultCreateExecutionHandle = async (
             },
             declineToolCall: async ({ runId }) => {
                 const streamResult = await registeredAgent.resume(runId, { approved: false });
+
+                return {
+                    fullStream: streamResult.fullStream as unknown as AsyncIterable<TMastraStreamChunk>,
+                    runId: streamResult.runId,
+                    cleanup: streamResult.cleanup,
+                };
+            },
+            resumeStream: async (resumeData, { runId }) => {
+                const streamResult = await registeredAgent.resume(runId, resumeData);
 
                 return {
                     fullStream: streamResult.fullStream as unknown as AsyncIterable<TMastraStreamChunk>,
@@ -1672,6 +1695,10 @@ const isApprovedDecision = (decision: string): boolean => {
         'no',
         'reject',
         'rejected',
+        'skip',
+        'skipped',
+        'stop',
+        'stopped',
     ].includes(normalizedDecision);
 };
 
@@ -2158,17 +2185,18 @@ export class MastraRuntime {
         sessionId: string,
         agent: IMastraAgentLike,
         bundle: IMastraMcpBundle,
-        chunk: TMastraToolCallApprovalChunk,
+        chunk: TMastraToolCallApprovalChunk | TMastraToolCallSuspendedChunk,
         workspace?: AnyWorkspace,
         browser?: MastraBrowser,
     ): string | null {
         const runId = getChunkRunId(chunk);
 
-        if (
-            !runId
-            || typeof agent.approveToolCall !== 'function'
-            || typeof agent.declineToolCall !== 'function'
-        ) {
+        const canResolveApproval =
+            typeof agent.approveToolCall === 'function' &&
+            typeof agent.declineToolCall === 'function';
+        const canResumeSuspendedTool = typeof agent.resumeStream === 'function';
+
+        if (!runId || (!canResolveApproval && !canResumeSuspendedTool)) {
             return null;
         }
 
@@ -2179,6 +2207,7 @@ export class MastraRuntime {
             runId,
             sessionId,
             toolCallId: chunk.payload.toolCallId,
+            kind: chunk.type === 'tool-call-suspended' ? 'suspended' : 'approval',
             ...(workspace ? { workspace } : {}),
             ...(browser ? { browser } : {}),
         });
@@ -2356,10 +2385,23 @@ export class MastraRuntime {
 
             if (isToolCallSuspendedChunk(chunk)) {
                 pendingApproval = true;
+                const pendingRequestId = this.registerPendingApproval(
+                    sessionId,
+                    agent,
+                    bundle,
+                    chunk,
+                    workspace,
+                    browser,
+                );
+
+                if (pendingRequestId) {
+                    releaseResources = false;
+                }
+
                 pushUiEvent(events, {
                     type: 'approval_required',
                     request: {
-                        id: chunk.payload.toolCallId,
+                        id: pendingRequestId ?? chunk.payload.toolCallId,
                         toolName: chunk.payload.toolName,
                         question: `${chunk.payload.toolName} 已暂停，等待继续信息。`,
                         summary: JSON.stringify(toJsonValue(chunk.payload.suspendPayload)),
@@ -2505,7 +2547,13 @@ export class MastraRuntime {
         const hasAgentTools = hasTools || Boolean(workspace) || Boolean(browser);
         const requestedRunId = options.context?.requestId ?? createSessionId(`${sessionPrefix}-run`);
         const memory = executionPlan.useMemory
-            ? createMastraMemoryReference(createMastraMemoryScope(normalizedInput, sessionId))
+            ? createMastraMemoryReference(
+                createMastraMemoryScope(
+                    normalizedInput,
+                    sessionId,
+                    executionPlan.useTools ? { resourceScope: 'session' } : {},
+                ),
+            )
             : null;
         const agentMemory = executionPlan.useMemory
             ? createMastraMemoryForModel(modelConfig)
@@ -2673,7 +2721,13 @@ export class MastraRuntime {
         );
         const hasAgentTools = hasTools || Boolean(workspace) || Boolean(browser);
         const requestedRunId = options.context?.requestId ?? createSessionId('mastra-plan-run');
-        const memory = createMastraMemoryReference(createMastraMemoryScope(input, sessionId));
+        const memory = createMastraMemoryReference(
+            createMastraMemoryScope(
+                input,
+                sessionId,
+                { resourceScope: 'session' },
+            ),
+        );
         const agentMemory = createMastraMemoryForModel(modelConfig);
         const payloadEventSink = createDeepSeekPayloadEventSink(events, options);
 
@@ -2945,7 +2999,9 @@ export class MastraRuntime {
             memoryInput,
         );
         const requestedRunId = options.context?.requestId ?? createSessionId('mastra-plan-validator-run');
-        const memory = createMastraMemoryReference(createMastraMemoryScope(memoryInput, sessionId));
+        const memory = createMastraMemoryReference(
+            createMastraMemoryScope(memoryInput, sessionId, { resourceScope: 'session' }),
+        );
         const agentMemory = createMastraMemoryForModel(modelConfig);
         const payloadEventSink = createDeepSeekPayloadEventSink(events, options);
 
@@ -3131,7 +3187,9 @@ export class MastraRuntime {
             memoryInput,
         );
         const requestedRunId = options.context?.requestId ?? createSessionId('mastra-plan-replanner-run');
-        const memory = createMastraMemoryReference(createMastraMemoryScope(memoryInput, sessionId));
+        const memory = createMastraMemoryReference(
+            createMastraMemoryScope(memoryInput, sessionId, { resourceScope: 'session' }),
+        );
         const agentMemory = createMastraMemoryForModel(modelConfig);
         const payloadEventSink = createDeepSeekPayloadEventSink(events, options);
 
@@ -3352,7 +3410,9 @@ export class MastraRuntime {
             memoryInput,
         );
         const hasAgentTools = hasTools || Boolean(workspace) || Boolean(browser);
-        const memory = createMastraMemoryReference(createMastraMemoryScope(memoryInput, sessionId));
+        const memory = createMastraMemoryReference(
+            createMastraMemoryScope(memoryInput, sessionId, { resourceScope: 'session' }),
+        );
         const agentMemory = createMastraMemoryForModel(modelConfig);
         const createRequestedRunEvent = createRuntimeEventFactory({
             runId: requestedRunId,
@@ -3553,11 +3613,14 @@ export class MastraRuntime {
 
         this.pendingApprovals.delete(input.requestId);
 
-        const continueStream = isApprovedDecision(input.decision)
+        const approvalContinueStream = isApprovedDecision(input.decision)
             ? pending.agent.approveToolCall
             : pending.agent.declineToolCall;
+        const canContinue = pending.kind === 'suspended'
+            ? typeof pending.agent.resumeStream === 'function'
+            : typeof approvalContinueStream === 'function';
 
-        if (!continueStream) {
+        if (!canContinue) {
             await pending.bundle.disconnectAll();
             await destroyMastraWorkspace(pending.workspace);
             await destroyMastraBrowser(pending.browser);
@@ -3568,6 +3631,21 @@ export class MastraRuntime {
         const payloadEventSink = createDeepSeekPayloadEventSink(events, options);
         let shouldDisconnectBundle = true;
         let streamCleanup: (() => void) | undefined;
+        const continueSuspendedStream = pending.agent.resumeStream;
+        if (pending.kind === 'approval' && typeof approvalContinueStream !== 'function') {
+            await pending.bundle.disconnectAll();
+            await destroyMastraWorkspace(pending.workspace);
+            await destroyMastraBrowser(pending.browser);
+            return this.createFallbackApprovalResponse(input, sessionId, options);
+        }
+        if (pending.kind === 'suspended' && typeof continueSuspendedStream !== 'function') {
+            await pending.bundle.disconnectAll();
+            await destroyMastraWorkspace(pending.workspace);
+            await destroyMastraBrowser(pending.browser);
+            return this.createFallbackApprovalResponse(input, sessionId, options);
+        }
+        const resumeSuspendedTool = continueSuspendedStream;
+        const resumeApprovalTool = approvalContinueStream;
 
         try {
             return await runWithDeepSeekReasoningContext({
@@ -3575,11 +3653,31 @@ export class MastraRuntime {
                 runId: decodedRequest.runId,
                 onRequestPayload: payloadEventSink.onRequestPayload,
             }, async () => {
-                const stream = await continueStream({
-                    runId: decodedRequest.runId,
-                    toolCallId: decodedRequest.toolCallId,
-                    ...(options.context?.signal ? { abortSignal: options.context.signal } : {}),
-                });
+                let stream: IMastraAgentStreamLike;
+
+                if (pending.kind === 'suspended') {
+                    if (typeof resumeSuspendedTool !== 'function') {
+                        throw new Error('Mastra suspended tool resumeStream 不可用。');
+                    }
+
+                    stream = await resumeSuspendedTool({
+                        approved: isApprovedDecision(input.decision),
+                    }, {
+                        runId: decodedRequest.runId,
+                        toolCallId: decodedRequest.toolCallId,
+                        ...(options.context?.signal ? { abortSignal: options.context.signal } : {}),
+                    });
+                } else {
+                    if (typeof resumeApprovalTool !== 'function') {
+                        throw new Error('Mastra approval resume 不可用。');
+                    }
+
+                    stream = await resumeApprovalTool({
+                        runId: decodedRequest.runId,
+                        toolCallId: decodedRequest.toolCallId,
+                        ...(options.context?.signal ? { abortSignal: options.context.signal } : {}),
+                    });
+                }
                 streamCleanup = stream.cleanup;
                 const createRuntimeEvent = createRuntimeEventFactory({
                     runId: stream.runId ?? decodedRequest.runId,

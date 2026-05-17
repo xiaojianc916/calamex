@@ -1570,7 +1570,21 @@ describe('Mastra memory helpers', () => {
     }, 'session-123');
 
     assert.equal(scope.thread, 'ui-thread-1');
-    assert.equal(scope.resource, 'agent-sidecar:global');
+    assert.equal(scope.resource, 'agent-sidecar:session:ui-thread-1');
+  });
+
+  it('keeps session-scoped resource stable across turns for the same UI thread', () => {
+    const firstScope = createMastraMemoryScope({
+      threadId: 'ui-thread-1',
+    }, 'sidecar:assistant-1');
+    const secondScope = createMastraMemoryScope({
+      threadId: 'ui-thread-1',
+    }, 'sidecar:assistant-2');
+
+    assert.equal(firstScope.thread, 'ui-thread-1');
+    assert.equal(secondScope.thread, 'ui-thread-1');
+    assert.equal(firstScope.resource, 'agent-sidecar:session:ui-thread-1');
+    assert.equal(secondScope.resource, firstScope.resource);
   });
 });
 
@@ -3189,7 +3203,11 @@ describe('Mastra runtime execute', () => {
         resource?: unknown;
       };
     };
-    const executeMemoryScope = createMastraMemoryScope({ threadId: executionRecord.threadId }, response.sessionId);
+    const executeMemoryScope = createMastraMemoryScope(
+      { threadId: executionRecord.threadId, workspaceRootPath: 'D:/com.xiaojianc/my_desktop_app' },
+      response.sessionId,
+      { resourceScope: 'session' },
+    );
     assert.equal(typeof streamOptions.runId, 'string');
     assert.equal(streamOptions.maxSteps, 10);
     assert.equal(streamOptions.toolChoice, 'auto');
@@ -3210,6 +3228,7 @@ describe('Mastra runtime execute', () => {
       planStepId: 'step-1',
       approvedPlan: executionRecord.plan,
     });
+    assert.match(executeMemoryScope.resource, /^agent-sidecar:session:/);
     assertTokenBudgetEvent(streamedEvents, {
       runId: 'run-execute',
       toolCount: 6,
@@ -4137,6 +4156,11 @@ describe('Mastra runtime plan', () => {
       planId: executionRecord.planId,
       version: executionRecord.version,
     });
+    const validateMemoryScope = createMastraMemoryScope(
+      { threadId: executionRecord.threadId, workspaceRootPath: 'D:/com.xiaojianc/my_desktop_app' },
+      response.sessionId,
+      { resourceScope: 'session' },
+    );
 
     assert.match(capturedInstructions, /Validator Agent/u);
     assert.deepEqual(capturedGenerateOptions, {
@@ -4149,10 +4173,11 @@ describe('Mastra runtime plan', () => {
         schema: agentPlanValidationReportSchema,
       },
       memory: {
-        thread: createMastraMemoryScope({ threadId: executionRecord.threadId }, response.sessionId).thread,
-        resource: createMastraMemoryScope({ threadId: executionRecord.threadId }, response.sessionId).resource,
+        thread: validateMemoryScope.thread,
+        resource: validateMemoryScope.resource,
       },
     });
+    assert.match(validateMemoryScope.resource, /^agent-sidecar:session:/);
     assert.equal(response.result, '验证完成：缺少验证证据。，需要重新规划。');
     assert.deepEqual(events.map((event) => event.event.type), [
       'PlanGenerated',

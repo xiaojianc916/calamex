@@ -3380,6 +3380,13 @@ describe('useAiAssistant streaming integration', () => {
       toolName: 'run_command',
       question: '鍏佽 Agent 鎵ц pnpm test 鍚楋紵',
     });
+    expect(agentStore.pendingSidecarAgentSession).toMatchObject({
+      sessionId: 'sidecar-confirmation-session',
+      assistantMessageId: assistant.messages.value[1]?.id,
+      threadId: null,
+      turnId: assistant.messages.value[0]?.id,
+      messageContent: '运行一次最小验证',
+    });
     expect(assistant.messages.value[1]?.content).toContain('绛夊緟纭');
 
     await assistant.resolveSidecarToolConfirmation('allow-once');
@@ -3390,8 +3397,51 @@ describe('useAiAssistant streaming integration', () => {
       decision: 'allow-once',
     });
     expect(agentStore.pendingToolConfirmation).toBeNull();
+    expect(agentStore.pendingSidecarAgentSession).toBeNull();
     expect(assistant.messages.value[1]?.content).toContain('审批结果已交给 sidecar');
     expect(assistant.attachedFiles.value).toHaveLength(0);
+  });
+
+  it('seamlessly resumes a persisted sidecar approval after assistant recreation', async () => {
+    const agentStore = useAiAgentStore();
+
+    agentStore.setPendingToolConfirmation({
+      id: 'approval-persisted-command',
+      runId: 'sidecar:sidecar-persisted-session',
+      stepId: 'sidecar:approval-persisted-command',
+      toolName: 'run_command',
+      question: '允许 Agent 执行 pnpm test 吗？',
+      summary: '运行最小验证命令。',
+      riskLevel: 'medium',
+      impact: '运行最小验证命令。',
+      reversible: false,
+      createdAt: '2026-04-29T00:00:00.000Z',
+      options: [
+        { id: 'allow-once', label: '允许', tone: 'primary' },
+        { id: 'stop', label: '拒绝', tone: 'danger' },
+      ],
+    });
+    agentStore.setPendingSidecarAgentSession({
+      sessionId: 'sidecar-persisted-session',
+      assistantMessageId: 'assistant-persisted-approval',
+      threadId: null,
+      turnId: 'user-persisted-approval',
+      baseMessages: [],
+      messageContent: '运行一次最小验证',
+      references: [],
+    });
+
+    const assistant = createAssistantHarness();
+
+    await assistant.resolveSidecarToolConfirmation('stop');
+
+    expect(aiServiceMock.sidecarResolveApproval).toHaveBeenCalledWith({
+      sessionId: 'sidecar-persisted-session',
+      requestId: 'approval-persisted-command',
+      decision: 'reject',
+    });
+    expect(agentStore.pendingToolConfirmation).toBeNull();
+    expect(agentStore.pendingSidecarAgentSession).toBeNull();
   });
 
   it('applies patch by normalizing the returned path and syncing the current document', async () => {

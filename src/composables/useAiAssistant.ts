@@ -17,12 +17,13 @@ import { aiService } from '@/services/modules/ai';
 import { buildCurrentFileReference } from '@/services/modules/ai-context';
 import { aiEditService } from '@/services/modules/ai-edit';
 import { tauriService } from '@/services/tauri';
-import { useAiAgentStore } from '@/store/aiAgent';
+import { useAiAgentStore, type IAiPersistedSidecarAgentSession } from '@/store/aiAgent';
 import { useAiConversationStore, type IAiConversationScrollState } from '@/store/aiConversation';
 import {
   extractVisibleAgentRuntimeEvents,
   projectSidecarEventsToToolState,
   projectSidecarExecuteResponse,
+  type TAgentSidecarToolStreamStatus,
 } from '@/utils/agent-sidecar-events';
 import { createDefaultAiConfigPayload } from '@/utils/ai-config';
 import {
@@ -54,6 +55,7 @@ import type {
   IAiProviderConnectionRequest,
   IAiProviderProfileDetailPayload,
   IAiProviderProfilePayload,
+  IAiToolConfirmationRequest,
   TAiModelRole,
   TAiToolConfirmationDecision,
 } from '@/types/ai';
@@ -97,16 +99,6 @@ type TAgentExecutionStepStatus =
 interface IAiImageDimensions {
   width: number;
   height: number;
-}
-
-interface ISidecarAgentSession {
-  sessionId: string;
-  assistantMessageId: string;
-  threadId: string | null;
-  turnId: string | null;
-  baseMessages: IAiChatMessage[];
-  messageContent: string;
-  references: IAiContextReference[];
 }
 
 interface IAgentExecutionStep {
@@ -1014,6 +1006,16 @@ const mergeStreamTokenSnapshot = (
 const hasMeaningfulAssistantText = (value: string | null | undefined): value is string =>
   typeof value === 'string' && value.trim().length > 0;
 
+const resolveSidecarWaitingStreamStatus = (
+  projection: IAgentSidecarExecuteProjection,
+): NonNullable<IAiChatMessage['stream']>['status'] =>
+  projection.pendingConfirmation ? 'waiting-confirmation' : 'completed';
+
+const resolveSidecarToolProjectionStatus = (
+  projection: IAgentSidecarExecuteProjection,
+): TAgentSidecarToolStreamStatus =>
+  projection.pendingConfirmation ? 'streaming' : 'completed';
+
 const isAiEditOperationEntry = (
   entry: IAiEditTimelineEntry,
 ): entry is IAiEditTimelineEntry & { type: 'operation'; data: IAiEditOperation } =>
@@ -1330,7 +1332,9 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
   const activeStreamResolve = ref<(() => void) | null>(null);
   const activeAssistantMessage = ref<IAiChatMessage | null>(null);
   const activeAssistantBaseMessages = shallowRef<IAiChatMessage[]>([]);
-  const activeSidecarAgentSession = ref<ISidecarAgentSession | null>(null);
+  const activeSidecarAgentSession = ref<IAiPersistedSidecarAgentSession | null>(
+    agentStore.pendingSidecarAgentSession,
+  );
   const activeBufferedThreadId = ref<string | null>(null);
   const displayMessages = shallowRef<IAiChatMessage[]>(unref(conversationStore.activeMessages));
   const pendingTitleThreadIds = new Set<string>();
@@ -1407,6 +1411,24 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
   const clearActiveBufferedThread = (threadId: string | null): void => {
     if (activeBufferedThreadId.value === threadId) {
       activeBufferedThreadId.value = null;
+    }
+  };
+
+  const persistSidecarToolConfirmation = (
+    confirmation: IAiToolConfirmationRequest,
+    session: IAiPersistedSidecarAgentSession,
+  ): void => {
+    activeSidecarAgentSession.value = session;
+    agentStore.setPendingToolConfirmation(confirmation);
+    agentStore.setPendingSidecarAgentSession(session);
+  };
+
+  const clearSidecarToolConfirmation = (confirmationId?: string): void => {
+    agentStore.clearPendingToolConfirmation(confirmationId);
+
+    if (!confirmationId || !agentStore.pendingToolConfirmation) {
+      agentStore.clearPendingSidecarAgentSession();
+      activeSidecarAgentSession.value = null;
     }
   };
 
@@ -2348,8 +2370,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     isSending.value = true;
     agentSteps.value = [];
     runtimeTimelineEvents.value = [];
-    agentPlan.store.clearPendingToolConfirmation();
-    activeSidecarAgentSession.value = null;
+    clearSidecarToolConfirmation();
     proposedPatch.value = null;
     appliedPatchPreview.value = null;
 
@@ -2408,13 +2429,14 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       const toolProjection = projectSidecarEventsToToolState({
         events: payload.events,
         fallbackActivityText: initialActivityText,
-        streamStatus: 'completed',
+        streamStatus: resolveSidecarToolProjectionStatus(projection),
       });
+      const sidecarStreamStatus = resolveSidecarWaitingStreamStatus(projection);
       const streamMetadata: ISidecarAnswerStreamMetadata = {
         messageId: assistantMessageId,
         threadId: targetThreadId,
         toolCalls: toolProjection.toolCalls,
-        streamStatus: 'completed',
+        streamStatus: sidecarStreamStatus,
         activityText: toolProjection.activityText,
         runtimeEvents: compactRuntimeEvents(extractVisibleAgentRuntimeEvents(payload.events)),
         finalAnswerStarted: hasMeaningfulAssistantText(projection.assistantContent),
@@ -2506,7 +2528,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       await sidecarAnswerCompletion;
 
       if (projection.pendingConfirmation) {
-        activeSidecarAgentSession.value = {
+        persistSidecarToolConfirmation(projection.pendingConfirmation, {
           sessionId: payload.sessionId,
           assistantMessageId,
           threadId: targetThreadId,
@@ -2514,13 +2536,11 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
           baseMessages: visibleMessages,
           messageContent,
           references: sidecarContextReferences,
-        };
-        agentPlan.store.setPendingToolConfirmation(projection.pendingConfirmation);
+        });
         return;
       }
 
-      agentPlan.store.clearPendingToolConfirmation();
-      activeSidecarAgentSession.value = null;
+      clearSidecarToolConfirmation();
 
       if (!projection.errorMessage) {
         clearAttachedFiles({ revokePreviews: false });
@@ -2566,22 +2586,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       return;
     }
 
-    agentPlan.store.clearPendingToolConfirmation(confirmation.id);
-
-    if (decision === 'stop' || decision === 'skip') {
-      activeBufferedThreadId.value = session.threadId;
-      updateAgentExecutionMessage(
-        session.assistantMessageId,
-        decision === 'stop' ? 'Agent 工具调用已停止。' : 'Agent 工具调用已跳过。',
-        [],
-        'completed',
-      );
-      commitDisplayMessagesToStore(session.threadId);
-      activeSidecarAgentSession.value = null;
-      clearActiveBufferedThread(session.threadId);
-      syncDisplayMessagesFromActiveThread();
-      return;
-    }
+    clearSidecarToolConfirmation(confirmation.id);
 
     isSending.value = true;
     activeAgentMessageId.value = session.assistantMessageId;
@@ -2608,7 +2613,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       const payload = await aiService.sidecarResolveApproval({
         sessionId: session.sessionId,
         requestId: confirmation.id,
-        decision,
+        decision: decision === 'stop' ? 'reject' : decision,
       });
       liveEventBuffer.flush();
       unlistenSidecarStream?.();
@@ -2618,13 +2623,14 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       const toolProjection = projectSidecarEventsToToolState({
         events: payload.events,
         fallbackActivityText: session.messageContent,
-        streamStatus: 'completed',
+        streamStatus: resolveSidecarToolProjectionStatus(projection),
       });
+      const sidecarStreamStatus = resolveSidecarWaitingStreamStatus(projection);
       const streamMetadata: ISidecarAnswerStreamMetadata = {
         messageId: session.assistantMessageId,
         threadId: session.threadId,
         toolCalls: toolProjection.toolCalls,
-        streamStatus: 'completed',
+        streamStatus: sidecarStreamStatus,
         activityText: toolProjection.activityText,
         runtimeEvents: compactRuntimeEvents(extractVisibleAgentRuntimeEvents(payload.events)),
         finalAnswerStarted: hasMeaningfulAssistantText(projection.assistantContent),
@@ -2713,15 +2719,14 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       await sidecarAnswerCompletion;
 
       if (projection.pendingConfirmation) {
-        activeSidecarAgentSession.value = {
+        persistSidecarToolConfirmation(projection.pendingConfirmation, {
           ...session,
           sessionId: payload.sessionId,
-        };
-        agentPlan.store.setPendingToolConfirmation(projection.pendingConfirmation);
+        });
         return;
       }
 
-      activeSidecarAgentSession.value = null;
+      clearSidecarToolConfirmation();
 
       if (!projection.errorMessage) {
         clearAttachedFiles({ revokePreviews: false });
@@ -3335,10 +3340,9 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       appliedPatchPreview.value = null;
       fileRollbackPrompt.value = null;
       agentSteps.value = [];
-      activeSidecarAgentSession.value = null;
+      clearSidecarToolConfirmation();
       activeAgentMessageId.value = null;
       agentPlan.resetPlan();
-      agentPlan.store.clearPendingToolConfirmation();
       errorMessage.value = '';
     } catch (error) {
       errorMessage.value = toErrorMessage(error, '恢复回滚检查点失败');
@@ -3519,9 +3523,8 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     activeAssistantMessage.value = null;
     activeAssistantBaseMessages.value = [];
     activeAgentMessageId.value = null;
-    activeSidecarAgentSession.value = null;
     disposeSidecarAnswerStream();
-    agentPlan.store.clearPendingToolConfirmation();
+    clearSidecarToolConfirmation();
     isClearDialogOpen.value = false;
   };
 
@@ -3848,8 +3851,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       activeAgentMessageId.value = null;
     }
 
-    activeSidecarAgentSession.value = null;
-    agentPlan.store.clearPendingToolConfirmation();
+    clearSidecarToolConfirmation();
     commitDisplayMessagesToStore(targetThreadId);
     clearActiveBufferedThread(targetThreadId);
     isSending.value = false;

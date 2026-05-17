@@ -17,6 +17,8 @@ import type {
     IAiTaskPlanStep,
     IAiToolActivityInline,
     IAiToolConfirmationRequest,
+    IAiChatMessage,
+    IAiContextReference,
     TAiAgentNetworkPermission,
     TAiAgentTaskClassification,
 } from '@/types/ai';
@@ -25,10 +27,22 @@ import {
     aiAgentRunSchema,
     aiAgentStepDetailSchema,
     aiAgentTaskClassificationSchema,
+    aiToolConfirmationRequestSchema,
     aiTaskPlanStepSchema,
 } from '@/types/ai-agent.schema';
 import { aiToolActivityInlineSchema } from '@/types/ai-stream.schema';
-import { aiLanguageModelUsageSchema } from '@/types/ai.schema';
+import { aiChatMessageSchema, aiLanguageModelUsageSchema } from '@/types/ai.schema';
+import { aiContextReferenceSchema } from '@/types/ai-context.schema';
+
+export interface IAiPersistedSidecarAgentSession {
+    sessionId: string;
+    assistantMessageId: string;
+    threadId: string | null;
+    turnId: string | null;
+    baseMessages: IAiChatMessage[];
+    messageContent: string;
+    references: IAiContextReference[];
+}
 
 export type TAiAgentPanelMode = 'chat' | 'plan' | 'agent';
 
@@ -42,6 +56,16 @@ const aiAgentStepFinalAnswerSchema = z.object({
     stepId: z.string().min(1),
     content: z.string(),
     createdAt: z.string().min(1),
+});
+
+const aiPersistedSidecarAgentSessionSchema = z.object({
+    sessionId: z.string().min(1),
+    assistantMessageId: z.string().min(1),
+    threadId: z.string().min(1).nullable(),
+    turnId: z.string().min(1).nullable(),
+    baseMessages: z.array(aiChatMessageSchema).max(20),
+    messageContent: z.string(),
+    references: z.array(aiContextReferenceSchema).max(20),
 });
 
 const aiAgentPersistSchema = z.object({
@@ -73,6 +97,8 @@ const aiAgentPersistSchema = z.object({
     stepDetails: z.record(z.string(), aiAgentStepDetailSchema),
     stepFinalAnswers: z.record(z.string(), z.array(aiAgentStepFinalAnswerSchema).max(50)),
     toolActivities: z.record(z.string(), z.array(aiToolActivityInlineSchema).max(50)),
+    pendingToolConfirmation: aiToolConfirmationRequestSchema.nullable(),
+    pendingSidecarAgentSession: aiPersistedSidecarAgentSessionSchema.nullable(),
     errorMessage: z.string(),
 });
 
@@ -109,6 +135,7 @@ const normalizeHydratedAgentState = (state: TAiAgentPersistState): TAiAgentPersi
         ...state,
         activeRunId,
         runs,
+        pendingSidecarAgentSession: state.pendingToolConfirmation ? state.pendingSidecarAgentSession : null,
     };
 };
 
@@ -144,6 +171,8 @@ const applyHydratedAgentState = (
     target.stepDetails = source.stepDetails;
     target.stepFinalAnswers = source.stepFinalAnswers;
     target.toolActivities = source.toolActivities;
+    target.pendingToolConfirmation = source.pendingToolConfirmation;
+    target.pendingSidecarAgentSession = source.pendingSidecarAgentSession;
     target.errorMessage = source.errorMessage;
 };
 
@@ -240,6 +269,7 @@ export const useAiAgentStore = defineStore('ai-agent', () => {
     const patchSummaries = ref<Record<string, IAiAgentPatchSummary[]>>({});
     const toolActivities = ref<Record<string, IAiToolActivityInline[]>>({});
     const pendingToolConfirmation = ref<IAiToolConfirmationRequest | null>(null);
+    const pendingSidecarAgentSession = ref<IAiPersistedSidecarAgentSession | null>(null);
     const errorMessage = ref<string>('');
 
     const hasPlan = computed(() => steps.value.length > 0);
@@ -314,6 +344,7 @@ export const useAiAgentStore = defineStore('ai-agent', () => {
         classificationReason.value = '';
         shouldEnterPlanMode.value = false;
         pendingToolConfirmation.value = null;
+        pendingSidecarAgentSession.value = null;
         errorMessage.value = '';
     };
 
@@ -340,6 +371,7 @@ export const useAiAgentStore = defineStore('ai-agent', () => {
         totalOfficialUsage.value = null;
         shouldEnterPlanMode.value = false;
         pendingToolConfirmation.value = null;
+        pendingSidecarAgentSession.value = null;
         errorMessage.value = message;
         mode.value = 'plan';
     };
@@ -388,6 +420,8 @@ export const useAiAgentStore = defineStore('ai-agent', () => {
         latestOfficialUsage.value = null;
         totalOfficialUsageResolved.value = false;
         totalOfficialUsage.value = null;
+        pendingToolConfirmation.value = null;
+        pendingSidecarAgentSession.value = null;
     };
 
     const applyPlanMetadata = (
@@ -577,7 +611,16 @@ export const useAiAgentStore = defineStore('ai-agent', () => {
     const clearPendingToolConfirmation = (confirmationId?: string): void => {
         if (!confirmationId || pendingToolConfirmation.value?.id === confirmationId) {
             pendingToolConfirmation.value = null;
+            pendingSidecarAgentSession.value = null;
         }
+    };
+
+    const setPendingSidecarAgentSession = (session: IAiPersistedSidecarAgentSession): void => {
+        pendingSidecarAgentSession.value = session;
+    };
+
+    const clearPendingSidecarAgentSession = (): void => {
+        pendingSidecarAgentSession.value = null;
     };
 
     const upsertRunStep = (runId: string, step: IAiTaskPlanStep): void => {
@@ -633,6 +676,7 @@ export const useAiAgentStore = defineStore('ai-agent', () => {
         patchSummaries,
         toolActivities,
         pendingToolConfirmation,
+        pendingSidecarAgentSession,
         errorMessage,
         hasPlan,
         activeRun,
@@ -664,6 +708,8 @@ export const useAiAgentStore = defineStore('ai-agent', () => {
         appendToolActivity,
         setPendingToolConfirmation,
         clearPendingToolConfirmation,
+        setPendingSidecarAgentSession,
+        clearPendingSidecarAgentSession,
     };
 }, {
     persist: {
@@ -697,6 +743,8 @@ export const useAiAgentStore = defineStore('ai-agent', () => {
             'stepDetails',
             'stepFinalAnswers',
             'toolActivities',
+            'pendingToolConfirmation',
+            'pendingSidecarAgentSession',
             'errorMessage',
         ],
         afterHydrate(ctx) {
@@ -730,6 +778,8 @@ export const useAiAgentStore = defineStore('ai-agent', () => {
                 stepDetails: store.stepDetails,
                 stepFinalAnswers: store.stepFinalAnswers,
                 toolActivities: store.toolActivities,
+                pendingToolConfirmation: store.pendingToolConfirmation,
+                pendingSidecarAgentSession: store.pendingSidecarAgentSession,
                 errorMessage: store.errorMessage,
             });
 

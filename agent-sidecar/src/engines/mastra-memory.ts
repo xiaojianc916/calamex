@@ -107,6 +107,14 @@ export interface IMastraMemoryScope {
     resource: string;
 }
 
+export interface ICreateMastraMemoryScopeOptions {
+    /**
+     * Durable agent processors bind the workflow run to a session resource.
+     * Use this when the same run may suspend/resume or execute workspace tools.
+     */
+    resourceScope?: 'workspace' | 'session';
+}
+
 /**
  * Structurally identical to IMastraMemoryScope. Kept as a distinct nominal
  * type for call sites that want to express "this is a memory reference passed
@@ -391,20 +399,25 @@ const resolveSemanticRecallEmbedder = (
  *
  * - `thread` defaults to `input.threadId`, falling back to `fallbackThreadId`.
  * - `resource` is `workspace:<uuid>` when a workspace path is present.
- *   Otherwise it falls back to `agent-sidecar:session:<fallbackThreadId>`,
+ * - Pass `{ resourceScope: 'session' }` for durable/suspendable runs, where
+ *   Mastra processors require every input message to stay on a stable resource.
+ *   Explicit UI threads use the thread id so later turns can replay history.
+ * - Otherwise it falls back to `agent-sidecar:session:<fallbackThreadId>`,
  *   so unrelated no-workspace sessions don't share working memory.
  */
 export const createMastraMemoryScope = (
     input: Pick<IAgentRuntimeInput, 'workspaceRootPath' | 'threadId'>,
     fallbackThreadId: string,
+    options: ICreateMastraMemoryScopeOptions = {},
 ): IMastraMemoryScope => {
     const workspaceRootPath = toNonEmptyString(input.workspaceRootPath ?? null);
     const threadId = toNonEmptyString(input.threadId ?? null) ?? fallbackThreadId;
+    const sessionResourceId = toNonEmptyString(input.threadId ?? null) ?? fallbackThreadId;
 
-    if (!workspaceRootPath) {
+    if (!workspaceRootPath || options.resourceScope === 'session') {
         return {
             thread: threadId,
-            resource: `${RESOURCE_SCOPE_SESSION_PREFIX}${fallbackThreadId}`,
+            resource: `${RESOURCE_SCOPE_SESSION_PREFIX}${sessionResourceId}`,
         };
     }
 

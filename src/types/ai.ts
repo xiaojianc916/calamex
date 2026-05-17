@@ -86,7 +86,7 @@ export type {
 } from '@/types/ai-agent';
 
 export interface IAiChatStreamRenderState {
-  status: 'streaming' | 'completed' | 'cancelled';
+  status: 'streaming' | 'waiting-confirmation' | 'completed' | 'cancelled';
   activityText?: string;
   runtimeEvents?: TAgentRuntimeEvent[];
   finalAnswerStarted?: boolean;

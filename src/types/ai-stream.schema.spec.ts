@@ -55,9 +55,8 @@ describe('AI Agent stream schema', () => {
         reversible: true,
         createdAt: '2026-04-29T10:00:00.000Z',
         options: [
-          { id: 'allow-once', label: '允许本次', tone: 'primary' },
-          { id: 'skip', label: '跳过', tone: 'secondary' },
-          { id: 'stop', label: '停止任务', tone: 'danger' },
+          { id: 'allow-once', label: '允许', tone: 'primary' },
+          { id: 'stop', label: '拒绝', tone: 'danger' },
         ],
       },
     });

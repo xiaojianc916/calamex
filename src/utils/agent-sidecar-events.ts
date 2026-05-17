@@ -1629,9 +1629,8 @@ export const projectSidecarPlanValidationResponse = (
 };
 
 const TOOL_CONFIRMATION_OPTIONS: IAiToolConfirmationRequest['options'] = [
-  { id: 'allow-once', label: '允许一次', tone: 'primary' },
-  { id: 'skip', label: '跳过' },
-  { id: 'stop', label: '停止', tone: 'danger' },
+  { id: 'allow-once', label: '允许', tone: 'primary' },
+  { id: 'stop', label: '拒绝', tone: 'danger' },
 ];
 
 const mapSidecarApprovalToToolConfirmation = (
