@@ -1,5 +1,6 @@
 import AiPromptInput from '@/components/business/ai/AiPromptInput.vue';
 import type { IAiTokenContextProps } from '@/composables/useAiTokenContext';
+import { createDefaultAiConfigPayload } from '@/utils/ai-config';
 import { mount } from '@vue/test-utils';
 import { describe, expect, it } from 'vitest';
 import { nextTick } from 'vue';
@@ -24,9 +25,10 @@ interface IAiPromptInputTestProps {
   errorMessage: string;
   submitLabel: string;
   activeMode: 'chat' | 'agent' | 'plan';
-  providerLabel: string;
   attachments: IAiPromptInputTestAttachment[];
   hasAttachments: boolean;
+  config: ReturnType<typeof createDefaultAiConfigPayload>;
+  networkPermission: 'ask' | 'allowed-this-run' | 'denied';
   tokenContext?: IAiTokenContextProps;
   'onUpdate:modelValue': (value: string) => void;
 }
@@ -39,9 +41,10 @@ const mountPromptInput = (overrides: Partial<IAiPromptInputTestProps> = {}) =>
       errorMessage: '',
       submitLabel: '发送',
       activeMode: 'agent',
-      providerLabel: 'DeepSeek',
       attachments: [],
       hasAttachments: false,
+      config: createDefaultAiConfigPayload(),
+      networkPermission: 'ask',
       'onUpdate:modelValue': () => undefined,
       ...overrides,
     },
@@ -161,14 +164,14 @@ describe('AiPromptInput', () => {
 
     expect(wrapper.find('.ai-prompt-shell').exists()).toBe(true);
     expect(wrapper.find('.ai-attachment-button').exists()).toBe(true);
-    expect(wrapper.find('[aria-label="选择模式"]').exists()).toBe(true);
+    expect(wrapper.find('[aria-label="打开 AI 模式设置"]').exists()).toBe(true);
     expect(wrapper.find('[data-slot="input-group"]').exists()).toBe(true);
   });
 
   it('keeps the input-group mounted with the dropdown mode trigger', () => {
     const wrapper = mountPromptInput();
 
-    expect(wrapper.find('[aria-label="选择模式"]').exists()).toBe(true);
+    expect(wrapper.find('[aria-label="打开 AI 模式设置"]').exists()).toBe(true);
     expect(wrapper.find('[data-slot="input-group"]').exists()).toBe(true);
   });
 

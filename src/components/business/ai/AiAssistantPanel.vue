@@ -39,7 +39,7 @@ import type {
   IEditorSelectionSummary,
 } from '@/types/editor';
 import type { IGitDiffPreviewPayload, IGitRepositoryStatusPayload } from '@/types/git';
-import { cloneAiConfigPayload } from '@/utils/ai-config';
+import { cloneAiConfigPayload, resolveDefaultAiBaseUrl } from '@/utils/ai-config';
 import { toErrorMessage } from '@/utils/error';
 import SquarePen from '~icons/lucide/square-pen';
 import Trash2 from '~icons/lucide/trash2';
@@ -83,6 +83,7 @@ const settingsDraft = ref<IAiConfigPayload>(cloneAiConfigPayload(assistant.confi
 const settingsApiKey = ref('');
 const settingsTavilyApiKey = ref('');
 const isAgentRunActionPending = ref(false);
+const isPromptModelSaving = ref(false);
 const isHistoryOpen = ref(false);
 const pendingDeleteThreadId = ref<string | null>(null);
 const historyAnchorRef = ref<HTMLElement | null>(null);
@@ -788,6 +789,47 @@ const handleFetchWebSource = async (sourceId: string): Promise<void> => {
   }
 };
 
+const handlePromptModelChange = async (modelId: string): Promise<void> => {
+  const normalizedModelId = modelId.trim();
+
+  if (!normalizedModelId || normalizedModelId === assistant.config.value.selectedModel) {
+    return;
+  }
+
+  isPromptModelSaving.value = true;
+  try {
+    await assistant.saveConfig({
+      ...cloneAiConfigPayload(assistant.config.value),
+      providerType: 'mastra',
+      selectedModel: normalizedModelId,
+      baseUrl: resolveDefaultAiBaseUrl(normalizedModelId),
+    });
+    settingsDraft.value = cloneAiConfigPayload(assistant.config.value);
+  } catch (error) {
+    assistant.errorMessage.value = toErrorMessage(error, '模型切换失败');
+  } finally {
+    isPromptModelSaving.value = false;
+  }
+};
+
+const handlePromptNetworkPermissionChange = async (
+  permission: TAiAgentNetworkPermission,
+): Promise<void> => {
+  try {
+    await agentNetwork.setNetworkPermission(permission);
+  } catch (error) {
+    setPlanError(error, '设置网络访问权限失败。');
+  }
+};
+
+const openPromptInformationSources = (): void => {
+  openSettings();
+};
+
+const openPromptPersonalization = (): void => {
+  openSettings();
+};
+
 const getActiveAgentRunId = (): string | null =>
   planActiveRunId.value ?? planActiveRun.value?.id ?? null;
 
@@ -1213,10 +1255,15 @@ onBeforeUnmount(() => {
       <AiPromptInput v-model="assistant.draft.value" v-model:active-mode="assistant.activeMode.value"
         :disabled="composerDisabled" :stop-visible="assistant.isSending.value"
         :error-message="assistant.errorMessage.value" :submit-label="submitLabel"
-        :provider-label="aiIconTitle" :attachments="assistant.attachedFiles.value"
+        :config="assistant.config.value" :is-model-saving="isPromptModelSaving"
+        :network-permission="networkPermission" :is-network-permission-saving="agentNetwork.pending.value"
+        :attachments="assistant.attachedFiles.value"
         :has-attachments="assistant.attachedFiles.value.length > 0" :token-context="tokenContextProps"
         @submit="assistant.sendMessage" @stop="assistant.stopCurrentRequest" @file-selected="assistant.attachFile"
-        @remove-file="assistant.removeAttachedFile" />
+        @remove-file="assistant.removeAttachedFile" @model-change="handlePromptModelChange"
+        @network-permission-change="handlePromptNetworkPermissionChange"
+        @information-sources-open="openPromptInformationSources"
+        @personalization-open="openPromptPersonalization" />
     </div>
 
     <AiProviderSettings v-model:draft="settingsDraft" v-model:api-key="settingsApiKey"

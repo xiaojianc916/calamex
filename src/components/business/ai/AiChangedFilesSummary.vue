@@ -5,6 +5,7 @@ import Maximize2Icon from '~icons/lucide/maximize2';
 import Undo2Icon from '~icons/lucide/undo2';
 import { computed, ref } from 'vue';
 
+import CodeBlock from '@/components/ai-elements/code-block/CodeBlock.vue';
 import type {
   IAiAgentChangedFile,
   IAiAgentPatchSummary,
@@ -89,6 +90,24 @@ const getLineNumber = (line: IAiDiffPreviewLine): string => {
   return '';
 };
 
+const getLineSign = (line: IAiDiffPreviewLine): string => {
+  if (line.kind === 'add') {
+    return '+';
+  }
+
+  if (line.kind === 'delete') {
+    return '-';
+  }
+
+  return ' ';
+};
+
+const getHunkCode = (hunk: IAiDiffHunkPreview): string =>
+  [
+    hunk.header,
+    ...hunk.lines.map((line) => `${getLineSign(line)}${line.content}`),
+  ].join('\n');
+
 const handleViewDiff = (file: IAiAgentChangedFile): void => {
   if (isMessageVariant.value) {
     return;
@@ -169,15 +188,20 @@ const handleUndo = (): void => {
 
         <div v-if="isFileOpen(file) && hunks.length > 0" class="ai-changed-file-diff">
           <div v-for="hunk in hunks" :key="hunk.id" class="ai-changed-file-hunk">
-            <div
-              v-for="line in hunk.lines"
-              :key="line.id"
-              class="ai-changed-file-line"
-              :class="`is-${line.kind}`"
-            >
-              <span class="ai-changed-file-line-number">{{ getLineNumber(line) }}</span>
-              <code>{{ line.content }}</code>
+            <div class="ai-changed-file-line-numbers" aria-hidden="true">
+              <div class="ai-changed-file-line is-hunk">
+                <span class="ai-changed-file-line-number"></span>
+              </div>
+              <div
+                v-for="line in hunk.lines"
+                :key="line.id"
+                class="ai-changed-file-line"
+                :class="`is-${line.kind}`"
+              >
+                <span class="ai-changed-file-line-number">{{ getLineNumber(line) }}</span>
+              </div>
             </div>
+            <CodeBlock class="ai-changed-file-code" :code="getHunkCode(hunk)" language="diff" />
           </div>
         </div>
       </div>
@@ -334,8 +358,11 @@ button.ai-changed-files-action:disabled {
 }
 
 .ai-changed-file-hunk {
+  display: grid;
+  grid-template-columns: 50px minmax(0, 1fr);
   min-width: max-content;
   border-bottom: 4px solid color-mix(in srgb, var(--shell-divider) 50%, transparent);
+  background: #ffffff;
 }
 
 .ai-changed-file-hunk:last-child {
@@ -344,12 +371,12 @@ button.ai-changed-files-action:disabled {
 
 .ai-changed-file-line {
   display: grid;
-  grid-template-columns: 50px minmax(0, 1fr);
-  min-width: max-content;
+  grid-template-columns: 50px;
   color: var(--text-secondary);
   font-family: var(--font-mono);
   font-size: 11px;
-  line-height: 22px;
+  line-height: 20px;
+  min-height: 20px;
 }
 
 .ai-changed-file-line.is-add {
@@ -379,10 +406,19 @@ button.ai-changed-files-action:disabled {
   color: var(--danger);
 }
 
-.ai-changed-file-line code {
-  min-width: 0;
-  padding-right: 12px;
-  white-space: pre;
+.ai-changed-file-code {
+  border: 0;
+  border-radius: 0;
+  background: #ffffff;
+}
+
+.ai-changed-file-code :deep(pre) {
+  padding: 0 12px 0 0;
+}
+
+.ai-changed-file-code :deep(code) {
+  font-size: 11px;
+  line-height: 20px;
 }
 
 @media (max-width: 760px) {

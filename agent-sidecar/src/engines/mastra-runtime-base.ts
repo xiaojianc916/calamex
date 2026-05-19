@@ -1,3 +1,33 @@
+import { createMastraModelConfigFromEnv } from '../models/mastra-model-config.js';
+import type { IMastraResolvedModelConfig } from '../models/mastra-model-config.js';
+import { createMastraLoggerRef } from '../tools/log.js';
+import type { IMastraLogToolsRef } from '../tools/log.js';
+import { createMcpGatewayWarmPool } from '../tools/mcp-gateway.js';
+import type { McpGatewayWarmPool } from '../tools/mcp-gateway.js';
+import { createMastraMcpClientBundle } from '../tools/mcp.js';
+import type { TMcpServerName } from '../tools/mcp.js';
+import { buildSystemPrompt } from './agent-runtime-helpers.js';
+import { createMastraMemoryReference, createMastraMemoryScope } from './mastra-memory.js';
+import { createMastraMemoryForModel, createMastraModelConfig, defaultCreateAgent, defaultCreateExecutionHandle, defaultCreateResumableAgentHandle, defaultCreateStorage, resolveMastraModelConfig } from './mastra-runtime-agent-factory.js';
+import { encodeApprovalRequestId, getChunkRunId } from './mastra-runtime-approval-utils.js';
+import { normalizeMastraError } from './mastra-runtime-messages.js';
+import { createApprovalRequest, createApprovedPlanExecutionContext } from './mastra-runtime-responses.js';
+import { aggregateDoneTokenSnapshot, createOmMemoryCompressedEventDraft, createSandboxToolProgressPreview, extractFinishTokenSnapshot, getReasoningDelta, getTextDelta, isErrorChunk, isSandboxDataChunk, isTextDeltaChunk, isToolCallChunk, isToolCallSuspendedChunk, isToolErrorChunk, isToolResultChunk } from './mastra-runtime-stream-utils.js';
+import { loadMastraMcpTools } from './mastra-runtime-tools.js';
+import { DEFAULT_EXECUTION_AGENT_ID, DEFAULT_EXECUTION_AGENT_NAME } from './mastra-runtime-types.js';
+import type { IMastraAgentConfig, IMastraAgentLike, IMastraAgentStreamLike, IMastraApprovalExecutionContext, IMastraExecutionHandle, IMastraMcpBundle, IMastraPendingApproval, IMastraResumableAgentHandle, IMastraRuntimeDeps, IMastraStorageLike, IMastraTextStreamSummary, IMastraWorkflowSnapshotLike, IPlanWorkflowStepTracker, TDoneTokenSnapshot, TMastraStreamChunk, TMastraToolCallApprovalChunk, TMastraToolCallSuspendedChunk, TRuntimeEventFactory } from './mastra-runtime-types.js';
+import { createWorkspaceRuntimeInputPreview, createWorkspaceRuntimeResultPreview, isNodeTestProcess, pushUiEvent, toJsonValue } from './mastra-runtime-utils.js';
+import { createMastraAgentInputProcessors, createMastraAgentOutputProcessors, destroyMastraBrowser, destroyMastraWorkspace } from './mastra-runtime-workspace.js';
+import { createAgentPlanStore } from './plan-store.js';
+import type { IAgentPlanStore, TAgentPlanRecord } from './plan-store.js';
+import { createAgentPlanWorkflowStore } from './plan-workflow-store.js';
+import type { IAgentPlanWorkflowStore } from './plan-workflow-store.js';
+import type { IAgentRuntimeResponse, IAgentRuntimeRunOptions, TAgentRuntimeOutputEvent } from './runtime-contracts.js';
+import type { IAgentRuntimeInput, IApprovalResolutionInput } from './runtime-input.js';
+import { SIDECAR_VERSION } from './runtime.js';
+import type { MastraBrowser } from '@mastra/core/browser';
+import { WORKSPACE_TOOLS } from '@mastra/core/workspace';
+import type { AnyWorkspace } from '@mastra/core/workspace';
 
 export class MastraRuntimeBase {
     readonly name = 'mastra' as const;

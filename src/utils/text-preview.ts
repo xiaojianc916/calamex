@@ -214,6 +214,11 @@ const segmentText = (
   return splitGraphemesFallback(value);
 };
 
+export const splitTextGraphemes = (
+  value: string,
+  locale?: TTextPreviewLocale,
+): string[] => segmentText(value, 'grapheme', locale);
+
 
 const normalizePreviewText = (value: string): string =>
   value.normalize('NFC').replace(/\s+/gu, ' ').trim();

@@ -279,7 +279,7 @@ export const agentUiEventSchema = z.discriminatedUnion('type', [
         /** @deprecated 使用 `usage.totalTokens`。 */
         totalTokens: z.number().nonnegative().optional(),
         // 复用 ai.schema 的共享 schema,避免双 SoT 与 passthrough 索引签名。
-        usage: aiLanguageModelUsageSchema.nullable().optional(),
+        usage: z.lazy(() => aiLanguageModelUsageSchema).nullable().optional(),
     }),
     z.object({
         type: z.literal('error'),

@@ -7,10 +7,10 @@ import {
     CodeBlockHeader,
     CodeBlockTitle,
 } from '@/components/ai-elements/code-block';
+import { normalizeLanguageTag, resolveShikiLanguage, SHIKI_LANGUAGE_LABELS } from '@/utils/shiki-language';
 import ChevronDown from '~icons/lucide/chevron-down';
 import ChevronUp from '~icons/lucide/chevron-up';
 import FileIcon from '~icons/lucide/file';
-import type { BundledLanguage } from 'shiki';
 import { computed, ref } from 'vue';
 
 const props = withDefaults(defineProps<{
@@ -24,119 +24,10 @@ const props = withDefaults(defineProps<{
 
 const isExpanded = ref(true);
 
-const SHIKI_LANGUAGE_MAP = {
-    '': 'text',
-    text: 'text',
-    txt: 'text',
-    plain: 'text',
-    plaintext: 'text',
-
-    shell: 'bash',
-    sh: 'bash',
-    zsh: 'bash',
-    bash: 'bash',
-
-    ps: 'powershell',
-    pwsh: 'powershell',
-    powershell: 'powershell',
-
-    cmd: 'bat',
-    batch: 'bat',
-    bat: 'bat',
-
-    c: 'c',
-    h: 'c',
-    cpp: 'cpp',
-    'c++': 'cpp',
-    cc: 'cpp',
-    cxx: 'cpp',
-    hpp: 'cpp',
-
-    js: 'javascript',
-    mjs: 'javascript',
-    cjs: 'javascript',
-    javascript: 'javascript',
-    jsx: 'jsx',
-
-    ts: 'typescript',
-    mts: 'typescript',
-    cts: 'typescript',
-    typescript: 'typescript',
-    tsx: 'tsx',
-
-    vue: 'vue',
-
-    py: 'python',
-    python: 'python',
-
-    rb: 'ruby',
-    ruby: 'ruby',
-
-    rs: 'rust',
-    rust: 'rust',
-
-    go: 'go',
-
-    java: 'java',
-
-    yml: 'yaml',
-    yaml: 'yaml',
-
-    md: 'markdown',
-    markdown: 'markdown',
-
-    jsonc: 'jsonc',
-    json: 'json',
-
-    html: 'html',
-    css: 'css',
-    scss: 'scss',
-    less: 'less',
-
-    sql: 'sql',
-    xml: 'xml',
-    dockerfile: 'dockerfile',
-} satisfies Partial<Record<string, BundledLanguage>>;
-
-const LANGUAGE_LABEL_MAP: Partial<Record<BundledLanguage, string>> = {
-    bat: 'Batch',
-    bash: 'Bash',
-    c: 'C',
-    cpp: 'C++',
-    css: 'CSS',
-    dockerfile: 'Dockerfile',
-    go: 'Go',
-    html: 'HTML',
-    java: 'Java',
-    javascript: 'JavaScript',
-    json: 'JSON',
-    jsonc: 'JSONC',
-    jsx: 'JSX',
-    less: 'Less',
-    markdown: 'Markdown',
-    powershell: 'PowerShell',
-    python: 'Python',
-    ruby: 'Ruby',
-    rust: 'Rust',
-    scss: 'SCSS',
-    sql: 'SQL',
-    text: 'Text',
-    tsx: 'TSX',
-    typescript: 'TypeScript',
-    vue: 'Vue',
-    xml: 'XML',
-    yaml: 'YAML',
-};
-
 const normalizedLanguage = computed(() => normalizeLanguageTag(props.language || props.fenceInfo));
-const shikiLanguage = computed<BundledLanguage>(() => SHIKI_LANGUAGE_MAP[normalizedLanguage.value] ?? 'text');
-const languageLabel = computed(() => LANGUAGE_LABEL_MAP[shikiLanguage.value] ?? shikiLanguage.value);
+const shikiLanguage = computed(() => resolveShikiLanguage(normalizedLanguage.value));
+const languageLabel = computed(() => SHIKI_LANGUAGE_LABELS[shikiLanguage.value] ?? shikiLanguage.value);
 const filename = computed(() => resolveCodeBlockFilename(props.fenceInfo, languageLabel.value));
-
-function normalizeLanguageTag(value: string): string {
-    const firstToken = String(value ?? '').trim().split(/\s+/u, 1)[0] ?? '';
-    return firstToken.split(':')[0].trim().toLowerCase();
-}
 
 function resolveCodeBlockFilename(info: string, fallback: string): string {
     const infoParts = info.trim().split(/\s+/u).filter(Boolean);

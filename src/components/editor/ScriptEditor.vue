@@ -31,6 +31,7 @@ import type { IEditorContextMenuItem } from '@/components/editor/editor-context-
 import EditorContextMenu from '@/components/editor/EditorContextMenu.vue';
 import { useEditorContextMenu } from '@/composables/useEditorContextMenu';
 import { aiService } from '@/services/modules/ai';
+import { applyShikiTheme, ensureShikiLanguageLoaded } from '@/services/monaco-shiki';
 import { useEditorStore } from '@/store/editor';
 import type { IAiCodeActionRequest, IAiCodeActionResult } from '@/types/ai';
 import type { TThemeMode } from '@/types/app';
@@ -437,6 +438,7 @@ const handleShellWindowResizeSettled = (): void => {
 
 const setTheme = (theme: TThemeMode): void => {
   applyMonacoTheme(theme);
+  applyShikiTheme();
 };
 
 const ensureShellCompletionProvider = async (): Promise<void> => {
@@ -574,6 +576,10 @@ const createEditor = async (): Promise<void> => {
   await ensureMonacoSuggestContribution().catch((error) => {
     console.error('Monaco suggest contribution preload failed', error);
   });
+  const initialLanguage = resolveLanguageForPath(props.documentPath);
+  await ensureShikiLanguageLoaded(initialLanguage).catch((error) => {
+    console.error('Shiki 语法加载失败', error);
+  });
 
   if (!containerRef.value || editorInstance) {
     return;
@@ -583,7 +589,7 @@ const createEditor = async (): Promise<void> => {
 
   editorInstance = monaco.editor.create(containerRef.value, {
     value: props.modelValue,
-    language: resolveLanguageForPath(props.documentPath),
+    language: initialLanguage,
     useShadowDOM: false,
     automaticLayout: false,
     lineDecorationsWidth: 16,
@@ -690,7 +696,15 @@ watch(
     const model = editorInstance.getModel();
     if (model) {
       const lang = resolveLanguageForPath(nextPath);
-      monaco.editor.setModelLanguage(model, lang);
+      void ensureShikiLanguageLoaded(lang)
+        .catch((error) => {
+          console.error('Shiki 语法加载失败', error);
+        })
+        .finally(() => {
+          if (editorInstance?.getModel() === model) {
+            monaco.editor.setModelLanguage(model, lang);
+          }
+        });
     }
 
     restoreViewStateForPath(nextPath);

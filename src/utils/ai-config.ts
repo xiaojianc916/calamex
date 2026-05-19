@@ -22,7 +22,7 @@ import type {
  * 用 `||` 而非 `??`:空字符串 `''` 是"未配置"的哨兵值,需要被当作 falsy
  * 链式 fallback,最终返回 null 让上层 prompt 用户配置。
  */
-const resolveDefaultBaseUrl = (selectedModel: string): string | null => {
+export const resolveDefaultAiBaseUrl = (selectedModel: string): string | null => {
   const platform = findAiServicePlatformByModel(selectedModel);
   return platform.baseUrl || DEFAULT_MASTRA_BASE_URL || null;
 };
@@ -32,7 +32,7 @@ export const createDefaultAiModelEndpointConfig = (
 ): IAiModelEndpointConfigPayload => ({
   providerType: DEFAULT_PROVIDER_TYPE,
   selectedModel,
-  baseUrl: resolveDefaultBaseUrl(selectedModel),
+  baseUrl: resolveDefaultAiBaseUrl(selectedModel),
   activeProfileId: null,
   isBaseUrlConfigured: true,
   hasCredentials: false,
@@ -42,7 +42,7 @@ export const createDefaultAiModelEndpointConfig = (
 export const createDefaultAiConfigPayload = (): IAiConfigPayload => ({
   providerType: DEFAULT_PROVIDER_TYPE,
   selectedModel: DEFAULT_MASTRA_MODEL_ID,
-  baseUrl: resolveDefaultBaseUrl(DEFAULT_MASTRA_MODEL_ID),
+  baseUrl: resolveDefaultAiBaseUrl(DEFAULT_MASTRA_MODEL_ID),
   activeProfileId: null,
   isBaseUrlConfigured: true,
   hasCredentials: false,

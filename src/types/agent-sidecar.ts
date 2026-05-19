@@ -1,18 +1,3 @@
-/**
- * Agent sidecar IPC / event wire types.
- *
- * ⚠️ RFC 化警告:**整个文件是 wire 边界,目前为 handwritten,与 backend Rust
- * + Vue 一侧的 zod schema 形成"三处 SoT 并存"格局,长期会漂移**。
- *
- * 待办:配合 `@/types/agent-sidecar.schema.ts` 完成后,将本文件改造为
- * `z.infer<typeof xxxSchema>` 推断模式,与 `@/types/ai.ts` 同款,消除 SoT 漂移。
- *
- * 在重构完成之前,任何对本文件的修改都必须**同步**:
- *   1. Rust backend(`src-tauri/.../agent_sidecar.rs` 或相关)
- *   2. Zod schema(`@/types/agent-sidecar.schema.ts`)
- *   3. 本文件(`@/types/agent-sidecar.ts`)
- */
-
 import type { IAiLanguageModelUsage } from '@/types/ai';
 import type { IAiContextReference } from '@/types/ai-context';
 

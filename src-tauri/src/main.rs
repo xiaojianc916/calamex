@@ -41,7 +41,7 @@ use commands::{
     resize_terminal_session, save_git_stash, save_script, save_ssh_password, search_workspace,
     set_window_background, shutdown_all_terminal_sessions, stage_git_paths, start_wsl_link_agent,
     start_wsl_link_supervisor, stop_wsl_link_supervisor, test_ssh_connection, unstage_git_paths,
-    upload_ssh_file, write_terminal_input, TerminalSessionState,
+    upload_ssh_file, write_ssh_file, write_terminal_input, TerminalSessionState,
 };
 use std::{
     sync::atomic::{AtomicBool, Ordering},
@@ -347,6 +347,7 @@ fn main() {
             download_ssh_file,
             upload_ssh_file,
             read_ssh_file,
+            write_ssh_file,
             delete_ssh_path,
             rename_ssh_path,
             create_ssh_directory,

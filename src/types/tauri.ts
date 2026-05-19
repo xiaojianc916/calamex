@@ -222,6 +222,24 @@ export interface ISshFileReadPayload {
   remotePath: string;
   content: string;
   byteSize: number;
+  encoding: 'utf-8' | 'utf-8-bom';
+  lineCount: number;
+  lineEnding: 'lf' | 'crlf' | 'cr' | 'mixed' | 'none';
+  permission: string;
+  owner: string;
+  modifiedAt: string | null;
+}
+
+export interface ISshFileWriteRequest extends ISshConnectionTestRequest {
+  remotePath: string;
+  content: string;
+  encoding: 'utf-8' | 'utf-8-bom';
+  lineEnding: 'lf' | 'crlf' | 'cr' | 'mixed' | 'none';
+}
+
+export interface ISshFileWritePayload {
+  remotePath: string;
+  byteSize: number;
 }
 
 export interface ISshPathDeleteRequest extends ISshConnectionTestRequest {
@@ -360,6 +378,7 @@ export interface ITauriService {
   downloadSshFile(payload: ISshFileDownloadRequest): Promise<ISshFileDownloadPayload>;
   uploadSshFile(payload: ISshFileUploadRequest): Promise<ISshFileUploadPayload>;
   readSshFile(payload: ISshFileReadRequest): Promise<ISshFileReadPayload>;
+  writeSshFile(payload: ISshFileWriteRequest): Promise<ISshFileWritePayload>;
   deleteSshPath(payload: ISshPathDeleteRequest): Promise<ISshPathDeletePayload>;
   renameSshPath(payload: ISshPathRenameRequest): Promise<ISshPathRenamePayload>;
   createSshDirectory(payload: ISshDirectoryCreateRequest): Promise<ISshDirectoryCreatePayload>;

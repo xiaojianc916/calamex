@@ -3,10 +3,11 @@ use super::{
     SshDirectoryCreatePayload, SshDirectoryCreateRequest, SshDirectoryEntryPayload,
     SshDirectoryListPayload, SshDirectoryListRequest, SshFileDownloadPayload,
     SshFileDownloadRequest, SshFileReadPayload, SshFileReadRequest, SshFileUploadPayload,
-    SshFileUploadRequest, SshPasswordGetRequest, SshPasswordPayload, SshPasswordSaveRequest,
-    SshPasswordStatusPayload, SshPathDeletePayload, SshPathDeleteRequest, SshPathRenamePayload,
-    SshPathRenameRequest,
+    SshFileUploadRequest, SshFileWritePayload, SshFileWriteRequest, SshPasswordGetRequest,
+    SshPasswordPayload, SshPasswordSaveRequest, SshPasswordStatusPayload, SshPathDeletePayload,
+    SshPathDeleteRequest, SshPathRenamePayload, SshPathRenameRequest,
 };
+use chrono::{DateTime, Utc};
 use ssh2::{FileStat, OpenFlags, OpenType, RenameFlags, Session, Sftp};
 use std::{
     env, fs as std_fs,
@@ -120,6 +121,17 @@ impl SshConnectionParams {
     }
 
     fn from_read_request(payload: &SshFileReadRequest) -> Self {
+        Self {
+            host: payload.host.trim().into(),
+            port: payload.port,
+            username: payload.username.trim().into(),
+            auth_mode: payload.auth_mode.clone(),
+            identity_path: payload.identity_path.clone(),
+            password: payload.password.clone(),
+        }
+    }
+
+    fn from_write_request(payload: &SshFileWriteRequest) -> Self {
         Self {
             host: payload.host.trim().into(),
             port: payload.port,
@@ -377,6 +389,42 @@ pub async fn read_ssh_file(payload: SshFileReadRequest) -> Result<SshFileReadPay
         Ok(Err(error)) => Err(format!("读取远端文件任务失败：{error}")),
         Err(_) => Err("读取远端文件超时。".into()),
     }
+}
+
+#[tauri::command]
+pub async fn write_ssh_file(payload: SshFileWriteRequest) -> Result<SshFileWritePayload, String> {
+    let params = SshConnectionParams::from_write_request(&payload);
+    let remote_path = normalize_remote_path(&payload.remote_path);
+    let encoding = normalize_ssh_preview_encoding(&payload.encoding)?;
+    let line_ending = normalize_ssh_preview_line_ending(&payload.line_ending)?;
+    if params.host.is_empty() {
+        return Err("请填写主机地址。".into());
+    }
+    if params.username.is_empty() {
+        return Err("请填写用户名。".into());
+    }
+    validate_ssh_endpoint(&params.host, &params.username)?;
+    validate_remote_path(&remote_path)?;
+
+    let content = payload.content;
+    let byte_size = match timeout(
+        SSH_MUTATION_TIMEOUT,
+        task::spawn_blocking({
+            let remote_path = remote_path.clone();
+            move || write_sftp_text_file(&params, &remote_path, &content, encoding, line_ending)
+        }),
+    )
+    .await
+    {
+        Ok(Ok(result)) => result?,
+        Ok(Err(error)) => return Err(format!("写入远端文件任务失败：{error}")),
+        Err(_) => return Err("写入远端文件超时。".into()),
+    };
+
+    Ok(SshFileWritePayload {
+        remote_path,
+        byte_size,
+    })
 }
 
 #[tauri::command]
@@ -866,17 +914,102 @@ fn read_sftp_text_file(
     remote_file
         .read_to_end(&mut buffer)
         .map_err(|error| format!("读取远端文件失败：{error}"))?;
-    if buffer.contains(&0) {
-        return Err("暂不支持预览二进制文件，请下载到本地查看。".into());
-    }
-    let content =
-        String::from_utf8(buffer).map_err(|_| "远端文件不是有效 UTF-8 文本。".to_string())?;
+    let owner = resolve_remote_owner_label(&session, remote_path, &stat);
+    let permission = format_remote_permission(&stat, false);
+    let modified_at = format_remote_modified_at(&stat);
+    let (content, encoding, line_ending) = decode_remote_preview_text(buffer)?;
+    let line_count = count_text_lines(&content);
 
     Ok(SshFileReadPayload {
         remote_path: remote_path.into(),
         content,
         byte_size,
+        encoding: encoding.into(),
+        line_count,
+        line_ending: line_ending.into(),
+        permission,
+        owner,
+        modified_at,
     })
+}
+
+fn write_sftp_text_file(
+    params: &SshConnectionParams,
+    remote_path: &str,
+    content: &str,
+    encoding: &str,
+    line_ending: &str,
+) -> Result<u64, String> {
+    let session = open_authenticated_session(params)?;
+    let sftp = session
+        .sftp()
+        .map_err(|error| format!("打开 SFTP 会话失败：{error}"))?;
+    let stat = sftp
+        .stat(Path::new(remote_path))
+        .map_err(|error| format!("读取远端文件信息失败：{error}"))?;
+    if is_directory_stat(&stat) {
+        return Err("请选择一个文件编辑。".into());
+    }
+
+    let encoded_content = encode_remote_preview_text(content, encoding, line_ending)?;
+    let mut remote_file = sftp
+        .open_mode(
+            Path::new(remote_path),
+            OpenFlags::WRITE | OpenFlags::TRUNCATE,
+            (stat.perm.unwrap_or(0o644) & 0o777) as i32,
+            OpenType::File,
+        )
+        .map_err(|error| format!("打开远端文件失败：{error}"))?;
+    remote_file
+        .write_all(&encoded_content)
+        .map_err(|error| format!("写入远端文件失败：{error}"))?;
+    remote_file
+        .flush()
+        .map_err(|error| format!("刷新远端文件失败：{error}"))?;
+    remote_file
+        .fsync()
+        .map_err(|error| format!("同步远端文件失败：{error}"))?;
+
+    Ok(encoded_content.len() as u64)
+}
+
+fn decode_remote_preview_text(buffer: Vec<u8>) -> Result<(String, &'static str, &'static str), String> {
+    if buffer.contains(&0) {
+        return Err("暂不支持预览二进制文件，请下载到本地查看。".into());
+    }
+
+    let line_ending = detect_remote_line_ending(&buffer);
+    if buffer.starts_with(&[0xef, 0xbb, 0xbf]) {
+        let content = String::from_utf8(buffer[3..].to_vec())
+            .map_err(|_| "远端文件不是有效 UTF-8 文本。".to_string())?;
+        return Ok((content, "utf-8-bom", line_ending));
+    }
+
+    let content =
+        String::from_utf8(buffer).map_err(|_| "远端文件不是有效 UTF-8 文本。".to_string())?;
+    Ok((content, "utf-8", line_ending))
+}
+
+fn encode_remote_preview_text(
+    content: &str,
+    encoding: &str,
+    line_ending: &str,
+) -> Result<Vec<u8>, String> {
+    let line_ending = normalize_ssh_preview_line_ending(line_ending)?;
+    let normalized_line_feed = content.replace("\r\n", "\n").replace('\r', "\n");
+    let normalized = match line_ending {
+        "crlf" => normalized_line_feed.replace('\n', "\r\n"),
+        "cr" => normalized_line_feed.replace('\n', "\r"),
+        _ => normalized_line_feed,
+    };
+    let mut encoded = Vec::new();
+    match normalize_ssh_preview_encoding(encoding)? {
+        "utf-8" => {}
+        "utf-8-bom" => encoded.extend_from_slice(&[0xef, 0xbb, 0xbf]),
+        _ => return Err("暂不支持写入该编码的 SSH 文件。".into()),
+    }
+    encoded.extend_from_slice(normalized.as_bytes());
+    Ok(encoded)
 }
 
 fn delete_sftp_path(sftp: &Sftp, remote_path: &str) -> Result<(), String> {
@@ -930,6 +1063,167 @@ fn create_sftp_directory(sftp: &Sftp, remote_path: &str) -> Result<(), String> {
     }
     sftp.mkdir(Path::new(remote_path), 0o755)
         .map_err(|error| format!("创建远端目录失败：{error}"))
+}
+
+fn normalize_ssh_preview_encoding(encoding: &str) -> Result<&'static str, String> {
+    match encoding.trim().to_ascii_lowercase().as_str() {
+        "utf-8" => Ok("utf-8"),
+        "utf-8-bom" => Ok("utf-8-bom"),
+        _ => Err("暂不支持该 SSH 文件编码。".into()),
+    }
+}
+
+fn normalize_ssh_preview_line_ending(line_ending: &str) -> Result<&'static str, String> {
+    match line_ending.trim().to_ascii_lowercase().as_str() {
+        "lf" | "none" | "mixed" => Ok("lf"),
+        "crlf" => Ok("crlf"),
+        "cr" => Ok("cr"),
+        _ => Err("暂不支持该 SSH 文件换行格式。".into()),
+    }
+}
+
+fn detect_remote_line_ending(buffer: &[u8]) -> &'static str {
+    let mut has_lf = false;
+    let mut has_crlf = false;
+    let mut has_cr = false;
+    let mut index = 0;
+
+    while index < buffer.len() {
+        match buffer[index] {
+            b'\r' if buffer.get(index + 1) == Some(&b'\n') => {
+                has_crlf = true;
+                index += 2;
+                continue;
+            }
+            b'\r' => {
+                has_cr = true;
+            }
+            b'\n' => {
+                has_lf = true;
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+
+    match (has_crlf, has_lf, has_cr) {
+        (false, false, false) => "none",
+        (true, false, false) => "crlf",
+        (false, true, false) => "lf",
+        (false, false, true) => "cr",
+        _ => "mixed",
+    }
+}
+
+fn count_text_lines(content: &str) -> u64 {
+    if content.is_empty() {
+        return 1;
+    }
+
+    content
+        .replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .split('\n')
+        .count() as u64
+}
+
+fn format_remote_permission(stat: &FileStat, is_directory: bool) -> String {
+    let Some(mode) = stat.perm else {
+        return if is_directory {
+            "d---------".into()
+        } else {
+            "----------".into()
+        };
+    };
+
+    let file_type = if mode & S_IFMT == S_IFDIR || is_directory {
+        'd'
+    } else {
+        '-'
+    };
+    let bit_to_char = |bit: u32, value: char| if mode & bit != 0 { value } else { '-' };
+
+    format!(
+        "{file_type}{}{}{}{}{}{}{}{}{}",
+        bit_to_char(0o400, 'r'),
+        bit_to_char(0o200, 'w'),
+        bit_to_char(0o100, 'x'),
+        bit_to_char(0o040, 'r'),
+        bit_to_char(0o020, 'w'),
+        bit_to_char(0o010, 'x'),
+        bit_to_char(0o004, 'r'),
+        bit_to_char(0o002, 'w'),
+        bit_to_char(0o001, 'x'),
+    )
+}
+
+fn format_remote_modified_at(stat: &FileStat) -> Option<String> {
+    let timestamp = stat.mtime?;
+    let seconds = i64::try_from(timestamp).ok()?;
+    Some(
+        DateTime::<Utc>::from_timestamp(seconds, 0)
+            .unwrap_or_else(|| DateTime::<Utc>::from_timestamp(0, 0).expect("unix epoch"))
+            .to_rfc3339(),
+    )
+}
+
+fn resolve_remote_owner_label(session: &Session, remote_path: &str, stat: &FileStat) -> String {
+    if let Some(owner_label) = lookup_remote_owner_label(session, remote_path) {
+        return owner_label;
+    }
+
+    match (stat.uid, stat.gid) {
+        (Some(uid), Some(gid)) => format!("{uid}:{gid}"),
+        (Some(uid), None) => uid.to_string(),
+        (None, Some(gid)) => gid.to_string(),
+        (None, None) => "—".into(),
+    }
+}
+
+fn lookup_remote_owner_label(session: &Session, remote_path: &str) -> Option<String> {
+    let command = format!(
+        "LC_ALL=C stat -c '%U:%G' -- {}",
+        quote_posix_shell(remote_path)
+    );
+    let output = run_remote_exec(session, &command).ok()?;
+    let owner = output.lines().next()?.trim();
+    if owner.is_empty() {
+        return None;
+    }
+
+    Some(owner.into())
+}
+
+fn run_remote_exec(session: &Session, command: &str) -> Result<String, String> {
+    let mut channel = session
+        .channel_session()
+        .map_err(|error| format!("打开远端命令通道失败：{error}"))?;
+    channel
+        .exec(command)
+        .map_err(|error| format!("执行远端命令失败：{error}"))?;
+
+    let mut stdout = String::new();
+    channel
+        .read_to_string(&mut stdout)
+        .map_err(|error| format!("读取远端命令输出失败：{error}"))?;
+    let mut stderr = String::new();
+    let _ = channel.stderr().read_to_string(&mut stderr);
+    channel
+        .wait_close()
+        .map_err(|error| format!("等待远端命令结束失败：{error}"))?;
+    let exit_status = channel
+        .exit_status()
+        .map_err(|error| format!("读取远端命令退出码失败：{error}"))?;
+    if exit_status != 0 {
+        let detail = stderr.trim();
+        return Err(if detail.is_empty() {
+            format!("远端命令执行失败，退出码 {exit_status}。")
+        } else {
+            format!("远端命令执行失败：{detail}")
+        });
+    }
+
+    Ok(stdout)
 }
 
 fn is_directory_stat(stat: &FileStat) -> bool {
@@ -1142,7 +1436,6 @@ fn finalize_remote_upload(
     .map_err(|error| format!("提交远端临时上传文件失败：{error}"))
 }
 
-#[cfg(test)]
 fn quote_posix_shell(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
@@ -1560,5 +1853,42 @@ Host * !blocked concrete-host
     #[test]
     fn quote_posix_shell_escapes_single_quotes() {
         assert_eq!(quote_posix_shell("deploy's app"), "'deploy'\\''s app'");
+    }
+
+    #[test]
+    fn detect_remote_line_ending_distinguishes_lf_crlf_and_mixed() {
+        assert_eq!(detect_remote_line_ending(b"alpha\nbeta\n"), "lf");
+        assert_eq!(detect_remote_line_ending(b"alpha\r\nbeta\r\n"), "crlf");
+        assert_eq!(detect_remote_line_ending(b"alpha\rbeta\r"), "cr");
+        assert_eq!(detect_remote_line_ending(b"alpha\r\nbeta\n"), "mixed");
+        assert_eq!(detect_remote_line_ending(b"alpha beta"), "none");
+    }
+
+    #[test]
+    fn decode_and_encode_remote_preview_text_preserve_utf8_bom_and_line_endings() {
+        let (decoded, encoding, line_ending) =
+            decode_remote_preview_text(vec![0xef, 0xbb, 0xbf, b'a', b'\r', b'\n', b'b'])
+                .expect("preview text should decode");
+        assert_eq!(decoded, "a\r\nb");
+        assert_eq!(encoding, "utf-8-bom");
+        assert_eq!(line_ending, "crlf");
+
+        let encoded = encode_remote_preview_text("a\nb", encoding, line_ending)
+            .expect("preview text should encode");
+        assert_eq!(encoded, vec![0xef, 0xbb, 0xbf, b'a', b'\r', b'\n', b'b']);
+    }
+
+    #[test]
+    fn format_remote_permission_renders_posix_mode_bits() {
+        let stat = FileStat {
+            size: Some(0),
+            uid: Some(0),
+            gid: Some(0),
+            perm: Some(0o100755),
+            atime: None,
+            mtime: None,
+        };
+
+        assert_eq!(format_remote_permission(&stat, false), "-rwxr-xr-x");
     }
 }

@@ -13,6 +13,7 @@
 import type { TThemeMode } from '@/types/app';
 import type { IGitDiffPreviewPayload } from '@/types/git';
 import type { IEditorSettings } from '@/types/settings';
+import { applyShikiTheme, ensureShikiLanguageLoaded } from '@/services/monaco-shiki';
 import { applyMonacoTheme, monaco, resolveLanguageForPath } from '@/utils/monaco';
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
@@ -133,16 +134,26 @@ const disposeModels = (): void => {
   modifiedModel = null;
 };
 
-const syncModels = (): void => {
-  if (!diffEditor || props.preview.isEmpty) {
+const syncModels = async (
+  targetDiffEditor: monaco.editor.IStandaloneDiffEditor,
+): Promise<void> => {
+  if (props.preview.isEmpty) {
     return;
   }
 
   disposeModels();
   const language = resolveLanguageForPath(props.preview.relativePath);
+  await ensureShikiLanguageLoaded(language).catch((error) => {
+    console.error('Shiki 语法加载失败', error);
+  });
+
+  if (diffEditor !== targetDiffEditor) {
+    return;
+  }
+
   originalModel = monaco.editor.createModel(props.preview.originalContent, language);
   modifiedModel = monaco.editor.createModel(props.preview.modifiedContent, language);
-  diffEditor.setModel({
+  targetDiffEditor.setModel({
     original: originalModel,
     modified: modifiedModel,
   });
@@ -156,8 +167,9 @@ const mountDiffEditor = async (): Promise<void> => {
   }
 
   applyMonacoTheme(props.theme);
+  applyShikiTheme();
   diffEditor = monaco.editor.createDiffEditor(host, resolveRuntimeOptions());
-  syncModels();
+  await syncModels(diffEditor);
   await nextTick();
   scheduleLayout();
   window.requestAnimationFrame(() => scheduleLayout());
@@ -206,6 +218,7 @@ watch(
   () => props.theme,
   () => {
     applyMonacoTheme(props.theme);
+    applyShikiTheme();
     scheduleLayout();
   },
 );

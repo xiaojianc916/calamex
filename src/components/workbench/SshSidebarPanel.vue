@@ -2,6 +2,7 @@
 import '@/assets/css/ssh-sidebar.css'
 import FieldError from '@/components/common/FieldError.vue'
 import LinearContextMenu from '@/components/common/LinearContextMenu.vue'
+import SshFilePreviewDialog from '@/components/workbench/SshFilePreviewDialog.vue'
 import type {
   ILinearContextMenuGroup,
   ILinearContextMenuItem,
@@ -51,6 +52,7 @@ import type {
   TSshPanelTab,
   TSshTransferDirection,
 } from '@/types/ssh'
+import type { ISshFileReadPayload } from '@/types/tauri'
 import { toTypedSchema } from '@vee-validate/zod'
 import { storeToRefs } from 'pinia'
 import { useForm } from 'vee-validate'
@@ -187,8 +189,9 @@ const isPathMutating = ref(false)
 const pendingRenameItem = ref<ISshFileItem | null>(null)
 const pendingDeleteItem = ref<ISshFileItem | null>(null)
 const previewFileItem = ref<ISshFileItem | null>(null)
-const previewContent = ref('')
+const previewPayload = ref<ISshFileReadPayload | null>(null)
 const isPreviewLoading = ref(false)
+const isPreviewSaving = ref(false)
 const isCreateDirectoryDialogOpen = ref(false)
 const renameInputValue = ref('')
 const createDirectoryName = ref('')
@@ -393,6 +396,19 @@ const createSshFileReadRequest = (remotePath: string) => ({
   remotePath,
 })
 
+const createSshFileWriteRequest = (
+  remotePath: string,
+  content: string,
+  encoding: ISshFileReadPayload['encoding'],
+  lineEnding: ISshFileReadPayload['lineEnding'],
+) => ({
+  ...createSshConnectionRequest(),
+  remotePath,
+  content,
+  encoding,
+  lineEnding,
+})
+
 const createSshPasswordIdentityRequest = () => ({
   host: connectionForm.host.trim(),
   port: Number.parseInt(connectionForm.port.trim(), 10),
@@ -467,15 +483,14 @@ const loadRemoteDirectory = async (path: string): Promise<void> => {
   }
 }
 
-const downloadSelectedFile = async (): Promise<void> => {
+const downloadRemoteFile = async (fileItem: ISshFileItem): Promise<void> => {
   if (!isConnected.value || isDownloading.value) return
-  const fileItem = selectedFile.value
   if (fileItem.isDirectory) {
     message.info('暂不支持下载目录，请选择一个文件。')
     return
   }
 
-  const savePath = await tauriService.pickSavePath(fileItem.name)
+  const savePath = await tauriService.pickAnySavePath(fileItem.name)
   if (!savePath) return
 
   const transferItem = createTransferItem('download', fileItem.name, '下载中…')
@@ -504,6 +519,10 @@ const downloadSelectedFile = async (): Promise<void> => {
   } finally {
     isDownloading.value = false
   }
+}
+
+const downloadSelectedFile = async (): Promise<void> => {
+  await downloadRemoteFile(selectedFile.value)
 }
 
 const uploadFileToCurrentDirectory = async (): Promise<void> => {
@@ -559,25 +578,68 @@ const copySelectedPath = async (): Promise<void> => {
 }
 
 const closePreviewDialog = (): void => {
-  if (isPreviewLoading.value) return
+  if (isPreviewLoading.value || isPreviewSaving.value) return
   previewFileItem.value = null
-  previewContent.value = ''
+  previewPayload.value = null
 }
 
-const previewRemoteFile = async (fileItem: ISshFileItem): Promise<void> => {
+const previewRemoteFile = async (
+  fileItem: ISshFileItem,
+  options: { preservePayload?: boolean } = {},
+): Promise<void> => {
   if (isPreviewLoading.value) return
   previewFileItem.value = fileItem
-  previewContent.value = ''
+  if (!options.preservePayload) {
+    previewPayload.value = null
+  }
   isPreviewLoading.value = true
   try {
     const result = await tauriService.readSshFile(createSshFileReadRequest(fileItem.path))
-    previewContent.value = result.content
+    previewPayload.value = result
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : '读取远端文件失败。'
     message.error(errorMessage)
     previewFileItem.value = null
+    previewPayload.value = null
   } finally {
     isPreviewLoading.value = false
+  }
+}
+
+const reloadPreviewFile = async (): Promise<void> => {
+  const fileItem = previewFileItem.value
+  if (!fileItem) return
+  await previewRemoteFile(fileItem, { preservePayload: true })
+}
+
+const downloadPreviewFile = async (): Promise<void> => {
+  const fileItem = previewFileItem.value
+  if (!fileItem) return
+  await downloadRemoteFile(fileItem)
+}
+
+const savePreviewFile = async (content: string): Promise<void> => {
+  const fileItem = previewFileItem.value
+  const currentPreviewPayload = previewPayload.value
+  if (!fileItem || !currentPreviewPayload || isPreviewSaving.value) return
+
+  isPreviewSaving.value = true
+  try {
+    const result = await tauriService.writeSshFile(
+      createSshFileWriteRequest(
+        fileItem.path,
+        content,
+        currentPreviewPayload.encoding,
+        currentPreviewPayload.lineEnding,
+      ),
+    )
+    message.success(`已保存 ${fileItem.name}，共 ${formatRemoteFileSize(result.byteSize)}。`)
+    await previewRemoteFile(fileItem, { preservePayload: true })
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : '保存远端文件失败。'
+    message.error(errorMessage)
+  } finally {
+    isPreviewSaving.value = false
   }
 }
 
@@ -850,10 +912,13 @@ const disconnectSshSession = (): void => {
   remoteDirectoryRequestVersion.value += 1
   isRemoteDirectoryLoading.value = false
   isPathMutating.value = false
+  isPreviewLoading.value = false
+  isPreviewSaving.value = false
   activeSshConnectionRequest.value = null
   resetRenameDialog(true)
   resetDeleteDialog(true)
   resetCreateDirectoryDialog(true)
+  closePreviewDialog()
   closeContextMenu()
   sshStore.clearConnectionState()
   resetForm()
@@ -1263,25 +1328,17 @@ onBeforeUnmount(() => {
   <LinearContextMenu :open="isConnected && contextMenu.open" :x="contextMenu.x" :y="contextMenu.y"
     :groups="SSH_CONTEXT_MENU_GROUPS" theme="dark" submenu-direction="right" @select="handleContextMenuSelect" />
 
-  <Teleport to="body">
-    <div v-if="previewFileItem" class="ssh-modal-backdrop" @click.self="closePreviewDialog">
-      <section class="ssh-modal ssh-preview-modal" role="dialog" aria-modal="true">
-        <div class="ssh-modal-copy">
-          <h3>{{ previewFileItem.name }}</h3>
-          <p>{{ previewFileItem.path }}</p>
-        </div>
-        <div class="ssh-preview-body" aria-live="polite">
-          <div v-if="isPreviewLoading" class="ssh-file-list-state">正在读取远端文件…</div>
-          <pre v-else>{{ previewContent }}</pre>
-        </div>
-        <div class="ssh-modal-actions">
-          <button type="button" class="ssh-modal-button" :disabled="isPreviewLoading" @click="closePreviewDialog">
-            关闭
-          </button>
-        </div>
-      </section>
-    </div>
-  </Teleport>
+  <SshFilePreviewDialog
+    v-if="previewFileItem"
+    :file-item="previewFileItem"
+    :payload="previewPayload"
+    :is-loading="isPreviewLoading"
+    :is-saving="isPreviewSaving"
+    @close="closePreviewDialog"
+    @reload="reloadPreviewFile"
+    @download="downloadPreviewFile"
+    @save="savePreviewFile"
+  />
 
   <Teleport to="body">
     <div v-if="isCreateDirectoryDialogOpen" class="ssh-modal-backdrop" @click.self="closeCreateDirectoryDialog">

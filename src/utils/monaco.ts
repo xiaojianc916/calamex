@@ -1,5 +1,6 @@
 import { buildMonacoThemeForVariant, getThemeManager, onThemeChanged } from '@/themes';
 import type { TThemeMode } from '@/types/app';
+import { SHIKI_THEME } from '@/constants/shiki';
 
 import 'monaco-editor/esm/nls.messages.zh-cn.js';
 import {
@@ -103,6 +104,8 @@ import {
   create as createStandaloneEditor,
   createModel as createStandaloneModel,
   defineTheme as defineStandaloneTheme,
+  getModels as getStandaloneModels,
+  onDidCreateModel as onDidCreateStandaloneModel,
   setModelLanguage as setStandaloneModelLanguage,
   setModelMarkers as setStandaloneModelMarkers,
   setTheme as setStandaloneTheme,
@@ -148,6 +151,8 @@ const monaco = {
     createDiffEditor: createStandaloneDiffEditor,
     createModel: createStandaloneModel,
     defineTheme: defineStandaloneTheme,
+    getModels: getStandaloneModels,
+    onDidCreateModel: onDidCreateStandaloneModel,
     setModelLanguage: setStandaloneModelLanguage,
     setModelMarkers: setStandaloneModelMarkers,
     setTheme: setStandaloneTheme,
@@ -365,7 +370,8 @@ const resolveLanguageForPath = (filePath: string | null | undefined): string => 
 };
 
 const applyMonacoTheme = (theme: TThemeMode): void => {
-  monaco.editor.setTheme(resolveMonacoThemeName(theme));
+  void theme;
+  monaco.editor.setTheme(SHIKI_THEME);
 };
 
 const ensureMonacoSuggestContribution = async (): Promise<void> => {

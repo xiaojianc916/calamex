@@ -187,7 +187,7 @@ export const aiChatMessageToolCallSchema = z.object({
 export const aiChatMessageStreamSnapshotSchema = z.object({
   status: z.enum(['streaming', 'waiting-confirmation', 'completed', 'cancelled']),
   activityText: z.string().min(1).optional(),
-  runtimeEvents: z.array(agentRuntimeEventSchema).optional(),
+  runtimeEvents: z.array(z.lazy(() => agentRuntimeEventSchema)).optional(),
   finalAnswerStarted: z.boolean().optional(),
   /** @deprecated 优先使用 `usage.inputTokens`;此字段仅为兼容旧 client 保留。 */
   promptTokens: z.number().nonnegative().optional(),

@@ -209,6 +209,9 @@ const sshPasswordIdentitySchema = z.object({
   username: z.string().min(1),
 });
 
+const sshPreviewEncodingSchema = z.enum(['utf-8', 'utf-8-bom']);
+const sshPreviewLineEndingSchema = z.enum(['lf', 'crlf', 'cr', 'mixed', 'none']);
+
 const executionOptionSchema = z.object({
   type: executorKindSchema,
   label: z.string(),
@@ -828,6 +831,24 @@ export const tauriContracts = {
     outSchema: z.object({
       remotePath: z.string(),
       content: z.string(),
+      byteSize: z.number().int().nonnegative(),
+      encoding: sshPreviewEncodingSchema,
+      lineCount: z.number().int().nonnegative(),
+      lineEnding: sshPreviewLineEndingSchema,
+      permission: z.string(),
+      owner: z.string(),
+      modifiedAt: z.string().nullable(),
+    }),
+  },
+  writeSshFile: {
+    inSchema: sshConnectionInputSchema.extend({
+      remotePath: z.string().min(1),
+      content: z.string(),
+      encoding: sshPreviewEncodingSchema,
+      lineEnding: sshPreviewLineEndingSchema,
+    }),
+    outSchema: z.object({
+      remotePath: z.string(),
       byteSize: z.number().int().nonnegative(),
     }),
   },

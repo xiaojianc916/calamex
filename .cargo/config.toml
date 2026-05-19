@@ -1,5 +1,5 @@
 [source.crates-io]
-replace-with = "rsproxy-sparse"
+replace-with = "ustc"
 
 [source.rsproxy]
 registry = "https://rsproxy.cn/crates.io-index"

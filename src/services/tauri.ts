@@ -956,6 +956,17 @@ const readSshFileIpc = definePayloadIpc(
   { idempotent: true, audit: 'sensitive', timeoutMs: 60_000 },
 );
 
+const writeSshFileIpc = definePayloadIpc(
+  'write_ssh_file',
+  '写入 SSH 远端文件',
+  tauriContracts.writeSshFile,
+  {
+    audit: 'sensitive',
+    timeoutMs: 60_000,
+    measureInput: (value) => buildPayloadMetricsOmittingTextFields(value, ['content']),
+  },
+);
+
 const deleteSshPathIpc = definePayloadIpc(
   'delete_ssh_path',
   '删除 SSH 远端路径',
@@ -1269,6 +1280,7 @@ export const tauriService: ITauriService & {
   pickAnyOpenPath(): Promise<string | null>;
   pickOpenFolderPath(): Promise<string | null>;
   pickSavePath(defaultPath: string): Promise<string | null>;
+  pickAnySavePath(defaultPath: string): Promise<string | null>;
 } = {
   agentSidecarHealth: () => agentSidecarHealthIpc(undefined),
 
@@ -1333,6 +1345,14 @@ export const tauriService: ITauriService & {
       save({
         defaultPath,
         filters: saveFileFilters,
+      }),
+    );
+  },
+
+  pickAnySavePath(defaultPath) {
+    return pickDialogPath('保存远端文件', ({ save }) =>
+      save({
+        defaultPath,
       }),
     );
   },
@@ -1448,6 +1468,8 @@ export const tauriService: ITauriService & {
   uploadSshFile: uploadSshFileIpc,
 
   readSshFile: readSshFileIpc,
+
+  writeSshFile: writeSshFileIpc,
 
   deleteSshPath: deleteSshPathIpc,
 

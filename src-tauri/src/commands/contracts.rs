@@ -456,6 +456,34 @@ pub struct SshFileReadPayload {
     pub(crate) remote_path: String,
     pub(crate) content: String,
     pub(crate) byte_size: u64,
+    pub(crate) encoding: String,
+    pub(crate) line_count: u64,
+    pub(crate) line_ending: String,
+    pub(crate) permission: String,
+    pub(crate) owner: String,
+    pub(crate) modified_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SshFileWriteRequest {
+    pub(crate) host: String,
+    pub(crate) port: u16,
+    pub(crate) username: String,
+    pub(crate) auth_mode: String,
+    pub(crate) identity_path: Option<String>,
+    pub(crate) password: Option<String>,
+    pub(crate) remote_path: String,
+    pub(crate) content: String,
+    pub(crate) encoding: String,
+    pub(crate) line_ending: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SshFileWritePayload {
+    pub(crate) remote_path: String,
+    pub(crate) byte_size: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
