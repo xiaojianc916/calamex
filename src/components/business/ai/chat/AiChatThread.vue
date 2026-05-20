@@ -8,9 +8,9 @@ import {
 import { Message } from '@/components/ai-elements/message';
 import type { TAiServicePlatformId } from '@/constants/ai-providers';
 import type { IAiChatMessage, TAiChatMessageActionId } from '@/types/ai';
+import { computed } from 'vue';
 import ArchiveIcon from '~icons/lucide/archive';
 import MessageSquareIcon from '~icons/lucide/message-square';
-import { computed } from 'vue';
 import AiMessageItem from './AiMessageItem.vue';
 import AiThinkingStatus from './AiThinkingStatus.vue';
 
@@ -34,7 +34,7 @@ const props = withDefaults(defineProps<{
   revertingChangedFilesSummaryId?: string | null;
   pinningChangedFilesSummaryId?: string | null;
 }>(), {
-  typingLabel: '正在准备回复',
+  typingLabel: '正在思考',
   conversationId: null,
   workspaceRootPath: null,
   scrollState: null,
@@ -117,16 +117,11 @@ const hasContextCompressionMarker = (message: IAiChatMessage): boolean =>
 </script>
 
 <template>
-  <Conversation
-    class="relative size-full overflow-x-hidden ai-chat-list"
-    aria-label="AI 对话记录"
-    :initial="conversationInitialScroll"
-    :resize="conversationResizeMode"
-    :restore-key="conversationId"
+  <Conversation class="relative size-full overflow-x-hidden ai-chat-list" aria-label="AI 对话记录"
+    :initial="conversationInitialScroll" :resize="conversationResizeMode" :restore-key="conversationId"
     :initial-scroll-top="scrollState?.scrollTop ?? null"
     :initial-distance-from-bottom="scrollState?.distanceFromBottom ?? null"
-    @scroll-state-change="handleScrollStateChange"
-  >
+    @scroll-state-change="handleScrollStateChange">
     <ConversationContent class="ai-chat-list__content" :class="{ 'is-empty': shouldRenderEmptyState }">
       <slot v-if="shouldRenderEmptyState" name="empty">
         <ConversationEmptyState class="ai-chat-empty-state" title="还没有对话" description="选择一个提示词，或直接输入你的问题。">
@@ -139,23 +134,13 @@ const hasContextCompressionMarker = (message: IAiChatMessage): boolean =>
         <slot name="before-messages" />
         <template v-for="message in messages" :key="message.id">
           <slot v-if="message.id === lastAssistantMessageId" name="before-last-assistant" :message="message" />
-          <AiMessageItem
-            :message="message"
-            :platform-id="platformId"
-            :provider-label="providerLabel"
+          <AiMessageItem :message="message" :platform-id="platformId" :provider-label="providerLabel"
             :workspace-root-path="workspaceRootPath"
             :reverting-changed-files-summary-id="revertingChangedFilesSummaryId"
-            :pinning-changed-files-summary-id="pinningChangedFilesSummaryId"
-            @message-action="handleMessageAction"
-            @changed-files-rollback="handleChangedFilesRollback"
-            @changed-files-pin="handleChangedFilesPin"
-          />
-          <div
-            v-if="hasContextCompressionMarker(message)"
-            class="ai-context-compression-divider"
-            role="status"
-            aria-label="上下文已自动压缩"
-          >
+            :pinning-changed-files-summary-id="pinningChangedFilesSummaryId" @message-action="handleMessageAction"
+            @changed-files-rollback="handleChangedFilesRollback" @changed-files-pin="handleChangedFilesPin" />
+          <div v-if="hasContextCompressionMarker(message)" class="ai-context-compression-divider" role="status"
+            aria-label="上下文已自动压缩">
             <span class="ai-context-compression-divider__label">
               <ArchiveIcon class="ai-context-compression-divider__icon" aria-hidden="true" />
               <span>上下文已自动压缩</span>
@@ -164,12 +149,8 @@ const hasContextCompressionMarker = (message: IAiChatMessage): boolean =>
           <slot name="after-message" :message="message" />
         </template>
         <slot name="after-messages" />
-        <Message
-          v-if="shouldRenderStandaloneTyping"
-          from="assistant"
-          class="ai-message-typing"
-          :aria-label="typingLabel"
-        >
+        <Message v-if="shouldRenderStandaloneTyping" from="assistant" class="ai-message-typing"
+          :aria-label="typingLabel">
           <AiThinkingStatus :label="typingLabel" />
         </Message>
       </template>
@@ -269,5 +250,4 @@ const hasContextCompressionMarker = (message: IAiChatMessage): boolean =>
   flex: 0 0 auto;
   stroke-width: 1.8;
 }
-
 </style>

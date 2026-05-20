@@ -23,7 +23,8 @@
 │   │   ├── config
 │   │   ├── context
 │   │   ├── engines
-│   │   │   ├── agent-runtime-helpers.ts
+│   │   │   ├── agent
+│   │   │   │   └── factory.ts
 │   │   │   ├── approval-client
 │   │   │   │   ├── client.ts
 │   │   │   │   └── utils.ts
@@ -33,13 +34,12 @@
 │   │   │   ├── chat
 │   │   │   │   └── chat.ts
 │   │   │   ├── context
-│   │   │   │   └── context.ts
+│   │   │   │   ├── context.ts
+│   │   │   │   └── memory.ts
 │   │   │   ├── contracts
 │   │   │   │   ├── runtime-contracts.ts
 │   │   │   │   └── runtime-input.ts
 │   │   │   ├── execution.ts
-│   │   │   ├── mastra-memory.ts
-│   │   │   ├── mastra-runtime-agent-factory.ts
 │   │   │   ├── mastra-runtime.ts
 │   │   │   ├── messages.ts
 │   │   │   ├── plan
@@ -47,6 +47,8 @@
 │   │   │   │   ├── plan-utils.ts
 │   │   │   │   ├── plan-workflow-store.ts
 │   │   │   │   └── plan.ts
+│   │   │   ├── prompts
+│   │   │   │   └── system-prompt.ts
 │   │   │   ├── responses.ts
 │   │   │   ├── rollback.ts
 │   │   │   ├── runtime.ts
@@ -780,6 +782,8 @@
 │   │   │   ├── integrated-terminal.state.spec.ts
 │   │   │   └── workbench.facade.spec.ts
 │   │   ├── ai
+│   │   │   ├── sidecar-events.spec.ts
+│   │   │   ├── sidecar-events.ts
 │   │   │   ├── useAiAgentNetwork.ts
 │   │   │   ├── useAiAgentPlan.spec.ts
 │   │   │   ├── useAiAgentPlan.ts
@@ -951,57 +955,73 @@
 │   │       ├── dark.ts
 │   │       └── light.ts
 │   ├── types
-│   │   ├── agent-sidecar.schema.spec.ts
-│   │   ├── agent-sidecar.schema.ts
-│   │   ├── agent-sidecar.ts
-│   │   ├── ai-agent.schema.spec.ts
-│   │   ├── ai-agent.schema.ts
-│   │   ├── ai-agent.ts
-│   │   ├── ai-context.schema.ts
-│   │   ├── ai-context.ts
-│   │   ├── ai-conversation.schema.spec.ts
-│   │   ├── ai-conversation.schema.ts
-│   │   ├── ai-edit.schema.spec.ts
-│   │   ├── ai-edit.schema.ts
-│   │   ├── ai-edit.ts
-│   │   ├── ai-patch.schema.spec.ts
-│   │   ├── ai-patch.schema.ts
-│   │   ├── ai-patch.ts
-│   │   ├── ai-provider.schema.spec.ts
-│   │   ├── ai-provider.schema.ts
-│   │   ├── ai-stream.schema.spec.ts
-│   │   ├── ai-stream.schema.ts
-│   │   ├── ai-stream.ts
-│   │   ├── ai-suggestion.schema.spec.ts
-│   │   ├── ai-suggestion.schema.ts
-│   │   ├── ai-tools.ts
-│   │   ├── ai-web.schema.spec.ts
-│   │   ├── ai-web.schema.ts
-│   │   ├── ai-web.ts
-│   │   ├── ai.schema.spec.ts
-│   │   ├── ai.schema.ts
-│   │   ├── ai.ts
-│   │   ├── app-error.ts
-│   │   ├── app.ts
-│   │   ├── dialog.ts
-│   │   ├── editor.ts
-│   │   ├── file-icon.ts
-│   │   ├── git.ts
-│   │   ├── monaco-shims.d.ts
-│   │   ├── search.ts
-│   │   ├── session.ts
-│   │   ├── settings.ts
-│   │   ├── shell-completion.ts
-│   │   ├── ssh.ts
-│   │   ├── startup-shell.ts
-│   │   ├── tauri.ts
-│   │   ├── terminal.ts
-│   │   ├── window.d.ts
-│   │   ├── wsl-link.schema.ts
-│   │   └── wsl-link.ts
+│   │   ├── ai
+│   │   │   ├── agent.schema.spec.ts
+│   │   │   ├── agent.schema.ts
+│   │   │   ├── agent.ts
+│   │   │   ├── context.schema.ts
+│   │   │   ├── context.ts
+│   │   │   ├── conversation.schema.spec.ts
+│   │   │   ├── conversation.schema.ts
+│   │   │   ├── edit.schema.spec.ts
+│   │   │   ├── edit.schema.ts
+│   │   │   ├── edit.ts
+│   │   │   ├── index.ts
+│   │   │   ├── patch.schema.spec.ts
+│   │   │   ├── patch.schema.ts
+│   │   │   ├── patch.ts
+│   │   │   ├── provider.schema.spec.ts
+│   │   │   ├── provider.schema.ts
+│   │   │   ├── schema.spec.ts
+│   │   │   ├── schema.ts
+│   │   │   ├── sidecar.schema.spec.ts
+│   │   │   ├── sidecar.schema.ts
+│   │   │   ├── sidecar.ts
+│   │   │   ├── stream.schema.spec.ts
+│   │   │   ├── stream.schema.ts
+│   │   │   ├── stream.ts
+│   │   │   ├── suggestion.schema.spec.ts
+│   │   │   ├── suggestion.schema.ts
+│   │   │   ├── tools.ts
+│   │   │   ├── web.schema.spec.ts
+│   │   │   ├── web.schema.ts
+│   │   │   └── web.ts
+│   │   ├── app
+│   │   │   └── index.ts
+│   │   ├── app-error
+│   │   │   └── index.ts
+│   │   ├── dialog
+│   │   │   └── index.ts
+│   │   ├── editor
+│   │   │   └── index.ts
+│   │   ├── file-icon
+│   │   │   └── index.ts
+│   │   ├── git
+│   │   │   └── index.ts
+│   │   ├── monaco
+│   │   │   └── shims.d.ts
+│   │   ├── search
+│   │   │   └── index.ts
+│   │   ├── session
+│   │   │   └── index.ts
+│   │   ├── settings
+│   │   │   └── index.ts
+│   │   ├── shell-completion
+│   │   │   └── index.ts
+│   │   ├── ssh
+│   │   │   └── index.ts
+│   │   ├── startup-shell
+│   │   │   └── index.ts
+│   │   ├── tauri
+│   │   │   └── index.ts
+│   │   ├── terminal
+│   │   │   └── index.ts
+│   │   ├── window
+│   │   │   └── index.d.ts
+│   │   └── wsl-link
+│   │       ├── index.ts
+│   │       └── schema.ts
 │   ├── utils
-│   │   ├── agent-sidecar-events.spec.ts
-│   │   ├── agent-sidecar-events.ts
 │   │   ├── app-tooltip.spec.ts
 │   │   ├── app-tooltip.ts
 │   │   ├── app-window.ts
@@ -1041,8 +1061,6 @@
 │   │   ├── startup-shell.ts
 │   │   ├── structured-run-report.spec.ts
 │   │   ├── structured-run-report.ts
-│   │   ├── suggestion-layout.spec.ts
-│   │   ├── suggestion-layout.ts
 │   │   ├── templates.ts
 │   │   ├── terminal-run.spec.ts
 │   │   ├── terminal-run.ts
@@ -1157,6 +1175,11 @@
 │   │   │   │   ├── mod.rs
 │   │   │   │   ├── planner.rs
 │   │   │   │   └── policy.rs
+│   │   │   ├── approval
+│   │   │   │   ├── decision.rs
+│   │   │   │   ├── journal.rs
+│   │   │   │   ├── mod.rs
+│   │   │   │   └── policy.rs
 │   │   │   ├── audit
 │   │   │   │   └── mod.rs
 │   │   │   ├── budget
@@ -1190,11 +1213,6 @@
 │   │   │   │   └── mod.rs
 │   │   │   └── transport
 │   │   │       └── mod.rs
-│   │   ├── approval_engine
-│   │   │   ├── decision.rs
-│   │   │   ├── journal.rs
-│   │   │   ├── mod.rs
-│   │   │   └── policy.rs
 │   │   ├── assets
 │   │   │   ├── favicon.rs
 │   │   │   └── mod.rs

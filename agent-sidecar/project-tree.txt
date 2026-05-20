@@ -1,0 +1,87 @@
+.
+├── .agent-sidecar
+│   ├── mastra.db
+│   ├── mastra.db-shm
+│   ├── mastra.db-wal
+│   └── mastra.log
+├── MATURITY.md
+├── package.json
+├── project-tree.txt
+├── src
+│   ├── approvals
+│   ├── config
+│   ├── context
+│   ├── engines
+│   │   ├── agent
+│   │   │   └── factory.ts
+│   │   ├── approval-client
+│   │   │   ├── client.ts
+│   │   │   └── utils.ts
+│   │   ├── base.ts
+│   │   ├── budget
+│   │   │   └── budget.ts
+│   │   ├── chat
+│   │   │   └── chat.ts
+│   │   ├── context
+│   │   │   ├── context.ts
+│   │   │   └── memory.ts
+│   │   ├── contracts
+│   │   │   ├── runtime-contracts.ts
+│   │   │   └── runtime-input.ts
+│   │   ├── execution.ts
+│   │   ├── mastra-runtime.ts
+│   │   ├── messages.ts
+│   │   ├── plan
+│   │   │   ├── plan-store.ts
+│   │   │   ├── plan-utils.ts
+│   │   │   ├── plan-workflow-store.ts
+│   │   │   └── plan.ts
+│   │   ├── prompts
+│   │   │   └── system-prompt.ts
+│   │   ├── responses.ts
+│   │   ├── rollback.ts
+│   │   ├── runtime.ts
+│   │   ├── stream
+│   │   │   └── stream-utils.ts
+│   │   ├── tools
+│   │   │   └── tools.ts
+│   │   ├── types.ts
+│   │   ├── utils.ts
+│   │   ├── validation.ts
+│   │   └── workspace.ts
+│   ├── models
+│   │   ├── config.ts
+│   │   ├── index.ts
+│   │   ├── output-budget.ts
+│   │   └── providers
+│   │       ├── deepseek-mastra-gateway.ts
+│   │       └── deepseek-reasoning-fetch.ts
+│   ├── rollback
+│   ├── schemas
+│   │   ├── events.ts
+│   │   ├── plan-workflow.ts
+│   │   └── plan.ts
+│   ├── server.spec.ts
+│   ├── server.ts
+│   ├── streaming
+│   │   ├── stream-adapter.ts
+│   │   ├── stream-debug-recorder.ts
+│   │   ├── stream-event-bus.ts
+│   │   ├── stream-normalizer.ts
+│   │   ├── stream-runner.ts
+│   │   ├── stream-runtime-contract.ts
+│   │   ├── stream-types.ts
+│   │   └── streaming.spec.ts
+│   ├── tools
+│   │   ├── generated.ts
+│   │   ├── log.ts
+│   │   ├── mcp-gateway.ts
+│   │   ├── mcp.spec.ts
+│   │   ├── mcp.ts
+│   │   └── time.ts
+│   ├── types
+│   │   └── json-value.ts
+│   └── web
+│       ├── service.ts
+│       └── types.ts
+└── tsconfig.json

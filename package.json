@@ -63,7 +63,7 @@
     "vue-router": "^5.0.7",
     "vue-sonner": "2.0.9",
     "vue-stick-to-bottom": "^1.0.0",
-    "web-tree-sitter": "^0.26.8",
+    "web-tree-sitter": "^0.26.9",
     "zhipuai": "^2.0.0",
     "zod": "^4.4.3"
   },
@@ -77,9 +77,9 @@
     "@size-limit/file": "^12.1.0",
     "@tailwindcss/vite": "^4.3.0",
     "@tauri-apps/cli": "^2.11.2",
-    "@types/node": "^25.9.0",
+    "@types/node": "^25.9.1",
     "@vitejs/plugin-vue": "^6.0.7",
-    "@vitest/coverage-v8": "^4.1.6",
+    "@vitest/coverage-v8": "^4.1.7",
     "@vue/test-utils": "^2.4.10",
     "@vue/tsconfig": "^0.9.1",
     "@withfig/autocomplete": "^2.692.3",
@@ -98,7 +98,7 @@
     "prettier": "^3.8.3",
     "shellcheck": "^4.1.0",
     "size-limit": "^12.1.0",
-    "stylelint": "^17.11.1",
+    "stylelint": "^17.12.0",
     "stylelint-config-tailwindcss": "^1.0.1",
     "tailwindcss": "^4.3.0",
     "tsx": "^4.22.3",
@@ -106,9 +106,9 @@
     "typescript-eslint": "^8.59.4",
     "unplugin-icons": "^23.0.1",
     "vite": "^8.0.13",
-    "vitest": "^4.1.6",
+    "vitest": "^4.1.7",
     "vue-eslint-parser": "^10.4.0",
-    "vue-tsc": "^3.3.0"
+    "vue-tsc": "^3.3.1"
   },
   "lint-staged": {
     "*.{ts,vue}": [
