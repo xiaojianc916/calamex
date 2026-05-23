@@ -4,6 +4,7 @@ import {
   agentSidecarCheckpointRestoreRequestSchema,
   agentSidecarExecuteRequestSchema,
   agentSidecarHealthPayloadSchema,
+  agentSidecarWarmupPayloadSchema,
   agentSidecarPlanApproveRequestSchema,
   agentSidecarPlanFinishRequestSchema,
   agentSidecarPlanQueryRequestSchema,
@@ -271,6 +272,10 @@ export const tauriContracts = {
   agentSidecarRestart: {
     inSchema: z.void(),
     outSchema: agentSidecarHealthPayloadSchema,
+  },
+  agentSidecarWarmup: {
+    inSchema: z.void(),
+    outSchema: agentSidecarWarmupPayloadSchema,
   },
   agentSidecarChat: {
     inSchema: agentSidecarChatRequestSchema,

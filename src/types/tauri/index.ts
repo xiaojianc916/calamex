@@ -4,6 +4,7 @@ import type {
   IAgentSidecarCheckpointRestoreRequest,
   IAgentSidecarExecuteRequest,
   IAgentSidecarHealthPayload,
+  IAgentSidecarWarmupPayload,
   IAgentSidecarPlanApproveRequest,
   IAgentSidecarPlanFinishRequest,
   IAgentSidecarPlanQueryRequest,
@@ -281,6 +282,7 @@ export interface ISshConfigHostPayload {
 export interface ITauriService {
   agentSidecarHealth(): Promise<IAgentSidecarHealthPayload>;
   agentSidecarRestart(): Promise<IAgentSidecarHealthPayload>;
+  agentSidecarWarmup(): Promise<IAgentSidecarWarmupPayload>;
   agentSidecarChat(payload: IAgentSidecarChatRequest): Promise<IAgentSidecarResponsePayload>;
   agentSidecarPlan(payload: IAgentSidecarPlanRequest): Promise<IAgentSidecarResponsePayload>;
   agentSidecarPlanApprove(

@@ -14,6 +14,7 @@ use crate::commands::contracts::{
     AgentSidecarModelConfigPayload, AgentSidecarPlanApproveRequest, AgentSidecarPlanFinishRequest,
     AgentSidecarPlanQueryRequest, AgentSidecarPlanRejectRequest, AgentSidecarPlanReplanRequest,
     AgentSidecarPlanRequest, AgentSidecarPlanValidateRequest, AgentSidecarResponsePayload,
+    AgentSidecarWarmupPayload, AgentSidecarWarmupRequest,
     AiWebFetchInput, AiWebFetchPayload, AiWebSearchInput, AiWebSearchPayload,
 };
 
@@ -862,6 +863,16 @@ fn parse_reg_query_value(output: &str, key: &str) -> Option<String> {
 
 pub async fn health() -> Result<AgentSidecarHealthPayload, String> {
     get_json("/health").await
+}
+
+pub async fn warmup() -> Result<AgentSidecarWarmupPayload, String> {
+    post_json(
+        "/agent/warmup",
+        &AgentSidecarWarmupRequest {
+            model_config: Some(current_sidecar_model_config()?),
+        },
+    )
+    .await
 }
 
 pub async fn chat(

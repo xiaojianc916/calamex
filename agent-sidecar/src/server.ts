@@ -22,6 +22,14 @@ import {
   aiWebSearchPayloadSchema,
 } from './web/types.js';
 import { fetchWeb, searchWeb } from './web/service.js';
+import { configureGlobalHttpTransport } from './http/transport.js';
+import {
+  logWarmupResult,
+  scheduleBackgroundWarmup,
+  warmupLlmConnection,
+} from './http/warmup.js';
+
+configureGlobalHttpTransport();
 
 const DEFAULT_PORT = 39871;
 const MAX_REQUEST_BYTES = 2 * 1024 * 1024;
@@ -309,6 +317,21 @@ const handlePlainPost = async <TPayload>(
   }
 };
 
+const handleWarmupPost = async (
+  request: IncomingMessage,
+  response: ServerResponse,
+): Promise<void> => {
+  try {
+    const result = await warmupLlmConnection(await readBody(request));
+    logWarmupResult('explicit', result);
+    writeJson(response, 200, result);
+  } catch (error) {
+    writeJson(response, 400, {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+};
+
 const writeNdjsonFrame = (response: ServerResponse, payload: unknown): void => {
   if (response.writableEnded || response.destroyed) {
     return;
@@ -435,6 +458,7 @@ export const createAgentSidecarServer = (
     if (request.method === 'POST' && url === '/agent/chat') {
       void handlePost(request, response, async (body, options) => {
         const payload = agentSidecarChatRequestSchema.parse(body);
+        scheduleBackgroundWarmup(payload, 'request');
         return runtime.chat(toAgentInput(payload, 'ask'), options);
       });
       return;
@@ -443,6 +467,7 @@ export const createAgentSidecarServer = (
     if (request.method === 'POST' && url === '/agent/chat/stream') {
       void handlePostStream(request, response, async (body, options) => {
         const payload = agentSidecarChatRequestSchema.parse(body);
+        scheduleBackgroundWarmup(payload, 'request');
         return runtime.chat(toAgentInput(payload, 'ask'), options);
       });
       return;
@@ -451,6 +476,7 @@ export const createAgentSidecarServer = (
     if (request.method === 'POST' && url === '/model/chat') {
       void handlePost(request, response, async (body, options) => {
         const payload = agentSidecarChatRequestSchema.parse(body);
+        scheduleBackgroundWarmup(payload, 'request');
         return runtime.chat(toAgentInput(payload, 'ask'), options);
       });
       return;
@@ -459,14 +485,21 @@ export const createAgentSidecarServer = (
     if (request.method === 'POST' && url === '/model/chat/stream') {
       void handlePostStream(request, response, async (body, options) => {
         const payload = agentSidecarChatRequestSchema.parse(body);
+        scheduleBackgroundWarmup(payload, 'request');
         return runtime.chat(toAgentInput(payload, 'ask'), options);
       });
+      return;
+    }
+
+    if (request.method === 'POST' && url === '/agent/warmup') {
+      void handleWarmupPost(request, response);
       return;
     }
 
     if (request.method === 'POST' && url === '/agent/plan') {
       void handlePost(request, response, async (body, options) => {
         const payload = agentSidecarPlanRequestSchema.parse(body);
+        scheduleBackgroundWarmup(payload, 'request');
         return runtime.plan(toAgentInput(payload, 'plan'), options);
       });
       return;
@@ -475,6 +508,7 @@ export const createAgentSidecarServer = (
     if (request.method === 'POST' && url === '/agent/plan/stream') {
       void handlePostStream(request, response, async (body, options) => {
         const payload = agentSidecarPlanRequestSchema.parse(body);
+        scheduleBackgroundWarmup(payload, 'request');
         return runtime.plan(toAgentInput(payload, 'plan'), options);
       });
       return;
@@ -515,6 +549,7 @@ export const createAgentSidecarServer = (
     if (request.method === 'POST' && url === '/agent/plan/validate') {
       void handlePost(request, response, async (body, options) => {
         const payload = agentSidecarPlanValidateRequestSchema.parse(body);
+        scheduleBackgroundWarmup(payload, 'request');
         return runtime.validatePlan(toAgentInput(payload, 'agent'), options);
       });
       return;
@@ -523,6 +558,7 @@ export const createAgentSidecarServer = (
     if (request.method === 'POST' && url === '/agent/plan/replan') {
       void handlePost(request, response, async (body, options) => {
         const payload = agentSidecarPlanReplanRequestSchema.parse(body);
+        scheduleBackgroundWarmup(payload, 'request');
         return runtime.replanPlan(toAgentInput(payload, 'plan'), options);
       });
       return;
@@ -531,6 +567,7 @@ export const createAgentSidecarServer = (
     if (request.method === 'POST' && url === '/agent/execute') {
       void handlePost(request, response, async (body, options) => {
         const payload = agentSidecarExecuteRequestSchema.parse(body);
+        scheduleBackgroundWarmup(payload, 'request');
         return runtime.execute(toAgentInput(payload, 'agent'), options);
       });
       return;
@@ -539,6 +576,7 @@ export const createAgentSidecarServer = (
     if (request.method === 'POST' && url === '/agent/execute/stream') {
       void handlePostStream(request, response, async (body, options) => {
         const payload = agentSidecarExecuteRequestSchema.parse(body);
+        scheduleBackgroundWarmup(payload, 'request');
         return runtime.execute(toAgentInput(payload, 'agent'), options);
       });
       return;
@@ -547,6 +585,7 @@ export const createAgentSidecarServer = (
     if (request.method === 'POST' && url === '/approval/resolve') {
       void handlePost(request, response, async (body, options) => {
         const payload = approvalResolutionSchema.parse(body);
+        scheduleBackgroundWarmup(payload, 'request');
         return runtime.resolveApproval(payload, options);
       });
       return;
@@ -555,6 +594,7 @@ export const createAgentSidecarServer = (
     if (request.method === 'POST' && url === '/approval/resolve/stream') {
       void handlePostStream(request, response, async (body, options) => {
         const payload = approvalResolutionSchema.parse(body);
+        scheduleBackgroundWarmup(payload, 'request');
         return runtime.resolveApproval(payload, options);
       });
       return;
@@ -581,6 +621,7 @@ export const createAgentSidecarServer = (
     if (request.method === 'POST' && url === '/rollback/restore') {
       void handlePost(request, response, async (body, options) => {
         const payload = agentSidecarRollbackRestoreRequestSchema.parse(body);
+        scheduleBackgroundWarmup(payload, 'request');
         return runtime.restoreCheckpoint(payload, options);
       });
       return;
@@ -589,6 +630,7 @@ export const createAgentSidecarServer = (
     if (request.method === 'POST' && url === '/rollback/restore/stream') {
       void handlePostStream(request, response, async (body, options) => {
         const payload = agentSidecarRollbackRestoreRequestSchema.parse(body);
+        scheduleBackgroundWarmup(payload, 'request');
         return runtime.restoreCheckpoint(payload, options);
       });
       return;

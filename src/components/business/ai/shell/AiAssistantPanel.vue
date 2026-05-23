@@ -829,6 +829,24 @@ const openPromptPersonalization = (): void => {
   openSettings();
 };
 
+let aiConnectionPrewarmStarted = false;
+
+const handlePromptPrewarm = (): void => {
+  if (aiConnectionPrewarmStarted) {
+    return;
+  }
+
+  aiConnectionPrewarmStarted = true;
+  void aiService.sidecarWarmup().catch((error) => {
+    console.info(JSON.stringify({
+      level: 'info',
+      scope: 'ai',
+      event: 'agent_sidecar_warmup.skipped',
+      reason: toErrorMessage(error, '预热连接失败'),
+    }));
+  });
+};
+
 const getActiveAgentRunId = (): string | null =>
   planActiveRunId.value ?? planActiveRun.value?.id ?? null;
 
@@ -1247,7 +1265,7 @@ onBeforeUnmount(() => {
         @remove-file="assistant.removeAttachedFile" @model-change="handlePromptModelChange"
         @network-permission-change="handlePromptNetworkPermissionChange"
         @information-sources-open="openPromptInformationSources"
-        @personalization-open="openPromptPersonalization" />
+        @personalization-open="openPromptPersonalization" @prewarm="handlePromptPrewarm" />
     </div>
 
     <AiProviderSettings v-model:draft="settingsDraft" v-model:api-key="settingsApiKey"
@@ -1661,8 +1679,30 @@ onBeforeUnmount(() => {
 }
 
 .ai-composer-shell {
+  --ai-composer-surface: var(--panel-bg);
+  --ai-composer-fade-height: calc(var(--app-density-scale) * 3rem);
+  position: relative;
+  z-index: 1;
   flex: 0 0 auto;
-  background: #ffffff;
+  background: var(--ai-composer-surface);
+}
+
+.ai-composer-shell::before {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% - 1px);
+  left: 0;
+  height: var(--ai-composer-fade-height);
+  pointer-events: none;
+  background: linear-gradient(
+    to top,
+    var(--ai-composer-surface) 0%,
+    color-mix(in srgb, var(--ai-composer-surface) 74%, transparent) 24%,
+    color-mix(in srgb, var(--ai-composer-surface) 34%, transparent) 58%,
+    color-mix(in srgb, var(--ai-composer-surface) 10%, transparent) 82%,
+    transparent 100%
+  );
+  content: '';
 }
 
 .ai-composer-shell.has-plan {
@@ -1684,7 +1724,7 @@ onBeforeUnmount(() => {
 }
 
 .ai-composer-shell :global(.ai-composer) {
-  background: #ffffff;
+  background: var(--ai-composer-surface);
   padding: 0 10px 10px;
 }
 

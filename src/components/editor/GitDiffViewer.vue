@@ -66,6 +66,7 @@ const resolveRuntimeOptions = (): monaco.editor.IDiffEditorConstructionOptions =
   minimap: { enabled: props.editorSettings.minimap },
   originalEditable: false,
   renderOverviewRuler: false,
+  'semanticHighlighting.enabled': false,
   overviewRulerBorder: false,
   padding: {
     top: 0,

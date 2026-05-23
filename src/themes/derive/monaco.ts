@@ -14,9 +14,6 @@ import type { IComponentTokens, IRoles } from '../types';
 // 辅助函数
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** 去掉 CSS 颜色字符串中的 `#` 前缀，供 Monaco rules[].foreground 使用 */
-const noHash = (color: string): string => color.replace(/^#/, '');
-
 /**
  * 将一个 6 位 hex 颜色叠加指定 alpha（2 位 hex），返回 8 位 hex。
  * 仅用于 Monaco colors 对象（不用于 rules）。
@@ -95,27 +92,10 @@ export function buildMonacoTheme(
 ): IMonacoThemeDefinition {
     const isDark = options.mode === 'dark';
 
-    const rules: IMonacoTokenRule[] = [
-        { token: 'comment', foreground: noHash(tokens.syntax.comment), fontStyle: isDark ? 'italic' : undefined },
-        { token: 'keyword', foreground: noHash(tokens.syntax.keyword) },
-        { token: 'string', foreground: noHash(tokens.syntax.string) },
-        { token: 'number', foreground: noHash(tokens.syntax.number) },
-        { token: 'delimiter', foreground: noHash(tokens.syntax.delimiter) },
-    ];
-
-    if (isDark) {
-        rules.push(
-            { token: 'variable', foreground: noHash(tokens.syntax.variable) },
-            { token: 'type', foreground: noHash(tokens.syntax.type) },
-            { token: 'function', foreground: noHash(tokens.syntax.type) },
-            { token: 'operator', foreground: noHash(tokens.syntax.operator) },
-        );
-    }
-
     return {
         base: isDark ? 'vs-dark' : 'vs',
         inherit: true,
-        rules,
+        rules: [],
         colors: sanitizeMonacoColors(buildMonacoColors(roles, tokens, isDark)),
     };
 }

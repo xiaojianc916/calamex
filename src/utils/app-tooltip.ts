@@ -161,6 +161,8 @@ export const initAppTooltipSystem = (): void => {
   let hasPointerPosition = false;
   let pendingShowTimeoutId: number | null = null;
   let pointerWatchdogId: number | null = null;
+  let isPointerTracking = false;
+  let isViewportTracking = false;
 
   const clearPendingTooltip = (): void => {
     if (pendingShowTimeoutId !== null) {
@@ -186,6 +188,44 @@ export const initAppTooltipSystem = (): void => {
 
   const clearPointerPosition = (): void => {
     hasPointerPosition = false;
+  };
+
+  const startPointerTracking = (): void => {
+    if (isPointerTracking) {
+      return;
+    }
+
+    document.addEventListener('pointermove', handlePointerMove, true);
+    isPointerTracking = true;
+  };
+
+  const stopPointerTracking = (): void => {
+    if (!isPointerTracking) {
+      return;
+    }
+
+    document.removeEventListener('pointermove', handlePointerMove, true);
+    isPointerTracking = false;
+  };
+
+  const startViewportTracking = (): void => {
+    if (isViewportTracking) {
+      return;
+    }
+
+    document.addEventListener('scroll', syncTooltipPosition, true);
+    window.addEventListener('resize', syncTooltipPosition);
+    isViewportTracking = true;
+  };
+
+  const stopViewportTracking = (): void => {
+    if (!isViewportTracking) {
+      return;
+    }
+
+    document.removeEventListener('scroll', syncTooltipPosition, true);
+    window.removeEventListener('resize', syncTooltipPosition);
+    isViewportTracking = false;
   };
 
   const isPointerOverTarget = (target: HTMLElement | null): boolean => {
@@ -232,6 +272,8 @@ export const initAppTooltipSystem = (): void => {
     activeTarget = null;
     activeSource = null;
     stopPointerWatchdog();
+    stopPointerTracking();
+    stopViewportTracking();
     tooltipElement.classList.remove(
       'is-visible',
       'is-top',
@@ -288,7 +330,11 @@ export const initAppTooltipSystem = (): void => {
     tooltipElement.classList.add(`is-${resolvedPlacement}`, 'is-visible');
     tooltipElement.style.left = `${Math.round(resolvedPosition.left)}px`;
     tooltipElement.style.top = `${Math.round(resolvedPosition.top)}px`;
-    ensurePointerWatchdog();
+    startViewportTracking();
+    if (source === 'pointer') {
+      startPointerTracking();
+      ensurePointerWatchdog();
+    }
   };
 
   const schedulePointerTooltip = (target: HTMLElement): void => {
@@ -302,6 +348,8 @@ export const initAppTooltipSystem = (): void => {
 
     hideTooltip();
     pendingTarget = target;
+    startPointerTracking();
+    startViewportTracking();
     pendingShowTimeoutId = window.setTimeout(() => {
       const nextTarget = pendingTarget;
       pendingShowTimeoutId = null;
@@ -316,6 +364,10 @@ export const initAppTooltipSystem = (): void => {
   };
 
   const syncTooltipPosition = (): void => {
+    if (!pendingTarget && !activeTarget) {
+      return;
+    }
+
     if (pendingTarget && !document.body.contains(pendingTarget)) {
       hideTooltip();
       return;
@@ -426,7 +478,6 @@ export const initAppTooltipSystem = (): void => {
     }
   };
 
-  document.addEventListener('pointermove', handlePointerMove, true);
   document.addEventListener('pointerover', handlePointerOver);
   document.addEventListener('pointerout', handlePointerOut);
   document.addEventListener('focusin', handleFocusIn);
@@ -434,13 +485,11 @@ export const initAppTooltipSystem = (): void => {
   document.addEventListener('pointerdown', handlePointerDown, true);
   document.documentElement.addEventListener('mouseleave', handleDocumentMouseLeave);
   document.addEventListener('visibilitychange', handleVisibilityChange);
-  document.addEventListener('scroll', syncTooltipPosition, true);
-  window.addEventListener('resize', syncTooltipPosition);
   window.addEventListener('blur', handleWindowBlur);
   window.addEventListener('keydown', handleKeyDown);
 
   const cleanup = (): void => {
-    document.removeEventListener('pointermove', handlePointerMove, true);
+    stopPointerTracking();
     document.removeEventListener('pointerover', handlePointerOver);
     document.removeEventListener('pointerout', handlePointerOut);
     document.removeEventListener('focusin', handleFocusIn);
@@ -448,8 +497,7 @@ export const initAppTooltipSystem = (): void => {
     document.removeEventListener('pointerdown', handlePointerDown, true);
     document.documentElement.removeEventListener('mouseleave', handleDocumentMouseLeave);
     document.removeEventListener('visibilitychange', handleVisibilityChange);
-    document.removeEventListener('scroll', syncTooltipPosition, true);
-    window.removeEventListener('resize', syncTooltipPosition);
+    stopViewportTracking();
     window.removeEventListener('blur', handleWindowBlur);
     window.removeEventListener('keydown', handleKeyDown);
     hideTooltip();

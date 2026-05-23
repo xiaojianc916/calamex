@@ -4,7 +4,7 @@ use crate::commands::contracts::{
     AgentSidecarCheckpointRestoreRequest, AgentSidecarExecuteRequest, AgentSidecarHealthPayload,
     AgentSidecarPlanApproveRequest, AgentSidecarPlanFinishRequest, AgentSidecarPlanQueryRequest,
     AgentSidecarPlanRejectRequest, AgentSidecarPlanReplanRequest, AgentSidecarPlanRequest,
-    AgentSidecarPlanValidateRequest, AgentSidecarResponsePayload,
+    AgentSidecarPlanValidateRequest, AgentSidecarResponsePayload, AgentSidecarWarmupPayload,
 };
 use tauri::AppHandle;
 
@@ -16,6 +16,11 @@ pub async fn agent_sidecar_health() -> Result<AgentSidecarHealthPayload, String>
 #[tauri::command]
 pub async fn agent_sidecar_restart() -> Result<AgentSidecarHealthPayload, String> {
     agent_sidecar::restart().await
+}
+
+#[tauri::command]
+pub async fn agent_sidecar_warmup() -> Result<AgentSidecarWarmupPayload, String> {
+    agent_sidecar::warmup().await
 }
 
 #[tauri::command]

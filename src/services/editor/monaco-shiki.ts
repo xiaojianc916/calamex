@@ -1,7 +1,8 @@
 import { SHIKI_THEME } from '@/constants/editor/shiki'
 import { monaco } from '@/utils/monaco'
-import { shikiToMonaco } from '@shikijs/monaco'
+import { textmateThemeToMonacoTheme } from '@shikijs/monaco'
 import type * as MonacoApi from 'monaco-editor'
+import { EncodedTokenMetadata, FontStyle, INITIAL, type StateStack } from 'shiki/textmate'
 import {
     bundledLanguagesInfo,
     createHighlighter,
@@ -36,6 +37,11 @@ const SHIKI_LANGUAGE_LOOKUP: ReadonlyMap<string, BundledLanguage> = (() => {
 /** install 时立即加载到 shiki 的语言;其他语言全部按需加载。 */
 const BOOTSTRAP_LANGUAGES: BundledLanguage[] = ['typescript']
 
+/** 复合文件在 Shiki 里会按嵌入语言继续分发,打开对应文件时再补齐这些语法。 */
+const EMBEDDED_LANGUAGE_DEPENDENCIES: Readonly<Partial<Record<BundledLanguage, readonly BundledLanguage[]>>> = {
+    vue: ['typescript', 'javascript', 'html', 'css', 'scss', 'sass', 'less', 'stylus', 'json'],
+} as const
+
 // ──────────────────────────────────────────────────────────────────────────────
 // === 模块级状态 ===
 // ──────────────────────────────────────────────────────────────────────────────
@@ -64,6 +70,21 @@ const SHIKI_TO_MONACO_LANGUAGE_ALIASES: Readonly<Record<string, readonly string[
     shellscript: ['bash', 'shell', 'sh', 'zsh'],
 } as const
 
+const SHIKI_TOKENIZE_MAX_LINE_LENGTH = 20_000
+const SHIKI_TOKENIZE_TIME_LIMIT_MS = 500
+const RE_FONT_STYLE_SPLIT = /[\s,]+/u
+const VALID_FONT_STYLES = ['italic', 'bold', 'underline', 'strikethrough'] as const
+const VALID_FONT_ALIASES: Readonly<Record<string, string>> = {
+    'line-through': 'strikethrough',
+}
+
+type TFontStyleText = '' | typeof VALID_FONT_STYLES[number] | `${typeof VALID_FONT_STYLES[number]} ${string}`
+type TColorStyleKey = string
+
+/** `highlighter.setTheme()` 返回的 TextMate colorMap,由 github-light 官方主题生成。 */
+const themeColorMap: string[] = []
+const colorStyleToScopeMap = new Map<TColorStyleKey, string>()
+
 // ──────────────────────────────────────────────────────────────────────────────
 // === 语言 / 主题工具 ===
 // ──────────────────────────────────────────────────────────────────────────────
@@ -73,6 +94,11 @@ const isSupportedLanguage = (language: string): boolean =>
 
 const toShikiLanguage = (language: string): BundledLanguage | null =>
     SHIKI_LANGUAGE_LOOKUP.get(language.toLowerCase()) ?? null
+
+const resolveShikiLanguageLoadPlan = (language: BundledLanguage): BundledLanguage[] => {
+    const languages = [language, ...(EMBEDDED_LANGUAGE_DEPENDENCIES[language] ?? [])]
+    return languages.filter((item, index) => languages.indexOf(item) === index)
+}
 
 const bootstrapRegisteredMonacoIds = (): void => {
     if (registeredMonacoIdsBootstrapped) return
@@ -113,15 +139,160 @@ const registerLoadedShikiLanguagesInMonaco = (nextHighlighter: Highlighter): voi
     }
 }
 
-const syncMonacoTheme = (nextHighlighter: Highlighter): void => {
+const resolveLoadedMonacoLanguageIds = (nextHighlighter: Highlighter): Set<string> => {
+    const ids = new Set<string>()
+    for (const language of nextHighlighter.getLoadedLanguages()) {
+        ids.add(language)
+        for (const alias of SHIKI_TO_MONACO_LANGUAGE_ALIASES[language] ?? []) {
+            ids.add(alias)
+        }
+    }
+    return ids
+}
+
+const refreshLanguageModels = (languageIds: ReadonlySet<string>): void => {
+    for (const model of monaco.editor.getModels()) {
+        const language = model.getLanguageId()
+        if (languageIds.has(language)) {
+            monaco.editor.setModelLanguage(model, language)
+        }
+    }
+}
+
+const normalizeColor = (color: string | readonly string[] | undefined): string | undefined => {
+    const candidate = Array.isArray(color) ? color[0] : color
+    if (!candidate) return undefined
+
+    const normalized = candidate.trim().replace(/^#/u, '').toLowerCase()
+    if (normalized.length === 3 || normalized.length === 4) {
+        return normalized.split('').map((part) => `${part}${part}`).join('')
+    }
+    return normalized || undefined
+}
+
+const normalizeFontStyleString = (fontStyle: string | undefined): TFontStyleText => {
+    if (!fontStyle) return ''
+
+    const styles = new Set(
+        fontStyle
+            .split(RE_FONT_STYLE_SPLIT)
+            .map((style) => style.trim().toLowerCase())
+            .map((style) => VALID_FONT_ALIASES[style] || style)
+            .filter(Boolean),
+    )
+
+    return VALID_FONT_STYLES.filter((style) => styles.has(style)).join(' ') as TFontStyleText
+}
+
+const normalizeFontStyleBits = (fontStyle: number): TFontStyleText => {
+    if (fontStyle <= FontStyle.None) return ''
+
+    const styles: string[] = []
+    if ((fontStyle & FontStyle.Italic) !== 0) styles.push('italic')
+    if ((fontStyle & FontStyle.Bold) !== 0) styles.push('bold')
+    if ((fontStyle & FontStyle.Underline) !== 0) styles.push('underline')
+    if ((fontStyle & FontStyle.Strikethrough) !== 0) styles.push('strikethrough')
+    return styles.join(' ') as TFontStyleText
+}
+
+const getColorStyleKey = (color: string, fontStyle: TFontStyleText): TColorStyleKey => (
+    fontStyle ? `${color}|${fontStyle}` : color
+)
+
+const rebuildThemeTokenScopeMap = (nextHighlighter: Highlighter, themeName: string): void => {
+    const themeResult = nextHighlighter.setTheme(themeName)
+    themeColorMap.length = themeResult.colorMap.length
+
+    for (let index = 0; index < themeResult.colorMap.length; index += 1) {
+        themeColorMap[index] = themeResult.colorMap[index] ?? ''
+    }
+
+    colorStyleToScopeMap.clear()
+    const monacoTheme = textmateThemeToMonacoTheme(nextHighlighter.getTheme(themeName))
+
+    for (const rule of monacoTheme.rules) {
+        const foreground = normalizeColor(rule.foreground)
+        if (!foreground) continue
+
+        const fontStyle = normalizeFontStyleString(rule.fontStyle)
+        const key = getColorStyleKey(foreground, fontStyle)
+        if (!colorStyleToScopeMap.has(key)) {
+            colorStyleToScopeMap.set(key, rule.token)
+        }
+    }
+}
+
+const syncMonacoTheme = (nextHighlighter: Highlighter, themeName = SHIKI_THEME): void => {
     registerLoadedShikiLanguagesInMonaco(nextHighlighter)
-    shikiToMonaco(nextHighlighter, monaco)
-    monaco.editor.setTheme(SHIKI_THEME)
+    const monacoTheme = textmateThemeToMonacoTheme(nextHighlighter.getTheme(themeName))
+    rebuildThemeTokenScopeMap(nextHighlighter, themeName)
+    monaco.editor.defineTheme(themeName, monacoTheme)
+    monaco.editor.setTheme(themeName)
+    refreshLanguageModels(resolveLoadedMonacoLanguageIds(nextHighlighter))
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
 // === Token provider ===
 // ──────────────────────────────────────────────────────────────────────────────
+
+class ShikiTokenizerState implements MonacoApi.languages.IState {
+    constructor(readonly ruleStack: StateStack) {}
+
+    clone(): MonacoApi.languages.IState {
+        return new ShikiTokenizerState(this.ruleStack)
+    }
+
+    equals(other: MonacoApi.languages.IState): boolean {
+        return other instanceof ShikiTokenizerState && other.ruleStack === this.ruleStack
+    }
+}
+
+const findScopeByColorAndStyle = (color: string, fontStyle: number): string => {
+    const key = getColorStyleKey(color, normalizeFontStyleBits(fontStyle))
+    return colorStyleToScopeMap.get(key) ?? ''
+}
+
+const createShikiTokenProvider = (
+    nextHighlighter: Highlighter,
+    shikiLanguage: BundledLanguage,
+): MonacoApi.languages.TokensProvider => ({
+    getInitialState() {
+        return new ShikiTokenizerState(INITIAL)
+    },
+    tokenize(line, state) {
+        if (line.length >= SHIKI_TOKENIZE_MAX_LINE_LENGTH) {
+            return {
+                endState: state,
+                tokens: [{ startIndex: 0, scopes: '' }],
+            }
+        }
+
+        const currentState =
+            state instanceof ShikiTokenizerState
+                ? state.ruleStack
+                : INITIAL
+        const result = nextHighlighter
+            .getLanguage(shikiLanguage)
+            .tokenizeLine2(line, currentState, SHIKI_TOKENIZE_TIME_LIMIT_MS)
+        const tokens: MonacoApi.languages.IToken[] = []
+        const tokenCount = result.tokens.length / 2
+
+        for (let index = 0; index < tokenCount; index += 1) {
+            const startIndex = result.tokens[2 * index] ?? 0
+            const metadata = result.tokens[(2 * index) + 1] ?? 0
+            const color = normalizeColor(themeColorMap[EncodedTokenMetadata.getForeground(metadata)])
+            tokens.push({
+                startIndex,
+                scopes: color ? findScopeByColorAndStyle(color, EncodedTokenMetadata.getFontStyle(metadata)) : '',
+            })
+        }
+
+        return {
+            endState: new ShikiTokenizerState(result.ruleStack),
+            tokens: tokens.length ? tokens : [{ startIndex: 0, scopes: '' }],
+        }
+    },
+})
 
 const registerMonacoTokenProvider = (language: string): void => {
     if (!highlighter || !monacoBridgeInstalled || monacoTokenProviderLanguages.has(language)) {
@@ -134,7 +305,9 @@ const registerMonacoTokenProvider = (language: string): void => {
 
     registerMonacoAliasesForShikiLanguage(shikiLanguage)
     syncMonacoTheme(highlighter)
+    monaco.languages.setTokensProvider(language, createShikiTokenProvider(highlighter, shikiLanguage))
     monacoTokenProviderLanguages.add(language)
+    refreshLanguageModels(new Set([language]))
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -272,8 +445,10 @@ export async function ensureShikiLanguageLoaded(
     const loadPromise = ensureMonacoShikiReady()
         .then(async () => {
             if (!highlighter) return
-            if (!highlighter.getLoadedLanguages().includes(shikiLanguage)) {
-                await highlighter.loadLanguage(shikiLanguage)
+            for (const languageToLoad of resolveShikiLanguageLoadPlan(shikiLanguage)) {
+                if (!highlighter.getLoadedLanguages().includes(languageToLoad)) {
+                    await highlighter.loadLanguage(languageToLoad)
+                }
             }
         })
         .catch((error) => {
@@ -325,8 +500,7 @@ export async function setShikiTheme(themeName: string): Promise<void> {
         await (highlighter.loadTheme as (t: string) => Promise<void>)(themeName)
     }
 
-    shikiToMonaco(highlighter, monaco)
-    monaco.editor.setTheme(themeName)
+    syncMonacoTheme(highlighter, themeName)
     activeShikiTheme = themeName
 }
 

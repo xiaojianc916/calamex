@@ -1234,6 +1234,13 @@ pub struct AgentSidecarModelConfigPayload {
     pub(crate) base_url: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSidecarWarmupRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) model_config: Option<AgentSidecarModelConfigPayload>,
+}
+
 fn is_blank_optional_string(value: &Option<String>) -> bool {
     value
         .as_deref()
@@ -1442,6 +1449,18 @@ pub struct AgentSidecarHealthPayload {
     pub(crate) protocol_version: Option<String>,
     pub(crate) implementation_version: Option<String>,
     pub(crate) mcp: AgentSidecarMcpHealthPayload,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSidecarWarmupPayload {
+    pub(crate) ok: bool,
+    pub(crate) provider_id: Option<String>,
+    pub(crate) origin: Option<String>,
+    pub(crate) status_code: Option<u16>,
+    pub(crate) duration_ms: u64,
+    pub(crate) skipped: bool,
+    pub(crate) reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

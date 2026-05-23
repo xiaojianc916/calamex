@@ -639,6 +639,13 @@ const agentSidecarRestartIpc = defineContractIpc(
   { audit: 'sensitive', timeoutMs: 30_000 },
 );
 
+const agentSidecarWarmupIpc = defineContractIpc(
+  'agent_sidecar_warmup',
+  '预热 Agent sidecar 模型连接',
+  tauriContracts.agentSidecarWarmup,
+  { audit: 'sensitive', timeoutMs: 8_000 },
+);
+
 const agentSidecarChatIpc = definePayloadIpc(
   'agent_sidecar_chat',
   '通过 Node sidecar 执行 Agent Ask',
@@ -1279,6 +1286,8 @@ export const tauriService: ITauriService & {
   agentSidecarHealth: () => agentSidecarHealthIpc(undefined),
 
   agentSidecarRestart: () => agentSidecarRestartIpc(undefined),
+
+  agentSidecarWarmup: () => agentSidecarWarmupIpc(undefined),
 
   agentSidecarChat: agentSidecarChatIpc,
 

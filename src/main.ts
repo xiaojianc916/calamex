@@ -62,20 +62,6 @@ const bootstrap = async (): Promise<void> => {
     })
     markStartup('shell-catalog-prefetch-scheduled')
 
-    queueMicrotask(() => {
-      markStartup('monaco-shiki-prefetch-start')
-      void import('./services/editor/monaco-shiki')
-        .then(({ ensureMonacoShikiReady }) => ensureMonacoShikiReady())
-        .then(() => {
-          markStartup('monaco-shiki-prefetch-done')
-        })
-        .catch((error: unknown) => {
-          markStartup('monaco-shiki-prefetch-failed')
-          console.warn('Monaco/Shiki 高亮预热失败', error)
-        })
-    })
-    markStartup('monaco-shiki-prefetch-scheduled')
-
     markStartup('session-storage-hydrate-start')
     await hydrateSessionStorage()
     markStartup('session-storage-hydrated')

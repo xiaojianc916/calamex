@@ -572,6 +572,16 @@ export interface IAgentSidecarHealthPayload {
   };
 }
 
+export interface IAgentSidecarWarmupPayload {
+  ok: boolean;
+  providerId: string | null;
+  origin: string | null;
+  statusCode: number | null;
+  durationMs: number;
+  skipped: boolean;
+  reason?: string;
+}
+
 export interface IAgentSidecarResponsePayload {
   sessionId: string;
   events: TAgentUiEvent[];

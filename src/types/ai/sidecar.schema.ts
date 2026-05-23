@@ -305,6 +305,16 @@ export const agentSidecarHealthPayloadSchema = z.object({
     }),
 });
 
+export const agentSidecarWarmupPayloadSchema = z.object({
+    ok: z.boolean(),
+    providerId: z.string().min(1).nullable(),
+    origin: z.string().min(1).nullable(),
+    statusCode: z.number().int().positive().nullable(),
+    durationMs: z.number().int().nonnegative(),
+    skipped: z.boolean(),
+    reason: z.string().min(1).optional(),
+});
+
 /* ============================================================================
  * Requests
  * ========================================================================== */

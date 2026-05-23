@@ -111,6 +111,7 @@ const emit = defineEmits<{
   networkPermissionChange: [permission: TAiAgentNetworkPermission];
   informationSourcesOpen: [];
   personalizationOpen: [];
+  prewarm: [];
 }>();
 
 const attrs = useAttrs();
@@ -277,6 +278,10 @@ const handleOpenPersonalization = (): void => {
   emit('personalizationOpen');
 };
 
+const handlePrewarmIntent = (): void => {
+  emit('prewarm');
+};
+
 const handleRemoveAttachment = (id: string): void => {
   emit('removeFile', id);
 };
@@ -353,6 +358,7 @@ const handleStop = (): void => {
       <InputGroup class="ai-prompt-shell">
         <InputGroupTextarea v-model="modelValue" class="ai-prompt-textarea" placeholder="使用 AI 处理各种任务..."
           aria-label="输入消息" :disabled="disabled" @keydown="handleKeyDown" @paste="handlePaste"
+          @focus="handlePrewarmIntent" @mouseenter="handlePrewarmIntent"
           @compositionstart="isComposing = true" @compositionend="isComposing = false" />
         <InputGroupAddon align="block-end" class="ai-toolbar-row">
           <div class="ai-toolbar-left">

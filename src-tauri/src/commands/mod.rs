@@ -20,6 +20,7 @@ pub use agent_sidecar::{
     agent_sidecar_plan_approve, agent_sidecar_plan_finish, agent_sidecar_plan_query,
     agent_sidecar_plan_reject, agent_sidecar_plan_replan, agent_sidecar_plan_validate,
     agent_sidecar_resolve_approval, agent_sidecar_restart, agent_sidecar_restore_checkpoint,
+    agent_sidecar_warmup,
 };
 pub use ai::{
     ai_agent_classify_task, ai_agent_set_network_permission, ai_apply_patch, ai_cancel,

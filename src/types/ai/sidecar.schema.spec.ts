@@ -7,6 +7,7 @@ import {
   agentSidecarHealthPayloadSchema,
   agentSidecarPlanRequestSchema,
   agentSidecarResponsePayloadSchema,
+  agentSidecarWarmupPayloadSchema,
 } from '@/types/ai/sidecar.schema';
 
 describe('agent sidecar event contract', () => {
@@ -181,6 +182,26 @@ describe('agent sidecar event contract', () => {
       configuredServers: 1,
       serverNames: ['filesystem'],
       errors: [],
+    });
+  });
+
+  it('validates sidecar warmup payload without credentials', () => {
+    const parsed = agentSidecarWarmupPayloadSchema.parse({
+      ok: true,
+      providerId: 'deepseek',
+      origin: 'https://api.deepseek.com',
+      statusCode: 200,
+      durationMs: 123,
+      skipped: false,
+    });
+
+    expect(parsed).toEqual({
+      ok: true,
+      providerId: 'deepseek',
+      origin: 'https://api.deepseek.com',
+      statusCode: 200,
+      durationMs: 123,
+      skipped: false,
     });
   });
 

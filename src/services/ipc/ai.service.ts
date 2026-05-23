@@ -14,6 +14,7 @@ import type {
   IAgentSidecarPlanValidateRequest,
   IAgentSidecarResponsePayload,
   IAgentSidecarStreamEventPayload,
+  IAgentSidecarWarmupPayload,
 } from '@/types/ai/sidecar';
 import type {
   IAiAgentClassifyTaskPayload,
@@ -174,6 +175,9 @@ export const aiService = {
   },
   sidecarRestart(): Promise<IAgentSidecarHealthPayload> {
     return tauriService.agentSidecarRestart();
+  },
+  sidecarWarmup(): Promise<IAgentSidecarWarmupPayload> {
+    return tauriService.agentSidecarWarmup();
   },
   async loadTavilyApiKey(workspaceRootPath: string): Promise<string> {
     const sidecarDotenvPath = resolveSidecarDotenvPath(workspaceRootPath);

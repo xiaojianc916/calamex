@@ -4800,6 +4800,39 @@ describe('Agent sidecar protocol golden tests', () => {
     }
   });
 
+  it('accepts warmup requests without invoking the runtime', async () => {
+    const runtime = createFakeRuntime();
+    const server = await startServer(runtime);
+
+    try {
+      const response = await fetch(`${server.baseUrl}/agent/warmup`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({}),
+      });
+
+      assert.equal(response.status, 200);
+      const payload = await response.json() as Record<string, unknown>;
+      assert.equal(typeof payload.durationMs, 'number');
+      assert.deepEqual({
+        ...payload,
+        durationMs: 0,
+      }, {
+        ok: true,
+        providerId: null,
+        origin: null,
+        statusCode: null,
+        durationMs: 0,
+        skipped: true,
+        reason: 'missing_model_config',
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
   it('returns persisted plan records through POST and GET query routes', async () => {
     const record = createPlanRecordForTest({
       planId: 'plan-query-1',

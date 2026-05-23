@@ -65,6 +65,7 @@ const createEmptyAnalysis = (): IAnalyzeScriptPayload => ({
 const props = withDefaults(
   defineProps<{
     documentPath?: string | null;
+    documentName?: string;
     modelValue?: string;
     theme?: TThemeMode;
     analysis?: IAnalyzeScriptPayload;
@@ -73,6 +74,7 @@ const props = withDefaults(
   }>(),
   {
     documentPath: null,
+    documentName: '',
     modelValue: '',
     theme: 'dark',
     analysis: undefined,
@@ -573,13 +575,7 @@ const createEditor = async (): Promise<void> => {
     return;
   }
 
-  await ensureMonacoSuggestContribution().catch((error) => {
-    console.error('Monaco suggest contribution preload failed', error);
-  });
-  const initialLanguage = resolveLanguageForPath(props.documentPath);
-  await ensureShikiLanguageLoaded(initialLanguage).catch((error) => {
-    console.error('Shiki 语法加载失败', error);
-  });
+  const initialLanguage = resolveLanguageForPath(props.documentPath, props.documentName);
 
   if (!containerRef.value || editorInstance) {
     return;
@@ -590,6 +586,7 @@ const createEditor = async (): Promise<void> => {
   editorInstance = monaco.editor.create(containerRef.value, {
     value: props.modelValue,
     language: initialLanguage,
+    'semanticHighlighting.enabled': false,
     useShadowDOM: false,
     automaticLayout: false,
     lineDecorationsWidth: 16,
@@ -673,6 +670,19 @@ const createEditor = async (): Promise<void> => {
   restoreViewStateForPath(props.documentPath);
   scheduleShellCompletionRegistration();
   registerAiInlineCompletionProvider();
+  void ensureMonacoSuggestContribution().catch((error) => {
+    console.error('Monaco suggest contribution preload failed', error);
+  });
+  void ensureShikiLanguageLoaded(initialLanguage)
+    .catch((error) => {
+      console.error('Shiki 语法加载失败', error);
+    })
+    .finally(() => {
+      const model = editorInstance?.getModel();
+      if (model && editorInstance) {
+        monaco.editor.setModelLanguage(model, initialLanguage);
+      }
+    });
 
   requestAnimationFrame(() => {
     scheduleEditorLayout();
@@ -683,8 +693,8 @@ const createEditor = async (): Promise<void> => {
 };
 
 watch(
-  () => props.documentPath,
-  (nextPath, previousPath) => {
+  () => [props.documentPath, props.documentName] as const,
+  ([nextPath, nextName], [previousPath]) => {
     if (!editorInstance) {
       return;
     }
@@ -695,7 +705,7 @@ watch(
 
     const model = editorInstance.getModel();
     if (model) {
-      const lang = resolveLanguageForPath(nextPath);
+      const lang = resolveLanguageForPath(nextPath, nextName);
       void ensureShikiLanguageLoaded(lang)
         .catch((error) => {
           console.error('Shiki 语法加载失败', error);

@@ -173,4 +173,55 @@ describe('initAppTooltipSystem', () => {
     expect(isTooltipVisible(tooltipElement)).toBe(true);
     expect(tooltipElement.textContent).toBe(TOOLTIP_TEXT);
   });
+
+  it('空闲态不常驻监听 pointermove,只在悬停追踪期间按需挂载', () => {
+    const target = createTooltipTarget();
+    hoverHitTarget = target;
+    const addEventListenerSpy = vi.spyOn(document, 'addEventListener');
+    const removeEventListenerSpy = vi.spyOn(document, 'removeEventListener');
+    const countPointerMoveAdds = (): number =>
+      addEventListenerSpy.mock.calls.filter(([eventName]) => eventName === 'pointermove').length;
+    const countPointerMoveRemoves = (): number =>
+      removeEventListenerSpy.mock.calls.filter(([eventName]) => eventName === 'pointermove').length;
+
+    initAppTooltipSystem();
+
+    expect(countPointerMoveAdds()).toBe(0);
+
+    dispatchPointerOver(target);
+    expect(countPointerMoveAdds()).toBe(1);
+
+    dispatchPointerOut(target);
+    expect(countPointerMoveRemoves()).toBe(1);
+  });
+
+  it('空闲态不常驻监听 scroll/resize,只在需要定位时按需挂载', () => {
+    const target = createTooltipTarget();
+    hoverHitTarget = target;
+    const documentAddEventListenerSpy = vi.spyOn(document, 'addEventListener');
+    const documentRemoveEventListenerSpy = vi.spyOn(document, 'removeEventListener');
+    const windowAddEventListenerSpy = vi.spyOn(window, 'addEventListener');
+    const windowRemoveEventListenerSpy = vi.spyOn(window, 'removeEventListener');
+    const countDocumentEventAdds = (eventName: string): number =>
+      documentAddEventListenerSpy.mock.calls.filter(([name]) => name === eventName).length;
+    const countDocumentEventRemoves = (eventName: string): number =>
+      documentRemoveEventListenerSpy.mock.calls.filter(([name]) => name === eventName).length;
+    const countWindowEventAdds = (eventName: string): number =>
+      windowAddEventListenerSpy.mock.calls.filter(([name]) => name === eventName).length;
+    const countWindowEventRemoves = (eventName: string): number =>
+      windowRemoveEventListenerSpy.mock.calls.filter(([name]) => name === eventName).length;
+
+    initAppTooltipSystem();
+
+    expect(countDocumentEventAdds('scroll')).toBe(0);
+    expect(countWindowEventAdds('resize')).toBe(0);
+
+    dispatchPointerOver(target);
+    expect(countDocumentEventAdds('scroll')).toBe(1);
+    expect(countWindowEventAdds('resize')).toBe(1);
+
+    dispatchPointerOut(target);
+    expect(countDocumentEventRemoves('scroll')).toBe(1);
+    expect(countWindowEventRemoves('resize')).toBe(1);
+  });
 });

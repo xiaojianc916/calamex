@@ -1,7 +1,7 @@
 <template>
   <ScriptEditor
-ref="innerEditorRef" :document-path="documentPath" :model-value="modelValue" :theme="theme"
-    :can-run="canRun" :analysis="analysisState" :editor-settings="editorSettings"
+ref="innerEditorRef" :document-path="documentPath" :document-name="documentName"
+    :model-value="modelValue" :theme="theme" :can-run="canRun" :analysis="analysisState" :editor-settings="editorSettings"
     @update:model-value="handleModelValueChange" @cursor-position-change="handleCursorPositionChange"
     @selection-change="emit('selection-change', $event)" @open-terminal-request="emit('open-terminal-request')"
     @format-request="emit('format-request')" @command-palette-request="emit('command-palette-request')"
