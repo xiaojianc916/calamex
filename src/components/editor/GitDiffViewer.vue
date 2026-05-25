@@ -4,8 +4,7 @@
       <strong>没有可显示的 Diff</strong>
       <p>当前文件在这个 Git 区域没有内容差异。</p>
     </section>
-
-    <div v-else ref="diffHostRef" class="git-diff-viewer-surface" />
+    <div v-else ref="diffHostRef" class="git-diff-viewer-surface"></div>
   </section>
 </template>
 
@@ -20,7 +19,8 @@ import { MergeView } from '@codemirror/merge';
 import type { Extension } from '@codemirror/state';
 import { EditorView, highlightSpecialChars } from '@codemirror/view';
 import { githubLight } from '@fsegurai/codemirror-theme-github-light';
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { useResizeObserver } from '@vueuse/core';
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 const props = defineProps<{
   preview: IGitDiffPreviewPayload;
@@ -31,9 +31,11 @@ const props = defineProps<{
 const diffHostRef = ref<HTMLElement | null>(null);
 
 let mergeView: MergeView | null = null;
-let resizeObserver: ResizeObserver | null = null;
 let layoutFrameId: number | null = null;
 
+// ──────────────────────────────────────────────────────────────────────
+// Extensions
+// ──────────────────────────────────────────────────────────────────────
 const buildDiffEditorExtensions = (language: string): Extension[] => [
   highlightSpecialChars(),
   githubLight,
@@ -51,41 +53,25 @@ const buildDiffEditorExtensions = (language: string): Extension[] => [
 const buildMergeView = (host: HTMLElement): MergeView => {
   const language = resolveLanguageForPath(props.preview.relativePath);
   const extensions = buildDiffEditorExtensions(language);
-
   return new MergeView({
-    a: {
-      doc: props.preview.originalContent,
-      extensions,
-    },
-    b: {
-      doc: props.preview.modifiedContent,
-      extensions,
-    },
-    collapseUnchanged: {
-      margin: 3,
-      minSize: 8,
-    },
-    diffConfig: {
-      scanLimit: 1_000,
-      timeout: 500,
-    },
+    a: { doc: props.preview.originalContent, extensions },
+    b: { doc: props.preview.modifiedContent, extensions },
+    collapseUnchanged: { margin: 3, minSize: 8 },
+    diffConfig: { scanLimit: 1_000, timeout: 500 },
     gutter: true,
     highlightChanges: true,
     parent: host,
-    revertControls: undefined,
+    // revertControls 留空即可，原值 undefined 已是默认行为
   });
 };
 
+// ──────────────────────────────────────────────────────────────────────
+// Layout
+// ──────────────────────────────────────────────────────────────────────
 const layoutDiffEditor = (): boolean => {
   const host = diffHostRef.value;
-  if (!host || !mergeView) {
-    return false;
-  }
-
-  if (host.clientWidth <= 0 || host.clientHeight <= 0) {
-    return false;
-  }
-
+  if (!host || !mergeView) return false;
+  if (host.clientWidth <= 0 || host.clientHeight <= 0) return false;
   mergeView.a.requestMeasure();
   mergeView.b.requestMeasure();
   return true;
@@ -94,50 +80,57 @@ const layoutDiffEditor = (): boolean => {
 const scheduleLayout = (): void => {
   if (layoutFrameId !== null) {
     window.cancelAnimationFrame(layoutFrameId);
+    layoutFrameId = null;
   }
-
   layoutFrameId = window.requestAnimationFrame(() => {
     layoutFrameId = null;
     layoutDiffEditor();
   });
 };
 
+// ──────────────────────────────────────────────────────────────────────
+// Mount / dispose
+//
+// 关键修复：
+//   1. dispose 必须调用 MergeView.destroy()，否则两个内部 EditorView 的
+//      DOM / 事件 / observer 会泄漏，多次 remount 还会让 diff DOM 叠加。
+//   2. ResizeObserver 只在 onMounted 注册一次；mountDiffEditor 自身不再
+//      注册，避免每次 remount 累积。
+// ──────────────────────────────────────────────────────────────────────
 const disposeDiffEditor = (): void => {
   if (layoutFrameId !== null) {
     window.cancelAnimationFrame(layoutFrameId);
     layoutFrameId = null;
   }
-
-  resizeObserver?.disconnect();
-  resizeObserver = null;
-  mergeView?.destroy();
-  mergeView = null;
+  if (mergeView) {
+    mergeView.destroy();
+    mergeView = null;
+  }
 };
 
-const mountDiffEditor = async (): Promise<void> => {
+const mountDiffEditor = (): void => {
   const host = diffHostRef.value;
-  if (!host || props.preview.isEmpty) {
-    return;
-  }
-
+  if (!host || props.preview.isEmpty || mergeView) return;
   mergeView = buildMergeView(host);
-  await nextTick();
+  // MergeView 已挂载到 host；下一帧再 requestMeasure 拿到正确尺寸。
   scheduleLayout();
-
-  if (typeof ResizeObserver !== 'undefined') {
-    resizeObserver = new ResizeObserver(() => scheduleLayout());
-    resizeObserver.observe(host);
-  }
 };
 
 const remountDiffEditor = async (): Promise<void> => {
   disposeDiffEditor();
-  await nextTick();
-  await mountDiffEditor();
+  // 等 DOM 反映 v-if/v-else 切换（preview.isEmpty 可能刚变化，
+  // 导致 diffHostRef 这一帧还不存在）。
+  await Promise.resolve();
+  mountDiffEditor();
 };
 
+// ──────────────────────────────────────────────────────────────────────
+// Lifecycle
+// ──────────────────────────────────────────────────────────────────────
 onMounted(() => {
-  void mountDiffEditor();
+  mountDiffEditor();
+  // 全生命周期只注册一次；vueuse 会在 scope dispose 时自动 stop。
+  useResizeObserver(diffHostRef, () => scheduleLayout());
 });
 
 onBeforeUnmount(() => {

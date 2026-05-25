@@ -1,36 +1,28 @@
 <template>
-  <div
-    class="shell-editor-surface codemirror-editor-surface relative h-full min-h-0 w-full bg-(--editor-bg)"
-    @contextmenu.prevent="handleContainerContextMenu"
-  >
-    <div ref="containerRef" class="h-full min-h-0 w-full bg-(--editor-bg)" />
+  <div class="shell-editor-surface codemirror-editor-surface relative h-full min-h-0 w-full bg-(--editor-bg)"
+    @contextmenu.prevent="handleContainerContextMenu">
+    <div ref="containerRef" class="h-full min-h-0 w-full bg-(--editor-bg)"></div>
     <section v-if="aiActionResult || isAiActionRunning || aiActionError" class="ai-code-action-card">
       <div class="ai-code-action-head">
-        <span>{{ isAiActionRunning ? 'AI 正在分析…' : 'AI Code Action' }}</span>
+        <span> isAiActionRunning ? 'AI 正在分析…' : 'AI Code Action' </span>
         <button type="button" aria-label="关闭 AI 结果" @click="clearAiActionResult">×</button>
       </div>
-      <p v-if="aiActionError" class="is-error">{{ aiActionError }}</p>
+      <p v-if="aiActionError" class="is-error"> aiActionError </p>
       <template v-else-if="aiActionResult">
-        <p>{{ aiActionResult.explanation }}</p>
+        <p> aiActionResult.explanation </p>
         <ul v-if="aiActionResult.followUpQuestions.length">
           <li v-for="question in aiActionResult.followUpQuestions" :key="question">
-            {{ question }}
+            question
           </li>
         </ul>
         <p v-if="aiActionResult.testSuggestion" class="ai-code-action-note">
-          {{ aiActionResult.testSuggestion }}
+          aiActionResult.testSuggestion
         </p>
       </template>
     </section>
-    <EditorContextMenu
-      :open="contextMenuState.open"
-      :x="contextMenuState.x"
-      :y="contextMenuState.y"
-      :groups="contextMenuGroups"
-      :theme="props.theme"
-      :submenu-direction="submenuDirection"
-      @select="handleContextMenuItemSelect"
-    />
+    <EditorContextMenu :open="contextMenuState.open" :x="contextMenuState.x" :y="contextMenuState.y"
+      :groups="contextMenuGroups" :theme="props.theme" :submenu-direction="submenuDirection"
+      @select="handleContextMenuItemSelect" />
   </div>
 </template>
 
@@ -53,9 +45,8 @@ import {
   SHELL_WINDOW_RESIZE_SETTLED_EVENT,
   SHELL_WINDOW_RESIZE_START_EVENT,
 } from '@/utils/window-resize-events';
+import type { CompletionContext, CompletionResult, CompletionSource } from '@codemirror/autocomplete';
 import { acceptCompletion, autocompletion, completeAnyWord, snippet } from '@codemirror/autocomplete';
-import type { CompletionContext, CompletionResult } from '@codemirror/autocomplete';
-import { githubLight } from '@fsegurai/codemirror-theme-github-light';
 import {
   defaultKeymap,
   history,
@@ -71,7 +62,7 @@ import {
   indentOnInput,
 } from '@codemirror/language';
 import { lintGutter, setDiagnostics, type Diagnostic } from '@codemirror/lint';
-import { highlightSelectionMatches, gotoLine, openSearchPanel, search, searchKeymap } from '@codemirror/search';
+import { gotoLine, highlightSelectionMatches, openSearchPanel, search, searchKeymap } from '@codemirror/search';
 import { Compartment, EditorSelection, EditorState, type Extension, type SelectionRange } from '@codemirror/state';
 import {
   crosshairCursor,
@@ -84,6 +75,8 @@ import {
   scrollPastEnd,
   type ViewUpdate,
 } from '@codemirror/view';
+import { githubLight } from '@fsegurai/codemirror-theme-github-light';
+import { useResizeObserver } from '@vueuse/core';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 interface IEditorExpose {
@@ -94,18 +87,39 @@ interface IEditorExpose {
   runAiCodeAction: (kind: IAiCodeActionRequest['kind']) => Promise<void>;
 }
 
+// ──────────────────────────────────────────────────────────────────────
+// Constants
+// ──────────────────────────────────────────────────────────────────────
 const VIEW_STATE_SAVE_DEBOUNCE_MS = 500;
 const MENU_WIDTH = 224;
+const MENU_MAX_HEIGHT = 320;
 const SUBMENU_SAFE_WIDTH = 224;
 const VIEWPORT_PADDING = 12;
 const MENU_ROOT_SELECTOR = '.linear-context-menu-root';
 const MENU_TRIGGER_SELECTOR = '.linear-context-menu-trigger';
+
 const createEmptyAnalysis = (): IAnalyzeScriptPayload => ({
   available: true,
   message: null,
   dialect: 'bash',
   diagnostics: [],
 });
+
+// ──────────────────────────────────────────────────────────────────────
+// Lazy / cached shell completion source
+// ──────────────────────────────────────────────────────────────────────
+// `import('@/utils/shell-completion')` 自身会被打包器缓存，但每次 completion 都
+// 重新 `.then(...)` 并重新 `createShellCodeMirrorCompletionSource()` 仍有不必要的
+// 微开销，且每次都拿到一个新的 source 实例，影响内部可能的状态复用。
+let cachedShellCompletionSourcePromise: Promise<CompletionSource> | null = null;
+const getShellCompletionSource = (): Promise<CompletionSource> => {
+  if (!cachedShellCompletionSourcePromise) {
+    cachedShellCompletionSourcePromise = import('@/utils/shell-completion').then(
+      (mod) => mod.createShellCodeMirrorCompletionSource(),
+    );
+  }
+  return cachedShellCompletionSourcePromise;
+};
 
 const props = withDefaults(
   defineProps<{
@@ -145,24 +159,29 @@ const isAiActionRunning = ref(false);
 const contextMenuState = ref({ open: false, x: 0, y: 0 });
 const contextMenuGroups = ref<ReturnType<typeof buildMenuGroups>>([]);
 const submenuDirection = ref<'left' | 'right'>('right');
+
 const editorStore = useEditorStore();
 
 let editorView: EditorView | null = null;
-let resizeObserver: ResizeObserver | null = null;
 let editorLayoutFrameId: number | null = null;
 let viewStateSaveTimerId: number | null = null;
 let suppressModelValueEmit = false;
 let previousContainerSize = { width: 0, height: 0 };
 let isShellWindowResizing = false;
 let pendingEditorLayoutAfterWindowResize = false;
+
 const languageCompartment = new Compartment();
 const settingsCompartment = new Compartment();
 const completionCompartment = new Compartment();
+
 const inlineCompletionController = createCodeMirrorInlineCompletionController({
   getFilePath: () => props.documentPath,
   getLanguage: () => getCurrentLanguage(),
 });
 
+// ──────────────────────────────────────────────────────────────────────
+// Completion / language
+// ──────────────────────────────────────────────────────────────────────
 const buildCompletionExtension = (editorSettings: IEditorSettings, language: string): Extension =>
   editorSettings.commandCompletion
     ? autocompletion({
@@ -170,8 +189,8 @@ const buildCompletionExtension = (editorSettings: IEditorSettings, language: str
       activateOnTypingDelay: editorSettings.suggestionDelay,
       override: language === 'shell'
         ? [async (completionContext: CompletionContext): Promise<CompletionResult | null> => {
-          const { createShellCodeMirrorCompletionSource } = await import('@/utils/shell-completion');
-          return createShellCodeMirrorCompletionSource()(completionContext);
+          const source = await getShellCompletionSource();
+          return source(completionContext);
         }]
         : [completeAnyWord],
       maxRenderedOptions: 80,
@@ -181,6 +200,9 @@ const buildCompletionExtension = (editorSettings: IEditorSettings, language: str
 const getCurrentLanguage = (): string =>
   resolveLanguageForPath(props.documentPath, props.documentName);
 
+// ──────────────────────────────────────────────────────────────────────
+// Selection helpers
+// ──────────────────────────────────────────────────────────────────────
 const lineColumnToOffset = (view: EditorView, line: number, column: number): number => {
   const lineInfo = view.state.doc.line(Math.min(Math.max(1, line), view.state.doc.lines));
   return Math.min(lineInfo.to, lineInfo.from + Math.max(0, column - 1));
@@ -191,15 +213,11 @@ const selectionRangeToText = (view: EditorView, range: SelectionRange): string =
 
 const resolveSelectedText = (): string => {
   const view = editorView;
-  if (!view) {
-    return '';
-  }
-
+  if (!view) return '';
   const selectedRanges = view.state.selection.ranges.filter((range) => !range.empty);
   if (selectedRanges.length > 0) {
     return selectedRanges.map((range) => selectionRangeToText(view, range)).join('\n');
   }
-
   const position = view.state.selection.main.head;
   const line = view.state.doc.lineAt(position);
   return line.text;
@@ -208,15 +226,9 @@ const resolveSelectedText = (): string => {
 const resolveSelectionSummary = (): IEditorSelectionSummary | null => {
   const view = editorView;
   const range = view?.state.selection.main;
-  if (!view || !range || range.empty) {
-    return null;
-  }
-
+  if (!view || !range || range.empty) return null;
   const selectedText = selectionRangeToText(view, range);
-  if (!selectedText.trim()) {
-    return null;
-  }
-
+  if (!selectedText.trim()) return null;
   const chars = [...selectedText];
   return {
     text: chars.length > 4_000 ? `${chars.slice(0, 4_000).join('')}\n[已截断]` : selectedText,
@@ -235,6 +247,9 @@ const emitSelectionSummary = (): void => {
   emit('selection-change', resolveSelectionSummary());
 };
 
+// ──────────────────────────────────────────────────────────────────────
+// AI code action
+// ──────────────────────────────────────────────────────────────────────
 const clearAiActionResult = (): void => {
   aiActionResult.value = null;
   aiActionError.value = '';
@@ -245,14 +260,10 @@ const runAiCodeAction = async (
   kind: IAiCodeActionRequest['kind'],
   selection: string,
 ): Promise<void> => {
-  if (isAiActionRunning.value) {
-    return;
-  }
-
+  if (isAiActionRunning.value) return;
   isAiActionRunning.value = true;
   aiActionError.value = '';
   aiActionResult.value = null;
-
   try {
     aiActionResult.value = await aiService.codeAction({
       kind,
@@ -271,10 +282,12 @@ const runAiCodeAction = async (
 const runAiCodeActionFromEditor = async (
   kind: IAiCodeActionRequest['kind'],
 ): Promise<void> => {
-  const selection = resolveSelectedText();
-  await runAiCodeAction(kind, selection);
+  await runAiCodeAction(kind, resolveSelectedText());
 };
 
+// ──────────────────────────────────────────────────────────────────────
+// View state persist / restore
+// ──────────────────────────────────────────────────────────────────────
 const clearViewStateSaveTimer = (): void => {
   if (viewStateSaveTimerId !== null) {
     window.clearTimeout(viewStateSaveTimerId);
@@ -284,10 +297,7 @@ const clearViewStateSaveTimer = (): void => {
 
 const persistViewState = (path: string | null | undefined): void => {
   const view = editorView;
-  if (!view || !path) {
-    return;
-  }
-
+  if (!view || !path) return;
   editorStore.saveEditorViewState(path, {
     anchor: view.state.selection.main.anchor,
     head: view.state.selection.main.head,
@@ -311,14 +321,9 @@ const readNumberField = (value: Record<string, unknown>, key: string): number | 
 
 const restoreViewStateForPath = (path: string | null | undefined): void => {
   const view = editorView;
-  if (!view || !path) {
-    return;
-  }
-
+  if (!view || !path) return;
   const savedState = editorStore.getEditorViewState(path);
-  if (!savedState) {
-    return;
-  }
+  if (!savedState) return;
 
   const anchor = readNumberField(savedState, 'anchor');
   const head = readNumberField(savedState, 'head') ?? anchor;
@@ -326,7 +331,8 @@ const restoreViewStateForPath = (path: string | null | undefined): void => {
     const maxPosition = view.state.doc.length;
     const selection = EditorSelection.single(
       Math.min(Math.max(0, anchor), maxPosition),
-      Math.min(Math.max(0, head ?? anchor), maxPosition),
+      // head 在上面已经 ?? anchor，不需要二次回退
+      Math.min(Math.max(0, head as number), maxPosition),
     );
     view.dispatch({
       selection,
@@ -337,35 +343,31 @@ const restoreViewStateForPath = (path: string | null | undefined): void => {
   const scrollTop = readNumberField(savedState, 'scrollTop');
   const scrollLeft = readNumberField(savedState, 'scrollLeft');
   if (scrollTop !== null || scrollLeft !== null) {
+    // 注意：这里会在 next frame **覆盖** scrollIntoView 的结果。
+    // 如果调用方希望"恢复滚动位置 + 看到光标"，应只持久化其中之一。
     requestAnimationFrame(() => {
-      if (!editorView) {
-        return;
-      }
+      if (!editorView) return;
       editorView.scrollDOM.scrollTop = scrollTop ?? editorView.scrollDOM.scrollTop;
       editorView.scrollDOM.scrollLeft = scrollLeft ?? editorView.scrollDOM.scrollLeft;
     });
   }
 };
 
+// ──────────────────────────────────────────────────────────────────────
+// Diagnostics
+// ──────────────────────────────────────────────────────────────────────
 const toDiagnosticSeverity = (level: TScriptDiagnosticSeverity): Diagnostic['severity'] => {
   switch (level) {
-    case 'error':
-      return 'error';
-    case 'warning':
-      return 'warning';
-    case 'style':
-      return 'hint';
-    default:
-      return 'info';
+    case 'error': return 'error';
+    case 'warning': return 'warning';
+    case 'style': return 'hint';
+    default: return 'info';
   }
 };
 
 const syncDiagnostics = (): void => {
   const view = editorView;
-  if (!view) {
-    return;
-  }
-
+  if (!view) return;
   const diagnostics = analysisState.value.available
     ? analysisState.value.diagnostics.map((item): Diagnostic => {
       const from = lineColumnToOffset(view, item.line, item.column);
@@ -379,10 +381,12 @@ const syncDiagnostics = (): void => {
       };
     })
     : [];
-
   view.dispatch(setDiagnostics(view.state, diagnostics));
 };
 
+// ──────────────────────────────────────────────────────────────────────
+// Layout / window resize coordination
+// ──────────────────────────────────────────────────────────────────────
 const layoutEditor = (): void => {
   editorView?.requestMeasure();
 };
@@ -392,11 +396,7 @@ const scheduleEditorLayout = (): void => {
     pendingEditorLayoutAfterWindowResize = true;
     return;
   }
-
-  if (editorLayoutFrameId !== null) {
-    return;
-  }
-
+  if (editorLayoutFrameId !== null) return;
   editorLayoutFrameId = window.requestAnimationFrame(() => {
     editorLayoutFrameId = null;
     layoutEditor();
@@ -404,10 +404,7 @@ const scheduleEditorLayout = (): void => {
 };
 
 const updatePreviousContainerSize = (): void => {
-  if (!containerRef.value) {
-    return;
-  }
-
+  if (!containerRef.value) return;
   previousContainerSize = {
     width: Math.round(containerRef.value.clientWidth),
     height: Math.round(containerRef.value.clientHeight),
@@ -417,7 +414,6 @@ const updatePreviousContainerSize = (): void => {
 const handleShellWindowResizeStart = (): void => {
   isShellWindowResizing = true;
   pendingEditorLayoutAfterWindowResize = false;
-
   if (editorLayoutFrameId !== null) {
     window.cancelAnimationFrame(editorLayoutFrameId);
     editorLayoutFrameId = null;
@@ -425,9 +421,9 @@ const handleShellWindowResizeStart = (): void => {
 };
 
 const handleShellWindowResizeEnd = (): void => {
-  const shouldRelayout = pendingEditorLayoutAfterWindowResize || editorView !== null;
-  pendingEditorLayoutAfterWindowResize = false;
-  pendingEditorLayoutAfterWindowResize = shouldRelayout;
+  // 等价于原版的 (= false; = shouldRelayout) 序列，但去掉中间被立即覆盖的死代码。
+  // 语义：只要当前有 editor 或之前已经标记了待重排，就在 settled 时重排。
+  pendingEditorLayoutAfterWindowResize ||= editorView !== null;
 };
 
 const handleShellWindowResizeSettled = (): void => {
@@ -435,44 +431,36 @@ const handleShellWindowResizeSettled = (): void => {
   updatePreviousContainerSize();
   const shouldRelayout = pendingEditorLayoutAfterWindowResize || editorView !== null;
   pendingEditorLayoutAfterWindowResize = false;
-  if (shouldRelayout) {
-    scheduleEditorLayout();
-  }
+  if (shouldRelayout) scheduleEditorLayout();
 };
 
+// ──────────────────────────────────────────────────────────────────────
+// Context menu
+// ──────────────────────────────────────────────────────────────────────
 const closeContextMenu = (): void => {
   contextMenuState.value.open = false;
   contextMenuGroups.value = [];
 };
 
-const clampMenuPosition = (clientX: number, clientY: number) => ({
-  x: Math.min(clientX, Math.max(VIEWPORT_PADDING, window.innerWidth - MENU_WIDTH - VIEWPORT_PADDING)),
-  y: Math.min(clientY, Math.max(VIEWPORT_PADDING, window.innerHeight - 320 - VIEWPORT_PADDING)),
-});
+const clampMenuPosition = (clientX: number, clientY: number): { x: number; y: number } => {
+  const maxX = Math.max(VIEWPORT_PADDING, window.innerWidth - MENU_WIDTH - VIEWPORT_PADDING);
+  const maxY = Math.max(VIEWPORT_PADDING, window.innerHeight - MENU_MAX_HEIGHT - VIEWPORT_PADDING);
+  return {
+    x: Math.min(Math.max(clientX, VIEWPORT_PADDING), maxX),
+    y: Math.min(Math.max(clientY, VIEWPORT_PADDING), maxY),
+  };
+};
 
 const buildMenuGroups = (): Array<{ key: string; items: IEditorContextMenuItem[] }> => {
   const hasDocument = Boolean(editorView);
   const selectedText = resolveSelectedText().trim();
   const canRunAiAction = hasDocument && selectedText.length > 0;
-
   return [
     {
       key: 'run-actions',
       items: [
-        {
-          key: 'open-terminal',
-          label: '打开终端',
-          icon: 'terminal',
-          action: 'open-terminal',
-          disabled: false,
-        },
-        {
-          key: 'run-current-script',
-          label: '运行当前脚本',
-          icon: 'play',
-          action: 'run-current-script',
-          disabled: !props.canRun,
-        },
+        { key: 'open-terminal', label: '打开终端', icon: 'terminal', action: 'open-terminal', disabled: false },
+        { key: 'run-current-script', label: '运行当前脚本', icon: 'play', action: 'run-current-script', disabled: !props.canRun },
       ],
     },
     {
@@ -486,32 +474,14 @@ const buildMenuGroups = (): Array<{ key: string; items: IEditorContextMenuItem[]
       key: 'code-actions',
       items: [
         {
-          key: 'format-tools',
-          label: '格式与注释',
-          icon: 'format',
-          disabled: !hasDocument,
+          key: 'format-tools', label: '格式与注释', icon: 'format', disabled: !hasDocument,
           children: [
-            {
-              key: 'format-with-shfmt',
-              label: '使用 shfmt 格式化',
-              icon: 'format',
-              action: 'format-with-shfmt',
-              disabled: !hasDocument,
-            },
-            {
-              key: 'toggle-comment-line',
-              label: '切换行注释',
-              icon: 'comment',
-              action: 'toggle-comment-line',
-              disabled: !hasDocument,
-            },
+            { key: 'format-with-shfmt', label: '使用 shfmt 格式化', icon: 'format', action: 'format-with-shfmt', disabled: !hasDocument },
+            { key: 'toggle-comment-line', label: '切换行注释', icon: 'comment', action: 'toggle-comment-line', disabled: !hasDocument },
           ],
         },
         {
-          key: 'find-tools',
-          label: '查找与跳转',
-          icon: 'search',
-          disabled: !hasDocument,
+          key: 'find-tools', label: '查找与跳转', icon: 'search', disabled: !hasDocument,
           children: [
             { key: 'find', label: '查找', icon: 'search', action: 'find', disabled: !hasDocument },
             { key: 'goto-line', label: '转到行 / 列', icon: 'goto', action: 'goto-line', disabled: !hasDocument },
@@ -531,37 +501,16 @@ const buildMenuGroups = (): Array<{ key: string; items: IEditorContextMenuItem[]
     {
       key: 'ai-actions',
       items: [
-        {
-          key: 'ai-explain-selection',
-          label: 'AI 解释选区',
-          icon: 'search',
-          action: 'ai-explain-selection',
-          disabled: !canRunAiAction,
-        },
-        {
-          key: 'ai-fix-diagnostic',
-          label: 'AI 修复诊断',
-          icon: 'wrench',
-          action: 'ai-fix-diagnostic',
-          disabled: !canRunAiAction,
-        },
-        {
-          key: 'ai-generate-tests',
-          label: 'AI 生成测试',
-          icon: 'flask',
-          action: 'ai-generate-tests',
-          disabled: !canRunAiAction,
-        },
+        { key: 'ai-explain-selection', label: 'AI 解释选区', icon: 'search', action: 'ai-explain-selection', disabled: !canRunAiAction },
+        { key: 'ai-fix-diagnostic', label: 'AI 修复诊断', icon: 'wrench', action: 'ai-fix-diagnostic', disabled: !canRunAiAction },
+        { key: 'ai-generate-tests', label: 'AI 生成测试', icon: 'flask', action: 'ai-generate-tests', disabled: !canRunAiAction },
       ],
     },
   ];
 };
 
 const openContextMenu = (event: MouseEvent): void => {
-  if (!editorView) {
-    return;
-  }
-
+  if (!editorView) return;
   const nextPosition = clampMenuPosition(event.clientX, event.clientY);
   contextMenuGroups.value = buildMenuGroups();
   contextMenuState.value = { open: true, x: nextPosition.x, y: nextPosition.y };
@@ -581,46 +530,34 @@ const isTargetInsideMenu = (target: EventTarget | null): boolean =>
   (target.closest(MENU_ROOT_SELECTOR) !== null || target.closest(MENU_TRIGGER_SELECTOR) !== null);
 
 const handleWindowPointerDown = (event: PointerEvent): void => {
-  if (!contextMenuState.value.open || isTargetInsideMenu(event.target)) {
-    return;
-  }
-
+  if (!contextMenuState.value.open || isTargetInsideMenu(event.target)) return;
   closeContextMenu();
 };
 
 const handleWindowKeydown = (event: KeyboardEvent): void => {
-  if (contextMenuState.value.open && event.key === 'Escape') {
-    closeContextMenu();
-  }
+  if (contextMenuState.value.open && event.key === 'Escape') closeContextMenu();
 };
 
 const handleWindowResize = (): void => {
-  if (contextMenuState.value.open) {
-    closeContextMenu();
-  }
+  if (contextMenuState.value.open) closeContextMenu();
 };
 
+// ──────────────────────────────────────────────────────────────────────
+// Clipboard
+// ──────────────────────────────────────────────────────────────────────
 const copyEditorSelection = async (): Promise<void> => {
   const text = resolveSelectedText();
-  if (text.trim()) {
-    await writeClipboardText(text);
-  }
+  if (text.trim()) await writeClipboardText(text);
 };
 
 const cutEditorSelection = async (): Promise<void> => {
   const view = editorView;
-  if (!view) {
-    return;
-  }
-
+  if (!view) return;
   const ranges = view.state.selection.ranges;
   const selectedText = ranges.filter((range) => !range.empty)
     .map((range) => selectionRangeToText(view, range))
     .join('\n');
-  if (!selectedText) {
-    return;
-  }
-
+  if (!selectedText) return;
   await writeClipboardText(selectedText);
   view.dispatch({
     changes: ranges.map((range) => ({ from: range.from, to: range.to, insert: '' })),
@@ -629,95 +566,56 @@ const cutEditorSelection = async (): Promise<void> => {
 
 const pasteIntoEditor = async (): Promise<void> => {
   const view = editorView;
-  if (!view) {
-    return;
-  }
-
+  if (!view) return;
   const clipboardText = await tryReadClipboardText();
-  if (clipboardText === null) {
-    return;
-  }
-
+  if (clipboardText === null) return;
   view.dispatch(view.state.replaceSelection(clipboardText));
   view.focus();
 };
 
+// ──────────────────────────────────────────────────────────────────────
+// Context menu item dispatch
+// ──────────────────────────────────────────────────────────────────────
 const handleContextMenuItemSelect = async (item: IEditorContextMenuItem): Promise<void> => {
   const view = editorView;
   closeContextMenu();
-  if (!view || !item.action) {
-    return;
-  }
-
+  if (!view || !item.action) return;
   view.focus();
-
   switch (item.action) {
-    case 'ai-explain-selection':
-      await runAiCodeAction('explain_selection', resolveSelectedText());
-      return;
-    case 'ai-fix-diagnostic':
-      await runAiCodeAction('fix_diagnostic', resolveSelectedText());
-      return;
-    case 'ai-generate-tests':
-      await runAiCodeAction('generate_tests', resolveSelectedText());
-      return;
-    case 'undo':
-      undo(view);
-      return;
-    case 'redo':
-      redo(view);
-      return;
-    case 'format-with-shfmt':
-      emit('format-request');
-      return;
-    case 'toggle-comment-line':
-      toggleLineComment(view);
-      return;
-    case 'find':
-      openSearchPanel(view);
-      return;
-    case 'goto-line':
-      gotoLine(view);
-      return;
-    case 'quick-command':
-      emit('command-palette-request');
-      return;
-    case 'run-current-script':
-      emit('run-request');
-      return;
-    case 'open-terminal':
-      emit('open-terminal-request');
-      return;
-    case 'cut':
-      await cutEditorSelection();
-      return;
-    case 'copy':
-      await copyEditorSelection();
-      return;
-    case 'paste':
-      await pasteIntoEditor();
-      return;
-    case 'select-all':
-      selectAll(view);
-      return;
-    default:
-      return;
+    case 'ai-explain-selection': await runAiCodeAction('explain_selection', resolveSelectedText()); return;
+    case 'ai-fix-diagnostic': await runAiCodeAction('fix_diagnostic', resolveSelectedText()); return;
+    case 'ai-generate-tests': await runAiCodeAction('generate_tests', resolveSelectedText()); return;
+    case 'undo': undo(view); return;
+    case 'redo': redo(view); return;
+    case 'format-with-shfmt': emit('format-request'); return;
+    case 'toggle-comment-line': toggleLineComment(view); return;
+    case 'find': openSearchPanel(view); return;
+    case 'goto-line': gotoLine(view); return;
+    case 'quick-command': emit('command-palette-request'); return;
+    case 'run-current-script': emit('run-request'); return;
+    case 'open-terminal': emit('open-terminal-request'); return;
+    case 'cut': await cutEditorSelection(); return;
+    case 'copy': await copyEditorSelection(); return;
+    case 'paste': await pasteIntoEditor(); return;
+    case 'select-all': selectAll(view); return;
+    default: return;
   }
 };
 
+// ──────────────────────────────────────────────────────────────────────
+// Editor lifecycle
+// ──────────────────────────────────────────────────────────────────────
 const handleEditorUpdate = (update: ViewUpdate): void => {
   if (update.docChanged && !suppressModelValueEmit) {
     closeContextMenu();
     emit('update:modelValue', update.state.doc.toString());
   }
-
   if (update.selectionSet || update.docChanged) {
     emitCursorPosition(update.view);
     emitSelectionSummary();
     scheduleViewStatePersist();
     inlineCompletionController.handleUpdate(update);
   }
-
   if (update.viewportChanged) {
     closeContextMenu();
     scheduleViewStatePersist();
@@ -755,10 +653,7 @@ const createBaseExtensions = (language: string): Extension[] => [
 ];
 
 const createEditor = (): void => {
-  if (!containerRef.value || editorView) {
-    return;
-  }
-
+  if (!containerRef.value || editorView) return;
   const language = getCurrentLanguage();
   editorView = new EditorView({
     parent: containerRef.value,
@@ -767,7 +662,6 @@ const createEditor = (): void => {
       extensions: createBaseExtensions(language),
     }),
   });
-
   emitCursorPosition(editorView);
   syncDiagnostics();
   restoreViewStateForPath(props.documentPath);
@@ -776,10 +670,7 @@ const createEditor = (): void => {
 
 const reconfigureLanguage = (): void => {
   const view = editorView;
-  if (!view) {
-    return;
-  }
-
+  if (!view) return;
   const language = getCurrentLanguage();
   inlineCompletionController.clear();
   view.dispatch({
@@ -792,10 +683,7 @@ const reconfigureLanguage = (): void => {
 
 const reconfigureSettings = (): void => {
   const view = editorView;
-  if (!view) {
-    return;
-  }
-
+  if (!view) return;
   view.dispatch({
     effects: [
       settingsCompartment.reconfigure(buildCodeMirrorSettingsExtensions(props.editorSettings)),
@@ -805,13 +693,13 @@ const reconfigureSettings = (): void => {
   scheduleEditorLayout();
 };
 
+// ──────────────────────────────────────────────────────────────────────
+// Watchers
+// ──────────────────────────────────────────────────────────────────────
 watch(
   () => [props.documentPath, props.documentName] as const,
   ([nextPath], [previousPath]) => {
-    if (previousPath) {
-      persistViewState(previousPath);
-    }
-
+    if (previousPath) persistViewState(previousPath);
     reconfigureLanguage();
     restoreViewStateForPath(nextPath);
   },
@@ -822,15 +710,15 @@ watch(
   () => props.modelValue,
   (value) => {
     const view = editorView;
-    if (!view || view.state.doc.toString() === value) {
-      return;
-    }
-
+    if (!view || view.state.doc.toString() === value) return;
     suppressModelValueEmit = true;
-    view.dispatch({
-      changes: { from: 0, to: view.state.doc.length, insert: value },
-    });
-    suppressModelValueEmit = false;
+    try {
+      view.dispatch({
+        changes: { from: 0, to: view.state.doc.length, insert: value },
+      });
+    } finally {
+      suppressModelValueEmit = false;
+    }
   },
 );
 
@@ -846,6 +734,9 @@ watch(
   { deep: true },
 );
 
+// ──────────────────────────────────────────────────────────────────────
+// Mount / unmount
+// ──────────────────────────────────────────────────────────────────────
 onMounted(() => {
   createEditor();
   window.addEventListener(SHELL_WINDOW_RESIZE_START_EVENT, handleShellWindowResizeStart);
@@ -856,25 +747,14 @@ onMounted(() => {
   window.addEventListener('resize', handleWindowResize);
   window.addEventListener('blur', handleWindowResize);
 
-  if (typeof ResizeObserver !== 'undefined' && containerRef.value) {
-    updatePreviousContainerSize();
-    resizeObserver = new ResizeObserver(() => {
-      if (!containerRef.value) {
-        return;
-      }
-
-      const nextWidth = Math.round(containerRef.value.clientWidth);
-      const nextHeight = Math.round(containerRef.value.clientHeight);
-
-      if (previousContainerSize.width === nextWidth && previousContainerSize.height === nextHeight) {
-        return;
-      }
-
-      previousContainerSize = { width: nextWidth, height: nextHeight };
-      scheduleEditorLayout();
-    });
-    resizeObserver.observe(containerRef.value);
-  }
+  useResizeObserver(containerRef, () => {
+    if (!containerRef.value) return;
+    const nextWidth = Math.round(containerRef.value.clientWidth);
+    const nextHeight = Math.round(containerRef.value.clientHeight);
+    if (previousContainerSize.width === nextWidth && previousContainerSize.height === nextHeight) return;
+    previousContainerSize = { width: nextWidth, height: nextHeight };
+    scheduleEditorLayout();
+  });
 });
 
 onBeforeUnmount(() => {
@@ -885,33 +765,28 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', handleWindowKeydown);
   window.removeEventListener('resize', handleWindowResize);
   window.removeEventListener('blur', handleWindowResize);
-
   persistViewState(props.documentPath);
   clearViewStateSaveTimer();
   inlineCompletionController.destroy();
-  resizeObserver?.disconnect();
-  resizeObserver = null;
-
   if (editorLayoutFrameId !== null) {
     window.cancelAnimationFrame(editorLayoutFrameId);
     editorLayoutFrameId = null;
   }
-
   closeContextMenu();
   editorView?.destroy();
   editorView = null;
 });
 
+// ──────────────────────────────────────────────────────────────────────
+// Public methods
+// ──────────────────────────────────────────────────────────────────────
 const focusEditor = (): void => {
   editorView?.focus();
 };
 
 const insertSnippet = (snippetText: string): void => {
   const view = editorView;
-  if (!view) {
-    return;
-  }
-
+  if (!view) return;
   const range = view.state.selection.main;
   snippet(snippetText)(view, null, range.from, range.to);
   view.focus();
@@ -919,10 +794,7 @@ const insertSnippet = (snippetText: string): void => {
 
 const revealPosition = (line: number, column: number): void => {
   const view = editorView;
-  if (!view) {
-    return;
-  }
-
+  if (!view) return;
   const position = lineColumnToOffset(view, line, column);
   view.dispatch({
     selection: EditorSelection.cursor(position),

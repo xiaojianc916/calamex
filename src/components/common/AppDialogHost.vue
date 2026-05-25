@@ -52,6 +52,7 @@ import {
   type TAppDialogVariant,
 } from '@/types/dialog';
 import { nextTick, onBeforeUnmount, onMounted, ref, useId } from 'vue';
+import { useEventListener } from '@vueuse/core';
 
 type TResolvedDialogState = {
   id: string;
@@ -165,15 +166,12 @@ const handleWindowKeydown = (event: KeyboardEvent): void => {
 };
 
 onMounted(() => {
-  window.addEventListener(APP_DIALOG_EVENT, handleDialogEvent);
-  window.addEventListener(APP_DIALOG_DISMISS_EVENT, handleDialogDismissEvent);
-  window.addEventListener('keydown', handleWindowKeydown);
+useEventListener(window, APP_DIALOG_EVENT, handleDialogEvent);
+useEventListener(window, APP_DIALOG_DISMISS_EVENT, handleDialogDismissEvent);
+useEventListener(window, 'keydown', handleWindowKeydown);
 });
 
 onBeforeUnmount(() => {
-  window.removeEventListener(APP_DIALOG_EVENT, handleDialogEvent);
-  window.removeEventListener(APP_DIALOG_DISMISS_EVENT, handleDialogDismissEvent);
-  window.removeEventListener('keydown', handleWindowKeydown);
   // 卸载时若仍有未结算的对话框，强制结算避免外部 Promise 悬挂
   const pending = dialogState.value;
   if (pending) {

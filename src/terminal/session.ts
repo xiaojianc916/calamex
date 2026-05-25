@@ -519,7 +519,6 @@ export class TerminalSession {
 
     handleBecomeVisible(): void {
         this._createTerminal();
-        this._ensurePreferredRenderer();
         this._syncTerminalSurfaceTone();
         this._scheduleLayoutSync({ settle: true });
         this._scheduleViewportSync({
@@ -607,7 +606,6 @@ export class TerminalSession {
 
         if (this.session.value) {
             this._emitStatus('ready', `${this.session.value.shellLabel} 已连接`);
-            this._ensurePreferredRenderer();
             this._scheduleViewportSync({ scrollToBottom: true });
             if (this._visible) {
                 this.focusTerminal();
@@ -658,7 +656,6 @@ export class TerminalSession {
                 this._pendingInitialPaintRecovery = true;
             }
             this._emitStatus('ready', `${payload.shellLabel} 已连接`);
-            this._ensurePreferredRenderer();
             this._scheduleViewportSync({ scrollToBottom: true });
             if (this._visible) {
                 this.focusTerminal();
@@ -818,7 +815,6 @@ export class TerminalSession {
         if (!this._windowFocusCleanup) {
             const handleWindowFocus = (): void => {
                 if (!this._visible) return;
-                this._ensurePreferredRenderer();
                 this._scheduleLayoutSync({ settle: true });
                 this._scheduleViewportSync({
                     clearTextureAtlas: true,
@@ -836,7 +832,6 @@ export class TerminalSession {
         if (!this._visibilityChangeCleanup) {
             const handleDocVisChange = (): void => {
                 if (document.visibilityState !== 'visible' || !this._visible) return;
-                this._ensurePreferredRenderer();
                 this._scheduleLayoutSync({ settle: true });
                 this._scheduleViewportSync({
                     clearTextureAtlas: true,
@@ -859,7 +854,6 @@ export class TerminalSession {
             const fontSet = document.fonts;
             const handleFontMetricsReady = (): void => {
                 if (!this._visible) return;
-                this._ensurePreferredRenderer();
                 this._scheduleLayoutSync({ settle: true });
                 this._scheduleViewportSync({ refresh: true });
             };
@@ -925,7 +919,6 @@ export class TerminalSession {
         this._interactiveResizeRepaintSuppressUntilMs = 0;
         this._previousHostSize = { width: 0, height: 0 };
 
-        this._disposeWebglRenderer();
 
         this._hostEl = null;
         this._visible = false;
@@ -1638,7 +1631,6 @@ export class TerminalSession {
 
     // ── 私有：渲染器 ─────────────────────────────────────────────────────────────
 
-    private _canUseWebglRenderer(): boolean {
         return (
             TERMINAL_ENABLE_WEBGL_RENDERER &&
             !this._webglRendererBlocked &&
@@ -1647,43 +1639,13 @@ export class TerminalSession {
         );
     }
 
-    private _ensurePreferredRenderer(): void {
-        const terminal = this._terminalRef.value;
-        if (!terminal || this._webglAddonRef.value || !this._canUseWebglRenderer()) return;
-        try {
-            const addon = markRaw(new WebglAddon());
-            this._webglContextLossCleanup = addon.onContextLoss(() => {
-                this._disposeWebglRenderer();
-                window.setTimeout(() => {
-                    this._ensurePreferredRenderer();
-                    this._scheduleLayoutSync();
-                    this._scheduleViewportSync({
-                        clearTextureAtlas: true,
-                        refresh: true,
-                        scrollToBottom: true,
-                    });
-                }, TERMINAL_WEBGL_RECOVERY_DELAY_MS);
-            });
-            terminal.loadAddon(addon);
-            this._webglAddonRef.value = addon;
-        } catch (error) {
-            this._webglRendererBlocked = true;
-            console.warn('WebGL 终端渲染器初始化失败，已回退默认渲染。', error);
-        }
     }
 
-    private _disposeWebglRenderer(): void {
-        this._webglContextLossCleanup?.dispose();
-        this._webglContextLossCleanup = null;
-        this._webglAddonRef.value?.dispose();
-        this._webglAddonRef.value = null;
-    }
 
     private _clearTerminalTextureAtlas(): void {
-        if (this._webglAddonRef.value) {
-            this._webglAddonRef.value.clearTextureAtlas();
-            return;
-        }
+        this._terminalRef.value?.clearTextureAtlas();
+    }
+
         this._terminalRef.value?.clearTextureAtlas();
     }
 
@@ -1734,14 +1696,6 @@ export class TerminalSession {
         return isLikelyInteractiveResizeRepaintFrame(data);
     }
 
-    private _scheduleScrollRecovery(): void {
-        if (!this._webglAddonRef.value) return;
-        this._clearScrollRecoveryTimeout();
-        this._scrollRecoveryTimeoutId = window.setTimeout(() => {
-            this._scrollRecoveryTimeoutId = null;
-            this._scheduleViewportSync({ clearTextureAtlas: true, refresh: true });
-        }, TERMINAL_SCROLL_RECOVERY_DELAY_MS);
-    }
 
     private _hasTerminalRenderableContent(): boolean {
         const terminal = this._terminalRef.value;
@@ -1958,7 +1912,6 @@ export class TerminalSession {
             height: Math.round(host.clientHeight),
         };
         this._bindResizeObserver();
-        this._ensurePreferredRenderer();
         this._syncTerminalSurfaceTone();
         this._pendingInitialPaintRecovery = true;
         this._scheduleLayoutSync({ settle: true });
@@ -2019,7 +1972,6 @@ export class TerminalSession {
                     this._clearScrollRecoveryTimeout();
                     return;
                 }
-                this._scheduleScrollRecovery();
             });
             terminal.onResize(({ cols, rows }) => {
                 if (!this._didTerminalSizeChange(cols, rows)) return;

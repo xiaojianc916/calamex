@@ -1,3 +1,6 @@
+import { fnv1a32 } from '@/utils/hash';
+import { areFileSystemPathsEqual, normalizeFileSystemPath } from '@/utils/path';
+
 import type {
   IAiDiffHunkPreview,
   IAiDiffPreviewLine,
@@ -6,8 +9,6 @@ import type {
   IAiPatchSet,
 } from '@/types/ai';
 import type { IGitDiffPreviewPayload } from '@/types/git';
-
-import { areFileSystemPathsEqual, normalizeFileSystemPath } from '@/utils/path';
 
 export interface IAiPatchPreviewFile {
   path: string;
@@ -24,11 +25,9 @@ interface ILineCursor {
 interface IMaterializedPatchContent {
   originalContent: string;
   modifiedContent: string;
+  /** 任意 hunk 含 + 或 - 行；为 false 时整 patch 实质无变更。 */
+  hasMaterialChange: boolean;
 }
-
-/** FNV-1a 32-bit 常量；仅用于会话内 patch 预览引用，非加密哈希。 */
-const PATCH_DIFF_HASH_OFFSET = 0x811c9dc5;
-const PATCH_DIFF_HASH_PRIME = 0x01000193;
 
 // ──────────────────────────────────────────────────────────────────────
 // Path helpers
@@ -54,36 +53,25 @@ const toComparablePath = (path: string): string =>
     foldWindowsCase: true,
   });
 
-const detectPathSeparator = (path: string): '/' | '\\' => {
-  if (path.includes('\\') && !path.includes('/')) {
-    return '\\';
-  }
-  return '/';
-};
-
 const getPatchRelativePath = (
   filePath: string,
   workspaceRootPath: string | null | undefined,
 ): string => {
   const displayPath = formatAiPatchDisplayPath(filePath);
   const displayRoot = formatAiPatchDisplayPath(workspaceRootPath ?? '');
-  if (!displayRoot) {
-    return displayPath;
-  }
-  if (areFileSystemPathsEqual(displayPath, displayRoot)) {
-    return '';
-  }
+
+  if (!displayRoot) return displayPath;
+  if (areFileSystemPathsEqual(displayPath, displayRoot)) return '';
 
   const comparablePath = toComparablePath(displayPath);
   const comparableRoot = toComparablePath(displayRoot);
-  if (comparablePath === comparableRoot) {
-    return '';
-  }
+  if (comparablePath === comparableRoot) return '';
 
-  const separator = detectPathSeparator(comparableRoot);
-  const rootWithSep = `${comparableRoot}${separator}`;
+  // normalizeFileSystemPath 内部统一把 \ 转为 /，所以分隔符固定是 /。
+  // 同时 displayRoot 与 comparableRoot 仅大小写不同，长度严格相等 —— 这是
+  // 下面 displayPath.slice(displayRoot.length + 1) 能保留原始大小写的前提。
+  const rootWithSep = `${comparableRoot}/`;
   if (comparablePath.startsWith(rootWithSep)) {
-    // 用真实 displayRoot 长度切割，保留原始大小写
     return displayPath.slice(displayRoot.length + 1);
   }
   return displayPath;
@@ -105,15 +93,6 @@ const buildPatchHunkHeader = (hunk: IAiPatchHunk): string =>
 const buildPatchDiffRef = (displayPath: string): string =>
   `patch-preview:${encodeURIComponent(displayPath)}`;
 
-const hashPatchDiffKey = (value: string): string => {
-  let hash = PATCH_DIFF_HASH_OFFSET;
-  for (const character of value) {
-    hash ^= character.codePointAt(0) ?? 0;
-    hash = Math.imul(hash, PATCH_DIFF_HASH_PRIME);
-  }
-  return (hash >>> 0).toString(16).padStart(8, '0');
-};
-
 const buildPatchDiffPreviewId = (file: IAiPatchFile, displayPath: string): string => {
   const source = [
     displayPath,
@@ -126,7 +105,7 @@ const buildPatchDiffPreviewId = (file: IAiPatchFile, displayPath: string): strin
       ...hunk.lines,
     ]),
   ].join('\n');
-  return `patch-diff:${hashPatchDiffKey(source)}`;
+  return `patch-diff:${fnv1a32(source)}`;
 };
 
 // ──────────────────────────────────────────────────────────────────────
@@ -134,7 +113,7 @@ const buildPatchDiffPreviewId = (file: IAiPatchFile, displayPath: string): strin
 // ──────────────────────────────────────────────────────────────────────
 
 type DiffLineClassification =
-  | { kind: 'skip' }                          // 头部 +++ / ---  /  '\ No newline at end of file'
+  | { kind: 'skip' } //                          头部 +++ / --- / '\ No newline at end of file'
   | { kind: 'add'; content: string }
   | { kind: 'delete'; content: string }
   | { kind: 'context'; content: string };
@@ -147,30 +126,16 @@ type DiffLineClassification =
  *   - 真正空字符串（防御性）
  */
 const classifyDiffLine = (line: string): DiffLineClassification => {
-  if (!line) {
-    return { kind: 'skip' };
-  }
+  if (!line) return { kind: 'skip' };
   if (line.startsWith('+++') || line.startsWith('---') || line.startsWith('\\')) {
     return { kind: 'skip' };
   }
-  if (line.startsWith('+')) {
-    return { kind: 'add', content: line.slice(1) };
-  }
-  if (line.startsWith('-')) {
-    return { kind: 'delete', content: line.slice(1) };
-  }
-  if (line.startsWith(' ')) {
-    return { kind: 'context', content: line.slice(1) };
-  }
+  if (line.startsWith('+')) return { kind: 'add', content: line.slice(1) };
+  if (line.startsWith('-')) return { kind: 'delete', content: line.slice(1) };
+  if (line.startsWith(' ')) return { kind: 'context', content: line.slice(1) };
   // 非标准行兜底按 context 处理（极少出现的 AI 输出毛刺）
   return { kind: 'context', content: line };
 };
-
-const hunkHasMaterialChange = (hunk: IAiPatchHunk): boolean =>
-  hunk.lines.some((line) => {
-    const classified = classifyDiffLine(line);
-    return classified.kind === 'add' || classified.kind === 'delete';
-  });
 
 // ──────────────────────────────────────────────────────────────────────
 // Hunk preview lines
@@ -184,9 +149,7 @@ const buildLinePreview = (
   cursor: ILineCursor,
 ): IAiDiffPreviewLine | null => {
   const classified = classifyDiffLine(line);
-  if (classified.kind === 'skip') {
-    return null;
-  }
+  if (classified.kind === 'skip') return null;
 
   const id = `${filePathForId}:${hunkIndex}:${lineIndex}`;
 
@@ -240,7 +203,9 @@ const buildPatchPreviewHunks = (
       diffRef,
       header: buildPatchHunkHeader(hunk),
       lines: hunk.lines
-        .map((line, lineIndex) => buildLinePreview(displayPath, hunkIndex, line, lineIndex, cursor))
+        .map((line, lineIndex) =>
+          buildLinePreview(displayPath, hunkIndex, line, lineIndex, cursor),
+        )
         .filter((line): line is IAiDiffPreviewLine => line !== null),
     };
   });
@@ -250,8 +215,18 @@ const buildPatchPreviewHunks = (
 // Materialized content (hunk-only, but line-number aligned)
 // ──────────────────────────────────────────────────────────────────────
 
+/** 把 lines 数组扩容到 target - 1 长（1-indexed 起点对应数组的下一次 push）。 */
+const padLinesTo = (lines: string[], cursor: number, target: number): number => {
+  let next = cursor;
+  while (next < target) {
+    lines.push('');
+    next += 1;
+  }
+  return next;
+};
+
 /**
- * 把 patch 重建成两侧字符串。
+ * 把 patch 重建成两侧字符串，并顺便判定整 patch 是否含实质变更。
  *
  * 设计：**hunk-only**——不读取真实文件内容，只重建 patch 覆盖到的区段。
  *
@@ -262,6 +237,8 @@ const buildPatchPreviewHunks = (
  *   - 但代价是：相距很远的两个 hunk 之间会产生大量空行（仍远小于真实文件读取的成本）。
  *
  * 不在两个 hunk 之间插入 `…` 占位文本，避免被下游 diff 算法当作上下文行参与匹配。
+ *
+ * 同时返回 `hasMaterialChange`，避免上层再扫一次 hunks 做 classify。
  */
 const materializePatchContent = (file: IAiPatchFile): IMaterializedPatchContent => {
   const originalLines: string[] = [];
@@ -270,19 +247,11 @@ const materializePatchContent = (file: IAiPatchFile): IMaterializedPatchContent 
   // cursor 表示"下一个待写入的真实文件行号"，1-indexed。
   let originalCursor = 1;
   let modifiedCursor = 1;
-
-  const padTo = (lines: string[], cursor: number, target: number): number => {
-    let next = cursor;
-    while (next < target) {
-      lines.push('');
-      next += 1;
-    }
-    return next;
-  };
+  let hasMaterialChange = false;
 
   for (const hunk of file.hunks) {
-    originalCursor = padTo(originalLines, originalCursor, hunk.oldStart);
-    modifiedCursor = padTo(modifiedLines, modifiedCursor, hunk.newStart);
+    originalCursor = padLinesTo(originalLines, originalCursor, hunk.oldStart);
+    modifiedCursor = padLinesTo(modifiedLines, modifiedCursor, hunk.newStart);
 
     for (const line of hunk.lines) {
       const classified = classifyDiffLine(line);
@@ -292,10 +261,12 @@ const materializePatchContent = (file: IAiPatchFile): IMaterializedPatchContent 
         case 'add':
           modifiedLines.push(classified.content);
           modifiedCursor += 1;
+          hasMaterialChange = true;
           continue;
         case 'delete':
           originalLines.push(classified.content);
           originalCursor += 1;
+          hasMaterialChange = true;
           continue;
         case 'context':
           originalLines.push(classified.content);
@@ -304,9 +275,11 @@ const materializePatchContent = (file: IAiPatchFile): IMaterializedPatchContent 
           modifiedCursor += 1;
           continue;
         default: {
-          // 编译期穷尽检查
+          // 编译期穷尽检查 + 运行期硬失败（防止未来新增 kind 时静默吞错）
           const _exhaustive: never = classified;
-          return _exhaustive;
+          throw new Error(
+            `materializePatchContent: 未处理的 diff 行分类 ${JSON.stringify(_exhaustive)}`,
+          );
         }
       }
     }
@@ -315,6 +288,7 @@ const materializePatchContent = (file: IAiPatchFile): IMaterializedPatchContent 
   return {
     originalContent: originalLines.join('\n'),
     modifiedContent: modifiedLines.join('\n'),
+    hasMaterialChange,
   };
 };
 
@@ -328,8 +302,8 @@ const buildGitDiffPreview = (
   workspaceRootPath: string | null | undefined,
 ): IGitDiffPreviewPayload => {
   const relativePath = getPatchRelativePath(file.path, workspaceRootPath);
-  const { originalContent, modifiedContent } = materializePatchContent(file);
-  const hasMaterialChange = file.hunks.some(hunkHasMaterialChange);
+  const { originalContent, modifiedContent, hasMaterialChange } =
+    materializePatchContent(file);
 
   return {
     id: buildPatchDiffPreviewId(file, displayPath),
@@ -340,8 +314,8 @@ const buildGitDiffPreview = (
     mode: 'worktree',
     originalContent,
     modifiedContent,
-    // 真正"没有改动" = 任何 hunk 里都不包含 + / - 数据行。
-    // 不再用字符串相等来判定（避免 -foo/+foo 抵消时被误判为 empty）。
+    // 真正 "没有改动" = 任何 hunk 里都不包含 + / - 数据行。
+    // 不用字符串相等判定（避免 -foo/+foo 抵消时被误判为 empty）。
     isEmpty: !hasMaterialChange,
   };
 };

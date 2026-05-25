@@ -65,6 +65,9 @@ importers:
       '@tauri-apps/plugin-store':
         specifier: ^2.4.3
         version: 2.4.3
+      '@texel/color':
+        specifier: ^1.1.11
+        version: 1.1.11
       '@vee-validate/zod':
         specifier: ^4.15.1
         version: 4.15.1(vue@3.5.34(typescript@6.0.3))(zod@4.4.3)
@@ -83,9 +86,6 @@ importers:
       '@xterm/addon-web-links':
         specifier: ^0.12.0
         version: 0.12.0
-      '@xterm/addon-webgl':
-        specifier: ^0.19.0
-        version: 0.19.0
       '@xterm/xterm':
         specifier: ^6.0.0
         version: 6.0.0
@@ -101,6 +101,9 @@ importers:
       codemirror:
         specifier: ^6.0.2
         version: 6.0.2
+      consola:
+        specifier: ^3.4.2
+        version: 3.4.2
       katex:
         specifier: ^0.17.0
         version: 0.17.0
@@ -113,6 +116,9 @@ importers:
       nanoid:
         specifier: ^5.1.11
         version: 5.1.11
+      pathe:
+        specifier: ^2.0.3
+        version: 2.0.3
       photoswipe:
         specifier: ^5.4.4
         version: 5.4.4
@@ -287,7 +293,7 @@ importers:
     dependencies:
       '@ai-sdk/openai-compatible':
         specifier: 2.0.47
-        version: 2.0.48(zod@4.4.3)
+        version: 2.0.47(zod@4.4.3)
       '@ast-grep/napi':
         specifier: 0.42.3
         version: 0.42.3
@@ -320,7 +326,7 @@ importers:
         version: 2025.12.18(zod@4.4.3)
       '@upstash/context7-mcp':
         specifier: 2.2.5
-        version: 3.0.0
+        version: 2.2.5
       eventsource-parser:
         specifier: 3.0.8
         version: 3.0.8
@@ -335,7 +341,7 @@ importers:
         version: 5.3.0
       undici:
         specifier: 7.25.0
-        version: 8.3.0
+        version: 7.25.0
       vscode-jsonrpc:
         specifier: 8.2.1
         version: 8.2.1
@@ -379,8 +385,8 @@ packages:
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
 
-  '@ai-sdk/openai-compatible@2.0.48':
-    resolution: {integrity: sha512-z9MC6M4Oh/yUY/F/eszOtO8wc2nMz99XmZQKd2gWTtyIfe716xTfrKe3aYZKg20NZDtyjqPPKPSR+wqz7q1T7Q==}
+  '@ai-sdk/openai-compatible@2.0.47':
+    resolution: {integrity: sha512-Enm5UlL0zUCrW3792opk5h7hRWxZOZzDe6eQYVFqX9LUOGGCe1h8MZWAGim765nwzgnjlpeYOsuzZmLtRsTPlg==}
     engines: {node: '>=18'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
@@ -2288,6 +2294,9 @@ packages:
   '@tauri-apps/plugin-store@2.4.3':
     resolution: {integrity: sha512-9LWPj9yMphRi9czEtUv87XHbl1b6xgd9EXpPrUnq6nG7+nbtoF84d4Kwz9xhAv/Hf30sr58pq7EOlyI936y8qw==}
 
+  '@texel/color@1.1.11':
+    resolution: {integrity: sha512-/3kKgfBqzrRfLl4RsEccx+Yfj1kVL6Bh6DejVWZ+DPg/jJdcfdYZ5fpD1nXFwWd8OQNATjz+WqsfQfUynSsgRg==}
+
   '@tokenizer/inflate@0.2.7':
     resolution: {integrity: sha512-MADQgmZT1eKjp06jpI2yozxaU9uVs4GzzgSL+uEq7bVcJ9V1ZXQkeGNql1fsSI0gMy1vhvNTNbUqrx+pZfJVmg==}
     engines: {node: '>=18'}
@@ -2471,12 +2480,9 @@ packages:
   '@ungap/structured-clone@1.3.1':
     resolution: {integrity: sha512-mUFwbeTqrVgDQxFveS+df2yfap6iuP20NAKAsBt5jDEoOTDew+zwLAOilHCeQJOVSvmgCX4ogqIrA0mnyr08yQ==}
 
-  '@upstash/context7-mcp@3.0.0':
-    resolution: {integrity: sha512-rwSFWlJe71q2FgJDfddg5Wh4+LCvEKP89bW6AKOl/hLgbRJiJLULbIXru79ubVAuIBdw5ncNHA0A2RPcHzc/Tg==}
+  '@upstash/context7-mcp@2.2.5':
+    resolution: {integrity: sha512-0TdLOtFmgu5oHu3xlkAoVuNYKsleh9+mjgu7gFfQcHCmaESaEoQOsKZ/hMvTybEz/D1S65vbkKZ2QoucknH4nw==}
     hasBin: true
-
-  '@upstash/redis@1.38.0':
-    resolution: {integrity: sha512-wu+dZBptlLy0+MCUEoHmzrY/TnmgDey3+c7EbIGwrLqAvkP8yi5MWZHYGIFtAygmL4Bkz2TdFu+eU0vFPncIcg==}
 
   '@vee-validate/zod@4.15.1':
     resolution: {integrity: sha512-329Z4TDBE5Vx0FdbA8S4eR9iGCFFUNGbxjpQ20ff5b5wGueScjocUIx9JHPa79LTG06RnlUR4XogQsjN4tecKA==}
@@ -2688,9 +2694,6 @@ packages:
 
   '@xterm/addon-web-links@0.12.0':
     resolution: {integrity: sha512-4Smom3RPyVp7ZMYOYDoC/9eGJJJqYhnPLGGqJ6wOBfB8VxPViJNSKdgRYb8NpaM6YSelEKbA2SStD7lGyqaobw==}
-
-  '@xterm/addon-webgl@0.19.0':
-    resolution: {integrity: sha512-b3fMOsyLVuCeNJWxolACEUED0vm7qC0cy4wRvf3oURSzDTYVQiGPhTnhWZwIHdvC48Y+oLhvYXnY4XDXPoJo6A==}
 
   '@xterm/xterm@6.0.0':
     resolution: {integrity: sha512-TQwDdQGtwwDt+2cgKDLn0IRaSxYu1tSUjgKarSDkUM0ZNiSRXFpjxEsvc/Zgc5kq5omJ+V0a8/kIM2WD3sMOYg==}
@@ -3146,6 +3149,10 @@ packages:
 
   config-chain@1.1.13:
     resolution: {integrity: sha512-qj+f8APARXHrM0hraqXYb2/bOVSV4PvJQlNZ/DVj0QrmNM2q2euizkeuVckQ57J+W0mRH6Hvi+k50M4Jul2VRQ==}
+
+  consola@3.4.2:
+    resolution: {integrity: sha512-5IKcdX0nnYavi6G7TtOhwkYzyjfJlatbjMjuLSfE2kYT5pMDOilZ4OvMhi637CcDICTmz3wARPoyhqyX1Y+XvA==}
+    engines: {node: ^14.18.0 || >=16.10.0}
 
   console-control-strings@1.1.0:
     resolution: {integrity: sha512-ty/fTekppD2fIwRvnZAVdeOiGd1c7YXEixbgJTNzqcxJWKQnjJ/V1bNEEE6hygpM3WjwHFUVK6HTjWSzV4a8sQ==}
@@ -5993,9 +6000,6 @@ packages:
   unbzip2-stream@1.4.3:
     resolution: {integrity: sha512-mlExGW4w71ebDJviH16lQLtZS32VKqsSfk80GCfUlwT/4/hNRFsoscrF/c++9xinkMzECL1uL9DDwXqFWkruPg==}
 
-  uncrypto@0.1.3:
-    resolution: {integrity: sha512-Ql87qFHB3s/De2ClA9e0gsnS6zXG27SkTiSJwjCc9MebbfapQfuPzumMIUMi38ezPZVNFcHI9sUIepeQfw8J8Q==}
-
   undici-types@6.21.0:
     resolution: {integrity: sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==}
 
@@ -6009,10 +6013,6 @@ packages:
   undici@7.25.0:
     resolution: {integrity: sha512-xXnp4kTyor2Zq+J1FfPI6Eq3ew5h6Vl0F/8d9XU5zZQf1tX9s2Su1/3PiMmUANFULpmksxkClamIZcaUqryHsQ==}
     engines: {node: '>=20.18.1'}
-
-  undici@8.3.0:
-    resolution: {integrity: sha512-TkUDgb6tl7KOGZ+7e8E3d2FYgUQgF6z5YypqjWmixVQSQERFcVrVg0ySADm2LVLRh5ljAaHTCR5Fmz3Q34rB7Q==}
-    engines: {node: '>=22.19.0'}
 
   unicorn-magic@0.3.0:
     resolution: {integrity: sha512-+QBBXBCvifc56fsbuxZQ6Sic3wqqc3WWaqxs58gvJrcOuN83HGTCwz3oS5phzU9LthRNE9VrJCFCLUgHeeFnfA==}
@@ -6536,7 +6536,7 @@ snapshots:
       '@vercel/oidc': 3.2.0
       zod: 4.4.3
 
-  '@ai-sdk/openai-compatible@2.0.48(zod@4.4.3)':
+  '@ai-sdk/openai-compatible@2.0.47(zod@4.4.3)':
     dependencies:
       '@ai-sdk/provider': 3.0.10
       '@ai-sdk/provider-utils': 4.0.27(zod@4.4.3)
@@ -8209,6 +8209,8 @@ snapshots:
     dependencies:
       '@tauri-apps/api': 2.11.0
 
+  '@texel/color@1.1.11': {}
+
   '@tokenizer/inflate@0.2.7':
     dependencies:
       debug: 4.4.3
@@ -8440,11 +8442,10 @@ snapshots:
 
   '@ungap/structured-clone@1.3.1': {}
 
-  '@upstash/context7-mcp@3.0.0':
+  '@upstash/context7-mcp@2.2.5':
     dependencies:
       '@modelcontextprotocol/sdk': 1.29.0(zod@4.4.3)
       '@types/express': 5.0.6
-      '@upstash/redis': 1.38.0
       commander: 14.0.3
       express: 5.2.1
       jose: 6.2.3
@@ -8453,10 +8454,6 @@ snapshots:
     transitivePeerDependencies:
       - '@cfworker/json-schema'
       - supports-color
-
-  '@upstash/redis@1.38.0':
-    dependencies:
-      uncrypto: 0.1.3
 
   '@vee-validate/zod@4.15.1(vue@3.5.34(typescript@6.0.3))(zod@4.4.3)':
     dependencies:
@@ -8781,8 +8778,6 @@ snapshots:
   '@xterm/addon-search@0.16.0': {}
 
   '@xterm/addon-web-links@0.12.0': {}
-
-  '@xterm/addon-webgl@0.19.0': {}
 
   '@xterm/xterm@6.0.0': {}
 
@@ -9262,6 +9257,8 @@ snapshots:
     dependencies:
       ini: 1.3.8
       proto-list: 1.2.4
+
+  consola@3.4.2: {}
 
   console-control-strings@1.1.0: {}
 
@@ -12504,8 +12501,6 @@ snapshots:
       buffer: 5.7.1
       through: 2.3.8
 
-  uncrypto@0.1.3: {}
-
   undici-types@6.21.0: {}
 
   undici-types@7.24.6: {}
@@ -12513,8 +12508,6 @@ snapshots:
   undici@6.25.0: {}
 
   undici@7.25.0: {}
-
-  undici@8.3.0: {}
 
   unicorn-magic@0.3.0: {}
 

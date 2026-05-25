@@ -57,7 +57,6 @@ const TRAY_MENU_QUIT_ID: &str = "tray.quit-app";
 const TRAY_TOOLTIP: &str = "Calamex";
 
 // === 启动日志 ============================================================
-// 改动 1: 重命名 startup_elapsed_ms → elapsed_ms，原名误导（被用于 step 耗时）
 fn elapsed_ms(since: Instant) -> f64 {
     since.elapsed().as_secs_f64() * 1000.0
 }
@@ -87,15 +86,12 @@ fn emit_startup_step(event: &str, app_started_at: Instant, step_started_at: Inst
     );
 }
 
-// 改动 2: 消除 setup 里 6 处 "let xxx_started_at = Instant::now(); ...; emit_startup_step(...)" 样板
-//   宏形式是为了兼容 `?` 与任意返回类型，且开销为零。
 macro_rules! timed_step {
     ($event:expr, $app_started_at:expr, $body:block) => 
         let __step_started_at = std::time::Instant::now();
         let __result = $body;
         emit_startup_step($event, $app_started_at, __step_started_at);
-        __result
-    ;
+        __result;
 }
 
 // === 生命周期 ============================================================

@@ -1,3 +1,7 @@
+import { buildAiAedDiffRef } from '@/components/business/ai/edit/diff-ref';
+import { fnv1a32Base36 } from '@/utils/hash';
+import { areFileSystemPathsEqual, normalizeFileSystemPath } from '@/utils/path';
+
 import type {
   IAiApplyPatchPayload,
   IAiPatchFile,
@@ -10,14 +14,8 @@ import type {
   TAiAgentChangedFileStatus,
 } from '@/types/ai/patch';
 
-import { buildAiAedDiffRef } from '@/components/business/ai/edit/diff-ref';
-import { areFileSystemPathsEqual } from '@/utils/path';
-
 const AED_PATCH_REF_PREFIX = 'aed-patch:';
 const PATCH_SUMMARY_ID_PREFIX = 'patch-summary';
-const HASH_OFFSET_BASIS = 2_166_136_261;
-const HASH_PRIME = 16_777_619;
-const HASH_PAD_LENGTH = 7;
 
 export interface IAiPatchFileLineStats {
   additions: number;
@@ -48,6 +46,11 @@ interface IPatchSummaryIdKeys {
   appliedAt: string;
 }
 
+interface IChangedFileTotals {
+  totalAdditions: number;
+  totalDeletions: number;
+}
+
 // ──────────────────────────────────────────────────────────────────────
 // Ref helpers
 // ──────────────────────────────────────────────────────────────────────
@@ -56,13 +59,9 @@ export const buildAiAedPatchRef = (taskId: string): string =>
   `${AED_PATCH_REF_PREFIX}${encodeURIComponent(taskId)}`;
 
 export const parseAiAedPatchRef = (patchRef: string): string | null => {
-  if (!patchRef.startsWith(AED_PATCH_REF_PREFIX)) {
-    return null;
-  }
+  if (!patchRef.startsWith(AED_PATCH_REF_PREFIX)) return null;
   const encodedTaskId = patchRef.slice(AED_PATCH_REF_PREFIX.length);
-  if (!encodedTaskId) {
-    return null;
-  }
+  if (!encodedTaskId) return null;
   try {
     const taskId = decodeURIComponent(encodedTaskId).trim();
     return taskId || null;
@@ -72,6 +71,21 @@ export const parseAiAedPatchRef = (patchRef: string): string | null => {
 };
 
 // ──────────────────────────────────────────────────────────────────────
+// Path normalization (for Map keying)
+// ──────────────────────────────────────────────────────────────────────
+
+/**
+ * 大小写不敏感文件系统上比较 / Map keying 用的归一化路径。
+ * 不要把它当成展示路径，也不要写回数据。
+ */
+const toMapKeyPath = (path: string): string =>
+  normalizeFileSystemPath(path, {
+    collapseDuplicateSeparators: true,
+    trimTrailingSeparator: true,
+    foldWindowsCase: true,
+  });
+
+// ──────────────────────────────────────────────────────────────────────
 // Hash + ID
 // ──────────────────────────────────────────────────────────────────────
 
@@ -79,14 +93,7 @@ export const parseAiAedPatchRef = (patchRef: string): string | null => {
  * FNV-1a 32-bit, 以 base36 + 左侧补零输出固定长度，便于在 UI / 日志中视觉对齐。
  * 注意：仅用于「同会话内 patch summary 去重 / 引用」用途，非加密哈希。
  */
-const hashString = (value: string): string => {
-  let hash = HASH_OFFSET_BASIS;
-  for (const char of value) {
-    hash ^= char.codePointAt(0) ?? 0;
-    hash = Math.imul(hash, HASH_PRIME);
-  }
-  return (hash >>> 0).toString(36).padStart(HASH_PAD_LENGTH, '0');
-};
+const hashString = (value: string): string => fnv1a32Base36(value);
 
 const buildSummaryIdPayload = (
   keys: IPatchSummaryIdKeys,
@@ -108,7 +115,7 @@ const buildSummaryIdPayload = (
     ),
   ].join('\n');
 
-const makeSummaryId = (namespace: string, payload: string): string =>
+const makeSummaryId = (payload: string, namespace?: string): string =>
   namespace
     ? `${PATCH_SUMMARY_ID_PREFIX}:${namespace}:${hashString(payload)}`
     : `${PATCH_SUMMARY_ID_PREFIX}:${hashString(payload)}`;
@@ -126,19 +133,12 @@ export const countAiPatchFileLineStats = (file: IAiPatchFile): IAiPatchFileLineS
   let deletions = 0;
   for (const hunk of file.hunks) {
     for (const line of hunk.lines) {
-      if (!line) {
-        continue;
-      }
+      if (!line) continue;
       // 头部行（文件名标记）不计入
-      if (line.startsWith('+++') || line.startsWith('---')) {
-        continue;
-      }
+      if (line.startsWith('+++') || line.startsWith('---')) continue;
       const head = line.charCodeAt(0);
-      if (head === 0x2b /* '+' */) {
-        additions += 1;
-      } else if (head === 0x2d /* '-' */) {
-        deletions += 1;
-      }
+      if (head === 0x2b /* '+' */) additions += 1;
+      else if (head === 0x2d /* '-' */) deletions += 1;
     }
   }
   return { additions, deletions };
@@ -197,18 +197,10 @@ const mergeFileStatus = (
   prev: TAiAgentChangedFileStatus,
   next: TAiAgentChangedFileStatus,
 ): TAiAgentChangedFileStatus => {
-  if (prev === next) {
-    return prev;
-  }
-  if (prev === 'deleted' || next === 'deleted') {
-    return 'deleted';
-  }
-  if (prev === 'added' || next === 'added') {
-    return 'added';
-  }
-  if (prev === 'renamed' || next === 'renamed') {
-    return 'renamed';
-  }
+  if (prev === next) return prev;
+  if (prev === 'deleted' || next === 'deleted') return 'deleted';
+  if (prev === 'added' || next === 'added') return 'added';
+  if (prev === 'renamed' || next === 'renamed') return 'renamed';
   return 'modified';
 };
 
@@ -222,11 +214,18 @@ const isAppliedPatchFile = (
 ): boolean =>
   appliedFiles.some((appliedFile) => areFileSystemPathsEqual(appliedFile.path, file.path));
 
-const sumAdditions = (files: readonly IAiAgentChangedFile[]): number =>
-  files.reduce((total, file) => total + file.additions, 0);
-
-const sumDeletions = (files: readonly IAiAgentChangedFile[]): number =>
-  files.reduce((total, file) => total + file.deletions, 0);
+/** 单趟扫描同时算出 totalAdditions / totalDeletions。 */
+const computeChangedFileTotals = (
+  files: readonly IAiAgentChangedFile[],
+): IChangedFileTotals => {
+  let totalAdditions = 0;
+  let totalDeletions = 0;
+  for (const file of files) {
+    totalAdditions += file.additions;
+    totalDeletions += file.deletions;
+  }
+  return { totalAdditions, totalDeletions };
+};
 
 export const buildAiAgentPatchSummaryFromApplyResult = (
   input: IBuildAiAgentPatchSummaryInput,
@@ -235,7 +234,13 @@ export const buildAiAgentPatchSummaryFromApplyResult = (
   const runId = input.runId.trim();
   const stepId = input.stepId.trim();
   const appliedAt = input.appliedAt.trim();
-  if (!taskId || !runId || !stepId || !appliedAt || input.applyResult.appliedFiles.length === 0) {
+  if (
+    !taskId ||
+    !runId ||
+    !stepId ||
+    !appliedAt ||
+    input.applyResult.appliedFiles.length === 0
+  ) {
     return null;
   }
 
@@ -252,19 +257,17 @@ export const buildAiAgentPatchSummaryFromApplyResult = (
       };
     });
 
-  if (files.length === 0) {
-    return null;
-  }
+  if (files.length === 0) return null;
 
   const keys: IPatchSummaryIdKeys = { runId, stepId, taskId, appliedAt };
-
+  const totals = computeChangedFileTotals(files);
   return {
-    id: makeSummaryId('', buildSummaryIdPayload(keys, files)),
+    id: makeSummaryId(buildSummaryIdPayload(keys, files)),
     runId,
     stepId,
     files,
-    totalAdditions: sumAdditions(files),
-    totalDeletions: sumDeletions(files),
+    totalAdditions: totals.totalAdditions,
+    totalDeletions: totals.totalDeletions,
     patchRef: buildAiAedPatchRef(taskId),
     appliedAt,
   };
@@ -279,9 +282,7 @@ export const buildAiAgentPatchSummaryFromApplyResult = (
 export const buildAiPatchSetFromAedDiff = (
   diff: IAiEditGetDiffPayload,
 ): IAiPatchSet | null => {
-  if (diff.hunks.length === 0) {
-    return null;
-  }
+  if (diff.hunks.length === 0) return null;
   return {
     summary: `已修改 ${diff.path}`,
     files: [
@@ -321,19 +322,17 @@ export const buildAiAgentPatchSummaryFromAedDiffs = (
       diffRef: buildAiAedDiffRef({ taskId, path: diff.path }),
     }));
 
-  if (files.length === 0) {
-    return null;
-  }
+  if (files.length === 0) return null;
 
   const keys: IPatchSummaryIdKeys = { runId, stepId, taskId, appliedAt };
-
+  const totals = computeChangedFileTotals(files);
   return {
-    id: makeSummaryId('aed-diff', buildSummaryIdPayload(keys, files)),
+    id: makeSummaryId(buildSummaryIdPayload(keys, files), 'aed-diff'),
     runId,
     stepId,
     files,
-    totalAdditions: sumAdditions(files),
-    totalDeletions: sumDeletions(files),
+    totalAdditions: totals.totalAdditions,
+    totalDeletions: totals.totalDeletions,
     patchRef: buildAiAedPatchRef(taskId),
     appliedAt,
   };
@@ -342,27 +341,6 @@ export const buildAiAgentPatchSummaryFromAedDiffs = (
 // ──────────────────────────────────────────────────────────────────────
 // Merge
 // ──────────────────────────────────────────────────────────────────────
-
-/**
- * 按 `path` 查找已合并文件；当 `Map` 命中失败时，回退到
- * `areFileSystemPathsEqual` 线性比对，兼容大小写不敏感文件系统。
- */
-const findExistingMergedFileIndex = (
-  files: readonly IAiAgentChangedFile[],
-  indexByPath: Map<string, number>,
-  path: string,
-): number => {
-  const direct = indexByPath.get(path);
-  if (direct !== undefined) {
-    return direct;
-  }
-  for (let i = 0; i < files.length; i += 1) {
-    if (areFileSystemPathsEqual(files[i].path, path)) {
-      return i;
-    }
-  }
-  return -1;
-};
 
 /**
  * 将多个 `IAiAgentPatchSummary` 按文件维度合并。
@@ -375,20 +353,25 @@ const findExistingMergedFileIndex = (
  *   - `diffRef` 始终采用**最新**一次 summary 的值（"最近一次 diff 胜出"）；
  *   - `patchRef` 取**首条** summary 的值。**前置约束**：所有 summary 应属于同一 task；
  *     若 dev 模式下检测到 `patchRef` 不一致，会在控制台告警。
- *   - `appliedAt` / `revertedAt` 优先末条，缺值则回退首条。
+ *   - `appliedAt` / `revertedAt` 优先末条，缺值则回退首条。**注意**：若仅中间条
+ *     存在 `revertedAt`、首末均无，本函数将**丢失**该信息（与历史行为一致）；
+ *     若你需要"任一存在即取"语义，请提单独工具函数处理。
  *   - `runId` / `stepId` 取首条；调用方应保证多 summary 属于同一 run/step。
+ *
+ * 实现说明：跨平台兼容 —— 使用归一化路径作为 Map key，使大小写不敏感文件系统上的
+ * `src/App.tsx` 与 `src/app.tsx` 被正确视为同一文件，避免历史实现里 Map miss → O(n)
+ * 线性 fallback → 整体 O(N²) 的性能坑。
  */
 export const mergeAiAgentPatchSummaries = (
   summaries: readonly IAiAgentPatchSummary[],
 ): IAiAgentPatchSummary | null => {
   const firstSummary = summaries[0];
-  if (!firstSummary) {
-    return null;
-  }
+  if (!firstSummary) return null;
 
   if (import.meta.env.DEV) {
-    const patchRefs = new Set(summaries.map((summary) => summary.patchRef));
+    const patchRefs = new Set(summaries.map((s) => s.patchRef));
     if (patchRefs.size > 1) {
+      // TODO: 接入 Aster 统一 logger (logger.warn) 替换 console.warn
       // eslint-disable-next-line no-console
       console.warn(
         '[mergeAiAgentPatchSummaries] 输入 summary 的 patchRef 不一致，仅会保留首条:',
@@ -398,17 +381,20 @@ export const mergeAiAgentPatchSummaries = (
   }
 
   const files: IAiAgentChangedFile[] = [];
-  const indexByPath = new Map<string, number>();
+  const indexByKey = new Map<string, number>();
 
   for (const summary of summaries) {
     for (const file of summary.files) {
-      const existingIndex = findExistingMergedFileIndex(files, indexByPath, file.path);
-      if (existingIndex < 0) {
-        indexByPath.set(file.path, files.length);
+      const key = toMapKeyPath(file.path);
+      const existingIndex = indexByKey.get(key);
+
+      if (existingIndex === undefined) {
+        indexByKey.set(key, files.length);
         files.push({ ...file });
         continue;
       }
-      const existingFile = files[existingIndex];
+
+      const existingFile = files[existingIndex]!;
       files[existingIndex] = {
         ...existingFile,
         status: mergeFileStatus(existingFile.status, file.status),
@@ -420,21 +406,20 @@ export const mergeAiAgentPatchSummaries = (
     }
   }
 
-  if (files.length === 0) {
-    return null;
-  }
+  if (files.length === 0) return null;
 
   const lastSummary = summaries[summaries.length - 1] ?? firstSummary;
   const mergedAppliedAt = lastSummary.appliedAt || firstSummary.appliedAt;
   const mergedRevertedAt = lastSummary.revertedAt || firstSummary.revertedAt;
+  const totals = computeChangedFileTotals(files);
 
   return {
-    id: makeSummaryId('merged', summaries.map((summary) => summary.id).join('\n')),
+    id: makeSummaryId(summaries.map((s) => s.id).join('\n'), 'merged'),
     runId: firstSummary.runId,
     stepId: firstSummary.stepId,
     files,
-    totalAdditions: sumAdditions(files),
-    totalDeletions: sumDeletions(files),
+    totalAdditions: totals.totalAdditions,
+    totalDeletions: totals.totalDeletions,
     patchRef: firstSummary.patchRef,
     ...(mergedAppliedAt ? { appliedAt: mergedAppliedAt } : {}),
     ...(mergedRevertedAt ? { revertedAt: mergedRevertedAt } : {}),

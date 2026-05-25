@@ -70,7 +70,6 @@ nucleo-matcher = { version = "0.3.1", optional = true }
 portable-pty = { version = "0.9.0", optional = true }
 keyring = { version = "3.6.3", features = ["windows-native"], optional = true }
 reqwest = { version = "0.12.24", default-features = false, features = ["json", "rustls-tls", "stream"], optional = true }
-reqwest13 = { package = "reqwest", version = "0.13.2", default-features = false, features = ["json", "rustls", "stream"] }
 regex = { version = "1.12.3", optional = true }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
@@ -101,6 +100,7 @@ normpath = { version = "1.5.1", optional = true }
 specta = "=2.0.0-rc.25"
 specta-typescript = "0.0.12"
 tauri-specta = { version = "=2.0.0-rc.25", features = ["typescript"] }
+vt100 = "0.16.2"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Networking_WinSock", "Win32_System_Hypervisor"] }

@@ -3,7 +3,8 @@ import type { HTMLAttributes } from 'vue';
 import type { PromptInputMessage } from './types';
 import { InputGroup } from '@/components/ui/input-group';
 import { cn } from '@/lib/utils';
-import { getCurrentInstance, inject, onMounted, onUnmounted, ref } from 'vue';
+import { getCurrentInstance, inject, computed, ref } from 'vue';
+import { useEventListener } from '@vueuse/core';
 import { usePromptInputProvider } from './context';
 import { PROMPT_INPUT_KEY } from './types';
 
@@ -90,19 +91,11 @@ function handleDrop(e: DragEvent) {
   }
 }
 
-onMounted(() => {
-  if (props.globalDrop) {
-    document.addEventListener('dragover', handleDragOver);
-    document.addEventListener('drop', handleDrop);
-  }
-});
+const globalDropTarget = computed(() => props.globalDrop ? document : undefined);
+useEventListener(globalDropTarget, 'dragover', handleDragOver);
+useEventListener(globalDropTarget, 'drop', handleDrop);
 
-onUnmounted(() => {
-  if (props.globalDrop) {
-    document.removeEventListener('dragover', handleDragOver);
-    document.removeEventListener('drop', handleDrop);
-  }
-});
+
 
 function onFileChange(e: Event) {
   const input = e.target as HTMLInputElement;
