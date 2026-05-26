@@ -746,15 +746,22 @@ const handleEditorUpdate = (update: ViewUpdate): void => {
 };
 
 /** 构建 LSP extension（仅对 shell 文件启用） */
+let currentLsp: ReturnType<typeof createLspExtension> | null = null;
+
 const buildLspExtension = (): Extension => {
+  currentLsp?.detach();
+  currentLsp = null;
+
   const lang = getCurrentLanguage();
   if (lang !== 'Shell' || !props.documentPath) return [];
-  const lsp = createLspExtension({
+
+  currentLsp = createLspExtension({
     filePath: props.documentPath,
     languageId: 'shellscript',
     getContent: () => props.modelValue,
   });
-  return lsp.extensions;
+
+  return currentLsp.extensions;
 };
 const createBaseExtensions = (language: string): Extension[] => [
   highlightSpecialChars(),
@@ -810,6 +817,7 @@ const createEditor = (): void => {
     }),
   });
   emitCursorPosition(editorView);
+  currentLsp?.attach(editorView);
   syncDiagnostics();
   restoreViewStateForPath(props.documentPath);
   requestAnimationFrame(() => scheduleEditorLayout());
@@ -926,6 +934,7 @@ onBeforeUnmount(() => {
   persistViewState(props.documentPath);
   clearViewStateSaveTimer();
   inlineCompletionController.destroy();
+  currentLsp?.detach();
   void lspStopBridge();
   if (editorLayoutFrameId !== null) {
     window.cancelAnimationFrame(editorLayoutFrameId);
