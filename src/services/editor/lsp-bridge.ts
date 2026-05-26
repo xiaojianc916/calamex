@@ -21,12 +21,7 @@ import { autocompletion } from '@codemirror/autocomplete';
 import type { Diagnostic } from '@codemirror/lint';
 import { setDiagnostics } from '@codemirror/lint';
 import type { Extension, Text } from '@codemirror/state';
-import {
-  EditorView,
-  hoverTooltip,
-  type Tooltip,
-  type ViewUpdate,
-} from '@codemirror/view';
+import { EditorView, hoverTooltip, type Tooltip, type ViewUpdate } from '@codemirror/view';
 import type { UnlistenFn } from '@tauri-apps/api/event';
 
 // ============================================================================
@@ -41,10 +36,7 @@ async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Prom
   if (!coreMod) coreMod = await import('@tauri-apps/api/core');
   return coreMod.invoke<T>(cmd, args);
 }
-async function tauriListen<T>(
-  event: string,
-  handler: (payload: T) => void,
-): Promise<UnlistenFn> {
+async function tauriListen<T>(event: string, handler: (payload: T) => void): Promise<UnlistenFn> {
   if (!eventMod) eventMod = await import('@tauri-apps/api/event');
   return eventMod.listen<T>(event, (e) => handler(e.payload));
 }
@@ -83,11 +75,20 @@ interface LspHover {
 // ============================================================================
 type FileHandler = (diags: LspDiag[]) => void;
 
+interface PendingOp {
+  kind: 'didOpen';
+  filePath: string;
+  content: string;
+  languageId: string;
+}
+
 class LspBridge {
   private started = false;
   private startPromise: Promise<void> | null = null;
   private unlistenDiagnostics: UnlistenFn | null = null;
   private fileHandlers = new Map<string, FileHandler>();
+  /** 在 LSP 启动完成前到达的 didOpen，启动后按序重放 */
+  private pendingOps: PendingOp[] = [];
 
   async start(workspaceRoot: string): Promise<void> {
     if (this.started) return;
@@ -95,16 +96,15 @@ class LspBridge {
 
     this.startPromise = (async () => {
       // 先建立监听，避免 didOpen → 第一波诊断丢失
-      this.unlistenDiagnostics = await tauriListen<LspDiagEvent>(
-        'lsp-diagnostics',
-        (e) => {
-          const h = this.fileHandlers.get(e.filePath);
-          if (h) h(e.diagnostics);
-        },
-      );
+      this.unlistenDiagnostics = await tauriListen<LspDiagEvent>('lsp-diagnostics', (e) => {
+        const h = this.fileHandlers.get(e.filePath);
+        if (h) h(e.diagnostics);
+      });
       try {
         await tauriInvoke<void>('lsp_start', { workspaceRoot });
         this.started = true;
+        // 启动成功后重放排队中的 didOpen
+        await this.flushPendingOps();
       } catch (err) {
         // start 失败要拆掉监听
         this.unlistenDiagnostics?.();
@@ -123,6 +123,7 @@ class LspBridge {
   async stop(): Promise<void> {
     if (!this.started) return;
     this.started = false;
+    this.pendingOps = [];
     if (this.unlistenDiagnostics) {
       this.unlistenDiagnostics();
       this.unlistenDiagnostics = null;
@@ -145,19 +146,53 @@ class LspBridge {
     };
   }
 
-  didOpen(filePath: string, content: string, languageId: string): Promise<void> {
-    return tauriInvoke<void>('lsp_did_open', { filePath, content, languageId });
+  /** 重放所有排队的 didOpen */
+  private async flushPendingOps(): Promise<void> {
+    const ops = this.pendingOps;
+    this.pendingOps = [];
+    for (const op of ops) {
+      try {
+        await tauriInvoke<void>('lsp_did_open', {
+          filePath: op.filePath,
+          content: op.content,
+          languageId: op.languageId,
+        });
+      } catch {
+        // 单个失败不影响后续
+      }
+    }
+  }
+
+  async didOpen(filePath: string, content: string, languageId: string): Promise<void> {
+    // 如果有正在进行的 start，等它完成
+    if (this.startPromise) {
+      try {
+        await this.startPromise;
+      } catch {
+        // start 失败，本次 didOpen 无法完成
+        return;
+      }
+    }
+    if (this.started) {
+      return tauriInvoke<void>('lsp_did_open', { filePath, content, languageId });
+    }
+    // LSP 尚未启动 → 排队，等 start() 成功后重放
+    this.pendingOps.push({ kind: 'didOpen', filePath, content, languageId });
   }
   didChange(filePath: string, content: string, version: number): Promise<void> {
+    if (!this.started) return Promise.resolve();
     return tauriInvoke<void>('lsp_did_change', { filePath, content, version });
   }
   didClose(filePath: string): Promise<void> {
+    if (!this.started) return Promise.resolve();
     return tauriInvoke<void>('lsp_did_close', { filePath });
   }
   completion(filePath: string, line: number, column: number): Promise<LspItem[]> {
+    if (!this.started) return Promise.resolve([]);
     return tauriInvoke<LspItem[]>('lsp_completion', { filePath, line, column });
   }
   hover(filePath: string, line: number, column: number): Promise<LspHover | null> {
+    if (!this.started) return Promise.resolve(null);
     return tauriInvoke<LspHover | null>('lsp_hover', { filePath, line, column });
   }
 }
@@ -167,10 +202,8 @@ export const lspBridge = new LspBridge();
 // 兼容旧的命名导出
 export const lspStartBridge = (workspaceRoot: string) => lspBridge.start(workspaceRoot);
 export const lspStopBridge = () => lspBridge.stop();
-export const lspDidOpenBridge = (f: string, c: string, l: string) =>
-  lspBridge.didOpen(f, c, l);
-export const lspDidChangeBridge = (f: string, c: string, v: number) =>
-  lspBridge.didChange(f, c, v);
+export const lspDidOpenBridge = (f: string, c: string, l: string) => lspBridge.didOpen(f, c, l);
+export const lspDidChangeBridge = (f: string, c: string, v: number) => lspBridge.didChange(f, c, v);
 export const lspDidCloseBridge = (f: string) => lspBridge.didClose(f);
 
 // ============================================================================
@@ -323,7 +356,7 @@ export function createLspExtension(opts: LspExtensionOptions): LspExtensionHandl
       await flushPendingChanges();
       const line = v.state.doc.lineAt(pos);
       const result = await lspBridge.hover(filePath, line.number - 1, pos - line.from);
-      if (!result || !result.contents) return null;
+      if (!result?.contents) return null;
       return {
         pos,
         create() {
@@ -362,11 +395,9 @@ export function createLspExtension(opts: LspExtensionOptions): LspExtensionHandl
       lastSentVersion = 1;
       unregisterDiag = lspBridge.registerFile(filePath, onDiagnostics);
       // didOpen 必须先发；完成后再允许 didChange
-      void lspBridge
-        .didOpen(filePath, getContent(), languageId)
-        .catch(() => {
-          /* 失败让 detach 收尾 */
-        });
+      void lspBridge.didOpen(filePath, getContent(), languageId).catch(() => {
+        /* 失败让 detach 收尾 */
+      });
     },
     detach() {
       detached = true;
@@ -378,7 +409,7 @@ export function createLspExtension(opts: LspExtensionOptions): LspExtensionHandl
         unregisterDiag();
         unregisterDiag = null;
       }
-      void lspBridge.didClose(filePath).catch(() => { });
+      void lspBridge.didClose(filePath).catch(() => {});
       view = null;
     },
   };

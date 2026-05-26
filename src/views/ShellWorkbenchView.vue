@@ -175,6 +175,12 @@ v-else-if="editorStore.document.path"
                             </div>
                         </CardContent>
                     </Card>
+
+                    <LspStatusBar
+v-show="!isAiMode" :status="lspStatus" :server-name="lspServerName"
+                        :error="lspError" :is-running="lspIsRunning"
+                        :is-starting="lspIsStarting" :has-error="lspHasError"
+                        @restart="restartLsp" />
                     </div>
                 </div>
             </div>
@@ -188,6 +194,7 @@ import { computed, defineAsyncComponent, nextTick } from 'vue';
 import EmptyEditorState from '@/components/editor/EmptyEditorState.vue';
 import { Card, CardContent } from '@/components/ui/card';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
+import LspStatusBar from '@/components/workbench/LspStatusBar.vue';
 import StartupWorkbenchShell from '@/components/workbench/StartupWorkbenchShell.vue';
 import WorkbenchDashboardSidebar from '@/components/workbench/WorkbenchDashboardSidebar.vue';
 import { useLsp } from '@/composables/useLsp';
@@ -285,7 +292,16 @@ const {
   handleAiFixDiagnostic,
 } = useShellWorkbenchView(() => emit('ready'));
 
-useLsp(visibleWorkspaceRootPath);
+const lsp = useLsp(visibleWorkspaceRootPath);
+const {
+  status: lspStatus,
+  error: lspError,
+  serverName: lspServerName,
+  isRunning: lspIsRunning,
+  isStarting: lspIsStarting,
+  hasError: lspHasError,
+  restartLsp,
+} = lsp;
 
 const isTerminalAllowed = computed(() => !isAiMode.value);
 const isTerminalPanelVisible = computed(() => isTerminalAllowed.value && isTerminalVisible.value);

@@ -348,6 +348,78 @@ async fn send_request(
 }
 
 // ============================================================================
+// 二进制路径解析
+// ============================================================================
+
+/// 在常见位置查找 bash-language-server 可执行文件。
+///
+/// 查找优先级：
+/// 1. 项目本地 node_modules/.bin/（pnpm install 后自动存在，开发 & 打包均可）
+/// 2. 全局安装目录（pnpm / npm，兼容用户手动全局安装）
+/// 3. PATH 兜底
+fn resolve_bash_language_server() -> String {
+    let bin_name = if cfg!(windows) {
+        "bash-language-server.CMD"
+    } else {
+        "bash-language-server"
+    };
+
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+
+    // 1) 项目本地 node_modules/.bin/（pnpm install 后即存在）
+    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    if let Some(workspace_root) = manifest_dir.parent() {
+        candidates.push(
+            workspace_root
+                .join("node_modules")
+                .join(".bin")
+                .join(bin_name),
+        );
+    }
+
+    // 2) 全局安装 — pnpm
+    if cfg!(windows) {
+        if let Ok(local) = std::env::var("LOCALAPPDATA") {
+            candidates.push(std::path::PathBuf::from(&local).join("pnpm").join(bin_name));
+        }
+    } else if let Ok(home) = std::env::var("HOME") {
+        candidates.push(
+            std::path::PathBuf::from(&home)
+                .join(".local/share/pnpm")
+                .join(bin_name),
+        );
+    }
+
+    // 3) 全局安装 — npm
+    if cfg!(windows) {
+        if let Ok(appdata) = std::env::var("APPDATA") {
+            candidates.push(std::path::PathBuf::from(&appdata).join("npm").join(bin_name));
+        }
+    } else {
+        candidates.push(std::path::PathBuf::from("/usr/local/bin").join(bin_name));
+        candidates.push(std::path::PathBuf::from("/usr/bin").join(bin_name));
+        if let Ok(home) = std::env::var("HOME") {
+            candidates.push(
+                std::path::PathBuf::from(&home)
+                    .join(".npm-global/bin")
+                    .join(bin_name),
+            );
+        }
+    }
+
+    for candidate in &candidates {
+        if candidate.exists() {
+            log::info!("找到 bash-language-server: {}", candidate.display());
+            return candidate.to_string_lossy().to_string();
+        }
+    }
+
+    // 兜底：信任 PATH
+    log::info!("在已知目录未找到 bash-language-server，回退到 PATH 查找");
+    bin_name.to_string()
+}
+
+// ============================================================================
 // Tauri 命令
 // ============================================================================
 
@@ -367,7 +439,8 @@ pub async fn lsp_start(
         }
     }
 
-    let mut child = Command::new("bash-language-server")
+    let bin_path = resolve_bash_language_server();
+    let mut child = Command::new(&bin_path)
         .arg("start")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -375,7 +448,9 @@ pub async fn lsp_start(
         .kill_on_drop(true)
         .spawn()
         .map_err(|e| {
-            format!("无法启动 bash-language-server: {e}。请确认已安装：npm i -g bash-language-server@^5")
+            format!(
+                "无法启动 bash-language-server ({bin_path}): {e}。请确认已安装：pnpm i -g bash-language-server@^5"
+            )
         })?;
 
     let stdin = child.stdin.take().ok_or("无法获取 stdin")?;
