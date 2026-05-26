@@ -190,6 +190,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import StartupWorkbenchShell from '@/components/workbench/StartupWorkbenchShell.vue';
 import WorkbenchDashboardSidebar from '@/components/workbench/WorkbenchDashboardSidebar.vue';
+import { useLsp } from '@/composables/useLsp';
 import { useShellWorkbenchView } from '@/composables/useShellWorkbenchView';
 import AppShellLayout from '@/layouts/AppShellLayout.vue';
 import { useAiAgentStore } from '@/store/aiAgent';
@@ -220,7 +221,6 @@ const DeferredSmartScriptEditor = defineAsyncComponent({
   loader: () => import('@/components/editor/SmartScriptEditor.vue'),
   suspensible: false,
 });
-
 
 // 预加载 AI 工作区组件，避免首次切换时出现空白帧
 import('@/components/business/ai/shell/AiWorkspaceSurface.vue');
@@ -284,6 +284,8 @@ const {
   handleOpenCommandPalette,
   handleAiFixDiagnostic,
 } = useShellWorkbenchView(() => emit('ready'));
+
+useLsp(visibleWorkspaceRootPath);
 
 const isTerminalAllowed = computed(() => !isAiMode.value);
 const isTerminalPanelVisible = computed(() => isTerminalAllowed.value && isTerminalVisible.value);

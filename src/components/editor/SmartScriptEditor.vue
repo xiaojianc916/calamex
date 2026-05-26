@@ -107,8 +107,21 @@ const captureAnalysisSnapshot = (): TAnalysisSnapshot => ({
   content: props.modelValue ?? '',
 });
 
+const isShellFile = (path: string | null): boolean => {
+  if (!path) return false;
+  return /\\.(sh|bash|zsh)$/iu.test(path);
+};
+
 const runAnalysis = async (requestId: number): Promise<void> => {
   const snapshot = captureAnalysisSnapshot();
+
+  // Shell 文件交给 bash-language-server (LSP) 处理，跳过旧的 analyze_script
+  if (isShellFile(snapshot.path)) {
+    if (!isUnmounted && requestId === latestAnalysisRequestId) {
+      clearAnalysis();
+    }
+    return;
+  }
 
   if (!snapshot.content.trim()) {
     if (!isUnmounted && requestId === latestAnalysisRequestId) {

@@ -397,6 +397,9 @@ const toDiagnosticSeverity = (level: TScriptDiagnosticSeverity): Diagnostic['sev
 const syncDiagnostics = (): void => {
   const view = editorView;
   if (!view) return;
+  // Shell 文件由 LSP 管理诊断，不覆盖
+  const lang = getCurrentLanguage();
+  if (lang === 'Shell') return;
   const diagnostics = analysisState.value.available
     ? analysisState.value.diagnostics.map((item): Diagnostic => {
         const from = lineColumnToOffset(view, item.line, item.column);
@@ -829,6 +832,10 @@ const reconfigureLsp = (): void => {
   view.dispatch({
     effects: [lspCompartment.reconfigure(buildLspExtension())],
   });
+  // 文件切换后重新 attach（didOpen 新文件，didClose 旧文件已在 buildLspExtension 中处理）
+  if (currentLsp && view) {
+    currentLsp.attach(view);
+  }
 };
 const reconfigureLanguage = (): void => {
   const view = editorView;

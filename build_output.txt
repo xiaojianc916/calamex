@@ -1,0 +1,543 @@
+warning: patch for the non root package will be ignored, specify patch at the workspace root:
+package:   D:\com.xiaojianc\my_desktop_app\src-tauri\Cargo.toml
+workspace: D:\com.xiaojianc\my_desktop_app\Cargo.toml
+    Blocking waiting for file lock on artifact directory
+   Compiling calamex v0.1.0 (D:\com.xiaojianc\my_desktop_app\src-tauri)
+error: unknown start of token: \
+ --> src-tauri\src\bin\..\commands\shell_tools.rs:8:9
+  |
+8 |     env,\r?\n    ffi::OsString,
+  |         ^
+
+error: unknown start of token: \
+ --> src-tauri\src\bin\..\commands\shell_tools.rs:8:12
+  |
+8 |     env,\r?\n    ffi::OsString,
+  |            ^
+
+error: expected one of `,`, `::`, `as`, or `}`, found `?`
+ --> src-tauri\src\bin\..\commands\shell_tools.rs:8:11
+  |
+8 |     env,\r?\n    ffi::OsString,
+  |           ^ expected one of `,`, `::`, `as`, or `}`
+
+error: expected one of `*`, `,`, `::`, `;`, `as`, `{`, or `}`, found `?`
+ --> src-tauri\src\bin\..\commands\shell_tools.rs:8:11
+  |
+8 |     env,\r?\n    ffi::OsString,
+  |           ^ expected one of 7 possible tokens
+  |
+  = note: glob-like brace syntax must be last on the path
+
+error: unknown start of token: \
+ --> src-tauri\src\commands\shell_tools.rs:8:9
+  |
+8 |     env,\r?\n    ffi::OsString,
+  |         ^
+
+error: unknown start of token: \
+ --> src-tauri\src\commands\shell_tools.rs:8:12
+  |
+8 |     env,\r?\n    ffi::OsString,
+  |            ^
+
+error: expected one of `,`, `::`, `as`, or `}`, found `?`
+ --> src-tauri\src\commands\shell_tools.rs:8:11
+  |
+8 |     env,\r?\n    ffi::OsString,
+  |           ^ expected one of `,`, `::`, `as`, or `}`
+
+error: expected one of `*`, `,`, `::`, `;`, `as`, `{`, or `}`, found `?`
+ --> src-tauri\src\commands\shell_tools.rs:8:11
+  |
+8 |     env,\r?\n    ffi::OsString,
+  |           ^ expected one of 7 possible tokens
+  |
+  = note: glob-like brace syntax must be last on the path
+
+error[E0433]: cannot find `__tauri_command_name_analyze_script` in `shell_tools`
+  --> src-tauri\src\bin\..\tauri_bindings.rs:16:19
+   |
+16 |           .commands(collect_commands![
+   |  ___________________^
+17 | |             script_run::detect_execution_environment,
+18 | |             search::apply_workspace_replacement,
+19 | |             search::preview_workspace_replacement,
+...  |
+33 | |             workspace_watcher::stop_workspace_watching,
+34 | |         ])
+   | |_________^ could not find `__tauri_command_name_analyze_script` in `shell_tools`
+   |
+   = note: this error originates in the macro `::tauri::generate_handler` which comes from the expansion of the macro `collect_commands` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0433]: cannot find `__cmd__analyze_script` in `shell_tools`
+  --> src-tauri\src\bin\..\tauri_bindings.rs:21:26
+   |
+21 |             shell_tools::analyze_script,
+   |                          ^^^^^^^^^^^^^^ could not find `__cmd__analyze_script` in `shell_tools`
+
+error[E0433]: cannot find `__tauri_command_name_format_script` in `shell_tools`
+  --> src-tauri\src\bin\..\tauri_bindings.rs:16:19
+   |
+16 |           .commands(collect_commands![
+   |  ___________________^
+17 | |             script_run::detect_execution_environment,
+18 | |             search::apply_workspace_replacement,
+19 | |             search::preview_workspace_replacement,
+...  |
+33 | |             workspace_watcher::stop_workspace_watching,
+34 | |         ])
+   | |_________^ could not find `__tauri_command_name_format_script` in `shell_tools`
+   |
+   = note: this error originates in the macro `::tauri::generate_handler` which comes from the expansion of the macro `collect_commands` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0433]: cannot find `__cmd__format_script` in `shell_tools`
+  --> src-tauri\src\bin\..\tauri_bindings.rs:22:26
+   |
+22 |             shell_tools::format_script,
+   |                          ^^^^^^^^^^^^^ could not find `__cmd__format_script` in `shell_tools`
+
+error[E0433]: cannot find `__specta__fn__analyze_script` in `shell_tools`
+  --> src-tauri\src\bin\..\tauri_bindings.rs:16:19
+   |
+16 |           .commands(collect_commands![
+   |  ___________________^
+17 | |             script_run::detect_execution_environment,
+18 | |             search::apply_workspace_replacement,
+19 | |             search::preview_workspace_replacement,
+...  |
+33 | |             workspace_watcher::stop_workspace_watching,
+34 | |         ])
+   | |_________^ could not find `__specta__fn__analyze_script` in `shell_tools`
+   |
+   = note: this error originates in the macro `$crate::function::_fn_datatype_internal` which comes from the expansion of the macro `collect_commands` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0433]: cannot find `__specta__fn__format_script` in `shell_tools`
+  --> src-tauri\src\bin\..\tauri_bindings.rs:16:19
+   |
+16 |           .commands(collect_commands![
+   |  ___________________^
+17 | |             script_run::detect_execution_environment,
+18 | |             search::apply_workspace_replacement,
+19 | |             search::preview_workspace_replacement,
+...  |
+33 | |             workspace_watcher::stop_workspace_watching,
+34 | |         ])
+   | |_________^ could not find `__specta__fn__format_script` in `shell_tools`
+   |
+   = note: this error originates in the macro `$crate::function::_fn_datatype_internal` which comes from the expansion of the macro `collect_commands` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unused imports: `create_temp_script` and `find_command_path`
+  --> src-tauri\src\bin\export_tauri_bindings.rs:36:29
+   |
+36 | pub(crate) use script_run::{create_temp_script, find_command_path, line_count};
+   |                             ^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+error[E0433]: cannot find `__tauri_command_name_analyze_script` in `shell_tools`
+  --> src-tauri\src\tauri_bindings.rs:16:19
+   |
+16 |           .commands(collect_commands![
+   |  ___________________^
+17 | |             script_run::detect_execution_environment,
+18 | |             search::apply_workspace_replacement,
+19 | |             search::preview_workspace_replacement,
+...  |
+33 | |             workspace_watcher::stop_workspace_watching,
+34 | |         ])
+   | |_________^ could not find `__tauri_command_name_analyze_script` in `shell_tools`
+   |
+   = note: this error originates in the macro `::tauri::generate_handler` which comes from the expansion of the macro `collect_commands` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0433]: cannot find `__cmd__analyze_script` in `shell_tools`
+  --> src-tauri\src\tauri_bindings.rs:21:26
+   |
+21 |             shell_tools::analyze_script,
+   |                          ^^^^^^^^^^^^^^ could not find `__cmd__analyze_script` in `shell_tools`
+
+error[E0433]: cannot find `__tauri_command_name_format_script` in `shell_tools`
+  --> src-tauri\src\tauri_bindings.rs:16:19
+   |
+16 |           .commands(collect_commands![
+   |  ___________________^
+17 | |             script_run::detect_execution_environment,
+18 | |             search::apply_workspace_replacement,
+19 | |             search::preview_workspace_replacement,
+...  |
+33 | |             workspace_watcher::stop_workspace_watching,
+34 | |         ])
+   | |_________^ could not find `__tauri_command_name_format_script` in `shell_tools`
+   |
+   = note: this error originates in the macro `::tauri::generate_handler` which comes from the expansion of the macro `collect_commands` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0433]: cannot find `__cmd__format_script` in `shell_tools`
+  --> src-tauri\src\tauri_bindings.rs:22:26
+   |
+22 |             shell_tools::format_script,
+   |                          ^^^^^^^^^^^^^ could not find `__cmd__format_script` in `shell_tools`
+
+error[E0433]: cannot find `__specta__fn__analyze_script` in `shell_tools`
+  --> src-tauri\src\tauri_bindings.rs:16:19
+   |
+16 |           .commands(collect_commands![
+   |  ___________________^
+17 | |             script_run::detect_execution_environment,
+18 | |             search::apply_workspace_replacement,
+19 | |             search::preview_workspace_replacement,
+...  |
+33 | |             workspace_watcher::stop_workspace_watching,
+34 | |         ])
+   | |_________^ could not find `__specta__fn__analyze_script` in `shell_tools`
+   |
+   = note: this error originates in the macro `$crate::function::_fn_datatype_internal` which comes from the expansion of the macro `collect_commands` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0433]: cannot find `__specta__fn__format_script` in `shell_tools`
+  --> src-tauri\src\tauri_bindings.rs:16:19
+   |
+16 |           .commands(collect_commands![
+   |  ___________________^
+17 | |             script_run::detect_execution_environment,
+18 | |             search::apply_workspace_replacement,
+19 | |             search::preview_workspace_replacement,
+...  |
+33 | |             workspace_watcher::stop_workspace_watching,
+34 | |         ])
+   | |_________^ could not find `__specta__fn__format_script` in `shell_tools`
+   |
+   = note: this error originates in the macro `$crate::function::_fn_datatype_internal` which comes from the expansion of the macro `collect_commands` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: cannot find macro `__tauri_command_name_analyze_script` in this scope
+   --> src-tauri\src\main.rs:290:25
+    |
+290 |           .invoke_handler(tauri::generate_handler![
+    |  _________________________^
+291 | |             apply_window_stage,
+292 | |             set_window_background,
+293 | |             load_script,
+...   |
+396 | |             stop_workspace_watching
+397 | |         ]);
+    | |_________^
+    |
+   ::: src-tauri\src\commands\workspace_fs.rs:39:1
+    |
+ 39 |   #[tauri::command]
+    |   ----------------- similarly named macro `__tauri_command_name_save_script` defined here
+    |
+    = note: this error originates in the macro `tauri::generate_handler` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: a macro with a similar name exists
+    |
+290 -         .invoke_handler(tauri::generate_handler![
+291 -             apply_window_stage,
+292 -             set_window_background,
+293 -             load_script,
+294 -             load_image_asset,
+295 -             save_script,
+296 -             analyze_script,
+297 -             format_script,
+298 -             detect_execution_environment,
+299 -             get_wsl_link_status,
+300 -             check_wsl_link_environment,
+301 -             get_wsl_link_agent_artifact_status,
+302 -             install_wsl_link_agent,
+303 -             start_wsl_link_agent,
+304 -             start_wsl_link_supervisor,
+305 -             stop_wsl_link_supervisor,
+306 -             probe_wsl_link_primary,
+307 -             dispatch_script_to_terminal,
+308 -             list_workspace_entries,
+309 -             create_workspace_path,
+310 -             rename_workspace_path,
+311 -             delete_workspace_path,
+312 -             search_workspace,
+313 -             preview_workspace_replacement,
+314 -             apply_workspace_replacement,
+315 -             get_git_repository_status,
+316 -             init_git_repository,
+317 -             list_git_commit_history,
+318 -             list_git_branches,
+319 -             checkout_git_branch,
+320 -             create_git_branch,
+321 -             get_git_file_baseline,
+322 -             get_git_diff_preview,
+323 -             stage_git_paths,
+324 -             unstage_git_paths,
+325 -             discard_git_paths,
+326 -             commit_git_index,
+327 -             list_git_stashes,
+328 -             save_git_stash,
+329 -             apply_git_stash,
+330 -             drop_git_stash,
+331 -             get_git_pull_request_support,
+332 -             ensure_terminal_session,
+333 -             cancel_terminal_run,
+334 -             write_terminal_input,
+335 -             resize_terminal_session,
+336 -             close_terminal_session,
+337 -             agent_sidecar_health,
+338 -             agent_sidecar_chat,
+339 -             agent_sidecar_plan,
+340 -             agent_sidecar_plan_approve,
+341 -             agent_sidecar_plan_query,
+342 -             agent_sidecar_plan_reject,
+343 -             agent_sidecar_plan_finish,
+344 -             agent_sidecar_plan_validate,
+345 -             agent_sidecar_plan_replan,
+346 -             agent_sidecar_execute,
+347 -             agent_sidecar_resolve_approval,
+348 -             agent_sidecar_restart,
+349 -             agent_sidecar_restore_checkpoint,
+350 -             agent_sidecar_warmup,
+351 -             test_ssh_connection,
+352 -             save_ssh_password,
+353 -             get_ssh_password,
+354 -             list_ssh_config_hosts,
+355 -             list_ssh_directory,
+356 -             download_ssh_file,
+357 -             upload_ssh_file,
+358 -             read_ssh_file,
+359 -             write_ssh_file,
+360 -             delete_ssh_path,
+361 -             rename_ssh_path,
+362 -             create_ssh_directory,
+363 -             ai_get_config,
+364 -             ai_save_config,
+365 -             ai_save_credentials,
+366 -             ai_clear_credentials,
+367 -             ai_test_provider,
+368 -             ai_test_provider_config,
+369 -             ai_connect_provider,
+370 -             ai_generate_conversation_title,
+371 -             ai_get_suggestion_pool_cache,
+372 -             ai_generate_suggestion_pool,
+373 -             ai_chat_stream,
+374 -             ai_cancel,
+375 -             ai_inline_complete,
+376 -             ai_code_action,
+377 -             ai_agent_classify_task,
+378 -             ai_agent_set_network_permission,
+379 -             ai_web_search,
+380 -             ai_web_fetch,
+381 -             ai_propose_patch,
+382 -             ai_apply_patch,
+383 -             ai_edit_get_auth_level,
+384 -             ai_edit_set_auth_level,
+385 -             ai_edit_list_timeline,
+386 -             ai_edit_get_diff,
+387 -             ai_edit_create_snapshot,
+388 -             ai_edit_restore_snapshot,
+389 -             ai_edit_undo_operation,
+390 -             ai_edit_revert_file,
+391 -             ai_edit_revert_hunk,
+392 -             ai_edit_revert_task,
+393 -             ai_edit_set_pin,
+394 -             lsp_start, lsp_stop, lsp_did_open, lsp_did_change, lsp_did_close, lsp_completion, lsp_hover,
+395 -             start_workspace_watching,
+396 -             stop_workspace_watching
+397 -         ]);
+290 +         .invoke_handler(__tauri_command_name_save_script);
+    |
+
+error: cannot find macro `__cmd__analyze_script` in this scope
+   --> src-tauri\src\main.rs:296:13
+    |
+296 |             analyze_script,
+    |             ^^^^^^^^^^^^^^
+    |
+   ::: src-tauri\src\commands\workspace_fs.rs:39:1
+    |
+ 39 | #[tauri::command]
+    | ----------------- similarly named macro `__cmd__save_script` defined here
+    |
+help: a macro with a similar name exists
+    |
+296 -             analyze_script,
+296 +             __cmd__save_script,
+    |
+
+error: cannot find macro `__tauri_command_name_format_script` in this scope
+   --> src-tauri\src\main.rs:290:25
+    |
+290 |           .invoke_handler(tauri::generate_handler![
+    |  _________________________^
+291 | |             apply_window_stage,
+292 | |             set_window_background,
+293 | |             load_script,
+...   |
+396 | |             stop_workspace_watching
+397 | |         ]);
+    | |_________^
+    |
+   ::: src-tauri\src\commands\workspace_fs.rs:15:1
+    |
+ 15 |   #[tauri::command]
+    |   ----------------- similarly named macro `__tauri_command_name_load_script` defined here
+    |
+    = note: this error originates in the macro `tauri::generate_handler` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: a macro with a similar name exists
+    |
+290 -         .invoke_handler(tauri::generate_handler![
+291 -             apply_window_stage,
+292 -             set_window_background,
+293 -             load_script,
+294 -             load_image_asset,
+295 -             save_script,
+296 -             analyze_script,
+297 -             format_script,
+298 -             detect_execution_environment,
+299 -             get_wsl_link_status,
+300 -             check_wsl_link_environment,
+301 -             get_wsl_link_agent_artifact_status,
+302 -             install_wsl_link_agent,
+303 -             start_wsl_link_agent,
+304 -             start_wsl_link_supervisor,
+305 -             stop_wsl_link_supervisor,
+306 -             probe_wsl_link_primary,
+307 -             dispatch_script_to_terminal,
+308 -             list_workspace_entries,
+309 -             create_workspace_path,
+310 -             rename_workspace_path,
+311 -             delete_workspace_path,
+312 -             search_workspace,
+313 -             preview_workspace_replacement,
+314 -             apply_workspace_replacement,
+315 -             get_git_repository_status,
+316 -             init_git_repository,
+317 -             list_git_commit_history,
+318 -             list_git_branches,
+319 -             checkout_git_branch,
+320 -             create_git_branch,
+321 -             get_git_file_baseline,
+322 -             get_git_diff_preview,
+323 -             stage_git_paths,
+324 -             unstage_git_paths,
+325 -             discard_git_paths,
+326 -             commit_git_index,
+327 -             list_git_stashes,
+328 -             save_git_stash,
+329 -             apply_git_stash,
+330 -             drop_git_stash,
+331 -             get_git_pull_request_support,
+332 -             ensure_terminal_session,
+333 -             cancel_terminal_run,
+334 -             write_terminal_input,
+335 -             resize_terminal_session,
+336 -             close_terminal_session,
+337 -             agent_sidecar_health,
+338 -             agent_sidecar_chat,
+339 -             agent_sidecar_plan,
+340 -             agent_sidecar_plan_approve,
+341 -             agent_sidecar_plan_query,
+342 -             agent_sidecar_plan_reject,
+343 -             agent_sidecar_plan_finish,
+344 -             agent_sidecar_plan_validate,
+345 -             agent_sidecar_plan_replan,
+346 -             agent_sidecar_execute,
+347 -             agent_sidecar_resolve_approval,
+348 -             agent_sidecar_restart,
+349 -             agent_sidecar_restore_checkpoint,
+350 -             agent_sidecar_warmup,
+351 -             test_ssh_connection,
+352 -             save_ssh_password,
+353 -             get_ssh_password,
+354 -             list_ssh_config_hosts,
+355 -             list_ssh_directory,
+356 -             download_ssh_file,
+357 -             upload_ssh_file,
+358 -             read_ssh_file,
+359 -             write_ssh_file,
+360 -             delete_ssh_path,
+361 -             rename_ssh_path,
+362 -             create_ssh_directory,
+363 -             ai_get_config,
+364 -             ai_save_config,
+365 -             ai_save_credentials,
+366 -             ai_clear_credentials,
+367 -             ai_test_provider,
+368 -             ai_test_provider_config,
+369 -             ai_connect_provider,
+370 -             ai_generate_conversation_title,
+371 -             ai_get_suggestion_pool_cache,
+372 -             ai_generate_suggestion_pool,
+373 -             ai_chat_stream,
+374 -             ai_cancel,
+375 -             ai_inline_complete,
+376 -             ai_code_action,
+377 -             ai_agent_classify_task,
+378 -             ai_agent_set_network_permission,
+379 -             ai_web_search,
+380 -             ai_web_fetch,
+381 -             ai_propose_patch,
+382 -             ai_apply_patch,
+383 -             ai_edit_get_auth_level,
+384 -             ai_edit_set_auth_level,
+385 -             ai_edit_list_timeline,
+386 -             ai_edit_get_diff,
+387 -             ai_edit_create_snapshot,
+388 -             ai_edit_restore_snapshot,
+389 -             ai_edit_undo_operation,
+390 -             ai_edit_revert_file,
+391 -             ai_edit_revert_hunk,
+392 -             ai_edit_revert_task,
+393 -             ai_edit_set_pin,
+394 -             lsp_start, lsp_stop, lsp_did_open, lsp_did_change, lsp_did_close, lsp_completion, lsp_hover,
+395 -             start_workspace_watching,
+396 -             stop_workspace_watching
+397 -         ]);
+290 +         .invoke_handler(__tauri_command_name_load_script);
+    |
+
+error: cannot find macro `__cmd__format_script` in this scope
+   --> src-tauri\src\main.rs:297:13
+    |
+297 |             format_script,
+    |             ^^^^^^^^^^^^^
+    |
+   ::: src-tauri\src\commands\workspace_fs.rs:15:1
+    |
+ 15 | #[tauri::command]
+    | ----------------- similarly named macro `__cmd__load_script` defined here
+    |
+help: a macro with a similar name exists
+    |
+297 -             format_script,
+297 +             __cmd__load_script,
+    |
+
+warning: unused imports: `AnalyzeScriptPayload`, `AnalyzeScriptRequest`, `FormatScriptPayload`, `FormatScriptRequest`, `ScriptDiagnosticPayload`, and `ScriptDiagnosticSeverity`
+  --> src-tauri\src\commands\mod.rs:38:5
+   |
+38 |     AnalyzeScriptPayload, AnalyzeScriptRequest, DocumentEncoding, ExecutionEnvironment,
+   |     ^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^
+39 |     ExecutionOption, ExecutorKind, FormatScriptPayload, FormatScriptRequest, ImageAssetPayload,
+   |                                    ^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^
+40 |     SaveScriptRequest, ScriptDiagnosticPayload, ScriptDiagnosticSeverity, ScriptFilePayload,
+   |                        ^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `create_temp_script`
+  --> src-tauri\src\commands\mod.rs:59:29
+   |
+59 | pub(crate) use script_run::{create_temp_script, find_command_path, line_count};
+   |                             ^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `to_wsl_path`
+  --> src-tauri\src\commands\mod.rs:67:51
+   |
+67 | pub(crate) use terminal::{build_temp_file_suffix, to_wsl_path};
+   |                                                   ^^^^^^^^^^^
+
+warning: unused imports: `LspCompletionItem`, `LspDiagnostic`, and `LspHoverResult`
+  --> src-tauri\src\commands\mod.rs:87:44
+   |
+87 |     lsp_completion, lsp_hover, LspManager, LspDiagnostic, LspCompletionItem, LspHoverResult,
+   |                                            ^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^
+
+For more information about this error, try `rustc --explain E0433`.
+warning: `calamex` (bin "export_tauri_bindings") generated 1 warning
+error: could not compile `calamex` (bin "export_tauri_bindings") due to 10 previous errors; 1 warning emitted
+warning: build failed, waiting for other jobs to finish...
+warning: `calamex` (bin "calamex") generated 4 warnings
+error: could not compile `calamex` (bin "calamex") due to 14 previous errors; 4 warnings emitted

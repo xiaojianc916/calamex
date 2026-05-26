@@ -61,13 +61,9 @@ struct ShellCheckComment {
 
 #[tauri::command]
 #[specta::specta]
-pub async fn analyze_script(payload: AnalyzeScriptRequest) -> Result<AnalyzeScriptPayload, String> {
+pub async fn analyze_script(payload: AnalyzeScriptRequest) -> Result<AnalyzeScriptPayload, String> {    // ShellCheck 诊断已迁移至 bash-language-server (LSP) 管线。
+    // 此命令仅返回方言信息，供 AI 分析上下文使用。
     let normalized_content = normalize_shellcheck_content(&payload.content);
-    let should_check_with_shellcheck = should_run_shellcheck(
-        payload.path.as_deref(),
-        payload.name.as_deref(),
-        &normalized_content,
-    );
     let dialect = detect_shellcheck_dialect(
         payload.path.as_deref(),
         payload.name.as_deref(),
@@ -75,56 +71,14 @@ pub async fn analyze_script(payload: AnalyzeScriptRequest) -> Result<AnalyzeScri
     )
     .to_string();
 
-    if normalized_content.trim().is_empty() {
-        return Ok(AnalyzeScriptPayload {
-            available: true,
-            message: None,
-            dialect,
-            diagnostics: Vec::new(),
-        });
-    }
-
-    if !should_check_with_shellcheck {
-        return Ok(AnalyzeScriptPayload {
-            available: true,
-            message: None,
-            dialect,
-            diagnostics: Vec::new(),
-        });
-    }
-
-    let Some(shellcheck) = resolve_shellcheck_candidate() else {
-        return Ok(AnalyzeScriptPayload {
-            available: false,
-            message: Some("未检测到可用的 ShellCheck，本地实时诊断暂不可用。".into()),
-            dialect,
-            diagnostics: Vec::new(),
-        });
-    };
-
-    let script_name =
-        resolve_analysis_script_name(payload.path.as_deref(), payload.name.as_deref());
-    let temporary_root = env::temp_dir().join("sh-editor-shellcheck");
-    let temporary_script = super::create_temp_script(
-        &temporary_root,
-        &script_name,
-        &normalized_content,
-        super::DocumentEncoding::Utf8,
-    )?;
-    let output = run_shellcheck(&shellcheck, &temporary_script, &dialect).await;
-    let _ = std::fs::remove_file(&temporary_script);
-
-    let output = output?;
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let diagnostics = parse_shellcheck_diagnostics(&stdout)?;
-
     Ok(AnalyzeScriptPayload {
         available: true,
         message: None,
         dialect,
-        diagnostics,
+        diagnostics: Vec::new(),
     })
 }
+
 
 #[tauri::command]
 #[specta::specta]

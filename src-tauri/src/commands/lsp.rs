@@ -262,6 +262,20 @@ async fn dispatch_message(
     }
 }
 
+
+
+// ============================================================================
+// ShellCheck 中文本地化（来自 Messages_zh.json）
+// ============================================================================
+const SHELLCHECK_ZH_JSON: &str = include_str!("../../../resources/Messages_zh.json");
+static ZH_MESSAGES: std::sync::OnceLock<std::collections::HashMap<String, String>> = std::sync::OnceLock::new();
+
+fn zh_message(code: &str) -> Option<&'static str> {
+    let map = ZH_MESSAGES.get_or_init(|| {
+        serde_json::from_str(SHELLCHECK_ZH_JSON.trim_start_matches('﻿')).unwrap_or_default()
+    });
+    map.get(code).map(|s| s.as_str())
+}
 fn handle_diagnostics(app: &AppHandle, uri: &str, diags: &[Value]) {
     let file_path = uri_to_path(uri);
     let lsp_diagnostics: Vec<LspDiagnostic> = diags
@@ -275,7 +289,15 @@ fn handle_diagnostics(app: &AppHandle, uri: &str, diags: &[Value]) {
                 end_line: range["end"]["line"].as_u64().unwrap_or(0) as u32,
                 end_column: range["end"]["character"].as_u64().unwrap_or(0) as u32,
                 severity: d["severity"].as_u64().unwrap_or(2) as u32,
-                message: d["message"].as_str().unwrap_or("").to_string(),
+                message: {
+                    let raw = d["message"].as_str().unwrap_or("");
+                    let code = d["code"].as_str()
+                        .or_else(|| d["code"].get("value").and_then(|v| v.as_str()));
+                    match code.and_then(|c| zh_message(c)) {
+                        Some(zh) => format!("{} · {}", raw, zh),
+                        None => raw.to_string(),
+                    }
+                },
                 code: d["code"]
                     .as_str()
                     .map(String::from)
