@@ -25,6 +25,14 @@ import type { Extension, Text } from '@codemirror/state';
 import { EditorView, hoverTooltip, type Tooltip, type ViewUpdate } from '@codemirror/view';
 import type { UnlistenFn } from '@tauri-apps/api/event';
 
+// 懒加载 Shiki（避免阻塞编辑器初始化）
+type ShikiMod = typeof import('@/services/editor/shiki');
+let shikiModPromise: Promise<ShikiMod> | null = null;
+function getShikiMod(): Promise<ShikiMod> {
+  shikiModPromise ??= import('@/services/editor/shiki');
+  return shikiModPromise;
+}
+
 // ============================================================================
 // Tauri IPC(懒加载,避免 SSR / 测试环境炸)
 // ============================================================================
@@ -80,15 +88,26 @@ interface LspHover {
 // 路径归一化
 // ============================================================================
 /**
- * 统一前后端 filePath 表示:全部用正斜杠。
- * Rust 端 `uri_to_path` 已经返回正斜杠形式(Windows 上 `C:/Users/...`),
- * 这里把可能来自前端的 `C:\Users\...` 也对齐到同一表示,作为 fileHandlers 的 key。
+ * 统一前后端 filePath 表示:去掉 Windows 扩展路径前缀,全部用正斜杠。
  *
- * 注:Windows 文件系统大小写不敏感,但这里**不**做大小写规范化——
- * 编辑器侧打开什么路径就用什么路径,只要前后端一致即可。
+ * Windows 上 Tauri 可能返回 `\\?\D:\workspace\test.sh` 这样的
+ * 扩展路径(extended-length path)。`\\?\` 前缀在 Rust 的
+ * path_to_uri → uri_to_path 往返中会被错误截断,导致前后端路径不一致。
+ * 这里统一剥掉前缀再归一化。
  */
 function normalizePath(p: string): string {
-  return p.replace(/\\/g, '/');
+  // 去掉 Windows 扩展路径前缀 \\?\ 或 \\.\ (含正斜杠变体)
+  let cleaned = p;
+  if (cleaned.startsWith('\\\\?\\UNC\\')) {
+    cleaned = '\\\\' + cleaned.slice('\\\\?\\UNC\\'.length);
+  } else if (cleaned.startsWith('\\\\?\\') || cleaned.startsWith('\\\\.\\')) {
+    cleaned = cleaned.slice('\\\\?\\'.length);
+  } else if (cleaned.startsWith('//?/UNC/')) {
+    cleaned = '//' + cleaned.slice('//?/UNC/'.length);
+  } else if (cleaned.startsWith('//?/') || cleaned.startsWith('//./')) {
+    cleaned = cleaned.slice('//?/'.length);
+  }
+  return cleaned.replace(/\\/g, '/');
 }
 
 // ============================================================================
@@ -127,6 +146,9 @@ class LspBridge {
       this.unlistenDiagnostics = await tauriListen<LspDiagEvent>('lsp-diagnostics', (e) => {
         const key = normalizePath(e.filePath);
         const handlers = this.fileHandlers.get(key);
+        console.log(
+          `[lsp] diagnostics event: filePath=${key} diags=${e.diagnostics.length} handlers=${handlers?.size ?? 0}`,
+        );
         if (!handlers) return;
         for (const h of handlers) {
           try {
@@ -141,11 +163,14 @@ class LspBridge {
       });
 
       try {
+        console.log('[lsp] invoking lsp_start with workspaceRoot:', workspaceRoot);
         await tauriInvoke<void>('lsp_start', { workspaceRoot });
         this.started = true;
+        console.log('[lsp] lsp_start succeeded, started=true');
         this.emitState({ type: 'started' });
         await this.flushPendingOps();
       } catch (err) {
+        console.error('[lsp] lsp_start FAILED:', err);
         this.tearDownListeners();
         throw err;
       }
@@ -198,6 +223,7 @@ class LspBridge {
   /** 注册按文件的诊断 handler,返回解注册函数。同一文件可注册多个 handler。 */
   registerFile(filePath: string, handler: FileHandler): () => void {
     const key = normalizePath(filePath);
+    console.log(`[lsp] registerFile: key=${key}`);
     let set = this.fileHandlers.get(key);
     if (!set) {
       set = new Set();
@@ -215,17 +241,20 @@ class LspBridge {
   async didOpen(filePath: string, content: string, languageId: string): Promise<void> {
     const key = normalizePath(filePath);
     if (this.startPromise) {
+      console.log(`[lsp] didOpen WAITING for start: key=${key}`);
       try {
         await this.startPromise;
       } catch {
+        console.log(`[lsp] didOpen start FAILED, aborting: key=${key}`);
         return;
       }
     }
     if (this.started) {
+      console.log(`[lsp] didOpen SENDING: key=${key} lang=${languageId} len=${content.length}`);
       await tauriInvoke<void>('lsp_did_open', { filePath: key, content, languageId });
       return;
     }
-    // LSP 尚未启动 → 排队,等 start() 成功后重放;同一文件后写覆盖
+    console.log(`[lsp] didOpen QUEUED: key=${key}`);
     this.pendingOps.set(key, { filePath: key, content, languageId });
   }
 
@@ -423,6 +452,174 @@ function lspDiagToPositioned(d: LspDiag, doc: Text): Diagnostic {
 }
 
 // ============================================================================
+// Markdown → HTML 轻量渲染（LSP 文档专用）
+// ============================================================================
+
+/**
+ * 把 bash-language-server 返回的 man-page 风格 markdown 转成 HTML。
+ * 支持 ```lang 代码块（用 Shiki 高亮）、行内代码、段落。
+ * 所有异常内部消化，确保始终返回合法的 HTML 字符串。
+ */
+async function renderLspDoc(md: string): Promise<string> {
+  try {
+    // 统一换行符，避免 Windows \r\n 导致正则不匹配
+    const normalized = md.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
+    // 分离代码块和普通文本
+    const parts: Array<
+      { type: 'code'; lang: string; code: string } | { type: 'text'; text: string }
+    > = [];
+    const codeBlockRe = /```(\S*)\n([\s\S]*?)```/g;
+    let lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = codeBlockRe.exec(normalized)) !== null) {
+      if (match.index > lastIndex) {
+        parts.push({ type: 'text', text: normalized.slice(lastIndex, match.index) });
+      }
+      parts.push({
+        type: 'code',
+        lang: match[1] || 'bash',
+        code: match[2].replace(/\n$/, ''),
+      });
+      lastIndex = match.index + match[0].length;
+    }
+    if (lastIndex < normalized.length) {
+      parts.push({ type: 'text', text: normalized.slice(lastIndex) });
+    }
+
+    // 如果没有任何代码块也没有文本 → 兜底：整个内容按文本段落渲染
+    if (parts.length === 0 && normalized.trim()) {
+      parts.push({ type: 'text', text: normalized });
+    }
+
+    // 渲染各部分
+    const rendered: string[] = [];
+    for (const part of parts) {
+      if (part.type === 'code') {
+        rendered.push(await renderCodeBlock(part.lang, part.code));
+      } else {
+        rendered.push(renderTextBlock(part.text));
+      }
+    }
+    return rendered.join('') || escapeHtml(normalized);
+  } catch (err) {
+    console.warn('[lsp] renderLspDoc failed', err);
+    // 最终兜底：转义后展示纯文本
+    return `<pre class="cm-lsp-code-block"><code>${escapeHtml(md)}</code></pre>`;
+  }
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function renderTextBlock(text: string): string {
+  // 段落分割
+  const paragraphs = text
+    .split(/\n{2,}/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+
+  if (paragraphs.length === 0) return '';
+
+  return paragraphs
+    .map((p) => {
+      // 行内代码
+      const withInlineCode = p.replace(
+        /`([^`]+)`/g,
+        '<code class="cm-lsp-inline-code">$1</code>',
+      );
+      return `<p class="cm-lsp-para">${withInlineCode}</p>`;
+    })
+    .join('');
+}
+
+async function renderCodeBlock(lang: string, code: string): Promise<string> {
+  try {
+    const shiki = await getShikiMod();
+    const hl = shiki.getShikiHighlighter();
+    const shikiLang = lang ? shiki.toShikiLanguage(lang) : null;
+
+    if (hl && shikiLang) {
+      await shiki.ensureShikiLanguageLoaded(shikiLang);
+      const html = hl.codeToHtml(code, { lang: shikiLang, theme: 'dark-plus' });
+      return `<div class="cm-lsp-code-block">${html}</div>`;
+    }
+  } catch {
+    // Shiki 不可用时优雅降级
+  }
+  // 降级：纯文本代码块
+  const escaped = code.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return `<pre class="cm-lsp-code-block"><code>${escaped}</code></pre>`;
+}
+
+// ============================================================================
+// 补全详情面板构建
+// ============================================================================
+
+function lspKindLabel(kind: number | null): string {
+  switch (kind) {
+    case 1: return '文本';
+    case 2: return '方法';
+    case 3: return '函数';
+    case 6: return '变量';
+    case 9: return '模块';
+    case 14: return '关键字';
+    case 15: return '代码片段';
+    default: return kind ? `kind ${kind}` : '';
+  }
+}
+
+function highlightSnippetPlaceholders(snippet: string): string {
+  return snippet.replace(
+    /\$\{(\d+):([^}]+)\}/g,
+    '<span class="cm-lsp-ph">$2</span>',
+  ).replace(
+    /\$(\d+)/g,
+    '<span class="cm-lsp-ph">$$1</span>',
+  );
+}
+
+function buildCompletionInfoPanel(item: LspItem): HTMLElement {
+  const dom = document.createElement('div');
+  dom.className = 'cm-lsp-info';
+
+  const kindLabel = lspKindLabel(item.kind);
+  const snippetHtml = item.insertText
+    ? highlightSnippetPlaceholders(escapeHtml(item.insertText))
+    : '';
+
+  dom.innerHTML = `
+    <div class="cm-lsp-info-head">
+      <span class="cm-lsp-info-title">${escapeHtml(item.label)}</span>
+      ${kindLabel ? `<span class="cm-lsp-info-tag">${kindLabel}</span>` : ''}
+      <span class="cm-lsp-info-tag">bash-language-server</span>
+    </div>
+    ${item.detail ? `<p class="cm-lsp-info-detail">${escapeHtml(item.detail)}</p>` : ''}
+    ${item.documentation ? `<div class="cm-lsp-info-doc"></div>` : ''}
+    ${snippetHtml ? `<pre class="cm-lsp-info-snippet"><code>${snippetHtml}</code></pre>` : ''}
+    <div class="cm-lsp-info-foot">
+      <span>${snippetHtml ? 'Tab 切换占位 · ' : ''}Enter 插入</span>
+    </div>`;
+
+  // 异步渲染 markdown 文档
+  if (item.documentation) {
+    const docEl = dom.querySelector('.cm-lsp-info-doc')!;
+    renderLspDoc(item.documentation).then((html) => {
+      docEl.innerHTML = html;
+    }).catch(() => {});
+  }
+
+  // CM6 补全信息面板有内置 max-width，去掉
+  requestAnimationFrame(() => {
+    const info = dom.closest('.cm-completionInfo') as HTMLElement | null;
+    if (info) info.style.maxWidth = 'none';
+  });
+
+  return dom;
+}
+
+// ============================================================================
 // CM6 Extension 工厂
 // ============================================================================
 export interface LspExtensionOptions {
@@ -528,6 +725,8 @@ export function createLspExtension(opts: LspExtensionOptions): LspExtensionHandl
 
   function onDiagnostics(diags: LspDiag[]): void {
     if (!view || detached) return;
+    // 空诊断不覆盖 ShellCheck 的结果
+    if (diags.length === 0) return;
     const doc = view.state.doc;
     const positioned = diags.map((d) => lspDiagToPositioned(d, doc));
     view.dispatch(setDiagnostics(view.state, positioned));
@@ -553,7 +752,7 @@ export function createLspExtension(opts: LspExtensionOptions): LspExtensionHandl
           (item): Completion => ({
             label: item.label,
             detail: item.detail ?? undefined,
-            info: item.documentation ?? undefined,
+            info: () => buildCompletionInfoPanel(item),
             type: lspKindToType(item.kind),
             apply: item.insertText ?? item.label,
           }),
@@ -574,13 +773,19 @@ export function createLspExtension(opts: LspExtensionOptions): LspExtensionHandl
       const line = v.state.doc.lineAt(pos);
       const result = await lspBridge.hover(filePath, line.number - 1, pos - line.from);
       if (!result?.contents) return null;
+      // 异步渲染 markdown → HTML（Shiki 代码高亮）
+      const html = await renderLspDoc(result.contents);
       return {
         pos,
         create() {
           const dom = document.createElement('div');
           dom.className = 'cm-lsp-hover';
-          // 纯文本兜底;上层可以替换为 markdown 渲染
-          dom.textContent = result.contents;
+          dom.innerHTML = html;
+          // CM6 的 tooltip wrapper 有内置 max-width，去掉
+          requestAnimationFrame(() => {
+            const tooltip = dom.closest('.cm-tooltip') as HTMLElement | null;
+            if (tooltip) tooltip.style.maxWidth = 'none';
+          });
           return { dom };
         },
       };

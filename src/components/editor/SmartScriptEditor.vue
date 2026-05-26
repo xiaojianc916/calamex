@@ -115,14 +115,6 @@ const isShellFile = (path: string | null): boolean => {
 const runAnalysis = async (requestId: number): Promise<void> => {
   const snapshot = captureAnalysisSnapshot();
 
-  // Shell 文件交给 bash-language-server (LSP) 处理，跳过旧的 analyze_script
-  if (isShellFile(snapshot.path)) {
-    if (!isUnmounted && requestId === latestAnalysisRequestId) {
-      clearAnalysis();
-    }
-    return;
-  }
-
   if (!snapshot.content.trim()) {
     if (!isUnmounted && requestId === latestAnalysisRequestId) {
       clearAnalysis();

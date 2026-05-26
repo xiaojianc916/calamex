@@ -402,9 +402,6 @@ const toDiagnosticSeverity = (level: TScriptDiagnosticSeverity): Diagnostic['sev
 const syncDiagnostics = (): void => {
   const view = editorView;
   if (!view) return;
-  // Shell 文件由 LSP 管理诊断，不覆盖
-  const lang = getCurrentLanguage();
-  if (lang === 'Shell') return;
   const diagnostics = analysisState.value.available
     ? analysisState.value.diagnostics.map((item): Diagnostic => {
         const from = lineColumnToOffset(view, item.line, item.column);
@@ -1010,3 +1007,184 @@ defineExpose<IEditorExpose>({
 </script>
 
 <style scoped src="./CodeMirrorScriptEditor.css"></style>
+
+<style>
+/* ================================================================
+   CM6 补全 / hover 全局样式（非 scoped — CM6 弹窗不在组件 DOM 内）
+   ================================================================ */
+
+/* -- 覆盖 CM6 内置 max-width -- */
+.cm-tooltip.cm-tooltip-hover,
+.cm-tooltip-autocomplete {
+  max-width: none;
+}
+.cm-tooltip-autocomplete .cm-completionInfo {
+  max-width: none;
+}
+
+/* -- 补全列表图标 -- */
+.cm-tooltip-autocomplete .cm-completionIcon {
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  opacity: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.cm-tooltip-autocomplete .cm-completionIcon svg {
+  width: 14px;
+  height: 14px;
+}
+.cm-tooltip-autocomplete .cm-completionIcon[data-type="function"],
+.cm-tooltip-autocomplete .cm-completionIcon[data-type="method"] {
+  background: var(--accent-strong);
+  color: #fff;
+}
+.cm-tooltip-autocomplete .cm-completionIcon[data-type="keyword"] {
+  background: color-mix(in srgb, #8b5cf6 88%, white);
+  color: #fff;
+}
+.cm-tooltip-autocomplete .cm-completionIcon[data-type="variable"] {
+  background: color-mix(in srgb, #0d9488 88%, white);
+  color: #fff;
+}
+.cm-tooltip-autocomplete .cm-completionIcon[data-type="text"] {
+  background: transparent;
+  color: var(--text-tertiary);
+  border: 1px dashed var(--text-quaternary);
+}
+
+/* -- 补全列表文字 -- */
+.cm-tooltip-autocomplete .cm-completionLabel {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+}
+.cm-tooltip-autocomplete .cm-completionDetail {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  opacity: 1;
+}
+.cm-tooltip-autocomplete .cm-completionMatchedText {
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+/* -- 选中项 -- */
+.cm-tooltip-autocomplete li[aria-selected] {
+  background: color-mix(in srgb, var(--accent-strong) 10%, transparent);
+}
+
+/* -- 补全详情面板 -- */
+.cm-lsp-info {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  min-width: 240px;
+  max-width: 520px;
+}
+.cm-lsp-info-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.cm-lsp-info-title {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text-primary);
+}
+.cm-lsp-info-tag {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 6px;
+  font-size: 10.5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--surface-soft-strong) 50%, transparent);
+  color: var(--text-tertiary);
+}
+.cm-lsp-info-detail {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+.cm-lsp-info-doc {
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+.cm-lsp-info-doc .cm-lsp-para {
+  margin: 2px 0;
+}
+.cm-lsp-info-doc .cm-lsp-code-block {
+  margin: 6px 0;
+}
+.cm-lsp-info-snippet {
+  margin: 0;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--app-bg) 86%, black);
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow-wrap: anywhere;
+}
+.cm-lsp-ph {
+  background: color-mix(in srgb, var(--accent-strong) 14%, transparent);
+  color: var(--accent-strong);
+  padding: 0 3px;
+  border-radius: 3px;
+}
+.cm-lsp-info-foot {
+  display: flex;
+  justify-content: flex-end;
+  font-size: 11px;
+  color: var(--text-quaternary);
+}
+
+/* -- 补全列表滚动条 -- */
+.cm-tooltip-autocomplete ul::-webkit-scrollbar { width: 8px; }
+.cm-tooltip-autocomplete ul::-webkit-scrollbar-thumb {
+  background: var(--text-quaternary);
+  border-radius: 8px;
+}
+
+/* -- hover 悬停 -- */
+.cm-lsp-hover {
+  padding: 8px 10px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-primary);
+}
+
+/* -- markdown 通用 -- */
+.cm-lsp-para { margin: 4px 0; }
+.cm-lsp-inline-code {
+  background: color-mix(in srgb, var(--surface-soft-strong) 60%, transparent);
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+}
+.cm-lsp-code-block { margin: 6px 0; border-radius: 4px; }
+.cm-lsp-code-block pre {
+  margin: 0;
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--app-bg) 86%, black);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+.cm-lsp-code-block .shiki {
+  padding: 8px 10px;
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+</style>

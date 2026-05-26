@@ -181,15 +181,29 @@ fn percent_decode(s: &str) -> String {
 
 fn path_to_uri(path: &str) -> Result<String, String> {
     let normalized = path.replace('\\', "/");
+    // 去掉 Windows 扩展路径前缀(\\?\ 或 //?/),避免打断后续 trim 逻辑
+    let cleaned = if cfg!(windows) {
+        if let Some(rest) = normalized.strip_prefix("//?/UNC/") {
+            format!("//{}", rest)
+        } else if let Some(rest) = normalized.strip_prefix("//?/") {
+            rest.to_string()
+        } else if let Some(rest) = normalized.strip_prefix("//./") {
+            rest.to_string()
+        } else {
+            normalized
+        }
+    } else {
+        normalized
+    };
+
     if cfg!(windows) {
-        // Windows: file:///C:/path/with%20space
-        let trimmed = normalized.trim_start_matches('/');
+        let trimmed = cleaned.trim_start_matches('/');
         Ok(format!("file:///{}", percent_encode_path(trimmed)))
     } else {
-        let with_slash = if normalized.starts_with('/') {
-            normalized
+        let with_slash = if cleaned.starts_with('/') {
+            cleaned
         } else {
-            format!("/{}", normalized)
+            format!("/{}", cleaned)
         };
         Ok(format!("file://{}", percent_encode_path(&with_slash)))
     }
@@ -695,9 +709,8 @@ pub async fn lsp_start(
             },
             "workspace": { "workspaceFolders": false }
         },
-        // bash-language-server 的合法字段;留空表示用 PATH 上的 shellcheck。
-        // 想显式禁用 shellcheck 改成 "shellcheckPath": "" 即可。
-        "initializationOptions": {}
+        // 显式禁用 shellcheck,使用 bash-language-server 内置语法解析
+        "initializationOptions": { "shellcheckPath": "" }
     });
 
     let _init_resp = send_request(
