@@ -106,6 +106,8 @@ export const useShellWorkbenchView = (onReady: () => void) => {
   const documentBackStack = ref<string[]>([]);
   const documentForwardStack = ref<string[]>([]);
   let isApplyingDocumentNavigation = false;
+  let isSyncingAiPanelWidth = false;
+  let isSyncingTerminalPanelHeight = false;
 
   let nativeCloseRequestedUnlisten: (() => void) | null = null;
   let isUnmounted = false;
@@ -133,6 +135,11 @@ export const useShellWorkbenchView = (onReady: () => void) => {
   watch(
     () => workbench.appStore.aiPanelWidth,
     (nextWidth) => {
+      // 防回环：若当前正在同步中则跳过
+      if (isSyncingAiPanelWidth) {
+        return;
+      }
+      isSyncingAiPanelWidth = true;
       const clampedWidth = clampAiPanelWidth(nextWidth);
       if (clampedWidth !== aiPanelWidth.value) {
         aiPanelWidth.value = clampedWidth;
@@ -141,6 +148,7 @@ export const useShellWorkbenchView = (onReady: () => void) => {
       if (clampedWidth !== nextWidth) {
         workbench.appStore.setAiPanelWidth(clampedWidth);
       }
+      isSyncingAiPanelWidth = false;
     },
     { immediate: true },
   );
@@ -148,6 +156,11 @@ export const useShellWorkbenchView = (onReady: () => void) => {
   watch(
     () => workbench.appStore.terminalPanelHeight,
     (nextHeight) => {
+      // 防回环：若当前正在同步中则跳过
+      if (isSyncingTerminalPanelHeight) {
+        return;
+      }
+      isSyncingTerminalPanelHeight = true;
       const clampedHeight = clampTerminalPanelHeight(nextHeight);
 
       if (clampedHeight !== terminalHeight.value && !isTerminalMaximized.value) {
@@ -161,6 +174,7 @@ export const useShellWorkbenchView = (onReady: () => void) => {
       if (clampedHeight !== nextHeight) {
         workbench.appStore.setTerminalPanelHeight(clampedHeight);
       }
+      isSyncingTerminalPanelHeight = false;
     },
     { immediate: true },
   );

@@ -78,10 +78,6 @@ pub fn now_unix_ms() -> u64 {
         .unwrap_or(0)
 }
 
-pub fn noise_server_proof_payload(trace_id: &str, session_id: &str) -> Vec<u8> {
-    format!("wsl-link:v1:server-proof:{trace_id}:{session_id}").into_bytes()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

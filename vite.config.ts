@@ -1,6 +1,7 @@
 import tailwindcss from '@tailwindcss/vite'
 import vue from '@vitejs/plugin-vue'
 import { fileURLToPath, URL } from 'node:url'
+import { visualizer } from 'rollup-plugin-visualizer'
 import Icons from 'unplugin-icons/vite'
 import { defineConfig } from 'vite'
 
@@ -15,6 +16,13 @@ export default defineConfig(({ command }) => ({
       // 让 Tailwind 的 size-* / text-* class 完全接管,不强加默认样式
       defaultStyle: '',
       defaultClass: '',
+    }),
+    visualizer({
+      filename: 'dist/stats.html',
+      template: 'treemap',   // 还可选 'sunburst' / 'network'
+      gzipSize: true,
+      brotliSize: true,
+      open: true,
     }),
   ],
   clearScreen: false,

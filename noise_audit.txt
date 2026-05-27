@@ -1,0 +1,703 @@
+===== 1. Noise crate =====
+
+鈹溾攢鈹€ snow v0.10.0
+
+
+src-tauri\Cargo.toml:95:snow = "0.10.0"
+
+===== 2. Noise pattern usage =====
+src-tauri/src/wsl_link/runtime.rs:272:            note: "WSL Link 褰撳墠鏀舵暃涓哄崟閫氶亾锛欰F_HYPERV/AF_VSOCK + tonic gRPC + HTTP/2 keepalive + Noise_KKpsk2 鎻℃墜銆傚凡鎺ュ叆 WSL agent銆佺敤鎴锋€佸畨瑁?鍚姩銆佷富閫氶亾鎺㈡祴銆佸悗鍙?supervisor 閲嶈繛 loop銆侀粯璁や氦浜掔粓绔€侀粯璁よ剼鏈墽琛屽拰榛樿 WSL2 smoke銆?,
+src-tauri/src/wsl_link/grpc_transport.rs:10:        build_initiator, into_transport_mode, read_empty_handshake_message,
+src-tauri/src/wsl_link/grpc_transport.rs:256:    let mut transport = into_transport_mode(initiator)?;
+src-tauri/src/wsl_link/agent.rs:18:        build_responder, into_transport_mode, read_empty_handshake_message,
+src-tauri/src/wsl_link/agent.rs:267:        let mut transport = into_transport_mode(responder).map_err(|error| {
+src-tauri/src/wsl_link/agent.rs:687:    let mut command = CommandBuilder::new(AGENT_INTERACTIVE_SHELL);
+src-tauri/src/wsl_link/noise.rs:3:use snow::{Builder, HandshakeState, TransportState};
+src-tauri/src/wsl_link/noise.rs:6:pub const WSL_LINK_NOISE_PATTERN: &str = "Noise_KKpsk2_25519_ChaChaPoly_BLAKE2s";
+src-tauri/src/wsl_link/noise.rs:134:    inner: TransportState,
+src-tauri/src/wsl_link/noise.rs:177:) -> Result<HandshakeState, WslLinkNoiseError> {
+src-tauri/src/wsl_link/noise.rs:185:) -> Result<HandshakeState, WslLinkNoiseError> {
+src-tauri/src/wsl_link/noise.rs:204:        into_transport_mode(initiator)?,
+src-tauri/src/wsl_link/noise.rs:205:        into_transport_mode(responder)?,
+src-tauri/src/wsl_link/noise.rs:210:    state: &mut HandshakeState,
+src-tauri/src/wsl_link/noise.rs:220:    state: &mut HandshakeState,
+src-tauri/src/wsl_link/noise.rs:232:pub fn into_transport_mode(
+src-tauri/src/wsl_link/noise.rs:233:    state: HandshakeState,
+src-tauri/src/wsl_link/noise.rs:236:        inner: state.into_transport_mode()?,
+src-tauri/src/wsl_link/noise.rs:242:    Ok(Builder::new(params))
+===== 3. noise_material.rs =====
+use std::path::Path;
+
+use base64::{engine::general_purpose::STANDARD, Engine as _};
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+use super::{
+    noise::{
+        generate_static_keypair, WslLinkNoiseHandshakeConfig, WslLinkNoiseKeypair, WslLinkNoisePsk,
+        WSL_LINK_NOISE_KEY_BYTES,
+    },
+    types::now_unix_ms,
+};
+
+const MATERIAL_VERSION: u32 = 1;
+
+#[derive(Debug, Error)]
+pub enum WslLinkNoiseMaterialError {
+    #[error("WSL Link Noise 密钥材料版本不支持：{0}。")]
+    UnsupportedVersion(u32),
+    #[error("WSL Link Noise 密钥材料字段 {field} 长度不正确：需要 {expected} 字节，实际 {actual} 字节。")]
+    InvalidKeyLength {
+        field: &'static str,
+        expected: usize,
+        actual: usize,
+    },
+    #[error("WSL Link Noise 密钥材料字段 {field} Base64 解码失败：{message}")]
+    Base64Decode {
+        field: &'static str,
+        message: String,
+    },
+    #[error("WSL Link Noise 密钥材料 JSON 编码失败：{0}")]
+    JsonEncode(#[from] serde_json::Error),
+    #[error("WSL Link Noise agent 配置文件读写失败：{0}")]
+    Io(#[from] std::io::Error),
+    #[error("WSL Link Noise agent 配置文件权限过宽：{mode:o}，需要 0600 或更严格。")]
+    InsecureAgentConfigMode { mode: u32 },
+    #[error("WSL Link Noise 随机数生成失败：{0}")]
+    Random(#[from] getrandom::Error),
+    #[error("WSL Link Noise 密钥生成失败：{0}")]
+    Noise(#[from] super::noise::WslLinkNoiseError),
+    #[error("WSL Link Noise 系统凭据容器不可用：{0}")]
+    Keyring(String),
+    #[error("WSL Link Noise 测试密钥存储锁已损坏。")]
+    StorePoisoned,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct WslLinkDesktopNoiseMaterial {
+    desktop_static: WslLinkNoiseKeypair,
+    agent_static_public: [u8; WSL_LINK_NOISE_KEY_BYTES],
+    psk: WslLinkNoisePsk,
+    created_at_unix_ms: u64,
+}
+
+impl WslLinkDesktopNoiseMaterial {
+    pub fn new(
+        desktop_static: WslLinkNoiseKeypair,
+        agent_static_public: [u8; WSL_LINK_NOISE_KEY_BYTES],
+        psk: WslLinkNoisePsk,
+        created_at_unix_ms: u64,
+    ) -> Self {
+        Self {
+            desktop_static,
+            agent_static_public,
+            psk,
+            created_at_unix_ms,
+        }
+    }
+
+    pub fn initiator_config(&self) -> WslLinkNoiseHandshakeConfig {
+        WslLinkNoiseHandshakeConfig::new(
+            *self.desktop_static.private(),
+            self.agent_static_public,
+            self.psk.clone(),
+        )
+    }
+
+    pub fn desktop_static_public(&self) -> &[u8; WSL_LINK_NOISE_KEY_BYTES] {
+        self.desktop_static.public()
+    }
+
+    pub fn agent_static_public(&self) -> &[u8; WSL_LINK_NOISE_KEY_BYTES] {
+        &self.agent_static_public
+    }
+
+    pub fn created_at_unix_ms(&self) -> u64 {
+        self.created_at_unix_ms
+    }
+}
+
+impl std::fmt::Debug for WslLinkDesktopNoiseMaterial {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // 改动 4: 公钥指纹比 _len 更有诊断价值
+        formatter
+            .debug_struct("WslLinkDesktopNoiseMaterial")
+            .field(
+                "desktop_static_public",
+                &public_key_fingerprint(self.desktop_static.public()),
+            )
+            .field(
+                "agent_static_public",
+                &public_key_fingerprint(&self.agent_static_public),
+            )
+            .field("psk", &"<redacted>")
+            .field("created_at_unix_ms", &self.created_at_unix_ms)
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct WslLinkAgentNoiseMaterial {
+    agent_static: WslLinkNoiseKeypair,
+    desktop_static_public: [u8; WSL_LINK_NOISE_KEY_BYTES],
+    psk: WslLinkNoisePsk,
+    created_at_unix_ms: u64,
+}
+
+impl WslLinkAgentNoiseMaterial {
+    pub fn responder_config(&self) -> WslLinkNoiseHandshakeConfig {
+        WslLinkNoiseHandshakeConfig::new(
+            *self.agent_static.private(),
+            self.desktop_static_public,
+            self.psk.clone(),
+        )
+    }
+
+    pub fn agent_static_public(&self) -> &[u8; WSL_LINK_NOISE_KEY_BYTES] {
+        self.agent_static.public()
+    }
+
+    pub fn desktop_static_public(&self) -> &[u8; WSL_LINK_NOISE_KEY_BYTES] {
+        &self.desktop_static_public
+    }
+
+    pub fn created_at_unix_ms(&self) -> u64 {
+        self.created_at_unix_ms
+    }
+}
+
+impl std::fmt::Debug for WslLinkAgentNoiseMaterial {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("WslLinkAgentNoiseMaterial")
+            .field(
+                "agent_static_public",
+                &public_key_fingerprint(self.agent_static.public()),
+            )
+            .field(
+                "desktop_static_public",
+                &public_key_fingerprint(&self.desktop_static_public),
+            )
+            .field("psk", &"<redacted>")
+            .field("created_at_unix_ms", &self.created_at_unix_ms)
+            .finish()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WslLinkNoisePairingMaterial {
+    pub desktop: WslLinkDesktopNoiseMaterial,
+    pub agent: WslLinkAgentNoiseMaterial,
+}
+
+pub trait WslLinkNoiseMaterialStore {
+    fn load_desktop_material(
+        &self,
+    ) -> Result<Option<WslLinkDesktopNoiseMaterial>, WslLinkNoiseMaterialError>;
+    fn save_desktop_material(
+        &self,
+        material: &WslLinkDesktopNoiseMaterial,
+    ) -> Result<(), WslLinkNoiseMaterialError>;
+    fn delete_desktop_material(&self) -> Result<(), WslLinkNoiseMaterialError>;
+}
+
+// 改动 3: 把分散的 4 处 cfg 收进一个 mod。外部 import 路径不变(pub use 重新导出)。
+#[cfg(not(feature = "wsl-link-agent"))]
+mod keyring_store {
+    use super::{
+        decode_desktop_material, encode_desktop_material, WslLinkDesktopNoiseMaterial,
+        WslLinkNoiseMaterialError, WslLinkNoiseMaterialStore,
+    };
+
+    const KEYRING_SERVICE_NAME: &str = "calamex.wsl-link";
+    const DESKTOP_NOISE_ACCOUNT: &str = "noise.desktop.v1";
+
+    #[derive(Debug, Default, Clone, Copy)]
+    pub struct KeyringWslLinkNoiseMaterialStore;
+
+    impl WslLinkNoiseMaterialStore for KeyringWslLinkNoiseMaterialStore {
+        fn load_desktop_material(
+            &self,
+        ) -> Result<Option<WslLinkDesktopNoiseMaterial>, WslLinkNoiseMaterialError> {
+            let entry = keyring_entry()?;
+            let encoded = match entry.get_password() {
+                Ok(value) => value,
+                Err(keyring::Error::NoEntry) => return Ok(None),
+                Err(error) => {
+                    return Err(WslLinkNoiseMaterialError::Keyring(error.to_string()))
+                }
+            };
+            Ok(Some(decode_desktop_material(&encoded)?))
+        }
+
+        fn save_desktop_material(
+            &self,
+            material: &WslLinkDesktopNoiseMaterial,
+        ) -> Result<(), WslLinkNoiseMaterialError> {
+            keyring_entry()?
+                .set_password(&encode_desktop_material(material)?)
+                .map_err(|error| WslLinkNoiseMaterialError::Keyring(error.to_string()))
+        }
+
+        fn delete_desktop_material(&self) -> Result<(), WslLinkNoiseMaterialError> {
+            let entry = keyring_entry()?;
+            match entry.delete_credential() {
+                Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+                Err(error) => Err(WslLinkNoiseMaterialError::Keyring(error.to_string())),
+            }
+        }
+    }
+
+    fn keyring_entry() -> Result<keyring::Entry, WslLinkNoiseMaterialError> {
+        keyring::Entry::new(KEYRING_SERVICE_NAME, DESKTOP_NOISE_ACCOUNT)
+            .map_err(|error| WslLinkNoiseMaterialError::Keyring(error.to_string()))
+    }
+}
+
+#[cfg(not(feature = "wsl-link-agent"))]
+pub use keyring_store::KeyringWslLinkNoiseMaterialStore;
+
+// 改动 1: 重排序消除两次不必要的 clone。
+//   - desktop_static 原本 .clone() 一次进 desktop material,然后 .public() 取 bytes 进 agent material;
+//     现在先取 public bytes 到栈,再把 desktop_static *move* 进 desktop material。
+//   - psk 同理,最后一次使用 move 而非 clone。
+//   私钥与 PSK 在内存中的拷贝数 -2,归零失败的攻击面相应减少。
+pub fn generate_pairing_material() -> Result<WslLinkNoisePairingMaterial, WslLinkNoiseMaterialError>
+{
+    let desktop_static = generate_static_keypair()?;
+    let agent_static = generate_static_keypair()?;
+    let psk = generate_psk()?;
+    let created_at_unix_ms = now_unix_ms();
+
+    let desktop_static_public = *desktop_static.public();
+    let agent_static_public = *agent_static.public();
+
+    Ok(WslLinkNoisePairingMaterial {
+        desktop: WslLinkDesktopNoiseMaterial::new(
+            desktop_static,
+            agent_static_public,
+            psk.clone(),
+            created_at_unix_ms,
+        ),
+        agent: WslLinkAgentNoiseMaterial {
+            agent_static,
+            desktop_static_public,
+            psk,
+            created_at_unix_ms,
+        },
+    })
+}
+
+pub fn generate_psk() -> Result<WslLinkNoisePsk, WslLinkNoiseMaterialError> {
+    let mut psk = [0_u8; WSL_LINK_NOISE_KEY_BYTES];
+    getrandom::fill(&mut psk)?;
+    Ok(WslLinkNoisePsk::from_bytes(psk))
+}
+
+pub fn encode_agent_material(
+    material: &WslLinkAgentNoiseMaterial,
+) -> Result<String, WslLinkNoiseMaterialError> {
+    Ok(serde_json::to_string(&SerializedAgentNoiseMaterial {
+        version: MATERIAL_VERSION,
+        agent_static_public: encode_key(material.agent_static.public()),
+        agent_static_private: encode_key(material.agent_static.private()),
+        desktop_static_public: encode_key(&material.desktop_static_public),
+        psk: encode_key(material.psk.as_bytes()),
+        created_at_unix_ms: material.created_at_unix_ms,
+    })?)
+}
+
+pub fn decode_agent_material(
+    value: &str,
+) -> Result<WslLinkAgentNoiseMaterial, WslLinkNoiseMaterialError> {
+    let serialized: SerializedAgentNoiseMaterial = serde_json::from_str(value)?;
+    if serialized.version != MATERIAL_VERSION {
+        return Err(WslLinkNoiseMaterialError::UnsupportedVersion(
+            serialized.version,
+        ));
+    }
+    Ok(WslLinkAgentNoiseMaterial {
+        agent_static: WslLinkNoiseKeypair::from_parts(
+            decode_key("agent_static_public", &serialized.agent_static_public)?,
+            decode_key("agent_static_private", &serialized.agent_static_private)?,
+        ),
+        desktop_static_public: decode_key(
+            "desktop_static_public",
+            &serialized.desktop_static_public,
+        )?,
+        psk: WslLinkNoisePsk::from_bytes(decode_key("psk", &serialized.psk)?),
+        created_at_unix_ms: serialized.created_at_unix_ms,
+    })
+}
+
+pub fn load_agent_material_from_file(
+    path: &Path,
+) -> Result<WslLinkAgentNoiseMaterial, WslLinkNoiseMaterialError> {
+    validate_agent_config_permissions(path)?;
+    decode_agent_material(&std::fs::read_to_string(path)?)
+}
+
+#[cfg(unix)]
+fn validate_agent_config_permissions(path: &Path) -> Result<(), WslLinkNoiseMaterialError> {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = std::fs::metadata(path)?.permissions().mode() & 0o777;
+    if mode & 0o077 != 0 {
+        return Err(WslLinkNoiseMaterialError::InsecureAgentConfigMode { mode });
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn validate_agent_config_permissions(_path: &Path) -> Result<(), WslLinkNoiseMaterialError> {
+    Ok(())
+}
+
+fn encode_desktop_material(
+    material: &WslLinkDesktopNoiseMaterial,
+) -> Result<String, WslLinkNoiseMaterialError> {
+    Ok(serde_json::to_string(&SerializedDesktopNoiseMaterial {
+        version: MATERIAL_VERSION,
+        desktop_static_public: encode_key(material.desktop_static.public()),
+        desktop_static_private: encode_key(material.desktop_static.private()),
+        agent_static_public: encode_key(&material.agent_static_public),
+        psk: encode_key(material.psk.as_bytes()),
+        created_at_unix_ms: material.created_at_unix_ms,
+    })?)
+}
+
+fn decode_desktop_material(
+    value: &str,
+) -> Result<WslLinkDesktopNoiseMaterial, WslLinkNoiseMaterialError> {
+    let serialized: SerializedDesktopNoiseMaterial = serde_json::from_str(value)?;
+    if serialized.version != MATERIAL_VERSION {
+        return Err(WslLinkNoiseMaterialError::UnsupportedVersion(
+            serialized.version,
+        ));
+    }
+    Ok(WslLinkDesktopNoiseMaterial::new(
+        WslLinkNoiseKeypair::from_parts(
+            decode_key("desktop_static_public", &serialized.desktop_static_public)?,
+            decode_key("desktop_static_private", &serialized.desktop_static_private)?,
+        ),
+        decode_key("agent_static_public", &serialized.agent_static_public)?,
+        WslLinkNoisePsk::from_bytes(decode_key("psk", &serialized.psk)?),
+        serialized.created_at_unix_ms,
+    ))
+}
+
+fn encode_key(key: &[u8; WSL_LINK_NOISE_KEY_BYTES]) -> String {
+    STANDARD.encode(key)
+}
+
+fn decode_key(
+    field: &'static str,
+    value: &str,
+) -> Result<[u8; WSL_LINK_NOISE_KEY_BYTES], WslLinkNoiseMaterialError> {
+    let decoded =
+        STANDARD
+            .decode(value.trim())
+            .map_err(|error| WslLinkNoiseMaterialError::Base64Decode {
+                field,
+                message: error.to_string(),
+            })?;
+    decoded.try_into().map_err(
+        |bytes: Vec<u8>| WslLinkNoiseMaterialError::InvalidKeyLength {
+            field,
+            expected: WSL_LINK_NOISE_KEY_BYTES,
+            actual: bytes.len(),
+        },
+    )
+}
+
+// 改动 4: 公钥指纹 —— 取 base64 前 12 字符,~72 bits 熵足够识别同一对密钥
+fn public_key_fingerprint(key: &[u8; WSL_LINK_NOISE_KEY_BYTES]) -> String {
+    let encoded = STANDARD.encode(key);
+    // 32 字节 base64 = 44 字符,索引 [..12] 永远安全
+    format!("{}…", &encoded[..12])
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SerializedDesktopNoiseMaterial {
+    version: u32,
+    desktop_static_public: String,
+    desktop_static_private: String,
+    agent_static_public: String,
+    psk: String,
+    created_at_unix_ms: u64,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SerializedAgentNoiseMaterial {
+    version: u32,
+    agent_static_public: String,
+    agent_static_private: String,
+    desktop_static_public: String,
+    psk: String,
+    created_at_unix_ms: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{fs, sync::Mutex};
+
+    use serde_json::Value;
+
+    use super::{
+        super::{noise::complete_handshake, types::now_unix_ms},
+        decode_agent_material, decode_desktop_material, encode_agent_material,
+        encode_desktop_material, generate_pairing_material, load_agent_material_from_file,
+        WslLinkDesktopNoiseMaterial, WslLinkNoiseMaterialError, WslLinkNoiseMaterialStore,
+    };
+
+    #[derive(Default)]
+    struct MemoryNoiseMaterialStore {
+        encoded: Mutex<Option<String>>,
+    }
+
+    impl WslLinkNoiseMaterialStore for MemoryNoiseMaterialStore {
+        fn load_desktop_material(
+            &self,
+        ) -> Result<Option<WslLinkDesktopNoiseMaterial>, WslLinkNoiseMaterialError> {
+            let guard = self
+                .encoded
+                .lock()
+                .map_err(|_| WslLinkNoiseMaterialError::StorePoisoned)?;
+            guard.as_deref().map(decode_desktop_material).transpose()
+        }
+
+        fn save_desktop_material(
+            &self,
+            material: &WslLinkDesktopNoiseMaterial,
+        ) -> Result<(), WslLinkNoiseMaterialError> {
+            let mut guard = self
+                .encoded
+                .lock()
+                .map_err(|_| WslLinkNoiseMaterialError::StorePoisoned)?;
+            *guard = Some(encode_desktop_material(material)?);
+            Ok(())
+        }
+
+        fn delete_desktop_material(&self) -> Result<(), WslLinkNoiseMaterialError> {
+            let mut guard = self
+                .encoded
+                .lock()
+                .map_err(|_| WslLinkNoiseMaterialError::StorePoisoned)?;
+            *guard = None;
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn pairing_material_builds_compatible_noise_configs() {
+        let material = generate_pairing_material().expect("pairing material should generate");
+        let (mut desktop, mut agent) = complete_handshake(
+            &material.desktop.initiator_config(),
+            &material.agent.responder_config(),
+        )
+        .expect("pairing material should complete handshake");
+        let ciphertext = desktop
+            .encrypt_frame(b"hello-agent")
+            .expect("desktop should encrypt");
+        let plaintext = agent
+            .decrypt_frame(&ciphertext)
+            .expect("agent should decrypt");
+        assert_eq!(plaintext, b"hello-agent");
+        assert_eq!(
+            material.desktop.agent_static_public(),
+            material.agent.agent_static_public()
+        );
+        assert_eq!(
+            material.desktop.desktop_static_public(),
+            material.agent.desktop_static_public()
+        );
+    }
+
+    #[test]
+    fn desktop_material_serialization_roundtrips_without_agent_private() {
+        let material = generate_pairing_material().expect("pairing material should generate");
+        let encoded =
+            encode_desktop_material(&material.desktop).expect("material should serialize");
+        let decoded = decode_desktop_material(&encoded).expect("material should deserialize");
+        let json: Value = serde_json::from_str(&encoded).expect("encoded material should be JSON");
+        assert_eq!(decoded, material.desktop);
+        assert!(json.get("agentStaticPrivate").is_none());
+        assert!(json.get("psk").is_some());
+    }
+
+    #[test]
+    fn agent_material_serialization_roundtrips_without_desktop_private() {
+        let material = generate_pairing_material().expect("pairing material should generate");
+        let encoded = encode_agent_material(&material.agent).expect("material should serialize");
+        let decoded = decode_agent_material(&encoded).expect("material should deserialize");
+        let json: Value = serde_json::from_str(&encoded).expect("encoded material should be JSON");
+        assert_eq!(decoded, material.agent);
+        assert!(json.get("desktopStaticPrivate").is_none());
+        assert!(json.get("agentStaticPrivate").is_some());
+        assert!(json.get("psk").is_some());
+    }
+
+    #[test]
+    fn agent_material_loads_from_json_file() {
+        let material = generate_pairing_material().expect("pairing material should generate");
+        let encoded = encode_agent_material(&material.agent).expect("material should serialize");
+        let path = std::env::temp_dir().join(format!(
+            "calamex-wsl-link-agent-material-{}-{}.json",
+            std::process::id(),
+            now_unix_ms()
+        ));
+        fs::write(&path, encoded).expect("test config should write");
+
+        // 改动 2: Unix 默认 umask 通常是 022,导致文件落地为 0644,
+        // validate_agent_config_permissions 会拒绝。这里显式 chmod 0600。
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
+                .expect("test should set 0600");
+        }
+
+        let loaded = load_agent_material_from_file(&path).expect("agent material should load");
+        let _ = fs::remove_file(path);
+        assert_eq!(loaded, material.agent);
+    }
+
+    #[test]
+    fn desktop_material_store_roundtrips_and_deletes() {
+        let store = MemoryNoiseMaterialStore::default();
+        let material = generate_pairing_material().expect("pairing material should generate");
+        store
+            .save_desktop_material(&material.desktop)
+            .expect("save should work");
+        let loaded = store
+            .load_desktop_material()
+            .expect("load should work")
+            .expect("material should exist");
+        store.delete_desktop_material().expect("delete should work");
+        assert_eq!(loaded, material.desktop);
+        assert!(store.load_desktop_material().unwrap().is_none());
+    }
+
+    #[test]
+    fn decoding_rejects_unknown_material_version() {
+        let payload = r#"{
+            "version": 99,
+            "desktopStaticPublic": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+            "desktopStaticPrivate": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+            "agentStaticPublic": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+            "psk": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+            "createdAtUnixMs": 1
+        }"#;
+        let result = decode_desktop_material(payload);
+        assert!(matches!(
+            result,
+            Err(WslLinkNoiseMaterialError::UnsupportedVersion(99))
+        ));
+    }
+}
+===== 4. Server location =====
+D:\com.xiaojianc\my_desktop_app\Cargo.toml
+D:\com.xiaojianc\my_desktop_app\src-tauri\Cargo.toml
+D:\com.xiaojianc\my_desktop_app\vendor\tauri-runtime\Cargo.toml
+D:\com.xiaojianc\my_desktop_app\vendor\tauri-runtime-wry\Cargo.toml
+D:\com.xiaojianc\my_desktop_app\vendor\tauri-utils\Cargo.toml
+D:\com.xiaojianc\my_desktop_app\vendor\wry\Cargo.toml
+src-tauri\src\wsl_link\smoke_tests.rs
+src-tauri\src\wsl_link\quic_fallback.rs
+src-tauri\src\wsl_link\primary_supervisor.rs
+src-tauri\src\wsl_link\grpc_transport.rs
+src-tauri\src\wsl_link\connection_pool.rs
+src-tauri\src\wsl_link\agent.rs
+src-tauri\src\commands\wsl_link.rs
+===== 5. tonic version =====
+
+src-tauri\Cargo.toml:11:tonic-prost-build = "0.14.5"
+src-tauri\Cargo.toml:87:tonic = { version = "0.14.5", features = ["transport"] }
+src-tauri\Cargo.toml:89:tonic-prost = "0.14.5"
+src-tauri\Cargo.toml:90:prost = "0.14.3"
+
+===== 6. Transport =====
+src-tauri/src/wsl_link/grpc_transport.rs:177:pub async fn connect_primary_grpc_channel(
+src-tauri/src/wsl_link/grpc_transport.rs-178-    config: WslLinkTransportConfig,
+src-tauri/src/wsl_link/grpc_transport.rs-179-) -> Result<Channel, WslLinkGrpcTransportError> {
+src-tauri/src/wsl_link/grpc_transport.rs-180-    let mut guard = CACHED_PRIMARY_CHANNEL.lock().await;
+src-tauri/src/wsl_link/grpc_transport.rs-181-    if let Some(channel) = guard.as_ref() {
+src-tauri/src/wsl_link/grpc_transport.rs-182-        return Ok(channel.clone());
+src-tauri/src/wsl_link/grpc_transport.rs-183-    }
+src-tauri/src/wsl_link/grpc_transport.rs-184-    let channel = platform_connect_primary_grpc_channel(config).await?;
+src-tauri/src/wsl_link/grpc_transport.rs-185-    *guard = Some(channel.clone());
+src-tauri/src/wsl_link/grpc_transport.rs-186-    Ok(channel)
+src-tauri/src/wsl_link/grpc_transport.rs-187-}
+src-tauri/src/wsl_link/grpc_transport.rs-188-
+src-tauri/src/wsl_link/grpc_transport.rs-189-/// 娣樻卑缂撳瓨鐨?Channel锛堣繛鎺ュ嚭閿欐椂鐢变笂灞傝皟鐢紝涓嬫鑷姩閲嶈繛锛夈€?src-tauri/src/wsl_link/grpc_transport.rs-190-pub async fn invalidate_primary_grpc_channel() {
+src-tauri/src/wsl_link/grpc_transport.rs-191-    *CACHED_PRIMARY_CHANNEL.lock().await = None;
+src-tauri/src/wsl_link/grpc_transport.rs-192-}
+src-tauri/src/wsl_link/grpc_transport.rs-193-
+src-tauri/src/wsl_link/grpc_transport.rs-194-pub async fn connect_primary_grpc_client(
+src-tauri/src/wsl_link/grpc_transport.rs-195-    config: WslLinkTransportConfig,
+src-tauri/src/wsl_link/grpc_transport.rs-196-) -> Result<WslLinkGrpcClient, WslLinkGrpcTransportError> {
+src-tauri/src/wsl_link/grpc_transport.rs-197-    let channel = connect_primary_grpc_channel(config).await?;
+src-tauri/src/wsl_link/grpc_transport.rs-198-    Ok(WslLinkGrpcClient::new(channel))
+src-tauri/src/wsl_link/grpc_transport.rs-199-}
+src-tauri/src/wsl_link/grpc_transport.rs-200-
+src-tauri/src/wsl_link/grpc_transport.rs-201-pub async fn open_primary_grpc_session(
+src-tauri/src/wsl_link/grpc_transport.rs-202-    config: WslLinkTransportConfig,
+src-tauri/src/wsl_link/grpc_transport.rs-203-    handshake: WslLinkOpenSessionHandshake,
+src-tauri/src/wsl_link/grpc_transport.rs-204-) -> Result<WslLinkGrpcSession, WslLinkGrpcTransportError> {
+src-tauri/src/wsl_link/grpc_transport.rs-205-    let mut client = connect_primary_grpc_client(config).await?;
+src-tauri/src/wsl_link/grpc_transport.rs-206-    open_session_with_grpc_client(&mut client, handshake).await
+src-tauri/src/wsl_link/grpc_transport.rs-207-}
+--
+src-tauri/src/wsl_link/grpc_transport.rs:280:async fn platform_connect_primary_grpc_channel(
+src-tauri/src/wsl_link/grpc_transport.rs-281-    config: WslLinkTransportConfig,
+src-tauri/src/wsl_link/grpc_transport.rs-282-) -> Result<Channel, WslLinkGrpcTransportError> {
+src-tauri/src/wsl_link/grpc_transport.rs-283-    let endpoint = config.grpc_client_endpoint()?;
+src-tauri/src/wsl_link/grpc_transport.rs-284-    let connector_error = windows::new_connector_error_slot();
+src-tauri/src/wsl_link/grpc_transport.rs-285-    let connector = windows::WslLinkHypervGrpcConnector::new(
+src-tauri/src/wsl_link/grpc_transport.rs-286-        config.vsock_grpc_port,
+src-tauri/src/wsl_link/grpc_transport.rs-287-        config.connect_timeout,
+src-tauri/src/wsl_link/grpc_transport.rs-288-        connector_error.clone(),
+src-tauri/src/wsl_link/grpc_transport.rs-289-    );
+src-tauri/src/wsl_link/grpc_transport.rs-290-    endpoint
+src-tauri/src/wsl_link/grpc_transport.rs-291-        .connect_with_connector(connector)
+src-tauri/src/wsl_link/grpc_transport.rs-292-        .await
+src-tauri/src/wsl_link/grpc_transport.rs-293-        .map_err(|error| {
+src-tauri/src/wsl_link/grpc_transport.rs-294-            windows::take_connector_error(&connector_error)
+src-tauri/src/wsl_link/grpc_transport.rs-295-                .map(WslLinkGrpcTransportError::Connector)
+src-tauri/src/wsl_link/grpc_transport.rs-296-                .unwrap_or_else(|| WslLinkGrpcTransportError::Transport(error))
+src-tauri/src/wsl_link/grpc_transport.rs-297-        })
+src-tauri/src/wsl_link/grpc_transport.rs-298-}
+src-tauri/src/wsl_link/grpc_transport.rs-299-
+src-tauri/src/wsl_link/grpc_transport.rs-300-#[cfg(not(windows))]
+src-tauri/src/wsl_link/grpc_transport.rs:301:async fn platform_connect_primary_grpc_channel(
+src-tauri/src/wsl_link/grpc_transport.rs-302-    config: WslLinkTransportConfig,
+src-tauri/src/wsl_link/grpc_transport.rs-303-) -> Result<Channel, WslLinkGrpcTransportError> {
+src-tauri/src/wsl_link/grpc_transport.rs-304-    Err(WslLinkGrpcTransportError::UnsupportedPlatform(
+src-tauri/src/wsl_link/grpc_transport.rs-305-        config.primary_transport(),
+src-tauri/src/wsl_link/grpc_transport.rs-306-    ))
+src-tauri/src/wsl_link/grpc_transport.rs-307-}
+src-tauri/src/wsl_link/grpc_transport.rs-308-
+src-tauri/src/wsl_link/grpc_transport.rs-309-#[cfg(windows)]
+src-tauri/src/wsl_link/grpc_transport.rs-310-mod windows {
+src-tauri/src/wsl_link/grpc_transport.rs-311-    use std::{
+src-tauri/src/wsl_link/grpc_transport.rs-312-        future::Future,
+src-tauri/src/wsl_link/grpc_transport.rs-313-        pin::Pin,
+src-tauri/src/wsl_link/grpc_transport.rs-314-        sync::{Arc, Mutex},
+src-tauri/src/wsl_link/grpc_transport.rs-315-        task::{Context, Poll},
+src-tauri/src/wsl_link/grpc_transport.rs-316-        time::Duration,
+src-tauri/src/wsl_link/grpc_transport.rs-317-    };
+src-tauri/src/wsl_link/grpc_transport.rs-318-
+src-tauri/src/wsl_link/grpc_transport.rs-319-    use hyper_util::rt::TokioIo;
+src-tauri/src/wsl_link/grpc_transport.rs-320-    use tonic::{codegen::Service, transport::Uri};
+src-tauri/src/wsl_link/grpc_transport.rs-321-
+src-tauri/src/wsl_link/grpc_transport.rs-322-    use crate::wsl_link::adapters::windows_hyperv::{
+src-tauri/src/wsl_link/grpc_transport.rs-323-        connect_wsl_vsock_grpc_stream, WslLinkHypervConnectError,
+src-tauri/src/wsl_link/grpc_transport.rs-324-    };
+src-tauri/src/wsl_link/grpc_transport.rs-325-
+src-tauri/src/wsl_link/grpc_transport.rs-326-    pub(super) type ConnectorErrorSlot = Arc<Mutex<Option<String>>>;
+src-tauri/src/wsl_link/grpc_transport.rs-327-
+src-tauri/src/wsl_link/grpc_transport.rs-328-    pub(super) fn new_connector_error_slot() -> ConnectorErrorSlot {
+src-tauri/src/wsl_link/grpc_transport.rs-329-        Arc::new(Mutex::new(None))
+src-tauri/src/wsl_link/grpc_transport.rs-330-    }
+src-tauri/src/wsl_link/grpc_transport.rs-331-

@@ -151,8 +151,9 @@ async fn real_wsl_agent_install_start_and_probe_primary() {
     .await
     .expect("WSL Link interactive terminal 应能打开");
     interactive
-        .write_input("printf '__WSL_LINK_INTERACTIVE_OK__\\n你好\\n'\nexit 9\n".to_string())
-        .expect("interactive input 应能发送");
+    .write_input("printf '**WSL_LINK_INTERACTIVE_OK**\\n你好\\n'\nexit 9\n".to_string())
+    .await
+    .expect("interactive input 应能发送");
 
     timeout(Duration::from_secs(8), async {
         loop {

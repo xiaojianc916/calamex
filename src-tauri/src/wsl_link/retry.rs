@@ -28,6 +28,7 @@ impl BackoffPolicy {
             .with_min_delay(self.min_delay)
             .with_max_delay(self.max_delay)
             .with_factor(self.factor)
+            .with_jitter()
             .with_max_times(usize::MAX)
             .build();
 
@@ -45,13 +46,20 @@ mod tests {
     #[test]
     fn backoff_is_capped() {
         let policy = BackoffPolicy::default();
-        assert!(policy.delay_for_attempt(20) <= policy.max_delay);
+        let delay = policy.delay_for_attempt(20);
+        // 带 jitter 时延迟应在合理范围（正数且不超过 max_delay 的 2x）
+        assert!(delay >= Duration::ZERO);
+        assert!(delay <= policy.max_delay * 2);
     }
 
     #[test]
     fn backoff_is_stable() {
         let policy = BackoffPolicy::default();
-        assert_eq!(policy.delay_for_attempt(3), policy.delay_for_attempt(3));
-        assert_ne!(policy.delay_for_attempt(3), policy.delay_for_attempt(4));
+        // 带 jitter 时不能断言确定性，但各 attempt 返回的延迟应在有效范围
+        for attempt in 0..5 {
+            let delay = policy.delay_for_attempt(attempt);
+            assert!(delay >= Duration::ZERO);
+            assert!(delay <= policy.max_delay * 2);
+        }
     }
 }

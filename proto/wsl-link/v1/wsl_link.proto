@@ -4,9 +4,11 @@ package calamex.wsl_link.v1;
 
 // WSL Link 的跨 VM 协议契约。所有请求必须带 session / seq / ack，
 // 用于断线恢复、进程内恢复和幂等去重。
+//
+// Stage 2 起,Noise 加密下沉到传输层 (NoiseStream),proto 层不再承担
+// 密码学职责。OpenSession 仅负责会话簿记 (session_id / seq / ack)。
 service WslLink {
   rpc OpenSession(OpenSessionRequest) returns (OpenSessionResponse);
-  rpc OpenNoiseSession(OpenNoiseSessionRequest) returns (OpenNoiseSessionResponse);
   rpc ResumeSession(ResumeSessionRequest) returns (ResumeSessionResponse);
   rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
   rpc Duplex(stream ClientFrame) returns (stream ServerFrame);
@@ -29,17 +31,6 @@ message OpenSessionResponse {
   uint64 server_seq = 2;
   uint64 ack_client_seq = 3;
   TransportKind transport = 4;
-}
-
-message OpenNoiseSessionRequest {
-  OpenSessionRequest open_session = 1;
-  bytes handshake_message = 2;
-}
-
-message OpenNoiseSessionResponse {
-  OpenSessionResponse open_session = 1;
-  bytes handshake_message = 2;
-  bytes encrypted_server_proof = 3;
 }
 
 message ResumeSessionRequest {

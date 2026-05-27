@@ -3,6 +3,7 @@ use super::{
     types::{WslLinkTransportKind, DEFAULT_VSOCK_GRPC_PORT},
 };
 
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VsockGrpcEndpoint {
     pub port: u32,
@@ -130,6 +131,8 @@ pub mod windows_hyperv {
         SocketOption(i32),
         #[error("WSL Link AF_HYPERV socket 转 Tokio stream 失败：{0}")]
         TokioStream(#[from] io::Error),
+        #[error("WSL Link Noise 握手失败:{0}")]
+        Handshake(String),
     }
 
     #[derive(Clone, Copy)]

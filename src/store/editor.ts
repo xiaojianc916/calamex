@@ -359,17 +359,29 @@ export const useEditorStore = defineStore(
       () => documentAnalysis.value[document.value.id] ?? createEmptyScriptAnalysis(),
     );
     const activeDiagnostics = computed(() => activeScriptAnalysis.value.diagnostics);
-    const activeDiagnosticErrors = computed(
-      () => activeDiagnostics.value.filter((item) => item.level === 'error').length,
-    );
-    const activeDiagnosticWarnings = computed(
-      () => activeDiagnostics.value.filter((item) => item.level === 'warning').length,
-    );
-    const activeDiagnosticInfos = computed(
-      () =>
-        activeDiagnostics.value.filter((item) => item.level === 'info' || item.level === 'style')
-          .length,
-    );
+    /** 按严重程度分组，单次遍历代替三个独立 computed */
+    const activeDiagnosticCounts = computed(() => {
+      let errors = 0;
+      let warnings = 0;
+      let infos = 0;
+      for (const item of activeDiagnostics.value) {
+        switch (item.level) {
+          case 'error':
+            errors += 1;
+            break;
+          case 'warning':
+            warnings += 1;
+            break;
+          default:
+            infos += 1;
+            break;
+        }
+      }
+      return { errors, warnings, infos };
+    });
+    const activeDiagnosticErrors = computed(() => activeDiagnosticCounts.value.errors);
+    const activeDiagnosticWarnings = computed(() => activeDiagnosticCounts.value.warnings);
+    const activeDiagnosticInfos = computed(() => activeDiagnosticCounts.value.infos);
 
     const canOpenMoreTabs = computed(() => documents.value.length < MAX_OPEN_TABS);
     const hasRunArtifacts = computed(

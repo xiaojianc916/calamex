@@ -39,14 +39,16 @@ pub enum WslLinkTerminalClientError {
 #[derive(Debug)]
 enum WslLinkInteractiveTerminalCommand {
     Input(WslLinkTerminalInteractiveInput),
-    Resize(WslLinkTerminalInteractiveResize),
     Close(WslLinkTerminalInteractiveClose),
 }
 
 #[derive(Debug, Clone)]
 pub struct WslLinkInteractiveTerminalHandle {
     session_id: String,
-    command_tx: mpsc::UnboundedSender<WslLinkInteractiveTerminalCommand>,
+    /// bounded channel for Input / Close（容量 64）
+    command_tx: mpsc::Sender<WslLinkInteractiveTerminalCommand>,
+    /// watch channel for Resize（只保留最新值）
+    resize_tx: tokio::sync::watch::Sender<(u16, u16)>,
 }
 
 impl WslLinkInteractiveTerminalHandle {
@@ -54,7 +56,8 @@ impl WslLinkInteractiveTerminalHandle {
         &self.session_id
     }
 
-    pub fn write_input(&self, data: String) -> Result<(), WslLinkTerminalClientError> {
+    pub async fn write_input(&self, data: String) -> Result<(), WslLinkTerminalClientError> {
+        // send().await 保证背压：通道满时阻塞等待，绝不静默丢字符
         self.command_tx
             .send(WslLinkInteractiveTerminalCommand::Input(
                 WslLinkTerminalInteractiveInput {
@@ -62,24 +65,20 @@ impl WslLinkInteractiveTerminalHandle {
                     data,
                 },
             ))
+            .await
             .map_err(|_| WslLinkTerminalClientError::CommandChannelClosed)
     }
 
     pub fn resize(&self, cols: u16, rows: u16) -> Result<(), WslLinkTerminalClientError> {
-        self.command_tx
-            .send(WslLinkInteractiveTerminalCommand::Resize(
-                WslLinkTerminalInteractiveResize {
-                    session_id: self.session_id.clone(),
-                    cols,
-                    rows,
-                },
-            ))
-            .map_err(|_| WslLinkTerminalClientError::CommandChannelClosed)
+        // watch: 覆盖旧值，不阻塞，拖拽中间态丢弃是正确行为
+        let _ = self.resize_tx.send((cols, rows));
+        Ok(())
     }
 
     pub fn close(&self) -> Result<(), WslLinkTerminalClientError> {
+        // try_send: close 是 fire-and-forget 信号，通道满说明 task 已跟不上
         self.command_tx
-            .send(WslLinkInteractiveTerminalCommand::Close(
+            .try_send(WslLinkInteractiveTerminalCommand::Close(
                 WslLinkTerminalInteractiveClose {
                     session_id: self.session_id.clone(),
                 },
@@ -202,13 +201,14 @@ where
     .await?;
 
     let (command_tx, mut command_rx) =
-        mpsc::unbounded_channel::<WslLinkInteractiveTerminalCommand>();
+        mpsc::channel::<WslLinkInteractiveTerminalCommand>(64);
+    let (resize_tx, mut resize_rx) = tokio::sync::watch::channel((0u16, 0u16));
     let handle = WslLinkInteractiveTerminalHandle {
         session_id: terminal_session_id,
         command_tx,
+        resize_tx,
     };
 
-    // 改动 3: 删除 task_session_id 死代码 —— 它被 clone 进 task 仅为压 warning,从未被读取。
     tokio::spawn(async move {
         let mut stream = response.into_inner();
         loop {
@@ -222,10 +222,6 @@ where
                             format!("interactive-input-{}-{}", payload.session_id, now_unix_ms()),
                             WslLinkTerminalClientPayload::InteractiveInput(payload),
                         ),
-                        WslLinkInteractiveTerminalCommand::Resize(payload) => (
-                            format!("interactive-resize-{}-{}", payload.session_id, now_unix_ms()),
-                            WslLinkTerminalClientPayload::InteractiveResize(payload),
-                        ),
                         WslLinkInteractiveTerminalCommand::Close(payload) => (
                             format!("interactive-close-{}-{}", payload.session_id, now_unix_ms()),
                             WslLinkTerminalClientPayload::InteractiveClose(payload),
@@ -237,6 +233,33 @@ where
                         &wsl_link_session_id,
                         request_id,
                         payload,
+                    )
+                    .await
+                    .is_err()
+                    {
+                        break;
+                    }
+                }
+                _ = resize_rx.changed() => {
+                    let (cols, rows) = *resize_rx.borrow_and_update();
+                    if cols == 0 && rows == 0 {
+                        continue;
+                    }
+                    let payload = WslLinkTerminalInteractiveResize {
+                        session_id: wsl_link_session_id.clone(),
+                        cols,
+                        rows,
+                    };
+                    let request_id = format!(
+                        "interactive-resize-{}-{}",
+                        payload.session_id, now_unix_ms()
+                    );
+                    if send_terminal_payload_frame(
+                        &mut supervisor,
+                        &frame_tx,
+                        &wsl_link_session_id,
+                        request_id,
+                        WslLinkTerminalClientPayload::InteractiveResize(payload),
                     )
                     .await
                     .is_err()

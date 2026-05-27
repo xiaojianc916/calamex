@@ -1,18 +1,18 @@
+use std::sync::Arc;
+
 use thiserror::Error;
+use tokio::sync::Mutex;
 use tonic::transport::Channel;
 
 use super::{
     config::WslLinkTransportConfig,
-    noise::{
-        build_initiator, into_transport_mode, read_empty_handshake_message,
-        write_empty_handshake_message, WslLinkNoiseError,
-    },
+    noise_handshake::WslLinkNoiseHandshakeError,
     noise_material::{WslLinkDesktopNoiseMaterial, WslLinkNoiseMaterialError},
     protocol::v1::{
         wsl_link_client::WslLinkClient, HeartbeatRequest, HeartbeatResponse,
-        OpenNoiseSessionRequest, OpenSessionRequest, OpenSessionResponse, TransportKind,
+        OpenSessionRequest, OpenSessionResponse, TransportKind,
     },
-    types::{noise_server_proof_payload, WslLinkTransportKind, DEFAULT_PROTOCOL_VERSION},
+    types::{WslLinkTransportKind, DEFAULT_PROTOCOL_VERSION},
 };
 
 pub type WslLinkGrpcClient = WslLinkClient<Channel>;
@@ -23,7 +23,6 @@ pub enum WslLinkGrpcTransportError {
     InvalidOpenSessionRequest(&'static str),
     #[error("WSL Link OpenSession 响应无效：{0}")]
     InvalidOpenSessionResponse(&'static str),
-    // 改动 1: heartbeat 校验失败独立成桶,便于上层按来源分发
     #[error("WSL Link Heartbeat 响应无效：{0}")]
     InvalidHeartbeatResponse(&'static str),
     #[error("WSL Link gRPC 主通道暂不支持当前平台：{0:?}")]
@@ -36,10 +35,10 @@ pub enum WslLinkGrpcTransportError {
     Status(#[from] tonic::Status),
     #[error("WSL Link Noise 密钥材料不可用：{0}")]
     NoiseMaterial(#[from] WslLinkNoiseMaterialError),
+    // Stage 2: 替换原 Noise(WslLinkNoiseError) / InvalidNoiseServerProof。
+    // 握手现在发生在传输层,失败统一走这里。
     #[error("WSL Link Noise 握手失败：{0}")]
-    Noise(#[from] WslLinkNoiseError),
-    #[error("WSL Link Noise server proof 不匹配。")]
-    InvalidNoiseServerProof,
+    Handshake(#[from] WslLinkNoiseHandshakeError),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -147,7 +146,6 @@ impl WslLinkGrpcHeartbeatAck {
     pub fn try_from_response(
         response: HeartbeatResponse,
     ) -> Result<Self, WslLinkGrpcTransportError> {
-        // 改动 1: 错误变体改为 InvalidHeartbeatResponse;message 不再重复 "heartbeat " 前缀。
         if response.session_id.trim().is_empty() {
             return Err(WslLinkGrpcTransportError::InvalidHeartbeatResponse(
                 "session_id 不能为空。",
@@ -167,44 +165,52 @@ impl WslLinkGrpcHeartbeatAck {
     }
 }
 
+/// Stage 2: 缓存的 Channel 内部持有 NoiseStream。material 轮换后
+/// 必须显式 invalidate_primary_grpc_channel(),否则下次 RPC 会用旧 PSK。
+static CACHED_PRIMARY_CHANNEL: std::sync::LazyLock<Arc<Mutex<Option<Channel>>>> =
+    std::sync::LazyLock::new(|| Arc::new(Mutex::new(None)));
+
 pub async fn connect_primary_grpc_channel(
     config: WslLinkTransportConfig,
+    desktop_material: Arc<WslLinkDesktopNoiseMaterial>,
 ) -> Result<Channel, WslLinkGrpcTransportError> {
-    platform_connect_primary_grpc_channel(config).await
+    let mut guard = CACHED_PRIMARY_CHANNEL.lock().await;
+    if let Some(channel) = guard.as_ref() {
+        return Ok(channel.clone());
+    }
+    let channel = platform_connect_primary_grpc_channel(config, desktop_material).await?;
+    *guard = Some(channel.clone());
+    Ok(channel)
+}
+
+pub async fn invalidate_primary_grpc_channel() {
+    *CACHED_PRIMARY_CHANNEL.lock().await = None;
 }
 
 pub async fn connect_primary_grpc_client(
     config: WslLinkTransportConfig,
+    desktop_material: Arc<WslLinkDesktopNoiseMaterial>,
 ) -> Result<WslLinkGrpcClient, WslLinkGrpcTransportError> {
-    let channel = connect_primary_grpc_channel(config).await?;
+    let channel = connect_primary_grpc_channel(config, desktop_material).await?;
     Ok(WslLinkGrpcClient::new(channel))
 }
 
 pub async fn open_primary_grpc_session(
     config: WslLinkTransportConfig,
+    desktop_material: Arc<WslLinkDesktopNoiseMaterial>,
     handshake: WslLinkOpenSessionHandshake,
 ) -> Result<WslLinkGrpcSession, WslLinkGrpcTransportError> {
-    let mut client = connect_primary_grpc_client(config).await?;
+    let mut client = connect_primary_grpc_client(config, desktop_material).await?;
     open_session_with_grpc_client(&mut client, handshake).await
 }
 
-pub async fn open_primary_noise_session(
+pub async fn open_primary_grpc_connection(
     config: WslLinkTransportConfig,
+    desktop_material: Arc<WslLinkDesktopNoiseMaterial>,
     handshake: WslLinkOpenSessionHandshake,
-    desktop_material: &WslLinkDesktopNoiseMaterial,
-) -> Result<WslLinkGrpcSession, WslLinkGrpcTransportError> {
-    let mut client = connect_primary_grpc_client(config).await?;
-    open_noise_session_with_grpc_client(&mut client, handshake, desktop_material).await
-}
-
-pub async fn open_primary_noise_connection(
-    config: WslLinkTransportConfig,
-    handshake: WslLinkOpenSessionHandshake,
-    desktop_material: &WslLinkDesktopNoiseMaterial,
 ) -> Result<WslLinkGrpcConnection, WslLinkGrpcTransportError> {
-    let mut client = connect_primary_grpc_client(config).await?;
-    let session =
-        open_noise_session_with_grpc_client(&mut client, handshake, desktop_material).await?;
+    let mut client = connect_primary_grpc_client(config, desktop_material).await?;
+    let session = open_session_with_grpc_client(&mut client, handshake).await?;
     Ok(WslLinkGrpcConnection { client, session })
 }
 
@@ -219,37 +225,6 @@ pub async fn open_session_with_grpc_client(
     WslLinkGrpcSession::try_from_open_session_response(response)
 }
 
-pub async fn open_noise_session_with_grpc_client(
-    client: &mut WslLinkGrpcClient,
-    handshake: WslLinkOpenSessionHandshake,
-    desktop_material: &WslLinkDesktopNoiseMaterial,
-) -> Result<WslLinkGrpcSession, WslLinkGrpcTransportError> {
-    let trace_id = handshake.trace_id().to_string();
-    let mut initiator = build_initiator(&desktop_material.initiator_config())?;
-    let handshake_message = write_empty_handshake_message(&mut initiator)?;
-    let response = client
-        .open_noise_session(OpenNoiseSessionRequest {
-            open_session: Some(handshake.into_proto()),
-            handshake_message,
-        })
-        .await?
-        .into_inner();
-    read_empty_handshake_message(&mut initiator, &response.handshake_message)?;
-    let mut transport = into_transport_mode(initiator)?;
-    let open_session =
-        response
-            .open_session
-            .ok_or(WslLinkGrpcTransportError::InvalidOpenSessionResponse(
-                "open_session 不能为空。",
-            ))?;
-    let proof = transport.decrypt_frame(&response.encrypted_server_proof)?;
-    let expected = noise_server_proof_payload(&trace_id, &open_session.session_id);
-    if proof != expected {
-        return Err(WslLinkGrpcTransportError::InvalidNoiseServerProof);
-    }
-    WslLinkGrpcSession::try_from_open_session_response(open_session)
-}
-
 pub async fn heartbeat_with_grpc_client(
     client: &mut WslLinkGrpcClient,
     request: HeartbeatRequest,
@@ -261,12 +236,14 @@ pub async fn heartbeat_with_grpc_client(
 #[cfg(windows)]
 async fn platform_connect_primary_grpc_channel(
     config: WslLinkTransportConfig,
+    desktop_material: Arc<WslLinkDesktopNoiseMaterial>,
 ) -> Result<Channel, WslLinkGrpcTransportError> {
     let endpoint = config.grpc_client_endpoint()?;
     let connector_error = windows::new_connector_error_slot();
     let connector = windows::WslLinkHypervGrpcConnector::new(
         config.vsock_grpc_port,
         config.connect_timeout,
+        desktop_material,
         connector_error.clone(),
     );
     endpoint
@@ -282,6 +259,7 @@ async fn platform_connect_primary_grpc_channel(
 #[cfg(not(windows))]
 async fn platform_connect_primary_grpc_channel(
     config: WslLinkTransportConfig,
+    _desktop_material: Arc<WslLinkDesktopNoiseMaterial>,
 ) -> Result<Channel, WslLinkGrpcTransportError> {
     Err(WslLinkGrpcTransportError::UnsupportedPlatform(
         config.primary_transport(),
@@ -301,8 +279,11 @@ mod windows {
     use hyper_util::rt::TokioIo;
     use tonic::{codegen::Service, transport::Uri};
 
-    use crate::wsl_link::adapters::windows_hyperv::{
-        connect_wsl_vsock_grpc_stream, WslLinkHypervConnectError,
+    use crate::wsl_link::{
+        adapters::windows_hyperv::{connect_wsl_vsock_grpc_stream, WslLinkHypervConnectError},
+        noise_handshake::perform_initiator_handshake,
+        noise_material::WslLinkDesktopNoiseMaterial,
+        noise_stream::NoiseStream,
     };
 
     pub(super) type ConnectorErrorSlot = Arc<Mutex<Option<String>>>;
@@ -323,10 +304,12 @@ mod windows {
             .and_then(|mut last_error| last_error.take())
     }
 
-    #[derive(Debug, Clone)]
+    // Clone 是必须的 (tonic 在每个连接 clone connector);Debug 不要,以免泄漏 PSK。
+    #[derive(Clone)]
     pub struct WslLinkHypervGrpcConnector {
         vsock_grpc_port: u32,
         connect_timeout: Duration,
+        desktop_material: Arc<WslLinkDesktopNoiseMaterial>,
         last_error: ConnectorErrorSlot,
     }
 
@@ -334,11 +317,13 @@ mod windows {
         pub fn new(
             vsock_grpc_port: u32,
             connect_timeout: Duration,
+            desktop_material: Arc<WslLinkDesktopNoiseMaterial>,
             last_error: ConnectorErrorSlot,
         ) -> Self {
             Self {
                 vsock_grpc_port,
                 connect_timeout,
+                desktop_material,
                 last_error,
             }
         }
@@ -353,7 +338,7 @@ mod windows {
     }
 
     impl Service<Uri> for WslLinkHypervGrpcConnector {
-        type Response = TokioIo<tokio::net::TcpStream>;
+        type Response = TokioIo<NoiseStream<tokio::net::TcpStream>>;
         type Error = WslLinkHypervConnectError;
         type Future =
             Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send + 'static>>;
@@ -362,23 +347,36 @@ mod windows {
             Poll::Ready(Ok(()))
         }
 
-        // 改动 2: 显式说明为何丢弃 Uri 参数。
         // tonic 的 channel 会按 endpoint URI dispatch,但 AF_HYPERV vsock 连接的目标
         // 完全由 (running WSL2 VM GUID, vsock_grpc_port) 决定 —— host/port/scheme
         // 在 vsock 语义里都无意义。这里的 _request: Uri 仅用于满足
         // tower::Service<Uri> trait 签名,运行时被有意忽略。
+        //
+        // Stage 2 改造:TCP 建立 → Noise initiator 握手 → wrap 成 NoiseStream → 交给 hyper。
+        // 所有 HTTP/2 流量在 vsock 线缆上是密文。
         fn call(&mut self, _request: Uri) -> Self::Future {
             let timeout = self.connect_timeout;
             let vsock_grpc_port = self.vsock_grpc_port;
+            let material = Arc::clone(&self.desktop_material);
             let last_error = self.last_error.clone();
             Box::pin(async move {
-                match connect_wsl_vsock_grpc_stream(vsock_grpc_port, timeout).await {
-                    Ok(stream) => Ok(TokioIo::new(stream)),
+                let stream = match connect_wsl_vsock_grpc_stream(vsock_grpc_port, timeout).await {
+                    Ok(stream) => stream,
                     Err(error) => {
                         record_connector_error(&last_error, error.to_string());
-                        Err(error)
+                        return Err(error);
                     }
-                }
+                };
+                let config = material.initiator_config();
+                let (stream, transport) =
+                    match perform_initiator_handshake(stream, &config).await {
+                        Ok(pair) => pair,
+                        Err(error) => {
+                            record_connector_error(&last_error, error.to_string());
+                            return Err(WslLinkHypervConnectError::Handshake(error.to_string()));
+                        }
+                    };
+                Ok(TokioIo::new(NoiseStream::new(stream, transport)))
             })
         }
     }
@@ -388,6 +386,7 @@ mod windows {
 mod tests {
     #[cfg(not(windows))]
     use super::*;
+
     use crate::wsl_link::protocol::v1::TransportKind;
 
     #[test]
@@ -395,9 +394,7 @@ mod tests {
         let result = super::WslLinkOpenSessionHandshake::new("  ", "trace-1", 0);
         assert!(matches!(
             result,
-            Err(super::WslLinkGrpcTransportError::InvalidOpenSessionRequest(
-                _
-            ))
+            Err(super::WslLinkGrpcTransportError::InvalidOpenSessionRequest(_))
         ));
     }
 
@@ -451,7 +448,6 @@ mod tests {
         ));
     }
 
-    // 改动 1: heartbeat 错误必须使用 InvalidHeartbeatResponse,而不是 InvalidOpenSessionResponse。
     #[test]
     fn heartbeat_response_rejects_empty_session_id() {
         let result = super::WslLinkGrpcHeartbeatAck::try_from_response(
@@ -468,7 +464,6 @@ mod tests {
         ));
     }
 
-    // 改动 1 的补强:server_seq=0 同样进入 heartbeat 错误桶,不再混入 OpenSession。
     #[test]
     fn heartbeat_response_rejects_zero_server_seq_with_heartbeat_variant() {
         let result = super::WslLinkGrpcHeartbeatAck::try_from_response(
@@ -488,9 +483,12 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn windows_connector_keeps_configured_timeout() {
+        let pairing = crate::wsl_link::noise_material::generate_pairing_material()
+            .expect("pairing material should generate");
         let connector = super::windows::WslLinkHypervGrpcConnector::new(
             crate::wsl_link::types::DEFAULT_VSOCK_GRPC_PORT,
             std::time::Duration::from_millis(123),
+            std::sync::Arc::new(pairing.desktop),
             super::windows::new_connector_error_slot(),
         );
         assert_eq!(
@@ -518,7 +516,13 @@ mod tests {
     #[cfg(not(windows))]
     #[tokio::test]
     async fn primary_grpc_channel_reports_unsupported_platform() {
-        let result = connect_primary_grpc_channel(WslLinkTransportConfig::default()).await;
+        let pairing = crate::wsl_link::noise_material::generate_pairing_material()
+            .expect("pairing material should generate");
+        let result = connect_primary_grpc_channel(
+            WslLinkTransportConfig::default(),
+            std::sync::Arc::new(pairing.desktop),
+        )
+        .await;
         assert!(matches!(
             result,
             Err(WslLinkGrpcTransportError::UnsupportedPlatform(

@@ -1,11 +1,11 @@
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use thiserror::Error;
 
 use super::{
     config::WslLinkTransportConfig,
     grpc_transport::{
-        heartbeat_with_grpc_client, open_primary_noise_connection, WslLinkGrpcConnection,
+        heartbeat_with_grpc_client, open_primary_grpc_connection, WslLinkGrpcConnection,
         WslLinkGrpcHeartbeatAck, WslLinkGrpcTransportError, WslLinkOpenSessionHandshake,
     },
     noise_material::WslLinkDesktopNoiseMaterial,
@@ -84,20 +84,27 @@ impl WslLinkPrimarySupervisor {
         WslLinkOpenSessionHandshake::new(self.client_id.clone(), trace_id, self.last_client_seq)
     }
 
-    pub async fn open_noise_connection(
-        &mut self,
-        desktop_material: &WslLinkDesktopNoiseMaterial,
-    ) -> Result<WslLinkGrpcConnection, WslLinkPrimarySupervisorError> {
-        let trace_id = format!("wsl-link-reconnect-{}", now_unix_ms());
-        let handshake = self.build_open_session_handshake(trace_id)?;
-        let connection =
-            open_primary_noise_connection(self.config, handshake, desktop_material).await?;
-        self.last_ack_server_seq = self.last_ack_server_seq.max(connection.session.server_seq);
-        self.last_client_seq = self.last_client_seq.max(connection.session.ack_client_seq);
-        self.reset_reconnect_attempts();
-        Ok(connection)
-    }
-
+    /// Stage 2 起,Noise 已下沉到传输层 (NoiseStream + perform_initiator_handshake)。
+/// 从 supervisor 调用方视角:签名不变,实现细节封装。material 在这里被 wrap 成 Arc,
+/// 由 connector 在 Channel 生命周期内复用同一份密钥;一次性 clone (~128B) 优于
+/// connector 跨连接 invalidate channel 的代价。
+pub async fn open_noise_connection(
+    &mut self,
+    desktop_material: &WslLinkDesktopNoiseMaterial,
+) -> Result<WslLinkGrpcConnection, WslLinkPrimarySupervisorError> {
+    let trace_id = format!("wsl-link-reconnect-{}", now_unix_ms());
+    let handshake = self.build_open_session_handshake(trace_id)?;
+    let connection = open_primary_grpc_connection(
+        self.config,
+        Arc::new(desktop_material.clone()),
+        handshake,
+    )
+    .await?;
+    self.last_ack_server_seq = self.last_ack_server_seq.max(connection.session.server_seq);
+    self.last_client_seq = self.last_client_seq.max(connection.session.ack_client_seq);
+    self.reset_reconnect_attempts();
+    Ok(connection)
+}
     pub async fn heartbeat(
         &mut self,
         connection: &mut WslLinkGrpcConnection,

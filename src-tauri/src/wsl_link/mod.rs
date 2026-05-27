@@ -7,7 +7,7 @@
 // @status: yellow
 // 保留原因：ADR-20260506 的 P0 可靠性核心先于生产传输接入落地。
 // 复活条件：WSL agent、AF_HYPERV / AF_VSOCK、重连和终端切流矩阵完成后移除此豁免。
-// 负责人：xiaojianc
+// 负责人：xiaojianc 
 // 截止日期：2026-06-06
 #![allow(dead_code)]
 
@@ -25,6 +25,8 @@ pub mod grpc_transport;
 #[cfg(not(feature = "wsl-link-agent"))]
 pub mod manager;
 pub mod noise;
+pub mod noise_stream;
+pub mod noise_handshake;
 pub mod noise_material;
 #[cfg(not(feature = "wsl-link-agent"))]
 pub mod primary_supervisor;
@@ -44,3 +46,6 @@ pub mod types;
 
 #[cfg(all(test, windows, not(feature = "wsl-link-agent")))]
 mod smoke_tests;
+
+#[cfg(all(test, not(feature = "wsl-link-agent")))]
+mod e2e_tests;

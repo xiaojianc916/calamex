@@ -420,38 +420,63 @@ fn extract_diag_code(d: &Value) -> Option<String> {
 }
 
 fn handle_diagnostics(app: &AppHandle, uri: &str, diags: &[Value]) {
-    let file_path = uri_to_path(uri);
-    let lsp_diagnostics: Vec<LspDiagnostic> = diags
-        .iter()
-        .map(|d| {
-            let range = &d["range"];
-            let raw = d["message"].as_str().unwrap_or("");
-            let code = extract_diag_code(d);
-            let message = match code.as_deref().and_then(zh_message) {
-                Some(zh) => format!("{raw} · {zh}"),
-                None => raw.to_string(),
-            };
-            LspDiagnostic {
-                file_path: file_path.clone(),
-                line: range["start"]["line"].as_u64().unwrap_or(0) as u32,
-                column: range["start"]["character"].as_u64().unwrap_or(0) as u32,
-                end_line: range["end"]["line"].as_u64().unwrap_or(0) as u32,
-                end_column: range["end"]["character"].as_u64().unwrap_or(0) as u32,
-                // LSP 规范缺省 severity 视作 Error (1)。
-                severity: d["severity"].as_u64().unwrap_or(1) as u32,
-                message,
-                code,
-                source: d["source"].as_str().map(String::from),
-            }
-        })
-        .collect();
+    use std::collections::HashMap;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Mutex;
 
-    let payload = serde_json::json!({
-        "filePath": file_path,
-        "diagnostics": lsp_diagnostics,
-    });
-    if let Err(e) = app.emit("lsp-diagnostics", &payload) {
-        log::warn!("发送 LSP 诊断失败: {e}");
+    static PENDING: std::sync::LazyLock<Mutex<HashMap<String, Vec<Value>>>> =
+        std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+    static FLUSH_SCHEDULED: AtomicBool = AtomicBool::new(false);
+
+    {
+        let mut guard = PENDING.lock().unwrap();
+        guard.insert(uri.to_string(), diags.to_vec());
+    }
+
+    if !FLUSH_SCHEDULED.swap(true, Ordering::AcqRel) {
+        let app = app.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            // 关键：先清标志再 take，防止 take→emit→清标志之间插入的诊断被 stranded
+            let batch = {
+                let mut guard = PENDING.lock().unwrap();
+                FLUSH_SCHEDULED.store(false, Ordering::Release);
+                std::mem::take(&mut *guard)
+            };
+            for (file_uri, file_diags) in batch {
+                let file_path = uri_to_path(&file_uri);
+                let lsp_diagnostics: Vec<LspDiagnostic> = file_diags
+                    .iter()
+                    .map(|d| {
+                        let range = &d["range"];
+                        let raw = d["message"].as_str().unwrap_or("");
+                        let code = extract_diag_code(d);
+                        let message = match code.as_deref().and_then(zh_message) {
+                            Some(zh) => format!("{raw} · {zh}"),
+                            None => raw.to_string(),
+                        };
+                        LspDiagnostic {
+                            file_path: file_path.clone(),
+                            line: range["start"]["line"].as_u64().unwrap_or(0) as u32,
+                            column: range["start"]["character"].as_u64().unwrap_or(0) as u32,
+                            end_line: range["end"]["line"].as_u64().unwrap_or(0) as u32,
+                            end_column: range["end"]["character"].as_u64().unwrap_or(0) as u32,
+                            severity: d["severity"].as_u64().unwrap_or(1) as u32,
+                            message,
+                            code,
+                            source: d["source"].as_str().map(String::from),
+                        }
+                    })
+                    .collect();
+                let payload = serde_json::json!({
+                    "filePath": file_path,
+                    "diagnostics": lsp_diagnostics,
+                });
+                if let Err(e) = app.emit("lsp-diagnostics", &payload) {
+                    log::warn!("发送 LSP 诊断失败: {e}");
+                }
+            }
+        });
     }
 }
 

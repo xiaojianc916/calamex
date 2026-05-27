@@ -14,15 +14,10 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tonic::{Request, Response, Status};
 
 use super::{
-    noise::{
-        build_responder, into_transport_mode, read_empty_handshake_message,
-        write_empty_handshake_message, WslLinkNoiseHandshakeConfig,
-    },
-    noise_material::WslLinkAgentNoiseMaterial,
     protocol::v1::{
         wsl_link_server::WslLink, ClientFrame, HeartbeatRequest, HeartbeatResponse,
-        OpenNoiseSessionRequest, OpenNoiseSessionResponse, OpenSessionRequest, OpenSessionResponse,
-        ResumeSessionRequest, ResumeSessionResponse, ServerFrame, TransportKind,
+        OpenSessionRequest, OpenSessionResponse, ResumeSessionRequest, ResumeSessionResponse,
+        ServerFrame, TransportKind,
     },
     terminal_exec::{
         decode_terminal_client_payload, encode_terminal_server_payload,
@@ -36,7 +31,7 @@ use super::{
         WslLinkTerminalRunScriptRequest, WslLinkTerminalRunStarted, WslLinkTerminalServerPayload,
         WslLinkTerminalSignalProcess, WslLinkUtf8ChunkDecoder,
     },
-    types::{noise_server_proof_payload, now_unix_ms, DEFAULT_PROTOCOL_VERSION},
+    types::{now_unix_ms, DEFAULT_PROTOCOL_VERSION},
 };
 
 type DuplexStream =
@@ -48,7 +43,6 @@ const AGENT_INTERACTIVE_TERM: &str = "xterm-256color";
 const AGENT_INTERACTIVE_COLORTERM: &str = "truecolor";
 const AGENT_INTERACTIVE_LOCALE: &str = "C.UTF-8";
 const AGENT_PROCESS_SIGNAL_COMMAND: &str = "/bin/kill";
-
 const MAX_RESPONSE_CACHE_ENTRIES: usize = 1024;
 
 #[derive(Debug, Clone)]
@@ -166,30 +160,16 @@ impl AgentState {
     }
 }
 
-// 改动 7: 用 std::sync::Mutex 而非 tokio::sync::Mutex —— 持锁时间只覆盖
-//         HashMap 操作,不跨 await,符合 std Mutex 的使用约束。
+// Stage 2 改造:Noise 已下沉到传输层 (见 noise_handshake.rs + agent_runtime.rs),
+// service 不再持有密钥材料,只做应用层会话状态管理。
 #[derive(Clone, Default)]
 pub struct WslLinkAgentService {
     state: Arc<Mutex<AgentState>>,
-    noise_material: Option<Arc<WslLinkAgentNoiseMaterial>>,
 }
 
 impl WslLinkAgentService {
     pub fn new() -> Self {
         Self::default()
-    }
-
-    pub fn with_noise_material(noise_material: WslLinkAgentNoiseMaterial) -> Self {
-        Self {
-            state: Arc::new(Mutex::new(AgentState::default())),
-            noise_material: Some(Arc::new(noise_material)),
-        }
-    }
-
-    pub fn noise_responder_config(&self) -> Option<WslLinkNoiseHandshakeConfig> {
-        self.noise_material
-            .as_ref()
-            .map(|material| material.responder_config())
     }
 
     pub fn handle_client_frame(&self, frame: ClientFrame) -> Result<ServerFrame, Status> {
@@ -210,6 +190,7 @@ impl WslLinkAgentService {
         if request.trace_id.trim().is_empty() {
             return Err(Status::invalid_argument("trace_id 不能为空。"));
         }
+
         let mut state = self
             .state
             .lock()
@@ -233,49 +214,6 @@ impl WslLink for WslLinkAgentService {
         Ok(Response::new(
             self.open_session_response(request.into_inner())?,
         ))
-    }
-
-    async fn open_noise_session(
-        &self,
-        request: Request<OpenNoiseSessionRequest>,
-    ) -> Result<Response<OpenNoiseSessionResponse>, Status> {
-        let request = request.into_inner();
-        let open_request = request
-            .open_session
-            .ok_or_else(|| Status::invalid_argument("open_session 不能为空。"))?;
-        if request.handshake_message.is_empty() {
-            return Err(Status::invalid_argument("handshake_message 不能为空。"));
-        }
-        let config = self
-            .noise_responder_config()
-            .ok_or_else(|| Status::failed_precondition("WSL Link Noise agent 材料未加载。"))?;
-
-        let trace_id = open_request.trace_id.clone();
-        let mut responder = build_responder(&config).map_err(|error| {
-            Status::internal(format!("WSL Link Noise responder 创建失败：{error}"))
-        })?;
-
-        read_empty_handshake_message(&mut responder, &request.handshake_message).map_err(
-            |error| Status::unauthenticated(format!("WSL Link Noise 握手失败：{error}")),
-        )?;
-        let response_message = write_empty_handshake_message(&mut responder).map_err(|error| {
-            Status::unauthenticated(format!("WSL Link Noise 握手失败：{error}"))
-        })?;
-
-        let open_session = self.open_session_response(open_request)?;
-        let proof = noise_server_proof_payload(&trace_id, &open_session.session_id);
-        let mut transport = into_transport_mode(responder).map_err(|error| {
-            Status::unauthenticated(format!("WSL Link Noise 握手失败：{error}"))
-        })?;
-        let encrypted_server_proof = transport
-            .encrypt_frame(&proof)
-            .map_err(|error| Status::internal(format!("WSL Link Noise proof 加密失败：{error}")))?;
-
-        Ok(Response::new(OpenNoiseSessionResponse {
-            open_session: Some(open_session),
-            handshake_message: response_message,
-            encrypted_server_proof,
-        }))
     }
 
     async fn resume_session(
@@ -343,7 +281,6 @@ impl WslLink for WslLinkAgentService {
         let mut inbound = request.into_inner();
         let state = Arc::clone(&self.state);
         let (tx, rx) = tokio::sync::mpsc::channel(16);
-
         tokio::spawn(async move {
             loop {
                 let frame = match inbound.message().await {
@@ -358,9 +295,11 @@ impl WslLink for WslLinkAgentService {
                         break;
                     }
                 };
+
                 if handle_terminal_duplex_frame(&state, frame.clone(), &tx).await {
                     continue;
                 }
+
                 match build_server_frame_with_state(&state, frame) {
                     Some(response) => {
                         if tx.send(response).await.is_err() {
@@ -406,7 +345,6 @@ fn build_server_frame(state: &mut AgentState, frame: ClientFrame) -> Result<Serv
     let Some(session) = state.get_session_mut(&frame.session_id) else {
         return Err(Status::not_found("session 不存在。"));
     };
-
     if let Some(cached) = session
         .response_cache_by_client_seq
         .get(&frame.client_seq)
@@ -419,7 +357,6 @@ fn build_server_frame(state: &mut AgentState, frame: ClientFrame) -> Result<Serv
         response.ack_client_seq = session.ack_client_seq;
         return Ok(response);
     }
-
     session.ack_client_seq(frame.client_seq);
     let server_seq = session.next_server_seq();
     let response = ServerFrame {
@@ -442,7 +379,7 @@ struct TerminalFrameMeta {
     client_seq: u64,
 }
 
-// 改动 2: 把 7 个同构分支收敛进一个宏 —— 每个 handler 返回 Result,失败统一转发到 tx
+// 把 7 个同构分支收敛进一个宏 —— 每个 handler 返回 Result,失败统一转发到 tx
 macro_rules! dispatch_terminal {
     ($handler:expr, $tx:expr) => {{
         if let Err(error) = $handler.await {
@@ -552,7 +489,6 @@ async fn run_terminal_script_frame(
     register_terminal_run_input(state, &request.run_id, input_tx)?;
 
     let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<TerminalProcessEvent>(32);
-
     tokio::spawn(write_process_stdin(
         request.run_id.clone(),
         stdin,
@@ -749,7 +685,6 @@ async fn open_interactive_terminal_frame(
         tx.clone(),
     );
     spawn_interactive_waiter(state, meta, key, request.session_id, child, pty, tx.clone());
-
     Ok(())
 }
 
@@ -878,6 +813,7 @@ async fn signal_process_frame(
         .status()
         .await
         .map_err(|error| Status::internal(format!("发送进程信号失败：{error}")))?;
+
     if !status.success() {
         return Err(Status::internal("发送进程信号失败。"));
     }
@@ -894,8 +830,8 @@ async fn signal_process_frame(
     .await
 }
 
-// 改动 1: 合并 begin_terminal_run_frame + begin_terminal_control_frame —— 各自 request.validate()
-//        提前到调用方调用,这里只做 frame 基础校验 + 幂等占位。
+// 合并 begin_terminal_run_frame + begin_terminal_control_frame —— 各自 request.validate()
+// 提前到调用方调用,这里只做 frame 基础校验 + 幂等占位。
 fn begin_terminal_frame(
     state: &Arc<Mutex<AgentState>>,
     frame: ClientFrame,
@@ -909,7 +845,6 @@ fn begin_terminal_frame(
     if frame.client_seq == 0 {
         return Err(Status::invalid_argument("client_seq 必须从 1 开始。"));
     }
-
     let mut state = state
         .lock()
         .map_err(|_| Status::internal("WSL Link agent 状态锁已损坏。"))?;
@@ -952,7 +887,6 @@ async fn replay_cached_terminal_frames(
             .cloned()
             .unwrap_or_default()
     };
-
     for frame in frames {
         if tx.send(Ok(frame)).await.is_err() {
             return Ok(());
@@ -1113,7 +1047,6 @@ fn spawn_interactive_reader(
         let mut buffer = [0_u8; 16 * 1024];
         let mut decoder = WslLinkUtf8ChunkDecoder::default();
         let mut output = String::new();
-
         loop {
             match reader.read(&mut buffer) {
                 Ok(0) => break,
@@ -1123,7 +1056,7 @@ fn spawn_interactive_reader(
                     if output.is_empty() {
                         continue;
                     }
-                    // 改动 8: 用 std::mem::take 避免每帧 clone 一次 String
+                    // 用 std::mem::take 避免每帧 clone 一次 String
                     let chunk = std::mem::take(&mut output);
                     let request_id = format!("interactive-data-{terminal_session_id}");
                     let sent = send_terminal_event_uncached_blocking(
@@ -1161,7 +1094,6 @@ fn spawn_interactive_reader(
                 }
             }
         }
-
         output.clear();
         decoder.decode_into(&[], &mut output, true);
         if !output.is_empty() {
@@ -1248,7 +1180,6 @@ where
     let mut buffer = [0_u8; 16 * 1024];
     let mut decoder = WslLinkUtf8ChunkDecoder::default();
     let mut output = String::new();
-
     loop {
         match reader.read(&mut buffer).await {
             Ok(0) => break,
@@ -1272,7 +1203,6 @@ where
             }
         }
     }
-
     output.clear();
     decoder.decode_into(&[], &mut output, true);
     if !output.is_empty() {
@@ -1297,7 +1227,7 @@ async fn set_private_file_permissions(path: &str) -> Result<(), Status> {
                 Status::internal(format!("设置 WSL Link 临时脚本权限失败：{error}"))
             })?;
     }
-    // 改动 5: 非 Unix 平台:WSL agent 实际不会跑在这里,显式 no-op 而非 `let _ = path`
+    // 非 Unix 平台:WSL agent 实际不会跑在这里,显式 no-op 而非 `let _ = path`
     #[cfg(not(unix))]
     {
         let _ = path; // suppress unused warning; agent is Linux-only
@@ -1305,7 +1235,7 @@ async fn set_private_file_permissions(path: &str) -> Result<(), Status> {
     Ok(())
 }
 
-// 改动 6: now_unix_ms 不会超过 i64::MAX(到公元 2262 年),保留 saturation 仅作合约文档
+// now_unix_ms 不会超过 i64::MAX(到公元 2262 年),保留 saturation 仅作合约文档
 fn now_unix_ms_i64() -> i64 {
     now_unix_ms().min(i64::MAX as u64) as i64
 }
@@ -1416,13 +1346,5 @@ mod tests {
         let second = build_server_frame(&mut state, frame).expect("second frame should work");
         assert_eq!(second.server_seq, first.server_seq);
         assert_eq!(second.payload, b"payload");
-    }
-
-    #[test]
-    fn service_exposes_noise_responder_config_when_material_is_loaded() {
-        let material = super::super::noise_material::generate_pairing_material()
-            .expect("pairing material should generate");
-        let service = WslLinkAgentService::with_noise_material(material.agent);
-        assert!(service.noise_responder_config().is_some());
     }
 }

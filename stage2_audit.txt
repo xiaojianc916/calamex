@@ -1,0 +1,2251 @@
+===== A. noise.rs FULL =====
+use std::fmt;
+
+use snow::{Builder, HandshakeState, TransportState};
+use thiserror::Error;
+
+pub const WSL_LINK_NOISE_PATTERN: &str = "Noise_KKpsk2_25519_ChaChaPoly_BLAKE2s";
+pub const WSL_LINK_NOISE_PSK_POSITION: u8 = 2;
+pub const WSL_LINK_NOISE_KEY_BYTES: usize = 32;
+pub const WSL_LINK_NOISE_MAX_MESSAGE_BYTES: usize = 65_535;
+pub const WSL_LINK_NOISE_TAG_BYTES: usize = 16;
+pub const WSL_LINK_NOISE_MAX_PLAINTEXT_BYTES: usize =
+    WSL_LINK_NOISE_MAX_MESSAGE_BYTES - WSL_LINK_NOISE_TAG_BYTES;
+
+#[derive(Debug, Error)]
+pub enum WslLinkNoiseError {
+    #[error("WSL Link Noise key 长度不正确：{field} 需要 {expected} 字节，实际 {actual} 字节。")]
+    InvalidKeyLength {
+        field: &'static str,
+        expected: usize,
+        actual: usize,
+    },
+    #[error("WSL Link Noise 消息超过上限：{len} > {max}。")]
+    MessageTooLarge { len: usize, max: usize },
+    #[error("WSL Link Noise 明文超过上限：{len} > {max}。")]
+    PlaintextTooLarge { len: usize, max: usize },
+    #[error("WSL Link Noise 握手不允许携带明文 payload，实际收到 {len} 字节。")]
+    UnexpectedHandshakePayload { len: usize },
+    #[error("WSL Link Noise 协议失败：{0}")]
+    Snow(#[from] snow::Error),
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct WslLinkNoiseKeypair {
+    public: [u8; WSL_LINK_NOISE_KEY_BYTES],
+    private: [u8; WSL_LINK_NOISE_KEY_BYTES],
+}
+
+impl WslLinkNoiseKeypair {
+    pub fn from_parts(
+        public: [u8; WSL_LINK_NOISE_KEY_BYTES],
+        private: [u8; WSL_LINK_NOISE_KEY_BYTES],
+    ) -> Self {
+        Self { public, private }
+    }
+
+    pub fn public(&self) -> &[u8; WSL_LINK_NOISE_KEY_BYTES] {
+        &self.public
+    }
+
+    pub fn private(&self) -> &[u8; WSL_LINK_NOISE_KEY_BYTES] {
+        &self.private
+    }
+}
+
+impl fmt::Debug for WslLinkNoiseKeypair {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // 改动 4: 公钥指纹比 _len 更有诊断价值;私钥严格 redacted
+        formatter
+            .debug_struct("WslLinkNoiseKeypair")
+            .field("public", &public_key_fingerprint(&self.public))
+            .field("private", &"<redacted>")
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct WslLinkNoisePsk([u8; WSL_LINK_NOISE_KEY_BYTES]);
+
+impl WslLinkNoisePsk {
+    pub fn from_bytes(bytes: [u8; WSL_LINK_NOISE_KEY_BYTES]) -> Self {
+        Self(bytes)
+    }
+
+    pub fn as_bytes(&self) -> &[u8; WSL_LINK_NOISE_KEY_BYTES] {
+        &self.0
+    }
+}
+
+impl fmt::Debug for WslLinkNoisePsk {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // 改动 5: PSK 是机密,Debug 不暴露任何属性
+        formatter.write_str("WslLinkNoisePsk(<redacted>)")
+    }
+}
+
+#[derive(Clone)]
+pub struct WslLinkNoiseHandshakeConfig {
+    local_static_private: [u8; WSL_LINK_NOISE_KEY_BYTES],
+    remote_static_public: [u8; WSL_LINK_NOISE_KEY_BYTES],
+    psk: WslLinkNoisePsk,
+}
+
+impl WslLinkNoiseHandshakeConfig {
+    pub fn new(
+        local_static_private: [u8; WSL_LINK_NOISE_KEY_BYTES],
+        remote_static_public: [u8; WSL_LINK_NOISE_KEY_BYTES],
+        psk: WslLinkNoisePsk,
+    ) -> Self {
+        Self {
+            local_static_private,
+            remote_static_public,
+            psk,
+        }
+    }
+
+    pub fn local_static_private(&self) -> &[u8; WSL_LINK_NOISE_KEY_BYTES] {
+        &self.local_static_private
+    }
+
+    pub fn remote_static_public(&self) -> &[u8; WSL_LINK_NOISE_KEY_BYTES] {
+        &self.remote_static_public
+    }
+
+    pub fn psk(&self) -> &WslLinkNoisePsk {
+        &self.psk
+    }
+}
+
+impl fmt::Debug for WslLinkNoiseHandshakeConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("WslLinkNoiseHandshakeConfig")
+            .field("local_static_private", &"<redacted>")
+            .field(
+                "remote_static_public",
+                &public_key_fingerprint(&self.remote_static_public),
+            )
+            .field("psk", &self.psk)
+            .finish()
+    }
+}
+
+pub struct WslLinkNoiseTransport {
+    inner: TransportState,
+}
+
+impl WslLinkNoiseTransport {
+    pub fn encrypt_frame(&mut self, plaintext: &[u8]) -> Result<Vec<u8>, WslLinkNoiseError> {
+        // 先校验 plaintext,错误信息明确指出是明文超限
+        if plaintext.len() > WSL_LINK_NOISE_MAX_PLAINTEXT_BYTES {
+            return Err(WslLinkNoiseError::PlaintextTooLarge {
+                len: plaintext.len(),
+                max: WSL_LINK_NOISE_MAX_PLAINTEXT_BYTES,
+            });
+        }
+        // 总长度防御性再检查一次 —— 理论上由上面那条保证,但保留作为协议合约文档
+        ensure_noise_message_len(
+            plaintext.len().saturating_add(WSL_LINK_NOISE_TAG_BYTES),
+            WSL_LINK_NOISE_MAX_MESSAGE_BYTES,
+        )?;
+
+        let mut ciphertext = vec![0_u8; plaintext.len() + WSL_LINK_NOISE_TAG_BYTES];
+        let len = self.inner.write_message(plaintext, &mut ciphertext)?;
+        ciphertext.truncate(len);
+        Ok(ciphertext)
+    }
+
+    pub fn decrypt_frame(&mut self, ciphertext: &[u8]) -> Result<Vec<u8>, WslLinkNoiseError> {
+        ensure_noise_message_len(ciphertext.len(), WSL_LINK_NOISE_MAX_MESSAGE_BYTES)?;
+        let mut plaintext = vec![0_u8; ciphertext.len()];
+        let len = self.inner.read_message(ciphertext, &mut plaintext)?;
+        plaintext.truncate(len);
+        Ok(plaintext)
+    }
+}
+
+pub fn generate_static_keypair() -> Result<WslLinkNoiseKeypair, WslLinkNoiseError> {
+    let keypair = noise_builder()?.generate_keypair()?;
+    Ok(WslLinkNoiseKeypair {
+        public: vec_to_key_bytes("public", keypair.public)?,
+        private: vec_to_key_bytes("private", keypair.private)?,
+    })
+}
+
+pub fn build_initiator(
+    config: &WslLinkNoiseHandshakeConfig,
+) -> Result<HandshakeState, WslLinkNoiseError> {
+    noise_builder_with_config(config)?
+        .build_initiator()
+        .map_err(Into::into)
+}
+
+pub fn build_responder(
+    config: &WslLinkNoiseHandshakeConfig,
+) -> Result<HandshakeState, WslLinkNoiseError> {
+    noise_builder_with_config(config)?
+        .build_responder()
+        .map_err(Into::into)
+}
+
+pub fn complete_handshake(
+    initiator_config: &WslLinkNoiseHandshakeConfig,
+    responder_config: &WslLinkNoiseHandshakeConfig,
+) -> Result<(WslLinkNoiseTransport, WslLinkNoiseTransport), WslLinkNoiseError> {
+    let mut initiator = build_initiator(initiator_config)?;
+    let mut responder = build_responder(responder_config)?;
+
+    let message = write_empty_handshake_message(&mut initiator)?;
+    read_empty_handshake_message(&mut responder, &message)?;
+    let message = write_empty_handshake_message(&mut responder)?;
+    read_empty_handshake_message(&mut initiator, &message)?;
+
+    Ok((
+        into_transport_mode(initiator)?,
+        into_transport_mode(responder)?,
+    ))
+}
+
+pub fn write_empty_handshake_message(
+    state: &mut HandshakeState,
+) -> Result<Vec<u8>, WslLinkNoiseError> {
+    // 写消息时不知道实际长度,保留 MAX 分配作为安全上界
+    let mut message = vec![0_u8; WSL_LINK_NOISE_MAX_MESSAGE_BYTES];
+    let message_len = state.write_message(&[], &mut message)?;
+    message.truncate(message_len);
+    Ok(message)
+}
+
+pub fn read_empty_handshake_message(
+    state: &mut HandshakeState,
+    message: &[u8],
+) -> Result<(), WslLinkNoiseError> {
+    ensure_noise_message_len(message.len(), WSL_LINK_NOISE_MAX_MESSAGE_BYTES)?;
+    let mut payload = vec![0_u8; message.len()];
+    let payload_len = state.read_message(message, &mut payload)?;
+    if payload_len != 0 {
+        return Err(WslLinkNoiseError::UnexpectedHandshakePayload { len: payload_len });
+    }
+    Ok(())
+}
+
+pub fn into_transport_mode(
+    state: HandshakeState,
+) -> Result<WslLinkNoiseTransport, WslLinkNoiseError> {
+    Ok(WslLinkNoiseTransport {
+        inner: state.into_transport_mode()?,
+    })
+}
+
+fn noise_builder() -> Result<Builder<'static>, WslLinkNoiseError> {
+    let params = WSL_LINK_NOISE_PATTERN.parse()?;
+    Ok(Builder::new(params))
+}
+
+fn noise_builder_with_config<'a>(
+    config: &'a WslLinkNoiseHandshakeConfig,
+) -> Result<Builder<'a>, WslLinkNoiseError> {
+    Ok(noise_builder()?
+        .local_private_key(config.local_static_private())?
+        .remote_public_key(config.remote_static_public())?
+        .psk(WSL_LINK_NOISE_PSK_POSITION, config.psk().as_bytes())?)
+}
+
+fn ensure_noise_message_len(len: usize, max: usize) -> Result<(), WslLinkNoiseError> {
+    if len > max {
+        return Err(WslLinkNoiseError::MessageTooLarge { len, max });
+    }
+    Ok(())
+}
+
+fn vec_to_key_bytes(
+    field: &'static str,
+    bytes: Vec<u8>,
+) -> Result<[u8; WSL_LINK_NOISE_KEY_BYTES], WslLinkNoiseError> {
+    bytes
+        .try_into()
+        .map_err(|bytes: Vec<u8>| WslLinkNoiseError::InvalidKeyLength {
+            field,
+            expected: WSL_LINK_NOISE_KEY_BYTES,
+            actual: bytes.len(),
+        })
+}
+
+// 公钥指纹:取前 6 字节 hex = 48 bits 熵,够识别一对密钥;不引入 base64/hex crate 依赖
+fn public_key_fingerprint(key: &[u8; WSL_LINK_NOISE_KEY_BYTES]) -> String {
+    format!(
+        "{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}…",
+        key[0], key[1], key[2], key[3], key[4], key[5]
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn psk(seed: u8) -> WslLinkNoisePsk {
+        WslLinkNoisePsk::from_bytes([seed; WSL_LINK_NOISE_KEY_BYTES])
+    }
+
+    fn configs(psk: WslLinkNoisePsk) -> (WslLinkNoiseHandshakeConfig, WslLinkNoiseHandshakeConfig) {
+        let desktop = generate_static_keypair().expect("desktop keypair should generate");
+        let agent = generate_static_keypair().expect("agent keypair should generate");
+        (
+            WslLinkNoiseHandshakeConfig::new(*desktop.private(), *agent.public(), psk.clone()),
+            WslLinkNoiseHandshakeConfig::new(*agent.private(), *desktop.public(), psk),
+        )
+    }
+
+    fn configs_with_different_psks() -> (WslLinkNoiseHandshakeConfig, WslLinkNoiseHandshakeConfig) {
+        let desktop = generate_static_keypair().expect("desktop keypair should generate");
+        let agent = generate_static_keypair().expect("agent keypair should generate");
+        (
+            WslLinkNoiseHandshakeConfig::new(*desktop.private(), *agent.public(), psk(1)),
+            WslLinkNoiseHandshakeConfig::new(*agent.private(), *desktop.public(), psk(2)),
+        )
+    }
+
+    #[test]
+    fn requested_noise_pattern_is_supported() {
+        let params = WSL_LINK_NOISE_PATTERN
+            .parse::<snow::params::NoiseParams>()
+            .expect("requested Noise pattern should parse");
+        assert_eq!(params.name, WSL_LINK_NOISE_PATTERN);
+    }
+
+    #[test]
+    fn generated_static_keypair_has_expected_key_lengths() {
+        let keypair = generate_static_keypair().expect("keypair should generate");
+        assert_eq!(keypair.public().len(), WSL_LINK_NOISE_KEY_BYTES);
+        assert_eq!(keypair.private().len(), WSL_LINK_NOISE_KEY_BYTES);
+    }
+
+    #[test]
+    fn kk_psk2_handshake_encrypts_bidirectional_frames() {
+        let (initiator_config, responder_config) = configs(psk(7));
+        let (mut initiator, mut responder) =
+            complete_handshake(&initiator_config, &responder_config)
+                .expect("handshake should complete");
+
+        let client_ciphertext = initiator
+            .encrypt_frame(b"client-frame")
+            .expect("client frame should encrypt");
+        let client_plaintext = responder
+            .decrypt_frame(&client_ciphertext)
+            .expect("agent should decrypt client frame");
+        let server_ciphertext = responder
+            .encrypt_frame(b"server-frame")
+            .expect("server frame should encrypt");
+        let server_plaintext = initiator
+            .decrypt_frame(&server_ciphertext)
+            .expect("desktop should decrypt server frame");
+
+        assert_ne!(client_ciphertext, b"client-frame");
+        assert_eq!(client_plaintext, b"client-frame");
+        assert_eq!(server_plaintext, b"server-frame");
+    }
+
+    #[test]
+    fn wrong_psk_rejects_handshake() {
+        let (initiator_config, responder_config) = configs_with_different_psks();
+        let result = complete_handshake(&initiator_config, &responder_config);
+        assert!(matches!(result, Err(WslLinkNoiseError::Snow(_))));
+    }
+
+    #[test]
+    fn wrong_remote_static_rejects_handshake() {
+        let (initiator_config, responder_config) = configs(psk(3));
+        let wrong_remote = generate_static_keypair().expect("wrong keypair should generate");
+        let bad_initiator_config = WslLinkNoiseHandshakeConfig::new(
+            *initiator_config.local_static_private(),
+            *wrong_remote.public(),
+            psk(3),
+        );
+        let result = complete_handshake(&bad_initiator_config, &responder_config);
+        assert!(matches!(result, Err(WslLinkNoiseError::Snow(_))));
+    }
+
+    #[test]
+    fn oversized_plaintext_is_rejected_before_encryption() {
+        let (initiator_config, responder_config) = configs(psk(4));
+        let (mut initiator, _) = complete_handshake(&initiator_config, &responder_config)
+            .expect("handshake should complete");
+
+        let payload = vec![0_u8; WSL_LINK_NOISE_MAX_PLAINTEXT_BYTES + 1];
+        let result = initiator.encrypt_frame(&payload);
+        assert!(matches!(
+            result,
+            Err(WslLinkNoiseError::PlaintextTooLarge { .. })
+        ));
+    }
+}
+===== B. grpc_transport.rs FULL =====
+use std::sync::Arc;
+
+use thiserror::Error;
+use tokio::sync::Mutex;
+use tonic::transport::Channel;
+
+use super::{
+    config::WslLinkTransportConfig,
+    noise::{
+        build_initiator, into_transport_mode, read_empty_handshake_message,
+        write_empty_handshake_message, WslLinkNoiseError,
+    },
+    noise_material::{WslLinkDesktopNoiseMaterial, WslLinkNoiseMaterialError},
+    protocol::v1::{
+        wsl_link_client::WslLinkClient, HeartbeatRequest, HeartbeatResponse,
+        OpenNoiseSessionRequest, OpenSessionRequest, OpenSessionResponse, TransportKind,
+    },
+    types::{noise_server_proof_payload, WslLinkTransportKind, DEFAULT_PROTOCOL_VERSION},
+};
+
+pub type WslLinkGrpcClient = WslLinkClient<Channel>;
+
+#[derive(Debug, Error)]
+pub enum WslLinkGrpcTransportError {
+    #[error("WSL Link OpenSession 请求无效：{0}")]
+    InvalidOpenSessionRequest(&'static str),
+    #[error("WSL Link OpenSession 响应无效：{0}")]
+    InvalidOpenSessionResponse(&'static str),
+    // 改动 1: heartbeat 校验失败独立成桶,便于上层按来源分发
+    #[error("WSL Link Heartbeat 响应无效：{0}")]
+    InvalidHeartbeatResponse(&'static str),
+    #[error("WSL Link gRPC 主通道暂不支持当前平台：{0:?}")]
+    UnsupportedPlatform(WslLinkTransportKind),
+    #[error("WSL Link gRPC 主通道建立失败：{0}")]
+    Transport(#[from] tonic::transport::Error),
+    #[error("WSL Link gRPC 主通道连接器失败：{0}")]
+    Connector(String),
+    #[error("WSL Link OpenSession RPC 失败：{0}")]
+    Status(#[from] tonic::Status),
+    #[error("WSL Link Noise 密钥材料不可用：{0}")]
+    NoiseMaterial(#[from] WslLinkNoiseMaterialError),
+    #[error("WSL Link Noise 握手失败：{0}")]
+    Noise(#[from] WslLinkNoiseError),
+    #[error("WSL Link Noise server proof 不匹配。")]
+    InvalidNoiseServerProof,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WslLinkOpenSessionHandshake {
+    client_id: String,
+    trace_id: String,
+    last_client_seq: u64,
+}
+
+impl WslLinkOpenSessionHandshake {
+    pub fn new(
+        client_id: impl Into<String>,
+        trace_id: impl Into<String>,
+        last_client_seq: u64,
+    ) -> Result<Self, WslLinkGrpcTransportError> {
+        let client_id = client_id.into();
+        if client_id.trim().is_empty() {
+            return Err(WslLinkGrpcTransportError::InvalidOpenSessionRequest(
+                "client_id 不能为空。",
+            ));
+        }
+        let trace_id = trace_id.into();
+        if trace_id.trim().is_empty() {
+            return Err(WslLinkGrpcTransportError::InvalidOpenSessionRequest(
+                "trace_id 不能为空。",
+            ));
+        }
+        Ok(Self {
+            client_id,
+            trace_id,
+            last_client_seq,
+        })
+    }
+
+    pub fn into_proto(self) -> OpenSessionRequest {
+        OpenSessionRequest {
+            client_id: self.client_id,
+            protocol_version: DEFAULT_PROTOCOL_VERSION.to_string(),
+            last_client_seq: self.last_client_seq,
+            trace_id: self.trace_id,
+        }
+    }
+
+    pub fn trace_id(&self) -> &str {
+        &self.trace_id
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WslLinkGrpcSession {
+    pub session_id: String,
+    pub server_seq: u64,
+    pub ack_client_seq: u64,
+    pub transport: WslLinkTransportKind,
+}
+
+impl WslLinkGrpcSession {
+    pub fn try_from_open_session_response(
+        response: OpenSessionResponse,
+    ) -> Result<Self, WslLinkGrpcTransportError> {
+        if response.session_id.trim().is_empty() {
+            return Err(WslLinkGrpcTransportError::InvalidOpenSessionResponse(
+                "session_id 不能为空。",
+            ));
+        }
+        if response.server_seq == 0 {
+            return Err(WslLinkGrpcTransportError::InvalidOpenSessionResponse(
+                "server_seq 必须大于 0。",
+            ));
+        }
+        let transport = match TransportKind::try_from(response.transport)
+            .unwrap_or(TransportKind::Unspecified)
+        {
+            TransportKind::VsockGrpc => WslLinkTransportKind::VsockGrpc,
+            TransportKind::Unspecified => {
+                return Err(WslLinkGrpcTransportError::InvalidOpenSessionResponse(
+                    "transport 必须是 VSOCK gRPC。",
+                ));
+            }
+        };
+        Ok(Self {
+            session_id: response.session_id,
+            server_seq: response.server_seq,
+            ack_client_seq: response.ack_client_seq,
+            transport,
+        })
+    }
+}
+
+#[derive(Debug)]
+pub struct WslLinkGrpcConnection {
+    pub client: WslLinkGrpcClient,
+    pub session: WslLinkGrpcSession,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WslLinkGrpcHeartbeatAck {
+    pub session_id: String,
+    pub server_seq: u64,
+    pub ack_client_seq: u64,
+    pub received_at_unix_ms: i64,
+}
+
+impl WslLinkGrpcHeartbeatAck {
+    pub fn try_from_response(
+        response: HeartbeatResponse,
+    ) -> Result<Self, WslLinkGrpcTransportError> {
+        // 改动 1: 错误变体改为 InvalidHeartbeatResponse;message 不再重复 "heartbeat " 前缀。
+        if response.session_id.trim().is_empty() {
+            return Err(WslLinkGrpcTransportError::InvalidHeartbeatResponse(
+                "session_id 不能为空。",
+            ));
+        }
+        if response.server_seq == 0 {
+            return Err(WslLinkGrpcTransportError::InvalidHeartbeatResponse(
+                "server_seq 必须大于 0。",
+            ));
+        }
+        Ok(Self {
+            session_id: response.session_id,
+            server_seq: response.server_seq,
+            ack_client_seq: response.ack_client_seq,
+            received_at_unix_ms: response.received_at_unix_ms,
+        })
+    }
+}
+
+/// 缓存的 gRPC Channel，避免每次 RPC 都重新 VSOCK connect。
+static CACHED_PRIMARY_CHANNEL: std::sync::LazyLock<Arc<Mutex<Option<Channel>>>> =
+    std::sync::LazyLock::new(|| Arc::new(Mutex::new(None)));
+
+pub async fn connect_primary_grpc_channel(
+    config: WslLinkTransportConfig,
+) -> Result<Channel, WslLinkGrpcTransportError> {
+    let mut guard = CACHED_PRIMARY_CHANNEL.lock().await;
+    if let Some(channel) = guard.as_ref() {
+        return Ok(channel.clone());
+    }
+    let channel = platform_connect_primary_grpc_channel(config).await?;
+    *guard = Some(channel.clone());
+    Ok(channel)
+}
+
+/// 淘汰缓存的 Channel（连接出错时由上层调用，下次自动重连）。
+pub async fn invalidate_primary_grpc_channel() {
+    *CACHED_PRIMARY_CHANNEL.lock().await = None;
+}
+
+pub async fn connect_primary_grpc_client(
+    config: WslLinkTransportConfig,
+) -> Result<WslLinkGrpcClient, WslLinkGrpcTransportError> {
+    let channel = connect_primary_grpc_channel(config).await?;
+    Ok(WslLinkGrpcClient::new(channel))
+}
+
+pub async fn open_primary_grpc_session(
+    config: WslLinkTransportConfig,
+    handshake: WslLinkOpenSessionHandshake,
+) -> Result<WslLinkGrpcSession, WslLinkGrpcTransportError> {
+    let mut client = connect_primary_grpc_client(config).await?;
+    open_session_with_grpc_client(&mut client, handshake).await
+}
+
+pub async fn open_primary_noise_session(
+    config: WslLinkTransportConfig,
+    handshake: WslLinkOpenSessionHandshake,
+    desktop_material: &WslLinkDesktopNoiseMaterial,
+) -> Result<WslLinkGrpcSession, WslLinkGrpcTransportError> {
+    let mut client = connect_primary_grpc_client(config).await?;
+    open_noise_session_with_grpc_client(&mut client, handshake, desktop_material).await
+}
+
+pub async fn open_primary_noise_connection(
+    config: WslLinkTransportConfig,
+    handshake: WslLinkOpenSessionHandshake,
+    desktop_material: &WslLinkDesktopNoiseMaterial,
+) -> Result<WslLinkGrpcConnection, WslLinkGrpcTransportError> {
+    let mut client = connect_primary_grpc_client(config).await?;
+    let session =
+        open_noise_session_with_grpc_client(&mut client, handshake, desktop_material).await?;
+    Ok(WslLinkGrpcConnection { client, session })
+}
+
+pub async fn open_session_with_grpc_client(
+    client: &mut WslLinkGrpcClient,
+    handshake: WslLinkOpenSessionHandshake,
+) -> Result<WslLinkGrpcSession, WslLinkGrpcTransportError> {
+    let response = client
+        .open_session(handshake.into_proto())
+        .await?
+        .into_inner();
+    WslLinkGrpcSession::try_from_open_session_response(response)
+}
+
+pub async fn open_noise_session_with_grpc_client(
+    client: &mut WslLinkGrpcClient,
+    handshake: WslLinkOpenSessionHandshake,
+    desktop_material: &WslLinkDesktopNoiseMaterial,
+) -> Result<WslLinkGrpcSession, WslLinkGrpcTransportError> {
+    let trace_id = handshake.trace_id().to_string();
+    let mut initiator = build_initiator(&desktop_material.initiator_config())?;
+    let handshake_message = write_empty_handshake_message(&mut initiator)?;
+    let response = client
+        .open_noise_session(OpenNoiseSessionRequest {
+            open_session: Some(handshake.into_proto()),
+            handshake_message,
+        })
+        .await?
+        .into_inner();
+    read_empty_handshake_message(&mut initiator, &response.handshake_message)?;
+    let mut transport = into_transport_mode(initiator)?;
+    let open_session =
+        response
+            .open_session
+            .ok_or(WslLinkGrpcTransportError::InvalidOpenSessionResponse(
+                "open_session 不能为空。",
+            ))?;
+    let proof = transport.decrypt_frame(&response.encrypted_server_proof)?;
+    let expected = noise_server_proof_payload(&trace_id, &open_session.session_id);
+    if proof != expected {
+        return Err(WslLinkGrpcTransportError::InvalidNoiseServerProof);
+    }
+    WslLinkGrpcSession::try_from_open_session_response(open_session)
+}
+
+pub async fn heartbeat_with_grpc_client(
+    client: &mut WslLinkGrpcClient,
+    request: HeartbeatRequest,
+) -> Result<WslLinkGrpcHeartbeatAck, WslLinkGrpcTransportError> {
+    let response = client.heartbeat(request).await?.into_inner();
+    WslLinkGrpcHeartbeatAck::try_from_response(response)
+}
+
+#[cfg(windows)]
+async fn platform_connect_primary_grpc_channel(
+    config: WslLinkTransportConfig,
+) -> Result<Channel, WslLinkGrpcTransportError> {
+    let endpoint = config.grpc_client_endpoint()?;
+    let connector_error = windows::new_connector_error_slot();
+    let connector = windows::WslLinkHypervGrpcConnector::new(
+        config.vsock_grpc_port,
+        config.connect_timeout,
+        connector_error.clone(),
+    );
+    endpoint
+        .connect_with_connector(connector)
+        .await
+        .map_err(|error| {
+            windows::take_connector_error(&connector_error)
+                .map(WslLinkGrpcTransportError::Connector)
+                .unwrap_or_else(|| WslLinkGrpcTransportError::Transport(error))
+        })
+}
+
+#[cfg(not(windows))]
+async fn platform_connect_primary_grpc_channel(
+    config: WslLinkTransportConfig,
+) -> Result<Channel, WslLinkGrpcTransportError> {
+    Err(WslLinkGrpcTransportError::UnsupportedPlatform(
+        config.primary_transport(),
+    ))
+}
+
+#[cfg(windows)]
+mod windows {
+    use std::{
+        future::Future,
+        pin::Pin,
+        sync::{Arc, Mutex},
+        task::{Context, Poll},
+        time::Duration,
+    };
+
+    use hyper_util::rt::TokioIo;
+    use tonic::{codegen::Service, transport::Uri};
+
+    use crate::wsl_link::adapters::windows_hyperv::{
+        connect_wsl_vsock_grpc_stream, WslLinkHypervConnectError,
+    };
+
+    pub(super) type ConnectorErrorSlot = Arc<Mutex<Option<String>>>;
+
+    pub(super) fn new_connector_error_slot() -> ConnectorErrorSlot {
+        Arc::new(Mutex::new(None))
+    }
+
+    pub(super) fn record_connector_error(slot: &ConnectorErrorSlot, error: String) {
+        if let Ok(mut last_error) = slot.lock() {
+            *last_error = Some(error);
+        }
+    }
+
+    pub(super) fn take_connector_error(slot: &ConnectorErrorSlot) -> Option<String> {
+        slot.lock()
+            .ok()
+            .and_then(|mut last_error| last_error.take())
+    }
+
+    #[derive(Debug, Clone)]
+    pub struct WslLinkHypervGrpcConnector {
+        vsock_grpc_port: u32,
+        connect_timeout: Duration,
+        last_error: ConnectorErrorSlot,
+    }
+
+    impl WslLinkHypervGrpcConnector {
+        pub fn new(
+            vsock_grpc_port: u32,
+            connect_timeout: Duration,
+            last_error: ConnectorErrorSlot,
+        ) -> Self {
+            Self {
+                vsock_grpc_port,
+                connect_timeout,
+                last_error,
+            }
+        }
+
+        pub fn connect_timeout(&self) -> Duration {
+            self.connect_timeout
+        }
+
+        pub fn vsock_grpc_port(&self) -> u32 {
+            self.vsock_grpc_port
+        }
+    }
+
+    impl Service<Uri> for WslLinkHypervGrpcConnector {
+        type Response = TokioIo<tokio::net::TcpStream>;
+        type Error = WslLinkHypervConnectError;
+        type Future =
+            Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send + 'static>>;
+
+        fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+
+        // 改动 2: 显式说明为何丢弃 Uri 参数。
+        // tonic 的 channel 会按 endpoint URI dispatch,但 AF_HYPERV vsock 连接的目标
+        // 完全由 (running WSL2 VM GUID, vsock_grpc_port) 决定 —— host/port/scheme
+        // 在 vsock 语义里都无意义。这里的 _request: Uri 仅用于满足
+        // tower::Service<Uri> trait 签名,运行时被有意忽略。
+        fn call(&mut self, _request: Uri) -> Self::Future {
+            let timeout = self.connect_timeout;
+            let vsock_grpc_port = self.vsock_grpc_port;
+            let last_error = self.last_error.clone();
+            Box::pin(async move {
+                match connect_wsl_vsock_grpc_stream(vsock_grpc_port, timeout).await {
+                    Ok(stream) => Ok(TokioIo::new(stream)),
+                    Err(error) => {
+                        record_connector_error(&last_error, error.to_string());
+                        Err(error)
+                    }
+                }
+            })
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(not(windows))]
+    use super::*;
+    use crate::wsl_link::protocol::v1::TransportKind;
+
+    #[test]
+    fn open_session_handshake_rejects_empty_client_id() {
+        let result = super::WslLinkOpenSessionHandshake::new("  ", "trace-1", 0);
+        assert!(matches!(
+            result,
+            Err(super::WslLinkGrpcTransportError::InvalidOpenSessionRequest(
+                _
+            ))
+        ));
+    }
+
+    #[test]
+    fn open_session_handshake_builds_versioned_proto_request() {
+        let request = super::WslLinkOpenSessionHandshake::new("desktop-1", "trace-1", 7)
+            .expect("handshake should be valid")
+            .into_proto();
+        assert_eq!(request.client_id, "desktop-1");
+        assert_eq!(
+            request.protocol_version,
+            crate::wsl_link::types::DEFAULT_PROTOCOL_VERSION
+        );
+        assert_eq!(request.last_client_seq, 7);
+        assert_eq!(request.trace_id, "trace-1");
+    }
+
+    #[test]
+    fn open_session_response_maps_transport_kind() {
+        let session = super::WslLinkGrpcSession::try_from_open_session_response(
+            crate::wsl_link::protocol::v1::OpenSessionResponse {
+                session_id: "s1".to_string(),
+                server_seq: 1,
+                ack_client_seq: 7,
+                transport: TransportKind::VsockGrpc as i32,
+            },
+        )
+        .expect("response should map");
+        assert_eq!(session.session_id, "s1");
+        assert_eq!(session.server_seq, 1);
+        assert_eq!(session.ack_client_seq, 7);
+        assert_eq!(
+            session.transport,
+            crate::wsl_link::types::WslLinkTransportKind::VsockGrpc
+        );
+    }
+
+    #[test]
+    fn open_session_response_rejects_unspecified_transport() {
+        let result = super::WslLinkGrpcSession::try_from_open_session_response(
+            crate::wsl_link::protocol::v1::OpenSessionResponse {
+                session_id: "s1".to_string(),
+                server_seq: 1,
+                ack_client_seq: 0,
+                transport: TransportKind::Unspecified as i32,
+            },
+        );
+        assert!(matches!(
+            result,
+            Err(super::WslLinkGrpcTransportError::InvalidOpenSessionResponse(_))
+        ));
+    }
+
+    // 改动 1: heartbeat 错误必须使用 InvalidHeartbeatResponse,而不是 InvalidOpenSessionResponse。
+    #[test]
+    fn heartbeat_response_rejects_empty_session_id() {
+        let result = super::WslLinkGrpcHeartbeatAck::try_from_response(
+            crate::wsl_link::protocol::v1::HeartbeatResponse {
+                session_id: String::new(),
+                server_seq: 1,
+                ack_client_seq: 1,
+                received_at_unix_ms: 1,
+            },
+        );
+        assert!(matches!(
+            result,
+            Err(super::WslLinkGrpcTransportError::InvalidHeartbeatResponse(_))
+        ));
+    }
+
+    // 改动 1 的补强:server_seq=0 同样进入 heartbeat 错误桶,不再混入 OpenSession。
+    #[test]
+    fn heartbeat_response_rejects_zero_server_seq_with_heartbeat_variant() {
+        let result = super::WslLinkGrpcHeartbeatAck::try_from_response(
+            crate::wsl_link::protocol::v1::HeartbeatResponse {
+                session_id: "s1".to_string(),
+                server_seq: 0,
+                ack_client_seq: 0,
+                received_at_unix_ms: 1,
+            },
+        );
+        assert!(matches!(
+            result,
+            Err(super::WslLinkGrpcTransportError::InvalidHeartbeatResponse(_))
+        ));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_connector_keeps_configured_timeout() {
+        let connector = super::windows::WslLinkHypervGrpcConnector::new(
+            crate::wsl_link::types::DEFAULT_VSOCK_GRPC_PORT,
+            std::time::Duration::from_millis(123),
+            super::windows::new_connector_error_slot(),
+        );
+        assert_eq!(
+            connector.connect_timeout(),
+            std::time::Duration::from_millis(123)
+        );
+        assert_eq!(
+            connector.vsock_grpc_port(),
+            crate::wsl_link::types::DEFAULT_VSOCK_GRPC_PORT
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_connector_error_slot_is_consumed_once() {
+        let slot = super::windows::new_connector_error_slot();
+        super::windows::record_connector_error(&slot, "WSL Link 连接失败".to_string());
+        assert_eq!(
+            super::windows::take_connector_error(&slot),
+            Some("WSL Link 连接失败".to_string())
+        );
+        assert_eq!(super::windows::take_connector_error(&slot), None);
+    }
+
+    #[cfg(not(windows))]
+    #[tokio::test]
+    async fn primary_grpc_channel_reports_unsupported_platform() {
+        let result = connect_primary_grpc_channel(WslLinkTransportConfig::default()).await;
+        assert!(matches!(
+            result,
+            Err(WslLinkGrpcTransportError::UnsupportedPlatform(
+                WslLinkTransportKind::VsockGrpc
+            ))
+        ));
+    }
+}
+use std::{
+    collections::{HashMap, VecDeque},
+    io::{Read, Write},
+    process::Stdio,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
+    thread,
+};
+
+use portable_pty::{native_pty_system, Child, ChildKiller, CommandBuilder, MasterPty, PtySize};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tonic::{Request, Response, Status};
+
+use super::{
+    noise::{
+        build_responder, into_transport_mode, read_empty_handshake_message,
+        write_empty_handshake_message, WslLinkNoiseHandshakeConfig,
+    },
+    noise_material::WslLinkAgentNoiseMaterial,
+    protocol::v1::{
+        wsl_link_server::WslLink, ClientFrame, HeartbeatRequest, HeartbeatResponse,
+        OpenNoiseSessionRequest, OpenNoiseSessionResponse, OpenSessionRequest, OpenSessionResponse,
+        ResumeSessionRequest, ResumeSessionResponse, ServerFrame, TransportKind,
+    },
+    terminal_exec::{
+        decode_terminal_client_payload, encode_terminal_server_payload,
+        resolve_agent_working_directory, WslLinkTerminalClientPayload,
+        WslLinkTerminalInteractiveAck, WslLinkTerminalInteractiveClose,
+        WslLinkTerminalInteractiveClosed, WslLinkTerminalInteractiveData,
+        WslLinkTerminalInteractiveError, WslLinkTerminalInteractiveInput,
+        WslLinkTerminalInteractiveOpened, WslLinkTerminalInteractiveResize,
+        WslLinkTerminalOpenInteractiveRequest, WslLinkTerminalRunChunk,
+        WslLinkTerminalRunCompleted, WslLinkTerminalRunError, WslLinkTerminalRunInput,
+        WslLinkTerminalRunScriptRequest, WslLinkTerminalRunStarted, WslLinkTerminalServerPayload,
+        WslLinkTerminalSignalProcess, WslLinkUtf8ChunkDecoder,
+    },
+    types::{noise_server_proof_payload, now_unix_ms, DEFAULT_PROTOCOL_VERSION},
+};
+
+type DuplexStream =
+    tonic::codegen::tokio_stream::wrappers::ReceiverStream<Result<ServerFrame, Status>>;
+
+const AGENT_INTERACTIVE_SHELL: &str = "/bin/bash";
+const AGENT_INTERACTIVE_SHELL_LOGIN_ARG: &str = "-il";
+const AGENT_INTERACTIVE_TERM: &str = "xterm-256color";
+const AGENT_INTERACTIVE_COLORTERM: &str = "truecolor";
+const AGENT_INTERACTIVE_LOCALE: &str = "C.UTF-8";
+const AGENT_PROCESS_SIGNAL_COMMAND: &str = "/bin/kill";
+
+const MAX_RESPONSE_CACHE_ENTRIES: usize = 1024;
+
+#[derive(Debug, Clone)]
+struct AgentSession {
+    session_id: String,
+    server_seq: u64,
+    ack_client_seq: u64,
+    /// 写请求按 client_seq 去重缓存。普通路径 Vec 长度恒为 1;
+    /// terminal 流式路径 Vec 持续 append。
+    /// FIFO 顺序由 `cache_order` 维护,超过 `MAX_RESPONSE_CACHE_ENTRIES` 会淘汰最旧的。
+    response_cache_by_client_seq: HashMap<u64, Vec<ServerFrame>>,
+    cache_order: VecDeque<u64>,
+}
+
+impl AgentSession {
+    fn new(session_id: String, last_client_seq: u64) -> Self {
+        Self {
+            session_id,
+            server_seq: 1,
+            ack_client_seq: last_client_seq,
+            response_cache_by_client_seq: HashMap::new(),
+            cache_order: VecDeque::new(),
+        }
+    }
+
+    fn next_server_seq(&mut self) -> u64 {
+        let current = self.server_seq;
+        self.server_seq = self.server_seq.saturating_add(1);
+        current
+    }
+
+    fn ack_client_seq(&mut self, client_seq: u64) {
+        self.ack_client_seq = self.ack_client_seq.max(client_seq);
+    }
+
+    fn cache_insert(&mut self, client_seq: u64, frames: Vec<ServerFrame>) {
+        if self.response_cache_by_client_seq.insert(client_seq, frames).is_none() {
+            self.cache_order.push_back(client_seq);
+            while self.cache_order.len() > MAX_RESPONSE_CACHE_ENTRIES {
+                if let Some(oldest) = self.cache_order.pop_front() {
+                    self.response_cache_by_client_seq.remove(&oldest);
+                }
+            }
+        }
+    }
+}
+
+struct AgentInteractivePty {
+    master: Mutex<Box<dyn MasterPty + Send>>,
+    writer: Mutex<Box<dyn Write + Send>>,
+    killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
+    is_alive: AtomicBool,
+}
+
+impl AgentInteractivePty {
+    fn write_input(&self, data: &str) -> Result<(), Status> {
+        if !self.is_alive.load(Ordering::SeqCst) {
+            return Err(Status::failed_precondition("交互终端已退出。"));
+        }
+        let mut writer = self
+            .writer
+            .lock()
+            .map_err(|_| Status::internal("交互终端写入通道已损坏。"))?;
+        writer
+            .write_all(data.as_bytes())
+            .and_then(|_| writer.flush())
+            .map_err(|error| Status::internal(format!("写入交互终端失败：{error}")))
+    }
+
+    fn resize(&self, cols: u16, rows: u16) -> Result<(), Status> {
+        if !self.is_alive.load(Ordering::SeqCst) {
+            return Err(Status::failed_precondition("交互终端已退出。"));
+        }
+        let master = self
+            .master
+            .lock()
+            .map_err(|_| Status::internal("交互终端尺寸通道已损坏。"))?;
+        master
+            .resize(agent_pty_size(cols, rows))
+            .map_err(|error| Status::internal(format!("同步交互终端尺寸失败：{error}")))
+    }
+
+    fn terminate(&self) -> Result<(), Status> {
+        self.is_alive.store(false, Ordering::SeqCst);
+        let mut killer = self
+            .killer
+            .lock()
+            .map_err(|_| Status::internal("交互终端结束通道已损坏。"))?;
+        killer
+            .kill()
+            .map_err(|error| Status::internal(format!("关闭交互终端失败：{error}")))
+    }
+}
+
+#[derive(Default)]
+struct AgentState {
+    next_session_seq: u64,
+    sessions: HashMap<String, AgentSession>,
+    interactive_sessions: HashMap<String, Arc<AgentInteractivePty>>,
+    active_run_inputs: HashMap<String, tokio::sync::mpsc::UnboundedSender<String>>,
+}
+
+impl AgentState {
+    fn create_session(&mut self, last_client_seq: u64) -> (AgentSession, u64) {
+        self.next_session_seq = self.next_session_seq.saturating_add(1);
+        let session_id = format!("wsl-link-session-{}", self.next_session_seq);
+        let mut session = AgentSession::new(session_id.clone(), last_client_seq);
+        let initial_server_seq = session.next_server_seq();
+        self.sessions.insert(session_id, session.clone());
+        (session, initial_server_seq)
+    }
+
+    fn get_session_mut(&mut self, session_id: &str) -> Option<&mut AgentSession> {
+        self.sessions.get_mut(session_id)
+    }
+}
+
+// 改动 7: 用 std::sync::Mutex 而非 tokio::sync::Mutex —— 持锁时间只覆盖
+//         HashMap 操作,不跨 await,符合 std Mutex 的使用约束。
+#[derive(Clone, Default)]
+pub struct WslLinkAgentService {
+    state: Arc<Mutex<AgentState>>,
+    noise_material: Option<Arc<WslLinkAgentNoiseMaterial>>,
+}
+
+impl WslLinkAgentService {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_noise_material(noise_material: WslLinkAgentNoiseMaterial) -> Self {
+        Self {
+            state: Arc::new(Mutex::new(AgentState::default())),
+            noise_material: Some(Arc::new(noise_material)),
+        }
+    }
+
+    pub fn noise_responder_config(&self) -> Option<WslLinkNoiseHandshakeConfig> {
+        self.noise_material
+            .as_ref()
+            .map(|material| material.responder_config())
+    }
+
+    pub fn handle_client_frame(&self, frame: ClientFrame) -> Result<ServerFrame, Status> {
+        build_server_frame_with_state(&self.state, frame)
+            .unwrap_or_else(|| Err(Status::internal("WSL Link agent 状态锁已损坏。")))
+    }
+
+    fn open_session_response(
+        &self,
+        request: OpenSessionRequest,
+    ) -> Result<OpenSessionResponse, Status> {
+        if request.client_id.trim().is_empty() {
+            return Err(Status::invalid_argument("client_id 不能为空。"));
+        }
+        if request.protocol_version != DEFAULT_PROTOCOL_VERSION {
+            return Err(Status::failed_precondition("WSL Link 协议版本不匹配。"));
+        }
+        if request.trace_id.trim().is_empty() {
+            return Err(Status::invalid_argument("trace_id 不能为空。"));
+        }
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| Status::internal("WSL Link agent 状态锁已损坏。"))?;
+        let (session, server_seq) = state.create_session(request.last_client_seq);
+        Ok(OpenSessionResponse {
+            session_id: session.session_id,
+            server_seq,
+            ack_client_seq: session.ack_client_seq,
+            transport: TransportKind::VsockGrpc as i32,
+        })
+    }
+}
+
+#[tonic::async_trait]
+impl WslLink for WslLinkAgentService {
+    async fn open_session(
+        &self,
+        request: Request<OpenSessionRequest>,
+    ) -> Result<Response<OpenSessionResponse>, Status> {
+        Ok(Response::new(
+            self.open_session_response(request.into_inner())?,
+        ))
+    }
+
+    async fn open_noise_session(
+        &self,
+        request: Request<OpenNoiseSessionRequest>,
+    ) -> Result<Response<OpenNoiseSessionResponse>, Status> {
+        let request = request.into_inner();
+        let open_request = request
+            .open_session
+            .ok_or_else(|| Status::invalid_argument("open_session 不能为空。"))?;
+        if request.handshake_message.is_empty() {
+            return Err(Status::invalid_argument("handshake_message 不能为空。"));
+        }
+        let config = self
+            .noise_responder_config()
+            .ok_or_else(|| Status::failed_precondition("WSL Link Noise agent 材料未加载。"))?;
+
+        let trace_id = open_request.trace_id.clone();
+        let mut responder = build_responder(&config).map_err(|error| {
+            Status::internal(format!("WSL Link Noise responder 创建失败：{error}"))
+        })?;
+
+        read_empty_handshake_message(&mut responder, &request.handshake_message).map_err(
+            |error| Status::unauthenticated(format!("WSL Link Noise 握手失败：{error}")),
+        )?;
+        let response_message = write_empty_handshake_message(&mut responder).map_err(|error| {
+            Status::unauthenticated(format!("WSL Link Noise 握手失败：{error}"))
+        })?;
+
+        let open_session = self.open_session_response(open_request)?;
+        let proof = noise_server_proof_payload(&trace_id, &open_session.session_id);
+        let mut transport = into_transport_mode(responder).map_err(|error| {
+            Status::unauthenticated(format!("WSL Link Noise 握手失败：{error}"))
+        })?;
+        let encrypted_server_proof = transport
+            .encrypt_frame(&proof)
+            .map_err(|error| Status::internal(format!("WSL Link Noise proof 加密失败：{error}")))?;
+
+        Ok(Response::new(OpenNoiseSessionResponse {
+            open_session: Some(open_session),
+            handshake_message: response_message,
+            encrypted_server_proof,
+        }))
+    }
+
+    async fn resume_session(
+        &self,
+        request: Request<ResumeSessionRequest>,
+    ) -> Result<Response<ResumeSessionResponse>, Status> {
+        let request = request.into_inner();
+        if request.session_id.trim().is_empty() {
+            return Err(Status::invalid_argument("session_id 不能为空。"));
+        }
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| Status::internal("WSL Link agent 状态锁已损坏。"))?;
+        let Some(session) = state.get_session_mut(&request.session_id) else {
+            return Ok(Response::new(ResumeSessionResponse {
+                accepted: false,
+                server_seq: 0,
+                ack_client_seq: 0,
+                reason: "session 不存在，需要重新 OpenSession。".to_string(),
+            }));
+        };
+        session.ack_client_seq(request.last_client_seq);
+        // 返回当前可用的 server_seq,内部状态推进到 +1 供下次使用
+        let server_seq = session
+            .server_seq
+            .max(request.last_ack_server_seq.saturating_add(1));
+        session.server_seq = server_seq.saturating_add(1);
+        Ok(Response::new(ResumeSessionResponse {
+            accepted: true,
+            server_seq,
+            ack_client_seq: session.ack_client_seq,
+            reason: "已恢复。".to_string(),
+        }))
+    }
+
+    async fn heartbeat(
+        &self,
+        request: Request<HeartbeatRequest>,
+    ) -> Result<Response<HeartbeatResponse>, Status> {
+        let request = request.into_inner();
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| Status::internal("WSL Link agent 状态锁已损坏。"))?;
+        let Some(session) = state.get_session_mut(&request.session_id) else {
+            return Err(Status::not_found("session 不存在。"));
+        };
+        session.ack_client_seq(request.client_seq);
+        let server_seq = session.next_server_seq();
+        Ok(Response::new(HeartbeatResponse {
+            session_id: request.session_id,
+            server_seq,
+            ack_client_seq: session.ack_client_seq,
+            received_at_unix_ms: now_unix_ms_i64(),
+        }))
+    }
+
+    type DuplexStream = DuplexStream;
+
+    async fn duplex(
+        &self,
+        request: Request<tonic::Streaming<ClientFrame>>,
+    ) -> Result<Response<Self::DuplexStream>, Status> {
+        let mut inbound = request.into_inner();
+        let state = Arc::clone(&self.state);
+        let (tx, rx) = tokio::sync::mpsc::channel(16);
+
+        tokio::spawn(async move {
+            loop {
+                let frame = match inbound.message().await {
+                    Ok(Some(frame)) => frame,
+                    Ok(None) => break,
+                    Err(error) => {
+                        let _ = tx
+                            .send(Err(Status::internal(format!(
+                                "读取 WSL Link duplex frame 失败：{error}"
+                            ))))
+                            .await;
+                        break;
+                    }
+                };
+                if handle_terminal_duplex_frame(&state, frame.clone(), &tx).await {
+                    continue;
+                }
+                match build_server_frame_with_state(&state, frame) {
+                    Some(response) => {
+                        if tx.send(response).await.is_err() {
+                            break;
+                        }
+                    }
+                    None => {
+                        let _ = tx
+                            .send(Err(Status::internal("WSL Link agent 状态锁已损坏。")))
+                            .await;
+                        break;
+                    }
+                }
+            }
+        });
+
+        Ok(Response::new(
+            tonic::codegen::tokio_stream::wrappers::ReceiverStream::new(rx),
+        ))
+    }
+}
+
+fn build_server_frame_with_state(
+    state: &Arc<Mutex<AgentState>>,
+    frame: ClientFrame,
+) -> Option<Result<ServerFrame, Status>> {
+    let mut state = state.lock().ok()?;
+    Some(build_server_frame(&mut state, frame))
+}
+
+fn build_server_frame(state: &mut AgentState, frame: ClientFrame) -> Result<ServerFrame, Status> {
+    if frame.session_id.trim().is_empty() {
+        return Err(Status::invalid_argument("session_id 不能为空。"));
+    }
+    if frame.request_id.trim().is_empty() {
+        return Err(Status::invalid_argument("request_id 不能为空。"));
+    }
+--- D:\com.xiaojianc\my_desktop_app\src-tauri\src\wsl_link\adapters.rs ---
+use super::{
+    manager::WslLinkTransportAdapter,
+    types::{WslLinkTransportKind, DEFAULT_VSOCK_GRPC_PORT},
+};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VsockGrpcEndpoint {
+    pub port: u32,
+}
+
+impl Default for VsockGrpcEndpoint {
+    fn default() -> Self {
+        Self {
+            port: DEFAULT_VSOCK_GRPC_PORT,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VsockGrpcAdapter {
+    endpoint: VsockGrpcEndpoint,
+    is_platform_available: bool,
+}
+
+impl VsockGrpcAdapter {
+    pub fn new(endpoint: VsockGrpcEndpoint) -> Self {
+        Self {
+            endpoint,
+            is_platform_available: cfg!(windows) || cfg!(target_os = "linux"),
+        }
+    }
+
+    pub fn endpoint(&self) -> &VsockGrpcEndpoint {
+        &self.endpoint
+    }
+}
+
+impl WslLinkTransportAdapter for VsockGrpcAdapter {
+    fn kind(&self) -> WslLinkTransportKind {
+        WslLinkTransportKind::VsockGrpc
+    }
+
+    fn is_available(&self) -> bool {
+        self.is_platform_available
+    }
+}
+
+#[cfg(windows)]
+pub mod windows_hyperv {
+    use std::{
+        fmt, io, mem,
+        os::windows::{io::FromRawSocket, process::CommandExt},
+        process::{Command, Stdio},
+        sync::OnceLock,
+        thread,
+        time::{Duration, Instant},
+    };
+
+    use thiserror::Error;
+    use windows_sys::{
+        core::GUID,
+        Win32::{
+            Networking::WinSock::{
+                closesocket, connect, getsockopt, ioctlsocket, select, WSAGetLastError, WSASocketW,
+                WSAStartup, AF_HYPERV, FD_SET, FIONBIO, INVALID_SOCKET, SOCKADDR, SOCKET,
+                SOCKET_ERROR, SOCK_STREAM, SOL_SOCKET, SO_ERROR, TIMEVAL, WSADATA, WSAEALREADY,
+                WSAEINPROGRESS, WSAEISCONN, WSAETIMEDOUT, WSAEWOULDBLOCK, WSA_FLAG_OVERLAPPED,
+            },
+            System::Hypervisor::{HV_PROTOCOL_RAW, SOCKADDR_HV},
+        },
+    };
+
+    pub const WSL_LINK_AF_HYPERV: u16 = AF_HYPERV;
+    pub const WSL_LINK_HV_PROTOCOL_RAW: u32 = HV_PROTOCOL_RAW;
+    pub const WSL_LINK_HV_VSOCK_TEMPLATE_DATA2: u16 = 0xfacb;
+    pub const WSL_LINK_HV_VSOCK_TEMPLATE_DATA3: u16 = 0x11e6;
+    pub const WSL_LINK_HV_VSOCK_TEMPLATE_DATA4: [u8; 8] =
+        [0xbd, 0x58, 0x64, 0x00, 0x6a, 0x79, 0x86, 0xd3];
+    pub const WSL_LINK_HV_VSOCK_MAX_LISTEN_PORT: u32 = 0x7fff_ffff;
+    pub const WSL_LINK_WSL_WAKE_TIMEOUT: Duration = Duration::from_secs(8);
+    pub const WSL_LINK_WSL_WAKE_POLL_INTERVAL: Duration = Duration::from_millis(250);
+    pub const WSL_LINK_AF_HYPERV_CONNECT_RETRY_DELAY: Duration = Duration::from_millis(300);
+    const WSL_LINK_AF_HYPERV_CONNECT_ATTEMPTS: usize = 2;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    #[derive(Debug, Error, PartialEq, Eq)]
+    pub enum WslLinkHypervAddressError {
+        #[error("WSL Link Hyper-V VM GUID 不能为空。")]
+        EmptyVmGuid,
+        #[error("WSL Link Hyper-V VM GUID 格式无效：{0}")]
+        InvalidVmGuid(String),
+        #[error("WSL Link Hyper-V vsock port 超过 Linux guest 可监听范围：{port} > {max}")]
+        PortOutOfRange { port: u32, max: u32 },
+        #[error("WSL Link 运行 hcsdiag list 失败：{0}")]
+        HcsdiagIo(String),
+        #[error("WSL Link hcsdiag list 退出失败：{0}")]
+        HcsdiagFailed(String),
+        #[error("WSL Link 未在 hcsdiag list 输出中找到运行中的 WSL2 VM GUID。")]
+        WslVmGuidNotFound,
+        #[error("WSL Link 自动拉起默认 WSL2 发行版失败：{0}")]
+        WslWakeIo(String),
+        #[error(
+            "WSL Link 自动拉起默认 WSL2 发行版退出失败，退出码：{status_code:?}，输出：{output}"
+        )]
+        WslWakeFailed {
+            status_code: Option<i32>,
+            output: String,
+        },
+        #[error("WSL Link 自动拉起默认 WSL2 发行版后等待运行 VM 超时：{0:?}")]
+        WslWakeTimeout(Duration),
+    }
+
+    #[derive(Debug, Error)]
+    pub enum WslLinkHypervConnectError {
+        #[error("WSL Link Hyper-V 地址无效：{0}")]
+        Address(#[from] WslLinkHypervAddressError),
+        #[error("WSL Link WinSock 初始化失败：{0}")]
+        Startup(i32),
+        #[error("WSL Link 创建 AF_HYPERV socket 失败：{0}")]
+        CreateSocket(i32),
+        #[error("WSL Link 设置 AF_HYPERV socket 非阻塞失败：{0}")]
+        SetNonBlocking(i32),
+        #[error("WSL Link AF_HYPERV connect 失败：{0}")]
+        Connect(i32),
+        #[error("WSL Link AF_HYPERV connect 超时：{0:?}。WSL2 已运行，但 WSL Link agent 可能尚未监听，请先启动 WSL Link agent 或稍后重试。")]
+        ConnectTimeout(Duration),
+        #[error("WSL Link AF_HYPERV select 失败：{0}")]
+        Select(i32),
+        #[error("WSL Link AF_HYPERV getsockopt(SO_ERROR) 失败：{0}")]
+        SocketOption(i32),
+        #[error("WSL Link AF_HYPERV socket 转 Tokio stream 失败：{0}")]
+        TokioStream(#[from] io::Error),
+    }
+
+    #[derive(Clone, Copy)]
+    pub struct WslVmGuid(GUID);
+
+    impl WslVmGuid {
+        pub fn parse(value: &str) -> Result<Self, WslLinkHypervAddressError> {
+            parse_guid(value).map(Self)
+        }
+
+        pub fn as_guid(&self) -> GUID {
+            self.0
+        }
+    }
+
+    impl fmt::Debug for WslVmGuid {
+        fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter
+                .debug_tuple("WslVmGuid")
+                .field(&format_guid(&self.0))
+                .finish()
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    pub struct WslHypervSocketAddress {
+        vm_id: WslVmGuid,
+        service_id: GUID,
+        port: u32,
+    }
+
+    impl fmt::Debug for WslHypervSocketAddress {
+        fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter
+                .debug_struct("WslHypervSocketAddress")
+                .field("vm_id", &format_guid(&self.vm_id.as_guid()))
+                .field("service_id", &format_guid(&self.service_id))
+                .field("port", &self.port)
+                .finish()
+        }
+    }
+
+    impl WslHypervSocketAddress {
+        pub fn new(vm_id: WslVmGuid, port: u32) -> Result<Self, WslLinkHypervAddressError> {
+            Ok(Self {
+                vm_id,
+                service_id: service_guid_for_vsock_port(port)?,
+                port,
+            })
+        }
+
+        pub fn port(&self) -> u32 {
+            self.port
+        }
+
+        pub fn vm_id(&self) -> GUID {
+            self.vm_id.as_guid()
+        }
+
+        pub fn service_id(&self) -> GUID {
+            self.service_id
+        }
+
+        pub fn sockaddr(&self) -> SOCKADDR_HV {
+            SOCKADDR_HV {
+                Family: WSL_LINK_AF_HYPERV,
+                Reserved: 0,
+                VmId: self.vm_id.as_guid(),
+                ServiceId: self.service_id,
+            }
+        }
+
+        pub fn sockaddr_len(&self) -> i32 {
+            mem::size_of::<SOCKADDR_HV>() as i32
+        }
+    }
+
+    pub async fn connect_wsl_vsock_grpc_stream(
+        port: u32,
+        timeout: Duration,
+    ) -> Result<tokio::net::TcpStream, WslLinkHypervConnectError> {
+        let vm_id = tokio::task::spawn_blocking(resolve_running_wsl_vm_guid_with_auto_start)
+            .await
+            .map_err(|error| WslLinkHypervConnectError::TokioStream(io::Error::other(error)))??;
+        let address = WslHypervSocketAddress::new(vm_id, port)?;
+        connect_hyperv_stream_with_retry(address, timeout).await
+    }
+
+    pub async fn connect_hyperv_stream(
+        address: WslHypervSocketAddress,
+        timeout: Duration,
+    ) -> Result<tokio::net::TcpStream, WslLinkHypervConnectError> {
+        tokio::task::spawn_blocking(move || connect_hyperv_stream_blocking(address, timeout))
+            .await
+            .map_err(|error| WslLinkHypervConnectError::TokioStream(io::Error::other(error)))?
+    }
+
+    pub fn service_guid_for_vsock_port(port: u32) -> Result<GUID, WslLinkHypervAddressError> {
+        if port > WSL_LINK_HV_VSOCK_MAX_LISTEN_PORT {
+            return Err(WslLinkHypervAddressError::PortOutOfRange {
+                port,
+                max: WSL_LINK_HV_VSOCK_MAX_LISTEN_PORT,
+            });
+        }
+        Ok(GUID {
+            data1: port,
+            data2: WSL_LINK_HV_VSOCK_TEMPLATE_DATA2,
+            data3: WSL_LINK_HV_VSOCK_TEMPLATE_DATA3,
+            data4: WSL_LINK_HV_VSOCK_TEMPLATE_DATA4,
+        })
+    }
+
+    pub fn resolve_running_wsl_vm_guid_with_hcsdiag() -> Result<WslVmGuid, WslLinkHypervAddressError>
+    {
+        let mut command = Command::new("hcsdiag.exe");
+        command.arg("list").creation_flags(CREATE_NO_WINDOW);
+        let output = command
+            .output()
+            .map_err(|error| WslLinkHypervAddressError::HcsdiagIo(error.to_string()))?;
+        if !output.status.success() {
+            let stderr = decode_command_output(&output.stderr);
+            return Err(WslLinkHypervAddressError::HcsdiagFailed(stderr));
+        }
+        parse_hcsdiag_list_wsl_vm_guid(&String::from_utf8_lossy(&output.stdout))
+            .ok_or(WslLinkHypervAddressError::WslVmGuidNotFound)
+    }
+
+    pub fn resolve_running_wsl_vm_guid_with_auto_start(
+    ) -> Result<WslVmGuid, WslLinkHypervAddressError> {
+        resolve_running_wsl_vm_guid_with_wake(
+            resolve_running_wsl_vm_guid_with_hcsdiag,
+            wake_default_wsl2_distribution,
+            thread::sleep,
+            WSL_LINK_WSL_WAKE_TIMEOUT,
+            WSL_LINK_WSL_WAKE_POLL_INTERVAL,
+        )
+    }
+
+    pub fn parse_hcsdiag_list_wsl_vm_guid(output: &str) -> Option<WslVmGuid> {
+        output
+            .lines()
+            .filter(|line| {
+                let lower = line.to_ascii_lowercase();
+                lower.contains("wsl") && lower.contains("running")
+            })
+            .find_map(extract_first_guid)
+    }
+
+    // 改动 3: 用 destructure 替代 Vec 收集,错误路径少一次堆分配
+    fn parse_guid(value: &str) -> Result<GUID, WslLinkHypervAddressError> {
+        let normalized = value
+            .trim()
+            .trim_start_matches('{')
+            .trim_end_matches('}')
+            .to_ascii_lowercase();
+        if normalized.is_empty() {
+            return Err(WslLinkHypervAddressError::EmptyVmGuid);
+        }
+
+        let mut iter = normalized.split('-');
+        let (Some(s0), Some(s1), Some(s2), Some(s3), Some(s4), None) = (
+            iter.next(),
+            iter.next(),
+            iter.next(),
+            iter.next(),
+            iter.next(),
+            iter.next(),
+        ) else {
+            return Err(WslLinkHypervAddressError::InvalidVmGuid(value.to_string()));
+        };
+
+        if s0.len() != 8 || s1.len() != 4 || s2.len() != 4 || s3.len() != 4 || s4.len() != 12 {
+            return Err(WslLinkHypervAddressError::InvalidVmGuid(value.to_string()));
+        }
+
+        let data1 = parse_hex_u32(s0, value)?;
+        let data2 = parse_hex_u16(s1, value)?;
+        let data3 = parse_hex_u16(s2, value)?;
+        let data4_prefix = parse_hex_u16(s3, value)?.to_be_bytes();
+        let data4_tail = parse_hex_u64_48(s4, value)?.to_be_bytes();
+
+        Ok(GUID {
+            data1,
+            data2,
+            data3,
+            data4: [
+                data4_prefix[0],
+                data4_prefix[1],
+                data4_tail[2],
+                data4_tail[3],
+                data4_tail[4],
+                data4_tail[5],
+                data4_tail[6],
+                data4_tail[7],
+            ],
+        })
+    }
+
+    fn parse_hex_u16(value: &str, original: &str) -> Result<u16, WslLinkHypervAddressError> {
+        u16::from_str_radix(value, 16)
+            .map_err(|_| WslLinkHypervAddressError::InvalidVmGuid(original.to_string()))
+    }
+
+    fn parse_hex_u32(value: &str, original: &str) -> Result<u32, WslLinkHypervAddressError> {
+        u32::from_str_radix(value, 16)
+            .map_err(|_| WslLinkHypervAddressError::InvalidVmGuid(original.to_string()))
+    }
+
+    fn parse_hex_u64_48(value: &str, original: &str) -> Result<u64, WslLinkHypervAddressError> {
+        u64::from_str_radix(value, 16)
+            .map_err(|_| WslLinkHypervAddressError::InvalidVmGuid(original.to_string()))
+    }
+
+    fn extract_first_guid(line: &str) -> Option<WslVmGuid> {
+        line.split(|item: char| item.is_whitespace() || item == ',')
+            .map(|item| item.trim_matches(|ch| ch == '{' || ch == '}' || ch == '"' || ch == '\''))
+            .find_map(|item| WslVmGuid::parse(item).ok())
+    }
+
+    pub(super) fn resolve_running_wsl_vm_guid_with_wake<P, W, S>(
+        mut probe: P,
+        mut wake: W,
+        mut sleep: S,
+        timeout: Duration,
+        poll_interval: Duration,
+    ) -> Result<WslVmGuid, WslLinkHypervAddressError>
+    where
+        P: FnMut() -> Result<WslVmGuid, WslLinkHypervAddressError>,
+        W: FnMut() -> Result<(), WslLinkHypervAddressError>,
+        S: FnMut(Duration),
+    {
+        match probe() {
+            Ok(vm_id) => return Ok(vm_id),
+            Err(WslLinkHypervAddressError::WslVmGuidNotFound) => {}
+            Err(error) => return Err(error),
+        }
+        wake()?;
+        let started_at = Instant::now();
+        loop {
+            match probe() {
+                Ok(vm_id) => return Ok(vm_id),
+                Err(WslLinkHypervAddressError::WslVmGuidNotFound) => {}
+                Err(error) => return Err(error),
+            }
+            let elapsed = started_at.elapsed();
+            if elapsed >= timeout {
+                return Err(WslLinkHypervAddressError::WslWakeTimeout(timeout));
+            }
+            let delay = poll_interval.min(timeout.saturating_sub(elapsed));
+            if !delay.is_zero() {
+                sleep(delay);
+            }
+        }
+    }
+
+    fn wake_default_wsl2_distribution() -> Result<(), WslLinkHypervAddressError> {
+        let mut command = Command::new("wsl.exe");
+        command
+            .args(["--exec", "/bin/sh", "-lc", "true"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let output = command
+            .output()
+            .map_err(|error| WslLinkHypervAddressError::WslWakeIo(error.to_string()))?;
+        if output.status.success() {
+            return Ok(());
+        }
+        let stdout = decode_command_output(&output.stdout);
+        let stderr = decode_command_output(&output.stderr);
+        Err(WslLinkHypervAddressError::WslWakeFailed {
+            status_code: output.status.code(),
+            output: command_failure_output(&stdout, &stderr),
+        })
+    }
+
+    fn command_failure_output(stdout: &str, stderr: &str) -> String {
+        match (stdout.trim().is_empty(), stderr.trim().is_empty()) {
+            (true, true) => "无输出。".to_string(),
+            (false, true) => stdout.trim().to_string(),
+            (true, false) => stderr.trim().to_string(),
+            (false, false) => format!("{}\n{}", stdout.trim(), stderr.trim()),
+        }
+    }
+
+    pub(super) fn decode_command_output(bytes: &[u8]) -> String {
+        if bytes.is_empty() {
+            return String::new();
+        }
+        let output = if looks_like_utf16le(bytes) {
+            let units = bytes
+                .chunks_exact(2)
+                .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+                .collect::<Vec<_>>();
+            String::from_utf16_lossy(&units)
+        } else {
+            String::from_utf8_lossy(bytes).to_string()
+        };
+        output
+            .replace('\u{feff}', "")
+            .replace('\0', "")
+            .trim()
+            .to_string()
+    }
+
+    fn looks_like_utf16le(bytes: &[u8]) -> bool {
+        bytes.len() >= 4
+            && bytes
+                .iter()
+                .skip(1)
+                .step_by(2)
+                .filter(|byte| **byte == 0)
+                .count()
+                >= 2
+    }
+
+    fn format_guid(guid: &GUID) -> String {
+        format!(
+            "{:08x}-{:04x}-{:04x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+            guid.data1,
+            guid.data2,
+            guid.data3,
+            guid.data4[0],
+            guid.data4[1],
+            guid.data4[2],
+            guid.data4[3],
+            guid.data4[4],
+            guid.data4[5],
+            guid.data4[6],
+            guid.data4[7]
+        )
+    }
+
+    fn connect_hyperv_stream_blocking(
+        address: WslHypervSocketAddress,
+        timeout: Duration,
+    ) -> Result<tokio::net::TcpStream, WslLinkHypervConnectError> {
+        ensure_winsock_started()?;
+        let socket = create_overlapped_hyperv_socket()?;
+        set_socket_nonblocking(socket.as_socket())?;
+        connect_socket_with_timeout(socket.as_socket(), &address, timeout)?;
+        let raw_socket = socket.into_raw_socket();
+        let std_stream = unsafe { std::net::TcpStream::from_raw_socket(raw_socket as _) };
+        std_stream.set_nonblocking(true)?;
+        tokio::net::TcpStream::from_std(std_stream).map_err(Into::into)
+    }
+
+    // 改动 4: loop + 显式条件,消除 unreachable!()
+    async fn connect_hyperv_stream_with_retry(
+        address: WslHypervSocketAddress,
+        timeout: Duration,
+    ) -> Result<tokio::net::TcpStream, WslLinkHypervConnectError> {
+        let mut attempt: usize = 0;
+        loop {
+            match connect_hyperv_stream(address, timeout).await {
+                Ok(stream) => return Ok(stream),
+                Err(error) => {
+                    attempt += 1;
+                    if attempt >= WSL_LINK_AF_HYPERV_CONNECT_ATTEMPTS
+                        || !should_retry_hyperv_connect(&error)
+                    {
+                        return Err(error);
+                    }
+                    tokio::time::sleep(WSL_LINK_AF_HYPERV_CONNECT_RETRY_DELAY).await;
+                }
+            }
+        }
+    }
+
+    pub(super) fn should_retry_hyperv_connect(error: &WslLinkHypervConnectError) -> bool {
+        matches!(error, WslLinkHypervConnectError::ConnectTimeout(_))
+    }
+
+    fn ensure_winsock_started() -> Result<(), WslLinkHypervConnectError> {
+        static WSA_STARTUP_RESULT: OnceLock<i32> = OnceLock::new();
+        let result = *WSA_STARTUP_RESULT.get_or_init(|| {
+            let mut data = WSADATA::default();
+            unsafe { WSAStartup(0x0202, &mut data) }
+        });
+        if result == 0 {
+            Ok(())
+        } else {
+            Err(WslLinkHypervConnectError::Startup(result))
+        }
+    }
+
+    fn create_overlapped_hyperv_socket() -> Result<OwnedWinsockSocket, WslLinkHypervConnectError> {
+        let socket = unsafe {
+            WSASocketW(
+                i32::from(WSL_LINK_AF_HYPERV),
+                SOCK_STREAM,
+                WSL_LINK_HV_PROTOCOL_RAW as i32,
+                std::ptr::null(),
+                0,
+                WSA_FLAG_OVERLAPPED,
+            )
+        };
+        if socket == INVALID_SOCKET {
+            return Err(WslLinkHypervConnectError::CreateSocket(last_wsa_error()));
+        }
+        Ok(OwnedWinsockSocket { socket })
+    }
+
+    fn set_socket_nonblocking(socket: SOCKET) -> Result<(), WslLinkHypervConnectError> {
+        let mut enabled = 1_u32;
+        let result = unsafe { ioctlsocket(socket, FIONBIO, &mut enabled) };
+        if result == SOCKET_ERROR {
+            return Err(WslLinkHypervConnectError::SetNonBlocking(last_wsa_error()));
+        }
+        Ok(())
+    }
+
+    fn connect_socket_with_timeout(
+        socket: SOCKET,
+        address: &WslHypervSocketAddress,
+        timeout: Duration,
+    ) -> Result<(), WslLinkHypervConnectError> {
+        let sockaddr = address.sockaddr();
+        let result = unsafe {
+            connect(
+                socket,
+                (&sockaddr as *const SOCKADDR_HV).cast::<SOCKADDR>(),
+                address.sockaddr_len(),
+            )
+        };
+        if result == 0 {
+            return Ok(());
+        }
+        let error = last_wsa_error();
+        if !is_pending_connect_error(error) {
+            return Err(WslLinkHypervConnectError::Connect(error));
+        }
+        wait_socket_connected(socket, timeout)
+    }
+
+    fn wait_socket_connected(
+        socket: SOCKET,
+        timeout: Duration,
+    ) -> Result<(), WslLinkHypervConnectError> {
+        let mut writefds = fd_set_with_socket(socket);
+        let mut exceptfds = fd_set_with_socket(socket);
+        let timeval = duration_to_timeval(timeout);
+        let result = unsafe {
+            select(
+                0,
+                std::ptr::null_mut(),
+                &mut writefds,
+                &mut exceptfds,
+                &timeval,
+            )
+        };
+        if result == 0 {
+            return Err(WslLinkHypervConnectError::ConnectTimeout(timeout));
+        }
+        if result == SOCKET_ERROR {
+            return Err(WslLinkHypervConnectError::Select(last_wsa_error()));
+        }
+        let socket_error = socket_error(socket)?;
+        if socket_error == 0 || socket_error == WSAEISCONN {
+            Ok(())
+        } else if socket_error == WSAETIMEDOUT {
+            Err(WslLinkHypervConnectError::ConnectTimeout(timeout))
+        } else {
+            Err(WslLinkHypervConnectError::Connect(socket_error))
+        }
+    }
+
+    fn socket_error(socket: SOCKET) -> Result<i32, WslLinkHypervConnectError> {
+        let mut value = 0_i32;
+        let mut len = mem::size_of::<i32>() as i32;
+        let result = unsafe {
+            getsockopt(
+                socket,
+                SOL_SOCKET,
+                SO_ERROR,
+                (&mut value as *mut i32).cast::<u8>(),
+                &mut len,
+            )
+        };
+        if result == SOCKET_ERROR {
+            return Err(WslLinkHypervConnectError::SocketOption(last_wsa_error()));
+        }
+        Ok(value)
+    }
+
+    fn is_pending_connect_error(error: i32) -> bool {
+        matches!(error, WSAEWOULDBLOCK | WSAEINPROGRESS | WSAEALREADY)
+    }
+
+    fn fd_set_with_socket(socket: SOCKET) -> FD_SET {
+        let mut set = FD_SET::default();
+        set.fd_count = 1;
+        set.fd_array[0] = socket;
+        set
+    }
+
+    // 改动 1: 饱和转换的 idiomatic 写法
+    fn duration_to_timeval(duration: Duration) -> TIMEVAL {
+        TIMEVAL {
+            tv_sec: i32::try_from(duration.as_secs()).unwrap_or(i32::MAX),
+            tv_usec: duration.subsec_micros() as i32,
+        }
+    }
+
+    fn last_wsa_error() -> i32 {
+        unsafe { WSAGetLastError() }
+    }
+
+    struct OwnedWinsockSocket {
+        socket: SOCKET,
+    }
+
+    impl OwnedWinsockSocket {
+        fn as_socket(&self) -> SOCKET {
+            self.socket
+        }
+
+        // 改动 2: ManuallyDrop 比 mem::forget 更明确传达"接管 Drop 责任"
+        fn into_raw_socket(self) -> SOCKET {
+            let owned = mem::ManuallyDrop::new(self);
+            owned.socket
+        }
+    }
+
+    impl Drop for OwnedWinsockSocket {
+        fn drop(&mut self) {
+            unsafe {
+                let _ = closesocket(self.socket);
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub mod linux_vsock {
+    pub use tokio_vsock::{VsockListener, VsockStream, VMADDR_CID_ANY, VMADDR_CID_HOST};
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::wsl_link::manager::WslLinkTransportAdapter;
+    #[cfg(windows)]
+    use std::{cell::Cell, time::Duration};
+
+    #[test]
+    fn vsock_grpc_adapter_uses_reserved_port() {
+        let adapter = VsockGrpcAdapter::new(VsockGrpcEndpoint::default());
+        assert_eq!(adapter.kind(), WslLinkTransportKind::VsockGrpc);
+        assert_eq!(adapter.endpoint().port, DEFAULT_VSOCK_GRPC_PORT);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_service_guid_maps_vsock_port_to_hyperv_template() {
+        let guid = windows_hyperv::service_guid_for_vsock_port(DEFAULT_VSOCK_GRPC_PORT)
+            .expect("default port should map");
+        assert_eq!(guid.data1, DEFAULT_VSOCK_GRPC_PORT);
+        assert_eq!(guid.data2, windows_hyperv::WSL_LINK_HV_VSOCK_TEMPLATE_DATA2);
+        assert_eq!(guid.data3, windows_hyperv::WSL_LINK_HV_VSOCK_TEMPLATE_DATA3);
+        assert_eq!(guid.data4, windows_hyperv::WSL_LINK_HV_VSOCK_TEMPLATE_DATA4);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_service_guid_rejects_linux_guest_invalid_listen_port() {
+        let result = windows_hyperv::service_guid_for_vsock_port(0x8000_0000);
+        assert!(matches!(
+            result,
+            Err(windows_hyperv::WslLinkHypervAddressError::PortOutOfRange { .. })
+        ));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_hyperv_socket_address_uses_vm_guid_and_service_guid() {
+        let vm_id = windows_hyperv::WslVmGuid::parse("{90db8b89-0d35-4f79-8ce9-49ea0ac8b7cd}")
+            .expect("VM GUID should parse");
+        let address = windows_hyperv::WslHypervSocketAddress::new(vm_id, DEFAULT_VSOCK_GRPC_PORT)
+            .expect("address should build");
+        let sockaddr = address.sockaddr();
+        assert_eq!(address.port(), DEFAULT_VSOCK_GRPC_PORT);
+        assert_eq!(address.service_id().data1, DEFAULT_VSOCK_GRPC_PORT);
+        assert_eq!(address.vm_id().data1, 0x90db8b89);
+        assert_eq!(sockaddr.Family, windows_hyperv::WSL_LINK_AF_HYPERV);
+        assert_eq!(sockaddr.ServiceId.data1, DEFAULT_VSOCK_GRPC_PORT);
+        assert!(address.sockaddr_len() > 0);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_hyperv_vm_guid_parser_rejects_invalid_text() {
+        let result = windows_hyperv::WslVmGuid::parse("not-a-guid");
+        assert!(matches!(
+            result,
+            Err(windows_hyperv::WslLinkHypervAddressError::InvalidVmGuid(_))
+        ));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_hyperv_hcsdiag_parser_extracts_running_wsl_vm_guid() {
+        let output = r#"
+            VM, Running, AFD7952D-E55B-5EAD-A889-FC7922C6458D, WSL
+            VM, Stopped, 11111111-2222-3333-4444-555555555555, Other
+        "#;
+        let vm_id = windows_hyperv::parse_hcsdiag_list_wsl_vm_guid(output)
+            .expect("running WSL VM GUID should parse");
+        assert_eq!(vm_id.as_guid().data1, 0xafd7952d);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_hyperv_hcsdiag_parser_ignores_non_wsl_vms() {
+        let output = "VM, Running, 11111111-2222-3333-4444-555555555555, Docker";
+        assert!(windows_hyperv::parse_hcsdiag_list_wsl_vm_guid(output).is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_hyperv_guid_resolver_wakes_default_wsl_when_vm_is_missing() {
+        let probe_count = Cell::new(0);
+        let wake_count = Cell::new(0);
+        let vm_id = windows_hyperv::resolve_running_wsl_vm_guid_with_wake(
+            || {
+                let count = probe_count.get();
+                probe_count.set(count + 1);
+                if count == 0 {
+                    Err(windows_hyperv::WslLinkHypervAddressError::WslVmGuidNotFound)
+                } else {
+                    windows_hyperv::WslVmGuid::parse("90db8b89-0d35-4f79-8ce9-49ea0ac8b7cd")
+                }
+            },
+            || {
+                wake_count.set(wake_count.get() + 1);
+                Ok(())
+            },
+            |_| {},
+            Duration::from_secs(1),
+            Duration::from_millis(1),
+        )
+        .expect("resolver should return VM GUID after wake");
+        assert_eq!(vm_id.as_guid().data1, 0x90db8b89);
+        assert_eq!(probe_count.get(), 2);
+        assert_eq!(wake_count.get(), 1);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_hyperv_guid_resolver_does_not_wake_for_hcsdiag_errors() {
+        let wake_count = Cell::new(0);
+        let result = windows_hyperv::resolve_running_wsl_vm_guid_with_wake(
+            || {
+                Err(windows_hyperv::WslLinkHypervAddressError::HcsdiagIo(
+                    "boom".to_string(),
+                ))
+            },
+            || {
+                wake_count.set(wake_count.get() + 1);
+                Ok(())
+            },
+            |_| {},
+            Duration::from_secs(1),
+            Duration::from_millis(1),
+        );
+        assert!(matches!(
+            result,
+            Err(windows_hyperv::WslLinkHypervAddressError::HcsdiagIo(error))
+                if error == "boom"
+        ));
+        assert_eq!(wake_count.get(), 0);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_hyperv_guid_resolver_times_out_after_wake() {
+        let wake_count = Cell::new(0);
+        let result = windows_hyperv::resolve_running_wsl_vm_guid_with_wake(
+            || Err(windows_hyperv::WslLinkHypervAddressError::WslVmGuidNotFound),
+            || {
+                wake_count.set(wake_count.get() + 1);
+                Ok(())
+            },
+            |_| {},
+            Duration::ZERO,
+            Duration::ZERO,
+        );
+        assert!(matches!(
+            result,
+            Err(windows_hyperv::WslLinkHypervAddressError::WslWakeTimeout(timeout))
+                if timeout == Duration::ZERO
+        ));
+        assert_eq!(wake_count.get(), 1);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_command_output_decoder_handles_utf16le() {
+        let mut bytes = Vec::new();
+        for unit in "默认发行版：Ubuntu".encode_utf16() {
+            bytes.extend_from_slice(&unit.to_le_bytes());
+        }
+        assert_eq!(
+            windows_hyperv::decode_command_output(&bytes),
+            "默认发行版：Ubuntu"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_hyperv_connect_retry_only_retries_timeout() {
+        assert!(windows_hyperv::should_retry_hyperv_connect(
+            &windows_hyperv::WslLinkHypervConnectError::ConnectTimeout(Duration::from_secs(3))
+        ));
+        assert!(!windows_hyperv::should_retry_hyperv_connect(
+            &windows_hyperv::WslLinkHypervConnectError::Connect(10061)
+        ));
+    }
+}
+use std::time::Duration;
+
+use tonic::transport::{Endpoint, Server};
+
+use super::types::{WslLinkTransportKind, DEFAULT_VSOCK_GRPC_PORT};
+
+pub const DEFAULT_GRPC_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(10);
+pub const DEFAULT_GRPC_KEEPALIVE_TIMEOUT: Duration = Duration::from_secs(20);
+pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
+pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WslLinkTransportConfig {
+    pub vsock_grpc_port: u32,
+    pub grpc_keepalive_interval: Duration,
+    pub grpc_keepalive_timeout: Duration,
+    pub connect_timeout: Duration,
+    pub request_timeout: Duration,
+}
+
+impl Default for WslLinkTransportConfig {
+    fn default() -> Self {
+        Self {
+            vsock_grpc_port: DEFAULT_VSOCK_GRPC_PORT,
+            grpc_keepalive_interval: DEFAULT_GRPC_KEEPALIVE_INTERVAL,
+            grpc_keepalive_timeout: DEFAULT_GRPC_KEEPALIVE_TIMEOUT,
+            connect_timeout: DEFAULT_CONNECT_TIMEOUT,
+            request_timeout: DEFAULT_REQUEST_TIMEOUT,
+        }
+    }
+}
+
+impl WslLinkTransportConfig {
+    pub fn primary_transport(&self) -> WslLinkTransportKind {
+        WslLinkTransportKind::VsockGrpc
+    }
+
+    pub fn grpc_client_endpoint(&self) -> Result<Endpoint, tonic::transport::Error> {
+        Ok(Endpoint::try_from("http://[::]:0")?
+            .connect_timeout(self.connect_timeout)
+            .timeout(self.request_timeout)
+            .http2_keep_alive_interval(self.grpc_keepalive_interval)
+            .keep_alive_timeout(self.grpc_keepalive_timeout)
+            .keep_alive_while_idle(true)
+            .tcp_nodelay(true))
+    }
+
+    pub fn grpc_server_builder(&self) -> Server {
+        Server::builder()
+            .http2_keepalive_interval(Some(self.grpc_keepalive_interval))
+            .http2_keepalive_timeout(Some(self.grpc_keepalive_timeout))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_config_matches_requested_topology() {
+        let config = WslLinkTransportConfig::default();
+
+        assert_eq!(config.primary_transport(), WslLinkTransportKind::VsockGrpc);
+        assert_eq!(config.grpc_keepalive_interval, Duration::from_secs(10));
+        assert_eq!(config.grpc_keepalive_timeout, Duration::from_secs(20));
+        assert_eq!(config.connect_timeout, Duration::from_secs(3));
+    }
+}

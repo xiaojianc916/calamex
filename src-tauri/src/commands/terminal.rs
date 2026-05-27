@@ -109,15 +109,17 @@ pub struct TerminalSessionState {
 }
 
 #[tauri::command]
-pub fn ensure_terminal_session(
+pub async fn ensure_terminal_session(
     app: AppHandle,
-    state: State<TerminalSessionState>,
+    state: State<'_, TerminalSessionState>,
     payload: EnsureTerminalSessionRequest,
 ) -> Result<TerminalSessionPayload, String> {
     let terminal_state = state.inner().clone();
     update_terminal_geometry(payload.cols, payload.rows);
 
-    let terminal_cwd = {
+    // Phase 1: 创建锁保护下检查现有会话、准备 WSL 连接参数。
+    // std::sync::MutexGuard 不能跨越 .await，必须在 await 前释放。
+    let (terminal_cwd, created) = {
         let _creation_guard = terminal_state
             .creation_guard
             .lock()
@@ -154,7 +156,11 @@ pub fn ensure_terminal_session(
             .transpose()?
             .unwrap_or_else(|| DEFAULT_WSL_INTERACTIVE_CWD.to_string());
         let desktop_material = load_required_desktop_noise_material()?;
-        let handle = tauri::async_runtime::block_on(open_interactive_terminal_with_agent_retry(
+
+        // 释放 creation_guard 后再做异步 WSL 连接，避免 MutexGuard 跨越 .await
+        drop(_creation_guard);
+
+        let handle = open_interactive_terminal_with_agent_retry(
             app.clone(),
             terminal_state.clone(),
             payload.session_id.clone(),
@@ -165,20 +171,40 @@ pub fn ensure_terminal_session(
                 cols: payload.cols,
                 rows: payload.rows,
             },
-        ))
+        )
+        .await
         .map_err(|error| error.to_string())?;
 
-        let session = Arc::new(TerminalSession {
-            handle,
-            working_directory: terminal_cwd.clone(),
-        });
+        // Phase 2: 重新获取 creation_guard 后原子插入，防止并发创建
         {
+            let _creation_guard = terminal_state
+                .creation_guard
+                .lock()
+                .map_err(|_| "终端会话创建锁已损坏。".to_string())?;
+            // 再次检查：await 期间可能有其他调用者抢先生成了同一会话
+            if get_terminal_session(&terminal_state, &payload.session_id)?.is_some() {
+                // 已有会话，终止刚创建的连接
+                let _ = handle.close();
+                return Ok(TerminalSessionPayload {
+                    session_id: payload.session_id,
+                    cwd: terminal_cwd.clone(),
+                    shell_label: "WSL2".into(),
+                    created: false,
+                    initial_output: None,
+                });
+            }
+
+            let session = Arc::new(TerminalSession {
+                handle,
+                working_directory: terminal_cwd.clone(),
+            });
             let mut sessions = lock_terminal_sessions(&terminal_state)?;
             sessions.insert(payload.session_id.clone(), Arc::clone(&session));
+            set_terminal_snapshot(&terminal_state, &payload.session_id, String::new())?;
+            remove_terminal_interactive_visual_state(&terminal_state, &payload.session_id)?;
         }
-        set_terminal_snapshot(&terminal_state, &payload.session_id, String::new())?;
-        remove_terminal_interactive_visual_state(&terminal_state, &payload.session_id)?;
-        terminal_cwd
+
+        (terminal_cwd, true)
     };
 
     mark_terminal_interactive_ready(&app);
@@ -187,14 +213,14 @@ pub fn ensure_terminal_session(
         session_id: payload.session_id,
         cwd: terminal_cwd,
         shell_label: "WSL2".into(),
-        created: true,
+        created,
         initial_output: None,
     })
 }
 
 #[tauri::command]
-pub fn write_terminal_input(
-    state: State<TerminalSessionState>,
+pub async fn write_terminal_input(
+    state: State<'_, TerminalSessionState>,
     payload: TerminalInputRequest,
 ) -> Result<(), String> {
     let terminal_state = state.inner().clone();
@@ -205,13 +231,14 @@ pub fn write_terminal_input(
         }
         ActiveRunInputTarget::Run(run_id) => {
             let desktop_material = load_required_desktop_noise_material()?;
-            return tauri::async_runtime::block_on(write_terminal_run_input_over_wsl_link(
+            return write_terminal_run_input_over_wsl_link(
                 &desktop_material,
                 WslLinkTerminalRunInput {
                     run_id,
                     data: payload.data,
                 },
-            ))
+            )
+            .await
             .map_err(|error| error.to_string());
         }
         ActiveRunInputTarget::None => {}
@@ -222,6 +249,7 @@ pub fn write_terminal_input(
     session
         .handle
         .write_input(payload.data)
+        .await
         .map_err(|error| error.to_string())
 }
 
@@ -393,8 +421,8 @@ pub fn dispatch_script_to_terminal(
 }
 
 #[tauri::command]
-pub fn cancel_terminal_run(
-    state: State<TerminalSessionState>,
+pub async fn cancel_terminal_run(
+    state: State<'_, TerminalSessionState>,
     payload: CancelTerminalRunRequest,
 ) -> Result<(), String> {
     let terminal_state = state.inner().clone();
@@ -402,13 +430,14 @@ pub fn cancel_terminal_run(
 
     if let Some(pid) = get_active_terminal_run_wsl_link_pid(&terminal_state, &payload.run_id)? {
         let desktop_material = load_required_desktop_noise_material()?;
-        return tauri::async_runtime::block_on(signal_terminal_process_over_wsl_link(
+        return signal_terminal_process_over_wsl_link(
             &desktop_material,
             WslLinkTerminalSignalProcess {
                 pid,
                 mode: mode.to_string(),
             },
-        ))
+        )
+        .await
         .map_err(|error| error.to_string());
     }
 

@@ -81,7 +81,8 @@ export const useWorkbench = () => {
       return false;
     }
 
-    if (editorStore.document.content.trim().length <= 0) {
+    // 使用 charCount 避免每次按键都读取完整 content 字符串并执行 trim()
+    if (editorStore.document.charCount <= 0) {
       return false;
     }
 
