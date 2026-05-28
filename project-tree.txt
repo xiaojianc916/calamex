@@ -1,0 +1,1564 @@
+PS D:\com.xiaojianc\my_desktop_app> & "C:\ProgramData\chocolatey\lib\tree\tools\tree.exe" -I 'node_modules|target|dist|.git|.idea|.vscode|.cargo|__pycache__|*.log' -L 9
+.
+|-- AGENTS.md
+|-- Cargo.lock
+|-- Cargo.toml
+|-- RESIZE_NOTES.md
+|-- agent-sidecar
+|   |-- MATURITY.md
+|   |-- package.json
+|   |-- src
+|   |   |-- approvals
+|   |   |-- config
+|   |   |-- context
+|   |   |-- engines
+|   |   |   |-- agent
+|   |   |   |   `-- factory.ts
+|   |   |   |-- approval-client
+|   |   |   |   |-- client.ts
+|   |   |   |   `-- utils.ts
+|   |   |   |-- base.ts
+|   |   |   |-- budget
+|   |   |   |   `-- budget.ts
+|   |   |   |-- chat
+|   |   |   |   `-- chat.ts
+|   |   |   |-- context
+|   |   |   |   |-- context.ts
+|   |   |   |   `-- memory.ts
+|   |   |   |-- contracts
+|   |   |   |   |-- runtime-contracts.ts
+|   |   |   |   `-- runtime-input.ts
+|   |   |   |-- execution.ts
+|   |   |   |-- mastra-runtime.ts
+|   |   |   |-- messages.ts
+|   |   |   |-- plan
+|   |   |   |   |-- plan-store.ts
+|   |   |   |   |-- plan-utils.ts
+|   |   |   |   |-- plan-workflow-store.ts
+|   |   |   |   `-- plan.ts
+|   |   |   |-- prompts
+|   |   |   |   `-- system-prompt.ts
+|   |   |   |-- responses.ts
+|   |   |   |-- rollback.ts
+|   |   |   |-- runtime.ts
+|   |   |   |-- stream
+|   |   |   |   `-- stream-utils.ts
+|   |   |   |-- tools
+|   |   |   |   `-- tools.ts
+|   |   |   |-- types.ts
+|   |   |   |-- utils.ts
+|   |   |   |-- validation.ts
+|   |   |   `-- workspace.ts
+|   |   |-- http
+|   |   |   |-- transport.ts
+|   |   |   `-- warmup.ts
+|   |   |-- mastra
+|   |   |   |-- index.ts
+|   |   |   `-- public
+|   |   |-- models
+|   |   |   |-- config.ts
+|   |   |   |-- index.ts
+|   |   |   |-- output-budget.ts
+|   |   |   `-- providers
+|   |   |       |-- deepseek-mastra-gateway.ts
+|   |   |       `-- deepseek-reasoning-fetch.ts
+|   |   |-- rollback
+|   |   |-- schemas
+|   |   |   |-- events.ts
+|   |   |   |-- plan-workflow.ts
+|   |   |   `-- plan.ts
+|   |   |-- server.spec.ts
+|   |   |-- server.ts
+|   |   |-- streaming
+|   |   |   |-- stream-adapter.ts
+|   |   |   |-- stream-debug-recorder.ts
+|   |   |   |-- stream-event-bus.ts
+|   |   |   |-- stream-helpers.ts
+|   |   |   |-- stream-normalizer.ts
+|   |   |   |-- stream-runner.ts
+|   |   |   |-- stream-runtime-contract.ts
+|   |   |   |-- stream-types.ts
+|   |   |   `-- streaming.spec.ts
+|   |   |-- tools
+|   |   |   |-- generated.ts
+|   |   |   |-- log.ts
+|   |   |   |-- mcp-gateway.ts
+|   |   |   |-- mcp.spec.ts
+|   |   |   |-- mcp.ts
+|   |   |   `-- time.ts
+|   |   |-- types
+|   |   |   `-- json-value.ts
+|   |   `-- web
+|   |       |-- service.ts
+|   |       `-- types.ts
+|   `-- tsconfig.json
+|-- assets
+|   `-- brand
+|       `-- 1.svg
+|-- biome.json
+|-- code_agent.md
+|-- commitlint.config.ts
+|-- components.json
+|-- deny.toml
+|-- docs
+|   |-- adr
+|   |   `-- 006-cli-for-commit-stage-discard.md
+|   |-- architecture
+|   |   |-- ADR-0001-startup-single-source.md
+|   |   |-- ADR-0002-dependency-baseline.md
+|   |   |-- ADR-0003-static-guards-exemptions.md
+|   |   |-- ADR-0004-csp-strategy.md
+|   |   |-- ADR-0005-capability-domain-split.md
+|   |   |-- ADR-0006-router-dormant.md
+|   |   |-- ADR-0007-ipc-acl-contract.md
+|   |   |-- ADR-0008-session-restore.md
+|   |   |-- ADR-20260422-window-resize-tearing.md
+|   |   |-- ADR-20260423-standard-window-resize-redirection-bitmap.md
+|   |   |-- ADR-20260423-vendor-wry-visual-hosting.md
+|   |   |-- ADR-20260423-visual-hosting-nchittest-and-nobackground.md
+|   |   |-- ADR-20260423-welcome-smil-svg.md
+|   |   |-- ADR-20260425-terminal-dual-pty.md
+|   |   |-- ADR-20260427-ai-chat-code-rendering.md
+|   |   |-- ADR-20260427-generic-ide-ai.md
+|   |   |-- ADR-20260428-agent-auto-edit-and-rollback.md
+|   |   |-- ADR-20260429-agent-plan-mode-web-search.md
+|   |   |-- ADR-20260506-wsl-link-vsock-grpc-quic.md
+|   |   |-- ADR-20260513-aed-rust-infrastructure.md
+|   |   |-- ADR-20260520-aed-edit-patch-diff-terminology.md
+|   |   |-- ADR-20260520-aed-ownership.md
+|   |   |-- ADR-20260520-mcp-hooks-and-capability.md
+|   |   |-- README.md
+|   |   `-- _TEMPLATE.md
+|   |-- audit-events.md
+|   |-- env-vars.md
+|   |-- guides
+|   |   `-- agent-plan-mode-phase0-1.md
+|   |-- incident-log.md
+|   |-- incident-runbook.md
+|   |-- observability.md
+|   |-- performance-budget.md
+|   |-- security-exceptions.md
+|   `-- tech-debt.md
+|-- e2e
+|   |-- ai-edit-rollback.spec.ts
+|   `-- startup-flow.spec.ts
+|-- hooks_mcp.yaml
+|-- index.html
+|-- knip.json
+|-- localhost_2026-05-27_21-24-38.report.html
+|-- noise_audit.txt
+|-- package.json
+|-- playwright.config.ts
+|-- pnpm-lock.yaml
+|-- pnpm-workspace.yaml
+|-- project-tree.txt
+|-- proto
+|   `-- wsl-link
+|       `-- v1
+|           `-- wsl_link.proto
+|-- reports
+|-- resources
+|   |-- Messages_zh.json
+|   `-- logo.svg
+|-- rust_out.pdb
+|-- schemas
+|   `-- ai-tools-manifest.json
+|-- scripts
+|   |-- baselines
+|   |   |-- capability-domains.json
+|   |   |-- config-refs.json
+|   |   |-- dormant-modules.json
+|   |   |-- file-size.json
+|   |   |-- rust-mod-size.json
+|   |   `-- workbench-facade.json
+|   |-- build-wsl-link-agent.mjs
+|   |-- check-capabilities-domain.ts
+|   |-- check-config-refs.ts
+|   |-- check-dev-env.mjs
+|   |-- check-dormant-modules.ts
+|   |-- check-file-size.ts
+|   |-- check-router-disabled.ts
+|   |-- check-terminal-singleton.ts
+|   |-- check-versions.ts
+|   |-- check-workbench-facade.ts
+|   |-- gen-tools.mjs
+|   |-- generate-shell-command-catalog.mjs
+|   |-- guard-utils.ts
+|   |-- run-all-guards.ts
+|   `-- run-tauri.mjs
+|-- src
+|   |-- App.spec.ts
+|   |-- App.vue
+|   |-- __tests__
+|   |   `-- setup.ts
+|   |-- assets
+|   |   |-- css
+|   |   |   |-- run-sidebar.css
+|   |   |   |-- shadcn-theme.css
+|   |   |   |-- ssh-sidebar.css
+|   |   |   `-- tailwind.css
+|   |   |-- fonts
+|   |   |   `-- inter
+|   |   |       |-- InterVariable.woff2
+|   |   |       `-- inter.css
+|   |   |-- icons
+|   |   |   |-- ai-providers
+|   |   |   |   |-- anthropic.svg
+|   |   |   |   |-- deepseek-color.svg
+|   |   |   |   |-- deepseek.ico
+|   |   |   |   |-- google-gemini.svg
+|   |   |   |   |-- moonshotai.ico
+|   |   |   |   |-- ollama-text.svg
+|   |   |   |   |-- ollama.svg
+|   |   |   |   |-- openai.svg
+|   |   |   |   |-- qwen-color.svg
+|   |   |   |   |-- qwen.svg
+|   |   |   |   |-- zhipu-color.svg
+|   |   |   |   `-- zhipu.svg
+|   |   |   `-- pierre
+|   |   |       |-- astro-color-light.svg
+|   |   |       |-- astro-color.svg
+|   |   |       |-- astro-light.svg
+|   |   |       |-- astro.svg
+|   |   |       |-- babel-color-light.svg
+|   |   |       |-- babel-color.svg
+|   |   |       |-- babel-light.svg
+|   |   |       |-- babel.svg
+|   |   |       |-- bash-duo-color-light.svg
+|   |   |       |-- bash-duo-color.svg
+|   |   |       |-- bash-duo-light.svg
+|   |   |       |-- bash-duo.svg
+|   |   |       |-- biome-color-light.svg
+|   |   |       |-- biome-color.svg
+|   |   |       |-- biome-light.svg
+|   |   |       |-- biome.svg
+|   |   |       |-- bootstrap-duo-color-light.svg
+|   |   |       |-- bootstrap-duo-color.svg
+|   |   |       |-- bootstrap-duo-light.svg
+|   |   |       |-- bootstrap-duo.svg
+|   |   |       |-- braces-light.svg
+|   |   |       |-- braces.svg
+|   |   |       |-- browserslist-duo-color-light.svg
+|   |   |       |-- browserslist-duo-color.svg
+|   |   |       |-- browserslist-duo-light.svg
+|   |   |       |-- browserslist-duo.svg
+|   |   |       |-- bun-duo-color-light.svg
+|   |   |       |-- bun-duo-color.svg
+|   |   |       |-- bun-duo-light.svg
+|   |   |       |-- bun-duo.svg
+|   |   |       |-- claude-color-light.svg
+|   |   |       |-- claude-color.svg
+|   |   |       |-- claude-light.svg
+|   |   |       |-- claude.svg
+|   |   |       |-- docker-color-light.svg
+|   |   |       |-- docker-color.svg
+|   |   |       |-- docker-light.svg
+|   |   |       |-- docker.svg
+|   |   |       |-- eslint-color-light.svg
+|   |   |       |-- eslint-color.svg
+|   |   |       |-- eslint-light.svg
+|   |   |       |-- eslint.svg
+|   |   |       |-- file-duo-light.svg
+|   |   |       |-- file-duo.svg
+|   |   |       |-- file-symlink-duo-light.svg
+|   |   |       |-- file-symlink-duo.svg
+|   |   |       |-- file-table-duo-light.svg
+|   |   |       |-- file-table-duo.svg
+|   |   |       |-- file-text-duo-light.svg
+|   |   |       |-- file-text-duo.svg
+|   |   |       |-- file-zip-duo-light.svg
+|   |   |       |-- file-zip-duo.svg
+|   |   |       |-- folder-duo-light.svg
+|   |   |       |-- folder-duo.svg
+|   |   |       |-- folder-open-duo-light.svg
+|   |   |       |-- folder-open-duo.svg
+|   |   |       |-- font-light.svg
+|   |   |       |-- font.svg
+|   |   |       |-- git-color-light.svg
+|   |   |       |-- git-color.svg
+|   |   |       |-- git-light.svg
+|   |   |       |-- git.svg
+|   |   |       |-- graphql-color-light.svg
+|   |   |       |-- graphql-color.svg
+|   |   |       |-- graphql-light.svg
+|   |   |       |-- graphql.svg
+|   |   |       |-- image-duo-light.svg
+|   |   |       |-- image-duo.svg
+|   |   |       |-- lang-css-duo-color-light.svg
+|   |   |       |-- lang-css-duo-color.svg
+|   |   |       |-- lang-css-duo-light.svg
+|   |   |       |-- lang-css-duo.svg
+|   |   |       |-- lang-go-color-light.svg
+|   |   |       |-- lang-go-color.svg
+|   |   |       |-- lang-go-light.svg
+|   |   |       |-- lang-go.svg
+|   |   |       |-- lang-html-duo-color-light.svg
+|   |   |       |-- lang-html-duo-color.svg
+|   |   |       |-- lang-html-duo-light.svg
+|   |   |       |-- lang-html-duo.svg
+|   |   |       |-- lang-javascript-duo-color-light.svg
+|   |   |       |-- lang-javascript-duo-color.svg
+|   |   |       |-- lang-javascript-duo-light.svg
+|   |   |       |-- lang-javascript-duo.svg
+|   |   |       |-- lang-markdown-light.svg
+|   |   |       |-- lang-markdown.svg
+|   |   |       |-- lang-python-color-light.svg
+|   |   |       |-- lang-python-color.svg
+|   |   |       |-- lang-python-light.svg
+|   |   |       |-- lang-python.svg
+|   |   |       |-- lang-ruby-color-light.svg
+|   |   |       |-- lang-ruby-color.svg
+|   |   |       |-- lang-ruby-light.svg
+|   |   |       |-- lang-ruby.svg
+|   |   |       |-- lang-rust-color-light.svg
+|   |   |       |-- lang-rust-color.svg
+|   |   |       |-- lang-rust-light.svg
+|   |   |       |-- lang-rust.svg
+|   |   |       |-- lang-swift-color-light.svg
+|   |   |       |-- lang-swift-color.svg
+|   |   |       |-- lang-swift-light.svg
+|   |   |       |-- lang-swift.svg
+|   |   |       |-- lang-typescript-duo-color-light.svg
+|   |   |       |-- lang-typescript-duo-color.svg
+|   |   |       |-- lang-typescript-duo-light.svg
+|   |   |       |-- lang-typescript-duo.svg
+|   |   |       |-- nextjs-light.svg
+|   |   |       |-- nextjs.svg
+|   |   |       |-- npm-color-light.svg
+|   |   |       |-- npm-color.svg
+|   |   |       |-- npm-light.svg
+|   |   |       |-- npm.svg
+|   |   |       |-- oxc-color-light.svg
+|   |   |       |-- oxc-color.svg
+|   |   |       |-- oxc-light.svg
+|   |   |       |-- oxc.svg
+|   |   |       |-- postcss-color-light.svg
+|   |   |       |-- postcss-color.svg
+|   |   |       |-- postcss-light.svg
+|   |   |       |-- postcss.svg
+|   |   |       |-- prettier-color-light.svg
+|   |   |       |-- prettier-color.svg
+|   |   |       |-- prettier-light.svg
+|   |   |       |-- prettier.svg
+|   |   |       |-- react-color-light.svg
+|   |   |       |-- react-color.svg
+|   |   |       |-- react-light.svg
+|   |   |       |-- react.svg
+|   |   |       |-- sass-color-light.svg
+|   |   |       |-- sass-color.svg
+|   |   |       |-- sass-light.svg
+|   |   |       |-- sass.svg
+|   |   |       |-- server-duo-light.svg
+|   |   |       |-- server-duo.svg
+|   |   |       |-- stylelint-light.svg
+|   |   |       |-- stylelint.svg
+|   |   |       |-- svelte-color-light.svg
+|   |   |       |-- svelte-color.svg
+|   |   |       |-- svelte-light.svg
+|   |   |       |-- svelte.svg
+|   |   |       |-- svg-2-color-light.svg
+|   |   |       |-- svg-2-color.svg
+|   |   |       |-- svg-2-light.svg
+|   |   |       |-- svg-2.svg
+|   |   |       |-- svgo-color-light.svg
+|   |   |       |-- svgo-color.svg
+|   |   |       |-- svgo-light.svg
+|   |   |       |-- svgo.svg
+|   |   |       |-- tailwind-color-light.svg
+|   |   |       |-- tailwind-color.svg
+|   |   |       |-- tailwind-light.svg
+|   |   |       |-- tailwind.svg
+|   |   |       |-- terraform-color-light.svg
+|   |   |       |-- terraform-color.svg
+|   |   |       |-- terraform-light.svg
+|   |   |       |-- terraform.svg
+|   |   |       |-- theme-complete.json
+|   |   |       |-- vite-color-light.svg
+|   |   |       |-- vite-color.svg
+|   |   |       |-- vite-light.svg
+|   |   |       |-- vite.svg
+|   |   |       |-- vscode-color-light.svg
+|   |   |       |-- vscode-color.svg
+|   |   |       |-- vscode-light.svg
+|   |   |       |-- vscode.svg
+|   |   |       |-- vue-color-light.svg
+|   |   |       |-- vue-color.svg
+|   |   |       |-- vue-light.svg
+|   |   |       |-- vue.svg
+|   |   |       |-- wasm-duo-color-light.svg
+|   |   |       |-- wasm-duo-color.svg
+|   |   |       |-- wasm-duo-light.svg
+|   |   |       |-- wasm-duo.svg
+|   |   |       |-- webpack-color-light.svg
+|   |   |       |-- webpack-color.svg
+|   |   |       |-- webpack-light.svg
+|   |   |       |-- webpack.svg
+|   |   |       |-- yml-color-light.svg
+|   |   |       |-- yml-color.svg
+|   |   |       |-- yml-light.svg
+|   |   |       |-- yml.svg
+|   |   |       |-- zig-color-light.svg
+|   |   |       |-- zig-color.svg
+|   |   |       |-- zig-light.svg
+|   |   |       `-- zig.svg
+|   |   `-- svg
+|   |-- bindings
+|   |   `-- tauri.ts
+|   |-- components
+|   |   |-- ai-elements
+|   |   |   |-- AGENTS.md
+|   |   |   |-- attachments
+|   |   |   |   |-- Attachment.vue
+|   |   |   |   |-- AttachmentEmpty.vue
+|   |   |   |   |-- AttachmentHoverCard.vue
+|   |   |   |   |-- AttachmentHoverCardContent.vue
+|   |   |   |   |-- AttachmentHoverCardTrigger.vue
+|   |   |   |   |-- AttachmentInfo.vue
+|   |   |   |   |-- AttachmentPreview.vue
+|   |   |   |   |-- AttachmentRemove.vue
+|   |   |   |   |-- Attachments.vue
+|   |   |   |   |-- context.ts
+|   |   |   |   |-- index.ts
+|   |   |   |   |-- types.ts
+|   |   |   |   `-- utils.ts
+|   |   |   |-- chain-of-thought
+|   |   |   |   |-- ChainOfThought.vue
+|   |   |   |   |-- ChainOfThoughtContent.vue
+|   |   |   |   |-- ChainOfThoughtHeader.vue
+|   |   |   |   |-- ChainOfThoughtImage.vue
+|   |   |   |   |-- ChainOfThoughtSearchResult.vue
+|   |   |   |   |-- ChainOfThoughtSearchResults.vue
+|   |   |   |   |-- ChainOfThoughtStep.vue
+|   |   |   |   |-- context.ts
+|   |   |   |   `-- index.ts
+|   |   |   |-- checkpoint
+|   |   |   |   |-- Checkpoint.vue
+|   |   |   |   |-- CheckpointIcon.vue
+|   |   |   |   |-- CheckpointTrigger.vue
+|   |   |   |   `-- index.ts
+|   |   |   |-- code-block
+|   |   |   |   |-- CodeBlock.vue
+|   |   |   |   |-- CodeBlockActions.vue
+|   |   |   |   |-- CodeBlockContainer.vue
+|   |   |   |   |-- CodeBlockContent.vue
+|   |   |   |   |-- CodeBlockCopyButton.vue
+|   |   |   |   |-- CodeBlockFilename.vue
+|   |   |   |   |-- CodeBlockHeader.vue
+|   |   |   |   |-- CodeBlockLanguageSelector.vue
+|   |   |   |   |-- CodeBlockLanguageSelectorContent.vue
+|   |   |   |   |-- CodeBlockLanguageSelectorItem.vue
+|   |   |   |   |-- CodeBlockLanguageSelectorTrigger.vue
+|   |   |   |   |-- CodeBlockLanguageSelectorValue.vue
+|   |   |   |   |-- CodeBlockTitle.vue
+|   |   |   |   |-- context.ts
+|   |   |   |   |-- index.ts
+|   |   |   |   `-- utils.ts
+|   |   |   |-- context
+|   |   |   |   |-- Context.vue
+|   |   |   |   |-- ContextCacheUsage.vue
+|   |   |   |   |-- ContextContent.vue
+|   |   |   |   |-- ContextContentBody.vue
+|   |   |   |   |-- ContextContentFooter.vue
+|   |   |   |   |-- ContextContentHeader.vue
+|   |   |   |   |-- ContextIcon.vue
+|   |   |   |   |-- ContextInputUsage.vue
+|   |   |   |   |-- ContextOutputUsage.vue
+|   |   |   |   |-- ContextReasoningUsage.vue
+|   |   |   |   |-- ContextTrigger.vue
+|   |   |   |   |-- TokensWithCost.vue
+|   |   |   |   |-- context.ts
+|   |   |   |   |-- index.ts
+|   |   |   |   `-- token-format.ts
+|   |   |   |-- conversation
+|   |   |   |   |-- Conversation.vue
+|   |   |   |   |-- ConversationContent.vue
+|   |   |   |   |-- ConversationEmptyState.vue
+|   |   |   |   |-- ConversationScrollButton.vue
+|   |   |   |   `-- index.ts
+|   |   |   |-- file-tree
+|   |   |   |   |-- FileTree.vue
+|   |   |   |   |-- FileTreeActions.vue
+|   |   |   |   |-- FileTreeFile.vue
+|   |   |   |   |-- FileTreeFolder.vue
+|   |   |   |   |-- FileTreeIcon.vue
+|   |   |   |   |-- FileTreeName.vue
+|   |   |   |   |-- context.ts
+|   |   |   |   `-- index.ts
+|   |   |   |-- image
+|   |   |   |   |-- Image.vue
+|   |   |   |   |-- ImageAttachmentPreviewGrid.vue
+|   |   |   |   `-- index.ts
+|   |   |   |-- loader
+|   |   |   |   |-- Loader.vue
+|   |   |   |   |-- LoaderIcon.vue
+|   |   |   |   `-- index.ts
+|   |   |   |-- message
+|   |   |   |   |-- Message.vue
+|   |   |   |   |-- MessageAction.vue
+|   |   |   |   |-- MessageActions.vue
+|   |   |   |   |-- MessageAvatar.vue
+|   |   |   |   |-- MessageContent.vue
+|   |   |   |   |-- MessageToolbar.vue
+|   |   |   |   `-- index.ts
+|   |   |   |-- plan
+|   |   |   |   |-- AiPlan.vue
+|   |   |   |   `-- index.ts
+|   |   |   |-- prompt-input
+|   |   |   |   |-- PromptInput.vue
+|   |   |   |   |-- PromptInputActionAddAttachments.vue
+|   |   |   |   |-- PromptInputActionMenu.vue
+|   |   |   |   |-- PromptInputActionMenuContent.vue
+|   |   |   |   |-- PromptInputActionMenuItem.vue
+|   |   |   |   |-- PromptInputActionMenuTrigger.vue
+|   |   |   |   |-- PromptInputAttachmentsDisplay.spec.ts
+|   |   |   |   |-- PromptInputAttachmentsDisplay.vue
+|   |   |   |   |-- PromptInputBody.vue
+|   |   |   |   |-- PromptInputButton.vue
+|   |   |   |   |-- PromptInputFooter.vue
+|   |   |   |   |-- PromptInputHeader.vue
+|   |   |   |   |-- PromptInputHoverCard.vue
+|   |   |   |   |-- PromptInputHoverCardContent.vue
+|   |   |   |   |-- PromptInputHoverCardTrigger.vue
+|   |   |   |   |-- PromptInputProvider.vue
+|   |   |   |   |-- PromptInputSelect.vue
+|   |   |   |   |-- PromptInputSelectContent.vue
+|   |   |   |   |-- PromptInputSelectItem.vue
+|   |   |   |   |-- PromptInputSelectTrigger.vue
+|   |   |   |   |-- PromptInputSelectValue.vue
+|   |   |   |   |-- PromptInputSubmit.vue
+|   |   |   |   |-- PromptInputTab.vue
+|   |   |   |   |-- PromptInputTabBody.vue
+|   |   |   |   |-- PromptInputTabItem.vue
+|   |   |   |   |-- PromptInputTabLabel.vue
+|   |   |   |   |-- PromptInputTabsList.vue
+|   |   |   |   |-- PromptInputTextarea.vue
+|   |   |   |   |-- PromptInputTools.vue
+|   |   |   |   |-- context.ts
+|   |   |   |   |-- index.ts
+|   |   |   |   `-- types.ts
+|   |   |   |-- queue
+|   |   |   |   |-- AiQueue.vue
+|   |   |   |   `-- index.ts
+|   |   |   |-- shimmer
+|   |   |   |   |-- Shimmer.vue
+|   |   |   |   `-- index.ts
+|   |   |   |-- suggestion
+|   |   |   |   |-- Suggestion.spec.ts
+|   |   |   |   |-- Suggestion.vue
+|   |   |   |   |-- Suggestions.vue
+|   |   |   |   `-- index.ts
+|   |   |   |-- task
+|   |   |   |   |-- Task.vue
+|   |   |   |   |-- TaskContent.vue
+|   |   |   |   |-- TaskItem.vue
+|   |   |   |   |-- TaskItemFile.vue
+|   |   |   |   |-- TaskTrigger.vue
+|   |   |   |   `-- index.ts
+|   |   |   `-- terminal
+|   |   |       |-- Terminal.vue
+|   |   |       |-- TerminalActions.vue
+|   |   |       |-- TerminalClearButton.vue
+|   |   |       |-- TerminalContent.vue
+|   |   |       |-- TerminalCopyButton.vue
+|   |   |       |-- TerminalHeader.vue
+|   |   |       |-- TerminalStatus.vue
+|   |   |       |-- TerminalTitle.vue
+|   |   |       |-- ansi.ts
+|   |   |       |-- context.ts
+|   |   |       |-- index.ts
+|   |   |       `-- terminal-buttons.css
+|   |   |-- business
+|   |   |   `-- ai
+|   |   |       |-- chat
+|   |   |       |   |                               `-- AiChatThread.spec.ts
+|   |   |       |   |                               `-- AiChatThread.vue
+|   |   |       |   |                               `-- AiMarkdown.spec.ts
+|   |   |       |   |                               `-- AiMarkdown.vue
+|   |   |       |   |                               `-- AiMarkdownCodeBlock.vue
+|   |   |       |   |                               `-- AiMarkdownTable.vue
+|   |   |       |   |                               `-- AiMessageItem.spec.ts
+|   |   |       |   |                               `-- AiMessageItem.vue
+|   |   |       |   |                               `-- AiPromptInput.spec.ts
+|   |   |       |   |                               `-- AiPromptInput.vue
+|   |   |       |   |                               `-- AiReasoningCodeBlock.vue
+|   |   |       |   |                               `-- AiThinkingStatus.vue
+|   |   |       |   |                               `-- index.ts
+|   |   |       |                                   `-- normalize-math.ts
+|   |   |       |-- edit
+|   |   |       |   |                               `-- AiChangedFilesSummary.spec.ts
+|   |   |       |   |                               `-- AiChangedFilesSummary.vue
+|   |   |       |   |                               `-- AiDiffHunkViewer.spec.ts
+|   |   |       |   |                               `-- AiDiffHunkViewer.vue
+|   |   |       |   |                               `-- AiDiffPreviewEditor.spec.ts
+|   |   |       |   |                               `-- AiDiffPreviewEditor.vue
+|   |   |       |   |                               `-- AiPatchPreview.spec.ts
+|   |   |       |   |                               `-- AiPatchPreview.vue
+|   |   |       |   |                               `-- diff-ref.spec.ts
+|   |   |       |   |                               `-- diff-ref.ts
+|   |   |       |   |                               `-- index.ts
+|   |   |       |   |                               `-- patch-preview.ts
+|   |   |       |   |                               `-- patch-summary.spec.ts
+|   |   |       |                                   `-- patch-summary.ts
+|   |   |       |-- plan
+|   |   |       |   |                               `-- AiAgentRuntimeTimeline.spec.ts
+|   |   |       |   |                               `-- AiAgentRuntimeTimeline.vue
+|   |   |       |   |                               `-- AiPlanConfirmationMessage.vue
+|   |   |       |   |                               `-- AiPlanModePanel.spec.ts
+|   |   |       |   |                               `-- AiPlanModePanel.vue
+|   |   |       |                                   `-- index.ts
+|   |   |       |-- provider
+|   |   |       |   |                               `-- AiProviderIcon.spec.ts
+|   |   |       |   |                               `-- AiProviderIcon.vue
+|   |   |       |   |                               `-- AiProviderSettings.spec.ts
+|   |   |       |   |                               `-- AiProviderSettings.vue
+|   |   |       |   |                               `-- deepseek-pricing.spec.ts
+|   |   |       |   |                               `-- deepseek-pricing.ts
+|   |   |       |                                   `-- index.ts
+|   |   |       |-- shell
+|   |   |       |   |                               `-- AiAssistantPanel.spec.ts
+|   |   |       |   |                               `-- AiAssistantPanel.vue
+|   |   |       |   |                               `-- AiToolConfirmationCard.vue
+|   |   |       |   |                               `-- AiWorkspaceSurface.vue
+|   |   |       |                                   `-- index.ts
+|   |   |       |-- suggestion
+|   |   |       |   |                               `-- AiFloatingSuggestions.spec.ts
+|   |   |       |   |                               `-- AiFloatingSuggestions.vue
+|   |   |       |   |                               `-- index.ts
+|   |   |       |   |                               `-- layout.spec.ts
+|   |   |       |   |                               `-- layout.ts
+|   |   |       |   |                               `-- suggestion-selection.spec.ts
+|   |   |       |                                   `-- suggestion-selection.ts
+|   |   |       `-- web
+|   |   |           |                               `-- AiWebSearchActivity.vue
+|   |   |           |                               `-- AiWebSourceCard.vue
+|   |   |           |                               `-- AiWebSourcesPanel.spec.ts
+|   |   |           |                               `-- AiWebSourcesPanel.vue
+|   |   |                                           `-- index.ts
+|   |   |-- common
+|   |   |   |-- AppDialogHost.vue
+|   |   |   |-- BrowserContextMenuHost.vue
+|   |   |   |-- ErrorDetails.vue
+|   |   |   |-- FatalErrorScreen.vue
+|   |   |   |-- FieldError.vue
+|   |   |   |-- FileEntryIcon.vue
+|   |   |   |-- InlineError.vue
+|   |   |   |-- LinearContextMenu.spec.ts
+|   |   |   |-- LinearContextMenu.vue
+|   |   |   |-- LinearContextMenuIcon.vue
+|   |   |   `-- linear-context-menu.types.ts
+|   |   |-- editor
+|   |   |   |-- CodeMirrorScriptEditor.css
+|   |   |   |-- CodeMirrorScriptEditor.vue
+|   |   |   |-- EditorContextMenu.vue
+|   |   |   |-- EmptyEditorState.vue
+|   |   |   |-- GitDiffViewer.spec.ts
+|   |   |   |-- GitDiffViewer.vue
+|   |   |   |-- ImageAssetPreview.spec.ts
+|   |   |   |-- ImageAssetPreview.vue
+|   |   |   |-- SmartScriptEditor.vue
+|   |   |   `-- editor-context-menu.types.ts
+|   |   |-- ui
+|   |   |   |-- alert
+|   |   |   |   |-- Alert.vue
+|   |   |   |   |-- AlertDescription.vue
+|   |   |   |   |-- AlertTitle.vue
+|   |   |   |   `-- index.ts
+|   |   |   |-- alert-dialog
+|   |   |   |   `-- index.ts
+|   |   |   |-- avatar
+|   |   |   |   |-- Avatar.vue
+|   |   |   |   |-- AvatarFallback.vue
+|   |   |   |   |-- AvatarImage.vue
+|   |   |   |   `-- index.ts
+|   |   |   |-- badge
+|   |   |   |   |-- Badge.vue
+|   |   |   |   `-- index.ts
+|   |   |   |-- breadcrumb
+|   |   |   |   |-- Breadcrumb.vue
+|   |   |   |   |-- BreadcrumbEllipsis.vue
+|   |   |   |   |-- BreadcrumbItem.vue
+|   |   |   |   |-- BreadcrumbLink.vue
+|   |   |   |   |-- BreadcrumbList.vue
+|   |   |   |   |-- BreadcrumbPage.vue
+|   |   |   |   |-- BreadcrumbSeparator.vue
+|   |   |   |   `-- index.ts
+|   |   |   |-- button
+|   |   |   |   |-- Button.vue
+|   |   |   |   `-- index.ts
+|   |   |   |-- card
+|   |   |   |   |-- Card.vue
+|   |   |   |   |-- CardAction.vue
+|   |   |   |   |-- CardContent.vue
+|   |   |   |   |-- CardDescription.vue
+|   |   |   |   |-- CardFooter.vue
+|   |   |   |   |-- CardHeader.vue
+|   |   |   |   |-- CardTitle.vue
+|   |   |   |   `-- index.ts
+|   |   |   |-- collapsible
+|   |   |   |   |-- Collapsible.vue
+|   |   |   |   |-- CollapsibleContent.vue
+|   |   |   |   |-- CollapsibleTrigger.vue
+|   |   |   |   `-- index.ts
+|   |   |   |-- context-menu
+|   |   |   |   |-- ContextMenu.vue
+|   |   |   |   |-- ContextMenuCheckboxItem.vue
+|   |   |   |   |-- ContextMenuContent.vue
+|   |   |   |   |-- ContextMenuGroup.vue
+|   |   |   |   |-- ContextMenuItem.vue
+|   |   |   |   |-- ContextMenuLabel.vue
+|   |   |   |   |-- ContextMenuRadioGroup.vue
+|   |   |   |   |-- ContextMenuRadioItem.vue
+|   |   |   |   |-- ContextMenuSeparator.vue
+|   |   |   |   |-- ContextMenuShortcut.vue
+|   |   |   |   |-- ContextMenuSub.vue
+|   |   |   |   |-- ContextMenuSubContent.vue
+|   |   |   |   |-- ContextMenuSubTrigger.vue
+|   |   |   |   |-- ContextMenuTrigger.vue
+|   |   |   |   `-- index.ts
+|   |   |   |-- dropdown-menu
+|   |   |   |   |-- DropdownMenu.vue
+|   |   |   |   |-- DropdownMenuContent.vue
+|   |   |   |   |-- DropdownMenuItem.vue
+|   |   |   |   |-- DropdownMenuTrigger.vue
+|   |   |   |   `-- index.ts
+|   |   |   |-- empty
+|   |   |   |   |-- Empty.vue
+|   |   |   |   |-- EmptyDescription.vue
+|   |   |   |   |-- EmptyHeader.vue
+|   |   |   |   |-- EmptyMedia.vue
+|   |   |   |   |-- EmptyTitle.vue
+|   |   |   |   `-- index.ts
+|   |   |   |-- field
+|   |   |   |   |-- Field.vue
+|   |   |   |   |-- FieldDescription.vue
+|   |   |   |   |-- FieldGroup.vue
+|   |   |   |   |-- FieldLabel.vue
+|   |   |   |   |-- FieldLegend.vue
+|   |   |   |   |-- FieldSeparator.vue
+|   |   |   |   |-- FieldSet.vue
+|   |   |   |   `-- index.ts
+|   |   |   |-- hover-card
+|   |   |   |   |-- HoverCard.vue
+|   |   |   |   |-- HoverCardContent.vue
+|   |   |   |   |-- HoverCardTrigger.vue
+|   |   |   |   `-- index.ts
+|   |   |   |-- input
+|   |   |   |   |-- Input.vue
+|   |   |   |   `-- index.ts
+|   |   |   |-- input-group
+|   |   |   |   |-- InputGroup.vue
+|   |   |   |   |-- InputGroupAddon.vue
+|   |   |   |   |-- InputGroupButton.vue
+|   |   |   |   |-- InputGroupInput.vue
+|   |   |   |   |-- InputGroupText.vue
+|   |   |   |   |-- InputGroupTextarea.vue
+|   |   |   |   `-- index.ts
+|   |   |   |-- progress
+|   |   |   |   |-- Progress.vue
+|   |   |   |   `-- index.ts
+|   |   |   |-- resizable
+|   |   |   |   |-- ResizableHandle.vue
+|   |   |   |   |-- ResizablePanel.vue
+|   |   |   |   |-- ResizablePanelGroup.vue
+|   |   |   |   `-- index.ts
+|   |   |   |-- select
+|   |   |   |   |-- Select.vue
+|   |   |   |   |-- SelectContent.vue
+|   |   |   |   |-- SelectGroup.vue
+|   |   |   |   |-- SelectItem.vue
+|   |   |   |   |-- SelectItemText.vue
+|   |   |   |   |-- SelectLabel.vue
+|   |   |   |   |-- SelectScrollDownButton.vue
+|   |   |   |   |-- SelectScrollUpButton.vue
+|   |   |   |   |-- SelectSeparator.vue
+|   |   |   |   |-- SelectTrigger.vue
+|   |   |   |   |-- SelectValue.vue
+|   |   |   |   `-- index.ts
+|   |   |   |-- separator
+|   |   |   |   |-- Separator.vue
+|   |   |   |   `-- index.ts
+|   |   |   |-- skeleton
+|   |   |   |   |-- Skeleton.vue
+|   |   |   |   `-- index.ts
+|   |   |   |-- sonner
+|   |   |   |   |-- Sonner.vue
+|   |   |   |   `-- index.ts
+|   |   |   |-- table
+|   |   |   |   |-- Table.vue
+|   |   |   |   |-- TableBody.vue
+|   |   |   |   |-- TableCaption.vue
+|   |   |   |   |-- TableCell.vue
+|   |   |   |   |-- TableFooter.vue
+|   |   |   |   |-- TableHead.vue
+|   |   |   |   |-- TableHeader.vue
+|   |   |   |   |-- TableRow.vue
+|   |   |   |   `-- index.ts
+|   |   |   |-- textarea
+|   |   |   |   |-- Textarea.vue
+|   |   |   |   `-- index.ts
+|   |   |   `-- tooltip
+|   |   |       |-- Tooltip.vue
+|   |   |       |-- TooltipContent.vue
+|   |   |       |-- TooltipProvider.vue
+|   |   |       |-- TooltipTrigger.vue
+|   |   |       `-- index.ts
+|   |   `-- workbench
+|   |       |-- AppSidebar.spec.ts
+|   |       |-- AppSidebar.vue
+|   |       |-- DiagnosticsPanel.vue
+|   |       |-- EmbeddedTerminal.vue
+|   |       |-- ExplorerEntryIcon.vue
+|   |       |-- LspStatusBar.vue
+|   |       |-- RunPanel.vue
+|   |       |-- RunSidebarPanel.vue
+|   |       |-- SearchSidebarPanel.vue
+|   |       |-- SourceControlPanel.spec.ts
+|   |       |-- SourceControlPanel.vue
+|   |       |-- SshFilePreviewDialog.vue
+|   |       |-- SshSidebarPanel.vue
+|   |       |-- StartupWorkbenchShell.vue
+|   |       |-- StructuredRunInsights.vue
+|   |       |-- TerminalFlowPanel.spec.ts
+|   |       |-- TerminalFlowPanel.vue
+|   |       |-- WorkbenchDashboardSidebar.spec.ts
+|   |       |-- WorkbenchDashboardSidebar.vue
+|   |       |-- WorkspaceTreeNode.vue
+|   |       `-- run-sidebar
+|   |           |-- RunSidebarTemplatesSection.vue
+|   |           |-- runOpsTemplateCatalog.ts
+|   |           `-- templateCatalog.ts
+|   |-- composables
+|   |   |-- __tests__
+|   |   |   |-- browser-context-menu.spec.ts
+|   |   |   |-- integrated-terminal.state.spec.ts
+|   |   |   `-- workbench.facade.spec.ts
+|   |   |-- ai
+|   |   |   |-- sidecar-events.spec.ts
+|   |   |   |-- sidecar-events.ts
+|   |   |   |-- useAiAgentNetwork.ts
+|   |   |   |-- useAiAgentPlan.spec.ts
+|   |   |   |-- useAiAgentPlan.ts
+|   |   |   |-- useAiAgentRun.spec.ts
+|   |   |   |-- useAiAgentRun.ts
+|   |   |   |-- useAiAssistant.spec.ts
+|   |   |   |-- useAiAssistant.ts
+|   |   |   |-- useAiDiffPreview.spec.ts
+|   |   |   |-- useAiDiffPreview.ts
+|   |   |   |-- useAiStream.spec.ts
+|   |   |   |-- useAiStream.ts
+|   |   |   |-- useAiSuggestionPool.spec.ts
+|   |   |   |-- useAiSuggestionPool.ts
+|   |   |   |-- useAiTokenContext.spec.ts
+|   |   |   |-- useAiTokenContext.ts
+|   |   |   |-- useAiWebSources.spec.ts
+|   |   |   `-- useAiWebSources.ts
+|   |   |-- useBrowserContextMenu.ts
+|   |   |-- useDialog.ts
+|   |   |-- useDocumentLifecycle.ts
+|   |   |-- useDocumentPersistence.ts
+|   |   |-- useIntegratedTerminal.ts
+|   |   |-- useLsp.ts
+|   |   |-- useMessage.spec.ts
+|   |   |-- useMessage.ts
+|   |   |-- useShellWorkbenchAiBridge.ts
+|   |   |-- useShellWorkbenchView.spec.ts
+|   |   |-- useShellWorkbenchView.ts
+|   |   |-- useShellWorkbenchViewportState.ts
+|   |   |-- useSidecarChangedDocumentRefresh.ts
+|   |   |-- useSourceControlActions.ts
+|   |   |-- useSourceControlContextMenu.ts
+|   |   |-- useTerminalRun.ts
+|   |   |-- useTheme.ts
+|   |   |-- useWindowResizeState.ts
+|   |   |-- useWorkbench.ts
+|   |   `-- useWorkbenchDocumentIO.ts
+|   |-- constants
+|   |   |-- ai
+|   |   |   |-- provider-icons.ts
+|   |   |   |-- providers.ts
+|   |   |   |-- runtime-tools.generated.ts
+|   |   |   |-- runtime-tools.spec.ts
+|   |   |   |-- runtime-tools.ts
+|   |   |   `-- suggestions.ts
+|   |   |-- editor
+|   |   |-- shell
+|   |   |   `-- command-catalog.ts
+|   |   `-- terminal
+|   |       `-- index.ts
+|   |-- env.d.ts
+|   |-- generated
+|   |   `-- shell-catalog
+|   |       |-- ansible-playbook.json
+|   |       |-- ansible.json
+|   |       |-- apt.json
+|   |       |-- cargo.json
+|   |       |-- crontab.json
+|   |       |-- curl.json
+|   |       |-- df.json
+|   |       |-- dig.json
+|   |       |-- docker.json
+|   |       |-- du.json
+|   |       |-- fdisk.json
+|   |       |-- find.json
+|   |       |-- git.json
+|   |       |-- grep.json
+|   |       |-- helm.json
+|   |       |-- htop.json
+|   |       |-- index.json
+|   |       |-- kill.json
+|   |       |-- killall.json
+|   |       |-- kubectl.json
+|   |       |-- lsblk.json
+|   |       |-- lsof.json
+|   |       |-- mount.json
+|   |       |-- nc.json
+|   |       |-- nmap.json
+|   |       |-- npm.json
+|   |       |-- pip.json
+|   |       |-- pnpm.json
+|   |       |-- podman.json
+|   |       |-- ps.json
+|   |       |-- python.json
+|   |       |-- rsync.json
+|   |       |-- scp.json
+|   |       |-- sed.json
+|   |       |-- sftp.json
+|   |       |-- ssh.json
+|   |       |-- systemctl.json
+|   |       |-- tar.json
+|   |       |-- top.json
+|   |       |-- traceroute.json
+|   |       |-- uname.json
+|   |       |-- uv.json
+|   |       |-- visudo.json
+|   |       |-- wget.json
+|   |       `-- yarn.json
+|   |-- layouts
+|   |   `-- AppShellLayout.vue
+|   |-- lib
+|   |   `-- utils.ts
+|   |-- main.ts
+|   |-- router
+|   |   |-- README.md
+|   |   `-- index.ts
+|   |-- schemas
+|   |-- services
+|   |   |-- editor
+|   |   |   |-- codemirror-config.ts
+|   |   |   |-- codemirror-github-light-highlight.ts
+|   |   |   |-- codemirror-inline-completion.ts
+|   |   |   |-- codemirror-language.spec.ts
+|   |   |   |-- codemirror-language.ts
+|   |   |   |-- codemirror-static-highlight.ts
+|   |   |   `-- lsp-bridge.ts
+|   |   |-- ipc
+|   |   |   |-- ai-config.service.ts
+|   |   |   |-- ai-context.service.ts
+|   |   |   |-- ai-edit.service.ts
+|   |   |   |-- ai.service.ts
+|   |   |   |-- window.service.spec.ts
+|   |   |   `-- window.service.ts
+|   |   |-- ipc.ts
+|   |   |-- session
+|   |   |   |-- store.spec.ts
+|   |   |   `-- store.ts
+|   |   |-- shell
+|   |   |   `-- command-catalog.ts
+|   |   |-- tauri.contracts.ts
+|   |   |-- tauri.spec.ts
+|   |   |-- tauri.ts
+|   |   `-- terminal
+|   |       |-- eventBus.ts
+|   |       |-- facade.spec.ts
+|   |       |-- facade.ts
+|   |       |-- runStore.ts
+|   |       |-- shadowCompare.ts
+|   |       `-- state.ts
+|   |-- shims-icons.d.ts
+|   |-- store
+|   |   |-- ai.store.spec.ts
+|   |   |-- ai.ts
+|   |   |-- aiAgent.store.spec.ts
+|   |   |-- aiAgent.ts
+|   |   |-- aiConversation.store.spec.ts
+|   |   |-- aiConversation.ts
+|   |   |-- aiEdit.store.spec.ts
+|   |   |-- aiEdit.ts
+|   |   |-- app.ts
+|   |   |-- editor.store.spec.ts
+|   |   |-- editor.ts
+|   |   |-- git.store.spec.ts
+|   |   |-- git.ts
+|   |   |-- index.ts
+|   |   |-- plugins
+|   |   |   |-- tauriSessionStorage.spec.ts
+|   |   |   `-- tauriSessionStorage.ts
+|   |   |-- ssh.ts
+|   |   `-- terminal.ts
+|   |-- styles.css
+|   |-- terminal
+|   |   |-- registry.ts
+|   |   `-- session.ts
+|   |-- themes
+|   |   |-- __tests__
+|   |   |   `-- resolved-theme.spec.ts
+|   |   |-- components.ts
+|   |   |-- derive
+|   |   |   |-- cssVars.ts
+|   |   |   `-- terminal.ts
+|   |   |-- effects.ts
+|   |   |-- index.ts
+|   |   |-- manager.ts
+|   |   |-- primitives.ts
+|   |   |-- resolved-theme.ts
+|   |   |-- types.ts
+|   |   `-- variants
+|   |       |-- dark.ts
+|   |       `-- light.ts
+|   |-- types
+|   |   |-- ai
+|   |   |   |-- agent.schema.spec.ts
+|   |   |   |-- agent.schema.ts
+|   |   |   |-- agent.ts
+|   |   |   |-- context.schema.ts
+|   |   |   |-- context.ts
+|   |   |   |-- conversation.schema.spec.ts
+|   |   |   |-- conversation.schema.ts
+|   |   |   |-- edit.schema.spec.ts
+|   |   |   |-- edit.schema.ts
+|   |   |   |-- edit.ts
+|   |   |   |-- index.ts
+|   |   |   |-- patch.schema.spec.ts
+|   |   |   |-- patch.schema.ts
+|   |   |   |-- patch.ts
+|   |   |   |-- provider.schema.spec.ts
+|   |   |   |-- provider.schema.ts
+|   |   |   |-- schema.spec.ts
+|   |   |   |-- schema.ts
+|   |   |   |-- sidecar.schema.spec.ts
+|   |   |   |-- sidecar.schema.ts
+|   |   |   |-- sidecar.ts
+|   |   |   |-- stream.schema.spec.ts
+|   |   |   |-- stream.schema.ts
+|   |   |   |-- stream.ts
+|   |   |   |-- suggestion.schema.spec.ts
+|   |   |   |-- suggestion.schema.ts
+|   |   |   |-- tools.ts
+|   |   |   |-- web.schema.spec.ts
+|   |   |   |-- web.schema.ts
+|   |   |   `-- web.ts
+|   |   |-- app
+|   |   |   `-- index.ts
+|   |   |-- app-error
+|   |   |   `-- index.ts
+|   |   |-- dialog
+|   |   |   `-- index.ts
+|   |   |-- editor
+|   |   |   `-- index.ts
+|   |   |-- file-icon
+|   |   |   `-- index.ts
+|   |   |-- git
+|   |   |   `-- index.ts
+|   |   |-- search
+|   |   |   `-- index.ts
+|   |   |-- session
+|   |   |   `-- index.ts
+|   |   |-- settings
+|   |   |   `-- index.ts
+|   |   |-- shell-completion
+|   |   |   `-- index.ts
+|   |   |-- ssh
+|   |   |   |-- connection.schema.ts
+|   |   |   `-- index.ts
+|   |   |-- startup-shell
+|   |   |   `-- index.ts
+|   |   |-- tauri
+|   |   |   `-- index.ts
+|   |   |-- terminal
+|   |   |   `-- index.ts
+|   |   |-- window
+|   |   |   `-- index.d.ts
+|   |   `-- wsl-link
+|   |       |-- index.ts
+|   |       `-- schema.ts
+|   |-- utils
+|   |   |-- app-tooltip.spec.ts
+|   |   |-- app-tooltip.ts
+|   |   |-- app-window.ts
+|   |   |-- bootstrap-fatal-error.ts
+|   |   |-- browser.ts
+|   |   |-- clipboard.spec.ts
+|   |   |-- clipboard.ts
+|   |   |-- color.spec.ts
+|   |   |-- color.ts
+|   |   |-- date.ts
+|   |   |-- desktop-runtime.ts
+|   |   |-- document-persistence.spec.ts
+|   |   |-- document-persistence.ts
+|   |   |-- editor-language.spec.ts
+|   |   |-- editor-language.ts
+|   |   |-- error-dialog.spec.ts
+|   |   |-- error-dialog.ts
+|   |   |-- error-presentation.spec.ts
+|   |   |-- error-presentation.ts
+|   |   |-- error-presenter.spec.ts
+|   |   |-- error-presenter.ts
+|   |   |-- error-toast.ts
+|   |   |-- error.ts
+|   |   |-- file-assets.ts
+|   |   |-- file-icons.ts
+|   |   |-- hash.ts
+|   |   |-- logger.ts
+|   |   |-- path.spec.ts
+|   |   |-- path.ts
+|   |   |-- runtime-diagnostics.ts
+|   |   |-- shell-completion.spec.ts
+|   |   |-- shell-completion.ts
+|   |   |-- shfmt.ts
+|   |   |-- ssh-file-preview.spec.ts
+|   |   |-- ssh-file-preview.ts
+|   |   |-- startup-profiler.ts
+|   |   |-- startup-shell.spec.ts
+|   |   |-- startup-shell.ts
+|   |   |-- structured-run-report.spec.ts
+|   |   |-- structured-run-report.ts
+|   |   |-- templates.ts
+|   |   |-- terminal-run.spec.ts
+|   |   |-- terminal-run.ts
+|   |   |-- text-preview.spec.ts
+|   |   |-- text-preview.ts
+|   |   |-- window-close.ts
+|   |   |-- window-resize-events.ts
+|   |   |-- workspace.spec.ts
+|   |   `-- workspace.ts
+|   `-- views
+|       `-- ShellWorkbenchView.vue
+|-- src-tauri
+|   |-- Cargo.lock
+|   |-- Cargo.toml
+|   |-- binaries
+|   |   `-- wsl-link
+|   |       `-- wsl-link-agent-x86_64-unknown-linux-gnu
+|   |-- build.rs
+|   |-- capabilities
+|   |   |-- ai-edit.json
+|   |   |-- ai-index.json
+|   |   |-- ai-mcp.json
+|   |   |-- ai-tools-readonly.json
+|   |   |-- ai-tools-write.json
+|   |   |-- ai.json
+|   |   |-- default.json
+|   |   |-- git.json
+|   |   |-- script-toolchain.json
+|   |   |-- session.json
+|   |   |-- terminal.json
+|   |   |-- window.json
+|   |   |-- workspace-fs.json
+|   |   `-- wsl-link.json
+|   |-- gen
+|   |   `-- schemas
+|   |       |-- acl-manifests.json
+|   |       |-- capabilities.json
+|   |       |-- desktop-schema.json
+|   |       `-- windows-schema.json
+|   |-- icons
+|   |   |-- 128x128.png
+|   |   |-- 128x128@2x.png
+|   |   |-- 32x32.png
+|   |   |-- 64x64.png
+|   |   |-- Square107x107Logo.png
+|   |   |-- Square142x142Logo.png
+|   |   |-- Square150x150Logo.png
+|   |   |-- Square284x284Logo.png
+|   |   |-- Square30x30Logo.png
+|   |   |-- Square310x310Logo.png
+|   |   |-- Square44x44Logo.png
+|   |   |-- Square71x71Logo.png
+|   |   |-- Square89x89Logo.png
+|   |   |-- StoreLogo.png
+|   |   |-- android
+|   |   |   |-- mipmap-anydpi-v26
+|   |   |   |   `-- ic_launcher.xml
+|   |   |   |-- mipmap-hdpi
+|   |   |   |   |-- ic_launcher.png
+|   |   |   |   |-- ic_launcher_foreground.png
+|   |   |   |   `-- ic_launcher_round.png
+|   |   |   |-- mipmap-mdpi
+|   |   |   |   |-- ic_launcher.png
+|   |   |   |   |-- ic_launcher_foreground.png
+|   |   |   |   `-- ic_launcher_round.png
+|   |   |   |-- mipmap-xhdpi
+|   |   |   |   |-- ic_launcher.png
+|   |   |   |   |-- ic_launcher_foreground.png
+|   |   |   |   `-- ic_launcher_round.png
+|   |   |   |-- mipmap-xxhdpi
+|   |   |   |   |-- ic_launcher.png
+|   |   |   |   |-- ic_launcher_foreground.png
+|   |   |   |   `-- ic_launcher_round.png
+|   |   |   |-- mipmap-xxxhdpi
+|   |   |   |   |-- ic_launcher.png
+|   |   |   |   |-- ic_launcher_foreground.png
+|   |   |   |   `-- ic_launcher_round.png
+|   |   |   `-- values
+|   |   |       `-- ic_launcher_background.xml
+|   |   |-- icon-small.svg
+|   |   |-- icon.icns
+|   |   |-- icon.ico
+|   |   |-- icon.png
+|   |   |-- icon.svg
+|   |   `-- ios
+|   |       |-- AppIcon-20x20@1x.png
+|   |       |-- AppIcon-20x20@2x-1.png
+|   |       |-- AppIcon-20x20@2x.png
+|   |       |-- AppIcon-20x20@3x.png
+|   |       |-- AppIcon-29x29@1x.png
+|   |       |-- AppIcon-29x29@2x-1.png
+|   |       |-- AppIcon-29x29@2x.png
+|   |       |-- AppIcon-29x29@3x.png
+|   |       |-- AppIcon-40x40@1x.png
+|   |       |-- AppIcon-40x40@2x-1.png
+|   |       |-- AppIcon-40x40@2x.png
+|   |       |-- AppIcon-40x40@3x.png
+|   |       |-- AppIcon-512@2x.png
+|   |       |-- AppIcon-60x60@2x.png
+|   |       |-- AppIcon-60x60@3x.png
+|   |       |-- AppIcon-76x76@1x.png
+|   |       |-- AppIcon-76x76@2x.png
+|   |       `-- AppIcon-83.5x83.5@2x.png
+|   |-- src
+|   |   |-- agent_sidecar
+|   |   |   `-- mod.rs
+|   |   |-- ai
+|   |   |   |-- agent
+|   |   |   |   |-- mod.rs
+|   |   |   |   |-- planner.rs
+|   |   |   |   `-- policy.rs
+|   |   |   |-- approval
+|   |   |   |   |-- decision.rs
+|   |   |   |   |-- journal.rs
+|   |   |   |   |-- mod.rs
+|   |   |   |   `-- policy.rs
+|   |   |   |-- audit
+|   |   |   |   `-- mod.rs
+|   |   |   |-- budget
+|   |   |   |   `-- mod.rs
+|   |   |   |-- credential
+|   |   |   |   `-- mod.rs
+|   |   |   |-- edit
+|   |   |   |   |-- apply
+|   |   |   |   |   |                               `-- auto_apply.rs
+|   |   |   |   |   |                               `-- diff_render.rs
+|   |   |   |   |                                   `-- mod.rs
+|   |   |   |   |-- errors.rs
+|   |   |   |   |-- history
+|   |   |   |   |   |                               `-- edit_journal.rs
+|   |   |   |   |   |                               `-- mod.rs
+|   |   |   |   |   |                               `-- pins.rs
+|   |   |   |   |   |                               `-- revert.rs
+|   |   |   |   |   |                               `-- snapshot.rs
+|   |   |   |   |                                   `-- timeline.rs
+|   |   |   |   |-- io
+|   |   |   |   |   |                               `-- atomic_write.rs
+|   |   |   |   |   |                               `-- file_transaction.rs
+|   |   |   |   |   |                               `-- mod.rs
+|   |   |   |   |                                   `-- storage_lock.rs
+|   |   |   |   |-- mod.rs
+|   |   |   |   |-- patch.rs
+|   |   |   |   `-- security
+|   |   |   |       |                               `-- mod.rs
+|   |   |   |       |                               `-- path_security.rs
+|   |   |   |                                       `-- protected_paths.rs
+|   |   |   |-- errors.rs
+|   |   |   |-- gateway
+|   |   |   |   |-- config.rs
+|   |   |   |   |-- connection.rs
+|   |   |   |   |-- conversation.rs
+|   |   |   |   |-- mod.rs
+|   |   |   |   |-- suggestions.rs
+|   |   |   |   `-- tests.rs
+|   |   |   |-- mod.rs
+|   |   |   |-- provider
+|   |   |   |   `-- mod.rs
+|   |   |   |-- security
+|   |   |   |   |-- mod.rs
+|   |   |   |   |-- network_permission.rs
+|   |   |   |   `-- redaction.rs
+|   |   |   |-- stream
+|   |   |   |   `-- mod.rs
+|   |   |   `-- transport
+|   |   |       `-- mod.rs
+|   |   |-- assets
+|   |   |   |-- favicon.rs
+|   |   |   `-- mod.rs
+|   |   |-- bin
+|   |   |   |-- export_tauri_bindings.rs
+|   |   |   `-- wsl_link_agent.rs
+|   |   |-- commands
+|   |   |   |-- agent_sidecar.rs
+|   |   |   |-- ai
+|   |   |   |   |-- agent.rs
+|   |   |   |   |-- edit.rs
+|   |   |   |   |-- gateway.rs
+|   |   |   |   |-- mod.rs
+|   |   |   |   |-- storage.rs
+|   |   |   |   |-- tools.rs
+|   |   |   |   `-- tools_generated.rs
+|   |   |   |-- contracts.rs
+|   |   |   |-- git
+|   |   |   |   |-- branches.rs
+|   |   |   |   |-- cli.rs
+|   |   |   |   |-- diff.rs
+|   |   |   |   |-- history.rs
+|   |   |   |   |-- pull_request.rs
+|   |   |   |   |-- stash.rs
+|   |   |   |   |-- status.rs
+|   |   |   |   `-- tests.rs
+|   |   |   |-- git.rs
+|   |   |   |-- lsp.rs
+|   |   |   |-- mod.rs
+|   |   |   |-- script_run.rs
+|   |   |   |-- search.rs
+|   |   |   |-- shell_tools.rs
+|   |   |   |-- ssh.rs
+|   |   |   |-- ssh_pool.rs
+|   |   |   |-- terminal.rs
+|   |   |   |-- window.rs
+|   |   |   |-- window_stage.rs
+|   |   |   |-- workspace_fs.rs
+|   |   |   |-- workspace_watcher.rs
+|   |   |   `-- wsl_link.rs
+|   |   |-- main.rs
+|   |   |-- tauri_bindings.rs
+|   |   |-- terminal
+|   |   |   |-- ansi.rs
+|   |   |   |-- command_contracts.rs
+|   |   |   |-- dispatch.rs
+|   |   |   |-- event_bus.rs
+|   |   |   |-- mod.rs
+|   |   |   |-- multiplexer.rs
+|   |   |   |-- registry.rs
+|   |   |   |-- run_supervisor
+|   |   |   |-- snapshot.rs
+|   |   |   |-- state_machine.rs
+|   |   |   |-- tauri_events.rs
+|   |   |   |-- types.rs
+|   |   |   |-- utf8_decoder.rs
+|   |   |   |-- visual.rs
+|   |   |   |-- vte_detect.rs
+|   |   |   `-- wsl.rs
+|   |   `-- wsl_link
+|   |       |-- MATURITY.md
+|   |       |-- adapters.rs
+|   |       |-- agent.rs
+|   |       |-- agent_distribution.rs
+|   |       |-- agent_install.rs
+|   |       |-- agent_runtime.rs
+|   |       |-- circuit_breaker.rs
+|   |       |-- config.rs
+|   |       |-- e2e_tests.rs
+|   |       |-- grpc_transport.rs
+|   |       |-- manager.rs
+|   |       |-- mod.rs
+|   |       |-- noise.rs
+|   |       |-- noise_handshake.rs
+|   |       |-- noise_material.rs
+|   |       |-- noise_stream.rs
+|   |       |-- outbox.rs
+|   |       |-- primary_supervisor.rs
+|   |       |-- protocol.rs
+|   |       |-- quic_fallback.rs
+|   |       |-- retry.rs
+|   |       |-- runtime.rs
+|   |       |-- self_check.rs
+|   |       |-- smoke_tests.rs
+|   |       |-- state_machine.rs
+|   |       |-- terminal_client.rs
+|   |       |-- terminal_exec.rs
+|   |       |-- transport.rs
+|   |       `-- types.rs
+|   |-- tauri.conf.json
+|   `-- tokenizers
+|       |-- deepseek
+|       |   `-- tokenizer.json
+|       |-- o200k
+|       |   `-- tokenizer.json
+|       `-- qwen
+|           `-- tokenizer.json
+|-- stage2_audit.txt
+|-- test-results
+|-- tmp
+|-- tsconfig.app.json
+|-- tsconfig.json
+|-- tsconfig.node.json
+|-- tsconfig.node.tsbuildinfo
+|-- vendor
+|   |-- tauri-runtime
+|   |   |-- Cargo.toml
+|   |   |-- Cargo.toml.orig
+|   |   |-- LICENSE_APACHE-2.0
+|   |   |-- LICENSE_MIT
+|   |   |-- README.md
+|   |   |-- build.rs
+|   |   `-- src
+|   |       |-- dpi.rs
+|   |       |-- lib.rs
+|   |       |-- monitor.rs
+|   |       |-- webview.rs
+|   |       `-- window.rs
+|   |-- tauri-runtime-wry
+|   |   |-- Cargo.toml
+|   |   |-- Cargo.toml.orig
+|   |   |-- LICENSE_APACHE-2.0
+|   |   |-- LICENSE_MIT
+|   |   |-- README.md
+|   |   |-- build.rs
+|   |   `-- src
+|   |       |-- dialog
+|   |       |   |-- mod.rs
+|   |       |   `-- windows.rs
+|   |       |-- lib.rs
+|   |       |-- monitor
+|   |       |   |-- linux.rs
+|   |       |   |-- macos.rs
+|   |       |   |-- mod.rs
+|   |       |   `-- windows.rs
+|   |       |-- undecorated_resizing.rs
+|   |       |-- util.rs
+|   |       |-- webview.rs
+|   |       `-- window
+|   |           |-- linux.rs
+|   |           |-- macos.rs
+|   |           |-- mod.rs
+|   |           `-- windows.rs
+|   |-- tauri-utils
+|   |   |-- Cargo.toml
+|   |   |-- Cargo.toml.orig
+|   |   |-- LICENSE_APACHE-2.0
+|   |   |-- LICENSE_MIT
+|   |   |-- README.md
+|   |   `-- src
+|   |       |-- acl
+|   |       |   |-- build.rs
+|   |       |   |-- capability.rs
+|   |       |   |-- identifier.rs
+|   |       |   |-- manifest.rs
+|   |       |   |-- mod.rs
+|   |       |   |-- resolved.rs
+|   |       |   |-- schema.rs
+|   |       |   `-- value.rs
+|   |       |-- assets.rs
+|   |       |-- build.rs
+|   |       |-- config
+|   |       |   `-- parse.rs
+|   |       |-- config.rs
+|   |       |-- config_v1
+|   |       |   |-- mod.rs
+|   |       |   `-- parse.rs
+|   |       |-- html.rs
+|   |       |-- html2.rs
+|   |       |-- io.rs
+|   |       |-- lib.rs
+|   |       |-- mime_type.rs
+|   |       |-- pattern
+|   |       |   |-- isolation.js
+|   |       |   |-- isolation.rs
+|   |       |   `-- mod.rs
+|   |       |-- platform
+|   |       |   `-- starting_binary.rs
+|   |       |-- platform.rs
+|   |       |-- plugin.rs
+|   |       |-- resources.rs
+|   |       `-- tokens.rs
+|   `-- wry
+|       |-- CHANGELOG.md
+|       |-- Cargo.toml
+|       |-- Cargo.toml.orig
+|       |-- LICENSE-APACHE
+|       |-- LICENSE-MIT
+|       |-- LICENSE.spdx
+|       |-- MOBILE.md
+|       |-- README.md
+|       |-- SECURITY.md
+|       |-- build.rs
+|       |-- examples
+|       |   |-- async_custom_protocol.rs
+|       |   |-- cookies.rs
+|       |   |-- custom_protocol
+|       |   |   |-- index.html
+|       |   |   |-- script.js
+|       |   |   |-- subpage.html
+|       |   |   `-- wasm.wasm
+|       |   |-- custom_protocol.rs
+|       |   |-- custom_titlebar.rs
+|       |   |-- gtk_multiwebview.rs
+|       |   |-- gtk_opengl.rs
+|       |   |-- multiwebview.rs
+|       |   |-- multiwindow.rs
+|       |   |-- reparent.rs
+|       |   |-- simple.rs
+|       |   |-- streaming
+|       |   |   `-- index.html
+|       |   |-- streaming.rs
+|       |   |-- transparent.rs
+|       |   |-- wgpu.rs
+|       |   |-- window_border.rs
+|       |   `-- winit.rs
+|       |-- renovate.json
+|       |-- rustfmt.toml
+|       `-- src
+|           |-- android
+|           |   |-- binding.rs
+|           |   |-- kotlin
+|           |   |   |                               `-- Ipc.kt
+|           |   |   |                               `-- Logger.kt
+|           |   |   |                               `-- PermissionHelper.kt
+|           |   |   |                               `-- RustWebChromeClient.kt
+|           |   |   |                               `-- RustWebView.kt
+|           |   |   |                               `-- RustWebViewClient.kt
+|           |   |   |                               `-- WryActivity.kt
+|           |   |                                   `-- proguard-wry.pro
+|           |   |-- main_pipe.rs
+|           |   `-- mod.rs
+|           |-- custom_protocol_workaround.rs
+|           |-- error.rs
+|           |-- inject_initialization_scripts.rs
+|           |-- lib.rs
+|           |-- proxy.rs
+|           |-- util.rs
+|           |-- web_context.rs
+|           |-- webkitgtk
+|           |   |-- drag_drop.rs
+|           |   |-- mod.rs
+|           |   |-- synthetic_mouse_events.rs
+|           |   `-- web_context.rs
+|           |-- webview2
+|           |   |-- drag_drop.rs
+|           |   |-- mod.rs
+|           |   |-- util.rs
+|           |   `-- visual_host.rs
+|           `-- wkwebview
+|               |-- class
+|               |   |                               `-- document_title_changed_observer.rs
+|               |   |                               `-- mod.rs
+|               |   |                               `-- url_scheme_handler.rs
+|               |   |                               `-- wry_download_delegate.rs
+|               |   |                               `-- wry_navigation_delegate.rs
+|               |   |                               `-- wry_web_view.rs
+|               |   |                               `-- wry_web_view_delegate.rs
+|               |   |                               `-- wry_web_view_parent.rs
+|               |                                   `-- wry_web_view_ui_delegate.rs
+|               |-- download.rs
+|               |-- drag_drop.rs
+|               |-- ios
+|               |   |                               `-- WKWebView.rs
+|               |                                   `-- mod.rs
+|               |-- mod.rs
+|               |-- navigation.rs
+|               |-- proxy.rs
+|               |-- synthetic_mouse_events.rs
+|               `-- util.rs
+|-- vite.config.ts
+`-- vitest.config.ts
+
+232 directories, 1327 files
+PS D:\com.xiaojianc\my_desktop_app>
