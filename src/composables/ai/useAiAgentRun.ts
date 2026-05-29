@@ -1,4 +1,3 @@
-import { v7 as uuidv7 } from 'uuid';
 import { unref } from 'vue';
 import {
   mapSidecarEventsToToolCalls,
@@ -67,9 +66,7 @@ const SIDECAR_STEP_CONFIRMATION_PREFIX = 'sidecar-step-tool-confirmation:';
 const TERMINAL_RUN_STATUSES = new Set(['completed', 'failed', 'cancelled']);
 
 const createSidecarRunId = (): string => {
-  return `sidecar-plan:${uuidv7()}`;
-
-  return `sidecar-plan:${Date.now()}`;
+  return `sidecar-plan:${crypto.randomUUID()}`;
 };
 
 const createSidecarStepSessionId = (runId: string, stepId: string): string =>
