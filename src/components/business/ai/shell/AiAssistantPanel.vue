@@ -1175,7 +1175,7 @@ onBeforeUnmount(() => {
       <div class="ai-provider-mark" aria-label="当前 AI 平台和模型" :title="providerMarkTitle">
         <AiProviderIcon class="ai-provider-mark__icon" :platform-id="aiIconPlatformId" decorative />
         <span class="ai-provider-mark__copy">
-          <span class="ai-provider-mark__label">{{ aiModelName }}</span>
+          <span class="ai-provider-mark__label"> aiModelName </span>
         </span>
       </div>
       <div class="ai-panel-actions">
@@ -1216,10 +1216,10 @@ onBeforeUnmount(() => {
                   :class="{ 'is-active': thread.id === assistant.activeConversationId.value }">
                   <button type="button" class="ai-history-button" @click="openHistoryThread(thread.id)">
                     <div class="ai-history-meta">
-                      <strong class="ai-history-title">{{ thread.title }}</strong>
-                      <time>{{ getHistoryTimeLabel(thread.updatedAt) }}</time>
+                      <strong class="ai-history-title"> thread.title </strong>
+                      <time> getHistoryTimeLabel(thread.updatedAt) </time>
                     </div>
-                    <div class="ai-history-subtitle">{{ getHistoryMessageCountLabel(thread.messages) }}</div>
+                    <div class="ai-history-subtitle"> getHistoryMessageCountLabel(thread.messages) </div>
                   </button>
                   <button type="button" class="ai-history-delete-button" aria-label="删除这条对话记录"
                     @click.stop="openDeleteConversationDialog(thread.id)">
@@ -1245,15 +1245,17 @@ onBeforeUnmount(() => {
       @changed-files-rollback="assistant.rollbackChangedFilesSummary"
       @changed-files-pin="assistant.setChangedFilesSummaryPin">
       <template #empty>
-        <CopilotChatSuggestionView :suggestions="suggestionPool.suggestions.value"
-          @select-suggestion="(s: { message: string }) => handleSuggestionSelect(s.message)" />
+        <div class="ai-suggestion-empty">
+          <CopilotChatSuggestionView :suggestions="suggestionPool.suggestions.value"
+            @select-suggestion="(s: { message: string }) => handleSuggestionSelect(s.message)" />
+        </div>
       </template>
       <template #after-message="{ message }">
         <Checkpoint v-if="getConversationCheckpoint(message.id)" class="ai-conversation-checkpoint">
           <CheckpointTrigger class="ai-conversation-checkpoint__trigger" :disabled="isConversationCheckpointDisabled"
             @click="handleRestoreConversationCheckpoint(message.id)">
             <CheckpointIcon class="ai-conversation-checkpoint__icon" aria-hidden="true" />
-            <span class="ai-conversation-checkpoint__label">{{ getConversationCheckpointLabel(message.id) }}</span>
+            <span class="ai-conversation-checkpoint__label"> getConversationCheckpointLabel(message.id) </span>
             <Loader v-if="isConversationCheckpointRestoring(message.id)" class="ai-conversation-checkpoint__loader"
               :size="12" />
             <span v-else class="ai-conversation-checkpoint__spacer" aria-hidden="true"></span>
@@ -1280,7 +1282,7 @@ onBeforeUnmount(() => {
           <path d="M3 7v5h5" />
           <path d="M21 17a8 8 0 0 0-13.66-5.66L3 16" />
         </svg>
-        <span>{{ fileRollbackLabel }}</span>
+        <span> fileRollbackLabel </span>
       </button>
       <span class="ai-file-rollback-entry__line" aria-hidden="true"></span>
     </div>
@@ -1343,8 +1345,8 @@ onBeforeUnmount(() => {
       <div v-if="assistant.isClearDialogOpen.value" class="ai-dialog-backdrop" @click.self="cancelClearConversation">
         <section class="ai-dialog is-compact" role="alertdialog" aria-modal="true">
           <div class="ai-dialog-copy">
-            <h3>{{ getDeleteDialogTitle() }}</h3>
-            <p>{{ getDeleteDialogDescription() }}</p>
+            <h3> getDeleteDialogTitle() </h3>
+            <p> getDeleteDialogDescription() </p>
           </div>
           <div class="ai-dialog-actions">
             <button type="button" class="ai-button is-ghost" @click="cancelClearConversation">取消</button>
@@ -1791,6 +1793,60 @@ onBeforeUnmount(() => {
 .ai-composer-shell :global(.ai-composer) {
   background: var(--ai-composer-surface);
   padding: 0 10px 10px;
+}
+
+.ai-suggestion-empty {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
+.ai-suggestion-empty :deep(button) {
+  display: inline-flex;
+  min-width: 0;
+  max-width: min(100%, 360px);
+  min-height: 34px;
+  flex: 0 1 auto;
+  align-items: center;
+  justify-content: center;
+  border: 0 !important;
+  border-radius: var(--radius-md) !important;
+  background-color: color-mix(in srgb, var(--surface-soft) 62%, transparent) !important;
+  color: var(--text-secondary) !important;
+  cursor: pointer;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  line-height: 18px;
+  padding: 7px 17px !important;
+  text-align: center;
+  box-shadow: none !important;
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-easing-emphasized),
+    color var(--motion-duration-fast) var(--motion-easing-emphasized),
+    transform var(--motion-duration-fast) var(--motion-easing-emphasized);
+}
+
+.ai-suggestion-empty :deep(button:hover) {
+  background-color: color-mix(in srgb, var(--surface-soft) 100%, transparent) !important;
+  color: var(--text-primary) !important;
+}
+
+.ai-suggestion-empty :deep(button:active) {
+  transform: scale(0.985);
+}
+
+.ai-suggestion-empty :deep(button:focus-visible) {
+  outline: 2px solid color-mix(in srgb, var(--accent-strong) 44%, transparent);
+  outline-offset: 3px;
+}
+
+.ai-suggestion-empty :deep(button:disabled) {
+  cursor: default;
+  opacity: 0.58;
 }
 
 .ai-dialog-backdrop {
