@@ -3,7 +3,6 @@ import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import prettier from 'prettier';
 
 const ROOT_SPEC_NAMES = [
     'ansible',
@@ -630,13 +629,7 @@ const generateCommandCatalog = async () => {
     return mergeCommandList([], generatedCommands);
 };
 
-const formatJson = async (value) =>
-    prettier.format(`${JSON.stringify(value, null, 2)}\n`, {
-        parser: 'json-stringify',
-        printWidth: 100,
-        tabWidth: 2,
-        trailingComma: 'all',
-    });
+const formatJson = async (value) => `${JSON.stringify(value, null, 2)}\n`;
 
 const hasErrorCode = (error, code) =>
     typeof error === 'object' && error !== null && 'code' in error && error.code === code;
