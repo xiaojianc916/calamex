@@ -1,4 +1,4 @@
-﻿use jiff::Timestamp;
+use jiff::Timestamp;
 use std::{
     collections::HashMap,
     path::PathBuf,
@@ -61,6 +61,7 @@ const TERMINAL_RESIZE_REPAINT_SUPPRESSION: Duration = Duration::from_millis(240)
 const DEFAULT_WSL_INTERACTIVE_CWD: &str = "~";
 const WSL_LINK_NOISE_MATERIAL_MISSING_MESSAGE: &str =
     "WSL Link Noise 桌面密钥材料不存在，请先安装并启动 WSL Link agent。";
+const MAX_PENDING_SWITCH_INPUT_BYTES: usize = 64 * 1024;
 
 static TERMINAL_DATA_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 static TERMINAL_RUN_CHUNK_SEQUENCE: AtomicU64 = AtomicU64::new(1);
@@ -72,6 +73,7 @@ struct TerminalSession {
 }
 
 struct TerminalActiveRun {
+    session_id: String,
     run_id: String,
     wsl_link_pid: Option<u32>,
 }
@@ -105,6 +107,7 @@ pub struct TerminalSessionState {
     snapshots: Arc<Mutex<HashMap<String, String>>>,
     interactive_visual: Arc<Mutex<HashMap<String, TerminalInteractiveVisualState>>>,
     active_run: Arc<Mutex<Option<TerminalActiveRun>>>,
+    pending_switch_input: Arc<Mutex<HashMap<String, String>>>,
     creation_guard: Arc<Mutex<()>>,
 }
 
@@ -225,18 +228,23 @@ pub async fn write_terminal_input(
 ) -> Result<(), String> {
     let terminal_state = state.inner().clone();
 
-    match get_active_terminal_run_input_target(&terminal_state)? {
+    match get_active_terminal_run_input_target(&terminal_state, &payload.session_id)? {
         ActiveRunInputTarget::Pending => {
+            // 切换态（SwitchingToRun / SwitchingToIdle）：run 的 stdin 尚未就绪。
+            // 不再静默丢弃用户输入，而是按会话缓冲，待状态落定后随下一次写入按序补发。
+            buffer_pending_switch_input(&terminal_state, &payload.session_id, &payload.data)?;
             return Ok(());
         }
         ActiveRunInputTarget::Run(run_id) => {
+            let data = take_and_prepend_pending_switch_input(
+                &terminal_state,
+                &payload.session_id,
+                payload.data,
+            )?;
             let desktop_material = load_required_desktop_noise_material()?;
             return write_terminal_run_input_over_wsl_link(
                 &desktop_material,
-                WslLinkTerminalRunInput {
-                    run_id,
-                    data: payload.data,
-                },
+                WslLinkTerminalRunInput { run_id, data },
             )
             .await
             .map_err(|error| error.to_string());
@@ -244,11 +252,13 @@ pub async fn write_terminal_input(
         ActiveRunInputTarget::None => {}
     }
 
+    let data =
+        take_and_prepend_pending_switch_input(&terminal_state, &payload.session_id, payload.data)?;
     let session = get_terminal_session(&terminal_state, &payload.session_id)?
         .ok_or_else(|| "目标终端会话不存在。".to_string())?;
     session
         .handle
-        .write_input(payload.data)
+        .write_input(data)
         .await
         .map_err(|error| error.to_string())
 }
@@ -280,6 +290,7 @@ pub fn close_terminal_session(
     let removed_session = remove_terminal_session(&terminal_state, &payload.session_id)?;
     remove_terminal_snapshot(&terminal_state, &payload.session_id)?;
     remove_terminal_interactive_visual_state(&terminal_state, &payload.session_id)?;
+    remove_pending_switch_input(&terminal_state, &payload.session_id);
     let Some(session) = removed_session else {
         return Ok(());
     };
@@ -394,7 +405,7 @@ pub fn dispatch_script_to_terminal(
     let prompt_snapshot = get_terminal_snapshot(&terminal_state, &payload.session_id)?;
     let prompt = extract_prompt_from_terminal_snapshot(&prompt_snapshot);
 
-    try_mark_active_terminal_run(&terminal_state, &payload.run_id)?;
+    try_mark_active_terminal_run(&terminal_state, &payload.session_id, &payload.run_id)?;
     if let Err(error) = transition_terminal_state(&app, TerminalState::SwitchingToRun) {
         clear_active_terminal_run(&terminal_state, &payload.run_id);
         return Err(error);
@@ -550,7 +561,11 @@ fn update_terminal_geometry(cols: u16, rows: u16) {
     geometry.rows = rows.max(1);
 }
 
-fn try_mark_active_terminal_run(state: &TerminalSessionState, run_id: &str) -> Result<(), String> {
+fn try_mark_active_terminal_run(
+    state: &TerminalSessionState,
+    session_id: &str,
+    run_id: &str,
+) -> Result<(), String> {
     let mut active_run = state
         .active_run
         .lock()
@@ -559,6 +574,7 @@ fn try_mark_active_terminal_run(state: &TerminalSessionState, run_id: &str) -> R
         return Err(format!("已有脚本正在运行：{}", active_run.run_id));
     }
     *active_run = Some(TerminalActiveRun {
+        session_id: session_id.to_string(),
         run_id: run_id.to_string(),
         wsl_link_pid: None,
     });
@@ -612,6 +628,7 @@ fn get_active_terminal_run_wsl_link_pid(
 
 fn get_active_terminal_run_input_target(
     state: &TerminalSessionState,
+    session_id: &str,
 ) -> Result<ActiveRunInputTarget, String> {
     let active_run = state
         .active_run
@@ -620,12 +637,60 @@ fn get_active_terminal_run_input_target(
     let Some(active_run) = active_run.as_ref() else {
         return Ok(ActiveRunInputTarget::None);
     };
+    // 活动 run 全局串行，但输入必须按会话路由：只有发起该 run 的会话才把输入送进
+    // run 的 stdin；其它会话的输入应进入各自的交互 shell，避免跨会话输入串台。
+    if active_run.session_id != session_id {
+        return Ok(ActiveRunInputTarget::None);
+    }
     match crate::terminal::registry::registry().current_state() {
         TerminalState::Running => Ok(ActiveRunInputTarget::Run(active_run.run_id.clone())),
         TerminalState::SwitchingToRun | TerminalState::SwitchingToIdle => {
             Ok(ActiveRunInputTarget::Pending)
         }
         _ => Ok(ActiveRunInputTarget::None),
+    }
+}
+
+fn buffer_pending_switch_input(
+    state: &TerminalSessionState,
+    session_id: &str,
+    data: &str,
+) -> Result<(), String> {
+    if data.is_empty() {
+        return Ok(());
+    }
+    let mut pending = state
+        .pending_switch_input
+        .lock()
+        .map_err(|_| "终端切换态输入缓冲已损坏。".to_string())?;
+    let buffer = pending.entry(session_id.to_string()).or_default();
+    // 防御：切换窗口异常拉长时避免缓冲无限增长。超限则整体清空再写入，
+    // 既保留最新输入，也保证不会在 UTF-8 字符边界中间截断。
+    if buffer.len() + data.len() > MAX_PENDING_SWITCH_INPUT_BYTES {
+        buffer.clear();
+    }
+    buffer.push_str(data);
+    Ok(())
+}
+
+fn take_and_prepend_pending_switch_input(
+    state: &TerminalSessionState,
+    session_id: &str,
+    data: String,
+) -> Result<String, String> {
+    let mut pending = state
+        .pending_switch_input
+        .lock()
+        .map_err(|_| "终端切换态输入缓冲已损坏。".to_string())?;
+    match pending.remove(session_id) {
+        Some(buffered) if !buffered.is_empty() => Ok(format!("{buffered}{data}")),
+        _ => Ok(data),
+    }
+}
+
+fn remove_pending_switch_input(state: &TerminalSessionState, session_id: &str) {
+    if let Ok(mut pending) = state.pending_switch_input.lock() {
+        pending.remove(session_id);
     }
 }
 
@@ -970,6 +1035,9 @@ fn remove_interactive_terminal_after_exit(state: &TerminalSessionState, session_
     if let Ok(mut visual_states) = state.interactive_visual.lock() {
         visual_states.remove(session_id);
     }
+    if let Ok(mut pending) = state.pending_switch_input.lock() {
+        pending.remove(session_id);
+    }
 }
 
 fn spawn_wsl_link_terminal_run(
@@ -1133,40 +1201,40 @@ mod tests {
     fn wsl_link_active_run_is_serialized() {
         let state = TerminalSessionState::default();
         set_test_terminal_state(TerminalState::IdleInteractive);
-        assert!(try_mark_active_terminal_run(&state, "run-1").is_ok());
-        assert!(try_mark_active_terminal_run(&state, "run-2").is_err());
+        assert!(try_mark_active_terminal_run(&state, "session-1", "run-1").is_ok());
+        assert!(try_mark_active_terminal_run(&state, "session-1", "run-2").is_err());
         assert!(matches!(
-            get_active_terminal_run_input_target(&state),
+            get_active_terminal_run_input_target(&state, "session-1"),
             Ok(ActiveRunInputTarget::None)
         ));
         clear_active_terminal_run(&state, "run-1");
         assert!(matches!(
-            get_active_terminal_run_input_target(&state),
+            get_active_terminal_run_input_target(&state, "session-1"),
             Ok(ActiveRunInputTarget::None)
         ));
-        assert!(try_mark_active_terminal_run(&state, "run-2").is_ok());
+        assert!(try_mark_active_terminal_run(&state, "session-1", "run-2").is_ok());
     }
 
     #[test]
     fn active_run_does_not_block_input_outside_switching_states() {
         let state = TerminalSessionState::default();
-        try_mark_active_terminal_run(&state, "run-1").expect("active run should mark");
+        try_mark_active_terminal_run(&state, "session-1", "run-1").expect("active run should mark");
 
         set_test_terminal_state(TerminalState::IdleInteractive);
         assert!(matches!(
-            get_active_terminal_run_input_target(&state),
+            get_active_terminal_run_input_target(&state, "session-1"),
             Ok(ActiveRunInputTarget::None)
         ));
 
         set_test_terminal_state(TerminalState::SwitchingToRun);
         assert!(matches!(
-            get_active_terminal_run_input_target(&state),
+            get_active_terminal_run_input_target(&state, "session-1"),
             Ok(ActiveRunInputTarget::Pending)
         ));
 
         set_test_terminal_state(TerminalState::Running);
         assert!(matches!(
-            get_active_terminal_run_input_target(&state),
+            get_active_terminal_run_input_target(&state, "session-1"),
             Ok(ActiveRunInputTarget::Run(run_id)) if run_id == "run-1"
         ));
 
@@ -1174,9 +1242,49 @@ mod tests {
     }
 
     #[test]
+    fn active_run_input_routes_only_to_owning_session() {
+        let state = TerminalSessionState::default();
+        try_mark_active_terminal_run(&state, "session-A", "run-A").expect("active run should mark");
+        set_test_terminal_state(TerminalState::Running);
+
+        // 拥有该 run 的会话 → 输入路由到 run 的 stdin
+        assert!(matches!(
+            get_active_terminal_run_input_target(&state, "session-A"),
+            Ok(ActiveRunInputTarget::Run(run_id)) if run_id == "run-A"
+        ));
+
+        // 其它会话 → 输入进入各自交互 shell，而不是串进别人的 run
+        assert!(matches!(
+            get_active_terminal_run_input_target(&state, "session-B"),
+            Ok(ActiveRunInputTarget::None)
+        ));
+
+        set_test_terminal_state(TerminalState::IdleInteractive);
+    }
+
+    #[test]
+    fn pending_switch_input_is_buffered_and_prepended_not_dropped() {
+        let state = TerminalSessionState::default();
+        buffer_pending_switch_input(&state, "session-1", "ab").expect("buffer ok");
+        buffer_pending_switch_input(&state, "session-1", "cd").expect("buffer ok");
+
+        // 切换态缓冲的输入会在状态落定后按序补发，且原始输入排在新输入之前。
+        let combined =
+            take_and_prepend_pending_switch_input(&state, "session-1", "EF".to_string())
+                .expect("take ok");
+        assert_eq!(combined, "abcdEF");
+
+        // 取出后缓冲被清空，不会重复补发。
+        let again = take_and_prepend_pending_switch_input(&state, "session-1", "X".to_string())
+            .expect("take ok");
+        assert_eq!(again, "X");
+    }
+
+    #[test]
     fn wsl_link_active_run_records_pid_for_cancel() {
         let state = TerminalSessionState::default();
-        try_mark_active_terminal_run(&state, "run-wsl-link").expect("active run should mark");
+        try_mark_active_terminal_run(&state, "session-1", "run-wsl-link")
+            .expect("active run should mark");
         attach_active_terminal_run_wsl_link_pid(&state, "run-wsl-link", 1234)
             .expect("pid should attach");
         assert_eq!(
