@@ -12,11 +12,11 @@
         <p> aiActionResult.explanation </p>
         <ul v-if="aiActionResult.followUpQuestions.length">
           <li v-for="question in aiActionResult.followUpQuestions" :key="question">
-            question
+             question 
           </li>
         </ul>
         <p v-if="aiActionResult.testSuggestion" class="ai-code-action-note">
-          aiActionResult.testSuggestion
+           aiActionResult.testSuggestion 
         </p>
       </template>
     </section>
@@ -31,7 +31,10 @@ import EditorContextMenu from '@/components/editor/EditorContextMenu.vue';
 import type { IEditorContextMenuItem } from '@/components/editor/editor-context-menu.types';
 import { buildCodeMirrorSettingsExtensions } from '@/services/editor/codemirror-config';
 import { createCodeMirrorInlineCompletionController } from '@/services/editor/codemirror-inline-completion';
-import { resolveCodeMirrorLanguageExtension } from '@/services/editor/codemirror-language';
+import {
+  loadCodeMirrorLanguageSupport,
+  resolveCodeMirrorLanguageExtension,
+} from '@/services/editor/codemirror-language';
 import { createLspExtension, createLucideCompletionIcon, lspCompletionTheme } from '@/services/editor/lsp-bridge';
 import { aiService } from '@/services/ipc/ai.service';
 import { useEditorStore } from '@/store/editor';
@@ -110,9 +113,9 @@ interface IEditorExpose {
   runAiCodeAction: (kind: IAiCodeActionRequest['kind']) => Promise<void>;
 }
 
-// ──────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────
 // Constants
-// ──────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────
 const VIEW_STATE_SAVE_DEBOUNCE_MS = 500;
 const MENU_WIDTH = 224;
 const MENU_MAX_HEIGHT = 320;
@@ -128,9 +131,9 @@ const createEmptyAnalysis = (): IAnalyzeScriptPayload => ({
   diagnostics: [],
 });
 
-// ──────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────
 // Lazy / cached shell completion source
-// ──────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────
 // `import('@/utils/shell-completion')` 自身会被打包器缓存，但每次 completion 都
 // 重新 `.then(...)` 并重新 `createShellCodeMirrorCompletionSource()` 仍有不必要的
 // 微开销，且每次都拿到一个新的 source 实例，影响内部可能的状态复用。
@@ -203,9 +206,9 @@ const inlineCompletionController = createCodeMirrorInlineCompletionController({
   getLanguage: () => getCurrentLanguage(),
 });
 
-// ──────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────
 // Completion / language
-// ──────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────
 const buildCompletionExtension = (
   editorSettings: IEditorSettings,
   language: string,
@@ -215,7 +218,7 @@ const buildCompletionExtension = (
     ? autocompletion({
       activateOnTyping: true,
       activateOnTypingDelay: editorSettings.suggestionDelay,
-      // CM6 的 icons 是布尔开关:关掉内置字形，改用 Lucide SVG（addToOptions 渲染）
+      // CM6 的 icons 是布尔开关：关掉内置字形，改用 Lucide SVG（addToOptions 渲染）
       icons: false,
       addToOptions: [
         {
@@ -246,9 +249,9 @@ const buildCompletionExtension = (
 const getCurrentLanguage = (): string =>
   resolveLanguageForPath(props.documentPath, props.documentName);
 
-// ──────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────
 // Selection helpers
-// ──────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────
 const lineColumnToOffset = (view: EditorView, line: number, column: number): number => {
   const lineInfo = view.state.doc.line(Math.min(Math.max(1, line), view.state.doc.lines));
   return Math.min(lineInfo.to, lineInfo.from + Math.max(0, column - 1));
@@ -293,9 +296,9 @@ const emitSelectionSummary = (): void => {
   emit('selection-change', resolveSelectionSummary());
 };
 
-// ──────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────
 // AI code action
-// ──────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────
 const clearAiActionResult = (): void => {
   aiActionResult.value = null;
   aiActionError.value = '';
@@ -329,9 +332,9 @@ const runAiCodeActionFromEditor = async (kind: IAiCodeActionRequest['kind']): Pr
   await runAiCodeAction(kind, resolveSelectedText());
 };
 
-// ──────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────
 // View state persist / restore
-// ──────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────
 const clearViewStateSaveTimer = (): void => {
   if (viewStateSaveTimerId !== null) {
     window.clearTimeout(viewStateSaveTimerId);
@@ -388,7 +391,7 @@ const restoreViewStateForPath = (path: string | null | undefined): void => {
   const scrollLeft = readNumberField(savedState, 'scrollLeft');
   if (scrollTop !== null || scrollLeft !== null) {
     // 注意：这里会在 next frame **覆盖** scrollIntoView 的结果。
-    // 如果调用方希望"恢复滚动位置 + 看到光标"，应只持久化其中之一。
+    // 如果调用方希望\"恢复滚动位置 + 看到光标\"，应只持久化其中之一。
     requestAnimationFrame(() => {
       if (!editorView) return;
       editorView.scrollDOM.scrollTop = scrollTop ?? editorView.scrollDOM.scrollTop;
@@ -397,9 +400,9 @@ const restoreViewStateForPath = (path: string | null | undefined): void => {
   }
 };
 
-// ──────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────
 // Diagnostics
-// ──────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────
 const toDiagnosticSeverity = (level: TScriptDiagnosticSeverity): Diagnostic['severity'] => {
   switch (level) {
     case 'error':
@@ -444,9 +447,9 @@ const syncDiagnostics = (): void => {
   applyDiagnostics();
 };
 
-// ──────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────
 // Layout / window resize coordination
-// ──────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────
 const layoutEditor = (): void => {
   editorView?.requestMeasure();
 };
@@ -494,9 +497,9 @@ const handleShellWindowResizeSettled = (): void => {
   if (shouldRelayout) scheduleEditorLayout();
 };
 
-// ──────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────
 // Context menu
-// ──────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────
 const closeContextMenu = (): void => {
   contextMenuState.value.open = false;
   contextMenuGroups.value = [];
@@ -662,9 +665,9 @@ const handleWindowResize = (): void => {
   if (contextMenuState.value.open) closeContextMenu();
 };
 
-// ──────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────
 // Clipboard
-// ──────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────
 const copyEditorSelection = async (): Promise<void> => {
   const text = resolveSelectedText();
   if (text.trim()) await writeClipboardText(text);
@@ -694,9 +697,9 @@ const pasteIntoEditor = async (): Promise<void> => {
   view.focus();
 };
 
-// ──────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────
 // Context menu item dispatch
-// ──────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────
 const handleContextMenuItemSelect = async (item: IEditorContextMenuItem): Promise<void> => {
   const view = editorView;
   closeContextMenu();
@@ -756,9 +759,9 @@ const handleContextMenuItemSelect = async (item: IEditorContextMenuItem): Promis
   }
 };
 
-// ──────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────
 // Editor lifecycle
-// ──────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────
 const handleEditorUpdate = (update: ViewUpdate): void => {
   if (update.docChanged && !suppressModelValueEmit) {
     closeContextMenu();
@@ -858,6 +861,7 @@ const createEditor = (): void => {
     }),
   });
   emitCursorPosition(editorView);
+  applyLanguageExtension(language);
   currentLsp?.attach(editorView);
   syncDiagnostics();
   restoreViewStateForPath(props.documentPath);
@@ -884,6 +888,18 @@ const reconfigureLsp = (): void => {
     currentLsp.attach(view);
   }
 };
+
+// 语言语法按需加载：先用已缓存（或空）占位，加载完成后再 reconfigure 进编辑器，
+// 避免把全部语法打进初始 bundle。
+const applyLanguageExtension = (language: string): void => {
+  void loadCodeMirrorLanguageSupport(language).then((support) => {
+    const view = editorView;
+    // 加载期间文档可能已切换语言，过期结果直接丢弃。
+    if (!view || getCurrentLanguage() !== language) return;
+    view.dispatch({ effects: languageCompartment.reconfigure(support ?? []) });
+  });
+};
+
 const reconfigureLanguage = (): void => {
   const view = editorView;
   if (!view) return;
@@ -897,6 +913,7 @@ const reconfigureLanguage = (): void => {
       ),
     ],
   });
+  applyLanguageExtension(language);
 };
 
 const reconfigureSettings = (): void => {
@@ -917,9 +934,9 @@ const reconfigureSettings = (): void => {
   scheduleEditorLayout();
 };
 
-// ──────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────
 // Watchers
-// ──────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────
 watch(
   () => [props.documentPath, props.documentName] as const,
   ([nextPath], [previousPath]) => {
@@ -959,9 +976,9 @@ watch(
   { deep: true },
 );
 
-// ──────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────
 // Mount / unmount
-// ──────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────
 onMounted(() => {
   createEditor();
   window.addEventListener(SHELL_WINDOW_RESIZE_START_EVENT, handleShellWindowResizeStart);
@@ -1004,9 +1021,9 @@ onBeforeUnmount(() => {
   editorView = null;
 });
 
-// ──────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────
 // Public methods
-// ──────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────
 const focusEditor = (): void => {
   editorView?.focus();
 };
