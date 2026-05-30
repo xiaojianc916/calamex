@@ -1,4 +1,0 @@
-line1 https://x.com/emmanuelraymond
-line2 http://favicon.localhost/x.com
-line3 https://tauri.app/release-notes/?utm_source=test
-line4 'https://github.com/openai/codex/releases'
