@@ -31,6 +31,11 @@ import {
   loadCodeMirrorLanguageSupport,
   resolveCodeMirrorLanguageExtension,
 } from '@/services/editor/codemirror-language';
+import {
+  setShikiLanguage,
+  shikiEditorChromeTheme,
+  shikiHighlightExtension,
+} from '@/services/editor/codemirror-shiki-highlight';
 import { createLspExtension, createLucideCompletionIcon, lspCompletionTheme } from '@/services/editor/lsp-bridge';
 import { aiService } from '@/services/ipc/ai.service';
 import { useEditorStore } from '@/store/editor';
@@ -97,7 +102,6 @@ import {
   scrollPastEnd,
   type ViewUpdate,
 } from '@codemirror/view';
-import { githubLight } from '@uiw/codemirror-theme-github';
 import { useResizeObserver } from '@vueuse/core';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
@@ -803,7 +807,7 @@ const buildLspExtension = (): Extension => {
 const createBaseExtensions = (language: string): Extension[] => [
   lspCompletionTheme,
   highlightSpecialChars(),
-  githubLight,
+  shikiHighlightExtension(language),
   history(),
   drawSelection(),
   dropCursor(),
@@ -844,6 +848,7 @@ const createBaseExtensions = (language: string): Extension[] => [
     buildCompletionExtension(props.editorSettings, language, currentLsp?.completionSource),
   ),
   EditorView.updateListener.of(handleEditorUpdate),
+  shikiEditorChromeTheme,
 ];
 
 const createEditor = (): void => {
@@ -907,6 +912,7 @@ const reconfigureLanguage = (): void => {
       completionCompartment.reconfigure(
         buildCompletionExtension(props.editorSettings, language, currentLsp?.completionSource),
       ),
+      setShikiLanguage(language),
     ],
   });
   applyLanguageExtension(language);

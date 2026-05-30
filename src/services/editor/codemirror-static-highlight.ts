@@ -1,17 +1,13 @@
-import type { LanguageSupport } from '@codemirror/language';
-import { highlightTree } from '@lezer/highlight';
+import { resolveCodeMirrorLanguageId } from '@/services/editor/codemirror-language';
 import {
-  CODEMIRROR_GITHUB_LIGHT_BACKGROUND,
-  CODEMIRROR_GITHUB_LIGHT_FOREGROUND,
-  codeMirrorGithubLightHighlightStyle,
-  type ICodeMirrorStaticTokenStyle,
-  resolveCodeMirrorHighlightStyle,
-} from '@/services/editor/codemirror-github-light-highlight';
-import {
-  loadCodeMirrorLanguageSupport,
-  resolveCodeMirrorLanguageId,
-  resolveCodeMirrorLanguageSupport,
-} from '@/services/editor/codemirror-language';
+  ensureShikiLanguage,
+  type IShikiThemedToken,
+  resolveShikiLanguageId,
+  SHIKI_BACKGROUND,
+  SHIKI_FOREGROUND,
+  tokenizeWithShiki,
+  tokenizeWithShikiSync,
+} from '@/services/editor/shiki-highlighter';
 
 export interface ICodeMirrorHighlightToken {
   content: string;
@@ -25,12 +21,6 @@ export interface ITokenizedCode {
   tokens: ICodeMirrorHighlightToken[][];
   fg: string;
   bg: string;
-}
-
-interface IHighlightedRange {
-  from: number;
-  to: number;
-  classNames: string;
 }
 
 const FONT_STYLE_ITALIC = 1;
@@ -67,111 +57,35 @@ const rememberTokens = (key: string, value: ITokenizedCode): void => {
   tokensCache.set(key, value);
 };
 
-const toFontStyle = (style: ICodeMirrorStaticTokenStyle): number | undefined => {
-  let fontStyle = 0;
+const normalizeFontStyle = (fontStyle: number | undefined): number | undefined =>
+  fontStyle && fontStyle > 0 ? fontStyle : undefined;
 
-  if (style.fontStyle === 'italic') {
-    fontStyle |= FONT_STYLE_ITALIC;
-  }
-  if (style.fontWeight) {
-    fontStyle |= FONT_STYLE_BOLD;
-  }
-  if (style.textDecoration === 'underline') {
-    fontStyle |= FONT_STYLE_UNDERLINE;
-  }
-
-  return fontStyle === 0 ? undefined : fontStyle;
-};
-
-const toToken = (content: string, style?: ICodeMirrorStaticTokenStyle): ICodeMirrorHighlightToken => {
-  if (!style) {
-    return { content, color: 'inherit' };
-  }
-
-  const fontStyle = toFontStyle(style);
-  return {
-    content,
-    color: style.color,
-    bgColor: style.backgroundColor,
-    fontStyle,
-  };
-};
-
-const appendTokenContent = (
-  lines: ICodeMirrorHighlightToken[][],
-  content: string,
-  style?: ICodeMirrorStaticTokenStyle,
-): void => {
-  if (!content) {
-    return;
-  }
-
-  const parts = content.split('\n');
-  for (const [partIndex, part] of parts.entries()) {
-    if (partIndex > 0) {
-      lines.push([]);
-    }
-    if (part) {
-      const currentLine = lines.at(-1);
-      currentLine?.push(toToken(part, style));
-    }
-  }
-};
-
-export const createRawTokens = (code: string): ITokenizedCode => ({
-  tokens: code.split('\n').map((line) => (line === '' ? [] : [toToken(line)])),
-  fg: CODEMIRROR_GITHUB_LIGHT_FOREGROUND,
-  bg: CODEMIRROR_GITHUB_LIGHT_BACKGROUND,
+const toTokenizedCode = (lines: IShikiThemedToken[][]): ITokenizedCode => ({
+  tokens: lines.map((line) =>
+    line
+      .filter((token) => token.content.length > 0)
+      .map((token) => ({
+        content: token.content,
+        color: token.color ?? 'inherit',
+        bgColor: token.bgColor,
+        fontStyle: normalizeFontStyle(token.fontStyle),
+      })),
+  ),
+  fg: SHIKI_FOREGROUND,
+  bg: SHIKI_BACKGROUND,
 });
 
-// 用已加载的语法支持把代码解析成 token 行。
-const buildTokenizedFromSupport = (
-  code: string,
-  support: LanguageSupport,
-): ITokenizedCode | null => {
-  try {
-    const tree = support.language.parser.parse(code);
-    const ranges: IHighlightedRange[] = [];
-    highlightTree(tree, codeMirrorGithubLightHighlightStyle, (from, to, classNames) => {
-      if (from < to && classNames) {
-        ranges.push({ from, to, classNames });
-      }
-    });
-
-    const lines: ICodeMirrorHighlightToken[][] = [[]];
-    let position = 0;
-
-    for (const range of ranges) {
-      if (range.from > position) {
-        appendTokenContent(lines, code.slice(position, range.from));
-      }
-
-      appendTokenContent(
-        lines,
-        code.slice(range.from, range.to),
-        resolveCodeMirrorHighlightStyle(range.classNames),
-      );
-      position = range.to;
-    }
-
-    if (position < code.length) {
-      appendTokenContent(lines, code.slice(position));
-    }
-
-    return {
-      tokens: lines,
-      fg: CODEMIRROR_GITHUB_LIGHT_FOREGROUND,
-      bg: CODEMIRROR_GITHUB_LIGHT_BACKGROUND,
-    };
-  } catch (error) {
-    console.error('CodeMirror 静态代码高亮失败', error);
-    return null;
-  }
-};
+export const createRawTokens = (code: string): ITokenizedCode => ({
+  tokens: code
+    .split('\n')
+    .map((line) => (line === '' ? [] : [{ content: line, color: 'inherit' }])),
+  fg: SHIKI_FOREGROUND,
+  bg: SHIKI_BACKGROUND,
+});
 
 /**
- * 同步高亮:仅当目标语法"已按需加载"时返回结果,否则返回 null。
- * 调用方应先用 createRawTokens 兜底,并通过 highlightCodeAsync 在语法加载后升级。
+ * 同步高亮：仅当目标语法已按需加载时返回结果，否则返回 null。
+ * 调用方应先用 createRawTokens 兜底，并通过 highlightCodeAsync 在语法加载后升级。
  */
 export const highlightCodeSync = (
   code: string,
@@ -188,20 +102,18 @@ export const highlightCodeSync = (
     return cached;
   }
 
-  const support = resolveCodeMirrorLanguageSupport(languageId);
-  if (!support) {
+  const lines = tokenizeWithShikiSync(code, language);
+  if (!lines) {
     return null;
   }
 
-  const tokenized = buildTokenizedFromSupport(code, support);
-  if (tokenized) {
-    rememberTokens(tokensCacheKey, tokenized);
-  }
+  const tokenized = toTokenizedCode(lines);
+  rememberTokens(tokensCacheKey, tokenized);
   return tokenized;
 };
 
 /**
- * 异步高亮:按需加载目标语法后再解析高亮。语法包通过动态 import 代码分割。
+ * 异步高亮：按需加载目标语法后再解析高亮。语法包通过动态 import 代码分割。
  */
 export const highlightCodeAsync = async (
   code: string,
@@ -218,15 +130,13 @@ export const highlightCodeAsync = async (
     return cached;
   }
 
-  const support = await loadCodeMirrorLanguageSupport(languageId);
-  if (!support) {
+  const lines = await tokenizeWithShiki(code, language);
+  if (!lines) {
     return null;
   }
 
-  const tokenized = buildTokenizedFromSupport(code, support);
-  if (tokenized) {
-    rememberTokens(tokensCacheKey, tokenized);
-  }
+  const tokenized = toTokenizedCode(lines);
+  rememberTokens(tokensCacheKey, tokenized);
   return tokenized;
 };
 
@@ -254,7 +164,7 @@ const tokenStyleToHtml = (token: ICodeMirrorHighlightToken): string => {
     declarations.push('text-decoration:underline');
   }
 
-  return declarations.length > 0 ? ` style="${declarations.join(';')}"` : '';
+  return declarations.length > 0 ? ` style=\"${declarations.join(';')}\"` : '';
 };
 
 const tokenToHtml = (token: ICodeMirrorHighlightToken): string =>
@@ -262,13 +172,13 @@ const tokenToHtml = (token: ICodeMirrorHighlightToken): string =>
 
 /**
  * 同步生成高亮 HTML(供 LSP 文档等同步渲染场景)。
- * 若语法尚未加载,本次先用原始文本兜底,同时后台预热加载,下次渲染即可高亮。
+ * 若语法尚未加载，本次先用原始文本兜底，同时后台预热加载，下次渲染即可高亮。
  */
 export const highlightCodeToHtml = (code: string, language: string): string => {
   const tokenized = highlightCodeSync(code, language);
-  if (!tokenized && resolveCodeMirrorLanguageId(language) !== 'text') {
-    // 后台按需加载,预热缓存(本次仍用兜底)。
-    void loadCodeMirrorLanguageSupport(language);
+  if (!tokenized && resolveShikiLanguageId(language)) {
+    // 后台按需加载，预热缓存(本次仍用兜底)。
+    void ensureShikiLanguage(language);
   }
 
   const finalTokenized = tokenized ?? createRawTokens(code);
@@ -276,5 +186,5 @@ export const highlightCodeToHtml = (code: string, language: string): string => {
     .map((line) => line.map((token) => tokenToHtml(token)).join(''))
     .join('\n');
 
-  return `<pre class="cm-static-highlight" style="background-color:${finalTokenized.bg};color:${finalTokenized.fg}"><code>${html}</code></pre>`;
+  return `<pre class=\"cm-static-highlight\" style=\"background-color:${finalTokenized.bg};color:${finalTokenized.fg}\"><code>${html}</code></pre>`;
 };

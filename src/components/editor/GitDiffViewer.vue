@@ -12,7 +12,6 @@
 import { MergeView } from '@codemirror/merge';
 import { Compartment, type Extension } from '@codemirror/state';
 import { EditorView, highlightSpecialChars } from '@codemirror/view';
-import { githubLight } from '@uiw/codemirror-theme-github';
 import { useResizeObserver } from '@vueuse/core';
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { buildCodeMirrorSettingsExtensions } from '@/services/editor/codemirror-config';
@@ -20,6 +19,10 @@ import {
   loadCodeMirrorLanguageSupport,
   resolveCodeMirrorLanguageExtension,
 } from '@/services/editor/codemirror-language';
+import {
+  shikiEditorChromeTheme,
+  shikiHighlightExtension,
+} from '@/services/editor/codemirror-shiki-highlight';
 import type { TThemeMode } from '@/types/app';
 import type { IGitDiffPreviewPayload } from '@/types/git';
 import type { IEditorSettings } from '@/types/settings';
@@ -44,7 +47,7 @@ const buildDiffEditorExtensions = (
   languageCompartment: Compartment,
 ): Extension[] => [
   highlightSpecialChars(),
-  githubLight,
+  shikiHighlightExtension(language),
   languageCompartment.of(resolveCodeMirrorLanguageExtension(language)),
   buildCodeMirrorSettingsExtensions(props.editorSettings, {
     activeLine: false,
@@ -54,6 +57,7 @@ const buildDiffEditorExtensions = (
     readOnly: true,
   }),
   EditorView.contentAttributes.of({ 'aria-readonly': 'true' }),
+  shikiEditorChromeTheme,
 ];
 
 const buildMergeView = (host: HTMLElement): MergeView => {
