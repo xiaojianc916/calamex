@@ -128,11 +128,9 @@ const shouldShowTaskStatus = (node: ITaskNodeItem): boolean => node.status !== '
     aria-label="Agent Chain of Thought">
     <ChainOfThoughtHeader class="ai-runtime-chain-header">
       <Shimmer v-if="isStreaming || isWaitingConfirmation" as="span" class="ai-runtime-chain-label ai-runtime-chain-label--thinking">
-         chainHeaderLabel 
+        <span v-text="chainHeaderLabel" />
       </Shimmer>
-      <span v-else class="ai-runtime-chain-label ai-runtime-chain-label--done">
-         chainHeaderLabel 
-      </span>
+      <span v-else class="ai-runtime-chain-label ai-runtime-chain-label--done" v-text="chainHeaderLabel" />
     </ChainOfThoughtHeader>
 
     <ChainOfThoughtContent class="ai-runtime-chain-content">
@@ -154,30 +152,30 @@ const shouldShowTaskStatus = (node: ITaskNodeItem): boolean => node.status !== '
                 <p v-else-if="block.type === 'paragraph'" class="agent-line__segment agent-line__paragraph">
                   <template v-for="(token, tokenIndex) in tokenizeInlineMarkdown(block.text ?? '')"
                     :key="`${item.id}:segment:${segmentIndex}:block:${block.id}:token:${tokenIndex}`">
-                    <strong v-if="token.kind === 'strong'" class="agent-line__strong"> token.text </strong>
-                    <em v-else-if="token.kind === 'emphasis'" class="agent-line__emphasis"> token.text </em>
-                    <code v-else-if="token.kind === 'code'" class="agent-line__code"> token.text </code>
-                    <span v-else> token.text </span>
+                    <strong v-if="token.kind === 'strong'" class="agent-line__strong" v-text="token.text" />
+                    <em v-else-if="token.kind === 'emphasis'" class="agent-line__emphasis" v-text="token.text" />
+                    <code v-else-if="token.kind === 'code'" class="agent-line__code" v-text="token.text" />
+                    <span v-else v-text="token.text" />
                   </template>
                 </p>
 
                 <p v-else-if="block.type === 'heading'" class="agent-line__segment agent-line__heading">
                   <template v-for="(token, tokenIndex) in tokenizeInlineMarkdown(block.text ?? '')"
                     :key="`${item.id}:segment:${segmentIndex}:block:${block.id}:token:${tokenIndex}`">
-                    <strong v-if="token.kind === 'strong'" class="agent-line__strong"> token.text </strong>
-                    <em v-else-if="token.kind === 'emphasis'" class="agent-line__emphasis"> token.text </em>
-                    <code v-else-if="token.kind === 'code'" class="agent-line__code"> token.text </code>
-                    <span v-else> token.text </span>
+                    <strong v-if="token.kind === 'strong'" class="agent-line__strong" v-text="token.text" />
+                    <em v-else-if="token.kind === 'emphasis'" class="agent-line__emphasis" v-text="token.text" />
+                    <code v-else-if="token.kind === 'code'" class="agent-line__code" v-text="token.text" />
+                    <span v-else v-text="token.text" />
                   </template>
                 </p>
 
                 <blockquote v-else-if="block.type === 'quote'" class="agent-line__segment agent-line__quote">
                   <template v-for="(token, tokenIndex) in tokenizeInlineMarkdown(block.text ?? '')"
                     :key="`${item.id}:segment:${segmentIndex}:block:${block.id}:token:${tokenIndex}`">
-                    <strong v-if="token.kind === 'strong'" class="agent-line__strong"> token.text </strong>
-                    <em v-else-if="token.kind === 'emphasis'" class="agent-line__emphasis"> token.text </em>
-                    <code v-else-if="token.kind === 'code'" class="agent-line__code"> token.text </code>
-                    <span v-else> token.text </span>
+                    <strong v-if="token.kind === 'strong'" class="agent-line__strong" v-text="token.text" />
+                    <em v-else-if="token.kind === 'emphasis'" class="agent-line__emphasis" v-text="token.text" />
+                    <code v-else-if="token.kind === 'code'" class="agent-line__code" v-text="token.text" />
+                    <span v-else v-text="token.text" />
                   </template>
                 </blockquote>
 
@@ -186,10 +184,10 @@ const shouldShowTaskStatus = (node: ITaskNodeItem): boolean => node.status !== '
                     :key="`${segmentIndex}:${block.id}:entry:${entryIndex}`">
                     <template v-for="(token, tokenIndex) in tokenizeInlineMarkdown(entry)"
                       :key="`${item.id}:segment:${segmentIndex}:block:${block.id}:entry:${entryIndex}:token:${tokenIndex}`">
-                      <strong v-if="token.kind === 'strong'" class="agent-line__strong"> token.text </strong>
-                      <em v-else-if="token.kind === 'emphasis'" class="agent-line__emphasis"> token.text </em>
-                      <code v-else-if="token.kind === 'code'" class="agent-line__code"> token.text </code>
-                      <span v-else> token.text </span>
+                      <strong v-if="token.kind === 'strong'" class="agent-line__strong" v-text="token.text" />
+                      <em v-else-if="token.kind === 'emphasis'" class="agent-line__emphasis" v-text="token.text" />
+                      <code v-else-if="token.kind === 'code'" class="agent-line__code" v-text="token.text" />
+                      <span v-else v-text="token.text" />
                     </template>
                   </li>
                 </ol>
@@ -199,10 +197,10 @@ const shouldShowTaskStatus = (node: ITaskNodeItem): boolean => node.status !== '
                     :key="`${segmentIndex}:${block.id}:entry:${entryIndex}`">
                     <template v-for="(token, tokenIndex) in tokenizeInlineMarkdown(entry)"
                       :key="`${item.id}:segment:${segmentIndex}:block:${block.id}:entry:${entryIndex}:token:${tokenIndex}`">
-                      <strong v-if="token.kind === 'strong'" class="agent-line__strong"> token.text </strong>
-                      <em v-else-if="token.kind === 'emphasis'" class="agent-line__emphasis"> token.text </em>
-                      <code v-else-if="token.kind === 'code'" class="agent-line__code"> token.text </code>
-                      <span v-else> token.text </span>
+                      <strong v-if="token.kind === 'strong'" class="agent-line__strong" v-text="token.text" />
+                      <em v-else-if="token.kind === 'emphasis'" class="agent-line__emphasis" v-text="token.text" />
+                      <code v-else-if="token.kind === 'code'" class="agent-line__code" v-text="token.text" />
+                      <span v-else v-text="token.text" />
                     </template>
                   </li>
                 </ul>
@@ -223,11 +221,9 @@ const shouldShowTaskStatus = (node: ITaskNodeItem): boolean => node.status !== '
           <template v-if="item.node.shimmerAction || hasCommandTerminal(item.node)" #label>
             <div class="ai-runtime-task-label">
               <Shimmer v-if="item.node.shimmerAction" as="span" class="ai-runtime-task-label__text">
-                 item.node.action 
+                <span v-text="item.node.action" />
               </Shimmer>
-              <span v-else class="ai-runtime-task-label__text">
-                 item.node.action 
-              </span>
+              <span v-else class="ai-runtime-task-label__text" v-text="item.node.action" />
               <button
                 v-if="hasCommandTerminal(item.node)"
                 type="button"
@@ -259,20 +255,20 @@ const shouldShowTaskStatus = (node: ITaskNodeItem): boolean => node.status !== '
                       decoding="async" @error="handleWebSourceIconError" />
                     <Globe class="ai-runtime-web-source-icon-fallback" />
                   </span>
-                  <span class="ai-runtime-web-source-label"> source.displayUrl </span>
+                  <span class="ai-runtime-web-source-label" v-text="source.displayUrl" />
                 </div>
               </div>
 
               <ChainOfThoughtSearchResults v-if="item.node.tags.length" class="ai-runtime-task-search-results">
                 <ChainOfThoughtSearchResult v-for="tag in item.node.tags" :key="`${item.node.id}:tag:${tag}`"
                   class="ai-runtime-task-file" :title="tag">
-                   tag 
+                  <span v-text="tag" />
                 </ChainOfThoughtSearchResult>
               </ChainOfThoughtSearchResults>
 
               <TaskItem v-if="shouldShowTaskStatus(item.node) && item.node.tail" class="ai-runtime-task-item"
                 :class="`is-${item.node.status}`">
-                 item.node.tail 
+                <span v-text="item.node.tail" />
               </TaskItem>
             </TaskContent>
           </Task>
@@ -286,7 +282,9 @@ const shouldShowTaskStatus = (node: ITaskNodeItem): boolean => node.status !== '
               @clear="handleTerminalClear(item.node.id)"
             >
               <TerminalHeader>
-                <TerminalTitle> item.node.terminalTitle ?? 'Windows 终端' </TerminalTitle>
+                <TerminalTitle>
+                  <span v-text="item.node.terminalTitle ?? 'Windows 终端'" />
+                </TerminalTitle>
                 <div class="ai-runtime-terminal-header-actions">
                   <TerminalStatus />
                   <TerminalActions>
