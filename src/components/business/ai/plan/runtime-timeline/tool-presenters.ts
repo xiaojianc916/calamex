@@ -28,6 +28,52 @@ import {
   resolveWebSearchSources,
 } from './web-search';
 import type { IToolActionDescriptor, TToolLifecycleEvent } from './types';
+import { classifyRuntimeToolKind, type TAiRuntimeToolKind } from '@/constants/ai/runtime-tools';
+
+interface IFallbackActionVerbs {
+  running: string;
+  done: string;
+  failed: string;
+}
+
+const SYSTEM_FALLBACK_ACTION_VERBS: IFallbackActionVerbs = {
+  running: '正在处理',
+  done: '处理完成',
+  failed: '处理失败',
+};
+
+/**
+ * 兜底语义文案：当某个工具没有专属描述时，按运行时工具类别给出自然语言动作，
+ * 避免再退化成“完成调用 + 工具名”这类机械模板。
+ */
+const FALLBACK_ACTION_VERBS: Partial<Record<TAiRuntimeToolKind, IFallbackActionVerbs>> = {
+  search: { running: '正在搜索', done: '搜索完成', failed: '搜索失败' },
+  read: { running: '正在读取', done: '读取完成', failed: '读取失败' },
+  write: { running: '正在编辑', done: '编辑完成', failed: '编辑失败' },
+  git: { running: '正在执行版本控制操作', done: '版本控制操作完成', failed: '版本控制操作失败' },
+  browser: { running: '正在操作浏览器', done: '浏览器操作完成', failed: '浏览器操作失败' },
+  terminal: { running: '正在执行命令', done: '命令执行完成', failed: '命令执行失败' },
+  task: { running: '正在处理任务', done: '任务处理完成', failed: '任务处理失败' },
+  network: { running: '正在联网请求', done: '联网请求完成', failed: '联网请求失败' },
+  diagram: { running: '正在生成图示', done: '图示生成完成', failed: '图示生成失败' },
+  symbol: { running: '正在分析符号', done: '符号分析完成', failed: '符号分析失败' },
+  python: { running: '正在执行 Python', done: 'Python 执行完成', failed: 'Python 执行失败' },
+  java: { running: '正在执行调试', done: '调试完成', failed: '调试失败' },
+  memory: { running: '正在更新记忆', done: '记忆更新完成', failed: '记忆更新失败' },
+  thinking: { running: '正在思考', done: '思考完成', failed: '思考失败' },
+  system: SYSTEM_FALLBACK_ACTION_VERBS,
+};
+
+const resolveFallbackAction = (event: TToolLifecycleEvent, toolName: string): string => {
+  const kind = classifyRuntimeToolKind(toolName);
+  const verbs = FALLBACK_ACTION_VERBS[kind] ?? SYSTEM_FALLBACK_ACTION_VERBS;
+
+  if (event.type === 'agent.tool.completed' && !event.ok) {
+    return verbs.failed;
+  }
+
+  return event.type === 'agent.tool.started' ? verbs.running : verbs.done;
+};
 
 export const describeToolAction = (
   event: TToolLifecycleEvent,
@@ -191,40 +237,50 @@ export const describeToolAction = (
     };
   }
 
-  if (READ_FILE_TOOL_NAMES.has(toolName) && resourceLabel) {
-    if (event.type === 'agent.tool.completed' && !event.ok) {
+  if (READ_FILE_TOOL_NAMES.has(toolName)) {
+    const fileName =
+      fallbackResourceLabel ??
+      extractFileNameFromPath(
+        event.type === 'agent.tool.started' ? event.inputPreview : event.resultPreview,
+      ) ??
+      null;
+
+    if (fileName) {
+      if (event.type === 'agent.tool.completed' && !event.ok) {
+        return {
+          action: `查看失败 ${fileName}`,
+          resourceLabel: fileName,
+          suppressMeta: true,
+        };
+      }
+
       return {
-        action: `读取失败 ${resourceLabel}`,
-        resourceLabel,
+        action: event.type === 'agent.tool.started' ? `正在查看 ${fileName}` : `已查看 ${fileName}`,
+        resourceLabel: fileName,
         suppressMeta: true,
       };
     }
-
-    return {
-      action:
-        event.type === 'agent.tool.started'
-          ? `正在读取 ${resourceLabel}`
-          : `读取完成 ${resourceLabel}`,
-      resourceLabel,
-      suppressMeta: true,
-    };
   }
 
-  if (WRITE_FILE_TOOL_NAMES.has(toolName) && resourceLabel) {
+  if (WRITE_FILE_TOOL_NAMES.has(toolName)) {
+    const fileName =
+      fallbackResourceLabel ??
+      extractFileNameFromPath(
+        event.type === 'agent.tool.started' ? event.inputPreview : event.resultPreview,
+      ) ??
+      '文件';
+
     if (event.type === 'agent.tool.completed' && !event.ok) {
       return {
-        action: `编辑失败 ${resourceLabel}`,
-        resourceLabel,
+        action: `编辑失败 ${fileName}`,
+        resourceLabel: fileName,
         suppressMeta: true,
       };
     }
 
     return {
-      action:
-        event.type === 'agent.tool.started'
-          ? `正在编辑 ${resourceLabel}`
-          : `编辑完成 ${resourceLabel}`,
-      resourceLabel,
+      action: event.type === 'agent.tool.started' ? `正在编辑 ${fileName}` : `编辑完成 ${fileName}`,
+      resourceLabel: fileName,
       suppressMeta: true,
     };
   }
@@ -275,7 +331,7 @@ export const describeToolAction = (
 
     if (event.type === 'agent.tool.completed' && !event.ok) {
       return {
-        action: 'Search Failed',
+        action: '联网搜索失败',
         resourceLabel: query,
         suppressMeta: true,
         webSearchSources,
@@ -285,8 +341,8 @@ export const describeToolAction = (
     return {
       action:
         event.type === 'agent.tool.started'
-          ? `Search for ${query ?? 'web results'}`
-          : 'Complete Search',
+          ? `正在联网搜索 ${query ?? '相关内容'}`
+          : '联网搜索完成',
       resourceLabel: query,
       suppressMeta: true,
       webSearchSources,
@@ -294,7 +350,7 @@ export const describeToolAction = (
   }
 
   return {
-    action: event.type === 'agent.tool.started' ? `开始调用 ${toolName}` : `完成调用 ${toolName}`,
+    action: resolveFallbackAction(event, toolName),
     resourceLabel,
   };
 };
