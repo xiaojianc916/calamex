@@ -1155,9 +1155,7 @@ describe('AiAssistantPanel', () => {
                                         <li
                                             v-for="toolCall in message.toolCalls"
                                             :key="toolCall.id"
-                                        >
-                                             toolCall.name : toolCall.status : toolCall.summary 
-                                        </li>
+                                        > toolCall.name : toolCall.status : toolCall.summary </li>
                                     </ol>
                                 </article>
                             </section>
@@ -1239,9 +1237,7 @@ describe('AiAssistantPanel', () => {
                                 <article v-for="message in messages" :key="message.id">
                                     <p> message.content </p>
                                     <ol v-if="message.toolCalls?.length">
-                                        <li v-for="toolCall in message.toolCalls" :key="toolCall.id">
-                                             toolCall.name : toolCall.status : toolCall.summary 
-                                        </li>
+                                        <li v-for="toolCall in message.toolCalls" :key="toolCall.id"> toolCall.name : toolCall.status : toolCall.summary </li>
                                     </ol>
                                 </article>
                             </section>
