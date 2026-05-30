@@ -4,20 +4,16 @@
     <div ref="containerRef" class="h-full min-h-0 w-full bg-(--editor-bg)"></div>
     <section v-if="aiActionResult || isAiActionRunning || aiActionError" class="ai-code-action-card">
       <div class="ai-code-action-head">
-        <span> isAiActionRunning ? 'AI 正在分析…' : 'AI Code Action' </span>
+        <span v-text="isAiActionRunning ? 'AI 正在分析…' : 'AI Code Action'"></span>
         <button type="button" aria-label="关闭 AI 结果" @click="clearAiActionResult">×</button>
       </div>
-      <p v-if="aiActionError" class="is-error"> aiActionError </p>
+      <p v-if="aiActionError" class="is-error" v-text="aiActionError"></p>
       <template v-else-if="aiActionResult">
-        <p> aiActionResult.explanation </p>
+        <p v-text="aiActionResult.explanation"></p>
         <ul v-if="aiActionResult.followUpQuestions.length">
-          <li v-for="question in aiActionResult.followUpQuestions" :key="question">
-             question 
-          </li>
+          <li v-for="question in aiActionResult.followUpQuestions" :key="question" v-text="question"></li>
         </ul>
-        <p v-if="aiActionResult.testSuggestion" class="ai-code-action-note">
-           aiActionResult.testSuggestion 
-        </p>
+        <p v-if="aiActionResult.testSuggestion" class="ai-code-action-note" v-text="aiActionResult.testSuggestion"></p>
       </template>
     </section>
     <EditorContextMenu :open="contextMenuState.open" :x="contextMenuState.x" :y="contextMenuState.y"
@@ -101,7 +97,7 @@ import {
   scrollPastEnd,
   type ViewUpdate,
 } from '@codemirror/view';
-import { githubLight } from '@fsegurai/codemirror-theme-github-light';
+import { githubLight } from '@uiw/codemirror-theme-github';
 import { useResizeObserver } from '@vueuse/core';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
