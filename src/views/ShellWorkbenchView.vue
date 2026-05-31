@@ -323,23 +323,24 @@ const bindEditorViewportRef = (value: unknown): void => {
 };
 </script>
 
-<style scoped>
-/* 终端面板顶部分隔手柄：常态 1px 细线(#ededed)，宽热区易抓取，悬停/拖拽平滑高亮 */
+<style>
+/* 终端面板顶部：可拖拽分隔条 —— 常态 1px #ededed 细线，10px 不可见热区便于抓取，悬停/拖拽平滑变粗高亮 */
 .terminal-resize-handle {
-  background: transparent;
+  background-color: transparent !important;
   cursor: row-resize;
   touch-action: none;
 }
 
+/* 加宽抓取热区（覆盖基础 after 的 h-1 / inset-y-0），保持透明 */
 .terminal-resize-handle::after {
-  top: 50%;
-  bottom: auto;
-  height: 11px;
-  border-radius: 0;
-  background: transparent;
-  transform: translateY(-50%);
+  top: 50% !important;
+  bottom: auto !important;
+  height: 10px !important;
+  border-radius: 0 !important;
+  background-color: transparent !important;
 }
 
+/* 可见细线：默认 1px #ededed，绝对定位居中，不占布局高度 */
 .terminal-resize-handle::before {
   content: '';
   position: absolute;
@@ -348,18 +349,20 @@ const bindEditorViewportRef = (value: unknown): void => {
   top: 50%;
   height: 1px;
   transform: translateY(-50%);
-  background: #ededed;
+  background-color: #ededed;
+  border-radius: 999px;
   pointer-events: none;
+  z-index: 1;
   transition:
     height 160ms cubic-bezier(0.22, 1, 0.36, 1),
     background-color 160ms ease;
 }
 
+/* 悬停 / 拖拽：平滑变粗 3px 并高亮为品牌强调色 */
 .terminal-resize-handle:hover::before,
 .terminal-resize-handle:active::before {
   height: 3px;
-  border-radius: 999px;
-  background: var(--accent-strong);
+  background-color: var(--accent-strong);
 }
 
 @media (prefers-reduced-motion: reduce) {
