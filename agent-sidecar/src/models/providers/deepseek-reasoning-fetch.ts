@@ -32,6 +32,7 @@
 import { createParser, type EventSourceMessage, type EventSourceParser } from 'eventsource-parser';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { toNonEmptyString, toRecord } from '../../engines/utils.js';
+import { countJsonChars, countTextChars, estimateInputTokensByChars, stringifyForJson as stringifyForStats } from '../../text-metrics.js';
 
 // -----------------------------------------------------------------------------
 // Types
@@ -93,41 +94,6 @@ const REASONING_DEBUG_ENABLED =
 
 const isRecord = (value: unknown): value is TJsonRecord =>
   toRecord(value) !== null;
-
-const countTextChars = (value: string): number => Array.from(value).length;
-
-const stringifyForStats = (value: unknown): string => {
-  try {
-    return JSON.stringify(value) ?? '';
-  } catch {
-    return '';
-  }
-};
-
-const countJsonChars = (value: unknown): number =>
-  countTextChars(stringifyForStats(value));
-
-const estimateInputTokensByChars = (value: string): number => {
-  let asciiRunLength = 0;
-  let tokens = 0;
-  for (const char of Array.from(value)) {
-    const codePoint = char.codePointAt(0) ?? 0;
-    if (codePoint <= 0x7f) {
-      asciiRunLength += 1;
-      continue;
-    }
-    if (asciiRunLength > 0) {
-      tokens += Math.ceil(asciiRunLength / 4);
-      asciiRunLength = 0;
-    }
-    tokens += 1;
-  }
-  if (asciiRunLength > 0) {
-    tokens += Math.ceil(asciiRunLength / 4);
-  }
-  return Math.max(tokens, 1);
-};
-
 
 const logReasoningDebug = (
   event: string,

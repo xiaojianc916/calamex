@@ -5,18 +5,12 @@ import type { IAgentRuntimeRunOptions, TAgentRuntimeOutputEvent } from '../contr
 import type { IAgentContextReferenceInput } from '../contracts/runtime-input.js';
 import { pushUiEvent, toRecord } from '../utils.js';
 import type { IMastraToolBudgetStats, TAcontextProviderPayloadEventDraft, TAcontextTokenEventDraft, TMastraChatMessage, TRuntimeEventFactory } from '../types.js';
+import { countJsonChars, countTextChars, estimateInputTokensByChars, stringifyForJson } from '../../text-metrics.js';
 
-export const countTextChars = (value: string): number => Array.from(value).length;
-
-export const stringifyForBudget = (value: unknown): string => {
-    try {
-        return JSON.stringify(value) ?? '';
-    } catch {
-        return '';
-    }
-};
-
-export const countJsonChars = (value: unknown): number => countTextChars(stringifyForBudget(value));
+// Char/token helpers now live in ../../text-metrics.js. Re-exported here so the
+// existing import surface of this module is preserved.
+export { countJsonChars, countTextChars, estimateInputTokensByChars };
+export const stringifyForBudget = stringifyForJson;
 
 export const createJsonToolModelOutput = (value: unknown): { type: 'json'; value: unknown } => ({
     type: 'json',
@@ -86,33 +80,6 @@ export const countProviderToolSchemaChars = (tools: ToolsInput): number =>
     countJsonChars(Object.entries(tools).map(([name, tool]) =>
         createProviderToolBudgetShape(name, tool),
     ));
-
-export const estimateInputTokensByChars = (value: string): number => {
-    let asciiRunLength = 0;
-    let tokens = 0;
-
-    for (const char of Array.from(value)) {
-        const codePoint = char.codePointAt(0) ?? 0;
-
-        if (codePoint <= 0x7f) {
-            asciiRunLength += 1;
-            continue;
-        }
-
-        if (asciiRunLength > 0) {
-            tokens += Math.ceil(asciiRunLength / 4);
-            asciiRunLength = 0;
-        }
-
-        tokens += 1;
-    }
-
-    if (asciiRunLength > 0) {
-        tokens += Math.ceil(asciiRunLength / 4);
-    }
-
-    return Math.max(tokens, 1);
-};
 
 export const createAcontextTokenEventDraft = (input: {
     systemPrompt: string;

@@ -125,6 +125,7 @@ export class MastraRuntimeExecution extends MastraRuntimeValidation {
                 runId: requestedRunId,
                 onRequestPayload: payloadEventSink.onRequestPayload,
             }, async () => {
+                const mastraMessages = buildMastraMessages(memoryInput);
                 const toolChoice: IMastraGenerateOptions['toolChoice'] = hasAgentTools ? 'auto' : 'none';
                 const executionHandle = await this.createExecutionHandle({
                     id: DEFAULT_EXECUTION_AGENT_ID,
@@ -139,7 +140,7 @@ export class MastraRuntimeExecution extends MastraRuntimeValidation {
                     outputProcessors: createMastraAgentOutputProcessors(),
                 });
                 const stream = await executionHandle.agent.stream(
-                    buildMastraMessages(memoryInput),
+                    mastraMessages,
                     {
                         maxSteps: hasAgentTools ? 10 : 1,
                         toolChoice,
@@ -169,7 +170,7 @@ export class MastraRuntimeExecution extends MastraRuntimeValidation {
                 attachMcpGatewayMetrics(mcpGatewayMetrics, console);
                 pushUiEvent(events, createCheckpointEvent(createAcontextTokenEventDraft({
                     systemPrompt,
-                    messages: buildMastraMessages(memoryInput),
+                    messages: mastraMessages,
                     contextReferences: normalizedInput.context ?? [],
                     tools: mastraTools,
                     toolStats,

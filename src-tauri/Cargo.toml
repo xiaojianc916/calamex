@@ -120,9 +120,5 @@ windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Netwo
 [target.'cfg(target_os = "linux")'.dependencies]
 tokio-vsock = { version = "0.7.2", features = ["tonic014"] }
 
-[patch.crates-io]
-wry = { git = "https://github.com/<your-fork>/wry", branch = "visual-hosting" }
-tauri-runtime = { git = "https://github.com/<your-fork>/tauri", branch = "visual-hosting" }
-
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
