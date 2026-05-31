@@ -63,18 +63,6 @@ import {
   agentSidecarResponsePayloadSchema,
   agentSidecarWarmupPayloadSchema,
 } from '@/types/ai/sidecar.schema';
-import {
-  installWslLinkAgentPayloadSchema,
-  installWslLinkAgentRequestSchema,
-  probeWslLinkPrimaryPayloadSchema,
-  startWslLinkAgentPayloadSchema,
-  startWslLinkAgentRequestSchema,
-  startWslLinkSupervisorRequestSchema,
-  wslLinkAgentArtifactPayloadSchema,
-  wslLinkEnvironmentReportSchema,
-  wslLinkStatusPayloadSchema,
-  wslLinkSupervisorControlPayloadSchema,
-} from '@/types/wsl-link/schema';
 
 /**
  * @deprecated Tauri invoke 契约正在迁移到 tauri-specta 生成绑定。
@@ -318,38 +306,6 @@ export const tauriContracts = {
   agentSidecarRestoreCheckpoint: {
     inSchema: agentSidecarCheckpointRestoreRequestSchema,
     outSchema: agentSidecarResponsePayloadSchema,
-  },
-  getWslLinkStatus: {
-    inSchema: z.void(),
-    outSchema: wslLinkStatusPayloadSchema,
-  },
-  checkWslLinkEnvironment: {
-    inSchema: z.void(),
-    outSchema: wslLinkEnvironmentReportSchema,
-  },
-  getWslLinkAgentArtifactStatus: {
-    inSchema: z.void(),
-    outSchema: wslLinkAgentArtifactPayloadSchema,
-  },
-  installWslLinkAgent: {
-    inSchema: installWslLinkAgentRequestSchema,
-    outSchema: installWslLinkAgentPayloadSchema,
-  },
-  startWslLinkAgent: {
-    inSchema: startWslLinkAgentRequestSchema,
-    outSchema: startWslLinkAgentPayloadSchema,
-  },
-  startWslLinkSupervisor: {
-    inSchema: startWslLinkSupervisorRequestSchema,
-    outSchema: wslLinkSupervisorControlPayloadSchema,
-  },
-  stopWslLinkSupervisor: {
-    inSchema: z.void(),
-    outSchema: wslLinkSupervisorControlPayloadSchema,
-  },
-  probeWslLinkPrimary: {
-    inSchema: z.void(),
-    outSchema: probeWslLinkPrimaryPayloadSchema,
   },
   getGitRepositoryStatus: {
     inSchema: z.object({
