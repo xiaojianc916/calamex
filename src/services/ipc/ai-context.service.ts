@@ -1,11 +1,4 @@
 import type { IAiContextReference } from '@/types/ai';
-import type {
-  IActiveRunSummary,
-  IAnalyzeScriptPayload,
-  IEditorDocument,
-  IEditorSelectionSummary,
-} from '@/types/editor';
-import type { IGitRepositoryStatusPayload } from '@/types/git';
 
 const MAX_CONTEXT_PREVIEW_CHARS = 4000;
 

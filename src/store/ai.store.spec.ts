@@ -1,6 +1,5 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { aiService } from '@/services/ipc/ai.service';
 import { createDefaultAiModelEndpointConfig } from '@/services/ipc/ai-config.service';
 import { useAiStore } from './ai';
 

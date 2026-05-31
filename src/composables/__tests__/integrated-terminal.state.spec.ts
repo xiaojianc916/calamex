@@ -35,7 +35,7 @@ const { capturedListeners, mockFitAddonInstance, mockTerminalInstance, mockTauri
       open: vi.fn(),
       dispose: vi.fn(),
       // write 立即调用回调，避免死锁
-      write: vi.fn((data: string, cb?: () => void) => {
+      write: vi.fn((_data: string, cb?: () => void) => {
         cb?.();
       }),
       writeln: vi.fn((_data: string, cb?: () => void) => {

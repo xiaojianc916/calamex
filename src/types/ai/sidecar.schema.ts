@@ -10,6 +10,7 @@ import {
   AGENT_RUNTIME_EVENT_SCHEMA_VERSION,
   AGENT_RUNTIME_EVENT_TYPES,
   AGENT_SIDECAR_MODES,
+  type TAgentRuntimeEvent,
   type TJsonValue,
 } from '@/types/ai/sidecar';
 
@@ -217,7 +218,7 @@ export const agentRuntimeEventSchema = z
     parentId: z.string().min(1).optional(),
     spanId: z.string().min(1).optional(),
   })
-  .passthrough();
+  .passthrough() as unknown as z.ZodType<TAgentRuntimeEvent>;
 
 /* ============================================================================
  * UI events (sidecar response stream)
