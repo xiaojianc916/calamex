@@ -35,7 +35,7 @@ export type TTerminalDataHandler = (payload: ITerminalDataEvent) => void;
 export type TTerminalUnsubscribe = () => void;
 
 export interface ITerminalFacade {
-  ensureView(epoch: string): Promise<void>;
+  ensureView(): Promise<void>;
   dispatchScript(spec: IDispatchTerminalScriptRequest): Promise<ITerminalRunHandle>;
   cancelRun(runId: string, mode: TTerminalCancelMode): Promise<void>;
   writeInput(sessionId: string, data: Uint8Array): Promise<void>;
@@ -267,13 +267,7 @@ export const useTerminalFacade = (options: ITerminalFacadeOptions = {}): ITermin
     return eventBridgePromise;
   };
 
-  const ensureView = async (epoch: string): Promise<void> => {
-    if (!epoch.trim()) {
-      throw new Error('终端视图 epoch 不能为空。');
-    }
-    // TODO(R6): epoch 当前只做形式校验。如果意图是 staleness 检查
-    // ("视图切换后旧 ensureView 应被忽略"),需要保存 currentViewEpoch
-    // 并在 await 完成后比对;如果意图是传给后端,需要加到 IPC payload。
+  const ensureView = async (): Promise<void> => {
     await ensureEventBridge();
     await tauri.ensureTerminalSession({
       sessionId: interactiveSessionId,

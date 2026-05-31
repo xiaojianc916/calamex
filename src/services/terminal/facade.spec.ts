@@ -158,7 +158,7 @@ describe('terminal facade suite 1', () => {
     const eventBus = new FakeTerminalEventBus();
     const facade = useTerminalFacade({ tauri, eventBus });
 
-    await facade.ensureView('epoch-1');
+    await facade.ensureView();
     const handle = await facade.dispatchScript({
       sessionId: 'main-terminal',
       path: null,
@@ -222,7 +222,7 @@ describe('terminal facade suite 1', () => {
     const eventBus = new FakeTerminalEventBus();
     const facade = useTerminalFacade({ tauri: createTauriMock(), eventBus });
 
-    await facade.ensureView('epoch-1');
+    await facade.ensureView();
     await facade.dispatchScript({
       sessionId: 'main-terminal',
       path: null,
@@ -289,7 +289,7 @@ describe('terminal facade suite 1', () => {
     );
     const facade = useTerminalFacade({ tauri, eventBus });
 
-    await facade.ensureView('epoch-early-complete');
+    await facade.ensureView();
     const dispatchPromise = facade.dispatchScript({
       sessionId: 'main-terminal',
       path: null,

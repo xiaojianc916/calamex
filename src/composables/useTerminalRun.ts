@@ -241,7 +241,7 @@ export const useTerminalRun = ({ canRun, editorStore }: TUseTerminalRunOptions) 
   };
 
   const ensureIntegratedTerminalSession = async (): Promise<void> => {
-    await terminalFacade.ensureView(`run-dispatch-${DEFAULT_TERMINAL_SESSION_ID}`);
+    await terminalFacade.ensureView();
     hasEnsuredTerminalSession = true;
   };
 
