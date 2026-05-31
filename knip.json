@@ -25,6 +25,7 @@
         "@commitlint/types",
         "lint-staged",
         "shellcheck",
+        "bash-language-server",
         "stylelint",
         "stylelint-config-tailwindcss",
         "@axe-core/playwright",
