@@ -231,21 +231,21 @@ const handleInlineRenameInput = (event: Event): void => {
 
 /*
  * 重命名输入框：白色主题，且布局占位与普通文件行保持一致。
- * height:20px 配合 margin:-2px，使其在 flex 行内的占位高度为 16px，与文件图标(16px)一致，行高保持 24px不跳动。
+ * 用 line-height:1.5 + height:auto + margin:0，使输入框的占位高度与文件名文字行盒完全一致，重命名前后行高不跳动。
  */
 .explorer-inline-rename-input {
   flex: 1;
   width: auto;
   min-width: 0;
-  height: 20px;
-  margin: -2px 0;
+  height: auto;
+  margin: 0;
   padding: 0 6px;
   border: 0;
   border-radius: 5px;
   background: #ffffff;
   color: #1f2328;
   font-size: 13px;
-  line-height: 20px;
+  line-height: 1.5;
   box-shadow: 0 0 0 1px rgba(31, 35, 40, 0.18);
 }
 
