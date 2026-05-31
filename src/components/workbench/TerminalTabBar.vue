@@ -2,7 +2,7 @@
   <div class="terminal-tabbar">
     <div class="terminal-tabbar-list" role="tablist">
       <div
-        v-for="tab in tabs"
+        v-for="(tab, index) in tabs"
         :key="tab.sessionId"
         class="terminal-tab"
         :class="{ 'is-active': tab.sessionId === activeSessionId }"
@@ -12,7 +12,7 @@
         @mousedown.middle.prevent="emit('close', tab.sessionId)"
       >
         <span aria-hidden="true" class="terminal-tab-icon icon-[lucide--square-terminal]" />
-        <span class="terminal-tab-label" v-text="tab.title" />
+        <span class="terminal-tab-label" v-text="'终端 ' + (index + 1)" />
         <span
           class="terminal-tab-close"
           role="button"
@@ -26,7 +26,7 @@
 
     <button
       type="button"
-      class="terminal-tabbar-new icon-button"
+      class="terminal-tabbar-new icon-button run-panel-action-button"
       aria-label="新建终端"
       @click="emit('new')"
     >

@@ -28,11 +28,6 @@
           <span v-if="!props.isMaximized" aria-hidden="true" class="icon-[lucide--maximize-2]" />
           <span v-else aria-hidden="true" class="icon-[lucide--minimize-2]" />
         </button>
-
-        <button type="button" class="icon-button app-tooltip-target run-panel-action-button" data-tooltip="关闭终端面板"
-          data-tooltip-placement="top" aria-label="关闭终端面板" @click="emit('hide')">
-          <span aria-hidden="true" class="icon-[lucide--x]" />
-        </button>
       </div>
     </header>
 
