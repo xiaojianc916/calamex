@@ -20,6 +20,7 @@ import type {
 } from '@/types/editor';
 import type { IGitDiffPreviewPayload } from '@/types/git';
 import type { TSessionSnapshot, TSessionWorkbenchState } from '@/types/session';
+import { computeDocumentMetrics } from '@/utils/document-metrics';
 import { formatFileSystemTextForDisplay, normalizeFileSystemPath } from '@/utils/path';
 import { DEFAULT_EXECUTOR, DEFAULT_SCRIPT } from '@/utils/templates';
 
@@ -50,8 +51,6 @@ type TPersistableTabKind = (typeof PERSISTABLE_TAB_KINDS)[number];
 // ---------------------------------------------------------------------------
 // Pure helpers
 // ---------------------------------------------------------------------------
-
-const countCharacters = (content: string): number => Array.from(content).length;
 
 /** 把可能在 UTF-16 代理对中间截断的字符串按 code point 边界修正。 */
 const clampToCodeUnitBoundary = (value: string, maxLength: number): string => {
@@ -165,8 +164,9 @@ const createEmptySessionSnapshot = (): TSessionSnapshot => ({
 });
 
 const syncDocumentState = (document: IEditorDocument): IEditorDocument => {
-  document.lineCount = document.content.length === 0 ? 1 : document.content.split('\n').length;
-  document.charCount = countCharacters(document.content);
+  const { lineCount, charCount } = computeDocumentMetrics(document.content);
+  document.lineCount = lineCount;
+  document.charCount = charCount;
   document.isDirty =
     document.content !== document.savedContent || document.encoding !== document.savedEncoding;
   return document;
@@ -218,7 +218,7 @@ const createDocument = (
 export const useEditorStore = defineStore(
   'editor',
   () => {
-    // ── State ────────────────────────────────────────────────────────────────
+    // State
     const documents = ref<IEditorDocument[]>([]);
     const sessionSnapshot = ref<TSessionSnapshot>(createEmptySessionSnapshot());
     const environment = ref<IExecutionEnvironment>({
@@ -244,7 +244,7 @@ export const useEditorStore = defineStore(
     const pendingTerminalRunId = ref<string | null>(null);
     const documentAnalysis = ref<Record<string, IAnalyzeScriptPayload>>({});
 
-    // ── Internal helpers ─────────────────────────────────────────────────────
+    // Internal helpers
 
     const touchSessionSnapshot = (): void => {
       sessionSnapshot.value.savedAt = new Date().toISOString();
@@ -335,7 +335,7 @@ export const useEditorStore = defineStore(
       );
     };
 
-    // ── Getters ──────────────────────────────────────────────────────────────
+    // Getters
 
     const hasActiveDocument = computed(
       () => activeDocumentId.value !== '' && documents.value.length > 0,
@@ -393,7 +393,7 @@ export const useEditorStore = defineStore(
         terminalOutputLength.value > 0,
     );
 
-    // ── Actions: view state & workbench ──────────────────────────────────────
+    // Actions: view state & workbench
 
     const saveEditorViewState = (path: string, viewState: Record<string, unknown>): void => {
       const normalized = normalizeFileSystemPath(path);
@@ -441,7 +441,7 @@ export const useEditorStore = defineStore(
       touchSessionSnapshot();
     };
 
-    // ── Actions: terminal output ─────────────────────────────────────────────
+    // Actions: terminal output
 
     const getTerminalOutputSnapshot = (): string => terminalOutputChunks.value.join('');
 
@@ -505,7 +505,7 @@ export const useEditorStore = defineStore(
       appendTerminalOutputChunk(value);
     };
 
-    // ── Actions: document open / close ───────────────────────────────────────
+    // Actions: document open / close
 
     const setActiveDocument = (documentId: string): void => {
       const targetDocument = documents.value.find((item) => item.id === documentId);
@@ -741,7 +741,7 @@ export const useEditorStore = defineStore(
       return getDocumentById();
     };
 
-    // ── Actions: environment / logs / run ────────────────────────────────────
+    // Actions: environment / logs / run
 
     // TODO: setEnvironment 与 clearWorkspaceSession 对 selectedExecutor 的处理不一致——
     // 前者无条件重置为 DEFAULT_EXECUTOR,后者不动。如果是在同一会话内 environment 刷新

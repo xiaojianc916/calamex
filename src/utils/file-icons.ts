@@ -267,7 +267,37 @@ const resolveFileIconKey = ({ kind, path, expanded = false }: IFileIconResolveOp
   return PIERRE_ICON_THEME.file;
 };
 
+// 记忆化：文件树批量渲染时，同一 (kind, expanded, path) 与同一 icon key 会被
+// 反复解析。缓存可将重复解析降为 O(1)，避免重复的字符串处理、Map 查找与对象分配。
+const FILE_ICON_KEY_CACHE = new Map<string, string>();
+const FILE_ICON_ASSET_CACHE = new Map<string, IFileIconAsset>();
+
+const resolveFileIconKeyMemoized = (options: IFileIconResolveOptions): string => {
+  const cacheKey = `${options.kind}\u0000${options.expanded ? '1' : '0'}\u0000${options.path ?? ''}`;
+  const cachedKey = FILE_ICON_KEY_CACHE.get(cacheKey);
+  if (cachedKey !== undefined) {
+    return cachedKey;
+  }
+
+  const iconKey = resolveFileIconKey(options);
+  FILE_ICON_KEY_CACHE.set(cacheKey, iconKey);
+
+  return iconKey;
+};
+
+const resolveFileIconAssetByKey = (iconKey: string): IFileIconAsset => {
+  const cachedAsset = FILE_ICON_ASSET_CACHE.get(iconKey);
+  if (cachedAsset) {
+    return cachedAsset;
+  }
+
+  // resolveThemeIconAssetByKey 内部已优先处理单色着色回退，因此无需再单独调用
+  // resolveColorizedFallbackIconAsset；其语义与旧实现等价。
+  const asset = resolveThemeIconAssetByKey(iconKey) ?? DEFAULT_FILE_ICON_ASSET;
+  FILE_ICON_ASSET_CACHE.set(iconKey, asset);
+
+  return asset;
+};
+
 export const resolveFileIconAsset = (options: IFileIconResolveOptions): IFileIconAsset =>
-  resolveColorizedFallbackIconAsset(resolveFileIconKey(options)) ??
-  resolveThemeIconAssetByKey(resolveFileIconKey(options)) ??
-  DEFAULT_FILE_ICON_ASSET;
+  resolveFileIconAssetByKey(resolveFileIconKeyMemoized(options));

@@ -7,6 +7,7 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type EffectScope, effectScope } from 'vue';
+import { __resetTerminalEventBusForTesting } from '@/services/terminal/eventBus';
 import { useAppStore } from '@/store/app';
 import { useEditorStore } from '@/store/editor';
 import { useTerminalRegistryStore } from '@/terminal/registry';
@@ -171,6 +172,9 @@ describe('useWorkbench 特征化快照', () => {
     setActivePinia(createPinia());
     capturedTerminalEventListeners.clear();
     capturedTerminalEventListenerSets.clear();
+    // 终端事件总线是跨测试单例，start() 幂等。重置它，确保每个用例都会
+    // 通过 mockListen 重新注册监听，避免前一个用例 start() 后本用例取不到 handler。
+    __resetTerminalEventBusForTesting();
 
     scope = effectScope();
     scope.run(() => {

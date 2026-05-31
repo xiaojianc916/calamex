@@ -1,41 +1,8 @@
-import { cpp } from "@codemirror/lang-cpp";
-import { css } from "@codemirror/lang-css";
-import { go } from "@codemirror/lang-go";
-import { html } from "@codemirror/lang-html";
-import { java } from "@codemirror/lang-java";
-import { javascript } from "@codemirror/lang-javascript";
-import { json } from "@codemirror/lang-json";
-import { markdown } from "@codemirror/lang-markdown";
-import { python } from "@codemirror/lang-python";
-import { rust } from "@codemirror/lang-rust";
-import { sql } from "@codemirror/lang-sql";
-import { vue } from "@codemirror/lang-vue";
-import { xml } from "@codemirror/lang-xml";
 import {
   LanguageDescription,
   LanguageSupport,
   StreamLanguage,
 } from "@codemirror/language";
-import {
-  c,
-  csharp,
-  dart,
-  kotlin,
-  scala,
-} from "@codemirror/legacy-modes/mode/clike";
-import { diff } from "@codemirror/legacy-modes/mode/diff";
-import { dockerFile } from "@codemirror/legacy-modes/mode/dockerfile";
-import { lua } from "@codemirror/legacy-modes/mode/lua";
-import { powerShell } from "@codemirror/legacy-modes/mode/powershell";
-import { properties } from "@codemirror/legacy-modes/mode/properties";
-import { protobuf } from "@codemirror/legacy-modes/mode/protobuf";
-import { r } from "@codemirror/legacy-modes/mode/r";
-import { ruby } from "@codemirror/legacy-modes/mode/ruby";
-import { shell } from "@codemirror/legacy-modes/mode/shell";
-import { stex } from "@codemirror/legacy-modes/mode/stex";
-import { swift } from "@codemirror/legacy-modes/mode/swift";
-import { toml } from "@codemirror/legacy-modes/mode/toml";
-import { yaml } from "@codemirror/legacy-modes/mode/yaml";
 import type { Extension } from "@codemirror/state";
 
 export type TCodeMirrorLanguageId = string;
@@ -158,187 +125,245 @@ const LANGUAGE_ID_BY_DESCRIPTION_NAME: Readonly<Record<string, string>> = {
   yaml: "yaml",
 };
 
-const streamLanguage = (
-  parser: Parameters<typeof StreamLanguage.define>[0],
-): LanguageSupport => new LanguageSupport(StreamLanguage.define(parser));
+// StreamLanguage.define 的参数类型(legacy stream 模式)。
+type CodeMirrorStreamParser = Parameters<typeof StreamLanguage.define>[0];
 
+// 把一个"动态 import legacy stream parser"的 loader 包装成 LanguageDescription.load。
+// 语法包只有在该语言首次被用到时才会被动态 import(Vite 代码分割)。
+const streamLanguageLoader =
+  (loader: () => Promise<CodeMirrorStreamParser>) =>
+  async (): Promise<LanguageSupport> =>
+    new LanguageSupport(StreamLanguage.define(await loader()));
+
+// 所有语言都用 `load` 懒加载,不在模块顶层 import 任何语法包。
 const languageDescriptions: readonly LanguageDescription[] = [
   LanguageDescription.of({
     name: "Shell",
     alias: ["shellscript", "bash", "sh", "zsh"],
     extensions: ["bash", "sh", "zsh"],
-    support: streamLanguage(shell),
+    load: streamLanguageLoader(() =>
+      import("@codemirror/legacy-modes/mode/shell").then((m) => m.shell),
+    ),
   }),
   LanguageDescription.of({
     name: "JavaScript",
     alias: ["js", "jsx"],
     extensions: ["js", "jsx", "mjs", "cjs"],
-    support: javascript({ jsx: true }),
+    load: () =>
+      import("@codemirror/lang-javascript").then((m) => m.javascript({ jsx: true })),
   }),
   LanguageDescription.of({
     name: "TypeScript",
     alias: ["ts"],
     extensions: ["ts", "mts", "cts"],
-    support: javascript({ typescript: true }),
+    load: () =>
+      import("@codemirror/lang-javascript").then((m) =>
+        m.javascript({ typescript: true }),
+      ),
   }),
   LanguageDescription.of({
     name: "TSX",
     extensions: ["tsx"],
-    support: javascript({ jsx: true, typescript: true }),
+    load: () =>
+      import("@codemirror/lang-javascript").then((m) =>
+        m.javascript({ jsx: true, typescript: true }),
+      ),
   }),
   LanguageDescription.of({
     name: "HTML",
     extensions: ["html", "htm"],
-    support: html(),
+    load: () => import("@codemirror/lang-html").then((m) => m.html()),
   }),
-  LanguageDescription.of({ name: "Vue", extensions: ["vue"], support: vue() }),
+  LanguageDescription.of({
+    name: "Vue",
+    extensions: ["vue"],
+    load: () => import("@codemirror/lang-vue").then((m) => m.vue()),
+  }),
   LanguageDescription.of({
     name: "CSS",
     alias: ["scss", "less"],
     extensions: ["css", "scss", "less"],
-    support: css(),
+    load: () => import("@codemirror/lang-css").then((m) => m.css()),
   }),
   LanguageDescription.of({
     name: "JSON",
     alias: ["jsonc"],
     extensions: ["json", "jsonc"],
-    support: json(),
+    load: () => import("@codemirror/lang-json").then((m) => m.json()),
   }),
   LanguageDescription.of({
     name: "Markdown",
     alias: ["md"],
     extensions: ["md", "markdown"],
-    support: markdown(),
+    load: () => import("@codemirror/lang-markdown").then((m) => m.markdown()),
   }),
   LanguageDescription.of({
     name: "Dockerfile",
     alias: ["docker"],
     filename: /^Dockerfile$/u,
-    support: streamLanguage(dockerFile),
+    load: streamLanguageLoader(() =>
+      import("@codemirror/legacy-modes/mode/dockerfile").then((m) => m.dockerFile),
+    ),
   }),
   LanguageDescription.of({
     name: "Diff",
     alias: ["patch"],
     extensions: ["diff", "patch"],
-    support: streamLanguage(diff),
+    load: streamLanguageLoader(() =>
+      import("@codemirror/legacy-modes/mode/diff").then((m) => m.diff),
+    ),
   }),
   LanguageDescription.of({
     name: "C",
     extensions: ["c", "h"],
-    support: streamLanguage(c),
+    load: streamLanguageLoader(() =>
+      import("@codemirror/legacy-modes/mode/clike").then((m) => m.c),
+    ),
   }),
   LanguageDescription.of({
     name: "C++",
     alias: ["cpp"],
     extensions: ["cpp", "cc", "cxx", "hpp"],
-    support: cpp(),
+    load: () => import("@codemirror/lang-cpp").then((m) => m.cpp()),
   }),
   LanguageDescription.of({
     name: "C#",
     alias: ["csharp", "cs"],
     extensions: ["cs"],
-    support: streamLanguage(csharp),
+    load: streamLanguageLoader(() =>
+      import("@codemirror/legacy-modes/mode/clike").then((m) => m.csharp),
+    ),
   }),
   LanguageDescription.of({
     name: "Dart",
     extensions: ["dart"],
-    support: streamLanguage(dart),
+    load: streamLanguageLoader(() =>
+      import("@codemirror/legacy-modes/mode/clike").then((m) => m.dart),
+    ),
   }),
-  LanguageDescription.of({ name: "Go", extensions: ["go"], support: go() }),
+  LanguageDescription.of({
+    name: "Go",
+    extensions: ["go"],
+    load: () => import("@codemirror/lang-go").then((m) => m.go()),
+  }),
   LanguageDescription.of({
     name: "Java",
     extensions: ["java"],
-    support: java(),
+    load: () => import("@codemirror/lang-java").then((m) => m.java()),
   }),
   LanguageDescription.of({
     name: "Kotlin",
     alias: ["kt"],
     extensions: ["kt", "kts"],
-    support: streamLanguage(kotlin),
+    load: streamLanguageLoader(() =>
+      import("@codemirror/legacy-modes/mode/clike").then((m) => m.kotlin),
+    ),
   }),
   LanguageDescription.of({
     name: "Lua",
     extensions: ["lua"],
-    support: streamLanguage(lua),
+    load: streamLanguageLoader(() =>
+      import("@codemirror/legacy-modes/mode/lua").then((m) => m.lua),
+    ),
   }),
   LanguageDescription.of({
     name: "PowerShell",
     alias: ["ps", "pwsh"],
     extensions: ["ps1"],
-    support: streamLanguage(powerShell),
+    load: streamLanguageLoader(() =>
+      import("@codemirror/legacy-modes/mode/powershell").then((m) => m.powerShell),
+    ),
   }),
   LanguageDescription.of({
     name: "Protocol Buffers",
     alias: ["proto", "protobuf"],
     extensions: ["proto"],
-    support: streamLanguage(protobuf),
+    load: streamLanguageLoader(() =>
+      import("@codemirror/legacy-modes/mode/protobuf").then((m) => m.protobuf),
+    ),
   }),
   LanguageDescription.of({
     name: "Python",
     alias: ["py"],
     extensions: ["py"],
-    support: python(),
+    load: () => import("@codemirror/lang-python").then((m) => m.python()),
   }),
   LanguageDescription.of({
     name: "R",
     extensions: ["r"],
-    support: streamLanguage(r),
+    load: streamLanguageLoader(() =>
+      import("@codemirror/legacy-modes/mode/r").then((m) => m.r),
+    ),
   }),
   LanguageDescription.of({
     name: "Ruby",
     alias: ["rb"],
     extensions: ["rb"],
-    support: streamLanguage(ruby),
+    load: streamLanguageLoader(() =>
+      import("@codemirror/legacy-modes/mode/ruby").then((m) => m.ruby),
+    ),
   }),
   LanguageDescription.of({
     name: "Rust",
     alias: ["rs"],
     extensions: ["rs"],
-    support: rust(),
+    load: () => import("@codemirror/lang-rust").then((m) => m.rust()),
   }),
   LanguageDescription.of({
     name: "Scala",
     extensions: ["scala"],
-    support: streamLanguage(scala),
+    load: streamLanguageLoader(() =>
+      import("@codemirror/legacy-modes/mode/clike").then((m) => m.scala),
+    ),
   }),
   LanguageDescription.of({
     name: "SQL",
     extensions: ["sql"],
-    support: sql({}),
+    load: () => import("@codemirror/lang-sql").then((m) => m.sql({})),
   }),
   LanguageDescription.of({
     name: "LaTeX",
     alias: ["stex", "tex"],
     extensions: ["tex"],
-    support: streamLanguage(stex),
+    load: streamLanguageLoader(() =>
+      import("@codemirror/legacy-modes/mode/stex").then((m) => m.stex),
+    ),
   }),
   LanguageDescription.of({
     name: "Swift",
     extensions: ["swift"],
-    support: streamLanguage(swift),
+    load: streamLanguageLoader(() =>
+      import("@codemirror/legacy-modes/mode/swift").then((m) => m.swift),
+    ),
   }),
   LanguageDescription.of({
     name: "TOML",
     extensions: ["toml"],
-    support: streamLanguage(toml),
+    load: streamLanguageLoader(() =>
+      import("@codemirror/legacy-modes/mode/toml").then((m) => m.toml),
+    ),
   }),
   LanguageDescription.of({
     name: "INI",
     alias: ["properties"],
     extensions: ["ini", "properties"],
-    support: streamLanguage(properties),
+    load: streamLanguageLoader(() =>
+      import("@codemirror/legacy-modes/mode/properties").then((m) => m.properties),
+    ),
   }),
   LanguageDescription.of({
     name: "XML",
     alias: ["svg"],
     extensions: ["xml", "svg"],
-    support: xml(),
+    load: () => import("@codemirror/lang-xml").then((m) => m.xml()),
   }),
   LanguageDescription.of({
     name: "YAML",
     alias: ["yml"],
     extensions: ["yaml", "yml"],
-    support: streamLanguage(yaml),
+    load: streamLanguageLoader(() =>
+      import("@codemirror/legacy-modes/mode/yaml").then((m) => m.yaml),
+    ),
   }),
 ];
 
@@ -377,22 +402,96 @@ export function resolveCodeMirrorLanguageId(
   );
 }
 
+const matchLanguageDescription = (
+  languageId: string,
+): LanguageDescription | null =>
+  LanguageDescription.matchLanguageName(languageDescriptions, languageId, true);
+
+// 已经按需加载完成的语法支持(同步命中)。
+const loadedLanguageSupports = new Map<string, LanguageSupport>();
+// 正在加载中的语法支持,避免并发重复 import。
+const pendingLanguageSupports = new Map<
+  string,
+  Promise<LanguageSupport | null>
+>();
+
+/**
+ * 同步获取"已加载"的语言支持;若该语法尚未按需加载完成,返回 null。
+ * 调用方应配合 loadCodeMirrorLanguageSupport 触发加载。
+ */
 export const resolveCodeMirrorLanguageSupport = (
   language: string,
 ): LanguageSupport | null => {
   const languageId = resolveCodeMirrorLanguageId(language);
-  const support = LanguageDescription.matchLanguageName(
-    languageDescriptions,
-    languageId,
-    true,
-  )?.support;
-  return support instanceof LanguageSupport ? support : null;
+  if (languageId === "text") {
+    return null;
+  }
+  return loadedLanguageSupports.get(languageId) ?? null;
 };
 
+/**
+ * 按需加载某语言的语法支持。语法包通过动态 import 被代码分割,
+ * 只有该语言首次被用到时才会真正下载/解析。结果会被缓存以便后续同步命中。
+ */
+export const loadCodeMirrorLanguageSupport = async (
+  language: string,
+): Promise<LanguageSupport | null> => {
+  const languageId = resolveCodeMirrorLanguageId(language);
+  if (languageId === "text") {
+    return null;
+  }
+
+  const cached = loadedLanguageSupports.get(languageId);
+  if (cached) {
+    return cached;
+  }
+
+  const pending = pendingLanguageSupports.get(languageId);
+  if (pending) {
+    return pending;
+  }
+
+  const description = matchLanguageDescription(languageId);
+  if (!description) {
+    return null;
+  }
+
+  const promise = description
+    .load()
+    .then((support) => {
+      if (support instanceof LanguageSupport) {
+        loadedLanguageSupports.set(languageId, support);
+        return support;
+      }
+      return null;
+    })
+    .catch((error) => {
+      console.error("CodeMirror 语言按需加载失败", language, error);
+      return null;
+    })
+    .finally(() => {
+      pendingLanguageSupports.delete(languageId);
+    });
+
+  pendingLanguageSupports.set(languageId, promise);
+  return promise;
+};
+
+/**
+ * 同步返回"已加载"语言的扩展;未加载时返回空扩展([]),
+ * 配合 loadCodeMirrorLanguageExtension / loadCodeMirrorLanguageSupport 异步补齐。
+ */
 export const resolveCodeMirrorLanguageExtension = (
   language: string,
 ): Extension => {
   return resolveCodeMirrorLanguageSupport(language) ?? [];
+};
+
+/** 按需加载语言扩展(加载完成后可灌入编辑器的 language compartment)。 */
+export const loadCodeMirrorLanguageExtension = async (
+  language: string,
+): Promise<Extension> => {
+  return (await loadCodeMirrorLanguageSupport(language)) ?? [];
 };
 
 export const isCodeMirrorLanguageSupport = (

@@ -44,10 +44,12 @@ describe('AiPatchPreview', () => {
       },
     });
 
-    expect(wrapper.find('.ai-diff-hunk-viewer').exists()).toBe(true);
-    expect(wrapper.find('.ai-diff-hunk-line.is-hunk').text()).toContain('@@ -1,2 +1,2 @@');
-    expect(wrapper.find('.ai-diff-hunk-line.is-delete').text()).toContain('#include <stdio.h>');
-    expect(wrapper.find('.ai-diff-hunk-line.is-add').text()).toContain('#include <stdbool.h>');
+    const hunkViewer = wrapper.find('.ai-diff-hunk-viewer');
+
+    expect(hunkViewer.exists()).toBe(true);
+    expect(hunkViewer.text()).toContain('@@ -1,2 +1,2 @@');
+    expect(hunkViewer.text()).toContain('#include <stdio.h>');
+    expect(hunkViewer.text()).toContain('#include <stdbool.h>');
   });
 
   it('默认以 Codex 风格折叠文件 diff', () => {

@@ -1,8 +1,9 @@
 import { mount } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import AiMessageItem from '@/components/business/ai/chat/AiMessageItem.vue';
-import type { IAiChatMessage } from '@/types/ai';
-import type { TAgentRuntimeEvent } from '@/types/ai/sidecar';
+import type { IAiChatMessage, IAiChatStreamRenderState } from '@/types/ai';
+
+type AiRuntimeEvent = NonNullable<IAiChatStreamRenderState['runtimeEvents']>[number];
 
 const { successMock, errorMock, warningMock, tryWriteClipboardTextMock } = vi.hoisted(() => ({
   successMock: vi.fn(),
@@ -62,7 +63,7 @@ const createMessage = (overrides: Partial<IAiChatMessage>): IAiChatMessage => ({
   ...overrides,
 });
 
-const createRuntimeEvent = (overrides: Partial<TAgentRuntimeEvent>): TAgentRuntimeEvent =>
+const createRuntimeEvent = (overrides: Partial<AiRuntimeEvent>): AiRuntimeEvent =>
   ({
     id: overrides.id ?? 'runtime-event-1',
     type: overrides.type ?? 'agent.reasoning.delta',
@@ -77,7 +78,7 @@ const createRuntimeEvent = (overrides: Partial<TAgentRuntimeEvent>): TAgentRunti
     level: overrides.level ?? 'info',
     text: '我先确认真实工具列表。',
     ...(overrides as object),
-  }) as TAgentRuntimeEvent;
+  }) as AiRuntimeEvent;
 
 describe('AiMessageItem', () => {
   beforeEach(() => {
@@ -349,7 +350,7 @@ describe('AiMessageItem', () => {
     expect(runtimeTimeline.exists()).toBe(true);
     expect(messageBubble.exists()).toBe(true);
     expect(wrapper.text()).toContain('我先确认真实工具列表。');
-    expect(wrapper.text()).toContain('grep_search');
+    expect(wrapper.text()).toContain('正在搜索');
     expect(wrapper.find('.ai-tool-call-list').exists()).toBe(false);
     expect(
       runtimeTimeline.element.compareDocumentPosition(messageBubble.element) &
@@ -406,7 +407,7 @@ describe('AiMessageItem', () => {
     });
 
     expect(wrapper.find('.ai-runtime-timeline').exists()).toBe(true);
-    expect(wrapper.text()).toContain('读取完成 D:/test/heatmap.py');
+    expect(wrapper.text()).toContain('已查看 heatmap.py');
     expect(wrapper.find('.ai-tool-call-list').exists()).toBe(false);
     expect(wrapper.text()).not.toContain('已读取 D:/test/heatmap.py');
   });
@@ -560,7 +561,7 @@ describe('AiMessageItem', () => {
       },
     });
 
-    await wrapper.find('button.ai-changed-files-action').trigger('click');
+    await wrapper.find('button.ai-changed-files-action:not(.is-icon-only)').trigger('click');
 
     expect(wrapper.emitted('changedFilesRollback')).toEqual([
       ['assistant-message', 'patch-summary-1'],

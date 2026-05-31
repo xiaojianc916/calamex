@@ -15,6 +15,7 @@
  *   - 诊断不自行 dispatch，交由上层与 ShellCheck 合并为单一来源(见 createLspExtension 的 onDiagnostics)
  */
 
+import { highlightCodeToHtml } from "@/services/editor/codemirror-static-highlight";
 import type {
   Completion,
   CompletionContext,
@@ -31,7 +32,6 @@ import {
   type ViewUpdate,
 } from "@codemirror/view";
 import type { UnlistenFn } from "@tauri-apps/api/event";
-import { highlightCodeToHtml } from "@/services/editor/codemirror-static-highlight";
 
 export const lspCompletionTheme = EditorView.theme({}, {});
 
@@ -39,19 +39,48 @@ export const lspCompletionTheme = EditorView.theme({}, {});
 // Lucide SVG 图标（补全种类图标）
 // ============================================================================
 const LUCIDE_PATHS: Record<string, string> = {
+  // square-function — 命令 / 函数
   function:
     "M17.5 3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-11a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11ZM9 17c2 0 2.8-1 2.8-2.8V10c0-2 1-3.3 3.2-3M9 11h5.7",
-  method:
-    "M17.5 3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-11a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11ZM9 17c2 0 2.8-1 2.8-2.8V10c0-2 1-3.3 3.2-3M9 11h5.7",
+  // key-round — 关键字
   keyword: "m15 15-6 6v-4H4v-4h2v-2a6 6 0 0 1 6-6h3v4h-3a2 2 0 0 0-2 2v2h5Z",
+  // braces — 变量
   variable: "M8 21s-4-3-4-9 4-9 4-9m8 0s4 3 4 9-4 9-4 9M5 12h14",
-  text: "M4 7V4h16v3M9 21h6M12 4v17",
+  // tag — 选项 / 属性
+  property:
+    "M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42zM7.5 7.5h.01",
+  // hash — 常量 / 取值
+  constant: "M4 9h16M4 15h16M10 3 8 21M16 3l-2 18",
+  // box — 类型 / 类
+  class:
+    "M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16ZM3.3 7l8.7 5 8.7-5M12 22V12",
+  // list — 枚举
+  enum: "M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01",
+  // chevrons — 运算符
+  operator: "M18 7V5a1 1 0 0 0-1-1H7l6 8-6 8h10a1 1 0 0 0 1-1v-2",
+  // braces — 代码片段
   snippet:
     "M8 3H6a2 2 0 0 0-2 2v4a2 2 0 0 1-2 2 2 2 0 0 1 2 2v4c0 1.1.9 2 2 2h2M16 21h2a2 2 0 0 0 2-2v-4c0-1.1.9-2 2-2a2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-2",
+  // align-left — 普通文本(不再用 'T' 字形)
+  text: "M15 12H3M17 6H3M21 18H3",
+};
+
+// 把 LSP 的细分种类归并到上面已有图标
+const TYPE_ICON_ALIASES: Record<string, string> = {
+  method: "function",
+  constructor: "function",
+  interface: "class",
+  namespace: "class",
+  module: "class",
+  enumMember: "constant",
+  value: "constant",
+  field: "property",
+  type: "keyword",
 };
 
 function cm6TypeToLucide(type: string): string {
-  return LUCIDE_PATHS[type] ?? LUCIDE_PATHS.text;
+  const resolved = TYPE_ICON_ALIASES[type] ?? type;
+  return LUCIDE_PATHS[resolved] ?? LUCIDE_PATHS.text;
 }
 
 export function createLucideCompletionIcon(type: string): HTMLElement {
@@ -508,7 +537,7 @@ function lspKindToType(kind: number | null): string {
     case 14:
       return "keyword";
     case 15:
-      return "text"; // Snippet
+      return "snippet"; // Snippet
     case 17:
       return "text"; // File
     case 21:
@@ -782,17 +811,17 @@ export function createLspExtension(
             detail: item.detail ?? undefined,
             info: item.documentation
               ? () => {
-                  const documentation = item.documentation ?? "";
-                  const dom = document.createElement("div");
-                  dom.className = "cm-lsp-doc";
-                  dom.textContent = documentation;
-                  renderLspDoc(documentation)
-                    .then((h) => {
-                      dom.innerHTML = h;
-                    })
-                    .catch(() => {});
-                  return dom;
-                }
+                const documentation = item.documentation ?? "";
+                const dom = document.createElement("div");
+                dom.className = "cm-lsp-doc";
+                dom.textContent = documentation;
+                renderLspDoc(documentation)
+                  .then((h) => {
+                    dom.innerHTML = h;
+                  })
+                  .catch(() => { });
+                return dom;
+              }
               : undefined,
             type: lspKindToType(item.kind),
             apply: item.insertText ?? item.label,

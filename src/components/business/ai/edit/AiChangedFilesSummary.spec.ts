@@ -155,19 +155,25 @@ describe('AiChangedFilesSummary', () => {
   it('点击撤销时 emit 当前 summary id，回滚中或已回滚时禁用', async () => {
     const wrapper = mountSummary(createPatchSummary());
 
-    await wrapper.find('button.ai-changed-files-action').trigger('click');
+    await wrapper.find('button.ai-changed-files-action:not(.is-icon-only)').trigger('click');
 
     expect(wrapper.emitted('undo')).toEqual([['patch-summary-1']]);
 
     await wrapper.setProps({ isReverting: true });
-    expect(wrapper.find('button.ai-changed-files-action').attributes('disabled')).toBeDefined();
+    expect(
+      wrapper.find('button.ai-changed-files-action:not(.is-icon-only)').attributes('disabled'),
+    ).toBeDefined();
 
     await wrapper.setProps({
       isReverting: false,
       summary: createPatchSummary({ revertedAt: '2026-05-03T10:02:00.000Z' }),
     });
-    expect(wrapper.find('button.ai-changed-files-action').text()).toContain('已撤销');
-    expect(wrapper.find('button.ai-changed-files-action').attributes('disabled')).toBeDefined();
+    expect(
+      wrapper.find('button.ai-changed-files-action:not(.is-icon-only)').text(),
+    ).toContain('已撤销');
+    expect(
+      wrapper.find('button.ai-changed-files-action:not(.is-icon-only)').attributes('disabled'),
+    ).toBeDefined();
   });
 
   it('summary props 变更后响应式刷新展示内容', async () => {

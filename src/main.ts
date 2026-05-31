@@ -1,5 +1,6 @@
 import '@/assets/fonts/inter/inter.css';
 import { pinia } from './store';
+import { hydrateAiConversationStorage } from './store/plugins/debouncedPersistStorage';
 import { hydrateSessionStorage } from './store/plugins/tauriSessionStorage';
 import { initAppTooltipSystem } from './utils/app-tooltip';
 import { MAIN_WINDOW_LABEL } from './utils/app-window';
@@ -59,8 +60,10 @@ const bootstrap = async (): Promise<void> => {
     });
     markStartup('shell-catalog-prefetch-scheduled');
 
+    // session 与 ai-conversation 持久化都是异步 hydrate，必须在 app.use(pinia) 前
+    // 完成;二者相互独立，并行 await 以不增加首屏延迟。
     markStartup('session-storage-hydrate-start');
-    await hydrateSessionStorage();
+    await Promise.all([hydrateSessionStorage(), hydrateAiConversationStorage()]);
     markStartup('session-storage-hydrated');
 
     const app = createApp(App);

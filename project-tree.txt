@@ -198,16 +198,12 @@
 |   |   |   |-- ai-providers
 |   |   |   |   |-- anthropic.svg
 |   |   |   |   |-- deepseek-color.svg
-|   |   |   |   |-- deepseek.ico
 |   |   |   |   |-- google-gemini.svg
-|   |   |   |   |-- moonshotai.ico
-|   |   |   |   |-- ollama-text.svg
+|   |   |   |   |-- kimi-color.svg
 |   |   |   |   |-- ollama.svg
 |   |   |   |   |-- openai.svg
 |   |   |   |   |-- qwen-color.svg
-|   |   |   |   |-- qwen.svg
-|   |   |   |   |-- zhipu-color.svg
-|   |   |   |   `-- zhipu.svg
+|   |   |   |   `-- zhipu-color.svg
 |   |   |   `-- pierre
 |   |   |       |-- astro-color-light.svg
 |   |   |       |-- astro-color.svg
@@ -598,7 +594,20 @@
 |   |   |       |   |-- AiPlanConfirmationMessage.vue
 |   |   |       |   |-- AiPlanModePanel.spec.ts
 |   |   |       |   |-- AiPlanModePanel.vue
-|   |   |       |   `-- index.ts
+|   |   |       |   |-- index.ts
+|   |   |       |   `-- runtime-timeline
+|   |   |       |       |-- constants.ts
+|   |   |       |       |-- index.ts
+|   |   |       |       |-- preview.ts
+|   |   |       |       |-- reasoning-markdown.ts
+|   |   |       |       |-- run-events.ts
+|   |   |       |       |-- shellcheck.ts
+|   |   |       |       |-- text.ts
+|   |   |       |       |-- timeline.ts
+|   |   |       |       |-- tool-icons.ts
+|   |   |       |       |-- tool-presenters.ts
+|   |   |       |       |-- types.ts
+|   |   |       |       `-- web-search.ts
 |   |   |       |-- provider
 |   |   |       |   |-- AiProviderIcon.spec.ts
 |   |   |       |   |-- AiProviderIcon.vue
@@ -939,8 +948,10 @@
 |   |   |   |-- codemirror-inline-completion.ts
 |   |   |   |-- codemirror-language.spec.ts
 |   |   |   |-- codemirror-language.ts
+|   |   |   |-- codemirror-shiki-highlight.ts
 |   |   |   |-- codemirror-static-highlight.ts
-|   |   |   `-- lsp-bridge.ts
+|   |   |   |-- lsp-bridge.ts
+|   |   |   `-- shiki-highlighter.ts
 |   |   |-- ipc
 |   |   |   |-- ai-config.service.ts
 |   |   |   |-- ai-context.service.ts
@@ -1547,4 +1558,4 @@
 |-- vite.config.ts
 `-- vitest.config.ts
 
-233 directories, 1314 files
+234 directories, 1324 files

@@ -6,7 +6,9 @@ const mocks = vi.hoisted(() => ({
   languageLoad: vi.fn(),
   parserDelete: vi.fn(),
   treeDelete: vi.fn(),
+  treeEdit: vi.fn(),
   parserSetLanguage: vi.fn(),
+  parserParse: vi.fn(),
   listShellCommandLabels: vi.fn(),
 }));
 
@@ -28,8 +30,8 @@ vi.mock('web-tree-sitter', () => {
 
     setLanguage = mocks.parserSetLanguage;
 
-    parse(source: string) {
-      return createTree(source);
+    parse(source: string, previousTree?: unknown) {
+      return mocks.parserParse(source, previousTree);
     }
 
     delete = mocks.parserDelete;
@@ -59,7 +61,18 @@ const createTree = (source: string) => {
 
   return {
     rootNode,
+    edit: mocks.treeEdit,
     delete: mocks.treeDelete,
+  };
+};
+
+const createSource = () => {
+  const completionContextBase = { explicit: true, aborted: false };
+  return async (doc: string, pos: number) => {
+    const { createShellCodeMirrorCompletionSource } = await import('./shell-completion');
+    const source = createShellCodeMirrorCompletionSource();
+    const state = EditorState.create({ doc });
+    return source({ state, pos, ...completionContextBase } as never);
   };
 };
 
@@ -70,9 +83,12 @@ describe('shell-completion provider', () => {
     mocks.languageLoad.mockReset();
     mocks.parserDelete.mockReset();
     mocks.treeDelete.mockReset();
+    mocks.treeEdit.mockReset();
     mocks.parserSetLanguage.mockReset();
+    mocks.parserParse.mockReset();
     mocks.listShellCommandLabels.mockReset();
 
+    mocks.parserParse.mockImplementation((source: string) => createTree(source));
     mocks.listShellCommandLabels.mockResolvedValue(['git']);
     mocks.languageLoad.mockResolvedValue({
       lookaheadIterator: () => null,
@@ -101,5 +117,29 @@ describe('shell-completion provider', () => {
       'Shell completion provider failed',
       expect.any(Error),
     );
+  });
+
+  it('相同源文本的连续补全复用语法树，不重复解析', async () => {
+    mocks.parserInit.mockResolvedValue(undefined);
+    const runCompletion = createSource();
+
+    await runCompletion('git', 3);
+    await runCompletion('git', 3);
+
+    expect(mocks.parserParse).toHaveBeenCalledTimes(1);
+    expect(mocks.treeEdit).not.toHaveBeenCalled();
+  });
+
+  it('源文本变化时执行增量解析并携带上一棵语法树', async () => {
+    mocks.parserInit.mockResolvedValue(undefined);
+    const runCompletion = createSource();
+
+    await runCompletion('gi', 2);
+    await runCompletion('git', 3);
+
+    expect(mocks.parserParse).toHaveBeenCalledTimes(2);
+    expect(mocks.treeEdit).toHaveBeenCalledTimes(1);
+    const previousTreeArgument = mocks.parserParse.mock.calls[1][1];
+    expect(previousTreeArgument).toBe(mocks.parserParse.mock.results[0].value);
   });
 });

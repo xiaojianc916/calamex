@@ -57,8 +57,9 @@ describe('AiAgentRuntimeTimeline', () => {
     expect(wrapper.find('.ai-runtime-timeline').exists()).toBe(true);
     expect(wrapper.findAll('.agent-line')).toHaveLength(1);
     expect(wrapper.text()).toContain('我先确认 sidecar 是否是旧进程。');
-    expect(wrapper.findAll('.ai-runtime-task')).toHaveLength(1);
-    expect(wrapper.text()).toContain('完成调用 grep_search');
+    expect(wrapper.findAll('.ai-runtime-step.is-task')).toHaveLength(1);
+    expect(wrapper.text()).toContain('搜索完成');
+    expect(wrapper.text()).not.toContain('完成调用 grep_search');
     expect(wrapper.text()).not.toContain('开始调用 grep_search');
   });
 
@@ -77,7 +78,7 @@ describe('AiAgentRuntimeTimeline', () => {
     });
 
     expect(wrapper.find('.ai-runtime-step.is-task').exists()).toBe(true);
-    expect(wrapper.text()).toContain('正在读取 src/main.ts');
+    expect(wrapper.text()).toContain('正在查看 main.ts');
   });
 
   it('命令执行节点展开后显示真实终端输入与输出', async () => {
@@ -178,7 +179,7 @@ describe('AiAgentRuntimeTimeline', () => {
       },
     });
 
-    expect(wrapper.findAll('.ai-runtime-task')).toHaveLength(1);
+    expect(wrapper.findAll('.ai-runtime-step.is-task')).toHaveLength(1);
     expect(wrapper.text()).toContain('成功获取MCP工具集');
     expect(wrapper.text()).not.toContain('正在查找MCP工具集');
     expect(wrapper.find('.ai-runtime-step-icon.is-icon-catalog').exists()).toBe(true);
@@ -200,11 +201,11 @@ describe('AiAgentRuntimeTimeline', () => {
       props: { events },
     });
 
-    expect(wrapper.findAll('.ai-runtime-task')).toHaveLength(1);
+    expect(wrapper.findAll('.ai-runtime-step.is-task')).toHaveLength(1);
     expect(wrapper.text()).toContain('成功获取MCP工具集');
   });
 
-  it('read_text_file 在完成后原地替换为读取完成文案', () => {
+  it('read_text_file 在完成后原地替换为已查看文案', () => {
     const wrapper = mount(AiAgentRuntimeTimeline, {
       props: {
         events: [
@@ -228,8 +229,8 @@ describe('AiAgentRuntimeTimeline', () => {
     });
 
     expect(wrapper.findAll('.ai-runtime-step.is-task')).toHaveLength(1);
-    expect(wrapper.text()).toContain('读取完成 D:\\test\\test.sh');
-    expect(wrapper.text()).not.toContain('正在读取 D:\\test\\test.sh');
+    expect(wrapper.text()).toContain('已查看 test.sh');
+    expect(wrapper.text()).not.toContain('正在查看 test.sh');
     expect(wrapper.find('.ai-runtime-task-content').exists()).toBe(false);
   });
 
@@ -300,8 +301,8 @@ describe('AiAgentRuntimeTimeline', () => {
     });
 
     expect(wrapper.findAll('.ai-runtime-step.is-task')).toHaveLength(1);
-    expect(wrapper.text()).toContain('编辑完成 D:\\test\\test.sh');
-    expect(wrapper.text()).not.toContain('正在编辑 D:\\test\\test.sh');
+    expect(wrapper.text()).toContain('编辑完成 test.sh');
+    expect(wrapper.text()).not.toContain('正在编辑 test.sh');
     expect(wrapper.find('.ai-runtime-task-content').exists()).toBe(false);
   });
 
@@ -328,11 +329,11 @@ describe('AiAgentRuntimeTimeline', () => {
       },
     });
 
-    expect(wrapper.text()).toContain('编辑完成 D:\\test\\nested.sh');
+    expect(wrapper.text()).toContain('编辑完成 nested.sh');
     expect(wrapper.text()).not.toContain('完成调用 write_file');
   });
 
-  it('web_search 完成后原地改成 Complete Search，并保留真实来源胶囊', () => {
+  it('web_search 完成后原地改成联网搜索完成，并保留真实来源胶囊', () => {
     const wrapper = mount(AiAgentRuntimeTimeline, {
       props: {
         events: [
@@ -358,8 +359,8 @@ describe('AiAgentRuntimeTimeline', () => {
     });
 
     expect(wrapper.findAll('.ai-runtime-step.is-task')).toHaveLength(1);
-    expect(wrapper.text()).toContain('Complete Search');
-    expect(wrapper.text()).not.toContain('Search for profiles for Emmanuel Raymond');
+    expect(wrapper.text()).toContain('联网搜索完成');
+    expect(wrapper.text()).not.toContain('正在联网搜索 profiles for Emmanuel Raymond');
 
     const pills = wrapper.findAll('.ai-runtime-web-source-pill');
     expect(pills).toHaveLength(3);
@@ -375,7 +376,7 @@ describe('AiAgentRuntimeTimeline', () => {
     );
   });
 
-  it('web_search 开始时显示 Search for 查询文案', () => {
+  it('web_search 开始时显示正在联网搜索查询文案', () => {
     const wrapper = mount(AiAgentRuntimeTimeline, {
       props: {
         events: [
@@ -390,8 +391,8 @@ describe('AiAgentRuntimeTimeline', () => {
       },
     });
 
-    expect(wrapper.text()).toContain('Search for recent work');
-    expect(wrapper.text()).not.toContain('Complete Search');
+    expect(wrapper.text()).toContain('正在联网搜索 recent work');
+    expect(wrapper.text()).not.toContain('联网搜索完成');
   });
 
   it('web_search 开始时如果带站点范围会立即显示来源胶囊', () => {
@@ -410,9 +411,9 @@ describe('AiAgentRuntimeTimeline', () => {
     });
 
     expect(wrapper.findAll('.ai-runtime-step.is-task')).toHaveLength(1);
-    expect(wrapper.text()).toContain('Search for trending open source');
+    expect(wrapper.text()).toContain('正在联网搜索 trending open source');
     expect(wrapper.text()).toContain('github.com');
-    expect(wrapper.text()).not.toContain('Complete Search');
+    expect(wrapper.text()).not.toContain('联网搜索完成');
   });
 
   it('web_search progress 出现 URL 时会在同一个节点实时补充来源胶囊', () => {
@@ -436,12 +437,12 @@ describe('AiAgentRuntimeTimeline', () => {
     });
 
     expect(wrapper.findAll('.ai-runtime-step.is-task')).toHaveLength(1);
-    expect(wrapper.text()).toContain('Search for github trending');
+    expect(wrapper.text()).toContain('正在联网搜索 github trending');
     expect(wrapper.text()).toContain('github.com');
     expect(wrapper.text()).not.toContain('工具执行中');
   });
 
-  it('tavily-search 完成后也会原地替换为 Complete Search', () => {
+  it('tavily-search 完成后也会原地替换为联网搜索完成', () => {
     const wrapper = mount(AiAgentRuntimeTimeline, {
       props: {
         events: [
@@ -464,8 +465,8 @@ describe('AiAgentRuntimeTimeline', () => {
       },
     });
 
-    expect(wrapper.text()).toContain('Complete Search');
-    expect(wrapper.text()).not.toContain('Search for today sports news');
+    expect(wrapper.text()).toContain('联网搜索完成');
+    expect(wrapper.text()).not.toContain('正在联网搜索 today sports news');
   });
 
   it('web_search 完成结果为嵌套文本时也能提取完整 URL 来源胶囊', () => {

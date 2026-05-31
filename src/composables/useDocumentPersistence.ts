@@ -162,6 +162,7 @@ export const useDocumentPersistence = ({
     documentId = editorStore.document.id,
     options?: {
       suppressSuccessMessage?: boolean;
+      suppressErrorMessage?: boolean;
     },
   ): Promise<boolean> => {
     const targetDocument = editorStore.getDocumentById(documentId);
@@ -188,7 +189,15 @@ export const useDocumentPersistence = ({
 
       return true;
     } catch (error) {
-      return reportPersistenceError('shfmt 格式化失败', 'shfmt 格式化失败', error);
+      // 始终记录错误日志，便于排查；但在保存路径下可抑制弹窗（由调用方给出更友好的提示）。
+      const message = toErrorMessage(error, 'shfmt 格式化失败');
+      editorStore.appendLog('error', 'shfmt 格式化失败', message);
+      if (!options?.suppressErrorMessage) {
+        notifier.error('shfmt 格式化失败', {
+          ...(message === 'shfmt 格式化失败' ? {} : { description: message }),
+        });
+      }
+      return false;
     }
   };
 
@@ -201,9 +210,13 @@ export const useDocumentPersistence = ({
     if (appStore.settings.editor.formatOnSave) {
       const formatted = await formatDocumentWithShfmt(documentId, {
         suppressSuccessMessage: true,
+        suppressErrorMessage: true,
       });
       if (!formatted) {
-        return null;
+        // 格式化失败（通常是脚本存在语法错误）不应阻断保存：
+        // 跳过格式化，提示用户后按保存约定保存原始内容。
+        notifier.warning('保存时格式化失败，已跳过格式化直接保存，请检查脚本语法。');
+        return applySaveConventionsToDocument(documentId);
       }
 
       return applySaveConventionsToDocument(documentId);
