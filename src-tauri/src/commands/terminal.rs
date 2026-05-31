@@ -17,7 +17,7 @@ use crate::terminal::{
         DispatchTerminalScriptRequest, EnsureTerminalSessionRequest, TerminalInputRequest,
         TerminalResizeRequest, TerminalSessionPayload,
     },
-    dispatch::{build_terminal_run_command_for_wsl_link, TerminalDispatchCommand},
+    dispatch::build_terminal_run_command_for_wsl_link,
     snapshot::{
         contains_alt_screen_switch, is_likely_interactive_resize_repaint_frame,
         resolve_alt_screen_state_after_data, trim_terminal_snapshot,
@@ -37,27 +37,18 @@ use crate::terminal::{
         observe_visual_output_and_prefix, TerminalRunVisualObservation, TerminalRunVisualTracker,
     },
     wsl as terminal_wsl,
-    wsl_pty::{open_interactive_terminal_local, LocalWslPtyHandle},
+    wsl_pty::{
+        open_interactive_terminal_local, run_terminal_script_local, LocalWslPtyHandle,
+        LocalWslRunHandle,
+    },
 };
-use crate::wsl_link::{
-    noise_material::{
-        KeyringWslLinkNoiseMaterialStore, WslLinkDesktopNoiseMaterial, WslLinkNoiseMaterialStore,
-    },
-    terminal_client::{
-        run_terminal_script_over_wsl_link, signal_terminal_process_over_wsl_link,
-        write_terminal_run_input_over_wsl_link,
-    },
-    terminal_exec::{
-        WslLinkTerminalOpenInteractiveRequest, WslLinkTerminalRunInput,
-        WslLinkTerminalRunScriptRequest, WslLinkTerminalServerPayload,
-        WslLinkTerminalSignalProcess,
-    },
+use crate::wsl_link::terminal_exec::{
+    WslLinkTerminalOpenInteractiveRequest, WslLinkTerminalRunScriptRequest,
+    WslLinkTerminalServerPayload,
 };
 
 const TERMINAL_RESIZE_REPAINT_SUPPRESSION: Duration = Duration::from_millis(240);
 const DEFAULT_WSL_INTERACTIVE_CWD: &str = "~";
-const WSL_LINK_NOISE_MATERIAL_MISSING_MESSAGE: &str =
-    "WSL Link Noise 桌面密钥材料不存在，请先安装并启动 WSL Link agent。";
 const MAX_PENDING_SWITCH_INPUT_BYTES: usize = 64 * 1024;
 
 static TERMINAL_DATA_SEQUENCE: AtomicU64 = AtomicU64::new(1);
@@ -72,30 +63,13 @@ struct TerminalSession {
 struct TerminalActiveRun {
     session_id: String,
     run_id: String,
-    wsl_link_pid: Option<u32>,
+    run_handle: Option<LocalWslRunHandle>,
 }
 
 enum ActiveRunInputTarget {
     None,
     Pending,
     Run(String),
-}
-
-struct TerminalActiveRunGuard {
-    state: TerminalSessionState,
-    run_id: String,
-}
-
-impl TerminalActiveRunGuard {
-    fn new(state: TerminalSessionState, run_id: String) -> Self {
-        Self { state, run_id }
-    }
-}
-
-impl Drop for TerminalActiveRunGuard {
-    fn drop(&mut self) {
-        clear_active_terminal_run(&self.state, &self.run_id);
-    }
 }
 
 #[derive(Clone, Default)]
@@ -242,13 +216,12 @@ pub async fn write_terminal_input(
                 &payload.session_id,
                 payload.data,
             )?;
-            let desktop_material = load_required_desktop_noise_material()?;
-            return write_terminal_run_input_over_wsl_link(
-                &desktop_material,
-                WslLinkTerminalRunInput { run_id, data },
-            )
-            .await
-            .map_err(|error| error.to_string());
+            let handle = get_active_terminal_run_handle(&terminal_state, &run_id)?
+                .ok_or_else(|| "目标运行任务不存在或已结束。".to_string())?;
+            return handle
+                .write_input(data)
+                .await
+                .map_err(|error| error.to_string());
         }
         ActiveRunInputTarget::None => {}
     }
@@ -321,14 +294,28 @@ pub fn dispatch_script_to_terminal(
     let terminal_state = state.inner().clone();
     let session = get_terminal_session(&terminal_state, &payload.session_id)?
         .ok_or_else(|| "目标终端会话不存在，请先打开集成终端。".to_string())?;
-    let started_at = Timestamp::now();
-    let desktop_material = load_required_desktop_noise_material()?;
-    let (command, wsl_link_script_content) =
+    let started_at_ts = Timestamp::now();
+    let (command, script_content) =
         build_terminal_run_command_for_wsl_link(&payload, &session.working_directory)?;
     let command_line = command.display_command.clone();
     let used_temp_file = command.used_temp_file;
     let prompt_snapshot = get_terminal_snapshot(&terminal_state, &payload.session_id)?;
     let prompt = extract_prompt_from_terminal_snapshot(&prompt_snapshot);
+
+    let geometry = crate::terminal::registry::registry()
+        .geometry
+        .read()
+        .map(|geometry| *geometry)
+        .unwrap_or_default();
+    let request = WslLinkTerminalRunScriptRequest {
+        run_id: payload.run_id.clone(),
+        working_directory: command.working_directory.clone(),
+        execution_path: command.execution_path.clone(),
+        script_content,
+        cleanup_paths: command.cleanup_paths.clone(),
+        cols: geometry.cols,
+        rows: geometry.rows,
+    };
 
     try_mark_active_terminal_run(&terminal_state, &payload.session_id, &payload.run_id)?;
     if let Err(error) = transition_terminal_state(&app, TerminalState::SwitchingToRun) {
@@ -336,23 +323,45 @@ pub fn dispatch_script_to_terminal(
         return Err(error);
     }
 
-    spawn_wsl_link_terminal_run(
-        app,
-        terminal_state,
-        payload.session_id.clone(),
-        payload.run_id.clone(),
-        command,
-        wsl_link_script_content,
-        prompt,
-        desktop_material,
-    );
+    let started_at = Instant::now();
+    let visual_tracker = Arc::new(Mutex::new(TerminalRunVisualTracker::default()));
+    let event_app = app.clone();
+    let event_state = terminal_state.clone();
+    let event_session_id = payload.session_id.clone();
+    let event_run_id = payload.run_id.clone();
+    let event_prompt = prompt;
+
+    let run_handle = match run_terminal_script_local(request, move |event| {
+        handle_local_run_event(
+            &event_app,
+            &event_state,
+            &event_session_id,
+            &event_run_id,
+            &visual_tracker,
+            started_at,
+            event_prompt.clone(),
+            event,
+        );
+    }) {
+        Ok(handle) => handle,
+        Err(error) => {
+            // 启动失败：回滚活动 run 与状态机，不泄露半起的运行态。
+            clear_active_terminal_run(&terminal_state, &payload.run_id);
+            let _ = transition_terminal_state(&app, TerminalState::IdleInteractive);
+            return Err(error.to_string());
+        }
+    };
+
+    // run 已开始：把句柄登记到活动 run，供 stdin / 取消使用。
+    // 若脚本已极快结束并清空活动 run，attach 返回 Err，忽略即可。
+    let _ = attach_active_terminal_run_handle(&terminal_state, &payload.run_id, run_handle);
 
     Ok(DispatchTerminalScriptPayload {
         session_id: payload.session_id,
         cwd: session.working_directory.clone(),
         command_line,
         used_temp_file,
-        started_at: started_at.to_string(),
+        started_at: started_at_ts.to_string(),
     })
 }
 
@@ -364,27 +373,9 @@ pub async fn cancel_terminal_run(
     let terminal_state = state.inner().clone();
     let mode = payload.mode.as_deref().unwrap_or("graceful");
 
-    if let Some(pid) = get_active_terminal_run_wsl_link_pid(&terminal_state, &payload.run_id)? {
-        let desktop_material = load_required_desktop_noise_material()?;
-        return signal_terminal_process_over_wsl_link(
-            &desktop_material,
-            WslLinkTerminalSignalProcess {
-                pid,
-                mode: mode.to_string(),
-            },
-        )
-        .await
-        .map_err(|error| error.to_string());
-    }
-
-    Err(format!("未找到正在运行的脚本：{}", payload.run_id))
-}
-
-fn load_required_desktop_noise_material() -> Result<WslLinkDesktopNoiseMaterial, String> {
-    KeyringWslLinkNoiseMaterialStore
-        .load_desktop_material()
-        .map_err(|error| error.to_string())?
-        .ok_or_else(|| WSL_LINK_NOISE_MATERIAL_MISSING_MESSAGE.to_string())
+    let handle = get_active_terminal_run_handle(&terminal_state, &payload.run_id)?
+        .ok_or_else(|| format!("未找到正在运行的脚本：{}", payload.run_id))?;
+    handle.cancel(mode).map_err(|error| error.to_string())
 }
 
 fn lock_terminal_sessions(
@@ -501,22 +492,22 @@ fn try_mark_active_terminal_run(
     *active_run = Some(TerminalActiveRun {
         session_id: session_id.to_string(),
         run_id: run_id.to_string(),
-        wsl_link_pid: None,
+        run_handle: None,
     });
     Ok(())
 }
 
-fn attach_active_terminal_run_wsl_link_pid(
+fn attach_active_terminal_run_handle(
     state: &TerminalSessionState,
     run_id: &str,
-    pid: u32,
+    handle: LocalWslRunHandle,
 ) -> Result<(), String> {
     let mut active_run = state
         .active_run
         .lock()
         .map_err(|_| "终端运行状态已损坏。".to_string())?;
     let Some(active_run) = active_run.as_mut() else {
-        return Err("当前没有可绑定的 WSL Link 运行任务。".to_string());
+        return Err("当前没有可绑定的运行任务。".to_string());
     };
     if active_run.run_id != run_id {
         return Err(format!(
@@ -524,7 +515,7 @@ fn attach_active_terminal_run_wsl_link_pid(
             active_run.run_id
         ));
     }
-    active_run.wsl_link_pid = Some(pid);
+    active_run.run_handle = Some(handle);
     Ok(())
 }
 
@@ -537,10 +528,10 @@ fn clear_active_terminal_run(state: &TerminalSessionState, run_id: &str) {
     }
 }
 
-fn get_active_terminal_run_wsl_link_pid(
+fn get_active_terminal_run_handle(
     state: &TerminalSessionState,
     run_id: &str,
-) -> Result<Option<u32>, String> {
+) -> Result<Option<LocalWslRunHandle>, String> {
     let active_run = state
         .active_run
         .lock()
@@ -548,7 +539,7 @@ fn get_active_terminal_run_wsl_link_pid(
     Ok(active_run
         .as_ref()
         .filter(|run| run.run_id == run_id)
-        .and_then(|run| run.wsl_link_pid))
+        .and_then(|run| run.run_handle.clone()))
 }
 
 fn get_active_terminal_run_input_target(
@@ -965,126 +956,96 @@ fn remove_interactive_terminal_after_exit(state: &TerminalSessionState, session_
     }
 }
 
-fn spawn_wsl_link_terminal_run(
-    app: AppHandle,
-    state: TerminalSessionState,
-    session_id: String,
-    run_id: String,
-    command: TerminalDispatchCommand,
-    script_content: Option<String>,
+// 本地 run 读线程事件回调：与原 WSL Link run 路径的事件/状态转移保持等价。
+#[allow(clippy::too_many_arguments)]
+fn handle_local_run_event(
+    app: &AppHandle,
+    state: &TerminalSessionState,
+    session_id: &str,
+    run_id: &str,
+    visual_tracker: &Arc<Mutex<TerminalRunVisualTracker>>,
+    started_at: Instant,
     prompt: Option<String>,
-    desktop_material: WslLinkDesktopNoiseMaterial,
+    event: WslLinkTerminalServerPayload,
 ) {
-    tauri::async_runtime::spawn(async move {
-        let started_at = Instant::now();
-        let visual_tracker = Arc::new(Mutex::new(TerminalRunVisualTracker::default()));
-        let _active_run_guard = TerminalActiveRunGuard::new(state.clone(), run_id.clone());
-
-        let geometry = crate::terminal::registry::registry()
-            .geometry
-            .read()
-            .map(|geometry| *geometry)
-            .unwrap_or_default();
-        let request = WslLinkTerminalRunScriptRequest {
-            run_id: run_id.clone(),
-            working_directory: command.working_directory.clone(),
-            execution_path: command.execution_path.clone(),
-            script_content,
-            cleanup_paths: command.cleanup_paths.clone(),
-            cols: geometry.cols,
-            rows: geometry.rows,
-        };
-
-        let mut exit_code = None;
-        let mut completed = false;
-        let result =
-            run_terminal_script_over_wsl_link(&desktop_material, request, |event| match event {
-                WslLinkTerminalServerPayload::RunStarted(payload) => {
-                    let _ = attach_active_terminal_run_wsl_link_pid(&state, &run_id, payload.pid);
-                    emit_terminal_run_started_state(
-                        &app,
-                        &session_id,
-                        &run_id,
-                        payload.pid,
-                        started_at,
-                    );
-                }
-                WslLinkTerminalServerPayload::RunChunk(payload) => {
-                    let visual = observe_visual_output_and_prefix(&visual_tracker, &payload.data);
-                    emit_terminal_run_chunk_with_visual_prefix(
-                        &app,
-                        &state,
-                        &session_id,
-                        &run_id,
-                        payload.data,
-                        visual,
-                    );
-                }
-                WslLinkTerminalServerPayload::RunCompleted(payload) => {
-                    exit_code = payload.exit_code;
-                    completed = true;
-                }
-                WslLinkTerminalServerPayload::RunError(payload) => {
-                    let output = format!("{}\n", payload.message);
-                    let visual = observe_visual_output_and_prefix(&visual_tracker, &output);
-                    emit_terminal_run_chunk_with_visual_prefix(
-                        &app,
-                        &state,
-                        &session_id,
-                        &run_id,
-                        output,
-                        visual,
-                    );
-                    exit_code = payload.exit_code.or(Some(127));
-                    completed = true;
-                }
-                WslLinkTerminalServerPayload::InteractiveOpened(_)
-                | WslLinkTerminalServerPayload::InteractiveData(_)
-                | WslLinkTerminalServerPayload::InteractiveClosed(_)
-                | WslLinkTerminalServerPayload::InteractiveAck(_)
-                | WslLinkTerminalServerPayload::InteractiveError(_) => {}
-            })
-            .await;
-
-        if let Err(error) = result {
-            let output = format!("WSL Link 脚本执行失败：{error}\n");
-            let visual = observe_visual_output_and_prefix(&visual_tracker, &output);
+    match event {
+        WslLinkTerminalServerPayload::RunStarted(payload) => {
+            emit_terminal_run_started_state(app, session_id, run_id, payload.pid, started_at);
+        }
+        WslLinkTerminalServerPayload::RunChunk(payload) => {
+            let visual = observe_visual_output_and_prefix(visual_tracker, &payload.data);
             emit_terminal_run_chunk_with_visual_prefix(
-                &app,
-                &state,
-                &session_id,
-                &run_id,
-                output,
-                visual,
+                app, state, session_id, run_id, payload.data, visual,
             );
-            exit_code = Some(127);
-            completed = true;
         }
-        if !completed {
-            exit_code = Some(127);
-        }
-
-        emit_terminal_run_visual_completion(
-            &app,
-            &state,
-            &session_id,
-            &run_id,
-            exit_code,
-            started_at,
-            &visual_tracker,
-            prompt,
-        );
-
-        emit_terminal_run_completed_with_state(
-            &app,
-            TerminalRunCompletedEvent {
+        WslLinkTerminalServerPayload::RunCompleted(payload) => {
+            finalize_local_run(
+                app,
+                state,
                 session_id,
                 run_id,
-                exit_code,
-                finished_at: Timestamp::now().to_string(),
-            },
-        );
-    });
+                payload.exit_code,
+                started_at,
+                visual_tracker,
+                prompt,
+            );
+        }
+        WslLinkTerminalServerPayload::RunError(payload) => {
+            let output = format!("{}\n", payload.message);
+            let visual = observe_visual_output_and_prefix(visual_tracker, &output);
+            emit_terminal_run_chunk_with_visual_prefix(
+                app, state, session_id, run_id, output, visual,
+            );
+            finalize_local_run(
+                app,
+                state,
+                session_id,
+                run_id,
+                payload.exit_code.or(Some(127)),
+                started_at,
+                visual_tracker,
+                prompt,
+            );
+        }
+        WslLinkTerminalServerPayload::InteractiveOpened(_)
+        | WslLinkTerminalServerPayload::InteractiveData(_)
+        | WslLinkTerminalServerPayload::InteractiveClosed(_)
+        | WslLinkTerminalServerPayload::InteractiveAck(_)
+        | WslLinkTerminalServerPayload::InteractiveError(_) => {}
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn finalize_local_run(
+    app: &AppHandle,
+    state: &TerminalSessionState,
+    session_id: &str,
+    run_id: &str,
+    exit_code: Option<i32>,
+    started_at: Instant,
+    visual_tracker: &Arc<Mutex<TerminalRunVisualTracker>>,
+    prompt: Option<String>,
+) {
+    emit_terminal_run_visual_completion(
+        app,
+        state,
+        session_id,
+        run_id,
+        exit_code,
+        started_at,
+        visual_tracker,
+        prompt,
+    );
+    emit_terminal_run_completed_with_state(
+        app,
+        TerminalRunCompletedEvent {
+            session_id: session_id.to_string(),
+            run_id: run_id.to_string(),
+            exit_code,
+            finished_at: Timestamp::now().to_string(),
+        },
+    );
+    clear_active_terminal_run(state, run_id);
 }
 
 pub(crate) fn to_wsl_path(path: &std::path::Path) -> Result<String, String> {
@@ -1185,19 +1146,6 @@ mod tests {
         let again = take_and_prepend_pending_switch_input(&state, "session-1", "X".to_string())
             .expect("take ok");
         assert_eq!(again, "X");
-    }
-
-    #[test]
-    fn wsl_link_active_run_records_pid_for_cancel() {
-        let state = TerminalSessionState::default();
-        try_mark_active_terminal_run(&state, "session-1", "run-wsl-link")
-            .expect("active run should mark");
-        attach_active_terminal_run_wsl_link_pid(&state, "run-wsl-link", 1234)
-            .expect("pid should attach");
-        assert_eq!(
-            get_active_terminal_run_wsl_link_pid(&state, "run-wsl-link").expect("pid should read"),
-            Some(1234)
-        );
     }
 
     #[test]
