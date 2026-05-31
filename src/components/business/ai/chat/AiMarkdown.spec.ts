@@ -55,10 +55,10 @@ describe('AiMarkdown rendering', () => {
     expect(wrapper.text()).toContain('done');
   });
 
-  it('keeps markstream incremental placeholders disabled while streaming', async () => {
+  it('开启 markstream 平滑流式输出并关闭与之冲突的淡入动画', async () => {
     const wrapper = mount(AiMarkdown, {
       props: {
-        messageId: 'm-typewriter',
+        messageId: 'm-smooth-stream',
         content: '正在输出一段中文内容',
         streamStatus: 'streaming',
       },
@@ -67,8 +67,9 @@ describe('AiMarkdown rendering', () => {
     await nextTick();
 
     const streamingRenderer = wrapper.getComponent(MarkdownRender);
+    expect(streamingRenderer.props('smoothStreaming')).toBe(true);
+    expect(streamingRenderer.props('fade')).toBe(false);
     expect(streamingRenderer.props('typewriter')).toBe(false);
-    expect(streamingRenderer.props('fade')).toBe(true);
     expect(streamingRenderer.props('maxLiveNodes')).toBe(320);
     expect(streamingRenderer.props('initialRenderBatchSize')).toBe(64);
     expect(streamingRenderer.props('renderBatchSize')).toBe(96);
@@ -80,8 +81,9 @@ describe('AiMarkdown rendering', () => {
     await nextTick();
 
     const finalRenderer = wrapper.getComponent(MarkdownRender);
-    expect(finalRenderer.props('typewriter')).toBe(false);
+    expect(finalRenderer.props('smoothStreaming')).toBe(true);
     expect(finalRenderer.props('fade')).toBe(false);
+    expect(finalRenderer.props('typewriter')).toBe(false);
     expect(finalRenderer.props('maxLiveNodes')).toBe(320);
     expect(finalRenderer.props('initialRenderBatchSize')).toBe(64);
     expect(finalRenderer.props('renderBatchSize')).toBe(96);
