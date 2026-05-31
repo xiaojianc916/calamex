@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Codemod: migrate unplugin-icons component imports (`~icons/<set>/<name>`)
- * to @iconify/tailwind4 CSS-mask classes (`icon-[<set>--<name>]`).
+ * to @iconify/tailwind4 CSS-mask classes (`icon-[lucide--arrow-left]`, suffix form `<set>--<name>`).
  *
  * Why: unplugin-icons compiles every icon SVG into a Vue component at build time
  * (the dominant cost in our build's plugin timings). @iconify/tailwind4 instead
@@ -16,7 +16,7 @@
  * Per .vue file it will:
  *   - find default imports from '~icons/<set>/<name>' or 'virtual:icons/<set>/<name>'
  *   - replace template tag usages `<Local .../>` and `<Local>...</Local>`
- *     (PascalCase and kebab-case) with `<span class="icon-[<set>--<name>] ...">`,
+ *     (PascalCase and kebab-case) with `<span class="icon-[lucide--arrow-left] ...">`,
  *     merging any existing static `class` and preserving :class / style / @click / v-if / etc.
  *   - remove the now-unused icon import
  *
