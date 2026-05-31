@@ -1,6 +1,10 @@
 {
   "compilerOptions": {
     "target": "ES2022",
+    "lib": [
+      "ESNext",
+      "ESNext.Temporal"
+    ],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "strict": true,
