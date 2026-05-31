@@ -173,6 +173,10 @@ export const useIntegratedTerminal = ({
   });
   session.setRunSeparatorVisible(showRunSeparator.value);
 
+  // 运行管线（dispatchScript / run-chunk / trackRun）只路由到主会话；
+  // 仅主会话需要跟踪 run，避免运行脚本时附加终端的交互输出被误判抑制。
+  const isPrimarySession = sessionId === DEFAULT_TERMINAL_SESSION_ID;
+
   // --- 生命周期 ---
 
   onMounted(async () => {
@@ -209,13 +213,15 @@ export const useIntegratedTerminal = ({
     },
   );
 
-  watch(
-    () => editorStore.pendingTerminalRunId,
-    (nextRunId) => {
-      session.trackRun(nextRunId);
-    },
-    { flush: 'sync', immediate: true },
-  );
+  if (isPrimarySession) {
+    watch(
+      () => editorStore.pendingTerminalRunId,
+      (nextRunId) => {
+        session.trackRun(nextRunId);
+      },
+      { flush: 'sync', immediate: true },
+    );
+  }
 
   watch(
     showRunSeparator,

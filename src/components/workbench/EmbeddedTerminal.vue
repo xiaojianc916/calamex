@@ -16,10 +16,10 @@
         <div v-if="isUnavailable" class="embedded-terminal-overlay-caption">
           <div class="embedded-terminal-overlay-caption-copy">
             <p class="embedded-terminal-overlay-caption-title">
-              {{ status === 'closed' ? 'WSL2 终端已关闭' : 'WSL2 终端暂不可用' }}
+               status === 'closed' ? 'WSL2 终端已关闭' : 'WSL2 终端暂不可用' 
             </p>
             <p class="embedded-terminal-overlay-caption-text">
-              {{ statusMessage }}
+               statusMessage 
             </p>
           </div>
 
@@ -41,14 +41,21 @@ import type {
   ITerminalRunCompletedPayload,
   ITerminalStatusChangePayload,
 } from '@/types/terminal';
+import { DEFAULT_TERMINAL_SESSION_ID } from '@/types/terminal';
 import '@xterm/xterm/css/xterm.css';
 import { computed } from 'vue';
 
-const props = defineProps<{
-  visible: boolean;
-  theme: TThemeMode;
-  terminalSettings: ITerminalSettings;
-}>();
+const props = withDefaults(
+  defineProps<{
+    visible: boolean;
+    theme: TThemeMode;
+    terminalSettings: ITerminalSettings;
+    sessionId?: string;
+  }>(),
+  {
+    sessionId: DEFAULT_TERMINAL_SESSION_ID,
+  },
+);
 
 const emit = defineEmits<{
   'status-change': [payload: ITerminalStatusChangePayload];
@@ -60,6 +67,7 @@ const visible = computed(() => props.visible);
 const theme = computed(() => props.theme);
 const terminalSettings = computed(() => props.terminalSettings);
 const { hostRef, status, statusMessage, retry, focusTerminal } = useIntegratedTerminal({
+  sessionId: props.sessionId,
   visible,
   theme,
   settings: terminalSettings,
