@@ -57,7 +57,7 @@ describe('AiAgentRuntimeTimeline', () => {
     expect(wrapper.find('.ai-runtime-timeline').exists()).toBe(true);
     expect(wrapper.findAll('.agent-line')).toHaveLength(1);
     expect(wrapper.text()).toContain('我先确认 sidecar 是否是旧进程。');
-    expect(wrapper.findAll('.ai-runtime-task')).toHaveLength(1);
+    expect(wrapper.findAll('.ai-runtime-step.is-task')).toHaveLength(1);
     expect(wrapper.text()).toContain('搜索完成');
     expect(wrapper.text()).not.toContain('完成调用 grep_search');
     expect(wrapper.text()).not.toContain('开始调用 grep_search');
@@ -179,7 +179,7 @@ describe('AiAgentRuntimeTimeline', () => {
       },
     });
 
-    expect(wrapper.findAll('.ai-runtime-task')).toHaveLength(1);
+    expect(wrapper.findAll('.ai-runtime-step.is-task')).toHaveLength(1);
     expect(wrapper.text()).toContain('成功获取MCP工具集');
     expect(wrapper.text()).not.toContain('正在查找MCP工具集');
     expect(wrapper.find('.ai-runtime-step-icon.is-icon-catalog').exists()).toBe(true);
@@ -201,7 +201,7 @@ describe('AiAgentRuntimeTimeline', () => {
       props: { events },
     });
 
-    expect(wrapper.findAll('.ai-runtime-task')).toHaveLength(1);
+    expect(wrapper.findAll('.ai-runtime-step.is-task')).toHaveLength(1);
     expect(wrapper.text()).toContain('成功获取MCP工具集');
   });
 
@@ -1069,7 +1069,7 @@ describe('AiAgentRuntimeTimeline', () => {
               '',
               'Timeline:',
               '- Oct 2024: Initial open-source launch',
-            ].join('\\n'),
+            ].join('\n'),
           }),
         ],
       },
@@ -1103,7 +1103,7 @@ describe('AiAgentRuntimeTimeline', () => {
               'echo "start"',
               'pnpm exec vitest --run src/components/business/ai/AiAgentRuntimeTimeline.spec.ts',
               '```',
-            ].join('\\n'),
+            ].join('\n'),
           }),
         ],
       },

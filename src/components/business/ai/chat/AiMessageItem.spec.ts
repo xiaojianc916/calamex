@@ -349,7 +349,7 @@ describe('AiMessageItem', () => {
     expect(runtimeTimeline.exists()).toBe(true);
     expect(messageBubble.exists()).toBe(true);
     expect(wrapper.text()).toContain('我先确认真实工具列表。');
-    expect(wrapper.text()).toContain('grep_search');
+    expect(wrapper.text()).toContain('正在搜索');
     expect(wrapper.find('.ai-tool-call-list').exists()).toBe(false);
     expect(
       runtimeTimeline.element.compareDocumentPosition(messageBubble.element) &
@@ -406,7 +406,7 @@ describe('AiMessageItem', () => {
     });
 
     expect(wrapper.find('.ai-runtime-timeline').exists()).toBe(true);
-    expect(wrapper.text()).toContain('读取完成 D:/test/heatmap.py');
+    expect(wrapper.text()).toContain('已查看 heatmap.py');
     expect(wrapper.find('.ai-tool-call-list').exists()).toBe(false);
     expect(wrapper.text()).not.toContain('已读取 D:/test/heatmap.py');
   });
