@@ -34,9 +34,9 @@
               <StartupWorkbenchShell v-if="isStartupShellVisible && startupShellState" :state="startupShellState"
                 :show-terminal="isTerminalPanelVisible" :terminal-height="terminalHeight" />
 
-              <ResizablePanelGroup v-else-if="isTerminalSplitVisible" direction="vertical"
-                class="h-full min-h-0 w-full">
-                <ResizablePanel class="min-h-0" :min-size="220" size-unit="px">
+              <div v-else-if="isTerminalSplitVisible" ref="terminalSplitRef"
+                class="flex h-full min-h-0 w-full flex-col">
+                <div class="min-h-0 flex-1">
                   <CardContent class="flex h-full min-h-0 flex-1 px-0 pb-0 pt-0">
                     <div class="flex h-full min-h-0 flex-1 flex-col">
                       <EmptyEditorState v-if="!editorStore.hasActiveDocument"
@@ -67,18 +67,18 @@
                         :name="editorStore.document.name" />
                     </div>
                   </CardContent>
-                </ResizablePanel>
+                </div>
 
-                <ResizableHandle class="terminal-resize-handle" />
+                <div class="terminal-resize-handle" :class="{ 'is-dragging': isTerminalDragging }" role="separator"
+                  aria-orientation="horizontal" @pointerdown="startTerminalDrag"></div>
 
-                <ResizablePanel class="min-h-0 overflow-hidden" :default-size="terminalHeight" :min-size="140"
-                  size-unit="px" @resize="handleTerminalHeightChange">
+                <div class="min-h-0 overflow-hidden" :style="{ height: terminalHeight + 'px' }">
                   <DeferredRunPanel theme="light" :terminal-settings="appStore.settings.terminal"
                     :visible="isTerminalPanelVisible" :is-maximized="false" @hide="hideTerminal"
                     @toggle-maximize="toggleTerminalMaximize"
                     @terminal-run-completed="handleIntegratedTerminalRunCompleted" />
-                </ResizablePanel>
-              </ResizablePanelGroup>
+                </div>
+              </div>
 
               <div v-else-if="isTerminalPanelVisible" class="flex min-h-0 flex-1 flex-col overflow-hidden">
                 <DeferredRunPanel theme="light" :terminal-settings="appStore.settings.terminal"
@@ -131,7 +131,6 @@
 <script setup lang="ts">
 import EmptyEditorState from '@/components/editor/EmptyEditorState.vue';
 import { Card, CardContent } from '@/components/ui/card';
-import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import LspStatusBar from '@/components/workbench/LspStatusBar.vue';
 import StartupWorkbenchShell from '@/components/workbench/StartupWorkbenchShell.vue';
 import WorkbenchDashboardSidebar from '@/components/workbench/WorkbenchDashboardSidebar.vue';
@@ -141,7 +140,7 @@ import AppShellLayout from '@/layouts/AppShellLayout.vue';
 import { useAiAgentStore } from '@/store/aiAgent';
 import type { TWorkbenchOpenFilePayload } from '@/types/editor';
 import type { IGitDiffPreviewRequest } from '@/types/git';
-import { computed, defineAsyncComponent, nextTick } from 'vue';
+import { computed, defineAsyncComponent, nextTick, ref } from 'vue';
 
 const DeferredAiWorkspaceSurface = defineAsyncComponent({
   loader: () => import('@/components/business/ai/shell/AiWorkspaceSurface.vue'),
@@ -267,6 +266,41 @@ const hasPinnedAiWorkspace = computed(() => {
   );
 });
 
+// 终端面板：自定义指针拖拽调整高度（像素），替代 reka-ui 百分比分割器
+const terminalSplitRef = ref<HTMLElement | null>(null);
+const isTerminalDragging = ref(false);
+
+const startTerminalDrag = (event: PointerEvent): void => {
+  event.preventDefault();
+  const startY = event.clientY;
+  const startHeight = terminalHeight.value;
+  isTerminalDragging.value = true;
+  document.body.style.userSelect = 'none';
+  document.body.style.cursor = 'row-resize';
+
+  const handleMove = (moveEvent: PointerEvent): void => {
+    const delta = startY - moveEvent.clientY;
+    let next = startHeight + delta;
+    const container = terminalSplitRef.value;
+    if (container) {
+      const maxHeight = Math.max(140, container.clientHeight - 220);
+      next = Math.min(next, maxHeight);
+    }
+    handleTerminalHeightChange(next);
+  };
+
+  const handleUp = (): void => {
+    isTerminalDragging.value = false;
+    document.body.style.userSelect = '';
+    document.body.style.cursor = '';
+    window.removeEventListener('pointermove', handleMove);
+    window.removeEventListener('pointerup', handleUp);
+  };
+
+  window.addEventListener('pointermove', handleMove);
+  window.addEventListener('pointerup', handleUp);
+};
+
 const handleSidebarOpenFile = async (payload: TWorkbenchOpenFilePayload): Promise<void> => {
   const request = typeof payload === 'string' ? { path: payload } : payload;
 
@@ -323,50 +357,56 @@ const bindEditorViewportRef = (value: unknown): void => {
 };
 </script>
 
-<style>
-/* 终端面板顶部：可拖拽分隔条 —— 常态 1px #ededed 细线，10px 不可见热区便于抓取，悬停/拖拽平滑变粗高亮 */
+<style scoped>
+/* 终端面板顶部：可拖拽分隔条 —— 常态 1px #ededed 细线，11px 不可见热区便于抓取，悬停/拖拽平滑变粗高亮 */
 .terminal-resize-handle {
-  background-color: transparent !important;
+  position: relative;
+  z-index: 1;
+  flex: 0 0 auto;
+  height: 1px;
+  background-color: #ededed;
   cursor: row-resize;
   touch-action: none;
+  transition: background-color 160ms ease;
 }
 
-/* 加宽抓取热区（覆盖基础 after 的 h-1 / inset-y-0），保持透明 */
-.terminal-resize-handle::after {
-  top: 50% !important;
-  bottom: auto !important;
-  height: 10px !important;
-  border-radius: 0 !important;
-  background-color: transparent !important;
-}
-
-/* 可见细线：默认 1px #ededed，绝对定位居中，不占布局高度 */
+/* 加宽不可见抓取热区，方便鼠标对准 */
 .terminal-resize-handle::before {
   content: '';
   position: absolute;
   left: 0;
   right: 0;
   top: 50%;
-  height: 1px;
+  height: 11px;
   transform: translateY(-50%);
-  background-color: #ededed;
-  border-radius: 999px;
-  pointer-events: none;
-  z-index: 1;
-  transition:
-    height 160ms cubic-bezier(0.22, 1, 0.36, 1),
-    background-color 160ms ease;
 }
 
-/* 悬停 / 拖拽：平滑变粗 3px 并高亮为品牌强调色 */
-.terminal-resize-handle:hover::before,
-.terminal-resize-handle:active::before {
+/* 悬停 / 拖拽：平滑浮现 3px 品牌强调色高亮 */
+.terminal-resize-handle::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
   height: 3px;
+  transform: translateY(-50%);
   background-color: var(--accent-strong);
+  border-radius: 999px;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 160ms ease,
+    height 160ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.terminal-resize-handle:hover::after,
+.terminal-resize-handle.is-dragging::after {
+  opacity: 1;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .terminal-resize-handle::before {
+  .terminal-resize-handle,
+  .terminal-resize-handle::after {
     transition: none;
   }
 }
