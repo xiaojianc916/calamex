@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { type EffectScope, effectScope } from 'vue';
 import { useAiStream } from '@/composables/ai/useAiStream';
 
@@ -26,75 +26,28 @@ const createStreamHarness = (options: Parameters<typeof useAiStream>[0] = {}): I
 };
 
 describe('useAiStream', () => {
-  let frameId = 0;
-  let queuedFrames: Map<number, FrameRequestCallback>;
-
-  const runNextFrame = (timestamp: number): void => {
-    const frame = [...queuedFrames.entries()][0];
-
-    if (!frame) {
-      throw new Error('没有待执行的动画帧');
-    }
-
-    const [id, callback] = frame;
-    queuedFrames.delete(id);
-    callback(timestamp);
-  };
-
-  const runFramesUntilIdle = (maxFrames = 120): void => {
-    for (let index = 0; index < maxFrames && queuedFrames.size > 0; index += 1) {
-      runNextFrame((index + 1) * 16);
-    }
-  };
-
-  beforeEach(() => {
-    frameId = 0;
-    queuedFrames = new Map<number, FrameRequestCallback>();
-    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback): number => {
-      frameId += 1;
-      queuedFrames.set(frameId, callback);
-      return frameId;
-    });
-    vi.stubGlobal('cancelAnimationFrame', (id: number): void => {
-      queuedFrames.delete(id);
-    });
-  });
-
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
-  it('按稳定帧节奏输出 burst delta，不一帧喷完整段内容', () => {
+  it('原始增量内容立即累加，平滑呈现交由渲染层处理', () => {
     const { stream, scope } = createStreamHarness();
 
     stream.start();
     stream.append('abcdef'.repeat(8));
 
-    expect(stream.content.value).toBe('');
-    expect(stream.bufferedGraphemeCount.value).toBe(48);
-    expect(stream.maxBufferedGraphemeCount.value).toBe(48);
-    expect(queuedFrames.size).toBe(1);
-
-    runNextFrame(16);
-    expect(stream.content.value.length).toBeGreaterThan(0);
-    expect(stream.content.value.length).toBeLessThan(48);
-    expect(stream.bufferedGraphemeCount.value).toBeGreaterThan(0);
-    expect(stream.maxBufferedGraphemeCount.value).toBe(48);
-    expect(queuedFrames.size).toBe(1);
-
-    runFramesUntilIdle();
     expect(stream.content.value).toBe('abcdef'.repeat(8));
+    expect(stream.isStreaming.value).toBe(true);
     expect(stream.bufferedGraphemeCount.value).toBe(0);
+    expect(stream.maxBufferedGraphemeCount.value).toBe(0);
+
+    stream.append('追加');
+    expect(stream.content.value).toBe(`${'abcdef'.repeat(8)}追加`);
 
     stream.complete();
-    expect(stream.content.value).toBe('abcdef'.repeat(8));
-    expect(stream.bufferedGraphemeCount.value).toBe(0);
+    expect(stream.content.value).toBe(`${'abcdef'.repeat(8)}追加`);
     expect(stream.status.value).toBe('completed');
 
     scope.stop();
   });
 
-  it('完成时立即冲刷缓冲，保证最终内容完整', () => {
+  it('完成时保留完整内容', () => {
     const { stream, scope } = createStreamHarness();
 
     stream.start();
@@ -102,24 +55,21 @@ describe('useAiStream', () => {
     stream.complete();
 
     expect(stream.content.value).toBe('你好🙂');
-    expect(stream.bufferedGraphemeCount.value).toBe(0);
-    expect(stream.maxBufferedGraphemeCount.value).toBe(3);
     expect(stream.status.value).toBe('completed');
-    expect(queuedFrames.size).toBe(0);
 
     scope.stop();
   });
 
-  it('完成时不会慢放剩余内容，避免伪流式拖慢真实输出', () => {
+  it('开始新流时清空已有内容', () => {
     const { stream, scope } = createStreamHarness();
 
     stream.start();
-    stream.append('abcdef');
+    stream.append('上一段');
     stream.complete();
 
-    expect(stream.content.value).toBe('abcdef');
-    expect(stream.status.value).toBe('completed');
-    expect(queuedFrames.size).toBe(0);
+    stream.start();
+    expect(stream.content.value).toBe('');
+    expect(stream.status.value).toBe('streaming');
 
     scope.stop();
   });
@@ -133,25 +83,18 @@ describe('useAiStream', () => {
     stream.append('不应进入');
 
     expect(stream.content.value).toBe('已经到达');
-    expect(stream.bufferedGraphemeCount.value).toBe(0);
     expect(stream.status.value).toBe('cancelled');
 
     scope.stop();
   });
 
-  it('同一帧内合并跨 delta 的 emoji ZWJ 字符簇', () => {
+  it('保留跨 delta 的 emoji ZWJ 字符簇', () => {
     const { stream, scope } = createStreamHarness();
     const family = '👨‍👩‍👧‍👦';
 
     stream.start();
     stream.append('👨');
     stream.append('‍👩‍👧‍👦完成');
-
-    runNextFrame(16);
-    expect(stream.content.value).toBe(family);
-    expect(stream.content.value).not.toContain('�');
-
-    runFramesUntilIdle();
 
     expect(stream.content.value).toBe(`${family}完成`);
     expect(stream.content.value).not.toContain('�');
