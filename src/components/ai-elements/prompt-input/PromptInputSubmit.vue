@@ -1,15 +1,12 @@
 <script setup lang="ts">
 // import type { InputGroupButtonVariants } from '@/components/ui/input-group'
+
 import type { ChatStatus } from 'ai';
 import type { HTMLAttributes } from 'vue';
 import { computed } from 'vue';
 import type { InputGroupButtonVariants } from '@/components/ui/input-group';
 import { InputGroupButton } from '@/components/ui/input-group';
 import { cn } from '@/lib/utils';
-import CornerDownLeftIcon from '~icons/lucide/corner-down-left';
-import Loader2Icon from '~icons/lucide/loader2';
-import SquareIcon from '~icons/lucide/square';
-import XIcon from '~icons/lucide/x';
 
 type TPromptInputButtonVariant = 'default' | 'outline' | 'ghost';
 
@@ -28,14 +25,10 @@ const props = withDefaults(defineProps<Props>(), {
 });
 
 const icon = computed(() => {
-  if (props.status === 'submitted') {
-    return Loader2Icon;
-  } else if (props.status === 'streaming') {
-    return SquareIcon;
-  } else if (props.status === 'error') {
-    return XIcon;
-  }
-  return CornerDownLeftIcon;
+  if (props.status === 'submitted') return 'icon-[lucide--loader-circle]';
+  if (props.status === 'streaming') return 'icon-[lucide--square]';
+  if (props.status === 'error') return 'icon-[lucide--x]';
+  return 'icon-[lucide--corner-down-left]';
 });
 
 const iconClass = computed(() => {
@@ -47,16 +40,10 @@ const iconClass = computed(() => {
 </script>
 
 <template>
-  <InputGroupButton
-    aria-label="Submit"
-    :class="cn(props.class)"
-    :size="props.size"
-    :variant="props.variant"
-    type="submit"
-    v-bind="$attrs"
-  >
+  <InputGroupButton aria-label="Submit" :class="cn(props.class)" :size="props.size" :variant="props.variant"
+    type="submit" v-bind="$attrs">
     <slot>
-      <component :is="icon" :class="iconClass" />
+      <span :class="[icon, iconClass]" />
     </slot>
   </InputGroupButton>
 </template>

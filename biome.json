@@ -7,11 +7,7 @@
   },
   "files": {
     "ignoreUnknown": true,
-    "includes": [
-      "src/**/*.{ts,vue,css}",
-      "!src/bindings/tauri.ts",
-      "*.{ts,js,mjs,json}"
-    ]
+    "includes": ["src/**/*.{ts,vue,css}", "!src/bindings/tauri.ts", "*.{ts,js,mjs,json}"]
   },
   "formatter": {
     "enabled": true,
@@ -55,6 +51,9 @@
     }
   },
   "css": {
+    "parser": {
+      "tailwindDirectives": true
+    },
     "formatter": {
       "quoteStyle": "single",
       "enabled": true
@@ -65,9 +64,7 @@
   },
   "overrides": [
     {
-      "includes": [
-        "*.json"
-      ],
+      "includes": ["*.json"],
       "formatter": {
         "indentWidth": 2
       }

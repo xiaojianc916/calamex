@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { type Component, computed, ref } from 'vue';
+import { computed, ref } from 'vue';
 import {
   ChainOfThought,
   ChainOfThoughtContent,
@@ -56,7 +56,7 @@ const chainHeaderLabel = computed(() =>
   props.isStreaming || props.isWaitingConfirmation ? '正在思考' : '思考完成',
 );
 
-const getTaskIcon = (node: ITaskNodeItem): Component => TASK_ICON_MAP[node.icon];
+const getTaskIcon = (node: ITaskNodeItem): string => TASK_ICON_MAP[node.icon];
 
 const hasCommandTerminal = (node: ITaskNodeItem): boolean =>
   Boolean(node.toolName && COMMAND_TOOL_NAMES.has(node.toolName) && node.terminalOutput);
@@ -123,7 +123,8 @@ const shouldShowTaskStatus = (node: ITaskNodeItem): boolean => node.status !== '
   <ChainOfThought v-if="shouldRenderTimeline" class="ai-runtime-timeline" default-open
     aria-label="Agent Chain of Thought">
     <ChainOfThoughtHeader class="ai-runtime-chain-header">
-      <Shimmer v-if="isStreaming || isWaitingConfirmation" as="span" class="ai-runtime-chain-label ai-runtime-chain-label--thinking">
+      <Shimmer v-if="isStreaming || isWaitingConfirmation" as="span"
+        class="ai-runtime-chain-label ai-runtime-chain-label--thinking">
         <span v-text="chainHeaderLabel" />
       </Shimmer>
       <span v-else class="ai-runtime-chain-label ai-runtime-chain-label--done" v-text="chainHeaderLabel" />
@@ -134,7 +135,7 @@ const shouldShowTaskStatus = (node: ITaskNodeItem): boolean => node.status !== '
         <ChainOfThoughtStep v-if="item.type === 'reasoning'" class="ai-runtime-step is-reasoning" label="Reasoning"
           status="complete">
           <template #icon>
-            <span class="icon-[lucide--dot] ai-runtime-step-icon" aria-hidden="true"  />
+            <span class="icon-[lucide--dot] ai-runtime-step-icon" aria-hidden="true" />
           </template>
 
           <div class="agent-line">
@@ -208,7 +209,7 @@ const shouldShowTaskStatus = (node: ITaskNodeItem): boolean => node.status !== '
         <ChainOfThoughtStep v-else-if="item.type === 'event'" class="ai-runtime-step is-event" :label="item.text"
           status="complete">
           <template #icon>
-            <span class="icon-[lucide--activity] ai-runtime-step-icon" aria-hidden="true"  />
+            <span class="icon-[lucide--activity] ai-runtime-step-icon" aria-hidden="true" />
           </template>
         </ChainOfThoughtStep>
 
@@ -220,22 +221,18 @@ const shouldShowTaskStatus = (node: ITaskNodeItem): boolean => node.status !== '
                 <span v-text="item.node.action" />
               </Shimmer>
               <span v-else class="ai-runtime-task-label__text" v-text="item.node.action" />
-              <button
-                v-if="hasCommandTerminal(item.node)"
-                type="button"
-                class="ai-runtime-terminal-toggle"
+              <button v-if="hasCommandTerminal(item.node)" type="button" class="ai-runtime-terminal-toggle"
                 :class="{ 'is-open': isTerminalExpanded(item.node.id) }"
                 :aria-expanded="isTerminalExpanded(item.node.id)"
                 :aria-label="isTerminalExpanded(item.node.id) ? '收起终端输出' : '展开终端输出'"
                 :title="isTerminalExpanded(item.node.id) ? '收起终端输出' : '展开终端输出'"
-                @click.stop="toggleTerminalNode(item.node.id)"
-              >
+                @click.stop="toggleTerminalNode(item.node.id)">
                 <span aria-hidden="true" class="icon-[lucide--chevron-right]" />
               </button>
             </div>
           </template>
           <template #icon>
-            <component :is="getTaskIcon(item.node)" class="ai-runtime-step-icon" :class="`is-icon-${item.node.icon}`"
+            <span :class="[getTaskIcon(item.node), 'ai-runtime-step-icon', `is-icon-${item.node.icon}`]"
               aria-hidden="true" />
           </template>
 
@@ -249,7 +246,7 @@ const shouldShowTaskStatus = (node: ITaskNodeItem): boolean => node.status !== '
                   <span class="ai-runtime-web-source-icon-wrap" aria-hidden="true">
                     <img class="ai-runtime-web-source-icon" :src="getFaviconSource(source.host)" alt="" loading="lazy"
                       decoding="async" @error="handleWebSourceIconError" />
-                    <span class="icon-[lucide--globe] ai-runtime-web-source-icon-fallback"  />
+                    <span class="icon-[lucide--globe] ai-runtime-web-source-icon-fallback" />
                   </span>
                   <span class="ai-runtime-web-source-label" v-text="source.displayUrl" />
                 </div>
@@ -269,14 +266,10 @@ const shouldShowTaskStatus = (node: ITaskNodeItem): boolean => node.status !== '
             </TaskContent>
           </Task>
 
-          <div v-if="hasCommandTerminal(item.node) && isTerminalExpanded(item.node.id)" class="ai-runtime-terminal-wrap">
-            <AiTerminal
-              class="ai-runtime-terminal"
-              :auto-scroll="true"
-              :is-streaming="item.node.terminalStreaming"
-              :output="getTerminalOutput(item.node)"
-              @clear="handleTerminalClear(item.node.id)"
-            >
+          <div v-if="hasCommandTerminal(item.node) && isTerminalExpanded(item.node.id)"
+            class="ai-runtime-terminal-wrap">
+            <AiTerminal class="ai-runtime-terminal" :auto-scroll="true" :is-streaming="item.node.terminalStreaming"
+              :output="getTerminalOutput(item.node)" @clear="handleTerminalClear(item.node.id)">
               <TerminalHeader>
                 <TerminalTitle>
                   <span v-text="item.node.terminalTitle ?? 'Windows 终端'" />

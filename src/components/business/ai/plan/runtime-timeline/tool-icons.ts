@@ -1,36 +1,5 @@
-import type { Component } from 'vue';
 import { normalizeRuntimeToolName, type TAiRuntimeToolKind } from '@/constants/ai/runtime-tools';
-import Activity from '~icons/lucide/activity';
-import BadgeCheck from '~icons/lucide/badge-check';
-import BookOpen from '~icons/lucide/book-open';
-import Brain from '~icons/lucide/brain';
-import Bug from '~icons/lucide/bug';
-import ChartColumn from '~icons/lucide/chart-column';
-import CircleAlert from '~icons/lucide/circle-alert';
-import Clock3 from '~icons/lucide/clock3';
-import Coffee from '~icons/lucide/coffee';
-import FileCode from '~icons/lucide/file-code';
-import FileText from '~icons/lucide/file-text';
-import Files from '~icons/lucide/files';
-import FolderTree from '~icons/lucide/folder-tree';
-import GitBranch from '~icons/lucide/git-branch';
-import Globe from '~icons/lucide/globe';
-import HardDrive from '~icons/lucide/hard-drive';
-import ImageIcon from '~icons/lucide/image';
-import ListTodo from '~icons/lucide/list-todo';
-import ListTree from '~icons/lucide/list-tree';
-import NotebookPen from '~icons/lucide/notebook-pen';
-import Pencil from '~icons/lucide/pencil';
-import Play from '~icons/lucide/play';
-import Plug from '~icons/lucide/plug';
-import ScrollText from '~icons/lucide/scroll-text';
-import Search from '~icons/lucide/search';
-import Terminal from '~icons/lucide/terminal';
-import Workflow from '~icons/lucide/workflow';
-import {
-  extractShellcheckDiagnosticCodes,
-  hasShellcheckUnavailableSummary,
-} from './shellcheck';
+import { extractShellcheckDiagnosticCodes, hasShellcheckUnavailableSummary } from './shellcheck';
 import type { IToolIconMatcher, TTaskIcon, TToolLifecycleEvent } from './types';
 
 export const TOOL_ICON_MATCHERS: readonly IToolIconMatcher[] = [
@@ -190,40 +159,40 @@ export const TOOL_ICON_MATCHERS: readonly IToolIconMatcher[] = [
   },
 ];
 
-export const TASK_ICON_MAP: Record<TTaskIcon, Component> = {
-  search: Search,
-  read: FileText,
-  write: Pencil,
-  git: GitBranch,
-  browser: Globe,
-  terminal: Terminal,
-  task: ListTodo,
-  network: Globe,
-  diagram: Workflow,
-  symbol: FileCode,
-  python: FileCode,
-  java: Coffee,
-  memory: HardDrive,
-  thinking: Brain,
-  system: Activity,
-  file: FileText,
-  files: Files,
-  folder: FolderTree,
-  patch: Pencil,
-  globe: Globe,
-  play: Play,
-  book: BookOpen,
-  chart: ChartColumn,
-  brain: Brain,
-  image: ImageIcon,
-  clock: Clock3,
-  catalog: ListTree,
-  check: BadgeCheck,
-  note: NotebookPen,
-  log: ScrollText,
-  plug: Plug,
-  bug: Bug,
-  alert: CircleAlert,
+export const TASK_ICON_MAP: Record<TTaskIcon, string> = {
+  search: 'icon-[lucide--search]',
+  read: 'icon-[lucide--file-text]',
+  write: 'icon-[lucide--pencil]',
+  git: 'icon-[lucide--git-branch]',
+  browser: 'icon-[lucide--globe]',
+  terminal: 'icon-[lucide--terminal]',
+  task: 'icon-[lucide--list-todo]',
+  network: 'icon-[lucide--globe]',
+  diagram: 'icon-[lucide--workflow]',
+  symbol: 'icon-[lucide--file-code]',
+  python: 'icon-[lucide--file-code]',
+  java: 'icon-[lucide--coffee]',
+  memory: 'icon-[lucide--hard-drive]',
+  thinking: 'icon-[lucide--brain]',
+  system: 'icon-[lucide--activity]',
+  file: 'icon-[lucide--file-text]',
+  files: 'icon-[lucide--files]',
+  folder: 'icon-[lucide--folder-tree]',
+  patch: 'icon-[lucide--pencil]',
+  globe: 'icon-[lucide--globe]',
+  play: 'icon-[lucide--play]',
+  book: 'icon-[lucide--book-open]',
+  chart: 'icon-[lucide--chart-column]',
+  brain: 'icon-[lucide--brain]',
+  image: 'icon-[lucide--image]',
+  clock: 'icon-[lucide--clock-3]',
+  catalog: 'icon-[lucide--list-tree]',
+  check: 'icon-[lucide--badge-check]',
+  note: 'icon-[lucide--notebook-pen]',
+  log: 'icon-[lucide--scroll-text]',
+  plug: 'icon-[lucide--plug]',
+  bug: 'icon-[lucide--bug]',
+  alert: 'icon-[lucide--circle-alert]',
 };
 
 export const isMcpListToolsName = (toolName: string | undefined): boolean =>

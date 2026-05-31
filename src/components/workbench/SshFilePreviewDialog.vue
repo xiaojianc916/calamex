@@ -35,8 +35,6 @@ import {
   resolveSshPreviewLanguageInfo,
 } from '@/utils/ssh-file-preview';
 import { splitTextGraphemes } from '@/utils/text-preview';
-import FileCode2 from '~icons/lucide/file-code-2';
-import FileText from '~icons/lucide/file-text';
 
 interface IRenderedPreviewSegment {
   key: string;
@@ -286,7 +284,9 @@ const renderedLines = computed<IRenderedPreviewLine[]>(() =>
 );
 
 const previewFileIcon = computed(() =>
-  languageInfo.value.codeMirrorLanguage === 'text' ? FileText : FileCode2,
+  languageInfo.value.codeMirrorLanguage === 'text'
+    ? 'icon-[lucide--file-text]'
+    : 'icon-[lucide--file-code-2]',
 );
 const editorHighlightStyle = computed<CSSProperties>(() => ({
   transform: `translate(${-editorScrollLeft.value}px, ${-editorScrollTop.value}px)`,
@@ -703,15 +703,11 @@ onBeforeUnmount(() => {
 
 <template>
   <Teleport to="body">
-    <div
-      class="ssh-preview-dialog__scrim"
-      :style="previewThemeStyle"
-      @click.self="requestClose"
-    >
+    <div class="ssh-preview-dialog__scrim" :style="previewThemeStyle" @click.self="requestClose">
       <section class="ssh-preview-dialog" role="dialog" aria-modal="true" aria-label="SSH 文件预览">
         <header class="ssh-preview-dialog__header">
           <div class="ssh-preview-dialog__file-icon" aria-hidden="true">
-            <component :is="previewFileIcon" />
+            <span :class="[previewFileIcon, 'size-4']" />
           </div>
 
           <div class="ssh-preview-dialog__title-group">
@@ -720,97 +716,52 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="ssh-preview-dialog__actions">
-            <button
-              type="button"
-              class="ssh-preview-dialog__icon-button"
-              :disabled="!canOpenSearch"
-              title="搜索 (Ctrl/Cmd + F)"
-              aria-label="搜索"
-              @click="focusSearch"
-            >
+            <button type="button" class="ssh-preview-dialog__icon-button" :disabled="!canOpenSearch"
+              title="搜索 (Ctrl/Cmd + F)" aria-label="搜索" @click="focusSearch">
               <span aria-hidden="true" class="icon-[lucide--search]" />
             </button>
-            <button
-              type="button"
-              class="ssh-preview-dialog__icon-button"
-              :title="isWrapped ? '关闭自动换行' : '开启自动换行'"
-              :aria-label="isWrapped ? '关闭自动换行' : '开启自动换行'"
-              @click="isWrapped = !isWrapped"
-            >
+            <button type="button" class="ssh-preview-dialog__icon-button" :title="isWrapped ? '关闭自动换行' : '开启自动换行'"
+              :aria-label="isWrapped ? '关闭自动换行' : '开启自动换行'" @click="isWrapped = !isWrapped">
               <span aria-hidden="true" class="icon-[lucide--text-wrap]" />
             </button>
-            <button
-              type="button"
-              class="ssh-preview-dialog__icon-button"
-              :disabled="!canReload"
-              title="重新加载 (Ctrl/Cmd + R)"
-              aria-label="重新加载"
-              @click="requestReload"
-            >
+            <button type="button" class="ssh-preview-dialog__icon-button" :disabled="!canReload"
+              title="重新加载 (Ctrl/Cmd + R)" aria-label="重新加载" @click="requestReload">
               <span aria-hidden="true" class="icon-[lucide--refresh-cw]" />
             </button>
 
             <span class="ssh-preview-dialog__divider" aria-hidden="true" />
 
-            <button
-              type="button"
-              class="ssh-preview-dialog__action-button"
-              :disabled="!canCopy"
-              @click="requestCopy"
-            >
+            <button type="button" class="ssh-preview-dialog__action-button" :disabled="!canCopy" @click="requestCopy">
               <span aria-hidden="true" class="icon-[lucide--copy]" />
               <span>复制</span>
             </button>
-            <button
-              type="button"
-              class="ssh-preview-dialog__action-button"
-              :disabled="!canDownload"
-              @click="requestDownload"
-            >
+            <button type="button" class="ssh-preview-dialog__action-button" :disabled="!canDownload"
+              @click="requestDownload">
               <span aria-hidden="true" class="icon-[lucide--download]" />
               <span>下载</span>
             </button>
-            <button
-              v-if="isEditing"
-              type="button"
-              class="ssh-preview-dialog__action-button"
-              :disabled="props.isSaving"
-              @click="cancelEditMode"
-            >
+            <button v-if="isEditing" type="button" class="ssh-preview-dialog__action-button" :disabled="props.isSaving"
+              @click="cancelEditMode">
               <span aria-hidden="true" class="icon-[lucide--x]" />
               <span>取消编辑</span>
             </button>
-            <button
-              v-if="isEditing"
-              type="button"
-              class="ssh-preview-dialog__action-button ssh-preview-dialog__action-button--primary"
-              :disabled="!canSave"
-              @click="requestSave"
-            >
+            <button v-if="isEditing" type="button"
+              class="ssh-preview-dialog__action-button ssh-preview-dialog__action-button--primary" :disabled="!canSave"
+              @click="requestSave">
               <span aria-hidden="true" class="icon-[lucide--save]" />
               <span>{{ props.isSaving ? '保存中…' : '保存' }}</span>
             </button>
-            <button
-              v-else
-              type="button"
+            <button v-else type="button"
               class="ssh-preview-dialog__action-button ssh-preview-dialog__action-button--primary"
-              :disabled="!canToggleEdit"
-              @click="openEditMode"
-            >
+              :disabled="!canToggleEdit" @click="openEditMode">
               <span aria-hidden="true" class="icon-[lucide--pencil-line]" />
               <span>编辑</span>
             </button>
 
             <span class="ssh-preview-dialog__divider" aria-hidden="true" />
 
-            <button
-              type="button"
-              class="ssh-preview-dialog__icon-button"
-              :disabled="!canClose"
-              title="关闭 (Esc)"
-              aria-label="关闭"
-              @click="requestClose"
-            >
+            <button type="button" class="ssh-preview-dialog__icon-button" :disabled="!canClose" title="关闭 (Esc)"
+              aria-label="关闭" @click="requestClose">
               <span aria-hidden="true" class="icon-[lucide--x]" />
             </button>
           </div>
@@ -858,147 +809,77 @@ onBeforeUnmount(() => {
           </span>
         </div>
 
-        <div
-          class="ssh-preview-dialog__toolbar"
-          :class="{ 'is-open': isSearchOpen }"
-        >
+        <div class="ssh-preview-dialog__toolbar" :class="{ 'is-open': isSearchOpen }">
           <div class="ssh-preview-dialog__search">
             <span aria-hidden="true" class="icon-[lucide--search]" />
-            <input
-              ref="searchInputRef"
-              v-model="searchQuery"
-              type="text"
-              placeholder="在文件中查找…"
-              autocomplete="off"
-              @keydown="handleSearchInputKeydown"
-            >
+            <input ref="searchInputRef" v-model="searchQuery" type="text" placeholder="在文件中查找…" autocomplete="off"
+              @keydown="handleSearchInputKeydown">
             <span class="ssh-preview-dialog__search-count">{{ findCountLabel }}</span>
           </div>
 
-          <button
-            type="button"
-            class="ssh-preview-dialog__icon-button"
-            :disabled="indexedHits.length === 0"
-            aria-label="上一处"
-            @click="stepSearchHit(-1)"
-          >
+          <button type="button" class="ssh-preview-dialog__icon-button" :disabled="indexedHits.length === 0"
+            aria-label="上一处" @click="stepSearchHit(-1)">
             <span aria-hidden="true" class="icon-[lucide--chevron-up]" />
           </button>
-          <button
-            type="button"
-            class="ssh-preview-dialog__icon-button"
-            :disabled="indexedHits.length === 0"
-            aria-label="下一处"
-            @click="stepSearchHit(1)"
-          >
+          <button type="button" class="ssh-preview-dialog__icon-button" :disabled="indexedHits.length === 0"
+            aria-label="下一处" @click="stepSearchHit(1)">
             <span aria-hidden="true" class="icon-[lucide--chevron-down]" />
           </button>
-          <button
-            type="button"
-            class="ssh-preview-dialog__icon-button"
-            aria-label="关闭搜索"
-            @click="closeSearch"
-          >
+          <button type="button" class="ssh-preview-dialog__icon-button" aria-label="关闭搜索" @click="closeSearch">
             <span aria-hidden="true" class="icon-[lucide--x]" />
           </button>
         </div>
 
-        <div
-          ref="codeViewportRef"
-          class="ssh-preview-dialog__code"
-          :class="{ 'is-wrapped': isWrapped }"
-        >
-          <div
-            v-if="props.isLoading && !props.payload"
-            class="ssh-preview-dialog__state"
-            aria-live="polite"
-          >
+        <div ref="codeViewportRef" class="ssh-preview-dialog__code" :class="{ 'is-wrapped': isWrapped }">
+          <div v-if="props.isLoading && !props.payload" class="ssh-preview-dialog__state" aria-live="polite">
             正在读取远端文件…
           </div>
 
           <template v-else-if="props.payload">
-            <div
-              v-if="props.isLoading"
-              class="ssh-preview-dialog__loading-pill"
-              aria-live="polite"
-            >
+            <div v-if="props.isLoading" class="ssh-preview-dialog__loading-pill" aria-live="polite">
               正在重新加载…
             </div>
 
             <div v-if="isEditing" class="ssh-preview-dialog__editor-grid">
-              <div
-                class="ssh-preview-dialog__gutter ssh-preview-dialog__editor-gutter"
-                aria-hidden="true"
-              >
-                <div
-                  class="ssh-preview-dialog__editor-gutter-lines"
-                  :style="editorGutterStyle"
-                >
-                  <span
-                    v-for="lineIndex in currentContentLines.length"
-                    :key="`editor-line-${lineIndex}`"
-                  >
+              <div class="ssh-preview-dialog__gutter ssh-preview-dialog__editor-gutter" aria-hidden="true">
+                <div class="ssh-preview-dialog__editor-gutter-lines" :style="editorGutterStyle">
+                  <span v-for="lineIndex in currentContentLines.length" :key="`editor-line-${lineIndex}`">
                     {{ lineIndex }}
                   </span>
                 </div>
               </div>
 
               <div class="ssh-preview-dialog__editor-shell">
-                <div
-                  class="ssh-preview-dialog__editor-highlight"
-                  :style="editorHighlightStyle"
-                  aria-hidden="true"
-                >
-                  <div
-                    v-for="line in renderedLines"
-                    :key="`editor-highlight-${line.key}`"
+                <div class="ssh-preview-dialog__editor-highlight" :style="editorHighlightStyle" aria-hidden="true">
+                  <div v-for="line in renderedLines" :key="`editor-highlight-${line.key}`"
                     class="ssh-preview-dialog__line-code ssh-preview-dialog__line-code--editor"
-                    data-ssh-preview-line-code="true"
-                  >
+                    data-ssh-preview-line-code="true">
                     <template v-if="line.segments.length === 0">
                       <span class="ssh-preview-dialog__empty-line">&nbsp;</span>
                     </template>
 
                     <template v-else>
-                      <span
-                        v-for="segment in line.segments"
-                        :key="segment.key"
-                        class="ssh-preview-dialog__segment"
+                      <span v-for="segment in line.segments" :key="segment.key" class="ssh-preview-dialog__segment"
                         :class="{
                           'is-match': segment.matched,
                           'is-active-match': segment.active,
-                        }"
-                        :data-ssh-preview-active-hit="segment.active ? 'true' : undefined"
-                        :style="segment.style"
-                      >
+                        }" :data-ssh-preview-active-hit="segment.active ? 'true' : undefined" :style="segment.style">
                         {{ segment.text }}
                       </span>
                     </template>
                   </div>
                 </div>
 
-                <textarea
-                  ref="editorRef"
-                  v-model="draftContent"
-                  class="ssh-preview-dialog__editor"
-                  :class="{ 'is-wrapped': isWrapped }"
-                  :wrap="isWrapped ? 'soft' : 'off'"
-                  spellcheck="false"
-                  @click="updateCursorFromEditor()"
-                  @keyup="updateCursorFromEditor()"
-                  @select="updateCursorFromEditor()"
-                  @scroll.passive="handleEditorScroll"
-                />
+                <textarea ref="editorRef" v-model="draftContent" class="ssh-preview-dialog__editor"
+                  :class="{ 'is-wrapped': isWrapped }" :wrap="isWrapped ? 'soft' : 'off'" spellcheck="false"
+                  @click="updateCursorFromEditor()" @keyup="updateCursorFromEditor()" @select="updateCursorFromEditor()"
+                  @scroll.passive="handleEditorScroll" />
               </div>
             </div>
 
             <div v-else class="ssh-preview-dialog__preview-grid" @mouseup="handlePreviewMouseUp">
-              <div
-                v-for="line in renderedLines"
-                :key="line.key"
-                class="ssh-preview-dialog__line"
-                :data-ssh-preview-line-index="line.lineIndex"
-              >
+              <div v-for="line in renderedLines" :key="line.key" class="ssh-preview-dialog__line"
+                :data-ssh-preview-line-index="line.lineIndex">
                 <div class="ssh-preview-dialog__gutter" aria-hidden="true">
                   <span>{{ line.lineIndex + 1 }}</span>
                 </div>
@@ -1009,17 +890,11 @@ onBeforeUnmount(() => {
                   </template>
 
                   <template v-else>
-                    <span
-                      v-for="segment in line.segments"
-                      :key="segment.key"
-                      class="ssh-preview-dialog__segment"
+                    <span v-for="segment in line.segments" :key="segment.key" class="ssh-preview-dialog__segment"
                       :class="{
                         'is-match': segment.matched,
                         'is-active-match': segment.active,
-                      }"
-                      :data-ssh-preview-active-hit="segment.active ? 'true' : undefined"
-                      :style="segment.style"
-                    >
+                      }" :data-ssh-preview-active-hit="segment.active ? 'true' : undefined" :style="segment.style">
                       {{ segment.text }}
                     </span>
                   </template>
@@ -1041,11 +916,8 @@ onBeforeUnmount(() => {
 
           <div class="ssh-preview-dialog__footer-spacer" />
 
-          <button
-            type="button"
-            class="ssh-preview-dialog__footer-segment ssh-preview-dialog__footer-segment--button"
-            @click="isWrapped = !isWrapped"
-          >
+          <button type="button" class="ssh-preview-dialog__footer-segment ssh-preview-dialog__footer-segment--button"
+            @click="isWrapped = !isWrapped">
             <span aria-hidden="true" class="icon-[lucide--text-wrap]" />
             <span>换行 {{ isWrapped ? '开' : '关' }}</span>
           </button>
@@ -1607,6 +1479,7 @@ onBeforeUnmount(() => {
 }
 
 @media (prefers-reduced-motion: reduce) {
+
   .ssh-preview-dialog,
   .ssh-preview-dialog * {
     transition-duration: 0ms;

@@ -8,6 +8,7 @@
 @import './assets/css/tailwind.css';
 @import 'markstream-vue/index.css';
 @import 'tw-animate-css';
+@plugin '@iconify/tailwind4';
 
 @custom-variant dark (&:is(.dark *));
 
@@ -59,7 +60,7 @@
 
   --color-chrome-950: #0d1117;
   --color-chrome-900: #151b23;
-  --color-chrome-800: #FAFAFA;
+  --color-chrome-800: #fafafa;
   --color-chrome-700: #262c36;
   --color-chrome-600: #3d444d;
 

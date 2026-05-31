@@ -1,12 +1,6 @@
 <script setup lang="ts">
 import { computed, type HTMLAttributes, type VNode } from 'vue';
 import { cn } from '@/lib/utils';
-import FileTextIcon from '~icons/lucide/file-text';
-import GlobeIcon from '~icons/lucide/globe';
-import ImageIcon from '~icons/lucide/image';
-import Music2Icon from '~icons/lucide/music2';
-import PaperclipIcon from '~icons/lucide/paperclip';
-import VideoIcon from '~icons/lucide/video';
 import { useAttachmentContext } from './context';
 import type { TAttachmentMediaCategory } from './types';
 
@@ -29,13 +23,13 @@ const showVideo = computed(
   () => mediaCategory.value === 'video' && data.value.type === 'file' && Boolean(fileUrl.value),
 );
 
-const iconMap: Record<TAttachmentMediaCategory, typeof ImageIcon> = {
-  image: ImageIcon,
-  video: VideoIcon,
-  audio: Music2Icon,
-  source: GlobeIcon,
-  document: FileTextIcon,
-  unknown: PaperclipIcon,
+const iconMap: Record<TAttachmentMediaCategory, string> = {
+  image: 'icon-[lucide--image]',
+  video: 'icon-[lucide--video]',
+  audio: 'icon-[lucide--music-2]',
+  source: 'icon-[lucide--globe]',
+  document: 'icon-[lucide--file-text]',
+  unknown: 'icon-[lucide--paperclip]',
 };
 
 const iconComponent = computed(() => iconMap[mediaCategory.value]);
@@ -45,38 +39,18 @@ const imageAlt = computed(
 </script>
 
 <template>
-  <div
-    :class="cn(
-      'flex shrink-0 items-center justify-center overflow-hidden',
-      variant === 'grid' && 'size-full bg-muted',
-      variant === 'inline' && 'size-5 rounded bg-background',
-      variant === 'list' && 'size-12 rounded bg-muted',
-      props.class,
-    )"
-    v-bind="$attrs"
-  >
-    <img
-      v-if="showImage"
-      :alt="imageAlt"
-      :class="isGrid ? 'size-full object-cover' : 'size-full rounded object-cover'"
-      :height="isGrid ? 96 : 20"
-      :src="fileUrl"
-      :width="isGrid ? 96 : 20"
-      loading="lazy"
-      decoding="async"
-      draggable="false"
-    >
-    <video
-      v-else-if="showVideo"
-      class="size-full object-cover"
-      muted
-      :src="fileUrl"
-    />
+  <div :class="cn(
+    'flex shrink-0 items-center justify-center overflow-hidden',
+    variant === 'grid' && 'size-full bg-muted',
+    variant === 'inline' && 'size-5 rounded bg-background',
+    variant === 'list' && 'size-12 rounded bg-muted',
+    props.class,
+  )" v-bind="$attrs">
+    <img v-if="showImage" :alt="imageAlt" :class="isGrid ? 'size-full object-cover' : 'size-full rounded object-cover'"
+      :height="isGrid ? 96 : 20" :src="fileUrl" :width="isGrid ? 96 : 20" loading="lazy" decoding="async"
+      draggable="false">
+    <video v-else-if="showVideo" class="size-full object-cover" muted :src="fileUrl" />
     <component :is="props.fallbackIcon" v-else-if="props.fallbackIcon" />
-    <component
-      :is="iconComponent"
-      v-else
-      :class="cn(iconSize, 'text-muted-foreground')"
-    />
+    <span v-else :class="cn(iconComponent, iconSize, 'text-muted-foreground')" />
   </div>
 </template>

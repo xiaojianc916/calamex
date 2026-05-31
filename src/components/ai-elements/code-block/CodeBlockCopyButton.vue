@@ -4,8 +4,6 @@ import type { HTMLAttributes } from 'vue';
 import { computed, onBeforeUnmount, ref } from 'vue';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import CheckIcon from '~icons/lucide/check';
-import CopyIcon from '~icons/lucide/copy';
 import { useCodeBlockContext } from './context';
 
 interface IProps {
@@ -33,7 +31,7 @@ const { code } = useCodeBlockContext();
 const isCopied = ref(false);
 let resetTimer: ReturnType<typeof setTimeout> | undefined;
 
-const icon = computed(() => (isCopied.value ? CheckIcon : CopyIcon));
+const icon = computed(() => (isCopied.value ? 'icon-[lucide--check]' : 'icon-[lucide--copy]'));
 
 async function copyToClipboard(): Promise<void> {
   if (typeof window === 'undefined' || !navigator?.clipboard?.writeText) {
@@ -66,16 +64,10 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <Button
-    data-slot="code-block-copy-button"
-    v-bind="delegatedProps"
-    :class="cn('shrink-0', props.class)"
-    size="icon"
-    variant="ghost"
-    @click="copyToClipboard"
-  >
+  <Button data-slot="code-block-copy-button" v-bind="delegatedProps" :class="cn('shrink-0', props.class)" size="icon"
+    variant="ghost" @click="copyToClipboard">
     <slot>
-      <component :is="icon" :size="14" />
+      <span :class="[icon, 'size-3.5']" />
     </slot>
   </Button>
 </template>

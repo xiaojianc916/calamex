@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import type { FunctionalComponent, SVGAttributes } from 'vue';
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import {
   type IPhase,
@@ -8,216 +7,117 @@ import {
   TEMPLATE_PHASES,
   type TPhaseId,
 } from '@/components/workbench/run-sidebar/templateCatalog';
-import AlertTriangle from '~icons/lucide/alert-triangle';
-import ArrowDownAZ from '~icons/lucide/arrow-down-a-z';
-import ArrowLeftRight from '~icons/lucide/arrow-left-right';
-import ArrowRight from '~icons/lucide/arrow-right';
-import ArrowUpAZ from '~icons/lucide/arrow-up-a-z';
-import ArrowUpDown from '~icons/lucide/arrow-up-down';
-import Asterisk from '~icons/lucide/asterisk';
-import AtSign from '~icons/lucide/at-sign';
-import Ban from '~icons/lucide/ban';
-import Bell from '~icons/lucide/bell';
-import BellRing from '~icons/lucide/bell-ring';
-import BookOpen from '~icons/lucide/book-open';
-import Braces from '~icons/lucide/braces';
-import Brackets from '~icons/lucide/brackets';
-import Brush from '~icons/lucide/brush';
-import Bug from '~icons/lucide/bug';
-import Calendar from '~icons/lucide/calendar';
-import CalendarClock from '~icons/lucide/calendar-clock';
-import CalendarMinus from '~icons/lucide/calendar-minus';
-import ChartBar from '~icons/lucide/chart-bar';
-import Check from '~icons/lucide/check';
-import ChevronRight from '~icons/lucide/chevron-right';
-import Clock from '~icons/lucide/clock';
-import CodeXml from '~icons/lucide/code-xml';
-import Combine from '~icons/lucide/combine';
-import Cone from '~icons/lucide/cone';
-import Copy from '~icons/lucide/copy';
-import Cpu from '~icons/lucide/cpu';
-import Database from '~icons/lucide/database';
-import Equal from '~icons/lucide/equal';
-import EyeOff from '~icons/lucide/eye-off';
-import File from '~icons/lucide/file';
-import FileCheck from '~icons/lucide/file-check';
-import FileClock from '~icons/lucide/file-clock';
-import FileCode from '~icons/lucide/file-code';
-import FilePlus from '~icons/lucide/file-plus';
-import FileSearch from '~icons/lucide/file-search';
-import FileText from '~icons/lucide/file-text';
-import FileX from '~icons/lucide/file-x';
-import Filter from '~icons/lucide/filter';
-import Flag from '~icons/lucide/flag';
-import Folder from '~icons/lucide/folder';
-import FolderX from '~icons/lucide/folder-x';
-import GitBranch from '~icons/lucide/git-branch';
-import GitBranchPlus from '~icons/lucide/git-branch-plus';
-import GitFork from '~icons/lucide/git-fork';
-import Globe from '~icons/lucide/globe';
-import Grid3x3 from '~icons/lucide/grid-3x3';
-import HardDrive from '~icons/lucide/hard-drive';
-import Hash from '~icons/lucide/hash';
-import HelpCircle from '~icons/lucide/help-circle';
-import Info from '~icons/lucide/info';
-import Key from '~icons/lucide/key';
-import Layers from '~icons/lucide/layers';
-import List from '~icons/lucide/list';
-import ListOrdered from '~icons/lucide/list-ordered';
-import Loader from '~icons/lucide/loader';
-import Lock from '~icons/lucide/lock';
-import LogOut from '~icons/lucide/log-out';
-import Mail from '~icons/lucide/mail';
-import MessageCircle from '~icons/lucide/message-circle';
-import MessageSquare from '~icons/lucide/message-square';
-import Monitor from '~icons/lucide/monitor';
-import MousePointer from '~icons/lucide/mouse-pointer';
-import OctagonAlert from '~icons/lucide/octagon-alert';
-import Package from '~icons/lucide/package';
-import Plug from '~icons/lucide/plug';
-import RefreshCw from '~icons/lucide/refresh-cw';
-import Repeat from '~icons/lucide/repeat';
-import Replace from '~icons/lucide/replace';
-import Rocket from '~icons/lucide/rocket';
-import RotateCw from '~icons/lucide/rotate-cw';
-import Ruler from '~icons/lucide/ruler';
-import Save from '~icons/lucide/save';
-import Scissors from '~icons/lucide/scissors';
-// ── UI Chrome 图标 ──
-import Search from '~icons/lucide/search';
-import Send from '~icons/lucide/send';
-import Settings from '~icons/lucide/settings';
-import Shield from '~icons/lucide/shield';
-import ShieldCheck from '~icons/lucide/shield-check';
-import Skull from '~icons/lucide/skull';
-import SquareTerminal from '~icons/lucide/square-terminal';
-// ── 类别 / 片段图标（按需映射） ──
-import Star from '~icons/lucide/star';
-import Table2 from '~icons/lucide/table-2';
-import Tag from '~icons/lucide/tag';
-import Terminal from '~icons/lucide/terminal';
-import TestTube from '~icons/lucide/test-tube';
-import TextCursorInput from '~icons/lucide/text-cursor-input';
-import TimerOff from '~icons/lucide/timer-off';
-import Trash2 from '~icons/lucide/trash-2';
-import Type from '~icons/lucide/type';
-import Undo2 from '~icons/lucide/undo-2';
-import UserCheck from '~icons/lucide/user-check';
-import Webhook from '~icons/lucide/webhook';
-import Wrench from '~icons/lucide/wrench';
 
 // ═══════════════════════════════════════════════
-// 图标映射
+// 图标映射（值为 Tailwind mask 类名）
 // ═══════════════════════════════════════════════
-type IconComponent = FunctionalComponent<SVGAttributes>;
-
-const iconMap: Record<string, IconComponent> = {
+const iconMap: Record<string, string> = {
   // 类别图标
-  star: Star,
-  clock: Clock,
-  rocket: Rocket,
-  'book-open': BookOpen,
-  terminal: Terminal,
-  settings: Settings,
-  'shield-check': ShieldCheck,
-  lock: Lock,
-  type: Type,
-  braces: Braces,
-  calendar: Calendar,
-  database: Database,
-  'message-square': MessageSquare,
-  list: List,
-  loader: Loader,
-  'file-text': FileText,
-  'git-branch': GitBranch,
-  folder: Folder,
-  'file-search': FileSearch,
-  cpu: Cpu,
-  globe: Globe,
-  'bar-chart-2': ChartBar,
-  bell: Bell,
-  'alert-triangle': AlertTriangle,
-  'trash-2': Trash2,
-  'log-out': LogOut,
-  bug: Bug,
-  shield: Shield,
-  'test-tube': TestTube,
+  star: 'icon-[lucide--star]',
+  clock: 'icon-[lucide--clock]',
+  rocket: 'icon-[lucide--rocket]',
+  'book-open': 'icon-[lucide--book-open]',
+  terminal: 'icon-[lucide--terminal]',
+  settings: 'icon-[lucide--settings]',
+  'shield-check': 'icon-[lucide--shield-check]',
+  lock: 'icon-[lucide--lock]',
+  type: 'icon-[lucide--type]',
+  braces: 'icon-[lucide--braces]',
+  calendar: 'icon-[lucide--calendar]',
+  database: 'icon-[lucide--database]',
+  'message-square': 'icon-[lucide--message-square]',
+  list: 'icon-[lucide--list]',
+  loader: 'icon-[lucide--loader]',
+  'file-text': 'icon-[lucide--file-text]',
+  'git-branch': 'icon-[lucide--git-branch]',
+  folder: 'icon-[lucide--folder]',
+  'file-search': 'icon-[lucide--file-search]',
+  cpu: 'icon-[lucide--cpu]',
+  globe: 'icon-[lucide--globe]',
+  'bar-chart-2': 'icon-[lucide--chart-bar]', // ChartBar
+  bell: 'icon-[lucide--bell]',
+  'alert-triangle': 'icon-[lucide--alert-triangle]',
+  'trash-2': 'icon-[lucide--trash-2]',
+  'log-out': 'icon-[lucide--log-out]',
+  bug: 'icon-[lucide--bug]',
+  shield: 'icon-[lucide--shield]',
+  'test-tube': 'icon-[lucide--test-tube]',
   // 片段图标
-  info: Info,
-  'rotate-cw': RotateCw,
-  'refresh-cw': RefreshCw,
-  hash: Hash,
-  tag: Tag,
-  'help-circle': HelpCircle,
-  flag: Flag,
-  'arrow-right': ArrowRight,
-  key: Key,
-  layers: Layers,
-  file: File,
-  search: Search,
-  package: Package,
-  monitor: Monitor,
-  'user-check': UserCheck,
-  'hard-drive': HardDrive,
-  scissors: Scissors,
-  'arrow-down-az': ArrowDownAZ,
-  'arrow-up-az': ArrowUpAZ,
-  replace: Replace,
-  'text-cursor-input': TextCursorInput,
-  'at-sign': AtSign,
-  brackets: Brackets,
-  repeat: Repeat,
-  'git-branch-plus': GitBranchPlus,
-  combine: Combine,
-  'calendar-minus': CalendarMinus,
-  'calendar-clock': CalendarClock,
-  filter: Filter,
-  wrench: Wrench,
-  'arrow-left-right': ArrowLeftRight,
-  'mouse-pointer': MousePointer,
-  'chevron-right': ChevronRight,
-  'list-ordered': ListOrdered,
-  'octagon-alert': OctagonAlert,
-  save: Save,
-  'timer-off': TimerOff,
-  'git-fork': GitFork,
-  'file-check': FileCheck,
-  'file-plus': FilePlus,
-  'file-clock': FileClock,
-  'file-x': FileX,
-  copy: Copy,
-  ruler: Ruler,
-  table: Table2,
-  'arrow-up-down': ArrowUpDown,
-  cone: Cone,
-  ban: Ban,
-  send: Send,
-  plug: Plug,
-  mail: Mail,
-  webhook: Webhook,
-  'message-circle': MessageCircle,
-  'bell-ring': BellRing,
-  skull: Skull,
-  asterisk: Asterisk,
-  broom: Brush,
-  'folder-x': FolderX,
-  'undo-2': Undo2,
-  code: CodeXml,
-  'terminal-square': SquareTerminal,
-  'eye-off': EyeOff,
-  equal: Equal,
-  'grid-3x3': Grid3x3,
-  'file-code': FileCode,
-  check: Check,
-  'shield-alert': AlertTriangle,
-  regex: Brackets, // 用 Brackets 近似
-  'text-cursor': TextCursorInput,
-  'bar-chart': ChartBar,
-  pipeline: File, // 用 File 近似
+  info: 'icon-[lucide--info]',
+  'rotate-cw': 'icon-[lucide--rotate-cw]',
+  'refresh-cw': 'icon-[lucide--refresh-cw]',
+  hash: 'icon-[lucide--hash]',
+  tag: 'icon-[lucide--tag]',
+  'help-circle': 'icon-[lucide--help-circle]',
+  flag: 'icon-[lucide--flag]',
+  'arrow-right': 'icon-[lucide--arrow-right]',
+  key: 'icon-[lucide--key]',
+  layers: 'icon-[lucide--layers]',
+  file: 'icon-[lucide--file]',
+  search: 'icon-[lucide--search]',
+  package: 'icon-[lucide--package]',
+  monitor: 'icon-[lucide--monitor]',
+  'user-check': 'icon-[lucide--user-check]',
+  'hard-drive': 'icon-[lucide--hard-drive]',
+  scissors: 'icon-[lucide--scissors]',
+  'arrow-down-az': 'icon-[lucide--arrow-down-a-z]', // 路径是 a-z
+  'arrow-up-az': 'icon-[lucide--arrow-up-a-z]', // 路径是 a-z
+  replace: 'icon-[lucide--replace]',
+  'text-cursor-input': 'icon-[lucide--text-cursor-input]',
+  'at-sign': 'icon-[lucide--at-sign]',
+  brackets: 'icon-[lucide--brackets]',
+  repeat: 'icon-[lucide--repeat]',
+  'git-branch-plus': 'icon-[lucide--git-branch-plus]',
+  combine: 'icon-[lucide--combine]',
+  'calendar-minus': 'icon-[lucide--calendar-minus]',
+  'calendar-clock': 'icon-[lucide--calendar-clock]',
+  filter: 'icon-[lucide--filter]',
+  wrench: 'icon-[lucide--wrench]',
+  'arrow-left-right': 'icon-[lucide--arrow-left-right]',
+  'mouse-pointer': 'icon-[lucide--mouse-pointer]',
+  'chevron-right': 'icon-[lucide--chevron-right]',
+  'list-ordered': 'icon-[lucide--list-ordered]',
+  'octagon-alert': 'icon-[lucide--octagon-alert]',
+  save: 'icon-[lucide--save]',
+  'timer-off': 'icon-[lucide--timer-off]',
+  'git-fork': 'icon-[lucide--git-fork]',
+  'file-check': 'icon-[lucide--file-check]',
+  'file-plus': 'icon-[lucide--file-plus]',
+  'file-clock': 'icon-[lucide--file-clock]',
+  'file-x': 'icon-[lucide--file-x]',
+  copy: 'icon-[lucide--copy]',
+  ruler: 'icon-[lucide--ruler]',
+  table: 'icon-[lucide--table-2]', // Table2
+  'arrow-up-down': 'icon-[lucide--arrow-up-down]',
+  cone: 'icon-[lucide--cone]',
+  ban: 'icon-[lucide--ban]',
+  send: 'icon-[lucide--send]',
+  plug: 'icon-[lucide--plug]',
+  mail: 'icon-[lucide--mail]',
+  webhook: 'icon-[lucide--webhook]',
+  'message-circle': 'icon-[lucide--message-circle]',
+  'bell-ring': 'icon-[lucide--bell-ring]',
+  skull: 'icon-[lucide--skull]',
+  asterisk: 'icon-[lucide--asterisk]',
+  broom: 'icon-[lucide--brush]', // Brush
+  'folder-x': 'icon-[lucide--folder-x]',
+  'undo-2': 'icon-[lucide--undo-2]',
+  code: 'icon-[lucide--code-xml]', // CodeXml
+  'terminal-square': 'icon-[lucide--square-terminal]', // SquareTerminal
+  'eye-off': 'icon-[lucide--eye-off]',
+  equal: 'icon-[lucide--equal]',
+  'grid-3x3': 'icon-[lucide--grid-3x3]',
+  'file-code': 'icon-[lucide--file-code]',
+  check: 'icon-[lucide--check]',
+  'shield-alert': 'icon-[lucide--alert-triangle]', // 近似
+  regex: 'icon-[lucide--brackets]', // 近似
+  'text-cursor': 'icon-[lucide--text-cursor-input]', // 近似
+  'bar-chart': 'icon-[lucide--chart-bar]', // ChartBar
+  pipeline: 'icon-[lucide--file]', // 近似
 };
 
-function getIcon(name: string): IconComponent {
-  return iconMap[name] ?? FileCode;
+function getIcon(name: string): string {
+  return iconMap[name] ?? 'icon-[lucide--file-code]';
 }
 
 // ═══════════════════════════════════════════════
@@ -385,21 +285,16 @@ onBeforeUnmount(() => {
 <template>
   <section class="template-sidebar" aria-label="Shell 片段库">
     <!-- ═══ Header ═══ -->
-<div class="template-header">
-  <div class="template-title-row">
-    
-  </div>
+    <div class="template-header">
+      <div class="template-title-row">
 
-  <div class="template-search-row">
-    <Search class="template-search-icon" />
-    <input
-      ref="searchInputRef"
-      v-model="searchQuery"
-      type="text"
-      placeholder="搜索触发词或描述"
-    />
-  </div>
-</div>
+      </div>
+
+      <div class="template-search-row">
+        <span class="icon-[lucide--search] template-search-icon" />
+        <input ref="searchInputRef" v-model="searchQuery" type="text" placeholder="搜索触发词或描述" />
+      </div>
+    </div>
 
     <!-- ═══ 树形列表 ═══ -->
     <div class="template-scroll">
@@ -409,32 +304,19 @@ onBeforeUnmount(() => {
           <span>横切 · Cross-cutting</span>
         </div>
         <!-- 阶段标签 -->
-        <div
-          v-else
-          class="template-phase-label"
-          :style="{ '--phase-c': phase.color }"
-        >
+        <div v-else class="template-phase-label" :style="{ '--phase-c': phase.color }">
           <span class="template-phase-dot"></span>
           {{ phase.label }}
         </div>
 
         <!-- 类别列表 -->
-        <div
-          v-for="(cat, catIdx) in phase.categories"
-          :key="`${phase.id}-${catIdx}`"
-          class="template-cat"
-          :class="{
-            'template-cat--open': isCategoryOpen(phase.id, catIdx),
-          }"
-          :style="{ '--phase-c': phase.color }"
-        >
-          <button
-            class="template-cat-row"
-            @click="toggleCategory(phase.id, catIdx)"
-          >
-            <ChevronRight class="template-chev" />
+        <div v-for="(cat, catIdx) in phase.categories" :key="`${phase.id}-${catIdx}`" class="template-cat" :class="{
+          'template-cat--open': isCategoryOpen(phase.id, catIdx),
+        }" :style="{ '--phase-c': phase.color }">
+          <button class="template-cat-row" @click="toggleCategory(phase.id, catIdx)">
+            <span class="icon-[lucide--chevron-right] template-chev" />
             <span class="template-cat-icon">
-              <component :is="getIcon(cat.icon)" class="template-cat-svg" />
+              <span :class="[getIcon(cat.icon), 'template-cat-svg']" />
             </span>
             <span class="template-cat-name">
               {{ cat.name }}
@@ -445,29 +327,17 @@ onBeforeUnmount(() => {
 
           <!-- 片段列表 -->
           <div class="template-snips">
-            <div
-              v-for="item in cat.items"
-              :key="`${phase.id}-${catIdx}-${item.trigger}`"
-              class="template-snip"
-              @click="handleSnippetClick(item)"
-            >
-              <component :is="getIcon(item.icon)" class="template-snip-ic" />
+            <div v-for="item in cat.items" :key="`${phase.id}-${catIdx}-${item.trigger}`" class="template-snip"
+              @click="handleSnippetClick(item)">
+              <span :class="[getIcon(item.icon), 'template-snip-ic']" />
               <span class="template-snip-trigger">{{ item.trigger }}</span>
               <span class="template-snip-desc">{{ item.description }}</span>
               <span class="template-snip-actions">
-                <button
-                  class="template-snip-btn"
-                  title="插入到光标"
-                  @click.stop="handleSnippetClick(item)"
-                >
-                  <span class="icon-[lucide--plus] template-snip-btn-svg"  />
+                <button class="template-snip-btn" title="插入到光标" @click.stop="handleSnippetClick(item)">
+                  <span class="icon-[lucide--plus] template-snip-btn-svg" />
                 </button>
-                <button
-                  class="template-snip-btn"
-                  title="更多"
-                  @click.stop="openContextMenu($event, item)"
-                >
-                  <span class="icon-[lucide--more-horizontal] template-snip-btn-svg"  />
+                <button class="template-snip-btn" title="更多" @click.stop="openContextMenu($event, item)">
+                  <span class="icon-[lucide--more-horizontal] template-snip-btn-svg" />
                 </button>
               </span>
             </div>
@@ -478,44 +348,39 @@ onBeforeUnmount(() => {
 
     <!-- ═══ 右键菜单 ═══ -->
     <Teleport to="body">
-      <div
-        id="template-context-menu"
-        class="template-menu"
-        :class="{ 'template-menu--on': contextMenuOpen }"
-        :style="{
-          left: contextMenuPos.x + 'px',
-          top: contextMenuPos.y + 'px',
-        }"
-      >
+      <div id="template-context-menu" class="template-menu" :class="{ 'template-menu--on': contextMenuOpen }" :style="{
+        left: contextMenuPos.x + 'px',
+        top: contextMenuPos.y + 'px',
+      }">
         <button class="template-menu-item" @click="handleMenuAction('insert')">
-          <span class="icon-[lucide--plus] template-menu-icon"  />
+          <span class="icon-[lucide--plus] template-menu-icon" />
           插入到光标
           <span class="template-menu-kbd">↵</span>
         </button>
         <button class="template-menu-item" @click="handleMenuAction('copy-trigger')">
-          <Copy class="template-menu-icon" />
+          <span class="icon-[lucide--copy] template-menu-icon" />
           复制触发词
         </button>
         <button class="template-menu-item" @click="handleMenuAction('copy-code')">
-          <Copy class="template-menu-icon" />
+          <span class="icon-[lucide--copy] template-menu-icon" />
           复制完整代码
         </button>
         <div class="template-menu-sep"></div>
         <button class="template-menu-item" @click="handleMenuAction('pin')">
-          <span class="icon-[lucide--pin] template-menu-icon"  />
+          <span class="icon-[lucide--pin] template-menu-icon" />
           钉到收藏
         </button>
         <button class="template-menu-item" @click="handleMenuAction('view')">
-          <span class="icon-[lucide--eye] template-menu-icon"  />
+          <span class="icon-[lucide--eye] template-menu-icon" />
           在编辑器中查看
         </button>
         <button class="template-menu-item" @click="handleMenuAction('edit')">
-          <span class="icon-[lucide--pencil] template-menu-icon"  />
+          <span class="icon-[lucide--pencil] template-menu-icon" />
           编辑片段
         </button>
         <div class="template-menu-sep"></div>
         <button class="template-menu-item template-menu-item--danger" @click="handleMenuAction('delete')">
-          <Trash2 class="template-menu-icon" />
+          <span class="icon-[lucide--trash-2] template-menu-icon" />
           删除
         </button>
       </div>
@@ -524,7 +389,7 @@ onBeforeUnmount(() => {
     <!-- ═══ Toast ═══ -->
     <Teleport to="body">
       <div class="template-toast" :class="{ 'template-toast--on': toastVisible }">
-        <Check class="template-toast-icon" />
+        <span class="icon-[lucide--check] template-toast-icon" />
         <span>{{ toastMessage }}</span>
       </div>
     </Teleport>
@@ -739,7 +604,7 @@ onBeforeUnmount(() => {
   transition: transform 140ms ease;
 }
 
-.template-cat--open > .template-cat-row .template-chev {
+.template-cat--open>.template-cat-row .template-chev {
   transform: rotate(90deg);
 }
 
@@ -792,11 +657,11 @@ onBeforeUnmount(() => {
   position: relative;
 }
 
-.template-cat--open > .template-snips {
+.template-cat--open>.template-snips {
   display: block;
 }
 
-.template-cat--open > .template-snips::before {
+.template-cat--open>.template-snips::before {
   content: "";
   position: absolute;
   left: 27px;
@@ -1047,6 +912,7 @@ onBeforeUnmount(() => {
 
 /* ── 动效减弱 ── */
 @media (prefers-reduced-motion: reduce) {
+
   .template-search-row,
   .template-chev,
   .template-cat-row,
