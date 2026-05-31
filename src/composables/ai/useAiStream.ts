@@ -1,11 +1,6 @@
 import { computed, getCurrentScope, onScopeDispose, ref } from 'vue';
-import { splitTextGraphemes } from '@/utils/text-preview';
 
 type TAiStreamStatus = 'idle' | 'streaming' | 'completed' | 'cancelled';
-
-type TFrameHandle =
-  | { kind: 'raf'; id: number }
-  | { kind: 'timeout'; id: ReturnType<typeof setTimeout> };
 
 export interface IUseAiStreamOptions {
   messageId?: string;
@@ -15,166 +10,25 @@ export interface IAiStreamStartOptions {
   messageId?: string;
 }
 
-const DEFAULT_FRAME_MS = 16.7;
-const MAX_FRAME_DELTA_MS = 50;
-const BASE_GRAPHEMES_PER_SECOND = 42;
-const MAX_GRAPHEMES_PER_SECOND = 180;
-const BACKLOG_ACCELERATION_PER_GRAPHEME = 2.5;
-const BACKLOG_ACCELERATION_START = 12;
-
+/**
+ * AI 流式文本累加器。
+ *
+ * 平滑流式输出（逐字渐进显示）已交由 markstream-vue 内置的 smoothStreaming 能力处理，
+ * 因此这里不再手写 requestAnimationFrame 逐字素节流，只负责：
+ * - 维护流式状态机（idle/streaming/completed/cancelled）；
+ * - 把原始增量内容直接累加成完整文本，再由渲染层平滑呈现。
+ *
+ * 对外暴露的 API 与此前保持一致，避免影响上层调用方（如 useAiAssistant）。
+ */
 export const useAiStream = (options: IUseAiStreamOptions = {}) => {
   void options;
 
   const content = ref('');
   const status = ref<TAiStreamStatus>('idle');
-  const bufferedGraphemeCount = ref(0);
-  const maxBufferedGraphemeCount = ref(0);
-
-  let pendingText = '';
-  let frameHandle: TFrameHandle | null = null;
-  let isFrameScheduled = false;
-  let lastFrameTimestamp: number | null = null;
-  let pacingBudgetRemainder = 0;
-
-  const countBufferedText = (text: string): number => splitTextGraphemes(text).length;
-
-  const updateBufferMetrics = (): void => {
-    bufferedGraphemeCount.value = countBufferedText(pendingText);
-    maxBufferedGraphemeCount.value = Math.max(
-      maxBufferedGraphemeCount.value,
-      bufferedGraphemeCount.value,
-    );
-  };
-
-  const cancelFrame = (): void => {
-    if (frameHandle?.kind === 'raf') {
-      globalThis.cancelAnimationFrame?.(frameHandle.id);
-    }
-
-    if (frameHandle?.kind === 'timeout') {
-      clearTimeout(frameHandle.id);
-    }
-
-    frameHandle = null;
-    isFrameScheduled = false;
-  };
-
-  const flushPendingText = (): void => {
-    if (!pendingText) {
-      return;
-    }
-
-    content.value += pendingText;
-    pendingText = '';
-    pacingBudgetRemainder = 0;
-    updateBufferMetrics();
-  };
-
-  const getFrameElapsedMs = (timestamp: number): number => {
-    const elapsed = lastFrameTimestamp === null ? DEFAULT_FRAME_MS : timestamp - lastFrameTimestamp;
-    lastFrameTimestamp = timestamp;
-
-    if (!Number.isFinite(elapsed) || elapsed <= 0) {
-      return DEFAULT_FRAME_MS;
-    }
-
-    return Math.min(elapsed, MAX_FRAME_DELTA_MS);
-  };
-
-  const getPacingRate = (bufferedCount: number): number => {
-    const backlog = Math.max(0, bufferedCount - BACKLOG_ACCELERATION_START);
-    return Math.min(
-      MAX_GRAPHEMES_PER_SECOND,
-      BASE_GRAPHEMES_PER_SECOND + backlog * BACKLOG_ACCELERATION_PER_GRAPHEME,
-    );
-  };
-
-  const drainPendingTextByFrame = (timestamp: number): void => {
-    if (!pendingText) {
-      pacingBudgetRemainder = 0;
-      return;
-    }
-
-    const graphemes = splitTextGraphemes(pendingText);
-    if (graphemes.length === 0) {
-      pendingText = '';
-      updateBufferMetrics();
-      return;
-    }
-
-    const elapsedMs = getFrameElapsedMs(timestamp);
-    const nextBudget =
-      pacingBudgetRemainder + getPacingRate(graphemes.length) * (elapsedMs / 1_000);
-    const drainCount = Math.min(graphemes.length, Math.max(1, Math.floor(nextBudget)));
-    pacingBudgetRemainder = Math.max(0, nextBudget - drainCount);
-    content.value += graphemes.slice(0, drainCount).join('');
-    pendingText = graphemes.slice(drainCount).join('');
-    updateBufferMetrics();
-  };
-
-  const resetPacingState = (): void => {
-    cancelFrame();
-    pendingText = '';
-    lastFrameTimestamp = null;
-    pacingBudgetRemainder = 0;
-    bufferedGraphemeCount.value = 0;
-  };
-
-  const releaseFrame = (timestamp: number): void => {
-    frameHandle = null;
-    isFrameScheduled = false;
-
-    if (status.value !== 'streaming') {
-      return;
-    }
-
-    drainPendingTextByFrame(timestamp);
-
-    if (pendingText) {
-      scheduleFrame();
-    } else {
-      lastFrameTimestamp = null;
-      pacingBudgetRemainder = 0;
-    }
-  };
-
-  function scheduleFrame(): void {
-    if (isFrameScheduled) {
-      return;
-    }
-
-    isFrameScheduled = true;
-    let didRunSynchronously = false;
-
-    if (typeof globalThis.requestAnimationFrame === 'function') {
-      const frameId = globalThis.requestAnimationFrame((timestamp) => {
-        didRunSynchronously = true;
-        releaseFrame(timestamp);
-      });
-
-      if (!didRunSynchronously) {
-        frameHandle = {
-          kind: 'raf',
-          id: frameId,
-        };
-      }
-
-      return;
-    }
-
-    frameHandle = {
-      kind: 'timeout',
-      id: setTimeout(() => {
-        releaseFrame(Date.now());
-      }, DEFAULT_FRAME_MS),
-    };
-  }
 
   const start = (startOptions: Readonly<IAiStreamStartOptions> = {}): void => {
     void startOptions;
-    resetPacingState();
     content.value = '';
-    maxBufferedGraphemeCount.value = 0;
     status.value = 'streaming';
   };
 
@@ -183,14 +37,11 @@ export const useAiStream = (options: IUseAiStreamOptions = {}) => {
       return;
     }
 
-    pendingText += chunk;
-    updateBufferMetrics();
-    scheduleFrame();
+    content.value += chunk;
   };
 
   const flushNow = (): void => {
-    cancelFrame();
-    flushPendingText();
+    // 内容始终保持最新，无需冲刷缓冲；保留方法以兼容既有调用方。
   };
 
   const complete = (): void => {
@@ -198,26 +49,25 @@ export const useAiStream = (options: IUseAiStreamOptions = {}) => {
       return;
     }
 
-    flushNow();
     status.value = 'completed';
   };
 
   const stop = (): void => {
-    flushNow();
     status.value = 'cancelled';
   };
 
   if (getCurrentScope()) {
     onScopeDispose(() => {
-      resetPacingState();
+      content.value = '';
+      status.value = 'idle';
     });
   }
 
   return {
     content,
-    bufferedGraphemeCount: computed(() => bufferedGraphemeCount.value),
+    bufferedGraphemeCount: computed(() => 0),
     isStreaming: computed(() => status.value === 'streaming'),
-    maxBufferedGraphemeCount: computed(() => maxBufferedGraphemeCount.value),
+    maxBufferedGraphemeCount: computed(() => 0),
     status: computed(() => status.value),
     start,
     append,

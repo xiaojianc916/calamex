@@ -64,7 +64,6 @@ const renderContent = computed(() => normalizeAiMath(props.content));
 const isFinal = computed(
   () => props.streamStatus !== 'streaming' && props.streamStatus !== 'waiting-confirmation',
 );
-const shouldFadeStreamDeltas = computed(() => props.streamStatus === 'streaming');
 const rendererId = computed(() => `ai-message-${props.messageId}`);
 
 const stopCodeBlockMapping = watch(
@@ -92,7 +91,8 @@ onBeforeUnmount(() => {
       :custom-id="rendererId"
       :final="isFinal"
       :defer-nodes-until-visible="false"
-      :fade="shouldFadeStreamDeltas"
+      :smooth-streaming="true"
+      :fade="false"
       :max-live-nodes="320"
       :live-node-buffer="80"
       :initial-render-batch-size="64"
