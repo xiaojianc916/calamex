@@ -18,38 +18,47 @@ import type { IAgentRuntimeInput } from './contracts/runtime-input.js';
 
 
 export class MastraRuntimeValidation extends MastraRuntimePlan {
-    async validatePlan(
+    protected async preparePlanAgentRun(
         input: IAgentRuntimeInput,
-        options: IAgentRuntimeRunOptions = {},
-    ): Promise<IAgentRuntimeResponse> {
-        const sessionId = input.sessionId ?? createSessionId('mastra-plan-validate');
-        const events: TAgentRuntimeOutputEvent[] = [];
+        sessionId: string,
+        events: TAgentRuntimeOutputEvent[],
+        options: IAgentRuntimeRunOptions,
+        runIdPrefix: string,
+        missingPlanMessage: string,
+    ) {
         const planId = toNonEmptyString(input.planId);
         const planVersion = input.planVersion;
 
         if (!planId || !Number.isInteger(planVersion) || Number(planVersion) <= 0) {
-            return createErrorResponse(
-                sessionId,
-                '计划验证需要 planId 和 planVersion。',
-                events,
-                options,
-            );
+            return {
+                ok: false as const,
+                response: createErrorResponse(
+                    sessionId,
+                    missingPlanMessage,
+                    events,
+                    options,
+                ),
+            };
         }
 
         const modelConfig = resolveMastraModelConfig(this.readModelConfig, input.modelConfig);
 
         if (!modelConfig) {
-            return createErrorResponse(
-                sessionId,
-                'AI 模型未配置：请在 Node sidecar 环境设置 AGENT_SIDECAR_MODEL 与 AGENT_SIDECAR_API_KEY。',
-                events,
-                options,
-            );
+            return {
+                ok: false as const,
+                response: createErrorResponse(
+                    sessionId,
+                    'AI 模型未配置：请在 Node sidecar 环境设置 AGENT_SIDECAR_MODEL 与 AGENT_SIDECAR_API_KEY。',
+                    events,
+                    options,
+                ),
+            };
         }
 
+        const version = Number(planVersion);
         const record = await this.planStore.getPlan({
             planId,
-            version: Number(planVersion),
+            version,
         });
         let workflow = await this.planWorkflowStore.createForPlan({ record });
         if (record.status !== 'pending_approval' && record.status !== 'rejected') {
@@ -57,21 +66,13 @@ export class MastraRuntimeValidation extends MastraRuntimePlan {
         }
         const workflowEvents = await this.planWorkflowStore.listEvents({
             planId,
-            version: Number(planVersion),
+            version,
         });
         const memoryInput: IAgentRuntimeInput = {
             ...input,
             threadId: input.threadId ?? record.threadId,
         };
-        const {
-            bundle: mcpBundle,
-            tools: mastraTools,
-            hasTools,
-            toolStats,
-            mcpGatewayMetrics,
-            workspace,
-            browser,
-        } = await loadMastraMcpTools(
+        const toolBundle = await loadMastraMcpTools(
             this.mcpGatewayPool,
             input.workspaceRootPath,
             this.loggerRef,
@@ -79,12 +80,80 @@ export class MastraRuntimeValidation extends MastraRuntimePlan {
             'readonly',
             memoryInput,
         );
-        const requestedRunId = options.context?.requestId ?? createSessionId('mastra-plan-validator-run');
+        const requestedRunId = options.context?.requestId ?? createSessionId(runIdPrefix);
         const memory = createMastraMemoryReference(
             createMastraMemoryScope(memoryInput, sessionId, { resourceScope: 'session' }),
         );
         const agentMemory = createMastraMemoryForModel(modelConfig);
         const payloadEventSink = createDeepSeekPayloadEventSink(events, options);
+
+        return {
+            ok: true as const,
+            planId,
+            version,
+            modelConfig,
+            record,
+            workflow,
+            workflowEvents,
+            toolBundle,
+            requestedRunId,
+            memory,
+            agentMemory,
+            payloadEventSink,
+        };
+    }
+
+    protected async finalizePlanAgentRun(
+        sessionId: string,
+        requestedRunId: string,
+        toolBundle: Awaited<ReturnType<typeof loadMastraMcpTools>>,
+    ): Promise<void> {
+        evictDeepSeekReasoningByPrefix(createDeepSeekReasoningRunPrefix(sessionId, requestedRunId));
+        await toolBundle.bundle.disconnectAll();
+        await destroyMastraWorkspace(toolBundle.workspace);
+        await destroyMastraBrowser(toolBundle.browser);
+    }
+
+    async validatePlan(
+        input: IAgentRuntimeInput,
+        options: IAgentRuntimeRunOptions = {},
+    ): Promise<IAgentRuntimeResponse> {
+        const sessionId = input.sessionId ?? createSessionId('mastra-plan-validate');
+        const events: TAgentRuntimeOutputEvent[] = [];
+        const prepared = await this.preparePlanAgentRun(
+            input,
+            sessionId,
+            events,
+            options,
+            'mastra-plan-validator-run',
+            '计划验证需要 planId 和 planVersion。',
+        );
+
+        if (!prepared.ok) {
+            return prepared.response;
+        }
+
+        const {
+            planId,
+            version,
+            modelConfig,
+            record,
+            workflow,
+            workflowEvents,
+            toolBundle,
+            requestedRunId,
+            memory,
+            agentMemory,
+            payloadEventSink,
+        } = prepared;
+        const {
+            tools: mastraTools,
+            hasTools,
+            toolStats,
+            mcpGatewayMetrics,
+            workspace,
+            browser,
+        } = toolBundle;
 
         try {
             return await runWithDeepSeekReasoningContext({
@@ -167,7 +236,7 @@ export class MastraRuntimeValidation extends MastraRuntimePlan {
 
                 const projectedWorkflow = await this.planWorkflowStore.reportValidator({
                     planId,
-                    version: Number(planVersion),
+                    version,
                     report,
                 });
                 const result = report.needsReplan
@@ -199,10 +268,7 @@ export class MastraRuntimeValidation extends MastraRuntimePlan {
                 options,
             );
         } finally {
-            evictDeepSeekReasoningByPrefix(createDeepSeekReasoningRunPrefix(sessionId, requestedRunId));
-            await mcpBundle.disconnectAll();
-            await destroyMastraWorkspace(workspace);
-            await destroyMastraBrowser(browser);
+            await this.finalizePlanAgentRun(sessionId, requestedRunId, toolBundle);
         }
     }
 
@@ -212,67 +278,40 @@ export class MastraRuntimeValidation extends MastraRuntimePlan {
     ): Promise<IAgentRuntimeResponse> {
         const sessionId = input.sessionId ?? createSessionId('mastra-plan-replan');
         const events: TAgentRuntimeOutputEvent[] = [];
-        const planId = toNonEmptyString(input.planId);
-        const planVersion = input.planVersion;
+        const prepared = await this.preparePlanAgentRun(
+            input,
+            sessionId,
+            events,
+            options,
+            'mastra-plan-replanner-run',
+            '重新规划需要 planId 和 planVersion。',
+        );
 
-        if (!planId || !Number.isInteger(planVersion) || Number(planVersion) <= 0) {
-            return createErrorResponse(
-                sessionId,
-                '重新规划需要 planId 和 planVersion。',
-                events,
-                options,
-            );
+        if (!prepared.ok) {
+            return prepared.response;
         }
 
-        const modelConfig = resolveMastraModelConfig(this.readModelConfig, input.modelConfig);
-
-        if (!modelConfig) {
-            return createErrorResponse(
-                sessionId,
-                'AI 模型未配置：请在 Node sidecar 环境设置 AGENT_SIDECAR_MODEL 与 AGENT_SIDECAR_API_KEY。',
-                events,
-                options,
-            );
-        }
-
-        const record = await this.planStore.getPlan({
-            planId,
-            version: Number(planVersion),
-        });
-        let workflow = await this.planWorkflowStore.createForPlan({ record });
-        if (record.status !== 'pending_approval' && record.status !== 'rejected') {
-            workflow = await this.planWorkflowStore.approvePlan(record);
-        }
-        const workflowEvents = await this.planWorkflowStore.listEvents({
-            planId,
-            version: Number(planVersion),
-        });
-        const memoryInput: IAgentRuntimeInput = {
-            ...input,
-            threadId: input.threadId ?? record.threadId,
-        };
         const {
-            bundle: mcpBundle,
+            planId,
+            version,
+            modelConfig,
+            record,
+            workflow,
+            workflowEvents,
+            toolBundle,
+            requestedRunId,
+            memory,
+            agentMemory,
+            payloadEventSink,
+        } = prepared;
+        const {
             tools: mastraTools,
             hasTools,
             toolStats,
             mcpGatewayMetrics,
             workspace,
             browser,
-        } = await loadMastraMcpTools(
-            this.mcpGatewayPool,
-            input.workspaceRootPath,
-            this.loggerRef,
-            input.context ?? [],
-            'readonly',
-            memoryInput,
-        );
-        const requestedRunId = options.context?.requestId ?? createSessionId('mastra-plan-replanner-run');
-        const memory = createMastraMemoryReference(
-            createMastraMemoryScope(memoryInput, sessionId, { resourceScope: 'session' }),
-        );
-        const agentMemory = createMastraMemoryForModel(modelConfig);
-        const payloadEventSink = createDeepSeekPayloadEventSink(events, options);
+        } = toolBundle;
 
         try {
             return await runWithDeepSeekReasoningContext({
@@ -377,7 +416,7 @@ export class MastraRuntimeValidation extends MastraRuntimePlan {
                 });
                 await this.planWorkflowStore.issueReplan({
                     planId,
-                    version: Number(planVersion),
+                    version,
                     toVersion: nextRecord.version,
                     delta,
                 });
@@ -402,10 +441,7 @@ export class MastraRuntimeValidation extends MastraRuntimePlan {
                 options,
             );
         } finally {
-            evictDeepSeekReasoningByPrefix(createDeepSeekReasoningRunPrefix(sessionId, requestedRunId));
-            await mcpBundle.disconnectAll();
-            await destroyMastraWorkspace(workspace);
-            await destroyMastraBrowser(browser);
+            await this.finalizePlanAgentRun(sessionId, requestedRunId, toolBundle);
         }
     }
 }
