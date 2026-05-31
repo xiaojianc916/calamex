@@ -6,6 +6,7 @@ import {
   aiConversationLegacyPersistSchema,
   aiConversationPersistSchema,
 } from '@/types/ai/conversation.schema';
+import { createUniqueId } from '@/utils/id';
 import { getAiConversationPersistStorage } from './plugins/debouncedPersistStorage';
 
 // ---------------------------------------------------------------------------
@@ -59,8 +60,7 @@ interface IAiConversationPersistShape {
 // Pure helpers
 // ---------------------------------------------------------------------------
 
-const createThreadId = (): string =>
-  `ai-thread-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+const createThreadId = (): string => createUniqueId('ai-thread');
 
 const normalizeHydratedMessage = (message: IAiChatMessage): IAiChatMessage => {
   if (message.stream?.status !== 'streaming') return message;
@@ -348,8 +348,8 @@ export const useAiConversationStore = defineStore(
     };
 
     /**
-     * 注: 语义是「删除当前 active thread 并新建一个空 thread 顶替」,
-     * 不是「清空当前 thread 的消息」。 (与原实现一致, 此处保留以免破坏调用方。)
+     * 注: 语义是《删除当前 active thread 并新建一个空 thread 顶替》,
+     * 不是《清空当前 thread 的消息》。 (与原实现一致, 此处保留以免破坏调用方。)
      */
     const clearActiveThread = (): void => {
       const currentThread = activeThread.value;
