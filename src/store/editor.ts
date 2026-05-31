@@ -21,6 +21,7 @@ import type {
 import type { IGitDiffPreviewPayload } from '@/types/git';
 import type { TSessionSnapshot, TSessionWorkbenchState } from '@/types/session';
 import { computeDocumentMetrics } from '@/utils/document-metrics';
+import { createUniqueId } from '@/utils/id';
 import { formatFileSystemTextForDisplay, normalizeFileSystemPath } from '@/utils/path';
 import { DEFAULT_EXECUTOR, DEFAULT_SCRIPT } from '@/utils/templates';
 
@@ -123,20 +124,6 @@ const createEmptyScriptAnalysis = (): IAnalyzeScriptPayload => ({
 // ---------------------------------------------------------------------------
 // ID generation
 // ---------------------------------------------------------------------------
-
-let idSequence = 0;
-
-const createUniqueId = (prefix: string): string => {
-  const cryptoRef =
-    typeof globalThis !== 'undefined' ? (globalThis as { crypto?: Crypto }).crypto : undefined;
-  if (cryptoRef && typeof cryptoRef.randomUUID === 'function') {
-    return `${prefix}-${cryptoRef.randomUUID()}`;
-  }
-  idSequence += 1;
-  return `${prefix}-${Date.now().toString(36)}-${idSequence.toString(36)}-${Math.random()
-    .toString(36)
-    .slice(2, 10)}`;
-};
 
 const createDocumentId = (): string => createUniqueId('document');
 const createLogId = (): string => createUniqueId('log');

@@ -105,15 +105,6 @@ type TTimeSnapshot = z.infer<typeof timeSnapshotSchema>;
 type TCurrentTimeInput = z.infer<typeof currentTimeBaseInputSchema>;
 type TConvertTimeInput = z.infer<typeof convertTimeBaseInputSchema>;
 
-interface IDateTimeParts {
-  year: number;
-  month: number;
-  day: number;
-  hour: number;
-  minute: number;
-  second: number;
-}
-
 interface IParsedClockTime {
   hour: number;
   minute: number;
@@ -127,28 +118,7 @@ export interface IMastraTimeToolOptions {
 
 const normalizeUnicodeText = (value: string): string => value.normalize('NFKC').trim();
 
-const dateTimeFormatterCache = new Map<string, Intl.DateTimeFormat>();
 const weekdayFormatterCache = new Map<string, Intl.DateTimeFormat>();
-
-const createDateTimeFormatter = (timezone: string): Intl.DateTimeFormat => {
-  const cached = dateTimeFormatterCache.get(timezone);
-  if (cached) {
-    return cached;
-  }
-  const created = new Intl.DateTimeFormat('en-CA', {
-    timeZone: timezone,
-    hour12: false,
-    hourCycle: 'h23',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  });
-  dateTimeFormatterCache.set(timezone, created);
-  return created;
-};
 
 const createWeekdayFormatter = (timezone: string): Intl.DateTimeFormat => {
   const cached = weekdayFormatterCache.get(timezone);
@@ -192,84 +162,32 @@ const resolveTimezone = (value: string | undefined, fallbackTimezone: string): s
 const parseCurrentTimeInput = (value: unknown): TCurrentTimeInput => currentTimeNormalizedInputSchema.parse(value);
 const parseConvertTimeInput = (value: unknown): TConvertTimeInput => convertTimeNormalizedInputSchema.parse(value);
 
-const getDateTimeParts = (date: Date, timezone: string): IDateTimeParts => {
-  const parts = createDateTimeFormatter(timezone).formatToParts(date);
-  const values: Partial<IDateTimeParts> = {};
-  for (const part of parts) {
-    if (part.type === 'year' || part.type === 'month' || part.type === 'day'
-      || part.type === 'hour' || part.type === 'minute' || part.type === 'second') {
-      values[part.type] = Number(part.value);
-    }
-  }
-  if (
-    values.year === undefined
-    || values.month === undefined
-    || values.day === undefined
-    || values.hour === undefined
-    || values.minute === undefined
-    || values.second === undefined
-  ) {
-    throw new Error(`无法读取时区 ${timezone} 的日期时间。`);
-  }
-  return {
-    year: values.year,
-    month: values.month,
-    day: values.day,
-    hour: values.hour,
-    minute: values.minute,
-    second: values.second,
-  };
-};
+const NANOSECONDS_PER_MINUTE = 60_000_000_000;
 
-const getTimezoneOffsetMinutes = (date: Date, timezone: string): number => {
-  const parts = getDateTimeParts(date, timezone);
-  const zonedTimestamp = Date.UTC(
-    parts.year,
-    parts.month - 1,
-    parts.day,
-    parts.hour,
-    parts.minute,
-    parts.second,
-  );
-  return Math.round((zonedTimestamp - date.getTime()) / 60_000);
-};
+const formatZonedDateTime = (zonedDateTime: Temporal.ZonedDateTime): string =>
+  zonedDateTime.toString({ smallestUnit: 'second', timeZoneName: 'never' });
 
-const formatTimezoneOffset = (offsetMinutes: number): string => {
-  const sign = offsetMinutes >= 0 ? '+' : '-';
-  const absoluteMinutes = Math.abs(offsetMinutes);
-  const hours = Math.floor(absoluteMinutes / 60);
-  const minutes = absoluteMinutes % 60;
-  return `${sign}${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
-};
-
-const isDaylightSavingTime = (date: Date, timezone: string): boolean => {
-  const zoned = getDateTimeParts(date, timezone);
-  const januaryOffset = getTimezoneOffsetMinutes(
-    new Date(Date.UTC(zoned.year, 0, 1, 12, 0, 0)),
-    timezone,
-  );
-  const julyOffset = getTimezoneOffsetMinutes(
-    new Date(Date.UTC(zoned.year, 6, 1, 12, 0, 0)),
-    timezone,
-  );
+const isDaylightSavingTime = (zonedDateTime: Temporal.ZonedDateTime): boolean => {
+  const timezone = zonedDateTime.timeZoneId;
+  const januaryOffset = Temporal.ZonedDateTime
+    .from({ timeZone: timezone, year: zonedDateTime.year, month: 1, day: 1, hour: 12 })
+    .offsetNanoseconds;
+  const julyOffset = Temporal.ZonedDateTime
+    .from({ timeZone: timezone, year: zonedDateTime.year, month: 7, day: 1, hour: 12 })
+    .offsetNanoseconds;
   if (januaryOffset === julyOffset) {
     return false;
   }
-  const currentOffset = getTimezoneOffsetMinutes(date, timezone);
-  return currentOffset === Math.max(januaryOffset, julyOffset);
+  return zonedDateTime.offsetNanoseconds === Math.max(januaryOffset, julyOffset);
 };
 
-const createTimeSnapshot = (date: Date, timezone: string): TTimeSnapshot => {
-  const parts = getDateTimeParts(date, timezone);
-  const offsetMinutes = getTimezoneOffsetMinutes(date, timezone);
-  return {
-    timezone,
-    datetime: `${String(parts.year).padStart(4, '0')}-${String(parts.month).padStart(2, '0')}-${String(parts.day).padStart(2, '0')}T${String(parts.hour).padStart(2, '0')}:${String(parts.minute).padStart(2, '0')}:${String(parts.second).padStart(2, '0')}${formatTimezoneOffset(offsetMinutes)}`,
-    day_of_week: createWeekdayFormatter(timezone).format(date),
-    is_dst: isDaylightSavingTime(date, timezone),
-    unix_epoch_ms: date.getTime(),
-  };
-};
+const createTimeSnapshot = (zonedDateTime: Temporal.ZonedDateTime): TTimeSnapshot => ({
+  timezone: zonedDateTime.timeZoneId,
+  datetime: formatZonedDateTime(zonedDateTime),
+  day_of_week: createWeekdayFormatter(zonedDateTime.timeZoneId).format(new Date(zonedDateTime.epochMilliseconds)),
+  is_dst: isDaylightSavingTime(zonedDateTime),
+  unix_epoch_ms: zonedDateTime.epochMilliseconds,
+});
 
 const parseClockTime = (value: string): IParsedClockTime => {
   const normalized = normalizeUnicodeText(value);
@@ -316,50 +234,6 @@ const parseIsoDate = (value: string): IParsedIsoDate => {
   return { year, month, day };
 };
 
-const createUtcTimestampFromParts = (parts: IDateTimeParts): number => Date.UTC(
-  parts.year,
-  parts.month - 1,
-  parts.day,
-  parts.hour,
-  parts.minute,
-  parts.second,
-);
-
-const hasSameDateTimeParts = (left: IDateTimeParts, right: IDateTimeParts): boolean => (
-  left.year === right.year
-  && left.month === right.month
-  && left.day === right.day
-  && left.hour === right.hour
-  && left.minute === right.minute
-  && left.second === right.second
-);
-
-const zonedDateTimeToDate = (parts: IDateTimeParts, timezone: string): Date => {
-  let candidateTimestamp = createUtcTimestampFromParts(parts);
-  let lastGapMinutes = 0;
-  for (let index = 0; index < 4; index += 1) {
-    const candidate = new Date(candidateTimestamp);
-    const candidateParts = getDateTimeParts(candidate, timezone);
-    if (hasSameDateTimeParts(candidateParts, parts)) {
-      return candidate;
-    }
-    const deltaMs = createUtcTimestampFromParts(parts) - createUtcTimestampFromParts(candidateParts);
-    lastGapMinutes = Math.round(deltaMs / 60_000);
-    candidateTimestamp += deltaMs;
-  }
-  const finalCandidate = new Date(candidateTimestamp);
-  if (!hasSameDateTimeParts(getDateTimeParts(finalCandidate, timezone), parts)) {
-    // 不存在的本地时间通常是 DST spring-forward 跳过的 1 小时
-    const isLikelySpringForwardGap = Math.abs(lastGapMinutes) === 60;
-    const formatted = `${String(parts.year).padStart(4, '0')}-${String(parts.month).padStart(2, '0')}-${String(parts.day).padStart(2, '0')} ${String(parts.hour).padStart(2, '0')}:${String(parts.minute).padStart(2, '0')}`;
-    if (isLikelySpringForwardGap) {
-      throw new Error(`${timezone} 的本地时间 ${formatted} 不存在（夏令时切换跳过的 1 小时）。`);
-    }
-    throw new Error(`无法解析 ${timezone} 中的本地时间 ${formatted}。`);
-  }
-  return finalCandidate;
-};
-
 const formatTimeDifference = (offsetMinutes: number): string => {
   if (offsetMinutes === 0) {
     return '0h';
@@ -394,6 +268,8 @@ export const createMastraTimeTools = (
 ): Record<'get_current_time' | 'convert_time', ReturnType<typeof createTool>> => {
   const now = options.now ?? (() => new Date());
   const localTimezone = resolveLocalTimezone(options.localTimezone ?? process.env.AGENT_MCP_LOCAL_TIMEZONE);
+  const currentZonedDateTime = (timezone: string): Temporal.ZonedDateTime =>
+    Temporal.Instant.fromEpochMilliseconds(now().getTime()).toZonedDateTimeISO(timezone);
   return {
     get_current_time: createTool({
       id: 'get_current_time',
@@ -402,10 +278,7 @@ export const createMastraTimeTools = (
       outputSchema: timeSnapshotSchema,
       execute: async (inputData) => {
         const { timezone } = parseCurrentTimeInput(inputData);
-        return createTimeSnapshot(
-          now(),
-          resolveTimezone(timezone, localTimezone),
-        );
+        return createTimeSnapshot(currentZonedDateTime(resolveTimezone(timezone, localTimezone)));
       },
     }),
     convert_time: createTool({
@@ -418,23 +291,33 @@ export const createMastraTimeTools = (
         const sourceTimezone = resolveTimezone(source_timezone, localTimezone);
         const targetTimezone = resolveTimezone(target_timezone, localTimezone);
         const parsedTime = parseClockTime(time);
-        const baseDateParts = date
+        const baseDate = date
           ? parseIsoDate(date)
           : (() => {
-            const todayInSource = getDateTimeParts(now(), sourceTimezone);
+            const todayInSource = currentZonedDateTime(sourceTimezone).toPlainDate();
             return { year: todayInSource.year, month: todayInSource.month, day: todayInSource.day };
           })();
-        const sourceDate = zonedDateTimeToDate({
-          year: baseDateParts.year,
-          month: baseDateParts.month,
-          day: baseDateParts.day,
+        const sourcePlainDateTime = Temporal.PlainDateTime.from({
+          year: baseDate.year,
+          month: baseDate.month,
+          day: baseDate.day,
           hour: parsedTime.hour,
           minute: parsedTime.minute,
           second: parsedTime.second,
-        }, sourceTimezone);
-        const source = createTimeSnapshot(sourceDate, sourceTimezone);
-        const target = createTimeSnapshot(sourceDate, targetTimezone);
-        const timeDifferenceMinutes = getTimezoneOffsetMinutes(sourceDate, targetTimezone) - getTimezoneOffsetMinutes(sourceDate, sourceTimezone);
+        });
+        // disambiguation 默认 'compatible'：fall-back 重叠取较早的有效瞬间；
+        // spring-forward 跳过的本地时间会被前移，据此判定其不存在。
+        const sourceZonedDateTime = sourcePlainDateTime.toZonedDateTime(sourceTimezone);
+        if (!sourceZonedDateTime.toPlainDateTime().equals(sourcePlainDateTime)) {
+          const formatted = `${String(baseDate.year).padStart(4, '0')}-${String(baseDate.month).padStart(2, '0')}-${String(baseDate.day).padStart(2, '0')} ${String(parsedTime.hour).padStart(2, '0')}:${String(parsedTime.minute).padStart(2, '0')}`;
+          throw new Error(`${sourceTimezone} 的本地时间 ${formatted} 不存在（夏令时切换跳过的 1 小时）。`);
+        }
+        const targetZonedDateTime = sourceZonedDateTime.withTimeZone(targetTimezone);
+        const source = createTimeSnapshot(sourceZonedDateTime);
+        const target = createTimeSnapshot(targetZonedDateTime);
+        const timeDifferenceMinutes = Math.round(
+          (targetZonedDateTime.offsetNanoseconds - sourceZonedDateTime.offsetNanoseconds) / NANOSECONDS_PER_MINUTE,
+        );
         return {
           source,
           target,
