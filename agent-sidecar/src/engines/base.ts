@@ -136,7 +136,7 @@ export class MastraRuntimeBase {
         sessionId: string,
         decodedRequest: { runId: string; toolCallId: string; path?: string | undefined },
     ): Promise<IMastraApprovalExecutionContext | null> {
-        const mode: IAgentRuntimeInput['mode'] = input.planId ? 'agent' : 'agent';
+        const mode: IAgentRuntimeInput['mode'] = 'agent';
         const normalizedInput: IAgentRuntimeInput = {
             mode,
             goal: input.goal?.trim() || '继续当前任务',
