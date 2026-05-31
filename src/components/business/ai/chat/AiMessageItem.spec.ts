@@ -1,8 +1,9 @@
 import { mount } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import AiMessageItem from '@/components/business/ai/chat/AiMessageItem.vue';
-import type { IAiChatMessage } from '@/types/ai';
-import type { TAgentRuntimeEvent } from '@/types/ai/sidecar';
+import type { IAiChatMessage, IAiChatStreamRenderState } from '@/types/ai';
+
+type AiRuntimeEvent = NonNullable<IAiChatStreamRenderState['runtimeEvents']>[number];
 
 const { successMock, errorMock, warningMock, tryWriteClipboardTextMock } = vi.hoisted(() => ({
   successMock: vi.fn(),
@@ -62,7 +63,7 @@ const createMessage = (overrides: Partial<IAiChatMessage>): IAiChatMessage => ({
   ...overrides,
 });
 
-const createRuntimeEvent = (overrides: Partial<TAgentRuntimeEvent>): TAgentRuntimeEvent =>
+const createRuntimeEvent = (overrides: Partial<AiRuntimeEvent>): AiRuntimeEvent =>
   ({
     id: overrides.id ?? 'runtime-event-1',
     type: overrides.type ?? 'agent.reasoning.delta',
@@ -77,7 +78,7 @@ const createRuntimeEvent = (overrides: Partial<TAgentRuntimeEvent>): TAgentRunti
     level: overrides.level ?? 'info',
     text: '我先确认真实工具列表。',
     ...(overrides as object),
-  }) as TAgentRuntimeEvent;
+  }) as AiRuntimeEvent;
 
 describe('AiMessageItem', () => {
   beforeEach(() => {
