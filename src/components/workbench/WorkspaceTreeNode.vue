@@ -14,7 +14,7 @@
       <ExplorerEntryIcon :kind="entry.kind" :path="entry.path" :expanded="shouldShowChildren"
         class="h-4 w-4 shrink-0" />
 
-      <span class="explorer-tree-name">{{ entry.name }}</span>
+      <span class="explorer-tree-name"> entry.name </span>
       <span v-if="showDirtyMarker" class="explorer-tree-meta">M</span>
     </button>
 
@@ -229,8 +229,36 @@ const handleInlineRenameInput = (event: Event): void => {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-strong) 28%, transparent);
 }
 
+/*
+ * 重命名输入框：白色主题，且布局占位与普通文件行保持一致。
+ * 资源管理器面板始终为浅色背景(#fafafa)，因此这里固定使用白底深色文字。
+ * height:20px 配合 margin:-2px，使其在 flex 行内的占位高度为 16px，
+ * 与文件图标(16px)一致，从而行高保持 24px，进入/退出重命名不会跳动。
+ * 使用 box-shadow 作为描边(不影响布局高度)，避免 border 撑高行。
+ */
 .explorer-inline-rename-input {
   flex: 1;
+  width: auto;
   min-width: 0;
+  height: 20px;
+  margin: -2px 0;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 5px;
+  background: #ffffff;
+  color: #1f2328;
+  font-size: 13px;
+  line-height: 20px;
+  box-shadow: 0 0 0 1px rgba(31, 35, 40, 0.18);
+}
+
+.explorer-inline-rename-input:hover {
+  box-shadow: 0 0 0 1px rgba(31, 35, 40, 0.32);
+}
+
+.explorer-inline-rename-input:focus {
+  box-shadow:
+    0 0 0 1px #4493f8,
+    0 0 0 3px rgba(68, 147, 248, 0.2);
 }
 </style>

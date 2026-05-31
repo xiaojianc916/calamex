@@ -96,7 +96,7 @@
 
     <template v-else>
       <div class="border-b border-(--shell-divider) px-3 py-3">
-        <p class="sidebar-section-title">{{ panelMeta.title }}</p>
+        <p class="sidebar-section-title"> panelMeta.title </p>
       </div>
 
       <div class="workbench-scroll-region min-h-0 flex-1 overflow-auto py-2">
@@ -106,13 +106,13 @@
               侧边栏页面
             </p>
             <h3 class="mt-2 text-[13px] font-semibold text-(--text-primary)">
-              {{ panelMeta.headline }}
+               panelMeta.headline 
             </h3>
             <p class="mt-2 text-[12px] leading-6 text-(--text-secondary)">
-              {{ panelMeta.description }}
+               panelMeta.description 
             </p>
             <div class="mt-3 flex items-center gap-2">
-              <Button variant="outline" size="sm">{{ panelMeta.actionLabel }}</Button>
+              <Button variant="outline" size="sm"> panelMeta.actionLabel </Button>
               <span class="text-[11px] text-(--text-quaternary)">交互面板预留位</span>
             </div>
           </section>
@@ -124,9 +124,9 @@
             <div class="mt-3 space-y-2">
               <article v-for="item in panelMeta.items" :key="item.title"
                 class="rounded-lg border border-white/5 bg-white/3 px-3 py-2">
-                <p class="text-[12px] font-medium text-(--text-primary)">{{ item.title }}</p>
+                <p class="text-[12px] font-medium text-(--text-primary)"> item.title </p>
                 <p class="mt-1 text-[11px] leading-5 text-(--text-secondary)">
-                  {{ item.description }}
+                   item.description 
                 </p>
               </article>
             </div>
@@ -907,7 +907,16 @@ const focusInlineRenameInput = async (): Promise<boolean> => {
   }
 
   input.focus();
-  input.select();
+  // 智能选区：仅选中最后一个点之前的文件名（后缀前），方便直接改名。
+  // lastDotIndex > 0 可避免把 .gitignore 这类 dotfile 的整个名字视作后缀，
+  // 这种情况下回退为全选。
+  const currentValue = input.value;
+  const lastDotIndex = currentValue.lastIndexOf('.');
+  if (lastDotIndex > 0) {
+    input.setSelectionRange(0, lastDotIndex);
+  } else {
+    input.select();
+  }
   return true;
 };
 
