@@ -1,3 +1,5 @@
+import { stripWindowsVerbatimPrefix } from "@/utils/path";
+
 /**
  * 根据文件路径或文件名推断编辑器语言 ID。
  * 仅在确认为 shell 脚本时返回 shell,未知类型统一回退为 plaintext。
@@ -92,22 +94,6 @@ const LANGUAGE_BY_EXACT_NAME: Readonly<Record<string, string>> = {
   makefile: "make",
 } as const;
 
-const normalizeWindowsNamespacePath = (value: string): string => {
-  if (value.startsWith("\\\\?\\UNC\\")) {
-    return `\\\\${value.slice("\\\\?\\UNC\\".length)}`;
-  }
-  if (value.startsWith("\\\\?\\") || value.startsWith("\\\\.\\")) {
-    return value.slice("\\\\?\\".length);
-  }
-  if (value.startsWith("//?/UNC/")) {
-    return `//${value.slice("//?/UNC/".length)}`;
-  }
-  if (value.startsWith("//?/") || value.startsWith("//./")) {
-    return value.slice("//?/".length);
-  }
-  return value;
-};
-
 const resolveCandidateFileName = (
   filePath: string | null | undefined,
   fileName: string | null | undefined,
@@ -117,7 +103,7 @@ const resolveCandidateFileName = (
     return "";
   }
 
-  const normalizedPath = normalizeWindowsNamespacePath(candidate);
+  const normalizedPath = stripWindowsVerbatimPrefix(candidate);
   const withoutQuery = normalizedPath.toLowerCase().split(/[?#]/u)[0] ?? "";
   return withoutQuery.split(/[\\/]/u).at(-1) ?? "";
 };
