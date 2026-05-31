@@ -72,8 +72,6 @@ export const zTauriVoid = z
   .union([z.null(), z.undefined(), z.void()])
   .transform(() => undefined as void);
 
-const executorKindSchema = z.enum(['wsl']);
-
 const gitChangeKindSchema = z.enum([
   'added',
   'modified',

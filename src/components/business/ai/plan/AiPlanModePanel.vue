@@ -82,10 +82,6 @@ const runStatusLabel = computed(() => {
   }
 });
 
-const runStatusClass = computed(() =>
-  props.activeRun ? `is-${props.activeRun.status}` : 'is-waiting',
-);
-
 const executionSteps = computed(() => props.activeRun?.steps ?? props.steps);
 
 const completedStepCount = computed(
