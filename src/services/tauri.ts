@@ -318,85 +318,122 @@ interface ISpectaCommandOptions {
   audit?: TIpcAuditLevel;
   input?: unknown;
   measureInput?: (input: Record<string, unknown>) => IPayloadMetrics;
+  errorMap?: TErrorMap; // 新增
 }
 
-const callSpectaCommand = async <T>(
-  options: ISpectaCommandOptions,
-  run: () => Promise<T>,
-): Promise<T> => {
+interface IIpcInstrumentationOptions {
+  command: string;
+  audit: TIpcAuditLevel;
+  idempotent: boolean;
+  timeoutMs: number;
+  signal?: AbortSignal;
+  errorMap: TErrorMap;
+}
+
+interface IIpcInstrumentationContext {
+  traceId: string;
+  timeoutMs: number;
+  shouldAudit: boolean;
+  reportInputBytes: (bytes: number) => void;
+  reportOutputBytes: (bytes: number) => void;
+}
+
+/** IPC 调用统一插桩：集中处理 traceId、审计日志与错误归一化。 */
+const runInstrumentedIpc = async <TResult>(
+  options: IIpcInstrumentationOptions,
+  run: (context: IIpcInstrumentationContext) => Promise<TResult>,
+): Promise<TResult> => {
   const traceId = createTraceId();
   const startedAt = Date.now();
-  const audit = options.audit ?? 'info';
-  const shouldAudit = audit !== 'none';
+  const shouldAudit = options.audit !== 'none';
   let inputBytes = 0;
   let outputBytes = 0;
 
-  if (shouldAudit) {
-    const input = options.input ?? {};
-    const inputMetrics =
-      options.measureInput && input && typeof input === 'object' && !Array.isArray(input)
-        ? options.measureInput(input as Record<string, unknown>)
-        : buildPayloadMetrics(input);
-    inputBytes = inputMetrics.bytes;
-  }
+  const emit = (outcome: 'ok' | 'error', errorCode?: string): void => {
+    if (!shouldAudit) {
+      return;
+    }
+
+    emitIpcLog({
+      timestamp: new Date().toISOString(),
+      level: outcome === 'error' ? 'error' : 'info',
+      scope: 'ipc',
+      event: 'tauri.invoke',
+      traceId,
+      command: options.command,
+      audit: options.audit,
+      idempotent: options.idempotent,
+      durationMs: Date.now() - startedAt,
+      inputBytes,
+      outputBytes,
+      outcome,
+      ...(errorCode ? { errorCode } : {}),
+    });
+  };
+
+  const context: IIpcInstrumentationContext = {
+    traceId,
+    timeoutMs: options.timeoutMs,
+    shouldAudit,
+    reportInputBytes: (bytes) => {
+      inputBytes = bytes;
+    },
+    reportOutputBytes: (bytes) => {
+      outputBytes = bytes;
+    },
+  };
 
   try {
-    if (options.signal?.aborted) {
-      throw createCanceledError(traceId);
-    }
-
-    await assertDesktopRuntime(options.guardHint);
-    const invocation = run();
-    invocation.catch(() => undefined);
-    const output = await raceWithTimeoutAndAbort(invocation, {
-      timeoutMs: options.timeoutMs ?? TAURI_IPC_DEFAULT_TIMEOUT_MS,
-      signal: options.signal,
-      traceId,
-    });
-
-    if (shouldAudit) {
-      outputBytes = buildPayloadMetrics(output).bytes;
-      emitIpcLog({
-        timestamp: new Date().toISOString(),
-        level: 'info',
-        scope: 'ipc',
-        event: 'tauri.invoke',
-        traceId,
-        command: options.command,
-        audit,
-        idempotent: options.idempotent ?? false,
-        durationMs: Date.now() - startedAt,
-        inputBytes,
-        outputBytes,
-        outcome: 'ok',
-      });
-    }
-
-    return output;
+    const result = await run(context);
+    emit('ok');
+    return result;
   } catch (error) {
-    const normalizedError = normalizeIpcError(error, { traceId, errorMap: {} });
-
-    if (shouldAudit) {
-      emitIpcLog({
-        timestamp: new Date().toISOString(),
-        level: 'error',
-        scope: 'ipc',
-        event: 'tauri.invoke',
-        traceId,
-        command: options.command,
-        audit,
-        idempotent: options.idempotent ?? false,
-        durationMs: Date.now() - startedAt,
-        inputBytes,
-        outputBytes,
-        outcome: 'error',
-        errorCode: normalizedError.code,
-      });
-    }
-
+    const normalizedError = normalizeIpcError(error, { traceId, errorMap: options.errorMap });
+    emit('error', normalizedError.code);
     throw normalizedError;
   }
 };
+
+const callSpectaCommand = <T>(options: ISpectaCommandOptions, run: () => Promise<T>): Promise<T> =>
+  runInstrumentedIpc<T>(
+    {
+      command: options.command,
+      audit: options.audit ?? 'info',
+      idempotent: options.idempotent ?? false,
+      timeoutMs: options.timeoutMs ?? TAURI_IPC_DEFAULT_TIMEOUT_MS,
+      signal: options.signal,
+      errorMap: options.errorMap ?? {},
+    },
+    async ({ traceId, timeoutMs, shouldAudit, reportInputBytes, reportOutputBytes }) => {
+      if (shouldAudit) {
+        const input = options.input ?? {};
+        const inputMetrics =
+          options.measureInput && input && typeof input === 'object' && !Array.isArray(input)
+            ? options.measureInput(input as Record<string, unknown>)
+            : buildPayloadMetrics(input);
+        reportInputBytes(inputMetrics.bytes);
+      }
+
+      if (options.signal?.aborted) {
+        throw createCanceledError(traceId);
+      }
+
+      await assertDesktopRuntime(options.guardHint);
+      const invocation = run();
+      invocation.catch(() => undefined);
+      const output = await raceWithTimeoutAndAbort(invocation, {
+        timeoutMs,
+        signal: options.signal,
+        traceId,
+      });
+
+      if (shouldAudit) {
+        reportOutputBytes(buildPayloadMetrics(output).bytes);
+      }
+
+      return output;
+    },
+  );
 
 const invokeTauriCommand = async <T>(
   command: string,
@@ -457,106 +494,38 @@ export const defineIpc = <TInSchema extends z.ZodTypeAny, TOutSchema extends z.Z
 ) => {
   const timeoutMs = options.timeoutMs ?? TAURI_IPC_DEFAULT_TIMEOUT_MS;
   const audit = options.audit ?? 'info';
-  const shouldAudit = audit !== 'none';
   const idempotent = options.idempotent ?? false;
   const errorMap = options.errorMap ?? {};
 
-  return async (
+  return (
     input: z.input<TInSchema>,
     callOptions: IIpcCallOptions = {},
-  ): Promise<z.output<TOutSchema>> => {
-    const traceId = createTraceId();
-    const startedAt = Date.now();
-    let inputMetrics: IPayloadMetrics | null = null;
-    let inputBytes = 0;
-    let outputBytes = 0;
-    const ensureInputMetrics = (): IPayloadMetrics => {
-      if (inputMetrics) {
-        return inputMetrics;
-      }
-
-      inputMetrics = buildPayloadMetrics(input);
-      inputBytes = inputMetrics.bytes;
-      return inputMetrics;
-    };
-
-    try {
-      const normalizedInput = options.inSchema.parse(input);
-      if (shouldAudit) {
-        inputMetrics = options.measureInput
-          ? options.measureInput(normalizedInput)
-          : buildPayloadMetrics(normalizedInput);
-        inputBytes = inputMetrics.bytes;
-      }
-
-      if (callOptions.signal?.aborted) {
-        throw createCanceledError(traceId);
-      }
-
-      await assertDesktopRuntime(options.guardHint);
-
-      const args = options.mapArgs
-        ? options.mapArgs(normalizedInput, { traceId })
-        : normalizeInvokeArgs(normalizedInput);
-
-      const invocation = invokeTauriCommand<unknown>(options.name, args);
-      invocation.catch(() => undefined);
-      const rawOutput = await raceWithTimeoutAndAbort(invocation, {
+  ): Promise<z.output<TOutSchema>> =>
+    runInstrumentedIpc<z.output<TOutSchema>>(
+      {
+        command: options.name,
+        audit,
+        idempotent,
         timeoutMs,
         signal: callOptions.signal,
+        errorMap,
+      },
+      async ({
         traceId,
-      });
-      const parsedOutput = options.outSchema.safeParse(rawOutput);
-      let outputMetrics: IPayloadMetrics | null = null;
-      const ensureOutputMetrics = (): IPayloadMetrics => {
-        if (outputMetrics) {
-          return outputMetrics;
-        }
-
-        outputMetrics = buildPayloadMetrics(rawOutput);
-        outputBytes = outputMetrics.bytes;
-        return outputMetrics;
-      };
-
-      if (!parsedOutput.success) {
-        if (shouldAudit) {
-          ensureOutputMetrics();
-        }
-        const issueSummary = formatZodIssueSummary(parsedOutput.error.issues);
-        throw new AppError({
-          code: 'ipc.contract-violation',
-          message: `IPC 契约不一致(${options.name})，traceId=${traceId}，${issueSummary}`,
-          scope: 'validation',
-          traceId,
-          cause: {
-            issues: parsedOutput.error.issues,
-          },
-        });
-      }
-
-      if (shouldAudit) {
-        ensureOutputMetrics();
-        emitIpcLog({
-          timestamp: new Date().toISOString(),
-          level: 'info',
-          scope: 'ipc',
-          event: 'tauri.invoke',
-          traceId,
-          command: options.name,
-          audit,
-          idempotent,
-          durationMs: Date.now() - startedAt,
-          inputBytes,
-          outputBytes,
-          outcome: 'ok',
-        });
-      }
-
-      return parsedOutput.data;
-    } catch (error) {
-      const normalizedError =
-        error instanceof z.ZodError
-          ? new AppError({
+        timeoutMs: effectiveTimeoutMs,
+        shouldAudit,
+        reportInputBytes,
+        reportOutputBytes,
+      }) => {
+        let normalizedInput: z.output<TInSchema>;
+        try {
+          normalizedInput = options.inSchema.parse(input);
+        } catch (error) {
+          if (error instanceof z.ZodError) {
+            if (shouldAudit) {
+              reportInputBytes(buildPayloadMetrics(input).bytes);
+            }
+            throw new AppError({
               code: 'ipc.input-validation',
               message: `IPC 请求参数无效，已记录 traceId=${traceId}。`,
               scope: 'validation',
@@ -564,31 +533,60 @@ export const defineIpc = <TInSchema extends z.ZodTypeAny, TOutSchema extends z.Z
               cause: {
                 issues: error.issues,
               },
-            })
-          : normalizeIpcError(error, { traceId, errorMap });
+            });
+          }
+          throw error;
+        }
 
-      if (shouldAudit) {
-        inputMetrics ??= ensureInputMetrics();
-        emitIpcLog({
-          timestamp: new Date().toISOString(),
-          level: 'error',
-          scope: 'ipc',
-          event: 'tauri.invoke',
+        if (shouldAudit) {
+          const inputMetrics = options.measureInput
+            ? options.measureInput(normalizedInput)
+            : buildPayloadMetrics(normalizedInput);
+          reportInputBytes(inputMetrics.bytes);
+        }
+
+        if (callOptions.signal?.aborted) {
+          throw createCanceledError(traceId);
+        }
+
+        await assertDesktopRuntime(options.guardHint);
+
+        const args = options.mapArgs
+          ? options.mapArgs(normalizedInput, { traceId })
+          : normalizeInvokeArgs(normalizedInput);
+
+        const invocation = invokeTauriCommand<unknown>(options.name, args);
+        invocation.catch(() => undefined);
+        const rawOutput = await raceWithTimeoutAndAbort(invocation, {
+          timeoutMs: effectiveTimeoutMs,
+          signal: callOptions.signal,
           traceId,
-          command: options.name,
-          audit,
-          idempotent,
-          durationMs: Date.now() - startedAt,
-          inputBytes,
-          outputBytes,
-          outcome: 'error',
-          errorCode: normalizedError.code,
         });
-      }
 
-      throw normalizedError;
-    }
-  };
+        const parsedOutput = options.outSchema.safeParse(rawOutput);
+        if (!parsedOutput.success) {
+          if (shouldAudit) {
+            reportOutputBytes(buildPayloadMetrics(rawOutput).bytes);
+          }
+          const issueSummary = formatZodIssueSummary(parsedOutput.error.issues);
+          throw new AppError({
+            code: 'ipc.contract-violation',
+            message: `IPC 契约不一致(${options.name})，traceId=${traceId}，${issueSummary}`,
+            scope: 'validation',
+            traceId,
+            cause: {
+              issues: parsedOutput.error.issues,
+            },
+          });
+        }
+
+        if (shouldAudit) {
+          reportOutputBytes(buildPayloadMetrics(rawOutput).bytes);
+        }
+
+        return parsedOutput.data;
+      },
+    );
 };
 
 const defineContractIpc = <TInSchema extends z.ZodTypeAny, TOutSchema extends z.ZodTypeAny>(
@@ -1410,7 +1408,7 @@ export const tauriService: ITauriService & {
       {
         command: 'start_workspace_watching',
         guardHint: '启动文件监听',
-        audit: 'read',
+        audit: 'info',,
         input: rootPath,
       },
       () => commands.startWorkspaceWatching(rootPath),
@@ -1422,7 +1420,7 @@ export const tauriService: ITauriService & {
       {
         command: 'stop_workspace_watching',
         guardHint: '停止文件监听',
-        audit: 'read',
+        audit: 'info',,
         input: undefined,
       },
       () => commands.stopWorkspaceWatching(),
