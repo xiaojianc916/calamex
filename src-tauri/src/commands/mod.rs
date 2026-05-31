@@ -13,7 +13,6 @@ pub(crate) mod window_stage;
 pub(crate) mod workspace_fs;
 pub(crate) mod workspace_watcher;
 mod lsp;
-mod wsl_link;
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW_FLAG: u32 = 0x0800_0000;
@@ -86,11 +85,6 @@ pub use workspace_watcher::{
 pub use lsp::{
     lsp_start, lsp_stop, lsp_did_open, lsp_did_change, lsp_did_close,
     lsp_completion, lsp_hover, LspManager, LspDiagnostic, LspCompletionItem, LspHoverResult,
-};
-pub use wsl_link::{
-    check_wsl_link_environment, get_wsl_link_agent_artifact_status, get_wsl_link_status,
-    install_wsl_link_agent, probe_wsl_link_primary, start_wsl_link_agent,
-    start_wsl_link_supervisor, stop_wsl_link_supervisor,
 };
 
 #[cfg(windows)]
