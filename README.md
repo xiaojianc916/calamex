@@ -2,6 +2,14 @@
 
 > 面向 WSL2 的 Shell 脚本编辑器——在 Windows 上以原生体验编写、格式化、诊断并运行 Shell 脚本，执行环境统一由 WSL2 驱动。
 
+![Tauri](https://img.shields.io/badge/Tauri-2-FFC131?logo=tauri&logoColor=white)
+![Vue](https://img.shields.io/badge/Vue-3-4FC08D?logo=vuedotjs&logoColor=white)
+![Rust](https://img.shields.io/badge/Rust-000000?logo=rust&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)
+![pnpm](https://img.shields.io/badge/pnpm-F69220?logo=pnpm&logoColor=white)
+![Platform](https://img.shields.io/badge/Platform-Windows%20%2B%20WSL2-0078D6?logo=windows&logoColor=white)
+![License](https://img.shields.io/badge/License-Private-lightgrey)
+
 Calamex（仓库包名 `sh-editor-desktop`）是一款基于 **Tauri 2 + Vue 3 + CodeMirror 6** 构建的桌面应用。它把现代编辑器体验（多语言高亮、LSP、格式化、诊断、模糊搜索）与 Windows 上的 WSL2 执行环境打通，让你在 Windows 原生窗口中编写与运行 Linux Shell 脚本。
 
 ## ✨ 功能特性
