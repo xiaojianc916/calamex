@@ -30,7 +30,7 @@
         </button>
 
         <button type="button" class="icon-button app-tooltip-target run-panel-action-button" data-tooltip="关闭终端面板"
-          data-tooltip-placement="top" aria-label="关闭终端面板" @click="$emit('hide')">
+          data-tooltip-placement="top" aria-label="关闭终端面板" @click="emit('hide')">
           <span aria-hidden="true" class="icon-[lucide--x]" />
         </button>
       </div>
@@ -59,7 +59,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick } from 'vue';
+import { computed, nextTick, onMounted, watch } from 'vue';
 import { storeToRefs } from 'pinia';
 import EmbeddedTerminal from '@/components/workbench/EmbeddedTerminal.vue';
 import TerminalTabBar from '@/components/workbench/TerminalTabBar.vue';
@@ -81,7 +81,7 @@ const props = defineProps<{
   isMaximized: boolean;
 }>();
 
-defineEmits<{
+const emit = defineEmits<{
   hide: [];
   'terminal-run-chunk': [payload: ITerminalRunChunkPayload];
   'terminal-run-completed': [payload: ITerminalRunCompletedPayload];
@@ -110,7 +110,21 @@ const handleCloseTab = (sessionId: string): void => {
   // 先移除 tab（触发 EmbeddedTerminal 卸载 / detach），再彻底销毁后端会话。
   if (!tabsStore.closeTab(sessionId)) return;
   void nextTick().then(() => registry.dispose(sessionId));
+  // 关掉最后一个 tab → 整个终端界面关闭（交给父级隐藏面板）。
+  if (tabs.value.length === 0) {
+    emit('hide');
+  }
 };
+
+// 终端面板（重新）可见且无任何会话时，补一个首终端，实现“重新启动”。
+const ensureTerminalPresence = (): void => {
+  if (props.visible && tabs.value.length === 0) {
+    tabsStore.ensurePrimaryTab();
+  }
+};
+
+onMounted(ensureTerminalPresence);
+watch(() => props.visible, ensureTerminalPresence);
 
 const runTerminalAction = async (
   task: () => Promise<void>,

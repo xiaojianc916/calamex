@@ -8,14 +8,12 @@
         :class="{ 'is-active': tab.sessionId === activeSessionId }"
         role="tab"
         :aria-selected="tab.sessionId === activeSessionId"
-        :title="tab.title"
         @click="emit('select', tab.sessionId)"
-        @mousedown.middle.prevent="onMiddleClick(tab.sessionId)"
+        @mousedown.middle.prevent="emit('close', tab.sessionId)"
       >
         <span aria-hidden="true" class="terminal-tab-icon icon-[lucide--square-terminal]" />
         <span class="terminal-tab-label" v-text="tab.title" />
         <span
-          v-if="isClosable(tab.sessionId)"
           class="terminal-tab-close"
           role="button"
           aria-label="关闭终端"
@@ -28,9 +26,7 @@
 
     <button
       type="button"
-      class="terminal-tabbar-new icon-button app-tooltip-target"
-      data-tooltip="新建终端 (WSL2)"
-      data-tooltip-placement="top"
+      class="terminal-tabbar-new icon-button"
       aria-label="新建终端"
       @click="emit('new')"
     >
@@ -41,7 +37,6 @@
 
 <script setup lang="ts">
 import type { ITerminalTab } from '@/store/terminalTabs';
-import { DEFAULT_TERMINAL_SESSION_ID } from '@/types/terminal';
 
 defineProps<{
   tabs: ITerminalTab[];
@@ -53,14 +48,6 @@ const emit = defineEmits<{
   close: [sessionId: string];
   new: [];
 }>();
-
-// 主会话（main-terminal）不可关闭。
-const isClosable = (sessionId: string): boolean =>
-  sessionId !== DEFAULT_TERMINAL_SESSION_ID;
-
-const onMiddleClick = (sessionId: string): void => {
-  if (isClosable(sessionId)) emit('close', sessionId);
-};
 </script>
 
 <style scoped>
@@ -77,7 +64,7 @@ const onMiddleClick = (sessionId: string): void => {
   align-items: center;
   gap: 2px;
   min-width: 0;
-  flex: 1;
+  flex: 0 1 auto;
   overflow-x: auto;
   scrollbar-width: none;
 }

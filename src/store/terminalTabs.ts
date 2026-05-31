@@ -12,10 +12,13 @@ export interface ITerminalTab {
  * 终端多会话 tab store。
  *
  * 约定：
- *  - 第一个 tab 固定使用 DEFAULT_TERMINAL_SESSION_ID（'main-terminal'），运行管线
- *    （facade / run-chunk / trackRun）始终路由到该会话，因此该 tab 不可关闭。
- *  - `+` 直接新建一个独立的 WSL2 交互会话（生成新的 sessionId），不弹菜单。
- *  - 关闭 tab 仅从列表移除并切换 active；后端会话的 dispose 由调用方（RunPanel）负责。
+ *  - 不再区分“主会话”：所有 tab 均可点击 × 关闭。
+ *  - 关闭最后一个 tab 后，终端面板由调用方（RunPanel）隐藏。
+ *  - 面板重新开启时调用 ensurePrimaryTab() 补一个首会话。
+ *  - 首会话固定用 DEFAULT_TERMINAL_SESSION_ID（'main-terminal'），以保证运行管线
+ *    （facade / run-chunk / trackRun）始终有归属终端。
+ *  - `+` 直接新建一个独立的 WSL2 交互会话（生成新 sessionId），不弹菜单。
+ *  - 后端会话的 dispose 由调用方（RunPanel）负责。
  */
 export const useTerminalTabsStore = defineStore('terminal-tabs', () => {
   const tabs = ref<ITerminalTab[]>([
@@ -31,10 +34,6 @@ export const useTerminalTabsStore = defineStore('terminal-tabs', () => {
   const activeTab = computed(
     () => tabs.value.find((tab) => tab.sessionId === activeSessionId.value) ?? null,
   );
-
-  /** 主会话（main-terminal）不可关闭，以保证运行管线始终有归属终端。 */
-  const isClosable = (sessionId: string): boolean =>
-    sessionId !== DEFAULT_TERMINAL_SESSION_ID;
 
   const createSessionId = (): string => {
     idSeq += 1;
@@ -59,17 +58,28 @@ export const useTerminalTabsStore = defineStore('terminal-tabs', () => {
     return tab;
   };
 
-  /** 关闭一个 tab（主会话不可关闭）。返回是否真正移除。 */
+  /** 关闭一个 tab（任意 tab 均可关闭）。返回是否真正移除。 */
   const closeTab = (sessionId: string): boolean => {
-    if (!isClosable(sessionId)) return false;
     const index = tabs.value.findIndex((tab) => tab.sessionId === sessionId);
     if (index === -1) return false;
     tabs.value.splice(index, 1);
     if (activeSessionId.value === sessionId) {
       const fallback = tabs.value[index] ?? tabs.value[index - 1] ?? null;
-      activeSessionId.value = fallback?.sessionId ?? DEFAULT_TERMINAL_SESSION_ID;
+      activeSessionId.value = fallback?.sessionId ?? '';
     }
     return true;
+  };
+
+  /**
+   * 终端面板（重新）开启时调用：若当前没有任何 tab，则补一个首会话。
+   * 首会话固定用 DEFAULT_TERMINAL_SESSION_ID，保证运行管线始终有归属终端。
+   */
+  const ensurePrimaryTab = (): void => {
+    if (tabs.value.length > 0) return;
+    creationCount.value = 1;
+    idSeq = 0;
+    tabs.value = [{ sessionId: DEFAULT_TERMINAL_SESSION_ID, title: '终端 1' }];
+    activeSessionId.value = DEFAULT_TERMINAL_SESSION_ID;
   };
 
   const setTabTitle = (sessionId: string, title: string): void => {
@@ -81,10 +91,10 @@ export const useTerminalTabsStore = defineStore('terminal-tabs', () => {
     tabs,
     activeSessionId,
     activeTab,
-    isClosable,
     setActive,
     addTab,
     closeTab,
+    ensurePrimaryTab,
     setTabTitle,
   };
 });
