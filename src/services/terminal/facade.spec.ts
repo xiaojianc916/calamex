@@ -277,13 +277,15 @@ describe('terminal facade suite 1', () => {
   it('terminal facade case 4', async () => {
     const eventBus = new FakeTerminalEventBus();
     const tauri = createTauriMock();
-    let resolveDispatch:
-      | ((value: Awaited<ReturnType<TTerminalFacadeTauri['dispatchScriptToTerminal']>>) => void)
-      | null = null;
+    const dispatchControl: {
+      resolve:
+        | ((value: Awaited<ReturnType<TTerminalFacadeTauri['dispatchScriptToTerminal']>>) => void)
+        | null;
+    } = { resolve: null };
     tauri.dispatchScriptToTerminal = vi.fn(
       (payload) =>
         new Promise((resolve) => {
-          resolveDispatch = resolve;
+          dispatchControl.resolve = resolve;
           void payload;
         }),
     );
@@ -316,10 +318,10 @@ describe('terminal facade suite 1', () => {
       to: 'idle_interactive',
       atMs: 1777104001000,
     });
-    if (!resolveDispatch) {
+    if (!dispatchControl.resolve) {
       throw new Error('dispatchScriptToTerminal 未进入等待返回状态。');
     }
-    resolveDispatch({
+    dispatchControl.resolve({
       sessionId: 'main-terminal',
       cwd: '/workspace',
       commandLine: '/bin/bash /tmp/fast.sh',
