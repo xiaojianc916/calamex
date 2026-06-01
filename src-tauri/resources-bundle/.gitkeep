@@ -1,4 +1,0 @@
-# 占位文件：保证 tauri.conf.json 的 bundle.resources glob (resources-bundle/**/*)
-# 在未运行 prepare-bundle-resources.mjs（plain cargo build / 全新检出）时也能匹配到文件。
-# 真正的随包运行时（node / agent-sidecar / bash-language-server / shellcheck / shfmt）
-# 由 scripts/prepare-bundle-resources.mjs 在打包前生成，不提交到仓库。
