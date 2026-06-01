@@ -160,7 +160,23 @@ const readMarkTime = (name: TStartupMeasureStart): number | null => {
   return entry ? entry.startTime : null;
 };
 
+const shouldEmitStartupLogs = (): boolean => {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+
+  // 默认只在开发模式输出;如需在 release 中定位启动慢问题，可在控制台临时设置:
+  //   window.__CALAMEX_STARTUP_DEBUG__ = true
+  const debugFlag = (window as unknown as { __CALAMEX_STARTUP_DEBUG__?: boolean })
+    .__CALAMEX_STARTUP_DEBUG__;
+  return Boolean(debugFlag) || Boolean(import.meta.env.DEV);
+};
+
 const emitStartupLog = (payload: Record<string, unknown>): void => {
+  if (!shouldEmitStartupLogs()) {
+    return;
+  }
+
   console.info(
     JSON.stringify({
       timestamp: new Date().toISOString(),
@@ -227,7 +243,7 @@ export const reportStartupTimings = (): void => {
     timings,
   });
 
-  if (typeof console.table === 'function') {
+  if (shouldEmitStartupLogs() && typeof console.table === 'function') {
     console.table(timings);
   }
 };
