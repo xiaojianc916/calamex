@@ -198,7 +198,8 @@ async function stageShfmt() {
 		return
 	}
 	const dest = join(stageRoot, shfmtExeName)
-	const url = `https://github.com/mvdan/sh/releases/download/${SHFMT_VERSION}/shfmt_${SHFMT_VERSION}_windows_amd64.exe`
+	const base = "https://github.com/mvdan/sh/releases/download"
+	const url = `${base}/${SHFMT_VERSION}/shfmt_${SHFMT_VERSION}_windows_amd64.exe`
 	try {
 		const response = await fetch(url)
 		if (!response.ok) {
