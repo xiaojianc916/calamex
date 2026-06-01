@@ -64,6 +64,13 @@ const renderContent = computed(() => normalizeAiMath(props.content));
 const isFinal = computed(
   () => props.streamStatus !== 'streaming' && props.streamStatus !== 'waiting-confirmation',
 );
+
+// 流式阶段：把 max-live-nodes 设为 0，关闭虚拟化、启用 markstream 的增量打字渲染器，
+// 这样 smooth-streaming 才能按节奏逐步显示文本，并在结束时等待可见内容追平。
+// 完成后：关闭 smooth-streaming，直接展示完整内容（无需再做节奏控制）。
+// 这样可避免“先显示一点点、结束时再一次性全部弹出”的问题。
+const smoothStreaming = computed(() => !isFinal.value);
+const maxLiveNodes = computed(() => (isFinal.value ? 320 : 0));
 const rendererId = computed(() => `ai-message-${props.messageId}`);
 
 const stopCodeBlockMapping = watch(
@@ -91,9 +98,9 @@ onBeforeUnmount(() => {
       :custom-id="rendererId"
       :final="isFinal"
       :defer-nodes-until-visible="false"
-      :smooth-streaming="true"
+      :smooth-streaming="smoothStreaming"
       :fade="false"
-      :max-live-nodes="320"
+      :max-live-nodes="maxLiveNodes"
       :live-node-buffer="80"
       :initial-render-batch-size="64"
       :render-batch-size="96"

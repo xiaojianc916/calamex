@@ -55,7 +55,7 @@ describe('AiMarkdown rendering', () => {
     expect(wrapper.text()).toContain('done');
   });
 
-  it('开启 markstream 平滑流式输出并关闭与之冲突的淡入动画', async () => {
+  it('流式阶段启用增量打字渲染，完成后关闭平滑流式直接展示完整内容', async () => {
     const wrapper = mount(AiMarkdown, {
       props: {
         messageId: 'm-smooth-stream',
@@ -67,10 +67,12 @@ describe('AiMarkdown rendering', () => {
     await nextTick();
 
     const streamingRenderer = wrapper.getComponent(MarkdownRender);
+    // 流式阶段：开启平滑流式，并通过 max-live-nodes=0 启用增量打字渲染器，
+    // 关闭与高频更新冲突的淡入动画。
     expect(streamingRenderer.props('smoothStreaming')).toBe(true);
     expect(streamingRenderer.props('fade')).toBe(false);
     expect(streamingRenderer.props('typewriter')).toBe(false);
-    expect(streamingRenderer.props('maxLiveNodes')).toBe(320);
+    expect(streamingRenderer.props('maxLiveNodes')).toBe(0);
     expect(streamingRenderer.props('initialRenderBatchSize')).toBe(64);
     expect(streamingRenderer.props('renderBatchSize')).toBe(96);
     expect(streamingRenderer.props('renderBatchDelay')).toBe(0);
@@ -81,7 +83,9 @@ describe('AiMarkdown rendering', () => {
     await nextTick();
 
     const finalRenderer = wrapper.getComponent(MarkdownRender);
-    expect(finalRenderer.props('smoothStreaming')).toBe(true);
+    // 完成后：关闭平滑流式，直接展示完整内容，避免结束时一次性 flush；
+    // 恢复虚拟化（max-live-nodes=320）以应对长文档。
+    expect(finalRenderer.props('smoothStreaming')).toBe(false);
     expect(finalRenderer.props('fade')).toBe(false);
     expect(finalRenderer.props('typewriter')).toBe(false);
     expect(finalRenderer.props('maxLiveNodes')).toBe(320);
