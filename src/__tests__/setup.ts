@@ -21,6 +21,48 @@
 
 import { beforeEach, vi } from 'vitest';
 
+// ── localStorage / sessionStorage 兜底 ──────────────────────────────────────
+// Node ≥22 内置的全局 localStorage 在未传 --localstorage-file 时为 undefined，
+// 且会遮蔽 happy-dom 注入的实现。这里强制装一个内存版，覆盖 globalThis 与 window，
+// 保证 `localStorage.xxx` 与 `window.localStorage.xxx`（含 store/index.ts 的导入期迁移）都可用。
+class MemoryStorage implements Storage {
+  private store = new Map<string, string>();
+  get length(): number {
+    return this.store.size;
+  }
+  clear(): void {
+    this.store.clear();
+  }
+  getItem(key: string): string | null {
+    return this.store.has(key) ? (this.store.get(key) as string) : null;
+  }
+  key(index: number): string | null {
+    return Array.from(this.store.keys())[index] ?? null;
+  }
+  removeItem(key: string): void {
+    this.store.delete(key);
+  }
+  setItem(key: string, value: string): void {
+    this.store.set(key, String(value));
+  }
+}
+
+const installMemoryStorage = (name: 'localStorage' | 'sessionStorage'): void => {
+  const storage = new MemoryStorage();
+  const targets = [globalThis, (globalThis as { window?: unknown }).window];
+  for (const target of targets) {
+    if (!target) continue;
+    Object.defineProperty(target, name, {
+      value: storage,
+      configurable: true,
+      writable: true,
+    });
+  }
+};
+
+installMemoryStorage('localStorage');
+installMemoryStorage('sessionStorage');
+
 // ── @tauri-apps/api/core ────────────────────────────────────────────────────
 
 vi.mock('@tauri-apps/api/core', () => ({
