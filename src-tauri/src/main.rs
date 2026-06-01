@@ -204,6 +204,64 @@ fn disable_webview_default_context_menu<R: tauri::Runtime>(
 ) {
 }
 
+// === 随包资源 ============================================================
+
+/// 打包后把「随包资源」的绝对路径注入进程环境变量，供 sidecar / LSP / shfmt 复用。
+/// 这些解析器（agent_sidecar、commands::lsp、commands::shell_tools）都已支持相应的
+/// 环境变量覆盖，因此无需改动它们即可让生产环境优先使用安装目录内自带的运行时。
+/// 仅在对应文件 / 目录真实存在时设置（开发模式下资源目录不存在则整体跳过），
+/// 且不覆盖用户已显式设置的同名环境变量。
+fn prime_bundled_resource_env<R: tauri::Runtime>(app: &tauri::App<R>) {
+    let Ok(resource_dir) = app.path().resource_dir() else {
+        return;
+    };
+    let bundle = resource_dir.join("resources-bundle");
+    if !bundle.is_dir() {
+        return;
+    }
+
+    let set_if_present = |key: &str, path: std::path::PathBuf, require_dir: bool| {
+        if std::env::var_os(key).is_some() {
+            return;
+        }
+        let exists = if require_dir { path.is_dir() } else { path.is_file() };
+        if exists {
+            std::env::set_var(key, &path);
+        }
+    };
+
+    let node_exe = if cfg!(windows) { "node.exe" } else { "node" };
+    let shellcheck_exe = if cfg!(windows) { "shellcheck.exe" } else { "shellcheck" };
+    let shfmt_exe = if cfg!(windows) { "shfmt.exe" } else { "shfmt" };
+
+    set_if_present(
+        "XIAOJIANC_AGENT_SIDECAR_ROOT",
+        bundle.join("agent-sidecar"),
+        true,
+    );
+    set_if_present(
+        "XIAOJIANC_NODE_EXE",
+        bundle.join("node").join(node_exe),
+        false,
+    );
+    set_if_present(
+        "XIAOJIANC_SHELLCHECK_EXE",
+        bundle.join(shellcheck_exe),
+        false,
+    );
+    set_if_present("SHFMT_BIN", bundle.join(shfmt_exe), false);
+    set_if_present(
+        "XIAOJIANC_LSP_CLI_JS",
+        bundle
+            .join("lsp")
+            .join("node_modules")
+            .join("bash-language-server")
+            .join("out")
+            .join("cli.js"),
+        false,
+    );
+}
+
 // === main ================================================================
 
 fn main() {
@@ -252,6 +310,9 @@ fn main() {
         .setup(move |app| {
             let setup_started_at = Instant::now();
             emit_startup_event("tauri.setup.start", app_started_at);
+
+            // 打包环境：把随包运行时/二进制路径注入环境变量（须在任何 sidecar / LSP 解析前完成）。
+            prime_bundled_resource_env(app);
 
             // 挂载 specta 强类型事件；让前端 events.workspaceFsEvent.listen(...) 拿到 typed payload
             specta_bindings.mount_events(app);
