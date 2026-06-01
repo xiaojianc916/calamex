@@ -5,14 +5,15 @@
         <p class="text-[11px] font-medium uppercase tracking-[0.14em] text-(--text-quaternary)">
           图片预览
         </p>
-        <p class="mt-1 truncate text-[13px] font-medium text-(--text-primary)">
-           props.name 
-        </p>
+        <p
+          class="mt-1 truncate text-[13px] font-medium text-(--text-primary)"
+          v-text="props.name"
+        ></p>
       </div>
       <div class="flex items-center gap-2 text-[11px] text-(--text-quaternary)">
-        <span v-if="assetMeta"> assetMeta.mimeType </span>
-        <span v-if="assetMeta"> formatBytes(assetMeta.byteSize) </span>
-        <span v-if="imageSizeLabel"> imageSizeLabel </span>
+        <span v-if="assetMeta" v-text="assetMeta.mimeType"></span>
+        <span v-if="assetMeta" v-text="formatBytes(assetMeta.byteSize)"></span>
+        <span v-if="imageSizeLabel" v-text="imageSizeLabel"></span>
       </div>
     </div>
 
