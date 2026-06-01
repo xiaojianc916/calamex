@@ -503,13 +503,15 @@ describe('useShellWorkbenchView', () => {
     wrapper.unmount();
   });
 
-  it('切到 AI 主界面后会隐藏终端，且无法再次打开', async () => {
+  it('切到 AI 主界面会保留终端可见状态，且 AI 模式下 openTerminal 不生效', async () => {
+    sessionSnapshotState.workbench.isTerminalVisible = false;
+
     const wrapper = mount(TestHost, {
       props: { onReady: vi.fn() },
     });
     await flushPromises();
 
-    expect(wrapper.vm.isTerminalVisible).toBe(true);
+    expect(wrapper.vm.isTerminalVisible).toBe(false);
 
     await wrapper.vm.handleSelectSidebarView('ai');
 
@@ -557,7 +559,7 @@ describe('useShellWorkbenchView', () => {
 
     expect(wrapper.vm.isEditorMode).toBe(false);
     expect(wrapper.vm.isAiMode).toBe(true);
-    expect(wrapper.vm.isTerminalVisible).toBe(false);
+    expect(wrapper.vm.isTerminalVisible).toBe(true);
 
     wrapper.vm.openEditorMode();
     await flushPromises();
@@ -570,7 +572,7 @@ describe('useShellWorkbenchView', () => {
     await wrapper.vm.handleSelectSidebarView('ai');
 
     expect(wrapper.vm.isAiMode).toBe(true);
-    expect(wrapper.vm.isTerminalVisible).toBe(false);
+    expect(wrapper.vm.isTerminalVisible).toBe(true);
     expect(setWorkbenchPrimaryModeMock).toHaveBeenLastCalledWith('ai');
     expect(appStoreState.workbenchPrimaryMode).toBe('ai');
 
