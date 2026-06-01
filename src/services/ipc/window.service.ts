@@ -1,6 +1,7 @@
 import { z } from 'zod';
-import { commands, type SetWindowBackgroundInput, type WindowStage } from '@/bindings/tauri';
-import { defineIpc, zTauriVoid } from '@/services/tauri.contracts';
+import type { SetWindowBackgroundInput, WindowStage } from '@/bindings/tauri';
+import { defineIpc } from '@/services/tauri';
+import { zTauriVoid } from '@/services/tauri.contracts';
 
 export type TSetWindowBackgroundRequest = Omit<SetWindowBackgroundInput, 'label' | 'a'> &
   Partial<Pick<SetWindowBackgroundInput, 'a'>> & {
@@ -56,14 +57,8 @@ const setWindowBackgroundIpc = defineIpc({
   }),
 });
 
-/**
- * Keeps the native window background in sync with the WebView surface background.
- */
 export const setWindowBackground = (input: TSetWindowBackgroundRequest): Promise<void> =>
   setWindowBackgroundIpc(input);
 
-/**
- * 由 Rust 窗口阶段命令统一收口主窗口显示时机。
- */
 export const applyWindowStage = (input: TWindowStageRequest): Promise<void> =>
   applyWindowStageIpc(input);
