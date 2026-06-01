@@ -104,12 +104,6 @@ const ERROR_PATTERN =
 
 const stripAnsi = (value: string): string => value.replace(ANSI_PATTERN, '');
 
-const getPathLeaf = (value: string | null | undefined): string => getPathBaseName(value);
-
-const getRelativePath = (fullPath: string | null, rootPath: string | null): string | null => {
-  return getRelativeFileSystemPath(fullPath, rootPath);
-};
-
 const normalizeOutput = (value: string): string =>
   stripAnsi(value)
     .replace(/\r\n/g, '\n')
@@ -237,9 +231,9 @@ const resolveSession = (
   runLogs: IRunLogEntry[],
   executor: TExecutorKind,
 ): IStructuredRunSession => {
-  const workspaceLabel = getPathLeaf(workspaceRootPath) || '未打开工作区';
-  const fallbackFileLabel = documentName.trim() || getPathLeaf(documentPath) || '未选择文件';
-  const relativePath = getRelativePath(documentPath, workspaceRootPath);
+  const workspaceLabel = getPathBaseName(workspaceRootPath) || '未打开工作区';
+  const fallbackFileLabel = documentName.trim() || getPathBaseName(documentPath) || '未选择文件';
+  const relativePath = getRelativeFileSystemPath(documentPath, workspaceRootPath);
   const relativeSegments = relativePath ? relativePath.split('/').filter(Boolean) : [];
 
   if (relativeSegments.length === 0) {
