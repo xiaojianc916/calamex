@@ -1089,4 +1089,168 @@ onBeforeUnmount(() => {
                 用户名
               </FieldLabel>
               <Input id="ssh-connect-username" v-model="username" type="text" placeholder="root" autocomplete="off"
-                class="ssh-connect-input" :aria-invalid="Boolean(connectionFieldErrors.username
+                class="ssh-connect-input" :aria-invalid="Boolean(connectionFieldErrors.username)" />
+              <FieldError v-if="connectionFieldErrors.username" :message="connectionFieldErrors.username" />
+            </Field>
+
+            <Field class="ssh-connect-field">
+              <FieldLabel for="ssh-connect-auth-mode" class="ssh-connect-label">
+                认证方式
+              </FieldLabel>
+              <Select :model-value="authMode" @update:model-value="handleAuthModeChange">
+                <SelectTrigger id="ssh-connect-auth-mode" aria-label="选择 SSH 认证方式" class="ssh-connect-select-trigger">
+                  <SelectValue placeholder="选择认证方式" />
+                </SelectTrigger>
+                <SelectContent
+                  class="ssh-connect-select-content data-[state=open]:animate-none data-[state=closed]:animate-none data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-100 data-[state=open]:zoom-in-100 data-[side=bottom]:slide-in-from-top-0 data-[side=left]:slide-in-from-right-0 data-[side=right]:slide-in-from-left-0 data-[side=top]:slide-in-from-bottom-0">
+                  <SelectItem v-for="option in SSH_AUTH_OPTIONS" :key="option.value" :value="option.value"
+                    class="ssh-connect-select-item">
+                     option.label 
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+
+            <Field v-if="authMode === 'key'" class="ssh-connect-field">
+              <FieldLabel for="ssh-connect-identity-path" class="ssh-connect-label">
+                私钥路径
+              </FieldLabel>
+              <Input id="ssh-connect-identity-path" v-model="identityPath" type="text" placeholder="~/.ssh/id_rsa"
+                autocomplete="off" class="ssh-connect-input"
+                :aria-invalid="Boolean(connectionFieldErrors.identityPath)" />
+              <FieldError v-if="connectionFieldErrors.identityPath" :message="connectionFieldErrors.identityPath" />
+            </Field>
+
+            <Field v-else class="ssh-connect-field">
+              <FieldLabel for="ssh-connect-password" class="ssh-connect-label">
+                登录密码
+              </FieldLabel>
+              <div class="ssh-password-input-wrap">
+                <Input id="ssh-connect-password" v-model="password" :type="passwordInputType" placeholder="输入 SSH 登录密码"
+                  autocomplete="current-password" class="ssh-connect-input ssh-connect-input--password"
+                  :aria-invalid="Boolean(connectionFieldErrors.password)" />
+                <button type="button" class="ssh-password-toggle" :aria-label="isPasswordVisible ? '隐藏密码' : '显示密码'"
+                  :title="isPasswordVisible ? '隐藏密码' : '显示密码'" @click="isPasswordVisible = !isPasswordVisible">
+                  <span v-if="isPasswordVisible" aria-hidden="true" class="icon-[lucide--eye]" />
+                  <span v-else aria-hidden="true" class="icon-[lucide--eye-off]" />
+                </button>
+              </div>
+              <FieldError v-if="connectionFieldErrors.password" :message="connectionFieldErrors.password" />
+            </Field>
+          </FieldGroup>
+        </FieldSet>
+
+        <div class="ssh-form-actions">
+          <Button type="submit" class="ssh-connect-action ssh-connect-action--submit" :disabled="isConnecting">
+             isConnecting ? '连接中…' : '连接' 
+          </Button>
+          <Button type="button" variant="outline" class="ssh-connect-action ssh-connect-action--cancel"
+            :disabled="isConnecting" @click="handleCancelConnect">
+            取消
+          </Button>
+        </div>
+
+        <div v-if="connectionStatusText || connectionErrorText" class="ssh-connect-feedback"
+          :class="{ 'is-error': Boolean(connectionErrorText) }" aria-live="polite">
+           connectionErrorText || connectionStatusText 
+        </div>
+      </form>
+
+      <section v-else-if="isDisconnected" class="ssh-empty-state ssh-empty-state--disconnected" aria-label="SSH 未连接状态">
+        <span class="icon-[lucide--server] ssh-empty-icon" aria-hidden="true" />
+
+        <div class="ssh-empty-copy">
+          <div class="ssh-empty-title ssh-empty-title--disconnected">尚未连接到远程主机</div>
+          <div class="ssh-empty-desc ssh-empty-desc--disconnected">
+            连接一台 SSH 服务器后，即可在此浏览文件、上传下载以及管理远程资源。
+          </div>
+        </div>
+
+        <div class="ssh-empty-actions ssh-empty-actions--disconnected">
+          <button type="button"
+            class="ssh-button ssh-button--primary ssh-button--stacked ssh-button--disconnected-primary"
+            @click="openConnectForm">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+              stroke-linejoin="round" aria-hidden="true">
+              <path d="M5 12h14" />
+              <path d="M12 5l7 7-7 7" />
+            </svg>
+            新建连接
+          </button>
+        </div>
+
+        <section class="ssh-recent-section ssh-recent-section--disconnected" aria-label="最近使用 SSH 连接">
+          <div class="ssh-recent-title ssh-recent-title--disconnected">最近使用</div>
+
+          <div v-if="normalizedRecentConnections.length === 0" class="ssh-recent-empty">
+            暂无真实连接记录，可新建连接。
+          </div>
+
+          <button v-for="connection in normalizedRecentConnections" :key="connection.id" type="button"
+            class="ssh-recent-item ssh-recent-item--disconnected" @click="handleSelectRecentConnection(connection)">
+            <span class="ssh-recent-icon ssh-recent-icon--disconnected" aria-hidden="true">
+              <span class="icon-[lucide--clock-3]" />
+            </span>
+
+            <span class="ssh-recent-info">
+              <span class="ssh-recent-name ssh-recent-name--disconnected">
+                 connection.username  @  connection.host 
+              </span>
+            </span>
+
+            <span class="ssh-recent-time ssh-recent-time--disconnected">
+               connection.lastUsedLabel 
+            </span>
+          </button>
+        </section>
+      </section>
+
+      <template v-else>
+        <div v-if="isExplorerActive" class="ssh-path-bar">
+          <Breadcrumb class="ssh-path-breadcrumb" aria-label="远端路径">
+            <BreadcrumbList class="ssh-path-list">
+              <template v-for="(item, index) in sshBreadcrumbItems" :key="item.id">
+                <BreadcrumbItem v-if="item.type === 'ellipsis'">
+                  <DropdownMenu>
+                    <DropdownMenuTrigger as-child>
+                      <button type="button" class="ssh-path-ellipsis" :disabled="isRemoteDirectoryLoading"
+                        aria-label="展开中间路径">
+                        <BreadcrumbEllipsis class="ssh-path-ellipsis-icon" />
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start" class="ssh-path-menu">
+                      <DropdownMenuItem v-for="segment in item.segments" :key="segment.id" class="ssh-path-menu-item"
+                        :disabled="isRemoteDirectoryLoading" @select="handlePathSegmentClick(segment)">
+                         segment.label 
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </BreadcrumbItem>
+                <BreadcrumbItem v-else>
+                  <BreadcrumbPage v-if="item.path === currentRemotePath" class="ssh-path-segment is-current">
+                     item.label 
+                  </BreadcrumbPage>
+                  <BreadcrumbLink v-else as-child>
+                    <button type="button" class="ssh-path-segment" :disabled="isRemoteDirectoryLoading"
+                      @click="handlePathSegmentClick(item)">
+                       item.label 
+                    </button>
+                  </BreadcrumbLink>
+                </BreadcrumbItem>
+                <BreadcrumbSeparator v-if="index < sshBreadcrumbItems.length - 1" class="ssh-path-separator" />
+              </template>
+            </BreadcrumbList>
+          </Breadcrumb>
+          <div class="ssh-path-actions">
+            <button type="button" class="ssh-path-action" aria-label="断开 SSH 连接" title="断开连接"
+              @click="disconnectSshSession">
+              <span aria-hidden="true" class="icon-[lucide--unplug]" />
+            </button>
+            <button type="button" class="ssh-path-action" :disabled="isRemoteDirectoryLoading" aria-label="刷新远端目录"
+              title="刷新远端目录" @click="refreshCurrentRemoteDirectory">
+              <span aria-hidden="true" class="icon-[lucide--refresh-cw]" />
+            </button>
+          </div>
+        </div>
+
+        <div v-if=
