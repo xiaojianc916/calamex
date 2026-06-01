@@ -4,6 +4,25 @@ import { computed, type Ref, ref } from 'vue';
 const clampNumber = (value: number, min: number, max: number): number =>
   Math.min(max, Math.max(min, value));
 
+interface IDiagnosticsPanelBreakpoint {
+  minViewportWidth: number;
+  ratio: number;
+  minWidth: number;
+  softMaxWidth: number;
+}
+
+/**
+ * 兜底断点（minViewportWidth 为 0，任何非负 viewport 宽度都能命中）。
+ * 单独抽出以便 resolveDiagnosticsPanelSizeStrategy 在 find 落空时安全回退，
+ * 无需对数组末项做非空断言。
+ */
+const DIAGNOSTICS_PANEL_FALLBACK_BREAKPOINT: IDiagnosticsPanelBreakpoint = {
+  minViewportWidth: 0,
+  ratio: 0.46,
+  minWidth: 180,
+  softMaxWidth: 320,
+};
+
 /**
  * 诊断面板宽度断点表（从大到小排列）。
  *
@@ -12,27 +31,24 @@ const clampNumber = (value: number, min: number, max: number): number =>
  * - `minWidth` / `softMaxWidth`：clamp 区间下/上限（与 hardMaxWidth 共同决定）。
  *
  * 修改断点：直接编辑此数组即可，无需改动下方的解析逻辑。
+ * 末项为 DIAGNOSTICS_PANEL_FALLBACK_BREAKPOINT，保证任何非负宽度都有命中项。
  */
-const DIAGNOSTICS_PANEL_BREAKPOINTS: ReadonlyArray<{
-  minViewportWidth: number;
-  ratio: number;
-  minWidth: number;
-  softMaxWidth: number;
-}> = [
+const DIAGNOSTICS_PANEL_BREAKPOINTS: ReadonlyArray<IDiagnosticsPanelBreakpoint> = [
   { minViewportWidth: 1680, ratio: 0.28, minWidth: 320, softMaxWidth: 460 },
   { minViewportWidth: 1440, ratio: 0.3, minWidth: 300, softMaxWidth: 440 },
   { minViewportWidth: 1200, ratio: 0.32, minWidth: 280, softMaxWidth: 420 },
   { minViewportWidth: 960, ratio: 0.34, minWidth: 260, softMaxWidth: 400 },
   { minViewportWidth: 760, ratio: 0.38, minWidth: 220, softMaxWidth: 360 },
-  { minViewportWidth: 0, ratio: 0.46, minWidth: 180, softMaxWidth: 320 },
+  DIAGNOSTICS_PANEL_FALLBACK_BREAKPOINT,
 ];
 
 const resolveDiagnosticsPanelSizeStrategy = (
   normalizedWidth: number,
-): (typeof DIAGNOSTICS_PANEL_BREAKPOINTS)[number] =>
-  // 断点表已按 minViewportWidth 从大到小排序，find 命中即用
+): IDiagnosticsPanelBreakpoint =>
+  // 断点表已按 minViewportWidth 从大到小排序，find 命中即用；
+  // 任何非负宽度至少命中兜底断点（minViewportWidth: 0）。
   DIAGNOSTICS_PANEL_BREAKPOINTS.find((bp) => normalizedWidth >= bp.minViewportWidth) ??
-  DIAGNOSTICS_PANEL_BREAKPOINTS[DIAGNOSTICS_PANEL_BREAKPOINTS.length - 1]!;
+  DIAGNOSTICS_PANEL_FALLBACK_BREAKPOINT;
 
 const resolveDiagnosticsPanelWidth = (availableWidth: number): number => {
   const normalizedWidth = Math.max(0, Math.round(availableWidth));

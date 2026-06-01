@@ -27,6 +27,9 @@ const STABILITY_RESET_MS = 30_000;
  * 同时订阅 bridge 状态事件：后端崩溃 / 外部停止会如实反映到状态栏，
  * 并在崩溃后做限次指数退避自动重启。
  *
+ * 所有触达 bridge 的 start/stop 经 runExclusive 串行化，避免快速切换
+ * 工作区时异步操作交错导致重复启动 / 启到错误 root。
+ *
  * 组件卸载时自动停止 LSP、取消订阅与定时器，无进程 / 监听泄漏。
  */
 export const useLsp = (workspaceRootPath: MaybeRefOrGetter<string | null>) => {
@@ -46,6 +49,16 @@ export const useLsp = (workspaceRootPath: MaybeRefOrGetter<string | null>) => {
   let autoRestartTimer: ReturnType<typeof setTimeout> | null = null;
   let stabilityTimer: ReturnType<typeof setTimeout> | null = null;
 
+  // 串行化所有会触达 bridge 的 start/stop：把操作挂到同一条 Promise 链上顺序执行，
+  // 避免快速切换工作区时 stop/start 异步交错（重复启动 / 启到错误 root）。
+  let pendingOperation: Promise<void> = Promise.resolve();
+  const runExclusive = (operation: () => Promise<void>): Promise<void> => {
+    const next = pendingOperation.then(operation, operation);
+    // 吞掉链上的 reject，避免单次失败阻断后续排队的操作
+    pendingOperation = next.catch(() => {});
+    return next;
+  };
+
   const clearAutoRestartTimer = (): void => {
     if (autoRestartTimer !== null) {
       clearTimeout(autoRestartTimer);
@@ -59,7 +72,8 @@ export const useLsp = (workspaceRootPath: MaybeRefOrGetter<string | null>) => {
     }
   };
 
-  const startLsp = async (root: string): Promise<void> => {
+  // 内部实现：不入队，仅供 runExclusive 串行块内部按序调用，避免嵌套入队自锁。
+  const startLspInternal = async (root: string): Promise<void> => {
     if (isDisposed) return;
     status.value = 'starting';
     error.value = null;
@@ -74,7 +88,7 @@ export const useLsp = (workspaceRootPath: MaybeRefOrGetter<string | null>) => {
     }
   };
 
-  const stopLsp = async (): Promise<void> => {
+  const stopLspInternal = async (): Promise<void> => {
     if (isDisposed) return;
     // 主动停止会取消任何待执行的自动重启
     clearAutoRestartTimer();
@@ -147,20 +161,25 @@ export const useLsp = (workspaceRootPath: MaybeRefOrGetter<string | null>) => {
 
   const unsubscribeState = lspBridge.onStateChange(handleBridgeState);
 
-  const restartLsp = async (): Promise<void> => {
-    if (isDisposed) return;
-    // 用户手动重启：重置退避计数，给予全新的重试预算
-    autoRestartCount = 0;
-    clearAutoRestartTimer();
-    await stopLsp();
-    const root = rootRef.value;
-    if (root) {
-      await startLsp(root);
-    } else {
-      status.value = 'idle';
-      error.value = null;
-    }
-  };
+  // 公开操作：经 runExclusive 入队，保证与切换工作区的 start/stop 不交错。
+  const startLsp = (root: string): Promise<void> => runExclusive(() => startLspInternal(root));
+  const stopLsp = (): Promise<void> => runExclusive(stopLspInternal);
+
+  const restartLsp = (): Promise<void> =>
+    runExclusive(async () => {
+      if (isDisposed) return;
+      // 用户手动重启：重置退避计数，给予全新的重试预算
+      autoRestartCount = 0;
+      clearAutoRestartTimer();
+      await stopLspInternal();
+      const root = rootRef.value;
+      if (root) {
+        await startLspInternal(root);
+      } else {
+        status.value = 'idle';
+        error.value = null;
+      }
+    });
 
   onScopeDispose(() => {
     isDisposed = true;
@@ -172,25 +191,29 @@ export const useLsp = (workspaceRootPath: MaybeRefOrGetter<string | null>) => {
 
   watch(
     rootRef,
-    async (newRoot, oldRoot) => {
+    (newRoot, oldRoot) => {
       if (isDisposed) return;
       if (newRoot === oldRoot) return;
 
-      // 切换工作区：重置退避计数，取消待执行重启
-      autoRestartCount = 0;
-      clearAutoRestartTimer();
+      void runExclusive(async () => {
+        if (isDisposed) return;
 
-      // 先停旧实例
-      if (lspBridge.isStarted()) {
-        await stopLsp();
-      }
+        // 切换工作区：重置退避计数，取消待执行重启
+        autoRestartCount = 0;
+        clearAutoRestartTimer();
 
-      if (newRoot) {
-        await startLsp(newRoot);
-      } else {
-        status.value = 'idle';
-        error.value = null;
-      }
+        // 先停旧实例
+        if (lspBridge.isStarted()) {
+          await stopLspInternal();
+        }
+
+        if (newRoot) {
+          await startLspInternal(newRoot);
+        } else {
+          status.value = 'idle';
+          error.value = null;
+        }
+      });
     },
     { immediate: true },
   );
