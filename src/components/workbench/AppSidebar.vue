@@ -25,6 +25,7 @@
     />
 
     <section
+      ref="explorerSectionRef"
       v-show="isExplorerView"
       class="explorer-sidebar"
       aria-label="资源管理器"
@@ -75,13 +76,7 @@
         </Empty>
 
         <template v-else>
-          <FileTree
-            class="explorer-file-tree"
-            :expanded="effectiveExplorerExpandedPaths"
-            :selected-path="selectedExplorerPath"
-            @expanded-change="void handleExplorerExpandedChange($event)"
-            @update:selected-path="handleExplorerSelection"
-          >
+          <FileTree class="explorer-file-tree">
             <WorkspaceTreeNode
               v-if="rootEntry"
               :entry="rootEntry"
@@ -311,6 +306,7 @@ const appStore = useAppStore();
 const root = ref<IWorkspaceDirectoryPayload | null>(null);
 const rootLoading = ref(false);
 const loadError = ref('');
+const explorerSectionRef = ref<HTMLElement | null>(null);
 const explorerSearchQuery = ref('');
 const childrenMap = reactive<Record<string, IWorkspaceEntry[]>>({});
 const manualExpandedPaths = ref<Set<string>>(new Set());
@@ -584,22 +580,6 @@ const effectiveExplorerExpandedPaths = computed(() => {
   return nextExpandedPaths;
 });
 
-const loadedExplorerEntries = computed(() => {
-  const entryMap = new Map<string, IWorkspaceEntry>();
-
-  if (rootEntry.value) {
-    entryMap.set(rootEntry.value.path, rootEntry.value);
-  }
-
-  Object.values(childrenMap).forEach((entries) => {
-    entries.forEach((entry) => {
-      entryMap.set(entry.path, entry);
-    });
-  });
-
-  return entryMap;
-});
-
 const clearTreeState = (): void => {
   Object.keys(childrenMap).forEach((path) => {
     delete childrenMap[path];
@@ -680,17 +660,27 @@ const loadDirectoryEntries = async (path: string): Promise<void> => {
     return;
   }
 
+  // 记录发起时的工作区版本号，避免切换工作区时迟到结果污染新状态。
+  const requestId = rootRequestId;
   loadingPaths[path] = true;
 
   try {
     const payload = await tauriService.listWorkspaceEntries(path, root.value?.rootPath);
+    if (requestId !== rootRequestId) {
+      return;
+    }
     childrenMap[path] = payload.entries;
   } catch (error) {
+    if (requestId !== rootRequestId) {
+      return;
+    }
     const errorMessage = toErrorMessage(error, '读取目录失败');
     message.error(errorMessage);
     childrenMap[path] = [];
   } finally {
-    loadingPaths[path] = false;
+    if (requestId === rootRequestId) {
+      loadingPaths[path] = false;
+    }
   }
 };
 
@@ -746,36 +736,6 @@ const toggleExplorerPath = async (path: string): Promise<void> => {
   await expandExplorerPath(path);
 };
 
-const handleExplorerExpandedChange = async (nextExpanded: Set<string>): Promise<void> => {
-  const previousExpanded = new Set(effectiveExplorerExpandedPaths.value);
-  const nextManualExpanded = new Set(nextExpanded);
-
-  if (hasExplorerSearch.value) {
-    searchExpandedPaths.value.forEach((path) => {
-      nextManualExpanded.delete(path);
-    });
-  }
-
-  manualExpandedPaths.value = nextManualExpanded;
-  emitExplorerStateChange();
-
-  if (!root.value) {
-    return;
-  }
-
-  const pendingLoads = [...nextExpanded].filter((path) => {
-    if (previousExpanded.has(path) || path === root.value?.rootPath) {
-      return false;
-    }
-
-    return childrenMap[path] === undefined;
-  });
-
-  for (const path of pendingLoads) {
-    await loadDirectoryEntries(path);
-  }
-};
-
 const closeExplorerContextMenu = (): void => {
   explorerContextMenu.open = false;
   explorerContextTarget.value = null;
@@ -799,15 +759,6 @@ const handleEntryContextMenu = (payload: { event: MouseEvent; entry: IWorkspaceE
 
 const handleOpenFile = (payload: TWorkbenchOpenFilePayload): void => {
   emit('open-file', payload);
-};
-
-const handleExplorerSelection = (path: string): void => {
-  emitExplorerStateChange(path);
-  const entry = loadedExplorerEntries.value.get(path);
-
-  if (entry?.kind === 'file') {
-    handleOpenFile(entry.path);
-  }
 };
 
 const emitExplorerStateChange = (
@@ -842,7 +793,9 @@ const closeInlineCreateDraft = (): void => {
 const focusInlineCreateInput = async (): Promise<void> => {
   await nextTick();
 
-  const input = document.querySelector('.explorer-inline-create-input') as HTMLInputElement | null;
+  const input =
+    (explorerSectionRef.value?.querySelector('.explorer-inline-create-input') ??
+      null) as HTMLInputElement | null;
   input?.focus();
   input?.select();
 };
@@ -963,7 +916,9 @@ const focusInlineRenameInput = async (): Promise<boolean> => {
   await nextTick();
   await waitNextFrame();
 
-  const input = document.querySelector('.explorer-inline-rename-input') as HTMLInputElement | null;
+  const input =
+    (explorerSectionRef.value?.querySelector('.explorer-inline-rename-input') ??
+      null) as HTMLInputElement | null;
   if (!input) {
     return false;
   }
@@ -1081,6 +1036,7 @@ const handleDeleteWorkspaceEntry = async (target: IExplorerContextTarget): Promi
       path: target.path,
       rootPath: root.value.rootPath,
     });
+    await refreshDirectoryAfterMutation(resolveParentPathForMutation(target.path));
     message.success('已移动到回收站');
   } catch (error) {
     message.error(toErrorMessage(error, '删除失败'));
@@ -1155,21 +1111,6 @@ const handleWindowKeydown = (event: KeyboardEvent): void => {
   }
 };
 
-if (typeof window !== 'undefined') {
-  window.addEventListener('pointerdown', handleWindowPointerDown, true);
-  window.addEventListener('keydown', handleWindowKeydown);
-}
-
-onBeforeUnmount(() => {
-  closeInlineCreateDraft();
-  cancelInlineRename();
-
-  if (typeof window !== 'undefined') {
-    window.removeEventListener('pointerdown', handleWindowPointerDown, true);
-    window.removeEventListener('keydown', handleWindowKeydown);
-  }
-});
-
 watch(
   [
     () => props.isDesktopRuntime,
@@ -1211,18 +1152,28 @@ interface WorkspaceFsEvent {
 }
 
 let fsEventUnlisten: (() => void) | null = null;
+let isFsWatcherStarting = false;
 
 async function startWorkspaceFileWatcher(): Promise<void> {
-  if (!root.value?.rootPath) return;
+  const rootPath = root.value?.rootPath;
+  if (!rootPath) return;
+  // 同步去重：监听器已存在或正在建立时直接返回，避免 await 期间并发注册导致旧监听器泄漏。
+  if (fsEventUnlisten || isFsWatcherStarting) return;
+
+  isFsWatcherStarting = true;
   try {
-    await tauriService.startWorkspaceWatching(root.value.rootPath);
-  } catch {
-    // 监听启动失败不阻塞
+    try {
+      await tauriService.startWorkspaceWatching(rootPath);
+    } catch {
+      // 监听启动失败不阻塞
+    }
+    if (fsEventUnlisten) return;
+    fsEventUnlisten = await events.workspaceFsEvent.listen((e) => {
+      void handleFileSystemEvent(e.payload);
+    });
+  } finally {
+    isFsWatcherStarting = false;
   }
-  if (fsEventUnlisten) return;
-  fsEventUnlisten = await events.workspaceFsEvent.listen((e) => {
-    void handleFileSystemEvent(e.payload);
-  });
 }
 
 async function handleFileSystemEvent(payload: WorkspaceFsEvent): Promise<void> {
@@ -1233,17 +1184,32 @@ async function handleFileSystemEvent(payload: WorkspaceFsEvent): Promise<void> {
     if (parent) affectedDirs.add(parent);
   }
   for (const dir of affectedDirs) {
+    // 仅刷新当前已加载/展开的目录，避免为折叠或从未打开的目录做多余 IO。
+    if (childrenMap[dir] === undefined) continue;
     await loadDirectoryEntries(dir);
   }
 }
 
 onMounted(() => {
+  if (typeof window !== 'undefined') {
+    window.addEventListener('pointerdown', handleWindowPointerDown, true);
+    window.addEventListener('keydown', handleWindowKeydown);
+  }
+
   if (root.value?.rootPath) {
     void startWorkspaceFileWatcher();
   }
 });
 
 onBeforeUnmount(() => {
+  closeInlineCreateDraft();
+  cancelInlineRename();
+
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('pointerdown', handleWindowPointerDown, true);
+    window.removeEventListener('keydown', handleWindowKeydown);
+  }
+
   fsEventUnlisten?.();
   fsEventUnlisten = null;
   void tauriService.stopWorkspaceWatching();
