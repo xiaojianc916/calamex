@@ -656,7 +656,7 @@ const handleStop = (): void => {
 }
 
 .ai-send-button:hover:not(:disabled) {
-  background: var(--accent-strong);
+  background: color-mix(in srgb, #2783de 86%, #000);
   color: var(--accent-foreground);
 }
 
