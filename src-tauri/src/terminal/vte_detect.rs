@@ -87,10 +87,8 @@ impl Perform for CsiDetector {
             'r' if !self.private_mode => {
                 self.scroll_region_changed = true;
             }
-            'n' if !self.private_mode => {
-                if single_param_value(params) == Some(6) {
-                    self.cursor_position_query = true;
-                }
+            'n' if !self.private_mode && single_param_value(params) == Some(6) => {
+                self.cursor_position_query = true;
             }
             _ => {}
         }
