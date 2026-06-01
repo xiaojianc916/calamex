@@ -1,7 +1,6 @@
 pub mod agent;
 pub mod approval;
 pub mod audit;
-pub mod budget;
 pub mod credential;
 pub mod edit;
 pub mod errors;

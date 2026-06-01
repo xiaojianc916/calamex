@@ -101,11 +101,8 @@ pub async fn chat_stream(
         &model,
     );
     let request = AiProviderChatRequest::new(messages);
-    let prompt_token_estimate =
-        token_budget::estimate_chat_prompt_tokens_if_supported(&model, &request)?;
-    let prompt_tokens = prompt_token_estimate
-        .as_ref()
-        .map(|estimate| estimate.input_tokens);
+    // 已移除本地 tokenizer 估算：prompt/total token 一律以官方返回的 usage 为准。
+    let prompt_tokens: Option<u64> = None;
 
     stream_manager::register(&stream_id);
 

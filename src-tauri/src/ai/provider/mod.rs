@@ -84,11 +84,3 @@ pub struct AiProviderUsage {
     pub reasoning_tokens: u64,
     pub raw: Value,
 }
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AiProviderTokenEstimate {
-    pub input_tokens: u64,
-    pub tokenizer: String,
-    pub model: String,
-}
