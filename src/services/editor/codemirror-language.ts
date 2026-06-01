@@ -1,3 +1,4 @@
+import { logger } from "@/utils/logger";
 import {
   LanguageDescription,
   LanguageSupport,
@@ -466,7 +467,11 @@ export const loadCodeMirrorLanguageSupport = async (
       return null;
     })
     .catch((error) => {
-      console.error("CodeMirror 语言按需加载失败", language, error);
+      logger.error({
+        event: "codemirror.language.load_failed",
+        err: error,
+        language,
+      });
       return null;
     })
     .finally(() => {

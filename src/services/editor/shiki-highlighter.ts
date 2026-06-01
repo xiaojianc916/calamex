@@ -3,6 +3,7 @@ import {
   CODEMIRROR_GITHUB_LIGHT_FOREGROUND,
 } from '@/services/editor/codemirror-github-light-highlight';
 import { resolveCodeMirrorLanguageId } from '@/services/editor/codemirror-language';
+import { logger } from '@/utils/logger';
 import { createHighlighterCore, type HighlighterCore } from 'shiki/core';
 import { createOnigurumaEngine } from 'shiki/engine/oniguruma';
 
@@ -108,10 +109,18 @@ export const ensureHighlighter = (): Promise<HighlighterCore> => {
       themes: [import('@shikijs/themes/github-light')],
       langs: [],
       engine: createOnigurumaEngine(import('shiki/wasm')),
-    }).then((highlighter) => {
-      highlighterInstance = highlighter;
-      return highlighter;
-    });
+    })
+      .then((highlighter) => {
+        highlighterInstance = highlighter;
+        return highlighter;
+      })
+      .catch((error) => {
+        // 初始化失败不能缓存被拒绝的 Promise，否则后续所有高亮调用都会拿到
+        // 同一个失败结果、整会话高亮永久失效；置空以便下次调用重新尝试创建。
+        highlighterPromise = null;
+        logger.error({ event: 'shiki.highlighter.init_failed', err: error });
+        throw error;
+      });
   }
   return highlighterPromise;
 };
@@ -146,7 +155,7 @@ export const ensureShikiLanguage = async (language: string): Promise<string | nu
         loadedLanguages.add(shikiId);
         return true;
       } catch (error) {
-        console.error('Shiki 语言按需加载失败:', language, error);
+        logger.error({ event: 'shiki.language.load_failed', err: error, language });
         return false;
       } finally {
         pendingLanguages.delete(shikiId);
@@ -170,7 +179,7 @@ const tokenize = (
       theme: SHIKI_THEME_NAME,
     }) as unknown as IShikiThemedToken[][];
   } catch (error) {
-    console.error('Shiki 高亮失败:', shikiId, error);
+    logger.error({ event: 'shiki.tokenize_failed', err: error, shikiId });
     return null;
   }
 };
