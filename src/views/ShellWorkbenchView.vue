@@ -348,11 +348,11 @@ const bindEditorViewportRef = (value: unknown): void => {
 <style scoped>
 /* 主界面内容卡片：右/下边缘贴合窗口（Codex 风格布局）。
    基础规则在 src/styles.css 的 .workbench-content-card；此处只针对主工作台界面局部覆盖：
-   去掉右、下边框，并将右/下侧圆角置为直角，仅保留上/左边框与左上圆角。 */
+   去掉右、下边框，并仅保留左上 + 左下两个圆角（右上/右下为直角），使左侧上下都圆、右与下贴合窗口。 */
 .workbench-content-card {
   border-right: 0;
   border-bottom: 0;
-  border-radius: var(--workbench-content-left-radius) 0 0 0;
+  border-radius: var(--workbench-content-left-radius) 0 0 var(--workbench-content-left-radius);
 }
 
 /* 终端面板顶部：可拖拽分隔条 —— 常态 1px #ededed 细线，11px 不可见热区便于抓取，悬停/拖拽平滑变粗高亮 */
