@@ -882,4 +882,73 @@ export class McpGatewayWarmPool {
   }
 
   private countActiveBundles(): number {
-    return [...this.entries.values()].filter((entry) => entry.activeC
+    return [...this.entries.values()].filter((entry) => entry.activeCount > 0).length;
+  }
+
+  private clearIdleTimer(entry: IMcpGatewayPoolEntry): void {
+    if (!entry.idleTimer) {
+      return;
+    }
+    clearTimeout(entry.idleTimer);
+    delete entry.idleTimer;
+  }
+
+  private scheduleIdleDisconnect(entry: IMcpGatewayPoolEntry): void {
+    this.clearIdleTimer(entry);
+    if (!entry.bundle || this.pinnedServers.has(entry.serverName)) {
+      return;
+    }
+    entry.idleTimer = setTimeout(() => {
+      if (entry.activeCount > 0 || !entry.bundle) {
+        return;
+      }
+      if (this.now() - entry.lastUsedAt < this.ttlIdleMs) {
+        this.scheduleIdleDisconnect(entry);
+        return;
+      }
+      void this.disconnectEntry(entry).catch(() => undefined);
+    }, this.ttlIdleMs);
+    entry.idleTimer.unref();
+  }
+
+  private async evictExpired(): Promise<void> {
+    const now = this.now();
+    const expiredEntries = [...this.entries.values()].filter((entry) => (
+      Boolean(entry.bundle)
+      && entry.activeCount === 0
+      && !this.pinnedServers.has(entry.serverName)
+      && now - entry.lastUsedAt >= this.ttlIdleMs
+    ));
+    await Promise.all(expiredEntries.map((entry) => this.disconnectEntry(entry)));
+  }
+
+  private async evictOverflow(): Promise<void> {
+    const candidates = [...this.entries.values()]
+      .filter((entry) => (
+        Boolean(entry.bundle)
+        && entry.activeCount === 0
+        && !this.pinnedServers.has(entry.serverName)
+      ))
+      .sort((left, right) => left.lastUsedAt - right.lastUsedAt);
+    while (this.countWarmBundles() > this.maxWarm && candidates.length > 0) {
+      const entry = candidates.shift();
+      if (entry) {
+        await this.disconnectEntry(entry);
+      }
+    }
+  }
+
+  private async disconnectEntry(entry: IMcpGatewayPoolEntry): Promise<void> {
+    this.clearIdleTimer(entry);
+    this.entries.delete(entry.key);
+    const bundle = entry.bundle;
+    delete entry.bundle;
+    if (bundle) {
+      await bundle.disconnectAll().catch(() => undefined);
+    }
+  }
+}
+
+export const createMcpGatewayWarmPool = (
+  options: IMcpGatewayPoolOptions,
+): McpGatewayWarmPool => new McpGatewayWarmPool(options);
