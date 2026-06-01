@@ -34,13 +34,13 @@
 | --- | --- |
 | 🖊️ **代码编辑器** | 基于 CodeMirror 6，支持 Bash、Rust、JS/TS、Python、Go、JSON、Markdown 等多语言高亮，内置差异（merge）视图、搜索、自动补全。 |
 | 🖥️ **集成终端** | 基于 xterm.js + Rust `portable-pty`，提供真正的 PTY 会话，按 registry + 显式 session 管理，支持 WebGL 渲染、搜索与链接识别。 |
-| 🧪 **Shell 工具链** | 集成 **ShellCheck** 静态诊断与 **shfmt** 格式化（由 Rust 侧承担），并接入 **bash-language-server** 提供 LSP 能力（补全、悬浮、诊断）。 |
+| 🧪 **Shell 工具链** | 集成 **ShellCheck** 静态诊断与 **shfmt** 格式化，并接入 **bash-language-server** 提供 LSP 能力（补全、悬浮、诊断）。 |
 | 🌳 **语法解析** | 使用 tree-sitter / tree-sitter-bash 进行结构化解析，支撑高亮与代码理解。 |
 | 🔭 **全文 / 结构搜索** | Rust 侧基于 ripgrep 系组件（`grep-searcher`、`globset`、`ignore`）与 `ast-grep`、`nucleo` 模糊匹配，提供高性能项目内搜索。 |
 | 🌿 **Git 集成** | 基于 `gix`（gitoxide）实现状态、差异、版本信息等仓库操作。 |
 | 🔐 **SSH / SFTP** | 基于 `russh` / `russh-sftp` 的远程连接与文件传输，连接池化管理。 |
-| 🤖 **AI 辅助** | 集成 `async-openai`、CopilotKit 与 AG-UI 协议，支持脚本理解、补全与对话式辅助；本地 `tokenizers` 计量上下文。 |
-| 🔗 **WSL Link Agent** | 独立的 sidecar 代理，通过 vsock + gRPC（tonic/prost）在 Windows 宿主与 WSL2 之间建立可靠通道，统一驱动脚本执行环境。 |
+| 🤖 **AI 辅助** | 前端集成 CopilotKit、AG-UI 协议与 `ai` SDK，支持脚本理解、补全与对话式辅助；Rust 侧 `async-openai` 调用模型，本地 `tokenizers` 计量上下文。 |
+| 🧩 **AI Agent 边车** | 独立的 Node 边车 `agent-sidecar/`，基于 **Mastra** 编排智能体与工具（顺序思考、Context7、Tavily 网络搜索、TypeScript 语言服务等），经 MCP 接入。状态推进中，详见 `agent-sidecar/MATURITY.md`。 |
 | 📁 **工作区** | 安全的文件系统命令与实时文件监听（`notify`），所有 I/O 经 Rust 命令出口。 |
 
 ## 技术栈
@@ -54,9 +54,14 @@
 
 **桌面 / 后端**
 - Tauri 2.x（`tray-icon`、dialog、store 插件）
-- Rust（edition 2021），按域拆分的命令模块（editor / terminal / lsp / git / ssh / search / workspace / wsl_link / ai）
+- Rust（edition 2021），按域拆分的命令模块（terminal / lsp / git / ssh / search / workspace / ai / shell_tools / script_run / agent_sidecar / window 等）
 - IPC 类型由 `tauri-specta` 自动生成，前后端契约强类型对齐
-- 异步运行时 Tokio，gRPC 通道 tonic + prost
+- 异步运行时 Tokio
+
+**AI 边车（`agent-sidecar/`，Node）**
+- 基于 Mastra 的智能体运行时，经 MCP 集成顺序思考、Context7、Tavily、TypeScript 语言服务等工具
+- 模型走 OpenAI 兼容接口（`@ai-sdk/openai-compatible`），对外提供 HTTP / 流式服务
+- 会话与记忆基于 libSQL；当前为推进中状态（见 `agent-sidecar/MATURITY.md`）
 
 **工程化**
 - 包管理：pnpm（workspace）
@@ -81,13 +86,14 @@
                 │  tauri-specta 生成的强类型 IPC
 ┌───────────────▼───────────────────────────────┐
 │                  Rust 后端                      │
-│  commands: editor · terminal · lsp · git ·      │
-│  ssh · search · workspace · ai · wsl_link       │
+│  commands: terminal · lsp · git · ssh ·         │
+│  search · workspace · ai · shell_tools ·        │
+│  script_run · agent_sidecar · window            │
 └───────────────┬───────────────────────────────┘
-                │  vsock + gRPC (tonic/prost)
+                │  PTY / WSL 调用
 ┌───────────────▼───────────────────────────────┐
 │              WSL2 / Linux 执行环境               │
-│         (WSL Link Agent sidecar 驱动)            │
+│          (脚本与 shell 工具链在此运行)            │
 └─────────────────────────────────────────────────┘
 ```
 
@@ -95,7 +101,7 @@
 - 组件 **不** 直接 `fetch` / `invoke` / 读写存储；I/O 唯一出口为 `services/`。
 - 不使用 `any` / `@ts-ignore` / 非空断言；外部输入经 Zod 校验；IPC 类型由 `tauri-specta` 生成，不手改。
 - 敏感数据走 keyring，不进入 `localStorage`。
-- CSP 禁用 `unsafe-inline` / `unsafe-eval`；能力清单按域最小授权；文件操作必须经 Rust 命令。
+- CSP 以 `default-src 'self'` 为基线：脚本源仅允许 `wasm-unsafe-eval`（禁用动态 `eval`），样式因 Tailwind 运行时注入保留 `unsafe-inline`；能力清单按域最小授权；文件操作必须经 Rust 命令。
 
 ## 目录结构
 
@@ -115,11 +121,11 @@
 │   ├── src/commands/        # 按域拆分的 Tauri 命令
 │   ├── src/terminal/        # PTY / 终端后端
 │   ├── src/ai/              # AI 集成
-│   ├── src/wsl_link/        # WSL 通道
+│   ├── src/agent_sidecar/   # AI 边车的宿主侧桥接
+│   ├── src/bin/             # 辅助二进制（如导出 IPC 绑定）
 │   ├── capabilities/        # Tauri 能力清单（最小授权）
 │   └── tauri.conf.json      # Tauri 配置
-├── agent-sidecar/           # WSL Link Agent sidecar
-├── proto/                   # gRPC / protobuf 定义
+├── agent-sidecar/           # 基于 Mastra 的 AI Agent 边车（Node）
 ├── e2e/                     # Playwright 端到端测试
 ├── docs/                    # 架构、ADR、可观测性、性能预算等文档
 └── scripts/                 # 构建与开发辅助脚本
@@ -129,7 +135,7 @@
 
 - **操作系统**：Windows 10/11
 - **WSL2**：已安装并配置可用的 Linux 发行版（脚本执行环境）
-- **Node.js** ≥ 20
+- **Node.js** ≥ 26
 - **pnpm** 11.4（推荐 `corepack enable && corepack prepare pnpm@latest --activate`）
 - **Rust** 工具链（通过 [rustup](https://rustup.rs)）
 - WSL 内建议具备 `shellcheck`、`shfmt`、`bash-language-server` 以获得完整体验
@@ -166,7 +172,7 @@ pnpm build
 
 | 命令 | 作用 |
 | --- | --- |
-| `pnpm dev` | 启动 Vite 前端开发服务器 |
+| `pnpm dev` | 生成 shell 命令目录并启动 Vite 前端开发服务器 |
 | `pnpm tauri:dev` | 启动 Tauri 桌面应用（开发模式） |
 | `pnpm tauri:build` | 打包桌面安装包 |
 | `pnpm lint` | Biome 代码检查 |
