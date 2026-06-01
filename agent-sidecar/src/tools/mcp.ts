@@ -9,6 +9,7 @@ import {
   type LogMessage,
   type MastraMCPServerDefinition
 } from '@mastra/mcp';
+import { withTimeout, withTimeoutFallback } from '../timeout.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -551,16 +552,11 @@ export const createMastraMcpClientBundle = async (
 
     if (client) {
       try {
-        tools = await Promise.race([
+        tools = await withTimeout(
           client.listTools(),
-          new Promise<ToolsInput>((_, reject) => {
-            const timer = setTimeout(
-              () => reject(new Error(`MCP listTools 超过 ${MCP_LIST_TOOLS_TIMEOUT_MS}ms 未完成`)),
-              MCP_LIST_TOOLS_TIMEOUT_MS,
-            );
-            timer.unref();
-          }),
-        ]);
+          MCP_LIST_TOOLS_TIMEOUT_MS,
+          () => new Error(`MCP listTools 超过 ${MCP_LIST_TOOLS_TIMEOUT_MS}ms 未完成`),
+        );
       } catch (error) {
         errors.push(`MCP listTools 失败：${error instanceof Error ? error.message : String(error)}`);
       }
@@ -577,13 +573,7 @@ export const createMastraMcpClientBundle = async (
       return;
     }
     try {
-      await Promise.race([
-        client.disconnect(),
-        new Promise<void>((resolve) => {
-          const timer = setTimeout(() => resolve(), MCP_DISCONNECT_TIMEOUT_MS);
-          timer.unref();
-        }),
-      ]);
+      await withTimeoutFallback(client.disconnect(), MCP_DISCONNECT_TIMEOUT_MS, undefined);
     } catch (error) {
       console.warn(`[mcp] disconnect failed: ${error instanceof Error ? error.message : String(error)}`);
     }

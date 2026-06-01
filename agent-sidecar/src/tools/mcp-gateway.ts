@@ -3,6 +3,9 @@ import { createTool } from '@mastra/core/tools';
 import { resolve } from 'node:path';
 import { z } from 'zod';
 import { compactModelOutput } from '../models/output-budget.js';
+import { createJsonToolModelOutput } from '../engines/budget/budget.js';
+import { toRecord } from '../engines/utils.js';
+import { withTimeout } from '../timeout.js';
 import {
   MCP_SERVER_NAMES,
   type IMcpServerConfig,
@@ -204,12 +207,6 @@ const createEmptyGatewayBundle = (): IMcpGatewayBundle => ({
 
 export const createMcpGatewayRunBundle = createEmptyGatewayBundle;
 
-const toRecord = (value: unknown): Record<string, unknown> | null => (
-  value && typeof value === 'object' && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : null
-);
-
 let unwrapConflictWarningEmitted = false;
 
 const unwrapGatewayToolInput = (value: unknown): unknown => {
@@ -235,11 +232,6 @@ const unwrapGatewayToolInput = (value: unknown): unknown => {
   }
   return record;
 };
-
-const createJsonToolModelOutput = (value: unknown): { type: 'json'; value: unknown } => ({
-  type: 'json',
-  value,
-});
 
 const getToolDescription = (tool: unknown): string => {
   const record = toRecord(tool);
@@ -396,21 +388,11 @@ const executeMcpGatewayToolWithTimeout = async (
       throw error;
     }
   };
-  let timeoutHandle: NodeJS.Timeout | undefined;
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timeoutHandle = setTimeout(
-      () => reject(new Error(`MCP tool 调用超时（${timeoutMs}ms）。`)),
-      timeoutMs,
-    );
-    timeoutHandle.unref();
-  });
-  try {
-    return await Promise.race([invoke(), timeoutPromise]);
-  } finally {
-    if (timeoutHandle) {
-      clearTimeout(timeoutHandle);
-    }
-  }
+  return await withTimeout(
+    invoke(),
+    timeoutMs,
+    () => new Error(`MCP tool 调用超时（${timeoutMs}ms）。`),
+  );
 };
 
 const createPoolKey = (
@@ -900,73 +882,4 @@ export class McpGatewayWarmPool {
   }
 
   private countActiveBundles(): number {
-    return [...this.entries.values()].filter((entry) => entry.activeCount > 0).length;
-  }
-
-  private clearIdleTimer(entry: IMcpGatewayPoolEntry): void {
-    if (!entry.idleTimer) {
-      return;
-    }
-    clearTimeout(entry.idleTimer);
-    delete entry.idleTimer;
-  }
-
-  private scheduleIdleDisconnect(entry: IMcpGatewayPoolEntry): void {
-    this.clearIdleTimer(entry);
-    if (!entry.bundle || this.pinnedServers.has(entry.serverName)) {
-      return;
-    }
-    entry.idleTimer = setTimeout(() => {
-      if (entry.activeCount > 0 || !entry.bundle) {
-        return;
-      }
-      if (this.now() - entry.lastUsedAt < this.ttlIdleMs) {
-        this.scheduleIdleDisconnect(entry);
-        return;
-      }
-      void this.disconnectEntry(entry).catch(() => undefined);
-    }, this.ttlIdleMs);
-    entry.idleTimer.unref();
-  }
-
-  private async evictExpired(): Promise<void> {
-    const now = this.now();
-    const expiredEntries = [...this.entries.values()].filter((entry) => (
-      Boolean(entry.bundle)
-      && entry.activeCount === 0
-      && !this.pinnedServers.has(entry.serverName)
-      && now - entry.lastUsedAt >= this.ttlIdleMs
-    ));
-    await Promise.all(expiredEntries.map((entry) => this.disconnectEntry(entry)));
-  }
-
-  private async evictOverflow(): Promise<void> {
-    const candidates = [...this.entries.values()]
-      .filter((entry) => (
-        Boolean(entry.bundle)
-        && entry.activeCount === 0
-        && !this.pinnedServers.has(entry.serverName)
-      ))
-      .sort((left, right) => left.lastUsedAt - right.lastUsedAt);
-    while (this.countWarmBundles() > this.maxWarm && candidates.length > 0) {
-      const entry = candidates.shift();
-      if (entry) {
-        await this.disconnectEntry(entry);
-      }
-    }
-  }
-
-  private async disconnectEntry(entry: IMcpGatewayPoolEntry): Promise<void> {
-    this.clearIdleTimer(entry);
-    this.entries.delete(entry.key);
-    const bundle = entry.bundle;
-    delete entry.bundle;
-    if (bundle) {
-      await bundle.disconnectAll().catch(() => undefined);
-    }
-  }
-}
-
-export const createMcpGatewayWarmPool = (
-  options: IMcpGatewayPoolOptions,
-): McpGatewayWarmPool => new McpGatewayWarmPool(options);
+    return [...this.entries.values()].filter((entry) => entry.activeC
