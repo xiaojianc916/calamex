@@ -75,7 +75,7 @@ pub(crate) fn prepare_terminal_dispatch_script(
     })
 }
 
-pub(crate) fn build_terminal_run_command_for_wsl_link(
+pub(crate) fn build_terminal_run_command_for_local_wsl(
     payload: &DispatchTerminalScriptRequest,
     terminal_working_directory: &str,
 ) -> Result<(TerminalDispatchCommand, Option<String>), String> {

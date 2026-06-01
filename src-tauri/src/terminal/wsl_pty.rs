@@ -4,8 +4,8 @@
 // gRPC / Noise / 旁路 agent，而是用 portable-pty 在桌面进程内直接拉起 wsl.exe，
 // 与 VS Code、Windows Terminal 走同一套官方方案。
 //
-// 事件类型（WslLinkTerminalServerPayload）、运行/交互请求与 UTF-8 分块解码器定义在
-// 同域的 terminal::exec_protocol；命令层与本模块共用这一套类型，不再依赖 wsl_link。
+// 事件类型（LocalWslTerminalServerPayload）、运行/交互请求与 UTF-8 分块解码器定义在
+// 同域的 terminal::local_wsl_protocol；命令层与本模块共用这一套类型，不再依赖原 wsl_link 模块。
 
 use std::{
     io::{Read, Write},
@@ -18,11 +18,11 @@ use portable_pty::{
 };
 use thiserror::Error;
 
-use super::exec_protocol::{
-    WslLinkTerminalInteractiveClosed, WslLinkTerminalInteractiveData,
-    WslLinkTerminalInteractiveOpened, WslLinkTerminalOpenInteractiveRequest,
-    WslLinkTerminalRunChunk, WslLinkTerminalRunCompleted, WslLinkTerminalRunScriptRequest,
-    WslLinkTerminalRunStarted, WslLinkTerminalServerPayload, WslLinkUtf8ChunkDecoder,
+use super::local_wsl_protocol::{
+    LocalWslTerminalInteractiveClosed, LocalWslTerminalInteractiveData,
+    LocalWslTerminalInteractiveOpened, LocalWslTerminalOpenInteractiveRequest,
+    LocalWslTerminalRunChunk, LocalWslTerminalRunCompleted, LocalWslTerminalRunScriptRequest,
+    LocalWslTerminalRunStarted, LocalWslTerminalServerPayload, LocalWslUtf8ChunkDecoder,
     SIGNAL_MODE_KILL,
 };
 use super::wsl::bash_quote;
@@ -153,11 +153,11 @@ impl LocalWslRunHandle {
 /// on_event 在独立读线程中被调用，事件序列与 WSL Link 路径一致：
 /// InteractiveOpened → 若干 InteractiveData → InteractiveClosed。
 pub fn open_interactive_terminal_local<F>(
-    request: WslLinkTerminalOpenInteractiveRequest,
+    request: LocalWslTerminalOpenInteractiveRequest,
     on_event: F,
 ) -> Result<LocalWslPtyHandle, LocalWslPtyError>
 where
-    F: FnMut(WslLinkTerminalServerPayload) + Send + 'static,
+    F: FnMut(LocalWslTerminalServerPayload) + Send + 'static,
 {
     request
         .validate()
@@ -225,11 +225,11 @@ where
 /// on_event 在独立读线程中被调用，事件序列与 WSL Link 路径一致：
 /// RunStarted → 若干 RunChunk → RunCompleted。
 pub fn run_terminal_script_local<F>(
-    request: WslLinkTerminalRunScriptRequest,
+    request: LocalWslTerminalRunScriptRequest,
     on_event: F,
 ) -> Result<LocalWslRunHandle, LocalWslPtyError>
 where
-    F: FnMut(WslLinkTerminalServerPayload) + Send + 'static,
+    F: FnMut(LocalWslTerminalServerPayload) + Send + 'static,
 {
     request
         .validate()
@@ -306,13 +306,13 @@ fn spawn_interactive_reader<F>(
     mut on_event: F,
 ) -> Result<(), LocalWslPtyError>
 where
-    F: FnMut(WslLinkTerminalServerPayload) + Send + 'static,
+    F: FnMut(LocalWslTerminalServerPayload) + Send + 'static,
 {
     std::thread::Builder::new()
         .name(format!("wsl-pty-{session_id}"))
         .spawn(move || {
-            on_event(WslLinkTerminalServerPayload::InteractiveOpened(
-                WslLinkTerminalInteractiveOpened {
+            on_event(LocalWslTerminalServerPayload::InteractiveOpened(
+                LocalWslTerminalInteractiveOpened {
                     session_id: session_id.clone(),
                     cwd: working_directory,
                     pid,
@@ -320,7 +320,7 @@ where
                 },
             ));
 
-            let mut decoder = WslLinkUtf8ChunkDecoder::default();
+            let mut decoder = LocalWslUtf8ChunkDecoder::default();
             let mut buffer = [0u8; TERMINAL_READ_BUFFER_BYTES];
             loop {
                 match reader.read(&mut buffer) {
@@ -329,8 +329,8 @@ where
                         let mut decoded = String::new();
                         decoder.decode_into(&buffer[..read], &mut decoded, false);
                         if !decoded.is_empty() {
-                            on_event(WslLinkTerminalServerPayload::InteractiveData(
-                                WslLinkTerminalInteractiveData {
+                            on_event(LocalWslTerminalServerPayload::InteractiveData(
+                                LocalWslTerminalInteractiveData {
                                     session_id: session_id.clone(),
                                     data: decoded,
                                 },
@@ -344,8 +344,8 @@ where
             let mut tail = String::new();
             decoder.decode_into(&[], &mut tail, true);
             if !tail.is_empty() {
-                on_event(WslLinkTerminalServerPayload::InteractiveData(
-                    WslLinkTerminalInteractiveData {
+                on_event(LocalWslTerminalServerPayload::InteractiveData(
+                    LocalWslTerminalInteractiveData {
                         session_id: session_id.clone(),
                         data: tail,
                     },
@@ -353,8 +353,8 @@ where
             }
 
             let exit_code = child.wait().ok().map(|status| status.exit_code() as i32);
-            on_event(WslLinkTerminalServerPayload::InteractiveClosed(
-                WslLinkTerminalInteractiveClosed {
+            on_event(LocalWslTerminalServerPayload::InteractiveClosed(
+                LocalWslTerminalInteractiveClosed {
                     session_id,
                     exit_code,
                     finished_at_unix_ms: now_unix_ms(),
@@ -375,22 +375,22 @@ fn spawn_run_reader<F>(
     mut on_event: F,
 ) -> Result<(), LocalWslPtyError>
 where
-    F: FnMut(WslLinkTerminalServerPayload) + Send + 'static,
+    F: FnMut(LocalWslTerminalServerPayload) + Send + 'static,
 {
     std::thread::Builder::new()
         .name(format!("wsl-run-{run_id}"))
         .spawn(move || {
             // master 在本线程内保活，确保运行期间 stdin/输出通道有效；运行结束后随线程释放。
             let _master = master;
-            on_event(WslLinkTerminalServerPayload::RunStarted(
-                WslLinkTerminalRunStarted {
+            on_event(LocalWslTerminalServerPayload::RunStarted(
+                LocalWslTerminalRunStarted {
                     run_id: run_id.clone(),
                     pid,
                     started_at_unix_ms: now_unix_ms(),
                 },
             ));
 
-            let mut decoder = WslLinkUtf8ChunkDecoder::default();
+            let mut decoder = LocalWslUtf8ChunkDecoder::default();
             let mut buffer = [0u8; TERMINAL_READ_BUFFER_BYTES];
             loop {
                 match reader.read(&mut buffer) {
@@ -399,8 +399,8 @@ where
                         let mut decoded = String::new();
                         decoder.decode_into(&buffer[..read], &mut decoded, false);
                         if !decoded.is_empty() {
-                            on_event(WslLinkTerminalServerPayload::RunChunk(
-                                WslLinkTerminalRunChunk {
+                            on_event(LocalWslTerminalServerPayload::RunChunk(
+                                LocalWslTerminalRunChunk {
                                     run_id: run_id.clone(),
                                     data: decoded,
                                 },
@@ -414,8 +414,8 @@ where
             let mut tail = String::new();
             decoder.decode_into(&[], &mut tail, true);
             if !tail.is_empty() {
-                on_event(WslLinkTerminalServerPayload::RunChunk(
-                    WslLinkTerminalRunChunk {
+                on_event(LocalWslTerminalServerPayload::RunChunk(
+                    LocalWslTerminalRunChunk {
                         run_id: run_id.clone(),
                         data: tail,
                     },
@@ -424,8 +424,8 @@ where
 
             let exit_code = child.wait().ok().map(|status| status.exit_code() as i32);
             cleanup_wsl_paths(&cleanup_paths);
-            on_event(WslLinkTerminalServerPayload::RunCompleted(
-                WslLinkTerminalRunCompleted {
+            on_event(LocalWslTerminalServerPayload::RunCompleted(
+                LocalWslTerminalRunCompleted {
                     run_id,
                     exit_code,
                     finished_at_unix_ms: now_unix_ms(),

@@ -1,4 +1,4 @@
-// 终端域模块：iPTY 长寿命交互会话 + WSL Link 脚本运行通道。
+// 终端域模块：iPTY 长寿命交互会话 + 本地 WSL 脚本运行通道。
 // 部分契约类型预留给后续命令拆分与观测闭环，当前由命令层桥接生产路径。
 #![allow(dead_code)]
 
@@ -6,7 +6,7 @@ pub mod ansi;
 pub mod command_contracts;
 pub mod dispatch;
 pub mod event_bus;
-pub mod exec_protocol;
+pub mod local_wsl_protocol;
 pub mod multiplexer;
 pub mod registry;
 pub mod snapshot;
