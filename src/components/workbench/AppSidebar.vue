@@ -312,6 +312,8 @@ const childrenMap = reactive<Record<string, IWorkspaceEntry[]>>({});
 const manualExpandedPaths = ref<Set<string>>(new Set());
 const loadingPaths = reactive<Record<string, boolean>>({});
 const loadedWorkspaceKey = ref<string | null>(null);
+// 目录加载期间到达的重复刷新请求：合并为加载完成后补刷一次，避免吞掉并发期间的文件变更。
+const pendingReloadAgainPaths = new Set<string>();
 let rootRequestId = 0;
 
 type TExplorerContextMenuAction =
@@ -587,6 +589,7 @@ const clearTreeState = (): void => {
   Object.keys(loadingPaths).forEach((path) => {
     delete loadingPaths[path];
   });
+  pendingReloadAgainPaths.clear();
   manualExpandedPaths.value = new Set();
 };
 
@@ -657,6 +660,8 @@ const loadWorkspaceRoot = async (workspaceKey: string): Promise<void> => {
 
 const loadDirectoryEntries = async (path: string): Promise<void> => {
   if (loadingPaths[path]) {
+    // 加载进行中：标记“完成后补刷一次”，合并并发刷新请求，避免吞掉加载期间到达的文件变更。
+    pendingReloadAgainPaths.add(path);
     return;
   }
 
@@ -681,6 +686,11 @@ const loadDirectoryEntries = async (path: string): Promise<void> => {
     if (requestId === rootRequestId) {
       loadingPaths[path] = false;
     }
+  }
+
+  // 加载期间若有新的刷新请求到达，补刷一次（已合并为单次），保证最终一致。
+  if (pendingReloadAgainPaths.delete(path) && requestId === rootRequestId) {
+    await loadDirectoryEntries(path);
   }
 };
 
@@ -1142,6 +1152,9 @@ watch(
   () => {
     explorerSearchQuery.value = '';
     closeInlineCreateDraft();
+    // 工作区切换/关闭时拆除旧监听器并清空待刷新队列，确保新根重新绑定
+    // （startWorkspaceFileWatcher 的去重守卫会因 fsEventUnlisten 被置空而放行）。
+    stopWorkspaceFileWatcher();
   },
 );
 
@@ -1169,6 +1182,15 @@ const flushPendingFsReloads = useDebounceFn(async (): Promise<void> => {
     await loadDirectoryEntries(dir);
   }
 }, 80);
+
+// 拆除文件监听器并清空待刷新队列：供工作区切换/关闭与组件卸载复用，避免旧监听器泄漏。
+function stopWorkspaceFileWatcher(): void {
+  fsEventUnlisten?.();
+  fsEventUnlisten = null;
+  isFsWatcherStarting = false;
+  pendingFsReloadDirs.clear();
+  void tauriService.stopWorkspaceWatching();
+}
 
 async function startWorkspaceFileWatcher(): Promise<void> {
   const rootPath = root.value?.rootPath;
@@ -1211,9 +1233,7 @@ onBeforeUnmount(() => {
   closeInlineCreateDraft();
   cancelInlineRename();
 
-  fsEventUnlisten?.();
-  fsEventUnlisten = null;
-  void tauriService.stopWorkspaceWatching();
+  stopWorkspaceFileWatcher();
 });
 </script>
 
