@@ -265,17 +265,10 @@ const saveProviderSettings = (): void => {
 
   actionState.value = 'saving';
   showStatus(`正在保存 ${selectedProvider.value.label} 设置...`, 'info');
-  if (normalizedApiKey) {
-    emit(
-      'saveCredentials',
-      normalizedApiKey,
-      selectedProviderId.value,
-      normalizedAlias,
-      createFeedback(() => {
-        providerKey.value = '';
-      }, `${selectedProvider.value.label} API Key 已保存`),
-    );
-  }
+  // 原子保存:只 emit 一次 `save`。父层 @save 走 connectProvider(ai_connect_provider),
+  // 在单次 IPC 内同时写入凭证(apiKey 作为第 2 个参数带出)与小模型配置,保证两者
+  // 要么一起成功要么一起失败。不要再额外 emit `saveCredentials`:那会让凭证写两遍,
+  // 并产生两套互相竞争、可能互相覆盖的 feedback / actionState,破坏保存的原子性。
   emit(
     'save',
     createRoleConfig(selectedProvider.value, 'narrator', selectedSmallModel.value.id),
@@ -283,6 +276,7 @@ const saveProviderSettings = (): void => {
     'narrator',
     createFeedback(() => {
       actionState.value = 'idle';
+      providerKey.value = '';
     }, `${selectedProvider.value.label} 小模型已保存`),
   );
 };
@@ -294,19 +288,10 @@ const testSelectedProvider = (): void => {
   }
 
   actionState.value = 'testing';
-  const draft = cloneAiConfigPayload(props.draft);
-  const role: TAiModelRole =
-    selectedProviderId.value === narratorProviderId.value &&
-    selectedProviderId.value !== mainProviderId.value
-      ? 'narrator'
-      : 'main';
-  if (role === 'narrator') {
-    draft.narrator.selectedModel = selectedSmallModel.value.id;
-    draft.narrator.baseUrl = selectedProvider.value.baseUrl || null;
-  } else {
-    draft.selectedModel = selectedProvider.value.defaultModel;
-    draft.baseUrl = selectedProvider.value.baseUrl || null;
-  }
+  // 与 saveProviderSettings 对齐:测试用的角色 / 模型 / baseUrl 必须和「保存时会写入的」
+  // 完全一致(都走 narrator 小模型 + 当前所选小模型),否则「测试通过」不能代表「保存后可用」。
+  const role: TAiModelRole = 'narrator';
+  const draft = createRoleConfig(selectedProvider.value, role, selectedSmallModel.value.id);
   showStatus(`正在测试 ${selectedProvider.value.label}...`, 'info');
   emit(
     'testProvider',
@@ -415,7 +400,7 @@ watch(
             <span aria-hidden="true" class="icon-[lucide--arrow-left]" />
           </Button>
           <h2 id="ai-credential-title" class="ai-credential-title">
-            {{ pane === 'form' ? '编辑凭证' : 'AI 凭证' }}
+             pane === 'form' ? '编辑凭证' : 'AI 凭证' 
           </h2>
           <Button
             v-if="pane === 'list'"
@@ -450,12 +435,12 @@ watch(
               >
                 <header class="ai-credential-group__head">
                   <AiProviderIcon class="ai-credential-provider-icon" :platform-id="row.preset.id" decorative />
-                  <span class="ai-credential-group__name">{{ row.preset.label }}</span>
+                  <span class="ai-credential-group__name"> row.preset.label </span>
                 </header>
                 <div class="ai-credential-row">
                   <div class="ai-credential-row__main">
                     <div class="ai-credential-row__name">
-                      <span>{{ row.alias }}</span>
+                      <span> row.alias </span>
                       <span
                         v-if="row.isNarratorProvider"
                         class="ai-credential-default-mark"
@@ -465,7 +450,7 @@ watch(
                       </span>
                     </div>
                     <div class="ai-credential-row__key">
-                      {{ row.preset.id }} / {{ row.keyPreview }}
+                       row.preset.id  /  row.keyPreview 
                     </div>
                   </div>
                   <div class="ai-credential-row__acts">
@@ -516,7 +501,7 @@ watch(
                             <span v-else aria-hidden="true" class="icon-[lucide--plus]" />
                           </Button>
                         </TooltipTrigger>
-                        <TooltipContent>{{ row.hasCredentials ? '编辑' : '添加' }}</TooltipContent>
+                        <TooltipContent> row.hasCredentials ? '编辑' : '添加' </TooltipContent>
                       </Tooltip>
                     </TooltipProvider>
                   </div>
@@ -525,10 +510,10 @@ watch(
             </div>
             <div v-else class="ai-credential-empty">
               <div class="ai-credential-empty__title">
-                {{ providerRows.length ? '没有匹配的凭证' : '还没有 AI 凭证' }}
+                 providerRows.length ? '没有匹配的凭证' : '还没有 AI 凭证' 
               </div>
               <div class="ai-credential-empty__desc">
-                {{ providerRows.length ? '换个关键词再试试' : '点击右上角添加厂商 Key' }}
+                 providerRows.length ? '换个关键词再试试' : '点击右上角添加厂商 Key' 
               </div>
             </div>
           </div>
@@ -536,7 +521,7 @@ watch(
             <span v-if="feedbackTone === 'success'" aria-hidden="true" class="icon-[lucide--check]" />
             <span v-else-if="feedbackTone === 'error'" aria-hidden="true" class="icon-[lucide--x]" />
             <span v-else aria-hidden="true" class="icon-[lucide--triangle-alert]" />
-            <span>{{ feedbackText }}</span>
+            <span> feedbackText </span>
           </div>
         </section>
 
@@ -561,7 +546,7 @@ watch(
                       :platform-id="selectedProviderId"
                       decorative
                     />
-                    <span>{{ selectedProvider.label }}</span>
+                    <span> selectedProvider.label </span>
                   </span>
                   <span class="ai-credential-combobox-chev" aria-hidden="true"></span>
                 </Button>
@@ -577,7 +562,7 @@ watch(
                     @click="handleProviderChange(provider.id)"
                   >
                     <AiProviderIcon class="ai-credential-select-icon" :platform-id="provider.id" decorative />
-                    <span>{{ provider.label }}</span>
+                    <span> provider.label </span>
                     <span aria-hidden="true" class="icon-[lucide--check]" />
                   </button>
                 </div>
@@ -596,13 +581,13 @@ watch(
                 placeholder="默认"
                 :aria-invalid="aliasError ? 'true' : 'false'"
               />
-              <p v-if="aliasError" class="ai-credential-field-msg is-error">{{ aliasError }}</p>
+              <p v-if="aliasError" class="ai-credential-field-msg is-error"> aliasError </p>
             </div>
 
             <div class="ai-credential-field">
               <label class="ai-credential-label" for="ai-provider-key">
                 API Key
-                <span>{{ selectedProviderHasCredentials ? '留空则不修改已保存 Key' : '按厂商保存' }}</span>
+                <span> selectedProviderHasCredentials ? '留空则不修改已保存 Key' : '按厂商保存' </span>
               </label>
               <div class="ai-credential-key-wrap">
                 <Input
@@ -628,7 +613,7 @@ watch(
                 </Button>
               </div>
               <p class="ai-credential-field-msg" :class="{ 'is-error': providerKeyError }">
-                {{ providerKeyError || '本地加密保存，不会上传。' }}
+                 providerKeyError || '本地加密保存，不会上传。' 
               </p>
             </div>
 
@@ -654,7 +639,7 @@ watch(
                       :platform-id="selectedProviderId"
                       decorative
                     />
-                    <span>{{ selectedSmallModel.label }}</span>
+                    <span> selectedSmallModel.label </span>
                   </span>
                   <span class="ai-credential-combobox-chev" aria-hidden="true"></span>
                 </Button>
@@ -670,7 +655,7 @@ watch(
                     @click="handleSmallModelChange(model.id)"
                   >
                     <AiProviderIcon class="ai-credential-select-icon" :platform-id="selectedProviderId" decorative />
-                    <span>{{ model.label }}</span>
+                    <span> model.label </span>
                     <span aria-hidden="true" class="icon-[lucide--check]" />
                   </button>
                 </div>
@@ -724,7 +709,7 @@ watch(
                     保存
                   </Button>
                 </div>
-                <p v-if="tavilyKeyError" class="ai-credential-field-msg is-error">{{ tavilyKeyError }}</p>
+                <p v-if="tavilyKeyError" class="ai-credential-field-msg is-error"> tavilyKeyError </p>
               </div>
             </details>
           </form>
@@ -745,14 +730,14 @@ watch(
               <span v-if="feedbackTone === 'success'" aria-hidden="true" class="icon-[lucide--check]" />
               <span v-else-if="feedbackTone === 'error'" aria-hidden="true" class="icon-[lucide--x]" />
               <span v-else aria-hidden="true" class="icon-[lucide--triangle-alert]" />
-              <span>{{ feedbackText }}</span>
+              <span> feedbackText </span>
             </div>
             <div class="ai-credential-spacer"></div>
             <Button variant="outline" size="sm" type="button" @click="openList">
               取消
             </Button>
             <Button size="sm" type="button" :disabled="!canSaveProviderKey" @click="saveProviderSettings">
-              {{ isSaving ? '保存中' : '保存' }}
+               isSaving ? '保存中' : '保存' 
             </Button>
           </footer>
         </section>
