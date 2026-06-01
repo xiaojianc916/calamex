@@ -5,7 +5,7 @@ import type { IEditorDocument, IScriptFilePayload } from '@/types/editor';
 import type { IGitDiffPreviewPayload, IGitDiffPreviewRequest } from '@/types/git';
 import type { TSessionSnapshot, TSessionTabKind } from '@/types/session';
 import { waitForDesktopRuntime } from '@/utils/desktop-runtime';
-import { getFileBaseName, isImageAssetPath } from '@/utils/file-assets';
+import { isImageAssetPath } from '@/utils/file-assets';
 import { getPathBaseName } from '@/utils/path';
 import { isWorkspaceRootAccessible } from '@/utils/workspace';
 
@@ -167,7 +167,7 @@ export const useWorkbenchDocumentIO = ({
 
   const loadDocumentFromPath = async (path: string, scene: string): Promise<void> => {
     if (isImageAssetPath(path)) {
-      const imageName = getFileBaseName(path);
+      const imageName = getPathBaseName(path);
       openTabAndNotify(scene, 'image', path, imageName, () =>
         editorStore.openImageDocument(path, imageName),
       );
@@ -206,7 +206,7 @@ export const useWorkbenchDocumentIO = ({
             return {
               kind,
               imagePath: tab.path,
-              imageName: getFileBaseName(tab.path),
+              imageName: getPathBaseName(tab.path),
               order: tab.order,
             };
           }

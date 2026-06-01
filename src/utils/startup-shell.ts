@@ -1,6 +1,6 @@
 import type { TSessionSnapshot, TSessionTabKind } from '@/types/session';
 import { StartupShellStateSchema, type TStartupShellState } from '@/types/startup-shell';
-import { getFileBaseName, isImageAssetPath } from '@/utils/file-assets';
+import { isImageAssetPath } from '@/utils/file-assets';
 import { getPathBaseName, normalizeFileSystemPath } from '@/utils/path';
 
 const resolveTabKind = (path: string, kind?: TSessionTabKind): TSessionTabKind =>
@@ -34,7 +34,7 @@ export const createStartupShellState = (snapshot: TSessionSnapshot): TStartupShe
       return {
         id: `${index}-${normalizedPath}`,
         path: tab.path,
-        title: getFileBaseName(tab.path),
+        title: getPathBaseName(tab.path),
         kind: resolveTabKind(tab.path, tab.kind),
         order: tab.order,
         isActive: normalizedActivePath !== null && normalizedPath === normalizedActivePath,

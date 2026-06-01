@@ -1,4 +1,4 @@
-import { getPathBaseName, normalizeFileSystemPath } from '@/utils/path';
+import { normalizeFileSystemPath } from '@/utils/path';
 
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'ico']);
 const SHELL_SCRIPT_EXTENSIONS = new Set(['sh', 'bash']);
@@ -34,5 +34,3 @@ export const formatBytes = (value: number): string => {
 
   return `${(value / (1024 * 1024)).toFixed(value < 10 * 1024 * 1024 ? 1 : 0)} MB`;
 };
-
-export const getFileBaseName = (path: string): string => getPathBaseName(path);
