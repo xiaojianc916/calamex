@@ -1,5 +1,5 @@
 @layer base {
-  /* Resize 视觉撕裂抑制 —— ADR-20260422-window-resize-tearing 授权 !important 使用 */
+  /* Resize 视觉撞裂抑制 —— ADR-20260422-window-resize-tearing 授权 !important 使用 */
   /* stylelint-disable declaration-no-important -- ADR-20260422-window-resize-tearing: 仅 resize 系统态允许覆盖组件动画 */
   html.is-resizing,
   html.is-resizing body,
@@ -35,4 +35,14 @@
   }
 
   /* stylelint-enable declaration-no-important */
+}
+
+/* AI 模型选择器：隐藏触发器右侧的下拉箭头。
+   reka-ui 的 SelectIcon 渲染为 iconify <span>（class 含 lucide--chevron-down），
+   既不是 <svg> 也无 data-slot，所以 AiPromptInput.vue 里的
+   [data-slot='select-icon'] / svg:last-child 规则都无法命中。
+   这里放在 @layer 之外（无层级 = 优先级高于 Tailwind utilities），
+   按 class 精确隐藏，仅作用于 .ai-model-trigger，不影响其它下拉框的箭头。 */
+.ai-model-trigger [class*='lucide--chevron-down'] {
+  display: none;
 }
