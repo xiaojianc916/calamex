@@ -117,9 +117,6 @@
                 </div>
               </CardContent>
             </Card>
-
-            <LspStatusBar v-show="!isAiMode" :status="lspStatus" :server-name="lspServerName" :error="lspError"
-              :is-running="lspIsRunning" :is-starting="lspIsStarting" :has-error="lspHasError" @restart="restartLsp" />
           </div>
         </div>
       </div>
@@ -131,7 +128,6 @@
 <script setup lang="ts">
 import EmptyEditorState from '@/components/editor/EmptyEditorState.vue';
 import { Card, CardContent } from '@/components/ui/card';
-import LspStatusBar from '@/components/workbench/LspStatusBar.vue';
 import StartupWorkbenchShell from '@/components/workbench/StartupWorkbenchShell.vue';
 import WorkbenchDashboardSidebar from '@/components/workbench/WorkbenchDashboardSidebar.vue';
 import { useLsp } from '@/composables/useLsp';
@@ -225,16 +221,8 @@ const {
   handleOpenCommandPalette,
 } = useShellWorkbenchView(() => emit('ready'));
 
-const lsp = useLsp(visibleWorkspaceRootPath);
-const {
-  status: lspStatus,
-  error: lspError,
-  serverName: lspServerName,
-  isRunning: lspIsRunning,
-  isStarting: lspIsStarting,
-  hasError: lspHasError,
-  restartLsp,
-} = lsp;
+// 保留 LSP 生命周期管理（启动 / 停止 bash-language-server），仅移除底部状态栏 UI。
+useLsp(visibleWorkspaceRootPath);
 
 const isTerminalAllowed = computed(() => !isAiMode.value);
 const isTerminalPanelVisible = computed(() => isTerminalAllowed.value && isTerminalVisible.value);
