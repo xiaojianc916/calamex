@@ -1,15 +1,34 @@
 <template>
-  <aside class="app-sidebar-shell flex h-full min-h-0 min-w-0 flex-col overflow-hidden" :class="{
-    'source-control-sidebar-host': isSourceControlView,
-    'explorer-sidebar-host': isExplorerView,
-    'search-sidebar-host': isSearchView,
-    'ssh-sidebar-host': isSshView,
-  }">
-    <SourceControlPanel v-if="isSourceControlView" class="h-full min-h-0 w-full flex-1"
-      :is-desktop-runtime="isDesktopRuntime" :workspace-root-path="workspaceRootPath" :active-path="document.path"
-      @open-file="handleOpenFile" @open-diff="handleOpenGitDiff" />
+  <aside
+    class="app-sidebar-shell flex h-full min-h-0 min-w-0 flex-col overflow-hidden"
+    :class="{
+      'source-control-sidebar-host': isSourceControlView,
+      'explorer-sidebar-host': isExplorerView,
+      'search-sidebar-host': isSearchView,
+      'ssh-sidebar-host': isSshView,
+    }"
+  >
+    <!--
+      性能优化：侧边栏切换时避免频繁 mount/unmount 大面板（文件树、搜索、Git 等）。
+      改为常驻挂载 + v-show 切换可见性，以减少切换时的同步渲染/布局开销。
+      相关数据加载仍由各面板内部的 watch 条件控制（例如仅在 explorer view 时加载树）。
+    -->
 
-    <section v-else-if="isExplorerView" class="explorer-sidebar" aria-label="资源管理器">
+    <SourceControlPanel
+      v-show="isSourceControlView"
+      class="h-full min-h-0 w-full flex-1"
+      :is-desktop-runtime="isDesktopRuntime"
+      :workspace-root-path="workspaceRootPath"
+      :active-path="document.path"
+      @open-file="handleOpenFile"
+      @open-diff="handleOpenGitDiff"
+    />
+
+    <section
+      v-show="isExplorerView"
+      class="explorer-sidebar"
+      aria-label="资源管理器"
+    >
       <div class="explorer-tree">
         <div v-if="!isDesktopRuntime" class="explorer-empty-state">
           浏览器预览模式下不显示本地目录树，请在 Tauri 桌面端查看资源文件。
@@ -24,7 +43,7 @@
         <Empty v-else-if="!workspaceRootPath" class="explorer-empty-state explorer-empty-state--raised">
           <EmptyHeader class="gap-1.5">
             <EmptyMedia class="h-auto w-auto rounded-none border-0 bg-transparent p-0 shadow-none">
-              <span class="icon-[lucide--folder-open] h-14 w-14"  />
+              <span class="icon-[lucide--folder-open] h-14 w-14" />
             </EmptyMedia>
             <EmptyTitle class="text-[12px] font-medium">尚未打开工作区</EmptyTitle>
             <EmptyDescription class="text-[11px] leading-5">
@@ -42,7 +61,7 @@
         <Empty v-else-if="isExplorerWorkspaceEmpty" class="explorer-empty-state explorer-empty-state--raised">
           <EmptyHeader class="gap-1.5">
             <EmptyMedia class="h-auto w-auto rounded-none border-0 bg-transparent p-0 shadow-none">
-              <span class="icon-[lucide--folder-open] h-14 w-14"  />
+              <span class="icon-[lucide--folder-open] h-14 w-14" />
             </EmptyMedia>
             <EmptyTitle class="text-[12px] font-medium">This folder is empty</EmptyTitle>
             <EmptyDescription class="text-[11px] leading-5">
@@ -56,45 +75,89 @@
         </Empty>
 
         <template v-else>
-          <FileTree class="explorer-file-tree" :expanded="effectiveExplorerExpandedPaths"
-            :selected-path="selectedExplorerPath" @expanded-change="void handleExplorerExpandedChange($event)"
-            @update:selected-path="handleExplorerSelection">
-            <WorkspaceTreeNode v-if="rootEntry" :entry="rootEntry" :level="0" :children-map="childrenMap"
-              :expanded-paths="effectiveExplorerExpandedPaths" :loading-paths="loadingPaths"
-              :active-path="document.path" :active-dirty="document.isDirty"
-              :context-menu-path="explorerContextMenuHighlightPath" :search-query="explorerSearchQuery"
-              :inline-create-draft="inlineCreateDraft" :root-path="root.rootPath"
-              :inline-rename-draft="inlineRenameDraft" @toggle-directory="void toggleExplorerPath($event)"
-              @open-file="handleOpenFile" @context-menu="handleEntryContextMenu"
-              @inline-create-input="handleInlineCreateInputValue" @inline-create-blur="handleInlineCreateBlur"
+          <FileTree
+            class="explorer-file-tree"
+            :expanded="effectiveExplorerExpandedPaths"
+            :selected-path="selectedExplorerPath"
+            @expanded-change="void handleExplorerExpandedChange($event)"
+            @update:selected-path="handleExplorerSelection"
+          >
+            <WorkspaceTreeNode
+              v-if="rootEntry"
+              :entry="rootEntry"
+              :level="0"
+              :children-map="childrenMap"
+              :expanded-paths="effectiveExplorerExpandedPaths"
+              :loading-paths="loadingPaths"
+              :active-path="document.path"
+              :active-dirty="document.isDirty"
+              :context-menu-path="explorerContextMenuHighlightPath"
+              :search-query="explorerSearchQuery"
+              :inline-create-draft="inlineCreateDraft"
+              :root-path="root.rootPath"
+              :inline-rename-draft="inlineRenameDraft"
+              @toggle-directory="void toggleExplorerPath($event)"
+              @open-file="handleOpenFile"
+              @context-menu="handleEntryContextMenu"
+              @inline-create-input="handleInlineCreateInputValue"
+              @inline-create-blur="handleInlineCreateBlur"
               @inline-create-confirm="void confirmInlineCreateWorkspaceEntry()"
               @inline-create-cancel="cancelInlineCreateWorkspaceEntry"
               @inline-rename-input="inlineRenameDraft.value = $event"
-              @inline-rename-confirm="void confirmInlineRename()" @inline-rename-cancel="cancelInlineRename" />
+              @inline-rename-confirm="void confirmInlineRename()"
+              @inline-rename-cancel="cancelInlineRename"
+            />
           </FileTree>
         </template>
       </div>
 
-      <DeferredLinearContextMenu v-if="explorerContextMenu.open" :open="explorerContextMenu.open"
-        :x="explorerContextMenu.x" :y="explorerContextMenu.y" :groups="explorerContextMenuGroups"
-        :theme="appStore.theme" :submenu-direction="explorerContextMenu.x > 280 ? 'left' : 'right'"
-        @select="handleExplorerContextMenuSelect" />
+      <DeferredLinearContextMenu
+        v-if="explorerContextMenu.open"
+        :open="explorerContextMenu.open"
+        :x="explorerContextMenu.x"
+        :y="explorerContextMenu.y"
+        :groups="explorerContextMenuGroups"
+        :theme="appStore.theme"
+        :submenu-direction="explorerContextMenu.x > 280 ? 'left' : 'right'"
+        @select="handleExplorerContextMenuSelect"
+      />
     </section>
 
-    <DeferredSearchSidebarPanel v-else-if="isSearchView" :document-path="document.path"
-      :is-desktop-runtime="isDesktopRuntime" :workspace-root-path="workspaceRootPath"
-      :preloaded-workspace-root="preloadedWorkspaceRoot" @open-file="handleOpenFile" />
+    <DeferredSearchSidebarPanel
+      v-show="isSearchView"
+      :document-path="document.path"
+      :is-desktop-runtime="isDesktopRuntime"
+      :workspace-root-path="workspaceRootPath"
+      :preloaded-workspace-root="preloadedWorkspaceRoot"
+      @open-file="handleOpenFile"
+    />
 
-    <DeferredRunSidebarPanel v-else-if="isRunView" :document="document" :has-active-document="Boolean(document.id)"
-      :is-desktop-runtime="isDesktopRuntime" :can-run="canRun" :is-running="isRunning"
-      :has-run-artifacts="hasRunArtifacts" :active-run="activeRun" :run-history="runHistory"
-      :command-templates="commandTemplates" :executor="executor" @run="emit('run')"
-      @create-document="emit('create-document')" @open-terminal="emit('open-terminal')"
-      @insert-template="emit('insert-template', $event)" @clear-run-history="emit('clear-run-history')" />
+    <DeferredRunSidebarPanel
+      v-show="isRunView"
+      :document="document"
+      :has-active-document="Boolean(document.id)"
+      :is-desktop-runtime="isDesktopRuntime"
+      :can-run="canRun"
+      :is-running="isRunning"
+      :has-run-artifacts="hasRunArtifacts"
+      :active-run="activeRun"
+      :run-history="runHistory"
+      :command-templates="commandTemplates"
+      :executor="executor"
+      @run="emit('run')"
+      @create-document="emit('create-document')"
+      @open-terminal="emit('open-terminal')"
+      @insert-template="emit('insert-template', $event)"
+      @clear-run-history="emit('clear-run-history')"
+    />
 
-    <DeferredSshSidebarPanel v-else-if="isSshView" @open-terminal="emit('open-terminal')" />
+    <DeferredSshSidebarPanel
+      v-show="isSshView"
+      @open-terminal="emit('open-terminal')"
+    />
 
-    <template v-else>
+    <!-- fallback placeholder (rare) -->
+    <template v-if="!isExplorerView && !isSearchView && !isSourceControlView && !isRunView && !isSshView">
       <div class="border-b border-(--shell-divider) px-3 py-3">
         <p class="sidebar-section-title" v-text="panelMeta.title"></p>
       </div>
@@ -118,8 +181,11 @@
               将展示
             </p>
             <div class="mt-3 space-y-2">
-              <article v-for="item in panelMeta.items" :key="item.title"
-                class="rounded-lg border border-white/5 bg-white/3 px-3 py-2">
+              <article
+                v-for="item in panelMeta.items"
+                :key="item.title"
+                class="rounded-lg border border-white/5 bg-white/3 px-3 py-2"
+              >
                 <p class="text-[12px] font-medium text-(--text-primary)" v-text="item.title"></p>
                 <p class="mt-1 text-[11px] leading-5 text-(--text-secondary)" v-text="item.description"></p>
               </article>
