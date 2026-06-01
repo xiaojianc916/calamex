@@ -59,7 +59,7 @@ ast-grep-core = { version = "0.42.2", default-features = false, features = ["tre
 ast-grep-language = { version = "0.42.2", default-features = false, features = ["tree-sitter-bash"], optional = true }
 diffy-imara = { version = "0.3.2", optional = true }
 encoding_rs = { version = "0.8.35", optional = true }
-gix = { version = "0.83", default-features = false, features = ["max-performance-safe", "sha1", "revision", "index", "status", "blob-diff", "excludes"], optional = true }
+gix = { version = "0.83", default-features = false, features = ["max-performance-safe", "sha1", "revision", "index", "status", "blob-diff", "excludes", "tree-editor"], optional = true }
 globset = { version = "0.4.18", optional = true }
 grep-matcher = { version = "0.1.8", optional = true }
 grep-regex = { version = "0.1.14", optional = true }
