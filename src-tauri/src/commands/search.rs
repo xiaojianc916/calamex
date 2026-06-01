@@ -1843,4 +1843,99 @@ mod tests {
         let preview =
             preview_workspace_replacement(request.clone()).expect("应能生成结构化替换预览");
         assert_eq!(preview.file_count, 1);
-        assert_e
+                assert_eq!(preview.replacement_count, 2);
+
+        let expected_files = expected_files(&preview);
+        apply_workspace_replacement(WorkspaceReplacementApplyRequest {
+            request,
+            expected_files,
+        })
+        .expect("应能应用结构化替换");
+        assert_eq!(
+            fs::read_to_string(file).expect("应能读取替换后的文件"),
+            "baz 1\nbaz 2\nbar 3\n"
+        );
+
+        cleanup_workspace(root);
+    }
+
+    #[test]
+    fn apply_replacement_rejects_changed_file_after_preview() {
+        let root = temp_workspace("hash");
+        let file = write_workspace_file(&root, "script.sh", "echo old\n");
+        let request = replacement_request(&root, "old", "new", false, false);
+        let preview = preview_workspace_replacement(request.clone()).expect("应能生成替换预览");
+        let expected_files = expected_files(&preview);
+
+        fs::write(&file, b"echo old\n# changed\n").expect("应能模拟预览后的文件变更");
+        let error = match apply_workspace_replacement(WorkspaceReplacementApplyRequest {
+            request,
+            expected_files,
+        }) {
+            Ok(_) => panic!("文件变更后应拒绝应用旧预览"),
+            Err(error) => error,
+        };
+        assert!(error.contains("已变更"));
+
+        cleanup_workspace(root);
+    }
+
+    #[test]
+    fn symbol_search_returns_function_definitions() {
+        let root = temp_workspace("symbol");
+        write_workspace_file(&root, "script.sh", "deploy_app() {\n    echo deploy\n}\n");
+
+        let payload = search_workspace(WorkspaceSearchRequest {
+            workspace_root_path: root.to_string_lossy().to_string(),
+            query: "deploy_app".to_string(),
+            scope: WorkspaceSearchScope::Symbol,
+            match_case: false,
+            whole_word: false,
+            use_regex: false,
+            use_structural: false,
+            include_patterns: Vec::new(),
+            exclude_patterns: Vec::new(),
+            limit: Some(20),
+        })
+        .expect("应能执行符号搜索");
+
+        assert!(payload.results.iter().any(|result| {
+            matches!(result.kind, WorkspaceSearchResultKind::Symbol)
+                && result.name == "deploy_app"
+                && result.line_number == Some(1)
+        }));
+
+        cleanup_workspace(root);
+    }
+
+    #[test]
+    fn all_scope_keeps_content_results_when_file_name_matches_fill_limit() {
+        let root = temp_workspace("all-scope-limit");
+        write_workspace_file(&root, "needle_a.txt", "alpha\n");
+        write_workspace_file(&root, "needle_b.txt", "beta\n");
+        write_workspace_file(&root, "needle_c.txt", "gamma\n");
+        let content_file = write_workspace_file(&root, "content.sh", "echo needle\n");
+
+        let payload = search_workspace(WorkspaceSearchRequest {
+            workspace_root_path: root.to_string_lossy().to_string(),
+            query: "needle".to_string(),
+            scope: WorkspaceSearchScope::All,
+            match_case: false,
+            whole_word: false,
+            use_regex: false,
+            use_structural: false,
+            include_patterns: Vec::new(),
+            exclude_patterns: Vec::new(),
+            limit: Some(2),
+        })
+        .expect("应能执行全部范围搜索");
+
+        // 文件名命中已占满 limit=2，但 all 范围下内容结果仍应保留（修复前会被整体截断丢掉）。
+        assert!(payload.results.iter().any(|result| {
+            matches!(result.kind, WorkspaceSearchResultKind::Content)
+                && result.path == content_file.to_string_lossy()
+        }));
+
+        cleanup_workspace(root);
+    }
+}
