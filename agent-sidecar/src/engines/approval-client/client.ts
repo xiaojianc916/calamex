@@ -39,6 +39,7 @@ export class MastraRuntimeApproval extends MastraRuntimeExecution {
 
         if (cachedPending) {
             this.pendingApprovals.delete(input.requestId);
+            this.clearPendingApprovalTimer(input.requestId);
         }
 
         const { pending } = approvalContext;

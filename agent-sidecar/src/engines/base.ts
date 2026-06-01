@@ -11,7 +11,7 @@ import { createMastraMemoryReference, createMastraMemoryScope } from './context/
 import { createMastraMemoryForModel, createMastraModelConfig, defaultCreateAgent, defaultCreateExecutionHandle, defaultCreateResumableAgentHandle, defaultCreateStorage, resolveMastraModelConfig } from './agent/factory.js';
 import { encodeApprovalRequestId, extractApprovalToolPath, getChunkRunId } from './approval-client/utils.js';
 import { normalizeMastraError } from './messages.js';
-import { createApprovalRequest, createApprovedPlanExecutionContext } from './responses.js';
+import { createApprovalRequest, createApprovedPlanExecutionContext, deriveApprovalRisk } from './responses.js';
 import { aggregateDoneTokenSnapshot, createOmMemoryCompressedEventDraft, createSandboxToolProgressPreview, extractFinishTokenSnapshot, getReasoningDelta, getTextDelta, isErrorChunk, isSandboxDataChunk, isTextDeltaChunk, isToolCallChunk, isToolCallSuspendedChunk, isToolErrorChunk, isToolResultChunk } from './stream/stream-utils.js';
 import { loadMastraMcpTools } from './tools/tools.js';
 import { DEFAULT_EXECUTION_AGENT_ID, DEFAULT_EXECUTION_AGENT_NAME } from './types.js';
@@ -28,6 +28,12 @@ import { SIDECAR_VERSION } from './runtime.js';
 import type { MastraBrowser } from '@mastra/core/browser';
 import { WORKSPACE_TOOLS } from '@mastra/core/workspace';
 import type { AnyWorkspace } from '@mastra/core/workspace';
+
+/**
+ * 放弃的审批（用户从不 resolve）在内存中保留的最长时间。超时后释放其持有的
+ * MCP bundle / workspace / browser，避免长跑 sidecar 永久泄漏重型资源。
+ */
+const PENDING_APPROVAL_TTL_MS = 10 * 60_000;
 
 export class MastraRuntimeBase {
     readonly name = 'mastra' as const;
@@ -64,6 +70,11 @@ export class MastraRuntimeBase {
     protected readonly loggerRef: IMastraLogToolsRef;
 
     protected readonly pendingApprovals = new Map<string, IMastraPendingApproval>();
+
+    protected readonly pendingApprovalTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+    /** 放弃审批的资源回收 TTL；<=0 时禁用自动回收。 */
+    protected readonly pendingApprovalTtlMs: number = PENDING_APPROVAL_TTL_MS;
 
     constructor(deps: IMastraRuntimeDeps = {}) {
         this.createAgent = deps.createAgent ?? defaultCreateAgent;
@@ -128,7 +139,51 @@ export class MastraRuntimeBase {
             ...(browser ? { browser } : {}),
         });
 
+        this.schedulePendingApprovalEviction(requestId);
+
         return requestId;
+    }
+
+    /**
+     * 为某个挂起审批安排 TTL 回收计时器。若用户始终不 resolve，超时后释放其资源。
+     */
+    protected schedulePendingApprovalEviction(requestId: string): void {
+        if (!(this.pendingApprovalTtlMs > 0)) {
+            return;
+        }
+        this.clearPendingApprovalTimer(requestId);
+        const timer = setTimeout(() => {
+            void this.evictPendingApproval(requestId);
+        }, this.pendingApprovalTtlMs);
+        // 不让悬挂的审批计时器阻止进程退出。
+        timer.unref?.();
+        this.pendingApprovalTimers.set(requestId, timer);
+    }
+
+    /** 清理某个挂起审批的回收计时器（在被正常 resolve 时调用）。 */
+    protected clearPendingApprovalTimer(requestId: string): void {
+        const timer = this.pendingApprovalTimers.get(requestId);
+        if (timer) {
+            clearTimeout(timer);
+            this.pendingApprovalTimers.delete(requestId);
+        }
+    }
+
+    /** TTL 到期后释放挂起审批占用的 bundle / workspace / browser。 */
+    protected async evictPendingApproval(requestId: string): Promise<void> {
+        this.pendingApprovalTimers.delete(requestId);
+        const pending = this.pendingApprovals.get(requestId);
+        if (!pending) {
+            return;
+        }
+        this.pendingApprovals.delete(requestId);
+        try {
+            await pending.bundle.disconnectAll();
+        } catch {
+            // 资源释放尽力而为，忽略清理期间的异常。
+        }
+        await destroyMastraWorkspace(pending.workspace);
+        await destroyMastraBrowser(pending.browser);
     }
 
     protected async createResumableApprovalContext(
@@ -139,7 +194,7 @@ export class MastraRuntimeBase {
         const mode: IAgentRuntimeInput['mode'] = 'agent';
         const normalizedInput: IAgentRuntimeInput = {
             mode,
-            goal: input.goal?.trim() || '\u7ee7\u7eed\u5f53\u524d\u4efb\u52a1',
+            goal: input.goal?.trim() || '继续当前任务',
             messages: input.messages ?? [],
             context: input.context ?? [],
             ...(input.workspaceRootPath ? { workspaceRootPath: input.workspaceRootPath } : {}),
@@ -366,7 +421,12 @@ export class MastraRuntimeBase {
 
                 const output = toJsonValue(chunk.payload.result);
                 const pendingToolCallIds = pendingToolCallIdsByName.get(chunk.payload.toolName) ?? [];
-                const toolUseId = chunk.payload.toolCallId ?? pendingToolCallIds.shift();
+                // 始终从队列出队一个，避免 toolCallId 存在时残留条目无限累积。
+                const queuedToolCallId = pendingToolCallIds.shift();
+                const toolUseId = chunk.payload.toolCallId ?? queuedToolCallId;
+                if (pendingToolCallIds.length === 0) {
+                    pendingToolCallIdsByName.delete(chunk.payload.toolName);
+                }
 
                 if (createRuntimeEvent) {
                     const resultPreview = createWorkspaceRuntimeResultPreview(
@@ -430,15 +490,16 @@ export class MastraRuntimeBase {
                     releaseResources = false;
                 }
 
+                const suspendedRisk = deriveApprovalRisk(chunk.payload);
                 pushUiEvent(events, {
                     type: 'approval_required',
                     request: {
                         id: pendingRequestId ?? chunk.payload.toolCallId,
                         toolName: chunk.payload.toolName,
-                        question: `${chunk.payload.toolName} \u5df2\u6682\u505c\uff0c\u7b49\u5f85\u7ee7\u7eed\u4fe1\u606f\u3002`,
+                        question: `${chunk.payload.toolName} 已暂停，等待继续信息。`,
                         summary: JSON.stringify(toJsonValue(chunk.payload.suspendPayload)),
-                        riskLevel: 'medium',
-                        reversible: true,
+                        riskLevel: suspendedRisk.riskLevel,
+                        reversible: suspendedRisk.reversible,
                         createdAt: new Date().toISOString(),
                     },
                 }, options);
@@ -475,7 +536,7 @@ export class MastraRuntimeBase {
             }
 
             if (chunk.type === 'abort') {
-                streamErrorMessage = 'Mastra Agent \u6267\u884c\u5df2\u4e2d\u6b62\u3002';
+                streamErrorMessage = 'Mastra Agent 执行已中止。';
             }
         }
 
@@ -493,7 +554,7 @@ export class MastraRuntimeBase {
         sessionId: string,
         options: IAgentRuntimeRunOptions,
     ): IAgentRuntimeResponse {
-        const result = '\u5ba1\u6279\u7ed3\u679c\u5df2\u8bb0\u5f55\uff0c\u7b49\u5f85\u4e0b\u4e00\u6b21 Agent \u6267\u884c\u7ee7\u7eed\u6d88\u8d39\u3002';
+        const result = '审批结果已记录，等待下一次 Agent 执行继续消费。';
         const events: TAgentRuntimeOutputEvent[] = [];
 
         pushUiEvent(events, {
