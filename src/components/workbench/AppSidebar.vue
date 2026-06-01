@@ -151,10 +151,12 @@
       @clear-run-history="emit('clear-run-history')"
     />
 
-    <DeferredSshSidebarPanel
+    <div
       v-show="isSshView"
-      @open-terminal="emit('open-terminal')"
-    />
+      class="ssh-sidebar-host-shell flex min-h-0 w-full flex-1 flex-col overflow-hidden"
+    >
+      <DeferredSshSidebarPanel @open-terminal="emit('open-terminal')" />
+    </div>
 
     <!-- fallback placeholder (rare) -->
     <template v-if="!isExplorerView && !isSearchView && !isSourceControlView && !isRunView && !isSshView">
