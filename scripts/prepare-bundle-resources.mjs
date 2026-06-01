@@ -7,7 +7,7 @@
 // NSIS 打包之前）。
 //
 // 与 Rust 端 (agent_sidecar/mod.rs、commands/lsp.rs、commands/shell_tools.rs)
-// 的解析策略保持一致：随包优先 → 系统兜底。本脚本负责「随包」那一份。
+// 的解析策略保持一致：随包优先 → 系统兑底。本脚本负责「随包」那一份。
 //
 // 产物布局（必须与 Rust 的 bundled_resource_roots() 拼接路径对齐）：
 //   resources-bundle/node/node.exe
@@ -16,7 +16,7 @@
 //   resources-bundle/shellcheck.exe
 //   resources-bundle/shfmt.exe  (可选，失败不阻断打包)
 
-import { execFileSync } from "node:child_process"
+import { execFileSync, execSync } from "node:child_process"
 import {
 	cpSync,
 	existsSync,
@@ -55,6 +55,15 @@ function fail(message) {
 
 function run(command, args, options = {}) {
 	log(`$ ${command} ${args.join(" ")}`)
+	// Windows：Node 18.20.2+/20.12.2+（CVE-2024-27980 修复）拒绝直接 spawn .cmd/.bat，
+	// 必须经 shell。走 shell 时手动给含空格的参数加引号（路径可能含空格）。
+	const needsShell = isWindows && /\.(cmd|bat)$/i.test(command)
+	if (needsShell) {
+		const quote = (s) => (/\s/.test(s) ? `"${s}"` : s)
+		const line = [quote(command), ...args.map(quote)].join(" ")
+		execSync(line, { stdio: "inherit", ...options })
+		return
+	}
 	execFileSync(command, args, { stdio: "inherit", ...options })
 }
 
