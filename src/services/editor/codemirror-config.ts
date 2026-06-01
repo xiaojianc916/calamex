@@ -8,6 +8,7 @@ import {
   highlightActiveLineGutter,
   lineNumbers,
 } from '@codemirror/view';
+import { indentationMarkers } from '@replit/codemirror-indentation-markers';
 import type { IEditorSettings } from '@/types/settings';
 
 export const resolveCodeMirrorIndentUnit = (editorSettings: IEditorSettings): string => {
@@ -46,9 +47,10 @@ export const buildCodeMirrorSettingsExtensions = (
     drawSelection(),
     showLineNumbers ? lineNumbers() : [],
     showActiveLine ? highlightActiveLine() : [],
-    // highlightActiveLineGutter 是“高亮当前行”在行号槽中的对应部分，应跟随 activeLine 设置，
-    // 而非与之语义无关的 indentGuides。当前依赖未提供缩进参考线扩展，indentGuides 暂未接线。
+    // highlightActiveLineGutter 是“高亮当前行”在行号槽中的对应部分，应跟随 activeLine 设置。
     showActiveLine ? highlightActiveLineGutter() : [],
+    // 缩进参考线：在每级缩进处渲染竖线；highlightActiveBlock 让光标所在作用域的竖线高亮。
+    editorSettings.indentGuides ? indentationMarkers({ highlightActiveBlock: true }) : [],
     showFoldGutter ? foldGutter() : [],
     enableAutoClosingPairs ? closeBrackets() : [],
   ];
