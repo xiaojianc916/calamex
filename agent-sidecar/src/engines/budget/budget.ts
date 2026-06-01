@@ -30,11 +30,16 @@ export const isZodSchemaLike = (value: unknown): value is z.ZodType<unknown> => 
         && typeof record?.safeParse === 'function';
 };
 
-export const convertToolInputSchemaForBudget = (schema: unknown): unknown => {
-    if (!schema) {
-        return EMPTY_TOOL_PARAMETERS;
-    }
+// z.toJSONSchema is comparatively expensive and the same tool schema is
+// converted repeatedly within a single agent run (token estimation in
+// createAcontextTokenEventDraft and provider-shape building in
+// countProviderToolSchemaChars both walk the same tools). Schema objects are
+// stable for a tool's lifetime, so a WeakMap keyed by the schema object lets
+// repeated conversions reuse the first result and is reclaimed automatically
+// when the tool is gone.
+const toolInputSchemaCache = new WeakMap<object, unknown>();
 
+const computeToolInputSchemaForBudget = (schema: unknown): unknown => {
     const schemaRecord = toRecord(schema);
     if (schemaRecord && 'jsonSchema' in schemaRecord) {
         return schemaRecord.jsonSchema;
@@ -49,6 +54,27 @@ export const convertToolInputSchemaForBudget = (schema: unknown): unknown => {
     }
 
     return schema;
+};
+
+export const convertToolInputSchemaForBudget = (schema: unknown): unknown => {
+    if (!schema) {
+        return EMPTY_TOOL_PARAMETERS;
+    }
+
+    if (typeof schema === 'object') {
+        const cached = toolInputSchemaCache.get(schema);
+        if (cached !== undefined) {
+            return cached;
+        }
+    }
+
+    const converted = computeToolInputSchemaForBudget(schema);
+
+    if (typeof schema === 'object') {
+        toolInputSchemaCache.set(schema, converted);
+    }
+
+    return converted;
 };
 
 export const createProviderToolBudgetShape = (
