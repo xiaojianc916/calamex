@@ -645,20 +645,20 @@ fn restore_worktree_from_index_blob(
     let object = repository
         .find_object(object_id)
         .map_err(|error| format!("读取 Git 对象失败：{error}"))?;
-    let bytes = object.data;
+    let bytes = object.data.as_slice();
     let target_path = repository_root.join(Path::new(relative_path));
     if let Some(parent) = target_path.parent() {
         fs::create_dir_all(parent).map_err(|error| format!("创建目录失败：{error}"))?;
     }
     if mode == Mode::SYMLINK {
-        let link_target = String::from_utf8_lossy(&bytes).into_owned();
+        let link_target = String::from_utf8_lossy(bytes).into_owned();
         recreate_symlink(&target_path, &link_target)?;
     } else {
         if fs::symlink_metadata(&target_path).is_ok() {
             // 先移除既有文件 / 链接，避免写入时跟随旧符号链接。
             let _ = fs::remove_file(&target_path);
         }
-        fs::write(&target_path, &bytes).map_err(|error| format!("写入工作区文件失败：{error}"))?;
+        fs::write(&target_path, bytes).map_err(|error| format!("写入工作区文件失败：{error}"))?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
