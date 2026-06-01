@@ -93,7 +93,6 @@ import {
 } from '@codemirror/state';
 import {
   crosshairCursor,
-  drawSelection,
   dropCursor,
   EditorView,
   highlightSpecialChars,
@@ -374,6 +373,10 @@ const restoreViewStateForPath = (path: string | null | undefined): void => {
 
   const anchor = readNumberField(savedState, 'anchor');
   const head = readNumberField(savedState, 'head') ?? anchor;
+  const scrollTop = readNumberField(savedState, 'scrollTop');
+  const scrollLeft = readNumberField(savedState, 'scrollLeft');
+  const hasSavedScroll = scrollTop !== null || scrollLeft !== null;
+
   if (anchor !== null) {
     const maxPosition = view.state.doc.length;
     const selection = EditorSelection.single(
@@ -381,17 +384,17 @@ const restoreViewStateForPath = (path: string | null | undefined): void => {
       // head 在上面已经 ?? anchor，不需要二次回退
       Math.min(Math.max(0, head as number), maxPosition),
     );
+    // 仅在没有已保存滚动位置时，才用 scrollIntoView 兜底把光标滚到可视区中部；
+    // 若已有保存的滚动位置，则交由下方精确恢复，避免二者冲突（滚动覆盖光标定位）。
     view.dispatch({
       selection,
-      effects: EditorView.scrollIntoView(selection.main.head, { y: 'center' }),
+      ...(hasSavedScroll
+        ? {}
+        : { effects: EditorView.scrollIntoView(selection.main.head, { y: 'center' }) }),
     });
   }
 
-  const scrollTop = readNumberField(savedState, 'scrollTop');
-  const scrollLeft = readNumberField(savedState, 'scrollLeft');
-  if (scrollTop !== null || scrollLeft !== null) {
-    // 注意：这里会在 next frame **覆盖** scrollIntoView 的结果。
-    // 如果调用方希望\"恢复滚动位置 + 看到光标\"，应只持久化其中之一。
+  if (hasSavedScroll) {
     requestAnimationFrame(() => {
       if (!editorView) return;
       editorView.scrollDOM.scrollTop = scrollTop ?? editorView.scrollDOM.scrollTop;
@@ -809,7 +812,6 @@ const createBaseExtensions = (language: string): Extension[] => [
   highlightSpecialChars(),
   shikiHighlightExtension(language),
   history(),
-  drawSelection(),
   dropCursor(),
   indentOnInput(),
   bracketMatching(),
