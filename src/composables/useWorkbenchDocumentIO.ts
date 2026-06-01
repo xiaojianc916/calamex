@@ -120,18 +120,38 @@ export const useWorkbenchDocumentIO = ({
     name: string,
     path: string,
     reusedExisting: boolean,
+    options?: {
+      /**
+       * 是否显示 toast。
+       *
+       * 默认规则：
+       * - reusedExisting: false → true (真正打开了新 tab)
+       * - reusedExisting: true → false (频繁切 tab 时 toast 会带来额外渲染/布局开销)
+       */
+      toast?: boolean;
+      /** 是否写入 log；同 toast，切 tab 场景默认关闭以减少噪音与渲染开销。 */
+      log?: boolean;
+    },
   ): void => {
+    const shouldToast = options?.toast ?? !reusedExisting;
+    const shouldLog = options?.log ?? !reusedExisting;
+
     const labels = ACTION_LABEL_TABLE[kind];
     const toasts = TOAST_TEMPLATE_TABLE[kind];
     const actionLabel = reusedExisting ? labels.reused : labels.opened;
     const toastMessage = reusedExisting ? toasts.reused(name) : toasts.opened(name);
 
-    editorStore.appendLog(
-      reusedExisting ? 'info' : 'success',
-      scene,
-      buildLogDetail(actionLabel, path),
-    );
-    notifier.success(toastMessage);
+    if (shouldLog) {
+      editorStore.appendLog(
+        reusedExisting ? 'info' : 'success',
+        scene,
+        buildLogDetail(actionLabel, path),
+      );
+    }
+
+    if (shouldToast) {
+      notifier.success(toastMessage);
+    }
   };
 
   /**
@@ -147,12 +167,16 @@ export const useWorkbenchDocumentIO = ({
     path: string,
     name: string,
     open: () => { reusedExisting: boolean },
+    options?: {
+      toast?: boolean;
+      log?: boolean;
+    },
   ): void => {
     const existing = editorStore.findDocumentByPath(path);
     if (!existing && !ensureCanOpenNewTab()) return;
 
     const { reusedExisting } = open();
-    notifyDocumentOpenResult(scene, kind, name, path, reusedExisting);
+    notifyDocumentOpenResult(scene, kind, name, path, reusedExisting, options);
   };
 
   // -----------------------------------------------------------------------
@@ -318,10 +342,11 @@ export const useWorkbenchDocumentIO = ({
     try {
       const existingDocument = editorStore.findDocumentByPath(path);
       if (existingDocument) {
+        // 频繁切换文件时，toast + appendLog 会带来额外渲染/布局开销；这里默认静默切换。
         editorStore.setActiveDocument(existingDocument.id);
-        notifier.success(`已切换到 ${existingDocument.name}`);
         return;
       }
+
       await loadDocumentFromPath(path, '资源管理器打开文件');
     } catch (error) {
       reportError('打开资源文件失败', error, '打开资源文件失败');
