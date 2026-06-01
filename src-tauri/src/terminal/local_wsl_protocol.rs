@@ -1,9 +1,4 @@
 // 终端域：本地 PTY 运行/交互所需的协议类型。
-//
-// 这些类型原先定义在 wsl_link::terminal_exec，被“自研 gRPC supervisor + WSL Link agent”
-// 链路复用。链路下线后，仅 terminal 域的本地 PTY 实现（wsl_pty.rs）与命令层
-// （commands/terminal.rs）仍需要其中的服务端事件类型、运行/交互请求与 UTF-8 分块
-// 解码器，故收敛到本模块，不再依赖 wsl_link，也不再保留无人使用的 serde/wire 编解码面。
 
 use thiserror::Error;
 
