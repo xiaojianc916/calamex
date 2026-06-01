@@ -1,95 +1,73 @@
 <template>
-  <div class="explorer-node" :class="{ 'is-open': shouldShowChildren }">
-    <button v-if="!isRenamingEntry" type="button" class="explorer-tree-row w-full text-left"
-      :class="{ 'is-active': isActive, 'is-context-target': isContextTarget }" :style="rowStyle"
-      role="treeitem" :aria-level="level + 1" :aria-selected="isActive"
-      :aria-expanded="isDirectory ? shouldShowChildren : undefined" @click="handleClick"
-      @contextmenu.prevent.stop="handleContextMenu">
-      <span class="explorer-chevron" :class="{ 'is-placeholder': !showChevron }">
-        <svg v-if="showChevron" viewBox="0 0 12 12" class="h-3 w-3 transition-transform"
-          :class="shouldShowChildren ? 'rotate-90' : ''" fill="none" stroke="currentColor" stroke-width="1.4"
-          stroke-linecap="round" stroke-linejoin="round">
-          <path d="M4 2.5 8 6 4 9.5" />
-        </svg>
-      </span>
+  <div ref="rootEl" class="explorer-tree-flat" role="presentation" @keydown="onKeydown">
+    <template v-if="!shouldVirtualize">
+      <WorkspaceTreeRow
+        v-for="row in rows"
+        :key="row.key"
+        :row="row"
+        :active-path="activePath"
+        :active-dirty="activeDirty"
+        :context-menu-path="contextMenuPath"
+        :tabbable="row.type === 'entry' && row.entry.path === effectiveFocusPath"
+        :inline-create-draft="inlineCreateDraft"
+        :inline-rename-draft="inlineRenameDraft"
+        @activate="onActivate"
+        @contextmenu="(payload) => emit('context-menu', payload)"
+        @inline-create-input="(value) => emit('inline-create-input', value)"
+        @inline-create-blur="emit('inline-create-blur')"
+        @inline-create-confirm="emit('inline-create-confirm')"
+        @inline-create-cancel="emit('inline-create-cancel')"
+        @inline-rename-input="(value) => emit('inline-rename-input', value)"
+        @inline-rename-confirm="emit('inline-rename-confirm')"
+        @inline-rename-cancel="emit('inline-rename-cancel')"
+      />
+    </template>
 
-      <ExplorerEntryIcon :kind="entry.kind" :path="entry.path" :expanded="shouldShowChildren"
-        class="h-4 w-4 shrink-0" />
-
-      <span class="explorer-tree-name" v-text="entry.name"></span>
-      <span v-if="showDirtyMarker" class="explorer-tree-meta">M</span>
-    </button>
-
-    <div v-else class="explorer-tree-row w-full text-left"
-      :class="{ 'is-active': isActive, 'is-context-target': isContextTarget }" :style="rowStyle"
-      role="treeitem" :aria-level="level + 1" :aria-selected="isActive"
-      @contextmenu.prevent.stop="handleContextMenu">
-      <span class="explorer-chevron" :class="{ 'is-placeholder': !showChevron }">
-        <svg v-if="showChevron" viewBox="0 0 12 12" class="h-3 w-3 transition-transform"
-          :class="shouldShowChildren ? 'rotate-90' : ''" fill="none" stroke="currentColor" stroke-width="1.4"
-          stroke-linecap="round" stroke-linejoin="round">
-          <path d="M4 2.5 8 6 4 9.5" />
-        </svg>
-      </span>
-
-      <ExplorerEntryIcon :kind="entry.kind" :path="entry.path" :expanded="shouldShowChildren"
-        class="h-4 w-4 shrink-0" />
-
-      <input class="explorer-inline-create-input explorer-inline-rename-input" type="text" aria-label="重命名文件"
-        :value="inlineRenameDraft?.value ?? entry.name" @input="handleInlineRenameInput"
-        @blur="$emit('inline-rename-confirm')" @pointerdown.stop @click.stop
-        @keydown.enter.prevent.stop="$emit('inline-rename-confirm')"
-        @keydown.esc.prevent.stop="$emit('inline-rename-cancel')" />
-      <span v-if="showDirtyMarker" class="explorer-tree-meta">M</span>
-    </div>
-
-    <div v-if="shouldShowChildren" class="explorer-tree-children" role="group">
-      <div v-if="isLoading" class="explorer-helper-text explorer-helper-text-padded" :style="childStateStyle">
-        正在读取目录...
-      </div>
-      <div v-else-if="visibleChildEntries.length === 0 && !hasActiveSearch"
-        class="explorer-helper-text explorer-helper-text-padded" :style="childStateStyle">
-        空文件夹
-      </div>
-
-      <WorkspaceTreeNode v-for="child in visibleChildEntries" :key="child.path" :entry="child" :level="level + 1"
-        :children-map="childrenMap" :expanded-paths="expandedPaths" :loading-paths="loadingPaths"
-        :active-path="activePath" :active-dirty="activeDirty" :context-menu-path="contextMenuPath"
-        :search-query="searchQuery" :inline-create-draft="inlineCreateDraft" :root-path="rootPath"
-        :inline-rename-draft="inlineRenameDraft" @toggle-directory="$emit('toggle-directory', $event)"
-        @open-file="$emit('open-file', $event)" @context-menu="$emit('context-menu', $event)"
-        @inline-create-input="$emit('inline-create-input', $event)" @inline-create-blur="$emit('inline-create-blur')"
-        @inline-create-confirm="$emit('inline-create-confirm')" @inline-create-cancel="$emit('inline-create-cancel')"
-        @inline-rename-input="$emit('inline-rename-input', $event)"
-        @inline-rename-confirm="$emit('inline-rename-confirm')" @inline-rename-cancel="$emit('inline-rename-cancel')" />
-
-      <div v-if="showInlineCreateDraft" class="explorer-tree-row explorer-tree-inline-create"
-        :style="inlineCreateRowStyle">
-        <span class="explorer-chevron is-placeholder"></span>
-
-        <ExplorerEntryIcon :kind="inlineCreateDraft?.kind === 'directory' ? 'directory' : 'file'" :path="entry.path"
-          class="h-4 w-4 shrink-0" />
-
-        <input class="explorer-inline-create-input" :value="inlineCreateDraft?.value ?? ''"
-          :placeholder="inlineCreateDraft?.placeholder ?? ''" @input="handleInlineCreateInput"
-          @blur="$emit('inline-create-confirm')" @keydown.enter.prevent.stop="$emit('inline-create-confirm')"
-          @keydown.esc.prevent.stop="$emit('inline-create-cancel')" />
+    <div v-else class="explorer-tree-virtual-sizer" :style="{ height: `${totalSize}px` }">
+      <div
+        v-for="item in virtualItems"
+        :key="item.key"
+        :ref="measureRef"
+        :data-index="item.index"
+        class="explorer-tree-virtual-item"
+        :style="{ transform: `translateY(${item.start - scrollMargin}px)` }"
+      >
+        <WorkspaceTreeRow
+          :row="item.row"
+          :active-path="activePath"
+          :active-dirty="activeDirty"
+          :context-menu-path="contextMenuPath"
+          :tabbable="item.row.type === 'entry' && item.row.entry.path === effectiveFocusPath"
+          :inline-create-draft="inlineCreateDraft"
+          :inline-rename-draft="inlineRenameDraft"
+          @activate="onActivate"
+          @contextmenu="(payload) => emit('context-menu', payload)"
+          @inline-create-input="(value) => emit('inline-create-input', value)"
+          @inline-create-blur="emit('inline-create-blur')"
+          @inline-create-confirm="emit('inline-create-confirm')"
+          @inline-create-cancel="emit('inline-create-cancel')"
+          @inline-rename-input="(value) => emit('inline-rename-input', value)"
+          @inline-rename-confirm="emit('inline-rename-confirm')"
+          @inline-rename-cancel="emit('inline-rename-cancel')"
+        />
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import type { CSSProperties } from 'vue';
-import { computed } from 'vue';
-import ExplorerEntryIcon from '@/components/workbench/ExplorerEntryIcon.vue';
+import { useVirtualizer } from '@tanstack/vue-virtual';
+import { useResizeObserver } from '@vueuse/core';
+import type { ComponentPublicInstance } from 'vue';
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
+import WorkspaceTreeRow from '@/components/workbench/WorkspaceTreeRow.vue';
+import type { TWorkspaceTreeRow } from '@/components/workbench/workspace-tree.types';
 import type { IWorkspaceEntry } from '@/types/editor';
 import { areFileSystemPathsEqual } from '@/utils/path';
 import { filterWorkspaceEntriesByQuery } from '@/utils/workspace';
 
-defineOptions({
-  name: 'WorkspaceTreeNode',
-});
+// 保留原组件名，避免影响 AppSidebar 的引用与测试中的 stub。
+defineOptions({ name: 'WorkspaceTreeNode' });
 
 const props = defineProps<{
   entry: IWorkspaceEntry;
@@ -128,138 +106,328 @@ const emit = defineEmits<{
   'inline-rename-cancel': [];
 }>();
 
-const isDirectory = computed(() => props.entry.kind === 'directory');
-const isExpanded = computed(() => props.expandedPaths.has(props.entry.path));
-const isLoading = computed(() => Boolean(props.loadingPaths[props.entry.path]));
-const childEntries = computed(() => props.childrenMap[props.entry.path] ?? []);
-const isActive = computed(() => areFileSystemPathsEqual(props.entry.path, props.activePath));
-const isContextTarget = computed(
-  () => !isActive.value && areFileSystemPathsEqual(props.entry.path, props.contextMenuPath),
-);
-const normalizedSearchQuery = computed(() => (props.searchQuery ?? '').trim().toLowerCase());
-const hasActiveSearch = computed(() => normalizedSearchQuery.value.length > 0);
-const showChevron = computed(() => isDirectory.value && props.entry.hasChildren);
-const showDirtyMarker = computed(
-  () => props.entry.kind === 'file' && isActive.value && props.activeDirty,
-);
-const isRenamingEntry = computed(() => props.inlineRenameDraft?.path === props.entry.path);
-const rowStyle = computed<CSSProperties>(() => ({
-  '--explorer-indent': `${18 + props.level * 18}px`,
-}));
-const childStateStyle = computed<CSSProperties>(() => ({
-  paddingLeft: `${44 + props.level * 18}px`,
-}));
-const inlineCreateRowStyle = computed<CSSProperties>(() => ({
-  paddingLeft: `${18 + (props.level + 1) * 18}px`,
-}));
-const showInlineCreateDraft = computed(
-  () =>
-    Boolean(props.inlineCreateDraft?.open) &&
-    props.inlineCreateDraft?.parentPath === props.entry.path &&
-    props.entry.kind === 'directory',
-);
+// 把可见的树结构拍平成一维行列表，以便虚拟化与键盘导航。
+const rows = computed<TWorkspaceTreeRow[]>(() => {
+  const result: TWorkspaceTreeRow[] = [];
+  const normalizedQuery = (props.searchQuery ?? '').trim().toLowerCase();
+  const draft = props.inlineCreateDraft;
 
-const visibleChildEntries = computed(() => {
-  return filterWorkspaceEntriesByQuery(
-    childEntries.value,
-    normalizedSearchQuery.value,
-    props.childrenMap,
-  );
+  const walk = (node: IWorkspaceEntry, level: number): void => {
+    const isDirectory = node.kind === 'directory';
+    const expanded = isDirectory && props.expandedPaths.has(node.path);
+
+    result.push({
+      type: 'entry',
+      key: node.path,
+      entry: node,
+      level,
+      expanded,
+      showChevron: isDirectory,
+    });
+
+    if (!isDirectory || !expanded) {
+      return;
+    }
+
+    const rawChildren = props.childrenMap[node.path];
+    const isLoading = props.loadingPaths[node.path] === true;
+    const showInlineCreate =
+      draft?.open === true && areFileSystemPathsEqual(draft.parentPath, node.path);
+
+    if (rawChildren === undefined) {
+      if (isLoading) {
+        result.push({ type: 'loading', key: `${node.path}::loading`, level: level + 1 });
+      }
+      if (showInlineCreate) {
+        result.push({
+          type: 'inline-create',
+          key: `${node.path}::inline-create`,
+          parentPath: node.path,
+          level,
+        });
+      }
+      return;
+    }
+
+    const visibleChildren = normalizedQuery
+      ? filterWorkspaceEntriesByQuery(rawChildren, normalizedQuery, props.childrenMap)
+      : rawChildren;
+
+    for (const child of visibleChildren) {
+      walk(child, level + 1);
+    }
+
+    if (isLoading) {
+      result.push({ type: 'loading', key: `${node.path}::loading`, level: level + 1 });
+    }
+
+    if (showInlineCreate) {
+      result.push({
+        type: 'inline-create',
+        key: `${node.path}::inline-create`,
+        parentPath: node.path,
+        level,
+      });
+    }
+
+    if (visibleChildren.length === 0 && !showInlineCreate && !isLoading) {
+      result.push({ type: 'empty', key: `${node.path}::empty`, level: level + 1 });
+    }
+  };
+
+  walk(props.entry, props.level);
+  return result;
 });
 
-const shouldShowChildren = computed(
-  () =>
-    isDirectory.value &&
-    (isExpanded.value || (hasActiveSearch.value && visibleChildEntries.value.length > 0)),
+type TEntryNav = {
+  path: string;
+  level: number;
+  isDirectory: boolean;
+  expanded: boolean;
+};
+
+const entryNav = computed<TEntryNav[]>(() => {
+  const result: TEntryNav[] = [];
+  for (const row of rows.value) {
+    if (row.type === 'entry') {
+      result.push({
+        path: row.entry.path,
+        level: row.level,
+        isDirectory: row.entry.kind === 'directory',
+        expanded: row.expanded,
+      });
+    }
+  }
+  return result;
+});
+
+const focusedPath = ref<string | null>(null);
+const effectiveFocusPath = computed<string | null>(
+  () => focusedPath.value ?? entryNav.value[0]?.path ?? null,
 );
 
-const handleClick = (): void => {
-  if (isDirectory.value) {
-    emit('toggle-directory', props.entry.path);
+// 虚拟化：仅在行数超过阈值时启用，避免在 happy-dom 零高容器下渲染 0 行。
+const VIRTUALIZE_THRESHOLD = 100;
+const rootEl = ref<HTMLElement | null>(null);
+const scrollMargin = ref(0);
+const shouldVirtualize = computed(() => rows.value.length > VIRTUALIZE_THRESHOLD);
+
+const getScrollElement = (): HTMLElement | null => {
+  if (!shouldVirtualize.value) {
+    return null;
+  }
+  const root = rootEl.value;
+  if (!root) {
+    return null;
+  }
+  return root.closest('.explorer-tree') as HTMLElement | null;
+};
+
+const virtualizerOptions = computed(() => ({
+  count: rows.value.length,
+  getScrollElement,
+  estimateSize: () => 28,
+  overscan: 12,
+  scrollMargin: scrollMargin.value,
+  getItemKey: (index: number): string => rows.value[index]?.key ?? String(index),
+}));
+
+const virtualizer = useVirtualizer<HTMLElement, HTMLElement>(virtualizerOptions);
+const totalSize = computed(() => virtualizer.value.getTotalSize());
+
+const virtualItems = computed(() => {
+  const all = rows.value;
+  const result: Array<{ key: string; index: number; start: number; row: TWorkspaceTreeRow }> = [];
+  for (const item of virtualizer.value.getVirtualItems()) {
+    const row = all[item.index];
+    if (row) {
+      result.push({ key: row.key, index: item.index, start: item.start, row });
+    }
+  }
+  return result;
+});
+
+const measureRef = (el: Element | ComponentPublicInstance | null): void => {
+  if (el instanceof HTMLElement) {
+    virtualizer.value.measureElement(el);
+  }
+};
+
+const recomputeScrollMargin = (): void => {
+  if (!shouldVirtualize.value) {
+    scrollMargin.value = 0;
+    return;
+  }
+  const scroller = getScrollElement();
+  const sizer = rootEl.value;
+  if (!scroller || !sizer) {
+    return;
+  }
+  const scrollerRect = scroller.getBoundingClientRect();
+  const sizerRect = sizer.getBoundingClientRect();
+  scrollMargin.value = sizerRect.top - scrollerRect.top + scroller.scrollTop;
+};
+
+useResizeObserver(rootEl, () => recomputeScrollMargin());
+useResizeObserver(
+  () => getScrollElement(),
+  () => recomputeScrollMargin(),
+);
+onMounted(() => recomputeScrollMargin());
+watch(
+  () => rows.value.length,
+  () => {
+    void nextTick(recomputeScrollMargin);
+  },
+);
+
+const findRowEl = (path: string): HTMLElement | null => {
+  const root = rootEl.value;
+  if (!root) {
+    return null;
+  }
+  const candidates = root.querySelectorAll('[data-tree-path]');
+  for (const candidate of Array.from(candidates)) {
+    if (candidate instanceof HTMLElement && candidate.dataset.treePath === path) {
+      return candidate;
+    }
+  }
+  return null;
+};
+
+const focusRowByPath = async (path: string): Promise<void> => {
+  focusedPath.value = path;
+  if (shouldVirtualize.value) {
+    const index = rows.value.findIndex(
+      (row) => row.type === 'entry' && row.entry.path === path,
+    );
+    if (index >= 0) {
+      virtualizer.value.scrollToIndex(index, { align: 'auto' });
+      await nextTick();
+    }
+  }
+  await nextTick();
+  findRowEl(path)?.focus();
+};
+
+const onActivate = (entry: IWorkspaceEntry): void => {
+  focusedPath.value = entry.path;
+  if (entry.kind === 'directory') {
+    emit('toggle-directory', entry.path);
+  } else {
+    emit('open-file', entry.path);
+  }
+};
+
+const onKeydown = (event: KeyboardEvent): void => {
+  // 不劫持行内输入框（新建 / 重命名）的按键。
+  if (event.target instanceof HTMLInputElement) {
+    return;
+  }
+  const nav = entryNav.value;
+  if (nav.length === 0) {
+    return;
+  }
+  const currentPath = focusedPath.value ?? nav[0]?.path ?? null;
+  const rawIdx = nav.findIndex((item) => item.path === currentPath);
+  const idx = rawIdx < 0 ? 0 : rawIdx;
+  const current = nav[idx];
+  if (!current) {
     return;
   }
 
-  emit('open-file', props.entry.path);
-};
-
-const handleContextMenu = (event: MouseEvent): void => {
-  emit('context-menu', { event, entry: props.entry });
-};
-
-const handleInlineCreateInput = (event: Event): void => {
-  const target = event.target;
-  if (!(target instanceof HTMLInputElement)) {
-    return;
+  switch (event.key) {
+    case 'ArrowDown': {
+      event.preventDefault();
+      const next = nav[Math.min(idx + 1, nav.length - 1)];
+      if (next) {
+        void focusRowByPath(next.path);
+      }
+      break;
+    }
+    case 'ArrowUp': {
+      event.preventDefault();
+      const prev = nav[Math.max(idx - 1, 0)];
+      if (prev) {
+        void focusRowByPath(prev.path);
+      }
+      break;
+    }
+    case 'Home': {
+      event.preventDefault();
+      const first = nav[0];
+      if (first) {
+        void focusRowByPath(first.path);
+      }
+      break;
+    }
+    case 'End': {
+      event.preventDefault();
+      const last = nav[nav.length - 1];
+      if (last) {
+        void focusRowByPath(last.path);
+      }
+      break;
+    }
+    case 'ArrowRight': {
+      event.preventDefault();
+      if (!current.isDirectory) {
+        break;
+      }
+      if (!current.expanded) {
+        emit('toggle-directory', current.path);
+      } else {
+        const next = nav[idx + 1];
+        if (next && next.level > current.level) {
+          void focusRowByPath(next.path);
+        }
+      }
+      break;
+    }
+    case 'ArrowLeft': {
+      event.preventDefault();
+      if (current.isDirectory && current.expanded) {
+        emit('toggle-directory', current.path);
+        break;
+      }
+      for (let i = idx - 1; i >= 0; i--) {
+        const candidate = nav[i];
+        if (candidate && candidate.level < current.level) {
+          void focusRowByPath(candidate.path);
+          break;
+        }
+      }
+      break;
+    }
+    case 'Enter': {
+      event.preventDefault();
+      if (current.isDirectory) {
+        emit('toggle-directory', current.path);
+      } else {
+        emit('open-file', current.path);
+      }
+      break;
+    }
+    default:
+      break;
   }
-
-  emit('inline-create-input', target.value);
-};
-
-const handleInlineRenameInput = (event: Event): void => {
-  const target = event.target;
-  if (!(target instanceof HTMLInputElement)) {
-    return;
-  }
-
-  emit('inline-rename-input', target.value);
 };
 </script>
 
 <style scoped>
-.explorer-inline-create-input {
+.explorer-tree-flat {
+  display: block;
+}
+
+.explorer-tree-virtual-sizer {
+  position: relative;
   width: 100%;
-  min-width: 0;
-  height: 28px;
-  border: 1px solid color-mix(in srgb, var(--shell-divider) 82%, transparent);
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--bg-3) 96%, transparent);
-  color: var(--text-primary);
-  font-size: 12.5px;
-  padding: 0 10px;
-  outline: none;
-  transition:
-    border-color 120ms ease,
-    box-shadow 120ms ease,
-    background-color 120ms ease;
 }
 
-.explorer-inline-create-input:hover {
-  border-color: color-mix(in srgb, var(--accent-strong) 38%, var(--shell-divider));
-}
-
-.explorer-inline-create-input:focus {
-  border-color: color-mix(in srgb, var(--accent-strong) 70%, transparent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-strong) 28%, transparent);
-}
-
-/*
- * 重命名输入框：白色主题。重命名行内没有文件名文字 span（被输入框替换），
- * 所以行高由输入框决定。把高度固定为一行文字的行盒高度 ⌈Ｑ３px × 1.5⌉ = 20px（不用 auto，
- * 避免浏览器对 input 自动擑高），与普通文件行严格一致，重命名前后不跳也不偏高。
- */
-.explorer-inline-rename-input {
-  flex: 1;
-  width: auto;
-  min-width: 0;
-  height: 20px;
-  margin: 0;
-  padding: 0 6px;
-  border: 0;
-  border-radius: 5px;
-  background: #ffffff;
-  color: #1f2328;
-  font-size: 13px;
-  line-height: 20px;
-  box-shadow: 0 0 0 1px rgba(31, 35, 40, 0.18);
-}
-
-.explorer-inline-rename-input:hover {
-  box-shadow: 0 0 0 1px rgba(31, 35, 40, 0.32);
-}
-
-.explorer-inline-rename-input:focus {
-  box-shadow:
-    0 0 0 1px #4493f8,
-    0 0 0 3px rgba(68, 147, 248, 0.2);
+.explorer-tree-virtual-item {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
 }
 </style>
