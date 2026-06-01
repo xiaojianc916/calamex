@@ -9,7 +9,6 @@
   },
   "scripts": {
     "check:env": "node ./scripts/check-dev-env.mjs",
-    "wsl-link:agent:build": "node ./scripts/build-wsl-link-agent.mjs",
     "generate:shell-catalog": "node ./scripts/generate-shell-command-catalog.mjs",
     "dev": "pnpm run generate:shell-catalog && vite --host 0.0.0.0 --port 1420",
     "pretauri:dev": "node ./scripts/check-dev-env.mjs",
