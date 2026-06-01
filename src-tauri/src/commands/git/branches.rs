@@ -132,11 +132,17 @@ fn build_git_branch_payload_from_ref(
 
     let is_current = is_current_branch(repository, reference);
 
-    let (ahead, behind) = if kind == "local" {
+    let (ahead, behind, upstream_name) = if kind == "local" {
+    let upstream_name = resolve_branch_upstream(repository_root, shorthand);
+    let (ahead, behind) = if upstream_name.is_some() {
         resolve_ahead_behind_cli(repository_root, shorthand)?
     } else {
         (0, 0)
     };
+    (ahead, behind, upstream_name)
+} else {
+    (0, 0, None)
+};
 
     let last_commit = repository
         .find_commit(target_id)
@@ -163,13 +169,27 @@ fn is_current_branch(repository: &Repository, reference: &gix::Reference<'_>) ->
     head_ref.name().as_bstr() == reference.name().as_bstr()
 }
 
+fn resolve_branch_upstream(repository_root: &Path, branch_name: &str) -> Option<String> {
+    let upstream_ref = [branch_name, "@{upstream}"].concat();
+    let output = cli::run_git_text_allow_exit_one(
+        repository_root,
+        &["rev-parse", "--abbrev-ref", "--symbolic-full-name", &upstream_ref],
+        "读取上游分支",
+    ).ok().flatten()?;
+    let trimmed = output.trim();
+    if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
+}
+
 fn resolve_ahead_behind_cli(
     repository_root: &Path,
     branch_name: &str,
 ) -> Result<(usize, usize), String> {
+    // 比较「该分支」与「它自己的上游」，而不是当前 HEAD 的上游。
+    let upstream_ref = [branch_name, "@{upstream}"].concat();
+    let range = [branch_name, "...", &upstream_ref].concat();
     let output = cli::run_git_text_allow_exit_one(
         repository_root,
-        &["rev-list", "--count", "--left-right", &format!("{branch_name}...@{{upstream}}")],
+        &["rev-list", "--count", "--left-right", &range],
         "读取 ahead/behind",
     );
 

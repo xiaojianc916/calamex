@@ -82,8 +82,10 @@ pub fn commit_git_index(payload: GitCommitRequest) -> Result<GitCommitResultPayl
         arg_list.extend_from_slice(&ps_refs);
     }
     cli::run_git_ok(&repository_root, &arg_list, "提交")?;
-    let status = build_git_repository_status_payload(&repository)?;
-    Ok(GitCommitResultPayload { status, commit_id: None })
+let repository = open_repository_from_root(&payload.repository_root_path)?;
+let commit_id = resolve_head_commit(&repository).ok().flatten().map(|commit| commit.id().to_string());
+let status = build_git_repository_status_payload(&repository)?;
+Ok(GitCommitResultPayload { status, commit_id })
 }
 
 #[tauri::command]
@@ -92,17 +94,23 @@ pub fn discard_git_paths(payload: GitPathOperationRequest) -> Result<GitReposito
     let repository_root = resolve_repository_root(&repository)?;
     let pathspecs = resolve_pathspecs(&repository_root, &payload.paths)?;
     if pathspecs.is_empty() { return build_git_repository_status_payload(&repository); }
-    for pathspec in &pathspecs {
-        let relative_path = Path::new(pathspec);
-        if !is_tracked_git_path(&repository_root, relative_path)? {
-            super::diff::remove_untracked_worktree_path(&repository_root, relative_path)?;
-        }
+let mut tracked_pathspecs: Vec<String> = Vec::new();
+for pathspec in &pathspecs {
+    let relative_path = Path::new(pathspec);
+    if is_tracked_git_path(&repository_root, relative_path)? {
+        tracked_pathspecs.push(pathspec.clone());
+    } else {
+        // 未跟踪文件无法用 checkout 还原，直接从工作区删除。
+        super::diff::remove_untracked_worktree_path(&repository_root, relative_path)?;
     }
+}
+if !tracked_pathspecs.is_empty() {
     let mut arg_list = vec!["checkout", "-q", "--"];
-    let ps_refs: Vec<&str> = pathspecs.iter().map(|s| s.as_str()).collect();
+    let ps_refs: Vec<&str> = tracked_pathspecs.iter().map(|s| s.as_str()).collect();
     arg_list.extend_from_slice(&ps_refs);
     cli::run_git_ok(&repository_root, &arg_list, "放弃改动")?;
-    build_git_repository_status_payload(&repository)
+}
+build_git_repository_status_payload(&repository)
 }
 
 /// 核心状态构建。
@@ -125,7 +133,7 @@ pub(super) fn build_git_repository_status_payload(
         git_dir_path: Some(repository.git_dir().to_string_lossy().to_string()),
         head_branch_name: status.head_branch,
         head_short_name: status.head_short_name,
-        head_short_oid: status.head_oid,
+        head_short_oid: status.head_oid.as_deref().map(|oid| oid.chars().take(7).collect::<String>()),
         is_detached: status.detached,
         is_clean: status.staged_count == 0 && status.unstaged_count == 0 && status.untracked_count == 0,
         ahead: status.ahead, behind: status.behind,
@@ -153,12 +161,12 @@ struct StatusAccum {
 /// CLI porcelain v2 回退路径。
 fn build_git_status_via_cli(repository_root: &Path) -> Result<StatusAccum, String> {
     let output = cli::run_git_text(
-        repository_root,
-        &["status", "--porcelain=v2", "--branch", "--untracked-files=all", "--ignore-submodules", "-z"],
-        "读取状态",
-    ).unwrap_or_default();
+    repository_root,
+    &["status", "--porcelain=v2", "--branch", "--untracked-files=all", "--ignore-submodules", "-z"],
+    "读取状态",
+)?;
 
-    parse_git_status_v2(&output, repository_root)
+parse_git_status_v2(&output, repository_root)
 }
 
 fn parse_git_status_v2(output: &str, repository_root: &Path) -> Result<StatusAccum, String> {
@@ -169,8 +177,11 @@ fn parse_git_status_v2(output: &str, repository_root: &Path) -> Result<StatusAcc
         files: Vec::new(),
     };
 
-    for line in output.split('\0') {
-        let line = line.trim();
+    let tokens: Vec<&str> = output.split('\0').collect();
+    let mut cursor = 0;
+    while cursor < tokens.len() {
+        let line = tokens[cursor].trim();
+        cursor += 1;
         if line.is_empty() { continue; }
         if let Some(rest) = line.strip_prefix("# branch.oid ") { accum.head_oid = Some(rest.to_string()); }
         else if let Some(rest) = line.strip_prefix("# branch.head ") {
@@ -184,7 +195,19 @@ fn parse_git_status_v2(output: &str, repository_root: &Path) -> Result<StatusAcc
             }
         }
         else if line.starts_with('#') { continue; }
-        else if let Some(entry) = parse_git_status_entry(line, repository_root) {
+        else if let Some(mut entry) = parse_git_status_entry(line, repository_root) {
+            // porcelain v2 + -z 模式下，重命名/复制（type 2）的原始路径位于紧随其后的 NUL token。
+            if line.starts_with('2') {
+                if let Some(orig) = tokens.get(cursor) {
+                    let orig = orig.trim();
+                    if !orig.is_empty() {
+                        let orig_path = Path::new(orig);
+                        entry.previous_relative_path = Some(path_to_forward_slashes(orig_path));
+                        entry.previous_path = Some(repository_root.join(orig_path).to_string_lossy().to_string());
+                    }
+                    cursor += 1;
+                }
+            }
             if entry.index_status.as_deref() == Some("conflicted") { accum.conflicted_count += 1; }
             else if entry.index_status.is_some() { accum.staged_count += 1; }
             if entry.worktree_status.is_some() { accum.unstaged_count += 1; }
@@ -256,13 +279,15 @@ fn parse_git_status_entry(line: &str, repository_root: &Path) -> Option<GitFileS
         let wt  = if is_conflict { Some("conflicted") } else { char_to_status(y) };
 
         // 跳过 "XY " 和后续 8 个空格分隔的字段，从路径开始
+        // 普通条目(1) 路径前有 6 个字段；重命名/复制(2) 多一个 <X><score> 共 7 个；未合并(u) 有 8 个。
         let after_fields = &rest[3..]; // 跳过 "XY "
+        let field_count = match first_char { '2' => 7, 'u' => 8, _ => 6 };
         let path_start = after_fields
-            .char_indices()
-            .filter(|(_, ch)| *ch == ' ')
-            .nth(if is_conflict { 7 } else { 5 })
-            .map(|(i, _)| i + 1)
-            .unwrap_or(0);
+        .char_indices()
+        .filter(|(_, ch)| *ch == ' ')
+        .nth(field_count - 1)
+        .map(|(i, _)| i + 1)
+        .unwrap_or(0);
         let path_str = after_fields[path_start..].trim();
         if path_str.is_empty() { return None; }
 
@@ -320,7 +345,7 @@ fn build_git_file_baseline_payload(repository: &Repository, file_path: &Path) ->
     })
 }
 
-fn is_tracked_git_path(repository_root: &Path, relative_path: &Path) -> Result<bool, String> {
+pub(super) fn is_tracked_git_path(repository_root: &Path, relative_path: &Path) -> Result<bool, String> {
     let rp = path_to_forward_slashes(relative_path);
     match cli::run_git_text_allow_exit_one(repository_root, &["ls-files", "--error-unmatch", &rp], "检查跟踪") {
         Ok(Some(_)) => Ok(true),

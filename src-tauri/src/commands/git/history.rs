@@ -26,7 +26,7 @@ pub fn list_git_commit_history(
         .clamp(1, MAX_GIT_HISTORY_LIMIT);
 
     let max_count = limit + 1;
-    let mut args = vec!["log".to_string(), "--format=%H|%h|%s|%an|%at".to_string(), format!("-n{max_count}")];
+    let mut args = vec!["log".to_string(), "--format=%H%x1f%h%x1f%s%x1f%an%x1f%at".to_string(), format!("-n{max_count}")];
     if offset > 0 {
         args.push("--skip".to_string());
         args.push(offset.to_string());
@@ -40,7 +40,7 @@ pub fn list_git_commit_history(
 
     for line in output.lines() {
         if line.trim().is_empty() { continue; }
-        let parts: Vec<&str> = line.splitn(5, '|').collect();
+        let parts: Vec<&str> = line.split('\u{1f}').collect();
         if parts.len() < 5 { continue; }
 
         if entries.len() >= limit {

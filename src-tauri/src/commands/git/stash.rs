@@ -17,7 +17,7 @@ pub fn list_git_stashes(payload: GitRepositoryRootRequest) -> Result<GitStashLis
         let summary = parts[1].trim().to_string();
         let oid_str = parts[2].trim().to_string();
         let oid: gix::ObjectId = oid_str.parse().map_err(|_| format!("解析 Git 贮藏 OID 失败：{oid_str}"))?;
-        entries.push(build_git_stash_entry_payload(&repository, index, &summary, oid)?);
+        entries.push(build_git_stash_entry_payload(&repository_root, &repository, index, &summary, oid)?);
     }
     Ok(GitStashListPayload { entries })
 }
@@ -68,13 +68,13 @@ pub fn drop_git_stash(payload: GitStashDropRequest) -> Result<GitRepositoryStatu
 }
 
 fn build_git_stash_entry_payload(
+    repository_root: &Path,
     repository: &Repository,
     index: usize,
     summary: &str,
     oid: gix::ObjectId,
 ) -> Result<GitStashEntryPayload, String> {
-    let commit = repository.find_commit(oid).map_err(|error| format!("读取 Git 贮藏提交失败：{error}"))?;
-    let details = build_git_stash_details(repository, &commit)?;
+    let details = build_git_stash_details(repository_root, repository, index, oid)?;
     let (branch_name, commit_short_id) = parse_git_stash_name(summary);
     Ok(GitStashEntryPayload {
         index,
@@ -90,41 +90,67 @@ fn build_git_stash_entry_payload(
     })
 }
 
-fn build_git_stash_details(repository: &Repository, commit: &gix::Commit<'_>) -> Result<GitStashDetails, String> {
-    let created_at = jiff::Timestamp::from_second(commit.time().unwrap_or_default().seconds as i64)
-        .unwrap_or_else(|_| jiff::Timestamp::now()).to_string();
-    let stash_tree = commit.tree().map_err(|error| format!("读取 Git 贮藏快照失败：{error}"))?;
+fn build_git_stash_details(
+    repository_root: &Path,
+    repository: &Repository,
+    index: usize,
+    oid: gix::ObjectId,
+) -> Result<GitStashDetails, String> {
+    let created_at = repository
+        .find_commit(oid)
+        .ok()
+        .and_then(|commit| commit.time().ok())
+        .and_then(|time| jiff::Timestamp::from_second(time.seconds as i64).ok())
+        .unwrap_or_else(jiff::Timestamp::now)
+        .to_string();
 
-    let parent_tree = if commit.parent_ids().count() > 0 {
-        let parent_oid = commit.parent_ids().next().expect("parent exists");
-        Some(repository.find_commit(parent_oid)
-            .map_err(|error| format!("读取 Git 贮藏基线失败：{error}"))?
-            .tree().map_err(|error| format!("读取 Git 贮藏基线树失败：{error}"))?)
-    } else { None };
+    // 用拼接构造 stash@{N}，避免 format! 的花括号转义。
+    let stash_ref = ["stash@{", &index.to_string(), "}"].concat();
+    // --numstat -z：递归列出每个文件的真实增删行数与完整路径（含子目录）。
+    let output = cli::run_git_text(
+        repository_root,
+        &["stash", "show", "--include-untracked", "--numstat", "-z", &stash_ref],
+        "读取贮藏明细",
+    ).unwrap_or_default();
 
     let mut file_count = 0usize;
     let mut additions = 0u32;
     let mut deletions = 0u32;
     let mut files = Vec::new();
 
-    for entry_result in stash_tree.iter() {
-        let entry = entry_result.map_err(|error| format!("读取 Git 贮藏树条目失败：{error}"))?;
-        let filename = entry.filename();
-        let relative_path = filename.to_str_lossy().into_owned();
+    // numstat -z 记录：<additions>\t<deletions>\t<path>\0；二进制文件增删列为 "-"。
+    for record in output.split('\0') {
+        let record = record.trim_matches('\n');
+        if record.is_empty() { continue; }
+        let mut parts = record.splitn(3, '\t');
+        let added_str = parts.next().unwrap_or("");
+        let deleted_str = parts.next().unwrap_or("");
+        let Some(path_str) = parts.next() else { continue; };
+        if path_str.is_empty() { continue; }
 
-        let (status, fa, fd) = if let Some(ref pt) = parent_tree {
-            let parent_entry = pt.iter().filter_map(|e| e.ok()).find(|e| e.filename() == filename);
-            if let Some(pe) = parent_entry {
-                if entry.mode() != pe.mode() || entry.id() != pe.id() { ("modified", 1, 1) } else { continue; }
-            } else { ("added", 1, 0) }
-        } else { ("added", 1, 0) };
+        let fa = added_str.parse::<u32>().unwrap_or(0);
+        let fd = deleted_str.parse::<u32>().unwrap_or(0);
+        let status = if added_str == "-" || deleted_str == "-" {
+            "binary"
+        } else if fd == 0 {
+            "added"
+        } else {
+            "modified"
+        };
+
+        let relative_path = Path::new(path_str);
+        let file_name = relative_path
+            .file_name()
+            .and_then(|v| v.to_str())
+            .map(str::to_string)
+            .unwrap_or_else(|| path_str.to_string());
 
         file_count += 1;
-        additions += fa;
-        deletions += fd;
+        additions = additions.saturating_add(fa);
+        deletions = deletions.saturating_add(fd);
         files.push(GitStashFilePayload {
-            relative_path: relative_path.clone(),
-            file_name: Path::new(&relative_path).file_name().and_then(|v| v.to_str()).map(str::to_string).unwrap_or_else(|| relative_path.clone()),
+            relative_path: path_to_forward_slashes(relative_path),
+            file_name,
             previous_relative_path: None,
             status: status.to_string(),
             additions: fa,
@@ -132,27 +158,7 @@ fn build_git_stash_details(repository: &Repository, commit: &gix::Commit<'_>) ->
         });
     }
 
-    if let Some(ref pt) = parent_tree {
-        for entry_result in pt.iter() {
-            let Ok(entry) = entry_result else { continue };
-            let filename = entry.filename();
-            if !stash_tree.iter().filter_map(|e| e.ok()).any(|e| e.filename() == filename) {
-                let rp = filename.to_str_lossy().into_owned();
-                file_count += 1;
-                deletions += 1;
-                files.push(GitStashFilePayload {
-                    file_name: Path::new(&rp).file_name().and_then(|v| v.to_str()).map(str::to_string).unwrap_or_else(|| rp.clone()),
-                    relative_path: rp,
-                    previous_relative_path: None,
-                    status: "deleted".to_string(),
-                    additions: 0,
-                    deletions: 1,
-                });
-            }
-        }
-    }
-
-    Ok(GitStashDetails { created_at, file_count, additions: additions.min(u32::MAX as u32), deletions: deletions.min(u32::MAX as u32), files })
+    Ok(GitStashDetails { created_at, file_count, additions, deletions, files })
 }
 
 struct GitStashDetails { created_at: String, file_count: usize, additions: u32, deletions: u32, files: Vec<GitStashFilePayload> }

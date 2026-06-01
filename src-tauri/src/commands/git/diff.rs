@@ -17,9 +17,9 @@ pub fn get_git_diff_preview(payload: GitDiffPreviewRequest) -> Result<GitDiffPre
     let mode = parse_git_diff_mode(&payload.mode)?;
     let relative_path = resolve_single_relative_path(&repository_root, &payload.path)?;
     let relative_path_text = path_to_forward_slashes(&relative_path);
-    let diff_text = build_git_diff_text(&repository_root, &relative_path, mode)?;
     let content_pair = build_git_diff_content_pair(&repository_root, &relative_path, mode)?;
-    let is_empty = diff_text.trim().is_empty();
+    let is_empty = content_pair.original_content.replace('\r', "")
+    == content_pair.modified_content.replace('\r', "");
     let mode_label = match mode { GitDiffMode::Staged => "已暂存", GitDiffMode::Worktree => "工作区" };
 
     Ok(GitDiffPreviewPayload {
@@ -91,39 +91,6 @@ pub(super) fn build_git_diff_content_pair(
     }
 }
 
-fn build_git_diff_text(repository_root: &Path, relative_path: &Path, mode: GitDiffMode) -> Result<String, String> {
-    if mode == GitDiffMode::Worktree && is_untracked_git_path(repository_root, relative_path)? {
-        return build_untracked_file_diff(repository_root, relative_path);
-    }
-    let rp = path_to_forward_slashes(relative_path);
-    let cached = if mode == GitDiffMode::Staged { vec!["--cached"] } else { vec![] };
-    let mut args = vec!["-c", "core.quotepath=false", "diff", "--no-ext-diff", "--no-color", "--ignore-cr-at-eol", "--find-renames"];
-    args.extend(cached.iter().map(|s| *s));
-    args.extend(&["--", &rp]);
-    let str_args: Vec<&str> = args.iter().map(|s| *s).collect();
-    cli::run_git_text(repository_root, &str_args, "读取 diff")
-}
-
 fn is_untracked_git_path(repository_root: &Path, relative_path: &Path) -> Result<bool, String> {
-    let rp = path_to_forward_slashes(relative_path);
-    match cli::run_git_text_allow_exit_one(repository_root, &["ls-files", "--error-unmatch", &rp], "检查跟踪") {
-        Ok(Some(_)) => Ok(false),
-        _ => Ok(true),
-    }
-}
-
-#[allow(dead_code)]
-pub(super) fn build_untracked_file_diff(repository_root: &Path, relative_path: &Path) -> Result<String, String> {
-    let file_path = repository_root.join(relative_path);
-    if file_path.is_dir() { return Err("当前未跟踪路径是目录，暂不支持直接预览目录 Diff。".to_string()); }
-    let bytes = fs::read(&file_path).map_err(|e| format!("读取未跟踪文件失败：{e}"))?;
-    let (content, _) = decode_script_bytes(&bytes).map_err(|_| "当前未跟踪文件不是可直接比较的文本内容。".to_string())?;
-    let rp = path_to_forward_slashes(relative_path);
-    let mut lines: Vec<&str> = if content.is_empty() { Vec::new() } else { content.split('\n').collect() };
-    let has_trailing = content.ends_with('\n');
-    if has_trailing { lines.pop(); }
-    let mut diff = format!("diff --git a/{0} b/{0}\nnew file mode 100644\nindex 0000000..0000000\n--- /dev/null\n+++ b/{0}\n@@ -0,0 +1,{1} @@\n", rp, lines.len());
-    for line in &lines { diff.push('+'); diff.push_str(line.strip_suffix('\r').unwrap_or(*line)); diff.push('\n'); }
-    if !has_trailing && !content.is_empty() { diff.push_str("\\ No newline at end of file\n"); }
-    Ok(diff)
+    Ok(!super::status::is_tracked_git_path(repository_root, relative_path)?)
 }

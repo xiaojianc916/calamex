@@ -294,14 +294,11 @@ fn resolve_head_commit(repository: &Repository) -> Result<Option<gix::Commit<'_>
     match repository.head_commit() {
         Ok(commit) => Ok(Some(commit)),
         Err(error) => {
-            let err_str = format!("{error}");
-            if err_str.contains("unborn")
-                || err_str.contains("does not exist")
-                || err_str.contains("not found")
-            {
-                Ok(None)
-            } else {
-                Err(format!("读取 Git HEAD 提交失败：{error}"))
+            // 通过 HEAD 引用是否已指向某个对象来判断「空仓库（unborn）」，
+            // 而不是匹配易变的英文错误文案。
+            match repository.head() {
+                Ok(head) if head.id().is_none() => Ok(None),
+                _ => Err(format!("读取 Git HEAD 提交失败：{error}")),
             }
         }
     }

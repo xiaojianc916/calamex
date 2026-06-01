@@ -241,3 +241,45 @@ fn get_git_pull_request_support_parses_github_remote() -> Result<(), String> {
     assert_eq!(payload.repository_url.as_deref(), Some("https://github.com/owner/repo"));
     Ok(())
 }
+
+#[test]
+fn get_git_repository_status_reports_renamed_path_correctly() -> Result<(), String> {
+    let temp = TempGitDir::new("status-rename")?;
+    let _repo = temp.init_repository()?;
+    let root = temp.repository_root()?;
+    write_worktree_file(&temp.path, "src/old_name.sh", "echo hello\n")?;
+    commit_via_cli(&temp.path, "feat: initial")?;
+    cli::run_git_ok(&temp.path, &["mv", "src/old_name.sh", "src/new_name.sh"], "rename")?;
+    let status = get_git_repository_status(Some(root.to_string_lossy().to_string()))?;
+    let renamed = status.files.iter().find(|f| f.relative_path == "src/new_name.sh")
+        .ok_or_else(|| "未找到重命名后的路径".to_string())?;
+    assert_eq!(renamed.index_status.as_deref(), Some("renamed"));
+    assert_eq!(renamed.previous_relative_path.as_deref(), Some("src/old_name.sh"));
+    Ok(())
+}
+
+#[test]
+fn discard_git_paths_removes_untracked_file_without_error() -> Result<(), String> {
+    let temp = TempGitDir::new("discard-untracked")?;
+    let _repo = temp.init_repository()?;
+    let root = temp.repository_root()?;
+    write_worktree_file(&temp.path, "src/app.sh", "echo base\n")?;
+    commit_via_cli(&temp.path, "feat: initial")?;
+    write_worktree_file(&temp.path, "src/extra.sh", "echo extra\n")?;
+    discard_git_paths(GitPathOperationRequest { repository_root_path: root.to_string_lossy().to_string(), paths: vec!["src/extra.sh".into()] })?;
+    assert!(!temp.path.join("src/extra.sh").exists());
+    Ok(())
+}
+
+#[test]
+fn git_commit_history_preserves_pipe_in_message() -> Result<(), String> {
+    let temp = TempGitDir::new("history-pipe")?;
+    let _repo = temp.init_repository()?;
+    let root = temp.repository_root()?;
+    write_worktree_file(&temp.path, "src/app.sh", "echo first\n")?;
+    commit_via_cli(&temp.path, "feat: a | b | c")?;
+    let payload = list_git_commit_history(GitCommitHistoryRequest { repository_root_path: root.to_string_lossy().to_string(), offset: Some(0), limit: Some(5) })?;
+    assert_eq!(payload.entries[0].summary, "feat: a | b | c");
+    assert!(!payload.entries[0].authored_at.is_empty());
+    Ok(())
+}
