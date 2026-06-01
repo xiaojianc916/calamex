@@ -1,5 +1,5 @@
 use crate::ai::edit as ai_edit;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
 
 pub(super) fn resolve_ai_edit_storage_root(app: &AppHandle) -> Result<PathBuf, String> {
@@ -11,6 +11,6 @@ pub(super) fn resolve_ai_edit_storage_root(app: &AppHandle) -> Result<PathBuf, S
         .join("edits"))
 }
 
-pub(super) fn recover_ai_edit_storage(storage_root: &PathBuf) -> Result<(), String> {
+pub(super) fn recover_ai_edit_storage(storage_root: &Path) -> Result<(), String> {
     ai_edit::recover_pending_file_transactions(storage_root)
 }

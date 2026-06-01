@@ -56,6 +56,7 @@ fn open_lock_file(path: &Path) -> Result<File, String> {
         .read(true)
         .write(true)
         .create(true)
+        .truncate(false)
         .open(path)
         .map_err(|error| {
             errors::storage_locked(format!(

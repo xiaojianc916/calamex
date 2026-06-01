@@ -1,4 +1,4 @@
-﻿use serde::Serialize;
+use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -12,5 +12,5 @@ pub fn error(code: &'static str, message: impl Into<String>) -> String {
         code,
         message: message.into(),
     };
-    serde_json::to_string(&payload).unwrap_or_else(|_| payload.message)
+    serde_json::to_string(&payload).unwrap_or(payload.message)
 }

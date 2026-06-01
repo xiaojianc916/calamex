@@ -1,4 +1,4 @@
-﻿use crate::ai::edit::errors;
+use crate::ai::edit::errors;
 use crate::ai::edit::history::pins::PinIndex;
 use crate::ai::edit::io::{atomic_write, storage_lock};
 use crate::commands::contracts::{AiApplyPatchMetadataRequest, AiSnapshotPayload};
@@ -45,8 +45,8 @@ impl Default for SnapshotRetentionPolicy {
     fn default() -> Self {
         Self {
             now: Timestamp::now(),
-            full_blob_ttl: SignedDuration::from_secs((FULL_BLOB_TTL_DAYS as i64) * 86400),
-            pinned_full_blob_ttl: SignedDuration::from_secs((PINNED_FULL_BLOB_TTL_DAYS as i64) * 86400),
+            full_blob_ttl: SignedDuration::from_secs(FULL_BLOB_TTL_DAYS * 86400),
+            pinned_full_blob_ttl: SignedDuration::from_secs(PINNED_FULL_BLOB_TTL_DAYS * 86400),
             total_blob_quota_bytes: DEFAULT_TOTAL_BLOB_QUOTA_BYTES,
         }
     }

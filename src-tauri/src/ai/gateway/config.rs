@@ -107,6 +107,7 @@ pub fn clear_credentials() -> Result<(), String> {
     CredentialStore::clear()
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn build_provider_connection_candidate(
     provider_id: Option<&str>,
     provider_type: &str,

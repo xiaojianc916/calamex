@@ -71,6 +71,7 @@ pub async fn test_provider() -> Result<(), String> {
     test_provider_connection_candidate(&candidate).await
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn test_provider_config(
     _role: Option<&str>,
     provider_id: Option<&str>,
@@ -96,6 +97,7 @@ pub async fn test_provider_config(
     test_provider_connection_candidate(&candidate).await
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn connect_provider(
     role: Option<&str>,
     provider_id: Option<&str>,
