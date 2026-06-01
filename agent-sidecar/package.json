@@ -9,7 +9,7 @@
   },
   "scripts": {
     "dev": "tsx --env-file=.env src/server.ts",
-    "test": "node --import tsx --test src/tools/mcp.spec.ts src/server.spec.ts",
+    "test": "node --import tsx --test src/tools/mcp.spec.ts src/server.spec.ts src/engines/workspace.spec.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

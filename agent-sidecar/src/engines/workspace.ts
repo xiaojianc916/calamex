@@ -2,12 +2,12 @@ import { existsSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { AgentBrowser } from '@mastra/agent-browser';
 import type { MastraBrowser } from '@mastra/core/browser';
-import { BatchPartsProcessor, PIIDetector, UnicodeNormalizer, type InputProcessorOrWorkflow, type OutputProcessorOrWorkflow } from '@mastra/core/processors';
+import { BatchPartsProcessor, UnicodeNormalizer, type InputProcessorOrWorkflow, type OutputProcessorOrWorkflow } from '@mastra/core/processors';
 import { LocalFilesystem, LocalSandbox, Workspace, WORKSPACE_TOOLS, type AnyWorkspace, type CommandResult, type ExecuteCommandOptions, type WorkspaceToolsConfig } from '@mastra/core/workspace';
 import { MastraStorageExporter, Observability, SensitiveDataFilter } from '@mastra/observability';
 import type { IAgentContextReferenceInput, IAgentRuntimeInput } from './contracts/runtime-input.js';
 import type { IMastraTextModeExecutionPlan, IMastraToolLoadPlan, TMastraToolProfile } from './types.js';
-import { MASTRA_GUARDRAIL_MODEL, MASTRA_WORKSPACE_REDACTED_PREVIEW_TOOL_NAMES, WINDOWS_POWERSHELL_CORE_RELATIVE_PATH, WINDOWS_POWERSHELL_RELATIVE_PATH } from './types.js';
+import { MASTRA_WORKSPACE_REDACTED_PREVIEW_TOOL_NAMES, WINDOWS_POWERSHELL_CORE_RELATIVE_PATH, WINDOWS_POWERSHELL_RELATIVE_PATH } from './types.js';
 import { toNonEmptyString } from './utils.js';
 import { resolveWorkspaceDirectory } from './context/context.js';
 
@@ -251,19 +251,19 @@ export const createMastraAgentInputProcessors = (): InputProcessorOrWorkflow[] =
     }),
 ];
 
+// 流式聊天 / Agent 的最终回答必须逐 token 实时下发。
+// 此前输出侧挂了基于大模型的 PIIDetector（strategy:'redact' + lastMessageOnly），
+// 它必须拿到完整最终消息才能脱敏，会把整段输出缓冲到流结束才一次性放出；
+// 而 consumeTextStream 读取的是 output processor 之后的 fullStream，因此 token
+// 在到达转发层/前端之前就被截留，表现为“先冒一点点、末尾哗一下全弹”。
+// 因此输出侧不再挂任何会整段缓冲的护栏处理器，只保留不阻塞流的 BatchPartsProcessor
+//（达到 batchSize 或 maxWaitTime 即 flush）。输入侧脱敏仍由 Rust 网关
+// collect_messages 中的 redact_text 完成，安全护栏不受影响。
 export const createMastraAgentOutputProcessors = (): OutputProcessorOrWorkflow[] => [
     new BatchPartsProcessor({
         batchSize: 10,
         maxWaitTime: 120,
         emitOnNonText: true,
-    }),
-    new PIIDetector({
-        model: MASTRA_GUARDRAIL_MODEL,
-        strategy: 'redact',
-        redactionMethod: 'mask',
-        preserveFormat: true,
-        threshold: 0.6,
-        lastMessageOnly: true,
     }),
 ];
 
