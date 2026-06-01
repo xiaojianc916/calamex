@@ -1,16 +1,14 @@
 use super::*;
-use super::cli;
 
-// TODO(gix-history): gix 0.83 的 `CommitTimeOrder` 为 private，
-// `rev_walk` 无法按提交时间排序。当前回退 CLI `git log`。
-// 跟踪：https://github.com/Byron/gitoxide/issues（开 issue 后替换为具体链接）
+// 提交历史改用 gix 遍历实现，不再依赖系统 git。
+// 通过 `rev_walk` + `Sorting::ByCommitTime(NewestFirst)` 按提交时间倒序遍历，
+// 等价于 `git log`（最新在前）。时间取自 Info.commit_time（提交时间，秒）。
 
 #[tauri::command]
 pub fn list_git_commit_history(
     payload: GitCommitHistoryRequest,
 ) -> Result<GitCommitHistoryPayload, String> {
     let repository = open_repository_from_root(&payload.repository_root_path)?;
-    let repository_root = resolve_repository_root(&repository)?;
     if resolve_head_commit(&repository)?.is_none() {
         return Ok(GitCommitHistoryPayload {
             entries: Vec::new(),
@@ -25,42 +23,74 @@ pub fn list_git_commit_history(
         .unwrap_or(DEFAULT_GIT_HISTORY_LIMIT)
         .clamp(1, MAX_GIT_HISTORY_LIMIT);
 
-    let max_count = limit + 1;
-    let mut args = vec!["log".to_string(), "--format=%H%x1f%h%x1f%s%x1f%an%x1f%at".to_string(), format!("-n{max_count}")];
-    if offset > 0 {
-        args.push("--skip".to_string());
-        args.push(offset.to_string());
-    }
+    let head_id = repository
+        .head_id()
+        .map_err(|error| format!("读取 HEAD 失败：{error}"))?
+        .detach();
 
-    let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    let output = cli::run_git_text(&repository_root, &arg_refs, "读取提交历史")?;
+    let walk = repository
+        .rev_walk(Some(head_id))
+        .sorting(gix::revision::walk::Sorting::ByCommitTime(
+            gix::traverse::commit::simple::CommitTimeOrder::NewestFirst,
+        ))
+        .all()
+        .map_err(|error| format!("遍历提交历史失败：{error}"))?;
 
     let mut entries = Vec::new();
     let mut has_more = false;
 
-    for line in output.lines() {
-        if line.trim().is_empty() { continue; }
-        let parts: Vec<&str> = line.split('\u{1f}').collect();
-        if parts.len() < 5 { continue; }
-
+    for (index, item) in walk.enumerate() {
+        if index < offset {
+            continue;
+        }
         if entries.len() >= limit {
             has_more = true;
             break;
         }
 
-        let timestamp_str = parts[4].trim();
-        let authored_at = timestamp_str
-            .parse::<i64>()
-            .ok()
-            .and_then(|ts| jiff::Timestamp::from_second(ts).ok())
-            .map(|ts| ts.to_string())
+        let info = item.map_err(|error| format!("读取提交失败：{error}"))?;
+        let commit = repository
+            .find_commit(info.id)
+            .map_err(|error| format!("读取提交对象失败：{error}"))?;
+
+        let full_id = info.id.to_string();
+        let short_id = commit
+            .short_id()
+            .map(|prefix| prefix.to_string())
+            .unwrap_or_else(|_| full_id.chars().take(7).collect());
+
+        let summary_raw = commit
+            .message()
+            .map_err(|error| format!("解析提交信息失败：{error}"))?
+            .title
+            .to_string();
+        let summary = summary_raw.trim();
+
+        let author_name = commit
+            .author()
+            .map(|author| author.name.to_string())
+            .unwrap_or_default();
+        let author_name = author_name.trim();
+
+        let authored_at = info
+            .commit_time
+            .and_then(|seconds| jiff::Timestamp::from_second(seconds).ok())
+            .map(|timestamp| timestamp.to_string())
             .unwrap_or_default();
 
         entries.push(GitCommitSummaryPayload {
-            id: parts[0].trim().to_string(),
-            short_id: parts[1].trim().to_string(),
-            summary: if parts[2].trim().is_empty() { "无提交说明".to_string() } else { parts[2].trim().to_string() },
-            author_name: if parts[3].trim().is_empty() { "未知作者".to_string() } else { parts[3].trim().to_string() },
+            id: full_id,
+            short_id,
+            summary: if summary.is_empty() {
+                "无提交说明".to_string()
+            } else {
+                summary.to_string()
+            },
+            author_name: if author_name.is_empty() {
+                "未知作者".to_string()
+            } else {
+                author_name.to_string()
+            },
             authored_at,
         });
     }
