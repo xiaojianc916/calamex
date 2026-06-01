@@ -76,7 +76,7 @@
         </Empty>
 
         <template v-else>
-          <FileTree class="explorer-file-tree">
+          <div class="explorer-file-tree font-mono text-sm" role="tree" aria-label="文件资源树">
             <WorkspaceTreeNode
               v-if="rootEntry"
               :entry="rootEntry"
@@ -102,7 +102,7 @@
               @inline-rename-confirm="void confirmInlineRename()"
               @inline-rename-cancel="cancelInlineRename"
             />
-          </FileTree>
+          </div>
         </template>
       </div>
 
@@ -195,6 +195,7 @@
 </template>
 
 <script setup lang="ts">
+import { useDebounceFn, useEventListener } from '@vueuse/core';
 import {
   computed,
   defineAsyncComponent,
@@ -206,7 +207,6 @@ import {
   watch,
 } from 'vue';
 import { events } from '@/bindings/tauri';
-import { FileTree } from '@/components/ai-elements/file-tree';
 import InlineError from '@/components/common/InlineError.vue';
 import type {
   ILinearContextMenuGroup,
@@ -1111,6 +1111,10 @@ const handleWindowKeydown = (event: KeyboardEvent): void => {
   }
 };
 
+// 使用 VueUse 注册全局监听，组件卸载时自动解绑，无需在 onBeforeUnmount 手动 removeEventListener。
+useEventListener(window, 'pointerdown', handleWindowPointerDown, true);
+useEventListener(window, 'keydown', handleWindowKeydown);
+
 watch(
   [
     () => props.isDesktopRuntime,
@@ -1154,6 +1158,18 @@ interface WorkspaceFsEvent {
 let fsEventUnlisten: (() => void) | null = null;
 let isFsWatcherStarting = false;
 
+// 合并文件系统事件：git checkout / pnpm install 等突发大量变更时，按目录去重并防抖批量刷新，避免风暴式 IO。
+const pendingFsReloadDirs = new Set<string>();
+const flushPendingFsReloads = useDebounceFn(async (): Promise<void> => {
+  const dirs = [...pendingFsReloadDirs];
+  pendingFsReloadDirs.clear();
+  for (const dir of dirs) {
+    // 仅刷新当前已加载/展开的目录，避免为折叠或从未打开的目录做多余 IO。
+    if (childrenMap[dir] === undefined) continue;
+    await loadDirectoryEntries(dir);
+  }
+}, 80);
+
 async function startWorkspaceFileWatcher(): Promise<void> {
   const rootPath = root.value?.rootPath;
   if (!rootPath) return;
@@ -1169,33 +1185,23 @@ async function startWorkspaceFileWatcher(): Promise<void> {
     }
     if (fsEventUnlisten) return;
     fsEventUnlisten = await events.workspaceFsEvent.listen((e) => {
-      void handleFileSystemEvent(e.payload);
+      handleFileSystemEvent(e.payload);
     });
   } finally {
     isFsWatcherStarting = false;
   }
 }
 
-async function handleFileSystemEvent(payload: WorkspaceFsEvent): Promise<void> {
+function handleFileSystemEvent(payload: WorkspaceFsEvent): void {
   if (!root.value || payload.rootPath !== root.value.rootPath) return;
-  const affectedDirs = new Set<string>();
   for (const change of payload.changes) {
     const parent = resolveParentPathForMutation(change.path);
-    if (parent) affectedDirs.add(parent);
+    if (parent) pendingFsReloadDirs.add(parent);
   }
-  for (const dir of affectedDirs) {
-    // 仅刷新当前已加载/展开的目录，避免为折叠或从未打开的目录做多余 IO。
-    if (childrenMap[dir] === undefined) continue;
-    await loadDirectoryEntries(dir);
-  }
+  void flushPendingFsReloads();
 }
 
 onMounted(() => {
-  if (typeof window !== 'undefined') {
-    window.addEventListener('pointerdown', handleWindowPointerDown, true);
-    window.addEventListener('keydown', handleWindowKeydown);
-  }
-
   if (root.value?.rootPath) {
     void startWorkspaceFileWatcher();
   }
@@ -1205,11 +1211,6 @@ onBeforeUnmount(() => {
   closeInlineCreateDraft();
   cancelInlineRename();
 
-  if (typeof window !== 'undefined') {
-    window.removeEventListener('pointerdown', handleWindowPointerDown, true);
-    window.removeEventListener('keydown', handleWindowKeydown);
-  }
-
   fsEventUnlisten?.();
   fsEventUnlisten = null;
   void tauriService.stopWorkspaceWatching();
@@ -1217,50 +1218,6 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-:deep(.explorer-file-tree[data-slot='file-tree']) {
-  border: 0;
-  background: transparent;
-  box-shadow: none;
-}
-
-:deep(.explorer-file-tree[data-slot='file-tree'] > div) {
-  padding: 0;
-}
-
-.explorer-tree-inline-create {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 24px;
-  padding-right: 8px;
-}
-
-.explorer-inline-create-input {
-  width: 100%;
-  min-width: 0;
-  height: 28px;
-  border: 1px solid color-mix(in srgb, var(--shell-divider) 82%, transparent);
-  border-radius: 6px;
-  background: #fafafa;
-  color: var(--text-primary);
-  font-size: 12.5px;
-  padding: 0 10px;
-  outline: none;
-  transition:
-    border-color 120ms ease,
-    box-shadow 120ms ease,
-    background-color 120ms ease;
-}
-
-.explorer-inline-create-input:hover {
-  border-color: color-mix(in srgb, var(--accent-strong) 38%, var(--shell-divider));
-}
-
-.explorer-inline-create-input:focus {
-  border-color: color-mix(in srgb, var(--accent-strong) 70%, transparent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-strong) 28%, transparent);
-}
-
 .explorer-empty-action {
   color: var(--accent-strong);
   font-weight: 500;
