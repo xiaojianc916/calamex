@@ -1601,4 +1601,312 @@ fn truncate_at_utf8_boundary(mut raw: Vec<u8>) -> Vec<u8> {
 }
 
 fn decode_remote_preview_text(raw: Vec<u8>) -> Result<(String, String, String), String> {
-    let
+    let has_bom = raw.starts_with(&[0xef, 0xbb, 0xbf]);
+    let encoding = if has_bom { "utf-8-bom" } else { "utf-8" };
+    let decoded = if has_bom {
+        String::from_utf8(raw[3..].to_vec()).map_err(|e| format!("UTF-8 解码失败：{e}"))?
+    } else {
+        String::from_utf8(raw).map_err(|e| format!("UTF-8 解码失败：{e}"))?
+    };
+    let line_ending = detect_line_ending(decoded.as_bytes());
+    Ok((decoded, encoding.to_string(), line_ending.to_string()))
+}
+
+fn detect_line_ending(data: &[u8]) -> &'static str {
+    let mut has_crlf = false;
+    let mut has_lf = false;
+    let mut has_cr = false;
+    let mut i = 0;
+    while i < data.len() {
+        if data[i] == b'\r' {
+            if i + 1 < data.len() && data[i + 1] == b'\n' {
+                has_crlf = true;
+                i += 1;
+            } else {
+                has_cr = true;
+            }
+        } else if data[i] == b'\n' {
+            has_lf = true;
+        }
+        i += 1;
+    }
+    match (has_crlf, has_lf, has_cr) {
+        (true, false, false) => "crlf",
+        (false, true, false) => "lf",
+        (false, false, true) => "cr",
+        (true, true, _) | (true, _, true) | (_, true, true) => "mixed",
+        _ => "lf",
+    }
+}
+
+fn encode_remote_preview_text(
+    content: &str,
+    encoding: &str,
+    line_ending: &str,
+) -> Result<Vec<u8>, String> {
+    // Normalise to LF first so the second-stage replace can't double-expand.
+    let lf_only = content.replace("\r\n", "\n").replace('\r', "\n");
+    let normalized = match line_ending {
+        "crlf" => lf_only.replace('\n', "\r\n"),
+        "cr" => lf_only.replace('\n', "\r"),
+        _ => lf_only,
+    };
+    let mut bytes = normalized.into_bytes();
+    if encoding == "utf-8-bom" {
+        let mut bom = vec![0xef, 0xbb, 0xbf];
+        bom.append(&mut bytes);
+        Ok(bom)
+    } else {
+        Ok(bytes)
+    }
+}
+
+fn format_remote_permission_from_bits(bits: u32) -> String {
+    let kind = match bits & S_IFMT {
+        S_IFDIR  => 'd',
+        S_IFLNK  => 'l',
+        S_IFBLK  => 'b',
+        S_IFCHR  => 'c',
+        S_IFIFO  => 'p',
+        S_IFSOCK => 's',
+        S_IFREG  => '-',
+        // Some SFTP servers ship pure-mode bits (no file-type bits set).
+        _        => '-',
+    };
+    let mode = bits & 0o777;
+    let mut s = String::with_capacity(10);
+    s.push(kind);
+    s.push(if mode & 0o400 != 0 { 'r' } else { '-' });
+    s.push(if mode & 0o200 != 0 { 'w' } else { '-' });
+    s.push(if mode & 0o100 != 0 { 'x' } else { '-' });
+    s.push(if mode & 0o040 != 0 { 'r' } else { '-' });
+    s.push(if mode & 0o020 != 0 { 'w' } else { '-' });
+    s.push(if mode & 0o010 != 0 { 'x' } else { '-' });
+    s.push(if mode & 0o004 != 0 { 'r' } else { '-' });
+    s.push(if mode & 0o002 != 0 { 'w' } else { '-' });
+    s.push(if mode & 0o001 != 0 { 'x' } else { '-' });
+    s
+}
+
+// ===== Tests =====
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_ssh_config_hosts_extracts_hostname_user_port_and_key() {
+        let content = "Host dev-box\n  HostName 192.168.56.10\n  User ubuntu\n  Port 2202\n  IdentityFile ~/.ssh/dev key\n";
+        let hosts = parse_ssh_config_hosts(content);
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0].name, "dev-box");
+        assert_eq!(hosts[0].host, "192.168.56.10");
+        assert_eq!(hosts[0].username, "ubuntu");
+        assert_eq!(hosts[0].port, 2202);
+        assert_eq!(hosts[0].identity_path.as_deref(), Some("~/.ssh/dev key"));
+    }
+
+    #[test]
+    fn parse_ssh_config_hosts_uses_alias_when_proxy_jump_is_required() {
+        let content = "Host prod-app\n  HostName 10.0.12.31\n  User deploy\n  ProxyJump bastion\n  IdentityFile \"~/.ssh/prod # key\"\n";
+        let hosts = parse_ssh_config_hosts(content);
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0].name, "prod-app");
+        assert_eq!(hosts[0].host, "10.0.12.31");
+        assert_eq!(hosts[0].username, "deploy");
+        assert_eq!(hosts[0].identity_path.as_deref(), Some("~/.ssh/prod # key"));
+    }
+
+    #[test]
+    fn parse_ssh_config_hosts_resets_state_between_hosts() {
+        // Regression: ProxyJump on host A previously leaked HostName into host B.
+        let content = "Host a\n  HostName 10.0.0.1\n  ProxyJump bastion\nHost b\n  User root\n";
+        let hosts = parse_ssh_config_hosts(content);
+        assert_eq!(hosts.len(), 2);
+        assert_eq!(hosts[1].name, "b");
+        assert_eq!(hosts[1].host, "b"); // alias fallback, not "10.0.0.1"
+        assert_eq!(hosts[1].port, DEFAULT_SSH_PORT);
+    }
+
+    #[test]
+    fn parse_ssh_config_hosts_filters_wildcard_aliases() {
+        let content = "Host * !blocked concrete-host\n  User root\n";
+        let hosts = parse_ssh_config_hosts(content);
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0].name, "concrete-host");
+    }
+
+    #[test]
+    fn known_hosts_line_targets_host_matches_plain_and_ported_entries() {
+        assert!(known_hosts_line_targets_host(
+            "example.com ssh-ed25519 AAAAC3NzaC1lZDI1",
+            "example.com",
+            22,
+        ));
+        assert!(known_hosts_line_targets_host(
+            "[example.com]:2222 ssh-ed25519 AAAAC3NzaC1lZDI1",
+            "example.com",
+            2222,
+        ));
+        // Wrong port must not match a ported entry.
+        assert!(!known_hosts_line_targets_host(
+            "[example.com]:2222 ssh-ed25519 AAAAC3NzaC1lZDI1",
+            "example.com",
+            22,
+        ));
+        // Hashed entries are left untouched.
+        assert!(!known_hosts_line_targets_host(
+            "|1|abcd|efgh ssh-ed25519 AAAAC3NzaC1lZDI1",
+            "example.com",
+            22,
+        ));
+        // Comments are ignored.
+        assert!(!known_hosts_line_targets_host("# a comment", "example.com", 22));
+        // @-markers are skipped before the host field.
+        assert!(known_hosts_line_targets_host(
+            "@cert-authority example.com ssh-ed25519 AAAAC3NzaC1lZDI1",
+            "example.com",
+            22,
+        ));
+        // Comma-separated host patterns are honoured.
+        assert!(known_hosts_line_targets_host(
+            "other.example,example.com ssh-rsa AAAAB3Nza",
+            "example.com",
+            22,
+        ));
+    }
+
+    #[test]
+    fn transfer_partial_paths_use_stable_suffix() {
+        assert_eq!(
+            remote_partial_path("/home/app/0.txt"),
+            "/home/app/0.txt.aster.partial"
+        );
+        assert_eq!(
+            local_partial_path(Path::new("0.txt")),
+            PathBuf::from("0.txt.aster.partial")
+        );
+    }
+
+    #[test]
+    fn ensure_expected_transfer_size_rejects_short_copy() {
+        assert!(ensure_expected_transfer_size(8, 8, "上传本地文件").is_ok());
+        assert!(ensure_expected_transfer_size(7, 8, "上传本地文件").is_err());
+    }
+
+    #[test]
+    fn preview_read_limit_handles_unknown_and_known_sizes() {
+        // Unknown size must read up to the full budget, NOT a single byte.
+        assert_eq!(preview_read_limit(None), SSH_FILE_PREVIEW_MAX_BYTES);
+        assert_eq!(preview_read_limit(Some(10)), 10);
+        assert_eq!(preview_read_limit(Some(0)), 1);
+        assert_eq!(
+            preview_read_limit(Some(SSH_FILE_PREVIEW_MAX_BYTES + 5)),
+            SSH_FILE_PREVIEW_MAX_BYTES
+        );
+    }
+
+    #[test]
+    fn io_error_connection_kinds_are_classified() {
+        use std::io::{Error, ErrorKind};
+        assert!(io_error_is_connection_level(&Error::from(ErrorKind::ConnectionReset)));
+        assert!(io_error_is_connection_level(&Error::from(ErrorKind::BrokenPipe)));
+        assert!(io_error_is_connection_level(&Error::from(ErrorKind::UnexpectedEof)));
+        assert!(io_error_is_connection_level(&Error::from(ErrorKind::TimedOut)));
+        assert!(!io_error_is_connection_level(&Error::from(ErrorKind::PermissionDenied)));
+        assert!(!io_error_is_connection_level(&Error::from(ErrorKind::NotFound)));
+    }
+
+    #[test]
+    fn russh_io_errors_are_treated_as_connection_level() {
+        // Construct via the `From<io::Error>` conversion so we don't depend on
+        // the exact russh error variant name.
+        let err = russh::Error::from(std::io::Error::from(std::io::ErrorKind::ConnectionReset));
+        assert!(russh_error_is_connection_level(&err));
+    }
+
+    #[test]
+    fn ssh_password_account_trims_and_scopes_connection() {
+        assert_eq!(
+            ssh_password_account(" 192.168.1.10 ", 22, " root ").unwrap(),
+            "password:root@192.168.1.10:22"
+        );
+    }
+
+    #[test]
+    fn ssh_password_account_rejects_unsafe_identity() {
+        assert!(ssh_password_account("example.com", 22, "root@other").is_err());
+        assert!(ssh_password_account("example.com\nbad", 22, "root").is_err());
+        assert!(ssh_password_account("", 22, "root").is_err());
+    }
+
+    #[test]
+    fn validate_remote_mutation_names_rejects_path_control_names() {
+        assert!(validate_remote_mutation_name("release").is_ok());
+        // `..` 上跳穿越必须被拒绝（即便叶子名本身是干净的）。
+        assert!(validate_remote_mutation_name("../release").is_err());
+        assert!(validate_remote_mutation_name("bad\nname").is_err());
+        assert!(safe_remote_path("bad\rpath").is_err());
+    }
+
+    #[test]
+    fn detect_line_ending_distinguishes_lf_crlf_and_mixed() {
+        assert_eq!(detect_line_ending(b"alpha\nbeta\n"), "lf");
+        assert_eq!(detect_line_ending(b"alpha\r\nbeta\r\n"), "crlf");
+        assert_eq!(detect_line_ending(b"alpha\rbeta\r"), "cr");
+        assert_eq!(detect_line_ending(b"alpha\r\nbeta\n"), "mixed");
+        assert_eq!(detect_line_ending(b"alpha beta"), "lf");
+    }
+
+    #[test]
+    fn decode_and_encode_remote_preview_text_preserve_utf8_bom_and_line_endings() {
+        let (decoded, encoding, line_ending) =
+            decode_remote_preview_text(vec![0xef, 0xbb, 0xbf, b'a', b'\r', b'\n', b'b'])
+                .expect("preview text should decode");
+        assert_eq!(decoded, "a\r\nb");
+        assert_eq!(encoding, "utf-8-bom");
+        assert_eq!(line_ending, "crlf");
+        let encoded = encode_remote_preview_text("a\nb", &encoding, &line_ending)
+            .expect("preview text should encode");
+        assert_eq!(encoded, vec![0xef, 0xbb, 0xbf, b'a', b'\r', b'\n', b'b']);
+    }
+
+    #[test]
+    fn encode_does_not_double_expand_existing_crlf() {
+        // Regression: "a\r\nb" -> crlf should stay "a\r\nb", not "a\r\r\nb".
+        let out = encode_remote_preview_text("a\r\nb", "utf-8", "crlf").unwrap();
+        assert_eq!(out, b"a\r\nb");
+    }
+
+    #[test]
+    fn format_remote_permission_renders_posix_mode_bits() {
+        assert_eq!(format_remote_permission_from_bits(0o100755), "-rwxr-xr-x");
+        assert_eq!(format_remote_permission_from_bits(0o040755), "drwxr-xr-x");
+        assert_eq!(format_remote_permission_from_bits(0o120777), "lrwxrwxrwx");
+    }
+
+    #[test]
+    fn expand_tilde_resolves_home_directory() {
+        let expanded = expand_tilde("~/.ssh/id_rsa");
+        assert!(!expanded.starts_with('~'), "tilde should be expanded: {expanded}");
+    }
+
+    #[test]
+    fn safe_remote_path_normalizes_backslashes() {
+        assert_eq!(
+            safe_remote_path(r"\home\user\file").unwrap(),
+            "/home/user/file"
+        );
+    }
+
+    #[test]
+    fn truncate_at_utf8_boundary_backs_off_mid_codepoint() {
+        // "你" is 0xE4 0xBD 0xA0; truncated to 2 bytes is invalid → back off.
+        let v = vec![0xe4, 0xbd];
+        let out = truncate_at_utf8_boundary(v);
+        assert!(out.is_empty());
+
+        let v = vec![b'a', 0xe4, 0xbd];
+        let out = truncate_at_utf8_boundary(v);
+        assert_eq!(out, b"a");
+    }
+}
