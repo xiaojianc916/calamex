@@ -36,8 +36,8 @@
       <button v-for="chip in scopeChips" :key="chip.key" type="button" class="search-panel-chip"
         :class="{ 'is-active': activeScope === chip.key }" :aria-pressed="activeScope === chip.key"
         @click="activeScope = chip.key">
-        <span>{{ chip.label }}</span>
-        <span class="search-panel-chip-count">{{ chip.count }}</span>
+        <span> chip.label </span>
+        <span class="search-panel-chip-count"> chip.count </span>
       </button>
     </div>
 
@@ -99,15 +99,15 @@
               <button type="button" class="search-replace-inline-file-open"
                 :aria-expanded="!isReplacementFileCollapsed(file.path)" @click="toggleReplacementFile(file.path)">
                 <span class="search-replace-inline-chevron" aria-hidden="true">
-                  {{ isReplacementFileCollapsed(file.path) ? '›' : '⌄' }}
+                   isReplacementFileCollapsed(file.path) ? '▸' : '▾' 
                 </span>
                 <span class="search-replace-inline-file-icon" aria-hidden="true">
                   <ExplorerEntryIcon kind="file" :path="file.path" />
                 </span>
-                <span class="search-replace-inline-file-name">{{ file.name }}</span>
-                <span class="search-replace-inline-file-path">{{ file.parentPath }}</span>
+                <span class="search-replace-inline-file-name"> file.name </span>
+                <span class="search-replace-inline-file-path"> file.parentPath </span>
               </button>
-              <span class="search-replace-inline-count">{{ file.visibleReplacementCount }}</span>
+              <span class="search-replace-inline-count"> file.visibleReplacementCount </span>
             </header>
 
             <template v-if="!isReplacementFileCollapsed(file.path)">
@@ -115,7 +115,7 @@
                 role="option" tabindex="0" @click="handleReplacementLineOpen(file.path, line.lineNumber)"
                 @keydown.enter="handleReplacementLineOpen(file.path, line.lineNumber)"
                 @keydown.space.prevent="handleReplacementLineOpen(file.path, line.lineNumber)">
-                <span class="search-replace-inline-line-number">{{ line.lineNumber }}</span>
+                <span class="search-replace-inline-line-number"> line.lineNumber </span>
                 <span class="search-replace-inline-code">
                   <template v-for="(segment, segmentIndex) in line.segments" :key="`${line.id}-${segmentIndex}`">
                     <span v-if="segment.kind !== 'empty'" class="search-replace-inline-segment"
@@ -151,9 +151,9 @@
         <p class="search-panel-empty-text">先打开一个目录，再在这里按文件名或路径快速定位。</p>
       </div>
 
-      <div v-else-if="searchIndexing && indexedFileCount === 0" class="search-panel-empty-state">
-        <p class="search-panel-empty-title"></p>
-        <p class="search-panel-empty-text"></p>
+      <div v-else-if="searchIndexing && scannedFileCount === 0" class="search-panel-empty-state">
+        <span class="icon-[lucide--loader-circle] search-panel-spin" aria-hidden="true" />
+        <p class="search-panel-empty-text">正在搜索工作区…</p>
       </div>
 
       <div v-else-if="searchError" class="search-panel-empty-state">
@@ -164,9 +164,9 @@
         <InlineError title="正则表达式无效" :message="matcherError" severity="warning" />
       </div>
 
-      <div v-else-if="activeScopeIsPending" class="search-panel-empty-state">
-        <p class="search-panel-empty-title">该类别待接入</p>
-        <p class="search-panel-empty-text">当前已接入文件名与路径搜索，符号与内容结果稍后补齐。</p>
+      <div v-else-if="!hasSearchQuery" class="search-panel-empty-state">
+        <p class="search-panel-empty-title">搜索工作区</p>
+        <p class="search-panel-empty-text">输入关键字，按文件名、符号或内容快速定位匹配项。</p>
       </div>
 
       <div v-else-if="hasSearchQuery && activeResults.length === 0" class="search-panel-empty-state">
@@ -180,15 +180,15 @@
             <button type="button" class="search-panel-result-group-open"
               :aria-expanded="!isSearchResultGroupCollapsed(group.path)" @click="toggleSearchResultGroup(group.path)">
               <span class="search-panel-result-group-chevron" aria-hidden="true">
-                {{ isSearchResultGroupCollapsed(group.path) ? '›' : '⌄' }}
+                 isSearchResultGroupCollapsed(group.path) ? '▸' : '▾' 
               </span>
               <span class="search-panel-result-group-icon" aria-hidden="true">
                 <ExplorerEntryIcon kind="file" :path="group.path" />
               </span>
-              <span class="search-panel-result-group-name">{{ group.name }}</span>
-              <span class="search-panel-result-group-path">{{ group.parentPath }}</span>
+              <span class="search-panel-result-group-name"> group.name </span>
+              <span class="search-panel-result-group-path"> group.parentPath </span>
             </button>
-            <span class="search-panel-result-group-count">{{ group.results.length }}</span>
+            <span class="search-panel-result-group-count"> group.results.length </span>
           </header>
 
           <template v-if="!isSearchResultGroupCollapsed(group.path)">
@@ -197,7 +197,7 @@
               role="option" :aria-selected="selectedResultKey === result.resultKey"
               @click="handleSearchResultOpen(result)">
               <span class="search-panel-result-line-number">
-                {{ result.lineNumber ?? '' }}
+                 result.lineNumber 
               </span>
 
               <span class="search-panel-result-line-body">
@@ -223,7 +223,10 @@ import InlineError from '@/components/common/InlineError.vue';
 import { Input } from '@/components/ui/input';
 import ExplorerEntryIcon from '@/components/workbench/ExplorerEntryIcon.vue';
 import { useMessage } from '@/composables/useMessage';
-import { useSidecarChangedDocumentRefresh } from '@/composables/useSidecarChangedDocumentRefresh';
+import {
+  type IRefreshSidecarChangedDocumentsResult,
+  useSidecarChangedDocumentRefresh,
+} from '@/composables/useSidecarChangedDocumentRefresh';
 import { tauriService } from '@/services/tauri';
 import type { IWorkbenchOpenFileRequest, IWorkspaceDirectoryPayload } from '@/types/editor';
 import type {
@@ -350,22 +353,6 @@ const isWordCharacter = (value: string | undefined): boolean =>
 
 const isBoundaryWhitespace = (value: string): boolean => /^\s$/u.test(value);
 
-const trimBoundaryWhitespace = (value: string): string => {
-  const characters = Array.from(value);
-  let startIndex = 0;
-  let endIndex = characters.length;
-
-  while (startIndex < endIndex && isBoundaryWhitespace(characters[startIndex] ?? '')) {
-    startIndex += 1;
-  }
-
-  while (endIndex > startIndex && isBoundaryWhitespace(characters[endIndex - 1] ?? '')) {
-    endIndex -= 1;
-  }
-
-  return characters.slice(startIndex, endIndex).join('');
-};
-
 const trimBoundaryWhitespaceWithRange = (
   value: string,
   range: [number, number] | null,
@@ -404,11 +391,16 @@ const trimBoundaryWhitespaceWithRange = (
   };
 };
 
+const trimBoundaryWhitespace = (value: string): string =>
+  trimBoundaryWhitespaceWithRange(value, null).text;
+
 const splitPatternList = (value: string): string[] =>
   value
     .split(/[\n,]+/u)
     .map((item) => item.trim())
     .filter(Boolean);
+
+const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 
 const collectPlainMatchRanges = (
   value: string,
@@ -416,34 +408,45 @@ const collectPlainMatchRanges = (
   caseSensitive: boolean,
   fullWord: boolean,
 ): Array<[number, number]> => {
-  const source = caseSensitive ? value : value.toLocaleLowerCase();
-  const needle = caseSensitive ? query : query.toLocaleLowerCase();
   const ranges: Array<[number, number]> = [];
 
-  if (!needle) {
+  if (!query) {
     return ranges;
   }
 
-  let searchIndex = 0;
-  while (searchIndex < source.length) {
-    const nextMatchIndex = source.indexOf(needle, searchIndex);
-    if (nextMatchIndex === -1) {
-      break;
+  // 直接在原串上用大小写不敏感正则匹配，避免 toLocaleLowerCase()
+  // 在某些语言环境下改变字符串长度，导致高亮区间相对原串发生偏移。
+  let pattern: RegExp;
+  try {
+    pattern = new RegExp(escapeRegExp(query), caseSensitive ? 'gu' : 'giu');
+  } catch {
+    return ranges;
+  }
+
+  let nextMatch = pattern.exec(value);
+  while (nextMatch) {
+    const matchedValue = nextMatch[0] ?? '';
+    if (!matchedValue) {
+      pattern.lastIndex += 1;
+      nextMatch = pattern.exec(value);
+      continue;
     }
 
-    const matchEndIndex = nextMatchIndex + needle.length;
-    const beforeCharacter = value[nextMatchIndex - 1];
-    const afterCharacter = value[matchEndIndex];
+    const startIndex = nextMatch.index;
+    const endIndex = startIndex + matchedValue.length;
+    const beforeCharacter = value[startIndex - 1];
+    const afterCharacter = value[endIndex];
     const passesWordBoundary =
       !fullWord || (!isWordCharacter(beforeCharacter) && !isWordCharacter(afterCharacter));
 
     if (passesWordBoundary) {
-      ranges.push([nextMatchIndex, matchEndIndex]);
+      ranges.push([startIndex, endIndex]);
     }
 
-    searchIndex = nextMatchIndex + Math.max(needle.length, 1);
+    nextMatch = pattern.exec(value);
   }
 
+  pattern.lastIndex = 0;
   return ranges;
 };
 
@@ -555,7 +558,10 @@ const resolveMatcher = (): ISearchMatcher => {
   if (useRegex.value) {
     try {
       const baseFlags = matchCase.value ? 'gu' : 'giu';
-      const highlightPattern = new RegExp(query, baseFlags);
+      // 与后端正则构建保持一致：全字匹配时用单词边界包裹，避免前端高亮
+      // 与后端命中范围不一致。
+      const highlightSource = wholeWord.value ? `\\b(?:${query})\\b` : query;
+      const highlightPattern = new RegExp(highlightSource, baseFlags);
       return {
         hasQuery: true,
         errorMessage: '',
@@ -585,7 +591,6 @@ const resolveMatcher = (): ISearchMatcher => {
 const matcher = computed(resolveMatcher);
 const matcherError = computed(() => matcher.value.errorMessage);
 const hasSearchQuery = computed(() => searchQuery.value.trim().length > 0);
-const indexedFileCount = computed(() => scannedFileCount.value);
 const includePatterns = computed(() => splitPatternList(includePattern.value));
 const excludePatterns = computed(() => splitPatternList(excludePattern.value));
 
@@ -636,7 +641,6 @@ const scopeChips = computed(() =>
   })),
 );
 
-const activeScopeIsPending = computed(() => false);
 const activeResults = computed(() => searchResultsByScope.value[activeScope.value]);
 const searchResultGroups = computed<ISearchResultGroup[]>(() => {
   const groups = new Map<string, ISearchResultGroup>();
@@ -890,6 +894,18 @@ const runSearch = async (): Promise<void> => {
     return;
   }
 
+  // 空查询无需触发后端检索：直接清空结果，回到初始空状态。
+  if (!hasSearchQuery.value) {
+    searchRequestId += 1;
+    activeAbortController?.abort();
+    activeAbortController = null;
+    scannedFileCount.value = 0;
+    backendResults.value = [];
+    searchIndexing.value = false;
+    searchError.value = '';
+    return;
+  }
+
   const requestId = searchRequestId + 1;
   searchRequestId = requestId;
   activeAbortController?.abort();
@@ -1110,6 +1126,28 @@ const refreshReplacementPreviewAfterLineApply = async (
   }
 };
 
+const reportReplacementRefreshOutcome = (
+  refreshResult: IRefreshSidecarChangedDocumentsResult,
+  replacementCount: number,
+  successMessage: string,
+): void => {
+  if (refreshResult.skippedDirtyNames.length > 0) {
+    message.warning(
+      `已替换 ${replacementCount} 处内容，但 ${refreshResult.skippedDirtyNames.join('、')} 有未保存改动，已跳过自动刷新。`,
+    );
+    return;
+  }
+
+  if (refreshResult.failedNames.length > 0) {
+    message.warning(
+      `已替换 ${replacementCount} 处内容，但 ${refreshResult.failedNames.join('、')} 刷新失败，请手动重新打开。`,
+    );
+    return;
+  }
+
+  message.success(successMessage);
+};
+
 const confirmReplacementPreview = async (): Promise<void> => {
   const request = replacementPreviewRequest.value;
   const files = visibleReplacementFiles.value;
@@ -1146,19 +1184,11 @@ const confirmReplacementPreview = async (): Promise<void> => {
     replacementPreviewRequest.value = null;
     replacementPreviewRequestId += 1;
 
-    if (refreshResult.skippedDirtyNames.length > 0) {
-      message.warning(
-        `已替换 ${payload.replacementCount} 处内容，但 ${refreshResult.skippedDirtyNames.join('、')} 有未保存改动，已跳过自动刷新。`,
-      );
-    } else if (refreshResult.failedNames.length > 0) {
-      message.warning(
-        `已替换 ${payload.replacementCount} 处内容，但 ${refreshResult.failedNames.join('、')} 刷新失败，请手动重新打开。`,
-      );
-    } else {
-      message.success(
-        `已替换 ${payload.changedFileCount} 个文件中的 ${payload.replacementCount} 处内容。`,
-      );
-    }
+    reportReplacementRefreshOutcome(
+      refreshResult,
+      payload.replacementCount,
+      `已替换 ${payload.changedFileCount} 个文件中的 ${payload.replacementCount} 处内容。`,
+    );
 
     void runSearch();
   } catch (error) {
@@ -1206,17 +1236,11 @@ const replaceReplacementLine = async (
 
     await refreshReplacementPreviewAfterLineApply(request);
 
-    if (refreshResult.skippedDirtyNames.length > 0) {
-      message.warning(
-        `已替换 ${payload.replacementCount} 处内容，但 ${refreshResult.skippedDirtyNames.join('、')} 有未保存改动，已跳过自动刷新。`,
-      );
-    } else if (refreshResult.failedNames.length > 0) {
-      message.warning(
-        `已替换 ${payload.replacementCount} 处内容，但 ${refreshResult.failedNames.join('、')} 刷新失败，请手动重新打开。`,
-      );
-    } else {
-      message.success(`已替换 ${payload.replacementCount} 处内容。`);
-    }
+    reportReplacementRefreshOutcome(
+      refreshResult,
+      payload.replacementCount,
+      `已替换 ${payload.replacementCount} 处内容。`,
+    );
 
     void runSearch();
   } catch (error) {
@@ -1250,7 +1274,6 @@ watch(
   [
     () => props.isDesktopRuntime,
     () => props.workspaceRootPath,
-    () => props.preloadedWorkspaceRoot,
     searchQuery,
     matchCase,
     wholeWord,
