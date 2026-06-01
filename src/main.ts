@@ -16,6 +16,26 @@ const MESSAGES = {
   bootstrapErrorLabel: 'Application bootstrap failed',
 } as const;
 
+const scheduleIdle = (task: () => void, timeoutMs = 1500): void => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  const idleCallback = window.requestIdleCallback;
+  if (typeof idleCallback === 'function') {
+    idleCallback(
+      () => {
+        task();
+      },
+      { timeout: timeoutMs },
+    );
+    return;
+  }
+
+  // fallback：尽量让出首帧/输入事件
+  setTimeout(task, 0);
+};
+
 const bootstrap = async (): Promise<void> => {
   try {
     markStartup('bootstrap-start');
@@ -46,7 +66,8 @@ const bootstrap = async (): Promise<void> => {
     getThemeManager().init();
     markStartup('theme-manager-ready');
 
-    queueMicrotask(() => {
+    // 命令目录预热可能涉及较重的动态 import/解析;放到 idle 时间，避免与首屏渲染抢主线程。
+    scheduleIdle(() => {
       markStartup('shell-catalog-prefetch-start');
       void import('./services/shell/command-catalog')
         .then(({ listShellCommandLabels }) => listShellCommandLabels())
