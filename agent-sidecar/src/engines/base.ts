@@ -35,6 +35,13 @@ import type { AnyWorkspace } from '@mastra/core/workspace';
  */
 const PENDING_APPROVAL_TTL_MS = 10 * 60_000;
 
+/**
+ * 启动时仅预热的本地 MCP 服务（无网络、无密钥依赖）。用于缩短冷启动，避免在
+ * 启动阶段串行启动全部 MCP 服务（含需 npx 联网下载的 probe）后又被暖池
+ * maxWarm 立刻淘汰造成的反复 spawn/evict 抖动。其余服务保持按需懒加载。
+ */
+const STARTUP_PRIME_SERVER_NAMES: readonly TMcpServerName[] = ['memory', 'sequential-thinking'];
+
 export class MastraRuntimeBase {
     readonly name = 'mastra' as const;
     readonly version: string = SIDECAR_VERSION;
@@ -101,9 +108,23 @@ export class MastraRuntimeBase {
             createBundle: this.createMcpClientBundle,
         });
         if (!deps.createMcpClientBundle && !isNodeTestProcess()) {
-            void this.mcpGatewayPool.primeCatalog().catch(() => undefined);
+            void this.mcpGatewayPool
+                .primeCatalog({ serverNames: STARTUP_PRIME_SERVER_NAMES })
+                .catch(() => undefined);
         }
         this.now = deps.now;
+    }
+
+    /**
+     * 优雅关闭：清理挂起审批的 TTL 回收计时器，并断开暖池中的全部 MCP 连接
+     * （含其 stdio 子进程）。由进程退出 / 终止信号处理器调用，避免 MCP 子进程
+     * 变成孤儿进程。
+     */
+    async dispose(): Promise<void> {
+        for (const requestId of [...this.pendingApprovalTimers.keys()]) {
+            this.clearPendingApprovalTimer(requestId);
+        }
+        await this.mcpGatewayPool.disconnectAll();
     }
 
     protected registerPendingApproval(
