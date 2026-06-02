@@ -1,58 +1,18 @@
-import { type Ref, ref } from 'vue';
-
-import type { IAiCodeActionRequest } from '@/types/ai';
-import type { IScriptDiagnostic } from '@/types/editor';
+import { ref } from 'vue';
 
 export type TTitlebarExpose = {
   openCommandPalette: () => void;
 };
 
-type TAiCodeActionEditorExpose = {
-  runAiCodeAction: (kind: IAiCodeActionRequest['kind']) => void | Promise<void>;
-};
-
-interface IUseShellWorkbenchAiBridgeOptions {
-  editorRef: Ref<unknown>;
-  handleSelectDiagnostic: (line: number, column: number) => void;
-}
-
-export const useShellWorkbenchAiBridge = (options: IUseShellWorkbenchAiBridgeOptions) => {
+export const useShellWorkbenchAiBridge = () => {
   const titlebarRef = ref<TTitlebarExpose | null>(null);
-
-  const getAiCodeActionEditor = (): TAiCodeActionEditorExpose | null => {
-    const candidate = options.editorRef.value as
-      | Partial<TAiCodeActionEditorExpose>
-      | null
-      | undefined;
-
-    if (typeof candidate?.runAiCodeAction !== 'function') {
-      return null;
-    }
-
-    return candidate as TAiCodeActionEditorExpose;
-  };
-
-  const runAiCodeAction = (kind: IAiCodeActionRequest['kind']): void => {
-    void getAiCodeActionEditor()?.runAiCodeAction(kind);
-  };
 
   const handleOpenCommandPalette = (): void => {
     titlebarRef.value?.openCommandPalette();
   };
 
-  const handleAiCodeAction = (kind: IAiCodeActionRequest['kind']): void => {
-    runAiCodeAction(kind);
-  };
-
-  const handleAiFixDiagnostic = (diagnostic: IScriptDiagnostic): void => {
-    options.handleSelectDiagnostic(diagnostic.line, diagnostic.column);
-    runAiCodeAction('fix_diagnostic');
-  };
-
   return {
     titlebarRef,
     handleOpenCommandPalette,
-    handleAiCodeAction,
-    handleAiFixDiagnostic,
   };
 };

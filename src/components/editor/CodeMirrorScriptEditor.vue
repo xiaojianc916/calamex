@@ -2,20 +2,6 @@
   <div class="shell-editor-surface codemirror-editor-surface relative h-full min-h-0 w-full bg-(--editor-bg)"
     @contextmenu.prevent="handleContainerContextMenu">
     <div ref="containerRef" class="h-full min-h-0 w-full bg-(--editor-bg)"></div>
-    <section v-if="aiActionResult || isAiActionRunning || aiActionError" class="ai-code-action-card">
-      <div class="ai-code-action-head">
-        <span v-text="isAiActionRunning ? 'AI 正在分析…' : 'AI Code Action'"></span>
-        <button type="button" aria-label="关闭 AI 结果" @click="clearAiActionResult">×</button>
-      </div>
-      <p v-if="aiActionError" class="is-error" v-text="aiActionError"></p>
-      <template v-else-if="aiActionResult">
-        <p v-text="aiActionResult.explanation"></p>
-        <ul v-if="aiActionResult.followUpQuestions.length">
-          <li v-for="question in aiActionResult.followUpQuestions" :key="question" v-text="question"></li>
-        </ul>
-        <p v-if="aiActionResult.testSuggestion" class="ai-code-action-note" v-text="aiActionResult.testSuggestion"></p>
-      </template>
-    </section>
     <EditorContextMenu :open="contextMenuState.open" :x="contextMenuState.x" :y="contextMenuState.y"
       :groups="contextMenuGroups" :theme="props.theme" :submenu-direction="submenuDirection"
       @select="handleContextMenuItemSelect" />
@@ -37,9 +23,7 @@ import {
   shikiHighlightExtension,
 } from '@/services/editor/codemirror-shiki-highlight';
 import { createLspExtension, createLucideCompletionIcon, lspCompletionTheme } from '@/services/editor/lsp-bridge';
-import { aiService } from '@/services/ipc/ai.service';
 import { useEditorStore } from '@/store/editor';
-import type { IAiCodeActionRequest, IAiCodeActionResult } from '@/types/ai';
 import type { TThemeMode } from '@/types/app';
 import type {
   IAnalyzeScriptPayload,
@@ -108,7 +92,6 @@ interface IEditorExpose {
   insertSnippet: (snippet: string) => void;
   revealPosition: (line: number, column: number) => void;
   layoutEditor: () => void;
-  runAiCodeAction: (kind: IAiCodeActionRequest['kind']) => Promise<void>;
 }
 
 // ────────────────────────────────────────────────────────
@@ -177,9 +160,6 @@ const emit = defineEmits<{
 
 const containerRef = ref<HTMLElement | null>(null);
 const analysisState = computed(() => props.analysis ?? createEmptyAnalysis());
-const aiActionResult = ref<IAiCodeActionResult | null>(null);
-const aiActionError = ref('');
-const isAiActionRunning = ref(false);
 const contextMenuState = ref({ open: false, x: 0, y: 0 });
 const contextMenuGroups = ref<ReturnType<typeof buildMenuGroups>>([]);
 const submenuDirection = ref<'left' | 'right'>('right');
@@ -292,42 +272,6 @@ const emitCursorPosition = (view: EditorView): void => {
 
 const emitSelectionSummary = (): void => {
   emit('selection-change', resolveSelectionSummary());
-};
-
-// ────────────────────────────────────────────────────────
-// AI code action
-// ────────────────────────────────────────────────────────
-const clearAiActionResult = (): void => {
-  aiActionResult.value = null;
-  aiActionError.value = '';
-  isAiActionRunning.value = false;
-};
-
-const runAiCodeAction = async (
-  kind: IAiCodeActionRequest['kind'],
-  selection: string,
-): Promise<void> => {
-  if (isAiActionRunning.value) return;
-  isAiActionRunning.value = true;
-  aiActionError.value = '';
-  aiActionResult.value = null;
-  try {
-    aiActionResult.value = await aiService.codeAction({
-      kind,
-      filePath: props.documentPath ?? null,
-      language: getCurrentLanguage(),
-      selection,
-      diagnostics: analysisState.value.diagnostics.map((item) => `${item.code}: ${item.message}`),
-    });
-  } catch (error) {
-    aiActionError.value = error instanceof Error ? error.message : String(error);
-  } finally {
-    isAiActionRunning.value = false;
-  }
-};
-
-const runAiCodeActionFromEditor = async (kind: IAiCodeActionRequest['kind']): Promise<void> => {
-  await runAiCodeAction(kind, resolveSelectedText());
 };
 
 // ────────────────────────────────────────────────────────
@@ -1008,7 +952,6 @@ defineExpose<IEditorExpose>({
   insertSnippet,
   revealPosition,
   layoutEditor,
-  runAiCodeAction: runAiCodeActionFromEditor,
 });
 </script>
 
