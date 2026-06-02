@@ -15,7 +15,7 @@ import {
 } from '@/components/ai-elements/attachments';
 import type { IAiImageAttachmentPreview } from '@/types/ai';
 import 'photoswipe/style.css';
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type StyleValue } from 'vue';
 
 type TAiImageAttachmentPreviewVariant = 'composer' | 'message';
 
@@ -147,6 +147,35 @@ const resolveSecondaryMetaLabel = (entry: IInternalAttachmentItem): string => {
     return `${entry.item.preview.width} × ${entry.item.preview.height}`;
   }
   return '';
+};
+
+const resolvePreviewAspectRatio = (
+  preview: IAiImageAttachmentPreview | undefined,
+): string | undefined => {
+  if (
+    typeof preview?.width !== 'number' ||
+    typeof preview.height !== 'number' ||
+    preview.width <= 0 ||
+    preview.height <= 0
+  ) {
+    return undefined;
+  }
+
+  return `${preview.width} / ${preview.height}`;
+};
+
+const resolveMessageCardStyle = (entry: IInternalAttachmentItem): StyleValue | undefined => {
+  if (props.variant !== 'message' || !entry.openable) {
+    return undefined;
+  }
+
+  const aspectRatio = resolvePreviewAspectRatio(entry.item.preview);
+
+  return aspectRatio
+    ? {
+        '--ai-attachment-preview-aspect-ratio': aspectRatio,
+      }
+    : undefined;
 };
 
 const destroyLightbox = (): void => {
@@ -331,10 +360,10 @@ v-if="getMediaCategory(entry.data) === 'image' && entry.data.type === 'file' && 
           <AttachmentRemove v-if="removable" class="ai-image-attachment-preview-remove" label="移除附件" />
         </Attachment>
 
-        <!-- message / grid 变体：缩略图本身就是整张卡，hover 仍仅在缩略图上 -->
+        <!-- message / grid 变体：按原始宽高比展示图片，避免截图被裁切成低清小方块 -->
         <Attachment
-v-else :data="entry.data" class="ai-attachment-card" :data-variant="variant"
-          @remove="handleRemove(entry.item.id)">
+v-else :data="entry.data" class="ai-attachment-card" :class="{ 'is-image-preview': entry.openable }"
+          :style="resolveMessageCardStyle(entry)" :data-variant="variant" @remove="handleRemove(entry.item.id)">
           <a
 v-if="entry.openable && entry.item.preview"
             class="ai-image-attachment-preview-link ai-attachment-preview-frame is-openable"
@@ -403,6 +432,16 @@ v-else class="ai-attachment-preview-frame" role="img" :aria-label="entry.item.na
   background: var(--surface-subtle, #f4f4f5);
 }
 
+.ai-attachment-card[data-variant='message'].is-image-preview {
+  width: min(320px, 72vw);
+  max-width: 100%;
+  height: auto;
+  max-height: 220px;
+  aspect-ratio: var(--ai-attachment-preview-aspect-ratio, 4 / 3);
+  border-color: color-mix(in srgb, var(--shell-divider) 86%, transparent);
+  background: var(--surface-default, #ffffff);
+}
+
 .ai-attachment-preview-frame {
   display: flex;
   flex: 0 0 auto;
@@ -425,6 +464,10 @@ v-else class="ai-attachment-preview-frame" role="img" :aria-label="entry.item.na
   height: 100%;
   border-radius: inherit;
   background: var(--surface-subtle, #f4f4f5);
+}
+
+.ai-attachment-card[data-variant='message'].is-image-preview .ai-attachment-preview-frame {
+  background: var(--surface-default, #ffffff);
 }
 
 .ai-attachment-preview-frame :deep(.ai-attachment-preview-media) {
@@ -456,6 +499,11 @@ v-else class="ai-attachment-preview-frame" role="img" :aria-label="entry.item.na
 .ai-attachment-card[data-variant='composer'] .ai-attachment-preview-frame :deep(img),
 .ai-attachment-card[data-variant='composer'] .ai-attachment-preview-frame :deep(video) {
   object-fit: cover;
+}
+
+.ai-attachment-card[data-variant='message'].is-image-preview .ai-attachment-preview-frame :deep(img),
+.ai-attachment-card[data-variant='message'].is-image-preview .ai-attachment-preview-frame :deep(video) {
+  object-fit: contain;
 }
 
 .ai-attachment-inline-info {

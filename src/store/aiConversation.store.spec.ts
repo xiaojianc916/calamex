@@ -2,7 +2,11 @@ import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { IAiChatMessage } from '@/types/ai';
 
-import { AI_CONVERSATION_HISTORY_LIMIT, useAiConversationStore } from './aiConversation';
+import {
+  AI_CONVERSATION_HISTORY_LIMIT,
+  salvageHydratedThreads,
+  useAiConversationStore,
+} from './aiConversation';
 
 const createMessage = (index: number): IAiChatMessage => ({
   id: `message-${index}`,
@@ -286,5 +290,80 @@ describe('useAiConversationStore', () => {
       userMessage: '第一句用户问题',
       assistantMessage: '第一句 AI 回答',
     });
+  });
+});
+
+describe('salvageHydratedThreads', () => {
+  const validThread = (id: string, messageId: string) => ({
+    id,
+    title: `线程 ${id}`,
+    titleStatus: 'generated',
+    createdAt: '2026-04-28T10:00:00.000Z',
+    updatedAt: '2026-04-28T10:05:00.000Z',
+    messages: [
+      {
+        id: messageId,
+        role: 'user',
+        content: '内容',
+        createdAt: '2026-04-28T10:00:00.000Z',
+        references: [],
+      },
+    ],
+  });
+
+  it('丢弃损坏线程,保留其余合法线程(单线程坏数据不清空整库)', () => {
+    const result = salvageHydratedThreads(
+      [
+        validThread('thread-1', 'message-1'),
+        { id: '', title: '', messages: 'not-an-array' },
+        validThread('thread-2', 'message-2'),
+      ],
+      'thread-2',
+    );
+
+    expect(result).not.toBeNull();
+    expect(result?.threads.map((thread) => thread.id)).toEqual(['thread-1', 'thread-2']);
+    expect(result?.activeThreadId).toBe('thread-2');
+  });
+
+  it('丢弃线程内的损坏消息,保留同线程其余合法消息', () => {
+    const base = validThread('thread-1', 'message-1');
+    const result = salvageHydratedThreads(
+      [
+        {
+          ...base,
+          messages: [
+            base.messages[0],
+            { id: 'bad', role: 'unknown-role', content: 1, createdAt: '' },
+            {
+              id: 'message-2',
+              role: 'assistant',
+              content: '回答',
+              createdAt: '2026-04-28T10:01:00.000Z',
+              references: [],
+            },
+          ],
+        },
+      ],
+      'thread-1',
+    );
+
+    expect(result?.threads).toHaveLength(1);
+    expect(result?.threads[0]?.messages.map((message) => message.id)).toEqual([
+      'message-1',
+      'message-2',
+    ]);
+  });
+
+  it('无任何可救援线程时返回 null(交回 legacy/兜底)', () => {
+    expect(salvageHydratedThreads('not-an-array', null)).toBeNull();
+    expect(salvageHydratedThreads([{ id: '', messages: [] }], null)).toBeNull();
+  });
+
+  it('activeThreadId 非法时归一化为 null', () => {
+    const result = salvageHydratedThreads([validThread('thread-1', 'message-1')], '   ');
+
+    expect(result).not.toBeNull();
+    expect(result?.activeThreadId).toBeNull();
   });
 });
