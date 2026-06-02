@@ -1,0 +1,241 @@
+/* ============================================================
+ * 5. App shell
+ * ============================================================ */
+
+.app-surface {
+  background: var(--app-bg);
+  color: var(--text-primary);
+  font-size: var(--app-ui-font-size);
+}
+
+.app-window-shell {
+  background: var(--app-bg);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--shell-divider) 46%, transparent),
+    0 8px 20px -16px color-mix(in srgb, var(--text-quaternary) 42%, transparent);
+}
+
+.app-shell-pane,
+.workbench-editor-viewport,
+.diagnostics-overlay-panel {
+  min-width: 0;
+  min-height: 0;
+  contain: layout;
+  isolation: isolate;
+}
+
+.workbench-sidebar-pane {
+  z-index: var(--workbench-motion-layer-sidebar);
+  box-shadow: none;
+}
+
+.workbench-content-stage {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  padding-block-start: var(--workbench-content-top-offset);
+}
+
+.workbench-content-dock {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.workbench-content-card {
+  overflow: hidden;
+  border: 1px solid var(--shell-divider);
+  border-radius: var(--workbench-content-left-radius);
+  background: var(--workbench-content-bg);
+  box-shadow: none;
+}
+
+.app-window-controls {
+  position: absolute;
+  top: -1px;
+  right: -1px;
+  z-index: var(--workbench-motion-layer-overlay);
+  display: flex;
+  height: calc(var(--workbench-content-top-offset) + 1px);
+  align-items: stretch;
+  background: transparent;
+  overflow: hidden;
+  border-top-right-radius: var(--window-corner-radius);
+}
+
+.app-window-control-button {
+  display: inline-flex;
+  width: 48px;
+  height: 100%;
+  position: relative;
+  border: 0;
+  padding: 0;
+  appearance: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0;
+  color: var(--text-primary);
+  background: transparent;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
+}
+
+.app-window-control-button svg {
+  width: 14px;
+  height: 14px;
+  stroke-width: 1.45;
+}
+
+.app-window-control-button:hover {
+  background: var(--surface-hover);
+}
+
+.app-window-control-button.is-close {
+  width: 49px;
+  height: 100%;
+  margin-left: -1px;
+  margin-bottom: 0;
+}
+
+.app-window-shell .app-window-control-button.is-close {
+  border: 0 !important;
+  border-top-right-radius: var(--window-corner-radius) !important;
+  padding: 0 !important;
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  box-shadow: none !important;
+  overflow: hidden;
+}
+
+.app-window-control-button.is-close:hover {
+  color: #ffffff;
+  background: #e81123;
+}
+
+.app-window-control-button.is-close:hover svg {
+  position: relative;
+  z-index: 1;
+}
+
+.app-window-shell[data-layout-resizing='true'],
+.app-window-shell[data-workbench-motion-state='opening'],
+.app-window-shell[data-workbench-motion-state='closing'],
+.app-window-shell[data-workbench-motion-state='right-sidebar-opening'],
+.app-window-shell[data-workbench-motion-state='right-sidebar-closing'],
+.app-window-shell[data-workbench-motion-state='terminal-opening'],
+.app-window-shell[data-workbench-motion-state='terminal-closing'],
+.app-window-shell[data-workbench-motion-state='settling'] {
+  background: var(--app-bg);
+}
+
+.app-window-shell[data-workbench-motion-state='opening'] .app-shell-pane,
+.app-window-shell[data-workbench-motion-state='closing'] .app-shell-pane,
+.app-window-shell[data-workbench-motion-state='right-sidebar-opening'] .app-shell-pane,
+.app-window-shell[data-workbench-motion-state='right-sidebar-closing'] .app-shell-pane,
+.app-window-shell[data-workbench-motion-state='terminal-opening'] .app-shell-pane,
+.app-window-shell[data-workbench-motion-state='terminal-closing'] .app-shell-pane,
+.app-window-shell[data-workbench-motion-state='settling'] .app-shell-pane {
+  backface-visibility: hidden;
+}
+
+.app-window-shell[data-workbench-motion-state='opening'] .editor-surface,
+.app-window-shell[data-workbench-motion-state='closing'] .editor-surface,
+.app-window-shell[data-workbench-motion-state='right-sidebar-opening'] .editor-surface,
+.app-window-shell[data-workbench-motion-state='right-sidebar-closing'] .editor-surface,
+.app-window-shell[data-workbench-motion-state='terminal-opening'] .editor-surface,
+.app-window-shell[data-workbench-motion-state='terminal-closing'] .editor-surface,
+.app-window-shell[data-workbench-motion-state='settling'] .editor-surface,
+.app-window-shell[data-workbench-motion-state='opening'] .embedded-terminal-shell,
+.app-window-shell[data-workbench-motion-state='closing'] .embedded-terminal-shell,
+.app-window-shell[data-workbench-motion-state='terminal-opening'] .embedded-terminal-shell,
+.app-window-shell[data-workbench-motion-state='terminal-closing'] .embedded-terminal-shell,
+.app-window-shell[data-workbench-motion-state='settling'] .embedded-terminal-shell {
+  overflow: hidden;
+  background: var(--editor-bg);
+  contain: layout paint;
+}
+
+.right-sidebar-resize-handle {
+  position: absolute;
+  top: 0;
+  left: -8px;
+  z-index: 12;
+  width: 8px;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+.right-sidebar-resize-handle-bar {
+  display: none;
+}
+
+.app-window-shell[data-workbench-motion-state='right-sidebar-opening'] .right-sidebar-resize-handle,
+.app-window-shell[data-workbench-motion-state='right-sidebar-closing']
+  .right-sidebar-resize-handle {
+  pointer-events: none;
+}
+
+.workbench-scroll-region {
+  scrollbar-gutter: stable both-edges;
+  overscroll-behavior: contain;
+}
+
+.linear-card,
+.linear-card-soft {
+  border-radius: 0;
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-soft);
+  box-shadow: none;
+}
+
+.linear-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  color: var(--text-secondary);
+  transition:
+    border-color 0.18s ease,
+    background 0.18s ease,
+    color 0.18s ease;
+}
+
+.linear-button:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-soft-strong);
+  color: var(--text-primary);
+}
+
+.linear-button:disabled {
+  opacity: 0.45;
+}
+
+.linear-button:disabled:hover {
+  border-color: var(--border-subtle);
+  background: var(--surface-soft);
+  color: var(--text-secondary);
+}
+
+.linear-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  padding: 4px 10px;
+  color: var(--text-secondary);
+  background: var(--surface-soft);
+}
+
+.mono-text {
+  font-family: var(--font-mono);
+}

@@ -1,0 +1,251 @@
+/* ============================================================
+ * 12. Editor widgets
+ * ============================================================ */
+
+.run-panel-shell {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+  background: var(--panel-bg);
+  border-top: 1px solid var(--shell-divider);
+}
+
+.run-panel-toolbar {
+  display: flex;
+  align-items: stretch;
+  height: 36px;
+  padding: 0 6px 0 12px;
+  background: var(--panel-bg);
+  border-bottom: 0;
+  user-select: none;
+}
+
+.run-panel-tab-list {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  height: 100%;
+}
+
+.run-panel-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  height: 100%;
+  padding: 0 12px;
+  background: var(--panel-bg);
+  border-bottom: 0;
+  font-family: var(--font-sans);
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-quaternary);
+  transition: color 0.14s ease;
+}
+
+.run-panel-tab:hover {
+  color: var(--text-tertiary);
+}
+
+.run-panel-tab.is-active {
+  background: var(--panel-bg);
+  color: var(--text-primary);
+}
+
+.run-panel-tab.is-active::after {
+  content: '';
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: var(--accent-strong);
+}
+
+.run-panel-tab-label {
+  pointer-events: none;
+}
+
+.run-panel-toolbar-spacer {
+  flex: 1;
+}
+
+.run-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding-left: 8px;
+  margin-left: 8px;
+}
+
+.run-panel-action-button {
+  width: 26px;
+  height: 26px;
+  border-radius: 5px;
+}
+
+.run-panel-action-button svg {
+  width: 13px;
+  height: 13px;
+}
+
+.run-panel-action-button:disabled,
+.run-panel-action-button:disabled:hover {
+  background: transparent;
+  color: var(--text-quaternary);
+  opacity: 0.45;
+}
+
+.run-panel-body,
+.run-panel-view {
+  min-height: 0;
+}
+
+.run-panel-body {
+  flex: 1;
+  overflow: hidden;
+}
+
+.run-panel-view {
+  height: 100%;
+}
+
+.embedded-terminal-shell {
+  position: relative;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  --terminal-cursor: #000000;
+  --terminal-cursor-accent: #ffffff;
+  background: var(--terminal-fill, var(--panel-bg));
+}
+
+.embedded-terminal-host {
+  position: absolute;
+  inset: 0;
+  min-height: 0;
+  padding: 0;
+  box-sizing: border-box;
+  overflow: hidden;
+  background: var(--terminal-fill, var(--panel-bg));
+  contain: layout;
+  overscroll-behavior: contain;
+  isolation: isolate;
+}
+
+.embedded-terminal-host.is-hidden-by-overlay {
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.embedded-terminal-host:hover,
+.embedded-terminal-shell:focus-within .embedded-terminal-host {
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+
+.embedded-terminal-host::-webkit-scrollbar {
+  width: 0;
+  height: 8px;
+}
+
+.embedded-terminal-host::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: transparent;
+}
+
+.embedded-terminal-shell:hover .embedded-terminal-host::-webkit-scrollbar-thumb,
+.embedded-terminal-shell:focus-within .embedded-terminal-host::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.embedded-terminal-host .xterm {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  background: var(--terminal-fill, var(--panel-bg));
+}
+
+.embedded-terminal-host .xterm-viewport {
+  width: 100%;
+  height: 100%;
+  background-color: var(--terminal-fill, var(--panel-bg)) !important;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  scroll-behavior: auto !important;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--shell-divider) 90%, transparent) transparent;
+}
+
+.embedded-terminal-host .xterm-scroll-area {
+  background-color: var(--terminal-fill, var(--panel-bg));
+}
+
+.embedded-terminal-shell:hover .embedded-terminal-host .xterm-viewport,
+.embedded-terminal-shell:focus-within .embedded-terminal-host .xterm-viewport {
+  scrollbar-color: color-mix(in srgb, var(--shell-divider) 100%, transparent) transparent;
+}
+
+.embedded-terminal-host .xterm-viewport::-webkit-scrollbar {
+  width: 10px;
+  height: 0;
+}
+
+.embedded-terminal-host .xterm-viewport::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.embedded-terminal-host .xterm-viewport::-webkit-scrollbar-thumb {
+  border: 2px solid var(--terminal-fill, var(--panel-bg));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--shell-divider) 90%, transparent);
+}
+
+.embedded-terminal-shell:hover .embedded-terminal-host .xterm-viewport::-webkit-scrollbar-thumb,
+.embedded-terminal-shell:focus-within
+  .embedded-terminal-host
+  .xterm-viewport::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--shell-divider) 100%, transparent);
+}
+
+.embedded-terminal-host .xterm-screen {
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  padding-left: 10px;
+  background: var(--terminal-fill, var(--panel-bg)) !important;
+  transform: none !important;
+}
+
+.embedded-terminal-host .xterm-screen canvas {
+  display: block;
+  max-width: none;
+  background: var(--terminal-fill, var(--panel-bg)) !important;
+  backface-visibility: visible;
+  transform: none !important;
+}
+
+.embedded-terminal-host .xterm .xterm-helpers textarea {
+  opacity: 0;
+}
+
+.embedded-terminal-host .xterm .xterm-cursor-layer .xterm-cursor {
+  color: var(--terminal-cursor-accent) !important;
+  background-color: var(--terminal-cursor) !important;
+  border-color: var(--terminal-cursor) !important;
+}
+
+.embedded-terminal-host .xterm .xterm-cursor-layer .xterm-cursor.xterm-cursor-bar {
+  background-color: transparent !important;
+  border-left-color: var(--terminal-cursor) !important;
+}
+
+.embedded-terminal-host .xterm .xterm-cursor-layer .xterm-cursor.xterm-cursor-underline {
+  background-color: transparent !important;
+  border-bottom-color: var(--terminal-cursor) !important;
+}

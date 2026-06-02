@@ -1,0 +1,114 @@
+/* ============================================================
+ * 2. Root variables — dark (default)
+ * ============================================================ */
+
+:root {
+  color-scheme: dark;
+  font-family: var(--font-sans);
+  font-feature-settings:
+    'cv01' 1,
+    'ss03' 1;
+
+  --bg-0: #0d1117;
+  --bg-1: #151b23;
+  --bg-2: #fafafa;
+  --bg-3: #262c36;
+  --bg-4: #3d444d;
+  --bg-h: #656c7633;
+  --bg-s: #388bfd1a;
+  --bg-a: #388bfd66;
+  --bg-code: #0d1117;
+  --bg-gutter: #0d1117;
+
+  --app-bg: var(--bg-0);
+  --titlebar-bg: var(--bg-1);
+  --activity-bg: #161c24;
+  --sidebar-bg: var(--bg-1);
+  --editor-bg: var(--bg-code);
+  --editor-gutter-bg: var(--bg-gutter);
+  --editor-surface: var(--bg-2);
+  --panel-bg: var(--bg-1);
+  --panel-muted: var(--bg-2);
+  --tabbar-bg: var(--bg-1);
+  --tab-active-bg: var(--bg-code);
+  --tab-hover-bg: var(--bg-2);
+  --statusbar-bg: var(--bg-1);
+  --overlay-bg: var(--bg-2);
+  --overlay-bg-depth: var(--bg-3);
+  --overlay-border: var(--border-strong);
+  --overlay-separator: var(--shell-divider);
+  --statusbar-accent: #dcdee0;
+  --surface-hover: var(--bg-h);
+  --surface-soft: #388bfd1a;
+  --surface-soft-strong: #388bfd66;
+  --image-preview-frame-surface: #ffffff;
+  --image-preview-frame-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.06),
+    0 1px 2px rgba(17, 24, 39, 0.04),
+    0 8px 24px -8px rgba(17, 24, 39, 0.12),
+    0 24px 48px -16px rgba(17, 24, 39, 0.12);
+  --image-attachment-preview-radius: 12px;
+  --image-attachment-preview-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.04), 0 2px 6px rgba(17, 24, 39, 0.05),
+    0 10px 20px -14px rgba(17, 24, 39, 0.08);
+  --border-subtle: #3d444db3;
+  --border-strong: #3d444d;
+  --shell-divider: #3d444db3;
+  --workbench-motion-layer-sidebar: 20;
+  --workbench-motion-layer-overlay: 35;
+  --workbench-motion-layer-workbench: 10;
+  --workbench-motion-layer-terminal: 12;
+  --workbench-content-top-offset: 40px;
+  --workbench-content-left-radius: 12px;
+  --window-corner-radius: 0px;
+  --workbench-content-bg: #ffffff;
+  --text-primary: #f0f6fc;
+  --text-secondary: #9198a1;
+  --text-tertiary: #656c76;
+  --text-quaternary: #3d444d;
+  --accent: #dcdee0;
+  --accent-strong: #dcdee0;
+  --accent-muted: #388bfd1a;
+  --settings-accent: #dcdee0;
+  --settings-accent-soft: #388bfd66;
+  --settings-accent-muted: #388bfd1a;
+  --app-ui-font-size: 13px;
+  --app-density-scale: 1;
+  --diff-resize-handle-width: 2px;
+  --success: #3fb950;
+  --warning: #d29922;
+  --danger: #f85149;
+
+  --radius: 0.625rem;
+
+  --background: var(--bg-0);
+  --foreground: var(--text-primary);
+  --card: var(--bg-1);
+  --card-foreground: var(--text-primary);
+  --popover: var(--overlay-bg);
+  --popover-foreground: var(--text-primary);
+  --primary: var(--settings-accent);
+  --primary-foreground: #ffffff;
+  --secondary: var(--bg-2);
+  --secondary-foreground: var(--text-primary);
+  --muted: var(--bg-1);
+  --muted-foreground: var(--text-secondary);
+  --accent-foreground: #ffffff;
+  --destructive: #da3633;
+  --border: var(--border-subtle);
+  --input: var(--shell-divider);
+  --ring: var(--settings-accent);
+  --chart-1: #dcdee0;
+  --chart-2: #3fb950;
+  --chart-3: #d29922;
+  --chart-4: #ab7df8;
+  --chart-5: #f85149;
+  --sidebar: var(--bg-1);
+  --sidebar-foreground: var(--text-primary);
+  --sidebar-primary: var(--settings-accent);
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: var(--bg-2);
+  --sidebar-accent-foreground: var(--text-primary);
+  --sidebar-border: var(--border-subtle);
+  --sidebar-ring: var(--settings-accent);
+}

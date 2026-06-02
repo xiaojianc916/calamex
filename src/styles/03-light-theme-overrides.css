@@ -1,0 +1,109 @@
+/* ============================================================
+ * 3. Light theme overrides
+ * ============================================================ */
+
+.light,
+[data-theme='light'] {
+  color-scheme: light;
+
+  --bg-0: #f6f8fa;
+  --bg-1: #ffffff;
+  --bg-2: #f6f8fa;
+  --bg-3: #eff2f5;
+  --bg-4: #ffffff;
+  --bg-h: #818b981f;
+  --bg-s: #ddf4ff;
+  --bg-a: #54aeff66;
+  --bg-code: #ffffff;
+  --bg-gutter: #f6f8fa;
+
+  --app-bg: #f6f8fa;
+  --titlebar-bg: #ffffff;
+  --activity-bg: #f6f8fa;
+  --sidebar-bg: #f6f8fa;
+  --editor-bg: #ffffff;
+  --editor-gutter-bg: var(--bg-gutter);
+  --editor-surface: #ffffff;
+  --panel-bg: #ffffff;
+  --panel-muted: #eff2f5;
+  --tabbar-bg: #ffffff;
+  --tab-active-bg: #ffffff;
+  --tab-hover-bg: #eff2f5;
+  --statusbar-bg: #ffffff;
+  --overlay-bg: var(--bg-4);
+  --overlay-bg-depth: var(--bg-2);
+  --overlay-border: var(--border-strong);
+  --overlay-separator: var(--shell-divider);
+  --statusbar-accent: #0969da;
+  --surface-hover: #818b981f;
+  --surface-soft: #818b981f;
+  --surface-soft-strong: #d1d9e0b3;
+  --image-preview-frame-surface: #ffffff;
+  --image-preview-frame-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.06),
+    0 1px 2px rgba(17, 24, 39, 0.04),
+    0 8px 24px -8px rgba(17, 24, 39, 0.12),
+    0 24px 48px -16px rgba(17, 24, 39, 0.12);
+  --image-attachment-preview-radius: 12px;
+  --image-attachment-preview-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.04), 0 2px 6px rgba(17, 24, 39, 0.05),
+    0 10px 20px -14px rgba(17, 24, 39, 0.08);
+  --border-subtle: #d1d9e0b3;
+  --border-strong: #d1d9e0;
+  --shell-divider: #d1d9e0b3;
+  --text-primary: #1f2328;
+  --text-secondary: #59636e;
+  --text-tertiary: #818b98;
+  --text-quaternary: #818b98;
+  --accent: #0969da;
+  --accent-strong: #0969da;
+  --accent-muted: #ddf4ff;
+  --background: var(--bg-0);
+  --foreground: var(--text-primary);
+  --card: var(--bg-1);
+  --card-foreground: var(--text-primary);
+  --popover: var(--overlay-bg);
+  --popover-foreground: var(--text-primary);
+  --primary: var(--accent);
+  --primary-foreground: #ffffff;
+  --secondary: var(--bg-2);
+  --secondary-foreground: var(--text-primary);
+  --muted: var(--bg-2);
+  --muted-foreground: var(--text-secondary);
+  --accent-foreground: #ffffff;
+  --destructive: #cf222e;
+  --border: var(--border-subtle);
+  --input: var(--shell-divider);
+  --ring: var(--accent);
+  --chart-1: #0969da;
+  --chart-2: #1a7f37;
+  --chart-3: #9a6700;
+  --chart-4: #8250df;
+  --chart-5: #d1242f;
+  --sidebar: var(--bg-2);
+  --sidebar-foreground: var(--text-primary);
+  --sidebar-primary: var(--accent);
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: var(--bg-3);
+  --sidebar-accent-foreground: var(--text-primary);
+  --sidebar-border: var(--border-subtle);
+  --sidebar-ring: var(--accent);
+}
+
+.terminal-bell-flash {
+  animation: terminal-bell-flash 120ms ease-out;
+}
+
+@keyframes terminal-bell-flash {
+  0% {
+    box-shadow: inset 0 0 0 2px transparent;
+  }
+
+  50% {
+    box-shadow: inset 0 0 0 2px currentColor;
+  }
+
+  100% {
+    box-shadow: inset 0 0 0 2px transparent;
+  }
+}

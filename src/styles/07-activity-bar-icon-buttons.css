@@ -1,0 +1,90 @@
+/* ============================================================
+ * 7. Activity bar / icon buttons
+ * ============================================================ */
+
+.activity-button,
+.activity-settings-trigger {
+  position: relative;
+  display: inline-flex;
+  height: 44px;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-quaternary);
+  background: transparent;
+  transition: none;
+}
+
+.activity-button::before,
+.activity-settings-trigger::before {
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 2px;
+  background: transparent;
+  content: '';
+}
+
+.activity-button:hover,
+.activity-settings-trigger:hover {
+  background: var(--surface-soft);
+  color: var(--text-secondary);
+}
+
+.activity-button.is-active,
+.activity-settings-trigger.is-active {
+  background: var(--surface-soft);
+  color: var(--text-primary);
+}
+
+.activity-button.is-active:hover,
+.activity-settings-trigger.is-active:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.activity-button.is-active::before,
+.activity-settings-trigger.is-active::before {
+  background: var(--accent-strong);
+}
+
+.activity-button.is-bottom {
+  margin-top: auto;
+}
+
+.activity-settings-trigger {
+  margin-top: auto;
+  margin-bottom: 12px;
+}
+
+.activity-settings-icon {
+  transform-origin: center;
+  backface-visibility: hidden;
+  transition: transform 560ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.icon-button {
+  display: inline-flex;
+  height: 28px;
+  width: 28px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  color: var(--text-tertiary);
+  transition:
+    background 0.18s ease,
+    color 0.18s ease;
+}
+
+.icon-button:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.icon-button.is-inert-control:hover,
+.icon-button[aria-disabled='true']:hover,
+.icon-button:disabled:hover {
+  background: transparent;
+  color: var(--text-tertiary);
+}

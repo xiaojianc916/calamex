@@ -1,0 +1,26 @@
+/* ============================================================
+ * 15. Image preview
+ * ============================================================ */
+
+.image-preview-frame {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  max-width: min(100%, 1320px);
+  padding: 0;
+  border: 0;
+  border-radius: 18px;
+  background: transparent;
+}
+
+.image-preview-asset {
+  display: block;
+  max-width: min(100%, 1280px);
+  max-height: calc(100vh - 290px);
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: 10px;
+  background: var(--image-preview-frame-surface);
+  box-shadow: var(--image-preview-frame-shadow);
+}

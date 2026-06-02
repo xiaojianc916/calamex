@@ -1,0 +1,45 @@
+/* ============================================================
+ * 18. Element Plus overrides
+ * ============================================================ */
+
+.el-message {
+  border-radius: 10px !important;
+  border: 1px solid var(--border-strong) !important;
+  background: color-mix(in srgb, var(--panel-bg) 96%, transparent) !important;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.28) !important;
+}
+
+.el-message__content {
+  color: var(--text-primary) !important;
+}
+
+.el-overlay {
+  background-color: rgba(0, 0, 0, 0.78) !important;
+}
+
+.el-message-box,
+.el-select__wrapper,
+.el-input__wrapper {
+  border-radius: 10px !important;
+  background: color-mix(in srgb, var(--panel-bg) 96%, transparent) !important;
+  border: 1px solid var(--border-strong) !important;
+  box-shadow: none !important;
+}
+
+.el-message-box__title,
+.el-message-box__message,
+.el-select__selected-item,
+.el-input__inner,
+.el-message-box__headerbtn .el-message-box__close {
+  color: var(--text-primary) !important;
+}
+
+.el-select-dropdown__item {
+  color: var(--text-secondary) !important;
+}
+
+.el-select-dropdown__item.is-selected,
+.el-select-dropdown__item.hover {
+  background: color-mix(in srgb, var(--accent-strong) 18%, transparent) !important;
+  color: var(--text-primary) !important;
+}

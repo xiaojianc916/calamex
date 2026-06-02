@@ -1,0 +1,357 @@
+/* ============================================================
+ * 19. Root stage / splash
+ * ============================================================ */
+
+.app-root-stage {
+  position: relative;
+  min-height: 100vh;
+  overflow: hidden;
+  background: #fafafa;
+  isolation: isolate;
+}
+
+.splash-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: transparent;
+  opacity: 1;
+  visibility: visible;
+  transition:
+    opacity 0.24s cubic-bezier(0.22, 1, 0.36, 1),
+    visibility 0s linear 0.24s;
+}
+
+.splash-screen::before {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(
+      circle at 50% 42%,
+      color-mix(in srgb, var(--accent-strong) 16%, transparent),
+      transparent 42%
+    ),
+    radial-gradient(circle at 50% 54%, rgba(255, 255, 255, 0.05), transparent 38%);
+  content: '';
+  pointer-events: none;
+  opacity: 1;
+  transition: opacity 0.24s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.splash-screen.is-leaving {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.splash-screen.is-leaving::before {
+  opacity: 0;
+}
+
+.splash-editor {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  width: min(780px, 100vw);
+  height: min(520px, 100vh);
+  min-height: 0;
+  flex-shrink: 0;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  background: var(--bg-1);
+  box-shadow:
+    0 24px 72px rgba(0, 0, 0, 0.36),
+    0 1px 0 rgba(255, 255, 255, 0.04) inset;
+  transform: translateY(0) scale(1) translateZ(0);
+  transform-origin: center center;
+  backface-visibility: hidden;
+  transition: opacity 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.splash-editor.is-error {
+  border-color: rgba(255, 107, 122, 0.34);
+  box-shadow:
+    0 24px 72px rgba(0, 0, 0, 0.36),
+    0 1px 0 rgba(255, 255, 255, 0.04) inset,
+    0 0 0 1px rgba(255, 107, 122, 0.08);
+}
+
+.splash-screen.is-leaving .splash-editor {
+  opacity: 0;
+  transform: translateZ(0);
+}
+
+.splash-editor-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-0);
+  padding: 14px 20px;
+}
+
+.splash-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+}
+
+.splash-dot-red {
+  background: #da5555;
+}
+
+.splash-dot-yellow {
+  background: #e6b349;
+}
+
+.splash-dot-green {
+  background: #49c085;
+}
+
+.splash-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 16px;
+  color: #a1a8b3;
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.splash-title svg {
+  width: 16px;
+  height: 16px;
+  color: #6e7681;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.splash-code-area {
+  flex: 1;
+  padding: 32px;
+  background: var(--bg-code);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 15px;
+  line-height: 1.9;
+}
+
+.splash-log-area {
+  flex: 1;
+  overflow: hidden;
+  padding: 26px 32px 18px;
+  background: var(--bg-code);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+}
+
+.splash-log-line {
+  margin-bottom: 10px;
+  color: #c4c9d4;
+  font-size: 13px;
+  line-height: 1.8;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.splash-log-line-error {
+  color: #ff9aa5;
+}
+
+.splash-log-divider {
+  height: 1px;
+  margin: 14px 0 16px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.splash-log-pre {
+  margin: 0;
+  max-height: 100%;
+  overflow: auto;
+  color: #9aa3b5;
+  font-size: 12px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.splash-code-line {
+  min-height: 28.5px;
+  margin-bottom: 10px;
+  white-space: pre;
+}
+
+.splash-keyword {
+  color: #b39ddb;
+}
+
+.splash-function {
+  color: #81c7e8;
+}
+
+.splash-string {
+  color: #ffd180;
+}
+
+.splash-comment {
+  color: #5c6370;
+}
+
+.splash-variable {
+  color: #ffab91;
+}
+
+.splash-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1.3em;
+  margin: 0 2px;
+  border-radius: 1px;
+  background: #ffffff;
+  animation: splashCaretBlink 1s step-end infinite;
+  vertical-align: text-bottom;
+}
+
+.splash-progress-wrap {
+  padding: 0 32px 28px;
+}
+
+.splash-progress-bar {
+  width: 100%;
+  height: 5px;
+  overflow: hidden;
+  border-radius: 6px;
+  background: var(--bg-3);
+}
+
+.splash-progress-bar.is-error .splash-progress {
+  background: linear-gradient(90deg, #ff7b88, #ff8e6b);
+}
+
+.splash-progress {
+  height: 100%;
+  border-radius: 6px;
+  background: var(--accent-strong);
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
+}
+
+.splash-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding-bottom: 20px;
+  color: #6e7681;
+  font-size: 12px;
+}
+
+.splash-status.is-error {
+  color: #c2c9d6;
+}
+
+.splash-spinner {
+  width: 13px;
+  height: 13px;
+  border: 2px solid color-mix(in srgb, var(--accent-strong) 24%, transparent);
+  border-top-color: var(--accent-strong);
+  border-radius: 999px;
+  animation: splashSpin 1s linear infinite;
+}
+
+.splash-error-indicator {
+  display: inline-flex;
+  width: 15px;
+  height: 15px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: rgba(255, 107, 122, 0.18);
+  color: #ff9aa5;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+@keyframes splashCaretBlink {
+  50% {
+    opacity: 0;
+  }
+}
+
+@keyframes splashSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 720px) {
+  .splash-screen {
+    padding: 0;
+  }
+
+  .splash-editor {
+    width: 100vw;
+    height: 100vh;
+    border-radius: 10px;
+  }
+
+  .splash-code-area {
+    padding: 24px;
+    font-size: 13px;
+  }
+
+  .splash-progress-wrap {
+    padding: 0 24px 24px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .splash-screen,
+  .splash-progress {
+    transition: none;
+  }
+
+  .splash-cursor,
+  .splash-spinner {
+    animation: none;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* === 自定义窗口圆角（professional fix v3）=====================
+ * 已确认 src-tauri 未设置窗口圆角策略，Windows 11 默认按系统
+ * 圆角(约8px)裁剪窗口；CSS 不要再画第二层圆角，否则两套壳半径
+ * 不一致会在四角露底。
+ * 做法：CSS 内容铺成方块，圆角完全交给系统那一层统一裁剪。
+ * =========================================================== */
+html,
+body,
+#app,
+.app-root-stage,
+.app-surface {
+  background: transparent !important;
+}
+
+:root {
+  --window-corner-radius: 0px;
+}

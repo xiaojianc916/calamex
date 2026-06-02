@@ -1,0 +1,140 @@
+/* ============================================================
+ * 16. Status bar
+ * ============================================================ */
+
+.workbench-statusbar {
+  width: 100%;
+  box-sizing: border-box;
+  background: color-mix(in srgb, var(--statusbar-bg) 92%, var(--panel-muted));
+}
+
+.statusbar-segment {
+  display: inline-flex;
+  height: 22px;
+  align-items: center;
+  gap: 6px;
+  border-radius: 5px;
+  padding: 0 8px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  user-select: none;
+}
+
+.statusbar-segment-passive {
+  color: var(--text-quaternary);
+}
+
+.statusbar-segment-flash {
+  color: #d7def2;
+  border: 1px solid color-mix(in srgb, var(--settings-accent) 26%, transparent);
+  background: color-mix(in srgb, var(--settings-accent) 14%, transparent);
+}
+
+.statusbar-segment-flash::before {
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--settings-accent);
+  content: '';
+}
+
+.statusbar-segment-button {
+  cursor: pointer;
+  transition:
+    background 0.18s ease,
+    color 0.18s ease;
+}
+
+.statusbar-segment-button:hover,
+.statusbar-segment-button.is-open {
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text-primary);
+}
+
+.statusbar-git-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+}
+
+.statusbar-git-added {
+  color: #86efac;
+  opacity: 0.85;
+}
+
+.statusbar-git-removed {
+  color: #fb7185;
+  opacity: 0.85;
+}
+
+.statusbar-diagnostics {
+  gap: 11px;
+  padding: 0 8px;
+  color: var(--text-tertiary);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.statusbar-diagnostics-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  line-height: 1;
+}
+
+.statusbar-diagnostics-item svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+}
+
+.statusbar-diagnostics-item.is-ok {
+  color: var(--success);
+}
+
+.statusbar-diagnostics-item.is-error {
+  color: var(--danger);
+}
+
+.statusbar-diagnostics-item.is-warning {
+  color: var(--warning);
+}
+
+.statusbar-diagnostics-item.is-info {
+  color: color-mix(in srgb, var(--statusbar-accent) 78%, var(--text-secondary));
+}
+
+.statusbar-diagnostics:hover {
+  color: var(--text-secondary);
+}
+
+.reduce-motion .activity-settings-icon,
+.reduce-motion .activity-button,
+.reduce-motion .activity-settings-trigger,
+.reduce-motion .statusbar-segment,
+.reduce-motion .app-shell-pane,
+.reduce-motion .diagnostics-overlay-panel {
+  transition: none;
+}
+
+@media (max-width: 1180px) {
+  .keybind-grid {
+    grid-template-columns: minmax(0, 1fr) 150px 80px;
+  }
+}
+
+@media (max-width: 900px) {
+  .env-grid,
+  .keybind-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .workbench-settings-about-hero {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .workbench-settings-about-hero .spacer {
+    display: none;
+  }
+}
