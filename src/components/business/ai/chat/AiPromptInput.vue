@@ -181,7 +181,17 @@ const modelSections = computed<IAiPromptModelSection[]>(() =>
 const isPromptInputMode = (value: unknown): value is TAiPromptInputMode =>
   value === 'chat' || value === 'agent' || value === 'plan';
 
-const canSubmit = computed(() => modelValue.value.trim().length > 0 || props.hasAttachments);
+const hasProcessingAttachments = computed(() =>
+  props.attachments.some((attachment) => attachment.status === 'processing'),
+);
+const hasReadyAttachments = computed(() =>
+  props.attachments.some((attachment) => (attachment.status ?? 'ready') === 'ready'),
+);
+const canSubmit = computed(
+  () =>
+    (modelValue.value.trim().length > 0 || hasReadyAttachments.value) &&
+    !hasProcessingAttachments.value,
+);
 const modelSelectDisabled = computed(() => props.disabled || props.isModelSaving);
 const networkPermissionEnabled = computed(() => props.networkPermission === 'allowed-this-run');
 const activeModeOption = computed(
@@ -710,10 +720,6 @@ const handleStop = (): void => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.ai-model-trigger :deep([data-slot='select-icon']) {
-  display: none;
 }
 
 .ai-model-trigger> :deep(svg:last-child) {

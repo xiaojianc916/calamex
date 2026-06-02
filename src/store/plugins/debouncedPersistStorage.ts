@@ -38,6 +38,10 @@ const HYDRATE_TIMEOUT_MS = 300;
 /** 专用 IndexedDB 库/表名，与其他持久化隔离。 */
 const IDB_DB_NAME = 'shell-ide.ai-conversation';
 const IDB_STORE_NAME = 'persist';
+const ATTACHMENT_PREVIEW_POINTER_PREFIX = 'idb://ai-conversation-attachment-preview/';
+const ATTACHMENT_PREVIEW_KEY_PREFIX = 'ai-conversation-attachment-preview:';
+const DATA_IMAGE_URL_PATTERN = /^data:image\/[a-z0-9.+-]+;base64,/iu;
+const ATTACHMENT_PREVIEW_POINTER_PATTERN = /^idb:\/\/ai-conversation-attachment-preview\//u;
 
 export type TAiConversationHydrateStatus = 'loaded' | 'empty' | 'timeout';
 
@@ -123,6 +127,120 @@ const getIdbStore = (): UseStore => {
   return idbStore;
 };
 
+const createAttachmentPreviewStorageId = (value: string): string => {
+  let hash = 0x811c9dc5;
+
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+
+  return `${value.length.toString(36)}-${hash.toString(36).padStart(7, '0')}`;
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === 'object' && !Array.isArray(value);
+
+const isDataImageUrl = (value: string): boolean => DATA_IMAGE_URL_PATTERN.test(value);
+
+const isAttachmentPreviewPointer = (value: string): boolean =>
+  ATTACHMENT_PREVIEW_POINTER_PATTERN.test(value);
+
+const toAttachmentPreviewKey = (id: string): string => `${ATTACHMENT_PREVIEW_KEY_PREFIX}${id}`;
+const toAttachmentPreviewPointer = (id: string): string => `${ATTACHMENT_PREVIEW_POINTER_PREFIX}${id}`;
+
+const getAttachmentPreviewIdFromPointer = (value: string): string | null => {
+  if (!isAttachmentPreviewPointer(value)) {
+    return null;
+  }
+
+  const id = value.slice(ATTACHMENT_PREVIEW_POINTER_PREFIX.length).trim();
+
+  return id || null;
+};
+
+const extractAttachmentPreviewPayloads = async (value: unknown): Promise<void> => {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      await extractAttachmentPreviewPayloads(item);
+    }
+    return;
+  }
+
+  if (!isRecord(value)) {
+    return;
+  }
+
+  for (const [key, child] of Object.entries(value)) {
+    if (key === 'src' && typeof child === 'string' && isDataImageUrl(child)) {
+      const id = createAttachmentPreviewStorageId(child);
+      await set(toAttachmentPreviewKey(id), child, getIdbStore());
+      value[key] = toAttachmentPreviewPointer(id);
+      continue;
+    }
+
+    await extractAttachmentPreviewPayloads(child);
+  }
+};
+
+const restoreAttachmentPreviewPayloads = async (value: unknown): Promise<void> => {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      await restoreAttachmentPreviewPayloads(item);
+    }
+    return;
+  }
+
+  if (!isRecord(value)) {
+    return;
+  }
+
+  for (const [key, child] of Object.entries(value)) {
+    if (key === 'src' && typeof child === 'string') {
+      const id = getAttachmentPreviewIdFromPointer(child);
+
+      if (id) {
+        const restored = await get<string>(toAttachmentPreviewKey(id), getIdbStore());
+        if (typeof restored === 'string' && isDataImageUrl(restored)) {
+          value[key] = restored;
+        }
+      }
+
+      continue;
+    }
+
+    await restoreAttachmentPreviewPayloads(child);
+  }
+};
+
+const preparePersistValue = async (value: string): Promise<string> => {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    await extractAttachmentPreviewPayloads(parsed);
+
+    return JSON.stringify(parsed);
+  } catch (error) {
+    logWarn('ai-conversation-attachment-preview-extract-failed', stringifyError(error));
+    return value;
+  }
+};
+
+const restorePersistValue = async (value: string | null): Promise<string | null> => {
+  if (value === null) {
+    return null;
+  }
+
+  try {
+    const parsed: unknown = JSON.parse(value);
+    await restoreAttachmentPreviewPayloads(parsed);
+
+    return JSON.stringify(parsed);
+  } catch (error) {
+    logWarn('ai-conversation-attachment-preview-restore-failed', stringifyError(error));
+    return value;
+  }
+};
+
 const readLegacyLocalStorage = (): string | null => {
   try {
     return window.localStorage.getItem(AI_CONVERSATION_PERSIST_KEY);
@@ -150,7 +268,7 @@ const loadFromIdbWithMigration = async (): Promise<string | null> => {
   const store = getIdbStore();
   const fromIdb = await get<string>(AI_CONVERSATION_PERSIST_KEY, store);
   if (fromIdb !== undefined) {
-    return fromIdb;
+    return restorePersistValue(fromIdb);
   }
   const legacy = readLegacyLocalStorage();
   if (legacy !== null) {
@@ -158,7 +276,7 @@ const loadFromIdbWithMigration = async (): Promise<string | null> => {
       removeLegacyLocalStorage();
       return null;
     }
-    await set(AI_CONVERSATION_PERSIST_KEY, legacy, store);
+    await set(AI_CONVERSATION_PERSIST_KEY, await preparePersistValue(legacy), store);
     removeLegacyLocalStorage();
     return legacy;
   }
@@ -231,7 +349,7 @@ const schedulePersist = (value: string): void => {
     saveTimer = null;
     firstPendingAt = null;
     enqueuePersist(
-      () => set(AI_CONVERSATION_PERSIST_KEY, value, getIdbStore()),
+      async () => set(AI_CONVERSATION_PERSIST_KEY, await preparePersistValue(value), getIdbStore()),
       'ai-conversation-save-failed',
     );
   }, delay);
@@ -244,7 +362,7 @@ const flushPendingPersist = (): void => {
   firstPendingAt = null;
   const value = cache;
   enqueuePersist(
-    () => set(AI_CONVERSATION_PERSIST_KEY, value, getIdbStore()),
+    async () => set(AI_CONVERSATION_PERSIST_KEY, await preparePersistValue(value), getIdbStore()),
     'ai-conversation-flush-failed',
   );
 };
