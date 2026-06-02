@@ -11,7 +11,7 @@
 //
 // 产物布局（必须与 Rust 的 bundled_resource_roots() 拼接路径对齐）：
 //   resources-bundle/node/node.exe
-//   resources-bundle/agent-sidecar/{package.json,src,node_modules}
+//   resources-bundle/agent-sidecar/{package.json,src,dist,node_modules}
 //   resources-bundle/lsp/node_modules/bash-language-server/out/cli.js
 //   resources-bundle/shellcheck.exe
 //   resources-bundle/shfmt.exe  (可选，失败不阻断打包)
@@ -103,6 +103,8 @@ function stageNode() {
 // 3) sidecar：复制 package.json + src，然后在 staging 目录内做一份自包含安装。
 //    tsx 在 agent-sidecar 中是 devDependency，但运行时需要它
 //    (node node_modules/tsx/dist/cli.mjs)，因此安装时不能 --omit=dev。
+//    另预编译出 dist/server.js，运行时优先 node dist/server.js（不依赖 tsx
+//    现场转译，规避 tsx 在 Node 26 下解析入口塌成盘符 D: 的崩溃）；src + tsx 仅作兜底。
 function stageSidecar() {
 	const srcDir = join(repoRoot, "agent-sidecar")
 	const destDir = join(stageRoot, "agent-sidecar")
@@ -128,6 +130,15 @@ function stageSidecar() {
 	if (!existsSync(serverEntry)) {
 		fail(`sidecar 入口缺失：${serverEntry}`)
 	}
+	// 预编译生产入口 dist/server.js：在仓库内 agent-sidecar 用其完整
+	// node_modules/tsconfig 构建，再把 dist 复制进随包目录。
+	run(npmBin(), ["run", "build"], { cwd: srcDir })
+	const compiledEntry = join(srcDir, "dist", "server.js")
+	if (!existsSync(compiledEntry)) {
+		fail(`sidecar 预编译后未找到入口：${compiledEntry}`)
+	}
+	cpSync(join(srcDir, "dist"), join(destDir, "dist"), { recursive: true })
+	log("已预编译并内置 agent-sidecar/dist（运行时使用 node dist/server.js）")
 	log("已内置 agent-sidecar（含生产依赖与 tsx）")
 }
 
