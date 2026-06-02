@@ -9,6 +9,7 @@ mod ssh;
 pub(crate) mod ssh_pool;
 mod terminal;
 pub(crate) mod window;
+pub(crate) mod window_paint;
 pub(crate) mod window_stage;
 pub(crate) mod workspace_fs;
 pub(crate) mod workspace_watcher;
@@ -70,6 +71,7 @@ pub use terminal::{
     write_terminal_input, TerminalSessionState,
 };
 pub use window::set_window_background;
+pub use window_paint::install_resize_paint_guard;
 pub use window_stage::apply_window_stage;
 pub use workspace_fs::{
     create_workspace_path, delete_workspace_path, list_workspace_entries, load_image_asset,

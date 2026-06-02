@@ -333,6 +333,14 @@ fn main() {
                 }
             });
 
+            timed_step!("tauri.setup.resize-paint-guard-ready", app_started_at, {
+                if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+                    // 初始底色 #fafafa（与 tauri.conf.json backgroundColor 一致）；
+                    // 前端主题就绪后会通过 set_window_background 同步刷新。
+                    commands::install_resize_paint_guard(&window, (250, 250, 250));
+                }
+            });
+
             timed_step!("tauri.setup.window-state-ready", app_started_at, {
                 if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
                     let _ = window.unminimize();
