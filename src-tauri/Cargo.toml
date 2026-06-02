@@ -47,7 +47,6 @@ desktop = [
 bytes = "1.7"
 parking_lot = "0.12"
 pin-project-lite = "0.2"
-async-openai = { version = "0.38.2", default-features = false, features = ["chat-completion-types", "chat-completion", "byot"] }
 base64 = "0.22.1"
 ast-grep-core = { version = "0.42.2", default-features = false, features = ["tree-sitter"], optional = true }
 ast-grep-language = { version = "0.42.2", default-features = false, features = ["tree-sitter-bash"], optional = true }

@@ -12,7 +12,6 @@ ref="innerEditorRef" :document-path="documentPath" :document-name="documentName"
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import CodeMirrorScriptEditor from '@/components/editor/CodeMirrorScriptEditor.vue';
 import { tauriService } from '@/services/tauri';
-import type { IAiCodeActionRequest } from '@/types/ai';
 import type { TThemeMode } from '@/types/app';
 import type { IAnalyzeScriptPayload, IEditorSelectionSummary } from '@/types/editor';
 import type { IEditorSettings } from '@/types/settings';
@@ -28,7 +27,6 @@ interface IEditorExpose {
   revealPosition: (line: number, column: number) => void;
   rerunDiagnostics: () => void;
   layoutEditor: () => void;
-  runAiCodeAction: (kind: IAiCodeActionRequest['kind']) => Promise<void>;
 }
 
 const props = withDefaults(
@@ -230,10 +228,6 @@ const layoutEditor = (): void => {
   innerEditorRef.value?.layoutEditor();
 };
 
-const runAiCodeAction = async (kind: IAiCodeActionRequest['kind']): Promise<void> => {
-  await innerEditorRef.value?.runAiCodeAction(kind);
-};
-
 const handleModelValueChange = (value: string): void => {
   emit('update:modelValue', value);
 };
@@ -248,6 +242,5 @@ defineExpose<IEditorExpose>({
   revealPosition,
   rerunDiagnostics,
   layoutEditor,
-  runAiCodeAction,
 });
 </script>

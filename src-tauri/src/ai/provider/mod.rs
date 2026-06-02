@@ -27,34 +27,14 @@ impl AiProviderMessage {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct AiProviderToolSpec {
-    pub name: String,
-    pub description: String,
-    pub parameters: Value,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct AiProviderChatRequest {
     pub messages: Vec<AiProviderMessage>,
-    #[serde(default)]
-    pub tools: Vec<AiProviderToolSpec>,
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub force_tool_choice_none: bool,
 }
 
 impl AiProviderChatRequest {
     pub fn new(messages: Vec<AiProviderMessage>) -> Self {
-        Self {
-            messages,
-            tools: Vec::new(),
-            force_tool_choice_none: false,
-        }
+        Self { messages }
     }
-}
-
-fn is_false(value: &bool) -> bool {
-    !*value
 }
 
 #[derive(Debug, Clone, Serialize)]
