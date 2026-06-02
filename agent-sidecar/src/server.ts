@@ -603,4 +603,120 @@ export const createAgentSidecarServer = (
     if (request.method === 'POST' && url === '/web/fetch') {
       void handlePlainPost(request, response, async (body) =>
         aiWebFetchPayloadSchema.parse(
-          await fetchWeb(aiWebFetchInputSchema.parse(body)
+          await fetchWeb(aiWebFetchInputSchema.parse(body)),
+        )
+      );
+      return;
+    }
+
+    if (request.method === 'POST' && url === '/rollback/restore') {
+      void handlePost(request, response, async (body, options) => {
+        const payload = agentSidecarRollbackRestoreRequestSchema.parse(body);
+        scheduleBackgroundWarmup(payload, 'request');
+        return runtime.restoreCheckpoint(payload, options);
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && url === '/rollback/restore/stream') {
+      void handlePostStream(request, response, async (body, options) => {
+        const payload = agentSidecarRollbackRestoreRequestSchema.parse(body);
+        scheduleBackgroundWarmup(payload, 'request');
+        return runtime.restoreCheckpoint(payload, options);
+      });
+      return;
+    }
+
+    writeJson(response, 404, {
+      error: '未知 sidecar 路由。',
+    });
+  });
+};
+
+const resolvePort = (): number => {
+  const rawPort = process.env.AGENT_SIDECAR_PORT?.trim();
+  if (!rawPort) {
+    return DEFAULT_PORT;
+  }
+  const parsed = Number(rawPort);
+  return Number.isInteger(parsed) && parsed > 0 && parsed <= 65_535 ? parsed : DEFAULT_PORT;
+};
+
+const isEntrypoint = (): boolean => {
+  const entrypoint = process.argv[1];
+  return entrypoint ? resolve(fileURLToPath(import.meta.url)) === resolve(entrypoint) : false;
+};
+
+const logProcessEvent = (event: string, error: unknown): void => {
+  console.error(JSON.stringify({
+    level: 'error',
+    scope: 'agent-sidecar',
+    event,
+    message: error instanceof Error ? error.message : String(error),
+    stack: error instanceof Error ? error.stack : undefined,
+  }));
+};
+
+if (isEntrypoint()) {
+  const port = resolvePort();
+  const runtime = createConfiguredRuntime();
+  const server = createAgentSidecarServer({ runtime });
+
+  let shuttingDown = false;
+  const shutdown = async (code: number): Promise<void> => {
+    if (shuttingDown) {
+      return;
+    }
+    shuttingDown = true;
+    try {
+      server.close();
+    } catch {
+      // 忽略关闭 HTTP server 时的异常。
+    }
+    try {
+      await runtime.dispose?.();
+    } catch {
+      // 资源释放尽力而为，忽略清理期间的异常。
+    }
+    try {
+      // web 搜索使用独立的共享 tavily MCP bundle，关闭时一并断开，避免遗留子进程。
+      await disposeWebService();
+    } catch {
+      // 同样尽力而为，忽略清理期间的异常。
+    }
+    process.exit(code);
+  };
+
+  // 顶层兜底：长跑 sidecar 不能因为一次未处理的 rejection / 异常而静默退出。
+  // 错误写入 stderr（由宿主重定向进 agent-sidecar.log，便于崩溃后回读）。
+  process.on('unhandledRejection', (reason) => {
+    logProcessEvent('process.unhandledRejection', reason);
+  });
+  process.on('uncaughtException', (error) => {
+    logProcessEvent('process.uncaughtException', error);
+    // 未捕获异常后进程状态不可信，尽力优雅退出。
+    void shutdown(1);
+  });
+
+  // listen 失败（例如端口被并发抢占的 EADDRINUSE）必须兜住，否则无人处理的
+  // 'error' 事件会直接让进程崩溃，且日志里看不到原因。
+  server.on('error', (error) => {
+    const err = error as NodeJS.ErrnoException;
+    logProcessEvent('server.error', err);
+    if (err.code === 'EADDRINUSE') {
+      console.error(`agent sidecar 端口 ${port} 已被占用，进程退出。`);
+    }
+    void shutdown(1);
+  });
+
+  // 收到终止信号时优雅关闭，断开 MCP 子进程，避免孤儿进程堆积。
+  for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+    process.once(signal, () => {
+      void shutdown(0);
+    });
+  }
+
+  server.listen(port, '127.0.0.1', () => {
+    console.info(`agent sidecar listening on http://127.0.0.1:${port}`);
+  });
+}
