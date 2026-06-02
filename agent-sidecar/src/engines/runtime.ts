@@ -88,6 +88,12 @@ export interface IAgentSidecarRuntime {
 
     resolveApproval: TRuntimeMethod<IApprovalResolutionInput>;
     restoreCheckpoint: TRuntimeMethod<ICheckpointRestoreInput>;
+
+    /**
+     * 可选的优雅关闭钩子：释放运行时持有的长生命周期资源（如 MCP 子进程）。
+     * 进程退出或收到终止信号时调用。
+     */
+    dispose?: () => Promise<void>;
 }
 
 // -----------------------------------------------------------------------------
@@ -110,7 +116,7 @@ export const resolveConfiguredRuntimeName = (
         return configured;
     }
     throw new Error(
-        `Unsupported AGENT_RUNTIME: "${configured}". Expected one of: ${SUPPORTED_AGENT_RUNTIMES.join(', ')}.`,
+        `Unsupported AGENT_RUNTIME: \"${configured}\". Expected one of: ${SUPPORTED_AGENT_RUNTIMES.join(', ')}.`,
     );
 };
 
