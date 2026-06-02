@@ -830,17 +830,11 @@ async fn download_file_inner(
         return Err(e);
     }
 
-<<<<<<< Updated upstream
-    if let Some(expected) = expected_size {
-        ensure_expected_transfer_size(written, expected, "下载远程文件")?;
-    }
-=======
     // Propagate reader errors.
     read_handle
         .await
         .map_err(|e| format!("读取任务异常终止：{e}"))?
         .map_err(|e| e.to_string())?;
->>>>>>> Stashed changes
 
     let partial_for_rename = partial.clone();
     let target = local_path.to_path_buf();
