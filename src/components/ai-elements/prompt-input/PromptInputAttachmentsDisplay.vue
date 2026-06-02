@@ -18,6 +18,8 @@ const attachmentItems = computed(() =>
     preview: attachment.preview,
     mediaType: attachment.preview?.mimeType ?? resolveAttachmentMediaType(attachment),
     detailLabel: attachment.detailLabel,
+    status: attachment.status ?? 'ready',
+    errorMessage: attachment.errorMessage,
   })),
 );
 

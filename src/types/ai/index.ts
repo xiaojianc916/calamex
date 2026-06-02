@@ -201,11 +201,15 @@ export interface IAiChatMessage extends IAiChatMessageWire {
   changedFilesSummary?: IAiAgentPatchSummary;
 }
 
+export type TAiAttachmentStatus = 'processing' | 'ready' | 'failed';
+
 export interface IAiAttachedFile {
   id: string;
   name: string;
   sizeLabel: string;
   kind: 'text' | 'image';
+  status?: TAiAttachmentStatus;
+  errorMessage?: string;
   detailLabel?: string;
   preview?: IAiImageAttachmentPreview;
   reference: IAiContextReference;
