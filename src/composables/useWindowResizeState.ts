@@ -44,6 +44,13 @@ const isResizeEventSource = (value: unknown): value is IResizeEventSource =>
   'onResized' in value &&
   typeof value.onResized === 'function';
 
+const warnResizeListenerFailure = (err: unknown): void => {
+  logger.warn({
+    event: 'window.resize_listener.failed',
+    err,
+  });
+};
+
 export const useWindowResizeState = () => {
   const html = document.documentElement;
   let timer: number | undefined;
@@ -132,10 +139,7 @@ export const useWindowResizeState = () => {
       const tauriWindow = await import('@tauri-apps/api/window');
       getCurrentWindow = tauriWindow.getCurrentWindow;
     } catch (err) {
-      logger.warn({
-        event: 'window.resize_listener.failed',
-        err,
-      });
+      warnResizeListenerFailure(err);
       return;
     }
 
@@ -147,10 +151,7 @@ export const useWindowResizeState = () => {
     try {
       currentWindow = getCurrentWindow();
     } catch (err) {
-      logger.warn({
-        event: 'window.resize_listener.failed',
-        err,
-      });
+      warnResizeListenerFailure(err);
       return;
     }
 
@@ -167,10 +168,7 @@ export const useWindowResizeState = () => {
 
       unlisten = off;
     } catch (err) {
-      logger.warn({
-        event: 'window.resize_listener.failed',
-        err,
-      });
+      warnResizeListenerFailure(err);
     }
   };
 
