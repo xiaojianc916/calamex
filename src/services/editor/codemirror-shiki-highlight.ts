@@ -291,24 +291,32 @@ export const shikiEditorChromeTheme = EditorView.theme(
       justifyContent: 'center',
       transition: 'transform 150ms ease',
     },
-    // 折叠后的占位标记：淡灰药丸，去掉默认刺眼边框，hover 才加深。
-    '.cm-foldPlaceholder': {
+    // 折叠后的占位标记：placeholderDOM 渲染的圆点药丸，flex 居中（与字体度量无关）。
+    '.cm-fold-pill': {
       display: 'inline-flex',
-      alignItems: 'center', // 上下居中（交叉轴）
-      justifyContent: 'center', // 左右居中（主轴）
-      lineHeight: '1', // 去掉 1.7 行高带来的额外上下空白
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: '2.5px',
+      height: '0.95em',
+      margin: '0 4px',
       padding: '0 7px',
+      verticalAlign: 'middle',
       backgroundColor: 'rgba(175, 184, 193, 0.2)',
-      border: 'none',
       borderRadius: '6px',
-      color: '#6e7781',
-      fontFamily: EDITOR_FONT_FAMILY,
-      fontSize: '0.85em',
       cursor: 'pointer',
+      transition: 'background-color 120ms ease',
     },
-    '.cm-foldPlaceholder:hover': {
+    '.cm-fold-pill:hover': {
       backgroundColor: 'rgba(175, 184, 193, 0.34)',
-      color: '#24292f',
+    },
+    '.cm-fold-pill-dot': {
+      width: '3px',
+      height: '3px',
+      borderRadius: '50%',
+      backgroundColor: '#6e7781',
+    },
+    '.cm-fold-pill:hover .cm-fold-pill-dot': {
+      backgroundColor: '#24292f',
     },
   },
   { dark: false },
