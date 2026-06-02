@@ -11,6 +11,7 @@ import { aiService } from '@/services/ipc/ai.service';
 import type { IAiInlineCompletionResult } from '@/types/ai';
 
 const INLINE_COMPLETION_CONTEXT_LIMIT = 8_000;
+const INLINE_COMPLETION_CONTEXT_CODE_UNIT_WINDOW = INLINE_COMPLETION_CONTEXT_LIMIT * 2;
 const INLINE_COMPLETION_DELAY_MS = 450;
 const INLINE_COMPLETION_CONFIG_TTL_MS = 5_000;
 
@@ -110,9 +111,42 @@ const inlineCompletionState = StateField.define<IInlineCompletionState | null>({
   },
 });
 
-const clipInlineContext = (value: string, limit: number): string => {
-  const chars = [...value];
-  return chars.length <= limit ? value : chars.slice(chars.length - limit).join('');
+export const clipInlineContext = (value: string, limit: number): string => {
+  if (limit <= 0 || value.length === 0) {
+    return '';
+  }
+
+  let codePoints = 0;
+  let start = value.length;
+  while (start > 0 && codePoints < limit) {
+    start -= 1;
+    const code = value.charCodeAt(start);
+    if (code >= 0xdc00 && code <= 0xdfff && start > 0) {
+      const previousCode = value.charCodeAt(start - 1);
+      if (previousCode >= 0xd800 && previousCode <= 0xdbff) {
+        start -= 1;
+      }
+    }
+    codePoints += 1;
+  }
+  return value.slice(start);
+};
+
+const resolveInlineCompletionContexts = (
+  view: EditorView,
+  cursorOffset: number,
+): { prefix: string; suffix: string } => {
+  const prefixStart = Math.max(0, cursorOffset - INLINE_COMPLETION_CONTEXT_CODE_UNIT_WINDOW);
+  return {
+    prefix: clipInlineContext(
+      view.state.doc.sliceString(prefixStart, cursorOffset),
+      INLINE_COMPLETION_CONTEXT_LIMIT,
+    ),
+    suffix: view.state.doc.sliceString(
+      cursorOffset,
+      cursorOffset + INLINE_COMPLETION_CONTEXT_LIMIT,
+    ),
+  };
 };
 
 const resolveInlineCompletionInsertText = (
@@ -168,13 +202,13 @@ export const createCodeMirrorInlineCompletionController = (
     if (nextRequestId !== requestId || !config.inlineCompletionEnabled) {
       return;
     }
-    const fullText = view.state.doc.toString();
+    const { prefix, suffix } = resolveInlineCompletionContexts(view, cursorOffset);
     const result = await aiService.inlineComplete({
       filePath: options.getFilePath() ?? 'untitled.sh',
       language: 'shell',
       cursorOffset,
-      prefix: clipInlineContext(fullText.slice(0, cursorOffset), INLINE_COMPLETION_CONTEXT_LIMIT),
-      suffix: fullText.slice(cursorOffset, cursorOffset + INLINE_COMPLETION_CONTEXT_LIMIT),
+      prefix,
+      suffix,
     });
     const insertText = resolveInlineCompletionInsertText(cursorOffset, result);
     if (nextRequestId !== requestId || !insertText.trim()) {
