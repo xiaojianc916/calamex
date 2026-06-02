@@ -71,7 +71,6 @@ import {
   historyKeymap,
   indentWithTab,
   redo,
-  selectAll,
   toggleLineComment,
   undo,
 } from '@codemirror/commands';
@@ -519,8 +518,6 @@ const clampMenuPosition = (clientX: number, clientY: number): { x: number; y: nu
 
 const buildMenuGroups = (): Array<{ key: string; items: IEditorContextMenuItem[] }> => {
   const hasDocument = Boolean(editorView);
-  const selectedText = resolveSelectedText().trim();
-  const canRunAiAction = hasDocument && selectedText.length > 0;
   return [
     {
       key: 'run-actions',
@@ -597,39 +594,6 @@ const buildMenuGroups = (): Array<{ key: string; items: IEditorContextMenuItem[]
         { key: 'cut', label: '剪切', icon: 'cut', action: 'cut', disabled: !hasDocument },
         { key: 'copy', label: '复制', icon: 'copy', action: 'copy', disabled: !hasDocument },
         { key: 'paste', label: '粘贴', icon: 'paste', action: 'paste', disabled: !hasDocument },
-        {
-          key: 'select-all',
-          label: '全选',
-          icon: 'select-all',
-          action: 'select-all',
-          disabled: !hasDocument,
-        },
-      ],
-    },
-    {
-      key: 'ai-actions',
-      items: [
-        {
-          key: 'ai-explain-selection',
-          label: 'AI 解释选区',
-          icon: 'search',
-          action: 'ai-explain-selection',
-          disabled: !canRunAiAction,
-        },
-        {
-          key: 'ai-fix-diagnostic',
-          label: 'AI 修复诊断',
-          icon: 'wrench',
-          action: 'ai-fix-diagnostic',
-          disabled: !canRunAiAction,
-        },
-        {
-          key: 'ai-generate-tests',
-          label: 'AI 生成测试',
-          icon: 'flask',
-          action: 'ai-generate-tests',
-          disabled: !canRunAiAction,
-        },
       ],
     },
   ];
@@ -709,15 +673,6 @@ const handleContextMenuItemSelect = async (item: IEditorContextMenuItem): Promis
   if (!view || !item.action) return;
   view.focus();
   switch (item.action) {
-    case 'ai-explain-selection':
-      await runAiCodeAction('explain_selection', resolveSelectedText());
-      return;
-    case 'ai-fix-diagnostic':
-      await runAiCodeAction('fix_diagnostic', resolveSelectedText());
-      return;
-    case 'ai-generate-tests':
-      await runAiCodeAction('generate_tests', resolveSelectedText());
-      return;
     case 'undo':
       undo(view);
       return;
@@ -753,9 +708,6 @@ const handleContextMenuItemSelect = async (item: IEditorContextMenuItem): Promis
       return;
     case 'paste':
       await pasteIntoEditor();
-      return;
-    case 'select-all':
-      selectAll(view);
       return;
     default:
       return;

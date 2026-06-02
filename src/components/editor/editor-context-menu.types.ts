@@ -13,21 +13,15 @@ export type TEditorContextMenuIcon = Extract<
   | 'cut'
   | 'copy'
   | 'paste'
-  | 'select-all'
   | 'goto'
   | 'undo'
   | 'redo'
-  | 'wrench'
-  | 'flask'
   | 'terminal'
   | 'play'
   | 'sparkles'
 >;
 
 export type TEditorContextMenuAction =
-  | 'ai-explain-selection'
-  | 'ai-fix-diagnostic'
-  | 'ai-generate-tests'
   | 'open-terminal'
   | 'undo'
   | 'redo'
@@ -39,8 +33,7 @@ export type TEditorContextMenuAction =
   | 'run-current-script'
   | 'cut'
   | 'copy'
-  | 'paste'
-  | 'select-all';
+  | 'paste';
 
 export interface IEditorContextMenuItem extends Omit<ILinearContextMenuItem, 'icon' | 'children'> {
   icon: TEditorContextMenuIcon;
