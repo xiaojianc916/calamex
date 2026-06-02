@@ -1,18 +1,17 @@
 import { WORKSPACE_TOOLS } from '@mastra/core/workspace';
 import type { ToolCallPayload } from '@mastra/core/stream';
-import type { ModelMessage } from 'ai';
-import { EXPLICIT_CONTEXT_MESSAGE_LIMIT, type TMastraChatMessage } from './types.js';
+import {
+    EXPLICIT_CONTEXT_MESSAGE_LIMIT,
+    type TMastraChatMessage,
+    type TMastraImagePart,
+    type TMastraTextPart,
+    type TMastraUserContent,
+} from './types.js';
 import type { IAgentContextReferenceInput, IAgentMessageInput, IAgentRuntimeInput } from './contracts/runtime-input.js';
 import { toNonEmptyString, toRecord } from './utils.js';
 
 const IMAGE_ATTACHMENT_MODEL_PART_MARKER = 'AI_SDK_IMAGE_PART_JSON:';
 const SUPPORTED_IMAGE_PART_SOURCE_PATTERN = /^(?:data:image\/[a-z0-9.+-]+;base64,|https?:\/\/|file:\/\/)/iu;
-
-type TAiSdkUserMessage = Extract<ModelMessage, { role: 'user' }>;
-type TAiSdkUserContent = TAiSdkUserMessage['content'];
-type TAiSdkUserPart = Exclude<TAiSdkUserContent, string>[number];
-type TAiSdkTextPart = Extract<TAiSdkUserPart, { type: 'text' }>;
-type TAiSdkImagePart = Extract<TAiSdkUserPart, { type: 'image' }>;
 
 type TImagePartCarrier = {
     type: 'image';
@@ -20,7 +19,7 @@ type TImagePartCarrier = {
     mediaType?: string;
 };
 
-const isTextPart = (part: unknown): part is TAiSdkTextPart => {
+const isTextPart = (part: unknown): part is TMastraTextPart => {
     const record = toRecord(part);
     return record?.type === 'text' && typeof record.text === 'string';
 };
@@ -75,8 +74,8 @@ const parseImagePartCarrier = (line: string): TImagePartCarrier | null => {
 
 const buildImagePartsFromContext = (
     contextReferences: readonly IAgentContextReferenceInput[] | undefined,
-): TAiSdkImagePart[] => {
-    const imageParts: TAiSdkImagePart[] = [];
+): TMastraImagePart[] => {
+    const imageParts: TMastraImagePart[] = [];
     const seenSources = new Set<string>();
 
     for (const reference of contextReferences ?? []) {
@@ -105,16 +104,15 @@ const buildImagePartsFromContext = (
 
 const buildUserContentWithImages = (
     text: string,
-    imageParts: readonly TAiSdkImagePart[],
-): TAiSdkUserContent => {
+    imageParts: readonly TMastraImagePart[],
+): TMastraUserContent => {
     if (imageParts.length === 0) {
         return text;
     }
 
-    const normalizedText = text.trim() || '请分析这些图片附件。';
-    const textPart: TAiSdkTextPart = {
+    const textPart: TMastraTextPart = {
         type: 'text',
-        text: normalizedText,
+        text: text.trim() || '请分析这些图片附件。',
     };
 
     return [textPart, ...imageParts];
@@ -122,7 +120,7 @@ const buildUserContentWithImages = (
 
 const withImagePartsOnUserMessage = (
     message: TMastraChatMessage,
-    imageParts: readonly TAiSdkImagePart[],
+    imageParts: readonly TMastraImagePart[],
 ): TMastraChatMessage => {
     if (message.role !== 'user' || imageParts.length === 0) {
         return message;
@@ -130,13 +128,42 @@ const withImagePartsOnUserMessage = (
 
     return {
         ...message,
-        content: buildUserContentWithImages(getContentText(message.content), imageParts) as unknown as string,
+        content: buildUserContentWithImages(getContentText(message.content), imageParts),
     };
 };
 
 export const hasImageAttachmentParts = (
     contextReferences: readonly IAgentContextReferenceInput[] | undefined,
 ): boolean => buildImagePartsFromContext(contextReferences).length > 0;
+
+export const isVisionModelId = (modelId: string): boolean => {
+    const normalized = modelId.trim().toLowerCase();
+
+    if (!normalized) {
+        return false;
+    }
+
+    if (normalized.includes('deepseek')) {
+        return false;
+    }
+
+    return [
+        'gpt-4o',
+        'gpt-4.1',
+        'gpt-5',
+        'gemini',
+        'claude-3',
+        'claude-4',
+        'qwen-vl',
+        'qwen2-vl',
+        'qwen2.5-vl',
+        'qwen3-vl',
+        'glm-4v',
+        'vision',
+        'vl-',
+        '-vl',
+    ].some((keyword) => normalized.includes(keyword));
+};
 
 export const findLastUserMessage = (messages: IAgentMessageInput[]): IAgentMessageInput | null => {
     for (let index = messages.length - 1; index >= 0; index -= 1) {
@@ -174,7 +201,7 @@ export const buildMastraMessages = (input: IAgentRuntimeInput): TMastraChatMessa
         .filter((message): message is IAgentMessageInput & { role: TMastraChatMessage['role'] } =>
             (message.role === 'user' || message.role === 'assistant')
             && getContentText(message.content).trim().length > 0)
-        .map((message) => ({
+        .map<TMastraChatMessage>((message) => ({
             role: message.role,
             content: getContentText(message.content).trim(),
         }))
@@ -188,7 +215,7 @@ export const buildMastraMessages = (input: IAgentRuntimeInput): TMastraChatMessa
                     ? userPrompt
                     : (input.goal.trim().length > 0 ? input.goal : '继续。'),
                 imageParts,
-            ) as unknown as string,
+            ),
         }];
     }
 
@@ -208,8 +235,8 @@ export const buildMastraMessages = (input: IAgentRuntimeInput): TMastraChatMessa
             return conversationMessages.map((message, messageIndex) =>
                 messageIndex === index
                     ? {
-                        ...message,
-                        content: buildUserContentWithImages(userPrompt, imageParts) as unknown as string,
+                        role: 'user',
+                        content: buildUserContentWithImages(userPrompt, imageParts),
                     }
                     : message);
         }
@@ -217,7 +244,7 @@ export const buildMastraMessages = (input: IAgentRuntimeInput): TMastraChatMessa
 
     return [
         ...conversationMessages,
-        { role: 'user', content: buildUserContentWithImages(userPrompt, imageParts) as unknown as string },
+        { role: 'user', content: buildUserContentWithImages(userPrompt, imageParts) },
     ];
 };
 

@@ -47,10 +47,31 @@ export type IMcpGatewayMetricLogger = {
     info(data: object, msg?: string): void;
     warn(data: object, msg?: string): void;
 };
-export type TMastraChatMessage = {
-    role: 'user' | 'assistant';
-    content: string;
+export type TMastraTextPart = {
+    type: 'text';
+    text: string;
 };
+export type TMastraImagePart = {
+    type: 'image';
+    image: string | URL;
+    mediaType?: string;
+};
+export type TMastraFilePart = {
+    type: 'file';
+    data: string | URL;
+    mediaType: string;
+    filename?: string;
+};
+export type TMastraUserContent = string | Array<TMastraTextPart | TMastraImagePart | TMastraFilePart>;
+export type TMastraChatMessage =
+    | {
+        role: 'user';
+        content: TMastraUserContent;
+    }
+    | {
+        role: 'assistant';
+        content: string;
+    };
 
 export type TMastraAgentChunk = AgentChunkType<undefined>;
 export type TMastraStreamChunk = TMastraAgentChunk | DataChunkType;

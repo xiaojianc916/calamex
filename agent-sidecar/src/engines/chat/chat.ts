@@ -6,7 +6,7 @@ import { createMastraMemoryReference, createMastraMemoryScope } from '../context
 import { createMastraMemoryForModel, createMastraModelConfig, resolveMastraModelConfig } from '../agent/factory.js';
 import { createAcontextTokenEventDraft, createDeepSeekPayloadEventSink } from '../budget/budget.js';
 import { createExecutionRequestContext } from '../context/context.js';
-import { buildMastraMessages, normalizeMastraError } from '../messages.js';
+import { buildMastraMessages, hasImageAttachmentParts, isVisionModelId, normalizeMastraError } from '../messages.js';
 import { createErrorResponse } from '../responses.js';
 import { createDoneOutputEvent } from '../stream/stream-utils.js';
 import { loadMastraMcpTools } from '../tools/tools.js';
@@ -38,6 +38,15 @@ export class MastraRuntimeChat extends MastraRuntimeBase {
             return createErrorResponse(
                 sessionId,
                 'AI 模型未配置：请在 Node sidecar 环境设置 AGENT_SIDECAR_MODEL 与 AGENT_SIDECAR_API_KEY。',
+                events,
+                options,
+            );
+        }
+
+        if (hasImageAttachmentParts(normalizedInput.context) && !isVisionModelId(modelConfig.modelId)) {
+            return createErrorResponse(
+                sessionId,
+                '当前模型不支持图片理解，请切换支持视觉输入的模型后再发送图片。',
                 events,
                 options,
             );
