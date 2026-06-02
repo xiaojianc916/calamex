@@ -4,6 +4,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::OnceLock;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -25,8 +26,14 @@ const NODE_EXE_ENV: &str = "XIAOJIANC_NODE_EXE";
 const MCP_UVX_PATH_ENV: &str = "AGENT_MCP_UVX_PATH";
 const SIDECAR_REQUEST_TIMEOUT_SECONDS: u64 = 30 * 60;
 const SIDECAR_HEALTH_TIMEOUT_SECONDS: u64 = 2;
-const SIDECAR_STARTUP_TIMEOUT_SECONDS: u64 = 15;
 const SIDECAR_STARTUP_RETRY_MS: u64 = 250;
+const SIDECAR_STARTUP_TIMEOUT_ENV: &str = "XIAOJIANC_AGENT_SIDECAR_STARTUP_TIMEOUT_SECONDS";
+const SIDECAR_STARTUP_TIMEOUT_DEFAULT_SECONDS: u64 = 20;
+const SIDECAR_STARTUP_TIMEOUT_MIN_SECONDS: u64 = 5;
+const SIDECAR_STARTUP_TIMEOUT_MAX_SECONDS: u64 = 600;
+const SIDECAR_STARTUP_ATTEMPTS: u32 = 2;
+const SIDECAR_LOG_MAX_BYTES: u64 = 4 * 1024 * 1024;
+const SIDECAR_LOG_TAIL_CHARS: usize = 1200;
 const NARRATOR_CHAT_RETRY_DELAYS_MS: &[u64] = &[1500, 3000, 5000, 9000, 16000, 30000, 60000];
 const SIDECAR_PROTOCOL_VERSION: &str = "7";
 const SIDECAR_IMPLEMENTATION_VERSION: &str = "deepseek-reasoning-transport-v6-plan-history";
@@ -84,7 +91,20 @@ enum AgentSidecarStreamFrame {
 }
 
 fn configured_base_url() -> String {
-    normalize_base_url(env::var(SIDECAR_URL_ENV).ok().as_deref())
+    canonicalize_local_base_url(normalize_base_url(env::var(SIDECAR_URL_ENV).ok().as_deref()))
+}
+
+/// 默认本地 sidecar 的 localhost / [::1] 写法统一规整为 127.0.0.1。
+///
+/// sidecar 仅监听 127.0.0.1；若配置/默认 URL 使用 `localhost`，在某些系统上会
+/// 先解析到 IPv6 的 `::1`，导致健康探测与请求永远连不上 → 每次都 15 秒超时。
+/// 这里把三种等价的默认本地写法统一成 127.0.0.1，保证探测与请求地址一致。
+fn canonicalize_local_base_url(base_url: String) -> String {
+    if is_default_local_sidecar_url(&base_url) {
+        DEFAULT_SIDECAR_URL.to_string()
+    } else {
+        base_url
+    }
 }
 
 fn normalize_base_url(raw_url: Option<&str>) -> String {
@@ -182,6 +202,7 @@ fn is_retryable_narrator_sidecar_error(error: &str) -> bool {
         || normalized.contains("temporarily unavailable")
         || normalized.contains(" timeout")
         || normalized.contains(" timed out")
+        || normalized.contains("就绪")
         || normalized.contains(" connection reset")
         || normalized.contains(" connection aborted")
         || normalized.contains(" broken pipe")
@@ -464,10 +485,41 @@ fn is_default_local_sidecar_url(base_url: &str) -> bool {
     )
 }
 
+/// 进程级单飞锁：串行化对默认 sidecar 的并发 (重)启动，
+/// 避免多个请求同时各自 spawn 出多个 Node 进程抢占同一端口。
+fn sidecar_spawn_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
+fn startup_timeout_seconds() -> u64 {
+    clamp_startup_timeout_seconds(env_or_user_env(SIDECAR_STARTUP_TIMEOUT_ENV).as_deref())
+}
+
+fn clamp_startup_timeout_seconds(raw: Option<&str>) -> u64 {
+    raw.map(str::trim)
+        .filter(|value| !value.is_empty())
+        .and_then(|value| value.parse::<u64>().ok())
+        .map(|secs| {
+            secs.clamp(
+                SIDECAR_STARTUP_TIMEOUT_MIN_SECONDS,
+                SIDECAR_STARTUP_TIMEOUT_MAX_SECONDS,
+            )
+        })
+        .unwrap_or(SIDECAR_STARTUP_TIMEOUT_DEFAULT_SECONDS)
+}
+
 async fn ensure_default_sidecar_available(base_url: &str) -> Result<(), String> {
     if !is_default_local_sidecar_url(base_url) {
         return Ok(());
     }
+
+    if probe_sidecar_health(base_url).await == SidecarHealthStatus::Ready {
+        return Ok(());
+    }
+
+    // 单飞：串行化并发的 (重)启动。拿到锁前可能已被其它请求启动完成。
+    let _guard = sidecar_spawn_lock().lock().await;
 
     match probe_sidecar_health(base_url).await {
         SidecarHealthStatus::Ready => return Ok(()),
@@ -477,19 +529,40 @@ async fn ensure_default_sidecar_available(base_url: &str) -> Result<(), String> 
         SidecarHealthStatus::Unavailable => {}
     }
 
-    spawn_default_sidecar()?;
-    wait_for_default_sidecar_ready(base_url).await
+    let timeout_secs = startup_timeout_seconds();
+    let mut last_error: Option<String> = None;
+    for _ in 0..SIDECAR_STARTUP_ATTEMPTS {
+        spawn_default_sidecar_if_absent()?;
+        match wait_for_default_sidecar_ready(base_url, timeout_secs).await {
+            Ok(()) => return Ok(()),
+            Err(error) => {
+                last_error = Some(error);
+                // 本轮窗口内仍未就绪：清掉可能卡死/半启动的进程后再试一轮。
+                let _ = restart_stale_default_sidecar();
+            }
+        }
+    }
+
+    let mut error = last_error.unwrap_or_else(|| {
+        format!(
+            "AGENT_SIDECAR_UNAVAILABLE: Node sidecar 已尝试启动，但未在 {timeout_secs} 秒内就绪。"
+        )
+    });
+    if let Some(tail) = read_sidecar_log_tail() {
+        error.push_str("\n--- agent-sidecar.log（末尾）---\n");
+        error.push_str(&tail);
+    }
+    Err(error)
 }
 
-async fn wait_for_default_sidecar_ready(base_url: &str) -> Result<(), String> {
-    let deadline =
-        tokio::time::Instant::now() + Duration::from_secs(SIDECAR_STARTUP_TIMEOUT_SECONDS);
+async fn wait_for_default_sidecar_ready(base_url: &str, timeout_secs: u64) -> Result<(), String> {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_secs);
     while tokio::time::Instant::now() < deadline {
         match probe_sidecar_health(base_url).await {
             SidecarHealthStatus::Ready => return Ok(()),
             SidecarHealthStatus::Stale => {
                 restart_stale_default_sidecar()?;
-                spawn_default_sidecar()?;
+                spawn_default_sidecar_if_absent()?;
             }
             SidecarHealthStatus::Unavailable => {}
         }
@@ -498,7 +571,7 @@ async fn wait_for_default_sidecar_ready(base_url: &str) -> Result<(), String> {
     }
 
     Err(format!(
-        "AGENT_SIDECAR_UNAVAILABLE: Node sidecar 已尝试启动，但未在 {SIDECAR_STARTUP_TIMEOUT_SECONDS} 秒内就绪。"
+        "AGENT_SIDECAR_UNAVAILABLE: Node sidecar 已尝试启动，但未在 {timeout_secs} 秒内就绪。"
     ))
 }
 
@@ -510,7 +583,7 @@ pub async fn restart() -> Result<AgentSidecarHealthPayload, String> {
 
     restart_stale_default_sidecar()?;
     spawn_default_sidecar()?;
-    wait_for_default_sidecar_ready(&base_url).await?;
+    wait_for_default_sidecar_ready(&base_url, startup_timeout_seconds()).await?;
     health().await
 }
 
@@ -543,6 +616,14 @@ fn restart_stale_default_sidecar() -> Result<(), String> {
     }
 
     Ok(())
+}
+
+/// 端口是否已有进程在监听。用于在 spawn 前去重：若已有 sidecar 在启动中，
+/// 就不要再拉起一个会因 EADDRINUSE 崩溃的重复进程。
+fn is_port_listening(port: u16) -> bool {
+    find_listening_pids_for_port(port)
+        .map(|pids| !pids.is_empty())
+        .unwrap_or(false)
 }
 
 #[cfg(windows)]
@@ -625,15 +706,17 @@ fn sidecar_log_path(sidecar_root: &Path) -> PathBuf {
     sidecar_root.join("agent-sidecar.log")
 }
 
-/// 打开（截断重建）sidecar 日志文件，返回供 stdout / stderr 复用的两个句柄。
+/// 打开 sidecar 日志文件（append 追加），返回供 stdout / stderr 复用的两个句柄。
+/// 不再每次 spawn 都截断，以免并发启动时互相清空、丢失崩溃诊断；
+/// 超过上限则滚动一代（.old）以防无限增长。
 /// 任意一步失败都安全回退到 `Stdio::null()`，绝不阻断 sidecar 启动。
 fn open_sidecar_log_stdio(sidecar_root: &Path) -> (Stdio, Stdio) {
     let log_path = sidecar_log_path(sidecar_root);
+    rotate_sidecar_log_if_oversized(&log_path);
 
     let Ok(stdout_file) = fs::OpenOptions::new()
         .create(true)
-        .write(true)
-        .truncate(true)
+        .append(true)
         .open(&log_path)
     else {
         return (Stdio::null(), Stdio::null());
@@ -645,41 +728,85 @@ fn open_sidecar_log_stdio(sidecar_root: &Path) -> (Stdio, Stdio) {
     }
 }
 
+/// 日志超过上限时滚动一代（重命名为 agent-sidecar.log.old），
+/// 保留上一段日志用于排查，同时避免 append 模式无限增长。
+fn rotate_sidecar_log_if_oversized(log_path: &Path) {
+    let Ok(metadata) = fs::metadata(log_path) else {
+        return;
+    };
+    if metadata.len() <= SIDECAR_LOG_MAX_BYTES {
+        return;
+    }
+    let backup = log_path.with_file_name("agent-sidecar.log.old");
+    let _ = fs::rename(log_path, backup);
+}
+
+/// 读取 sidecar 日志末尾若干字符，用于在启动失败时把诊断信息附到错误上。
+fn read_sidecar_log_tail() -> Option<String> {
+    let sidecar_root = resolve_sidecar_root().ok()?;
+    let content = fs::read_to_string(sidecar_log_path(&sidecar_root)).ok()?;
+    let trimmed = content.trim_end();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let char_count = trimmed.chars().count();
+    let skip = char_count.saturating_sub(SIDECAR_LOG_TAIL_CHARS);
+    Some(trimmed.chars().skip(skip).collect())
+}
+
+/// 仅在端口尚无监听者时才 spawn，避免并发重复拉起导致 EADDRINUSE。
+fn spawn_default_sidecar_if_absent() -> Result<(), String> {
+    if is_port_listening(DEFAULT_SIDECAR_PORT) {
+        return Ok(());
+    }
+    spawn_default_sidecar()
+}
+
 fn spawn_default_sidecar() -> Result<(), String> {
     let sidecar_root = resolve_sidecar_root()?;
     let node = resolve_node_executable()?;
-    let tsx_cli = sidecar_root
-        .join("node_modules")
-        .join("tsx")
-        .join("dist")
-        .join("cli.mjs");
-    let server = sidecar_root.join("src").join("server.ts");
-
-    if !tsx_cli.is_file() {
-        return Err(format!(
-            "AGENT_SIDECAR_UNAVAILABLE: 未找到 sidecar TSX 启动器：{}",
-            tsx_cli.display()
-        ));
-    }
-
-    if !server.is_file() {
-        return Err(format!(
-            "AGENT_SIDECAR_UNAVAILABLE: 未找到 sidecar 入口：{}",
-            server.display()
-        ));
-    }
 
     let (sidecar_stdout, sidecar_stderr) = open_sidecar_log_stdio(&sidecar_root);
 
     let mut command = Command::new(node);
+
+    // 优先使用预编译产物 dist/server.js（无需运行时 tsx 转译，冷启动更快更稳）；
+    // 不存在时回退到 tsx + src/server.ts，保持开发态与未构建场景可用。
+    let compiled_server = sidecar_root.join("dist").join("server.js");
+    if compiled_server.is_file() {
+        command.arg(&compiled_server);
+    } else {
+        let tsx_cli = sidecar_root
+            .join("node_modules")
+            .join("tsx")
+            .join("dist")
+            .join("cli.mjs");
+        let server = sidecar_root.join("src").join("server.ts");
+
+        if !tsx_cli.is_file() {
+            return Err(format!(
+                "AGENT_SIDECAR_UNAVAILABLE: 未找到 sidecar TSX 启动器：{}",
+                tsx_cli.display()
+            ));
+        }
+
+        if !server.is_file() {
+            return Err(format!(
+                "AGENT_SIDECAR_UNAVAILABLE: 未找到 sidecar 入口：{}",
+                server.display()
+            ));
+        }
+
+        command.arg(tsx_cli).arg(server);
+    }
+
     command
-        .arg(tsx_cli)
-        .arg(server)
         .current_dir(&sidecar_root)
         .stdin(Stdio::null())
         .stdout(sidecar_stdout)
         .stderr(sidecar_stderr)
-        .env("AGENT_SIDECAR_PORT", "39871");
+        .env("AGENT_SIDECAR_PORT", "39871")
+        .env("NODE_COMPILE_CACHE", sidecar_root.join(".node-compile-cache"));
 
     inject_sidecar_dotenv_key_if_present(&mut command, &sidecar_root, "TAVILY_API_KEY");
     inject_user_env_if_present(&mut command, "TAVILY_API_KEY");
@@ -1151,11 +1278,14 @@ pub async fn web_fetch(payload: AiWebFetchInput) -> Result<AiWebFetchPayload, St
 #[cfg(test)]
 mod tests {
     use super::{
-        answer_delta_text, build_sidecar_url, classify_sidecar_health,
+        answer_delta_text, build_sidecar_url, canonicalize_local_base_url,
+        clamp_startup_timeout_seconds, classify_sidecar_health,
         drain_complete_sidecar_stream_lines, has_non_whitespace_bytes,
-        inject_sidecar_dotenv_key_if_present, is_default_local_sidecar_url, model_provider_id,
-        normalize_base_url, parse_netstat_listening_pids, SidecarHealthProbePayload,
-        SidecarHealthStatus, DEFAULT_SIDECAR_URL,
+        inject_sidecar_dotenv_key_if_present, is_default_local_sidecar_url,
+        is_retryable_narrator_sidecar_error, model_provider_id, normalize_base_url,
+        parse_netstat_listening_pids, SidecarHealthProbePayload, SidecarHealthStatus,
+        DEFAULT_SIDECAR_URL, SIDECAR_STARTUP_TIMEOUT_DEFAULT_SECONDS,
+        SIDECAR_STARTUP_TIMEOUT_MAX_SECONDS, SIDECAR_STARTUP_TIMEOUT_MIN_SECONDS,
     };
     use std::fs;
     use std::process::Command;
@@ -1188,6 +1318,60 @@ mod tests {
         assert!(is_default_local_sidecar_url("http://localhost:39871/"));
         assert!(!is_default_local_sidecar_url("http://127.0.0.1:49999"));
         assert!(!is_default_local_sidecar_url("https://agent.example.com"));
+    }
+
+    #[test]
+    fn canonicalizes_localhost_and_ipv6_to_loopback_ipv4() {
+        assert_eq!(
+            canonicalize_local_base_url("http://localhost:39871".to_string()),
+            DEFAULT_SIDECAR_URL
+        );
+        assert_eq!(
+            canonicalize_local_base_url("http://[::1]:39871".to_string()),
+            DEFAULT_SIDECAR_URL
+        );
+        assert_eq!(
+            canonicalize_local_base_url("http://127.0.0.1:39871".to_string()),
+            DEFAULT_SIDECAR_URL
+        );
+        assert_eq!(
+            canonicalize_local_base_url("https://agent.example.com".to_string()),
+            "https://agent.example.com"
+        );
+    }
+
+    #[test]
+    fn clamp_startup_timeout_uses_default_and_bounds() {
+        assert_eq!(
+            clamp_startup_timeout_seconds(None),
+            SIDECAR_STARTUP_TIMEOUT_DEFAULT_SECONDS
+        );
+        assert_eq!(
+            clamp_startup_timeout_seconds(Some("   ")),
+            SIDECAR_STARTUP_TIMEOUT_DEFAULT_SECONDS
+        );
+        assert_eq!(
+            clamp_startup_timeout_seconds(Some("not-a-number")),
+            SIDECAR_STARTUP_TIMEOUT_DEFAULT_SECONDS
+        );
+        assert_eq!(
+            clamp_startup_timeout_seconds(Some("1")),
+            SIDECAR_STARTUP_TIMEOUT_MIN_SECONDS
+        );
+        assert_eq!(
+            clamp_startup_timeout_seconds(Some("99999")),
+            SIDECAR_STARTUP_TIMEOUT_MAX_SECONDS
+        );
+        assert_eq!(clamp_startup_timeout_seconds(Some("30")), 30);
+    }
+
+    #[test]
+    fn startup_not_ready_error_is_retryable() {
+        let error = "AGENT_SIDECAR_UNAVAILABLE: Node sidecar 已尝试启动，但未在 20 秒内就绪。";
+        assert!(is_retryable_narrator_sidecar_error(error));
+        assert!(!is_retryable_narrator_sidecar_error(
+            "AGENT_SIDECAR_CONTRACT_ERROR: sidecar 响应无法解析"
+        ));
     }
 
     #[test]
