@@ -827,16 +827,15 @@ async fn download_file_inner(
         .map_err(|e| format!("写入任务异常终止：{e}"))??;
 
     if let Some(e) = read_error {
-        return Err(e);
-    }
+    return Err(e);
+}
 
-    // Propagate reader errors.
-    read_handle
-        .await
-        .map_err(|e| format!("读取任务异常终止：{e}"))?
-        .map_err(|e| e.to_string())?;
+// 校验下载字节数，防止静默截断（与上传路径保持一致）。
+if let Some(expected) = expected_size {
+    ensure_expected_transfer_size(written, expected, "下载远程文件")?;
+}
 
-    let partial_for_rename = partial.clone();
+let partial_for_rename = partial.clone();
     let target = local_path.to_path_buf();
     tokio::task::spawn_blocking(move || {
         std_fs::rename(&partial_for_rename, &target)
