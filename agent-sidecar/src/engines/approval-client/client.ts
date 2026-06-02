@@ -6,8 +6,8 @@ import { createExecutionRequestContext } from '../context/context.js';
 import { normalizeMastraError } from '../messages.js';
 import { createErrorResponse } from '../responses.js';
 import { DEFAULT_EXECUTION_AGENT_ID } from '../types.js';
-import type { IMastraAgentStreamLike, IMastraApprovalOptions } from '../types.js';
-import { createRuntimeEventFactory, createSessionId, pushUiEvent } from '../utils.js';
+import type { IMastraAgentStreamLike, IMastraApprovalOptions, IPlanWorkflowStepTracker } from '../types.js';
+import { createRuntimeEventFactory, createSessionId, pushUiEvent, toNonEmptyString } from '../utils.js';
 import { allowWorkspaceWriteAfterVerifiedRead, destroyMastraBrowser, destroyMastraWorkspace } from '../workspace.js';
 import type { IAgentRuntimeResponse, IAgentRuntimeRunOptions, TAgentRuntimeOutputEvent } from '../contracts/runtime-contracts.js';
 import type { IApprovalResolutionInput } from '../contracts/runtime-input.js';
@@ -21,6 +21,9 @@ export class MastraRuntimeApproval extends MastraRuntimeExecution {
         const decodedRequest = decodeApprovalRequestId(input.requestId);
         const cachedPending = this.pendingApprovals.get(input.requestId);
         const sessionId = cachedPending?.sessionId ?? input.sessionId ?? createSessionId('mastra-approval');
+        // 审批回执自身携带计划三元组（见 /approval/resolve schema），据此把 execute()
+        // 在挂起时留下的 libSQL 工作流步骤恢复推进；缺三元组（纯 chat 审批）时为 null。
+        const workflowTracker = this.resolveApprovalWorkflowTracker(input);
 
         if (!decodedRequest) {
             return this.createFallbackApprovalResponse(input, sessionId, options);
@@ -140,8 +143,9 @@ export class MastraRuntimeApproval extends MastraRuntimeExecution {
                     stream = await resumeApprovalTool(resumeOptions);
                 }
                 streamCleanup = stream.cleanup;
+                const resumedRunId = stream.runId ?? decodedRequest.runId;
                 const createRuntimeEvent = createRuntimeEventFactory({
-                    runId: stream.runId ?? decodedRequest.runId,
+                    runId: resumedRunId,
                     sessionId,
                     agentId: DEFAULT_EXECUTION_AGENT_ID,
                     ...(this.now ? { now: this.now } : {}),
@@ -157,10 +161,18 @@ export class MastraRuntimeApproval extends MastraRuntimeExecution {
                     createRuntimeEvent,
                     pending.workspace,
                     pending.browser,
+                    workflowTracker ?? undefined,
                 );
                 shouldDisconnectBundle = streamSummary.releaseResources;
 
                 if (streamSummary.streamErrorMessage) {
+                    if (workflowTracker) {
+                        await this.planWorkflowStore.failStep({
+                            ...workflowTracker,
+                            error: streamSummary.streamErrorMessage,
+                            retryable: true,
+                        }).catch(() => undefined);
+                    }
                     return createErrorResponse(
                         sessionId,
                         `Mastra Approval 执行失败：${streamSummary.streamErrorMessage}`,
@@ -170,6 +182,19 @@ export class MastraRuntimeApproval extends MastraRuntimeExecution {
                 }
 
                 if (streamSummary.pendingApproval) {
+                    // 链式审批：又有工具需要批准，与 execute() 一致地重新挂起工作流步骤。
+                    if (workflowTracker) {
+                        await this.planWorkflowStore.suspend({
+                            planId: workflowTracker.planId,
+                            version: workflowTracker.version,
+                            reason: 'tool_external_wait',
+                            payload: {
+                                stepId: workflowTracker.stepId,
+                                runId: resumedRunId,
+                            },
+                            allowedFields: ['decision', 'requestId'],
+                        }).catch(() => undefined);
+                    }
                     return {
                         sessionId,
                         events,
@@ -180,6 +205,16 @@ export class MastraRuntimeApproval extends MastraRuntimeExecution {
                 const result = streamSummary.visibleText.trim().length > 0
                     ? streamSummary.visibleText
                     : 'Agent 已完成。';
+
+                // 闭环关键：审批恢复后必须对称地推进 libSQL 工作流，完成该步骤、前移
+                // executionCursor，否则计划主线永远停在 executing/tool_external_wait。
+                // 工作流协调采用尽力而为：其失败不得影响用户已成功获得的工具执行结果。
+                if (workflowTracker) {
+                    await this.planWorkflowStore.completeStep({
+                        ...workflowTracker,
+                        resultRef: resumedRunId,
+                    }).catch(() => undefined);
+                }
 
                 pushUiEvent(events, {
                     type: 'done',
@@ -193,6 +228,13 @@ export class MastraRuntimeApproval extends MastraRuntimeExecution {
                 };
             });
         } catch (error) {
+            if (workflowTracker) {
+                await this.planWorkflowStore.failStep({
+                    ...workflowTracker,
+                    error: normalizeMastraError(error),
+                    retryable: true,
+                }).catch(() => undefined);
+            }
             return createErrorResponse(
                 sessionId,
                 `Mastra Approval 执行失败：${normalizeMastraError(error)}`,
@@ -210,5 +252,22 @@ export class MastraRuntimeApproval extends MastraRuntimeExecution {
                 await destroyMastraBrowser(pending.browser);
             }
         }
+    }
+
+    /**
+     * 从审批回执输入还原计划工作流步骤坐标（planId/version/stepId）。
+     * 仅当三元组齐备且 version 为正整数时返回；否则返回 null，调用方据此
+     * 跳过工作流状态机推进（例如不绑定计划的纯 chat 审批场景）。
+     */
+    private resolveApprovalWorkflowTracker(
+        input: IApprovalResolutionInput,
+    ): IPlanWorkflowStepTracker | null {
+        const planId = toNonEmptyString(input.planId);
+        const stepId = toNonEmptyString(input.planStepId);
+        const version = input.planVersion;
+        if (!planId || !stepId || !Number.isInteger(version) || Number(version) <= 0) {
+            return null;
+        }
+        return { planId, version: Number(version), stepId };
     }
 }
