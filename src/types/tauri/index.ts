@@ -8,8 +8,6 @@ import type {
   IAiChatRequest,
   IAiChatStreamEventPayload,
   IAiChatStreamPayload,
-  IAiCodeActionRequest,
-  IAiCodeActionResult,
   IAiConfigPayload,
   IAiConversationTitlePayload,
   IAiConversationTitleRequest,
@@ -378,7 +376,6 @@ export interface ITauriService {
   aiCancel(payload: { streamId: string }): Promise<void>;
   onAiChatStream(handler: (payload: IAiChatStreamEventPayload) => void): Promise<() => void>;
   aiInlineComplete(payload: IAiInlineCompletionRequest): Promise<IAiInlineCompletionResult>;
-  aiCodeAction(payload: IAiCodeActionRequest): Promise<IAiCodeActionResult>;
   aiAgentClassifyTask(payload: IAiAgentClassifyTaskRequest): Promise<IAiAgentClassifyTaskPayload>;
   aiWebSearch(payload: IAiWebSearchInput): Promise<IAiWebSearchPayload>;
   aiWebFetch(payload: IAiWebFetchInput): Promise<IAiWebFetchPayload>;

@@ -29,8 +29,6 @@ import {
   aiApplyPatchMetadataSchema,
   aiChatRequestSchema,
   aiChatStreamPayloadSchema,
-  aiCodeActionPayloadSchema,
-  aiCodeActionRequestSchema,
   aiConfigPayloadSchema,
   aiConversationTitlePayloadSchema,
   aiConversationTitleRequestSchema,
@@ -640,10 +638,6 @@ export const tauriContracts = {
       }),
       confidence: z.enum(['low', 'medium', 'high']),
     }),
-  },
-  aiCodeAction: {
-    inSchema: aiCodeActionRequestSchema,
-    outSchema: aiCodeActionPayloadSchema,
   },
   aiAgentClassifyTask: {
     inSchema: aiAgentClassifyTaskRequestSchema,
