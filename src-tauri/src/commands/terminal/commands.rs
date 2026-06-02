@@ -44,6 +44,7 @@ use super::to_wsl_path;
 const DEFAULT_WSL_INTERACTIVE_CWD: &str = "~";
 
 #[tauri::command]
+#[specta::specta]
 pub async fn ensure_terminal_session(
     app: AppHandle,
     state: State<'_, TerminalSessionState>,
@@ -158,6 +159,7 @@ pub async fn ensure_terminal_session(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn write_terminal_input(
     state: State<'_, TerminalSessionState>,
     payload: TerminalInputRequest,
@@ -199,6 +201,7 @@ pub async fn write_terminal_input(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn resize_terminal_session(
     state: State<TerminalSessionState>,
     payload: TerminalResizeRequest,
@@ -217,6 +220,7 @@ pub fn resize_terminal_session(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn close_terminal_session(
     state: State<TerminalSessionState>,
     payload: CloseTerminalSessionRequest,
@@ -247,6 +251,7 @@ pub fn shutdown_all_terminal_sessions(state: &TerminalSessionState) -> Result<()
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn dispatch_script_to_terminal(
     app: AppHandle,
     state: State<TerminalSessionState>,
@@ -327,6 +332,7 @@ pub fn dispatch_script_to_terminal(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn cancel_terminal_run(
     state: State<'_, TerminalSessionState>,
     payload: CancelTerminalRunRequest,

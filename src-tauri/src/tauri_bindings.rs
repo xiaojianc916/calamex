@@ -1,5 +1,7 @@
 use crate::commands::{
-    script_run, search, shell_tools, window, window_stage, workspace_fs, workspace_watcher,
+    cancel_terminal_run, close_terminal_session, dispatch_script_to_terminal,
+    ensure_terminal_session, resize_terminal_session, script_run, search, shell_tools, window,
+    window_stage, workspace_fs, workspace_watcher, write_terminal_input,
 };
 use specta_typescript::Typescript;
 use std::path::PathBuf;
@@ -31,6 +33,13 @@ pub fn builder() -> Builder<tauri::Wry> {
             workspace_fs::save_script,
             workspace_watcher::start_workspace_watching,
             workspace_watcher::stop_workspace_watching,
+            // ↓↓↓ terminal：从手写 Zod 契约迁入 specta 生成轨 ↓↓↓
+            ensure_terminal_session,
+            write_terminal_input,
+            resize_terminal_session,
+            close_terminal_session,
+            dispatch_script_to_terminal,
+            cancel_terminal_run,
         ])
 }
 

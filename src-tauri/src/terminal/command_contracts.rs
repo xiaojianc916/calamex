@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
+use specta::Type;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct EnsureTerminalSessionRequest {
     pub(crate) session_id: String,
@@ -9,7 +10,7 @@ pub struct EnsureTerminalSessionRequest {
     pub(crate) rows: u16,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct TerminalSessionPayload {
     pub(crate) session_id: String,
@@ -19,7 +20,7 @@ pub struct TerminalSessionPayload {
     pub(crate) initial_output: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct DispatchTerminalScriptRequest {
     pub(crate) session_id: String,
@@ -30,7 +31,7 @@ pub struct DispatchTerminalScriptRequest {
     pub(crate) run_id: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct DispatchTerminalScriptPayload {
     pub(crate) session_id: String,
@@ -40,14 +41,14 @@ pub struct DispatchTerminalScriptPayload {
     pub(crate) started_at: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct TerminalInputRequest {
     pub(crate) session_id: String,
     pub(crate) data: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct TerminalResizeRequest {
     pub(crate) session_id: String,
@@ -55,13 +56,13 @@ pub struct TerminalResizeRequest {
     pub(crate) rows: u16,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct CloseTerminalSessionRequest {
     pub(crate) session_id: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct CancelTerminalRunRequest {
     pub(crate) run_id: String,
