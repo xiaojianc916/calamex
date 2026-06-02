@@ -3,8 +3,10 @@ import { computed, ref } from 'vue';
 
 import type { IAiChatMessage } from '@/types/ai';
 import {
+  aiChatMessageSchema,
   aiConversationLegacyPersistSchema,
   aiConversationPersistSchema,
+  aiConversationThreadSchema,
 } from '@/types/ai/conversation.schema';
 import { createUniqueId } from '@/utils/id';
 import { getAiConversationPersistStorage } from './plugins/debouncedPersistStorage';
@@ -230,6 +232,51 @@ const ensureActiveThread = (
     activeThreadId: resolvedActiveThreadId,
     threads,
   };
+};
+
+/**
+ * 逐线程 / 逐消息救援 hydrate 快照。
+ *
+ * 动机: aiConversationPersistSchema 用 z.array(aiChatMessageSchema) 做全有或全无
+ * 校验 —— 任一线程内任一条消息不合法(典型如版本升级后消息结构漂移、流式中断
+ * 写入异常态、token 字段越界等), 整库 parse 失败, 旧逻辑随即落到
+ * ensureActiveThread(null, []) 用空白线程把全部历史顶替清空。本函数改为尽量救援:
+ *   - 单条消息不合法 → 仅丢弃该消息, 保留同线程其余消息;
+ *   - 线程元信息(id/title/时间戳)不合法 → 丢弃该线程, 保留其余线程;
+ *   - 至少救回一个线程即返回; 全部不可救援才返回 null(交回 legacy/兜底)。
+ *
+ * 仅在严格 parse 失败后作为兜底调用, parse 成功路径行为不变。
+ */
+const salvageHydratedThreads = (
+  rawThreads: unknown,
+  rawActiveThreadId: unknown,
+): IAiConversationPersistShape | null => {
+  if (!Array.isArray(rawThreads)) {
+    return null;
+  }
+  const threads = rawThreads.flatMap((rawThread): IAiConversationThread[] => {
+    if (typeof rawThread !== 'object' || rawThread === null) {
+      return [];
+    }
+    const candidate = rawThread as Record<string, unknown>;
+    const rawMessages = Array.isArray(candidate.messages) ? candidate.messages : [];
+    // 逐条救援: 保留可通过校验的消息, 丢弃异常单条, 避免一条坏数据牵连整线程。
+    const messages = rawMessages.flatMap((rawMessage) => {
+      const parsedMessage = aiChatMessageSchema.safeParse(rawMessage);
+      return parsedMessage.success ? [parsedMessage.data] : [];
+    });
+    // 用线程 schema 校验元信息; messages 已替换为救援后的合法集合。
+    const parsedThread = aiConversationThreadSchema.safeParse({ ...candidate, messages });
+    return parsedThread.success ? [parsedThread.data as unknown as IAiConversationThread] : [];
+  });
+  if (threads.length === 0) {
+    return null;
+  }
+  const activeThreadId =
+    typeof rawActiveThreadId === 'string' && rawActiveThreadId.trim().length > 0
+      ? rawActiveThreadId
+      : null;
+  return { activeThreadId, threads };
 };
 
 // ---------------------------------------------------------------------------
@@ -489,6 +536,19 @@ export const useAiConversationStore = defineStore(
           const normalized = ensureActiveThread(
             parsed.activeThreadId,
             normalizeHydratedThreads(parsed.threads, parsed.activeThreadId),
+          );
+          store.activeThreadId = normalized.activeThreadId;
+          store.threads = normalized.threads;
+          return;
+        }
+
+        // ── 当前版本快照部分损坏: 逐线程/逐消息救援, 绝不因单条坏数据清空整库。
+        // 仅救援掉无法解析的单条消息/单个线程, 至少留下一个线程即沿用救援结果。
+        const salvaged = salvageHydratedThreads(store.threads, store.activeThreadId);
+        if (salvaged) {
+          const normalized = ensureActiveThread(
+            salvaged.activeThreadId,
+            normalizeHydratedThreads(salvaged.threads, salvaged.activeThreadId),
           );
           store.activeThreadId = normalized.activeThreadId;
           store.threads = normalized.threads;
