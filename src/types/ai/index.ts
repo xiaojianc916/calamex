@@ -12,8 +12,6 @@ import type {
   aiChatRequestSchema,
   aiChatStreamEventPayloadSchema,
   aiChatStreamPayloadSchema,
-  aiCodeActionPayloadSchema,
-  aiCodeActionRequestSchema,
   aiConfigPayloadSchema,
   aiConversationTitlePayloadSchema,
   aiConversationTitleRequestSchema,
@@ -176,9 +174,6 @@ export type IAiPatchSet = z.infer<typeof aiPatchSetSchema>;
 /** 从 IAiPatchSet narrow 出 file / hunk 元素类型,保持单一来源。 */
 export type IAiPatchFile = IAiPatchSet['files'][number];
 export type IAiPatchHunk = IAiPatchFile['hunks'][number];
-
-export type IAiCodeActionRequest = z.infer<typeof aiCodeActionRequestSchema>;
-export type IAiCodeActionResult = z.infer<typeof aiCodeActionPayloadSchema>;
 
 export type IAiApplyPatchMetadata = z.infer<typeof aiApplyPatchMetadataSchema>;
 

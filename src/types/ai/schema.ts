@@ -351,7 +351,7 @@ export const aiSuggestionPoolPayloadSchema = z.object({
 });
 
 /* ============================================================================
- * Patch / code action
+ * Patch
  * ========================================================================== */
 
 export const aiPatchSetSchema = z.object({
@@ -393,31 +393,6 @@ export const aiApplyPatchMetadataSchema = z.object({
   agentRunId: z.string().min(1).nullable().optional(),
   agentStepId: z.string().min(1).nullable().optional(),
   workspaceRootPath: z.string().min(1).nullable().optional(),
-});
-
-export const aiCodeActionRequestSchema = z.object({
-  kind: z.enum([
-    'explain_selection',
-    'rewrite_selection',
-    'generate_tests',
-    'fix_diagnostic',
-    'extract_function',
-    'add_error_handling',
-    'add_docs',
-    'simplify_code',
-    'convert_style',
-  ]),
-  filePath: z.string().nullable(),
-  language: z.string(),
-  selection: z.string(),
-  diagnostics: z.array(z.string()),
-});
-
-export const aiCodeActionPayloadSchema = z.object({
-  explanation: z.string(),
-  suggestedPatch: aiPatchSetSchema.nullable(),
-  testSuggestion: z.string().nullable(),
-  followUpQuestions: z.array(z.string()),
 });
 
 /* ============================================================================
