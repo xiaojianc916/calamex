@@ -1136,13 +1136,6 @@ const aiInlineCompleteIpc = definePayloadIpc(
   { audit: 'sensitive', timeoutMs: 15_000, measureInput: measureAiInlineCompletionInput },
 );
 
-const aiCodeActionIpc = definePayloadIpc(
-  'ai_code_action',
-  '请求 AI Code Action',
-  tauriContracts.aiCodeAction,
-  { audit: 'sensitive', timeoutMs: 60_000, measureInput: buildPayloadMetrics },
-);
-
 const aiAgentClassifyTaskIpc = definePayloadIpc(
   'ai_agent_classify_task',
   '分类 AI Agent 任务复杂度',
@@ -1717,8 +1710,6 @@ export const tauriService: ITauriService & {
   },
 
   aiInlineComplete: aiInlineCompleteIpc,
-
-  aiCodeAction: aiCodeActionIpc,
 
   aiAgentClassifyTask: aiAgentClassifyTaskIpc,
 
