@@ -1,5 +1,5 @@
 import { closeBrackets } from '@codemirror/autocomplete';
-import { foldGutter, indentUnit } from '@codemirror/language';
+import { codeFolding, foldGutter, indentUnit } from '@codemirror/language';
 import { EditorState, type Extension } from '@codemirror/state';
 import {
   EditorView,
@@ -24,6 +24,21 @@ const buildFoldMarker = (open: boolean): HTMLElement => {
     '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>';
   marker.style.transform = open ? 'rotate(90deg)' : 'none';
   return marker;
+};
+
+/** 折叠后的占位标记：用三个 flex 居中的圆点替代默认 “…” 文本，与字体度量无关，精确居中。 */
+const buildFoldPlaceholder = (_view: EditorView, onclick: (event: Event) => void): HTMLElement => {
+  const pill = document.createElement('span');
+  pill.className = 'cm-fold-pill';
+  pill.title = '展开折叠的代码';
+  pill.setAttribute('aria-label', '展开折叠的代码');
+  pill.onclick = onclick;
+  for (let i = 0; i < 3; i += 1) {
+    const dot = document.createElement('span');
+    dot.className = 'cm-fold-pill-dot';
+    pill.appendChild(dot);
+  }
+  return pill;
 };
 
 export interface ICodeMirrorSettingsOptions {
@@ -60,7 +75,12 @@ export const buildCodeMirrorSettingsExtensions = (
     showActiveLine ? highlightActiveLineGutter() : [],
     // 缩进参考线：在每级缩进处渲染竖线；highlightActiveBlock 让光标所在作用域的竖线高亮。
     editorSettings.indentGuides ? indentationMarkers({ highlightActiveBlock: true }) : [],
-    showFoldGutter ? foldGutter({ markerDOM: buildFoldMarker }) : [],
+    showFoldGutter
+      ? [
+          codeFolding({ placeholderDOM: buildFoldPlaceholder }),
+          foldGutter({ markerDOM: buildFoldMarker }),
+        ]
+      : [],
     enableAutoClosingPairs ? closeBrackets() : [],
   ];
 };
