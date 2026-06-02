@@ -246,8 +246,8 @@ export const shikiEditorChromeTheme = EditorView.theme(
     },
     '.cm-scroller': {
       fontFamily: EDITOR_FONT_FAMILY,
-      fontSize: '15px',
-      lineHeight: '1.7',
+      fontSize: '13px',
+      lineHeight: '1.6',
     },
     '.cm-content': {
       fontFamily: EDITOR_FONT_FAMILY,
@@ -293,7 +293,10 @@ export const shikiEditorChromeTheme = EditorView.theme(
     },
     // 折叠后的占位标记：淡灰药丸，去掉默认刺眼边框，hover 才加深。
     '.cm-foldPlaceholder': {
-      margin: '0 4px',
+      display: 'inline-flex',
+      alignItems: 'center', // 上下居中（交叉轴）
+      justifyContent: 'center', // 左右居中（主轴）
+      lineHeight: '1', // 去掉 1.7 行高带来的额外上下空白
       padding: '0 7px',
       backgroundColor: 'rgba(175, 184, 193, 0.2)',
       border: 'none',
