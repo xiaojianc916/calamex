@@ -43,14 +43,6 @@
             "expiresAt": "2026-08-31"
         },
         {
-            "path": "src-tauri/src/commands/search.rs",
-            "rule": "max-lines-800",
-            "reason": "灯下黑补登：~65KB 单文件承载搜索+替换全链路，待按子域(query/match/replace)拆分",
-            "owner": "@xiaojianc",
-            "adrRef": "ADR-0003",
-            "expiresAt": "2026-12-31"
-        },
-        {
             "path": "src-tauri/src/commands/ssh.rs",
             "rule": "max-lines-800",
             "reason": "灯下黑补登：~63KB SSH 命令集中，待按连接/传输/凭证拆分",
