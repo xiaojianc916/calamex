@@ -2,7 +2,6 @@ import { closeBrackets } from '@codemirror/autocomplete';
 import { foldGutter, indentUnit } from '@codemirror/language';
 import { EditorState, type Extension } from '@codemirror/state';
 import {
-  drawSelection,
   EditorView,
   highlightActiveLine,
   highlightActiveLineGutter,
@@ -44,7 +43,6 @@ export const buildCodeMirrorSettingsExtensions = (
     wrapLines ? EditorView.lineWrapping : [],
     EditorState.readOnly.of(readOnly),
     EditorView.editable.of(editable),
-    drawSelection(),
     showLineNumbers ? lineNumbers() : [],
     showActiveLine ? highlightActiveLine() : [],
     // highlightActiveLineGutter 是“高亮当前行”在行号槽中的对应部分，应跟随 activeLine 设置。
