@@ -296,7 +296,7 @@ export const shikiEditorChromeTheme = EditorView.theme(
       display: 'inline-flex',
       alignItems: 'center',
       justifyContent: 'center',
-      gap: '2.5px',
+      gap: '3px',
       height: '0.95em',
       margin: '0 4px',
       padding: '0 7px',
@@ -309,9 +309,11 @@ export const shikiEditorChromeTheme = EditorView.theme(
     '.cm-fold-pill:hover': {
       backgroundColor: 'rgba(175, 184, 193, 0.34)',
     },
+    // 固定 4px 正圆：flex-shrink:0 锁死三点尺寸恒等，偶数边长+整数 gap 避免亚像素发虚。
     '.cm-fold-pill-dot': {
-      width: '3px',
-      height: '3px',
+      flexShrink: 0,
+      width: '4px',
+      height: '4px',
       borderRadius: '50%',
       backgroundColor: '#6e7781',
     },
