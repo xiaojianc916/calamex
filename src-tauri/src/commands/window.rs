@@ -49,6 +49,9 @@ pub async fn set_window_background(
         .set_background_color(Some(Color(input.r, input.g, input.b, input.a)))
         .map_err(|error| error.to_string())?;
 
+    // 让拖拽 / 缩放漏底抑制（window_paint）使用与窗口画刷一致的主题底色。
+    crate::commands::window_paint::set_resize_paint_color(input.r, input.g, input.b);
+
     Ok(())
 }
 

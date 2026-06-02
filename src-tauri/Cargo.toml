@@ -104,7 +104,7 @@ backon = "1.6.0"
 vte = "0.15.0"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Networking_WinSock", "Win32_System_Hypervisor"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Networking_WinSock", "Win32_System_Hypervisor", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
