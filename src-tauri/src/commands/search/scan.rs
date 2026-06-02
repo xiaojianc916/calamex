@@ -363,4 +363,24 @@ fn collect_symbols_from_node(
     symbols: &mut Vec<SymbolEntry>,
 ) {
     if node.kind() == "function_definition" {
-        if let Some(name_node) = node.child_by_field_name("name
+        if let Some(name_node) = node.child_by_field_name("name") {
+            if let Ok(name) = name_node.utf8_text(source) {
+                if let Ok(line_number) = count_to_u32(name_node.start_position().row + 1, "行号")
+                {
+                    symbols.push(SymbolEntry {
+                        path: file.path.clone(),
+                        relative_path: file.relative_path.clone(),
+                        name: name.to_string(),
+                        line_number,
+                    });
+                }
+            }
+        }
+    }
+
+    for child_index in 0..node.named_child_count() {
+        if let Some(child) = node.named_child(child_index as u32) {
+            collect_symbols_from_node(child, source, file, symbols);
+        }
+    }
+}
