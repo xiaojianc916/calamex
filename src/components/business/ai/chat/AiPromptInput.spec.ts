@@ -10,6 +10,8 @@ interface IAiPromptInputTestAttachment {
   name: string;
   sizeLabel: string;
   kind: 'text' | 'image';
+  status?: 'processing' | 'ready' | 'failed';
+  errorMessage?: string;
   detailLabel?: string;
   preview?: {
     src: string;
@@ -90,6 +92,23 @@ describe('AiPromptInput', () => {
 
     expect(wrapper.emitted('fileSelected')).toHaveLength(1);
     expect(wrapper.emitted('fileSelected')?.[0]?.[0]).toBe(file);
+  });
+
+  it('shows a processing overlay and blocks submit while an attachment is being prepared', async () => {
+    const wrapper = mountPromptInput({ modelValue: '分析这个附件' });
+    const file = new File(['image-bytes'], 'pasted-image.png', { type: 'image/png' });
+    const fileInput = wrapper.get('input[type="file"]');
+
+    Object.defineProperty(fileInput.element, 'files', {
+      configurable: true,
+      value: [file],
+    });
+
+    await fileInput.trigger('change');
+    await nextTick();
+
+    expect(wrapper.find('.ai-attachment-processing-overlay').exists()).toBe(true);
+    expect(wrapper.get('[aria-label="发送"]').attributes('disabled')).toBeDefined();
   });
 
   it('renders image attachments as thumbnails and hides metadata text', () => {

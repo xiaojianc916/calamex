@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, useAttrs } from 'vue';
+import { computed, ref, useAttrs, watch } from 'vue';
 import {
   Context,
   ContextContent,
@@ -101,6 +101,8 @@ const attrs = useAttrs();
 const fileInputRef = ref<HTMLInputElement | null>(null);
 const isComposing = ref(false);
 const isModeSubmenuOpen = ref(false);
+const pendingAttachmentDrafts = ref<IAiAttachedFile[]>([]);
+const lastResolvedAttachmentCount = ref(props.attachments.length);
 
 const modeOptions: IAiPromptModeOption[] = [
   { key: 'chat', label: 'chat', description: '仅回答，不进行编辑' },
@@ -182,11 +184,16 @@ const isPromptInputMode = (value: unknown): value is TAiPromptInputMode =>
   value === 'chat' || value === 'agent' || value === 'plan';
 
 const hasProcessingAttachments = computed(() =>
+  pendingAttachmentDrafts.value.some((attachment) => attachment.status === 'processing') ||
   props.attachments.some((attachment) => attachment.status === 'processing'),
 );
 const hasReadyAttachments = computed(() =>
   props.attachments.some((attachment) => (attachment.status ?? 'ready') === 'ready'),
 );
+const displayedAttachments = computed<readonly IAiAttachedFile[]>(() => [
+  ...pendingAttachmentDrafts.value,
+  ...props.attachments,
+]);
 const canSubmit = computed(
   () =>
     (modelValue.value.trim().length > 0 || hasReadyAttachments.value) &&
@@ -198,6 +205,49 @@ const activeModeOption = computed(
   () => modeOptions.find((option) => option.key === activeMode.value) ?? modeOptions[0],
 );
 const networkPermissionLabel = computed(() => (networkPermissionEnabled.value ? '已允许' : '询问'));
+
+watch(
+  () => props.attachments.length,
+  (nextLength, previousLength) => {
+    const resolvedCount = Math.max(0, nextLength - previousLength);
+    lastResolvedAttachmentCount.value = nextLength;
+
+    if (resolvedCount === 0) {
+      return;
+    }
+
+    let remainingResolvedCount = resolvedCount;
+    pendingAttachmentDrafts.value = pendingAttachmentDrafts.value.filter((attachment) => {
+      if (remainingResolvedCount <= 0 || attachment.status !== 'processing') {
+        return true;
+      }
+
+      remainingResolvedCount -= 1;
+      return false;
+    });
+  },
+);
+
+watch(
+  () => props.errorMessage,
+  (message) => {
+    const normalizedMessage = message.trim();
+
+    if (!normalizedMessage) {
+      return;
+    }
+
+    pendingAttachmentDrafts.value = pendingAttachmentDrafts.value.map((attachment) =>
+      attachment.status === 'processing'
+        ? {
+            ...attachment,
+            status: 'failed',
+            errorMessage: normalizedMessage,
+          }
+        : attachment,
+    );
+  },
+);
 
 const formatModelLabel = (label: string): string =>
   label
@@ -226,6 +276,45 @@ const formatSelectedModelLabel = (modelId: string, label: string): string => {
 
 const getModelPlatformId = (modelId: string): TAiServicePlatformId =>
   findAiServicePlatformByModel(modelId).id;
+
+const normalizePendingAttachmentName = (file: File): string => {
+  const normalizedName = file.name.trim();
+
+  if (normalizedName) {
+    return normalizedName;
+  }
+
+  return file.type.startsWith('image/') ? 'pasted-image' : 'pasted-attachment';
+};
+
+const createPendingAttachment = (file: File): IAiAttachedFile => {
+  const name = normalizePendingAttachmentName(file);
+  const kind = file.type.startsWith('image/') ? 'image' : 'text';
+  const id = `pending-attachment-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+  return {
+    id,
+    name,
+    sizeLabel: '',
+    kind,
+    status: 'processing',
+    detailLabel: '处理中…',
+    reference: {
+      id,
+      kind: kind === 'image' ? 'image-attachment' : 'search-result',
+      label: `${kind === 'image' ? '图片附件' : '附件'} · ${name}`,
+      path: name,
+      range: null,
+      contentPreview: '附件正在处理中，完成后会作为 AI 上下文发送。',
+      redacted: false,
+    },
+  };
+};
+
+const queueAttachmentFile = (file: File): void => {
+  pendingAttachmentDrafts.value = [...pendingAttachmentDrafts.value, createPendingAttachment(file)];
+  emit('fileSelected', file);
+};
 
 const handleSubmit = (): void => {
   if (props.disabled || !canSubmit.value) {
@@ -271,6 +360,13 @@ const handlePrewarmIntent = (): void => {
 };
 
 const handleRemoveAttachment = (id: string): void => {
+  if (pendingAttachmentDrafts.value.some((attachment) => attachment.id === id)) {
+    pendingAttachmentDrafts.value = pendingAttachmentDrafts.value.filter(
+      (attachment) => attachment.id !== id,
+    );
+    return;
+  }
+
   emit('removeFile', id);
 };
 
@@ -292,7 +388,7 @@ const handleFileChange = (event: Event): void => {
     return;
   }
   for (const file of Array.from(fileList)) {
-    emit('fileSelected', file);
+    queueAttachmentFile(file);
   }
   input.value = '';
 };
@@ -317,7 +413,7 @@ const handlePaste = (event: ClipboardEvent): void => {
   }
   event.preventDefault();
   for (const file of pastedFiles) {
-    emit('fileSelected', file);
+    queueAttachmentFile(file);
   }
 };
 
@@ -342,8 +438,8 @@ const handleStop = (): void => {
     <FieldError v-if="errorMessage" class="ai-error" :message="errorMessage" />
     <form class="ai-composer-surface" v-bind="attrs" @submit.prevent="handleSubmit">
       <input ref="fileInputRef" type="file" class="hidden" multiple @change="handleFileChange" />
-      <div v-if="attachments.length" class="ai-attachments">
-        <PromptInputAttachmentsDisplay :attachments="attachments" @remove="handleRemoveAttachment" />
+      <div v-if="displayedAttachments.length" class="ai-attachments">
+        <PromptInputAttachmentsDisplay :attachments="displayedAttachments" @remove="handleRemoveAttachment" />
       </div>
       <InputGroup class="ai-prompt-shell">
         <InputGroupTextarea v-model="modelValue" class="ai-prompt-textarea" placeholder="使用 AI 处理各种任务..."
