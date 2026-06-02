@@ -1,5 +1,4 @@
 use super::*;
-use super::cli;
 use gix::bstr::ByteSlice;
 
 #[tauri::command]
@@ -67,11 +66,8 @@ pub fn checkout_git_branch(
     let repository_root = resolve_repository_root(&repository)?;
     assert_repository_is_clean_for_switch(&repository, "切换分支")?;
 
-    cli::run_git_ok(
-        &repository_root,
-        &["checkout", payload.branch_name.trim()],
-        "切换分支",
-    )?;
+    // 通过 gix 切换工作区 / 索引 / HEAD，避免依赖系统安装的 git（免装目标）。
+    checkout_to_target(&repository, &repository_root, payload.branch_name.trim())?;
 
     let repository = open_repository_from_root(&payload.repository_root_path)?;
     super::status::build_git_repository_status_payload(&repository)
@@ -109,7 +105,7 @@ pub fn create_git_branch(
         .map_err(|error| format!("创建分支失败：{branch_name}（{error}）"))?;
 
     if payload.checkout {
-        cli::run_git_ok(&repository_root, &["checkout", branch_name], "切换分支")?;
+        checkout_to_target(&repository, &repository_root, branch_name)?;
     }
 
     let repository = open_repository_from_root(&payload.repository_root_path)?;
@@ -267,4 +263,224 @@ pub(super) fn assert_repository_is_clean_for_switch(
         ));
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 基于 gix 的分支 / 提交切换实现（移除对系统安装 git 的依赖）。
+//
+// 前置条件：调用方已通过 `assert_repository_is_clean_for_switch` 确认工作区干净
+// （无暂存 / 未暂存 / 未跟踪改动），此时索引与工作区都等于 HEAD 树。这里只需把
+// 「HEAD 树 → 目标树」的差异应用到工作区与索引，再移动 HEAD 即可，既快又不会
+// 破坏未跟踪文件（干净前提下不存在未跟踪文件）。
+//
+// 下列 checkout_restore_worktree_blob / checkout_upsert_index_entry /
+// checkout_remove_index_path / checkout_recreate_symlink 与 status.rs 中的同名
+// 实现保持一致；因 Rust 模块私有可见性此处保留一份本地副本，修改时应同步两处。
+// ---------------------------------------------------------------------------
+
+fn checkout_to_target(
+    repository: &Repository,
+    repository_root: &Path,
+    target_name: &str,
+) -> Result<(), String> {
+    let target_name = target_name.trim();
+    if target_name.is_empty() {
+        return Err("切换目标不能为空。".into());
+    }
+
+    // 解析目标提交（用于分离 HEAD）与目标树。
+    let target_commit_id = repository
+        .rev_parse_single(target_name)
+        .map_err(|error| format!("解析切换目标失败：{target_name}（{error}）"))?
+        .detach();
+    let target_tree_id = repository
+        .rev_parse_single(format!("{target_name}^tree").as_str())
+        .map_err(|error| format!("解析目标树失败：{target_name}（{error}）"))?
+        .detach();
+
+    let old_tree = repository
+        .head_tree()
+        .map_err(|error| format!("读取 HEAD 树失败：{error}"))?;
+    let new_tree = repository
+        .find_tree(target_tree_id)
+        .map_err(|error| format!("读取目标树失败：{error}"))?;
+
+    let mut changes = repository
+        .diff_tree_to_tree(Some(&old_tree), Some(&new_tree), None)
+        .map_err(|error| format!("计算切换差异失败：{error}"))?;
+    // 先删除、后写入，避免「文件 ↔ 目录」互换时父目录冲突。
+    changes.sort_by_key(checkout_change_order);
+
+    let mut index = repository
+        .open_index()
+        .map_err(|error| format!("读取 Git 索引失败：{error}"))?;
+    for change in changes {
+        apply_checkout_change(repository, repository_root, &mut index, change)?;
+    }
+    index.sort_entries();
+    index
+        .write(gix::index::write::Options::default())
+        .map_err(|error| format!("写入 Git 索引失败：{error}"))?;
+
+    checkout_update_head(repository, target_name, target_commit_id)
+}
+
+/// 差异处理顺序：删除(0) → 重命名(1) → 新增/修改(2)。
+fn checkout_change_order(change: &gix::diff::tree_with_rewrites::Change) -> u8 {
+    use gix::diff::tree_with_rewrites::Change;
+    match change {
+        Change::Deletion { .. } => 0,
+        Change::Rewrite { .. } => 1,
+        _ => 2,
+    }
+}
+
+/// 把单条树差异应用到工作区与索引。
+fn apply_checkout_change(
+    repository: &Repository,
+    repository_root: &Path,
+    index: &mut gix::index::File,
+    change: gix::diff::tree_with_rewrites::Change,
+) -> Result<(), String> {
+    use gix::diff::tree_with_rewrites::Change;
+    use gix::index::entry::Mode;
+
+    match change {
+        Change::Addition { location, entry_mode, id, .. }
+        | Change::Modification { location, entry_mode, id, .. } => {
+            if entry_mode.is_tree() || entry_mode.is_commit() {
+                return Ok(());
+            }
+            let mode = if entry_mode.is_link() {
+                Mode::SYMLINK
+            } else if entry_mode.is_executable() {
+                Mode::FILE_EXECUTABLE
+            } else {
+                Mode::FILE
+            };
+            let path = location.to_str_lossy().into_owned();
+            checkout_restore_worktree_blob(repository, repository_root, &path, id, mode)?;
+            checkout_upsert_index_entry(index, &path, id, mode);
+        }
+        Change::Deletion { location, .. } => {
+            let path = location.to_str_lossy().into_owned();
+            checkout_remove_worktree_path(repository_root, &path);
+            checkout_remove_index_path(index, &path);
+        }
+        Change::Rewrite { source_location, location, entry_mode, id, .. } => {
+            let source = source_location.to_str_lossy().into_owned();
+            checkout_remove_worktree_path(repository_root, &source);
+            checkout_remove_index_path(index, &source);
+            if !(entry_mode.is_tree() || entry_mode.is_commit()) {
+                let mode = if entry_mode.is_link() {
+                    Mode::SYMLINK
+                } else if entry_mode.is_executable() {
+                    Mode::FILE_EXECUTABLE
+                } else {
+                    Mode::FILE
+                };
+                let path = location.to_str_lossy().into_owned();
+                checkout_restore_worktree_blob(repository, repository_root, &path, id, mode)?;
+                checkout_upsert_index_entry(index, &path, id, mode);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// 移动 HEAD：目标为本地分支则写符号引用（`ref: refs/heads/<name>`），
+/// 否则写入提交 ID 进入分离 HEAD。直接改写 `<git_dir>/HEAD`，避免依赖系统安装的 git。
+fn checkout_update_head(
+    repository: &Repository,
+    target_name: &str,
+    target_commit_id: gix::ObjectId,
+) -> Result<(), String> {
+    let local_ref = format!("refs/heads/{target_name}");
+    let is_local_branch = repository.rev_parse_single(local_ref.as_str()).is_ok();
+    let content = if is_local_branch {
+        format!("ref: {local_ref}\n")
+    } else {
+        format!("{target_commit_id}\n")
+    };
+    let head_path = repository.git_dir().join("HEAD");
+    fs::write(&head_path, content).map_err(|error| format!("更新 HEAD 失败：{error}"))
+}
+
+/// 从工作区删除某路径（忽略不存在的情况）。
+fn checkout_remove_worktree_path(repository_root: &Path, relative_path: &str) {
+    let target_path = repository_root.join(Path::new(relative_path));
+    if fs::symlink_metadata(&target_path).is_ok() {
+        let _ = fs::remove_file(&target_path);
+    }
+}
+
+/// 将对象库中的 blob 写回工作区文件（含符号链接与可执行位处理）。
+fn checkout_restore_worktree_blob(
+    repository: &Repository,
+    repository_root: &Path,
+    relative_path: &str,
+    object_id: gix::ObjectId,
+    mode: gix::index::entry::Mode,
+) -> Result<(), String> {
+    use gix::index::entry::Mode;
+    let object = repository
+        .find_object(object_id)
+        .map_err(|error| format!("读取 Git 对象失败：{error}"))?;
+    let bytes = object.data.as_slice();
+    let target_path = repository_root.join(Path::new(relative_path));
+    if let Some(parent) = target_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| format!("创建目录失败：{error}"))?;
+    }
+    if mode == Mode::SYMLINK {
+        let link_target = String::from_utf8_lossy(bytes).into_owned();
+        checkout_recreate_symlink(&target_path, &link_target)?;
+    } else {
+        if fs::symlink_metadata(&target_path).is_ok() {
+            let _ = fs::remove_file(&target_path);
+        }
+        fs::write(&target_path, bytes).map_err(|error| format!("写入工作区文件失败：{error}"))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if mode == Mode::FILE_EXECUTABLE {
+                let _ = fs::set_permissions(&target_path, fs::Permissions::from_mode(0o755));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// 插入或替换 stage-0 的索引条目（先移除同路径旧条目）。
+fn checkout_upsert_index_entry(
+    index: &mut gix::index::File,
+    relative_path: &str,
+    object_id: gix::ObjectId,
+    mode: gix::index::entry::Mode,
+) {
+    use gix::index::entry::{Flags, Stat};
+    checkout_remove_index_path(index, relative_path);
+    let path = gix::bstr::BStr::new(relative_path.as_bytes());
+    // path-length 存放于 flags 低 12 位（上限 0xFFF），stage 为 0。
+    let flags = Flags::from_bits_retain(relative_path.len().min(0xFFF) as _);
+    index.dangerously_push_entry(Stat::default(), object_id, flags, mode, path);
+}
+
+/// 从索引移除某路径的所有条目（含各冲突阶段）。
+fn checkout_remove_index_path(index: &mut gix::index::File, relative_path: &str) {
+    index.remove_entries(|_, entry_path, _| entry_path.to_str_lossy().as_ref() == relative_path);
+}
+
+#[cfg(unix)]
+fn checkout_recreate_symlink(target_path: &Path, link_target: &str) -> Result<(), String> {
+    let _ = fs::remove_file(target_path);
+    std::os::unix::fs::symlink(link_target, target_path)
+        .map_err(|error| format!("创建符号链接失败：{error}"))
+}
+
+#[cfg(windows)]
+fn checkout_recreate_symlink(target_path: &Path, link_target: &str) -> Result<(), String> {
+    // Windows 下退化为写入链接目标文本，避免符号链接权限问题。
+    let _ = fs::remove_file(target_path);
+    fs::write(target_path, link_target.as_bytes())
+        .map_err(|error| format!("写入符号链接占位失败：{error}"))
 }

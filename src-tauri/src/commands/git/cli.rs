@@ -41,6 +41,9 @@ pub(super) fn spawn_git(
         .map_err(|error| format!("执行 {operation_label} 失败：{error}"))
 }
 
+// 注：自 stash 列表/明细改用 gix 后，run_git_text 仅在系统 git 仍为更优解时备用，
+// 当前可能无调用方；保留以便后续命令复用，并以 allow(dead_code) 抑制未使用告警。
+#[allow(dead_code)]
 pub(super) fn run_git_text(
     repository_root: &Path,
     args: &[&str],
