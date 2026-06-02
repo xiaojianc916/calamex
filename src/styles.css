@@ -5502,11 +5502,11 @@ button:disabled,
   }
 }
 
-/* === 自定义窗口圆角（professional fix v2）=====================
- * 只让最外层 .app-window-shell 画一条圆角弧线；
- * 标题栏按钮/容器自身圆角清零(--window-corner-radius:0)，
- * 红色铺成方块由外层统一裁剪，彻底消除内外两条弧之间的白边。
- * 想改圆角大小，只改下面 .app-window-shell 的 10px。
+/* === 自定义窗口圆角（professional fix v3）=====================
+ * 已确认 src-tauri 未设置窗口圆角策略，Windows 11 默认按系统
+ * 圆角(约8px)裁剪窗口；CSS 不要再画第二层圆角，否则两套壳半径
+ * 不一致会在四角露底。
+ * 做法：CSS 内容铺成方块，圆角完全交给系统那一层统一裁剪。
  * =========================================================== */
 html,
 body,
@@ -5514,11 +5514,6 @@ body,
 .app-root-stage,
 .app-surface {
   background: transparent !important;
-}
-
-.app-window-shell {
-  border-radius: 10px;
-  overflow: hidden;
 }
 
 :root {
