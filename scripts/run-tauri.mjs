@@ -509,10 +509,7 @@ const sidecarDir = path.join(rootDir, 'agent-sidecar');
 const bundledNodeExeName = process.platform === 'win32' ? 'node.exe' : 'node';
 const bundledNodePath = path.join(rootDir, 'src-tauri', 'resources-bundle', 'node', bundledNodeExeName);
 
-const resolveSidecarTsc = () => [
-    path.join(sidecarDir, 'node_modules', 'typescript', 'bin', 'tsc'),
-    path.join(rootDir, 'node_modules', 'typescript', 'bin', 'tsc'),
-].find((candidate) => existsSync(candidate)) ?? null;
+const sidecarBuildScript = path.join(sidecarDir, 'build.mjs');
 
 // dev 下预编译 agent-sidecar -> dist/server.js，运行时直接 node dist/server.js，
 // 不再依赖 tsx（tsx 在 Node 26 下解析入口会塌成盘符 D: 而崩溃）。
@@ -521,14 +518,13 @@ const ensureSidecarBuilt = () => {
         return;
     }
 
-    const tscScript = resolveSidecarTsc();
-    if (!tscScript) {
-        console.warn('[run-tauri] 未找到 agent-sidecar 的 TypeScript，跳过 sidecar 预编译；请先执行 pnpm install。');
+    if (!existsSync(sidecarBuildScript)) {
+        console.warn('[run-tauri] 未找到 agent-sidecar/build.mjs，跳过 sidecar 预编译；请先执行 pnpm install。');
         return;
     }
 
     console.log('[run-tauri] 预编译 agent-sidecar -> dist/server.js ...');
-    const result = spawnSync(process.execPath, [tscScript, '-p', 'tsconfig.build.json'], {
+    const result = spawnSync(process.execPath, [sidecarBuildScript], {
         cwd: sidecarDir,
         stdio: 'inherit',
         shell: false,
