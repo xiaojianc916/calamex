@@ -168,6 +168,26 @@ fn list_git_branches_returns_current_branch_after_init() -> Result<(), String> {
 }
 
 #[test]
+fn list_git_branches_skips_invalid_loose_reference() -> Result<(), String> {
+    let temp = TempGitDir::new("branches-invalid-ref")?;
+    let _repo = temp.init_repository()?;
+    let root = temp.repository_root()?;
+    write_worktree_file(&temp.path, "src/app.sh", "echo base\n")?;
+    commit_via_cli(&temp.path, "feat: initial")?;
+    // 模拟被误放进 .git/refs 下的杂项文件（内容不是合法引用），
+    // 例如脚本文件 untitled.sh，复现「读取 Git 分支失败」警告。
+    let invalid_ref_path = temp.path.join(".git").join("refs").join("untitled.sh");
+    if let Some(parent) = invalid_ref_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    fs::write(&invalid_ref_path, "#!/bin/sh\necho not a ref\n").map_err(|e| e.to_string())?;
+    // 分支列表应跳过无效引用而不报错，且仍能返回当前分支。
+    let branches = list_git_branches(GitRepositoryRootRequest { repository_root_path: root.to_string_lossy().to_string() })?;
+    assert!(branches.branches.iter().any(|b| b.is_current));
+    Ok(())
+}
+
+#[test]
 fn git_commit_history_pagination() -> Result<(), String> {
     let temp = TempGitDir::new("history-pagination")?;
     let _repo = temp.init_repository()?;
