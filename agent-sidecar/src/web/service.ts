@@ -139,18 +139,27 @@ const ensureMcpSuccess = (value: unknown, fallbackMessage: string): string => {
 let sharedBundlePromise: Promise<TMcpBundle> | null = null
 let shutdownHookRegistered = false
 
+/**
+ * 断开 web 搜索使用的共享 tavily MCP bundle。
+ * 既被进程信号钩子调用，也可由 sidecar 的统一优雅关闭显式 await，
+ * 确保关闭流程结束前 tavily 子进程已被回收，不留孤儿。
+ */
+export const disposeWebService = async (): Promise<void> => {
+  const pending = sharedBundlePromise
+  sharedBundlePromise = null
+  if (!pending) return
+  await pending.then(
+    (bundle) => bundle.disconnectAll().catch(() => undefined),
+    () => undefined,
+  )
+}
+
 const registerShutdownHook = (): void => {
   if (shutdownHookRegistered || typeof process === 'undefined') return
   shutdownHookRegistered = true
 
   const dispose = (): void => {
-    const pending = sharedBundlePromise
-    sharedBundlePromise = null
-    if (!pending) return
-    void pending.then(
-      (bundle) => bundle.disconnectAll().catch(() => undefined),
-      () => undefined,
-    )
+    void disposeWebService()
   }
 
   process.once('beforeExit', dispose)

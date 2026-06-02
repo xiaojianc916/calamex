@@ -772,6 +772,10 @@ export class McpGatewayWarmPool {
     this.listAllInflight.clear();
     await Promise.all(entries.map(async (entry) => {
       this.clearIdleTimer(entry);
+      // 等待在途创建完成：否则刚创建好的 bundle（含 MCP 子进程）会脱离 entries map 成为孤儿。
+      if (entry.creating) {
+        await entry.creating.catch(() => undefined);
+      }
       await entry.bundle?.disconnectAll().catch(() => undefined);
     }));
   }
