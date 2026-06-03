@@ -145,17 +145,9 @@ export const useAiAgentPlan = () => {
 
       const usageResolution = resolveSidecarOfficialUsage(payload);
       if (usageResolution.resolved && usageResolution.usage) {
-        // TODO: resolveSidecarOfficialUsage 返回的 usage 中 inputTokenDetails /
-        // outputTokenDetails 是 optional(`| undefined`),而 store.setLatestOfficialUsage
-        // 期望的参数把它们标成了 required。两侧类型对齐前用 Parameters<> 显式 cast,
-        // 避免污染全局 any 类型。修复方案待定:
-        //   (a) 让 resolveSidecarOfficialUsage 在 resolved 分支返回 narrowed 类型,
-        //       inputTokenDetails / outputTokenDetails 收紧为 required(配合默认值 0)
-        //   (b) 让 setLatestOfficialUsage 参数改成 Partial 或把这两个字段改 optional
-        // 推荐 (a),让 store 端拿到的总是完整 usage,UI 不需要 ?? 0 守卫。
-        store.setLatestOfficialUsage(
-          usageResolution.usage as Parameters<typeof store.setLatestOfficialUsage>[0],
-        );
+        // usageResolution.usage 与 setLatestOfficialUsage 参数同为
+        // IAiLanguageModelUsage,守卫内已窄化为非空,直接传入即类型安全,无需 cast。
+        store.setLatestOfficialUsage(usageResolution.usage);
       }
 
       const projection = projectSidecarPlanResponse(payload, goal);
