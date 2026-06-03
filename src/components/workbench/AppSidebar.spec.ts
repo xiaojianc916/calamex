@@ -1,8 +1,22 @@
 import { flushPromises, mount } from '@vue/test-utils';
 import { createPinia } from 'pinia';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { IEditorDocument, IWorkspaceDirectoryPayload } from '@/types/editor';
 import AppSidebar from './AppSidebar.vue';
+
+const asyncPanelStub = (name: string) => ({
+  default: { name, render: () => null },
+});
+
+vi.mock('@/components/workbench/SshSidebarPanel.vue', () => asyncPanelStub('SshSidebarPanel'));
+vi.mock('@/components/workbench/SearchSidebarPanel.vue', () =>
+  asyncPanelStub('SearchSidebarPanel'),
+);
+vi.mock('@/components/workbench/RunSidebarPanel.vue', () => asyncPanelStub('RunSidebarPanel'));
+vi.mock('@/components/workbench/SourceControlPanel.vue', () =>
+  asyncPanelStub('SourceControlPanel'),
+);
+vi.mock('@/components/common/LinearContextMenu.vue', () => asyncPanelStub('LinearContextMenu'));
 
 const documentFixture: IEditorDocument = {
   id: 'doc-1',

@@ -1,6 +1,6 @@
 import { flushPromises, mount } from '@vue/test-utils';
 import MarkdownRender from 'markstream-vue';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { nextTick } from 'vue';
 import AiMarkdown from '@/components/business/ai/chat/AiMarkdown.vue';
 import AiMarkdownCodeBlock from '@/components/business/ai/chat/AiMarkdownCodeBlock.vue';
@@ -50,6 +50,13 @@ describe('AiMarkdown rendering', () => {
       streamStatus: 'completed',
     });
     await flushRender();
+    await vi.waitFor(
+      () => {
+        expect(wrapper.text()).toContain('后文');
+        expect(wrapper.text()).toContain('done');
+      },
+      { timeout: 2000, interval: 50 },
+    );
 
     expect(wrapper.text()).toContain('后文');
     expect(wrapper.text()).toContain('done');

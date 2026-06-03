@@ -28,7 +28,10 @@ describe('AiErrorNotice', () => {
 
   it('点击时复制完整报错信息', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.assign(navigator, { clipboard: { writeText } });
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
 
     const longMessage = `${'错误详情 '.repeat(40)}END`;
     const wrapper = mount(AiErrorNotice, { props: { message: longMessage } });

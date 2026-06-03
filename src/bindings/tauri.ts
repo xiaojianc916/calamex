@@ -63,6 +63,19 @@ export const commands = {
 	unstageGitPaths: (payload: GitPathOperationRequest) => __TAURI_INVOKE<GitRepositoryStatusPayload>("unstage_git_paths", { payload }),
 	commitGitIndex: (payload: GitCommitRequest) => __TAURI_INVOKE<GitCommitResultPayload>("commit_git_index", { payload }),
 	discardGitPaths: (payload: GitPathOperationRequest) => __TAURI_INVOKE<GitRepositoryStatusPayload>("discard_git_paths", { payload }),
+	testSshConnection: (payload: SshConnectionTestRequest) => __TAURI_INVOKE<SshConnectionTestPayload>("test_ssh_connection", { payload }),
+	trustSshHostKey: (host: string, port: number) => __TAURI_INVOKE<SshHostKeyTrustPayload>("trust_ssh_host_key", { host, port }),
+	saveSshPassword: (payload: SshPasswordSaveRequest) => __TAURI_INVOKE<SshPasswordStatusPayload>("save_ssh_password", { payload }),
+	getSshPassword: (payload: SshPasswordGetRequest) => __TAURI_INVOKE<SshPasswordPayload>("get_ssh_password", { payload }),
+	listSshConfigHosts: () => __TAURI_INVOKE<SshConfigHostPayload[]>("list_ssh_config_hosts"),
+	listSshDirectory: (payload: SshDirectoryListRequest) => __TAURI_INVOKE<SshDirectoryListPayload>("list_ssh_directory", { payload }),
+	downloadSshFile: (payload: SshFileDownloadRequest) => __TAURI_INVOKE<SshFileDownloadPayload>("download_ssh_file", { payload }),
+	uploadSshFile: (payload: SshFileUploadRequest) => __TAURI_INVOKE<SshFileUploadPayload>("upload_ssh_file", { payload }),
+	readSshFile: (payload: SshFileReadRequest) => __TAURI_INVOKE<SshFileReadPayload>("read_ssh_file", { payload }),
+	writeSshFile: (payload: SshFileWriteRequest) => __TAURI_INVOKE<SshFileWritePayload>("write_ssh_file", { payload }),
+	deleteSshPath: (payload: SshPathDeleteRequest) => __TAURI_INVOKE<SshPathDeletePayload>("delete_ssh_path", { payload }),
+	renameSshPath: (payload: SshPathRenameRequest) => __TAURI_INVOKE<SshPathRenamePayload>("rename_ssh_path", { payload }),
+	createSshDirectory: (payload: SshDirectoryCreateRequest) => __TAURI_INVOKE<SshDirectoryCreatePayload>("create_ssh_directory", { payload }),
 };
 
 /** Events */
@@ -376,12 +389,207 @@ export type ScriptFilePayload = {
 	charCount: number,
 };
 
+export type SecretString = string;
+
 export type SetWindowBackgroundInput = {
 	label?: string | null,
 	r: number,
 	g: number,
 	b: number,
 	a?: number,
+};
+
+export type SshConfigHostPayload = {
+	id: string,
+	name: string,
+	username: string,
+	host: string,
+	port: number,
+	identityPath: string | null,
+	lastUsedLabel: string,
+};
+
+export type SshConnectionTestPayload = {
+	ok: boolean,
+	/**  已知值："ok" | "auth-failed" | "host-unreachable" | "timeout" | …。 */
+	code: string,
+	message: string,
+};
+
+export type SshConnectionTestRequest = {
+	host: string,
+	port: number,
+	username: string,
+	/**  已知值："password" | "key" | "agent"。 */
+	authMode: string,
+	identityPath: string | null,
+	password: SecretString | null,
+};
+
+export type SshDirectoryCreatePayload = {
+	remotePath: string,
+};
+
+export type SshDirectoryCreateRequest = {
+	host: string,
+	port: number,
+	username: string,
+	authMode: string,
+	identityPath: string | null,
+	password: SecretString | null,
+	remoteDirectory: string,
+};
+
+export type SshDirectoryEntryPayload = {
+	name: string,
+	path: string,
+	/**  已知值："file" | "directory" | "symlink"。 */
+	kind: string,
+	size: number | null,
+};
+
+export type SshDirectoryListPayload = {
+	path: string,
+	entries: SshDirectoryEntryPayload[],
+};
+
+export type SshDirectoryListRequest = {
+	host: string,
+	port: number,
+	username: string,
+	authMode: string,
+	identityPath: string | null,
+	password: SecretString | null,
+	path: string,
+};
+
+export type SshFileDownloadPayload = {
+	remotePath: string,
+	localPath: string,
+	byteSize: number | null,
+};
+
+export type SshFileDownloadRequest = {
+	host: string,
+	port: number,
+	username: string,
+	authMode: string,
+	identityPath: string | null,
+	password: SecretString | null,
+	remotePath: string,
+	localPath: string,
+};
+
+export type SshFileReadPayload = {
+	remotePath: string,
+	content: string,
+	byteSize: number | null,
+	encoding: string,
+	lineCount: number | null,
+	lineEnding: string,
+	permission: string,
+	owner: string,
+	modifiedAt: string | null,
+};
+
+export type SshFileReadRequest = {
+	host: string,
+	port: number,
+	username: string,
+	authMode: string,
+	identityPath: string | null,
+	password: SecretString | null,
+	remotePath: string,
+};
+
+export type SshFileUploadPayload = {
+	localPath: string,
+	remotePath: string,
+	byteSize: number | null,
+};
+
+export type SshFileUploadRequest = {
+	host: string,
+	port: number,
+	username: string,
+	authMode: string,
+	identityPath: string | null,
+	password: SecretString | null,
+	localPath: string,
+	remoteDirectory: string,
+};
+
+export type SshFileWritePayload = {
+	remotePath: string,
+	byteSize: number | null,
+};
+
+export type SshFileWriteRequest = {
+	host: string,
+	port: number,
+	username: string,
+	authMode: string,
+	identityPath: string | null,
+	password: SecretString | null,
+	remotePath: string,
+	content: string,
+	encoding: string,
+	lineEnding: string,
+};
+
+export type SshHostKeyTrustPayload = {
+	trusted: boolean,
+};
+
+export type SshPasswordGetRequest = {
+	host: string,
+	port: number,
+	username: string,
+};
+
+export type SshPasswordPayload = {
+	password: string,
+};
+
+export type SshPasswordSaveRequest = {
+	host: string,
+	port: number,
+	username: string,
+	password: SecretString,
+};
+
+export type SshPasswordStatusPayload = {
+	hasPassword: boolean,
+};
+
+export type SshPathDeletePayload = {
+	remotePath: string,
+};
+
+export type SshPathDeleteRequest = {
+	host: string,
+	port: number,
+	username: string,
+	authMode: string,
+	identityPath: string | null,
+	password: SecretString | null,
+	remotePath: string,
+};
+
+export type SshPathRenamePayload = {
+	oldPath: string,
+	newPath: string,
+};
+
+export type SshPathRenameRequest = {
+	host: string,
+	port: number,
+	username: string,
+	authMode: string,
+	identityPath: string | null,
+	password: SecretString | null,
+	remotePath: string,
+	newName: string,
 };
 
 export type TerminalInputRequest = {
