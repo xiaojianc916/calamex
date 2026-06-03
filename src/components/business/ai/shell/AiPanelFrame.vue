@@ -62,10 +62,10 @@ withDefaults(
   position: relative;
   display: flex;
   flex: 0 0 auto;
-  height: 40px;
+  min-height: 52px;
   align-items: center;
   gap: 8px;
-  padding: 0 8px 0 12px;
+  padding: 12px 18px 10px;
   color: var(--text-secondary);
   font-size: 12px;
   font-weight: 500;

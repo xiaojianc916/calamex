@@ -216,11 +216,6 @@ type="button" class="ai-icon-button ai-right-sidebar-toggle-btn" aria-label="收
     background: #ffffff;
 }
 
-:deep(.ai-panel-header) {
-    min-height: 52px;
-    padding: 12px 18px 10px;
-}
-
 :deep(.ai-composer-shell) {
     background: #ffffff;
 }
