@@ -1,8 +1,8 @@
-mod agent;
-mod edit;
-mod gateway;
+pub(crate) mod agent;
+pub(crate) mod edit;
+pub(crate) mod gateway;
 mod storage;
-mod tools;
+pub(crate) mod tools;
 pub mod tools_generated;
 
 pub use agent::{ai_agent_classify_task, ai_agent_set_network_permission};

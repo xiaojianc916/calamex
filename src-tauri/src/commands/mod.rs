@@ -1,5 +1,5 @@
-mod agent_sidecar;
-mod ai;
+pub(crate) mod agent_sidecar;
+pub(crate) mod ai;
 pub(crate) mod contracts;
 pub(crate) mod git;
 pub(crate) mod script_run;

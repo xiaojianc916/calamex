@@ -6,6 +6,7 @@ use crate::commands::contracts::{
 };
 
 #[tauri::command]
+#[specta::specta]
 pub async fn ai_agent_classify_task(
     payload: AiAgentClassifyTaskRequest,
 ) -> Result<AiAgentClassifyTaskPayload, String> {
@@ -13,6 +14,7 @@ pub async fn ai_agent_classify_task(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn ai_agent_set_network_permission(
     payload: AiAgentSetNetworkPermissionRequest,
 ) -> Result<AiAgentNetworkPermissionPayload, String> {

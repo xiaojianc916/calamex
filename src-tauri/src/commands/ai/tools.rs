@@ -6,6 +6,7 @@ use crate::commands::contracts::{
 };
 
 #[tauri::command]
+#[specta::specta]
 pub async fn ai_web_search(payload: AiWebSearchInput) -> Result<AiWebSearchPayload, String> {
     audit::emit(AiAuditEventKind::AgentWebSearchRequested);
     if redact_text(payload.query.trim()).blocked {
@@ -32,6 +33,7 @@ pub async fn ai_web_search(payload: AiWebSearchInput) -> Result<AiWebSearchPaylo
 }
 
 #[tauri::command]
+#[specta::specta]
 pub async fn ai_web_fetch(payload: AiWebFetchInput) -> Result<AiWebFetchPayload, String> {
     audit::emit(AiAuditEventKind::AgentWebFetchRequested);
     if let Err(error) = validate_public_http_url(&payload.url) {
