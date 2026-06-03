@@ -1260,47 +1260,6 @@ const aiEditRevertTaskIpc = definePayloadIpc(
   { audit: 'sensitive', timeoutMs: 30_000 },
 );
 
-const ensureTerminalSessionIpc = definePayloadIpc(
-  'ensure_terminal_session',
-  '连接 WSL2 终端',
-  tauriContracts.ensureTerminalSession,
-);
-
-const dispatchScriptToTerminalIpc = definePayloadIpc(
-  'dispatch_script_to_terminal',
-  '在终端中执行脚本',
-  tauriContracts.dispatchScriptToTerminal,
-  { measureInput: measureScriptContentInput },
-);
-
-const writeTerminalInputIpc = definePayloadIpc(
-  'write_terminal_input',
-  '写入终端输入',
-  tauriContracts.writeTerminalInput,
-  { audit: 'none' },
-);
-
-const resizeTerminalSessionIpc = definePayloadIpc(
-  'resize_terminal_session',
-  '同步终端尺寸',
-  tauriContracts.resizeTerminalSession,
-  { audit: 'none' },
-);
-
-const closeTerminalSessionIpc = definePayloadIpc(
-  'close_terminal_session',
-  '关闭终端会话',
-  tauriContracts.closeTerminalSession,
-  { audit: 'sensitive' },
-);
-
-const cancelTerminalRunIpc = definePayloadIpc(
-  'cancel_terminal_run',
-  '取消终端脚本运行',
-  tauriContracts.cancelTerminalRun,
-  { audit: 'sensitive' },
-);
-
 export const tauriService: ITauriService & {
   pickOpenPath(): Promise<string | null>;
   pickAnyOpenPath(): Promise<string | null>;
@@ -1625,17 +1584,84 @@ export const tauriService: ITauriService & {
 
   getGitPullRequestSupport: getGitPullRequestSupportIpc,
 
-  ensureTerminalSession: ensureTerminalSessionIpc,
+  ensureTerminalSession(payload) {
+    return callSpectaCommand(
+      {
+        command: 'ensure_terminal_session',
+        guardHint: '连接 WSL2 终端',
+        input: payload,
+      },
+      () => commands.ensureTerminalSession(payload),
+    );
+  },
 
-  dispatchScriptToTerminal: dispatchScriptToTerminalIpc,
+  dispatchScriptToTerminal(payload) {
+    return callSpectaCommand(
+      {
+        command: 'dispatch_script_to_terminal',
+        guardHint: '在终端中执行脚本',
+        input: payload,
+        measureInput: measureScriptContentInput,
+      },
+      () => commands.dispatchScriptToTerminal(payload),
+    );
+  },
 
-  writeTerminalInput: writeTerminalInputIpc,
+  writeTerminalInput(payload) {
+    return callSpectaCommand<void>(
+      {
+        command: 'write_terminal_input',
+        guardHint: '写入终端输入',
+        audit: 'none',
+        input: payload,
+      },
+      async () => {
+        await commands.writeTerminalInput(payload);
+      },
+    );
+  },
 
-  resizeTerminalSession: resizeTerminalSessionIpc,
+  resizeTerminalSession(payload) {
+    return callSpectaCommand<void>(
+      {
+        command: 'resize_terminal_session',
+        guardHint: '同步终端尺寸',
+        audit: 'none',
+        input: payload,
+      },
+      async () => {
+        await commands.resizeTerminalSession(payload);
+      },
+    );
+  },
 
-  closeTerminalSession: closeTerminalSessionIpc,
+  closeTerminalSession(payload) {
+    return callSpectaCommand<void>(
+      {
+        command: 'close_terminal_session',
+        guardHint: '关闭终端会话',
+        audit: 'sensitive',
+        input: payload,
+      },
+      async () => {
+        await commands.closeTerminalSession(payload);
+      },
+    );
+  },
 
-  cancelTerminalRun: cancelTerminalRunIpc,
+  cancelTerminalRun(payload) {
+    return callSpectaCommand<void>(
+      {
+        command: 'cancel_terminal_run',
+        guardHint: '取消终端脚本运行',
+        audit: 'sensitive',
+        input: payload,
+      },
+      async () => {
+        await commands.cancelTerminalRun({ runId: payload.runId, mode: payload.mode ?? null });
+      },
+    );
+  },
 
   testSshConnection: testSshConnectionWithHostKeyPrompt,
 
@@ -1689,59 +1715,3 @@ export const tauriService: ITauriService & {
     await assertDesktopRuntime('监听 AI 流式响应');
     const { listen } = await loadTauriEvent();
     return listen('ai:chat-stream', (event) => {
-      const parsed = aiChatStreamEventPayloadSchema.safeParse(event.payload);
-      if (!parsed.success) {
-        return;
-      }
-      handler(parsed.data);
-    });
-  },
-
-  async onAgentSidecarStream(handler) {
-    await assertDesktopRuntime('监听 Agent sidecar 流式事件');
-    const { listen } = await loadTauriEvent();
-    return listen('ai:sidecar-stream', (event) => {
-      const parsed = agentSidecarStreamEventPayloadSchema.safeParse(event.payload);
-      if (!parsed.success) {
-        return;
-      }
-      handler(parsed.data);
-    });
-  },
-
-  aiInlineComplete: aiInlineCompleteIpc,
-
-  aiAgentClassifyTask: aiAgentClassifyTaskIpc,
-
-  aiAgentSetNetworkPermission: aiAgentSetNetworkPermissionIpc,
-
-  aiWebSearch: aiWebSearchIpc,
-
-  aiWebFetch: aiWebFetchIpc,
-
-  aiProposePatch: aiProposePatchIpc,
-
-  aiApplyPatch: aiApplyPatchIpc,
-
-  aiEditGetAuthLevel: () => aiEditGetAuthLevelIpc(undefined),
-
-  aiEditSetAuthLevel: aiEditSetAuthLevelIpc,
-
-  aiEditListTimeline: aiEditListTimelineIpc,
-
-  aiEditCreateSnapshot: aiEditCreateSnapshotIpc,
-
-  aiEditSetPin: aiEditSetPinIpc,
-
-  aiEditGetDiff: aiEditGetDiffIpc,
-
-  aiEditRestoreSnapshot: aiEditRestoreSnapshotIpc,
-
-  aiEditUndoOperation: aiEditUndoOperationIpc,
-
-  aiEditRevertFile: aiEditRevertFileIpc,
-
-  aiEditRevertHunk: aiEditRevertHunkIpc,
-
-  aiEditRevertTask: aiEditRevertTaskIpc,
-};

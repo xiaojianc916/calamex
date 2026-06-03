@@ -198,54 +198,6 @@ const gitPullRequestSupportPayloadSchema = z.object({
   createPullRequestUrl: z.string().nullable(),
 });
 
-const terminalSessionPayloadSchema = z.object({
-  sessionId: z.string(),
-  cwd: z.string(),
-  shellLabel: z.string(),
-  created: z.boolean(),
-  initialOutput: z.string().nullable().optional(),
-});
-
-const terminalSessionPayloadSnakeSchema = z
-  .object({
-    session_id: z.string(),
-    cwd: z.string(),
-    shell_label: z.string(),
-    created: z.boolean(),
-    initial_output: z.string().nullable().optional(),
-  })
-  .transform((value) => ({
-    sessionId: value.session_id,
-    cwd: value.cwd,
-    shellLabel: value.shell_label,
-    created: value.created,
-    initialOutput: value.initial_output,
-  }));
-
-const dispatchTerminalScriptPayloadSchema = z.object({
-  sessionId: z.string(),
-  cwd: z.string(),
-  commandLine: z.string(),
-  usedTempFile: z.boolean(),
-  startedAt: z.string(),
-});
-
-const dispatchTerminalScriptPayloadSnakeSchema = z
-  .object({
-    session_id: z.string(),
-    cwd: z.string(),
-    command_line: z.string(),
-    used_temp_file: z.boolean(),
-    started_at: z.string(),
-  })
-  .transform((value) => ({
-    sessionId: value.session_id,
-    cwd: value.cwd,
-    commandLine: value.command_line,
-    usedTempFile: value.used_temp_file,
-    startedAt: value.started_at,
-  }));
-
 export const tauriContracts = {
   agentSidecarHealth: {
     inSchema: z.void(),
@@ -723,56 +675,5 @@ export const tauriContracts = {
   aiEditRevertTask: {
     inSchema: aiEditRevertTaskRequestSchema,
     outSchema: aiEditRevertTaskPayloadSchema,
-  },
-  ensureTerminalSession: {
-    inSchema: z.object({
-      sessionId: z.string(),
-      cwd: z.string().nullable(),
-      cols: z.number().int().min(1),
-      rows: z.number().int().min(1),
-    }),
-    outSchema: z.union([terminalSessionPayloadSchema, terminalSessionPayloadSnakeSchema]),
-  },
-  dispatchScriptToTerminal: {
-    inSchema: z.object({
-      sessionId: z.string(),
-      path: z.string().nullable(),
-      workspaceRootPath: z.string().nullable().optional(),
-      content: z.string(),
-      isDirty: z.boolean(),
-      runId: z.string(),
-    }),
-    outSchema: z.union([
-      dispatchTerminalScriptPayloadSchema,
-      dispatchTerminalScriptPayloadSnakeSchema,
-    ]),
-  },
-  writeTerminalInput: {
-    inSchema: z.object({
-      sessionId: z.string(),
-      data: z.string(),
-    }),
-    outSchema: zTauriVoid,
-  },
-  resizeTerminalSession: {
-    inSchema: z.object({
-      sessionId: z.string(),
-      cols: z.number().int().min(1),
-      rows: z.number().int().min(1),
-    }),
-    outSchema: zTauriVoid,
-  },
-  closeTerminalSession: {
-    inSchema: z.object({
-      sessionId: z.string(),
-    }),
-    outSchema: zTauriVoid,
-  },
-  cancelTerminalRun: {
-    inSchema: z.object({
-      runId: z.string(),
-      mode: z.enum(['graceful', 'kill']).optional(),
-    }),
-    outSchema: zTauriVoid,
   },
 } as const;
