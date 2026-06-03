@@ -258,13 +258,15 @@ const cancelUiFlush = (handle: TUiFlushHandle | null): void => {
   clearTimeout(handle.id);
 };
 
-// message_delta 下发的是「累计完整文本」快照而非增量片段；下游用前缀 diff 揭示，
-// 故合并时取最新一条完整文本，不拼接（拼接会重复，如 AB+ABC=ABABC）。
+// message_delta 下发的是「增量片段」而非累计完整文本，因此同一 phase 的多条 delta 必须按
+// 到达顺序拼接，才能得到完整文本。若只取最新一条会丢失先前内容，表现为文字一段段闪现替换、
+// 最后由 done 事件一次性补全（即最初的流式 bug）。
 const mergeMessageDeltaText = (
-  _existing: Extract<TAgentUiEvent, { type: 'message_delta' }>,
+  existing: Extract<TAgentUiEvent, { type: 'message_delta' }>,
   incoming: Extract<TAgentUiEvent, { type: 'message_delta' }>,
 ): Extract<TAgentUiEvent, { type: 'message_delta' }> => ({
   ...incoming,
+  text: `${existing.text}${incoming.text}`,
 });
 
 export const createSidecarLiveEventBuffer = (
@@ -287,7 +289,7 @@ export const createSidecarLiveEventBuffer = (
     const existingEvent = existingIndex !== undefined ? events[existingIndex] : undefined;
 
     if (existingIndex !== undefined && existingEvent?.type === 'message_delta') {
-      // 取最新累计快照,而非拼接:保证保留的 events 中该 phase 的 message_delta 始终是完整文本。
+      // 按到达顺序拼接增量片段：保证保留的 events 中该 phase 的 message_delta 始终是完整累计文本。
       events[existingIndex] = mergeMessageDeltaText(existingEvent, event);
       return;
     }
@@ -309,7 +311,7 @@ export const createSidecarLiveEventBuffer = (
     if (existingIndex >= 0) {
       const existingEvent = pendingEvents[existingIndex];
 
-      // 同一帧内多条 message_delta 同样取最新累计文本,避免重复。
+      // 同一帧内多条 message_delta 同样按到达顺序拼接，得到该帧的完整增量。
       pendingEvents[existingIndex] =
         existingEvent?.type === 'message_delta'
           ? mergeMessageDeltaText(existingEvent, event)
