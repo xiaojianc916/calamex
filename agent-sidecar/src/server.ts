@@ -648,7 +648,7 @@ export const createAgentSidecarServer = (
           throw new Error('当前 runtime 不支持原生编排 workflow。');
         }
         const workflow = runtime.buildPlanOrchestrationWorkflow(payload.modelConfig);
-        const run = await workflow.createRunAsync();
+        const run = await workflow.createRun();
         // 首切片：跑到首个 suspend 或终态，返回 workflow 结果。
         // 跨 HTTP 请求的 suspend/resume 流式留给 Phase 2b。
         return run.start({
