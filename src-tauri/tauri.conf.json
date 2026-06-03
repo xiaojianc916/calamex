@@ -7,7 +7,7 @@
   "build": {
     "beforeDevCommand": "pnpm run dev",
     "beforeBuildCommand": "pnpm run build",
-    "beforeBundleCommand": "node_modules/.bin/tsx scripts/prepare-bundle-resources.ts",
+    "beforeBundleCommand": "tsx scripts/prepare-bundle-resources.ts",
     "devUrl": "http://localhost:1420",
     "frontendDist": "../dist"
   },

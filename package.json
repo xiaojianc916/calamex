@@ -8,10 +8,10 @@
     "node": ">=26"
   },
   "scripts": {
-    "check:env": "node_modules/.bin/tsx scripts/check-dev-env.ts",
-    "generate:shell-catalog": "node_modules/.bin/tsx scripts/generate-shell-command-catalog.ts",
+    "check:env": "tsx scripts/check-dev-env.ts",
+    "generate:shell-catalog": "tsx scripts/generate-shell-command-catalog.ts",
     "dev": "pnpm run generate:shell-catalog && vite --host 0.0.0.0 --port 1420",
-    "pretauri:dev": "node_modules/.bin/tsx scripts/check-dev-env.ts",
+    "pretauri:dev": "tsx scripts/check-dev-env.ts",
     "build": "pnpm run generate:shell-catalog && vue-tsc --noEmit && vite build",
     "preview": "vite preview",
     "format": "biome check --write src/",
@@ -22,10 +22,10 @@
     "test:e2e": "playwright test",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "guard": "node_modules/.bin/tsx scripts/run-all-guards.ts",
-    "tauri": "node_modules/.bin/tsx scripts/run-tauri.ts",
-    "tauri:dev": "node_modules/.bin/tsx scripts/run-tauri.ts dev",
-    "tauri:build": "node_modules/.bin/tsx scripts/run-tauri.ts build",
+    "guard": "tsx scripts/run-all-guards.ts",
+    "tauri": "tsx scripts/run-tauri.ts",
+    "tauri:dev": "tsx scripts/run-tauri.ts dev",
+    "tauri:build": "tsx scripts/run-tauri.ts build",
     "prepare": "lefthook install"
   },
   "dependencies": {
