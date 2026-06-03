@@ -8,12 +8,12 @@ use std::{
 };
 
 mod cli;
-mod branches;
-mod diff;
-mod history;
-mod pull_request;
-mod stash;
-mod status;
+pub(crate) mod branches;
+pub(crate) mod diff;
+pub(crate) mod history;
+pub(crate) mod pull_request;
+pub(crate) mod stash;
+pub(crate) mod status;
 
 #[cfg(test)]
 mod tests;
@@ -35,7 +35,7 @@ const MAX_GIT_HISTORY_LIMIT: usize = 200;
 
 type Repository = gix::Repository;
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct GitCommitSummaryPayload {
     id: String,
@@ -45,7 +45,7 @@ pub struct GitCommitSummaryPayload {
     authored_at: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct GitCommitHistoryRequest {
     repository_root_path: String,
@@ -53,7 +53,7 @@ pub struct GitCommitHistoryRequest {
     limit: Option<usize>,
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct GitCommitHistoryPayload {
     entries: Vec<GitCommitSummaryPayload>,
@@ -61,7 +61,7 @@ pub struct GitCommitHistoryPayload {
     next_offset: Option<usize>,
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct GitBranchPayload {
     name: String,
@@ -75,26 +75,26 @@ pub struct GitBranchPayload {
     last_commit: Option<GitCommitSummaryPayload>,
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct GitBranchListPayload {
     branches: Vec<GitBranchPayload>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct GitRepositoryRootRequest {
     repository_root_path: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct GitBranchCheckoutRequest {
     repository_root_path: String,
     branch_name: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct GitBranchCreateRequest {
     repository_root_path: String,
@@ -102,7 +102,7 @@ pub struct GitBranchCreateRequest {
     checkout: bool,
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct GitFileStatusPayload {
     path: String,
@@ -116,7 +116,7 @@ pub struct GitFileStatusPayload {
     is_untracked: bool,
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct GitRepositoryStatusPayload {
     available: bool,
@@ -139,7 +139,7 @@ pub struct GitRepositoryStatusPayload {
     last_commit: Option<GitCommitSummaryPayload>,
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct GitFileBaselinePayload {
     available: bool,
@@ -151,7 +151,7 @@ pub struct GitFileBaselinePayload {
     content: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct GitDiffPreviewRequest {
     repository_root_path: String,
@@ -159,7 +159,7 @@ pub struct GitDiffPreviewRequest {
     mode: String,
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct GitDiffPreviewPayload {
     id: String,
@@ -178,14 +178,14 @@ struct GitDiffContentPair {
     modified_content: String,
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct GitCommitResultPayload {
     status: GitRepositoryStatusPayload,
     commit_id: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct GitCommitRequest {
     repository_root_path: String,
@@ -193,14 +193,14 @@ pub struct GitCommitRequest {
     paths: Vec<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct GitPathOperationRequest {
     repository_root_path: String,
     paths: Vec<String>,
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct GitStashEntryPayload {
     index: usize,
@@ -215,7 +215,7 @@ pub struct GitStashEntryPayload {
     files: Vec<GitStashFilePayload>,
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct GitStashFilePayload {
     relative_path: String,
@@ -226,13 +226,13 @@ pub struct GitStashFilePayload {
     deletions: u32,
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct GitStashListPayload {
     entries: Vec<GitStashEntryPayload>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct GitStashSaveRequest {
     repository_root_path: String,
@@ -240,7 +240,7 @@ pub struct GitStashSaveRequest {
     include_untracked: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct GitStashApplyRequest {
     repository_root_path: String,
@@ -248,14 +248,14 @@ pub struct GitStashApplyRequest {
     pop: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct GitStashDropRequest {
     repository_root_path: String,
     stash_index: usize,
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct GitPullRequestSupportPayload {
     available: bool,
@@ -384,11 +384,11 @@ fn path_to_forward_slashes(path: &Path) -> String {
 fn normalize_path_for_git(path: &Path) -> PathBuf {
     let value = path.to_string_lossy();
 
-    if let Some(stripped) = value.strip_prefix(r"\\?\UNC\") {
+    if let Some(stripped) = value.strip_prefix(r"\\?\UNC\\") {
         return PathBuf::from(format!(r"\\{stripped}"));
     }
 
-    if let Some(stripped) = value.strip_prefix(r"\\?\") {
+    if let Some(stripped) = value.strip_prefix(r"\\?\\") {
         return PathBuf::from(stripped.to_string());
     }
 

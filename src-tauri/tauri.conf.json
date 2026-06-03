@@ -7,7 +7,7 @@
   "build": {
     "beforeDevCommand": "pnpm run dev",
     "beforeBuildCommand": "pnpm run build",
-    "beforeBundleCommand": "node ./scripts/prepare-bundle-resources.mjs",
+    "beforeBundleCommand": "node_modules/.bin/tsx scripts/prepare-bundle-resources.ts",
     "devUrl": "http://localhost:1420",
     "frontendDist": "../dist"
   },
@@ -85,7 +85,6 @@
       "icons/android/mipmap-hdpi/ic_launcher_round.png",
       "icons/android/mipmap-xhdpi/ic_launcher_round.png",
       "icons/android/mipmap-xxhdpi/ic_launcher_round.png",
-      "icons/android/mipmap-xxxhdpi/ic_launcher_round.png",
       "icons/android/mipmap-mdpi/ic_launcher_foreground.png",
       "icons/android/mipmap-hdpi/ic_launcher_foreground.png",
       "icons/android/mipmap-xhdpi/ic_launcher_foreground.png",
