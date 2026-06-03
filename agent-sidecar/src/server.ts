@@ -39,7 +39,7 @@ export const SIDECAR_PROTOCOL_VERSION = '7';
 export const SIDECAR_IMPLEMENTATION_VERSION = 'deepseek-reasoning-transport-v6-plan-history';
 
 // Phase 2b：内存中保留的「已挂起、等待审批 resume」编排 run 的最长存活时间。
-// 超时未 resume 则回收，避免长跑 sidecar 永久持有被放弃的 run。
+// 超时未 resume 则回收，避免长负 sidecar 永久持有被放弃的 run。
 const ORCHESTRATION_RUN_TTL_MS = 30 * 60 * 1000;
 
 // committed orchestration workflow 的 run 实例类型（createRun 可能同步或异步返回，统一 Awaited）。
@@ -205,10 +205,12 @@ export const agentSidecarOrchestrateRequestSchema = z.object({
 });
 
 // Phase 2b：恢复一个被计划审批门挂起的编排 run（需携带 start 返回的 runId）。
+// Phase 3b：modelConfig 可选：内存未命中需从快照重建 run 时，用它传递请求级模型。
 export const agentSidecarOrchestrateResumeRequestSchema = z.object({
   runId: requiredNonEmptyStringSchema,
   decision: z.enum(['approve', 'reject']),
   reason: optionalNonEmptyStringSchema,
+  modelConfig: requestScopedModelConfigSchema.optional(),
 });
 
 // -----------------------------------------------------------------------
@@ -446,7 +448,7 @@ export const createAgentSidecarServer = (
   const runtime = options.runtime ?? createConfiguredRuntime();
 
   // Phase 2b：挂起中的编排 run 注册表。sidecar 是长跑进程，同一进程内保留 run
-  // 实例即可跨 HTTP 请求 resume，无需依赖 storage 跨进程重建（对齐 pendingApprovals 模式）。
+  // 实例即可跨 HTTP 请求 resume；跨进程 / 回收后则由 Phase 3b 从 libsql 快照重建。
   const orchestrationRuns = new Map<string, TPlanOrchestrationRun>();
   const orchestrationRunTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -715,9 +717,16 @@ export const createAgentSidecarServer = (
       }
       void handlePlainPost(request, response, async (body) => {
         const payload = agentSidecarOrchestrateResumeRequestSchema.parse(body);
-        const run = orchestrationRuns.get(payload.runId);
+        // Phase 3b：先查内存快路径；未命中（进程重启 / TTL 回收）时，借助 Phase 3a
+        // 已落 libsql 的快照，用 createRun({ runId }) 重建同一 run 再 resume。
+        let run = orchestrationRuns.get(payload.runId);
         if (!run) {
-          throw new Error('未找到对应的编排 run（可能已完成、已被拒绝或已超时回收）。');
+          if (typeof runtime.buildPlanOrchestrationWorkflow !== 'function') {
+            throw new Error('当前 runtime 不支持原生编排 workflow。');
+          }
+          const workflow = runtime.buildPlanOrchestrationWorkflow(payload.modelConfig);
+          // 同 runId 的 createRun 会从 storage 的 'workflows' 域 rehydrate 已挂起快照。
+          run = await workflow.createRun({ runId: payload.runId });
         }
         // approval-gate 步骤的 resumeSchema = { decision, reason? }。
         const result = await run.resume({
@@ -727,9 +736,12 @@ export const createAgentSidecarServer = (
             ...(payload.reason ? { reason: payload.reason } : {}),
           },
         });
-        // 理论上本 workflow 只在 approval-gate 挂起一次；非 suspended 即终态，回收 run。
+        // 本 workflow 只在 approval-gate 挂起一次：非 suspended 即终态，回收 run；
+        // 若仍 suspended（防御性），重新登记内存供下次 resume。
         if (result.status !== 'suspended') {
           forgetOrchestrationRun(payload.runId);
+        } else {
+          rememberOrchestrationRun(payload.runId, run);
         }
         return { runId: payload.runId, result };
       });
