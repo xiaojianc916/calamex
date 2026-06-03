@@ -80,9 +80,8 @@
                     'is-snap-maximize': terminalDragIntent === 'maximize',
                     'is-snap-close': terminalDragIntent === 'close',
                   }" role="separator" aria-orientation="horizontal" @pointerdown="startTerminalDrag">
-                    <span v-if="isTerminalDragging && terminalDragIntent !== 'resize'" class="terminal-resize-hint">
-                       terminalDragIntent === 'maximize' ? '松开即可全屏' : '松开即可关闭终端' 
-                    </span>
+                    <span v-if="isTerminalDragging && terminalDragIntent !== 'resize'" class="terminal-resize-hint"
+                      v-text="terminalDragIntent === 'maximize' ? '松开即可全屏' : '松开即可关闭终端'"></span>
                   </div>
 
                   <div class="min-h-0 overflow-hidden" :style="{ height: terminalHeight + 'px' }">
