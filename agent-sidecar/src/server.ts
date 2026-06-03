@@ -12,6 +12,7 @@ import {
 } from './engines/contracts/runtime-contracts.js';
 import type { IAgentRuntimeInput, TAgentMode } from './engines/contracts/runtime-input.js';
 import { createConfiguredRuntime, type IAgentSidecarRuntime } from './engines/runtime.js';
+import type { TPlanOrchestrationWorkflow } from './engines/plan/orchestration-workflow.js';
 import type { TAgentSidecarResponse } from './schemas/events.js';
 import { agentSidecarResponseSchema } from './schemas/events.js';
 import { getMcpRuntimeStatus } from './tools/mcp.js';
@@ -36,6 +37,13 @@ const MAX_REQUEST_BYTES = 2 * 1024 * 1024;
 const DEFAULT_RUNTIME_TIMEOUT_MS = 30 * 60 * 1000;
 export const SIDECAR_PROTOCOL_VERSION = '7';
 export const SIDECAR_IMPLEMENTATION_VERSION = 'deepseek-reasoning-transport-v6-plan-history';
+
+// Phase 2b：内存中保留的「已挂起、等待审批 resume」编排 run 的最长存活时间。
+// 超时未 resume 则回收，避免长跑 sidecar 永久持有被放弃的 run。
+const ORCHESTRATION_RUN_TTL_MS = 30 * 60 * 1000;
+
+// committed orchestration workflow 的 run 实例类型（createRun 可能同步或异步返回，统一 Awaited）。
+type TPlanOrchestrationRun = Awaited<ReturnType<TPlanOrchestrationWorkflow['createRun']>>;
 
 // -----------------------------------------------------------------------
 // 基础 schema 工具
@@ -194,6 +202,13 @@ export const agentSidecarOrchestrateRequestSchema = z.object({
   goal: requiredNonEmptyStringSchema,
   threadId: optionalNonEmptyStringSchema,
   modelConfig: requestScopedModelConfigSchema.optional(),
+});
+
+// Phase 2b：恢复一个被计划审批门挂起的编排 run（需携带 start 返回的 runId）。
+export const agentSidecarOrchestrateResumeRequestSchema = z.object({
+  runId: requiredNonEmptyStringSchema,
+  decision: z.enum(['approve', 'reject']),
+  reason: optionalNonEmptyStringSchema,
 });
 
 // -----------------------------------------------------------------------
@@ -430,6 +445,32 @@ export const createAgentSidecarServer = (
 ) => {
   const runtime = options.runtime ?? createConfiguredRuntime();
 
+  // Phase 2b：挂起中的编排 run 注册表。sidecar 是长跑进程，同一进程内保留 run
+  // 实例即可跨 HTTP 请求 resume，无需依赖 storage 跨进程重建（对齐 pendingApprovals 模式）。
+  const orchestrationRuns = new Map<string, TPlanOrchestrationRun>();
+  const orchestrationRunTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+  const forgetOrchestrationRun = (runId: string): void => {
+    orchestrationRuns.delete(runId);
+    const timer = orchestrationRunTimers.get(runId);
+    if (timer) {
+      clearTimeout(timer);
+      orchestrationRunTimers.delete(runId);
+    }
+  };
+
+  const rememberOrchestrationRun = (runId: string, run: TPlanOrchestrationRun): void => {
+    orchestrationRuns.set(runId, run);
+    const existing = orchestrationRunTimers.get(runId);
+    if (existing) {
+      clearTimeout(existing);
+    }
+    const timer = setTimeout(() => forgetOrchestrationRun(runId), ORCHESTRATION_RUN_TTL_MS);
+    // 不让悬挂的回收计时器阻止进程退出。
+    timer.unref?.();
+    orchestrationRunTimers.set(runId, timer);
+  };
+
   // /agent/chat, /agent/chat/stream, /model/chat and /model/chat/stream all
   // share this exact handler; the streaming vs non-streaming difference is
   // handled by the surrounding handlePost / handlePostStream wrapper.
@@ -648,12 +689,49 @@ export const createAgentSidecarServer = (
           throw new Error('当前 runtime 不支持原生编排 workflow。');
         }
         const workflow = runtime.buildPlanOrchestrationWorkflow(payload.modelConfig);
-        const run = await workflow.createRun();
-        // 首切片：跑到首个 suspend 或终态，返回 workflow 结果。
-        // 跨 HTTP 请求的 suspend/resume 流式留给 Phase 2b。
-        return run.start({
+        // 自发 runId，避免依赖 run.runId 的实现细节（createRun({ runId }) 与 rollback 路径一致）。
+        const runId = randomUUID();
+        const run = await workflow.createRun({ runId });
+        rememberOrchestrationRun(runId, run);
+        // 首切片：跑到审批门 suspend 或终态。suspended 时保留 run 供后续 resume。
+        const result = await run.start({
           inputData: { goal: payload.goal, threadId: payload.threadId ?? null },
         });
+        if (result.status !== 'suspended') {
+          forgetOrchestrationRun(runId);
+        }
+        return { runId, result };
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && url === '/agent/plan/orchestrate/resume') {
+      // Phase 2b：恢复被计划审批门挂起的编排 run。同样默认关闭。
+      if (process.env.AGENT_ORCHESTRATION_WORKFLOW !== '1') {
+        writeJson(response, 404, {
+          error: '未知 sidecar 路由。',
+        });
+        return;
+      }
+      void handlePlainPost(request, response, async (body) => {
+        const payload = agentSidecarOrchestrateResumeRequestSchema.parse(body);
+        const run = orchestrationRuns.get(payload.runId);
+        if (!run) {
+          throw new Error('未找到对应的编排 run（可能已完成、已被拒绝或已超时回收）。');
+        }
+        // approval-gate 步骤的 resumeSchema = { decision, reason? }。
+        const result = await run.resume({
+          step: 'approval-gate',
+          resumeData: {
+            decision: payload.decision,
+            ...(payload.reason ? { reason: payload.reason } : {}),
+          },
+        });
+        // 理论上本 workflow 只在 approval-gate 挂起一次；非 suspended 即终态，回收 run。
+        if (result.status !== 'suspended') {
+          forgetOrchestrationRun(payload.runId);
+        }
+        return { runId: payload.runId, result };
       });
       return;
     }
