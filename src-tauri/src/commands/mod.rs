@@ -7,7 +7,7 @@ pub(crate) mod search;
 pub(crate) mod shell_tools;
 mod ssh;
 pub(crate) mod ssh_pool;
-mod terminal;
+pub(crate) mod terminal;
 pub(crate) mod window;
 pub(crate) mod window_stage;
 pub(crate) mod workspace_fs;

@@ -6,7 +6,7 @@
 //! - `events`：终端事件发射与状态机转移。
 //! - `tests`：单元测试。
 
-mod commands;
+pub(crate) mod commands;
 mod events;
 mod state;
 #[cfg(test)]
