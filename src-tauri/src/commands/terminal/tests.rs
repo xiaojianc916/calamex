@@ -15,7 +15,9 @@ use crate::terminal::{
     wsl as terminal_wsl,
 };
 
-use super::events::{next_terminal_data_seq, next_terminal_run_chunk_seq};
+use super::events::{
+    next_terminal_data_seq, next_terminal_run_chunk_seq, sanitize_terminal_run_chunk,
+};
 use super::state::{
     append_terminal_snapshot, buffer_pending_switch_input, clear_active_terminal_run,
     get_active_terminal_run_input_target, get_terminal_snapshot,
@@ -303,4 +305,45 @@ fn dirty_script_dispatch_keeps_inline_content_for_local_wsl() {
     assert_eq!(script_content.as_deref(), Some(payload.content.as_str()));
     assert!(command.used_temp_file);
     assert_eq!(command.cleanup_paths, vec![command.execution_path.clone()]);
+}
+
+#[test]
+fn run_chunk_strips_leading_conpty_screen_clear_on_first_output() {
+    let cleaned = sanitize_terminal_run_chunk("\x1b[2J\x1b[H\x1b[3;1Hclimate report\r\n", false);
+    assert_eq!(cleaned, "climate report\r\n");
+}
+
+#[test]
+fn run_chunk_strips_repeated_wsl_diagnostic_banner() {
+    let raw = "wsl: 检测到 localhost 代理配置，但未镜像到 WSL。\r\nclimate report\r\n";
+    let cleaned = sanitize_terminal_run_chunk(raw, false);
+    assert_eq!(cleaned, "climate report\r\n");
+}
+
+#[test]
+fn run_chunk_keeps_plain_output_and_dollar_signs() {
+    let raw = "total price is $5\n";
+    assert_eq!(sanitize_terminal_run_chunk(raw, true), raw);
+    assert_eq!(sanitize_terminal_run_chunk(raw, false), raw);
+}
+
+#[test]
+fn run_chunk_does_not_strip_leading_newline_without_control_prefix() {
+    // 脚本自身的前导空行必须保留（没有屏幕初始化控制序列时不处理）。
+    let raw = "\r\nfirst real line\r\n";
+    assert_eq!(sanitize_terminal_run_chunk(raw, false), raw);
+}
+
+#[test]
+fn run_chunk_preserves_alt_screen_entry_for_tui_programs() {
+    // 进入 alt-screen 的 TUI（如 vim）首字节是 ?1049h，不应被当作屏幕初始化剥除。
+    let raw = "\x1b[?1049h\x1b[2J\x1b[Hvim ui";
+    assert_eq!(sanitize_terminal_run_chunk(raw, false), raw);
+}
+
+#[test]
+fn run_chunk_banner_strip_only_targets_line_start() {
+    // 行中出现 "wsl:" 不应被删除（仅整行以 wsl: 开头才视作横幅）。
+    let raw = "see docs at wsl: not a banner\r\n";
+    assert_eq!(sanitize_terminal_run_chunk(raw, true), raw);
 }
