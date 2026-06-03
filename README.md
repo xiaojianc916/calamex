@@ -176,7 +176,7 @@
 - **Rust** 工具链（通过 [rustup](https://rustup.rs)）
 - WSL 内建议具备 `shellcheck`、`shfmt`、`bash-language-server` 以获得完整体验
 
-> 国内网络环境下，建议在 `.cargo/config.toml` 配置 rsproxy 镜像，并设置 `git-fetch-with-cli = true` 以规避 Windows 下的 TLS 握手问题。`pnpm tauri:dev` 启动前会自动运行 `scripts/check-dev-env.mjs` 进行环境自检。
+> 国内网络环境下，建议在 `.cargo/config.toml` 配置 rsproxy 镜像，并设置 `git-fetch-with-cli = true` 以规避 Windows 下的 TLS 握手问题。`pnpm tauri:dev` 启动前会自动运行 `scripts/check-dev-env.ts` 进行环境自检。
 
 ## 快速开始
 

@@ -384,11 +384,11 @@ fn path_to_forward_slashes(path: &Path) -> String {
 fn normalize_path_for_git(path: &Path) -> PathBuf {
     let value = path.to_string_lossy();
 
-    if let Some(stripped) = value.strip_prefix(r"\\?\UNC\\") {
+    if let Some(stripped) = value.strip_prefix(r"\\?\UNC\") {
         return PathBuf::from(format!(r"\\{stripped}"));
     }
 
-    if let Some(stripped) = value.strip_prefix(r"\\?\\") {
+    if let Some(stripped) = value.strip_prefix(r"\\?\") {
         return PathBuf::from(stripped.to_string());
     }
 

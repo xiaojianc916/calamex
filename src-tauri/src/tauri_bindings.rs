@@ -1,6 +1,6 @@
 use crate::commands::terminal::commands as terminal_commands;
 use crate::commands::{
-    script_run, search, shell_tools, window, window_stage, workspace_fs, workspace_watcher,
+    git, script_run, search, shell_tools, window, window_stage, workspace_fs, workspace_watcher,
 };
 use specta_typescript::Typescript;
 use std::path::PathBuf;
@@ -39,6 +39,24 @@ pub fn builder() -> Builder<tauri::Wry> {
             terminal_commands::close_terminal_session,
             terminal_commands::dispatch_script_to_terminal,
             terminal_commands::cancel_terminal_run,
+            // ↓↓↓ git：从手写 Zod 契约迁入 specta 生成轨（用模块限定路径以解析配套宏）↓↓↓
+            git::branches::list_git_branches,
+            git::branches::checkout_git_branch,
+            git::branches::create_git_branch,
+            git::diff::get_git_diff_preview,
+            git::history::list_git_commit_history,
+            git::pull_request::get_git_pull_request_support,
+            git::stash::list_git_stashes,
+            git::stash::save_git_stash,
+            git::stash::apply_git_stash,
+            git::stash::drop_git_stash,
+            git::status::get_git_repository_status,
+            git::status::init_git_repository,
+            git::status::get_git_file_baseline,
+            git::status::stage_git_paths,
+            git::status::unstage_git_paths,
+            git::status::commit_git_index,
+            git::status::discard_git_paths,
         ])
 }
 

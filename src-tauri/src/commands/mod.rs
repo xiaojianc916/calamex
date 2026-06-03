@@ -1,7 +1,7 @@
 mod agent_sidecar;
 mod ai;
 pub(crate) mod contracts;
-mod git;
+pub(crate) mod git;
 pub(crate) mod script_run;
 pub(crate) mod search;
 pub(crate) mod shell_tools;
