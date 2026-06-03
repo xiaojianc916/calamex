@@ -221,21 +221,23 @@ async fn run_shfmt(
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .stderr(Stdio::piped())
+        // 超时分支会随 future 一并 drop 掉 child；开启 kill_on_drop 确保 shfmt
+        // 子进程被回收，不残留孤儿进程。
+        .kill_on_drop(true);
 
     let mut child = command
         .spawn()
         .map_err(|error| format!("启动 shfmt 失败：{error}"))?;
 
+    // 并发写入 stdin：大脚本下 shfmt 的格式化输出可能先写满 stdout 管道缓冲而阻塞，
+    // 若此时仍在串行写 stdin 便会双向死锁。将写入放入独立任务，与读取输出并发。
     if let Some(mut stdin) = child.stdin.take() {
-        stdin
-            .write_all(content.as_bytes())
-            .await
-            .map_err(|error| format!("写入 shfmt 输入失败：{error}"))?;
-        stdin
-            .shutdown()
-            .await
-            .map_err(|error| format!("关闭 shfmt 输入失败：{error}"))?;
+        let input = content.as_bytes().to_vec();
+        tokio::spawn(async move {
+            let _ = stdin.write_all(&input).await;
+            let _ = stdin.shutdown().await;
+        });
     }
 
     let output = match timeout(SHFMT_TIMEOUT, child.wait_with_output()).await {

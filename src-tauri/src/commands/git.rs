@@ -353,10 +353,36 @@ fn resolve_relative_path(repository_root: &Path, path: &Path) -> Result<PathBuf,
     };
     let path_candidate = normalize_path_for_git(&path_candidate);
 
-    path_candidate
-        .strip_prefix(repository_root)
-        .map(Path::to_path_buf)
-        .map_err(|_| "目标文件超出当前 Git 仓库根目录。".to_string())
+    strip_repository_prefix(repository_root, &path_candidate)
+        .ok_or_else(|| "目标文件超出当前 Git 仓库根目录。".to_string())
+}
+
+/// 在仓库根之下求相对路径。Windows 文件系统大小写不敏感，盘符或目录大小写与仓库根
+/// 记录不一致时仍应判定为「仓库内」，故按组件逐级比较，而非区分大小写的 `strip_prefix`。
+fn strip_repository_prefix(repository_root: &Path, candidate: &Path) -> Option<PathBuf> {
+    let mut root_components = repository_root.components();
+    let mut candidate_components = candidate.components();
+    loop {
+        match root_components.next() {
+            None => return Some(candidate_components.as_path().to_path_buf()),
+            Some(root_component) => {
+                let candidate_component = candidate_components.next()?;
+                if !path_components_match(root_component, candidate_component) {
+                    return None;
+                }
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+fn path_components_match(left: Component<'_>, right: Component<'_>) -> bool {
+    left.as_os_str().eq_ignore_ascii_case(right.as_os_str())
+}
+
+#[cfg(not(windows))]
+fn path_components_match(left: Component<'_>, right: Component<'_>) -> bool {
+    left == right
 }
 
 fn resolve_pathspecs(repository_root: &Path, paths: &[String]) -> Result<Vec<String>, String> {
