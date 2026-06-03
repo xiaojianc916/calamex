@@ -1715,3 +1715,59 @@ export const tauriService: ITauriService & {
     await assertDesktopRuntime('监听 AI 流式响应');
     const { listen } = await loadTauriEvent();
     return listen('ai:chat-stream', (event) => {
+      const parsed = aiChatStreamEventPayloadSchema.safeParse(event.payload);
+      if (!parsed.success) {
+        return;
+      }
+      handler(parsed.data);
+    });
+  },
+
+  async onAgentSidecarStream(handler) {
+    await assertDesktopRuntime('监听 Agent sidecar 流式事件');
+    const { listen } = await loadTauriEvent();
+    return listen('ai:sidecar-stream', (event) => {
+      const parsed = agentSidecarStreamEventPayloadSchema.safeParse(event.payload);
+      if (!parsed.success) {
+        return;
+      }
+      handler(parsed.data);
+    });
+  },
+
+  aiInlineComplete: aiInlineCompleteIpc,
+
+  aiAgentClassifyTask: aiAgentClassifyTaskIpc,
+
+  aiAgentSetNetworkPermission: aiAgentSetNetworkPermissionIpc,
+
+  aiWebSearch: aiWebSearchIpc,
+
+  aiWebFetch: aiWebFetchIpc,
+
+  aiProposePatch: aiProposePatchIpc,
+
+  aiApplyPatch: aiApplyPatchIpc,
+
+  aiEditGetAuthLevel: () => aiEditGetAuthLevelIpc(undefined),
+
+  aiEditSetAuthLevel: aiEditSetAuthLevelIpc,
+
+  aiEditListTimeline: aiEditListTimelineIpc,
+
+  aiEditCreateSnapshot: aiEditCreateSnapshotIpc,
+
+  aiEditSetPin: aiEditSetPinIpc,
+
+  aiEditGetDiff: aiEditGetDiffIpc,
+
+  aiEditRestoreSnapshot: aiEditRestoreSnapshotIpc,
+
+  aiEditUndoOperation: aiEditUndoOperationIpc,
+
+  aiEditRevertFile: aiEditRevertFileIpc,
+
+  aiEditRevertHunk: aiEditRevertHunkIpc,
+
+  aiEditRevertTask: aiEditRevertTaskIpc,
+};
