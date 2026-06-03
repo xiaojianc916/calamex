@@ -51,8 +51,10 @@ export class MastraRuntime extends MastraRuntimeApproval {
             storage: this.storage as never,
         });
 
+        // workflow 值 as never 会使 getWorkflowById 的参数联合塌缩为 never，
+        // 给实参加 as never（纯编译期，运行时传真实 id）解除。
         return mastra.getWorkflowById(
-            PLAN_ORCHESTRATION_WORKFLOW_ID,
+            PLAN_ORCHESTRATION_WORKFLOW_ID as never,
         ) as unknown as TPlanOrchestrationWorkflow;
     }
 
