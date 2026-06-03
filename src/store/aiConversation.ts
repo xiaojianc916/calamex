@@ -174,10 +174,7 @@ const trimThreads = (
   // (例如 hydrate 到超过 LIMIT 条的历史时)落在最近 N 个之外, 都不能被裁掉,
   // 否则会静默丢失用户正在查看的会话并把 active 重置到最新线程。
   // (空白-active 行为向后兼容: 空线程本就不在 non-empty 结果中, 同样被追加。)
-  if (
-    activeThread &&
-    !trimmedNonEmptyThreads.some((thread) => thread.id === activeThread.id)
-  ) {
+  if (activeThread && !trimmedNonEmptyThreads.some((thread) => thread.id === activeThread.id)) {
     return [...trimmedNonEmptyThreads, activeThread];
   }
   return trimmedNonEmptyThreads;
@@ -247,7 +244,7 @@ const ensureActiveThread = (
  *
  * 仅在严格 parse 失败后作为兜底调用, parse 成功路径行为不变。
  */
-const salvageHydratedThreads = (
+export const salvageHydratedThreads = (
   rawThreads: unknown,
   rawActiveThreadId: unknown,
 ): IAiConversationPersistShape | null => {

@@ -5,6 +5,7 @@ use super::*;
 // 等价于 `git log`（最新在前）。时间取自 Info.commit_time（提交时间，秒）。
 
 #[tauri::command]
+#[specta::specta]
 pub fn list_git_commit_history(
     payload: GitCommitHistoryRequest,
 ) -> Result<GitCommitHistoryPayload, String> {

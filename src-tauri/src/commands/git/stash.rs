@@ -3,6 +3,7 @@ use super::cli;
 use gix::bstr::ByteSlice;
 
 #[tauri::command]
+#[specta::specta]
 pub fn list_git_stashes(payload: GitRepositoryRootRequest) -> Result<GitStashListPayload, String> {
     let repository = open_repository_from_root(&payload.repository_root_path)?;
 
@@ -40,6 +41,7 @@ pub fn list_git_stashes(payload: GitRepositoryRootRequest) -> Result<GitStashLis
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn save_git_stash(payload: GitStashSaveRequest) -> Result<GitRepositoryStatusPayload, String> {
     let repository = open_repository_from_root(&payload.repository_root_path)?;
     let repository_root = resolve_repository_root(&repository)?;
@@ -62,6 +64,7 @@ pub fn save_git_stash(payload: GitStashSaveRequest) -> Result<GitRepositoryStatu
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn apply_git_stash(payload: GitStashApplyRequest) -> Result<GitRepositoryStatusPayload, String> {
     let repository = open_repository_from_root(&payload.repository_root_path)?;
     let repository_root = resolve_repository_root(&repository)?;
@@ -77,6 +80,7 @@ pub fn apply_git_stash(payload: GitStashApplyRequest) -> Result<GitRepositorySta
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn drop_git_stash(payload: GitStashDropRequest) -> Result<GitRepositoryStatusPayload, String> {
     let repository = open_repository_from_root(&payload.repository_root_path)?;
     drop_stash_by_index(&repository, payload.stash_index)?;

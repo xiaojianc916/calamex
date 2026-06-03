@@ -2,6 +2,7 @@ use super::*;
 use gix::bstr::ByteSlice;
 
 #[tauri::command]
+#[specta::specta]
 pub fn list_git_branches(
     payload: GitRepositoryRootRequest,
 ) -> Result<GitBranchListPayload, String> {
@@ -59,6 +60,7 @@ pub fn list_git_branches(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn checkout_git_branch(
     payload: GitBranchCheckoutRequest,
 ) -> Result<GitRepositoryStatusPayload, String> {
@@ -74,6 +76,7 @@ pub fn checkout_git_branch(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn create_git_branch(
     payload: GitBranchCreateRequest,
 ) -> Result<GitRepositoryStatusPayload, String> {

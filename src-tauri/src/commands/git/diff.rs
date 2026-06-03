@@ -10,6 +10,7 @@ impl GitDiffMode {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn get_git_diff_preview(payload: GitDiffPreviewRequest) -> Result<GitDiffPreviewPayload, String> {
     let repository = open_repository_from_root(&payload.repository_root_path)?;
     let repository_root = resolve_repository_root(&repository)?;

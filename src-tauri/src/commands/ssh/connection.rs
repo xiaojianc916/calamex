@@ -292,6 +292,12 @@ async fn open_sftp_once(params: &SshConnectionParams) -> Result<SftpConnection, 
 
 fn russh_error_is_connection_level(err: &russh::Error) -> bool {
     use std::error::Error as StdError;
+    // russh 0.61 的 Error::IO 用 #[error(transparent)] 包裹 std::io::Error：
+    // 其 source() 会转发到内层 io::Error 的 source()（通常为 None），从而“跳过”
+    // io::Error 本体，导致下面的 source 链遍历取不到它。故先对 IO 变体直接取内层判定。
+    if let russh::Error::IO(io) = err {
+        return io_error_is_connection_level(io);
+    }
     let mut current: Option<&(dyn StdError + 'static)> = Some(err);
     while let Some(e) = current {
         if let Some(io) = e.downcast_ref::<std::io::Error>() {

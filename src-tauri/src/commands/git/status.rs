@@ -3,6 +3,7 @@ use crate::commands::workspace_fs::workspace_name;
 use gix::bstr::ByteSlice;
 
 #[tauri::command]
+#[specta::specta]
 pub fn get_git_repository_status(
     workspace_root_path: Option<String>,
 ) -> Result<GitRepositoryStatusPayload, String> {
@@ -14,6 +15,7 @@ pub fn get_git_repository_status(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn init_git_repository(
     workspace_root_path: Option<String>,
 ) -> Result<GitRepositoryStatusPayload, String> {
@@ -29,6 +31,7 @@ pub fn init_git_repository(
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn get_git_file_baseline(path: String) -> Result<GitFileBaselinePayload, String> {
     let file_path = normalize_path_for_git(Path::new(&path));
     let discovery_root = file_path.parent().unwrap_or(file_path.as_path());
@@ -43,6 +46,7 @@ pub fn get_git_file_baseline(path: String) -> Result<GitFileBaselinePayload, Str
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn stage_git_paths(payload: GitPathOperationRequest) -> Result<GitRepositoryStatusPayload, String> {
     let repository = open_repository_from_root(&payload.repository_root_path)?;
     let repository_root = resolve_repository_root(&repository)?;
@@ -93,6 +97,7 @@ pub fn stage_git_paths(payload: GitPathOperationRequest) -> Result<GitRepository
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn unstage_git_paths(payload: GitPathOperationRequest) -> Result<GitRepositoryStatusPayload, String> {
     let repository = open_repository_from_root(&payload.repository_root_path)?;
     let repository_root = resolve_repository_root(&repository)?;
@@ -170,6 +175,7 @@ pub fn unstage_git_paths(payload: GitPathOperationRequest) -> Result<GitReposito
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn commit_git_index(payload: GitCommitRequest) -> Result<GitCommitResultPayload, String> {
     let repository = open_repository_from_root(&payload.repository_root_path)?;
     let repository_root = resolve_repository_root(&repository)?;
@@ -223,6 +229,7 @@ pub fn commit_git_index(payload: GitCommitRequest) -> Result<GitCommitResultPayl
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn discard_git_paths(payload: GitPathOperationRequest) -> Result<GitRepositoryStatusPayload, String> {
     let repository = open_repository_from_root(&payload.repository_root_path)?;
     let repository_root = resolve_repository_root(&repository)?;

@@ -10,6 +10,7 @@ struct ParsedGitRemoteRepositoryUrl {
 }
 
 #[tauri::command]
+#[specta::specta]
 pub fn get_git_pull_request_support(
     payload: GitRepositoryRootRequest,
 ) -> Result<GitPullRequestSupportPayload, String> {
