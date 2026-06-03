@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { watch } from 'vue';
+import { onMounted, watch } from 'vue';
 import AppDialogHost from '@/components/common/AppDialogHost.vue';
 import BrowserContextMenuHost from '@/components/common/BrowserContextMenuHost.vue';
 import FatalErrorScreen from '@/components/common/FatalErrorScreen.vue';
@@ -53,6 +53,26 @@ const revealMainWindow = async (): Promise<void> => {
   }
 };
 
+// 首帧绘制后尽早显示窗口：窗口默认 visible:false，用以根除「透明窗口先于 WebView2
+// 首帧合成」造成的透明边框闪烁；同时让启动骨架屏第一时间可见，而无需等到工作台
+// ready(workbench.initialize 完成)。双 requestAnimationFrame 确保首帧已绘制后再显示。
+const scheduleInitialWindowReveal = (): void => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.requestAnimationFrame(() => {
+    window.requestAnimationFrame(() => {
+      void revealMainWindow();
+    });
+  });
+
+  // 兜底：当 rAF 长时间不触发(例如窗口/标签页不可见)时，仍保证窗口最终会显示。
+  window.setTimeout(() => {
+    void revealMainWindow();
+  }, 1200);
+};
+
 const handleWorkbenchReady = (): void => {
   markStartup('workbench-ready-event');
   void revealMainWindow();
@@ -67,6 +87,10 @@ watch(
   },
   { flush: 'post' },
 );
+
+onMounted(() => {
+  scheduleInitialWindowReveal();
+});
 </script>
 
 <template>
