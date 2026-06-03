@@ -23,6 +23,9 @@ export class MastraRuntime extends MastraRuntimeApproval {
      * deps 复用现有 store（结构化真值）与现有 phase 方法（跑 agent），
      * 不改动任何既有运行路径，可随时 git revert。
      *
+     * Phase 2c-2：额外注入 resolveApproval，让 deps.resolveToolApproval 能以审批决定
+     * 续跑被工具审批挂起的内层 agent run（统一 resume 通道·方案A）。
+     *
      * Phase 3a：把 workflow 注册到带 libsql storage 的 Mastra 实例上，让 run
      * 快照落到持久化存储（storage 域 'workflows'，官方用于 suspend/resume），
      * 为跨进程 / TTL 回收后恢复打基础。复用 factory.ts 中 agent 执行 workflow
@@ -39,6 +42,7 @@ export class MastraRuntime extends MastraRuntimeApproval {
                 execute: (input, options) => this.execute(input, options),
                 validatePlan: (input, options) => this.validatePlan(input, options),
                 replanPlan: (input, options) => this.replanPlan(input, options),
+                resolveApproval: (input, options) => this.resolveApproval(input, options),
                 ...(modelConfig ? { modelConfig } : {}),
             }),
         );
