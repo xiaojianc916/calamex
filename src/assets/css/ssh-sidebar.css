@@ -362,6 +362,19 @@
   filter: brightness(1.05);
 }
 
+/* 新建连接(未连接态)主按钮:改用清晰的蓝色主色,提升对比度与可点击感 */
+.ssh-button--disconnected-primary {
+  border-color: #2563eb;
+  background: #2563eb;
+  color: #ffffff;
+}
+
+.ssh-button--disconnected-primary:hover:not(:disabled) {
+  border-color: #1d4ed8;
+  background: #1d4ed8;
+  filter: none;
+}
+
 .ssh-button:disabled {
   cursor: default;
   opacity: 0.58;
@@ -435,6 +448,11 @@
 .ssh-recent-icon svg {
   width: 12px;
   height: 12px;
+}
+
+/* 隐藏最近使用记录左侧的时钟图标 */
+.ssh-recent-icon--disconnected {
+  display: none;
 }
 
 .ssh-recent-info {
