@@ -189,6 +189,13 @@ export const agentSidecarRollbackRestoreRequestSchema = z.object({
   modelConfig: requestScopedModelConfigSchema.optional(),
 });
 
+// Phase 2：原生编排 workflow 入口（默认关闭，AGENT_ORCHESTRATION_WORKFLOW=1 才启用）。
+export const agentSidecarOrchestrateRequestSchema = z.object({
+  goal: requiredNonEmptyStringSchema,
+  threadId: optionalNonEmptyStringSchema,
+  modelConfig: requestScopedModelConfigSchema.optional(),
+});
+
 // -----------------------------------------------------------------------
 // HTTP utilities
 // -----------------------------------------------------------------------
@@ -623,6 +630,30 @@ export const createAgentSidecarServer = (
         const payload = agentSidecarRollbackRestoreRequestSchema.parse(body);
         scheduleBackgroundWarmup(payload, 'request');
         return runtime.restoreCheckpoint(payload, options);
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && url === '/agent/plan/orchestrate') {
+      // Phase 2：原生编排 workflow 新路径。默认关闭；未开启时与未知路由一致（旧行为完全不变）。
+      if (process.env.AGENT_ORCHESTRATION_WORKFLOW !== '1') {
+        writeJson(response, 404, {
+          error: '未知 sidecar 路由。',
+        });
+        return;
+      }
+      void handlePlainPost(request, response, async (body) => {
+        const payload = agentSidecarOrchestrateRequestSchema.parse(body);
+        if (typeof runtime.buildPlanOrchestrationWorkflow !== 'function') {
+          throw new Error('当前 runtime 不支持原生编排 workflow。');
+        }
+        const workflow = runtime.buildPlanOrchestrationWorkflow(payload.modelConfig);
+        const run = await workflow.createRunAsync();
+        // 首切片：跑到首个 suspend 或终态，返回 workflow 结果。
+        // 跨 HTTP 请求的 suspend/resume 流式留给 Phase 2b。
+        return run.start({
+          inputData: { goal: payload.goal, threadId: payload.threadId ?? null },
+        });
       });
       return;
     }
