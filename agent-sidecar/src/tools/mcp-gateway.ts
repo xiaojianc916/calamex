@@ -282,7 +282,29 @@ const isWriteishToolName = (toolName: string): boolean => {
   return READONLY_MCP_TOOL_DENY_PREFIX_PATTERN.test(toolName);
 };
 
-const requiresMcpToolApproval = (
+// 整库无副作用的 MCP server（纯推理 / 纯文档检索），其工具始终免审批。
+// 这是 server 级别的信任决定（易于论证），不是按工具名逐个猜测。
+const SIDE_EFFECT_FREE_SERVERS: ReadonlySet<TMcpServerName> = new Set<TMcpServerName>([
+  'sequential-thinking',
+  'context7',
+]);
+
+// 明确只读的工具名（list/get/read/search/...）。命中即可免审批；
+// 故意排除 query / exec / run 等可能有副作用的歧义动词。
+const READONLY_MCP_TOOL_ALLOW_PATTERN =
+  /(?:^|[_-])(?:list|get|read|fetch|show|describe|view|status|diff|log|grep|search|find|lookup|resolve|inspect|explain|count|stat|stats|history|doc|docs|help|catalog|schema|info|summary|summarize)(?:$|[_-])/iu;
+
+const isReadOnlyToolName = (toolName: string): boolean => {
+  const lower = toolName.toLowerCase();
+  if (isWriteishToolName(lower)) {
+    return false;
+  }
+  return READONLY_MCP_TOOL_ALLOW_PATTERN.test(lower);
+};
+
+// 纯名字启发式：仅识别**已知**写操作。保留作为 fail-closed 的升级信号，
+// 绝不再用它来判定“安全/免审批”。
+const requiresApprovalByName = (
   serverName: TMcpServerName,
   toolName: string,
 ): boolean => {
@@ -312,6 +334,26 @@ const requiresMcpToolApproval = (
     default:
       return isWriteishToolName(normalizedToolName);
   }
+};
+
+// 审批门控（fail-closed）：除非能正向判定为只读，否则一律要求人工审批。
+// 取代旧的“仅当名字命中写动词才审批”逻辑——后者会让名字不匹配的危险工具
+// （例如 sqlite 的 query 跑 DELETE、或任意自定义命名的写工具）静默绕过审批。
+export const requiresMcpToolApproval = (
+  serverName: TMcpServerName,
+  toolName: string,
+): boolean => {
+  if (SIDE_EFFECT_FREE_SERVERS.has(serverName)) {
+    return false;
+  }
+  const normalizedToolName = toolName.trim().toLowerCase();
+  if (requiresApprovalByName(serverName, normalizedToolName)) {
+    return true;
+  }
+  if (isReadOnlyToolName(normalizedToolName)) {
+    return false;
+  }
+  return true;
 };
 
 const filterMcpToolsForProfile = (
