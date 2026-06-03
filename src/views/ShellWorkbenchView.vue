@@ -375,46 +375,51 @@ const bindEditorViewportRef = (value: unknown): void => {
   border-radius: var(--workbench-content-left-radius) 0 0 var(--workbench-content-left-radius);
 }
 
-/* 终端拖拽分隔条（reka-ui ResizableHandle）：强制为整宽水平条，
-   不依赖 data-panel-group-direction 选择器（部分环境不生效，会退化为左侧竖线）。
-   常态 1px #ededed 细线，11px 不可见拓拽热区，悬停/拖拽变 3px 品牌强调色。 */
+/* 终端拖拽分隔条（reka-ui ResizableHandle）：整宽水平细线 + 11px 抓取热区。
+   线条用 ::before 作为 flex 子项渲染，width:100% 在 flex 容器里必然整宽；
+   同时彻底关闭基类残留的 ::after（上次“左半边”的根因），避免左侧出现半截竖条/方块。 */
 .workbench-terminal-handle {
-  position: relative;
-  flex: 0 0 auto;
-  width: 100% !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  align-self: stretch !important;
+  width: auto !important;
+  min-width: 100% !important;
   height: 11px !important;
+  flex: 0 0 11px !important;
   background-color: transparent !important;
+  border: 0 !important;
   cursor: row-resize;
   touch-action: none;
 }
 
 .workbench-terminal-handle::after {
+  display: none !important;
+  content: none !important;
+}
+
+.workbench-terminal-handle::before {
   content: '' !important;
-  position: absolute !important;
-  left: 0 !important;
-  right: 0 !important;
-  top: 50% !important;
-  bottom: auto !important;
-  width: auto !important;
+  display: block !important;
+  width: 100% !important;
   height: 1px !important;
-  transform: translateY(-50%) !important;
-  background-color: #ededed !important;
+  background-color: #e5e5e5 !important;
   border-radius: 999px;
   transition:
     height 160ms ease,
     background-color 160ms ease;
 }
 
-.workbench-terminal-handle:hover::after,
-.workbench-terminal-handle:active::after,
-.workbench-terminal-handle[data-resize-handle-state='hover']::after,
-.workbench-terminal-handle[data-resize-handle-state='drag']::after {
+.workbench-terminal-handle:hover::before,
+.workbench-terminal-handle:active::before,
+.workbench-terminal-handle[data-resize-handle-state='hover']::before,
+.workbench-terminal-handle[data-resize-handle-state='drag']::before {
   height: 3px !important;
   background-color: var(--accent-strong) !important;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .workbench-terminal-handle::after {
+  .workbench-terminal-handle::before {
     transition: none;
   }
 }
