@@ -8,6 +8,7 @@ import type {
   IAiWebSourceEntry,
   TAiWebActivityState,
 } from '@/types/ai';
+import { toErrorMessage } from '@/utils/error';
 
 const DEFAULT_WEB_FETCH_BYTES = 128 * 1024;
 const QUERY_PREVIEW_CHARS = 48;
@@ -17,18 +18,6 @@ interface IAiWebSourceActionContext {
   stepId?: string;
   stepTitle?: string;
 }
-
-const toErrorMessage = (error: unknown, fallback: string): string => {
-  if (error instanceof Error && error.message.trim()) {
-    return error.message;
-  }
-
-  if (typeof error === 'string' && error.trim()) {
-    return error;
-  }
-
-  return fallback;
-};
 
 const clipText = (value: string, maxChars: number): string => {
   const normalized = value.replace(/\s+/g, ' ').trim();
