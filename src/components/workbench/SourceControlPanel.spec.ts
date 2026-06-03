@@ -41,9 +41,8 @@ const LinearContextMenuStub = {
           data-slot="dropdown-menu-item"
           :disabled="item.disabled"
           @pointerdown="$emit('select', item)"
-        >
-           item.label 
-        </button>
+          v-text="item.label"
+        ></button>
       </template>
     </div>
   `,
