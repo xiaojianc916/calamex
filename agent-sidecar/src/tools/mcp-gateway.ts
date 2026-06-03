@@ -133,57 +133,11 @@ const MCP_GATEWAY_MODEL_OUTPUT_MAX_ARRAY_ITEMS = 20;
 const MCP_GATEWAY_MODEL_OUTPUT_MAX_OBJECT_KEYS = 40;
 const MCP_GATEWAY_MODEL_OUTPUT_MAX_DEPTH = 6;
 
-// Readonly profile 拒绝清单：只拦截**前缀就是写动词**的 tool，避免误伤 *_list / *_get 这类名词性 tool。
-// 歧义动词（commit/merge/pull/...）只通过 exact set 命中已知的写操作。
-const READONLY_MCP_TOOL_DENY_PREFIX_PATTERN =
-  /^(?:write|edit|create|delete|remove|move|install|apply|drop|upload|insert|replace|update|reset|patch|put|post)(?:[_-]|$)/iu;
-
-const READONLY_MCP_TOOL_DENY_EXACT: ReadonlySet<string> = new Set<string>([
-  // 单动词
-  'commit', 'push', 'merge', 'pull', 'rebase', 'stash', 'add', 'checkout',
-  'send', 'run', 'exec', 'execute',
-  // Git 风格
-  'git_commit', 'git_push', 'git_merge', 'git_pull', 'git_rebase',
-  'git_stash', 'git_add', 'git_checkout', 'git_reset',
-  // PR / MR 合并
-  'merge_pr', 'merge_pull_request', 'merge_merge_request',
-  'close_pr', 'close_pull_request', 'close_merge_request',
-  // 消息发送
-  'send_message', 'send_email', 'send_request', 'send_notification',
-  'post_message', 'post_comment', 'reply',
-  // Shell / exec
-  'run_command', 'run_shell', 'exec_command', 'execute_command',
-  'shell_exec', 'shell_run', 'bash', 'sh',
-]);
-
 const GIT_NATIVE_FILE_DUPLICATE_TOOL_PATTERN =
   /(?:^|[_*-])(?:read_file|write_file|edit_file|create_directory|move_file|delete_file|grep)(?:$|[_*-])/iu;
 
 const PROBE_NATIVE_FILE_DUPLICATE_TOOL_PATTERN =
   /(?:^|[_*-])(?:grep|search_code|search_files|extract_code|read_file|list_files)(?:$|[_*-])/iu;
-
-const MCP_APPROVAL_EXACT_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
-  'git_commit',
-  'git_push',
-  'git_merge',
-  'git_rebase',
-  'git_reset',
-  'git_checkout',
-  'git_add',
-  'git_stash',
-  'bash',
-  'sh',
-  'run_command',
-  'exec_command',
-  'execute_command',
-  'send_message',
-  'send_email',
-  'send_request',
-  'send_notification',
-  'post_message',
-  'post_comment',
-  'reply',
-]);
 
 export const MCP_GATEWAY_TOOL_NAMES = ['mcp_list_tools', 'mcp_call_tool'] as const;
 
@@ -274,87 +228,85 @@ const filterNativeFilePrimitiveDuplicates = (
   return filteredTools;
 };
 
-const isWriteishToolName = (toolName: string): boolean => {
-  const lower = toolName.toLowerCase();
-  if (READONLY_MCP_TOOL_DENY_EXACT.has(lower)) {
-    return true;
-  }
-  return READONLY_MCP_TOOL_DENY_PREFIX_PATTERN.test(toolName);
-};
+// ── MCP 工具能力模型（capability model）─────────────────────────────
+// 是否需要人工审批，不再依据工具名形态猜测，而是依据 MCP 协议层 server 在
+// `tools/list` 自报的 tool annotations（readOnlyHint / destructiveHint / ...）。
+// @mastra/mcp 会把这些注解透传到 Mastra 工具的 `tool.mcp.annotations` 上
+// （见 @mastra/mcp client.ts 与 CHANGELOG：annotations 同时转发给
+//  requireToolApproval 回调，并挂在 tool.mcp.annotations 供消费）。
+//
+// 信任模型（这就是“白名单”的优雅形态，按 server 粒度、可论证）：
+//   - 注解是 hint，不是保证（MCP spec 明确：除非来自受信任 server，否则
+//     必须视为不可信）。calamex 的全部 MCP server 均由本进程按固定版本
+//     spawn、完全受控（见 mcp.ts），属于 provenance-trusted，故可据其注解
+//     做能力判定。
+//   - 对**整库无副作用**的 server（纯推理 / 纯文档检索）做 server 级信任，
+//     无条件免审批；这是按 server 粒度的白名单，而非逐个工具名猜测。
+//   - 其余一律 fail-closed：只有能**正向证明只读**时才免审批。
 
-// 整库无副作用的 MCP server（纯推理 / 纯文档检索），其工具始终免审批。
-// 这是 server 级别的信任决定（易于论证），不是按工具名逐个猜测。
+// MCP tool annotations（hint）。字段语义见 MCP spec 2025-11-25。
+// server 整体省略 annotations 时该对象为 undefined（@mastra/mcp 不自动填
+// 默认值），据此可区分“未声明”与“声明为安全”。
+export interface IMcpToolAnnotations {
+  title?: string;
+  readOnlyHint?: boolean;
+  destructiveHint?: boolean;
+  idempotentHint?: boolean;
+  openWorldHint?: boolean;
+}
+
+// 整库无副作用的 MCP server（server 级信任白名单）：其工具始终视为只读。
 const SIDE_EFFECT_FREE_SERVERS: ReadonlySet<TMcpServerName> = new Set<TMcpServerName>([
   'sequential-thinking',
   'context7',
 ]);
 
-// 明确只读的工具名（list/get/read/search/...）。命中即可免审批；
-// 故意排除 query / exec / run 等可能有副作用的歧义动词。
-const READONLY_MCP_TOOL_ALLOW_PATTERN =
-  /(?:^|[_-])(?:list|get|read|fetch|show|describe|view|status|diff|log|grep|search|find|lookup|resolve|inspect|explain|count|stat|stats|history|doc|docs|help|catalog|schema|info|summary|summarize)(?:$|[_-])/iu;
+export type TMcpToolCapability = 'readonly' | 'write' | 'unknown';
 
-const isReadOnlyToolName = (toolName: string): boolean => {
-  const lower = toolName.toLowerCase();
-  if (isWriteishToolName(lower)) {
-    return false;
+// 从 @mastra/mcp 透传的工具对象上读取 MCP annotations：
+// 优先 `tool.mcp.annotations`（转换后的 Mastra 工具），回退 `tool.annotations`
+// （原始 MCP 工具）。读不到则返回 undefined（=server 未自报）。
+export const readMcpToolAnnotations = (tool: unknown): IMcpToolAnnotations | undefined => {
+  const record = toRecord(tool);
+  if (!record) {
+    return undefined;
   }
-  return READONLY_MCP_TOOL_ALLOW_PATTERN.test(lower);
+  const mcpMeta = toRecord(record.mcp);
+  const fromMcp = mcpMeta ? toRecord(mcpMeta.annotations) : undefined;
+  const fromRaw = toRecord(record.annotations);
+  const annotations = fromMcp ?? fromRaw;
+  return annotations as IMcpToolAnnotations | undefined;
 };
 
-// 纯名字启发式：仅识别**已知**写操作。保留作为 fail-closed 的升级信号，
-// 绝不再用它来判定“安全/免审批”。
-const requiresApprovalByName = (
+// 能力判定（逻辑链条）：
+//   1. server 级无副作用白名单 → readonly（信任优先于注解）
+//   2. 无 annotations（server 未自报）→ unknown（不猜名字）
+//   3. annotations.readOnlyHint === true → readonly
+//   4. 其余（destructive、仅增量写入、或字段缺省按 spec 默认非只读）→ write
+export const resolveMcpToolCapability = (
   serverName: TMcpServerName,
-  toolName: string,
-): boolean => {
-  const normalizedToolName = toolName.trim().toLowerCase();
-
-  if (MCP_APPROVAL_EXACT_TOOL_NAMES.has(normalizedToolName)) {
-    return true;
+  annotations: IMcpToolAnnotations | undefined,
+): TMcpToolCapability => {
+  if (SIDE_EFFECT_FREE_SERVERS.has(serverName)) {
+    return 'readonly';
   }
-
-  switch (serverName) {
-    case 'git':
-    case 'hooks-mcp':
-    case 'sqlite-mcp':
-      return isWriteishToolName(normalizedToolName);
-    case 'probe':
-      return isWriteishToolName(normalizedToolName)
-        || /(?:command|shell|exec|write|edit|delete|move|create|patch)/iu.test(normalizedToolName);
-    case 'github':
-      return isWriteishToolName(normalizedToolName)
-        || /(?:issue|pull|comment|review|merge|branch|commit|release|label|secret)/iu.test(normalizedToolName);
-    case 'memory':
-    case 'sequential-thinking':
-    case 'context7':
-    case 'logoscope':
-    case 'tavily-mcp':
-      return isWriteishToolName(normalizedToolName);
-    default:
-      return isWriteishToolName(normalizedToolName);
+  if (!annotations) {
+    return 'unknown';
   }
+  if (annotations.readOnlyHint === true) {
+    return 'readonly';
+  }
+  return 'write';
 };
 
-// 审批门控（fail-closed）：除非能正向判定为只读，否则一律要求人工审批。
-// 取代旧的“仅当名字命中写动词才审批”逻辑——后者会让名字不匹配的危险工具
-// （例如 sqlite 的 query 跑 DELETE、或任意自定义命名的写工具）静默绕过审批。
+// 审批门控（fail-closed）：仅当能**正向证明只读**时免审批；
+// write 与 unknown（server 未自报注解）一律要求人工审批。
+// 取代旧的“按工具名猜测写动词才审批”逻辑——后者会让名字不匹配的危险工具
+// （例如 sqlite-mcp 的 query 跑 DELETE、或任意自定义命名的写工具）静默绕过审批。
 export const requiresMcpToolApproval = (
   serverName: TMcpServerName,
-  toolName: string,
-): boolean => {
-  if (SIDE_EFFECT_FREE_SERVERS.has(serverName)) {
-    return false;
-  }
-  const normalizedToolName = toolName.trim().toLowerCase();
-  if (requiresApprovalByName(serverName, normalizedToolName)) {
-    return true;
-  }
-  if (isReadOnlyToolName(normalizedToolName)) {
-    return false;
-  }
-  return true;
-};
+  annotations: IMcpToolAnnotations | undefined,
+): boolean => resolveMcpToolCapability(serverName, annotations) !== 'readonly';
 
 const filterMcpToolsForProfile = (
   serverName: TMcpServerName,
@@ -365,9 +317,13 @@ const filterMcpToolsForProfile = (
   if (profile === 'write') {
     return nativeFilteredTools;
   }
+  // readonly profile：剔除**能证明是写操作**的工具（server 注解声明非只读 /
+  // 破坏性）。能力未知（server 未自报注解）的工具仍保留可见，但调用时会被
+  // 审批门控（requiresMcpToolApproval，fail-closed）拦截——安全性不依赖此处过滤。
   const filteredTools: ToolsInput = {};
   for (const [name, tool] of Object.entries(nativeFilteredTools)) {
-    if (!isWriteishToolName(name)) {
+    const annotations = readMcpToolAnnotations(tool);
+    if (resolveMcpToolCapability(serverName, annotations) !== 'write') {
       filteredTools[name] = tool;
     }
   }
@@ -614,7 +570,22 @@ export class McpGatewayWarmPool {
           '已知道 tool 名称时应直接调用，只有不确定名称时才先用 mcp_list_tools 探索。',
         ].join('\n'),
         inputSchema: mcpGatewayCallInputSchema,
-        requireApproval: async (input) => requiresMcpToolApproval(input.serverName, input.toolName),
+        requireApproval: async (rawInput) => {
+          let parsed: z.infer<typeof mcpGatewayCallInputSchema>;
+          try {
+            parsed = mcpGatewayCallInputSchema.parse(unwrapGatewayToolInput(rawInput));
+          } catch {
+            // 无法解析调用目标 → 无法判定能力 → fail-closed。
+            return true;
+          }
+          return await this.requiresToolApproval({
+            serverName: parsed.serverName,
+            toolName: parsed.toolName,
+            profile: options.profile,
+            ...(options.workspaceRootPath ? { workspaceRootPath: options.workspaceRootPath } : {}),
+            ...(options.metricSink ? { metricSink: options.metricSink } : {}),
+          });
+        },
         execute: async (inputData) => {
           const parsed = mcpGatewayCallInputSchema.parse(unwrapGatewayToolInput(inputData));
           return await this.callTool({
@@ -635,6 +606,38 @@ export class McpGatewayWarmPool {
         })),
       }),
     };
+  }
+
+  // 判定某次 MCP 工具调用是否需要人工审批：依据 server 在 tools/list 自报、
+  // 经 @mastra/mcp 透传到 tool.mcp.annotations 的能力注解，不依赖工具名形态。
+  // 任何无法正向判定为只读的情况（含未自报注解、解析失败、启动失败）一律
+  // fail-closed 要求审批。
+  async requiresToolApproval(input: {
+    serverName: TMcpServerName;
+    toolName: string;
+    profile: TMcpGatewayToolProfile;
+    workspaceRootPath?: string;
+    metricSink?: IMcpGatewayMetricSink;
+  }): Promise<boolean> {
+    // 快路径：server 级无副作用白名单无需启动 server 即可免审批。
+    if (SIDE_EFFECT_FREE_SERVERS.has(input.serverName)) {
+      return false;
+    }
+    try {
+      return await this.withServer(input, (bundle) => {
+        const tools = filterMcpToolsForProfile(input.serverName, bundle.tools, input.profile);
+        const resolved = resolveMcpGatewayTool(tools, input.serverName, input.toolName);
+        if (!resolved) {
+          // 解析不到目标工具 → 能力未知 → fail-closed。
+          return true;
+        }
+        const annotations = readMcpToolAnnotations(resolved.tool);
+        return requiresMcpToolApproval(input.serverName, annotations);
+      });
+    } catch {
+      // 启动 / 列举工具失败 → 无法判定能力 → fail-closed。
+      return true;
+    }
   }
 
   async primeCatalog(options: {
