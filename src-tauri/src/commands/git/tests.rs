@@ -1,6 +1,6 @@
 use super::*;
 use super::cli;
-use super::branches::{create_git_branch, list_git_branches};
+use super::branches::{checkout_git_branch, create_git_branch, list_git_branches};
 use super::diff::get_git_diff_preview;
 use super::history::list_git_commit_history;
 use super::pull_request::get_git_pull_request_support;
@@ -226,6 +226,35 @@ fn create_git_branch_with_checkout_updates_head_branch() -> Result<(), String> {
 }
 
 #[test]
+fn checkout_git_branch_rejects_invalid_branch_name() -> Result<(), String> {
+    let temp = TempGitDir::new("checkout-invalid-name")?;
+    let _repo = temp.init_repository()?;
+    let root = temp.repository_root()?;
+    write_worktree_file(&temp.path, "src/app.sh", "echo base\n")?;
+    commit_via_cli(&temp.path, "feat: initial")?;
+    // 非法分支名（含 ':'）应被拒绝，且不触碰工作区。
+    let result = checkout_git_branch(GitBranchCheckoutRequest { repository_root_path: root.to_string_lossy().to_string(), branch_name: "bad:name".into() });
+    assert!(result.is_err());
+    Ok(())
+}
+
+#[test]
+fn checkout_git_branch_switches_between_branches() -> Result<(), String> {
+    let temp = TempGitDir::new("checkout-switch")?;
+    let _repo = temp.init_repository()?;
+    let root = temp.repository_root()?;
+    write_worktree_file(&temp.path, "src/app.sh", "echo base\n")?;
+    commit_via_cli(&temp.path, "feat: initial")?;
+    let initial = get_git_repository_status(Some(root.to_string_lossy().to_string()))?;
+    let initial_branch = initial.head_branch_name.clone().ok_or_else(|| "缺少初始分支名".to_string())?;
+    // 新建并切换到 feature 分支，再切回初始分支，验证 HEAD 原子写入后分支正确。
+    create_git_branch(GitBranchCreateRequest { repository_root_path: root.to_string_lossy().to_string(), branch_name: "feature/switch".into(), checkout: true })?;
+    let status = checkout_git_branch(GitBranchCheckoutRequest { repository_root_path: root.to_string_lossy().to_string(), branch_name: initial_branch.clone() })?;
+    assert_eq!(status.head_branch_name.as_deref(), Some(initial_branch.as_str()));
+    Ok(())
+}
+
+#[test]
 fn save_git_stash_and_list_git_stashes_round_trip() -> Result<(), String> {
     let temp = TempGitDir::new("stash-round-trip")?;
     let _repo = temp.init_repository()?;
@@ -264,6 +293,19 @@ fn get_git_pull_request_support_parses_github_remote() -> Result<(), String> {
     let _repo = temp.init_repository()?;
     let root = temp.repository_root()?;
     add_remote_via_cli(&temp.path, "origin", "git@github.com:owner/repo.git")?;
+    let payload = get_git_pull_request_support(GitRepositoryRootRequest { repository_root_path: root.to_string_lossy().to_string() })?;
+    assert!(payload.available);
+    assert_eq!(payload.provider, "github");
+    assert_eq!(payload.repository_url.as_deref(), Some("https://github.com/owner/repo"));
+    Ok(())
+}
+
+#[test]
+fn get_git_pull_request_support_parses_https_remote() -> Result<(), String> {
+    let temp = TempGitDir::new("pull-request-https")?;
+    let _repo = temp.init_repository()?;
+    let root = temp.repository_root()?;
+    add_remote_via_cli(&temp.path, "origin", "https://github.com/owner/repo.git")?;
     let payload = get_git_pull_request_support(GitRepositoryRootRequest { repository_root_path: root.to_string_lossy().to_string() })?;
     assert!(payload.available);
     assert_eq!(payload.provider, "github");

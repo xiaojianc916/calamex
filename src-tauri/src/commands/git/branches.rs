@@ -66,10 +66,17 @@ pub fn checkout_git_branch(
 ) -> Result<GitRepositoryStatusPayload, String> {
     let repository = open_repository_from_root(&payload.repository_root_path)?;
     let repository_root = resolve_repository_root(&repository)?;
+    let branch_name = payload.branch_name.trim();
+    if branch_name.is_empty() {
+        return Err("Git 分支名称不能为空。".into());
+    }
+    if !is_valid_git_branch_name(branch_name) {
+        return Err(format!("Git 分支名称不合法：{branch_name}"));
+    }
     assert_repository_is_clean_for_switch(&repository, "切换分支")?;
 
     // 通过 gix 切换工作区 / 索引 / HEAD，避免依赖系统安装的 git（免装目标）。
-    checkout_to_target(&repository, &repository_root, payload.branch_name.trim())?;
+    checkout_to_target(&repository, &repository_root, branch_name)?;
 
     let repository = open_repository_from_root(&payload.repository_root_path)?;
     super::status::build_git_repository_status_payload(&repository)
@@ -406,8 +413,16 @@ fn checkout_update_head(
     } else {
         format!("{target_commit_id}\n")
     };
-    let head_path = repository.git_dir().join("HEAD");
-    fs::write(&head_path, content).map_err(|error| format!("更新 HEAD 失败：{error}"))
+    let git_dir = repository.git_dir();
+    let head_path = git_dir.join("HEAD");
+    // 原子写入：先写入同目录临时文件，再 rename 覆盖目标，避免进程在写一半时
+    // 崩溃导致 .git/HEAD 被截断/损坏（同一文件系统内 rename 是原子操作）。
+    let temp_path = git_dir.join("HEAD.calamex.tmp");
+    fs::write(&temp_path, content).map_err(|error| format!("更新 HEAD 失败：{error}"))?;
+    fs::rename(&temp_path, &head_path).map_err(|error| {
+        let _ = fs::remove_file(&temp_path);
+        format!("更新 HEAD 失败：{error}")
+    })
 }
 
 /// 从工作区删除某路径（忽略不存在的情况）。
