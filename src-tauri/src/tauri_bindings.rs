@@ -2,7 +2,7 @@ use crate::commands::terminal::commands as terminal_commands;
 use crate::commands::{
     git, script_run, search, shell_tools, window, window_stage, workspace_fs, workspace_watcher,
 };
-use specta_typescript::Typescript;
+use specta_typescript::{BigIntExportBehavior, Typescript};
 use std::path::PathBuf;
 use tauri_specta::{collect_commands, collect_events, Builder, ErrorHandlingMode};
 
@@ -66,6 +66,12 @@ pub fn export(builder: &Builder<tauri::Wry>) {
         std::fs::create_dir_all(parent).expect("failed to create tauri binding directory");
     }
     builder
-        .export(Typescript::default(), path)
+        .export(
+            // git 计数/索引为 usize（ahead/behind/各类 count/index/offset/limit），
+            // 恒在 JS 安全整数范围内，按 number 导出无精度损失；
+            // 同时放开 specta 对 BigInt 风格类型的默认 Fail 限制。
+            Typescript::default().bigint(BigIntExportBehavior::Number),
+            path,
+        )
         .expect("failed to export tauri-specta TypeScript bindings");
 }
