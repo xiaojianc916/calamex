@@ -3,37 +3,9 @@ import { type ComputedRef, computed, type Ref, readonly, ref } from 'vue';
 import { aiService } from '@/services/ipc/ai.service';
 import { useAiAgentStore } from '@/store/aiAgent';
 import type { TAiAgentNetworkPermission } from '@/types/ai';
-
-// ---------------------------------------------------------------------------
-// Internal helpers
-//
-// TODO: toErrorMessage 是业务无关的工具,后续抽到 @/utils/errors.ts 全局复用
-// (当前 store/ai.ts / store/aiAgent.ts / 其他 composable 都有等价实现)。
-// ---------------------------------------------------------------------------
+import { toErrorMessage } from '@/utils/error';
 
 const DEFAULT_ERROR_MESSAGE = '设置 AI Agent 网络权限失败。';
-
-/**
- * 将任意 unknown 错误规范化为人类可读字符串。
- *
- * 兼容:Error 实例 / string / 带 message 字段的对象;否则回退到 fallback。
- * 任何"看起来有 message 但 trim 后为空"的情况都视为无效,继续向下尝试。
- */
-const toErrorMessage = (error: unknown, fallback: string): string => {
-  if (error instanceof Error && error.message.trim()) {
-    return error.message;
-  }
-  if (typeof error === 'string' && error.trim()) {
-    return error;
-  }
-  if (error !== null && typeof error === 'object' && 'message' in error) {
-    const candidate = (error as { message: unknown }).message;
-    if (typeof candidate === 'string' && candidate.trim()) {
-      return candidate;
-    }
-  }
-  return fallback;
-};
 
 // ---------------------------------------------------------------------------
 // Composable
@@ -69,7 +41,7 @@ export interface IUseAiAgentNetworkReturn {
 export const useAiAgentNetwork = (): IUseAiAgentNetworkReturn => {
   const store = useAiAgentStore();
 
-  // ── Race-protection counter ─────────────────────────────────────────
+  // ── Race-protection counter ──────────────────────────
   //
   // 单调递增的请求序号。**注意**:这是 composable 实例级 —— 每次
   // useAiAgentNetwork() 调用都拿到独立计数器。
@@ -79,11 +51,11 @@ export const useAiAgentNetwork = (): IUseAiAgentNetworkReturn => {
   // 目前假设每个组件实例独立调用,实例内部 race 即可。
   let requestSeq = 0;
 
-  // ── Reactive state ──────────────────────────────────────────────────
+  // ── Reactive state ─────────────────────────────────
   const pending = ref(false);
   const errorMessage = computed<string>(() => store.errorMessage);
 
-  // ── Actions ─────────────────────────────────────────────────────────
+  // ── Actions ────────────────────────────────────
 
   const clearError = (): void => {
     // 直接 mutate store state(Pinia setup store 允许)。
