@@ -39,6 +39,7 @@ import type {
   IAiToolConfirmationRequest,
   TAiToolConfirmationDecision,
 } from '@/types/ai';
+import type { TAiAssistantMode } from '@/types/ai/assistant-mode';
 import type { IAiEditGetDiffPayload, IAiEditOperation } from '@/types/ai/edit';
 import type { IAgentSidecarMessage, TAgentRuntimeEvent, TAgentUiEvent } from '@/types/ai/sidecar';
 import type {
@@ -111,8 +112,6 @@ import {
 import { createStreamPipeline } from './useAiAssistant.stream-pipeline';
 
 type TAiQuickActionId = 'explain' | 'fix' | 'review';
-
-type TAiAssistantMode = 'chat' | 'agent' | 'plan';
 
 type TAiFileRollbackStatus = 'ready' | 'reverting' | 'reverted';
 
@@ -1198,6 +1197,135 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       : undefined;
   };
 
+  interface IFinalizeSidecarTurnContext {
+    assistantMessageId: string;
+    threadId: string | null;
+    fallbackActivityText: string;
+    patchTaskId: string;
+    patchSessionId: string;
+    updateSteps: boolean;
+    onPendingConfirmation: (pendingConfirmation: IAiToolConfirmationRequest) => void;
+  }
+
+  const finalizeSidecarTurn = async (
+    payload: Awaited<ReturnType<typeof aiService.sidecarChat>>,
+    ctx: IFinalizeSidecarTurnContext,
+  ): Promise<void> => {
+    appendRuntimeTimelineEvents(payload.events);
+    const projection = projectSidecarExecuteResponse(payload);
+    const toolProjection = projectSidecarEventsToToolState({
+      events: payload.events,
+      fallbackActivityText: ctx.fallbackActivityText,
+      streamStatus: resolveSidecarToolProjectionStatus(projection),
+    });
+    const sidecarStreamStatus = resolveSidecarWaitingStreamStatus(projection);
+    const streamMetadata: ISidecarAnswerStreamMetadata = {
+      messageId: ctx.assistantMessageId,
+      threadId: ctx.threadId,
+      toolCalls: toolProjection.toolCalls,
+      streamStatus: sidecarStreamStatus,
+      activityText: toolProjection.activityText,
+      runtimeEvents: compactRuntimeEvents(extractVisibleAgentRuntimeEvents(payload.events)),
+      finalAnswerStarted: hasMeaningfulAssistantText(projection.assistantContent),
+      streamTokenSnapshot: resolveSidecarDoneStreamTokenSnapshot(
+        getLatestSidecarLiveEvents(payload.events).doneEvent,
+      ),
+    };
+    if (projection.errorMessage) {
+      disposeSidecarAnswerStream(ctx.assistantMessageId);
+    }
+
+    const displayContent = projection.errorMessage
+      ? projection.assistantContent
+      : completeSidecarAnswerStream(projection.assistantContent, streamMetadata);
+    const sidecarAnswerCompletion =
+      projection.errorMessage || projection.pendingConfirmation
+        ? Promise.resolve()
+        : waitForSidecarAnswerStreamCompletion(ctx.assistantMessageId);
+    const sidecarPatchEntries = projection.errorMessage
+      ? []
+      : extractSidecarPatchEntries(payload.events);
+    const sidecarPatchResult =
+      sidecarPatchEntries.length > 0
+        ? await applySidecarPatchSets(sidecarPatchEntries, ctx.patchTaskId, ctx.patchSessionId)
+        : { appliedPaths: [], runtimeEvents: [], patches: [], summaries: [] };
+    const sidecarAppliedPaths = sidecarPatchResult.appliedPaths;
+    const aedDiffPatchState = projection.errorMessage
+      ? null
+      : await loadAedDiffPatchStateForChangedFiles({
+          changedFilePaths: projection.changedFilePaths,
+          excludedPaths: sidecarAppliedPaths,
+          fallbackTaskId: ctx.patchTaskId,
+          runId: `sidecar:${ctx.patchTaskId}`,
+          stepId: 'agent',
+        });
+    const patchSummaries = [
+      ...sidecarPatchResult.summaries,
+      ...(aedDiffPatchState?.changedFilesSummary ? [aedDiffPatchState.changedFilesSummary] : []),
+    ];
+    const displayedPatches = [...sidecarPatchResult.patches, ...(aedDiffPatchState?.patches ?? [])];
+    const changedFilesSummary = mergeAiAgentPatchSummaries(patchSummaries);
+    const patchState =
+      displayedPatches.length > 0 || changedFilesSummary
+        ? { patches: displayedPatches, changedFilesSummary }
+        : undefined;
+
+    if (sidecarPatchResult.runtimeEvents.length > 0) {
+      streamMetadata.runtimeEvents = compactRuntimeEvents([
+        ...(streamMetadata.runtimeEvents ?? []),
+        ...sidecarPatchResult.runtimeEvents,
+      ]);
+      appendVisibleRuntimeTimelineEvents(sidecarPatchResult.runtimeEvents);
+    }
+
+    if (ctx.updateSteps) {
+      for (const toolCall of toolProjection.toolCalls) {
+        updateAgentStep(
+          toolCall.id,
+          toolCall.summary,
+          mapSidecarToolCallStatusToStepStatus(toolCall.status),
+        );
+      }
+    }
+
+    updateAgentExecutionMessage(
+      ctx.assistantMessageId,
+      displayContent,
+      toolProjection.toolCalls,
+      projection.errorMessage ? 'completed' : resolveSidecarAnswerDisplayStatus(streamMetadata),
+      toolProjection.activityText,
+      streamMetadata.runtimeEvents,
+      streamMetadata.finalAnswerStarted,
+      streamMetadata.streamTokenSnapshot,
+      patchState,
+    );
+
+    await refreshChangedDocumentsAfterSidecarRun(
+      [...projection.changedFilePaths, ...sidecarAppliedPaths],
+      projection.hasFileMutations || sidecarAppliedPaths.length > 0,
+    );
+    await updateFileRollbackPrompt(
+      [...projection.changedFilePaths, ...sidecarAppliedPaths],
+      projection.hasFileMutations || sidecarAppliedPaths.length > 0,
+    );
+    await sidecarAnswerCompletion;
+
+    if (projection.pendingConfirmation) {
+      ctx.onPendingConfirmation(projection.pendingConfirmation);
+      return;
+    }
+
+    clearSidecarToolConfirmation();
+
+    if (!projection.errorMessage) {
+      clearAttachedFiles({ revokePreviews: false });
+    }
+
+    if (projection.errorMessage) {
+      errorMessage.value = projection.errorMessage;
+    }
+  };
+
   const executeSidecarAgentRequest = async (
     visibleMessages: IAiChatMessage[],
     messageContent: string,
@@ -2068,6 +2196,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
 
     if (activeMode.value === 'plan') {
       agentSteps.value = [];
+      let planSucceeded = false;
 
       try {
         const planResult = await agentPlan.createPlan(
@@ -2084,14 +2213,8 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
         }));
 
         messages.value = nextMessages;
-
         clearAttachedFiles({ revokePreviews: false });
-        commitDisplayMessagesToStore(titleThreadId);
-        clearActiveBufferedThread(titleThreadId);
-        isSending.value = false;
-        syncDisplayMessagesFromActiveThread();
-        void maybeGenerateConversationTitle(titleThreadId);
-        return;
+        planSucceeded = true;
       } catch (error) {
         const message = toErrorMessage(error, '生成计划失败。');
         errorMessage.value = message;
@@ -2106,22 +2229,32 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
             references: [],
           },
         ];
+      } finally {
         commitDisplayMessagesToStore(titleThreadId);
         clearActiveBufferedThread(titleThreadId);
         isSending.value = false;
         syncDisplayMessagesFromActiveThread();
-        return;
+        if (planSucceeded) {
+          void maybeGenerateConversationTitle(titleThreadId);
+        }
       }
+
+      return;
+    }
+    if (activeMode.value === 'chat') {
+      try {
+        await executeAiRequest(nextMessages, nextMessages, references, titleThreadId);
+        if (!errorMessage.value) {
+          void maybeGenerateConversationTitle(titleThreadId);
+        }
+      } catch (error) {
+        errorMessage.value = toErrorMessage(error, MSG_CALL_FAILED);
+      }
+      return;
     }
 
-    try {
-      await executeAiRequest(nextMessages, nextMessages, references, titleThreadId);
-      if (!errorMessage.value) {
-        void maybeGenerateConversationTitle(titleThreadId);
-      }
-    } catch (error) {
-      errorMessage.value = toErrorMessage(error, MSG_CALL_FAILED);
-    }
+    const exhaustiveModeCheck: never = activeMode.value;
+    throw new Error(`未处理的 AI 助手模式：${String(exhaustiveModeCheck)}`);
   };
 
   // -----------------------------------------------------------------------

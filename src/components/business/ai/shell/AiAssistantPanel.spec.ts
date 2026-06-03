@@ -40,7 +40,6 @@ import type { IGitRepositoryStatusPayload } from '@/types/git';
 const useAiAssistantMock = vi.hoisted(() => vi.fn());
 const useCopilotSuggestionsMock = vi.hoisted(() => vi.fn());
 const useCopilotContextMock = vi.hoisted(() => vi.fn());
-const useCopilotAgentBridgeMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/composables/ai/useAiAssistant', () => ({
   useAiAssistant: useAiAssistantMock,
@@ -52,10 +51,6 @@ vi.mock('@/composables/ai/useCopilotSuggestions', () => ({
 
 vi.mock('@/composables/ai/useCopilotContext', () => ({
   useCopilotContext: useCopilotContextMock,
-}));
-
-vi.mock('@/composables/ai/useCopilotAgentBridge', () => ({
-  useCopilotAgentBridge: useCopilotAgentBridgeMock,
 }));
 
 interface IAiConversationThreadMock {
@@ -412,14 +407,6 @@ describe('AiAssistantPanel', () => {
       rotateBatch: vi.fn(),
     });
     useCopilotContextMock.mockReturnValue(undefined);
-    useCopilotAgentBridgeMock.mockReturnValue({
-      messages: ref([]),
-      isRunning: ref(false),
-      errorMessage: ref(''),
-      sendMessage: vi.fn(),
-      stop: vi.fn(),
-      clearMessages: vi.fn(),
-    });
   });
 
   afterEach(() => {
