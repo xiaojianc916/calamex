@@ -322,15 +322,6 @@ onBeforeUnmount(() => {
   height: 0;
 }
 
-/* 流式输出时，尚未批量挂载的尾部块会以骨架占位（node-placeholder）短暂出现，
-   其 shimmer 动画在快速到达的文本上表现为“偶尔闪一下”。聊天场景下文本已由
-   smooth-streaming 平滑揭示，无需骨架动画，这里仅关闭其 shimmer 动画与渐变背景，
-   保留占位高度以维持布局稳定。 */
-.ai-markdown :global(.node-placeholder) {
-  background-image: none;
-  animation: none;
-}
-
 @media (prefers-reduced-motion: reduce) {
   .ai-markdown :global(.markstream-vue *) {
     animation: none;
