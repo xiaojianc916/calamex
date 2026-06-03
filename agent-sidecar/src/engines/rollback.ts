@@ -3,6 +3,8 @@ import { createMastraModelConfig, resolveMastraModelConfig } from './agent/facto
 import { extractRestoreResultText, resolveSystemPromptFromSnapshot, resolveWorkspaceRootPathFromSnapshot } from './context/context.js';
 import { normalizeMastraError } from './messages.js';
 import { createErrorResponse } from './responses.js';
+import { createMastraPlanOrchestrationDeps } from './plan/orchestration-deps.js';
+import { createPlanOrchestrationWorkflow, type TPlanOrchestrationWorkflow } from './plan/orchestration-workflow.js';
 import { loadMastraMcpTools } from './tools/tools.js';
 import { DEFAULT_EXECUTION_AGENT_ID, DEFAULT_EXECUTION_AGENT_NAME, DEFAULT_ROLLBACK_STEP } from './types.js';
 import { createMastraRequestContext, createRuntimeEventFactory, createSessionId, pushUiEvent, requestContextToRecord } from './utils.js';
@@ -13,6 +15,29 @@ import { DurableStepIds } from '@mastra/core/agent/durable';
 
 
 export class MastraRuntime extends MastraRuntimeApproval {
+    /**
+     * Phase 2：构建原生 Mastra 计划编排 workflow（默认关，由 server.ts 的
+     * `/agent/plan/orchestrate` 在 `AGENT_ORCHESTRATION_WORKFLOW=1` 时调用）。
+     *
+     * deps 复用现有 store（结构化真值）与现有 phase 方法（跑 agent），
+     * 不改动任何既有运行路径，可随时 git revert。
+     */
+    buildPlanOrchestrationWorkflow(
+        modelConfig?: IAgentRuntimeModelConfigInput,
+    ): TPlanOrchestrationWorkflow {
+        return createPlanOrchestrationWorkflow(
+            createMastraPlanOrchestrationDeps({
+                planStore: this.planStore,
+                planWorkflowStore: this.planWorkflowStore,
+                plan: (input, options) => this.plan(input, options),
+                execute: (input, options) => this.execute(input, options),
+                validatePlan: (input, options) => this.validatePlan(input, options),
+                replanPlan: (input, options) => this.replanPlan(input, options),
+                ...(modelConfig ? { modelConfig } : {}),
+            }),
+        );
+    }
+
     async restoreCheckpoint(
         input: ICheckpointRestoreInput,
         options: IAgentRuntimeRunOptions = {},

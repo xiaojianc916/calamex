@@ -225,3 +225,6 @@ export const createPlanOrchestrationWorkflow = (deps: IPlanOrchestrationDeps) =>
 		.then(finishStep)
 		.commit();
 };
+
+/** Phase 2 接线用：committed workflow 的类型别名（供 runtime 接口 / server 路由引用）。 */
+export type TPlanOrchestrationWorkflow = ReturnType<typeof createPlanOrchestrationWorkflow>;
