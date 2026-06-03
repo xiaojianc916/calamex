@@ -594,9 +594,13 @@ pub async fn restart() -> Result<AgentSidecarHealthPayload, String> {
         return Err("AGENT_SIDECAR_UNAVAILABLE: 仅支持重启默认本地 Node sidecar。".to_string());
     }
 
-    restart_stale_default_sidecar()?;
-    let spawned_child = spawn_default_sidecar()?;
-    wait_for_default_sidecar_ready(&base_url, startup_timeout_seconds(), Some(spawned_child)).await?;
+    {
+        let _guard = sidecar_spawn_lock().lock().await;
+        restart_stale_default_sidecar()?;
+        let spawned_child = spawn_default_sidecar()?;
+        wait_for_default_sidecar_ready(&base_url, startup_timeout_seconds(), Some(spawned_child))
+            .await?;
+    }
     health().await
 }
 
