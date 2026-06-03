@@ -6,10 +6,12 @@ import type { IAgentPlanWorkflowStore } from './plan-workflow-store.js';
 import type {
     IAgentRuntimeResponse,
     IAgentRuntimeRunOptions,
+    TAgentRuntimeOutputEvent,
 } from '../contracts/runtime-contracts.js';
 import type {
     IAgentRuntimeInput,
     IAgentRuntimeModelConfigInput,
+    IApprovalResolutionInput,
 } from '../contracts/runtime-input.js';
 
 /**
@@ -22,6 +24,10 @@ import type {
  *   validator / completedStepIds / failedStepIds），而不是脆弱地解析事件流。
  * - 本模块不持有任何运行路径；只有 server.ts 的 `/agent/plan/orchestrate`
  *   在 `AGENT_ORCHESTRATION_WORKFLOW=1` 时才会用到（默认关，旧路径完全不受影响）。
+ *
+ * Phase 2c-2：工具级审批挂起。executeStep 在 result===null 时从事件流取出待审批
+ * 工具的 requestId 透出；resolveToolApproval 映射到 runtime.resolveApproval，由其
+ * 续跑内层 agent 并对称推进 libSQL（completeStep/failStep），链式审批时再次返回 null。
  */
 
 type TRuntimePhaseMethod = (
@@ -36,9 +42,30 @@ export interface IPlanOrchestrationRuntimeAccess {
     readonly execute: TRuntimePhaseMethod;
     readonly validatePlan: TRuntimePhaseMethod;
     readonly replanPlan: TRuntimePhaseMethod;
+    /** Phase 2c-2：以审批决定续跑被工具审批挂起的内层 agent run（映射到 runtime.resolveApproval）。 */
+    readonly resolveApproval: (
+        input: IApprovalResolutionInput,
+        options?: IAgentRuntimeRunOptions,
+    ) => Promise<IAgentRuntimeResponse>;
     /** 请求级模型配置；缺省时各 phase 方法回退到 runtime 的 env 配置。 */
     readonly modelConfig?: IAgentRuntimeModelConfigInput | undefined;
 }
+
+/**
+ * 从一次 execute()/resolveApproval() 的事件流里取出「待审批工具请求」的 requestId。
+ * 取最后一个 approval_required 事件（链式审批时对应当前待批的工具）。
+ */
+const extractPendingApproval = (
+    events: ReadonlyArray<TAgentRuntimeOutputEvent>,
+): { requestId: string; toolName?: string } | undefined => {
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+        const event = events[index];
+        if (event && event.type === 'approval_required') {
+            return { requestId: event.request.id, toolName: event.request.toolName };
+        }
+    }
+    return undefined;
+};
 
 export const createMastraPlanOrchestrationDeps = (
     access: IPlanOrchestrationRuntimeAccess,
@@ -110,7 +137,8 @@ export const createMastraPlanOrchestrationDeps = (
             );
             // execute() 仅在「挂起等待外部审批」时返回 result === null。
             if (response.result === null) {
-                return { status: 'suspended' };
+                const approval = extractPendingApproval(response.events);
+                return { status: 'suspended', ...(approval ? { approval } : {}) };
             }
             // 成功与否的权威记录在 workflow state：completeStep 写入 completedStepIds，
             // failStep 写入 failedStepIds（completeStep 会反向清除 failedStepIds）。
@@ -123,6 +151,34 @@ export const createMastraPlanOrchestrationDeps = (
             return {
                 status: 'failed',
                 error: workflow?.errorMessage ?? response.result ?? '步骤执行失败',
+            };
+        },
+
+        async resolveToolApproval({ planId, version, stepId, requestId, decision }) {
+            const record = await access.planStore.getPlan({ planId, version }).catch(() => null);
+            const response = await access.resolveApproval({
+                requestId,
+                decision,
+                planId,
+                planVersion: version,
+                planStepId: stepId,
+                ...(record?.threadId ? { threadId: record.threadId } : {}),
+            });
+            // 链式审批：又一个工具待批，resolveApproval 与 execute() 一致返回 result === null。
+            if (response.result === null) {
+                const approval = extractPendingApproval(response.events);
+                return { status: 'suspended', ...(approval ? { approval } : {}) };
+            }
+            // resolveApproval 内部已对称推进 libSQL（completeStep/failStep）；据 workflow state 判真值。
+            const workflow = await access.planWorkflowStore
+                .getWorkflow({ planId, version })
+                .catch(() => null);
+            if (workflow?.state.completedStepIds.includes(stepId)) {
+                return { status: 'completed' };
+            }
+            return {
+                status: 'failed',
+                error: workflow?.errorMessage ?? response.result ?? '工具审批续跑后步骤未完成',
             };
         },
 
