@@ -464,7 +464,7 @@ describe('AiAssistantPanel', () => {
     expect(wrapper.find('.ai-model-switch').exists()).toBe(false);
     expect(wrapper.find('.ai-model-button').exists()).toBe(false);
     expect(wrapper.find('.ai-mode-menu').exists()).toBe(false);
-    expect(wrapper.findAll('.ai-panel-actions .ai-icon-button')).toHaveLength(3);
+    expect(wrapper.findAll('.ai-panel-frame__actions .ai-icon-button')).toHaveLength(3);
   });
 
   it('点击空态提示词会直接发送给 AI', async () => {
