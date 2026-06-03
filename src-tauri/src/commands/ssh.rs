@@ -48,12 +48,17 @@ pub(crate) struct SshConnectionParams {
 
 impl Drop for SshConnectionParams {
     fn drop(&mut self) {
+        // 用 volatile 写 + 编译屏障逐字节覆盖密码，避免编译器把「写后即弃」的
+        // 清零作为死存储优化掉；涉及堆上明文密码的安全擦除。
         if let Some(p) = self.password.as_mut() {
+            // SAFETY: 仅将已分配的 UTF-8 缓冲区逐字节覆写为 0，不改变长度 / 容量；
+            // 全 0 始终是合法 UTF-8，且 clear() 前缓冲区内容已不再被使用。
             unsafe {
                 for b in p.as_bytes_mut() {
-                    *b = 0;
+                    std::ptr::write_volatile(b, 0u8);
                 }
             }
+            std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
             p.clear();
         }
     }

@@ -201,6 +201,7 @@ where
         .take_writer()
         .map_err(|error| LocalWslPtyError::Open(error.to_string()))?;
     let killer = child.clone_killer();
+    let mut cleanup_killer = child.clone_killer();
     let pid = child.process_id().unwrap_or_default();
 
     spawn_interactive_reader(
@@ -210,7 +211,11 @@ where
         reader,
         child,
         on_event,
-    )?;
+    )
+    .inspect_err(|_error| {
+        // 读线程创建失败时，child 不会被任何线程接管，主动终止以免遗留孤儿 wsl.exe。
+        let _ = cleanup_killer.kill();
+    })?;
 
     Ok(LocalWslPtyHandle {
         session_id,
@@ -295,6 +300,7 @@ where
         }
     };
     let killer = child.clone_killer();
+    let mut cleanup_killer = child.clone_killer();
     let pid = child.process_id().unwrap_or_default();
 
     spawn_run_reader(
@@ -307,6 +313,8 @@ where
         on_event,
     )
     .inspect_err(|_error| {
+        // 读线程创建失败时，child 不会被任何线程接管，主动终止以免遗留孤儿 wsl.exe。
+        let _ = cleanup_killer.kill();
         cleanup_wsl_paths(&cleanup_paths);
     })?;
 
@@ -480,9 +488,11 @@ fn materialize_wsl_script(execution_path: &str, content: &str) -> Result<(), Loc
         .spawn()
         .map_err(|error| LocalWslPtyError::Open(format!("写入临时脚本失败：{error}")))?;
     if let Some(mut stdin) = child.stdin.take() {
-        stdin
-            .write_all(content.as_bytes())
-            .map_err(|error| LocalWslPtyError::Open(format!("写入临时脚本失败：{error}")))?;
+        if let Err(error) = stdin.write_all(content.as_bytes()) {
+            // 写 stdin 失败时主动终止子进程，避免遗留挂起的 wsl.exe。
+            let _ = child.kill();
+            return Err(LocalWslPtyError::Open(format!("写入临时脚本失败：{error}")));
+        }
     }
     let output = child
         .wait_with_output()
