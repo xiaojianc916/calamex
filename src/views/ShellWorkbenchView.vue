@@ -12,7 +12,7 @@
         :command-templates="commandTemplates" :executor="editorStore.selectedExecutor"
         @select-view="handleSelectSidebarView" @toggle-primary-mode="handleTogglePrimaryMode"
         @open-file="handleSidebarOpenFile" @open-folder="openFolder" @open-git-diff="handleSidebarOpenGitDiff"
-        @run="handleRunScript" @create-document="createNewDocument" @open-terminal="openTerminal"
+        @run="handleRunScript" @create-document="createNewDocument" @open-terminal="handleOpenTerminal"
         @insert-template="handleInsertTemplate" @clear-run-history="handleClearRunHistory"
         @explorer-state-change="handleExplorerSessionStateChange" />
     </template>
@@ -39,9 +39,11 @@
 
               <Card v-show="!isAiMode"
                 class="flex h-full min-h-0 flex-1 flex-col gap-0 rounded-none border-0 py-0 shadow-none bg-transparent">
-                <div v-if="isTerminalSplitVisible" ref="terminalSplitRef"
-                  class="flex h-full min-h-0 w-full flex-col">
-                  <div class="min-h-0 flex-1">
+                <ResizablePanelGroup direction="vertical" auto-save-id="workbench-terminal-split"
+                  class="min-h-0 flex-1">
+                  <ResizablePanel id="workbench-editor-panel" :order="1" :ref="bindEditorPanel" :min-size="20"
+                    collapsible :collapsed-size="0" :default-size="68" class="min-h-0"
+                    @collapse="handleEditorCollapse" @expand="handleEditorExpand">
                     <CardContent class="flex h-full min-h-0 flex-1 px-0 pb-0 pt-0">
                       <div class="flex h-full min-h-0 flex-1 flex-col">
                         <EmptyEditorState v-if="!editorStore.hasActiveDocument"
@@ -56,7 +58,7 @@
                           @update:model-value="updateContent" @cursor-position-change="handleCursorPositionChange"
                           @diagnostics-change="handleDiagnosticsChange" @selection-change="handleSelectionChange"
                           @format-request="handleFormatDocument" @command-palette-request="handleOpenCommandPalette"
-                          @open-terminal-request="openTerminal" @run-request="handleRunScript" />
+                          @open-terminal-request="handleOpenTerminal" @run-request="handleRunScript" />
 
                         <DeferredAiDiffPreviewEditor v-else-if="
                           editorStore.document.kind === 'ai-diff' &&
@@ -73,62 +75,21 @@
                           :path="editorStore.document.path" :name="editorStore.document.name" />
                       </div>
                     </CardContent>
-                  </div>
+                  </ResizablePanel>
 
-                  <div class="terminal-resize-handle" :class="{
-                    'is-dragging': isTerminalDragging,
-                    'is-snap-maximize': terminalDragIntent === 'maximize',
-                    'is-snap-close': terminalDragIntent === 'close',
-                  }" role="separator" aria-orientation="horizontal" @pointerdown="startTerminalDrag">
-                    <span v-if="isTerminalDragging && terminalDragIntent !== 'resize'" class="terminal-resize-hint"
-                      v-text="terminalDragIntent === 'maximize' ? '松开即可全屏' : '松开即可关闭终端'"></span>
-                  </div>
+                  <template v-if="isTerminalPanelVisible">
+                    <ResizableHandle with-handle />
 
-                  <div class="min-h-0 overflow-hidden" :style="{ height: terminalHeight + 'px' }">
-                    <DeferredRunPanel theme="light" :terminal-settings="appStore.settings.terminal"
-                      :visible="isTerminalPanelVisible" :is-maximized="false" @hide="hideTerminal"
-                      @toggle-maximize="toggleTerminalMaximize"
-                      @terminal-run-completed="handleIntegratedTerminalRunCompleted" />
-                  </div>
-                </div>
-
-                <div v-else-if="isTerminalPanelVisible" class="flex min-h-0 flex-1 flex-col overflow-hidden">
-                  <DeferredRunPanel theme="light" :terminal-settings="appStore.settings.terminal"
-                    :visible="isTerminalPanelVisible" :is-maximized="true" @hide="hideTerminal"
-                    @toggle-maximize="toggleTerminalMaximize"
-                    @terminal-run-completed="handleIntegratedTerminalRunCompleted" />
-                </div>
-
-                <CardContent v-else class="flex min-h-0 flex-1 px-0 pb-0 pt-0">
-                  <div class="flex h-full min-h-0 flex-1 flex-col">
-                    <EmptyEditorState v-if="!editorStore.hasActiveDocument"
-                      :has-workspace="Boolean(editorStore.workspaceRootPath)" :is-desktop-runtime="isDesktopRuntime"
-                      @create="createNewDocument" @open="openDocument" @open-folder="openFolder" />
-
-                    <DeferredSmartScriptEditor v-else-if="editorStore.document.kind === 'text'" :ref="bindEditorRef"
-                      :key="editorStore.document.id"
-                      :document-id="editorStore.document.id" :document-path="editorStore.document.path"
-                      :document-name="editorStore.document.name" :model-value="editorStore.document.content" theme="light"
-                      :editor-settings="appStore.settings.editor" :can-run="canRun" @update:model-value="updateContent"
-                      @cursor-position-change="handleCursorPositionChange" @diagnostics-change="handleDiagnosticsChange"
-                      @selection-change="handleSelectionChange" @format-request="handleFormatDocument"
-                      @command-palette-request="handleOpenCommandPalette" @open-terminal-request="openTerminal"
-                      @run-request="handleRunScript" />
-
-                    <DeferredAiDiffPreviewEditor v-else-if="
-                      editorStore.document.kind === 'ai-diff' && editorStore.document.aiDiffPreview
-                    " :preview="editorStore.document.aiDiffPreview" />
-
-                    <DeferredGitDiffViewer v-else-if="
-                      editorStore.document.kind === 'git-diff' &&
-                      editorStore.document.gitDiffPreview
-                    " :preview="editorStore.document.gitDiffPreview" theme="light"
-                      :editor-settings="appStore.settings.editor" />
-
-                    <DeferredImageAssetPreview v-else-if="editorStore.document.path" :path="editorStore.document.path"
-                      :name="editorStore.document.name" />
-                  </div>
-                </CardContent>
+                    <ResizablePanel id="workbench-terminal-panel" :order="2" :min-size="12" collapsible
+                      :collapsed-size="0" :default-size="32" class="min-h-0 overflow-hidden"
+                      @collapse="handleHideTerminal">
+                      <DeferredRunPanel theme="light" :terminal-settings="appStore.settings.terminal"
+                        :visible="isTerminalPanelVisible" :is-maximized="isEditorCollapsed" @hide="handleHideTerminal"
+                        @toggle-maximize="toggleTerminalFullscreen"
+                        @terminal-run-completed="handleIntegratedTerminalRunCompleted" />
+                    </ResizablePanel>
+                  </template>
+                </ResizablePanelGroup>
               </Card>
             </template>
           </div>
@@ -143,6 +104,7 @@
 import { computed, defineAsyncComponent, nextTick, ref } from 'vue';
 import EmptyEditorState from '@/components/editor/EmptyEditorState.vue';
 import { Card, CardContent } from '@/components/ui/card';
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import StartupAiWorkbenchShell from '@/components/workbench/StartupAiWorkbenchShell.vue';
 import StartupWorkbenchShell from '@/components/workbench/StartupWorkbenchShell.vue';
 import WorkbenchDashboardSidebar from '@/components/workbench/WorkbenchDashboardSidebar.vue';
@@ -209,7 +171,6 @@ const {
   isSidebarVisible,
   isAiMode,
   terminalHeight,
-  isTerminalMaximized,
   activeSidebarView,
   sidebarWidth,
   startupShellState,
@@ -221,8 +182,6 @@ const {
   handleCursorPositionChange,
   handleSelectionChange,
   handleDiagnosticsChange,
-  handleTerminalHeightChange,
-  toggleTerminalMaximize,
   openAiMode,
   openEditorMode,
   handleSelectSidebarView,
@@ -241,9 +200,6 @@ useLsp(visibleWorkspaceRootPath);
 
 const isTerminalAllowed = computed(() => !isAiMode.value);
 const isTerminalPanelVisible = computed(() => isTerminalAllowed.value && isTerminalVisible.value);
-const isTerminalSplitVisible = computed(
-  () => isTerminalPanelVisible.value && !isTerminalMaximized.value,
-);
 const aiAgentStore = useAiAgentStore();
 const terminalAgentRunStatuses = new Set(['completed', 'failed', 'cancelled']);
 const terminalPlanStatuses = new Set(['completed', 'failed', 'rejected']);
@@ -269,69 +225,59 @@ const hasPinnedAiWorkspace = computed(() => {
   );
 });
 
-// 终端面板：自定义指针拖拽调整高度（像素），替代 reka-ui 百分比分割器
-const terminalSplitRef = ref<HTMLElement | null>(null);
-const isTerminalDragging = ref(false);
+// 终端分栏：使用官方 reka-ui Splitter（ResizablePanelGroup）实现磁吸折叠/全屏，
+// 不再手写指针拖拽。编辑器面板折叠=终端全屏，终端面板折叠=关闭终端。
+type TResizablePanelHandle = {
+  collapse: () => void;
+  expand: () => void;
+};
 
-// 拖拽手势意图：resize 普通调整 / maximize 即将全屏 / close 即将关闭
-// 在“还差一点距离”时即触发，贴近常见软件的吸附式交互
-type TTerminalDragIntent = 'resize' | 'maximize' | 'close';
-const TERMINAL_SNAP_MAXIMIZE_OVERSHOOT = 64; // 向上越过最大高度再多拉这么多像素 → 全屏
-const TERMINAL_SNAP_CLOSE_HEIGHT = 100; // 向下拉到意图高度低于此值 → 关闭终端
-const terminalDragIntent = ref<TTerminalDragIntent>('resize');
+const isResizablePanelHandle = (value: unknown): value is TResizablePanelHandle =>
+  typeof value === 'object' &&
+  value !== null &&
+  'collapse' in value &&
+  typeof (value as { collapse: unknown }).collapse === 'function' &&
+  'expand' in value &&
+  typeof (value as { expand: unknown }).expand === 'function';
 
-const startTerminalDrag = (event: PointerEvent): void => {
-  event.preventDefault();
-  const startY = event.clientY;
-  const startHeight = terminalHeight.value;
-  isTerminalDragging.value = true;
-  terminalDragIntent.value = 'resize';
-  document.body.style.userSelect = 'none';
-  document.body.style.cursor = 'row-resize';
+const editorPanelRef = ref<TResizablePanelHandle | null>(null);
+// 终端是否处于全屏（即编辑器面板被折叠）。由面板的 collapse/expand 事件驱动。
+const isEditorCollapsed = ref(false);
 
-  const handleMove = (moveEvent: PointerEvent): void => {
-    const delta = startY - moveEvent.clientY;
-    const rawHeight = startHeight + delta;
-    const container = terminalSplitRef.value;
-    const maxHeight = container ? Math.max(140, container.clientHeight - 220) : rawHeight;
+const bindEditorPanel = (value: unknown): void => {
+  editorPanelRef.value = isResizablePanelHandle(value) ? value : null;
+};
 
-    if (rawHeight >= maxHeight + TERMINAL_SNAP_MAXIMIZE_OVERSHOOT) {
-      terminalDragIntent.value = 'maximize';
-    } else if (rawHeight <= TERMINAL_SNAP_CLOSE_HEIGHT) {
-      terminalDragIntent.value = 'close';
-    } else {
-      terminalDragIntent.value = 'resize';
-    }
+const handleEditorCollapse = (): void => {
+  isEditorCollapsed.value = true;
+};
 
-    handleTerminalHeightChange(Math.min(rawHeight, maxHeight));
-  };
+const handleEditorExpand = (): void => {
+  isEditorCollapsed.value = false;
+};
 
-  const handleUp = (): void => {
-    isTerminalDragging.value = false;
-    document.body.style.userSelect = '';
-    document.body.style.cursor = '';
-    window.removeEventListener('pointermove', handleMove);
-    window.removeEventListener('pointerup', handleUp);
+const handleOpenTerminal = async (): Promise<void> => {
+  isEditorCollapsed.value = false;
+  await openTerminal();
+};
 
-    const intent = terminalDragIntent.value;
-    terminalDragIntent.value = 'resize';
+const handleHideTerminal = (): void => {
+  isEditorCollapsed.value = false;
+  hideTerminal();
+};
 
-    if (intent === 'maximize') {
-      if (!isTerminalMaximized.value) {
-        toggleTerminalMaximize();
-      }
-      return;
-    }
+// 终端全屏切换：折叠/展开编辑器面板（reka-ui 原生），状态由事件回写 isEditorCollapsed。
+const toggleTerminalFullscreen = (): void => {
+  const panel = editorPanelRef.value;
+  if (!panel) {
+    return;
+  }
 
-    if (intent === 'close') {
-      // 关闭前恢复拖拽起始高度，避免“记忆高度”被压缩成最小值
-      handleTerminalHeightChange(startHeight);
-      hideTerminal();
-    }
-  };
-
-  window.addEventListener('pointermove', handleMove);
-  window.addEventListener('pointerup', handleUp);
+  if (isEditorCollapsed.value) {
+    panel.expand();
+  } else {
+    panel.collapse();
+  }
 };
 
 const handleSidebarOpenFile = async (payload: TWorkbenchOpenFilePayload): Promise<void> => {
@@ -398,97 +344,5 @@ const bindEditorViewportRef = (value: unknown): void => {
   border-right: 0;
   border-bottom: 0;
   border-radius: var(--workbench-content-left-radius) 0 0 var(--workbench-content-left-radius);
-}
-
-/* 终端面板顶部：可拖拽分隔条 —— 常态 1px #ededed 细线，11px 不可见热区便于抓取，悬停/拖拽平滑变粗高亮 */
-.terminal-resize-handle {
-  position: relative;
-  z-index: 1;
-  flex: 0 0 auto;
-  height: 1px;
-  background-color: #ededed;
-  cursor: row-resize;
-  touch-action: none;
-  transition: background-color 160ms ease;
-}
-
-/* 加宽不可见抓取热区，方便鼠标对准 */
-.terminal-resize-handle::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 50%;
-  height: 11px;
-  transform: translateY(-50%);
-}
-
-/* 悬停 / 拖拽：平滑浮现 3px 品牌强调色高亮 */
-.terminal-resize-handle::after {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 50%;
-  height: 3px;
-  transform: translateY(-50%);
-  background-color: var(--accent-strong);
-  border-radius: 999px;
-  opacity: 0;
-  pointer-events: none;
-  transition:
-    opacity 160ms ease,
-    height 160ms cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-.terminal-resize-handle:hover::after,
-.terminal-resize-handle.is-dragging::after {
-  opacity: 1;
-}
-
-/* 拖拽到全屏阈值：高亮条变为强调绿并加粗，提示“即将全屏” */
-.terminal-resize-handle.is-snap-maximize::after {
-  opacity: 1;
-  height: 5px;
-  background-color: #16a34a;
-}
-
-/* 拖拽到关闭阈值：高亮条变为警示红并加粗，提示“即将关闭” */
-.terminal-resize-handle.is-snap-close::after {
-  opacity: 1;
-  height: 5px;
-  background-color: #ef4444;
-}
-
-/* 拖拽手势提示气泡：悬浮在分隔条上方居中 */
-.terminal-resize-hint {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, calc(-100% - 8px));
-  padding: 3px 10px;
-  border-radius: 999px;
-  font-size: 12px;
-  line-height: 1.4;
-  white-space: nowrap;
-  color: #ffffff;
-  background-color: rgba(31, 35, 40, 0.92);
-  pointer-events: none;
-  z-index: 2;
-}
-
-.terminal-resize-handle.is-snap-maximize .terminal-resize-hint {
-  background-color: #16a34a;
-}
-
-.terminal-resize-handle.is-snap-close .terminal-resize-hint {
-  background-color: #ef4444;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .terminal-resize-handle,
-  .terminal-resize-handle::after {
-    transition: none;
-  }
 }
 </style>
