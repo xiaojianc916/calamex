@@ -232,7 +232,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
   const activeMode = computed<TAiAssistantMode>({
     get: () => agentStore.mode,
     set: (nextMode) => {
-      agentStore.mode = nextMode;
+      agentStore.setMode(nextMode);
     },
   });
   const agentSteps = shallowRef<IAgentExecutionStep[]>([]);

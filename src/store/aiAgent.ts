@@ -398,6 +398,10 @@ export const useAiAgentStore = defineStore(
       networkPermission.value = permission;
     };
 
+    const setMode = (nextMode: TAiAgentPanelMode): void => {
+      mode.value = nextMode;
+    };
+
     const setPlan = (
       goal: string,
       nextSteps: IAiTaskPlanStep[],
@@ -677,6 +681,7 @@ export const useAiAgentStore = defineStore(
       getToolActivities,
       // actions
       setNetworkPermission,
+      setMode,
       setClassification,
       beginPlanning,
       failPlanning,

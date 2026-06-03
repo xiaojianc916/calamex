@@ -162,7 +162,7 @@ export const useAiAgentPlan = () => {
 
       latestContext.value = contextSnapshot;
       latestWorkspaceRootPath.value = workspaceRootPath;
-      store.mode = 'plan';
+      store.setMode('plan');
       store.setPlan(projection.goal, projection.steps, planMetadata);
       await refreshPlanRecord(planMetadata.planId, planMetadata.version).catch((error: unknown) => {
         logger.warn({
@@ -225,7 +225,7 @@ export const useAiAgentPlan = () => {
     if (!hasPersistedSnapshot) {
       return;
     }
-    store.mode = 'plan';
+    store.setMode('plan');
     store.isClassifying = false;
     store.isPlanning = false;
     store.isApproving = false;
@@ -280,7 +280,7 @@ export const useAiAgentPlan = () => {
       assertSidecarSuccess(payload, 'sidecar 未确认计划审批结果。');
       applyPlanRecordPayload(payload);
       store.setPlanStatus('approved', store.approvedAt ?? approvedAt);
-      store.mode = 'agent';
+      store.setMode('agent');
     } catch (error) {
       store.errorMessage = toErrorMessage(error, '批准计划失败。');
       throw error;
@@ -304,7 +304,7 @@ export const useAiAgentPlan = () => {
       });
       assertSidecarSuccess(payload, 'sidecar 未确认计划拒绝结果。');
       applyPlanRecordPayload(payload);
-      store.mode = 'plan';
+      store.setMode('plan');
     } catch (error) {
       store.errorMessage = toErrorMessage(error, '拒绝计划失败。');
       throw error;

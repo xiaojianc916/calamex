@@ -188,7 +188,7 @@ export const useAiAgentRun = () => {
   const getActiveRun = (): IAiAgentRun | null => unref(store.activeRun);
   const getPendingToolConfirmation = () => unref(store.pendingToolConfirmation);
   const setMode = (nextMode: TAiAgentPanelMode): void => {
-    Reflect.set(store, 'mode', nextMode);
+    store.setMode(nextMode);
   };
   const setErrorMessage = (message: string): void => {
     Reflect.set(store, 'errorMessage', message);
@@ -283,7 +283,7 @@ export const useAiAgentRun = () => {
     }
 
     store.setPlan(projection.goal, projection.steps, projection.planMetadata);
-    store.mode = 'plan';
+    store.setMode('plan');
   };
 
   const validateCompletedSidecarPlan = async (
