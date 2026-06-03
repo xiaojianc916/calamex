@@ -42,7 +42,7 @@ const editorLineWidths = ['62%', '46%', '72%', '38%', '66%', '54%', '78%', '42%'
 
         <template v-else>
           <div class="startup-workbench-shell__gutter">
-            <span v-for="line in editorLineWidths.length" :key="line"> line </span>
+            <span v-for="line in editorLineWidths.length" :key="line" v-text="line"></span>
           </div>
           <div class="startup-workbench-shell__code">
             <Skeleton
