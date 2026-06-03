@@ -43,14 +43,6 @@
             "expiresAt": "2026-08-31"
         },
         {
-            "path": "src/services/tauri.ts",
-            "rule": "max-lines-400",
-            "reason": "灯下黑补登：~48KB 前端 ACL facade 巨石，待按域 re-export 拆分",
-            "owner": "@xiaojianc",
-            "adrRef": "ADR-0007",
-            "expiresAt": "2026-12-31"
-        },
-        {
             "path": "src/store/editor.ts",
             "rule": "max-lines-400",
             "reason": "灯下黑补登：~32KB editor store，待按 state/actions 模块拆分",
