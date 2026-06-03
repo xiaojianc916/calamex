@@ -214,6 +214,10 @@ async fn run_shfmt(
 ) -> Result<String, String> {
     let mut command = Command::new(&candidate.executable);
     configure_tokio_command_for_background(&mut command);
+    // 超时分支会 drop 掉 wait_with_output() 的 future，从而 drop 掉 child。
+    // tokio 默认不会在 drop 时终止子进程，这里显式开启 kill_on_drop，
+    // 避免 shfmt 超时后残留孤儿进程。
+    command.kill_on_drop(true);
 
     if candidate.use_wsl {
         command.args(["--", "shfmt", "-i", "2"]);

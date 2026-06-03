@@ -137,10 +137,32 @@ fn replace_known_host_key_in(
             kept.push_str(line);
             kept.push('\n');
         }
-        std_fs::write(path, &kept).map_err(|e| format!("写入 known_hosts 失败：{e}"))?;
+        // 原子重写：避免在截断 + 重写之间崩溃 / 断电导致 known_hosts 内容丢失。
+        atomic_rewrite(path, &kept)?;
     }
     russh::keys::known_hosts::learn_known_hosts_path(host, port, key, path)
         .map_err(|e| format!("写入 known_hosts 失败：{e}"))
+}
+
+/// 原子重写文件：先写入同目录下的临时文件，再 rename 覆盖目标，
+/// 避免重写过程中崩溃 / 断电把 known_hosts 截断、丢失既有可信主机条目。
+fn atomic_rewrite(path: &Path, contents: &str) -> Result<(), String> {
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("known_hosts");
+    let temp_path = match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent.join(format!(".{file_name}.tmp")),
+        _ => PathBuf::from(format!(".{file_name}.tmp")),
+    };
+
+    std_fs::write(&temp_path, contents.as_bytes())
+        .map_err(|e| format!("写入 known_hosts 失败：{e}"))?;
+    if let Err(e) = std_fs::rename(&temp_path, path) {
+        let _ = std_fs::remove_file(&temp_path);
+        return Err(format!("写入 known_hosts 失败：{e}"));
+    }
+    Ok(())
 }
 
 fn known_hosts_line_targets_host(line: &str, host: &str, port: u16) -> bool {
@@ -211,5 +233,21 @@ mod tests {
             "example.com",
             22,
         ));
+    }
+
+    #[test]
+    fn atomic_rewrite_replaces_existing_contents() {
+        let dir = std::env::temp_dir().join(format!("calamex_known_hosts_{}", std::process::id()));
+        std_fs::create_dir_all(&dir).expect("create temp dir");
+        let path = dir.join("known_hosts");
+        std_fs::write(&path, "stale entry\n").expect("seed file");
+
+        atomic_rewrite(&path, "fresh-a\nfresh-b\n").expect("atomic rewrite");
+
+        assert_eq!(
+            std_fs::read_to_string(&path).expect("read back"),
+            "fresh-a\nfresh-b\n"
+        );
+        let _ = std_fs::remove_dir_all(&dir);
     }
 }
