@@ -57,20 +57,30 @@ export const getChunkRunId = (chunk: unknown): string | null => {
     return typeof runId === 'string' && runId.trim().length > 0 ? runId : null;
 };
 
-export const isApprovedDecision = (decision: string): boolean => {
-    const normalizedDecision = decision.trim().toLowerCase();
+/**
+ * Affirmative approval tokens. This is an ALLOW-LIST and the gate is
+ * fail-closed: any decision that is not explicitly listed here is treated as
+ * NOT approved, so the pending dangerous tool call is declined instead of
+ * executed.
+ *
+ * The canonical sidecar contract decisions are `approve | reject | cancel |
+ * modify` (see APPROVAL_DECISIONS in engines/contracts/runtime-input.ts). Only
+ * `approve` is affirmative; `reject`, `cancel`, and `modify` must NOT proceed.
+ * The UI confirmation ids `allow-once` / `allow-run` / `allow` are also
+ * accepted defensively, in case a caller forwards the raw confirmation id
+ * without first mapping it to `approve`.
+ *
+ * NOTE: This used to be a deny-list, which fail-OPEN: `cancel`, `modify`, and
+ * any unknown/empty decision were incorrectly treated as approved. Keep this an
+ * allow-list so that new or unexpected decision values default to "deny".
+ */
+const APPROVED_DECISION_TOKENS: ReadonlySet<string> = new Set([
+    'approve',
+    'approved',
+    'allow',
+    'allow-once',
+    'allow-run',
+]);
 
-    return ![
-        'decline',
-        'declined',
-        'deny',
-        'denied',
-        'no',
-        'reject',
-        'rejected',
-        'skip',
-        'skipped',
-        'stop',
-        'stopped',
-    ].includes(normalizedDecision);
-};
+export const isApprovedDecision = (decision: string): boolean =>
+    APPROVED_DECISION_TOKENS.has(decision.trim().toLowerCase());
