@@ -75,8 +75,15 @@
                     </CardContent>
                   </div>
 
-                  <div class="terminal-resize-handle" :class="{ 'is-dragging': isTerminalDragging }" role="separator"
-                    aria-orientation="horizontal" @pointerdown="startTerminalDrag"></div>
+                  <div class="terminal-resize-handle" :class="{
+                    'is-dragging': isTerminalDragging,
+                    'is-snap-maximize': terminalDragIntent === 'maximize',
+                    'is-snap-close': terminalDragIntent === 'close',
+                  }" role="separator" aria-orientation="horizontal" @pointerdown="startTerminalDrag">
+                    <span v-if="isTerminalDragging && terminalDragIntent !== 'resize'" class="terminal-resize-hint">
+                       terminalDragIntent === 'maximize' ? '松开即可全屏' : '松开即可关闭终端' 
+                    </span>
+                  </div>
 
                   <div class="min-h-0 overflow-hidden" :style="{ height: terminalHeight + 'px' }">
                     <DeferredRunPanel theme="light" :terminal-settings="appStore.settings.terminal"
@@ -267,23 +274,37 @@ const hasPinnedAiWorkspace = computed(() => {
 const terminalSplitRef = ref<HTMLElement | null>(null);
 const isTerminalDragging = ref(false);
 
+// 拖拽手势意图：resize 普通调整 / maximize 即将全屏 / close 即将关闭
+// 在“还差一点距离”时即触发，贴近常见软件的吸附式交互
+type TTerminalDragIntent = 'resize' | 'maximize' | 'close';
+const TERMINAL_SNAP_MAXIMIZE_OVERSHOOT = 64; // 向上越过最大高度再多拉这么多像素 → 全屏
+const TERMINAL_SNAP_CLOSE_HEIGHT = 100; // 向下拉到意图高度低于此值 → 关闭终端
+const terminalDragIntent = ref<TTerminalDragIntent>('resize');
+
 const startTerminalDrag = (event: PointerEvent): void => {
   event.preventDefault();
   const startY = event.clientY;
   const startHeight = terminalHeight.value;
   isTerminalDragging.value = true;
+  terminalDragIntent.value = 'resize';
   document.body.style.userSelect = 'none';
   document.body.style.cursor = 'row-resize';
 
   const handleMove = (moveEvent: PointerEvent): void => {
     const delta = startY - moveEvent.clientY;
-    let next = startHeight + delta;
+    const rawHeight = startHeight + delta;
     const container = terminalSplitRef.value;
-    if (container) {
-      const maxHeight = Math.max(140, container.clientHeight - 220);
-      next = Math.min(next, maxHeight);
+    const maxHeight = container ? Math.max(140, container.clientHeight - 220) : rawHeight;
+
+    if (rawHeight >= maxHeight + TERMINAL_SNAP_MAXIMIZE_OVERSHOOT) {
+      terminalDragIntent.value = 'maximize';
+    } else if (rawHeight <= TERMINAL_SNAP_CLOSE_HEIGHT) {
+      terminalDragIntent.value = 'close';
+    } else {
+      terminalDragIntent.value = 'resize';
     }
-    handleTerminalHeightChange(next);
+
+    handleTerminalHeightChange(Math.min(rawHeight, maxHeight));
   };
 
   const handleUp = (): void => {
@@ -292,6 +313,22 @@ const startTerminalDrag = (event: PointerEvent): void => {
     document.body.style.cursor = '';
     window.removeEventListener('pointermove', handleMove);
     window.removeEventListener('pointerup', handleUp);
+
+    const intent = terminalDragIntent.value;
+    terminalDragIntent.value = 'resize';
+
+    if (intent === 'maximize') {
+      if (!isTerminalMaximized.value) {
+        toggleTerminalMaximize();
+      }
+      return;
+    }
+
+    if (intent === 'close') {
+      // 关闭前恢复拖拽起始高度，避免“记忆高度”被压缩成最小值
+      handleTerminalHeightChange(startHeight);
+      hideTerminal();
+    }
   };
 
   window.addEventListener('pointermove', handleMove);
@@ -408,6 +445,45 @@ const bindEditorViewportRef = (value: unknown): void => {
 .terminal-resize-handle:hover::after,
 .terminal-resize-handle.is-dragging::after {
   opacity: 1;
+}
+
+/* 拖拽到全屏阈值：高亮条变为强调绿并加粗，提示“即将全屏” */
+.terminal-resize-handle.is-snap-maximize::after {
+  opacity: 1;
+  height: 5px;
+  background-color: #16a34a;
+}
+
+/* 拖拽到关闭阈值：高亮条变为警示红并加粗，提示“即将关闭” */
+.terminal-resize-handle.is-snap-close::after {
+  opacity: 1;
+  height: 5px;
+  background-color: #ef4444;
+}
+
+/* 拖拽手势提示气泡：悬浮在分隔条上方居中 */
+.terminal-resize-hint {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, calc(-100% - 8px));
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: nowrap;
+  color: #ffffff;
+  background-color: rgba(31, 35, 40, 0.92);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.terminal-resize-handle.is-snap-maximize .terminal-resize-hint {
+  background-color: #16a34a;
+}
+
+.terminal-resize-handle.is-snap-close .terminal-resize-hint {
+  background-color: #ef4444;
 }
 
 @media (prefers-reduced-motion: reduce) {
