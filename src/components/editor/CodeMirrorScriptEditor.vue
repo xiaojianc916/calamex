@@ -43,10 +43,12 @@ import {
   EditorSelection,
   EditorState,
   type Extension,
+  Prec,
   type SelectionRange,
 } from '@codemirror/state';
 import {
   crosshairCursor,
+  drawSelection,
   dropCursor,
   EditorView,
   highlightSpecialChars,
@@ -97,9 +99,9 @@ interface IEditorExpose {
   layoutEditor: () => void;
 }
 
-// ────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────
 // Constants
-// ────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────
 const VIEW_STATE_SAVE_DEBOUNCE_MS = 500;
 const MENU_WIDTH = 224;
 const MENU_MAX_HEIGHT = 320;
@@ -115,9 +117,9 @@ const createEmptyAnalysis = (): IAnalyzeScriptPayload => ({
   diagnostics: [],
 });
 
-// ────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────
 // Lazy / cached shell completion source
-// ────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────
 // `import('@/utils/shell-completion')` 自身会被打包器缓存，但每次 completion 都
 // 重新 `.then(...)` 并重新 `createShellCodeMirrorCompletionSource()` 仍有不必要的
 // 微开销，且每次都拿到一个新的 source 实例，影响内部可能的状态复用。
@@ -187,9 +189,9 @@ const inlineCompletionController = createCodeMirrorInlineCompletionController({
   getLanguage: () => getCurrentLanguage(),
 });
 
-// ────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────
 // Completion / language
-// ────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────
 const buildCompletionExtension = (
   editorSettings: IEditorSettings,
   language: string,
@@ -230,9 +232,9 @@ const buildCompletionExtension = (
 const getCurrentLanguage = (): string =>
   resolveLanguageForPath(props.documentPath, props.documentName);
 
-// ────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────
 // Selection helpers
-// ────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────
 const lineColumnToOffset = (view: EditorView, line: number, column: number): number => {
   const lineInfo = view.state.doc.line(Math.min(Math.max(1, line), view.state.doc.lines));
   return Math.min(lineInfo.to, lineInfo.from + Math.max(0, column - 1));
@@ -277,9 +279,9 @@ const emitSelectionSummary = (): void => {
   emit('selection-change', resolveSelectionSummary());
 };
 
-// ────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────
 // View state persist / restore
-// ────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────
 const clearViewStateSaveTimer = (): void => {
   if (viewStateSaveTimerId !== null) {
     window.clearTimeout(viewStateSaveTimerId);
@@ -349,9 +351,9 @@ const restoreViewStateForPath = (path: string | null | undefined): void => {
   }
 };
 
-// ────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────
 // Diagnostics
-// ────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────
 const toDiagnosticSeverity = (level: TScriptDiagnosticSeverity): Diagnostic['severity'] => {
   switch (level) {
     case 'error':
@@ -396,9 +398,9 @@ const syncDiagnostics = (): void => {
   applyDiagnostics();
 };
 
-// ────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────
 // Layout / window resize coordination
-// ────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────
 const layoutEditor = (): void => {
   editorView?.requestMeasure();
 };
@@ -446,9 +448,9 @@ const handleShellWindowResizeSettled = (): void => {
   if (shouldRelayout) scheduleEditorLayout();
 };
 
-// ────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────
 // Context menu
-// ────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────
 const closeContextMenu = (): void => {
   contextMenuState.value.open = false;
   contextMenuGroups.value = [];
@@ -579,9 +581,9 @@ const handleWindowResize = (): void => {
   if (contextMenuState.value.open) closeContextMenu();
 };
 
-// ────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────
 // Clipboard
-// ────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────
 const copyEditorSelection = async (): Promise<void> => {
   const text = resolveSelectedText();
   if (text.trim()) await writeClipboardText(text);
@@ -611,9 +613,9 @@ const pasteIntoEditor = async (): Promise<void> => {
   view.focus();
 };
 
-// ────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────
 // Context menu item dispatch
-// ────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────
 const handleContextMenuItemSelect = async (item: IEditorContextMenuItem): Promise<void> => {
   const view = editorView;
   closeContextMenu();
@@ -661,9 +663,9 @@ const handleContextMenuItemSelect = async (item: IEditorContextMenuItem): Promis
   }
 };
 
-// ────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────
 // Editor lifecycle
-// ────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────
 const handleEditorUpdate = (update: ViewUpdate): void => {
   if (update.docChanged && !suppressModelValueEmit) {
     closeContextMenu();
@@ -713,12 +715,28 @@ const editorBottomPaddingTheme = EditorView.theme({
   '.cm-content': { paddingBottom: '24em' },
 });
 
+// drawSelection 提供可控制宽度的“自绘光标”（浏览器原生光标宽度无法用 CSS 修改），
+// 因此重新启用它来让光标加粗生效；但隐藏它绘制的整块选区，改回浏览器原生选区，
+// 保持行尾不刷蓝、多行/全选呈参差右边缘（与 VS Code 一致）的既有观感。
+const nativeSelectionWithDrawnCursorTheme = Prec.highest(
+  EditorView.theme({
+    // 隐藏 drawSelection 的选区矩形层（仅保留其光标层 .cm-cursorLayer）。
+    '.cm-selectionLayer': { display: 'none' },
+    // 覆盖 drawSelection 注入的 “::selection 透明 !important”，恢复原生选区高亮。
+    '.cm-content .cm-line::selection, .cm-content .cm-line ::selection': {
+      backgroundColor: '#add6ff80 !important',
+    },
+  }),
+);
+
 const createBaseExtensions = (language: string): Extension[] => [
   lspCompletionTheme,
   highlightSpecialChars(),
   shikiHighlightExtension(language),
   history(),
   dropCursor(),
+  drawSelection(),
+  nativeSelectionWithDrawnCursorTheme,
   indentOnInput(),
   bracketMatching(),
   rectangularSelection(),
@@ -844,9 +862,9 @@ const reconfigureSettings = (): void => {
   scheduleEditorLayout();
 };
 
-// ────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────
 // Watchers
-// ────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────
 watch(
   () => [props.documentPath, props.documentName] as const,
   ([nextPath], [previousPath]) => {
@@ -886,9 +904,9 @@ watch(
   { deep: true },
 );
 
-// ────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────
 // Mount / unmount
-// ────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────
 onMounted(() => {
   createEditor();
   window.addEventListener(SHELL_WINDOW_RESIZE_START_EVENT, handleShellWindowResizeStart);
@@ -931,9 +949,9 @@ onBeforeUnmount(() => {
   editorView = null;
 });
 
-// ────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────
 // Public methods
-// ────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────
 const focusEditor = (): void => {
   editorView?.focus();
 };
@@ -1187,5 +1205,3 @@ defineExpose<IEditorExpose>({
   line-height: 1.45;
 }
 </style>
-
-
