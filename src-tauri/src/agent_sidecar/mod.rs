@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::OnceLock;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
@@ -532,9 +532,12 @@ async fn ensure_default_sidecar_available(base_url: &str) -> Result<(), String> 
     let timeout_secs = startup_timeout_seconds();
     let mut last_error: Option<String> = None;
     for _ in 0..SIDECAR_STARTUP_ATTEMPTS {
-        spawn_default_sidecar_if_absent()?;
-        match wait_for_default_sidecar_ready(base_url, timeout_secs).await {
+        let spawned_child = spawn_default_sidecar_if_absent()?;
+        match wait_for_default_sidecar_ready(base_url, timeout_secs, spawned_child).await {
             Ok(()) => return Ok(()),
+            // 进程确定性崩溃（如依赖缺失导致 ERR_MODULE_NOT_FOUND）：重试只会重复崩溃，
+            // 直接快速失败，把修复建议 + 日志末尾返回，不再空等整个就绪超时。
+            Err(error) if is_crashed_sidecar_error(&error) => return Err(error),
             Err(error) => {
                 last_error = Some(error);
                 // 本轮窗口内仍未就绪：清掉可能卡死/半启动的进程后再试一轮。
@@ -555,16 +558,26 @@ async fn ensure_default_sidecar_available(base_url: &str) -> Result<(), String> 
     Err(error)
 }
 
-async fn wait_for_default_sidecar_ready(base_url: &str, timeout_secs: u64) -> Result<(), String> {
+async fn wait_for_default_sidecar_ready(
+    base_url: &str,
+    timeout_secs: u64,
+    mut spawned_child: Option<Child>,
+) -> Result<(), String> {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_secs);
     while tokio::time::Instant::now() < deadline {
         match probe_sidecar_health(base_url).await {
             SidecarHealthStatus::Ready => return Ok(()),
             SidecarHealthStatus::Stale => {
                 restart_stale_default_sidecar()?;
-                spawn_default_sidecar_if_absent()?;
+                spawned_child = spawn_default_sidecar_if_absent()?;
             }
-            SidecarHealthStatus::Unavailable => {}
+            SidecarHealthStatus::Unavailable => {
+                // 快速失败：本轮 spawn 的进程若已退出（如依赖缺失导致 ERR_MODULE_NOT_FOUND），
+                // 继续轮询只会空等到超时，这里一旦发现崩溃就立即带诊断返回。
+                if let Some(crash_error) = take_crashed_sidecar_error(&mut spawned_child) {
+                    return Err(crash_error);
+                }
+            }
         }
 
         tokio::time::sleep(Duration::from_millis(SIDECAR_STARTUP_RETRY_MS)).await;
@@ -582,8 +595,8 @@ pub async fn restart() -> Result<AgentSidecarHealthPayload, String> {
     }
 
     restart_stale_default_sidecar()?;
-    spawn_default_sidecar()?;
-    wait_for_default_sidecar_ready(&base_url, startup_timeout_seconds()).await?;
+    let spawned_child = spawn_default_sidecar()?;
+    wait_for_default_sidecar_ready(&base_url, startup_timeout_seconds(), Some(spawned_child)).await?;
     health().await
 }
 
@@ -755,14 +768,15 @@ fn read_sidecar_log_tail() -> Option<String> {
 }
 
 /// 仅在端口尚无监听者时才 spawn，避免并发重复拉起导致 EADDRINUSE。
-fn spawn_default_sidecar_if_absent() -> Result<(), String> {
+/// 返回新拉起的子进程句柄（端口已被监听而未拉起时返回 `None`），供调用方做快速失败崩溃探测。
+fn spawn_default_sidecar_if_absent() -> Result<Option<Child>, String> {
     if is_port_listening(DEFAULT_SIDECAR_PORT) {
-        return Ok(());
+        return Ok(None);
     }
-    spawn_default_sidecar()
+    spawn_default_sidecar().map(Some)
 }
 
-fn spawn_default_sidecar() -> Result<(), String> {
+fn spawn_default_sidecar() -> Result<Child, String> {
     let sidecar_root = resolve_sidecar_root()?;
     let node = resolve_node_executable()?;
 
@@ -815,8 +829,42 @@ fn spawn_default_sidecar() -> Result<(), String> {
     crate::commands::configure_std_command_for_background(&mut command);
     command
         .spawn()
-        .map(|_| ())
         .map_err(|error| format!("AGENT_SIDECAR_UNAVAILABLE: 启动 Node sidecar 失败：{error}"))
+}
+/// 若 `spawned_child` 指向的进程已退出且退出码非零（启动即崩溃，典型如依赖缺失导致的
+/// `ERR_MODULE_NOT_FOUND`），消费该句柄并返回带修复建议 + 日志末尾的明确错误；
+/// 进程仍在运行、已正常退出或无法探测时返回 `None`，不打断既有就绪等待。
+fn take_crashed_sidecar_error(spawned_child: &mut Option<Child>) -> Option<String> {
+    let child = spawned_child.as_mut()?;
+    let Ok(Some(status)) = child.try_wait() else {
+        return None;
+    };
+
+    *spawned_child = None;
+
+    if status.success() {
+        return None;
+    }
+
+    let mut error = crashed_sidecar_error_message(status.code());
+    if let Some(tail) = read_sidecar_log_tail() {
+        error.push_str("\n--- agent-sidecar.log（末尾）---\n");
+        error.push_str(&tail);
+    }
+    Some(error)
+}
+
+fn crashed_sidecar_error_message(exit_code: Option<i32>) -> String {
+    let code = exit_code
+        .map(|code| code.to_string())
+        .unwrap_or_else(|| "未知".to_string());
+    format!(
+        "AGENT_SIDECAR_CRASHED: Node sidecar 启动后立即退出（退出码 {code}）。多为 agent-sidecar 依赖未安装或损坏，请在仓库根目录运行 `pnpm install` 后重试。"
+    )
+}
+
+fn is_crashed_sidecar_error(error: &str) -> bool {
+    error.starts_with("AGENT_SIDECAR_CRASHED:")
 }
 
 fn resolve_sidecar_root() -> Result<PathBuf, String> {
@@ -1286,6 +1334,7 @@ mod tests {
         parse_netstat_listening_pids, SidecarHealthProbePayload, SidecarHealthStatus,
         DEFAULT_SIDECAR_URL, SIDECAR_STARTUP_TIMEOUT_DEFAULT_SECONDS,
         SIDECAR_STARTUP_TIMEOUT_MAX_SECONDS, SIDECAR_STARTUP_TIMEOUT_MIN_SECONDS,
+        crashed_sidecar_error_message, is_crashed_sidecar_error,
     };
     use std::fs;
     use std::process::Command;
@@ -1512,4 +1561,28 @@ mod tests {
         assert_eq!(model_provider_id(" openai/gpt-5.5 ").unwrap(), "openai");
         assert!(model_provider_id("gpt-5.5").is_err());
     }
+    #[test]
+fn crashed_sidecar_error_message_is_actionable() {
+    let message = crashed_sidecar_error_message(Some(1));
+    assert!(message.starts_with("AGENT_SIDECAR_CRASHED:"));
+    assert!(message.contains("退出码 1"));
+    assert!(message.contains("pnpm install"));
+    assert!(crashed_sidecar_error_message(None).contains("退出码 未知"));
+}
+
+#[test]
+fn is_crashed_sidecar_error_only_matches_crash_prefix() {
+    assert!(is_crashed_sidecar_error(&crashed_sidecar_error_message(Some(1))));
+    assert!(!is_crashed_sidecar_error(
+        "AGENT_SIDECAR_UNAVAILABLE: Node sidecar 已尝试启动，但未在 20 秒内就绪。"
+    ));
+}
+
+#[test]
+fn crashed_sidecar_error_is_not_narrator_retryable() {
+    // 启动即崩溃是确定性故障，narrator 重试路径不应把它当作可重试错误。
+    assert!(!is_retryable_narrator_sidecar_error(
+        &crashed_sidecar_error_message(Some(1))
+    ));
+}
 }

@@ -16,6 +16,7 @@ pub struct AiPatchHunkPayload {
     /// - `'+'`：新增行
     /// - `'-'`：删除行
     /// - `"\\ No newline at end of file"`：标准 unified diff 无末尾换行标记
+    ///
     /// 普通行内不含末尾换行符；应用端按 unified diff 语义补齐。
     pub(crate) lines: Vec<String>,
 }

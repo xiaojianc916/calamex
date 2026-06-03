@@ -962,7 +962,7 @@ mod tests {
             &temp_dir,
             &PinIndex::default(),
             SnapshotRetentionPolicy {
-                now: jiff::Timestamp::now() + jiff::SignedDuration::from_secs(((super::FULL_BLOB_TTL_DAYS + 1)) * 86400),
+                now: jiff::Timestamp::now() + jiff::SignedDuration::from_secs((super::FULL_BLOB_TTL_DAYS + 1) * 86400),
                 total_blob_quota_bytes: 0,
                 ..SnapshotRetentionPolicy::default()
             },

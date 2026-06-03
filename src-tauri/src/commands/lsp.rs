@@ -30,4 +30,4 @@ mod types;
 pub use self::commands::{
     lsp_completion, lsp_did_change, lsp_did_close, lsp_did_open, lsp_hover, lsp_start, lsp_stop,
 };
-pub use self::types::{LspCompletionItem, LspDiagnostic, LspHoverResult, LspManager};
+pub use self::types::LspManager;

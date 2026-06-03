@@ -73,6 +73,7 @@ fn resolve_node_executable() -> Result<PathBuf, String> {
 ///   2. 项目 node_modules 里 shellcheck npm 包自带的二进制(最常见)
 ///   3. 常见系统安装位置(scoop/winget/choco/Homebrew 等)
 ///   4. 兑底 PATH
+///
 /// 找不到时返回 None，调用方退回裸名 "shellcheck"（至少保持旧行为）。
 pub(crate) fn resolve_shellcheck_executable() -> Option<PathBuf> {
     if let Ok(path) = std::env::var("XIAOJIANC_SHELLCHECK_EXE") {

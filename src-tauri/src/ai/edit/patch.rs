@@ -302,8 +302,7 @@ mod tests {
         AiPatchSetPayload, AiProposePatchRequest,
     };
     use std::fs;
-    use std::path::PathBuf;
-
+use std::path::{Path, PathBuf};
     #[test]
     fn propose_patch_uses_original_hash() {
         let payload = propose_patch(AiProposePatchRequest {
@@ -628,7 +627,7 @@ mod tests {
         let _ = fs::remove_dir_all(&temp_dir);
     }
 
-    fn patch_file(path: &PathBuf, original: &str, updated: &str) -> AiPatchFilePayload {
+    fn patch_file(path: &Path, original: &str, updated: &str) -> AiPatchFilePayload {
         AiPatchFilePayload {
             path: path.to_string_lossy().to_string(),
             original_hash: hash_text(original),

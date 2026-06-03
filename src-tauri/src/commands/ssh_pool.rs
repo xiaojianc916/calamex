@@ -232,13 +232,6 @@ impl SshConnectionPool {
             );
         }
     }
-
-    /// Clear all entries (used in tests to ensure isolation).
-    #[cfg(test)]
-    pub(crate) async fn clear(&self) {
-        let mut entries = self.entries.lock().await;
-        entries.clear();
-    }
 }
 
 // ---- global pool singleton ----

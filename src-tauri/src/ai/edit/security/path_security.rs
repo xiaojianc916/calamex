@@ -259,7 +259,7 @@ mod tests {
         validate_ai_writable_path_with_root,
     };
     use std::fs;
-    use std::path::PathBuf;
+use std::path::PathBuf;
 
     #[test]
     fn validate_rejects_empty_nul_parent_and_protected_paths() {

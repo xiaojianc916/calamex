@@ -187,16 +187,30 @@ pub(super) fn next_terminal_run_chunk_seq() -> u64 {
     TERMINAL_RUN_CHUNK_SEQUENCE.fetch_add(1, AtomicOrdering::Relaxed)
 }
 
-fn emit_terminal_run_visual_completion(
-    app: &AppHandle,
-    state: &TerminalSessionState,
-    session_id: &str,
-    run_id: &str,
+/// `emit_terminal_run_visual_completion` 的入参集合：把一次 run 结束时注入
+/// reset / 分隔符视觉块所需的上下文收拢成结构体，避免过长参数列表。
+struct RunVisualCompletion<'a> {
+    app: &'a AppHandle,
+    state: &'a TerminalSessionState,
+    session_id: &'a str,
+    run_id: &'a str,
     exit_code: Option<i32>,
     started_at: Instant,
-    tracker: &Arc<Mutex<TerminalRunVisualTracker>>,
+    tracker: &'a Arc<Mutex<TerminalRunVisualTracker>>,
     prompt: Option<String>,
-) {
+}
+
+fn emit_terminal_run_visual_completion(ctx: RunVisualCompletion<'_>) {
+    let RunVisualCompletion {
+        app,
+        state,
+        session_id,
+        run_id,
+        exit_code,
+        started_at,
+        tracker,
+        prompt,
+    } = ctx;
     let tracker_snapshot = current_visual_tracker(tracker);
     let reset_run_seq = next_visual_run_seq(tracker);
     let separator_run_seq = next_visual_run_seq(tracker);
@@ -382,16 +396,16 @@ fn finalize_local_run(
     visual_tracker: &Arc<Mutex<TerminalRunVisualTracker>>,
     prompt: Option<String>,
 ) {
-    emit_terminal_run_visual_completion(
-        app,
-        state,
-        session_id,
-        run_id,
-        exit_code,
-        started_at,
-        visual_tracker,
-        prompt,
-    );
+    emit_terminal_run_visual_completion(RunVisualCompletion {
+    app,
+    state,
+    session_id,
+    run_id,
+    exit_code,
+    started_at,
+    tracker: visual_tracker,
+    prompt,
+});
     emit_terminal_run_completed_with_state(
         app,
         TerminalRunCompletedEvent {
