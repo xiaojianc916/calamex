@@ -151,7 +151,7 @@ describe('AiChatThread', () => {
             actions: [
               {
                 id: 'allow-agent-execution',
-                label: '鍏佽鎵ц',
+                label: '鱏佳銭鍊Ñ',
               },
             ],
           }),
@@ -211,7 +211,7 @@ describe('AiChatThread', () => {
       props: {
         messages: [
           createMessage({
-            content: 'AI 姝ｅ湪鑷姩浣跨敤宸ュ叿锛歳ead_file',
+            content: 'AI 姝ｅ湺鮑妩浣跨敢宓ゥ叿锡ﾚread_file',
             toolCalls: [
               {
                 id: 'tool-call-read-file',
@@ -331,5 +331,34 @@ describe('AiChatThread', () => {
 
     expect(wrapper.find('.ai-context-compression-divider').exists()).toBe(true);
     expect(wrapper.text()).toContain('上下文已自动压缩');
+  });
+
+  it('过滤掉以错误前缀开头的助手回复消息', () => {
+    const wrapper = mount(AiChatThread, {
+      props: {
+        messages: [
+          createMessage({ id: 'user-1', role: 'user', content: '帮我跑一下' }),
+          createMessage({
+            id: 'assistant-error-1',
+            content: 'Agent 执行失败：Node sidecar 未就绪',
+          }),
+        ],
+        isTyping: false,
+        platformId: 'deepseek',
+        providerLabel: 'DeepSeek',
+      },
+      global: {
+        stubs: {
+          AiMessageItem: {
+            props: ['message'],
+            template: '<div class="message-item-stub" v-text="message.content" />',
+          },
+        },
+      },
+    });
+
+    expect(wrapper.findAll('.message-item-stub')).toHaveLength(1);
+    expect(wrapper.text()).toContain('帮我跑一下');
+    expect(wrapper.text()).not.toContain('Agent 执行失败');
   });
 });

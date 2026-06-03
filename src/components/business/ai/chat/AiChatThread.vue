@@ -57,10 +57,35 @@ const TOOL_PROGRESS_PREFIXES = [
   'Agent 正在调用工具…',
   'Agent 正在根据你的确认继续执行…',
 ] as const;
+// 报错只在输入框上方以一条居中提示线呈现，因此这些“把报错当回复”的助手占位消息
+// 不再进入对话流，避免同一个错误出现两次。
+const ERROR_REPLY_PREFIXES = [
+  'Agent 执行失败：',
+  'AI 上下文收集失败：',
+  '计划生成失败：',
+] as const;
 const CONTEXT_COMPRESSION_EVENT_TYPE = 'acontext.memory.compressed';
 
+const isErrorReplyMessage = (message: IAiChatMessage): boolean => {
+  if (message.role !== 'assistant') {
+    return false;
+  }
+
+  const content = message.content.trim();
+
+  if (!content) {
+    return false;
+  }
+
+  return ERROR_REPLY_PREFIXES.some((prefix) => content.startsWith(prefix));
+};
+
+const visibleMessages = computed<IAiChatMessage[]>(() =>
+  props.messages.filter((message) => !isErrorReplyMessage(message)),
+);
+
 const hasInlineProgressMessage = computed(() => {
-  const lastMessage = props.messages.at(-1);
+  const lastMessage = visibleMessages.value.at(-1);
   if (lastMessage?.role !== 'assistant') {
     return false;
   }
@@ -81,12 +106,14 @@ const shouldRenderStandaloneTyping = computed(
 );
 const shouldRenderEmptyState = computed(
   () =>
-    props.messages.length === 0 && !props.hasExtraContent && !shouldRenderStandaloneTyping.value,
+    visibleMessages.value.length === 0 &&
+    !props.hasExtraContent &&
+    !shouldRenderStandaloneTyping.value,
 );
 
 const lastAssistantMessageId = computed(() => {
-  for (let index = props.messages.length - 1; index >= 0; index -= 1) {
-    const message = props.messages[index];
+  for (let index = visibleMessages.value.length - 1; index >= 0; index -= 1) {
+    const message = visibleMessages.value[index];
 
     if (message?.role === 'assistant') {
       return message.id;
@@ -136,7 +163,7 @@ const hasContextCompressionMarker = (message: IAiChatMessage): boolean =>
       </slot>
       <template v-else>
         <slot name="before-messages" />
-        <template v-for="message in messages" :key="message.id">
+        <template v-for="message in visibleMessages" :key="message.id">
           <slot v-if="message.id === lastAssistantMessageId" name="before-last-assistant" :message="message" />
           <AiMessageItem :message="message" :platform-id="platformId" :provider-label="providerLabel"
             :workspace-root-path="workspaceRootPath"
@@ -159,7 +186,7 @@ const hasContextCompressionMarker = (message: IAiChatMessage): boolean =>
         </Message>
       </template>
     </ConversationContent>
-    <ConversationScrollButton v-if="messages.length > 0" class="ai-chat-scroll-button" />
+    <ConversationScrollButton v-if="visibleMessages.length > 0" class="ai-chat-scroll-button" />
   </Conversation>
 </template>
 

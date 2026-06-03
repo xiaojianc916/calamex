@@ -11,12 +11,12 @@ import {
   ContextTrigger,
 } from '@/components/ai-elements/context';
 import { PromptInputAttachmentsDisplay } from '@/components/ai-elements/prompt-input';
+import AiErrorNotice from '@/components/business/ai/chat/AiErrorNotice.vue';
 import AiProviderIcon from '@/components/business/ai/provider/AiProviderIcon.vue';
 import {
   computeDeepSeekCostBreakdown,
   formatCnyCost,
 } from '@/components/business/ai/provider/deepseek-pricing';
-import FieldError from '@/components/common/FieldError.vue';
 import DropdownMenu from '@/components/ui/dropdown-menu/DropdownMenu.vue';
 import DropdownMenuContent from '@/components/ui/dropdown-menu/DropdownMenuContent.vue';
 import DropdownMenuItem from '@/components/ui/dropdown-menu/DropdownMenuItem.vue';
@@ -435,7 +435,7 @@ const handleStop = (): void => {
 
 <template>
   <footer class="ai-composer">
-    <FieldError v-if="errorMessage" class="ai-error" :message="errorMessage" />
+    <AiErrorNotice :message="errorMessage" />
     <form class="ai-composer-surface" v-bind="attrs" @submit.prevent="handleSubmit">
       <input ref="fileInputRef" type="file" class="hidden" multiple @change="handleFileChange" />
       <div v-if="displayedAttachments.length" class="ai-attachments">
