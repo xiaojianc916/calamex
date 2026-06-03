@@ -1,8 +1,24 @@
 # Agent Sidecar 打包闭环方案
 
-> 状态：草案 (Proposed)
-> 目标：将 `agent-sidecar` 从 `MATURITY.md` 的 **yellow** 推进到“可随安装包交付”
+> 状态：已实现 (Implemented) — 2026-06-03 经基于源码的架构评审核实，步骤 1–5 已在 `main` 落地
+> 目标：将 `agent-sidecar` 从 `MATURITY.md` 的 **yellow** 推进到“可随安装包交付” ✅ 已达成
 > 适用平台：Windows / NSIS（`src-tauri/tauri.conf.json > bundle.targets = ["nsis"]`）
+
+## 0. 落地核实（2026-06-03，以代码为唯一事实源）
+
+本方案不再是草案：步骤 1–5 均已在代码中落地。核实证据（均取自源码，而非文档自述）：
+
+- **步骤 1（`bundled_resource_roots()` 提升为共享工具）✅**：`commands/shell_tools.rs` 中已声明为 `pub(crate) fn bundled_resource_roots()`，注释写明“同时供 agent_sidecar 复用”，并被 `agent_sidecar/mod.rs` 与 `commands/lsp/discovery.rs` 实际复用。
+- **步骤 2（sidecar root 随包优先分支）✅**：`agent_sidecar/mod.rs::resolve_sidecar_root()` 已在 env 覆盖之后、源码树兜底之前探测 `bundled_resource_roots()/agent-sidecar`（以 `package.json` 存在为有效）。
+- **步骤 3（Node 可执行文件随包优先）✅**：`resolve_node_executable()` 已把 `bundled_resource_roots()/node/{node.exe,node}` 排在系统候选（`ProgramFiles`、`PATH`）之前。
+- **步骤 4（可写状态迁移到用户目录）✅（实现细节略有调整）**：运行时可写目录由 `sidecar_runtime_dir()` 统一解析为 `LOCALAPPDATA/com.xiaojianc.Calamex/agent-sidecar`（缺失时回退系统临时目录），`agent-sidecar.log` 与 `NODE_COMPILE_CACHE` 均落于其下；prod 密钥走 keyring（`current_sidecar_model_config()` + `CredentialStore`），`.env` 仅作 dev 兜底注入。与原方案相比，落地时直接使用 `LOCALAPPDATA` 而非 Tauri 的 `app_log_dir()/app_cache_dir()`，二者皆为用户级可写目录，目标一致。
+- **步骤 5（产物布局契约化 + 打包 smoke 校验）✅**：`scripts/prepare-bundle-resources.ts` 头注释声明“产物布局必须与 Rust 的 `bundled_resource_roots()` 拼接路径对齐”，并对 Node、`agent-sidecar/dist/server.js`、tsx 启动器、bash-language-server CLI、shellcheck 二进制逐项 `fail()` 断言（即打包后 smoke 校验）。
+
+**遗留（不在本方案范围）**：`MATURITY.md` 原缺口 (2)「危险工具执行的 Rust 后端实现」仍按其自身 ADR 推进，且未在本次架构评审中复核。
+
+---
+
+> 以下为原始方案正文（草案阶段撰写，保留供追溯）。
 
 ---
 
