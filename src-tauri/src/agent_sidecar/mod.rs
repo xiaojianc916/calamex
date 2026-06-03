@@ -1463,4 +1463,180 @@ mod tests {
     }
 
     #[test]
-    
+    fn answer_delta_text_extracts_only_final_phase_message_deltas() {
+        let implicit_final = serde_json::json!({ "type": "message_delta", "text": "你好" });
+        assert_eq!(answer_delta_text(&implicit_final).as_deref(), Some("你好"));
+
+        let explicit_final =
+            serde_json::json!({ "type": "message_delta", "text": "世界", "phase": "final" });
+        assert_eq!(answer_delta_text(&explicit_final).as_deref(), Some("世界"));
+
+        let stage_event =
+            serde_json::json!({ "type": "message_delta", "text": "思考中", "phase": "stage" });
+        assert_eq!(answer_delta_text(&stage_event), None);
+
+        let empty_event = serde_json::json!({ "type": "message_delta", "text": "" });
+        assert_eq!(answer_delta_text(&empty_event), None);
+
+        let other_event =
+            serde_json::json!({ "type": "tool_start", "toolName": "x", "input": {} });
+        assert_eq!(answer_delta_text(&other_event), None);
+    }
+
+    #[test]
+    fn parses_sidecar_listener_pid_from_netstat_output() {
+        let output = r#"
+  Proto  Local Address          Foreign Address        State           PID
+  TCP    127.0.0.1:39871        0.0.0.0:0              LISTENING       1234
+  TCP    [::1]:39871            [::]:0                 LISTENING       1234
+  TCP    127.0.0.1:39872        0.0.0.0:0              LISTENING       5678
+"#;
+
+        assert_eq!(parse_netstat_listening_pids(output, 39871), vec![1234]);
+    }
+
+    #[test]
+    fn sidecar_stream_line_buffer_waits_for_complete_utf8_line() {
+        let line =
+            "{\"type\":\"event\",\"event\":{\"type\":\"message_delta\",\"text\":\"你好🙂\"}}\n";
+        let split_at = line.find('你').expect("line should contain chinese") + 2;
+        let bytes = line.as_bytes();
+        let mut buffer = Vec::new();
+
+        buffer.extend_from_slice(&bytes[..split_at]);
+        let lines = drain_complete_sidecar_stream_lines(&mut buffer, "/agent/chat/stream")
+            .expect("partial chunk should not decode incomplete utf8");
+        assert!(lines.is_empty());
+
+        buffer.extend_from_slice(&bytes[split_at..]);
+        let lines = drain_complete_sidecar_stream_lines(&mut buffer, "/agent/chat/stream")
+            .expect("complete line should decode");
+
+        assert_eq!(lines, vec![line.trim_end_matches('\n').to_string()]);
+        assert!(!lines[0].contains('\u{fffd}'));
+        assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn sidecar_stream_line_buffer_ignores_whitespace_tail() {
+        assert!(!has_non_whitespace_bytes(b"\r\n\t "));
+        assert!(has_non_whitespace_bytes(b"\n{}"));
+    }
+
+    #[test]
+    fn injects_tavily_key_from_sidecar_dotenv_when_user_env_is_missing() {
+        let sidecar_root =
+            std::env::temp_dir().join(format!("xiaojianc-sidecar-env-test-{}", std::process::id()));
+
+        fs::create_dir_all(&sidecar_root).expect("temp sidecar root should be created");
+        fs::write(
+            sidecar_root.join(".env"),
+            "# comment\nXIAOJIANC_TEST_TAVILY_KEY=tvly-test-from-dotenv\n",
+        )
+        .expect("dotenv should be written");
+
+        let mut command = Command::new("node");
+        inject_sidecar_dotenv_key_if_present(
+            &mut command,
+            &sidecar_root,
+            "XIAOJIANC_TEST_TAVILY_KEY",
+        );
+
+        let injected = command
+            .get_envs()
+            .find(|(key, _)| key.to_string_lossy() == "XIAOJIANC_TEST_TAVILY_KEY")
+            .and_then(|(_, value)| value.map(|item| item.to_string_lossy().to_string()));
+
+        assert_eq!(injected.as_deref(), Some("tvly-test-from-dotenv"));
+
+        fs::remove_dir_all(sidecar_root).expect("temp sidecar root should be removed");
+    }
+
+    #[test]
+    fn sidecar_health_is_runtime_name_agnostic() {
+        let ready_payload = SidecarHealthProbePayload {
+            ok: true,
+            _engine: Some("mastra".to_string()),
+            protocol_version: Some("7".to_string()),
+            implementation_version: Some(
+                "deepseek-reasoning-transport-v6-plan-history".to_string(),
+            ),
+        };
+        let stale_payload = SidecarHealthProbePayload {
+            ok: true,
+            _engine: Some("custom-runtime".to_string()),
+            protocol_version: Some("6".to_string()),
+            implementation_version: None,
+        };
+        let unavailable_payload = SidecarHealthProbePayload {
+            ok: false,
+            _engine: Some("legacy-runtime".to_string()),
+            protocol_version: Some("7".to_string()),
+            implementation_version: Some(
+                "deepseek-reasoning-transport-v6-plan-history".to_string(),
+            ),
+        };
+
+        assert_eq!(
+            classify_sidecar_health(&ready_payload),
+            SidecarHealthStatus::Ready
+        );
+        assert_eq!(
+            classify_sidecar_health(&stale_payload),
+            SidecarHealthStatus::Stale
+        );
+        assert_eq!(
+            classify_sidecar_health(&unavailable_payload),
+            SidecarHealthStatus::Unavailable
+        );
+    }
+
+    #[test]
+    fn model_provider_id_uses_model_prefix() {
+        assert_eq!(
+            model_provider_id("deepseek/deepseek-v4-pro").unwrap(),
+            "deepseek"
+        );
+        assert_eq!(model_provider_id(" openai/gpt-5.5 ").unwrap(), "openai");
+        assert!(model_provider_id("gpt-5.5").is_err());
+    }
+
+    #[test]
+    fn crashed_sidecar_error_message_is_actionable() {
+        let message = crashed_sidecar_error_message(Some(1));
+        assert!(message.starts_with("AGENT_SIDECAR_CRASHED:"));
+        assert!(message.contains("退出码 1"));
+        assert!(message.contains("pnpm install"));
+        assert!(crashed_sidecar_error_message(None).contains("退出码 未知"));
+    }
+
+    #[test]
+    fn is_crashed_sidecar_error_only_matches_crash_prefix() {
+        assert!(is_crashed_sidecar_error(&crashed_sidecar_error_message(Some(1))));
+        assert!(!is_crashed_sidecar_error(
+            "AGENT_SIDECAR_UNAVAILABLE: Node sidecar 已尝试启动，但未在 20 秒内就绪。"
+        ));
+    }
+
+    #[test]
+    fn crashed_sidecar_error_is_not_narrator_retryable() {
+        // 启动即崩溃是确定性故障，narrator 重试路径不应把它当作可重试错误。
+        assert!(!is_retryable_narrator_sidecar_error(
+            &crashed_sidecar_error_message(Some(1))
+        ));
+    }
+
+    #[test]
+    fn sidecar_runtime_dir_falls_back_to_temp_without_local_app_data() {
+        let with_local =
+            sidecar_runtime_dir_from(Some("C:\\Users\\tester\\AppData\\Local".to_string()));
+        assert!(with_local.ends_with("agent-sidecar"));
+        assert!(with_local
+            .parent()
+            .is_some_and(|parent| parent.ends_with("com.xiaojianc.Calamex")));
+
+        let fallback = sidecar_runtime_dir_from(None);
+        assert!(fallback.ends_with("agent-sidecar"));
+        assert!(fallback.to_string_lossy().contains("com.xiaojianc.Calamex"));
+    }
+}
