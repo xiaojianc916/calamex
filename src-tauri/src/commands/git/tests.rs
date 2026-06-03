@@ -242,3 +242,73 @@ fn save_git_stash_and_list_git_stashes_round_trip() -> Result<(), String> {
 
 #[test]
 fn apply_git_stash_with_pop_restores_worktree_and_clears_stash() -> Result<(), String> {
+    let temp = TempGitDir::new("stash-pop")?;
+    let _repo = temp.init_repository()?;
+    let root = temp.repository_root()?;
+    write_worktree_file(&temp.path, "src/app.sh", "echo base\n")?;
+    commit_via_cli(&temp.path, "feat: initial")?;
+    write_worktree_file(&temp.path, "src/app.sh", "echo changed\n")?;
+    save_git_stash(GitStashSaveRequest { repository_root_path: root.to_string_lossy().to_string(), message: Some("demo pop".into()), include_untracked: false })?;
+    let status = apply_git_stash(GitStashApplyRequest { repository_root_path: root.to_string_lossy().to_string(), stash_index: 0, pop: true })?;
+    let content = fs::read_to_string(temp.path.join("src/app.sh")).map_err(|e| e.to_string())?;
+    let stashes = list_git_stashes(GitRepositoryRootRequest { repository_root_path: root.to_string_lossy().to_string() })?;
+    assert_eq!(content.replace("\r\n", "\n"), "echo changed\n");
+    assert_eq!(status.unstaged_count, 1);
+    assert!(stashes.entries.is_empty());
+    Ok(())
+}
+
+#[test]
+fn get_git_pull_request_support_parses_github_remote() -> Result<(), String> {
+    let temp = TempGitDir::new("pull-request-support")?;
+    let _repo = temp.init_repository()?;
+    let root = temp.repository_root()?;
+    add_remote_via_cli(&temp.path, "origin", "git@github.com:owner/repo.git")?;
+    let payload = get_git_pull_request_support(GitRepositoryRootRequest { repository_root_path: root.to_string_lossy().to_string() })?;
+    assert!(payload.available);
+    assert_eq!(payload.provider, "github");
+    assert_eq!(payload.repository_url.as_deref(), Some("https://github.com/owner/repo"));
+    Ok(())
+}
+
+#[test]
+fn get_git_repository_status_reports_renamed_path_correctly() -> Result<(), String> {
+    let temp = TempGitDir::new("status-rename")?;
+    let _repo = temp.init_repository()?;
+    let root = temp.repository_root()?;
+    write_worktree_file(&temp.path, "src/old_name.sh", "echo hello\n")?;
+    commit_via_cli(&temp.path, "feat: initial")?;
+    cli::run_git_ok(&temp.path, &["mv", "src/old_name.sh", "src/new_name.sh"], "rename")?;
+    let status = get_git_repository_status(Some(root.to_string_lossy().to_string()))?;
+    let renamed = status.files.iter().find(|f| f.relative_path == "src/new_name.sh")
+        .ok_or_else(|| "未找到重命名后的路径".to_string())?;
+    assert_eq!(renamed.index_status.as_deref(), Some("renamed"));
+    assert_eq!(renamed.previous_relative_path.as_deref(), Some("src/old_name.sh"));
+    Ok(())
+}
+
+#[test]
+fn discard_git_paths_removes_untracked_file_without_error() -> Result<(), String> {
+    let temp = TempGitDir::new("discard-untracked")?;
+    let _repo = temp.init_repository()?;
+    let root = temp.repository_root()?;
+    write_worktree_file(&temp.path, "src/app.sh", "echo base\n")?;
+    commit_via_cli(&temp.path, "feat: initial")?;
+    write_worktree_file(&temp.path, "src/extra.sh", "echo extra\n")?;
+    discard_git_paths(GitPathOperationRequest { repository_root_path: root.to_string_lossy().to_string(), paths: vec!["src/extra.sh".into()] })?;
+    assert!(!temp.path.join("src/extra.sh").exists());
+    Ok(())
+}
+
+#[test]
+fn git_commit_history_preserves_pipe_in_message() -> Result<(), String> {
+    let temp = TempGitDir::new("history-pipe")?;
+    let _repo = temp.init_repository()?;
+    let root = temp.repository_root()?;
+    write_worktree_file(&temp.path, "src/app.sh", "echo first\n")?;
+    commit_via_cli(&temp.path, "feat: a | b | c")?;
+    let payload = list_git_commit_history(GitCommitHistoryRequest { repository_root_path: root.to_string_lossy().to_string(), offset: Some(0), limit: Some(5) })?;
+    assert_eq!(payload.entries[0].summary, "feat: a | b | c");
+    assert!(!payload.entries[0].authored_at.is_empty());
+    Ok(())
+}
