@@ -1,4 +1,4 @@
-// @status: active
+// @status: active | ADR: docs/architecture/ADR-0008-router-active-shell.md
 
 import { createRouter, createWebHashHistory, type RouteRecordRaw } from 'vue-router';
 import { getThemeManager } from '@/themes';
@@ -12,9 +12,6 @@ const routes: RouteRecordRaw[] = [
     path: '/home',
     name: 'home',
     component: () => import('@/views/ShellWorkbenchView.vue'),
-    meta: {
-      layout: 'workbench',
-    },
   },
   {
     path: '/:pathMatch(.*)*',
