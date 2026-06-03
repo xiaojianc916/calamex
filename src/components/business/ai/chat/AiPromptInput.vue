@@ -11,7 +11,6 @@ import {
   ContextTrigger,
 } from '@/components/ai-elements/context';
 import { PromptInputAttachmentsDisplay } from '@/components/ai-elements/prompt-input';
-import AiErrorNotice from '@/components/business/ai/chat/AiErrorNotice.vue';
 import AiProviderIcon from '@/components/business/ai/provider/AiProviderIcon.vue';
 import {
   computeDeepSeekCostBreakdown,
@@ -435,7 +434,6 @@ const handleStop = (): void => {
 
 <template>
   <footer class="ai-composer">
-    <AiErrorNotice :message="errorMessage" />
     <form class="ai-composer-surface" v-bind="attrs" @submit.prevent="handleSubmit">
       <input ref="fileInputRef" type="file" class="hidden" multiple @change="handleFileChange" />
       <div v-if="displayedAttachments.length" class="ai-attachments">
