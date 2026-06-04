@@ -79,139 +79,6 @@ const agentSidecarChatIpc = (
     () => commands.agentSidecarChat(payload),
   );
 
-const agentSidecarPlanIpc = (
-  payload: TSidecarRequest<'agentSidecarPlan'>,
-  options?: IIpcCallOptions,
-): Promise<TSidecarResult<'agentSidecarPlan'>> =>
-  callSpectaCommand(
-    {
-      command: 'agent_sidecar_plan',
-      guardHint: '通过 Node sidecar 生成 Agent 计划',
-      audit: 'sensitive',
-      timeoutMs: AGENT_SIDECAR_TASK_TIMEOUT_MS,
-      input: payload,
-      measureInput: measureAiChatInput,
-      signal: options?.signal,
-    },
-    () => commands.agentSidecarPlan(payload),
-  );
-
-const agentSidecarPlanApproveIpc = (
-  payload: TSidecarRequest<'agentSidecarPlanApprove'>,
-  options?: IIpcCallOptions,
-): Promise<TSidecarResult<'agentSidecarPlanApprove'>> =>
-  callSpectaCommand(
-    {
-      command: 'agent_sidecar_plan_approve',
-      guardHint: '批准 Agent sidecar 计划',
-      audit: 'sensitive',
-      timeoutMs: AGENT_SIDECAR_TASK_TIMEOUT_MS,
-      input: payload,
-      signal: options?.signal,
-    },
-    () => commands.agentSidecarPlanApprove(payload),
-  );
-
-const agentSidecarPlanQueryIpc = (
-  payload: TSidecarRequest<'agentSidecarPlanQuery'>,
-  options?: IIpcCallOptions,
-): Promise<TSidecarResult<'agentSidecarPlanQuery'>> =>
-  callSpectaCommand(
-    {
-      command: 'agent_sidecar_plan_query',
-      guardHint: '读取 Agent sidecar 计划记录',
-      idempotent: true,
-      audit: 'sensitive',
-      timeoutMs: AGENT_SIDECAR_TASK_TIMEOUT_MS,
-      input: payload,
-      signal: options?.signal,
-    },
-    () => commands.agentSidecarPlanQuery(payload),
-  );
-
-const agentSidecarPlanRejectIpc = (
-  payload: TSidecarRequest<'agentSidecarPlanReject'>,
-  options?: IIpcCallOptions,
-): Promise<TSidecarResult<'agentSidecarPlanReject'>> =>
-  callSpectaCommand(
-    {
-      command: 'agent_sidecar_plan_reject',
-      guardHint: '拒绝 Agent sidecar 计划',
-      audit: 'sensitive',
-      timeoutMs: AGENT_SIDECAR_TASK_TIMEOUT_MS,
-      input: payload,
-      signal: options?.signal,
-    },
-    () => commands.agentSidecarPlanReject(payload),
-  );
-
-const agentSidecarPlanFinishIpc = (
-  payload: TSidecarRequest<'agentSidecarPlanFinish'>,
-  options?: IIpcCallOptions,
-): Promise<TSidecarResult<'agentSidecarPlanFinish'>> =>
-  callSpectaCommand(
-    {
-      command: 'agent_sidecar_plan_finish',
-      guardHint: '收口 Agent sidecar 计划状态',
-      audit: 'sensitive',
-      timeoutMs: AGENT_SIDECAR_TASK_TIMEOUT_MS,
-      input: payload,
-      signal: options?.signal,
-    },
-    () => commands.agentSidecarPlanFinish(payload),
-  );
-
-const agentSidecarPlanValidateIpc = (
-  payload: TSidecarRequest<'agentSidecarPlanValidate'>,
-  options?: IIpcCallOptions,
-): Promise<TSidecarResult<'agentSidecarPlanValidate'>> =>
-  callSpectaCommand(
-    {
-      command: 'agent_sidecar_plan_validate',
-      guardHint: '验证 Agent sidecar 计划执行结果',
-      audit: 'sensitive',
-      timeoutMs: AGENT_SIDECAR_TASK_TIMEOUT_MS,
-      input: payload,
-      measureInput: measureAiChatInput,
-      signal: options?.signal,
-    },
-    () => commands.agentSidecarPlanValidate(payload),
-  );
-
-const agentSidecarPlanReplanIpc = (
-  payload: TSidecarRequest<'agentSidecarPlanReplan'>,
-  options?: IIpcCallOptions,
-): Promise<TSidecarResult<'agentSidecarPlanReplan'>> =>
-  callSpectaCommand(
-    {
-      command: 'agent_sidecar_plan_replan',
-      guardHint: '根据验证结果重新生成 Agent sidecar 计划',
-      audit: 'sensitive',
-      timeoutMs: AGENT_SIDECAR_TASK_TIMEOUT_MS,
-      input: payload,
-      measureInput: measureAiChatInput,
-      signal: options?.signal,
-    },
-    () => commands.agentSidecarPlanReplan(payload),
-  );
-
-const agentSidecarExecuteIpc = (
-  payload: TSidecarRequest<'agentSidecarExecute'>,
-  options?: IIpcCallOptions,
-): Promise<TSidecarResult<'agentSidecarExecute'>> =>
-  callSpectaCommand(
-    {
-      command: 'agent_sidecar_execute',
-      guardHint: '通过 Node sidecar 执行 Agent 任务',
-      audit: 'sensitive',
-      timeoutMs: AGENT_SIDECAR_TASK_TIMEOUT_MS,
-      input: payload,
-      measureInput: measureAiChatInput,
-      signal: options?.signal,
-    },
-    () => commands.agentSidecarExecute(payload),
-  );
-
 const agentSidecarResolveApprovalIpc = (
   payload: TSidecarRequest<'agentSidecarResolveApproval'>,
   options?: IIpcCallOptions,
@@ -283,14 +150,6 @@ type TSidecarTauriService = Pick<
   | 'agentSidecarRestart'
   | 'agentSidecarWarmup'
   | 'agentSidecarChat'
-  | 'agentSidecarPlan'
-  | 'agentSidecarPlanApprove'
-  | 'agentSidecarPlanQuery'
-  | 'agentSidecarPlanReject'
-  | 'agentSidecarPlanFinish'
-  | 'agentSidecarPlanValidate'
-  | 'agentSidecarPlanReplan'
-  | 'agentSidecarExecute'
   | 'agentSidecarResolveApproval'
   | 'agentSidecarRestoreCheckpoint'
   | 'agentSidecarOrchestrate'
@@ -306,22 +165,6 @@ export const sidecarTauriService: TSidecarTauriService = {
   agentSidecarWarmup: () => agentSidecarWarmupIpc(),
 
   agentSidecarChat: agentSidecarChatIpc,
-
-  agentSidecarPlan: agentSidecarPlanIpc,
-
-  agentSidecarPlanApprove: agentSidecarPlanApproveIpc,
-
-  agentSidecarPlanQuery: agentSidecarPlanQueryIpc,
-
-  agentSidecarPlanReject: agentSidecarPlanRejectIpc,
-
-  agentSidecarPlanFinish: agentSidecarPlanFinishIpc,
-
-  agentSidecarPlanValidate: agentSidecarPlanValidateIpc,
-
-  agentSidecarPlanReplan: agentSidecarPlanReplanIpc,
-
-  agentSidecarExecute: agentSidecarExecuteIpc,
 
   agentSidecarResolveApproval: agentSidecarResolveApprovalIpc,
 

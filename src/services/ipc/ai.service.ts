@@ -35,18 +35,10 @@ import type {
   IAgentSidecarApprovalResolveRequest,
   IAgentSidecarChatRequest,
   IAgentSidecarCheckpointRestoreRequest,
-  IAgentSidecarExecuteRequest,
   IAgentSidecarHealthPayload,
   IAgentSidecarOrchestratePayload,
   IAgentSidecarOrchestrateRequest,
   IAgentSidecarOrchestrateResumeRequest,
-  IAgentSidecarPlanApproveRequest,
-  IAgentSidecarPlanFinishRequest,
-  IAgentSidecarPlanQueryRequest,
-  IAgentSidecarPlanRejectRequest,
-  IAgentSidecarPlanReplanRequest,
-  IAgentSidecarPlanRequest,
-  IAgentSidecarPlanValidateRequest,
   IAgentSidecarResponsePayload,
   IAgentSidecarStreamEventPayload,
   IAgentSidecarWarmupPayload,
@@ -206,40 +198,6 @@ export const aiService = {
   },
   sidecarChat(payload: IAgentSidecarChatRequest): Promise<IAgentSidecarResponsePayload> {
     return tauriService.agentSidecarChat(payload);
-  },
-  sidecarPlan(payload: IAgentSidecarPlanRequest): Promise<IAgentSidecarResponsePayload> {
-    return tauriService.agentSidecarPlan(payload);
-  },
-  sidecarPlanApprove(
-    payload: IAgentSidecarPlanApproveRequest,
-  ): Promise<IAgentSidecarResponsePayload> {
-    return tauriService.agentSidecarPlanApprove(payload);
-  },
-  sidecarPlanQuery(payload: IAgentSidecarPlanQueryRequest): Promise<IAgentSidecarResponsePayload> {
-    return tauriService.agentSidecarPlanQuery(payload);
-  },
-  sidecarPlanReject(
-    payload: IAgentSidecarPlanRejectRequest,
-  ): Promise<IAgentSidecarResponsePayload> {
-    return tauriService.agentSidecarPlanReject(payload);
-  },
-  sidecarPlanFinish(
-    payload: IAgentSidecarPlanFinishRequest,
-  ): Promise<IAgentSidecarResponsePayload> {
-    return tauriService.agentSidecarPlanFinish(payload);
-  },
-  sidecarPlanValidate(
-    payload: IAgentSidecarPlanValidateRequest,
-  ): Promise<IAgentSidecarResponsePayload> {
-    return tauriService.agentSidecarPlanValidate(payload);
-  },
-  sidecarPlanReplan(
-    payload: IAgentSidecarPlanReplanRequest,
-  ): Promise<IAgentSidecarResponsePayload> {
-    return tauriService.agentSidecarPlanReplan(payload);
-  },
-  sidecarExecute(payload: IAgentSidecarExecuteRequest): Promise<IAgentSidecarResponsePayload> {
-    return tauriService.agentSidecarExecute(payload);
   },
   sidecarResolveApproval(
     payload: IAgentSidecarApprovalResolveRequest,

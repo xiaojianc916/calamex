@@ -276,26 +276,6 @@ export interface ITauriService {
   agentSidecarRestart(): Promise<IAgentSidecarHealthPayload>;
   agentSidecarWarmup(): Promise<IAgentSidecarWarmupPayload>;
   agentSidecarChat(payload: IAgentSidecarChatRequest): Promise<IAgentSidecarResponsePayload>;
-  agentSidecarPlan(payload: IAgentSidecarPlanRequest): Promise<IAgentSidecarResponsePayload>;
-  agentSidecarPlanApprove(
-    payload: IAgentSidecarPlanApproveRequest,
-  ): Promise<IAgentSidecarResponsePayload>;
-  agentSidecarPlanQuery(
-    payload: IAgentSidecarPlanQueryRequest,
-  ): Promise<IAgentSidecarResponsePayload>;
-  agentSidecarPlanReject(
-    payload: IAgentSidecarPlanRejectRequest,
-  ): Promise<IAgentSidecarResponsePayload>;
-  agentSidecarPlanFinish(
-    payload: IAgentSidecarPlanFinishRequest,
-  ): Promise<IAgentSidecarResponsePayload>;
-  agentSidecarPlanValidate(
-    payload: IAgentSidecarPlanValidateRequest,
-  ): Promise<IAgentSidecarResponsePayload>;
-  agentSidecarPlanReplan(
-    payload: IAgentSidecarPlanReplanRequest,
-  ): Promise<IAgentSidecarResponsePayload>;
-  agentSidecarExecute(payload: IAgentSidecarExecuteRequest): Promise<IAgentSidecarResponsePayload>;
   agentSidecarResolveApproval(
     payload: IAgentSidecarApprovalResolveRequest,
   ): Promise<IAgentSidecarResponsePayload>;
