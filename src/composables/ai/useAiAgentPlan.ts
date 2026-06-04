@@ -2,9 +2,8 @@ import { ref } from 'vue';
 import {
   mapSidecarPlanToTaskSteps,
   projectSidecarPlanRecordResponse,
-  projectSidecarPlanResponse,
-  resolveSidecarOfficialUsage,
 } from '@/composables/ai/sidecar-events';
+import { resumeOrchestration, startOrchestration } from '@/composables/ai/sidecar-orchestrate';
 import { aiService } from '@/services/ipc/ai.service';
 import { useAiAgentStore } from '@/store/aiAgent';
 import type {
@@ -48,22 +47,6 @@ const assertValidPlanSteps = (steps: IAiTaskPlanStep[]): void => {
   }
 };
 
-const getSidecarErrorMessage = (payload: IAgentSidecarResponsePayload): string | null =>
-  payload.events.find(
-    (event): event is Extract<(typeof payload.events)[number], { type: 'error' }> =>
-      event.type === 'error',
-  )?.message ?? null;
-
-const assertSidecarSuccess = (payload: IAgentSidecarResponsePayload, fallback: string): void => {
-  const errorMessage = getSidecarErrorMessage(payload);
-  if (errorMessage) {
-    throw new Error(errorMessage);
-  }
-  if (payload.result === null) {
-    throw new Error(fallback);
-  }
-};
-
 export const useAiAgentPlan = () => {
   const store = useAiAgentStore();
   const latestContext = ref<IAiContextReference[]>([]);
@@ -80,7 +63,6 @@ export const useAiAgentPlan = () => {
     if (!projection.metadata) {
       throw new Error('sidecar 未返回计划记录，无法同步计划状态。');
     }
-    // 抽 local const,绕过 TS 在 property access 上"函数调用后窄化丢失"的限制。
     const metadata = projection.metadata;
 
     if (options.replacePlanSnapshot && projection.record) {
@@ -129,54 +111,35 @@ export const useAiAgentPlan = () => {
     try {
       assertValidGoal(goal, '任务目标不能为空。');
       const contextSnapshot = cloneContext(context);
-      const payload = await aiService.sidecarPlan({
+
+      // 原生编排:启动单条 workflow run,跑到计划审批门挂起(plan_ready + suspend)。
+      const { payload, projection } = await startOrchestration({
         goal,
-        messages: [
-          {
-            role: 'user',
-            content: goal,
-          },
-        ],
-        workspaceRootPath,
-        context: contextSnapshot,
         ...(options.threadId ? { threadId: options.threadId } : {}),
-        ...(options.planId ? { planId: options.planId } : {}),
       });
 
-      const usageResolution = resolveSidecarOfficialUsage(payload);
-      if (usageResolution.resolved && usageResolution.usage) {
-        // usageResolution.usage 与 setLatestOfficialUsage 参数同为
-        // IAiLanguageModelUsage,守卫内已窄化为非空,直接传入即类型安全,无需 cast。
-        store.setLatestOfficialUsage(usageResolution.usage);
+      if (projection.usage) {
+        store.setLatestOfficialUsage(projection.usage);
       }
-
-      const projection = projectSidecarPlanResponse(payload, goal);
       if (projection.errorMessage) {
         throw new Error(projection.errorMessage);
       }
       if (!projection.planMetadata) {
-        throw new Error('sidecar 未返回计划元数据，无法进入审批流程。');
+        throw new Error('编排未返回计划元数据，无法进入审批流程。');
       }
-      // 同上:抽 local const,后续所有调用穿过 store.setPlan / await 都保持非空窄化。
       const planMetadata = projection.planMetadata;
 
       latestContext.value = contextSnapshot;
       latestWorkspaceRootPath.value = workspaceRootPath;
+      // 把计划阶段的 runId 一直带到执行阶段(approve / resume 复用)。
+      store.setOrchestrationRunId(payload.runId);
       store.setMode('plan');
-      store.setPlan(projection.goal, projection.steps, planMetadata);
-      await refreshPlanRecord(planMetadata.planId, planMetadata.version).catch((error: unknown) => {
-        logger.warn({
-          event: 'ai-agent-plan-record-refresh-failed',
-          err: error,
-          planId: planMetadata.planId,
-          planVersion: planMetadata.version,
-        });
-      });
+      store.setPlan(goal, projection.steps, planMetadata);
 
       return {
         steps: projection.steps,
         planMetadata,
-        summary: projection.summary,
+        summary: planMetadata.summary ?? projection.plan?.summary ?? null,
         toolCalls: projection.toolCalls,
         assistantContent: projection.assistantContent,
       };
@@ -263,23 +226,18 @@ export const useAiAgentPlan = () => {
     store.removeStep(stepId);
   };
 
+  // 原生编排:批准是本地状态切换;实际放行由执行阶段 resume('approve') 完成
+  // (host 在 approvePlan() 之后会调用 runPlanToCompletion,在那里 resume)。
   const approvePlan = async (): Promise<void> => {
     assertValidGoal(store.activeGoal, '任务目标不能为空。');
     assertValidPlanSteps(store.steps);
     store.isApproving = true;
     store.errorMessage = '';
     try {
-      if (!store.planId || !store.planVersion) {
-        throw new Error('当前计划缺少 planId 或 version，不能批准。');
+      if (!store.orchestrationRunId) {
+        throw new Error('当前没有可执行的编排 run，无法批准。');
       }
-      const approvedAt = new Date().toISOString();
-      const payload = await aiService.sidecarPlanApprove({
-        planId: store.planId,
-        version: store.planVersion,
-      });
-      assertSidecarSuccess(payload, 'sidecar 未确认计划审批结果。');
-      applyPlanRecordPayload(payload);
-      store.setPlanStatus('approved', store.approvedAt ?? approvedAt);
+      store.setPlanStatus('approved', store.approvedAt ?? new Date().toISOString());
       store.setMode('agent');
     } catch (error) {
       store.errorMessage = toErrorMessage(error, '批准计划失败。');
@@ -289,21 +247,22 @@ export const useAiAgentPlan = () => {
     }
   };
 
+  // 原生编排:拒绝 = resume('reject') 拆掉挂起的 workflow,然后清空本地编排 run。
   const rejectPlan = async (reason?: string): Promise<void> => {
-    if (!store.planId || !store.planVersion) {
+    const orchestrationRunId = store.orchestrationRunId;
+    if (!orchestrationRunId) {
       resetPlan();
       return;
     }
     store.isApproving = true;
     store.errorMessage = '';
     try {
-      const payload = await aiService.sidecarPlanReject({
-        planId: store.planId,
-        version: store.planVersion,
+      await resumeOrchestration({
+        runId: orchestrationRunId,
+        decision: 'reject',
         ...(reason ? { reason } : {}),
       });
-      assertSidecarSuccess(payload, 'sidecar 未确认计划拒绝结果。');
-      applyPlanRecordPayload(payload);
+      store.setOrchestrationRunId(null);
       store.setMode('plan');
     } catch (error) {
       store.errorMessage = toErrorMessage(error, '拒绝计划失败。');
