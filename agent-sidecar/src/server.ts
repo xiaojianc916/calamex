@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import {
+  AGENT_RUNTIME_OUTPUT_EVENT_TYPES,
   toAgentSidecarResponse,
   toAgentUiEvent,
   type IAgentRuntimeResponse,
@@ -53,6 +54,46 @@ const isOrchestrationWorkflowDisabled = (): boolean => {
 
 // committed orchestration workflow 的 run 实例类型（createRun 可能同步或异步返回，统一 Awaited）。
 type TPlanOrchestrationRun = Awaited<ReturnType<TPlanOrchestrationWorkflow['createRun']>>;
+
+// 编排 workflow 各 step 通过 step writer 写入内层 agent 运行时事件，Mastra 会把它包进
+// 形如 { type: 'workflow-step-output', payload: { output: <event> } } 的 chunk。这里只透出
+// 白名单（AGENT_RUNTIME_OUTPUT_EVENT_TYPES，共 11 类）内的运行时事件，丢弃所有 Mastra
+// 内部生命周期 chunk（step-start / step-result / workflow-* 等），使流式输出帧与既有 /stream
+// 路由完全同构（{ type: 'event', event }）。
+const isRuntimeOutputEvent = (value: unknown): value is TAgentRuntimeOutputEvent => {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+  const candidateType = (value as { type?: unknown }).type;
+  return (
+    typeof candidateType === 'string'
+    && (AGENT_RUNTIME_OUTPUT_EVENT_TYPES as readonly string[]).includes(candidateType)
+  );
+};
+
+// 从 workflow chunk 中提取内层 agent 事件：优先 payload.output（step writer 主路径），
+// 再回退 payload、chunk 自身；任一命中 11 类白名单即返回，否则视为内部帧并丢弃（undefined）。
+const extractOrchestrationAgentEvent = (
+  chunk: unknown,
+): TAgentRuntimeOutputEvent | undefined => {
+  if (!chunk || typeof chunk !== 'object') {
+    return undefined;
+  }
+  const payload = (chunk as { payload?: unknown }).payload;
+  const output = payload && typeof payload === 'object'
+    ? (payload as { output?: unknown }).output
+    : undefined;
+  if (isRuntimeOutputEvent(output)) {
+    return output;
+  }
+  if (isRuntimeOutputEvent(payload)) {
+    return payload;
+  }
+  if (isRuntimeOutputEvent(chunk)) {
+    return chunk;
+  }
+  return undefined;
+};
 
 // -----------------------------------------------------------------------
 // 基础 schema 工具
@@ -784,7 +825,11 @@ export const createAgentSidecarServer = (
             inputData: { goal: payload.goal, threadId: payload.threadId ?? null },
           });
           for await (const chunk of stream) {
-            writeNdjsonFrame(response, { type: 'event', event: chunk });
+            // 只把白名单内的内层 agent 事件解包成与 /stream 同构的帧；丢弃 Mastra 内部帧。
+            const event = extractOrchestrationAgentEvent(chunk);
+            if (event) {
+              writeNdjsonFrame(response, { type: 'event', event: toAgentUiEvent(event) });
+            }
           }
           // 流结束后读取权威终态：result 为 Promise，status 为当前运行状态。
           const result = await stream.result;
@@ -849,6 +894,73 @@ export const createAgentSidecarServer = (
         }
         return { runId: payload.runId, result };
       });
+      return;
+    }
+
+    if (request.method === 'POST' && url === '/agent/plan/orchestrate/resume/stream') {
+      // Phase 2c-2：编排审批门的「流式」恢复入口。同样默认关闭。
+      // 与非流式 /orchestrate/resume 等价，但用 run.resumeStream() 把 approval-gate 之后
+      // （执行 → 验证 → 重规划 → finish）阶段的内层 agent 事件以 NDJSON 逐帧推给客户端，
+      // 帧协议与 /orchestrate/stream 完全一致（meta → event* → response）。
+      if (isOrchestrationWorkflowDisabled()) {
+        writeJson(response, 404, {
+          error: '未知 sidecar 路由。',
+        });
+        return;
+      }
+      void (async () => {
+        try {
+          const payload = agentSidecarOrchestrateResumeRequestSchema.parse(await readBody(request));
+          // 先查内存快路径；未命中（进程重启 / TTL 回收）时用同 runId createRun 从快照重建。
+          let run = orchestrationRuns.get(payload.runId);
+          if (!run) {
+            if (typeof runtime.buildPlanOrchestrationWorkflow !== 'function') {
+              throw new Error('当前 runtime 不支持原生编排 workflow。');
+            }
+            const workflow = runtime.buildPlanOrchestrationWorkflow(payload.modelConfig);
+            run = await workflow.createRun({ runId: payload.runId });
+          }
+          writeStreamHeaders(response);
+          // 首帧：回 runId（链式工具审批再次挂起时，客户端用同一 runId 继续 resume）。
+          writeNdjsonFrame(response, { type: 'meta', runId: payload.runId });
+          // resumeStream() 与 stream() 同构：可 async-iterate，且带 result(Promise) 与 status。
+          const stream = run.resumeStream({
+            step: 'approval-gate',
+            resumeData: {
+              decision: payload.decision,
+              ...(payload.reason ? { reason: payload.reason } : {}),
+            },
+          });
+          for await (const chunk of stream) {
+            const event = extractOrchestrationAgentEvent(chunk);
+            if (event) {
+              writeNdjsonFrame(response, { type: 'event', event: toAgentUiEvent(event) });
+            }
+          }
+          const result = await stream.result;
+          // 非 suspended 即终态，回收 run；若仍 suspended（链式审批），重新登记内存供下次 resume。
+          if (stream.status !== 'suspended') {
+            forgetOrchestrationRun(payload.runId);
+          } else {
+            rememberOrchestrationRun(payload.runId, run);
+          }
+          writeNdjsonFrame(response, {
+            type: 'response',
+            runId: payload.runId,
+            status: stream.status,
+            result,
+          });
+          response.end();
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (!response.headersSent) {
+            writeJson(response, 400, { error: message });
+            return;
+          }
+          writeNdjsonFrame(response, { type: 'error', error: message });
+          response.end();
+        }
+      })();
       return;
     }
 
