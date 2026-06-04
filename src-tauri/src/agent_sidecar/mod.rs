@@ -1095,22 +1095,18 @@ fn model_provider_id(model_id: &str) -> Result<&str, String> {
     Ok(provider_id)
 }
 
-/// 从给定的模型选择 / base_url 组装 sidecar 模型配置。
-///
-/// `current_sidecar_model_config` 与 `narrator_sidecar_model_config` 仅在读取主模型还是
-/// Narrator 模型、以及“未配置”错误文案上有别；其余（去空白、校验厂商前缀、取凭证、
-/// 规整 base_url 末尾斜杠）完全一致，故收拢到此共享实现，避免两份逻辑日后漂移。
-fn sidecar_model_config_from(
-    selected_model: Option<&str>,
-    base_url: Option<&str>,
-    missing_model_error: &str,
-) -> Result<AgentSidecarModelConfigPayload, String> {
-    let model_id = selected_model
+fn current_sidecar_model_config() -> Result<AgentSidecarModelConfigPayload, String> {
+    let config = crate::ai::gateway::get_config();
+    let model_id = config
+        .selected_model
+        .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| missing_model_error.to_string())?;
+        .ok_or_else(|| "AI 模型未配置：请先在 AI 设置中选择模型并保存。".to_string())?;
     let api_key = CredentialStore::get(model_provider_id(model_id)?)?;
-    let base_url = base_url
+    let base_url = config
+        .base_url
+        .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(|value| value.trim_end_matches('/').to_string());
@@ -1122,35 +1118,31 @@ fn sidecar_model_config_from(
     })
 }
 
-fn current_sidecar_model_config() -> Result<AgentSidecarModelConfigPayload, String> {
-    let config = crate::ai::gateway::get_config();
-    sidecar_model_config_from(
-        config.selected_model.as_deref(),
-        config.base_url.as_deref(),
-        "AI 模型未配置：请先在 AI 设置中选择模型并保存。",
-    )
-}
-
 fn narrator_sidecar_model_config() -> Result<AgentSidecarModelConfigPayload, String> {
     let config = crate::ai::gateway::get_config();
-    sidecar_model_config_from(
-        config.narrator.selected_model.as_deref(),
-        config.narrator.base_url.as_deref(),
-        "Narrator 模型未配置：请先在 AI 设置中选择 Narrator 模型并保存。",
-    )
-}
+    let model_id = config
+        .narrator
+        .selected_model
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            "Narrator 模型未配置：请先在 AI 设置中选择 Narrator 模型并保存。".to_string()
+        })?;
+    let api_key = CredentialStore::get(model_provider_id(model_id)?)?;
+    let base_url = config
+        .narrator
+        .base_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.trim_end_matches('/').to_string());
 
-/// 仅当调用方未显式提供模型配置时，回填默认（主模型 / Narrator）配置。
-///
-/// 收拢各请求函数中重复的 `if payload.model_config.is_none() { ... }` 样板：
-/// `$config` 必须是返回 `Result<AgentSidecarModelConfigPayload, String>` 的表达式，
-/// 其 `?` 在调用方函数内向上传播错误。
-macro_rules! ensure_model_config {
-    ($payload:expr, $config:expr $(,)?) => {
-        if $payload.model_config.is_none() {
-            $payload.model_config = Some($config?);
-        }
-    };
+    Ok(AgentSidecarModelConfigPayload {
+        model_id: model_id.to_string(),
+        api_key: api_key.into(),
+        base_url,
+    })
 }
 
 fn env_or_user_env(key: &str) -> Option<String> {
@@ -1192,4 +1184,497 @@ fn read_user_environment_value(_key: &str) -> Option<String> {
 #[cfg(windows)]
 fn parse_reg_query_value(output: &str, key: &str) -> Option<String> {
     output.lines().find_map(|line| {
-        let tr
+        let trimmed = line.trim();
+        if !trimmed.starts_with(key) {
+            return None;
+        }
+
+        let mut parts = trimmed.split_whitespace();
+        let name = parts.next()?;
+        let _kind = parts.next()?;
+        let value = parts.collect::<Vec<_>>().join(" ");
+
+        (name == key).then_some(value).and_then(non_empty_string)
+    })
+}
+
+pub async fn health() -> Result<AgentSidecarHealthPayload, String> {
+    get_json("/health").await
+}
+
+pub async fn warmup() -> Result<AgentSidecarWarmupPayload, String> {
+    post_json(
+        "/agent/warmup",
+        &AgentSidecarWarmupRequest {
+            model_config: Some(current_sidecar_model_config()?),
+        },
+    )
+    .await
+}
+
+pub async fn chat(
+    app: AppHandle,
+    mut payload: AgentSidecarChatRequest,
+) -> Result<AgentSidecarResponsePayload, String> {
+    let session_id = ensure_request_session_id(&mut payload.session_id, "sidecar-chat");
+    if payload.model_config.is_none() {
+        payload.model_config = Some(current_sidecar_model_config()?);
+    }
+    post_json_streaming_events(
+        &app,
+        "/agent/chat",
+        "/agent/chat/stream",
+        &payload,
+        &session_id,
+    )
+    .await
+}
+
+pub async fn plan(
+    app: AppHandle,
+    mut payload: AgentSidecarPlanRequest,
+) -> Result<AgentSidecarResponsePayload, String> {
+    let session_id = ensure_request_session_id(&mut payload.session_id, "sidecar-plan");
+    if payload.model_config.is_none() {
+        payload.model_config = Some(current_sidecar_model_config()?);
+    }
+    post_json_streaming_events(
+        &app,
+        "/agent/plan",
+        "/agent/plan/stream",
+        &payload,
+        &session_id,
+    )
+    .await
+}
+
+pub async fn approve_plan(
+    payload: AgentSidecarPlanApproveRequest,
+) -> Result<AgentSidecarResponsePayload, String> {
+    post_json("/agent/plan/approve", &payload).await
+}
+
+pub async fn query_plan(
+    payload: AgentSidecarPlanQueryRequest,
+) -> Result<AgentSidecarResponsePayload, String> {
+    post_json("/agent/plan/query", &payload).await
+}
+
+pub async fn reject_plan(
+    payload: AgentSidecarPlanRejectRequest,
+) -> Result<AgentSidecarResponsePayload, String> {
+    post_json("/agent/plan/reject", &payload).await
+}
+
+pub async fn finish_plan(
+    payload: AgentSidecarPlanFinishRequest,
+) -> Result<AgentSidecarResponsePayload, String> {
+    post_json("/agent/plan/finish", &payload).await
+}
+
+pub async fn validate_plan(
+    mut payload: AgentSidecarPlanValidateRequest,
+) -> Result<AgentSidecarResponsePayload, String> {
+    if payload.model_config.is_none() {
+        payload.model_config = Some(current_sidecar_model_config()?);
+    }
+    post_json("/agent/plan/validate", &payload).await
+}
+
+pub async fn replan_plan(
+    mut payload: AgentSidecarPlanReplanRequest,
+) -> Result<AgentSidecarResponsePayload, String> {
+    if payload.model_config.is_none() {
+        payload.model_config = Some(current_sidecar_model_config()?);
+    }
+    post_json("/agent/plan/replan", &payload).await
+}
+
+pub async fn execute(
+    app: AppHandle,
+    mut payload: AgentSidecarExecuteRequest,
+) -> Result<AgentSidecarResponsePayload, String> {
+    let session_id = ensure_request_session_id(&mut payload.session_id, "sidecar-agent");
+    if payload.model_config.is_none() {
+        payload.model_config = Some(current_sidecar_model_config()?);
+    }
+    post_json_streaming_events(
+        &app,
+        "/agent/execute",
+        "/agent/execute/stream",
+        &payload,
+        &session_id,
+    )
+    .await
+}
+
+pub async fn resolve_approval(
+    app: AppHandle,
+    mut payload: AgentSidecarApprovalResolveRequest,
+) -> Result<AgentSidecarResponsePayload, String> {
+    let session_id = ensure_request_session_id(&mut payload.session_id, "sidecar-approval");
+    if payload.model_config.is_none() {
+        payload.model_config = Some(current_sidecar_model_config()?);
+    }
+    post_json_streaming_events(
+        &app,
+        "/approval/resolve",
+        "/approval/resolve/stream",
+        &payload,
+        &session_id,
+    )
+    .await
+}
+
+pub async fn restore_checkpoint(
+    app: AppHandle,
+    mut payload: AgentSidecarCheckpointRestoreRequest,
+) -> Result<AgentSidecarResponsePayload, String> {
+    let session_id = ensure_request_session_id(&mut payload.session_id, "sidecar-rollback");
+    if payload.model_config.is_none() {
+        payload.model_config = Some(current_sidecar_model_config()?);
+    }
+    post_json_streaming_events(
+        &app,
+        "/rollback/restore",
+        "/rollback/restore/stream",
+        &payload,
+        &session_id,
+    )
+    .await
+}
+
+/// 流式聊天：在读取 sidecar NDJSON 事件流的同时，把每个 UI 事件交给
+/// `on_event` 回调（聊天网关据此把 `message_delta` 增量实时下发到
+/// `ai:chat-stream`），最终返回完整响应。除回调外，行为与既有流式路径一致。
+pub async fn model_chat_streaming<F>(
+    app: AppHandle,
+    mut payload: AgentSidecarChatRequest,
+    mut on_event: F,
+) -> Result<AgentSidecarResponsePayload, String>
+where
+    F: FnMut(&serde_json::Value),
+{
+    let session_id = ensure_request_session_id(&mut payload.session_id, "sidecar-model-chat");
+    if payload.model_config.is_none() {
+        payload.model_config = Some(current_sidecar_model_config()?);
+    }
+    post_json_streaming_events_with_handler(
+        &app,
+        "/model/chat",
+        "/model/chat/stream",
+        &payload,
+        &session_id,
+        &mut on_event,
+    )
+    .await
+}
+
+pub async fn model_chat_once(
+    mut payload: AgentSidecarChatRequest,
+) -> Result<AgentSidecarResponsePayload, String> {
+    let _session_id = ensure_request_session_id(&mut payload.session_id, "sidecar-model-chat");
+    if payload.model_config.is_none() {
+        payload.model_config = Some(current_sidecar_model_config()?);
+    }
+    post_json("/model/chat", &payload).await
+}
+
+pub async fn narrator_model_chat_once(
+    mut payload: AgentSidecarChatRequest,
+) -> Result<AgentSidecarResponsePayload, String> {
+    let _session_id = ensure_request_session_id(&mut payload.session_id, "sidecar-narrator-chat");
+    if payload.model_config.is_none() {
+        payload.model_config = Some(narrator_sidecar_model_config()?);
+    }
+    post_json_with_narrator_retry("/model/chat", &payload).await
+}
+
+pub async fn web_search(payload: AiWebSearchInput) -> Result<AiWebSearchPayload, String> {
+    post_json("/web/search", &payload).await
+}
+
+pub async fn web_fetch(payload: AiWebFetchInput) -> Result<AiWebFetchPayload, String> {
+    post_json("/web/fetch", &payload).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        DEFAULT_SIDECAR_URL, SIDECAR_STARTUP_TIMEOUT_DEFAULT_SECONDS,
+        SIDECAR_STARTUP_TIMEOUT_MAX_SECONDS, SIDECAR_STARTUP_TIMEOUT_MIN_SECONDS,
+        SidecarHealthProbePayload, SidecarHealthStatus, answer_delta_text, build_sidecar_url,
+        canonicalize_local_base_url, clamp_startup_timeout_seconds, classify_sidecar_health,
+        crashed_sidecar_error_message, drain_complete_sidecar_stream_lines,
+        has_non_whitespace_bytes, inject_sidecar_dotenv_key_if_present, is_crashed_sidecar_error,
+        is_default_local_sidecar_url, is_retryable_narrator_sidecar_error, model_provider_id,
+        normalize_base_url, parse_netstat_listening_pids, sidecar_runtime_dir_from,
+    };
+    use std::fs;
+    use std::process::Command;
+
+    #[test]
+    fn normalize_base_url_uses_default_when_env_is_empty() {
+        assert_eq!(normalize_base_url(None), DEFAULT_SIDECAR_URL);
+        assert_eq!(normalize_base_url(Some("   ")), DEFAULT_SIDECAR_URL);
+    }
+
+    #[test]
+    fn normalize_base_url_strips_trailing_slash() {
+        assert_eq!(
+            normalize_base_url(Some("http://127.0.0.1:39871///")),
+            "http://127.0.0.1:39871"
+        );
+    }
+
+    #[test]
+    fn build_sidecar_url_joins_endpoint_without_double_slash() {
+        assert_eq!(
+            build_sidecar_url("http://127.0.0.1:39871/", "/agent/chat"),
+            "http://127.0.0.1:39871/agent/chat"
+        );
+    }
+
+    #[test]
+    fn only_default_local_sidecar_url_is_auto_started() {
+        assert!(is_default_local_sidecar_url("http://127.0.0.1:39871"));
+        assert!(is_default_local_sidecar_url("http://localhost:39871/"));
+        assert!(!is_default_local_sidecar_url("http://127.0.0.1:49999"));
+        assert!(!is_default_local_sidecar_url("https://agent.example.com"));
+    }
+
+    #[test]
+    fn canonicalizes_localhost_and_ipv6_to_loopback_ipv4() {
+        assert_eq!(
+            canonicalize_local_base_url("http://localhost:39871".to_string()),
+            DEFAULT_SIDECAR_URL
+        );
+        assert_eq!(
+            canonicalize_local_base_url("http://[::1]:39871".to_string()),
+            DEFAULT_SIDECAR_URL
+        );
+        assert_eq!(
+            canonicalize_local_base_url("http://127.0.0.1:39871".to_string()),
+            DEFAULT_SIDECAR_URL
+        );
+        assert_eq!(
+            canonicalize_local_base_url("https://agent.example.com".to_string()),
+            "https://agent.example.com"
+        );
+    }
+
+    #[test]
+    fn clamp_startup_timeout_uses_default_and_bounds() {
+        assert_eq!(
+            clamp_startup_timeout_seconds(None),
+            SIDECAR_STARTUP_TIMEOUT_DEFAULT_SECONDS
+        );
+        assert_eq!(
+            clamp_startup_timeout_seconds(Some("   ")),
+            SIDECAR_STARTUP_TIMEOUT_DEFAULT_SECONDS
+        );
+        assert_eq!(
+            clamp_startup_timeout_seconds(Some("not-a-number")),
+            SIDECAR_STARTUP_TIMEOUT_DEFAULT_SECONDS
+        );
+        assert_eq!(
+            clamp_startup_timeout_seconds(Some("1")),
+            SIDECAR_STARTUP_TIMEOUT_MIN_SECONDS
+        );
+        assert_eq!(
+            clamp_startup_timeout_seconds(Some("99999")),
+            SIDECAR_STARTUP_TIMEOUT_MAX_SECONDS
+        );
+        assert_eq!(clamp_startup_timeout_seconds(Some("30")), 30);
+    }
+
+    #[test]
+    fn startup_not_ready_error_is_retryable() {
+        let error = "AGENT_SIDECAR_UNAVAILABLE: Node sidecar 已尝试启动，但未在 20 秒内就绪。";
+        assert!(is_retryable_narrator_sidecar_error(error));
+        assert!(!is_retryable_narrator_sidecar_error(
+            "AGENT_SIDECAR_CONTRACT_ERROR: sidecar 响应无法解析"
+        ));
+    }
+
+    #[test]
+    fn answer_delta_text_extracts_only_final_phase_message_deltas() {
+        let implicit_final = serde_json::json!({ "type": "message_delta", "text": "你好" });
+        assert_eq!(answer_delta_text(&implicit_final).as_deref(), Some("你好"));
+
+        let explicit_final =
+            serde_json::json!({ "type": "message_delta", "text": "世界", "phase": "final" });
+        assert_eq!(answer_delta_text(&explicit_final).as_deref(), Some("世界"));
+
+        let stage_event =
+            serde_json::json!({ "type": "message_delta", "text": "思考中", "phase": "stage" });
+        assert_eq!(answer_delta_text(&stage_event), None);
+
+        let empty_event = serde_json::json!({ "type": "message_delta", "text": "" });
+        assert_eq!(answer_delta_text(&empty_event), None);
+
+        let other_event = serde_json::json!({ "type": "tool_start", "toolName": "x", "input": {} });
+        assert_eq!(answer_delta_text(&other_event), None);
+    }
+
+    #[test]
+    fn parses_sidecar_listener_pid_from_netstat_output() {
+        let output = r#"
+  Proto  Local Address          Foreign Address        State           PID
+  TCP    127.0.0.1:39871        0.0.0.0:0              LISTENING       1234
+  TCP    [::1]:39871            [::]:0                 LISTENING       1234
+  TCP    127.0.0.1:39872        0.0.0.0:0              LISTENING       5678
+"#;
+
+        assert_eq!(parse_netstat_listening_pids(output, 39871), vec![1234]);
+    }
+
+    #[test]
+    fn sidecar_stream_line_buffer_waits_for_complete_utf8_line() {
+        let line =
+            "{\"type\":\"event\",\"event\":{\"type\":\"message_delta\",\"text\":\"你好🙂\"}}\n";
+        let split_at = line.find('你').expect("line should contain chinese") + 2;
+        let bytes = line.as_bytes();
+        let mut buffer = Vec::new();
+
+        buffer.extend_from_slice(&bytes[..split_at]);
+        let lines = drain_complete_sidecar_stream_lines(&mut buffer, "/agent/chat/stream")
+            .expect("partial chunk should not decode incomplete utf8");
+        assert!(lines.is_empty());
+
+        buffer.extend_from_slice(&bytes[split_at..]);
+        let lines = drain_complete_sidecar_stream_lines(&mut buffer, "/agent/chat/stream")
+            .expect("complete line should decode");
+
+        assert_eq!(lines, vec![line.trim_end_matches('\n').to_string()]);
+        assert!(!lines[0].contains('\u{fffd}'));
+        assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn sidecar_stream_line_buffer_ignores_whitespace_tail() {
+        assert!(!has_non_whitespace_bytes(b"\r\n\t "));
+        assert!(has_non_whitespace_bytes(b"\n{}"));
+    }
+
+    #[test]
+    fn injects_tavily_key_from_sidecar_dotenv_when_user_env_is_missing() {
+        let sidecar_root =
+            std::env::temp_dir().join(format!("xiaojianc-sidecar-env-test-{}", std::process::id()));
+
+        fs::create_dir_all(&sidecar_root).expect("temp sidecar root should be created");
+        fs::write(
+            sidecar_root.join(".env"),
+            "# comment\nXIAOJIANC_TEST_TAVILY_KEY=tvly-test-from-dotenv\n",
+        )
+        .expect("dotenv should be written");
+
+        let mut command = Command::new("node");
+        inject_sidecar_dotenv_key_if_present(
+            &mut command,
+            &sidecar_root,
+            "XIAOJIANC_TEST_TAVILY_KEY",
+        );
+
+        let injected = command
+            .get_envs()
+            .find(|(key, _)| key.to_string_lossy() == "XIAOJIANC_TEST_TAVILY_KEY")
+            .and_then(|(_, value)| value.map(|item| item.to_string_lossy().to_string()));
+
+        assert_eq!(injected.as_deref(), Some("tvly-test-from-dotenv"));
+
+        fs::remove_dir_all(sidecar_root).expect("temp sidecar root should be removed");
+    }
+
+    #[test]
+    fn sidecar_health_is_runtime_name_agnostic() {
+        let ready_payload = SidecarHealthProbePayload {
+            ok: true,
+            _engine: Some("mastra".to_string()),
+            protocol_version: Some("7".to_string()),
+            implementation_version: Some(
+                "deepseek-reasoning-transport-v6-plan-history".to_string(),
+            ),
+        };
+        let stale_payload = SidecarHealthProbePayload {
+            ok: true,
+            _engine: Some("custom-runtime".to_string()),
+            protocol_version: Some("6".to_string()),
+            implementation_version: None,
+        };
+        let unavailable_payload = SidecarHealthProbePayload {
+            ok: false,
+            _engine: Some("legacy-runtime".to_string()),
+            protocol_version: Some("7".to_string()),
+            implementation_version: Some(
+                "deepseek-reasoning-transport-v6-plan-history".to_string(),
+            ),
+        };
+
+        assert_eq!(
+            classify_sidecar_health(&ready_payload),
+            SidecarHealthStatus::Ready
+        );
+        assert_eq!(
+            classify_sidecar_health(&stale_payload),
+            SidecarHealthStatus::Stale
+        );
+        assert_eq!(
+            classify_sidecar_health(&unavailable_payload),
+            SidecarHealthStatus::Unavailable
+        );
+    }
+
+    #[test]
+    fn model_provider_id_uses_model_prefix() {
+        assert_eq!(
+            model_provider_id("deepseek/deepseek-v4-pro").unwrap(),
+            "deepseek"
+        );
+        assert_eq!(model_provider_id(" openai/gpt-5.5 ").unwrap(), "openai");
+        assert!(model_provider_id("gpt-5.5").is_err());
+    }
+
+    #[test]
+    fn crashed_sidecar_error_message_is_actionable() {
+        let message = crashed_sidecar_error_message(Some(1));
+        assert!(message.starts_with("AGENT_SIDECAR_CRASHED:"));
+        assert!(message.contains("退出码 1"));
+        assert!(message.contains("pnpm install"));
+        assert!(crashed_sidecar_error_message(None).contains("退出码 未知"));
+    }
+
+    #[test]
+    fn is_crashed_sidecar_error_only_matches_crash_prefix() {
+        assert!(is_crashed_sidecar_error(&crashed_sidecar_error_message(
+            Some(1)
+        )));
+        assert!(!is_crashed_sidecar_error(
+            "AGENT_SIDECAR_UNAVAILABLE: Node sidecar 已尝试启动，但未在 20 秒内就绪。"
+        ));
+    }
+
+    #[test]
+    fn crashed_sidecar_error_is_not_narrator_retryable() {
+        // 启动即崩溃是确定性故障，narrator 重试路径不应把它当作可重试错误。
+        assert!(!is_retryable_narrator_sidecar_error(
+            &crashed_sidecar_error_message(Some(1))
+        ));
+    }
+
+    #[test]
+    fn sidecar_runtime_dir_falls_back_to_temp_without_local_app_data() {
+        let with_local =
+            sidecar_runtime_dir_from(Some("C:\\Users\\tester\\AppData\\Local".to_string()));
+        assert!(with_local.ends_with("agent-sidecar"));
+        assert!(
+            with_local
+                .parent()
+                .is_some_and(|parent| parent.ends_with("com.xiaojianc.Calamex"))
+        );
+
+        let fallback = sidecar_runtime_dir_from(None);
+        assert!(fallback.ends_with("agent-sidecar"));
+        assert!(fallback.to_string_lossy().contains("com.xiaojianc.Calamex"));
+    }
+}
