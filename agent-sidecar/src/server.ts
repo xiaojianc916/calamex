@@ -746,6 +746,62 @@ export const createAgentSidecarServer = (
       return;
     }
 
+    if (request.method === 'POST' && url === '/agent/plan/orchestrate/stream') {
+      // Phase 2c-1：原生编排 workflow 的流式入口。同样默认关闭。
+      // 用 run.stream() 把 workflow 执行事件以 NDJSON 逐帧推给客户端，达到与旧
+      // /stream 路径的功能对等；首帧先回 runId 便于挂起后 resume。
+      if (process.env.AGENT_ORCHESTRATION_WORKFLOW !== '1') {
+        writeJson(response, 404, {
+          error: '未知 sidecar 路由。',
+        });
+        return;
+      }
+      void (async () => {
+        try {
+          const payload = agentSidecarOrchestrateRequestSchema.parse(await readBody(request));
+          if (typeof runtime.buildPlanOrchestrationWorkflow !== 'function') {
+            throw new Error('当前 runtime 不支持原生编排 workflow。');
+          }
+          const workflow = runtime.buildPlanOrchestrationWorkflow(payload.modelConfig);
+          const runId = randomUUID();
+          const run = await workflow.createRun({ runId });
+          rememberOrchestrationRun(runId, run);
+          writeStreamHeaders(response);
+          // 首帧：尽早把 runId 交给客户端（approval-gate 挂起后 resume 需要它）。
+          writeNdjsonFrame(response, { type: 'meta', runId });
+          // run.stream() 返回 async-iterable 的 WorkflowRunOutput；closeOnSuspend
+          // 默认 true：approval-gate 挂起时流自动闭合，客户端据此转去调用 resume。
+          const stream = run.stream({
+            inputData: { goal: payload.goal, threadId: payload.threadId ?? null },
+          });
+          for await (const chunk of stream) {
+            writeNdjsonFrame(response, { type: 'event', event: chunk });
+          }
+          // 流结束后读取权威终态：result 为 Promise，status 为当前运行状态。
+          const result = await stream.result;
+          if (stream.status !== 'suspended') {
+            forgetOrchestrationRun(runId);
+          }
+          writeNdjsonFrame(response, {
+            type: 'response',
+            runId,
+            status: stream.status,
+            result,
+          });
+          response.end();
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (!response.headersSent) {
+            writeJson(response, 400, { error: message });
+            return;
+          }
+          writeNdjsonFrame(response, { type: 'error', error: message });
+          response.end();
+        }
+      })();
+      return;
+    }
+
     if (request.method === 'POST' && url === '/agent/plan/orchestrate/resume') {
       // Phase 2b：恢复被计划审批门挂起的编排 run。同样默认关闭。
       if (process.env.AGENT_ORCHESTRATION_WORKFLOW !== '1') {
