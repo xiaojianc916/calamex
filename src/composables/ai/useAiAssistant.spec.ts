@@ -1408,8 +1408,9 @@ describe('useAiAssistant streaming integration', () => {
   });
 
   it('runs a complex sidecar Plan flow via orchestration', async () => {
-    const harness = createAssistantHarness();
-    const { store } = harness;
+    const { assistant } = createAssistantHarnessContext();
+    const store = assistant.agentPlan.store;
+    const userQuestion = '帮我完成一个复杂的多步骤任务';
 
     aiServiceMock.sidecarOrchestrate.mockImplementationOnce(async (request) => {
       const sessionId = request.sessionId ?? 'complex-session-1';
@@ -1421,7 +1422,7 @@ describe('useAiAssistant streaming integration', () => {
           planId: 'complex-plan-1',
           threadId: 'thread-1',
           version: 1,
-          status: 'pending',
+          status: 'pending_approval',
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
           approvedAt: null,
@@ -1472,13 +1473,15 @@ describe('useAiAssistant streaming integration', () => {
       return { runId: 'complex-orchestrate-run-1', result: null };
     });
 
-    const userQuestion = '帮我完成一个复杂的多步骤任务';
-    await harness.sendMessage(userQuestion, 'plan');
+    assistant.activeMode.value = 'plan';
+    assistant.draft.value = userQuestion;
+
+    await assistant.sendMessage();
     await flushMicrotasks();
 
-    expect(harness.messages.value).toHaveLength(1);
-    expect(harness.messages.value[0]?.role).toBe('user');
-    expect(harness.messages.value[0]?.content).toBe(userQuestion);
+    expect(assistant.messages.value).toHaveLength(1);
+    expect(assistant.messages.value[0]?.role).toBe('user');
+    expect(assistant.messages.value[0]?.content).toBe(userQuestion);
 
     expect(aiServiceMock.classifyTask).toHaveBeenCalledTimes(0);
     expect(aiServiceMock.sidecarPlan).toHaveBeenCalledTimes(0);
@@ -1489,9 +1492,9 @@ describe('useAiAssistant streaming integration', () => {
       expect.objectContaining({ goal: userQuestion }),
     );
 
-    expect(harness.agentSteps.value).toHaveLength(3);
-    expect(store.steps).toHaveLength(3);
-    expect(store.steps[1]?.requiresUserApproval).toBe(true);
+    expect(assistant.agentSteps.value).toHaveLength(3);
+    expect(readReactiveValue(store.steps)).toHaveLength(3);
+    expect(readReactiveValue(store.steps)[1]?.requiresUserApproval).toBe(true);
   });
 
   it('plan 请求只把目标交给 sidecar 编排，不再转发消息和文件上下文', async () => {
