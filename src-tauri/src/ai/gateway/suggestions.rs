@@ -364,26 +364,20 @@ fn json_candidates(value: &str) -> Vec<&str> {
     }
 
     // 首个 { 到末个 } 的切片
-    if let (Some(start), Some(end)) = (value.find('{'), value.rfind('}')) {
-        if start <= end {
-            if let Some(slice) = value.get(start..=end) {
-                if !result.contains(&slice) {
+    if let (Some(start), Some(end)) = (value.find('{'), value.rfind('}'))
+        && start <= end
+            && let Some(slice) = value.get(start..=end)
+                && !result.contains(&slice) {
                     result.push(slice);
                 }
-            }
-        }
-    }
 
     // 首个 [ 到末个 ] 的切片
-    if let (Some(start), Some(end)) = (value.find('['), value.rfind(']')) {
-        if start <= end {
-            if let Some(slice) = value.get(start..=end) {
-                if !result.contains(&slice) {
+    if let (Some(start), Some(end)) = (value.find('['), value.rfind(']'))
+        && start <= end
+            && let Some(slice) = value.get(start..=end)
+                && !result.contains(&slice) {
                     result.push(slice);
                 }
-            }
-        }
-    }
 
     result
 }

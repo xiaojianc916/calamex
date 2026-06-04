@@ -99,14 +99,13 @@ pub fn validate_public_http_url(value: &str) -> Result<reqwest::Url, String> {
     }
 
     let ip_candidate = host_lower.trim_matches(['[', ']']);
-    if let Ok(ip) = ip_candidate.parse::<IpAddr>() {
-        if is_blocked_ip(ip) {
+    if let Ok(ip) = ip_candidate.parse::<IpAddr>()
+        && is_blocked_ip(ip) {
             return Err(errors::error(
                 "AI_AGENT_WEB_SOURCE_BLOCKED",
                 "web_fetch 禁止访问内网或本机 IP。",
             ));
         }
-    }
 
     Ok(url)
 }

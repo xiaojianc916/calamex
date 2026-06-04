@@ -338,8 +338,8 @@ fn remove_staging_dir(storage_root: &Path, transaction_id: &str) -> Result<(), S
 }
 
 fn ensure_parent_dir(path: &Path) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty() {
             fs::create_dir_all(parent).map_err(|error| {
                 errors::transaction_failed(format!(
                     "创建事务目标目录失败（{}）：{error}",
@@ -347,7 +347,6 @@ fn ensure_parent_dir(path: &Path) -> Result<(), String> {
                 ))
             })?;
         }
-    }
     Ok(())
 }
 

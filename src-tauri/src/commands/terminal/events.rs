@@ -216,7 +216,7 @@ fn strip_wsl_diagnostic_lines(input: &str) -> String {
     }
     let mut out = String::with_capacity(input.len());
     for segment in input.split_inclusive('\n') {
-        let trimmed = segment.trim_start_matches(|c: char| matches!(c, '\r' | ' ' | '\t'));
+        let trimmed = segment.trim_start_matches(['\r', ' ', '\t']);
         if trimmed.starts_with("wsl:") {
             continue;
         }
@@ -383,8 +383,8 @@ pub(super) fn handle_local_wsl_interactive_terminal_event(
             );
         }
         LocalWslTerminalServerPayload::InteractiveError(payload) => {
-            if let Some(message_session_id) = payload.session_id.as_ref() {
-                if message_session_id == session_id {
+            if let Some(message_session_id) = payload.session_id.as_ref()
+                && message_session_id == session_id {
                     emit_terminal_interactive_output(
                         app,
                         state,
@@ -392,7 +392,6 @@ pub(super) fn handle_local_wsl_interactive_terminal_event(
                         format!("{}\n", payload.message),
                     );
                 }
-            }
             remove_interactive_terminal_after_exit(state, session_id);
             mark_terminal_interactive_exited(
                 app,

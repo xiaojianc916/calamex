@@ -294,11 +294,10 @@ pub fn answer_delta_text(event: &serde_json::Value) -> Option<String> {
         return None;
     }
 
-    if let Some(phase) = event.get("phase").and_then(|value| value.as_str()) {
-        if phase != "final" {
+    if let Some(phase) = event.get("phase").and_then(|value| value.as_str())
+        && phase != "final" {
             return None;
         }
-    }
 
     event
         .get("text")
@@ -894,11 +893,10 @@ fn is_crashed_sidecar_error(error: &str) -> bool {
 }
 
 fn resolve_sidecar_root() -> Result<PathBuf, String> {
-    if let Some(path) = env_or_user_env(SIDECAR_ROOT_ENV).map(PathBuf::from) {
-        if path.is_dir() {
+    if let Some(path) = env_or_user_env(SIDECAR_ROOT_ENV).map(PathBuf::from)
+        && path.is_dir() {
             return Ok(path);
         }
-    }
 
     // 随包优先：安装包内 resources-bundle/agent-sidecar（含 dist/server.js 与 node_modules）。
     // 与 shell_tools 的 shellcheck/shfmt 解析策略保持一致：随包优先 → 源码树兜底。
@@ -926,11 +924,10 @@ fn resolve_sidecar_root() -> Result<PathBuf, String> {
 }
 
 fn resolve_node_executable() -> Result<PathBuf, String> {
-    if let Some(path) = env_or_user_env(NODE_EXE_ENV).map(PathBuf::from) {
-        if path.is_file() {
+    if let Some(path) = env_or_user_env(NODE_EXE_ENV).map(PathBuf::from)
+        && path.is_file() {
             return Ok(path);
         }
-    }
 
     // 随包优先：安装包内 resources-bundle/node/node.exe（目标机无系统 Node 也能运行 sidecar）。
     for root in crate::commands::shell_tools::bundled_resource_roots() {
@@ -986,11 +983,10 @@ fn inject_uvx_path(command: &mut Command) {
 }
 
 fn resolve_windows_uvx_path() -> Option<PathBuf> {
-    if let Some(path) = env_or_user_env(MCP_UVX_PATH_ENV).map(PathBuf::from) {
-        if path.is_file() {
+    if let Some(path) = env_or_user_env(MCP_UVX_PATH_ENV).map(PathBuf::from)
+        && path.is_file() {
             return Some(path);
         }
-    }
 
     windows_uvx_candidates()
         .into_iter()

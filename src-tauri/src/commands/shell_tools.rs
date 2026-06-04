@@ -117,11 +117,10 @@ fn detect_shellcheck_dialect(
         .next()
         .unwrap_or_default()
         .to_ascii_lowercase();
-    if first_line.starts_with("#!") {
-        if let Some(shell) = shell_from_shebang(content) {
+    if first_line.starts_with("#!")
+        && let Some(shell) = shell_from_shebang(content) {
             return shell;
         }
-    }
 
     let inferred_name = infer_script_name(path, name);
 
@@ -146,13 +145,12 @@ fn detect_shellcheck_dialect(
 /// 确保打包侧 (prepare-bundle-resources.ts) 与运行时侧的产物布局契约一致。
 pub(crate) fn bundled_resource_roots() -> Vec<PathBuf> {
     let mut roots = Vec::new();
-    if let Ok(exe) = env::current_exe() {
-        if let Some(dir) = exe.parent() {
+    if let Ok(exe) = env::current_exe()
+        && let Some(dir) = exe.parent() {
             roots.push(dir.join("resources-bundle"));
             roots.push(dir.join("resources").join("resources-bundle"));
             roots.push(dir.to_path_buf());
         }
-    }
     roots
 }
 

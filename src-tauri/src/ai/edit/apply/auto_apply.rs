@@ -226,8 +226,8 @@ fn capture_checkpoint_snapshots(
         ai_edit::append_snapshot(state, storage_root, snapshot)?;
     }
 
-    if let Some(turn_id) = resolve_turn_id(metadata) {
-        if ai_edit::mark_snapshot_scope(state, format!("turn-start:{turn_id}"))? {
+    if let Some(turn_id) = resolve_turn_id(metadata)
+        && ai_edit::mark_snapshot_scope(state, format!("turn-start:{turn_id}"))? {
             let snapshot = snapshot::store_turn_start_snapshot(
                 storage_root,
                 &snapshot_sources,
@@ -236,7 +236,6 @@ fn capture_checkpoint_snapshots(
             )?;
             ai_edit::append_snapshot(state, storage_root, snapshot)?;
         }
-    }
 
     let confirmed_by_user = metadata
         .and_then(|value| value.confirmed_by_user)

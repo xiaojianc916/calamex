@@ -343,11 +343,10 @@ fn validate_ssh_endpoint(host: &str, username: &str) -> Result<(), String> {
 
 // ---- expand tilde ----
 fn expand_tilde(path: &str) -> String {
-    if path.starts_with('~') {
-        if let Ok(home) = env::var("USERPROFILE").or_else(|_| env::var("HOME")) {
+    if path.starts_with('~')
+        && let Ok(home) = env::var("USERPROFILE").or_else(|_| env::var("HOME")) {
             return path.replacen('~', &home, 1);
         }
-    }
     path.to_string()
 }
 

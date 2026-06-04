@@ -280,11 +280,10 @@ mod tests {
     }
 
     fn cleanup_workspace(root: PathBuf) {
-        if let Some(caches) = WORKSPACE_FILE_CACHES.get() {
-            if let Ok(mut guard) = caches.lock() {
+        if let Some(caches) = WORKSPACE_FILE_CACHES.get()
+            && let Ok(mut guard) = caches.lock() {
                 guard.remove(&root.to_string_lossy().to_string());
             }
-        }
 
         let _ = fs::remove_dir_all(root);
     }

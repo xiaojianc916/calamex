@@ -198,14 +198,12 @@ pub(crate) fn resolve_workspace_root(selected_root: Option<String>) -> Result<Pa
             .file_name()
             .and_then(|value| value.to_str())
             .is_some_and(|name| name.eq_ignore_ascii_case("src-tauri"))
-        {
-            if let Some(parent) = current_dir.parent() {
+            && let Some(parent) = current_dir.parent() {
                 return parent
                     .to_path_buf()
                     .canonicalize()
                     .map_err(|error| format!("读取工作区目录失败：{error}"));
             }
-        }
     }
 
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));

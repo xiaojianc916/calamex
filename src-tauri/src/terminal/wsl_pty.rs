@@ -487,13 +487,12 @@ fn materialize_wsl_script(execution_path: &str, content: &str) -> Result<(), Loc
     let mut child = command
         .spawn()
         .map_err(|error| LocalWslPtyError::Open(format!("写入临时脚本失败：{error}")))?;
-    if let Some(mut stdin) = child.stdin.take() {
-        if let Err(error) = stdin.write_all(content.as_bytes()) {
+    if let Some(mut stdin) = child.stdin.take()
+        && let Err(error) = stdin.write_all(content.as_bytes()) {
             // 写 stdin 失败时主动终止子进程，避免遗留挂起的 wsl.exe。
             let _ = child.kill();
             return Err(LocalWslPtyError::Open(format!("写入临时脚本失败：{error}")));
         }
-    }
     let output = child
         .wait_with_output()
         .map_err(|error| LocalWslPtyError::Open(format!("写入临时脚本失败：{error}")))?;

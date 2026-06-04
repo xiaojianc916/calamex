@@ -318,18 +318,16 @@ struct GitStashDetails { created_at: String, file_count: usize, additions: u32, 
 
 fn parse_git_stash_name(name: &str) -> (Option<String>, Option<String>) {
     let trimmed = name.trim();
-    if let Some(rest) = trimmed.strip_prefix("WIP on ") {
-        if let Some((branch_name, remainder)) = rest.split_once(':') {
+    if let Some(rest) = trimmed.strip_prefix("WIP on ")
+        && let Some((branch_name, remainder)) = rest.split_once(':') {
             let commit_short_id = remainder.split_whitespace().next()
                 .filter(|value| is_short_git_commit_id(value)).map(str::to_string);
             return (Some(branch_name.trim().to_string()), commit_short_id);
         }
-    }
-    if let Some(rest) = trimmed.strip_prefix("On ") {
-        if let Some((branch_name, _)) = rest.split_once(':') {
+    if let Some(rest) = trimmed.strip_prefix("On ")
+        && let Some((branch_name, _)) = rest.split_once(':') {
             return (Some(branch_name.trim().to_string()), None);
         }
-    }
     (None, None)
 }
 

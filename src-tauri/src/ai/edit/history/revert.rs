@@ -533,14 +533,13 @@ fn ensure_operation_matches_expected_state(
     match operation.kind.as_str() {
         "modify" => {
             let current_file = read_snapshot_file(&operation.path)?;
-            if let Some(expected_hash) = operation.after_hash.as_deref() {
-                if current_file.content_hash != expected_hash {
+            if let Some(expected_hash) = operation.after_hash.as_deref()
+                && current_file.content_hash != expected_hash {
                     return Err(errors::restore_conflict(format!(
                         "文件当前内容与 AED 记录不一致,拒绝回滚:{}",
                         operation.path
                     )));
                 }
-            }
             Ok(())
         }
         other => Err(errors::restore_conflict(format!(
@@ -933,13 +932,12 @@ fn validate_revert_path(path: &str) -> Result<PathBuf, String> {
 }
 
 fn ensure_parent_dir(path: &Path, context: &str) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty() {
             fs::create_dir_all(parent).map_err(|error| {
                 errors::restore_failed(format!("创建{context}失败({}):{error}", parent.display()))
             })?;
         }
-    }
     Ok(())
 }
 

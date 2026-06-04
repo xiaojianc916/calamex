@@ -48,8 +48,8 @@ impl SshConfigHostBuilder {
     }
 
     fn flush(&mut self, hosts: &mut Vec<SshConfigHostPayload>) {
-        if let Some(name) = self.name.take() {
-            if !name.contains('*') && !name.contains('!') {
+        if let Some(name) = self.name.take()
+            && !name.contains('*') && !name.contains('!') {
                 let host = if self.host.is_empty() || self.has_proxyjump {
                     if self.host.is_empty() {
                         name.clone()
@@ -69,7 +69,6 @@ impl SshConfigHostBuilder {
                     last_used_label: SSH_CONFIG_IMPORTED_LABEL.into(),
                 });
             }
-        }
         self.username.clear();
         self.host.clear();
         self.port = DEFAULT_SSH_PORT;
