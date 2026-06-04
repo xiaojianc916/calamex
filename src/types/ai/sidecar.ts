@@ -606,7 +606,12 @@ export interface IAgentSidecarOrchestrateRequest {
   modelConfig?: IAgentSidecarModelConfig;
 }
 
-export type TAgentSidecarOrchestrateDecision = 'approve' | 'reject';
+/**
+ * 统一的恢复决策。三类挂起点共用同一入口,由 step 内部根据 suspendData.reason 解释:
+ * - 计划审批门 / 工具审批:`approve` | `reject`
+ * - 逐步闸门(step gate):`continue`(跑下一步) | `cancel`(中止)
+ */
+export type TAgentSidecarOrchestrateDecision = 'approve' | 'reject' | 'continue' | 'cancel';
 
 export interface IAgentSidecarOrchestrateResumeRequest {
   runId: string;
