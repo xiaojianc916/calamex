@@ -582,3 +582,126 @@ fn emit_stream_event(app: &AppHandle, payload: AiChatStreamEventPayload) {
         let _ = window.emit("ai:chat-stream", payload);
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::parse_done_event_usage;
+    use serde_json::json;
+
+    fn done_with_usage(usage: serde_json::Value) -> Vec<serde_json::Value> {
+        vec![
+            json!({ "type": "message_delta", "text": "hi" }),
+            json!({ "type": "done", "usage": usage }),
+        ]
+    }
+
+    #[test]
+    fn maps_full_authoritative_usage_without_estimation() {
+        let events = done_with_usage(json!({
+            "inputTokens": 100,
+            "outputTokens": 40,
+            "totalTokens": 140,
+            "inputTokenDetails": {
+                "noCacheTokens": 80,
+                "cacheReadTokens": 20,
+                "cacheWriteTokens": 5
+            },
+            "outputTokenDetails": { "textTokens": 30, "reasoningTokens": 10 },
+            "cachedInputTokens": 20,
+            "reasoningTokens": 10,
+            "raw": { "provider": "mastra" }
+        }));
+
+        let usage = parse_done_event_usage(&events).expect("应解析出权威用量");
+        assert_eq!(usage.input_tokens, 100);
+        assert_eq!(usage.output_tokens, 40);
+        assert_eq!(usage.total_tokens, 140);
+        assert_eq!(usage.input_token_details.no_cache_tokens, 80);
+        assert_eq!(usage.input_token_details.cache_read_tokens, 20);
+        assert_eq!(usage.input_token_details.cache_write_tokens, 5);
+        assert_eq!(usage.output_token_details.text_tokens, 30);
+        assert_eq!(usage.output_token_details.reasoning_tokens, 10);
+        assert_eq!(usage.cached_input_tokens, 20);
+        assert_eq!(usage.reasoning_tokens, 10);
+        assert_eq!(usage.raw, json!({ "provider": "mastra" }));
+    }
+
+    #[test]
+    fn fills_total_from_sum_and_optional_details_default_to_zero() {
+        let events = done_with_usage(json!({ "inputTokens": 12, "outputTokens": 8 }));
+        let usage = parse_done_event_usage(&events).expect("最小用量应可解析");
+        assert_eq!(usage.input_tokens, 12);
+        assert_eq!(usage.output_tokens, 8);
+        assert_eq!(usage.total_tokens, 20); // totalTokens 缺失 → 回退为 input + output
+        assert_eq!(usage.input_token_details.no_cache_tokens, 0);
+        assert_eq!(usage.input_token_details.cache_read_tokens, 0);
+        assert_eq!(usage.input_token_details.cache_write_tokens, 0);
+        assert_eq!(usage.output_token_details.text_tokens, 0);
+        assert_eq!(usage.output_token_details.reasoning_tokens, 0);
+        assert_eq!(usage.cached_input_tokens, 0);
+        assert_eq!(usage.reasoning_tokens, 0);
+        assert_eq!(usage.raw, serde_json::Value::Null);
+    }
+
+    #[test]
+    fn cached_input_tokens_falls_back_to_cache_read_tokens() {
+        let events = done_with_usage(json!({
+            "inputTokens": 50,
+            "outputTokens": 10,
+            "inputTokenDetails": { "cacheReadTokens": 15 }
+        }));
+        let usage = parse_done_event_usage(&events).expect("用量应可解析");
+        // 顶层无 cachedInputTokens → 回退到明细里的 cacheReadTokens
+        assert_eq!(usage.cached_input_tokens, 15);
+        assert_eq!(usage.input_token_details.cache_read_tokens, 15);
+    }
+
+    #[test]
+    fn reasoning_tokens_falls_back_to_output_details() {
+        let events = done_with_usage(json!({
+            "inputTokens": 50,
+            "outputTokens": 10,
+            "outputTokenDetails": { "reasoningTokens": 7 }
+        }));
+        let usage = parse_done_event_usage(&events).expect("用量应可解析");
+        assert_eq!(usage.reasoning_tokens, 7);
+    }
+
+    #[test]
+    fn returns_none_when_input_or_output_tokens_missing() {
+        assert!(parse_done_event_usage(&done_with_usage(json!({ "outputTokens": 10 }))).is_none());
+        assert!(parse_done_event_usage(&done_with_usage(json!({ "inputTokens": 10 }))).is_none());
+    }
+
+    #[test]
+    fn returns_none_without_done_event_or_with_null_usage() {
+        let no_done = vec![json!({ "type": "message_delta", "text": "hi" })];
+        assert!(parse_done_event_usage(&no_done).is_none());
+
+        assert!(parse_done_event_usage(&done_with_usage(serde_json::Value::Null)).is_none());
+
+        let done_without_usage = vec![json!({ "type": "done" })];
+        assert!(parse_done_event_usage(&done_without_usage).is_none());
+    }
+
+    #[test]
+    fn uses_last_done_event_when_multiple_present() {
+        let events = vec![
+            json!({ "type": "done", "usage": { "inputTokens": 1, "outputTokens": 1 } }),
+            json!({ "type": "message_delta", "text": "more" }),
+            json!({ "type": "done", "usage": { "inputTokens": 99, "outputTokens": 11 } }),
+        ];
+        let usage = parse_done_event_usage(&events).expect("用量应可解析");
+        // rev().find → 取最后一个 done 事件
+        assert_eq!(usage.input_tokens, 99);
+        assert_eq!(usage.output_tokens, 11);
+    }
+
+    #[test]
+    fn ignores_negative_token_values_as_untrusted() {
+        // as_u64 对负数返回 None → 缺少可信 inputTokens，视为无用量，绝不本地估算
+        let events = done_with_usage(json!({ "inputTokens": -5, "outputTokens": 10 }));
+        assert!(parse_done_event_usage(&events).is_none());
+    }
+}

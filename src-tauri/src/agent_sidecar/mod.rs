@@ -7,6 +7,9 @@ use std::process::{Child, Command, Stdio};
 use std::sync::OnceLock;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
+use std::process::Command;
+use std::sync::OnceLock;
+use std::time::Duration;
 
 use crate::ai::credential::CredentialStore;
 use crate::commands::contracts::{
@@ -1459,8 +1462,9 @@ mod tests {
         crashed_sidecar_error_message, drain_complete_sidecar_stream_lines,
         has_non_whitespace_bytes, inject_sidecar_dotenv_key_if_present, is_crashed_sidecar_error,
         is_default_local_sidecar_url, is_retryable_narrator_sidecar_error, model_provider_id,
-        normalize_base_url, parse_netstat_listening_pids, sidecar_runtime_dir_from,
-    };
+            client, health_client, normalize_base_url, parse_netstat_listening_pids,
+    shared_client, sidecar_runtime_dir_from,
+};
     use std::fs;
     use std::process::Command;
 
@@ -1724,8 +1728,32 @@ mod tests {
                 .is_some_and(|parent| parent.ends_with("com.xiaojianc.Calamex"))
         );
 
-        let fallback = sidecar_runtime_dir_from(None);
+                let fallback = sidecar_runtime_dir_from(None);
         assert!(fallback.ends_with("agent-sidecar"));
         assert!(fallback.to_string_lossy().contains("com.xiaojianc.Calamex"));
+    }
+
+    #[test]
+    fn shared_client_builds_then_reuses_cached_instance() {
+        static CELL: OnceLock<reqwest::Client> = OnceLock::new();
+        assert!(CELL.get().is_none(), "cell 起始应为空");
+
+        let _first =
+            shared_client(&CELL, Duration::from_secs(5)).expect("首次调用应构建并缓存 client");
+        assert!(CELL.get().is_some(), "首次调用后 cell 应被填充");
+
+        // 第二次传入不同 timeout：应命中已缓存实例（早返回复用分支），不再 rebuild。
+        let _second =
+            shared_client(&CELL, Duration::from_secs(600)).expect("再次调用应复用已缓存 client");
+        assert!(CELL.get().is_some());
+    }
+
+    #[test]
+    fn long_and_health_clients_build_and_reuse_without_error() {
+        // 覆盖两个公共封装：首次构建 + 二次取用（命中 OnceLock 复用分支），均不应报错。
+        let _first = client().expect("长超时 client 应构建成功");
+        let _second = client().expect("长超时 client 应复用成功");
+        let _health_first = health_client().expect("health client 应构建成功");
+        let _health_second = health_client().expect("health client 应复用成功");
     }
 }
