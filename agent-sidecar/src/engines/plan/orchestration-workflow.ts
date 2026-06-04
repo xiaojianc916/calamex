@@ -1,6 +1,8 @@
 import { createWorkflow, createStep } from '@mastra/core/workflows';
 import { z } from 'zod';
 
+import type { TAgentRuntimeOutputEvent } from '../contracts/runtime-contracts.js';
+
 /**
  * Phase 1：用原生 Mastra Workflow 收编 plan→execute→validate→replan 主编排。
  *
@@ -30,8 +32,10 @@ const MAX_REPLANS = 3;
 // ---------------------------------------------------------------------------
 // 注入接口：Phase 2 由 MastraRuntime 实现（内部仍调用现有 store / 现有 phase 方法）
 // ---------------------------------------------------------------------------
+export type TOrchestrationEmit = (event: TAgentRuntimeOutputEvent) => void;
+
 export interface IPlanOrchestrationDeps {
-	generatePlan(input: { goal: string; threadId: string | null }): Promise<{
+	generatePlan(input: { goal: string; threadId: string | null }, emit?: TOrchestrationEmit): Promise<{
 		planId: string;
 		version: number;
 		threadId: string;
@@ -40,7 +44,7 @@ export interface IPlanOrchestrationDeps {
 	approvePlan(input: { planId: string; version: number }): Promise<void>;
 	rejectPlan(input: { planId: string; version: number; reason?: string }): Promise<void>;
 	/** 执行单个 step；映射到现有 execute()。'suspended' 表示工具审批等外部等待，并携带待审批工具请求。 */
-	executeStep(input: { planId: string; version: number; stepId: string }): Promise<{
+	executeStep(input: { planId: string; version: number; stepId: string }, emit?: TOrchestrationEmit): Promise<{
 		status: 'completed' | 'failed' | 'suspended';
 		error?: string;
 		/** 'suspended' 时携带待审批工具请求（用于 workflow 级 suspend + resume 续跑）。 */
@@ -57,17 +61,17 @@ export interface IPlanOrchestrationDeps {
 		requestId: string;
 		decision: 'approve' | 'reject';
 		reason?: string;
-	}): Promise<{
+	}, emit?: TOrchestrationEmit): Promise<{
 		status: 'completed' | 'failed' | 'suspended';
 		error?: string;
 		approval?: { requestId: string; toolName?: string };
 	}>;
-	validate(input: { planId: string; version: number }): Promise<{
+	validate(input: { planId: string; version: number }, emit?: TOrchestrationEmit): Promise<{
 		needsReplan: boolean;
 		summary: string;
 	}>;
 	/** 生成新版本计划（delta 应用后），返回新 version + 新 stepIds。 */
-	replan(input: { planId: string; version: number }): Promise<{
+	replan(input: { planId: string; version: number }, emit?: TOrchestrationEmit): Promise<{
 		planId: string;
 		version: number;
 		stepIds: string[];
@@ -120,16 +124,29 @@ const approvalResumeSchema = z.object({
 	reason: z.string().min(1).optional(),
 });
 
+type TStepWriter = { write(data: unknown): Promise<unknown> } | undefined;
+const createStepEmit = (writer: TStepWriter): TOrchestrationEmit => (event) => {
+	try {
+		const result = writer?.write(event);
+		if (result && typeof result.then === 'function') {
+			result.catch(() => {});
+		}
+	} catch {
+		// best-effort streaming: ignore writer errors
+	}
+};
+
 export const createPlanOrchestrationWorkflow = (deps: IPlanOrchestrationDeps) => {
 	const generatePlanStep = createStep({
 		id: 'generate-plan',
 		inputSchema: workflowInputSchema,
 		outputSchema: cycleContextSchema,
-		execute: async ({ inputData }) => {
+		execute: async ({ inputData, writer }) => {
+			const emit = createStepEmit(writer);
 			const plan = await deps.generatePlan({
 				goal: inputData.goal,
 				threadId: inputData.threadId,
-			});
+			}, emit);
 			return {
 				...plan,
 				cursor: 0,
@@ -178,7 +195,8 @@ export const createPlanOrchestrationWorkflow = (deps: IPlanOrchestrationDeps) =>
 		outputSchema: cycleContextSchema,
 		resumeSchema: approvalResumeSchema,
 		execute: async (stepArgs) => {
-			const { inputData, resumeData, suspend } = stepArgs;
+			const { inputData, resumeData, suspend, writer } = stepArgs;
+			const emit = createStepEmit(writer);
 			// suspendData 未必出现在当前 @mastra/core 版本的 execute 形参类型里，
 			// 防御性读取（运行时由 Mastra 注入；缺失则降级为从 inputData.cursor 重跑）。
 			const suspendData = (stepArgs as { suspendData?: TToolApprovalSuspend }).suspendData;
@@ -200,7 +218,7 @@ export const createPlanOrchestrationWorkflow = (deps: IPlanOrchestrationDeps) =>
 						requestId: suspendData.requestId,
 						decision: resumeData.decision,
 						...(resumeData.reason ? { reason: resumeData.reason } : {}),
-					});
+					}, emit);
 					if (resolved.status === 'failed') {
 						return { ...ctx, cursor, failed: true, lastSummary: resolved.error ?? '工具审批续跑失败' };
 					}
@@ -229,7 +247,7 @@ export const createPlanOrchestrationWorkflow = (deps: IPlanOrchestrationDeps) =>
 					planId: ctx.planId,
 					version: ctx.version,
 					stepId,
-				});
+				}, emit);
 				if (result.status === 'failed') {
 					return { ...ctx, cursor, failed: true, lastSummary: result.error ?? '执行失败' };
 				}
@@ -253,7 +271,7 @@ export const createPlanOrchestrationWorkflow = (deps: IPlanOrchestrationDeps) =>
 			const advanced: TCycleContext = { ...ctx, cursor };
 
 			// 2) 验证
-			const report = await deps.validate({ planId: advanced.planId, version: advanced.version });
+			const report = await deps.validate({ planId: advanced.planId, version: advanced.version }, emit);
 			if (!report.needsReplan) {
 				return { ...advanced, validationPassed: true, lastSummary: report.summary };
 			}
@@ -266,7 +284,7 @@ export const createPlanOrchestrationWorkflow = (deps: IPlanOrchestrationDeps) =>
 					lastSummary: `重规划次数超过上限(${MAX_REPLANS})：${report.summary}`,
 				};
 			}
-			const next = await deps.replan({ planId: advanced.planId, version: advanced.version });
+			const next = await deps.replan({ planId: advanced.planId, version: advanced.version }, emit);
 			return {
 				...advanced,
 				version: next.version,

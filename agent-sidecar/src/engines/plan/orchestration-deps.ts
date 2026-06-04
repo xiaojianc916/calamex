@@ -82,14 +82,21 @@ export const createMastraPlanOrchestrationDeps = (
         ...extra,
     });
 
+    // Phase 2.5: wrap the step-provided emit into a phase onEvent option.
+    // Omit entirely when absent (exactOptionalPropertyTypes-safe).
+    const runOptions = (
+        emit?: (event: TAgentRuntimeOutputEvent) => void,
+    ): IAgentRuntimeRunOptions | undefined => (emit ? { onEvent: emit } : undefined);
+
     return {
-        async generatePlan({ goal, threadId }) {
+        async generatePlan({ goal, threadId }, emit) {
             const planId = randomUUID();
             await access.plan(
                 baseInput('plan', goal, {
                     planId,
                     ...(threadId ? { threadId } : {}),
                 }),
+                runOptions(emit),
             );
             // plan() 内部以传入的 planId 落库；读回拿结构化版本与步骤 id。
             const record = await access.planStore
@@ -123,7 +130,7 @@ export const createMastraPlanOrchestrationDeps = (
             await access.planWorkflowStore.rejectPlan(record, reason);
         },
 
-        async executeStep({ planId, version, stepId }) {
+        async executeStep({ planId, version, stepId }, emit) {
             const record = await access.planStore.getPlan({ planId, version });
             const step = record.plan.steps.find((candidate) => candidate.id === stepId);
             const goal = step ? `${step.title}：${step.goal}` : `执行计划步骤 ${stepId}`;
@@ -134,6 +141,7 @@ export const createMastraPlanOrchestrationDeps = (
                     planStepId: stepId,
                     threadId: record.threadId,
                 }),
+                runOptions(emit),
             );
             // execute() 仅在「挂起等待外部审批」时返回 result === null。
             if (response.result === null) {
@@ -154,7 +162,7 @@ export const createMastraPlanOrchestrationDeps = (
             };
         },
 
-        async resolveToolApproval({ planId, version, stepId, requestId, decision }) {
+        async resolveToolApproval({ planId, version, stepId, requestId, decision }, emit) {
             const record = await access.planStore.getPlan({ planId, version }).catch(() => null);
             const response = await access.resolveApproval({
                 requestId,
@@ -163,7 +171,7 @@ export const createMastraPlanOrchestrationDeps = (
                 planVersion: version,
                 planStepId: stepId,
                 ...(record?.threadId ? { threadId: record.threadId } : {}),
-            });
+            }, runOptions(emit));
             // 链式审批：又一个工具待批，resolveApproval 与 execute() 一致返回 result === null。
             if (response.result === null) {
                 const approval = extractPendingApproval(response.events);
@@ -182,7 +190,7 @@ export const createMastraPlanOrchestrationDeps = (
             };
         },
 
-        async validate({ planId, version }) {
+        async validate({ planId, version }, emit) {
             const record = await access.planStore.getPlan({ planId, version });
             const response = await access.validatePlan(
                 baseInput('agent', record.userRequest.trim() || '验证计划执行结果', {
@@ -190,6 +198,7 @@ export const createMastraPlanOrchestrationDeps = (
                     planVersion: version,
                     threadId: record.threadId,
                 }),
+                runOptions(emit),
             );
             // validatePlan() 通过 reportValidator 把结果写进 workflow state.validator。
             const workflow = await access.planWorkflowStore.getWorkflow({ planId, version });
@@ -199,7 +208,7 @@ export const createMastraPlanOrchestrationDeps = (
             };
         },
 
-        async replan({ planId, version }) {
+        async replan({ planId, version }, emit) {
             const record = await access.planStore.getPlan({ planId, version });
             await access.replanPlan(
                 baseInput('plan', record.userRequest.trim() || '根据验证结果重新规划', {
@@ -207,6 +216,7 @@ export const createMastraPlanOrchestrationDeps = (
                     planVersion: version,
                     threadId: record.threadId,
                 }),
+                runOptions(emit),
             );
             // replanPlan() 以同一 planId 写入新版本；getPlan(无 version) 取最新版本。
             const latest = await access.planStore.getPlan({ planId });
