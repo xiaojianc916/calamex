@@ -1,5 +1,6 @@
 use super::*;
 use crate::agent_sidecar;
+use crate::ai::provider::{AiProviderInputTokenDetails, AiProviderOutputTokenDetails};
 use crate::commands::contracts::{AgentSidecarChatRequest, AgentSidecarMessagePayload};
 use super::prompt::{
     build_context_block, build_conversation_title_prompt, build_identity_system_message,
@@ -22,6 +23,70 @@ fn sidecar_events_result_text(
     payload: &crate::commands::contracts::AgentSidecarResponsePayload,
 ) -> String {
     payload.result.clone().unwrap_or_default()
+}
+
+/// 从 sidecar 事件流中提取最终 `done` 事件携带的官方用量（authoritative usage）。
+///
+/// sidecar 已在 `done` 事件里回传 Mastra/ai-sdk 的真实 `usage`（见 agent-sidecar
+/// 的 `parseDoneTokenSnapshot`），这里只做无损映射到 `AiProviderUsage`：
+/// - `inputTokens` / `outputTokens` 必须存在，缺任一则视为无可信用量并返回 `None`；
+/// - `totalTokens` 缺失时回退为输入与输出之和；
+/// - 明细 / 缓存 / 推理 token 等可选字段缺失时按 0 处理，绝不本地估算。
+fn parse_done_event_usage(events: &[serde_json::Value]) -> Option<AiProviderUsage> {
+    let usage = events
+        .iter()
+        .rev()
+        .find(|event| event.get("type").and_then(|value| value.as_str()) == Some("done"))
+        .and_then(|event| event.get("usage"))
+        .filter(|usage| !usage.is_null())?;
+
+    let read_u64 = |parent: &serde_json::Value, key: &str| -> Option<u64> {
+        parent.get(key).and_then(serde_json::Value::as_u64)
+    };
+
+    let input_tokens = read_u64(usage, "inputTokens")?;
+    let output_tokens = read_u64(usage, "outputTokens")?;
+    let total_tokens = read_u64(usage, "totalTokens").unwrap_or(input_tokens + output_tokens);
+
+    let input_details = usage.get("inputTokenDetails");
+    let input_token_details = AiProviderInputTokenDetails {
+        no_cache_tokens: input_details
+            .and_then(|details| read_u64(details, "noCacheTokens"))
+            .unwrap_or(0),
+        cache_read_tokens: input_details
+            .and_then(|details| read_u64(details, "cacheReadTokens"))
+            .unwrap_or(0),
+        cache_write_tokens: input_details
+            .and_then(|details| read_u64(details, "cacheWriteTokens"))
+            .unwrap_or(0),
+    };
+
+    let output_details = usage.get("outputTokenDetails");
+    let output_token_details = AiProviderOutputTokenDetails {
+        text_tokens: output_details
+            .and_then(|details| read_u64(details, "textTokens"))
+            .unwrap_or(0),
+        reasoning_tokens: output_details
+            .and_then(|details| read_u64(details, "reasoningTokens"))
+            .unwrap_or(0),
+    };
+
+    let cached_input_tokens =
+        read_u64(usage, "cachedInputTokens").unwrap_or(input_token_details.cache_read_tokens);
+    let reasoning_tokens =
+        read_u64(usage, "reasoningTokens").unwrap_or(output_token_details.reasoning_tokens);
+    let raw = usage.get("raw").cloned().unwrap_or(serde_json::Value::Null);
+
+    Some(AiProviderUsage {
+        input_tokens,
+        input_token_details,
+        output_tokens,
+        output_token_details,
+        total_tokens,
+        cached_input_tokens,
+        reasoning_tokens,
+        raw,
+    })
 }
 
 pub async fn generate_conversation_title(
@@ -199,12 +264,15 @@ pub async fn chat_stream(
                 }
             }
 
-            Ok::<_, String>((None, None))
+            let final_usage = parse_done_event_usage(&sidecar_response.events);
+            let completion_tokens = final_usage.as_ref().map(|usage| usage.output_tokens);
+
+            Ok::<_, String>((final_usage, completion_tokens))
         }
         .await;
 
         match result {
-            Ok((final_usage, completion_tokens_estimate)) => {
+            Ok((final_usage, completion_tokens)) => {
                 if stream_manager::is_cancelled(&task_stream_id) {
                     emit_stream_event(
                         &app,
@@ -216,9 +284,9 @@ pub async fn chat_stream(
                             message: Some("AI 请求已取消。".to_string()),
                             model: Some(task_model.clone()),
                             prompt_tokens,
-                            completion_tokens: completion_tokens_estimate,
+                            completion_tokens,
                             total_tokens: prompt_tokens
-                                .zip(completion_tokens_estimate)
+                                .zip(completion_tokens)
                                 .map(|(input_tokens, output_tokens)| input_tokens + output_tokens),
                             usage: final_usage,
                         },
@@ -232,7 +300,7 @@ pub async fn chat_stream(
                     let final_completion_tokens = final_usage
                         .as_ref()
                         .map(|usage| usage.output_tokens)
-                        .or(completion_tokens_estimate);
+                        .or(completion_tokens);
                     let final_total_tokens = final_usage
                         .as_ref()
                         .map(|usage| usage.total_tokens)
