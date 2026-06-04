@@ -242,8 +242,8 @@ describe('useAiAgentPlan', () => {
     );
     expect(store.orchestrationRunId).toBe('orch-plan-run-1');
     expect(store.mode).toBe('plan');
-    expect(store.planVersion).toBe(1);
-    expect(store.planStatus).toBe('pending_approval');
+    expect(result.planMetadata.version).toBe(1);
+    expect(result.planMetadata.status).toBe('pending_approval');
     expect(result.steps).toHaveLength(2);
     expect(store.latestOfficialUsageResolved).toBe(true);
     expect(store.latestOfficialUsage).toMatchObject({
