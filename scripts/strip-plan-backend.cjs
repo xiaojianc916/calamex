@@ -2,7 +2,8 @@
 // scripts/strip-plan-backend.cjs
 // 一次性移除「旧 plan/execute HTTP 通道」：后端路由 + 对应集成测试（原子操作）。
 // 只改动 agent-sidecar/src/server.ts 与 agent-sidecar/src/server.spec.ts。
-// 不创建备份；UTF-8 读写；可重复运行（已应用则跳过）；任一标记异常则中止且不写盘。
+// 不创建备份；UTF-8 读写；自动适配 LF / CRLF 行尾；可重复运行（已应用则跳过）；
+// 任一标记异常则中止且不写盘。
 // 保留：/agent/chat、/agent/warmup、/approval/resolve、/rollback/restore、
 //       所有 /agent/plan/orchestrate*、/health、引擎方法、schema 校验测试、鉴权测试。
 
@@ -20,6 +21,11 @@ function read(file) {
     return fs.readFileSync(file, 'utf8');
 }
 
+// 探测文件行尾（CRLF 或 LF），多行匹配串据此拼接。
+function eol(content) {
+    return content.includes('\r\n') ? '\r\n' : '\n';
+}
+
 // 精确单处替换；已应用则跳过；找不到且未应用则中止。
 function replaceOnce(content, find, replace, label) {
     const count = content.split(find).length - 1;
@@ -35,6 +41,7 @@ function replaceOnce(content, find, replace, label) {
 }
 
 // 删除 [startAnchor, endAnchor) 之间整段（含 startAnchor，不含 endAnchor）。
+// 锚点均为单行（不含换行），LF / CRLF 均可匹配。
 // startAnchor 已不存在则跳过；endAnchor 缺失或顺序异常则中止。
 function cutBetween(content, startAnchor, endAnchor, label) {
     const startIdx = content.indexOf(startAnchor);
@@ -55,43 +62,53 @@ function cutBetween(content, startAnchor, endAnchor, label) {
 
 // ---------- server.ts ----------
 let server = read(SERVER);
+const NL = eol(server);
+const j = (lines) => lines.join(NL);
 
 // 1) 裁剪 request-schemas 导入：移除 8 个仅被旧路由使用的 schema。
 server = replaceOnce(
     server,
-    `import {
-  agentSidecarChatRequestSchema,
-  agentSidecarExecuteRequestSchema,
-  agentSidecarOrchestrateRequestSchema,
-  agentSidecarOrchestrateResumeRequestSchema,
-  agentSidecarPlanApproveRequestSchema,
-  agentSidecarPlanFinishRequestSchema,
-  agentSidecarPlanQueryRequestSchema,
-  agentSidecarPlanRejectRequestSchema,
-  agentSidecarPlanReplanRequestSchema,
-  agentSidecarPlanRequestSchema,
-  agentSidecarPlanValidateRequestSchema,
-  agentSidecarRollbackRestoreRequestSchema,
-  approvalResolutionSchema,
-} from './server/request-schemas.js';`,
-    `import {
-  agentSidecarChatRequestSchema,
-  agentSidecarOrchestrateRequestSchema,
-  agentSidecarOrchestrateResumeRequestSchema,
-  agentSidecarRollbackRestoreRequestSchema,
-  approvalResolutionSchema,
-} from './server/request-schemas.js';`,
+    j([
+        `import {`,
+        `  agentSidecarChatRequestSchema,`,
+        `  agentSidecarExecuteRequestSchema,`,
+        `  agentSidecarOrchestrateRequestSchema,`,
+        `  agentSidecarOrchestrateResumeRequestSchema,`,
+        `  agentSidecarPlanApproveRequestSchema,`,
+        `  agentSidecarPlanFinishRequestSchema,`,
+        `  agentSidecarPlanQueryRequestSchema,`,
+        `  agentSidecarPlanRejectRequestSchema,`,
+        `  agentSidecarPlanReplanRequestSchema,`,
+        `  agentSidecarPlanRequestSchema,`,
+        `  agentSidecarPlanValidateRequestSchema,`,
+        `  agentSidecarRollbackRestoreRequestSchema,`,
+        `  approvalResolutionSchema,`,
+        `} from './server/request-schemas.js';`,
+    ]),
+    j([
+        `import {`,
+        `  agentSidecarChatRequestSchema,`,
+        `  agentSidecarOrchestrateRequestSchema,`,
+        `  agentSidecarOrchestrateResumeRequestSchema,`,
+        `  agentSidecarRollbackRestoreRequestSchema,`,
+        `  approvalResolutionSchema,`,
+        `} from './server/request-schemas.js';`,
+    ]),
     'server.ts: 裁剪 request-schemas 导入（移除 8 个 schema）',
 );
 
 // 2) 移除仅被 GET /agent/plan/ 使用的 handleRuntimeResponse 导入。
 server = replaceOnce(
     server,
-    `  handlePostStream,
-  handleRuntimeResponse,
-  handleWarmupPost,`,
-    `  handlePostStream,
-  handleWarmupPost,`,
+    j([
+        `  handlePostStream,`,
+        `  handleRuntimeResponse,`,
+        `  handleWarmupPost,`,
+    ]),
+    j([
+        `  handlePostStream,`,
+        `  handleWarmupPost,`,
+    ]),
     'server.ts: 移除 handleRuntimeResponse 导入',
 );
 

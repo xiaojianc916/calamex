@@ -20,16 +20,8 @@ import { configureGlobalHttpTransport } from './http/transport.js';
 import { scheduleBackgroundWarmup } from './http/warmup.js';
 import {
   agentSidecarChatRequestSchema,
-  agentSidecarExecuteRequestSchema,
   agentSidecarOrchestrateRequestSchema,
   agentSidecarOrchestrateResumeRequestSchema,
-  agentSidecarPlanApproveRequestSchema,
-  agentSidecarPlanFinishRequestSchema,
-  agentSidecarPlanQueryRequestSchema,
-  agentSidecarPlanRejectRequestSchema,
-  agentSidecarPlanReplanRequestSchema,
-  agentSidecarPlanRequestSchema,
-  agentSidecarPlanValidateRequestSchema,
   agentSidecarRollbackRestoreRequestSchema,
   approvalResolutionSchema,
 } from './server/request-schemas.js';
@@ -37,7 +29,6 @@ import {
   handlePlainPost,
   handlePost,
   handlePostStream,
-  handleRuntimeResponse,
   handleWarmupPost,
   isAuthorizedSidecarRequest,
   normalizeSidecarToken,
@@ -155,26 +146,6 @@ export const createAgentSidecarServer = (
       return;
     }
 
-    if (request.method === 'GET' && parsedUrl.pathname.startsWith('/agent/plan/')) {
-      const planId = decodeURIComponent(parsedUrl.pathname.slice('/agent/plan/'.length));
-      const rawVersion = parsedUrl.searchParams.get('version');
-      const version = rawVersion ? Number(rawVersion) : undefined;
-      const payload = agentSidecarPlanQueryRequestSchema.safeParse({
-        planId,
-        ...(version !== undefined ? { version } : {}),
-      });
-      if (!payload.success) {
-        writeJson(response, 400, {
-          error: '计划查询参数无效。',
-        });
-        return;
-      }
-      void handleRuntimeResponse(request, response, async (options) =>
-        runtime.getPlan(payload.data, options)
-      );
-      return;
-    }
-
     if (request.method === 'POST' && (url === '/agent/chat' || url === '/model/chat')) {
       void handlePost(request, response, runChat);
       return;
@@ -187,92 +158,6 @@ export const createAgentSidecarServer = (
 
     if (request.method === 'POST' && url === '/agent/warmup') {
       void handleWarmupPost(request, response);
-      return;
-    }
-
-    if (request.method === 'POST' && url === '/agent/plan') {
-      void handlePost(request, response, async (body, options) => {
-        const payload = agentSidecarPlanRequestSchema.parse(body);
-        scheduleBackgroundWarmup(payload, 'request');
-        return runtime.plan(toAgentInput(payload, 'plan'), options);
-      });
-      return;
-    }
-
-    if (request.method === 'POST' && url === '/agent/plan/stream') {
-      void handlePostStream(request, response, async (body, options) => {
-        const payload = agentSidecarPlanRequestSchema.parse(body);
-        scheduleBackgroundWarmup(payload, 'request');
-        return runtime.plan(toAgentInput(payload, 'plan'), options);
-      });
-      return;
-    }
-
-    if (request.method === 'POST' && url === '/agent/plan/approve') {
-      void handlePost(request, response, async (body, options) => {
-        const payload = agentSidecarPlanApproveRequestSchema.parse(body);
-        return runtime.approvePlan(payload, options);
-      });
-      return;
-    }
-
-    if (request.method === 'POST' && url === '/agent/plan/reject') {
-      void handlePost(request, response, async (body, options) => {
-        const payload = agentSidecarPlanRejectRequestSchema.parse(body);
-        return runtime.rejectPlan(payload, options);
-      });
-      return;
-    }
-
-    if (request.method === 'POST' && url === '/agent/plan/finish') {
-      void handlePost(request, response, async (body, options) => {
-        const payload = agentSidecarPlanFinishRequestSchema.parse(body);
-        return runtime.finishPlan(payload, options);
-      });
-      return;
-    }
-
-    if (request.method === 'POST' && url === '/agent/plan/query') {
-      void handlePost(request, response, async (body, options) => {
-        const payload = agentSidecarPlanQueryRequestSchema.parse(body);
-        return runtime.getPlan(payload, options);
-      });
-      return;
-    }
-
-    if (request.method === 'POST' && url === '/agent/plan/validate') {
-      void handlePost(request, response, async (body, options) => {
-        const payload = agentSidecarPlanValidateRequestSchema.parse(body);
-        scheduleBackgroundWarmup(payload, 'request');
-        return runtime.validatePlan(toAgentInput(payload, 'agent'), options);
-      });
-      return;
-    }
-
-    if (request.method === 'POST' && url === '/agent/plan/replan') {
-      void handlePost(request, response, async (body, options) => {
-        const payload = agentSidecarPlanReplanRequestSchema.parse(body);
-        scheduleBackgroundWarmup(payload, 'request');
-        return runtime.replanPlan(toAgentInput(payload, 'plan'), options);
-      });
-      return;
-    }
-
-    if (request.method === 'POST' && url === '/agent/execute') {
-      void handlePost(request, response, async (body, options) => {
-        const payload = agentSidecarExecuteRequestSchema.parse(body);
-        scheduleBackgroundWarmup(payload, 'request');
-        return runtime.execute(toAgentInput(payload, 'agent'), options);
-      });
-      return;
-    }
-
-    if (request.method === 'POST' && url === '/agent/execute/stream') {
-      void handlePostStream(request, response, async (body, options) => {
-        const payload = agentSidecarExecuteRequestSchema.parse(body);
-        scheduleBackgroundWarmup(payload, 'request');
-        return runtime.execute(toAgentInput(payload, 'agent'), options);
-      });
       return;
     }
 
