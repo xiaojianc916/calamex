@@ -1,12 +1,9 @@
 use crate::agent_sidecar;
 use crate::commands::contracts::{
     AgentSidecarApprovalResolveRequest, AgentSidecarChatRequest,
-    AgentSidecarCheckpointRestoreRequest, AgentSidecarExecuteRequest, AgentSidecarHealthPayload,
+    AgentSidecarCheckpointRestoreRequest, AgentSidecarHealthPayload,
     AgentSidecarOrchestratePayload, AgentSidecarOrchestrateRequest,
-    AgentSidecarOrchestrateResumeRequest, AgentSidecarPlanApproveRequest,
-    AgentSidecarPlanFinishRequest, AgentSidecarPlanQueryRequest, AgentSidecarPlanRejectRequest,
-    AgentSidecarPlanReplanRequest, AgentSidecarPlanRequest, AgentSidecarPlanValidateRequest,
-    AgentSidecarResponsePayload, AgentSidecarWarmupPayload,
+    AgentSidecarOrchestrateResumeRequest, AgentSidecarResponsePayload, AgentSidecarWarmupPayload,
 };
 use tauri::AppHandle;
 
@@ -35,72 +32,6 @@ pub async fn agent_sidecar_chat(
     payload: AgentSidecarChatRequest,
 ) -> Result<AgentSidecarResponsePayload, String> {
     agent_sidecar::chat(app, payload).await
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn agent_sidecar_plan(
-    app: AppHandle,
-    payload: AgentSidecarPlanRequest,
-) -> Result<AgentSidecarResponsePayload, String> {
-    agent_sidecar::plan(app, payload).await
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn agent_sidecar_plan_approve(
-    payload: AgentSidecarPlanApproveRequest,
-) -> Result<AgentSidecarResponsePayload, String> {
-    agent_sidecar::approve_plan(payload).await
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn agent_sidecar_plan_query(
-    payload: AgentSidecarPlanQueryRequest,
-) -> Result<AgentSidecarResponsePayload, String> {
-    agent_sidecar::query_plan(payload).await
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn agent_sidecar_plan_reject(
-    payload: AgentSidecarPlanRejectRequest,
-) -> Result<AgentSidecarResponsePayload, String> {
-    agent_sidecar::reject_plan(payload).await
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn agent_sidecar_plan_finish(
-    payload: AgentSidecarPlanFinishRequest,
-) -> Result<AgentSidecarResponsePayload, String> {
-    agent_sidecar::finish_plan(payload).await
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn agent_sidecar_plan_validate(
-    payload: AgentSidecarPlanValidateRequest,
-) -> Result<AgentSidecarResponsePayload, String> {
-    agent_sidecar::validate_plan(payload).await
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn agent_sidecar_plan_replan(
-    payload: AgentSidecarPlanReplanRequest,
-) -> Result<AgentSidecarResponsePayload, String> {
-    agent_sidecar::replan_plan(payload).await
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn agent_sidecar_execute(
-    app: AppHandle,
-    payload: AgentSidecarExecuteRequest,
-) -> Result<AgentSidecarResponsePayload, String> {
-    agent_sidecar::execute(app, payload).await
 }
 
 #[tauri::command]

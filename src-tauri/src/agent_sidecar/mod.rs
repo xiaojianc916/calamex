@@ -7,9 +7,6 @@ use std::process::{Child, Command, Stdio};
 use std::sync::OnceLock;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
-use std::process::Command;
-use std::sync::OnceLock;
-use std::time::Duration;
 
 use crate::ai::credential::CredentialStore;
 use crate::commands::contracts::{
