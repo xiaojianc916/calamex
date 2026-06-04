@@ -33,7 +33,6 @@ const defaultEnv = {
   AGENT_MCP_UVX_PATH: UVX_FIXTURE_PATH,
   AGENT_MCP_GIT_EXECUTABLE_PATH: GIT_FIXTURE_PATH,
   GITHUB_MCP_PAT: 'ghp-test-token',
-  SQLITE_DB_PATH: join(WORKSPACE_ROOT, 'tmp', 'agent-sidecar.sqlite'),
   TAVILY_API_KEY: 'tvly-test-key',
 };
 
@@ -576,7 +575,6 @@ describe('MCP sidecar config', () => {
       'github',
       'context7',
       'hooks-mcp',
-      'sqlite-mcp',
       'tavily-mcp',
     ]);
   });
@@ -593,7 +591,6 @@ describe('MCP sidecar config', () => {
     const github = loaded.configs.find((config) => config.name === 'github');
     const context7 = loaded.configs.find((config) => config.name === 'context7');
     const hooksMcp = loaded.configs.find((config) => config.name === 'hooks-mcp');
-    const sqliteMcp = loaded.configs.find((config) => config.name === 'sqlite-mcp');
     const tavily = loaded.configs.find((config) => config.name === 'tavily-mcp');
 
     assertStdioConfig(git, 'git');
@@ -602,7 +599,6 @@ describe('MCP sidecar config', () => {
     assertHttpConfig(github, 'github');
     assertStdioConfig(context7, 'context7');
     assertStdioConfig(hooksMcp, 'hooks-mcp');
-    assertStdioConfig(sqliteMcp, 'sqlite-mcp');
     assertStdioConfig(tavily, 'tavily-mcp');
 
     assert.equal(git.command, UVX_FIXTURE_PATH);
@@ -615,9 +611,6 @@ describe('MCP sidecar config', () => {
     assert.match(github.headers?.Authorization ?? '', /^Bearer\s+/u);
     assert.deepEqual(context7.args, []);
     assert.deepEqual(hooksMcp.args, ['hooks-mcp==0.2.4', '--working-directory', WORKSPACE_ROOT]);
-    assert.equal(sqliteMcp.env?.SQLITE_DB_PATH, resolve(join(WORKSPACE_ROOT, 'tmp', 'agent-sidecar.sqlite')));
-    assert.equal(sqliteMcp.env?.SQLITE_READ_ONLY, 'true');
-    assert.equal(sqliteMcp.env?.SQLITE_TIMEOUT, '30');
     assert.equal(tavily.env?.TAVILY_API_KEY, 'tvly-test-key');
   });
 
@@ -649,19 +642,6 @@ describe('MCP sidecar config', () => {
     assert.equal(loaded.configs.some((config) => config.name === 'github'), false);
     assert.equal(loaded.errors.some((error) => /GITHUB_MCP_PAT/u.test(error)), true);
   });
-  it('skips sqlite MCP when database path is missing', () => {
-    const loaded = loadMcpServerConfigs({
-      workspaceRootPath: WORKSPACE_ROOT,
-      env: {
-        ...defaultEnv,
-        SQLITE_DB_PATH: '',
-      },
-      platform: 'win32',
-    });
-
-    assert.equal(loaded.configs.some((config) => config.name === 'sqlite-mcp'), false);
-    assert.equal(loaded.errors.some((error) => /SQLITE_DB_PATH/u.test(error)), true);
-  });
 
   it('ignores legacy arbitrary MCP JSON so old tools are not loaded', () => {
     const loaded = loadMcpServerConfigs({
@@ -689,7 +669,6 @@ describe('MCP sidecar config', () => {
       'github',
       'context7',
       'hooks-mcp',
-      'sqlite-mcp',
       'tavily-mcp',
     ]);
   });
@@ -735,7 +714,7 @@ describe('MCP sidecar config', () => {
       env: defaultEnv,
       platform: 'win32',
     }), {
-      configuredServers: 9,
+      configuredServers: 8,
       serverNames: [
         'git',
         'probe',
@@ -744,7 +723,6 @@ describe('MCP sidecar config', () => {
         'github',
         'context7',
         'hooks-mcp',
-        'sqlite-mcp',
         'tavily-mcp',
       ],
       errors: [LOGOSCOPE_MISSING_ERROR],
