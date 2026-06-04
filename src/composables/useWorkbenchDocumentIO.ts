@@ -245,15 +245,20 @@ export const useWorkbenchDocumentIO = ({
     return loadedTabs.filter(isRestoredSessionTab).sort((left, right) => left.order - right.order);
   };
 
-  /** 把单个还原后的 tab 派发回 editorStore，分支语义与原版一致。 */
-  const applyRestoredTab = (tab: TRestoredSessionTab): void => {
+  /**
+   * 把单个还原后的 tab 派发回 editorStore。
+   * 文本文档打开后尝试用草稿恢复未保存内容，返回是否恢复了草稿。
+   */
+  const applyRestoredTab = (tab: TRestoredSessionTab): boolean => {
     if (tab.kind === 'image' && tab.imagePath && tab.imageName) {
       editorStore.openImageDocument(tab.imagePath, tab.imageName);
-      return;
+      return false;
     }
     if (tab.payload) {
-      editorStore.openDocumentTab(tab.payload);
+      const { document: openedDocument } = editorStore.openDocumentTab(tab.payload);
+      return editorStore.restoreDraftForDocument(openedDocument.id);
     }
+    return false;
   };
 
   const restoreActiveDocument = (activePath: string | null): void => {
@@ -285,11 +290,20 @@ export const useWorkbenchDocumentIO = ({
     editorStore.clearDocuments();
 
     const aliveTabs = await restoreOpenTabs(snapshot.openTabs);
-    aliveTabs.forEach(applyRestoredTab);
+    let restoredDraftCount = 0;
+    aliveTabs.forEach((tab) => {
+      if (applyRestoredTab(tab)) {
+        restoredDraftCount += 1;
+      }
+    });
 
     if (aliveTabs.length === 0) return;
 
     restoreActiveDocument(snapshot.activeTabPath);
+
+    if (restoredDraftCount > 0) {
+      notifier.info(`已恢复 ${restoredDraftCount} 个文件未保存的修改`);
+    }
   };
 
   // -----------------------------------------------------------------------

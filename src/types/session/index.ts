@@ -19,6 +19,20 @@ export const EditorViewStateEntrySchema = z.object({
   updatedAt: z.string().datetime(),
 });
 
+/**
+ * 未保存草稿：在编辑器中有改动但尚未保存到磁盘时，按文件路径缓存的草稿内容。
+ * 用于崩溃 / 意外重载后恢复未保存的修改。
+ * - content：当前未保存的内容。
+ * - baselineContent：草稿创建时磁盘上的内容（保存基线）。恢复时若磁盘内容已与
+ *   该基线不一致（被外部改动），则丢弃草稿，避免覆盖外部修改。
+ */
+export const DocumentDraftSchema = z.object({
+  path: z.string().min(1),
+  content: z.string(),
+  baselineContent: z.string(),
+  updatedAt: z.string().datetime(),
+});
+
 export const SessionWorkbenchStateSchema = z
   .object({
     activeSidebarView: SessionWorkbenchSidebarViewSchema.default('explorer'),
@@ -42,6 +56,8 @@ export const SessionSnapshotSchema = z.object({
   workbench: SessionWorkbenchStateSchema,
   recentWorkspaces: z.array(z.string()).max(10),
   recentFiles: z.array(z.string()).max(50),
+  // 可选 + 默认空数组：旧快照（无 drafts 字段）仍可解析，无需 schemaVersion 迁移。
+  drafts: z.array(DocumentDraftSchema).max(30).default([]),
   savedAt: z.string().datetime(),
 });
 
@@ -49,3 +65,4 @@ export type TSessionSnapshot = z.infer<typeof SessionSnapshotSchema>;
 export type TTabState = z.infer<typeof TabStateSchema>;
 export type TSessionTabKind = z.infer<typeof SessionTabKindSchema>;
 export type TSessionWorkbenchState = z.infer<typeof SessionWorkbenchStateSchema>;
+export type TDocumentDraft = z.infer<typeof DocumentDraftSchema>;

@@ -188,6 +188,12 @@ export const useDocumentLifecycle = ({
     }
 
     if (action !== 'save') {
+      // 用户选择“不保存”：连同未保存草稿一并清除，避免下次启动又被草稿恢复回来。
+      dirtyDocuments.forEach((targetDocument) => {
+        if (targetDocument.path) {
+          editorStore.clearDocumentDraft(targetDocument.path);
+        }
+      });
       return true;
     }
 
