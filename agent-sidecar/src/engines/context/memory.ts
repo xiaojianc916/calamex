@@ -228,7 +228,7 @@ export interface IMastraObservationalMemoryModels {
  * Platform-aware default storage directory. Override with
  * AGENT_SIDECAR_STORAGE_ROOT (absolute path).
  *
- * - win32:  %APPDATA%\com.xiaojianc.Calamex\agent-sidecar
+ * - win32:  %APPDATA%\\com.xiaojianc.Calamex\\agent-sidecar
  * - darwin: ~/Library/Application Support/com.xiaojianc.Calamex/agent-sidecar
  * - linux:  $XDG_DATA_HOME/com.xiaojianc.Calamex/agent-sidecar
  *           (fallback ~/.local/share/com.xiaojianc.Calamex/agent-sidecar)
@@ -289,13 +289,25 @@ export const resolveMastraStorageDirectory = (
 /**
  * Resolve the libsql storage URL, ensuring the parent directory exists.
  * Side effect: creates the storage directory via mkdirSync.
+ *
+ * AGENT_SIDECAR_LIBSQL_URL takes precedence over AGENT_SIDECAR_STORAGE_ROOT.
+ * If both are set, STORAGE_ROOT is ignored and we emit a console.warn so the
+ * silent override is observable.
  */
 export const resolveMastraStorageUrl = (
     env: NodeJS.ProcessEnv = process.env,
     cwd: string = process.cwd(),
 ): string => {
     const configuredUrl = toNonEmptyString(env[LIBSQL_URL_ENV]);
-    if (configuredUrl) return configuredUrl;
+    if (configuredUrl) {
+        if (toNonEmptyString(env[STORAGE_ROOT_ENV])) {
+            console.warn(
+                `[agent-sidecar] Both ${LIBSQL_URL_ENV} and ${STORAGE_ROOT_ENV} are set; ` +
+                `${LIBSQL_URL_ENV} takes precedence and ${STORAGE_ROOT_ENV} is ignored.`,
+            );
+        }
+        return configuredUrl;
+    }
 
     const storageDirectory = resolveMastraStorageDirectory(env, cwd);
     mkdirSync(storageDirectory, { recursive: true });
@@ -310,7 +322,7 @@ const isValidUuid = (value: unknown): value is string =>
     typeof value === 'string' && UUID_REGEX.test(value);
 
 /**
- * Resolve a stable per-workspace UUID, stored at
+ * Read or create a stable per-workspace UUID, stored at
  * `<workspaceRootPath>/.mastracode/project.json`.
  *
  * Behavior:
@@ -331,8 +343,11 @@ const isValidUuid = (value: unknown): value is string =>
  * EPERM/EACCES. For desktop-sidecar use this is acceptable — the workspace is
  * typically owned by a single Aster IDE process. If multi-process init becomes
  * a real scenario, switch to an O_CREAT|O_EXCL lockfile pattern.
+ *
+ * NOTE: This is the uncached implementation. Callers should use
+ * `resolveProjectUuid`, which memoizes results per workspace path.
  */
-export const resolveProjectUuid = (workspaceRootPath: string): string => {
+const readOrCreateProjectUuid = (workspaceRootPath: string): string => {
     const mastraCodeDir = join(workspaceRootPath, PROJECT_DIR_NAME);
     const projectJsonPath = join(mastraCodeDir, PROJECT_JSON_NAME);
 
@@ -406,6 +421,32 @@ export const resolveProjectUuid = (workspaceRootPath: string): string => {
         );
     }
     return newUuid;
+};
+
+/**
+ * Process-lifetime cache of resolved project UUIDs, keyed by workspace path.
+ *
+ * `createMastraMemoryScope` runs on every request and would otherwise hit the
+ * filesystem (existsSync + readFileSync) each time. The project UUID is
+ * immutable once created, so memoizing for the process lifetime is safe. It
+ * also stabilizes the write-failure degraded path: instead of minting a fresh
+ * random UUID on every call (fragmenting memory), a single per-process UUID is
+ * reused until the process restarts.
+ */
+const projectUuidCache = new Map<string, string>();
+
+/**
+ * Cached accessor for the stable per-workspace UUID. See
+ * `readOrCreateProjectUuid` for the underlying read/create semantics.
+ */
+export const resolveProjectUuid = (workspaceRootPath: string): string => {
+    const cached = projectUuidCache.get(workspaceRootPath);
+    if (cached !== undefined) {
+        return cached;
+    }
+    const uuid = readOrCreateProjectUuid(workspaceRootPath);
+    projectUuidCache.set(workspaceRootPath, uuid);
+    return uuid;
 };
 
 // -----------------------------------------------------------------------------
