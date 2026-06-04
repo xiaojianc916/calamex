@@ -1,6 +1,7 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { projectOrchestrateEvents } from '@/composables/ai/sidecar-orchestrate';
 import { useAiAgentPlan } from '@/composables/ai/useAiAgentPlan';
 import { useAiAgentStore } from '@/store/aiAgent';
 import type { IAiAgentRun, IAiTaskPlanStep } from '@/types/ai';
@@ -8,27 +9,35 @@ import type {
   IAgentPlan,
   IAgentPlanRecord,
   IAgentSidecarResponsePayload,
+  TAgentUiEvent,
 } from '@/types/ai/sidecar';
+
+// 部分 mock：保留真实 projectOrchestrateEvents，仅替换两个驱动函数。
+const orchestrateMock = vi.hoisted(() => ({
+  startOrchestration: vi.fn(),
+  resumeOrchestration: vi.fn(),
+}));
+
+vi.mock('@/composables/ai/sidecar-orchestrate', async (importActual) => {
+  const actual =
+    await importActual<typeof import('@/composables/ai/sidecar-orchestrate')>();
+  return {
+    ...actual,
+    startOrchestration: orchestrateMock.startOrchestration,
+    resumeOrchestration: orchestrateMock.resumeOrchestration,
+  };
+});
 
 const aiServiceMock = vi.hoisted(() => {
   const classifyTask = vi.fn();
-  const sidecarPlan = vi.fn();
   const sidecarPlanQuery = vi.fn();
-  const sidecarPlanApprove = vi.fn();
-  const sidecarPlanReject = vi.fn();
 
   return {
     classifyTask,
-    sidecarPlan,
     sidecarPlanQuery,
-    sidecarPlanApprove,
-    sidecarPlanReject,
     reset(): void {
       classifyTask.mockReset();
-      sidecarPlan.mockReset();
       sidecarPlanQuery.mockReset();
-      sidecarPlanApprove.mockReset();
-      sidecarPlanReject.mockReset();
     },
   };
 });
@@ -36,10 +45,7 @@ const aiServiceMock = vi.hoisted(() => {
 vi.mock('@/services/ipc/ai.service', () => ({
   aiService: {
     classifyTask: aiServiceMock.classifyTask,
-    sidecarPlan: aiServiceMock.sidecarPlan,
     sidecarPlanQuery: aiServiceMock.sidecarPlanQuery,
-    sidecarPlanApprove: aiServiceMock.sidecarPlanApprove,
-    sidecarPlanReject: aiServiceMock.sidecarPlanReject,
   },
 }));
 
@@ -135,10 +141,50 @@ const createRun = (steps: IAiTaskPlanStep[]): IAiAgentRun => ({
   errorMessage: null,
 });
 
+const makeResult = (events: TAgentUiEvent[], runId = 'orch-plan-run-1') => ({
+  payload: { runId, result: null },
+  events,
+  projection: projectOrchestrateEvents(events, runId),
+});
+
+const planReadyEvent = (): TAgentUiEvent => ({
+  type: 'plan_ready',
+  planId: 'plan-runtime-1',
+  threadId: 'thread-runtime-1',
+  version: 1,
+  status: 'pending_approval',
+  createdAt: '2026-05-11T10:00:00.000Z',
+  updatedAt: '2026-05-11T10:01:00.000Z',
+  plan: createPlan(),
+});
+
+const doneWithUsageEvent = (): TAgentUiEvent => ({
+  type: 'done',
+  result: '计划已生成。',
+  usage: {
+    inputTokens: 23,
+    inputTokenDetails: {
+      noCacheTokens: 23,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+    },
+    outputTokens: 7,
+    outputTokenDetails: {
+      textTokens: 6,
+      reasoningTokens: 1,
+    },
+    totalTokens: 30,
+    cachedInputTokens: 0,
+    reasoningTokens: 1,
+  },
+});
+
 describe('useAiAgentPlan', () => {
   beforeEach(() => {
     setActivePinia(createPinia());
     aiServiceMock.reset();
+    orchestrateMock.startOrchestration.mockReset();
+    orchestrateMock.resumeOrchestration.mockReset();
   });
 
   it('刷新回查计划记录时保留已恢复的暂停 run', async () => {
@@ -177,55 +223,85 @@ describe('useAiAgentPlan', () => {
     expect(store.planStatus).toBe('executing');
   });
 
-  it('生成计划后记录 sidecar 返回的官方 usage', async () => {
+  it('生成计划后启动编排，记录 runId、usage 并进入 plan 模式', async () => {
     const store = useAiAgentStore();
     const agentPlan = useAiAgentPlan();
 
-    aiServiceMock.sidecarPlan.mockResolvedValueOnce({
-      sessionId: 'sidecar-plan-session-1',
-      events: [
-        {
-          type: 'plan_ready',
-          planId: 'plan-runtime-1',
-          threadId: 'thread-runtime-1',
-          version: 1,
-          status: 'pending_approval',
-          createdAt: '2026-05-11T10:00:00.000Z',
-          updatedAt: '2026-05-11T10:01:00.000Z',
-          plan: createPlan(),
-        },
-        {
-          type: 'done',
-          result: '计划已生成。',
-          usage: {
-            inputTokens: 23,
-            inputTokenDetails: {
-              noCacheTokens: 23,
-              cacheReadTokens: 0,
-              cacheWriteTokens: 0,
-            },
-            outputTokens: 7,
-            outputTokenDetails: {
-              textTokens: 6,
-              reasoningTokens: 1,
-            },
-            totalTokens: 30,
-            cachedInputTokens: 0,
-            reasoningTokens: 1,
-          },
-        },
-      ],
-      result: '计划已生成。',
-    });
-    aiServiceMock.sidecarPlanQuery.mockResolvedValueOnce(createPlanRecordResponse());
+    orchestrateMock.startOrchestration.mockResolvedValueOnce(
+      makeResult([planReadyEvent(), doneWithUsageEvent()]),
+    );
 
-    await agentPlan.createPlan('实现计划模式持久化', [], 'd:/com.xiaojianc/my_desktop_app');
+    const result = await agentPlan.createPlan(
+      '实现计划模式持久化',
+      [],
+      'd:/com.xiaojianc/my_desktop_app',
+    );
 
+    expect(orchestrateMock.startOrchestration).toHaveBeenCalledWith(
+      expect.objectContaining({ goal: '实现计划模式持久化' }),
+    );
+    expect(store.orchestrationRunId).toBe('orch-plan-run-1');
+    expect(store.mode).toBe('plan');
+    expect(store.planVersion).toBe(1);
+    expect(store.planStatus).toBe('pending_approval');
+    expect(result.steps).toHaveLength(2);
     expect(store.latestOfficialUsageResolved).toBe(true);
     expect(store.latestOfficialUsage).toMatchObject({
       inputTokens: 23,
       outputTokens: 7,
       totalTokens: 30,
     });
+  });
+
+  it('批准计划只切换本地状态，不触发服务端 resume', async () => {
+    const store = useAiAgentStore();
+    const agentPlan = useAiAgentPlan();
+    const steps = [createTaskStep(0), createTaskStep(1)];
+
+    store.setPlan('实现计划模式持久化', steps, {
+      planId: 'plan-runtime-1',
+      version: 1,
+      status: 'pending_approval',
+      summary: '待批准计划。',
+      requiresApproval: true,
+    });
+    store.setOrchestrationRunId('orch-plan-run-1');
+
+    await agentPlan.approvePlan();
+
+    expect(store.planStatus).toBe('approved');
+    expect(store.mode).toBe('agent');
+    expect(orchestrateMock.resumeOrchestration).not.toHaveBeenCalled();
+  });
+
+  it('拒绝计划调用 resume(reject) 并清空编排 runId', async () => {
+    const store = useAiAgentStore();
+    const agentPlan = useAiAgentPlan();
+    const steps = [createTaskStep(0), createTaskStep(1)];
+
+    store.setPlan('实现计划模式持久化', steps, {
+      planId: 'plan-runtime-1',
+      version: 1,
+      status: 'pending_approval',
+      summary: '待批准计划。',
+      requiresApproval: true,
+    });
+    store.setOrchestrationRunId('orch-plan-run-1');
+
+    orchestrateMock.resumeOrchestration.mockResolvedValueOnce(
+      makeResult([{ type: 'done', result: '计划已拒绝。' }]),
+    );
+
+    await agentPlan.rejectPlan('暂不执行');
+
+    expect(orchestrateMock.resumeOrchestration).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: 'orch-plan-run-1',
+        decision: 'reject',
+        reason: '暂不执行',
+      }),
+    );
+    expect(store.orchestrationRunId).toBeNull();
+    expect(store.mode).toBe('plan');
   });
 });
