@@ -32,3 +32,6 @@ src-tauri/resources-bundle/
 
 # Tauri 自动生成的 ACL schema（每次构建会重新生成，不应提交）
 src-tauri/gen/schemas/
+
+# Compiled JS artifacts that shadow .ts sources (never used at runtime)
+agent-sidecar/src/**/*.js
