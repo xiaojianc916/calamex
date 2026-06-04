@@ -102,7 +102,7 @@ fn configured_base_url() -> String {
 /// 默认本地 sidecar 的 localhost / [::1] 写法统一规整为 127.0.0.1。
 ///
 /// sidecar 仅监听 127.0.0.1；若配置/默认 URL 使用 `localhost`，在某些系统上会
-/// 先解析到 IPv6 的 `::1`，导致健康探测与请求永远连不上 → 每次都 15 秒超时。
+/// 先解析到 IPv6 的 `::1`，导致健康探测与请求永连不上 → 每次都 15 秒超时。
 /// 这里把三种等价的默认本地写法统一成 127.0.0.1，保证探测与请求地址一致。
 fn canonicalize_local_base_url(base_url: String) -> String {
     if is_default_local_sidecar_url(&base_url) {
@@ -127,17 +127,45 @@ fn build_sidecar_url(base_url: &str, path: &str) -> String {
     format!("{normalized_base}/{normalized_path}")
 }
 
-fn client_with_timeout(timeout: Duration) -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
+/// 复用同一个 reqwest::Client 以共享底层连接池（keep-alive、TLS 会话复用），
+/// 避免每次请求都新建客户端导致连接无法复用、握手开销叠加。
+/// reqwest::Client 内部是 Arc，clone 成本极低，且 clone 出来的实例共享同一连接池。
+fn shared_client(
+    cell: &'static OnceLock<reqwest::Client>,
+    timeout: Duration,
+) -> Result<reqwest::Client, String> {
+    if let Some(client) = cell.get() {
+        return Ok(client.clone());
+    }
+
+    let client = reqwest::Client::builder()
         .timeout(timeout)
         .build()
         .map_err(|error| {
             format!("AGENT_SIDECAR_CLIENT_ERROR: 创建 sidecar HTTP 客户端失败：{error}")
-        })
+        })?;
+
+    // 并发首次初始化时可能有多个线程同时 build；set 失败说明已有实例，复用既有的即可。
+    let _ = cell.set(client.clone());
+    Ok(cell.get().cloned().unwrap_or(client))
 }
 
+/// 长超时客户端：用于 chat / plan / execute 等可能长时间流式的请求。
 fn client() -> Result<reqwest::Client, String> {
-    client_with_timeout(Duration::from_secs(SIDECAR_REQUEST_TIMEOUT_SECONDS))
+    static REQUEST_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    shared_client(
+        &REQUEST_CLIENT,
+        Duration::from_secs(SIDECAR_REQUEST_TIMEOUT_SECONDS),
+    )
+}
+
+/// 短超时客户端：仅用于 /health 探测，避免探测请求复用长超时设置而迟迟不返回。
+fn health_client() -> Result<reqwest::Client, String> {
+    static HEALTH_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    shared_client(
+        &HEALTH_CLIENT,
+        Duration::from_secs(SIDECAR_HEALTH_TIMEOUT_SECONDS),
+    )
 }
 
 async fn decode_response<T: DeserializeOwned>(
@@ -607,8 +635,7 @@ pub async fn restart() -> Result<AgentSidecarHealthPayload, String> {
 }
 
 async fn probe_sidecar_health(base_url: &str) -> SidecarHealthStatus {
-    let Ok(client) = client_with_timeout(Duration::from_secs(SIDECAR_HEALTH_TIMEOUT_SECONDS))
-    else {
+    let Ok(client) = health_client() else {
         return SidecarHealthStatus::Unavailable;
     };
     let url = build_sidecar_url(base_url, "/health");
