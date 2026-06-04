@@ -39,10 +39,10 @@ describe('resolveMcpToolCapability / requiresMcpToolApproval（基于 annotation
 
   it('完全无注解的非白名单 server → 能力未知 → fail-closed 要求审批', () => {
     assert.equal(resolveMcpToolCapability('git', undefined), 'unknown');
-    assert.equal(resolveMcpToolCapability('sqlite-mcp', undefined), 'unknown');
+    assert.equal(resolveMcpToolCapability('tavily-mcp', undefined), 'unknown');
     assert.equal(requiresMcpToolApproval('git', undefined), true);
-    // 旧名字启发式会把 sqlite-mcp 的 query 误判为只读而绕过审批；现按“未知→审批”兜住。
-    assert.equal(requiresMcpToolApproval('sqlite-mcp', undefined), true);
+    // 旧名字启发式会把 tavily-mcp 的 search 误判为只读而绕过审批；现按“未知→审批”兜住。
+    assert.equal(requiresMcpToolApproval('tavily-mcp', undefined), true);
   });
 });
 
