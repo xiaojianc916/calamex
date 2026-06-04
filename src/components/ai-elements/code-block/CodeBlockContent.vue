@@ -26,12 +26,12 @@ const props = withDefaults(
 interface IKeyedToken {
   token: ICodeMirrorHighlightToken;
   key: string;
-  lineIndex: number;
 }
 
 interface IKeyedLine {
   tokens: IKeyedToken[];
   key: string;
+  lineIndex: number;
 }
 
 const rawTokens = computed(() => createRawTokens(props.code));
