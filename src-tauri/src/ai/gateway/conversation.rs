@@ -511,12 +511,6 @@ pub(super) fn with_identity_system_message(
 }
 
 fn disabled_inline_complete(payload: AiInlineCompletionRequest) -> AiInlineCompletionResult {
-    let _recent_edits_count = payload
-        .recent_edits
-        .as_ref()
-        .map(Vec::len)
-        .unwrap_or_default();
-
     AiInlineCompletionResult {
         insert_text: String::new(),
         range: AiInlineCompletionRangePayload {
