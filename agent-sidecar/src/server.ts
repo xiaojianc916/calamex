@@ -254,11 +254,13 @@ export const agentSidecarOrchestrateRequestSchema = z.object({
   modelConfig: requestScopedModelConfigSchema.optional(),
 });
 
-// Phase 2b：恢复一个被计划审批门挂起的编排 run（需携带 start 返回的 runId）。
+// Phase 2b：恢复一个被挂起的编排 run（需携带 start 返回的 runId）。
+// 三类挂起点统一走此入口：计划审批门(approve/reject)、工具审批(approve/reject)、
+// 逐步闸门(continue/cancel)；server 只透传 decision，step 内部读 suspendData.reason 解释。
 // Phase 3b：modelConfig 可选：内存未命中需从快照重建 run 时，用它传递请求级模型。
 export const agentSidecarOrchestrateResumeRequestSchema = z.object({
   runId: requiredNonEmptyStringSchema,
-  decision: z.enum(['approve', 'reject']),
+  decision: z.enum(['approve', 'reject', 'continue', 'cancel']),
   reason: optionalNonEmptyStringSchema,
   modelConfig: requestScopedModelConfigSchema.optional(),
 });
@@ -857,7 +859,7 @@ export const createAgentSidecarServer = (
     }
 
     if (request.method === 'POST' && url === '/agent/plan/orchestrate/resume') {
-      // Phase 2b：恢复被计划审批门挂起的编排 run。同样默认关闭。
+      // Phase 2b：恢复被挂起的编排 run（计划审批门 / 工具审批 / 逐步闸门通用）。同样默认关闭。
       if (isOrchestrationWorkflowDisabled()) {
         writeJson(response, 404, {
           error: '未知 sidecar 路由。',
@@ -877,16 +879,16 @@ export const createAgentSidecarServer = (
           // 同 runId 的 createRun 会从 storage 的 'workflows' 域 rehydrate 已挂起快照。
           run = await workflow.createRun({ runId: payload.runId });
         }
-        // approval-gate 步骤的 resumeSchema = { decision, reason? }。
+        // 省略 step：本 workflow 任意时刻只有一个挂起步骤（线性、无并行/foreach），
+        // 运行时自动恢复当前挂起步；step 内部读 suspendData.reason 解释 decision。
         const result = await run.resume({
-          step: 'approval-gate',
           resumeData: {
             decision: payload.decision,
             ...(payload.reason ? { reason: payload.reason } : {}),
           },
         });
-        // 本 workflow 只在 approval-gate 挂起一次：非 suspended 即终态，回收 run；
-        // 若仍 suspended（防御性），重新登记内存供下次 resume。
+        // 非 suspended 即终态，回收 run；仍 suspended（工具审批 / 下一个逐步闸门）时
+        // 重新登记内存供下次 resume。
         if (result.status !== 'suspended') {
           forgetOrchestrationRun(payload.runId);
         } else {
@@ -898,9 +900,9 @@ export const createAgentSidecarServer = (
     }
 
     if (request.method === 'POST' && url === '/agent/plan/orchestrate/resume/stream') {
-      // Phase 2c-2：编排审批门的「流式」恢复入口。同样默认关闭。
-      // 与非流式 /orchestrate/resume 等价，但用 run.resumeStream() 把 approval-gate 之后
-      // （执行 → 验证 → 重规划 → finish）阶段的内层 agent 事件以 NDJSON 逐帧推给客户端，
+      // Phase 2c-2：编排挂起点的「流式」恢复入口。同样默认关闭。
+      // 与非流式 /orchestrate/resume 等价，但用 run.resumeStream() 把恢复之后
+      // （执行 → 验证 → 重规划 → finish，含逐步闸门）阶段的内层 agent 事件以 NDJSON 逐帧推给客户端，
       // 帧协议与 /orchestrate/stream 完全一致（meta → event* → response）。
       if (isOrchestrationWorkflowDisabled()) {
         writeJson(response, 404, {
@@ -921,11 +923,11 @@ export const createAgentSidecarServer = (
             run = await workflow.createRun({ runId: payload.runId });
           }
           writeStreamHeaders(response);
-          // 首帧：回 runId（链式工具审批再次挂起时，客户端用同一 runId 继续 resume）。
+          // 首帧：回 runId（链式工具审批 / 下一个逐步闸门再次挂起时，客户端用同一 runId 继续 resume）。
           writeNdjsonFrame(response, { type: 'meta', runId: payload.runId });
           // resumeStream() 与 stream() 同构：可 async-iterate，且带 result(Promise) 与 status。
+          // 省略 step：本 workflow 任意时刻仅一个挂起步骤，运行时自动恢复当前挂起步。
           const stream = run.resumeStream({
-            step: 'approval-gate',
             resumeData: {
               decision: payload.decision,
               ...(payload.reason ? { reason: payload.reason } : {}),
@@ -938,7 +940,7 @@ export const createAgentSidecarServer = (
             }
           }
           const result = await stream.result;
-          // 非 suspended 即终态，回收 run；若仍 suspended（链式审批），重新登记内存供下次 resume。
+          // 非 suspended 即终态，回收 run；若仍 suspended（链式审批 / 下一个逐步闸门），重新登记内存供下次 resume。
           if (stream.status !== 'suspended') {
             forgetOrchestrationRun(payload.runId);
           } else {
