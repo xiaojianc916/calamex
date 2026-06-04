@@ -19,7 +19,7 @@ import type {
   TRunLogScope,
 } from '@/types/editor';
 import type { IGitDiffPreviewPayload } from '@/types/git';
-import type { TSessionSnapshot, TSessionWorkbenchState } from '@/types/session';
+import type { TDocumentDraft, TSessionSnapshot, TSessionWorkbenchState } from '@/types/session';
 import { computeDocumentMetrics } from '@/utils/document-metrics';
 import { createUniqueId } from '@/utils/id';
 import { formatFileSystemTextForDisplay, normalizeFileSystemPath } from '@/utils/path';
@@ -38,6 +38,9 @@ const MAX_RECENT_WORKSPACES = 10;
 const MAX_RECENT_FILES = 50;
 const MAX_VIEW_STATE_ENTRIES = 30;
 const MAX_EXPLORER_EXPANDED_PATHS = 120;
+const MAX_DRAFT_ENTRIES = 30;
+/** 单个草稿内容上限，超过则不缓存草稿，避免会话快照膨胀（脚本通常很小）。 */
+const MAX_DRAFT_CONTENT_LENGTH = 512_000;
 
 /**
  * 只有 text / image 文档会进 sessionSnapshot.openTabs 持久化。
@@ -147,6 +150,7 @@ const createEmptySessionSnapshot = (): TSessionSnapshot => ({
   },
   recentWorkspaces: [],
   recentFiles: [],
+  drafts: [],
   savedAt: new Date().toISOString(),
 });
 
@@ -417,6 +421,80 @@ export const useEditorStore = defineStore(
       return item?.viewState ?? null;
     };
 
+    // Actions: unsaved drafts (崩溃 / 意外重载后恢复未保存内容)
+
+    const clearDocumentDraft = (path: string): void => {
+      const normalized = normalizeFileSystemPath(path);
+      if (!normalized) return;
+      const next = sessionSnapshot.value.drafts.filter(
+        (item) => normalizeFileSystemPath(item.path) !== normalized,
+      );
+      if (next.length !== sessionSnapshot.value.drafts.length) {
+        sessionSnapshot.value.drafts = next;
+        touchSessionSnapshot();
+      }
+    };
+
+    const captureDocumentDraft = (
+      path: string,
+      content: string,
+      baselineContent: string,
+    ): void => {
+      const normalized = normalizeFileSystemPath(path);
+      if (!normalized) return;
+      // 无未保存差异或内容过大:清除已有草稿,不再缓存。
+      if (content === baselineContent || content.length > MAX_DRAFT_CONTENT_LENGTH) {
+        clearDocumentDraft(normalized);
+        return;
+      }
+      sessionSnapshot.value.drafts = [
+        {
+          path: normalized,
+          content,
+          baselineContent,
+          updatedAt: new Date().toISOString(),
+        },
+        ...sessionSnapshot.value.drafts.filter(
+          (item) => normalizeFileSystemPath(item.path) !== normalized,
+        ),
+      ].slice(0, MAX_DRAFT_ENTRIES);
+      touchSessionSnapshot();
+    };
+
+    const getDocumentDraft = (path: string): TDocumentDraft | null => {
+      const normalized = normalizeFileSystemPath(path);
+      if (!normalized) return null;
+      return (
+        sessionSnapshot.value.drafts.find(
+          (item) => normalizeFileSystemPath(item.path) === normalized,
+        ) ?? null
+      );
+    };
+
+    /**
+     * 文档(从磁盘)打开后,尝试用已缓存草稿恢复未保存内容。
+     * 仅当磁盘内容仍等于草稿基线(未被外部改动)且草稿确有差异时才恢复;
+     * 否则视为过期草稿并清除。返回是否真正恢复了草稿。
+     */
+    const restoreDraftForDocument = (documentId: string): boolean => {
+      const targetDocument = getDocumentById(documentId);
+      if (!targetDocument || targetDocument.kind !== 'text' || !targetDocument.path) {
+        return false;
+      }
+      const draft = getDocumentDraft(targetDocument.path);
+      if (!draft) return false;
+      if (
+        draft.baselineContent !== targetDocument.savedContent ||
+        draft.content === targetDocument.savedContent
+      ) {
+        clearDocumentDraft(targetDocument.path);
+        return false;
+      }
+      targetDocument.content = draft.content;
+      syncDocumentState(targetDocument);
+      return true;
+    };
+
     const setWorkbenchSessionState = (patch: Partial<TSessionWorkbenchState>): void => {
       const explorerExpandedPaths = patch.explorerExpandedPaths
         ?.map((path) => normalizeFileSystemPath(path))
@@ -660,6 +738,8 @@ export const useEditorStore = defineStore(
       if (payload.path) {
         pushRecentFile(payload.path);
         syncSessionOpenTabs();
+        // 已落盘:对应未保存草稿不再需要,清除以免下次启动误恢复。
+        clearDocumentDraft(payload.path);
         touchSessionSnapshot();
       }
       return targetDocument;
@@ -672,6 +752,14 @@ export const useEditorStore = defineStore(
       }
       targetDocument.content = content;
       syncDocumentState(targetDocument);
+      // 内容变更后同步维护未保存草稿(与磁盘基线 savedContent 比较)。
+      if (targetDocument.path) {
+        captureDocumentDraft(
+          targetDocument.path,
+          targetDocument.content,
+          targetDocument.savedContent,
+        );
+      }
     };
 
     const updateActiveDocumentContent = (content: string): void => {
@@ -712,7 +800,12 @@ export const useEditorStore = defineStore(
       if (targetIndex === -1) {
         return getDocumentById();
       }
-      const wasActive = documents.value[targetIndex].id === activeDocumentId.value;
+      const closingDocument = documents.value[targetIndex];
+      const wasActive = closingDocument.id === activeDocumentId.value;
+      // 关闭标签即放弃其未保存草稿(用户已通过关闭流程确认)。
+      if (closingDocument.path) {
+        clearDocumentDraft(closingDocument.path);
+      }
       clearDocumentAnalysis(documentId);
       documents.value.splice(targetIndex, 1);
       syncSessionOpenTabs();
@@ -895,6 +988,8 @@ export const useEditorStore = defineStore(
       getTerminalOutputSnapshot,
       // actions
       saveEditorViewState,
+      clearDocumentDraft,
+      restoreDraftForDocument,
       setWorkbenchSessionState,
       setActiveDocument,
       createDocumentTab,

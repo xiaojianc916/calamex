@@ -373,9 +373,19 @@ let lspDiagnostics: Diagnostic[] = [];
 const applyDiagnostics = (): void => {
   const view = editorView;
   if (!view) return;
-  const merged = [...shellcheckDiagnostics, ...lspDiagnostics].sort(
-    (a, b) => a.from - b.from || a.to - b.to,
-  );
+  // shellcheck / lsp 两个来源各自缓存绝对位置，仅在自身重算时裁剪到当时的文档长度。
+  // 当文档变短而另一来源仍是旧缓存时，过期位置会越界，触发 CM6 lint 的
+  // doc.lineAt(越界) → RangeError（Invalid position）。下发前统一做最终裁剪兜底。
+  const docLength = view.state.doc.length;
+  const merged = [...shellcheckDiagnostics, ...lspDiagnostics]
+    .map((diagnostic) => {
+      const from = Math.min(Math.max(0, diagnostic.from), docLength);
+      const to = Math.min(Math.max(from, diagnostic.to), docLength);
+      return from === diagnostic.from && to === diagnostic.to
+        ? diagnostic
+        : { ...diagnostic, from, to };
+    })
+    .sort((a, b) => a.from - b.from || a.to - b.to);
   view.dispatch(setDiagnostics(view.state, merged));
 };
 
