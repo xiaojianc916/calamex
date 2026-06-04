@@ -184,18 +184,22 @@ const extractAttachmentPreviewPayloads = async (value: unknown): Promise<void> =
   }
 };
 
-const restoreAttachmentPreviewPayloads = async (value: unknown): Promise<void> => {
+const restoreAttachmentPreviewPayloads = async (value: unknown): Promise<boolean> => {
   if (Array.isArray(value)) {
+    let changed = false;
     for (const item of value) {
-      await restoreAttachmentPreviewPayloads(item);
+      if (await restoreAttachmentPreviewPayloads(item)) {
+        changed = true;
+      }
     }
-    return;
+    return changed;
   }
 
   if (!isRecord(value)) {
-    return;
+    return false;
   }
 
+  let changed = false;
   for (const [key, child] of Object.entries(value)) {
     if (key === 'src' && typeof child === 'string') {
       const id = getAttachmentPreviewIdFromPointer(child);
@@ -204,14 +208,18 @@ const restoreAttachmentPreviewPayloads = async (value: unknown): Promise<void> =
         const restored = await get<string>(toAttachmentPreviewKey(id), getIdbStore());
         if (typeof restored === 'string' && isDataImageUrl(restored)) {
           value[key] = restored;
+          changed = true;
         }
       }
 
       continue;
     }
 
-    await restoreAttachmentPreviewPayloads(child);
+    if (await restoreAttachmentPreviewPayloads(child)) {
+      changed = true;
+    }
   }
+  return changed;
 };
 
 const preparePersistValue = async (value: string): Promise<string> => {
@@ -226,6 +234,12 @@ const preparePersistValue = async (value: string): Promise<string> => {
   }
 };
 
+/** 判断快照是否为会话持久化形状（{ activeThreadId, threads:[...] }）。 */
+const isConversationPersistShape = (
+  value: unknown,
+): value is { activeThreadId: unknown; threads: unknown[] } =>
+  isRecord(value) && Array.isArray((value as Record<string, unknown>).threads);
+
 const restorePersistValue = async (value: string | null): Promise<string | null> => {
   if (value === null) {
     return null;
@@ -233,13 +247,52 @@ const restorePersistValue = async (value: string | null): Promise<string | null>
 
   try {
     const parsed: unknown = JSON.parse(value);
-    await restoreAttachmentPreviewPayloads(parsed);
+    // 懒加载（按需加载）：hydrate 时只回填 **active 线程** 的图片 base64，其余历史线程
+    // 的 attachmentPreview.src 保留 `idb://` 指针，待用户切到该线程时再按需解析（见
+    // store 的 switchThread / ensureActiveThreadAttachmentPreviewsResolved 与本模块
+    // 导出的 restoreAttachmentPreviewPointers）。这样启动时不再把所有历史会话的图片
+    // base64 一次性灌进内存，显著降低常驻内存与首屏 hydrate 耗时。
+    if (isConversationPersistShape(parsed)) {
+      const activeThreadId =
+        typeof parsed.activeThreadId === 'string' ? parsed.activeThreadId : null;
+      const activeThread = activeThreadId
+        ? parsed.threads.find(
+            (thread): thread is Record<string, unknown> =>
+              isRecord(thread) && thread.id === activeThreadId,
+          )
+        : undefined;
+      // 找到 active 线程则只恢复它；找不到（异常/兜底）退回全量恢复，确保不会出现
+      // 整库都是无法显示的指针。
+      await restoreAttachmentPreviewPayloads(activeThread ?? parsed);
+    } else {
+      await restoreAttachmentPreviewPayloads(parsed);
+    }
 
     return JSON.stringify(parsed);
   } catch (error) {
     logWarn('ai-conversation-attachment-preview-restore-failed', stringifyError(error));
     return value;
   }
+};
+
+/**
+ * 懒加载按需解析：把任意值内 `attachmentPreview.src` 的 `idb://` 指针解析回 base64。
+ * 供 store 在某历史线程被激活时调用（hydrate 时只恢复了 active 线程，其余线程仍是指针）。
+ *
+ * - 深拷贝后解析，绝不改动调用方持有的原对象；
+ * - changed=false 表示没有任何指针被解析（store 无需回写，避免无谓持久化）。
+ */
+export const restoreAttachmentPreviewPointers = async <T>(
+  value: T,
+): Promise<{ changed: boolean; value: T }> => {
+  if (typeof window === 'undefined') {
+    return { changed: false, value };
+  }
+
+  const cloned = JSON.parse(JSON.stringify(value)) as T;
+  const changed = await restoreAttachmentPreviewPayloads(cloned);
+
+  return changed ? { changed, value: cloned } : { changed: false, value };
 };
 
 const readLegacyLocalStorage = (): string | null => {

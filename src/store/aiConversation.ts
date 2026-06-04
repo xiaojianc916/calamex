@@ -9,7 +9,10 @@ import {
   aiConversationThreadSchema,
 } from '@/types/ai/conversation.schema';
 import { createUniqueId } from '@/utils/id';
-import { getAiConversationPersistStorage } from './plugins/debouncedPersistStorage';
+import {
+  getAiConversationPersistStorage,
+  restoreAttachmentPreviewPointers,
+} from './plugins/debouncedPersistStorage';
 
 // ---------------------------------------------------------------------------
 // Public constants & types
@@ -383,11 +386,57 @@ export const useAiConversationStore = defineStore(
       }));
     };
 
+    // ── 懒加载：历史线程图片按需解析
+    //
+    // hydrate 时只有 active 线程的图片被回填成 base64（见 debouncedPersistStorage 的
+    // restorePersistValue），其余历史线程的 attachmentPreview.src 仍是 `idb://` 指针。
+    // 这里在某线程被激活时按需把它的指针解析回 base64，从而避免启动时一次性加载所有会话的图片。
+
+    /** 已在解析中的线程，避免同一线程并发重复解析。 */
+    const resolvingThreadIds = new Set<string>();
+
+    const threadHasAttachmentPreviewPointer = (messages: IAiChatMessage[]): boolean =>
+      messages.some((message) =>
+        message.references.some((reference) =>
+          Boolean(reference.attachmentPreview?.src?.startsWith('idb://')),
+        ),
+      );
+
+    const resolveThreadAttachmentPreviews = (threadId: string | null): void => {
+      if (!threadId || resolvingThreadIds.has(threadId)) return;
+      const thread = threads.value.find((item) => item.id === threadId);
+      if (!thread || !threadHasAttachmentPreviewPointer(thread.messages)) return;
+
+      const targetMessages = thread.messages;
+      resolvingThreadIds.add(threadId);
+      void restoreAttachmentPreviewPointers(targetMessages)
+        .then(({ changed, value }) => {
+          if (!changed) return;
+          const current = threads.value.find((item) => item.id === threadId);
+          // 仅当该线程消息引用在解析期间未被其它操作替换时才回填，避免覆盖更新内容。
+          if (current && current.messages === targetMessages) {
+            replaceThreadMessages(threadId, value);
+          }
+        })
+        .catch(() => {
+          // 解析失败：保留指针，下次激活再试（不影响文本与历史列表）。
+        })
+        .finally(() => {
+          resolvingThreadIds.delete(threadId);
+        });
+    };
+
+    /** 解析当前 active 线程的图片指针（hydrate 后兜底，及外部主动触发）。 */
+    const ensureActiveThreadAttachmentPreviewsResolved = (): void => {
+      resolveThreadAttachmentPreviews(activeThreadId.value);
+    };
+
     // ── Actions: thread lifecycle
 
     const switchThread = (threadId: string): void => {
       if (!threads.value.some((thread) => thread.id === threadId)) return;
       activeThreadId.value = threadId;
+      resolveThreadAttachmentPreviews(threadId);
     };
 
     const startNewThread = (): void => {
@@ -499,6 +548,7 @@ export const useAiConversationStore = defineStore(
       replaceMessages,
       replaceThreadMessages,
       switchThread,
+      ensureActiveThreadAttachmentPreviewsResolved,
       startNewThread,
       clearActiveThread,
       updateThreadScrollState,
@@ -518,6 +568,7 @@ export const useAiConversationStore = defineStore(
       afterHydrate(ctx) {
         const store = ctx.store as unknown as IAiConversationPersistShape & {
           activeMessages?: IAiChatMessage[];
+          ensureActiveThreadAttachmentPreviewsResolved?: () => void;
         };
 
         // ── 当前版本快照
@@ -536,6 +587,7 @@ export const useAiConversationStore = defineStore(
           );
           store.activeThreadId = normalized.activeThreadId;
           store.threads = normalized.threads;
+          store.ensureActiveThreadAttachmentPreviewsResolved?.();
           return;
         }
 
@@ -549,6 +601,7 @@ export const useAiConversationStore = defineStore(
           );
           store.activeThreadId = normalized.activeThreadId;
           store.threads = normalized.threads;
+          store.ensureActiveThreadAttachmentPreviewsResolved?.();
           return;
         }
 

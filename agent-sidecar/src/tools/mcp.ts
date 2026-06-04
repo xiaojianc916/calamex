@@ -1,19 +1,15 @@
 import { existsSync, mkdirSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { ToolsInput } from '@mastra/core/agent';
-import {
-  MCPClient,
-  type LogMessage,
-  type MastraMCPServerDefinition
-} from '@mastra/mcp';
+import { MCPClient, type LogMessage, type MastraMCPServerDefinition } from '@mastra/mcp';
+
+import { resolveMastraStorageDirectory } from '../engines/context/memory.js';
 import { withTimeout, withTimeoutFallback } from '../timeout.js';
 
 // ───────────────────────────────────────────────────────────────────
 // Types
-
 /**
  * MCP server 配置；transportType 区分 stdio / http，对应字段在各分支下变必填。
  */
@@ -59,7 +55,7 @@ export const MCP_SERVER_NAMES = [
   'tavily-mcp',
 ] as const;
 
-export type TMcpServerName = typeof MCP_SERVER_NAMES[number];
+export type TMcpServerName = (typeof MCP_SERVER_NAMES)[number];
 
 export interface IMcpConfigOptions {
   workspaceRootPath?: string | null;
@@ -70,12 +66,10 @@ export interface IMcpConfigOptions {
 
 // ───────────────────────────────────────────────────────────────────
 // Constants
-
 const SIDECAR_ROOT = resolve(fileURLToPath(new URL('../../', import.meta.url)));
 const PROJECT_ROOT = resolve(SIDECAR_ROOT, '..');
 const NODE_BIN_DIRECTORY = join(SIDECAR_ROOT, 'node_modules', '.bin');
-
-const DEFAULT_MEMORY_FILE_PATH = join(homedir(), '.xiaojianc', 'mcp-memory.jsonl');
+const DEFAULT_MEMORY_FILENAME = 'mcp-memory.jsonl';
 const DEFAULT_GITHUB_MCP_URL = 'https://api.githubcopilot.com/mcp/';
 
 /** 第三方 MCP 包版本统一管理；升级时改这里一处。 */
@@ -87,16 +81,18 @@ const MCP_PACKAGE_SPECS = {
 
 /** MCPClient 单次 RPC 超时（listTools 之外的常规调用）。 */
 const MCP_RPC_TIMEOUT_MS = 10_000;
+
 /** 启动时 listTools 超时（包含 spawn + 握手，通常比常规 RPC 慢）。 */
 const MCP_LIST_TOOLS_TIMEOUT_MS = 30_000;
+
 /** disconnect 超时；超过则放弃等待。 */
 const MCP_DISCONNECT_TIMEOUT_MS = 5_000;
+
 /** 每个 MCP server 最多收集多少条 error 进 errors[]，超过丢弃。 */
 const MCP_RUNTIME_ERROR_LIMIT_PER_SERVER = 3;
 
 // ───────────────────────────────────────────────────────────────────
 // Helpers
-
 const trimToNull = (value: string | null | undefined): string | null => {
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
@@ -159,10 +155,12 @@ const resolveUvxCommand = (
   if (configured) {
     return configured;
   }
+
   if (platform !== 'win32') {
     // 非 Windows：交由 PATH 解析（与 npx 处理方式一致）。
     return 'uvx';
   }
+
   const candidates = [
     join(trimToNull(env.USERPROFILE) ?? '', '.local', 'bin', 'uvx.exe'),
     join(trimToNull(env.USERPROFILE) ?? '', '.cargo', 'bin', 'uvx.exe'),
@@ -171,12 +169,14 @@ const resolveUvxCommand = (
     join(trimToNull(env.ProgramFiles) ?? '', 'uv', 'uvx.exe'),
     join(trimToNull(env['ProgramFiles(x86)']) ?? '', 'uv', 'uvx.exe'),
   ];
+
   for (const candidate of candidates) {
     const resolved = normalizeAbsoluteExecutablePath(candidate);
     if (resolved) {
       return resolved;
     }
   }
+
   return null;
 };
 
@@ -188,13 +188,16 @@ const resolveGitExecutable = (
   if (configured) {
     return configured;
   }
+
   if (platform !== 'win32') {
     // 非 Windows：交由 PATH 解析 git。
     return 'git';
   }
+
   const programFiles = trimToNull(env.ProgramFiles) ?? 'C:\\Program Files';
   const programFilesX86 = trimToNull(env['ProgramFiles(x86)']) ?? 'C:\\Program Files (x86)';
   const localAppData = trimToNull(env.LOCALAPPDATA);
+
   const candidates = [
     join(programFiles, 'Git', 'cmd', 'git.exe'),
     join(programFiles, 'Git', 'bin', 'git.exe'),
@@ -203,12 +206,14 @@ const resolveGitExecutable = (
     localAppData ? join(localAppData, 'Programs', 'Git', 'cmd', 'git.exe') : '',
     localAppData ? join(localAppData, 'Programs', 'Git', 'bin', 'git.exe') : '',
   ];
+
   for (const candidate of candidates) {
     const resolved = normalizeAbsoluteExecutablePath(candidate);
     if (resolved) {
       return resolved;
     }
   }
+
   return null;
 };
 
@@ -225,6 +230,7 @@ const nodeServerConfig = (
   if (!command) {
     return null;
   }
+
   return {
     name,
     transportType: 'stdio',
@@ -249,6 +255,7 @@ const uvxServerConfig = (
     errors.push(missingUvxError);
     return null;
   }
+
   return {
     name,
     transportType: 'stdio',
@@ -268,14 +275,17 @@ const appendMcpRuntimeError = (
   if (logMessage.level !== 'error') {
     return;
   }
+
   const currentCount = serverErrorCounts.get(logMessage.serverName) ?? 0;
   if (currentCount >= MCP_RUNTIME_ERROR_LIMIT_PER_SERVER) {
     return;
   }
+
   const message = `MCP server ${logMessage.serverName} 不可用，已跳过：${logMessage.message}`;
   if (knownMessages.has(message)) {
     return;
   }
+
   knownMessages.add(message);
   errors.push(message);
   serverErrorCounts.set(logMessage.serverName, currentCount + 1);
@@ -289,12 +299,14 @@ const toMastraMcpServerDefinition = (
 ): MastraMCPServerDefinition | null => {
   const logger = (message: LogMessage): void =>
     appendMcpRuntimeError(errors, knownMessages, serverErrorCounts, message);
+
   if (config.transportType === 'http') {
     const url = trimToNull(config.url);
     if (!url) {
       errors.push(`MCP server ${config.name} 缺少 URL，已跳过。`);
       return null;
     }
+
     return {
       url: new URL(url),
       logger,
@@ -302,11 +314,13 @@ const toMastraMcpServerDefinition = (
       ...(config.headers ? { requestInit: { headers: config.headers } } : {}),
     };
   }
+
   const command = trimToNull(config.command);
   if (!command) {
     errors.push(`MCP server ${config.name} 缺少启动命令，已跳过。`);
     return null;
   }
+
   return {
     command,
     ...(config.args ? { args: config.args } : {}),
@@ -326,22 +340,24 @@ const createMastraMcpServers = (
   const knownMessages = new Set(errors);
   const serverErrorCounts = new Map<string, number>();
   const result: Record<string, MastraMCPServerDefinition> = {};
+
   for (const config of configs) {
     if (Object.prototype.hasOwnProperty.call(result, config.name)) {
       errors.push(`MCP server 名称重复：${config.name}，已忽略后续配置。`);
       continue;
     }
+
     const server = toMastraMcpServerDefinition(config, errors, knownMessages, serverErrorCounts);
     if (server) {
       result[config.name] = server;
     }
   }
+
   return result;
 };
 
 // ───────────────────────────────────────────────────────────────────
 // Public surface
-
 export const loadMcpServerConfigs = (
   options: IMcpConfigOptions = {},
 ): { configs: IMcpServerConfig[]; errors: string[] } => {
@@ -350,36 +366,41 @@ export const loadMcpServerConfigs = (
   const workspaceRoot = resolveWorkspaceRoot(options.workspaceRootPath);
   const errors: string[] = [];
   const configs: IMcpServerConfig[] = [];
-  const requestedServers = options.serverNames
-    ? new Set(options.serverNames)
-    : null;
 
+  const requestedServers = options.serverNames ? new Set(options.serverNames) : null;
   const uvxCommand = resolveUvxCommand(env, platform);
   const npxCommand = resolveNpxCommand(platform);
   const gitExecutable = resolveGitExecutable(env, platform);
-  const memoryFilePath = resolve(trimToNull(env.AGENT_MCP_MEMORY_FILE_PATH) ?? DEFAULT_MEMORY_FILE_PATH);
+
+  const memoryFilePath = resolve(
+    trimToNull(env.AGENT_MCP_MEMORY_FILE_PATH) ??
+    join(resolveMastraStorageDirectory(env), DEFAULT_MEMORY_FILENAME),
+  );
+
   const githubMcpPat = trimToNull(env.GITHUB_MCP_PAT);
   const githubMcpUrl = trimToNull(env.GITHUB_MCP_URL) ?? DEFAULT_GITHUB_MCP_URL;
 
-  if (!shouldLoadServer(requestedServers, 'git')) {
-    // 当前请求不需要 Git MCP。
-  } else if (uvxCommand && gitExecutable) {
-    configs.push({
-      name: 'git',
-      transportType: 'stdio',
-      command: uvxCommand,
-      args: [MCP_PACKAGE_SPECS.mcpServerGit, '--repository', workspaceRoot],
-      env: {
-        GIT_PYTHON_GIT_EXECUTABLE: gitExecutable,
-      },
-      cwd: workspaceRoot,
-    });
-  } else if (!gitExecutable) {
-    errors.push('未找到 git 可执行文件，已跳过 Git MCP。请设置 AGENT_MCP_GIT_EXECUTABLE_PATH。');
-  } else {
-    errors.push('未找到 uvx 可执行文件，已跳过 Git MCP。请设置 AGENT_MCP_UVX_PATH。');
+  // Git MCP
+  if (shouldLoadServer(requestedServers, 'git')) {
+    if (uvxCommand && gitExecutable) {
+      configs.push({
+        name: 'git',
+        transportType: 'stdio',
+        command: uvxCommand,
+        args: [MCP_PACKAGE_SPECS.mcpServerGit, '--repository', workspaceRoot],
+        env: {
+          GIT_PYTHON_GIT_EXECUTABLE: gitExecutable,
+        },
+        cwd: workspaceRoot,
+      });
+    } else if (!gitExecutable) {
+      errors.push('未找到 git 可执行文件，已跳过 Git MCP。请设置 AGENT_MCP_GIT_EXECUTABLE_PATH。');
+    } else {
+      errors.push('未找到 uvx 可执行文件，已跳过 Git MCP。请设置 AGENT_MCP_UVX_PATH。');
+    }
   }
 
+  // Probe MCP
   if (shouldLoadServer(requestedServers, 'probe')) {
     configs.push({
       name: 'probe',
@@ -391,6 +412,7 @@ export const loadMcpServerConfigs = (
     });
   }
 
+  // Memory MCP
   if (shouldLoadServer(requestedServers, 'memory') && ensureParentDirectory(memoryFilePath, errors)) {
     const memory = nodeServerConfig(
       'memory',
@@ -408,6 +430,7 @@ export const loadMcpServerConfigs = (
     }
   }
 
+  // Sequential Thinking MCP
   if (shouldLoadServer(requestedServers, 'sequential-thinking')) {
     const sequentialThinking = nodeServerConfig(
       'sequential-thinking',
@@ -422,21 +445,23 @@ export const loadMcpServerConfigs = (
     }
   }
 
-  if (!shouldLoadServer(requestedServers, 'github')) {
-    // 当前请求不需要 GitHub MCP。
-  } else if (githubMcpPat) {
-    configs.push({
-      name: 'github',
-      transportType: 'http',
-      url: githubMcpUrl,
-      headers: {
-        Authorization: `Bearer ${githubMcpPat}`,
-      },
-    });
-  } else {
-    errors.push('GITHUB_MCP_PAT 未配置，已跳过 github-mcp-server。');
+  // GitHub MCP
+  if (shouldLoadServer(requestedServers, 'github')) {
+    if (githubMcpPat) {
+      configs.push({
+        name: 'github',
+        transportType: 'http',
+        url: githubMcpUrl,
+        headers: {
+          Authorization: `Bearer ${githubMcpPat}`,
+        },
+      });
+    } else {
+      errors.push('GITHUB_MCP_PAT 未配置，已跳过 github-mcp-server。');
+    }
   }
 
+  // Context7 MCP
   if (shouldLoadServer(requestedServers, 'context7')) {
     const context7 = nodeServerConfig(
       'context7',
@@ -451,6 +476,7 @@ export const loadMcpServerConfigs = (
     }
   }
 
+  // Logoscope MCP
   if (shouldLoadServer(requestedServers, 'logoscope')) {
     const logoscope = nodeServerConfig(
       'logoscope',
@@ -465,6 +491,7 @@ export const loadMcpServerConfigs = (
     }
   }
 
+  // Hooks MCP
   if (shouldLoadServer(requestedServers, 'hooks-mcp')) {
     const hooksMcp = uvxServerConfig(
       'hooks-mcp',
@@ -480,32 +507,30 @@ export const loadMcpServerConfigs = (
     }
   }
 
+  // Tavily MCP
   const tavilyApiKey = trimToNull(env.TAVILY_API_KEY);
-  if (!shouldLoadServer(requestedServers, 'tavily-mcp')) {
-    // 当前请求不需要 Tavily MCP。
-  } else if (tavilyApiKey) {
-    const tavily = nodeServerConfig(
-      'tavily-mcp',
-      'tavily-mcp',
-      [],
-      workspaceRoot,
-      platform,
-      errors,
-      {
-        TAVILY_API_KEY: tavilyApiKey,
-      },
-    );
-    if (tavily) {
-      configs.push(tavily);
+  if (shouldLoadServer(requestedServers, 'tavily-mcp')) {
+    if (tavilyApiKey) {
+      const tavily = nodeServerConfig(
+        'tavily-mcp',
+        'tavily-mcp',
+        [],
+        workspaceRoot,
+        platform,
+        errors,
+        {
+          TAVILY_API_KEY: tavilyApiKey,
+        },
+      );
+      if (tavily) {
+        configs.push(tavily);
+      }
+    } else {
+      errors.push('TAVILY_API_KEY 未配置，已跳过 tavily-mcp。');
     }
-  } else {
-    errors.push('TAVILY_API_KEY 未配置，已跳过 tavily-mcp。');
   }
 
-  return {
-    configs,
-    errors,
-  };
+  return { configs, errors };
 };
 
 export const createMastraMcpClientBundle = async (
@@ -513,17 +538,19 @@ export const createMastraMcpClientBundle = async (
 ): Promise<IMastraMcpClientBundle> => {
   const { configs, errors } = loadMcpServerConfigs(options);
   const servers = createMastraMcpServers(configs, errors);
+
   let client: MCPClient | null = null;
   let tools: ToolsInput = {};
 
   try {
-    client = Object.keys(servers).length > 0
-      ? new MCPClient({
-        id: `xiaojianc-agent-sidecar-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
-        servers,
-        timeout: MCP_RPC_TIMEOUT_MS,
-      })
-      : null;
+    client =
+      Object.keys(servers).length > 0
+        ? new MCPClient({
+          id: `xiaojianc-agent-sidecar-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+          servers,
+          timeout: MCP_RPC_TIMEOUT_MS,
+        })
+        : null;
 
     if (client) {
       try {

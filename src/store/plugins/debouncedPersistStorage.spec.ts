@@ -248,4 +248,81 @@ describe('ai-conversation idb 持久化 storage', () => {
     expect(idbMock.set).not.toHaveBeenCalled();
     expect(storage.getItem(KEY)).toBe('{"history":true}');
   });
+
+  it('hydrate 只回填 active 线程图片, 其余历史线程保留 idb:// 指针（懒加载）', async () => {
+    idbMock.map.set('ai-conversation-attachment-preview:a1', 'data:image/png;base64,ACTIVE');
+    idbMock.map.set('ai-conversation-attachment-preview:b1', 'data:image/png;base64,OTHER');
+    const snapshot = JSON.stringify({
+      activeThreadId: 'tA',
+      threads: [
+        {
+          id: 'tA',
+          messages: [
+            {
+              references: [
+                { attachmentPreview: { src: 'idb://ai-conversation-attachment-preview/a1' } },
+              ],
+            },
+          ],
+        },
+        {
+          id: 'tB',
+          messages: [
+            {
+              references: [
+                { attachmentPreview: { src: 'idb://ai-conversation-attachment-preview/b1' } },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    idbMock.map.set(KEY, snapshot);
+
+    const mod = await loadModule();
+    await mod.hydrateAiConversationStorage();
+
+    const restored = JSON.parse(mod.getAiConversationPersistStorage().getItem(KEY) ?? 'null') as {
+      threads: Array<{
+        messages: Array<{ references: Array<{ attachmentPreview: { src: string } }> }>;
+      }>;
+    };
+    // active 线程：指针已解析为 base64
+    expect(restored.threads[0].messages[0].references[0].attachmentPreview.src).toBe(
+      'data:image/png;base64,ACTIVE',
+    );
+    // 非 active 线程：仍保留指针（按需加载）
+    expect(restored.threads[1].messages[0].references[0].attachmentPreview.src).toBe(
+      'idb://ai-conversation-attachment-preview/b1',
+    );
+  });
+
+  it('restoreAttachmentPreviewPointers 按需把指针解析回 base64 且不改动原对象', async () => {
+    idbMock.map.set('ai-conversation-attachment-preview:b1', 'data:image/png;base64,OTHER');
+    const mod = await loadModule();
+
+    const input = [
+      {
+        references: [{ attachmentPreview: { src: 'idb://ai-conversation-attachment-preview/b1' } }],
+      },
+    ];
+    const result = await mod.restoreAttachmentPreviewPointers(input);
+
+    expect(result.changed).toBe(true);
+    expect(result.value[0].references[0].attachmentPreview.src).toBe('data:image/png;base64,OTHER');
+    // 深拷贝：原对象保持指针不变
+    expect(input[0].references[0].attachmentPreview.src).toBe(
+      'idb://ai-conversation-attachment-preview/b1',
+    );
+  });
+
+  it('restoreAttachmentPreviewPointers 无指针时 changed=false 并原样返回', async () => {
+    const mod = await loadModule();
+
+    const input = [{ references: [{ attachmentPreview: { src: 'data:image/png;base64,X' } }] }];
+    const result = await mod.restoreAttachmentPreviewPointers(input);
+
+    expect(result.changed).toBe(false);
+    expect(result.value).toBe(input);
+  });
 });
