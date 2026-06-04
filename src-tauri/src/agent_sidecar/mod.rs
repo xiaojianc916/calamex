@@ -1164,18 +1164,19 @@ fn model_provider_id(model_id: &str) -> Result<&str, String> {
     Ok(provider_id)
 }
 
-fn current_sidecar_model_config() -> Result<AgentSidecarModelConfigPayload, String> {
-    let config = crate::ai::gateway::get_config();
-    let model_id = config
-        .selected_model
-        .as_deref()
+/// 把已配置的 selected_model / base_url 组装成 sidecar 模型配置。
+/// current / narrator 两条链路只是数据来源与报错文案不同，这里抽出公共逻辑去重。
+fn sidecar_model_config_from(
+    selected_model: Option<&str>,
+    base_url: Option<&str>,
+    missing_model_error: &str,
+) -> Result<AgentSidecarModelConfigPayload, String> {
+    let model_id = selected_model
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| "AI 模型未配置：请先在 AI 设置中选择模型并保存。".to_string())?;
+        .ok_or_else(|| missing_model_error.to_string())?;
     let api_key = CredentialStore::get(model_provider_id(model_id)?)?;
-    let base_url = config
-        .base_url
-        .as_deref()
+    let base_url = base_url
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(|value| value.trim_end_matches('/').to_string());
@@ -1187,31 +1188,32 @@ fn current_sidecar_model_config() -> Result<AgentSidecarModelConfigPayload, Stri
     })
 }
 
+fn current_sidecar_model_config() -> Result<AgentSidecarModelConfigPayload, String> {
+    let config = crate::ai::gateway::get_config();
+    sidecar_model_config_from(
+        config.selected_model.as_deref(),
+        config.base_url.as_deref(),
+        "AI 模型未配置：请先在 AI 设置中选择模型并保存。",
+    )
+}
+
 fn narrator_sidecar_model_config() -> Result<AgentSidecarModelConfigPayload, String> {
     let config = crate::ai::gateway::get_config();
-    let model_id = config
-        .narrator
-        .selected_model
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| {
-            "Narrator 模型未配置：请先在 AI 设置中选择 Narrator 模型并保存。".to_string()
-        })?;
-    let api_key = CredentialStore::get(model_provider_id(model_id)?)?;
-    let base_url = config
-        .narrator
-        .base_url
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| value.trim_end_matches('/').to_string());
+    sidecar_model_config_from(
+        config.narrator.selected_model.as_deref(),
+        config.narrator.base_url.as_deref(),
+        "Narrator 模型未配置：请先在 AI 设置中选择 Narrator 模型并保存。",
+    )
+}
 
-    Ok(AgentSidecarModelConfigPayload {
-        model_id: model_id.to_string(),
-        api_key: api_key.into(),
-        base_url,
-    })
+/// 若 payload 尚未携带 model_config，则用给定配置补齐。
+/// `$config` 是返回 Result 的表达式，错误通过 `?` 向外传播（要求所在函数返回 Result<_, String>）。
+macro_rules! ensure_model_config {
+    ($payload:expr, $config:expr $(,)?) => {
+        if $payload.model_config.is_none() {
+            $payload.model_config = Some($config?);
+        }
+    };
 }
 
 fn env_or_user_env(key: &str) -> Option<String> {
@@ -1286,9 +1288,7 @@ pub async fn chat(
     mut payload: AgentSidecarChatRequest,
 ) -> Result<AgentSidecarResponsePayload, String> {
     let session_id = ensure_request_session_id(&mut payload.session_id, "sidecar-chat");
-    if payload.model_config.is_none() {
-        payload.model_config = Some(current_sidecar_model_config()?);
-    }
+    ensure_model_config!(payload, current_sidecar_model_config());
     post_json_streaming_events(
         &app,
         "/agent/chat",
@@ -1304,9 +1304,7 @@ pub async fn plan(
     mut payload: AgentSidecarPlanRequest,
 ) -> Result<AgentSidecarResponsePayload, String> {
     let session_id = ensure_request_session_id(&mut payload.session_id, "sidecar-plan");
-    if payload.model_config.is_none() {
-        payload.model_config = Some(current_sidecar_model_config()?);
-    }
+    ensure_model_config!(payload, current_sidecar_model_config());
     post_json_streaming_events(
         &app,
         "/agent/plan",
@@ -1344,18 +1342,14 @@ pub async fn finish_plan(
 pub async fn validate_plan(
     mut payload: AgentSidecarPlanValidateRequest,
 ) -> Result<AgentSidecarResponsePayload, String> {
-    if payload.model_config.is_none() {
-        payload.model_config = Some(current_sidecar_model_config()?);
-    }
+    ensure_model_config!(payload, current_sidecar_model_config());
     post_json("/agent/plan/validate", &payload).await
 }
 
 pub async fn replan_plan(
     mut payload: AgentSidecarPlanReplanRequest,
 ) -> Result<AgentSidecarResponsePayload, String> {
-    if payload.model_config.is_none() {
-        payload.model_config = Some(current_sidecar_model_config()?);
-    }
+    ensure_model_config!(payload, current_sidecar_model_config());
     post_json("/agent/plan/replan", &payload).await
 }
 
@@ -1364,9 +1358,7 @@ pub async fn execute(
     mut payload: AgentSidecarExecuteRequest,
 ) -> Result<AgentSidecarResponsePayload, String> {
     let session_id = ensure_request_session_id(&mut payload.session_id, "sidecar-agent");
-    if payload.model_config.is_none() {
-        payload.model_config = Some(current_sidecar_model_config()?);
-    }
+    ensure_model_config!(payload, current_sidecar_model_config());
     post_json_streaming_events(
         &app,
         "/agent/execute",
@@ -1382,9 +1374,7 @@ pub async fn resolve_approval(
     mut payload: AgentSidecarApprovalResolveRequest,
 ) -> Result<AgentSidecarResponsePayload, String> {
     let session_id = ensure_request_session_id(&mut payload.session_id, "sidecar-approval");
-    if payload.model_config.is_none() {
-        payload.model_config = Some(current_sidecar_model_config()?);
-    }
+    ensure_model_config!(payload, current_sidecar_model_config());
     post_json_streaming_events(
         &app,
         "/approval/resolve",
@@ -1400,9 +1390,7 @@ pub async fn restore_checkpoint(
     mut payload: AgentSidecarCheckpointRestoreRequest,
 ) -> Result<AgentSidecarResponsePayload, String> {
     let session_id = ensure_request_session_id(&mut payload.session_id, "sidecar-rollback");
-    if payload.model_config.is_none() {
-        payload.model_config = Some(current_sidecar_model_config()?);
-    }
+    ensure_model_config!(payload, current_sidecar_model_config());
     post_json_streaming_events(
         &app,
         "/rollback/restore",
@@ -1425,9 +1413,7 @@ where
     F: FnMut(&serde_json::Value),
 {
     let session_id = ensure_request_session_id(&mut payload.session_id, "sidecar-model-chat");
-    if payload.model_config.is_none() {
-        payload.model_config = Some(current_sidecar_model_config()?);
-    }
+    ensure_model_config!(payload, current_sidecar_model_config());
     post_json_streaming_events_with_handler(
         &app,
         "/model/chat",
@@ -1443,9 +1429,7 @@ pub async fn model_chat_once(
     mut payload: AgentSidecarChatRequest,
 ) -> Result<AgentSidecarResponsePayload, String> {
     let _session_id = ensure_request_session_id(&mut payload.session_id, "sidecar-model-chat");
-    if payload.model_config.is_none() {
-        payload.model_config = Some(current_sidecar_model_config()?);
-    }
+    ensure_model_config!(payload, current_sidecar_model_config());
     post_json("/model/chat", &payload).await
 }
 
@@ -1453,9 +1437,7 @@ pub async fn narrator_model_chat_once(
     mut payload: AgentSidecarChatRequest,
 ) -> Result<AgentSidecarResponsePayload, String> {
     let _session_id = ensure_request_session_id(&mut payload.session_id, "sidecar-narrator-chat");
-    if payload.model_config.is_none() {
-        payload.model_config = Some(narrator_sidecar_model_config()?);
-    }
+    ensure_model_config!(payload, narrator_sidecar_model_config());
     post_json_with_narrator_retry("/model/chat", &payload).await
 }
 

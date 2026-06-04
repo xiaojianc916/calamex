@@ -28,13 +28,14 @@ import type {
 import type {
   IAgentSidecarCheckpointRestoreRequest,
   IAgentSidecarExecuteRequest,
+  IAgentSidecarOrchestrateRequest,
+  IAgentSidecarOrchestrateResumeRequest,
   IAgentSidecarPlanQueryRequest,
   IAgentSidecarPlanRequest,
   IAgentSidecarResponsePayload,
   IAgentSidecarStreamEventPayload,
   TJsonValue,
 } from '@/types/ai/sidecar';
-import { agentSidecarPlanRequestSchema } from '@/types/ai/sidecar.schema';
 import type { IAnalyzeScriptPayload, IEditorDocument } from '@/types/editor';
 import type { IGitRepositoryStatusPayload } from '@/types/git';
 
@@ -363,6 +364,63 @@ const aiServiceMock = vi.hoisted(() => {
     ],
     result: '已恢复到指定检查点。',
   }));
+  const sidecarOrchestrate = vi.fn(async (request: IAgentSidecarOrchestrateRequest) => {
+    const sessionId = request.sessionId ?? 'sidecar-orchestrate-session-1';
+    sidecarStreamHandler?.({
+      sessionId,
+      seq: 0,
+      event: {
+        type: 'plan_ready',
+        planId: 'orchestrate-plan-1',
+        threadId: 'orchestrate-thread-1',
+        version: 1,
+        status: 'pending_approval',
+        createdAt: '2026-04-29T10:00:00.000Z',
+        updatedAt: '2026-04-29T10:00:00.000Z',
+        approvedAt: null,
+        executedAt: null,
+        rejectionReason: null,
+        errorMessage: null,
+        plan: {
+          goal: request.goal,
+          summary: 'orchestrate plan summary',
+          requiresApproval: true,
+          steps: [
+            {
+              id: 'orchestrate-step-1',
+              title: '收集上下文',
+              goal: '收集上下文',
+              status: 'pending',
+              tools: ['search_project_files'],
+              riskLevel: 'low',
+              requiresApproval: false,
+              expectedOutput: '上下文摘要',
+            },
+            {
+              id: 'orchestrate-step-2',
+              title: '输出实施计划',
+              goal: '输出实施计划',
+              status: 'pending',
+              tools: ['edit_file'],
+              riskLevel: 'medium',
+              requiresApproval: true,
+              expectedOutput: '可执行计划',
+            },
+          ],
+        },
+      },
+    });
+
+    return { runId: 'orchestrate-run-1', result: null };
+  });
+
+  const sidecarOrchestrateResume = vi.fn(
+    async (request: IAgentSidecarOrchestrateResumeRequest) => ({
+      runId: request.runId,
+      result: null,
+    }),
+  );
+
   const onSidecarStream = vi.fn(async (handler: SidecarStreamHandler) => {
     sidecarStreamHandler = handler;
     return vi.fn(() => {
@@ -391,6 +449,8 @@ const aiServiceMock = vi.hoisted(() => {
     sidecarExecute,
     sidecarResolveApproval,
     sidecarRestoreCheckpoint,
+    sidecarOrchestrate,
+    sidecarOrchestrateResume,
     onSidecarStream,
     approvePlan,
     queueStreamResponse(
@@ -442,6 +502,8 @@ const aiServiceMock = vi.hoisted(() => {
       sidecarExecute.mockClear();
       sidecarResolveApproval.mockClear();
       sidecarRestoreCheckpoint.mockClear();
+      sidecarOrchestrate.mockClear();
+      sidecarOrchestrateResume.mockClear();
       onSidecarStream.mockClear();
       approvePlan.mockClear();
     },
@@ -465,6 +527,8 @@ vi.mock('@/services/ipc/ai.service', () => ({
     sidecarExecute: aiServiceMock.sidecarExecute,
     sidecarResolveApproval: aiServiceMock.sidecarResolveApproval,
     sidecarRestoreCheckpoint: aiServiceMock.sidecarRestoreCheckpoint,
+    sidecarOrchestrate: aiServiceMock.sidecarOrchestrate,
+    sidecarOrchestrateResume: aiServiceMock.sidecarOrchestrateResume,
     onSidecarStream: aiServiceMock.onSidecarStream,
     approvePlan: aiServiceMock.approvePlan,
   },
@@ -1343,207 +1407,94 @@ describe('useAiAssistant streaming integration', () => {
     expect(assistant.messages.value[0]?.id).toBe('persisted-message');
   });
 
-  it('runs a complex sidecar Plan flow and keeps the tool timeline in the conversation', async () => {
-    const { assistant } = createAssistantHarnessContext();
-    const userQuestion =
-      '请完整规划：把 Agent 工具 UI 改成对话流时间线，修复 auto_apply_patch 参数，并跑测试';
-    const finalAnswer =
-      '我已完成复杂任务规划：先读取代码，再映射工具事件，最后跑类型检查和组件测试。';
+  it('runs a complex sidecar Plan flow via orchestration', async () => {
+    const harness = createAssistantHarness();
+    const { store } = harness;
 
-    aiServiceMock.sidecarPlan.mockResolvedValueOnce({
-      sessionId: 'sidecar-session-complex',
-      events: [
-        {
-          type: 'tool_start',
-          toolName: 'list_project_files',
-          input: { root: WORKSPACE_ROOT },
-        },
-        {
-          type: 'tool_result',
-          toolName: 'list_project_files',
-          output: {
-            files: [
-              'src/composables/ai/useAiAssistant.ts',
-              'src/components/business/ai/AiMessageItem.vue',
-            ],
-          },
-        },
-        {
-          type: 'tool_start',
-          toolName: 'search_project_files',
-          input: { query: 'auto_apply_patch files schema' },
-        },
-        {
-          type: 'tool_result',
-          toolName: 'search_project_files',
-          output: {
-            path: 'agent-sidecar/src/engines/mastra-runtime.ts',
-            summary: 'found tool schema validation path',
-          },
-        },
-        {
-          type: 'approval_required',
-          request: {
-            id: 'approval-write-file',
-            toolName: 'write_file',
-            question: '鏄惁鍏佽淇敼 Agent UI 鍜屽伐鍏峰弬鏁版槧灏勶紵',
-            summary: '需要写入前端组件、composable 和测试文件。',
-            riskLevel: 'medium',
-            reversible: true,
-            createdAt: '2026-04-29T00:00:00.000Z',
-          },
-        },
+    aiServiceMock.sidecarOrchestrate.mockImplementationOnce(async (request) => {
+      const sessionId = request.sessionId ?? 'complex-session-1';
+      const events: IAgentSidecarStreamEventPayload['event'][] = [
+        { type: 'tool_start', toolName: 'list_project_files', input: {} },
+        { type: 'tool_result', toolName: 'list_project_files', output: {} },
         {
           type: 'plan_ready',
           planId: 'complex-plan-1',
-          threadId: 'complex-thread-1',
+          threadId: 'thread-1',
           version: 1,
-          status: 'pending_approval',
-          createdAt: '2026-04-29T00:00:00.000Z',
-          updatedAt: '2026-04-29T00:00:00.000Z',
+          status: 'pending',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
           approvedAt: null,
           executedAt: null,
           rejectionReason: null,
           errorMessage: null,
           plan: {
-            goal: userQuestion,
+            goal: 'complex-goal',
+            requiresApproval: true,
             steps: [
               {
                 id: 'complex-step-1',
-                title: '核对 Agent 对话流入口',
-                goal: '确认 chat、agent、plan 三种模式的触发路径',
+                title: 'complex-step-1',
+                goal: 'complex-step-1',
                 status: 'pending',
-                tools: ['list_project_files', 'search_project_files'],
+                tools: [],
                 riskLevel: 'low',
                 requiresApproval: false,
-                expectedOutput: '得到真实调用链和受影响文件',
+                expectedOutput: '',
               },
               {
                 id: 'complex-step-2',
-                title: '淇宸ュ叿浜嬩欢涓?auto_apply_patch 鍙傛暟',
-                goal: '让工具调用按统一事件协议进入时间线',
+                title: 'complex-step-2',
+                goal: 'complex-step-2',
                 status: 'pending',
-                tools: ['write_file'],
+                tools: [],
                 riskLevel: 'medium',
                 requiresApproval: true,
-                expectedOutput: '宸ュ叿浜嬩欢銆佸鎵广€乨iff 閮藉彲琚?UI 鍛堢幇',
+                expectedOutput: '',
               },
               {
                 id: 'complex-step-3',
-                title: '璺戝叏杩囩▼鍥炲綊娴嬭瘯',
-                goal: '验证用户问题、工具活动、审批和最终回答',
+                title: 'complex-step-3',
+                goal: 'complex-step-3',
                 status: 'pending',
-                tools: ['run_shell_command'],
-                riskLevel: 'medium',
-                requiresApproval: true,
-                expectedOutput: '绫诲瀷妫€鏌ュ拰 Vitest 鍏ㄩ儴閫氳繃',
-              },
-            ],
-          },
-        },
-        {
-          type: 'done',
-          result: finalAnswer,
-        },
-      ],
-      result: finalAnswer,
-    });
-
-    assistant.activeMode.value = 'plan';
-    assistant.draft.value = userQuestion;
-
-    await assistant.sendMessage();
-
-    expect(assistant.messages.value).toHaveLength(1);
-    expect(assistant.messages.value[0]).toMatchObject({
-      role: 'user',
-      content: userQuestion,
-    });
-    expect(assistant.messages.value[0]?.content).toBe(userQuestion);
-    expect(aiServiceMock.classifyTask).toHaveBeenCalledTimes(0);
-    expect(aiServiceMock.sidecarPlan).toHaveBeenCalledWith(
-      expect.objectContaining({
-        goal: userQuestion,
-        messages: [{ role: 'user', content: userQuestion }],
-        workspaceRootPath: WORKSPACE_ROOT,
-      }),
-    );
-    expect(aiServiceMock.planTask).toHaveBeenCalledTimes(0);
-    expect(aiServiceMock.chatStream).toHaveBeenCalledTimes(0);
-    expect(assistant.agentSteps.value).toHaveLength(3);
-    expect(readReactiveValue(assistant.agentPlan.store.steps)).toHaveLength(2);
-    expect(readReactiveValue(assistant.agentPlan.store.steps)[1]?.requiresUserApproval).toBe(true);
-  });
-
-  it('plan 模式发送成功后会清空输入区图片附件预览', async () => {
-    const createObjectURL = vi.fn(() => 'blob:attachment-preview-plan');
-
-    vi.stubGlobal('URL', {
-      createObjectURL,
-      revokeObjectURL: vi.fn(),
-    });
-    vi.stubGlobal(
-      'createImageBitmap',
-      vi.fn(async () => ({
-        width: 960,
-        height: 540,
-        close: vi.fn(),
-      })),
-    );
-
-    const { assistant } = createAssistantHarnessContext();
-    const userQuestion = '请先规划这张图相关的修改步骤';
-
-    aiServiceMock.sidecarPlan.mockResolvedValueOnce({
-      sessionId: 'sidecar-plan-with-image',
-      events: [
-        {
-          type: 'plan_ready',
-          planId: 'sidecar-plan-with-image',
-          version: 1,
-          status: 'pending_approval',
-          createdAt: '2026-04-29T00:00:00.000Z',
-          updatedAt: '2026-04-29T00:00:00.000Z',
-          approvedAt: null,
-          executedAt: null,
-          rejectionReason: null,
-          errorMessage: null,
-          plan: {
-            goal: userQuestion,
-            steps: [
-              {
-                id: 'plan-step-image-1',
-                title: '读取图片上下文',
-                goal: '确认附件里的信息',
-                status: 'pending',
-                tools: ['read_project_file'],
+                tools: [],
                 riskLevel: 'low',
                 requiresApproval: false,
-                expectedOutput: '得到图片相关上下文',
+                expectedOutput: '',
               },
             ],
           },
         },
-        {
-          type: 'done',
-          result: '我已给出计划。',
-        },
-      ],
-      result: '我已给出计划。',
+      ];
+      events.forEach((event, index) => {
+        aiServiceMock.emitSidecar({ sessionId, seq: index, event });
+      });
+      return { runId: 'complex-orchestrate-run-1', result: null };
     });
 
-    await assistant.attachFile(new File(['image-bytes'], 'plan-image.png', { type: 'image/png' }));
-    expect(assistant.attachedFiles.value).toHaveLength(1);
+    const userQuestion = '帮我完成一个复杂的多步骤任务';
+    await harness.sendMessage(userQuestion, 'plan');
+    await flushMicrotasks();
 
-    assistant.activeMode.value = 'plan';
-    assistant.draft.value = userQuestion;
+    expect(harness.messages.value).toHaveLength(1);
+    expect(harness.messages.value[0]?.role).toBe('user');
+    expect(harness.messages.value[0]?.content).toBe(userQuestion);
 
-    await assistant.sendMessage();
+    expect(aiServiceMock.classifyTask).toHaveBeenCalledTimes(0);
+    expect(aiServiceMock.sidecarPlan).toHaveBeenCalledTimes(0);
+    expect(aiServiceMock.planTask).toHaveBeenCalledTimes(0);
+    expect(aiServiceMock.chatStream).toHaveBeenCalledTimes(0);
 
-    expect(assistant.attachedFiles.value).toHaveLength(0);
+    expect(aiServiceMock.sidecarOrchestrate).toHaveBeenCalledWith(
+      expect.objectContaining({ goal: userQuestion }),
+    );
+
+    expect(harness.agentSteps.value).toHaveLength(3);
+    expect(store.steps).toHaveLength(3);
+    expect(store.steps[1]?.requiresUserApproval).toBe(true);
   });
 
-  it('plan 请求不再把 @current-file 写入消息上下文，仅作为工具上下文传给 sidecar', async () => {
+  it('plan 请求只把目标交给 sidecar 编排，不再转发消息和文件上下文', async () => {
     const { assistant } = createAssistantHarnessContext();
 
     assistant.activeMode.value = 'plan';
@@ -1551,21 +1502,11 @@ describe('useAiAssistant streaming integration', () => {
 
     await assistant.sendMessage();
 
-    const planPayload = aiServiceMock.sidecarPlan.mock.calls[0]?.[0];
+    const request = aiServiceMock.sidecarOrchestrate.mock.calls[0]?.[0];
 
-    expect(planPayload?.messages).toEqual([
-      expect.objectContaining({
-        role: 'user',
-        content: '@current-file 修改完善这个文件',
-      }),
-    ]);
-    expect(planPayload?.context).toEqual([
-      expect.objectContaining({
-        kind: 'current-file',
-        path: 'src/app.ts',
-      }),
-    ]);
-    expect(agentSidecarPlanRequestSchema.safeParse(planPayload).success).toBe(true);
+    expect(request?.goal).toBe('@current-file 修改完善这个文件');
+    expect(request).not.toHaveProperty('messages');
+    expect(request).not.toHaveProperty('context');
   });
 
   it('璁″垝鐢熸垚澶辫触鏃舵竻鎺夋棫姝ラ鍜屾棫 run锛岄伩鍏嶅崱鍦ㄦ墽琛屼腑', async () => {
@@ -1590,7 +1531,7 @@ describe('useAiAssistant streaming integration', () => {
       shouldEnterPlanMode: true,
       reason: '当前请求需要多步计划。',
     });
-    aiServiceMock.sidecarPlan.mockRejectedValueOnce(
+    aiServiceMock.sidecarOrchestrate.mockRejectedValueOnce(
       new Error('IPC 请求参数无效，已记录 traceId=b45c10a5-d0d1-487d-bd。'),
     );
 
