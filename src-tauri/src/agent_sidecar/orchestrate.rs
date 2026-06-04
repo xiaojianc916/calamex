@@ -15,10 +15,10 @@ use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
 use super::{
-    build_sidecar_url, client, configured_base_url, current_sidecar_model_config, decode_response,
-    decode_sidecar_stream_line_bytes, drain_complete_sidecar_stream_lines,
-    emit_sidecar_stream_event, ensure_default_sidecar_available, ensure_request_session_id,
-    has_non_whitespace_bytes,
+    apply_sidecar_auth, build_sidecar_url, client, configured_base_url,
+    current_sidecar_model_config, decode_response, decode_sidecar_stream_line_bytes,
+    drain_complete_sidecar_stream_lines, emit_sidecar_stream_event,
+    ensure_default_sidecar_available, ensure_request_session_id, has_non_whitespace_bytes,
 };
 use crate::commands::contracts::{
     AgentSidecarOrchestratePayload, AgentSidecarOrchestrateRequest,
@@ -109,8 +109,7 @@ where
     ensure_default_sidecar_available(&base_url).await?;
 
     let url = build_sidecar_url(&base_url, endpoint);
-    let mut response = client()?
-        .post(&url)
+    let mut response = apply_sidecar_auth(client()?.post(&url), &base_url)
         .json(payload)
         .send()
         .await

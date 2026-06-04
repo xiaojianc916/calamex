@@ -20,7 +20,16 @@ const MAX_IMAGE_ASSET_BYTES: u64 = 20 * 1024 * 1024;
 #[tauri::command]
 #[specta::specta]
 pub fn load_script(path: String) -> Result<ScriptFilePayload, String> {
-    let file_path = PathBuf::from(&path);
+    // 先规范化到真实路径并确认是文件，避免 `..` 等路径穿越与对目录/不存在路径的误读，
+    // 与 load_image_asset 的处理保持一致。
+    let file_path = PathBuf::from(&path)
+        .canonicalize()
+        .map_err(|error| format!("读取脚本失败：{error}"))?;
+
+    if !file_path.is_file() {
+        return Err("目标脚本不存在或不是有效文件。".into());
+    }
+
     ensure_within_size_limit(&file_path, MAX_SCRIPT_FILE_BYTES, "脚本")?;
     let bytes = fs::read(&file_path).map_err(|error| format!("读取脚本失败：{error}"))?;
     let (content, encoding) = decode_script_bytes(&bytes)?;
@@ -46,10 +55,25 @@ pub fn load_image_asset(path: String) -> Result<ImageAssetPayload, String> {
 #[tauri::command]
 #[specta::specta]
 pub fn save_script(payload: SaveScriptRequest) -> Result<ScriptFilePayload, String> {
-    let file_path = PathBuf::from(&payload.path);
-    if let Some(parent) = file_path.parent() {
-        fs::create_dir_all(parent).map_err(|error| format!("创建目录失败：{error}"))?;
-    }
+    // 先拆出文件名与父目录（缺省父目录视为当前目录），创建父目录后再对父目录做
+    // canonicalize，使最终写入路径中的 `..` 等被解析为真实目录，避免路径穿越写盘。
+    let raw_path = PathBuf::from(&payload.path);
+    let file_name = raw_path
+        .file_name()
+        .ok_or_else(|| "无法解析目标文件名。".to_string())?
+        .to_owned();
+    let parent = raw_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
+
+    fs::create_dir_all(&parent).map_err(|error| format!("创建目录失败：{error}"))?;
+
+    let file_path = parent
+        .canonicalize()
+        .map_err(|error| format!("解析目标目录失败：{error}"))?
+        .join(&file_name);
 
     let bytes = encode_script_content(&payload.content, &payload.encoding)?;
     atomic_write(&file_path, &bytes)?;
