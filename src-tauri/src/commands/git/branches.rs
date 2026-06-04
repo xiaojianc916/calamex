@@ -52,9 +52,8 @@ pub fn list_git_branches(
         }
     }
 
-    branches.sort_by(|left, right| {
-        resolve_branch_sort_key(left).cmp(&resolve_branch_sort_key(right))
-    });
+    branches
+        .sort_by(|left, right| resolve_branch_sort_key(left).cmp(&resolve_branch_sort_key(right)));
 
     Ok(GitBranchListPayload { branches })
 }
@@ -123,16 +122,37 @@ pub fn create_git_branch(
 }
 
 fn is_valid_git_branch_name(name: &str) -> bool {
-    if name.is_empty() { return false; }
-    if name.starts_with('.') || name.ends_with('.') { return false; }
-    if name.ends_with(".lock") { return false; }
-    if name.contains("..") { return false; }
-    if name.contains(' ') || name.contains('~') || name.contains('^')
-        || name.contains(':') || name.contains('?') || name.contains('*')
-        || name.contains('[') { return false; }
-    if name.contains("@{") { return false; }
-    if name.as_bytes().iter().any(|&b| b == 0x7f || b < 0x20) { return false; }
-    if name.starts_with('/') || name.ends_with('/') { return false; }
+    if name.is_empty() {
+        return false;
+    }
+    if name.starts_with('.') || name.ends_with('.') {
+        return false;
+    }
+    if name.ends_with(".lock") {
+        return false;
+    }
+    if name.contains("..") {
+        return false;
+    }
+    if name.contains(' ')
+        || name.contains('~')
+        || name.contains('^')
+        || name.contains(':')
+        || name.contains('?')
+        || name.contains('*')
+        || name.contains('[')
+    {
+        return false;
+    }
+    if name.contains("@{") {
+        return false;
+    }
+    if name.as_bytes().iter().any(|&b| b == 0x7f || b < 0x20) {
+        return false;
+    }
+    if name.starts_with('/') || name.ends_with('/') {
+        return false;
+    }
     true
 }
 
@@ -223,8 +243,8 @@ pub(super) fn resolve_ahead_behind_cli(
     // 比较「该分支」与「它自己的上游」，而不是当前 HEAD 的上游。
     // 通过 gix 的修订遍历计算 ahead/behind，等价于
     // `git rev-list --count --left-right <branch>...<upstream>`，避免依赖系统安装的 git。
-    let repository = gix::open(repository_root)
-        .map_err(|error| format!("打开 Git 仓库失败：{error}"))?;
+    let repository =
+        gix::open(repository_root).map_err(|error| format!("打开 Git 仓库失败：{error}"))?;
 
     let local_id = match repository.rev_parse_single(branch_name) {
         Ok(id) => id.detach(),
@@ -357,8 +377,18 @@ fn apply_checkout_change(
     use gix::index::entry::Mode;
 
     match change {
-        Change::Addition { location, entry_mode, id, .. }
-        | Change::Modification { location, entry_mode, id, .. } => {
+        Change::Addition {
+            location,
+            entry_mode,
+            id,
+            ..
+        }
+        | Change::Modification {
+            location,
+            entry_mode,
+            id,
+            ..
+        } => {
             if entry_mode.is_tree() || entry_mode.is_commit() {
                 return Ok(());
             }
@@ -378,7 +408,13 @@ fn apply_checkout_change(
             checkout_remove_worktree_path(repository_root, &path);
             checkout_remove_index_path(index, &path);
         }
-        Change::Rewrite { source_location, location, entry_mode, id, .. } => {
+        Change::Rewrite {
+            source_location,
+            location,
+            entry_mode,
+            id,
+            ..
+        } => {
             let source = source_location.to_str_lossy().into_owned();
             checkout_remove_worktree_path(repository_root, &source);
             checkout_remove_index_path(index, &source);

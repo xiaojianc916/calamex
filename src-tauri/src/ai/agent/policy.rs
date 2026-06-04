@@ -90,8 +90,8 @@ pub fn clamp_plan_step_count(count: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_task, AgentTaskClassification, AgentTaskPolicyInput, MAX_PLAN_STEPS,
-        MIN_PLAN_STEPS,
+        AgentTaskClassification, AgentTaskPolicyInput, MAX_PLAN_STEPS, MIN_PLAN_STEPS,
+        classify_task,
     };
 
     #[test]

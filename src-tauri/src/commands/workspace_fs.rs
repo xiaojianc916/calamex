@@ -1,11 +1,11 @@
 use super::{
-    line_count, DocumentEncoding, ImageAssetPayload, SaveScriptRequest, ScriptFilePayload,
+    DocumentEncoding, ImageAssetPayload, SaveScriptRequest, ScriptFilePayload,
     WorkspaceDirectoryPayload, WorkspaceEntry, WorkspacePathCreatePayload,
     WorkspacePathCreateRequest, WorkspacePathDeletePayload, WorkspacePathDeleteRequest,
-    WorkspacePathKind, WorkspacePathRenamePayload, WorkspacePathRenameRequest,
+    WorkspacePathKind, WorkspacePathRenamePayload, WorkspacePathRenameRequest, line_count,
 };
-use base64::{engine::general_purpose::STANDARD, Engine as _};
-use encoding_rs::{GB18030, UTF_16BE, UTF_16LE, UTF_8};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
+use encoding_rs::{GB18030, UTF_8, UTF_16BE, UTF_16LE};
 use std::{
     borrow::Cow,
     env, fs,
@@ -163,8 +163,7 @@ pub fn delete_workspace_path(
         return Err("目标文件或文件夹不存在。".into());
     }
 
-    trash::delete(&target_path)
-        .map_err(|error| format!("移动到回收站失败：{error}"))?;
+    trash::delete(&target_path).map_err(|error| format!("移动到回收站失败：{error}"))?;
 
     Ok(WorkspacePathDeletePayload {
         path: target_path.to_string_lossy().to_string(),
@@ -198,12 +197,13 @@ pub(crate) fn resolve_workspace_root(selected_root: Option<String>) -> Result<Pa
             .file_name()
             .and_then(|value| value.to_str())
             .is_some_and(|name| name.eq_ignore_ascii_case("src-tauri"))
-            && let Some(parent) = current_dir.parent() {
-                return parent
-                    .to_path_buf()
-                    .canonicalize()
-                    .map_err(|error| format!("读取工作区目录失败：{error}"));
-            }
+            && let Some(parent) = current_dir.parent()
+        {
+            return parent
+                .to_path_buf()
+                .canonicalize()
+                .map_err(|error| format!("读取工作区目录失败：{error}"));
+        }
     }
 
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));

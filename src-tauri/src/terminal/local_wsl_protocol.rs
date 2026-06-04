@@ -229,12 +229,14 @@ mod tests {
             rows: 40,
         };
         assert!(valid.validate().is_ok());
-        assert!(LocalWslTerminalOpenInteractiveRequest {
-            session_id: "  ".to_string(),
-            ..valid.clone()
-        }
-        .validate()
-        .is_err());
+        assert!(
+            LocalWslTerminalOpenInteractiveRequest {
+                session_id: "  ".to_string(),
+                ..valid.clone()
+            }
+            .validate()
+            .is_err()
+        );
     }
 
     #[test]

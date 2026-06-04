@@ -1,20 +1,18 @@
-use crate::commands::terminal::commands as terminal_commands;
 use crate::commands::lsp::commands as lsp_commands;
+use crate::commands::terminal::commands as terminal_commands;
 use crate::commands::{
     agent_sidecar, ai, git, script_run, search, shell_tools, ssh, window, window_stage,
     workspace_fs, workspace_watcher,
 };
 use specta_typescript::Typescript;
 use std::path::PathBuf;
-use tauri_specta::{collect_commands, collect_events, Builder, ErrorHandlingMode};
+use tauri_specta::{Builder, ErrorHandlingMode, collect_commands, collect_events};
 
 pub fn builder() -> Builder<tauri::Wry> {
     Builder::<tauri::Wry>::new()
         .error_handling(ErrorHandlingMode::Throw)
         // ↓↓↓ events 先 ↓↓↓
-        .events(collect_events![
-            workspace_watcher::WorkspaceFsEvent,
-        ])
+        .events(collect_events![workspace_watcher::WorkspaceFsEvent,])
         // ↓↓↓ commands 后（它会\"封口\"返回 Commands，不能再 .events()）↓↓↓
         .commands(collect_commands![
             script_run::detect_execution_environment,

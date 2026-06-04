@@ -5,7 +5,9 @@ use std::{
 };
 
 use crate::commands::contracts::DocumentEncoding;
-use crate::commands::{configure_std_command_for_background, decode_script_bytes, find_command_path};
+use crate::commands::{
+    configure_std_command_for_background, decode_script_bytes, find_command_path,
+};
 
 pub(super) fn cached_git_executable() -> Result<&'static Path, String> {
     static GIT: OnceLock<Option<PathBuf>> = OnceLock::new();
@@ -58,8 +60,12 @@ pub(super) fn run_git_text(
             format!("执行 {operation_label} 失败：{stderr}")
         });
     }
-    let (content, _encoding) = decode_script_bytes(&output.stdout)
-        .unwrap_or_else(|_| (String::from_utf8_lossy(&output.stdout).into_owned(), DocumentEncoding::Utf8));
+    let (content, _encoding) = decode_script_bytes(&output.stdout).unwrap_or_else(|_| {
+        (
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            DocumentEncoding::Utf8,
+        )
+    });
     Ok(content)
 }
 

@@ -2,9 +2,9 @@ use super::conversation::{normalize_conversation_title, with_identity_system_mes
 use super::prompt::{build_conversation_title_prompt, build_identity_system_prompt};
 use super::suggestions::{normalize_suggestion_text, parse_suggestion_pool_response};
 use super::{
-    default_base_url, default_model, is_endpoint_ready, model_service_platform,
-    validate_model_provider, validate_provider, AiModelEndpointRuntimeConfig, AiRuntimeConfig,
-    DEFAULT_MASTRA_MODEL, DEFAULT_NARRATOR_MODEL, MAX_GENERATED_TITLE_CHARS,
+    AiModelEndpointRuntimeConfig, AiRuntimeConfig, DEFAULT_MASTRA_MODEL, DEFAULT_NARRATOR_MODEL,
+    MAX_GENERATED_TITLE_CHARS, default_base_url, default_model, is_endpoint_ready,
+    model_service_platform, validate_model_provider, validate_provider,
 };
 use crate::ai::provider::AiProviderMessage;
 

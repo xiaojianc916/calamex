@@ -30,7 +30,7 @@ pub(crate) mod transfer;
 mod util;
 
 // `ssh_pool` 通过 `super::ssh::{connect_and_auth, SshClientHandler}` 引用这两项。
-pub(crate) use connection::{connect_and_auth, SshClientHandler};
+pub(crate) use connection::{SshClientHandler, connect_and_auth};
 
 /// 默认 SSH 端口；被 `hostkey` 与 `config` 子模块通过 `super::DEFAULT_SSH_PORT` 引用。
 const DEFAULT_SSH_PORT: u16 = 22;

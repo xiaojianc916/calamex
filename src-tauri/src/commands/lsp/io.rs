@@ -7,7 +7,7 @@ use tauri::AppHandle;
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     process::{ChildStdin, ChildStdout},
-    sync::{oneshot, Mutex},
+    sync::{Mutex, oneshot},
     time::timeout,
 };
 
@@ -23,7 +23,9 @@ pub(crate) async fn write_framed(
     data: &[u8],
 ) -> Result<(), String> {
     let mut s = stdin.lock().await;
-    s.write_all(data).await.map_err(|e| format!("写入 LSP 失败: {e}"))?;
+    s.write_all(data)
+        .await
+        .map_err(|e| format!("写入 LSP 失败: {e}"))?;
     s.flush().await.map_err(|e| format!("flush 失败: {e}"))?;
     Ok(())
 }
@@ -48,9 +50,7 @@ pub(crate) async fn read_lsp_stdout(
                     if line.is_empty() {
                         break;
                     }
-                    if let Some(val) =
-                        line.to_ascii_lowercase().strip_prefix("content-length:")
-                    {
+                    if let Some(val) = line.to_ascii_lowercase().strip_prefix("content-length:") {
                         content_length = val.trim().parse().ok();
                     }
                 }

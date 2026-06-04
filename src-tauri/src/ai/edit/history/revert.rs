@@ -22,13 +22,13 @@
 
 use crate::ai::audit::{self, AiAuditEventKind};
 use crate::ai::edit as ai_edit;
+use crate::ai::edit::AiEditState;
 use crate::ai::edit::apply::diff_render;
 use crate::ai::edit::errors;
 use crate::ai::edit::history::{edit_journal, snapshot};
 use crate::ai::edit::io::atomic_write;
 use crate::ai::edit::patch;
 use crate::ai::edit::security::path_security;
-use crate::ai::edit::AiEditState;
 use crate::commands::contracts::{
     AiEditDiffHunkPayload, AiEditGetDiffPayload, AiEditGetDiffRequest, AiEditListTimelineRequest,
     AiEditOperationPayload, AiEditRestoreSnapshotPayload, AiEditRestoreSnapshotRequest,
@@ -534,12 +534,13 @@ fn ensure_operation_matches_expected_state(
         "modify" => {
             let current_file = read_snapshot_file(&operation.path)?;
             if let Some(expected_hash) = operation.after_hash.as_deref()
-                && current_file.content_hash != expected_hash {
-                    return Err(errors::restore_conflict(format!(
-                        "文件当前内容与 AED 记录不一致,拒绝回滚:{}",
-                        operation.path
-                    )));
-                }
+                && current_file.content_hash != expected_hash
+            {
+                return Err(errors::restore_conflict(format!(
+                    "文件当前内容与 AED 记录不一致,拒绝回滚:{}",
+                    operation.path
+                )));
+            }
             Ok(())
         }
         other => Err(errors::restore_conflict(format!(
@@ -933,11 +934,12 @@ fn validate_revert_path(path: &str) -> Result<PathBuf, String> {
 
 fn ensure_parent_dir(path: &Path, context: &str) -> Result<(), String> {
     if let Some(parent) = path.parent()
-        && !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent).map_err(|error| {
-                errors::restore_failed(format!("创建{context}失败({}):{error}", parent.display()))
-            })?;
-        }
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent).map_err(|error| {
+            errors::restore_failed(format!("创建{context}失败({}):{error}", parent.display()))
+        })?;
+    }
     Ok(())
 }
 
@@ -966,11 +968,11 @@ mod tests {
     };
     use crate::ai::edit as ai_edit;
     use crate::ai::edit::apply::{
-        auto_apply::{apply_operation_plans, AiAutoApplyOperationPlan},
+        auto_apply::{AiAutoApplyOperationPlan, apply_operation_plans},
         diff_render,
     };
     use crate::ai::edit::history::{edit_journal, snapshot};
-    use crate::ai::edit::{errors, AiEditState};
+    use crate::ai::edit::{AiEditState, errors};
     use crate::commands::contracts::{
         AiApplyPatchMetadataRequest, AiApplyPatchRequest, AiEditGetDiffRequest,
         AiEditListTimelineRequest, AiEditRestoreSnapshotRequest, AiEditRevertFileRequest,

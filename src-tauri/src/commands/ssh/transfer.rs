@@ -1,11 +1,11 @@
 //! SFTP 传输与远程文件操作命令：目录列举、上传/下载、预览读写、删除、重命名、建目录。
 
+use super::SshConnectionParams;
 use super::connection::open_authenticated_sftp;
 use super::util::{
     decode_remote_preview_text, encode_remote_preview_text, format_remote_permission_from_bits,
     safe_remote_path, truncate_at_utf8_boundary, validate_remote_mutation_name,
 };
-use super::SshConnectionParams;
 use crate::commands::{
     SshDirectoryCreatePayload, SshDirectoryCreateRequest, SshDirectoryEntryPayload,
     SshDirectoryListPayload, SshDirectoryListRequest, SshFileDownloadPayload,
@@ -13,6 +13,7 @@ use crate::commands::{
     SshFileUploadRequest, SshFileWritePayload, SshFileWriteRequest, SshPathDeletePayload,
     SshPathDeleteRequest, SshPathRenamePayload, SshPathRenameRequest,
 };
+use jiff::Timestamp;
 use russh_sftp::{client::SftpSession, protocol::OpenFlags};
 use std::{
     fs as std_fs,
@@ -20,7 +21,6 @@ use std::{
     path::{Path, PathBuf},
     time::Duration,
 };
-use jiff::Timestamp;
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::time::timeout;
 
@@ -101,8 +101,8 @@ pub async fn download_ssh_file(
     payload: SshFileDownloadRequest,
 ) -> Result<SshFileDownloadPayload, String> {
     let params = SshConnectionParams::from_download_request(&payload);
-    let remote = safe_remote_path(&payload.remote_path)
-        .map_err(|e| format!("远程路径不合法：{e}"))?;
+    let remote =
+        safe_remote_path(&payload.remote_path).map_err(|e| format!("远程路径不合法：{e}"))?;
     let local = PathBuf::from(&payload.local_path);
 
     match timeout(SSH_FILE_TRANSFER_TIMEOUT, open_authenticated_sftp(&params)).await {
@@ -181,19 +181,18 @@ async fn download_file_inner(
         .map_err(|e| format!("写入任务异常终止：{e}"))??;
 
     if let Some(e) = read_error {
-    return Err(e);
-}
+        return Err(e);
+    }
 
-// 校验下载字节数，防止静默截断（与上传路径保持一致）。
-if let Some(expected) = expected_size {
-    ensure_expected_transfer_size(written, expected, "下载远程文件")?;
-}
+    // 校验下载字节数，防止静默截断（与上传路径保持一致）。
+    if let Some(expected) = expected_size {
+        ensure_expected_transfer_size(written, expected, "下载远程文件")?;
+    }
 
-let partial_for_rename = partial.clone();
+    let partial_for_rename = partial.clone();
     let target = local_path.to_path_buf();
     tokio::task::spawn_blocking(move || {
-        std_fs::rename(&partial_for_rename, &target)
-            .map_err(|e| format!("重命名本地文件失败：{e}"))
+        std_fs::rename(&partial_for_rename, &target).map_err(|e| format!("重命名本地文件失败：{e}"))
     })
     .await
     .map_err(|e| format!("重命名任务异常终止：{e}"))??;
@@ -207,8 +206,8 @@ pub async fn upload_ssh_file(
     payload: SshFileUploadRequest,
 ) -> Result<SshFileUploadPayload, String> {
     let params = SshConnectionParams::from_upload_request(&payload);
-    let remote = safe_remote_path(&payload.remote_directory)
-        .map_err(|e| format!("远程路径不合法：{e}"))?;
+    let remote =
+        safe_remote_path(&payload.remote_directory).map_err(|e| format!("远程路径不合法：{e}"))?;
     let local = PathBuf::from(&payload.local_path);
     let file_size = std_fs::metadata(&local)
         .map_err(|e| format!("无法获取本地文件信息 {local:?}：{e}"))?
@@ -322,7 +321,11 @@ async fn cleanup_remote_partial(sftp: &SftpSession, remote_path: &str) {
     let _ = sftp.remove_file(&partial).await;
 }
 
-fn ensure_expected_transfer_size(actual: u64, expected: u64, operation: &str) -> Result<(), String> {
+fn ensure_expected_transfer_size(
+    actual: u64,
+    expected: u64,
+    operation: &str,
+) -> Result<(), String> {
     if actual != expected {
         return Err(format!(
             "{operation}大小不一致（预期 {expected} 字节，实际 {actual} 字节）。"
@@ -333,12 +336,10 @@ fn ensure_expected_transfer_size(actual: u64, expected: u64, operation: &str) ->
 
 #[tauri::command]
 #[specta::specta]
-pub async fn read_ssh_file(
-    payload: SshFileReadRequest,
-) -> Result<SshFileReadPayload, String> {
+pub async fn read_ssh_file(payload: SshFileReadRequest) -> Result<SshFileReadPayload, String> {
     let params = SshConnectionParams::from_read_request(&payload);
-    let remote_path = safe_remote_path(&payload.remote_path)
-        .map_err(|e| format!("远程路径不合法：{e}"))?;
+    let remote_path =
+        safe_remote_path(&payload.remote_path).map_err(|e| format!("远程路径不合法：{e}"))?;
 
     match timeout(SSH_FILE_PREVIEW_TIMEOUT, open_authenticated_sftp(&params)).await {
         Ok(Ok(conn)) => {
@@ -375,7 +376,8 @@ async fn read_file_inner(
         .await
         .map_err(|e| format!("无法打开远程文件 {remote_path}：{e}"))?;
 
-    let mut raw: Vec<u8> = Vec::with_capacity(read_limit.min(SFTP_TRANSFER_CHUNK_BYTES as u64) as usize);
+    let mut raw: Vec<u8> =
+        Vec::with_capacity(read_limit.min(SFTP_TRANSFER_CHUNK_BYTES as u64) as usize);
     let mut buf = vec![0u8; SFTP_TRANSFER_CHUNK_BYTES];
     while (raw.len() as u64) < read_limit {
         let remaining = (read_limit - raw.len() as u64) as usize;
@@ -426,12 +428,10 @@ async fn read_file_inner(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn write_ssh_file(
-    payload: SshFileWriteRequest,
-) -> Result<SshFileWritePayload, String> {
+pub async fn write_ssh_file(payload: SshFileWriteRequest) -> Result<SshFileWritePayload, String> {
     let params = SshConnectionParams::from_write_request(&payload);
-    let remote_path = safe_remote_path(&payload.remote_path)
-        .map_err(|e| format!("远程路径不合法：{e}"))?;
+    let remote_path =
+        safe_remote_path(&payload.remote_path).map_err(|e| format!("远程路径不合法：{e}"))?;
     let raw =
         encode_remote_preview_text(&payload.content, &payload.encoding, &payload.line_ending)?;
     let byte_size = raw.len() as u64;
@@ -514,8 +514,8 @@ pub async fn delete_ssh_path(
     payload: SshPathDeleteRequest,
 ) -> Result<SshPathDeletePayload, String> {
     let params = SshConnectionParams::from_delete_request(&payload);
-    let remote_path = safe_remote_path(&payload.remote_path)
-        .map_err(|e| format!("远程路径不合法：{e}"))?;
+    let remote_path =
+        safe_remote_path(&payload.remote_path).map_err(|e| format!("远程路径不合法：{e}"))?;
     validate_remote_mutation_name(&remote_path)?;
 
     match timeout(SSH_MUTATION_TIMEOUT, open_authenticated_sftp(&params)).await {
@@ -564,10 +564,8 @@ pub async fn rename_ssh_path(
     payload: SshPathRenameRequest,
 ) -> Result<SshPathRenamePayload, String> {
     let params = SshConnectionParams::from_rename_request(&payload);
-    let old = safe_remote_path(&payload.remote_path)
-        .map_err(|e| format!("原路径不合法：{e}"))?;
-    let new = safe_remote_path(&payload.new_name)
-        .map_err(|e| format!("新路径不合法：{e}"))?;
+    let old = safe_remote_path(&payload.remote_path).map_err(|e| format!("原路径不合法：{e}"))?;
+    let new = safe_remote_path(&payload.new_name).map_err(|e| format!("新路径不合法：{e}"))?;
     validate_remote_mutation_name(&old)?;
     validate_remote_mutation_name(&new)?;
 
@@ -598,8 +596,8 @@ pub async fn create_ssh_directory(
     payload: SshDirectoryCreateRequest,
 ) -> Result<SshDirectoryCreatePayload, String> {
     let params = SshConnectionParams::from_create_directory_request(&payload);
-    let remote_path = safe_remote_path(&payload.remote_directory)
-        .map_err(|e| format!("远程路径不合法：{e}"))?;
+    let remote_path =
+        safe_remote_path(&payload.remote_directory).map_err(|e| format!("远程路径不合法：{e}"))?;
 
     match timeout(SSH_MUTATION_TIMEOUT, open_authenticated_sftp(&params)).await {
         Ok(Ok(conn)) => {

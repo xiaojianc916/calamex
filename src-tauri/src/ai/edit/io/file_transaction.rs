@@ -1,9 +1,9 @@
-﻿use jiff::Timestamp;
 use crate::ai::edit::errors;
 use crate::ai::edit::history::edit_journal;
 use crate::ai::edit::io::{atomic_write, storage_lock};
 use crate::ai::edit::security::path_security;
 use crate::commands::contracts::AiEditOperationPayload;
+use jiff::Timestamp;
 
 use fjall::{Database, Keyspace, KeyspaceCreateOptions, PersistMode};
 use serde::{Deserialize, Serialize};
@@ -82,10 +82,7 @@ struct PreparedFileTransaction {
 impl PreparedFileTransaction {
     fn new(storage_root: &Path, plan: FileTransactionPlan) -> Result<Self, String> {
         let now = Timestamp::now();
-        let id = format!(
-            "ai-edit-tx-{}",
-            now.as_nanosecond()
-        );
+        let id = format!("ai-edit-tx-{}", now.as_nanosecond());
         let entries = plan
             .actions
             .into_iter()
@@ -339,14 +336,15 @@ fn remove_staging_dir(storage_root: &Path, transaction_id: &str) -> Result<(), S
 
 fn ensure_parent_dir(path: &Path) -> Result<(), String> {
     if let Some(parent) = path.parent()
-        && !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent).map_err(|error| {
-                errors::transaction_failed(format!(
-                    "创建事务目标目录失败（{}）：{error}",
-                    parent.display()
-                ))
-            })?;
-        }
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent).map_err(|error| {
+            errors::transaction_failed(format!(
+                "创建事务目标目录失败（{}）：{error}",
+                parent.display()
+            ))
+        })?;
+    }
     Ok(())
 }
 
@@ -359,8 +357,8 @@ fn path_to_string(path: &Path) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        commit, recover_pending, update_status, FileTransactionAction, FileTransactionPlan,
-        TransactionStatus,
+        FileTransactionAction, FileTransactionPlan, TransactionStatus, commit, recover_pending,
+        update_status,
     };
     use crate::ai::edit::history::edit_journal;
     use crate::commands::contracts::AiEditOperationPayload;

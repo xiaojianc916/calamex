@@ -6,13 +6,8 @@
 //! - 跨平台：Linux (inotify) / macOS (FSEvents) / Windows (ReadDirectoryChangesW)
 
 use arc_swap::ArcSwapOption;
-use notify::{
-    event::ModifyKind,
-    EventKind, RecommendedWatcher, RecursiveMode,
-};
-use notify_debouncer_full::{
-    new_debouncer, DebounceEventResult, Debouncer, FileIdMap,
-};
+use notify::{EventKind, RecommendedWatcher, RecursiveMode, event::ModifyKind};
+use notify_debouncer_full::{DebounceEventResult, Debouncer, FileIdMap, new_debouncer};
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, sync::Arc, time::Duration};
 use tauri::AppHandle;
@@ -60,7 +55,6 @@ pub struct WorkspaceFsEvent {
     /// 监听根目录的绝对路径
     pub root_path: String,
 }
-
 
 impl tauri_specta::Event for WorkspaceFsEvent {
     const NAME: &'static str = "workspace-fs-event";
@@ -157,9 +151,7 @@ pub fn start_workspace_watching(
 /// 重复调用、未启动时调用都是安全的（幂等）。
 #[tauri::command]
 #[specta::specta]
-pub fn stop_workspace_watching(
-    state: tauri::State<'_, WorkspaceWatcher>,
-) -> Result<(), String> {
+pub fn stop_workspace_watching(state: tauri::State<'_, WorkspaceWatcher>) -> Result<(), String> {
     state.0.store(None);
     log::info!("工作区文件监听已停止");
     Ok(())
@@ -169,11 +161,7 @@ pub fn stop_workspace_watching(
 // 事件处理
 // ============================================================================
 
-fn handle_debounced_events(
-    result: DebounceEventResult,
-    app: &AppHandle,
-    root_path: &str,
-) {
+fn handle_debounced_events(result: DebounceEventResult, app: &AppHandle, root_path: &str) {
     let events = match result {
         Ok(events) => events,
         Err(errors) => {

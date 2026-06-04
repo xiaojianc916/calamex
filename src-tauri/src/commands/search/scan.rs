@@ -8,8 +8,8 @@ use std::{
     fs,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc, Mutex, OnceLock,
+        atomic::{AtomicBool, Ordering},
     },
 };
 use tree_sitter::{Node, Parser};
@@ -165,9 +165,10 @@ pub(super) fn workspace_cache_symbols(root: &Path) -> Result<Arc<Vec<SymbolEntry
             .lock()
             .map_err(|_| "搜索索引状态已损坏，请重启应用后重试。".to_string())?;
         if let Some(cache) = guard.get(&cache_key)
-            && let Some(symbols) = &cache.symbols {
-                return Ok(Arc::clone(symbols));
-            }
+            && let Some(symbols) = &cache.symbols
+        {
+            return Ok(Arc::clone(symbols));
+        }
     }
 
     // 确保文件列表已建立；dirty 时这里会刷新文件列表并清空旧的符号缓存。
@@ -262,14 +263,16 @@ fn is_unsearchable_workspace_path(root: &Path, path: &Path, is_dir: bool) -> boo
 
 pub(super) fn passes_path_filters(relative_path: &str, filters: &PathFilters) -> bool {
     if let Some(include) = &filters.include
-        && !include.is_match(relative_path) {
-            return false;
-        }
+        && !include.is_match(relative_path)
+    {
+        return false;
+    }
 
     if let Some(exclude) = &filters.exclude
-        && exclude.is_match(relative_path) {
-            return false;
-        }
+        && exclude.is_match(relative_path)
+    {
+        return false;
+    }
 
     true
 }
@@ -361,16 +364,16 @@ fn collect_symbols_from_node(
 ) {
     if node.kind() == "function_definition"
         && let Some(name_node) = node.child_by_field_name("name")
-            && let Ok(name) = name_node.utf8_text(source)
-                && let Ok(line_number) = count_to_u32(name_node.start_position().row + 1, "行号")
-                {
-                    symbols.push(SymbolEntry {
-                        path: file.path.clone(),
-                        relative_path: file.relative_path.clone(),
-                        name: name.to_string(),
-                        line_number,
-                    });
-                }
+        && let Ok(name) = name_node.utf8_text(source)
+        && let Ok(line_number) = count_to_u32(name_node.start_position().row + 1, "行号")
+    {
+        symbols.push(SymbolEntry {
+            path: file.path.clone(),
+            relative_path: file.relative_path.clone(),
+            name: name.to_string(),
+            line_number,
+        });
+    }
 
     for child_index in 0..node.named_child_count() {
         if let Some(child) = node.named_child(child_index as u32) {

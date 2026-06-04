@@ -11,9 +11,9 @@ use std::{
 
 use crate::terminal::{
     snapshot::{
-        contains_alt_screen_switch, is_likely_interactive_resize_repaint_frame,
-        resolve_alt_screen_state_after_data, trim_terminal_snapshot,
-        TerminalInteractiveVisualState,
+        TerminalInteractiveVisualState, contains_alt_screen_switch,
+        is_likely_interactive_resize_repaint_frame, resolve_alt_screen_state_after_data,
+        trim_terminal_snapshot,
     },
     types::TerminalState,
     wsl_pty::{LocalWslPtyHandle, LocalWslRunHandle},
@@ -83,7 +83,10 @@ fn lock_terminal_snapshots(
         .map_err(|_| "终端快照状态已损坏。".to_string())
 }
 
-pub(super) fn get_terminal_snapshot(state: &TerminalSessionState, session_id: &str) -> Result<String, String> {
+pub(super) fn get_terminal_snapshot(
+    state: &TerminalSessionState,
+    session_id: &str,
+) -> Result<String, String> {
     let snapshots = lock_terminal_snapshots(state)?;
     Ok(snapshots.get(session_id).cloned().unwrap_or_default())
 }
@@ -98,7 +101,10 @@ pub(super) fn set_terminal_snapshot(
     Ok(())
 }
 
-pub(super) fn remove_terminal_snapshot(state: &TerminalSessionState, session_id: &str) -> Result<(), String> {
+pub(super) fn remove_terminal_snapshot(
+    state: &TerminalSessionState,
+    session_id: &str,
+) -> Result<(), String> {
     let mut snapshots = lock_terminal_snapshots(state)?;
     snapshots.remove(session_id);
     Ok(())
@@ -131,7 +137,10 @@ pub(super) fn remove_terminal_interactive_visual_state(
     Ok(())
 }
 
-pub(super) fn mark_terminal_resize_repaint_suppression(state: &TerminalSessionState, session_id: &str) {
+pub(super) fn mark_terminal_resize_repaint_suppression(
+    state: &TerminalSessionState,
+    session_id: &str,
+) {
     let Ok(mut visual_states) = state.interactive_visual.lock() else {
         return;
     };
@@ -322,7 +331,9 @@ pub(super) fn terminate_terminal_session(session: &TerminalSession) -> Result<()
     session.handle.close().map_err(|error| error.to_string())
 }
 
-pub(super) fn resolve_terminal_start_directory(path: Option<&str>) -> Result<Option<PathBuf>, String> {
+pub(super) fn resolve_terminal_start_directory(
+    path: Option<&str>,
+) -> Result<Option<PathBuf>, String> {
     if let Some(path) = path {
         let directory = PathBuf::from(path)
             .canonicalize()
@@ -335,7 +346,10 @@ pub(super) fn resolve_terminal_start_directory(path: Option<&str>) -> Result<Opt
     Ok(None)
 }
 
-pub(super) fn remove_interactive_terminal_after_exit(state: &TerminalSessionState, session_id: &str) {
+pub(super) fn remove_interactive_terminal_after_exit(
+    state: &TerminalSessionState,
+    session_id: &str,
+) {
     if let Ok(mut sessions) = state.sessions.lock() {
         sessions.remove(session_id);
     }

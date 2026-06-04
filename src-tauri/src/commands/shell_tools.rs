@@ -1,6 +1,6 @@
 use super::{
-    configure_std_command_for_background, configure_tokio_command_for_background,
     AnalyzeScriptPayload, AnalyzeScriptRequest, FormatScriptPayload, FormatScriptRequest,
+    configure_std_command_for_background, configure_tokio_command_for_background,
 };
 use std::{
     env,
@@ -118,9 +118,10 @@ fn detect_shellcheck_dialect(
         .unwrap_or_default()
         .to_ascii_lowercase();
     if first_line.starts_with("#!")
-        && let Some(shell) = shell_from_shebang(content) {
-            return shell;
-        }
+        && let Some(shell) = shell_from_shebang(content)
+    {
+        return shell;
+    }
 
     let inferred_name = infer_script_name(path, name);
 
@@ -146,11 +147,12 @@ fn detect_shellcheck_dialect(
 pub(crate) fn bundled_resource_roots() -> Vec<PathBuf> {
     let mut roots = Vec::new();
     if let Ok(exe) = env::current_exe()
-        && let Some(dir) = exe.parent() {
-            roots.push(dir.join("resources-bundle"));
-            roots.push(dir.join("resources").join("resources-bundle"));
-            roots.push(dir.to_path_buf());
-        }
+        && let Some(dir) = exe.parent()
+    {
+        roots.push(dir.join("resources-bundle"));
+        roots.push(dir.join("resources").join("resources-bundle"));
+        roots.push(dir.to_path_buf());
+    }
     roots
 }
 
@@ -250,7 +252,7 @@ async fn run_shfmt(
             return Err(format!(
                 "shfmt 格式化超时（超过 {} 秒）。",
                 SHFMT_TIMEOUT.as_secs()
-            ))
+            ));
         }
     };
 

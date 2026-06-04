@@ -1,5 +1,5 @@
 use super::config::{
-    build_provider_connection_candidate, save_connected_model, AiProviderConnectionCandidate,
+    AiProviderConnectionCandidate, build_provider_connection_candidate, save_connected_model,
 };
 use super::*;
 use crate::agent_sidecar;

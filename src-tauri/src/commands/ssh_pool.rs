@@ -32,14 +32,14 @@
 
 use std::collections::HashMap;
 use std::ffi::OsStr;
-use std::sync::{Arc, LazyLock};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
 use russh::client::Handle;
 use tokio::sync::Mutex;
 
-use super::ssh::{connect_and_auth, SshClientHandler, SshConnectionParams};
+use super::ssh::{SshClientHandler, SshConnectionParams, connect_and_auth};
 
 // ---- constants ----
 

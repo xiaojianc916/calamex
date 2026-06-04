@@ -108,7 +108,7 @@ fn preserve_cr(original_line: &str, replacement: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{redact_text, REDACTION_PLACEHOLDER};
+    use super::{REDACTION_PLACEHOLDER, redact_text};
 
     #[test]
     fn keeps_clean_text_unchanged() {

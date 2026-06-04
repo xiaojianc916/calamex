@@ -17,8 +17,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{
-    atomic::{AtomicU64, Ordering},
     Mutex, OnceLock,
+    atomic::{AtomicU64, Ordering},
 };
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -33,9 +33,7 @@ mod tests;
 
 pub use config::{clear_credentials, get_config, save_config, save_credentials};
 pub use connection::{connect_provider, test_provider, test_provider_config};
-pub use conversation::{
-    chat_stream, classify_task, generate_conversation_title, inline_complete,
-};
+pub use conversation::{chat_stream, classify_task, generate_conversation_title, inline_complete};
 pub use suggestions::{generate_suggestion_pool, get_suggestion_pool_cache};
 
 const MAX_AI_MESSAGES: usize = 32;
@@ -455,8 +453,7 @@ fn normalize_runtime_config(mut config: AiRuntimeConfig) -> AiRuntimeConfig {
 
     config.selected_model = selected_model;
     config.base_url = base_url;
-    config.narrator = normalize_model_endpoint_config(config.narrator)
-        .unwrap_or_default();
+    config.narrator = normalize_model_endpoint_config(config.narrator).unwrap_or_default();
 
     config
 }
@@ -497,10 +494,7 @@ fn persist_config(config: &AiRuntimeConfig) -> Result<(), String> {
     }
 
     let content = serde_json::to_string_pretty(config).map_err(|error| {
-        errors::error(
-            "AI_RESPONSE_INVALID",
-            format!("AI 配置序列化失败：{error}"),
-        )
+        errors::error("AI_RESPONSE_INVALID", format!("AI 配置序列化失败：{error}"))
     })?;
 
     fs::write(path, content).map_err(|error| {

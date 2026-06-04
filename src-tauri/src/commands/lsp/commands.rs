@@ -7,7 +7,7 @@ use tauri::{AppHandle, Emitter};
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
     process::{ChildStdin, Command},
-    sync::{oneshot, Mutex},
+    sync::{Mutex, oneshot},
     time::timeout,
 };
 
@@ -210,8 +210,7 @@ async fn stop_inner(session: &Arc<Mutex<LspSession>>, pending: &PendingMap) {
         let shutdown_id = i64::MAX;
         pending.lock().await.insert(shutdown_id, resp_tx);
 
-        let shutdown =
-            frame_message(&jsonrpc_request(shutdown_id, "shutdown", Value::Null));
+        let shutdown = frame_message(&jsonrpc_request(shutdown_id, "shutdown", Value::Null));
         let _ = write_framed(&stdin, &shutdown).await;
 
         // 最多等 500ms
@@ -370,15 +369,12 @@ fn parse_completion(result: Value) -> Vec<LspCompletionItem> {
             insert_text: it["insertText"].as_str().map(String::from),
             kind: it["kind"].as_u64().map(|n| n as u32),
             detail: it["detail"].as_str().map(String::from),
-            documentation: it["documentation"]
-                .as_str()
-                .map(String::from)
-                .or_else(|| {
-                    it["documentation"]
-                        .get("value")
-                        .and_then(|v| v.as_str())
-                        .map(String::from)
-                }),
+            documentation: it["documentation"].as_str().map(String::from).or_else(|| {
+                it["documentation"]
+                    .get("value")
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+            }),
         })
         .collect()
 }
@@ -405,7 +401,9 @@ pub async fn lsp_hover(
         Duration::from_secs(1),
     )
     .await?;
-    Ok(parse_hover(resp.get("result").cloned().unwrap_or(Value::Null)))
+    Ok(parse_hover(
+        resp.get("result").cloned().unwrap_or(Value::Null),
+    ))
 }
 
 fn parse_hover(result: Value) -> Option<LspHoverResult> {

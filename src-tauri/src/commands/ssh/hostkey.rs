@@ -9,8 +9,7 @@ use super::DEFAULT_SSH_PORT;
 use russh::keys::HashAlg;
 use std::{
     collections::HashMap,
-    env,
-    fs as std_fs,
+    env, fs as std_fs,
     path::{Path, PathBuf},
     sync::{LazyLock, Mutex},
 };
@@ -56,7 +55,11 @@ pub(crate) enum HostKeyVerdict {
 }
 
 /// Trust-on-first-use host-key verification backed by the user's `known_hosts`.
-pub(crate) fn verify_known_host(host: &str, port: u16, key: &russh::keys::PublicKey) -> HostKeyVerdict {
+pub(crate) fn verify_known_host(
+    host: &str,
+    port: u16,
+    key: &russh::keys::PublicKey,
+) -> HostKeyVerdict {
     match russh::keys::check_known_hosts(host, port, key) {
         Ok(true) => HostKeyVerdict::Accept,
         Ok(false) => {
@@ -222,7 +225,11 @@ mod tests {
             "example.com",
             22,
         ));
-        assert!(!known_hosts_line_targets_host("# a comment", "example.com", 22));
+        assert!(!known_hosts_line_targets_host(
+            "# a comment",
+            "example.com",
+            22
+        ));
         assert!(known_hosts_line_targets_host(
             "@cert-authority example.com ssh-ed25519 AAAAC3NzaC1lZDI1",
             "example.com",

@@ -7,10 +7,9 @@ use crate::terminal::{
     dispatch::build_terminal_run_command_for_local_wsl,
     types::TerminalState,
     visual::{
-        build_terminal_ansi_reset, build_terminal_run_separator,
-        extract_prompt_from_terminal_snapshot, TerminalRunVisualTracker,
         TERMINAL_ANSI_EXIT_ALT_SCREEN, TERMINAL_ANSI_RESET_SCROLL_REGION_PRESERVE_CURSOR,
-        TERMINAL_ANSI_SAFE_RESET,
+        TERMINAL_ANSI_SAFE_RESET, TerminalRunVisualTracker, build_terminal_ansi_reset,
+        build_terminal_run_separator, extract_prompt_from_terminal_snapshot,
     },
     wsl as terminal_wsl,
 };
@@ -19,11 +18,11 @@ use super::events::{
     next_terminal_data_seq, next_terminal_run_chunk_seq, sanitize_terminal_run_chunk,
 };
 use super::state::{
-    append_terminal_snapshot, buffer_pending_switch_input, clear_active_terminal_run,
-    get_active_terminal_run_input_target, get_terminal_snapshot,
-    mark_terminal_resize_repaint_suppression, set_terminal_snapshot,
+    ActiveRunInputTarget, TerminalSessionState, append_terminal_snapshot,
+    buffer_pending_switch_input, clear_active_terminal_run, get_active_terminal_run_input_target,
+    get_terminal_snapshot, mark_terminal_resize_repaint_suppression, set_terminal_snapshot,
     should_skip_snapshot_for_interactive_resize_repaint, take_and_prepend_pending_switch_input,
-    try_mark_active_terminal_run, ActiveRunInputTarget, TerminalSessionState,
+    try_mark_active_terminal_run,
 };
 use super::to_wsl_path;
 
@@ -104,9 +103,8 @@ fn pending_switch_input_is_buffered_and_prepended_not_dropped() {
     buffer_pending_switch_input(&state, "session-1", "ab").expect("buffer ok");
     buffer_pending_switch_input(&state, "session-1", "cd").expect("buffer ok");
 
-    let combined =
-        take_and_prepend_pending_switch_input(&state, "session-1", "EF".to_string())
-            .expect("take ok");
+    let combined = take_and_prepend_pending_switch_input(&state, "session-1", "EF".to_string())
+        .expect("take ok");
     assert_eq!(combined, "abcdEF");
 
     let again = take_and_prepend_pending_switch_input(&state, "session-1", "X".to_string())

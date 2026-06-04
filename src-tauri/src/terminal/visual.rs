@@ -1,4 +1,4 @@
-﻿use std::{
+use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -120,9 +120,7 @@ pub fn current_visual_tracker(
     match tracker.lock() {
         Ok(guard) => *guard,
         Err(err) => {
-            log::error!(
-                "TerminalRunVisualTracker mutex poisoned in current_visual_tracker: {err}"
-            );
+            log::error!("TerminalRunVisualTracker mutex poisoned in current_visual_tracker: {err}");
             TerminalRunVisualTracker::default()
         }
     }
@@ -132,9 +130,7 @@ pub fn next_visual_run_seq(tracker: &Arc<Mutex<TerminalRunVisualTracker>>) -> u6
     match tracker.lock() {
         Ok(mut guard) => guard.allocate_seq(),
         Err(err) => {
-            log::error!(
-                "TerminalRunVisualTracker mutex poisoned in next_visual_run_seq: {err}"
-            );
+            log::error!("TerminalRunVisualTracker mutex poisoned in next_visual_run_seq: {err}");
             VISUAL_RUN_SEQ_LOCK_FAILED
         }
     }
@@ -172,9 +168,8 @@ pub fn build_terminal_run_separator(
         None => "exit ?".to_string(),
     };
     let duration_secs = duration.as_secs_f64();
-    let mut text = format!(
-        "{prefix}──── run #{visual_seq} · {exit_label} · {duration_secs:.1}s ────\r\n"
-    );
+    let mut text =
+        format!("{prefix}──── run #{visual_seq} · {exit_label} · {duration_secs:.1}s ────\r\n");
     if let Some(prompt) = prompt {
         text.push_str(&prompt);
     }

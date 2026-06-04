@@ -2244,7 +2244,8 @@ describe('useAiAssistant streaming integration', () => {
           seq: 2,
           event: {
             type: 'message_delta',
-            text: expectedLiveText,
+            // message_delta 是增量片段；缓冲层按阶段拼成累计文本。
+            text: '，第二段实时回答',
             phase: 'final',
           },
         });
@@ -2809,7 +2810,8 @@ describe('useAiAssistant streaming integration', () => {
           seq: 1,
           event: {
             type: 'message_delta',
-            text: secondChunk,
+            // 增量片段：仅携带相对 firstChunk 新增的部分，由缓冲层拼回累计文本。
+            text: secondChunk.slice(firstChunk.length),
             phase: 'final',
           },
         });

@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::{
     process::ChildStdin,
-    sync::{oneshot, Mutex},
+    sync::{Mutex, oneshot},
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]

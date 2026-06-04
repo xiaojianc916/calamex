@@ -277,7 +277,8 @@ fn apply_retention_policy_with_policy(
     let stored_operations = edit_journal::list_operations(storage_root)?;
     let pin_records = pins::list_pin_records(storage_root)?;
     let pin_index = pins::build_pin_index(&pin_records);
-    let metadata_cutoff = snapshot_policy.now - jiff::SignedDuration::from_secs(OPERATION_METADATA_TTL_DAYS * 86400);
+    let metadata_cutoff =
+        snapshot_policy.now - jiff::SignedDuration::from_secs(OPERATION_METADATA_TTL_DAYS * 86400);
     let retained_operations = stored_operations
         .iter()
         .filter(|operation| {
@@ -316,14 +317,14 @@ fn apply_retention_policy_with_policy(
             .map_err(|_| errors::state_poisoned())?;
         guard.retain(|entry| match entry {
             AiEditTimelineEntryPayload::Snapshot(snapshot) => {
-    !snapshot_outcome.removed_snapshot_ids.contains(&snapshot.id)
-        && (referenced_snapshot_ids.contains(&snapshot.id)
-            || snapshot.pinned
-            || (snapshot.content_available
-                && !snapshot_outcome
-                    .downgraded_snapshot_ids
-                    .contains(&snapshot.id)))
-}
+                !snapshot_outcome.removed_snapshot_ids.contains(&snapshot.id)
+                    && (referenced_snapshot_ids.contains(&snapshot.id)
+                        || snapshot.pinned
+                        || (snapshot.content_available
+                            && !snapshot_outcome
+                                .downgraded_snapshot_ids
+                                .contains(&snapshot.id)))
+            }
             AiEditTimelineEntryPayload::Operation(operation) => !journal_outcome
                 .removed_operation_ids
                 .contains(&operation.id),
@@ -515,14 +516,14 @@ fn ensure_write_authorized(
             (Some(expected_task_id), None) => Err(errors::auth_blocked(format!(
                 "当前仅允许任务 {expected_task_id} 自动写盘，本次 {action} 缺少 taskId。"
             ))),
-            (Some(expected_task_id), Some(actual_task_id)) if expected_task_id == actual_task_id => {
+            (Some(expected_task_id), Some(actual_task_id))
+                if expected_task_id == actual_task_id =>
+            {
                 Ok(())
             }
-            (Some(expected_task_id), Some(actual_task_id)) => Err(errors::auth_blocked(
-                format!(
-                    "当前仅允许任务 {expected_task_id} 自动写盘，本次 {action} 属于任务 {actual_task_id}。"
-                ),
-            )),
+            (Some(expected_task_id), Some(actual_task_id)) => Err(errors::auth_blocked(format!(
+                "当前仅允许任务 {expected_task_id} 自动写盘，本次 {action} 属于任务 {actual_task_id}。"
+            ))),
         },
     }
 }
@@ -586,7 +587,7 @@ fn parse_rfc3339_utc(value: &str) -> Option<Timestamp> {
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_retention_policy_with_policy, create_snapshot, AiEditState};
+    use super::{AiEditState, apply_retention_policy_with_policy, create_snapshot};
     use crate::ai::edit::history::snapshot;
     use crate::commands::contracts::AiEditCreateSnapshotRequest;
     use crate::commands::contracts::AiEditTimelineEntryPayload;

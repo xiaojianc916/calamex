@@ -385,6 +385,6 @@ describe('tauriService', () => {
       status: 'ready',
       engine: 'mastra',
     });
-    expect(invokeMock).toHaveBeenCalledWith('agent_sidecar_restart', undefined);
+    expect(invokeMock).toHaveBeenCalledWith('agent_sidecar_restart');
   });
 });

@@ -49,26 +49,28 @@ impl SshConfigHostBuilder {
 
     fn flush(&mut self, hosts: &mut Vec<SshConfigHostPayload>) {
         if let Some(name) = self.name.take()
-            && !name.contains('*') && !name.contains('!') {
-                let host = if self.host.is_empty() || self.has_proxyjump {
-                    if self.host.is_empty() {
-                        name.clone()
-                    } else {
-                        self.host.clone()
-                    }
+            && !name.contains('*')
+            && !name.contains('!')
+        {
+            let host = if self.host.is_empty() || self.has_proxyjump {
+                if self.host.is_empty() {
+                    name.clone()
                 } else {
                     self.host.clone()
-                };
-                hosts.push(SshConfigHostPayload {
-                    id: name.clone(),
-                    name,
-                    username: std::mem::take(&mut self.username),
-                    host,
-                    port: self.port,
-                    identity_path: self.identity.take(),
-                    last_used_label: SSH_CONFIG_IMPORTED_LABEL.into(),
-                });
-            }
+                }
+            } else {
+                self.host.clone()
+            };
+            hosts.push(SshConfigHostPayload {
+                id: name.clone(),
+                name,
+                username: std::mem::take(&mut self.username),
+                host,
+                port: self.port,
+                identity_path: self.identity.take(),
+                last_used_label: SSH_CONFIG_IMPORTED_LABEL.into(),
+            });
+        }
         self.username.clear();
         self.host.clear();
         self.port = DEFAULT_SSH_PORT;
@@ -101,10 +103,9 @@ fn parse_ssh_config_hosts(content: &str) -> Vec<SshConfigHostPayload> {
                 cur.flush(&mut hosts);
                 cur.name = concrete_host_alias(&value);
             }
-            "hostname"
-                if !value.contains('*') => {
-                    cur.host = value;
-                }
+            "hostname" if !value.contains('*') => {
+                cur.host = value;
+            }
             "user" => cur.username = value,
             "port" => {
                 if let Ok(p) = value.parse::<u16>() {

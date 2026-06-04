@@ -13,9 +13,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use portable_pty::{
-    native_pty_system, Child, ChildKiller, CommandBuilder, MasterPty, PtySize,
-};
+use portable_pty::{Child, ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use thiserror::Error;
 
 use super::local_wsl_protocol::{
@@ -366,7 +364,9 @@ where
                         }
                     }
                     Err(error) => {
-                        log::warn!("WSL 交互终端读线程异常退出（session_id={session_id}）：{error}");
+                        log::warn!(
+                            "WSL 交互终端读线程异常退出（session_id={session_id}）：{error}"
+                        );
                         break;
                     }
                 }
@@ -488,11 +488,12 @@ fn materialize_wsl_script(execution_path: &str, content: &str) -> Result<(), Loc
         .spawn()
         .map_err(|error| LocalWslPtyError::Open(format!("写入临时脚本失败：{error}")))?;
     if let Some(mut stdin) = child.stdin.take()
-        && let Err(error) = stdin.write_all(content.as_bytes()) {
-            // 写 stdin 失败时主动终止子进程，避免遗留挂起的 wsl.exe。
-            let _ = child.kill();
-            return Err(LocalWslPtyError::Open(format!("写入临时脚本失败：{error}")));
-        }
+        && let Err(error) = stdin.write_all(content.as_bytes())
+    {
+        // 写 stdin 失败时主动终止子进程，避免遗留挂起的 wsl.exe。
+        let _ = child.kill();
+        return Err(LocalWslPtyError::Open(format!("写入临时脚本失败：{error}")));
+    }
     let output = child
         .wait_with_output()
         .map_err(|error| LocalWslPtyError::Open(format!("写入临时脚本失败：{error}")))?;

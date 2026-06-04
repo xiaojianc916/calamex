@@ -150,8 +150,7 @@ where
     }
 
     if has_non_whitespace_bytes(&buffer) {
-        let line =
-            decode_sidecar_stream_line_bytes(std::mem::take(&mut buffer), endpoint)?;
+        let line = decode_sidecar_stream_line_bytes(std::mem::take(&mut buffer), endpoint)?;
 
         if let Some(response) =
             consume_orchestrate_stream_line(app, session_id, &mut seq, &line, endpoint)?
@@ -196,8 +195,7 @@ pub async fn orchestrate_resume(
     // synthesize one only to label the emitted `ai:sidecar-stream` events so the
     // post-approval phases stream with the same UI contract as the initial run.
     let mut session_id_slot: Option<String> = None;
-    let session_id =
-        ensure_request_session_id(&mut session_id_slot, "sidecar-orchestrate-resume");
+    let session_id = ensure_request_session_id(&mut session_id_slot, "sidecar-orchestrate-resume");
     post_orchestrate_streaming(
         &app,
         ORCHESTRATE_RESUME_STREAM_ENDPOINT,

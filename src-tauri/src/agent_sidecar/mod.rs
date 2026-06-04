@@ -15,8 +15,8 @@ use crate::commands::contracts::{
     AgentSidecarModelConfigPayload, AgentSidecarPlanApproveRequest, AgentSidecarPlanFinishRequest,
     AgentSidecarPlanQueryRequest, AgentSidecarPlanRejectRequest, AgentSidecarPlanReplanRequest,
     AgentSidecarPlanRequest, AgentSidecarPlanValidateRequest, AgentSidecarResponsePayload,
-    AgentSidecarWarmupPayload, AgentSidecarWarmupRequest,
-    AiWebFetchInput, AiWebFetchPayload, AiWebSearchInput, AiWebSearchPayload,
+    AgentSidecarWarmupPayload, AgentSidecarWarmupRequest, AiWebFetchInput, AiWebFetchPayload,
+    AiWebSearchInput, AiWebSearchPayload,
 };
 
 mod orchestrate;
@@ -94,7 +94,9 @@ enum AgentSidecarStreamFrame {
 }
 
 fn configured_base_url() -> String {
-    canonicalize_local_base_url(normalize_base_url(env::var(SIDECAR_URL_ENV).ok().as_deref()))
+    canonicalize_local_base_url(normalize_base_url(
+        env::var(SIDECAR_URL_ENV).ok().as_deref(),
+    ))
 }
 
 /// 默认本地 sidecar 的 localhost / [::1] 写法统一规整为 127.0.0.1。
@@ -247,10 +249,7 @@ where
 }
 
 fn create_sidecar_session_id(prefix: &str) -> String {
-    format!(
-        "{prefix}-{}",
-        { jiff::Timestamp::now().as_nanosecond() }
-    )
+    format!("{prefix}-{}", { jiff::Timestamp::now().as_nanosecond() })
 }
 
 fn ensure_request_session_id(session_id: &mut Option<String>, prefix: &str) -> String {
@@ -295,9 +294,10 @@ pub fn answer_delta_text(event: &serde_json::Value) -> Option<String> {
     }
 
     if let Some(phase) = event.get("phase").and_then(|value| value.as_str())
-        && phase != "final" {
-            return None;
-        }
+        && phase != "final"
+    {
+        return None;
+    }
 
     event
         .get("text")
@@ -845,7 +845,10 @@ fn spawn_default_sidecar() -> Result<Child, String> {
         .stdout(sidecar_stdout)
         .stderr(sidecar_stderr)
         .env("AGENT_SIDECAR_PORT", "39871")
-        .env("NODE_COMPILE_CACHE", sidecar_runtime_dir().join(".node-compile-cache"));
+        .env(
+            "NODE_COMPILE_CACHE",
+            sidecar_runtime_dir().join(".node-compile-cache"),
+        );
 
     inject_sidecar_dotenv_key_if_present(&mut command, &sidecar_root, "TAVILY_API_KEY");
     inject_user_env_if_present(&mut command, "TAVILY_API_KEY");
@@ -894,9 +897,10 @@ fn is_crashed_sidecar_error(error: &str) -> bool {
 
 fn resolve_sidecar_root() -> Result<PathBuf, String> {
     if let Some(path) = env_or_user_env(SIDECAR_ROOT_ENV).map(PathBuf::from)
-        && path.is_dir() {
-            return Ok(path);
-        }
+        && path.is_dir()
+    {
+        return Ok(path);
+    }
 
     // 随包优先：安装包内 resources-bundle/agent-sidecar（含 dist/server.js 与 node_modules）。
     // 与 shell_tools 的 shellcheck/shfmt 解析策略保持一致：随包优先 → 源码树兜底。
@@ -925,9 +929,10 @@ fn resolve_sidecar_root() -> Result<PathBuf, String> {
 
 fn resolve_node_executable() -> Result<PathBuf, String> {
     if let Some(path) = env_or_user_env(NODE_EXE_ENV).map(PathBuf::from)
-        && path.is_file() {
-            return Ok(path);
-        }
+        && path.is_file()
+    {
+        return Ok(path);
+    }
 
     // 随包优先：安装包内 resources-bundle/node/node.exe（目标机无系统 Node 也能运行 sidecar）。
     for root in crate::commands::shell_tools::bundled_resource_roots() {
@@ -984,9 +989,10 @@ fn inject_uvx_path(command: &mut Command) {
 
 fn resolve_windows_uvx_path() -> Option<PathBuf> {
     if let Some(path) = env_or_user_env(MCP_UVX_PATH_ENV).map(PathBuf::from)
-        && path.is_file() {
-            return Some(path);
-        }
+        && path.is_file()
+    {
+        return Some(path);
+    }
 
     windows_uvx_candidates()
         .into_iter()
@@ -1368,15 +1374,14 @@ pub async fn web_fetch(payload: AiWebFetchInput) -> Result<AiWebFetchPayload, St
 #[cfg(test)]
 mod tests {
     use super::{
-        answer_delta_text, build_sidecar_url, canonicalize_local_base_url,
-        clamp_startup_timeout_seconds, classify_sidecar_health,
-        drain_complete_sidecar_stream_lines, has_non_whitespace_bytes,
-        inject_sidecar_dotenv_key_if_present, is_default_local_sidecar_url,
-        is_retryable_narrator_sidecar_error, model_provider_id, normalize_base_url,
-        parse_netstat_listening_pids, sidecar_runtime_dir_from, SidecarHealthProbePayload,
-        SidecarHealthStatus, DEFAULT_SIDECAR_URL, SIDECAR_STARTUP_TIMEOUT_DEFAULT_SECONDS,
+        DEFAULT_SIDECAR_URL, SIDECAR_STARTUP_TIMEOUT_DEFAULT_SECONDS,
         SIDECAR_STARTUP_TIMEOUT_MAX_SECONDS, SIDECAR_STARTUP_TIMEOUT_MIN_SECONDS,
-        crashed_sidecar_error_message, is_crashed_sidecar_error,
+        SidecarHealthProbePayload, SidecarHealthStatus, answer_delta_text, build_sidecar_url,
+        canonicalize_local_base_url, clamp_startup_timeout_seconds, classify_sidecar_health,
+        crashed_sidecar_error_message, drain_complete_sidecar_stream_lines,
+        has_non_whitespace_bytes, inject_sidecar_dotenv_key_if_present, is_crashed_sidecar_error,
+        is_default_local_sidecar_url, is_retryable_narrator_sidecar_error, model_provider_id,
+        normalize_base_url, parse_netstat_listening_pids, sidecar_runtime_dir_from,
     };
     use std::fs;
     use std::process::Command;
@@ -1481,8 +1486,7 @@ mod tests {
         let empty_event = serde_json::json!({ "type": "message_delta", "text": "" });
         assert_eq!(answer_delta_text(&empty_event), None);
 
-        let other_event =
-            serde_json::json!({ "type": "tool_start", "toolName": "x", "input": {} });
+        let other_event = serde_json::json!({ "type": "tool_start", "toolName": "x", "input": {} });
         assert_eq!(answer_delta_text(&other_event), None);
     }
 
@@ -1615,7 +1619,9 @@ mod tests {
 
     #[test]
     fn is_crashed_sidecar_error_only_matches_crash_prefix() {
-        assert!(is_crashed_sidecar_error(&crashed_sidecar_error_message(Some(1))));
+        assert!(is_crashed_sidecar_error(&crashed_sidecar_error_message(
+            Some(1)
+        )));
         assert!(!is_crashed_sidecar_error(
             "AGENT_SIDECAR_UNAVAILABLE: Node sidecar 已尝试启动，但未在 20 秒内就绪。"
         ));
@@ -1634,9 +1640,11 @@ mod tests {
         let with_local =
             sidecar_runtime_dir_from(Some("C:\\Users\\tester\\AppData\\Local".to_string()));
         assert!(with_local.ends_with("agent-sidecar"));
-        assert!(with_local
-            .parent()
-            .is_some_and(|parent| parent.ends_with("com.xiaojianc.Calamex")));
+        assert!(
+            with_local
+                .parent()
+                .is_some_and(|parent| parent.ends_with("com.xiaojianc.Calamex"))
+        );
 
         let fallback = sidecar_runtime_dir_from(None);
         assert!(fallback.ends_with("agent-sidecar"));

@@ -1,15 +1,15 @@
-use jiff::Timestamp;
 use crate::ai::edit as ai_edit;
+use crate::ai::edit::AiEditState;
 use crate::ai::edit::apply::diff_render;
 use crate::ai::edit::history::snapshot::{self, SnapshotSourceFile};
 use crate::ai::edit::io::file_transaction::{self, FileTransactionAction, FileTransactionPlan};
 use crate::ai::edit::patch::{hash_text, read_text_file_baseline};
 use crate::ai::edit::security::path_security;
-use crate::ai::edit::AiEditState;
 use crate::ai::errors;
 use crate::commands::contracts::{
     AiApplyPatchMetadataRequest, AiEditOperationPayload, AiEditTimelineEntryPayload,
 };
+use jiff::Timestamp;
 
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -227,15 +227,16 @@ fn capture_checkpoint_snapshots(
     }
 
     if let Some(turn_id) = resolve_turn_id(metadata)
-        && ai_edit::mark_snapshot_scope(state, format!("turn-start:{turn_id}"))? {
-            let snapshot = snapshot::store_turn_start_snapshot(
-                storage_root,
-                &snapshot_sources,
-                metadata,
-                summary,
-            )?;
-            ai_edit::append_snapshot(state, storage_root, snapshot)?;
-        }
+        && ai_edit::mark_snapshot_scope(state, format!("turn-start:{turn_id}"))?
+    {
+        let snapshot = snapshot::store_turn_start_snapshot(
+            storage_root,
+            &snapshot_sources,
+            metadata,
+            summary,
+        )?;
+        ai_edit::append_snapshot(state, storage_root, snapshot)?;
+    }
 
     let confirmed_by_user = metadata
         .and_then(|value| value.confirmed_by_user)
@@ -415,7 +416,7 @@ fn resolve_reason(metadata: Option<&AiApplyPatchMetadataRequest>, summary: &str)
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_operation_plans, AiAutoApplyOperationPlan};
+    use super::{AiAutoApplyOperationPlan, apply_operation_plans};
     use crate::ai::edit as ai_edit;
     use crate::ai::edit::AiEditState;
     use crate::commands::contracts::{

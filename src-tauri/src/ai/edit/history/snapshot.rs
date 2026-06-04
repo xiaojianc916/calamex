@@ -2,8 +2,8 @@ use crate::ai::edit::errors;
 use crate::ai::edit::history::pins::PinIndex;
 use crate::ai::edit::io::{atomic_write, storage_lock};
 use crate::commands::contracts::{AiApplyPatchMetadataRequest, AiSnapshotPayload};
-use jiff::{SignedDuration, Timestamp};
 use fjall::{Database, Keyspace, KeyspaceCreateOptions, PersistMode};
+use jiff::{SignedDuration, Timestamp};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -362,11 +362,7 @@ fn store_snapshot_locked(
 ) -> Result<AiSnapshotPayload, String> {
     let store = open_store(storage_root)?;
     let timestamp = Timestamp::now();
-    let snapshot_id = format!(
-        "ai-edit-snapshot-{}",
-        timestamp
-            .as_nanosecond()
-    );
+    let snapshot_id = format!("ai-edit-snapshot-{}", timestamp.as_nanosecond());
 
     let mut manifest_files = Vec::with_capacity(files.len());
     let mut file_refs = Vec::with_capacity(files.len());
@@ -660,9 +656,9 @@ fn strip_manifest_blobs(
         }
     }
 
-        outcome.downgraded_snapshot_count += 1;
-        outcome.downgraded_snapshot_ids.insert(manifest.id.clone());
-        Ok(())
+    outcome.downgraded_snapshot_count += 1;
+    outcome.downgraded_snapshot_ids.insert(manifest.id.clone());
+    Ok(())
 }
 
 fn remove_blob(
@@ -811,9 +807,9 @@ fn read_blob(
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_snapshot_retention, list_stored_snapshots, load_stored_snapshot,
-        store_manual_snapshot, store_pre_tool_snapshot, SnapshotRetentionPolicy,
-        SnapshotSourceFile,
+        SnapshotRetentionPolicy, SnapshotSourceFile, apply_snapshot_retention,
+        list_stored_snapshots, load_stored_snapshot, store_manual_snapshot,
+        store_pre_tool_snapshot,
     };
     use crate::ai::edit::history::pins::PinIndex;
     use crate::commands::contracts::AiApplyPatchMetadataRequest;
@@ -962,7 +958,8 @@ mod tests {
             &temp_dir,
             &PinIndex::default(),
             SnapshotRetentionPolicy {
-                now: jiff::Timestamp::now() + jiff::SignedDuration::from_secs((super::FULL_BLOB_TTL_DAYS + 1) * 86400),
+                now: jiff::Timestamp::now()
+                    + jiff::SignedDuration::from_secs((super::FULL_BLOB_TTL_DAYS + 1) * 86400),
                 total_blob_quota_bytes: 0,
                 ..SnapshotRetentionPolicy::default()
             },

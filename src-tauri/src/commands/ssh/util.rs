@@ -3,8 +3,8 @@
 use std::path::Path;
 
 // POSIX mode bits used for permission rendering.
-const S_IFMT:  u32 = 0o170000;
-const S_IFSOCK:u32 = 0o140000;
+const S_IFMT: u32 = 0o170000;
+const S_IFSOCK: u32 = 0o140000;
 const S_IFLNK: u32 = 0o120000;
 const S_IFREG: u32 = 0o100000;
 const S_IFBLK: u32 = 0o060000;
@@ -126,14 +126,14 @@ pub(crate) fn encode_remote_preview_text(
 
 pub(crate) fn format_remote_permission_from_bits(bits: u32) -> String {
     let kind = match bits & S_IFMT {
-        S_IFDIR  => 'd',
-        S_IFLNK  => 'l',
-        S_IFBLK  => 'b',
-        S_IFCHR  => 'c',
-        S_IFIFO  => 'p',
+        S_IFDIR => 'd',
+        S_IFLNK => 'l',
+        S_IFBLK => 'b',
+        S_IFCHR => 'c',
+        S_IFIFO => 'p',
         S_IFSOCK => 's',
-        S_IFREG  => '-',
-        _        => '-',
+        S_IFREG => '-',
+        _ => '-',
     };
     let mode = bits & 0o777;
     let mut s = String::with_capacity(10);

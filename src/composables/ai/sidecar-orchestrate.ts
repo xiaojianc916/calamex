@@ -133,8 +133,7 @@ export const projectOrchestrateEvents = (
     events.find((event): event is TPlanReadyEvent => event.type === 'plan_ready') ?? null;
   const approval =
     events.find((event): event is TApprovalEvent => event.type === 'approval_required') ?? null;
-  const errorEvent =
-    events.find((event): event is TErrorEvent => event.type === 'error') ?? null;
+  const errorEvent = events.find((event): event is TErrorEvent => event.type === 'error') ?? null;
   let doneEvent: TDoneEvent | null = null;
   let latestDelta: TMessageDeltaEvent | null = null;
   for (let index = events.length - 1; index >= 0; index -= 1) {
@@ -161,8 +160,7 @@ export const projectOrchestrateEvents = (
   });
   const assistantContent = errorMessage
     ? `Agent 执行失败：${errorMessage}`
-    : (finalAnswer ??
-      (hasMeaningfulText(latestDelta?.text) ? latestDelta.text : ''));
+    : (finalAnswer ?? (hasMeaningfulText(latestDelta?.text) ? latestDelta.text : ''));
 
   return {
     plan,
@@ -196,8 +194,7 @@ export interface IOrchestrateRunResult {
   projection: IOrchestrateProjection;
 }
 
-const createOrchestrationSessionId = (): string =>
-  `sidecar-orchestrate:${crypto.randomUUID()}`;
+const createOrchestrationSessionId = (): string => `sidecar-orchestrate:${crypto.randomUUID()}`;
 
 /**
  * 启动一次原生编排 run：跑到计划审批门挂起（plan_ready + suspend）或终态，

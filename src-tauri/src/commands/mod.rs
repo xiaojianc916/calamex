@@ -2,6 +2,7 @@ pub(crate) mod agent_sidecar;
 pub(crate) mod ai;
 pub(crate) mod contracts;
 pub(crate) mod git;
+pub(crate) mod lsp;
 pub(crate) mod script_run;
 pub(crate) mod search;
 pub(crate) mod shell_tools;
@@ -12,7 +13,6 @@ pub(crate) mod window;
 pub(crate) mod window_stage;
 pub(crate) mod workspace_fs;
 pub(crate) mod workspace_watcher;
-pub(crate) mod lsp;
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW_FLAG: u32 = 0x0800_0000;
@@ -20,25 +20,22 @@ const CREATE_NO_WINDOW_FLAG: u32 = 0x0800_0000;
 pub use contracts::{
     AnalyzeScriptPayload, AnalyzeScriptRequest, DocumentEncoding, ExecutionEnvironment,
     ExecutionOption, ExecutorKind, FormatScriptPayload, FormatScriptRequest, ImageAssetPayload,
-    SaveScriptRequest, ScriptFilePayload,
-    SshConfigHostPayload, SshConnectionTestPayload, SshConnectionTestRequest,
-    SshDirectoryCreatePayload, SshDirectoryCreateRequest, SshDirectoryEntryPayload,
-    SshDirectoryListPayload, SshDirectoryListRequest, SshFileDownloadPayload,
-    SshFileDownloadRequest, SshFileReadPayload, SshFileReadRequest, SshFileUploadPayload,
-    SshFileUploadRequest, SshFileWritePayload, SshFileWriteRequest, SshPasswordGetRequest,
-    SshPasswordPayload, SshPasswordSaveRequest, SshPasswordStatusPayload, SshPathDeletePayload,
-    SshPathDeleteRequest, SshPathRenamePayload, SshPathRenameRequest, WorkspaceDirectoryPayload,
-    WorkspaceEntry, WorkspacePathCreatePayload, WorkspacePathCreateRequest,
-    WorkspacePathDeletePayload, WorkspacePathDeleteRequest, WorkspacePathKind,
-    WorkspacePathRenamePayload, WorkspacePathRenameRequest,
+    SaveScriptRequest, ScriptFilePayload, SshConfigHostPayload, SshConnectionTestPayload,
+    SshConnectionTestRequest, SshDirectoryCreatePayload, SshDirectoryCreateRequest,
+    SshDirectoryEntryPayload, SshDirectoryListPayload, SshDirectoryListRequest,
+    SshFileDownloadPayload, SshFileDownloadRequest, SshFileReadPayload, SshFileReadRequest,
+    SshFileUploadPayload, SshFileUploadRequest, SshFileWritePayload, SshFileWriteRequest,
+    SshPasswordGetRequest, SshPasswordPayload, SshPasswordSaveRequest, SshPasswordStatusPayload,
+    SshPathDeletePayload, SshPathDeleteRequest, SshPathRenamePayload, SshPathRenameRequest,
+    WorkspaceDirectoryPayload, WorkspaceEntry, WorkspacePathCreatePayload,
+    WorkspacePathCreateRequest, WorkspacePathDeletePayload, WorkspacePathDeleteRequest,
+    WorkspacePathKind, WorkspacePathRenamePayload, WorkspacePathRenameRequest,
 };
-pub(crate) use script_run::{find_command_path, line_count};
-pub use terminal::{shutdown_all_terminal_sessions, TerminalSessionState};
-pub(crate) use workspace_fs::{
-    decode_script_bytes, encode_script_content, resolve_workspace_root,
-};
-pub use workspace_watcher::WorkspaceWatcher;
 pub use lsp::LspManager;
+pub(crate) use script_run::{find_command_path, line_count};
+pub use terminal::{TerminalSessionState, shutdown_all_terminal_sessions};
+pub(crate) use workspace_fs::{decode_script_bytes, encode_script_content, resolve_workspace_root};
+pub use workspace_watcher::WorkspaceWatcher;
 
 #[cfg(windows)]
 pub(crate) fn configure_std_command_for_background(

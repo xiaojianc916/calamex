@@ -1,4 +1,4 @@
-﻿use std::time::Instant;
+use std::time::Instant;
 
 /// 终端快照保留的**字节**上限（不是字符数）。160 KiB。
 pub const TERMINAL_SNAPSHOT_MAX_LENGTH: usize = 160 * 1024;
@@ -78,6 +78,5 @@ pub fn resolve_alt_screen_state_after_data(current: bool, data: &str) -> bool {
 pub fn is_likely_interactive_resize_repaint_frame(data: &str) -> bool {
     data.contains("\x1b[H")
         && data.contains("\x1b[K")
-        && (data.contains("To run a command as administrator")
-            || data.contains("sudo <command>"))
+        && (data.contains("To run a command as administrator") || data.contains("sudo <command>"))
 }

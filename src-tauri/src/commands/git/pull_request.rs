@@ -1,8 +1,7 @@
 use super::*;
 use gix::bstr::ByteSlice;
 
-const AUTHORITY_PATH_REMOTE_SCHEMES: &[&str] =
-    &["ssh://", "https://", "http://", "git://"];
+const AUTHORITY_PATH_REMOTE_SCHEMES: &[&str] = &["ssh://", "https://", "http://", "git://"];
 
 struct ParsedGitRemoteRepositoryUrl {
     host: String,

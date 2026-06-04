@@ -2,17 +2,17 @@ use super::super::decode_script_bytes;
 use super::preview::line_range_at_byte_offset;
 use super::replace::build_structural_pattern;
 use super::scan::{
-    is_shell_like_file, passes_path_filters, workspace_cache_symbols, PathFilters, ScannedFile,
+    PathFilters, ScannedFile, is_shell_like_file, passes_path_filters, workspace_cache_symbols,
 };
 use super::types::{WorkspaceSearchRequest, WorkspaceSearchResult, WorkspaceSearchResultKind};
 use super::util::{byte_to_char_offset, count_to_u32, i64_to_i32, trim_line, u64_to_u32};
 use ast_grep_language::{LanguageExt, SupportLang};
 use grep_matcher::Matcher as GrepMatcher;
 use grep_regex::RegexMatcherBuilder;
-use grep_searcher::{sinks::Lossy, BinaryDetection, SearcherBuilder};
+use grep_searcher::{BinaryDetection, SearcherBuilder, sinks::Lossy};
 use nucleo_matcher::{
-    pattern::{CaseMatching, Normalization, Pattern as NucleoPattern},
     Config, Matcher as NucleoMatcher, Utf32Str,
+    pattern::{CaseMatching, Normalization, Pattern as NucleoPattern},
 };
 use std::{fs, io, path::Path};
 

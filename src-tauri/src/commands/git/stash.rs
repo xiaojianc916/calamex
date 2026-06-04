@@ -1,5 +1,5 @@
-use super::*;
 use super::cli;
+use super::*;
 use gix::bstr::ByteSlice;
 
 #[tauri::command]
@@ -11,12 +11,17 @@ pub fn list_git_stashes(payload: GitRepositoryRootRequest) -> Result<GitStashLis
     // 该文件按追加顺序记录（最旧在前），stash@索引 0 为最新，因此倒序枚举。
     let reflog_path = repository.git_dir().join("logs").join("refs").join("stash");
     if !reflog_path.exists() {
-        return Ok(GitStashListPayload { entries: Vec::new() });
+        return Ok(GitStashListPayload {
+            entries: Vec::new(),
+        });
     }
     let content = fs::read_to_string(&reflog_path)
         .map_err(|error| format!("读取贮藏 reflog 失败：{error}"))?;
 
-    let lines: Vec<&str> = content.lines().filter(|line| !line.trim().is_empty()).collect();
+    let lines: Vec<&str> = content
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
     let mut entries = Vec::new();
     for (index, line) in lines.iter().rev().enumerate() {
         let line = *line;
@@ -35,7 +40,12 @@ pub fn list_git_stashes(payload: GitRepositoryRootRequest) -> Result<GitStashLis
             Ok(value) => value,
             Err(_) => continue,
         };
-        entries.push(build_git_stash_entry_payload(&repository, index, message.trim(), oid)?);
+        entries.push(build_git_stash_entry_payload(
+            &repository,
+            index,
+            message.trim(),
+            oid,
+        )?);
     }
     Ok(GitStashListPayload { entries })
 }
@@ -54,10 +64,15 @@ pub fn save_git_stash(payload: GitStashSaveRequest) -> Result<GitRepositoryStatu
     }
 
     let mut args = vec!["stash", "push"];
-    if payload.include_untracked { args.push("--include-untracked"); }
+    if payload.include_untracked {
+        args.push("--include-untracked");
+    }
     if let Some(ref message) = payload.message {
         let msg = message.trim();
-        if !msg.is_empty() { args.push("--message"); args.push(msg); }
+        if !msg.is_empty() {
+            args.push("--message");
+            args.push(msg);
+        }
     }
     cli::run_git_ok(&repository_root, &args, "保存贮藏")?;
     super::status::build_git_repository_status_payload(&repository)
@@ -65,15 +80,25 @@ pub fn save_git_stash(payload: GitStashSaveRequest) -> Result<GitRepositoryStatu
 
 #[tauri::command]
 #[specta::specta]
-pub fn apply_git_stash(payload: GitStashApplyRequest) -> Result<GitRepositoryStatusPayload, String> {
+pub fn apply_git_stash(
+    payload: GitStashApplyRequest,
+) -> Result<GitRepositoryStatusPayload, String> {
     let repository = open_repository_from_root(&payload.repository_root_path)?;
     let repository_root = resolve_repository_root(&repository)?;
-    let label = if payload.pop { "应用并移除贮藏" } else { "应用贮藏" };
+    let label = if payload.pop {
+        "应用并移除贮藏"
+    } else {
+        "应用贮藏"
+    };
     super::branches::assert_repository_is_clean_for_switch(&repository, label)?;
 
     // stash@{N}：用字符串拼接构造字面花括号。
     let stash_ref = ["stash@{", &payload.stash_index.to_string(), "}"].concat();
-    let args = if payload.pop { vec!["stash", "pop", &stash_ref] } else { vec!["stash", "apply", &stash_ref] };
+    let args = if payload.pop {
+        vec!["stash", "pop", &stash_ref]
+    } else {
+        vec!["stash", "apply", &stash_ref]
+    };
     cli::run_git_ok(&repository_root, &args, label)?;
 
     super::status::build_git_repository_status_payload(&repository)
@@ -139,8 +164,7 @@ fn drop_stash_by_index(repository: &Repository, target_index: usize) -> Result<(
 
     let mut rebuilt = lines.join("\n");
     rebuilt.push('\n');
-    fs::write(&reflog_path, rebuilt)
-        .map_err(|error| format!("写入贮藏 reflog 失败：{error}"))?;
+    fs::write(&reflog_path, rebuilt).map_err(|error| format!("写入贮藏 reflog 失败：{error}"))?;
     Ok(())
 }
 
@@ -212,10 +236,20 @@ fn build_git_stash_details(
     }
 
     let file_count = files.len();
-    let additions = files.iter().fold(0u32, |acc, file| acc.saturating_add(file.additions));
-    let deletions = files.iter().fold(0u32, |acc, file| acc.saturating_add(file.deletions));
+    let additions = files
+        .iter()
+        .fold(0u32, |acc, file| acc.saturating_add(file.additions));
+    let deletions = files
+        .iter()
+        .fold(0u32, |acc, file| acc.saturating_add(file.deletions));
 
-    Ok(GitStashDetails { created_at, file_count, additions, deletions, files })
+    Ok(GitStashDetails {
+        created_at,
+        file_count,
+        additions,
+        deletions,
+        files,
+    })
 }
 
 /// 计算两棵树之间的文件级差异，逐个文件统计增删行数后追加到 `files`。
@@ -238,18 +272,47 @@ fn collect_stash_tree_changes(
     use gix::diff::tree_with_rewrites::Change;
     for change in changes {
         let (location, previous_location, old_id, new_id, base_status, entry_mode) = match change {
-            Change::Addition { location, id, entry_mode, .. } => {
-                (location, None, None, Some(id), "added", entry_mode)
-            }
-            Change::Deletion { location, id, entry_mode, .. } => {
-                (location, None, Some(id), None, "deleted", entry_mode)
-            }
-            Change::Modification { location, previous_id, id, entry_mode, .. } => {
-                (location, None, Some(previous_id), Some(id), "modified", entry_mode)
-            }
-            Change::Rewrite { source_location, location, source_id, id, entry_mode, .. } => {
-                (location, Some(source_location), Some(source_id), Some(id), "renamed", entry_mode)
-            }
+            Change::Addition {
+                location,
+                id,
+                entry_mode,
+                ..
+            } => (location, None, None, Some(id), "added", entry_mode),
+            Change::Deletion {
+                location,
+                id,
+                entry_mode,
+                ..
+            } => (location, None, Some(id), None, "deleted", entry_mode),
+            Change::Modification {
+                location,
+                previous_id,
+                id,
+                entry_mode,
+                ..
+            } => (
+                location,
+                None,
+                Some(previous_id),
+                Some(id),
+                "modified",
+                entry_mode,
+            ),
+            Change::Rewrite {
+                source_location,
+                location,
+                source_id,
+                id,
+                entry_mode,
+                ..
+            } => (
+                location,
+                Some(source_location),
+                Some(source_id),
+                Some(id),
+                "renamed",
+                entry_mode,
+            ),
         };
 
         // 目录 / 子模块项不计入文件改动。
@@ -289,18 +352,25 @@ fn collect_stash_tree_changes(
 
 /// 读取 blob 对象的原始字节；对象缺失时返回 None。
 fn stash_blob_bytes(repository: &Repository, object_id: gix::ObjectId) -> Option<Vec<u8>> {
-    repository.find_object(object_id).ok().map(|object| object.data.clone())
+    repository
+        .find_object(object_id)
+        .ok()
+        .map(|object| object.data.clone())
 }
 
 /// 统计两段 blob 内容之间的增删行数；任一侧含 NUL 字节则视为二进制（返回 0/0 + true）。
 fn count_blob_line_changes(old: Option<&[u8]>, new: Option<&[u8]>) -> (u32, u32, bool) {
-    let is_binary = old.is_some_and(|bytes| bytes.contains(&0))
-        || new.is_some_and(|bytes| bytes.contains(&0));
+    let is_binary =
+        old.is_some_and(|bytes| bytes.contains(&0)) || new.is_some_and(|bytes| bytes.contains(&0));
     if is_binary {
         return (0, 0, true);
     }
-    let old_text = old.map(|bytes| String::from_utf8_lossy(bytes).into_owned()).unwrap_or_default();
-    let new_text = new.map(|bytes| String::from_utf8_lossy(bytes).into_owned()).unwrap_or_default();
+    let old_text = old
+        .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+        .unwrap_or_default();
+    let new_text = new
+        .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+        .unwrap_or_default();
     let diff = similar::TextDiff::from_lines(&old_text, &new_text);
     let mut additions = 0u32;
     let mut deletions = 0u32;
@@ -314,20 +384,31 @@ fn count_blob_line_changes(old: Option<&[u8]>, new: Option<&[u8]>) -> (u32, u32,
     (additions, deletions, false)
 }
 
-struct GitStashDetails { created_at: String, file_count: usize, additions: u32, deletions: u32, files: Vec<GitStashFilePayload> }
+struct GitStashDetails {
+    created_at: String,
+    file_count: usize,
+    additions: u32,
+    deletions: u32,
+    files: Vec<GitStashFilePayload>,
+}
 
 fn parse_git_stash_name(name: &str) -> (Option<String>, Option<String>) {
     let trimmed = name.trim();
     if let Some(rest) = trimmed.strip_prefix("WIP on ")
-        && let Some((branch_name, remainder)) = rest.split_once(':') {
-            let commit_short_id = remainder.split_whitespace().next()
-                .filter(|value| is_short_git_commit_id(value)).map(str::to_string);
-            return (Some(branch_name.trim().to_string()), commit_short_id);
-        }
+        && let Some((branch_name, remainder)) = rest.split_once(':')
+    {
+        let commit_short_id = remainder
+            .split_whitespace()
+            .next()
+            .filter(|value| is_short_git_commit_id(value))
+            .map(str::to_string);
+        return (Some(branch_name.trim().to_string()), commit_short_id);
+    }
     if let Some(rest) = trimmed.strip_prefix("On ")
-        && let Some((branch_name, _)) = rest.split_once(':') {
-            return (Some(branch_name.trim().to_string()), None);
-        }
+        && let Some((branch_name, _)) = rest.split_once(':')
+    {
+        return (Some(branch_name.trim().to_string()), None);
+    }
     (None, None)
 }
 

@@ -1,4 +1,4 @@
-use super::{ decode_script_bytes, resolve_workspace_root };
+use super::{decode_script_bytes, resolve_workspace_root};
 
 use gix::bstr::ByteSlice;
 use serde::{Deserialize, Serialize};
@@ -7,8 +7,8 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-mod cli;
 pub(crate) mod branches;
+mod cli;
 pub(crate) mod diff;
 pub(crate) mod history;
 pub(crate) mod pull_request;
@@ -287,9 +287,7 @@ pub(super) fn resolve_repository_root(repository: &Repository) -> Result<PathBuf
         .ok_or_else(|| "当前 Git 仓库没有工作区。".to_string())
 }
 
-fn resolve_git_workspace_root(
-    workspace_root_path: Option<String>,
-) -> Result<PathBuf, String> {
+fn resolve_git_workspace_root(workspace_root_path: Option<String>) -> Result<PathBuf, String> {
     match workspace_root_path {
         Some(value) if !value.trim().is_empty() => {
             let path = normalize_path_for_git(Path::new(value.trim()));
@@ -313,14 +311,10 @@ fn resolve_head_commit(repository: &Repository) -> Result<Option<gix::Commit<'_>
     }
 }
 
-
-
 fn build_git_commit_summary(commit: &gix::Commit<'_>) -> GitCommitSummaryPayload {
-    let authored_at = jiff::Timestamp::from_second(
-        commit.time().unwrap_or_default().seconds,
-    )
-    .unwrap_or_else(|_| jiff::Timestamp::now())
-    .to_string();
+    let authored_at = jiff::Timestamp::from_second(commit.time().unwrap_or_default().seconds)
+        .unwrap_or_else(|_| jiff::Timestamp::now())
+        .to_string();
 
     let summary = commit
         .message()

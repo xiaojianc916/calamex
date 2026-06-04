@@ -51,16 +51,17 @@ pub(crate) fn find_command_path(file_name: &str, extra_candidates: &[&str]) -> O
     }
 
     if cfg!(windows)
-        && let Some(local_app_data) = env::var_os("LOCALAPPDATA") {
-            let winget_link = PathBuf::from(local_app_data)
-                .join("Microsoft")
-                .join("WinGet")
-                .join("Links")
-                .join(file_name);
-            if is_executable_file(&winget_link) {
-                return Some(winget_link);
-            }
+        && let Some(local_app_data) = env::var_os("LOCALAPPDATA")
+    {
+        let winget_link = PathBuf::from(local_app_data)
+            .join("Microsoft")
+            .join("WinGet")
+            .join("Links")
+            .join(file_name);
+        if is_executable_file(&winget_link) {
+            return Some(winget_link);
         }
+    }
 
     extra_candidates
         .iter()

@@ -21,7 +21,7 @@ use crate::terminal::{
         LocalWslTerminalOpenInteractiveRequest, LocalWslTerminalRunScriptRequest,
     },
     types::TerminalState,
-    visual::{extract_prompt_from_terminal_snapshot, TerminalRunVisualTracker},
+    visual::{TerminalRunVisualTracker, extract_prompt_from_terminal_snapshot},
     wsl_pty::{open_interactive_terminal_local, run_terminal_script_local},
 };
 
@@ -30,14 +30,14 @@ use super::events::{
     mark_terminal_interactive_ready, transition_terminal_state,
 };
 use super::state::{
-    attach_active_terminal_run_handle, buffer_pending_switch_input, clear_active_terminal_run,
-    get_active_terminal_run_handle, get_active_terminal_run_input_target, get_terminal_session,
-    get_terminal_snapshot, lock_terminal_sessions, mark_terminal_resize_repaint_suppression,
-    remove_pending_switch_input, remove_terminal_interactive_visual_state, remove_terminal_session,
-    remove_terminal_snapshot, resolve_terminal_start_directory, set_terminal_snapshot,
-    should_recreate_terminal_session, take_and_prepend_pending_switch_input,
-    terminate_terminal_session, try_mark_active_terminal_run, update_terminal_geometry,
-    ActiveRunInputTarget, TerminalSession, TerminalSessionState,
+    ActiveRunInputTarget, TerminalSession, TerminalSessionState, attach_active_terminal_run_handle,
+    buffer_pending_switch_input, clear_active_terminal_run, get_active_terminal_run_handle,
+    get_active_terminal_run_input_target, get_terminal_session, get_terminal_snapshot,
+    lock_terminal_sessions, mark_terminal_resize_repaint_suppression, remove_pending_switch_input,
+    remove_terminal_interactive_visual_state, remove_terminal_session, remove_terminal_snapshot,
+    resolve_terminal_start_directory, set_terminal_snapshot, should_recreate_terminal_session,
+    take_and_prepend_pending_switch_input, terminate_terminal_session,
+    try_mark_active_terminal_run, update_terminal_geometry,
 };
 use super::to_wsl_path;
 

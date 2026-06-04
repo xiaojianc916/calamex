@@ -2,12 +2,12 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use reqwest::Url;
 use reqwest::header::{ACCEPT, CONTENT_LENGTH, CONTENT_TYPE};
 use reqwest::redirect::Policy as RedirectPolicy;
-use reqwest::Url;
 use serde::{Deserialize, Serialize};
-use tauri::http::{Request, Response, StatusCode};
 use tauri::Manager;
+use tauri::http::{Request, Response, StatusCode};
 use tokio::fs;
 use tokio::net::lookup_host;
 use tokio::task::JoinSet;
@@ -276,9 +276,10 @@ async fn fetch_favicon_bytes(host: &str) -> Result<(Vec<u8>, String), String> {
     }
 
     if let Some(icon_url) = resolve_html_icon_url(host).await
-        && let Ok(pair) = try_fetch_icon(icon_url.as_str()).await {
-            return Ok(pair);
-        }
+        && let Ok(pair) = try_fetch_icon(icon_url.as_str()).await
+    {
+        return Ok(pair);
+    }
 
     Err("favicon not found".to_string())
 }
@@ -345,9 +346,10 @@ async fn try_fetch_icon(candidate_url: &str) -> Result<(Vec<u8>, String), String
         .get(CONTENT_LENGTH)
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.parse::<usize>().ok())
-        && content_length > MAX_ICON_BYTES {
-            return Err("favicon payload exceeds content-length limit".into());
-        }
+        && content_length > MAX_ICON_BYTES
+    {
+        return Err("favicon payload exceeds content-length limit".into());
+    }
 
     let content_type = response
         .headers()
@@ -497,26 +499,21 @@ fn find_html_icon_href(html: &str) -> Option<String> {
                     "icon" | "shortcut" | "apple-touch-icon" | "mask-icon" | "fluid-icon"
                 )
             });
-            if is_icon
-                && let Some(href) = extract_html_attribute(tag, tag_lower, "href") {
-                    let href_trim = href.trim().to_string();
-                    if !href_trim.is_empty() {
-                        let size = extract_html_attribute(tag, tag_lower, "sizes")
-                            .and_then(|s| {
-                                s.split(['x', 'X'])
-                                    .next()
-                                    .map(|x| x.trim().to_string())
-                            })
-                            .and_then(|s| s.parse::<u32>().ok())
-                            .unwrap_or(16);
-                        if best.as_ref().map(|b| size > b.sizes).unwrap_or(true) {
-                            best = Some(IconCandidate {
-                                sizes: size,
-                                href: href_trim,
-                            });
-                        }
+            if is_icon && let Some(href) = extract_html_attribute(tag, tag_lower, "href") {
+                let href_trim = href.trim().to_string();
+                if !href_trim.is_empty() {
+                    let size = extract_html_attribute(tag, tag_lower, "sizes")
+                        .and_then(|s| s.split(['x', 'X']).next().map(|x| x.trim().to_string()))
+                        .and_then(|s| s.parse::<u32>().ok())
+                        .unwrap_or(16);
+                    if best.as_ref().map(|b| size > b.sizes).unwrap_or(true) {
+                        best = Some(IconCandidate {
+                            sizes: size,
+                            href: href_trim,
+                        });
                     }
                 }
+            }
         }
 
         search_index = end + 1;
@@ -637,9 +634,10 @@ fn build_redirect_policy() -> RedirectPolicy {
         if let Some(host) = url.host_str() {
             // IP 字面量重定向：直接用同样的 SSRF 规则同步检查
             if let Ok(ip) = host.parse::<IpAddr>()
-                && is_blocked_ip(ip) {
-                    return attempt.error("redirect target is a blocked IP");
-                }
+                && is_blocked_ip(ip)
+            {
+                return attempt.error("redirect target is a blocked IP");
+            }
             if host.eq_ignore_ascii_case("localhost")
                 || host.to_ascii_lowercase().ends_with(".localhost")
             {

@@ -1,18 +1,18 @@
 //! 建链、认证、SFTP 会话获取，以及连接性测试 / 主机密钥信任命令。
 
-use super::hostkey::{
-    clear_pending_host_key, replace_known_host_key, stash_pending_host_key, take_pending_host_key,
-    verify_known_host, HostKeyVerdict, PendingHostKey,
-};
 use super::SshConnectionParams;
+use super::hostkey::{
+    HostKeyVerdict, PendingHostKey, clear_pending_host_key, replace_known_host_key,
+    stash_pending_host_key, take_pending_host_key, verify_known_host,
+};
 use crate::commands::ssh_pool::POOL;
 use crate::commands::{SshConnectionTestPayload, SshConnectionTestRequest};
 use russh::{
-    cipher,
-    client::{connect, Handle},
+    Preferred, cipher,
+    client::{Handle, connect},
     compression, kex,
-    keys::{load_secret_key, Algorithm, EcdsaCurve, HashAlg, PrivateKeyWithHashAlg},
-    mac, Preferred,
+    keys::{Algorithm, EcdsaCurve, HashAlg, PrivateKeyWithHashAlg, load_secret_key},
+    mac,
 };
 use russh_sftp::client::SftpSession;
 use std::{
@@ -45,11 +45,21 @@ pub(crate) const OPTIMIZED_SSH_PREFERRED: Preferred = Preferred {
     ]),
     key: std::borrow::Cow::Borrowed(&[
         Algorithm::Ed25519,
-        Algorithm::Ecdsa { curve: EcdsaCurve::NistP256 },
-        Algorithm::Rsa { hash: Some(HashAlg::Sha256) },
-        Algorithm::Ecdsa { curve: EcdsaCurve::NistP384 },
-        Algorithm::Rsa { hash: Some(HashAlg::Sha512) },
-        Algorithm::Ecdsa { curve: EcdsaCurve::NistP521 },
+        Algorithm::Ecdsa {
+            curve: EcdsaCurve::NistP256,
+        },
+        Algorithm::Rsa {
+            hash: Some(HashAlg::Sha256),
+        },
+        Algorithm::Ecdsa {
+            curve: EcdsaCurve::NistP384,
+        },
+        Algorithm::Rsa {
+            hash: Some(HashAlg::Sha512),
+        },
+        Algorithm::Ecdsa {
+            curve: EcdsaCurve::NistP521,
+        },
     ]),
     cipher: std::borrow::Cow::Borrowed(&[
         cipher::AES_256_GCM,
@@ -188,8 +198,10 @@ pub(crate) async fn connect_and_auth(
             // If this attempt was aborted because the server's host key changed,
             // surface a structured, machine-readable error so the UI can offer to
             // trust the new key instead of failing outright.
-            if let Some(pending) =
-                seen_changed_key.lock().ok().and_then(|mut slot| slot.take())
+            if let Some(pending) = seen_changed_key
+                .lock()
+                .ok()
+                .and_then(|mut slot| slot.take())
             {
                 return Err(format!("{HOST_KEY_CHANGED_CODE}::{}", pending.fingerprint));
             }
@@ -277,12 +289,10 @@ async fn open_sftp_once(params: &SshConnectionParams) -> Result<SftpConnection, 
             message: format!("无法请求 SFTP 子系统：{e}"),
         })?;
     let stream = channel.into_stream();
-    let sftp = SftpSession::new(stream)
-        .await
-        .map_err(|e| OpenSftpError {
-            retryable: true,
-            message: format!("无法创建 SFTP 会话：{e}"),
-        })?;
+    let sftp = SftpSession::new(stream).await.map_err(|e| OpenSftpError {
+        retryable: true,
+        message: format!("无法创建 SFTP 会话：{e}"),
+    })?;
 
     Ok(SftpConnection {
         _handle: handle,
@@ -344,9 +354,10 @@ fn validate_ssh_endpoint(host: &str, username: &str) -> Result<(), String> {
 // ---- expand tilde ----
 fn expand_tilde(path: &str) -> String {
     if path.starts_with('~')
-        && let Ok(home) = env::var("USERPROFILE").or_else(|_| env::var("HOME")) {
-            return path.replacen('~', &home, 1);
-        }
+        && let Ok(home) = env::var("USERPROFILE").or_else(|_| env::var("HOME"))
+    {
+        return path.replacen('~', &home, 1);
+    }
     path.to_string()
 }
 
@@ -450,10 +461,7 @@ pub struct SshHostKeyTrustPayload {
 
 #[tauri::command]
 #[specta::specta]
-pub async fn trust_ssh_host_key(
-    host: String,
-    port: u16,
-) -> Result<SshHostKeyTrustPayload, String> {
+pub async fn trust_ssh_host_key(host: String, port: u16) -> Result<SshHostKeyTrustPayload, String> {
     let host = host.trim().to_string();
     if host.is_empty() {
         return Err("主机地址不能为空。".into());
@@ -475,12 +483,24 @@ mod tests {
     #[test]
     fn io_error_connection_kinds_are_classified() {
         use std::io::{Error, ErrorKind};
-        assert!(io_error_is_connection_level(&Error::from(ErrorKind::ConnectionReset)));
-        assert!(io_error_is_connection_level(&Error::from(ErrorKind::BrokenPipe)));
-        assert!(io_error_is_connection_level(&Error::from(ErrorKind::UnexpectedEof)));
-        assert!(io_error_is_connection_level(&Error::from(ErrorKind::TimedOut)));
-        assert!(!io_error_is_connection_level(&Error::from(ErrorKind::PermissionDenied)));
-        assert!(!io_error_is_connection_level(&Error::from(ErrorKind::NotFound)));
+        assert!(io_error_is_connection_level(&Error::from(
+            ErrorKind::ConnectionReset
+        )));
+        assert!(io_error_is_connection_level(&Error::from(
+            ErrorKind::BrokenPipe
+        )));
+        assert!(io_error_is_connection_level(&Error::from(
+            ErrorKind::UnexpectedEof
+        )));
+        assert!(io_error_is_connection_level(&Error::from(
+            ErrorKind::TimedOut
+        )));
+        assert!(!io_error_is_connection_level(&Error::from(
+            ErrorKind::PermissionDenied
+        )));
+        assert!(!io_error_is_connection_level(&Error::from(
+            ErrorKind::NotFound
+        )));
     }
 
     #[test]
@@ -492,6 +512,9 @@ mod tests {
     #[test]
     fn expand_tilde_resolves_home_directory() {
         let expanded = expand_tilde("~/.ssh/id_rsa");
-        assert!(!expanded.starts_with('~'), "tilde should be expanded: {expanded}");
+        assert!(
+            !expanded.starts_with('~'),
+            "tilde should be expanded: {expanded}"
+        );
     }
 }

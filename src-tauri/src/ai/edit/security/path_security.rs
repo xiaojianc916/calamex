@@ -259,7 +259,7 @@ mod tests {
         validate_ai_writable_path_with_root,
     };
     use std::fs;
-use std::path::PathBuf;
+    use std::path::PathBuf;
 
     #[test]
     fn validate_rejects_empty_nul_parent_and_protected_paths() {
@@ -278,19 +278,23 @@ use std::path::PathBuf;
         let accepted =
             validate_ai_writable_path_with_root("src/main.ts", Some(&root.to_string_lossy()))
                 .expect("child path should be accepted");
-        assert!(accepted
-            .into_path_buf()
-            .ends_with(std::path::Path::new("src").join("main.ts")));
+        assert!(
+            accepted
+                .into_path_buf()
+                .ends_with(std::path::Path::new("src").join("main.ts"))
+        );
 
         let outside = root
             .parent()
             .expect("temp dir should have parent")
             .join("outside.txt");
-        assert!(validate_ai_writable_path_with_root(
-            &outside.to_string_lossy(),
-            Some(&root.to_string_lossy())
-        )
-        .is_err());
+        assert!(
+            validate_ai_writable_path_with_root(
+                &outside.to_string_lossy(),
+                Some(&root.to_string_lossy())
+            )
+            .is_err()
+        );
 
         let _ = fs::remove_dir_all(root);
     }

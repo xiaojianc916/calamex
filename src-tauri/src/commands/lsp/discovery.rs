@@ -97,7 +97,11 @@ pub(crate) fn resolve_shellcheck_executable() -> Option<PathBuf> {
         }
     }
 
-    let exe_name = if cfg!(windows) { "shellcheck.exe" } else { "shellcheck" };
+    let exe_name = if cfg!(windows) {
+        "shellcheck.exe"
+    } else {
+        "shellcheck"
+    };
 
     // 打包优先：安装目录内随包自带的 shellcheck（随包自发现，与 shfmt/sidecar 策略一致，
     // 不再依赖启动期向进程环境注入 XIAOJIANC_SHELLCHECK_EXE）。
@@ -131,16 +135,27 @@ pub(crate) fn resolve_shellcheck_executable() -> Option<PathBuf> {
     if cfg!(windows) {
         // scoop (用户级): %USERPROFILE%\scoop\shims\shellcheck.exe
         if let Ok(home) = std::env::var("USERPROFILE") {
-            candidates.push(PathBuf::from(&home).join("scoop").join("shims").join(exe_name));
+            candidates.push(
+                PathBuf::from(&home)
+                    .join("scoop")
+                    .join("shims")
+                    .join(exe_name),
+            );
         }
         if let Ok(progdata) = std::env::var("ProgramData") {
             // scoop (全局)
             candidates.push(
-                PathBuf::from(&progdata).join("scoop").join("shims").join(exe_name),
+                PathBuf::from(&progdata)
+                    .join("scoop")
+                    .join("shims")
+                    .join(exe_name),
             );
             // chocolatey
             candidates.push(
-                PathBuf::from(&progdata).join("chocolatey").join("bin").join(exe_name),
+                PathBuf::from(&progdata)
+                    .join("chocolatey")
+                    .join("bin")
+                    .join(exe_name),
             );
         }
         // winget links
@@ -158,7 +173,12 @@ pub(crate) fn resolve_shellcheck_executable() -> Option<PathBuf> {
         candidates.push(PathBuf::from("/usr/bin").join(exe_name));
         candidates.push(PathBuf::from("/opt/homebrew/bin").join(exe_name));
         if let Ok(home) = std::env::var("HOME") {
-            candidates.push(PathBuf::from(&home).join(".local").join("bin").join(exe_name));
+            candidates.push(
+                PathBuf::from(&home)
+                    .join(".local")
+                    .join("bin")
+                    .join(exe_name),
+            );
         }
     }
 

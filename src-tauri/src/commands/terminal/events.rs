@@ -5,8 +5,8 @@
 use jiff::Timestamp;
 use std::{
     sync::{
-        atomic::{AtomicU64, Ordering as AtomicOrdering},
         Arc, Mutex,
+        atomic::{AtomicU64, Ordering as AtomicOrdering},
     },
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
@@ -17,22 +17,22 @@ use crate::terminal::{
     local_wsl_protocol::LocalWslTerminalServerPayload,
     state_machine::StateMachine,
     tauri_events::{
-        emit_terminal_data, emit_terminal_exit, emit_terminal_run_chunk,
-        emit_terminal_run_completed, emit_terminal_run_started, emit_terminal_state_changed,
         TerminalDataEvent, TerminalDataSource, TerminalExitEvent, TerminalRunChunkEvent,
         TerminalRunCompletedEvent, TerminalRunStartedEvent, TerminalStateChangedEvent,
+        emit_terminal_data, emit_terminal_exit, emit_terminal_run_chunk,
+        emit_terminal_run_completed, emit_terminal_run_started, emit_terminal_state_changed,
     },
     types::TerminalState,
     visual::{
-        build_terminal_ansi_reset, build_terminal_run_separator, current_visual_tracker,
-        next_visual_run_seq, observe_visual_output_and_prefix, TerminalRunVisualObservation,
-        TerminalRunVisualTracker,
+        TerminalRunVisualObservation, TerminalRunVisualTracker, build_terminal_ansi_reset,
+        build_terminal_run_separator, current_visual_tracker, next_visual_run_seq,
+        observe_visual_output_and_prefix,
     },
 };
 
 use super::state::{
-    append_terminal_snapshot, clear_active_terminal_run, remove_interactive_terminal_after_exit,
-    should_skip_snapshot_for_interactive_resize_repaint, TerminalSessionState,
+    TerminalSessionState, append_terminal_snapshot, clear_active_terminal_run,
+    remove_interactive_terminal_after_exit, should_skip_snapshot_for_interactive_resize_repaint,
 };
 
 static TERMINAL_DATA_SEQUENCE: AtomicU64 = AtomicU64::new(1);
@@ -384,14 +384,15 @@ pub(super) fn handle_local_wsl_interactive_terminal_event(
         }
         LocalWslTerminalServerPayload::InteractiveError(payload) => {
             if let Some(message_session_id) = payload.session_id.as_ref()
-                && message_session_id == session_id {
-                    emit_terminal_interactive_output(
-                        app,
-                        state,
-                        session_id,
-                        format!("{}\n", payload.message),
-                    );
-                }
+                && message_session_id == session_id
+            {
+                emit_terminal_interactive_output(
+                    app,
+                    state,
+                    session_id,
+                    format!("{}\n", payload.message),
+                );
+            }
             remove_interactive_terminal_after_exit(state, session_id);
             mark_terminal_interactive_exited(
                 app,
@@ -489,15 +490,15 @@ fn finalize_local_run(
     prompt: Option<String>,
 ) {
     emit_terminal_run_visual_completion(RunVisualCompletion {
-    app,
-    state,
-    session_id,
-    run_id,
-    exit_code,
-    started_at,
-    tracker: visual_tracker,
-    prompt,
-});
+        app,
+        state,
+        session_id,
+        run_id,
+        exit_code,
+        started_at,
+        tracker: visual_tracker,
+        prompt,
+    });
     emit_terminal_run_completed_with_state(
         app,
         TerminalRunCompletedEvent {

@@ -1,9 +1,9 @@
-use super::super::{decode_script_bytes, DocumentEncoding};
+use super::super::{DocumentEncoding, decode_script_bytes};
 use super::preview::{
     build_line_previews, build_replacement_diff, compute_line_start_offsets,
     line_number_from_starts, replacement_edit_preview_id,
 };
-use super::scan::{is_shell_like_file, relative_path, ScannedFile};
+use super::scan::{ScannedFile, is_shell_like_file, relative_path};
 use super::types::{
     WorkspaceReplacementFilePreview, WorkspaceReplacementLinePreview,
     WorkspaceReplacementPreviewPayload, WorkspaceReplacementRequest,

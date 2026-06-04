@@ -435,11 +435,7 @@ export const useEditorStore = defineStore(
       }
     };
 
-    const captureDocumentDraft = (
-      path: string,
-      content: string,
-      baselineContent: string,
-    ): void => {
+    const captureDocumentDraft = (path: string, content: string, baselineContent: string): void => {
       const normalized = normalizeFileSystemPath(path);
       if (!normalized) return;
       // 无未保存差异或内容过大:清除已有草稿,不再缓存。

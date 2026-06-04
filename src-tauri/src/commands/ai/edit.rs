@@ -1,7 +1,7 @@
 use super::storage::{recover_ai_edit_storage, resolve_ai_edit_storage_root};
 use crate::ai::edit as ai_edit;
-use crate::ai::edit::patch;
 use crate::ai::edit::AiEditState;
+use crate::ai::edit::patch;
 use crate::commands::contracts::{
     AiApplyPatchPayload, AiApplyPatchRequest, AiEditAuthStatePayload, AiEditCreateSnapshotPayload,
     AiEditCreateSnapshotRequest, AiEditGetDiffPayload, AiEditGetDiffRequest,

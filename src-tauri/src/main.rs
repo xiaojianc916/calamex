@@ -10,17 +10,17 @@ mod tauri_bindings;
 mod terminal;
 
 use ai::edit::AiEditState;
-use commands::WorkspaceWatcher;
 use commands::LspManager;
-use commands::{shutdown_all_terminal_sessions, TerminalSessionState};
+use commands::WorkspaceWatcher;
+use commands::{TerminalSessionState, shutdown_all_terminal_sessions};
 use std::{
     sync::atomic::{AtomicBool, Ordering},
     time::Instant,
 };
 use tauri::{
+    Manager, WindowEvent,
     menu::{MenuBuilder, MenuItemBuilder},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Manager, WindowEvent,
 };
 
 const MAIN_WINDOW_LABEL: &str = "main";
@@ -61,12 +61,12 @@ fn emit_startup_step(event: &str, app_started_at: Instant, step_started_at: Inst
 }
 
 macro_rules! timed_step {
-    ($event:expr_2021, $app_started_at:expr_2021, $body:block) => ({
+    ($event:expr_2021, $app_started_at:expr_2021, $body:block) => {{
         let __step_started_at = std::time::Instant::now();
         let __result = $body;
         emit_startup_step($event, $app_started_at, __step_started_at);
         __result
-    });
+    }};
 }
 
 // === 生命周期 ============================================================

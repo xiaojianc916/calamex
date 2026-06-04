@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::ai::agent::policy::{classify_task as classify_by_policy, AgentTaskPolicyInput};
+use crate::ai::agent::policy::{AgentTaskPolicyInput, classify_task as classify_by_policy};
 use crate::ai::errors;
 use crate::commands::contracts::{
     AiAgentClassifyTaskPayload, AiAgentClassifyTaskRequest, AiContextReferencePayload,

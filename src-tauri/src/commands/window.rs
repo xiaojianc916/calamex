@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use specta::Type;
-use tauri::{window::Color, AppHandle, Manager};
+use tauri::{AppHandle, Manager, window::Color};
 
 #[derive(Debug, Deserialize, Serialize, Type)]
 #[serde(rename_all = "camelCase")]

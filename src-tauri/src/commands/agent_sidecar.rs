@@ -3,10 +3,10 @@ use crate::commands::contracts::{
     AgentSidecarApprovalResolveRequest, AgentSidecarChatRequest,
     AgentSidecarCheckpointRestoreRequest, AgentSidecarExecuteRequest, AgentSidecarHealthPayload,
     AgentSidecarOrchestratePayload, AgentSidecarOrchestrateRequest,
-    AgentSidecarOrchestrateResumeRequest,
-    AgentSidecarPlanApproveRequest, AgentSidecarPlanFinishRequest, AgentSidecarPlanQueryRequest,
-    AgentSidecarPlanRejectRequest, AgentSidecarPlanReplanRequest, AgentSidecarPlanRequest,
-    AgentSidecarPlanValidateRequest, AgentSidecarResponsePayload, AgentSidecarWarmupPayload,
+    AgentSidecarOrchestrateResumeRequest, AgentSidecarPlanApproveRequest,
+    AgentSidecarPlanFinishRequest, AgentSidecarPlanQueryRequest, AgentSidecarPlanRejectRequest,
+    AgentSidecarPlanReplanRequest, AgentSidecarPlanRequest, AgentSidecarPlanValidateRequest,
+    AgentSidecarResponsePayload, AgentSidecarWarmupPayload,
 };
 use tauri::AppHandle;
 

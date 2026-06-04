@@ -281,9 +281,10 @@ mod tests {
 
     fn cleanup_workspace(root: PathBuf) {
         if let Some(caches) = WORKSPACE_FILE_CACHES.get()
-            && let Ok(mut guard) = caches.lock() {
-                guard.remove(&root.to_string_lossy().to_string());
-            }
+            && let Ok(mut guard) = caches.lock()
+        {
+            guard.remove(&root.to_string_lossy().to_string());
+        }
 
         let _ = fs::remove_dir_all(root);
     }
@@ -481,18 +482,24 @@ mod tests {
         })
         .expect("应能搜索工作区");
 
-        assert!(payload
-            .results
-            .iter()
-            .any(|result| result.path == script.to_string_lossy()));
-        assert!(!payload
-            .results
-            .iter()
-            .any(|result| result.relative_path.starts_with(".git/")));
-        assert!(!payload
-            .results
-            .iter()
-            .any(|result| result.relative_path == "asset.png"));
+        assert!(
+            payload
+                .results
+                .iter()
+                .any(|result| result.path == script.to_string_lossy())
+        );
+        assert!(
+            !payload
+                .results
+                .iter()
+                .any(|result| result.relative_path.starts_with(".git/"))
+        );
+        assert!(
+            !payload
+                .results
+                .iter()
+                .any(|result| result.relative_path == "asset.png")
+        );
 
         cleanup_workspace(root);
     }
@@ -506,7 +513,7 @@ mod tests {
         let preview =
             preview_workspace_replacement(request.clone()).expect("应能生成结构化替换预览");
         assert_eq!(preview.file_count, 1);
-                assert_eq!(preview.replacement_count, 2);
+        assert_eq!(preview.replacement_count, 2);
 
         let expected_files = expected_files(&preview);
         apply_workspace_replacement(WorkspaceReplacementApplyRequest {

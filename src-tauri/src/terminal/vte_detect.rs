@@ -1,4 +1,4 @@
-use vte::{Params, Perform, Parser};
+use vte::{Params, Parser, Perform};
 
 /// 通过 vte 解析器从 ANSI 数据流中检测特定 CSI 事件。
 /// 基于 Alacritty 使用的 vte crate 提供符合 ECMA-48 标准的 CSI 解析。
