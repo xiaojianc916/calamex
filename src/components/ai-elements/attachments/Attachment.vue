@@ -17,7 +17,7 @@ const emit = defineEmits<{
 }>();
 
 const { variant } = useAttachmentsContext();
-const data = computed(() => props.data);
+const attachmentData = computed(() => props.data);
 const mediaCategory = computed(() => getMediaCategory(props.data));
 
 function handleRemove(): void {
@@ -25,7 +25,7 @@ function handleRemove(): void {
 }
 
 provide(AttachmentKey, {
-  data,
+  data: attachmentData,
   mediaCategory,
   remove: handleRemove,
   variant,

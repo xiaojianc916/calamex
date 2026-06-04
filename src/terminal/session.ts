@@ -1201,7 +1201,9 @@ export class TerminalSession {
       0,
       this._pendingTerminalWriteCallbacks.length,
     );
-    cbs.forEach((cb) => cb());
+    cbs.forEach((cb) => {
+      cb();
+    });
   }
 
   private _flushTerminalWriteBufferNow(options?: {

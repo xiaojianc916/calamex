@@ -68,6 +68,40 @@
       "formatter": {
         "indentWidth": 2
       }
+    },
+    {
+      "includes": ["src/components/ai-elements/terminal/ansi.ts"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noControlCharactersInRegex": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/constants/shell/command-catalog.ts", "src/utils/shell-completion.ts"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noTemplateCurlyInString": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "src/styles/editor-tabs.css",
+        "src/styles/sidebar-explorer.css",
+        "src/styles/sidebar-source-control.css"
+      ],
+      "linter": {
+        "rules": {
+          "style": {
+            "noDescendingSpecificity": "off"
+          }
+        }
+      }
     }
   ]
 }

@@ -474,7 +474,7 @@ export const useEditorStore = defineStore(
      */
     const restoreDraftForDocument = (documentId: string): boolean => {
       const targetDocument = getDocumentById(documentId);
-      if (!targetDocument || targetDocument.kind !== 'text' || !targetDocument.path) {
+      if (targetDocument?.kind !== 'text' || !targetDocument.path) {
         return false;
       }
       const draft = getDocumentDraft(targetDocument.path);

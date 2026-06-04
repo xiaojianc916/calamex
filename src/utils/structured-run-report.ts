@@ -87,9 +87,8 @@ type TInternalTimelineItem = Omit<IStructuredRunTimelineItem, 'gapWeight'> & {
 const RUN_START_MARKER = '[sh-editor] Running current script...';
 const EXIT_CODE_PATTERN = /\[sh-editor\]\s*Exit code:\s*(-?\d+)/i;
 const EXIT_CODE_LINE_PATTERN = /\[sh-editor\]\s*Exit code:\s*-?\d+/i;
-const ANSI_PATTERN =
-  // eslint-disable-next-line no-control-regex
-  /\u001b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][\s\S]*?(?:\u0007|\u001b\\))/g;
+// biome-ignore lint/suspicious/noControlCharactersInRegex: 剥离 ANSI 转义序列必须匹配 ESC(\u001b)/BEL(\u0007) 控制字符
+const ANSI_PATTERN = /\u001b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][\s\S]*?(?:\u0007|\u001b\\))/g;
 const STEP_LINE_PATTERN = /^(?:\[\s*step\s*\]|\[\s*\d+\/\d+\s*\]|step\s*\d+|==>|->)/i;
 const COMMAND_PROMPT_PATTERN = /^[\w.-]+@[\w.-]+:.*[$#]\s+/;
 const PROMPT_ONLY_PATTERN = /^[\w.-]+@[\w.-]+:.*[$#]\s*$/;

@@ -435,7 +435,9 @@ declare global {
   // eslint-disable-next-line no-var
   var __lspBridge__: LspBridge | undefined;
 }
-export const lspBridge: LspBridge = (globalThis.__lspBridge__ ??= new LspBridge());
+const existingLspBridge = globalThis.__lspBridge__ ?? new LspBridge();
+globalThis.__lspBridge__ = existingLspBridge;
+export const lspBridge: LspBridge = existingLspBridge;
 
 // --- 兼容旧的命名导出 -------------------------------------------------------
 /** @deprecated 用 `lspBridge.start(...)` */
@@ -551,8 +553,8 @@ async function renderLspDoc(md: string): Promise<string> {
     > = [];
     const codeBlockRe = /```(\S*)\n([\s\S]*?)```/g;
     let lastIndex = 0;
-    let match: RegExpExecArray | null;
-    while ((match = codeBlockRe.exec(normalized)) !== null) {
+    let match = codeBlockRe.exec(normalized);
+    while (match !== null) {
       if (match.index > lastIndex) {
         parts.push({
           type: 'text',
@@ -565,6 +567,7 @@ async function renderLspDoc(md: string): Promise<string> {
         code: match[2].replace(/\n$/, ''),
       });
       lastIndex = match.index + match[0].length;
+      match = codeBlockRe.exec(normalized);
     }
     if (lastIndex < normalized.length) {
       parts.push({ type: 'text', text: normalized.slice(lastIndex) });

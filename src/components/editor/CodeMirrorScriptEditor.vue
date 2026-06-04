@@ -993,7 +993,20 @@ defineExpose<IEditorExpose>({
 });
 </script>
 
-<style scoped src="./CodeMirrorScriptEditor.css"></style>
+<style scoped>
+.codemirror-editor-surface :deep(.cm-editor) {
+  height: 100%;
+  min-height: 0;
+}
+
+.codemirror-editor-surface :deep(.cm-content) {
+  min-height: 100%;
+}
+
+.codemirror-editor-surface :deep(.cm-scroller) {
+  overflow: auto;
+}
+</style>
 
 <style>
 /* CM6 补全 / hover 全局样式(非 scoped — 弹窗在 body，不在组件 DOM 内)

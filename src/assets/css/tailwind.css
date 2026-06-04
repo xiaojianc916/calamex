@@ -1,4 +1,10 @@
 @layer base {
+  html,
+  body,
+  #app {
+    background-color: var(--bg-0, #0d1117);
+  }
+
   /* Resize 视觉撞裂抑制 —— ADR-20260422-window-resize-tearing 授权 !important 使用 */
   /* stylelint-disable declaration-no-important -- ADR-20260422-window-resize-tearing: 仅 resize 系统态允许覆盖组件动画 */
   html.is-resizing,
@@ -26,12 +32,6 @@
   html.is-resizing .embedded-terminal-host,
   html.is-resizing .diagnostics-overlay-panel {
     contain: layout paint !important;
-  }
-
-  html,
-  body,
-  #app {
-    background-color: var(--bg-0, #0d1117);
   }
 
   /* stylelint-enable declaration-no-important */
