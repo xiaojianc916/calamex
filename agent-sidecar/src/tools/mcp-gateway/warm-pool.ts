@@ -11,6 +11,7 @@ import type {
   IMcpGatewayMetricSink,
   IMcpGatewayPoolEntry,
   IMcpGatewayPoolOptions,
+  TMcpGatewayCreateBundle,
   TMcpGatewayToolProfile,
 } from './types.js';
 import {
