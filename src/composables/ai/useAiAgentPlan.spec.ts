@@ -5,12 +5,7 @@ import { projectOrchestrateEvents } from '@/composables/ai/sidecar-orchestrate';
 import { useAiAgentPlan } from '@/composables/ai/useAiAgentPlan';
 import { useAiAgentStore } from '@/store/aiAgent';
 import type { IAiAgentRun, IAiTaskPlanStep } from '@/types/ai';
-import type {
-  IAgentPlan,
-  IAgentPlanRecord,
-  IAgentSidecarResponsePayload,
-  TAgentUiEvent,
-} from '@/types/ai/sidecar';
+import type { IAgentPlan, TAgentUiEvent } from '@/types/ai/sidecar';
 
 // 部分 mock：保留真实 projectOrchestrateEvents，仅替换两个驱动函数。
 const orchestrateMock = vi.hoisted(() => ({
@@ -30,14 +25,11 @@ vi.mock('@/composables/ai/sidecar-orchestrate', async (importActual) => {
 
 const aiServiceMock = vi.hoisted(() => {
   const classifyTask = vi.fn();
-  const sidecarPlanQuery = vi.fn();
 
   return {
     classifyTask,
-    sidecarPlanQuery,
     reset(): void {
       classifyTask.mockReset();
-      sidecarPlanQuery.mockReset();
     },
   };
 });
@@ -45,7 +37,6 @@ const aiServiceMock = vi.hoisted(() => {
 vi.mock('@/services/ipc/ai.service', () => ({
   aiService: {
     classifyTask: aiServiceMock.classifyTask,
-    sidecarPlanQuery: aiServiceMock.sidecarPlanQuery,
   },
 }));
 
@@ -92,41 +83,6 @@ const createPlan = (): IAgentPlan => ({
     },
   ],
 });
-
-const createPlanRecord = (): IAgentPlanRecord => ({
-  planId: 'plan-persisted-1',
-  threadId: 'thread-persisted-1',
-  version: 1,
-  status: 'executing',
-  userRequest: '实现计划模式持久化',
-  plan: createPlan(),
-  createdAt: '2026-05-11T10:00:00.000Z',
-  updatedAt: '2026-05-11T10:02:00.000Z',
-  approvedAt: '2026-05-11T10:00:30.000Z',
-  executedAt: null,
-  rejectionReason: null,
-  errorMessage: null,
-});
-
-const createPlanRecordResponse = (): IAgentSidecarResponsePayload => {
-  const record = createPlanRecord();
-
-  return {
-    sessionId: 'sidecar-plan-query-session-1',
-    events: [
-      {
-        type: 'plan_record',
-        record,
-        versions: [record],
-      },
-      {
-        type: 'done',
-        result: 'sidecar plan record ready',
-      },
-    ],
-    result: 'sidecar plan record ready',
-  };
-};
 
 const createRun = (steps: IAiTaskPlanStep[]): IAiAgentRun => ({
   id: 'agent-run-persisted-1',
@@ -187,13 +143,12 @@ describe('useAiAgentPlan', () => {
     orchestrateMock.resumeOrchestration.mockReset();
   });
 
-  it('刷新回查计划记录时保留已恢复的暂停 run', async () => {
+  it('恢复持久化计划状态时保留暂停 run，且不再回查服务端', async () => {
     const store = useAiAgentStore();
     const agentPlan = useAiAgentPlan();
     const runSteps = [createTaskStep(0), createTaskStep(1)];
     const run = createRun(runSteps);
 
-    aiServiceMock.sidecarPlanQuery.mockResolvedValue(createPlanRecordResponse());
     store.setPlan('实现计划模式持久化', runSteps, {
       planId: 'plan-persisted-1',
       threadId: 'thread-persisted-1',
@@ -210,10 +165,6 @@ describe('useAiAgentPlan', () => {
 
     await agentPlan.restorePersistedPlanState();
 
-    expect(aiServiceMock.sidecarPlanQuery).toHaveBeenCalledWith({
-      planId: 'plan-persisted-1',
-      version: 1,
-    });
     expect(store.mode).toBe('plan');
     expect(store.activeGoal).toBe('实现计划模式持久化');
     expect(store.activeRunId).toBe(run.id);

@@ -1,8 +1,4 @@
 import { ref } from 'vue';
-import {
-  mapSidecarPlanToTaskSteps,
-  projectSidecarPlanRecordResponse,
-} from '@/composables/ai/sidecar-events';
 import { resumeOrchestration, startOrchestration } from '@/composables/ai/sidecar-orchestrate';
 import { aiService } from '@/services/ipc/ai.service';
 import { useAiAgentStore } from '@/store/aiAgent';
@@ -12,9 +8,7 @@ import type {
   IAiTaskPlanStep,
   IAiToolCall,
 } from '@/types/ai';
-import type { IAgentSidecarResponsePayload } from '@/types/ai/sidecar';
 import { toErrorMessage } from '@/utils/error';
-import { logger } from '@/utils/logger';
 
 const MIN_PLAN_STEPS = 2;
 const MAX_PLAN_STEPS = 6;
@@ -51,35 +45,6 @@ export const useAiAgentPlan = () => {
   const store = useAiAgentStore();
   const latestContext = ref<IAiContextReference[]>([]);
   const latestWorkspaceRootPath = ref<string | null>(null);
-
-  const applyPlanRecordPayload = (
-    payload: IAgentSidecarResponsePayload,
-    options: { replacePlanSnapshot?: boolean } = {},
-  ): void => {
-    const projection = projectSidecarPlanRecordResponse(payload);
-    if (projection.errorMessage) {
-      throw new Error(projection.errorMessage);
-    }
-    if (!projection.metadata) {
-      throw new Error('sidecar 未返回计划记录，无法同步计划状态。');
-    }
-    const metadata = projection.metadata;
-
-    if (options.replacePlanSnapshot && projection.record) {
-      const activeRun = store.activeRun;
-      if (activeRun) {
-        store.activeGoal = projection.record.plan.goal;
-        store.steps = activeRun.steps;
-      } else {
-        store.setPlan(
-          projection.record.plan.goal,
-          mapSidecarPlanToTaskSteps(projection.record.plan),
-          metadata,
-        );
-      }
-    }
-    store.applyPlanMetadata(metadata, projection.versions);
-  };
 
   const classifyTask = async (goal: string, context: IAiContextReference[]): Promise<void> => {
     store.beginPlanning(goal);
@@ -168,18 +133,20 @@ export const useAiAgentPlan = () => {
     ).steps;
   };
 
+  // 原 plan_query 服务端对账已下线;计划状态完全以本地持久化快照为准。
+  // 暂停中的执行 run 是步骤的权威来源,优先对齐到它。
   const refreshPlanRecord = async (
     planId = store.planId,
-    version = store.planVersion ?? undefined,
+    _version = store.planVersion ?? undefined,
   ): Promise<void> => {
     if (!planId) {
-      throw new Error('当前没有可查询的计划记录。');
+      return;
     }
-    const payload = await aiService.sidecarPlanQuery({
-      planId,
-      ...(version ? { version } : {}),
-    });
-    applyPlanRecordPayload(payload, { replacePlanSnapshot: true });
+    const activeRun = store.activeRun;
+    if (activeRun) {
+      store.activeGoal = activeRun.goal;
+      store.steps = activeRun.steps;
+    }
   };
 
   const restorePersistedPlanState = async (): Promise<void> => {
@@ -195,16 +162,7 @@ export const useAiAgentPlan = () => {
     if (!store.planId) {
       return;
     }
-    await refreshPlanRecord(store.planId, store.planVersion ?? undefined).catch(
-      (error: unknown) => {
-        logger.warn({
-          event: 'ai-agent-plan-persisted-refresh-failed',
-          err: error,
-          planId: store.planId,
-          planVersion: store.planVersion,
-        });
-      },
-    );
+    await refreshPlanRecord(store.planId, store.planVersion ?? undefined);
   };
 
   const updateStep = (stepId: string, partial: Partial<IAiTaskPlanStep>): void => {
