@@ -181,14 +181,15 @@
               <button type="button" class="search-panel-result-group-open"
                 :aria-expanded="!isSearchResultGroupCollapsed(entry.row.group.path)"
                 @click="toggleSearchResultGroup(entry.row.group.path)">
-                <span class="search-panel-result-group-chevron" aria-hidden="true">填你原来的箭头表达式</span>
+                <span class="search-panel-result-group-chevron" aria-hidden="true">{{
+                  isSearchResultGroupCollapsed(entry.row.group.path) ? '▸' : '▾' }}</span>
                 <span class="search-panel-result-group-icon" aria-hidden="true">
                   <ExplorerEntryIcon kind="file" :path="entry.row.group.path" />
                 </span>
-                <span class="search-panel-result-group-name"> entry.row.group.name </span>
-                <span class="search-panel-result-group-path"> entry.row.group.parentPath </span>
+                <span class="search-panel-result-group-name"> {{ entry.row.group.name }} </span>
+                <span class="search-panel-result-group-path"> {{ entry.row.group.parentPath }} </span>
               </button>
-              <span class="search-panel-result-group-count"> entry.row.group.results.length </span>
+              <span class="search-panel-result-group-count"> {{ entry.row.group.results.length }} </span>
             </header>
 
             <button v-else type="button" class="search-panel-result-line search-panel-virtual-row"
@@ -196,7 +197,7 @@
               :aria-selected="selectedResultKey === entry.row.result?.resultKey"
               :style="{ transform: `translateY(${entry.start}px)` }"
               @click="entry.row.result && handleSearchResultOpen(entry.row.result)">
-              <span class="search-panel-result-line-number"> entry.row.result?.lineNumber </span>
+              <span class="search-panel-result-line-number"> {{ entry.row.result?.lineNumber }} </span>
               <span class="search-panel-result-line-body">
                 <span class="search-panel-result-snippet">
                   <template v-for="(segment, index) in entry.row.result?.snippetSegments ?? []"
@@ -210,56 +211,50 @@
           </template>
         </div>
 
-        <!-- ② 原样保留：结果少时不虚拟化（你原来的 article 整段塞进这里，一字不改） -->
+        <!-- ② 原样保留：结果少时不虚拟化 -->
         <template v-else>
           <article v-for="group in searchResultGroups" :key="group.path" class="search-panel-result-group">
-            …（你原本的内容，原封不动）…
+
+            <header class="search-panel-result-group-header">
+              <button type="button" class="search-panel-result-group-open"
+                :aria-expanded="!isSearchResultGroupCollapsed(group.path)" @click="toggleSearchResultGroup(group.path)">
+                <span class="search-panel-result-group-chevron" aria-hidden="true">{{
+                  isSearchResultGroupCollapsed(group.path) ? '▸' : '▾' }}</span>
+                <span class="search-panel-result-group-icon" aria-hidden="true">
+                  <ExplorerEntryIcon kind="file" :path="group.path" />
+                </span>
+                <span class="search-panel-result-group-name">{{ group.name }}</span>
+                <span class="search-panel-result-group-path">{{ group.parentPath }}</span>
+              </button>
+              <span class="search-panel-result-group-count">{{ group.results.length }}</span>
+            </header>
+
+            <template v-if="!isSearchResultGroupCollapsed(group.path)">
+              <button v-for="result in group.results" :key="result.resultKey" type="button"
+                class="search-panel-result-line" :class="{ 'is-selected': selectedResultKey === result.resultKey }"
+                role="option" :aria-selected="selectedResultKey === result.resultKey"
+                @click="handleSearchResultOpen(result)">
+                <span class="search-panel-result-line-number">{{ result.lineNumber }}</span>
+
+                <span class="search-panel-result-line-body">
+                  <span class="search-panel-result-snippet">
+                    <template v-for="(segment, index) in result.snippetSegments"
+                      :key="`${result.resultKey}-snippet-${index}`">
+                      <mark v-if="segment.matched" class="search-panel-result-snippet-match" v-text="segment.text" />
+                      <span v-else class="search-panel-result-snippet-context" v-text="segment.text" />
+                    </template>
+                  </span>
+                </span>
+              </button>
+            </template>
           </article>
         </template>
-
-        <article v-for="group in searchResultGroups" :key="group.path" class="search-panel-result-group">
-
-          <header class="search-panel-result-group-header">
-            <button type="button" class="search-panel-result-group-open"
-              :aria-expanded="!isSearchResultGroupCollapsed(group.path)" @click="toggleSearchResultGroup(group.path)">
-              <span class="search-panel-result-group-chevron" aria-hidden="true">{{
-                isSearchResultGroupCollapsed(group.path) ? '▸' : '▾' }}</span>
-              <span class="search-panel-result-group-icon" aria-hidden="true">
-                <ExplorerEntryIcon kind="file" :path="group.path" />
-              </span>
-              <span class="search-panel-result-group-name">{{ group.name }}</span>
-              <span class="search-panel-result-group-path">{{ group.parentPath }}</span>
-            </button>
-            <span class="search-panel-result-group-count">{{ group.results.length }}</span>
-          </header>
-
-          <template v-if="!isSearchResultGroupCollapsed(group.path)">
-            <button v-for="result in group.results" :key="result.resultKey" type="button"
-              class="search-panel-result-line" :class="{ 'is-selected': selectedResultKey === result.resultKey }"
-              role="option" :aria-selected="selectedResultKey === result.resultKey"
-              @click="handleSearchResultOpen(result)">
-              <span class="search-panel-result-line-number">{{ result.lineNumber }}</span>
-
-              <span class="search-panel-result-line-body">
-                <span class="search-panel-result-snippet">
-                  <template v-for="(segment, index) in result.snippetSegments"
-                    :key="`${result.resultKey}-snippet-${index}`">
-                    <mark v-if="segment.matched" class="search-panel-result-snippet-match" v-text="segment.text" />
-                    <span v-else class="search-panel-result-snippet-context" v-text="segment.text" />
-                  </template>
-                </span>
-              </span>
-            </button>
-          </template>
-        </article>
       </template>
     </div>
   </section>
 </template>
 
 <script setup lang="ts">
-import { useVirtualizer } from '@tanstack/vue-virtual';
-import { computed, onScopeDispose, ref, watch } from 'vue';
 import InlineError from '@/components/common/InlineError.vue';
 import { Input } from '@/components/ui/input';
 import ExplorerEntryIcon from '@/components/workbench/ExplorerEntryIcon.vue';
@@ -280,6 +275,8 @@ import type {
   TWorkspaceSearchScope,
 } from '@/types/search';
 import { toErrorMessage } from '@/utils/error';
+import { useVirtualizer } from '@tanstack/vue-virtual';
+import { computed, onScopeDispose, ref, watch } from 'vue';
 
 type TSearchReason = TWorkspaceSearchResultKind;
 type TSearchToggleOption = 'matchCase' | 'wholeWord' | 'useRegex' | 'showPathFilters';
@@ -568,9 +565,8 @@ const buildCompactHighlightedSegments = (
     .slice(previewStart, safeStart)
     .join('')}`;
   const matchText = characters.slice(safeStart, safeEnd).join('');
-  const suffixText = `${characters.slice(safeEnd, previewEnd).join('')}${
-    previewEnd < characters.length ? COMPACT_PREVIEW_ELLIPSIS : ''
-  }`;
+  const suffixText = `${characters.slice(safeEnd, previewEnd).join('')}${previewEnd < characters.length ? COMPACT_PREVIEW_ELLIPSIS : ''
+    }`;
   const segments: IHighlightedSegment[] = [];
 
   if (prefixText) {
@@ -813,7 +809,7 @@ const buildReplacementLineSegments = (
     suffixLength < beforeCharacters.length - prefixLength &&
     suffixLength < afterCharacters.length - prefixLength &&
     beforeCharacters[beforeCharacters.length - 1 - suffixLength] ===
-      afterCharacters[afterCharacters.length - 1 - suffixLength]
+    afterCharacters[afterCharacters.length - 1 - suffixLength]
   ) {
     suffixLength += 1;
   }
