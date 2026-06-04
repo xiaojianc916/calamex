@@ -96,6 +96,9 @@ const aiAgentPersistSchema = z.object({
   planExecutedAt: nullablePersistedTextSchema,
   planRejectionReason: nullablePersistedTextSchema,
   planErrorMessage: nullablePersistedTextSchema,
+  // 原生编排 (createWorkflow) 单条 run 的 runId,用于把计划阶段 (plan_ready) 的 run
+  // 一直带到执行阶段 (resume)。default(null) 兼容旧持久化数据与既有测试。
+  orchestrationRunId: nullablePersistedTextSchema.default(null),
   activeRunId: nullablePersistedTextSchema,
   runs: z.array(aiAgentRunSchema).max(20),
   latestOfficialUsageResolved: z.boolean(),
@@ -279,6 +282,8 @@ export const useAiAgentStore = defineStore(
     const planRejectionReason = ref<string | null>(null);
     const planErrorMessage = ref<string | null>(null);
     const planVersions = ref<IAiAgentPlanVersionSummary[]>([]);
+    // 原生编排单条 run 的 runId(计划阶段产生,执行阶段 resume 复用)。
+    const orchestrationRunId = ref<string | null>(null);
     const activeRunId = ref<string | null>(null);
     const runs = ref<IAiAgentRun[]>([]);
     const latestOfficialUsageResolved = ref<boolean>(false);
@@ -346,6 +351,7 @@ export const useAiAgentStore = defineStore(
       planRejectionReason.value = null;
       planErrorMessage.value = null;
       planVersions.value = [];
+      orchestrationRunId.value = null;
       activeRunId.value = null;
       latestOfficialUsageResolved.value = false;
       latestOfficialUsage.value = null;
@@ -423,6 +429,11 @@ export const useAiAgentStore = defineStore(
       planErrorMessage.value = metadata?.errorMessage ?? null;
       planVersions.value = metadata ? [{ ...metadata }] : [];
       activeRunId.value = null;
+    };
+
+    // 原生编排:把计划阶段拿到的 runId 写入 store,供执行阶段 resume 复用。
+    const setOrchestrationRunId = (runId: string | null): void => {
+      orchestrationRunId.value = runId;
     };
 
     const applyPlanMetadata = (
@@ -657,6 +668,7 @@ export const useAiAgentStore = defineStore(
       planRejectionReason,
       planErrorMessage,
       planVersions,
+      orchestrationRunId,
       activeRunId,
       runs,
       latestOfficialUsageResolved,
@@ -686,6 +698,7 @@ export const useAiAgentStore = defineStore(
       beginPlanning,
       failPlanning,
       setPlan,
+      setOrchestrationRunId,
       applyPlanMetadata,
       setPlanStatus,
       replaceStep,
@@ -731,6 +744,7 @@ export const useAiAgentStore = defineStore(
         'planExecutedAt',
         'planRejectionReason',
         'planErrorMessage',
+        'orchestrationRunId',
         'activeRunId',
         'runs',
         'latestOfficialUsageResolved',
