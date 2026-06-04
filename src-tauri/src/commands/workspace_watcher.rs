@@ -9,11 +9,35 @@ use arc_swap::ArcSwapOption;
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, event::ModifyKind};
 use notify_debouncer_full::{DebounceEventResult, Debouncer, FileIdMap, new_debouncer};
 use serde::{Deserialize, Serialize};
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    ffi::OsStr,
+    path::{Component, Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 use tauri::AppHandle;
 use tauri_specta::Event as _;
 
 const DEBOUNCE_DURATION: Duration = Duration::from_millis(200);
+
+/// 监听时始终忽略的目录名（相对监听根判断）。
+///
+/// 这些目录的变更对资源树毫无意义，却会在依赖安装 / 构建 / git 操作时喷出
+/// 成千上万条事件，灌满去抖窗口、拖垮前端刷新，甚至把用户真正关心的源码
+/// 改动淹没。语义对齐编辑器通行的 watcher 排除清单。
+const IGNORED_DIR_NAMES: &[&str] = &[
+    ".git",
+    ".hg",
+    ".svn",
+    "node_modules",
+    "target",
+    "dist",
+    ".next",
+    ".nuxt",
+    ".turbo",
+    ".venv",
+    "__pycache__",
+];
 
 // ============================================================================
 // 事件负载
@@ -176,16 +200,22 @@ fn handle_debounced_events(result: DebounceEventResult, app: &AppHandle, root_pa
         return;
     }
 
-    // 展开为 (path, kind) 列表
+    // 展开为 (path, kind) 列表，并丢弃落在被忽略目录内的变更
     // 每个 DebouncedEvent 可能携带多个路径（如 rename 携带 from/to）
     // 每条事件保留自己的 kind，不像旧版那样被循环覆盖
+    let root = Path::new(root_path);
     let mut changes: Vec<FsChange> = events
         .iter()
         .flat_map(|ev| {
             let kind = classify_event_kind(&ev.event.kind);
-            ev.event.paths.iter().map(move |path| FsChange {
-                path: path.to_string_lossy().into_owned(),
-                kind,
+            ev.event.paths.iter().filter_map(move |path| {
+                if is_ignored_change(root, path) {
+                    return None;
+                }
+                Some(FsChange {
+                    path: path.to_string_lossy().into_owned(),
+                    kind,
+                })
             })
         })
         .collect();
@@ -230,13 +260,115 @@ fn classify_event_kind(kind: &EventKind) -> FsChangeKind {
 
 /// 去重时的优先级：Removed > Renamed > Created > Modified
 ///
-/// 直觉：同一路径在一批次内既被改又被删，应当告诉前端"它没了"，
-/// 而不是"它被改了"——后者会导致前端尝试读取已删文件。
+/// 直觉：同一路径在一批次内既被改又被删，应当告诉前端\"它没了\"，
+/// 而不是\"它被改了\"——后者会导致前端尝试读取已删文件。
 fn severity(kind: FsChangeKind) -> u8 {
     match kind {
         FsChangeKind::Removed => 3,
         FsChangeKind::Renamed => 2,
         FsChangeKind::Created => 1,
         FsChangeKind::Modified => 0,
+    }
+}
+
+// ============================================================================
+// 路径忽略
+// ============================================================================
+
+/// 判断变更路径是否落在监听根下被忽略的目录内。
+fn is_ignored_change(root: &Path, path: &Path) -> bool {
+    let Some(relative) = relativize(root, path) else {
+        // 无法判定归属（前缀形态不一致等）时放行，避免漏报真实改动。
+        return false;
+    };
+    relative.components().any(|component| match component {
+        Component::Normal(name) => IGNORED_DIR_NAMES
+            .iter()
+            .any(|ignored| os_str_eq(name, OsStr::new(ignored))),
+        _ => false,
+    })
+}
+
+/// 按组件逐级剥掉监听根前缀，返回根 *之下* 的相对路径。
+///
+/// 仅比较相对组件可避免一个隐蔽陷阱：当用户把工作区直接开在名为
+/// `node_modules`（或 `target` 等）的目录里时，不应把整棵树误判为被忽略。
+/// 前缀形态不一致（罕见）时返回 `None`，调用方据此放行。
+fn relativize(root: &Path, path: &Path) -> Option<PathBuf> {
+    let mut root_components = root.components();
+    let mut path_components = path.components();
+    loop {
+        match root_components.next() {
+            None => return Some(path_components.as_path().to_path_buf()),
+            Some(root_component) => {
+                let path_component = path_components.next()?;
+                if !os_str_eq(root_component.as_os_str(), path_component.as_os_str()) {
+                    return None;
+                }
+            }
+        }
+    }
+}
+
+/// 路径组件相等性：Windows 上大小写不敏感，其它平台精确匹配。
+/// 与 `commands::git` 中仓库根前缀比较保持一致的跨平台语义。
+#[cfg(windows)]
+fn os_str_eq(left: &OsStr, right: &OsStr) -> bool {
+    left.eq_ignore_ascii_case(right)
+}
+
+#[cfg(not(windows))]
+fn os_str_eq(left: &OsStr, right: &OsStr) -> bool {
+    left == right
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn p(value: &str) -> PathBuf {
+        PathBuf::from(value)
+    }
+
+    #[test]
+    fn ignores_dependency_build_and_vcs_dirs() {
+        let root = p("/ws");
+        assert!(is_ignored_change(&root, &p("/ws/node_modules/lodash/index.js")));
+        assert!(is_ignored_change(&root, &p("/ws/.git/HEAD")));
+        assert!(is_ignored_change(&root, &p("/ws/src-tauri/target/debug/app")));
+        assert!(is_ignored_change(&root, &p("/ws/web/dist/bundle.js")));
+        assert!(is_ignored_change(&root, &p("/ws/api/__pycache__/mod.pyc")));
+    }
+
+    #[test]
+    fn keeps_real_source_changes() {
+        let root = p("/ws");
+        assert!(!is_ignored_change(&root, &p("/ws/src/main.rs")));
+        assert!(!is_ignored_change(
+            &root,
+            &p("/ws/src-tauri/src/commands/mod.rs")
+        ));
+    }
+
+    #[test]
+    fn only_relative_components_are_inspected() {
+        // 工作区根自身就在名为 node_modules 的目录里：根之下的源码不应被误伤
+        let root = p("/home/user/node_modules/my-project");
+        assert!(!is_ignored_change(
+            &root,
+            &p("/home/user/node_modules/my-project/src/main.rs")
+        ));
+        // 但根之下真正的 node_modules 仍被忽略
+        assert!(is_ignored_change(
+            &root,
+            &p("/home/user/node_modules/my-project/node_modules/x.js")
+        ));
+    }
+
+    #[test]
+    fn unrelated_path_fails_open() {
+        // 前缀不匹配时放行（返回 false），宁可多推一条也不漏报
+        let root = p("/ws");
+        assert!(!is_ignored_change(&root, &p("/elsewhere/node_modules/x.js")));
     }
 }
