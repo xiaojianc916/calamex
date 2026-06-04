@@ -341,56 +341,6 @@ export const agentSidecarChatRequestSchema = agentSidecarBaseRequestSchema.exten
   mode: optionalAgentModeSchema,
 });
 
-export const agentSidecarPlanRequestSchema = agentSidecarBaseRequestSchema.extend({
-  goal: requiredNonEmptyStringSchema,
-});
-
-export const agentSidecarExecuteRequestSchema = agentSidecarBaseRequestSchema.extend({
-  goal: requiredNonEmptyStringSchema,
-  planId: requiredNonEmptyStringSchema,
-  planVersion: z.number().int().positive(),
-  planStepId: requiredNonEmptyStringSchema,
-});
-
-export const agentSidecarPlanValidateRequestSchema = agentSidecarBaseRequestSchema
-  .extend({
-    planId: requiredNonEmptyStringSchema,
-    planVersion: z.number().int().positive(),
-  })
-  .omit({ planStepId: true });
-
-export const agentSidecarPlanReplanRequestSchema = agentSidecarBaseRequestSchema
-  .extend({
-    goal: requiredNonEmptyStringSchema,
-    planId: requiredNonEmptyStringSchema,
-    planVersion: z.number().int().positive(),
-  })
-  .omit({ planStepId: true });
-
-const agentSidecarPlanVersionRequestSchema = z.object({
-  sessionId: optionalNonEmptyStringSchema,
-  planId: requiredNonEmptyStringSchema,
-  version: z.number().int().positive(),
-});
-
-export const agentSidecarPlanApproveRequestSchema = agentSidecarPlanVersionRequestSchema;
-
-export const agentSidecarPlanQueryRequestSchema = z.object({
-  sessionId: optionalNonEmptyStringSchema,
-  planId: requiredNonEmptyStringSchema,
-  version: z.number().int().positive().optional(),
-});
-
-export const agentSidecarPlanRejectRequestSchema = agentSidecarPlanVersionRequestSchema.extend({
-  reason: optionalNonEmptyStringSchema,
-});
-
-export const agentSidecarPlanFinishRequestSchema = agentSidecarPlanVersionRequestSchema.extend({
-  // 用 enum.extract 而不是重写字面量,与 agentPlanStatusSchema 保持单一来源。
-  status: agentPlanStatusSchema.extract(['completed', 'failed']),
-  errorMessage: optionalNonEmptyStringSchema,
-});
-
 /**
  * Approval resolve:大部分 base 字段都可不传(只需 sessionId + requestId + decision)。
  * 用 `.partial()` 把 base 全部变 optional,然后 `.extend` 只重新声明必填字段。

@@ -11,12 +11,10 @@ use tauri::{AppHandle, Emitter, Manager};
 use crate::ai::credential::CredentialStore;
 use crate::commands::contracts::{
     AgentSidecarApprovalResolveRequest, AgentSidecarChatRequest,
-    AgentSidecarCheckpointRestoreRequest, AgentSidecarExecuteRequest, AgentSidecarHealthPayload,
-    AgentSidecarModelConfigPayload, AgentSidecarPlanApproveRequest, AgentSidecarPlanFinishRequest,
-    AgentSidecarPlanQueryRequest, AgentSidecarPlanRejectRequest, AgentSidecarPlanReplanRequest,
-    AgentSidecarPlanRequest, AgentSidecarPlanValidateRequest, AgentSidecarResponsePayload,
-    AgentSidecarWarmupPayload, AgentSidecarWarmupRequest, AiWebFetchInput, AiWebFetchPayload,
-    AiWebSearchInput, AiWebSearchPayload,
+    AgentSidecarCheckpointRestoreRequest, AgentSidecarHealthPayload,
+    AgentSidecarModelConfigPayload, AgentSidecarResponsePayload, AgentSidecarWarmupPayload,
+    AgentSidecarWarmupRequest, AiWebFetchInput, AiWebFetchPayload, AiWebSearchInput,
+    AiWebSearchPayload,
 };
 
 mod orchestrate;
@@ -1293,76 +1291,6 @@ pub async fn chat(
         &app,
         "/agent/chat",
         "/agent/chat/stream",
-        &payload,
-        &session_id,
-    )
-    .await
-}
-
-pub async fn plan(
-    app: AppHandle,
-    mut payload: AgentSidecarPlanRequest,
-) -> Result<AgentSidecarResponsePayload, String> {
-    let session_id = ensure_request_session_id(&mut payload.session_id, "sidecar-plan");
-    ensure_model_config!(payload, current_sidecar_model_config());
-    post_json_streaming_events(
-        &app,
-        "/agent/plan",
-        "/agent/plan/stream",
-        &payload,
-        &session_id,
-    )
-    .await
-}
-
-pub async fn approve_plan(
-    payload: AgentSidecarPlanApproveRequest,
-) -> Result<AgentSidecarResponsePayload, String> {
-    post_json("/agent/plan/approve", &payload).await
-}
-
-pub async fn query_plan(
-    payload: AgentSidecarPlanQueryRequest,
-) -> Result<AgentSidecarResponsePayload, String> {
-    post_json("/agent/plan/query", &payload).await
-}
-
-pub async fn reject_plan(
-    payload: AgentSidecarPlanRejectRequest,
-) -> Result<AgentSidecarResponsePayload, String> {
-    post_json("/agent/plan/reject", &payload).await
-}
-
-pub async fn finish_plan(
-    payload: AgentSidecarPlanFinishRequest,
-) -> Result<AgentSidecarResponsePayload, String> {
-    post_json("/agent/plan/finish", &payload).await
-}
-
-pub async fn validate_plan(
-    mut payload: AgentSidecarPlanValidateRequest,
-) -> Result<AgentSidecarResponsePayload, String> {
-    ensure_model_config!(payload, current_sidecar_model_config());
-    post_json("/agent/plan/validate", &payload).await
-}
-
-pub async fn replan_plan(
-    mut payload: AgentSidecarPlanReplanRequest,
-) -> Result<AgentSidecarResponsePayload, String> {
-    ensure_model_config!(payload, current_sidecar_model_config());
-    post_json("/agent/plan/replan", &payload).await
-}
-
-pub async fn execute(
-    app: AppHandle,
-    mut payload: AgentSidecarExecuteRequest,
-) -> Result<AgentSidecarResponsePayload, String> {
-    let session_id = ensure_request_session_id(&mut payload.session_id, "sidecar-agent");
-    ensure_model_config!(payload, current_sidecar_model_config());
-    post_json_streaming_events(
-        &app,
-        "/agent/execute",
-        "/agent/execute/stream",
         &payload,
         &session_id,
     )

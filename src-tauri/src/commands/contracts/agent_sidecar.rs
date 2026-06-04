@@ -61,120 +61,6 @@ pub struct AgentSidecarChatRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
-pub struct AgentSidecarPlanRequest {
-    #[serde(skip_serializing_if = "is_blank_optional_string")]
-    pub(crate) session_id: Option<String>,
-    pub(crate) goal: String,
-    pub(crate) messages: Vec<AgentSidecarMessagePayload>,
-    #[serde(skip_serializing_if = "is_blank_optional_string")]
-    pub(crate) workspace_root_path: Option<String>,
-    #[serde(default)]
-    pub(crate) context: Vec<AiContextReferencePayload>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) model_config: Option<AgentSidecarModelConfigPayload>,
-    #[serde(skip_serializing_if = "is_blank_optional_string")]
-    pub(crate) thread_id: Option<String>,
-    #[serde(skip_serializing_if = "is_blank_optional_string")]
-    pub(crate) plan_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentSidecarExecuteRequest {
-    #[serde(skip_serializing_if = "is_blank_optional_string")]
-    pub(crate) session_id: Option<String>,
-    pub(crate) goal: String,
-    pub(crate) messages: Vec<AgentSidecarMessagePayload>,
-    #[serde(skip_serializing_if = "is_blank_optional_string")]
-    pub(crate) workspace_root_path: Option<String>,
-    #[serde(default)]
-    pub(crate) context: Vec<AiContextReferencePayload>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) model_config: Option<AgentSidecarModelConfigPayload>,
-    pub(crate) plan_id: String,
-    pub(crate) plan_version: u32,
-    pub(crate) plan_step_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentSidecarPlanValidateRequest {
-    #[serde(skip_serializing_if = "is_blank_optional_string")]
-    pub(crate) session_id: Option<String>,
-    #[serde(skip_serializing_if = "is_blank_optional_string")]
-    pub(crate) goal: Option<String>,
-    pub(crate) messages: Vec<AgentSidecarMessagePayload>,
-    #[serde(skip_serializing_if = "is_blank_optional_string")]
-    pub(crate) workspace_root_path: Option<String>,
-    #[serde(default)]
-    pub(crate) context: Vec<AiContextReferencePayload>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) model_config: Option<AgentSidecarModelConfigPayload>,
-    pub(crate) plan_id: String,
-    pub(crate) plan_version: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentSidecarPlanReplanRequest {
-    #[serde(skip_serializing_if = "is_blank_optional_string")]
-    pub(crate) session_id: Option<String>,
-    pub(crate) goal: String,
-    pub(crate) messages: Vec<AgentSidecarMessagePayload>,
-    #[serde(skip_serializing_if = "is_blank_optional_string")]
-    pub(crate) workspace_root_path: Option<String>,
-    #[serde(default)]
-    pub(crate) context: Vec<AiContextReferencePayload>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) model_config: Option<AgentSidecarModelConfigPayload>,
-    pub(crate) plan_id: String,
-    pub(crate) plan_version: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentSidecarPlanApproveRequest {
-    #[serde(skip_serializing_if = "is_blank_optional_string")]
-    pub(crate) session_id: Option<String>,
-    pub(crate) plan_id: String,
-    pub(crate) version: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentSidecarPlanQueryRequest {
-    #[serde(skip_serializing_if = "is_blank_optional_string")]
-    pub(crate) session_id: Option<String>,
-    pub(crate) plan_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) version: Option<u32>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentSidecarPlanRejectRequest {
-    #[serde(skip_serializing_if = "is_blank_optional_string")]
-    pub(crate) session_id: Option<String>,
-    pub(crate) plan_id: String,
-    pub(crate) version: u32,
-    #[serde(skip_serializing_if = "is_blank_optional_string")]
-    pub(crate) reason: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentSidecarPlanFinishRequest {
-    #[serde(skip_serializing_if = "is_blank_optional_string")]
-    pub(crate) session_id: Option<String>,
-    pub(crate) plan_id: String,
-    pub(crate) version: u32,
-    pub(crate) status: String,
-    #[serde(skip_serializing_if = "is_blank_optional_string")]
-    pub(crate) error_message: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
 pub struct AgentSidecarApprovalResolveRequest {
     #[serde(skip_serializing_if = "is_blank_optional_string")]
     pub(crate) session_id: Option<String>,
@@ -273,7 +159,7 @@ mod agent_sidecar_contract_tests {
     use serde_json::{Map, Value};
 
     use super::{
-        AgentSidecarChatRequest, AgentSidecarCheckpointRestoreRequest, AgentSidecarExecuteRequest,
+        AgentSidecarChatRequest, AgentSidecarCheckpointRestoreRequest,
         AgentSidecarMessagePayload, AgentSidecarRollbackStepPath,
     };
 
@@ -338,55 +224,6 @@ mod agent_sidecar_contract_tests {
         assert_eq!(
             object.get("threadId"),
             Some(&Value::String("thread-chat-1".to_string()))
-        );
-    }
-
-    #[test]
-    fn execute_request_omits_absent_optional_fields() {
-        let request = AgentSidecarExecuteRequest {
-            session_id: None,
-            goal: "run".to_string(),
-            messages: vec![sidecar_message()],
-            workspace_root_path: None,
-            context: Vec::new(),
-            model_config: None,
-            plan_id: "plan-1".to_string(),
-            plan_version: 1,
-            plan_step_id: "step-1".to_string(),
-        };
-
-        let object = serialize_object(&request);
-
-        assert!(!object.contains_key("sessionId"));
-        assert!(!object.contains_key("workspaceRootPath"));
-        assert_eq!(object.get("goal"), Some(&Value::String("run".to_string())));
-    }
-
-    #[test]
-    fn execute_request_keeps_non_empty_optional_fields() {
-        let request = AgentSidecarExecuteRequest {
-            session_id: Some("agent-session-1".to_string()),
-            goal: "run".to_string(),
-            messages: vec![sidecar_message()],
-            workspace_root_path: Some("D:/com.xiaojianc/my_desktop_app".to_string()),
-            context: Vec::new(),
-            model_config: None,
-            plan_id: "plan-1".to_string(),
-            plan_version: 1,
-            plan_step_id: "step-1".to_string(),
-        };
-
-        let object = serialize_object(&request);
-
-        assert_eq!(
-            object.get("sessionId"),
-            Some(&Value::String("agent-session-1".to_string()))
-        );
-        assert_eq!(
-            object.get("workspaceRootPath"),
-            Some(&Value::String(
-                "D:/com.xiaojianc/my_desktop_app".to_string()
-            ))
         );
     }
 

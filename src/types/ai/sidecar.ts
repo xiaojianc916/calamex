@@ -483,51 +483,6 @@ export interface IAgentSidecarChatRequest extends IAgentSidecarBaseRequest {
   mode?: TAgentSidecarMode;
 }
 
-export interface IAgentSidecarPlanRequest extends Omit<IAgentSidecarBaseRequest, 'goal'> {
-  goal: string;
-}
-
-export interface IAgentSidecarExecuteRequest extends Omit<IAgentSidecarBaseRequest, 'goal'> {
-  goal: string;
-  planId: string;
-  planVersion: number;
-  planStepId: string;
-}
-
-export interface IAgentSidecarPlanValidateRequest
-  extends Omit<IAgentSidecarBaseRequest, 'planStepId'> {
-  planId: string;
-  planVersion: number;
-}
-
-export interface IAgentSidecarPlanReplanRequest
-  extends Omit<IAgentSidecarBaseRequest, 'goal' | 'planStepId'> {
-  goal: string;
-  planId: string;
-  planVersion: number;
-}
-
-export interface IAgentSidecarPlanApproveRequest {
-  sessionId?: string;
-  planId: string;
-  version: number;
-}
-
-export interface IAgentSidecarPlanQueryRequest {
-  sessionId?: string;
-  planId: string;
-  version?: number;
-}
-
-export interface IAgentSidecarPlanRejectRequest extends IAgentSidecarPlanApproveRequest {
-  reason?: string;
-}
-
-export interface IAgentSidecarPlanFinishRequest extends IAgentSidecarPlanApproveRequest {
-  status: Extract<TAgentPlanStatus, 'completed' | 'failed'>;
-  errorMessage?: string;
-}
-
 /**
  * approval resolve 用 `Partial<IAgentSidecarBaseRequest>`,把所有 base 字段都
  * 变成 optional(包括 `messages` / `context`)。这是有意的:resolve 调用一般
