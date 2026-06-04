@@ -2,11 +2,13 @@ use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+use tokio_util::sync::CancellationToken;
+
 const STREAM_STATE_TTL: Duration = Duration::from_secs(30 * 60);
 
 #[derive(Debug, Clone)]
 struct StreamState {
-    cancelled: bool,
+    token: CancellationToken,
     registered_at: Instant,
 }
 
@@ -30,7 +32,7 @@ pub fn register(stream_id: &str) {
     guard.insert(
         stream_id.to_string(),
         StreamState {
-            cancelled: false,
+            token: CancellationToken::new(),
             registered_at: Instant::now(),
         },
     );
@@ -47,14 +49,17 @@ pub fn cancel(stream_id: &str) -> bool {
 
     prune_expired_locked(&mut guard);
 
-    let Some(state) = guard.get_mut(stream_id) else {
+    let Some(state) = guard.get(stream_id) else {
         return false;
     };
 
-    let was_already_cancelled = state.cancelled;
-    state.cancelled = true;
+    if state.token.is_cancelled() {
+        return false;
+    }
 
-    !was_already_cancelled
+    state.token.cancel();
+
+    true
 }
 
 pub fn is_cancelled(stream_id: &str) -> bool {
@@ -70,8 +75,26 @@ pub fn is_cancelled(stream_id: &str) -> bool {
 
     guard
         .get(stream_id)
-        .map(|state| state.cancelled)
+        .map(|state| state.token.is_cancelled())
         .unwrap_or(false)
+}
+
+/// 返回该 stream 的取消令牌克隆，供流式读取路径用 `select!` 等待取消信号。
+/// CancellationToken 克隆共享同一取消状态：`cancel()` 触发后，所有克隆体的
+/// `cancelled()` future 都会被唤醒。未注册（或已 `finish`）时返回 `None`，
+/// 调用方据此视为“无取消语义”，行为与改造前保持一致。
+pub fn token(stream_id: &str) -> Option<CancellationToken> {
+    if stream_id.trim().is_empty() {
+        return None;
+    }
+
+    let mut guard = streams()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    prune_expired_locked(&mut guard);
+
+    guard.get(stream_id).map(|state| state.token.clone())
 }
 
 pub fn finish(stream_id: &str) {
@@ -96,7 +119,7 @@ fn prune_expired_locked(streams: &mut HashMap<String, StreamState>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{cancel, finish, is_cancelled, register};
+    use super::{cancel, finish, is_cancelled, register, token};
 
     #[test]
     fn registered_stream_is_not_cancelled_by_default() {
@@ -178,5 +201,28 @@ mod tests {
         assert!(!cancel(""));
         assert!(!is_cancelled(""));
         finish("");
+    }
+
+    #[test]
+    fn token_tracks_cancellation_and_clears_after_finish() {
+        let stream_id = "test-stream-token";
+
+        register(stream_id);
+
+        let handle = token(stream_id).expect("token should exist after register");
+        assert!(!handle.is_cancelled());
+
+        assert!(cancel(stream_id));
+        assert!(handle.is_cancelled());
+
+        finish(stream_id);
+
+        assert!(token(stream_id).is_none());
+    }
+
+    #[test]
+    fn token_for_unknown_or_empty_stream_is_none() {
+        assert!(token("").is_none());
+        assert!(token("test-stream-token-unknown").is_none());
     }
 }
