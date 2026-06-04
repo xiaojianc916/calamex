@@ -21,8 +21,8 @@ use super::state::{
     ActiveRunInputTarget, TerminalSessionState, append_terminal_snapshot,
     buffer_pending_switch_input, clear_active_terminal_run, get_active_terminal_run_input_target,
     get_terminal_snapshot, mark_terminal_resize_repaint_suppression, set_terminal_snapshot,
-    should_skip_snapshot_for_interactive_resize_repaint, take_and_prepend_pending_switch_input,
-    try_mark_active_terminal_run,
+    should_skip_snapshot_for_interactive_resize_repaint, take_active_terminal_run_for_session,
+    take_and_prepend_pending_switch_input, try_mark_active_terminal_run,
 };
 use super::to_wsl_path;
 
@@ -95,6 +95,37 @@ fn active_run_input_routes_only_to_owning_session() {
     ));
 
     set_test_terminal_state(TerminalState::IdleInteractive);
+}
+
+#[test]
+fn interactive_exit_takes_active_run_only_for_owning_session() {
+    let state = TerminalSessionState::default();
+    try_mark_active_terminal_run(&state, "session-A", "run-A").expect("active run should mark");
+
+    // 其它会话退出：绝不能清掉 session-A 的活动运行（多开隔离）。
+    assert!(take_active_terminal_run_for_session(&state, "session-B").is_none());
+    assert!(
+        try_mark_active_terminal_run(&state, "session-B", "run-B").is_err(),
+        "session-A 的活动运行必须仍然在位"
+    );
+
+    // 归属会话退出：取走并清空活动运行（此处未绑定句柄故返回 None，但已清空）。
+    assert!(take_active_terminal_run_for_session(&state, "session-A").is_none());
+    assert!(
+        try_mark_active_terminal_run(&state, "session-B", "run-B").is_ok(),
+        "归属会话退出后活动运行必须已被清空"
+    );
+
+    clear_active_terminal_run(&state, "run-B");
+}
+
+#[test]
+fn take_active_run_for_session_is_noop_when_no_active_run() {
+    let state = TerminalSessionState::default();
+    assert!(take_active_terminal_run_for_session(&state, "session-A").is_none());
+    // 无活动运行时取空不应影响后续标记。
+    assert!(try_mark_active_terminal_run(&state, "session-A", "run-A").is_ok());
+    clear_active_terminal_run(&state, "run-A");
 }
 
 #[test]

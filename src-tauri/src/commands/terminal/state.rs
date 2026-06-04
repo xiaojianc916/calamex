@@ -208,6 +208,20 @@ pub(super) fn clear_active_terminal_run(state: &TerminalSessionState, run_id: &s
     }
 }
 
+/// 会话作用域地接管活动运行：仅当当前活动运行归属指定会话时，才取出其句柄并清空活动
+/// 运行，返回被取出的句柄供调用方 kill，避免脚本进程沦为无人管理的孤儿。多开场景下，
+/// 若活动运行属于其它会话，则原样保留并返回 None，绝不误清其它会话仍在进行的脚本。
+pub(super) fn take_active_terminal_run_for_session(
+    state: &TerminalSessionState,
+    session_id: &str,
+) -> Option<LocalWslRunHandle> {
+    let mut active_run = state.active_run.lock().ok()?;
+    if active_run.as_ref().map(|run| run.session_id.as_str()) != Some(session_id) {
+        return None;
+    }
+    active_run.take().and_then(|run| run.run_handle)
+}
+
 pub(super) fn get_active_terminal_run_handle(
     state: &TerminalSessionState,
     run_id: &str,

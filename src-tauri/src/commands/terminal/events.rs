@@ -14,7 +14,7 @@ use std::{
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::terminal::{
-    local_wsl_protocol::LocalWslTerminalServerPayload,
+    local_wsl_protocol::{LocalWslTerminalServerPayload, SIGNAL_MODE_KILL},
     state_machine::StateMachine,
     tauri_events::{
         TerminalDataEvent, TerminalDataSource, TerminalExitEvent, TerminalRunChunkEvent,
@@ -33,6 +33,7 @@ use crate::terminal::{
 use super::state::{
     TerminalSessionState, append_terminal_snapshot, clear_active_terminal_run,
     remove_interactive_terminal_after_exit, should_skip_snapshot_for_interactive_resize_repaint,
+    take_active_terminal_run_for_session,
 };
 
 static TERMINAL_DATA_SEQUENCE: AtomicU64 = AtomicU64::new(1);
@@ -83,8 +84,11 @@ fn mark_terminal_interactive_exited(
     state: &TerminalSessionState,
     payload: TerminalExitEvent,
 ) {
-    if let Ok(mut active_run) = state.active_run.lock() {
-        *active_run = None;
+    // 仅接管归属于正在退出的这个会话的活动运行：多开场景下，关闭/退出某个会话绝不能
+    // 误清其它会话仍在进行的脚本。取出句柄后立即 kill，避免脚本进程沦为无人管理的孤儿
+    // （既丢失取消/输入入口，又遗留挂起的 wsl.exe）。
+    if let Some(run_handle) = take_active_terminal_run_for_session(state, &payload.session_id) {
+        let _ = run_handle.cancel(SIGNAL_MODE_KILL);
     }
     if crate::terminal::registry::registry().current_state() == TerminalState::IdleInteractive {
         let _ = transition_terminal_state(app, TerminalState::Booting);
