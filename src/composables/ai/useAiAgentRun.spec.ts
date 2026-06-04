@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { projectOrchestrateEvents } from '@/composables/ai/sidecar-orchestrate';
 import { useAiAgentRun } from '@/composables/ai/useAiAgentRun';
 import { useAiAgentStore } from '@/store/aiAgent';
-import type { IAiAgentRun, IAiTaskPlanStep } from '@/types/ai';
+import type { IAiTaskPlanStep } from '@/types/ai';
 import type { TAgentUiEvent } from '@/types/ai/sidecar';
 
 // 部分 mock：保留真实 projectOrchestrateEvents，仅替换两个驱动函数，
@@ -108,4 +108,143 @@ describe('useAiAgentRun', () => {
     orchestrateMock.resumeOrchestration.mockReset();
   });
 
-  it('启动 run 后写入 activ
+  it('启动 run 后写入 activeRun 并把首步置为执行中', async () => {
+    const agentRun = useAiAgentRun();
+    const store = useAiAgentStore();
+    const steps = createRunSteps();
+
+    const createdRun = await agentRun.runPlan('实现 Step Runtime', steps);
+
+    expect(createdRun.goal).toBe('实现 Step Runtime');
+    expect(store.mode).toBe('agent');
+    expect(store.activeRunId).toBe(createdRun.id);
+    expect(store.activeRun?.status).toBe('running-step');
+    expect(store.activeRun?.currentStepId).toBe('plan-step-1');
+    expect(store.activeRun?.steps[0]?.status).toBe('running');
+  });
+
+  it('单步模式：首次点击清计划审批门、再次点击推进一步', async () => {
+    orchestrateMock.resumeOrchestration
+      .mockResolvedValueOnce(gateResult())
+      .mockResolvedValueOnce(gateResult());
+
+    const agentRun = useAiAgentRun();
+    const store = useAiAgentStore();
+    const steps = createRunSteps();
+    seedApprovedPlan(store, '实现 Step Runtime', steps);
+    const run = await agentRun.runPlan('实现 Step Runtime', steps);
+
+    await agentRun.runStepWithSidecar(run.id, {
+      goal: '实现 Step Runtime',
+      context: [],
+      workspaceRootPath: 'd:/com.xiaojianc/my_desktop_app',
+    });
+
+    // 首次 = resume('approve')，只清计划门、不执行步骤。
+    expect(store.activeRun?.steps[0]?.status).toBe('running');
+    expect(store.activeRun?.currentStepId).toBe('plan-step-1');
+
+    await agentRun.runStepWithSidecar(run.id, {
+      goal: '实现 Step Runtime',
+      context: [],
+      workspaceRootPath: 'd:/com.xiaojianc/my_desktop_app',
+    });
+
+    // 再次 = resume('continue')，执行第 1 步并推进游标。
+    expect(store.activeRun?.steps[0]?.status).toBe('done');
+    expect(store.activeRun?.steps[1]?.status).toBe('running');
+    expect(store.activeRun?.currentStepId).toBe('plan-step-2');
+
+    expect(decisionsOf()).toEqual(['approve', 'continue']);
+    expect(orchestrateMock.resumeOrchestration.mock.calls[0]?.[0]?.runId).toBe(
+      'orch-run-1',
+    );
+  });
+
+  it('批准后自动连续执行所有步骤直到完成', async () => {
+    orchestrateMock.resumeOrchestration
+      .mockResolvedValueOnce(gateResult())
+      .mockResolvedValueOnce(gateResult())
+      .mockResolvedValueOnce(doneResult('计划已完成。'));
+
+    const agentRun = useAiAgentRun();
+    const store = useAiAgentStore();
+    const steps = createRunSteps();
+    seedApprovedPlan(store, '实现 Step Runtime', steps);
+
+    const run = await agentRun.runPlanToCompletion('实现 Step Runtime', steps, {
+      context: [],
+      workspaceRootPath: 'd:/com.xiaojianc/my_desktop_app',
+    });
+
+    expect(orchestrateMock.resumeOrchestration).toHaveBeenCalledTimes(3);
+    expect(decisionsOf()).toEqual(['approve', 'continue', 'continue']);
+    expect(run.status).toBe('completed');
+    expect(store.activeRun?.steps.map((step) => step.status)).toEqual([
+      'done',
+      'done',
+    ]);
+    expect(
+      store.getStepFinalAnswers(run.id).map((answer) => answer.content),
+    ).toEqual(['计划已完成。']);
+  });
+
+  it('高风险工具挂起后，确认放行可继续跑到完成', async () => {
+    orchestrateMock.resumeOrchestration
+      .mockResolvedValueOnce(gateResult())
+      .mockResolvedValueOnce(confirmResult())
+      .mockResolvedValueOnce(gateResult())
+      .mockResolvedValueOnce(doneResult('已完成。'));
+
+    const agentRun = useAiAgentRun();
+    const store = useAiAgentStore();
+    const steps = createRunSteps();
+    seedApprovedPlan(store, '实现 Step Runtime', steps);
+
+    const waitingRun = await agentRun.runPlanToCompletion(
+      '实现 Step Runtime',
+      steps,
+      {
+        context: [],
+        workspaceRootPath: 'd:/com.xiaojianc/my_desktop_app',
+      },
+    );
+
+    expect(waitingRun.status).toBe('waiting-for-tool-confirmation');
+    const confirmationId = store.pendingToolConfirmation?.id;
+    expect(confirmationId).toBe('call-run-test');
+    expect(agentRun.hasSidecarStepToolConfirmation(confirmationId ?? '')).toBe(true);
+
+    const finalRun = await agentRun.resolveSidecarStepToolConfirmation(
+      confirmationId ?? '',
+      'allow-once',
+    );
+
+    expect(store.pendingToolConfirmation).toBeNull();
+    expect(finalRun.status).toBe('completed');
+    expect(decisionsOf()).toEqual(['approve', 'continue', 'approve', 'continue']);
+  });
+
+  it('暂停、继续、取消 run 都在本地回写 store', async () => {
+    const agentRun = useAiAgentRun();
+    const run = await agentRun.runPlan('实现 Step Runtime', createRunSteps());
+
+    await agentRun.pauseRun(run.id);
+    expect(agentRun.store.activeRun?.status).toBe('paused');
+
+    await agentRun.resumeRun(run.id);
+    expect(agentRun.store.activeRun?.status).toBe('running-step');
+
+    await agentRun.cancelRun(run.id);
+    expect(agentRun.store.activeRun?.status).toBe('cancelled');
+  });
+
+  it('解析未注册的工具确认会抛出错误', async () => {
+    const agentRun = useAiAgentRun();
+    await agentRun.runPlan('实现 Step Runtime', createRunSteps());
+
+    await expect(
+      agentRun.resolveToolConfirmation('agent-run-1', 'confirmation-1', 'skip'),
+    ).rejects.toThrow('未找到对应的工具确认');
+  });
+});
