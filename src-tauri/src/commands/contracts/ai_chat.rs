@@ -102,7 +102,6 @@ pub struct AiInlineCompletionRequest {
     pub(crate) cursor_offset: u32,
     pub(crate) prefix: String,
     pub(crate) suffix: String,
-    pub(crate) recent_edits: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Type)]
