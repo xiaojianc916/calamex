@@ -133,7 +133,8 @@ pub async fn agent_sidecar_orchestrate(
 #[tauri::command]
 #[specta::specta]
 pub async fn agent_sidecar_orchestrate_resume(
+    app: AppHandle,
     payload: AgentSidecarOrchestrateResumeRequest,
 ) -> Result<AgentSidecarOrchestratePayload, String> {
-    agent_sidecar::orchestrate_resume(payload).await
+    agent_sidecar::orchestrate_resume(app, payload).await
 }
