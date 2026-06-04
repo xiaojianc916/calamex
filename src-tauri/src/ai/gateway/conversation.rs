@@ -6,9 +6,6 @@ use super::prompt::{
     build_context_block, build_conversation_title_prompt, build_identity_system_message,
     build_inline_prompt, clip_title_source,
 };
-use super::*;
-use crate::agent_sidecar;
-use crate::commands::contracts::{AgentSidecarChatRequest, AgentSidecarMessagePayload};
 
 fn to_sidecar_message_payloads(
     messages: Vec<AiProviderMessage>,
