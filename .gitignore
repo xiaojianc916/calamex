@@ -29,3 +29,6 @@ playwright-report/
 *.report.html
 
 src-tauri/resources-bundle/
+
+# Tauri 自动生成的 ACL schema（每次构建会重新生成，不应提交）
+src-tauri/gen/schemas/
