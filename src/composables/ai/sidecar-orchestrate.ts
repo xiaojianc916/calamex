@@ -17,6 +17,7 @@ import type {
 import type {
   IAgentPlan,
   IAgentSidecarOrchestratePayload,
+  TAgentSidecarOrchestrateDecision,
   TAgentUiEvent,
 } from '@/types/ai/sidecar';
 
@@ -34,8 +35,9 @@ import type {
  *  - resume -> sidecarOrchestrateResume({ runId, decision, reason? })，resume 请求
  *    无 sessionId 字段，Rust 内部用随机 sessionId 打标，前端不可知；编排在面板内
  *    单实例运行，故 resume 期间订阅全部 sidecar 流事件（不按 sessionId 过滤）。
- *  - workflow 仅在 approval-gate 挂起：plan_ready 之后挂起 = 等待计划审批；
- *    approval_required 之后挂起 = 等待工具审批。done/error 即终态。
+ *  - workflow 在三类点挂起：plan_ready 之后挂起 = 等待计划审批；approval_required
+ *    之后挂起 = 等待工具审批；二者都未新发又处于挂起 = 逐步闸门（step gate）。
+ *    done/error 即终态。
  * ========================================================================== */
 
 type TPlanReadyEvent = Extract<TAgentUiEvent, { type: 'plan_ready' }>;
@@ -230,13 +232,16 @@ export const startOrchestration = async (args: {
 };
 
 /**
- * 恢复一个被审批门挂起的编排 run（approve / reject）：跑到下一个审批门挂起或终态。
+ * 恢复一个被挂起的编排 run：跑到下一个挂起点或终态。
+ * decision 统一覆盖三类挂起点（与 server.ts / orchestration-workflow.ts 一致）：
+ *  - 计划审批门 / 工具审批门：approve | reject
+ *  - 逐步闸门（step gate）：continue（跑下一步）| cancel（中止整个 run）
  * resume 流事件的 sessionId 是 Rust 内部随机、前端不可知，编排在面板内单实例运行，
  * 故订阅全部 sidecar 流事件（不按 sessionId 过滤），并以 runId 作为打标标识。
  */
 export const resumeOrchestration = async (args: {
   runId: string;
-  decision: 'approve' | 'reject';
+  decision: TAgentSidecarOrchestrateDecision;
   reason?: string;
   onLiveEvents?: TOrchestrateLiveHandler;
 }): Promise<IOrchestrateRunResult> => {
