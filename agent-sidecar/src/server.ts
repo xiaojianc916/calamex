@@ -1,21 +1,13 @@
-import { randomUUID, timingSafeEqual } from 'node:crypto';
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { randomUUID } from 'node:crypto';
+import { createServer } from 'node:http';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { z } from 'zod';
 import {
-  AGENT_RUNTIME_OUTPUT_EVENT_TYPES,
-  toAgentSidecarResponse,
   toAgentUiEvent,
   type IAgentRuntimeResponse,
   type IAgentRuntimeRunOptions,
-  type TAgentRuntimeOutputEvent,
 } from './engines/contracts/runtime-contracts.js';
-import type { IAgentRuntimeInput, TAgentMode } from './engines/contracts/runtime-input.js';
 import { createConfiguredRuntime, type IAgentSidecarRuntime } from './engines/runtime.js';
-import type { TPlanOrchestrationWorkflow } from './engines/plan/orchestration-workflow.js';
-import type { TAgentSidecarResponse } from './schemas/events.js';
-import { agentSidecarResponseSchema } from './schemas/events.js';
 import { getMcpRuntimeStatus } from './tools/mcp.js';
 import {
   aiWebFetchInputSchema,
@@ -25,497 +17,67 @@ import {
 } from './web/types.js';
 import { disposeWebService, fetchWeb, searchWeb } from './web/service.js';
 import { configureGlobalHttpTransport } from './http/transport.js';
+import { scheduleBackgroundWarmup } from './http/warmup.js';
 import {
-  logWarmupResult,
-  scheduleBackgroundWarmup,
-  warmupLlmConnection,
-} from './http/warmup.js';
+  agentSidecarChatRequestSchema,
+  agentSidecarExecuteRequestSchema,
+  agentSidecarOrchestrateRequestSchema,
+  agentSidecarOrchestrateResumeRequestSchema,
+  agentSidecarPlanApproveRequestSchema,
+  agentSidecarPlanFinishRequestSchema,
+  agentSidecarPlanQueryRequestSchema,
+  agentSidecarPlanRejectRequestSchema,
+  agentSidecarPlanReplanRequestSchema,
+  agentSidecarPlanRequestSchema,
+  agentSidecarPlanValidateRequestSchema,
+  agentSidecarRollbackRestoreRequestSchema,
+  approvalResolutionSchema,
+} from './server/request-schemas.js';
+import {
+  handlePlainPost,
+  handlePost,
+  handlePostStream,
+  handleRuntimeResponse,
+  handleWarmupPost,
+  isAuthorizedSidecarRequest,
+  normalizeSidecarToken,
+  readBody,
+  toAgentInput,
+  writeJson,
+  writeNdjsonFrame,
+  writeStreamHeaders,
+} from './server/http.js';
+import {
+  extractOrchestrationAgentEvent,
+  isOrchestrationWorkflowDisabled,
+  type TPlanOrchestrationRun,
+} from './server/orchestration-events.js';
+
+export {
+  agentSidecarChatRequestSchema,
+  agentSidecarExecuteRequestSchema,
+  agentSidecarOrchestrateRequestSchema,
+  agentSidecarOrchestrateResumeRequestSchema,
+  agentSidecarPlanApproveRequestSchema,
+  agentSidecarPlanFinishRequestSchema,
+  agentSidecarPlanQueryRequestSchema,
+  agentSidecarPlanRejectRequestSchema,
+  agentSidecarPlanReplanRequestSchema,
+  agentSidecarPlanRequestSchema,
+  agentSidecarPlanValidateRequestSchema,
+  agentSidecarRollbackRestoreRequestSchema,
+  baseAgentRequestSchema,
+} from './server/request-schemas.js';
 
 configureGlobalHttpTransport();
 
 const DEFAULT_PORT = 39871;
-const MAX_REQUEST_BYTES = 2 * 1024 * 1024;
-const DEFAULT_RUNTIME_TIMEOUT_MS = 30 * 60 * 1000;
 export const SIDECAR_PROTOCOL_VERSION = '7';
 export const SIDECAR_IMPLEMENTATION_VERSION = 'deepseek-reasoning-transport-v6-plan-history';
 
 // Phase 2b：内存中保留的「已挂起、等待审批 resume」编排 run 的最长存活时间。
 // 超时未 resume 则回收，避免长负 sidecar 永久持有被放弃的 run。
 const ORCHESTRATION_RUN_TTL_MS = 30 * 60 * 1000;
-
-// Orchestration is enabled by default; it is disabled only when
-// AGENT_ORCHESTRATION_WORKFLOW is explicitly set to '0' or 'false'. The flag was
-// only an off-by-default migration gate while the per-phase channel was primary;
-// the native orchestration channel is now the default path.
-const isOrchestrationWorkflowDisabled = (): boolean => {
-  const raw = (process.env.AGENT_ORCHESTRATION_WORKFLOW ?? '').trim().toLowerCase();
-  return raw === '0' || raw === 'false';
-};
-
-// committed orchestration workflow 的 run 实例类型（createRun 可能同步或异步返回，统一 Awaited）。
-type TPlanOrchestrationRun = Awaited<ReturnType<TPlanOrchestrationWorkflow['createRun']>>;
-
-// 编排 workflow 各 step 通过 step writer 写入内层 agent 运行时事件，Mastra 会把它包进
-// 形如 { type: 'workflow-step-output', payload: { output: <event> } } 的 chunk。这里只透出
-// 白名单（AGENT_RUNTIME_OUTPUT_EVENT_TYPES，共 11 类）内的运行时事件，丢弃所有 Mastra
-// 内部生命周期 chunk（step-start / step-result / workflow-* 等），使流式输出帧与既有 /stream
-// 路由完全同构（{ type: 'event', event }）。
-const isRuntimeOutputEvent = (value: unknown): value is TAgentRuntimeOutputEvent => {
-  if (!value || typeof value !== 'object') {
-    return false;
-  }
-  const candidateType = (value as { type?: unknown }).type;
-  return (
-    typeof candidateType === 'string'
-    && (AGENT_RUNTIME_OUTPUT_EVENT_TYPES as readonly string[]).includes(candidateType)
-  );
-};
-
-// 从 workflow chunk 中提取内层 agent 事件：优先 payload.output（step writer 主路径），
-// 再回退 payload、chunk 自身；任一命中 11 类白名单即返回，否则视为内部帧并丢弃（undefined）。
-const extractOrchestrationAgentEvent = (
-  chunk: unknown,
-): TAgentRuntimeOutputEvent | undefined => {
-  if (!chunk || typeof chunk !== 'object') {
-    return undefined;
-  }
-  const payload = (chunk as { payload?: unknown }).payload;
-  const output = payload && typeof payload === 'object'
-    ? (payload as { output?: unknown }).output
-    : undefined;
-  if (isRuntimeOutputEvent(output)) {
-    return output;
-  }
-  if (isRuntimeOutputEvent(payload)) {
-    return payload;
-  }
-  if (isRuntimeOutputEvent(chunk)) {
-    return chunk;
-  }
-  return undefined;
-};
-
-// -----------------------------------------------------------------------
-// 基础 schema 工具
-// -----------------------------------------------------------------------
-
-const agentModeSchema = z.enum(['ask', 'plan', 'agent', 'patch', 'review']);
-
-const approvalDecisionSchema = z.enum(['approve', 'reject', 'cancel', 'modify']);
-
-const optionalNonEmptyStringSchema = z.preprocess((value) => {
-  if (value === null || value === undefined) {
-    return undefined;
-  }
-  if (typeof value === 'string' && value.trim().length === 0) {
-    return undefined;
-  }
-  return value;
-}, z.string().trim().min(1).optional()).optional();
-
-const requiredNonEmptyStringSchema = z.string().trim().min(1);
-
-const optionalAgentModeSchema = z.preprocess((value) => {
-  if (value === null || value === undefined) {
-    return undefined;
-  }
-  if (typeof value === 'string' && value.trim().length === 0) {
-    return undefined;
-  }
-  return value;
-}, agentModeSchema.optional()).optional();
-
-const optionalWorkspaceRootPathSchema = z.preprocess((value) => {
-  if (value === null || value === undefined) {
-    return value;
-  }
-  if (typeof value === 'string' && value.trim().length === 0) {
-    return undefined;
-  }
-  return value;
-}, z.string().trim().min(1).nullable().optional()).optional();
-
-const agentMessageInputSchema = z.object({
-  role: z.enum(['user', 'assistant', 'system', 'tool']),
-  content: z.string(),
-});
-
-const agentContextReferenceSchema = z.object({
-  id: z.string().min(1),
-  kind: z.string().min(1),
-  label: z.string().min(1),
-  path: z.string().nullable(),
-  range: z.object({
-    startLine: z.number().int().positive(),
-    endLine: z.number().int().positive(),
-  }).nullable(),
-  contentPreview: z.string(),
-  redacted: z.boolean(),
-});
-
-const requestScopedModelConfigSchema = z.object({
-  modelId: requiredNonEmptyStringSchema,
-  apiKey: requiredNonEmptyStringSchema,
-  baseUrl: optionalNonEmptyStringSchema,
-});
-
-// -----------------------------------------------------------------------
-// Request schemas
-// -----------------------------------------------------------------------
-
-export const baseAgentRequestSchema = z.object({
-  sessionId: optionalNonEmptyStringSchema,
-  mode: optionalAgentModeSchema,
-  goal: optionalNonEmptyStringSchema,
-  messages: z.array(agentMessageInputSchema).default([]),
-  workspaceRootPath: optionalWorkspaceRootPathSchema,
-  context: z.array(agentContextReferenceSchema).default([]),
-  modelConfig: requestScopedModelConfigSchema.optional(),
-  threadId: optionalNonEmptyStringSchema,
-  planId: optionalNonEmptyStringSchema,
-  planVersion: z.number().int().positive().optional(),
-  planStepId: optionalNonEmptyStringSchema,
-});
-
-export const agentSidecarChatRequestSchema = baseAgentRequestSchema;
-
-export const agentSidecarPlanRequestSchema = baseAgentRequestSchema.extend({
-  goal: requiredNonEmptyStringSchema,
-});
-
-export const agentSidecarExecuteRequestSchema = baseAgentRequestSchema.extend({
-  goal: requiredNonEmptyStringSchema,
-  planId: requiredNonEmptyStringSchema,
-  planVersion: z.number().int().positive(),
-  planStepId: requiredNonEmptyStringSchema,
-});
-
-export const agentSidecarPlanValidateRequestSchema = baseAgentRequestSchema.extend({
-  planId: requiredNonEmptyStringSchema,
-  planVersion: z.number().int().positive(),
-});
-
-export const agentSidecarPlanReplanRequestSchema = baseAgentRequestSchema.extend({
-  goal: requiredNonEmptyStringSchema,
-  planId: requiredNonEmptyStringSchema,
-  planVersion: z.number().int().positive(),
-});
-
-const planVersionRequestSchema = z.object({
-  sessionId: optionalNonEmptyStringSchema,
-  planId: requiredNonEmptyStringSchema,
-  version: z.number().int().positive(),
-});
-
-export const agentSidecarPlanApproveRequestSchema = planVersionRequestSchema;
-
-export const agentSidecarPlanRejectRequestSchema = planVersionRequestSchema.extend({
-  reason: optionalNonEmptyStringSchema,
-});
-
-export const agentSidecarPlanFinishRequestSchema = planVersionRequestSchema.extend({
-  status: z.enum(['completed', 'failed']),
-  errorMessage: optionalNonEmptyStringSchema,
-});
-
-export const agentSidecarPlanQueryRequestSchema = z.object({
-  sessionId: optionalNonEmptyStringSchema,
-  planId: requiredNonEmptyStringSchema,
-  version: z.number().int().positive().optional(),
-});
-
-const approvalResolutionSchema = baseAgentRequestSchema.extend({
-  sessionId: optionalNonEmptyStringSchema,
-  requestId: z.string().min(1),
-  decision: approvalDecisionSchema,
-});
-
-/**
- * 把单字符串归一为单元素数组；输出永远是 `string[]`，
- * 结构上兼容 `TRollbackStepPath = readonly string[]`。
- */
-const rollbackStepSchema = z.preprocess(
-  (value) => (typeof value === 'string' ? [value] : value),
-  z.array(requiredNonEmptyStringSchema).min(1),
-);
-
-export const agentSidecarRollbackRestoreRequestSchema = z.object({
-  sessionId: optionalNonEmptyStringSchema,
-  runId: requiredNonEmptyStringSchema,
-  snapshotId: optionalNonEmptyStringSchema,
-  step: rollbackStepSchema.optional(),
-  modelConfig: requestScopedModelConfigSchema.optional(),
-});
-
-// Phase 2：原生编排 workflow 入口（默认关闭，AGENT_ORCHESTRATION_WORKFLOW=1 才启用）。
-export const agentSidecarOrchestrateRequestSchema = z.object({
-  goal: requiredNonEmptyStringSchema,
-  threadId: optionalNonEmptyStringSchema,
-  modelConfig: requestScopedModelConfigSchema.optional(),
-});
-
-// Phase 2b：恢复一个被挂起的编排 run（需携带 start 返回的 runId）。
-// 三类挂起点统一走此入口：计划审批门(approve/reject)、工具审批(approve/reject)、
-// 逐步闸门(continue/cancel)；server 只透传 decision，step 内部读 suspendData.reason 解释。
-// Phase 3b：modelConfig 可选：内存未命中需从快照重建 run 时，用它传递请求级模型。
-export const agentSidecarOrchestrateResumeRequestSchema = z.object({
-  runId: requiredNonEmptyStringSchema,
-  decision: z.enum(['approve', 'reject', 'continue', 'cancel']),
-  reason: optionalNonEmptyStringSchema,
-  modelConfig: requestScopedModelConfigSchema.optional(),
-});
-
-// -----------------------------------------------------------------------
-// HTTP utilities
-// -----------------------------------------------------------------------
-
-const writeJson = (response: ServerResponse, statusCode: number, payload: unknown): void => {
-  response.writeHead(statusCode, {
-    'content-type': 'application/json; charset=utf-8',
-  });
-  response.end(JSON.stringify(payload));
-};
-
-// 将空 / 空白令牌归一为 null，表示「未配置鉴权」。
-const normalizeSidecarToken = (value: string | null | undefined): string | null => {
-  if (typeof value !== 'string') {
-    return null;
-  }
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-};
-
-// 未配置令牌时不强制（兼容外部 / 自定义部署）；配置后要求
-// Authorization: Bearer <token>，用恒时比较避免时序侧信道。
-const isAuthorizedSidecarRequest = (
-  request: IncomingMessage,
-  token: string | null,
-): boolean => {
-  if (!token) {
-    return true;
-  }
-  const header = request.headers.authorization;
-  if (typeof header !== 'string') {
-    return false;
-  }
-  const expected = Buffer.from(`Bearer ${token}`, 'utf8');
-  const actual = Buffer.from(header, 'utf8');
-  return actual.length === expected.length && timingSafeEqual(actual, expected);
-};
-
-const readBody = async (request: IncomingMessage): Promise<unknown> =>
-  new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    let totalBytes = 0;
-    request.on('data', (chunk: Buffer) => {
-      totalBytes += chunk.byteLength;
-      if (totalBytes > MAX_REQUEST_BYTES) {
-        reject(new Error('请求体超过 sidecar 限制。'));
-        request.destroy();
-        return;
-      }
-      chunks.push(chunk);
-    });
-    request.on('error', reject);
-    request.on('end', () => {
-      const rawBody = Buffer.concat(chunks).toString('utf8').trim();
-      if (!rawBody) {
-        resolve({});
-        return;
-      }
-      try {
-        resolve(JSON.parse(rawBody));
-      } catch {
-        reject(new Error('请求体不是合法 JSON。'));
-      }
-    });
-  });
-
-const toAgentInput = (
-  payload: z.infer<typeof baseAgentRequestSchema>,
-  mode: TAgentMode,
-): IAgentRuntimeInput => {
-  const lastUserMessage = [...payload.messages]
-    .reverse()
-    .find((message) => message.role === 'user');
-  const input: IAgentRuntimeInput = {
-    mode: payload.mode ?? mode,
-    goal: payload.goal ?? lastUserMessage?.content ?? '继续当前任务',
-    messages: payload.messages,
-    context: payload.context,
-  };
-  if (payload.sessionId) {
-    input.sessionId = payload.sessionId;
-  }
-  if (payload.workspaceRootPath) {
-    input.workspaceRootPath = payload.workspaceRootPath;
-  }
-  if (payload.threadId) {
-    input.threadId = payload.threadId;
-  }
-  if (payload.modelConfig) {
-    input.modelConfig = payload.modelConfig;
-  }
-  if (payload.planId) {
-    input.planId = payload.planId;
-  }
-  if (payload.planVersion) {
-    input.planVersion = payload.planVersion;
-  }
-  if (payload.planStepId) {
-    input.planStepId = payload.planStepId;
-  }
-  return input;
-};
-
-const handlePost = async (
-  request: IncomingMessage,
-  response: ServerResponse,
-  handler: (body: unknown, options: IAgentRuntimeRunOptions) => Promise<IAgentRuntimeResponse>,
-): Promise<void> => {
-  try {
-    const body = await readBody(request);
-    writeJson(
-      response,
-      200,
-      toValidatedSidecarResponse(await handler(body, createRuntimeRunOptions(request))),
-    );
-  } catch (error) {
-    writeJson(response, 400, {
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
-};
-
-const handleRuntimeResponse = async (
-  request: IncomingMessage,
-  response: ServerResponse,
-  handler: (options: IAgentRuntimeRunOptions) => Promise<IAgentRuntimeResponse>,
-): Promise<void> => {
-  try {
-    writeJson(
-      response,
-      200,
-      toValidatedSidecarResponse(await handler(createRuntimeRunOptions(request))),
-    );
-  } catch (error) {
-    writeJson(response, 400, {
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
-};
-
-const handlePlainPost = async <TPayload>(
-  request: IncomingMessage,
-  response: ServerResponse,
-  handler: (body: unknown) => Promise<TPayload>,
-): Promise<void> => {
-  try {
-    const body = await readBody(request);
-    writeJson(response, 200, await handler(body));
-  } catch (error) {
-    writeJson(response, 400, {
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
-};
-
-const handleWarmupPost = async (
-  request: IncomingMessage,
-  response: ServerResponse,
-): Promise<void> => {
-  try {
-    const result = await warmupLlmConnection(await readBody(request));
-    logWarmupResult('explicit', result);
-    writeJson(response, 200, result);
-  } catch (error) {
-    writeJson(response, 400, {
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
-};
-
-const writeNdjsonFrame = (response: ServerResponse, payload: unknown): void => {
-  if (response.writableEnded || response.destroyed) {
-    return;
-  }
-  response.write(`${JSON.stringify(payload)}\n`);
-};
-
-const writeStreamHeaders = (response: ServerResponse): void => {
-  response.socket?.setNoDelay(true);
-  response.writeHead(200, {
-    'content-type': 'application/x-ndjson; charset=utf-8',
-    'cache-control': 'no-cache, no-transform',
-    connection: 'keep-alive',
-    'x-accel-buffering': 'no',
-  });
-  response.flushHeaders();
-};
-
-const createRuntimeRunOptions = (
-  request: IncomingMessage,
-  onEvent?: (event: TAgentRuntimeOutputEvent) => void,
-): IAgentRuntimeRunOptions => {
-  const controller = new AbortController();
-  // Node 已废弃 IncomingMessage 的 'aborted' 事件；改用 'close' + !complete 等价判定：
-  // 仅当请求在正常结束（complete=true）之前断开时才中止，行为与旧 'aborted' 一致。
-  request.once('close', () => {
-    if (!request.complete) {
-      controller.abort();
-    }
-  });
-  return {
-    context: {
-      requestId: randomUUID(),
-      signal: controller.signal,
-      timeoutMs: DEFAULT_RUNTIME_TIMEOUT_MS,
-    },
-    ...(onEvent ? { onEvent } : {}),
-  };
-};
-
-const toValidatedSidecarResponse = (
-  response: IAgentRuntimeResponse,
-): TAgentSidecarResponse => {
-  const payload = toAgentSidecarResponse(response);
-  agentSidecarResponseSchema.parse(payload);
-  return payload;
-};
-
-const handlePostStream = async (
-  request: IncomingMessage,
-  response: ServerResponse,
-  handler: (body: unknown, options: IAgentRuntimeRunOptions) => Promise<IAgentRuntimeResponse>,
-): Promise<void> => {
-  try {
-    const body = await readBody(request);
-    writeStreamHeaders(response);
-    const payload = await handler(body, createRuntimeRunOptions(request, (event) => {
-      writeNdjsonFrame(response, {
-        type: 'event',
-        event: toAgentUiEvent(event),
-      });
-    }));
-    writeNdjsonFrame(response, {
-      type: 'response',
-      response: toValidatedSidecarResponse(payload),
-    });
-    response.end();
-  } catch (error) {
-    if (!response.headersSent) {
-      writeJson(response, 400, {
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return;
-    }
-    writeNdjsonFrame(response, {
-      type: 'error',
-      error: error instanceof Error ? error.message : String(error),
-    });
-    response.end();
-  }
-};
 
 // -----------------------------------------------------------------------
 // Server
