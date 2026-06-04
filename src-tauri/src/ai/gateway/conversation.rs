@@ -174,6 +174,9 @@ pub async fn chat_stream(
     let prompt_tokens: Option<u64> = None;
 
     stream_manager::register(&stream_id);
+    // 取消令牌：与该 stream 绑定，供下方流式请求用 select! 竞速。
+    // cancel 命令调用 stream_manager::cancel 时，此克隆体会被唤醒。
+    let cancel_token = stream_manager::token(&stream_id);
 
     let task_stream_id = stream_id.clone();
     let task_assistant_message_id = assistant_message_id.clone();
@@ -201,7 +204,7 @@ pub async fn chat_stream(
         let result = async {
             let _ = task_config;
             let mut streamed_any = false;
-            let sidecar_response = agent_sidecar::model_chat_streaming(
+            let streaming = agent_sidecar::model_chat_streaming(
                 app.clone(),
                 AgentSidecarChatRequest {
                     session_id: Some(task_stream_id.clone()),
@@ -240,8 +243,25 @@ pub async fn chat_stream(
                         );
                     }
                 },
-            )
-            .await?;
+            );
+
+            // 真正中断取消：用 select! 让流式请求与取消信号竞速。一旦取消触发，
+            // 直接丢弃 `streaming` future —— 这会级联 drop 其内部持有的 reqwest 响应，
+            // 关闭底层 TCP 连接，从而真正中断进行中的请求，而非等它自然结束。
+            let sidecar_response = match cancel_token.clone() {
+                Some(token) => {
+                    tokio::select! {
+                        biased;
+                        () = token.cancelled() => {
+                            return Err(
+                                "AI_REQUEST_CANCELLED: 用户已取消进行中的 AI 请求。".to_string(),
+                            );
+                        }
+                        response = streaming => response?,
+                    }
+                }
+                None => streaming.await?,
+            };
 
             if !streamed_any {
                 let final_text = sidecar_events_result_text(&sidecar_response);
