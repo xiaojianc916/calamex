@@ -9,8 +9,6 @@ import type {
   IAiChatRequest,
   IAiChatStreamEventPayload,
   IAiChatStreamPayload,
-  IAiCodeActionRequest,
-  IAiCodeActionResult,
   IAiConfigPayload,
   IAiConversationTitlePayload,
   IAiConversationTitleRequest,
@@ -267,9 +265,6 @@ export const aiService = {
   },
   inlineComplete(payload: IAiInlineCompletionRequest): Promise<IAiInlineCompletionResult> {
     return tauriService.aiInlineComplete(payload);
-  },
-  codeAction(payload: IAiCodeActionRequest): Promise<IAiCodeActionResult> {
-    return tauriService.aiCodeAction(payload);
   },
   classifyTask(payload: IAiAgentClassifyTaskRequest): Promise<IAiAgentClassifyTaskPayload> {
     return tauriService.aiAgentClassifyTask(payload);
