@@ -5,6 +5,9 @@ import type {
   GitBranchCreateRequest,
   GitBranchListPayload,
   GitBranchPayload,
+  GitCommitDetailPayload,
+  GitCommitDetailRequest,
+  GitCommitFileChangePayload,
   GitCommitHistoryPayload,
   GitCommitHistoryRequest,
   GitCommitRequest,
@@ -36,6 +39,9 @@ export type TGitPullRequestProvider = string;
 export type IGitCommitSummaryPayload = GitCommitSummaryPayload;
 export type IGitCommitHistoryRequest = GitCommitHistoryRequest;
 export type IGitCommitHistoryPayload = GitCommitHistoryPayload;
+export type IGitCommitDetailRequest = GitCommitDetailRequest;
+export type IGitCommitDetailPayload = GitCommitDetailPayload;
+export type IGitCommitFileChangePayload = GitCommitFileChangePayload;
 export type IGitFileStatusPayload = GitFileStatusPayload;
 export type IGitBranchPayload = GitBranchPayload;
 export type IGitBranchListPayload = GitBranchListPayload;
