@@ -30,7 +30,7 @@
       class="explorer-sidebar"
       aria-label="资源管理器"
     >
-      <div class="explorer-tree">
+      <div class="explorer-tree" @contextmenu.prevent="handleEmptyAreaContextMenu">
         <div v-if="!isDesktopRuntime" class="explorer-empty-state">
           浏览器预览模式下不显示本地目录树，请在 Tauri 桌面端查看资源文件。
         </div>
@@ -366,14 +366,6 @@ const explorerContextMenuGroups = computed<ILinearContextMenuGroup<IExplorerCont
         key: 'primary',
         items: [
           {
-            key: 'open',
-            label: '打开',
-            icon: 'goto',
-            shortcut: ['Enter'],
-            action: 'open',
-            disabled: !target,
-          },
-          {
             key: 'new-file',
             label: '新建文件',
             icon: 'plus',
@@ -417,13 +409,6 @@ const explorerContextMenuGroups = computed<ILinearContextMenuGroup<IExplorerCont
             shortcut: ['Ctrl', 'Shift', 'C'],
             action: 'copy-path',
             disabled: !target,
-          },
-          {
-            key: 'refresh',
-            label: '刷新',
-            icon: 'refresh',
-            shortcut: ['F5'],
-            action: 'refresh',
           },
           {
             key: 'open-folder',
@@ -729,6 +714,20 @@ const handleEntryContextMenu = (payload: { event: MouseEvent; entry: IWorkspaceE
     name: payload.entry.name,
     kind: payload.entry.kind,
     isRoot: payload.entry.path === root.value?.rootPath,
+  });
+};
+
+// 文件区空白处右键：以工作区根目录为目标，新建文件/文件夹将落在根目录；根目录本身不可重命名/删除。
+const handleEmptyAreaContextMenu = (event: MouseEvent): void => {
+  if (!root.value) {
+    return;
+  }
+
+  openExplorerContextMenu(event, {
+    path: root.value.rootPath,
+    name: rootEntry.value?.name ?? root.value.rootName ?? root.value.rootPath,
+    kind: 'directory',
+    isRoot: true,
   });
 };
 
@@ -1066,14 +1065,6 @@ const handleExplorerContextMenuSelect = async (item: ILinearContextMenuItem): Pr
   }
 
   switch (actionItem.action) {
-    case 'open':
-      if (!target) return;
-      if (target.kind === 'directory') {
-        await toggleExplorerPath(target.path);
-        return;
-      }
-      handleOpenFile(target.path);
-      return;
     case 'new-file':
       await handleCreateWorkspaceEntry('file', target);
       return;
@@ -1091,9 +1082,6 @@ const handleExplorerContextMenuSelect = async (item: ILinearContextMenuItem): Pr
         await writeFileSystemPathToClipboard(target.path);
         message.success('已复制路径');
       }
-      return;
-    case 'refresh':
-      await handleRefreshExplorer();
       return;
     case 'open-folder':
       emit('open-folder');
