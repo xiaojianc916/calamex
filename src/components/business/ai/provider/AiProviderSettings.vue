@@ -728,7 +728,7 @@ watch(
   </Teleport>
 </template>
 
-<style>
+<style scoped>
 .ai-credential-shell {
   position: fixed;
   inset: 0;
@@ -765,7 +765,7 @@ watch(
   color: var(--ai-credential-text);
 }
 
-.ai-credential-dialog button:active {
+.ai-credential-dialog :deep(button:active) {
   transform: none;
 }
 
@@ -796,11 +796,11 @@ watch(
   font-size: 12px;
 }
 
-.ai-credential-head-action svg,
-.ai-credential-icon-button svg,
-.ai-credential-test svg,
-.ai-credential-status svg,
-.ai-credential-list-status svg {
+.ai-credential-head-action :deep(svg),
+.ai-credential-icon-button :deep(svg),
+.ai-credential-test :deep(svg),
+.ai-credential-status :deep(svg),
+.ai-credential-list-status :deep(svg) {
   width: 12px;
   height: 12px;
 }
@@ -950,7 +950,7 @@ watch(
   white-space: nowrap;
 }
 
-.ai-credential-default-mark__icon svg {
+.ai-credential-default-mark__icon :deep(svg) {
   width: 11px;
   height: 11px;
 }
@@ -1136,13 +1136,13 @@ watch(
   white-space: nowrap;
 }
 
-.ai-credential-combobox-option svg:last-child {
+.ai-credential-combobox-option :deep(svg:last-child) {
   width: 13px;
   height: 13px;
   opacity: 0;
 }
 
-.ai-credential-combobox-option.is-selected svg:last-child {
+.ai-credential-combobox-option.is-selected :deep(svg:last-child) {
   opacity: 1;
 }
 
@@ -1167,7 +1167,7 @@ watch(
   transform: translateY(-50%);
 }
 
-.ai-credential-key-toggle svg {
+.ai-credential-key-toggle :deep(svg) {
   width: 14px;
   height: 14px;
 }
@@ -1258,7 +1258,7 @@ watch(
   color: var(--ai-credential-text);
 }
 
-.ai-credential-foot>button:not(.ai-credential-test) {
+.ai-credential-foot > :deep(button:not(.ai-credential-test)) {
   height: 32px;
   border-color: transparent;
   border-radius: 6px;
@@ -1268,25 +1268,25 @@ watch(
   padding: 0 10px;
 }
 
-.ai-credential-foot>button:not(.ai-credential-test):hover:not(:disabled) {
+.ai-credential-foot > :deep(button:not(.ai-credential-test):hover:not(:disabled)) {
   background: var(--ai-credential-surface-2);
 }
 
-.ai-credential-foot>button:not(.ai-credential-test):last-child {
+.ai-credential-foot > :deep(button:not(.ai-credential-test):last-child) {
   color: var(--ai-credential-muted);
 }
 
-.ai-credential-foot>button:not(.ai-credential-test):last-child:not(:disabled) {
+.ai-credential-foot > :deep(button:not(.ai-credential-test):last-child:not(:disabled)) {
   color: var(--ai-credential-text);
 }
 
-.ai-credential-foot>button.ai-credential-save:last-child:not(:disabled) {
+.ai-credential-foot > :deep(button.ai-credential-save:last-child:not(:disabled)) {
   border-color: var(--ai-credential-accent);
   background: var(--ai-credential-accent);
   color: var(--ai-credential-accent-fg);
 }
 
-.ai-credential-foot>button.ai-credential-save:last-child:not(:disabled):hover {
+.ai-credential-foot > :deep(button.ai-credential-save:last-child:not(:disabled):hover) {
   background: #000;
 }
 
