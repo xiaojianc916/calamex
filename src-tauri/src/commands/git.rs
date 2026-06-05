@@ -8,7 +8,6 @@ use std::{
 };
 
 pub(crate) mod branches;
-mod cli;
 pub(crate) mod diff;
 pub(crate) mod history;
 pub(crate) mod pull_request;
