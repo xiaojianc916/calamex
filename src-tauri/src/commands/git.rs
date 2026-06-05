@@ -30,12 +30,23 @@ type Repository = gix::Repository;
 
 #[derive(Debug, Serialize, Clone, specta::Type)]
 #[serde(rename_all = "camelCase")]
+pub struct GitCommitRefPayload {
+    name: String,
+    kind: String,
+    is_head: bool,
+}
+
+#[derive(Debug, Serialize, Clone, specta::Type)]
+#[serde(rename_all = "camelCase")]
 pub struct GitCommitSummaryPayload {
     id: String,
     short_id: String,
     summary: String,
     author_name: String,
+    author_email: String,
     authored_at: String,
+    parent_ids: Vec<String>,
+    refs: Vec<GitCommitRefPayload>,
 }
 
 #[derive(Debug, Deserialize, specta::Type)]
@@ -322,15 +333,23 @@ fn build_git_commit_summary(commit: &gix::Commit<'_>) -> GitCommitSummaryPayload
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "无提交说明".to_string());
 
+    let (author_name, author_email) = commit
+        .author()
+        .map(|author| (author.name.to_string(), author.email.to_string()))
+        .unwrap_or_else(|_| ("未知作者".to_string(), String::new()));
+
     GitCommitSummaryPayload {
         id: commit.id().to_string(),
         short_id: short_commit_id(commit.id().detach()),
         summary,
-        author_name: commit
-            .author()
-            .map(|a| a.name.to_string())
-            .unwrap_or_else(|_| "未知作者".to_string()),
+        author_name,
+        author_email,
         authored_at,
+        parent_ids: commit
+            .parent_ids()
+            .map(|id| id.detach().to_string())
+            .collect(),
+        refs: Vec::new(),
     }
 }
 
