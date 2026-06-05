@@ -26,12 +26,10 @@ import type {
   IAiSnapshot,
 } from '@/types/ai/edit';
 import type {
+  IAgentSidecarChatRequest,
   IAgentSidecarCheckpointRestoreRequest,
-  IAgentSidecarExecuteRequest,
   IAgentSidecarOrchestrateRequest,
   IAgentSidecarOrchestrateResumeRequest,
-  IAgentSidecarPlanQueryRequest,
-  IAgentSidecarPlanRequest,
   IAgentSidecarResponsePayload,
   IAgentSidecarStreamEventPayload,
   TJsonValue,
@@ -164,157 +162,9 @@ const aiServiceMock = vi.hoisted(() => {
     reason: '任务影响面较大，需要先进入计划模式。',
   }));
 
-  const planTask = vi.fn(async () => ({
-    steps: [
-      {
-        id: 'plan-step-1',
-        index: 0,
-        title: '收集上下文',
-        goal: '收集上下文',
-        kind: 'inspect',
-        status: 'pending',
-        expectedOutput: '浜у嚭褰卞搷鑼冨洿',
-        tools: ['search_text'],
-        requiresUserApproval: false,
-        riskLevel: 'low',
-      },
-      {
-        id: 'plan-step-2',
-        index: 1,
-        title: '杈撳嚭瀹炴柦璁″垝',
-        goal: '杈撳嚭瀹炴柦璁″垝',
-        kind: 'summarize',
-        status: 'pending',
-        expectedOutput: '产出可执行计划',
-        tools: ['get_diagnostics'],
-        requiresUserApproval: true,
-        riskLevel: 'medium',
-      },
-    ],
-  }));
-
-  const createSidecarPlanResponse = (goal: string): IAgentSidecarResponsePayload => ({
-    sessionId: 'sidecar-session-1',
-    events: [
-      {
-        type: 'tool_start',
-        toolName: 'search_project_files',
-        input: { query: goal },
-      },
-      {
-        type: 'tool_result',
-        toolName: 'search_project_files',
-        output: {
-          path: 'src/composables/ai/useAiAssistant.ts',
-          summary: 'matched plan entry',
-        },
-      },
-      {
-        type: 'plan_ready',
-        planId: 'sidecar-plan-1',
-        threadId: 'sidecar-thread-1',
-        version: 1,
-        status: 'pending_approval',
-        createdAt: '2026-04-29T10:00:00.000Z',
-        updatedAt: '2026-04-29T10:00:00.000Z',
-        approvedAt: null,
-        executedAt: null,
-        rejectionReason: null,
-        errorMessage: null,
-        plan: {
-          goal,
-          summary: 'sidecar plan summary',
-          requiresApproval: true,
-          steps: [
-            {
-              id: 'sidecar-plan-step-1',
-              title: '收集上下文',
-              goal: '璇诲彇褰撳墠闂銆侀」鐩枃浠跺拰鐩稿叧閿欒',
-              status: 'pending',
-              tools: ['search_project_files'],
-              riskLevel: 'low',
-              requiresApproval: false,
-              expectedOutput: '鏄庣‘褰卞搷鑼冨洿',
-            },
-            {
-              id: 'sidecar-plan-step-2',
-              title: '杈撳嚭瀹炴柦璁″垝',
-              goal: '缁欏嚭鍙墽琛屼慨鏀归『搴忓拰楠岃瘉鏂瑰紡',
-              status: 'pending',
-              tools: ['run_shell_command'],
-              riskLevel: 'medium',
-              requiresApproval: true,
-              expectedOutput: '寰楀埌鍙鎵圭殑鎵ц璁″垝',
-            },
-          ],
-        },
-      },
-      {
-        type: 'done',
-        result: 'sidecar plan ready',
-      },
-    ],
-    result: 'sidecar plan ready',
-  });
-
-  const sidecarPlan = vi.fn(async (payload: IAgentSidecarPlanRequest) =>
-    createSidecarPlanResponse(payload.goal),
-  );
-
-  const sidecarPlanQuery = vi.fn(async (payload: IAgentSidecarPlanQueryRequest) => {
-    const planResponse = createSidecarPlanResponse('接入 Agent Plan Mode');
-    const planReady = planResponse.events.find((event) => event.type === 'plan_ready');
-
-    if (planReady?.type !== 'plan_ready') {
-      throw new Error('测试计划响应缺少 plan_ready。');
-    }
-
-    return {
-      sessionId: 'sidecar-plan-query-session-1',
-      events: [
-        {
-          type: 'plan_record',
-          record: {
-            planId: payload.planId,
-            threadId: planReady.threadId ?? 'sidecar-thread-1',
-            version: payload.version ?? planReady.version,
-            status: planReady.status,
-            userRequest: planReady.plan.goal,
-            plan: planReady.plan,
-            createdAt: planReady.createdAt ?? '2026-04-29T10:00:00.000Z',
-            updatedAt: planReady.updatedAt ?? '2026-04-29T10:00:00.000Z',
-            approvedAt: planReady.approvedAt ?? null,
-            executedAt: planReady.executedAt ?? null,
-            rejectionReason: planReady.rejectionReason ?? null,
-            errorMessage: planReady.errorMessage ?? null,
-          },
-          versions: [
-            {
-              planId: payload.planId,
-              threadId: planReady.threadId ?? 'sidecar-thread-1',
-              version: payload.version ?? planReady.version,
-              status: planReady.status,
-              userRequest: planReady.plan.goal,
-              plan: planReady.plan,
-              createdAt: planReady.createdAt ?? '2026-04-29T10:00:00.000Z',
-              updatedAt: planReady.updatedAt ?? '2026-04-29T10:00:00.000Z',
-              approvedAt: planReady.approvedAt ?? null,
-              executedAt: planReady.executedAt ?? null,
-              rejectionReason: planReady.rejectionReason ?? null,
-              errorMessage: planReady.errorMessage ?? null,
-            },
-          ],
-        },
-        {
-          type: 'done',
-          result: 'sidecar plan record ready',
-        },
-      ],
-      result: 'sidecar plan record ready',
-    };
-  });
-
-  const createSidecarExecuteResponse = (goal: string): IAgentSidecarResponsePayload => ({
+  const createSidecarExecuteResponse = (
+    goal: string | undefined,
+  ): IAgentSidecarResponsePayload => ({
     sessionId: 'sidecar-execute-session-1',
     events: [
       {
@@ -338,7 +188,7 @@ const aiServiceMock = vi.hoisted(() => {
     result: `已通过 Mastra Agent 处理：${goal}`,
   });
 
-  const sidecarExecute = vi.fn(async (payload: IAgentSidecarExecuteRequest) =>
+  const sidecarExecute = vi.fn(async (payload: IAgentSidecarChatRequest) =>
     createSidecarExecuteResponse(payload.goal),
   );
 
@@ -428,11 +278,6 @@ const aiServiceMock = vi.hoisted(() => {
     });
   });
 
-  const approvePlan = vi.fn(async () => ({
-    approvedAt: '2026-04-29T00:00:00.000Z',
-    stepCount: 2,
-  }));
-
   return {
     onChatStream,
     generateConversationTitle,
@@ -442,9 +287,6 @@ const aiServiceMock = vi.hoisted(() => {
     proposePatch,
     applyPatch,
     classifyTask,
-    planTask,
-    sidecarPlan,
-    sidecarPlanQuery,
     sidecarChat: sidecarExecute,
     sidecarExecute,
     sidecarResolveApproval,
@@ -452,7 +294,6 @@ const aiServiceMock = vi.hoisted(() => {
     sidecarOrchestrate,
     sidecarOrchestrateResume,
     onSidecarStream,
-    approvePlan,
     queueStreamResponse(
       content: string,
       terminalKind: 'done' | 'error' = 'done',
@@ -496,16 +337,12 @@ const aiServiceMock = vi.hoisted(() => {
       proposePatch.mockClear();
       applyPatch.mockClear();
       classifyTask.mockClear();
-      planTask.mockClear();
-      sidecarPlan.mockClear();
-      sidecarPlanQuery.mockClear();
       sidecarExecute.mockClear();
       sidecarResolveApproval.mockClear();
       sidecarRestoreCheckpoint.mockClear();
       sidecarOrchestrate.mockClear();
       sidecarOrchestrateResume.mockClear();
       onSidecarStream.mockClear();
-      approvePlan.mockClear();
     },
   };
 });
@@ -520,17 +357,13 @@ vi.mock('@/services/ipc/ai.service', () => ({
     proposePatch: aiServiceMock.proposePatch,
     applyPatch: aiServiceMock.applyPatch,
     classifyTask: aiServiceMock.classifyTask,
-    planTask: aiServiceMock.planTask,
     sidecarChat: aiServiceMock.sidecarChat,
-    sidecarPlan: aiServiceMock.sidecarPlan,
-    sidecarPlanQuery: aiServiceMock.sidecarPlanQuery,
     sidecarExecute: aiServiceMock.sidecarExecute,
     sidecarResolveApproval: aiServiceMock.sidecarResolveApproval,
     sidecarRestoreCheckpoint: aiServiceMock.sidecarRestoreCheckpoint,
     sidecarOrchestrate: aiServiceMock.sidecarOrchestrate,
     sidecarOrchestrateResume: aiServiceMock.sidecarOrchestrateResume,
     onSidecarStream: aiServiceMock.onSidecarStream,
-    approvePlan: aiServiceMock.approvePlan,
   },
 }));
 
@@ -543,6 +376,8 @@ const createAiEditSnapshot = (id: string, fileRefs: string[] = []): IAiSnapshot 
   fileRefs,
   storageKey: `${id}.json`,
   sizeBytes: 0,
+  contentAvailable: true,
+  pinned: false,
 });
 
 const createAiEditOperation = (overrides: Partial<IAiEditOperation> = {}): IAiEditOperation => ({
@@ -559,6 +394,7 @@ const createAiEditOperation = (overrides: Partial<IAiEditOperation> = {}): IAiEd
   appliedAt: '2026-04-29T00:00:01.000Z',
   reason: '应用 AI 文件修改',
   toolCallId: null,
+  pinned: false,
   ...overrides,
 });
 
@@ -1484,8 +1320,6 @@ describe('useAiAssistant streaming integration', () => {
     expect(assistant.messages.value[0]?.content).toBe(userQuestion);
 
     expect(aiServiceMock.classifyTask).toHaveBeenCalledTimes(0);
-    expect(aiServiceMock.sidecarPlan).toHaveBeenCalledTimes(0);
-    expect(aiServiceMock.planTask).toHaveBeenCalledTimes(0);
     expect(aiServiceMock.chatStream).toHaveBeenCalledTimes(0);
 
     expect(aiServiceMock.sidecarOrchestrate).toHaveBeenCalledWith(
@@ -1560,8 +1394,6 @@ describe('useAiAssistant streaming integration', () => {
     await assistant.sendMessage();
 
     expect(aiServiceMock.classifyTask).toHaveBeenCalledTimes(0);
-    expect(aiServiceMock.planTask).toHaveBeenCalledTimes(0);
-    expect(aiServiceMock.sidecarPlan).toHaveBeenCalledTimes(0);
     expect(aiServiceMock.chatStream).toHaveBeenCalledTimes(0);
     expect(aiServiceMock.sidecarExecute).toHaveBeenCalledTimes(1);
     expect(aiServiceMock.applyPatch).toHaveBeenCalledTimes(0);
@@ -1637,7 +1469,7 @@ describe('useAiAssistant streaming integration', () => {
     const { assistant } = createAssistantHarnessContext({ narratorConfigured: true });
 
     aiServiceMock.sidecarExecute.mockImplementationOnce(
-      async (payload: IAgentSidecarExecuteRequest) => {
+      async (payload: IAgentSidecarChatRequest) => {
         const sessionId = payload.sessionId ?? 'sidecar-narrator-dedupe-session';
         const toolStartEvent = {
           type: 'tool_start' as const,
@@ -1703,7 +1535,7 @@ describe('useAiAssistant streaming integration', () => {
   it('raw sidecar event 模式下连续序列更新不会创建 narrator 序列', async () => {
     const { assistant } = createAssistantHarnessContext({ narratorConfigured: true });
     aiServiceMock.sidecarExecute.mockImplementationOnce(
-      async (payload: IAgentSidecarExecuteRequest) => {
+      async (payload: IAgentSidecarChatRequest) => {
         const sessionId = payload.sessionId ?? 'sidecar-narrator-sequence-session';
 
         aiServiceMock.emitSidecar({
@@ -1809,7 +1641,7 @@ describe('useAiAssistant streaming integration', () => {
     const sidecarGate = createDeferred<void>();
 
     aiServiceMock.sidecarExecute.mockImplementationOnce(
-      async (payload: IAgentSidecarExecuteRequest) => {
+      async (payload: IAgentSidecarChatRequest) => {
         await sidecarGate.promise;
 
         return {
@@ -1868,7 +1700,7 @@ describe('useAiAssistant streaming integration', () => {
     const sidecarGate = createDeferred<void>();
 
     aiServiceMock.sidecarExecute.mockImplementationOnce(
-      async (payload: IAgentSidecarExecuteRequest) => {
+      async (payload: IAgentSidecarChatRequest) => {
         const sessionId = payload.sessionId ?? 'sidecar-live-session';
 
         aiServiceMock.emitSidecar({
@@ -2162,7 +1994,7 @@ describe('useAiAssistant streaming integration', () => {
     });
 
     aiServiceMock.sidecarExecute.mockImplementationOnce(
-      async (payload: IAgentSidecarExecuteRequest) => {
+      async (payload: IAgentSidecarChatRequest) => {
         const sessionId = payload.sessionId ?? 'sidecar-batched-frame-session';
 
         aiServiceMock.emitSidecar({
@@ -2260,7 +2092,7 @@ describe('useAiAssistant streaming integration', () => {
     const finalText = '切换会话后仍然保留的 Agent 回复';
 
     aiServiceMock.sidecarExecute.mockImplementationOnce(
-      async (payload: IAgentSidecarExecuteRequest) => {
+      async (payload: IAgentSidecarChatRequest) => {
         const sessionId = payload.sessionId ?? 'sidecar-thread-switch-session';
 
         await sidecarGate.promise;
@@ -2332,7 +2164,7 @@ describe('useAiAssistant streaming integration', () => {
     });
 
     aiServiceMock.sidecarExecute.mockImplementationOnce(
-      async (payload: IAgentSidecarExecuteRequest) => {
+      async (payload: IAgentSidecarChatRequest) => {
         const sessionId = payload.sessionId ?? 'sidecar-final-only-session';
 
         await sidecarGate.promise;
@@ -2367,7 +2199,7 @@ describe('useAiAssistant streaming integration', () => {
     const finalGate = createDeferred<void>();
 
     aiServiceMock.sidecarExecute.mockImplementationOnce(
-      async (payload: IAgentSidecarExecuteRequest) => {
+      async (payload: IAgentSidecarChatRequest) => {
         const sessionId = payload.sessionId ?? 'sidecar-clear-delta-session';
 
         aiServiceMock.emitSidecar({
@@ -2439,7 +2271,7 @@ describe('useAiAssistant streaming integration', () => {
     const sidecarGate = createDeferred<void>();
 
     aiServiceMock.sidecarExecute.mockImplementationOnce(
-      async (payload: IAgentSidecarExecuteRequest) => {
+      async (payload: IAgentSidecarChatRequest) => {
         const sessionId = payload.sessionId ?? 'sidecar-runtime-preview-session';
 
         aiServiceMock.emitSidecar({
@@ -2527,7 +2359,7 @@ describe('useAiAssistant streaming integration', () => {
     const sidecarGate = createDeferred<void>();
 
     aiServiceMock.sidecarExecute.mockImplementationOnce(
-      async (payload: IAgentSidecarExecuteRequest) => {
+      async (payload: IAgentSidecarChatRequest) => {
         const sessionId = payload.sessionId ?? 'sidecar-runtime-activity-session';
 
         aiServiceMock.emitSidecar({
@@ -2723,7 +2555,7 @@ describe('useAiAssistant streaming integration', () => {
     const sidecarGate = createDeferred<void>();
 
     aiServiceMock.sidecarExecute.mockImplementationOnce(
-      async (payload: IAgentSidecarExecuteRequest) => {
+      async (payload: IAgentSidecarChatRequest) => {
         const sessionId = payload.sessionId ?? 'sidecar-code-fence-session';
         const fence = String.fromCharCode(96).repeat(3);
         const firstChunk = [
@@ -2809,7 +2641,7 @@ describe('useAiAssistant streaming integration', () => {
     const sidecarGate = createDeferred<void>();
 
     aiServiceMock.sidecarExecute.mockImplementationOnce(
-      async (payload: IAgentSidecarExecuteRequest) => {
+      async (payload: IAgentSidecarChatRequest) => {
         await sidecarGate.promise;
 
         return {
