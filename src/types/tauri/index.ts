@@ -309,6 +309,7 @@ export interface ITauriService {
   ): Promise<IWorkspaceSearchPayload>;
   previewWorkspaceReplacement(
     payload: IWorkspaceReplacementRequest,
+    options?: ITauriCallOptions,
   ): Promise<IWorkspaceReplacementPreviewPayload>;
   applyWorkspaceReplacement(
     payload: IWorkspaceReplacementApplyRequest,

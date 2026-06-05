@@ -181,4 +181,60 @@ describe('SearchSidebarPanel', () => {
       .find((chip) => chip.text().includes('内容'));
     expect(contentChip?.classes()).toContain('is-active');
   });
+
+  it('未展开路径过滤时切换过滤开关不应触发重复后端检索', async () => {
+    const wrapper = mountPanel();
+    await wrapper.find('input[aria-label="搜索关键字"]').setValue('foo');
+    await flushDebouncedSearch();
+    expect(tauriServiceMock.searchWorkspace).toHaveBeenCalledTimes(1);
+
+    // 展开路径过滤但未填写规则：生效过滤为空，结果相同，不应再次请求后端。
+    await wrapper.get('button[title="包含 / 排除路径"]').trigger('click');
+    await flushDebouncedSearch();
+    expect(tauriServiceMock.searchWorkspace).toHaveBeenCalledTimes(1);
+
+    // 填写包含规则后过滤真正生效，应触发一次新的后端检索。
+    await wrapper.find('.search-panel-path-filter input').setValue('src/**');
+    await flushDebouncedSearch();
+    expect(tauriServiceMock.searchWorkspace).toHaveBeenCalledTimes(2);
+    expect(tauriServiceMock.searchWorkspace).toHaveBeenLastCalledWith(
+      expect.objectContaining({ includePatterns: ['src/**'] }),
+      expect.objectContaining({ signal: expect.anything() }),
+    );
+  });
+
+  it('切换工作区根目录会重置搜索选项与范围，避免遗留矛盾状态', async () => {
+    const wrapper = mountPanel();
+    await flushPromises();
+
+    const structuralButton = wrapper.get('button[title="结构化搜索与替换"]');
+    await structuralButton.trigger('click');
+    expect(structuralButton.classes()).toContain('is-active');
+
+    await wrapper.setProps({ workspaceRootPath: 'D:/another-repo' });
+    await flushPromises();
+
+    expect(structuralButton.classes()).not.toContain('is-active');
+    const allChip = wrapper
+      .findAll('.search-panel-chip')
+      .find((chip) => chip.text().includes('全部'));
+    expect(allChip?.classes()).toContain('is-active');
+  });
+
+  it('生成替换预览时向后端传入中止信号', async () => {
+    tauriServiceMock.previewWorkspaceReplacement.mockResolvedValue({
+      fileCount: 0,
+      files: [],
+    });
+    const wrapper = mountPanel();
+    await wrapper.find('input[aria-label="搜索关键字"]').setValue('foo');
+    await flushDebouncedSearch();
+    await wrapper.find('input[aria-label="替换内容"]').setValue('bar');
+    await flushDebouncedSearch();
+
+    expect(tauriServiceMock.previewWorkspaceReplacement).toHaveBeenCalledWith(
+      expect.objectContaining({ query: 'foo', replacement: 'bar' }),
+      expect.objectContaining({ signal: expect.anything() }),
+    );
+  });
 });

@@ -373,6 +373,10 @@ const useStructural = ref(false);
 const showPathFilters = ref(false);
 const searchIndexing = ref(false);
 const searchError = ref('');
+// replaceRunning：替换流程「整体忙碌」标志，覆盖「生成预览」与「写入磁盘」两个阶段，
+//   用于禁用「全部替换」按钮并显示其加载态。
+// replacementApplying：仅表示「正在把替换写入磁盘」（整页或单行），用于禁用单行的
+//   替换/跳过按钮并防止 apply 重入。两者语义不同，不可合并。
 const replaceRunning = ref(false);
 const replacementApplying = ref(false);
 const replacementApplyingLineId = ref<string | null>(null);
@@ -390,11 +394,16 @@ let replacementPreviewRequestId = 0;
 let searchTimer: ReturnType<typeof setTimeout> | null = null;
 let replacementPreviewTimer: ReturnType<typeof setTimeout> | null = null;
 let activeAbortController: AbortController | null = null;
+let activeReplacementPreviewAbortController: AbortController | null = null;
 const message = useMessage();
 const { refreshSidecarChangedDocuments } = useSidecarChangedDocumentRefresh();
 
+// 单词字符定义需与后端一致：后端 grep_regex 的 .word(true) 使用 Unicode \b（\w：
+// 字母、数字、下划线，含 CJK 等表意文字），连字符属于「非单词字符」。早期把 '-'
+// 当作单词字符，会让前端全字高亮边界与后端命中范围不一致（如 "foo-bar" 中的 "foo"
+// 后端命中、前端却判为非边界而不高亮）。
 const isWordCharacter = (value: string | undefined): boolean =>
-  typeof value === 'string' && /[A-Za-z0-9_\-\u4E00-\u9FFF]/u.test(value);
+  typeof value === 'string' && /[A-Za-z0-9_\u4E00-\u9FFF]/u.test(value);
 
 const isBoundaryWhitespace = (value: string): boolean => /^\s$/u.test(value);
 
@@ -639,6 +648,16 @@ const hasSearchQuery = computed(() => searchQuery.value.trim().length > 0);
 const includePatterns = computed(() => splitPatternList(includePattern.value));
 const excludePatterns = computed(() => splitPatternList(excludePattern.value));
 
+// 仅在「展开路径过滤且非结构化搜索」时，过滤规则才真正下发后端。统一用这两个计算值
+// 作为「生效的过滤规则」：当未启用过滤时，编辑包含/排除输入框不会进入依赖追踪，
+// 从而避免触发结果完全相同的重复后端检索。
+const effectiveIncludePatterns = computed(() =>
+  showPathFilters.value && !useStructural.value ? includePatterns.value : [],
+);
+const effectiveExcludePatterns = computed(() =>
+  showPathFilters.value && !useStructural.value ? excludePatterns.value : [],
+);
+
 const toResultItem = (result: IWorkspaceSearchResult): ISearchResultItem => {
   const rawSnippetText = result.lineText ?? result.name;
   const rawMatchRange =
@@ -655,6 +674,10 @@ const toResultItem = (result: IWorkspaceSearchResult): ISearchResultItem => {
     relativePath: result.relativePath,
     resultKey: `${result.kind}:${result.path}:${result.lineNumber ?? 0}:${result.matchStart ?? -1}:${result.matchEnd ?? -1}`,
     reason: result.kind,
+    // 内容命中：直接用后端返回的字符（码点）区间做紧凑高亮，与后端 byte_to_char_offset
+    // 完全对齐。文件名/符号命中：后端用 nucleo 模糊匹配且不返回区间，这里退化为前端的
+    // 精确/正则高亮——可能与后端模糊命中不完全一致（模糊命中时甚至无高亮）。属于已知取舍：
+    // 仅作视觉提示，不影响定位与打开。
     snippetSegments:
       result.kind === 'content' && preview.range
         ? buildCompactHighlightedSegments(preview.text, preview.range, SEARCH_RESULT_CONTEXT_CHARS)
@@ -915,6 +938,8 @@ const resetReplacementPreview = (): void => {
   }
 
   replacementPreviewRequestId += 1;
+  activeReplacementPreviewAbortController?.abort();
+  activeReplacementPreviewAbortController = null;
   replacementPreviewOpen.value = false;
   replacementPreview.value = null;
   replacementPreviewRequest.value = null;
@@ -974,33 +999,48 @@ const cancelPendingSearch = (): void => {
     activeAbortController.abort();
     activeAbortController = null;
   }
+
+  if (activeReplacementPreviewAbortController) {
+    activeReplacementPreviewAbortController.abort();
+    activeReplacementPreviewAbortController = null;
+  }
+};
+
+// 作废所有在途搜索请求：递增 requestId 让迟到的响应被丢弃，并中止已发出的请求。
+// 否则在清空结果后，旧请求 resolve 时其 requestId 仍等于全局值，会把过期结果回灌
+// （例如把合法查询改成非法正则后，旧的合法结果又被写回）。
+const invalidateInFlightSearch = (): void => {
+  searchRequestId += 1;
+  activeAbortController?.abort();
+  activeAbortController = null;
+};
+
+const clearSearchResults = (): void => {
+  scannedFileCount.value = 0;
+  backendResults.value = [];
+  searchIndexing.value = false;
+  searchError.value = '';
 };
 
 const runSearch = async (): Promise<void> => {
+  // 以下三种情况都不应发起后端检索，且都必须作废在途请求，防止之前发出的检索结果
+  // 在清空后又被写回。
   if (!props.isDesktopRuntime || !props.workspaceRootPath) {
-    scannedFileCount.value = 0;
-    backendResults.value = [];
-    searchIndexing.value = false;
-    searchError.value = '';
+    invalidateInFlightSearch();
+    clearSearchResults();
     return;
   }
 
   if (matcherError.value) {
-    backendResults.value = [];
-    searchIndexing.value = false;
-    searchError.value = '';
+    invalidateInFlightSearch();
+    clearSearchResults();
     return;
   }
 
   // 空查询无需触发后端检索：直接清空结果，回到初始空状态。
   if (!hasSearchQuery.value) {
-    searchRequestId += 1;
-    activeAbortController?.abort();
-    activeAbortController = null;
-    scannedFileCount.value = 0;
-    backendResults.value = [];
-    searchIndexing.value = false;
-    searchError.value = '';
+    invalidateInFlightSearch();
+    clearSearchResults();
     return;
   }
 
@@ -1017,13 +1057,15 @@ const runSearch = async (): Promise<void> => {
       {
         workspaceRootPath: props.workspaceRootPath,
         query: searchQuery.value.trim(),
+        // 后端一次性返回全部范围（文件名/符号/内容）的命中，scope 分面切换完全由前端
+        // searchResultsByScope 即时过滤，因此固定下发 'all'，避免切 chip 时重新请求后端。
         scope: 'all',
         matchCase: matchCase.value,
         wholeWord: wholeWord.value,
         useRegex: useRegex.value,
         useStructural: useStructural.value,
-        includePatterns: showPathFilters.value && !useStructural.value ? includePatterns.value : [],
-        excludePatterns: showPathFilters.value && !useStructural.value ? excludePatterns.value : [],
+        includePatterns: effectiveIncludePatterns.value,
+        excludePatterns: effectiveExcludePatterns.value,
         limit: SEARCH_RESULT_LIMIT,
       },
       {
@@ -1076,8 +1118,8 @@ const buildReplacementRequest = (): IWorkspaceReplacementRequest | null => {
     wholeWord: wholeWord.value,
     useRegex: useRegex.value,
     useStructural: useStructural.value,
-    includePatterns: showPathFilters.value && !useStructural.value ? includePatterns.value : [],
-    excludePatterns: showPathFilters.value && !useStructural.value ? excludePatterns.value : [],
+    includePatterns: effectiveIncludePatterns.value,
+    excludePatterns: effectiveExcludePatterns.value,
     limit: REPLACEMENT_FILE_LIMIT,
   };
 };
@@ -1124,6 +1166,9 @@ const previewReplacementToSearch = async (source: 'manual' | 'auto'): Promise<bo
   }
   const requestId = replacementPreviewRequestId + 1;
   replacementPreviewRequestId = requestId;
+  activeReplacementPreviewAbortController?.abort();
+  const abortController = new AbortController();
+  activeReplacementPreviewAbortController = abortController;
 
   replaceRunning.value = true;
   replacementPreviewOpen.value = true;
@@ -1132,7 +1177,9 @@ const previewReplacementToSearch = async (source: 'manual' | 'auto'): Promise<bo
   skippedReplacementLineIds.value = new Set<string>();
 
   try {
-    const preview = await tauriService.previewWorkspaceReplacement(request);
+    const preview = await tauriService.previewWorkspaceReplacement(request, {
+      signal: abortController.signal,
+    });
 
     if (requestId !== replacementPreviewRequestId) {
       return false;
@@ -1150,6 +1197,11 @@ const previewReplacementToSearch = async (source: 'manual' | 'auto'): Promise<bo
     replacementPreviewRequest.value = request;
     return true;
   } catch (error) {
+    // 中止属于正常的竞态取消（更新的请求已接管），不应弹错或污染搜索错误状态。
+    if (abortController.signal.aborted || requestId !== replacementPreviewRequestId) {
+      return false;
+    }
+
     replacementPreviewOpen.value = false;
     if (source === 'manual') {
       message.error(toErrorMessage(error, '替换失败。'));
@@ -1158,7 +1210,11 @@ const previewReplacementToSearch = async (source: 'manual' | 'auto'): Promise<bo
     }
     return false;
   } finally {
-    replaceRunning.value = false;
+    // 仅当自己仍是最新请求时才复位忙碌态/控制器；被取代时交给接管的请求处理。
+    if (requestId === replacementPreviewRequestId) {
+      replaceRunning.value = false;
+      activeReplacementPreviewAbortController = null;
+    }
   }
 };
 
@@ -1201,10 +1257,15 @@ const refreshReplacementPreviewAfterLineApply = async (
 ): Promise<void> => {
   const requestId = replacementPreviewRequestId + 1;
   replacementPreviewRequestId = requestId;
+  activeReplacementPreviewAbortController?.abort();
+  const abortController = new AbortController();
+  activeReplacementPreviewAbortController = abortController;
   replacementPreviewOpen.value = true;
 
   try {
-    const preview = await tauriService.previewWorkspaceReplacement(request);
+    const preview = await tauriService.previewWorkspaceReplacement(request, {
+      signal: abortController.signal,
+    });
     if (requestId !== replacementPreviewRequestId) {
       return;
     }
@@ -1220,7 +1281,15 @@ const refreshReplacementPreviewAfterLineApply = async (
     replacementPreviewRequest.value = request;
     retainVisibleSkippedReplacementLines(preview);
   } catch (error) {
+    if (abortController.signal.aborted || requestId !== replacementPreviewRequestId) {
+      return;
+    }
+
     message.error(toErrorMessage(error, '刷新替换预览失败。'));
+  } finally {
+    if (requestId === replacementPreviewRequestId) {
+      activeReplacementPreviewAbortController = null;
+    }
   }
 };
 
@@ -1229,21 +1298,39 @@ const reportReplacementRefreshOutcome = (
   replacementCount: number,
   successMessage: string,
 ): void => {
+  const issues: string[] = [];
+
   if (refreshResult.skippedDirtyNames.length > 0) {
-    message.warning(
-      `已替换 ${replacementCount} 处内容，但 ${refreshResult.skippedDirtyNames.join('、')} 有未保存改动，已跳过自动刷新。`,
-    );
-    return;
+    issues.push(`${refreshResult.skippedDirtyNames.join('、')} 有未保存改动，已跳过自动刷新`);
   }
 
   if (refreshResult.failedNames.length > 0) {
-    message.warning(
-      `已替换 ${replacementCount} 处内容，但 ${refreshResult.failedNames.join('、')} 刷新失败，请手动重新打开。`,
-    );
+    issues.push(`${refreshResult.failedNames.join('、')} 刷新失败，请手动重新打开`);
+  }
+
+  // 跳过与失败可能同时发生，合并到一条提示，避免漏报其中一类。
+  if (issues.length > 0) {
+    message.warning(`已替换 ${replacementCount} 处内容，但 ${issues.join('；')}。`);
     return;
   }
 
   message.success(successMessage);
+};
+
+// 「应用替换 + 同步刷新已变更文档」是整页替换与单行替换的公共流程，抽出以避免两处
+// 逻辑漂移（如刷新参数不一致）。调用方各自处理预览的开/合。
+const applyReplacementAndRefresh = async (
+  request: IWorkspaceReplacementRequest,
+  expectedFiles: Array<{ path: string; beforeHash: string; includedMatchIds: string[] }>,
+) => {
+  const payload = await tauriService.applyWorkspaceReplacement({ request, expectedFiles });
+  const refreshResult = await refreshSidecarChangedDocuments({
+    changedFilePaths: payload.files.map((changedFile: { path: string }) => changedFile.path),
+    hasFileMutations: true,
+    workspaceRootPath: payload.rootPath,
+  });
+
+  return { payload, refreshResult };
 };
 
 const confirmReplacementPreview = async (): Promise<void> => {
@@ -1316,28 +1403,26 @@ const replaceReplacementLine = async (
   replacementApplyingLineId.value = line.id;
 
   try {
-    const payload = await tauriService.applyWorkspaceReplacement({
+    const { payload, refreshResult } = await applyReplacementAndRefresh(
       request,
-      expectedFiles: [
-        {
-          path: file.path,
-          beforeHash: file.beforeHash,
-          includedMatchIds: [line.id],
-        },
-      ],
-    });
-    const refreshResult = await refreshSidecarChangedDocuments({
-      changedFilePaths: payload.files.map((changedFile: { path: string }) => changedFile.path),
-      hasFileMutations: true,
-      workspaceRootPath: payload.rootPath,
-    });
+      files.map((file) => ({
+        path: file.path,
+        beforeHash: file.beforeHash,
+        includedMatchIds: file.visibleLinePreviews.map((line) => line.id),
+      })),
+    );
 
-    await refreshReplacementPreviewAfterLineApply(request);
+    replacementPreviewOpen.value = false;
+    replacementPreview.value = null;
+    replacementPreviewRequest.value = null;
+    replacementPreviewRequestId += 1;
+    activeReplacementPreviewAbortController?.abort();
+    activeReplacementPreviewAbortController = null;
 
     reportReplacementRefreshOutcome(
       refreshResult,
       payload.replacementCount,
-      `已替换 ${payload.replacementCount} 处内容。`,
+      `已替换 ${payload.changedFileCount} 个文件中的 ${payload.replacementCount} 处内容。`,
     );
 
     void runSearch();
@@ -1377,9 +1462,10 @@ watch(
     wholeWord,
     useRegex,
     useStructural,
-    showPathFilters,
-    includePattern,
-    excludePattern,
+    // 用「生效过滤值」的序列化结果作为依赖：未启用路径过滤、或过滤为空时，
+    // 编辑包含/排除输入框或切换过滤开关都不会改变下发内容，从而不触发重复检索。
+    () => effectiveIncludePatterns.value.join('\n'),
+    () => effectiveExcludePatterns.value.join('\n'),
   ],
   scheduleSearch,
   { immediate: true },
@@ -1393,6 +1479,13 @@ watch(
     includePattern.value = '';
     excludePattern.value = '';
     activeScope.value = 'all';
+    // 同步重置搜索选项，避免遗留「结构化模式 + scope=all」等自相矛盾的组合
+    // （结构化搜索本应锁定 content 范围）。
+    matchCase.value = false;
+    wholeWord.value = false;
+    useRegex.value = false;
+    useStructural.value = false;
+    showPathFilters.value = false;
     selectedResultKey.value = null;
     resetReplacementPreview();
   },
@@ -1406,9 +1499,8 @@ watch(
     wholeWord,
     useRegex,
     useStructural,
-    showPathFilters,
-    includePattern,
-    excludePattern,
+    () => effectiveIncludePatterns.value.join('\n'),
+    () => effectiveExcludePatterns.value.join('\n'),
     () => props.workspaceRootPath,
   ],
   () => {

@@ -254,7 +254,7 @@ export const workspaceTauriService: TWorkspaceTauriService = {
     );
   },
 
-  previewWorkspaceReplacement(payload) {
+  previewWorkspaceReplacement(payload, options) {
     const commandPayload = {
       ...payload,
       includePatterns: payload.includePatterns,
@@ -268,6 +268,7 @@ export const workspaceTauriService: TWorkspaceTauriService = {
         idempotent: true,
         audit: 'sensitive',
         timeoutMs: 30_000,
+        signal: options?.signal,
         input: commandPayload,
       },
       () => commands.previewWorkspaceReplacement(commandPayload),
