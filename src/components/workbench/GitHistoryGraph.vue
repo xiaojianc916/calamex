@@ -11,56 +11,92 @@
         <span class="git-history-graph-group-count" v-text="group.count" />
       </header>
 
-      <article
-        v-for="row in group.rows"
-        :key="row.commit.id"
-        class="source-control-history-item git-history-graph-row"
-        :class="{ 'is-active': row.commit.id === activeCommitId }"
-        @click="handleSelect(row.commit)"
-        @contextmenu="handleContextMenu($event, row.commit)"
-        @mouseenter="handleRowEnter($event, row.commit)"
-        @mouseleave="handleRowLeave"
-      >
-        <div class="git-history-graph-cell" :style="{ width: graphWidth + 'px' }" aria-hidden="true">
-          <svg
-            class="git-history-graph-svg"
-            :width="graphWidth"
-            :height="ROW_HEIGHT"
-            :viewBox="'0 0 ' + graphWidth + ' ' + ROW_HEIGHT"
-          >
-            <path
-              v-for="edge in row.paths"
-              :key="edge.key"
-              :d="edge.d"
-              :stroke="edge.color"
-              class="git-history-graph-edge"
-              fill="none"
-            />
-            <circle
-              :cx="row.nodeX"
-              :cy="ROW_HEIGHT / 2"
-              :r="NODE_RADIUS"
-              :fill="row.nodeColor"
-              class="git-history-graph-node"
-            />
-          </svg>
-        </div>
+      <template v-for="row in group.rows" :key="row.commit.id">
+        <article
+          class="source-control-history-item git-history-graph-row"
+          :class="{ 'is-active': row.commit.id === activeCommitId, 'is-expanded': row.commit.id === expandedCommitId }"
+          @click="handleSelect(row.commit)"
+          @contextmenu="handleContextMenu($event, row.commit)"
+          @mouseenter="handleRowEnter($event, row.commit)"
+          @mouseleave="handleRowLeave"
+        >
+          <div class="git-history-graph-cell" :style="{ width: graphWidth + 'px' }" aria-hidden="true">
+            <svg
+              class="git-history-graph-svg"
+              :width="graphWidth"
+              :height="ROW_HEIGHT"
+              :viewBox="'0 0 ' + graphWidth + ' ' + ROW_HEIGHT"
+            >
+              <path
+                v-for="edge in row.paths"
+                :key="edge.key"
+                :d="edge.d"
+                :stroke="edge.color"
+                class="git-history-graph-edge"
+                fill="none"
+              />
+              <circle
+                :cx="row.nodeX"
+                :cy="ROW_HEIGHT / 2"
+                :r="NODE_RADIUS"
+                :fill="row.nodeColor"
+                class="git-history-graph-node"
+              />
+            </svg>
+          </div>
 
-        <div class="git-history-graph-body">
-          <span class="git-history-graph-message-text" v-text="row.commit.summary" />
-          <span
-            v-for="commitRef in row.refs"
-            :key="commitRef.name"
-            class="git-history-graph-ref"
-            :class="refClass(commitRef)"
-          >
-            <span :class="refIcon(commitRef)" class="git-history-graph-ref-icon" aria-hidden="true" />
-            <span class="git-history-graph-ref-name" v-text="commitRef.name" />
-          </span>
-        </div>
+          <div class="git-history-graph-body">
+            <span class="git-history-graph-expand-icon" aria-hidden="true">
+              <span :class="row.commit.id === expandedCommitId ? 'icon-[lucide--chevron-down]' : 'icon-[lucide--chevron-right]'" />
+            </span>
+            <span class="git-history-graph-message-text" v-text="row.commit.summary" />
+            <span
+              v-for="commitRef in row.refs"
+              :key="commitRef.name"
+              class="git-history-graph-ref"
+              :class="refClass(commitRef)"
+            >
+              <span :class="refIcon(commitRef)" class="git-history-graph-ref-icon" aria-hidden="true" />
+              <span class="git-history-graph-ref-name" v-text="commitRef.name" />
+            </span>
+          </div>
 
-        <span class="source-control-history-author git-history-graph-author" v-text="row.commit.authorName" />
-      </article>
+          <span class="source-control-history-author git-history-graph-author" v-text="row.commit.authorName" />
+        </article>
+
+        <!-- Inline expanded file list -->
+        <div
+          v-if="row.commit.id === expandedCommitId"
+          class="git-history-graph-filelist"
+        >
+          <div v-if="expandedLoading && !expandedDetail" class="git-history-graph-filelist-loading">
+            <span class="icon-[lucide--loader-circle] git-history-graph-filelist-spinner" aria-hidden="true" />
+            <span v-text="'正在读取文件列表…'" />
+          </div>
+          <template v-else-if="expandedDetail && expandedDetail.files.length > 0">
+            <div class="git-history-graph-filelist-summary">
+              <span v-text="expandedDetail.files.length + ' 个文件'" />
+              <span v-if="expandedDetail.additions > 0" class="git-history-graph-filelist-add" v-text="'+' + expandedDetail.additions" />
+              <span v-if="expandedDetail.deletions > 0" class="git-history-graph-filelist-del" v-text="'-' + expandedDetail.deletions" />
+            </div>
+            <div
+              v-for="file in expandedDetail.files"
+              :key="file.relativePath"
+              class="git-history-graph-filelist-row"
+            >
+              <span class="git-history-graph-filelist-tag" :class="'is-' + file.status" v-text="resolveFileTag(file.status)" />
+              <span class="git-history-graph-filelist-name" v-text="file.fileName" />
+              <span v-if="file.previousRelativePath" class="git-history-graph-filelist-renamed" v-text="'← ' + file.previousRelativePath" />
+              <span class="git-history-graph-filelist-path" v-text="resolveFileDir(file)" />
+              <span v-if="file.additions > 0" class="git-history-graph-filelist-stat git-history-graph-filelist-stat-add" v-text="'+' + file.additions" />
+              <span v-if="file.deletions > 0" class="git-history-graph-filelist-stat git-history-graph-filelist-stat-del" v-text="'-' + file.deletions" />
+            </div>
+          </template>
+          <div v-else-if="expandedDetail" class="git-history-graph-filelist-empty">
+            <span v-text="'该提交没有文件变更'" />
+          </div>
+        </div>
+      </template>
     </template>
 
     <section v-if="behind > 0" class="git-history-graph-incoming-note">
@@ -110,7 +146,12 @@
         </div>
         <div class="git-history-graph-hovercard-foot">
           <code class="git-history-graph-hovercard-sha" v-text="hoverShortId" />
-          <button type="button" class="git-history-graph-hovercard-copy" title="复制完整提交哈希" @click="copyHoverCommitId">
+          <button
+            type="button"
+            class="git-history-graph-hovercard-copy"
+            title="复制完整提交哈希"
+            @click="copyHoverCommitId"
+          >
             <span class="icon-[lucide--copy]" aria-hidden="true" />
           </button>
         </div>
@@ -125,7 +166,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import LinearContextMenu from '@/components/common/LinearContextMenu.vue';
 import type { ILinearContextMenuGroup, ILinearContextMenuItem } from '@/components/common/linear-context-menu.types';
 import { useGitStore } from '@/store/git';
-import type { IGitCommitDetailPayload, IGitCommitSummaryPayload } from '@/types/git';
+import type { IGitCommitDetailPayload, IGitCommitFileChangePayload, IGitCommitSummaryPayload } from '@/types/git';
 import { writeClipboardText } from '@/utils/clipboard';
 import type { IGitGraphEdge } from '@/utils/git-graph';
 import { buildGitGraph, resolveGitGraphLaneColor } from '@/utils/git-graph';
@@ -160,6 +201,9 @@ const emit = defineEmits<{ 'select-commit': [commit: IGitCommitSummaryPayload] }
 
 const gitStore = useGitStore();
 const activeCommitId = ref<string | null>(null);
+const expandedCommitId = ref<string | null>(null);
+const expandedDetail = ref<IGitCommitDetailPayload | null>(null);
+const expandedLoading = ref(false);
 
 const menu = reactive<{ open: boolean; x: number; y: number; commit: IGitCommitSummaryPayload | null }>({
   open: false, x: 0, y: 0, commit: null,
@@ -275,6 +319,22 @@ const refClass = (commitRef: IGitCommitRef): Record<string, boolean> => ({
 const refIcon = (commitRef: IGitCommitRef): string =>
   commitRef.kind === 'remoteBranch' ? 'icon-[lucide--cloud]' : 'icon-[lucide--git-branch]';
 
+const resolveFileTag = (status: string): string => {
+  switch (status) {
+    case 'added': return 'A';
+    case 'deleted': return 'D';
+    case 'renamed': return 'R';
+    case 'binary': return 'B';
+    default: return 'M';
+  }
+};
+
+const resolveFileDir = (file: IGitCommitFileChangePayload): string => {
+  const path = file.relativePath;
+  const lastSlash = path.lastIndexOf('/');
+  return lastSlash >= 0 ? path.slice(0, lastSlash) : '';
+};
+
 const formatTime = (value: string | null | undefined): string => {
   if (!value) return '';
   const time = new Date(value).getTime();
@@ -302,9 +362,35 @@ const formatAbsolute = (value: string | null | undefined): string => {
   return year + '年' + month + '月' + day + '日 ' + hours + ':' + minutes;
 };
 
+const loadExpandedDetail = async (commit: IGitCommitSummaryPayload): Promise<void> => {
+  expandedDetail.value = null;
+  expandedLoading.value = true;
+  try {
+    const detail = await gitStore.loadCommitDetail(commit.id);
+    if (expandedCommitId.value === commit.id) {
+      expandedDetail.value = detail;
+    }
+  } catch {
+    // ignore errors
+  } finally {
+    if (expandedCommitId.value === commit.id) {
+      expandedLoading.value = false;
+    }
+  }
+};
+
 const handleSelect = (commit: IGitCommitSummaryPayload): void => {
+  // toggle expansion
+  if (expandedCommitId.value === commit.id) {
+    expandedCommitId.value = null;
+    expandedDetail.value = null;
+    expandedLoading.value = false;
+    return;
+  }
   activeCommitId.value = commit.id;
+  expandedCommitId.value = commit.id;
   emit('select-commit', commit);
+  void loadExpandedDetail(commit);
 };
 
 const clearHoverOpenTimer = (): void => {
@@ -446,6 +532,11 @@ watch(
     if (commits.length === 0) { activeCommitId.value = null; return; }
     const stillExists = commits.some((commit) => commit.id === activeCommitId.value);
     if (!stillExists) activeCommitId.value = commits[0].id;
+    // collapse if expanded commit is no longer in list
+    if (expandedCommitId.value && !commits.some((c) => c.id === expandedCommitId.value)) {
+      expandedCommitId.value = null;
+      expandedDetail.value = null;
+    }
   },
   { immediate: true },
 );
@@ -531,6 +622,11 @@ onBeforeUnmount(() => {
   background: rgba(129, 139, 152, 0.12);
 }
 
+.git-history-graph-row.source-control-history-item.is-expanded {
+  background: rgba(9, 105, 218, 0.07);
+  border-radius: 6px 6px 0 0;
+}
+
 .git-history-graph-cell { flex: 0 0 auto; height: 28px; display: block; }
 .git-history-graph-svg { display: block; overflow: visible; }
 .git-history-graph-edge { stroke-width: 1.5; fill: none; }
@@ -544,6 +640,16 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 5px;
   overflow: hidden;
+}
+
+.git-history-graph-expand-icon {
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  color: #818b98;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .git-history-graph-message-text {
@@ -588,6 +694,123 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
   max-width: 80px;
 }
+
+/* === Inline file list === */
+.git-history-graph-filelist {
+  margin: 0 0 4px;
+  border: 1px solid #d1d9e0;
+  border-top: none;
+  border-radius: 0 0 6px 6px;
+  background: #f6f8fa;
+  overflow: hidden;
+}
+
+.git-history-graph-filelist-loading,
+.git-history-graph-filelist-empty {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  font-size: 11px;
+  color: #818b98;
+}
+
+.git-history-graph-filelist-spinner {
+  width: 12px;
+  height: 12px;
+  animation: git-history-spin 1s linear infinite;
+}
+
+@keyframes git-history-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.git-history-graph-filelist-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px 4px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: #59636e;
+  border-bottom: 1px solid #d1d9e0;
+  background: #f0f2f5;
+}
+
+.git-history-graph-filelist-add { color: #1a7f37; }
+.git-history-graph-filelist-del { color: #cf222e; }
+
+.git-history-graph-filelist-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  font-size: 11.5px;
+  color: #1f2328;
+  border-bottom: 1px solid rgba(209, 217, 224, 0.5);
+  min-height: 24px;
+  box-sizing: border-box;
+}
+
+.git-history-graph-filelist-row:last-child { border-bottom: none; }
+
+.git-history-graph-filelist-tag {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  background: rgba(129, 139, 152, 0.15);
+  color: #59636e;
+}
+.git-history-graph-filelist-tag.is-added { background: rgba(31, 136, 61, 0.12); color: #1a7f37; }
+.git-history-graph-filelist-tag.is-deleted { background: rgba(207, 34, 46, 0.12); color: #cf222e; }
+.git-history-graph-filelist-tag.is-renamed { background: rgba(130, 80, 223, 0.12); color: #6e40c9; }
+.git-history-graph-filelist-tag.is-modified { background: rgba(9, 105, 218, 0.1); color: #0550ae; }
+
+.git-history-graph-filelist-name {
+  flex: 0 0 auto;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 180px;
+}
+
+.git-history-graph-filelist-renamed {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: 10.5px;
+  color: #818b98;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.git-history-graph-filelist-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 10.5px;
+  color: #818b98;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.git-history-graph-filelist-stat {
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.git-history-graph-filelist-stat-add { color: #1a7f37; }
+.git-history-graph-filelist-stat-del { color: #cf222e; }
 
 /* Hover card */
 .git-history-graph-hovercard {
