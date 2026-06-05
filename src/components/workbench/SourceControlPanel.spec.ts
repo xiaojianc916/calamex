@@ -532,12 +532,12 @@ describe('SourceControlPanel', () => {
     await branchTab?.trigger('click');
     await flushPromises();
 
-    const checkoutButton = wrapper
-      .findAll('.source-control-btn')
-      .find((button) => button.text() === '切换');
-    expect(checkoutButton).toBeDefined();
+    const checkoutRow = wrapper
+      .findAll('.source-control-branch-row')
+      .find((row) => row.text().includes('feature/demo'));
+    expect(checkoutRow).toBeDefined();
 
-    await checkoutButton?.trigger('click');
+    await checkoutRow?.trigger('click');
     await flushPromises();
 
     expect(tauriServiceMock.checkoutGitBranch).toHaveBeenCalledWith({

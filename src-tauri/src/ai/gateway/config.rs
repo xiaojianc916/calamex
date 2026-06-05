@@ -6,6 +6,7 @@ pub(super) struct AiProviderConnectionCandidate {
     pub(super) selected_model: Option<String>,
     pub(super) base_url: Option<String>,
     pub(super) api_key_for_test: String,
+    pub(super) api_key_from_saved: bool,
     pub(super) inline_completion_enabled: bool,
     pub(super) chat_enabled: bool,
     pub(super) agent_enabled: bool,
@@ -127,12 +128,15 @@ pub(super) fn build_provider_connection_candidate(
         .or_else(|| default_model(provider_type));
     let resolved_provider_id = validate_model_provider(model.as_deref(), provider_id)?;
 
-    let api_key_for_test = api_key
+    let typed_api_key = api_key
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .map(Ok)
-        .unwrap_or_else(|| get_saved_api_key_for_candidate(model.as_deref()))?;
+        .map(ToOwned::to_owned);
+    let api_key_from_saved = typed_api_key.is_none();
+    let api_key_for_test = match typed_api_key {
+        Some(value) => value,
+        None => get_saved_api_key_for_candidate(model.as_deref())?,
+    };
 
     if api_key_for_test.trim().is_empty() {
         return Err(errors::error("AI_PROVIDER_AUTH_FAILED", "请填写 API Key。"));
@@ -144,6 +148,7 @@ pub(super) fn build_provider_connection_candidate(
         selected_model: model,
         base_url: normalized_base_url,
         api_key_for_test,
+        api_key_from_saved,
         inline_completion_enabled,
         chat_enabled,
         agent_enabled,

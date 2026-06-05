@@ -10,6 +10,28 @@ use crate::commands::contracts::{
 };
 use tauri::AppHandle;
 
+fn classify_provider_test_error_code(error: &str) -> &'static str {
+    let normalized = error.to_ascii_lowercase();
+    if normalized.contains("http 401")
+        || normalized.contains("http 403")
+        || normalized.contains("unauthorized")
+        || normalized.contains("ai_provider_auth_failed")
+    {
+        "AI_PROVIDER_AUTH_FAILED"
+    } else if normalized.contains("http 429")
+        || normalized.contains("too many requests")
+        || normalized.contains("rate limit")
+    {
+        "AI_PROVIDER_RATE_LIMITED"
+    } else if normalized.contains("ai_provider_not_configured") || normalized.contains("http 404") {
+        "AI_PROVIDER_NOT_CONFIGURED"
+    } else if normalized.contains("ai_response_invalid") {
+        "AI_RESPONSE_INVALID"
+    } else {
+        "AI_PROVIDER_UNAVAILABLE"
+    }
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn ai_get_config() -> Result<AiConfigPayload, String> {
@@ -58,14 +80,14 @@ pub async fn ai_test_provider_config(
     )
     .await
     {
-        Ok(()) => Ok(AiProviderTestPayload {
+        Ok(message) => Ok(AiProviderTestPayload {
             ok: true,
             code: "AI_PROVIDER_READY".to_string(),
-            message: "AI Provider 可用。".to_string(),
+            message,
         }),
         Err(error) => Ok(AiProviderTestPayload {
             ok: false,
-            code: "AI_PROVIDER_UNAVAILABLE".to_string(),
+            code: classify_provider_test_error_code(&error).to_string(),
             message: error,
         }),
     }
@@ -111,14 +133,14 @@ pub fn ai_clear_credentials() -> Result<(), String> {
 #[specta::specta]
 pub async fn ai_test_provider() -> Result<AiProviderTestPayload, String> {
     match gateway::test_provider().await {
-        Ok(()) => Ok(AiProviderTestPayload {
+        Ok(message) => Ok(AiProviderTestPayload {
             ok: true,
             code: "AI_PROVIDER_READY".to_string(),
-            message: "AI Provider 可用。".to_string(),
+            message,
         }),
         Err(error) => Ok(AiProviderTestPayload {
             ok: false,
-            code: "AI_PROVIDER_UNAVAILABLE".to_string(),
+            code: classify_provider_test_error_code(&error).to_string(),
             message: error,
         }),
     }

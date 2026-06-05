@@ -69,6 +69,7 @@ const feedbackTone = ref<TFeedbackTone>('info');
 const actionState = ref<TActionState>('idle');
 const isKeyVisible = ref(false);
 const isTavilyKeyVisible = ref(false);
+const baseUrlInput = ref('');
 const isProviderMenuOpen = ref(false);
 const isSmallModelMenuOpen = ref(false);
 
@@ -219,11 +220,13 @@ const openForm = (providerId?: TAiServicePlatformId): void => {
   isTavilyKeyVisible.value = false;
   isProviderMenuOpen.value = false;
   isSmallModelMenuOpen.value = false;
+  baseUrlInput.value = selectedProvider.value.baseUrl ?? '';
   pane.value = 'form';
 };
 
 const handleProviderChange = (providerId: string): void => {
   selectedProviderId.value = providerId as TAiServicePlatformId;
+  baseUrlInput.value = selectedProvider.value.baseUrl ?? '';
   const credential = credentialsByProvider.value.get(selectedProviderId.value);
   credentialAlias.value = credential?.alias?.trim() || '默认';
   // 与 openForm 对齐:沿用 narrator 已选小模型(若匹配当前厂商),否则回退默认模型。
@@ -273,9 +276,16 @@ const saveProviderSettings = (): void => {
   // 在单次 IPC 内同时写入凭证(apiKey 作为第 2 个参数带出)与小模型配置,保证两者
   // 要么一起成功要么一起失败。不要再额外 emit `saveCredentials`:那会让凭证写两遍,
   // 并产生两套互相竞争、可能互相覆盖的 feedback / actionState,破坏保存的原子性。
+  const narratorConfig = createRoleConfig(
+    selectedProvider.value,
+    'narrator',
+    selectedSmallModel.value.id,
+  );
+  narratorConfig.narrator.baseUrl =
+    baseUrlInput.value.trim() || selectedProvider.value.baseUrl || null;
   emit(
     'save',
-    createRoleConfig(selectedProvider.value, 'narrator', selectedSmallModel.value.id),
+    narratorConfig,
     normalizedApiKey,
     'narrator',
     createFeedback(() => {
@@ -296,6 +306,7 @@ const testSelectedProvider = (): void => {
   // 完全一致(都走 narrator 小模型 + 当前所选小模型),否则「测试通过」不能代表「保存后可用」。
   const role: TAiModelRole = 'narrator';
   const draft = createRoleConfig(selectedProvider.value, role, selectedSmallModel.value.id);
+  draft.narrator.baseUrl = baseUrlInput.value.trim() || selectedProvider.value.baseUrl || null;
   showStatus(`正在测试 ${selectedProvider.value.label}...`, 'info');
   emit(
     'testProvider',
@@ -471,6 +482,7 @@ watch(
     pane.value = 'list';
     searchText.value = '';
     selectedProviderId.value = mainProviderId.value;
+    baseUrlInput.value = selectedProvider.value.baseUrl ?? '';
     selectedSmallModelId.value = resolveSmallModelForProvider(selectedProviderId.value);
     credentialAlias.value = '默认';
     aliasError.value = '';
@@ -671,10 +683,10 @@ watch(
               <div class="ai-credential-field">
                 <label class="ai-credential-label" for="ai-base-url">
                   Base URL
-                  <span>由模型路由管理</span>
+                  <span>留空用默认路由</span>
                 </label>
-                <Input id="ai-base-url" class="ai-credential-input" :model-value="selectedProvider.baseUrl"
-                  placeholder="使用系统默认路由" disabled />
+                <Input id="ai-base-url" v-model="baseUrlInput" class="ai-credential-input"
+                  placeholder="使用系统默认路由" autocomplete="off" spellcheck="false" />
               </div>
               <div class="ai-credential-field">
                 <label class="ai-credential-label" for="tavily-key">
@@ -1128,7 +1140,7 @@ watch(
   background: var(--ai-credential-surface-2);
 }
 
-.ai-credential-combobox-option span {
+.ai-credential-combobox-option > span:not([class]) {
   min-width: 0;
   flex: 1;
   overflow: hidden;
@@ -1136,13 +1148,14 @@ watch(
   white-space: nowrap;
 }
 
-.ai-credential-combobox-option :deep(svg:last-child) {
+.ai-credential-combobox-option > :last-child {
+  flex: none;
   width: 13px;
   height: 13px;
   opacity: 0;
 }
 
-.ai-credential-combobox-option.is-selected :deep(svg:last-child) {
+.ai-credential-combobox-option.is-selected > :last-child {
   opacity: 1;
 }
 

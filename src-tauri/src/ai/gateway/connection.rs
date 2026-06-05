@@ -45,12 +45,38 @@ fn build_test_request(
 
 async fn test_provider_connection_candidate(
     candidate: &AiProviderConnectionCandidate,
-) -> Result<(), String> {
-    let _ = agent_sidecar::model_chat_once(build_test_request(candidate)?).await?;
-    Ok(())
+) -> Result<String, String> {
+    let started_at = std::time::Instant::now();
+    let response = agent_sidecar::model_chat_once(build_test_request(candidate)?).await?;
+    let reply = response.result.unwrap_or_default();
+    let reply = reply.trim();
+
+    if reply.is_empty() {
+        return Err(errors::error(
+            "AI_RESPONSE_INVALID",
+            "模型连接成功但未返回任何内容，请确认所选模型与对应厂商 API Key 是否匹配可用。",
+        ));
+    }
+
+    let latency_ms = started_at.elapsed().as_millis();
+    let model_label = candidate
+        .selected_model
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("默认模型");
+    let key_source = if candidate.api_key_from_saved {
+        "已保存的 API Key"
+    } else {
+        "本次填写的 API Key"
+    };
+
+    Ok(format!(
+        "连接正常：{model_label} 已成功响应（使用{key_source}，耗时 {latency_ms}ms）。"
+    ))
 }
 
-pub async fn test_provider() -> Result<(), String> {
+pub async fn test_provider() -> Result<String, String> {
     let config = current_config()?;
     let selected_model = config
         .selected_model
@@ -63,6 +89,7 @@ pub async fn test_provider() -> Result<(), String> {
         selected_model,
         base_url: config.base_url.clone(),
         api_key_for_test: get_api_key_for_config(&config)?,
+        api_key_from_saved: true,
         inline_completion_enabled: config.inline_completion_enabled,
         chat_enabled: config.chat_enabled,
         agent_enabled: config.agent_enabled,
@@ -82,7 +109,7 @@ pub async fn test_provider_config(
     chat_enabled: bool,
     agent_enabled: bool,
     api_key: Option<&str>,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let candidate = build_provider_connection_candidate(
         provider_id,
         provider_type,
