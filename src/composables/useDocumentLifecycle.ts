@@ -27,7 +27,10 @@ type TUseDocumentLifecycleOptions = {
   flushSession?: () => Promise<void>;
 };
 
-const CLOSE_FLUSH_TIMEOUT_MS = 1000;
+// 关闭应用前会话落盘的最长等待时间。1s 对体量稍大的会话快照(多标签 + 草稿)
+// 在慢磁盘上可能不够,导致 flush 被超时打断、会话状态丢失;放宽到 5s 更稳妥,
+// 同时仍能避免落盘异常时无限期阻塞关闭。
+const CLOSE_FLUSH_TIMEOUT_MS = 5000;
 
 const resolveCloseConfirmMessage = (
   dirtyDocuments: IEditorDocument[],
