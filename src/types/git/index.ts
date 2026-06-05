@@ -21,6 +21,7 @@ import type {
   GitFileStatusPayload,
   GitPathOperationRequest,
   GitPullRequestSupportPayload,
+  GitRemoteSetRequest,
   GitRepositoryRootRequest,
   GitRepositoryStatusPayload,
   GitStashApplyRequest,
@@ -30,8 +31,6 @@ import type {
   GitStashSaveRequest,
 } from '@/bindings/tauri';
 
-// 后端枚举经 specta 序列化为字符串，生成绑定层目前以 `string` 暴露。
-// 以下别名仅用于语义标注（取值范围见 Rust 端定义），不再约束为字面量联合。
 export type TGitChangeKind = string;
 export type TGitDiffMode = string;
 export type TGitBranchKind = string;
@@ -59,6 +58,7 @@ export type IGitStashSaveRequest = GitStashSaveRequest;
 export type IGitStashApplyRequest = GitStashApplyRequest;
 export type IGitStashDropRequest = GitStashDropRequest;
 export type IGitPullRequestSupportPayload = GitPullRequestSupportPayload;
+export type IGitRemoteSetRequest = GitRemoteSetRequest;
 export type IGitDiffPreviewRequest = GitDiffPreviewRequest;
 export type IGitDiffPreviewPayload = GitDiffPreviewPayload;
 export type IGitPathOperationRequest = GitPathOperationRequest;
