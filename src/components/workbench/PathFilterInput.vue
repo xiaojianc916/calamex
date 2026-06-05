@@ -2,13 +2,33 @@
   <div class="search-panel-path-filter">
     <span v-text="label" />
 
-    <div class="search-path-filter-control">
+    <div class="search-path-filter-control" @click="focusInput">
+      <span
+        v-for="(chip, index) in chips"
+        :key="`${chip.value}:${index}`"
+        class="search-path-filter-chip"
+        :class="{ 'is-invalid': !chip.valid }"
+        :title="chip.valid ? chip.value : `非法的模式：${chip.value}`"
+      >
+        <span class="search-path-filter-chip-label" v-text="chip.value" />
+        <button
+          type="button"
+          class="search-path-filter-chip-remove"
+          tabindex="-1"
+          aria-label="移除"
+          @mousedown.prevent
+          @click.stop="removeChip(index)"
+        >
+          <span class="icon-[lucide--x]" aria-hidden="true" />
+        </button>
+      </span>
+
       <input
         ref="inputRef"
         class="search-path-filter-input"
         type="text"
-        :value="modelValue"
-        :placeholder="placeholder"
+        :value="draft"
+        :placeholder="chips.length === 0 ? placeholder : ''"
         :aria-label="resolvedAriaLabel"
         autocomplete="off"
         spellcheck="false"
@@ -30,7 +50,7 @@
           role="option"
           :aria-selected="index === activeIndex"
           @mousedown.prevent="selectSuggestion(index)"
-          @mouseenter="activeIndex = index"
+          @mouseenter="onOptionHover(index)"
         >
           <span class="search-path-filter-option-icon" aria-hidden="true">
             <ExplorerEntryIcon :kind="item.kind" :path="item.insertValue" />
@@ -70,6 +90,10 @@ const emit = defineEmits<{
 
 const inputRef = ref<HTMLInputElement | null>(null);
 const menuRef = ref<HTMLElement | null>(null);
+const draft = ref('');
+// 仅当用户用方向键/悬停「主动选中」某条建议时才为 true：回车此时才接受建议，
+// 否则回车一律把草稿文本「定型」成 chip——避免抢走手输的 glob 模式（如 *.sh）。
+const userNavigated = ref(false);
 
 const { suggestions, open, activeIndex, request, close, moveActive, accept, dispose } =
   useWorkspacePathSuggestions({
@@ -81,18 +105,119 @@ const { suggestions, open, activeIndex, request, close, moveActive, accept, disp
 const isMenuOpen = computed(() => open.value && suggestions.value.length > 0);
 const resolvedAriaLabel = computed(() => props.ariaLabel ?? props.label);
 
-const requestForElement = (element: HTMLInputElement): void => {
-  request(element.value, element.selectionStart ?? element.value.length);
+// 把以逗号/换行分隔的模式串解析成去空白的非空片段；与父组件 splitPatternList 保持一致，
+// 因此 modelValue 仍以逗号拼接存储，后端下发逻辑无需改动。
+const parsePatterns = (value: string): string[] =>
+  value
+    .split(/[\n,]+/u)
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+// 轻量 glob 合法性校验（仅作视觉提示，不阻止提交）：非空、方括号/花括号配对。
+const isValidGlobPattern = (value: string): boolean => {
+  if (!value) {
+    return false;
+  }
+
+  let squareDepth = 0;
+  let braceDepth = 0;
+  for (const character of value) {
+    if (character === '[') {
+      squareDepth += 1;
+    } else if (character === ']') {
+      squareDepth -= 1;
+    } else if (character === '{') {
+      braceDepth += 1;
+    } else if (character === '}') {
+      braceDepth -= 1;
+    }
+
+    if (squareDepth < 0 || braceDepth < 0) {
+      return false;
+    }
+  }
+
+  return squareDepth === 0 && braceDepth === 0;
+};
+
+const chips = computed(() =>
+  parsePatterns(props.modelValue).map((value) => ({
+    value,
+    valid: isValidGlobPattern(value),
+  })),
+);
+
+const focusInput = (): void => {
+  inputRef.value?.focus();
+};
+
+// 追加一个模式：去空白、去重后拼回 modelValue。空片段忽略，避免产生空 chip。
+const commitPattern = (pattern: string): void => {
+  const trimmed = pattern.trim();
+  if (!trimmed) {
+    return;
+  }
+
+  const existing = parsePatterns(props.modelValue);
+  if (existing.includes(trimmed)) {
+    return;
+  }
+
+  emit('update:modelValue', [...existing, trimmed].join(','));
+};
+
+const commitDraft = (): void => {
+  const pattern = draft.value;
+  draft.value = '';
+  commitPattern(pattern);
+  close();
+};
+
+const removeChip = (index: number): void => {
+  const existing = parsePatterns(props.modelValue);
+  if (index < 0 || index >= existing.length) {
+    return;
+  }
+
+  existing.splice(index, 1);
+  emit('update:modelValue', existing.join(','));
+  void nextTick(() => inputRef.value?.focus());
+};
+
+const removeLastChip = (): void => {
+  const existing = parsePatterns(props.modelValue);
+  if (existing.length === 0) {
+    return;
+  }
+
+  existing.pop();
+  emit('update:modelValue', existing.join(','));
 };
 
 const handleInput = (event: Event): void => {
   const element = event.target as HTMLInputElement;
-  emit('update:modelValue', element.value);
-  requestForElement(element);
+  const raw = element.value;
+  userNavigated.value = false;
+
+  // 输入或粘贴中出现分隔符：把已完整的片段逐个定型成 chip，最后一段留作草稿继续编辑。
+  if (/[,\n]/u.test(raw)) {
+    const segments = raw.split(/[\n,]+/u);
+    const tail = segments.pop() ?? '';
+    for (const segment of segments) {
+      commitPattern(segment);
+    }
+    draft.value = tail;
+    request(tail, tail.length);
+    return;
+  }
+
+  draft.value = raw;
+  request(raw, element.selectionStart ?? raw.length);
 };
 
-const handleFocus = (event: FocusEvent): void => {
-  requestForElement(event.target as HTMLInputElement);
+const handleFocus = (): void => {
+  userNavigated.value = false;
+  request(draft.value, draft.value.length);
 };
 
 let blurTimer: ReturnType<typeof setTimeout> | null = null;
@@ -105,11 +230,15 @@ const clearBlurTimer = (): void => {
 };
 
 const handleBlur = (): void => {
-  // 失焦后延迟关闭：给下拉项的 mousedown 选择留出时间（mousedown 已 preventDefault
-  // 防止抢焦，这里再加一道延时关闭以兼容不同浏览器的事件时序）。
+  // 失焦后延迟处理：给下拉项的 mousedown 选择留出时间（mousedown 已 preventDefault 防抢焦）。
+  // 真正离开输入框时，把未提交的草稿也定型成 chip，避免「输了没生效」。
   clearBlurTimer();
   blurTimer = setTimeout(() => {
     blurTimer = null;
+    if (draft.value.trim()) {
+      commitPattern(draft.value);
+      draft.value = '';
+    }
     close();
   }, 120);
 };
@@ -120,63 +249,105 @@ const selectSuggestion = (index: number): void => {
     return;
   }
 
-  const result = accept(index, element.value, element.selectionStart ?? element.value.length);
+  const caret = element.selectionStart ?? draft.value.length;
+  const result = accept(index, draft.value, caret);
   if (!result) {
     return;
   }
 
   clearBlurTimer();
-  emit('update:modelValue', result.value);
 
-  // 下一帧再定位光标：等 v-model 回流后输入框的值已更新。选中目录（insertValue 以 '/'
-  // 结尾）则继续弹出该目录下的建议以支持逐级下钻；选中文件则收起下拉。
-  void nextTick(() => {
-    const nextElement = inputRef.value;
-    if (!nextElement) {
-      return;
-    }
+  if (result.suggestion.kind === 'directory') {
+    // 选中目录：填入草稿继续逐级下钻，并重新拉取该目录下的建议。
+    draft.value = result.value;
+    void nextTick(() => {
+      const nextElement = inputRef.value;
+      if (!nextElement) {
+        return;
+      }
 
-    nextElement.focus();
-    nextElement.setSelectionRange(result.caret, result.caret);
+      nextElement.focus();
+      nextElement.setSelectionRange(result.caret, result.caret);
+      userNavigated.value = false;
+      request(result.value, result.caret);
+    });
+    return;
+  }
 
-    if (result.suggestion.kind === 'directory') {
-      request(nextElement.value, result.caret);
-    } else {
-      close();
-    }
-  });
+  // 选中文件：直接定型为 chip 并收起下拉。
+  commitPattern(result.value);
+  draft.value = '';
+  close();
+  void nextTick(() => inputRef.value?.focus());
+};
+
+const onOptionHover = (index: number): void => {
+  activeIndex.value = index;
+  userNavigated.value = true;
 };
 
 const handleKeydown = (event: KeyboardEvent): void => {
-  if (!isMenuOpen.value) {
+  // 输入法组字过程中（如中文拼音）放行所有按键，尤其是空格选词，绝不在此时提交 chip。
+  if (event.isComposing) {
     return;
   }
 
-  if (event.key === 'ArrowDown') {
-    event.preventDefault();
-    moveActive(1);
+  // 草稿为空时按退格：删除最后一个 chip，符合标签输入框的直觉。
+  if (event.key === 'Backspace' && draft.value.length === 0) {
+    if (chips.value.length > 0) {
+      event.preventDefault();
+      removeLastChip();
+    }
     return;
   }
 
-  if (event.key === 'ArrowUp') {
-    event.preventDefault();
-    moveActive(-1);
-    return;
-  }
-
-  if (event.key === 'Enter' || event.key === 'Tab') {
-    if (activeIndex.value < 0) {
+  if (isMenuOpen.value) {
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      userNavigated.value = true;
+      moveActive(1);
       return;
     }
 
+    if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      userNavigated.value = true;
+      moveActive(-1);
+      return;
+    }
+
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      close();
+      return;
+    }
+
+    // Tab：始终接受当前高亮建议（明确的补全意图）；Enter 仅在用户主动选中后才接受建议。
+    if (event.key === 'Tab' && activeIndex.value >= 0) {
+      event.preventDefault();
+      selectSuggestion(activeIndex.value);
+      return;
+    }
+
+    if (event.key === 'Enter' && userNavigated.value && activeIndex.value >= 0) {
+      event.preventDefault();
+      selectSuggestion(activeIndex.value);
+      return;
+    }
+  }
+
+  if (event.key === 'Enter') {
     event.preventDefault();
-    selectSuggestion(activeIndex.value);
+    commitDraft();
     return;
   }
 
-  if (event.key === 'Escape') {
+  // 空格定型为 chip；草稿为空时仅吞掉按键，避免产生纯空白片段。
+  if (event.key === ' ') {
     event.preventDefault();
-    close();
+    if (draft.value.trim()) {
+      commitDraft();
+    }
   }
 };
 
@@ -199,16 +370,82 @@ onBeforeUnmount(() => {
 
 <style scoped>
 /* 复用全局 sidebar-search.css 中 .search-panel-path-filter 的栅格、边框与 input 外观，
-   这里只补充补全下拉所需的相对定位容器与浮层菜单样式，不改动全局样式表。 */
+   这里只补充标签 chip、补全下拉所需的相对定位容器与浮层菜单样式，不改动全局样式表。 */
+.search-panel-path-filter {
+  align-items: center;
+  min-height: 28px;
+  padding: 3px 8px;
+}
+
 .search-path-filter-control {
   position: relative;
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
   min-width: 0;
 }
 
 .search-path-filter-input {
-  flex: 1;
-  min-width: 0;
+  flex: 1 1 64px;
+  min-width: 64px;
+  height: 20px;
+}
+
+.search-path-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  max-width: 100%;
+  height: 20px;
+  padding: 0 2px 0 7px;
+  border-radius: var(--search-radius-sm);
+  background: var(--search-bg-selected);
+  color: var(--search-text);
+  font-size: 11px;
+  line-height: 1;
+}
+
+.search-path-filter-chip-label {
+  overflow: hidden;
+  color: var(--search-text);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.search-path-filter-chip.is-invalid {
+  background: rgb(220 38 38 / 12%);
+  color: #b91c1c;
+  box-shadow: inset 0 0 0 1px rgb(220 38 38 / 38%);
+}
+
+.search-path-filter-chip.is-invalid .search-path-filter-chip-label {
+  color: #b91c1c;
+}
+
+.search-path-filter-chip-remove {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.65;
+}
+
+.search-path-filter-chip-remove:hover {
+  background: rgb(0 0 0 / 10%);
+  opacity: 1;
 }
 
 .search-path-filter-menu {
