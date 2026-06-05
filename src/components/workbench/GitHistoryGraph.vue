@@ -18,6 +18,8 @@
         :class="{ 'is-active': row.commit.id === activeCommitId }"
         @click="handleSelect(row.commit)"
         @contextmenu="handleContextMenu($event, row.commit)"
+        @mouseenter="handleRowEnter($event, row.commit)"
+        @mouseleave="handleRowLeave"
       >
         <div class="git-history-graph-cell" :style="{ width: graphWidth + 'px' }" aria-hidden="true">
           <svg
@@ -58,12 +60,6 @@
         </div>
 
         <span class="source-control-history-author git-history-graph-author" v-text="row.commit.authorName" />
-
-        <time
-          class="git-history-graph-time"
-          :datetime="row.commit.authoredAt"
-          v-text="formatTime(row.commit.authoredAt)"
-        />
       </article>
     </template>
 
@@ -81,6 +77,61 @@
       submenu-direction="right"
       @select="handleMenuSelect"
     />
+
+    <Teleport to="body">
+      <div
+        v-if="hover.open && hoverCommit"
+        class="git-history-graph-hovercard"
+        :style="{ top: hover.y + 'px', left: hover.x + 'px' }"
+        @mouseenter="handleCardEnter"
+        @mouseleave="handleCardLeave"
+      >
+        <div class="git-history-graph-hovercard-head">
+          <span class="git-history-graph-hovercard-author" v-text="hoverAuthorName" />
+          <span class="git-history-graph-hovercard-ago" v-text="formatTime(hoverAuthoredAt)" />
+        </div>
+        <div
+          v-if="formatAbsolute(hoverAuthoredAt)"
+          class="git-history-graph-hovercard-date"
+          v-text="formatAbsolute(hoverAuthoredAt)"
+        />
+        <p class="git-history-graph-hovercard-message" v-text="hoverMessage" />
+        <div class="git-history-graph-hovercard-stats">
+          <span
+            v-if="hoverLoading && !hoverDetail"
+            class="git-history-graph-hovercard-loading"
+            v-text="'正在统计变更…'"
+          />
+          <template v-else-if="hoverDetail">
+            <span
+              class="git-history-graph-hovercard-files"
+              v-text="'已更改 ' + hoverDetail.fileCount + ' 个文件'"
+            />
+            <span
+              v-if="hoverDetail.additions > 0"
+              class="git-history-graph-hovercard-add"
+              v-text="'+' + hoverDetail.additions"
+            />
+            <span
+              v-if="hoverDetail.deletions > 0"
+              class="git-history-graph-hovercard-del"
+              v-text="'-' + hoverDetail.deletions"
+            />
+          </template>
+        </div>
+        <div class="git-history-graph-hovercard-foot">
+          <code class="git-history-graph-hovercard-sha" v-text="hoverShortId" />
+          <button
+            type="button"
+            class="git-history-graph-hovercard-copy"
+            title="复制完整提交哈希"
+            @click="copyHoverCommitId"
+          >
+            <span class="icon-[lucide--copy]" aria-hidden="true" />
+          </button>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -92,7 +143,8 @@ import type {
   ILinearContextMenuGroup,
   ILinearContextMenuItem,
 } from '@/components/common/linear-context-menu.types';
-import type { IGitCommitSummaryPayload } from '@/types/git';
+import { useGitStore } from '@/store/git';
+import type { IGitCommitDetailPayload, IGitCommitSummaryPayload } from '@/types/git';
 import { writeClipboardText } from '@/utils/clipboard';
 import type { IGitGraphEdge } from '@/utils/git-graph';
 import { buildGitGraph, resolveGitGraphLaneColor } from '@/utils/git-graph';
@@ -100,6 +152,10 @@ import { buildGitGraph, resolveGitGraphLaneColor } from '@/utils/git-graph';
 const LANE_WIDTH = 13;
 const ROW_HEIGHT = 28;
 const NODE_RADIUS = 3;
+
+const HOVER_OPEN_DELAY = 320;
+const HOVER_CLOSE_DELAY = 160;
+const HOVER_CARD_WIDTH = 320;
 
 interface IGitCommitRef {
   name: string;
@@ -147,6 +203,8 @@ const emit = defineEmits<{
   'select-commit': [commit: IGitCommitSummaryPayload];
 }>();
 
+const gitStore = useGitStore();
+
 const activeCommitId = ref<string | null>(null);
 
 const menu = reactive<{
@@ -160,6 +218,25 @@ const menu = reactive<{
   y: 0,
   commit: null,
 });
+
+const hover = reactive<{
+  open: boolean;
+  commitId: string | null;
+  x: number;
+  y: number;
+}>({
+  open: false,
+  commitId: null,
+  x: 0,
+  y: 0,
+});
+
+const hoverCommit = ref<IGitCommitSummaryPayload | null>(null);
+const hoverDetail = ref<IGitCommitDetailPayload | null>(null);
+const hoverLoading = ref(false);
+
+let hoverOpenTimer: ReturnType<typeof setTimeout> | null = null;
+let hoverCloseTimer: ReturnType<typeof setTimeout> | null = null;
 
 const laneX = (lane: number): number => lane * LANE_WIDTH + LANE_WIDTH / 2;
 
@@ -285,6 +362,26 @@ const menuGroups = computed<ILinearContextMenuGroup[]>(() => {
   ];
 });
 
+const hoverMessage = computed<string>(() => {
+  const detail = hoverDetail.value;
+  if (detail) {
+    return detail.body ? detail.summary + '\n\n' + detail.body : detail.summary;
+  }
+  return hoverCommit.value?.summary ?? '';
+});
+
+const hoverAuthorName = computed<string>(
+  () => hoverDetail.value?.authorName ?? hoverCommit.value?.authorName ?? '',
+);
+
+const hoverAuthoredAt = computed<string>(
+  () => hoverDetail.value?.authoredAt ?? hoverCommit.value?.authoredAt ?? '',
+);
+
+const hoverShortId = computed<string>(
+  () => hoverDetail.value?.shortId ?? hoverCommit.value?.shortId ?? '',
+);
+
 const refClass = (commitRef: IGitCommitRef): Record<string, boolean> => ({
   'is-head': commitRef.isHead,
   'is-remote': commitRef.kind === 'remoteBranch',
@@ -327,9 +424,131 @@ const formatTime = (value: string | null | undefined): string => {
   return new Date(value).toLocaleDateString();
 };
 
+const formatAbsolute = (value: string | null | undefined): string => {
+  if (!value) {
+    return '';
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+
+  const year = date.getFullYear();
+  const month = date.getMonth() + 1;
+  const day = date.getDate();
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  return year + '年' + month + '月' + day + '日 ' + hours + ':' + minutes;
+};
+
 const handleSelect = (commit: IGitCommitSummaryPayload): void => {
   activeCommitId.value = commit.id;
   emit('select-commit', commit);
+};
+
+const clearHoverOpenTimer = (): void => {
+  if (hoverOpenTimer !== null) {
+    clearTimeout(hoverOpenTimer);
+    hoverOpenTimer = null;
+  }
+};
+
+const clearHoverCloseTimer = (): void => {
+  if (hoverCloseTimer !== null) {
+    clearTimeout(hoverCloseTimer);
+    hoverCloseTimer = null;
+  }
+};
+
+const closeHoverCard = (): void => {
+  hover.open = false;
+  hover.commitId = null;
+  hoverCommit.value = null;
+  hoverDetail.value = null;
+  hoverLoading.value = false;
+};
+
+const positionHoverCard = (rect: DOMRect): { x: number; y: number } => {
+  const margin = 8;
+  let x = rect.right + margin;
+  if (x + HOVER_CARD_WIDTH > window.innerWidth - margin) {
+    x = rect.left - HOVER_CARD_WIDTH - margin;
+  }
+  if (x < margin) {
+    x = margin;
+  }
+  let y = rect.top;
+  const maxY = window.innerHeight - 180;
+  if (y > maxY) {
+    y = Math.max(margin, maxY);
+  }
+  return { x, y };
+};
+
+const openHoverCard = async (rect: DOMRect, commit: IGitCommitSummaryPayload): Promise<void> => {
+  const position = positionHoverCard(rect);
+  hover.x = position.x;
+  hover.y = position.y;
+  hover.commitId = commit.id;
+  hoverCommit.value = commit;
+  hover.open = true;
+
+  if (hoverDetail.value?.id === commit.id) {
+    return;
+  }
+
+  hoverDetail.value = null;
+  hoverLoading.value = true;
+  try {
+    const detail = await gitStore.loadCommitDetail(commit.id);
+    if (hover.commitId === commit.id) {
+      hoverDetail.value = detail;
+    }
+  } catch {
+    // 详情读取失败时保留摘要回退，不阻塞悬浮卡片。
+  } finally {
+    if (hover.commitId === commit.id) {
+      hoverLoading.value = false;
+    }
+  }
+};
+
+const handleRowEnter = (event: MouseEvent, commit: IGitCommitSummaryPayload): void => {
+  if (menu.open) {
+    return;
+  }
+  clearHoverCloseTimer();
+  const target = event.currentTarget;
+  if (!(target instanceof HTMLElement)) {
+    return;
+  }
+  const rect = target.getBoundingClientRect();
+  clearHoverOpenTimer();
+  hoverOpenTimer = setTimeout(() => {
+    void openHoverCard(rect, commit);
+  }, HOVER_OPEN_DELAY);
+};
+
+const handleRowLeave = (): void => {
+  clearHoverOpenTimer();
+  clearHoverCloseTimer();
+  hoverCloseTimer = setTimeout(closeHoverCard, HOVER_CLOSE_DELAY);
+};
+
+const handleCardEnter = (): void => {
+  clearHoverCloseTimer();
+};
+
+const handleCardLeave = (): void => {
+  handleRowLeave();
+};
+
+const copyHoverCommitId = async (): Promise<void> => {
+  const commitId = hoverDetail.value?.id ?? hoverCommit.value?.id;
+  if (commitId) {
+    await writeClipboardText(commitId);
+  }
 };
 
 const closeMenu = (): void => {
@@ -339,6 +558,9 @@ const closeMenu = (): void => {
 
 const handleContextMenu = (event: MouseEvent, commit: IGitCommitSummaryPayload): void => {
   event.preventDefault();
+  clearHoverOpenTimer();
+  clearHoverCloseTimer();
+  closeHoverCard();
   activeCommitId.value = commit.id;
   menu.commit = commit;
   menu.x = event.clientX;
@@ -383,14 +605,27 @@ const handleWindowPointerDown = (event: PointerEvent): void => {
 };
 
 const handleWindowKeydown = (event: KeyboardEvent): void => {
-  if (menu.open && event.key === 'Escape') {
+  if (event.key !== 'Escape') {
+    return;
+  }
+  if (menu.open) {
     closeMenu();
+  }
+  if (hover.open) {
+    clearHoverOpenTimer();
+    clearHoverCloseTimer();
+    closeHoverCard();
   }
 };
 
 const handleWindowResize = (): void => {
   if (menu.open) {
     closeMenu();
+  }
+  if (hover.open) {
+    clearHoverOpenTimer();
+    clearHoverCloseTimer();
+    closeHoverCard();
   }
 };
 
@@ -421,6 +656,9 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  clearHoverOpenTimer();
+  clearHoverCloseTimer();
+
   if (typeof window === 'undefined') {
     return;
   }
@@ -601,14 +839,6 @@ onBeforeUnmount(() => {
   line-height: 1.2;
   color: #818b98;
 }
-
-.git-history-graph-row .git-history-graph-time {
-  flex: 0 0 auto;
-  font-size: 11px;
-  line-height: 1.2;
-  white-space: nowrap;
-  color: #818b98;
-}
 </style>
 
 <style>
@@ -620,5 +850,138 @@ onBeforeUnmount(() => {
 
 .source-control-history-refresh:disabled > span {
   animation: scm-history-refresh-spin 0.8s linear infinite;
+}
+
+.git-history-graph-hovercard {
+  position: fixed;
+  z-index: 40;
+  width: 320px;
+  max-width: calc(100vw - 16px);
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid #d1d9e0;
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: 0 8px 28px rgba(31, 35, 40, 0.16);
+  color: #1f2328;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.git-history-graph-hovercard-head {
+  display: flex;
+  flex-direction: row;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.git-history-graph-hovercard-author {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #1f2328;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-history-graph-hovercard-ago {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: #818b98;
+}
+
+.git-history-graph-hovercard-date {
+  font-size: 11px;
+  color: #818b98;
+}
+
+.git-history-graph-hovercard-message {
+  margin: 0;
+  padding: 8px 0;
+  border-top: 1px solid #eaeef2;
+  border-bottom: 1px solid #eaeef2;
+  font-size: 12px;
+  color: #1f2328;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.git-history-graph-hovercard-stats {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  font-size: 11.5px;
+  color: #59636e;
+}
+
+.git-history-graph-hovercard-loading {
+  color: #818b98;
+}
+
+.git-history-graph-hovercard-add {
+  color: #1a7f37;
+  font-variant-numeric: tabular-nums;
+}
+
+.git-history-graph-hovercard-del {
+  color: #cf222e;
+  font-variant-numeric: tabular-nums;
+}
+
+.git-history-graph-hovercard-foot {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.git-history-graph-hovercard-sha {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 2px 8px;
+  border: 1px solid #eaeef2;
+  border-radius: 6px;
+  background: #f6f8fa;
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 11px;
+  color: #59636e;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-history-graph-hovercard-copy {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid #d1d9e0;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #59636e;
+  cursor: pointer;
+  transition:
+    background 0.14s ease,
+    color 0.14s ease;
+}
+
+.git-history-graph-hovercard-copy:hover {
+  background: rgba(129, 139, 152, 0.12);
+  color: #1f2328;
+}
+
+.git-history-graph-hovercard-copy > span {
+  width: 14px;
+  height: 14px;
 }
 </style>
