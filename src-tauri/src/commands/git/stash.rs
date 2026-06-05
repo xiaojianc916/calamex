@@ -1,4 +1,3 @@
-use super::cli;
 use super::*;
 use gix::bstr::ByteSlice;
 
@@ -63,18 +62,77 @@ pub fn save_git_stash(payload: GitStashSaveRequest) -> Result<GitRepositoryStatu
         return Err("存在冲突文件，解决冲突后再执行贮藏。".into());
     }
 
-    let mut args = vec!["stash", "push"];
-    if payload.include_untracked {
-        args.push("--include-untracked");
+    // 基线提交（HEAD）。空仓库尚无提交时无法贮藏（与 git 行为一致）。
+    let head_commit = resolve_head_commit(&repository)?
+        .ok_or_else(|| "当前仓库尚无提交，无法贮藏改动。".to_string())?;
+    let base_commit_id = head_commit.id().detach();
+    let base_tree_id = head_commit
+        .tree_id()
+        .map_err(|error| format!("读取 HEAD 树失败：{error}"))?
+        .detach();
+
+    let branch_label = status
+        .head_short_name
+        .clone()
+        .unwrap_or_else(|| "(no branch)".to_string());
+    let base_short = short_commit_id(base_commit_id);
+    let raw_message = head_commit.message_raw_sloppy().to_str_lossy().into_owned();
+    let base_subject = raw_message
+        .lines()
+        .next()
+        .map(str::trim)
+        .filter(|summary| !summary.is_empty())
+        .unwrap_or("无提交说明")
+        .to_string();
+
+    // 贮藏说明：沿用 git 习惯，便于 list 解析分支名与短哈希。
+    let stash_message = match payload.message.as_deref().map(str::trim) {
+        Some(message) if !message.is_empty() => format!("On {branch_label}: {message}"),
+        _ => format!("WIP on {branch_label}: {base_short} {base_subject}"),
+    };
+
+    // 构建工作区树（含已折叠的未跟踪文件，若启用）。
+    let worktree_tree_id =
+        build_worktree_tree(&repository, &repository_root, &status, payload.include_untracked)?;
+    if worktree_tree_id == base_tree_id {
+        return Err("当前没有可贮藏的改动。".into());
     }
-    if let Some(ref message) = payload.message {
-        let msg = message.trim();
-        if !msg.is_empty() {
-            args.push("--message");
-            args.push(msg);
-        }
-    }
-    cli::run_git_ok(&repository_root, &args, "保存贮藏")?;
+
+    // 提交者身份（用于贮藏提交与 reflog）。
+    let committer = repository
+        .committer()
+        .ok_or_else(|| "尚未配置 Git 用户名与邮箱，无法创建贮藏。".to_string())?
+        .map_err(|error| format!("读取提交者身份失败：{error}"))?;
+    let seconds = jiff::Timestamp::now().as_second();
+    let signature = gix::actor::Signature {
+        name: committer.name.to_owned(),
+        email: committer.email.to_owned(),
+        time: gix::date::Time::new(seconds, 0),
+    };
+
+    // 仅以 HEAD 为父创建贮藏提交：本应用的明细/应用逻辑只依赖 ^1（基线）与提交树。
+    let commit = gix::objs::Commit {
+        tree: worktree_tree_id,
+        parents: std::iter::once(base_commit_id).collect(),
+        author: signature.clone(),
+        committer: signature.clone(),
+        encoding: None,
+        message: stash_message.clone().into_bytes().into(),
+        extra_headers: Vec::new(),
+    };
+    let stash_commit_id = repository
+        .write_object(&commit)
+        .map_err(|error| format!("写入贮藏提交失败：{error}"))?
+        .detach();
+
+    // 手动更新 refs/stash 与 logs/refs/stash（gix 默认不会为 refs/stash 建 reflog，
+    // 而 list/drop 依赖该 reflog，故手动写入，且与现有 drop 的手改方式保持一致）。
+    store_new_stash(&repository, stash_commit_id, &signature, seconds, &stash_message)?;
+
+    // 将工作区与索引恢复到 HEAD（等价 reset --hard + 清理已贮藏的未跟踪文件）。
+    reset_worktree_to_head(&repository, &repository_root, &status, payload.include_untracked)?;
+
+    let repository = open_repository_from_root(&payload.repository_root_path)?;
     super::status::build_git_repository_status_payload(&repository)
 }
 
@@ -90,17 +148,41 @@ pub fn apply_git_stash(
     } else {
         "应用贮藏"
     };
+    // 要求工作区干净，从而 ours 等于 HEAD 树，三方合并的 ours 端可直接取 HEAD。
     super::branches::assert_repository_is_clean_for_switch(&repository, label)?;
 
-    // stash@{N}：用字符串拼接构造字面花括号。
-    let stash_ref = ["stash@{", &payload.stash_index.to_string(), "}"].concat();
-    let args = if payload.pop {
-        vec!["stash", "pop", &stash_ref]
-    } else {
-        vec!["stash", "apply", &stash_ref]
-    };
-    cli::run_git_ok(&repository_root, &args, label)?;
+    let stash_oid = resolve_stash_oid(&repository, payload.stash_index)?;
+    let stash = stash_oid.to_string();
 
+    // 三方合并的三棵树：base = 贮藏基线(^1)，theirs = 贮藏树，ours = 当前 HEAD 树。
+    let base_tree_id = repository
+        .rev_parse_single([stash.as_str(), "^1^{tree}"].concat().as_str())
+        .map(|id| id.detach())
+        .map_err(|error| format!("解析贮藏基线树失败：{error}"))?;
+    let theirs_tree_id = repository
+        .rev_parse_single([stash.as_str(), "^{tree}"].concat().as_str())
+        .map(|id| id.detach())
+        .map_err(|error| format!("解析贮藏树失败：{error}"))?;
+    let ours_tree_id = repository
+        .head_tree()
+        .map_err(|error| format!("读取 HEAD 树失败：{error}"))?
+        .id()
+        .detach();
+
+    let conflicted = apply_stash_changes(
+        &repository,
+        &repository_root,
+        base_tree_id,
+        ours_tree_id,
+        theirs_tree_id,
+    )?;
+
+    // pop 且无冲突时移除该贮藏；有冲突则保留（与 git pop 行为一致）。
+    if payload.pop && !conflicted {
+        drop_stash_by_index(&repository, payload.stash_index)?;
+    }
+
+    let repository = open_repository_from_root(&payload.repository_root_path)?;
     super::status::build_git_repository_status_payload(&repository)
 }
 
@@ -192,11 +274,6 @@ fn build_git_stash_entry_payload(
 }
 
 /// 通过 gix 解析贮藏提交的差异，构建明细（增删行数 + 文件列表），避免依赖系统安装的 git。
-///
-/// 贮藏提交 W 的父结构：parent1 = 贮藏时的基线提交、parent2 = 索引快照、
-/// parent3 = 未跟踪文件快照（仅 --include-untracked 时存在）。明细等价于
-/// `git stash show --include-untracked`：基线树 → 工作区树 的跟踪改动，
-/// 外加未跟踪树中的全部文件（视为新增）。
 fn build_git_stash_details(
     repository: &Repository,
     oid: gix::ObjectId,
@@ -210,7 +287,6 @@ fn build_git_stash_details(
         .to_string();
 
     let stash = oid.to_string();
-    // peel 到 tree 的修订语法需要字面花括号 "^{tree}"，用字符串拼接构造。
     let worktree_tree_id = repository
         .rev_parse_single([stash.as_str(), "^{tree}"].concat().as_str())
         .map_err(|error| format!("解析贮藏树失败：{error}"))?
@@ -225,11 +301,9 @@ fn build_git_stash_details(
         .map(|id| id.detach());
 
     let mut files = Vec::new();
-    // 跟踪改动：基线树 → 工作区树。
     if let Some(base_id) = base_tree_id {
         collect_stash_tree_changes(repository, base_id, worktree_tree_id, &mut files)?;
     }
-    // 未跟踪文件：空树 → 未跟踪树（全部视为新增）。
     if let Some(untracked_id) = untracked_tree_id {
         let empty_tree_id = repository.empty_tree().id().detach();
         collect_stash_tree_changes(repository, empty_tree_id, untracked_id, &mut files)?;
@@ -252,7 +326,6 @@ fn build_git_stash_details(
     })
 }
 
-/// 计算两棵树之间的文件级差异，逐个文件统计增删行数后追加到 `files`。
 fn collect_stash_tree_changes(
     repository: &Repository,
     old_tree_id: gix::ObjectId,
@@ -315,7 +388,6 @@ fn collect_stash_tree_changes(
             ),
         };
 
-        // 目录 / 子模块项不计入文件改动。
         if entry_mode.is_tree() || entry_mode.is_commit() {
             continue;
         }
@@ -350,7 +422,6 @@ fn collect_stash_tree_changes(
     Ok(())
 }
 
-/// 读取 blob 对象的原始字节；对象缺失时返回 None。
 fn stash_blob_bytes(repository: &Repository, object_id: gix::ObjectId) -> Option<Vec<u8>> {
     repository
         .find_object(object_id)
@@ -358,7 +429,6 @@ fn stash_blob_bytes(repository: &Repository, object_id: gix::ObjectId) -> Option
         .map(|object| object.data.clone())
 }
 
-/// 统计两段 blob 内容之间的增删行数；任一侧含 NUL 字节则视为二进制（返回 0/0 + true）。
 fn count_blob_line_changes(old: Option<&[u8]>, new: Option<&[u8]>) -> (u32, u32, bool) {
     let is_binary =
         old.is_some_and(|bytes| bytes.contains(&0)) || new.is_some_and(|bytes| bytes.contains(&0));
@@ -414,4 +484,641 @@ fn parse_git_stash_name(name: &str) -> (Option<String>, Option<String>) {
 
 fn is_short_git_commit_id(value: &str) -> bool {
     (7..=40).contains(&value.len()) && value.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+// ---------------------------------------------------------------------------
+// 纯 gix 贮藏保存 / 应用的辅助函数。
+// ---------------------------------------------------------------------------
+
+/// 解析第 `stash_index` 条贮藏（stash@{N}，0 = 最新）对应的提交 oid。
+fn resolve_stash_oid(repository: &Repository, stash_index: usize) -> Result<gix::ObjectId, String> {
+    let reflog_path = repository.git_dir().join("logs").join("refs").join("stash");
+    let content =
+        fs::read_to_string(&reflog_path).map_err(|_| "指定的贮藏不存在。".to_string())?;
+    let lines: Vec<&str> = content
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    if stash_index >= lines.len() {
+        return Err("指定的贮藏不存在。".into());
+    }
+    let line = lines[lines.len() - 1 - stash_index];
+    let meta = line.split('\t').next().unwrap_or("");
+    let new_oid = meta
+        .split(' ')
+        .nth(1)
+        .ok_or_else(|| "贮藏 reflog 格式异常。".to_string())?;
+    new_oid
+        .parse()
+        .map_err(|_| "贮藏 reflog 格式异常。".to_string())
+}
+
+/// 以当前索引为基底，叠加工作区实际内容，构建用于贮藏的「工作区树」。
+/// 仅在内存中修改索引副本，不写回磁盘索引。
+fn build_worktree_tree(
+    repository: &Repository,
+    repository_root: &Path,
+    status: &GitRepositoryStatusPayload,
+    include_untracked: bool,
+) -> Result<gix::ObjectId, String> {
+    let mut index = repository
+        .open_index()
+        .map_err(|error| format!("读取 Git 索引失败：{error}"))?;
+
+    for file in &status.files {
+        let rel = file.relative_path.as_str();
+        if file.is_untracked {
+            if include_untracked {
+                let absolute_path = repository_root.join(Path::new(rel));
+                if path_exists_in_worktree(&absolute_path) {
+                    let object_id = write_worktree_blob(repository, &absolute_path)?;
+                    let mode = index_mode_for_worktree_file(&absolute_path)?;
+                    upsert_index_entry(&mut index, rel, object_id, mode);
+                }
+            }
+            continue;
+        }
+        match file.worktree_status.as_deref() {
+            None => {}
+            Some("deleted") => {
+                remove_index_path(&mut index, rel);
+            }
+            Some(_) => {
+                let absolute_path = repository_root.join(Path::new(rel));
+                if path_exists_in_worktree(&absolute_path) {
+                    let object_id = write_worktree_blob(repository, &absolute_path)?;
+                    let mode = index_mode_for_worktree_file(&absolute_path)?;
+                    upsert_index_entry(&mut index, rel, object_id, mode);
+                } else {
+                    remove_index_path(&mut index, rel);
+                }
+            }
+        }
+    }
+
+    build_tree_from_full_index(repository, &index)
+}
+
+/// 将工作区与索引恢复到 HEAD（限定在贮藏涉及的路径），并删除已贮藏的未跟踪文件。
+fn reset_worktree_to_head(
+    repository: &Repository,
+    repository_root: &Path,
+    status: &GitRepositoryStatusPayload,
+    include_untracked: bool,
+) -> Result<(), String> {
+    if include_untracked {
+        for file in &status.files {
+            if file.is_untracked {
+                remove_worktree_path(repository_root, &file.relative_path);
+            }
+        }
+    }
+
+    let head_tree = repository
+        .head_tree()
+        .map_err(|error| format!("读取 HEAD 树失败：{error}"))?;
+    let mut index = repository
+        .open_index()
+        .map_err(|error| format!("读取 Git 索引失败：{error}"))?;
+
+    for file in &status.files {
+        if file.is_untracked {
+            continue;
+        }
+        let rel = file.relative_path.as_str();
+        let head_entry = {
+            let mut tree = head_tree.clone();
+            tree.peel_to_entry_by_path(Path::new(rel)).ok().flatten()
+        };
+        match head_entry {
+            Some(entry) => {
+                let entry_mode = entry.mode();
+                if entry_mode.is_tree() || entry_mode.is_commit() {
+                    continue;
+                }
+                let object_id = entry.id().detach();
+                let mode = index_mode_from_tree_mode(entry_mode);
+                restore_worktree_from_index_blob(repository, repository_root, rel, object_id, mode)?;
+                upsert_index_entry(&mut index, rel, object_id, mode);
+            }
+            None => {
+                remove_worktree_path(repository_root, rel);
+                remove_index_path(&mut index, rel);
+            }
+        }
+    }
+
+    index.sort_entries();
+    index
+        .write(gix::index::write::Options::default())
+        .map_err(|error| format!("写入 Git 索引失败：{error}"))?;
+    Ok(())
+}
+
+/// 手动写入 refs/stash 与 logs/refs/stash（gix 默认不会为 refs/stash 创建 reflog）。
+fn store_new_stash(
+    repository: &Repository,
+    new_oid: gix::ObjectId,
+    signature: &gix::actor::Signature,
+    seconds: i64,
+    message: &str,
+) -> Result<(), String> {
+    use std::io::Write;
+    let git_dir = repository.git_dir();
+
+    let refs_dir = git_dir.join("refs");
+    fs::create_dir_all(&refs_dir).map_err(|error| format!("创建 refs 目录失败：{error}"))?;
+    let stash_ref_path = refs_dir.join("stash");
+
+    let old_oid = fs::read_to_string(&stash_ref_path)
+        .ok()
+        .map(|content| content.trim().to_string())
+        .filter(|value| value.len() == 40 && value.chars().all(|c| c.is_ascii_hexdigit()))
+        .unwrap_or_else(|| "0".repeat(40));
+
+    let logs_dir = git_dir.join("logs").join("refs");
+    fs::create_dir_all(&logs_dir).map_err(|error| format!("创建 reflog 目录失败：{error}"))?;
+    let reflog_path = logs_dir.join("stash");
+    let name = signature.name.to_str_lossy();
+    let email = signature.email.to_str_lossy();
+    // reflog 行格式：<old> <new> <name> <email> <ts> <tz>\t<message>
+    let line = format!("{old_oid} {new_oid} {name} <{email}> {seconds} +0000\t{message}\n");
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&reflog_path)
+        .map_err(|error| format!("写入贮藏 reflog 失败：{error}"))?;
+    file.write_all(line.as_bytes())
+        .map_err(|error| format!("写入贮藏 reflog 失败：{error}"))?;
+
+    let temp_path = refs_dir.join("stash.calamex.tmp");
+    fs::write(&temp_path, format!("{new_oid}\n"))
+        .map_err(|error| format!("写入 refs/stash 失败：{error}"))?;
+    fs::rename(&temp_path, &stash_ref_path).map_err(|error| {
+        let _ = fs::remove_file(&temp_path);
+        format!("写入 refs/stash 失败：{error}")
+    })?;
+    Ok(())
+}
+
+/// 把贮藏（base→theirs）应用到当前工作区（ours == HEAD，已确认干净）。返回是否产生冲突。
+fn apply_stash_changes(
+    repository: &Repository,
+    repository_root: &Path,
+    base_tree_id: gix::ObjectId,
+    ours_tree_id: gix::ObjectId,
+    theirs_tree_id: gix::ObjectId,
+) -> Result<bool, String> {
+    let base_tree = repository
+        .find_tree(base_tree_id)
+        .map_err(|error| format!("读取贮藏基线树失败：{error}"))?;
+    let theirs_tree = repository
+        .find_tree(theirs_tree_id)
+        .map_err(|error| format!("读取贮藏树失败：{error}"))?;
+    let ours_tree = repository
+        .find_tree(ours_tree_id)
+        .map_err(|error| format!("读取 HEAD 树失败：{error}"))?;
+
+    let changes = repository
+        .diff_tree_to_tree(Some(&base_tree), Some(&theirs_tree), None)
+        .map_err(|error| format!("计算贮藏差异失败：{error}"))?;
+
+    let mut conflicted = false;
+    let mut conflict_index: Option<gix::index::File> = None;
+
+    use gix::diff::tree_with_rewrites::Change;
+    for change in changes {
+        match change {
+            Change::Addition {
+                location,
+                id,
+                entry_mode,
+                ..
+            } => {
+                if entry_mode.is_tree() || entry_mode.is_commit() {
+                    continue;
+                }
+                let path = location.to_str_lossy().into_owned();
+                match tree_entry_at(&ours_tree, &path) {
+                    None => {
+                        write_blob_to_worktree(repository, repository_root, &path, id, entry_mode)?;
+                    }
+                    Some((ours_id, _)) if ours_id == id => {}
+                    Some((ours_id, ours_mode)) => {
+                        record_conflict(
+                            repository,
+                            &mut conflict_index,
+                            &path,
+                            None,
+                            Some((ours_id, ours_mode)),
+                            Some((id, entry_mode)),
+                        )?;
+                        conflicted = true;
+                    }
+                }
+            }
+            Change::Deletion {
+                location,
+                id,
+                entry_mode,
+                ..
+            } => {
+                if entry_mode.is_tree() || entry_mode.is_commit() {
+                    continue;
+                }
+                let path = location.to_str_lossy().into_owned();
+                match tree_entry_at(&ours_tree, &path) {
+                    None => {}
+                    Some((ours_id, _)) if ours_id == id => {
+                        remove_worktree_path(repository_root, &path);
+                    }
+                    Some((ours_id, ours_mode)) => {
+                        record_conflict(
+                            repository,
+                            &mut conflict_index,
+                            &path,
+                            Some((id, entry_mode)),
+                            Some((ours_id, ours_mode)),
+                            None,
+                        )?;
+                        conflicted = true;
+                    }
+                }
+            }
+            Change::Modification {
+                location,
+                previous_id,
+                id,
+                entry_mode,
+                ..
+            } => {
+                if entry_mode.is_tree() || entry_mode.is_commit() {
+                    continue;
+                }
+                let path = location.to_str_lossy().into_owned();
+                match tree_entry_at(&ours_tree, &path) {
+                    None => {
+                        write_blob_to_worktree(repository, repository_root, &path, id, entry_mode)?;
+                        record_conflict(
+                            repository,
+                            &mut conflict_index,
+                            &path,
+                            Some((previous_id, entry_mode)),
+                            None,
+                            Some((id, entry_mode)),
+                        )?;
+                        conflicted = true;
+                    }
+                    Some((ours_id, _)) if ours_id == previous_id => {
+                        write_blob_to_worktree(repository, repository_root, &path, id, entry_mode)?;
+                    }
+                    Some((ours_id, _)) if ours_id == id => {}
+                    Some((ours_id, ours_mode)) => {
+                        match try_text_merge(repository, previous_id, ours_id, id) {
+                            TextMerge::Clean(bytes) => {
+                                write_bytes_to_worktree(repository_root, &path, &bytes, entry_mode)?;
+                            }
+                            TextMerge::Conflicted(bytes) => {
+                                write_bytes_to_worktree(repository_root, &path, &bytes, entry_mode)?;
+                                record_conflict(
+                                    repository,
+                                    &mut conflict_index,
+                                    &path,
+                                    Some((previous_id, entry_mode)),
+                                    Some((ours_id, ours_mode)),
+                                    Some((id, entry_mode)),
+                                )?;
+                                conflicted = true;
+                            }
+                            TextMerge::Binary => {
+                                record_conflict(
+                                    repository,
+                                    &mut conflict_index,
+                                    &path,
+                                    Some((previous_id, entry_mode)),
+                                    Some((ours_id, ours_mode)),
+                                    Some((id, entry_mode)),
+                                )?;
+                                conflicted = true;
+                            }
+                        }
+                    }
+                }
+            }
+            // base→theirs 的重命名：贮藏基于工作区快照，通常不会产生重命名检测；
+            // 保守起见标记为冲突，提示用户手动处理。
+            Change::Rewrite { .. } => {
+                conflicted = true;
+            }
+        }
+    }
+
+    if let Some(mut index) = conflict_index {
+        index.sort_entries();
+        index
+            .write(gix::index::write::Options::default())
+            .map_err(|error| format!("写入 Git 索引失败：{error}"))?;
+    }
+
+    Ok(conflicted)
+}
+
+/// 在树中查找指定路径的条目，返回（对象 ID，文件模式）。
+fn tree_entry_at(
+    tree: &gix::Tree<'_>,
+    relative_path: &str,
+) -> Option<(gix::ObjectId, gix::objs::tree::EntryMode)> {
+    let mut tree = tree.clone();
+    tree.peel_to_entry_by_path(Path::new(relative_path))
+        .ok()
+        .flatten()
+        .map(|entry| (entry.id().detach(), entry.mode()))
+}
+
+/// 将对象库中的 blob 写回工作区（按树条目模式）。
+fn write_blob_to_worktree(
+    repository: &Repository,
+    repository_root: &Path,
+    relative_path: &str,
+    object_id: gix::ObjectId,
+    entry_mode: gix::objs::tree::EntryMode,
+) -> Result<(), String> {
+    let mode = index_mode_from_tree_mode(entry_mode);
+    restore_worktree_from_index_blob(repository, repository_root, relative_path, object_id, mode)
+}
+
+/// 将合并后的原始字节写入工作区文件。
+fn write_bytes_to_worktree(
+    repository_root: &Path,
+    relative_path: &str,
+    bytes: &[u8],
+    entry_mode: gix::objs::tree::EntryMode,
+) -> Result<(), String> {
+    let target_path = repository_root.join(Path::new(relative_path));
+    if let Some(parent) = target_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| format!("创建目录失败：{error}"))?;
+    }
+    if fs::symlink_metadata(&target_path).is_ok() {
+        let _ = fs::remove_file(&target_path);
+    }
+    fs::write(&target_path, bytes).map_err(|error| format!("写入工作区文件失败：{error}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if entry_mode.is_executable() {
+            let _ = fs::set_permissions(&target_path, fs::Permissions::from_mode(0o755));
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = entry_mode;
+    }
+    Ok(())
+}
+
+/// 删除工作区中的文件（含损坏的符号链接）。
+fn remove_worktree_path(repository_root: &Path, relative_path: &str) {
+    let target_path = repository_root.join(Path::new(relative_path));
+    if fs::symlink_metadata(&target_path).is_ok() {
+        let _ = fs::remove_file(&target_path);
+    }
+}
+
+/// 向索引写入指定阶段（stage 1/2/3）的冲突条目。
+fn push_stage_entry(
+    index: &mut gix::index::File,
+    relative_path: &str,
+    object_id: gix::ObjectId,
+    mode: gix::index::entry::Mode,
+    stage: u32,
+) {
+    use gix::index::entry::{Flags, Stat};
+    let path = gix::bstr::BStr::new(relative_path.as_bytes());
+    // 低 12 位为 path-length（上限 0xFFF），stage 占 12–13 位。
+    let raw = (relative_path.len().min(0xFFF) as u32) | (stage << 12);
+    let flags = Flags::from_bits_retain(raw as _);
+    index.dangerously_push_entry(Stat::default(), object_id, flags, mode, path);
+}
+
+/// 记录一个路径的冲突：移除 stage-0 后写入 base/ours/theirs 各阶段。
+fn record_conflict(
+    repository: &Repository,
+    conflict_index: &mut Option<gix::index::File>,
+    relative_path: &str,
+    base: Option<(gix::ObjectId, gix::objs::tree::EntryMode)>,
+    ours: Option<(gix::ObjectId, gix::objs::tree::EntryMode)>,
+    theirs: Option<(gix::ObjectId, gix::objs::tree::EntryMode)>,
+) -> Result<(), String> {
+    if conflict_index.is_none() {
+        let index = repository
+            .open_index()
+            .map_err(|error| format!("读取 Git 索引失败：{error}"))?;
+        *conflict_index = Some(index);
+    }
+    let index = conflict_index.as_mut().unwrap();
+    remove_index_path(index, relative_path);
+    if let Some((id, mode)) = base {
+        push_stage_entry(index, relative_path, id, index_mode_from_tree_mode(mode), 1);
+    }
+    if let Some((id, mode)) = ours {
+        push_stage_entry(index, relative_path, id, index_mode_from_tree_mode(mode), 2);
+    }
+    if let Some((id, mode)) = theirs {
+        push_stage_entry(index, relative_path, id, index_mode_from_tree_mode(mode), 3);
+    }
+    Ok(())
+}
+
+/// 将树条目模式映射为索引条目模式。
+fn index_mode_from_tree_mode(entry_mode: gix::objs::tree::EntryMode) -> gix::index::entry::Mode {
+    use gix::index::entry::Mode;
+    if entry_mode.is_link() {
+        Mode::SYMLINK
+    } else if entry_mode.is_executable() {
+        Mode::FILE_EXECUTABLE
+    } else {
+        Mode::FILE
+    }
+}
+
+enum TextMerge {
+    Clean(Vec<u8>),
+    Conflicted(Vec<u8>),
+    Binary,
+}
+
+/// 尝试对三个 blob 做文本三方合并；任一侧含 NUL 字节则视为二进制。
+fn try_text_merge(
+    repository: &Repository,
+    base_id: gix::ObjectId,
+    ours_id: gix::ObjectId,
+    theirs_id: gix::ObjectId,
+) -> TextMerge {
+    let base = stash_blob_bytes(repository, base_id).unwrap_or_default();
+    let ours = stash_blob_bytes(repository, ours_id).unwrap_or_default();
+    let theirs = stash_blob_bytes(repository, theirs_id).unwrap_or_default();
+    if base.contains(&0) || ours.contains(&0) || theirs.contains(&0) {
+        return TextMerge::Binary;
+    }
+    let base_text = String::from_utf8_lossy(&base).into_owned();
+    let ours_text = String::from_utf8_lossy(&ours).into_owned();
+    let theirs_text = String::from_utf8_lossy(&theirs).into_owned();
+    match diffy_imara::merge(&base_text, &ours_text, &theirs_text) {
+        Ok(merged) => TextMerge::Clean(merged.into_bytes()),
+        Err(conflicted) => TextMerge::Conflicted(conflicted.into_bytes()),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 以下辅助函数与 status.rs 中同名实现保持一致（参考 branches.rs 的同步复制惯例），
+// 修改时需同步更新。
+// ---------------------------------------------------------------------------
+
+/// 工作区中是否存在该路径（含损坏的符号链接）。
+fn path_exists_in_worktree(absolute_path: &Path) -> bool {
+    fs::symlink_metadata(absolute_path).is_ok()
+}
+
+/// 将工作区文件内容写入对象库，返回 blob 的对象 ID。
+fn write_worktree_blob(
+    repository: &Repository,
+    absolute_path: &Path,
+) -> Result<gix::ObjectId, String> {
+    let metadata = fs::symlink_metadata(absolute_path)
+        .map_err(|error| format!("读取文件元数据失败：{error}"))?;
+    let bytes = if metadata.file_type().is_symlink() {
+        let target =
+            fs::read_link(absolute_path).map_err(|error| format!("读取符号链接失败：{error}"))?;
+        target.to_string_lossy().replace('\\', "/").into_bytes()
+    } else {
+        fs::read(absolute_path).map_err(|error| format!("读取工作区文件失败：{error}"))?
+    };
+    repository
+        .write_blob(bytes)
+        .map(|id| id.detach())
+        .map_err(|error| format!("写入 Git blob 失败：{error}"))
+}
+
+/// 依据工作区文件类型推断索引条目的文件模式。
+fn index_mode_for_worktree_file(absolute_path: &Path) -> Result<gix::index::entry::Mode, String> {
+    use gix::index::entry::Mode;
+    let metadata = fs::symlink_metadata(absolute_path)
+        .map_err(|error| format!("读取文件元数据失败：{error}"))?;
+    if metadata.file_type().is_symlink() {
+        return Ok(Mode::SYMLINK);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if metadata.permissions().mode() & 0o111 != 0 {
+            return Ok(Mode::FILE_EXECUTABLE);
+        }
+    }
+    Ok(Mode::FILE)
+}
+
+/// 从索引移除某路径的所有条目（含各冲突阶段）。
+fn remove_index_path(index: &mut gix::index::File, relative_path: &str) {
+    index.remove_entries(|_, entry_path, _| entry_path.to_str_lossy().as_ref() == relative_path);
+}
+
+/// 插入或替换 stage-0 的索引条目（先移除同路径旧条目）。
+fn upsert_index_entry(
+    index: &mut gix::index::File,
+    relative_path: &str,
+    object_id: gix::ObjectId,
+    mode: gix::index::entry::Mode,
+) {
+    use gix::index::entry::{Flags, Stat};
+    remove_index_path(index, relative_path);
+    let path = gix::bstr::BStr::new(relative_path.as_bytes());
+    let flags = Flags::from_bits_retain(relative_path.len().min(0xFFF) as _);
+    index.dangerously_push_entry(Stat::default(), object_id, flags, mode, path);
+}
+
+/// 将索引中记录的 blob 内容写回工作区文件。
+fn restore_worktree_from_index_blob(
+    repository: &Repository,
+    repository_root: &Path,
+    relative_path: &str,
+    object_id: gix::ObjectId,
+    mode: gix::index::entry::Mode,
+) -> Result<(), String> {
+    use gix::index::entry::Mode;
+    let object = repository
+        .find_object(object_id)
+        .map_err(|error| format!("读取 Git 对象失败：{error}"))?;
+    let bytes = object.data.as_slice();
+    let target_path = repository_root.join(Path::new(relative_path));
+    if let Some(parent) = target_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| format!("创建目录失败：{error}"))?;
+    }
+    if mode == Mode::SYMLINK {
+        let link_target = String::from_utf8_lossy(bytes).into_owned();
+        recreate_symlink(&target_path, &link_target)?;
+    } else {
+        if fs::symlink_metadata(&target_path).is_ok() {
+            let _ = fs::remove_file(&target_path);
+        }
+        fs::write(&target_path, bytes).map_err(|error| format!("写入工作区文件失败：{error}"))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if mode == Mode::FILE_EXECUTABLE {
+                let _ = fs::set_permissions(&target_path, fs::Permissions::from_mode(0o755));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn recreate_symlink(target_path: &Path, link_target: &str) -> Result<(), String> {
+    let _ = fs::remove_file(target_path);
+    std::os::unix::fs::symlink(link_target, target_path)
+        .map_err(|error| format!("创建符号链接失败：{error}"))
+}
+
+#[cfg(windows)]
+fn recreate_symlink(target_path: &Path, link_target: &str) -> Result<(), String> {
+    let _ = fs::remove_file(target_path);
+    fs::write(target_path, link_target.as_bytes())
+        .map_err(|error| format!("写入符号链接占位失败：{error}"))
+}
+
+/// 将整个索引内容构建为一棵树，返回树对象 ID。
+fn build_tree_from_full_index(
+    repository: &Repository,
+    index: &gix::index::File,
+) -> Result<gix::ObjectId, String> {
+    let empty_tree = repository.empty_tree();
+    let mut editor = gix::object::tree::Editor::new(&empty_tree)
+        .map_err(|error| format!("创建树编辑器失败：{error}"))?;
+    for entry in index.entries() {
+        let path = entry.path(index).to_str_lossy().into_owned();
+        editor
+            .upsert(
+                path.as_str(),
+                tree_entry_kind_from_index_mode(entry.mode),
+                entry.id,
+            )
+            .map_err(|error| format!("写入树条目失败：{error}"))?;
+    }
+    editor
+        .write()
+        .map(|id| id.detach())
+        .map_err(|error| format!("写入树失败：{error}"))
+}
+
+/// 将索引条目的文件模式映射为树条目类型。
+fn tree_entry_kind_from_index_mode(mode: gix::index::entry::Mode) -> gix::object::tree::EntryKind {
+    use gix::index::entry::Mode;
+    use gix::object::tree::EntryKind;
+    if mode == Mode::SYMLINK {
+        EntryKind::Link
+    } else if mode == Mode::FILE_EXECUTABLE {
+        EntryKind::BlobExecutable
+    } else {
+        EntryKind::Blob
+    }
 }
