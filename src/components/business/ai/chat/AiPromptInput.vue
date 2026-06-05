@@ -11,6 +11,7 @@ import {
   ContextTrigger,
 } from '@/components/ai-elements/context';
 import { PromptInputAttachmentsDisplay } from '@/components/ai-elements/prompt-input';
+import { collectConnectedPlatformIds } from '@/components/business/ai/chat/connected-platforms';
 import AiProviderIcon from '@/components/business/ai/provider/AiProviderIcon.vue';
 import {
   computeDeepSeekCostBreakdown,
@@ -59,7 +60,7 @@ interface IAiPromptModelOption {
 interface IAiPromptModelSection {
   key: TAiServicePlatformId;
   label: string;
-  badge: string;
+  badge: string | null;
   models: IAiPromptModelOption[];
 }
 
@@ -166,11 +167,13 @@ const selectedModelLabel = computed(() => {
 });
 const selectedPlatformId = computed<TAiServicePlatformId>(() => selectedPlatform.value.id);
 
+const connectedPlatformIds = computed(() => collectConnectedPlatformIds(props.config.credentials));
+
 const modelSections = computed<IAiPromptModelSection[]>(() =>
   AI_SERVICE_PLATFORM_PRESETS.map((platform) => ({
     key: platform.id,
     label: platform.label,
-    badge: '已接入',
+    badge: connectedPlatformIds.value.has(platform.id) ? '已接入' : null,
     models: platform.models.map((model) => ({
       id: model.id,
       label: formatModelLabel(model.label),
@@ -524,7 +527,7 @@ const handleStop = (): void => {
               <template v-for="(section, sectionIndex) in modelSections" :key="section.key">
                 <SelectLabel class="ai-model-section-label">
                   <span v-text="section.label"></span>
-                  <span class="ai-model-beta" v-text="section.badge"></span>
+                  <span v-if="section.badge" class="ai-model-beta" v-text="section.badge"></span>
                 </SelectLabel>
                 <SelectGroup>
                   <SelectItem v-for="model in section.models" :key="model.id" class="ai-model-item" :value="model.id">

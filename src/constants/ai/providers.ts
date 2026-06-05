@@ -140,7 +140,6 @@ export const AI_SERVICE_PLATFORM_PRESETS = [
     defaultModel: 'alibaba/qwen3.6-plus',
     models: [
       { id: 'alibaba/qwen3.6-plus', label: 'Qwen3.6-plus' },
-      { id: 'alibaba/qwen3.6-plus-2026-04-02', label: 'Qwen3.6-plus (2026-04-02 快照)' },
       { id: 'alibaba/qwen3.6-max-preview', label: 'Qwen3.6-max-preview' },
       { id: 'alibaba/qwen3.6-flash', label: 'Qwen3.6-flash' },
     ],
