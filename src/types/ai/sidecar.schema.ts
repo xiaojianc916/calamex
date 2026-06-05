@@ -341,6 +341,17 @@ export const agentSidecarChatRequestSchema = agentSidecarBaseRequestSchema.exten
   mode: optionalAgentModeSchema,
 });
 
+export const agentSidecarPlanRequestSchema = agentSidecarBaseRequestSchema.extend({
+  goal: requiredNonEmptyStringSchema,
+});
+
+export const agentSidecarExecuteRequestSchema = agentSidecarBaseRequestSchema.extend({
+  goal: requiredNonEmptyStringSchema,
+  planId: requiredNonEmptyStringSchema,
+  planVersion: z.number().int().positive(),
+  planStepId: requiredNonEmptyStringSchema,
+});
+
 /**
  * Approval resolve:大部分 base 字段都可不传(只需 sessionId + requestId + decision)。
  * 用 `.partial()` 把 base 全部变 optional,然后 `.extend` 只重新声明必填字段。
