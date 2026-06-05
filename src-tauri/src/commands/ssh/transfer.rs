@@ -25,6 +25,11 @@ use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::time::timeout;
 
 // ---- constants ----
+// 建连阶段（连接池获取 + 认证 + SFTP 子系统初始化，含一次无感重试）的超时预算。
+// 关键修复：超时此前只裹住 `open_authenticated_sftp`（即建连），真正的传输 / 读写
+// 是无界的，链路半死时只能靠 russh keepalive 兜底。现在把「建连」与「操作」拆成两段：
+// 建连用本预算，操作本身另用下方对应预算 + `run_with_timeout` 单独限时。
+const SSH_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 const SSH_MUTATION_TIMEOUT: Duration = Duration::from_secs(30);
 const SSH_FILE_TRANSFER_TIMEOUT: Duration = Duration::from_secs(300);
 const SSH_FILE_PREVIEW_TIMEOUT: Duration = Duration::from_secs(60);
@@ -33,6 +38,20 @@ const SFTP_PARTIAL_SUFFIX: &str = ".aster.partial";
 const SFTP_BACKUP_SUFFIX: &str = ".aster.backup";
 const SFTP_TRANSFER_CHUNK_BYTES: usize = 256 * 1024;
 const SFTP_PIPELINE_DEPTH: usize = 32;
+
+/// 在给定预算内运行一个「操作」future，超时则返回带语义的中文错误。
+/// future 被丢弃时其内部 channel 随之关闭，附带的 spawn_blocking 任务会自然收尾，
+/// 不会泄漏后台线程。
+async fn run_with_timeout<T>(
+    duration: Duration,
+    timeout_message: &str,
+    fut: impl std::future::Future<Output = Result<T, String>>,
+) -> Result<T, String> {
+    match timeout(duration, fut).await {
+        Ok(inner) => inner,
+        Err(_) => Err(timeout_message.to_string()),
+    }
+}
 
 #[tauri::command]
 #[specta::specta]
@@ -49,9 +68,14 @@ pub async fn list_ssh_directory(
         safe_remote_path(trimmed).map_err(|e| format!("远程路径不合法：{e}"))?
     };
 
-    match timeout(SSH_MUTATION_TIMEOUT, open_authenticated_sftp(&params)).await {
+    match timeout(SSH_CONNECT_TIMEOUT, open_authenticated_sftp(&params)).await {
         Ok(Ok(conn)) => {
-            let result = list_dir_inner(&conn.sftp, &effective_path).await;
+            let result = run_with_timeout(
+                SSH_MUTATION_TIMEOUT,
+                "列出 SSH 远端目录超时。",
+                list_dir_inner(&conn.sftp, &effective_path),
+            )
+            .await;
             let _ = conn.close().await;
             match result {
                 Ok(entries) => Ok(SshDirectoryListPayload {
@@ -62,7 +86,7 @@ pub async fn list_ssh_directory(
             }
         }
         Ok(Err(error)) => Err(error),
-        Err(_) => Err("SSH 操作超时。".into()),
+        Err(_) => Err("建立 SSH 连接超时。".into()),
     }
 }
 
@@ -105,9 +129,14 @@ pub async fn download_ssh_file(
         safe_remote_path(&payload.remote_path).map_err(|e| format!("远程路径不合法：{e}"))?;
     let local = PathBuf::from(&payload.local_path);
 
-    match timeout(SSH_FILE_TRANSFER_TIMEOUT, open_authenticated_sftp(&params)).await {
+    match timeout(SSH_CONNECT_TIMEOUT, open_authenticated_sftp(&params)).await {
         Ok(Ok(conn)) => {
-            let result = download_file_inner(&conn.sftp, &remote, &local).await;
+            let result = run_with_timeout(
+                SSH_FILE_TRANSFER_TIMEOUT,
+                "SSH 文件下载超时。",
+                download_file_inner(&conn.sftp, &remote, &local),
+            )
+            .await;
             let _ = conn.close().await;
             match result {
                 Ok(size) => Ok(SshFileDownloadPayload {
@@ -122,7 +151,7 @@ pub async fn download_ssh_file(
             }
         }
         Ok(Err(error)) => Err(error),
-        Err(_) => Err("SSH 文件下载超时。".into()),
+        Err(_) => Err("建立 SSH 连接超时。".into()),
     }
 }
 
@@ -223,11 +252,15 @@ pub async fn upload_ssh_file(
         .map_err(|e| format!("无法获取本地文件信息 {local:?}：{e}"))?
         .len();
 
-    match timeout(SSH_FILE_TRANSFER_TIMEOUT, open_authenticated_sftp(&params)).await {
+    match timeout(SSH_CONNECT_TIMEOUT, open_authenticated_sftp(&params)).await {
         Ok(Ok(conn)) => {
             let remote_partial = remote_partial_path(&remote);
-            let result =
-                upload_file_inner(&conn.sftp, &remote, &remote_partial, &local, file_size).await;
+            let result = run_with_timeout(
+                SSH_FILE_TRANSFER_TIMEOUT,
+                "SSH 文件上传超时。",
+                upload_file_inner(&conn.sftp, &remote, &remote_partial, &local, file_size),
+            )
+            .await;
             if result.is_err() {
                 let _ = conn.sftp.remove_file(&remote_partial).await;
             }
@@ -242,7 +275,7 @@ pub async fn upload_ssh_file(
             }
         }
         Ok(Err(error)) => Err(error),
-        Err(_) => Err("SSH 文件上传超时。".into()),
+        Err(_) => Err("建立 SSH 连接超时。".into()),
     }
 }
 
@@ -374,14 +407,19 @@ pub async fn read_ssh_file(payload: SshFileReadRequest) -> Result<SshFileReadPay
     let remote_path =
         safe_remote_path(&payload.remote_path).map_err(|e| format!("远程路径不合法：{e}"))?;
 
-    match timeout(SSH_FILE_PREVIEW_TIMEOUT, open_authenticated_sftp(&params)).await {
+    match timeout(SSH_CONNECT_TIMEOUT, open_authenticated_sftp(&params)).await {
         Ok(Ok(conn)) => {
-            let result = read_file_inner(&conn.sftp, &remote_path).await;
+            let result = run_with_timeout(
+                SSH_FILE_PREVIEW_TIMEOUT,
+                "SSH 文件读取超时。",
+                read_file_inner(&conn.sftp, &remote_path),
+            )
+            .await;
             let _ = conn.close().await;
             result
         }
         Ok(Err(error)) => Err(error),
-        Err(_) => Err("SSH 文件读取超时。".into()),
+        Err(_) => Err("建立 SSH 连接超时。".into()),
     }
 }
 
@@ -469,10 +507,15 @@ pub async fn write_ssh_file(payload: SshFileWriteRequest) -> Result<SshFileWrite
         encode_remote_preview_text(&payload.content, &payload.encoding, &payload.line_ending)?;
     let byte_size = raw.len() as u64;
 
-    match timeout(SSH_MUTATION_TIMEOUT, open_authenticated_sftp(&params)).await {
+    match timeout(SSH_CONNECT_TIMEOUT, open_authenticated_sftp(&params)).await {
         Ok(Ok(conn)) => {
             let partial = remote_partial_path(&remote_path);
-            let result = write_file_inner(&conn.sftp, &remote_path, &partial, &raw).await;
+            let result = run_with_timeout(
+                SSH_MUTATION_TIMEOUT,
+                "SSH 文件写入超时。",
+                write_file_inner(&conn.sftp, &remote_path, &partial, &raw),
+            )
+            .await;
             if result.is_err() {
                 let _ = conn.sftp.remove_file(&partial).await;
             }
@@ -486,7 +529,7 @@ pub async fn write_ssh_file(payload: SshFileWriteRequest) -> Result<SshFileWrite
             }
         }
         Ok(Err(error)) => Err(error),
-        Err(_) => Err("SSH 文件写入超时。".into()),
+        Err(_) => Err("建立 SSH 连接超时。".into()),
     }
 }
 
@@ -552,9 +595,14 @@ pub async fn delete_ssh_path(
         safe_remote_path(&payload.remote_path).map_err(|e| format!("远程路径不合法：{e}"))?;
     validate_remote_mutation_name(&remote_path)?;
 
-    match timeout(SSH_MUTATION_TIMEOUT, open_authenticated_sftp(&params)).await {
+    match timeout(SSH_CONNECT_TIMEOUT, open_authenticated_sftp(&params)).await {
         Ok(Ok(conn)) => {
-            let result = delete_path_inner(&conn.sftp, &remote_path).await;
+            let result = run_with_timeout(
+                SSH_MUTATION_TIMEOUT,
+                "删除 SSH 远端路径超时。",
+                delete_path_inner(&conn.sftp, &remote_path),
+            )
+            .await;
             let _ = conn.close().await;
             match result {
                 Ok(()) => Ok(SshPathDeletePayload { remote_path }),
@@ -562,7 +610,7 @@ pub async fn delete_ssh_path(
             }
         }
         Ok(Err(error)) => Err(error),
-        Err(_) => Err("SSH 路径删除超时。".into()),
+        Err(_) => Err("建立 SSH 连接超时。".into()),
     }
 }
 
@@ -621,13 +669,15 @@ pub async fn rename_ssh_path(
     validate_remote_mutation_name(&old)?;
     validate_remote_mutation_name(&new)?;
 
-    match timeout(SSH_MUTATION_TIMEOUT, open_authenticated_sftp(&params)).await {
+    match timeout(SSH_CONNECT_TIMEOUT, open_authenticated_sftp(&params)).await {
         Ok(Ok(conn)) => {
-            let result = conn
-                .sftp
-                .rename(&old, &new)
-                .await
-                .map_err(|e| format!("重命名远程路径失败：{e}"));
+            let result = run_with_timeout(SSH_MUTATION_TIMEOUT, "重命名 SSH 远端路径超时。", async {
+                conn.sftp
+                    .rename(&old, &new)
+                    .await
+                    .map_err(|e| format!("重命名远程路径失败：{e}"))
+            })
+            .await;
             let _ = conn.close().await;
             match result {
                 Ok(()) => Ok(SshPathRenamePayload {
@@ -638,7 +688,7 @@ pub async fn rename_ssh_path(
             }
         }
         Ok(Err(error)) => Err(error),
-        Err(_) => Err("SSH 路径重命名超时。".into()),
+        Err(_) => Err("建立 SSH 连接超时。".into()),
     }
 }
 
@@ -651,13 +701,15 @@ pub async fn create_ssh_directory(
     let remote_path =
         safe_remote_path(&payload.remote_directory).map_err(|e| format!("远程路径不合法：{e}"))?;
 
-    match timeout(SSH_MUTATION_TIMEOUT, open_authenticated_sftp(&params)).await {
+    match timeout(SSH_CONNECT_TIMEOUT, open_authenticated_sftp(&params)).await {
         Ok(Ok(conn)) => {
-            let result = conn
-                .sftp
-                .create_dir(&remote_path)
-                .await
-                .map_err(|e| format!("创建远程目录 {remote_path} 失败：{e}"));
+            let result = run_with_timeout(SSH_MUTATION_TIMEOUT, "创建 SSH 远端目录超时。", async {
+                conn.sftp
+                    .create_dir(&remote_path)
+                    .await
+                    .map_err(|e| format!("创建远程目录 {remote_path} 失败：{e}"))
+            })
+            .await;
             let _ = conn.close().await;
             match result {
                 Ok(()) => Ok(SshDirectoryCreatePayload { remote_path }),
@@ -665,7 +717,7 @@ pub async fn create_ssh_directory(
             }
         }
         Ok(Err(error)) => Err(error),
-        Err(_) => Err("SSH 目录创建超时。".into()),
+        Err(_) => Err("建立 SSH 连接超时。".into()),
     }
 }
 
@@ -715,5 +767,28 @@ mod tests {
             preview_read_limit(Some(SSH_FILE_PREVIEW_MAX_BYTES + 5)),
             SSH_FILE_PREVIEW_MAX_BYTES
         );
+    }
+
+    #[tokio::test]
+    async fn run_with_timeout_returns_inner_result_when_fast() {
+        let ok = run_with_timeout(Duration::from_secs(5), "超时", async { Ok::<_, String>(7u8) })
+            .await;
+        assert_eq!(ok, Ok(7));
+
+        let err = run_with_timeout(Duration::from_secs(5), "超时", async {
+            Err::<u8, String>("内部错误".into())
+        })
+        .await;
+        assert_eq!(err, Err("内部错误".to_string()));
+    }
+
+    #[tokio::test]
+    async fn run_with_timeout_maps_elapsed_to_message() {
+        let res = run_with_timeout(Duration::from_millis(10), "操作超时。", async {
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            Ok::<_, String>(())
+        })
+        .await;
+        assert_eq!(res, Err("操作超时。".to_string()));
     }
 }
