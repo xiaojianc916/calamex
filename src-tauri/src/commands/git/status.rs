@@ -206,6 +206,10 @@ pub fn commit_git_index(payload: GitCommitRequest) -> Result<GitCommitResultPayl
         return Err("Git 提交说明不能为空。".into());
     }
 
+    // 提交前预检 Git 身份（user.name / user.email）：缺失时给出可读的中文提示，
+    // 避免底层 gix 在提交阶段抛出难以理解的错误。
+    assert_git_identity_configured(&repository)?;
+
     // 读取索引；存在未解决的合并冲突（stage != 0）时拒绝提交。
     let index = repository
         .open_index()
@@ -648,6 +652,27 @@ pub(super) fn read_git_revision_text(
     decode_script_bytes(&object.data)
         .map(|(c, _)| Some(c))
         .map_err(|_| "当前对象不是可直接比较的文本内容。".to_string())
+}
+
+/// 提交前校验是否已配置 Git 提交身份（user.name / user.email）。
+/// 缺失任一项时返回可读的中文错误，避免 gix 在创建提交时抛出难以理解的底层错误。
+fn assert_git_identity_configured(repository: &Repository) -> Result<(), String> {
+    let config = repository.config_snapshot();
+    let name = config
+        .string("user.name")
+        .map(|value| value.to_str_lossy().trim().to_string())
+        .unwrap_or_default();
+    let email = config
+        .string("user.email")
+        .map(|value| value.to_str_lossy().trim().to_string())
+        .unwrap_or_default();
+    if name.is_empty() || email.is_empty() {
+        return Err(
+            "尚未配置 Git 提交身份：请设置 user.name 与 user.email（可在仓库的 .git/config 或全局 Git 配置中设置）后再提交。"
+                .into(),
+        );
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
