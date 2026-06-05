@@ -206,18 +206,30 @@ pub async fn upload_ssh_file(
     payload: SshFileUploadRequest,
 ) -> Result<SshFileUploadPayload, String> {
     let params = SshConnectionParams::from_upload_request(&payload);
-    let remote =
+    let remote_dir =
         safe_remote_path(&payload.remote_directory).map_err(|e| format!("远程路径不合法：{e}"))?;
     let local = PathBuf::from(&payload.local_path);
+    // `remote_directory` 语义上是「目标目录」。历史实现直接把它当作目标文件路径，
+    // 因此 rename(partial, dir) 必然失败 —— 上传/覆盖从未真正成功过。这里显式地用
+    // 本地文件名与目录拼接出真正的目标文件路径。
+    let file_name = local
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .ok_or_else(|| format!("无法从本地路径解析文件名：{}", payload.local_path))?;
+    let remote = safe_remote_path(&join_remote_path(&remote_dir, &file_name))
+        .map_err(|e| format!("远程路径不合法：{e}"))?;
+    validate_remote_mutation_name(&remote)?;
     let file_size = std_fs::metadata(&local)
         .map_err(|e| format!("无法获取本地文件信息 {local:?}：{e}"))?
         .len();
 
     match timeout(SSH_FILE_TRANSFER_TIMEOUT, open_authenticated_sftp(&params)).await {
         Ok(Ok(conn)) => {
-            let result = upload_file_inner(&conn.sftp, &remote, &local, file_size).await;
+            let remote_partial = remote_partial_path(&remote);
+            let result =
+                upload_file_inner(&conn.sftp, &remote, &remote_partial, &local, file_size).await;
             if result.is_err() {
-                cleanup_remote_partial(&conn.sftp, &remote).await;
+                let _ = conn.sftp.remove_file(&remote_partial).await;
             }
             let _ = conn.close().await;
             match result {
@@ -237,14 +249,13 @@ pub async fn upload_ssh_file(
 async fn upload_file_inner(
     sftp: &SftpSession,
     remote_path: &str,
+    remote_partial: &str,
     local_path: &Path,
     file_size: u64,
 ) -> Result<(), String> {
-    let remote_partial = remote_partial_path(remote_path);
-
     let mut file = sftp
         .open_with_flags(
-            &remote_partial,
+            remote_partial,
             OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::TRUNCATE,
         )
         .await
@@ -291,10 +302,9 @@ async fn upload_file_inner(
 
     ensure_expected_transfer_size(written, file_size, "上传本地文件")?;
 
-    sftp.rename(&remote_partial, remote_path)
-        .await
-        .map_err(|e| format!("重命名远程文件 {remote_partial} -> {remote_path} 失败：{e}"))?;
-    Ok(())
+    // 用安全替换覆盖目标：SFTP rename 在目标已存在时通常直接失败，单纯 rename 既无法
+    // 覆盖旧文件，也无法保证原子性。swap 会在替换失败时回滚到原文件。
+    swap_partial_onto_target(sftp, remote_partial, remote_path).await
 }
 
 fn local_partial_path(local: &Path) -> PathBuf {
@@ -307,18 +317,41 @@ fn local_partial_path(local: &Path) -> PathBuf {
     p
 }
 
+/// 生成进程内唯一的传输令牌（pid + 纳秒时间戳 + 单调计数器）。
+/// 用于远端临时 / 备份文件名，避免并发上传或写入时固定后缀互相覆盖。
+fn unique_transfer_token() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let pid = std::process::id();
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("{pid}.{nanos}.{counter}")
+}
+
+/// 把目标目录与文件名拼成远端目标文件路径，统一去除目录尾部多余的 `/`。
+fn join_remote_path(dir: &str, name: &str) -> String {
+    let trimmed = dir.trim_end_matches('/');
+    if trimmed.is_empty() {
+        format!("/{name}")
+    } else {
+        format!("{trimmed}/{name}")
+    }
+}
+
 fn remote_partial_path(remote: &str) -> String {
-    format!("{remote}{SFTP_PARTIAL_SUFFIX}")
+    format!("{remote}.{}{SFTP_PARTIAL_SUFFIX}", unique_transfer_token())
+}
+
+fn remote_backup_path(target: &str) -> String {
+    format!("{target}.{}{SFTP_BACKUP_SUFFIX}", unique_transfer_token())
 }
 
 fn cleanup_local_partial(local_path: &Path) {
     let partial = local_partial_path(local_path);
     let _ = std_fs::remove_file(partial);
-}
-
-async fn cleanup_remote_partial(sftp: &SftpSession, remote_path: &str) {
-    let partial = remote_partial_path(remote_path);
-    let _ = sftp.remove_file(&partial).await;
 }
 
 fn ensure_expected_transfer_size(
@@ -438,9 +471,10 @@ pub async fn write_ssh_file(payload: SshFileWriteRequest) -> Result<SshFileWrite
 
     match timeout(SSH_MUTATION_TIMEOUT, open_authenticated_sftp(&params)).await {
         Ok(Ok(conn)) => {
-            let result = write_file_inner(&conn.sftp, &remote_path, &raw).await;
+            let partial = remote_partial_path(&remote_path);
+            let result = write_file_inner(&conn.sftp, &remote_path, &partial, &raw).await;
             if result.is_err() {
-                cleanup_remote_partial(&conn.sftp, &remote_path).await;
+                let _ = conn.sftp.remove_file(&partial).await;
             }
             let _ = conn.close().await;
             match result {
@@ -459,12 +493,12 @@ pub async fn write_ssh_file(payload: SshFileWriteRequest) -> Result<SshFileWrite
 async fn write_file_inner(
     sftp: &SftpSession,
     remote_path: &str,
+    partial: &str,
     data: &[u8],
 ) -> Result<(), String> {
-    let partial = remote_partial_path(remote_path);
     let mut file = sftp
         .open_with_flags(
-            &partial,
+            partial,
             OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::TRUNCATE,
         )
         .await
@@ -476,7 +510,7 @@ async fn write_file_inner(
         .await
         .map_err(|e| format!("关闭远程文件写入失败：{e}"))?;
 
-    swap_partial_onto_target(sftp, &partial, remote_path).await
+    swap_partial_onto_target(sftp, partial, remote_path).await
 }
 
 async fn swap_partial_onto_target(
@@ -488,7 +522,7 @@ async fn swap_partial_onto_target(
         return Ok(());
     }
 
-    let backup = format!("{target}{SFTP_BACKUP_SUFFIX}");
+    let backup = remote_backup_path(target);
     let had_backup = sftp.rename(target, &backup).await.is_ok();
 
     match sftp.rename(partial, target).await {
@@ -537,6 +571,24 @@ async fn delete_path_inner(sftp: &SftpSession, remote_path: &str) -> Result<(), 
     match meta {
         Ok(attrs) => {
             if attrs.file_type().is_dir() {
+                // SFTP rmdir 在非空目录上会失败且报错晦涩。这里先探测目录内容：
+                // 非空时给出清晰中文提示，并明确「不做递归删除」以避免误删整目录。
+                let children = sftp
+                    .read_dir(remote_path)
+                    .await
+                    .map_err(|e| format!("无法读取远程目录内容 {remote_path}：{e}"))?;
+                let child_count = children
+                    .into_iter()
+                    .filter(|entry| {
+                        let name = entry.file_name();
+                        name != "." && name != ".."
+                    })
+                    .count();
+                if child_count > 0 {
+                    return Err(format!(
+                        "远程目录非空（包含 {child_count} 个项目），为避免误删不会递归删除；请先清空目录内容后再删除：{remote_path}"
+                    ));
+                }
                 sftp.remove_dir(remote_path)
                     .await
                     .map_err(|e| format!("无法删除远程目录 {remote_path}：{e}"))?;
@@ -622,15 +674,30 @@ mod tests {
     use super::*;
 
     #[test]
-    fn transfer_partial_paths_use_stable_suffix() {
-        assert_eq!(
-            remote_partial_path("/home/app/0.txt"),
-            "/home/app/0.txt.aster.partial"
-        );
+    fn remote_partial_and_backup_paths_are_unique_with_expected_shape() {
+        let a = remote_partial_path("/home/app/0.txt");
+        let b = remote_partial_path("/home/app/0.txt");
+        assert!(a.starts_with("/home/app/0.txt."));
+        assert!(a.ends_with(SFTP_PARTIAL_SUFFIX));
+        assert_ne!(a, b, "并发临时文件名应互不相同");
+
+        let backup = remote_backup_path("/home/app/0.txt");
+        assert!(backup.starts_with("/home/app/0.txt."));
+        assert!(backup.ends_with(SFTP_BACKUP_SUFFIX));
+
+        // 本地分片后缀保持稳定（下载为单线程、碰撞概率极低）。
         assert_eq!(
             local_partial_path(Path::new("0.txt")),
             PathBuf::from("0.txt.aster.partial")
         );
+    }
+
+    #[test]
+    fn join_remote_path_builds_target_file_path() {
+        assert_eq!(join_remote_path("/home/app", "0.txt"), "/home/app/0.txt");
+        assert_eq!(join_remote_path("/home/app/", "0.txt"), "/home/app/0.txt");
+        assert_eq!(join_remote_path("/", "0.txt"), "/0.txt");
+        assert_eq!(join_remote_path(".", "0.txt"), "./0.txt");
     }
 
     #[test]
