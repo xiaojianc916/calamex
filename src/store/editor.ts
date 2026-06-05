@@ -741,6 +741,59 @@ export const useEditorStore = defineStore(
       return targetDocument;
     };
 
+    // 未保存草稿的写入会变更 sessionSnapshot,从而触发持久化插件对整个会话快照做
+    // JSON 序列化 + Zod 全量校验。若每次按键都同步写草稿,大文件会在输入热路径上
+    // 反复付出 O(快照) 的序列化/校验开销。这里把草稿写入防抖:仅在输入停顿后落定
+    // 一次,把按键热路径从 O(快照) 降到 O(1)(均摊)。文档自身的 content / 行列统计 /
+    // isDirty 仍在 updateDocumentContent 中同步更新,状态栏与脏标记不受影响;草稿仅
+    // 用于崩溃恢复,停顿后落定即可。
+    const DRAFT_CAPTURE_DEBOUNCE_MS = 400;
+    let draftCaptureTimer: ReturnType<typeof setTimeout> | null = null;
+    let pendingDraftDocumentId: string | null = null;
+
+    const runDraftCapture = (documentId: string): void => {
+      const targetDocument = getDocumentById(documentId);
+      if (targetDocument?.kind !== 'text' || !targetDocument.path) {
+        return;
+      }
+      captureDocumentDraft(
+        targetDocument.path,
+        targetDocument.content,
+        targetDocument.savedContent,
+      );
+    };
+
+    const flushPendingDraftCapture = (): void => {
+      if (draftCaptureTimer !== null) {
+        clearTimeout(draftCaptureTimer);
+        draftCaptureTimer = null;
+      }
+      const documentId = pendingDraftDocumentId;
+      pendingDraftDocumentId = null;
+      if (documentId !== null) {
+        runDraftCapture(documentId);
+      }
+    };
+
+    const scheduleDraftCapture = (documentId: string): void => {
+      // 切到另一个文档前,先把上一个文档待写的草稿立即落定,避免防抖窗口内丢失。
+      if (pendingDraftDocumentId !== null && pendingDraftDocumentId !== documentId) {
+        flushPendingDraftCapture();
+      }
+      pendingDraftDocumentId = documentId;
+      if (draftCaptureTimer !== null) {
+        clearTimeout(draftCaptureTimer);
+      }
+      draftCaptureTimer = setTimeout(() => {
+        draftCaptureTimer = null;
+        const id = pendingDraftDocumentId;
+        pendingDraftDocumentId = null;
+        if (id !== null) {
+          runDraftCapture(id);
+        }
+      }, DRAFT_CAPTURE_DEBOUNCE_MS);
+    };
+
     const updateDocumentContent = (documentId: string, content: string): void => {
       const targetDocument = getDocumentById(documentId);
       if (targetDocument?.kind !== 'text') {
@@ -748,13 +801,9 @@ export const useEditorStore = defineStore(
       }
       targetDocument.content = content;
       syncDocumentState(targetDocument);
-      // 内容变更后同步维护未保存草稿(与磁盘基线 savedContent 比较)。
+      // 内容变更后维护未保存草稿(与磁盘基线 savedContent 比较),写入防抖见上。
       if (targetDocument.path) {
-        captureDocumentDraft(
-          targetDocument.path,
-          targetDocument.content,
-          targetDocument.savedContent,
-        );
+        scheduleDraftCapture(targetDocument.id);
       }
     };
 

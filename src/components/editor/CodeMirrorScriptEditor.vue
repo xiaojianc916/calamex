@@ -175,6 +175,10 @@ let editorView: EditorView | null = null;
 let editorLayoutFrameId: number | null = null;
 let viewStateSaveTimerId: number | null = null;
 let suppressModelValueEmit = false;
+// 记录最近一次与父组件 v-model 同步过的文档串:editor 自身 emit 出去的值,或外部
+// 写入并已对齐的值。用于在 modelValue watcher 里做廉价的“回声”判定,避免每次按键
+// 都对整篇文档 toString() 比较一次。
+let lastSyncedModelValue: string | null = null;
 let previousContainerSize = { width: 0, height: 0 };
 let isShellWindowResizing = false;
 let pendingEditorLayoutAfterWindowResize = false;
@@ -679,7 +683,10 @@ const handleContextMenuItemSelect = async (item: IEditorContextMenuItem): Promis
 const handleEditorUpdate = (update: ViewUpdate): void => {
   if (update.docChanged && !suppressModelValueEmit) {
     closeContextMenu();
-    emit('update:modelValue', update.state.doc.toString());
+    const nextValue = update.state.doc.toString();
+    // 记录本次对外同步的串,作为 v-model 回声的廉价判定依据(见 modelValue watcher)。
+    lastSyncedModelValue = nextValue;
+    emit('update:modelValue', nextValue);
   }
   if (update.selectionSet || update.docChanged) {
     emitCursorPosition(update.view);
@@ -797,6 +804,8 @@ const createEditor = (): void => {
       extensions: createBaseExtensions(language),
     }),
   });
+  // 初始文档串与父组件 v-model 已对齐,记录为同步基线,避免首个 echo 误判。
+  lastSyncedModelValue = props.modelValue;
   emitCursorPosition(editorView);
   applyLanguageExtension(language);
   currentLsp?.attach(editorView);
@@ -872,6 +881,36 @@ const reconfigureSettings = (): void => {
   scheduleEditorLayout();
 };
 
+// 计算把 current 变成 next 所需的“最小连续改动区间”:跳过公共前缀/后缀,只 dispatch
+// 真正变化的中间段。相比整文档替换,可保留未变区域的折叠/选区,也产生更细粒度的撤销
+// 历史、避免大文档整篇重建。注:按 UTF-16 code unit 计算;即便前后缀恰好落在代理对
+// 中间,prefix + insert + suffix 仍逐 code unit 等于 next,结果文档完全正确。
+const computeMinimalDocChange = (
+  current: string,
+  next: string,
+): { from: number; to: number; insert: string } => {
+  const currentLength = current.length;
+  const nextLength = next.length;
+  let prefix = 0;
+  const maxPrefix = Math.min(currentLength, nextLength);
+  while (prefix < maxPrefix && current.charCodeAt(prefix) === next.charCodeAt(prefix)) {
+    prefix += 1;
+  }
+  let suffix = 0;
+  const maxSuffix = Math.min(currentLength, nextLength) - prefix;
+  while (
+    suffix < maxSuffix &&
+    current.charCodeAt(currentLength - 1 - suffix) === next.charCodeAt(nextLength - 1 - suffix)
+  ) {
+    suffix += 1;
+  }
+  return {
+    from: prefix,
+    to: currentLength - suffix,
+    insert: next.slice(prefix, nextLength - suffix),
+  };
+};
+
 // ──────────────────────────────────────────────────────────
 // Watchers
 // ──────────────────────────────────────────────────────────
@@ -890,12 +929,21 @@ watch(
   () => props.modelValue,
   (value) => {
     const view = editorView;
-    if (!view || view.state.doc.toString() === value) return;
+    if (!view) return;
+    // 自身 emit 的 v-model 回声:用上次同步串做廉价比较,命中即跳过,不再每次按键
+    // 对整篇文档 toString()。
+    if (value === lastSyncedModelValue) return;
+    const current = view.state.doc.toString();
+    if (current === value) {
+      lastSyncedModelValue = value;
+      return;
+    }
+    // 外部真正改了内容（载入文件 / 格式化 / AI 补丁等）：只替换最小变化区间,保留未变
+    // 区域的折叠/选区,避免整篇替换清空这些状态。
+    lastSyncedModelValue = value;
     suppressModelValueEmit = true;
     try {
-      view.dispatch({
-        changes: { from: 0, to: view.state.doc.length, insert: value },
-      });
+      view.dispatch({ changes: computeMinimalDocChange(current, value) });
     } finally {
       suppressModelValueEmit = false;
     }
