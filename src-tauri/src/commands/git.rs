@@ -323,6 +323,14 @@ pub struct GitPullRequestSupportPayload {
     create_pull_request_url: Option<String>,
 }
 
+#[derive(Debug, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct GitRemoteSetRequest {
+    repository_root_path: String,
+    remote_name: String,
+    remote_url: String,
+}
+
 fn open_repository_from_root(root: &str) -> Result<Repository, String> {
     let root = normalize_path_for_git(Path::new(root));
     gix::open(&root).map_err(|error| format!("打开 Git 仓库失败：{error}"))
@@ -349,8 +357,6 @@ fn resolve_head_commit(repository: &Repository) -> Result<Option<gix::Commit<'_>
     match repository.head_commit() {
         Ok(commit) => Ok(Some(commit)),
         Err(error) => {
-            // 通过 HEAD 引用是否已指向某个对象来判断「空仓库（unborn）」，
-            // 而不是匹配易变的英文错误文案。
             match repository.head() {
                 Ok(head) if head.id().is_none() => Ok(None),
                 _ => Err(format!("读取 Git HEAD 提交失败：{error}")),
@@ -407,8 +413,6 @@ fn resolve_relative_path(repository_root: &Path, path: &Path) -> Result<PathBuf,
         .ok_or_else(|| "目标文件超出当前 Git 仓库根目录。".to_string())
 }
 
-/// 在仓库根之下求相对路径。Windows 文件系统大小写不敏感，盘符或目录大小写与仓库根
-/// 记录不一致时仍应判定为「仓库内」，故按组件逐级比较，而非区分大小写的 `strip_prefix`。
 fn strip_repository_prefix(repository_root: &Path, candidate: &Path) -> Option<PathBuf> {
     let mut root_components = repository_root.components();
     let mut candidate_components = candidate.components();
