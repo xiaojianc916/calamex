@@ -7,8 +7,8 @@
         :class="'git-history-graph-group-' + group.tone"
       >
         <span :class="group.icon" class="git-history-graph-group-icon" aria-hidden="true" />
-        <span class="git-history-graph-group-title"> group.title </span>
-        <span class="git-history-graph-group-count"> group.count </span>
+        <span class="git-history-graph-group-title" v-text="group.title" />
+        <span class="git-history-graph-group-count" v-text="group.count" />
       </header>
 
       <article
@@ -46,7 +46,7 @@
 
         <div class="source-control-history-body git-history-graph-body">
           <p class="source-control-history-message">
-            <span class="git-history-graph-message-text"> row.commit.summary </span>
+            <span class="git-history-graph-message-text" v-text="row.commit.summary" />
             <span
               v-for="commitRef in row.refs"
               :key="commitRef.name"
@@ -54,25 +54,27 @@
               :class="refClass(commitRef)"
             >
               <span :class="refIcon(commitRef)" class="git-history-graph-ref-icon" aria-hidden="true" />
-              <span class="git-history-graph-ref-name"> commitRef.name </span>
+              <span class="git-history-graph-ref-name" v-text="commitRef.name" />
             </span>
           </p>
 
           <div class="source-control-history-meta">
-            <span class="source-control-history-hash"> row.commit.shortId </span>
-            <span class="source-control-history-author"> row.commit.authorName </span>
+            <span class="source-control-history-hash" v-text="row.commit.shortId" />
+            <span class="source-control-history-author" v-text="row.commit.authorName" />
           </div>
         </div>
 
-        <time class="source-control-history-time" :datetime="row.commit.authoredAt">
-           formatTime(row.commit.authoredAt) 
-        </time>
+        <time
+          class="source-control-history-time"
+          :datetime="row.commit.authoredAt"
+          v-text="formatTime(row.commit.authoredAt)"
+        />
       </article>
     </template>
 
     <section v-if="behind > 0" class="git-history-graph-incoming-note">
       <span class="icon-[lucide--arrow-down] git-history-graph-group-icon" aria-hidden="true" />
-      <span>传入更改  behind  条 · 拉取后查看</span>
+      <span v-text="'传入更改 ' + behind + ' 条 · 拉取后查看'" />
     </section>
 
     <LinearContextMenu
