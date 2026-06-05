@@ -81,6 +81,41 @@ pub fn checkout_git_branch(
     super::status::build_git_repository_status_payload(&repository)
 }
 
+#[derive(Debug, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct GitCommitCheckoutRequest {
+    repository_root_path: String,
+    commit_id: String,
+}
+
+/// 以分离 HEAD 方式检出指定提交（等价 `git checkout <commit>`）。
+/// 复用分支切换的工作区 / 索引 / HEAD 同步实现；要求工作区干净。
+#[tauri::command]
+#[specta::specta]
+pub fn checkout_git_commit(
+    payload: GitCommitCheckoutRequest,
+) -> Result<GitRepositoryStatusPayload, String> {
+    let repository = open_repository_from_root(&payload.repository_root_path)?;
+    let repository_root = resolve_repository_root(&repository)?;
+    let commit_id = payload.commit_id.trim();
+    if commit_id.is_empty() {
+        return Err("提交 ID 不能为空。".into());
+    }
+    // 仅接受合法对象 ID，并确认该提交存在，避免把任意修订语法传入切换实现。
+    let object_id: gix::ObjectId = commit_id
+        .parse()
+        .map_err(|_| "无效的提交 ID。".to_string())?;
+    repository
+        .find_commit(object_id)
+        .map_err(|error| format!("读取提交对象失败：{error}"))?;
+
+    assert_repository_is_clean_for_switch(&repository, "检出提交")?;
+    checkout_to_target(&repository, &repository_root, commit_id)?;
+
+    let repository = open_repository_from_root(&payload.repository_root_path)?;
+    super::status::build_git_repository_status_payload(&repository)
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn create_git_branch(
