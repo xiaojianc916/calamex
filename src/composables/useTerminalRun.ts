@@ -41,6 +41,7 @@ type TEditorStore = ReturnType<typeof useEditorStore>;
 type TUseTerminalRunOptions = {
   canRun: ComputedRef<boolean>;
   editorStore: TEditorStore;
+  saveDocument: (documentId?: string) => Promise<boolean>;
 };
 
 const isTextDocument = (document: IEditorDocument): boolean => document.kind === 'text';
@@ -65,7 +66,7 @@ const buildTerminalDispatchRequest = (
   runId,
 });
 
-export const useTerminalRun = ({ canRun, editorStore }: TUseTerminalRunOptions) => {
+export const useTerminalRun = ({ canRun, editorStore, saveDocument }: TUseTerminalRunOptions) => {
   const notifier = useMessage();
   const terminalRegistryStore = useTerminalRegistryStore();
   const terminalFacade = useTerminalFacade();
@@ -536,6 +537,17 @@ export const useTerminalRun = ({ canRun, editorStore }: TUseTerminalRunOptions) 
     if (!editorStore.environment.hasAny) {
       notifier.error('当前系统不可用：WSL2。');
       return;
+    }
+
+    // 运行前自动保存:已落盘文件若有未保存修改,先保存,确保终端运行的内容与编辑器一致。
+    // 未命名文件(无 path)仍走临时文件分发,不在此处理。
+    const activeDocument = editorStore.document;
+    if (activeDocument.path && activeDocument.isDirty) {
+      const saved = await saveDocument(activeDocument.id);
+      if (!saved) {
+        notifier.warning('运行前自动保存失败，已取消运行，请先手动保存后再运行。');
+        return;
+      }
     }
 
     editorStore.isRunning = true;

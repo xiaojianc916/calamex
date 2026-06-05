@@ -302,13 +302,29 @@ fn ensure_within_size_limit(path: &Path, max_bytes: u64, label: &str) -> Result<
 /// 原子写入：先写入同目录下的临时文件，再 rename 覆盖目标，
 /// 避免写入中途崩溃 / 断电导致原文件被截断、内容丢失。
 fn atomic_write(file_path: &Path, bytes: &[u8]) -> Result<(), String> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    // 进程内自增计数器，叠加 pid 与纳秒时间戳，确保即便同一文件被并发/连续保存，
+    // 临时文件名也唯一，避免多个写入复用同一个 .tmp 互相覆盖、污染彼此内容。
+    static TEMP_WRITE_COUNTER: AtomicU64 = AtomicU64::new(0);
+
     let file_name = file_path
         .file_name()
         .and_then(|value| value.to_str())
         .ok_or_else(|| "无法解析目标文件名。".to_string())?;
+
+    let pid = std::process::id();
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos())
+        .unwrap_or(0);
+    let counter = TEMP_WRITE_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let temp_file_name = format!(".{file_name}.{pid}.{nanos}.{counter}.tmp");
+
     let temp_path = match file_path.parent() {
-        Some(parent) if !parent.as_os_str().is_empty() => parent.join(format!(".{file_name}.tmp")),
-        _ => PathBuf::from(format!(".{file_name}.tmp")),
+        Some(parent) if !parent.as_os_str().is_empty() => parent.join(&temp_file_name),
+        _ => PathBuf::from(&temp_file_name),
     };
 
     fs::write(&temp_path, bytes).map_err(|error| format!("保存脚本失败：{error}"))?;
