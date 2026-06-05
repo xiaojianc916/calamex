@@ -22,7 +22,6 @@ const tauriServiceMock = vi.hoisted(() => ({
   applyGitStash: vi.fn(),
   dropGitStash: vi.fn(),
   getGitPullRequestSupport: vi.fn(),
-  setGitRemote: vi.fn(),
 }));
 
 const clipboardMock = vi.hoisted(() => ({
@@ -257,7 +256,6 @@ describe('SourceControlPanel', () => {
     );
     tauriServiceMock.dropGitStash.mockResolvedValue(cleanStatus);
     tauriServiceMock.getGitPullRequestSupport.mockResolvedValue(pullRequestSupportPayload);
-    tauriServiceMock.setGitRemote.mockResolvedValue(pullRequestSupportPayload);
     window.addEventListener(APP_DIALOG_EVENT, confirmDialog);
   });
 
@@ -597,35 +595,6 @@ describe('SourceControlPanel', () => {
       'https://github.com/owner/repo/compare',
       '_blank',
       'noopener,noreferrer',
-    );
-  });
-
-  it('拉取请求面板可在软件内配置远程并调用 set_git_remote', async () => {
-    const wrapper = await mountPanel();
-    const pullRequestTab = wrapper
-      .findAll('.source-control-nav-item')
-      .find((button) => button.text().includes('拉取请求'));
-    expect(pullRequestTab).toBeDefined();
-
-    await pullRequestTab?.trigger('click');
-    await flushPromises();
-
-    await wrapper.find('.source-control-pull-requests-config-trigger').trigger('click');
-    await flushPromises();
-
-    const inputs = wrapper.findAll('.source-control-pull-requests-input');
-    expect(inputs).toHaveLength(2);
-
-    await inputs[0].setValue('origin');
-    await inputs[1].setValue('https://github.com/owner/repo.git');
-    await wrapper.find('.source-control-pull-requests-form').trigger('submit');
-    await flushPromises();
-
-    expect(tauriServiceMock.setGitRemote).toHaveBeenCalledWith(
-      expect.objectContaining({
-        remoteName: 'origin',
-        remoteUrl: 'https://github.com/owner/repo.git',
-      }),
     );
   });
 });

@@ -91,7 +91,6 @@ import type {
   IGitFileBaselinePayload,
   IGitPathOperationRequest,
   IGitPullRequestSupportPayload,
-  IGitRemoteSetRequest,
   IGitRepositoryRootRequest,
   IGitRepositoryStatusPayload,
   IGitStashApplyRequest,
@@ -326,7 +325,6 @@ export interface ITauriService {
   getGitPullRequestSupport(
     payload: IGitRepositoryRootRequest,
   ): Promise<IGitPullRequestSupportPayload>;
-  setGitRemote(payload: IGitRemoteSetRequest): Promise<IGitPullRequestSupportPayload>;
   ensureTerminalSession(payload: IEnsureTerminalSessionRequest): Promise<ITerminalSessionPayload>;
   dispatchScriptToTerminal(
     payload: IDispatchTerminalScriptRequest,

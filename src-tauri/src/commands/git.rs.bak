@@ -285,14 +285,6 @@ pub struct GitPullRequestSupportPayload {
     create_pull_request_url: Option<String>,
 }
 
-#[derive(Debug, Deserialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct GitRemoteSetRequest {
-    repository_root_path: String,
-    remote_name: String,
-    remote_url: String,
-}
-
 fn open_repository_from_root(root: &str) -> Result<Repository, String> {
     let root = normalize_path_for_git(Path::new(root));
     gix::open(&root).map_err(|error| format!("打开 Git 仓库失败：{error}"))

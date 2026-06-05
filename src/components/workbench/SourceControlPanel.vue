@@ -314,25 +314,92 @@
           <p v-else class="source-control-info-note source-control-branches-note">{{ branchesEmptyText }}</p>
         </section>
 
-        <section v-else-if="activeTab === 'pull-requests'" class="source-control-info-panel">
-          <p class="source-control-info-eyebrow">Pull requests</p>
-          <p class="source-control-info-title">{{ pullRequestPanelTitle }}</p>
-          <p class="source-control-info-text">{{ pullRequestPanelText }}</p>
-          <p v-if="pullRequestSupport.remoteName" class="source-control-info-note">
-            远程 {{ pullRequestSupport.remoteName }} · {{ pullRequestProviderLabel }}
-          </p>
-
-          <div class="source-control-toolbar">
-            <button type="button" class="source-control-toolbar-btn"
-              :disabled="!canOpenPullRequestList || isPullRequestSupportLoading" @click="handleOpenPullRequestList">
-              查看列表
-            </button>
-
-            <button type="button" class="source-control-toolbar-btn"
-              :disabled="!canOpenPullRequestCreate || isPullRequestSupportLoading" @click="handleOpenCreatePullRequest">
-              创建 PR
-            </button>
+        <section v-else-if="activeTab === 'pull-requests'"
+          class="source-control-info-panel source-control-pull-requests-panel">
+          <div class="source-control-pull-requests-header">
+            <p class="source-control-pull-requests-heading">Pull requests</p>
+            <div class="source-control-pull-requests-header-actions">
+              <span v-if="pullRequestSupport.available" class="source-control-pull-requests-provider">
+                {{ pullRequestProviderLabel }}
+              </span>
+              <button type="button" class="source-control-pull-requests-refresh" aria-label="刷新 Pull Request 支持"
+                title="刷新 Pull Request 支持"
+                :disabled="isPullRequestSupportLoading || isSettingRemote || isBusy"
+                @click="handleReloadPullRequestSupport">
+                <span aria-hidden="true" class="icon-[lucide--refresh-cw]" />
+              </button>
+            </div>
           </div>
+
+          <div v-if="isPullRequestSupportLoading" class="source-control-pull-requests-skeleton" aria-hidden="true">
+            <span class="source-control-pull-requests-skeleton-line is-title" />
+            <span class="source-control-pull-requests-skeleton-line" />
+            <span class="source-control-pull-requests-skeleton-line is-short" />
+          </div>
+
+          <template v-else>
+            <p class="source-control-info-title">{{ pullRequestPanelTitle }}</p>
+            <p class="source-control-info-text">{{ pullRequestPanelText }}</p>
+
+            <p v-if="pullRequestSupport.remoteName" class="source-control-info-note">
+              远程 {{ pullRequestSupport.remoteName }} · {{ pullRequestProviderLabel }}
+            </p>
+
+            <div v-if="pullRequestSupport.available"
+              class="source-control-toolbar source-control-pull-requests-toolbar">
+              <button type="button" class="source-control-toolbar-btn"
+                :disabled="!canOpenPullRequestList || isBusy" @click="handleOpenPullRequestList">
+                查看列表
+              </button>
+
+              <button type="button" class="source-control-toolbar-btn"
+                :disabled="!canOpenPullRequestCreate || isBusy" @click="handleOpenCreatePullRequest">
+                创建 PR
+              </button>
+            </div>
+
+            <div class="source-control-pull-requests-config">
+              <button v-if="!isRemoteFormOpen" type="button"
+                class="source-control-btn source-control-pull-requests-config-trigger"
+                :disabled="isSettingRemote || isBusy" @click="handleOpenRemoteForm">
+                {{ pullRequestSupport.remoteName ? '更新远程地址' : '配置远程地址' }}
+              </button>
+
+              <form v-else class="source-control-pull-requests-form" @submit.prevent="handleSubmitRemoteForm">
+                <label class="source-control-pull-requests-field">
+                  <span class="source-control-pull-requests-field-label">远程名称</span>
+                  <input v-model="remoteNameInput" type="text" class="source-control-pull-requests-input"
+                    placeholder="origin" :disabled="isSettingRemote" spellcheck="false" />
+                </label>
+
+                <label class="source-control-pull-requests-field">
+                  <span class="source-control-pull-requests-field-label">远程地址</span>
+                  <input v-model="remoteUrlInput" type="text"
+                    class="source-control-pull-requests-input"
+                    :class="{ 'is-invalid': Boolean(remoteFormError) }"
+                    placeholder="https://github.com/owner/repo.git" :disabled="isSettingRemote"
+                    spellcheck="false" />
+                </label>
+
+                <p v-if="remoteFormError" class="source-control-pull-requests-form-error">
+                  {{ remoteFormError }}
+                </p>
+
+                <div class="source-control-pull-requests-form-actions">
+                  <button type="button"
+                    class="source-control-btn source-control-pull-requests-form-btn"
+                    :disabled="isSettingRemote" @click="handleCancelRemoteForm">
+                    取消
+                  </button>
+                  <button type="submit"
+                    class="source-control-btn source-control-btn-primary source-control-pull-requests-form-btn"
+                    :disabled="isSettingRemote || !canSubmitRemoteForm">
+                    {{ isSettingRemote ? '保存中…' : '保存' }}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </template>
         </section>
 
         <section v-else class="source-control-info-panel source-control-stash-panel">
@@ -737,6 +804,16 @@ const pullRequestSupport = computed<IGitPullRequestSupportPayload>(
   () => gitStore.pullRequestSupport,
 );
 const isPullRequestSupportLoading = computed(() => gitStore.isPullRequestSupportLoading);
+const isSettingRemote = computed(() => gitStore.isSettingRemote);
+
+const isRemoteFormOpen = ref(false);
+const remoteNameInput = ref('');
+const remoteUrlInput = ref('');
+const remoteFormError = ref<string | null>(null);
+
+const canSubmitRemoteForm = computed(
+  () => remoteNameInput.value.trim().length > 0 && remoteUrlInput.value.trim().length > 0,
+);
 
 const sections = computed<IGitSection[]>(() => {
   const nextSections: IGitSection[] = [];
@@ -1518,6 +1595,51 @@ const handleOpenPullRequestList = (): void => {
   openExternalUrl(targetUrl);
 };
 
+const handleReloadPullRequestSupport = async (): Promise<void> => {
+  try {
+    await gitStore.loadPullRequestSupport();
+  } catch (error) {
+    message.error(toErrorMessage(error, '读取 Pull Request 支持信息失败'));
+  }
+};
+
+const handleOpenRemoteForm = (): void => {
+  remoteNameInput.value = pullRequestSupport.value.remoteName ?? 'origin';
+  remoteUrlInput.value = pullRequestSupport.value.repositoryUrl ?? '';
+  remoteFormError.value = null;
+  isRemoteFormOpen.value = true;
+};
+
+const handleCancelRemoteForm = (): void => {
+  if (isSettingRemote.value) {
+    return;
+  }
+
+  isRemoteFormOpen.value = false;
+  remoteFormError.value = null;
+};
+
+const handleSubmitRemoteForm = async (): Promise<void> => {
+  const remoteName = remoteNameInput.value.trim();
+  const remoteUrl = remoteUrlInput.value.trim();
+  if (!remoteName || !remoteUrl) {
+    remoteFormError.value = '请填写远程名称和远程地址。';
+    return;
+  }
+
+  remoteFormError.value = null;
+
+  await runWithPending('set-remote', async () => {
+    try {
+      await gitStore.setRemote(remoteName, remoteUrl);
+      isRemoteFormOpen.value = false;
+      message.success('已更新仓库远程地址');
+    } catch (error) {
+      remoteFormError.value = toErrorMessage(error, '配置远程地址失败');
+    }
+  });
+};
+
 const handleOpenCreatePullRequest = (): void => {
   const targetUrl =
     pullRequestSupport.value.createPullRequestUrl ??
@@ -1645,6 +1767,8 @@ watch(
     activeTab.value = 'changes';
     sourceControlActionError.value = null;
     activeStashId.value = undefined;
+    isRemoteFormOpen.value = false;
+    remoteFormError.value = null;
     closeSourceControlMenu();
     resetSectionCollapse();
   },

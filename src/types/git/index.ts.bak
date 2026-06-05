@@ -16,7 +16,6 @@ import type {
   GitFileStatusPayload,
   GitPathOperationRequest,
   GitPullRequestSupportPayload,
-  GitRemoteSetRequest,
   GitRepositoryRootRequest,
   GitRepositoryStatusPayload,
   GitStashApplyRequest,
@@ -50,7 +49,6 @@ export type IGitStashSaveRequest = GitStashSaveRequest;
 export type IGitStashApplyRequest = GitStashApplyRequest;
 export type IGitStashDropRequest = GitStashDropRequest;
 export type IGitPullRequestSupportPayload = GitPullRequestSupportPayload;
-export type IGitRemoteSetRequest = GitRemoteSetRequest;
 export type IGitDiffPreviewRequest = GitDiffPreviewRequest;
 export type IGitDiffPreviewPayload = GitDiffPreviewPayload;
 export type IGitPathOperationRequest = GitPathOperationRequest;

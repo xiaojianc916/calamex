@@ -21,6 +21,7 @@ type TGitTauriService = Pick<
   | 'applyGitStash'
   | 'dropGitStash'
   | 'getGitPullRequestSupport'
+  | 'setGitRemote'
 >;
 
 export const gitTauriService: TGitTauriService = {
@@ -233,6 +234,19 @@ export const gitTauriService: TGitTauriService = {
         input: payload,
       },
       () => commands.getGitPullRequestSupport(payload),
+    );
+  },
+
+  setGitRemote(payload) {
+    return callSpectaCommand(
+      {
+        command: 'set_git_remote',
+        guardHint: '配置 Git 远端地址',
+        audit: 'sensitive',
+        timeoutMs: 20_000,
+        input: payload,
+      },
+      () => commands.setGitRemote(payload),
     );
   },
 };

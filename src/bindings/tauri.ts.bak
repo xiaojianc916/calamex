@@ -52,7 +52,6 @@ export const commands = {
 	getGitDiffPreview: (payload: GitDiffPreviewRequest) => __TAURI_INVOKE<GitDiffPreviewPayload>("get_git_diff_preview", { payload }),
 	listGitCommitHistory: (payload: GitCommitHistoryRequest) => __TAURI_INVOKE<GitCommitHistoryPayload>("list_git_commit_history", { payload }),
 	getGitPullRequestSupport: (payload: GitRepositoryRootRequest) => __TAURI_INVOKE<GitPullRequestSupportPayload>("get_git_pull_request_support", { payload }),
-	setGitRemote: (payload: GitRemoteSetRequest) => __TAURI_INVOKE<GitPullRequestSupportPayload>("set_git_remote", { payload }),
 	listGitStashes: (payload: GitRepositoryRootRequest) => __TAURI_INVOKE<GitStashListPayload>("list_git_stashes", { payload }),
 	saveGitStash: (payload: GitStashSaveRequest) => __TAURI_INVOKE<GitRepositoryStatusPayload>("save_git_stash", { payload }),
 	applyGitStash: (payload: GitStashApplyRequest) => __TAURI_INVOKE<GitRepositoryStatusPayload>("apply_git_stash", { payload }),
@@ -987,12 +986,6 @@ export type GitPullRequestSupportPayload = {
 	repositoryUrl: string | null,
 	pullRequestsUrl: string | null,
 	createPullRequestUrl: string | null,
-};
-
-export type GitRemoteSetRequest = {
-	repositoryRootPath: string,
-	remoteName: string,
-	remoteUrl: string,
 };
 
 export type GitRepositoryRootRequest = {

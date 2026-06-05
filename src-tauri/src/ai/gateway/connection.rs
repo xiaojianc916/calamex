@@ -119,6 +119,7 @@ pub async fn test_provider_config(
         chat_enabled,
         agent_enabled,
         api_key,
+        false,
     )?;
 
     test_provider_connection_candidate(&candidate).await
@@ -146,6 +147,7 @@ pub async fn connect_provider(
         chat_enabled,
         agent_enabled,
         api_key,
+        true,
     )?;
 
     test_provider_connection_candidate(&candidate).await?;

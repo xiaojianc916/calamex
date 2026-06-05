@@ -1585,3 +1585,194 @@
   cursor: default;
   opacity: 0.46;
 }
+
+.source-control-pull-requests-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.source-control-pull-requests-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.source-control-pull-requests-heading {
+  margin: 0;
+  color: var(--scm-text-faint);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.source-control-pull-requests-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.source-control-pull-requests-provider {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border: 1px solid var(--scm-border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--scm-bg-hover) 70%, var(--scm-bg-elev));
+  color: var(--scm-text-dim);
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.source-control-pull-requests-refresh {
+  display: inline-flex;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--scm-text-faint);
+  padding: 0;
+  font-size: 13px;
+  line-height: 0;
+  cursor: pointer;
+  transition:
+    background 0.14s cubic-bezier(0.23, 1, 0.32, 1),
+    color 0.14s cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.source-control-pull-requests-refresh:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--scm-bg-hover) 82%, transparent);
+  color: var(--scm-text);
+}
+
+.source-control-pull-requests-refresh:disabled {
+  opacity: 0.42;
+  cursor: default;
+}
+
+.source-control-pull-requests-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 0 2px;
+}
+
+.source-control-pull-requests-skeleton-line {
+  height: 11px;
+  border-radius: 6px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--scm-bg-hover) 70%, transparent) 25%,
+    color-mix(in srgb, var(--scm-bg-active) 85%, transparent) 37%,
+    color-mix(in srgb, var(--scm-bg-hover) 70%, transparent) 63%
+  );
+  background-size: 400% 100%;
+  animation: source-control-pull-requests-shimmer 1.4s ease infinite;
+}
+
+.source-control-pull-requests-skeleton-line.is-title {
+  width: 62%;
+  height: 13px;
+}
+
+.source-control-pull-requests-skeleton-line.is-short {
+  width: 40%;
+}
+
+@keyframes source-control-pull-requests-shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: 0 0;
+  }
+}
+
+.source-control-pull-requests-toolbar {
+  margin-top: 2px;
+  border-bottom: 0;
+  padding: 0;
+  background: transparent;
+}
+
+.source-control-pull-requests-config {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px solid var(--scm-border);
+  padding-top: 10px;
+}
+
+.source-control-pull-requests-config-trigger {
+  align-self: flex-start;
+}
+
+.source-control-pull-requests-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.source-control-pull-requests-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.source-control-pull-requests-field-label {
+  color: var(--scm-text-faint);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.source-control-pull-requests-input {
+  width: 100%;
+  border: 1px solid var(--scm-border);
+  border-radius: var(--scm-radius);
+  background: var(--scm-bg-elev);
+  padding: 6px 9px;
+  color: var(--scm-text);
+  font-family: inherit;
+  font-size: 12.5px;
+  line-height: 1.5;
+  outline: 0;
+  transition: border-color 0.15s ease;
+}
+
+.source-control-pull-requests-input:focus {
+  border-color: var(--settings-accent-soft);
+}
+
+.source-control-pull-requests-input.is-invalid {
+  border-color: color-mix(in srgb, var(--danger) 55%, var(--scm-border));
+}
+
+.source-control-pull-requests-input::placeholder {
+  color: var(--scm-text-faint);
+}
+
+.source-control-pull-requests-form-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.source-control-pull-requests-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.source-control-pull-requests-form-btn {
+  min-height: 28px;
+  padding: 0 12px;
+}

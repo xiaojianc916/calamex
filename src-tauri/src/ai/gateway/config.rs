@@ -118,6 +118,7 @@ pub(super) fn build_provider_connection_candidate(
     chat_enabled: bool,
     agent_enabled: bool,
     api_key: Option<&str>,
+    allow_saved_fallback: bool,
 ) -> Result<AiProviderConnectionCandidate, String> {
     validate_provider(provider_type)?;
 
@@ -132,10 +133,19 @@ pub(super) fn build_provider_connection_candidate(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned);
-    let api_key_from_saved = typed_api_key.is_none();
+    let api_key_from_saved = typed_api_key.is_none() && allow_saved_fallback;
     let api_key_for_test = match typed_api_key {
         Some(value) => value,
-        None => get_saved_api_key_for_candidate(model.as_deref())?,
+        None => {
+            if allow_saved_fallback {
+                get_saved_api_key_for_candidate(model.as_deref())?
+            } else {
+                return Err(errors::error(
+                    "AI_PROVIDER_AUTH_FAILED",
+                    "请先填写要测试的 API Key 后再测试连接。",
+                ));
+            }
+        }
     };
 
     if api_key_for_test.trim().is_empty() {

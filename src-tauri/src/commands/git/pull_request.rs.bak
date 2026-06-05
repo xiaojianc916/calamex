@@ -50,65 +50,6 @@ pub fn get_git_pull_request_support(
     })
 }
 
-#[tauri::command]
-#[specta::specta]
-pub fn set_git_remote(
-    payload: GitRemoteSetRequest,
-) -> Result<GitPullRequestSupportPayload, String> {
-    let remote_name = payload.remote_name.trim().to_string();
-    let remote_url = payload.remote_url.trim().to_string();
-    if remote_name.is_empty() {
-        return Err("远程名称不能为空。".to_string());
-    }
-    if remote_url.is_empty() {
-        return Err("远程地址不能为空。".to_string());
-    }
-
-    let repository = open_repository_from_root(&payload.repository_root_path)?;
-    let repository_root = resolve_repository_root(&repository)?;
-    let remote_already_exists = repository
-        .remote_names()
-        .iter()
-        .any(|name| name.as_bstr().to_str_lossy().as_ref() == remote_name.as_str());
-
-    let subcommand = if remote_already_exists { "set-url" } else { "add" };
-    run_git_remote_subcommand(&repository_root, subcommand, &remote_name, &remote_url)?;
-
-    get_git_pull_request_support(GitRepositoryRootRequest {
-        repository_root_path: payload.repository_root_path,
-    })
-}
-
-fn run_git_remote_subcommand(
-    repository_root: &std::path::Path,
-    subcommand: &str,
-    remote_name: &str,
-    remote_url: &str,
-) -> Result<(), String> {
-    let output = std::process::Command::new("git")
-        .arg("-C")
-        .arg(repository_root)
-        .arg("remote")
-        .arg(subcommand)
-        .arg(remote_name)
-        .arg(remote_url)
-        .output()
-        .map_err(|error| format!("调用 git 配置远程失败：{error}"))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let detail = stderr.trim();
-        let detail = if detail.is_empty() {
-            "git 返回了非零退出码。"
-        } else {
-            detail
-        };
-        return Err(format!("配置 Git 远程失败：{detail}"));
-    }
-
-    Ok(())
-}
-
 fn find_preferred_git_remote(repository: &Repository) -> Result<Option<(String, String)>, String> {
     let names = repository.remote_names();
     let mut remote_list: Vec<String> = names

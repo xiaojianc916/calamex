@@ -109,6 +109,7 @@ export const useGitStore = defineStore('git', () => {
 
   const pullRequestSupport = ref<IGitPullRequestSupportPayload>(createEmptyPullRequestSupport());
   const isPullRequestSupportLoading = ref(false);
+  const isSettingRemote = ref(false);
 
   // -- request-id staleness tokens -----------------------------------------
   // 模块私有计数器,不是 reactive 状态。每个资源的并发 fetch 用 ++ 拿到自己的
@@ -486,6 +487,27 @@ export const useGitStore = defineStore('git', () => {
     }
   };
 
+  const setRemote = async (
+    remoteName: string,
+    remoteUrl: string,
+  ): Promise<IGitPullRequestSupportPayload> => {
+    isSettingRemote.value = true;
+    try {
+      const payload = await tauriService.setGitRemote({
+        repositoryRootPath: requireRepositoryRootPath(),
+        remoteName,
+        remoteUrl,
+      });
+      // 远端写操作落盘即最新真值：bump request-id 让任何 in-flight 的
+      // loadPullRequestSupport resolve 后跳过写入，避免旧探测结果覆盖。
+      pullRequestSupportRequestId += 1;
+      pullRequestSupport.value = payload;
+      return pullRequestSupport.value;
+    } finally {
+      isSettingRemote.value = false;
+    }
+  };
+
   // -- branch / stash write ops ---------------------------------------------
 
   const checkoutBranch = async (branchName: string): Promise<IGitRepositoryStatusPayload> => {
@@ -567,6 +589,7 @@ export const useGitStore = defineStore('git', () => {
     isStashesLoading,
     pullRequestSupport,
     isPullRequestSupportLoading,
+    isSettingRemote,
     // getters
     hasRepository,
     totalChangeCount,
@@ -588,6 +611,7 @@ export const useGitStore = defineStore('git', () => {
     loadBranches,
     loadStashes,
     loadPullRequestSupport,
+    setRemote,
     // branch / stash write ops
     checkoutBranch,
     createBranch,
