@@ -51,6 +51,11 @@ export const commands = {
 	createGitBranch: (payload: GitBranchCreateRequest) => __TAURI_INVOKE<GitRepositoryStatusPayload>("create_git_branch", { payload }),
 	getGitDiffPreview: (payload: GitDiffPreviewRequest) => __TAURI_INVOKE<GitDiffPreviewPayload>("get_git_diff_preview", { payload }),
 	listGitCommitHistory: (payload: GitCommitHistoryRequest) => __TAURI_INVOKE<GitCommitHistoryPayload>("list_git_commit_history", { payload }),
+	/**
+	 *  读取单个提交的详细信息（用于历史悬浮卡片）：提交元数据 + 相对首个父提交的
+	 *  文件/行变更聚合（文件数、插入、删除）。根提交对空树取差异。
+	 */
+	getGitCommitDetail: (payload: GitCommitDetailRequest) => __TAURI_INVOKE<GitCommitDetailPayload>("get_git_commit_detail", { payload }),
 	getGitPullRequestSupport: (payload: GitRepositoryRootRequest) => __TAURI_INVOKE<GitPullRequestSupportPayload>("get_git_pull_request_support", { payload }),
 	setGitRemote: (payload: GitRemoteSetRequest) => __TAURI_INVOKE<GitPullRequestSupportPayload>("set_git_remote", { payload }),
 	listGitStashes: (payload: GitRepositoryRootRequest) => __TAURI_INVOKE<GitStashListPayload>("list_git_stashes", { payload }),
@@ -893,6 +898,36 @@ export type GitBranchPayload = {
 	ahead: number,
 	behind: number,
 	lastCommit: GitCommitSummaryPayload | null,
+};
+
+export type GitCommitDetailPayload = {
+	id: string,
+	shortId: string,
+	summary: string,
+	body: string,
+	authorName: string,
+	authorEmail: string,
+	authoredAt: string,
+	parentIds: string[],
+	refs: GitCommitRefPayload[],
+	fileCount: number,
+	additions: number,
+	deletions: number,
+	files: GitCommitFileChangePayload[],
+};
+
+export type GitCommitDetailRequest = {
+	repositoryRootPath: string,
+	commitId: string,
+};
+
+export type GitCommitFileChangePayload = {
+	relativePath: string,
+	fileName: string,
+	previousRelativePath: string | null,
+	status: string,
+	additions: number,
+	deletions: number,
 };
 
 export type GitCommitHistoryPayload = {
