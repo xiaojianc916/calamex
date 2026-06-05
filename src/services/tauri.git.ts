@@ -7,6 +7,7 @@ type TGitTauriService = Pick<
   | 'getGitRepositoryStatus'
   | 'initGitRepository'
   | 'listGitCommitHistory'
+  | 'getGitCommitDetail'
   | 'listGitBranches'
   | 'checkoutGitBranch'
   | 'createGitBranch'
@@ -57,6 +58,19 @@ export const gitTauriService: TGitTauriService = {
         input: payload,
       },
       () => commands.listGitCommitHistory(payload),
+    );
+  },
+
+  getGitCommitDetail(payload) {
+    return callSpectaCommand(
+      {
+        command: 'get_git_commit_detail',
+        guardHint: '读取 Git 提交详情',
+        idempotent: true,
+        timeoutMs: 20_000,
+        input: payload,
+      },
+      () => commands.getGitCommitDetail(payload),
     );
   },
 
