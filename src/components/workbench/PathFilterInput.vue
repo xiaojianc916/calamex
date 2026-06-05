@@ -46,7 +46,7 @@
           v-for="(item, index) in suggestions"
           :key="`${item.kind}:${item.insertValue}`"
           class="search-path-filter-option"
-          :class="{ 'is-active': index === activeIndex }"
+          :class="{ 'is-active': index === activeIndex, 'is-directory': item.kind === 'directory' }"
           role="option"
           :aria-selected="index === activeIndex"
           @mousedown.prevent="selectSuggestion(index)"
@@ -408,7 +408,7 @@ onBeforeUnmount(() => {
    这里只补充标签 chip、补全下拉所需的相对定位容器与浮层菜单样式，不改动全局样式表。 */
 .search-panel-path-filter {
   align-items: center;
-  min-height: 28px;
+  min-height: 30px;
   padding: 3px 8px;
 }
 
@@ -425,7 +425,7 @@ onBeforeUnmount(() => {
 .search-path-filter-input {
   flex: 1 1 64px;
   min-width: 64px;
-  height: 20px;
+  height: 22px;
 }
 
 .search-path-filter-chip {
@@ -433,19 +433,19 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 2px;
   max-width: 100%;
-  height: 20px;
+  height: 22px;
   padding: 0 2px 0 7px;
   border-radius: var(--search-radius-sm);
   background: var(--search-bg-selected);
   color: var(--search-text);
   font-size: 11px;
-  line-height: 1;
 }
 
 .search-path-filter-chip-label {
   overflow: hidden;
   color: var(--search-text);
   font-size: 11px;
+  line-height: 20px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -572,6 +572,16 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
+/* 目录与文件颜色区分：目录用蓝色（图标 + 文字），文件保持默认深色文字。 */
+.search-path-filter-option.is-directory .search-path-filter-option-icon {
+  color: #2563eb;
+}
+
+.search-path-filter-option.is-directory .search-path-filter-option-label {
+  color: #2563eb;
+  font-weight: 500;
+}
+
 .search-path-filter-option-enter {
   display: inline-flex;
   flex-shrink: 0;
@@ -584,13 +594,13 @@ onBeforeUnmount(() => {
   border: 0;
   border-radius: var(--search-radius-sm);
   background: transparent;
-  color: var(--search-text-subtle);
+  color: #2563eb;
   font-size: 13px;
   cursor: pointer;
 }
 
 .search-path-filter-option-enter:hover {
-  background: rgb(0 0 0 / 8%);
-  color: var(--search-text);
+  background: rgb(37 99 235 / 12%);
+  color: #1d4ed8;
 }
 </style>
