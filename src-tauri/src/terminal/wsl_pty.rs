@@ -9,8 +9,11 @@
 
 use std::{
     io::{Read, Write},
-    sync::{Arc, Mutex},
-    time::{SystemTime, UNIX_EPOCH},
+    sync::{
+        Arc, Mutex,
+        mpsc::{self, RecvTimeoutError, Sender},
+    },
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use portable_pty::{Child, ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
@@ -25,7 +28,15 @@ use super::local_wsl_protocol::{
 };
 use super::wsl::bash_quote;
 
-const TERMINAL_READ_BUFFER_BYTES: usize = 8192;
+// 读缓冲：单次 read 的字节上限。配合下游输出合并，调大可减少高吞吐时的 read 次数。
+const TERMINAL_READ_BUFFER_BYTES: usize = 65536;
+
+/// 输出合并时间窗：读线程产生的高频小块输出在该时间窗内聚合为一条事件再发往前端，
+/// 显著降低跨 WebView 的 IPC 序列化 / 事件回调次数。8ms 远小于一帧（16ms），交互回显无可感延迟。
+const TERMINAL_OUTPUT_COALESCE_WINDOW: Duration = Duration::from_millis(8);
+
+/// 合并缓冲的字节上限：达到即立即冲洗，避免高吞吐（如 `cat 大文件`）时单条事件无限膨胀。
+const TERMINAL_OUTPUT_COALESCE_MAX_BYTES: usize = 256 * 1024;
 
 #[derive(Debug, Error)]
 pub enum LocalWslPtyError {
@@ -146,9 +157,87 @@ impl LocalWslRunHandle {
     }
 }
 
+/// 合并线程的入站消息：数据块会被聚合，生命周期等非数据事件原样透传并保持顺序。
+enum CoalescerMessage {
+    Data(String),
+    Passthrough(LocalWslTerminalServerPayload),
+}
+
+/// 启动一个输出合并线程，返回向其投递消息的发送端。
+///
+/// 读线程只负责 `read + 解码 + 投递`，真正的 `on_event`（含 Tauri 事件发射）在合并线程内执行：
+/// 把同一时间窗内的多次小块输出聚合成一条，从根上减少跨 WebView 的 IPC 事件数量。
+fn spawn_output_coalescer<F, W>(
+    thread_name: String,
+    on_event: F,
+    wrap_data: W,
+) -> Result<Sender<CoalescerMessage>, LocalWslPtyError>
+where
+    F: FnMut(LocalWslTerminalServerPayload) + Send + 'static,
+    W: Fn(String) -> LocalWslTerminalServerPayload + Send + 'static,
+{
+    let (tx, rx) = mpsc::channel::<CoalescerMessage>();
+    std::thread::Builder::new()
+        .name(thread_name)
+        .spawn(move || run_output_coalescer(rx, on_event, wrap_data))
+        .map_err(|error| LocalWslPtyError::Open(error.to_string()))?;
+    Ok(tx)
+}
+
+/// 合并主循环：阻塞等待首条消息（空闲时不轮询），随后在一个时间窗内尽量聚合相邻数据块；
+/// 遇到非数据事件先冲洗已聚合数据再原样发射，严格保持事件顺序。
+fn run_output_coalescer<F, W>(rx: mpsc::Receiver<CoalescerMessage>, mut on_event: F, wrap_data: W)
+where
+    F: FnMut(LocalWslTerminalServerPayload),
+    W: Fn(String) -> LocalWslTerminalServerPayload,
+{
+    'outer: loop {
+        let mut pending = match rx.recv() {
+            Ok(CoalescerMessage::Data(text)) => text,
+            Ok(CoalescerMessage::Passthrough(payload)) => {
+                on_event(payload);
+                continue 'outer;
+            }
+            // 发送端（读线程）已结束，正常退出。
+            Err(_) => return,
+        };
+
+        let deadline = Instant::now() + TERMINAL_OUTPUT_COALESCE_WINDOW;
+        loop {
+            if pending.len() >= TERMINAL_OUTPUT_COALESCE_MAX_BYTES {
+                break;
+            }
+            let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+                break;
+            };
+            match rx.recv_timeout(remaining) {
+                Ok(CoalescerMessage::Data(text)) => pending.push_str(&text),
+                Ok(CoalescerMessage::Passthrough(payload)) => {
+                    if !pending.is_empty() {
+                        on_event(wrap_data(std::mem::take(&mut pending)));
+                    }
+                    on_event(payload);
+                    continue 'outer;
+                }
+                Err(RecvTimeoutError::Timeout) => break,
+                Err(RecvTimeoutError::Disconnected) => {
+                    if !pending.is_empty() {
+                        on_event(wrap_data(pending));
+                    }
+                    return;
+                }
+            }
+        }
+
+        if !pending.is_empty() {
+            on_event(wrap_data(pending));
+        }
+    }
+}
+
 /// 打开一个本地 PTY 交互式 WSL2 终端。
 ///
-/// on_event 在独立读线程中被调用，事件序列与 WSL Link 路径一致：
+/// on_event 在独立合并线程中被调用，事件序列与 WSL Link 路径一致：
 /// InteractiveOpened → 若干 InteractiveData → InteractiveClosed。
 pub fn open_interactive_terminal_local<F>(
     request: LocalWslTerminalOpenInteractiveRequest,
@@ -225,7 +314,7 @@ where
 
 /// 在本地 PTY 中运行一个脚本。
 ///
-/// on_event 在独立读线程中被调用，事件序列与 WSL Link 路径一致：
+/// on_event 在独立合并线程中被调用，事件序列与 WSL Link 路径一致：
 /// RunStarted → 若干 RunChunk → RunCompleted。
 pub fn run_terminal_script_local<F>(
     request: LocalWslTerminalRunScriptRequest,
@@ -329,21 +418,35 @@ fn spawn_interactive_reader<F>(
     pid: u32,
     mut reader: Box<dyn Read + Send>,
     mut child: Box<dyn Child + Send + Sync>,
-    mut on_event: F,
+    on_event: F,
 ) -> Result<(), LocalWslPtyError>
 where
     F: FnMut(LocalWslTerminalServerPayload) + Send + 'static,
 {
+    let wrap_session_id = session_id.clone();
+    let tx = spawn_output_coalescer(
+        format!("wsl-pty-coalesce-{session_id}"),
+        on_event,
+        move |data| {
+            LocalWslTerminalServerPayload::InteractiveData(LocalWslTerminalInteractiveData {
+                session_id: wrap_session_id.clone(),
+                data,
+            })
+        },
+    )?;
+
     std::thread::Builder::new()
         .name(format!("wsl-pty-{session_id}"))
         .spawn(move || {
-            on_event(LocalWslTerminalServerPayload::InteractiveOpened(
-                LocalWslTerminalInteractiveOpened {
-                    session_id: session_id.clone(),
-                    cwd: working_directory,
-                    pid,
-                    opened_at_unix_ms: now_unix_ms(),
-                },
+            let _ = tx.send(CoalescerMessage::Passthrough(
+                LocalWslTerminalServerPayload::InteractiveOpened(
+                    LocalWslTerminalInteractiveOpened {
+                        session_id: session_id.clone(),
+                        cwd: working_directory,
+                        pid,
+                        opened_at_unix_ms: now_unix_ms(),
+                    },
+                ),
             ));
 
             let mut decoder = LocalWslUtf8ChunkDecoder::default();
@@ -354,13 +457,11 @@ where
                     Ok(read) => {
                         let mut decoded = String::new();
                         decoder.decode_into(&buffer[..read], &mut decoded, false);
-                        if !decoded.is_empty() {
-                            on_event(LocalWslTerminalServerPayload::InteractiveData(
-                                LocalWslTerminalInteractiveData {
-                                    session_id: session_id.clone(),
-                                    data: decoded,
-                                },
-                            ));
+                        if !decoded.is_empty()
+                            && tx.send(CoalescerMessage::Data(decoded)).is_err()
+                        {
+                            // 合并线程已退出，无人消费，提前结束读循环。
+                            break;
                         }
                     }
                     Err(error) => {
@@ -375,22 +476,20 @@ where
             let mut tail = String::new();
             decoder.decode_into(&[], &mut tail, true);
             if !tail.is_empty() {
-                on_event(LocalWslTerminalServerPayload::InteractiveData(
-                    LocalWslTerminalInteractiveData {
-                        session_id: session_id.clone(),
-                        data: tail,
-                    },
-                ));
+                let _ = tx.send(CoalescerMessage::Data(tail));
             }
 
             let exit_code = child.wait().ok().map(|status| status.exit_code() as i32);
-            on_event(LocalWslTerminalServerPayload::InteractiveClosed(
-                LocalWslTerminalInteractiveClosed {
-                    session_id,
-                    exit_code,
-                    finished_at_unix_ms: now_unix_ms(),
-                },
+            let _ = tx.send(CoalescerMessage::Passthrough(
+                LocalWslTerminalServerPayload::InteractiveClosed(
+                    LocalWslTerminalInteractiveClosed {
+                        session_id,
+                        exit_code,
+                        finished_at_unix_ms: now_unix_ms(),
+                    },
+                ),
             ));
+            // tx 在此随线程结束被 drop，合并线程收到 Disconnected 后冲洗剩余数据并退出。
         })
         .map(|_| ())
         .map_err(|error| LocalWslPtyError::Open(error.to_string()))
@@ -403,22 +502,34 @@ fn spawn_run_reader<F>(
     mut reader: Box<dyn Read + Send>,
     mut child: Box<dyn Child + Send + Sync>,
     master: Box<dyn MasterPty + Send>,
-    mut on_event: F,
+    on_event: F,
 ) -> Result<(), LocalWslPtyError>
 where
     F: FnMut(LocalWslTerminalServerPayload) + Send + 'static,
 {
+    let wrap_run_id = run_id.clone();
+    let tx = spawn_output_coalescer(
+        format!("wsl-run-coalesce-{run_id}"),
+        on_event,
+        move |data| {
+            LocalWslTerminalServerPayload::RunChunk(LocalWslTerminalRunChunk {
+                run_id: wrap_run_id.clone(),
+                data,
+            })
+        },
+    )?;
+
     std::thread::Builder::new()
         .name(format!("wsl-run-{run_id}"))
         .spawn(move || {
             // master 在本线程内保活，确保运行期间 stdin/输出通道有效；运行结束后随线程释放。
             let _master = master;
-            on_event(LocalWslTerminalServerPayload::RunStarted(
-                LocalWslTerminalRunStarted {
+            let _ = tx.send(CoalescerMessage::Passthrough(
+                LocalWslTerminalServerPayload::RunStarted(LocalWslTerminalRunStarted {
                     run_id: run_id.clone(),
                     pid,
                     started_at_unix_ms: now_unix_ms(),
-                },
+                }),
             ));
 
             let mut decoder = LocalWslUtf8ChunkDecoder::default();
@@ -429,13 +540,11 @@ where
                     Ok(read) => {
                         let mut decoded = String::new();
                         decoder.decode_into(&buffer[..read], &mut decoded, false);
-                        if !decoded.is_empty() {
-                            on_event(LocalWslTerminalServerPayload::RunChunk(
-                                LocalWslTerminalRunChunk {
-                                    run_id: run_id.clone(),
-                                    data: decoded,
-                                },
-                            ));
+                        if !decoded.is_empty()
+                            && tx.send(CoalescerMessage::Data(decoded)).is_err()
+                        {
+                            // 合并线程已退出，无人消费，提前结束读循环。
+                            break;
                         }
                     }
                     Err(error) => {
@@ -448,23 +557,19 @@ where
             let mut tail = String::new();
             decoder.decode_into(&[], &mut tail, true);
             if !tail.is_empty() {
-                on_event(LocalWslTerminalServerPayload::RunChunk(
-                    LocalWslTerminalRunChunk {
-                        run_id: run_id.clone(),
-                        data: tail,
-                    },
-                ));
+                let _ = tx.send(CoalescerMessage::Data(tail));
             }
 
             let exit_code = child.wait().ok().map(|status| status.exit_code() as i32);
             cleanup_wsl_paths(&cleanup_paths);
-            on_event(LocalWslTerminalServerPayload::RunCompleted(
-                LocalWslTerminalRunCompleted {
+            let _ = tx.send(CoalescerMessage::Passthrough(
+                LocalWslTerminalServerPayload::RunCompleted(LocalWslTerminalRunCompleted {
                     run_id,
                     exit_code,
                     finished_at_unix_ms: now_unix_ms(),
-                },
+                }),
             ));
+            // tx 在此随线程结束被 drop，合并线程收到 Disconnected 后冲洗剩余数据并退出。
         })
         .map(|_| ())
         .map_err(|error| LocalWslPtyError::Open(error.to_string()))
@@ -549,6 +654,7 @@ fn now_unix_ms() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::mpsc::channel;
 
     #[test]
     fn interactive_cwd_defaults_to_home_when_blank() {
@@ -567,5 +673,83 @@ mod tests {
     #[test]
     fn now_unix_ms_is_positive() {
         assert!(now_unix_ms() > 0);
+    }
+
+    // 合并器：相邻数据块合并为一条；生命周期事件原样透传并保序；其后的数据块独立成条。
+    #[test]
+    fn coalescer_merges_adjacent_data_and_preserves_event_order() {
+        let (tx, rx) = channel::<CoalescerMessage>();
+        tx.send(CoalescerMessage::Data("foo".to_string())).unwrap();
+        tx.send(CoalescerMessage::Data("bar".to_string())).unwrap();
+        tx.send(CoalescerMessage::Passthrough(
+            LocalWslTerminalServerPayload::InteractiveClosed(LocalWslTerminalInteractiveClosed {
+                session_id: "s1".to_string(),
+                exit_code: Some(0),
+                finished_at_unix_ms: 1,
+            }),
+        ))
+        .unwrap();
+        tx.send(CoalescerMessage::Data("baz".to_string())).unwrap();
+        drop(tx);
+
+        let events = Arc::new(Mutex::new(Vec::<LocalWslTerminalServerPayload>::new()));
+        let sink = Arc::clone(&events);
+        run_output_coalescer(
+            rx,
+            move |payload| sink.lock().unwrap().push(payload),
+            |data| {
+                LocalWslTerminalServerPayload::InteractiveData(LocalWslTerminalInteractiveData {
+                    session_id: "s1".to_string(),
+                    data,
+                })
+            },
+        );
+
+        let collected = events.lock().unwrap();
+        assert_eq!(collected.len(), 3);
+        match &collected[0] {
+            LocalWslTerminalServerPayload::InteractiveData(data) => {
+                assert_eq!(data.data, "foobar");
+            }
+            _ => panic!("第一条应为合并后的交互数据"),
+        }
+        assert!(matches!(
+            collected[1],
+            LocalWslTerminalServerPayload::InteractiveClosed(_)
+        ));
+        match &collected[2] {
+            LocalWslTerminalServerPayload::InteractiveData(data) => {
+                assert_eq!(data.data, "baz");
+            }
+            _ => panic!("第三条应为透传事件后的新数据块"),
+        }
+    }
+
+    // 合并器：发送端断开前，缓冲中的剩余数据必须被冲洗出去。
+    #[test]
+    fn coalescer_flushes_pending_data_before_disconnect() {
+        let (tx, rx) = channel::<CoalescerMessage>();
+        tx.send(CoalescerMessage::Data("only".to_string())).unwrap();
+        drop(tx);
+
+        let events = Arc::new(Mutex::new(Vec::<LocalWslTerminalServerPayload>::new()));
+        let sink = Arc::clone(&events);
+        run_output_coalescer(
+            rx,
+            move |payload| sink.lock().unwrap().push(payload),
+            |data| {
+                LocalWslTerminalServerPayload::RunChunk(LocalWslTerminalRunChunk {
+                    run_id: "r1".to_string(),
+                    data,
+                })
+            },
+        );
+
+        let collected = events.lock().unwrap();
+        assert_eq!(collected.len(), 1);
+        match &collected[0] {
+            LocalWslTerminalServerPayload::RunChunk(chunk) => assert_eq!(chunk.data, "only"),
+            _ => panic!("应冲洗出唯一的运行数据块"),
+        }
     }
 }

@@ -20,10 +20,14 @@ import {
 export const EDITOR_FONT_FAMILY =
   "Consolas, 'Cascadia Mono', 'SF Mono', 'JetBrains Mono', Menlo, Monaco, 'Courier New', monospace";
 
-// 超过该长度不做整文档高亮，避免大文件卡顿。
-const MAX_HIGHLIGHT_LENGTH = 300_000;
+// 视口高亮的单次切片字节上限：仅 tokenize 可见区域，极端长行（如压缩成一行的文件）
+// 也不至于让主线程卡顿。注意这是“切片”上限而非“整文档”上限——大文件照常逐屏高亮。
+const MAX_HIGHLIGHT_SLICE_LENGTH = 200_000;
 
-// 输入停顿后过多久触发一次全量重算（毫秒）；过小会让连续输入仍频繁重算，过大高亮滑后明显。
+// 视口外额外预渲染的行数：滚动时减少“滚出 overscan 才补高亮”的闪烁，取值兼顾成本与观感。
+const HIGHLIGHT_OVERSCAN_LINES = 40;
+
+// 输入停顿后过多久触发一次重算（毫秒）；过小会让连续输入仍频繁重算，过大高亮滞后明显。
 const HIGHLIGHT_RECOMPUTE_DEBOUNCE_MS = 90;
 
 const FONT_STYLE_ITALIC = 1;
@@ -34,7 +38,7 @@ const FONT_STYLE_UNDERLINE = 4;
 const setShikiLanguageEffect = StateEffect.define<string>();
 // 语法异步加载完成后借此 effect 触发一次重新高亮。
 const shikiReadyEffect = StateEffect.define<null>();
-// 防抖超时触发的全量重算信号。
+// 防抖超时触发的重算信号。
 const shikiRecomputeEffect = StateEffect.define<null>();
 
 /** 供外部在语言切换时派发，通知高亮插件更新语言。 */
@@ -45,20 +49,27 @@ export type TShikiHighlightUpdateAction = 'recompute' | 'remap' | 'skip';
 
 /**
  * 纯函数：根据一次 ViewUpdate 的特征决定高亮插件应执行的动作。
- * - recompute：语言切换或收到重算请求时，立即全量 tokenize。
+ * - recompute：语言切换、收到重算请求、或仅视口变化（滚动）时，重新 tokenize 当前可见区域。
  * - remap：仅文档变化时，按编辑位移映射现有 decorations，随后防抖重算。
  * - skip：其余情况（如纯选区变化）保持现有 decorations。
+ *
+ * 注意优先级：文档变化优先于视口变化——编辑往往同时触发两者，此时先做廉价的位移映射，
+ * 再由防抖重算按最新视口补齐，避免每次按键都整屏重算。
  */
 export const resolveShikiHighlightUpdateAction = (input: {
   languageChanged: boolean;
   recomputeRequested: boolean;
   docChanged: boolean;
+  viewportChanged?: boolean;
 }): TShikiHighlightUpdateAction => {
   if (input.languageChanged || input.recomputeRequested) {
     return 'recompute';
   }
   if (input.docChanged) {
     return 'remap';
+  }
+  if (input.viewportChanged) {
+    return 'recompute';
   }
   return 'skip';
 };
@@ -98,25 +109,45 @@ const tokenInlineStyle = (token: IShikiThemedToken): string => {
   return declarations.join(';');
 };
 
+// 仅 tokenize 当前可见行（带 overscan）。单次成本与可见行数成正比，而非文档总长，
+// 从而避免大文件编辑/滚动时主线程出现长任务。代价：切片起点处语法状态被重置，
+// 跨切片边界的多行结构（如未闭合块注释）配色可能不完美——对脚本/配置类编辑可接受。
 const buildShikiDecorations = (view: EditorView, language: string): DecorationSet => {
   const { doc } = view.state;
-  if (doc.length === 0 || doc.length > MAX_HIGHLIGHT_LENGTH) {
+  if (doc.length === 0) {
     return Decoration.none;
   }
 
-  const lines = tokenizeWithShikiSync(doc.toString(), language);
+  const { visibleRanges } = view;
+  if (visibleRanges.length === 0) {
+    return Decoration.none;
+  }
+
+  const firstVisibleLine = doc.lineAt(visibleRanges[0].from).number;
+  const lastVisibleLine = doc.lineAt(visibleRanges[visibleRanges.length - 1].to).number;
+  const startLine = Math.max(1, firstVisibleLine - HIGHLIGHT_OVERSCAN_LINES);
+  const endLine = Math.min(doc.lines, lastVisibleLine + HIGHLIGHT_OVERSCAN_LINES);
+
+  const sliceFrom = doc.line(startLine).from;
+  const sliceTo = doc.line(endLine).to;
+  if (sliceTo - sliceFrom > MAX_HIGHLIGHT_SLICE_LENGTH) {
+    return Decoration.none;
+  }
+
+  const code = doc.sliceString(sliceFrom, sliceTo);
+  const lines = tokenizeWithShikiSync(code, language);
   if (!lines) {
     return Decoration.none;
   }
 
   const builder = new RangeSetBuilder<Decoration>();
-  const lineCount = Math.min(lines.length, doc.lines);
+  const lineCount = Math.min(lines.length, endLine - startLine + 1);
   for (let index = 0; index < lineCount; index += 1) {
     const lineTokens = lines[index];
     if (!lineTokens || lineTokens.length === 0) {
       continue;
     }
-    const docLine = doc.line(index + 1);
+    const docLine = doc.line(startLine + index);
     let position = docLine.from;
     for (const token of lineTokens) {
       const length = token.content.length;
@@ -160,6 +191,7 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
         languageChanged,
         recomputeRequested,
         docChanged: update.docChanged,
+        viewportChanged: update.viewportChanged,
       });
 
       if (action === 'recompute') {
@@ -169,7 +201,8 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
       }
 
       if (action === 'remap') {
-        // 仅按编辑位移映射已有高亮，避免每次按键对整篇文档重新 tokenize。
+        // 仅按编辑位移映射已有高亮，避免每次按键对可见区域重新 tokenize；
+        // 随后防抖重算按最新视口补齐新进入屏幕的行。
         this.decorations = this.decorations.map(update.changes);
         this.scheduleRecompute(update.view);
       }
@@ -195,7 +228,7 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
           return;
         }
         try {
-          // 派发重算 effect，让插件在下一次 update 中做一次全量 tokenize。
+          // 派发重算 effect，让插件在下一次 update 中对当前视口做一次 tokenize。
           view.dispatch({ effects: shikiRecomputeEffect.of(null) });
         } catch {
           // view 已销毁，忽略。

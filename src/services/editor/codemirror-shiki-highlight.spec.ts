@@ -13,7 +13,7 @@ vi.mock('@/services/editor/shiki-highlighter', () => ({
 import { resolveShikiHighlightUpdateAction } from './codemirror-shiki-highlight';
 
 describe('resolveShikiHighlightUpdateAction', () => {
-  it('语言切换时立即全量重算', () => {
+  it('语言切换时立即重算', () => {
     expect(
       resolveShikiHighlightUpdateAction({
         languageChanged: true,
@@ -23,7 +23,7 @@ describe('resolveShikiHighlightUpdateAction', () => {
     ).toBe('recompute');
   });
 
-  it('收到重算请求（语法加载完成/防抖超时）时全量重算', () => {
+  it('收到重算请求（语法加载完成/防抖超时）时重算', () => {
     expect(
       resolveShikiHighlightUpdateAction({
         languageChanged: false,
@@ -33,12 +33,34 @@ describe('resolveShikiHighlightUpdateAction', () => {
     ).toBe('recompute');
   });
 
-  it('仅文档变化时只做位移映射，不全量 tokenize', () => {
+  it('仅文档变化时只做位移映射，不重新 tokenize', () => {
     expect(
       resolveShikiHighlightUpdateAction({
         languageChanged: false,
         recomputeRequested: false,
         docChanged: true,
+      }),
+    ).toBe('remap');
+  });
+
+  it('仅视口变化（滚动）时重新 tokenize 可见区域', () => {
+    expect(
+      resolveShikiHighlightUpdateAction({
+        languageChanged: false,
+        recomputeRequested: false,
+        docChanged: false,
+        viewportChanged: true,
+      }),
+    ).toBe('recompute');
+  });
+
+  it('文档变化优先于视口变化，走位移映射', () => {
+    expect(
+      resolveShikiHighlightUpdateAction({
+        languageChanged: false,
+        recomputeRequested: false,
+        docChanged: true,
+        viewportChanged: true,
       }),
     ).toBe('remap');
   });
