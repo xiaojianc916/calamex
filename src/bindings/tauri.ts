@@ -48,15 +48,30 @@ export const commands = {
 	cancelTerminalRun: (payload: CancelTerminalRunRequest) => __TAURI_INVOKE<null>("cancel_terminal_run", { payload }),
 	listGitBranches: (payload: GitRepositoryRootRequest) => __TAURI_INVOKE<GitBranchListPayload>("list_git_branches", { payload }),
 	checkoutGitBranch: (payload: GitBranchCheckoutRequest) => __TAURI_INVOKE<GitRepositoryStatusPayload>("checkout_git_branch", { payload }),
+	/**
+	 *  以分离 HEAD 方式检出指定提交（等价 `git checkout <commit>`）。
+	 *  复用分支切换的工作区 / 索引 / HEAD 同步实现；要求工作区干净。
+	 */
+	checkoutGitCommit: (payload: GitCommitCheckoutRequest) => __TAURI_INVOKE<GitRepositoryStatusPayload>("checkout_git_commit", { payload }),
 	createGitBranch: (payload: GitBranchCreateRequest) => __TAURI_INVOKE<GitRepositoryStatusPayload>("create_git_branch", { payload }),
 	getGitDiffPreview: (payload: GitDiffPreviewRequest) => __TAURI_INVOKE<GitDiffPreviewPayload>("get_git_diff_preview", { payload }),
 	listGitCommitHistory: (payload: GitCommitHistoryRequest) => __TAURI_INVOKE<GitCommitHistoryPayload>("list_git_commit_history", { payload }),
+	/**
+	 *  读取单个提交的详细信息（用于历史悬浮卡片）：提交元数据 + 相对首个父提交的
+	 *  文件/行变更聚合（文件数、插入、删除）。根提交对空树取差异。
+	 */
+	getGitCommitDetail: (payload: GitCommitDetailRequest) => __TAURI_INVOKE<GitCommitDetailPayload>("get_git_commit_detail", { payload }),
 	getGitPullRequestSupport: (payload: GitRepositoryRootRequest) => __TAURI_INVOKE<GitPullRequestSupportPayload>("get_git_pull_request_support", { payload }),
 	listGitPullRequests: (payload: GitPullRequestListRequest) => __TAURI_INVOKE<GitPullRequestSummaryPayload[]>("list_git_pull_requests", { payload }),
 	getGitPullRequestDetail: (payload: GitPullRequestDetailRequest) => __TAURI_INVOKE<GitPullRequestDetailPayload>("get_git_pull_request_detail", { payload }),
 	createGitPullRequest: (payload: GitPullRequestCreateRequest) => __TAURI_INVOKE<GitPullRequestSummaryPayload>("create_git_pull_request", { payload }),
 	mergeGitPullRequest: (payload: GitPullRequestMergeRequest) => __TAURI_INVOKE<GitPullRequestSummaryPayload>("merge_git_pull_request", { payload }),
 	closeGitPullRequest: (payload: GitPullRequestCloseRequest) => __TAURI_INVOKE<GitPullRequestSummaryPayload>("close_git_pull_request", { payload }),
+	/**
+	 *  回滚指定提交：把该提交的改动反向应用到工作区与索引（等价 `git revert --no-commit`）。
+	 *  要求工作区干净；结果以「已暂存」状态呈现，用户检查后可直接提交。
+	 */
+	revertGitCommit: (payload: GitCommitRevertRequest) => __TAURI_INVOKE<GitRepositoryStatusPayload>("revert_git_commit", { payload }),
 	listGitStashes: (payload: GitRepositoryRootRequest) => __TAURI_INVOKE<GitStashListPayload>("list_git_stashes", { payload }),
 	saveGitStash: (payload: GitStashSaveRequest) => __TAURI_INVOKE<GitRepositoryStatusPayload>("save_git_stash", { payload }),
 	applyGitStash: (payload: GitStashApplyRequest) => __TAURI_INVOKE<GitRepositoryStatusPayload>("apply_git_stash", { payload }),
@@ -671,7 +686,7 @@ export type AiProviderConnectionPayload = {
 };
 
 /**
- *  用于"测试连接 / 开始连接"的草稿配置。
+ *  用于“测试连接 / 开始连接”的草稿配置。
  * 
  *  `api_key` 允许为空：为空时后端只会尝试读取当前 Provider 已保存的凭证；
  *  若也不存在已保存凭证，连接测试必须失败，不能伪造成功。
@@ -899,6 +914,41 @@ export type GitBranchPayload = {
 	lastCommit: GitCommitSummaryPayload | null,
 };
 
+export type GitCommitCheckoutRequest = {
+	repositoryRootPath: string,
+	commitId: string,
+};
+
+export type GitCommitDetailPayload = {
+	id: string,
+	shortId: string,
+	summary: string,
+	body: string,
+	authorName: string,
+	authorEmail: string,
+	authoredAt: string,
+	parentIds: string[],
+	refs: GitCommitRefPayload[],
+	fileCount: number,
+	additions: number,
+	deletions: number,
+	files: GitCommitFileChangePayload[],
+};
+
+export type GitCommitDetailRequest = {
+	repositoryRootPath: string,
+	commitId: string,
+};
+
+export type GitCommitFileChangePayload = {
+	relativePath: string,
+	fileName: string,
+	previousRelativePath: string | null,
+	status: string,
+	additions: number,
+	deletions: number,
+};
+
 export type GitCommitHistoryPayload = {
 	entries: GitCommitSummaryPayload[],
 	hasMore: boolean,
@@ -926,6 +976,11 @@ export type GitCommitRequest = {
 export type GitCommitResultPayload = {
 	status: GitRepositoryStatusPayload,
 	commitId: string | null,
+};
+
+export type GitCommitRevertRequest = {
+	repositoryRootPath: string,
+	commitId: string,
 };
 
 export type GitCommitSummaryPayload = {
@@ -1009,8 +1064,8 @@ export type GitPullRequestDetailPayload = {
 	htmlUrl: string,
 	createdAt: string,
 	updatedAt: string,
-	comments: number | null,
 	body: string,
+	comments: number | null,
 	additions: number | null,
 	deletions: number | null,
 	changedFiles: number | null,
@@ -1587,3 +1642,4 @@ function makeEvent<T>(name: string, serialize?: (payload: T) => unknown, deseria
 
     return Object.assign(fn, base);
 }
+
