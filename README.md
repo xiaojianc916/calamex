@@ -39,7 +39,7 @@
 | 🔭 **全文 / 结构搜索** | Rust 侧基于 ripgrep 系组件（`grep-searcher`、`globset`、`ignore`）与 `ast-grep`、`nucleo` 模糊匹配，提供高性能项目内搜索。 |
 | 🌿 **Git 集成** | 基于 `gix`（gitoxide）实现状态、差异、版本信息等仓库操作。 |
 | 🔐 **SSH / SFTP** | 基于 `russh` / `russh-sftp` 的远程连接与文件传输，连接池化管理。 |
-| 🤖 **AI 辅助** | 前端集成 CopilotKit、AG-UI 协议与 `ai` SDK，支持脚本理解、补全与对话式辅助；Rust 侧 `async-openai` 调用模型，本地 `tokenizers` 计量上下文。 |
+| 🤖 **AI 辅助** | 前端集成 CopilotKit、AG-UI 协议与 `ai` SDK，支持脚本理解、补全与对话式辅助；模型调用统一收敛到 Node 边车（OpenAI 兼容接口），Rust 侧仅作为凭证 / 策略 / 审计网关并桥接边车，不直连模型。 |
 | 🧩 **AI Agent 边车** | 独立的 Node 边车 `agent-sidecar/`，基于 **Mastra** 编排智能体与工具（顺序思考、Context7、Tavily 网络搜索、TypeScript 语言服务等），经 MCP 接入。状态推进中，详见 `agent-sidecar/MATURITY.md`。 |
 | 📁 **工作区** | 安全的文件系统命令与实时文件监听（`notify`），所有 I/O 经 Rust 命令出口。 |
 
@@ -135,7 +135,7 @@
 │   ├── src/
 │   │   ├── commands/         # 按域拆分的 Tauri 命令
 │   │   ├── terminal/         # PTY / 终端后端
-│   │   ├── ai/               # AI 集成（async-openai 等）
+│   │   ├── ai/               # AI 网关（凭证 / 策略 / 审计 + 边车桥接，不直连模型）
 │   │   ├── agent_sidecar/    # AI 边车的宿主侧桥接
 │   │   ├── assets/           # 后端内置资源
 │   │   ├── bin/              # 辅助二进制（如导出 IPC 绑定）
