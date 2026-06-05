@@ -226,7 +226,32 @@ onBeforeUnmount(() => {
   border-radius: var(--search-radius);
   background: var(--search-bg-panel);
   box-shadow: 0 8px 24px rgb(0 0 0 / 18%);
+  /* 强制浅色配色方案，避免 WebView2/Chromium 跟随系统暗色主题渲染出深色原生滚动条。 */
+  color-scheme: light;
+  /* Firefox：细滚动条 + 浅灰滑块 / 透明轨道。 */
   scrollbar-width: thin;
+  scrollbar-color: rgb(15 23 42 / 22%) transparent;
+}
+
+/* WebKit / Chromium（含 Windows WebView2）：自定义浅色滚动条，与面板背景融合。 */
+.search-path-filter-menu::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.search-path-filter-menu::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.search-path-filter-menu::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 8px;
+  background-color: rgb(15 23 42 / 22%);
+  background-clip: padding-box;
+}
+
+.search-path-filter-menu::-webkit-scrollbar-thumb:hover {
+  background-color: rgb(15 23 42 / 36%);
 }
 
 .search-path-filter-option {
