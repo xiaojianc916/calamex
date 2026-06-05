@@ -164,13 +164,11 @@ const isExecutableTool = (tool: unknown): tool is IMcpGatewayExecutableTool => {
 
 // MCP 原生工具通常直接接收 raw args；
 // 少数 Mastra 风格工具的 execute 实现会从 args.context 取输入。
-// 双路兼容：优先传 raw args，只有明确缺少 context/runtimeContext 时才回退包装参数。
-const isContextSignatureError = (error: unknown): boolean => {
-  if (!(error instanceof Error)) {
-    return false;
-  }
-  return /\b(?:context|runtimeContext|undefined is not an object|cannot read propert)/iu.test(error.message);
-};
+// 当用 raw args 调用这类工具时，它会在读取 `context.*`（此时 context 为
+// undefined）时抛出 TypeError。据此按错误的「类型」判定是否回退，而不是匹配
+// error.message 文本——错误文案随框架 / Node / 语言版本变化，既可能漏判也可能误判。
+const isContextArgShapeError = (error: unknown): boolean =>
+  error instanceof TypeError;
 
 export const executeMcpGatewayToolWithTimeout = async (
   tool: unknown,
@@ -184,10 +182,18 @@ export const executeMcpGatewayToolWithTimeout = async (
     try {
       return await tool.execute(args);
     } catch (error) {
-      if (isContextSignatureError(error)) {
-        return await tool.execute({ context: args, runtimeContext: undefined });
+      // 仅当 raw 调用因参数形态不匹配（TypeError）失败时，才回退为
+      // { context, runtimeContext } 包装重试一次。
+      if (!isContextArgShapeError(error)) {
+        throw error;
       }
-      throw error;
+      try {
+        return await tool.execute({ context: args, runtimeContext: undefined });
+      } catch {
+        // 回退仍失败：抛出原始错误。raw args 是 MCP 工具的主路径，其错误
+        // 对诊断更有价值，避免被二次调用（包装路径）的报错掩盖。
+        throw error;
+      }
     }
   };
   return await withTimeout(
