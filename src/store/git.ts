@@ -4,6 +4,7 @@ import { computed, ref } from 'vue';
 import { tauriService } from '@/services/tauri';
 import type {
   IGitBranchPayload,
+  IGitCommitDetailPayload,
   IGitCommitResultPayload,
   IGitCommitSummaryPayload,
   IGitFileBaselinePayload,
@@ -110,6 +111,10 @@ export const useGitStore = defineStore('git', () => {
   const pullRequestSupport = ref<IGitPullRequestSupportPayload>(createEmptyPullRequestSupport());
   const isPullRequestSupportLoading = ref(false);
 
+  // 提交详情按 commit id 缓存。每个 commit 的详情不可变，可长期缓存；
+  // 仓库根变更 / reset 时随 baseline 缓存一起清空。
+  const commitDetailCache = ref<Record<string, IGitCommitDetailPayload>>({});
+
   // -- request-id staleness tokens -----------------------------------------
   // 模块私有计数器,不是 reactive 状态。每个资源的并发 fetch 用 ++ 拿到自己的
   // token,resolve 时与当前 token 比对——不等则视为 stale,既不写结果也不
@@ -122,6 +127,9 @@ export const useGitStore = defineStore('git', () => {
 
   // de-duplicates concurrent in-flight baseline fetches keyed by normalized path.
   const pendingBaselineRequests = new Map<string, Promise<IGitFileBaselinePayload>>();
+
+  // de-duplicates concurrent in-flight commit-detail fetches keyed by commit id.
+  const pendingCommitDetailRequests = new Map<string, Promise<IGitCommitDetailPayload>>();
 
   // -- getters ---------------------------------------------------------------
 
@@ -144,6 +152,7 @@ export const useGitStore = defineStore('git', () => {
   const clearBaselineCache = (): void => {
     baselineCache.value = {};
     baselineEpoch.value += 1;
+    commitDetailCache.value = {};
   };
 
   const resetCommitHistory = (): void => {
@@ -222,6 +231,41 @@ export const useGitStore = defineStore('git', () => {
       });
 
     pendingBaselineRequests.set(cacheKey, request);
+    return request;
+  };
+
+  /**
+   * 读取单个提交的详情（文件变更 + 增删统计），用于历史悬浮卡片。
+   * 按 commit id 缓存；并发同一 commit 的请求会复用同一个 in-flight promise。
+   */
+  const loadCommitDetail = async (commitId: string): Promise<IGitCommitDetailPayload> => {
+    const cached = commitDetailCache.value[commitId];
+    if (cached) {
+      return cached;
+    }
+
+    const pending = pendingCommitDetailRequests.get(commitId);
+    if (pending) {
+      return pending;
+    }
+
+    const request = tauriService
+      .getGitCommitDetail({
+        repositoryRootPath: requireRepositoryRootPath(),
+        commitId,
+      })
+      .then((payload) => {
+        commitDetailCache.value = {
+          ...commitDetailCache.value,
+          [commitId]: payload,
+        };
+        return payload;
+      })
+      .finally(() => {
+        pendingCommitDetailRequests.delete(commitId);
+      });
+
+    pendingCommitDetailRequests.set(commitId, request);
     return request;
   };
 
@@ -567,6 +611,7 @@ export const useGitStore = defineStore('git', () => {
     isStashesLoading,
     pullRequestSupport,
     isPullRequestSupportLoading,
+    commitDetailCache,
     // getters
     hasRepository,
     totalChangeCount,
@@ -585,6 +630,7 @@ export const useGitStore = defineStore('git', () => {
     commitIndex,
     // supplementary loaders
     loadCommitHistory,
+    loadCommitDetail,
     loadBranches,
     loadStashes,
     loadPullRequestSupport,

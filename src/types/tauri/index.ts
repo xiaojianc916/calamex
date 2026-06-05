@@ -82,6 +82,8 @@ import type {
   IGitBranchCheckoutRequest,
   IGitBranchCreateRequest,
   IGitBranchListPayload,
+  IGitCommitDetailPayload,
+  IGitCommitDetailRequest,
   IGitCommitHistoryPayload,
   IGitCommitHistoryRequest,
   IGitCommitRequest,
@@ -309,6 +311,7 @@ export interface ITauriService {
   getGitRepositoryStatus(workspaceRootPath?: string | null): Promise<IGitRepositoryStatusPayload>;
   initGitRepository(workspaceRootPath?: string | null): Promise<IGitRepositoryStatusPayload>;
   listGitCommitHistory(payload: IGitCommitHistoryRequest): Promise<IGitCommitHistoryPayload>;
+  getGitCommitDetail(payload: IGitCommitDetailRequest): Promise<IGitCommitDetailPayload>;
   listGitBranches(payload: IGitRepositoryRootRequest): Promise<IGitBranchListPayload>;
   checkoutGitBranch(payload: IGitBranchCheckoutRequest): Promise<IGitRepositoryStatusPayload>;
   createGitBranch(payload: IGitBranchCreateRequest): Promise<IGitRepositoryStatusPayload>;
