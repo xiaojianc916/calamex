@@ -45,6 +45,7 @@ pub fn builder() -> Builder<tauri::Wry> {
             git::branches::create_git_branch,
             git::diff::get_git_diff_preview,
             git::history::list_git_commit_history,
+            git::history::get_git_commit_detail,
             git::pull_request::get_git_pull_request_support,
             git::stash::list_git_stashes,
             git::stash::save_git_stash,

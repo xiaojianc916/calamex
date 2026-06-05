@@ -68,6 +68,43 @@ pub struct GitCommitHistoryPayload {
     next_offset: Option<usize>,
 }
 
+#[derive(Debug, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct GitCommitDetailRequest {
+    repository_root_path: String,
+    commit_id: String,
+}
+
+#[derive(Debug, Serialize, Clone, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct GitCommitFileChangePayload {
+    relative_path: String,
+    file_name: String,
+    previous_relative_path: Option<String>,
+    status: String,
+    additions: u32,
+    deletions: u32,
+}
+
+#[derive(Debug, Serialize, Clone, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct GitCommitDetailPayload {
+    id: String,
+    short_id: String,
+    summary: String,
+    body: String,
+    author_name: String,
+    author_email: String,
+    authored_at: String,
+    parent_ids: Vec<String>,
+    refs: Vec<GitCommitRefPayload>,
+    #[specta(type = u32)]
+    file_count: usize,
+    additions: u32,
+    deletions: u32,
+    files: Vec<GitCommitFileChangePayload>,
+}
+
 #[derive(Debug, Serialize, Clone, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct GitBranchPayload {
