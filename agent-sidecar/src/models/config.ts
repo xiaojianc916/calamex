@@ -18,7 +18,7 @@ const BASE_URL_ENV = 'AGENT_SIDECAR_BASE_URL';
 const OBSERVER_MODEL_ID_ENV = 'AGENT_SIDECAR_OBSERVER_MODEL';
 const REFLECTOR_MODEL_ID_ENV = 'AGENT_SIDECAR_REFLECTOR_MODEL';
 
-const DEFAULT_MODEL_ID = 'deepseek/deepseek-v4-flash';
+const DEFAULT_MODEL_ID = 'deepseek/deepseek-v4-pro';
 
 const SMALL_MODEL_BY_PROVIDER: Readonly<Record<string, string>> = {
   openai: 'openai/gpt-5.4-mini',

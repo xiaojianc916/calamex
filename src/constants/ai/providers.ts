@@ -8,7 +8,7 @@ import type { TAiProviderType } from '@/types/ai';
 export const DEFAULT_PROVIDER_TYPE: TAiProviderType = 'mastra';
 
 /** Mastra 默认主模型 id。 */
-export const DEFAULT_MASTRA_MODEL_ID = 'openai/gpt-5.5';
+export const DEFAULT_MASTRA_MODEL_ID = 'deepseek/deepseek-v4-pro';
 
 /**
  * Mastra 默认 baseUrl。空字符串 `''` 是"未配置"的哨兵值,下游用 `||` 链式
