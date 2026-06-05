@@ -1151,22 +1151,6 @@ const saveSettings = async (
   }
 };
 
-const saveCredentials = async (
-  apiKey: string,
-  providerId: string,
-  alias: string,
-  feedback: IAiProviderSettingsActionFeedback,
-): Promise<void> => {
-  try {
-    await assistant.saveCredentials(apiKey, providerId, alias);
-    settingsApiKey.value = '';
-    settingsDraft.value = cloneAiConfigPayload(assistant.config.value);
-    feedback.onSuccess('API Key 已保存到系统凭证');
-  } catch (error) {
-    feedback.onError(toErrorMessage(error, 'API Key 保存失败'));
-  }
-};
-
 const testProvider = async (
   config: IAiConfigPayload,
   apiKey: string,
@@ -1381,7 +1365,7 @@ onBeforeUnmount(() => {
       <AiProviderSettings v-model:draft="settingsDraft" v-model:api-key="settingsApiKey"
         v-model:tavily-api-key="settingsTavilyApiKey" :open="assistant.isSettingsOpen.value"
         :config="assistant.config.value" @close="assistant.isSettingsOpen.value = false" @save="saveSettings"
-        @save-credentials="saveCredentials" @test-provider="testProvider" @save-tavily-key="saveTavilyKey" />
+        @test-provider="testProvider" @save-tavily-key="saveTavilyKey" />
 
       <Teleport to="body">
         <div v-if="assistant.isClearDialogOpen.value" class="ai-dialog-backdrop" @click.self="cancelClearConversation">

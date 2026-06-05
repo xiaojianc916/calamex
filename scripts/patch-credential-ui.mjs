@@ -16,8 +16,18 @@ function applyEdit(src, { find, replace, skipIf, label }) {
   return src.replace(find, replace);
 }
 
+/** 读文件并归一化为 \n，同时记录原始 EOL，便于写回时还原。 */
+function readNormalized(path) {
+  const raw = readFileSync(path, 'utf8');
+  const eol = raw.includes('\r\n') ? '\r\n' : '\n';
+  return { src: raw.replace(/\r\n/g, '\n'), eol };
+}
+function writeWithEol(path, src, eol) {
+  writeFileSync(path, eol === '\r\n' ? src.replace(/\n/g, '\r\n') : src, 'utf8');
+}
+
 /* ───────────── AiProviderSettings.vue ───────────── */
-let provider = readFileSync(PROVIDER, 'utf8');
+let { src: provider, eol: providerEol } = readNormalized(PROVIDER);
 
 // #1 行内操作按钮：补上 opacity:0 基线（仅 hover 设备隐藏，触摸设备保持常显）
 provider = applyEdit(provider, {
@@ -90,10 +100,10 @@ provider = applyEdit(provider, {
   replace: '',
 });
 
-writeFileSync(PROVIDER, provider, 'utf8');
+writeWithEol(PROVIDER, provider, providerEol);
 
 /* ───────────── AiAssistantPanel.vue（清理父层悬空接线）───────────── */
-let panel = readFileSync(PANEL, 'utf8');
+let { src: panel, eol: panelEol } = readNormalized(PANEL);
 
 // #13b 移除模板里指向死事件的监听（否则子组件去掉 emit 后 Vue 会告警 extraneous listener）
 panel = applyEdit(panel, {
@@ -125,6 +135,6 @@ panel = applyEdit(panel, {
   replace: '',
 });
 
-writeFileSync(PANEL, panel, 'utf8');
+writeWithEol(PANEL, panel, panelEol);
 
 console.log('\n🎉 全部完成。请运行 typecheck / lint 并自测。');

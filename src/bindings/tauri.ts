@@ -1252,4 +1252,270 @@ export type SshFileWriteRequest = {
 	lineEnding: string,
 };
 
-export type SshHostKeyTrustPayload =
+export type SshHostKeyTrustPayload = {
+	trusted: boolean,
+};
+
+export type SshPasswordGetRequest = {
+	host: string,
+	port: number,
+	username: string,
+};
+
+export type SshPasswordPayload = {
+	password: string,
+};
+
+export type SshPasswordSaveRequest = {
+	host: string,
+	port: number,
+	username: string,
+	password: SecretString,
+};
+
+export type SshPasswordStatusPayload = {
+	hasPassword: boolean,
+};
+
+export type SshPathDeletePayload = {
+	remotePath: string,
+};
+
+export type SshPathDeleteRequest = {
+	host: string,
+	port: number,
+	username: string,
+	authMode: string,
+	identityPath: string | null,
+	password: SecretString | null,
+	remotePath: string,
+};
+
+export type SshPathRenamePayload = {
+	oldPath: string,
+	newPath: string,
+};
+
+export type SshPathRenameRequest = {
+	host: string,
+	port: number,
+	username: string,
+	authMode: string,
+	identityPath: string | null,
+	password: SecretString | null,
+	remotePath: string,
+	newName: string,
+};
+
+export type TerminalInputRequest = {
+	sessionId: string,
+	data: string,
+};
+
+export type TerminalResizeRequest = {
+	sessionId: string,
+	cols: number,
+	rows: number,
+};
+
+export type TerminalSessionPayload = {
+	sessionId: string,
+	cwd: string,
+	shellLabel: string,
+	created: boolean,
+	initialOutput: string | null,
+};
+
+export type WindowStage = "main";
+
+export type WorkspaceDirectoryPayload = {
+	rootPath: string,
+	rootName: string,
+	entries: WorkspaceEntry[],
+};
+
+export type WorkspaceEntry = {
+	path: string,
+	name: string,
+	/**  已知值："file" | "directory" | "symlink" | …。 */
+	kind: WorkspacePathKind,
+	hasChildren: boolean,
+};
+
+/**
+ *  工作区文件系统事件
+ * 
+ *  derive `tauri_specta::Event` 让此类型同时：
+ *  - 出现在生成的 TS 绑定 `events.workspaceFsEvent.listen(...)` 中
+ *  - 提供类型化的 `.emit(app)` 方法（事件名自动为 `workspace-fs-event`）
+ */
+export type WorkspaceFsEvent = {
+	/**
+	 *  本批次的变更列表
+	 * 
+	 *  已按路径去重，同一路径保留 severity 最高的 kind
+	 *  (Removed > Renamed > Created > Modified)
+	 */
+	changes: FsChange[],
+	/**  监听根目录的绝对路径 */
+	rootPath: string,
+};
+
+export type WorkspacePathCreatePayload = {
+	path: string,
+	name: string,
+	kind: WorkspacePathKind,
+};
+
+export type WorkspacePathCreateRequest = {
+	parentPath: string,
+	rootPath: string,
+	name: string,
+	/**  已知值："file" | "directory"。 */
+	kind: WorkspacePathKind,
+};
+
+export type WorkspacePathDeletePayload = {
+	path: string,
+};
+
+export type WorkspacePathDeleteRequest = {
+	path: string,
+	rootPath: string,
+};
+
+export type WorkspacePathKind = "directory" | "file";
+
+export type WorkspacePathRenamePayload = {
+	oldPath: string,
+	newPath: string,
+	name: string,
+};
+
+export type WorkspacePathRenameRequest = {
+	path: string,
+	rootPath: string,
+	newName: string,
+};
+
+export type WorkspaceReplacementAppliedFile = {
+	path: string,
+	relativePath: string,
+	replacementCount: number,
+	byteSize: number,
+};
+
+export type WorkspaceReplacementApplyPayload = {
+	rootPath: string,
+	changedFileCount: number,
+	replacementCount: number,
+	files: WorkspaceReplacementAppliedFile[],
+};
+
+export type WorkspaceReplacementApplyRequest = {
+	request: WorkspaceReplacementRequest,
+	expectedFiles: WorkspaceReplacementExpectedFile[],
+};
+
+export type WorkspaceReplacementExpectedFile = {
+	path: string,
+	beforeHash: string,
+	includedMatchIds?: string[],
+};
+
+export type WorkspaceReplacementFilePreview = {
+	path: string,
+	relativePath: string,
+	replacementCount: number,
+	beforeHash: string,
+	afterHash: string,
+	diff: string,
+	diffTruncated: boolean,
+	linePreviews: WorkspaceReplacementLinePreview[],
+};
+
+export type WorkspaceReplacementLinePreview = {
+	id: string,
+	lineNumber: number,
+	beforeLine: string,
+	afterLine: string,
+	replacementCount: number,
+};
+
+export type WorkspaceReplacementPreviewPayload = {
+	rootPath: string,
+	fileCount: number,
+	replacementCount: number,
+	files: WorkspaceReplacementFilePreview[],
+};
+
+export type WorkspaceReplacementRequest = {
+	workspaceRootPath: string,
+	query: string,
+	replacement: string,
+	matchCase: boolean,
+	wholeWord: boolean,
+	useRegex: boolean,
+	useStructural?: boolean,
+	includePatterns?: string[],
+	excludePatterns?: string[],
+	limit: number | null,
+};
+
+export type WorkspaceSearchPayload = {
+	rootPath: string,
+	scannedFileCount: number,
+	results: WorkspaceSearchResult[],
+};
+
+export type WorkspaceSearchRequest = {
+	workspaceRootPath: string,
+	query: string,
+	scope: WorkspaceSearchScope,
+	matchCase: boolean,
+	wholeWord: boolean,
+	useRegex: boolean,
+	useStructural?: boolean,
+	includePatterns?: string[],
+	excludePatterns?: string[],
+	limit: number | null,
+};
+
+export type WorkspaceSearchResult = {
+	path: string,
+	relativePath: string,
+	name: string,
+	kind: WorkspaceSearchResultKind,
+	lineNumber: number | null,
+	lineText: string | null,
+	matchStart: number | null,
+	matchEnd: number | null,
+	score: number,
+};
+
+export type WorkspaceSearchResultKind = "file-name" | "content" | "symbol";
+
+export type WorkspaceSearchScope = "all" | "file-name" | "symbol" | "content";
+
+/* Tauri Specta runtime */
+type EventEmit<T> = [T] extends [null] ? () => Promise<void> : (payload: T) => Promise<void>;
+
+function makeEvent<T>(name: string, serialize?: (payload: T) => unknown, deserialize?: (payload: any) => T) {
+    const mapEvent = (cb: __TAURI_EVENT.EventCallback<T>) => (event: __TAURI_EVENT.Event<any>) => cb({ ...event, payload: deserialize ? deserialize(event.payload) : event.payload });
+    const mapPayload = (payload: T) => serialize ? serialize(payload) : payload;
+
+    const base = {
+        listen: (cb: __TAURI_EVENT.EventCallback<T>) => __TAURI_EVENT.listen(name, mapEvent(cb)),
+        once: (cb: __TAURI_EVENT.EventCallback<T>) => __TAURI_EVENT.once(name, mapEvent(cb)),
+        emit: ((payload: T) => __TAURI_EVENT.emit(name, mapPayload(payload)) as unknown) as EventEmit<T>
+    };
+
+    const fn = (target: import("@tauri-apps/api/webview").Webview | import("@tauri-apps/api/window").Window) => ({
+        listen: (cb: __TAURI_EVENT.EventCallback<T>) => target.listen(name, mapEvent(cb)),
+        once: (cb: __TAURI_EVENT.EventCallback<T>) => target.once(name, mapEvent(cb)),
+        emit: ((payload: T) => target.emit(name, mapPayload(payload)) as unknown) as EventEmit<T>
+    });
+
+    return Object.assign(fn, base);
+}
+

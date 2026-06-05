@@ -33,12 +33,6 @@ const emit = defineEmits<{
     role: TAiModelRole,
     feedback: IAiProviderSettingsActionFeedback,
   ];
-  saveCredentials: [
-    apiKey: string,
-    providerId: TAiServicePlatformId,
-    alias: string,
-    feedback: IAiProviderSettingsActionFeedback,
-  ];
   testProvider: [
     config: IAiConfigPayload,
     apiKey: string,
@@ -118,6 +112,13 @@ const tavilyKey = computed({
     tavilyKeyError.value = '';
     emit('update:tavilyApiKey', value);
   },
+});
+
+// 名称输入时即时清除校验错误，和 API Key / Tavily Key 的清除行为保持一致。
+watch(credentialAlias, () => {
+  if (aliasError.value) {
+    aliasError.value = '';
+  }
 });
 
 const providerRows = computed<IProviderViewModel[]>(() =>
@@ -792,6 +793,11 @@ watch(
 @media (hover: hover) and (pointer: fine) {
   .ai-credential-row:hover {
     background: var(--ai-credential-surface-2);
+  }
+
+  .ai-credential-row__acts {
+    opacity: 0;
+    transition: opacity 150ms ease-out;
   }
 
   .ai-credential-row:hover .ai-credential-row__acts,
