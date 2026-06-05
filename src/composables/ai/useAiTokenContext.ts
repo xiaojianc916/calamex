@@ -2,6 +2,7 @@ import type { LanguageModelUsage } from 'ai';
 import { getContext } from 'tokenlens';
 import type { ComputedRef } from 'vue';
 import { computed } from 'vue';
+import { findModelContextWindow } from '@/constants/ai/providers';
 import type { IAiChatMessage } from '@/types/ai';
 import type { TAiAssistantMode } from '@/types/ai/assistant-mode';
 import type { IAiContextReference } from '@/types/ai/context';
@@ -29,8 +30,6 @@ interface IUseAiTokenContextOptions {
   draft: ComputedRef<string>;
   officialUsage?: ComputedRef<LanguageModelUsage | null | undefined>;
 }
-
-const DEEPSEEK_CONTEXT_LIMIT_TOKENS = 1_000_000;
 
 const isPositiveFiniteNumber = (value: number | undefined): value is number =>
   typeof value === 'number' && Number.isFinite(value) && value > 0;
@@ -248,11 +247,13 @@ const resolveMaxTokens = (modelId: string | undefined): number => {
     return 0;
   }
 
-  const normalizedModelId = modelId.trim().toLowerCase();
-  if (normalizedModelId.startsWith('deepseek/')) {
-    return DEEPSEEK_CONTEXT_LIMIT_TOKENS;
+  // 优先用应用自己的模型目录(覆盖 Mastra 路由的别名/未来模型,tokenlens 目录可能不识别)。
+  const catalogContextWindow = findModelContextWindow(modelId);
+  if (isPositiveFiniteNumber(catalogContextWindow)) {
+    return catalogContextWindow;
   }
 
+  // 目录未命中或窗口未知时,兜底查 tokenlens;仍拿不到则返回 0(UI 显示"未知")。
   const context = getContext({ modelId });
   const maxTokens = [
     context.maxTotal,

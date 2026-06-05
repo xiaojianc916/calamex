@@ -42,6 +42,13 @@ export type TAiServicePlatformId =
 export interface IAiServicePlatformModel {
   id: string;
   label: string;
+  /**
+   * 模型上下文窗口(单位:token),用作用量进度条的分母。
+   * - 数值为官方/权威来源核实的窗口大小;部分按"默认窗口"而非"可选上限"取值(见各模型注释)。
+   * - 留空(undefined)表示窗口**真正未知**(如 ollama 本地模型,取决于运行时 num_ctx),
+   *   此时 UI 应显示"未知"而不是猜一个错误数字。
+   */
+  contextWindow?: number;
 }
 
 export interface IAiServicePlatformPreset {
@@ -75,11 +82,13 @@ export const AI_SERVICE_PLATFORM_PRESETS = [
     baseUrl: '',
     defaultModel: 'openai/gpt-5.5',
     models: [
-      { id: 'openai/gpt-5.5', label: 'GPT5.5' },
-      { id: 'openai/gpt-5.4', label: 'GPT5.4' },
-      { id: 'openai/gpt-5.4-pro', label: 'GPT5.4 Pro' },
-      { id: 'openai/gpt-5.4-mini', label: 'GPT5.4 Mini' },
-      { id: 'openai/gpt-5.4-nano', label: 'GPT5.4 Nano' },
+      // GPT-5.x 标准窗口 272K;1M 为需显式开启(model_context_window)的可选上限,
+      // 超 272K 按 2x 计费。进度条按默认 272K 取值。
+      { id: 'openai/gpt-5.5', label: 'GPT5.5', contextWindow: 272_000 },
+      { id: 'openai/gpt-5.4', label: 'GPT5.4', contextWindow: 272_000 },
+      { id: 'openai/gpt-5.4-pro', label: 'GPT5.4 Pro', contextWindow: 272_000 },
+      { id: 'openai/gpt-5.4-mini', label: 'GPT5.4 Mini', contextWindow: 272_000 },
+      { id: 'openai/gpt-5.4-nano', label: 'GPT5.4 Nano', contextWindow: 272_000 },
     ],
   },
   {
@@ -88,12 +97,13 @@ export const AI_SERVICE_PLATFORM_PRESETS = [
     baseUrl: '',
     defaultModel: 'anthropic/claude-opus-4-6',
     models: [
-      { id: 'anthropic/claude-opus-4-7', label: 'Claude Opus 4.7' },
-      { id: 'anthropic/claude-sonnet-4-6', label: 'Claude Sonnet 4.6' },
-      { id: 'anthropic/claude-opus-4-6', label: 'Claude Opus 4.6' },
-      { id: 'anthropic/claude-opus-4-5-20251101', label: 'Claude Opus 4.5' },
-      { id: 'anthropic/claude-sonnet-4-5-20250929', label: 'Claude Sonnet 4.5' },
-      { id: 'anthropic/claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5' },
+      // 4.6/4.7 代 Claude API 已 GA 1M;4.5 代及更早为 200K。
+      { id: 'anthropic/claude-opus-4-7', label: 'Claude Opus 4.7', contextWindow: 1_000_000 },
+      { id: 'anthropic/claude-sonnet-4-6', label: 'Claude Sonnet 4.6', contextWindow: 1_000_000 },
+      { id: 'anthropic/claude-opus-4-6', label: 'Claude Opus 4.6', contextWindow: 1_000_000 },
+      { id: 'anthropic/claude-opus-4-5-20251101', label: 'Claude Opus 4.5', contextWindow: 200_000 },
+      { id: 'anthropic/claude-sonnet-4-5-20250929', label: 'Claude Sonnet 4.5', contextWindow: 200_000 },
+      { id: 'anthropic/claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5', contextWindow: 200_000 },
     ],
   },
   {
@@ -102,8 +112,9 @@ export const AI_SERVICE_PLATFORM_PRESETS = [
     baseUrl: '',
     defaultModel: 'deepseek/deepseek-v4-pro',
     models: [
-      { id: 'deepseek/deepseek-v4-pro', label: 'DeepSeek-v4-pro' },
-      { id: 'deepseek/deepseek-v4-flash', label: 'DeepSeek-v4-flash' },
+      // DeepSeek V4 官方默认 1M 上下文(api-docs.deepseek.com)。
+      { id: 'deepseek/deepseek-v4-pro', label: 'DeepSeek-v4-pro', contextWindow: 1_000_000 },
+      { id: 'deepseek/deepseek-v4-flash', label: 'DeepSeek-v4-flash', contextWindow: 1_000_000 },
     ],
   },
   {
@@ -112,11 +123,12 @@ export const AI_SERVICE_PLATFORM_PRESETS = [
     baseUrl: '',
     defaultModel: 'google/gemini-3.1-pro-preview',
     models: [
-      { id: 'google/gemini-3.1-pro-preview', label: 'gemini-3.1-pro-preview' },
-      { id: 'google/gemini-3-flash-preview', label: 'gemini-3-flash-preview' },
-      { id: 'google/gemini-3.1-flash-lite-preview', label: 'gemini-3.1-flash-lite-preview' },
-      { id: 'google/gemini-2.5-pro', label: 'gemini-2.5-pro' },
-      { id: 'google/gemini-2.5-flash', label: 'gemini-2.5-flash' },
+      // Gemini 系列 1M 上下文(1,048,576)。
+      { id: 'google/gemini-3.1-pro-preview', label: 'gemini-3.1-pro-preview', contextWindow: 1_048_576 },
+      { id: 'google/gemini-3-flash-preview', label: 'gemini-3-flash-preview', contextWindow: 1_048_576 },
+      { id: 'google/gemini-3.1-flash-lite-preview', label: 'gemini-3.1-flash-lite-preview', contextWindow: 1_048_576 },
+      { id: 'google/gemini-2.5-pro', label: 'gemini-2.5-pro', contextWindow: 1_048_576 },
+      { id: 'google/gemini-2.5-flash', label: 'gemini-2.5-flash', contextWindow: 1_048_576 },
     ],
   },
   {
@@ -125,12 +137,13 @@ export const AI_SERVICE_PLATFORM_PRESETS = [
     baseUrl: '',
     defaultModel: 'moonshotai/kimi-k2.6',
     models: [
-      { id: 'moonshotai/kimi-k2.6', label: 'Kimi-k2.6' },
-      { id: 'moonshotai/kimi-k2.5', label: 'Kimi-k2.5' },
-      { id: 'moonshotai/kimi-k2', label: 'Kimi-k2' },
-      { id: 'moonshotai/kimi-k2-thinking', label: 'Kimi-k2-thinking' },
-      { id: 'moonshotai/kimi-k2-thinking-turbo', label: 'Kimi-k2-thinking-turbo' },
-      { id: 'moonshotai/kimi-k2-turbo-preview', label: 'Kimi-k2-turbo-preview' },
+      // Kimi K2 全系 256K(262,144)。
+      { id: 'moonshotai/kimi-k2.6', label: 'Kimi-k2.6', contextWindow: 262_144 },
+      { id: 'moonshotai/kimi-k2.5', label: 'Kimi-k2.5', contextWindow: 262_144 },
+      { id: 'moonshotai/kimi-k2', label: 'Kimi-k2', contextWindow: 262_144 },
+      { id: 'moonshotai/kimi-k2-thinking', label: 'Kimi-k2-thinking', contextWindow: 262_144 },
+      { id: 'moonshotai/kimi-k2-thinking-turbo', label: 'Kimi-k2-thinking-turbo', contextWindow: 262_144 },
+      { id: 'moonshotai/kimi-k2-turbo-preview', label: 'Kimi-k2-turbo-preview', contextWindow: 262_144 },
     ],
   },
   {
@@ -139,9 +152,10 @@ export const AI_SERVICE_PLATFORM_PRESETS = [
     baseUrl: '',
     defaultModel: 'alibaba/qwen3.6-plus',
     models: [
-      { id: 'alibaba/qwen3.6-plus', label: 'Qwen3.6-plus' },
-      { id: 'alibaba/qwen3.6-max-preview', label: 'Qwen3.6-max-preview' },
-      { id: 'alibaba/qwen3.6-flash', label: 'Qwen3.6-flash' },
+      // 阿里云百炼托管 Qwen3.6 默认 1M 上下文(开源权重默认 256K,此处为托管口径)。
+      { id: 'alibaba/qwen3.6-plus', label: 'Qwen3.6-plus', contextWindow: 1_000_000 },
+      { id: 'alibaba/qwen3.6-max-preview', label: 'Qwen3.6-max-preview', contextWindow: 1_000_000 },
+      { id: 'alibaba/qwen3.6-flash', label: 'Qwen3.6-flash', contextWindow: 1_000_000 },
     ],
   },
   {
@@ -150,11 +164,12 @@ export const AI_SERVICE_PLATFORM_PRESETS = [
     baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
     defaultModel: 'zhipuai/glm-4.7-flash',
     models: [
-      { id: 'zhipuai/glm-4-flash', label: 'GLM-4-Flash' },
-      { id: 'zhipuai/glm-4.7-flash', label: 'GLM-4.7-Flash' },
-      { id: 'zhipuai/glm-4.5-flash', label: 'GLM-4.5-Flash' },
-      { id: 'zhipuai/glm-4-plus', label: 'GLM-4-Plus' },
-      { id: 'zhipuai/glm-4-air', label: 'GLM-4-Air' },
+      // GLM-4.7-Flash 约 200K(202,752);其余 GLM 系为 128K。
+      { id: 'zhipuai/glm-4-flash', label: 'GLM-4-Flash', contextWindow: 128_000 },
+      { id: 'zhipuai/glm-4.7-flash', label: 'GLM-4.7-Flash', contextWindow: 202_752 },
+      { id: 'zhipuai/glm-4.5-flash', label: 'GLM-4.5-Flash', contextWindow: 128_000 },
+      { id: 'zhipuai/glm-4-plus', label: 'GLM-4-Plus', contextWindow: 128_000 },
+      { id: 'zhipuai/glm-4-air', label: 'GLM-4-Air', contextWindow: 128_000 },
     ],
   },
   {
@@ -163,6 +178,7 @@ export const AI_SERVICE_PLATFORM_PRESETS = [
     baseUrl: '',
     defaultModel: 'ollama/qwen3-coder-next',
     models: [
+      // 本地模型上下文取决于运行时 num_ctx,无法静态确定 → 留空,UI 显示"未知"。
       { id: 'ollama/qwen3-coder-next', label: 'Qwen3-coder-next' },
       { id: 'ollama/qwen3-coder', label: 'Qwen3-coder' },
       { id: 'ollama/qwen3', label: 'Qwen3' },
@@ -246,4 +262,26 @@ export const isAiServicePlatformModel = (
   return findAiServicePlatformPreset(platformId).models.some(
     (model) => model.id === normalizedModelId,
   );
+};
+
+/**
+ * 解析某个 model id 的上下文窗口(token 数)。
+ * - 命中目录且配置了 contextWindow:返回该数值。
+ * - 命中目录但未配置(如 ollama 本地模型):返回 undefined(窗口未知)。
+ * - 未命中任何 model:返回 undefined。
+ */
+export const findModelContextWindow = (
+  modelId: string | null | undefined,
+): number | undefined => {
+  const normalizedModelId = modelId?.trim() ?? '';
+  if (!normalizedModelId) {
+    return undefined;
+  }
+  for (const platform of AI_SERVICE_PLATFORM_PRESETS) {
+    const matched = platform.models.find((model) => model.id === normalizedModelId);
+    if (matched) {
+      return typeof matched.contextWindow === 'number' ? matched.contextWindow : undefined;
+    }
+  }
+  return undefined;
 };
