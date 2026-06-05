@@ -60,14 +60,12 @@ const emit = defineEmits<{
 }>();
 
 const innerEditorRef = ref<IEditorExpose | null>(null);
-const createEmptyAnalysis = (): IAnalyzeScriptPayload => ({
+const analysisState = ref<IAnalyzeScriptPayload>({
   available: true,
   message: null,
   dialect: 'bash',
   diagnostics: [],
 });
-
-const analysisState = ref<IAnalyzeScriptPayload>(createEmptyAnalysis());
 let pendingAnalysisTimerId: number | null = null;
 let latestAnalysisRequestId = 0;
 let lastCompletedAnalysisRequestId = 0;
@@ -93,7 +91,12 @@ const emitAnalysis = (payload: IAnalyzeScriptPayload): void => {
 };
 
 const clearAnalysis = (): void => {
-  emitAnalysis(createEmptyAnalysis());
+  emitAnalysis({
+    available: true,
+    message: null,
+    dialect: 'bash',
+    diagnostics: [],
+  });
 };
 
 const captureAnalysisSnapshot = (): TAnalysisSnapshot => ({

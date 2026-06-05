@@ -132,28 +132,6 @@ export const clipInlineContext = (value: string, limit: number): string => {
   return value.slice(start);
 };
 
-// 从字符串「开头」保留至多 limit 个码点，且不在末尾切断一个代理对(与 clipInlineContext 对称，
-// 后者从结尾保留)。用于裁剪光标右侧的 suffix 上下文。
-export const clipInlineContextTrailing = (value: string, limit: number): string => {
-  if (limit <= 0 || value.length === 0) {
-    return '';
-  }
-  let codePoints = 0;
-  let end = 0;
-  while (end < value.length && codePoints < limit) {
-    const code = value.charCodeAt(end);
-    if (code >= 0xd800 && code <= 0xdbff && end + 1 < value.length) {
-      const nextCode = value.charCodeAt(end + 1);
-      if (nextCode >= 0xdc00 && nextCode <= 0xdfff) {
-        end += 1;
-      }
-    }
-    end += 1;
-    codePoints += 1;
-  }
-  return value.slice(0, end);
-};
-
 const resolveInlineCompletionContexts = (
   view: EditorView,
   cursorOffset: number,
@@ -164,12 +142,9 @@ const resolveInlineCompletionContexts = (
       view.state.doc.sliceString(prefixStart, cursorOffset),
       INLINE_COMPLETION_CONTEXT_LIMIT,
     ),
-    suffix: clipInlineContextTrailing(
-      view.state.doc.sliceString(
-        cursorOffset,
-        cursorOffset + INLINE_COMPLETION_CONTEXT_CODE_UNIT_WINDOW,
-      ),
-      INLINE_COMPLETION_CONTEXT_LIMIT,
+    suffix: view.state.doc.sliceString(
+      cursorOffset,
+      cursorOffset + INLINE_COMPLETION_CONTEXT_LIMIT,
     ),
   };
 };
@@ -277,17 +252,8 @@ export const createCodeMirrorInlineCompletionController = (
       keymap.of([{ key: 'Tab', run: acceptInlineCompletion }]),
     ],
     handleUpdate(update: ViewUpdate): void {
-      if (update.docChanged) {
+      if (update.selectionSet || update.docChanged) {
         schedule(update.view);
-        return;
-      }
-      // 纯移动光标(无文档变化)不应触发 AI 补全请求：仅作废待定请求并清掉已展示的 ghost，
-      // 否则方向键导航也会在停顿后打一次补全 IPC。
-      if (update.selectionSet) {
-        viewRef = update.view;
-        clearTimer();
-        requestId += 1;
-        clearGhost();
       }
     },
   };

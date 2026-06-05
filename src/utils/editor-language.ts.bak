@@ -19,6 +19,7 @@ const LANGUAGE_BY_EXTENSION: Readonly<Record<string, string>> = {
   cts: 'typescript',
   cxx: 'cpp',
   dart: 'dart',
+  dockerfile: 'dockerfile',
   env: 'ini',
   ex: 'elixir',
   exs: 'elixir',

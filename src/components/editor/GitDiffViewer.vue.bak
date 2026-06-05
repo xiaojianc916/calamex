@@ -156,14 +156,13 @@ onBeforeUnmount(() => {
   disposeDiffEditor();
 });
 
-// 不监听 props.theme —— diff 视图(与主编辑器一致)刻意恒为 github-light，buildMergeView
-// 不读取 theme，监听它只会在每次主题切换时整块 remount 出一个完全相同的视图。
 watch(
   () => [
     props.preview.id,
     props.preview.originalContent,
     props.preview.modifiedContent,
     props.preview.isEmpty,
+    props.theme,
     props.editorSettings,
   ],
   () => {

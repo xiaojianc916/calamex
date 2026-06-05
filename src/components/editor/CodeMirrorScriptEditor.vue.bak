@@ -87,6 +87,7 @@ import type { IEditorSettings } from '@/types/settings';
 import { tryReadClipboardText, writeClipboardText } from '@/utils/clipboard';
 import { resolveLanguageForPath } from '@/utils/editor-language';
 import {
+  SHELL_WINDOW_RESIZE_END_EVENT,
   SHELL_WINDOW_RESIZE_SETTLED_EVENT,
   SHELL_WINDOW_RESIZE_START_EVENT,
 } from '@/utils/window-resize-events';
@@ -180,6 +181,7 @@ let suppressModelValueEmit = false;
 let lastSyncedModelValue: string | null = null;
 let previousContainerSize = { width: 0, height: 0 };
 let isShellWindowResizing = false;
+let pendingEditorLayoutAfterWindowResize = false;
 
 const languageCompartment = new Compartment();
 const settingsCompartment = new Compartment();
@@ -400,8 +402,7 @@ const syncDiagnostics = (): void => {
         const to = Math.max(from + 1, lineColumnToOffset(view, item.endLine, item.endColumn));
         return {
           from,
-          // 越界裁剪统一交给 applyDiagnostics(合并 shellcheck/lsp 后按当时文档长度兜底)，此处不再重复。
-          to,
+          to: Math.min(to, view.state.doc.length),
           severity: toDiagnosticSeverity(item.level),
           source: item.code,
           message: `${item.code} · ${item.message}`,
@@ -419,8 +420,10 @@ const layoutEditor = (): void => {
 };
 
 const scheduleEditorLayout = (): void => {
-  // 窗口拖拽缩放期间不逐帧重排，统一在 settled 后做一次重排。
-  if (isShellWindowResizing) return;
+  if (isShellWindowResizing) {
+    pendingEditorLayoutAfterWindowResize = true;
+    return;
+  }
   if (editorLayoutFrameId !== null) return;
   editorLayoutFrameId = window.requestAnimationFrame(() => {
     editorLayoutFrameId = null;
@@ -438,17 +441,25 @@ const updatePreviousContainerSize = (): void => {
 
 const handleShellWindowResizeStart = (): void => {
   isShellWindowResizing = true;
+  pendingEditorLayoutAfterWindowResize = false;
   if (editorLayoutFrameId !== null) {
     window.cancelAnimationFrame(editorLayoutFrameId);
     editorLayoutFrameId = null;
   }
 };
 
+const handleShellWindowResizeEnd = (): void => {
+  // 等价于原版的 (= false; = shouldRelayout) 序列，但去掉中间被立即覆盖的死代码。
+  // 语义：只要当前有 editor 或之前已经标记了待重排，就在 settled 时重排。
+  pendingEditorLayoutAfterWindowResize ||= editorView !== null;
+};
+
 const handleShellWindowResizeSettled = (): void => {
   isShellWindowResizing = false;
   updatePreviousContainerSize();
-  // editorView 为 null 时 layout 是 no-op，因此直接以「是否存在编辑器」决定是否重排。
-  if (editorView !== null) scheduleEditorLayout();
+  const shouldRelayout = pendingEditorLayoutAfterWindowResize || editorView !== null;
+  pendingEditorLayoutAfterWindowResize = false;
+  if (shouldRelayout) scheduleEditorLayout();
 };
 
 // ──────────────────────────────────────────────────────────
@@ -580,7 +591,7 @@ const handleWindowKeydown = (event: KeyboardEvent): void => {
   if (contextMenuState.value.open && event.key === 'Escape') closeContextMenu();
 };
 
-const closeMenuOnWindowChange = (): void => {
+const handleWindowResize = (): void => {
   if (contextMenuState.value.open) closeContextMenu();
 };
 
@@ -602,12 +613,9 @@ const cutEditorSelection = async (): Promise<void> => {
     .join('\n');
   if (!selectedText) return;
   await writeClipboardText(selectedText);
-  // 写剪贴板会让出事件循环，await 之前捕获的 ranges 可能已过期(文档被改)；用过期偏移删除
-  // 会误删甚至越界。改用「当前」选区删除(replaceSelection 支持多选区)；写剪贴板若失败会在
-  // 此之前抛出、不会执行删除，避免静默丢数据。
-  const liveView = editorView;
-  if (!liveView) return;
-  liveView.dispatch(liveView.state.replaceSelection(''));
+  view.dispatch({
+    changes: ranges.map((range) => ({ from: range.from, to: range.to, insert: '' })),
+  });
 };
 
 const pasteIntoEditor = async (): Promise<void> => {
@@ -822,7 +830,7 @@ const reconfigureLsp = (): void => {
     ],
   });
   // 文件切换后重新 attach（didOpen 新文件，didClose 旧文件已在 buildLspExtension 中处理）
-  if (currentLsp) {
+  if (currentLsp && view) {
     currentLsp.attach(view);
   }
 };
@@ -843,11 +851,12 @@ const reconfigureLanguage = (): void => {
   if (!view) return;
   const language = getCurrentLanguage();
   inlineCompletionController.clear();
-  // 不在此处 reconfigure 补全：紧随其后调用的 reconfigureLsp 会用「新」LSP 的 completionSource
-  // 统一重配补全。这里若先配一次，用的还是旧文件的 LSP 源，纯属多余 dispatch。
   view.dispatch({
     effects: [
       languageCompartment.reconfigure(resolveCodeMirrorLanguageExtension(language)),
+      completionCompartment.reconfigure(
+        buildCompletionExtension(props.editorSettings, language, currentLsp?.completionSource),
+      ),
       setShikiLanguage(language),
     ],
   });
@@ -959,11 +968,12 @@ watch(
 onMounted(() => {
   createEditor();
   window.addEventListener(SHELL_WINDOW_RESIZE_START_EVENT, handleShellWindowResizeStart);
+  window.addEventListener(SHELL_WINDOW_RESIZE_END_EVENT, handleShellWindowResizeEnd);
   window.addEventListener(SHELL_WINDOW_RESIZE_SETTLED_EVENT, handleShellWindowResizeSettled);
   window.addEventListener('pointerdown', handleWindowPointerDown, true);
   window.addEventListener('keydown', handleWindowKeydown);
-  window.addEventListener('resize', closeMenuOnWindowChange);
-  window.addEventListener('blur', closeMenuOnWindowChange);
+  window.addEventListener('resize', handleWindowResize);
+  window.addEventListener('blur', handleWindowResize);
 
   useResizeObserver(containerRef, () => {
     if (!containerRef.value) return;
@@ -978,11 +988,12 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.removeEventListener(SHELL_WINDOW_RESIZE_START_EVENT, handleShellWindowResizeStart);
+  window.removeEventListener(SHELL_WINDOW_RESIZE_END_EVENT, handleShellWindowResizeEnd);
   window.removeEventListener(SHELL_WINDOW_RESIZE_SETTLED_EVENT, handleShellWindowResizeSettled);
   window.removeEventListener('pointerdown', handleWindowPointerDown, true);
   window.removeEventListener('keydown', handleWindowKeydown);
-  window.removeEventListener('resize', closeMenuOnWindowChange);
-  window.removeEventListener('blur', closeMenuOnWindowChange);
+  window.removeEventListener('resize', handleWindowResize);
+  window.removeEventListener('blur', handleWindowResize);
   persistViewState(props.documentPath);
   clearViewStateSaveTimer();
   inlineCompletionController.destroy();
@@ -1047,27 +1058,19 @@ defineExpose<IEditorExpose>({
 
 <style>
 /* CM6 补全 / hover 全局样式(非 scoped — 弹窗在 body，不在组件 DOM 内)
-   编辑器整体刻意恒为 github-light(见 shikiEditorChromeTheme)，弹窗同样恒为浅色，
-   与应用深浅主题无关。重复的卡片表面/描边/阴影集中为变量，便于统一维护。 */
-.cm-tooltip-autocomplete,
-.cm-tooltip-hover,
-.cm-completionInfo {
-  --cm-popup-surface: #ffffff;
-  --cm-popup-border: #e6e8eb;
-  --cm-popup-shadow: 0 10px 30px rgba(15, 23, 42, 0.12);
-}
+   主色纯白 #ffffff，图标 Lucide，颜色按语义区分 */
 
 /* 弹窗：纯白卡片 */
 .cm-tooltip.cm-tooltip.cm-tooltip-autocomplete {
-  background: var(--cm-popup-surface);
-  border: 1px solid var(--cm-popup-border);
+  background: #ffffff;
+  border: 1px solid #e6e8eb;
   border-radius: 12px;
   box-shadow: 0 10px 30px rgba(15, 23, 42, 0.12), 0 0 0 0.5px rgba(15, 23, 42, 0.04);
   padding: 4px;
 }
 
 .cm-tooltip.cm-tooltip.cm-tooltip-autocomplete>ul {
-  background: var(--cm-popup-surface);
+  background: #ffffff;
 }
 
 .cm-tooltip.cm-tooltip-hover,
@@ -1207,10 +1210,10 @@ defineExpose<IEditorExpose>({
   margin-left: 6px;
   padding: 10px 12px;
   max-width: none;
-  background: var(--cm-popup-surface);
-  border: 1px solid var(--cm-popup-border);
+  background: #ffffff;
+  border: 1px solid #e6e8eb;
   border-radius: 10px;
-  box-shadow: var(--cm-popup-shadow);
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.12);
   color: #475467;
 }
 
@@ -1226,10 +1229,10 @@ defineExpose<IEditorExpose>({
 
 /* hover 卡片 */
 .cm-tooltip.cm-tooltip-hover {
-  background: var(--cm-popup-surface);
-  border: 1px solid var(--cm-popup-border);
+  background: #ffffff;
+  border: 1px solid #e6e8eb;
   border-radius: 10px;
-  box-shadow: var(--cm-popup-shadow);
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.12);
 }
 
 .cm-lsp-hover {
