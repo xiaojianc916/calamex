@@ -17,6 +17,20 @@ import type { IIpcCallOptions } from './tauri.ipc-types';
 type TSshRequest<K extends keyof ITauriService> = Parameters<ITauriService[K]>[0];
 type TSshResult<K extends keyof ITauriService> = Awaited<ReturnType<ITauriService[K]>>;
 
+/**
+ * 前端 IPC 超时预算。
+ *
+ * 必须 ≥ 后端对应命令的「建连 + 操作」预算，否则会在后端仍在正常传输时就被前端
+ * 提前判为超时（大文件 / 高延迟链路尤甚），并让后端继续跑成孤儿操作。
+ * 后端建连预算约 30s；下方各项在此基础上叠加对应操作预算并留出余量，
+ * 以便后端带语义的超时错误先返回。
+ */
+const SSH_CONNECT_BUDGET_MS = 30_000;
+const SSH_LIST_TIMEOUT_MS = SSH_CONNECT_BUDGET_MS + 45_000; // 后端列目录 ≈ 30s，总 75s
+const SSH_TRANSFER_TIMEOUT_MS = SSH_CONNECT_BUDGET_MS + 330_000; // 后端传输 300s，总 360s
+const SSH_PREVIEW_READ_TIMEOUT_MS = SSH_CONNECT_BUDGET_MS + 75_000; // 后端预览读 60s，总 105s
+const SSH_MUTATION_TIMEOUT_MS = SSH_CONNECT_BUDGET_MS + 45_000; // 后端写/删/改/建目录 ≈ 30s，总 75s
+
 const testSshConnectionIpc = (
   payload: TSshRequest<'testSshConnection'>,
   options?: IIpcCallOptions,
@@ -88,7 +102,7 @@ const listSshDirectoryIpc = (
       command: 'list_ssh_directory',
       guardHint: '读取 SSH 远端目录',
       idempotent: true,
-      timeoutMs: 15_000,
+      timeoutMs: SSH_LIST_TIMEOUT_MS,
       audit: 'sensitive',
       input: payload,
       signal: options?.signal,
@@ -105,7 +119,7 @@ const downloadSshFileIpc = (
       command: 'download_ssh_file',
       guardHint: '下载 SSH 远端文件',
       audit: 'sensitive',
-      timeoutMs: 60_000,
+      timeoutMs: SSH_TRANSFER_TIMEOUT_MS,
       input: payload,
       signal: options?.signal,
     },
@@ -121,7 +135,7 @@ const uploadSshFileIpc = (
       command: 'upload_ssh_file',
       guardHint: '上传 SSH 远端文件',
       audit: 'sensitive',
-      timeoutMs: 60_000,
+      timeoutMs: SSH_TRANSFER_TIMEOUT_MS,
       input: payload,
       signal: options?.signal,
     },
@@ -138,7 +152,7 @@ const readSshFileIpc = (
       guardHint: '读取 SSH 远端文件',
       idempotent: true,
       audit: 'sensitive',
-      timeoutMs: 60_000,
+      timeoutMs: SSH_PREVIEW_READ_TIMEOUT_MS,
       input: payload,
       signal: options?.signal,
     },
@@ -154,7 +168,7 @@ const writeSshFileIpc = (
       command: 'write_ssh_file',
       guardHint: '写入 SSH 远端文件',
       audit: 'sensitive',
-      timeoutMs: 60_000,
+      timeoutMs: SSH_MUTATION_TIMEOUT_MS,
       input: payload,
       measureInput: (value) => buildPayloadMetricsOmittingTextFields(value, ['content']),
       signal: options?.signal,
@@ -171,7 +185,7 @@ const deleteSshPathIpc = (
       command: 'delete_ssh_path',
       guardHint: '删除 SSH 远端路径',
       audit: 'sensitive',
-      timeoutMs: 30_000,
+      timeoutMs: SSH_MUTATION_TIMEOUT_MS,
       input: payload,
       signal: options?.signal,
     },
@@ -187,7 +201,7 @@ const renameSshPathIpc = (
       command: 'rename_ssh_path',
       guardHint: '重命名 SSH 远端路径',
       audit: 'sensitive',
-      timeoutMs: 30_000,
+      timeoutMs: SSH_MUTATION_TIMEOUT_MS,
       input: payload,
       signal: options?.signal,
     },
@@ -203,7 +217,7 @@ const createSshDirectoryIpc = (
       command: 'create_ssh_directory',
       guardHint: '创建 SSH 远端目录',
       audit: 'sensitive',
-      timeoutMs: 30_000,
+      timeoutMs: SSH_MUTATION_TIMEOUT_MS,
       input: payload,
       signal: options?.signal,
     },
