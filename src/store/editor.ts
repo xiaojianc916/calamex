@@ -423,9 +423,38 @@ export const useEditorStore = defineStore(
 
     // Actions: unsaved drafts (崩溃 / 意外重载后恢复未保存内容)
 
+    /**
+     * 草稿写入节流:编辑器每次按键都会触发草稿捕获,而草稿捕获会重写 drafts 数组
+     * 并 touchSessionSnapshot(进而触发会话持久化)。高频按键下逐次写入既浪费 CPU,
+     * 又会让会话快照频繁落盘。这里做轻量节流:同一文件在窗口期内最多落一次草稿,
+     * 窗口结束时再补齐最新内容。窗口很短(400ms),崩溃恢复场景下的内容损失可忽略。
+     */
+    const DRAFT_CAPTURE_DEBOUNCE_MS = 400;
+    let draftCaptureTimerId: number | null = null;
+    let pendingDraftCapture: {
+      path: string;
+      content: string;
+      baselineContent: string;
+    } | null = null;
+
+    const cancelPendingDraftCapture = (): void => {
+      if (draftCaptureTimerId !== null) {
+        window.clearTimeout(draftCaptureTimerId);
+        draftCaptureTimerId = null;
+      }
+      pendingDraftCapture = null;
+    };
+
     const clearDocumentDraft = (path: string): void => {
       const normalized = normalizeFileSystemPath(path);
       if (!normalized) return;
+      // 若有指向同一文件的待写入草稿,先撤销,避免定时器在清除后又把过期草稿写回。
+      if (
+        pendingDraftCapture &&
+        normalizeFileSystemPath(pendingDraftCapture.path) === normalized
+      ) {
+        cancelPendingDraftCapture();
+      }
       const next = sessionSnapshot.value.drafts.filter(
         (item) => normalizeFileSystemPath(item.path) !== normalized,
       );
@@ -455,6 +484,50 @@ export const useEditorStore = defineStore(
         ),
       ].slice(0, MAX_DRAFT_ENTRIES);
       touchSessionSnapshot();
+    };
+
+    /**
+     * 节流版草稿捕获:供高频的内容变更调用。
+     * - 切换到不同文件时,先把上一个文件的待写入草稿立即落盘,避免丢失。
+     * - 无 DOM 定时器环境(如单元测试)下退化为同步捕获,保持行为可预测。
+     */
+    const scheduleDocumentDraftCapture = (
+      path: string,
+      content: string,
+      baselineContent: string,
+    ): void => {
+      const normalized = normalizeFileSystemPath(path);
+      if (!normalized) return;
+
+      if (
+        pendingDraftCapture &&
+        normalizeFileSystemPath(pendingDraftCapture.path) !== normalized
+      ) {
+        const previous = pendingDraftCapture;
+        cancelPendingDraftCapture();
+        captureDocumentDraft(previous.path, previous.content, previous.baselineContent);
+      }
+
+      if (typeof window === 'undefined') {
+        captureDocumentDraft(normalized, content, baselineContent);
+        return;
+      }
+
+      pendingDraftCapture = { path: normalized, content, baselineContent };
+
+      // 窗口内已有定时器:仅更新待写入内容,等到期统一落盘。
+      if (draftCaptureTimerId !== null) {
+        return;
+      }
+
+      draftCaptureTimerId = window.setTimeout(() => {
+        draftCaptureTimerId = null;
+        const pending = pendingDraftCapture;
+        pendingDraftCapture = null;
+        if (pending) {
+          captureDocumentDraft(pending.path, pending.content, pending.baselineContent);
+        }
+      }, DRAFT_CAPTURE_DEBOUNCE_MS);
     };
 
     const getDocumentDraft = (path: string): TDocumentDraft | null => {
@@ -749,8 +822,9 @@ export const useEditorStore = defineStore(
       targetDocument.content = content;
       syncDocumentState(targetDocument);
       // 内容变更后同步维护未保存草稿(与磁盘基线 savedContent 比较)。
+      // 走节流版本,避免每次按键都重写 drafts 并触发会话持久化。
       if (targetDocument.path) {
-        captureDocumentDraft(
+        scheduleDocumentDraftCapture(
           targetDocument.path,
           targetDocument.content,
           targetDocument.savedContent,
