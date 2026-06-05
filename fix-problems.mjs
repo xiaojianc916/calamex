@@ -1,55 +1,82 @@
-// fix-problems.mjs —— 一次性修复 3 处问题
-// 用法：在项目根目录执行  node fix-problems.mjs
+// fix-problems.mjs — 修复 VS Code 问题面板的 3 项（CRLF/LF 自适应 + 幂等）
 import { readFileSync, writeFileSync } from 'node:fs';
 
 let changed = 0;
+let skipped = 0;
 
-function edit(file, label, before, after) {
-    const text = readFileSync(file, 'utf8');
-    if (text.includes(after) && !text.includes(before)) {
-        console.log(`· 跳过（已修复）：${label}`);
+/**
+ * 把锚点里的 \n 适配成目标文件实际使用的换行符；
+ * 已应用则跳过；锚点缺失或重复则中止（不写坏文件）。
+ */
+function edit(file, oldLf, newLf, label) {
+    const raw = readFileSync(file, 'utf8');
+    const eol = raw.includes('\r\n') ? '\r\n' : '\n';
+    const oldStr = oldLf.split('\n').join(eol);
+    const newStr = newLf.split('\n').join(eol);
+
+    if (!raw.includes(oldStr) && raw.includes(newStr)) {
+        console.log(`• 跳过(已应用)：${label}`);
+        skipped++;
         return;
     }
-    const count = text.split(before).length - 1;
+    const count = raw.split(oldStr).length - 1;
     if (count === 0) throw new Error(`✗ 未找到锚点，已中止：${label}\n  文件：${file}`);
-    if (count > 1) throw new Error(`✗ 锚点出现 ${count} 次（预期 1 次），已中止以免误改：${label}`);
-    writeFileSync(file, text.replace(before, after), 'utf8');
-    changed++;
+    if (count > 1) throw new Error(`✗ 锚点出现 ${count} 次，已中止：${label}\n  文件：${file}`);
+
+    writeFileSync(file, raw.replace(oldStr, newStr), 'utf8');
     console.log(`✓ 已修复：${label}`);
+    changed++;
 }
 
-// ── 修复 1：SshSidebarPanel.vue 的 encoding 类型不兼容（ts2345，红色）──
-const vue = 'src/components/workbench/SshSidebarPanel.vue';
+const VUE = 'src/components/workbench/SshSidebarPanel.vue';
+const SESSION = 'src/terminal/session.ts';
+const SPEC = 'src/composables/ai/useAiAssistant.spec.ts';
 
-edit(vue, '1/3 SSH 写文件：补充 ISshFileWriteRequest 类型导入',
+// ── 1) SSH 写文件类型（真正的 ts2345）─────────────────────────────
+// 1a 导入 ISshFileWriteRequest（上次已成功，会自动跳过）
+edit(
+    VUE,
     `import type { ISshFileReadPayload } from '@/types/tauri';`,
-    `import type { ISshFileReadPayload, ISshFileWriteRequest } from '@/types/tauri';`);
+    `import type { ISshFileReadPayload, ISshFileWriteRequest } from '@/types/tauri';`,
+    '1a SSH 写文件：补充 ISshFileWriteRequest 类型导入',
+);
 
-edit(vue, '2/3 SSH 写文件：收紧 createSshFileWriteRequest 参数类型',
+// 1b 收紧 createSshFileWriteRequest 参数为“写请求”的严格联合类型
+edit(
+    VUE,
     `  encoding: ISshFileReadPayload['encoding'],
   lineEnding: ISshFileReadPayload['lineEnding'],`,
     `  encoding: ISshFileWriteRequest['encoding'],
-  lineEnding: ISshFileWriteRequest['lineEnding'],`);
+  lineEnding: ISshFileWriteRequest['lineEnding'],`,
+    '1b SSH 写文件：收紧 createSshFileWriteRequest 参数类型',
+);
 
-edit(vue, '3/3 SSH 写文件：调用处把宽松 string 收窄到写入枚举',
+// 1c 调用处把“读到的值”收窄回写请求的联合类型（边界 as，无 any / @ts-ignore / !）
+edit(
+    VUE,
     `        currentPreviewPayload.encoding,
         currentPreviewPayload.lineEnding,`,
     `        currentPreviewPayload.encoding as ISshFileWriteRequest['encoding'],
-        currentPreviewPayload.lineEnding as ISshFileWriteRequest['lineEnding'],`);
+        currentPreviewPayload.lineEnding as ISshFileWriteRequest['lineEnding'],`,
+    '1c SSH 写文件：调用处收窄 encoding / lineEnding',
+);
 
-// ── 修复 2：session.ts 未使用常量 TERMINAL_SCROLL_RECOVERY_DELAY_MS（ts6133）──
-edit('src/terminal/session.ts',
-    'session.ts：删除未使用常量 TERMINAL_SCROLL_RECOVERY_DELAY_MS',
+// ── 2) session.ts 删除未使用常量（ts6133）─────────────────────────
+edit(
+    SESSION,
     `const TERMINAL_RUN_VISUAL_REORDER_TIMEOUT_MS = 2000;
 const TERMINAL_SCROLL_RECOVERY_DELAY_MS = 64;
 const TERMINAL_LAYOUT_SCROLL_GUARD_RELEASE_MS = 180;`,
     `const TERMINAL_RUN_VISUAL_REORDER_TIMEOUT_MS = 2000;
-const TERMINAL_LAYOUT_SCROLL_GUARD_RELEASE_MS = 180;`);
+const TERMINAL_LAYOUT_SCROLL_GUARD_RELEASE_MS = 180;`,
+    '2 session.ts：删除未使用的 TERMINAL_SCROLL_RECOVERY_DELAY_MS',
+);
 
-// ── 修复 3：useAiAssistant.spec.ts 未使用工厂 createAiEditOperation（ts6133）──
-const spec = 'src/composables/ai/useAiAssistant.spec.ts';
-{
-    const fn = `const createAiEditOperation = (overrides: Partial<IAiEditOperation> = {}): IAiEditOperation => ({
+// ── 3) 测试文件删除未使用工厂 + 其类型导入（ts6133）───────────────
+// 3a 删除未使用工厂 createAiEditOperation（含其后空行）
+edit(
+    SPEC,
+    `const createAiEditOperation = (overrides: Partial<IAiEditOperation> = {}): IAiEditOperation => ({
   id: 'operation-rollback-1',
   taskId: 'thread-rollback',
   turnId: 'turn-rollback',
@@ -67,25 +94,21 @@ const spec = 'src/composables/ai/useAiAssistant.spec.ts';
   ...overrides,
 });
 
-`;
-    let text = readFileSync(spec, 'utf8');
-    if (!text.includes(fn)) {
-        if (text.includes('const createAiEditOperation')) {
-            throw new Error('✗ useAiAssistant.spec.ts：createAiEditOperation 内容与预期不符，已中止，请手动核对。');
-        }
-        console.log('· 跳过（已修复）：useAiAssistant.spec.ts 工厂 createAiEditOperation');
-    } else {
-        text = text.replace(fn, '');
-        // 删完函数后，若 IAiEditOperation 仅剩类型导入这一处引用，则一并清理，避免新的 ts6133
-        const importLine = '  IAiEditOperation,\n';
-        if (text.includes(importLine)) {
-            const withoutImport = text.replace(importLine, '');
-            if (!withoutImport.includes('IAiEditOperation')) text = withoutImport;
-        }
-        writeFileSync(spec, text, 'utf8');
-        changed++;
-        console.log('✓ 已修复：useAiAssistant.spec.ts 删除未使用工厂 createAiEditOperation');
-    }
-}
+`,
+    ``,
+    '3a 测试：删除未使用工厂 createAiEditOperation',
+);
 
-console.log(`\n完成，本次改动 ${changed} 处。接着请运行： pnpm typecheck && pnpm test`);
+// 3b 删除随之未使用的类型导入 IAiEditOperation
+edit(
+    SPEC,
+    `  IAiEditListTimelineRequest,
+  IAiEditOperation,
+  IAiEditRevertTaskPayload,`,
+    `  IAiEditListTimelineRequest,
+  IAiEditRevertTaskPayload,`,
+    '3b 测试：删除未使用的 IAiEditOperation 类型导入',
+);
+
+console.log(`\n完成：修改 ${changed} 处，跳过 ${skipped} 处。`);
+console.log('接着请运行：pnpm lint && pnpm typecheck && pnpm test');
