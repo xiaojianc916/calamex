@@ -1403,26 +1403,22 @@ const replaceReplacementLine = async (
   replacementApplyingLineId.value = line.id;
 
   try {
-    const { payload, refreshResult } = await applyReplacementAndRefresh(
-      request,
-      files.map((file) => ({
+    const { payload, refreshResult } = await applyReplacementAndRefresh(request, [
+      {
         path: file.path,
         beforeHash: file.beforeHash,
-        includedMatchIds: file.visibleLinePreviews.map((line) => line.id),
-      })),
-    );
+        includedMatchIds: [line.id],
+      },
+    ]);
 
-    replacementPreviewOpen.value = false;
-    replacementPreview.value = null;
-    replacementPreviewRequest.value = null;
-    replacementPreviewRequestId += 1;
-    activeReplacementPreviewAbortController?.abort();
-    activeReplacementPreviewAbortController = null;
+    // 单行替换：仅刷新预览（移除已应用的该行、保留其余待替换项），不要套用「全部替换」的
+    // 收尾逻辑（关闭整个预览面板 + 作废预览请求）。
+    await refreshReplacementPreviewAfterLineApply(request);
 
     reportReplacementRefreshOutcome(
       refreshResult,
       payload.replacementCount,
-      `已替换 ${payload.changedFileCount} 个文件中的 ${payload.replacementCount} 处内容。`,
+      `已替换 ${payload.replacementCount} 处内容。`,
     );
 
     void runSearch();
