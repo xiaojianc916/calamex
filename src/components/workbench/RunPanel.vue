@@ -11,6 +11,13 @@
       />
 
       <div class="run-panel-actions">
+        <button v-if="canStopRun" type="button"
+          class="icon-button app-tooltip-target run-panel-action-button run-panel-action-button--stop"
+          data-tooltip="停止 / 重置运行" data-tooltip-placement="top" aria-label="停止 / 重置运行"
+          @click="void handleStopRun()">
+          <span aria-hidden="true" class="icon-[lucide--square]" />
+        </button>
+
         <button type="button" class="icon-button app-tooltip-target run-panel-action-button" data-tooltip="重连终端"
           data-tooltip-placement="top" aria-label="重连终端" @click="void handleRestartTerminal()">
           <span aria-hidden="true" class="icon-[lucide--refresh-ccw]" />
@@ -59,6 +66,7 @@ import { computed, nextTick, onMounted, watch } from 'vue';
 import EmbeddedTerminal from '@/components/workbench/EmbeddedTerminal.vue';
 import TerminalTabBar from '@/components/workbench/TerminalTabBar.vue';
 import { useMessage } from '@/composables/useMessage';
+import { useTerminalRunControl } from '@/composables/useTerminalRunControl';
 import { useTerminalTabsStore } from '@/store/terminalTabs';
 import { useTerminalRegistryStore } from '@/terminal/registry';
 import type { TThemeMode } from '@/types/app';
@@ -84,6 +92,7 @@ const message = useMessage();
 const tabsStore = useTerminalTabsStore();
 const { tabs, activeSessionId } = storeToRefs(tabsStore);
 const registry = useTerminalRegistryStore();
+const { canStopRun, stopRun } = useTerminalRunControl();
 
 // 工具栏作用于当前激活会话；状态来自 registry 共享 refs（会话创建前后同源）。
 const isTerminalReady = computed(
@@ -138,6 +147,12 @@ const handleClearTerminal = (): Promise<void> =>
   runTerminalAction(async () => {
     await registry.get(activeSessionId.value)?.clearScreen();
   }, '清屏失败');
+
+const handleStopRun = (): Promise<void> =>
+  runTerminalAction(async () => {
+    await stopRun();
+    message.success('已停止运行并复位状态。');
+  }, '停止运行失败');
 </script>
 
 <style scoped>
