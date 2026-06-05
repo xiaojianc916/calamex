@@ -66,11 +66,32 @@ onBeforeUnmount(() => {
   padding: 0 2px;
 }
 
+/*
+ * 分隔线：中性灰（随主题自适应，浅色下为柔和的灰）。
+ * 使用线性渐变，靠近文字端最清晰，向两侧外缘逐渐消失，视觉更克制优雅。
+ */
 .ai-error-notice__line {
   height: 1px;
   min-width: 18px;
   flex: 1 1 auto;
-  background: color-mix(in srgb, var(--danger) 24%, transparent);
+  border: 0;
+  border-radius: 1px;
+}
+
+.ai-error-notice__line:first-child {
+  background: linear-gradient(
+    to right,
+    transparent,
+    color-mix(in srgb, var(--border-strong) 55%, transparent)
+  );
+}
+
+.ai-error-notice__line:last-child {
+  background: linear-gradient(
+    to left,
+    transparent,
+    color-mix(in srgb, var(--border-strong) 55%, transparent)
+  );
 }
 
 .ai-error-notice__body {
