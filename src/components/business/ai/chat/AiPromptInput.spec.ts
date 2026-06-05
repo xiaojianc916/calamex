@@ -195,7 +195,7 @@ describe('AiPromptInput', () => {
     expect(wrapper.find('[data-slot="input-group"]').exists()).toBe(true);
   });
 
-  it('uses compact DeepSeek model labels on the outer trigger', () => {
+  it('uses the full DeepSeek model labels on the outer trigger', () => {
     const baseConfig = createDefaultAiConfigPayload();
 
     const proWrapper = mountPromptInput({
@@ -211,8 +211,8 @@ describe('AiPromptInput', () => {
       },
     });
 
-    expect(proWrapper.get('.ai-model-trigger__label').text()).toBe('v4-pro');
-    expect(flashWrapper.get('.ai-model-trigger__label').text()).toBe('v4-flash');
+    expect(proWrapper.get('.ai-model-trigger__label').text()).toBe('DeepSeek V4 Pro');
+    expect(flashWrapper.get('.ai-model-trigger__label').text()).toBe('DeepSeek V4 Flash');
   });
 
   it('renders token usage before the send button', () => {

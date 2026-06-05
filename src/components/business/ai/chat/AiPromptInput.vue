@@ -160,10 +160,10 @@ const selectedModelLabel = computed(() => {
 
   const matched = selectedPlatform.value.models.find((model) => model.id === modelId);
   if (matched) {
-    return formatSelectedModelLabel(modelId, matched.label);
+    return formatModelLabel(matched.label);
   }
 
-  return formatSelectedModelLabel(modelId, modelId.split('/').filter(Boolean).at(-1) ?? modelId);
+  return formatModelLabel(modelId.split('/').filter(Boolean).at(-1) ?? modelId);
 });
 const selectedPlatformId = computed<TAiServicePlatformId>(() => selectedPlatform.value.id);
 
@@ -261,17 +261,6 @@ const formatModelLabel = (label: string): string =>
     .replace(/\bflash\b/giu, 'Flash')
     .replace(/\s+/gu, ' ')
     .trim();
-
-const formatSelectedModelLabel = (modelId: string, label: string): string => {
-  const normalizedModelId = modelId.trim().toLowerCase();
-  if (normalizedModelId === 'deepseek/deepseek-v4-pro') {
-    return 'v4-pro';
-  }
-  if (normalizedModelId === 'deepseek/deepseek-v4-flash') {
-    return 'v4-flash';
-  }
-  return formatModelLabel(label);
-};
 
 const getModelPlatformId = (modelId: string): TAiServicePlatformId =>
   findAiServicePlatformByModel(modelId).id;
@@ -779,7 +768,7 @@ const handleStop = (): void => {
   display: inline-flex;
   width: auto;
   min-width: 0;
-  max-width: 154px;
+  max-width: 260px;
   height: var(--ai-composer-control-size);
   align-items: center;
   gap: 6px;
@@ -845,7 +834,7 @@ const handleStop = (): void => {
   }
 
   .ai-model-trigger {
-    max-width: 136px;
+    max-width: 220px;
     font-size: 14px;
   }
 }
