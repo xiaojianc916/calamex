@@ -1645,17 +1645,17 @@ mod tests {
     #[test]
     fn sidecar_runtime_dir_falls_back_to_temp_without_local_app_data() {
         let with_local =
-            sidecar_runtime_dir_from(Some("C:\\Users\\tester\\AppData\\Local".to_string()));
-        assert!(with_local.ends_with("agent-sidecar"));
-        assert!(
-            with_local
-                .parent()
-                .is_some_and(|parent| parent.ends_with("com.xiaojianc.Calamex"))
-        );
+    sidecar_runtime_dir_from(Some("C:\\Users\\tester\\AppData\\Local".to_string()));
+assert!(with_local.ends_with("ai-service"));          
+assert!(
+    with_local
+        .parent()
+        .is_some_and(|parent| parent.ends_with(".calamex"))   
+);
 
-                let fallback = sidecar_runtime_dir_from(None);
-        assert!(fallback.ends_with("agent-sidecar"));
-        assert!(fallback.to_string_lossy().contains("com.xiaojianc.Calamex"));
+let fallback = sidecar_runtime_dir_from(None);
+assert!(fallback.ends_with("ai-service"));            
+assert!(fallback.to_string_lossy().contains(".calamex")); 
     }
 
     #[test]
