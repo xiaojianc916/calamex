@@ -199,28 +199,29 @@ async fn stop_inner(session: &Arc<Mutex<LspSession>>, pending: &PendingMap) {
         return;
     }
 
-    // 通知 watcher 进入\"主动停止\"分支
-    if let Some(tx) = kill_tx {
-        let _ = tx.send(());
-    }
+    /// 先尝试优雅 shutdown:此刻进程仍存活,能正常回 shutdown 响应并自行退出。
+// 必须早于 kill_tx——否则 watcher 会 drop child 触发 kill_on_drop,把进程杀死,
+// 导致 shutdown 响应永远不到、resp_rx 既不 resolve 也不 close,白白吃满 500ms。
+if let Some(stdin) = stdin {
+    let (resp_tx, resp_rx) = oneshot::channel::<Value>();
+    let shutdown_id = i64::MAX;
+    pending.lock().await.insert(shutdown_id, resp_tx);
 
-    // 尝试优雅 shutdown:发请求并尽量等响应,然后发 exit。
-    if let Some(stdin) = stdin {
-        let (resp_tx, resp_rx) = oneshot::channel::<Value>();
-        let shutdown_id = i64::MAX;
-        pending.lock().await.insert(shutdown_id, resp_tx);
+    let shutdown = frame_message(&jsonrpc_request(shutdown_id, "shutdown", Value::Null));
+    let _ = write_framed(&stdin, &shutdown).await;
 
-        let shutdown = frame_message(&jsonrpc_request(shutdown_id, "shutdown", Value::Null));
-        let _ = write_framed(&stdin, &shutdown).await;
+    // 最多等 500ms(进程存活时通常很快 resolve,提前返回)
+    let _ = timeout(Duration::from_millis(500), resp_rx).await;
+    pending.lock().await.remove(&shutdown_id);
 
-        // 最多等 500ms
-        let _ = timeout(Duration::from_millis(500), resp_rx).await;
-        pending.lock().await.remove(&shutdown_id);
+    let exit = frame_message(&jsonrpc_notify("exit", Value::Null));
+    let _ = write_framed(&stdin, &exit).await;
+}
 
-        let exit = frame_message(&jsonrpc_notify("exit", Value::Null));
-        let _ = write_framed(&stdin, &exit).await;
-    }
-
+// 再通知 watcher 退出:drop child → kill_on_drop 仅作为"不听话才强杀"的兜底。
+if let Some(tx) = kill_tx {
+    let _ = tx.send(());
+}
     // 子进程依赖 `kill_on_drop` 在 Child 被 drop 时强杀(watcher 持有 child)。
     // watcher 在 kill_rx 触发后即返回,Child 随之被 drop。
     log::info!("bash-language-server 已停止");

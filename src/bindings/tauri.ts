@@ -80,14 +80,6 @@ export const commands = {
 	agentSidecarRestart: () => __TAURI_INVOKE<AgentSidecarHealthPayload>("agent_sidecar_restart"),
 	agentSidecarWarmup: () => __TAURI_INVOKE<AgentSidecarWarmupPayload>("agent_sidecar_warmup"),
 	agentSidecarChat: (payload: AgentSidecarChatRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarResponsePayload>("agent_sidecar_chat", { payload }),
-	agentSidecarPlan: (payload: AgentSidecarPlanRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarResponsePayload>("agent_sidecar_plan", { payload }),
-	agentSidecarPlanApprove: (payload: AgentSidecarPlanApproveRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarResponsePayload>("agent_sidecar_plan_approve", { payload }),
-	agentSidecarPlanQuery: (payload: AgentSidecarPlanQueryRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarResponsePayload>("agent_sidecar_plan_query", { payload }),
-	agentSidecarPlanReject: (payload: AgentSidecarPlanRejectRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarResponsePayload>("agent_sidecar_plan_reject", { payload }),
-	agentSidecarPlanFinish: (payload: AgentSidecarPlanFinishRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarResponsePayload>("agent_sidecar_plan_finish", { payload }),
-	agentSidecarPlanValidate: (payload: AgentSidecarPlanValidateRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarResponsePayload>("agent_sidecar_plan_validate", { payload }),
-	agentSidecarPlanReplan: (payload: AgentSidecarPlanReplanRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarResponsePayload>("agent_sidecar_plan_replan", { payload }),
-	agentSidecarExecute: (payload: AgentSidecarExecuteRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarResponsePayload>("agent_sidecar_execute", { payload }),
 	agentSidecarResolveApproval: (payload: AgentSidecarApprovalResolveRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarResponsePayload>("agent_sidecar_resolve_approval", { payload }),
 	agentSidecarRestoreCheckpoint: (payload: AgentSidecarCheckpointRestoreRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarResponsePayload>("agent_sidecar_restore_checkpoint", { payload }),
 	agentSidecarOrchestrate: (payload: AgentSidecarOrchestrateRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarOrchestratePayload>("agent_sidecar_orchestrate", { payload }),
@@ -217,32 +209,6 @@ export type AgentSidecarCheckpointRestoreRequest_Serialize = {
 	modelConfig?: AgentSidecarModelConfigPayload_Serialize | null,
 };
 
-export type AgentSidecarExecuteRequest = AgentSidecarExecuteRequest_Serialize | AgentSidecarExecuteRequest_Deserialize;
-
-export type AgentSidecarExecuteRequest_Deserialize = {
-	sessionId: string | null,
-	goal: string,
-	messages: AgentSidecarMessagePayload[],
-	workspaceRootPath: string | null,
-	context?: AiContextReferencePayload[],
-	modelConfig: AgentSidecarModelConfigPayload_Deserialize | null,
-	planId: string,
-	planVersion: number,
-	planStepId: string,
-};
-
-export type AgentSidecarExecuteRequest_Serialize = {
-	sessionId?: string | null,
-	goal: string,
-	messages: AgentSidecarMessagePayload[],
-	workspaceRootPath?: string | null,
-	context: AiContextReferencePayload[],
-	modelConfig?: AgentSidecarModelConfigPayload_Serialize | null,
-	planId: string,
-	planVersion: number,
-	planStepId: string,
-};
-
 export type AgentSidecarHealthPayload = {
 	ok: boolean,
 	status: string,
@@ -318,140 +284,6 @@ export type AgentSidecarOrchestrateResumeRequest_Serialize = {
 	decision: string,
 	reason?: string | null,
 	modelConfig?: AgentSidecarModelConfigPayload_Serialize | null,
-};
-
-export type AgentSidecarPlanApproveRequest = AgentSidecarPlanApproveRequest_Serialize | AgentSidecarPlanApproveRequest_Deserialize;
-
-export type AgentSidecarPlanApproveRequest_Deserialize = {
-	sessionId: string | null,
-	planId: string,
-	version: number,
-};
-
-export type AgentSidecarPlanApproveRequest_Serialize = {
-	sessionId?: string | null,
-	planId: string,
-	version: number,
-};
-
-export type AgentSidecarPlanFinishRequest = AgentSidecarPlanFinishRequest_Serialize | AgentSidecarPlanFinishRequest_Deserialize;
-
-export type AgentSidecarPlanFinishRequest_Deserialize = {
-	sessionId: string | null,
-	planId: string,
-	version: number,
-	status: string,
-	errorMessage: string | null,
-};
-
-export type AgentSidecarPlanFinishRequest_Serialize = {
-	sessionId?: string | null,
-	planId: string,
-	version: number,
-	status: string,
-	errorMessage?: string | null,
-};
-
-export type AgentSidecarPlanQueryRequest = AgentSidecarPlanQueryRequest_Serialize | AgentSidecarPlanQueryRequest_Deserialize;
-
-export type AgentSidecarPlanQueryRequest_Deserialize = {
-	sessionId: string | null,
-	planId: string,
-	version: number | null,
-};
-
-export type AgentSidecarPlanQueryRequest_Serialize = {
-	sessionId?: string | null,
-	planId: string,
-	version?: number | null,
-};
-
-export type AgentSidecarPlanRejectRequest = AgentSidecarPlanRejectRequest_Serialize | AgentSidecarPlanRejectRequest_Deserialize;
-
-export type AgentSidecarPlanRejectRequest_Deserialize = {
-	sessionId: string | null,
-	planId: string,
-	version: number,
-	reason: string | null,
-};
-
-export type AgentSidecarPlanRejectRequest_Serialize = {
-	sessionId?: string | null,
-	planId: string,
-	version: number,
-	reason?: string | null,
-};
-
-export type AgentSidecarPlanReplanRequest = AgentSidecarPlanReplanRequest_Serialize | AgentSidecarPlanReplanRequest_Deserialize;
-
-export type AgentSidecarPlanReplanRequest_Deserialize = {
-	sessionId: string | null,
-	goal: string,
-	messages: AgentSidecarMessagePayload[],
-	workspaceRootPath: string | null,
-	context?: AiContextReferencePayload[],
-	modelConfig: AgentSidecarModelConfigPayload_Deserialize | null,
-	planId: string,
-	planVersion: number,
-};
-
-export type AgentSidecarPlanReplanRequest_Serialize = {
-	sessionId?: string | null,
-	goal: string,
-	messages: AgentSidecarMessagePayload[],
-	workspaceRootPath?: string | null,
-	context: AiContextReferencePayload[],
-	modelConfig?: AgentSidecarModelConfigPayload_Serialize | null,
-	planId: string,
-	planVersion: number,
-};
-
-export type AgentSidecarPlanRequest = AgentSidecarPlanRequest_Serialize | AgentSidecarPlanRequest_Deserialize;
-
-export type AgentSidecarPlanRequest_Deserialize = {
-	sessionId: string | null,
-	goal: string,
-	messages: AgentSidecarMessagePayload[],
-	workspaceRootPath: string | null,
-	context?: AiContextReferencePayload[],
-	modelConfig: AgentSidecarModelConfigPayload_Deserialize | null,
-	threadId: string | null,
-	planId: string | null,
-};
-
-export type AgentSidecarPlanRequest_Serialize = {
-	sessionId?: string | null,
-	goal: string,
-	messages: AgentSidecarMessagePayload[],
-	workspaceRootPath?: string | null,
-	context: AiContextReferencePayload[],
-	modelConfig?: AgentSidecarModelConfigPayload_Serialize | null,
-	threadId?: string | null,
-	planId?: string | null,
-};
-
-export type AgentSidecarPlanValidateRequest = AgentSidecarPlanValidateRequest_Serialize | AgentSidecarPlanValidateRequest_Deserialize;
-
-export type AgentSidecarPlanValidateRequest_Deserialize = {
-	sessionId: string | null,
-	goal: string | null,
-	messages: AgentSidecarMessagePayload[],
-	workspaceRootPath: string | null,
-	context?: AiContextReferencePayload[],
-	modelConfig: AgentSidecarModelConfigPayload_Deserialize | null,
-	planId: string,
-	planVersion: number,
-};
-
-export type AgentSidecarPlanValidateRequest_Serialize = {
-	sessionId?: string | null,
-	goal?: string | null,
-	messages: AgentSidecarMessagePayload[],
-	workspaceRootPath?: string | null,
-	context: AiContextReferencePayload[],
-	modelConfig?: AgentSidecarModelConfigPayload_Serialize | null,
-	planId: string,
-	planVersion: number,
 };
 
 export type AgentSidecarResponsePayload = {
@@ -766,7 +598,6 @@ export type AiInlineCompletionRequest = {
 	cursorOffset: number,
 	prefix: string,
 	suffix: string,
-	recentEdits: string[] | null,
 };
 
 export type AiInlineCompletionResult = {
