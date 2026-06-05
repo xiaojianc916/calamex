@@ -182,7 +182,9 @@ const providerMarkTitle = computed(() => {
   return `${aiIconTitle.value} · ${selectedModel}`;
 });
 const historyThreads = computed(() =>
-  assistant.historyThreads.value.slice(-MAX_HISTORY_THREADS).reverse(),
+  [...assistant.historyThreads.value]
+    .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+    .slice(0, MAX_HISTORY_MESSAGES),
 );
 const activeHistoryThread = computed(
   () =>
@@ -431,27 +433,6 @@ const buildPlanRunFinalAnswer = (
     '已完成这轮计划执行。',
     ...(resultLines.length ? ['', '执行结果：', ...resultLines] : []),
   ].join('\n');
-};
-
-const isAgentTokenMessage = (message: IAiChatMessage): boolean =>
-  message.role !== 'assistant' ||
-  Boolean(message.toolCalls?.length) ||
-  Boolean(message.stream?.runtimeEvents?.length);
-
-const resolvePlanTokenStep = (run: IAiAgentRun | null): IAiTaskPlanStep | null => {
-  if (!run) {
-    return null;
-  }
-
-  if (run.currentStepId) {
-    return run.steps.find((step) => step.id === run.currentStepId) ?? null;
-  }
-
-  return (
-    run.steps.find((step) => step.status === 'running') ??
-    run.steps.find((step) => step.status === 'pending') ??
-    null
-  );
 };
 
 const buildPlanTokenEstimationMessages = (
@@ -781,6 +762,27 @@ const getHistoryTimeLabel = (timestampText: string): string => {
     minute: '2-digit',
     hour12: false,
   }).format(new Date(timestamp));
+};
+
+const getHistoryTimestampLabel = (timestampText: string): string => {
+  const timestamp = Date.parse(timestampText);
+  if (!Number.isFinite(timestamp)) return '刚刚';
+  const date = new Date(timestamp);
+  const timeLabel = getHistoryTimeLabel(timestampText);
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startOfDate = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const dayDiff = Math.round((startOfToday - startOfDate) / (24 * 60 * 60 * 1000));
+  if (dayDiff <= 0) return `今天 ${timeLabel}`;
+  if (dayDiff === 1) return `昨天 ${timeLabel}`;
+  const sameYear = date.getFullYear() === now.getFullYear();
+  const dateLabel = new Intl.DateTimeFormat(
+    'zh-CN',
+    sameYear
+      ? { month: '2-digit', day: '2-digit' }
+      : { year: 'numeric', month: '2-digit', day: '2-digit' },
+  ).format(date);
+  return `${dateLabel} ${timeLabel}`;
 };
 
 const getConversationCheckpoint = (messageId: string): IAiConversationCheckpoint | null =>
@@ -1239,7 +1241,7 @@ onBeforeUnmount(() => {
                 <button type="button" class="ai-history-button" @click="openHistoryThread(thread.id)">
                   <div class="ai-history-meta">
                     <strong class="ai-history-title" v-text="thread.title"></strong>
-                    <time v-text="getHistoryTimeLabel(thread.updatedAt)"></time>
+                    <time v-text="getHistoryTimestampLabel(thread.updatedAt)"></time>
                   </div>
                   <div class="ai-history-subtitle" v-text="getHistoryMessageCountLabel(thread.messages)"></div>
                 </button>
