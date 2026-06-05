@@ -619,7 +619,7 @@ describe('SourceControlPanel', () => {
     });
   });
 
-  it('拉取请求标签会打开创建 PR 页面', async () => {
+  it('拉取请求标签会在软件内加载 PR 列表', async () => {
     const wrapper = await mountPanel();
     const pullRequestTab = wrapper
       .findAll('.source-control-nav-item')
@@ -629,17 +629,14 @@ describe('SourceControlPanel', () => {
     await pullRequestTab?.trigger('click');
     await flushPromises();
 
-    const createButton = wrapper
-      .findAll('.source-control-toolbar-btn')
-      .find((button) => button.text() === '创建 PR');
-    expect(createButton).toBeDefined();
-
-    await createButton?.trigger('click');
-    expect(window.open).toHaveBeenCalledWith(
-      'https://github.com/owner/repo/compare',
-      '_blank',
-      'noopener,noreferrer',
-    );
+    expect(tauriServiceMock.getGitPullRequestSupport).toHaveBeenCalledWith('D:/repo');
+    expect(tauriServiceMock.listGitPullRequests).toHaveBeenCalledWith({
+      repositoryRootPath: 'D:/repo',
+      state: 'open',
+    });
+    expect(wrapper.find('.source-control-pr-item').exists()).toBe(true);
+    expect(wrapper.text()).toContain('feat: add pull request panel');
+    expect(window.open).not.toHaveBeenCalled();
   });
 
   it('拉取请求面板可在软件内配置远程并调用 set_git_remote', async () => {
