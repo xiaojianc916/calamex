@@ -84,7 +84,7 @@ export const resolveSidecarToolProjectionStatus = (
 
 export const mapToolConfirmationDecisionToSidecarDecision = (
   decision: TAiToolConfirmationDecision,
-): 'approve' | 'reject' | 'cancel' => {
+): 'approve' | 'reject' | 'cancel' | 'modify' => {
   switch (decision) {
     case 'allow-once':
     case 'allow-run':
@@ -227,9 +227,6 @@ export const resolveSidecarDoneStreamTokenSnapshot = (
   };
 };
 
-// 高水位游标:以「事件数组的引用」为 key 记录已处理到的下标。依赖调用方始终传入
-// 同一个被原地 mutate 的 buffer.events 引用(见 createSidecarLiveEventBuffer);若传入
-// 每次新建的数组,游标会失效并把全部事件当作新事件重复下发。
 const processedRuntimeEventCountsByEvents = new WeakMap<readonly TAgentUiEvent[], number>();
 
 const scheduleUiFlush = (flush: () => void): TUiFlushHandle => {
@@ -364,6 +361,10 @@ export const createSidecarLiveEventBuffer = (
 
       isFlushScheduled = true;
       scheduledFlush = scheduleUiFlush(flush);
+
+      if (!isFlushScheduled) {
+        scheduledFlush = null;
+      }
     },
     flush,
     dispose: () => {

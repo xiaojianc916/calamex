@@ -19,6 +19,7 @@ import type { AgentCapabilities } from '@ag-ui/core';
 import { Observable, type Subscriber } from 'rxjs';
 
 import {
+  createRunErrorEvent,
   createRunStartedEvent,
   createSidecarEventAdapter,
   createTextMessageEndEvent,
@@ -62,6 +63,8 @@ interface IRunContext {
   streamUnlisten: (() => void) | null;
   /** Resolves once stream subscription has been attempted (success or failure). */
   streamReady: Promise<void>;
+  /** True once cleanup has released resources (idempotency guard). */
+  released: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -103,6 +106,7 @@ export class SidecarAgent extends AbstractAgent {
         pendingStreamEvents: [],
         streamUnlisten: null,
         streamReady: Promise.resolve(),
+        released: false,
       };
 
       // ── Emit RUN_STARTED + TEXT_MESSAGE_START synchronously ──────────────
@@ -166,7 +170,7 @@ export class SidecarAgent extends AbstractAgent {
 
           // Some responses arrive complete in one shot — finish if so.
           if (ctx.isActive && response.result !== undefined) {
-            this.finishRun(ctx, subscriber, response.result, null);
+            this.finishRun(ctx, subscriber, response.result);
           }
         })
         .catch((err: unknown) => {
@@ -178,8 +182,19 @@ export class SidecarAgent extends AbstractAgent {
 
       // ── Cleanup ──────────────────────────────────────────────────────────
       const cleanup = (): void => {
-        if (!ctx.isActive && ctx.finished) return;
+        if (ctx.released) return;
+        ctx.released = true;
         ctx.isActive = false;
+
+        // Torn down before reaching a terminal state (e.g. abortRun): honour the
+        // "always terminates exactly once" invariant. These emissions are no-ops
+        // if the subscriber is already closed (consumer-initiated unsubscribe).
+        if (!ctx.finished) {
+          ctx.finished = true;
+          subscriber.next(createTextMessageEndEvent(ctx.base, ctx.messageId));
+          subscriber.next(createRunErrorEvent(ctx.base, 'Run aborted'));
+          subscriber.complete();
+        }
 
         // Unlisten now if we already have the handle.
         if (ctx.streamUnlisten) {
@@ -251,7 +266,7 @@ export class SidecarAgent extends AbstractAgent {
     // Sidecar's own terminal markers — finish exactly once.
     if (payload.event.type === 'done') {
       const doneEvent = payload.event as { type: 'done'; result?: string };
-      this.finishRun(ctx, subscriber, doneEvent.result ?? null, null);
+      this.finishRun(ctx, subscriber, doneEvent.result ?? null);
     } else if (payload.event.type === 'error') {
       const errEvent = payload.event as { type: 'error'; message: string };
       this.failRun(ctx, subscriber, errEvent.message);
@@ -265,13 +280,12 @@ export class SidecarAgent extends AbstractAgent {
     ctx: IRunContext,
     subscriber: Subscriber<BaseEvent>,
     result: string | null,
-    usage: null,
   ): void {
     if (ctx.finished) return;
     ctx.finished = true;
     ctx.isActive = false;
 
-    for (const evt of ctx.adapter.terminal(ctx.base, ctx.messageId, result, usage)) {
+    for (const evt of ctx.adapter.terminal(ctx.base, ctx.messageId, result)) {
       subscriber.next(evt);
     }
     subscriber.complete();
@@ -284,12 +298,7 @@ export class SidecarAgent extends AbstractAgent {
 
     // Close the text message frame so downstream parsers don't hang on it.
     subscriber.next(createTextMessageEndEvent(ctx.base, ctx.messageId));
-    subscriber.next({
-      type: 'RUN_ERROR',
-      runId: ctx.base.runId,
-      threadId: ctx.base.threadId,
-      message,
-    } as BaseEvent);
+    subscriber.next(createRunErrorEvent(ctx.base, message) as BaseEvent);
     subscriber.complete();
   }
 

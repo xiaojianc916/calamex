@@ -16,7 +16,6 @@ export {
   createToolCallResultEvent,
   createToolCallStartEvent,
   defaultIdGenerator,
-  nextSeq,
   toAguiMessage,
   toAguiMessages,
   toSidecarChatRequest,

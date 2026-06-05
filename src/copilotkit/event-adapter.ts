@@ -11,6 +11,7 @@ import { z } from 'zod';
 
 import type { IAiLanguageModelUsage } from '@/types/ai';
 import type { IAgentSidecarChatRequest } from '@/types/ai/sidecar';
+import { logger } from '@/utils/logger';
 
 // ===========================================================================
 // ID generation
@@ -48,7 +49,6 @@ const extractMessageText = (msg: Message): string => {
     .map((part: unknown) => {
       const p = part as { type?: string; text?: string } | null;
       if (p?.type === 'text' && typeof p.text === 'string') return p.text;
-      if (p?.type) return `[${p.type}]`;
       return '';
     })
     .filter(Boolean)
@@ -239,7 +239,6 @@ export interface ISidecarEventAdapter {
     result: string | null,
     usage?: IAiLanguageModelUsage | null,
   ) => AguiEvent[];
-  nextSeq: () => number;
   reset: () => void;
 }
 
@@ -247,10 +246,10 @@ export const createSidecarEventAdapter = (
   options: ISidecarEventAdapterOptions = {},
 ): ISidecarEventAdapter => {
   const generateId = options.generateId ?? defaultIdGenerator;
-  const warn = options.warn ?? ((m, p) => console.warn(`[ag-ui-adapter] ${m}`, p));
+  const warn =
+    options.warn ?? ((m, p) => logger.warn({ event: 'ag-ui-adapter', message: m, payload: p }));
 
   let toolCallIdByKey = new Map<string, string>();
-  let seqCounter = 0;
 
   const getOrCreateToolCallId = (key: string): { id: string; isNew: boolean } => {
     const existing = toolCallIdByKey.get(key);
@@ -379,16 +378,11 @@ export const createSidecarEventAdapter = (
     return events;
   };
 
-  const nextSeq = (): number => {
-    seqCounter += 1;
-    return seqCounter;
-  };
   const reset = (): void => {
     toolCallIdByKey = new Map();
-    seqCounter = 0;
   };
 
-  return { convert, terminal, nextSeq, reset };
+  return { convert, terminal, reset };
 };
 
 // ===========================================================================
@@ -409,5 +403,4 @@ export const createTerminalEvents = (
   usage?: IAiLanguageModelUsage | null,
 ): AguiEvent[] => sharedAdapter.terminal(base, messageId, result, usage);
 
-export const nextSeq = (): number => sharedAdapter.nextSeq();
 export const createEventId = (prefix: string): string => defaultIdGenerator(prefix);

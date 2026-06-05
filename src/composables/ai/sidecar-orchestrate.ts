@@ -177,7 +177,7 @@ export const projectOrchestrateEvents = (
     hasFileMutations: hasSidecarFileMutationEvent(events),
     usage: usageResolution.usage,
     isDone: Boolean(doneEvent) || Boolean(errorEvent),
-    isAwaitingApproval: !doneEvent && !errorEvent && Boolean(approval ?? planReady),
+    isAwaitingApproval: !doneEvent && !errorEvent && Boolean(approval || planReady),
   };
 };
 
@@ -196,7 +196,13 @@ export interface IOrchestrateRunResult {
   projection: IOrchestrateProjection;
 }
 
-const createOrchestrationSessionId = (): string => `sidecar-orchestrate:${crypto.randomUUID()}`;
+const createOrchestrationSessionId = (): string => {
+  const uuid =
+    typeof globalThis.crypto?.randomUUID === 'function'
+      ? globalThis.crypto.randomUUID()
+      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  return `sidecar-orchestrate:${uuid}`;
+};
 
 /**
  * 启动一次原生编排 run：跑到计划审批门挂起（plan_ready + suspend）或终态，
