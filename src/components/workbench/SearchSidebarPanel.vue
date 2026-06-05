@@ -36,8 +36,8 @@
       <button v-for="chip in scopeChips" :key="chip.key" type="button" class="search-panel-chip"
         :class="{ 'is-active': activeScope === chip.key }" :aria-pressed="activeScope === chip.key"
         @click="activeScope = chip.key">
-        <span> {{ chip.label }} </span>
-        <span class="search-panel-chip-count">{{ chip.count }}</span>
+        <span>  chip.label  </span>
+        <span class="search-panel-chip-count"> chip.count </span>
       </button>
     </div>
 
@@ -70,15 +70,23 @@
     </div>
 
     <div v-if="showPathFilters && !useStructural" class="search-panel-path-filter-row">
-      <label class="search-panel-path-filter">
-        <span>包含</span>
-        <input v-model="includePattern" type="text" placeholder="" autocomplete="off" spellcheck="false" />
-      </label>
+      <PathFilterInput
+        v-model="includePattern"
+        label="包含"
+        aria-label="包含的路径或文件"
+        :workspace-root-path="props.workspaceRootPath"
+        :is-desktop-runtime="props.isDesktopRuntime"
+        :match-case="matchCase"
+      />
 
-      <label class="search-panel-path-filter">
-        <span>排除</span>
-        <input v-model="excludePattern" type="text" placeholder="" autocomplete="off" spellcheck="false" />
-      </label>
+      <PathFilterInput
+        v-model="excludePattern"
+        label="排除"
+        aria-label="排除的路径或文件"
+        :workspace-root-path="props.workspaceRootPath"
+        :is-desktop-runtime="props.isDesktopRuntime"
+        :match-case="matchCase"
+      />
     </div>
 
     <div ref="resultsScrollRef" class="search-panel-results" role="listbox">
@@ -98,15 +106,15 @@
             <header class="search-replace-inline-file-header">
               <button type="button" class="search-replace-inline-file-open"
                 :aria-expanded="!isReplacementFileCollapsed(file.path)" @click="toggleReplacementFile(file.path)">
-                <span class="search-replace-inline-chevron" aria-hidden="true">{{ isReplacementFileCollapsed(file.path)
-                  ? '▸' : '▾' }}</span>
+                <span class="search-replace-inline-chevron" aria-hidden="true"> isReplacementFileCollapsed(file.path)
+                  ? '▸' : '▾' </span>
                 <span class="search-replace-inline-file-icon" aria-hidden="true">
                   <ExplorerEntryIcon kind="file" :path="file.path" />
                 </span>
-                <span class="search-replace-inline-file-name">{{ file.name }}</span>
-                <span class="search-replace-inline-file-path">{{ file.parentPath }}</span>
+                <span class="search-replace-inline-file-name"> file.name </span>
+                <span class="search-replace-inline-file-path"> file.parentPath </span>
               </button>
-              <span class="search-replace-inline-count">{{ file.visibleReplacementCount }}</span>
+              <span class="search-replace-inline-count"> file.visibleReplacementCount </span>
             </header>
 
             <template v-if="!isReplacementFileCollapsed(file.path)">
@@ -114,7 +122,7 @@
                 role="option" tabindex="0" @click="handleReplacementLineOpen(file.path, line.lineNumber)"
                 @keydown.enter="handleReplacementLineOpen(file.path, line.lineNumber)"
                 @keydown.space.prevent="handleReplacementLineOpen(file.path, line.lineNumber)">
-                <span class="search-replace-inline-line-number">{{ line.lineNumber }}</span>
+                <span class="search-replace-inline-line-number"> line.lineNumber </span>
                 <span class="search-replace-inline-code">
                   <template v-for="(segment, segmentIndex) in line.segments" :key="`${line.id}-${segmentIndex}`">
                     <span v-if="segment.kind !== 'empty'" class="search-replace-inline-segment"
@@ -178,15 +186,15 @@
               <button type="button" class="search-panel-result-group-open"
                 :aria-expanded="!isSearchResultGroupCollapsed(entry.row.group.path)"
                 @click="toggleSearchResultGroup(entry.row.group.path)">
-                <span class="search-panel-result-group-chevron" aria-hidden="true">{{
-                  isSearchResultGroupCollapsed(entry.row.group.path) ? '▸' : '▾' }}</span>
+                <span class="search-panel-result-group-chevron" aria-hidden="true">
+                  isSearchResultGroupCollapsed(entry.row.group.path) ? '▸' : '▾' </span>
                 <span class="search-panel-result-group-icon" aria-hidden="true">
                   <ExplorerEntryIcon kind="file" :path="entry.row.group.path" />
                 </span>
-                <span class="search-panel-result-group-name"> {{ entry.row.group.name }} </span>
-                <span class="search-panel-result-group-path"> {{ entry.row.group.parentPath }} </span>
+                <span class="search-panel-result-group-name">  entry.row.group.name  </span>
+                <span class="search-panel-result-group-path">  entry.row.group.parentPath  </span>
               </button>
-              <span class="search-panel-result-group-count"> {{ entry.row.group.results.length }} </span>
+              <span class="search-panel-result-group-count">  entry.row.group.results.length  </span>
             </header>
 
             <button v-else type="button" class="search-panel-result-line search-panel-virtual-row"
@@ -194,7 +202,7 @@
               :aria-selected="selectedResultKey === entry.row.result?.resultKey"
               :style="{ transform: `translateY(${entry.start}px)` }"
               @click="entry.row.result && handleSearchResultOpen(entry.row.result)">
-              <span class="search-panel-result-line-number"> {{ entry.row.result?.lineNumber }} </span>
+              <span class="search-panel-result-line-number">  entry.row.result?.lineNumber  </span>
               <span class="search-panel-result-line-body">
                 <span class="search-panel-result-snippet">
                   <template v-for="(segment, index) in entry.row.result?.snippetSegments ?? []"
@@ -215,15 +223,15 @@
             <header class="search-panel-result-group-header">
               <button type="button" class="search-panel-result-group-open"
                 :aria-expanded="!isSearchResultGroupCollapsed(group.path)" @click="toggleSearchResultGroup(group.path)">
-                <span class="search-panel-result-group-chevron" aria-hidden="true">{{
-                  isSearchResultGroupCollapsed(group.path) ? '▸' : '▾' }}</span>
+                <span class="search-panel-result-group-chevron" aria-hidden="true">
+                  isSearchResultGroupCollapsed(group.path) ? '▸' : '▾' </span>
                 <span class="search-panel-result-group-icon" aria-hidden="true">
                   <ExplorerEntryIcon kind="file" :path="group.path" />
                 </span>
-                <span class="search-panel-result-group-name">{{ group.name }}</span>
-                <span class="search-panel-result-group-path">{{ group.parentPath }}</span>
+                <span class="search-panel-result-group-name"> group.name </span>
+                <span class="search-panel-result-group-path"> group.parentPath </span>
               </button>
-              <span class="search-panel-result-group-count">{{ group.results.length }}</span>
+              <span class="search-panel-result-group-count"> group.results.length </span>
             </header>
 
             <template v-if="!isSearchResultGroupCollapsed(group.path)">
@@ -231,7 +239,7 @@
                 class="search-panel-result-line" :class="{ 'is-selected': selectedResultKey === result.resultKey }"
                 role="option" :aria-selected="selectedResultKey === result.resultKey"
                 @click="handleSearchResultOpen(result)">
-                <span class="search-panel-result-line-number">{{ result.lineNumber }}</span>
+                <span class="search-panel-result-line-number"> result.lineNumber </span>
 
                 <span class="search-panel-result-line-body">
                   <span class="search-panel-result-snippet">
@@ -257,6 +265,7 @@ import { computed, onScopeDispose, ref, watch } from 'vue';
 import InlineError from '@/components/common/InlineError.vue';
 import { Input } from '@/components/ui/input';
 import ExplorerEntryIcon from '@/components/workbench/ExplorerEntryIcon.vue';
+import PathFilterInput from '@/components/workbench/PathFilterInput.vue';
 import { useMessage } from '@/composables/useMessage';
 import {
   type IRefreshSidecarChangedDocumentsResult,
