@@ -1467,8 +1467,6 @@ watch(
     wholeWord,
     useRegex,
     useStructural,
-    // 用「生效过滤值」的序列化结果作为依赖：未启用路径过滤、或过滤为空时，
-    // 编辑包含/排除输入框或切换过滤开关都不会改变下发内容，从而不触发重复检索。
     () => effectiveIncludePatterns.value.join('\n'),
     () => effectiveExcludePatterns.value.join('\n'),
   ],
@@ -1484,8 +1482,6 @@ watch(
     includePattern.value = '';
     excludePattern.value = '';
     activeScope.value = 'all';
-    // 同步重置搜索选项，避免遗留「结构化模式 + scope=all」等自相矛盾的组合
-    // （结构化搜索本应锁定 content 范围）。
     matchCase.value = false;
     wholeWord.value = false;
     useRegex.value = false;
