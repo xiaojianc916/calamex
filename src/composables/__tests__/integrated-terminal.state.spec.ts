@@ -8,6 +8,7 @@ import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { defineComponent, ref } from 'vue';
 import { useEditorStore } from '@/store/editor';
+import { useTerminalRunRoutingStore } from '@/store/terminalRunRouting';
 import {
   normalizeTerminalAnsiForTheme,
   stripInjectedRunSeparatorForTerminalData,
@@ -801,6 +802,8 @@ describe('suite 1', () => {
       await flushPromises();
 
       const editorStore = useEditorStore();
+      const runRoutingStore = useTerminalRunRoutingStore();
+      runRoutingStore.setActiveRunSessionId('main-terminal');
       editorStore.setPendingTerminalRunId('run-suppress-interactive');
       await flushPromises();
       mockTerminalInstance.write.mockClear();

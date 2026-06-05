@@ -138,12 +138,14 @@ describe('SearchSidebarPanel', () => {
     expect(wrapper.text()).toContain('尚未打开工作区');
   });
 
-  it('空查询时短路不触发后端检索，并展示初始引导空状态', async () => {
+  it('空查询时短路不触发后端检索，且不渲染任何结果或空状态', async () => {
     const wrapper = mountPanel();
     await flushDebouncedSearch();
 
     expect(tauriServiceMock.searchWorkspace).not.toHaveBeenCalled();
-    expect(wrapper.text()).toContain('搜索工作区');
+    // 空查询是有意为之的「干净空白」:不渲染结果分组,也不显示任何空状态文案。
+    expect(wrapper.find('.search-panel-result-group').exists()).toBe(false);
+    expect(wrapper.find('.search-panel-empty-state').exists()).toBe(false);
   });
 
   it('输入关键字后按 scope=all 调用后端并渲染结果分组与高亮', async () => {
