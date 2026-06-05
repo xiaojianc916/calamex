@@ -7,7 +7,7 @@
         v-for="(chip, index) in chips"
         :key="`${chip.value}:${index}`"
         class="search-path-filter-chip"
-        :class="{ 'is-invalid': !chip.valid }"
+        :class="{ 'is-directory': chip.isDirectory, 'is-invalid': !chip.valid }"
         :title="chip.valid ? chip.value : `非法的模式：${chip.value}`"
       >
         <span class="search-path-filter-chip-label" v-text="chip.value" />
@@ -46,7 +46,7 @@
           v-for="(item, index) in suggestions"
           :key="`${item.kind}:${item.insertValue}`"
           class="search-path-filter-option"
-          :class="{ 'is-active': index === activeIndex, 'is-directory': item.kind === 'directory' }"
+          :class="{ 'is-active': index === activeIndex }"
           role="option"
           :aria-selected="index === activeIndex"
           @mousedown.prevent="selectSuggestion(index)"
@@ -151,10 +151,12 @@ const isValidGlobPattern = (value: string): boolean => {
   return squareDepth === 0 && braceDepth === 0;
 };
 
+// chip 是否代表目录：以 '/' 结尾视为目录（选目录时 insertValue 就是这样），其余视为文件/通配符。
 const chips = computed(() =>
   parsePatterns(props.modelValue).map((value) => ({
     value,
     valid: isValidGlobPattern(value),
+    isDirectory: value.endsWith('/'),
   })),
 );
 
@@ -428,6 +430,7 @@ onBeforeUnmount(() => {
   height: 22px;
 }
 
+/* 胶囊默认（文件/通配符）：蓝色背景。 */
 .search-path-filter-chip {
   display: inline-flex;
   align-items: center;
@@ -436,9 +439,21 @@ onBeforeUnmount(() => {
   height: 22px;
   padding: 0 2px 0 7px;
   border-radius: var(--search-radius-sm);
-  background: var(--search-bg-selected);
+  background: rgb(37 99 235 / 12%);
   color: var(--search-text);
   font-size: 11px;
+}
+
+/* 目录胶囊（以 '/' 结尾）：琴珀色背景，呼应橙色文件夹图标。 */
+.search-path-filter-chip.is-directory {
+  background: rgb(245 158 11 / 20%);
+}
+
+/* 非法模式：红色背景，优先级高于目录/文件配色。 */
+.search-path-filter-chip.is-invalid {
+  background: rgb(220 38 38 / 14%);
+  color: #b91c1c;
+  box-shadow: inset 0 0 0 1px rgb(220 38 38 / 38%);
 }
 
 .search-path-filter-chip-label {
@@ -448,12 +463,6 @@ onBeforeUnmount(() => {
   line-height: 20px;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.search-path-filter-chip.is-invalid {
-  background: rgb(220 38 38 / 12%);
-  color: #b91c1c;
-  box-shadow: inset 0 0 0 1px rgb(220 38 38 / 38%);
 }
 
 .search-path-filter-chip.is-invalid .search-path-filter-chip-label {
@@ -572,16 +581,6 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-/* 目录与文件颜色区分：目录用蓝色（图标 + 文字），文件保持默认深色文字。 */
-.search-path-filter-option.is-directory .search-path-filter-option-icon {
-  color: #2563eb;
-}
-
-.search-path-filter-option.is-directory .search-path-filter-option-label {
-  color: #2563eb;
-  font-weight: 500;
-}
-
 .search-path-filter-option-enter {
   display: inline-flex;
   flex-shrink: 0;
@@ -594,13 +593,13 @@ onBeforeUnmount(() => {
   border: 0;
   border-radius: var(--search-radius-sm);
   background: transparent;
-  color: #2563eb;
+  color: var(--search-text-subtle);
   font-size: 13px;
   cursor: pointer;
 }
 
 .search-path-filter-option-enter:hover {
-  background: rgb(37 99 235 / 12%);
-  color: #1d4ed8;
+  background: rgb(0 0 0 / 8%);
+  color: var(--search-text);
 }
 </style>
