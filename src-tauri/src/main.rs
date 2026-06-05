@@ -6,6 +6,7 @@ mod ai;
 mod assets;
 #[macro_use]
 mod commands;
+mod storage_paths;
 mod tauri_bindings;
 mod terminal;
 
@@ -226,6 +227,8 @@ fn main() {
         .setup(move |app| {
             let setup_started_at = Instant::now();
             emit_startup_event("tauri.setup.start", app_started_at);
+            // 统一本地存储：首启把历史分散目录迁移到 .calamex 根（幂等、绝不阻断启动）。
+storage_paths::migrate_legacy_storage();
 
             // 挂载 specta 强类型事件;让前端 events.workspaceFsEvent.listen(...) 拿到 typed payload
             specta_bindings.mount_events(app);

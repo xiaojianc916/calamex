@@ -596,7 +596,7 @@ async fn ensure_default_sidecar_available(base_url: &str) -> Result<(), String> 
         )
     });
     if let Some(tail) = read_sidecar_log_tail() {
-        error.push_str("\n--- agent-sidecar.log（末尾）---\n");
+        error.push_str("\n--- service.log（末尾）---\n");
         error.push_str(&tail);
     }
     Err(error)
@@ -772,8 +772,8 @@ fn sidecar_runtime_dir_from(local_app_data: Option<String>) -> PathBuf {
     local_app_data
         .map(PathBuf::from)
         .unwrap_or_else(env::temp_dir)
-        .join("com.xiaojianc.Calamex")
-        .join("agent-sidecar")
+        .join(".calamex")
+        .join("ai-service")
 }
 
 /// 本地 sidecar 鉴权令牌：进程内只生成 / 读取一次，并持久化到运行时目录。
@@ -786,7 +786,7 @@ fn sidecar_auth_token() -> Option<String> {
 }
 
 fn load_or_create_sidecar_auth_token() -> Option<String> {
-    let token_path = sidecar_runtime_dir().join("agent-sidecar.token");
+    let token_path = sidecar_runtime_dir().join("auth.token");
 
     // 复用已持久化的令牌：宿主重启后与仍在运行的旧 sidecar 保持一致。
     if let Ok(existing) = fs::read_to_string(&token_path) {
@@ -826,7 +826,7 @@ fn generate_sidecar_auth_token() -> Option<String> {
 /// App 启动 sidecar 时把 stdout/stderr 重定向到这里，便于排查
 /// sidecar 进程在流式过程中崩溃 / 抛未捕获异常的原因。
 fn sidecar_log_path() -> PathBuf {
-    sidecar_runtime_dir().join("agent-sidecar.log")
+    sidecar_runtime_dir().join("service.log")
 }
 
 /// 打开 sidecar 日志文件（append 追加），返回供 stdout / stderr 复用的两个句柄。
@@ -863,7 +863,7 @@ fn rotate_sidecar_log_if_oversized(log_path: &Path) {
     if metadata.len() <= SIDECAR_LOG_MAX_BYTES {
         return;
     }
-    let backup = log_path.with_file_name("agent-sidecar.log.old");
+    let backup = log_path.with_file_name("service.log.old");
     let _ = fs::rename(log_path, backup);
 }
 
@@ -934,7 +934,7 @@ fn spawn_default_sidecar() -> Result<Child, String> {
         .env("AGENT_SIDECAR_PORT", "39871")
         .env(
             "NODE_COMPILE_CACHE",
-            sidecar_runtime_dir().join(".node-compile-cache"),
+            sidecar_runtime_dir().join("node-compile-cache"),
         );
 
     // 注入本地 sidecar 鉴权令牌：sidecar 端 server.ts 检测到该环境变量后，
@@ -970,7 +970,7 @@ fn take_crashed_sidecar_error(spawned_child: &mut Option<Child>) -> Option<Strin
 
     let mut error = crashed_sidecar_error_message(status.code());
     if let Some(tail) = read_sidecar_log_tail() {
-        error.push_str("\n--- agent-sidecar.log（末尾）---\n");
+        error.push_str("\n--- service.log（末尾）---\n");
         error.push_str(&tail);
     }
     Some(error)

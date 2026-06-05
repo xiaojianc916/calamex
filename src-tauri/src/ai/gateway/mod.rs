@@ -419,11 +419,11 @@ fn sanitize_fenced_text(value: &str) -> String {
 }
 
 fn config_file_path() -> Option<PathBuf> {
-    let base = std::env::var_os("APPDATA")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(PathBuf::from))?;
-
-    Some(base.join("Calamex").join("ai-config.json"))
+    Some(
+        crate::storage_paths::roaming_root()?
+            .join("config")
+            .join("ai.json"),
+    )
 }
 
 fn load_config_from_disk() -> Option<AiRuntimeConfig> {
