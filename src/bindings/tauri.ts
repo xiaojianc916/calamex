@@ -51,13 +51,12 @@ export const commands = {
 	createGitBranch: (payload: GitBranchCreateRequest) => __TAURI_INVOKE<GitRepositoryStatusPayload>("create_git_branch", { payload }),
 	getGitDiffPreview: (payload: GitDiffPreviewRequest) => __TAURI_INVOKE<GitDiffPreviewPayload>("get_git_diff_preview", { payload }),
 	listGitCommitHistory: (payload: GitCommitHistoryRequest) => __TAURI_INVOKE<GitCommitHistoryPayload>("list_git_commit_history", { payload }),
-	/**
-	 *  读取单个提交的详细信息（用于历史悬浮卡片）：提交元数据 + 相对首个父提交的
-	 *  文件/行变更聚合（文件数、插入、删除）。根提交对空树取差异。
-	 */
-	getGitCommitDetail: (payload: GitCommitDetailRequest) => __TAURI_INVOKE<GitCommitDetailPayload>("get_git_commit_detail", { payload }),
 	getGitPullRequestSupport: (payload: GitRepositoryRootRequest) => __TAURI_INVOKE<GitPullRequestSupportPayload>("get_git_pull_request_support", { payload }),
-	setGitRemote: (payload: GitRemoteSetRequest) => __TAURI_INVOKE<GitPullRequestSupportPayload>("set_git_remote", { payload }),
+	listGitPullRequests: (payload: GitPullRequestListRequest) => __TAURI_INVOKE<GitPullRequestSummaryPayload[]>("list_git_pull_requests", { payload }),
+	getGitPullRequestDetail: (payload: GitPullRequestDetailRequest) => __TAURI_INVOKE<GitPullRequestDetailPayload>("get_git_pull_request_detail", { payload }),
+	createGitPullRequest: (payload: GitPullRequestCreateRequest) => __TAURI_INVOKE<GitPullRequestSummaryPayload>("create_git_pull_request", { payload }),
+	mergeGitPullRequest: (payload: GitPullRequestMergeRequest) => __TAURI_INVOKE<GitPullRequestSummaryPayload>("merge_git_pull_request", { payload }),
+	closeGitPullRequest: (payload: GitPullRequestCloseRequest) => __TAURI_INVOKE<GitPullRequestSummaryPayload>("close_git_pull_request", { payload }),
 	listGitStashes: (payload: GitRepositoryRootRequest) => __TAURI_INVOKE<GitStashListPayload>("list_git_stashes", { payload }),
 	saveGitStash: (payload: GitStashSaveRequest) => __TAURI_INVOKE<GitRepositoryStatusPayload>("save_git_stash", { payload }),
 	applyGitStash: (payload: GitStashApplyRequest) => __TAURI_INVOKE<GitRepositoryStatusPayload>("apply_git_stash", { payload }),
@@ -672,7 +671,7 @@ export type AiProviderConnectionPayload = {
 };
 
 /**
- *  用于“测试连接 / 开始连接”的草稿配置。
+ *  用于"测试连接 / 开始连接"的草稿配置。
  * 
  *  `api_key` 允许为空：为空时后端只会尝试读取当前 Provider 已保存的凭证；
  *  若也不存在已保存凭证，连接测试必须失败，不能伪造成功。
@@ -900,36 +899,6 @@ export type GitBranchPayload = {
 	lastCommit: GitCommitSummaryPayload | null,
 };
 
-export type GitCommitDetailPayload = {
-	id: string,
-	shortId: string,
-	summary: string,
-	body: string,
-	authorName: string,
-	authorEmail: string,
-	authoredAt: string,
-	parentIds: string[],
-	refs: GitCommitRefPayload[],
-	fileCount: number,
-	additions: number,
-	deletions: number,
-	files: GitCommitFileChangePayload[],
-};
-
-export type GitCommitDetailRequest = {
-	repositoryRootPath: string,
-	commitId: string,
-};
-
-export type GitCommitFileChangePayload = {
-	relativePath: string,
-	fileName: string,
-	previousRelativePath: string | null,
-	status: string,
-	additions: number,
-	deletions: number,
-};
-
 export type GitCommitHistoryPayload = {
 	entries: GitCommitSummaryPayload[],
 	hasMore: boolean,
@@ -1015,6 +984,70 @@ export type GitPathOperationRequest = {
 	paths: string[],
 };
 
+export type GitPullRequestCloseRequest = {
+	repositoryRootPath: string,
+	number: number,
+};
+
+export type GitPullRequestCreateRequest = {
+	repositoryRootPath: string,
+	title: string,
+	body: string | null,
+	base: string,
+	head: string,
+	draft: boolean | null,
+};
+
+export type GitPullRequestDetailPayload = {
+	number: number,
+	title: string,
+	state: string,
+	isDraft: boolean,
+	author: string | null,
+	headRef: string,
+	baseRef: string,
+	htmlUrl: string,
+	createdAt: string,
+	updatedAt: string,
+	comments: number | null,
+	body: string,
+	additions: number | null,
+	deletions: number | null,
+	changedFiles: number | null,
+	mergeable: boolean | null,
+	mergeableState: string | null,
+};
+
+export type GitPullRequestDetailRequest = {
+	repositoryRootPath: string,
+	number: number,
+};
+
+export type GitPullRequestListRequest = {
+	repositoryRootPath: string,
+	state: string | null,
+};
+
+export type GitPullRequestMergeRequest = {
+	repositoryRootPath: string,
+	number: number,
+	mergeMethod: string | null,
+};
+
+export type GitPullRequestSummaryPayload = {
+	number: number,
+	title: string,
+	state: string,
+	isDraft: boolean,
+	author: string | null,
+	headRef: string,
+	baseRef: string,
+	htmlUrl: string,
+	createdAt: string,
+	updatedAt: string,
+	comments: number | null,
+};
+
 export type GitPullRequestSupportPayload = {
 	available: boolean,
 	remoteName: string | null,
@@ -1022,12 +1055,6 @@ export type GitPullRequestSupportPayload = {
 	repositoryUrl: string | null,
 	pullRequestsUrl: string | null,
 	createPullRequestUrl: string | null,
-};
-
-export type GitRemoteSetRequest = {
-	repositoryRootPath: string,
-	remoteName: string,
-	remoteUrl: string,
 };
 
 export type GitRepositoryRootRequest = {
@@ -1560,4 +1587,3 @@ function makeEvent<T>(name: string, serialize?: (payload: T) => unknown, deseria
 
     return Object.assign(fn, base);
 }
-

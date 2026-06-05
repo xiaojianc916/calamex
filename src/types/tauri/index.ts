@@ -92,8 +92,14 @@ import type {
   IGitDiffPreviewRequest,
   IGitFileBaselinePayload,
   IGitPathOperationRequest,
+  IGitPullRequestCloseRequest,
+  IGitPullRequestCreateRequest,
+  IGitPullRequestDetailPayload,
+  IGitPullRequestDetailRequest,
+  IGitPullRequestListRequest,
+  IGitPullRequestMergeRequest,
+  IGitPullRequestSummaryPayload,
   IGitPullRequestSupportPayload,
-  IGitRemoteSetRequest,
   IGitRepositoryRootRequest,
   IGitRepositoryStatusPayload,
   IGitStashApplyRequest,
@@ -329,7 +335,11 @@ export interface ITauriService {
   getGitPullRequestSupport(
     payload: IGitRepositoryRootRequest,
   ): Promise<IGitPullRequestSupportPayload>;
-  setGitRemote(payload: IGitRemoteSetRequest): Promise<IGitPullRequestSupportPayload>;
+  listGitPullRequests(payload: IGitPullRequestListRequest): Promise<IGitPullRequestSummaryPayload[]>;
+  getGitPullRequestDetail(payload: IGitPullRequestDetailRequest): Promise<IGitPullRequestDetailPayload>;
+  createGitPullRequest(payload: IGitPullRequestCreateRequest): Promise<IGitPullRequestSummaryPayload>;
+  mergeGitPullRequest(payload: IGitPullRequestMergeRequest): Promise<IGitPullRequestSummaryPayload>;
+  closeGitPullRequest(payload: IGitPullRequestCloseRequest): Promise<IGitPullRequestSummaryPayload>;
   ensureTerminalSession(payload: IEnsureTerminalSessionRequest): Promise<ITerminalSessionPayload>;
   dispatchScriptToTerminal(
     payload: IDispatchTerminalScriptRequest,
