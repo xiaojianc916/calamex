@@ -1,3 +1,4 @@
+import { useDialog } from '@/composables/useDialog';
 import { useMessage } from '@/composables/useMessage';
 import { tauriService } from '@/services/tauri';
 import type { useAppStore } from '@/store/app';
@@ -42,6 +43,10 @@ const trimTrailingWhitespace = (content: string): string =>
     .split('\n')
     .map((line) => line.replace(/[\t ]+$/u, ''))
     .join('\n');
+
+/** 仅用于内容比对:归一化换行符(CRLF / CR -> LF),避免因行尾差异误判为外部变更。 */
+const stripLineEndingsForCompare = (content: string): string =>
+  content.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 
 const isTextDocument = (document: IEditorDocument): boolean => document.kind === 'text';
 
@@ -296,6 +301,59 @@ export const useDocumentPersistence = ({
     });
   };
 
+  /**
+   * 保存前检测磁盘是否已被外部修改(其他程序 / 编辑器改动了同一文件)。
+   * 若磁盘内容与我们加载时的基线 (savedContent) 不一致,说明存在外部变更,
+   * 直接覆盖会静默丢失对方的改动。此时弹窗让用户选择如何处理。
+   *
+   * 返回 'proceed' 表示继续保存(覆盖);'abort' 表示应中止保存
+   * (用户取消,或已选择放弃本地修改并重新加载磁盘内容)。
+   */
+  const reconcileExternalDiskChange = async (
+    documentId: string,
+    targetDocument: IEditorDocument,
+  ): Promise<'proceed' | 'abort'> => {
+    if (!targetDocument.path) {
+      return 'proceed';
+    }
+
+    let diskPayload: IScriptFilePayload;
+    try {
+      diskPayload = await tauriService.loadScript(targetDocument.path);
+    } catch {
+      // 读取失败(通常是文件已被删除 / 移动):无从对比,按正常保存流程处理。
+      return 'proceed';
+    }
+
+    if (
+      stripLineEndingsForCompare(diskPayload.content) ===
+      stripLineEndingsForCompare(targetDocument.savedContent)
+    ) {
+      return 'proceed';
+    }
+
+    const action = await useDialog().confirm({
+      title: '文件已被外部修改',
+      description: `文件“${targetDocument.name}”在编辑器之外被修改过。继续保存会覆盖磁盘上的最新内容。`,
+      confirmText: '覆盖保存',
+      cancelText: '放弃我的修改并重新加载',
+      dismissText: '取消',
+      variant: 'warning',
+    });
+
+    if (action === 'confirm') {
+      return 'proceed';
+    }
+
+    if (action === 'cancel') {
+      editorStore.applyDocumentPayload(documentId, diskPayload);
+      notifier.success('已放弃本地修改并重新加载磁盘最新内容。');
+      return 'abort';
+    }
+
+    return 'abort';
+  };
+
   const saveDocument = async (documentId = editorStore.document.id): Promise<boolean> => {
     const targetDocument = await prepareDocumentForSave(documentId);
     if (!targetDocument) {
@@ -308,6 +366,12 @@ export const useDocumentPersistence = ({
 
     if (!targetDocument.path) {
       return saveDocumentAs(documentId);
+    }
+
+    // 覆盖已落盘文件前,先检测磁盘是否被外部修改,避免静默覆盖。
+    const reconciliation = await reconcileExternalDiskChange(documentId, targetDocument);
+    if (reconciliation === 'abort') {
+      return false;
     }
 
     return persistTextDocument({
@@ -324,6 +388,8 @@ export const useDocumentPersistence = ({
   };
 
   const saveDirtyDocuments = async (documentIds: string[]): Promise<boolean> => {
+    const failedNames: string[] = [];
+
     for (const documentId of documentIds) {
       const targetDocument = editorStore.getDocumentById(documentId);
       if (!targetDocument?.isDirty) {
@@ -332,8 +398,15 @@ export const useDocumentPersistence = ({
 
       const saved = await saveDocument(documentId);
       if (!saved) {
-        return false;
+        failedNames.push(targetDocument.name);
       }
+    }
+
+    if (failedNames.length > 0) {
+      const detail = `以下文件未能保存：${failedNames.join('、')}`;
+      editorStore.appendLog('error', '部分文件保存失败', detail);
+      notifier.error('部分文件保存失败', { description: detail });
+      return false;
     }
 
     return true;
