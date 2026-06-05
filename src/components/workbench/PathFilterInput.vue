@@ -57,6 +57,17 @@
           </span>
           <span class="search-path-filter-option-label" v-text="item.label" />
           <span v-if="item.detail" class="search-path-filter-option-detail" v-text="item.detail" />
+          <button
+            v-if="item.kind === 'directory'"
+            type="button"
+            class="search-path-filter-option-enter"
+            tabindex="-1"
+            aria-label="进入目录"
+            title="进入目录浏览子项"
+            @mousedown.prevent.stop="drillIntoSuggestion(index)"
+          >
+            <span class="icon-[lucide--chevron-right]" aria-hidden="true" />
+          </button>
         </li>
       </ul>
     </div>
@@ -243,6 +254,8 @@ const handleBlur = (): void => {
   }, 120);
 };
 
+// 选中任意建议（文件或目录）→ 直接定型为 chip。目录的 insertValue 以 '/' 结尾，
+// gitignore 风格下代表该目录及其子项，适作包含/排除模式。
 const selectSuggestion = (index: number): void => {
   const element = inputRef.value;
   if (!element) {
@@ -256,29 +269,38 @@ const selectSuggestion = (index: number): void => {
   }
 
   clearBlurTimer();
-
-  if (result.suggestion.kind === 'directory') {
-    // 选中目录：填入草稿继续逐级下钻，并重新拉取该目录下的建议。
-    draft.value = result.value;
-    void nextTick(() => {
-      const nextElement = inputRef.value;
-      if (!nextElement) {
-        return;
-      }
-
-      nextElement.focus();
-      nextElement.setSelectionRange(result.caret, result.caret);
-      userNavigated.value = false;
-      request(result.value, result.caret);
-    });
-    return;
-  }
-
-  // 选中文件：直接定型为 chip 并收起下拉。
   commitPattern(result.value);
   draft.value = '';
   close();
   void nextTick(() => inputRef.value?.focus());
+};
+
+// 进入目录浏览：把目录路径填入草稿（以 '/' 结尾）并重新拉取该目录下的建议，不提交 chip。
+const drillIntoSuggestion = (index: number): void => {
+  const element = inputRef.value;
+  if (!element) {
+    return;
+  }
+
+  const caret = element.selectionStart ?? draft.value.length;
+  const result = accept(index, draft.value, caret);
+  if (!result) {
+    return;
+  }
+
+  clearBlurTimer();
+  draft.value = result.value;
+  void nextTick(() => {
+    const nextElement = inputRef.value;
+    if (!nextElement) {
+      return;
+    }
+
+    nextElement.focus();
+    nextElement.setSelectionRange(result.caret, result.caret);
+    userNavigated.value = false;
+    request(result.value, result.caret);
+  });
 };
 
 const onOptionHover = (index: number): void => {
@@ -322,13 +344,26 @@ const handleKeydown = (event: KeyboardEvent): void => {
       return;
     }
 
-    // Tab：始终接受当前高亮建议（明确的补全意图）；Enter 仅在用户主动选中后才接受建议。
-    if (event.key === 'Tab' && activeIndex.value >= 0) {
+    // 右方向键/Tab 在高亮为目录时进入目录浏览；文件则直接定型成 chip。
+    const activeSuggestion = activeIndex.value >= 0 ? suggestions.value[activeIndex.value] : undefined;
+
+    if (event.key === 'ArrowRight' && activeSuggestion?.kind === 'directory') {
       event.preventDefault();
-      selectSuggestion(activeIndex.value);
+      drillIntoSuggestion(activeIndex.value);
       return;
     }
 
+    if (event.key === 'Tab' && activeSuggestion) {
+      event.preventDefault();
+      if (activeSuggestion.kind === 'directory') {
+        drillIntoSuggestion(activeIndex.value);
+      } else {
+        selectSuggestion(activeIndex.value);
+      }
+      return;
+    }
+
+    // Enter 仅在用户主动选中后才接受建议（目录也直接定型成 chip）。
     if (event.key === 'Enter' && userNavigated.value && activeIndex.value >= 0) {
       event.preventDefault();
       selectSuggestion(activeIndex.value);
@@ -535,5 +570,27 @@ onBeforeUnmount(() => {
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.search-path-filter-option-enter {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  border-radius: var(--search-radius-sm);
+  background: transparent;
+  color: var(--search-text-subtle);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.search-path-filter-option-enter:hover {
+  background: rgb(0 0 0 / 8%);
+  color: var(--search-text);
 }
 </style>
