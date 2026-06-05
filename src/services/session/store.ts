@@ -9,7 +9,12 @@ import { SessionSnapshotSchema, type TSessionSnapshot } from '@/types/session';
 
 const SESSION_STORE_FILE = 'session.json';
 const SESSION_SNAPSHOT_KEY = 'snapshot';
-const SESSION_FALLBACK_STORAGE_KEY = 'shell-ide:session-snapshot';
+// 会话快照统一落到漫游根 %APPDATA%\.calamex\config\session.json。
+const SESSION_STORE_RELATIVE_SEGMENTS = ['.calamex', 'config', SESSION_STORE_FILE] as const;
+// localStorage 兜底键（Tauri store 不可用时使用）。
+const SESSION_FALLBACK_STORAGE_KEY = 'calamex:session-snapshot';
+// 旧版兜底键，仅用于一次性迁移到新键。
+const LEGACY_SESSION_FALLBACK_STORAGE_KEY = 'shell-ide:session-snapshot';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -86,18 +91,38 @@ const createSessionPersistError = (cause: unknown): AppError =>
 let storePromise: Promise<Store> | null = null;
 
 /**
+ * 解析会话存储文件的绝对路径：%APPDATA%\.calamex\config\session.json。
+ *
+ * appDataDir() 返回 Tauri 标识目录(%APPDATA%\com.xiaojianc.Calamex)，取其父目录(=%APPDATA%)
+ * 后落到统一的 .calamex 根，使会话快照与其它本地数据同根。任意一步失败（如非 Tauri
+ * 运行环境 / 单测）时抛出，由 getStore 兜底回退到默认文件名。
+ */
+const resolveStorePath = async (): Promise<string> => {
+  const { appDataDir, join, normalize } = await import('@tauri-apps/api/path');
+  const identifierDir = await appDataDir();
+  const absolute = await join(identifierDir, '..', ...SESSION_STORE_RELATIVE_SEGMENTS);
+  return normalize(absolute);
+};
+
+/**
  * Tauri Store 单例 lazy loader。
  *
  * 关键设计:`Store.load` 失败时**清空 storePromise**,允许下次重试。
- * 旧实现用 `??=` 把 rejected promise 永久缓存,会导致主存储在启动期
- * 短暂失败 (Tauri runtime race / IPC 还没就绪) 后,整个进程生命周期
- * 都被迫降级到 localStorage,即使后端早已恢复。
+ * 路径解析失败时降级为默认相对文件名,保证非 Tauri / 单测环境仍可用。
  */
 const getStore = (): Promise<Store> => {
   if (storePromise) {
     return storePromise;
   }
-  storePromise = Store.load(SESSION_STORE_FILE).catch((error) => {
+  storePromise = (async (): Promise<Store> => {
+    let storePath = SESSION_STORE_FILE;
+    try {
+      storePath = await resolveStorePath();
+    } catch (cause) {
+      logWarn('snapshot-store-path-resolve-failed', cause);
+    }
+    return Store.load(storePath);
+  })().catch((error) => {
     storePromise = null;
     throw error;
   });
@@ -119,10 +144,33 @@ const isFallbackStorageAvailable = (): boolean => {
   }
 };
 
+/**
+ * 一次性迁移旧版兜底键 (shell-ide:session-snapshot) 到新键 (calamex:session-snapshot)。
+ * 仅当新键尚无值时搬运,随后移除旧键。失败只警告。
+ */
+const migrateLegacyFallbackKey = (): void => {
+  if (!isFallbackStorageAvailable()) {
+    return;
+  }
+  try {
+    const legacy = window.localStorage.getItem(LEGACY_SESSION_FALLBACK_STORAGE_KEY);
+    if (legacy == null) {
+      return;
+    }
+    if (window.localStorage.getItem(SESSION_FALLBACK_STORAGE_KEY) == null) {
+      window.localStorage.setItem(SESSION_FALLBACK_STORAGE_KEY, legacy);
+    }
+    window.localStorage.removeItem(LEGACY_SESSION_FALLBACK_STORAGE_KEY);
+  } catch (cause) {
+    logWarn('snapshot-fallback-key-migrate-failed', cause);
+  }
+};
+
 const readFallbackSnapshot = (): TRawSnapshot | null => {
   if (!isFallbackStorageAvailable()) {
     return null;
   }
+  migrateLegacyFallbackKey();
   const raw = window.localStorage.getItem(SESSION_FALLBACK_STORAGE_KEY);
   if (!raw) {
     return null;
@@ -147,6 +195,7 @@ const clearFallbackSnapshot = (): void => {
     return;
   }
   window.localStorage.removeItem(SESSION_FALLBACK_STORAGE_KEY);
+  window.localStorage.removeItem(LEGACY_SESSION_FALLBACK_STORAGE_KEY);
 };
 
 // ---------------------------------------------------------------------------
@@ -202,10 +251,6 @@ const validateRawSnapshot = (raw: TRawSnapshot, invalidEvent: string): TSessionS
  * 1. 优先读主存储 (Tauri Store);成功且非空 → 直接返回。
  * 2. 主存储 IO **抛错** → 回退到 localStorage fallback。
  * 3. 主存储**显式为空** (key 不存在) → 不读 fallback,直接返回 null。
- *
- * 第 3 条是关键设计:clearSession 之后 fallback 也已清空,但如果用户
- * 手动改了 localStorage 或某次 clear 没清干净,允许 "主为空回查 fallback"
- * 就会把已删除的会话从 fallback 复活回来。所以主权威说没有就是没有。
  */
 export const loadSession = async (): Promise<TSessionSnapshot | null> => {
   try {
@@ -236,10 +281,6 @@ export const loadSession = async (): Promise<TSessionSnapshot | null> => {
  * 1. 按 schema 校验输入,失败抛 `SESSION_VALIDATION_FAILED` (调用方 Bug)。
  * 2. 写主存储 (Tauri Store)。
  * 3. 镜像写 fallback (localStorage),作为主存储未来损坏时的应急副本。
- *
- * 关键修复:**主存储成功而 fallback 镜像写失败时,只警告,不抛错**。
- * 主存储是权威——既然权威已经写入,就不能让上游误以为 "保存失败"。
- * 仅当主与 fallback **都**失败时才抛 `SESSION_PERSIST_FAILED`。
  */
 export const saveSession = async (snapshot: TSessionSnapshot): Promise<void> => {
   let validated: TSessionSnapshot;
