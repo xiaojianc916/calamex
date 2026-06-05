@@ -142,6 +142,7 @@ export const useWorkbench = () => {
   const { runScript, appendTerminalOutput, handleIntegratedTerminalRunCompleted } = useTerminalRun({
     canRun,
     editorStore,
+    saveDocument,
   });
 
   const {
