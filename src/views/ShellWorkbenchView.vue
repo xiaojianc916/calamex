@@ -376,22 +376,24 @@ const bindEditorViewportRef = (value: unknown): void => {
   border-radius: var(--workbench-content-left-radius) 0 0 var(--workbench-content-left-radius);
 }
 
-/* 终端拖拽分隔条（reka-ui ResizableHandle）：整宽水平细线 + 11px 抓取热区。
-   线条用 ::before 作为 flex 子项渲染，width:100% 在 flex 容器里必然整宽；
-   同时彻底关闭基类残留的 ::after（上次“左半边”的根因），避免左侧出现半截竖条/方块。 */
+/* 终端拖拽分隔条（reka-ui ResizableHandle）。
+   细线本体即手柄背景，高 1px，正好落在编辑器/终端的交界处——
+   因此线条上方不再有任何白色间隙，线即终端界面最上方。
+   更大的抓取热区由 ::before 以绝对定位向上下各扩展 5px 实现，不占据布局高度
+   （不会把线往下推、也不会留白）。::after 彻底关闭，避免基类残留出现半截竖条/方块。 */
 .workbench-terminal-handle {
-  display: flex !important;
-  align-items: center !important;
-  justify-content: center !important;
+  position: relative !important;
+  display: block !important;
   align-self: stretch !important;
   width: auto !important;
   min-width: 100% !important;
-  height: 11px !important;
-  flex: 0 0 11px !important;
-  background-color: transparent !important;
+  height: 1px !important;
+  flex: 0 0 1px !important;
+  background-color: #e5e5e5 !important;
   border: 0 !important;
   cursor: row-resize;
   touch-action: none;
+  transition: background-color 160ms ease;
 }
 
 .workbench-terminal-handle::after {
@@ -401,29 +403,27 @@ const bindEditorViewportRef = (value: unknown): void => {
 
 .workbench-terminal-handle::before {
   content: '' !important;
+  position: absolute !important;
+  left: 0 !important;
+  right: 0 !important;
+  top: -5px !important;
+  bottom: -5px !important;
   display: block !important;
-  width: 100% !important;
-  height: 1px !important;
-  background-color: #e5e5e5 !important;
-  border-radius: 999px;
-  transition:
-    height 160ms ease,
-    background-color 160ms ease;
 }
 
-.workbench-terminal-handle:hover::before,
-.workbench-terminal-handle:active::before,
-.workbench-terminal-handle[data-resize-handle-state='hover']::before,
-.workbench-terminal-handle[data-resize-handle-state='drag']::before {
-  height: 3px !important;
+.workbench-terminal-handle:hover,
+.workbench-terminal-handle:active,
+.workbench-terminal-handle[data-resize-handle-state='hover'],
+.workbench-terminal-handle[data-resize-handle-state='drag'] {
   background-color: var(--accent-strong) !important;
 }
 
-/* 终端全屏（编辑器折叠）时：手柄收为 0 高、隐藏线条，不再碍眼。 */
+/* 终端全屏（编辑器折叠）时：手柄收为 0 高、隐藏线条与热区，不再碍眼。 */
 .workbench-terminal-handle--fullscreen {
   height: 0 !important;
   min-height: 0 !important;
   flex: 0 0 0 !important;
+  background-color: transparent !important;
   pointer-events: none !important;
 }
 
@@ -432,7 +432,7 @@ const bindEditorViewportRef = (value: unknown): void => {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .workbench-terminal-handle::before {
+  .workbench-terminal-handle {
     transition: none;
   }
 }
