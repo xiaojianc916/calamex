@@ -96,7 +96,7 @@ const splitSuggestionsIntoRows = <T extends { title: string }>(
   return rows;
 };
 
-const MAX_HISTORY_MESSAGES = 20;
+const MAX_HISTORY_THREADS = 20;
 const props = defineProps<{
   document: IEditorDocument;
   activeRun: IActiveRunSummary | null;
@@ -182,7 +182,7 @@ const providerMarkTitle = computed(() => {
   return `${aiIconTitle.value} · ${selectedModel}`;
 });
 const historyThreads = computed(() =>
-  assistant.historyThreads.value.slice(-MAX_HISTORY_MESSAGES).reverse(),
+  assistant.historyThreads.value.slice(-MAX_HISTORY_THREADS).reverse(),
 );
 const activeHistoryThread = computed(
   () =>
@@ -211,47 +211,31 @@ const isConversationCheckpointDisabled = computed(
   () => assistant.isSending.value || isCheckpointRestorePending.value,
 );
 const planStore = computed(() => assistant.agentPlan.store);
-const readPlanStoreValue = <T>(value: T | { value: T }): T => {
-  if (typeof value === 'object' && value !== null && 'value' in value) {
-    return value.value;
-  }
 
-  return value;
-};
-const planHasPlan = computed(() => readPlanStoreValue(planStore.value.hasPlan));
-const planIsClassifying = computed(() => readPlanStoreValue(planStore.value.isClassifying));
-const planIsPlanning = computed(() => readPlanStoreValue(planStore.value.isPlanning));
-const planClassificationReason = computed(() =>
-  readPlanStoreValue(planStore.value.classificationReason),
+const planHasPlan = computed(() => planStore.value.hasPlan);
+const planIsClassifying = computed(() => planStore.value.isClassifying);
+const planIsPlanning = computed(() => planStore.value.isPlanning);
+const planClassificationReason = computed(() => planStore.value.classificationReason);
+const planErrorMessage = computed(() => planStore.value.errorMessage);
+const planIsApproving = computed(() => planStore.value.isApproving);
+const planApprovedAt = computed(() => planStore.value.approvedAt);
+const planSummary = computed(() => planStore.value.planSummary);
+const planStatus = computed(() => planStore.value.planStatus);
+const planId = computed(() => planStore.value.planId);
+const planVersion = computed(() => planStore.value.planVersion);
+const planThreadId = computed(() => planStore.value.planThreadId);
+const planCreatedAt = computed(() => planStore.value.planCreatedAt);
+const planUpdatedAt = computed(() => planStore.value.planUpdatedAt);
+const planExecutedAt = computed(() => planStore.value.planExecutedAt);
+const planRejectionReason = computed(() => planStore.value.planRejectionReason);
+const planExecutionErrorMessage = computed(() => planStore.value.planErrorMessage);
+const planVersions = computed(() => planStore.value.planVersions);
+const planActiveRun = computed<IAiAgentRun | null>(() => planStore.value.activeRun);
+const planActiveToolActivity = computed<IAiToolActivityInline | null>(
+  () => planStore.value.activeToolActivity,
 );
-const planErrorMessage = computed(() => readPlanStoreValue(planStore.value.errorMessage));
-const planIsApproving = computed(() => readPlanStoreValue(planStore.value.isApproving));
-const planApprovedAt = computed(() => readPlanStoreValue(planStore.value.approvedAt));
-const planSummary = computed(() => readPlanStoreValue(planStore.value.planSummary));
-const planStatus = computed(() => readPlanStoreValue(planStore.value.planStatus));
-const planId = computed(() => readPlanStoreValue(planStore.value.planId));
-const planVersion = computed(() => readPlanStoreValue(planStore.value.planVersion));
-const planThreadId = computed(() => readPlanStoreValue(planStore.value.planThreadId));
-const planCreatedAt = computed(() => readPlanStoreValue(planStore.value.planCreatedAt));
-const planUpdatedAt = computed(() => readPlanStoreValue(planStore.value.planUpdatedAt));
-const planExecutedAt = computed(() => readPlanStoreValue(planStore.value.planExecutedAt));
-const planRejectionReason = computed(() => readPlanStoreValue(planStore.value.planRejectionReason));
-const planExecutionErrorMessage = computed(() =>
-  readPlanStoreValue(planStore.value.planErrorMessage),
-);
-const planVersions = computed(() => readPlanStoreValue(planStore.value.planVersions));
-const planActiveRun = computed<IAiAgentRun | null>(() =>
-  readPlanStoreValue(planStore.value.activeRun),
-);
-const planActiveToolActivity = computed<IAiToolActivityInline | null>(() =>
-  readPlanStoreValue(planStore.value.activeToolActivity),
-);
-const planPendingToolConfirmation = computed(() =>
-  readPlanStoreValue(planStore.value.pendingToolConfirmation),
-);
-const planPendingSidecarSession = computed(() =>
-  readPlanStoreValue(planStore.value.pendingSidecarAgentSession),
-);
+const planPendingToolConfirmation = computed(() => planStore.value.pendingToolConfirmation);
+const planPendingSidecarSession = computed(() => planStore.value.pendingSidecarAgentSession);
 const visibleDirectToolConfirmation = computed(() => {
   const confirmation = planPendingToolConfirmation.value;
 
@@ -267,14 +251,12 @@ const visibleDirectToolConfirmation = computed(() => {
 
   return confirmation;
 });
-const planSteps = computed<IAiTaskPlanStep[]>(() => readPlanStoreValue(planStore.value.steps));
-const planActiveGoal = computed(() => readPlanStoreValue(planStore.value.activeGoal));
-const planActiveRunId = computed<string | null>(() =>
-  readPlanStoreValue(planStore.value.activeRunId),
-);
-const networkPermission = computed(() => readPlanStoreValue(agentNetwork.store.networkPermission));
+const planSteps = computed<IAiTaskPlanStep[]>(() => planStore.value.steps);
+const planActiveGoal = computed(() => planStore.value.activeGoal);
+const planActiveRunId = computed<string | null>(() => planStore.value.activeRunId);
+const networkPermission = computed(() => agentNetwork.store.networkPermission);
 const setPlanErrorMessage = (message: string): void => {
-  Reflect.set(planStore.value, 'errorMessage', message);
+  planStore.value.errorMessage = message;
 };
 const hasPlannedAgentState = computed(
   () =>
@@ -627,9 +609,7 @@ const tokenOfficialUsage = computed(() => {
     return null;
   }
 
-  return readPlanStoreValue(planStore.value.totalOfficialUsageResolved)
-    ? readPlanStoreValue(planStore.value.totalOfficialUsage)
-    : null;
+  return planStore.value.totalOfficialUsageResolved ? planStore.value.totalOfficialUsage : null;
 });
 const { contextProps: tokenContextProps } = useAiTokenContext({
   mode: computed(() => assistant.activeMode.value),
@@ -851,7 +831,7 @@ const handleConversationScrollStateChange = (state: {
   });
 };
 
-const getDeleteDialogTitle = (): string => {
+const deleteDialogTitle = computed<string>(() => {
   const thread = pendingDeleteThread.value;
 
   if (!thread) {
@@ -859,14 +839,14 @@ const getDeleteDialogTitle = (): string => {
   }
 
   return `删除“${thread.title}”？`;
-};
+});
 
-const getDeleteDialogDescription = (): string => {
+const deleteDialogDescription = computed<string>(() => {
   const thread = pendingDeleteThread.value;
   const messageCountLabel = thread ? getHistoryMessageCountLabel(thread.messages) : '这条记录';
 
   return `只会删除这条对话记录（${messageCountLabel}），不会删除文件或其他对话。`;
-};
+});
 
 const setPlanError = (error: unknown, fallback: string): void => {
   setPlanErrorMessage(toErrorMessage(error, fallback));
@@ -1376,8 +1356,8 @@ onBeforeUnmount(() => {
         <div v-if="assistant.isClearDialogOpen.value" class="ai-dialog-backdrop" @click.self="cancelClearConversation">
           <section class="ai-dialog is-compact" role="alertdialog" aria-modal="true">
             <div class="ai-dialog-copy">
-              <h3 v-text="getDeleteDialogTitle()"></h3>
-              <p v-text="getDeleteDialogDescription()"></p>
+              <h3 v-text="deleteDialogTitle"></h3>
+              <p v-text="deleteDialogDescription"></p>
             </div>
             <div class="ai-dialog-actions">
               <button type="button" class="ai-button is-ghost" @click="cancelClearConversation">取消</button>

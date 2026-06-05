@@ -72,7 +72,7 @@ const edits = [
       '  const thread = pendingDeleteThread.value;',
       "  const messageCountLabel = thread ? getHistoryMessageCountLabel(thread.messages) : '这条记录';",
       '',
-      '  return `只会删除这条对话记录（${messageCountLabel}）,不会删除文件或其他对话。`;',
+      '  return `只会删除这条对话记录（${messageCountLabel}），不会删除文件或其他对话。`;',
       '};',
     ],
     replace: [
@@ -90,7 +90,7 @@ const edits = [
       '  const thread = pendingDeleteThread.value;',
       "  const messageCountLabel = thread ? getHistoryMessageCountLabel(thread.messages) : '这条记录';",
       '',
-      '  return `只会删除这条对话记录（${messageCountLabel}）,不会删除文件或其他对话。`;',
+      '  return `只会删除这条对话记录（${messageCountLabel}），不会删除文件或其他对话。`;',
       '});',
     ],
   },
