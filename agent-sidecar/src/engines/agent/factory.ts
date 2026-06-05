@@ -9,6 +9,7 @@ import { createMastraAgentMemory, resolveMastraStorageUrl } from '../context/mem
 import { createMastraObservability } from '../workspace.js';
 import { DEFAULT_MASTRA_LOG_FILE, type IMastraAgentConfig, type IMastraAgentLike, type IMastraAgentStreamLike, type IMastraApprovalOptions, type IMastraDurableAgentLike, type IMastraExecutionHandle, type IMastraRegisteredAgentLike, type IMastraResumableAgentHandle, type IMastraStorageLike, type TMastraStreamChunk, type TMastraToolResumeData } from '../types.js';
 import type { IAgentRuntimeModelConfigInput } from '../contracts/runtime-input.js';
+import { buildCodingSubAgents, isSubAgentsEnabled } from './subagents.js';
 
 export const createMastraModelConfig = (
     model: IMastraResolvedModelConfig,
@@ -150,6 +151,18 @@ export const defaultCreateExecutionHandle = async (
     if (loggerRef) {
         loggerRef.current = fileLogger;
     }
+    // 官方 Supervisor 子 agent（默认关，AGENT_SUBAGENTS 开启）：把规划/改码/审查/检索
+    // 四个子 agent 以 Agent.agents 形态挂到主 agent 上，子 agent 以「工具」形式被委派。
+    // 仅在 autonomous 执行路径生效；关闭时下方 baseAgent 与原实现完全一致，可随时 git revert。
+    const subAgents = isSubAgentsEnabled()
+        ? buildCodingSubAgents({
+            model: config.model,
+            ...(config.memory ? { memory: config.memory } : {}),
+            ...(config.tools ? { tools: config.tools } : {}),
+            ...(config.workspace ? { workspace: config.workspace } : {}),
+            ...(config.browser ? { browser: config.browser } : {}),
+        })
+        : undefined;
     const baseAgent = new Agent({
         id: config.id,
         name: config.name,
@@ -161,6 +174,7 @@ export const defaultCreateExecutionHandle = async (
         ...(config.browser ? { browser: config.browser } : {}),
         ...(config.inputProcessors ? { inputProcessors: config.inputProcessors } : {}),
         ...(config.outputProcessors ? { outputProcessors: config.outputProcessors } : {}),
+        ...(subAgents ? { agents: subAgents } : {}),
     });
     const durableAgent = createDurableAgent({ agent: baseAgent });
     const mastra = new Mastra({
