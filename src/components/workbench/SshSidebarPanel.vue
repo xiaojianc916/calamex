@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import '@/assets/css/ssh-sidebar.css';
+import { useVirtualizer } from '@tanstack/vue-virtual';
 import { toTypedSchema } from '@vee-validate/zod';
+import { useResizeObserver } from '@vueuse/core';
 import { storeToRefs } from 'pinia';
 import { useForm } from 'vee-validate';
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import FieldError from '@/components/common/FieldError.vue';
 import LinearContextMenu from '@/components/common/LinearContextMenu.vue';
 import type {
@@ -247,6 +249,89 @@ const canConfirmCreateDirectory = computed(() => {
   );
 });
 const passwordInputType = computed(() => (isPasswordVisible.value ? 'text' : 'password'));
+
+// ── 远端文件列表虚拟化:目录项可能成百上千,超过阈值时启用窗口化渲染 ──────────────
+const SSH_FILE_VIRTUALIZE_THRESHOLD = 100;
+const SSH_FILE_ROW_ESTIMATE = 30;
+const SSH_FILE_OVERSCAN = 12;
+const sshFileListRef = ref<HTMLElement | null>(null);
+const sshFileSizerRef = ref<HTMLElement | null>(null);
+const sshFileScrollMargin = ref(0);
+
+const shouldVirtualizeSshFiles = computed(
+  () => isExplorerActive.value && sshFileItems.value.length > SSH_FILE_VIRTUALIZE_THRESHOLD,
+);
+
+const sshFileVirtualizer = useVirtualizer<HTMLElement, HTMLElement>(
+  computed(() => ({
+    count: shouldVirtualizeSshFiles.value ? sshFileItems.value.length : 0,
+    getScrollElement: () => sshFileListRef.value,
+    estimateSize: () => SSH_FILE_ROW_ESTIMATE,
+    overscan: SSH_FILE_OVERSCAN,
+    scrollMargin: sshFileScrollMargin.value,
+    getItemKey: (index: number) => sshFileItems.value[index]?.id ?? index,
+  })),
+);
+
+const sshFileTotalSize = computed(() =>
+  shouldVirtualizeSshFiles.value ? sshFileVirtualizer.value.getTotalSize() : 0,
+);
+
+interface ISshFileVirtualRow {
+  key: string;
+  index: number;
+  start: number;
+  item: ISshFileItem;
+}
+
+const sshFileVirtualRows = computed<ISshFileVirtualRow[]>(() => {
+  if (!shouldVirtualizeSshFiles.value) {
+    return [];
+  }
+
+  const items = sshFileItems.value;
+  const rows: ISshFileVirtualRow[] = [];
+  for (const virtualRow of sshFileVirtualizer.value.getVirtualItems()) {
+    const item = items[virtualRow.index];
+    if (item) {
+      rows.push({ key: item.id, index: virtualRow.index, start: virtualRow.start, item });
+    }
+  }
+
+  return rows;
+});
+
+const measureSshFileRow = (el: unknown): void => {
+  if (el instanceof HTMLElement) {
+    sshFileVirtualizer.value.measureElement(el);
+  }
+};
+
+const recomputeSshFileScrollMargin = (): void => {
+  const scroller = sshFileListRef.value;
+  const sizer = sshFileSizerRef.value;
+  if (!scroller || !sizer) {
+    sshFileScrollMargin.value = 0;
+    return;
+  }
+
+  const scrollerRect = scroller.getBoundingClientRect();
+  const sizerRect = sizer.getBoundingClientRect();
+  sshFileScrollMargin.value = Math.max(0, sizerRect.top - scrollerRect.top + scroller.scrollTop);
+};
+
+useResizeObserver(sshFileListRef, () => {
+  recomputeSshFileScrollMargin();
+});
+
+watch(
+  () => [shouldVirtualizeSshFiles.value, sshFileItems.value.length] as const,
+  () => {
+    void nextTick(() => {
+      recomputeSshFileScrollMargin();
+    });
+  },
+);
 
 const isTabActive = (tab: TSshPanelTab): boolean => {
   if (tab === 'connect') {
@@ -1023,6 +1108,9 @@ onMounted(() => {
   window.addEventListener('click', handleWindowClick);
   window.addEventListener('contextmenu', handleWindowContextMenu);
   window.addEventListener('keydown', handleWindowKeydown);
+  void nextTick(() => {
+    recomputeSshFileScrollMargin();
+  });
 });
 
 onBeforeUnmount(() => {
@@ -1105,7 +1193,7 @@ onBeforeUnmount(() => {
                   class="ssh-connect-select-content data-[state=open]:animate-none data-[state=closed]:animate-none data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-100 data-[state=open]:zoom-in-100 data-[side=bottom]:slide-in-from-top-0 data-[side=left]:slide-in-from-right-0 data-[side=right]:slide-in-from-left-0 data-[side=top]:slide-in-from-bottom-0">
                   <SelectItem v-for="option in SSH_AUTH_OPTIONS" :key="option.value" :value="option.value"
                     class="ssh-connect-select-item">
-                    {{ option.label }}
+                     option.label 
                   </SelectItem>
                 </SelectContent>
               </Select>
@@ -1142,7 +1230,7 @@ onBeforeUnmount(() => {
 
         <div class="ssh-form-actions">
           <Button type="submit" class="ssh-connect-action ssh-connect-action--submit" :disabled="isConnecting">
-            {{ isConnecting ? '连接中…' : '连接' }}
+             isConnecting ? '连接中…' : '连接' 
           </Button>
           <Button type="button" variant="outline" class="ssh-connect-action ssh-connect-action--cancel"
             :disabled="isConnecting" @click="handleCancelConnect">
@@ -1152,7 +1240,7 @@ onBeforeUnmount(() => {
 
         <div v-if="connectionStatusText || connectionErrorText" class="ssh-connect-feedback"
           :class="{ 'is-error': Boolean(connectionErrorText) }" aria-live="polite">
-          {{ connectionErrorText || connectionStatusText }}
+           connectionErrorText || connectionStatusText 
         </div>
       </form>
 
@@ -1194,12 +1282,12 @@ onBeforeUnmount(() => {
 
             <span class="ssh-recent-info">
               <span class="ssh-recent-name ssh-recent-name--disconnected">
-                {{ connection.username }} @ {{ connection.host }}
+                 connection.username  @  connection.host 
               </span>
             </span>
 
             <span class="ssh-recent-time ssh-recent-time--disconnected">
-              {{ connection.lastUsedLabel }}
+               connection.lastUsedLabel 
             </span>
           </button>
         </section>
@@ -1221,19 +1309,19 @@ onBeforeUnmount(() => {
                     <DropdownMenuContent align="start" class="ssh-path-menu">
                       <DropdownMenuItem v-for="segment in item.segments" :key="segment.id" class="ssh-path-menu-item"
                         :disabled="isRemoteDirectoryLoading" @select="handlePathSegmentClick(segment)">
-                        {{ segment.label }}
+                         segment.label 
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </BreadcrumbItem>
                 <BreadcrumbItem v-else>
                   <BreadcrumbPage v-if="item.path === currentRemotePath" class="ssh-path-segment is-current">
-                    {{ item.label }}
+                     item.label 
                   </BreadcrumbPage>
                   <BreadcrumbLink v-else as-child>
                     <button type="button" class="ssh-path-segment" :disabled="isRemoteDirectoryLoading"
                       @click="handlePathSegmentClick(item)">
-                      {{ item.label }}
+                       item.label 
                     </button>
                   </BreadcrumbLink>
                 </BreadcrumbItem>
@@ -1253,14 +1341,14 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <div v-if="isExplorerActive" class="ssh-file-list" role="list" aria-label="远端文件列表">
+        <div v-if="isExplorerActive" ref="sshFileListRef" class="ssh-file-list" role="list" aria-label="远端文件列表">
           <div v-if="isRemoteDirectoryLoading" class="ssh-file-list-state" aria-live="polite">
             正在读取远端目录…
           </div>
           <div v-else-if="sshFileItems.length === 0" class="ssh-file-list-state">
             当前目录为空
           </div>
-          <template v-else>
+          <template v-else-if="!shouldVirtualizeSshFiles">
             <button v-for="item in sshFileItems" :key="item.id" type="button" class="ssh-file-item" :class="{
               'is-folder': item.kind === 'folder',
               'is-selected': selectedFileId === item.id,
@@ -1283,10 +1371,41 @@ onBeforeUnmount(() => {
                 </svg>
               </span>
 
-              <span class="ssh-file-name"> {{ item.name }} </span>
-              <span class="ssh-file-meta">{{ item.metaLabel }}</span>
+              <span class="ssh-file-name">  item.name  </span>
+              <span class="ssh-file-meta"> item.metaLabel </span>
             </button>
           </template>
+          <div v-else ref="sshFileSizerRef" class="ssh-file-virtual-sizer"
+            :style="{ height: `${sshFileTotalSize}px` }">
+            <div v-for="row in sshFileVirtualRows" :key="row.key" :ref="measureSshFileRow" :data-index="row.index"
+              class="ssh-file-virtual-row" :style="{ transform: `translateY(${row.start - sshFileScrollMargin}px)` }">
+              <button type="button" class="ssh-file-item" :class="{
+                'is-folder': row.item.kind === 'folder',
+                'is-selected': selectedFileId === row.item.id,
+              }" :aria-label="`${row.item.name}，${row.item.metaLabel}`" @click="handleSelectFile(row.item.id)"
+                @dblclick="handleOpenFile(row.item.id)" @contextmenu.prevent="handleFileContextMenu($event, row.item.id)">
+                <span class="ssh-file-icon" :class="`is-${row.item.kind}`" aria-hidden="true">
+                  <svg v-if="row.item.kind === 'folder'" width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M2 6a2 2 0 0 1 2-2h5l2 2h9a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6z" />
+                  </svg>
+                  <span v-else-if="row.item.kind === 'rust'">⚙</span>
+                  <svg v-else-if="row.item.kind === 'lock'" width="13" height="13" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                    <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                  </svg>
+                  <svg v-else width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                    <polyline points="14 2 14 8 20 8" />
+                  </svg>
+                </span>
+
+                <span class="ssh-file-name">  row.item.name  </span>
+                <span class="ssh-file-meta"> row.item.metaLabel </span>
+              </button>
+            </div>
+          </div>
         </div>
 
         <div v-else-if="isTransferActive" class="ssh-transfer-panel" aria-label="传输任务列表">
@@ -1297,11 +1416,11 @@ onBeforeUnmount(() => {
             <div class="ssh-transfer-header">
               <div class="ssh-transfer-name">
                 <span class="ssh-transfer-direction" :class="`is-${item.direction}`">
-                  {{ item.direction === 'upload' ? '↑ 上传' : '↓ 下载' }}
+                   item.direction === 'upload' ? '↑ 上传' : '↓ 下载' 
                 </span>
-                {{ item.name }}
+                 item.name 
               </div>
-              <span class="ssh-transfer-meta">{{ item.sizeLabel }}</span>
+              <span class="ssh-transfer-meta"> item.sizeLabel </span>
             </div>
 
             <div class="ssh-progress-bar" aria-hidden="true">
@@ -1309,10 +1428,10 @@ onBeforeUnmount(() => {
             </div>
 
             <div class="ssh-transfer-footer">
-              <span class="ssh-transfer-meta">{{ item.progressLabel }}</span>
+              <span class="ssh-transfer-meta"> item.progressLabel </span>
               <span class="ssh-transfer-meta"
                 :class="{ 'is-success': item.status === 'done', 'is-failed': item.status === 'failed' }">
-                {{ item.status === 'done' ? '完成' : item.status === 'failed' ? '失败' : '进行中' }}
+                 item.status === 'done' ? '完成' : item.status === 'failed' ? '失败' : '进行中' 
               </span>
             </div>
           </article>
@@ -1333,7 +1452,7 @@ onBeforeUnmount(() => {
       <form class="ssh-modal" @submit.prevent="confirmCreateDirectory">
         <div class="ssh-modal-copy">
           <h3>新建远端文件夹</h3>
-          <p>将在“{{ currentRemotePath }}”下创建文件夹。不会覆盖远端已有项目。</p>
+          <p>将在“ currentRemotePath ”下创建文件夹。不会覆盖远端已有项目。</p>
         </div>
         <label class="ssh-modal-field">
           <span>文件夹名称</span>
@@ -1346,7 +1465,7 @@ onBeforeUnmount(() => {
           </button>
           <button type="submit" class="ssh-modal-button is-primary"
             :disabled="!canConfirmCreateDirectory || isPathMutating">
-            {{ isPathMutating ? '处理中…' : '创建' }}
+             isPathMutating ? '处理中…' : '创建' 
           </button>
         </div>
       </form>
@@ -1358,7 +1477,7 @@ onBeforeUnmount(() => {
       <form class="ssh-modal" @submit.prevent="confirmRenamePath">
         <div class="ssh-modal-copy">
           <h3>重命名远端项目</h3>
-          <p>为“{{ pendingRenameItem.name }}”输入新的名称。不会覆盖远端已有项目。</p>
+          <p>为“ pendingRenameItem.name ”输入新的名称。不会覆盖远端已有项目。</p>
         </div>
         <label class="ssh-modal-field">
           <span>新名称</span>
@@ -1369,7 +1488,7 @@ onBeforeUnmount(() => {
             取消
           </button>
           <button type="submit" class="ssh-modal-button is-primary" :disabled="!canConfirmRename || isPathMutating">
-            {{ isPathMutating ? '处理中…' : '重命名' }}
+             isPathMutating ? '处理中…' : '重命名' 
           </button>
         </div>
       </form>
@@ -1381,7 +1500,7 @@ onBeforeUnmount(() => {
       <section class="ssh-modal is-danger" role="alertdialog" aria-modal="true">
         <div class="ssh-modal-copy">
           <h3>删除远端项目？</h3>
-          <p>将删除“{{ pendingDeleteItem.name }}”。此操作不可撤销，请确认这是你想要的操作。</p>
+          <p>将删除“ pendingDeleteItem.name ”。此操作不可撤销，请确认这是你想要的操作。</p>
         </div>
         <div class="ssh-modal-actions">
           <button type="button" class="ssh-modal-button" :disabled="isPathMutating" @click="closeDeleteDialog">
@@ -1389,10 +1508,28 @@ onBeforeUnmount(() => {
           </button>
           <button type="button" class="ssh-modal-button is-danger" :disabled="isPathMutating"
             @click="confirmDeletePath">
-            {{ isPathMutating ? '删除中…' : '删除' }}
+             isPathMutating ? '删除中…' : '删除' 
           </button>
         </div>
       </section>
     </div>
   </Teleport>
 </template>
+
+<style scoped>
+.ssh-file-virtual-sizer {
+  position: relative;
+  width: 100%;
+}
+
+.ssh-file-virtual-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+}
+
+.ssh-file-virtual-row > .ssh-file-item {
+  width: 100%;
+}
+</style>
