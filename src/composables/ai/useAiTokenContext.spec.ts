@@ -62,7 +62,7 @@ const createContext = (options?: {
 };
 
 describe('useAiTokenContext', () => {
-  it('uses 1M context window for deepseek models', () => {
+  it('resolves the deepseek context window (1M) from the model catalog', () => {
     const context = useAiTokenContext({
       mode: computed(() => 'chat'),
       modelId: computed(() => 'deepseek/deepseek-v4-flash'),
@@ -75,6 +75,21 @@ describe('useAiTokenContext', () => {
     });
 
     expect(context.contextProps.value.maxTokens).toBe(1_000_000);
+  });
+
+  it('resolves the context window from the model catalog for GLM models', () => {
+    const context = useAiTokenContext({
+      mode: computed(() => 'chat'),
+      modelId: computed(() => 'zhipuai/glm-4-flash'),
+      runtimeEvents: computed(() => []),
+      messages: computed(() => []),
+      estimationMessages: computed(() => []),
+      contextReferences: computed(() => []),
+      hasPendingRequest: computed(() => false),
+      draft: computed(() => ''),
+    });
+
+    expect(context.contextProps.value.maxTokens).toBe(128_000);
   });
 
   it('reports zero usage before the model returns official usage', () => {
