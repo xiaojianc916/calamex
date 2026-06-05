@@ -393,7 +393,11 @@ const bindEditorViewportRef = (value: unknown): void => {
   border: 0 !important;
   cursor: row-resize;
   touch-action: none;
-  transition: background-color 160ms ease;
+  transition:
+    height 160ms ease,
+    flex-basis 160ms ease,
+    margin 160ms ease,
+    background-color 160ms ease;
 }
 
 .workbench-terminal-handle::after {
@@ -411,10 +415,16 @@ const bindEditorViewportRef = (value: unknown): void => {
   display: block !important;
 }
 
+/* hover/拖拽：线条加粗到 3px 并高亮（与原行为一致）。
+   用 -1px 上下负外边距抵消 +2px 增高，线条以交界缝为中心对称变粗，不产生布局抖动、也不留白。 */
 .workbench-terminal-handle:hover,
 .workbench-terminal-handle:active,
 .workbench-terminal-handle[data-resize-handle-state='hover'],
 .workbench-terminal-handle[data-resize-handle-state='drag'] {
+  height: 3px !important;
+  flex-basis: 3px !important;
+  margin-top: -1px !important;
+  margin-bottom: -1px !important;
   background-color: var(--accent-strong) !important;
 }
 
