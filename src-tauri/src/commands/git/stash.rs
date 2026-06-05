@@ -231,6 +231,8 @@ fn drop_stash_by_index(repository: &Repository, target_index: usize) -> Result<(
         // 贮藏栈清空：移除 ref 与 reflog。
         let _ = fs::remove_file(&stash_ref_path);
         let _ = fs::remove_file(&reflog_path);
+        // 同步清理 packed-refs 中可能存在的 refs/stash，避免打包条目让贮藏“复活”。
+        prune_packed_stash_ref(git_dir)?;
         return Ok(());
     }
 
@@ -247,6 +249,53 @@ fn drop_stash_by_index(repository: &Repository, target_index: usize) -> Result<(
     let mut rebuilt = lines.join("\n");
     rebuilt.push('\n');
     fs::write(&reflog_path, rebuilt).map_err(|error| format!("写入贮藏 reflog 失败：{error}"))?;
+    // 松散 refs/stash 已更新；若该引用曾被打包进 packed-refs，移除打包条目避免其继续生效。
+    prune_packed_stash_ref(git_dir)?;
+    Ok(())
+}
+
+/// 从 .git/packed-refs 中移除 refs/stash 行（若存在）。
+/// drop/clear 仅改写松散引用 .git/refs/stash 与 reflog；若 refs/stash 曾被打包进
+/// packed-refs，仅删除松散引用会让打包条目继续生效，导致已删除的贮藏“复活”。
+/// 此处同步清理 packed-refs 中的 refs/stash 行（紧跟其后的 peeled "^" 行一并移除）。
+fn prune_packed_stash_ref(git_dir: &Path) -> Result<(), String> {
+    let packed_path = git_dir.join("packed-refs");
+    let content = match fs::read_to_string(&packed_path) {
+        Ok(content) => content,
+        // 无 packed-refs 文件，无需处理。
+        Err(_) => return Ok(()),
+    };
+
+    let mut changed = false;
+    let mut output = String::with_capacity(content.len());
+    let mut skip_peeled = false;
+    for line in content.lines() {
+        // peeled 值行以 '^' 开头，紧跟在其对应的 ref 行之后。
+        if skip_peeled && line.starts_with('^') {
+            skip_peeled = false;
+            changed = true;
+            continue;
+        }
+        skip_peeled = false;
+        // 引用行格式：<oid> <refname>。
+        let is_stash = line
+            .split_once(' ')
+            .map(|(_, name)| name.trim() == "refs/stash")
+            .unwrap_or(false);
+        if is_stash {
+            changed = true;
+            // 若下一行是该 ref 的 peeled 值，一并跳过。
+            skip_peeled = true;
+            continue;
+        }
+        output.push_str(line);
+        output.push('\n');
+    }
+
+    if changed {
+        fs::write(&packed_path, output)
+            .map_err(|error| format!("写入 packed-refs 失败：{error}"))?;
+    }
     Ok(())
 }
 
