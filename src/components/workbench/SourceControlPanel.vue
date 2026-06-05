@@ -26,7 +26,7 @@
       <div class="source-control-empty-shell source-control-setup-shell">
         <section class="source-control-setup-panel" aria-label="源代码管理未初始化引导">
           <header class="source-control-setup-project-header">
-            <span class="source-control-setup-project-name">{{ workspaceLabel }}</span>
+            <span class="source-control-setup-project-name"> workspaceLabel </span>
             <svg class="source-control-setup-chevron" viewBox="0 0 16 16" aria-hidden="true">
               <polyline points="4 6 8 10 12 6" />
             </svg>
@@ -48,14 +48,14 @@
             </p>
 
             <p v-if="sourceControlActionError" class="source-control-setup-error">
-              {{ sourceControlActionError }}
+               sourceControlActionError 
             </p>
 
             <div class="source-control-setup-actions">
               <button type="button" class="source-control-setup-btn source-control-setup-btn-primary"
                 :disabled="isBusy || isLoading" :aria-busy="pendingAction === 'init-repository'"
                 @click="handleInitRepository">
-                {{ initRepositoryButtonLabel }}
+                 initRepositoryButtonLabel 
               </button>
 
               <button type="button" class="source-control-setup-btn source-control-setup-btn-secondary"
@@ -90,13 +90,13 @@
         </svg>
 
         <div class="source-control-branch-copy">
-          <p class="source-control-branch-name">{{ branchLabel }}</p>
+          <p class="source-control-branch-name"> branchLabel </p>
         </div>
 
         <div class="source-control-branch-sync">
-          <span v-if="status.behind > 0">↓ {{ status.behind }}</span>
-          <span v-if="status.ahead > 0">↑ {{ status.ahead }}</span>
-          <span v-if="status.ahead === 0 && status.behind === 0">{{ workspaceStateLabel }}</span>
+          <span v-if="status.behind > 0">↓  status.behind </span>
+          <span v-if="status.ahead > 0">↑  status.ahead </span>
+          <span v-if="status.ahead === 0 && status.behind === 0"> workspaceStateLabel </span>
         </div>
       </div>
 
@@ -134,43 +134,99 @@
             <path d="M7 13h10v7H7z" />
           </svg>
 
-          <span class="source-control-nav-label">{{ item.label }}</span>
-          <span class="source-control-nav-count">{{ item.count }}</span>
+          <span class="source-control-nav-label"> item.label </span>
+          <span class="source-control-nav-count"> item.count </span>
         </button>
       </nav>
 
-      <div class="source-control-scroll">
+      <div ref="sourceControlScrollRef" class="source-control-scroll">
         <template v-if="activeTab === 'changes'">
           <section v-if="!hasVisibleChanges && searchQuery.trim()"
             class="source-control-empty-card source-control-empty-card-inline">
-            <p class="source-control-empty-title">{{ emptyChangesTitle }}</p>
-            <p class="source-control-empty-text">{{ emptyChangesText }}</p>
+            <p class="source-control-empty-title"> emptyChangesTitle </p>
+            <p class="source-control-empty-text"> emptyChangesText </p>
           </section>
 
-          <section v-for="section in filteredSections" :key="section.key" class="source-control-section"
-            :class="{ 'is-collapsed': collapsedSections[section.key] }">
-            <button type="button" class="source-control-section-header" @click="toggleSectionCollapse(section.key)">
-              <svg class="source-control-section-chevron" viewBox="0 0 24 24" aria-hidden="true">
-                <polyline points="6 9 12 15 18 9" />
-              </svg>
-              <span>{{ section.title }}</span>
-              <span class="source-control-section-count">{{ section.entries.length }}</span>
-            </button>
+          <template v-if="!shouldVirtualizeChanges">
+            <section v-for="section in filteredSections" :key="section.key" class="source-control-section"
+              :class="{ 'is-collapsed': collapsedSections[section.key] }">
+              <button type="button" class="source-control-section-header" @click="toggleSectionCollapse(section.key)">
+                <svg class="source-control-section-chevron" viewBox="0 0 24 24" aria-hidden="true">
+                  <polyline points="6 9 12 15 18 9" />
+                </svg>
+                <span> section.title </span>
+                <span class="source-control-section-count"> section.entries.length </span>
+              </button>
 
-            <div class="source-control-file-list">
-              <article v-for="entry in section.entries" :key="section.key + ':' + entry.path"
-                class="source-control-file" :class="{
+              <div class="source-control-file-list">
+                <article v-for="entry in section.entries" :key="section.key + ':' + entry.path"
+                  class="source-control-file" :class="{
+                    'is-active': isActivePath(entry.path),
+                    'is-context-target': isContextTargetPath(entry.path),
+                  }" @contextmenu.prevent.stop="handleEntryContextMenu($event, section.key, entry)">
+                  <button type="button" class="source-control-file-main" @click="handleOpenFile(entry.path)">
+                    <span class="source-control-file-tag" :class="'is-' + resolveEntryTagTone(section.key, entry)">
+                       resolveEntryTag(section.key, entry) 
+                    </span>
+
+                    <span class="source-control-file-path">
+                      <span class="source-control-file-name"> resolveEntryDisplayName(entry) </span>
+                      <span class="source-control-file-dir"> resolveEntryDirectory(entry) </span>
+                    </span>
+                  </button>
+
+                  <div v-if="resolveEntryActions(section.key, entry).length > 0" class="source-control-file-actions">
+                    <button v-for="action in resolveEntryActions(section.key, entry)"
+                      :key="section.key + ':' + entry.path + ':' + action.key" type="button"
+                      class="source-control-icon-btn" :disabled="isBusy" :aria-label="action.title" :title="action.title"
+                      @click.stop="handleEntryAction(action.key, section.key, entry)">
+                      <svg v-if="action.icon === 'plus'" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M12 5v14" />
+                        <path d="M5 12h14" />
+                      </svg>
+                      <svg v-else-if="action.icon === 'minus'" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M5 12h14" />
+                      </svg>
+                      <svg v-else viewBox="0 0 24 24" aria-hidden="true">
+                        <polyline points="3 6 5 6 21 6" />
+                        <path d="M19 6l-2 14H7L5 6" />
+                      </svg>
+                    </button>
+                  </div>
+                </article>
+              </div>
+            </section>
+          </template>
+
+          <div v-else ref="changeSizerRef" class="scm-changes-virtual-sizer"
+            :style="{ height: changeTotalSize + 'px' }">
+            <div
+              v-for="{ kind, section, entry, isFirstSection, start, index, key } in changeWindowRows"
+              :key="key" :ref="measureChangeRow" :data-index="index"
+              :class="['scm-changes-virtual-row', kind === 'header' ? 'scm-changes-virtual-row--header' : 'scm-changes-virtual-row--entry', { 'is-section-start': kind === 'header' && !isFirstSection }]"
+              :style="{ transform: 'translateY(' + (start - changeScrollMargin) + 'px)' }">
+              <button v-if="kind === 'header'" type="button" class="source-control-section-header"
+                :class="{ 'is-collapsed': collapsedSections[section.key] }"
+                @click="toggleSectionCollapse(section.key)">
+                <svg class="source-control-section-chevron" viewBox="0 0 24 24" aria-hidden="true">
+                  <polyline points="6 9 12 15 18 9" />
+                </svg>
+                <span> section.title </span>
+                <span class="source-control-section-count"> section.entries.length </span>
+              </button>
+
+              <article v-else-if="entry" class="source-control-file" :class="{
                   'is-active': isActivePath(entry.path),
                   'is-context-target': isContextTargetPath(entry.path),
                 }" @contextmenu.prevent.stop="handleEntryContextMenu($event, section.key, entry)">
                 <button type="button" class="source-control-file-main" @click="handleOpenFile(entry.path)">
                   <span class="source-control-file-tag" :class="'is-' + resolveEntryTagTone(section.key, entry)">
-                    {{ resolveEntryTag(section.key, entry) }}
+                     resolveEntryTag(section.key, entry) 
                   </span>
 
                   <span class="source-control-file-path">
-                    <span class="source-control-file-name">{{ resolveEntryDisplayName(entry) }}</span>
-                    <span class="source-control-file-dir">{{ resolveEntryDirectory(entry) }}</span>
+                    <span class="source-control-file-name"> resolveEntryDisplayName(entry) </span>
+                    <span class="source-control-file-dir"> resolveEntryDirectory(entry) </span>
                   </span>
                 </button>
 
@@ -194,7 +250,7 @@
                 </div>
               </article>
             </div>
-          </section>
+          </div>
         </template>
 
         <section v-else-if="activeTab === 'history'" class="source-control-info-panel source-control-history-panel">
@@ -205,7 +261,7 @@
                 :disabled="isCommitHistoryLoading || isBusy" @click="handleReloadCommitHistory">
                 <span aria-hidden="true" class="icon-[lucide--refresh-cw]" />
               </button>
-              <p class="source-control-history-summary">{{ historyPanelTitle }}</p>
+              <p class="source-control-history-summary"> historyPanelTitle </p>
             </div>
           </div>
 
@@ -215,34 +271,62 @@
           </div>
 
           <div v-else-if="filteredCommitHistory.length > 0" class="source-control-history-timeline">
-            <article v-for="(entry, index) in filteredCommitHistory" :key="entry.id" class="source-control-history-item"
-              :class="{ 'is-active': index === 0 }">
-              <div class="source-control-history-node" aria-hidden="true">
-                <span class="source-control-history-node-dot"></span>
-              </div>
-
-              <div class="source-control-history-body">
-                <p class="source-control-history-message">{{ entry.summary }}</p>
-
-                <div class="source-control-history-meta">
-                  <span class="source-control-history-hash">{{ entry.shortId }}</span>
-                  <span class="source-control-history-author">{{ entry.authorName }}</span>
+            <template v-if="!shouldVirtualizeHistory">
+              <article v-for="(entry, index) in filteredCommitHistory" :key="entry.id" class="source-control-history-item"
+                :class="{ 'is-active': index === 0 }">
+                <div class="source-control-history-node" aria-hidden="true">
+                  <span class="source-control-history-node-dot"></span>
                 </div>
-              </div>
 
-              <time class="source-control-history-time" :datetime="entry.authoredAt">
-                {{ formatCommitTime(entry.authoredAt) }}
-              </time>
-            </article>
+                <div class="source-control-history-body">
+                  <p class="source-control-history-message"> entry.summary </p>
+
+                  <div class="source-control-history-meta">
+                    <span class="source-control-history-hash"> entry.shortId </span>
+                    <span class="source-control-history-author"> entry.authorName </span>
+                  </div>
+                </div>
+
+                <time class="source-control-history-time" :datetime="entry.authoredAt">
+                   formatCommitTime(entry.authoredAt) 
+                </time>
+              </article>
+            </template>
+
+            <div v-else ref="historySizerRef" class="scm-history-virtual-sizer"
+              :style="{ height: historyTotalSize + 'px' }">
+              <div v-for="{ entry, index, start, key } in historyWindowRows" :key="key" :ref="measureHistoryRow"
+                :data-index="index" class="scm-history-virtual-row"
+                :style="{ transform: 'translateY(' + (start - historyScrollMargin) + 'px)' }">
+                <article class="source-control-history-item" :class="{ 'is-active': index === 0 }">
+                  <div class="source-control-history-node" aria-hidden="true">
+                    <span class="source-control-history-node-dot"></span>
+                  </div>
+
+                  <div class="source-control-history-body">
+                    <p class="source-control-history-message"> entry.summary </p>
+
+                    <div class="source-control-history-meta">
+                      <span class="source-control-history-hash"> entry.shortId </span>
+                      <span class="source-control-history-author"> entry.authorName </span>
+                    </div>
+                  </div>
+
+                  <time class="source-control-history-time" :datetime="entry.authoredAt">
+                     formatCommitTime(entry.authoredAt) 
+                  </time>
+                </article>
+              </div>
+            </div>
           </div>
 
-          <p v-else class="source-control-info-note source-control-history-note">{{ historyEmptyText }}</p>
+          <p v-else class="source-control-info-note source-control-history-note"> historyEmptyText </p>
         </section>
 
         <section v-else-if="activeTab === 'branches'" class="source-control-info-panel">
           <p class="source-control-info-eyebrow">Branches</p>
-          <p class="source-control-info-title">{{ branchLabel }}</p>
-          <p class="source-control-info-text">{{ branchesPanelText }}</p>
+          <p class="source-control-info-title"> branchLabel </p>
+          <p class="source-control-info-text"> branchesPanelText </p>
 
           <div class="source-control-toolbar">
             <button type="button" class="source-control-toolbar-btn" :disabled="isBranchesLoading || isBusy"
@@ -265,32 +349,32 @@
               :class="{ 'is-active': entry.isCurrent }">
               <div class="source-control-file-main">
                 <span class="source-control-file-tag" :class="'is-' + resolveBranchTagTone(entry)">
-                  {{ resolveBranchTag(entry) }}
+                   resolveBranchTag(entry) 
                 </span>
                 <span class="source-control-file-path">
-                  <span class="source-control-file-name">{{ entry.shorthand }}</span>
-                  <span class="source-control-file-dir">{{ resolveBranchMeta(entry) }}</span>
+                  <span class="source-control-file-name"> entry.shorthand </span>
+                  <span class="source-control-file-dir"> resolveBranchMeta(entry) </span>
                 </span>
               </div>
 
               <div v-if="!entry.isCurrent" class="source-control-file-actions">
                 <button type="button" class="source-control-btn" :disabled="isBusy"
                   @click.stop="handleCheckoutBranch(entry)">
-                  {{ entry.kind === 'remote' ? '检出' : '切换' }}
+                   entry.kind === 'remote' ? '检出' : '切换' 
                 </button>
               </div>
             </article>
           </div>
 
-          <p v-else class="source-control-info-note">{{ branchesEmptyText }}</p>
+          <p v-else class="source-control-info-note"> branchesEmptyText </p>
         </section>
 
         <section v-else-if="activeTab === 'pull-requests'" class="source-control-info-panel">
           <p class="source-control-info-eyebrow">Pull requests</p>
-          <p class="source-control-info-title">{{ pullRequestPanelTitle }}</p>
-          <p class="source-control-info-text">{{ pullRequestPanelText }}</p>
+          <p class="source-control-info-title"> pullRequestPanelTitle </p>
+          <p class="source-control-info-text"> pullRequestPanelText </p>
           <p v-if="pullRequestSupport.remoteName" class="source-control-info-note">
-            远程 {{ pullRequestSupport.remoteName }} · {{ pullRequestProviderLabel }}
+            远程  pullRequestSupport.remoteName  ·  pullRequestProviderLabel 
           </p>
 
           <div class="source-control-toolbar">
@@ -309,7 +393,7 @@
         <section v-else class="source-control-info-panel source-control-stash-panel">
           <div class="source-control-stash-header">
             <p class="source-control-stash-heading">贮藏</p>
-            <p class="source-control-stash-summary">{{ stashPanelTitle }}</p>
+            <p class="source-control-stash-summary"> stashPanelTitle </p>
           </div>
 
           <div class="source-control-stash-toolbar">
@@ -339,11 +423,11 @@
               :class="{ 'is-open': isStashOpen(entry.stashId) }">
               <button type="button" class="source-control-stash-head" :aria-expanded="isStashOpen(entry.stashId)"
                 @click="toggleStashOpen(entry.stashId)">
-                <span class="source-control-stash-ref">{{ resolveStashIndexLabel(entry) }}</span>
+                <span class="source-control-stash-ref"> resolveStashIndexLabel(entry) </span>
 
                 <span class="source-control-stash-info">
-                  <span class="source-control-stash-title">{{ resolveStashTitle(entry) }}</span>
-                  <span class="source-control-stash-meta">{{ resolveStashMeta(entry) }}</span>
+                  <span class="source-control-stash-title"> resolveStashTitle(entry) </span>
+                  <span class="source-control-stash-meta"> resolveStashMeta(entry) </span>
                 </span>
 
                 <svg class="source-control-stash-chevron" viewBox="0 0 24 24" aria-hidden="true">
@@ -355,17 +439,17 @@
                 <div class="source-control-stash-details">
                   <div class="source-control-stash-detail">
                     <span class="source-control-stash-detail-label">引用</span>
-                    <span class="source-control-stash-detail-value">{{ entry.stashId }}</span>
+                    <span class="source-control-stash-detail-value"> entry.stashId </span>
                   </div>
 
                   <div v-if="entry.branchName" class="source-control-stash-detail">
                     <span class="source-control-stash-detail-label">分支</span>
-                    <span class="source-control-stash-detail-value">{{ entry.branchName }}</span>
+                    <span class="source-control-stash-detail-value"> entry.branchName </span>
                   </div>
 
                   <div v-if="entry.commitShortId" class="source-control-stash-detail">
                     <span class="source-control-stash-detail-label">基线</span>
-                    <span class="source-control-stash-detail-value">{{ entry.commitShortId }}</span>
+                    <span class="source-control-stash-detail-value"> entry.commitShortId </span>
                   </div>
                 </div>
 
@@ -388,7 +472,7 @@
             </article>
           </div>
 
-          <p v-else class="source-control-info-note source-control-stash-note">{{ stashEmptyText }}</p>
+          <p v-else class="source-control-info-note source-control-stash-note"> stashEmptyText </p>
         </section>
       </div>
 
@@ -399,7 +483,7 @@
         <div class="source-control-commit-actions">
           <button type="button" class="source-control-btn source-control-btn-primary" :disabled="!canCommit"
             @click="handleCommit">
-            {{ commitButtonLabel }}
+             commitButtonLabel 
           </button>
 
           <button type="button" class="source-control-btn source-control-btn-icon" :disabled="isBusy"
@@ -418,7 +502,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue';
+import { useVirtualizer } from '@tanstack/vue-virtual';
+import { useResizeObserver } from '@vueuse/core';
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import LinearContextMenu from '@/components/common/LinearContextMenu.vue';
 import type { ILinearContextMenuItem } from '@/components/common/linear-context-menu.types';
 import { useDialog } from '@/composables/useDialog';
@@ -1568,12 +1654,216 @@ const handleWindowResize = (): void => {
   }
 };
 
+// --- 大型变更/历史列表的虚拟滚动 ---
+const SCM_VIRTUALIZE_THRESHOLD = 100;
+const SCM_ROW_ESTIMATE = 28;
+const SCM_OVERSCAN = 12;
+
+type TScmChangeRowKind = 'header' | 'entry';
+
+interface IScmChangeRow {
+  kind: TScmChangeRowKind;
+  key: string;
+  section: IGitSection;
+  entry: IGitFileStatusPayload | null;
+  isFirstSection: boolean;
+}
+
+interface IScmChangeWindowRow extends IScmChangeRow {
+  start: number;
+  index: number;
+}
+
+interface IScmHistoryRow {
+  key: string;
+  index: number;
+  entry: IGitCommitSummaryPayload;
+}
+
+interface IScmHistoryWindowRow extends IScmHistoryRow {
+  start: number;
+}
+
+const sourceControlScrollRef = ref<HTMLElement | null>(null);
+const changeSizerRef = ref<HTMLElement | null>(null);
+const historySizerRef = ref<HTMLElement | null>(null);
+const changeScrollMargin = ref(0);
+const historyScrollMargin = ref(0);
+
+const changeRows = computed<IScmChangeRow[]>(() => {
+  const rows: IScmChangeRow[] = [];
+
+  filteredSections.value.forEach((section, sectionIndex) => {
+    rows.push({
+      kind: 'header',
+      key: `header:${section.key}`,
+      section,
+      entry: null,
+      isFirstSection: sectionIndex === 0,
+    });
+
+    if (collapsedSections[section.key]) {
+      return;
+    }
+
+    for (const entry of section.entries) {
+      rows.push({
+        kind: 'entry',
+        key: `${section.key}:${entry.path}`,
+        section,
+        entry,
+        isFirstSection: false,
+      });
+    }
+  });
+
+  return rows;
+});
+
+const historyRows = computed<IScmHistoryRow[]>(() =>
+  filteredCommitHistory.value.map((entry, index) => ({
+    key: entry.id,
+    index,
+    entry,
+  })),
+);
+
+const shouldVirtualizeChanges = computed(
+  () => changeRows.value.length > SCM_VIRTUALIZE_THRESHOLD,
+);
+const shouldVirtualizeHistory = computed(
+  () => historyRows.value.length > SCM_VIRTUALIZE_THRESHOLD,
+);
+
+const changeVirtualizer = useVirtualizer<HTMLElement, HTMLElement>(
+  computed(() => ({
+    count: shouldVirtualizeChanges.value ? changeRows.value.length : 0,
+    getScrollElement: () => sourceControlScrollRef.value,
+    estimateSize: () => SCM_ROW_ESTIMATE,
+    overscan: SCM_OVERSCAN,
+    scrollMargin: changeScrollMargin.value,
+    getItemKey: (index: number) => changeRows.value[index]?.key ?? index,
+  })),
+);
+
+const historyVirtualizer = useVirtualizer<HTMLElement, HTMLElement>(
+  computed(() => ({
+    count: shouldVirtualizeHistory.value ? historyRows.value.length : 0,
+    getScrollElement: () => sourceControlScrollRef.value,
+    estimateSize: () => SCM_ROW_ESTIMATE,
+    overscan: SCM_OVERSCAN,
+    scrollMargin: historyScrollMargin.value,
+    getItemKey: (index: number) => historyRows.value[index]?.key ?? index,
+  })),
+);
+
+const changeTotalSize = computed(() => changeVirtualizer.value.getTotalSize());
+const historyTotalSize = computed(() => historyVirtualizer.value.getTotalSize());
+
+const changeWindowRows = computed<IScmChangeWindowRow[]>(() => {
+  const rows = changeRows.value;
+  const windowRows: IScmChangeWindowRow[] = [];
+
+  for (const item of changeVirtualizer.value.getVirtualItems()) {
+    const row = rows[item.index];
+    if (!row) {
+      continue;
+    }
+
+    windowRows.push({
+      kind: row.kind,
+      key: row.key,
+      section: row.section,
+      entry: row.entry,
+      isFirstSection: row.isFirstSection,
+      start: item.start,
+      index: item.index,
+    });
+  }
+
+  return windowRows;
+});
+
+const historyWindowRows = computed<IScmHistoryWindowRow[]>(() => {
+  const rows = historyRows.value;
+  const windowRows: IScmHistoryWindowRow[] = [];
+
+  for (const item of historyVirtualizer.value.getVirtualItems()) {
+    const row = rows[item.index];
+    if (!row) {
+      continue;
+    }
+
+    windowRows.push({
+      key: row.key,
+      index: row.index,
+      entry: row.entry,
+      start: item.start,
+    });
+  }
+
+  return windowRows;
+});
+
+const measureChangeRow = (el: unknown): void => {
+  if (el instanceof HTMLElement) {
+    changeVirtualizer.value.measureElement(el);
+  }
+};
+
+const measureHistoryRow = (el: unknown): void => {
+  if (el instanceof HTMLElement) {
+    historyVirtualizer.value.measureElement(el);
+  }
+};
+
+const recomputeScrollMargins = (): void => {
+  const scrollEl = sourceControlScrollRef.value;
+  if (!scrollEl) {
+    return;
+  }
+
+  const scrollTop = scrollEl.scrollTop;
+  const scrollTopOffset = scrollEl.getBoundingClientRect().top;
+
+  if (changeSizerRef.value) {
+    changeScrollMargin.value =
+      changeSizerRef.value.getBoundingClientRect().top - scrollTopOffset + scrollTop;
+  }
+
+  if (historySizerRef.value) {
+    historyScrollMargin.value =
+      historySizerRef.value.getBoundingClientRect().top - scrollTopOffset + scrollTop;
+  }
+};
+
+onMounted(() => {
+  void nextTick(recomputeScrollMargins);
+});
+
+watch(
+  [
+    () => activeTab.value,
+    () => shouldVirtualizeChanges.value,
+    () => shouldVirtualizeHistory.value,
+    () => changeRows.value.length,
+    () => historyRows.value.length,
+  ],
+  () => {
+    void nextTick(recomputeScrollMargins);
+  },
+);
+
 if (typeof window !== 'undefined') {
   window.addEventListener('pointerdown', handleWindowPointerDown, true);
   window.addEventListener('keydown', handleWindowKeydown);
   window.addEventListener('resize', handleWindowResize);
   window.addEventListener('blur', handleWindowResize);
 }
+
+useResizeObserver(sourceControlScrollRef, () => {
+  recomputeScrollMargins();
+});
 
 onBeforeUnmount(() => {
   if (typeof window === 'undefined') {
@@ -1623,3 +1913,40 @@ watch(
   { immediate: true },
 );
 </script>
+
+<style scoped>
+.scm-changes-virtual-sizer,
+.scm-history-virtual-sizer {
+  position: relative;
+  width: 100%;
+}
+
+.scm-history-virtual-sizer {
+  flex: 0 0 auto;
+}
+
+.scm-changes-virtual-row,
+.scm-history-virtual-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+}
+
+.scm-changes-virtual-row {
+  box-sizing: border-box;
+  padding: 0 6px;
+}
+
+.scm-changes-virtual-row--header {
+  padding-top: 8px;
+}
+
+.scm-changes-virtual-row.is-section-start {
+  border-top: 1px solid var(--scm-border);
+}
+
+.scm-changes-virtual-row .source-control-section-header.is-collapsed .source-control-section-chevron {
+  transform: rotate(-90deg);
+}
+</style>
