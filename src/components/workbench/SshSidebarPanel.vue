@@ -56,7 +56,7 @@ import {
   sshConnectionSchema,
   toSshConnectionPayload,
 } from '@/types/ssh/connection.schema';
-import type { ISshFileReadPayload } from '@/types/tauri';
+import type { ISshFileReadPayload, ISshFileWriteRequest } from '@/types/tauri';
 
 const CONTEXT_MENU_WIDTH = 172;
 const CONTEXT_MENU_HEIGHT = 252;
