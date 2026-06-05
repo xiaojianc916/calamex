@@ -1,12 +1,11 @@
 use super::branches::{checkout_git_branch, create_git_branch, list_git_branches};
-use super::cli;
 use super::diff::get_git_diff_preview;
 use super::history::list_git_commit_history;
 use super::pull_request::get_git_pull_request_support;
 use super::stash::{apply_git_stash, list_git_stashes, save_git_stash};
 use super::status::{
-    discard_git_paths, get_git_repository_status, init_git_repository, stage_git_paths,
-    unstage_git_paths,
+    commit_git_index, discard_git_paths, get_git_repository_status, init_git_repository,
+    stage_git_paths, unstage_git_paths,
 };
 use super::*;
 use std::{
@@ -33,6 +32,9 @@ impl TempGitDir {
     }
     fn init_repository(&self) -> Result<Repository, String> {
         gix::init(&self.path).map_err(|e| e.to_string())?;
+        // 配置本地提交身份（user.name / user.email）：提交命令在创建提交前会预检身份，
+        // 这样测试夹具无需依赖系统安装的 git 或全局 Git 配置（免装目标）。
+        configure_test_identity(&self.path)?;
         gix::open(&self.path).map_err(|e| e.to_string())
     }
     fn repository_root(&self) -> Result<PathBuf, String> {
@@ -55,13 +57,63 @@ fn write_worktree_file(root: &Path, relative_path: &str, content: &str) -> Resul
     fs::write(&file_path, content).map_err(|e| e.to_string())
 }
 
-fn commit_via_cli(root: &Path, message: &str) -> Result<(), String> {
-    cli::run_git_ok(root, &["add", "-A"], "add")?;
-    cli::run_git_ok(root, &["commit", "-m", message], "commit")
+/// 向仓库本地配置写入测试用的提交身份（user.name / user.email），不依赖系统安装的 git。
+fn configure_test_identity(repository_path: &Path) -> Result<(), String> {
+    use std::io::Write;
+    let config_path = repository_path.join(".git").join("config");
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&config_path)
+        .map_err(|e| e.to_string())?;
+    // 前置换行确保与已有配置段落分隔，避免被粘连到上一行。
+    write!(
+        file,
+        "\n[user]\n\tname = Calamex Test\n\temail = test@calamex.local\n"
+    )
+    .map_err(|e| e.to_string())
 }
 
-fn add_remote_via_cli(root: &Path, name: &str, url: &str) -> Result<(), String> {
-    cli::run_git_ok(root, &["remote", "add", name, url], "add remote")
+/// 通过 gix 暂存当前工作区的全部变更并提交（等价 `git add -A && git commit -m`），
+/// 全程不依赖系统安装的 git。
+fn commit_worktree(root: &Path, message: &str) -> Result<(), String> {
+    let root_str = root.to_string_lossy().to_string();
+    // 收集所有变更 / 未跟踪路径并暂存（等价 `git add -A`）。
+    let status = get_git_repository_status(Some(root_str.clone()))?;
+    let paths: Vec<String> = status
+        .files
+        .iter()
+        .map(|file| file.relative_path.clone())
+        .collect();
+    if !paths.is_empty() {
+        stage_git_paths(GitPathOperationRequest {
+            repository_root_path: root_str.clone(),
+            paths,
+        })?;
+    }
+    // 提交整个索引（pathspec 留空）。
+    commit_git_index(GitCommitRequest {
+        repository_root_path: root_str,
+        message: message.to_string(),
+        paths: Vec::new(),
+    })?;
+    Ok(())
+}
+
+/// 通过写入本地配置注册一个远程（等价 `git remote add <name> <url>`），不依赖系统安装的 git。
+fn add_remote(repository_path: &Path, name: &str, url: &str) -> Result<(), String> {
+    use std::io::Write;
+    let config_path = repository_path.join(".git").join("config");
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&config_path)
+        .map_err(|e| e.to_string())?;
+    write!(
+        file,
+        "\n[remote \"{name}\"]\n\turl = {url}\n\tfetch = +refs/heads/*:refs/remotes/{name}/*\n"
+    )
+    .map_err(|e| e.to_string())
 }
 
 #[cfg(windows)]
@@ -141,7 +193,7 @@ fn stage_git_paths_and_unstage_git_paths_round_trip() -> Result<(), String> {
     let _repo = temp.init_repository()?;
     let root = temp.repository_root()?;
     write_worktree_file(&temp.path, "src/app.sh", "echo hello\n")?;
-    commit_via_cli(&temp.path, "feat: initial")?;
+    commit_worktree(&temp.path, "feat: initial")?;
     write_worktree_file(&temp.path, "src/app.sh", "echo world\n")?;
     let s = stage_git_paths(GitPathOperationRequest {
         repository_root_path: root.to_string_lossy().to_string(),
@@ -163,7 +215,7 @@ fn discard_git_paths_restores_committed_content() -> Result<(), String> {
     let _repo = temp.init_repository()?;
     let root = temp.repository_root()?;
     write_worktree_file(&temp.path, "src/app.sh", "echo base\n")?;
-    commit_via_cli(&temp.path, "feat: initial")?;
+    commit_worktree(&temp.path, "feat: initial")?;
     write_worktree_file(&temp.path, "src/app.sh", "echo changed\n")?;
     discard_git_paths(GitPathOperationRequest {
         repository_root_path: root.to_string_lossy().to_string(),
@@ -180,7 +232,7 @@ fn get_git_diff_preview_worktree_returns_diff_for_changed_file() -> Result<(), S
     let _repo = temp.init_repository()?;
     let root = temp.repository_root()?;
     write_worktree_file(&temp.path, "src/app.sh", "echo base\n")?;
-    commit_via_cli(&temp.path, "feat: initial")?;
+    commit_worktree(&temp.path, "feat: initial")?;
     write_worktree_file(&temp.path, "src/app.sh", "echo modified\n")?;
     let preview = get_git_diff_preview(GitDiffPreviewRequest {
         repository_root_path: root.to_string_lossy().to_string(),
@@ -199,7 +251,7 @@ fn get_git_diff_preview_staged_returns_diff_for_staged_change() -> Result<(), St
     let _repo = temp.init_repository()?;
     let root = temp.repository_root()?;
     write_worktree_file(&temp.path, "src/app.sh", "echo base\n")?;
-    commit_via_cli(&temp.path, "feat: initial")?;
+    commit_worktree(&temp.path, "feat: initial")?;
     write_worktree_file(&temp.path, "src/app.sh", "echo staged\n")?;
     stage_git_paths(GitPathOperationRequest {
         repository_root_path: root.to_string_lossy().to_string(),
@@ -221,7 +273,7 @@ fn list_git_branches_returns_current_branch_after_init() -> Result<(), String> {
     let _repo = temp.init_repository()?;
     let root = temp.repository_root()?;
     write_worktree_file(&temp.path, "src/app.sh", "echo base\n")?;
-    commit_via_cli(&temp.path, "feat: initial")?;
+    commit_worktree(&temp.path, "feat: initial")?;
     let branches = list_git_branches(GitRepositoryRootRequest {
         repository_root_path: root.to_string_lossy().to_string(),
     })?;
@@ -236,7 +288,7 @@ fn list_git_branches_skips_invalid_loose_reference() -> Result<(), String> {
     let _repo = temp.init_repository()?;
     let root = temp.repository_root()?;
     write_worktree_file(&temp.path, "src/app.sh", "echo base\n")?;
-    commit_via_cli(&temp.path, "feat: initial")?;
+    commit_worktree(&temp.path, "feat: initial")?;
     // 模拟被误放进 .git/refs 下的杂项文件（内容不是合法引用），
     // 例如脚本文件 untitled.sh，复现「读取 Git 分支失败」警告。
     let invalid_ref_path = temp.path.join(".git").join("refs").join("untitled.sh");
@@ -258,9 +310,9 @@ fn git_commit_history_pagination() -> Result<(), String> {
     let _repo = temp.init_repository()?;
     let root = temp.repository_root()?;
     write_worktree_file(&temp.path, "src/app.sh", "echo first\n")?;
-    commit_via_cli(&temp.path, "feat: first")?;
+    commit_worktree(&temp.path, "feat: first")?;
     write_worktree_file(&temp.path, "src/app.sh", "echo second\n")?;
-    commit_via_cli(&temp.path, "feat: second")?;
+    commit_worktree(&temp.path, "feat: second")?;
     let payload = list_git_commit_history(GitCommitHistoryRequest {
         repository_root_path: root.to_string_lossy().to_string(),
         offset: Some(0),
@@ -279,7 +331,7 @@ fn create_git_branch_with_checkout_updates_head_branch() -> Result<(), String> {
     let _repo = temp.init_repository()?;
     let root = temp.repository_root()?;
     write_worktree_file(&temp.path, "src/app.sh", "echo base\n")?;
-    commit_via_cli(&temp.path, "feat: initial")?;
+    commit_worktree(&temp.path, "feat: initial")?;
     let status = create_git_branch(GitBranchCreateRequest {
         repository_root_path: root.to_string_lossy().to_string(),
         branch_name: "feature/demo".into(),
@@ -295,7 +347,7 @@ fn checkout_git_branch_rejects_invalid_branch_name() -> Result<(), String> {
     let _repo = temp.init_repository()?;
     let root = temp.repository_root()?;
     write_worktree_file(&temp.path, "src/app.sh", "echo base\n")?;
-    commit_via_cli(&temp.path, "feat: initial")?;
+    commit_worktree(&temp.path, "feat: initial")?;
     // 非法分支名（含 ':'）应被拒绝，且不触碰工作区。
     let result = checkout_git_branch(GitBranchCheckoutRequest {
         repository_root_path: root.to_string_lossy().to_string(),
@@ -311,7 +363,7 @@ fn checkout_git_branch_switches_between_branches() -> Result<(), String> {
     let _repo = temp.init_repository()?;
     let root = temp.repository_root()?;
     write_worktree_file(&temp.path, "src/app.sh", "echo base\n")?;
-    commit_via_cli(&temp.path, "feat: initial")?;
+    commit_worktree(&temp.path, "feat: initial")?;
     let initial = get_git_repository_status(Some(root.to_string_lossy().to_string()))?;
     let initial_branch = initial
         .head_branch_name
@@ -340,7 +392,7 @@ fn save_git_stash_and_list_git_stashes_round_trip() -> Result<(), String> {
     let _repo = temp.init_repository()?;
     let root = temp.repository_root()?;
     write_worktree_file(&temp.path, "src/app.sh", "echo base\n")?;
-    commit_via_cli(&temp.path, "feat: initial")?;
+    commit_worktree(&temp.path, "feat: initial")?;
     write_worktree_file(&temp.path, "src/app.sh", "echo changed\n")?;
     save_git_stash(GitStashSaveRequest {
         repository_root_path: root.to_string_lossy().to_string(),
@@ -361,7 +413,7 @@ fn apply_git_stash_with_pop_restores_worktree_and_clears_stash() -> Result<(), S
     let _repo = temp.init_repository()?;
     let root = temp.repository_root()?;
     write_worktree_file(&temp.path, "src/app.sh", "echo base\n")?;
-    commit_via_cli(&temp.path, "feat: initial")?;
+    commit_worktree(&temp.path, "feat: initial")?;
     write_worktree_file(&temp.path, "src/app.sh", "echo changed\n")?;
     save_git_stash(GitStashSaveRequest {
         repository_root_path: root.to_string_lossy().to_string(),
@@ -388,7 +440,7 @@ fn get_git_pull_request_support_parses_github_remote() -> Result<(), String> {
     let temp = TempGitDir::new("pull-request-support")?;
     let _repo = temp.init_repository()?;
     let root = temp.repository_root()?;
-    add_remote_via_cli(&temp.path, "origin", "git@github.com:owner/repo.git")?;
+    add_remote(&temp.path, "origin", "git@github.com:owner/repo.git")?;
     let payload = get_git_pull_request_support(GitRepositoryRootRequest {
         repository_root_path: root.to_string_lossy().to_string(),
     })?;
@@ -406,7 +458,7 @@ fn get_git_pull_request_support_parses_https_remote() -> Result<(), String> {
     let temp = TempGitDir::new("pull-request-https")?;
     let _repo = temp.init_repository()?;
     let root = temp.repository_root()?;
-    add_remote_via_cli(&temp.path, "origin", "https://github.com/owner/repo.git")?;
+    add_remote(&temp.path, "origin", "https://github.com/owner/repo.git")?;
     let payload = get_git_pull_request_support(GitRepositoryRootRequest {
         repository_root_path: root.to_string_lossy().to_string(),
     })?;
@@ -425,12 +477,18 @@ fn get_git_repository_status_reports_renamed_path_correctly() -> Result<(), Stri
     let _repo = temp.init_repository()?;
     let root = temp.repository_root()?;
     write_worktree_file(&temp.path, "src/old_name.sh", "echo hello\n")?;
-    commit_via_cli(&temp.path, "feat: initial")?;
-    cli::run_git_ok(
-        &temp.path,
-        &["mv", "src/old_name.sh", "src/new_name.sh"],
-        "rename",
-    )?;
+    commit_worktree(&temp.path, "feat: initial")?;
+    // 模拟 `git mv`：磁盘上重命名后，暂存「删除旧路径 + 新增新路径」，
+    // 由状态命令据 HEAD→索引 的差异做重命名检测。
+    fs::rename(
+        temp.path.join("src/old_name.sh"),
+        temp.path.join("src/new_name.sh"),
+    )
+    .map_err(|e| e.to_string())?;
+    stage_git_paths(GitPathOperationRequest {
+        repository_root_path: root.to_string_lossy().to_string(),
+        paths: vec!["src/old_name.sh".into(), "src/new_name.sh".into()],
+    })?;
     let status = get_git_repository_status(Some(root.to_string_lossy().to_string()))?;
     let renamed = status
         .files
@@ -451,7 +509,7 @@ fn discard_git_paths_removes_untracked_file_without_error() -> Result<(), String
     let _repo = temp.init_repository()?;
     let root = temp.repository_root()?;
     write_worktree_file(&temp.path, "src/app.sh", "echo base\n")?;
-    commit_via_cli(&temp.path, "feat: initial")?;
+    commit_worktree(&temp.path, "feat: initial")?;
     write_worktree_file(&temp.path, "src/extra.sh", "echo extra\n")?;
     discard_git_paths(GitPathOperationRequest {
         repository_root_path: root.to_string_lossy().to_string(),
@@ -467,7 +525,7 @@ fn git_commit_history_preserves_pipe_in_message() -> Result<(), String> {
     let _repo = temp.init_repository()?;
     let root = temp.repository_root()?;
     write_worktree_file(&temp.path, "src/app.sh", "echo first\n")?;
-    commit_via_cli(&temp.path, "feat: a | b | c")?;
+    commit_worktree(&temp.path, "feat: a | b | c")?;
     let payload = list_git_commit_history(GitCommitHistoryRequest {
         repository_root_path: root.to_string_lossy().to_string(),
         offset: Some(0),
