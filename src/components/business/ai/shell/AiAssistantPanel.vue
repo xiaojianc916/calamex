@@ -97,6 +97,22 @@ const splitSuggestionsIntoRows = <T extends { title: string }>(
 };
 
 const MAX_HISTORY_THREADS = 20;
+
+const HISTORY_TIME_FORMAT = new Intl.DateTimeFormat('zh-CN', {
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+});
+const HISTORY_DATE_FORMAT_SAME_YEAR = new Intl.DateTimeFormat('zh-CN', {
+  month: '2-digit',
+  day: '2-digit',
+});
+const HISTORY_DATE_FORMAT_FULL = new Intl.DateTimeFormat('zh-CN', {
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
+
 const props = defineProps<{
   document: IEditorDocument;
   activeRun: IActiveRunSummary | null;
@@ -778,32 +794,24 @@ const handleSubmitMessage = async (): Promise<void> => {
 const getHistoryTimeLabel = (timestampText: string): string => {
   const timestamp = Date.parse(timestampText);
   if (!Number.isFinite(timestamp)) return '刚刚';
-  return new Intl.DateTimeFormat('zh-CN', {
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).format(new Date(timestamp));
+  return HISTORY_TIME_FORMAT.format(new Date(timestamp));
 };
 
 const getHistoryTimestampLabel = (timestampText: string): string => {
   const timestamp = Date.parse(timestampText);
   if (!Number.isFinite(timestamp)) return '刚刚';
   const date = new Date(timestamp);
-  const timeLabel = getHistoryTimeLabel(timestampText);
   const now = new Date();
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   const startOfDate = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
   const dayDiff = Math.round((startOfToday - startOfDate) / (24 * 60 * 60 * 1000));
-  if (dayDiff <= 0) return `今天 ${timeLabel}`;
-  if (dayDiff === 1) return `昨天 ${timeLabel}`;
-  const sameYear = date.getFullYear() === now.getFullYear();
-  const dateLabel = new Intl.DateTimeFormat(
-    'zh-CN',
-    sameYear
-      ? { month: '2-digit', day: '2-digit' }
-      : { year: 'numeric', month: '2-digit', day: '2-digit' },
-  ).format(date);
-  return `${dateLabel} ${timeLabel}`;
+  if (dayDiff <= 0) return `今天 ${HISTORY_TIME_FORMAT.format(date)}`;
+  if (dayDiff === 1) return `昨天 ${HISTORY_TIME_FORMAT.format(date)}`;
+  const formatter =
+    date.getFullYear() === now.getFullYear()
+      ? HISTORY_DATE_FORMAT_SAME_YEAR
+      : HISTORY_DATE_FORMAT_FULL;
+  return formatter.format(date); // 带日期的这档不再拼时间
 };
 
 const getConversationCheckpoint = (messageId: string): IAiConversationCheckpoint | null =>

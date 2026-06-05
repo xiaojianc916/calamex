@@ -78,11 +78,13 @@ const SIDEBAR_MIN_WIDTH = 240;
 const props = withDefaults(
   defineProps<{
     isDesktopRuntime?: boolean;
+    activityVisible?: boolean;
     sidebarVisible?: boolean;
     sidebarWidth?: number;
   }>(),
   {
     isDesktopRuntime: false,
+    activityVisible: false,
     sidebarVisible: true,
     sidebarWidth: 288,
   },
@@ -117,7 +119,7 @@ const sidebarStyle = computed(() => ({
   maxWidth: `${resolvedSidebarWidth.value}px`,
 }));
 
-const shellThemeStyle = {
+const shellThemeStyle = computed(() => ({
   '--app-bg': '#fafafa',
   '--titlebar-bg': '#fafafa',
   '--sidebar-bg': '#fafafa',
@@ -138,7 +140,7 @@ const shellThemeStyle = {
   '--surface-hover': '#818b981f',
   '--surface-soft': '#818b981f',
   '--surface-soft-strong': '#d1d9e0b3',
-} as const;
+}));
 
 const getAppWindow = async () => {
   if (!props.isDesktopRuntime) {
@@ -189,8 +191,8 @@ const startWindowResize = async (direction: TResizeDirection, event: MouseEvent)
   window.dispatchEvent(new Event(SHELL_WINDOW_RESIZE_START_EVENT));
 
   try {
-    const appWindow = await getAppWindow();
-    await appWindow?.startResizeDragging(direction);
+    const { getCurrentWindow } = await import('@tauri-apps/api/window');
+    await getCurrentWindow().startResizeDragging(direction);
   } catch (error) {
     console.warn('窗口边缘拉伸失败', error);
   } finally {
