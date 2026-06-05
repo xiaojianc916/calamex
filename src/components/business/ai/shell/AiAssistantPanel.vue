@@ -184,7 +184,7 @@ const providerMarkTitle = computed(() => {
 const historyThreads = computed(() =>
   [...assistant.historyThreads.value]
     .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
-    .slice(0, MAX_HISTORY_MESSAGES),
+    .slice(0, MAX_HISTORY_THREADS),
 );
 const activeHistoryThread = computed(
   () =>
@@ -433,6 +433,27 @@ const buildPlanRunFinalAnswer = (
     '已完成这轮计划执行。',
     ...(resultLines.length ? ['', '执行结果：', ...resultLines] : []),
   ].join('\n');
+};
+
+const isAgentTokenMessage = (message: IAiChatMessage): boolean =>
+  message.role !== 'assistant' ||
+  Boolean(message.toolCalls?.length) ||
+  Boolean(message.stream?.runtimeEvents?.length);
+
+const resolvePlanTokenStep = (run: IAiAgentRun | null): IAiTaskPlanStep | null => {
+  if (!run) {
+    return null;
+  }
+
+  if (run.currentStepId) {
+    return run.steps.find((step) => step.id === run.currentStepId) ?? null;
+  }
+
+  return (
+    run.steps.find((step) => step.status === 'running') ??
+    run.steps.find((step) => step.status === 'pending') ??
+    null
+  );
 };
 
 const buildPlanTokenEstimationMessages = (
