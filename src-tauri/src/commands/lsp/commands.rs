@@ -199,9 +199,9 @@ async fn stop_inner(session: &Arc<Mutex<LspSession>>, pending: &PendingMap) {
         return;
     }
 
-    /// 先尝试优雅 shutdown:此刻进程仍存活,能正常回 shutdown 响应并自行退出。
-// 必须早于 kill_tx——否则 watcher 会 drop child 触发 kill_on_drop,把进程杀死,
-// 导致 shutdown 响应永远不到、resp_rx 既不 resolve 也不 close,白白吃满 500ms。
+    // 先尝试优雅 shutdown:此刻进程仍存活,能正常回 shutdown 响应并自行退出。
+   // 必须早于 kill_tx——否则 watcher 会 drop child 触发 kill_on_drop,把进程杀死,
+   // 导致 shutdown 响应永远不到、resp_rx 既不 resolve 也不 close,白白吃满 500ms。
 if let Some(stdin) = stdin {
     let (resp_tx, resp_rx) = oneshot::channel::<Value>();
     let shutdown_id = i64::MAX;
