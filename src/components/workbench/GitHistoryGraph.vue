@@ -82,7 +82,7 @@
       :x="menu.x"
       :y="menu.y"
       :groups="menuGroups"
-      theme="dark"
+      theme="light"
       submenu-direction="right"
       @select="handleMenuSelect"
     />
@@ -103,8 +103,8 @@ import type { IGitGraphEdge } from '@/utils/git-graph';
 import { buildGitGraph, resolveGitGraphLaneColor } from '@/utils/git-graph';
 
 const LANE_WIDTH = 14;
-const ROW_HEIGHT = 44;
-const NODE_RADIUS = 4;
+const ROW_HEIGHT = 40;
+const NODE_RADIUS = 3.5;
 
 interface IGitCommitRef {
   name: string;
@@ -437,21 +437,27 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.git-history-graph {
+.git-history-graph.source-control-history-timeline {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 0;
+  padding: 4px 12px 10px;
+}
+
+.git-history-graph.source-control-history-timeline::before {
+  content: none;
 }
 
 .git-history-graph-group-header {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 8px 4px;
-  font-size: 11px;
+  padding: 8px 6px 4px;
+  font-size: 10.5px;
+  font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: var(--scm-muted, #8b8f98);
+  color: #818b98;
 }
 
 .git-history-graph-group-icon {
@@ -468,27 +474,30 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 8px;
+  padding: 8px 6px;
   font-size: 11px;
-  color: var(--scm-muted, #8b8f98);
+  color: #818b98;
 }
 
-.git-history-graph-item {
+.git-history-graph-item.source-control-history-item {
   display: flex;
   align-items: stretch;
-  gap: 8px;
-  min-height: 44px;
-  padding: 0 8px;
+  gap: 10px;
+  min-height: 40px;
+  padding: 0 6px;
   border-radius: 6px;
   cursor: pointer;
+  background: transparent;
+  transition: background 0.14s ease;
 }
 
-.git-history-graph-item:hover {
-  background: var(--scm-hover, rgba(255, 255, 255, 0.04));
+.git-history-graph-item.source-control-history-item:hover,
+.git-history-graph-item.source-control-history-item.is-active:hover {
+  background: rgba(129, 139, 152, 0.12);
 }
 
-.git-history-graph-item.is-active {
-  background: var(--scm-active, rgba(94, 151, 222, 0.16));
+.git-history-graph-item.source-control-history-item.is-active {
+  background: transparent;
 }
 
 .git-history-graph-cell {
@@ -503,12 +512,12 @@ onBeforeUnmount(() => {
 }
 
 .git-history-graph-edge {
-  stroke-width: 1.6;
+  stroke-width: 1.5;
 }
 
 .git-history-graph-node {
-  stroke: var(--scm-bg, #1e1f24);
-  stroke-width: 1.5;
+  stroke: #ffffff;
+  stroke-width: 2;
 }
 
 .git-history-graph-body {
@@ -517,7 +526,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 2px;
+  gap: 1px;
 }
 
 .git-history-graph-body .source-control-history-message {
@@ -525,6 +534,11 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 6px;
   min-width: 0;
+  margin: 0;
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1.3;
+  color: #1f2328;
 }
 
 .git-history-graph-message-text {
@@ -537,14 +551,16 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   gap: 3px;
+  flex: 0 0 auto;
   height: 16px;
-  padding: 0 5px;
-  border-radius: 8px;
+  padding: 0 6px;
+  border: 1px solid #d1d9e0;
+  border-radius: 999px;
+  background: #ffffff;
   font-size: 10px;
-  line-height: 16px;
+  line-height: 1;
   white-space: nowrap;
-  background: rgba(255, 255, 255, 0.08);
-  color: var(--scm-muted, #b7bcc6);
+  color: #59636e;
 }
 
 .git-history-graph-ref-icon {
@@ -553,25 +569,47 @@ onBeforeUnmount(() => {
 }
 
 .git-history-graph-ref.is-head {
-  background: rgba(82, 183, 136, 0.22);
-  color: #7fe0ac;
+  border-color: #aacbf0;
+  background: #ddf4ff;
+  color: #0969da;
 }
 
 .git-history-graph-ref.is-remote {
-  background: rgba(94, 151, 222, 0.2);
-  color: #8fbdf0;
+  border-color: #a9d3cf;
+  background: #e6f6f4;
+  color: #137e74;
 }
 
 .git-history-graph-ref.is-local {
-  background: rgba(224, 161, 60, 0.2);
-  color: #e6bd76;
+  color: #59636e;
 }
 
 .git-history-graph-item .source-control-history-meta {
   display: flex;
+  align-items: center;
   gap: 8px;
+  min-width: 0;
   font-size: 11px;
-  color: var(--scm-muted, #8b8f98);
+  color: #818b98;
+}
+
+.git-history-graph-item .source-control-history-hash {
+  flex: 0 0 auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #818b98;
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.git-history-graph-item .source-control-history-author {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #818b98;
 }
 
 .git-history-graph-item .source-control-history-time {
@@ -579,6 +617,6 @@ onBeforeUnmount(() => {
   align-self: center;
   font-size: 11px;
   white-space: nowrap;
-  color: var(--scm-muted, #8b8f98);
+  color: #818b98;
 }
 </style>
