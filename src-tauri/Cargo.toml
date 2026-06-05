@@ -95,9 +95,9 @@ atomic-write-file = { version = "0.3.0", optional = true }
 camino = { version = "1.2.2" }
 cap-std = { version = "4.0.2", optional = true }
 normpath = { version = "1.5.1", optional = true }
-specta = { version = "=2.0.0-rc.25", features = ["serde_json"] }
+specta = { version = "2.0.0-rc.25", features = ["serde_json"] }
 specta-typescript = "0.0.12"
-tauri-specta = { version = "=2.0.0-rc.25", features = ["typescript"] }
+tauri-specta = { version = "2.0.0-rc.25", features = ["typescript"] }
 log = "0.4.30"
 jiff = "0.2.25"
 backon = "1.6.0"
