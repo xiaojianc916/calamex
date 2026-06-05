@@ -42,6 +42,7 @@ pub fn builder() -> Builder<tauri::Wry> {
             // ↓↓↓ git：从手写 Zod 契约迁入 specta 生成轨（用模块限定路径以解析配套宏）↓↓↓
             git::branches::list_git_branches,
             git::branches::checkout_git_branch,
+            git::branches::checkout_git_commit,
             git::branches::create_git_branch,
             git::diff::get_git_diff_preview,
             git::history::list_git_commit_history,
@@ -56,6 +57,7 @@ pub fn builder() -> Builder<tauri::Wry> {
             git::stash::save_git_stash,
             git::stash::apply_git_stash,
             git::stash::drop_git_stash,
+            git::stash::revert_git_commit,
             git::status::get_git_repository_status,
             git::status::init_git_repository,
             git::status::get_git_file_baseline,
