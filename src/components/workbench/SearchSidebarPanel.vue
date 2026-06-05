@@ -162,10 +162,7 @@
       <div v-else-if="matcherError" class="search-panel-empty-state">
         <InlineError title="正则表达式无效" :message="matcherError" severity="warning" />
       </div>
-      <div v-else-if="!hasSearchQuery" class="search-panel-empty-state">
-        <p class="search-panel-empty-title">搜索工作区</p>
-        <p class="search-panel-empty-text">输入关键字，按文件名、符号或内容快速定位。</p>
-      </div>
+      <template v-else-if="!hasSearchQuery" />
       <div v-else-if="hasSearchQuery && activeResults.length === 0" class="search-panel-empty-state">
         <p class="search-panel-empty-title">没有匹配结果</p>
         <p class="search-panel-empty-text">试试更短的关键字，或调整大小写、正则和路径过滤条件。</p>
