@@ -8,6 +8,8 @@ import type {
   IGitCommitResultPayload,
   IGitCommitSummaryPayload,
   IGitFileBaselinePayload,
+  IGitPullRequestDetailPayload,
+  IGitPullRequestSummaryPayload,
   IGitPullRequestSupportPayload,
   IGitRepositoryStatusPayload,
   IGitStashEntryPayload,
@@ -110,6 +112,12 @@ export const useGitStore = defineStore('git', () => {
 
   const pullRequestSupport = ref<IGitPullRequestSupportPayload>(createEmptyPullRequestSupport());
   const isPullRequestSupportLoading = ref(false);
+  const isSettingRemote = ref(false);
+  const pullRequests = ref<IGitPullRequestSummaryPayload[]>([]);
+  const isPullRequestsLoading = ref(false);
+  const pullRequestStateFilter = ref('open');
+  const pullRequestDetail = ref<IGitPullRequestDetailPayload | null>(null);
+  const isPullRequestDetailLoading = ref(false);
 
   // 提交详情按 commit id 缓存。每个 commit 的详情不可变，可长期缓存；
   // 仓库根变更 / reset 时随 baseline 缓存一起清空。
@@ -124,6 +132,8 @@ export const useGitStore = defineStore('git', () => {
   let branchesRequestId = 0;
   let stashesRequestId = 0;
   let pullRequestSupportRequestId = 0;
+  let pullRequestsRequestId = 0;
+  let pullRequestDetailRequestId = 0;
 
   // de-duplicates concurrent in-flight baseline fetches keyed by normalized path.
   const pendingBaselineRequests = new Map<string, Promise<IGitFileBaselinePayload>>();
@@ -177,11 +187,20 @@ export const useGitStore = defineStore('git', () => {
     pullRequestSupport.value = createEmptyPullRequestSupport();
   };
 
+  const resetPullRequests = (): void => {
+    pullRequestsRequestId += 1;
+    pullRequestDetailRequestId += 1;
+    pullRequests.value = [];
+    pullRequestStateFilter.value = 'open';
+    pullRequestDetail.value = null;
+  };
+
   const resetSupplementaryData = (): void => {
     resetCommitHistory();
     resetBranches();
     resetStashes();
     resetPullRequestSupport();
+    resetPullRequests();
   };
 
   /**
@@ -279,6 +298,8 @@ export const useGitStore = defineStore('git', () => {
     branchesRequestId += 1;
     stashesRequestId += 1;
     pullRequestSupportRequestId += 1;
+    pullRequestsRequestId += 1;
+    pullRequestDetailRequestId += 1;
 
     isLoading.value = false;
     isCommitting.value = false;
@@ -286,6 +307,8 @@ export const useGitStore = defineStore('git', () => {
     isBranchesLoading.value = false;
     isStashesLoading.value = false;
     isPullRequestSupportLoading.value = false;
+    isPullRequestsLoading.value = false;
+    isPullRequestDetailLoading.value = false;
 
     status.value = createEmptyGitRepositoryStatus();
     clearBaselineCache();
@@ -530,6 +553,101 @@ export const useGitStore = defineStore('git', () => {
     }
   };
 
+  const loadPullRequests = async (state?: string): Promise<IGitPullRequestSummaryPayload[]> => {
+    if (state !== undefined) {
+      pullRequestStateFilter.value = state;
+    }
+    const requestId = ++pullRequestsRequestId;
+    isPullRequestsLoading.value = true;
+    try {
+      const payload = await tauriService.listGitPullRequests({
+        repositoryRootPath: requireRepositoryRootPath(),
+        state: pullRequestStateFilter.value,
+      });
+      if (requestId !== pullRequestsRequestId) {
+        return pullRequests.value;
+      }
+      pullRequests.value = payload;
+      return pullRequests.value;
+    } finally {
+      if (requestId === pullRequestsRequestId) {
+        isPullRequestsLoading.value = false;
+      }
+    }
+  };
+
+  const loadPullRequestDetail = async (
+    number: number,
+  ): Promise<IGitPullRequestDetailPayload> => {
+    const requestId = ++pullRequestDetailRequestId;
+    isPullRequestDetailLoading.value = true;
+    try {
+      const payload = await tauriService.getGitPullRequestDetail({
+        repositoryRootPath: requireRepositoryRootPath(),
+        number,
+      });
+      if (requestId !== pullRequestDetailRequestId) {
+        if (pullRequestDetail.value) return pullRequestDetail.value;
+      }
+      pullRequestDetail.value = payload;
+      return payload;
+    } finally {
+      if (requestId === pullRequestDetailRequestId) {
+        isPullRequestDetailLoading.value = false;
+      }
+    }
+  };
+
+  const createPullRequest = async (payload: {
+    title: string;
+    body: string | null;
+    base: string;
+    head: string;
+    draft: boolean | null;
+  }): Promise<IGitPullRequestSummaryPayload> =>
+    tauriService.createGitPullRequest({
+      repositoryRootPath: requireRepositoryRootPath(),
+      ...payload,
+    });
+
+  const mergePullRequest = async (
+    number: number,
+    mergeMethod: string | null,
+  ): Promise<IGitPullRequestSummaryPayload> =>
+    tauriService.mergeGitPullRequest({
+      repositoryRootPath: requireRepositoryRootPath(),
+      number,
+      mergeMethod,
+    });
+
+  const closePullRequest = async (number: number): Promise<IGitPullRequestSummaryPayload> =>
+    tauriService.closeGitPullRequest({
+      repositoryRootPath: requireRepositoryRootPath(),
+      number,
+    });
+
+  const setRemote = async (
+    remoteName: string,
+    remoteUrl: string,
+  ): Promise<IGitPullRequestSupportPayload> => {
+    isSettingRemote.value = true;
+    try {
+      const payload = await tauriService.setGitRemote({
+        repositoryRootPath: requireRepositoryRootPath(),
+        remoteName,
+        remoteUrl,
+      });
+      // 远端写操作落盘即最新真值：bump request-id 让任何 in-flight 的
+      // loadPullRequestSupport resolve 后跳过写入，避免旧探测结果覆盖。
+      pullRequestSupportRequestId += 1;
+      pullRequestSupport.value = payload;
+      resetPullRequests();
+      return pullRequestSupport.value;
+    } finally {
+      isSettingRemote.value = false;
+    }
+  };
+
   // -- branch / stash / commit write ops -----------------------------------
 
   const checkoutBranch = async (branchName: string): Promise<IGitRepositoryStatusPayload> => {
@@ -633,6 +751,12 @@ export const useGitStore = defineStore('git', () => {
     isStashesLoading,
     pullRequestSupport,
     isPullRequestSupportLoading,
+    isSettingRemote,
+    pullRequests,
+    isPullRequestsLoading,
+    pullRequestStateFilter,
+    pullRequestDetail,
+    isPullRequestDetailLoading,
     commitDetailCache,
     // getters
     hasRepository,
@@ -656,6 +780,12 @@ export const useGitStore = defineStore('git', () => {
     loadBranches,
     loadStashes,
     loadPullRequestSupport,
+    loadPullRequests,
+    loadPullRequestDetail,
+    createPullRequest,
+    mergePullRequest,
+    closePullRequest,
+    setRemote,
     // branch / stash / commit write ops
     checkoutBranch,
     checkoutCommit,
