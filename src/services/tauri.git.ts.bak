@@ -128,7 +128,6 @@ export const gitTauriService: TGitTauriService = {
       {
         command: 'stage_git_paths',
         guardHint: '暂存 Git 变更',
-        timeoutMs: 20_000,
         input: payload,
       },
       () => commands.stageGitPaths(payload),
@@ -140,7 +139,6 @@ export const gitTauriService: TGitTauriService = {
       {
         command: 'unstage_git_paths',
         guardHint: '取消暂存 Git 变更',
-        timeoutMs: 20_000,
         input: payload,
       },
       () => commands.unstageGitPaths(payload),
@@ -153,7 +151,6 @@ export const gitTauriService: TGitTauriService = {
         command: 'discard_git_paths',
         guardHint: '放弃 Git 工作区更改',
         audit: 'sensitive',
-        timeoutMs: 20_000,
         input: payload,
       },
       () => commands.discardGitPaths(payload),
@@ -166,7 +163,6 @@ export const gitTauriService: TGitTauriService = {
         command: 'commit_git_index',
         guardHint: '创建 Git 提交',
         audit: 'sensitive',
-        timeoutMs: 20_000,
         input: payload,
       },
       () => commands.commitGitIndex(payload),

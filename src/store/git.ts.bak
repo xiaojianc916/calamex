@@ -262,20 +262,6 @@ export const useGitStore = defineStore('git', () => {
     return payload;
   };
 
-  /**
-   * 写操作(stage/unstage/discard/commit/branch/stash)落盘的状态即最新真值。
-   * 通过 ++statusRequestId 把任何 in-flight 的 refreshRepositoryStatus 标记为 stale,
-   * 防止其稍后 resolve 时用过期 payload 覆盖刚写入的状态;同时把可能残留的
-   * isLoading 归位(被作废的那次 refresh 不会再进入自己的 finally 重置分支)。
-   */
-  const applyStatusFromMutation = (
-    payload: IGitRepositoryStatusPayload,
-  ): IGitRepositoryStatusPayload => {
-    statusRequestId += 1;
-    isLoading.value = false;
-    return applyStatus(payload);
-  };
-
   const assertInitializedRepositoryStatus = (
     payload: IGitRepositoryStatusPayload,
     workspaceRootPath: string,
@@ -359,7 +345,7 @@ export const useGitStore = defineStore('git', () => {
       paths: deduplicatedPaths,
     });
     onSuccess?.(deduplicatedPaths);
-    return applyStatusFromMutation(payload);
+    return applyStatus(payload);
   };
 
   const stagePaths = (paths: string[]): Promise<IGitRepositoryStatusPayload> =>
@@ -384,7 +370,7 @@ export const useGitStore = defineStore('git', () => {
         // 空 paths 表示提交整个暂存区,保持既有提交行为。
         paths: [],
       });
-      applyStatusFromMutation(payload.status);
+      applyStatus(payload.status);
       clearBaselineCache();
       return payload;
     } finally {
@@ -495,7 +481,7 @@ export const useGitStore = defineStore('git', () => {
     });
     clearBaselineCache();
     resetBranches();
-    return applyStatusFromMutation(payload);
+    return applyStatus(payload);
   };
 
   const createBranch = async (
@@ -511,7 +497,7 @@ export const useGitStore = defineStore('git', () => {
       clearBaselineCache();
     }
     resetBranches();
-    return applyStatusFromMutation(payload);
+    return applyStatus(payload);
   };
 
   const saveStash = async (
@@ -525,7 +511,7 @@ export const useGitStore = defineStore('git', () => {
     });
     clearBaselineCache();
     resetStashes();
-    return applyStatusFromMutation(payload);
+    return applyStatus(payload);
   };
 
   const applyStash = async (
@@ -539,7 +525,7 @@ export const useGitStore = defineStore('git', () => {
     });
     clearBaselineCache();
     resetStashes();
-    return applyStatusFromMutation(payload);
+    return applyStatus(payload);
   };
 
   const dropStash = async (stashIndex: number): Promise<IGitRepositoryStatusPayload> => {
@@ -548,7 +534,7 @@ export const useGitStore = defineStore('git', () => {
       stashIndex,
     });
     resetStashes();
-    return applyStatusFromMutation(payload);
+    return applyStatus(payload);
   };
 
   return {

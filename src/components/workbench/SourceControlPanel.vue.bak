@@ -418,7 +418,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue';
 import LinearContextMenu from '@/components/common/LinearContextMenu.vue';
 import type { ILinearContextMenuItem } from '@/components/common/linear-context-menu.types';
 import { useDialog } from '@/composables/useDialog';
@@ -545,6 +545,10 @@ const resetSectionCollapse = (): void => {
   collapsedSections.untracked = false;
 };
 
+const markStatusSynced = (): void => {
+  // no-op: keep callback contract with action/composable layers
+};
+
 const runWithPending = async (key: string, task: () => Promise<void>): Promise<boolean> => {
   if (pendingAction.value) {
     return false;
@@ -618,6 +622,8 @@ const syncRepositoryStatus = async (
       return;
     }
 
+    markStatusSynced();
+
     if (hasRepository.value && activeTab.value !== 'changes') {
       await ensureActiveTabData(activeTab.value);
     }
@@ -687,8 +693,7 @@ const changedEntries = computed(() =>
 );
 const untrackedEntries = computed(() => status.value.files.filter((entry) => entry.isUntracked));
 const stageableEntries = computed(() => [...changedEntries.value, ...untrackedEntries.value]);
-// 放弃全部的目标集合与可暂存集合完全一致(已跟踪改动 + 未跟踪文件),复用同一个 computed。
-const discardableEntries = stageableEntries;
+const discardableEntries = computed(() => [...changedEntries.value, ...untrackedEntries.value]);
 const stagedPaths = computed(() => stagedEntries.value.map((entry) => entry.path));
 const canStageAll = computed(() => stageableEntries.value.length > 0 && !isBusy.value);
 const canUnstageAll = computed(() => stagedPaths.value.length > 0 && !isBusy.value);
@@ -1272,6 +1277,7 @@ const {
     commitMessage.value = value;
   },
   runWithPending,
+  markStatusSynced,
   setSourceControlActionError: (value) => {
     sourceControlActionError.value = value;
   },
@@ -1316,6 +1322,7 @@ const handleCreateBranch = async (): Promise<void> => {
       return;
     }
 
+    markStatusSynced();
     message.success(`已创建并切换到 ${branchName}`);
   } catch (error) {
     message.error(toErrorMessage(error, '创建 Git 分支失败'));
@@ -1337,6 +1344,7 @@ const handleCheckoutBranch = async (entry: IGitBranchPayload): Promise<void> => 
       return;
     }
 
+    markStatusSynced();
     message.success(`已切换到 ${entry.shorthand}`);
   } catch (error) {
     message.error(toErrorMessage(error, '切换 Git 分支失败'));
@@ -1382,6 +1390,7 @@ const handleSaveStash = async (): Promise<void> => {
       return;
     }
 
+    markStatusSynced();
     message.success('当前改动已保存到 Git 贮藏');
   } catch (error) {
     message.error(toErrorMessage(error, '保存 Git 贮藏失败'));
@@ -1415,6 +1424,7 @@ const handleApplyStash = async (entry: IGitStashEntryPayload, pop: boolean): Pro
       return;
     }
 
+    markStatusSynced();
     message.success(pop ? `已弹出 ${entry.stashId}` : `已应用 ${entry.stashId}`);
   } catch (error) {
     message.error(toErrorMessage(error, pop ? '弹出 Git 贮藏失败' : '应用 Git 贮藏失败'));
@@ -1443,6 +1453,7 @@ const handleDropStash = async (entry: IGitStashEntryPayload): Promise<void> => {
       return;
     }
 
+    markStatusSynced();
     message.success(`已删除 ${entry.stashId}`);
   } catch (error) {
     message.error(toErrorMessage(error, '删除 Git 贮藏失败'));
@@ -1557,16 +1568,12 @@ const handleWindowResize = (): void => {
   }
 };
 
-onMounted(() => {
-  if (typeof window === 'undefined') {
-    return;
-  }
-
+if (typeof window !== 'undefined') {
   window.addEventListener('pointerdown', handleWindowPointerDown, true);
   window.addEventListener('keydown', handleWindowKeydown);
   window.addEventListener('resize', handleWindowResize);
   window.addEventListener('blur', handleWindowResize);
-});
+}
 
 onBeforeUnmount(() => {
   if (typeof window === 'undefined') {

@@ -1,8 +1,9 @@
 import type { useDialog } from '@/composables/useDialog';
 import type { useMessage } from '@/composables/useMessage';
 import type { useGitStore } from '@/store/git';
-import type { IGitFileStatusPayload } from '@/types/git';
+import type { IGitFileStatusPayload, IGitRepositoryStatusPayload } from '@/types/git';
 import { toErrorMessage } from '@/utils/error';
+import { areFileSystemPathsEqual } from '@/utils/path';
 import type { TGitSectionKey } from './useSourceControlContextMenu';
 
 export type TGitEntryActionKey = 'stage' | 'unstage' | 'discard';
@@ -23,6 +24,7 @@ interface IUseSourceControlActionsOptions {
   getCommitMessage: () => string;
   setCommitMessage: (value: string) => void;
   runWithPending: (key: string, task: () => Promise<void>) => Promise<boolean>;
+  markStatusSynced: () => void;
   setSourceControlActionError: (value: string | null) => void;
   syncRepositoryStatus: (
     workspaceRootPath: string,
@@ -35,6 +37,21 @@ interface IUseSourceControlActionsOptions {
 
 const collectPaths = (entries: IGitFileStatusPayload[]): string[] =>
   entries.map((entry) => entry.path);
+
+const assertWorkspaceRepositoryReady = (
+  payload: IGitRepositoryStatusPayload,
+  workspaceRootPath: string,
+): void => {
+  if (!payload.available || !payload.repositoryRootPath) {
+    throw new Error(payload.message ?? 'Git 初始化后仍未检测到仓库。');
+  }
+
+  if (!areFileSystemPathsEqual(payload.repositoryRootPath, workspaceRootPath)) {
+    throw new Error(
+      `Git 仓库根目录与当前工作区不一致：当前工作区 ${workspaceRootPath}，检测到 ${payload.repositoryRootPath}。`,
+    );
+  }
+};
 
 export const useSourceControlActions = (options: IUseSourceControlActionsOptions) => {
   const confirmDangerAction = async (config: {
@@ -64,73 +81,67 @@ export const useSourceControlActions = (options: IUseSourceControlActionsOptions
     });
   };
 
-  const runBulkPathsAction = async (config: {
-    paths: string[];
-    emptyMessage: string;
-    pendingKey: string;
-    mutate: (paths: string[]) => Promise<unknown>;
-    successMessage: (count: number) => string;
-    errorMessage: string;
-    confirm?: () => Promise<boolean>;
-  }): Promise<void> => {
-    if (config.paths.length === 0) {
-      options.message.info(config.emptyMessage);
-      return;
-    }
-
-    if (config.confirm && !(await config.confirm())) {
+  const handleStageAll = async (): Promise<void> => {
+    const paths = collectPaths(options.getStageableEntries());
+    if (paths.length === 0) {
+      options.message.info('没有可暂存的变更。');
       return;
     }
 
     try {
-      const didRun = await options.runWithPending(config.pendingKey, async () => {
-        await config.mutate(config.paths);
+      await options.runWithPending('stage-all', async () => {
+        await options.gitStore.stagePaths(paths);
       });
-      if (!didRun) {
-        return;
-      }
-      options.message.success(config.successMessage(config.paths.length));
+      options.markStatusSynced();
+      options.message.success(`已暂存 ${paths.length} 项变更`);
     } catch (error) {
-      options.message.error(toErrorMessage(error, config.errorMessage));
+      options.message.error(toErrorMessage(error, '暂存全部变更失败'));
     }
   };
 
-  const handleStageAll = (): Promise<void> =>
-    runBulkPathsAction({
-      paths: collectPaths(options.getStageableEntries()),
-      emptyMessage: '没有可暂存的变更。',
-      pendingKey: 'stage-all',
-      mutate: (paths) => options.gitStore.stagePaths(paths),
-      successMessage: (count) => `已暂存 ${count} 项变更`,
-      errorMessage: '暂存全部变更失败',
-    });
+  const handleUnstageAll = async (): Promise<void> => {
+    const paths = options.getStagedPaths();
+    if (paths.length === 0) {
+      options.message.info('没有已暂存的变更。');
+      return;
+    }
 
-  const handleUnstageAll = (): Promise<void> =>
-    runBulkPathsAction({
-      paths: options.getStagedPaths(),
-      emptyMessage: '没有已暂存的变更。',
-      pendingKey: 'unstage-all',
-      mutate: (paths) => options.gitStore.unstagePaths(paths),
-      successMessage: (count) => `已取消暂存 ${count} 项变更`,
-      errorMessage: '取消暂存全部变更失败',
-    });
+    try {
+      await options.runWithPending('unstage-all', async () => {
+        await options.gitStore.unstagePaths(paths);
+      });
+      options.markStatusSynced();
+      options.message.success(`已取消暂存 ${paths.length} 项变更`);
+    } catch (error) {
+      options.message.error(toErrorMessage(error, '取消暂存全部变更失败'));
+    }
+  };
 
-  const handleDiscardAll = (): Promise<void> => {
+  const handleDiscardAll = async (): Promise<void> => {
     const paths = collectPaths(options.getDiscardableEntries());
-    return runBulkPathsAction({
-      paths,
-      emptyMessage: '没有可放弃的未暂存更改。',
-      pendingKey: 'discard-all',
-      mutate: (entries) => options.gitStore.discardPaths(entries),
-      successMessage: (count) => `已放弃 ${count} 项未暂存更改`,
-      errorMessage: '放弃未暂存更改失败',
-      confirm: () =>
-        confirmDangerAction({
-          title: '放弃所有未暂存更改？',
-          description: `将丢弃 ${paths.length} 项工作区更改；未跟踪文件会被删除。此操作无法撤销。`,
-          confirmText: '放弃更改',
-        }),
+    if (paths.length === 0) {
+      options.message.info('没有可放弃的未暂存更改。');
+      return;
+    }
+
+    const confirmed = await confirmDangerAction({
+      title: '放弃所有未暂存更改？',
+      description: `将丢弃 ${paths.length} 项工作区更改；未跟踪文件会被删除。此操作无法撤销。`,
+      confirmText: '放弃更改',
     });
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      await options.runWithPending('discard-all', async () => {
+        await options.gitStore.discardPaths(paths);
+      });
+      options.markStatusSynced();
+      options.message.success(`已放弃 ${paths.length} 项未暂存更改`);
+    } catch (error) {
+      options.message.error(toErrorMessage(error, '放弃未暂存更改失败'));
+    }
   };
 
   const handleInitRepository = async (): Promise<void> => {
@@ -143,15 +154,18 @@ export const useSourceControlActions = (options: IUseSourceControlActionsOptions
 
     try {
       const didRun = await options.runWithPending('init-repository', async () => {
-        // gitStore.initRepository 内部已通过 assertInitializedRepositoryStatus 校验,
-        // 并返回最新仓库状态,无需再次刷新或在此重复断言。
-        await options.gitStore.initRepository(workspaceRootPath);
+        const initializedStatus = await options.gitStore.initRepository(workspaceRootPath);
+        assertWorkspaceRepositoryReady(initializedStatus, workspaceRootPath);
+
+        const refreshedStatus = await options.gitStore.refreshRepositoryStatus(workspaceRootPath);
+        assertWorkspaceRepositoryReady(refreshedStatus, workspaceRootPath);
       });
 
       if (!didRun) {
         return;
       }
 
+      options.markStatusSynced();
       options.message.success('Git 仓库已初始化');
     } catch (error) {
       const errorMessage = toErrorMessage(error, '初始化 Git 仓库失败');
@@ -176,6 +190,7 @@ export const useSourceControlActions = (options: IUseSourceControlActionsOptions
       await options.runWithPending('commit', async () => {
         const result = await options.gitStore.commitIndex(nextCommitMessage);
         options.setCommitMessage('');
+        options.markStatusSynced();
         options.message.success(`已创建提交 ${result.commitId?.slice(0, 7) ?? ''}`);
       });
     } catch (error) {
@@ -196,12 +211,10 @@ export const useSourceControlActions = (options: IUseSourceControlActionsOptions
     }
 
     try {
-      const didRun = await options.runWithPending(`discard:${entry.path}`, async () => {
+      await options.runWithPending(`discard:${entry.path}`, async () => {
         await options.gitStore.discardPaths([entry.path]);
       });
-      if (!didRun) {
-        return;
-      }
+      options.markStatusSynced();
       options.message.success(`已放弃更改 ${entry.fileName}`);
     } catch (error) {
       options.message.error(toErrorMessage(error, `放弃更改 ${entry.fileName} 失败`));
@@ -218,22 +231,18 @@ export const useSourceControlActions = (options: IUseSourceControlActionsOptions
 
     try {
       if (sectionKey === 'staged') {
-        const didRun = await options.runWithPending(`unstage:${entry.path}`, async () => {
+        await options.runWithPending(`unstage:${entry.path}`, async () => {
           await options.gitStore.unstagePaths([entry.path]);
         });
-        if (!didRun) {
-          return;
-        }
+        options.markStatusSynced();
         options.message.success(`已取消暂存 ${entry.fileName}`);
         return;
       }
 
-      const didRun = await options.runWithPending(`stage:${entry.path}`, async () => {
+      await options.runWithPending(`stage:${entry.path}`, async () => {
         await options.gitStore.stagePaths([entry.path]);
       });
-      if (!didRun) {
-        return;
-      }
+      options.markStatusSynced();
       options.message.success(`已暂存 ${entry.fileName}`);
     } catch (error) {
       options.message.error(toErrorMessage(error, 'Git 变更操作失败'));
