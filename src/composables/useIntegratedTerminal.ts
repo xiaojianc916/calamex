@@ -10,6 +10,7 @@ import { nextTick, onBeforeUnmount, onMounted, type Ref, readonly, ref, watch } 
 import { tauriService } from '@/services/tauri';
 import { useTerminalFacade } from '@/services/terminal/facade';
 import { useEditorStore } from '@/store/editor';
+import { useTerminalRunRoutingStore } from '@/store/terminalRunRouting';
 import { useTerminalRuntimeStore } from '@/store/terminal';
 import { useTerminalRegistryStore } from '@/terminal/registry';
 import type { ITerminalSessionCallbacks } from '@/terminal/session';
@@ -132,6 +133,7 @@ export const useIntegratedTerminal = ({
 }: TUseIntegratedTerminalOptions) => {
   const editorStore = useEditorStore();
   const runtimeStore = useTerminalRuntimeStore();
+  const runRoutingStore = useTerminalRunRoutingStore();
   const { showRunSeparator, deepDiagnosticsEnabled } = storeToRefs(runtimeStore);
   const registry = useTerminalRegistryStore();
   const hostRef = ref<HTMLElement | null>(null);
@@ -171,10 +173,6 @@ export const useIntegratedTerminal = ({
   });
   session.setRunSeparatorVisible(showRunSeparator.value);
 
-  // 运行管线（dispatchScript / run-chunk / trackRun）只路由到主会话；
-  // 仅主会话需要跟踪 run，避免运行脚本时附加终端的交互输出被误判抑制。
-  const isPrimarySession = sessionId === DEFAULT_TERMINAL_SESSION_ID;
-
   // --- 生命周期 ---
 
   onMounted(async () => {
@@ -211,15 +209,17 @@ export const useIntegratedTerminal = ({
     },
   );
 
-  if (isPrimarySession) {
-    watch(
-      () => editorStore.pendingTerminalRunId,
-      (nextRunId) => {
-        session.trackRun(nextRunId);
-      },
-      { flush: 'sync', immediate: true },
-    );
-  }
+  // 运行管线（dispatchScript / run-chunk / trackRun）路由到「发起运行时选中的终端」：
+  // 仅当当前运行归属于本会话（按唯一会话编号匹配，而非主会话 / 终端序号）时才跟踪 run，
+  // 避免在未发起运行的终端里误抑制其交互输出。
+  watch(
+    () =>
+      runRoutingStore.activeRunSessionId === sessionId ? editorStore.pendingTerminalRunId : null,
+    (nextRunId) => {
+      session.trackRun(nextRunId);
+    },
+    { flush: 'sync', immediate: true },
+  );
 
   watch(
     showRunSeparator,

@@ -2,6 +2,7 @@ import { storeToRefs } from 'pinia';
 import { computed } from 'vue';
 import { tauriService } from '@/services/tauri';
 import { useEditorStore } from '@/store/editor';
+import { useTerminalRunRoutingStore } from '@/store/terminalRunRouting';
 
 /**
  * 运行控制：提供「停止 / 重置运行」能力。
@@ -16,10 +17,11 @@ import { useEditorStore } from '@/store/editor';
  * `stopRun` 负责打破这种卡死：
  *  1. 若存在当前 runId，则尽力请求后端优雅取消（后端找不到该运行属于预期内的
  *     情况，忽略其错误）。
- *  2. 无论后端取消是否成功，都强制复位前端运行态，重新打开运行闸门。
+ *  2. 无论后端取消是否成功，都强制复位前端运行态（包括运行归属会话），重新打开运行闸门。
  */
 export const useTerminalRunControl = () => {
   const editorStore = useEditorStore();
+  const runRoutingStore = useTerminalRunRoutingStore();
   const { isRunning } = storeToRefs(editorStore);
 
   const canStopRun = computed(() => isRunning.value);
@@ -29,6 +31,7 @@ export const useTerminalRunControl = () => {
     editorStore.isRunning = false;
     editorStore.setPendingTerminalRunId(null);
     editorStore.setActiveRunSummary(null);
+    runRoutingStore.setActiveRunSessionId(null);
   };
 
   const stopRun = async (): Promise<void> => {

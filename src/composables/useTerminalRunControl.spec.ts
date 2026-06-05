@@ -13,6 +13,7 @@ vi.mock('@/services/tauri', () => ({
 
 import { useTerminalRunControl } from '@/composables/useTerminalRunControl';
 import { useEditorStore } from '@/store/editor';
+import { useTerminalRunRoutingStore } from '@/store/terminalRunRouting';
 
 describe('useTerminalRunControl', () => {
   beforeEach(() => {
@@ -21,10 +22,12 @@ describe('useTerminalRunControl', () => {
     cancelTerminalRun.mockResolvedValue(undefined);
   });
 
-  it('存在 runId 时请求后端优雅取消并复位运行态', async () => {
+  it('存在 runId 时请求后端优雅取消并复位运行态（含运行归属会话）', async () => {
     const store = useEditorStore();
+    const routingStore = useTerminalRunRoutingStore();
     store.isRunning = true;
     store.setPendingTerminalRunId('run-1');
+    routingStore.setActiveRunSessionId('terminal-abc-1');
 
     const { stopRun, isRunning } = useTerminalRunControl();
     await stopRun();
@@ -33,6 +36,7 @@ describe('useTerminalRunControl', () => {
     expect(isRunning.value).toBe(false);
     expect(store.pendingTerminalRunId).toBeNull();
     expect(store.activeRunSummary).toBeNull();
+    expect(routingStore.activeRunSessionId).toBeNull();
   });
 
   it('后端找不到运行（完成事件丢失）时仍强制复位前端运行态', async () => {
@@ -49,7 +53,7 @@ describe('useTerminalRunControl', () => {
     expect(store.pendingTerminalRunId).toBeNull();
   });
 
-  it('卡死场景：isRunning 为真但无任何 runId 时不请求后端取消但仍复位', async () => {
+  it('卡死场景：isRunning 为真但无任何 runId 时，不调用后端取消但仍复位', async () => {
     const store = useEditorStore();
     store.isRunning = true;
 

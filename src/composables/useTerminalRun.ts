@@ -4,6 +4,8 @@ import { useMessage } from '@/composables/useMessage';
 import { getTerminalEventBus } from '@/services/terminal/eventBus';
 import { useTerminalFacade } from '@/services/terminal/facade';
 import type { useEditorStore } from '@/store/editor';
+import { useTerminalRunRoutingStore } from '@/store/terminalRunRouting';
+import { useTerminalTabsStore } from '@/store/terminalTabs';
 import { useTerminalRegistryStore } from '@/terminal/registry';
 import type { IEditorDocument } from '@/types/editor';
 import {
@@ -53,8 +55,9 @@ const buildTerminalDispatchRequest = (
   document: IEditorDocument,
   runId: string,
   workspaceRootPath: string | null,
+  sessionId: string,
 ): IDispatchTerminalScriptRequest => ({
-  sessionId: DEFAULT_TERMINAL_SESSION_ID,
+  sessionId,
   path: document.path,
   workspaceRootPath,
   content: shouldDispatchDocumentContent(document) ? document.content : '',
@@ -67,6 +70,8 @@ export const useTerminalRun = ({ canRun, editorStore }: TUseTerminalRunOptions) 
   const terminalRegistryStore = useTerminalRegistryStore();
   const terminalFacade = useTerminalFacade();
   const terminalEventBus = getTerminalEventBus();
+  const runRoutingStore = useTerminalRunRoutingStore();
+  const tabsStore = useTerminalTabsStore();
 
   let bufferedTerminalOutputChunks: string[] = [];
   let bufferedTerminalOutputTimerId: number | null = null;
@@ -123,6 +128,7 @@ export const useTerminalRun = ({ canRun, editorStore }: TUseTerminalRunOptions) 
   const clearActiveTerminalRunState = (): void => {
     editorStore.setPendingTerminalRunId(null);
     editorStore.setActiveRunSummary(null);
+    runRoutingStore.setActiveRunSessionId(null);
     editorStore.isRunning = false;
     activeTerminalRunMeta = null;
   };
@@ -153,8 +159,13 @@ export const useTerminalRun = ({ canRun, editorStore }: TUseTerminalRunOptions) 
   const getCurrentTerminalRunId = (): string | null =>
     activeTerminalRunMeta?.runId ?? editorStore.currentRunId;
 
-  const isIntegratedTerminalSession = (sessionId: string): boolean =>
-    sessionId === DEFAULT_TERMINAL_SESSION_ID;
+  // 运行路由以「当前运行归属会话」为准：优先取本次运行记录的会话编号，
+  // 其次回退到当前选中的终端，最后才是默认主会话。
+  const resolveRunSessionId = (): string =>
+    runRoutingStore.activeRunSessionId ?? tabsStore.activeSessionId ?? DEFAULT_TERMINAL_SESSION_ID;
+
+  const isActiveRunSession = (sessionId: string): boolean =>
+    sessionId === resolveRunSessionId();
 
   const resolveTerminalRunId = (runId: string | null | undefined): string | null => {
     const normalizedRunId = typeof runId === 'string' ? runId.trim() : '';
@@ -243,8 +254,8 @@ export const useTerminalRun = ({ canRun, editorStore }: TUseTerminalRunOptions) 
     hasEnsuredTerminalSession = true;
   };
 
-  const ensureIntegratedTerminalEventBridge = async (): Promise<void> => {
-    const session = terminalRegistryStore.get(DEFAULT_TERMINAL_SESSION_ID);
+  const ensureIntegratedTerminalEventBridge = async (sessionId: string): Promise<void> => {
+    const session = terminalRegistryStore.get(sessionId);
     if (!session) {
       return;
     }
@@ -252,8 +263,10 @@ export const useTerminalRun = ({ canRun, editorStore }: TUseTerminalRunOptions) 
     await session.registerEventListeners();
   };
 
-  const ensureIntegratedTerminalSessionBeforeDispatch = async (): Promise<void> => {
-    await ensureIntegratedTerminalEventBridge();
+  const ensureIntegratedTerminalSessionBeforeDispatch = async (
+    sessionId: string,
+  ): Promise<void> => {
+    await ensureIntegratedTerminalEventBridge(sessionId);
 
     if (hasEnsuredTerminalSession) {
       return;
@@ -267,11 +280,16 @@ export const useTerminalRun = ({ canRun, editorStore }: TUseTerminalRunOptions) 
     return message.includes('目标终端会话不存在');
   };
 
-  const dispatchScriptToIntegratedTerminal = async (document: IEditorDocument, runId: string) => {
+  const dispatchScriptToIntegratedTerminal = async (
+    document: IEditorDocument,
+    runId: string,
+    sessionId: string,
+  ) => {
     const dispatchRequest = buildTerminalDispatchRequest(
       document,
       runId,
       editorStore.workspaceRootPath,
+      sessionId,
     );
 
     try {
@@ -282,7 +300,7 @@ export const useTerminalRun = ({ canRun, editorStore }: TUseTerminalRunOptions) 
       }
 
       hasEnsuredTerminalSession = false;
-      await ensureIntegratedTerminalSessionBeforeDispatch();
+      await ensureIntegratedTerminalSessionBeforeDispatch(sessionId);
       return terminalFacade.dispatchScript(dispatchRequest);
     }
   };
@@ -317,11 +335,15 @@ export const useTerminalRun = ({ canRun, editorStore }: TUseTerminalRunOptions) 
       throw new Error('当前文件不是脚本文件，仅支持运行 .sh / .bash 脚本。');
     }
 
-    await ensureIntegratedTerminalSessionBeforeDispatch();
+    // 路由到当前选中的终端：使用其唯一会话编号（自动生成），而非固定主会话或终端序号。
+    const sessionId = tabsStore.activeSessionId || DEFAULT_TERMINAL_SESSION_ID;
+    runRoutingStore.setActiveRunSessionId(sessionId);
+
+    await ensureIntegratedTerminalSessionBeforeDispatch(sessionId);
     const runId = primeTerminalRun(document);
 
     try {
-      const dispatchResult = await dispatchScriptToIntegratedTerminal(document, runId);
+      const dispatchResult = await dispatchScriptToIntegratedTerminal(document, runId, sessionId);
       if (isDisposed || !isCurrentTerminalRun(runId)) {
         return;
       }
@@ -366,7 +388,7 @@ export const useTerminalRun = ({ canRun, editorStore }: TUseTerminalRunOptions) 
   };
 
   const handleIntegratedTerminalExit = (payload: ITerminalExitEvent): void => {
-    if (isDisposed || !isIntegratedTerminalSession(payload.sessionId)) {
+    if (isDisposed || !isActiveRunSession(payload.sessionId)) {
       return;
     }
 
@@ -440,7 +462,7 @@ export const useTerminalRun = ({ canRun, editorStore }: TUseTerminalRunOptions) 
   };
 
   const finalizeTerminalRun = (payload: ITerminalRunCompletedPayload): void => {
-    if (!isIntegratedTerminalSession(payload.sessionId)) {
+    if (!isActiveRunSession(payload.sessionId)) {
       return;
     }
     const resolvedRunId = resolveTerminalRunId(payload.runId);
@@ -531,7 +553,7 @@ export const useTerminalRun = ({ canRun, editorStore }: TUseTerminalRunOptions) 
   const appendTerminalOutput = (payload: ITerminalRunChunkPayload): void => {
     if (
       isDisposed ||
-      !isIntegratedTerminalSession(payload.sessionId) ||
+      !isActiveRunSession(payload.sessionId) ||
       !payload.data ||
       !isCurrentTerminalRun(payload.runId)
     ) {
@@ -551,7 +573,7 @@ export const useTerminalRun = ({ canRun, editorStore }: TUseTerminalRunOptions) 
   const appendStructuredTerminalOutput = (payload: ITerminalRunChunkPayload): void => {
     if (
       isDisposed ||
-      !isIntegratedTerminalSession(payload.sessionId) ||
+      !isActiveRunSession(payload.sessionId) ||
       !payload.data ||
       !isCurrentTerminalRun(payload.runId)
     ) {
