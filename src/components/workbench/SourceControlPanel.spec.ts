@@ -22,6 +22,11 @@ const tauriServiceMock = vi.hoisted(() => ({
   applyGitStash: vi.fn(),
   dropGitStash: vi.fn(),
   getGitPullRequestSupport: vi.fn(),
+  listGitPullRequests: vi.fn(),
+  getGitPullRequestDetail: vi.fn(),
+  createGitPullRequest: vi.fn(),
+  mergeGitPullRequest: vi.fn(),
+  closeGitPullRequest: vi.fn(),
   setGitRemote: vi.fn(),
 }));
 
@@ -208,6 +213,32 @@ const pullRequestSupportPayload = {
   createPullRequestUrl: 'https://github.com/owner/repo/compare',
 };
 
+const pullRequestListPayload = [
+  {
+    number: 12,
+    title: 'feat: add pull request panel',
+    state: 'open',
+    isDraft: false,
+    author: 'octocat',
+    headRef: 'feature/pr-panel',
+    baseRef: 'main',
+    htmlUrl: 'https://github.com/owner/repo/pull/12',
+    createdAt: '2026-04-28T00:00:00.000Z',
+    updatedAt: '2026-04-28T00:00:00.000Z',
+    comments: 2,
+  },
+];
+
+const pullRequestDetailPayload = {
+  ...pullRequestListPayload[0],
+  body: 'PR body',
+  additions: 10,
+  deletions: 2,
+  changedFiles: 3,
+  mergeable: true,
+  mergeableState: 'clean',
+};
+
 const mountPanel = async (
   status = createStatus(),
   propsOverrides: Partial<{ activePath: string | null }> = {},
@@ -257,6 +288,17 @@ describe('SourceControlPanel', () => {
     );
     tauriServiceMock.dropGitStash.mockResolvedValue(cleanStatus);
     tauriServiceMock.getGitPullRequestSupport.mockResolvedValue(pullRequestSupportPayload);
+    tauriServiceMock.listGitPullRequests.mockResolvedValue(pullRequestListPayload);
+    tauriServiceMock.getGitPullRequestDetail.mockResolvedValue(pullRequestDetailPayload);
+    tauriServiceMock.createGitPullRequest.mockResolvedValue(pullRequestListPayload[0]);
+    tauriServiceMock.mergeGitPullRequest.mockResolvedValue({
+      ...pullRequestListPayload[0],
+      state: 'merged',
+    });
+    tauriServiceMock.closeGitPullRequest.mockResolvedValue({
+      ...pullRequestListPayload[0],
+      state: 'closed',
+    });
     tauriServiceMock.setGitRemote.mockResolvedValue(pullRequestSupportPayload);
     window.addEventListener(APP_DIALOG_EVENT, confirmDialog);
   });
