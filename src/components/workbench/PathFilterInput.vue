@@ -1,6 +1,6 @@
 <template>
   <div class="search-panel-path-filter">
-    <span> label </span>
+    <span v-text="label" />
 
     <div class="search-path-filter-control">
       <input
@@ -35,8 +35,8 @@
           <span class="search-path-filter-option-icon" aria-hidden="true">
             <ExplorerEntryIcon :kind="item.kind" :path="item.insertValue" />
           </span>
-          <span class="search-path-filter-option-label"> item.label </span>
-          <span v-if="item.detail" class="search-path-filter-option-detail"> item.detail </span>
+          <span class="search-path-filter-option-label" v-text="item.label" />
+          <span v-if="item.detail" class="search-path-filter-option-detail" v-text="item.detail" />
         </li>
       </ul>
     </div>
