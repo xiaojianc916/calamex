@@ -80,7 +80,7 @@
     "consola": "^3.4.2",
     "idb-keyval": "^6.2.5",
     "katex": "^0.17.0",
-    "markstream-vue": "1.0.1-beta.3",
+    "markstream-vue": "1.0.1-beta.5",
     "motion-v": "2.2.1",
     "pathe": "^2.0.3",
     "photoswipe": "^5.4.4",

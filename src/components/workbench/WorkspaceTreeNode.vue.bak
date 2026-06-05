@@ -64,6 +64,7 @@ import WorkspaceTreeRow from '@/components/workbench/WorkspaceTreeRow.vue';
 import type { TWorkspaceTreeRow } from '@/components/workbench/workspace-tree.types';
 import type { IWorkspaceEntry } from '@/types/editor';
 import { areFileSystemPathsEqual } from '@/utils/path';
+import { filterWorkspaceEntriesByQuery } from '@/utils/workspace';
 
 // 保留原组件名，避免影响 AppSidebar 的引用与测试中的 stub。
 defineOptions({ name: 'WorkspaceTreeNode' });
@@ -77,6 +78,7 @@ const props = defineProps<{
   activePath: string | null;
   activeDirty: boolean;
   contextMenuPath?: string | null;
+  searchQuery?: string;
   rootPath: string;
   inlineCreateDraft?: {
     open: boolean;
@@ -107,6 +109,7 @@ const emit = defineEmits<{
 // 把可见的树结构拍平成一维行列表，以便虚拟化与键盘导航。
 const rows = computed<TWorkspaceTreeRow[]>(() => {
   const result: TWorkspaceTreeRow[] = [];
+  const normalizedQuery = (props.searchQuery ?? '').trim().toLowerCase();
   const draft = props.inlineCreateDraft;
 
   const walk = (node: IWorkspaceEntry, level: number): void => {
@@ -146,7 +149,11 @@ const rows = computed<TWorkspaceTreeRow[]>(() => {
       return;
     }
 
-    for (const child of rawChildren) {
+    const visibleChildren = normalizedQuery
+      ? filterWorkspaceEntriesByQuery(rawChildren, normalizedQuery, props.childrenMap)
+      : rawChildren;
+
+    for (const child of visibleChildren) {
       walk(child, level + 1);
     }
 
@@ -163,7 +170,7 @@ const rows = computed<TWorkspaceTreeRow[]>(() => {
       });
     }
 
-    if (rawChildren.length === 0 && !showInlineCreate && !isLoading) {
+    if (visibleChildren.length === 0 && !showInlineCreate && !isLoading) {
       result.push({ type: 'empty', key: `${node.path}::empty`, level: level + 1 });
     }
   };

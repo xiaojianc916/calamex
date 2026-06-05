@@ -66,6 +66,15 @@ function applyBlockEdit(content, find, replace, id) {
     return contentLines.join('\n');
 }
 
+// 行级正则编辑：用于模板属性等「顺序/写法可能与提交版略有差异」的位置，按属性名锚定。
+function applyRegexEdit(content, pattern, replacement) {
+    const re = new RegExp(pattern.source, 'gm');
+    const count = [...content.matchAll(re)].length;
+    if (count === 0) throw new Error('未找到匹配');
+    if (count > 1) throw new Error(`匹配不唯一（${count} 处）`);
+    return content.replace(re, replacement);
+}
+
 // ---- A1：workspace.ts 整文件重写 ------------------------------------------
 const fullRewrites = {
     'src/utils/workspace.ts': `import type { IWorkspaceDirectoryPayload } from '@/types/editor';
@@ -502,6 +511,22 @@ message.success('已重命名');`,
     ],
 };
 
+// ---- 行级正则编辑（按文件）-------------------------------------------------
+const lineRegexEdits = {
+    'src/components/workbench/AppSidebar.vue': [
+        {
+            id: 'A6 模板 expanded-paths 改绑',
+            pattern: /^([ \t]*):expanded-paths="[^"]*"[ \t]*$/,
+            replacement: '$1:expanded-paths="manualExpandedPaths"',
+        },
+        {
+            id: 'A7 模板移除 search-query',
+            pattern: /^[ \t]*:search-query="[^"]*"[ \t]*\r?\n/,
+            replacement: '',
+        },
+    ],
+};
+
 // ---- 执行 ------------------------------------------------------------------
 let hadError = false;
 
@@ -537,9 +562,19 @@ for (const [rel, fileEdits] of Object.entries(edits)) {
     let content = original;
     const applied = [];
     const failed = [];
+    const regexIds = new Set((lineRegexEdits[rel] ?? []).map((e) => e.id));
     for (const e of fileEdits) {
+        if (regexIds.has(e.id)) continue; // 已由 lineRegexEdits 接管（如 A6/A7），跳过块编辑版本
         try {
             content = applyBlockEdit(content, e.find, e.replace, e.id);
+            applied.push(e.id);
+        } catch (err) {
+            failed.push(`${e.id} -> ${err.message}`);
+        }
+    }
+    for (const e of lineRegexEdits[rel] ?? []) {
+        try {
+            content = applyRegexEdit(content, e.pattern, e.replacement);
             applied.push(e.id);
         } catch (err) {
             failed.push(`${e.id} -> ${err.message}`);
