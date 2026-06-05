@@ -100,21 +100,45 @@ pub fn create_git_branch(
     }
 
     // 通过 gix 直接创建分支引用，避免依赖系统安装的 git（免装目标）。
-    let head_target = repository
-        .head_id()
-        .map_err(|error| format!("读取 HEAD 失败：{error}"))?
-        .detach();
-    repository
-        .reference(
-            format!("refs/heads/{branch_name}"),
-            head_target,
-            gix::refs::transaction::PreviousValue::MustNotExist,
-            "branch: created from HEAD",
-        )
-        .map_err(|error| format!("创建分支失败：{branch_name}（{error}）"))?;
+    // 处理「未出生 HEAD」（空仓库尚无任何提交）：此时没有可指向的提交对象，
+    // 无法创建 refs/heads/<name> 引用。仿照 `git checkout -b` 在空仓库下的行为，
+    // 仅把 HEAD 符号引用指向目标分支名；分支引用会在首次提交时自动创建。
+    match repository.head_id() {
+        Ok(head_id) => {
+            let head_target = head_id.detach();
+            repository
+                .reference(
+                    format!("refs/heads/{branch_name}"),
+                    head_target,
+                    gix::refs::transaction::PreviousValue::MustNotExist,
+                    "branch: created from HEAD",
+                )
+                .map_err(|error| format!("创建分支失败：{branch_name}（{error}）"))?;
 
-    if payload.checkout {
-        checkout_to_target(&repository, &repository_root, branch_name)?;
+            if payload.checkout {
+                checkout_to_target(&repository, &repository_root, branch_name)?;
+            }
+        }
+        Err(_) => {
+            // 空仓库（未出生 HEAD）。
+            if !payload.checkout {
+                return Err(
+                    "当前仓库还没有任何提交，无法创建分支引用；请改用「创建并切换」在空仓库中切换到新分支名，或先创建首个提交。"
+                        .into(),
+                );
+            }
+            // 直接把 HEAD 指向新分支名，分支引用待首次提交时由 Git 自动创建。
+            // 原子写入：先写临时文件再 rename 覆盖，避免写一半导致 HEAD 损坏。
+            let git_dir = repository.git_dir();
+            let head_path = git_dir.join("HEAD");
+            let temp_path = git_dir.join("HEAD.calamex.tmp");
+            let content = format!("ref: refs/heads/{branch_name}\n");
+            fs::write(&temp_path, content).map_err(|error| format!("更新 HEAD 失败：{error}"))?;
+            fs::rename(&temp_path, &head_path).map_err(|error| {
+                let _ = fs::remove_file(&temp_path);
+                format!("更新 HEAD 失败：{error}")
+            })?;
+        }
     }
 
     let repository = open_repository_from_root(&payload.repository_root_path)?;
@@ -152,6 +176,19 @@ fn is_valid_git_branch_name(name: &str) -> bool {
     }
     if name.starts_with('/') || name.ends_with('/') {
         return false;
+    }
+    // 逐路径段校验（参照 git check-ref-format）：以 "/" 分隔的每个路径段都不能为空、
+    // 不能以 "." 开头、不能以 ".lock" 结尾；空段同时排除了连续 "//" 的情况。
+    for component in name.split('/') {
+        if component.is_empty() {
+            return false;
+        }
+        if component.starts_with('.') {
+            return false;
+        }
+        if component.ends_with(".lock") {
+            return false;
+        }
     }
     true
 }
