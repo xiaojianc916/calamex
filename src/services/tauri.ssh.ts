@@ -316,6 +316,88 @@ const testSshConnectionWithHostKeyPrompt: typeof testSshConnectionIpc = async (i
   return testSshConnectionIpc(input, options);
 };
 
+/**
+ * 覆盖上传保护。
+ *
+ * 上传的真实目标是 `remoteDirectory` 与本地文件名拼接后的远端文件。若该文件已存在，
+ * 直接上传会（在后端安全替换下）覆盖原文件 —— 对真实使用者这可能是误操作。
+ * 这里在上传前先探测目标目录，发现同名文件时弹出危险确认弹窗；用户取消则中止上传。
+ * 探测失败（权限 / 网络 / 主机密钥变更等）不阻断上传，退化为直接上传，由后端的
+ * 原子替换保证覆盖本身的安全性。
+ */
+const SSH_UPLOAD_CANCELLED_MESSAGE = '已取消覆盖上传：远端同名文件保持不变。';
+
+const localBaseName = (localPath: string): string => {
+  const segments = localPath.split(/[\\/]/);
+  return segments[segments.length - 1] ?? localPath;
+};
+
+const remoteUploadTargetExists = async (
+  payload: TSshRequest<'uploadSshFile'>,
+  options?: IIpcCallOptions,
+): Promise<boolean> => {
+  const fileName = localBaseName(payload.localPath);
+  if (!fileName) {
+    return false;
+  }
+
+  const listing = await listSshDirectoryIpc(
+    {
+      host: payload.host,
+      port: payload.port,
+      username: payload.username,
+      authMode: payload.authMode,
+      identityPath: payload.identityPath,
+      password: payload.password,
+      path: payload.remoteDirectory,
+    },
+    options,
+  );
+
+  return listing.entries.some(
+    (entry) => entry.kind !== 'directory' && entry.name === fileName,
+  );
+};
+
+const confirmOverwriteRemoteUpload = async (
+  fileName: string,
+  remoteDirectory: string,
+): Promise<boolean> => {
+  const action = await useDialog().confirm({
+    title: '覆盖远端文件',
+    description: `目标目录 ${remoteDirectory} 中已存在文件「${fileName}」。继续上传将覆盖原文件，此操作不可撤销。确认要覆盖吗？`,
+    variant: 'danger',
+    confirmText: '覆盖上传',
+    cancelText: '取消',
+  });
+  return action === 'confirm';
+};
+
+const uploadWithHostKeyPrompt = withChangedHostKeyPrompt(uploadSshFileIpc);
+
+const uploadSshFileWithOverwritePrompt = async (
+  payload: TSshRequest<'uploadSshFile'>,
+  options?: IIpcCallOptions,
+): Promise<TSshResult<'uploadSshFile'>> => {
+  let targetExists = false;
+  try {
+    targetExists = await remoteUploadTargetExists(payload, options);
+  } catch {
+    // 探测失败不应阻断上传：退化为直接上传，由后端安全替换保证覆盖的原子性。
+    targetExists = false;
+  }
+
+  if (targetExists) {
+    const fileName = localBaseName(payload.localPath);
+    const confirmed = await confirmOverwriteRemoteUpload(fileName, payload.remoteDirectory);
+    if (!confirmed) {
+      throw new Error(SSH_UPLOAD_CANCELLED_MESSAGE);
+    }
+  }
+
+  return uploadWithHostKeyPrompt(payload, options);
+};
+
 type TSshTauriService = Pick<
   ITauriService,
   | 'testSshConnection'
@@ -345,7 +427,7 @@ export const sshTauriService: TSshTauriService = {
 
   downloadSshFile: withChangedHostKeyPrompt(downloadSshFileIpc),
 
-  uploadSshFile: withChangedHostKeyPrompt(uploadSshFileIpc),
+  uploadSshFile: uploadSshFileWithOverwritePrompt,
 
   readSshFile: withChangedHostKeyPrompt(readSshFileIpc),
 
