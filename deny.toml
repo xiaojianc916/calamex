@@ -3,7 +3,7 @@ targets = ["x86_64-pc-windows-msvc"]
 
 [bans]
 deny = [
-    { name = "git2", reason = "Replaced by gix 0.83 — pure-Rust Git implementation" },
+    { name = "git2", reason = "Replaced by gix 0.84 — pure-Rust Git implementation" },
     { name = "libgit2-sys", reason = "git2 transitive dependency; do not reintroduce C deps" },
     { name = "openssl-sys", reason = "Use rustls; project target is pure-Rust with zero C dependencies" },
 ]
