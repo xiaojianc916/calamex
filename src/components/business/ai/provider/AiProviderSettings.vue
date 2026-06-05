@@ -129,7 +129,7 @@ const providerRows = computed<IProviderViewModel[]>(() =>
     return {
       preset,
       hasCredentials: true,
-      alias: credential?.alias?.trim() || '厂商 API Key',
+      alias: credential?.alias?.trim() || '默认',
       keyPreview: credential?.keyPreview?.trim() || '已加密保存',
       isNarratorProvider: preset.id === narratorProviderId.value,
     };
@@ -224,7 +224,8 @@ const handleProviderChange = (providerId: string): void => {
   selectedProviderId.value = providerId as TAiServicePlatformId;
   const credential = credentialsByProvider.value.get(selectedProviderId.value);
   credentialAlias.value = credential?.alias?.trim() || '默认';
-  selectedSmallModelId.value = findAiServicePlatformPreset(selectedProviderId.value).defaultModel;
+  // 与 openForm 对齐:沿用 narrator 已选小模型(若匹配当前厂商),否则回退默认模型。
+  selectedSmallModelId.value = resolveSmallModelForProvider(selectedProviderId.value);
   aliasError.value = '';
   providerKeyError.value = '';
   feedbackText.value = '';
@@ -421,9 +422,8 @@ watch(
                   <div class="ai-credential-row__main">
                     <div class="ai-credential-row__name">
                       <span>{{ row.alias }}</span>
-                      <span v-if="row.isNarratorProvider" class="ai-credential-default-mark" aria-label="默认小模型厂商">
-                        <AiProviderIcon class="ai-credential-default-mark__icon" :platform-id="row.preset.id"
-                          decorative />
+                      <span v-if="row.isNarratorProvider" class="ai-credential-default-mark" aria-label="默认小模型厂商" title="默认小模型">
+                        <span aria-hidden="true" class="icon-[lucide--gauge] ai-credential-default-mark__icon" />
                       </span>
                     </div>
                     <div class="ai-credential-row__key">
@@ -506,7 +506,7 @@ watch(
             <div class="ai-credential-field">
               <label class="ai-credential-label" for="ai-credential-alias">
                 名称
-                <span>同厂商唯一</span>
+                <span>便于识别</span>
               </label>
               <Input id="ai-credential-alias" v-model="credentialAlias" class="ai-credential-input" placeholder="默认"
                 :aria-invalid="aliasError ? 'true' : 'false'" />
@@ -610,7 +610,7 @@ watch(
             <Button variant="outline" size="sm" type="button" @click="openList">
               取消
             </Button>
-            <Button size="sm" type="button" :disabled="!canSaveProviderKey" @click="saveProviderSettings">
+            <Button class="ai-credential-save" size="sm" type="button" :disabled="!canSaveProviderKey" @click="saveProviderSettings">
                {{ isSaving ? '保存中' : '保存' }} 
             </Button>
           </footer>
@@ -970,6 +970,11 @@ watch(
   border-bottom: 1.5px solid currentColor;
   color: var(--ai-credential-muted);
   transform: translateY(-2px) rotate(45deg);
+  transition: transform 150ms ease-out;
+}
+
+.ai-credential-combobox.is-open .ai-credential-combobox-chev {
+  transform: translateY(2px) rotate(225deg);
 }
 
 .ai-credential-select-icon {
@@ -1117,12 +1122,6 @@ watch(
   margin-top: 10px;
 }
 
-.ai-credential-usage {
-  margin: 0;
-  color: var(--ai-credential-muted);
-  font-size: 12px;
-}
-
 .ai-credential-foot {
   display: flex;
   align-items: center;
@@ -1167,6 +1166,16 @@ watch(
 
 .ai-credential-foot>button:not(.ai-credential-test):last-child:not(:disabled) {
   color: var(--ai-credential-text);
+}
+
+.ai-credential-foot>button.ai-credential-save:last-child:not(:disabled) {
+  border-color: var(--ai-credential-accent);
+  background: var(--ai-credential-accent);
+  color: var(--ai-credential-accent-fg);
+}
+
+.ai-credential-foot>button.ai-credential-save:last-child:not(:disabled):hover {
+  background: #000;
 }
 
 .ai-credential-status {

@@ -104,7 +104,10 @@ const createStatus = (
     shortId: 'abc1234',
     summary: 'feat: 初始化项目',
     authorName: 'test',
+    authorEmail: 'test@example.com',
     authoredAt: '2026-04-26T00:00:00.000Z',
+    parentIds: [],
+    refs: [],
   },
   ...overrides,
 });
