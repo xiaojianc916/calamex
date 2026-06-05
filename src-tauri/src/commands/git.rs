@@ -11,6 +11,7 @@ pub(crate) mod branches;
 pub(crate) mod diff;
 pub(crate) mod history;
 pub(crate) mod pull_request;
+pub(crate) mod revision;
 pub(crate) mod stash;
 pub(crate) mod status;
 
@@ -320,14 +321,6 @@ pub struct GitPullRequestSupportPayload {
     repository_url: Option<String>,
     pull_requests_url: Option<String>,
     create_pull_request_url: Option<String>,
-}
-
-#[derive(Debug, Deserialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct GitRemoteSetRequest {
-    repository_root_path: String,
-    remote_name: String,
-    remote_url: String,
 }
 
 fn open_repository_from_root(root: &str) -> Result<Repository, String> {
