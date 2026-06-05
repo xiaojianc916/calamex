@@ -9,7 +9,7 @@ import { createMastraAgentMemory, resolveMastraStorageUrl } from '../context/mem
 import { createMastraObservability } from '../workspace.js';
 import { DEFAULT_MASTRA_LOG_FILE, type IMastraAgentConfig, type IMastraAgentLike, type IMastraAgentStreamLike, type IMastraApprovalOptions, type IMastraDurableAgentLike, type IMastraExecutionHandle, type IMastraRegisteredAgentLike, type IMastraResumableAgentHandle, type IMastraStorageLike, type TMastraStreamChunk, type TMastraToolResumeData } from '../types.js';
 import type { IAgentRuntimeModelConfigInput } from '../contracts/runtime-input.js';
-import { buildCodingSubAgents, isSubAgentsEnabled } from './subagents.js';
+import { buildCodingSubAgents, buildSupervisorDelegationInstructions, isSubAgentsEnabled } from './subagents.js';
 
 export const createMastraModelConfig = (
     model: IMastraResolvedModelConfig,
@@ -163,10 +163,16 @@ export const defaultCreateExecutionHandle = async (
             ...(config.browser ? { browser: config.browser } : {}),
         })
         : undefined;
+    // 官方文档：supervisor 靠自身 instructions + 子 agent description 决定委派。
+    // 开启子 agent 时把委派说明追加到主 agent 指令尾部，使其真正会去委派；
+    // 关闭时指令与原来完全一致。
+    const instructions = subAgents
+        ? `${config.instructions}\n\n${buildSupervisorDelegationInstructions()}`
+        : config.instructions;
     const baseAgent = new Agent({
         id: config.id,
         name: config.name,
-        instructions: config.instructions,
+        instructions,
         model: config.model,
         ...(config.memory ? { memory: config.memory } : {}),
         ...(config.tools ? { tools: config.tools } : {}),

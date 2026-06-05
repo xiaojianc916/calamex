@@ -6,6 +6,7 @@ import {
     SUBAGENT_ID_PREFIX,
     buildCodingSubAgentDefinitions,
     buildCodingSubAgents,
+    buildSupervisorDelegationInstructions,
     isSubAgentsEnabled,
     type TSubAgentSlug,
 } from './subagents.js';
@@ -31,6 +32,21 @@ test('buildCodingSubAgentDefinitions：四个子 agent，slug / id / 描述齐�
     // 仅规划 agent 为纯推理（不挂工具）。
     const planner = definitions.find((d) => d.slug === 'planner');
     assert.equal(planner?.needsTools, false);
+});
+
+test('buildSupervisorDelegationInstructions：涵盖四个子 agent 且含委派原则', () => {
+    const instructions = buildSupervisorDelegationInstructions();
+    for (const definition of buildCodingSubAgentDefinitions()) {
+        assert.ok(
+            instructions.includes(definition.name),
+            `委派指令应包含 ${definition.name}`,
+        );
+        assert.ok(
+            instructions.includes(definition.slug),
+            `委派指令应包含 slug ${definition.slug}`,
+        );
+    }
+    assert.ok(instructions.includes('委派'), '应包含委派原则');
 });
 
 test('buildCodingSubAgents：返回可作为父 Agent agents 字段的 Agent 记录', () => {

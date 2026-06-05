@@ -120,6 +120,31 @@ export const buildCodingSubAgentDefinitions = (): readonly ISubAgentDefinition[]
     },
 ];
 
+/**
+ * 从子 agent 定义自动生成的「Supervisor 委派指令」段。
+ *
+ * 官方文档明确：supervisor 靠自身 instructions + 子 agent description 共同决定委派，
+ * 「Clear instructions are essential for effective delegation」。仅挂 agents 而不在指令中
+ * 说明何时/如何委派，主 agent 往往不会去用子 agent。此段由 factory 在
+ * 开关开启时追加到主 agent 指令尾部，与子 agent 列表保持同步。
+ */
+export const buildSupervisorDelegationInstructions = (): string => {
+    const roster = buildCodingSubAgentDefinitions().map(
+        (definition) => `- **${definition.name}**（\`${definition.slug}\`）：${definition.description}`,
+    );
+    return [
+        '## 子 agent 委派（Supervisor）',
+        '你是主控 agent，可把子任务委派给以下专职子 agent；它们以工具形式提供，调用即委派。',
+        ...roster,
+        '',
+        '### 委派原则',
+        '- 复杂或多步任务：先委派「规划」产出最小可验证步骤，再按步委派「改码」，改完委派「审查」；需要事实/定位时随时委派「检索」。',
+        '- 简单、可直答的问题不必委派，自己回答即可，避免无谓的来回。',
+        '- 委派时给出清晰、自包含的子任务描述与期望产出；汇总子 agent 结果后再给用户最终答复。',
+        '- 改动遵循最小、可回退、合并前验证；不可逆或高风险操作交回用户审批。',
+    ].join('\n');
+};
+
 /** buildCodingSubAgents 的入参：主 agent 的模型与（可选）共享资源。 */
 export interface IBuildCodingSubAgentsOptions {
     /** 子 agent 使用的模型（通常与主 agent 同一个解析后的模型）。 */
