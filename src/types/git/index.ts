@@ -20,6 +20,13 @@ import type {
   GitFileBaselinePayload,
   GitFileStatusPayload,
   GitPathOperationRequest,
+  GitPullRequestCloseRequest,
+  GitPullRequestCreateRequest,
+  GitPullRequestDetailPayload,
+  GitPullRequestDetailRequest,
+  GitPullRequestListRequest,
+  GitPullRequestMergeRequest,
+  GitPullRequestSummaryPayload,
   GitPullRequestSupportPayload,
   GitRemoteSetRequest,
   GitRepositoryRootRequest,
@@ -35,6 +42,7 @@ export type TGitChangeKind = string;
 export type TGitDiffMode = string;
 export type TGitBranchKind = string;
 export type TGitPullRequestProvider = string;
+export type TGitPullRequestState = string;
 
 export type IGitCommitSummaryPayload = GitCommitSummaryPayload;
 export type IGitCommitHistoryRequest = GitCommitHistoryRequest;
@@ -58,6 +66,13 @@ export type IGitStashSaveRequest = GitStashSaveRequest;
 export type IGitStashApplyRequest = GitStashApplyRequest;
 export type IGitStashDropRequest = GitStashDropRequest;
 export type IGitPullRequestSupportPayload = GitPullRequestSupportPayload;
+export type IGitPullRequestListRequest = GitPullRequestListRequest;
+export type IGitPullRequestDetailRequest = GitPullRequestDetailRequest;
+export type IGitPullRequestCreateRequest = GitPullRequestCreateRequest;
+export type IGitPullRequestMergeRequest = GitPullRequestMergeRequest;
+export type IGitPullRequestCloseRequest = GitPullRequestCloseRequest;
+export type IGitPullRequestSummaryPayload = GitPullRequestSummaryPayload;
+export type IGitPullRequestDetailPayload = GitPullRequestDetailPayload;
 export type IGitRemoteSetRequest = GitRemoteSetRequest;
 export type IGitDiffPreviewRequest = GitDiffPreviewRequest;
 export type IGitDiffPreviewPayload = GitDiffPreviewPayload;

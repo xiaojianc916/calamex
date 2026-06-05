@@ -25,6 +25,11 @@ type TGitTauriService = Pick<
   | 'applyGitStash'
   | 'dropGitStash'
   | 'getGitPullRequestSupport'
+  | 'listGitPullRequests'
+  | 'getGitPullRequestDetail'
+  | 'createGitPullRequest'
+  | 'mergeGitPullRequest'
+  | 'closeGitPullRequest'
 >;
 
 export const gitTauriService: TGitTauriService = {
@@ -172,6 +177,41 @@ export const gitTauriService: TGitTauriService = {
     return callSpectaCommand(
       { command: 'get_git_pull_request_support', guardHint: '读取 Git 远端 Pull Request 支持信息', idempotent: true, input: payload },
       () => commands.getGitPullRequestSupport(payload),
+    );
+  },
+
+  listGitPullRequests(payload) {
+    return callSpectaCommand(
+      { command: 'list_git_pull_requests', guardHint: '读取 GitHub Pull Request 列表', idempotent: true, timeoutMs: 20_000, input: payload },
+      () => commands.listGitPullRequests(payload),
+    );
+  },
+
+  getGitPullRequestDetail(payload) {
+    return callSpectaCommand(
+      { command: 'get_git_pull_request_detail', guardHint: '读取 GitHub Pull Request 详情', idempotent: true, timeoutMs: 20_000, input: payload },
+      () => commands.getGitPullRequestDetail(payload),
+    );
+  },
+
+  createGitPullRequest(payload) {
+    return callSpectaCommand(
+      { command: 'create_git_pull_request', guardHint: '创建 GitHub Pull Request', audit: 'sensitive', timeoutMs: 30_000, input: payload },
+      () => commands.createGitPullRequest(payload),
+    );
+  },
+
+  mergeGitPullRequest(payload) {
+    return callSpectaCommand(
+      { command: 'merge_git_pull_request', guardHint: '合并 GitHub Pull Request', audit: 'sensitive', timeoutMs: 30_000, input: payload },
+      () => commands.mergeGitPullRequest(payload),
+    );
+  },
+
+  closeGitPullRequest(payload) {
+    return callSpectaCommand(
+      { command: 'close_git_pull_request', guardHint: '关闭 GitHub Pull Request', audit: 'sensitive', timeoutMs: 20_000, input: payload },
+      () => commands.closeGitPullRequest(payload),
     );
   },
 };
