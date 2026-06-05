@@ -1,3 +1,7 @@
+// stash 保存/应用迁移到纯 gix 后，本模块（系统 git CLI 封装）已无调用方。
+// 暂保留以便后续命令复用，以模块级 allow(dead_code) 抑制未使用告警（后续可整体删除）。
+#![allow(dead_code)]
+
 use std::{
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
