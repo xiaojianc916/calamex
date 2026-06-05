@@ -508,7 +508,7 @@ describe('SourceControlPanel', () => {
     expect(wrapper.find('.source-control-history-toolbar').exists()).toBe(false);
     expect(wrapper.findAll('.source-control-history-item')).toHaveLength(2);
     expect(wrapper.find('.source-control-history-item').classes()).toContain('is-active');
-    expect(wrapper.find('.source-control-history-hash').text()).toBe('def5678');
+    expect(wrapper.find('.source-control-history-author').text()).toBe('test');
     expect(wrapper.text()).toContain('fix: 修正边界处理');
   });
 
@@ -532,12 +532,12 @@ describe('SourceControlPanel', () => {
     await branchTab?.trigger('click');
     await flushPromises();
 
-    const checkoutRow = wrapper
-      .findAll('.source-control-branch-row')
-      .find((row) => row.text().includes('feature/demo'));
-    expect(checkoutRow).toBeDefined();
+    const checkoutButton = wrapper
+      .findAll('.source-control-btn')
+      .find((button) => button.text() === '切换');
+    expect(checkoutButton).toBeDefined();
 
-    await checkoutRow?.trigger('click');
+    await checkoutButton?.trigger('click');
     await flushPromises();
 
     expect(tauriServiceMock.checkoutGitBranch).toHaveBeenCalledWith({

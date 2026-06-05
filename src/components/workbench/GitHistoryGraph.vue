@@ -45,24 +45,19 @@
         </div>
 
         <div class="source-control-history-body git-history-graph-body">
-          <p class="source-control-history-message">
-            <span class="git-history-graph-message-text" v-text="row.commit.summary" />
-            <span
-              v-for="commitRef in row.refs"
-              :key="commitRef.name"
-              class="git-history-graph-ref"
-              :class="refClass(commitRef)"
-            >
-              <span :class="refIcon(commitRef)" class="git-history-graph-ref-icon" aria-hidden="true" />
-              <span class="git-history-graph-ref-name" v-text="commitRef.name" />
-            </span>
-          </p>
-
-          <div class="source-control-history-meta">
-            <span class="source-control-history-hash" v-text="row.commit.shortId" />
-            <span class="source-control-history-author" v-text="row.commit.authorName" />
-          </div>
+          <span class="git-history-graph-message-text" v-text="row.commit.summary" />
+          <span
+            v-for="commitRef in row.refs"
+            :key="commitRef.name"
+            class="git-history-graph-ref"
+            :class="refClass(commitRef)"
+          >
+            <span :class="refIcon(commitRef)" class="git-history-graph-ref-icon" aria-hidden="true" />
+            <span class="git-history-graph-ref-name" v-text="commitRef.name" />
+          </span>
         </div>
+
+        <span class="source-control-history-author" v-text="row.commit.authorName" />
 
         <time
           class="source-control-history-time"
@@ -103,7 +98,7 @@ import type { IGitGraphEdge } from '@/utils/git-graph';
 import { buildGitGraph, resolveGitGraphLaneColor } from '@/utils/git-graph';
 
 const LANE_WIDTH = 14;
-const ROW_HEIGHT = 40;
+const ROW_HEIGHT = 28;
 const NODE_RADIUS = 3.5;
 
 interface IGitCommitRef {
@@ -481,9 +476,9 @@ onBeforeUnmount(() => {
 
 .git-history-graph-item.source-control-history-item {
   display: flex;
-  align-items: stretch;
-  gap: 10px;
-  min-height: 40px;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
   padding: 0 6px;
   border-radius: 6px;
   cursor: pointer;
@@ -502,6 +497,7 @@ onBeforeUnmount(() => {
 
 .git-history-graph-cell {
   flex: 0 0 auto;
+  align-self: stretch;
   display: flex;
   align-items: center;
 }
@@ -524,27 +520,19 @@ onBeforeUnmount(() => {
   flex: 1 1 auto;
   min-width: 0;
   display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 1px;
-}
-
-.git-history-graph-body .source-control-history-message {
-  display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.git-history-graph-message-text {
   min-width: 0;
-  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 12.5px;
   font-weight: 500;
   line-height: 1.3;
   color: #1f2328;
-}
-
-.git-history-graph-message-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .git-history-graph-ref {
@@ -584,39 +572,33 @@ onBeforeUnmount(() => {
   color: #59636e;
 }
 
-.git-history-graph-item .source-control-history-meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  font-size: 11px;
-  color: #818b98;
-}
-
-.git-history-graph-item .source-control-history-hash {
-  flex: 0 0 auto;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: #818b98;
-  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-}
-
 .git-history-graph-item .source-control-history-author {
+  flex: 0 1 auto;
   min-width: 0;
+  max-width: 96px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 11px;
   color: #818b98;
 }
 
 .git-history-graph-item .source-control-history-time {
   flex: 0 0 auto;
-  align-self: center;
   font-size: 11px;
   white-space: nowrap;
   color: #818b98;
+}
+</style>
+
+<style>
+@keyframes scm-history-refresh-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.source-control-history-refresh:disabled > span {
+  animation: scm-history-refresh-spin 0.8s linear infinite;
 }
 </style>
