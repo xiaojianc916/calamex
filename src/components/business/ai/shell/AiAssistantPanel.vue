@@ -1355,7 +1355,7 @@ onBeforeUnmount(() => {
           :is-model-saving="isPromptModelSaving" :network-permission="networkPermission"
           :is-network-permission-saving="agentNetwork.pending.value" :attachments="assistant.attachedFiles.value"
           :has-attachments="assistant.attachedFiles.value.length > 0" :token-context="tokenContextProps"
-          @submit="handleSubmitMessage" @stop="assistant.stopCurrentRequest" @file-selected="assistant.attachFile"
+          @submit="handleSubmitMessage" @stop="assistant.stopCurrentRequest" :resolve-attachment="assistant.attachFile"
           @remove-file="assistant.removeAttachedFile" @model-change="handlePromptModelChange"
           @network-permission-change="handlePromptNetworkPermissionChange"
           @information-sources-open="openPromptInformationSources" @personalization-open="openPromptPersonalization"

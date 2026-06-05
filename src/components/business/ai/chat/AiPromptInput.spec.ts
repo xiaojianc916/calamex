@@ -1,5 +1,5 @@
 import { mount } from '@vue/test-utils';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { nextTick } from 'vue';
 import AiPromptInput from '@/components/business/ai/chat/AiPromptInput.vue';
 import type { IAiTokenContextProps } from '@/composables/ai/useAiTokenContext';
@@ -32,6 +32,7 @@ interface IAiPromptInputTestProps {
   config: ReturnType<typeof createDefaultAiConfigPayload>;
   networkPermission: 'ask' | 'allowed-this-run' | 'denied';
   tokenContext?: IAiTokenContextProps;
+  resolveAttachment: (file: File) => Promise<boolean>;
   'onUpdate:modelValue': (value: string) => void;
 }
 
@@ -47,14 +48,16 @@ const mountPromptInput = (overrides: Partial<IAiPromptInputTestProps> = {}) =>
       hasAttachments: false,
       config: createDefaultAiConfigPayload(),
       networkPermission: 'ask',
+      resolveAttachment: () => Promise.resolve(true),
       'onUpdate:modelValue': () => undefined,
       ...overrides,
     },
   });
 
 describe('AiPromptInput', () => {
-  it('emits pasted image files as attachments', async () => {
-    const wrapper = mountPromptInput();
+  it('routes pasted image files to the attachment resolver', async () => {
+    const resolveAttachment = vi.fn(() => Promise.resolve(true));
+    const wrapper = mountPromptInput({ resolveAttachment });
 
     const file = new File(['image-bytes'], 'pasted-image.png', { type: 'image/png' });
     const event = new Event('paste', { bubbles: true, cancelable: true });
@@ -74,12 +77,13 @@ describe('AiPromptInput', () => {
     await nextTick();
 
     expect(event.defaultPrevented).toBe(true);
-    expect(wrapper.emitted('fileSelected')).toHaveLength(1);
-    expect(wrapper.emitted('fileSelected')?.[0]?.[0]).toBe(file);
+    expect(resolveAttachment).toHaveBeenCalledTimes(1);
+    expect(resolveAttachment).toHaveBeenCalledWith(file);
   });
 
-  it('emits fileSelected when choosing a file from attachments shortcut', async () => {
-    const wrapper = mountPromptInput();
+  it('routes chosen files to the attachment resolver', async () => {
+    const resolveAttachment = vi.fn(() => Promise.resolve(true));
+    const wrapper = mountPromptInput({ resolveAttachment });
     const file = new File(['readme'], 'README.md', { type: 'text/markdown' });
     const fileInput = wrapper.get('input[type="file"]');
 
@@ -90,12 +94,15 @@ describe('AiPromptInput', () => {
 
     await fileInput.trigger('change');
 
-    expect(wrapper.emitted('fileSelected')).toHaveLength(1);
-    expect(wrapper.emitted('fileSelected')?.[0]?.[0]).toBe(file);
+    expect(resolveAttachment).toHaveBeenCalledTimes(1);
+    expect(resolveAttachment).toHaveBeenCalledWith(file);
   });
 
   it('shows a processing overlay and blocks submit while an attachment is being prepared', async () => {
-    const wrapper = mountPromptInput({ modelValue: '分析这个附件' });
+    const wrapper = mountPromptInput({
+      modelValue: '分析这个附件',
+      resolveAttachment: () => new Promise<boolean>(() => undefined),
+    });
     const file = new File(['image-bytes'], 'pasted-image.png', { type: 'image/png' });
     const fileInput = wrapper.get('input[type="file"]');
 

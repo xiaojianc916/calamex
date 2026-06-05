@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, useAttrs, watch } from 'vue';
+import { computed, ref, useAttrs } from 'vue';
 import {
   Context,
   ContextContent,
@@ -82,12 +82,12 @@ const props = defineProps<{
   isModelSaving?: boolean;
   networkPermission: TAiAgentNetworkPermission;
   isNetworkPermissionSaving?: boolean;
+  resolveAttachment: (file: File) => Promise<boolean>;
 }>();
 
 const emit = defineEmits<{
   submit: [];
   stop: [];
-  fileSelected: [file: File];
   removeFile: [id: string];
   modelChange: [modelId: string];
   networkPermissionChange: [permission: TAiAgentNetworkPermission];
@@ -101,7 +101,6 @@ const fileInputRef = ref<HTMLInputElement | null>(null);
 const isComposing = ref(false);
 const isModeSubmenuOpen = ref(false);
 const pendingAttachmentDrafts = ref<IAiAttachedFile[]>([]);
-const lastResolvedAttachmentCount = ref(props.attachments.length);
 
 const modeOptions: IAiPromptModeOption[] = [
   { key: 'chat', label: 'chat', description: '仅回答，不进行编辑' },
@@ -130,6 +129,20 @@ const emptyTokenContext: IAiTokenContextProps = {
   },
 };
 const resolvedTokenContext = computed(() => props.tokenContext ?? emptyTokenContext);
+const formatModelLabel = (label: string): string =>
+  label
+    .replace(/^Claude\s+/u, '')
+    .replace(/^GPT5/u, 'GPT-5')
+    .replace(/^DeepSeek-v/u, 'DeepSeek V')
+    .replace(/^Kimi-k/u, 'Kimi K')
+    .replace(/^gemini-/u, 'Gemini ')
+    .replace(/-preview$/u, '')
+    .replace(/-/gu, ' ')
+    .replace(/\bpro\b/giu, 'Pro')
+    .replace(/\bflash\b/giu, 'Flash')
+    .replace(/\s+/gu, ' ')
+    .trim();
+
 const selectedModel = computed(() => props.config.selectedModel?.trim() ?? '');
 const tokenUsageCost = computed(() => {
   const pricing = computeDeepSeekCostBreakdown(
@@ -205,66 +218,6 @@ const activeModeOption = computed(
 );
 const networkPermissionLabel = computed(() => (networkPermissionEnabled.value ? '已允许' : '询问'));
 
-watch(
-  () => props.attachments.length,
-  (nextLength, previousLength) => {
-    const resolvedCount = Math.max(0, nextLength - previousLength);
-    lastResolvedAttachmentCount.value = nextLength;
-
-    if (resolvedCount === 0) {
-      return;
-    }
-
-    let remainingResolvedCount = resolvedCount;
-    pendingAttachmentDrafts.value = pendingAttachmentDrafts.value.filter((attachment) => {
-      if (remainingResolvedCount <= 0 || attachment.status !== 'processing') {
-        return true;
-      }
-
-      remainingResolvedCount -= 1;
-      return false;
-    });
-  },
-);
-
-watch(
-  () => props.errorMessage,
-  (message) => {
-    const normalizedMessage = message.trim();
-
-    if (!normalizedMessage) {
-      return;
-    }
-
-    pendingAttachmentDrafts.value = pendingAttachmentDrafts.value.map((attachment) =>
-      attachment.status === 'processing'
-        ? {
-            ...attachment,
-            status: 'failed',
-            errorMessage: normalizedMessage,
-          }
-        : attachment,
-    );
-  },
-);
-
-const formatModelLabel = (label: string): string =>
-  label
-    .replace(/^Claude\s+/u, '')
-    .replace(/^GPT5/u, 'GPT-5')
-    .replace(/^DeepSeek-v/u, 'DeepSeek V')
-    .replace(/^Kimi-k/u, 'Kimi K')
-    .replace(/^gemini-/u, 'Gemini ')
-    .replace(/-preview$/u, '')
-    .replace(/-/gu, ' ')
-    .replace(/\bpro\b/giu, 'Pro')
-    .replace(/\bflash\b/giu, 'Flash')
-    .replace(/\s+/gu, ' ')
-    .trim();
-
-const getModelPlatformId = (modelId: string): TAiServicePlatformId =>
-  findAiServicePlatformByModel(modelId).id;
-
 const normalizePendingAttachmentName = (file: File): string => {
   const normalizedName = file.name.trim();
 
@@ -299,9 +252,29 @@ const createPendingAttachment = (file: File): IAiAttachedFile => {
   };
 };
 
-const queueAttachmentFile = (file: File): void => {
-  pendingAttachmentDrafts.value = [...pendingAttachmentDrafts.value, createPendingAttachment(file)];
-  emit('fileSelected', file);
+const queueAttachmentFile = async (file: File): Promise<void> => {
+  const draft = createPendingAttachment(file);
+  pendingAttachmentDrafts.value = [...pendingAttachmentDrafts.value, draft];
+
+  let resolved = false;
+  try {
+    resolved = await props.resolveAttachment(file);
+  } catch {
+    resolved = false;
+  }
+
+  if (resolved) {
+    pendingAttachmentDrafts.value = pendingAttachmentDrafts.value.filter(
+      (attachment) => attachment.id !== draft.id,
+    );
+    return;
+  }
+
+  pendingAttachmentDrafts.value = pendingAttachmentDrafts.value.map((attachment) =>
+    attachment.id === draft.id
+      ? { ...attachment, status: 'failed', detailLabel: '处理失败' }
+      : attachment,
+  );
 };
 
 const handleSubmit = (): void => {
@@ -376,7 +349,7 @@ const handleFileChange = (event: Event): void => {
     return;
   }
   for (const file of Array.from(fileList)) {
-    queueAttachmentFile(file);
+    void queueAttachmentFile(file);
   }
   input.value = '';
 };
@@ -401,7 +374,7 @@ const handlePaste = (event: ClipboardEvent): void => {
   }
   event.preventDefault();
   for (const file of pastedFiles) {
-    queueAttachmentFile(file);
+    void queueAttachmentFile(file);
   }
 };
 
@@ -520,7 +493,7 @@ const handleStop = (): void => {
                 </SelectLabel>
                 <SelectGroup>
                   <SelectItem v-for="model in section.models" :key="model.id" class="ai-model-item" :value="model.id">
-                    <AiProviderIcon class="ai-model-item__icon" :platform-id="getModelPlatformId(model.id)"
+                    <AiProviderIcon class="ai-model-item__icon" :platform-id="section.key"
                       decorative />
                     <span class="ai-model-item__label" v-text="model.label"></span>
                   </SelectItem>

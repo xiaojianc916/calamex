@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import AiProviderIcon from '@/components/business/ai/provider/AiProviderIcon.vue';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -68,6 +68,7 @@ const feedbackText = ref('');
 const feedbackTone = ref<TFeedbackTone>('info');
 const actionState = ref<TActionState>('idle');
 const isKeyVisible = ref(false);
+const isTavilyKeyVisible = ref(false);
 const isProviderMenuOpen = ref(false);
 const isSmallModelMenuOpen = ref(false);
 
@@ -215,6 +216,7 @@ const openForm = (providerId?: TAiServicePlatformId): void => {
   tavilyKeyError.value = '';
   feedbackText.value = '';
   isKeyVisible.value = false;
+  isTavilyKeyVisible.value = false;
   isProviderMenuOpen.value = false;
   isSmallModelMenuOpen.value = false;
   pane.value = 'form';
@@ -361,6 +363,104 @@ const handleClose = (): void => {
   emit('close');
 };
 
+const dialogRef = ref<HTMLElement | null>(null);
+
+const closeMenus = (): void => {
+  isProviderMenuOpen.value = false;
+  isSmallModelMenuOpen.value = false;
+};
+
+const collectFocusable = (): HTMLElement[] => {
+  if (!dialogRef.value) {
+    return [];
+  }
+  const selector =
+    'a[href], button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])';
+  return Array.from(dialogRef.value.querySelectorAll<HTMLElement>(selector)).filter(
+    (element) => element.offsetParent !== null,
+  );
+};
+
+const focusFirstElement = (): void => {
+  const focusables = collectFocusable();
+  (focusables[0] ?? dialogRef.value)?.focus();
+};
+
+// #4 点击 combobox 之外的任意位置时收起已展开的下拉;点在 combobox 内部交由其自身处理。
+const handleOutsidePointerDown = (event: PointerEvent): void => {
+  if (!props.open || (!isProviderMenuOpen.value && !isSmallModelMenuOpen.value)) {
+    return;
+  }
+  const target = event.target as Element | null;
+  if (target?.closest('.ai-credential-combobox')) {
+    return;
+  }
+  closeMenus();
+};
+
+// #5 Esc 关闭(下拉优先于弹窗);Tab / Shift+Tab 在弹窗内循环,形成焦点陷阱。
+const handleDialogKeydown = (event: KeyboardEvent): void => {
+  if (!props.open) {
+    return;
+  }
+
+  if (event.key === 'Escape') {
+    if (isProviderMenuOpen.value || isSmallModelMenuOpen.value) {
+      closeMenus();
+    } else {
+      handleClose();
+    }
+    event.stopPropagation();
+    return;
+  }
+
+  if (event.key !== 'Tab') {
+    return;
+  }
+
+  const focusables = collectFocusable();
+  if (focusables.length === 0) {
+    return;
+  }
+
+  const first = focusables[0];
+  const last = focusables[focusables.length - 1];
+  const active = document.activeElement as HTMLElement | null;
+  const inDialog = dialogRef.value?.contains(active) ?? false;
+
+  if (!inDialog) {
+    event.preventDefault();
+    first.focus();
+    return;
+  }
+  if (event.shiftKey && active === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && active === last) {
+    event.preventDefault();
+    first.focus();
+  }
+};
+
+watch(
+  () => props.open,
+  (open) => {
+    if (open) {
+      void nextTick(focusFirstElement);
+    }
+  },
+);
+
+onMounted(() => {
+  document.addEventListener('pointerdown', handleOutsidePointerDown, true);
+  document.addEventListener('keydown', handleDialogKeydown);
+});
+
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', handleOutsidePointerDown, true);
+  document.removeEventListener('keydown', handleDialogKeydown);
+});
+
 watch(
   () => props.open,
   (open) => {
@@ -379,6 +479,7 @@ watch(
     feedbackText.value = '';
     actionState.value = 'idle';
     isKeyVisible.value = false;
+    isTavilyKeyVisible.value = false;
     isProviderMenuOpen.value = false;
     isSmallModelMenuOpen.value = false;
   },
@@ -388,7 +489,7 @@ watch(
 <template>
   <Teleport to="body">
     <div v-if="open" class="ai-credential-shell" @click.self="handleClose">
-      <section class="ai-credential-dialog" role="dialog" aria-modal="true" aria-labelledby="ai-credential-title">
+      <section ref="dialogRef" class="ai-credential-dialog" role="dialog" aria-modal="true" aria-labelledby="ai-credential-title" tabindex="-1">
         <header class="ai-credential-head" :data-pane="pane">
           <Button v-if="pane === 'form'" class="ai-credential-icon-button" variant="ghost" size="icon-sm" type="button"
             aria-label="返回" @click="openList">
@@ -582,8 +683,15 @@ watch(
                 </label>
                 <div class="ai-credential-key-wrap">
                   <Input id="tavily-key" v-model="tavilyKey" class="ai-credential-input ai-credential-key-input"
-                    data-tavily-input type="password" autocomplete="off" spellcheck="false" placeholder="Tavily API Key"
+                    data-tavily-input :type="isTavilyKeyVisible ? 'text' : 'password'" autocomplete="off" spellcheck="false" placeholder="Tavily API Key"
                     :aria-invalid="tavilyKeyError ? 'true' : 'false'" />
+                  <Button class="ai-credential-key-toggle ai-credential-key-toggle--tavily" variant="ghost"
+                    size="icon-sm" type="button"
+                    :aria-label="isTavilyKeyVisible ? '隐藏 Tavily API Key' : '显示 Tavily API Key'"
+                    @click="isTavilyKeyVisible = !isTavilyKeyVisible">
+                    <span v-if="isTavilyKeyVisible" aria-hidden="true" class="icon-[lucide--eye-off]" />
+                    <span v-else aria-hidden="true" class="icon-[lucide--eye]" />
+                  </Button>
                   <Button class="ai-credential-inline-save" variant="ghost" size="sm" type="button" data-save-tavily
                     :disabled="isSaving" @click="saveTavily">
                     保存
@@ -1062,6 +1170,10 @@ watch(
 .ai-credential-key-toggle svg {
   width: 14px;
   height: 14px;
+}
+
+.ai-credential-key-toggle--tavily {
+  right: 48px;
 }
 
 .ai-credential-inline-save {

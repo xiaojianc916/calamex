@@ -1617,20 +1617,20 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     errorMessage.value = '';
   };
 
-  const attachFile = async (file: File): Promise<void> => {
+  const attachFile = async (file: File): Promise<boolean> => {
     const normalizedName = normalizeAttachmentName(file);
 
     if (isTextAttachment(file)) {
       if (file.size > MAX_TEXT_ATTACHMENT_BYTES) {
         errorMessage.value = `附件超过 ${formatBytes(MAX_TEXT_ATTACHMENT_BYTES)}，请先拆分或只粘贴关键片段。`;
-        return;
+        return false;
       }
 
       const content = await file.text().catch((): null => null);
 
       if (content === null) {
         errorMessage.value = '读取附件失败，请确认文件可访问后重试。';
-        return;
+        return false;
       }
 
       const id = `attachment:${normalizedName}:${file.lastModified}:${file.size}`;
@@ -1661,20 +1661,20 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       currentReferences.value = await buildReferences();
       errorMessage.value = '';
 
-      return;
+      return true;
     }
 
     if (isImageAttachment(file)) {
       if (file.size > MAX_IMAGE_ATTACHMENT_BYTES) {
         errorMessage.value = `图片超过 ${formatBytes(MAX_IMAGE_ATTACHMENT_BYTES)}，请压缩后再试。`;
-        return;
+        return false;
       }
 
       const signature = await createImageAttachmentSignature(file);
       const id = `attachment:${signature}`;
 
       if (attachedFiles.value.some((attachment) => attachment.id === id)) {
-        return;
+        return true;
       }
 
       const attachmentName = createUniqueAttachmentName(normalizedName, attachedFiles.value);
@@ -1720,10 +1720,11 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       currentReferences.value = await buildReferences();
       errorMessage.value = '';
 
-      return;
+      return true;
     }
 
     errorMessage.value = '当前只支持文本文件和图片作为 AI 上下文附件。';
+    return false;
   };
 
   const removeAttachedFile = (id: string): void => {

@@ -906,6 +906,12 @@ export type GitCommitHistoryRequest = {
 	limit: number | null,
 };
 
+export type GitCommitRefPayload = {
+	name: string,
+	kind: string,
+	isHead: boolean,
+};
+
 export type GitCommitRequest = {
 	repositoryRootPath: string,
 	message: string,
@@ -922,7 +928,10 @@ export type GitCommitSummaryPayload = {
 	shortId: string,
 	summary: string,
 	authorName: string,
+	authorEmail: string,
 	authoredAt: string,
+	parentIds: string[],
+	refs: GitCommitRefPayload[],
 };
 
 export type GitDiffPreviewPayload = {
