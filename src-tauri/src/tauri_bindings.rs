@@ -11,9 +11,7 @@ use tauri_specta::{Builder, ErrorHandlingMode, collect_commands, collect_events}
 pub fn builder() -> Builder<tauri::Wry> {
     Builder::<tauri::Wry>::new()
         .error_handling(ErrorHandlingMode::Throw)
-        // ↓↓↓ events 先 ↓↓↓
         .events(collect_events![workspace_watcher::WorkspaceFsEvent,])
-        // ↓↓↓ commands 后（它会\"封口\"返回 Commands，不能再 .events()）↓↓↓
         .commands(collect_commands![
             script_run::detect_execution_environment,
             search::apply_workspace_replacement,
@@ -32,14 +30,12 @@ pub fn builder() -> Builder<tauri::Wry> {
             workspace_fs::save_script,
             workspace_watcher::start_workspace_watching,
             workspace_watcher::stop_workspace_watching,
-            // ↓↓↓ terminal：从手写 Zod 契约迁入 specta 生成轨（用模块限定路径以解析配套宏）↓↓↓
             terminal_commands::ensure_terminal_session,
             terminal_commands::write_terminal_input,
             terminal_commands::resize_terminal_session,
             terminal_commands::close_terminal_session,
             terminal_commands::dispatch_script_to_terminal,
             terminal_commands::cancel_terminal_run,
-            // ↓↓↓ git：从手写 Zod 契约迁入 specta 生成轨（用模块限定路径以解析配套宏）↓↓↓
             git::branches::list_git_branches,
             git::branches::checkout_git_branch,
             git::branches::checkout_git_commit,
@@ -48,6 +44,7 @@ pub fn builder() -> Builder<tauri::Wry> {
             git::history::list_git_commit_history,
             git::history::get_git_commit_detail,
             git::pull_request::get_git_pull_request_support,
+            git::pull_request::set_git_remote,
             git::pull_request::list_git_pull_requests,
             git::pull_request::get_git_pull_request_detail,
             git::pull_request::create_git_pull_request,
@@ -65,7 +62,6 @@ pub fn builder() -> Builder<tauri::Wry> {
             git::status::unstage_git_paths,
             git::status::commit_git_index,
             git::status::discard_git_paths,
-            // ↓↓↓ ssh：从手写 Zod 契约迁入 specta 生成轨（用模块限定路径以解析配套宏）↓↓↓
             ssh::connection::test_ssh_connection,
             ssh::connection::trust_ssh_host_key,
             ssh::credentials::save_ssh_password,
@@ -79,7 +75,6 @@ pub fn builder() -> Builder<tauri::Wry> {
             ssh::transfer::delete_ssh_path,
             ssh::transfer::rename_ssh_path,
             ssh::transfer::create_ssh_directory,
-            // ↓↓↓ agent_sidecar：从手写 Zod 契约迁入 specta 生成轨（用模块限定路径以解析配套宏）↓↓↓
             agent_sidecar::agent_sidecar_health,
             agent_sidecar::agent_sidecar_restart,
             agent_sidecar::agent_sidecar_warmup,
@@ -88,7 +83,6 @@ pub fn builder() -> Builder<tauri::Wry> {
             agent_sidecar::agent_sidecar_restore_checkpoint,
             agent_sidecar::agent_sidecar_orchestrate,
             agent_sidecar::agent_sidecar_orchestrate_resume,
-            // ↓↓↓ ai gateway / chat / config / inline ↓↓↓
             ai::gateway::ai_get_config,
             ai::gateway::ai_save_config,
             ai::gateway::ai_save_credentials,
@@ -102,12 +96,10 @@ pub fn builder() -> Builder<tauri::Wry> {
             ai::gateway::ai_chat_stream,
             ai::gateway::ai_cancel,
             ai::gateway::ai_inline_complete,
-            // ↓↓↓ ai agent / web tools ↓↓↓
             ai::agent::ai_agent_classify_task,
             ai::agent::ai_agent_set_network_permission,
             ai::tools::ai_web_search,
             ai::tools::ai_web_fetch,
-            // ↓↓↓ ai edit（patch / timeline / snapshots）↓↓↓
             ai::edit::ai_propose_patch,
             ai::edit::ai_apply_patch,
             ai::edit::ai_edit_get_auth_level,
@@ -121,7 +113,6 @@ pub fn builder() -> Builder<tauri::Wry> {
             ai::edit::ai_edit_revert_file,
             ai::edit::ai_edit_revert_hunk,
             ai::edit::ai_edit_revert_task,
-            // ↓↓↓ lsp：补登记进 specta 生成轨（命令早已带 #[specta::specta]，此前漏登记）↓↓↓
             lsp_commands::lsp_start,
             lsp_commands::lsp_stop,
             lsp_commands::lsp_did_open,
