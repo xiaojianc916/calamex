@@ -393,8 +393,8 @@ const createSshFileReadRequest = (remotePath: string) => ({
 const createSshFileWriteRequest = (
   remotePath: string,
   content: string,
-  encoding: ISshFileReadPayload['encoding'],
-  lineEnding: ISshFileReadPayload['lineEnding'],
+  encoding: ISshFileWriteRequest['encoding'],
+  lineEnding: ISshFileWriteRequest['lineEnding'],
 ) => ({
   ...createSshConnectionRequest(),
   remotePath,
@@ -621,8 +621,8 @@ const savePreviewFile = async (content: string): Promise<void> => {
       createSshFileWriteRequest(
         fileItem.path,
         content,
-        currentPreviewPayload.encoding,
-        currentPreviewPayload.lineEnding,
+        currentPreviewPayload.encoding as ISshFileWriteRequest['encoding'],
+        currentPreviewPayload.lineEnding as ISshFileWriteRequest['lineEnding'],
       ),
     );
     message.success(`已保存 ${fileItem.name}，共 ${formatRemoteFileSize(result.byteSize)}。`);

@@ -18,7 +18,6 @@ import type {
   IAiEditGetDiffPayload,
   IAiEditListTimelinePayload,
   IAiEditListTimelineRequest,
-  IAiEditOperation,
   IAiEditRevertTaskPayload,
   IAiEditRevertTaskRequest,
   IAiEditUndoOperationPayload,
@@ -378,24 +377,6 @@ const createAiEditSnapshot = (id: string, fileRefs: string[] = []): IAiSnapshot 
   sizeBytes: 0,
   contentAvailable: true,
   pinned: false,
-});
-
-const createAiEditOperation = (overrides: Partial<IAiEditOperation> = {}): IAiEditOperation => ({
-  id: 'operation-rollback-1',
-  taskId: 'thread-rollback',
-  turnId: 'turn-rollback',
-  kind: 'modify',
-  path: 'D:/test/xiaojianc.sh',
-  sourceSnapshotId: 'snapshot-before',
-  beforeHash: 'fnv64:before',
-  afterHash: 'fnv64:after',
-  bytesBefore: 8,
-  bytesAfter: 8,
-  appliedAt: '2026-04-29T00:00:01.000Z',
-  reason: '应用 AI 文件修改',
-  toolCallId: null,
-  pinned: false,
-  ...overrides,
 });
 
 const createUndoOperationPayload = (

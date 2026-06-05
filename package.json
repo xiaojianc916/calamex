@@ -29,8 +29,8 @@
     "prepare": "lefthook install"
   },
   "dependencies": {
-    "@ag-ui/client": "^0.0.54",
-    "@ag-ui/core": "^0.0.54",
+    "@ag-ui/client": "^0.0.55",
+    "@ag-ui/core": "^0.0.55",
     "@codemirror/autocomplete": "^6.20.3",
     "@codemirror/commands": "^6.10.3",
     "@codemirror/lang-cpp": "^6.0.3",
@@ -53,8 +53,8 @@
     "@codemirror/search": "^6.7.0",
     "@codemirror/state": "^6.6.0",
     "@codemirror/view": "^6.43.0",
-    "@copilotkit/core": "^1.59.2",
-    "@copilotkit/vue": "^1.59.2",
+    "@copilotkit/core": "^1.59.4",
+    "@copilotkit/vue": "^1.59.4",
     "@lezer/highlight": "^1.2.3",
     "@replit/codemirror-indentation-markers": "^6.5.3",
     "@shikijs/langs": "4.2.0",
