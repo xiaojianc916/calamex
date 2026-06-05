@@ -36,8 +36,8 @@
       <button v-for="chip in scopeChips" :key="chip.key" type="button" class="search-panel-chip"
         :class="{ 'is-active': activeScope === chip.key }" :aria-pressed="activeScope === chip.key"
         @click="activeScope = chip.key">
-        <span>  chip.label  </span>
-        <span class="search-panel-chip-count"> chip.count </span>
+        <span v-text="chip.label" />
+        <span class="search-panel-chip-count" v-text="chip.count" />
       </button>
     </div>
 
@@ -106,15 +106,15 @@
             <header class="search-replace-inline-file-header">
               <button type="button" class="search-replace-inline-file-open"
                 :aria-expanded="!isReplacementFileCollapsed(file.path)" @click="toggleReplacementFile(file.path)">
-                <span class="search-replace-inline-chevron" aria-hidden="true"> isReplacementFileCollapsed(file.path)
-                  ? '▸' : '▾' </span>
+                <span class="search-replace-inline-chevron" aria-hidden="true"
+                  v-text="isReplacementFileCollapsed(file.path) ? '▸' : '▾'" />
                 <span class="search-replace-inline-file-icon" aria-hidden="true">
                   <ExplorerEntryIcon kind="file" :path="file.path" />
                 </span>
-                <span class="search-replace-inline-file-name"> file.name </span>
-                <span class="search-replace-inline-file-path"> file.parentPath </span>
+                <span class="search-replace-inline-file-name" v-text="file.name" />
+                <span class="search-replace-inline-file-path" v-text="file.parentPath" />
               </button>
-              <span class="search-replace-inline-count"> file.visibleReplacementCount </span>
+              <span class="search-replace-inline-count" v-text="file.visibleReplacementCount" />
             </header>
 
             <template v-if="!isReplacementFileCollapsed(file.path)">
@@ -122,7 +122,7 @@
                 role="option" tabindex="0" @click="handleReplacementLineOpen(file.path, line.lineNumber)"
                 @keydown.enter="handleReplacementLineOpen(file.path, line.lineNumber)"
                 @keydown.space.prevent="handleReplacementLineOpen(file.path, line.lineNumber)">
-                <span class="search-replace-inline-line-number"> line.lineNumber </span>
+                <span class="search-replace-inline-line-number" v-text="line.lineNumber" />
                 <span class="search-replace-inline-code">
                   <template v-for="(segment, segmentIndex) in line.segments" :key="`${line.id}-${segmentIndex}`">
                     <span v-if="segment.kind !== 'empty'" class="search-replace-inline-segment"
@@ -186,15 +186,15 @@
               <button type="button" class="search-panel-result-group-open"
                 :aria-expanded="!isSearchResultGroupCollapsed(entry.row.group.path)"
                 @click="toggleSearchResultGroup(entry.row.group.path)">
-                <span class="search-panel-result-group-chevron" aria-hidden="true">
-                  isSearchResultGroupCollapsed(entry.row.group.path) ? '▸' : '▾' </span>
+                <span class="search-panel-result-group-chevron" aria-hidden="true"
+                  v-text="isSearchResultGroupCollapsed(entry.row.group.path) ? '▸' : '▾'" />
                 <span class="search-panel-result-group-icon" aria-hidden="true">
                   <ExplorerEntryIcon kind="file" :path="entry.row.group.path" />
                 </span>
-                <span class="search-panel-result-group-name">  entry.row.group.name  </span>
-                <span class="search-panel-result-group-path">  entry.row.group.parentPath  </span>
+                <span class="search-panel-result-group-name" v-text="entry.row.group.name" />
+                <span class="search-panel-result-group-path" v-text="entry.row.group.parentPath" />
               </button>
-              <span class="search-panel-result-group-count">  entry.row.group.results.length  </span>
+              <span class="search-panel-result-group-count" v-text="entry.row.group.results.length" />
             </header>
 
             <button v-else type="button" class="search-panel-result-line search-panel-virtual-row"
@@ -202,7 +202,7 @@
               :aria-selected="selectedResultKey === entry.row.result?.resultKey"
               :style="{ transform: `translateY(${entry.start}px)` }"
               @click="entry.row.result && handleSearchResultOpen(entry.row.result)">
-              <span class="search-panel-result-line-number">  entry.row.result?.lineNumber  </span>
+              <span class="search-panel-result-line-number" v-text="entry.row.result?.lineNumber" />
               <span class="search-panel-result-line-body">
                 <span class="search-panel-result-snippet">
                   <template v-for="(segment, index) in entry.row.result?.snippetSegments ?? []"
@@ -223,15 +223,15 @@
             <header class="search-panel-result-group-header">
               <button type="button" class="search-panel-result-group-open"
                 :aria-expanded="!isSearchResultGroupCollapsed(group.path)" @click="toggleSearchResultGroup(group.path)">
-                <span class="search-panel-result-group-chevron" aria-hidden="true">
-                  isSearchResultGroupCollapsed(group.path) ? '▸' : '▾' </span>
+                <span class="search-panel-result-group-chevron" aria-hidden="true"
+                  v-text="isSearchResultGroupCollapsed(group.path) ? '▸' : '▾'" />
                 <span class="search-panel-result-group-icon" aria-hidden="true">
                   <ExplorerEntryIcon kind="file" :path="group.path" />
                 </span>
-                <span class="search-panel-result-group-name"> group.name </span>
-                <span class="search-panel-result-group-path"> group.parentPath </span>
+                <span class="search-panel-result-group-name" v-text="group.name" />
+                <span class="search-panel-result-group-path" v-text="group.parentPath" />
               </button>
-              <span class="search-panel-result-group-count"> group.results.length </span>
+              <span class="search-panel-result-group-count" v-text="group.results.length" />
             </header>
 
             <template v-if="!isSearchResultGroupCollapsed(group.path)">
@@ -239,7 +239,7 @@
                 class="search-panel-result-line" :class="{ 'is-selected': selectedResultKey === result.resultKey }"
                 role="option" :aria-selected="selectedResultKey === result.resultKey"
                 @click="handleSearchResultOpen(result)">
-                <span class="search-panel-result-line-number"> result.lineNumber </span>
+                <span class="search-panel-result-line-number" v-text="result.lineNumber" />
 
                 <span class="search-panel-result-line-body">
                   <span class="search-panel-result-snippet">
