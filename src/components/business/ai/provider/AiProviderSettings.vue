@@ -678,7 +678,7 @@ watch(
               </div>
               <div class="ai-credential-field">
                 <label class="ai-credential-label" for="tavily-key">
-                  信息源 API Key
+                  Tavily Key
                   <span>可选</span>
                 </label>
                 <div class="ai-credential-key-wrap">
