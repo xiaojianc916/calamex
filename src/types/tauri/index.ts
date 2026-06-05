@@ -82,23 +82,18 @@ import type {
   IGitBranchCheckoutRequest,
   IGitBranchCreateRequest,
   IGitBranchListPayload,
+  IGitCommitCheckoutRequest,
   IGitCommitDetailPayload,
   IGitCommitDetailRequest,
   IGitCommitHistoryPayload,
   IGitCommitHistoryRequest,
   IGitCommitRequest,
   IGitCommitResultPayload,
+  IGitCommitRevertRequest,
   IGitDiffPreviewPayload,
   IGitDiffPreviewRequest,
   IGitFileBaselinePayload,
   IGitPathOperationRequest,
-  IGitPullRequestCloseRequest,
-  IGitPullRequestCreateRequest,
-  IGitPullRequestDetailPayload,
-  IGitPullRequestDetailRequest,
-  IGitPullRequestListRequest,
-  IGitPullRequestMergeRequest,
-  IGitPullRequestSummaryPayload,
   IGitPullRequestSupportPayload,
   IGitRepositoryRootRequest,
   IGitRepositoryStatusPayload,
@@ -173,7 +168,6 @@ export interface ISshDirectoryListRequest extends ISshConnectionTestRequest {
 export interface ISshDirectoryEntryPayload {
   name: string;
   path: string;
-  // 生成绑定为 string（Rust 单一事实源）。已知值：'directory' | 'file'。
   kind: string;
   size: number;
 }
@@ -213,10 +207,8 @@ export interface ISshFileReadPayload {
   remotePath: string;
   content: string;
   byteSize: number;
-  // 生成绑定为 string（Rust 单一事实源）。已知值：'utf-8' | 'utf-8-bom'。
   encoding: string;
   lineCount: number;
-  // 生成绑定为 string（Rust 单一事实源）。已知值：'lf' | 'crlf' | 'cr' | 'mixed' | 'none'。
   lineEnding: string;
   permission: string;
   owner: string;
@@ -277,21 +269,11 @@ export interface ITauriService {
   agentSidecarRestart(): Promise<IAgentSidecarHealthPayload>;
   agentSidecarWarmup(): Promise<IAgentSidecarWarmupPayload>;
   agentSidecarChat(payload: IAgentSidecarChatRequest): Promise<IAgentSidecarResponsePayload>;
-  agentSidecarResolveApproval(
-    payload: IAgentSidecarApprovalResolveRequest,
-  ): Promise<IAgentSidecarResponsePayload>;
-  agentSidecarRestoreCheckpoint(
-    payload: IAgentSidecarCheckpointRestoreRequest,
-  ): Promise<IAgentSidecarResponsePayload>;
-  agentSidecarOrchestrate(
-    payload: IAgentSidecarOrchestrateRequest,
-  ): Promise<IAgentSidecarOrchestratePayload>;
-  agentSidecarOrchestrateResume(
-    payload: IAgentSidecarOrchestrateResumeRequest,
-  ): Promise<IAgentSidecarOrchestratePayload>;
-  onAgentSidecarStream(
-    handler: (payload: IAgentSidecarStreamEventPayload) => void,
-  ): Promise<() => void>;
+  agentSidecarResolveApproval(payload: IAgentSidecarApprovalResolveRequest): Promise<IAgentSidecarResponsePayload>;
+  agentSidecarRestoreCheckpoint(payload: IAgentSidecarCheckpointRestoreRequest): Promise<IAgentSidecarResponsePayload>;
+  agentSidecarOrchestrate(payload: IAgentSidecarOrchestrateRequest): Promise<IAgentSidecarOrchestratePayload>;
+  agentSidecarOrchestrateResume(payload: IAgentSidecarOrchestrateResumeRequest): Promise<IAgentSidecarOrchestratePayload>;
+  onAgentSidecarStream(handler: (payload: IAgentSidecarStreamEventPayload) => void): Promise<() => void>;
   analyzeScript(payload: IAnalyzeScriptRequest): Promise<IAnalyzeScriptPayload>;
   formatScript(payload: IFormatScriptRequest): Promise<IFormatScriptPayload>;
   loadScript(path: string): Promise<IScriptFilePayload>;
@@ -304,24 +286,18 @@ export interface ITauriService {
   deleteWorkspacePath(payload: IWorkspacePathDeleteRequest): Promise<IWorkspacePathDeletePayload>;
   startWorkspaceWatching(rootPath: string): Promise<void>;
   stopWorkspaceWatching(): Promise<void>;
-  searchWorkspace(
-    payload: IWorkspaceSearchRequest,
-    options?: ITauriCallOptions,
-  ): Promise<IWorkspaceSearchPayload>;
-  previewWorkspaceReplacement(
-    payload: IWorkspaceReplacementRequest,
-    options?: ITauriCallOptions,
-  ): Promise<IWorkspaceReplacementPreviewPayload>;
-  applyWorkspaceReplacement(
-    payload: IWorkspaceReplacementApplyRequest,
-  ): Promise<IWorkspaceReplacementApplyPayload>;
+  searchWorkspace(payload: IWorkspaceSearchRequest, options?: ITauriCallOptions): Promise<IWorkspaceSearchPayload>;
+  previewWorkspaceReplacement(payload: IWorkspaceReplacementRequest, options?: ITauriCallOptions): Promise<IWorkspaceReplacementPreviewPayload>;
+  applyWorkspaceReplacement(payload: IWorkspaceReplacementApplyRequest): Promise<IWorkspaceReplacementApplyPayload>;
   getGitRepositoryStatus(workspaceRootPath?: string | null): Promise<IGitRepositoryStatusPayload>;
   initGitRepository(workspaceRootPath?: string | null): Promise<IGitRepositoryStatusPayload>;
   listGitCommitHistory(payload: IGitCommitHistoryRequest): Promise<IGitCommitHistoryPayload>;
   getGitCommitDetail(payload: IGitCommitDetailRequest): Promise<IGitCommitDetailPayload>;
   listGitBranches(payload: IGitRepositoryRootRequest): Promise<IGitBranchListPayload>;
   checkoutGitBranch(payload: IGitBranchCheckoutRequest): Promise<IGitRepositoryStatusPayload>;
+  checkoutGitCommit(payload: IGitCommitCheckoutRequest): Promise<IGitRepositoryStatusPayload>;
   createGitBranch(payload: IGitBranchCreateRequest): Promise<IGitRepositoryStatusPayload>;
+  revertGitCommit(payload: IGitCommitRevertRequest): Promise<IGitRepositoryStatusPayload>;
   getGitFileBaseline(path: string): Promise<IGitFileBaselinePayload>;
   getGitDiffPreview(payload: IGitDiffPreviewRequest): Promise<IGitDiffPreviewPayload>;
   stageGitPaths(payload: IGitPathOperationRequest): Promise<IGitRepositoryStatusPayload>;
@@ -332,18 +308,9 @@ export interface ITauriService {
   saveGitStash(payload: IGitStashSaveRequest): Promise<IGitRepositoryStatusPayload>;
   applyGitStash(payload: IGitStashApplyRequest): Promise<IGitRepositoryStatusPayload>;
   dropGitStash(payload: IGitStashDropRequest): Promise<IGitRepositoryStatusPayload>;
-  getGitPullRequestSupport(
-    payload: IGitRepositoryRootRequest,
-  ): Promise<IGitPullRequestSupportPayload>;
-  listGitPullRequests(payload: IGitPullRequestListRequest): Promise<IGitPullRequestSummaryPayload[]>;
-  getGitPullRequestDetail(payload: IGitPullRequestDetailRequest): Promise<IGitPullRequestDetailPayload>;
-  createGitPullRequest(payload: IGitPullRequestCreateRequest): Promise<IGitPullRequestSummaryPayload>;
-  mergeGitPullRequest(payload: IGitPullRequestMergeRequest): Promise<IGitPullRequestSummaryPayload>;
-  closeGitPullRequest(payload: IGitPullRequestCloseRequest): Promise<IGitPullRequestSummaryPayload>;
+  getGitPullRequestSupport(payload: IGitRepositoryRootRequest): Promise<IGitPullRequestSupportPayload>;
   ensureTerminalSession(payload: IEnsureTerminalSessionRequest): Promise<ITerminalSessionPayload>;
-  dispatchScriptToTerminal(
-    payload: IDispatchTerminalScriptRequest,
-  ): Promise<IDispatchTerminalScriptPayload>;
+  dispatchScriptToTerminal(payload: IDispatchTerminalScriptRequest): Promise<IDispatchTerminalScriptPayload>;
   writeTerminalInput(payload: IWriteTerminalInputRequest): Promise<void>;
   resizeTerminalSession(payload: IResizeTerminalSessionRequest): Promise<void>;
   closeTerminalSession(payload: ICloseTerminalSessionRequest): Promise<void>;
@@ -367,9 +334,7 @@ export interface ITauriService {
   aiTestProvider(): Promise<IAiProviderTestPayload>;
   aiTestProviderConfig(payload: IAiProviderConnectionRequest): Promise<IAiProviderTestPayload>;
   aiConnectProvider(payload: IAiProviderConnectionRequest): Promise<IAiProviderConnectionPayload>;
-  aiGenerateConversationTitle(
-    payload: IAiConversationTitleRequest,
-  ): Promise<IAiConversationTitlePayload>;
+  aiGenerateConversationTitle(payload: IAiConversationTitleRequest): Promise<IAiConversationTitlePayload>;
   aiGetSuggestionPoolCache(): Promise<IAiSuggestionPoolPayload | null>;
   aiGenerateSuggestionPool(payload: IAiSuggestionPoolRequest): Promise<IAiSuggestionPoolPayload>;
   aiChatStream(payload: IAiChatRequest): Promise<IAiChatStreamPayload>;
@@ -379,22 +344,16 @@ export interface ITauriService {
   aiAgentClassifyTask(payload: IAiAgentClassifyTaskRequest): Promise<IAiAgentClassifyTaskPayload>;
   aiWebSearch(payload: IAiWebSearchInput): Promise<IAiWebSearchPayload>;
   aiWebFetch(payload: IAiWebFetchInput): Promise<IAiWebFetchPayload>;
-  aiAgentSetNetworkPermission(
-    payload: IAiAgentSetNetworkPermissionRequest,
-  ): Promise<IAiAgentNetworkPermissionPayload>;
+  aiAgentSetNetworkPermission(payload: IAiAgentSetNetworkPermissionRequest): Promise<IAiAgentNetworkPermissionPayload>;
   aiProposePatch(payload: IAiProposePatchRequest): Promise<IAiProposePatchPayload>;
   aiApplyPatch(payload: IAiApplyPatchRequest): Promise<IAiApplyPatchPayload>;
   aiEditGetAuthLevel(): Promise<IAiEditAuthState>;
   aiEditSetAuthLevel(payload: IAiEditSetAuthLevelRequest): Promise<IAiEditAuthState>;
   aiEditListTimeline(payload: IAiEditListTimelineRequest): Promise<IAiEditListTimelinePayload>;
-  aiEditCreateSnapshot(
-    payload: IAiEditCreateSnapshotRequest,
-  ): Promise<IAiEditCreateSnapshotPayload>;
+  aiEditCreateSnapshot(payload: IAiEditCreateSnapshotRequest): Promise<IAiEditCreateSnapshotPayload>;
   aiEditSetPin(payload: IAiEditSetPinRequest): Promise<IAiEditSetPinPayload>;
   aiEditGetDiff(payload: IAiEditGetDiffRequest): Promise<IAiEditGetDiffPayload>;
-  aiEditRestoreSnapshot(
-    payload: IAiEditRestoreSnapshotRequest,
-  ): Promise<IAiEditRestoreSnapshotPayload>;
+  aiEditRestoreSnapshot(payload: IAiEditRestoreSnapshotRequest): Promise<IAiEditRestoreSnapshotPayload>;
   aiEditUndoOperation(payload: IAiEditUndoOperationRequest): Promise<IAiEditUndoOperationPayload>;
   aiEditRevertFile(payload: IAiEditRevertFileRequest): Promise<IAiEditRevertFilePayload>;
   aiEditRevertHunk(payload: IAiEditRevertHunkRequest): Promise<IAiEditRevertHunkPayload>;

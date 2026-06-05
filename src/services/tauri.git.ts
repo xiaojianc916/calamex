@@ -10,7 +10,9 @@ type TGitTauriService = Pick<
   | 'getGitCommitDetail'
   | 'listGitBranches'
   | 'checkoutGitBranch'
+  | 'checkoutGitCommit'
   | 'createGitBranch'
+  | 'revertGitCommit'
   | 'getGitFileBaseline'
   | 'getGitDiffPreview'
   | 'stageGitPaths'
@@ -22,301 +24,146 @@ type TGitTauriService = Pick<
   | 'applyGitStash'
   | 'dropGitStash'
   | 'getGitPullRequestSupport'
-  | 'listGitPullRequests'
-  | 'getGitPullRequestDetail'
-  | 'createGitPullRequest'
-  | 'mergeGitPullRequest'
-  | 'closeGitPullRequest'
 >;
 
 export const gitTauriService: TGitTauriService = {
   getGitRepositoryStatus(workspaceRootPath) {
     return callSpectaCommand(
-      {
-        command: 'get_git_repository_status',
-        guardHint: '读取 Git 仓库状态',
-        idempotent: true,
-        input: { workspaceRootPath },
-      },
+      { command: 'get_git_repository_status', guardHint: '读取 Git 仓库状态', idempotent: true, input: { workspaceRootPath } },
       () => commands.getGitRepositoryStatus(workspaceRootPath ?? null),
     );
   },
 
   initGitRepository(workspaceRootPath) {
     return callSpectaCommand(
-      {
-        command: 'init_git_repository',
-        guardHint: '初始化 Git 仓库',
-        input: { workspaceRootPath },
-      },
+      { command: 'init_git_repository', guardHint: '初始化 Git 仓库', input: { workspaceRootPath } },
       () => commands.initGitRepository(workspaceRootPath ?? null),
     );
   },
 
   listGitCommitHistory(payload) {
     return callSpectaCommand(
-      {
-        command: 'list_git_commit_history',
-        guardHint: '读取 Git 提交历史',
-        idempotent: true,
-        timeoutMs: 20_000,
-        input: payload,
-      },
+      { command: 'list_git_commit_history', guardHint: '读取 Git 提交历史', idempotent: true, timeoutMs: 20_000, input: payload },
       () => commands.listGitCommitHistory(payload),
     );
   },
 
   getGitCommitDetail(payload) {
     return callSpectaCommand(
-      {
-        command: 'get_git_commit_detail',
-        guardHint: '读取 Git 提交详情',
-        idempotent: true,
-        timeoutMs: 20_000,
-        input: payload,
-      },
+      { command: 'get_git_commit_detail', guardHint: '读取 Git 提交详情', idempotent: true, timeoutMs: 20_000, input: payload },
       () => commands.getGitCommitDetail(payload),
     );
   },
 
   listGitBranches(payload) {
     return callSpectaCommand(
-      {
-        command: 'list_git_branches',
-        guardHint: '读取 Git 分支列表',
-        idempotent: true,
-        input: payload,
-      },
+      { command: 'list_git_branches', guardHint: '读取 Git 分支列表', idempotent: true, input: payload },
       () => commands.listGitBranches(payload),
     );
   },
 
   checkoutGitBranch(payload) {
     return callSpectaCommand(
-      {
-        command: 'checkout_git_branch',
-        guardHint: '切换 Git 分支',
-        audit: 'sensitive',
-        timeoutMs: 20_000,
-        input: payload,
-      },
+      { command: 'checkout_git_branch', guardHint: '切换 Git 分支', audit: 'sensitive', timeoutMs: 20_000, input: payload },
       () => commands.checkoutGitBranch(payload),
+    );
+  },
+
+  checkoutGitCommit(payload) {
+    return callSpectaCommand(
+      { command: 'checkout_git_commit', guardHint: '检出 Git 提交（分离 HEAD）', audit: 'sensitive', timeoutMs: 20_000, input: payload },
+      () => commands.checkoutGitCommit(payload),
     );
   },
 
   createGitBranch(payload) {
     return callSpectaCommand(
-      {
-        command: 'create_git_branch',
-        guardHint: '创建 Git 分支',
-        audit: 'sensitive',
-        timeoutMs: 20_000,
-        input: payload,
-      },
+      { command: 'create_git_branch', guardHint: '创建 Git 分支', audit: 'sensitive', timeoutMs: 20_000, input: payload },
       () => commands.createGitBranch(payload),
+    );
+  },
+
+  revertGitCommit(payload) {
+    return callSpectaCommand(
+      { command: 'revert_git_commit', guardHint: '回滚 Git 提交', audit: 'sensitive', timeoutMs: 20_000, input: payload },
+      () => commands.revertGitCommit(payload),
     );
   },
 
   getGitFileBaseline(path) {
     return callSpectaCommand(
-      {
-        command: 'get_git_file_baseline',
-        guardHint: '读取 Git 文件基线',
-        idempotent: true,
-        input: { path },
-      },
+      { command: 'get_git_file_baseline', guardHint: '读取 Git 文件基线', idempotent: true, input: { path } },
       () => commands.getGitFileBaseline(path),
     );
   },
 
   getGitDiffPreview(payload) {
     return callSpectaCommand(
-      {
-        command: 'get_git_diff_preview',
-        guardHint: '读取 Git Diff 预览',
-        idempotent: true,
-        timeoutMs: 20_000,
-        input: payload,
-      },
+      { command: 'get_git_diff_preview', guardHint: '读取 Git Diff 预览', idempotent: true, timeoutMs: 20_000, input: payload },
       () => commands.getGitDiffPreview(payload),
     );
   },
 
   stageGitPaths(payload) {
     return callSpectaCommand(
-      {
-        command: 'stage_git_paths',
-        guardHint: '暂存 Git 变更',
-        timeoutMs: 20_000,
-        input: payload,
-      },
+      { command: 'stage_git_paths', guardHint: '暂存 Git 变更', timeoutMs: 20_000, input: payload },
       () => commands.stageGitPaths(payload),
     );
   },
 
   unstageGitPaths(payload) {
     return callSpectaCommand(
-      {
-        command: 'unstage_git_paths',
-        guardHint: '取消暂存 Git 变更',
-        timeoutMs: 20_000,
-        input: payload,
-      },
+      { command: 'unstage_git_paths', guardHint: '取消暂存 Git 变更', timeoutMs: 20_000, input: payload },
       () => commands.unstageGitPaths(payload),
     );
   },
 
   discardGitPaths(payload) {
     return callSpectaCommand(
-      {
-        command: 'discard_git_paths',
-        guardHint: '放弃 Git 工作区更改',
-        audit: 'sensitive',
-        timeoutMs: 20_000,
-        input: payload,
-      },
+      { command: 'discard_git_paths', guardHint: '放弃 Git 工作区更改', audit: 'sensitive', timeoutMs: 20_000, input: payload },
       () => commands.discardGitPaths(payload),
     );
   },
 
   commitGitIndex(payload) {
     return callSpectaCommand(
-      {
-        command: 'commit_git_index',
-        guardHint: '创建 Git 提交',
-        audit: 'sensitive',
-        timeoutMs: 20_000,
-        input: payload,
-      },
+      { command: 'commit_git_index', guardHint: '创建 Git 提交', audit: 'sensitive', timeoutMs: 20_000, input: payload },
       () => commands.commitGitIndex(payload),
     );
   },
 
   listGitStashes(payload) {
     return callSpectaCommand(
-      {
-        command: 'list_git_stashes',
-        guardHint: '读取 Git 贮藏列表',
-        idempotent: true,
-        input: payload,
-      },
+      { command: 'list_git_stashes', guardHint: '读取 Git 贮藏列表', idempotent: true, input: payload },
       () => commands.listGitStashes(payload),
     );
   },
 
   saveGitStash(payload) {
     return callSpectaCommand(
-      {
-        command: 'save_git_stash',
-        guardHint: '保存 Git 贮藏',
-        audit: 'sensitive',
-        timeoutMs: 20_000,
-        input: payload,
-      },
+      { command: 'save_git_stash', guardHint: '保存 Git 贮藏', audit: 'sensitive', timeoutMs: 20_000, input: payload },
       () => commands.saveGitStash(payload),
     );
   },
 
   applyGitStash(payload) {
     return callSpectaCommand(
-      {
-        command: 'apply_git_stash',
-        guardHint: '应用 Git 贮藏',
-        audit: 'sensitive',
-        timeoutMs: 20_000,
-        input: payload,
-      },
+      { command: 'apply_git_stash', guardHint: '应用 Git 贮藏', audit: 'sensitive', timeoutMs: 20_000, input: payload },
       () => commands.applyGitStash(payload),
     );
   },
 
   dropGitStash(payload) {
     return callSpectaCommand(
-      {
-        command: 'drop_git_stash',
-        guardHint: '删除 Git 贮藏',
-        audit: 'sensitive',
-        timeoutMs: 20_000,
-        input: payload,
-      },
+      { command: 'drop_git_stash', guardHint: '删除 Git 贮藏', audit: 'sensitive', timeoutMs: 20_000, input: payload },
       () => commands.dropGitStash(payload),
     );
   },
 
   getGitPullRequestSupport(payload) {
     return callSpectaCommand(
-      {
-        command: 'get_git_pull_request_support',
-        guardHint: '读取 Git 远端 Pull Request 支持信息',
-        idempotent: true,
-        input: payload,
-      },
+      { command: 'get_git_pull_request_support', guardHint: '读取 Git 远端 Pull Request 支持信息', idempotent: true, input: payload },
       () => commands.getGitPullRequestSupport(payload),
-    );
-  },
-
-  listGitPullRequests(payload) {
-    return callSpectaCommand(
-      {
-        command: 'list_git_pull_requests',
-        guardHint: '读取 GitHub Pull Request 列表',
-        idempotent: true,
-        timeoutMs: 20_000,
-        input: payload,
-      },
-      () => commands.listGitPullRequests(payload),
-    );
-  },
-
-  getGitPullRequestDetail(payload) {
-    return callSpectaCommand(
-      {
-        command: 'get_git_pull_request_detail',
-        guardHint: '读取 GitHub Pull Request 详情',
-        idempotent: true,
-        timeoutMs: 20_000,
-        input: payload,
-      },
-      () => commands.getGitPullRequestDetail(payload),
-    );
-  },
-
-  createGitPullRequest(payload) {
-    return callSpectaCommand(
-      {
-        command: 'create_git_pull_request',
-        guardHint: '创建 GitHub Pull Request',
-        audit: 'sensitive',
-        timeoutMs: 30_000,
-        input: payload,
-      },
-      () => commands.createGitPullRequest(payload),
-    );
-  },
-
-  mergeGitPullRequest(payload) {
-    return callSpectaCommand(
-      {
-        command: 'merge_git_pull_request',
-        guardHint: '合并 GitHub Pull Request',
-        audit: 'sensitive',
-        timeoutMs: 30_000,
-        input: payload,
-      },
-      () => commands.mergeGitPullRequest(payload),
-    );
-  },
-
-  closeGitPullRequest(payload) {
-    return callSpectaCommand(
-      {
-        command: 'close_git_pull_request',
-        guardHint: '关闭 GitHub Pull Request',
-        audit: 'sensitive',
-        timeoutMs: 20_000,
-        input: payload,
-      },
-      () => commands.closeGitPullRequest(payload),
     );
   },
 };
