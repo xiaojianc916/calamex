@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-// 避免在测试环境加载真实 Shiki/Oniguruma 包；本用例只验证纯决策函数。
+// 避免在测试环境加载真实 Shiki/Oniguruma 包；本用例只验证纯决策/计算函数。
 vi.mock('@/services/editor/shiki-highlighter', () => ({
   ensureShikiLanguage: vi.fn(),
   isShikiLanguageLoaded: vi.fn(() => false),
@@ -10,10 +10,13 @@ vi.mock('@/services/editor/shiki-highlighter', () => ({
   SHIKI_FOREGROUND: '#000000',
 }));
 
-import { resolveShikiHighlightUpdateAction } from './codemirror-shiki-highlight';
+import {
+  computeShikiHighlightRange,
+  resolveShikiHighlightUpdateAction,
+} from './codemirror-shiki-highlight';
 
 describe('resolveShikiHighlightUpdateAction', () => {
-  it('语言切换时立即全量重算', () => {
+  it('语言切换时立即重算', () => {
     expect(
       resolveShikiHighlightUpdateAction({
         languageChanged: true,
@@ -23,7 +26,7 @@ describe('resolveShikiHighlightUpdateAction', () => {
     ).toBe('recompute');
   });
 
-  it('收到重算请求（语法加载完成/防抖超时）时全量重算', () => {
+  it('收到重算请求（语法加载完成/防抖超时）时重算', () => {
     expect(
       resolveShikiHighlightUpdateAction({
         languageChanged: false,
@@ -33,12 +36,34 @@ describe('resolveShikiHighlightUpdateAction', () => {
     ).toBe('recompute');
   });
 
-  it('仅文档变化时只做位移映射，不全量 tokenize', () => {
+  it('仅文档变化时只做位移映射，不重新 tokenize', () => {
     expect(
       resolveShikiHighlightUpdateAction({
         languageChanged: false,
         recomputeRequested: false,
         docChanged: true,
+      }),
+    ).toBe('remap');
+  });
+
+  it('仅视口变化（滚动）时重新 tokenize 可见区域', () => {
+    expect(
+      resolveShikiHighlightUpdateAction({
+        languageChanged: false,
+        recomputeRequested: false,
+        docChanged: false,
+        viewportChanged: true,
+      }),
+    ).toBe('recompute');
+  });
+
+  it('文档变化优先于视口变化，走位移映射', () => {
+    expect(
+      resolveShikiHighlightUpdateAction({
+        languageChanged: false,
+        recomputeRequested: false,
+        docChanged: true,
+        viewportChanged: true,
       }),
     ).toBe('remap');
   });
@@ -51,5 +76,55 @@ describe('resolveShikiHighlightUpdateAction', () => {
         docChanged: false,
       }),
     ).toBe('skip');
+  });
+});
+
+describe('computeShikiHighlightRange', () => {
+  it('默认从文档首行切片，下沿按可见区 + overscan', () => {
+    expect(
+      computeShikiHighlightRange({
+        firstVisibleLine: 100,
+        lastVisibleLine: 160,
+        totalLines: 500,
+        overscanLines: 40,
+        fromDocumentStart: true,
+      }),
+    ).toEqual({ startLine: 1, endLine: 200 });
+  });
+
+  it('从文档首行切片时下沿夹取到文档末行', () => {
+    expect(
+      computeShikiHighlightRange({
+        firstVisibleLine: 460,
+        lastVisibleLine: 500,
+        totalLines: 500,
+        overscanLines: 40,
+        fromDocumentStart: true,
+      }),
+    ).toEqual({ startLine: 1, endLine: 500 });
+  });
+
+  it('退化为窗口时上沿按可见区 - overscan，并夹取到第 1 行', () => {
+    expect(
+      computeShikiHighlightRange({
+        firstVisibleLine: 30,
+        lastVisibleLine: 90,
+        totalLines: 500,
+        overscanLines: 40,
+        fromDocumentStart: false,
+      }),
+    ).toEqual({ startLine: 1, endLine: 130 });
+  });
+
+  it('退化为窗口时上沿随可见区下移而大于 1', () => {
+    expect(
+      computeShikiHighlightRange({
+        firstVisibleLine: 300,
+        lastVisibleLine: 360,
+        totalLines: 1000,
+        overscanLines: 40,
+        fromDocumentStart: false,
+      }),
+    ).toEqual({ startLine: 260, endLine: 400 });
   });
 });
