@@ -214,27 +214,12 @@
             正在读取 Git 提交历史…
           </div>
 
-          <div v-else-if="filteredCommitHistory.length > 0" class="source-control-history-timeline">
-            <article v-for="(entry, index) in filteredCommitHistory" :key="entry.id" class="source-control-history-item"
-              :class="{ 'is-active': index === 0 }">
-              <div class="source-control-history-node" aria-hidden="true">
-                <span class="source-control-history-node-dot"></span>
-              </div>
-
-              <div class="source-control-history-body">
-                <p class="source-control-history-message">{{ entry.summary }}</p>
-
-                <div class="source-control-history-meta">
-                  <span class="source-control-history-hash">{{ entry.shortId }}</span>
-                  <span class="source-control-history-author">{{ entry.authorName }}</span>
-                </div>
-              </div>
-
-              <time class="source-control-history-time" :datetime="entry.authoredAt">
-                {{ formatCommitTime(entry.authoredAt) }}
-              </time>
-            </article>
-          </div>
+          <GitHistoryGraph
+            v-else-if="filteredCommitHistory.length > 0"
+            :commits="filteredCommitHistory"
+            :ahead="status.ahead"
+            :behind="status.behind"
+          />
 
           <p v-else class="source-control-info-note source-control-history-note">{{ historyEmptyText }}</p>
         </section>
@@ -421,6 +406,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import LinearContextMenu from '@/components/common/LinearContextMenu.vue';
 import type { ILinearContextMenuItem } from '@/components/common/linear-context-menu.types';
+import GitHistoryGraph from '@/components/workbench/GitHistoryGraph.vue';
 import { useDialog } from '@/composables/useDialog';
 import { useMessage } from '@/composables/useMessage';
 import {
@@ -842,34 +828,6 @@ const emptyChangesText = computed(() => '试试搜索文件名、目录、状态
 const commitButtonLabel = computed(() =>
   pendingAction.value === 'commit' ? '提交中...' : '提交更改',
 );
-
-const formatRelativeTime = (timestamp: number): string => {
-  const elapsedMs = Math.max(0, Date.now() - timestamp);
-  if (elapsedMs < 30_000) {
-    return '刚刚';
-  }
-
-  const minutes = Math.floor(elapsedMs / 60_000);
-  if (minutes < 60) {
-    return `${minutes} 分钟前`;
-  }
-
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) {
-    return `${hours} 小时前`;
-  }
-
-  return `${Math.floor(hours / 24)} 天前`;
-};
-
-const formatCommitTime = (value: string): string => {
-  const timestamp = Date.parse(value);
-  if (Number.isNaN(timestamp)) {
-    return value;
-  }
-
-  return formatRelativeTime(timestamp);
-};
 
 const matchesSearchQuery = (parts: Array<string | null | undefined>): boolean => {
   const keyword = searchQuery.value.trim().toLowerCase();

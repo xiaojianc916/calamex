@@ -1,30 +1,20 @@
-// Git 提交图布局：把(按时间倒序的)提交序列计算成可绘制的「泳道(lane)」布局。
-// 纯函数、无副作用，便于单测。渲染层(GitHistoryGraph.vue)只负责把 column/edge
-// 映射成 SVG 坐标。
-//
-// 约定：
-// - 输入按「新→旧」排列(与 git log 默认一致)。
-// - 每个提交带 parentIds(首个为第一父提交)。缺失时按根提交处理。
-// - 列一旦分配即稳定，经过型泳道始终是直线，避免跨行连线横向漂移；空出的列
-//   (null)允许被新提交的起点复用，防止无父链信息时列号无限膨胀。
+export type TGitGraphEdgeType = 'pass' | 'in' | 'out';
 
 export interface IGitGraphInputCommit {
   id: string;
-  parentIds?: string[];
+  parentIds: string[];
 }
-
-export type TGitGraphEdgeType = 'pass' | 'in' | 'out';
 
 export interface IGitGraphEdge {
   type: TGitGraphEdgeType;
-  fromColumn: number;
-  toColumn: number;
+  fromLane: number;
+  toLane: number;
   color: string;
 }
 
 export interface IGitGraphRow {
   id: string;
-  column: number;
+  lane: number;
   color: string;
   edges: IGitGraphEdge[];
 }
@@ -34,97 +24,131 @@ export interface IGitGraphLayout {
   laneCount: number;
 }
 
-// 泳道配色(循环取用)。刻意避开纯红/纯绿等状态色，避免与「变更状态」语义混淆。
-const GIT_GRAPH_LANE_COLORS = [
-  '#3b82f6',
-  '#8b5cf6',
-  '#ec4899',
-  '#f59e0b',
-  '#10b981',
-  '#06b6d4',
-  '#ef4444',
-  '#84cc16',
+const GIT_GRAPH_LANE_COLORS: string[] = [
+  '#4f9dde',
+  '#e0598b',
+  '#52b788',
+  '#e8a13c',
+  '#9d7cd8',
+  '#e5645b',
+  '#3cb4b0',
+  '#c7923e',
 ];
 
-export const resolveGitGraphLaneColor = (column: number): string => {
-  if (column < 0) {
-    return GIT_GRAPH_LANE_COLORS[0];
+export function resolveGitGraphLaneColor(lane: number): string {
+  const total = GIT_GRAPH_LANE_COLORS.length;
+  const index = ((lane % total) + total) % total;
+  return GIT_GRAPH_LANE_COLORS[index];
+}
+
+function firstFreeLane(lanes: Array<string | null>): number {
+  for (let index = 0; index < lanes.length; index += 1) {
+    if (lanes[index] === null || lanes[index] === undefined) {
+      return index;
+    }
   }
+  return lanes.length;
+}
 
-  return GIT_GRAPH_LANE_COLORS[column % GIT_GRAPH_LANE_COLORS.length];
-};
-
-const findReusableColumn = (lanes: (string | null)[]): number => lanes.indexOf(null);
-
-export const buildGitGraph = (commits: IGitGraphInputCommit[]): IGitGraphLayout => {
-  // lanes[i] = 该列当前「期待出现」的提交 id；null 表示空列。
-  const lanes: (string | null)[] = [];
+export function buildGitGraph(commits: IGitGraphInputCommit[]): IGitGraphLayout {
+  let lanes: Array<string | null> = [];
   const rows: IGitGraphRow[] = [];
   let laneCount = 0;
 
-  for (const commit of commits) {
-    const incoming = [...lanes];
+  for (let index = 0; index < commits.length; index += 1) {
+    const commit = commits[index];
+    const parents = commit.parentIds ? commit.parentIds.slice() : [];
+    const beforeLanes = lanes.slice();
 
-    // 1) 决定当前提交所在列。
-    let commitColumn = lanes.indexOf(commit.id);
-    if (commitColumn === -1) {
-      const reusable = findReusableColumn(lanes);
-      if (reusable === -1) {
-        commitColumn = lanes.length;
-        lanes.push(null);
-      } else {
-        commitColumn = reusable;
+    const incomingLanes: number[] = [];
+    for (let lane = 0; lane < beforeLanes.length; lane += 1) {
+      if (beforeLanes[lane] === commit.id) {
+        incomingLanes.push(lane);
       }
     }
 
-    const nodeColor = resolveGitGraphLaneColor(commitColumn);
+    const nodeLane = incomingLanes.length > 0 ? incomingLanes[0] : firstFreeLane(beforeLanes);
 
-    // 2) 其它同样期待本提交的泳道(多个子提交汇入)合并进 commitColumn 并释放。
-    for (let j = 0; j < lanes.length; j += 1) {
-      if (j !== commitColumn && lanes[j] === commit.id) {
-        lanes[j] = null;
-      }
+    const afterLanes = beforeLanes.slice();
+    while (afterLanes.length <= nodeLane) {
+      afterLanes.push(null);
     }
+    for (let i = 0; i < incomingLanes.length; i += 1) {
+      afterLanes[incomingLanes[i]] = null;
+    }
+    afterLanes[nodeLane] = null;
 
-    // 3) 安排父提交占位。
-    const parentIds = commit.parentIds ?? [];
-    if (parentIds.length === 0) {
-      lanes[commitColumn] = null;
-    } else {
-      lanes[commitColumn] = parentIds[0];
-      for (let p = 1; p < parentIds.length; p += 1) {
-        const parentId = parentIds[p];
-        let parentColumn = lanes.indexOf(parentId);
-        if (parentColumn === -1) {
-          const reusable = findReusableColumn(lanes);
-          if (reusable === -1) {
-            parentColumn = lanes.length;
-            lanes.push(parentId);
-          } else {
-            parentColumn = reusable;
-            lanes[parentColumn] = parentId;
-          }
+    const outLanes: number[] = [];
+    for (let parentIndex = 0; parentIndex < parents.length; parentIndex += 1) {
+      const parentId = parents[parentIndex];
+
+      let existingLane = -1;
+      for (let lane = 0; lane < afterLanes.length; lane += 1) {
+        if (afterLanes[lane] === parentId) {
+          existingLane = lane;
+          break;
         }
       }
+      if (existingLane !== -1) {
+        outLanes.push(existingLane);
+        continue;
+      }
+
+      const targetLane = parentIndex === 0 ? nodeLane : firstFreeLane(afterLanes);
+      while (afterLanes.length <= targetLane) {
+        afterLanes.push(null);
+      }
+      afterLanes[targetLane] = parentId;
+      outLanes.push(targetLane);
     }
 
-    const outgoing = [...lanes];
+    while (afterLanes.length > 0 && afterLanes[afterLanes.length - 1] === null) {
+      afterLanes.pop();
+    }
 
-    // 4) 生成边信息（此处为逻辑占位，可后续补充完整实现）
     const edges: IGitGraphEdge[] = [];
+    for (let lane = 0; lane < beforeLanes.length; lane += 1) {
+      const value = beforeLanes[lane];
+      if (value === null || value === undefined) {
+        continue;
+      }
+      if (value === commit.id) {
+        edges.push({
+          type: lane === nodeLane ? 'pass' : 'in',
+          fromLane: lane,
+          toLane: nodeLane,
+          color: resolveGitGraphLaneColor(lane),
+        });
+      } else {
+        edges.push({
+          type: 'pass',
+          fromLane: lane,
+          toLane: lane,
+          color: resolveGitGraphLaneColor(lane),
+        });
+      }
+    }
+
+    for (let i = 0; i < outLanes.length; i += 1) {
+      const target = outLanes[i];
+      edges.push({
+        type: target === nodeLane ? 'pass' : 'out',
+        fromLane: nodeLane,
+        toLane: target,
+        color: resolveGitGraphLaneColor(target),
+      });
+    }
 
     rows.push({
       id: commit.id,
-      column: commitColumn,
-      color: nodeColor,
+      lane: nodeLane,
+      color: resolveGitGraphLaneColor(nodeLane),
       edges,
     });
+
+    laneCount = Math.max(laneCount, beforeLanes.length, afterLanes.length, nodeLane + 1);
+    lanes = afterLanes;
   }
 
-  laneCount = lanes.length;
-
-  return {
-    rows,
-    laneCount,
-  };
-};
+  return { rows, laneCount: Math.max(1, laneCount) };
+}
