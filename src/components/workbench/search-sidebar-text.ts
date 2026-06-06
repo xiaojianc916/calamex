@@ -71,7 +71,8 @@ export const splitPatternList = (value: string): string[] =>
     .map((item) => item.trim())
     .filter(Boolean);
 
-export const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+export const escapeRegExp = (value: string): string =>
+  value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 
 const collectPlainMatchRanges = (
   value: string,

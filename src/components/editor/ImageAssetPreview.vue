@@ -69,9 +69,7 @@ const imageNaturalHeight = ref(0);
 
 // 通过 asset 协议把规范化后的真实路径转成 webview 可直接加载的 URL，
 // 由原生层按需流式读取图片，避免 base64 over IPC。
-const imageSrc = computed(() =>
-  assetMeta.value ? convertFileSrc(assetMeta.value.path) : '',
-);
+const imageSrc = computed(() => (assetMeta.value ? convertFileSrc(assetMeta.value.path) : ''));
 
 const imageSizeLabel = computed(() => {
   if (imageNaturalWidth.value <= 0 || imageNaturalHeight.value <= 0) {

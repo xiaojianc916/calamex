@@ -871,7 +871,7 @@ async function ensureActiveTabData(tabKey: TGitNavKey): Promise<void> {
     await gitStore.loadPullRequestSupport();
     if (gitStore.pullRequestSupport.available) {
       await gitStore.loadPullRequests();
-   }
+    }
   } catch (error) {
     const fallbackMessage =
       tabKey === 'history'
@@ -1874,7 +1874,7 @@ const handleDropStash = async (entry: IGitStashEntryPayload): Promise<void> => {
 const handleReloadPullRequestSupport = async (): Promise<void> => {
   try {
     await gitStore.loadPullRequestSupport();
-   if (gitStore.pullRequestSupport.available) {
+    if (gitStore.pullRequestSupport.available) {
       await gitStore.loadPullRequests();
     }
   } catch (error) {

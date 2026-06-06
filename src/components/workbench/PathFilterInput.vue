@@ -347,7 +347,8 @@ const handleKeydown = (event: KeyboardEvent): void => {
     }
 
     // 右方向键/Tab 在高亮为目录时进入目录浏览；文件则直接定型成 chip。
-    const activeSuggestion = activeIndex.value >= 0 ? suggestions.value[activeIndex.value] : undefined;
+    const activeSuggestion =
+      activeIndex.value >= 0 ? suggestions.value[activeIndex.value] : undefined;
 
     if (event.key === 'ArrowRight' && activeSuggestion?.kind === 'directory') {
       event.preventDefault();

@@ -171,10 +171,17 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 
 import LinearContextMenu from '@/components/common/LinearContextMenu.vue';
-import type { ILinearContextMenuGroup, ILinearContextMenuItem } from '@/components/common/linear-context-menu.types';
+import type {
+  ILinearContextMenuGroup,
+  ILinearContextMenuItem,
+} from '@/components/common/linear-context-menu.types';
 import { useEditorStore } from '@/store/editor';
 import { useGitStore } from '@/store/git';
-import type { IGitCommitDetailPayload, IGitCommitFileChangePayload, IGitCommitSummaryPayload } from '@/types/git';
+import type {
+  IGitCommitDetailPayload,
+  IGitCommitFileChangePayload,
+  IGitCommitSummaryPayload,
+} from '@/types/git';
 import { writeClipboardText } from '@/utils/clipboard';
 import type { IGitGraphEdge } from '@/utils/git-graph';
 import { buildGitGraph, resolveGitGraphLaneColor } from '@/utils/git-graph';
@@ -188,8 +195,16 @@ const HOVER_CARD_WIDTH = 320;
 // 悬浮卡片高度估算值,仅用于首帧定位;真实尺寸由 adjustHoverCardPosition 实测后再夹取。
 const HOVER_CARD_EST_HEIGHT = 188;
 
-interface IGitCommitRef { name: string; kind: string; isHead: boolean; }
-interface IGraphEdgePath { key: string; d: string; color: string; }
+interface IGitCommitRef {
+  name: string;
+  kind: string;
+  isHead: boolean;
+}
+interface IGraphEdgePath {
+  key: string;
+  d: string;
+  color: string;
+}
 interface IGraphRow {
   commit: IGitCommitSummaryPayload;
   nodeX: number;
@@ -198,8 +213,13 @@ interface IGraphRow {
   paths: IGraphEdgePath[];
 }
 interface IGraphGroup {
-  key: string; title: string; icon: string; tone: string;
-  count: number; showHeader: boolean; rows: IGraphRow[];
+  key: string;
+  title: string;
+  icon: string;
+  tone: string;
+  count: number;
+  showHeader: boolean;
+  rows: IGraphRow[];
 }
 
 const props = withDefaults(
@@ -217,12 +237,23 @@ const expandedDetail = ref<IGitCommitDetailPayload | null>(null);
 const expandedLoading = ref(false);
 const rootRef = ref<HTMLElement | null>(null);
 
-const menu = reactive<{ open: boolean; x: number; y: number; commit: IGitCommitSummaryPayload | null }>({
-  open: false, x: 0, y: 0, commit: null,
+const menu = reactive<{
+  open: boolean;
+  x: number;
+  y: number;
+  commit: IGitCommitSummaryPayload | null;
+}>({
+  open: false,
+  x: 0,
+  y: 0,
+  commit: null,
 });
 
 const hover = reactive<{ open: boolean; commitId: string | null; x: number; y: number }>({
-  open: false, commitId: null, x: 0, y: 0,
+  open: false,
+  commitId: null,
+  x: 0,
+  y: 0,
 });
 
 const hoverCommit = ref<IGitCommitSummaryPayload | null>(null);
@@ -244,14 +275,38 @@ const buildEdgePath = (edge: IGitGraphEdge, rowHeight: number): string => {
   const x1 = laneX(edge.fromLane);
   const x2 = laneX(edge.toLane);
   const mid = rowHeight / 2;
-  if (edge.type === 'pass' && edge.fromLane === edge.toLane) return 'M ' + x1 + ' 0 L ' + x1 + ' ' + rowHeight;
-  if (edge.type === 'in') return 'M ' + x1 + ' 0 C ' + x1 + ' ' + mid * 0.6 + ' ' + x2 + ' ' + mid * 0.4 + ' ' + x2 + ' ' + mid;
-  if (edge.type === 'out') return 'M ' + x1 + ' ' + mid + ' C ' + x1 + ' ' + (mid + mid * 0.4) + ' ' + x2 + ' ' + (mid + mid * 0.6) + ' ' + x2 + ' ' + rowHeight;
+  if (edge.type === 'pass' && edge.fromLane === edge.toLane)
+    return 'M ' + x1 + ' 0 L ' + x1 + ' ' + rowHeight;
+  if (edge.type === 'in')
+    return (
+      'M ' + x1 + ' 0 C ' + x1 + ' ' + mid * 0.6 + ' ' + x2 + ' ' + mid * 0.4 + ' ' + x2 + ' ' + mid
+    );
+  if (edge.type === 'out')
+    return (
+      'M ' +
+      x1 +
+      ' ' +
+      mid +
+      ' C ' +
+      x1 +
+      ' ' +
+      (mid + mid * 0.4) +
+      ' ' +
+      x2 +
+      ' ' +
+      (mid + mid * 0.6) +
+      ' ' +
+      x2 +
+      ' ' +
+      rowHeight
+    );
   return 'M ' + x1 + ' 0 C ' + x1 + ' ' + mid + ' ' + x2 + ' ' + mid + ' ' + x2 + ' ' + rowHeight;
 };
 
 const layout = computed(() =>
-  buildGitGraph(props.commits.map((commit) => ({ id: commit.id, parentIds: commit.parentIds ?? [] }))),
+  buildGitGraph(
+    props.commits.map((commit) => ({ id: commit.id, parentIds: commit.parentIds ?? [] })),
+  ),
 );
 
 const graphWidth = computed(() => Math.max(1, layout.value.laneCount) * LANE_WIDTH);
@@ -276,21 +331,32 @@ const decorated = computed<IGraphRow[]>(() =>
   }),
 );
 
-const outgoingRows = computed<IGraphRow[]>(() => decorated.value.slice(0, Math.max(0, props.ahead)));
+const outgoingRows = computed<IGraphRow[]>(() =>
+  decorated.value.slice(0, Math.max(0, props.ahead)),
+);
 const historyRows = computed<IGraphRow[]>(() => decorated.value.slice(Math.max(0, props.ahead)));
 
 const renderGroups = computed<IGraphGroup[]>(() => {
   const groups: IGraphGroup[] = [];
   if (outgoingRows.value.length > 0) {
     groups.push({
-      key: 'outgoing', title: '传出更改', icon: 'icon-[lucide--arrow-up]',
-      tone: 'outgoing', count: outgoingRows.value.length, showHeader: true, rows: outgoingRows.value,
+      key: 'outgoing',
+      title: '传出更改',
+      icon: 'icon-[lucide--arrow-up]',
+      tone: 'outgoing',
+      count: outgoingRows.value.length,
+      showHeader: true,
+      rows: outgoingRows.value,
     });
   }
   groups.push({
-    key: 'history', title: '历史', icon: 'icon-[lucide--git-commit-horizontal]',
-    tone: 'history', count: historyRows.value.length,
-    showHeader: outgoingRows.value.length > 0, rows: historyRows.value,
+    key: 'history',
+    title: '历史',
+    icon: 'icon-[lucide--git-commit-horizontal]',
+    tone: 'history',
+    count: historyRows.value.length,
+    showHeader: outgoingRows.value.length > 0,
+    rows: historyRows.value,
   });
   return groups;
 });
@@ -313,7 +379,13 @@ const menuGroups = computed<ILinearContextMenuGroup[]>(() => {
         { key: 'checkout-commit', label: '检出此提交', icon: 'git-branch' },
         { key: 'revert-commit', label: '回滚此提交', icon: 'rotate-ccw' },
         ...(repoUrl
-          ? [{ key: 'open-github', label: '在 GitHub 上打开', icon: 'external-link' } as ILinearContextMenuItem]
+          ? [
+              {
+                key: 'open-github',
+                label: '在 GitHub 上打开',
+                icon: 'external-link',
+              } as ILinearContextMenuItem,
+            ]
           : []),
       ],
     },
@@ -325,9 +397,15 @@ const hoverMessage = computed<string>(() => {
   if (detail) return detail.body ? detail.summary + '\n\n' + detail.body : detail.summary;
   return hoverCommit.value?.summary ?? '';
 });
-const hoverAuthorName = computed<string>(() => hoverDetail.value?.authorName ?? hoverCommit.value?.authorName ?? '');
-const hoverAuthoredAt = computed<string>(() => hoverDetail.value?.authoredAt ?? hoverCommit.value?.authoredAt ?? '');
-const hoverShortId = computed<string>(() => hoverDetail.value?.shortId ?? hoverCommit.value?.shortId ?? '');
+const hoverAuthorName = computed<string>(
+  () => hoverDetail.value?.authorName ?? hoverCommit.value?.authorName ?? '',
+);
+const hoverAuthoredAt = computed<string>(
+  () => hoverDetail.value?.authoredAt ?? hoverCommit.value?.authoredAt ?? '',
+);
+const hoverShortId = computed<string>(
+  () => hoverDetail.value?.shortId ?? hoverCommit.value?.shortId ?? '',
+);
 
 const refClass = (commitRef: IGitCommitRef): Record<string, boolean> => ({
   'is-head': commitRef.isHead,
@@ -340,11 +418,16 @@ const refIcon = (commitRef: IGitCommitRef): string =>
 
 const resolveFileIcon = (status: string): string => {
   switch (status) {
-    case 'added': return 'icon-[lucide--file-plus]';
-    case 'deleted': return 'icon-[lucide--file-minus]';
-    case 'renamed': return 'icon-[lucide--file-symlink]';
-    case 'binary': return 'icon-[lucide--file-digit]';
-    default: return 'icon-[lucide--file-pen-line]';
+    case 'added':
+      return 'icon-[lucide--file-plus]';
+    case 'deleted':
+      return 'icon-[lucide--file-minus]';
+    case 'renamed':
+      return 'icon-[lucide--file-symlink]';
+    case 'binary':
+      return 'icon-[lucide--file-digit]';
+    default:
+      return 'icon-[lucide--file-pen-line]';
   }
 };
 
@@ -426,11 +509,17 @@ const handleFileClick = async (file: IGitCommitFileChangePayload): Promise<void>
 };
 
 const clearHoverOpenTimer = (): void => {
-  if (hoverOpenTimer !== null) { clearTimeout(hoverOpenTimer); hoverOpenTimer = null; }
+  if (hoverOpenTimer !== null) {
+    clearTimeout(hoverOpenTimer);
+    hoverOpenTimer = null;
+  }
 };
 
 const clearHoverCloseTimer = (): void => {
-  if (hoverCloseTimer !== null) { clearTimeout(hoverCloseTimer); hoverCloseTimer = null; }
+  if (hoverCloseTimer !== null) {
+    clearTimeout(hoverCloseTimer);
+    hoverCloseTimer = null;
+  }
 };
 
 const closeHoverCard = (): void => {
@@ -510,7 +599,9 @@ const handleRowEnter = (event: MouseEvent, commit: IGitCommitSummaryPayload): vo
   if (!(target instanceof HTMLElement)) return;
   const rect = target.getBoundingClientRect();
   clearHoverOpenTimer();
-  hoverOpenTimer = setTimeout(() => { void openHoverCard(rect, commit); }, HOVER_OPEN_DELAY);
+  hoverOpenTimer = setTimeout(() => {
+    void openHoverCard(rect, commit);
+  }, HOVER_OPEN_DELAY);
 };
 
 const handleRowLeave = (): void => {
@@ -519,15 +610,22 @@ const handleRowLeave = (): void => {
   hoverCloseTimer = setTimeout(closeHoverCard, HOVER_CLOSE_DELAY);
 };
 
-const handleCardEnter = (): void => { clearHoverCloseTimer(); };
-const handleCardLeave = (): void => { handleRowLeave(); };
+const handleCardEnter = (): void => {
+  clearHoverCloseTimer();
+};
+const handleCardLeave = (): void => {
+  handleRowLeave();
+};
 
 const copyHoverCommitId = async (): Promise<void> => {
   const commitId = hoverDetail.value?.id ?? hoverCommit.value?.id;
   if (commitId) await writeClipboardText(commitId);
 };
 
-const closeMenu = (): void => { menu.open = false; menu.commit = null; };
+const closeMenu = (): void => {
+  menu.open = false;
+  menu.commit = null;
+};
 
 const handleContextMenu = (event: MouseEvent, commit: IGitCommitSummaryPayload): void => {
   event.preventDefault();
@@ -549,19 +647,34 @@ const handleMenuSelect = async (item: ILinearContextMenuItem): Promise<void> => 
   closeMenu();
   if (!commit) return;
 
-  if (item.key === 'copy-sha') { await writeClipboardText(commit.id); return; }
-  if (item.key === 'copy-short') { await writeClipboardText(commit.shortId); return; }
-  if (item.key === 'copy-message') { await writeClipboardText(commit.summary); return; }
+  if (item.key === 'copy-sha') {
+    await writeClipboardText(commit.id);
+    return;
+  }
+  if (item.key === 'copy-short') {
+    await writeClipboardText(commit.shortId);
+    return;
+  }
+  if (item.key === 'copy-message') {
+    await writeClipboardText(commit.summary);
+    return;
+  }
 
   if (item.key === 'checkout-commit') {
-    try { await gitStore.checkoutCommit(commit.id); }
-    catch (error) { console.error('[GitHistoryGraph] checkout commit failed:', error); }
+    try {
+      await gitStore.checkoutCommit(commit.id);
+    } catch (error) {
+      console.error('[GitHistoryGraph] checkout commit failed:', error);
+    }
     return;
   }
 
   if (item.key === 'revert-commit') {
-    try { await gitStore.revertCommit(commit.id); }
-    catch (error) { console.error('[GitHistoryGraph] revert commit failed:', error); }
+    try {
+      await gitStore.revertCommit(commit.id);
+    } catch (error) {
+      console.error('[GitHistoryGraph] revert commit failed:', error);
+    }
     return;
   }
 
@@ -581,12 +694,20 @@ const handleWindowPointerDown = (event: PointerEvent): void => {
 const handleWindowKeydown = (event: KeyboardEvent): void => {
   if (event.key !== 'Escape') return;
   if (menu.open) closeMenu();
-  if (hover.open) { clearHoverOpenTimer(); clearHoverCloseTimer(); closeHoverCard(); }
+  if (hover.open) {
+    clearHoverOpenTimer();
+    clearHoverCloseTimer();
+    closeHoverCard();
+  }
 };
 
 const handleWindowResize = (): void => {
   if (menu.open) closeMenu();
-  if (hover.open) { clearHoverOpenTimer(); clearHoverCloseTimer(); closeHoverCard(); }
+  if (hover.open) {
+    clearHoverOpenTimer();
+    clearHoverCloseTimer();
+    closeHoverCard();
+  }
 };
 
 // req5: 滚动历史列表时关闭并抑制悬浮卡片,滚动停止 180ms 后恢复。
@@ -595,7 +716,9 @@ const handleHistoryScroll = (): void => {
   clearHoverOpenTimer();
   if (hover.open) closeHoverCard();
   if (scrollSettleTimer !== null) clearTimeout(scrollSettleTimer);
-  scrollSettleTimer = setTimeout(() => { isScrolling.value = false; }, 180);
+  scrollSettleTimer = setTimeout(() => {
+    isScrolling.value = false;
+  }, 180);
 };
 
 const teardownHistoryScrollListener = (): void => {
@@ -663,7 +786,10 @@ watch(historySentinelRef, () => {
 watch(
   () => props.commits,
   (commits) => {
-    if (commits.length === 0) { activeCommitId.value = null; return; }
+    if (commits.length === 0) {
+      activeCommitId.value = null;
+      return;
+    }
     const stillExists = commits.some((commit) => commit.id === activeCommitId.value);
     if (!stillExists) activeCommitId.value = commits[0].id;
     // collapse if expanded commit is no longer in list
@@ -687,7 +813,10 @@ onMounted(() => {
 onBeforeUnmount(() => {
   clearHoverOpenTimer();
   clearHoverCloseTimer();
-  if (scrollSettleTimer !== null) { clearTimeout(scrollSettleTimer); scrollSettleTimer = null; }
+  if (scrollSettleTimer !== null) {
+    clearTimeout(scrollSettleTimer);
+    scrollSettleTimer = null;
+  }
   disconnectHistoryObserver();
   teardownHistoryScrollListener();
   if (typeof window === 'undefined') return;

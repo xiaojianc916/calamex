@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  computeBackoffDelayMs,
   SUGGESTION_POOL_RETRY_BASE_MS,
   SUGGESTION_POOL_RETRY_MAX_MS,
-  computeBackoffDelayMs,
 } from '@/composables/ai/suggestionPoolBackoff';
 
 describe('computeBackoffDelayMs', () => {

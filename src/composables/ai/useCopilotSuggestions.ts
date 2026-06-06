@@ -3,10 +3,7 @@ import { useConfigureSuggestions, useSuggestions } from '@copilotkit/vue';
 import { computed, onBeforeUnmount, onMounted, type Ref, ref } from 'vue';
 import { aiService } from '@/services/ipc/ai.service';
 import { logger } from '@/utils/logger';
-import {
-  SUGGESTION_POOL_MAX_ATTEMPTS,
-  computeBackoffDelayMs,
-} from './suggestionPoolBackoff';
+import { computeBackoffDelayMs, SUGGESTION_POOL_MAX_ATTEMPTS } from './suggestionPoolBackoff';
 
 /**
  * 兜底建议池：免费小模型(narrator)不可用时使用。

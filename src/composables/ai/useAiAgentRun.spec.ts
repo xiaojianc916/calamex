@@ -15,8 +15,7 @@ const orchestrateMock = vi.hoisted(() => ({
 }));
 
 vi.mock('@/composables/ai/sidecar-orchestrate', async (importActual) => {
-  const actual =
-    await importActual<typeof import('@/composables/ai/sidecar-orchestrate')>();
+  const actual = await importActual<typeof import('@/composables/ai/sidecar-orchestrate')>();
   return {
     ...actual,
     startOrchestration: orchestrateMock.startOrchestration,
@@ -65,8 +64,7 @@ const makeResult = (events: TAgentUiEvent[], runId = 'orch-run-1') => ({
 const gateResult = (runId = 'orch-run-1') => makeResult([], runId);
 
 const doneEvent = (result: string): TAgentUiEvent => ({ type: 'done', result });
-const doneResult = (result: string, runId = 'orch-run-1') =>
-  makeResult([doneEvent(result)], runId);
+const doneResult = (result: string, runId = 'orch-run-1') => makeResult([doneEvent(result)], runId);
 
 const approvalEvent: TAgentUiEvent = {
   type: 'approval_required',
@@ -156,9 +154,7 @@ describe('useAiAgentRun', () => {
     expect(store.activeRun?.currentStepId).toBe('plan-step-2');
 
     expect(decisionsOf()).toEqual(['approve', 'continue']);
-    expect(orchestrateMock.resumeOrchestration.mock.calls[0]?.[0]?.runId).toBe(
-      'orch-run-1',
-    );
+    expect(orchestrateMock.resumeOrchestration.mock.calls[0]?.[0]?.runId).toBe('orch-run-1');
   });
 
   it('批准后自动连续执行所有步骤直到完成', async () => {
@@ -180,13 +176,10 @@ describe('useAiAgentRun', () => {
     expect(orchestrateMock.resumeOrchestration).toHaveBeenCalledTimes(3);
     expect(decisionsOf()).toEqual(['approve', 'continue', 'continue']);
     expect(run.status).toBe('completed');
-    expect(store.activeRun?.steps.map((step) => step.status)).toEqual([
-      'done',
-      'done',
+    expect(store.activeRun?.steps.map((step) => step.status)).toEqual(['done', 'done']);
+    expect(store.getStepFinalAnswers(run.id).map((answer) => answer.content)).toEqual([
+      '计划已完成。',
     ]);
-    expect(
-      store.getStepFinalAnswers(run.id).map((answer) => answer.content),
-    ).toEqual(['计划已完成。']);
   });
 
   it('高风险工具挂起后，确认放行可继续跑到完成', async () => {
@@ -201,14 +194,10 @@ describe('useAiAgentRun', () => {
     const steps = createRunSteps();
     seedApprovedPlan(store, '实现 Step Runtime', steps);
 
-    const waitingRun = await agentRun.runPlanToCompletion(
-      '实现 Step Runtime',
-      steps,
-      {
-        context: [],
-        workspaceRootPath: 'd:/com.xiaojianc/my_desktop_app',
-      },
-    );
+    const waitingRun = await agentRun.runPlanToCompletion('实现 Step Runtime', steps, {
+      context: [],
+      workspaceRootPath: 'd:/com.xiaojianc/my_desktop_app',
+    });
 
     expect(waitingRun.status).toBe('waiting-for-tool-confirmation');
     const confirmationId = store.pendingToolConfirmation?.id;

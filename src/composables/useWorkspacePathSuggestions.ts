@@ -156,7 +156,10 @@ export const useWorkspacePathSuggestions = (options: IUseWorkspacePathSuggestion
       : name.toLowerCase().startsWith(prefix.toLowerCase());
   };
 
-  const toEntrySuggestion = (entry: IWorkspaceEntry, relativeDirectory: string): IPathSuggestion => {
+  const toEntrySuggestion = (
+    entry: IWorkspaceEntry,
+    relativeDirectory: string,
+  ): IPathSuggestion => {
     const isDirectory = entry.kind === 'directory';
     const relativePath = relativeDirectory ? `${relativeDirectory}/${entry.name}` : entry.name;
 

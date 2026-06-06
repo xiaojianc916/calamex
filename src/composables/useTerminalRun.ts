@@ -164,8 +164,7 @@ export const useTerminalRun = ({ canRun, editorStore }: TUseTerminalRunOptions) 
   const resolveRunSessionId = (): string =>
     runRoutingStore.activeRunSessionId ?? tabsStore.activeSessionId ?? DEFAULT_TERMINAL_SESSION_ID;
 
-  const isActiveRunSession = (sessionId: string): boolean =>
-    sessionId === resolveRunSessionId();
+  const isActiveRunSession = (sessionId: string): boolean => sessionId === resolveRunSessionId();
 
   const resolveTerminalRunId = (runId: string | null | undefined): string | null => {
     const normalizedRunId = typeof runId === 'string' ? runId.trim() : '';

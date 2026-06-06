@@ -131,9 +131,8 @@ const createThread = (messages: IAiChatMessage[] = []): IAiConversationThread =>
 };
 
 const syncThreadMeta = (thread: IAiConversationThread): IAiConversationThread => {
-  const generatedTitle = thread.titleStatus === 'generated'
-    ? normalizeGeneratedTitle(thread.title)
-    : '';
+  const generatedTitle =
+    thread.titleStatus === 'generated' ? normalizeGeneratedTitle(thread.title) : '';
   return {
     ...thread,
     title: generatedTitle || deriveTemporaryConversationTitle(thread.messages),
@@ -232,9 +231,10 @@ const ensureActiveThread = (
       threads: [emptyThread],
     };
   }
-  const resolvedActiveThreadId = activeThreadId && threads.some((thread) => thread.id === activeThreadId)
-    ? activeThreadId
-    : (threads.at(-1)?.id ?? null);
+  const resolvedActiveThreadId =
+    activeThreadId && threads.some((thread) => thread.id === activeThreadId)
+      ? activeThreadId
+      : (threads.at(-1)?.id ?? null);
   return {
     activeThreadId: resolvedActiveThreadId,
     threads,
@@ -277,16 +277,15 @@ export const salvageHydratedThreads = (
       ...candidate,
       messages,
     });
-    return parsedThread.success
-      ? [parsedThread.data as unknown as IAiConversationThread]
-      : [];
+    return parsedThread.success ? [parsedThread.data as unknown as IAiConversationThread] : [];
   });
   if (threads.length === 0) {
     return null;
   }
-  const activeThreadId = typeof rawActiveThreadId === 'string' && rawActiveThreadId.trim().length > 0
-    ? rawActiveThreadId
-    : null;
+  const activeThreadId =
+    typeof rawActiveThreadId === 'string' && rawActiveThreadId.trim().length > 0
+      ? rawActiveThreadId
+      : null;
   return {
     activeThreadId,
     threads,
@@ -307,11 +306,9 @@ export const useAiConversationStore = defineStore(
     const activeThread = computed<IAiConversationThread | null>(
       () => threads.value.find((thread) => thread.id === activeThreadId.value) ?? null,
     );
-    const activeMessages = computed<IAiChatMessage[]>(
-      () => activeThread.value?.messages ?? []
-    );
-    const historyThreads = computed<IAiConversationThread[]>(
-      () => threads.value.filter((thread) => thread.messages.length > 0),
+    const activeMessages = computed<IAiChatMessage[]>(() => activeThread.value?.messages ?? []);
+    const historyThreads = computed<IAiConversationThread[]>(() =>
+      threads.value.filter((thread) => thread.messages.length > 0),
     );
     const hasMessages = computed(() => activeMessages.value.length > 0);
 
@@ -355,9 +352,7 @@ export const useAiConversationStore = defineStore(
       replaceThreadsState({
         activeThreadId: currentThread.id,
         threads: threads.value.map((thread) =>
-          thread.id === currentThread.id
-            ? syncThreadMeta(updater(thread))
-            : thread,
+          thread.id === currentThread.id ? syncThreadMeta(updater(thread)) : thread,
         ),
       });
     };
@@ -370,9 +365,7 @@ export const useAiConversationStore = defineStore(
       replaceThreadsState({
         activeThreadId: activeThreadId.value,
         threads: threads.value.map((thread) =>
-          thread.id === threadId
-            ? syncThreadMeta(updater(thread))
-            : thread,
+          thread.id === threadId ? syncThreadMeta(updater(thread)) : thread,
         ),
       });
     };
@@ -489,9 +482,10 @@ export const useAiConversationStore = defineStore(
         return false;
       }
       const remainingThreads = threads.value.filter((thread) => thread.id !== threadId);
-      const nextActiveThreadId = activeThreadId.value === threadId
-        ? (remainingThreads.at(-1)?.id ?? null)
-        : activeThreadId.value;
+      const nextActiveThreadId =
+        activeThreadId.value === threadId
+          ? (remainingThreads.at(-1)?.id ?? null)
+          : activeThreadId.value;
       replaceThreadsState({
         activeThreadId: nextActiveThreadId,
         threads: remainingThreads,

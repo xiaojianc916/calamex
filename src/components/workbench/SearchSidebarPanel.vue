@@ -282,6 +282,14 @@ import type {
   TWorkspaceSearchScope,
 } from '@/types/search';
 import { toErrorMessage } from '@/utils/error';
+import type {
+  IFlatSearchRow,
+  IReplacementFileView,
+  IReplacementLineView,
+  ISearchResultGroup,
+  ISearchResultItem,
+  TSearchToggleOption,
+} from './search-sidebar.types';
 import {
   buildCompactHighlightedSegments,
   buildReplacementLineSegments,
@@ -293,14 +301,6 @@ import {
   trimBoundaryWhitespace,
   trimBoundaryWhitespaceWithRange,
 } from './search-sidebar-text';
-import type {
-  IFlatSearchRow,
-  IReplacementFileView,
-  IReplacementLineView,
-  ISearchResultGroup,
-  ISearchResultItem,
-  TSearchToggleOption,
-} from './search-sidebar.types';
 
 const props = defineProps<{
   documentPath: string | null;

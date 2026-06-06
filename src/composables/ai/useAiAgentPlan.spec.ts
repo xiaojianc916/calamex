@@ -14,8 +14,7 @@ const orchestrateMock = vi.hoisted(() => ({
 }));
 
 vi.mock('@/composables/ai/sidecar-orchestrate', async (importActual) => {
-  const actual =
-    await importActual<typeof import('@/composables/ai/sidecar-orchestrate')>();
+  const actual = await importActual<typeof import('@/composables/ai/sidecar-orchestrate')>();
   return {
     ...actual,
     startOrchestration: orchestrateMock.startOrchestration,

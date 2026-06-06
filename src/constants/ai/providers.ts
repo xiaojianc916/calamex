@@ -101,9 +101,21 @@ export const AI_SERVICE_PLATFORM_PRESETS = [
       { id: 'anthropic/claude-opus-4-7', label: 'Claude Opus 4.7', contextWindow: 1_000_000 },
       { id: 'anthropic/claude-sonnet-4-6', label: 'Claude Sonnet 4.6', contextWindow: 1_000_000 },
       { id: 'anthropic/claude-opus-4-6', label: 'Claude Opus 4.6', contextWindow: 1_000_000 },
-      { id: 'anthropic/claude-opus-4-5-20251101', label: 'Claude Opus 4.5', contextWindow: 200_000 },
-      { id: 'anthropic/claude-sonnet-4-5-20250929', label: 'Claude Sonnet 4.5', contextWindow: 200_000 },
-      { id: 'anthropic/claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5', contextWindow: 200_000 },
+      {
+        id: 'anthropic/claude-opus-4-5-20251101',
+        label: 'Claude Opus 4.5',
+        contextWindow: 200_000,
+      },
+      {
+        id: 'anthropic/claude-sonnet-4-5-20250929',
+        label: 'Claude Sonnet 4.5',
+        contextWindow: 200_000,
+      },
+      {
+        id: 'anthropic/claude-haiku-4-5-20251001',
+        label: 'Claude Haiku 4.5',
+        contextWindow: 200_000,
+      },
     ],
   },
   {
@@ -124,9 +136,21 @@ export const AI_SERVICE_PLATFORM_PRESETS = [
     defaultModel: 'google/gemini-3.1-pro-preview',
     models: [
       // Gemini 系列 1M 上下文(1,048,576)。
-      { id: 'google/gemini-3.1-pro-preview', label: 'gemini-3.1-pro-preview', contextWindow: 1_048_576 },
-      { id: 'google/gemini-3-flash-preview', label: 'gemini-3-flash-preview', contextWindow: 1_048_576 },
-      { id: 'google/gemini-3.1-flash-lite-preview', label: 'gemini-3.1-flash-lite-preview', contextWindow: 1_048_576 },
+      {
+        id: 'google/gemini-3.1-pro-preview',
+        label: 'gemini-3.1-pro-preview',
+        contextWindow: 1_048_576,
+      },
+      {
+        id: 'google/gemini-3-flash-preview',
+        label: 'gemini-3-flash-preview',
+        contextWindow: 1_048_576,
+      },
+      {
+        id: 'google/gemini-3.1-flash-lite-preview',
+        label: 'gemini-3.1-flash-lite-preview',
+        contextWindow: 1_048_576,
+      },
       { id: 'google/gemini-2.5-pro', label: 'gemini-2.5-pro', contextWindow: 1_048_576 },
       { id: 'google/gemini-2.5-flash', label: 'gemini-2.5-flash', contextWindow: 1_048_576 },
     ],
@@ -142,8 +166,16 @@ export const AI_SERVICE_PLATFORM_PRESETS = [
       { id: 'moonshotai/kimi-k2.5', label: 'Kimi-k2.5', contextWindow: 262_144 },
       { id: 'moonshotai/kimi-k2', label: 'Kimi-k2', contextWindow: 262_144 },
       { id: 'moonshotai/kimi-k2-thinking', label: 'Kimi-k2-thinking', contextWindow: 262_144 },
-      { id: 'moonshotai/kimi-k2-thinking-turbo', label: 'Kimi-k2-thinking-turbo', contextWindow: 262_144 },
-      { id: 'moonshotai/kimi-k2-turbo-preview', label: 'Kimi-k2-turbo-preview', contextWindow: 262_144 },
+      {
+        id: 'moonshotai/kimi-k2-thinking-turbo',
+        label: 'Kimi-k2-thinking-turbo',
+        contextWindow: 262_144,
+      },
+      {
+        id: 'moonshotai/kimi-k2-turbo-preview',
+        label: 'Kimi-k2-turbo-preview',
+        contextWindow: 262_144,
+      },
     ],
   },
   {
@@ -270,9 +302,7 @@ export const isAiServicePlatformModel = (
  * - 命中目录但未配置(如 ollama 本地模型):返回 undefined(窗口未知)。
  * - 未命中任何 model:返回 undefined。
  */
-export const findModelContextWindow = (
-  modelId: string | null | undefined,
-): number | undefined => {
+export const findModelContextWindow = (modelId: string | null | undefined): number | undefined => {
   const normalizedModelId = modelId?.trim() ?? '';
   if (!normalizedModelId) {
     return undefined;

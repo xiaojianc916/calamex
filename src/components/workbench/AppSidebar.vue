@@ -63,30 +63,76 @@
 
 <script setup lang="ts">
 import { useDebounceFn, useEventListener } from '@vueuse/core';
-import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch, } from 'vue';
+import {
+  computed,
+  defineAsyncComponent,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  reactive,
+  ref,
+  watch,
+} from 'vue';
 import { events } from '@/bindings/tauri';
 import InlineError from '@/components/common/InlineError.vue';
-import type { ILinearContextMenuGroup, ILinearContextMenuItem, } from '@/components/common/linear-context-menu.types';
+import type {
+  ILinearContextMenuGroup,
+  ILinearContextMenuItem,
+} from '@/components/common/linear-context-menu.types';
 import { Button } from '@/components/ui/button';
-import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle, } from '@/components/ui/empty';
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from '@/components/ui/empty';
 import WorkspaceTreeNode from '@/components/workbench/WorkspaceTreeNode.vue';
 import { useDialog } from '@/composables/useDialog';
 import { useMessage } from '@/composables/useMessage';
 import { tauriService } from '@/services/tauri';
 import { useAppStore } from '@/store/app';
 import type { TWorkbenchSidebarView } from '@/types/app';
-import type { IActiveRunSummary, ICommandTemplate, IEditorDocument, IRunHistoryEntry, IWorkspaceDirectoryPayload, IWorkspaceEntry, TExecutorKind, TWorkbenchOpenFilePayload, } from '@/types/editor';
+import type {
+  IActiveRunSummary,
+  ICommandTemplate,
+  IEditorDocument,
+  IRunHistoryEntry,
+  IWorkspaceDirectoryPayload,
+  IWorkspaceEntry,
+  TExecutorKind,
+  TWorkbenchOpenFilePayload,
+} from '@/types/editor';
 import type { IGitDiffPreviewRequest } from '@/types/git';
 import { writeFileSystemPathToClipboard } from '@/utils/clipboard';
 import { toErrorMessage } from '@/utils/error';
-import { formatFileSystemPathForDisplay, getPathBaseName, getRelativeFileSystemPath, } from '@/utils/path';
+import {
+  formatFileSystemPathForDisplay,
+  getPathBaseName,
+  getRelativeFileSystemPath,
+} from '@/utils/path';
 import { resolveWorkspaceKey, resolveWorkspaceRootPayload } from '@/utils/workspace';
 
-const DeferredLinearContextMenu = defineAsyncComponent({ loader: () => import('@/components/common/LinearContextMenu.vue'), suspensible: false, });
-const SourceControlPanel = defineAsyncComponent({ loader: () => import('@/components/workbench/SourceControlPanel.vue'), suspensible: false, });
-const DeferredSearchSidebarPanel = defineAsyncComponent({ loader: () => import('@/components/workbench/SearchSidebarPanel.vue'), suspensible: false, });
-const DeferredRunSidebarPanel = defineAsyncComponent({ loader: () => import('@/components/workbench/RunSidebarPanel.vue'), suspensible: false, });
-const DeferredSshSidebarPanel = defineAsyncComponent({ loader: () => import('@/components/workbench/SshSidebarPanel.vue'), suspensible: false, });
+const DeferredLinearContextMenu = defineAsyncComponent({
+  loader: () => import('@/components/common/LinearContextMenu.vue'),
+  suspensible: false,
+});
+const SourceControlPanel = defineAsyncComponent({
+  loader: () => import('@/components/workbench/SourceControlPanel.vue'),
+  suspensible: false,
+});
+const DeferredSearchSidebarPanel = defineAsyncComponent({
+  loader: () => import('@/components/workbench/SearchSidebarPanel.vue'),
+  suspensible: false,
+});
+const DeferredRunSidebarPanel = defineAsyncComponent({
+  loader: () => import('@/components/workbench/RunSidebarPanel.vue'),
+  suspensible: false,
+});
+const DeferredSshSidebarPanel = defineAsyncComponent({
+  loader: () => import('@/components/workbench/SshSidebarPanel.vue'),
+  suspensible: false,
+});
 
 const props = defineProps<{
   document: IEditorDocument;
@@ -133,62 +179,171 @@ const loadedWorkspaceKey = ref<string | null>(null);
 const pendingReloadAgainPaths = new Set<string>();
 let rootRequestId = 0;
 
-type TExplorerContextMenuAction = | 'open' | 'new-file' | 'new-directory' | 'rename' | 'delete' | 'copy-path' | 'refresh' | 'open-folder';
-interface IExplorerContextMenuItem extends ILinearContextMenuItem { action: TExplorerContextMenuAction; }
-interface IExplorerContextTarget { path: string; name: string; kind: 'directory' | 'file'; isRoot: boolean; }
+type TExplorerContextMenuAction =
+  | 'open'
+  | 'new-file'
+  | 'new-directory'
+  | 'rename'
+  | 'delete'
+  | 'copy-path'
+  | 'refresh'
+  | 'open-folder';
+interface IExplorerContextMenuItem extends ILinearContextMenuItem {
+  action: TExplorerContextMenuAction;
+}
+interface IExplorerContextTarget {
+  path: string;
+  name: string;
+  kind: 'directory' | 'file';
+  isRoot: boolean;
+}
 
-const explorerContextMenu = reactive({ open: false, x: 0, y: 0, });
+const explorerContextMenu = reactive({ open: false, x: 0, y: 0 });
 const explorerContextTarget = ref<IExplorerContextTarget | null>(null);
-const inlineCreateDraft = reactive({ open: false, parentPath: null as string | null, kind: 'file' as 'file' | 'directory', value: '', placeholder: '', });
-const inlineRenameDraft = reactive({ path: null as string | null, value: '', });
+const inlineCreateDraft = reactive({
+  open: false,
+  parentPath: null as string | null,
+  kind: 'file' as 'file' | 'directory',
+  value: '',
+  placeholder: '',
+});
+const inlineRenameDraft = reactive({ path: null as string | null, value: '' });
 const isInlineCreateSubmitting = ref(false);
 const isInlineRenamePriming = ref(false);
 
-const explorerContextMenuGroups = computed<ILinearContextMenuGroup<IExplorerContextMenuItem>[]>(() => {
-  const target = explorerContextTarget.value;
-  const canCreate = target?.kind === 'directory';
-  const canMutate = Boolean(target && !target.isRoot);
-  return [
-    { key: 'primary', items: [
-      { key: 'new-file', label: '新建文件', icon: 'plus', shortcut: ['Ctrl', 'N'], action: 'new-file', disabled: !canCreate, },
-      { key: 'new-directory', label: '新建文件夹', icon: 'plus', shortcut: ['Ctrl', 'Shift', 'N'], action: 'new-directory', disabled: !canCreate, },
-      { key: 'rename', label: '重命名', icon: 'comment', shortcut: ['F2'], action: 'rename', disabled: !canMutate, },
-    ], },
-    { key: 'secondary', items: [
-      { key: 'delete', label: '移动到回收站', icon: 'trash', shortcut: ['Del'], action: 'delete', disabled: !canMutate, },
-      { key: 'copy-path', label: '复制路径', icon: 'copy', shortcut: ['Ctrl', 'Shift', 'C'], action: 'copy-path', disabled: !target, },
-      { key: 'open-folder', label: '打开文件夹', icon: 'open-external', action: 'open-folder', },
-    ], },
-  ];
-});
+const explorerContextMenuGroups = computed<ILinearContextMenuGroup<IExplorerContextMenuItem>[]>(
+  () => {
+    const target = explorerContextTarget.value;
+    const canCreate = target?.kind === 'directory';
+    const canMutate = Boolean(target && !target.isRoot);
+    return [
+      {
+        key: 'primary',
+        items: [
+          {
+            key: 'new-file',
+            label: '新建文件',
+            icon: 'plus',
+            shortcut: ['Ctrl', 'N'],
+            action: 'new-file',
+            disabled: !canCreate,
+          },
+          {
+            key: 'new-directory',
+            label: '新建文件夹',
+            icon: 'plus',
+            shortcut: ['Ctrl', 'Shift', 'N'],
+            action: 'new-directory',
+            disabled: !canCreate,
+          },
+          {
+            key: 'rename',
+            label: '重命名',
+            icon: 'comment',
+            shortcut: ['F2'],
+            action: 'rename',
+            disabled: !canMutate,
+          },
+        ],
+      },
+      {
+        key: 'secondary',
+        items: [
+          {
+            key: 'delete',
+            label: '移动到回收站',
+            icon: 'trash',
+            shortcut: ['Del'],
+            action: 'delete',
+            disabled: !canMutate,
+          },
+          {
+            key: 'copy-path',
+            label: '复制路径',
+            icon: 'copy',
+            shortcut: ['Ctrl', 'Shift', 'C'],
+            action: 'copy-path',
+            disabled: !target,
+          },
+          { key: 'open-folder', label: '打开文件夹', icon: 'open-external', action: 'open-folder' },
+        ],
+      },
+    ];
+  },
+);
 
-const SIDEBAR_META: Record<TWorkbenchSidebarView, { title: string; headline: string; description: string; actionLabel: string; items: Array<{ title: string; description: string }>; }> = {
-  explorer: { title: '资源管理器', headline: '浏览工作区目录', description: '在这里查看脚本、图片资源和文件树。', actionLabel: '浏览文件', items: [], },
-  search: { title: '搜索', headline: '全局搜索与快速定位', description: '后续可以在这里放置关键字、范围过滤和搜索结果列表。', actionLabel: '搜索面板', items: [
-    { title: '全文匹配', description: '跨脚本搜索命令、变量、路径和注释。' },
-    { title: '范围过滤', description: '限定目录、文件类型和忽略规则。' },
-    { title: '结果联动', description: '搜索结果可直接定位到编辑器标签。' },
-  ], },
-  'source-control': { title: '源代码管理', headline: '变更、暂存与提交', description: '后续可以在这里聚合当前工作区的 Git 状态与常用操作。', actionLabel: '版本控制', items: [
-    { title: '变更列表', description: '按文件展示未提交、已暂存和冲突状态。' },
-    { title: '提交入口', description: '输入提交说明并触发常用 Git 动作。' },
-    { title: '分支提示', description: '显示当前分支和同步状态。' },
-  ], },
-  run: { title: '运行', headline: '执行配置与流程入口', description: '后续可以把运行配置、快速命令和运行历史收拢到这一栏。', actionLabel: '运行配置', items: [
-    { title: '启动脚本', description: '预置常用执行模板和参数组合。' },
-    { title: '调试入口', description: '为脚本运行和终端回放留出调试位。' },
-    { title: '历史记录', description: '回看最近一次运行的命令和结果。' },
-  ], },
-  ai: { title: 'AI 助手', headline: '对话、解释与修复建议', description: '这里承载 AI 对话、上下文整理和模型配置入口。', actionLabel: '打开 AI 面板', items: [
-    { title: '对话框', description: '用于向模型提问、整理上下文和保留临时对话。' },
-    { title: '快捷任务', description: '解释脚本、修复报错、代码审查等高频入口。' },
-    { title: '服务配置', description: '配置模型服务地址、模型名和系统提示词。' },
-  ], },
-  extensions: { title: 'SSH 连接', headline: '远端连接与文件传输', description: '这里承载 SSH 会话、远端文件浏览和传输任务。', actionLabel: '连接远端', items: [
-    { title: '连接表单', description: '填写主机、端口、用户和认证方式。' },
-    { title: '远端文件', description: '查看当前路径、文件列表和选中状态。' },
-    { title: '传输任务', description: '追踪上传下载进度并保留后续操作位。' },
-  ], },
+const SIDEBAR_META: Record<
+  TWorkbenchSidebarView,
+  {
+    title: string;
+    headline: string;
+    description: string;
+    actionLabel: string;
+    items: Array<{ title: string; description: string }>;
+  }
+> = {
+  explorer: {
+    title: '资源管理器',
+    headline: '浏览工作区目录',
+    description: '在这里查看脚本、图片资源和文件树。',
+    actionLabel: '浏览文件',
+    items: [],
+  },
+  search: {
+    title: '搜索',
+    headline: '全局搜索与快速定位',
+    description: '后续可以在这里放置关键字、范围过滤和搜索结果列表。',
+    actionLabel: '搜索面板',
+    items: [
+      { title: '全文匹配', description: '跨脚本搜索命令、变量、路径和注释。' },
+      { title: '范围过滤', description: '限定目录、文件类型和忽略规则。' },
+      { title: '结果联动', description: '搜索结果可直接定位到编辑器标签。' },
+    ],
+  },
+  'source-control': {
+    title: '源代码管理',
+    headline: '变更、暂存与提交',
+    description: '后续可以在这里聚合当前工作区的 Git 状态与常用操作。',
+    actionLabel: '版本控制',
+    items: [
+      { title: '变更列表', description: '按文件展示未提交、已暂存和冲突状态。' },
+      { title: '提交入口', description: '输入提交说明并触发常用 Git 动作。' },
+      { title: '分支提示', description: '显示当前分支和同步状态。' },
+    ],
+  },
+  run: {
+    title: '运行',
+    headline: '执行配置与流程入口',
+    description: '后续可以把运行配置、快速命令和运行历史收拢到这一栏。',
+    actionLabel: '运行配置',
+    items: [
+      { title: '启动脚本', description: '预置常用执行模板和参数组合。' },
+      { title: '调试入口', description: '为脚本运行和终端回放留出调试位。' },
+      { title: '历史记录', description: '回看最近一次运行的命令和结果。' },
+    ],
+  },
+  ai: {
+    title: 'AI 助手',
+    headline: '对话、解释与修复建议',
+    description: '这里承载 AI 对话、上下文整理和模型配置入口。',
+    actionLabel: '打开 AI 面板',
+    items: [
+      { title: '对话框', description: '用于向模型提问、整理上下文和保留临时对话。' },
+      { title: '快捷任务', description: '解释脚本、修复报错、代码审查等高频入口。' },
+      { title: '服务配置', description: '配置模型服务地址、模型名和系统提示词。' },
+    ],
+  },
+  extensions: {
+    title: 'SSH 连接',
+    headline: '远端连接与文件传输',
+    description: '这里承载 SSH 会话、远端文件浏览和传输任务。',
+    actionLabel: '连接远端',
+    items: [
+      { title: '连接表单', description: '填写主机、端口、用户和认证方式。' },
+      { title: '远端文件', description: '查看当前路径、文件列表和选中状态。' },
+      { title: '传输任务', description: '追踪上传下载进度并保留后续操作位。' },
+    ],
+  },
 };
 
 const isExplorerView = computed(() => props.view === 'explorer');
@@ -199,43 +354,69 @@ const isSshView = computed(() => props.view === 'extensions');
 const panelMeta = computed(() => SIDEBAR_META[props.view] ?? SIDEBAR_META.ai);
 
 const isExplorerWorkspaceEmpty = computed(() => {
-  if (!root.value) { return false; }
+  if (!root.value) {
+    return false;
+  }
   const rootEntries = childrenMap[root.value.rootPath] ?? root.value.entries;
   return rootEntries.length === 0;
 });
 
 const rootEntry = computed<IWorkspaceEntry | null>(() => {
-  if (!root.value) { return null; }
+  if (!root.value) {
+    return null;
+  }
   const rootEntries = childrenMap[root.value.rootPath] ?? root.value.entries;
-  const displayRootPath = formatFileSystemPathForDisplay(root.value.rootName || root.value.rootPath);
+  const displayRootPath = formatFileSystemPathForDisplay(
+    root.value.rootName || root.value.rootPath,
+  );
   const displayRootName = getPathBaseName(displayRootPath) || displayRootPath;
-  return { path: root.value.rootPath, name: displayRootName, kind: 'directory', hasChildren: rootEntries.length > 0, };
+  return {
+    path: root.value.rootPath,
+    name: displayRootName,
+    kind: 'directory',
+    hasChildren: rootEntries.length > 0,
+  };
 });
 
-const selectedExplorerPath = computed(() => props.document.path ?? props.startupExplorerSelectedPath ?? undefined);
-const explorerContextMenuHighlightPath = computed(() => explorerContextMenu.open ? (explorerContextTarget.value?.path ?? null) : null);
+const selectedExplorerPath = computed(
+  () => props.document.path ?? props.startupExplorerSelectedPath ?? undefined,
+);
+const explorerContextMenuHighlightPath = computed(() =>
+  explorerContextMenu.open ? (explorerContextTarget.value?.path ?? null) : null,
+);
 
 const clearTreeState = (): void => {
-  Object.keys(childrenMap).forEach((path) => { delete childrenMap[path]; });
-  Object.keys(loadingPaths).forEach((path) => { delete loadingPaths[path]; });
+  Object.keys(childrenMap).forEach((path) => {
+    delete childrenMap[path];
+  });
+  Object.keys(loadingPaths).forEach((path) => {
+    delete loadingPaths[path];
+  });
   pendingReloadAgainPaths.clear();
   manualExpandedPaths.value = new Set();
 };
 
-const applyWorkspaceRootPayload = (payload: IWorkspaceDirectoryPayload, workspaceKey: string,): void => {
+const applyWorkspaceRootPayload = (
+  payload: IWorkspaceDirectoryPayload,
+  workspaceKey: string,
+): void => {
   rootLoading.value = false;
   loadError.value = '';
   root.value = payload;
   loadedWorkspaceKey.value = workspaceKey;
   clearTreeState();
   childrenMap[payload.rootPath] = payload.entries;
-  const scopedExpandedPaths = props.startupExplorerExpandedPaths.filter((path) => getRelativeFileSystemPath(path, payload.rootPath) !== null);
+  const scopedExpandedPaths = props.startupExplorerExpandedPaths.filter(
+    (path) => getRelativeFileSystemPath(path, payload.rootPath) !== null,
+  );
   manualExpandedPaths.value = new Set([payload.rootPath, ...scopedExpandedPaths]);
   emitExplorerStateChange();
 };
 
 const loadWorkspaceRoot = async (workspaceKey: string): Promise<void> => {
-  if (!props.isDesktopRuntime) { return; }
+  if (!props.isDesktopRuntime) {
+    return;
+  }
   if (!props.workspaceRootPath) {
     rootLoading.value = false;
     loadError.value = '';
@@ -252,22 +433,35 @@ const loadWorkspaceRoot = async (workspaceKey: string): Promise<void> => {
   loadedWorkspaceKey.value = null;
   clearTreeState();
   try {
-    const payload = await resolveWorkspaceRootPayload(props.workspaceRootPath, props.preloadedWorkspaceRoot, tauriService.listWorkspaceEntries);
-    if (requestId !== rootRequestId) { return; }
+    const payload = await resolveWorkspaceRootPayload(
+      props.workspaceRootPath,
+      props.preloadedWorkspaceRoot,
+      tauriService.listWorkspaceEntries,
+    );
+    if (requestId !== rootRequestId) {
+      return;
+    }
     applyWorkspaceRootPayload(payload, workspaceKey);
     void loadStartupExpandedDirectories();
     void startWorkspaceFileWatcher();
   } catch (error) {
-    if (requestId !== rootRequestId) { return; }
+    if (requestId !== rootRequestId) {
+      return;
+    }
     root.value = null;
     loadedWorkspaceKey.value = null;
     loadError.value = toErrorMessage(error, '读取工作区目录失败');
   } finally {
-    if (requestId === rootRequestId) { rootLoading.value = false; }
+    if (requestId === rootRequestId) {
+      rootLoading.value = false;
+    }
   }
 };
 
-const loadDirectoryEntries = async (path: string, options: { silent?: boolean } = {},): Promise<void> => {
+const loadDirectoryEntries = async (
+  path: string,
+  options: { silent?: boolean } = {},
+): Promise<void> => {
   if (loadingPaths[path]) {
     pendingReloadAgainPaths.add(path);
     return;
@@ -276,14 +470,22 @@ const loadDirectoryEntries = async (path: string, options: { silent?: boolean } 
   loadingPaths[path] = true;
   try {
     const payload = await tauriService.listWorkspaceEntries(path, root.value?.rootPath);
-    if (requestId !== rootRequestId) { return; }
+    if (requestId !== rootRequestId) {
+      return;
+    }
     childrenMap[path] = payload.entries;
   } catch (error) {
-    if (requestId !== rootRequestId) { return; }
-    if (!options.silent) { message.error(toErrorMessage(error, '读取目录失败')); }
+    if (requestId !== rootRequestId) {
+      return;
+    }
+    if (!options.silent) {
+      message.error(toErrorMessage(error, '读取目录失败'));
+    }
     childrenMap[path] = [];
   } finally {
-    if (requestId === rootRequestId) { loadingPaths[path] = false; }
+    if (requestId === rootRequestId) {
+      loadingPaths[path] = false;
+    }
   }
   if (pendingReloadAgainPaths.delete(path) && requestId === rootRequestId) {
     await loadDirectoryEntries(path, options);
@@ -291,24 +493,34 @@ const loadDirectoryEntries = async (path: string, options: { silent?: boolean } 
 };
 
 const loadStartupExpandedDirectories = async (): Promise<void> => {
-  if (!root.value) { return; }
+  if (!root.value) {
+    return;
+  }
   const rootPath = root.value.rootPath;
-  const pendingPaths = [...manualExpandedPaths.value].filter((path) => path !== rootPath && childrenMap[path] === undefined);
+  const pendingPaths = [...manualExpandedPaths.value].filter(
+    (path) => path !== rootPath && childrenMap[path] === undefined,
+  );
   for (const path of pendingPaths) {
-    if (!manualExpandedPaths.value.has(path)) { continue; }
+    if (!manualExpandedPaths.value.has(path)) {
+      continue;
+    }
     await loadDirectoryEntries(path, { silent: true });
   }
 };
 
 const expandExplorerPath = async (path: string): Promise<void> => {
-  if (!root.value) { return; }
+  if (!root.value) {
+    return;
+  }
   if (!manualExpandedPaths.value.has(path)) {
     const nextExpandedPaths = new Set(manualExpandedPaths.value);
     nextExpandedPaths.add(path);
     manualExpandedPaths.value = nextExpandedPaths;
     emitExplorerStateChange();
   }
-  if (path !== root.value.rootPath && childrenMap[path] === undefined) { await loadDirectoryEntries(path); }
+  if (path !== root.value.rootPath && childrenMap[path] === undefined) {
+    await loadDirectoryEntries(path);
+  }
 };
 
 const toggleExplorerPath = async (path: string): Promise<void> => {
@@ -344,7 +556,9 @@ const handleEntryContextMenu = (payload: { event: MouseEvent; entry: IWorkspaceE
 };
 
 const handleEmptyAreaContextMenu = (event: MouseEvent): void => {
-  if (!root.value) { return; }
+  if (!root.value) {
+    return;
+  }
   openExplorerContextMenu(event, {
     path: root.value.rootPath,
     name: rootEntry.value?.name ?? root.value.rootName ?? root.value.rootPath,
@@ -353,14 +567,25 @@ const handleEmptyAreaContextMenu = (event: MouseEvent): void => {
   });
 };
 
-const handleOpenFile = (payload: TWorkbenchOpenFilePayload): void => { emit('open-file', payload); };
-const emitExplorerStateChange = (selectedPath: string | null | undefined = selectedExplorerPath.value ?? null): void => {
-  emit('explorer-state-change', { expandedPaths: [...manualExpandedPaths.value], selectedPath: selectedPath ?? null, });
+const handleOpenFile = (payload: TWorkbenchOpenFilePayload): void => {
+  emit('open-file', payload);
 };
-const handleOpenGitDiff = (payload: IGitDiffPreviewRequest): void => { emit('open-git-diff', payload); };
+const emitExplorerStateChange = (
+  selectedPath: string | null | undefined = selectedExplorerPath.value ?? null,
+): void => {
+  emit('explorer-state-change', {
+    expandedPaths: [...manualExpandedPaths.value],
+    selectedPath: selectedPath ?? null,
+  });
+};
+const handleOpenGitDiff = (payload: IGitDiffPreviewRequest): void => {
+  emit('open-git-diff', payload);
+};
 
 const resolveCreationParentPath = (target: IExplorerContextTarget | null): string | null => {
-  if (target?.kind === 'directory') { return target.path; }
+  if (target?.kind === 'directory') {
+    return target.path;
+  }
   return root.value?.rootPath ?? props.workspaceRootPath;
 };
 
@@ -374,15 +599,25 @@ const closeInlineCreateDraft = (): void => {
 
 const focusInlineCreateInput = async (): Promise<void> => {
   await nextTick();
-  const input = (explorerSectionRef.value?.querySelector('.explorer-inline-create-input') ?? null) as HTMLInputElement | null;
+  const input = (explorerSectionRef.value?.querySelector('.explorer-inline-create-input') ??
+    null) as HTMLInputElement | null;
   input?.focus();
   input?.select();
 };
 
-const openInlineCreateDraft = async (kind: 'file' | 'directory', target: IExplorerContextTarget | null,): Promise<void> => {
-  if (!root.value) { message.error('请先打开工作区。'); return; }
+const openInlineCreateDraft = async (
+  kind: 'file' | 'directory',
+  target: IExplorerContextTarget | null,
+): Promise<void> => {
+  if (!root.value) {
+    message.error('请先打开工作区。');
+    return;
+  }
   const parentPath = resolveCreationParentPath(target);
-  if (!parentPath) { message.error('无法解析新建位置。'); return; }
+  if (!parentPath) {
+    message.error('无法解析新建位置。');
+    return;
+  }
   await expandExplorerPath(parentPath);
   inlineCreateDraft.open = true;
   inlineCreateDraft.parentPath = parentPath;
@@ -392,23 +627,39 @@ const openInlineCreateDraft = async (kind: 'file' | 'directory', target: IExplor
   await focusInlineCreateInput();
 };
 
-const handleInlineCreateInputValue = (value: string): void => { inlineCreateDraft.value = value; };
-const cancelInlineCreateWorkspaceEntry = (): void => { closeInlineCreateDraft(); };
+const handleInlineCreateInputValue = (value: string): void => {
+  inlineCreateDraft.value = value;
+};
+const cancelInlineCreateWorkspaceEntry = (): void => {
+  closeInlineCreateDraft();
+};
 
 const confirmInlineCreateWorkspaceEntry = async (): Promise<void> => {
-  if (!root.value || !inlineCreateDraft.open || !inlineCreateDraft.parentPath || isInlineCreateSubmitting.value) { return; }
+  if (
+    !root.value ||
+    !inlineCreateDraft.open ||
+    !inlineCreateDraft.parentPath ||
+    isInlineCreateSubmitting.value
+  ) {
+    return;
+  }
   const name = inlineCreateDraft.value.trim();
-  if (!name) { closeInlineCreateDraft(); return; }
+  if (!name) {
+    closeInlineCreateDraft();
+    return;
+  }
   const parentPath = inlineCreateDraft.parentPath;
   const kind = inlineCreateDraft.kind;
   const rootPath = root.value.rootPath;
   isInlineCreateSubmitting.value = true;
   try {
-    const payload = await tauriService.createWorkspacePath({ parentPath, rootPath, name, kind, });
+    const payload = await tauriService.createWorkspacePath({ parentPath, rootPath, name, kind });
     await refreshDirectoryAfterMutation(parentPath);
     message.success(kind === 'file' ? '已创建文件' : '已创建文件夹');
     closeInlineCreateDraft();
-    if (payload.kind === 'file') { handleOpenFile(payload.path); }
+    if (payload.kind === 'file') {
+      handleOpenFile(payload.path);
+    }
   } catch (error) {
     isInlineCreateSubmitting.value = false;
     message.error(toErrorMessage(error, kind === 'file' ? '创建文件失败' : '创建文件夹失败'));
@@ -416,7 +667,9 @@ const confirmInlineCreateWorkspaceEntry = async (): Promise<void> => {
 };
 
 const handleInlineCreateBlur = (): void => {
-  if (!inlineCreateDraft.open || isInlineCreateSubmitting.value) { return; }
+  if (!inlineCreateDraft.open || isInlineCreateSubmitting.value) {
+    return;
+  }
   void confirmInlineCreateWorkspaceEntry();
 };
 
@@ -431,8 +684,12 @@ const cancelInlineRename = (): void => {
 };
 
 const confirmInlineRename = (): void => {
-  if (isInlineRenamePriming.value) { return; }
-  if (!resolveInlineRename) { return; }
+  if (isInlineRenamePriming.value) {
+    return;
+  }
+  if (!resolveInlineRename) {
+    return;
+  }
   const value = inlineRenameDraft.value.trim();
   inlineRenameDraft.path = null;
   inlineRenameDraft.value = '';
@@ -442,39 +699,60 @@ const confirmInlineRename = (): void => {
 };
 
 const waitNextFrame = (): Promise<void> => {
-  return new Promise((resolve) => { requestAnimationFrame(() => resolve()); });
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => resolve());
+  });
 };
 
 const focusInlineRenameInput = async (): Promise<boolean> => {
   await nextTick();
   await waitNextFrame();
-  const input = (explorerSectionRef.value?.querySelector('.explorer-inline-rename-input') ?? null) as HTMLInputElement | null;
-  if (!input) { return false; }
+  const input = (explorerSectionRef.value?.querySelector('.explorer-inline-rename-input') ??
+    null) as HTMLInputElement | null;
+  if (!input) {
+    return false;
+  }
   input.focus();
   const currentValue = input.value;
   const lastDotIndex = currentValue.lastIndexOf('.');
-  if (lastDotIndex > 0) { input.setSelectionRange(0, lastDotIndex); } else { input.select(); }
+  if (lastDotIndex > 0) {
+    input.setSelectionRange(0, lastDotIndex);
+  } else {
+    input.select();
+  }
   return true;
 };
 
 const requestInlineRename = async (path: string, defaultName: string): Promise<string | null> => {
-  if (resolveInlineRename) { cancelInlineRename(); }
+  if (resolveInlineRename) {
+    cancelInlineRename();
+  }
   isInlineRenamePriming.value = true;
   inlineRenameDraft.path = path;
   inlineRenameDraft.value = defaultName;
-  const renamePromise = new Promise<string | null>((resolve) => { resolveInlineRename = resolve; });
+  const renamePromise = new Promise<string | null>((resolve) => {
+    resolveInlineRename = resolve;
+  });
   const didFocus = await focusInlineRenameInput();
   isInlineRenamePriming.value = false;
-  if (!didFocus) { cancelInlineRename(); }
+  if (!didFocus) {
+    cancelInlineRename();
+  }
   return renamePromise;
 };
 
 const refreshDirectoryAfterMutation = async (path: string | null): Promise<void> => {
-  if (!root.value || !path) { await handleRefreshExplorer(); return; }
+  if (!root.value || !path) {
+    await handleRefreshExplorer();
+    return;
+  }
   await loadDirectoryEntries(path);
 };
 
-const handleCreateWorkspaceEntry = async (kind: 'file' | 'directory', target: IExplorerContextTarget | null,): Promise<void> => {
+const handleCreateWorkspaceEntry = async (
+  kind: 'file' | 'directory',
+  target: IExplorerContextTarget | null,
+): Promise<void> => {
   await openInlineCreateDraft(kind, target);
 };
 
@@ -485,18 +763,33 @@ const handleRefreshExplorer = async (): Promise<void> => {
 
 const resolveParentPathForMutation = (path: string): string | null => {
   const lastSlashIndex = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
-  if (lastSlashIndex <= 0) { return null; }
+  if (lastSlashIndex <= 0) {
+    return null;
+  }
   return path.slice(0, lastSlashIndex);
 };
 
 const pruneWorkspaceSubtreeState = (path: string): void => {
-  const isUnder = (candidate: string): boolean => getRelativeFileSystemPath(candidate, path) !== null;
-  Object.keys(childrenMap).forEach((key) => { if (isUnder(key)) { delete childrenMap[key]; } });
-  Object.keys(loadingPaths).forEach((key) => { if (isUnder(key)) { delete loadingPaths[key]; } });
+  const isUnder = (candidate: string): boolean =>
+    getRelativeFileSystemPath(candidate, path) !== null;
+  Object.keys(childrenMap).forEach((key) => {
+    if (isUnder(key)) {
+      delete childrenMap[key];
+    }
+  });
+  Object.keys(loadingPaths).forEach((key) => {
+    if (isUnder(key)) {
+      delete loadingPaths[key];
+    }
+  });
   let mutated = false;
   const nextExpandedPaths = new Set<string>();
   manualExpandedPaths.value.forEach((expanded) => {
-    if (isUnder(expanded)) { mutated = true; } else { nextExpandedPaths.add(expanded); }
+    if (isUnder(expanded)) {
+      mutated = true;
+    } else {
+      nextExpandedPaths.add(expanded);
+    }
   });
   if (mutated) {
     manualExpandedPaths.value = nextExpandedPaths;
@@ -505,11 +798,19 @@ const pruneWorkspaceSubtreeState = (path: string): void => {
 };
 
 const handleRenameWorkspaceEntry = async (target: IExplorerContextTarget): Promise<void> => {
-  if (!root.value || target.isRoot) { return; }
+  if (!root.value || target.isRoot) {
+    return;
+  }
   const newName = await requestInlineRename(target.path, target.name);
-  if (!newName || newName === target.name) { return; }
+  if (!newName || newName === target.name) {
+    return;
+  }
   try {
-    await tauriService.renameWorkspacePath({ path: target.path, rootPath: root.value.rootPath, newName, });
+    await tauriService.renameWorkspacePath({
+      path: target.path,
+      rootPath: root.value.rootPath,
+      newName,
+    });
     pruneWorkspaceSubtreeState(target.path);
     await refreshDirectoryAfterMutation(resolveParentPathForMutation(target.path));
     message.success('已重命名');
@@ -519,7 +820,9 @@ const handleRenameWorkspaceEntry = async (target: IExplorerContextTarget): Promi
 };
 
 const handleDeleteWorkspaceEntry = async (target: IExplorerContextTarget): Promise<void> => {
-  if (!root.value || target.isRoot) { return; }
+  if (!root.value || target.isRoot) {
+    return;
+  }
   const action = await dialog.confirm({
     title: '确认删除',
     description: `确认删除“${target.name}”？此操作不可撤销。`,
@@ -528,9 +831,11 @@ const handleDeleteWorkspaceEntry = async (target: IExplorerContextTarget): Promi
     dismissText: '返回',
     variant: 'danger',
   });
-  if (action !== 'confirm') { return; }
+  if (action !== 'confirm') {
+    return;
+  }
   try {
-    await tauriService.deleteWorkspacePath({ path: target.path, rootPath: root.value.rootPath, });
+    await tauriService.deleteWorkspacePath({ path: target.path, rootPath: root.value.rootPath });
     pruneWorkspaceSubtreeState(target.path);
     await refreshDirectoryAfterMutation(resolveParentPathForMutation(target.path));
     message.success('已移动到回收站');
@@ -543,44 +848,95 @@ const handleExplorerContextMenuSelect = async (item: ILinearContextMenuItem): Pr
   const actionItem = item as IExplorerContextMenuItem;
   const target = explorerContextTarget.value;
   closeExplorerContextMenu();
-  if (actionItem.disabled) { return; }
+  if (actionItem.disabled) {
+    return;
+  }
   switch (actionItem.action) {
-    case 'new-file': await handleCreateWorkspaceEntry('file', target); return;
-    case 'new-directory': await handleCreateWorkspaceEntry('directory', target); return;
-    case 'rename': if (target) await handleRenameWorkspaceEntry(target); return;
-    case 'delete': if (target) await handleDeleteWorkspaceEntry(target); return;
-    case 'copy-path': if (target) { await writeFileSystemPathToClipboard(target.path); message.success('已复制路径'); } return;
-    case 'open-folder': emit('open-folder'); return;
-    default: return;
+    case 'new-file':
+      await handleCreateWorkspaceEntry('file', target);
+      return;
+    case 'new-directory':
+      await handleCreateWorkspaceEntry('directory', target);
+      return;
+    case 'rename':
+      if (target) await handleRenameWorkspaceEntry(target);
+      return;
+    case 'delete':
+      if (target) await handleDeleteWorkspaceEntry(target);
+      return;
+    case 'copy-path':
+      if (target) {
+        await writeFileSystemPathToClipboard(target.path);
+        message.success('已复制路径');
+      }
+      return;
+    case 'open-folder':
+      emit('open-folder');
+      return;
+    default:
+      return;
   }
 };
 
 const handleWindowPointerDown = (event: PointerEvent): void => {
-  if (explorerContextMenu.open && event.target instanceof Element && event.target.closest('.linear-context-menu-root') === null) { closeExplorerContextMenu(); }
+  if (
+    explorerContextMenu.open &&
+    event.target instanceof Element &&
+    event.target.closest('.linear-context-menu-root') === null
+  ) {
+    closeExplorerContextMenu();
+  }
 };
 
 const handleWindowKeydown = (event: KeyboardEvent): void => {
-  if (explorerContextMenu.open && event.key === 'Escape') { closeExplorerContextMenu(); return; }
-  if (inlineCreateDraft.open && event.key === 'Escape') { cancelInlineCreateWorkspaceEntry(); }
+  if (explorerContextMenu.open && event.key === 'Escape') {
+    closeExplorerContextMenu();
+    return;
+  }
+  if (inlineCreateDraft.open && event.key === 'Escape') {
+    cancelInlineCreateWorkspaceEntry();
+  }
 };
 
 useEventListener(window, 'pointerdown', handleWindowPointerDown, true);
 useEventListener(window, 'keydown', handleWindowKeydown);
 
-watch([() => props.isDesktopRuntime, () => props.workspaceRootPath, isExplorerView, () => props.preloadedWorkspaceRoot, ], ([ready, workspaceRootPath, explorer]) => {
-  if (!ready || !explorer) { return; }
-  const workspaceKey = resolveWorkspaceKey(workspaceRootPath);
-  if (loadedWorkspaceKey.value === workspaceKey && root.value) { return; }
-  void loadWorkspaceRoot(workspaceKey);
-}, { immediate: true });
+watch(
+  [
+    () => props.isDesktopRuntime,
+    () => props.workspaceRootPath,
+    isExplorerView,
+    () => props.preloadedWorkspaceRoot,
+  ],
+  ([ready, workspaceRootPath, explorer]) => {
+    if (!ready || !explorer) {
+      return;
+    }
+    const workspaceKey = resolveWorkspaceKey(workspaceRootPath);
+    if (loadedWorkspaceKey.value === workspaceKey && root.value) {
+      return;
+    }
+    void loadWorkspaceRoot(workspaceKey);
+  },
+  { immediate: true },
+);
 
-watch(() => props.workspaceRootPath, () => {
-  closeInlineCreateDraft();
-  stopWorkspaceFileWatcher();
-});
+watch(
+  () => props.workspaceRootPath,
+  () => {
+    closeInlineCreateDraft();
+    stopWorkspaceFileWatcher();
+  },
+);
 
-interface FsChange { path: string; kind: 'created' | 'modified' | 'removed' | 'renamed'; }
-interface WorkspaceFsEvent { changes: FsChange[]; rootPath: string; }
+interface FsChange {
+  path: string;
+  kind: 'created' | 'modified' | 'removed' | 'renamed';
+}
+interface WorkspaceFsEvent {
+  changes: FsChange[];
+  rootPath: string;
+}
 let fsEventUnlisten: (() => void) | null = null;
 let isFsWatcherStarting = false;
 const pendingFsReloadDirs = new Set<string>();
@@ -599,7 +955,9 @@ function stopWorkspaceFileWatcher(): void {
   fsEventUnlisten = null;
   isFsWatcherStarting = false;
   pendingFsReloadDirs.clear();
-  if (wasWatching) { void tauriService.stopWorkspaceWatching(); }
+  if (wasWatching) {
+    void tauriService.stopWorkspaceWatching();
+  }
 }
 
 async function startWorkspaceFileWatcher(): Promise<void> {
@@ -608,10 +966,16 @@ async function startWorkspaceFileWatcher(): Promise<void> {
   if (fsEventUnlisten || isFsWatcherStarting) return;
   isFsWatcherStarting = true;
   try {
-    try { await tauriService.startWorkspaceWatching(rootPath); } catch {}
+    try {
+      await tauriService.startWorkspaceWatching(rootPath);
+    } catch {}
     if (fsEventUnlisten) return;
-    fsEventUnlisten = await events.workspaceFsEvent.listen((e) => { handleFileSystemEvent(e.payload); });
-  } finally { isFsWatcherStarting = false; }
+    fsEventUnlisten = await events.workspaceFsEvent.listen((e) => {
+      handleFileSystemEvent(e.payload);
+    });
+  } finally {
+    isFsWatcherStarting = false;
+  }
 }
 
 function handleFileSystemEvent(payload: WorkspaceFsEvent): void {
@@ -623,8 +987,16 @@ function handleFileSystemEvent(payload: WorkspaceFsEvent): void {
   void flushPendingFsReloads();
 }
 
-onMounted(() => { if (root.value?.rootPath) { void startWorkspaceFileWatcher(); } });
-onBeforeUnmount(() => { closeInlineCreateDraft(); cancelInlineRename(); stopWorkspaceFileWatcher(); });
+onMounted(() => {
+  if (root.value?.rootPath) {
+    void startWorkspaceFileWatcher();
+  }
+});
+onBeforeUnmount(() => {
+  closeInlineCreateDraft();
+  cancelInlineRename();
+  stopWorkspaceFileWatcher();
+});
 </script>
 
 <style scoped>

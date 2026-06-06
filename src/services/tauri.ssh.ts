@@ -368,9 +368,7 @@ const remoteUploadTargetExists = async (
     options,
   );
 
-  return listing.entries.some(
-    (entry) => entry.kind !== 'directory' && entry.name === fileName,
-  );
+  return listing.entries.some((entry) => entry.kind !== 'directory' && entry.name === fileName);
 };
 
 const confirmOverwriteRemoteUpload = async (

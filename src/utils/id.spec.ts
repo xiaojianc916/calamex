@@ -1,8 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createPrefixedId, createUniqueId } from '@/utils/id';
 
-const UUID_V4_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const UUID_V4_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 describe('createUniqueId', () => {
   it('生成符合 UUID v4 规范的标识符', () => {

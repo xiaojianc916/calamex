@@ -10,8 +10,8 @@ import { nextTick, onBeforeUnmount, onMounted, type Ref, readonly, ref, watch } 
 import { tauriService } from '@/services/tauri';
 import { useTerminalFacade } from '@/services/terminal/facade';
 import { useEditorStore } from '@/store/editor';
-import { useTerminalRunRoutingStore } from '@/store/terminalRunRouting';
 import { useTerminalRuntimeStore } from '@/store/terminal';
+import { useTerminalRunRoutingStore } from '@/store/terminalRunRouting';
 import { useTerminalRegistryStore } from '@/terminal/registry';
 import type { ITerminalSessionCallbacks } from '@/terminal/session';
 import type { TThemeMode } from '@/types/app';

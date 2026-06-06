@@ -675,9 +675,7 @@ export const useGitStore = defineStore('git', () => {
     }
   };
 
-  const loadPullRequestDetail = async (
-    number: number,
-  ): Promise<IGitPullRequestDetailPayload> => {
+  const loadPullRequestDetail = async (number: number): Promise<IGitPullRequestDetailPayload> => {
     const requestId = ++pullRequestDetailRequestId;
     isPullRequestDetailLoading.value = true;
     try {

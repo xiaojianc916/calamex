@@ -629,7 +629,9 @@ describe('SourceControlPanel', () => {
     await pullRequestTab?.trigger('click');
     await flushPromises();
 
-    expect(tauriServiceMock.getGitPullRequestSupport).toHaveBeenCalledWith({ repositoryRootPath: 'D:/repo' });
+    expect(tauriServiceMock.getGitPullRequestSupport).toHaveBeenCalledWith({
+      repositoryRootPath: 'D:/repo',
+    });
     expect(tauriServiceMock.listGitPullRequests).toHaveBeenCalledWith({
       repositoryRootPath: 'D:/repo',
       state: 'open',
