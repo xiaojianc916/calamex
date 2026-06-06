@@ -10,7 +10,7 @@
 use std::{
     io::{Read, Write},
     sync::{Arc, Mutex},
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use portable_pty::{Child, ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
@@ -26,6 +26,11 @@ use super::local_wsl_protocol::{
 use super::wsl::bash_quote;
 
 const TERMINAL_READ_BUFFER_BYTES: usize = 8192;
+
+/// 同步驱动 wsl.exe 写脚本 / 清理临时文件时的硬超时。
+/// 某些 Windows 环境下 wsl.exe 可能长时间挂起（参见 script_run.rs 对健康探测的刻意规避），
+/// 这里给同步子进程加超时兜底，避免命令线程被永久阻塞、反复触发后耗尽线程池导致 UI 冻结。
+const WSL_SYNC_COMMAND_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Debug, Error)]
 pub enum LocalWslPtyError {
@@ -470,6 +475,28 @@ where
         .map_err(|error| LocalWslPtyError::Open(error.to_string()))
 }
 
+/// 在 `timeout` 内轮询等待子进程结束：
+/// 正常结束返回 `Ok(Some(status))`；超时返回 `Ok(None)`（并已 kill + 回收子进程）；
+/// 轮询自身出错返回 `Err`。用于给同步 wsl.exe 调用加超时兜底，防止 WSL 挂起时永久阻塞。
+fn wait_child_with_timeout(
+    child: &mut std::process::Child,
+    timeout: Duration,
+) -> std::io::Result<Option<std::process::ExitStatus>> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok(Some(status));
+        }
+        if Instant::now() >= deadline {
+            // 超时：终止挂起的子进程并回收句柄，避免遗留僵尸 / 孤儿。
+            let _ = child.kill();
+            let _ = child.wait();
+            return Ok(None);
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
 /// 把脚本内容写入 WSL 侧的 execution_path（通过 `bash -c 'cat > <path>'` + stdin）。
 fn materialize_wsl_script(execution_path: &str, content: &str) -> Result<(), LocalWslPtyError> {
     let mut command = std::process::Command::new("wsl.exe");
@@ -492,15 +519,31 @@ fn materialize_wsl_script(execution_path: &str, content: &str) -> Result<(), Loc
     {
         // 写 stdin 失败时主动终止子进程，避免遗留挂起的 wsl.exe。
         let _ = child.kill();
+        let _ = child.wait();
         return Err(LocalWslPtyError::Open(format!("写入临时脚本失败：{error}")));
     }
-    let output = child
-        .wait_with_output()
-        .map_err(|error| LocalWslPtyError::Open(format!("写入临时脚本失败：{error}")))?;
-    if !output.status.success() {
+
+    // 加超时兜底：stdin 已关闭，cat 应迅速结束；若 wsl.exe 挂起则不应永久阻塞命令线程。
+    let status = match wait_child_with_timeout(&mut child, WSL_SYNC_COMMAND_TIMEOUT) {
+        Ok(Some(status)) => status,
+        Ok(None) => {
+            return Err(LocalWslPtyError::Open(format!(
+                "写入临时脚本超时（{} 秒），已终止挂起的 wsl.exe。",
+                WSL_SYNC_COMMAND_TIMEOUT.as_secs()
+            )));
+        }
+        Err(error) => {
+            return Err(LocalWslPtyError::Open(format!("写入临时脚本失败：{error}")));
+        }
+    };
+    if !status.success() {
+        let mut stderr = String::new();
+        if let Some(mut handle) = child.stderr.take() {
+            let _ = handle.read_to_string(&mut stderr);
+        }
         return Err(LocalWslPtyError::Open(format!(
             "写入临时脚本失败：{}",
-            String::from_utf8_lossy(&output.stderr).trim()
+            stderr.trim()
         )));
     }
     Ok(())
@@ -527,7 +570,20 @@ fn cleanup_wsl_paths(paths: &[String]) {
         .stderr(std::process::Stdio::null())
         .env("WSL_UTF8", "1");
     crate::commands::configure_std_command_for_background(&mut command);
-    let _ = command.status();
+    // 加超时兜底：清理用的 wsl.exe 若挂起，不应阻塞调用线程（读线程结束路径）。
+    match command.spawn() {
+        Ok(mut child) => {
+            if let Ok(None) = wait_child_with_timeout(&mut child, WSL_SYNC_COMMAND_TIMEOUT) {
+                log::warn!(
+                    "清理 WSL 临时文件超时（{} 秒），已终止挂起的 wsl.exe。",
+                    WSL_SYNC_COMMAND_TIMEOUT.as_secs()
+                );
+            }
+        }
+        Err(error) => {
+            log::warn!("清理 WSL 临时文件失败：{error}");
+        }
+    }
 }
 
 fn normalize_interactive_cwd(working_directory: &str) -> String {
@@ -567,5 +623,55 @@ mod tests {
     #[test]
     fn now_unix_ms_is_positive() {
         assert!(now_unix_ms() > 0);
+    }
+
+    #[test]
+    fn wait_child_with_timeout_returns_status_for_fast_process() {
+        let mut command = fast_exit_command();
+        let mut child = command.spawn().expect("应能启动快速退出的子进程");
+        let status =
+            wait_child_with_timeout(&mut child, Duration::from_secs(5)).expect("等待不应出错");
+        assert!(matches!(status, Some(code) if code.success()));
+    }
+
+    #[test]
+    fn wait_child_with_timeout_kills_overrunning_process() {
+        let mut command = long_sleep_command();
+        let mut child = command.spawn().expect("应能启动长时间运行的子进程");
+        let started = Instant::now();
+        let status =
+            wait_child_with_timeout(&mut child, Duration::from_millis(200)).expect("等待不应出错");
+        assert!(status.is_none(), "超时应返回 None 并已 kill 子进程");
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "超时后应迅速返回，而不是等待子进程自然结束"
+        );
+    }
+
+    #[cfg(windows)]
+    fn fast_exit_command() -> std::process::Command {
+        let mut command = std::process::Command::new("cmd");
+        command.args(["/C", "exit 0"]);
+        command
+    }
+
+    #[cfg(not(windows))]
+    fn fast_exit_command() -> std::process::Command {
+        std::process::Command::new("true")
+    }
+
+    #[cfg(windows)]
+    fn long_sleep_command() -> std::process::Command {
+        let mut command = std::process::Command::new("cmd");
+        // ping 作为可移植 sleep：-n 30 约 29 秒，足以触发 200ms 超时。
+        command.args(["/C", "ping 127.0.0.1 -n 30 >nul"]);
+        command
+    }
+
+    #[cfg(not(windows))]
+    fn long_sleep_command() -> std::process::Command {
+        let mut command = std::process::Command::new("sleep");
+        command.arg("30");
+        command
     }
 }
