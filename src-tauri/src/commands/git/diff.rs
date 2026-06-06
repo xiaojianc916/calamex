@@ -168,6 +168,69 @@ pub fn get_git_commit_file_diff(
     })
 }
 
+/// 返回特定提交中单个文件的主界面 Diff 预览（对比父提交）。
+/// 复用与工作区/暂存区 Diff 相同的只读 Diff 视图（GitDiffViewer / openGitDiffDocument）。
+#[tauri::command]
+#[specta::specta]
+pub fn get_git_commit_file_diff_preview(
+    payload: GitCommitFileDiffRequest,
+) -> Result<GitDiffPreviewPayload, String> {
+    let repository = open_repository_from_root(&payload.repository_root_path)?;
+    let repository_root = resolve_repository_root(&repository)?;
+    let commit_id = payload.commit_id.trim().to_string();
+    let commit_oid: gix::ObjectId = commit_id
+        .parse()
+        .map_err(|_| format!("无效的提交 ID：{commit_id}"))?;
+    let commit = repository
+        .find_commit(commit_oid)
+        .map_err(|e| format!("读取提交失败：{e}"))?;
+    let relative_path = resolve_single_relative_path(&repository_root, &payload.relative_path)?;
+    let relative_path_text = path_to_forward_slashes(&relative_path);
+
+    // 当前提交的文件内容
+    let new_content_opt = super::status::read_git_revision_text(
+        &repository_root,
+        &format!("{commit_id}:{relative_path_text}"),
+    )?;
+    // 父提交的文件内容（根提交则为空）
+    let old_content_opt = match commit.parent_ids().next() {
+        Some(parent_id) => {
+            let parent_str = parent_id.detach().to_string();
+            super::status::read_git_revision_text(
+                &repository_root,
+                &format!("{parent_str}:{relative_path_text}"),
+            )?
+        }
+        None => None,
+    };
+
+    let original_content = old_content_opt.unwrap_or_default();
+    let modified_content = new_content_opt.unwrap_or_default();
+    let is_empty = original_content.replace('\r', "") == modified_content.replace('\r', "");
+
+    let short = &commit_id[..commit_id.len().min(7)];
+
+    Ok(GitDiffPreviewPayload {
+        id: format!(
+            "git-diff:commit:{}:{}:{}",
+            short,
+            repository_root.to_string_lossy(),
+            relative_path_text
+        ),
+        repository_root_path: repository_root.to_string_lossy().to_string(),
+        path: repository_root
+            .join(&relative_path)
+            .to_string_lossy()
+            .to_string(),
+        relative_path: relative_path_text.clone(),
+        title: format!("{relative_path_text} · {short} Diff"),
+        mode: "commit".to_string(),
+        original_content,
+        modified_content,
+        is_empty,
+    })
+}
+
 pub(super) fn parse_git_diff_mode(value: &str) -> Result<GitDiffMode, String> {
     match value {
         GIT_DIFF_MODE_WORKTREE => Ok(GitDiffMode::Worktree),
