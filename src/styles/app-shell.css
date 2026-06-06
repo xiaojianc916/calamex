@@ -15,6 +15,23 @@
     0 8px 20px -16px color-mix(in srgb, var(--text-quaternary) 42%, transparent);
 }
 
+html.is-resizing .app-window-shell::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: #fafafa;
+  pointer-events: none;
+}
+
+html.is-resizing .app-window-shell,
+html.is-resizing .app-shell-pane,
+html.is-resizing .workbench-content-card,
+html.is-resizing .editor-surface {
+  background: #fafafa !important;
+  transition: none !important;
+}
+
 .app-shell-pane,
 .workbench-editor-viewport,
 .diagnostics-overlay-panel {

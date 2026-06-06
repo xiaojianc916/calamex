@@ -5,7 +5,8 @@ import BrowserContextMenuHost from '@/components/common/BrowserContextMenuHost.v
 import FatalErrorScreen from '@/components/common/FatalErrorScreen.vue';
 import { Toaster } from '@/components/ui/sonner';
 import CopilotKitProvider from '@/copilotkit/CopilotKitProvider.vue';
-import { applyWindowStage } from '@/services/ipc/window.service';
+import { useWindowResizeState } from '@/composables/useWindowResizeState';
+import { applyWindowStage, setWindowBackground } from '@/services/ipc/window.service';
 import { runtimeErrorState } from '@/utils/runtime-diagnostics';
 import { markStartup, reportStartupTimings } from '@/utils/startup-profiler';
 import 'vue-sonner/style.css';
@@ -15,9 +16,12 @@ interface ITauriInternals {
 }
 
 let hasAppliedMainWindowStage = false;
+let hasSyncedNativeWindowBackground = false;
 let isApplyingMainWindowStage = false;
 
-const canApplyNativeWindowStage = (): boolean => {
+useWindowResizeState();
+
+const canUseNativeWindowIpc = (): boolean => {
   if (typeof window === 'undefined') {
     return false;
   }
@@ -27,12 +31,25 @@ const canApplyNativeWindowStage = (): boolean => {
   return typeof internals?.invoke === 'function';
 };
 
+const syncNativeWindowBackground = async (): Promise<void> => {
+  if (hasSyncedNativeWindowBackground || !canUseNativeWindowIpc()) {
+    return;
+  }
+
+  try {
+    await setWindowBackground({ r: 250, g: 250, b: 250, a: 255 });
+    hasSyncedNativeWindowBackground = true;
+  } catch (error) {
+    console.warn('同步原生窗口底色失败', error);
+  }
+};
+
 const revealMainWindow = async (): Promise<void> => {
   if (hasAppliedMainWindowStage || isApplyingMainWindowStage) {
     return;
   }
 
-  if (!canApplyNativeWindowStage()) {
+  if (!canUseNativeWindowIpc()) {
     markStartup('window-stage-main-skipped');
     reportStartupTimings();
     return;
@@ -41,6 +58,7 @@ const revealMainWindow = async (): Promise<void> => {
   isApplyingMainWindowStage = true;
   markStartup('window-stage-main-start');
   try {
+    await syncNativeWindowBackground();
     await applyWindowStage({ stage: 'main' });
     markStartup('window-stage-main-done');
     hasAppliedMainWindowStage = true;
@@ -89,6 +107,7 @@ watch(
 );
 
 onMounted(() => {
+  void syncNativeWindowBackground();
   scheduleInitialWindowReveal();
 });
 </script>
