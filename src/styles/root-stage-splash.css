@@ -6,7 +6,7 @@
   position: relative;
   min-height: 100vh;
   overflow: hidden;
-  background: var(--app-bg);
+  background: #fafafa;
   isolation: isolate;
 }
 
@@ -49,15 +49,15 @@
 }
 
 /* === 无边框窗口拖拽/缩放底色 ======================
- * Tauri 窗口为非透明；所有根级容器必须使用软件壳层底色，而不是透明或独立硬编码色。
- * 这样拖拽缩放时 WebView2 / DOM 延迟重排也只会露出壳层颜色，不会露黑底。
+ * Tauri 窗口已改为非透明；根容器不能再强制 transparent，
+ * 否则 WebView 未覆盖区域会露出系统默认黑底。统一兜底为 #fafafa。
  * ================================================= */
 html,
 body,
 #app,
 .app-root-stage,
 .app-surface {
-  background: var(--app-bg) !important;
+  background: #fafafa !important;
 }
 
 :root {

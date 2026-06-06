@@ -2,12 +2,6 @@
  * 4. Base / reset
  * ============================================================ */
 
-:root {
-  --app-bg: #f6f8fa;
-  --panel-bg: #ffffff;
-  --editor-bg: #ffffff;
-}
-
 html,
 body,
 #app {
@@ -15,7 +9,7 @@ body,
   width: 100%;
   height: 100%;
   min-height: 100%;
-  background: var(--app-bg);
+  background: #fafafa;
   color: var(--text-primary);
 }
 
@@ -74,6 +68,6 @@ button:disabled,
 
   body {
     @apply text-foreground;
-    background: var(--app-bg);
+    background: #fafafa;
   }
 }

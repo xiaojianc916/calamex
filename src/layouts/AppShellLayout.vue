@@ -75,8 +75,6 @@ type TResizeDirection =
   | 'SouthWest';
 
 const SIDEBAR_MIN_WIDTH = 240;
-const SHELL_CHROME_BG = '#f6f8fa';
-const SHELL_PANEL_BG = '#ffffff';
 
 const props = withDefaults(
   defineProps<{
@@ -121,16 +119,16 @@ const sidebarStyle = computed(() => ({
 }));
 
 const shellThemeStyle = {
-  '--app-bg': SHELL_CHROME_BG,
-  '--titlebar-bg': SHELL_CHROME_BG,
-  '--sidebar-bg': SHELL_CHROME_BG,
-  '--panel-bg': SHELL_PANEL_BG,
-  '--tabbar-bg': SHELL_PANEL_BG,
-  '--tab-active-bg': SHELL_PANEL_BG,
-  '--statusbar-bg': SHELL_CHROME_BG,
-  '--editor-bg': SHELL_PANEL_BG,
-  '--editor-gutter-bg': SHELL_PANEL_BG,
-  '--editor-surface': SHELL_PANEL_BG,
+  '--app-bg': '#fafafa',
+  '--titlebar-bg': '#fafafa',
+  '--sidebar-bg': '#fafafa',
+  '--panel-bg': '#ffffff',
+  '--tabbar-bg': '#ffffff',
+  '--tab-active-bg': '#ffffff',
+  '--statusbar-bg': '#fafafa',
+  '--editor-bg': '#ffffff',
+  '--editor-gutter-bg': '#ffffff',
+  '--editor-surface': '#ffffff',
   '--shell-divider': '#d1d9e0b3',
   '--border-strong': '#d1d9e0',
   '--border-subtle': '#d1d9e0b3',
