@@ -33,7 +33,9 @@ pub use contracts::{
     WorkspacePathKind, WorkspacePathRenamePayload, WorkspacePathRenameRequest,
 };
 pub use lsp::LspManager;
+pub(crate) use lsp::commands::lsp_stop;
 pub(crate) use script_run::{find_command_path, line_count};
+pub(crate) use ssh_pool::shutdown_ssh_pool;
 pub use terminal::{TerminalSessionState, shutdown_all_terminal_sessions};
 pub(crate) use workspace_fs::{decode_script_bytes, encode_script_content, resolve_workspace_root};
 pub use workspace_watcher::WorkspaceWatcher;
