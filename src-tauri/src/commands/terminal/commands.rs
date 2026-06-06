@@ -138,7 +138,15 @@ pub async fn ensure_terminal_session(
                 handle,
                 working_directory: terminal_cwd.clone(),
             });
-            let mut sessions = lock_terminal_sessions(&terminal_state)?;
+            // 登记会话时若 sessions 锁已损坏，PTY 已打开但无人持有句柄 → 会泄漏 wsl.exe。
+            // 先兜底关闭刚打开的 PTY 再向上抛错，避免产生孤儿进程。
+            let mut sessions = match lock_terminal_sessions(&terminal_state) {
+                Ok(sessions) => sessions,
+                Err(error) => {
+                    let _ = terminate_terminal_session(session.as_ref());
+                    return Err(error);
+                }
+            };
             sessions.insert(payload.session_id.clone(), Arc::clone(&session));
             set_terminal_snapshot(&terminal_state, &payload.session_id, String::new())?;
             remove_terminal_interactive_visual_state(&terminal_state, &payload.session_id)?;
