@@ -1587,6 +1587,11 @@
 }
 
 .source-control-pull-requests-panel {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 12px 14px 14px;
   display: flex;
   flex-direction: column;
   gap: 10px;

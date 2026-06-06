@@ -314,260 +314,191 @@
           <p v-else class="source-control-info-note source-control-branches-note">{{ branchesEmptyText }}</p>
         </section>
 
-        <section v-else-if="activeTab === 'pull-requests'"
-          class="source-control-info-panel source-control-pull-requests-panel">
+        <section v-else-if="activeTab === 'pull-requests'" class="source-control-pull-requests-panel">
           <div class="source-control-pull-requests-header">
             <p class="source-control-pull-requests-heading">Pull requests</p>
             <div class="source-control-pull-requests-header-actions">
               <span v-if="pullRequestSupport.available" class="source-control-pull-requests-provider">
-                {{ pullRequestProviderLabel }}
+                {{pullRequestProviderLabel}}
               </span>
-              <button type="button" class="source-control-pull-requests-refresh" aria-label="刷新 Pull Request 支持"
-                title="刷新 Pull Request 支持"
-                :disabled="isPullRequestSupportLoading || isSettingRemote || isBusy"
+              <button type="button" class="source-control-pull-requests-refresh" aria-label="刷新 Pull Request"
+                title="刷新 Pull Request"
+                :disabled="isPullRequestSupportLoading || isPullRequestsLoading || isSettingRemote || isBusy"
                 @click="handleReloadPullRequestSupport">
                 <span aria-hidden="true" class="icon-[lucide--refresh-cw]" />
               </button>
             </div>
           </div>
 
-          <div v-if="isPullRequestSupportLoading" class="source-control-pull-requests-skeleton" aria-hidden="true">
-            <span class="source-control-pull-requests-skeleton-line is-title" />
-            <span class="source-control-pull-requests-skeleton-line" />
-            <span class="source-control-pull-requests-skeleton-line is-short" />
+          <div v-if="isPullRequestSupportLoading" class="source-control-pr-skeleton" aria-hidden="true">
+            <span class="source-control-pr-skeleton-row is-title" />
+            <span class="source-control-pr-skeleton-row" />
+            <span class="source-control-pr-skeleton-row is-short" />
           </div>
 
           <template v-else>
-            <p v-if="!pullRequestSupport.available" class="source-control-info-title">{{ pullRequestPanelTitle }}</p>
-            <p v-if="!pullRequestSupport.available" class="source-control-info-text">{{ pullRequestPanelText }}</p>
-
-            <p v-if="pullRequestSupport.remoteName" class="source-control-info-note">
-              远程 {{ pullRequestSupport.remoteName }} · {{ pullRequestProviderLabel }}
-            </p>
-
-            <div v-if="pullRequestSupport.available" class="source-control-pr-shell">
-              <template v-if="pullRequestView === 'detail'">
+            <template v-if="pullRequestSupport.available">
+              <template v-if="pullRequestView === 'list'">
                 <div class="source-control-pr-toolbar">
-                  <button type="button" class="source-control-pr-back-btn" :disabled="isBusy"
-                    @click="handleBackToPullRequestList">
-                    ← 返回列表
-                  </button>
-                </div>
-
-                <p v-if="pullRequestActionError" class="source-control-pr-form-error">
-                   pullRequestActionError 
-                </p>
-
-                <div v-if="isPullRequestDetailLoading && !pullRequestDetail"
-                  class="source-control-pr-skeleton" aria-hidden="true">
-                  <span class="source-control-pr-skeleton-row is-title" />
-                  <span class="source-control-pr-skeleton-row" />
-                  <span class="source-control-pr-skeleton-row is-short" />
-                </div>
-
-                <article v-else-if="pullRequestDetail" class="source-control-pr-detail">
-                  <div class="source-control-pr-detail-card">
-                    <p class="source-control-pr-detail-title">
-                      # pullRequestDetail.number  ·  pullRequestDetail.title 
-                    </p>
-                    <p class="source-control-pr-detail-meta">
-                      <span class="source-control-pr-state"
-                        :class="resolvePullRequestStateClass(pullRequestDetail)">
-                         resolvePullRequestStateLabel(pullRequestDetail) 
-                      </span>
-                      <span> resolvePullRequestMeta(pullRequestDetail) </span>
-                    </p>
-
-                    <div class="source-control-pr-detail-stats">
-                      <span class="source-control-pr-stat">
-                        <span class="source-control-pr-stat-value">+ pullRequestDetail.additions ?? 0 </span>
-                        <span class="source-control-pr-stat-label">新增</span>
-                      </span>
-                      <span class="source-control-pr-stat">
-                        <span class="source-control-pr-stat-value">- pullRequestDetail.deletions ?? 0 </span>
-                        <span class="source-control-pr-stat-label">删除</span>
-                      </span>
-                      <span class="source-control-pr-stat">
-                        <span class="source-control-pr-stat-value"> pullRequestDetail.changedFiles ?? 0 </span>
-                        <span class="source-control-pr-stat-label">文件</span>
-                      </span>
-                    </div>
-
-                    <p v-if="pullRequestDetail.body" class="source-control-pr-detail-body">
-                       pullRequestDetail.body 
-                    </p>
-
-                    <div v-if="isPullRequestOpen(pullRequestDetail)" class="source-control-pr-merge-row">
-                      <select v-model="pullRequestMergeMethod" class="source-control-pr-select" :disabled="isBusy">
-                        <option v-for="option in pullRequestMergeMethodOptions" :key="option.value"
-                          :value="option.value">
-                           option.label 
-                        </option>
-                      </select>
-
-                      <div class="source-control-pr-actions">
-                        <button type="button" class="source-control-pr-action-btn is-primary" :disabled="isBusy"
-                          @click="handleMergePullRequest(pullRequestDetail)">
-                          合并
-                        </button>
-                        <button type="button" class="source-control-pr-action-btn is-danger" :disabled="isBusy"
-                          @click="handleClosePullRequest(pullRequestDetail)">
-                          关闭
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </article>
-              </template>
-
-              <template v-else-if="pullRequestView === 'create'">
-                <div class="source-control-pr-toolbar">
-                  <button type="button" class="source-control-pr-back-btn" :disabled="isBusy"
-                    @click="handleBackToPullRequestList">
-                    ← 返回列表
-                  </button>
-                </div>
-
-                <form class="source-control-pr-create-form" @submit.prevent="handleSubmitCreatePullRequest">
-                  <label class="source-control-pr-field">
-                    <span class="source-control-pr-field-label">标题</span>
-                    <input v-model="createPullRequestTitle" type="text" class="source-control-pr-input"
-                      placeholder="Pull Request 标题" :disabled="isCreatingPullRequest" spellcheck="false" />
-                  </label>
-
-                  <label class="source-control-pr-field">
-                    <span class="source-control-pr-field-label">来源分支</span>
-                    <input v-model="createPullRequestHead" type="text" class="source-control-pr-input"
-                      placeholder="feature/your-branch" :disabled="isCreatingPullRequest" spellcheck="false" />
-                  </label>
-
-                  <label class="source-control-pr-field">
-                    <span class="source-control-pr-field-label">目标分支</span>
-                    <input v-model="createPullRequestBase" type="text" class="source-control-pr-input"
-                      placeholder="main" :disabled="isCreatingPullRequest" spellcheck="false" />
-                  </label>
-
-                  <label class="source-control-pr-field">
-                    <span class="source-control-pr-field-label">描述</span>
-                    <textarea v-model="createPullRequestBody" class="source-control-pr-textarea" rows="4"
-                      placeholder="可选的 Pull Request 描述" :disabled="isCreatingPullRequest" />
-                  </label>
-
-                  <label class="source-control-pr-draft-row">
-                    <input v-model="createPullRequestDraft" type="checkbox" :disabled="isCreatingPullRequest" />
-                    <span>创建为草稿</span>
-                  </label>
-
-                  <p v-if="createPullRequestError" class="source-control-pr-form-error">
-                     createPullRequestError 
-                  </p>
-
-                  <div class="source-control-pr-actions">
-                    <button type="button" class="source-control-pr-action-btn" :disabled="isCreatingPullRequest"
-                      @click="handleBackToPullRequestList">
-                      取消
-                    </button>
-                    <button type="submit" class="source-control-pr-action-btn is-primary"
-                      :disabled="!canSubmitCreatePullRequest">
-                       createPullRequestSubmitLabel 
-                    </button>
-                  </div>
-                </form>
-              </template>
-
-              <template v-else>
-                <div class="source-control-pr-toolbar">
-                  <div class="source-control-pr-filter">
-                    <button v-for="option in pullRequestStateOptions" :key="option.value" type="button"
+                  <div class="source-control-pr-filter" role="tablist">
+                    <button v-for="filter in pullRequestFilters" :key="filter.key" type="button"
                       class="source-control-pr-filter-btn"
-                      :class="{ 'is-active': pullRequestStateFilter === option.value }"
-                      :disabled="isBusy" @click="handleSelectPullRequestState(option.value)">
-                       option.label 
+                      :class="{ 'is-active': pullRequestStateFilter === filter.key }"
+                      :disabled="isPullRequestsLoading" @click="handleSelectPullRequestFilter(filter.key)">
+                      {{filter.label}}
                     </button>
                   </div>
-
-                  <div class="source-control-pr-actions">
-                    <button type="button" class="source-control-pr-icon-btn" aria-label="刷新 Pull Request 列表"
-                      title="刷新 Pull Request 列表" :disabled="isPullRequestsLoading || isBusy"
-                      @click="handleReloadPullRequests">
-                      <span aria-hidden="true" class="icon-[lucide--refresh-cw]" />
-                    </button>
-                    <button type="button" class="source-control-pr-action-btn is-primary" :disabled="isBusy"
-                      @click="handleOpenCreatePullRequest">
-                      创建 PR
-                    </button>
-                  </div>
+                  <button type="button" class="source-control-pr-action-btn is-primary"
+                    :disabled="isPullRequestsLoading || isBusy" @click="handleStartCreatePullRequest">
+                    新建 PR
+                  </button>
                 </div>
 
-                <p v-if="pullRequestActionError" class="source-control-pr-form-error">
-                   pullRequestActionError 
-                </p>
-
-                <div v-if="isPullRequestsLoading && pullRequests.length === 0"
-                  class="source-control-pr-skeleton" aria-hidden="true">
+                <div v-if="isPullRequestsLoading && pullRequests.length === 0" class="source-control-pr-skeleton">
                   <span class="source-control-pr-skeleton-row is-title" />
                   <span class="source-control-pr-skeleton-row" />
                   <span class="source-control-pr-skeleton-row is-short" />
                 </div>
 
                 <div v-else-if="pullRequests.length > 0" class="source-control-pr-list">
-                  <article v-for="pullRequest in pullRequests" :key="pullRequest.number"
-                    class="source-control-pr-item" role="button" tabindex="0"
-                    @click="handleOpenPullRequestDetail(pullRequest)"
-                    @keydown.enter.prevent="handleOpenPullRequestDetail(pullRequest)">
-                    <div class="source-control-pr-item-head">
-                      <span class="source-control-pr-item-title">
-                        # pullRequest.number  ·  pullRequest.title 
+                  <button v-for="pullRequest in pullRequests" :key="pullRequest.number" type="button"
+                    class="source-control-pr-item" @click="handleOpenPullRequest(pullRequest.number)">
+                    <span class="source-control-pr-item-head">
+                      <span class="source-control-pr-item-title">{{pullRequest.title}}</span>
+                      <span class="source-control-pr-state" :class="'is-' + resolvePullRequestStateTone(pullRequest)">
+                        {{resolvePullRequestStateLabel(pullRequest)}}
                       </span>
-                      <span class="source-control-pr-state" :class="resolvePullRequestStateClass(pullRequest)">
-                         resolvePullRequestStateLabel(pullRequest) 
-                      </span>
-                    </div>
-                    <span class="source-control-pr-item-meta"> resolvePullRequestMeta(pullRequest) </span>
-                  </article>
+                    </span>
+                    <span class="source-control-pr-item-meta">{{resolvePullRequestMeta(pullRequest)}}</span>
+                  </button>
                 </div>
 
-                <p v-else class="source-control-info-note source-control-pr-empty"> pullRequestsEmptyText </p>
+                <p v-else class="source-control-pr-empty">{{pullRequestsEmptyText}}</p>
               </template>
-            </div>
+
+              <template v-else-if="pullRequestView === 'detail'">
+                <button type="button" class="source-control-pr-back-btn" @click="handleBackToPullRequestList">
+                  <span aria-hidden="true">←</span><span>返回列表</span>
+                </button>
+
+                <div v-if="isPullRequestDetailLoading && !pullRequestDetail" class="source-control-pr-skeleton">
+                  <span class="source-control-pr-skeleton-row is-title" />
+                  <span class="source-control-pr-skeleton-row" />
+                  <span class="source-control-pr-skeleton-row is-short" />
+                </div>
+
+                <div v-else-if="pullRequestDetail" class="source-control-pr-detail">
+                  <div class="source-control-pr-detail-head">
+                    <span class="source-control-pr-detail-title">{{pullRequestDetail.title}}</span>
+                    <span class="source-control-pr-state" :class="'is-' + resolvePullRequestStateTone(pullRequestDetail)">
+                      {{resolvePullRequestStateLabel(pullRequestDetail)}}
+                    </span>
+                  </div>
+                  <p class="source-control-pr-detail-meta">{{resolvePullRequestMeta(pullRequestDetail)}}</p>
+                  <div class="source-control-pr-detail-stats">
+                    <span class="source-control-pr-stat is-add">+{{pullRequestDetail.additions ?? 0}}</span>
+                    <span class="source-control-pr-stat is-del">-{{pullRequestDetail.deletions ?? 0}}</span>
+                    <span class="source-control-pr-stat">{{pullRequestDetail.changedFiles ?? 0}} 个文件</span>
+                  </div>
+                  <p v-if="pullRequestDetail.body" class="source-control-pr-detail-body">{{pullRequestDetail.body}}</p>
+                  <p v-else class="source-control-pr-detail-body is-empty">这个 Pull Request 没有描述。</p>
+
+                  <div class="source-control-pr-merge-row">
+                    <select v-model="mergeMethod" class="source-control-pr-select" :disabled="isMutatingPullRequest">
+                      <option value="merge">Merge commit</option>
+                      <option value="squash">Squash</option>
+                      <option value="rebase">Rebase</option>
+                    </select>
+                    <button type="button" class="source-control-pr-action-btn is-primary"
+                      :disabled="isMutatingPullRequest || pullRequestDetail.state !== 'open'"
+                      @click="handleMergePullRequest(pullRequestDetail)">
+                      合并
+                    </button>
+                    <button type="button" class="source-control-pr-action-btn is-danger"
+                      :disabled="isMutatingPullRequest || pullRequestDetail.state !== 'open'"
+                      @click="handleClosePullRequest(pullRequestDetail)">
+                      关闭
+                    </button>
+                  </div>
+                </div>
+              </template>
+
+              <template v-else>
+                <button type="button" class="source-control-pr-back-btn" @click="handleBackToPullRequestList">
+                  <span aria-hidden="true">←</span><span>返回列表</span>
+                </button>
+                <form class="source-control-pr-create-form" @submit.prevent="handleSubmitCreatePullRequest">
+                  <label class="source-control-pr-field">
+                    <span class="source-control-pr-field-label">标题</span>
+                    <input v-model="createPullRequestTitle" type="text" class="source-control-pr-input"
+                      placeholder="简要描述这次改动" :disabled="isCreatingPullRequest" spellcheck="false" />
+                  </label>
+                  <div class="source-control-pr-merge-row">
+                    <label class="source-control-pr-field">
+                      <span class="source-control-pr-field-label">目标分支</span>
+                      <input v-model="createPullRequestBase" type="text" class="source-control-pr-input"
+                        placeholder="main" :disabled="isCreatingPullRequest" spellcheck="false" />
+                    </label>
+                    <label class="source-control-pr-field">
+                      <span class="source-control-pr-field-label">来源分支</span>
+                      <input v-model="createPullRequestHead" type="text" class="source-control-pr-input"
+                        placeholder="feature/..." :disabled="isCreatingPullRequest" spellcheck="false" />
+                    </label>
+                  </div>
+                  <label class="source-control-pr-field">
+                    <span class="source-control-pr-field-label">描述</span>
+                    <textarea v-model="createPullRequestBody" class="source-control-pr-textarea" rows="4"
+                      placeholder="补充背景、测试情况等（可选）" :disabled="isCreatingPullRequest" />
+                  </label>
+                  <label class="source-control-pr-draft-row">
+                    <input v-model="createPullRequestDraft" type="checkbox" :disabled="isCreatingPullRequest" />
+                    <span>创建为草稿 PR</span>
+                  </label>
+                  <p v-if="createPullRequestError" class="source-control-pr-form-error">{{createPullRequestError}}</p>
+                  <div class="source-control-pr-create-actions">
+                    <button type="button" class="source-control-pr-action-btn"
+                      :disabled="isCreatingPullRequest" @click="handleBackToPullRequestList">取消</button>
+                    <button type="submit" class="source-control-pr-action-btn is-primary"
+                      :disabled="isCreatingPullRequest || !canSubmitCreatePullRequest">
+                      {{isCreatingPullRequest ? '创建中…' : '创建 PR'}}
+                    </button>
+                  </div>
+                </form>
+              </template>
+            </template>
+
+            <template v-else>
+              <p class="source-control-info-title">{{pullRequestPanelTitle}}</p>
+              <p class="source-control-info-text">{{pullRequestPanelText}}</p>
+            </template>
 
             <div class="source-control-pull-requests-config">
               <button v-if="!isRemoteFormOpen" type="button"
-                class="source-control-btn source-control-pull-requests-config-trigger"
+                class="source-control-pr-action-btn source-control-pull-requests-config-trigger"
                 :disabled="isSettingRemote || isBusy" @click="handleOpenRemoteForm">
-                {{ pullRequestSupport.remoteName ? '更新远程地址' : '配置远程地址' }}
+                更新远程地址
               </button>
-
               <form v-else class="source-control-pull-requests-form" @submit.prevent="handleSubmitRemoteForm">
-                <label class="source-control-pull-requests-field">
-                  <span class="source-control-pull-requests-field-label">远程名称</span>
-                  <input v-model="remoteNameInput" type="text" class="source-control-pull-requests-input"
+                <label class="source-control-pr-field">
+                  <span class="source-control-pr-field-label">远程名称</span>
+                  <input v-model="remoteNameInput" type="text"
+                    class="source-control-pull-requests-input source-control-pr-input"
                     placeholder="origin" :disabled="isSettingRemote" spellcheck="false" />
                 </label>
-
-                <label class="source-control-pull-requests-field">
-                  <span class="source-control-pull-requests-field-label">远程地址</span>
+                <label class="source-control-pr-field">
+                  <span class="source-control-pr-field-label">远程地址</span>
                   <input v-model="remoteUrlInput" type="text"
-                    class="source-control-pull-requests-input"
+                    class="source-control-pull-requests-input source-control-pr-input"
                     :class="{ 'is-invalid': Boolean(remoteFormError) }"
-                    placeholder="https://github.com/owner/repo.git" :disabled="isSettingRemote"
-                    spellcheck="false" />
+                    placeholder="https://github.com/owner/repo.git" :disabled="isSettingRemote" spellcheck="false" />
                 </label>
-
-                <p v-if="remoteFormError" class="source-control-pull-requests-form-error">
-                  {{ remoteFormError }}
-                </p>
-
-                <div class="source-control-pull-requests-form-actions">
-                  <button type="button"
-                    class="source-control-btn source-control-pull-requests-form-btn"
-                    :disabled="isSettingRemote" @click="handleCancelRemoteForm">
-                    取消
-                  </button>
-                  <button type="submit"
-                    class="source-control-btn source-control-btn-primary source-control-pull-requests-form-btn"
+                <p v-if="remoteFormError" class="source-control-pr-form-error">{{remoteFormError}}</p>
+                <div class="source-control-pr-create-actions">
+                  <button type="button" class="source-control-pr-action-btn"
+                    :disabled="isSettingRemote" @click="handleCancelRemoteForm">取消</button>
+                  <button type="submit" class="source-control-pr-action-btn is-primary"
                     :disabled="isSettingRemote || !canSubmitRemoteForm">
-                    {{ isSettingRemote ? '保存中…' : '保存' }}
+                    {{isSettingRemote ? '保存中…' : '保存'}}
                   </button>
                 </div>
               </form>
@@ -729,9 +660,6 @@ const SOURCE_CONTROL_MENU_VIEWPORT_PADDING = 12;
 const SOURCE_CONTROL_MENU_ROOT_SELECTOR = '.linear-context-menu-root';
 
 type TGitNavKey = 'changes' | 'history' | 'branches' | 'pull-requests' | 'stash';
-type TPullRequestView = 'list' | 'detail' | 'create';
-type TPullRequestStateFilter = 'open' | 'closed' | 'all';
-type TPullRequestMergeMethod = 'merge' | 'squash' | 'rebase';
 interface IGitSection {
   key: TGitSectionKey;
   title: string;
@@ -940,10 +868,7 @@ async function ensureActiveTabData(tabKey: TGitNavKey): Promise<void> {
       return;
     }
 
-    await gitStore.loadPullRequestSupport();
-    if (pullRequestSupport.value.available) {
-      await gitStore.loadPullRequests(pullRequestStateFilter.value);
-    }
+    await Promise.all([gitStore.loadPullRequestSupport(), gitStore.loadPullRequests()]);
   } catch (error) {
     const fallbackMessage =
       tabKey === 'history'
@@ -987,13 +912,6 @@ const pullRequestSupport = computed<IGitPullRequestSupportPayload>(
 const isPullRequestSupportLoading = computed(() => gitStore.isPullRequestSupportLoading);
 const isSettingRemote = computed(() => gitStore.isSettingRemote);
 
-const pullRequests = computed<IGitPullRequestSummaryPayload[]>(() => gitStore.pullRequests);
-const isPullRequestsLoading = computed(() => gitStore.isPullRequestsLoading);
-const pullRequestDetail = computed<IGitPullRequestDetailPayload | null>(
-  () => gitStore.pullRequestDetail,
-);
-const isPullRequestDetailLoading = computed(() => gitStore.isPullRequestDetailLoading);
-
 const isRemoteFormOpen = ref(false);
 const remoteNameInput = ref('');
 const remoteUrlInput = ref('');
@@ -1003,42 +921,195 @@ const canSubmitRemoteForm = computed(
   () => remoteNameInput.value.trim().length > 0 && remoteUrlInput.value.trim().length > 0,
 );
 
+type TPullRequestView = 'list' | 'detail' | 'create';
+
+const pullRequests = computed<IGitPullRequestSummaryPayload[]>(() => gitStore.pullRequests);
+const isPullRequestsLoading = computed(() => gitStore.isPullRequestsLoading);
+const pullRequestStateFilter = computed(() => gitStore.pullRequestStateFilter);
+const pullRequestDetail = computed<IGitPullRequestDetailPayload | null>(
+  () => gitStore.pullRequestDetail,
+);
+const isPullRequestDetailLoading = computed(() => gitStore.isPullRequestDetailLoading);
+
 const pullRequestView = ref<TPullRequestView>('list');
-const pullRequestStateFilter = ref<TPullRequestStateFilter>('open');
-const pullRequestActionError = ref<string | null>(null);
-const pullRequestMergeMethod = ref<TPullRequestMergeMethod>('merge');
+const activePullRequestNumber = ref<number | null>(null);
+const mergeMethod = ref<'merge' | 'squash' | 'rebase'>('merge');
+const isMutatingPullRequest = ref(false);
 const createPullRequestTitle = ref('');
 const createPullRequestBody = ref('');
 const createPullRequestBase = ref('');
 const createPullRequestHead = ref('');
 const createPullRequestDraft = ref(false);
 const createPullRequestError = ref<string | null>(null);
+const isCreatingPullRequest = ref(false);
 
-const pullRequestStateOptions: Array<{ value: TPullRequestStateFilter; label: string }> = [
-  { value: 'open', label: '开放' },
-  { value: 'closed', label: '已关闭' },
-  { value: 'all', label: '全部' },
+const pullRequestFilters: Array<{ key: 'open' | 'closed' | 'all'; label: string }> = [
+  { key: 'open', label: '进行中' },
+  { key: 'closed', label: '已关闭' },
+  { key: 'all', label: '全部' },
 ];
-
-const pullRequestMergeMethodOptions: Array<{ value: TPullRequestMergeMethod; label: string }> = [
-  { value: 'merge', label: '合并提交' },
-  { value: 'squash', label: '压缩合并' },
-  { value: 'rebase', label: '变基合并' },
-];
-
-const isCreatingPullRequest = computed(() => pendingAction.value === 'create-pull-request');
 
 const canSubmitCreatePullRequest = computed(
   () =>
-    !isCreatingPullRequest.value &&
     createPullRequestTitle.value.trim().length > 0 &&
     createPullRequestBase.value.trim().length > 0 &&
     createPullRequestHead.value.trim().length > 0,
 );
 
-const createPullRequestSubmitLabel = computed(() =>
-  isCreatingPullRequest.value ? '创建中…' : '创建 Pull Request',
-);
+const pullRequestsEmptyText = computed(() => {
+  if (pullRequestStateFilter.value === 'closed') {
+    return '当前没有已关闭的 Pull Request。';
+  }
+  if (pullRequestStateFilter.value === 'all') {
+    return '这个仓库还没有任何 Pull Request。';
+  }
+  return '当前没有进行中的 Pull Request。';
+});
+
+const resolvePullRequestStateLabel = (pullRequest: IGitPullRequestSummaryPayload): string => {
+  if (pullRequest.isDraft) {
+    return '草稿';
+  }
+  if (pullRequest.state === 'merged') {
+    return '已合并';
+  }
+  if (pullRequest.state === 'closed') {
+    return '已关闭';
+  }
+  return '进行中';
+};
+
+const resolvePullRequestStateTone = (pullRequest: IGitPullRequestSummaryPayload): string => {
+  if (pullRequest.isDraft) {
+    return 'draft';
+  }
+  return pullRequest.state;
+};
+
+const resolvePullRequestMeta = (pullRequest: IGitPullRequestSummaryPayload): string => {
+  const segments: string[] = ['#' + pullRequest.number];
+  if (pullRequest.author) {
+    segments.push(pullRequest.author);
+  }
+  segments.push(pullRequest.headRef + ' → ' + pullRequest.baseRef);
+  return segments.join(' · ');
+};
+
+const handleSelectPullRequestFilter = async (
+  stateKey: 'open' | 'closed' | 'all',
+): Promise<void> => {
+  if (isPullRequestsLoading.value || stateKey === pullRequestStateFilter.value) {
+    return;
+  }
+  try {
+    await gitStore.loadPullRequests(stateKey);
+  } catch (error) {
+    message.error(toErrorMessage(error, '读取 Pull Request 列表失败'));
+  }
+};
+
+const handleOpenPullRequest = async (pullRequestNumber: number): Promise<void> => {
+  activePullRequestNumber.value = pullRequestNumber;
+  pullRequestView.value = 'detail';
+  try {
+    await gitStore.loadPullRequestDetail(pullRequestNumber);
+  } catch (error) {
+    message.error(toErrorMessage(error, '读取 Pull Request 详情失败'));
+  }
+};
+
+const handleBackToPullRequestList = (): void => {
+  pullRequestView.value = 'list';
+  activePullRequestNumber.value = null;
+};
+
+const handleStartCreatePullRequest = (): void => {
+  createPullRequestTitle.value = '';
+  createPullRequestBody.value = '';
+  createPullRequestBase.value = 'main';
+  createPullRequestHead.value = status.value.headShortName ?? status.value.headBranchName ?? '';
+  createPullRequestDraft.value = false;
+  createPullRequestError.value = null;
+  pullRequestView.value = 'create';
+};
+
+const handleSubmitCreatePullRequest = async (): Promise<void> => {
+  if (!canSubmitCreatePullRequest.value || isCreatingPullRequest.value) {
+    return;
+  }
+  isCreatingPullRequest.value = true;
+  createPullRequestError.value = null;
+  try {
+    await gitStore.createPullRequest({
+      title: createPullRequestTitle.value.trim(),
+      body: createPullRequestBody.value.trim(),
+      base: createPullRequestBase.value.trim(),
+      head: createPullRequestHead.value.trim(),
+      draft: createPullRequestDraft.value,
+    });
+    await gitStore.loadPullRequests(pullRequestStateFilter.value);
+    pullRequestView.value = 'list';
+    message.success('已创建 Pull Request');
+  } catch (error) {
+    createPullRequestError.value = toErrorMessage(error, '创建 Pull Request 失败');
+  } finally {
+    isCreatingPullRequest.value = false;
+  }
+};
+
+const handleMergePullRequest = async (
+  pullRequest: IGitPullRequestSummaryPayload,
+): Promise<void> => {
+  const action = await dialog.confirm({
+    title: '合并这个 Pull Request？',
+    description: '将以 ' + mergeMethod.value + ' 方式合并 #' + pullRequest.number + '。',
+    confirmText: '合并',
+    cancelText: '取消',
+    variant: 'default',
+  });
+  if (action !== 'confirm') {
+    return;
+  }
+  isMutatingPullRequest.value = true;
+  try {
+    await gitStore.mergePullRequest(pullRequest.number, mergeMethod.value);
+    await gitStore.loadPullRequests(pullRequestStateFilter.value);
+    pullRequestView.value = 'list';
+    activePullRequestNumber.value = null;
+    message.success('已合并 #' + pullRequest.number);
+  } catch (error) {
+    message.error(toErrorMessage(error, '合并 Pull Request 失败'));
+  } finally {
+    isMutatingPullRequest.value = false;
+  }
+};
+
+const handleClosePullRequest = async (
+  pullRequest: IGitPullRequestSummaryPayload,
+): Promise<void> => {
+  const action = await dialog.confirm({
+    title: '关闭这个 Pull Request？',
+    description: '将关闭 #' + pullRequest.number + '，但不会合并改动。',
+    confirmText: '关闭 PR',
+    cancelText: '取消',
+    variant: 'danger',
+  });
+  if (action !== 'confirm') {
+    return;
+  }
+  isMutatingPullRequest.value = true;
+  try {
+    await gitStore.closePullRequest(pullRequest.number);
+    await gitStore.loadPullRequests(pullRequestStateFilter.value);
+    pullRequestView.value = 'list';
+    activePullRequestNumber.value = null;
+    message.success('已关闭 #' + pullRequest.number);
+  } catch (error) {
+    message.error(toErrorMessage(error, '关闭 Pull Request 失败'));
+  } finally {
+    isMutatingPullRequest.value = false;
+  }
+};
 
 const sections = computed<IGitSection[]>(() => {
   const nextSections: IGitSection[] = [];
@@ -1348,70 +1419,6 @@ const pullRequestPanelText = computed(() => {
 
   return '先为仓库配置远程地址，再在这里打开 PR 列表或创建入口。';
 });
-
-const pullRequestsEmptyText = computed(() => {
-  if (pullRequestStateFilter.value === 'closed') {
-    return '当前没有已关闭的 Pull Request。';
-  }
-  if (pullRequestStateFilter.value === 'all') {
-    return '当前仓库还没有 Pull Request。';
-  }
-  return '当前没有开放中的 Pull Request。';
-});
-
-const isPullRequestOpen = (
-  pullRequest: IGitPullRequestSummaryPayload | IGitPullRequestDetailPayload,
-): boolean => pullRequest.state === 'open';
-
-const resolvePullRequestStateClass = (
-  pullRequest: IGitPullRequestSummaryPayload | IGitPullRequestDetailPayload,
-): string => {
-  if (pullRequest.state === 'merged') {
-    return 'is-merged';
-  }
-  if (pullRequest.state === 'closed') {
-    return 'is-closed';
-  }
-  return pullRequest.isDraft ? 'is-draft' : 'is-open';
-};
-
-const resolvePullRequestStateLabel = (
-  pullRequest: IGitPullRequestSummaryPayload | IGitPullRequestDetailPayload,
-): string => {
-  if (pullRequest.state === 'merged') {
-    return '已合并';
-  }
-  if (pullRequest.state === 'closed') {
-    return '已关闭';
-  }
-  return pullRequest.isDraft ? '草稿' : '开放';
-};
-
-const formatPullRequestTimestamp = (value: string | null | undefined): string => {
-  if (!value) {
-    return '';
-  }
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return '';
-  }
-  return parsed.toLocaleString();
-};
-
-const resolvePullRequestMeta = (
-  pullRequest: IGitPullRequestSummaryPayload | IGitPullRequestDetailPayload,
-): string => {
-  const segments: string[] = [];
-  if (pullRequest.author) {
-    segments.push(pullRequest.author);
-  }
-  segments.push(pullRequest.headRef + ' → ' + pullRequest.baseRef);
-  const updatedAt = formatPullRequestTimestamp(pullRequest.updatedAt);
-  if (updatedAt) {
-    segments.push('更新于 ' + updatedAt);
-  }
-  return segments.join(' · ');
-};
 
 const resolveBranchMeta = (entry: IGitBranchPayload): string => {
   const segments: string[] = [];
@@ -1861,109 +1868,11 @@ const handleDropStash = async (entry: IGitStashEntryPayload): Promise<void> => {
   }
 };
 
-const handleReloadPullRequests = async (): Promise<void> => {
-  try {
-    await gitStore.loadPullRequests(pullRequestStateFilter.value);
-  } catch (error) {
-    message.error(toErrorMessage(error, '读取 Pull Request 列表失败'));
-  }
-};
-
-const handleSelectPullRequestState = async (state: TPullRequestStateFilter): Promise<void> => {
-  if (pullRequestStateFilter.value === state) {
-    return;
-  }
-  pullRequestStateFilter.value = state;
-  pullRequestActionError.value = null;
-  try {
-    await gitStore.loadPullRequests(state);
-  } catch (error) {
-    message.error(toErrorMessage(error, '读取 Pull Request 列表失败'));
-  }
-};
-
-const handleOpenPullRequestDetail = async (
-  pullRequest: IGitPullRequestSummaryPayload,
-): Promise<void> => {
-  pullRequestActionError.value = null;
-  pullRequestMergeMethod.value = 'merge';
-  pullRequestView.value = 'detail';
-  try {
-    await gitStore.loadPullRequestDetail(pullRequest.number);
-  } catch (error) {
-    message.error(toErrorMessage(error, '读取 Pull Request 详情失败'));
-  }
-};
-
-const handleBackToPullRequestList = (): void => {
-  pullRequestView.value = 'list';
-  pullRequestActionError.value = null;
-  createPullRequestError.value = null;
-};
-
-const handleMergePullRequest = async (
-  pullRequest: IGitPullRequestSummaryPayload | IGitPullRequestDetailPayload,
-): Promise<void> => {
-  const action = await dialog.confirm({
-    title: '合并此 Pull Request？',
-    description: '将把 ' + pullRequest.headRef + ' 合并到 ' + pullRequest.baseRef + '。',
-    confirmText: '合并',
-    cancelText: '取消',
-    variant: 'default',
-  });
-  if (action !== 'confirm') {
-    return;
-  }
-  pullRequestActionError.value = null;
-  try {
-    const didRun = await runWithPending('merge-pull-request', async () => {
-      await gitStore.mergePullRequest(pullRequest.number, pullRequestMergeMethod.value);
-      await gitStore.loadPullRequests(pullRequestStateFilter.value);
-    });
-    if (!didRun) {
-      return;
-    }
-    pullRequestView.value = 'list';
-    message.success('已合并 #' + pullRequest.number);
-  } catch (error) {
-    pullRequestActionError.value = toErrorMessage(error, '合并 Pull Request 失败');
-  }
-};
-
-const handleClosePullRequest = async (
-  pullRequest: IGitPullRequestSummaryPayload | IGitPullRequestDetailPayload,
-): Promise<void> => {
-  const action = await dialog.confirm({
-    title: '关闭此 Pull Request？',
-    description: '将关闭 #' + pullRequest.number + '（' + pullRequest.title + '）。',
-    confirmText: '关闭',
-    cancelText: '取消',
-    variant: 'danger',
-  });
-  if (action !== 'confirm') {
-    return;
-  }
-  pullRequestActionError.value = null;
-  try {
-    const didRun = await runWithPending('close-pull-request', async () => {
-      await gitStore.closePullRequest(pullRequest.number);
-      await gitStore.loadPullRequests(pullRequestStateFilter.value);
-    });
-    if (!didRun) {
-      return;
-    }
-    pullRequestView.value = 'list';
-    message.success('已关闭 #' + pullRequest.number);
-  } catch (error) {
-    pullRequestActionError.value = toErrorMessage(error, '关闭 Pull Request 失败');
-  }
-};
-
 const handleReloadPullRequestSupport = async (): Promise<void> => {
   try {
-    await gitStore.loadPullRequestSupport();
+    await Promise.all([gitStore.loadPullRequestSupport(), gitStore.loadPullRequests()]);
   } catch (error) {
-    message.error(toErrorMessage(error, '读取 Pull Request 支持信息失败'));
+    message.error(toErrorMessage(error, '读取 Pull Request 列表失败'));
   }
 };
 
@@ -2002,45 +1911,6 @@ const handleSubmitRemoteForm = async (): Promise<void> => {
       remoteFormError.value = toErrorMessage(error, '配置远程地址失败');
     }
   });
-};
-
-const handleOpenCreatePullRequest = (): void => {
-  createPullRequestTitle.value = '';
-  createPullRequestBody.value = '';
-  createPullRequestBase.value = 'main';
-  createPullRequestHead.value = status.value.headShortName ?? status.value.headBranchName ?? '';
-  createPullRequestDraft.value = false;
-  createPullRequestError.value = null;
-  pullRequestActionError.value = null;
-  pullRequestView.value = 'create';
-};
-
-const handleSubmitCreatePullRequest = async (): Promise<void> => {
-  const title = createPullRequestTitle.value.trim();
-  const base = createPullRequestBase.value.trim();
-  const head = createPullRequestHead.value.trim();
-  const body = createPullRequestBody.value.trim();
-  if (!title || !base || !head) {
-    createPullRequestError.value = '请填写标题、来源分支和目标分支。';
-    return;
-  }
-  createPullRequestError.value = null;
-  try {
-    await runWithPending('create-pull-request', async () => {
-      const created = await gitStore.createPullRequest({
-        title,
-        body: body || null,
-        base,
-        head,
-        draft: createPullRequestDraft.value,
-      });
-      await gitStore.loadPullRequests(pullRequestStateFilter.value);
-      pullRequestView.value = 'list';
-      message.success('已创建 #' + created.number);
-    });
-  } catch (error) {
-    createPullRequestError.value = toErrorMessage(error, '创建 Pull Request 失败');
-  }
 };
 
 const {
@@ -2160,9 +2030,7 @@ watch(
     isRemoteFormOpen.value = false;
     remoteFormError.value = null;
     pullRequestView.value = 'list';
-    pullRequestStateFilter.value = 'open';
-    pullRequestActionError.value = null;
-    createPullRequestError.value = null;
+    activePullRequestNumber.value = null;
     closeSourceControlMenu();
     resetSectionCollapse();
   },
@@ -2171,13 +2039,13 @@ watch(
 watch(
   () => activeTab.value,
   (nextTab) => {
-    if (!hasRepository.value || nextTab === 'changes') {
-      return;
-    }
-
     if (nextTab === 'pull-requests') {
       pullRequestView.value = 'list';
-      pullRequestActionError.value = null;
+      activePullRequestNumber.value = null;
+    }
+
+    if (!hasRepository.value || nextTab === 'changes') {
+      return;
     }
 
     void ensureActiveTabData(nextTab);
