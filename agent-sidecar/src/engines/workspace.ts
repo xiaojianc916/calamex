@@ -1,5 +1,7 @@
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, symlinkSync } from 'node:fs';
 import { spawn } from 'node:child_process';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { AgentBrowser } from '@mastra/agent-browser';
 import type { MastraBrowser } from '@mastra/core/browser';
 import { UnicodeNormalizer, type InputProcessorOrWorkflow, type OutputProcessorOrWorkflow } from '@mastra/core/processors';
@@ -282,6 +284,52 @@ export const createMastraObservability = (): Observability => new Observability(
     },
 });
 
+/// 桥接进工作区的全局技能目录链接名。
+const BRIDGED_SKILLS_DIR_NAME = '.calamex-skills';
+
+// 解析全局技能目录：优先 CALAMEX_SKILLS_DIR 环境变量，其次回退到
+// %APPDATA%/.calamex/skills（与 Rust 侧 storage_paths::roaming_root 保持一致）。
+export const resolveGlobalSkillsDirectory = (): string | null => {
+    const explicit = toNonEmptyString(process.env.CALAMEX_SKILLS_DIR);
+    if (explicit) {
+        return explicit;
+    }
+    const roamingBase = toNonEmptyString(process.env.APPDATA)
+        ?? toNonEmptyString(process.env.HOME)
+        ?? homedir();
+    if (!roamingBase) {
+        return null;
+    }
+    return join(roamingBase, '.calamex', 'skills');
+};
+
+// 把全局技能目录桥接进受限工作区内，使 Mastra 的 skills 能在 contained
+// 文件系统内解析到。返回用于 Workspace.skills 的相对路径，失败则返回 null
+//（降级为不自动加载，不阻断工作区创建）。
+export const bridgeSkillsIntoWorkspace = (workspaceDirectory: string): string | null => {
+    const globalSkillsDir = resolveGlobalSkillsDirectory();
+    if (!globalSkillsDir) {
+        return null;
+    }
+    try {
+        mkdirSync(globalSkillsDir, { recursive: true });
+    } catch {
+        return null;
+    }
+
+    const linkPath = join(workspaceDirectory, BRIDGED_SKILLS_DIR_NAME);
+    try {
+        if (existsSync(linkPath)) {
+            // 已存在（可能是上一轮创建的链接）：直接复用。
+            return `./${BRIDGED_SKILLS_DIR_NAME}`;
+        }
+        symlinkSync(globalSkillsDir, linkPath, isWindowsRuntime() ? 'junction' : 'dir');
+        return `./${BRIDGED_SKILLS_DIR_NAME}`;
+    } catch {
+        return null;
+    }
+};
+
 export const createMastraWorkspace = async (
     workspaceRootPath?: string,
     profile: TMastraToolProfile = 'write',
@@ -291,6 +339,9 @@ export const createMastraWorkspace = async (
     if (!workspaceDirectory) {
         return undefined;
     }
+
+    // 尽力桥接全局技能库；成功时交给 Mastra 自动索引 / 加载，失败则静默跳过。
+    const bridgedSkillsPath = bridgeSkillsIntoWorkspace(workspaceDirectory);
 
     const workspace = new Workspace({
         filesystem: new LocalFilesystem({
@@ -302,6 +353,7 @@ export const createMastraWorkspace = async (
             workingDirectory: workspaceDirectory,
             env: createHostCommandEnv(),
         }),
+        ...(bridgedSkillsPath ? { skills: [bridgedSkillsPath] } : {}),
         tools: {
             [WORKSPACE_TOOLS.FILESYSTEM.READ_FILE]: {
                 enabled: true,
