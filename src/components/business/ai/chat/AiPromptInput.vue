@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, useAttrs } from 'vue';
+import { computed, onMounted, ref, useAttrs, watch } from 'vue';
 import {
   Context,
   ContextContent,
@@ -17,6 +17,7 @@ import {
   computeDeepSeekCostBreakdown,
   formatCnyCost,
 } from '@/components/business/ai/provider/deepseek-pricing';
+import { AiSlashCommandMenu, SkillManagerDialog } from '@/components/business/ai/skill';
 import DropdownMenu from '@/components/ui/dropdown-menu/DropdownMenu.vue';
 import DropdownMenuContent from '@/components/ui/dropdown-menu/DropdownMenuContent.vue';
 import DropdownMenuItem from '@/components/ui/dropdown-menu/DropdownMenuItem.vue';
@@ -43,8 +44,10 @@ import {
   AI_SERVICE_PLATFORM_PRESETS,
   findAiServicePlatformByModel,
 } from '@/constants/ai/providers';
+import { skillsTauriService } from '@/services/tauri.skills';
 import type { IAiAttachedFile, IAiConfigPayload, TAiAgentNetworkPermission } from '@/types/ai';
 import { isAiAssistantMode, type TAiAssistantMode } from '@/types/ai/assistant-mode';
+import type { ISkillSummary } from '@/types/ai/skill';
 
 interface IAiPromptModeOption {
   key: TAiAssistantMode;
@@ -62,6 +65,12 @@ interface IAiPromptModelSection {
   label: string;
   badge: string | null;
   models: IAiPromptModelOption[];
+}
+
+interface ISlashAnchorRect {
+  left: number;
+  top: number;
+  width: number;
 }
 
 /** 输入框文本 */
@@ -98,9 +107,17 @@ const emit = defineEmits<{
 
 const attrs = useAttrs();
 const fileInputRef = ref<HTMLInputElement | null>(null);
+const surfaceRef = ref<HTMLFormElement | null>(null);
 const isComposing = ref(false);
 const isModeSubmenuOpen = ref(false);
 const pendingAttachmentDrafts = ref<IAiAttachedFile[]>([]);
+
+// 技能 / 斜杠菜单状态。
+const skills = ref<ISkillSummary[]>([]);
+const slashOpen = ref(false);
+const slashQuery = ref('');
+const slashAnchorRect = ref<ISlashAnchorRect | null>(null);
+const skillsManagerOpen = ref(false);
 
 const modeOptions: IAiPromptModeOption[] = [
   { key: 'chat', label: 'chat', description: '仅回答，不进行编辑' },
@@ -277,6 +294,78 @@ const queueAttachmentFile = async (file: File): Promise<void> => {
   );
 };
 
+// -------------------------------------------------------------------------
+// 技能 / 斜杠菜单
+// -------------------------------------------------------------------------
+
+const loadSkills = async (): Promise<void> => {
+  try {
+    const result = await skillsTauriService.listSkills();
+    skills.value = [...result.skills];
+  } catch {
+    skills.value = [];
+  }
+};
+
+const refreshSlashAnchorRect = (): void => {
+  const element = surfaceRef.value;
+
+  if (!element) {
+    slashAnchorRect.value = null;
+    return;
+  }
+
+  const rect = element.getBoundingClientRect();
+  slashAnchorRect.value = { left: rect.left, top: rect.top, width: rect.width };
+};
+
+const closeSlashMenu = (): void => {
+  slashOpen.value = false;
+};
+
+const openSkillsManager = (): void => {
+  closeSlashMenu();
+  void loadSkills();
+  skillsManagerOpen.value = true;
+};
+
+const handleSelectSkill = async (slug: string): Promise<void> => {
+  closeSlashMenu();
+
+  try {
+    const detail = await skillsTauriService.readSkill(slug);
+    const fileName = `${detail.name.trim() || detail.slug}.md`;
+    const skillFile = new File([detail.content], fileName, { type: 'text/plain' });
+    await props.resolveAttachment(skillFile);
+  } catch {
+    // 读取或注入失败时静默返回；错误会通过附件管线对外暴露。
+  }
+
+  if (modelValue.value.startsWith('/')) {
+    modelValue.value = '';
+  }
+};
+
+watch(modelValue, (value) => {
+  const isSlashQuery = value.startsWith('/') && !value.includes(' ') && !value.includes('\n');
+
+  if (isSlashQuery) {
+    slashQuery.value = value.slice(1);
+
+    if (!slashOpen.value) {
+      void loadSkills();
+    }
+
+    refreshSlashAnchorRect();
+    slashOpen.value = true;
+    return;
+  }
+
+  if (slashOpen.value) {
+    closeSlashMenu();
+  }
+});
+
 const handleSubmit = (): void => {
   if (props.disabled || !canSubmit.value) {
     return;
@@ -392,11 +481,15 @@ const handleKeyDown = (event: KeyboardEvent): void => {
 const handleStop = (): void => {
   emit('stop');
 };
+
+onMounted(() => {
+  void loadSkills();
+});
 </script>
 
 <template>
   <footer class="ai-composer">
-    <form class="ai-composer-surface" v-bind="attrs" @submit.prevent="handleSubmit">
+    <form ref="surfaceRef" class="ai-composer-surface" v-bind="attrs" @submit.prevent="handleSubmit">
       <input ref="fileInputRef" type="file" class="hidden" multiple @change="handleFileChange" />
       <div v-if="displayedAttachments.length" class="ai-attachments">
         <PromptInputAttachmentsDisplay :attachments="displayedAttachments" @remove="handleRemoveAttachment" />
@@ -445,9 +538,9 @@ const handleStop = (): void => {
                   <span class="ai-settings-menu-label">我的信息源</span>
                   <span class="icon-[lucide--chevron-right] ai-settings-menu-chevron" />
                 </DropdownMenuItem>
-                <DropdownMenuItem class="ai-settings-menu-item" @select.prevent="handleOpenInformationSources">
+                <DropdownMenuItem class="ai-settings-menu-item" @select.prevent="openSkillsManager">
                   <span class="icon-[lucide--plus] ai-settings-menu-icon" />
-                  <span class="ai-settings-menu-label">添加信息源</span>
+                  <span class="ai-settings-menu-label">添加skill</span>
                 </DropdownMenuItem>
                 <DropdownMenuItem class="ai-settings-menu-item is-mode" @pointerenter="isModeSubmenuOpen = true"
                   @pointerleave="isModeSubmenuOpen = false" @select.prevent>
@@ -529,6 +622,10 @@ const handleStop = (): void => {
         </InputGroupAddon>
       </InputGroup>
     </form>
+
+    <AiSlashCommandMenu :open="slashOpen" :query="slashQuery" :skills="skills" :anchor-rect="slashAnchorRect"
+      @select-skill="handleSelectSkill" @close="closeSlashMenu" />
+    <SkillManagerDialog v-model:open="skillsManagerOpen" @saved="loadSkills" />
   </footer>
 </template>
 
