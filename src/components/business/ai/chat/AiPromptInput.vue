@@ -22,12 +22,7 @@ import DropdownMenu from '@/components/ui/dropdown-menu/DropdownMenu.vue';
 import DropdownMenuContent from '@/components/ui/dropdown-menu/DropdownMenuContent.vue';
 import DropdownMenuItem from '@/components/ui/dropdown-menu/DropdownMenuItem.vue';
 import DropdownMenuTrigger from '@/components/ui/dropdown-menu/DropdownMenuTrigger.vue';
-import {
-  InputGroup,
-  InputGroupAddon,
-  InputGroupButton,
-  InputGroupTextarea,
-} from '@/components/ui/input-group';
+import { InputGroup, InputGroupAddon, InputGroupButton } from '@/components/ui/input-group';
 import {
   Select,
   SelectContent,
@@ -47,7 +42,7 @@ import {
 import { skillsTauriService } from '@/services/tauri.skills';
 import type { IAiAttachedFile, IAiConfigPayload, TAiAgentNetworkPermission } from '@/types/ai';
 import { isAiAssistantMode, type TAiAssistantMode } from '@/types/ai/assistant-mode';
-import type { ISkillSummary } from '@/types/ai/skill';
+import type { ISelectedSkill, ISkillSummary } from '@/types/ai/skill';
 
 interface IAiPromptModeOption {
   key: TAiAssistantMode;
@@ -73,11 +68,16 @@ interface ISlashAnchorRect {
   width: number;
 }
 
-/** 输入框文本 */
+/** 输入框纯文本（不含技能胶囊） */
 const modelValue = defineModel<string>({ required: true });
 
 /** 当前模式（双向绑定） */
 const activeMode = defineModel<TAiAssistantMode>('activeMode', { required: true });
+
+/** 已选中的技能胶囊（内联显示在输入框中，独立于纯文本） */
+const selectedSkills = defineModel<ISelectedSkill[]>('selectedSkills', {
+  default: () => [],
+});
 
 const props = defineProps<{
   disabled: boolean;
@@ -108,9 +108,13 @@ const emit = defineEmits<{
 const attrs = useAttrs();
 const fileInputRef = ref<HTMLInputElement | null>(null);
 const surfaceRef = ref<HTMLFormElement | null>(null);
+const editorRef = ref<HTMLDivElement | null>(null);
 const isComposing = ref(false);
 const isModeSubmenuOpen = ref(false);
 const pendingAttachmentDrafts = ref<IAiAttachedFile[]>([]);
+
+// 编辑器内容程序化写入时为 true，避免输入事件回环。
+let isApplyingExternalValue = false;
 
 // 技能 / 斜杠菜单状态。
 const skills = ref<ISkillSummary[]>([]);
@@ -124,28 +128,24 @@ const modeOptions: IAiPromptModeOption[] = [
   { key: 'agent', label: 'agent', description: '可以搜索、编辑等' },
   { key: 'plan', label: 'plan', description: '先规划，然后在获得批准后执行' },
 ];
+
 const emptyTokenContext: IAiTokenContextProps = {
   usedTokens: 0,
   maxTokens: 0,
   usageSource: 'estimated',
   usage: {
     inputTokens: 0,
-    inputTokenDetails: {
-      noCacheTokens: 0,
-      cacheReadTokens: 0,
-      cacheWriteTokens: 0,
-    },
+    inputTokenDetails: { noCacheTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
     outputTokens: 0,
-    outputTokenDetails: {
-      textTokens: 0,
-      reasoningTokens: 0,
-    },
+    outputTokenDetails: { textTokens: 0, reasoningTokens: 0 },
     totalTokens: 0,
     cachedInputTokens: 0,
     reasoningTokens: 0,
   },
 };
+
 const resolvedTokenContext = computed(() => props.tokenContext ?? emptyTokenContext);
+
 const formatModelLabel = (label: string): string =>
   label
     .replace(/^Claude\s+/u, '')
@@ -161,6 +161,7 @@ const formatModelLabel = (label: string): string =>
     .trim();
 
 const selectedModel = computed(() => props.config.selectedModel?.trim() ?? '');
+
 const tokenUsageCost = computed(() => {
   const pricing = computeDeepSeekCostBreakdown(
     selectedModel.value,
@@ -169,7 +170,6 @@ const tokenUsageCost = computed(() => {
   if (!pricing) {
     return undefined;
   }
-
   return {
     inputCostText: formatCnyCost(pricing.inputCostCny),
     outputCostText: formatCnyCost(pricing.outputCostCny),
@@ -180,21 +180,21 @@ const tokenUsageCost = computed(() => {
     cacheMissInputTokens: pricing.usage.cacheMissInputTokens,
   };
 });
+
 const selectedPlatform = computed(() => findAiServicePlatformByModel(selectedModel.value));
+
 const selectedModelLabel = computed(() => {
   const modelId = selectedModel.value;
-
   if (!modelId) {
     return '未选择模型';
   }
-
   const matched = selectedPlatform.value.models.find((model) => model.id === modelId);
   if (matched) {
     return formatModelLabel(matched.label);
   }
-
   return formatModelLabel(modelId.split('/').filter(Boolean).at(-1) ?? modelId);
 });
+
 const selectedPlatformId = computed<TAiServicePlatformId>(() => selectedPlatform.value.id);
 
 const connectedPlatformIds = computed(() => collectConnectedPlatformIds(props.config.credentials));
@@ -216,32 +216,41 @@ const hasProcessingAttachments = computed(
     pendingAttachmentDrafts.value.some((attachment) => attachment.status === 'processing') ||
     props.attachments.some((attachment) => attachment.status === 'processing'),
 );
+
 const hasReadyAttachments = computed(() =>
   props.attachments.some((attachment) => (attachment.status ?? 'ready') === 'ready'),
 );
+
 const displayedAttachments = computed<readonly IAiAttachedFile[]>(() => [
   ...pendingAttachmentDrafts.value,
   ...props.attachments,
 ]);
+
 const canSubmit = computed(
   () =>
     (modelValue.value.trim().length > 0 || hasReadyAttachments.value) &&
     !hasProcessingAttachments.value,
 );
+
+const isEditorEmpty = computed(
+  () => (modelValue.value?.length ?? 0) === 0 && (selectedSkills.value?.length ?? 0) === 0,
+);
+
 const modelSelectDisabled = computed(() => props.disabled || props.isModelSaving);
+
 const networkPermissionEnabled = computed(() => props.networkPermission === 'allowed-this-run');
+
 const activeModeOption = computed(
   () => modeOptions.find((option) => option.key === activeMode.value) ?? modeOptions[0],
 );
+
 const networkPermissionLabel = computed(() => (networkPermissionEnabled.value ? '已允许' : '询问'));
 
 const normalizePendingAttachmentName = (file: File): string => {
   const normalizedName = file.name.trim();
-
   if (normalizedName) {
     return normalizedName;
   }
-
   return file.type.startsWith('image/') ? 'pasted-image' : 'pasted-attachment';
 };
 
@@ -249,7 +258,6 @@ const createPendingAttachment = (file: File): IAiAttachedFile => {
   const name = normalizePendingAttachmentName(file);
   const kind = file.type.startsWith('image/') ? 'image' : 'text';
   const id = `pending-attachment-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-
   return {
     id,
     name,
@@ -272,21 +280,18 @@ const createPendingAttachment = (file: File): IAiAttachedFile => {
 const queueAttachmentFile = async (file: File): Promise<void> => {
   const draft = createPendingAttachment(file);
   pendingAttachmentDrafts.value = [...pendingAttachmentDrafts.value, draft];
-
   let resolved = false;
   try {
     resolved = await props.resolveAttachment(file);
   } catch {
     resolved = false;
   }
-
   if (resolved) {
     pendingAttachmentDrafts.value = pendingAttachmentDrafts.value.filter(
       (attachment) => attachment.id !== draft.id,
     );
     return;
   }
-
   pendingAttachmentDrafts.value = pendingAttachmentDrafts.value.map((attachment) =>
     attachment.id === draft.id
       ? { ...attachment, status: 'failed', detailLabel: '处理失败' }
@@ -295,9 +300,225 @@ const queueAttachmentFile = async (file: File): Promise<void> => {
 };
 
 // -------------------------------------------------------------------------
+// 富文本输入：纯文本 + 内联技能胶囊
+// -------------------------------------------------------------------------
+const PILL_SELECTOR = '[data-skill-pill]';
+const BLOCK_TAGS = new Set(['DIV', 'P']);
+
+const skillsEqual = (
+  left: readonly ISelectedSkill[],
+  right: readonly ISelectedSkill[],
+): boolean => {
+  if (left.length !== right.length) {
+    return false;
+  }
+  return left.every((skill, index) => skill.slug === right[index]?.slug);
+};
+
+const serializeEditorNode = (node: Node, ctx: { text: string; skills: ISelectedSkill[] }): void => {
+  node.childNodes.forEach((child) => {
+    if (child.nodeType === Node.TEXT_NODE) {
+      ctx.text += child.nodeValue ?? '';
+      return;
+    }
+    if (child.nodeType !== Node.ELEMENT_NODE) {
+      return;
+    }
+    const element = child as HTMLElement;
+    if (element.matches(PILL_SELECTOR)) {
+      const slug = element.dataset.skillSlug ?? '';
+      if (slug) {
+        ctx.skills.push({ slug, name: element.dataset.skillName ?? '' });
+      }
+      return;
+    }
+    if (element.tagName === 'BR') {
+      ctx.text += '\n';
+      return;
+    }
+    if (BLOCK_TAGS.has(element.tagName) && ctx.text.length > 0 && !ctx.text.endsWith('\n')) {
+      ctx.text += '\n';
+    }
+    serializeEditorNode(element, ctx);
+  });
+};
+
+const serializeEditor = (): { text: string; skills: ISelectedSkill[] } => {
+  const root = editorRef.value;
+  if (!root) {
+    return { text: modelValue.value ?? '', skills: [...(selectedSkills.value ?? [])] };
+  }
+  const ctx = { text: '', skills: [] as ISelectedSkill[] };
+  serializeEditorNode(root, ctx);
+  return ctx;
+};
+
+const createPillElement = (skill: ISelectedSkill): HTMLSpanElement => {
+  const pill = document.createElement('span');
+  pill.className = 'ai-skill-pill';
+  pill.dataset.skillPill = '';
+  pill.dataset.skillSlug = skill.slug;
+  pill.dataset.skillName = skill.name;
+  pill.setAttribute('contenteditable', 'false');
+
+  const icon = document.createElement('span');
+  icon.className = 'ai-skill-pill__icon icon-[lucide--sparkles]';
+  icon.setAttribute('aria-hidden', 'true');
+
+  const label = document.createElement('span');
+  label.className = 'ai-skill-pill__label';
+  label.textContent = skill.name || skill.slug;
+
+  pill.append(icon, label);
+  return pill;
+};
+
+const applyValueToEditor = (text: string, skills: readonly ISelectedSkill[]): void => {
+  const root = editorRef.value;
+  if (!root) {
+    return;
+  }
+  isApplyingExternalValue = true;
+  root.replaceChildren();
+  skills.forEach((skill) => {
+    root.append(createPillElement(skill), document.createTextNode(' '));
+  });
+  if (text) {
+    const lines = text.split('\n');
+    lines.forEach((line, index) => {
+      if (index > 0) {
+        root.append(document.createElement('br'));
+      }
+      if (line) {
+        root.append(document.createTextNode(line));
+      }
+    });
+  }
+  isApplyingExternalValue = false;
+};
+
+const getEditorSelectionRange = (): Range | null => {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0) {
+    return null;
+  }
+  const range = selection.getRangeAt(0);
+  const root = editorRef.value;
+  if (!root || !root.contains(range.startContainer)) {
+    return null;
+  }
+  return range;
+};
+
+const getSlashQueryAtCaret = (): string | null => {
+  const range = getEditorSelectionRange();
+  if (!range || !range.collapsed) {
+    return null;
+  }
+  const node = range.startContainer;
+  if (node.nodeType !== Node.TEXT_NODE) {
+    return null;
+  }
+  const textBefore = (node.nodeValue ?? '').slice(0, range.startOffset);
+  const match = /(?:^|\s)\/(\S*)$/.exec(textBefore);
+  return match ? match[1] : null;
+};
+
+const updateSlashStateFromCaret = (): void => {
+  const query = getSlashQueryAtCaret();
+  if (query !== null) {
+    slashQuery.value = query;
+    if (!slashOpen.value) {
+      void loadSkills();
+    }
+    refreshSlashAnchorRect();
+    slashOpen.value = true;
+    return;
+  }
+  if (slashOpen.value) {
+    closeSlashMenu();
+  }
+};
+
+const syncFromEditor = (): void => {
+  if (isApplyingExternalValue) {
+    return;
+  }
+  const { text, skills } = serializeEditor();
+  modelValue.value = text;
+  selectedSkills.value = skills;
+};
+
+const onEditorInput = (): void => {
+  if (isApplyingExternalValue) {
+    return;
+  }
+  syncFromEditor();
+  updateSlashStateFromCaret();
+};
+
+const onCompositionEnd = (): void => {
+  isComposing.value = false;
+  syncFromEditor();
+  updateSlashStateFromCaret();
+};
+
+const insertSkillPill = (skill: ISelectedSkill): void => {
+  const root = editorRef.value;
+  if (!root) {
+    return;
+  }
+  root.focus();
+  const range = getEditorSelectionRange();
+  const alreadySelected = (selectedSkills.value ?? []).some((item) => item.slug === skill.slug);
+
+  if (range && range.startContainer.nodeType === Node.TEXT_NODE) {
+    const node = range.startContainer as Text;
+    const value = node.nodeValue ?? '';
+    const before = value.slice(0, range.startOffset);
+    const after = value.slice(range.startOffset);
+    const match = /(^|\s)(\/\S*)$/.exec(before);
+    if (match) {
+      const keepBefore = before.slice(0, before.length - match[2].length);
+      node.nodeValue = keepBefore + after;
+      range.setStart(node, keepBefore.length);
+      range.collapse(true);
+    }
+  }
+
+  let insertionRange = getEditorSelectionRange();
+  if (!insertionRange) {
+    insertionRange = document.createRange();
+    insertionRange.selectNodeContents(root);
+    insertionRange.collapse(false);
+  }
+
+  if (!alreadySelected) {
+    const pill = createPillElement(skill);
+    const trailingSpace = document.createTextNode(' ');
+    insertionRange.insertNode(trailingSpace);
+    insertionRange.insertNode(pill);
+    insertionRange.setStartAfter(trailingSpace);
+    insertionRange.collapse(true);
+  }
+
+  const selection = window.getSelection();
+  if (selection) {
+    selection.removeAllRanges();
+    selection.addRange(insertionRange);
+  }
+  closeSlashMenu();
+  syncFromEditor();
+};
+
+const insertLineBreakAtCaret = (): void => {
+  document.execCommand('insertLineBreak');
+  syncFromEditor();
+};
+
+// -------------------------------------------------------------------------
 // 技能 / 斜杠菜单
 // -------------------------------------------------------------------------
-
 const loadSkills = async (): Promise<void> => {
   try {
     const result = await skillsTauriService.listSkills();
@@ -309,12 +530,10 @@ const loadSkills = async (): Promise<void> => {
 
 const refreshSlashAnchorRect = (): void => {
   const element = surfaceRef.value;
-
   if (!element) {
     slashAnchorRect.value = null;
     return;
   }
-
   const rect = element.getBoundingClientRect();
   slashAnchorRect.value = { left: rect.left, top: rect.top, width: rect.width };
 };
@@ -329,42 +548,12 @@ const openSkillsManager = (): void => {
   skillsManagerOpen.value = true;
 };
 
-const handleSelectSkill = async (slug: string): Promise<void> => {
-  closeSlashMenu();
-
-  try {
-    const detail = await skillsTauriService.readSkill(slug);
-    const fileName = `${detail.name.trim() || detail.slug}.md`;
-    const skillFile = new File([detail.content], fileName, { type: 'text/plain' });
-    await props.resolveAttachment(skillFile);
-  } catch {
-    // 读取或注入失败时静默返回；错误会通过附件管线对外暴露。
-  }
-
-  if (modelValue.value.startsWith('/')) {
-    modelValue.value = '';
-  }
+// 选择技能：在光标处插入胶囊并去重，技能本身随 selectedSkills 上抛由发送时附加指令。
+const handleSelectSkill = (slug: string): void => {
+  const summary = skills.value.find((item) => item.slug === slug);
+  const name = summary?.name?.trim() || slug;
+  insertSkillPill({ slug, name });
 };
-
-watch(modelValue, (value) => {
-  const isSlashQuery = value.startsWith('/') && !value.includes(' ') && !value.includes('\n');
-
-  if (isSlashQuery) {
-    slashQuery.value = value.slice(1);
-
-    if (!slashOpen.value) {
-      void loadSkills();
-    }
-
-    refreshSlashAnchorRect();
-    slashOpen.value = true;
-    return;
-  }
-
-  if (slashOpen.value) {
-    closeSlashMenu();
-  }
-});
 
 const handleSubmit = (): void => {
   if (props.disabled || !canSubmit.value) {
@@ -416,7 +605,6 @@ const handleRemoveAttachment = (id: string): void => {
     );
     return;
   }
-
   emit('removeFile', id);
 };
 
@@ -445,30 +633,43 @@ const handleFileChange = (event: Event): void => {
 
 const handlePaste = (event: ClipboardEvent): void => {
   const items = event.clipboardData?.items;
-  if (!items) {
-    return;
-  }
-  const pastedFiles: File[] = [];
-  for (const item of Array.from(items)) {
-    if (item.kind !== 'file') {
-      continue;
+  if (items) {
+    const pastedFiles: File[] = [];
+    for (const item of Array.from(items)) {
+      if (item.kind !== 'file') {
+        continue;
+      }
+      const file = item.getAsFile();
+      if (file) {
+        pastedFiles.push(file);
+      }
     }
-    const file = item.getAsFile();
-    if (file) {
-      pastedFiles.push(file);
+    if (pastedFiles.length) {
+      event.preventDefault();
+      for (const file of pastedFiles) {
+        void queueAttachmentFile(file);
+      }
+      return;
     }
   }
-  if (!pastedFiles.length) {
-    return;
-  }
-  event.preventDefault();
-  for (const file of pastedFiles) {
-    void queueAttachmentFile(file);
+  // 纯文本粘贴：以 plain text 插入，避免把富文本 / 胶囊结构带进编辑器。
+  const text = event.clipboardData?.getData('text/plain');
+  if (text) {
+    event.preventDefault();
+    document.execCommand('insertText', false, text);
   }
 };
 
 const handleKeyDown = (event: KeyboardEvent): void => {
-  if (event.key !== 'Enter' || event.shiftKey || isComposing.value || event.isComposing) {
+  if (event.key !== 'Enter') {
+    return;
+  }
+  if (event.shiftKey) {
+    event.preventDefault();
+    insertLineBreakAtCaret();
+    return;
+  }
+  if (isComposing.value || event.isComposing) {
     return;
   }
   event.preventDefault();
@@ -482,124 +683,278 @@ const handleStop = (): void => {
   emit('stop');
 };
 
+// 外部写入 modelValue / selectedSkills（如填充建议、发送后清空）时同步重建编辑器内容。
+// 用户输入触发的更新会与序列化结果一致，从而跳过重建、保住光标。
+watch(
+  [modelValue, selectedSkills],
+  () => {
+    if (isApplyingExternalValue) {
+      return;
+    }
+    const root = editorRef.value;
+    if (!root) {
+      return;
+    }
+    const current = serializeEditor();
+    if (
+      current.text === (modelValue.value ?? '') &&
+      skillsEqual(current.skills, selectedSkills.value ?? [])
+    ) {
+      return;
+    }
+    applyValueToEditor(modelValue.value ?? '', selectedSkills.value ?? []);
+  },
+  { flush: 'post' },
+);
+
 onMounted(() => {
   void loadSkills();
+  applyValueToEditor(modelValue.value ?? '', selectedSkills.value ?? []);
 });
 </script>
 
 <template>
   <footer class="ai-composer">
     <form ref="surfaceRef" class="ai-composer-surface" v-bind="attrs" @submit.prevent="handleSubmit">
-      <input ref="fileInputRef" type="file" class="hidden" multiple @change="handleFileChange" />
+      <input
+        ref="fileInputRef"
+        type="file"
+        class="hidden"
+        multiple
+        @change="handleFileChange"
+      />
       <div v-if="displayedAttachments.length" class="ai-attachments">
-        <PromptInputAttachmentsDisplay :attachments="displayedAttachments" @remove="handleRemoveAttachment" />
+        <PromptInputAttachmentsDisplay
+          :attachments="displayedAttachments"
+          @remove="handleRemoveAttachment"
+        />
       </div>
       <InputGroup class="ai-prompt-shell">
-        <InputGroupTextarea v-model="modelValue" class="ai-prompt-textarea" placeholder="使用 AI 处理各种任务..."
-          aria-label="输入消息" :disabled="disabled" @keydown="handleKeyDown" @paste="handlePaste"
-          @focus="handlePrewarmIntent" @mouseenter="handlePrewarmIntent" @compositionstart="isComposing = true"
-          @compositionend="isComposing = false" />
+        <div class="ai-prompt-editor-wrap">
+          <div
+            ref="editorRef"
+            class="ai-prompt-textarea ai-prompt-editor"
+            data-slot="ai-prompt-editor"
+            role="textbox"
+            aria-multiline="true"
+            aria-label="输入消息"
+            :contenteditable="disabled ? 'false' : 'true'"
+            @input="onEditorInput"
+            @keydown="handleKeyDown"
+            @paste="handlePaste"
+            @focus="handlePrewarmIntent"
+            @mouseenter="handlePrewarmIntent"
+            @compositionstart="isComposing = true"
+            @compositionend="onCompositionEnd"
+          ></div>
+          <span
+            v-if="isEditorEmpty"
+            class="ai-prompt-placeholder"
+            aria-hidden="true"
+            >使用 AI 处理各种任务...</span
+          >
+        </div>
         <InputGroupAddon align="block-end" class="ai-toolbar-row">
           <div class="ai-toolbar-left">
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger as-child>
-                  <InputGroupButton type="button" variant="ghost" class="ai-icon-action ai-attachment-button"
-                    size="icon-xs" :disabled="disabled" aria-label="提供背景信息" @click="handleOpenFileDialog">
+                  <InputGroupButton
+                    type="button"
+                    variant="ghost"
+                    class="ai-icon-action ai-attachment-button"
+                    size="icon-xs"
+                    :disabled="disabled"
+                    aria-label="提供背景信息"
+                    @click="handleOpenFileDialog"
+                  >
                     <span class="icon-[lucide--paperclip] size-4" />
                   </InputGroupButton>
                 </TooltipTrigger>
-                <TooltipContent side="top" align="start" :side-offset="10" class="ai-composer-tooltip">
+                <TooltipContent
+                  side="top"
+                  align="start"
+                  :side-offset="10"
+                  class="ai-composer-tooltip"
+                >
                   <p>提供背景信息</p>
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
-
             <DropdownMenu>
               <DropdownMenuTrigger as-child>
-                <InputGroupButton type="button" variant="ghost" class="ai-icon-action ai-mode-trigger" size="icon-xs"
-                  :disabled="disabled" aria-label="打开 AI 模式设置">
+                <InputGroupButton
+                  type="button"
+                  variant="ghost"
+                  class="ai-icon-action ai-mode-trigger"
+                  size="icon-xs"
+                  :disabled="disabled"
+                  aria-label="打开 AI 模式设置"
+                >
                   <span class="icon-[lucide--settings-2] size-4" />
                 </InputGroupButton>
               </DropdownMenuTrigger>
-              <DropdownMenuContent side="top" align="start" :side-offset="8" class="ai-settings-menu">
-                <DropdownMenuItem class="ai-settings-menu-item" :disabled="disabled || isNetworkPermissionSaving"
-                  @select.prevent="toggleNetworkPermission">
+              <DropdownMenuContent
+                side="top"
+                align="start"
+                :side-offset="8"
+                class="ai-settings-menu"
+              >
+                <DropdownMenuItem
+                  class="ai-settings-menu-item"
+                  :disabled="disabled || isNetworkPermissionSaving"
+                  @select.prevent="toggleNetworkPermission"
+                >
                   <span class="icon-[lucide--globe] ai-settings-menu-icon" />
                   <span class="ai-settings-menu-label">网络访问权限</span>
-                  <button type="button" class="ai-network-switch" :class="{ 'is-on': networkPermissionEnabled }"
-                    :aria-pressed="networkPermissionEnabled" tabindex="-1">
+                  <button
+                    type="button"
+                    class="ai-network-switch"
+                    :class="{ 'is-on': networkPermissionEnabled }"
+                    :aria-pressed="networkPermissionEnabled"
+                    tabindex="-1"
+                  >
                     <span class="ai-network-switch__thumb" aria-hidden="true"></span>
                     <span class="sr-only" v-text="networkPermissionLabel"></span>
                   </button>
                 </DropdownMenuItem>
-                <DropdownMenuItem class="ai-settings-menu-item" @select.prevent="handleOpenInformationSources">
+                <DropdownMenuItem
+                  class="ai-settings-menu-item"
+                  @select.prevent="handleOpenInformationSources"
+                >
                   <span class="icon-[lucide--network] ai-settings-menu-icon" />
                   <span class="ai-settings-menu-label">我的信息源</span>
                   <span class="icon-[lucide--chevron-right] ai-settings-menu-chevron" />
                 </DropdownMenuItem>
-                <DropdownMenuItem class="ai-settings-menu-item" @select.prevent="openSkillsManager">
+                <DropdownMenuItem
+                  class="ai-settings-menu-item"
+                  @select.prevent="openSkillsManager"
+                >
                   <span class="icon-[lucide--plus] ai-settings-menu-icon" />
                   <span class="ai-settings-menu-label">添加skill</span>
                 </DropdownMenuItem>
-                <DropdownMenuItem class="ai-settings-menu-item is-mode" @pointerenter="isModeSubmenuOpen = true"
-                  @pointerleave="isModeSubmenuOpen = false" @select.prevent>
+                <DropdownMenuItem
+                  class="ai-settings-menu-item is-mode"
+                  @pointerenter="isModeSubmenuOpen = true"
+                  @pointerleave="isModeSubmenuOpen = false"
+                  @select.prevent
+                >
                   <span class="icon-[lucide--route] ai-settings-menu-icon" />
                   <span class="ai-settings-menu-label">模式</span>
                   <span class="ai-settings-menu-value" v-text="activeModeOption.label"></span>
                   <span class="icon-[lucide--chevron-right] ai-settings-menu-chevron" />
-                  <div v-if="isModeSubmenuOpen" class="ai-mode-submenu" @pointerenter="isModeSubmenuOpen = true"
-                    @pointerleave="isModeSubmenuOpen = false">
-                    <button v-for="option in modeOptions" :key="option.key" type="button" class="ai-mode-submenu-item"
+                  <div
+                    v-if="isModeSubmenuOpen"
+                    class="ai-mode-submenu"
+                    @pointerenter="isModeSubmenuOpen = true"
+                    @pointerleave="isModeSubmenuOpen = false"
+                  >
+                    <button
+                      v-for="option in modeOptions"
+                      :key="option.key"
+                      type="button"
+                      class="ai-mode-submenu-item"
                       :class="{ 'is-active': activeMode === option.key }"
-                      @click="handleModeChange(option.key); isModeSubmenuOpen = false">
-                      <span v-if="option.key === 'chat'" class="icon-[lucide--message-circle] ai-mode-submenu-icon" />
-                      <span v-else-if="option.key === 'plan'" class="icon-[lucide--workflow] ai-mode-submenu-icon" />
-                      <span v-else class="icon-[lucide--sliders-horizontal] ai-mode-submenu-icon" />
+                      @click="handleModeChange(option.key); isModeSubmenuOpen = false"
+                    >
+                      <span
+                        v-if="option.key === 'chat'"
+                        class="icon-[lucide--message-circle] ai-mode-submenu-icon"
+                      />
+                      <span
+                        v-else-if="option.key === 'plan'"
+                        class="icon-[lucide--workflow] ai-mode-submenu-icon"
+                      />
+                      <span
+                        v-else
+                        class="icon-[lucide--sliders-horizontal] ai-mode-submenu-icon"
+                      />
                       <span class="ai-mode-submenu-copy">
                         <span class="ai-mode-submenu-label" v-text="option.label"></span>
-                        <span class="ai-mode-submenu-description" v-text="option.description"></span>
+                        <span
+                          class="ai-mode-submenu-description"
+                          v-text="option.description"
+                        ></span>
                       </span>
-                      <span v-if="activeMode === option.key" class="icon-[lucide--check] ai-mode-submenu-check" />
+                      <span
+                        v-if="activeMode === option.key"
+                        class="icon-[lucide--check] ai-mode-submenu-check"
+                      />
                     </button>
                   </div>
                 </DropdownMenuItem>
-                <DropdownMenuItem class="ai-settings-menu-item" @select.prevent="handleOpenPersonalization">
+                <DropdownMenuItem
+                  class="ai-settings-menu-item"
+                  @select.prevent="handleOpenPersonalization"
+                >
                   <span class="icon-[lucide--paintbrush] ai-settings-menu-icon" />
                   <span class="ai-settings-menu-label">个性化</span>
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
-
           <div class="ai-toolbar-spacer" aria-hidden="true"></div>
-          <Select :model-value="selectedModel" :disabled="modelSelectDisabled" @update:model-value="handleModelChange">
+          <Select
+            :model-value="selectedModel"
+            :disabled="modelSelectDisabled"
+            @update:model-value="handleModelChange"
+          >
             <SelectTrigger aria-label="选择模型" class="ai-model-trigger">
-              <AiProviderIcon class="ai-model-trigger__icon" :platform-id="selectedPlatformId" decorative />
+              <AiProviderIcon
+                class="ai-model-trigger__icon"
+                :platform-id="selectedPlatformId"
+                decorative
+              />
               <span class="ai-model-trigger__label" v-text="selectedModelLabel"></span>
             </SelectTrigger>
-            <SelectContent side="top" align="end" :side-offset="8" class="ai-model-content">
-              <template v-for="(section, sectionIndex) in modelSections" :key="section.key">
+            <SelectContent
+              side="top"
+              align="end"
+              :side-offset="8"
+              class="ai-model-content"
+            >
+              <template
+                v-for="(section, sectionIndex) in modelSections"
+                :key="section.key"
+              >
                 <SelectLabel class="ai-model-section-label">
                   <span v-text="section.label"></span>
-                  <span v-if="section.badge" class="ai-model-beta" v-text="section.badge"></span>
+                  <span
+                    v-if="section.badge"
+                    class="ai-model-beta"
+                    v-text="section.badge"
+                  ></span>
                 </SelectLabel>
                 <SelectGroup>
-                  <SelectItem v-for="model in section.models" :key="model.id" class="ai-model-item" :value="model.id">
-                    <AiProviderIcon class="ai-model-item__icon" :platform-id="section.key"
-                      decorative />
+                  <SelectItem
+                    v-for="model in section.models"
+                    :key="model.id"
+                    class="ai-model-item"
+                    :value="model.id"
+                  >
+                    <AiProviderIcon
+                      class="ai-model-item__icon"
+                      :platform-id="section.key"
+                      decorative
+                    />
                     <span class="ai-model-item__label" v-text="model.label"></span>
                   </SelectItem>
                 </SelectGroup>
-                <SelectSeparator v-if="sectionIndex < modelSections.length - 1" class="ai-model-separator" />
+                <SelectSeparator
+                  v-if="sectionIndex < modelSections.length - 1"
+                  class="ai-model-separator"
+                />
               </template>
             </SelectContent>
           </Select>
-
           <Context v-bind="resolvedTokenContext" :cost="tokenUsageCost">
             <ContextTrigger class="ai-token-trigger" aria-label="Token 消耗" />
-
-            <ContextContent side="top" align="end" :side-offset="8" class="ai-token-content">
+            <ContextContent
+              side="top"
+              align="end"
+              :side-offset="8"
+              class="ai-token-content"
+            >
               <ContextContentHeader />
               <ContextContentBody>
                 <ContextInputUsage />
@@ -608,23 +963,41 @@ onMounted(() => {
               <ContextContentFooter class="bg-[#f4f4f5]" />
             </ContextContent>
           </Context>
-
-          <InputGroupButton v-if="disabled && stopVisible" type="button" variant="outline" class="ai-send-button"
-            size="icon-xs" aria-label="停止" @click="handleStop">
+          <InputGroupButton
+            v-if="disabled && stopVisible"
+            type="button"
+            variant="outline"
+            class="ai-send-button"
+            size="icon-xs"
+            aria-label="停止"
+            @click="handleStop"
+          >
             <span class="icon-[lucide--square] size-4" />
             <span class="sr-only">Stop</span>
           </InputGroupButton>
-          <InputGroupButton v-else type="submit" variant="default" class="ai-send-button" size="icon-xs"
-            :disabled="disabled || !canSubmit" :aria-label="submitLabel">
+          <InputGroupButton
+            v-else
+            type="submit"
+            variant="default"
+            class="ai-send-button"
+            size="icon-xs"
+            :disabled="disabled || !canSubmit"
+            :aria-label="submitLabel"
+          >
             <span class="icon-[lucide--arrow-up] size-4" />
             <span class="sr-only">Send</span>
           </InputGroupButton>
         </InputGroupAddon>
       </InputGroup>
     </form>
-
-    <AiSlashCommandMenu :open="slashOpen" :query="slashQuery" :skills="skills" :anchor-rect="slashAnchorRect"
-      @select-skill="handleSelectSkill" @close="closeSlashMenu" />
+    <AiSlashCommandMenu
+      :open="slashOpen"
+      :query="slashQuery"
+      :skills="skills"
+      :anchor-rect="slashAnchorRect"
+      @select-skill="handleSelectSkill"
+      @close="closeSlashMenu"
+    />
     <SkillManagerDialog v-model:open="skillsManagerOpen" @saved="loadSkills" />
   </footer>
 </template>
@@ -657,16 +1030,14 @@ onMounted(() => {
   background: var(--panel-bg);
   border: 1px solid #efeeec;
   border-radius: 18px;
-  box-shadow:
-    0 1px 2px color-mix(in srgb, var(--text-primary) 8%, transparent),
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--text-primary) 8%, transparent),
     0 14px 30px color-mix(in srgb, var(--text-primary) 6%, transparent);
   overflow: hidden;
 }
 
 .ai-prompt-shell:focus-within {
   border-color: #efeeec;
-  box-shadow:
-    0 1px 2px color-mix(in srgb, var(--text-primary) 8%, transparent),
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--text-primary) 8%, transparent),
     0 14px 30px color-mix(in srgb, var(--text-primary) 6%, transparent);
 }
 
@@ -679,6 +1050,12 @@ onMounted(() => {
 .ai-attachments {
   min-width: 0;
   padding: 0 2px;
+}
+
+.ai-prompt-editor-wrap {
+  position: relative;
+  width: 100%;
+  min-width: 0;
 }
 
 .ai-prompt-textarea {
@@ -700,6 +1077,55 @@ onMounted(() => {
   scrollbar-width: thin;
   scrollbar-color: var(--ai-prompt-scrollbar-thumb) transparent;
   text-align: left;
+}
+
+.ai-prompt-editor {
+  white-space: pre-wrap;
+  word-break: break-word;
+  cursor: text;
+}
+
+.ai-prompt-editor:focus,
+.ai-prompt-editor:focus-visible {
+  outline: none;
+}
+
+.ai-prompt-placeholder {
+  position: absolute;
+  top: 14px;
+  left: 20px;
+  color: var(--text-tertiary);
+  font-size: 16px;
+  line-height: var(--ai-prompt-line-box);
+  pointer-events: none;
+  user-select: none;
+}
+
+.ai-skill-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0 3px 0 1px;
+  padding: 1px 9px 1px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, #2783de 12%, transparent);
+  color: #2061a8;
+  font-size: 13px;
+  line-height: 1.5;
+  vertical-align: baseline;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.ai-skill-pill__icon {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  color: #2783de;
+}
+
+.ai-skill-pill__label {
+  white-space: nowrap;
 }
 
 .ai-prompt-textarea::-webkit-scrollbar {
@@ -757,8 +1183,7 @@ onMounted(() => {
   background: transparent;
   color: var(--text-secondary);
   box-shadow: none;
-  transition:
-    background-color 140ms cubic-bezier(0.23, 1, 0.32, 1),
+  transition: background-color 140ms cubic-bezier(0.23, 1, 0.32, 1),
     transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 
@@ -813,8 +1238,7 @@ onMounted(() => {
   color: var(--accent-foreground);
   box-shadow: none;
   transform: translate(3px, 3px);
-  transition:
-    background-color 140ms cubic-bezier(0.23, 1, 0.32, 1),
+  transition: background-color 140ms cubic-bezier(0.23, 1, 0.32, 1),
     opacity 140ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 
@@ -852,8 +1276,7 @@ onMounted(() => {
   font-weight: 500;
   line-height: 1;
   transform: translate(3px, 3px);
-  transition:
-    background-color 140ms cubic-bezier(0.23, 1, 0.32, 1),
+  transition: background-color 140ms cubic-bezier(0.23, 1, 0.32, 1),
     color 140ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 
@@ -903,6 +1326,10 @@ onMounted(() => {
     padding-inline: 20px;
   }
 
+  .ai-prompt-placeholder {
+    font-size: 17px;
+  }
+
   .ai-model-trigger {
     max-width: 220px;
     font-size: 14px;
@@ -925,8 +1352,7 @@ onMounted(() => {
   border-radius: 12px;
   background: var(--ai-menu-bg);
   color: var(--ai-menu-text);
-  box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--text-primary) 2%, transparent),
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--text-primary) 2%, transparent),
     var(--ai-menu-shadow);
 }
 
@@ -1024,8 +1450,7 @@ onMounted(() => {
   border-radius: 12px;
   background: var(--ai-menu-bg);
   padding: 5px;
-  box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--text-primary) 2%, transparent),
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--text-primary) 2%, transparent),
     var(--ai-menu-shadow);
 }
 
@@ -1133,6 +1558,6 @@ onMounted(() => {
 }
 
 .ai-token-content [data-slot='context-content-footer'] {
-  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
-}
+     background: color-mix(in srgb, var(--text-primary) 4%, transparent); 
+     }
 </style>
