@@ -62,11 +62,11 @@ fn emit_startup_step(event: &str, app_started_at: Instant, step_started_at: Inst
 }
 
 macro_rules! timed_step {
-    ($event:expr_2021, $app_started_at:expr_2021, $body:block) => 
+    ($event:expr_2021, $app_started_at:expr_2021, $body:block) => {
         let __step_started_at = std::time::Instant::now();
         $body
         emit_startup_step($event, $app_started_at, __step_started_at);
-    ;
+    };
 }
 
 // === 生命周期 ============================================================
