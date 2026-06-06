@@ -46,6 +46,14 @@ use super::ssh::{SshClientHandler, SshConnectionParams, connect_and_auth};
 const POOL_MAX_IDLE: Duration = Duration::from_secs(600); // 10 minutes
 const POOL_CLEANUP_INTERVAL: Duration = Duration::from_secs(60);
 
+// ---- shutdown signalling ----
+
+/// 应用退出时置位:后台清理任务在下一次 `select!` 时感知并退出,避免空转。
+static POOL_SHUTDOWN: AtomicBool = AtomicBool::new(false);
+/// 用于在关停时立即唤醒正在等待 tick 的清理任务(否则最坏要等满一个清理周期)。
+static POOL_SHUTDOWN_NOTIFY: LazyLock<tokio::sync::Notify> =
+    LazyLock::new(tokio::sync::Notify::new);
+
 // ---- connection key ----
 
 /// Uniquely identifies a pooled connection.
@@ -148,8 +156,15 @@ impl SshConnectionPool {
                 let mut interval = tokio::time::interval(POOL_CLEANUP_INTERVAL);
                 interval.tick().await; // skip first immediate tick
                 loop {
-                    interval.tick().await;
-                    POOL.cleanup().await;
+                    tokio::select! {
+                        _ = interval.tick() => {
+                            if POOL_SHUTDOWN.load(Ordering::Relaxed) {
+                                break;
+                            }
+                            POOL.cleanup().await;
+                        }
+                        _ = POOL_SHUTDOWN_NOTIFY.notified() => break,
+                    }
                 }
             });
         }
@@ -232,8 +247,49 @@ impl SshConnectionPool {
             );
         }
     }
+
+    /// 关闭连接池:清空所有缓存连接。底层 TCP/SSH 在最后一个 `Arc<Handle>`
+    /// 引用被释放时关闭,因此正在进行的操作完成后连接会自然断开。
+    pub(crate) async fn shutdown(&self) {
+        let mut entries = self.entries.lock().await;
+        entries.clear();
+    }
 }
 
 // ---- global pool singleton ----
 
 pub(crate) static POOL: LazyLock<SshConnectionPool> = LazyLock::new(SshConnectionPool::new);
+
+/// 应用退出时调用:置位关停标志并唤醒后台清理任务退出,随后清空连接池。
+///
+/// 与进程直接退出相比,这里主动断开池内长连接,避免远端遗留半开会话。
+pub(crate) async fn shutdown_ssh_pool() {
+    POOL_SHUTDOWN.store(true, Ordering::Relaxed);
+    POOL_SHUTDOWN_NOTIFY.notify_waiters();
+    POOL.shutdown().await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn shutdown_clears_pool_entries() {
+        let pool = SshConnectionPool::new();
+        {
+            let mut entries = pool.entries.lock().await;
+            entries.insert(
+                ConnKey {
+                    host: "example.com".to_string(),
+                    port: 22,
+                    username: "user".to_string(),
+                    auth_tag: 42,
+                },
+                Arc::new(Mutex::new(None)),
+            );
+        }
+        assert_eq!(pool.entries.lock().await.len(), 1);
+        pool.shutdown().await;
+        assert!(pool.entries.lock().await.is_empty());
+    }
+}
