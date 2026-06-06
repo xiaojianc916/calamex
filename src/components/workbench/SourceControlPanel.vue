@@ -868,7 +868,10 @@ async function ensureActiveTabData(tabKey: TGitNavKey): Promise<void> {
       return;
     }
 
-    await Promise.all([gitStore.loadPullRequestSupport(), gitStore.loadPullRequests()]);
+    await gitStore.loadPullRequestSupport();
+    if (gitStore.pullRequestSupport.available) {
+      await gitStore.loadPullRequests();
+   }
   } catch (error) {
     const fallbackMessage =
       tabKey === 'history'
@@ -1231,7 +1234,7 @@ const navItems = computed<IGitNavItem[]>(() => [
   {
     key: 'pull-requests',
     label: '拉取请求',
-    count: pullRequestSupport.value.available ? 1 : 0,
+    count: pullRequestSupport.value.available ? pullRequests.value.length : 0,
     active: activeTab.value === 'pull-requests',
   },
   {
@@ -1870,7 +1873,10 @@ const handleDropStash = async (entry: IGitStashEntryPayload): Promise<void> => {
 
 const handleReloadPullRequestSupport = async (): Promise<void> => {
   try {
-    await Promise.all([gitStore.loadPullRequestSupport(), gitStore.loadPullRequests()]);
+    await gitStore.loadPullRequestSupport();
+   if (gitStore.pullRequestSupport.available) {
+      await gitStore.loadPullRequests();
+    }
   } catch (error) {
     message.error(toErrorMessage(error, '读取 Pull Request 列表失败'));
   }

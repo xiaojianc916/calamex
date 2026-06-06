@@ -181,7 +181,7 @@ watch(
             </p>
             <p v-else-if="skills.length === 0" class="skill-hint">
               <span class="icon-[lucide--sparkles]" aria-hidden="true" />
-              还没有技能,点击「新建技能」开始创建。
+              还没有技能,点击「新建技能」开始创建
             </p>
             <article
               v-for="skill in skills"
