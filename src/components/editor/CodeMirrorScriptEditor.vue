@@ -1,5 +1,5 @@
 <template>
-  <div class="shell-editor-surface codemirror-editor-surface relative h-full min-h-0 w-full bg-(--editor-bg)"
+  <div data-shell-resize-responder class="shell-editor-surface codemirror-editor-surface relative h-full min-h-0 w-full bg-(--editor-bg)"
     @contextmenu.prevent="handleContainerContextMenu">
     <div ref="containerRef" class="h-full min-h-0 w-full bg-(--editor-bg)"></div>
     <EditorContextMenu :open="contextMenuState.open" :x="contextMenuState.x" :y="contextMenuState.y"
@@ -60,6 +60,7 @@ import { useResizeObserver } from '@vueuse/core';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import EditorContextMenu from '@/components/editor/EditorContextMenu.vue';
 import type { IEditorContextMenuItem } from '@/components/editor/editor-context-menu.types';
+import { useShellResizeFrameScheduler } from '@/composables/useShellResizeFrameScheduler';
 import { buildCodeMirrorSettingsExtensions } from '@/services/editor/codemirror-config';
 import { createCodeMirrorInlineCompletionController } from '@/services/editor/codemirror-inline-completion';
 import {
@@ -86,10 +87,6 @@ import type {
 import type { IEditorSettings } from '@/types/settings';
 import { tryReadClipboardText, writeClipboardText } from '@/utils/clipboard';
 import { resolveLanguageForPath } from '@/utils/editor-language';
-import {
-  SHELL_WINDOW_RESIZE_SETTLED_EVENT,
-  SHELL_WINDOW_RESIZE_START_EVENT,
-} from '@/utils/window-resize-events';
 
 interface IEditorExpose {
   focusEditor: () => void;
@@ -164,7 +161,8 @@ const emit = defineEmits<{
 
 const containerRef = ref<HTMLElement | null>(null);
 const analysisState = computed(() => props.analysis ?? createEmptyAnalysis());
-const contextMenuState = ref({ open: false, x: 0, y: 0 });
+const contextMenuState = ref({ open: false, x: 0 });
+contextMenuState.value = { open: false, x: 0, y: 0 } as typeof contextMenuState.value & { y: number };
 const contextMenuGroups = ref<ReturnType<typeof buildMenuGroups>>([]);
 const submenuDirection = ref<'left' | 'right'>('right');
 
@@ -443,6 +441,13 @@ const handleShellWindowResizeSettled = (): void => {
   if (editorView !== null) scheduleEditorLayout();
 };
 
+useShellResizeFrameScheduler({
+  onStart: handleShellWindowResizeStart,
+  onFrame: scheduleEditorLayout,
+  onSettled: handleShellWindowResizeSettled,
+  settledFrames: 3,
+});
+
 // ──────────────────────────────────────────────────────────
 // Context menu
 // ──────────────────────────────────────────────────────────
@@ -547,7 +552,7 @@ const openContextMenu = (event: MouseEvent): void => {
   if (!editorView) return;
   const nextPosition = clampMenuPosition(event.clientX, event.clientY);
   contextMenuGroups.value = buildMenuGroups();
-  contextMenuState.value = { open: true, x: nextPosition.x, y: nextPosition.y };
+  contextMenuState.value = { open: true, x: nextPosition.x, y: nextPosition.y } as typeof contextMenuState.value & { y: number };
   submenuDirection.value =
     nextPosition.x + MENU_WIDTH + SUBMENU_SAFE_WIDTH + VIEWPORT_PADDING > window.innerWidth
       ? 'left'
@@ -950,8 +955,6 @@ watch(
 // ──────────────────────────────────────────────────────────
 onMounted(() => {
   createEditor();
-  window.addEventListener(SHELL_WINDOW_RESIZE_START_EVENT, handleShellWindowResizeStart);
-  window.addEventListener(SHELL_WINDOW_RESIZE_SETTLED_EVENT, handleShellWindowResizeSettled);
   window.addEventListener('pointerdown', handleWindowPointerDown, true);
   window.addEventListener('keydown', handleWindowKeydown);
   window.addEventListener('resize', closeMenuOnWindowChange);
@@ -969,8 +972,6 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
-  window.removeEventListener(SHELL_WINDOW_RESIZE_START_EVENT, handleShellWindowResizeStart);
-  window.removeEventListener(SHELL_WINDOW_RESIZE_SETTLED_EVENT, handleShellWindowResizeSettled);
   window.removeEventListener('pointerdown', handleWindowPointerDown, true);
   window.removeEventListener('keydown', handleWindowKeydown);
   window.removeEventListener('resize', closeMenuOnWindowChange);

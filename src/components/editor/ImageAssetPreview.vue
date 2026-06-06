@@ -1,5 +1,5 @@
 <template>
-  <div class="flex h-full min-h-0 flex-col bg-(--editor-bg)">
+  <div data-shell-resize-responder class="image-asset-preview flex h-full min-h-0 flex-col bg-(--editor-bg)">
     <div class="flex items-center justify-between border-b border-(--shell-divider) px-5 py-3">
       <div class="min-w-0">
         <p class="text-[11px] font-medium uppercase tracking-[0.14em] text-(--text-quaternary)">
@@ -17,7 +17,7 @@
       </div>
     </div>
 
-    <div class="min-h-0 flex-1 overflow-auto p-5">
+    <div class="image-asset-preview-scroll min-h-0 flex-1 overflow-auto p-5">
       <div
         v-if="isLoading"
         class="flex h-full min-h-60 items-center justify-center rounded-xl border border-white/6 bg-white/2 text-[12px] text-(--text-quaternary)"
@@ -31,7 +31,7 @@
 
       <div
         v-else
-        class="flex min-h-full items-center justify-center rounded-[20px] border border-white/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.03),rgba(255,255,255,0.015))] p-6"
+        class="image-preview-stage flex min-h-full items-center justify-center rounded-[20px] border border-white/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.03),rgba(255,255,255,0.015))] p-6"
       >
         <div class="image-preview-frame">
           <img

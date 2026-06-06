@@ -21,6 +21,7 @@ withDefaults(
 
 <template>
   <section
+    data-shell-resize-responder
     class="ai-panel-frame"
     :aria-label="decorative ? undefined : ariaLabel"
     :aria-hidden="decorative ? 'true' : undefined"

@@ -15,6 +15,8 @@ interface ITauriInternals {
   invoke?: unknown;
 }
 
+const SHELL_WINDOW_BACKGROUND = { r: 246, g: 248, b: 250, a: 255 } as const;
+
 let hasAppliedMainWindowStage = false;
 let hasSyncedNativeWindowBackground = false;
 let isApplyingMainWindowStage = false;
@@ -37,7 +39,7 @@ const syncNativeWindowBackground = async (): Promise<void> => {
   }
 
   try {
-    await setWindowBackground({ r: 250, g: 250, b: 250, a: 255 });
+    await setWindowBackground(SHELL_WINDOW_BACKGROUND);
     hasSyncedNativeWindowBackground = true;
   } catch (error) {
     console.warn('同步原生窗口底色失败', error);
