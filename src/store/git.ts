@@ -5,6 +5,7 @@ import { tauriService } from '@/services/tauri';
 import type {
   IGitBranchPayload,
   IGitCommitDetailPayload,
+  IGitCommitFileDiffPayload,
   IGitCommitResultPayload,
   IGitCommitSummaryPayload,
   IGitFileBaselinePayload,
@@ -123,6 +124,10 @@ export const useGitStore = defineStore('git', () => {
   // 仓库根变更 / reset 时随 baseline 缓存一起清空。
   const commitDetailCache = ref<Record<string, IGitCommitDetailPayload>>({});
 
+  // 提交文件 diff 按 "commitId:relativePath" 缓存。每个提交的文件 diff 不可变，
+  // 可长期缓存；仓库根变更 / reset 时随 baseline 缓存一起清空。
+  const commitFileDiffCache = ref<Record<string, IGitCommitFileDiffPayload>>({});
+
   // -- request-id staleness tokens -----------------------------------------
   // 模块私有计数器,不是 reactive 状态。每个资源的并发 fetch 用 ++ 拿到自己的
   // token,resolve 时与当前 token 比对——不等则视为 stale,既不写结果也不
@@ -140,6 +145,9 @@ export const useGitStore = defineStore('git', () => {
 
   // de-duplicates concurrent in-flight commit-detail fetches keyed by commit id.
   const pendingCommitDetailRequests = new Map<string, Promise<IGitCommitDetailPayload>>();
+
+  // de-duplicates concurrent in-flight commit-file-diff fetches keyed by "commitId:relativePath".
+  const pendingCommitFileDiffRequests = new Map<string, Promise<IGitCommitFileDiffPayload>>();
 
   // -- getters ---------------------------------------------------------------
 
@@ -163,6 +171,7 @@ export const useGitStore = defineStore('git', () => {
     baselineCache.value = {};
     baselineEpoch.value += 1;
     commitDetailCache.value = {};
+    commitFileDiffCache.value = {};
   };
 
   const resetCommitHistory = (): void => {
@@ -285,6 +294,46 @@ export const useGitStore = defineStore('git', () => {
       });
 
     pendingCommitDetailRequests.set(commitId, request);
+    return request;
+  };
+
+  /**
+   * 读取单个提交中某个文件的 diff（按 hunk 分组），用于历史记录里内联展开。
+   * 按 "commitId:relativePath" 缓存；并发同一文件的请求会复用同一个 in-flight promise。
+   */
+  const loadCommitFileDiff = async (
+    commitId: string,
+    relativePath: string,
+  ): Promise<IGitCommitFileDiffPayload> => {
+    const cacheKey = commitId + ':' + relativePath;
+    const cached = commitFileDiffCache.value[cacheKey];
+    if (cached) {
+      return cached;
+    }
+
+    const pending = pendingCommitFileDiffRequests.get(cacheKey);
+    if (pending) {
+      return pending;
+    }
+
+    const request = tauriService
+      .getGitCommitFileDiff({
+        repositoryRootPath: requireRepositoryRootPath(),
+        commitId,
+        relativePath,
+      })
+      .then((payload) => {
+        commitFileDiffCache.value = {
+          ...commitFileDiffCache.value,
+          [cacheKey]: payload,
+        };
+        return payload;
+      })
+      .finally(() => {
+        pendingCommitFileDiffRequests.delete(cacheKey);
+      });
+
+    pendingCommitFileDiffRequests.set(cacheKey, request);
     return request;
   };
 
@@ -758,6 +807,7 @@ export const useGitStore = defineStore('git', () => {
     pullRequestDetail,
     isPullRequestDetailLoading,
     commitDetailCache,
+    commitFileDiffCache,
     // getters
     hasRepository,
     totalChangeCount,
@@ -777,6 +827,7 @@ export const useGitStore = defineStore('git', () => {
     // supplementary loaders
     loadCommitHistory,
     loadCommitDetail,
+    loadCommitFileDiff,
     loadBranches,
     loadStashes,
     loadPullRequestSupport,
