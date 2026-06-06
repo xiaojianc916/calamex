@@ -8,6 +8,8 @@
 //! ## Lifecycle
 //! * **Idle eviction**: handles unused for >10 min are closed by the background cleanup task.
 //! * **Error eviction**: callers call `evict()` when a connection-level error is detected.
+//! * **Capacity eviction**: `acquire`'s slow path bounds total entries via LRU once a new
+//!   connection is established, so pathological churn can't grow the pool without limit.
 //! * **Background cleanup**: a periodic sweep runs every 60 s.
 //!
 //! ## Concurrency model
@@ -45,6 +47,10 @@ use super::ssh::{SshClientHandler, SshConnectionParams, connect_and_auth};
 
 const POOL_MAX_IDLE: Duration = Duration::from_secs(600); // 10 minutes
 const POOL_CLEANUP_INTERVAL: Duration = Duration::from_secs(60);
+/// 连接池缓存条目（按 host:port:user:auth 计）的总量上限。
+/// 仅靠空闲清理无法覆盖“短时间大量不同连接”的极端场景,故在 `acquire` 慢路径
+/// 新建连接后按 LRU 驱逐空闲连接,防止句柄无界累积耗尽 fd / 远端会话。
+const POOL_MAX_ENTRIES: usize = 32;
 
 // ---- shutdown signalling ----
 
@@ -207,7 +213,53 @@ impl SshConnectionPool {
             handle: Arc::clone(&handle),
             last_used: now,
         });
+        // 先释放内层槽锁,再做总量收口:① 不在持锁状态下跨 await;② 让刚插入的最新
+        // 连接处于“未占用”可见状态——它 last_used 最新,排在驱逐序列末尾,不会被误删。
+        drop(guard);
+        self.enforce_capacity().await;
         Ok(handle)
+    }
+
+    /// 给连接池总量加上限并按 LRU 驱逐空闲连接。
+    ///
+    /// 由 `acquire` 慢路径在新建连接后调用。条目数不超上限时直接返回;超限时用
+    /// `try_lock` 探查可驱逐的空闲槽(`try_lock` 失败说明正被占用,跳过不动),
+    /// 按“空槽(驱逐残留)优先,其次 last_used 从旧到新”排序后删除到上限以内。
+    /// 与 `cleanup` 一致:始终先持外层 `entries` 锁,再对各槽 `try_lock`,不跨 await。
+    async fn enforce_capacity(&self) {
+        let mut entries = self.entries.lock().await;
+        if entries.len() <= POOL_MAX_ENTRIES {
+            return;
+        }
+
+        // 仅把当前未被占用的槽纳入可驱逐候选;正被持有的槽(try_lock 失败)说明
+        // 正在使用,保留不动。
+        let mut evictable: Vec<(ConnKey, Option<Instant>)> = entries
+            .iter()
+            .filter_map(|(conn_key, slot)| match slot.try_lock() {
+                Ok(slot_guard) => {
+                    Some((conn_key.clone(), slot_guard.as_ref().map(|entry| entry.last_used)))
+                }
+                Err(_) => None,
+            })
+            .collect();
+
+        // 空槽(None)最先驱逐,其次按 last_used 从旧到新。
+        evictable.sort_by(|left, right| match (left.1, right.1) {
+            (None, None) => std::cmp::Ordering::Equal,
+            (None, Some(_)) => std::cmp::Ordering::Less,
+            (Some(_), None) => std::cmp::Ordering::Greater,
+            (Some(left_used), Some(right_used)) => left_used.cmp(&right_used),
+        });
+
+        let mut overflow = entries.len() - POOL_MAX_ENTRIES;
+        for (conn_key, _) in evictable {
+            if overflow == 0 {
+                break;
+            }
+            entries.remove(&conn_key);
+            overflow -= 1;
+        }
     }
 
     /// Remove a connection from the pool (e.g. after a connection-level I/O error).
@@ -291,5 +343,66 @@ mod tests {
         assert_eq!(pool.entries.lock().await.len(), 1);
         pool.shutdown().await;
         assert!(pool.entries.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn enforce_capacity_bounds_total_entries() {
+        let pool = SshConnectionPool::new();
+        {
+            let mut entries = pool.entries.lock().await;
+            for index in 0..(POOL_MAX_ENTRIES + 8) {
+                entries.insert(
+                    ConnKey {
+                        host: format!("host-{index}"),
+                        port: 22,
+                        username: "user".to_string(),
+                        auth_tag: index as u64,
+                    },
+                    Arc::new(Mutex::new(None)),
+                );
+            }
+        }
+        assert_eq!(pool.entries.lock().await.len(), POOL_MAX_ENTRIES + 8);
+
+        pool.enforce_capacity().await;
+        assert_eq!(pool.entries.lock().await.len(), POOL_MAX_ENTRIES);
+    }
+
+    #[tokio::test]
+    async fn enforce_capacity_keeps_in_use_entries() {
+        let pool = SshConnectionPool::new();
+        let in_use_key = ConnKey {
+            host: "in-use".to_string(),
+            port: 22,
+            username: "user".to_string(),
+            auth_tag: 99,
+        };
+        let in_use_slot: Slot = Arc::new(Mutex::new(None));
+        {
+            let mut entries = pool.entries.lock().await;
+            entries.insert(in_use_key.clone(), Arc::clone(&in_use_slot));
+            for index in 0..POOL_MAX_ENTRIES {
+                entries.insert(
+                    ConnKey {
+                        host: format!("host-{index}"),
+                        port: 22,
+                        username: "user".to_string(),
+                        auth_tag: index as u64,
+                    },
+                    Arc::new(Mutex::new(None)),
+                );
+            }
+        }
+        assert_eq!(pool.entries.lock().await.len(), POOL_MAX_ENTRIES + 1);
+
+        // 持有该槽的内层锁,模拟“正在使用”:enforce_capacity 的 try_lock 会失败并跳过它,
+        // 因此它必定被保留,被驱逐的只能是其它空闲槽。
+        let slot_guard = in_use_slot.lock().await;
+        pool.enforce_capacity().await;
+        drop(slot_guard);
+
+        let entries = pool.entries.lock().await;
+        assert_eq!(entries.len(), POOL_MAX_ENTRIES);
+        assert!(entries.contains_key(&in_use_key));
     }
 }
