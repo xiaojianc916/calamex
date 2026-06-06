@@ -32,6 +32,23 @@ html.is-resizing .editor-surface {
   transition: none !important;
 }
 
+html.is-resizing .app-shell-pane,
+html.is-resizing .workbench-editor-viewport,
+html.is-resizing .workbench-content-stage,
+html.is-resizing .workbench-content-dock,
+html.is-resizing .workbench-content-card,
+html.is-resizing .editor-surface {
+  animation: none !important;
+  transition: none !important;
+}
+
+html.is-resizing .workbench-content-stage,
+html.is-resizing .workbench-content-dock,
+html.is-resizing .workbench-content-card {
+  width: 100%;
+  height: 100%;
+}
+
 .app-shell-pane,
 .workbench-editor-viewport,
 .diagnostics-overlay-panel {

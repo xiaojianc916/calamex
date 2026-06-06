@@ -17,6 +17,7 @@ import { createStartupShellState } from '@/utils/startup-shell';
 import { consumeProgrammaticWindowCloseAllowance } from '@/utils/window-close';
 import {
   SHELL_WINDOW_RESIZE_END_EVENT,
+  SHELL_WINDOW_RESIZE_FRAME_EVENT,
   SHELL_WINDOW_RESIZE_SETTLED_EVENT,
   SHELL_WINDOW_RESIZE_START_EVENT,
 } from '@/utils/window-resize-events';
@@ -112,6 +113,7 @@ export const useShellWorkbenchView = (onReady: () => void) => {
   let nativeCloseRequestedUnlisten: (() => void) | null = null;
   let isUnmounted = false;
   let editorLayoutAfterSidebarFrameId: number | null = null;
+  let editorLiveResizeFrameId: number | null = null;
   let globalKeydownCleanup: (() => void) | null = null;
 
   const sidebarWidth = computed(() => DASHBOARD_SIDEBAR_WIDTH);
@@ -309,6 +311,22 @@ export const useShellWorkbenchView = (onReady: () => void) => {
     mount: mountViewportState,
     cleanup: cleanupViewportState,
   } = useShellWorkbenchViewportState({ editorViewportRef });
+
+  const scheduleEditorLayoutDuringWindowResize = (): void => {
+    if (editorLiveResizeFrameId !== null) {
+      return;
+    }
+
+    editorLiveResizeFrameId = window.requestAnimationFrame(() => {
+      editorLiveResizeFrameId = null;
+      editorRef.value?.layoutEditor();
+    });
+  };
+
+  const handleShellWindowResizeFrame = (): void => {
+    handleShellWindowResizeEnd();
+    scheduleEditorLayoutDuringWindowResize();
+  };
 
   const handleInsertTemplate = (template: ICommandTemplate): void => {
     editorRef.value?.insertSnippet(template.snippet);
@@ -704,6 +722,7 @@ export const useShellWorkbenchView = (onReady: () => void) => {
     isStartupShellPrimed.value = true;
     markStartup('shell-workbench-mounted');
     window.addEventListener(SHELL_WINDOW_RESIZE_START_EVENT, handleShellWindowResizeStart);
+    window.addEventListener(SHELL_WINDOW_RESIZE_FRAME_EVENT, handleShellWindowResizeFrame);
     window.addEventListener(SHELL_WINDOW_RESIZE_END_EVENT, handleShellWindowResizeEnd);
     window.addEventListener(SHELL_WINDOW_RESIZE_SETTLED_EVENT, handleShellWindowResizeSettled);
 
@@ -717,6 +736,7 @@ export const useShellWorkbenchView = (onReady: () => void) => {
   onBeforeUnmount(() => {
     isUnmounted = true;
     window.removeEventListener(SHELL_WINDOW_RESIZE_START_EVENT, handleShellWindowResizeStart);
+    window.removeEventListener(SHELL_WINDOW_RESIZE_FRAME_EVENT, handleShellWindowResizeFrame);
     window.removeEventListener(SHELL_WINDOW_RESIZE_END_EVENT, handleShellWindowResizeEnd);
     window.removeEventListener(SHELL_WINDOW_RESIZE_SETTLED_EVENT, handleShellWindowResizeSettled);
     globalKeydownCleanup?.();
@@ -727,6 +747,11 @@ export const useShellWorkbenchView = (onReady: () => void) => {
     if (editorLayoutAfterSidebarFrameId !== null) {
       window.cancelAnimationFrame(editorLayoutAfterSidebarFrameId);
       editorLayoutAfterSidebarFrameId = null;
+    }
+
+    if (editorLiveResizeFrameId !== null) {
+      window.cancelAnimationFrame(editorLiveResizeFrameId);
+      editorLiveResizeFrameId = null;
     }
   });
 
