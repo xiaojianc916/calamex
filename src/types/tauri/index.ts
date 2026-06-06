@@ -315,6 +315,7 @@ export interface ITauriService {
   listGitCommitHistory(payload: IGitCommitHistoryRequest): Promise<IGitCommitHistoryPayload>;
   getGitCommitDetail(payload: IGitCommitDetailRequest): Promise<IGitCommitDetailPayload>;
   getGitCommitFileDiff(payload: IGitCommitFileDiffRequest): Promise<IGitCommitFileDiffPayload>;
+  getGitCommitFileDiffPreview(payload: IGitCommitFileDiffRequest): Promise<IGitDiffPreviewPayload>;
   listGitBranches(payload: IGitRepositoryRootRequest): Promise<IGitBranchListPayload>;
   checkoutGitBranch(payload: IGitBranchCheckoutRequest): Promise<IGitRepositoryStatusPayload>;
   checkoutGitCommit(payload: IGitCommitCheckoutRequest): Promise<IGitRepositoryStatusPayload>;
