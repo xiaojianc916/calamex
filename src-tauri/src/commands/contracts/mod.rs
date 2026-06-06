@@ -10,6 +10,7 @@ mod ai_config;
 mod ai_edit;
 mod script;
 mod secret;
+mod skills;
 mod ssh;
 mod workspace;
 
@@ -20,5 +21,6 @@ pub use ai_chat::*;
 pub use ai_config::*;
 pub use ai_edit::*;
 pub use script::*;
+pub use skills::*;
 pub use ssh::*;
 pub use workspace::*;

@@ -6,6 +6,7 @@ pub(crate) mod lsp;
 pub(crate) mod script_run;
 pub(crate) mod search;
 pub(crate) mod shell_tools;
+pub(crate) mod skills;
 pub(crate) mod ssh;
 pub(crate) mod ssh_pool;
 pub(crate) mod terminal;

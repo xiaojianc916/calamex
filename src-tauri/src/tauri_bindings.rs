@@ -1,8 +1,8 @@
 use crate::commands::lsp::commands as lsp_commands;
 use crate::commands::terminal::commands as terminal_commands;
 use crate::commands::{
-    agent_sidecar, ai, git, script_run, search, shell_tools, ssh, window, window_stage, workspace_fs,
-    workspace_watcher,
+    agent_sidecar, ai, git, script_run, search, shell_tools, skills, ssh, window, window_stage,
+    workspace_fs, workspace_watcher,
 };
 use specta_typescript::Typescript;
 use std::path::PathBuf;
@@ -19,6 +19,10 @@ pub fn builder() -> Builder<tauri::Wry> {
             search::search_workspace,
             shell_tools::analyze_script,
             shell_tools::format_script,
+            skills::list_skills,
+            skills::read_skill,
+            skills::save_skill,
+            skills::delete_skill,
             window_stage::apply_window_stage,
             window::set_window_background,
             workspace_fs::create_workspace_path,
