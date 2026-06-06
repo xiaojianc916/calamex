@@ -4,10 +4,12 @@ use super::{
     WorkspacePathCreateRequest, WorkspacePathDeletePayload, WorkspacePathDeleteRequest,
     WorkspacePathKind, WorkspacePathRenamePayload, WorkspacePathRenameRequest, line_count,
 };
+use atomic_write_file::AtomicWriteFile;
 use encoding_rs::{GB18030, UTF_8, UTF_16BE, UTF_16LE};
 use std::{
     borrow::Cow,
     env, fs,
+    io::Write,
     path::{Path, PathBuf},
 };
 use tauri::Manager;
@@ -310,24 +312,16 @@ fn ensure_within_size_limit(path: &Path, max_bytes: u64, label: &str) -> Result<
     Ok(byte_size)
 }
 
-/// 原子写入：先写入同目录下的临时文件，再 rename 覆盖目标，
-/// 避免写入中途崩溃 / 断电导致原文件被截断、内容丢失。
+/// 原子写入：由 atomic-write-file 在目标同目录创建唯一临时文件，完整写入后 commit 覆盖目标，
+/// 避免固定临时文件名在并发保存时互相覆盖 / 删除导致静默丢数据。
 fn atomic_write(file_path: &Path, bytes: &[u8]) -> Result<(), String> {
-    let file_name = file_path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .ok_or_else(|| "无法解析目标文件名。".to_string())?;
-    let temp_path = match file_path.parent() {
-        Some(parent) if !parent.as_os_str().is_empty() => parent.join(format!(".{file_name}.tmp")),
-        _ => PathBuf::from(format!(".{file_name}.tmp")),
-    };
-
-    fs::write(&temp_path, bytes).map_err(|error| format!("保存脚本失败：{error}"))?;
-    if let Err(error) = fs::rename(&temp_path, file_path) {
-        let _ = fs::remove_file(&temp_path);
-        return Err(format!("保存脚本失败：{error}"));
-    }
-    Ok(())
+    let mut file = AtomicWriteFile::options()
+        .open(file_path)
+        .map_err(|error| format!("保存脚本失败：{error}"))?;
+    file.write_all(bytes)
+        .map_err(|error| format!("保存脚本失败：{error}"))?;
+    file.commit()
+        .map_err(|error| format!("保存脚本失败：{error}"))
 }
 
 pub(crate) fn decode_script_bytes(bytes: &[u8]) -> Result<(String, DocumentEncoding), String> {
@@ -450,14 +444,11 @@ fn read_workspace_entries(directory: &Path) -> Result<Vec<WorkspaceEntry>, Strin
     entries.reserve(minimum_entry_count);
 
     for item in read_dir {
-        let Ok(entry) = item else {
-            continue;
-        };
-
+        let entry = item.map_err(|error| format!("读取资源目录项失败：{error}"))?;
         let path = entry.path();
-        let Ok(file_type) = entry.file_type() else {
-            continue;
-        };
+        let file_type = entry
+            .file_type()
+            .map_err(|error| format!("读取资源类型失败：{error}"))?;
         let is_directory = file_type.is_dir();
 
         entries.push(WorkspaceEntry {
@@ -530,4 +521,37 @@ fn encode_with_encoding_name(content: &str, label: &str) -> Result<Vec<u8>, Stri
         return Err(format!("将内容编码为 {label} 失败。"));
     }
     Ok(bytes.into_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::atomic_write;
+    use std::{fs, thread};
+
+    #[test]
+    fn atomic_write_allows_concurrent_writers_without_fixed_temp_collision() {
+        let test_dir = std::env::temp_dir().join(format!(
+            "calamex-atomic-write-{}",
+            jiff::Timestamp::now().as_nanosecond()
+        ));
+        fs::create_dir_all(&test_dir).expect("create temp dir");
+        let file_path = test_dir.join("script.sh");
+
+        let handles = (0..8)
+            .map(|index| {
+                let file_path = file_path.clone();
+                thread::spawn(move || atomic_write(&file_path, format!("echo {index}\n").as_bytes()))
+            })
+            .collect::<Vec<_>>();
+
+        for handle in handles {
+            handle.join().expect("writer thread panicked").expect("writer failed");
+        }
+
+        let content = fs::read_to_string(&file_path).expect("read final file");
+        assert!(content.starts_with("echo "));
+        assert!(!test_dir.join(".script.sh.tmp").exists());
+
+        fs::remove_dir_all(test_dir).expect("remove temp dir");
+    }
 }

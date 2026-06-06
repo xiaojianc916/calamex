@@ -77,7 +77,6 @@ export const useShellWorkbenchViewportState = (options: IUseShellWorkbenchViewpo
   let editorViewportResizeFrameId: number | null = null;
   let previousEditorViewportSize = { width: 0, height: 0 };
   let pendingEditorViewportSize: { width: number; height: number } | null = null;
-  let isShellWindowResizing = false;
 
   // useResizeObserver 的 stop 句柄；mount() 后写入，cleanup() 时显式调用。
   let stopEditorViewportResizeObserver: (() => void) | null = null;
@@ -107,7 +106,7 @@ export const useShellWorkbenchViewportState = (options: IUseShellWorkbenchViewpo
     diagnosticsResizeSettleTimerId = window.setTimeout(() => {
       diagnosticsTransitionsEnabled.value = true;
       diagnosticsResizeSettleTimerId = null;
-    }, 140);
+    }, 160);
   };
 
   const handleEditorViewportResize = (width: number, height: number): void => {
@@ -143,7 +142,6 @@ export const useShellWorkbenchViewportState = (options: IUseShellWorkbenchViewpo
       width: Math.round(width),
       height: Math.round(height),
     };
-    if (isShellWindowResizing) return;
     if (editorViewportResizeFrameId !== null) return;
     editorViewportResizeFrameId = window.requestAnimationFrame(flushEditorViewportResize);
   };
@@ -158,7 +156,6 @@ export const useShellWorkbenchViewportState = (options: IUseShellWorkbenchViewpo
   };
 
   const handleShellWindowResizeStart = (): void => {
-    isShellWindowResizing = true;
     diagnosticsTransitionsEnabled.value = false;
     if (diagnosticsResizeSettleTimerId !== null) {
       window.clearTimeout(diagnosticsResizeSettleTimerId);
@@ -170,11 +167,13 @@ export const useShellWorkbenchViewportState = (options: IUseShellWorkbenchViewpo
     const snapshot = captureCurrentViewportSize();
     if (snapshot) {
       pendingEditorViewportSize = snapshot;
+      if (editorViewportResizeFrameId === null) {
+        editorViewportResizeFrameId = window.requestAnimationFrame(flushEditorViewportResize);
+      }
     }
   };
 
   const handleShellWindowResizeSettled = (): void => {
-    isShellWindowResizing = false;
     if (editorViewportResizeFrameId !== null) {
       window.cancelAnimationFrame(editorViewportResizeFrameId);
       editorViewportResizeFrameId = null;

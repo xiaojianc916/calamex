@@ -21,6 +21,28 @@ const DEFAULT_RUNTIME_TIMEOUT_MS = 30 * 60 * 1000;
 // HTTP utilities
 // -----------------------------------------------------------------------
 
+class HttpError extends Error {
+  constructor(
+    public readonly statusCode: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'HttpError';
+  }
+}
+
+const toErrorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+
+const toHttpStatusCode = (error: unknown): number =>
+  error instanceof HttpError ? error.statusCode : 400;
+
+const writeErrorJson = (response: ServerResponse, error: unknown): void => {
+  writeJson(response, toHttpStatusCode(error), {
+    error: toErrorMessage(error),
+  });
+};
+
 export const writeJson = (response: ServerResponse, statusCode: number, payload: unknown): void => {
   response.writeHead(statusCode, {
     'content-type': 'application/json; charset=utf-8',
@@ -59,26 +81,41 @@ export const readBody = async (request: IncomingMessage): Promise<unknown> =>
   new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let totalBytes = 0;
+    let settled = false;
+
+    const settleResolve = (value: unknown): void => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    const settleReject = (error: unknown): void => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
+
     request.on('data', (chunk: Buffer) => {
+      if (settled) return;
       totalBytes += chunk.byteLength;
       if (totalBytes > MAX_REQUEST_BYTES) {
-        reject(new Error('请求体超过 sidecar 限制。'));
+        settleReject(new HttpError(413, '请求体超过 sidecar 限制。'));
         request.destroy();
         return;
       }
       chunks.push(chunk);
     });
-    request.on('error', reject);
+    request.on('error', settleReject);
     request.on('end', () => {
+      if (settled) return;
       const rawBody = Buffer.concat(chunks).toString('utf8').trim();
       if (!rawBody) {
-        resolve({});
+        settleResolve({});
         return;
       }
       try {
-        resolve(JSON.parse(rawBody));
+        settleResolve(JSON.parse(rawBody));
       } catch {
-        reject(new Error('请求体不是合法 JSON。'));
+        settleReject(new Error('请求体不是合法 JSON。'));
       }
     });
   });
@@ -181,9 +218,7 @@ export const handlePost = async (
       toValidatedSidecarResponse(await handler(body, createRuntimeRunOptions(request))),
     );
   } catch (error) {
-    writeJson(response, 400, {
-      error: error instanceof Error ? error.message : String(error),
-    });
+    writeErrorJson(response, error);
   }
 };
 
@@ -199,9 +234,7 @@ export const handleRuntimeResponse = async (
       toValidatedSidecarResponse(await handler(createRuntimeRunOptions(request))),
     );
   } catch (error) {
-    writeJson(response, 400, {
-      error: error instanceof Error ? error.message : String(error),
-    });
+    writeErrorJson(response, error);
   }
 };
 
@@ -214,9 +247,7 @@ export const handlePlainPost = async <TPayload>(
     const body = await readBody(request);
     writeJson(response, 200, await handler(body));
   } catch (error) {
-    writeJson(response, 400, {
-      error: error instanceof Error ? error.message : String(error),
-    });
+    writeErrorJson(response, error);
   }
 };
 
@@ -229,9 +260,7 @@ export const handleWarmupPost = async (
     logWarmupResult('explicit', result);
     writeJson(response, 200, result);
   } catch (error) {
-    writeJson(response, 400, {
-      error: error instanceof Error ? error.message : String(error),
-    });
+    writeErrorJson(response, error);
   }
 };
 
@@ -256,14 +285,12 @@ export const handlePostStream = async (
     response.end();
   } catch (error) {
     if (!response.headersSent) {
-      writeJson(response, 400, {
-        error: error instanceof Error ? error.message : String(error),
-      });
+      writeErrorJson(response, error);
       return;
     }
     writeNdjsonFrame(response, {
       type: 'error',
-      error: error instanceof Error ? error.message : String(error),
+      error: toErrorMessage(error),
     });
     response.end();
   }
