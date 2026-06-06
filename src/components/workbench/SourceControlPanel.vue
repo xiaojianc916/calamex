@@ -26,7 +26,7 @@
       <div class="source-control-empty-shell source-control-setup-shell">
         <section class="source-control-setup-panel" aria-label="源代码管理未初始化引导">
           <header class="source-control-setup-project-header">
-            <span class="source-control-setup-project-name">{{ workspaceLabel }}</span>
+            <span class="source-control-setup-project-name"> workspaceLabel </span>
             <svg class="source-control-setup-chevron" viewBox="0 0 16 16" aria-hidden="true">
               <polyline points="4 6 8 10 12 6" />
             </svg>
@@ -48,14 +48,14 @@
             </p>
 
             <p v-if="sourceControlActionError" class="source-control-setup-error">
-              {{ sourceControlActionError }}
+               sourceControlActionError 
             </p>
 
             <div class="source-control-setup-actions">
               <button type="button" class="source-control-setup-btn source-control-setup-btn-primary"
                 :disabled="isBusy || isLoading" :aria-busy="pendingAction === 'init-repository'"
                 @click="handleInitRepository">
-                {{ initRepositoryButtonLabel }}
+                 initRepositoryButtonLabel 
               </button>
 
               <button type="button" class="source-control-setup-btn source-control-setup-btn-secondary"
@@ -90,13 +90,13 @@
         </svg>
 
         <div class="source-control-branch-copy">
-          <p class="source-control-branch-name">{{ branchLabel }}</p>
+          <p class="source-control-branch-name"> branchLabel </p>
         </div>
 
         <div class="source-control-branch-sync">
-          <span v-if="status.behind > 0">↓ {{ status.behind }}</span>
-          <span v-if="status.ahead > 0">↑ {{ status.ahead }}</span>
-          <span v-if="status.ahead === 0 && status.behind === 0">{{ workspaceStateLabel }}</span>
+          <span v-if="status.behind > 0">↓  status.behind </span>
+          <span v-if="status.ahead > 0">↑  status.ahead </span>
+          <span v-if="status.ahead === 0 && status.behind === 0"> workspaceStateLabel </span>
         </div>
       </div>
 
@@ -134,8 +134,8 @@
             <path d="M7 13h10v7H7z" />
           </svg>
 
-          <span class="source-control-nav-label">{{ item.label }}</span>
-          <span class="source-control-nav-count">{{ item.count }}</span>
+          <span class="source-control-nav-label"> item.label </span>
+          <span class="source-control-nav-count"> item.count </span>
         </button>
       </nav>
 
@@ -143,8 +143,8 @@
         <template v-if="activeTab === 'changes'">
           <section v-if="!hasVisibleChanges && searchQuery.trim()"
             class="source-control-empty-card source-control-empty-card-inline">
-            <p class="source-control-empty-title">{{ emptyChangesTitle }}</p>
-            <p class="source-control-empty-text">{{ emptyChangesText }}</p>
+            <p class="source-control-empty-title"> emptyChangesTitle </p>
+            <p class="source-control-empty-text"> emptyChangesText </p>
           </section>
 
           <section v-for="section in filteredSections" :key="section.key" class="source-control-section"
@@ -153,8 +153,8 @@
               <svg class="source-control-section-chevron" viewBox="0 0 24 24" aria-hidden="true">
                 <polyline points="6 9 12 15 18 9" />
               </svg>
-              <span>{{ section.title }}</span>
-              <span class="source-control-section-count">{{ section.entries.length }}</span>
+              <span> section.title </span>
+              <span class="source-control-section-count"> section.entries.length </span>
             </button>
 
             <div class="source-control-file-list">
@@ -165,12 +165,12 @@
                 }" @contextmenu.prevent.stop="handleEntryContextMenu($event, section.key, entry)">
                 <button type="button" class="source-control-file-main" @click="handleOpenFile(entry.path)">
                   <span class="source-control-file-tag" :class="'is-' + resolveEntryTagTone(section.key, entry)">
-                    {{ resolveEntryTag(section.key, entry) }}
+                     resolveEntryTag(section.key, entry) 
                   </span>
 
                   <span class="source-control-file-path">
-                    <span class="source-control-file-name">{{ resolveEntryDisplayName(entry) }}</span>
-                    <span class="source-control-file-dir">{{ resolveEntryDirectory(entry) }}</span>
+                    <span class="source-control-file-name"> resolveEntryDisplayName(entry) </span>
+                    <span class="source-control-file-dir"> resolveEntryDirectory(entry) </span>
                   </span>
                 </button>
 
@@ -205,7 +205,7 @@
                 :disabled="isCommitHistoryLoading || isBusy" @click="handleReloadCommitHistory">
                 <span aria-hidden="true" class="icon-[lucide--refresh-cw]" />
               </button>
-              <p class="source-control-history-summary">{{ historyPanelTitle }}</p>
+              <p class="source-control-history-summary"> historyPanelTitle </p>
             </div>
           </div>
 
@@ -221,7 +221,7 @@
             :behind="status.behind"
           />
 
-          <p v-else class="source-control-info-note source-control-history-note">{{ historyEmptyText }}</p>
+          <p v-else class="source-control-info-note source-control-history-note"> historyEmptyText </p>
         </section>
 
         <section v-else-if="activeTab === 'branches'"
@@ -233,7 +233,7 @@
                 :disabled="isBranchesLoading || isBusy" @click="handleReloadBranches">
                 <span aria-hidden="true" class="icon-[lucide--refresh-cw]" />
               </button>
-              <p class="source-control-branches-summary">{{ branchesPanelSummary }}</p>
+              <p class="source-control-branches-summary"> branchesPanelSummary </p>
             </div>
           </div>
 
@@ -269,7 +269,7 @@
                 </button>
               </div>
 
-              <p v-if="branchCreateError" class="source-control-branch-create-error">{{ branchCreateError }}</p>
+              <p v-if="branchCreateError" class="source-control-branch-create-error"> branchCreateError </p>
             </form>
           </div>
 
@@ -281,8 +281,8 @@
           <template v-else-if="filteredBranchEntries.length > 0">
             <section v-for="group in branchGroups" :key="group.key" class="source-control-branch-group">
               <div class="source-control-branch-group-header">
-                <span>{{ group.title }}</span>
-                <span class="source-control-branch-group-count">{{ group.entries.length }}</span>
+                <span> group.title </span>
+                <span class="source-control-branch-group-count"> group.entries.length </span>
               </div>
 
               <div class="source-control-branch-list">
@@ -300,8 +300,8 @@
                   </svg>
 
                   <div class="source-control-branch-row-body">
-                    <span class="source-control-branch-row-name">{{ entry.shorthand }}</span>
-                    <span v-if="resolveBranchMeta(entry)" class="source-control-branch-row-meta">{{ resolveBranchMeta(entry) }}</span>
+                    <span class="source-control-branch-row-name"> entry.shorthand </span>
+                    <span v-if="resolveBranchMeta(entry)" class="source-control-branch-row-meta"> resolveBranchMeta(entry) </span>
                   </div>
 
                   <span v-if="entry.isCurrent" class="source-control-branch-row-current">当前</span>
@@ -311,7 +311,7 @@
             </section>
           </template>
 
-          <p v-else class="source-control-info-note source-control-branches-note">{{ branchesEmptyText }}</p>
+          <p v-else class="source-control-info-note source-control-branches-note"> branchesEmptyText </p>
         </section>
 
         <section v-else-if="activeTab === 'pull-requests'"
@@ -320,7 +320,7 @@
             <p class="source-control-pull-requests-heading">Pull requests</p>
             <div class="source-control-pull-requests-header-actions">
               <span v-if="pullRequestSupport.available" class="source-control-pull-requests-provider">
-                {{ pullRequestProviderLabel }}
+                 pullRequestProviderLabel 
               </span>
               <button type="button" class="source-control-pull-requests-refresh" aria-label="刷新 Pull Request 支持"
                 title="刷新 Pull Request 支持"
@@ -338,31 +338,199 @@
           </div>
 
           <template v-else>
-            <p class="source-control-info-title">{{ pullRequestPanelTitle }}</p>
-            <p class="source-control-info-text">{{ pullRequestPanelText }}</p>
+            <template v-if="!pullRequestSupport.available">
+              <p class="source-control-info-title"> pullRequestPanelTitle </p>
+              <p class="source-control-info-text"> pullRequestPanelText </p>
+            </template>
 
             <p v-if="pullRequestSupport.remoteName" class="source-control-info-note">
-              远程 {{ pullRequestSupport.remoteName }} · {{ pullRequestProviderLabel }}
+              远程  pullRequestSupport.remoteName  ·  pullRequestProviderLabel 
             </p>
 
-            <div v-if="pullRequestSupport.available"
-              class="source-control-toolbar source-control-pull-requests-toolbar">
-              <button type="button" class="source-control-toolbar-btn"
-                :disabled="!canOpenPullRequestList || isBusy" @click="handleOpenPullRequestList">
-                查看列表
-              </button>
+            <div v-if="pullRequestSupport.available" class="source-control-pr-shell">
+              <template v-if="pullRequestView === 'detail'">
+                <button type="button" class="source-control-pr-back-btn" :disabled="isBusy"
+                  @click="handleBackToPullRequestList">
+                  ← 返回列表
+                </button>
 
-              <button type="button" class="source-control-toolbar-btn"
-                :disabled="!canOpenPullRequestCreate || isBusy" @click="handleOpenCreatePullRequest">
-                创建 PR
-              </button>
+                <div v-if="isPullRequestDetailLoading && !pullRequestDetail"
+                  class="source-control-pr-skeleton" aria-hidden="true">
+                  <span class="source-control-pr-skeleton-row" />
+                  <span class="source-control-pr-skeleton-row" />
+                </div>
+
+                <div v-else-if="pullRequestDetail" class="source-control-pr-detail">
+                  <div class="source-control-pr-detail-card">
+                    <div class="source-control-pr-item-head">
+                      <h3 class="source-control-pr-detail-title">
+                        # pullRequestDetail.number   pullRequestDetail.title 
+                      </h3>
+                      <span class="source-control-pr-state"
+                        :class="resolvePullRequestStateClass(pullRequestDetail)">
+                         resolvePullRequestStateLabel(pullRequestDetail) 
+                      </span>
+                    </div>
+
+                    <p class="source-control-pr-detail-meta">
+                       resolvePullRequestMeta(pullRequestDetail) 
+                    </p>
+
+                    <div class="source-control-pr-detail-stats">
+                      <span class="source-control-pr-stat">
+                        <span class="source-control-pr-stat-value">+ pullRequestDetail.additions ?? 0 </span>
+                        <span class="source-control-pr-stat-label">新增</span>
+                      </span>
+                      <span class="source-control-pr-stat">
+                        <span class="source-control-pr-stat-value">- pullRequestDetail.deletions ?? 0 </span>
+                        <span class="source-control-pr-stat-label">删除</span>
+                      </span>
+                      <span class="source-control-pr-stat">
+                        <span class="source-control-pr-stat-value"> pullRequestDetail.changedFiles ?? 0 </span>
+                        <span class="source-control-pr-stat-label">文件</span>
+                      </span>
+                    </div>
+
+                    <p v-if="pullRequestDetail.body" class="source-control-pr-detail-body">
+                       pullRequestDetail.body 
+                    </p>
+
+                    <p v-if="pullRequestActionError" class="source-control-pr-form-error">
+                       pullRequestActionError 
+                    </p>
+
+                    <div v-if="isPullRequestOpen(pullRequestDetail)" class="source-control-pr-merge-row">
+                      <select v-model="pullRequestMergeMethod" class="source-control-pr-select"
+                        :disabled="isBusy">
+                        <option v-for="option in pullRequestMergeMethodOptions" :key="option.value"
+                          :value="option.value">
+                           option.label 
+                        </option>
+                      </select>
+                      <button type="button" class="source-control-pr-action-btn is-primary"
+                        :disabled="isBusy" @click="handleMergePullRequest">
+                        合并
+                      </button>
+                      <button type="button" class="source-control-pr-action-btn is-danger"
+                        :disabled="isBusy" @click="handleClosePullRequest">
+                        关闭
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <p v-else class="source-control-info-note">未能读取该 Pull Request 的详情。</p>
+              </template>
+
+              <template v-else-if="pullRequestView === 'create'">
+                <button type="button" class="source-control-pr-back-btn" :disabled="isCreatingPullRequest"
+                  @click="handleBackToPullRequestList">
+                  ← 返回列表
+                </button>
+
+                <form class="source-control-pr-create" @submit.prevent="handleSubmitCreatePullRequest">
+                  <div class="source-control-pr-create-form">
+                    <label class="source-control-pr-field">
+                      <span class="source-control-pr-field-label">标题</span>
+                      <input v-model="createPullRequestTitle" type="text" class="source-control-pr-input"
+                        placeholder="Pull Request 标题" :disabled="isCreatingPullRequest" spellcheck="false" />
+                    </label>
+
+                    <label class="source-control-pr-field">
+                      <span class="source-control-pr-field-label">来源分支 (head)</span>
+                      <input v-model="createPullRequestHead" type="text" class="source-control-pr-input"
+                        placeholder="feature/your-branch" :disabled="isCreatingPullRequest" spellcheck="false" />
+                    </label>
+
+                    <label class="source-control-pr-field">
+                      <span class="source-control-pr-field-label">目标分支 (base)</span>
+                      <input v-model="createPullRequestBase" type="text" class="source-control-pr-input"
+                        placeholder="main" :disabled="isCreatingPullRequest" spellcheck="false" />
+                    </label>
+
+                    <label class="source-control-pr-field">
+                      <span class="source-control-pr-field-label">描述（可选）</span>
+                      <textarea v-model="createPullRequestBody" class="source-control-pr-textarea" rows="4"
+                        placeholder="补充说明此次改动…" :disabled="isCreatingPullRequest" spellcheck="false" />
+                    </label>
+
+                    <label class="source-control-pr-draft-row">
+                      <input v-model="createPullRequestDraft" type="checkbox" :disabled="isCreatingPullRequest" />
+                      <span>创建为草稿 PR</span>
+                    </label>
+
+                    <p v-if="createPullRequestError" class="source-control-pr-form-error">
+                       createPullRequestError 
+                    </p>
+
+                    <div class="source-control-pr-merge-row">
+                      <button type="button" class="source-control-pr-action-btn"
+                        :disabled="isCreatingPullRequest" @click="handleBackToPullRequestList">
+                        取消
+                      </button>
+                      <button type="submit" class="source-control-pr-action-btn is-primary"
+                        :disabled="isCreatingPullRequest || !canSubmitCreatePullRequest">
+                         createPullRequestSubmitLabel 
+                      </button>
+                    </div>
+                  </div>
+                </form>
+              </template>
+
+              <template v-else>
+                <div class="source-control-pr-toolbar">
+                  <div class="source-control-pr-filter" role="group" aria-label="Pull Request 状态筛选">
+                    <button v-for="option in pullRequestStateOptions" :key="option.value" type="button"
+                      class="source-control-pr-filter-btn"
+                      :class="{ 'is-active': pullRequestStateFilter === option.value }"
+                      :disabled="isPullRequestsLoading || isBusy"
+                      @click="handleSelectPullRequestState(option.value)">
+                       option.label 
+                    </button>
+                  </div>
+
+                  <div class="source-control-pr-actions">
+                    <button type="button" class="source-control-pr-icon-btn" aria-label="刷新 Pull Request 列表"
+                      title="刷新 Pull Request 列表" :disabled="isPullRequestsLoading || isBusy"
+                      @click="handleReloadPullRequests">
+                      <span aria-hidden="true" class="icon-[lucide--refresh-cw]" />
+                    </button>
+                    <button type="button" class="source-control-pr-action-btn is-primary" :disabled="isBusy"
+                      @click="handleOpenCreatePullRequest">
+                      新建 PR
+                    </button>
+                  </div>
+                </div>
+
+                <div v-if="isPullRequestsLoading && pullRequests.length === 0"
+                  class="source-control-pr-skeleton" aria-hidden="true">
+                  <span class="source-control-pr-skeleton-row" />
+                  <span class="source-control-pr-skeleton-row" />
+                  <span class="source-control-pr-skeleton-row" />
+                </div>
+
+                <div v-else-if="pullRequests.length > 0" class="source-control-pr-list">
+                  <button v-for="pr in pullRequests" :key="pr.number" type="button"
+                    class="source-control-pr-item" @click="handleOpenPullRequestDetail(pr)">
+                    <span class="source-control-pr-item-head">
+                      <span class="source-control-pr-item-title"># pr.number   pr.title </span>
+                      <span class="source-control-pr-state" :class="resolvePullRequestStateClass(pr)">
+                         resolvePullRequestStateLabel(pr) 
+                      </span>
+                    </span>
+                    <span class="source-control-pr-item-meta"> resolvePullRequestMeta(pr) </span>
+                  </button>
+                </div>
+
+                <p v-else class="source-control-info-note"> pullRequestsEmptyText </p>
+              </template>
             </div>
 
             <div class="source-control-pull-requests-config">
               <button v-if="!isRemoteFormOpen" type="button"
                 class="source-control-btn source-control-pull-requests-config-trigger"
                 :disabled="isSettingRemote || isBusy" @click="handleOpenRemoteForm">
-                {{ pullRequestSupport.remoteName ? '更新远程地址' : '配置远程地址' }}
+                 pullRequestSupport.remoteName ? '修改远程地址' : '配置远程地址' 
               </button>
 
               <form v-else class="source-control-pull-requests-form" @submit.prevent="handleSubmitRemoteForm">
@@ -382,7 +550,7 @@
                 </label>
 
                 <p v-if="remoteFormError" class="source-control-pull-requests-form-error">
-                  {{ remoteFormError }}
+                   remoteFormError 
                 </p>
 
                 <div class="source-control-pull-requests-form-actions">
@@ -394,7 +562,7 @@
                   <button type="submit"
                     class="source-control-btn source-control-btn-primary source-control-pull-requests-form-btn"
                     :disabled="isSettingRemote || !canSubmitRemoteForm">
-                    {{ isSettingRemote ? '保存中…' : '保存' }}
+                     isSettingRemote ? '保存中…' : '保存远程' 
                   </button>
                 </div>
               </form>
@@ -405,7 +573,7 @@
         <section v-else class="source-control-info-panel source-control-stash-panel">
           <div class="source-control-stash-header">
             <p class="source-control-stash-heading">贮藏</p>
-            <p class="source-control-stash-summary">{{ stashPanelTitle }}</p>
+            <p class="source-control-stash-summary"> stashPanelTitle </p>
           </div>
 
           <div class="source-control-stash-toolbar">
@@ -435,11 +603,11 @@
               :class="{ 'is-open': isStashOpen(entry.stashId) }">
               <button type="button" class="source-control-stash-head" :aria-expanded="isStashOpen(entry.stashId)"
                 @click="toggleStashOpen(entry.stashId)">
-                <span class="source-control-stash-ref">{{ resolveStashIndexLabel(entry) }}</span>
+                <span class="source-control-stash-ref"> resolveStashIndexLabel(entry) </span>
 
                 <span class="source-control-stash-info">
-                  <span class="source-control-stash-title">{{ resolveStashTitle(entry) }}</span>
-                  <span class="source-control-stash-meta">{{ resolveStashMeta(entry) }}</span>
+                  <span class="source-control-stash-title"> resolveStashTitle(entry) </span>
+                  <span class="source-control-stash-meta"> resolveStashMeta(entry) </span>
                 </span>
 
                 <svg class="source-control-stash-chevron" viewBox="0 0 24 24" aria-hidden="true">
@@ -451,17 +619,17 @@
                 <div class="source-control-stash-details">
                   <div class="source-control-stash-detail">
                     <span class="source-control-stash-detail-label">引用</span>
-                    <span class="source-control-stash-detail-value">{{ entry.stashId }}</span>
+                    <span class="source-control-stash-detail-value"> entry.stashId </span>
                   </div>
 
                   <div v-if="entry.branchName" class="source-control-stash-detail">
                     <span class="source-control-stash-detail-label">分支</span>
-                    <span class="source-control-stash-detail-value">{{ entry.branchName }}</span>
+                    <span class="source-control-stash-detail-value"> entry.branchName </span>
                   </div>
 
                   <div v-if="entry.commitShortId" class="source-control-stash-detail">
                     <span class="source-control-stash-detail-label">基线</span>
-                    <span class="source-control-stash-detail-value">{{ entry.commitShortId }}</span>
+                    <span class="source-control-stash-detail-value"> entry.commitShortId </span>
                   </div>
                 </div>
 
@@ -484,7 +652,7 @@
             </article>
           </div>
 
-          <p v-else class="source-control-info-note source-control-stash-note">{{ stashEmptyText }}</p>
+          <p v-else class="source-control-info-note source-control-stash-note"> stashEmptyText </p>
         </section>
       </div>
 
@@ -495,7 +663,7 @@
         <div class="source-control-commit-actions">
           <button type="button" class="source-control-btn source-control-btn-primary" :disabled="!canCommit"
             @click="handleCommit">
-            {{ commitButtonLabel }}
+             commitButtonLabel 
           </button>
 
           <button type="button" class="source-control-btn source-control-btn-icon" :disabled="isBusy"
@@ -535,6 +703,8 @@ import type {
   IGitCommitSummaryPayload,
   IGitDiffPreviewRequest,
   IGitFileStatusPayload,
+  IGitPullRequestDetailPayload,
+  IGitPullRequestSummaryPayload,
   IGitPullRequestSupportPayload,
   IGitStashEntryPayload,
   TGitChangeKind,
@@ -554,6 +724,9 @@ const SOURCE_CONTROL_MENU_VIEWPORT_PADDING = 12;
 const SOURCE_CONTROL_MENU_ROOT_SELECTOR = '.linear-context-menu-root';
 
 type TGitNavKey = 'changes' | 'history' | 'branches' | 'pull-requests' | 'stash';
+type TPullRequestView = 'list' | 'detail' | 'create';
+type TPullRequestStateFilter = 'open' | 'closed' | 'all';
+type TPullRequestMergeMethod = 'merge' | 'squash' | 'rebase';
 interface IGitSection {
   key: TGitSectionKey;
   title: string;
@@ -763,6 +936,9 @@ async function ensureActiveTabData(tabKey: TGitNavKey): Promise<void> {
     }
 
     await gitStore.loadPullRequestSupport();
+    if (pullRequestSupport.value.available) {
+      await gitStore.loadPullRequests(pullRequestStateFilter.value);
+    }
   } catch (error) {
     const fallbackMessage =
       tabKey === 'history'
@@ -771,7 +947,7 @@ async function ensureActiveTabData(tabKey: TGitNavKey): Promise<void> {
           ? '读取 Git 分支失败'
           : tabKey === 'stash'
             ? '读取 Git 贮藏失败'
-            : '读取 Pull Request 支持信息失败';
+            : '读取 Pull Request 信息失败';
     message.error(toErrorMessage(error, fallbackMessage));
   }
 }
@@ -788,1013 +964,4 @@ const changedEntries = computed(() =>
 );
 const untrackedEntries = computed(() => status.value.files.filter((entry) => entry.isUntracked));
 const stageableEntries = computed(() => [...changedEntries.value, ...untrackedEntries.value]);
-// 放弃全部的目标集合与可暂存集合完全一致(已跟踪改动 + 未跟踪文件),复用同一个 computed。
-const discardableEntries = stageableEntries;
-const stagedPaths = computed(() => stagedEntries.value.map((entry) => entry.path));
-const canStageAll = computed(() => stageableEntries.value.length > 0 && !isBusy.value);
-const canUnstageAll = computed(() => stagedPaths.value.length > 0 && !isBusy.value);
-const canDiscardAll = computed(() => discardableEntries.value.length > 0 && !isBusy.value);
-const commitHistoryEntries = computed<IGitCommitSummaryPayload[]>(() => gitStore.commitHistory);
-const isCommitHistoryLoading = computed(() => gitStore.isCommitHistoryLoading);
-const branchEntries = computed<IGitBranchPayload[]>(() => gitStore.branches);
-const isBranchesLoading = computed(() => gitStore.isBranchesLoading);
-const stashEntries = computed<IGitStashEntryPayload[]>(() => gitStore.stashes);
-const isStashesLoading = computed(() => gitStore.isStashesLoading);
-const pullRequestSupport = computed<IGitPullRequestSupportPayload>(
-  () => gitStore.pullRequestSupport,
-);
-const isPullRequestSupportLoading = computed(() => gitStore.isPullRequestSupportLoading);
-const isSettingRemote = computed(() => gitStore.isSettingRemote);
-
-const isRemoteFormOpen = ref(false);
-const remoteNameInput = ref('');
-const remoteUrlInput = ref('');
-const remoteFormError = ref<string | null>(null);
-
-const canSubmitRemoteForm = computed(
-  () => remoteNameInput.value.trim().length > 0 && remoteUrlInput.value.trim().length > 0,
-);
-
-const sections = computed<IGitSection[]>(() => {
-  const nextSections: IGitSection[] = [];
-
-  if (conflictedEntries.value.length > 0) {
-    nextSections.push({
-      key: 'conflicts',
-      title: '冲突',
-      entries: conflictedEntries.value,
-    });
-  }
-
-  if (stagedEntries.value.length > 0) {
-    nextSections.push({
-      key: 'staged',
-      title: '已暂存',
-      entries: stagedEntries.value,
-    });
-  }
-
-  if (changedEntries.value.length > 0) {
-    nextSections.push({
-      key: 'changes',
-      title: '变更',
-      entries: changedEntries.value,
-    });
-  }
-
-  if (untrackedEntries.value.length > 0) {
-    nextSections.push({
-      key: 'untracked',
-      title: '未跟踪',
-      entries: untrackedEntries.value,
-    });
-  }
-
-  return nextSections;
-});
-
-const filteredSections = computed<IGitSection[]>(() => {
-  const keyword = searchQuery.value.trim().toLowerCase();
-  if (!keyword) {
-    return sections.value;
-  }
-
-  return sections.value
-    .map((section) => {
-      const matchesSection = section.title.toLowerCase().includes(keyword);
-      const entries = matchesSection
-        ? section.entries
-        : section.entries.filter((entry) => {
-            const haystack = [
-              entry.fileName,
-              entry.relativePath,
-              entry.previousRelativePath ?? '',
-              entry.indexStatus ?? '',
-              entry.worktreeStatus ?? '',
-            ]
-              .join(' ')
-              .toLowerCase();
-
-            return haystack.includes(keyword);
-          });
-
-      return {
-        ...section,
-        entries,
-      };
-    })
-    .filter((section) => section.entries.length > 0);
-});
-
-const hasVisibleChanges = computed(() =>
-  filteredSections.value.some((section) => section.entries.length > 0),
-);
-const canCommit = computed(
-  () => status.value.stagedCount > 0 && commitMessage.value.trim().length > 0 && !isBusy.value,
-);
-
-const branchLabel = computed(() => {
-  if (status.value.isDetached) {
-    return `detached @ ${status.value.headShortOid ?? 'HEAD'}`;
-  }
-
-  return status.value.headShortName ?? status.value.headBranchName ?? '未知分支';
-});
-
-const workspaceStateLabel = computed(() => {
-  if (status.value.conflictedCount > 0) {
-    return '存在冲突';
-  }
-
-  if (status.value.isClean) {
-    return '工作区干净';
-  }
-
-  return `${totalChangeCount.value} 项变更`;
-});
-
-const navItems = computed<IGitNavItem[]>(() => [
-  {
-    key: 'changes',
-    label: '变更',
-    count: totalChangeCount.value,
-    active: activeTab.value === 'changes',
-  },
-  {
-    key: 'history',
-    label: '历史',
-    count: commitHistoryEntries.value.length || (status.value.lastCommit ? 1 : 0),
-    active: activeTab.value === 'history',
-  },
-  {
-    key: 'branches',
-    label: '分支',
-    count: branchEntries.value.length || (status.value.headBranchName ? 1 : 0),
-    active: activeTab.value === 'branches',
-  },
-  {
-    key: 'pull-requests',
-    label: '拉取请求',
-    count: pullRequestSupport.value.available ? 1 : 0,
-    active: activeTab.value === 'pull-requests',
-  },
-  {
-    key: 'stash',
-    label: '贮藏',
-    count: stashEntries.value.length,
-    active: activeTab.value === 'stash',
-  },
-]);
-
-const emptyChangesTitle = computed(() => '没有匹配的变更');
-
-const emptyChangesText = computed(() => '试试搜索文件名、目录、状态，或者清空搜索关键字。');
-
-const commitButtonLabel = computed(() =>
-  pendingAction.value === 'commit' ? '提交中...' : '提交更改',
-);
-
-const matchesSearchQuery = (parts: Array<string | null | undefined>): boolean => {
-  const keyword = searchQuery.value.trim().toLowerCase();
-  if (!keyword) {
-    return true;
-  }
-
-  return parts
-    .filter((value): value is string => Boolean(value && value.trim().length > 0))
-    .join(' ')
-    .toLowerCase()
-    .includes(keyword);
-};
-
-const filteredCommitHistory = computed(() =>
-  commitHistoryEntries.value.filter((entry) =>
-    matchesSearchQuery([entry.summary, entry.shortId, entry.authorName]),
-  ),
-);
-
-const filteredBranchEntries = computed(() =>
-  branchEntries.value.filter((entry) =>
-    matchesSearchQuery([entry.shorthand, entry.upstreamName, entry.lastCommit?.summary ?? null]),
-  ),
-);
-
-const filteredStashEntries = computed(() =>
-  stashEntries.value.filter((entry) =>
-    matchesSearchQuery([entry.stashId, entry.summary, entry.branchName]),
-  ),
-);
-
-const activeStashId = ref<string | null | undefined>(undefined);
-
-const resolvedOpenStashId = computed(() => {
-  const firstEntry = filteredStashEntries.value[0];
-
-  if (!firstEntry) {
-    return null;
-  }
-
-  if (activeStashId.value === undefined) {
-    return firstEntry.stashId;
-  }
-
-  return activeStashId.value;
-});
-
-watch(
-  () => filteredStashEntries.value.map((entry) => entry.stashId),
-  (stashIds) => {
-    if (stashIds.length === 0) {
-      activeStashId.value = undefined;
-      return;
-    }
-
-    if (activeStashId.value && !stashIds.includes(activeStashId.value)) {
-      activeStashId.value = undefined;
-    }
-  },
-  { immediate: true },
-);
-
-const historyPanelTitle = computed(() => {
-  if (searchQuery.value.trim()) {
-    return `匹配 ${filteredCommitHistory.value.length} 条`;
-  }
-
-  const visibleCount = commitHistoryEntries.value.length || (status.value.lastCommit ? 1 : 0);
-
-  if (visibleCount > 0) {
-    return `最近 ${visibleCount} 条`;
-  }
-
-  return isCommitHistoryLoading.value ? '正在同步' : '暂无提交';
-});
-
-const historyEmptyText = computed(() =>
-  searchQuery.value.trim() ? '没有匹配的提交记录。' : '当前仓库还没有提交记录。',
-);
-
-const branchesPanelSummary = computed(() => {
-  if (searchQuery.value.trim()) {
-    return `匹配 ${filteredBranchEntries.value.length} 个`;
-  }
-
-  const total = branchEntries.value.length;
-  if (total === 0) {
-    return isBranchesLoading.value ? '正在同步' : '暂无分支';
-  }
-
-  return `共 ${total} 个`;
-});
-
-const branchGroups = computed<
-  Array<{ key: 'local' | 'remote'; title: string; entries: IGitBranchPayload[] }>
->(() => {
-  const localEntries = filteredBranchEntries.value.filter((entry) => entry.kind !== 'remote');
-  const remoteEntries = filteredBranchEntries.value.filter((entry) => entry.kind === 'remote');
-
-  const groups: Array<{ key: 'local' | 'remote'; title: string; entries: IGitBranchPayload[] }> =
-    [];
-  if (localEntries.length > 0) {
-    groups.push({ key: 'local', title: '本地', entries: localEntries });
-  }
-  if (remoteEntries.length > 0) {
-    groups.push({ key: 'remote', title: '远程', entries: remoteEntries });
-  }
-
-  return groups;
-});
-
-const branchesEmptyText = computed(() =>
-  searchQuery.value.trim() ? '没有匹配的分支。' : '当前仓库没有可显示的分支。',
-);
-
-const stashPanelTitle = computed(() => {
-  if (searchQuery.value.trim()) {
-    return `匹配 ${filteredStashEntries.value.length} 条`;
-  }
-
-  return stashEntries.value.length > 0 ? `共 ${stashEntries.value.length} 条` : '暂无贮藏';
-});
-
-const stashEmptyText = computed(() =>
-  searchQuery.value.trim() ? '没有匹配的贮藏记录。' : '当前仓库没有 Git 贮藏。',
-);
-
-const pullRequestProviderLabel = computed(() => {
-  switch (pullRequestSupport.value.provider) {
-    case 'github':
-      return 'GitHub';
-    case 'gitlab':
-      return 'GitLab';
-    case 'gitea':
-      return 'Gitea';
-    case 'bitbucket':
-      return 'Bitbucket';
-    default:
-      return '未知平台';
-  }
-});
-
-const pullRequestPanelTitle = computed(() => {
-  if (isPullRequestSupportLoading.value) {
-    return '正在检测远程 Pull Request 支持';
-  }
-
-  if (pullRequestSupport.value.available) {
-    return `已检测到 ${pullRequestProviderLabel.value} 远程`;
-  }
-
-  if (pullRequestSupport.value.remoteName) {
-    return '当前远程暂未识别为可直达的 PR 平台';
-  }
-
-  return '当前仓库没有可用的远程评审入口';
-});
-
-const pullRequestPanelText = computed(() => {
-  if (pullRequestSupport.value.available) {
-    return '已根据 Git 远程地址解析出 Pull Request 列表与创建入口，点击按钮会直接打开外部页面。';
-  }
-
-  if (pullRequestSupport.value.remoteName) {
-    return '已检测到远程仓库，但当前无法可靠推导 Pull Request 页面地址。';
-  }
-
-  return '先为仓库配置远程地址，再在这里打开 PR 列表或创建入口。';
-});
-
-const canOpenPullRequestList = computed(() =>
-  Boolean(pullRequestSupport.value.pullRequestsUrl ?? pullRequestSupport.value.repositoryUrl),
-);
-
-const canOpenPullRequestCreate = computed(() =>
-  Boolean(
-    pullRequestSupport.value.createPullRequestUrl ??
-      pullRequestSupport.value.pullRequestsUrl ??
-      pullRequestSupport.value.repositoryUrl,
-  ),
-);
-
-const resolveBranchMeta = (entry: IGitBranchPayload): string => {
-  const segments: string[] = [];
-  if (entry.upstreamName) {
-    segments.push(entry.upstreamName);
-  }
-  if (entry.lastCommit) {
-    segments.push(entry.lastCommit.shortId);
-  }
-
-  return segments.join(' · ');
-};
-
-const resolveStashMeta = (entry: IGitStashEntryPayload): string => {
-  const segments: string[] = [];
-
-  if (entry.branchName) {
-    segments.push(entry.branchName);
-  }
-  if (entry.commitShortId) {
-    segments.push(entry.commitShortId);
-  }
-
-  if (segments.length === 0) {
-    segments.push(entry.stashId);
-  }
-
-  return segments.join(' · ');
-};
-
-const STASH_SUMMARY_PREFIX_PATTERN = /^(?:On|WIP on)\s+[^:]+:\s*/u;
-
-const resolveStashTitle = (entry: IGitStashEntryPayload): string => {
-  const summary = entry.summary.trim();
-  const normalized = summary.replace(STASH_SUMMARY_PREFIX_PATTERN, '').trim();
-
-  return normalized || summary;
-};
-
-const resolveStashIndexLabel = (entry: IGitStashEntryPayload): string => `@${entry.index}`;
-
-const isStashOpen = (stashId: string): boolean => resolvedOpenStashId.value === stashId;
-
-const toggleStashOpen = (stashId: string): void => {
-  activeStashId.value = isStashOpen(stashId) ? null : stashId;
-};
-
-const resolveEntryKind = (
-  sectionKey: TGitSectionKey,
-  entry: IGitFileStatusPayload,
-): TGitChangeKind => {
-  switch (sectionKey) {
-    case 'staged':
-      return entry.indexStatus ?? 'modified';
-    case 'changes':
-      return entry.worktreeStatus ?? 'modified';
-    case 'untracked':
-      return 'untracked';
-    default:
-      return 'conflicted';
-  }
-};
-
-const resolveEntryTag = (sectionKey: TGitSectionKey, entry: IGitFileStatusPayload): string => {
-  switch (resolveEntryKind(sectionKey, entry)) {
-    case 'added':
-      return 'A';
-    case 'deleted':
-      return 'D';
-    case 'renamed':
-      return 'R';
-    case 'typechange':
-      return 'T';
-    case 'untracked':
-      return 'U';
-    case 'conflicted':
-      return '!';
-    default:
-      return 'M';
-  }
-};
-
-const resolveEntryTagTone = (sectionKey: TGitSectionKey, entry: IGitFileStatusPayload): string => {
-  switch (resolveEntryKind(sectionKey, entry)) {
-    case 'added':
-      return 'added';
-    case 'deleted':
-      return 'deleted';
-    case 'renamed':
-      return 'renamed';
-    case 'typechange':
-      return 'typechange';
-    case 'untracked':
-      return 'untracked';
-    case 'conflicted':
-      return 'conflicted';
-    default:
-      return 'modified';
-  }
-};
-
-const resolveEntryDisplayName = (entry: IGitFileStatusPayload): string => {
-  if (entry.fileName) {
-    return entry.fileName;
-  }
-
-  return getPathBaseName(entry.relativePath) || entry.relativePath;
-};
-
-const resolveEntryDirectory = (entry: IGitFileStatusPayload): string => {
-  if (entry.previousRelativePath) {
-    return `${entry.previousRelativePath} → ${entry.relativePath}`;
-  }
-
-  return getPathDirectory(entry.relativePath);
-};
-
-const resolveEntryActionTitle = (
-  sectionKey: TGitSectionKey,
-  entry: IGitFileStatusPayload,
-): string => {
-  if (sectionKey === 'staged') {
-    return `取消暂存 ${entry.fileName}`;
-  }
-
-  return `暂存 ${entry.fileName}`;
-};
-
-const resolveEntryActions = (
-  sectionKey: TGitSectionKey,
-  entry: IGitFileStatusPayload,
-): IGitEntryAction[] => {
-  if (sectionKey === 'conflicts') {
-    return [];
-  }
-
-  if (sectionKey === 'staged') {
-    return [
-      {
-        key: 'unstage',
-        title: resolveEntryActionTitle(sectionKey, entry),
-        icon: 'minus',
-      },
-    ];
-  }
-
-  return [
-    {
-      key: 'discard',
-      title: `放弃更改 ${entry.fileName}`,
-      icon: 'trash',
-    },
-    {
-      key: 'stage',
-      title: resolveEntryActionTitle(sectionKey, entry),
-      icon: 'plus',
-    },
-  ];
-};
-
-const isActivePath = (path: string): boolean => areFileSystemPathsEqual(path, props.activePath);
-
-const isContextTargetPath = (path: string): boolean =>
-  !isActivePath(path) && areFileSystemPathsEqual(path, scmContextTargetPath.value);
-
-const toggleSectionCollapse = (key: TGitSectionKey): void => {
-  collapsedSections[key] = !collapsedSections[key];
-};
-
-const selectNavItem = (key: TGitNavKey): void => {
-  activeTab.value = key;
-  closeSourceControlMenu();
-};
-
-const handleOpenCloneGuide = (): void => {
-  openExternalUrl(GIT_CLONE_GUIDE_URL);
-};
-
-const handleOpenGitGuide = (): void => {
-  openExternalUrl(GIT_GETTING_STARTED_URL);
-};
-
-const handleOpenFile = (path: string): void => {
-  emit('open-file', path);
-};
-
-const resolveDiffMode = (sectionKey: TGitSectionKey): TGitDiffMode =>
-  sectionKey === 'staged' ? 'staged' : 'worktree';
-
-const handleOpenDiff = (sectionKey: TGitSectionKey, entry: IGitFileStatusPayload): void => {
-  const repositoryRootPath = status.value.repositoryRootPath;
-  if (!repositoryRootPath) {
-    message.warning('当前工作区未检测到 Git 仓库。');
-    return;
-  }
-
-  emit('open-diff', {
-    repositoryRootPath,
-    path: entry.path,
-    mode: resolveDiffMode(sectionKey),
-  });
-};
-
-const {
-  handleRefresh,
-  handleStageAll,
-  handleUnstageAll,
-  handleDiscardAll,
-  handleInitRepository,
-  handleCommit,
-  handleDiscardEntry,
-  handleSectionAction,
-  handleEntryAction,
-} = useSourceControlActions({
-  gitStore,
-  message,
-  dialog,
-  getWorkspaceRootPath: () => props.workspaceRootPath,
-  getStageableEntries: () => stageableEntries.value,
-  getStagedPaths: () => stagedPaths.value,
-  getDiscardableEntries: () => discardableEntries.value,
-  getStagedCount: () => status.value.stagedCount,
-  getCommitMessage: () => commitMessage.value,
-  setCommitMessage: (value) => {
-    commitMessage.value = value;
-  },
-  runWithPending,
-  setSourceControlActionError: (value) => {
-    sourceControlActionError.value = value;
-  },
-  syncRepositoryStatus,
-});
-
-const handleReloadCommitHistory = async (): Promise<void> => {
-  try {
-    await gitStore.loadCommitHistory();
-  } catch (error) {
-    message.error(toErrorMessage(error, '读取 Git 提交历史失败'));
-  }
-};
-
-const handleReloadBranches = async (): Promise<void> => {
-  try {
-    await gitStore.loadBranches();
-  } catch (error) {
-    message.error(toErrorMessage(error, '读取 Git 分支失败'));
-  }
-};
-
-const INVALID_BRANCH_CHARS = [' ', '~', '^', ':', '?', '*', '[', ']'];
-
-const validateBranchName = (rawName: string): string | null => {
-  const name = rawName.trim();
-  if (!name) {
-    return '分支名称不能为空。';
-  }
-  if (INVALID_BRANCH_CHARS.some((char) => name.includes(char))) {
-    return '分支名称包含非法字符（空格、~、^、:、?、*、[、] 等）。';
-  }
-  if (name.includes('..')) {
-    return '分支名称不能包含连续的点（..）。';
-  }
-  if (name.startsWith('.') || name.endsWith('.')) {
-    return '分支名称不能以点（.）开头或结尾。';
-  }
-  if (name.startsWith('/') || name.endsWith('/')) {
-    return '分支名称不能以斜杠（/）开头或结尾。';
-  }
-  const exists = branchEntries.value.some(
-    (entry) => entry.kind !== 'remote' && entry.shorthand === name,
-  );
-  if (exists) {
-    return '已存在同名本地分支。';
-  }
-
-  return null;
-};
-
-const openBranchCreate = (): void => {
-  if (isBusy.value) {
-    return;
-  }
-
-  isBranchCreateOpen.value = true;
-  branchCreateName.value = '';
-  branchCreateError.value = null;
-  void nextTick(() => {
-    branchNameInputRef.value?.focus();
-  });
-};
-
-const cancelBranchCreate = (): void => {
-  isBranchCreateOpen.value = false;
-  branchCreateName.value = '';
-  branchCreateError.value = null;
-};
-
-const submitBranchCreate = async (): Promise<void> => {
-  const branchName = branchCreateName.value.trim();
-  const validationError = validateBranchName(branchName);
-  if (validationError) {
-    branchCreateError.value = validationError;
-    return;
-  }
-
-  try {
-    const didRun = await runWithPending('create-branch', async () => {
-      await gitStore.createBranch(branchName, true);
-      await gitStore.loadBranches();
-    });
-
-    if (!didRun) {
-      return;
-    }
-
-    cancelBranchCreate();
-    message.success(`已创建并切换到 ${branchName}`);
-  } catch (error) {
-    branchCreateError.value = toErrorMessage(error, '创建 Git 分支失败');
-  }
-};
-
-const handleCheckoutBranch = async (entry: IGitBranchPayload): Promise<void> => {
-  if (entry.isCurrent) {
-    return;
-  }
-
-  try {
-    const didRun = await runWithPending(`checkout-branch:${entry.name}`, async () => {
-      await gitStore.checkoutBranch(entry.shorthand);
-      await gitStore.loadBranches();
-    });
-
-    if (!didRun) {
-      return;
-    }
-
-    message.success(`已切换到 ${entry.shorthand}`);
-  } catch (error) {
-    message.error(toErrorMessage(error, '切换 Git 分支失败'));
-  }
-};
-
-const handleReloadStashes = async (): Promise<void> => {
-  try {
-    await gitStore.loadStashes();
-  } catch (error) {
-    message.error(toErrorMessage(error, '读取 Git 贮藏失败'));
-  }
-};
-
-const handleSaveStash = async (): Promise<void> => {
-  const stashMessageInput = promptForText('输入可选的贮藏说明；留空则使用 Git 默认说明。', '');
-  if (stashMessageInput === null) {
-    return;
-  }
-
-  const stashMode = await dialog.confirm({
-    title: '是否同时保存未跟踪文件？',
-    description: '确认会把未跟踪文件也放入 stash；取消则只保存已跟踪改动。',
-    confirmText: '包含未跟踪',
-    cancelText: '仅已跟踪',
-    dismissText: '取消',
-    variant: 'default',
-  });
-  if (stashMode === 'dismiss') {
-    return;
-  }
-
-  const includeUntracked = stashMode === 'confirm';
-  const stashMessage = stashMessageInput.trim() || null;
-
-  try {
-    const didRun = await runWithPending('save-stash', async () => {
-      await gitStore.saveStash(stashMessage, includeUntracked);
-      await gitStore.loadStashes();
-    });
-
-    if (!didRun) {
-      return;
-    }
-
-    message.success('当前改动已保存到 Git 贮藏');
-  } catch (error) {
-    message.error(toErrorMessage(error, '保存 Git 贮藏失败'));
-  }
-};
-
-const handleApplyStash = async (entry: IGitStashEntryPayload, pop: boolean): Promise<void> => {
-  if (pop) {
-    const action = await dialog.confirm({
-      title: '弹出此贮藏？',
-      description: `将应用 ${entry.stashId} 的改动并从贮藏列表移除。`,
-      confirmText: '弹出',
-      cancelText: '取消',
-      variant: 'danger',
-    });
-    if (action !== 'confirm') {
-      return;
-    }
-  }
-
-  try {
-    const didRun = await runWithPending(
-      `${pop ? 'pop' : 'apply'}-stash:${entry.stashId}`,
-      async () => {
-        await gitStore.applyStash(entry.index, pop);
-        await gitStore.loadStashes();
-      },
-    );
-
-    if (!didRun) {
-      return;
-    }
-
-    message.success(pop ? `已弹出 ${entry.stashId}` : `已应用 ${entry.stashId}`);
-  } catch (error) {
-    message.error(toErrorMessage(error, pop ? '弹出 Git 贮藏失败' : '应用 Git 贮藏失败'));
-  }
-};
-
-const handleDropStash = async (entry: IGitStashEntryPayload): Promise<void> => {
-  const action = await dialog.confirm({
-    title: '删除此贮藏？',
-    description: `将永久删除 ${entry.stashId}。此操作无法撤销。`,
-    confirmText: '删除',
-    cancelText: '取消',
-    variant: 'danger',
-  });
-  if (action !== 'confirm') {
-    return;
-  }
-
-  try {
-    const didRun = await runWithPending(`drop-stash:${entry.stashId}`, async () => {
-      await gitStore.dropStash(entry.index);
-      await gitStore.loadStashes();
-    });
-
-    if (!didRun) {
-      return;
-    }
-
-    message.success(`已删除 ${entry.stashId}`);
-  } catch (error) {
-    message.error(toErrorMessage(error, '删除 Git 贮藏失败'));
-  }
-};
-
-const handleOpenPullRequestList = (): void => {
-  const targetUrl =
-    pullRequestSupport.value.pullRequestsUrl ?? pullRequestSupport.value.repositoryUrl;
-  if (!targetUrl) {
-    message.warning('当前没有可打开的 Pull Request 列表。');
-    return;
-  }
-
-  openExternalUrl(targetUrl);
-};
-
-const handleReloadPullRequestSupport = async (): Promise<void> => {
-  try {
-    await gitStore.loadPullRequestSupport();
-  } catch (error) {
-    message.error(toErrorMessage(error, '读取 Pull Request 支持信息失败'));
-  }
-};
-
-const handleOpenRemoteForm = (): void => {
-  remoteNameInput.value = pullRequestSupport.value.remoteName ?? 'origin';
-  remoteUrlInput.value = pullRequestSupport.value.repositoryUrl ?? '';
-  remoteFormError.value = null;
-  isRemoteFormOpen.value = true;
-};
-
-const handleCancelRemoteForm = (): void => {
-  if (isSettingRemote.value) {
-    return;
-  }
-
-  isRemoteFormOpen.value = false;
-  remoteFormError.value = null;
-};
-
-const handleSubmitRemoteForm = async (): Promise<void> => {
-  const remoteName = remoteNameInput.value.trim();
-  const remoteUrl = remoteUrlInput.value.trim();
-  if (!remoteName || !remoteUrl) {
-    remoteFormError.value = '请填写远程名称和远程地址。';
-    return;
-  }
-
-  remoteFormError.value = null;
-
-  await runWithPending('set-remote', async () => {
-    try {
-      await gitStore.setRemote(remoteName, remoteUrl);
-      isRemoteFormOpen.value = false;
-      message.success('已更新仓库远程地址');
-    } catch (error) {
-      remoteFormError.value = toErrorMessage(error, '配置远程地址失败');
-    }
-  });
-};
-
-const handleOpenCreatePullRequest = (): void => {
-  const targetUrl =
-    pullRequestSupport.value.createPullRequestUrl ??
-    pullRequestSupport.value.pullRequestsUrl ??
-    pullRequestSupport.value.repositoryUrl;
-  if (!targetUrl) {
-    message.warning('当前没有可打开的 Pull Request 创建入口。');
-    return;
-  }
-
-  openExternalUrl(targetUrl);
-};
-
-const {
-  buildRepositoryMenuGroups,
-  buildEntryMenuGroups,
-  handleContextMenuSelect: dispatchContextMenuSelect,
-} = useSourceControlContextMenu({
-  isBusy: () => isBusy.value,
-  canStageAll: () => canStageAll.value,
-  canUnstageAll: () => canUnstageAll.value,
-  canDiscardAll: () => canDiscardAll.value,
-  canCommit: () => canCommit.value,
-  onRefresh: handleRefresh,
-  onStageAll: handleStageAll,
-  onUnstageAll: handleUnstageAll,
-  onDiscardAll: handleDiscardAll,
-  onCommit: handleCommit,
-  onOpenDiff: handleOpenDiff,
-  onOpenFile: handleOpenFile,
-  onCopyPath: async (path) => {
-    await writeFileSystemPathToClipboard(path);
-    message.success('已复制文件路径');
-  },
-  onStageEntry: handleSectionAction,
-  onUnstageEntry: async (entry) => {
-    await handleSectionAction('staged', entry);
-  },
-  onDiscardEntry: handleDiscardEntry,
-});
-
-const handleMoreActions = (event: MouseEvent): void => {
-  const target = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
-  const rect = target?.getBoundingClientRect();
-  openSourceControlMenu(
-    {
-      x: rect ? rect.right - SOURCE_CONTROL_MENU_WIDTH : event.clientX,
-      y: rect ? rect.bottom + 6 : event.clientY,
-    },
-    buildRepositoryMenuGroups(),
-    null,
-  );
-};
-
-const handleEntryContextMenu = (
-  event: MouseEvent,
-  sectionKey: TGitSectionKey,
-  entry: IGitFileStatusPayload,
-): void => {
-  openSourceControlMenu(
-    {
-      x: event.clientX,
-      y: event.clientY,
-    },
-    buildEntryMenuGroups(sectionKey, entry),
-    entry.path,
-  );
-};
-
-const handleContextMenuSelect = async (item: ILinearContextMenuItem): Promise<void> => {
-  closeSourceControlMenu();
-  await dispatchContextMenuSelect(item);
-};
-
-const isTargetInsideSourceControlMenu = (target: EventTarget | null): boolean =>
-  target instanceof Element && target.closest(SOURCE_CONTROL_MENU_ROOT_SELECTOR) !== null;
-
-const handleWindowPointerDown = (event: PointerEvent): void => {
-  if (!scmMenuState.open || isTargetInsideSourceControlMenu(event.target)) {
-    return;
-  }
-
-  closeSourceControlMenu();
-};
-
-const handleWindowKeydown = (event: KeyboardEvent): void => {
-  if (scmMenuState.open && event.key === 'Escape') {
-    closeSourceControlMenu();
-  }
-};
-
-const handleWindowResize = (): void => {
-  if (scmMenuState.open) {
-    closeSourceControlMenu();
-  }
-};
-
-onMounted(() => {
-  if (typeof window === 'undefined') {
-    return;
-  }
-
-  window.addEventListener('pointerdown', handleWindowPointerDown, true);
-  window.addEventListener('keydown', handleWindowKeydown);
-  window.addEventListener('resize', handleWindowResize);
-  window.addEventListener('blur', handleWindowResize);
-});
-
-onBeforeUnmount(() => {
-  if (typeof window === 'undefined') {
-    return;
-  }
-
-  window.removeEventListener('pointerdown', handleWindowPointerDown, true);
-  window.removeEventListener('keydown', handleWindowKeydown);
-  window.removeEventListener('resize', handleWindowResize);
-  window.removeEventListener('blur', handleWindowResize);
-});
-
-watch(
-  () => props.workspaceRootPath,
-  () => {
-    commitMessage.value = '';
-    searchQuery.value = '';
-    activeTab.value = 'changes';
-    sourceControlActionError.value = null;
-    activeStashId.value = undefined;
-    isRemoteFormOpen.value = false;
-    remoteFormError.value = null;
-    closeSourceControlMenu();
-    resetSectionCollapse();
-  },
-);
-
-watch(
-  () => activeTab.value,
-  (nextTab) => {
-    if (!hasRepository.value || nextTab === 'changes') {
-      return;
-    }
-
-    void ensureActiveTabData(nextTab);
-  },
-);
-
-watch(
-  [() => props.isDesktopRuntime, () => props.workspaceRootPath],
-  ([ready, workspaceRootPath]) => {
-    if (!ready || !workspaceRootPath) {
-      gitStore.reset();
-      sourceControlActionError.value = null;
-      return;
-    }
-    void syncRepositoryStatus(workspaceRootPath);
-  },
-  { immediate: true },
-);
-</script>
+// 放弃全部的目标集合与可暂存集合完全一致(已跟踪改动
