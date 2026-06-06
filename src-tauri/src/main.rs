@@ -62,12 +62,12 @@ fn emit_startup_step(event: &str, app_started_at: Instant, step_started_at: Inst
 }
 
 macro_rules! timed_step {
-    ($event:expr_2021, $app_started_at:expr_2021, $body:block) => {{
+    ($event:expr_2021, $app_started_at:expr_2021, $body:block) => 
         let __step_started_at = std::time::Instant::now();
         let __result = $body;
         emit_startup_step($event, $app_started_at, __step_started_at);
         __result
-    }};
+    ;
 }
 
 // === 生命周期 ============================================================
@@ -75,6 +75,7 @@ macro_rules! timed_step {
 #[derive(Default)]
 struct AppLifecycleState {
     is_quitting: AtomicBool,
+    cleanup_done: AtomicBool,
 }
 
 impl AppLifecycleState {
@@ -84,6 +85,14 @@ impl AppLifecycleState {
 
     fn is_quitting(&self) -> bool {
         self.is_quitting.load(Ordering::SeqCst)
+    }
+
+    /// 抢占退出清理权：首次调用返回 true，其后恒返回 false，
+    /// 保证统一清理逻辑在多入口触发下也只真正执行一次。
+    fn begin_cleanup(&self) -> bool {
+        self.cleanup_done
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
     }
 }
 
@@ -96,12 +105,38 @@ fn reveal_main_window<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>) {
     let _ = window.set_focus();
 }
 
-fn request_app_exit<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>) {
-    app_handle.state::<AppLifecycleState>().mark_quitting();
+/// 统一退出清理：幂等地收口所有后台资源（终端会话、LSP、SSH 连接池、默认 sidecar）。
+/// 由用户主动退出（托盘 / 快捷键 → request_app_exit）与运行时退出事件
+/// (RunEvent::ExitRequested / Exit) 共同入口，begin_cleanup 的 CAS 保证只执行一次。
+fn run_exit_cleanup<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>) {
+    let lifecycle = app_handle.state::<AppLifecycleState>();
+    lifecycle.mark_quitting();
+    if !lifecycle.begin_cleanup() {
+        return;
+    }
+
+    // 1) 终端会话（同步收口 PTY 子进程）
     let terminal_state = app_handle.state::<TerminalSessionState>();
     if let Err(error) = shutdown_all_terminal_sessions(terminal_state.inner()) {
         eprintln!("failed to shutdown terminal sessions: {error}");
     }
+
+    // 2) LSP 服务与 SSH 连接池（异步，阻塞等待其优雅退出，
+    //    避免遗留 bash-language-server / SSH 子进程与连接）
+    let lsp_manager = app_handle.state::<LspManager>();
+    tauri::async_runtime::block_on(async move {
+        if let Err(error) = commands::lsp_stop(lsp_manager).await {
+            eprintln!("failed to stop LSP server: {error}");
+        }
+        commands::shutdown_ssh_pool().await;
+    });
+
+    // 3) 默认 agent-sidecar：杀掉其进程树（连同派生的 Node / MCP / uvx 子进程）
+    agent_sidecar::shutdown_default_sidecar();
+}
+
+fn request_app_exit<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>) {
+    run_exit_cleanup(app_handle);
     app_handle.exit(0);
 }
 
@@ -262,8 +297,22 @@ storage_paths::migrate_legacy_storage();
     emit_startup_step("tauri.builder.ready", app_started_at, builder_started_at);
 
     emit_startup_event("tauri.run.start", app_started_at);
-    if let Err(error) = app.run(tauri::generate_context!()) {
-        eprintln!("failed to run SH editor: {error}");
-        std::process::exit(1);
-    }
+    let app = match app.build(tauri::generate_context!()) {
+        Ok(app) => app,
+        Err(error) => {
+            eprintln!("failed to run SH editor: {error}");
+            std::process::exit(1);
+        }
+    };
+
+    // 兜底：即使退出路径未经过 request_app_exit（如外部信号、最后一个窗口关闭），
+    // 也在运行时退出事件中触发统一清理；begin_cleanup 的 CAS 保证不会重复执行。
+    app.run(|app_handle, event| {
+        if matches!(
+            event,
+            tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
+        ) {
+            run_exit_cleanup(app_handle);
+        }
+    });
 }
