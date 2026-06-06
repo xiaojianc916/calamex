@@ -355,4 +355,16 @@ onBeforeUnmount(() => {
   animation: none !important;
   background: transparent !important;
 }
+
+/* 兜底：中和流式渲染期间任何骨架/占位块的深色背景与高度，避免黑块一闪而过 */
+.ai-markdown [class*="skeleton"],
+.ai-markdown [class*="placeholder"],
+.ai-markdown [class*="--loading"] {
+  background: transparent !important;
+  background-color: transparent !important;
+  box-shadow: none !important;
+  animation: none !important;
+  min-height: 0 !important;
+}
+
 </style>
