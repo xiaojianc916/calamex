@@ -46,6 +46,13 @@ updateFile('src/utils/workspace.ts', (source) => {
     "import type { IWorkspaceDirectoryPayload, IWorkspaceEntry } from '@/types/editor';",
     'workspace type import',
   );
+
+  // 修复旧版脚本已经写入但不符合 Biome 的 forEach 回调返回值问题。
+  next = next.replace(
+    'ancestorPaths.forEach((path) => expandedPaths.add(path));',
+    "ancestorPaths.forEach((path) => {\n          expandedPaths.add(path);\n        });",
+  );
+
   if (next.includes('collectWorkspaceExpandedPathsByQuery')) return next;
   return `${next.trimEnd()}
 
@@ -66,7 +73,9 @@ export const collectWorkspaceExpandedPathsByQuery = (
     for (const entry of items) {
       const haystack = normalizeWorkspaceQuery(entry.name + ' ' + entry.path);
       if (haystack.includes(normalizedQuery)) {
-        ancestorPaths.forEach((path) => expandedPaths.add(path));
+        ancestorPaths.forEach((path) => {
+          expandedPaths.add(path);
+        });
       }
 
       if (entry.kind !== 'directory') {

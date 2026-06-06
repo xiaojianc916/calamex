@@ -30,6 +30,21 @@ const updateFile = (path, updater) => {
   console.log(`[component-resize-polish-patch] 已更新 ${path}`);
 };
 
+const ensureImport = (path, source, importLine) => {
+  if (source.includes(importLine)) return source;
+  const matches = [...source.matchAll(/^import[\s\S]*?;\n/gm)];
+  if (matches.length === 0) fail(path, `import insertion for ${importLine}`);
+  const last = matches.at(-1);
+  const insertAt = last.index + last[0].length;
+  return `${source.slice(0, insertAt)}${importLine}\n${source.slice(insertAt)}`;
+};
+
+const removeWindowResizeEventsImport = (source) =>
+  source.replace(
+    /import \{\n\s*SHELL_WINDOW_RESIZE_SETTLED_EVENT,\n\s*SHELL_WINDOW_RESIZE_START_EVENT,\n\} from '@\/utils\/window-resize-events';\n/g,
+    '',
+  );
+
 updateFile('src/components/editor/CodeMirrorScriptEditor.vue', (source) => {
   let next = source;
 
@@ -41,40 +56,53 @@ updateFile('src/components/editor/CodeMirrorScriptEditor.vue', (source) => {
     'CodeMirror root resize responder marker',
   );
 
-  if (!next.includes("@/composables/useShellResizeFrameScheduler")) {
-    next = replaceRequired(
-      'src/components/editor/CodeMirrorScriptEditor.vue',
-      next,
-      "import EditorContextMenu from '@/components/editor/EditorContextMenu.vue';\n",
-      "import EditorContextMenu from '@/components/editor/EditorContextMenu.vue';\nimport { useShellResizeFrameScheduler } from '@/composables/useShellResizeFrameScheduler';\n",
-      'CodeMirror resize scheduler import',
-    );
-  }
-
-  next = replaceOptional(
+  next = ensureImport(
+    'src/components/editor/CodeMirrorScriptEditor.vue',
     next,
-    "import {\n  SHELL_WINDOW_RESIZE_SETTLED_EVENT,\n  SHELL_WINDOW_RESIZE_START_EVENT,\n} from '@/utils/window-resize-events';\n",
-    '',
+    "import { useShellResizeFrameScheduler } from '@/composables/useShellResizeFrameScheduler';",
   );
+
+  next = removeWindowResizeEventsImport(next);
 
   if (!next.includes('useShellResizeFrameScheduler({')) {
     next = replaceRequired(
       'src/components/editor/CodeMirrorScriptEditor.vue',
       next,
-      "const handleShellWindowResizeSettled = (): void => {\n  updatePreviousContainerSize();\n  // editorView 为 null 时 layout 是 no-op，因此直接以「是否存在编辑器」决定是否重排。\n  if (editorView !== null) scheduleEditorLayout();\n};\n",
-      "const handleShellWindowResizeSettled = (): void => {\n  updatePreviousContainerSize();\n  // editorView 为 null 时 layout 是 no-op，因此直接以「是否存在编辑器」决定是否重排。\n  if (editorView !== null) scheduleEditorLayout();\n};\n\nuseShellResizeFrameScheduler({\n  onStart: handleShellWindowResizeStart,\n  onFrame: scheduleEditorLayout,\n  onSettled: handleShellWindowResizeSettled,\n  settledFrames: 3,\n});\n",
+      `const handleShellWindowResizeSettled = (): void => {
+  updatePreviousContainerSize();
+  // editorView 为 null 时 layout 是 no-op，因此直接以「是否存在编辑器」决定是否重排。
+  if (editorView !== null) scheduleEditorLayout();
+};
+`,
+      `const handleShellWindowResizeSettled = (): void => {
+  updatePreviousContainerSize();
+  // editorView 为 null 时 layout 是 no-op，因此直接以「是否存在编辑器」决定是否重排。
+  if (editorView !== null) scheduleEditorLayout();
+};
+
+useShellResizeFrameScheduler({
+  onStart: handleShellWindowResizeStart,
+  onFrame: scheduleEditorLayout,
+  onSettled: handleShellWindowResizeSettled,
+  settledFrames: 3,
+});
+`,
       'CodeMirror resize scheduler setup',
     );
   }
 
   next = replaceOptional(
     next,
-    '  window.addEventListener(SHELL_WINDOW_RESIZE_START_EVENT, handleShellWindowResizeStart);\n  window.addEventListener(SHELL_WINDOW_RESIZE_SETTLED_EVENT, handleShellWindowResizeSettled);\n',
+    `  window.addEventListener(SHELL_WINDOW_RESIZE_START_EVENT, handleShellWindowResizeStart);
+  window.addEventListener(SHELL_WINDOW_RESIZE_SETTLED_EVENT, handleShellWindowResizeSettled);
+`,
     '',
   );
   next = replaceOptional(
     next,
-    '  window.removeEventListener(SHELL_WINDOW_RESIZE_START_EVENT, handleShellWindowResizeStart);\n  window.removeEventListener(SHELL_WINDOW_RESIZE_SETTLED_EVENT, handleShellWindowResizeSettled);\n',
+    `  window.removeEventListener(SHELL_WINDOW_RESIZE_START_EVENT, handleShellWindowResizeStart);
+  window.removeEventListener(SHELL_WINDOW_RESIZE_SETTLED_EVENT, handleShellWindowResizeSettled);
+`,
     '',
   );
 
@@ -95,8 +123,11 @@ updateFile('src/components/business/ai/shell/AiPanelFrame.vue', (source) =>
   replaceRequired(
     'src/components/business/ai/shell/AiPanelFrame.vue',
     source,
-    '<section\n    class="ai-panel-frame"',
-    '<section\n    data-shell-resize-responder\n    class="ai-panel-frame"',
+    `<section
+    class="ai-panel-frame"`,
+    `<section
+    data-shell-resize-responder
+    class="ai-panel-frame"`,
     'AI panel frame resize responder marker',
   ),
 );
@@ -107,16 +138,32 @@ updateFile('src/styles/app-shell.css', (source) => {
   next = replaceRequired(
     'src/styles/app-shell.css',
     next,
-    'html.is-resizing .git-diff-viewer,\nhtml.is-resizing .git-diff-viewer-surface {',
-    'html.is-resizing .codemirror-editor-surface,\nhtml.is-resizing .shell-editor-surface,\nhtml.is-resizing .image-asset-preview,\nhtml.is-resizing .image-preview-frame,\nhtml.is-resizing .image-preview-asset,\nhtml.is-resizing .ai-panel-frame__body,\nhtml.is-resizing .ai-panel-frame__composer,\nhtml.is-resizing .git-diff-viewer,\nhtml.is-resizing .git-diff-viewer-surface {',
+    `html.is-resizing .git-diff-viewer,
+html.is-resizing .git-diff-viewer-surface {`,
+    `html.is-resizing .codemirror-editor-surface,
+html.is-resizing .shell-editor-surface,
+html.is-resizing .image-asset-preview,
+html.is-resizing .image-preview-frame,
+html.is-resizing .image-preview-asset,
+html.is-resizing .ai-panel-frame__body,
+html.is-resizing .ai-panel-frame__composer,
+html.is-resizing .git-diff-viewer,
+html.is-resizing .git-diff-viewer-surface {`,
     'resize transition suppression selectors',
   );
 
   next = replaceRequired(
     'src/styles/app-shell.css',
     next,
-    'html.is-resizing .ai-chat-list,\nhtml.is-resizing .embedded-terminal-shell,',
-    'html.is-resizing .ai-chat-list,\nhtml.is-resizing .ai-panel-frame__body,\nhtml.is-resizing .ai-panel-frame__composer,\nhtml.is-resizing .codemirror-editor-surface,\nhtml.is-resizing .shell-editor-surface,\nhtml.is-resizing .image-asset-preview,\nhtml.is-resizing .embedded-terminal-shell,',
+    `html.is-resizing .ai-chat-list,
+html.is-resizing .embedded-terminal-shell,`,
+    `html.is-resizing .ai-chat-list,
+html.is-resizing .ai-panel-frame__body,
+html.is-resizing .ai-panel-frame__composer,
+html.is-resizing .codemirror-editor-surface,
+html.is-resizing .shell-editor-surface,
+html.is-resizing .image-asset-preview,
+html.is-resizing .embedded-terminal-shell,`,
     'resize size stabilization selectors',
   );
 
