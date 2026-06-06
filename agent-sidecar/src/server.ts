@@ -256,13 +256,14 @@ export const createAgentSidecarServer = (
         return;
       }
       void (async () => {
+        let runId: string | null = null;
         try {
           const payload = agentSidecarOrchestrateRequestSchema.parse(await readBody(request));
           if (typeof runtime.buildPlanOrchestrationWorkflow !== 'function') {
             throw new Error('当前 runtime 不支持原生编排 workflow。');
           }
           const workflow = runtime.buildPlanOrchestrationWorkflow(payload.modelConfig);
-          const runId = randomUUID();
+          runId = randomUUID();
           const run = await workflow.createRun({ runId });
           rememberOrchestrationRun(runId, run);
           writeStreamHeaders(response);
@@ -293,6 +294,9 @@ export const createAgentSidecarServer = (
           });
           response.end();
         } catch (error) {
+          if (runId) {
+            forgetOrchestrationRun(runId);
+          }
           const message = error instanceof Error ? error.message : String(error);
           if (!response.headersSent) {
             writeJson(response, 400, { error: message });
@@ -358,8 +362,10 @@ export const createAgentSidecarServer = (
         return;
       }
       void (async () => {
+        let runId: string | null = null;
         try {
           const payload = agentSidecarOrchestrateResumeRequestSchema.parse(await readBody(request));
+          runId = payload.runId;
           // 先查内存快路径；未命中（进程重启 / TTL 回收）时用同 runId createRun 从快照重建。
           let run = orchestrationRuns.get(payload.runId);
           if (!run) {
@@ -401,6 +407,9 @@ export const createAgentSidecarServer = (
           });
           response.end();
         } catch (error) {
+          if (runId) {
+            forgetOrchestrationRun(runId);
+          }
           const message = error instanceof Error ? error.message : String(error);
           if (!response.headersSent) {
             writeJson(response, 400, { error: message });
