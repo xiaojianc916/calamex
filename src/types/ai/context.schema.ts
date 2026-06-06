@@ -12,6 +12,7 @@ export const aiContextKindSchema = z.enum([
   'symbol-definition',
   'symbol-references',
   'project-tree',
+  'skill',
 ]);
 
 /**
@@ -83,6 +84,9 @@ const withImageAttachmentModelPart = <
  * - 图片附件在 IPC 入参校验阶段会额外把预览源编码成 AI SDK 官方 ImagePart
  *   carrier 行。Rust 目前只持久化 `contentPreview`;Node sidecar 再从该 carrier
  *   还原为官方 `{ type:'image', image, mediaType }` message part。
+ * - `skill`:由 `/skill` 选择器插入的技能调用引用。`path` 存技能 slug,
+ *   `contentPreview` 存简短的降级指令文本(正文不在此注入,交由 agent 用
+ *   `skill_read` 按 slug 读取)。
  */
 export const aiContextReferenceSchema = z
   .object({

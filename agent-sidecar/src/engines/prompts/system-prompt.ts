@@ -143,11 +143,30 @@ const buildModeInstruction = (mode: TAgentMode): string => {
 // Context block
 // -----------------------------------------------------------------------------
 
+/**
+ * 技能调用引用渲染为"指令",而非把 SKILL.md 正文塞进 prompt。
+ * 工作区已自动加载全局技能,agent 可用 skill_read 按 slug 读取正文。
+ */
+const buildSkillReferenceBlock = (
+    reference: IAgentContextReferenceInput,
+    index: number,
+): string =>
+    [
+        `### 技能调用 #${index + 1} — ${reference.label}`,
+        `- 用户已显式调用此技能${reference.path ? `（slug：${reference.path}）` : ''}。`,
+        '- 请先调用 skill_read 工具按上述 slug 读取该技能的完整内容，再据此执行用户的任务。',
+        '- 不要凭名称臆测技能内容；以 skill_read 返回的正文为准。',
+    ].join('\n');
+
 const buildContextSection = (context: IAgentContextReferenceInput[] = []): string => {
     const visibleContext = context.filter((reference) => reference.kind !== 'current-file');
     if (!visibleContext.length) return '';
 
     const blocks = visibleContext.map((reference, index) => {
+        if (reference.kind === 'skill') {
+            return buildSkillReferenceBlock(reference, index);
+        }
+
         const truncated = truncateModelOutputText(
             reference.contentPreview,
             CONTEXT_REFERENCE_PREVIEW_MAX_CHARS,
