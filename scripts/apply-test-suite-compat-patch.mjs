@@ -16,12 +16,6 @@ const replaceOnce = (path, source, oldText, newText, label) => {
   return source.replace(oldText, newText);
 };
 
-const replaceRegex = (path, source, regex, replacement, label) => {
-  if (typeof replacement === 'string' && source.includes(replacement)) return source;
-  if (!regex.test(source)) fail(path, label);
-  return source.replace(regex, replacement);
-};
-
 const updateFile = (path, updater) => {
   const before = read(path);
   const after = updater(before);
@@ -53,7 +47,43 @@ updateFile('src/utils/workspace.ts', (source) => {
     'workspace type import',
   );
   if (next.includes('collectWorkspaceExpandedPathsByQuery')) return next;
-  return `${next.trimEnd()}\n\nconst normalizeWorkspaceQuery = (value: string): string => value.trim().toLocaleLowerCase();\n\nexport const collectWorkspaceExpandedPathsByQuery = (\n  entries: readonly IWorkspaceEntry[],\n  query: string,\n  childrenMap: Readonly<Record<string, readonly IWorkspaceEntry[]>> = {},\n): ReadonlySet<string> => {\n  const normalizedQuery = normalizeWorkspaceQuery(query);\n  const expandedPaths = new Set<string>();\n  if (!normalizedQuery) {\n    return expandedPaths;\n  }\n\n  const visit = (items: readonly IWorkspaceEntry[], ancestorPaths: readonly string[]): void => {\n    for (const entry of items) {\n      const haystack = normalizeWorkspaceQuery(`${entry.name} ${entry.path}`);\n      if (haystack.includes(normalizedQuery)) {\n        ancestorPaths.forEach((path) => expandedPaths.add(path));\n      }\n\n      if (entry.kind !== 'directory') {\n        continue;\n      }\n\n      const children = childrenMap[entry.path] ?? [];\n      if (children.length > 0) {\n        visit(children, [...ancestorPaths, entry.path]);\n      }\n    }\n  };\n\n  visit(entries, []);\n  return expandedPaths;\n};\n`;
+  return `${next.trimEnd()}
+
+const normalizeWorkspaceQuery = (value: string): string => value.trim().toLocaleLowerCase();
+
+export const collectWorkspaceExpandedPathsByQuery = (
+  entries: readonly IWorkspaceEntry[],
+  query: string,
+  childrenMap: Readonly<Record<string, readonly IWorkspaceEntry[]>> = {},
+): ReadonlySet<string> => {
+  const normalizedQuery = normalizeWorkspaceQuery(query);
+  const expandedPaths = new Set<string>();
+  if (!normalizedQuery) {
+    return expandedPaths;
+  }
+
+  const visit = (items: readonly IWorkspaceEntry[], ancestorPaths: readonly string[]): void => {
+    for (const entry of items) {
+      const haystack = normalizeWorkspaceQuery(entry.name + ' ' + entry.path);
+      if (haystack.includes(normalizedQuery)) {
+        ancestorPaths.forEach((path) => expandedPaths.add(path));
+      }
+
+      if (entry.kind !== 'directory') {
+        continue;
+      }
+
+      const children = childrenMap[entry.path] ?? [];
+      if (children.length > 0) {
+        visit(children, [...ancestorPaths, entry.path]);
+      }
+    }
+  };
+
+  visit(entries, []);
+  return expandedPaths;
+};
+`;
 });
 
 updateFile('src/components/workbench/SearchSidebarPanel.spec.ts', (source) =>
