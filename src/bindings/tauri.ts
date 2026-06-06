@@ -697,7 +697,7 @@ export type AiProviderConnectionPayload = {
  *  用于“测试连接 / 开始连接”的草稿配置。
  * 
  *  `api_key` 允许为空：为空时后端只会尝试读取当前 Provider 已保存的凭证；
- *  若也不存在已保存凭证，连接测试必须失败，不能伪造成功。
+	 *  若也不存在已保存凭证，连接测试必须失败，不能伪造成功。
  */
 export type AiProviderConnectionRequest = {
 	role?: string | null,
@@ -1228,7 +1228,6 @@ export type ImageAssetPayload = {
 	path: string,
 	name: string,
 	mimeType: string,
-	dataUrl: string,
 	byteSize: number,
 };
 

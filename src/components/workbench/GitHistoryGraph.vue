@@ -78,7 +78,6 @@
             >
               <div
                 class="git-history-graph-filelist-row"
-                :class="{ 'is-open': expandedFilePath === file.relativePath }"
                 role="button"
                 tabindex="0"
                 @click="handleFileClick(file)"
@@ -91,29 +90,6 @@
                 <span class="git-history-graph-filelist-path" v-text="resolveFileDir(file)" />
                 <span v-if="file.additions > 0" class="git-history-graph-filelist-stat git-history-graph-filelist-stat-add" v-text="'+' + file.additions" />
                 <span v-if="file.deletions > 0" class="git-history-graph-filelist-stat git-history-graph-filelist-stat-del" v-text="'-' + file.deletions" />
-              </div>
-
-              <div v-if="expandedFilePath === file.relativePath" class="git-history-graph-filediff">
-                <div v-if="fileDiffLoading && !fileDiff" class="git-history-graph-filediff-status">
-                  <span class="icon-[lucide--loader-circle] git-history-graph-filelist-spinner" aria-hidden="true" />
-                  <span v-text="'正在读取 Diff…'" />
-                </div>
-                <div v-else-if="fileDiff && fileDiff.isBinary" class="git-history-graph-filediff-status" v-text="'二进制文件,无法显示 Diff'" />
-                <div v-else-if="fileDiff && fileDiff.isEmpty" class="git-history-graph-filediff-status" v-text="'该文件在此提交没有文本变更'" />
-                <template v-else-if="fileDiff">
-                  <div v-for="(hunk, hunkIndex) in fileDiff.hunks" :key="hunkIndex" class="git-history-graph-filediff-hunk">
-                    <div class="git-history-graph-filediff-hunk-head" v-text="formatHunkHeader(hunk)" />
-                    <div
-                      v-for="(line, lineIndex) in hunk.lines"
-                      :key="lineIndex"
-                      class="git-history-graph-filediff-line"
-                      :class="'is-' + line.tag"
-                    >
-                      <span class="git-history-graph-filediff-sign" aria-hidden="true" v-text="lineSign(line.tag)" />
-                      <span class="git-history-graph-filediff-code" v-text="line.content" />
-                    </div>
-                  </div>
-                </template>
               </div>
             </div>
           </template>
@@ -190,8 +166,9 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 
 import LinearContextMenu from '@/components/common/LinearContextMenu.vue';
 import type { ILinearContextMenuGroup, ILinearContextMenuItem } from '@/components/common/linear-context-menu.types';
+import { useEditorStore } from '@/store/editor';
 import { useGitStore } from '@/store/git';
-import type { IGitCommitDetailPayload, IGitCommitFileChangePayload, IGitCommitFileDiffPayload, IGitCommitSummaryPayload, IGitDiffHunk } from '@/types/git';
+import type { IGitCommitDetailPayload, IGitCommitFileChangePayload, IGitCommitSummaryPayload } from '@/types/git';
 import { writeClipboardText } from '@/utils/clipboard';
 import type { IGitGraphEdge } from '@/utils/git-graph';
 import { buildGitGraph, resolveGitGraphLaneColor } from '@/utils/git-graph';
@@ -225,13 +202,11 @@ const props = withDefaults(
 const emit = defineEmits<{ 'select-commit': [commit: IGitCommitSummaryPayload] }>();
 
 const gitStore = useGitStore();
+const editorStore = useEditorStore();
 const activeCommitId = ref<string | null>(null);
 const expandedCommitId = ref<string | null>(null);
 const expandedDetail = ref<IGitCommitDetailPayload | null>(null);
 const expandedLoading = ref(false);
-const expandedFilePath = ref<string | null>(null);
-const fileDiff = ref<IGitCommitFileDiffPayload | null>(null);
-const fileDiffLoading = ref(false);
 
 const menu = reactive<{ open: boolean; x: number; y: number; commit: IGitCommitSummaryPayload | null }>({
   open: false, x: 0, y: 0, commit: null,
@@ -357,11 +332,6 @@ const resolveFileIcon = (status: string): string => {
   }
 };
 
-const lineSign = (tag: string): string => (tag === 'add' ? '+' : tag === 'remove' ? '-' : ' ');
-
-const formatHunkHeader = (hunk: IGitDiffHunk): string =>
-  '@@ -' + hunk.oldStart + ',' + hunk.oldCount + ' +' + hunk.newStart + ',' + hunk.newCount + ' @@';
-
 const resolveFileDir = (file: IGitCommitFileChangePayload): string => {
   const path = file.relativePath;
   const lastSlash = path.lastIndexOf('/');
@@ -412,55 +382,31 @@ const loadExpandedDetail = async (commit: IGitCommitSummaryPayload): Promise<voi
   }
 };
 
-const resetFileDiff = (): void => {
-  expandedFilePath.value = null;
-  fileDiff.value = null;
-  fileDiffLoading.value = false;
-};
-
 const handleSelect = (commit: IGitCommitSummaryPayload): void => {
   // toggle expansion
   if (expandedCommitId.value === commit.id) {
     expandedCommitId.value = null;
     expandedDetail.value = null;
     expandedLoading.value = false;
-    resetFileDiff();
     return;
   }
   activeCommitId.value = commit.id;
   expandedCommitId.value = commit.id;
-  resetFileDiff();
   emit('select-commit', commit);
   void loadExpandedDetail(commit);
 };
 
-const loadFileDiff = async (commitId: string, file: IGitCommitFileChangePayload): Promise<void> => {
-  fileDiff.value = null;
-  fileDiffLoading.value = true;
-  try {
-    const diff = await gitStore.loadCommitFileDiff(commitId, file.relativePath);
-    if (expandedFilePath.value === file.relativePath) {
-      fileDiff.value = diff;
-    }
-  } catch {
-    // ignore errors
-  } finally {
-    if (expandedFilePath.value === file.relativePath) {
-      fileDiffLoading.value = false;
-    }
-  }
-};
-
-const handleFileClick = (file: IGitCommitFileChangePayload): void => {
-  if (expandedFilePath.value === file.relativePath) {
-    resetFileDiff();
-    return;
-  }
+// 点击具体文件：复用主界面原有的只读 Diff 视图（与右键菜单“查看 Diff”一致），
+// 打开该提交对比父提交的文件 Diff。
+const handleFileClick = async (file: IGitCommitFileChangePayload): Promise<void> => {
   const commitId = expandedCommitId.value;
   if (!commitId) return;
-  expandedFilePath.value = file.relativePath;
-  fileDiff.value = null;
-  void loadFileDiff(commitId, file);
+  try {
+    const preview = await gitStore.loadCommitFileDiffPreview(commitId, file.relativePath);
+    editorStore.openGitDiffDocument(preview);
+  } catch (error) {
+    console.error('[GitHistoryGraph] open commit file diff failed:', error);
+  }
 };
 
 const clearHoverOpenTimer = (): void => {
@@ -606,7 +552,6 @@ watch(
     if (expandedCommitId.value && !commits.some((c) => c.id === expandedCommitId.value)) {
       expandedCommitId.value = null;
       expandedDetail.value = null;
-      resetFileDiff();
     }
   },
   { immediate: true },
@@ -805,7 +750,6 @@ onBeforeUnmount(() => {
 }
 
 .git-history-graph-filelist-row:hover { background: rgba(9, 105, 218, 0.06); }
-.git-history-graph-filelist-row.is-open { background: rgba(9, 105, 218, 0.08); }
 
 .git-history-graph-filelist-icon {
   flex: 0 0 auto;
@@ -860,60 +804,6 @@ onBeforeUnmount(() => {
 }
 .git-history-graph-filelist-stat-add { color: #1a7f37; }
 .git-history-graph-filelist-stat-del { color: #cf222e; }
-
-/* Inline file diff */
-.git-history-graph-filediff {
-  border-top: 1px solid #ebedf0;
-  background: #ffffff;
-  max-height: 320px;
-  overflow: auto;
-  font-family: ui-monospace, 'SFMono-Regular', 'Menlo', monospace;
-  font-size: 11px;
-  line-height: 1.55;
-}
-
-.git-history-graph-filediff-status {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 10px;
-  font-size: 11px;
-  color: #818b98;
-}
-
-.git-history-graph-filediff-hunk-head {
-  padding: 2px 10px;
-  color: #6e7781;
-  background: #f0f3f6;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.git-history-graph-filediff-line {
-  display: flex;
-  align-items: flex-start;
-  padding: 0 10px;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.git-history-graph-filediff-line.is-add { background: rgba(31, 136, 61, 0.12); }
-.git-history-graph-filediff-line.is-remove { background: rgba(207, 34, 46, 0.12); }
-
-.git-history-graph-filediff-sign {
-  flex: 0 0 auto;
-  width: 12px;
-  color: #6e7781;
-  user-select: none;
-}
-
-.git-history-graph-filediff-line.is-add .git-history-graph-filediff-sign { color: #1a7f37; }
-.git-history-graph-filediff-line.is-remove .git-history-graph-filediff-sign { color: #cf222e; }
-
-.git-history-graph-filediff-code {
-  flex: 1 1 auto;
-  min-width: 0;
-}
 
 /* Hover card */
 .git-history-graph-hovercard {

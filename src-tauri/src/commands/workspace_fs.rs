@@ -4,17 +4,17 @@ use super::{
     WorkspacePathCreateRequest, WorkspacePathDeletePayload, WorkspacePathDeleteRequest,
     WorkspacePathKind, WorkspacePathRenamePayload, WorkspacePathRenameRequest, line_count,
 };
-use base64::{Engine as _, engine::general_purpose::STANDARD};
 use encoding_rs::{GB18030, UTF_8, UTF_16BE, UTF_16LE};
 use std::{
     borrow::Cow,
     env, fs,
     path::{Path, PathBuf},
 };
+use tauri::Manager;
 
 /// 脚本文件读取上限：超过则拒绝在编辑器中打开，避免一次性读入超大文件耗尽内存。
 const MAX_SCRIPT_FILE_BYTES: u64 = 10 * 1024 * 1024;
-/// 图片资源读取上限：base64 编码约放大 1.37 倍并叠加 data URL 字符串，故上限略宽于脚本。
+/// 图片资源大小上限：改用 asset 协议流式加载后不再 base64 膨胀，这里仅作为防御性的体积保护。
 const MAX_IMAGE_ASSET_BYTES: u64 = 20 * 1024 * 1024;
 
 #[tauri::command]
@@ -38,7 +38,10 @@ pub fn load_script(path: String) -> Result<ScriptFilePayload, String> {
 
 #[tauri::command]
 #[specta::specta]
-pub fn load_image_asset(path: String) -> Result<ImageAssetPayload, String> {
+pub fn load_image_asset(
+    app: tauri::AppHandle,
+    path: String,
+) -> Result<ImageAssetPayload, String> {
     let file_path = PathBuf::from(&path)
         .canonicalize()
         .map_err(|error| format!("读取图片资源失败：{error}"))?;
@@ -47,9 +50,16 @@ pub fn load_image_asset(path: String) -> Result<ImageAssetPayload, String> {
         return Err("目标图片不存在或不是有效文件。".into());
     }
 
-    ensure_within_size_limit(&file_path, MAX_IMAGE_ASSET_BYTES, "图片资源")?;
-    let bytes = fs::read(&file_path).map_err(|error| format!("读取图片资源失败：{error}"))?;
-    build_image_asset_payload(file_path, bytes)
+    let byte_size = ensure_within_size_limit(&file_path, MAX_IMAGE_ASSET_BYTES, "图片资源")?;
+
+    // 仅把当前预览的这一个文件加入 asset 协议作用域，前端通过 convertFileSrc 按需流式读取：
+    // 既避免把整张图 base64 编码后经 IPC 传输（约 1.37 倍膨胀 + 巨大 JS 字符串），
+    // 又把可访问面收敛到“确实打开过的图片”，保持最小授权。
+    app.asset_protocol_scope()
+        .allow_file(&file_path)
+        .map_err(|error| format!("授权图片资源访问失败：{error}"))?;
+
+    build_image_asset_payload(file_path, byte_size)
 }
 
 #[tauri::command]
@@ -286,17 +296,18 @@ fn validate_workspace_entry_name(raw_name: &str) -> Result<String, String> {
     Ok(name.to_string())
 }
 
-/// 校验文件大小未超过上限，避免一次性读入超大文件耗尽内存。
-fn ensure_within_size_limit(path: &Path, max_bytes: u64, label: &str) -> Result<(), String> {
+/// 校验文件大小未超过上限并返回其字节数，避免一次性读入超大文件耗尽内存。
+fn ensure_within_size_limit(path: &Path, max_bytes: u64, label: &str) -> Result<u64, String> {
     let metadata = fs::metadata(path).map_err(|error| format!("读取{label}失败：{error}"))?;
-    if metadata.len() > max_bytes {
+    let byte_size = metadata.len();
+    if byte_size > max_bytes {
         return Err(format!(
             "{label}过大（{:.1} MB），超过 {} MB 上限，已取消读取。",
-            metadata.len() as f64 / (1024.0 * 1024.0),
+            byte_size as f64 / (1024.0 * 1024.0),
             max_bytes / (1024 * 1024)
         ));
     }
-    Ok(())
+    Ok(byte_size)
 }
 
 /// 原子写入：先写入同目录下的临时文件，再 rename 覆盖目标，
@@ -393,22 +404,19 @@ fn build_script_payload(
     })
 }
 
-fn build_image_asset_payload(path: PathBuf, bytes: Vec<u8>) -> Result<ImageAssetPayload, String> {
+fn build_image_asset_payload(path: PathBuf, byte_size: u64) -> Result<ImageAssetPayload, String> {
     let mime_type = resolve_image_mime_type(&path)?;
     let name = path
         .file_name()
         .and_then(|value| value.to_str())
         .unwrap_or("image")
         .to_string();
-    let byte_size = count_to_u32(bytes.len(), "图片字节数")?;
-    let data_url = format!("data:{mime_type};base64,{}", STANDARD.encode(&bytes));
 
     Ok(ImageAssetPayload {
         path: path.to_string_lossy().to_string(),
         name,
         mime_type: mime_type.to_string(),
-        data_url,
-        byte_size,
+        byte_size: count_to_u32(byte_size as usize, "图片字节数")?,
     })
 }
 
@@ -460,7 +468,9 @@ fn read_workspace_entries(directory: &Path) -> Result<Vec<WorkspaceEntry>, Strin
             } else {
                 WorkspacePathKind::File
             },
-            has_children: is_directory && directory_has_entries(&path),
+            // 懒加载：只要是目录就给出可展开提示，不再为每个子目录预读一次 read_dir，
+            // 大目录树首屏明显更快。空目录会显示展开箭头但展开为空，是文件树的标准取舍。
+            has_children: is_directory,
         });
     }
 
@@ -472,12 +482,6 @@ fn read_workspace_entries(directory: &Path) -> Result<Vec<WorkspaceEntry>, Strin
         )
     });
     Ok(entries)
-}
-
-fn directory_has_entries(path: &Path) -> bool {
-    fs::read_dir(path)
-        .map(|mut iterator| iterator.any(|item| item.is_ok()))
-        .unwrap_or(false)
 }
 
 fn decode_with_encoding(

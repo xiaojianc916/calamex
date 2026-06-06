@@ -82,7 +82,6 @@ pub struct ImageAssetPayload {
     pub(crate) path: String,
     pub(crate) name: String,
     pub(crate) mime_type: String,
-    pub(crate) data_url: String,
     pub(crate) byte_size: u32,
 }
 

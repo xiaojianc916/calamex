@@ -36,7 +36,7 @@
         <div class="image-preview-frame">
           <img
             v-if="assetMeta"
-            :src="assetMeta.dataUrl"
+            :src="imageSrc"
             :alt="props.name"
             class="image-preview-asset"
             @load="handleImageLoad"
@@ -48,6 +48,7 @@
 </template>
 
 <script setup lang="ts">
+import { convertFileSrc } from '@tauri-apps/api/core';
 import { computed, onMounted, ref, watch } from 'vue';
 import InlineError from '@/components/common/InlineError.vue';
 import { tauriService } from '@/services/tauri';
@@ -65,6 +66,12 @@ const isLoading = ref(false);
 const errorMessage = ref('');
 const imageNaturalWidth = ref(0);
 const imageNaturalHeight = ref(0);
+
+// 通过 asset 协议把规范化后的真实路径转成 webview 可直接加载的 URL，
+// 由原生层按需流式读取图片，避免 base64 over IPC。
+const imageSrc = computed(() =>
+  assetMeta.value ? convertFileSrc(assetMeta.value.path) : '',
+);
 
 const imageSizeLabel = computed(() => {
   if (imageNaturalWidth.value <= 0 || imageNaturalHeight.value <= 0) {

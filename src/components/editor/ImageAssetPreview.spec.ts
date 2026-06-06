@@ -10,6 +10,10 @@ vi.mock('@/services/tauri', () => ({
   },
 }));
 
+vi.mock('@tauri-apps/api/core', () => ({
+  convertFileSrc: (path: string) => `asset://localhost/${encodeURIComponent(path)}`,
+}));
+
 const mockedLoadImageAsset = vi.mocked(tauriService.loadImageAsset);
 
 describe('ImageAssetPreview', () => {
@@ -22,7 +26,6 @@ describe('ImageAssetPreview', () => {
       path: 'Snipaste/logo.png',
       name: 'logo.png',
       mimeType: 'image/png',
-      dataUrl: 'data:image/png;base64,ZmFrZQ==',
       byteSize: 2048,
     });
 
@@ -45,6 +48,7 @@ describe('ImageAssetPreview', () => {
     expect(wrapper.text()).not.toContain('imageSizeLabel');
 
     const image = wrapper.get('img');
+    expect(image.attributes('src')).toContain('asset://localhost/');
     Object.defineProperty(image.element, 'naturalWidth', {
       configurable: true,
       value: 1440,
