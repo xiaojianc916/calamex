@@ -1,4 +1,4 @@
-﻿export type TAiContextKind =
+export type TAiContextKind =
   | 'current-file'
   | 'selection'
   | 'cursor-window'
@@ -9,7 +9,8 @@
   | 'image-attachment'
   | 'symbol-definition'
   | 'symbol-references'
-  | 'project-tree';
+  | 'project-tree'
+  | 'skill';
 
 export interface IAiContextRange {
   startLine: number;
