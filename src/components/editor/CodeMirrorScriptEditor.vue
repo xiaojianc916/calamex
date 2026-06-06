@@ -179,7 +179,6 @@ let suppressModelValueEmit = false;
 // 都对整篇文档 toString() 比较一次。
 let lastSyncedModelValue: string | null = null;
 let previousContainerSize = { width: 0, height: 0 };
-let isShellWindowResizing = false;
 
 const languageCompartment = new Compartment();
 const settingsCompartment = new Compartment();
@@ -419,8 +418,6 @@ const layoutEditor = (): void => {
 };
 
 const scheduleEditorLayout = (): void => {
-  // 窗口拖拽缩放期间不逐帧重排，统一在 settled 后做一次重排。
-  if (isShellWindowResizing) return;
   if (editorLayoutFrameId !== null) return;
   editorLayoutFrameId = window.requestAnimationFrame(() => {
     editorLayoutFrameId = null;
@@ -437,15 +434,10 @@ const updatePreviousContainerSize = (): void => {
 };
 
 const handleShellWindowResizeStart = (): void => {
-  isShellWindowResizing = true;
-  if (editorLayoutFrameId !== null) {
-    window.cancelAnimationFrame(editorLayoutFrameId);
-    editorLayoutFrameId = null;
-  }
+  updatePreviousContainerSize();
 };
 
 const handleShellWindowResizeSettled = (): void => {
-  isShellWindowResizing = false;
   updatePreviousContainerSize();
   // editorView 为 null 时 layout 是 no-op，因此直接以「是否存在编辑器」决定是否重排。
   if (editorView !== null) scheduleEditorLayout();
@@ -1026,7 +1018,7 @@ defineExpose<IEditorExpose>({
   focusEditor,
   insertSnippet,
   revealPosition,
-  layoutEditor,
+ layoutEditor,
 });
 </script>
 
