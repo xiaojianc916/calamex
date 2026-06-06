@@ -18,7 +18,8 @@ use super::{
     apply_sidecar_auth, build_sidecar_url, client, configured_base_url,
     current_sidecar_model_config, decode_response, decode_sidecar_stream_line_bytes,
     drain_complete_sidecar_stream_lines, emit_sidecar_stream_event,
-    ensure_default_sidecar_available, ensure_request_session_id, has_non_whitespace_bytes,
+    ensure_default_sidecar_available, ensure_request_session_id,
+    ensure_sidecar_stream_buffer_within_limit, has_non_whitespace_bytes,
 };
 use crate::commands::contracts::{
     AgentSidecarOrchestratePayload, AgentSidecarOrchestrateRequest,
@@ -146,6 +147,10 @@ where
                 final_response = Some(response);
             }
         }
+
+        // 完整行均已抽走后，buffer 仅剩“未完成行”。一旦其超过上限即判定为异常并报错，
+        // 防止永不换行的响应把缓冲无界撑大。正常按行下发的流式行为与视觉不受影响。
+        ensure_sidecar_stream_buffer_within_limit(buffer.len(), endpoint)?;
     }
 
     if has_non_whitespace_bytes(&buffer) {

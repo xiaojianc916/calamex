@@ -1,4 +1,5 @@
-import { commands } from '@/bindings/tauri';
+import { invoke } from '@tauri-apps/api/core';
+import { commands, type ScriptFilePayload } from '@/bindings/tauri';
 import type { ITauriService } from '@/types/tauri';
 import { measureScriptContentInput } from './tauri.ipc-metrics';
 import { callSpectaCommand, pickDialogPath } from './tauri.ipc-runtime';
@@ -119,10 +120,19 @@ export const workspaceTauriService: TWorkspaceTauriService = {
     );
   },
 
-  loadScript(path) {
+  loadScript(path, workspaceRootPath) {
     return callSpectaCommand(
-      { command: 'load_script', guardHint: '读取脚本文件', idempotent: true, input: { path } },
-      () => commands.loadScript(path),
+      {
+        command: 'load_script',
+        guardHint: '读取脚本文件',
+        idempotent: true,
+        input: { path, workspaceRootPath: workspaceRootPath ?? null },
+      },
+      () =>
+        invoke<ScriptFilePayload>('load_script', {
+          path,
+          workspaceRootPath: workspaceRootPath ?? null,
+        }),
     );
   },
 

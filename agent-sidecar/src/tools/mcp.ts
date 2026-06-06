@@ -561,6 +561,11 @@ export const createMastraMcpClientBundle = async (
         );
       } catch (error) {
         errors.push(`MCP listTools 失败：${error instanceof Error ? error.message : String(error)}`);
+        await withTimeoutFallback(client.disconnect(), MCP_DISCONNECT_TIMEOUT_MS, undefined).catch(
+          () => undefined,
+        );
+        client = null;
+        tools = {};
       }
     }
   } catch (error) {
