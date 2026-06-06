@@ -6,8 +6,8 @@ import {
   SHELL_WINDOW_RESIZE_START_EVENT,
 } from '@/utils/window-resize-events';
 
-const RESIZE_IDLE_RESET_DELAY_MS = 120;
-const INTERACTIVE_RESIZE_SETTLE_MS = 72;
+const RESIZE_IDLE_RESET_DELAY_MS = 140;
+const INTERACTIVE_RESIZE_SETTLE_MS = 140;
 const TAURI_INTERNALS_KEY = '__TAURI_INTERNALS__';
 
 interface IResizeEventSource {
@@ -83,9 +83,7 @@ export const useWindowResizeState = () => {
 
   const markResizing = (): void => {
     html.classList.add('is-resizing');
-    if (interactiveResizePhase !== 'idle') {
-      return;
-    }
+    interactiveResizePhase = 'settling';
     scheduleResizeClassRemoval(RESIZE_IDLE_RESET_DELAY_MS);
   };
 
