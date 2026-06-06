@@ -22,6 +22,7 @@ execSync(`git checkout ${GOOD_COMMIT} -- "${VUE_REL}" "${SPEC_REL}"`, {
 
 // 3) 替换工具：必须命中且仅命中一次，否则抛错
 function replaceOnce(content, label, oldStr, newStr) {
+    content = content.replace(/\r\n/g, '\n');   // ← 新增这一行
   const parts = content.split(oldStr);
   if (parts.length === 1) throw new Error(`[${label}] 未找到锚点，已中止（文件未写入）`);
   if (parts.length > 2) throw new Error(`[${label}] 锚点出现 ${parts.length - 1} 次（应为 1），已中止`);
