@@ -189,8 +189,8 @@ onBeforeUnmount(() => {
           >
             <span class="icon-[lucide--terminal] slash-item__icon" aria-hidden="true" />
             <span class="slash-item__text">
-              <span class="slash-item__name"> command.name </span>
-              <span class="slash-item__desc"> command.description </span>
+              <span class="slash-item__name" v-text="command.name" />
+              <span class="slash-item__desc" v-text="command.description" />
             </span>
             <span class="slash-item__badge">即将推出</span>
           </button>
@@ -215,8 +215,8 @@ onBeforeUnmount(() => {
           >
             <span class="icon-[lucide--sparkles] slash-item__icon" aria-hidden="true" />
             <span class="slash-item__text">
-              <span class="slash-item__name"> skill.name </span>
-              <span v-if="skill.description" class="slash-item__desc"> skill.description </span>
+              <span class="slash-item__name" v-text="skill.name" />
+              <span v-if="skill.description" class="slash-item__desc" v-text="skill.description" />
             </span>
           </button>
         </section>

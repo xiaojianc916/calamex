@@ -34,7 +34,9 @@ const isCreating = computed(() => form.slug === null);
 
 const editorTitle = computed(() => (isCreating.value ? '新建技能' : '编辑技能'));
 
-const canSave = computed(() => form.name.trim().length > 0 && form.content.trim().length > 0 && !busy.value);
+const canSave = computed(
+  () => form.name.trim().length > 0 && form.content.trim().length > 0 && !busy.value,
+);
 
 const requestClose = (): void => {
   if (busy.value) {
@@ -156,7 +158,7 @@ watch(
 
         <p v-if="errorMessage" class="skill-error">
           <span class="icon-[lucide--triangle-alert]" aria-hidden="true" />
-           errorMessage 
+          <span v-text="errorMessage" />
         </p>
 
         <!-- 列表视图 -->
@@ -191,8 +193,8 @@ watch(
               <div class="skill-card__main">
                 <span class="icon-[lucide--sparkles] skill-card__icon" aria-hidden="true" />
                 <div class="skill-card__text">
-                  <p class="skill-card__name"> skill.name </p>
-                  <p class="skill-card__desc"> skill.description || '暂无描述' </p>
+                  <p class="skill-card__name" v-text="skill.name" />
+                  <p class="skill-card__desc" v-text="skill.description" />
                 </div>
               </div>
               <div class="skill-card__actions">
@@ -247,7 +249,7 @@ watch(
         </div>
 
         <footer v-if="mode === 'editor'" class="skill-dialog__footer">
-          <span class="skill-footer-title"> editorTitle </span>
+          <span class="skill-footer-title" v-text="editorTitle" />
           <div class="skill-footer-actions">
             <button type="button" class="skill-btn" :disabled="busy" @click="backToList">取消</button>
             <button type="button" class="skill-btn skill-btn--primary" :disabled="!canSave" @click="saveSkill">
