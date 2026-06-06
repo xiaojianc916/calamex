@@ -79,3 +79,34 @@ export type IGitDiffPreviewPayload = GitDiffPreviewPayload;
 export type IGitPathOperationRequest = GitPathOperationRequest;
 export type IGitCommitRequest = GitCommitRequest;
 export type IGitCommitResultPayload = GitCommitResultPayload;
+
+// ── commit file diff (手动定义直到 tauri-specta 重新生成绑定) ──────────────────
+export interface IGitDiffLine {
+  tag: string; // 'add' | 'remove' | 'context'
+  oldLine: number | null;
+  newLine: number | null;
+  content: string;
+}
+
+export interface IGitDiffHunk {
+  oldStart: number;
+  oldCount: number;
+  newStart: number;
+  newCount: number;
+  lines: IGitDiffLine[];
+}
+
+export interface IGitCommitFileDiffRequest {
+  repositoryRootPath: string;
+  commitId: string;
+  relativePath: string;
+}
+
+export interface IGitCommitFileDiffPayload {
+  relativePath: string;
+  fileName: string;
+  title: string;
+  hunks: IGitDiffHunk[];
+  isBinary: boolean;
+  isEmpty: boolean;
+}

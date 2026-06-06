@@ -1,8 +1,8 @@
 use crate::commands::lsp::commands as lsp_commands;
 use crate::commands::terminal::commands as terminal_commands;
 use crate::commands::{
-    agent_sidecar, ai, git, script_run, search, shell_tools, ssh, window, window_stage,
-    workspace_fs, workspace_watcher,
+    agent_sidecar, ai, git, script_run, search, shell_tools, ssh, window, window_stage, workspace_fs,
+    workspace_watcher,
 };
 use specta_typescript::Typescript;
 use std::path::PathBuf;
@@ -41,6 +41,7 @@ pub fn builder() -> Builder<tauri::Wry> {
             git::branches::checkout_git_commit,
             git::branches::create_git_branch,
             git::diff::get_git_diff_preview,
+            git::diff::get_git_commit_file_diff,
             git::history::list_git_commit_history,
             git::history::get_git_commit_detail,
             git::pull_request::get_git_pull_request_support,

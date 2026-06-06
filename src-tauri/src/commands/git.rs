@@ -1,5 +1,4 @@
 use super::{decode_script_bytes, resolve_workspace_root};
-
 use gix::bstr::ByteSlice;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -331,6 +330,46 @@ pub struct GitRemoteSetRequest {
     remote_url: String,
 }
 
+// ── commit file diff ──────────────────────────────────────────────────────────
+#[derive(Debug, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct GitCommitFileDiffRequest {
+    repository_root_path: String,
+    commit_id: String,
+    relative_path: String,
+}
+
+#[derive(Debug, Serialize, Clone, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct GitDiffLine {
+    tag: String,
+    old_line: Option<u32>,
+    new_line: Option<u32>,
+    content: String,
+}
+
+#[derive(Debug, Serialize, Clone, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct GitDiffHunk {
+    old_start: u32,
+    old_count: u32,
+    new_start: u32,
+    new_count: u32,
+    lines: Vec<GitDiffLine>,
+}
+
+#[derive(Debug, Serialize, Clone, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct GitCommitFileDiffPayload {
+    relative_path: String,
+    file_name: String,
+    title: String,
+    hunks: Vec<GitDiffHunk>,
+    is_binary: bool,
+    is_empty: bool,
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 fn open_repository_from_root(root: &str) -> Result<Repository, String> {
     let root = normalize_path_for_git(Path::new(root));
     gix::open(&root).map_err(|error| format!("打开 Git 仓库失败：{error}"))
@@ -408,7 +447,6 @@ fn resolve_relative_path(repository_root: &Path, path: &Path) -> Result<PathBuf,
         repository_root.join(path)
     };
     let path_candidate = normalize_path_for_git(&path_candidate);
-
     strip_repository_prefix(repository_root, &path_candidate)
         .ok_or_else(|| "目标文件超出当前 Git 仓库根目录。".to_string())
 }
@@ -416,6 +454,7 @@ fn resolve_relative_path(repository_root: &Path, path: &Path) -> Result<PathBuf,
 fn strip_repository_prefix(repository_root: &Path, candidate: &Path) -> Option<PathBuf> {
     let mut root_components = repository_root.components();
     let mut candidate_components = candidate.components();
+
     loop {
         match root_components.next() {
             None => return Some(candidate_components.as_path().to_path_buf()),
@@ -441,27 +480,22 @@ fn path_components_match(left: Component<'_>, right: Component<'_>) -> bool {
 
 fn resolve_pathspecs(repository_root: &Path, paths: &[String]) -> Result<Vec<String>, String> {
     let mut pathspecs = Vec::new();
-
     for path in paths {
         if path.trim().is_empty() {
             continue;
         }
-
         let relative_path = resolve_relative_path(repository_root, Path::new(path))?;
-
         if relative_path
             .components()
             .any(|component| matches!(component, Component::ParentDir))
         {
             return Err(format!("Git 变更路径不合法：{path}"));
         }
-
         let pathspec = path_to_forward_slashes(&relative_path);
         if !pathspec.is_empty() {
             pathspecs.push(pathspec);
         }
     }
-
     Ok(pathspecs)
 }
 
@@ -472,23 +506,18 @@ fn path_to_forward_slashes(path: &Path) -> String {
 #[cfg(windows)]
 fn normalize_path_for_git(path: &Path) -> PathBuf {
     let value = path.to_string_lossy();
-
     if let Some(stripped) = value.strip_prefix(r"\\?\UNC\") {
         return PathBuf::from(format!(r"\\{stripped}"));
     }
-
     if let Some(stripped) = value.strip_prefix(r"\\?\") {
         return PathBuf::from(stripped.to_string());
     }
-
     if let Some(stripped) = value.strip_prefix("//?/UNC/") {
         return PathBuf::from(format!("//{stripped}").replace('/', r"\\"));
     }
-
     if let Some(stripped) = value.strip_prefix("//?/") {
         return PathBuf::from(stripped.replace('/', r"\\"));
     }
-
     path.to_path_buf()
 }
 

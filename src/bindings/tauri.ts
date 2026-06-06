@@ -55,6 +55,8 @@ export const commands = {
 	checkoutGitCommit: (payload: GitCommitCheckoutRequest) => __TAURI_INVOKE<GitRepositoryStatusPayload>("checkout_git_commit", { payload }),
 	createGitBranch: (payload: GitBranchCreateRequest) => __TAURI_INVOKE<GitRepositoryStatusPayload>("create_git_branch", { payload }),
 	getGitDiffPreview: (payload: GitDiffPreviewRequest) => __TAURI_INVOKE<GitDiffPreviewPayload>("get_git_diff_preview", { payload }),
+	/**  返回特定提交中单个文件的 diff（对比父提交）。 */
+	getGitCommitFileDiff: (payload: GitCommitFileDiffRequest) => __TAURI_INVOKE<GitCommitFileDiffPayload>("get_git_commit_file_diff", { payload }),
 	listGitCommitHistory: (payload: GitCommitHistoryRequest) => __TAURI_INVOKE<GitCommitHistoryPayload>("list_git_commit_history", { payload }),
 	/**
 	 *  读取单个提交的详细信息（用于历史悬浮卡片）：提交元数据 + 相对首个父提交的
@@ -62,6 +64,7 @@ export const commands = {
 	 */
 	getGitCommitDetail: (payload: GitCommitDetailRequest) => __TAURI_INVOKE<GitCommitDetailPayload>("get_git_commit_detail", { payload }),
 	getGitPullRequestSupport: (payload: GitRepositoryRootRequest) => __TAURI_INVOKE<GitPullRequestSupportPayload>("get_git_pull_request_support", { payload }),
+	setGitRemote: (payload: GitRemoteSetRequest) => __TAURI_INVOKE<GitPullRequestSupportPayload>("set_git_remote", { payload }),
 	listGitPullRequests: (payload: GitPullRequestListRequest) => __TAURI_INVOKE<GitPullRequestSummaryPayload[]>("list_git_pull_requests", { payload }),
 	getGitPullRequestDetail: (payload: GitPullRequestDetailRequest) => __TAURI_INVOKE<GitPullRequestDetailPayload>("get_git_pull_request_detail", { payload }),
 	createGitPullRequest: (payload: GitPullRequestCreateRequest) => __TAURI_INVOKE<GitPullRequestSummaryPayload>("create_git_pull_request", { payload }),
@@ -949,6 +952,21 @@ export type GitCommitFileChangePayload = {
 	deletions: number,
 };
 
+export type GitCommitFileDiffPayload = {
+	relativePath: string,
+	fileName: string,
+	title: string,
+	hunks: GitDiffHunk[],
+	isBinary: boolean,
+	isEmpty: boolean,
+};
+
+export type GitCommitFileDiffRequest = {
+	repositoryRootPath: string,
+	commitId: string,
+	relativePath: string,
+};
+
 export type GitCommitHistoryPayload = {
 	entries: GitCommitSummaryPayload[],
 	hasMore: boolean,
@@ -992,6 +1010,21 @@ export type GitCommitSummaryPayload = {
 	authoredAt: string,
 	parentIds: string[],
 	refs: GitCommitRefPayload[],
+};
+
+export type GitDiffHunk = {
+	oldStart: number,
+	oldCount: number,
+	newStart: number,
+	newCount: number,
+	lines: GitDiffLine[],
+};
+
+export type GitDiffLine = {
+	tag: string,
+	oldLine: number | null,
+	newLine: number | null,
+	content: string,
 };
 
 export type GitDiffPreviewPayload = {
@@ -1110,6 +1143,12 @@ export type GitPullRequestSupportPayload = {
 	repositoryUrl: string | null,
 	pullRequestsUrl: string | null,
 	createPullRequestUrl: string | null,
+};
+
+export type GitRemoteSetRequest = {
+	repositoryRootPath: string,
+	remoteName: string,
+	remoteUrl: string,
 };
 
 export type GitRepositoryRootRequest = {
