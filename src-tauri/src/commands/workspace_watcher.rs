@@ -1,17 +1,32 @@
 //! 工作区文件系统监听
 //!
-//! - 用 `ignore::WalkBuilder` 对根目录做「剪枝遍历」，只对存活目录逐个加
-//!   `RecursiveMode::NonRecursive` 监听，从源头跳过 node_modules / target / .git
-//!   等重型目录——而不是像旧版那样递归监听整棵树、事后再丢弃事件。
-//! - 200ms 去抖后通过强类型 specta 事件推送到前端
-//! - 遍历 + 监听 + 事件循环全部在后台线程执行，打开大仓库时绝不阻塞命令返回 / 冻结 UI
-//! - 同一时刻只有一个活跃监听；启动时若已有则「先建后换」，旧监听由原子标志位通知退出
-//! - 跨平台：Linux (inotify) / macOS (FSEvents) / Windows (ReadDirectoryChangesW)
+//! ## 设计：按平台选择监听原语（关键）
+//!
+//! 冻结的真正元凶不是「递归监听」本身，而是 `notify-debouncer-full` 的 `FileIdMap`
+//! 会在 `watch()` 时主动递归遍历整棵树登记 file-id。Windows(ReadDirectoryChangesW)
+//! 与 macOS(FSEvents) 本身支持廉价的内核级递归监听，根本不需要为每个子目录单独加
+//! watch，也不该承担 FileIdMap 那层用户态遍历。
+//!
+//! 因此本模块**不使用 debouncer-full**，直接用裸 `notify` watcher + 自实现去抖：
+//! - **Windows / macOS**：对根目录做**单次递归监听**（内核级递归，近乎 O(1) 成本，
+//!   无树遍历、无 watch 句柄爆炸、无「新建目录补监听」的竞态窗口）；忽略目录在事件层过滤。
+//! - **Linux (inotify)**：inotify 无原生递归，会给每个子目录单独加 watch，故必须先用
+//!   `ignore::WalkBuilder` 剪枝（跳过 node_modules / target / .git…）再逐目录非递归监听，
+//!   并在目录增删时动态跟进。
+//!
+//! ## 其它
+//! - 自实现尾沿去抖：安静 `DEBOUNCE_DURATION` 后吐出一批；持续事件风暴下最多攒
+//!   `MAX_DEBOUNCE` 强制吐出一次，避免饿死前端刷新。
+//! - 遍历 + 监听 + 事件循环全部在后台线程执行，打开大仓库时绝不阻塞命令返回 / 冻结 UI。
+//! - 同一时刻只有一个活跃监听；启动时若已有则「先建后换」，旧监听由原子标志位通知退出。
+//! - 去抖后通过强类型 specta 事件 `workspace-fs-event` 推送到前端。
 
 use arc_swap::ArcSwapOption;
 use ignore::WalkBuilder;
-use notify::{EventKind, RecommendedWatcher, RecursiveMode, event::ModifyKind};
-use notify_debouncer_full::{DebounceEventResult, Debouncer, FileIdMap, new_debouncer};
+use notify::{
+    Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher, event::ModifyKind,
+    recommended_watcher,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     ffi::OsStr,
@@ -22,16 +37,26 @@ use std::{
         mpsc::{Receiver, RecvTimeoutError, channel},
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tauri::AppHandle;
 use tauri_specta::Event as _;
 
+/// 尾沿去抖的安静期：最后一条事件后再静默这么久，才把这一批吐给前端。
 const DEBOUNCE_DURATION: Duration = Duration::from_millis(200);
 
-/// 后台事件循环等待事件的最长阻塞时间；超时即回头检查停止标志，
-/// 保证 stop / 热替换后线程能在亚秒级退出。
-const STOP_POLL_INTERVAL: Duration = Duration::from_millis(500);
+/// 事件风暴下的强制吐出上限：即使事件持续不断，攒满这个时长也先吐一批，
+/// 避免「构建/git 操作刷屏」时前端长时间收不到任何更新。
+const MAX_DEBOUNCE: Duration = Duration::from_secs(1);
+
+/// 当前平台是否提供廉价的内核级递归监听。
+///
+/// Windows(ReadDirectoryChangesW) / macOS(FSEvents) 为 true：单次递归监听即可。
+/// Linux(inotify) 为 false：无原生递归，需剪枝后逐目录非递归监听并动态维护。
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+const NATIVE_RECURSIVE: bool = true;
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+const NATIVE_RECURSIVE: bool = false;
 
 /// 始终忽略的目录名（按目录名匹配，相对监听根的任意层级）。
 ///
@@ -101,12 +126,10 @@ impl tauri_specta::Event for WorkspaceFsEvent {
 // 监听状态容器
 // ============================================================================
 
-type WorkspaceDebouncer = Debouncer<RecommendedWatcher, FileIdMap>;
-
 /// 单个活跃监听的句柄。
 ///
-/// debouncer 本体由后台线程持有（见 `run_watch_loop`），这里只保留通知其退出的
-/// 原子标志位；置 true 后线程会在 `STOP_POLL_INTERVAL` 内跳出循环并 Drop debouncer。
+/// watcher 本体由后台线程持有（见 `run_watch_loop`），这里只保留通知其退出的
+/// 原子标志位；置 true 后线程会在 `DEBOUNCE_DURATION` 内跳出循环并 Drop watcher。
 struct WatcherState {
     stop: Arc<AtomicBool>,
     /// 监听的根目录（保留用于诊断）
@@ -135,16 +158,16 @@ pub struct WorkspaceWatcher(ArcSwapOption<WatcherState>);
 
 /// 启动（或重启）工作区文件监听
 ///
-/// 真正的目录遍历与监听在后台线程完成，本命令仅做根目录校验与 debouncer 构造后
+/// 真正的目录遍历与监听在后台线程完成，本命令仅做根目录校验与 watcher 构造后
 /// 立即返回，因此打开超大仓库也不会阻塞前端。监听结果通过 `WorkspaceFsEvent` 推送。
-/// 若已有监听，会先换入新句柄再通知旧线程退出，旧 debouncer 在其线程结束时 Drop。
+/// 若已有监听，会先换入新句柄再通知旧线程退出，旧 watcher 在其线程结束时 Drop。
 ///
 /// # 参数
 /// - `root_path`: 工作区根目录的绝对或相对路径，会被 canonicalize
 ///
 /// # 错误
-/// 路径不存在 / 不是目录、或 debouncer 构造失败时返回 `Err(String)`。
-/// 注意：后台遍历 / 单目录 watch 失败只记日志，不再同步抛出（后台化的取舍）。
+/// 路径不存在 / 不是目录、或 watcher 构造失败时返回 `Err(String)`。
+/// 注意：后台的实际 watch 调用失败只记日志，不再同步抛出（后台化的取舍）。
 #[tauri::command]
 #[specta::specta]
 pub fn start_workspace_watching(
@@ -160,25 +183,24 @@ pub fn start_workspace_watching(
         return Err(format!("工作区根路径不是有效目录：{}", root.display()));
     }
 
-    // 2. 构造 debouncer
-    //    事件仅通过 channel 投递给后台线程处理；后台线程持有 debouncer，因而可在
-    //    回调之外安全地动态 watch/unwatch（回调本身不触碰 debouncer，杜绝重入死锁）。
+    // 2. 构造裸 watcher（不使用 debouncer-full，避免 FileIdMap 的递归树遍历）。
+    //    回调只把原始事件投递到 channel，去抖与处理全在后台线程完成。
     //    构造失败时不要触碰 state，旧监听（若有）保持不动。
-    let (tx, rx) = channel::<DebounceEventResult>();
-    let debouncer = new_debouncer(DEBOUNCE_DURATION, None, move |result: DebounceEventResult| {
+    let (tx, rx) = channel::<notify::Result<Event>>();
+    let watcher = recommended_watcher(move |result: notify::Result<Event>| {
         // 后台线程退出后 rx 被 Drop，send 失败可安全忽略。
         let _ = tx.send(result);
     })
     .map_err(|e| format!("创建文件监听器失败：{e}"))?;
 
-    // 3. 后台启动：剪枝遍历 + 逐目录非递归监听 + 事件循环全部丢到独立线程，
+    // 3. 后台启动：watch 配置 + 去抖 + 事件循环全部丢到独立线程，
     //    打开大仓库时绝不阻塞命令返回 / 冻结 UI。
     let stop = Arc::new(AtomicBool::new(false));
     let worker_stop = stop.clone();
     let worker_root = root.clone();
     thread::Builder::new()
         .name("workspace-watcher".into())
-        .spawn(move || run_watch_loop(debouncer, rx, app, worker_root, worker_stop))
+        .spawn(move || run_watch_loop(watcher, rx, app, worker_root, worker_stop))
         .map_err(|e| format!("启动文件监听线程失败：{e}"))?;
 
     // 4. 原子换入新句柄，并通知旧监听线程退出（先建后换，无监听真空期）。
@@ -196,7 +218,7 @@ pub fn start_workspace_watching(
 
 /// 停止工作区文件监听
 ///
-/// 通知后台线程退出；线程在 `STOP_POLL_INTERVAL` 内跳出循环并 Drop debouncer。
+/// 通知后台线程退出；线程在 `DEBOUNCE_DURATION` 内跳出循环并 Drop watcher。
 /// 重复调用、未启动时调用都是安全的（幂等）。
 #[tauri::command]
 #[specta::specta]
@@ -212,46 +234,111 @@ pub fn stop_workspace_watching(state: tauri::State<'_, WorkspaceWatcher>) -> Res
 // 后台事件循环
 // ============================================================================
 
-/// 后台线程主体：先把存活目录全部挂上监听，随后循环消费去抖事件直到收到停止信号。
+/// 后台线程主体：先按平台挂好监听，随后循环消费事件、做尾沿去抖直到收到停止信号。
 fn run_watch_loop(
-    mut debouncer: WorkspaceDebouncer,
-    rx: Receiver<DebounceEventResult>,
+    mut watcher: RecommendedWatcher,
+    rx: Receiver<notify::Result<Event>>,
     app: AppHandle,
     root: PathBuf,
     stop: Arc<AtomicBool>,
 ) {
-    // 初始：剪枝遍历，逐目录非递归监听。
-    let mut watched = 0usize;
-    for dir in collect_watch_dirs(&root) {
-        match debouncer.watch(&dir, RecursiveMode::NonRecursive) {
-            Ok(()) => watched += 1,
-            Err(e) => log::warn!("监听目录失败 {}: {e}", dir.display()),
-        }
-    }
-    log::info!(
-        "工作区文件监听已就绪：{watched} 个目录（根 {}）",
-        root.display()
-    );
+    setup_initial_watches(&mut watcher, &root);
 
-    // 事件循环：recv_timeout 让线程既能及时处理事件，又能周期性检查停止标志。
+    // 自实现尾沿去抖：攒到一批事件，安静 DEBOUNCE_DURATION 或攒满 MAX_DEBOUNCE 后吐出。
+    let mut pending: Vec<Event> = Vec::new();
+    let mut first_at: Option<Instant> = None;
+
     loop {
         if stop.load(Ordering::SeqCst) {
             break;
         }
-        match rx.recv_timeout(STOP_POLL_INTERVAL) {
-            Ok(result) => handle_debounced_events(result, &app, &root, &mut debouncer),
-            Err(RecvTimeoutError::Timeout) => continue,
-            // 仅当 debouncer（持有 Sender）被 Drop 时才会发生；正常路径走 stop 标志。
+        match rx.recv_timeout(DEBOUNCE_DURATION) {
+            Ok(Ok(event)) => {
+                // Linux 非递归监听需自行跟进目录增删；Win/Mac 递归监听无需。
+                if !NATIVE_RECURSIVE {
+                    maintain_watches(&mut watcher, &root, &event);
+                }
+                if first_at.is_none() {
+                    first_at = Some(Instant::now());
+                }
+                pending.push(event);
+                // 事件风暴下的强制上限：攒太久也要吐一次，避免饿死前端刷新。
+                if first_at.is_some_and(|t| t.elapsed() >= MAX_DEBOUNCE) {
+                    flush_events(&mut pending, &app, &root);
+                    first_at = None;
+                }
+            }
+            Ok(Err(e)) => log::warn!("文件监听产生错误事件: {e}"),
+            // 安静期已到（尾沿去抖）：把这一批攒下的事件吐给前端。
+            Err(RecvTimeoutError::Timeout) => {
+                if !pending.is_empty() {
+                    flush_events(&mut pending, &app, &root);
+                    first_at = None;
+                }
+            }
+            // 仅当 watcher（持有 Sender）被 Drop 时发生；正常路径走 stop 标志。
             Err(RecvTimeoutError::Disconnected) => break,
         }
     }
 
-    // 退出循环后 debouncer 在此 Drop，底层 watcher 关闭、内部线程回收。
+    // 退出前把残留事件吐完，避免丢最后一批。
+    if !pending.is_empty() {
+        flush_events(&mut pending, &app, &root);
+    }
+    // watcher 在此 Drop，底层监听关闭、内部线程回收。
     log::info!("工作区文件监听线程已退出: {}", root.display());
 }
 
+/// 按平台挂好初始监听。
+fn setup_initial_watches(watcher: &mut RecommendedWatcher, root: &Path) {
+    if NATIVE_RECURSIVE {
+        // Win/Mac：单次内核级递归监听，廉价且无需逐目录维护。
+        match watcher.watch(root, RecursiveMode::Recursive) {
+            Ok(()) => log::info!("工作区文件监听已就绪（递归）: {}", root.display()),
+            Err(e) => log::warn!("递归监听根目录失败 {}: {e}", root.display()),
+        }
+    } else {
+        // Linux：剪枝遍历后逐目录非递归监听。
+        let mut watched = 0usize;
+        for dir in collect_watch_dirs(root) {
+            match watcher.watch(&dir, RecursiveMode::NonRecursive) {
+                Ok(()) => watched += 1,
+                Err(e) => log::warn!("监听目录失败 {}: {e}", dir.display()),
+            }
+        }
+        log::info!(
+            "工作区文件监听已就绪：{watched} 个目录（根 {}）",
+            root.display()
+        );
+    }
+}
+
+/// 仅 Linux 非递归监听使用：根据事件动态维护监听集合。
+///
+/// - 新建目录：剪枝子遍历后补挂监听，覆盖「mkdir -p a/b/c」「git checkout 拉出整棵新目录」等；
+/// - 删除目录：best-effort 解除监听（删的是文件时 unwatch 失败，忽略即可）。
+fn maintain_watches(watcher: &mut RecommendedWatcher, root: &Path, event: &Event) {
+    match &event.kind {
+        EventKind::Create(_) => {
+            for path in &event.paths {
+                if path.is_dir() && !is_ignored_change(root, path) {
+                    for dir in collect_watch_dirs(path) {
+                        let _ = watcher.watch(&dir, RecursiveMode::NonRecursive);
+                    }
+                }
+            }
+        }
+        EventKind::Remove(_) => {
+            for path in &event.paths {
+                let _ = watcher.unwatch(path);
+            }
+        }
+        _ => {}
+    }
+}
+
 // ============================================================================
-// 目录剪枝遍历
+// 目录剪枝遍历（Linux 逐目录监听用）
 // ============================================================================
 
 /// 在 `start` 子树内做「剪枝遍历」，返回所有需要监听的目录（含 `start` 本身）。
@@ -300,57 +387,18 @@ fn collect_watch_dirs(start: &Path) -> Vec<PathBuf> {
 // 事件处理
 // ============================================================================
 
-fn handle_debounced_events(
-    result: DebounceEventResult,
-    app: &AppHandle,
-    root: &Path,
-    debouncer: &mut WorkspaceDebouncer,
-) {
-    let events = match result {
-        Ok(events) => events,
-        Err(errors) => {
-            for e in errors {
-                log::warn!("文件监听产生错误事件: {e}");
-            }
-            return;
-        }
-    };
-
-    if events.is_empty() {
-        return;
-    }
-
-    // 动态维护监听集合（非递归监听必须自己跟进目录增删）：
-    // - 新建目录：剪枝子遍历后补挂监听，覆盖「mkdir -p a/b/c」「git checkout 拉出整棵新目录」等情形；
-    // - 删除目录：best-effort 解除监听（删的是文件时 unwatch 失败，忽略即可）。
-    for ev in &events {
-        match &ev.event.kind {
-            EventKind::Create(_) => {
-                for path in &ev.event.paths {
-                    if path.is_dir() && !is_ignored_change(root, path) {
-                        for dir in collect_watch_dirs(path) {
-                            let _ = debouncer.watch(&dir, RecursiveMode::NonRecursive);
-                        }
-                    }
-                }
-            }
-            EventKind::Remove(_) => {
-                for path in &ev.event.paths {
-                    let _ = debouncer.unwatch(path);
-                }
-            }
-            _ => {}
-        }
-    }
+/// 把攒下的一批原始事件展开、过滤、去重后，作为单个 `WorkspaceFsEvent` 推送到前端。
+fn flush_events(pending: &mut Vec<Event>, app: &AppHandle, root: &Path) {
+    let events = std::mem::take(pending);
 
     // 展开为 (path, kind) 列表，并丢弃落在被忽略目录内的变更（事件级兜底过滤：
-    // 监听本身已不覆盖忽略目录，这里再挡一道被 .gitignore 命中的零散文件）。
-    // 每个 DebouncedEvent 可能携带多个路径（如 rename 携带 from/to）。
+    // Linux 监听已不覆盖忽略目录；Win/Mac 递归监听覆盖全树，这里按 .gitignore/黑名单挡掉）。
+    // 每个事件可能携带多个路径（如 rename 携带 from/to）。
     let mut changes: Vec<FsChange> = events
         .iter()
-        .flat_map(|ev| {
-            let kind = classify_event_kind(&ev.event.kind);
-            ev.event.paths.iter().filter_map(move |path| {
+        .flat_map(|event| {
+            let kind = classify_event_kind(&event.kind);
+            event.paths.iter().filter_map(move |path| {
                 if is_ignored_change(root, path) {
                     return None;
                 }
