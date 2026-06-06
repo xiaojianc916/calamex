@@ -1,6 +1,7 @@
 import { commands } from '@/bindings/tauri';
 import type { ITauriService } from '@/types/tauri';
-import { callSpectaCommand } from './tauri.ipc-runtime';
+import type { IGitCommitFileDiffPayload } from '@/types/git';
+import { callSpectaCommand, invokeTauriCommand } from './tauri.ipc-runtime';
 
 type TGitTauriService = Pick<
   ITauriService,
@@ -8,6 +9,7 @@ type TGitTauriService = Pick<
   | 'initGitRepository'
   | 'listGitCommitHistory'
   | 'getGitCommitDetail'
+  | 'getGitCommitFileDiff'
   | 'listGitBranches'
   | 'checkoutGitBranch'
   | 'checkoutGitCommit'
@@ -58,6 +60,13 @@ export const gitTauriService: TGitTauriService = {
     return callSpectaCommand(
       { command: 'get_git_commit_detail', guardHint: '读取 Git 提交详情', idempotent: true, timeoutMs: 20_000, input: payload },
       () => commands.getGitCommitDetail(payload),
+    );
+  },
+
+  getGitCommitFileDiff(payload) {
+    return callSpectaCommand(
+      { command: 'get_git_commit_file_diff', guardHint: '读取 Git 提交文件 Diff', idempotent: true, timeoutMs: 20_000, input: payload },
+      () => invokeTauriCommand<IGitCommitFileDiffPayload>('get_git_commit_file_diff', { payload }),
     );
   },
 
