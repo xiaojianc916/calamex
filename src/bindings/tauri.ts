@@ -11,6 +11,10 @@ export const commands = {
 	searchWorkspace: (payload: WorkspaceSearchRequest) => __TAURI_INVOKE<WorkspaceSearchPayload>("search_workspace", { payload }),
 	analyzeScript: (payload: AnalyzeScriptRequest) => __TAURI_INVOKE<AnalyzeScriptPayload>("analyze_script", { payload }),
 	formatScript: (payload: FormatScriptRequest) => __TAURI_INVOKE<FormatScriptPayload>("format_script", { payload }),
+	listSkills: () => __TAURI_INVOKE<SkillListPayload>("list_skills"),
+	readSkill: (slug: string) => __TAURI_INVOKE<SkillDetailPayload>("read_skill", { slug }),
+	saveSkill: (payload: SaveSkillRequest) => __TAURI_INVOKE<SkillDetailPayload>("save_skill", { payload }),
+	deleteSkill: (payload: DeleteSkillRequest) => __TAURI_INVOKE<DeleteSkillPayload>("delete_skill", { payload }),
 	applyWindowStage: (stage: WindowStage) => __TAURI_INVOKE<null>("apply_window_stage", { stage }),
 	setWindowBackground: (input: SetWindowBackgroundInput, traceId: string | null) => __TAURI_INVOKE<null>("set_window_background", { input, traceId }),
 	createWorkspacePath: (payload: WorkspacePathCreateRequest) => __TAURI_INVOKE<WorkspacePathCreatePayload>("create_workspace_path", { payload }),
@@ -828,6 +832,16 @@ export type CloseTerminalSessionRequest = {
 	sessionId: string,
 };
 
+/**  删除技能返回。 */
+export type DeleteSkillPayload = {
+	slug: string,
+};
+
+/**  删除技能入参。 */
+export type DeleteSkillRequest = {
+	slug: string,
+};
+
 export type DispatchTerminalScriptPayload = {
 	sessionId: string,
 	cwd: string,
@@ -1250,6 +1264,15 @@ export type SaveScriptRequest = {
 	encoding: DocumentEncoding,
 };
 
+/**  新建 / 更新技能入参。 */
+export type SaveSkillRequest = {
+	/**  None 表示新建（按名称生成 slug）；Some(slug) 表示更新已存在技能。 */
+	slug: string | null,
+	name: string,
+	description: string,
+	content: string,
+};
+
 export type ScriptDiagnosticPayload = {
 	line: number,
 	endLine: number,
@@ -1279,6 +1302,30 @@ export type SetWindowBackgroundInput = {
 	g: number,
 	b: number,
 	a?: number,
+};
+
+/**  单个技能详情（含正文，用于查看 / 编辑）。 */
+export type SkillDetailPayload = {
+	slug: string,
+	name: string,
+	description: string,
+	content: string,
+	path: string,
+	updatedAtMs: number | null,
+};
+
+/**  技能列表整体返回（含技能根目录，便于前端提示存储位置）。 */
+export type SkillListPayload = {
+	rootPath: string,
+	skills: SkillSummaryPayload[],
+};
+
+/**  技能列表项（轻量，仅含展示所需字段）。 */
+export type SkillSummaryPayload = {
+	slug: string,
+	name: string,
+	description: string,
+	updatedAtMs: number | null,
 };
 
 export type SshConfigHostPayload = {
