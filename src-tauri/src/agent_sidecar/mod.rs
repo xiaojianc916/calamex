@@ -39,6 +39,11 @@ const NARRATOR_CHAT_RETRY_DELAYS_MS: &[u64] = &[1500, 3000, 5000, 9000, 16000, 3
 const SIDECAR_PROTOCOL_VERSION: &str = "7";
 const SIDECAR_IMPLEMENTATION_VERSION: &str = "deepseek-reasoning-transport-v6-plan-history";
 const DEFAULT_SIDECAR_PORT: u16 = 39871;
+/// 流式响应中单个未完成行的字节上限（16 MiB）。正常 NDJSON 事件远小于此；
+/// 仅用于防御“始终不出现换行符的超长行”导致读缓冲无界增长 → OOM。
+/// 仅在缓冲区残留的“未完成行”超过此上限时触发，不改变正常按行解析 / 下发的
+/// 流式行为与前端视觉。
+const SIDECAR_STREAM_MAX_LINE_BYTES: usize = 16 * 1024 * 1024;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SidecarHealthStatus {
     Ready,
@@ -389,6 +394,20 @@ fn drain_complete_sidecar_stream_lines(
     Ok(lines)
 }
 
+/// 防御超长未完成行：当读缓冲中尚未出现换行符的残留字节超过上限时报错，
+/// 避免恶意 / 异常的不换行响应把缓冲撑爆。正常流式（按 `\n` 成行下发）不受影响。
+fn ensure_sidecar_stream_buffer_within_limit(
+    buffer_len: usize,
+    endpoint: &str,
+) -> Result<(), String> {
+    if buffer_len > SIDECAR_STREAM_MAX_LINE_BYTES {
+        return Err(format!(
+            "AGENT_SIDECAR_STREAM_ERROR: sidecar 流式响应单行超过 {SIDECAR_STREAM_MAX_LINE_BYTES} 字节上限({endpoint})"
+        ));
+    }
+    Ok(())
+}
+
 fn has_non_whitespace_bytes(bytes: &[u8]) -> bool {
     bytes
         .iter()
@@ -478,6 +497,10 @@ where
                 final_response = Some(response);
             }
         }
+
+        // 完整行均已抽走后，buffer 仅剩“未完成行”。一旦其超过上限即判定为异常并报错，
+        // 防止永不换行的响应把缓冲无界撑大。正常按行下发的流式行为与视觉不受影响。
+        ensure_sidecar_stream_buffer_within_limit(buffer.len(), stream_endpoint)?;
     }
 
     if has_non_whitespace_bytes(&buffer) {
@@ -1395,9 +1418,10 @@ mod tests {
     use super::{
         DEFAULT_SIDECAR_URL, SIDECAR_STARTUP_TIMEOUT_DEFAULT_SECONDS,
         SIDECAR_STARTUP_TIMEOUT_MAX_SECONDS, SIDECAR_STARTUP_TIMEOUT_MIN_SECONDS,
-        SidecarHealthProbePayload, SidecarHealthStatus, answer_delta_text, build_sidecar_url,
-        canonicalize_local_base_url, clamp_startup_timeout_seconds, classify_sidecar_health,
-        crashed_sidecar_error_message, drain_complete_sidecar_stream_lines,
+        SIDECAR_STREAM_MAX_LINE_BYTES, SidecarHealthProbePayload, SidecarHealthStatus,
+        answer_delta_text, build_sidecar_url, canonicalize_local_base_url,
+        clamp_startup_timeout_seconds, classify_sidecar_health, crashed_sidecar_error_message,
+        drain_complete_sidecar_stream_lines, ensure_sidecar_stream_buffer_within_limit,
         has_non_whitespace_bytes, inject_sidecar_dotenv_key_if_present, is_crashed_sidecar_error,
         is_default_local_sidecar_url, is_retryable_narrator_sidecar_error, model_provider_id,
         client, health_client, normalize_base_url, parse_netstat_listening_pids,
@@ -1548,6 +1572,25 @@ mod tests {
     fn sidecar_stream_line_buffer_ignores_whitespace_tail() {
         assert!(!has_non_whitespace_bytes(b"\r\n\t "));
         assert!(has_non_whitespace_bytes(b"\n{}"));
+    }
+
+    #[test]
+    fn sidecar_stream_buffer_rejects_unterminated_oversized_line() {
+        assert!(ensure_sidecar_stream_buffer_within_limit(0, "/agent/chat/stream").is_ok());
+        assert!(
+            ensure_sidecar_stream_buffer_within_limit(
+                SIDECAR_STREAM_MAX_LINE_BYTES,
+                "/agent/chat/stream"
+            )
+            .is_ok()
+        );
+        let error = ensure_sidecar_stream_buffer_within_limit(
+            SIDECAR_STREAM_MAX_LINE_BYTES + 1,
+            "/agent/chat/stream",
+        )
+        .expect_err("超过上限的未完成行应被拒绝");
+        assert!(error.contains("AGENT_SIDECAR_STREAM_ERROR"));
+        assert!(error.contains("/agent/chat/stream"));
     }
 
     #[test]
