@@ -17,6 +17,7 @@
 @import './styles/sidebar-search.css';
 @import './styles/sidebar-source-control.css';
 @import './styles/sidebar-source-control-pr.css';
+@import './styles/sidebar-source-control-history.css';
 @import './styles/editor-tabs.css';
 @import './styles/editor-widgets.css';
 @import './styles/skeletons-terminal-overlays.css';

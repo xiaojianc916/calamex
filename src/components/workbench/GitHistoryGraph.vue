@@ -1,5 +1,5 @@
 <template>
-  <div class="git-history-graph source-control-history-timeline">
+  <div ref="rootRef" class="git-history-graph source-control-history-timeline">
     <template v-for="group in renderGroups" :key="group.key">
       <header
         v-if="group.showHeader"
@@ -57,8 +57,6 @@
               <span class="git-history-graph-ref-name" v-text="commitRef.name" />
             </span>
           </div>
-
-          <span class="source-control-history-author git-history-graph-author" v-text="row.commit.authorName" />
         </article>
 
         <!-- Inline expanded file list -->
@@ -106,13 +104,6 @@
       class="git-history-graph-sentinel"
       aria-hidden="true"
     />
-    <div
-      v-if="gitStore.isCommitHistoryLoading && commits.length > 0"
-      class="git-history-graph-loading-more"
-    >
-      <span class="icon-[lucide--loader-circle] git-history-graph-filelist-spinner" aria-hidden="true" />
-      <span v-text="'正在加载更多提交…'" />
-    </div>
 
     <section v-if="behind > 0" class="git-history-graph-incoming-note">
       <span class="icon-[lucide--arrow-down] git-history-graph-group-icon" aria-hidden="true" />
@@ -132,6 +123,7 @@
     <Teleport to="body">
       <div
         v-if="hover.open && hoverCommit"
+        ref="hoverCardRef"
         class="git-history-graph-hovercard"
         :style="{ top: hover.y + 'px', left: hover.x + 'px' }"
         @mouseenter="handleCardEnter"
@@ -176,7 +168,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 
 import LinearContextMenu from '@/components/common/LinearContextMenu.vue';
 import type { ILinearContextMenuGroup, ILinearContextMenuItem } from '@/components/common/linear-context-menu.types';
@@ -193,6 +185,8 @@ const NODE_RADIUS = 3;
 const HOVER_OPEN_DELAY = 320;
 const HOVER_CLOSE_DELAY = 160;
 const HOVER_CARD_WIDTH = 320;
+// 悬浮卡片高度估算值,仅用于首帧定位;真实尺寸由 adjustHoverCardPosition 实测后再夹取。
+const HOVER_CARD_EST_HEIGHT = 188;
 
 interface IGitCommitRef { name: string; kind: string; isHead: boolean; }
 interface IGraphEdgePath { key: string; d: string; color: string; }
@@ -221,6 +215,7 @@ const activeCommitId = ref<string | null>(null);
 const expandedCommitId = ref<string | null>(null);
 const expandedDetail = ref<IGitCommitDetailPayload | null>(null);
 const expandedLoading = ref(false);
+const rootRef = ref<HTMLElement | null>(null);
 
 const menu = reactive<{ open: boolean; x: number; y: number; commit: IGitCommitSummaryPayload | null }>({
   open: false, x: 0, y: 0, commit: null,
@@ -233,8 +228,15 @@ const hover = reactive<{ open: boolean; commitId: string | null; x: number; y: n
 const hoverCommit = ref<IGitCommitSummaryPayload | null>(null);
 const hoverDetail = ref<IGitCommitDetailPayload | null>(null);
 const hoverLoading = ref(false);
+const hoverCardRef = ref<HTMLElement | null>(null);
 let hoverOpenTimer: ReturnType<typeof setTimeout> | null = null;
 let hoverCloseTimer: ReturnType<typeof setTimeout> | null = null;
+
+// 滚动期间抑制悬浮卡片,避免滑动时小卡片打扰。
+const isScrolling = ref(false);
+let scrollSettleTimer: ReturnType<typeof setTimeout> | null = null;
+let historyScrollTarget: HTMLElement | Window | null = null;
+let historyScrollCapture = false;
 
 const laneX = (lane: number): number => lane * LANE_WIDTH + LANE_WIDTH / 2;
 
@@ -439,30 +441,61 @@ const closeHoverCard = (): void => {
   hoverLoading.value = false;
 };
 
+// req4: 悬浮卡片智能排位。先按行右/左侧给初始位置,再用实测尺寸夹取进视口,避免被边缘遮挡。
 const positionHoverCard = (rect: DOMRect): { x: number; y: number } => {
   const margin = 8;
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  // 横向：优先放在行右侧,空间不足则放左侧,再不足则夹在视口内。
   let x = rect.right + margin;
-  if (x + HOVER_CARD_WIDTH > window.innerWidth - margin) x = rect.left - HOVER_CARD_WIDTH - margin;
+  if (x + HOVER_CARD_WIDTH > vw - margin) {
+    const leftX = rect.left - HOVER_CARD_WIDTH - margin;
+    x = leftX >= margin ? leftX : Math.max(margin, vw - HOVER_CARD_WIDTH - margin);
+  }
   if (x < margin) x = margin;
+  // 纵向：默认与行顶对齐;底部空间不足时上移,保证整卡在视口内。
   let y = rect.top;
-  const maxY = window.innerHeight - 180;
-  if (y > maxY) y = Math.max(margin, maxY);
+  if (y + HOVER_CARD_EST_HEIGHT > vh - margin) y = vh - HOVER_CARD_EST_HEIGHT - margin;
+  if (y < margin) y = margin;
   return { x, y };
 };
 
+// 卡片渲染/详情加载导致高度变化后,按真实尺寸再次夹取,确保不被视口边缘截断。
+const adjustHoverCardPosition = async (): Promise<void> => {
+  if (typeof window === 'undefined') return;
+  await nextTick();
+  const el = hoverCardRef.value;
+  if (!el || !hover.open) return;
+  const margin = 8;
+  const rect = el.getBoundingClientRect();
+  let x = hover.x;
+  let y = hover.y;
+  if (rect.right > window.innerWidth - margin) x = window.innerWidth - rect.width - margin;
+  if (x < margin) x = margin;
+  if (rect.bottom > window.innerHeight - margin) y = window.innerHeight - rect.height - margin;
+  if (y < margin) y = margin;
+  hover.x = x;
+  hover.y = y;
+};
+
 const openHoverCard = async (rect: DOMRect, commit: IGitCommitSummaryPayload): Promise<void> => {
+  if (isScrolling.value) return;
   const position = positionHoverCard(rect);
   hover.x = position.x;
   hover.y = position.y;
   hover.commitId = commit.id;
   hoverCommit.value = commit;
   hover.open = true;
+  void adjustHoverCardPosition();
   if (hoverDetail.value?.id === commit.id) return;
   hoverDetail.value = null;
   hoverLoading.value = true;
   try {
     const detail = await gitStore.loadCommitDetail(commit.id);
-    if (hover.commitId === commit.id) hoverDetail.value = detail;
+    if (hover.commitId === commit.id) {
+      hoverDetail.value = detail;
+      void adjustHoverCardPosition();
+    }
   } catch {
     // 详情失败时保留摘要回退
   } finally {
@@ -471,7 +504,7 @@ const openHoverCard = async (rect: DOMRect, commit: IGitCommitSummaryPayload): P
 };
 
 const handleRowEnter = (event: MouseEvent, commit: IGitCommitSummaryPayload): void => {
-  if (menu.open) return;
+  if (menu.open || isScrolling.value) return;
   clearHoverCloseTimer();
   const target = event.currentTarget;
   if (!(target instanceof HTMLElement)) return;
@@ -556,6 +589,37 @@ const handleWindowResize = (): void => {
   if (hover.open) { clearHoverOpenTimer(); clearHoverCloseTimer(); closeHoverCard(); }
 };
 
+// req5: 滚动历史列表时关闭并抑制悬浮卡片,滚动停止 180ms 后恢复。
+const handleHistoryScroll = (): void => {
+  isScrolling.value = true;
+  clearHoverOpenTimer();
+  if (hover.open) closeHoverCard();
+  if (scrollSettleTimer !== null) clearTimeout(scrollSettleTimer);
+  scrollSettleTimer = setTimeout(() => { isScrolling.value = false; }, 180);
+};
+
+const teardownHistoryScrollListener = (): void => {
+  if (historyScrollTarget) {
+    historyScrollTarget.removeEventListener('scroll', handleHistoryScroll, historyScrollCapture);
+    historyScrollTarget = null;
+  }
+};
+
+const setupHistoryScrollListener = (): void => {
+  teardownHistoryScrollListener();
+  if (typeof window === 'undefined') return;
+  const scrollEl = rootRef.value?.closest('.source-control-scroll') ?? null;
+  if (scrollEl instanceof HTMLElement) {
+    historyScrollTarget = scrollEl;
+    historyScrollCapture = false;
+    scrollEl.addEventListener('scroll', handleHistoryScroll, { passive: true });
+  } else {
+    historyScrollTarget = window;
+    historyScrollCapture = true;
+    window.addEventListener('scroll', handleHistoryScroll, { passive: true, capture: true });
+  }
+};
+
 // 滚动到底部时无限懒加载：哨兵进入(内部滚动容器的)视口就追加下一段历史。
 // 每页条数仍由后端默认值(20)决定，这里只负责"滚到底再要一段"，没有总量上限。
 const historySentinelRef = ref<HTMLElement | null>(null);
@@ -617,12 +681,15 @@ onMounted(() => {
   window.addEventListener('keydown', handleWindowKeydown);
   window.addEventListener('resize', handleWindowResize);
   setupHistoryObserver();
+  setupHistoryScrollListener();
 });
 
 onBeforeUnmount(() => {
   clearHoverOpenTimer();
   clearHoverCloseTimer();
+  if (scrollSettleTimer !== null) { clearTimeout(scrollSettleTimer); scrollSettleTimer = null; }
   disconnectHistoryObserver();
+  teardownHistoryScrollListener();
   if (typeof window === 'undefined') return;
   window.removeEventListener('pointerdown', handleWindowPointerDown, true);
   window.removeEventListener('keydown', handleWindowKeydown);
@@ -674,16 +741,6 @@ onBeforeUnmount(() => {
   width: 100%;
   height: 1px;
   flex: 0 0 auto;
-}
-
-.git-history-graph-loading-more {
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 6px;
-  font-size: 11px;
-  color: #818b98;
 }
 
 .git-history-graph-row.source-control-history-item {
@@ -762,16 +819,6 @@ onBeforeUnmount(() => {
 .git-history-graph-ref.is-remote { background: rgba(9, 105, 218, 0.12); color: #0550ae; }
 .git-history-graph-ref-icon { width: 10px; height: 10px; flex: 0 0 auto; }
 .git-history-graph-ref-name { overflow: hidden; text-overflow: ellipsis; }
-
-.source-control-history-author.git-history-graph-author {
-  flex: 0 0 auto;
-  font-size: 11px;
-  color: #818b98;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 80px;
-}
 
 /* === Inline file list === */
 .git-history-graph-filelist {

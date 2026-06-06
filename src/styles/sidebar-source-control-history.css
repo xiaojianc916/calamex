@@ -1,0 +1,47 @@
+/* 历史面板交互优化覆盖样式。
+   引入顺序在 sidebar-source-control.css 之后(见 src/styles.css),
+   等权选择器由后者覆盖前者,无需 !important。所有改动可整文件删除回滚。 */
+
+/* req6: 'HISTORY' 标题与刷新按钮固定在顶部,滚动历史时常驻,方便操作。
+   历史面板原本 overflow:hidden 会切断 sticky 所需的滚动上下文,这里放开,
+   让表头相对 .source-control-scroll 滚动容器吸顶。 */
+.source-control-history-panel {
+  overflow: visible;
+}
+
+.source-control-history-header {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: var(--scm-bg);
+  border-bottom: 1px solid var(--scm-border);
+}
+
+/* req7: 删除"最近 N 条"摘要 UI。 */
+.source-control-history-summary {
+  display: none;
+}
+
+/* req3: 刷新按钮 hover 不改背景色,仅图标轻微高亮。 */
+.source-control-history-refresh:hover:not(:disabled) {
+  background: transparent;
+  color: var(--scm-text);
+}
+
+/* 加载态(刷新中 / 忙碌时按钮 disabled)只用刷新图标转圈表示。 */
+@keyframes source-control-history-refresh-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.source-control-history-refresh:disabled {
+  opacity: 0.7;
+}
+
+.source-control-history-refresh:disabled > span {
+  animation: source-control-history-refresh-spin 0.8s linear infinite;
+}
