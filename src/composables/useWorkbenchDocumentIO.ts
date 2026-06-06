@@ -6,7 +6,7 @@ import type { IGitDiffPreviewPayload, IGitDiffPreviewRequest } from '@/types/git
 import type { TSessionSnapshot, TSessionTabKind } from '@/types/session';
 import { waitForDesktopRuntime } from '@/utils/desktop-runtime';
 import { isImageAssetPath } from '@/utils/file-assets';
-import { getPathBaseName } from '@/utils/path';
+import { getPathBaseName, getRelativeFileSystemPath } from '@/utils/path';
 import { isWorkspaceRootAccessible } from '@/utils/workspace';
 
 // ---------------------------------------------------------------------------
@@ -91,6 +91,14 @@ const pickRestorableSessionSnapshot = (snapshot: TSessionSnapshot): TRestorableS
     kind,
   })),
 });
+
+const scopedWorkspaceRootForPath = (
+  path: string,
+  workspaceRoot: string | null | undefined,
+): string | null => {
+  if (!workspaceRoot) return null;
+  return getRelativeFileSystemPath(path, workspaceRoot) === null ? null : workspaceRoot;
+};
 
 // ---------------------------------------------------------------------------
 // Composable
@@ -189,7 +197,11 @@ export const useWorkbenchDocumentIO = ({
     );
   };
 
-  const loadDocumentFromPath = async (path: string, scene: string): Promise<void> => {
+  const loadDocumentFromPath = async (
+    path: string,
+    scene: string,
+    workspaceRootPath?: string | null,
+  ): Promise<void> => {
     if (isImageAssetPath(path)) {
       const imageName = getPathBaseName(path);
       openTabAndNotify(scene, 'image', path, imageName, () =>
@@ -198,7 +210,10 @@ export const useWorkbenchDocumentIO = ({
       return;
     }
 
-    const payload = await tauriService.loadScript(path);
+    const payload = await tauriService.loadScript(
+      path,
+      scopedWorkspaceRootForPath(path, workspaceRootPath),
+    );
     openScriptPayload(payload, scene);
   };
 
@@ -221,6 +236,7 @@ export const useWorkbenchDocumentIO = ({
 
   const restoreOpenTabs = async (
     openTabs: TRestorableSessionSnapshot['openTabs'],
+    workspaceRoot: string | null,
   ): Promise<TRestoredSessionTab[]> => {
     const loadedTabs = await Promise.all(
       openTabs.map(async (tab): Promise<TRestoredSessionTab | null> => {
@@ -234,7 +250,10 @@ export const useWorkbenchDocumentIO = ({
               order: tab.order,
             };
           }
-          const payload = await tauriService.loadScript(tab.path);
+          const payload = await tauriService.loadScript(
+            tab.path,
+            scopedWorkspaceRootForPath(tab.path, workspaceRoot),
+          );
           return { kind, payload, order: tab.order };
         } catch {
           notifier.info(`文件已不可用，已从会话移除：${tab.path}`);
@@ -289,7 +308,7 @@ export const useWorkbenchDocumentIO = ({
 
     editorStore.clearDocuments();
 
-    const aliveTabs = await restoreOpenTabs(snapshot.openTabs);
+    const aliveTabs = await restoreOpenTabs(snapshot.openTabs, snapshot.workspaceRoot);
     let restoredDraftCount = 0;
     aliveTabs.forEach((tab) => {
       if (applyRestoredTab(tab)) {
@@ -361,7 +380,7 @@ export const useWorkbenchDocumentIO = ({
         return;
       }
 
-      await loadDocumentFromPath(path, '资源管理器打开文件');
+      await loadDocumentFromPath(path, '资源管理器打开文件', editorStore.workspaceRootPath);
     } catch (error) {
       reportError('打开资源文件失败', error, '打开资源文件失败');
     }
