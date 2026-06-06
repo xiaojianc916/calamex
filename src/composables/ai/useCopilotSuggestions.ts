@@ -1,8 +1,12 @@
 import type { Suggestion } from '@copilotkit/core';
 import { useConfigureSuggestions, useSuggestions } from '@copilotkit/vue';
-import { computed, onMounted, type Ref, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, type Ref, ref } from 'vue';
 import { aiService } from '@/services/ipc/ai.service';
 import { logger } from '@/utils/logger';
+import {
+  SUGGESTION_POOL_MAX_ATTEMPTS,
+  computeBackoffDelayMs,
+} from './suggestionPoolBackoff';
 
 /**
  * 兜底建议池：免费小模型(narrator)不可用时使用。
@@ -178,12 +182,33 @@ export const useCopilotSuggestions = (): IUseCopilotSuggestionsResult => {
   // 走免费小模型(narrator endpoint, 例如 zhipuai/glm-4.7-flash)生成的建议词池。
   const poolSuggestions = ref<Suggestion[]>([]);
 
-  const loadPool = async (): Promise<void> => {
+  // 组件卸载后停止后台重试，并清理待触发的定时器，避免泄漏与无谓调用。
+  let disposed = false;
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const applyPool = (pool: readonly string[] | undefined | null): boolean => {
+    if (pool && pool.length > 0) {
+      poolSuggestions.value = pickFromPool(pool);
+      return true;
+    }
+    return false;
+  };
+
+  // 后台自愈：命中缓存即用；否则调小模型生成；失败按指数退避有界重试。
+  // narrator 依赖 agent-sidecar 子进程，冷启动 / 瞬时抖动会让首次生成失败，
+  // 过去一次失败即永久回退静态池，这里给它若干次后台补偿机会。
+  const ensurePool = async (attempt = 0): Promise<void> => {
+    if (disposed || poolSuggestions.value.length > 0) {
+      return;
+    }
+
     try {
-      const cached = await aiService.getSuggestionPoolCache();
-      if (cached?.suggestions?.length) {
-        poolSuggestions.value = pickFromPool(cached.suggestions);
-        return;
+      // 仅首次尝试读缓存：命中可省一次小模型调用。
+      if (attempt === 0) {
+        const cached = await aiService.getSuggestionPoolCache();
+        if (applyPool(cached?.suggestions)) {
+          return;
+        }
       }
 
       const generated = await aiService.generateSuggestionPool({
@@ -191,16 +216,50 @@ export const useCopilotSuggestions = (): IUseCopilotSuggestionsResult => {
         locale: POOL_LOCALE,
         topics: [...POOL_TOPICS],
       });
-      if (generated?.suggestions?.length) {
-        poolSuggestions.value = pickFromPool(generated.suggestions);
+      if (applyPool(generated?.suggestions)) {
+        return;
       }
+
+      // 调用成功但池为空：按失败处理，进入退避重试。
+      throw new Error('suggestion pool is empty');
     } catch (err) {
-      logger.warn({ event: 'copilotkit.suggestion_pool_load_failed', err });
+      if (disposed) {
+        return;
+      }
+
+      const nextAttempt = attempt + 1;
+      if (nextAttempt >= SUGGESTION_POOL_MAX_ATTEMPTS) {
+        // 耗尽重试：不再静默吞错，记 error 暴露真实失败原因；UI 继续用静态兜底。
+        logger.error({
+          event: 'copilotkit.suggestion_pool_generate_exhausted',
+          attempts: nextAttempt,
+          err,
+        });
+        return;
+      }
+
+      logger.warn({
+        event: 'copilotkit.suggestion_pool_load_failed',
+        attempt: nextAttempt,
+        err,
+      });
+      retryTimer = setTimeout(() => {
+        retryTimer = null;
+        void ensurePool(nextAttempt);
+      }, computeBackoffDelayMs(attempt));
     }
   };
 
   onMounted(() => {
-    void loadPool();
+    void ensurePool();
+  });
+
+  onBeforeUnmount(() => {
+    disposed = true;
+    if (retryTimer !== null) {
+      clearTimeout(retryTimer);
+      retryTimer = null;
+    }
   });
 
   // 优先级：narrator 池 -> CopilotKit 池 -> 静态兜底，始终能兑出内容。
