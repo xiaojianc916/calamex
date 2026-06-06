@@ -137,6 +137,10 @@ export interface ITauriCallOptions {
   signal?: AbortSignal;
 }
 
+type TWorkspaceScopedSaveScriptRequest = ISaveScriptRequest & {
+  workspaceRootPath?: string | null;
+};
+
 export interface ISshConnectionTestPayload {
   ok: boolean;
   code: string;
@@ -289,9 +293,9 @@ export interface ITauriService {
   ): Promise<() => void>;
   analyzeScript(payload: IAnalyzeScriptRequest): Promise<IAnalyzeScriptPayload>;
   formatScript(payload: IFormatScriptRequest): Promise<IFormatScriptPayload>;
-  loadScript(path: string): Promise<IScriptFilePayload>;
+  loadScript(path: string, workspaceRootPath?: string | null): Promise<IScriptFilePayload>;
   loadImageAsset(path: string): Promise<IImageAssetPayload>;
-  saveScript(payload: ISaveScriptRequest): Promise<IScriptFilePayload>;
+  saveScript(payload: TWorkspaceScopedSaveScriptRequest): Promise<IScriptFilePayload>;
   detectEnvironment(): Promise<IExecutionEnvironment>;
   listWorkspaceEntries(path?: string, rootPath?: string): Promise<IWorkspaceDirectoryPayload>;
   createWorkspacePath(payload: IWorkspacePathCreateRequest): Promise<IWorkspacePathCreatePayload>;

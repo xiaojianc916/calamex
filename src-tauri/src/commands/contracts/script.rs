@@ -86,9 +86,13 @@ pub struct ImageAssetPayload {
 }
 
 #[derive(Debug, Clone, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
 pub struct SaveScriptRequest {
     pub(crate) path: String,
     pub(crate) content: String,
+    /// 若来自工作区文件树 / 会话恢复 / 工作区批处理，必须传入工作区根并由后端校验路径边界。
+    /// 通过系统文件选择器打开或另存为的单文件可为空，保留用户显式选择任意本地文件的能力。
+    pub(crate) workspace_root_path: Option<String>,
     /// 文本编码，已知值："utf-8" | "utf-8-bom" | "gbk" | …（保持字符串以便扩展）。
     pub(crate) encoding: DocumentEncoding,
 }
