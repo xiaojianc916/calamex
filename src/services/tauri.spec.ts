@@ -194,7 +194,10 @@ describe('tauriService', () => {
       path: 'D:/demo.sh',
       name: 'demo.sh',
     });
-    expect(invokeMock).toHaveBeenCalledWith('load_script', { path: 'D:/demo.sh' });
+    expect(invokeMock).toHaveBeenCalledWith('load_script', {
+      path: 'D:/demo.sh',
+      workspaceRootPath: null,
+    });
   });
 
   it('归一化后的错误保持为 AppError', async () => {

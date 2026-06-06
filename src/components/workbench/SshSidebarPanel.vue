@@ -1162,7 +1162,7 @@ onBeforeUnmount(() => {
         <div class="ssh-empty-copy">
           <div class="ssh-empty-title ssh-empty-title--disconnected">尚未连接到远程主机</div>
           <div class="ssh-empty-desc ssh-empty-desc--disconnected">
-            连接一台 SSH 服务器后，即可在此浏览文件、上传下载以及管理远程资源。
+            连接一台 SSH 服务器后，即可在此浏览文件、上传下载以及管理远程资源
           </div>
         </div>
 

@@ -21,7 +21,7 @@ export const commands = {
 	deleteWorkspacePath: (payload: WorkspacePathDeleteRequest) => __TAURI_INVOKE<WorkspacePathDeletePayload>("delete_workspace_path", { payload }),
 	listWorkspaceEntries: (path: string | null, rootPath: string | null) => __TAURI_INVOKE<WorkspaceDirectoryPayload>("list_workspace_entries", { path, rootPath }),
 	loadImageAsset: (path: string) => __TAURI_INVOKE<ImageAssetPayload>("load_image_asset", { path }),
-	loadScript: (path: string) => __TAURI_INVOKE<ScriptFilePayload>("load_script", { path }),
+	loadScript: (path: string, workspaceRootPath: string | null) => __TAURI_INVOKE<ScriptFilePayload>("load_script", { path, workspaceRootPath }),
 	renameWorkspacePath: (payload: WorkspacePathRenameRequest) => __TAURI_INVOKE<WorkspacePathRenamePayload>("rename_workspace_path", { payload }),
 	saveScript: (payload: SaveScriptRequest) => __TAURI_INVOKE<ScriptFilePayload>("save_script", { payload }),
 	/**
@@ -1262,6 +1262,11 @@ export type LspHoverResult = {
 export type SaveScriptRequest = {
 	path: string,
 	content: string,
+	/**
+	 *  若来自工作区文件树 / 会话恢复 / 工作区批处理，必须传入工作区根并由后端校验路径边界。
+	 *  通过系统文件选择器打开或另存为的单文件可为空，保留用户显式选择任意本地文件的能力。
+	 */
+	workspaceRootPath: string | null,
 	/**  文本编码，已知值："utf-8" | "utf-8-bom" | "gbk" | …（保持字符串以便扩展）。 */
 	encoding: DocumentEncoding,
 };

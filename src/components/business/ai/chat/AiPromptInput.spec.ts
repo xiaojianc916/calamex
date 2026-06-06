@@ -73,7 +73,7 @@ describe('AiPromptInput', () => {
       },
     });
 
-    wrapper.get('textarea').element.dispatchEvent(event);
+    wrapper.get('[data-slot="ai-prompt-editor"]').element.dispatchEvent(event);
     await nextTick();
 
     expect(event.defaultPrevented).toBe(true);
@@ -175,13 +175,14 @@ describe('AiPromptInput', () => {
       modelValue: '初始化内容',
     });
 
-    const textarea = wrapper.get('textarea');
-    const element = textarea.element as HTMLTextAreaElement;
+    const editor = wrapper.get('[data-slot="ai-prompt-editor"]');
+    const element = editor.element as HTMLElement;
 
     expect(wrapper.get('.ai-composer-surface').exists()).toBe(true);
     expect(element.style.height).toBe('');
 
-    await textarea.setValue('第一行\n第二行\n第三行\n第四行');
+    element.textContent = '第一行\n第二行\n第三行\n第四行';
+    await editor.trigger('input');
 
     expect(element.style.height).toBe('');
   });

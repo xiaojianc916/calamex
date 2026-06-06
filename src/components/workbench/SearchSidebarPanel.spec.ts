@@ -194,7 +194,9 @@ describe('SearchSidebarPanel', () => {
     expect(tauriServiceMock.searchWorkspace).toHaveBeenCalledTimes(1);
 
     // 填写包含规则后过滤真正生效，应触发一次新的后端检索。
-    await wrapper.find('.search-panel-path-filter input').setValue('src/**');
+    const includePathInput = wrapper.find('.search-panel-path-filter input');
+    await includePathInput.setValue('src/**');
+    await includePathInput.trigger('keydown', { key: 'Enter' });
     await flushDebouncedSearch();
     expect(tauriServiceMock.searchWorkspace).toHaveBeenCalledTimes(2);
     expect(tauriServiceMock.searchWorkspace).toHaveBeenLastCalledWith(
