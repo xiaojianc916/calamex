@@ -64,6 +64,9 @@ export const workspaceTauriService: TWorkspaceTauriService = {
       {
         command: 'format_script',
         guardHint: '使用 shfmt 格式化脚本',
+        // 后端 shfmt 守卫超时为 12s (SHFMT_TIMEOUT)，前端预算需高于它，
+        // 否则会在后端完成前就以「IPC 超时」取消，给出误导性的失败。
+        timeoutMs: 15_000,
         input: payload,
         measureInput: measureScriptContentInput,
       },
