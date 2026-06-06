@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  aiChatMessageStreamSnapshotSchema,
   aiChatRequestSchema,
   aiConfigPayloadSchema,
   aiCredentialStatusPayloadSchema,
@@ -46,7 +47,6 @@ describe('AI schema', () => {
       },
       credentials: [{ providerId: 'openai', hasCredentials: true }],
     });
-
     expect(parsed.providerType).toBe('mastra');
     expect(parsed.credentials[0]?.providerId).toBe('openai');
     expect('apiKey' in parsed).toBe(false);
@@ -58,7 +58,6 @@ describe('AI schema', () => {
       messages: [message],
       references: [reference],
     });
-
     expect(parsed.references[0]?.kind).toBe('current-file');
   });
 
@@ -84,7 +83,6 @@ describe('AI schema', () => {
         },
       ],
     });
-
     expect(parsed.references[0]?.attachmentPreview?.mimeType).toBe('image/png');
   });
 
@@ -122,8 +120,31 @@ describe('AI schema', () => {
       providerId: 'deepseek',
       hasCredentials: true,
     });
-
     expect(parsed.providerId).toBe('deepseek');
     expect(parsed.hasCredentials).toBe(true);
+  });
+});
+
+describe('AI 流式快照 interrupted 标记', () => {
+  it('interrupted 为可选字段(缺省时解析通过且为 undefined)', () => {
+    const parsed = aiChatMessageStreamSnapshotSchema.parse({ status: 'cancelled' });
+    expect(parsed.interrupted).toBeUndefined();
+  });
+
+  it('接受并保留 interrupted: true', () => {
+    const parsed = aiChatMessageStreamSnapshotSchema.parse({
+      status: 'cancelled',
+      interrupted: true,
+    });
+    expect(parsed.interrupted).toBe(true);
+  });
+
+  it('拒绝非布尔的 interrupted', () => {
+    expect(() =>
+      aiChatMessageStreamSnapshotSchema.parse({
+        status: 'cancelled',
+        interrupted: 'yes',
+      }),
+    ).toThrow();
   });
 });

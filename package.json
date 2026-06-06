@@ -129,5 +129,21 @@
     "vite": "^8.0.16",
     "vitest": "^4.1.8",
     "vue-tsc": "^3.3.3"
-  }
+  },
+  "description": "<div align=\"center\">",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xiaojianc916/calamex.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/xiaojianc916/calamex/issues"
+  },
+  "homepage": "https://github.com/xiaojianc916/calamex#readme"
 }

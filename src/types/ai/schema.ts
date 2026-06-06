@@ -63,35 +63,29 @@ import {
 /* ============================================================================
  * Constants
  * ========================================================================== */
-
 /** 对话标题最大字符数(刻意极简)。 */
 const CONVERSATION_TITLE_MAX_LENGTH = 10;
-
 /** 建议词池数量边界(请求 count 与响应 suggestions.length 共用)。 */
 const SUGGESTION_POOL_MIN_COUNT = 9;
 const SUGGESTION_POOL_MAX_COUNT = 90;
-
 /** 建议词池可指定的主题数量上限。 */
 const SUGGESTION_POOL_TOPICS_MAX = 24;
-
 /** 单行 unified diff hunk 合法前缀(行首字符)。 */
 export const UNIFIED_DIFF_HUNK_LINE_PREFIXES: readonly string[] = [' ', '+', '-'];
-
 /** "文件末尾无换行符" 在 unified diff 中的固定标记行。 */
 export const UNIFIED_DIFF_NO_NEWLINE_MARKER = '\\ No newline at end of file';
 
 /* ============================================================================
  * Patch
  * ========================================================================== */
-
 /**
  * 单行 unified diff hunk content。
  *
  * 合法形式:
- *   - `' '` 前缀:context line
- *   - `'+'` 前缀:added line
- *   - `'-'` 前缀:removed line
- *   - 字符串等于 `\\ No newline at end of file`:文件末尾无换行标记
+ * - `' '` 前缀:context line
+ * - `'+'` 前缀:added line
+ * - `'-'` 前缀:removed line
+ * - 字符串等于 `\\ No newline at end of file`:文件末尾无换行标记
  *
  * **不接受** hunk header (`@@ ... @@`) 与文件头 (`---`/`+++`),这些应在外层结构中。
  */
@@ -107,14 +101,12 @@ const aiUnifiedDiffHunkLineSchema = z
 /* ============================================================================
  * Provider / model
  * ========================================================================== */
-
 export const aiProviderTypeSchema = z.enum(['mastra']);
 export const aiModelRoleSchema = z.enum(['main', 'narrator']);
 
 /* ============================================================================
  * Chat message
  * ========================================================================== */
-
 export const aiChatMessageActionSchema = z.object({
   id: z.enum(['allow-agent-execution']),
   label: z.string().min(1),
@@ -128,7 +120,6 @@ export const aiAgentConfirmationStateSchema = z.object({
 });
 
 /* ----- Language model usage ---------------------------------------------- */
-
 export const aiLanguageModelUsageInputDetailsSchema = z.object({
   noCacheTokens: z.number().nonnegative(),
   cacheReadTokens: z.number().nonnegative(),
@@ -145,9 +136,9 @@ export const aiLanguageModelUsageOutputDetailsSchema = z.object({
  *
  * **重要**:此 schema **不使用 `.passthrough()`**。原因:
  * - 顶层 `.passthrough()` 会在 `z.infer` 推断类型上引入 `[x: string]: unknown`
- *   索引签名,阻塞与外部库类型(例如 `LanguageModelUsage`)的赋值兼容。
+ * 索引签名,阻塞与外部库类型(例如 `LanguageModelUsage`)的赋值兼容。
  * - 需要透传 provider-specific 额外字段时,使用 `raw: unknown` 装载;
- *   schema strip 未声明字段是预期行为。
+ * schema strip 未声明字段是预期行为。
  */
 export const aiLanguageModelUsageSchema = z.object({
   inputTokens: z.number().nonnegative(),
@@ -162,7 +153,6 @@ export const aiLanguageModelUsageSchema = z.object({
 });
 
 /* ----- Tool call --------------------------------------------------------- */
-
 export const aiChatMessageToolCallSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
@@ -174,7 +164,6 @@ export const aiChatMessageToolCallSchema = z.object({
 });
 
 /* ----- Stream snapshot (on persisted message) ---------------------------- */
-
 /**
  * 当 assistant message 处于流式或刚结束流式时,挂载在 message.stream 上的运行态快照。
  *
@@ -183,6 +172,15 @@ export const aiChatMessageToolCallSchema = z.object({
  */
 export const aiChatMessageStreamSnapshotSchema = z.object({
   status: z.enum(['streaming', 'waiting-confirmation', 'completed', 'cancelled']),
+  /**
+   * 标记该流式快照是被"运行异常终止"收尾的。
+   *
+   * 典型场景:上一次会话流式进行中应用被整体退出 → 重启 hydrate 时该消息无法
+   * 续跑,被归一化为 'cancelled' 终态并打上本标记。用于把它与用户主动停止
+   * (同样落到 'cancelled' 但无本标记)区分开,让 UI 在既有报错提示线上呈现
+   * "运行被异常终止"。仅 hydrate 归一化阶段写入,正常运行链路不设置。
+   */
+  interrupted: z.boolean().optional(),
   activityText: z.string().min(1).optional(),
   runtimeEvents: z.array(z.lazy(() => agentRuntimeEventSchema)).optional(),
   finalAnswerStarted: z.boolean().optional(),
@@ -196,7 +194,6 @@ export const aiChatMessageStreamSnapshotSchema = z.object({
 });
 
 /* ----- Chat message ------------------------------------------------------ */
-
 export const aiChatMessageSchema = z.object({
   id: z.string().min(1),
   role: z.enum(['user', 'assistant', 'system', 'tool']),
@@ -212,7 +209,6 @@ export const aiChatMessageSchema = z.object({
 /* ============================================================================
  * Provider config / credentials
  * ========================================================================== */
-
 export const aiModelEndpointConfigPayloadSchema = z.object({
   providerType: aiProviderTypeSchema,
   selectedModel: z.string().nullable(),
@@ -275,7 +271,6 @@ export const aiProviderConnectionPayloadSchema = z.object({
 /* ============================================================================
  * Chat request / streaming
  * ========================================================================== */
-
 export const aiChatRequestSchema = z.object({
   threadId: z.string().nullable(),
   messages: z.array(aiChatMessageSchema).min(1),
@@ -315,8 +310,7 @@ export const aiChatStreamEventPayloadSchema = z.object({
 
 /* ============================================================================
  * Conversation title generation
- * ========================================================================== */
-
+ * ============================================================================ */
 export const aiConversationTitleRequestSchema = z.object({
   userMessage: z.string().min(1),
   assistantMessage: z.string().min(1),
@@ -329,8 +323,7 @@ export const aiConversationTitlePayloadSchema = z.object({
 
 /* ============================================================================
  * Suggestion pool
- * ========================================================================== */
-
+ * ============================================================================ */
 export const aiSuggestionPoolRequestSchema = z.object({
   count: z.number().int().min(SUGGESTION_POOL_MIN_COUNT).max(SUGGESTION_POOL_MAX_COUNT),
   locale: z.string().min(1),
@@ -352,8 +345,7 @@ export const aiSuggestionPoolPayloadSchema = z.object({
 
 /* ============================================================================
  * Patch
- * ========================================================================== */
-
+ * ============================================================================ */
 export const aiPatchSetSchema = z.object({
   summary: z.string(),
   files: z.array(
@@ -397,8 +389,7 @@ export const aiApplyPatchMetadataSchema = z.object({
 
 /* ============================================================================
  * Re-exports (barrel: external schemas re-surfaced for downstream convenience)
- * ========================================================================== */
-
+ * ============================================================================ */
 export {
   aiAgentChangedFileSchema,
   aiAgentChangedFileStatusSchema,

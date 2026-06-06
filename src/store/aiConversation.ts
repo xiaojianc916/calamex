@@ -1,6 +1,5 @@
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
-
 import type { IAiChatMessage } from '@/types/ai';
 import {
   aiChatMessageSchema,
@@ -17,9 +16,7 @@ import {
 // ---------------------------------------------------------------------------
 // Public constants & types
 // ---------------------------------------------------------------------------
-
 export const AI_CONVERSATION_HISTORY_LIMIT = 20;
-
 const TEMPORARY_TITLE_MAX_CHARS = 24;
 const GENERATED_TITLE_MAX_CHARS = 10;
 
@@ -64,16 +61,26 @@ interface IAiConversationPersistShape {
 // ---------------------------------------------------------------------------
 // Pure helpers
 // ---------------------------------------------------------------------------
-
 const createThreadId = (): string => createUniqueId('ai-thread');
 
-const normalizeHydratedMessage = (message: IAiChatMessage): IAiChatMessage => {
+/**
+ * 归一化一条 hydrate 出来的消息。
+ *
+ * 上一次会话在流式进行中被整体退出 → 重启 hydrate 时已无法继续该流。这里把它
+ * 收尾为 'cancelled' 终态(与既有消费方语义兼容: getFirstRoundFromMessages 等
+ * 已把 cancelled 视为不可用作回答), 并打上 interrupted 标记, 使 UI 能把它与
+ * 用户主动停止区分开, 呈现为"运行被异常终止"。非流式消息原样返回。
+ *
+ * 导出以便单测(与 salvageHydratedThreads 同惯例)。
+ */
+export const normalizeHydratedMessage = (message: IAiChatMessage): IAiChatMessage => {
   if (message.stream?.status !== 'streaming') return message;
   return {
     ...message,
     stream: {
       ...message.stream,
       status: 'cancelled',
+      interrupted: true,
     },
   };
 };
@@ -104,7 +111,6 @@ const deriveTemporaryConversationTitle = (messages: IAiChatMessage[]): string =>
 // 头尾各类引号/括号字符;命中即剥除。
 const TITLE_TRIM_LEADING = /^["'“”‘’《》【】「」『』\s]+/gu;
 const TITLE_TRIM_TRAILING = /["'“”‘’《》【】「」『』\s]+$/gu;
-
 const normalizeGeneratedTitle = (title: string): string => {
   const normalized = normalizeTitleSource(title)
     .replace(TITLE_TRIM_LEADING, '')
@@ -125,8 +131,9 @@ const createThread = (messages: IAiChatMessage[] = []): IAiConversationThread =>
 };
 
 const syncThreadMeta = (thread: IAiConversationThread): IAiConversationThread => {
-  const generatedTitle =
-    thread.titleStatus === 'generated' ? normalizeGeneratedTitle(thread.title) : '';
+  const generatedTitle = thread.titleStatus === 'generated'
+    ? normalizeGeneratedTitle(thread.title)
+    : '';
   return {
     ...thread,
     title: generatedTitle || deriveTemporaryConversationTitle(thread.messages),
@@ -173,6 +180,7 @@ const trimThreads = (
   const trimmedNonEmptyThreads = threads
     .filter((thread) => thread.messages.length > 0)
     .slice(-AI_CONVERSATION_HISTORY_LIMIT);
+
   // 始终保住当前 active 线程: 无论它是空白新会话, 还是非空但因 slice 窗口
   // (例如 hydrate 到超过 LIMIT 条的历史时)落在最近 N 个之外, 都不能被裁掉,
   // 否则会静默丢失用户正在查看的会话并把 active 重置到最新线程。
@@ -224,10 +232,9 @@ const ensureActiveThread = (
       threads: [emptyThread],
     };
   }
-  const resolvedActiveThreadId =
-    activeThreadId && threads.some((thread) => thread.id === activeThreadId)
-      ? activeThreadId
-      : (threads.at(-1)?.id ?? null);
+  const resolvedActiveThreadId = activeThreadId && threads.some((thread) => thread.id === activeThreadId)
+    ? activeThreadId
+    : (threads.at(-1)?.id ?? null);
   return {
     activeThreadId: resolvedActiveThreadId,
     threads,
@@ -241,9 +248,9 @@ const ensureActiveThread = (
  * 校验 —— 任一线程内任一条消息不合法(典型如版本升级后消息结构漂移、流式中断
  * 写入异常态、token 字段越界等), 整库 parse 失败, 旧逻辑随即落到
  * ensureActiveThread(null, []) 用空白线程把全部历史顶替清空。本函数改为尽量救援:
- *   - 单条消息不合法 → 仅丢弃该消息, 保留同线程其余消息;
- *   - 线程元信息(id/title/时间戳)不合法 → 丢弃该线程, 保留其余线程;
- *   - 至少救回一个线程即返回; 全部不可救援才返回 null(交回 legacy/兜底)。
+ * - 单条消息不合法 → 仅丢弃该消息, 保留同线程其余消息;
+ * - 线程元信息(id/title/时间戳)不合法 → 丢弃该线程, 保留其余线程;
+ * - 至少救回一个线程即返回; 全部不可救援才返回 null(交回 legacy/兜底)。
  *
  * 仅在严格 parse 失败后作为兜底调用, parse 成功路径行为不变。
  */
@@ -266,23 +273,29 @@ export const salvageHydratedThreads = (
       return parsedMessage.success ? [parsedMessage.data] : [];
     });
     // 用线程 schema 校验元信息; messages 已替换为救援后的合法集合。
-    const parsedThread = aiConversationThreadSchema.safeParse({ ...candidate, messages });
-    return parsedThread.success ? [parsedThread.data as unknown as IAiConversationThread] : [];
+    const parsedThread = aiConversationThreadSchema.safeParse({
+      ...candidate,
+      messages,
+    });
+    return parsedThread.success
+      ? [parsedThread.data as unknown as IAiConversationThread]
+      : [];
   });
   if (threads.length === 0) {
     return null;
   }
-  const activeThreadId =
-    typeof rawActiveThreadId === 'string' && rawActiveThreadId.trim().length > 0
-      ? rawActiveThreadId
-      : null;
-  return { activeThreadId, threads };
+  const activeThreadId = typeof rawActiveThreadId === 'string' && rawActiveThreadId.trim().length > 0
+    ? rawActiveThreadId
+    : null;
+  return {
+    activeThreadId,
+    threads,
+  };
 };
 
 // ---------------------------------------------------------------------------
 // Store
 // ---------------------------------------------------------------------------
-
 export const useAiConversationStore = defineStore(
   'ai-conversation',
   () => {
@@ -294,17 +307,15 @@ export const useAiConversationStore = defineStore(
     const activeThread = computed<IAiConversationThread | null>(
       () => threads.value.find((thread) => thread.id === activeThreadId.value) ?? null,
     );
-
-    const activeMessages = computed<IAiChatMessage[]>(() => activeThread.value?.messages ?? []);
-
-    const historyThreads = computed<IAiConversationThread[]>(() =>
-      threads.value.filter((thread) => thread.messages.length > 0),
+    const activeMessages = computed<IAiChatMessage[]>(
+      () => activeThread.value?.messages ?? []
     );
-
+    const historyThreads = computed<IAiConversationThread[]>(
+      () => threads.value.filter((thread) => thread.messages.length > 0),
+    );
     const hasMessages = computed(() => activeMessages.value.length > 0);
 
     // ── Internal helpers
-
     /**
      * 提交线程状态。
      *
@@ -344,7 +355,9 @@ export const useAiConversationStore = defineStore(
       replaceThreadsState({
         activeThreadId: currentThread.id,
         threads: threads.value.map((thread) =>
-          thread.id === currentThread.id ? syncThreadMeta(updater(thread)) : thread,
+          thread.id === currentThread.id
+            ? syncThreadMeta(updater(thread))
+            : thread,
         ),
       });
     };
@@ -357,13 +370,14 @@ export const useAiConversationStore = defineStore(
       replaceThreadsState({
         activeThreadId: activeThreadId.value,
         threads: threads.value.map((thread) =>
-          thread.id === threadId ? syncThreadMeta(updater(thread)) : thread,
+          thread.id === threadId
+            ? syncThreadMeta(updater(thread))
+            : thread,
         ),
       });
     };
 
     // ── Actions: messages
-
     const appendMessage = (message: IAiChatMessage): void => {
       patchActiveThread((thread) => ({
         ...thread,
@@ -391,22 +405,18 @@ export const useAiConversationStore = defineStore(
     // hydrate 时只有 active 线程的图片被回填成 base64（见 debouncedPersistStorage 的
     // restorePersistValue），其余历史线程的 attachmentPreview.src 仍是 `idb://` 指针。
     // 这里在某线程被激活时按需把它的指针解析回 base64，从而避免启动时一次性加载所有会话的图片。
-
     /** 已在解析中的线程，避免同一线程并发重复解析。 */
     const resolvingThreadIds = new Set<string>();
-
     const threadHasAttachmentPreviewPointer = (messages: IAiChatMessage[]): boolean =>
       messages.some((message) =>
         message.references.some((reference) =>
           Boolean(reference.attachmentPreview?.src?.startsWith('idb://')),
         ),
       );
-
     const resolveThreadAttachmentPreviews = (threadId: string | null): void => {
       if (!threadId || resolvingThreadIds.has(threadId)) return;
       const thread = threads.value.find((item) => item.id === threadId);
       if (!thread || !threadHasAttachmentPreviewPointer(thread.messages)) return;
-
       const targetMessages = thread.messages;
       resolvingThreadIds.add(threadId);
       void restoreAttachmentPreviewPointers(targetMessages)
@@ -432,7 +442,6 @@ export const useAiConversationStore = defineStore(
     };
 
     // ── Actions: thread lifecycle
-
     const switchThread = (threadId: string): void => {
       if (!threads.value.some((thread) => thread.id === threadId)) return;
       activeThreadId.value = threadId;
@@ -480,10 +489,9 @@ export const useAiConversationStore = defineStore(
         return false;
       }
       const remainingThreads = threads.value.filter((thread) => thread.id !== threadId);
-      const nextActiveThreadId =
-        activeThreadId.value === threadId
-          ? (remainingThreads.at(-1)?.id ?? null)
-          : activeThreadId.value;
+      const nextActiveThreadId = activeThreadId.value === threadId
+        ? (remainingThreads.at(-1)?.id ?? null)
+        : activeThreadId.value;
       replaceThreadsState({
         activeThreadId: nextActiveThreadId,
         threads: remainingThreads,
@@ -492,7 +500,6 @@ export const useAiConversationStore = defineStore(
     };
 
     // ── Actions: title generation
-
     const getThreadTitleStatus = (threadId: string): TAiConversationTitleStatus => {
       const thread = threads.value.find((item) => item.id === threadId);
       return thread?.titleStatus ?? 'temporary';

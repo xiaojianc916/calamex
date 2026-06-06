@@ -27,20 +27,22 @@ export const commands = {
 	/**
 	 *  启动（或重启）工作区文件监听
 	 * 
-	 *  监听结果通过 `WorkspaceFsEvent` 事件推送到前端。
-	 *  若已有监听，会先构造新 watcher，成功后原子替换旧的，旧 watcher 在 Drop 中关闭。
+	 *  真正的目录遍历与监听在后台线程完成，本命令仅做根目录校验与 watcher 构造后
+	 *  立即返回，因此打开超大仓库也不会阻塞前端。监听结果通过 `WorkspaceFsEvent` 推送。
+	 *  若已有监听，会先换入新句柄再通知旧线程退出，旧 watcher 在其线程结束时 Drop。
 	 * 
 	 *  # 参数
 	 *  - `root_path`: 工作区根目录的绝对或相对路径，会被 canonicalize
 	 * 
 	 *  # 错误
-	 *  路径不存在、不是目录、或底层 watcher 启动失败时返回 `Err(String)`
+	 *  路径不存在 / 不是目录、或 watcher 构造失败时返回 `Err(String)`。
+	 *  注意：后台的实际 watch 调用失败只记日志，不再同步抛出（后台化的取舍）。
 	 */
 	startWorkspaceWatching: (rootPath: string) => __TAURI_INVOKE<null>("start_workspace_watching", { rootPath }),
 	/**
 	 *  停止工作区文件监听
 	 * 
-	 *  调用后 watcher 立即被 Drop，回调线程退出。
+	 *  通知后台线程退出；线程在 `DEBOUNCE_DURATION` 内跳出循环并 Drop watcher。
 	 *  重复调用、未启动时调用都是安全的（幂等）。
 	 */
 	stopWorkspaceWatching: () => __TAURI_INVOKE<null>("stop_workspace_watching"),
