@@ -100,6 +100,20 @@
       </template>
     </template>
 
+    <div
+      v-if="gitStore.canLoadMoreCommitHistory"
+      ref="historySentinelRef"
+      class="git-history-graph-sentinel"
+      aria-hidden="true"
+    />
+    <div
+      v-if="gitStore.isCommitHistoryLoading && commits.length > 0"
+      class="git-history-graph-loading-more"
+    >
+      <span class="icon-[lucide--loader-circle] git-history-graph-filelist-spinner" aria-hidden="true" />
+      <span v-text="'正在加载更多提交…'" />
+    </div>
+
     <section v-if="behind > 0" class="git-history-graph-incoming-note">
       <span class="icon-[lucide--arrow-down] git-history-graph-group-icon" aria-hidden="true" />
       <span v-text="'传入更改 ' + behind + ' 条 · 拉取后查看'" />
@@ -542,6 +556,46 @@ const handleWindowResize = (): void => {
   if (hover.open) { clearHoverOpenTimer(); clearHoverCloseTimer(); closeHoverCard(); }
 };
 
+// 滚动到底部时无限懒加载：哨兵进入(内部滚动容器的)视口就追加下一段历史。
+// 每页条数仍由后端默认值(20)决定，这里只负责"滚到底再要一段"，没有总量上限。
+const historySentinelRef = ref<HTMLElement | null>(null);
+let historyObserver: IntersectionObserver | null = null;
+
+const loadMoreHistory = (): void => {
+  if (!gitStore.canLoadMoreCommitHistory || gitStore.isCommitHistoryLoading) return;
+  void gitStore.loadCommitHistory({ append: true }).catch((error) => {
+    console.error('[GitHistoryGraph] load more commit history failed:', error);
+  });
+};
+
+const disconnectHistoryObserver = (): void => {
+  if (historyObserver) {
+    historyObserver.disconnect();
+    historyObserver = null;
+  }
+};
+
+const setupHistoryObserver = (): void => {
+  disconnectHistoryObserver();
+  const sentinel = historySentinelRef.value;
+  if (!sentinel || typeof IntersectionObserver === 'undefined') return;
+  // 历史列表渲染在 SourceControlPanel 的 .source-control-scroll 内部滚动容器里，
+  // 用它当 IntersectionObserver 的 root，回退到视口。
+  const scrollRoot = sentinel.closest('.source-control-scroll');
+  historyObserver = new IntersectionObserver(
+    (entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) loadMoreHistory();
+    },
+    { root: scrollRoot instanceof HTMLElement ? scrollRoot : null, rootMargin: '240px 0px' },
+  );
+  historyObserver.observe(sentinel);
+};
+
+// 哨兵随 canLoadMoreCommitHistory 显隐而挂载/卸载，跟随重建/断开观察器。
+watch(historySentinelRef, () => {
+  setupHistoryObserver();
+});
+
 watch(
   () => props.commits,
   (commits) => {
@@ -562,11 +616,13 @@ onMounted(() => {
   window.addEventListener('pointerdown', handleWindowPointerDown, true);
   window.addEventListener('keydown', handleWindowKeydown);
   window.addEventListener('resize', handleWindowResize);
+  setupHistoryObserver();
 });
 
 onBeforeUnmount(() => {
   clearHoverOpenTimer();
   clearHoverCloseTimer();
+  disconnectHistoryObserver();
   if (typeof window === 'undefined') return;
   window.removeEventListener('pointerdown', handleWindowPointerDown, true);
   window.removeEventListener('keydown', handleWindowKeydown);
@@ -605,6 +661,22 @@ onBeforeUnmount(() => {
 .git-history-graph-group-count { margin-left: auto; font-variant-numeric: tabular-nums; }
 
 .git-history-graph-incoming-note {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 6px;
+  font-size: 11px;
+  color: #818b98;
+}
+
+.git-history-graph-sentinel {
+  width: 100%;
+  height: 1px;
+  flex: 0 0 auto;
+}
+
+.git-history-graph-loading-more {
   display: flex;
   flex-direction: row;
   align-items: center;
