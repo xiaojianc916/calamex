@@ -678,6 +678,29 @@ fn restart_stale_default_sidecar() -> Result<(), String> {
     Ok(())
 }
 
+/// 应用退出时收口默认本地 sidecar：杀掉其监听进程及整棵子进程树
+/// （连同派生的 Node / MCP / uvx 等子进程，配合 terminate_process 的 `/T`）。
+/// 仅作用于默认本地 sidecar；指向自定义远端（XIAOJIANC_AGENT_SIDECAR_URL）时不处理。
+/// 尽力而为：任何一步失败都只记录日志，绝不 panic 或阻断退出流程。
+pub fn shutdown_default_sidecar() {
+    if !is_default_local_sidecar_url(&configured_base_url()) {
+        return;
+    }
+
+    match find_listening_pids_for_port(DEFAULT_SIDECAR_PORT) {
+        Ok(pids) => {
+            for pid in pids {
+                if let Err(error) = terminate_process(pid) {
+                    eprintln!("退出清理：结束 sidecar 进程 {pid} 失败：{error}");
+                }
+            }
+        }
+        Err(error) => {
+            eprintln!("退出清理：查询 sidecar 监听进程失败：{error}");
+        }
+    }
+}
+
 /// 端口是否已有进程在监听。用于在 spawn 前去重：若已有 sidecar 在启动中，
 /// 就不要再拉起一个会因 EADDRINUSE 崩溃的重复进程。
 fn is_port_listening(port: u16) -> bool {
@@ -735,7 +758,7 @@ fn parse_netstat_listening_pids(output: &str, port: u16) -> Vec<u32> {
 fn terminate_process(pid: u32) -> Result<(), String> {
     let mut command = Command::new("taskkill");
     command
-        .args(["/PID", &pid.to_string(), "/F"])
+        .args(["/PID", &pid.to_string(), "/T", "/F"])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
