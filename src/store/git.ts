@@ -8,6 +8,7 @@ import type {
   IGitCommitFileDiffPayload,
   IGitCommitResultPayload,
   IGitCommitSummaryPayload,
+  IGitDiffPreviewPayload,
   IGitFileBaselinePayload,
   IGitPullRequestDetailPayload,
   IGitPullRequestSummaryPayload,
@@ -128,6 +129,10 @@ export const useGitStore = defineStore('git', () => {
   // 可长期缓存；仓库根变更 / reset 时随 baseline 缓存一起清空。
   const commitFileDiffCache = ref<Record<string, IGitCommitFileDiffPayload>>({});
 
+  // 提交文件 Diff 预览（主界面只读 Diff 视图用）按 "commitId:relativePath" 缓存。
+  // 同样不可变，随 baseline 缓存一起清空。
+  const commitFileDiffPreviewCache = ref<Record<string, IGitDiffPreviewPayload>>({});
+
   // -- request-id staleness tokens -----------------------------------------
   // 模块私有计数器,不是 reactive 状态。每个资源的并发 fetch 用 ++ 拿到自己的
   // token,resolve 时与当前 token 比对——不等则视为 stale,既不写结果也不
@@ -148,6 +153,9 @@ export const useGitStore = defineStore('git', () => {
 
   // de-duplicates concurrent in-flight commit-file-diff fetches keyed by "commitId:relativePath".
   const pendingCommitFileDiffRequests = new Map<string, Promise<IGitCommitFileDiffPayload>>();
+
+  // de-duplicates concurrent in-flight commit-file-diff-preview fetches keyed by "commitId:relativePath".
+  const pendingCommitFileDiffPreviewRequests = new Map<string, Promise<IGitDiffPreviewPayload>>();
 
   // -- getters ---------------------------------------------------------------
 
@@ -172,6 +180,7 @@ export const useGitStore = defineStore('git', () => {
     baselineEpoch.value += 1;
     commitDetailCache.value = {};
     commitFileDiffCache.value = {};
+    commitFileDiffPreviewCache.value = {};
   };
 
   const resetCommitHistory = (): void => {
@@ -298,7 +307,7 @@ export const useGitStore = defineStore('git', () => {
   };
 
   /**
-   * 读取单个提交中某个文件的 diff（按 hunk 分组），用于历史记录里内联展开。
+   * 读取单个提交中某个文件的 diff（按 hunk 分组）。
    * 按 "commitId:relativePath" 缓存；并发同一文件的请求会复用同一个 in-flight promise。
    */
   const loadCommitFileDiff = async (
@@ -334,6 +343,47 @@ export const useGitStore = defineStore('git', () => {
       });
 
     pendingCommitFileDiffRequests.set(cacheKey, request);
+    return request;
+  };
+
+  /**
+   * 读取单个提交中某个文件的主界面 Diff 预览（对比父提交），
+   * 用于复用主界面只读 Diff 视图（editorStore.openGitDiffDocument）。
+   * 按 "commitId:relativePath" 缓存；并发同一文件的请求会复用同一个 in-flight promise。
+   */
+  const loadCommitFileDiffPreview = async (
+    commitId: string,
+    relativePath: string,
+  ): Promise<IGitDiffPreviewPayload> => {
+    const cacheKey = commitId + ':' + relativePath;
+    const cached = commitFileDiffPreviewCache.value[cacheKey];
+    if (cached) {
+      return cached;
+    }
+
+    const pending = pendingCommitFileDiffPreviewRequests.get(cacheKey);
+    if (pending) {
+      return pending;
+    }
+
+    const request = tauriService
+      .getGitCommitFileDiffPreview({
+        repositoryRootPath: requireRepositoryRootPath(),
+        commitId,
+        relativePath,
+      })
+      .then((payload) => {
+        commitFileDiffPreviewCache.value = {
+          ...commitFileDiffPreviewCache.value,
+          [cacheKey]: payload,
+        };
+        return payload;
+      })
+      .finally(() => {
+        pendingCommitFileDiffPreviewRequests.delete(cacheKey);
+      });
+
+    pendingCommitFileDiffPreviewRequests.set(cacheKey, request);
     return request;
   };
 
@@ -808,6 +858,7 @@ export const useGitStore = defineStore('git', () => {
     isPullRequestDetailLoading,
     commitDetailCache,
     commitFileDiffCache,
+    commitFileDiffPreviewCache,
     // getters
     hasRepository,
     totalChangeCount,
@@ -828,6 +879,7 @@ export const useGitStore = defineStore('git', () => {
     loadCommitHistory,
     loadCommitDetail,
     loadCommitFileDiff,
+    loadCommitFileDiffPreview,
     loadBranches,
     loadStashes,
     loadPullRequestSupport,
