@@ -22,6 +22,81 @@ const replaceRegex = (label, regex, replacer) => {
   source = source.replace(regex, replacer);
 };
 
+const findMatchingParen = (text, openParenIndex) => {
+  let depth = 0;
+  let quote = null;
+  let escaped = false;
+  for (let index = openParenIndex; index < text.length; index += 1) {
+    const char = text[index];
+    if (quote) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (char === '\\') {
+        escaped = true;
+        continue;
+      }
+      if (char === quote) {
+        quote = null;
+      }
+      continue;
+    }
+    if (char === '"' || char === "'" || char === '`') {
+      quote = char;
+      continue;
+    }
+    if (char === '(') {
+      depth += 1;
+      continue;
+    }
+    if (char === ')') {
+      depth -= 1;
+      if (depth === 0) return index;
+    }
+  }
+  return -1;
+};
+
+const replaceTerminalOnResizeBlock = () => {
+  if (source.includes('this._scheduleLiveResizePtySizeSync(cols, rows);')) {
+    return;
+  }
+
+  const anchor = 'terminal.onResize(';
+  const start = source.indexOf(anchor);
+  if (start < 0) fail('terminal onResize throttles during shell resize');
+
+  const openParenIndex = source.indexOf('(', start);
+  const closeParenIndex = findMatchingParen(source, openParenIndex);
+  if (closeParenIndex < 0) fail('terminal onResize closing paren');
+
+  let statementEnd = closeParenIndex + 1;
+  while (source[statementEnd] === ' ' || source[statementEnd] === '\t' || source[statementEnd] === '\r' || source[statementEnd] === '\n') {
+    statementEnd += 1;
+  }
+  if (source[statementEnd] !== ';') fail('terminal onResize statement end');
+  statementEnd += 1;
+
+  const replacement = `terminal.onResize(({ cols, rows }) => {
+      if (!this._didTerminalSizeChange(cols, rows)) return;
+      this._markInteractiveResizeRepaintSuppression();
+      if (this._isShellWindowResizing) {
+        this._scheduleViewportSync({
+          forceDuringResize: true,
+          refresh: this._liveResizeFrameCounter % TERMINAL_LIVE_RESIZE_REFRESH_EVERY === 0,
+          scrollToBottom: true,
+        });
+        this._scheduleLiveResizePtySizeSync(cols, rows);
+        return;
+      }
+      this._scheduleViewportSync({ scrollToBottom: true });
+      this._syncPtySize(cols, rows);
+    });`;
+
+  source = `${source.slice(0, start)}${replacement}${source.slice(statementEnd)}`;
+};
+
 if (source.includes('_syncTerminalLayoutDuringShellWindowResize')) {
   console.log('[terminal-live-resize-patch] 已应用过，无需重复执行。');
   process.exit(0);
@@ -127,11 +202,7 @@ replaceOnce(
 );
 
 // 9) 原 xterm onResize 事件在 shell live resize 中不直接打后端 PTY，改为节流同步。
-replaceRegex(
-  'terminal onResize throttles during shell resize',
-  /    terminal\.onResize\(\(\{ cols, rows \}\) => \{\n      if \(!this\._didTerminalSizeChange\(cols, rows\)\) return;\n      this\._scheduleViewportSync\(\{ scrollToBottom: true \}\);\n      this\._markInteractiveResizeRepaintSuppression\(\);\n      this\._syncPtySize\(cols, rows\);\n    \}\);/,
-  `    terminal.onResize(({ cols, rows }) => {\n      if (!this._didTerminalSizeChange(cols, rows)) return;\n      this._markInteractiveResizeRepaintSuppression();\n      if (this._isShellWindowResizing) {\n        this._scheduleViewportSync({\n          forceDuringResize: true,\n          refresh: this._liveResizeFrameCounter % TERMINAL_LIVE_RESIZE_REFRESH_EVERY === 0,\n          scrollToBottom: true,\n        });\n        this._scheduleLiveResizePtySizeSync(cols, rows);\n        return;\n      }\n      this._scheduleViewportSync({ scrollToBottom: true });\n      this._syncPtySize(cols, rows);\n    });`,
-);
+replaceTerminalOnResizeBlock();
 
 if (source === original) {
   console.log('[terminal-live-resize-patch] 没有变更。');
