@@ -9,6 +9,7 @@ import {
 
 const RESIZE_IDLE_RESET_DELAY_MS = 160;
 const INTERACTIVE_RESIZE_SETTLE_MS = 160;
+const INTERACTIVE_RESIZE_FRAME_PUMP_MAX_MS = 12_000;
 const TAURI_INTERNALS_KEY = '__TAURI_INTERNALS__';
 
 interface IResizeEventSource {
@@ -57,6 +58,8 @@ export const useWindowResizeState = () => {
   let timer: number | undefined;
   let unlisten: (() => void) | undefined;
   let detachResizeStartListener: (() => void) | undefined;
+  let resizeFramePumpId: number | undefined;
+  let resizeFramePumpStartedAt = 0;
   let isDisposed = false;
   let interactiveResizePhase: TInteractiveResizePhase = 'idle';
 
@@ -69,14 +72,53 @@ export const useWindowResizeState = () => {
     timer = undefined;
   };
 
+  const cancelResizeFramePump = (): void => {
+    if (resizeFramePumpId === undefined) {
+      return;
+    }
+
+    window.cancelAnimationFrame(resizeFramePumpId);
+    resizeFramePumpId = undefined;
+  };
+
   const dispatchResizeFrame = (): void => {
     window.dispatchEvent(new Event(SHELL_WINDOW_RESIZE_FRAME_EVENT));
+  };
+
+  const queueResizeFramePump = (): void => {
+    if (resizeFramePumpId !== undefined) {
+      return;
+    }
+
+    resizeFramePumpId = window.requestAnimationFrame(() => {
+      resizeFramePumpId = undefined;
+
+      if (isDisposed || interactiveResizePhase !== 'active') {
+        return;
+      }
+
+      dispatchResizeFrame();
+
+      if (Date.now() - resizeFramePumpStartedAt > INTERACTIVE_RESIZE_FRAME_PUMP_MAX_MS) {
+        interactiveResizePhase = 'settling';
+        scheduleResizeClassRemoval(INTERACTIVE_RESIZE_SETTLE_MS);
+        return;
+      }
+
+      queueResizeFramePump();
+    });
+  };
+
+  const startResizeFramePump = (): void => {
+    resizeFramePumpStartedAt = Date.now();
+    queueResizeFramePump();
   };
 
   const scheduleResizeClassRemoval = (delayMs: number): void => {
     clearResizeTimer();
     timer = window.setTimeout(() => {
       const wasResizing = html.classList.contains('is-resizing');
+      cancelResizeFramePump();
       html.classList.remove('is-resizing');
       interactiveResizePhase = 'idle';
       timer = undefined;
@@ -106,9 +148,12 @@ export const useWindowResizeState = () => {
     clearResizeTimer();
     html.classList.add('is-resizing');
     dispatchResizeFrame();
+    startResizeFramePump();
   };
 
   const endInteractiveResize = (): void => {
+    cancelResizeFramePump();
+    dispatchResizeFrame();
     interactiveResizePhase = 'settling';
     scheduleResizeClassRemoval(INTERACTIVE_RESIZE_SETTLE_MS);
   };
@@ -117,6 +162,7 @@ export const useWindowResizeState = () => {
     isDisposed = true;
     interactiveResizePhase = 'idle';
     clearResizeTimer();
+    cancelResizeFramePump();
     unlisten?.();
     detachResizeStartListener?.();
     html.classList.remove('is-resizing');
