@@ -10,6 +10,7 @@ import {
   type IEditorOperationFeedback,
 } from '@/utils/document-persistence';
 import { toErrorMessage } from '@/utils/error';
+import { getRelativeFileSystemPath } from '@/utils/path';
 
 type TAppStore = ReturnType<typeof useAppStore>;
 type TEditorStore = ReturnType<typeof useEditorStore>;
@@ -30,6 +31,7 @@ interface IPersistTextDocumentOptions {
   resolveSuccessFeedback: (payload: IScriptFilePayload) => IEditorOperationFeedback;
   failureTitle: string;
   fallbackFailureMessage: string;
+  workspaceRootPath?: string | null;
 }
 
 const formatShellScriptWithWasm = async (source: string, path?: string | null): Promise<string> => {
@@ -102,6 +104,12 @@ export const useDocumentPersistence = ({
     return true;
   };
 
+  const resolveWorkspaceRootForPath = (path: string): string | null => {
+    const workspaceRootPath = editorStore.workspaceRootPath;
+    if (!workspaceRootPath) return null;
+    return getRelativeFileSystemPath(path, workspaceRootPath) === null ? null : workspaceRootPath;
+  };
+
   const applySaveConventionsToDocument = (documentId: string): IEditorDocument | null => {
     const targetDocument = editorStore.getDocumentById(documentId);
     if (!targetDocument || !isTextDocument(targetDocument)) {
@@ -131,7 +139,7 @@ export const useDocumentPersistence = ({
       };
     }
 
-    return tauriService.loadScript(path);
+    return tauriService.loadScript(path, resolveWorkspaceRootForPath(path));
   };
 
   const persistTextDocument = async ({
@@ -142,12 +150,14 @@ export const useDocumentPersistence = ({
     resolveSuccessFeedback,
     failureTitle,
     fallbackFailureMessage,
+    workspaceRootPath,
   }: IPersistTextDocumentOptions): Promise<boolean> => {
     try {
       const payload = await tauriService.saveScript({
         path,
         content,
         encoding,
+        workspaceRootPath: workspaceRootPath ?? resolveWorkspaceRootForPath(path),
       });
 
       onSaved?.(payload);
@@ -227,6 +237,7 @@ export const useDocumentPersistence = ({
 
   const formatWorkspaceFileByPath = async (path: string): Promise<boolean> => {
     try {
+      const workspaceRootPath = resolveWorkspaceRootForPath(path);
       const sourceDocument = await loadTextSourceDocument(path);
       const formattedContent = await formatShellScriptWithWasm(
         sourceDocument.content,
@@ -238,6 +249,7 @@ export const useDocumentPersistence = ({
         path,
         content: formattedContent,
         encoding: sourceDocument.encoding,
+        workspaceRootPath,
         onSaved: (payload) => {
           const existingDocument = editorStore.findDocumentByPath(path);
           if (existingDocument && isTextDocument(existingDocument)) {

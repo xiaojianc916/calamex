@@ -2,6 +2,7 @@ import { onScopeDispose } from 'vue';
 import { logger } from '@/utils/logger';
 import {
   SHELL_WINDOW_RESIZE_END_EVENT,
+  SHELL_WINDOW_RESIZE_FRAME_EVENT,
   SHELL_WINDOW_RESIZE_SETTLED_EVENT,
   SHELL_WINDOW_RESIZE_START_EVENT,
 } from '@/utils/window-resize-events';
@@ -68,6 +69,10 @@ export const useWindowResizeState = () => {
     timer = undefined;
   };
 
+  const dispatchResizeFrame = (): void => {
+    window.dispatchEvent(new Event(SHELL_WINDOW_RESIZE_FRAME_EVENT));
+  };
+
   const scheduleResizeClassRemoval = (delayMs: number): void => {
     clearResizeTimer();
     timer = window.setTimeout(() => {
@@ -91,6 +96,7 @@ export const useWindowResizeState = () => {
 
   const markResizing = (): void => {
     beginResizePhase();
+    dispatchResizeFrame();
     interactiveResizePhase = 'settling';
     scheduleResizeClassRemoval(RESIZE_IDLE_RESET_DELAY_MS);
   };
@@ -99,6 +105,7 @@ export const useWindowResizeState = () => {
     interactiveResizePhase = 'active';
     clearResizeTimer();
     html.classList.add('is-resizing');
+    dispatchResizeFrame();
   };
 
   const endInteractiveResize = (): void => {

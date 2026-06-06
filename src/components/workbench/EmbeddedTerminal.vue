@@ -1,5 +1,5 @@
 <template>
-  <div class="embedded-terminal-shell" @mousedown="handleShellMouseDown">
+  <div class="embedded-terminal-shell" data-shell-resize-responder @mousedown="handleShellMouseDown">
     <div ref="hostRef" class="embedded-terminal-host" :class="{ 'is-hidden-by-overlay': showOverlay }" />
 
     <div v-if="showOverlay" class="embedded-terminal-overlay" :class="{ 'is-error': isUnavailable }">

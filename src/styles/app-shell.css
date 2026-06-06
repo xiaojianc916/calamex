@@ -32,6 +32,59 @@ html.is-resizing .editor-surface {
   transition: none !important;
 }
 
+html.is-resizing .app-shell-pane,
+html.is-resizing .workbench-editor-viewport,
+html.is-resizing .workbench-content-stage,
+html.is-resizing .workbench-content-dock,
+html.is-resizing .workbench-content-card,
+html.is-resizing .editor-surface {
+  animation: none !important;
+  transition: none !important;
+}
+
+html.is-resizing .workbench-content-stage,
+html.is-resizing .workbench-content-dock,
+html.is-resizing .workbench-content-card {
+  width: 100%;
+  height: 100%;
+}
+
+html.is-resizing [data-shell-resize-responder] {
+  contain: layout paint;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+}
+
+html.is-resizing .ai-workspace-right-sidebar,
+html.is-resizing .ai-icon-button,
+html.is-resizing .ai-suggestion-empty :is(button),
+html.is-resizing .ai-chat-scroll-button,
+html.is-resizing .cm-editor,
+html.is-resizing .cm-scroller,
+html.is-resizing .cm-gutters,
+html.is-resizing .cm-tooltip,
+html.is-resizing .cm-mergeView,
+html.is-resizing .embedded-terminal-shell,
+html.is-resizing .embedded-terminal-host,
+html.is-resizing .xterm,
+html.is-resizing .xterm-viewport,
+html.is-resizing .git-diff-viewer,
+html.is-resizing .git-diff-viewer-surface {
+  animation: none !important;
+  transition: none !important;
+}
+
+html.is-resizing .ai-panel-frame,
+html.is-resizing .ai-chat-list,
+html.is-resizing .embedded-terminal-shell,
+html.is-resizing .git-diff-viewer,
+html.is-resizing .git-diff-viewer-surface {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
 .app-shell-pane,
 .workbench-editor-viewport,
 .diagnostics-overlay-panel {

@@ -21,17 +21,11 @@ const MAX_IMAGE_ASSET_BYTES: u64 = 20 * 1024 * 1024;
 
 #[tauri::command]
 #[specta::specta]
-pub fn load_script(path: String) -> Result<ScriptFilePayload, String> {
-    // 先规范化到真实路径并确认是文件，避免 `..` 等路径穿越与对目录/不存在路径的误读，
-    // 与 load_image_asset 的处理保持一致。
-    let file_path = PathBuf::from(&path)
-        .canonicalize()
-        .map_err(|error| format!("读取脚本失败：{error}"))?;
-
-    if !file_path.is_file() {
-        return Err("目标脚本不存在或不是有效文件。".into());
-    }
-
+pub fn load_script(
+    path: String,
+    workspace_root_path: Option<String>,
+) -> Result<ScriptFilePayload, String> {
+    let file_path = resolve_script_file_path(&path, workspace_root_path)?;
     ensure_within_size_limit(&file_path, MAX_SCRIPT_FILE_BYTES, "脚本")?;
     let bytes = fs::read(&file_path).map_err(|error| format!("读取脚本失败：{error}"))?;
     let (content, encoding) = decode_script_bytes(&bytes)?;
@@ -67,26 +61,7 @@ pub fn load_image_asset(
 #[tauri::command]
 #[specta::specta]
 pub fn save_script(payload: SaveScriptRequest) -> Result<ScriptFilePayload, String> {
-    // 先拆出文件名与父目录（缺省父目录视为当前目录），创建父目录后再对父目录做
-    // canonicalize，使最终写入路径中的 `..` 等被解析为真实目录，避免路径穿越写盘。
-    let raw_path = PathBuf::from(&payload.path);
-    let file_name = raw_path
-        .file_name()
-        .ok_or_else(|| "无法解析目标文件名。".to_string())?
-        .to_owned();
-    let parent = raw_path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("."));
-
-    fs::create_dir_all(&parent).map_err(|error| format!("创建目录失败：{error}"))?;
-
-    let file_path = parent
-        .canonicalize()
-        .map_err(|error| format!("解析目标目录失败：{error}"))?
-        .join(&file_name);
-
+    let file_path = resolve_save_script_path(&payload.path, payload.workspace_root_path)?;
     let bytes = encode_script_content(&payload.content, &payload.encoding)?;
     atomic_write(&file_path, &bytes)?;
     build_script_payload(file_path, payload.content, payload.encoding)
@@ -258,6 +233,67 @@ pub(crate) fn workspace_name(root_path: &Path) -> String {
         .and_then(|value| value.to_str())
         .unwrap_or("workspace")
         .to_string()
+}
+
+fn resolve_script_file_path(
+    raw_path: &str,
+    workspace_root_path: Option<String>,
+) -> Result<PathBuf, String> {
+    let file_path = PathBuf::from(raw_path)
+        .canonicalize()
+        .map_err(|error| format!("读取脚本失败：{error}"))?;
+
+    if !file_path.is_file() {
+        return Err("目标脚本不存在或不是有效文件。".into());
+    }
+
+    ensure_optional_workspace_boundary(&file_path, workspace_root_path)
+}
+
+fn resolve_save_script_path(
+    raw_path: &str,
+    workspace_root_path: Option<String>,
+) -> Result<PathBuf, String> {
+    // 先拆出文件名与父目录（缺省父目录视为当前目录），创建父目录后再对父目录做
+    // canonicalize，使最终写入路径中的 `..` 等被解析为真实目录，避免路径穿越写盘。
+    let raw_path = PathBuf::from(raw_path);
+    let file_name = raw_path
+        .file_name()
+        .ok_or_else(|| "无法解析目标文件名。".to_string())?
+        .to_owned();
+    let parent = raw_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
+
+    fs::create_dir_all(&parent).map_err(|error| format!("创建目录失败：{error}"))?;
+
+    let file_path = parent
+        .canonicalize()
+        .map_err(|error| format!("解析目标目录失败：{error}"))?
+        .join(&file_name);
+
+    ensure_optional_workspace_boundary(&file_path, workspace_root_path)
+}
+
+fn ensure_optional_workspace_boundary(
+    file_path: &Path,
+    workspace_root_path: Option<String>,
+) -> Result<PathBuf, String> {
+    let Some(workspace_root_path) = workspace_root_path
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(file_path.to_path_buf());
+    };
+
+    let workspace_root = resolve_workspace_root(Some(workspace_root_path))?;
+    if !file_path.starts_with(&workspace_root) {
+        return Err("仅允许读写当前资源根目录内的脚本文件。".into());
+    }
+
+    Ok(file_path.to_path_buf())
 }
 
 fn resolve_workspace_child_path(workspace_root: &Path, raw_path: &str) -> Result<PathBuf, String> {
@@ -525,8 +561,52 @@ fn encode_with_encoding_name(content: &str, label: &str) -> Result<Vec<u8>, Stri
 
 #[cfg(test)]
 mod tests {
-    use super::atomic_write;
+    use super::{atomic_write, resolve_save_script_path, resolve_script_file_path};
     use std::{fs, thread};
+
+    #[test]
+    fn rejects_workspace_script_reads_outside_root() {
+        let test_dir = std::env::temp_dir().join(format!(
+            "calamex-script-boundary-{}",
+            jiff::Timestamp::now().as_nanosecond()
+        ));
+        let workspace_root = test_dir.join("workspace");
+        let outside_root = test_dir.join("outside");
+        fs::create_dir_all(&workspace_root).expect("create workspace dir");
+        fs::create_dir_all(&outside_root).expect("create outside dir");
+        let outside_file = outside_root.join("script.sh");
+        fs::write(&outside_file, "echo outside\n").expect("write outside file");
+
+        let error = resolve_script_file_path(
+            &outside_file.to_string_lossy(),
+            Some(workspace_root.to_string_lossy().to_string()),
+        )
+        .expect_err("outside file should be rejected");
+
+        assert!(error.contains("仅允许读写当前资源根目录内的脚本文件"));
+        fs::remove_dir_all(test_dir).expect("remove temp dir");
+    }
+
+    #[test]
+    fn rejects_workspace_script_writes_outside_root() {
+        let test_dir = std::env::temp_dir().join(format!(
+            "calamex-save-boundary-{}",
+            jiff::Timestamp::now().as_nanosecond()
+        ));
+        let workspace_root = test_dir.join("workspace");
+        let outside_root = test_dir.join("outside");
+        fs::create_dir_all(&workspace_root).expect("create workspace dir");
+        fs::create_dir_all(&outside_root).expect("create outside dir");
+
+        let error = resolve_save_script_path(
+            &outside_root.join("script.sh").to_string_lossy(),
+            Some(workspace_root.to_string_lossy().to_string()),
+        )
+        .expect_err("outside save target should be rejected");
+
+        assert!(error.contains("仅允许读写当前资源根目录内的脚本文件"));
+        fs::remove_dir_all(test_dir).expect("remove temp dir");
+    }
 
     #[test]
     fn atomic_write_allows_concurrent_writers_without_fixed_temp_collision() {

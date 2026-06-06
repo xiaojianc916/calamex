@@ -1,5 +1,5 @@
 <template>
-  <section class="git-diff-viewer" aria-label="Git Diff Preview">
+  <section class="git-diff-viewer" data-shell-resize-responder aria-label="Git Diff Preview">
     <section v-if="preview.isEmpty" class="git-diff-viewer-empty">
       <strong>没有可显示的 Diff</strong>
       <p>当前文件在这个 Git 区域没有内容差异。</p>
@@ -14,6 +14,7 @@ import { Compartment, type Extension } from '@codemirror/state';
 import { EditorView, highlightSpecialChars } from '@codemirror/view';
 import { useResizeObserver } from '@vueuse/core';
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { useShellResizeFrameScheduler } from '@/composables/useShellResizeFrameScheduler';
 import { buildCodeMirrorSettingsExtensions } from '@/services/editor/codemirror-config';
 import {
   loadCodeMirrorLanguageSupport,
@@ -106,6 +107,11 @@ const scheduleLayout = (): void => {
     layoutDiffEditor();
   });
 };
+
+useShellResizeFrameScheduler({
+  onFrame: scheduleLayout,
+  onSettled: layoutDiffEditor,
+});
 
 // ────────────────────────────────────────────────────────
 // Mount / dispose

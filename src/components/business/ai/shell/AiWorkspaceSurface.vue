@@ -55,7 +55,7 @@ const handleRestartSidecar = async (): Promise<void> => {
 </script>
 
 <template>
-    <Card class="ai-assistant-card flex h-full min-h-0 w-full flex-1 gap-0 rounded-none border-0 py-0 shadow-none bg-transparent">
+    <Card data-shell-resize-responder class="ai-assistant-card flex h-full min-h-0 w-full flex-1 gap-0 rounded-none border-0 py-0 shadow-none bg-transparent">
         <CardContent class="ai-workspace-shell flex min-h-0 flex-1 px-0 pb-0 pt-0">
             <div class="ai-workspace-main flex min-h-0 flex-1">
                 <section class="ai-workspace-primary min-w-0 flex-1">
