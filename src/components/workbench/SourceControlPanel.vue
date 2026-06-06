@@ -990,11 +990,11 @@ const resolvePullRequestStateTone = (pullRequest: IGitPullRequestSummaryPayload)
 };
 
 const resolvePullRequestMeta = (pullRequest: IGitPullRequestSummaryPayload): string => {
-  const segments: string[] = ['#' + pullRequest.number];
+  const segments: string[] = [`#${pullRequest.number}`];
   if (pullRequest.author) {
     segments.push(pullRequest.author);
   }
-  segments.push(pullRequest.headRef + ' → ' + pullRequest.baseRef);
+  segments.push(`${pullRequest.headRef} → ${pullRequest.baseRef}`);
   return segments.join(' · ');
 };
 
@@ -1065,7 +1065,7 @@ const handleMergePullRequest = async (
 ): Promise<void> => {
   const action = await dialog.confirm({
     title: '合并这个 Pull Request？',
-    description: '将以 ' + mergeMethod.value + ' 方式合并 #' + pullRequest.number + '。',
+    description: `将以 ${mergeMethod.value} 方式合并 #${pullRequest.number}。`,
     confirmText: '合并',
     cancelText: '取消',
     variant: 'default',
@@ -1079,7 +1079,7 @@ const handleMergePullRequest = async (
     await gitStore.loadPullRequests(pullRequestStateFilter.value);
     pullRequestView.value = 'list';
     activePullRequestNumber.value = null;
-    message.success('已合并 #' + pullRequest.number);
+    message.success(`已合并 #${pullRequest.number}`);
   } catch (error) {
     message.error(toErrorMessage(error, '合并 Pull Request 失败'));
   } finally {
@@ -1092,7 +1092,7 @@ const handleClosePullRequest = async (
 ): Promise<void> => {
   const action = await dialog.confirm({
     title: '关闭这个 Pull Request？',
-    description: '将关闭 #' + pullRequest.number + '，但不会合并改动。',
+    description: `将关闭 #${pullRequest.number}，但不会合并改动。`,
     confirmText: '关闭 PR',
     cancelText: '取消',
     variant: 'danger',
@@ -1106,7 +1106,7 @@ const handleClosePullRequest = async (
     await gitStore.loadPullRequests(pullRequestStateFilter.value);
     pullRequestView.value = 'list';
     activePullRequestNumber.value = null;
-    message.success('已关闭 #' + pullRequest.number);
+    message.success(`已关闭 #${pullRequest.number}`);
   } catch (error) {
     message.error(toErrorMessage(error, '关闭 Pull Request 失败'));
   } finally {

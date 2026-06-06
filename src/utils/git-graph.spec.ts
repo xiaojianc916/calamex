@@ -58,8 +58,8 @@ describe('buildGitGraph', () => {
     expect(layout.laneCount).toBe(2);
     const zRow = layout.rows.find((row) => row.id === 'z');
     const wRow = layout.rows.find((row) => row.id === 'w');
-    expect(zRow && zRow.lane).toBe(0);
-    expect(wRow && wRow.lane).toBe(0);
+    expect(zRow?.lane).toBe(0);
+    expect(wRow?.lane).toBe(0);
   });
 
   it('泳道颜色按调色板循环取值', () => {

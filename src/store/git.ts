@@ -314,7 +314,7 @@ export const useGitStore = defineStore('git', () => {
     commitId: string,
     relativePath: string,
   ): Promise<IGitCommitFileDiffPayload> => {
-    const cacheKey = commitId + ':' + relativePath;
+    const cacheKey = `${commitId}:${relativePath}`;
     const cached = commitFileDiffCache.value[cacheKey];
     if (cached) {
       return cached;
@@ -355,7 +355,7 @@ export const useGitStore = defineStore('git', () => {
     commitId: string,
     relativePath: string,
   ): Promise<IGitDiffPreviewPayload> => {
-    const cacheKey = commitId + ':' + relativePath;
+    const cacheKey = `${commitId}:${relativePath}`;
     const cached = commitFileDiffPreviewCache.value[cacheKey];
     if (cached) {
       return cached;

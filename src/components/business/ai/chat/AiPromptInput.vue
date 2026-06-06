@@ -404,7 +404,7 @@ const getEditorSelectionRange = (): Range | null => {
   }
   const range = selection.getRangeAt(0);
   const root = editorRef.value;
-  if (!root || !root.contains(range.startContainer)) {
+  if (!root?.contains(range.startContainer)) {
     return null;
   }
   return range;
@@ -412,7 +412,7 @@ const getEditorSelectionRange = (): Range | null => {
 
 const getSlashQueryAtCaret = (): string | null => {
   const range = getEditorSelectionRange();
-  if (!range || !range.collapsed) {
+  if (!range?.collapsed) {
     return null;
   }
   const node = range.startContainer;

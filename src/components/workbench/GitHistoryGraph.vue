@@ -276,11 +276,8 @@ const buildEdgePath = (edge: IGitGraphEdge, rowHeight: number): string => {
   const x2 = laneX(edge.toLane);
   const mid = rowHeight / 2;
   if (edge.type === 'pass' && edge.fromLane === edge.toLane)
-    return 'M ' + x1 + ' 0 L ' + x1 + ' ' + rowHeight;
-  if (edge.type === 'in')
-    return (
-      'M ' + x1 + ' 0 C ' + x1 + ' ' + mid * 0.6 + ' ' + x2 + ' ' + mid * 0.4 + ' ' + x2 + ' ' + mid
-    );
+    return `M ${x1} 0 L ${x1} ${rowHeight}`;
+  if (edge.type === 'in') return `M ${x1} 0 C ${x1} ${mid * 0.6} ${x2} ${mid * 0.4} ${x2} ${mid}`;
   if (edge.type === 'out')
     return (
       'M ' +
@@ -300,7 +297,7 @@ const buildEdgePath = (edge: IGitGraphEdge, rowHeight: number): string => {
       ' ' +
       rowHeight
     );
-  return 'M ' + x1 + ' 0 C ' + x1 + ' ' + mid + ' ' + x2 + ' ' + mid + ' ' + x2 + ' ' + rowHeight;
+  return `M ${x1} 0 C ${x1} ${mid} ${x2} ${mid} ${x2} ${rowHeight}`;
 };
 
 const layout = computed(() =>
@@ -323,7 +320,7 @@ const decorated = computed<IGraphRow[]>(() =>
       nodeColor,
       refs: (commit.refs ?? []) as IGitCommitRef[],
       paths: edges.map((edge, edgeIndex) => ({
-        key: edge.type + ':' + edge.fromLane + ':' + edge.toLane + ':' + edgeIndex,
+        key: `${edge.type}:${edge.fromLane}:${edge.toLane}:${edgeIndex}`,
         d: buildEdgePath(edge, ROW_HEIGHT),
         color: edge.color,
       })),
@@ -394,7 +391,7 @@ const menuGroups = computed<ILinearContextMenuGroup[]>(() => {
 
 const hoverMessage = computed<string>(() => {
   const detail = hoverDetail.value;
-  if (detail) return detail.body ? detail.summary + '\n\n' + detail.body : detail.summary;
+  if (detail) return detail.body ? `${detail.summary}\n\n${detail.body}` : detail.summary;
   return hoverCommit.value?.summary ?? '';
 });
 const hoverAuthorName = computed<string>(
@@ -444,11 +441,11 @@ const formatTime = (value: string | null | undefined): string => {
   const diff = Math.max(0, Date.now() - time);
   if (diff < 30000) return '刚刚';
   const minutes = Math.floor(diff / 60000);
-  if (minutes < 60) return minutes + ' 分钟前';
+  if (minutes < 60) return `${minutes} 分钟前`;
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return hours + ' 小时前';
+  if (hours < 24) return `${hours} 小时前`;
   const days = Math.floor(hours / 24);
-  if (days < 30) return days + ' 天前';
+  if (days < 30) return `${days} 天前`;
   return new Date(value).toLocaleDateString();
 };
 
@@ -461,7 +458,7 @@ const formatAbsolute = (value: string | null | undefined): string => {
   const day = date.getDate();
   const hours = String(date.getHours()).padStart(2, '0');
   const minutes = String(date.getMinutes()).padStart(2, '0');
-  return year + '年' + month + '月' + day + '日 ' + hours + ':' + minutes;
+  return `${year}年${month}月${day}日 ${hours}:${minutes}`;
 };
 
 const loadExpandedDetail = async (commit: IGitCommitSummaryPayload): Promise<void> => {
@@ -680,7 +677,7 @@ const handleMenuSelect = async (item: ILinearContextMenuItem): Promise<void> => 
 
   if (item.key === 'open-github') {
     const repoUrl = gitStore.pullRequestSupport.repositoryUrl;
-    if (repoUrl) window.open(repoUrl + '/commit/' + commit.id, '_blank', 'noopener,noreferrer');
+    if (repoUrl) window.open(`${repoUrl}/commit/${commit.id}`, '_blank', 'noopener,noreferrer');
   }
 };
 
