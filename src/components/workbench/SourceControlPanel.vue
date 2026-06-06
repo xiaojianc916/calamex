@@ -372,9 +372,7 @@
                       </span>
                     </div>
 
-                    <p class="source-control-pr-detail-meta">
-                       resolvePullRequestMeta(pullRequestDetail) 
-                    </p>
+                    <p class="source-control-pr-detail-meta"> resolvePullRequestMeta(pullRequestDetail) </p>
 
                     <div class="source-control-pr-detail-stats">
                       <span class="source-control-pr-stat">
@@ -391,21 +389,14 @@
                       </span>
                     </div>
 
-                    <p v-if="pullRequestDetail.body" class="source-control-pr-detail-body">
-                       pullRequestDetail.body 
-                    </p>
+                    <p v-if="pullRequestDetail.body" class="source-control-pr-detail-body"> pullRequestDetail.body </p>
 
-                    <p v-if="pullRequestActionError" class="source-control-pr-form-error">
-                       pullRequestActionError 
-                    </p>
+                    <p v-if="pullRequestActionError" class="source-control-pr-form-error"> pullRequestActionError </p>
 
                     <div v-if="isPullRequestOpen(pullRequestDetail)" class="source-control-pr-merge-row">
-                      <select v-model="pullRequestMergeMethod" class="source-control-pr-select"
-                        :disabled="isBusy">
+                      <select v-model="pullRequestMergeMethod" class="source-control-pr-select" :disabled="isBusy">
                         <option v-for="option in pullRequestMergeMethodOptions" :key="option.value"
-                          :value="option.value">
-                           option.label 
-                        </option>
+                          :value="option.value"> option.label </option>
                       </select>
                       <button type="button" class="source-control-pr-action-btn is-primary"
                         :disabled="isBusy" @click="handleMergePullRequest">
@@ -459,9 +450,7 @@
                       <span>创建为草稿 PR</span>
                     </label>
 
-                    <p v-if="createPullRequestError" class="source-control-pr-form-error">
-                       createPullRequestError 
-                    </p>
+                    <p v-if="createPullRequestError" class="source-control-pr-form-error"> createPullRequestError </p>
 
                     <div class="source-control-pr-merge-row">
                       <button type="button" class="source-control-pr-action-btn"
@@ -530,7 +519,7 @@
               <button v-if="!isRemoteFormOpen" type="button"
                 class="source-control-btn source-control-pull-requests-config-trigger"
                 :disabled="isSettingRemote || isBusy" @click="handleOpenRemoteForm">
-                 pullRequestSupport.remoteName ? '修改远程地址' : '配置远程地址' 
+                 pullRequestSupport.remoteName ? '更新远程地址' : '配置远程地址' 
               </button>
 
               <form v-else class="source-control-pull-requests-form" @submit.prevent="handleSubmitRemoteForm">
@@ -562,7 +551,7 @@
                   <button type="submit"
                     class="source-control-btn source-control-btn-primary source-control-pull-requests-form-btn"
                     :disabled="isSettingRemote || !canSubmitRemoteForm">
-                     isSettingRemote ? '保存中…' : '保存远程' 
+                     isSettingRemote ? '保存中…' : '保存' 
                   </button>
                 </div>
               </form>
@@ -947,7 +936,7 @@ async function ensureActiveTabData(tabKey: TGitNavKey): Promise<void> {
           ? '读取 Git 分支失败'
           : tabKey === 'stash'
             ? '读取 Git 贮藏失败'
-            : '读取 Pull Request 信息失败';
+            : '读取 Pull Request 支持信息失败';
     message.error(toErrorMessage(error, fallbackMessage));
   }
 }
@@ -964,4 +953,965 @@ const changedEntries = computed(() =>
 );
 const untrackedEntries = computed(() => status.value.files.filter((entry) => entry.isUntracked));
 const stageableEntries = computed(() => [...changedEntries.value, ...untrackedEntries.value]);
-// 放弃全部的目标集合与可暂存集合完全一致(已跟踪改动
+// 放弃全部的目标集合与可暂存集合完全一致(已跟踪改动 + 未跟踪文件),复用同一个 computed。
+const discardableEntries = stageableEntries;
+const stagedPaths = computed(() => stagedEntries.value.map((entry) => entry.path));
+const canStageAll = computed(() => stageableEntries.value.length > 0 && !isBusy.value);
+const canUnstageAll = computed(() => stagedPaths.value.length > 0 && !isBusy.value);
+const canDiscardAll = computed(() => discardableEntries.value.length > 0 && !isBusy.value);
+const commitHistoryEntries = computed<IGitCommitSummaryPayload[]>(() => gitStore.commitHistory);
+const isCommitHistoryLoading = computed(() => gitStore.isCommitHistoryLoading);
+const branchEntries = computed<IGitBranchPayload[]>(() => gitStore.branches);
+const isBranchesLoading = computed(() => gitStore.isBranchesLoading);
+const stashEntries = computed<IGitStashEntryPayload[]>(() => gitStore.stashes);
+const isStashesLoading = computed(() => gitStore.isStashesLoading);
+const pullRequestSupport = computed<IGitPullRequestSupportPayload>(
+  () => gitStore.pullRequestSupport,
+);
+const isPullRequestSupportLoading = computed(() => gitStore.isPullRequestSupportLoading);
+const isSettingRemote = computed(() => gitStore.isSettingRemote);
+const pullRequests = computed<IGitPullRequestSummaryPayload[]>(() => gitStore.pullRequests);
+const isPullRequestsLoading = computed(() => gitStore.isPullRequestsLoading);
+const pullRequestDetail = computed<IGitPullRequestDetailPayload | null>(
+  () => gitStore.pullRequestDetail,
+);
+const isPullRequestDetailLoading = computed(() => gitStore.isPullRequestDetailLoading);
+
+const isRemoteFormOpen = ref(false);
+const remoteNameInput = ref('');
+const remoteUrlInput = ref('');
+const remoteFormError = ref<string | null>(null);
+
+const canSubmitRemoteForm = computed(
+  () => remoteNameInput.value.trim().length > 0 && remoteUrlInput.value.trim().length > 0,
+);
+
+const pullRequestView = ref<TPullRequestView>('list');
+const pullRequestStateFilter = ref<TPullRequestStateFilter>('open');
+const pullRequestActionError = ref<string | null>(null);
+const pullRequestMergeMethod = ref<TPullRequestMergeMethod>('merge');
+const createPullRequestTitle = ref('');
+const createPullRequestBody = ref('');
+const createPullRequestBase = ref('');
+const createPullRequestHead = ref('');
+const createPullRequestDraft = ref(false);
+const createPullRequestError = ref<string | null>(null);
+
+const pullRequestStateOptions: Array<{ value: TPullRequestStateFilter; label: string }> = [
+  { value: 'open', label: '开放' },
+  { value: 'closed', label: '已关闭' },
+  { value: 'all', label: '全部' },
+];
+
+const pullRequestMergeMethodOptions: Array<{ value: TPullRequestMergeMethod; label: string }> = [
+  { value: 'merge', label: '合并提交' },
+  { value: 'squash', label: '压缩合并' },
+  { value: 'rebase', label: '变基合并' },
+];
+
+const isCreatingPullRequest = computed(() => pendingAction.value === 'create-pull-request');
+
+const canSubmitCreatePullRequest = computed(
+  () =>
+    createPullRequestTitle.value.trim().length > 0 &&
+    createPullRequestBase.value.trim().length > 0 &&
+    createPullRequestHead.value.trim().length > 0,
+);
+
+const createPullRequestSubmitLabel = computed(() =>
+  isCreatingPullRequest.value ? '创建中…' : '创建 PR',
+);
+
+const sections = computed<IGitSection[]>(() => {
+  const nextSections: IGitSection[] = [];
+
+  if (conflictedEntries.value.length > 0) {
+    nextSections.push({
+      key: 'conflicts',
+      title: '冲突',
+      entries: conflictedEntries.value,
+    });
+  }
+
+  if (stagedEntries.value.length > 0) {
+    nextSections.push({
+      key: 'staged',
+      title: '已暂存',
+      entries: stagedEntries.value,
+    });
+  }
+
+  if (changedEntries.value.length > 0) {
+    nextSections.push({
+      key: 'changes',
+      title: '变更',
+      entries: changedEntries.value,
+    });
+  }
+
+  if (untrackedEntries.value.length > 0) {
+    nextSections.push({
+      key: 'untracked',
+      title: '未跟踪',
+      entries: untrackedEntries.value,
+    });
+  }
+
+  return nextSections;
+});
+
+const filteredSections = computed<IGitSection[]>(() => {
+  const keyword = searchQuery.value.trim().toLowerCase();
+  if (!keyword) {
+    return sections.value;
+  }
+
+  return sections.value
+    .map((section) => {
+      const matchesSection = section.title.toLowerCase().includes(keyword);
+      const entries = matchesSection
+        ? section.entries
+        : section.entries.filter((entry) => {
+            const haystack = [
+              entry.fileName,
+              entry.relativePath,
+              entry.previousRelativePath ?? '',
+              entry.indexStatus ?? '',
+              entry.worktreeStatus ?? '',
+            ]
+              .join(' ')
+              .toLowerCase();
+
+            return haystack.includes(keyword);
+          });
+
+      return {
+        ...section,
+        entries,
+      };
+    })
+    .filter((section) => section.entries.length > 0);
+});
+
+const hasVisibleChanges = computed(() =>
+  filteredSections.value.some((section) => section.entries.length > 0),
+);
+const canCommit = computed(
+  () => status.value.stagedCount > 0 && commitMessage.value.trim().length > 0 && !isBusy.value,
+);
+
+const branchLabel = computed(() => {
+  if (status.value.isDetached) {
+    return `detached @ ${status.value.headShortOid ?? 'HEAD'}`;
+  }
+
+  return status.value.headShortName ?? status.value.headBranchName ?? '未知分支';
+});
+
+const workspaceStateLabel = computed(() => {
+  if (status.value.conflictedCount > 0) {
+    return '存在冲突';
+  }
+
+  if (status.value.isClean) {
+    return '工作区干净';
+  }
+
+  return `${totalChangeCount.value} 项变更`;
+});
+
+const navItems = computed<IGitNavItem[]>(() => [
+  {
+    key: 'changes',
+    label: '变更',
+    count: totalChangeCount.value,
+    active: activeTab.value === 'changes',
+  },
+  {
+    key: 'history',
+    label: '历史',
+    count: commitHistoryEntries.value.length || (status.value.lastCommit ? 1 : 0),
+    active: activeTab.value === 'history',
+  },
+  {
+    key: 'branches',
+    label: '分支',
+    count: branchEntries.value.length || (status.value.headBranchName ? 1 : 0),
+    active: activeTab.value === 'branches',
+  },
+  {
+    key: 'pull-requests',
+    label: '拉取请求',
+    count: pullRequestSupport.value.available ? 1 : 0,
+    active: activeTab.value === 'pull-requests',
+  },
+  {
+    key: 'stash',
+    label: '贮藏',
+    count: stashEntries.value.length,
+    active: activeTab.value === 'stash',
+  },
+]);
+
+const emptyChangesTitle = computed(() => '没有匹配的变更');
+
+const emptyChangesText = computed(() => '试试搜索文件名、目录、状态，或者清空搜索关键字。');
+
+const commitButtonLabel = computed(() =>
+  pendingAction.value === 'commit' ? '提交中...' : '提交更改',
+);
+
+const matchesSearchQuery = (parts: Array<string | null | undefined>): boolean => {
+  const keyword = searchQuery.value.trim().toLowerCase();
+  if (!keyword) {
+    return true;
+  }
+
+  return parts
+    .filter((value): value is string => Boolean(value && value.trim().length > 0))
+    .join(' ')
+    .toLowerCase()
+    .includes(keyword);
+};
+
+const filteredCommitHistory = computed(() =>
+  commitHistoryEntries.value.filter((entry) =>
+    matchesSearchQuery([entry.summary, entry.shortId, entry.authorName]),
+  ),
+);
+
+const filteredBranchEntries = computed(() =>
+  branchEntries.value.filter((entry) =>
+    matchesSearchQuery([entry.shorthand, entry.upstreamName, entry.lastCommit?.summary ?? null]),
+  ),
+);
+
+const filteredStashEntries = computed(() =>
+  stashEntries.value.filter((entry) =>
+    matchesSearchQuery([entry.stashId, entry.summary, entry.branchName]),
+  ),
+);
+
+const activeStashId = ref<string | null | undefined>(undefined);
+
+const resolvedOpenStashId = computed(() => {
+  const firstEntry = filteredStashEntries.value[0];
+
+  if (!firstEntry) {
+    return null;
+  }
+
+  if (activeStashId.value === undefined) {
+    return firstEntry.stashId;
+  }
+
+  return activeStashId.value;
+});
+
+watch(
+  () => filteredStashEntries.value.map((entry) => entry.stashId),
+  (stashIds) => {
+    if (stashIds.length === 0) {
+      activeStashId.value = undefined;
+      return;
+    }
+
+    if (activeStashId.value && !stashIds.includes(activeStashId.value)) {
+      activeStashId.value = undefined;
+    }
+  },
+  { immediate: true },
+);
+
+const historyPanelTitle = computed(() => {
+  if (searchQuery.value.trim()) {
+    return `匹配 ${filteredCommitHistory.value.length} 条`;
+  }
+
+  const visibleCount = commitHistoryEntries.value.length || (status.value.lastCommit ? 1 : 0);
+
+  if (visibleCount > 0) {
+    return `最近 ${visibleCount} 条`;
+  }
+
+  return isCommitHistoryLoading.value ? '正在同步' : '暂无提交';
+});
+
+const historyEmptyText = computed(() =>
+  searchQuery.value.trim() ? '没有匹配的提交记录。' : '当前仓库还没有提交记录。',
+);
+
+const branchesPanelSummary = computed(() => {
+  if (searchQuery.value.trim()) {
+    return `匹配 ${filteredBranchEntries.value.length} 个`;
+  }
+
+  const total = branchEntries.value.length;
+  if (total === 0) {
+    return isBranchesLoading.value ? '正在同步' : '暂无分支';
+  }
+
+  return `共 ${total} 个`;
+});
+
+const branchGroups = computed<
+  Array<{ key: 'local' | 'remote'; title: string; entries: IGitBranchPayload[] }>
+>(() => {
+  const localEntries = filteredBranchEntries.value.filter((entry) => entry.kind !== 'remote');
+  const remoteEntries = filteredBranchEntries.value.filter((entry) => entry.kind === 'remote');
+
+  const groups: Array<{ key: 'local' | 'remote'; title: string; entries: IGitBranchPayload[] }> =
+    [];
+  if (localEntries.length > 0) {
+    groups.push({ key: 'local', title: '本地', entries: localEntries });
+  }
+  if (remoteEntries.length > 0) {
+    groups.push({ key: 'remote', title: '远程', entries: remoteEntries });
+  }
+
+  return groups;
+});
+
+const branchesEmptyText = computed(() =>
+  searchQuery.value.trim() ? '没有匹配的分支。' : '当前仓库没有可显示的分支。',
+);
+
+const stashPanelTitle = computed(() => {
+  if (searchQuery.value.trim()) {
+    return `匹配 ${filteredStashEntries.value.length} 条`;
+  }
+
+  return stashEntries.value.length > 0 ? `共 ${stashEntries.value.length} 条` : '暂无贮藏';
+});
+
+const stashEmptyText = computed(() =>
+  searchQuery.value.trim() ? '没有匹配的贮藏记录。' : '当前仓库没有 Git 贮藏。',
+);
+
+const pullRequestProviderLabel = computed(() => {
+  switch (pullRequestSupport.value.provider) {
+    case 'github':
+      return 'GitHub';
+    case 'gitlab':
+      return 'GitLab';
+    case 'gitea':
+      return 'Gitea';
+    case 'bitbucket':
+      return 'Bitbucket';
+    default:
+      return '未知平台';
+  }
+});
+
+const pullRequestPanelTitle = computed(() => {
+  if (isPullRequestSupportLoading.value) {
+    return '正在检测远程 Pull Request 支持';
+  }
+
+  if (pullRequestSupport.value.available) {
+    return `已检测到 ${pullRequestProviderLabel.value} 远程`;
+  }
+
+  if (pullRequestSupport.value.remoteName) {
+    return '当前远程暂未识别为可直达的 PR 平台';
+  }
+
+  return '当前仓库没有可用的远程评审入口';
+});
+
+const pullRequestPanelText = computed(() => {
+  if (pullRequestSupport.value.available) {
+    return '已根据 Git 远程地址解析出 Pull Request，可在下方直接查看、创建与合并。';
+  }
+
+  if (pullRequestSupport.value.remoteName) {
+    return '已检测到远程仓库，但当前无法可靠推导 Pull Request 平台信息。';
+  }
+
+  return '先为仓库配置远程地址，再在这里拉取 PR 列表或创建入口。';
+});
+
+const pullRequestsEmptyText = computed(() => {
+  switch (pullRequestStateFilter.value) {
+    case 'closed':
+      return '没有已关闭的 Pull Request。';
+    case 'all':
+      return '该仓库还没有任何 Pull Request。';
+    default:
+      return '没有开放中的 Pull Request。';
+  }
+});
+
+const isPullRequestOpen = (
+  pr: IGitPullRequestSummaryPayload | IGitPullRequestDetailPayload,
+): boolean => pr.state === 'open';
+
+const resolvePullRequestStateClass = (
+  pr: IGitPullRequestSummaryPayload | IGitPullRequestDetailPayload,
+): string => {
+  if (pr.state === 'merged') {
+    return 'is-merged';
+  }
+  if (pr.state === 'closed') {
+    return 'is-closed';
+  }
+  if (pr.isDraft) {
+    return 'is-draft';
+  }
+  return 'is-open';
+};
+
+const resolvePullRequestStateLabel = (
+  pr: IGitPullRequestSummaryPayload | IGitPullRequestDetailPayload,
+): string => {
+  if (pr.state === 'merged') {
+    return '已合并';
+  }
+  if (pr.state === 'closed') {
+    return '已关闭';
+  }
+  if (pr.isDraft) {
+    return '草稿';
+  }
+  return '开放';
+};
+
+const formatPullRequestTimestamp = (value: string | null | undefined): string => {
+  if (!value) {
+    return '';
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return '';
+  }
+  return parsed.toLocaleString();
+};
+
+const resolvePullRequestMeta = (
+  pr: IGitPullRequestSummaryPayload | IGitPullRequestDetailPayload,
+): string => {
+  const segments: string[] = [];
+  if (pr.author) {
+    segments.push(`@${pr.author}`);
+  }
+  if (pr.headRef && pr.baseRef) {
+    segments.push(`${pr.headRef} → ${pr.baseRef}`);
+  }
+  const updatedAt = formatPullRequestTimestamp(pr.updatedAt);
+  if (updatedAt) {
+    segments.push(`更新于 ${updatedAt}`);
+  }
+  return segments.join(' · ');
+};
+
+const resolveBranchMeta = (entry: IGitBranchPayload): string => {
+  const segments: string[] = [];
+  if (entry.upstreamName) {
+    segments.push(entry.upstreamName);
+  }
+  if (entry.lastCommit) {
+    segments.push(entry.lastCommit.shortId);
+  }
+
+  return segments.join(' · ');
+};
+
+const resolveStashMeta = (entry: IGitStashEntryPayload): string => {
+  const segments: string[] = [];
+
+  if (entry.branchName) {
+    segments.push(entry.branchName);
+  }
+  if (entry.commitShortId) {
+    segments.push(entry.commitShortId);
+  }
+
+  if (segments.length === 0) {
+    segments.push(entry.stashId);
+  }
+
+  return segments.join(' · ');
+};
+
+const STASH_SUMMARY_PREFIX_PATTERN = /^(?:On|WIP on)\s+[^:]+:\s*/u;
+
+const resolveStashTitle = (entry: IGitStashEntryPayload): string => {
+  const summary = entry.summary.trim();
+  const normalized = summary.replace(STASH_SUMMARY_PREFIX_PATTERN, '').trim();
+
+  return normalized || summary;
+};
+
+const resolveStashIndexLabel = (entry: IGitStashEntryPayload): string => `@${entry.index}`;
+
+const isStashOpen = (stashId: string): boolean => resolvedOpenStashId.value === stashId;
+
+const toggleStashOpen = (stashId: string): void => {
+  activeStashId.value = isStashOpen(stashId) ? null : stashId;
+};
+
+const resolveEntryKind = (
+  sectionKey: TGitSectionKey,
+  entry: IGitFileStatusPayload,
+): TGitChangeKind => {
+  switch (sectionKey) {
+    case 'staged':
+      return entry.indexStatus ?? 'modified';
+    case 'changes':
+      return entry.worktreeStatus ?? 'modified';
+    case 'untracked':
+      return 'untracked';
+    default:
+      return 'conflicted';
+  }
+};
+
+const resolveEntryTag = (sectionKey: TGitSectionKey, entry: IGitFileStatusPayload): string => {
+  switch (resolveEntryKind(sectionKey, entry)) {
+    case 'added':
+      return 'A';
+    case 'deleted':
+      return 'D';
+    case 'renamed':
+      return 'R';
+    case 'typechange':
+      return 'T';
+    case 'untracked':
+      return 'U';
+    case 'conflicted':
+      return '!';
+    default:
+      return 'M';
+  }
+};
+
+const resolveEntryTagTone = (sectionKey: TGitSectionKey, entry: IGitFileStatusPayload): string => {
+  switch (resolveEntryKind(sectionKey, entry)) {
+    case 'added':
+      return 'added';
+    case 'deleted':
+      return 'deleted';
+    case 'renamed':
+      return 'renamed';
+    case 'typechange':
+      return 'typechange';
+    case 'untracked':
+      return 'untracked';
+    case 'conflicted':
+      return 'conflicted';
+    default:
+      return 'modified';
+  }
+};
+
+const resolveEntryDisplayName = (entry: IGitFileStatusPayload): string => {
+  if (entry.fileName) {
+    return entry.fileName;
+  }
+
+  return getPathBaseName(entry.relativePath) || entry.relativePath;
+};
+
+const resolveEntryDirectory = (entry: IGitFileStatusPayload): string => {
+  if (entry.previousRelativePath) {
+    return `${entry.previousRelativePath} → ${entry.relativePath}`;
+  }
+
+  return getPathDirectory(entry.relativePath);
+};
+
+const resolveEntryActionTitle = (
+  sectionKey: TGitSectionKey,
+  entry: IGitFileStatusPayload,
+): string => {
+  if (sectionKey === 'staged') {
+    return `取消暂存 ${entry.fileName}`;
+  }
+
+  return `暂存 ${entry.fileName}`;
+};
+
+const resolveEntryActions = (
+  sectionKey: TGitSectionKey,
+  entry: IGitFileStatusPayload,
+): IGitEntryAction[] => {
+  if (sectionKey === 'conflicts') {
+    return [];
+  }
+
+  if (sectionKey === 'staged') {
+    return [
+      {
+        key: 'unstage',
+        title: resolveEntryActionTitle(sectionKey, entry),
+        icon: 'minus',
+      },
+    ];
+  }
+
+  return [
+    {
+      key: 'discard',
+      title: `放弃更改 ${entry.fileName}`,
+      icon: 'trash',
+    },
+    {
+      key: 'stage',
+      title: resolveEntryActionTitle(sectionKey, entry),
+      icon: 'plus',
+    },
+  ];
+};
+
+const isActivePath = (path: string): boolean => areFileSystemPathsEqual(path, props.activePath);
+
+const isContextTargetPath = (path: string): boolean =>
+  !isActivePath(path) && areFileSystemPathsEqual(path, scmContextTargetPath.value);
+
+const toggleSectionCollapse = (key: TGitSectionKey): void => {
+  collapsedSections[key] = !collapsedSections[key];
+};
+
+const selectNavItem = (key: TGitNavKey): void => {
+  activeTab.value = key;
+  closeSourceControlMenu();
+};
+
+const handleOpenCloneGuide = (): void => {
+  openExternalUrl(GIT_CLONE_GUIDE_URL);
+};
+
+const handleOpenGitGuide = (): void => {
+  openExternalUrl(GIT_GETTING_STARTED_URL);
+};
+
+const handleOpenFile = (path: string): void => {
+  emit('open-file', path);
+};
+
+const resolveDiffMode = (sectionKey: TGitSectionKey): TGitDiffMode =>
+  sectionKey === 'staged' ? 'staged' : 'worktree';
+
+const handleOpenDiff = (sectionKey: TGitSectionKey, entry: IGitFileStatusPayload): void => {
+  const repositoryRootPath = status.value.repositoryRootPath;
+  if (!repositoryRootPath) {
+    message.warning('当前工作区未检测到 Git 仓库。');
+    return;
+  }
+
+  emit('open-diff', {
+    repositoryRootPath,
+    path: entry.path,
+    mode: resolveDiffMode(sectionKey),
+  });
+};
+
+const {
+  handleRefresh,
+  handleStageAll,
+  handleUnstageAll,
+  handleDiscardAll,
+  handleInitRepository,
+  handleCommit,
+  handleDiscardEntry,
+  handleSectionAction,
+  handleEntryAction,
+} = useSourceControlActions({
+  gitStore,
+  message,
+  dialog,
+  getWorkspaceRootPath: () => props.workspaceRootPath,
+  getStageableEntries: () => stageableEntries.value,
+  getStagedPaths: () => stagedPaths.value,
+  getDiscardableEntries: () => discardableEntries.value,
+  getStagedCount: () => status.value.stagedCount,
+  getCommitMessage: () => commitMessage.value,
+  setCommitMessage: (value) => {
+    commitMessage.value = value;
+  },
+  runWithPending,
+  setSourceControlActionError: (value) => {
+    sourceControlActionError.value = value;
+  },
+  syncRepositoryStatus,
+});
+
+const handleReloadCommitHistory = async (): Promise<void> => {
+  try {
+    await gitStore.loadCommitHistory();
+  } catch (error) {
+    message.error(toErrorMessage(error, '读取 Git 提交历史失败'));
+  }
+};
+
+const handleReloadBranches = async (): Promise<void> => {
+  try {
+    await gitStore.loadBranches();
+  } catch (error) {
+    message.error(toErrorMessage(error, '读取 Git 分支失败'));
+  }
+};
+
+const INVALID_BRANCH_CHARS = [' ', '~', '^', ':', '?', '*', '[', ']'];
+
+const validateBranchName = (rawName: string): string | null => {
+  const name = rawName.trim();
+  if (!name) {
+    return '分支名称不能为空。';
+  }
+  if (INVALID_BRANCH_CHARS.some((char) => name.includes(char))) {
+    return '分支名称包含非法字符（空格、~、^、:、?、*、[、] 等）。';
+  }
+  if (name.includes('..')) {
+    return '分支名称不能包含连续的点（..）。';
+  }
+  if (name.startsWith('.') || name.endsWith('.')) {
+    return '分支名称不能以点（.）开头或结尾。';
+  }
+  if (name.startsWith('/') || name.endsWith('/')) {
+    return '分支名称不能以斜杠（/）开头或结尾。';
+  }
+  const exists = branchEntries.value.some(
+    (entry) => entry.kind !== 'remote' && entry.shorthand === name,
+  );
+  if (exists) {
+    return '已存在同名本地分支。';
+  }
+
+  return null;
+};
+
+const openBranchCreate = (): void => {
+  if (isBusy.value) {
+    return;
+  }
+
+  isBranchCreateOpen.value = true;
+  branchCreateName.value = '';
+  branchCreateError.value = null;
+  void nextTick(() => {
+    branchNameInputRef.value?.focus();
+  });
+};
+
+const cancelBranchCreate = (): void => {
+  isBranchCreateOpen.value = false;
+  branchCreateName.value = '';
+  branchCreateError.value = null;
+};
+
+const submitBranchCreate = async (): Promise<void> => {
+  const branchName = branchCreateName.value.trim();
+  const validationError = validateBranchName(branchName);
+  if (validationError) {
+    branchCreateError.value = validationError;
+    return;
+  }
+
+  try {
+    const didRun = await runWithPending('create-branch', async () => {
+      await gitStore.createBranch(branchName, true);
+      await gitStore.loadBranches();
+    });
+
+    if (!didRun) {
+      return;
+    }
+
+    cancelBranchCreate();
+    message.success(`已创建并切换到 ${branchName}`);
+  } catch (error) {
+    branchCreateError.value = toErrorMessage(error, '创建 Git 分支失败');
+  }
+};
+
+const handleCheckoutBranch = async (entry: IGitBranchPayload): Promise<void> => {
+  if (entry.isCurrent) {
+    return;
+  }
+
+  try {
+    const didRun = await runWithPending(`checkout-branch:${entry.name}`, async () => {
+      await gitStore.checkoutBranch(entry.shorthand);
+      await gitStore.loadBranches();
+    });
+
+    if (!didRun) {
+      return;
+    }
+
+    message.success(`已切换到 ${entry.shorthand}`);
+  } catch (error) {
+    message.error(toErrorMessage(error, '切换 Git 分支失败'));
+  }
+};
+
+const handleReloadStashes = async (): Promise<void> => {
+  try {
+    await gitStore.loadStashes();
+  } catch (error) {
+    message.error(toErrorMessage(error, '读取 Git 贮藏失败'));
+  }
+};
+
+const handleSaveStash = async (): Promise<void> => {
+  const stashMessageInput = promptForText('输入可选的贮藏说明；留空则使用 Git 默认说明。', '');
+  if (stashMessageInput === null) {
+    return;
+  }
+
+  const stashMode = await dialog.confirm({
+    title: '是否同时保存未跟踪文件？',
+    description: '确认会把未跟踪文件也放入 stash；取消则只保存已跟踪改动。',
+    confirmText: '包含未跟踪',
+    cancelText: '仅已跟踪',
+    dismissText: '取消',
+    variant: 'default',
+  });
+  if (stashMode === 'dismiss') {
+    return;
+  }
+
+  const includeUntracked = stashMode === 'confirm';
+  const stashMessage = stashMessageInput.trim() || null;
+
+  try {
+    const didRun = await runWithPending('save-stash', async () => {
+      await gitStore.saveStash(stashMessage, includeUntracked);
+      await gitStore.loadStashes();
+    });
+
+    if (!didRun) {
+      return;
+    }
+
+    message.success('当前改动已保存到 Git 贮藏');
+  } catch (error) {
+    message.error(toErrorMessage(error, '保存 Git 贮藏失败'));
+  }
+};
+
+const handleApplyStash = async (entry: IGitStashEntryPayload, pop: boolean): Promise<void> => {
+  if (pop) {
+    const action = await dialog.confirm({
+      title: '弹出此贮藏？',
+      description: `将应用 ${entry.stashId} 的改动并从贮藏列表移除。`,
+      confirmText: '弹出',
+      cancelText: '取消',
+      variant: 'danger',
+    });
+    if (action !== 'confirm') {
+      return;
+    }
+  }
+
+  try {
+    const didRun = await runWithPending(
+      `${pop ? 'pop' : 'apply'}-stash:${entry.stashId}`,
+      async () => {
+        await gitStore.applyStash(entry.index, pop);
+        await gitStore.loadStashes();
+      },
+    );
+
+    if (!didRun) {
+      return;
+    }
+
+    message.success(pop ? `已弹出 ${entry.stashId}` : `已应用 ${entry.stashId}`);
+  } catch (error) {
+    message.error(toErrorMessage(error, pop ? '弹出 Git 贮藏失败' : '应用 Git 贮藏失败'));
+  }
+};
+
+const handleDropStash = async (entry: IGitStashEntryPayload): Promise<void> => {
+  const action = await dialog.confirm({
+    title: '删除此贮藏？',
+    description: `将永久删除 ${entry.stashId}。此操作无法撤销。`,
+    confirmText: '删除',
+    cancelText: '取消',
+    variant: 'danger',
+  });
+  if (action !== 'confirm') {
+    return;
+  }
+
+  try {
+    const didRun = await runWithPending(`drop-stash:${entry.stashId}`, async () => {
+      await gitStore.dropStash(entry.index);
+      await gitStore.loadStashes();
+    });
+
+    if (!didRun) {
+      return;
+    }
+
+    message.success(`已删除 ${entry.stashId}`);
+  } catch (error) {
+    message.error(toErrorMessage(error, '删除 Git 贮藏失败'));
+  }
+};
+
+const handleReloadPullRequestSupport = async (): Promise<void> => {
+  try {
+    await gitStore.loadPullRequestSupport();
+    if (pullRequestSupport.value.available) {
+      await gitStore.loadPullRequests(pullRequestStateFilter.value);
+    }
+  } catch (error) {
+    message.error(toErrorMessage(error, '读取 Pull Request 支持信息失败'));
+  }
+};
+
+const handleReloadPullRequests = async (): Promise<void> => {
+  try {
+    await gitStore.loadPullRequests(pullRequestStateFilter.value);
+  } catch (error) {
+    message.error(toErrorMessage(error, '读取 Pull Request 列表失败'));
+  }
+};
+
+const handleSelectPullRequestState = async (state: TPullRequestStateFilter): Promise<void> => {
+  if (pullRequestStateFilter.value === state || isPullRequestsLoading.value) {
+    return;
+  }
+
+  pullRequestStateFilter.value = state;
+
+  try {
+    await gitStore.loadPullRequests(state);
+  } catch (error) {
+    message.error(toErrorMessage(error, '读取 Pull Request 列表失败'));
+  }
+};
+
+const handleOpenPullRequestDetail = async (pr: IGitPullRequestSummaryPayload): Promise<void> => {
+  pullRequestActionError.value = null;
+  pullRequestMergeMethod.value = 'merge';
+  pullRequestView.value = 'detail';
+
+  try {
+    await gitStore.loadPullRequestDetail(pr.number);
+  } catch (error) {
+    message.error(toErrorMessage(error, '读取 Pull Request 详情失败'));
+  }
+};
+
+const handleBackToPullRequestList = (): void => {
+  pullRequestView.value = 'list';
+  pullRequestActionError.value = null;
+};
+
+const handleMergePullRequest = async (): Promise<void> => {
+  const detail = pullRequestDetail.value;
+  if (!detail) {
+    return;
+  }
+
+  const mergeMethodLabel =
+    pullRequestMergeMethodOptions.find((option) => option.value === pullRequestMergeMethod.value)
+      ?.label ?? '合并提交';
+
+  const action = await dialog.confirm({
+    title: `合并 PR #${detail.number}？`,
+    description: `将通过「${mergeMethodLabel}」把 ${detail.headRef} 合并到 ${detail.baseRef}。
