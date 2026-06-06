@@ -57,6 +57,11 @@ export const commands = {
 	getGitDiffPreview: (payload: GitDiffPreviewRequest) => __TAURI_INVOKE<GitDiffPreviewPayload>("get_git_diff_preview", { payload }),
 	/**  返回特定提交中单个文件的 diff（对比父提交）。 */
 	getGitCommitFileDiff: (payload: GitCommitFileDiffRequest) => __TAURI_INVOKE<GitCommitFileDiffPayload>("get_git_commit_file_diff", { payload }),
+	/**
+	 *  返回特定提交中单个文件的主界面 Diff 预览（对比父提交）。
+	 *  复用与工作区/暂存区 Diff 相同的只读 Diff 视图（GitDiffViewer / openGitDiffDocument）。
+	 */
+	getGitCommitFileDiffPreview: (payload: GitCommitFileDiffRequest) => __TAURI_INVOKE<GitDiffPreviewPayload>("get_git_commit_file_diff_preview", { payload }),
 	listGitCommitHistory: (payload: GitCommitHistoryRequest) => __TAURI_INVOKE<GitCommitHistoryPayload>("list_git_commit_history", { payload }),
 	/**
 	 *  读取单个提交的详细信息（用于历史悬浮卡片）：提交元数据 + 相对首个父提交的
