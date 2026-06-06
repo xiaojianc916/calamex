@@ -50,7 +50,7 @@
   position: absolute;
   top: 0;
   right: 144px;
-  left: 12px;
+  left: 104px;
   z-index: calc(var(--workbench-motion-layer-overlay) - 1);
   height: var(--workbench-content-top-offset);
   user-select: none;
