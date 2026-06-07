@@ -18,10 +18,10 @@ import type {
   IWorkspaceDirectoryPayload,
   TDocumentEncoding,
 } from '@/types/editor';
-import { createLatestTaskRunner } from '@/utils/cancelable-task';
 import { desktopRuntimeReady, waitForDesktopRuntime } from '@/utils/desktop-runtime';
 import { toErrorMessage } from '@/utils/error';
 import { isShellScriptPath } from '@/utils/file-assets';
+import { createRuntimeScope } from '@/utils/runtime-scope';
 import { COMMAND_TEMPLATES, COMMENT_TEMPLATES, DEFAULT_EXECUTOR } from '@/utils/templates';
 
 const EMPTY_ENVIRONMENT: IExecutionEnvironment = {
@@ -57,14 +57,13 @@ export const useWorkbench = () => {
   const notifier = useMessage();
   useTheme();
   useWindowResizeState();
-  let executionEnvironmentSyncTimerId: number | null = null;
-  const executionEnvironmentRunner = createLatestTaskRunner();
+  const runtimeScope = createRuntimeScope('workbench');
+  const executionEnvironmentRunner = runtimeScope.latestTask('execution-environment');
+  let cancelExecutionEnvironmentSyncTimer: (() => void) | null = null;
 
   const clearExecutionEnvironmentSyncTimer = (): void => {
-    if (executionEnvironmentSyncTimerId !== null) {
-      window.clearTimeout(executionEnvironmentSyncTimerId);
-      executionEnvironmentSyncTimerId = null;
-    }
+    cancelExecutionEnvironmentSyncTimer?.();
+    cancelExecutionEnvironmentSyncTimer = null;
   };
 
   const cancelExecutionEnvironmentSync = (): void => {
@@ -73,7 +72,7 @@ export const useWorkbench = () => {
   };
 
   onScopeDispose(() => {
-    cancelExecutionEnvironmentSync();
+    void runtimeScope.dispose();
   });
 
   const reportError = (scene: string, error: unknown, fallbackMessage: string): void => {
@@ -221,8 +220,8 @@ export const useWorkbench = () => {
     editorStore.setEnvironment(EMPTY_ENVIRONMENT);
     editorStore.selectedExecutor = DEFAULT_EXECUTOR;
     clearExecutionEnvironmentSyncTimer();
-    executionEnvironmentSyncTimerId = window.setTimeout(() => {
-      executionEnvironmentSyncTimerId = null;
+    cancelExecutionEnvironmentSyncTimer = runtimeScope.setTimeout(() => {
+      cancelExecutionEnvironmentSyncTimer = null;
       void syncExecutionEnvironment();
     }, 0);
 
