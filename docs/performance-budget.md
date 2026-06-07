@@ -16,3 +16,16 @@
 - 正确性：归一化口径与 `areFileSystemPathsEqual` 保持完全一致（含 Windows 盘符大小写折叠），
   匹配结果不变；新增单测覆盖等价路径、Windows 大小写折叠、hunk 反转、无交集与空补丁。
 - 验证：`pnpm test src/composables/ai/useAiAssistant.patch.spec.ts`、`pnpm typecheck`、`pnpm lint`。
+
+## pickFromPool：空态建议的随机抽取
+
+- 文件：`src/composables/ai/useCopilotSuggestions.ts`
+- 问题：每次展示空态建议都要从 90 条静态池里随机挑 9 条。原实现每次都重新 trim/去重整池，
+  再做一次覆盖全量的 Fisher–Yates 洗牌（即便只取前 9 条）。
+- 算法：静态池去重结果模块级预计算一次复用；抽取改用「部分 Fisher–Yates」，
+  只洗前 k 个位置（k = 展示数），统计上等价于完整洗牌后取前 k 个。
+- 复杂度：
+  - 之前：每次 O(n) 去重 + O(n) 洗牌（n=池大小，静态池 n=90）。
+  - 之后：静态池去重一次性 O(n)；单次抽取 O(k)（k=9），动态池仍需一次 O(n) 去重。
+- 正确性：仍是无放回均匀抽样；新增单测覆盖数量上界、互不相同、去重去空白、空池与小池。
+- 验证：`pnpm test src/composables/ai/useCopilotSuggestions.spec.ts`、`pnpm typecheck`、`pnpm lint`。
