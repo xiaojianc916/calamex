@@ -8,6 +8,7 @@ use std::{
 
 pub(crate) mod branches;
 pub(crate) mod diff;
+pub(crate) mod github_auth;
 pub(crate) mod history;
 pub(crate) mod pull_request;
 pub(crate) mod revision;
