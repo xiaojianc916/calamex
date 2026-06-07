@@ -53,7 +53,7 @@
 
                         <div v-else-if="isActiveTextBufferLoading"
                           class="flex h-full min-h-0 flex-1 items-center justify-center px-6 text-sm text-muted-foreground">
-                          正在加载  editorStore.document.name …
+                          <span>正在加载 </span><span class="font-medium text-foreground" v-text="editorStore.document.name" /><span>…</span>
                         </div>
 
                         <DeferredSmartScriptEditor v-else-if="editorStore.document.kind === 'text'" :ref="bindEditorRef"
@@ -105,7 +105,7 @@
 
                     <div v-else-if="isActiveTextBufferLoading"
                       class="flex h-full min-h-0 flex-1 items-center justify-center px-6 text-sm text-muted-foreground">
-                      正在加载  editorStore.document.name …
+                      <span>正在加载 </span><span class="font-medium text-foreground" v-text="editorStore.document.name" /><span>…</span>
                     </div>
 
                     <DeferredSmartScriptEditor v-else-if="editorStore.document.kind === 'text'" :ref="bindEditorRef"
