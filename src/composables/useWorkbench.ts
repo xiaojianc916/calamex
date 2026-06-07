@@ -18,6 +18,7 @@ import type {
   IWorkspaceDirectoryPayload,
   TDocumentEncoding,
 } from '@/types/editor';
+import { createLatestTaskRunner } from '@/utils/cancelable-task';
 import { desktopRuntimeReady, waitForDesktopRuntime } from '@/utils/desktop-runtime';
 import { toErrorMessage } from '@/utils/error';
 import { isShellScriptPath } from '@/utils/file-assets';
@@ -57,8 +58,7 @@ export const useWorkbench = () => {
   useTheme();
   useWindowResizeState();
   let executionEnvironmentSyncTimerId: number | null = null;
-  let executionEnvironmentRequestId = 0;
-  let executionEnvironmentAbortController: AbortController | null = null;
+  const executionEnvironmentRunner = createLatestTaskRunner();
 
   const clearExecutionEnvironmentSyncTimer = (): void => {
     if (executionEnvironmentSyncTimerId !== null) {
@@ -68,10 +68,8 @@ export const useWorkbench = () => {
   };
 
   const cancelExecutionEnvironmentSync = (): void => {
-    executionEnvironmentRequestId += 1;
     clearExecutionEnvironmentSyncTimer();
-    executionEnvironmentAbortController?.abort();
-    executionEnvironmentAbortController = null;
+    executionEnvironmentRunner.cancel();
   };
 
   onScopeDispose(() => {
@@ -85,19 +83,16 @@ export const useWorkbench = () => {
   };
 
   const syncExecutionEnvironment = async (): Promise<void> => {
-    executionEnvironmentAbortController?.abort();
-    const requestId = executionEnvironmentRequestId + 1;
-    executionEnvironmentRequestId = requestId;
-    const abortController = new AbortController();
-    executionEnvironmentAbortController = abortController;
-
     try {
       const detectEnvironment = tauriService.detectEnvironment as TCancelableDetectEnvironment;
-      const environment = await detectEnvironment({ signal: abortController.signal });
-      if (requestId !== executionEnvironmentRequestId || abortController.signal.aborted) {
+      const result = await executionEnvironmentRunner.run((signal) =>
+        detectEnvironment({ signal }),
+      );
+      if (result.status === 'canceled') {
         return;
       }
 
+      const environment = result.value;
       editorStore.setEnvironment(environment);
       editorStore.selectedExecutor = DEFAULT_EXECUTOR;
       editorStore.appendLog(
@@ -108,19 +103,11 @@ export const useWorkbench = () => {
           : '当前系统未发现可用的 WSL2 运行环境，建议先安装或启用 WSL2。',
       );
     } catch (error) {
-      if (
-        requestId !== executionEnvironmentRequestId ||
-        abortController.signal.aborted ||
-        isCanceledIpcError(error)
-      ) {
+      if (isCanceledIpcError(error)) {
         return;
       }
 
       reportError('执行环境检测失败', error, '执行环境检测失败');
-    } finally {
-      if (requestId === executionEnvironmentRequestId) {
-        executionEnvironmentAbortController = null;
-      }
     }
   };
 
