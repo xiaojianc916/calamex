@@ -196,6 +196,50 @@ const hasContextCompressionMarker = (message: IAiChatMessage): boolean =>
   overscroll-behavior: contain;
   scroll-behavior: auto;
   overflow-anchor: none;
+  scrollbar-color: transparent transparent;
+  scrollbar-width: thin;
+}
+
+.ai-chat-list.is-scrollbar-active :deep(> div > div),
+.ai-chat-list:focus-within :deep(> div > div) {
+  scrollbar-color: color-mix(in srgb, var(--text-primary) 18%, transparent) transparent;
+}
+
+@media (hover: hover) {
+  .ai-chat-list:hover :deep(> div > div) {
+    scrollbar-color: color-mix(in srgb, var(--text-primary) 18%, transparent) transparent;
+  }
+}
+
+.ai-chat-list :deep(> div > div)::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.ai-chat-list :deep(> div > div)::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.ai-chat-list :deep(> div > div)::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  background-clip: content-box;
+}
+
+.ai-chat-list.is-scrollbar-active :deep(> div > div)::-webkit-scrollbar-thumb,
+.ai-chat-list:focus-within :deep(> div > div)::-webkit-scrollbar-thumb {
+  background-color: color-mix(in srgb, var(--text-primary) 18%, transparent);
+}
+
+@media (hover: hover) {
+  .ai-chat-list:hover :deep(> div > div)::-webkit-scrollbar-thumb {
+    background-color: color-mix(in srgb, var(--text-primary) 18%, transparent);
+  }
+}
+
+.ai-chat-list :deep(> div > div)::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in srgb, var(--text-primary) 28%, transparent);
 }
 
 .ai-chat-list__content {
@@ -219,22 +263,6 @@ const hasContextCompressionMarker = (message: IAiChatMessage): boolean =>
   left: 50%;
   z-index: 1;
   transform: translateX(-50%);
-}
-
-.ai-chat-list {
-  scrollbar-color: color-mix(in srgb, var(--text-primary) 10%, transparent) transparent;
-  scrollbar-width: thin;
-}
-
-.ai-chat-list::-webkit-scrollbar {
-  width: 8px;
-}
-
-.ai-chat-list::-webkit-scrollbar-thumb {
-  border: 2px solid transparent;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--text-primary) 10%, transparent);
-  background-clip: content-box;
 }
 
 .ai-message-typing {

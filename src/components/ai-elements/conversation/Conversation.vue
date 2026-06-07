@@ -50,6 +50,8 @@ const emit = defineEmits<{
 }>();
 
 const SCROLL_BOTTOM_RESTORE_THRESHOLD = 4;
+const SCROLLBAR_IDLE_HIDE_DELAY_MS = 900;
+const SCROLLBAR_GUTTER_WIDTH = 12;
 const stickToBottomRef = ref<{ scrollRef: HTMLElement | null } | null>(null);
 const delegatedProps = reactiveOmit(
   props,
@@ -60,9 +62,12 @@ const delegatedProps = reactiveOmit(
   'resize',
 );
 const isShellWindowResizing = ref(false);
+const isScrollbarActive = ref(false);
 const resolvedResize = computed(() => (isShellWindowResizing.value ? 'instant' : props.resize));
 let scrollListenerCleanup: (() => void) | null = null;
 let pendingScrollStateTimer: ReturnType<typeof setTimeout> | null = null;
+let scrollbarIdleTimer: ReturnType<typeof setTimeout> | null = null;
+let scrollbarPointerCleanup: (() => void) | null = null;
 let restoreFrame: number | null = null;
 let resizeLifecycleCleanup: (() => void) | null = null;
 
@@ -74,7 +79,29 @@ const cancelRestoreFrame = (): void => {
   restoreFrame = null;
 };
 
+const clearScrollbarIdleTimer = (): void => {
+  if (scrollbarIdleTimer !== null) {
+    clearTimeout(scrollbarIdleTimer);
+    scrollbarIdleTimer = null;
+  }
+};
+
+const showScrollbarTemporarily = (): void => {
+  clearScrollbarIdleTimer();
+  isScrollbarActive.value = true;
+  scrollbarIdleTimer = setTimeout(() => {
+    scrollbarIdleTimer = null;
+    isScrollbarActive.value = false;
+  }, SCROLLBAR_IDLE_HIDE_DELAY_MS);
+};
+
 const getScrollElement = (): HTMLElement | null => stickToBottomRef.value?.scrollRef ?? null;
+
+const isPointerInScrollbarGutter = (event: PointerEvent, scrollElement: HTMLElement): boolean => {
+  const rect = scrollElement.getBoundingClientRect();
+
+  return event.clientX >= rect.right - SCROLLBAR_GUTTER_WIDTH && event.clientX <= rect.right;
+};
 
 const emitScrollState = (scrollElement: HTMLElement): void => {
   const scrollTop = Math.max(0, Math.round(scrollElement.scrollTop));
@@ -140,21 +167,56 @@ const restoreScrollPosition = async (): Promise<void> => {
 
 const bindScrollListener = (): void => {
   scrollListenerCleanup?.();
+  scrollbarPointerCleanup?.();
 
   const scrollElement = getScrollElement();
 
   if (!scrollElement) {
     scrollListenerCleanup = null;
+    scrollbarPointerCleanup = null;
     return;
   }
 
   const handleScroll = (): void => {
+    showScrollbarTemporarily();
     queueScrollStateEmit(scrollElement);
+  };
+  const handlePointerMove = (event: PointerEvent): void => {
+    if (isPointerInScrollbarGutter(event, scrollElement)) {
+      showScrollbarTemporarily();
+    }
+  };
+  const handlePointerDown = (event: PointerEvent): void => {
+    if (!isPointerInScrollbarGutter(event, scrollElement)) {
+      return;
+    }
+
+    clearScrollbarIdleTimer();
+    isScrollbarActive.value = true;
+
+    const handlePointerUp = (): void => {
+      showScrollbarTemporarily();
+      window.removeEventListener('pointerup', handlePointerUp);
+      window.removeEventListener('pointercancel', handlePointerUp);
+      scrollbarPointerCleanup = null;
+    };
+
+    window.addEventListener('pointerup', handlePointerUp);
+    window.addEventListener('pointercancel', handlePointerUp);
+    scrollbarPointerCleanup = () => {
+      window.removeEventListener('pointerup', handlePointerUp);
+      window.removeEventListener('pointercancel', handlePointerUp);
+      scrollbarPointerCleanup = null;
+    };
   };
 
   scrollElement.addEventListener('scroll', handleScroll, { passive: true });
+  scrollElement.addEventListener('pointermove', handlePointerMove, { passive: true });
+  scrollElement.addEventListener('pointerdown', handlePointerDown);
   scrollListenerCleanup = () => {
     scrollElement.removeEventListener('scroll', handleScroll);
+    scrollElement.removeEventListener('pointermove', handlePointerMove);
+    scrollElement.removeEventListener('pointerdown', handlePointerDown);
   };
 };
 
@@ -200,7 +262,9 @@ onBeforeUnmount(() => {
   }
 
   scrollListenerCleanup?.();
+  scrollbarPointerCleanup?.();
   resizeLifecycleCleanup?.();
+  clearScrollbarIdleTimer();
   cancelRestoreFrame();
 
   if (pendingScrollStateTimer !== null) {
@@ -215,7 +279,7 @@ onBeforeUnmount(() => {
     ref="stickToBottomRef"
     v-bind="delegatedProps"
     :resize="resolvedResize"
-    :class="cn('relative flex-1 overflow-y-hidden', props.class)"
+    :class="cn('relative flex-1 overflow-y-hidden', { 'is-scrollbar-active': isScrollbarActive }, props.class)"
     role="log"
   >
     <slot />
