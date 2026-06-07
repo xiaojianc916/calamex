@@ -136,6 +136,16 @@ const SIDECAR_FILE_MUTATION_TOOL_NAMES = new Set<string>([
   'delete_file',
 ]);
 
+// 内部运维类工具（如 Mastra 工作内存写入）禁止对外展示为工具调用或动态提示文本。
+// 这类工具会传输 { memory: { currentTask: ... } } 格式原始数据，导致“正在思考”折叠栏上方
+// 出现带「处理」前缀的杂乱内容。tool_start、tool_result 及运行时智能体事件三条链路均需拦截。
+const SIDECAR_HIDDEN_TOOL_NAMES = new Set<string>([
+  'updateWorkingMemory',
+  'update_working_memory',
+  '__updateWorkingMemory',
+  '__update_working_memory__',
+]);
+
 const SIDECAR_FILE_PATH_KEYS = new Set<string>([
   'path',
   'file',
@@ -1292,6 +1302,9 @@ export const mapSidecarEventsToToolCalls = (events: readonly TAgentUiEvent[]): I
   }
   for (const [index, event] of events.entries()) {
     if (event.type === 'tool_start') {
+      if (SIDECAR_HIDDEN_TOOL_NAMES.has(event.toolName)) {
+        continue;
+      }
       if (runtimeToolNames.has(event.toolName)) {
         continue;
       }
@@ -1307,6 +1320,9 @@ export const mapSidecarEventsToToolCalls = (events: readonly TAgentUiEvent[]): I
       continue;
     }
     if (event.type === 'tool_result') {
+      if (SIDECAR_HIDDEN_TOOL_NAMES.has(event.toolName)) {
+        continue;
+      }
       if (runtimeToolNames.has(event.toolName)) {
         continue;
       }
@@ -1357,6 +1373,12 @@ export const mapSidecarEventsToToolCalls = (events: readonly TAgentUiEvent[]): I
       });
     }
     if (event.type === 'agent_event') {
+      if (
+        isAgentRuntimeToolEvent(event.event) &&
+        SIDECAR_HIDDEN_TOOL_NAMES.has(event.event.toolName)
+      ) {
+        continue;
+      }
       applyRuntimeToolEventToToolCalls(toolCalls, event.event);
     }
   }

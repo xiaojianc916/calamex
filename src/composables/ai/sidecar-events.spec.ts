@@ -586,4 +586,73 @@ describe('agent-sidecar-events', () => {
     expect(projection.toolCalls).toEqual([]);
     expect(Object.hasOwn(projection, 'activities')).toBe(false);
   });
+
+  it('隐藏 Mastra 工作内存写入工具,不在思考折叠上方露出「处理 {memory}」', () => {
+    const events: TAgentUiEvent[] = [
+      {
+        type: 'tool_start',
+        toolName: 'updateWorkingMemory',
+        input: { memory: { currentTask: { goal: '解答气候变化', status: 'active' } } },
+      },
+      { type: 'tool_result', toolName: 'updateWorkingMemory', output: { success: true } },
+    ];
+
+    expect(mapSidecarEventsToToolCalls(events)).toEqual([]);
+
+    const projection = projectSidecarEventsToToolState({
+      fallbackActivityText: '正在思考',
+      streamStatus: 'streaming',
+      events,
+    });
+    expect(projection.toolCalls).toEqual([]);
+    expect(projection.activityText).toBe('正在思考');
+    expect(projection.activityText).not.toContain('memory');
+    expect(projection.activityText).not.toContain('处理');
+  });
+
+  it('运行时 agent 事件里的工作内存写入同样被隐藏', () => {
+    const events: TAgentUiEvent[] = [
+      {
+        type: 'agent_event',
+        event: {
+          id: 'mem-start',
+          type: 'agent.tool.started',
+          runId: 'run-1',
+          sessionId: 'session-1',
+          agentId: 'agent-1',
+          timestamp: '2026-06-07T07:00:00.000Z',
+          seq: 0,
+          schemaVersion: 1,
+          redacted: true,
+          visibility: 'user',
+          level: 'info',
+          toolUseId: 'mem-1',
+          toolName: 'updateWorkingMemory',
+          inputPreview: '{"memory":{"currentTask":{"goal":"x"}}}',
+        },
+      },
+      {
+        type: 'agent_event',
+        event: {
+          id: 'mem-done',
+          type: 'agent.tool.completed',
+          runId: 'run-1',
+          sessionId: 'session-1',
+          agentId: 'agent-1',
+          timestamp: '2026-06-07T07:00:01.000Z',
+          seq: 1,
+          schemaVersion: 1,
+          redacted: true,
+          visibility: 'user',
+          level: 'info',
+          toolUseId: 'mem-1',
+          toolName: 'updateWorkingMemory',
+          ok: true,
+          resultPreview: '{"success":true}',
+        },
+      },
+    ];
+
+    expect(mapSidecarEventsToToolCalls(events)).toEqual([]);
+  });
 });
