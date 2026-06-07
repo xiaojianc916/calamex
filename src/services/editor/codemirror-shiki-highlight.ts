@@ -7,13 +7,11 @@ import {
   type ViewUpdate,
 } from '@codemirror/view';
 import {
-  ensureShikiLanguage,
   type IShikiThemedToken,
-  isShikiLanguageLoaded,
   resolveShikiLanguageId,
   SHIKI_BACKGROUND,
   SHIKI_FOREGROUND,
-  tokenizeWithShikiSync,
+  tokenizeWithShikiWorker,
 } from '@/services/editor/shiki-highlighter';
 
 /** 编辑器与代码渲染统一使用的等宽字体，按要求以 Consolas 为首选。 */
@@ -22,7 +20,7 @@ export const EDITOR_FONT_FAMILY =
 
 // 单次 tokenize 切片的字节上限：默认从文档开头切到可见区下沿，超大文件超过此上限时
 // 退化为仅切可见区窗口；窗口切片仍超限（极端长行，如压缩成一行的文件）则放弃高亮，
-// 避免主线程出现长任务。注意这是“切片”上限而非“整文档”上限。
+// 避免 Worker 任务过重。注意这是“切片”上限而非“整文档”上限。
 const MAX_HIGHLIGHT_SLICE_LENGTH = 200_000;
 
 // 可见区上下额外着色的行数：平滑向下滚动时的着色衔接，并作为超大文件窗口退化时的缓冲。
@@ -43,8 +41,8 @@ const tokenDecorationCache = new Map<string, Decoration>();
 
 // 当前语言（app 语言 id）由外部通过 effect 注入。
 const setShikiLanguageEffect = StateEffect.define<string>();
-// 语法异步加载完成后借此 effect 触发一次重新高亮。
-const shikiReadyEffect = StateEffect.define<null>();
+// Worker 异步 tokenize 完成后借此 effect 应用 decorations。
+const shikiWorkerResultEffect = StateEffect.define<TShikiWorkerHighlightResult>();
 // 防抖超时触发的重算信号。
 const shikiRecomputeEffect = StateEffect.define<null>();
 
@@ -53,6 +51,20 @@ export const setShikiLanguage = (language: string): StateEffect<string> =>
   setShikiLanguageEffect.of(language);
 
 export type TShikiHighlightUpdateAction = 'recompute' | 'remap' | 'skip';
+
+type TShikiHighlightSlice = {
+  code: string;
+  startLine: number;
+  endLine: number;
+};
+
+type TShikiWorkerHighlightResult = {
+  requestId: number;
+  language: string;
+  startLine: number;
+  endLine: number;
+  tokens: IShikiThemedToken[][] | null;
+};
 
 /**
  * 纯函数：根据一次 ViewUpdate 的特征决定高亮插件应执行的动作。
@@ -66,9 +78,13 @@ export type TShikiHighlightUpdateAction = 'recompute' | 'remap' | 'skip';
 export const resolveShikiHighlightUpdateAction = (input: {
   languageChanged: boolean;
   recomputeRequested: boolean;
+  workerResultReceived?: boolean;
   docChanged: boolean;
   viewportChanged?: boolean;
 }): TShikiHighlightUpdateAction => {
+  if (input.workerResultReceived) {
+    return 'skip';
+  }
   if (input.languageChanged || input.recomputeRequested) {
     return 'recompute';
   }
@@ -156,13 +172,10 @@ const tokenDecoration = (style: string): Decoration => {
   return decoration;
 };
 
-// 仅 tokenize 当前可见行所需的切片，单次成本与可见行数相关而非文档总长，
-// 避免大文件编辑/滚动时主线程出现长任务。默认从文档首行起切片以保证跨行结构
+// 仅截取当前可见行所需的切片，单次成本与可见行数相关而非文档总长，
+// 避免大文件编辑/滚动时提交过重 Worker 任务。默认从文档首行起切片以保证跨行结构
 // 在可见区配色正确（见 computeShikiHighlightRange）。返回所用行范围供调用方做复用判定。
-const buildShikiDecorations = (
-  view: EditorView,
-  language: string,
-): { decorations: DecorationSet; startLine: number; endLine: number } | null => {
+const computeShikiHighlightSlice = (view: EditorView): TShikiHighlightSlice | null => {
   const { doc } = view.state;
   if (doc.length === 0) {
     return null;
@@ -198,26 +211,34 @@ const buildShikiDecorations = (
     });
     sliceFrom = doc.line(range.startLine).from;
     sliceTo = doc.line(range.endLine).to;
-    // 窗口切片仍超限（极端长行）时放弃高亮，避免主线程长任务。
+    // 窗口切片仍超限（极端长行）时放弃高亮，避免 Worker 任务过重。
     if (sliceTo - sliceFrom > MAX_HIGHLIGHT_SLICE_LENGTH) {
       return null;
     }
   }
 
-  const code = doc.sliceString(sliceFrom, sliceTo);
-  const lines = tokenizeWithShikiSync(code, language);
-  if (!lines) {
-    return null;
-  }
+  return {
+    code: doc.sliceString(sliceFrom, sliceTo),
+    startLine: range.startLine,
+    endLine: range.endLine,
+  };
+};
 
+const buildDecorationsFromTokenLines = (
+  view: EditorView,
+  startLine: number,
+  endLine: number,
+  lines: IShikiThemedToken[][],
+): DecorationSet => {
+  const { doc } = view.state;
   const builder = new RangeSetBuilder<Decoration>();
-  const lineCount = Math.min(lines.length, range.endLine - range.startLine + 1);
+  const lineCount = Math.min(lines.length, endLine - startLine + 1);
   for (let index = 0; index < lineCount; index += 1) {
     const lineTokens = lines[index];
     if (!lineTokens || lineTokens.length === 0) {
       continue;
     }
-    const docLine = doc.line(range.startLine + index);
+    const docLine = doc.line(startLine + index);
     let position = docLine.from;
     for (const token of lineTokens) {
       const length = token.content.length;
@@ -236,7 +257,7 @@ const buildShikiDecorations = (
       }
     }
   }
-  return { decorations: builder.finish(), startLine: range.startLine, endLine: range.endLine };
+  return builder.finish();
 };
 
 const shikiHighlightPlugin = ViewPlugin.fromClass(
@@ -244,6 +265,8 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
     decorations: DecorationSet;
     private destroyed = false;
     private recomputeTimer: number | null = null;
+    private nextRequestId = 1;
+    private latestRequestId = 0;
     // 已成功高亮的语言与行范围；用于滚动时判断当前可见区是否已被覆盖，覆盖则跳过重算。
     private highlightedLanguage: string | null = null;
     private highlightedStartLine: number | null = null;
@@ -255,16 +278,22 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
     }
 
     update(update: ViewUpdate): void {
+      const workerResult = this.takeWorkerResult(update);
+      if (workerResult) {
+        this.applyWorkerResult(update.view, workerResult);
+      }
+
       const languageChanged =
         update.startState.field(shikiLanguageField, false) !==
         update.state.field(shikiLanguageField, false);
       const recomputeRequested = update.transactions.some((tr) =>
-        tr.effects.some((effect) => effect.is(shikiReadyEffect) || effect.is(shikiRecomputeEffect)),
+        tr.effects.some((effect) => effect.is(shikiRecomputeEffect)),
       );
 
       const action = resolveShikiHighlightUpdateAction({
         languageChanged,
         recomputeRequested,
+        workerResultReceived: Boolean(workerResult),
         docChanged: update.docChanged,
         viewportChanged: update.viewportChanged,
       });
@@ -312,7 +341,7 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
           return;
         }
         try {
-          // 派发重算 effect，让插件在下一次 update 中对当前视口做一次 tokenize。
+          // 派发重算 effect，让插件在下一次 update 中对当前视口提交一次 Worker tokenize。
           view.dispatch({ effects: shikiRecomputeEffect.of(null) });
         } catch {
           // view 已销毁，忽略。
@@ -327,28 +356,72 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
         this.invalidateHighlightedRange();
         return;
       }
-      if (!isShikiLanguageLoaded(language)) {
-        this.requestLanguage(view, language);
-        this.decorations = Decoration.none;
-        this.invalidateHighlightedRange();
-        return;
-      }
 
       // 复用：语言未变且已高亮范围已覆盖当前可见区时，滚动无需重新 tokenize（零开销且不会露白）。
       if (options.allowReuse && this.isVisibleRangeHighlighted(view, language)) {
         return;
       }
 
-      const built = buildShikiDecorations(view, language);
-      if (!built) {
+      const slice = computeShikiHighlightSlice(view);
+      if (!slice) {
         this.decorations = Decoration.none;
         this.invalidateHighlightedRange();
         return;
       }
-      this.decorations = built.decorations;
-      this.highlightedLanguage = language;
-      this.highlightedStartLine = built.startLine;
-      this.highlightedEndLine = built.endLine;
+
+      const requestId = this.nextRequestId;
+      this.nextRequestId += 1;
+      this.latestRequestId = requestId;
+      void tokenizeWithShikiWorker(slice.code, language).then((tokens) => {
+        if (this.destroyed) {
+          return;
+        }
+        try {
+          view.dispatch({
+            effects: shikiWorkerResultEffect.of({
+              requestId,
+              language,
+              startLine: slice.startLine,
+              endLine: slice.endLine,
+              tokens,
+            }),
+          });
+        } catch {
+          // view 已销毁，忽略。
+        }
+      });
+    }
+
+    private takeWorkerResult(update: ViewUpdate): TShikiWorkerHighlightResult | null {
+      for (const tr of update.transactions) {
+        for (const effect of tr.effects) {
+          if (effect.is(shikiWorkerResultEffect)) {
+            return effect.value;
+          }
+        }
+      }
+      return null;
+    }
+
+    private applyWorkerResult(view: EditorView, result: TShikiWorkerHighlightResult): void {
+      const language = view.state.field(shikiLanguageField, false) ?? 'text';
+      if (
+        result.requestId !== this.latestRequestId ||
+        result.language !== language ||
+        !result.tokens
+      ) {
+        return;
+      }
+
+      this.decorations = buildDecorationsFromTokenLines(
+        view,
+        result.startLine,
+        result.endLine,
+        result.tokens,
+      );
+      this.highlightedLanguage = result.language;
+      this.highlightedStartLine = result.startLine;
+      this.highlightedEndLine = result.endLine;
     }
 
     private isVisibleRangeHighlighted(view: EditorView, language: string): boolean {
@@ -369,23 +442,6 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
       return (
         firstVisibleLine >= this.highlightedStartLine && lastVisibleLine <= this.highlightedEndLine
       );
-    }
-
-    private requestLanguage(view: EditorView, language: string): void {
-      void ensureShikiLanguage(language).then((shikiId) => {
-        if (!shikiId || this.destroyed) {
-          return;
-        }
-        // 加载期间语言可能又变了，过期请求直接丢弃。
-        if ((view.state.field(shikiLanguageField, false) ?? 'text') !== language) {
-          return;
-        }
-        try {
-          view.dispatch({ effects: shikiReadyEffect.of(null) });
-        } catch {
-          // view 已销毁，忽略。
-        }
-      });
     }
   },
   {

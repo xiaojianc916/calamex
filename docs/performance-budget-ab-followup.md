@@ -1,6 +1,6 @@
 ## A+B 性能优化跟进记录
 
-本页记录本轮已落到 `main` 的 A/B 优化点。原则是：优先使用业界常用、可验证、低风险的算法与数据结构；对 Worker 化、跨线程缓存等影响面更大的改动继续拆小批次推进，避免一次性上“屠龙术”。
+本页记录本轮已落到 `main` 的 A/B 优化点。原则是：优先使用业界常用、可验证、低风险的算法与数据结构；对跨线程等影响面较大的改动也保持可回退路径，避免一次性上“屠龙术”。
 
 ## A1：工作区搜索文件缓存的事件驱动增量刷新
 
@@ -29,6 +29,23 @@
   - 之前：重复窗口高亮每次都付出 O(slice) tokenize 成本。
   - 之后：重复窗口命中为 O(1) Map 访问；最多缓存 32 个不超过 200 KiB 的切片结果，避免无界增长。
 - 取舍：这是 Worker 化前的低风险热路径优化，不改变渲染模型、不改打包配置、不引入跨线程通信；真正 Worker 化仍建议单独提交。
+
+## A3b：Shiki Worker 化
+
+- 文件：
+  - `src/services/editor/shiki-tokenizer.worker.ts`
+  - `src/services/editor/shiki-highlighter.ts`
+  - `src/services/editor/codemirror-shiki-highlight.ts`
+- 问题：即使做了可见区切片和 LRU，Shiki/Oniguruma tokenize 仍可能在主线程形成长任务，影响输入和滚动流畅度。
+- 算法：将 tokenize 请求通过 Vite module worker 发送到独立线程：
+  - Worker 内部独立初始化 `shiki/core`、Oniguruma WASM、主题和按需语言。
+  - CodeMirror 插件提交异步高亮请求，结果通过 `StateEffect` 回填 decorations。
+  - 每次请求带递增 `requestId`；过期结果直接丢弃，避免滚动/编辑竞态错刷。
+  - 主线程保留 LRU token cache；Worker 不可用、超时或失败时回退到主线程异步 tokenize。
+- 复杂度：
+  - 主线程从 O(slice tokenize) 降为 O(slice 截取 + decorations 回填)，重 tokenize 的 CPU 成本移出主线程。
+  - 仍保留 200 KiB 单次切片预算，避免给 Worker 发送超大任务。
+- 取舍：首次语言加载仍会产生 Worker 初始化成本；但后续滚动/重算不会阻塞主线程。fallback 路径保证兼容性。
 
 ## B1：Bash 符号级 mtime/hash 增量 AST 缓存
 
@@ -63,10 +80,6 @@
 - 算法：为 diff 输入字节数与编辑数量加预算阈值；小输入仍走精确 diff，大输入返回明确省略信息。
 - 取舍：不影响实际替换，只限制预览成本；可避免 UI 为少数极端文件付出不可控代价。
 - 验证：新增小输入正常 diff、超大输入省略、编辑过多省略的单测。
-
-## 当前仍需拆小批次推进的项
-
-- A3b：Shiki Worker 化。会影响编辑器高亮初始化、worker 打包、fallback 路径，建议单独提交。
 
 ## 建议验证命令
 

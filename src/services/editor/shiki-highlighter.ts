@@ -30,6 +30,7 @@ export const SHIKI_BACKGROUND = CODEMIRROR_GITHUB_LIGHT_BACKGROUND;
 // 滚动/布局重复触发同一窗口 tokenize 时反复跑 Oniguruma，同时避免缓存无界增长。
 const MAX_TOKENIZE_CACHE_ENTRIES = 32;
 const MAX_TOKENIZE_CACHE_CODE_LENGTH = 200_000;
+const SHIKI_WORKER_TIMEOUT_MS = 4000;
 
 /** Shiki token 的最小结构（避免直接依赖 shiki 的类型导出路径）。 */
 export interface IShikiThemedToken {
@@ -40,6 +41,18 @@ export interface IShikiThemedToken {
   /** 位标志：1=italic, 2=bold, 4=underline（与 Shiki FontStyle 一致）。 */
   fontStyle?: number;
 }
+
+type TShikiWorkerRequest = {
+  id: number;
+  code: string;
+  language: string;
+};
+
+type TShikiWorkerResponse = {
+  id: number;
+  tokens: IShikiThemedToken[][] | null;
+  error?: string;
+};
 
 // 语法按需加载器：key = Shiki 语言 id，value = 动态 import。
 // 仅声明确定存在于 @shikijs/langs 的语言，避免 Vite 构建期解析失败。
@@ -94,6 +107,10 @@ const APP_TO_SHIKI: Record<string, string> = {
 
 let highlighterPromise: Promise<HighlighterCore> | null = null;
 let highlighterInstance: HighlighterCore | null = null;
+let shikiWorker: Worker | null = null;
+let shikiWorkerBroken = false;
+let nextWorkerRequestId = 1;
+
 const loadedLanguages = new Set<string>();
 const pendingLanguages = new Map<string, Promise<boolean>>();
 const tokenizeCache = new Map<string, IShikiThemedToken[][]>();
@@ -201,18 +218,31 @@ const setCachedTokens = (cacheKey: string, tokens: IShikiThemedToken[][]): void 
   tokenizeCache.set(cacheKey, tokens);
 };
 
+const cacheTokensIfEligible = (
+  code: string,
+  shikiId: string,
+  tokens: IShikiThemedToken[][],
+): void => {
+  if (code.length <= MAX_TOKENIZE_CACHE_CODE_LENGTH) {
+    setCachedTokens(tokenCacheKey(code, shikiId), tokens);
+  }
+};
+
+const cachedTokensFor = (code: string, shikiId: string): IShikiThemedToken[][] | null => {
+  if (code.length > MAX_TOKENIZE_CACHE_CODE_LENGTH) {
+    return null;
+  }
+  return getCachedTokens(tokenCacheKey(code, shikiId));
+};
+
 const tokenize = (
   highlighter: HighlighterCore,
   code: string,
   shikiId: string,
 ): IShikiThemedToken[][] | null => {
-  const canCache = code.length <= MAX_TOKENIZE_CACHE_CODE_LENGTH;
-  const cacheKey = canCache ? tokenCacheKey(code, shikiId) : null;
-  if (cacheKey) {
-    const cached = getCachedTokens(cacheKey);
-    if (cached) {
-      return cached;
-    }
+  const cached = cachedTokensFor(code, shikiId);
+  if (cached) {
+    return cached;
   }
 
   try {
@@ -220,14 +250,95 @@ const tokenize = (
       lang: shikiId,
       theme: SHIKI_THEME_NAME,
     }) as unknown as IShikiThemedToken[][];
-    if (cacheKey) {
-      setCachedTokens(cacheKey, tokens);
-    }
+    cacheTokensIfEligible(code, shikiId, tokens);
     return tokens;
   } catch (error) {
     logger.error({ event: 'shiki.tokenize_failed', err: error, shikiId });
     return null;
   }
+};
+
+const getShikiWorker = (): Worker | null => {
+  if (shikiWorkerBroken || typeof Worker === 'undefined') {
+    return null;
+  }
+  if (!shikiWorker) {
+    try {
+      shikiWorker = new Worker(new URL('./shiki-tokenizer.worker.ts', import.meta.url), {
+        type: 'module',
+      });
+      shikiWorker.addEventListener('error', (event) => {
+        shikiWorkerBroken = true;
+        logger.error({ event: 'shiki.worker.error', err: event.message });
+        shikiWorker?.terminate();
+        shikiWorker = null;
+      });
+    } catch (error) {
+      shikiWorkerBroken = true;
+      logger.error({ event: 'shiki.worker.create_failed', err: error });
+      return null;
+    }
+  }
+  return shikiWorker;
+};
+
+const tokenizeWithWorkerOnly = (
+  code: string,
+  language: string,
+): Promise<IShikiThemedToken[][] | null> | null => {
+  const worker = getShikiWorker();
+  if (!worker) {
+    return null;
+  }
+
+  const request: TShikiWorkerRequest = {
+    id: nextWorkerRequestId++,
+    code,
+    language,
+  };
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const cleanup = (): void => {
+      window.clearTimeout(timeoutId);
+      worker.removeEventListener('message', handleMessage);
+      worker.removeEventListener('error', handleError);
+    };
+    const finish = (tokens: IShikiThemedToken[][] | null): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      resolve(tokens);
+    };
+    const handleMessage = (event: MessageEvent<TShikiWorkerResponse>): void => {
+      if (event.data.id !== request.id) {
+        return;
+      }
+      if (event.data.error) {
+        logger.error({ event: 'shiki.worker.tokenize_failed', err: event.data.error, language });
+        finish(null);
+        return;
+      }
+      finish(event.data.tokens);
+    };
+    const handleError = (event: ErrorEvent): void => {
+      shikiWorkerBroken = true;
+      logger.error({ event: 'shiki.worker.runtime_failed', err: event.message });
+      shikiWorker?.terminate();
+      shikiWorker = null;
+      finish(null);
+    };
+    const timeoutId = window.setTimeout(() => {
+      logger.error({ event: 'shiki.worker.timeout', language });
+      finish(null);
+    }, SHIKI_WORKER_TIMEOUT_MS);
+
+    worker.addEventListener('message', handleMessage);
+    worker.addEventListener('error', handleError);
+    worker.postMessage(request);
+  });
 };
 
 /** 同步高亮：仅当语法已加载时返回 token 行，否则返回 null。 */
@@ -236,10 +347,47 @@ export const tokenizeWithShikiSync = (
   language: string,
 ): IShikiThemedToken[][] | null => {
   const shikiId = resolveShikiLanguageId(language);
-  if (!shikiId || !highlighterInstance || !loadedLanguages.has(shikiId)) {
+  if (!shikiId) {
+    return null;
+  }
+
+  const cached = cachedTokensFor(code, shikiId);
+  if (cached) {
+    return cached;
+  }
+
+  if (!highlighterInstance || !loadedLanguages.has(shikiId)) {
     return null;
   }
   return tokenize(highlighterInstance, code, shikiId);
+};
+
+/**
+ * Worker 优先高亮：将 Shiki/Oniguruma tokenize 放到独立线程执行。
+ * Worker 不可用、超时或失败时回退到主线程异步路径，保证功能可用。
+ */
+export const tokenizeWithShikiWorker = async (
+  code: string,
+  language: string,
+): Promise<IShikiThemedToken[][] | null> => {
+  const shikiId = resolveShikiLanguageId(language);
+  if (!shikiId) {
+    return null;
+  }
+
+  const cached = cachedTokensFor(code, shikiId);
+  if (cached) {
+    return cached;
+  }
+
+  const workerTokens = await tokenizeWithWorkerOnly(code, language);
+  if (workerTokens) {
+    cacheTokensIfEligible(code, shikiId, workerTokens);
+    return workerTokens;
+  }
+
+  // Worker 路径失败时才退回主线程。这里仍走异步入口，避免调用方关心 fallback 细节。
+  return tokenizeWithShiki(code, language);
 };
 
 /** 异步高亮：按需加载语法后再 tokenize。 */
