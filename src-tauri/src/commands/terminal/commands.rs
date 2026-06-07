@@ -30,14 +30,14 @@ use super::events::{
     mark_terminal_interactive_ready, transition_terminal_state,
 };
 use super::state::{
-    ActiveRunInputTarget, TerminalSession, TerminalSessionState, attach_active_terminal_run_handle,
-    buffer_pending_switch_input, clear_active_terminal_run, get_active_terminal_run_handle,
-    get_active_terminal_run_input_target, get_terminal_session, get_terminal_snapshot,
-    lock_terminal_sessions, mark_terminal_resize_repaint_suppression, remove_pending_switch_input,
-    remove_terminal_interactive_visual_state, remove_terminal_session, remove_terminal_snapshot,
-    resolve_terminal_start_directory, set_terminal_snapshot, should_recreate_terminal_session,
-    take_and_prepend_pending_switch_input, terminate_terminal_session,
-    try_mark_active_terminal_run, update_terminal_geometry,
+    ActiveRunInputTarget, TerminalSession, TerminalSessionState, active_terminal_run_count,
+    attach_active_terminal_run_handle, buffer_pending_switch_input, clear_active_terminal_run,
+    get_active_terminal_run_handle, get_active_terminal_run_input_target, get_terminal_session,
+    get_terminal_snapshot, lock_terminal_sessions, mark_terminal_resize_repaint_suppression,
+    remove_pending_switch_input, remove_terminal_interactive_visual_state,
+    remove_terminal_session, remove_terminal_snapshot, resolve_terminal_start_directory,
+    set_terminal_snapshot, should_recreate_terminal_session, take_and_prepend_pending_switch_input,
+    terminate_terminal_session, try_mark_active_terminal_run, update_terminal_geometry,
 };
 use super::to_wsl_path;
 
@@ -53,10 +53,8 @@ pub async fn ensure_terminal_session(
     let terminal_state = state.inner().clone();
     update_terminal_geometry(payload.cols, payload.rows);
 
-    // Phase 1: 创建锁保护下检查现有会话、准备 WSL 启动参数。
-    // std::sync::MutexGuard 不能跨越 .await，必须在 await 前释放。
     let (terminal_cwd, created) = {
-        let _creation_guard = terminal_state
+        let creation_guard = terminal_state
             .creation_guard
             .lock()
             .map_err(|_| "终端会话创建锁已损坏。".to_string())?;
@@ -92,8 +90,7 @@ pub async fn ensure_terminal_session(
             .transpose()?
             .unwrap_or_else(|| DEFAULT_WSL_INTERACTIVE_CWD.to_string());
 
-        // 释放 creation_guard 后再打开本地 PTY，保持与原异步路径一致的锁释放时机。
-        drop(_creation_guard);
+        drop(creation_guard);
 
         let event_app = app.clone();
         let event_state = terminal_state.clone();
@@ -116,13 +113,11 @@ pub async fn ensure_terminal_session(
         )
         .map_err(|error| error.to_string())?;
 
-        // Phase 2: 重新获取 creation_guard 后原子插入，防止并发创建。
         {
             let _creation_guard = terminal_state
                 .creation_guard
                 .lock()
                 .map_err(|_| "终端会话创建锁已损坏。".to_string())?;
-            // 再次检查：打开期间可能有其他调用者抢先生成了同一会话。
             if get_terminal_session(&terminal_state, &payload.session_id)?.is_some() {
                 let _ = handle.close();
                 return Ok(TerminalSessionPayload {
@@ -138,8 +133,6 @@ pub async fn ensure_terminal_session(
                 handle,
                 working_directory: terminal_cwd.clone(),
             });
-            // 登记会话时若 sessions 锁已损坏，PTY 已打开但无人持有句柄 → 会泄漏 wsl.exe。
-            // 先兜底关闭刚打开的 PTY 再向上抛错，避免产生孤儿进程。
             let mut sessions = match lock_terminal_sessions(&terminal_state) {
                 Ok(sessions) => sessions,
                 Err(error) => {
@@ -176,8 +169,6 @@ pub async fn write_terminal_input(
 
     match get_active_terminal_run_input_target(&terminal_state, &payload.session_id)? {
         ActiveRunInputTarget::Pending => {
-            // 切换态（SwitchingToRun / SwitchingToIdle）：run 的 stdin 尚未就绪。
-            // 不再静默丢弃用户输入，而是按会话缓冲，待状态落定后随下一次写入按序补发。
             buffer_pending_switch_input(&terminal_state, &payload.session_id, &payload.data)?;
             return Ok(());
         }
@@ -292,7 +283,10 @@ pub fn dispatch_script_to_terminal(
     };
 
     try_mark_active_terminal_run(&terminal_state, &payload.session_id, &payload.run_id)?;
-    if let Err(error) = transition_terminal_state(&app, TerminalState::SwitchingToRun) {
+    let is_first_active_run = active_terminal_run_count(&terminal_state) == 1;
+    if is_first_active_run
+        && let Err(error) = transition_terminal_state(&app, TerminalState::SwitchingToRun)
+    {
         clear_active_terminal_run(&terminal_state, &payload.run_id);
         return Err(error);
     }
@@ -319,15 +313,14 @@ pub fn dispatch_script_to_terminal(
     }) {
         Ok(handle) => handle,
         Err(error) => {
-            // 启动失败：回滚活动 run 与状态机，不泄露半起的运行态。
             clear_active_terminal_run(&terminal_state, &payload.run_id);
-            let _ = transition_terminal_state(&app, TerminalState::IdleInteractive);
+            if active_terminal_run_count(&terminal_state) == 0 {
+                let _ = transition_terminal_state(&app, TerminalState::IdleInteractive);
+            }
             return Err(error.to_string());
         }
     };
 
-    // run 已开始：把句柄登记到活动 run，供 stdin / 取消使用。
-    // 若脚本已极快结束并清空活动 run，attach 返回 Err，忽略即可。
     let _ = attach_active_terminal_run_handle(&terminal_state, &payload.run_id, run_handle);
 
     Ok(DispatchTerminalScriptPayload {

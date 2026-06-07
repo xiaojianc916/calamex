@@ -44,7 +44,7 @@ pub struct TerminalSessionState {
     sessions: Arc<Mutex<HashMap<String, Arc<TerminalSession>>>>,
     snapshots: Arc<Mutex<HashMap<String, String>>>,
     interactive_visual: Arc<Mutex<HashMap<String, TerminalInteractiveVisualState>>>,
-    pub(super) active_run: Arc<Mutex<Option<TerminalActiveRun>>>,
+    active_runs: Arc<Mutex<HashMap<String, TerminalActiveRun>>>,
     pending_switch_input: Arc<Mutex<HashMap<String, String>>>,
     pub(super) creation_guard: Arc<Mutex<()>>,
 }
@@ -157,23 +157,40 @@ pub(super) fn update_terminal_geometry(cols: u16, rows: u16) {
     geometry.rows = rows.max(1);
 }
 
+pub(super) fn active_terminal_run_count(state: &TerminalSessionState) -> usize {
+    state
+        .active_runs
+        .lock()
+        .map(|active_runs| active_runs.len())
+        .unwrap_or(0)
+}
+
 pub(super) fn try_mark_active_terminal_run(
     state: &TerminalSessionState,
     session_id: &str,
     run_id: &str,
 ) -> Result<(), String> {
-    let mut active_run = state
-        .active_run
+    let mut active_runs = state
+        .active_runs
         .lock()
         .map_err(|_| "终端运行状态已损坏。".to_string())?;
-    if let Some(active_run) = active_run.as_ref() {
-        return Err(format!("已有脚本正在运行：{}", active_run.run_id));
+    if active_runs.contains_key(run_id) {
+        return Err(format!("运行任务已存在：{run_id}"));
     }
-    *active_run = Some(TerminalActiveRun {
-        session_id: session_id.to_string(),
-        run_id: run_id.to_string(),
-        run_handle: None,
-    });
+    if let Some(active_run) = active_runs
+        .values()
+        .find(|active_run| active_run.session_id == session_id)
+    {
+        return Err(format!("当前终端已有脚本正在运行：{}", active_run.run_id));
+    }
+    active_runs.insert(
+        run_id.to_string(),
+        TerminalActiveRun {
+            session_id: session_id.to_string(),
+            run_id: run_id.to_string(),
+            run_handle: None,
+        },
+    );
     Ok(())
 }
 
@@ -182,30 +199,22 @@ pub(super) fn attach_active_terminal_run_handle(
     run_id: &str,
     handle: LocalWslRunHandle,
 ) -> Result<(), String> {
-    let mut active_run = state
-        .active_run
+    let mut active_runs = state
+        .active_runs
         .lock()
         .map_err(|_| "终端运行状态已损坏。".to_string())?;
-    let Some(active_run) = active_run.as_mut() else {
+    let Some(active_run) = active_runs.get_mut(run_id) else {
         return Err("当前没有可绑定的运行任务。".to_string());
     };
-    if active_run.run_id != run_id {
-        return Err(format!(
-            "运行任务不匹配：active={} incoming={run_id}",
-            active_run.run_id
-        ));
-    }
     active_run.run_handle = Some(handle);
     Ok(())
 }
 
 pub(super) fn clear_active_terminal_run(state: &TerminalSessionState, run_id: &str) {
-    let Ok(mut active_run) = state.active_run.lock() else {
+    let Ok(mut active_runs) = state.active_runs.lock() else {
         return;
     };
-    if active_run.as_ref().map(|run| run.run_id.as_str()) == Some(run_id) {
-        *active_run = None;
-    }
+    active_runs.remove(run_id);
 }
 
 /// 会话作用域地接管活动运行：仅当当前活动运行归属指定会话时，才取出其句柄并清空活动
@@ -215,43 +224,41 @@ pub(super) fn take_active_terminal_run_for_session(
     state: &TerminalSessionState,
     session_id: &str,
 ) -> Option<LocalWslRunHandle> {
-    let mut active_run = state.active_run.lock().ok()?;
-    if active_run.as_ref().map(|run| run.session_id.as_str()) != Some(session_id) {
-        return None;
-    }
-    active_run.take().and_then(|run| run.run_handle)
+    let mut active_runs = state.active_runs.lock().ok()?;
+    let run_id = active_runs
+        .values()
+        .find(|run| run.session_id == session_id)
+        .map(|run| run.run_id.clone())?;
+    active_runs.remove(&run_id).and_then(|run| run.run_handle)
 }
 
 pub(super) fn get_active_terminal_run_handle(
     state: &TerminalSessionState,
     run_id: &str,
 ) -> Result<Option<LocalWslRunHandle>, String> {
-    let active_run = state
-        .active_run
+    let active_runs = state
+        .active_runs
         .lock()
         .map_err(|_| "终端运行状态已损坏。".to_string())?;
-    Ok(active_run
-        .as_ref()
-        .filter(|run| run.run_id == run_id)
-        .and_then(|run| run.run_handle.clone()))
+    Ok(active_runs.get(run_id).and_then(|run| run.run_handle.clone()))
 }
 
 pub(super) fn get_active_terminal_run_input_target(
     state: &TerminalSessionState,
     session_id: &str,
 ) -> Result<ActiveRunInputTarget, String> {
-    let active_run = state
-        .active_run
+    let active_runs = state
+        .active_runs
         .lock()
         .map_err(|_| "终端运行状态已损坏。".to_string())?;
-    let Some(active_run) = active_run.as_ref() else {
+    let Some(active_run) = active_runs
+        .values()
+        .find(|active_run| active_run.session_id == session_id)
+    else {
         return Ok(ActiveRunInputTarget::None);
     };
-    // 活动 run 全局串行，但输入必须按会话路由：只有发起该 run 的会话才把输入送进
-    // run 的 stdin；其它会话的输入应进入各自的交互 shell，避免跨会话输入串台。
-    if active_run.session_id != session_id {
-        return Ok(ActiveRunInputTarget::None);
-    }
+    // 输入必须按会话路由：只有发起该 run 的会话才把输入送进 run 的 stdin；
+    // 其它会话的输入应进入各自的交互 shell，避免跨会话输入串台。
     match crate::terminal::registry::registry().current_state() {
         TerminalState::Running => Ok(ActiveRunInputTarget::Run(active_run.run_id.clone())),
         TerminalState::SwitchingToRun | TerminalState::SwitchingToIdle => {

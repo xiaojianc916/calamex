@@ -18,7 +18,7 @@ use super::events::{
     next_terminal_data_seq, next_terminal_run_chunk_seq, sanitize_terminal_run_chunk,
 };
 use super::state::{
-    ActiveRunInputTarget, TerminalSessionState, append_terminal_snapshot,
+    ActiveRunInputTarget, TerminalSessionState, active_terminal_run_count, append_terminal_snapshot,
     buffer_pending_switch_input, clear_active_terminal_run, get_active_terminal_run_input_target,
     get_terminal_snapshot, mark_terminal_resize_repaint_suppression, set_terminal_snapshot,
     should_skip_snapshot_for_interactive_resize_repaint, take_active_terminal_run_for_session,
@@ -35,21 +35,18 @@ fn set_test_terminal_state(state: TerminalState) {
 }
 
 #[test]
-fn local_wsl_active_run_is_serialized() {
+fn local_wsl_active_run_is_serialized_per_session() {
     let state = TerminalSessionState::default();
     set_test_terminal_state(TerminalState::IdleInteractive);
     assert!(try_mark_active_terminal_run(&state, "session-1", "run-1").is_ok());
     assert!(try_mark_active_terminal_run(&state, "session-1", "run-2").is_err());
-    assert!(matches!(
-        get_active_terminal_run_input_target(&state, "session-1"),
-        Ok(ActiveRunInputTarget::None)
-    ));
+    assert!(try_mark_active_terminal_run(&state, "session-2", "run-3").is_ok());
+    assert_eq!(active_terminal_run_count(&state), 2);
     clear_active_terminal_run(&state, "run-1");
-    assert!(matches!(
-        get_active_terminal_run_input_target(&state, "session-1"),
-        Ok(ActiveRunInputTarget::None)
-    ));
+    clear_active_terminal_run(&state, "run-3");
+    assert_eq!(active_terminal_run_count(&state), 0);
     assert!(try_mark_active_terminal_run(&state, "session-1", "run-2").is_ok());
+    clear_active_terminal_run(&state, "run-2");
 }
 
 #[test]
@@ -75,6 +72,7 @@ fn active_run_does_not_block_input_outside_switching_states() {
         Ok(ActiveRunInputTarget::Run(run_id)) if run_id == "run-1"
     ));
 
+    clear_active_terminal_run(&state, "run-1");
     set_test_terminal_state(TerminalState::IdleInteractive);
 }
 
@@ -94,6 +92,7 @@ fn active_run_input_routes_only_to_owning_session() {
         Ok(ActiveRunInputTarget::None)
     ));
 
+    clear_active_terminal_run(&state, "run-A");
     set_test_terminal_state(TerminalState::IdleInteractive);
 }
 
@@ -102,14 +101,12 @@ fn interactive_exit_takes_active_run_only_for_owning_session() {
     let state = TerminalSessionState::default();
     try_mark_active_terminal_run(&state, "session-A", "run-A").expect("active run should mark");
 
-    // 其它会话退出：绝不能清掉 session-A 的活动运行（多开隔离）。
     assert!(take_active_terminal_run_for_session(&state, "session-B").is_none());
     assert!(
-        try_mark_active_terminal_run(&state, "session-B", "run-B").is_err(),
+        try_mark_active_terminal_run(&state, "session-A", "run-A2").is_err(),
         "session-A 的活动运行必须仍然在位"
     );
 
-    // 归属会话退出：取走并清空活动运行（此处未绑定句柄故返回 None，但已清空）。
     assert!(take_active_terminal_run_for_session(&state, "session-A").is_none());
     assert!(
         try_mark_active_terminal_run(&state, "session-B", "run-B").is_ok(),
@@ -123,7 +120,6 @@ fn interactive_exit_takes_active_run_only_for_owning_session() {
 fn take_active_run_for_session_is_noop_when_no_active_run() {
     let state = TerminalSessionState::default();
     assert!(take_active_terminal_run_for_session(&state, "session-A").is_none());
-    // 无活动运行时取空不应影响后续标记。
     assert!(try_mark_active_terminal_run(&state, "session-A", "run-A").is_ok());
     clear_active_terminal_run(&state, "run-A");
 }
@@ -358,21 +354,18 @@ fn run_chunk_keeps_plain_output_and_dollar_signs() {
 
 #[test]
 fn run_chunk_does_not_strip_leading_newline_without_control_prefix() {
-    // 脚本自身的前导空行必须保留（没有屏幕初始化控制序列时不处理）。
     let raw = "\r\nfirst real line\r\n";
     assert_eq!(sanitize_terminal_run_chunk(raw, false), raw);
 }
 
 #[test]
 fn run_chunk_preserves_alt_screen_entry_for_tui_programs() {
-    // 进入 alt-screen 的 TUI（如 vim）首字节是 ?1049h，不应被当作屏幕初始化剥除。
     let raw = "\x1b[?1049h\x1b[2J\x1b[Hvim ui";
     assert_eq!(sanitize_terminal_run_chunk(raw, false), raw);
 }
 
 #[test]
 fn run_chunk_banner_strip_only_targets_line_start() {
-    // 行中出现 "wsl:" 不应被删除（仅整行以 wsl: 开头才视作横幅）。
     let raw = "see docs at wsl: not a banner\r\n";
     assert_eq!(sanitize_terminal_run_chunk(raw, true), raw);
 }
