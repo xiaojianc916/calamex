@@ -416,6 +416,7 @@ mod tests {
             whole_word: false,
             use_regex: false,
             use_structural: false,
+            content_fuzzy: false,
             include_patterns: Vec::new(),
             exclude_patterns: Vec::new(),
             limit: Some(20),
@@ -446,6 +447,7 @@ mod tests {
             whole_word: false,
             use_regex: false,
             use_structural: true,
+            content_fuzzy: false,
             include_patterns: Vec::new(),
             exclude_patterns: Vec::new(),
             limit: Some(20),
@@ -476,6 +478,7 @@ mod tests {
             whole_word: false,
             use_regex: false,
             use_structural: false,
+            content_fuzzy: false,
             include_patterns: Vec::new(),
             exclude_patterns: Vec::new(),
             limit: Some(20),
@@ -563,6 +566,7 @@ mod tests {
             whole_word: false,
             use_regex: false,
             use_structural: false,
+            content_fuzzy: false,
             include_patterns: Vec::new(),
             exclude_patterns: Vec::new(),
             limit: Some(20),
@@ -594,6 +598,7 @@ mod tests {
             whole_word: false,
             use_regex: false,
             use_structural: false,
+            content_fuzzy: false,
             include_patterns: Vec::new(),
             exclude_patterns: Vec::new(),
             limit: Some(2),
@@ -605,6 +610,62 @@ mod tests {
             matches!(result.kind, WorkspaceSearchResultKind::Content)
                 && result.path == content_file.to_string_lossy()
         }));
+
+        cleanup_workspace(root);
+    }
+
+    #[test]
+    fn fuzzy_content_search_matches_subsequence_and_returns_range() {
+        let root = temp_workspace("fuzzy-content");
+        write_workspace_file(&root, "script.sh", "echo deploy_app_now\n");
+
+        let payload = search_workspace(WorkspaceSearchRequest {
+            workspace_root_path: root.to_string_lossy().to_string(),
+            query: "dapnow".to_string(),
+            scope: WorkspaceSearchScope::Content,
+            match_case: false,
+            whole_word: false,
+            use_regex: false,
+            use_structural: false,
+            content_fuzzy: true,
+            include_patterns: Vec::new(),
+            exclude_patterns: Vec::new(),
+            limit: Some(20),
+        })
+        .expect("应能执行模糊内容搜索");
+
+        assert_eq!(payload.results.len(), 1);
+        let result = &payload.results[0];
+        assert!(matches!(result.kind, WorkspaceSearchResultKind::Content));
+        assert_eq!(result.line_number, Some(1));
+        let match_start = result.match_start.expect("模糊命中应返回起始列");
+        let match_end = result.match_end.expect("模糊命中应返回结束列");
+        assert!(match_start < match_end);
+
+        cleanup_workspace(root);
+    }
+
+    #[test]
+    fn exact_content_search_ignores_fuzzy_subsequence() {
+        let root = temp_workspace("exact-no-fuzzy");
+        write_workspace_file(&root, "script.sh", "echo deploy_app_now\n");
+
+        let payload = search_workspace(WorkspaceSearchRequest {
+            workspace_root_path: root.to_string_lossy().to_string(),
+            query: "dapnow".to_string(),
+            scope: WorkspaceSearchScope::Content,
+            match_case: false,
+            whole_word: false,
+            use_regex: false,
+            use_structural: false,
+            content_fuzzy: false,
+            include_patterns: Vec::new(),
+            exclude_patterns: Vec::new(),
+            limit: Some(20),
+        })
+        .expect("应能执行精确内容搜索");
+
+        assert!(payload.results.is_empty());
 
         cleanup_workspace(root);
     }
