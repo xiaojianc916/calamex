@@ -1,12 +1,12 @@
 export const WORKBENCH_TAB_LIMITS = {
   /**
-   * 标签页上限：防止一次性打开过多文件导致状态、持久化和渲染开销失控。
+   * 标签页是轻量元数据：允许大量保留，避免用户工作流被 30 个标签硬打断。
    */
-  maxOpenTabs: 30,
+  maxOpenTabs: 500,
   /**
-   * 会话只保存标签元数据；与可打开标签上限保持一致。
+   * 会话只保存标签元数据，不保存正文；因此可与 maxOpenTabs 保持一致。
    */
-  maxPersistedOpenTabs: 30,
+  maxPersistedOpenTabs: 500,
   /**
    * 只让最近使用的干净文本缓冲区常驻内存。
    * 活动标签、未保存标签、预览类标签不受该值影响。
