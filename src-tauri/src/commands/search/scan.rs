@@ -5,8 +5,9 @@ use ignore::WalkBuilder;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use std::{
     collections::HashMap,
+    ffi::OsStr,
     fs,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     sync::{
         Arc, Mutex, OnceLock,
         atomic::{AtomicBool, Ordering},
@@ -131,8 +132,19 @@ fn workspace_cache_files(root: &Path) -> Result<Arc<Vec<ScannedFile>>, String> {
 
     let dirty = Arc::new(AtomicBool::new(false));
     let watcher_dirty = Arc::clone(&dirty);
+    let watcher_root = root.to_path_buf();
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-        if event.is_ok() {
+        let Ok(event) = event else {
+            return;
+        };
+        // 搜索缓存只关心「会进入搜索索引」的源文件变更。构建产物、依赖目录、
+        // VCS 内部文件等高频噪音即使被底层递归 watcher 上报，也不应把缓存标脏，
+        // 否则 npm install / cargo build / git 操作会让下一次搜索反复重建索引。
+        if event
+            .paths
+            .iter()
+            .any(|path| !is_unsearchable_event_path(&watcher_root, path))
+        {
             watcher_dirty.store(true, Ordering::Release);
         }
     })
@@ -261,6 +273,50 @@ fn is_unsearchable_workspace_path(root: &Path, path: &Path, is_dir: bool) -> boo
         .unwrap_or(false)
 }
 
+fn is_unsearchable_event_path(root: &Path, path: &Path) -> bool {
+    let Some(relative) = relativize(root, path) else {
+        // 前缀形态不一致时放行，避免漏掉真实源文件变更。
+        return false;
+    };
+
+    if relative.components().any(|component| match component {
+        Component::Normal(name) => SKIPPED_SEARCH_DIR_NAMES
+            .iter()
+            .any(|skipped| os_str_eq(name, OsStr::new(skipped))),
+        _ => false,
+    }) {
+        return true;
+    }
+
+    is_unsearchable_workspace_path(root, path, false)
+}
+
+fn relativize(root: &Path, path: &Path) -> Option<PathBuf> {
+    let mut root_components = root.components();
+    let mut path_components = path.components();
+    loop {
+        match root_components.next() {
+            None => return Some(path_components.as_path().to_path_buf()),
+            Some(root_component) => {
+                let path_component = path_components.next()?;
+                if !os_str_eq(root_component.as_os_str(), path_component.as_os_str()) {
+                    return None;
+                }
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+fn os_str_eq(left: &OsStr, right: &OsStr) -> bool {
+    left.eq_ignore_ascii_case(right)
+}
+
+#[cfg(not(windows))]
+fn os_str_eq(left: &OsStr, right: &OsStr) -> bool {
+    left == right
+}
+
 pub(super) fn passes_path_filters(relative_path: &str, filters: &PathFilters) -> bool {
     if let Some(include) = &filters.include
         && !include.is_match(relative_path)
@@ -379,5 +435,48 @@ fn collect_symbols_from_node(
         if let Some(child) = node.named_child(child_index as u32) {
             collect_symbols_from_node(child, source, file, symbols);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn p(value: &str) -> PathBuf {
+        PathBuf::from(value)
+    }
+
+    #[test]
+    fn search_watcher_ignores_noisy_dependency_and_build_events() {
+        let root = p("/workspace/app");
+        assert!(is_unsearchable_event_path(
+            &root,
+            &p("/workspace/app/node_modules/pkg/index.js")
+        ));
+        assert!(is_unsearchable_event_path(
+            &root,
+            &p("/workspace/app/src-tauri/target/debug/app")
+        ));
+        assert!(is_unsearchable_event_path(
+            &root,
+            &p("/workspace/app/.git/objects/aa/hash")
+        ));
+        assert!(!is_unsearchable_event_path(
+            &root,
+            &p("/workspace/app/src/main.sh")
+        ));
+    }
+
+    #[test]
+    fn search_watcher_does_not_ignore_root_named_like_dependency_dir() {
+        let root = p("/workspace/node_modules/project");
+        assert!(!is_unsearchable_event_path(
+            &root,
+            &p("/workspace/node_modules/project/src/main.sh")
+        ));
+        assert!(is_unsearchable_event_path(
+            &root,
+            &p("/workspace/node_modules/project/node_modules/pkg/index.js")
+        ));
     }
 }
