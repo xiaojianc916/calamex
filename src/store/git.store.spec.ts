@@ -1,6 +1,10 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { IGitPullRequestSummaryPayload, IGitRepositoryStatusPayload } from '@/types/git';
+import type {
+  IGitPullRequestDetailPayload,
+  IGitPullRequestSummaryPayload,
+  IGitRepositoryStatusPayload,
+} from '@/types/git';
 
 import { useGitStore } from './git';
 
@@ -67,6 +71,19 @@ const createPullRequest = (
   ...overrides,
 });
 
+const createPullRequestDetail = (
+  overrides: Partial<IGitPullRequestDetailPayload> = {},
+): IGitPullRequestDetailPayload => ({
+  ...createPullRequest(),
+  body: 'Pull request body',
+  additions: 10,
+  deletions: 2,
+  changedFiles: 3,
+  mergeable: true,
+  mergeableState: 'clean',
+  ...overrides,
+});
+
 const createUnavailableStatus = (): IGitRepositoryStatusPayload =>
   createStatus({
     available: false,
@@ -78,10 +95,24 @@ const createUnavailableStatus = (): IGitRepositoryStatusPayload =>
     headShortName: null,
   });
 
+const pullRequestSupportPayload = {
+  available: true,
+  remoteName: 'origin',
+  provider: 'github',
+  repositoryUrl: 'https://github.com/owner/repo',
+  pullRequestsUrl: 'https://github.com/owner/repo/pulls',
+  createPullRequestUrl: 'https://github.com/owner/repo/compare',
+};
+
 const tauriServiceMock = vi.hoisted(() => ({
   getGitRepositoryStatus: vi.fn(),
   initGitRepository: vi.fn(),
+  getGitPullRequestSupport: vi.fn(),
   listGitPullRequests: vi.fn(),
+  getGitPullRequestDetail: vi.fn(),
+  createGitPullRequest: vi.fn(),
+  mergeGitPullRequest: vi.fn(),
+  closeGitPullRequest: vi.fn(),
 }));
 
 vi.mock('@/services/tauri', () => ({
@@ -92,6 +123,7 @@ describe('useGitStore', () => {
   beforeEach(() => {
     setActivePinia(createPinia());
     vi.clearAllMocks();
+    tauriServiceMock.getGitPullRequestSupport.mockResolvedValue(pullRequestSupportPayload);
   });
 
   it('初始化仓库结果不会被旧刷新请求覆盖回未初始化状态', async () => {
@@ -132,6 +164,25 @@ describe('useGitStore', () => {
     expect(gitStore.status.available).toBe(false);
     expect(gitStore.status.repositoryRootPath).toBeNull();
     expect(gitStore.isLoading).toBe(false);
+  });
+
+  it('拉取请求支持检测会合并并发请求', async () => {
+    const gitStore = useGitStore();
+    tauriServiceMock.getGitRepositoryStatus.mockResolvedValueOnce(createStatus());
+    await gitStore.refreshRepositoryStatus(WORKSPACE_ROOT);
+
+    const deferred = createDeferred<typeof pullRequestSupportPayload>();
+    tauriServiceMock.getGitPullRequestSupport.mockReturnValueOnce(deferred.promise);
+
+    const firstRequest = gitStore.loadPullRequestSupport();
+    const secondRequest = gitStore.loadPullRequestSupport();
+
+    expect(tauriServiceMock.getGitPullRequestSupport).toHaveBeenCalledTimes(1);
+
+    deferred.resolve(pullRequestSupportPayload);
+    await expect(firstRequest).resolves.toEqual(pullRequestSupportPayload);
+    await expect(secondRequest).resolves.toEqual(pullRequestSupportPayload);
+    expect(gitStore.pullRequestSupport.available).toBe(true);
   });
 
   it('拉取请求列表会合并并发请求并复用缓存', async () => {
@@ -182,5 +233,65 @@ describe('useGitStore', () => {
     await expect(refreshPromise).resolves.toEqual(nextPayload);
 
     expect(gitStore.pullRequests[0]?.title).toBe('feat: fresh pr');
+  });
+
+  it('旧的拉取请求详情响应不会覆盖当前选中的详情', async () => {
+    const gitStore = useGitStore();
+    tauriServiceMock.getGitRepositoryStatus.mockResolvedValueOnce(createStatus());
+    await gitStore.refreshRepositoryStatus(WORKSPACE_ROOT);
+
+    const staleDetail = createDeferred<IGitPullRequestDetailPayload>();
+    const currentDetail = createDeferred<IGitPullRequestDetailPayload>();
+    tauriServiceMock.getGitPullRequestDetail
+      .mockReturnValueOnce(staleDetail.promise)
+      .mockReturnValueOnce(currentDetail.promise);
+
+    const staleRequest = gitStore.loadPullRequestDetail(1);
+    const currentRequest = gitStore.loadPullRequestDetail(2);
+
+    const currentPayload = createPullRequestDetail({
+      number: 2,
+      title: 'feat: current detail',
+      htmlUrl: 'https://github.com/owner/repo/pull/2',
+    });
+    currentDetail.resolve(currentPayload);
+    await expect(currentRequest).resolves.toEqual(currentPayload);
+    expect(gitStore.pullRequestDetail?.number).toBe(2);
+
+    const stalePayload = createPullRequestDetail({
+      number: 1,
+      title: 'feat: stale detail',
+    });
+    staleDetail.resolve(stalePayload);
+    await expect(staleRequest).resolves.toEqual(stalePayload);
+
+    expect(gitStore.pullRequestDetail?.number).toBe(2);
+    expect(gitStore.pullRequestDetail?.title).toBe('feat: current detail');
+  });
+
+  it('拉取请求变更会立即更新当前列表缓存', async () => {
+    const gitStore = useGitStore();
+    tauriServiceMock.getGitRepositoryStatus.mockResolvedValueOnce(createStatus());
+    await gitStore.refreshRepositoryStatus(WORKSPACE_ROOT);
+
+    tauriServiceMock.listGitPullRequests.mockResolvedValueOnce([
+      createPullRequest({ number: 1, title: 'feat: open pr' }),
+    ]);
+    await gitStore.loadPullRequests('open');
+
+    const mergedPullRequest = createPullRequest({
+      number: 1,
+      title: 'feat: open pr',
+      state: 'merged',
+    });
+    tauriServiceMock.mergeGitPullRequest.mockResolvedValueOnce(mergedPullRequest);
+
+    await expect(gitStore.mergePullRequest(1, 'squash')).resolves.toEqual(mergedPullRequest);
+
+    expect(gitStore.pullRequests).toHaveLength(0);
+    await expect(gitStore.loadPullRequests('open')).resolves.toEqual([]);
+    expect(tauriServiceMock.listGitPullRequests).toHaveBeenCalledTimes(1);
+
+    await expect(gitStore.loadPullRequests('all')).resolves.toEqual([mergedPullRequest]);
   });
 });

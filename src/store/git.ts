@@ -66,7 +66,7 @@ const deduplicatePaths = (paths: string[]): string[] => {
   return result;
 };
 
-const normalizePullRequestState = (state?: string): string => {
+const normalizePullRequestState = (state?: string): 'open' | 'closed' | 'all' => {
   if (state === 'closed' || state === 'all') {
     return state;
   }
@@ -74,7 +74,41 @@ const normalizePullRequestState = (state?: string): string => {
 };
 
 const createPullRequestCacheKey = (repositoryRootPath: string, state: string): string =>
-  `${normalizeFileSystemPath(repositoryRootPath)}:${state}`;
+  `${normalizeFileSystemPath(repositoryRootPath)}|${state}`;
+
+const createPullRequestDetailCacheKey = (repositoryRootPath: string, number: number): string =>
+  `${normalizeFileSystemPath(repositoryRootPath)}|${number}`;
+
+const shouldIncludePullRequestInState = (
+  pullRequest: IGitPullRequestSummaryPayload,
+  state: 'open' | 'closed' | 'all',
+): boolean => {
+  if (state === 'all') return true;
+  if (state === 'open') return pullRequest.state === 'open';
+  return pullRequest.state !== 'open';
+};
+
+const upsertPullRequestSummary = (
+  entries: IGitPullRequestSummaryPayload[],
+  pullRequest: IGitPullRequestSummaryPayload,
+): IGitPullRequestSummaryPayload[] => {
+  const existingIndex = entries.findIndex((entry) => entry.number === pullRequest.number);
+  if (existingIndex === -1) return [pullRequest, ...entries];
+  const nextEntries = [...entries];
+  nextEntries[existingIndex] = pullRequest;
+  return nextEntries;
+};
+
+const updatePullRequestListForState = (
+  entries: IGitPullRequestSummaryPayload[],
+  pullRequest: IGitPullRequestSummaryPayload,
+  state: 'open' | 'closed' | 'all',
+): IGitPullRequestSummaryPayload[] => {
+  if (shouldIncludePullRequestInState(pullRequest, state)) {
+    return upsertPullRequestSummary(entries, pullRequest);
+  }
+  return entries.filter((entry) => entry.number !== pullRequest.number);
+};
 
 type TStatusFetcher = (workspaceRootPath: string) => Promise<IGitRepositoryStatusPayload>;
 
@@ -113,10 +147,11 @@ export const useGitStore = defineStore('git', () => {
   const isSettingRemote = ref(false);
   const pullRequests = ref<IGitPullRequestSummaryPayload[]>([]);
   const isPullRequestsLoading = ref(false);
-  const pullRequestStateFilter = ref('open');
+  const pullRequestStateFilter = ref<'open' | 'closed' | 'all'>('open');
   const pullRequestDetail = ref<IGitPullRequestDetailPayload | null>(null);
   const isPullRequestDetailLoading = ref(false);
   const pullRequestListCache = ref<Record<string, IGitPullRequestSummaryPayload[]>>({});
+  const pullRequestDetailCache = ref<Record<string, IGitPullRequestDetailPayload>>({});
 
   const commitDetailCache = ref<Record<string, IGitCommitDetailPayload>>({});
   const commitFileDiffCache = ref<Record<string, IGitCommitFileDiffPayload>>({});
@@ -138,6 +173,11 @@ export const useGitStore = defineStore('git', () => {
     string,
     Promise<IGitPullRequestSummaryPayload[]>
   >();
+  const pendingPullRequestDetailRequests = new Map<
+    string,
+    Promise<IGitPullRequestDetailPayload>
+  >();
+  let pendingPullRequestSupportRequest: Promise<IGitPullRequestSupportPayload> | null = null;
 
   const hasRepository = computed(
     () => status.value.available && Boolean(status.value.repositoryRootPath),
@@ -180,12 +220,28 @@ export const useGitStore = defineStore('git', () => {
 
   const resetPullRequestSupport = (): void => {
     pullRequestSupportRequestId += 1;
+    pendingPullRequestSupportRequest = null;
     pullRequestSupport.value = createEmptyPullRequestSupport();
   };
 
   const invalidatePullRequestListCache = (): void => {
     pullRequestListCache.value = {};
     pendingPullRequestListRequests.clear();
+  };
+
+  const invalidatePullRequestDetailCache = (pullRequestNumber?: number): void => {
+    if (pullRequestNumber === undefined) {
+      pullRequestDetailCache.value = {};
+      pendingPullRequestDetailRequests.clear();
+      return;
+    }
+    const repositoryRootPath = status.value.repositoryRootPath;
+    if (!repositoryRootPath) return;
+    const cacheKey = createPullRequestDetailCacheKey(repositoryRootPath, pullRequestNumber);
+    const nextCache = { ...pullRequestDetailCache.value };
+    delete nextCache[cacheKey];
+    pullRequestDetailCache.value = nextCache;
+    pendingPullRequestDetailRequests.delete(cacheKey);
   };
 
   const resetPullRequests = (): void => {
@@ -195,6 +251,7 @@ export const useGitStore = defineStore('git', () => {
     pullRequestStateFilter.value = 'open';
     pullRequestDetail.value = null;
     invalidatePullRequestListCache();
+    invalidatePullRequestDetailCache();
   };
 
   const resetSupplementaryData = (): void => {
@@ -405,9 +462,7 @@ export const useGitStore = defineStore('git', () => {
     isLoading.value = true;
     try {
       const payload = await fetchPayload(workspaceRootPath);
-      if (requestId !== statusRequestId) {
-        return status.value;
-      }
+      if (requestId !== statusRequestId) return status.value;
       validatePayload?.(payload, workspaceRootPath);
       return applyStatus(payload);
     } finally {
@@ -445,9 +500,7 @@ export const useGitStore = defineStore('git', () => {
     onSuccess?: (deduplicatedPaths: string[]) => void,
   ): Promise<IGitRepositoryStatusPayload> => {
     const deduplicatedPaths = deduplicatePaths(paths);
-    if (deduplicatedPaths.length === 0) {
-      return status.value;
-    }
+    if (deduplicatedPaths.length === 0) return status.value;
     const payload = await mutate({
       repositoryRootPath: requireRepositoryRootPath(),
       paths: deduplicatedPaths,
@@ -491,9 +544,7 @@ export const useGitStore = defineStore('git', () => {
   }): Promise<IGitCommitSummaryPayload[]> => {
     const append = options?.append ?? false;
     const nextOffset = append ? commitHistoryNextOffset.value : 0;
-    if (append && nextOffset === null) {
-      return commitHistory.value;
-    }
+    if (append && nextOffset === null) return commitHistory.value;
     const requestId = ++commitHistoryRequestId;
     isCommitHistoryLoading.value = true;
     try {
@@ -502,9 +553,7 @@ export const useGitStore = defineStore('git', () => {
         offset: nextOffset ?? 0,
         limit: options?.limit ?? null,
       });
-      if (requestId !== commitHistoryRequestId) {
-        return commitHistory.value;
-      }
+      if (requestId !== commitHistoryRequestId) return commitHistory.value;
       commitHistory.value = append ? [...commitHistory.value, ...payload.entries] : payload.entries;
       commitHistoryHasMore.value = payload.hasMore;
       commitHistoryNextOffset.value = payload.nextOffset;
@@ -523,9 +572,7 @@ export const useGitStore = defineStore('git', () => {
       const payload = await tauriService.listGitBranches({
         repositoryRootPath: requireRepositoryRootPath(),
       });
-      if (requestId !== branchesRequestId) {
-        return branches.value;
-      }
+      if (requestId !== branchesRequestId) return branches.value;
       branches.value = payload.branches;
       return branches.value;
     } finally {
@@ -542,9 +589,7 @@ export const useGitStore = defineStore('git', () => {
       const payload = await tauriService.listGitStashes({
         repositoryRootPath: requireRepositoryRootPath(),
       });
-      if (requestId !== stashesRequestId) {
-        return stashes.value;
-      }
+      if (requestId !== stashesRequestId) return stashes.value;
       stashes.value = payload.entries;
       return stashes.value;
     } finally {
@@ -555,22 +600,64 @@ export const useGitStore = defineStore('git', () => {
   };
 
   const loadPullRequestSupport = async (): Promise<IGitPullRequestSupportPayload> => {
+    if (pendingPullRequestSupportRequest) return pendingPullRequestSupportRequest;
+
     const requestId = ++pullRequestSupportRequestId;
     isPullRequestSupportLoading.value = true;
-    try {
-      const payload = await tauriService.getGitPullRequestSupport({
+    const request = tauriService
+      .getGitPullRequestSupport({
         repositoryRootPath: requireRepositoryRootPath(),
+      })
+      .then((payload) => {
+        if (requestId === pullRequestSupportRequestId) {
+          pullRequestSupport.value = payload;
+        }
+        return requestId === pullRequestSupportRequestId ? pullRequestSupport.value : payload;
+      })
+      .finally(() => {
+        if (pendingPullRequestSupportRequest === request) pendingPullRequestSupportRequest = null;
+        if (requestId === pullRequestSupportRequestId) {
+          isPullRequestSupportLoading.value = false;
+        }
       });
-      if (requestId !== pullRequestSupportRequestId) {
-        return pullRequestSupport.value;
-      }
-      pullRequestSupport.value = payload;
-      return pullRequestSupport.value;
-    } finally {
-      if (requestId === pullRequestSupportRequestId) {
-        isPullRequestSupportLoading.value = false;
-      }
+
+    pendingPullRequestSupportRequest = request;
+    return request;
+  };
+
+  const applyPullRequestSummaryMutation = (
+    pullRequest: IGitPullRequestSummaryPayload,
+  ): void => {
+    const repositoryRootPath = status.value.repositoryRootPath;
+    if (!repositoryRootPath) return;
+
+    pullRequestsRequestId += 1;
+    pendingPullRequestListRequests.clear();
+    invalidatePullRequestDetailCache(pullRequest.number);
+
+    const repositoryCachePrefix = `${normalizeFileSystemPath(repositoryRootPath)}|`;
+    const cacheKeys = new Set<string>(
+      Object.keys(pullRequestListCache.value).filter((key) => key.startsWith(repositoryCachePrefix)),
+    );
+    cacheKeys.add(createPullRequestCacheKey(repositoryRootPath, pullRequestStateFilter.value));
+    cacheKeys.add(createPullRequestCacheKey(repositoryRootPath, 'all'));
+
+    const nextCache = { ...pullRequestListCache.value };
+    for (const cacheKey of cacheKeys) {
+      const state = normalizePullRequestState(cacheKey.split('|').pop());
+      nextCache[cacheKey] = updatePullRequestListForState(
+        nextCache[cacheKey] ?? [],
+        pullRequest,
+        state,
+      );
     }
+
+    pullRequestListCache.value = nextCache;
+    pullRequests.value = updatePullRequestListForState(
+      pullRequests.value,
+      pullRequest,
+      pullRequestStateFilter.value,
+    );
   };
 
   const loadPullRequests = async (
@@ -587,14 +674,10 @@ export const useGitStore = defineStore('git', () => {
       pullRequests.value = cached;
       return cached;
     }
-    if (cached) {
-      pullRequests.value = cached;
-    }
+    if (cached) pullRequests.value = cached;
 
     const pending = pendingPullRequestListRequests.get(cacheKey);
-    if (pending) {
-      return pending;
-    }
+    if (pending) return pending;
 
     const requestId = ++pullRequestsRequestId;
     isPullRequestsLoading.value = true;
@@ -625,23 +708,43 @@ export const useGitStore = defineStore('git', () => {
   };
 
   const loadPullRequestDetail = async (number: number): Promise<IGitPullRequestDetailPayload> => {
+    const repositoryRootPath = requireRepositoryRootPath();
+    const cacheKey = createPullRequestDetailCacheKey(repositoryRootPath, number);
+    const cached = pullRequestDetailCache.value[cacheKey];
+    if (cached) {
+      pullRequestDetail.value = cached;
+      return cached;
+    }
+
+    const pending = pendingPullRequestDetailRequests.get(cacheKey);
+    if (pending) return pending;
+
     const requestId = ++pullRequestDetailRequestId;
     isPullRequestDetailLoading.value = true;
-    try {
-      const payload = await tauriService.getGitPullRequestDetail({
-        repositoryRootPath: requireRepositoryRootPath(),
+    const request = tauriService
+      .getGitPullRequestDetail({
+        repositoryRootPath,
         number,
+      })
+      .then((payload) => {
+        pullRequestDetailCache.value = {
+          ...pullRequestDetailCache.value,
+          [cacheKey]: payload,
+        };
+        if (requestId === pullRequestDetailRequestId) {
+          pullRequestDetail.value = payload;
+        }
+        return payload;
+      })
+      .finally(() => {
+        pendingPullRequestDetailRequests.delete(cacheKey);
+        if (requestId === pullRequestDetailRequestId) {
+          isPullRequestDetailLoading.value = false;
+        }
       });
-      if (requestId !== pullRequestDetailRequestId) {
-        if (pullRequestDetail.value) return pullRequestDetail.value;
-      }
-      pullRequestDetail.value = payload;
-      return payload;
-    } finally {
-      if (requestId === pullRequestDetailRequestId) {
-        isPullRequestDetailLoading.value = false;
-      }
-    }
+
+    pendingPullRequestDetailRequests.set(cacheKey, request);
+    return request;
   };
 
   const createPullRequest = async (payload: {
@@ -655,7 +758,7 @@ export const useGitStore = defineStore('git', () => {
       repositoryRootPath: requireRepositoryRootPath(),
       ...payload,
     });
-    invalidatePullRequestListCache();
+    applyPullRequestSummaryMutation(result);
     return result;
   };
 
@@ -668,7 +771,7 @@ export const useGitStore = defineStore('git', () => {
       number,
       mergeMethod,
     });
-    invalidatePullRequestListCache();
+    applyPullRequestSummaryMutation(result);
     return result;
   };
 
@@ -677,7 +780,7 @@ export const useGitStore = defineStore('git', () => {
       repositoryRootPath: requireRepositoryRootPath(),
       number,
     });
-    invalidatePullRequestListCache();
+    applyPullRequestSummaryMutation(result);
     return result;
   };
 
@@ -693,6 +796,7 @@ export const useGitStore = defineStore('git', () => {
         remoteUrl,
       });
       pullRequestSupportRequestId += 1;
+      pendingPullRequestSupportRequest = null;
       pullRequestSupport.value = payload;
       resetPullRequests();
       return pullRequestSupport.value;
@@ -740,9 +844,7 @@ export const useGitStore = defineStore('git', () => {
       branchName,
       checkout,
     });
-    if (checkout) {
-      clearBaselineCache();
-    }
+    if (checkout) clearBaselineCache();
     resetBranches();
     return applyStatusFromMutation(payload);
   };
