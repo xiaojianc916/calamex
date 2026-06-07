@@ -36,12 +36,14 @@
   - `src/services/editor/shiki-tokenizer.worker.ts`
   - `src/services/editor/shiki-highlighter.ts`
   - `src/services/editor/codemirror-shiki-highlight.ts`
+  - `src/services/editor/shiki-shared.ts`
 - 问题：即使做了可见区切片和 LRU，Shiki/Oniguruma tokenize 仍可能在主线程形成长任务，影响输入和滚动流畅度。
 - 算法：将 tokenize 请求通过 Vite module worker 发送到独立线程：
   - Worker 内部独立初始化 `shiki/core`、Oniguruma WASM、主题和按需语言。
   - CodeMirror 插件提交异步高亮请求，结果通过 `StateEffect` 回填 decorations。
-  - 每次请求带递增 `requestId`；过期结果直接丢弃，避免滚动/编辑竞态错刷。
-  - 主线程保留 LRU token cache；Worker 不可用、超时或失败时回退到主线程异步 tokenize。
+  - 每次请求带递增 `requestId` 与 `docVersion`；过期结果直接丢弃，避免滚动/编辑竞态错刷。
+  - `shiki-shared.ts` 仅保留 Shiki-only 依赖，避免 Worker bundle 间接拉入 CodeMirror registry / HighlightStyle。
+  - 主线程保留 LRU token cache；Worker 不可用或运行失败时回退主线程异步 tokenize，单次 Worker 超时则放弃本轮高亮，避免重任务回流 UI 线程。
 - 复杂度：
   - 主线程从 O(slice tokenize) 降为 O(slice 截取 + decorations 回填)，重 tokenize 的 CPU 成本移出主线程。
   - 仍保留 200 KiB 单次切片预算，避免给 Worker 发送超大任务。
@@ -80,6 +82,21 @@
 - 算法：为 diff 输入字节数与编辑数量加预算阈值；小输入仍走精确 diff，大输入返回明确省略信息。
 - 取舍：不影响实际替换，只限制预览成本；可避免 UI 为少数极端文件付出不可控代价。
 - 验证：新增小输入正常 diff、超大输入省略、编辑过多省略的单测。
+
+## C1：路径补全建议的有界 LRU 缓存
+
+- 文件：`src/composables/useWorkspacePathSuggestions.ts`
+- 问题：搜索包含/排除路径输入框会缓存目录列表，并在无斜杠 query 下调用后端文件名模糊搜索；用户在大仓库里浏览很多目录或反复输入相同 query 时，容易出现重复 IPC 或缓存无界增长。
+- 算法：
+  - 目录列表缓存改为 64 项 LRU，key 为相对目录路径。
+  - 文件名模糊搜索结果增加 64 项 LRU，key 为 `matchCase + limit + query`。
+  - 命中时通过 Map delete + reinsert 更新最近访问顺序；超过容量时淘汰最久未使用项。
+  - 工作区根变化时同时清空两个缓存，避免跨工作区污染。
+- 复杂度：
+  - 重复目录补全 / 重复文件名 query 从一次 IPC 降为 O(1) Map 命中。
+  - 缓存空间从潜在无界收敛到 O(64 + 64)。
+- 取舍：仍保留后端 nucleo 作为真实模糊排序来源；只缓存短期交互结果，不改变排序与匹配语义。
+- 验证：新增单测覆盖 LRU 淘汰、命中刷新与已有 key 更新。
 
 ## 建议验证命令
 

@@ -37,6 +37,8 @@ interface IUseWorkspacePathSuggestionsOptions {
 
 const DEFAULT_DEBOUNCE_MS = 180;
 const DEFAULT_SUGGESTION_LIMIT = 40;
+export const PATH_SUGGESTION_DIRECTORY_CACHE_LIMIT = 64;
+export const PATH_SUGGESTION_FILE_SEARCH_CACHE_LIMIT = 64;
 
 const normalizeSlashes = (value: string): string => value.replace(/\\/gu, '/');
 const stripTrailingSlashes = (value: string): string => value.replace(/[\\/]+$/u, '');
@@ -58,6 +60,43 @@ const getFileName = (relativePath: string): string => {
 const getParentPath = (relativePath: string): string => {
   const segments = normalizeSlashes(relativePath).split('/').filter(Boolean);
   return segments.length <= 1 ? '' : segments.slice(0, -1).join('/');
+};
+
+export const getBoundedCacheValue = <T>(cache: Map<string, T>, key: string): T | undefined => {
+  if (!cache.has(key)) {
+    return undefined;
+  }
+
+  const value = cache.get(key) as T;
+  // Map 删除后重插即可维护 LRU 最近访问顺序。
+  cache.delete(key);
+  cache.set(key, value);
+  return value;
+};
+
+export const setBoundedCacheValue = <T>(
+  cache: Map<string, T>,
+  key: string,
+  value: T,
+  limit: number,
+): void => {
+  if (limit <= 0) {
+    cache.clear();
+    return;
+  }
+
+  if (cache.has(key)) {
+    cache.delete(key);
+  }
+  cache.set(key, value);
+
+  while (cache.size > limit) {
+    const oldestKey = cache.keys().next().value;
+    if (oldestKey === undefined) {
+      break;
+    }
+    cache.delete(oldestKey);
+  }
 };
 
 // 包含/排除输入框是以逗号或换行分隔的 glob 列表，补全只应作用于「光标所在的那一段」。
@@ -112,9 +151,12 @@ export const useWorkspacePathSuggestions = (options: IUseWorkspacePathSuggestion
   const debounceMs = options.debounceMs ?? DEFAULT_DEBOUNCE_MS;
   const suggestionLimit = options.limit ?? DEFAULT_SUGGESTION_LIMIT;
 
-  // 目录列表缓存：键为目录的相对路径（'' 表示工作区根）。同一工作区会话内复用以减少 IPC，
-  // 工作区根变化时整体失效。
+  // 目录列表缓存：键为目录的相对路径（'' 表示工作区根）。同一工作区会话内复用以减少 IPC。
+  // 使用固定容量 LRU，避免在大仓库里逐级浏览很多目录后缓存无界增长。
   let directoryEntriesCache = new Map<string, IWorkspaceEntry[]>();
+  // 文件名全局模糊搜索缓存：键为 caseSensitive + query + limit。用户在输入框内来回编辑同一
+  // query 或失焦/聚焦时可复用结果，减少重复 searchWorkspace IPC；同样用 LRU 控制内存。
+  let fileSearchCache = new Map<string, IPathSuggestion[]>();
   let cachedRootPath: string | null = null;
 
   // 防抖 + 单调递增 requestId + AbortController：沿用搜索面板既有的竞态范式，
@@ -127,6 +169,7 @@ export const useWorkspacePathSuggestions = (options: IUseWorkspacePathSuggestion
     if (cachedRootPath !== rootPath) {
       cachedRootPath = rootPath;
       directoryEntriesCache = new Map<string, IWorkspaceEntry[]>();
+      fileSearchCache = new Map<string, IPathSuggestion[]>();
     }
   };
 
@@ -134,14 +177,19 @@ export const useWorkspacePathSuggestions = (options: IUseWorkspacePathSuggestion
     rootPath: string,
     relativeDirectory: string,
   ): Promise<IWorkspaceEntry[]> => {
-    const cached = directoryEntriesCache.get(relativeDirectory);
+    const cached = getBoundedCacheValue(directoryEntriesCache, relativeDirectory);
     if (cached) {
       return cached;
     }
 
     const absolutePath = joinWorkspacePath(rootPath, relativeDirectory);
     const payload = await tauriService.listWorkspaceEntries(absolutePath, rootPath);
-    directoryEntriesCache.set(relativeDirectory, payload.entries);
+    setBoundedCacheValue(
+      directoryEntriesCache,
+      relativeDirectory,
+      payload.entries,
+      PATH_SUGGESTION_DIRECTORY_CACHE_LIMIT,
+    );
 
     return payload.entries;
   };
@@ -169,6 +217,56 @@ export const useWorkspacePathSuggestions = (options: IUseWorkspacePathSuggestion
       detail: relativeDirectory,
       kind: isDirectory ? 'directory' : 'file',
     };
+  };
+
+  const buildFileSearchCacheKey = (core: string, caseSensitive: boolean): string =>
+    `${caseSensitive ? 'case' : 'fold'}\u0000${suggestionLimit}\u0000${core}`;
+
+  const searchFileNameSuggestions = async (
+    rootPath: string,
+    normalizedCore: string,
+    caseSensitive: boolean,
+    abortSignal: AbortSignal,
+  ): Promise<IPathSuggestion[]> => {
+    const cacheKey = buildFileSearchCacheKey(normalizedCore, caseSensitive);
+    const cached = getBoundedCacheValue(fileSearchCache, cacheKey);
+    if (cached) {
+      return cached;
+    }
+
+    const payload = await tauriService.searchWorkspace(
+      {
+        workspaceRootPath: rootPath,
+        query: normalizedCore,
+        scope: 'file-name',
+        matchCase: caseSensitive,
+        wholeWord: false,
+        useRegex: false,
+        useStructural: false,
+        includePatterns: [],
+        excludePatterns: [],
+        limit: suggestionLimit,
+      },
+      { signal: abortSignal },
+    );
+
+    const nextSuggestions = payload.results.map((result) => {
+      const relativePath = normalizeSlashes(result.relativePath);
+      return {
+        insertValue: relativePath,
+        label: getFileName(relativePath),
+        detail: getParentPath(relativePath),
+        kind: 'file' as const,
+      };
+    });
+
+    setBoundedCacheValue(
+      fileSearchCache,
+      cacheKey,
+      nextSuggestions,
+      PATH_SUGGESTION_FILE_SEARCH_CACHE_LIMIT,
+    );
+    return nextSuggestions;
   };
 
   const buildSuggestions = async (
@@ -213,30 +311,14 @@ export const useWorkspacePathSuggestions = (options: IUseWorkspacePathSuggestion
     }
 
     if (normalizedCore) {
-      const payload = await tauriService.searchWorkspace(
-        {
-          workspaceRootPath: rootPath,
-          query: normalizedCore,
-          scope: 'file-name',
-          matchCase: caseSensitive,
-          wholeWord: false,
-          useRegex: false,
-          useStructural: false,
-          includePatterns: [],
-          excludePatterns: [],
-          limit: suggestionLimit,
-        },
-        { signal: abortSignal },
+      const fileSuggestions = await searchFileNameSuggestions(
+        rootPath,
+        normalizedCore,
+        caseSensitive,
+        abortSignal,
       );
-
-      for (const result of payload.results) {
-        const relativePath = normalizeSlashes(result.relativePath);
-        pushSuggestion({
-          insertValue: relativePath,
-          label: getFileName(relativePath),
-          detail: getParentPath(relativePath),
-          kind: 'file',
-        });
+      for (const suggestion of fileSuggestions) {
+        pushSuggestion(suggestion);
       }
     }
 
@@ -345,6 +427,7 @@ export const useWorkspacePathSuggestions = (options: IUseWorkspacePathSuggestion
   const dispose = (): void => {
     close();
     directoryEntriesCache = new Map<string, IWorkspaceEntry[]>();
+    fileSearchCache = new Map<string, IPathSuggestion[]>();
     cachedRootPath = null;
   };
 
