@@ -67,6 +67,7 @@ import EmbeddedTerminal from '@/components/workbench/EmbeddedTerminal.vue';
 import TerminalTabBar from '@/components/workbench/TerminalTabBar.vue';
 import { useMessage } from '@/composables/useMessage';
 import { useTerminalRunControl } from '@/composables/useTerminalRunControl';
+import { useTerminalRunRoutingStore } from '@/store/terminalRunRouting';
 import { useTerminalTabsStore } from '@/store/terminalTabs';
 import { useTerminalRegistryStore } from '@/terminal/registry';
 import type { TThemeMode } from '@/types/app';
@@ -92,7 +93,8 @@ const message = useMessage();
 const tabsStore = useTerminalTabsStore();
 const { tabs, activeSessionId } = storeToRefs(tabsStore);
 const registry = useTerminalRegistryStore();
-const { canStopRun, stopRun } = useTerminalRunControl();
+const runRoutingStore = useTerminalRunRoutingStore();
+const { canStopRun, isRunning, stopRun } = useTerminalRunControl();
 
 // 工具栏作用于当前激活会话；状态来自 registry 共享 refs（会话创建前后同源）。
 const isTerminalReady = computed(
@@ -107,7 +109,14 @@ const handleNewTab = (): void => {
   tabsStore.addTab();
 };
 
-const handleCloseTab = (sessionId: string): void => {
+const closeTerminalTab = async (sessionId: string): Promise<void> => {
+  const closesActiveRunSession =
+    isRunning.value && runRoutingStore.activeRunSessionId === sessionId;
+
+  if (closesActiveRunSession) {
+    await stopRun();
+  }
+
   // 先移除 tab（触发 EmbeddedTerminal 卸载 / detach），再彻底销毁后端会话。
   if (!tabsStore.closeTab(sessionId)) return;
   void nextTick().then(() => registry.dispose(sessionId));
@@ -115,6 +124,12 @@ const handleCloseTab = (sessionId: string): void => {
   if (tabs.value.length === 0) {
     emit('hide');
   }
+};
+
+const handleCloseTab = (sessionId: string): void => {
+  void closeTerminalTab(sessionId).catch((error) => {
+    message.error(toErrorMessage(error, '关闭终端失败'));
+  });
 };
 
 // 终端面板（重新）可见且无任何会话时，补一个首终端，实现“重新启动”。
