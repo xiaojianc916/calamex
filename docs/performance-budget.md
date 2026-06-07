@@ -78,6 +78,21 @@
 - 验证：`cargo test -p calamex terminal::wsl_pty`、`cargo clippy`、`cargo test`；本机手动复测：
   `cat` 一个数 MB 文件观察滚动流畅度与 CPU 占用。
 
+## 终端快照跳过判定的单次 ANSI 扫描
+
+- 文件：`src-tauri/src/commands/terminal/state.rs`（`should_skip_snapshot_for_interactive_resize_repaint`）
+- 问题：每段交互输出都调用该判定；原实现对同一 chunk 先后调用 `contains_alt_screen_switch`
+  与 `resolve_alt_screen_state_after_data`，二者各自跑一遍完整 vte 解析（`scan_ansi_csi_events`），
+  即同一段数据被 vte 解析两遍。
+- 算法：单次扫描复用结果。改为只调用一次 `scan_ansi_csi_events`，从返回的
+  `AnsiCsiEvents { alt_screen_switched, alt_screen_active }` 同时得出「是否含切换」与
+  「应用后状态」。两个薄封装 helper 保留在 snapshot.rs（可能的其它调用方）。
+- 复杂度（设 chunk 长 k）：之前 2×O(k) vte 解析/段；之后 1×O(k)/段（解析次数减半）。
+- 正确性：语义逐字段等价——has_alt_screen_control == alt_screen_switched；新 alt_screen_active
+  在 switched 时取事件值、否则保持原值，与 resolve_alt_screen_state_after_data 一致；其余抑制
+  窗口逻辑不变。
+- 验证：`cargo test -p calamex`、`cargo clippy`、`cargo test`。
+
 ## 工作区搜索结果的 top-k 堆选择
 
 - 文件：`src-tauri/src/commands/search/find.rs`
