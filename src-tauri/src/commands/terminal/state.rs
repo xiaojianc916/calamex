@@ -11,11 +11,11 @@ use std::{
 
 use crate::terminal::{
     snapshot::{
-        TerminalInteractiveVisualState, contains_alt_screen_switch,
-        is_likely_interactive_resize_repaint_frame, resolve_alt_screen_state_after_data,
+        TerminalInteractiveVisualState, is_likely_interactive_resize_repaint_frame,
         trim_terminal_snapshot,
     },
     types::TerminalState,
+    vte_detect::scan_ansi_csi_events,
     wsl_pty::{LocalWslPtyHandle, LocalWslRunHandle},
 };
 
@@ -317,9 +317,14 @@ pub(super) fn should_skip_snapshot_for_interactive_resize_repaint(
     };
     let visual_state = visual_states.entry(session_id.to_string()).or_default();
     let was_alt_screen_active = visual_state.alt_screen_active;
-    let has_alt_screen_control = contains_alt_screen_switch(chunk);
-    visual_state.alt_screen_active =
-        resolve_alt_screen_state_after_data(visual_state.alt_screen_active, chunk);
+    // 单次 vte 扫描同时得出「本段是否含 alt-screen 切换」与「应用后最终 alt-screen 状态」，
+    // 避免对同一段数据解析两遍（原先分别调用 contains_alt_screen_switch 与
+    // resolve_alt_screen_state_after_data，各做一次完整 vte 解析）。
+    let ansi_events = scan_ansi_csi_events(chunk);
+    let has_alt_screen_control = ansi_events.alt_screen_switched;
+    if ansi_events.alt_screen_switched {
+        visual_state.alt_screen_active = ansi_events.alt_screen_active;
+    }
     if was_alt_screen_active || visual_state.alt_screen_active || has_alt_screen_control {
         return false;
     }

@@ -35,3 +35,60 @@
   对齐逻辑保持不变，不会把 CSI 序列切在中段。新增单测覆盖：未超限不裁剪、超限回落到低水位、
   多字节边界安全、对齐到换行之后、重复追加始终不超过上限。
 - 验证：`cargo test -p calamex terminal::snapshot`、`cargo clippy`、`cargo test`。
+
+## Utf8ChunkDecoder：PTY 增量 UTF-8 解码的零拷贝快路径与去重
+
+- 文件：`src-tauri/src/terminal/utf8_decoder.rs`（唯一实现，新增快路径）、
+  `src-tauri/src/terminal/local_wsl_protocol.rs`（删除重复实现，改为零成本别名）；
+  调用方：`src-tauri/src/terminal/wsl_pty.rs` 的两个 PTY 读线程。
+- 问题：① 两个 PTY 读线程每次 read 8 KiB 都把整块字节 `extend_from_slice` 进内部
+  `pending` 再 `from_utf8`，即便本块整体合法（绝大多数情况）也要多一次整块拷贝；
+  ② 存在两份近乎相同的解码器（`Utf8ChunkDecoder` 与 `LocalWslUtf8ChunkDecoder`），
+  违反“不造第二个轮子”。
+- 算法：空 `pending` 零拷贝快路径 + 去重。无残留字节时直接对本次输入 `from_utf8`：
+  整块合法则零拷贝直接 `push_str`；仅结尾切断一个多字节字符时，只把不完整残尾（<4 字节）
+  暂存，其余直接输出。含真正非法字节的少数情况回退到原有逐段循环（U+FFFD 替代）。
+  并把两份解码器合并为单一 `Utf8ChunkDecoder`，旧名保留为零成本类型别名。
+- 复杂度（设单次输入 k 字节）：
+  - 之前：每次 read 必有一次 O(k) 整块拷贝进 `pending`（无论是否合法）。
+  - 之后：合法 / 仅尾部切断的主路径无额外拷贝（仅暂存 <4 字节残尾），O(k) 仅为
+    `from_utf8` 校验本身；非法字节回退路径与原实现一致。
+- 正确性：解码结果与原实现逐字节等价；新增单测覆盖整块合法、跨 read 切断、中段非法字节、
+  结尾不完整 + last 收尾、空输入收尾等情况。去重后行为由 `Utf8ChunkDecoder` 单一实现保证。
+- 验证：`cargo test -p calamex terminal::utf8_decoder`、`cargo clippy`、`cargo test`。
+
+## 终端 PTY 输出事件的源头合批
+
+- 文件：`src-tauri/src/terminal/wsl_pty.rs`（两个 PTY 读线程）
+- 问题：交互与运行读线程每次 `reader.read`（8 KiB）都直接 `on_event` 发一个 Tauri
+  事件（InteractiveData / RunChunk）。高吞吐输出（构建日志、`cat` 大文件、`yes`）下
+  会以每 8 KiB 一次的频率洪水般创建 IPC 事件，序列化与 JS 事件处理开销随之上升。
+  （前端 session.ts 已有 16ms 写入合批，但源头未合批。）
+- 算法：“饱和则攒批、排空即 flush”启发式合批。把多次 read 的解码结果累加到 `pending_out`：
+  当本次 read 读满整个缓冲（`read == buffer.len()`，表明管道仍饱和）时继续攒批；一旦
+  未读满（突发已排空，常见于交互单字符回显）立即 flush 以保低延迟；攒批超 32 KiB 强制
+  flush 避免无界增长；读线程结束时补全解码残尾并一次性 flush 剩余。判决逻辑抽为纯函数
+  `should_flush_terminal_output` 以便单测。
+- 复杂度（设突发输出共 N 字节，缓冲 B=8 KiB，阈值 T=32 KiB）：
+  - 之前：事件数 ≈ N/B（每读一次发一个）。
+  - 之后：突发期间事件数 ≈ N/T（约降为原来的 1/4）；交互小输出仍立即发出，延迟不变。
+- 正确性：所有字节最终按原顺序送达前端（只是合并成更少的事件）；交互回显不被扣留（未读满
+  立即 flush）；空解码结果不会发出空事件（`pending_len == 0` 守卫）。新增单测覆盖启发式
+  的四种边界（空攒批、饱和未达阈、饱和超阈、未读满）。
+- 验证：`cargo test -p calamex terminal::wsl_pty`、`cargo clippy`、`cargo test`；本机手动复测：
+  `cat` 一个数 MB 文件观察滚动流畅度与 CPU 占用。
+
+## 终端快照跳过判定的单次 ANSI 扫描
+
+- 文件：`src-tauri/src/commands/terminal/state.rs`（`should_skip_snapshot_for_interactive_resize_repaint`）
+- 问题：每段交互输出都调用该判定；原实现对同一 chunk 先后调用 `contains_alt_screen_switch`
+  与 `resolve_alt_screen_state_after_data`，二者各自跑一遍完整 vte 解析（`scan_ansi_csi_events`），
+  即同一段数据被 vte 解析两遍。
+- 算法：单次扫描复用结果。改为只调用一次 `scan_ansi_csi_events`，从返回的
+  `AnsiCsiEvents { alt_screen_switched, alt_screen_active }` 同时得出「是否含切换」与
+  「应用后状态」。两个薄封装 helper 保留在 snapshot.rs（可能的其它调用方）。
+- 复杂度（设 chunk 长 k）：之前 2×O(k) vte 解析/段；之后 1×O(k)/段（解析次数减半）。
+- 正确性：语义逐字段等价——has_alt_screen_control == alt_screen_switched；新 alt_screen_active
+  在 switched 时取事件值、否则保持原值，与 resolve_alt_screen_state_after_data 一致；其余抑制
+  窗口逻辑不变。
+- 验证：`cargo test -p calamex`、`cargo clippy`、`cargo test`。
