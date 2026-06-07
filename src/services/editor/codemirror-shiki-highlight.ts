@@ -31,9 +31,15 @@ const HIGHLIGHT_OVERSCAN_LINES = 40;
 // 输入停顿后过多久触发一次重算（毫秒）；过小会让连续输入仍频繁重算，过大高亮滞后明显。
 const HIGHLIGHT_RECOMPUTE_DEBOUNCE_MS = 90;
 
+// Shiki token 样式种类远少于 token 数量。缓存 Decoration.mark 可避免滚动/重算时
+// 为同一 style 字符串反复分配短生命周期对象；设置上限避免异常主题造成无界增长。
+const MAX_TOKEN_DECORATION_CACHE_SIZE = 512;
+
 const FONT_STYLE_ITALIC = 1;
 const FONT_STYLE_BOLD = 2;
 const FONT_STYLE_UNDERLINE = 4;
+
+const tokenDecorationCache = new Map<string, Decoration>();
 
 // 当前语言（app 语言 id）由外部通过 effect 注入。
 const setShikiLanguageEffect = StateEffect.define<string>();
@@ -133,6 +139,23 @@ const tokenInlineStyle = (token: IShikiThemedToken): string => {
   return declarations.join(';');
 };
 
+const tokenDecoration = (style: string): Decoration => {
+  const cached = tokenDecorationCache.get(style);
+  if (cached) {
+    return cached;
+  }
+
+  const decoration = Decoration.mark({ attributes: { style } });
+  if (tokenDecorationCache.size >= MAX_TOKEN_DECORATION_CACHE_SIZE) {
+    const oldestKey = tokenDecorationCache.keys().next().value;
+    if (oldestKey) {
+      tokenDecorationCache.delete(oldestKey);
+    }
+  }
+  tokenDecorationCache.set(style, decoration);
+  return decoration;
+};
+
 // 仅 tokenize 当前可见行所需的切片，单次成本与可见行数相关而非文档总长，
 // 避免大文件编辑/滚动时主线程出现长任务。默认从文档首行起切片以保证跨行结构
 // 在可见区配色正确（见 computeShikiHighlightRange）。返回所用行范围供调用方做复用判定。
@@ -209,7 +232,7 @@ const buildShikiDecorations = (
       }
       const style = tokenInlineStyle(token);
       if (style) {
-        builder.add(from, to, Decoration.mark({ attributes: { style } }));
+        builder.add(from, to, tokenDecoration(style));
       }
     }
   }
