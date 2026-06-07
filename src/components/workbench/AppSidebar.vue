@@ -2,8 +2,8 @@
 <aside class="app-sidebar-shell flex h-full min-h-0 min-w-0 flex-col overflow-hidden" :class="{ 'source-control-sidebar-host': isSourceControlView, 'explorer-sidebar-host': isExplorerView, 'search-sidebar-host': isSearchView, 'ssh-sidebar-host': isSshView, }" >
   <!-- 性能优化：侧边栏切换时避免频繁 mount/unmount 大面板（文件树、搜索、Git 等）。 改为常驻挂载 + v-show 切换可见性，以减少切换时的同步渲染/布局开销。 相关数据加载仍由各面板内部的 watch 条件控制（例如仅在 explorer view 时加载树）。 -->
   <SourceControlPanel v-show="isSourceControlView" class="h-full min-h-0 w-full flex-1" :is-desktop-runtime="isDesktopRuntime" :workspace-root-path="workspaceRootPath" :active-path="document.path" @open-file="handleOpenFile" @open-diff="handleOpenGitDiff" />
-  <section ref="explorerSectionRef" v-show="isExplorerView" class="explorer-sidebar" aria-label="资源管理器" >
-    <div class="explorer-tree" @contextmenu.prevent="handleEmptyAreaContextMenu">
+  <section ref="explorerSectionRef" v-show="isExplorerView" class="explorer-sidebar" :class="{ 'is-scrollbar-active': isExplorerScrollbarActive }" aria-label="资源管理器" >
+    <div class="explorer-tree" @scroll.passive="handleExplorerTreeScroll" @contextmenu.prevent="handleEmptyAreaContextMenu">
       <div v-if="!isDesktopRuntime" class="explorer-empty-state"> 浏览器预览模式下不显示本地目录树，请在 Tauri 桌面端查看资源文件。 </div>
       <div v-else-if="loadError" class="explorer-empty-state"> <InlineError title="无法读取工作区目录" :message="loadError" /> </div>
       <div v-else-if="rootLoading && !root" class="explorer-empty-state">正在读取资源目录...</div>
@@ -134,6 +134,8 @@ const DeferredSshSidebarPanel = defineAsyncComponent({
   suspensible: false,
 });
 
+const EXPLORER_SCROLLBAR_IDLE_HIDE_DELAY_MS = 900;
+
 const props = defineProps<{
   document: IEditorDocument;
   view: TWorkbenchSidebarView;
@@ -171,6 +173,7 @@ const root = ref<IWorkspaceDirectoryPayload | null>(null);
 const rootLoading = ref(false);
 const loadError = ref('');
 const explorerSectionRef = ref<HTMLElement | null>(null);
+const isExplorerScrollbarActive = ref(false);
 const childrenMap = reactive<Record<string, IWorkspaceEntry[]>>({});
 const manualExpandedPaths = ref<Set<string>>(new Set());
 const loadingPaths = reactive<Record<string, boolean>>({});
@@ -178,6 +181,7 @@ const loadedWorkspaceKey = ref<string | null>(null);
 
 const pendingReloadAgainPaths = new Set<string>();
 let rootRequestId = 0;
+let explorerScrollbarIdleTimer: ReturnType<typeof setTimeout> | null = null;
 
 type TExplorerContextMenuAction =
   | 'open'
@@ -210,6 +214,22 @@ const inlineCreateDraft = reactive({
 const inlineRenameDraft = reactive({ path: null as string | null, value: '' });
 const isInlineCreateSubmitting = ref(false);
 const isInlineRenamePriming = ref(false);
+
+const clearExplorerScrollbarIdleTimer = (): void => {
+  if (explorerScrollbarIdleTimer !== null) {
+    clearTimeout(explorerScrollbarIdleTimer);
+    explorerScrollbarIdleTimer = null;
+  }
+};
+
+const handleExplorerTreeScroll = (): void => {
+  clearExplorerScrollbarIdleTimer();
+  isExplorerScrollbarActive.value = true;
+  explorerScrollbarIdleTimer = setTimeout(() => {
+    explorerScrollbarIdleTimer = null;
+    isExplorerScrollbarActive.value = false;
+  }, EXPLORER_SCROLLBAR_IDLE_HIDE_DELAY_MS);
+};
 
 const explorerContextMenuGroups = computed<ILinearContextMenuGroup<IExplorerContextMenuItem>[]>(
   () => {
@@ -995,6 +1015,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   closeInlineCreateDraft();
   cancelInlineRename();
+  clearExplorerScrollbarIdleTimer();
   stopWorkspaceFileWatcher();
 });
 </script>
