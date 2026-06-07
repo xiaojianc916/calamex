@@ -130,14 +130,29 @@
         @mouseleave="handleCardLeave"
       >
         <div class="git-history-graph-hovercard-head">
-          <span class="git-history-graph-hovercard-author" v-text="hoverAuthorName" />
+          <div class="git-history-graph-hovercard-identity">
+            <img
+              v-if="hoverAuthorAvatarUrl"
+              class="git-history-graph-hovercard-avatar"
+              :src="hoverAuthorAvatarUrl"
+              alt=""
+              referrerpolicy="no-referrer"
+            />
+            <span v-else class="git-history-graph-hovercard-avatar is-placeholder" aria-hidden="true">
+              <span class="icon-[lucide--user-round]" />
+            </span>
+            <div class="git-history-graph-hovercard-author-block">
+              <span class="git-history-graph-hovercard-author" v-text="hoverAuthorDisplayName" />
+              <span
+                v-if="formatAbsolute(hoverAuthoredAt)"
+                class="git-history-graph-hovercard-date"
+                v-text="formatAbsolute(hoverAuthoredAt)"
+              />
+            </div>
+          </div>
           <span class="git-history-graph-hovercard-ago" v-text="formatTime(hoverAuthoredAt)" />
         </div>
-        <div
-          v-if="formatAbsolute(hoverAuthoredAt)"
-          class="git-history-graph-hovercard-date"
-          v-text="formatAbsolute(hoverAuthoredAt)"
-        />
+
         <p class="git-history-graph-hovercard-message" v-text="hoverMessage" />
         <div class="git-history-graph-hovercard-stats">
           <span
@@ -153,14 +168,26 @@
         </div>
         <div class="git-history-graph-hovercard-foot">
           <code class="git-history-graph-hovercard-sha" v-text="hoverShortId" />
-          <button
-            type="button"
-            class="git-history-graph-hovercard-copy"
-            title="复制完整提交哈希"
-            @click="copyHoverCommitId"
-          >
-            <span class="icon-[lucide--copy]" aria-hidden="true" />
-          </button>
+          <div class="git-history-graph-hovercard-actions">
+            <button
+              type="button"
+              class="git-history-graph-hovercard-action"
+              title="复制完整提交哈希"
+              aria-label="复制完整提交哈希"
+              @click="copyHoverCommitId"
+            >
+              <span class="icon-[lucide--copy]" aria-hidden="true" />
+            </button>
+            <button
+              v-if="hoverGithubCommitUrl"
+              type="button"
+              class="git-history-graph-hovercard-open"
+              @click="openHoverCommitOnGithub"
+            >
+              <span class="icon-[lucide--github]" aria-hidden="true" />
+              <span>在 GitHub 上打开</span>
+            </button>
+          </div>
         </div>
       </div>
     </Teleport>
@@ -182,6 +209,7 @@ import type {
   IGitCommitFileChangePayload,
   IGitCommitSummaryPayload,
 } from '@/types/git';
+import { openExternalUrl } from '@/utils/browser';
 import { writeClipboardText } from '@/utils/clipboard';
 import type { IGitGraphEdge } from '@/utils/git-graph';
 import { buildGitGraph, resolveGitGraphLaneColor } from '@/utils/git-graph';
@@ -191,9 +219,11 @@ const ROW_HEIGHT = 28;
 const NODE_RADIUS = 3;
 const HOVER_OPEN_DELAY = 320;
 const HOVER_CLOSE_DELAY = 160;
-const HOVER_CARD_WIDTH = 320;
+const HOVER_CARD_WIDTH = 340;
 // 悬浮卡片高度估算值,仅用于首帧定位;真实尺寸由 adjustHoverCardPosition 实测后再夹取。
-const HOVER_CARD_EST_HEIGHT = 188;
+const HOVER_CARD_EST_HEIGHT = 210;
+const GITHUB_COMMIT_AUTHOR_CACHE_PREFIX = 'calamex.githubCommitAuthor.';
+const GITHUB_COMMIT_AUTHOR_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 interface IGitCommitRef {
   name: string;
@@ -221,6 +251,13 @@ interface IGraphGroup {
   showHeader: boolean;
   rows: IGraphRow[];
 }
+interface IGitHubCommitAuthorSnapshot {
+  login: string | null;
+  name: string;
+  avatarUrl: string | null;
+  htmlUrl: string | null;
+  updatedAt: number;
+}
 
 const props = withDefaults(
   defineProps<{ commits: IGitCommitSummaryPayload[]; ahead?: number; behind?: number }>(),
@@ -236,6 +273,7 @@ const expandedCommitId = ref<string | null>(null);
 const expandedDetail = ref<IGitCommitDetailPayload | null>(null);
 const expandedLoading = ref(false);
 const rootRef = ref<HTMLElement | null>(null);
+const pendingGithubAuthorRequests = new Map<string, Promise<IGitHubCommitAuthorSnapshot | null>>();
 
 const menu = reactive<{
   open: boolean;
@@ -259,6 +297,7 @@ const hover = reactive<{ open: boolean; commitId: string | null; x: number; y: n
 const hoverCommit = ref<IGitCommitSummaryPayload | null>(null);
 const hoverDetail = ref<IGitCommitDetailPayload | null>(null);
 const hoverLoading = ref(false);
+const hoverAuthorSnapshot = ref<IGitHubCommitAuthorSnapshot | null>(null);
 const hoverCardRef = ref<HTMLElement | null>(null);
 let hoverOpenTimer: ReturnType<typeof setTimeout> | null = null;
 let hoverCloseTimer: ReturnType<typeof setTimeout> | null = null;
@@ -358,6 +397,30 @@ const renderGroups = computed<IGraphGroup[]>(() => {
   return groups;
 });
 
+const hoverGithubCommitUrl = computed<string | null>(() => {
+  const repoUrl = gitStore.pullRequestSupport.repositoryUrl;
+  const commitId = hoverDetail.value?.id ?? hoverCommit.value?.id;
+  return repoUrl && commitId ? `${repoUrl}/commit/${commitId}` : null;
+});
+const hoverMessage = computed<string>(() => {
+  const detail = hoverDetail.value;
+  if (detail) return detail.body ? `${detail.summary}\n\n${detail.body}` : detail.summary;
+  return hoverCommit.value?.summary ?? '';
+});
+const hoverAuthorName = computed<string>(
+  () => hoverDetail.value?.authorName ?? hoverCommit.value?.authorName ?? '',
+);
+const hoverAuthorDisplayName = computed<string>(
+  () => hoverAuthorSnapshot.value?.login ?? hoverAuthorSnapshot.value?.name ?? hoverAuthorName.value,
+);
+const hoverAuthorAvatarUrl = computed<string | null>(() => hoverAuthorSnapshot.value?.avatarUrl ?? null);
+const hoverAuthoredAt = computed<string>(
+  () => hoverDetail.value?.authoredAt ?? hoverCommit.value?.authoredAt ?? '',
+);
+const hoverShortId = computed<string>(
+  () => hoverDetail.value?.shortId ?? hoverCommit.value?.shortId ?? '',
+);
+
 const menuGroups = computed<ILinearContextMenuGroup[]>(() => {
   if (!menu.commit) return [];
   const repoUrl = gitStore.pullRequestSupport.repositoryUrl;
@@ -388,21 +451,6 @@ const menuGroups = computed<ILinearContextMenuGroup[]>(() => {
     },
   ];
 });
-
-const hoverMessage = computed<string>(() => {
-  const detail = hoverDetail.value;
-  if (detail) return detail.body ? `${detail.summary}\n\n${detail.body}` : detail.summary;
-  return hoverCommit.value?.summary ?? '';
-});
-const hoverAuthorName = computed<string>(
-  () => hoverDetail.value?.authorName ?? hoverCommit.value?.authorName ?? '',
-);
-const hoverAuthoredAt = computed<string>(
-  () => hoverDetail.value?.authoredAt ?? hoverCommit.value?.authoredAt ?? '',
-);
-const hoverShortId = computed<string>(
-  () => hoverDetail.value?.shortId ?? hoverCommit.value?.shortId ?? '',
-);
 
 const refClass = (commitRef: IGitCommitRef): Record<string, boolean> => ({
   'is-head': commitRef.isHead,
@@ -459,6 +507,123 @@ const formatAbsolute = (value: string | null | undefined): string => {
   const hours = String(date.getHours()).padStart(2, '0');
   const minutes = String(date.getMinutes()).padStart(2, '0');
   return `${year}年${month}月${day}日 ${hours}:${minutes}`;
+};
+
+const resolveLocalStorage = (): Storage | null => {
+  if (typeof localStorage === 'undefined') return null;
+  return localStorage;
+};
+
+const resolveGithubAuthorCacheKey = (
+  repoUrl: string,
+  commit: IGitCommitSummaryPayload,
+): string => `${GITHUB_COMMIT_AUTHOR_CACHE_PREFIX}${encodeURIComponent(repoUrl)}:${commit.id}`;
+
+const readCachedGithubAuthor = (
+  repoUrl: string,
+  commit: IGitCommitSummaryPayload,
+): IGitHubCommitAuthorSnapshot | null => {
+  const storage = resolveLocalStorage();
+  if (!storage) return null;
+  try {
+    const raw = storage.getItem(resolveGithubAuthorCacheKey(repoUrl, commit));
+    if (!raw) return null;
+    const cached = JSON.parse(raw) as IGitHubCommitAuthorSnapshot;
+    if (!cached || typeof cached.updatedAt !== 'number') return null;
+    if (Date.now() - cached.updatedAt > GITHUB_COMMIT_AUTHOR_CACHE_TTL_MS) return null;
+    return cached;
+  } catch {
+    return null;
+  }
+};
+
+const writeCachedGithubAuthor = (
+  repoUrl: string,
+  commit: IGitCommitSummaryPayload,
+  snapshot: IGitHubCommitAuthorSnapshot,
+): void => {
+  const storage = resolveLocalStorage();
+  if (!storage) return;
+  try {
+    storage.setItem(resolveGithubAuthorCacheKey(repoUrl, commit), JSON.stringify(snapshot));
+  } catch {
+    // Avatar cache is best-effort only.
+  }
+};
+
+const resolveGithubCommitApiUrl = (repoUrl: string, commitId: string): string | null => {
+  const match = repoUrl.match(/^https:\/\/([^/]+)\/([^/]+)\/([^/]+)\/?$/);
+  if (!match) return null;
+
+  const [, host, owner, repo] = match;
+  const cleanRepo = repo.replace(/\.git$/, '');
+  const apiBase = host.toLowerCase() === 'github.com' ? 'https://api.github.com' : `https://api.${host}`;
+  return `${apiBase}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(cleanRepo)}/commits/${commitId}`;
+};
+
+const fetchGithubAuthorSnapshot = async (
+  repoUrl: string,
+  commit: IGitCommitSummaryPayload,
+): Promise<IGitHubCommitAuthorSnapshot | null> => {
+  const apiUrl = resolveGithubCommitApiUrl(repoUrl, commit.id);
+  if (!apiUrl) return null;
+
+  const cacheKey = resolveGithubAuthorCacheKey(repoUrl, commit);
+  const pending = pendingGithubAuthorRequests.get(cacheKey);
+  if (pending) return pending;
+
+  const request = fetch(apiUrl, {
+    headers: {
+      Accept: 'application/vnd.github+json',
+    },
+  })
+    .then(async (response) => {
+      if (!response.ok) return null;
+      const value = (await response.json()) as {
+        author?: { login?: string | null; avatar_url?: string | null; html_url?: string | null } | null;
+        commit?: { author?: { name?: string | null } | null } | null;
+      };
+      const snapshot: IGitHubCommitAuthorSnapshot = {
+        login: value.author?.login ?? null,
+        name: value.commit?.author?.name ?? commit.authorName,
+        avatarUrl: value.author?.avatar_url ?? null,
+        htmlUrl: value.author?.html_url ?? null,
+        updatedAt: Date.now(),
+      };
+      writeCachedGithubAuthor(repoUrl, commit, snapshot);
+      return snapshot;
+    })
+    .catch(() => null)
+    .finally(() => {
+      pendingGithubAuthorRequests.delete(cacheKey);
+    });
+
+  pendingGithubAuthorRequests.set(cacheKey, request);
+  return request;
+};
+
+const hydrateHoverGithubAuthor = async (commit: IGitCommitSummaryPayload): Promise<void> => {
+  let repoUrl = gitStore.pullRequestSupport.repositoryUrl;
+  if (!repoUrl) {
+    try {
+      repoUrl = (await gitStore.loadPullRequestSupport()).repositoryUrl;
+    } catch {
+      repoUrl = null;
+    }
+  }
+  if (!repoUrl) return;
+
+  const cached = readCachedGithubAuthor(repoUrl, commit);
+  if (cached) {
+    if (hover.commitId === commit.id) hoverAuthorSnapshot.value = cached;
+    return;
+  }
+
+  const snapshot = await fetchGithubAuthorSnapshot(repoUrl, commit);
+  if (snapshot && hover.commitId === commit.id) {
+    hoverAuthorSnapshot.value = snapshot;
+    void adjustHoverCardPosition();
+  }
 };
 
 const loadExpandedDetail = async (commit: IGitCommitSummaryPayload): Promise<void> => {
@@ -524,6 +689,7 @@ const closeHoverCard = (): void => {
   hover.commitId = null;
   hoverCommit.value = null;
   hoverDetail.value = null;
+  hoverAuthorSnapshot.value = null;
   hoverLoading.value = false;
 };
 
@@ -571,8 +737,10 @@ const openHoverCard = async (rect: DOMRect, commit: IGitCommitSummaryPayload): P
   hover.y = position.y;
   hover.commitId = commit.id;
   hoverCommit.value = commit;
+  hoverAuthorSnapshot.value = null;
   hover.open = true;
   void adjustHoverCardPosition();
+  void hydrateHoverGithubAuthor(commit);
   if (hoverDetail.value?.id === commit.id) return;
   hoverDetail.value = null;
   hoverLoading.value = true;
@@ -617,6 +785,11 @@ const handleCardLeave = (): void => {
 const copyHoverCommitId = async (): Promise<void> => {
   const commitId = hoverDetail.value?.id ?? hoverCommit.value?.id;
   if (commitId) await writeClipboardText(commitId);
+};
+
+const openHoverCommitOnGithub = (): void => {
+  const url = hoverGithubCommitUrl.value;
+  if (url) openExternalUrl(url);
 };
 
 const closeMenu = (): void => {
@@ -677,7 +850,7 @@ const handleMenuSelect = async (item: ILinearContextMenuItem): Promise<void> => 
 
   if (item.key === 'open-github') {
     const repoUrl = gitStore.pullRequestSupport.repositoryUrl;
-    if (repoUrl) window.open(`${repoUrl}/commit/${commit.id}`, '_blank', 'noopener,noreferrer');
+    if (repoUrl) openExternalUrl(`${repoUrl}/commit/${commit.id}`);
   }
 };
 
@@ -810,6 +983,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   clearHoverOpenTimer();
   clearHoverCloseTimer();
+  pendingGithubAuthorRequests.clear();
   if (scrollSettleTimer !== null) {
     clearTimeout(scrollSettleTimer);
     scrollSettleTimer = null;
@@ -1054,10 +1228,10 @@ onBeforeUnmount(() => {
 .git-history-graph-hovercard {
   position: fixed;
   z-index: 9999;
-  width: 320px;
+  width: 340px;
   background: #ffffff;
   border: 1px solid #d1d9e0;
-  border-radius: 8px;
+  border-radius: 10px;
   box-shadow: 0 8px 24px rgba(31, 35, 40, 0.12);
   padding: 12px 14px 10px;
   pointer-events: auto;
@@ -1065,10 +1239,42 @@ onBeforeUnmount(() => {
 
 .git-history-graph-hovercard-head {
   display: flex;
-  align-items: baseline;
+  align-items: flex-start;
   justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 2px;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.git-history-graph-hovercard-identity {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 9px;
+}
+
+.git-history-graph-hovercard-avatar {
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: rgba(129, 139, 152, 0.12);
+  color: #818b98;
+  object-fit: cover;
+}
+
+.git-history-graph-hovercard-avatar.is-placeholder > span {
+  width: 16px;
+  height: 16px;
+}
+
+.git-history-graph-hovercard-author-block {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .git-history-graph-hovercard-author {
@@ -1080,17 +1286,16 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-.git-history-graph-hovercard-ago {
-  font-size: 11px;
-  color: #818b98;
-  flex-shrink: 0;
-  white-space: nowrap;
-}
-
+.git-history-graph-hovercard-ago,
 .git-history-graph-hovercard-date {
   font-size: 11px;
   color: #818b98;
-  margin-bottom: 8px;
+  white-space: nowrap;
+}
+
+.git-history-graph-hovercard-ago {
+  flex-shrink: 0;
+  padding-top: 1px;
 }
 
 .git-history-graph-hovercard-message {
@@ -1119,6 +1324,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 10px;
   border-top: 1px solid #d1d9e0;
   padding-top: 8px;
 }
@@ -1132,14 +1338,19 @@ onBeforeUnmount(() => {
   border-radius: 4px;
 }
 
-.git-history-graph-hovercard-copy {
+.git-history-graph-hovercard-actions {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.git-history-graph-hovercard-action,
+.git-history-graph-hovercard-open {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
   border: 0;
-  border-radius: 4px;
   background: transparent;
   color: #818b98;
   cursor: pointer;
@@ -1147,8 +1358,30 @@ onBeforeUnmount(() => {
   padding: 0;
 }
 
-.git-history-graph-hovercard-copy:hover {
+.git-history-graph-hovercard-action {
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+}
+
+.git-history-graph-hovercard-open {
+  gap: 5px;
+  min-height: 24px;
+  border-radius: 999px;
+  padding: 0 8px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: #0969da;
+}
+
+.git-history-graph-hovercard-action:hover,
+.git-history-graph-hovercard-open:hover {
   background: rgba(129, 139, 152, 0.15);
   color: #1f2328;
+}
+
+.git-history-graph-hovercard-open > span:first-child {
+  width: 13px;
+  height: 13px;
 }
 </style>
