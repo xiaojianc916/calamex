@@ -30,14 +30,14 @@
     </button>
 
     <button
-      v-if="authStore.isAuthenticated && !authStore.deviceAuth"
+      v-if="showInlineAction"
       type="button"
-      class="source-control-github-auth-switch"
-      title="切换账号"
-      aria-label="切换 GitHub 账号"
-      @click.stop="handleSwitchAccount"
+      class="source-control-github-auth-inline-action"
+      :title="inlineActionLabel"
+      :aria-label="inlineActionLabel"
+      @click.stop="handleInlineAction"
     >
-      <span class="source-control-github-auth-icon icon-[lucide--refresh-cw]" aria-hidden="true" />
+      <span class="source-control-github-auth-icon" :class="inlineActionIcon" aria-hidden="true" />
     </button>
 
     <section
@@ -104,6 +104,11 @@ const disabled = computed(
     !props.repositoryRootPath ||
     (authStore.isLoading && !authStore.status.authenticated && !authStore.deviceAuth),
 );
+const showInlineAction = computed(() => Boolean(authStore.deviceAuth) || authStore.isAuthenticated);
+const inlineActionLabel = computed(() => (authStore.deviceAuth ? '复制验证码' : '切换账号'));
+const inlineActionIcon = computed(() =>
+  authStore.deviceAuth ? 'icon-[lucide--copy]' : 'icon-[lucide--refresh-cw]',
+);
 
 const handlePrimaryClick = async (): Promise<void> => {
   if (disabled.value) return;
@@ -132,7 +137,12 @@ const handleCancelAuth = (): void => {
   authStore.cancelDeviceAuth();
 };
 
-const handleSwitchAccount = async (): Promise<void> => {
+const handleInlineAction = async (): Promise<void> => {
+  if (authStore.deviceAuth) {
+    await authStore.copyDeviceCode();
+    return;
+  }
+
   await authStore.switchAccount();
 };
 
