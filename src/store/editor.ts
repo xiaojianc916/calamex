@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia';
 import { computed, ref, watch } from 'vue';
 
+import { WORKBENCH_TAB_LIMITS } from '@/constants/workbench';
 import { tauriSessionStorage } from '@/store/plugins/tauriSessionStorage';
 import type { IAiDiffEditorPreview } from '@/types/ai/patch';
 import type {
@@ -33,12 +34,13 @@ const MAX_TERMINAL_OUTPUT_LENGTH = 120_000;
 const MAX_TERMINAL_OUTPUT_CHUNK_LENGTH = 4_096;
 const MAX_RUN_LOG_ENTRIES = 500;
 const MAX_RUN_HISTORY_ENTRIES = 30;
-const MAX_OPEN_TABS = 30;
+const MAX_OPEN_TABS = WORKBENCH_TAB_LIMITS.maxOpenTabs;
+const MAX_LOADED_CLEAN_TEXT_BUFFERS = WORKBENCH_TAB_LIMITS.maxLoadedCleanTextBuffers;
 const MAX_RECENT_WORKSPACES = 10;
 const MAX_RECENT_FILES = 50;
-const MAX_VIEW_STATE_ENTRIES = 30;
+const MAX_VIEW_STATE_ENTRIES = WORKBENCH_TAB_LIMITS.maxViewStateEntries;
 const MAX_EXPLORER_EXPANDED_PATHS = 120;
-const MAX_DRAFT_ENTRIES = 30;
+const MAX_DRAFT_ENTRIES = WORKBENCH_TAB_LIMITS.maxDraftEntries;
 /** 单个草稿内容上限，超过则不缓存草稿，避免会话快照膨胀（脚本通常很小）。 */
 const MAX_DRAFT_CONTENT_LENGTH = 512_000;
 
@@ -88,6 +90,19 @@ const isPersistableTabKind = (kind: IEditorDocument['kind']): kind is TPersistab
 const hasPath = (item: IEditorDocument): item is IEditorDocument & { path: string } =>
   item.path !== null && item.path.length > 0;
 
+const isLoadedTextDocument = (document: IEditorDocument): boolean =>
+  document.kind === 'text' && document.bufferLoaded !== false;
+
+const isUnloadableCleanTextDocument = (
+  document: IEditorDocument,
+  activeDocumentId: string,
+): boolean =>
+  document.kind === 'text' &&
+  document.bufferLoaded !== false &&
+  Boolean(document.path) &&
+  !document.isDirty &&
+  document.id !== activeDocumentId;
+
 /**
  * 把 path 推到 recent 列表头部 (去重 + 截断到 max)。
  * pushRecentFile / pushRecentWorkspace 共用此实现。
@@ -108,6 +123,8 @@ const EMPTY_DOCUMENT: Readonly<IEditorDocument> = Object.freeze({
   path: null,
   name: '未打开文件',
   kind: 'text',
+  bufferLoaded: true,
+  lastAccessedAt: new Date(0).toISOString(),
   content: '',
   encoding: 'utf-8',
   savedContent: '',
@@ -155,6 +172,15 @@ const createEmptySessionSnapshot = (): TSessionSnapshot => ({
 });
 
 const syncDocumentState = (document: IEditorDocument): IEditorDocument => {
+  if (document.kind === 'text' && document.bufferLoaded === false) {
+    document.content = '';
+    document.savedContent = '';
+    document.isDirty = false;
+    document.lineCount = 1;
+    document.charCount = 0;
+    return document;
+  }
+
   const { lineCount, charCount } = computeDocumentMetrics(document.content);
   document.lineCount = lineCount;
   document.charCount = charCount;
@@ -185,11 +211,14 @@ const createDocument = (
   const content = overrides.content ?? DEFAULT_SCRIPT;
   const encoding = overrides.encoding ?? 'utf-8';
   const kind = overrides.kind ?? 'text';
+  const bufferLoaded = overrides.bufferLoaded ?? true;
   return syncDocumentState({
     id: overrides.id ?? createDocumentId(),
     path: overrides.path ?? null,
     name: overrides.name ?? resolveUntitledName(documents),
     kind,
+    bufferLoaded,
+    lastAccessedAt: overrides.lastAccessedAt ?? new Date().toISOString(),
     content,
     encoding,
     savedContent: overrides.savedContent ?? content,
@@ -241,6 +270,48 @@ export const useEditorStore = defineStore(
       sessionSnapshot.value.savedAt = new Date().toISOString();
     };
 
+    const touchDocumentAccess = (targetDocument: IEditorDocument): void => {
+      targetDocument.lastAccessedAt = new Date().toISOString();
+      if (targetDocument.kind === 'text' && targetDocument.bufferLoaded !== false) {
+        targetDocument.bufferLoaded = true;
+      }
+    };
+
+    const clearDocumentAnalysis = (documentId: string): void => {
+      if (!(documentId in documentAnalysis.value)) {
+        return;
+      }
+      const nextValue = { ...documentAnalysis.value };
+      delete nextValue[documentId];
+      documentAnalysis.value = nextValue;
+    };
+
+    const evictInactiveDocumentBuffers = (): void => {
+      const activeId = activeDocumentId.value;
+      const candidates = documents.value
+        .filter((item) => isUnloadableCleanTextDocument(item, activeId))
+        .sort((left, right) => {
+          const leftTime = Date.parse(left.lastAccessedAt ?? '');
+          const rightTime = Date.parse(right.lastAccessedAt ?? '');
+          return (Number.isFinite(leftTime) ? leftTime : 0) - (Number.isFinite(rightTime) ? rightTime : 0);
+        });
+
+      const overflow = candidates.length - MAX_LOADED_CLEAN_TEXT_BUFFERS;
+      if (overflow <= 0) {
+        return;
+      }
+
+      candidates.slice(0, overflow).forEach((targetDocument) => {
+        targetDocument.content = '';
+        targetDocument.savedContent = '';
+        targetDocument.bufferLoaded = false;
+        targetDocument.lineCount = 1;
+        targetDocument.charCount = 0;
+        targetDocument.isDirty = false;
+        clearDocumentAnalysis(targetDocument.id);
+      });
+    };
+
     const pushRecentFile = (path: string): void => {
       const next = pushRecentEntry(sessionSnapshot.value.recentFiles, path, MAX_RECENT_FILES);
       if (next) {
@@ -267,7 +338,7 @@ export const useEditorStore = defineStore(
         .filter((item): item is IEditorDocument & { path: string; kind: TPersistableTabKind } =>
           isPersistableTabKind(item.kind),
         )
-        .slice(0, MAX_OPEN_TABS)
+        .slice(0, WORKBENCH_TAB_LIMITS.maxPersistedOpenTabs)
         .map((item, index) => ({
           path: item.path,
           pinned: false,
@@ -474,7 +545,7 @@ export const useEditorStore = defineStore(
      */
     const restoreDraftForDocument = (documentId: string): boolean => {
       const targetDocument = getDocumentById(documentId);
-      if (targetDocument?.kind !== 'text' || !targetDocument.path) {
+      if (targetDocument?.kind !== 'text' || !targetDocument.path || targetDocument.bufferLoaded === false) {
         return false;
       }
       const draft = getDocumentDraft(targetDocument.path);
@@ -487,6 +558,7 @@ export const useEditorStore = defineStore(
         return false;
       }
       targetDocument.content = draft.content;
+      targetDocument.bufferLoaded = true;
       syncDocumentState(targetDocument);
       return true;
     };
@@ -582,12 +654,14 @@ export const useEditorStore = defineStore(
       if (!targetDocument) {
         return;
       }
+      touchDocumentAccess(targetDocument);
       activeDocumentId.value = targetDocument.id;
       sessionSnapshot.value.activeTabPath = targetDocument.path;
       touchSessionSnapshot();
       cursorLine.value = 1;
       cursorColumn.value = 1;
       activeSelectionSummary.value = null;
+      evictInactiveDocumentBuffers();
     };
 
     const createDocumentTab = (overrides: Partial<IEditorDocument> = {}): IEditorDocument => {
@@ -599,13 +673,49 @@ export const useEditorStore = defineStore(
       return nextDocument;
     };
 
+    const openUnloadedTextDocumentTab = (
+      path: string,
+      name: string,
+    ): { document: IEditorDocument; reusedExisting: boolean } => {
+      const existingDocument = findDocumentByPath(path);
+      if (existingDocument) {
+        return { document: existingDocument, reusedExisting: true };
+      }
+
+      const nextDocument = createDocument(documents.value, {
+        path,
+        name,
+        kind: 'text',
+        content: '',
+        savedContent: '',
+        encoding: 'utf-8',
+        savedEncoding: 'utf-8',
+        bufferLoaded: false,
+      });
+      documents.value.push(nextDocument);
+      pushRecentFile(path);
+      syncSessionOpenTabs();
+      touchSessionSnapshot();
+      return { document: nextDocument, reusedExisting: false };
+    };
+
     const openDocumentTab = (
       payload: IScriptFilePayload,
     ): { document: IEditorDocument; reusedExisting: boolean } => {
       const existingDocument = findDocumentByPath(payload.path);
       if (existingDocument) {
+        existingDocument.path = payload.path;
+        existingDocument.name = payload.name;
+        existingDocument.kind = 'text';
+        existingDocument.content = payload.content;
+        existingDocument.encoding = payload.encoding;
+        existingDocument.savedContent = payload.content;
+        existingDocument.savedEncoding = payload.encoding;
+        existingDocument.bufferLoaded = true;
+        syncDocumentState(existingDocument);
         setActiveDocument(existingDocument.id);
         pushRecentFile(payload.path);
+        syncSessionOpenTabs();
         touchSessionSnapshot();
         return { document: existingDocument, reusedExisting: true };
       }
@@ -616,6 +726,7 @@ export const useEditorStore = defineStore(
         encoding: payload.encoding,
         savedContent: payload.content,
         savedEncoding: payload.encoding,
+        bufferLoaded: true,
       });
       documents.value.push(nextDocument);
       setActiveDocument(nextDocument.id);
@@ -644,6 +755,7 @@ export const useEditorStore = defineStore(
         encoding: 'utf-8',
         savedContent: '',
         savedEncoding: 'utf-8',
+        bufferLoaded: true,
       });
       documents.value.push(nextDocument);
       setActiveDocument(nextDocument.id);
@@ -673,6 +785,7 @@ export const useEditorStore = defineStore(
         kind: 'ai-diff',
         content: '',
         savedContent: '',
+        bufferLoaded: true,
         aiDiffPreview: preview,
       });
       documents.value.push(nextDocument);
@@ -693,6 +806,7 @@ export const useEditorStore = defineStore(
         existingDocument.name = preview.title;
         existingDocument.content = preview.modifiedContent;
         existingDocument.savedContent = preview.modifiedContent;
+        existingDocument.bufferLoaded = true;
         syncDocumentState(existingDocument);
         setActiveDocument(existingDocument.id);
         touchSessionSnapshot();
@@ -705,6 +819,7 @@ export const useEditorStore = defineStore(
         kind: 'git-diff',
         content: preview.modifiedContent,
         savedContent: preview.modifiedContent,
+        bufferLoaded: true,
         gitDiffPreview: preview,
       });
       documents.value.push(nextDocument);
@@ -729,8 +844,10 @@ export const useEditorStore = defineStore(
       targetDocument.encoding = payload.encoding;
       targetDocument.savedContent = payload.content;
       targetDocument.savedEncoding = payload.encoding;
+      targetDocument.bufferLoaded = true;
       // 统一由本地计数器重新核算,避免与 payload.lineCount/charCount 不一致造成闪跳
       syncDocumentState(targetDocument);
+      touchDocumentAccess(targetDocument);
       if (payload.path) {
         pushRecentFile(payload.path);
         syncSessionOpenTabs();
@@ -738,7 +855,24 @@ export const useEditorStore = defineStore(
         clearDocumentDraft(payload.path);
         touchSessionSnapshot();
       }
+      evictInactiveDocumentBuffers();
       return targetDocument;
+    };
+
+    const unloadDocumentBuffer = (documentId: string): boolean => {
+      const targetDocument = getDocumentById(documentId);
+      if (!targetDocument || !isUnloadableCleanTextDocument(targetDocument, activeDocumentId.value)) {
+        return false;
+      }
+
+      targetDocument.content = '';
+      targetDocument.savedContent = '';
+      targetDocument.bufferLoaded = false;
+      targetDocument.lineCount = 1;
+      targetDocument.charCount = 0;
+      targetDocument.isDirty = false;
+      clearDocumentAnalysis(documentId);
+      return true;
     };
 
     // 未保存草稿的写入会变更 sessionSnapshot,从而触发持久化插件对整个会话快照做
@@ -753,7 +887,7 @@ export const useEditorStore = defineStore(
 
     const runDraftCapture = (documentId: string): void => {
       const targetDocument = getDocumentById(documentId);
-      if (targetDocument?.kind !== 'text' || !targetDocument.path) {
+      if (targetDocument?.kind !== 'text' || !targetDocument.path || targetDocument.bufferLoaded === false) {
         return;
       }
       captureDocumentDraft(
@@ -799,7 +933,9 @@ export const useEditorStore = defineStore(
       if (targetDocument?.kind !== 'text') {
         return;
       }
+      targetDocument.bufferLoaded = true;
       targetDocument.content = content;
+      touchDocumentAccess(targetDocument);
       syncDocumentState(targetDocument);
       // 内容变更后维护未保存草稿(与磁盘基线 savedContent 比较),写入防抖见上。
       if (targetDocument.path) {
@@ -813,7 +949,7 @@ export const useEditorStore = defineStore(
 
     const updateDocumentEncoding = (documentId: string, encoding: TDocumentEncoding): void => {
       const targetDocument = getDocumentById(documentId);
-      if (targetDocument?.kind !== 'text') {
+      if (targetDocument?.kind !== 'text' || targetDocument.bufferLoaded === false) {
         return;
       }
       targetDocument.encoding = encoding;
@@ -822,15 +958,6 @@ export const useEditorStore = defineStore(
 
     const updateActiveDocumentEncoding = (encoding: TDocumentEncoding): void => {
       updateDocumentEncoding(document.value.id, encoding);
-    };
-
-    const clearDocumentAnalysis = (documentId: string): void => {
-      if (!(documentId in documentAnalysis.value)) {
-        return;
-      }
-      const nextValue = { ...documentAnalysis.value };
-      delete nextValue[documentId];
-      documentAnalysis.value = nextValue;
     };
 
     const setDocumentAnalysis = (documentId: string, payload: IAnalyzeScriptPayload): void => {
@@ -867,9 +994,12 @@ export const useEditorStore = defineStore(
         const fallbackDocument =
           documents.value[Math.max(0, targetIndex - 1)] ?? documents.value[0];
         activeDocumentId.value = fallbackDocument.id;
+        touchDocumentAccess(fallbackDocument);
+        sessionSnapshot.value.activeTabPath = fallbackDocument.path;
         cursorLine.value = 1;
         cursorColumn.value = 1;
         activeSelectionSummary.value = null;
+        evictInactiveDocumentBuffers();
         return fallbackDocument;
       }
       return getDocumentById();
@@ -1038,11 +1168,14 @@ export const useEditorStore = defineStore(
       setWorkbenchSessionState,
       setActiveDocument,
       createDocumentTab,
+      openUnloadedTextDocumentTab,
       openDocumentTab,
       openImageDocument,
       openAiDiffDocument,
       openGitDiffDocument,
       applyDocumentPayload,
+      unloadDocumentBuffer,
+      evictInactiveDocumentBuffers,
       updateDocumentContent,
       updateActiveDocumentContent,
       updateDocumentEncoding,
