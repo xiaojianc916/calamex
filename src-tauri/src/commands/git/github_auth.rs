@@ -155,7 +155,7 @@ fn resolve_github_api_base(host: &str) -> String {
     if normalized_host == "github.com" {
         "https://api.github.com".to_string()
     } else {
-        format!("https://api.{host}")
+        format!("https://api.{}", host)
     }
 }
 
