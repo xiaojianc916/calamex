@@ -14,8 +14,6 @@ import type {
 
 const MAX_SUGGESTIONS = 80;
 
-const textEncoder = new TextEncoder();
-
 const VARIABLE_BRACE_PATTERN = /\$\{([A-Za-z_][A-Za-z0-9_]*)?$/;
 const VARIABLE_DIRECT_PATTERN = /\$([A-Za-z_][A-Za-z0-9_]*)?$/;
 const OPTION_PATTERN = /--?[A-Za-z0-9-]*$/;
@@ -324,7 +322,39 @@ const reportShellCompletionProviderError = (error: unknown): void => {
   console.error('Shell completion provider failed', error);
 };
 
-const getUtf8ByteLength = (value: string): number => textEncoder.encode(value).byteLength;
+// 计算 source[start, end) 子串的 UTF-8 字节长度，避免生成中间子串与 Uint8Array。
+// 补全热路径上（每次按键都会触发）减少分配；行为与 TextEncoder().encode().byteLength
+// 一致：完整代理对计 4 字节，孤立代理项按 U+FFFD 计 3 字节。
+const utf8ByteLengthOfRange = (source: string, start: number, end: number): number => {
+  let bytes = 0;
+  let index = start;
+  while (index < end) {
+    const code = source.charCodeAt(index);
+    if (code < 0x80) {
+      bytes += 1;
+      index += 1;
+    } else if (code < 0x800) {
+      bytes += 2;
+      index += 1;
+    } else if (code >= 0xd800 && code <= 0xdbff && index + 1 < end) {
+      const nextCode = source.charCodeAt(index + 1);
+      if (nextCode >= 0xdc00 && nextCode <= 0xdfff) {
+        bytes += 4;
+        index += 2;
+      } else {
+        bytes += 3;
+        index += 1;
+      }
+    } else {
+      bytes += 3;
+      index += 1;
+    }
+  }
+  return bytes;
+};
+
+export const getUtf8ByteLength = (value: string): number =>
+  utf8ByteLengthOfRange(value, 0, value.length);
 
 // 将字符下标转换为 tree-sitter 期望的字节坐标 Point（与 getUtf8ByteLength 的约定保持一致）。
 const toBytePoint = (source: string, charIndex: number): Point => {
@@ -338,7 +368,7 @@ const toBytePoint = (source: string, charIndex: number): Point => {
   }
   return {
     row,
-    column: getUtf8ByteLength(source.slice(lineStartChar, charIndex)),
+    column: utf8ByteLengthOfRange(source, lineStartChar, charIndex),
   };
 };
 
@@ -366,9 +396,9 @@ const computeShellSourceEdit = (oldSource: string, newSource: string): IShellSou
     newEndChar -= 1;
   }
   return {
-    startIndex: getUtf8ByteLength(newSource.slice(0, startChar)),
-    oldEndIndex: getUtf8ByteLength(oldSource.slice(0, oldEndChar)),
-    newEndIndex: getUtf8ByteLength(newSource.slice(0, newEndChar)),
+    startIndex: utf8ByteLengthOfRange(newSource, 0, startChar),
+    oldEndIndex: utf8ByteLengthOfRange(oldSource, 0, oldEndChar),
+    newEndIndex: utf8ByteLengthOfRange(newSource, 0, newEndChar),
     startPosition: toBytePoint(newSource, startChar),
     oldEndPosition: toBytePoint(oldSource, oldEndChar),
     newEndPosition: toBytePoint(newSource, newEndChar),
@@ -1181,7 +1211,7 @@ export const createShellCodeMirrorCompletionSource =
       const line = completionContext.state.doc.lineAt(completionContext.pos);
       const linePrefix = source.slice(line.from, completionContext.pos);
       const lineSuffix = source.slice(completionContext.pos, line.to);
-      const cursorByteOffset = getUtf8ByteLength(source.slice(0, completionContext.pos));
+      const cursorByteOffset = utf8ByteLengthOfRange(source, 0, completionContext.pos);
       const point = {
         row: Math.max(0, line.number - 1),
         column: getUtf8ByteLength(linePrefix),

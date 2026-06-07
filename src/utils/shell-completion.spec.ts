@@ -143,3 +143,23 @@ describe('shell-completion provider', () => {
     expect(previousTreeArgument).toBe(mocks.parserParse.mock.results[0].value);
   });
 });
+
+describe('getUtf8ByteLength', () => {
+  it('与 TextEncoder 的字节长度保持一致', async () => {
+    const { getUtf8ByteLength } = await import('./shell-completion');
+    const encoder = new TextEncoder();
+    const samples = [
+      '',
+      'ls -la',
+      '查看当前目录',
+      'echo 🙂 done',
+      'café',
+      'a\nb\tc',
+      '混合 mixed 文本 123',
+    ];
+
+    for (const sample of samples) {
+      expect(getUtf8ByteLength(sample)).toBe(encoder.encode(sample).byteLength);
+    }
+  });
+});
