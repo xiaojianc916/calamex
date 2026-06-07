@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { WORKBENCH_TAB_LIMITS } from '@/constants/workbench';
 import { WORKBENCH_SIDEBAR_VIEWS } from '@/types/app';
 
 /** 编辑器视图态是黑盒结构，这里仅做 JSON object 守卫。 */
@@ -50,14 +51,15 @@ export const SessionWorkbenchStateSchema = z
 export const SessionSnapshotSchema = z.object({
   schemaVersion: z.literal(1),
   workspaceRoot: z.string().nullable(),
-  openTabs: z.array(TabStateSchema).max(30),
+  // 这里只保存标签页元数据，不保存正文内容；正文缓冲区由运行时按需加载/淘汰。
+  openTabs: z.array(TabStateSchema).max(WORKBENCH_TAB_LIMITS.maxPersistedOpenTabs),
   activeTabPath: z.string().nullable(),
-  viewStates: z.array(EditorViewStateEntrySchema).max(30),
+  viewStates: z.array(EditorViewStateEntrySchema).max(WORKBENCH_TAB_LIMITS.maxViewStateEntries),
   workbench: SessionWorkbenchStateSchema,
   recentWorkspaces: z.array(z.string()).max(10),
   recentFiles: z.array(z.string()).max(50),
   // 可选 + 默认空数组：旧快照（无 drafts 字段）仍可解析，无需 schemaVersion 迁移。
-  drafts: z.array(DocumentDraftSchema).max(30).default([]),
+  drafts: z.array(DocumentDraftSchema).max(WORKBENCH_TAB_LIMITS.maxDraftEntries).default([]),
   savedAt: z.string().datetime(),
 });
 
