@@ -176,6 +176,22 @@
   Vec，无共享可变状态。
 - 验证：`cargo test -p calamex commands::search`、`cargo clippy`、`cargo test`；本机用结构化搜索大仓库对比墙钟耗时。
 
+## 替换预览的文件级并行生成
+
+- 文件：`src-tauri/src/commands/search/replace.rs`
+- 问题：全仓库替换预览此前按文件串行执行“读盘 → 解码 → 正则/结构化匹配 → 构造编辑 → 生成 diff/行预览”。
+  在候选文件多、匹配规则较重（尤其结构化替换）时，预览阶段会被单线程 CPU/IO 吞吐限制。
+- 算法：按文件粒度并行。用 `par_iter` 对候选文件并发构建 `FileReplacementPreview`，单文件内仍按原顺序
+  收集编辑并生成预览；并行结果展平后按 `relative_path` 排序，保持 UI 展示稳定。
+- 复杂度（设候选文件数 F、单文件预览成本 c、核数 P）：
+  - 之前：O(F·c) 串行墙钟。
+  - 之后：O(F·c / P) 并行墙钟（总工作量不变，受 IO 与调度开销约束）；最终排序为 O(r log r)，
+    r 为实际有替换的文件数。
+- 正确性：单文件替换编辑、diff、行预览逻辑不变；并行 worker 只返回本地预览，无共享可变状态；
+  最终按相对路径排序，避免并发调度影响结果顺序。
+- 验证：建议本机执行 `cargo test -p calamex commands::search`、`cargo clippy`、`cargo test`；
+  用大仓库替换预览对比墙钟耗时。
+
 ## 工作区 watcher 事件 HashMap 合并
 
 - 文件：`src-tauri/src/commands/workspace_watcher.rs`
