@@ -55,24 +55,6 @@ html.is-resizing [data-shell-resize-responder] {
   backface-visibility: hidden;
 }
 
-html.is-resizing .ai-composer[data-shell-resize-responder] {
-  contain: layout !important;
-  transform: none !important;
-  backface-visibility: visible;
-}
-
-html.is-resizing .ai-prompt-shell,
-html.is-resizing .ai-prompt-editor-wrap,
-html.is-resizing .ai-prompt-textarea,
-html.is-resizing .ai-toolbar-row {
-  animation: none !important;
-  transition: none !important;
-}
-
-html.is-resizing .ai-prompt-shell {
-  box-shadow: none !important;
-}
-
 html.is-resizing .ai-workspace-right-sidebar,
 html.is-resizing .ai-icon-button,
 html.is-resizing .ai-suggestion-empty :is(button),
