@@ -11,6 +11,7 @@ import { tryWriteClipboardText } from '@/utils/clipboard';
 
 const AUTH_CACHE_PREFIX = 'calamex.githubAuth.';
 const AUTH_CACHE_TTL_MS = 5 * 60 * 1000;
+const AUTH_SNAPSHOT_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
 interface ICachedGitHubAuthStatus {
   status: IGitHubAuthStatusPayload;
@@ -33,16 +34,22 @@ const createEmptyGithubAuthStatus = (message: string | null = null): IGitHubAuth
 const getCacheKey = (repositoryRootPath: string): string =>
   `${AUTH_CACHE_PREFIX}${encodeURIComponent(repositoryRootPath)}`;
 
+const resolveStorage = (): Storage | null => {
+  if (typeof localStorage !== 'undefined') return localStorage;
+  return null;
+};
+
 const readCachedStatus = (repositoryRootPath: string): ICachedGitHubAuthStatus | null => {
-  if (typeof sessionStorage === 'undefined') return null;
+  const storage = resolveStorage();
+  if (!storage) return null;
 
   try {
-    const raw = sessionStorage.getItem(getCacheKey(repositoryRootPath));
+    const raw = storage.getItem(getCacheKey(repositoryRootPath));
     if (!raw) return null;
 
     const cached = JSON.parse(raw) as ICachedGitHubAuthStatus;
-    if (!cached?.status || typeof cached.updatedAt !== 'number') return null;
-    if (Date.now() - cached.updatedAt >= AUTH_CACHE_TTL_MS) return null;
+    if (!cached?.status?.authenticated || typeof cached.updatedAt !== 'number') return null;
+    if (Date.now() - cached.updatedAt >= AUTH_SNAPSHOT_MAX_AGE_MS) return null;
 
     return cached;
   } catch {
@@ -54,11 +61,18 @@ const writeCachedStatus = (
   repositoryRootPath: string,
   status: IGitHubAuthStatusPayload,
 ): void => {
-  if (typeof sessionStorage === 'undefined') return;
+  const storage = resolveStorage();
+  if (!storage) return;
 
   try {
-    sessionStorage.setItem(
-      getCacheKey(repositoryRootPath),
+    const cacheKey = getCacheKey(repositoryRootPath);
+    if (!status.authenticated) {
+      storage.removeItem(cacheKey);
+      return;
+    }
+
+    storage.setItem(
+      cacheKey,
       JSON.stringify({ status, updatedAt: Date.now() } satisfies ICachedGitHubAuthStatus),
     );
   } catch {
@@ -188,10 +202,9 @@ export const useGitHubAuthStore = defineStore('github-auth', () => {
     const cached = readCachedStatus(rootPath);
     if (cached) {
       status.value = cached.status;
-      statusUpdatedAt = cached.updatedAt;
     }
 
-    void loadStatus({ visibleLoading: !cached });
+    void loadStatus({ force: true, visibleLoading: !cached });
   };
 
   const copyDeviceCode = async (): Promise<boolean> => {
