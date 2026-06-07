@@ -162,7 +162,9 @@ const emit = defineEmits<{
 const containerRef = ref<HTMLElement | null>(null);
 const analysisState = computed(() => props.analysis ?? createEmptyAnalysis());
 const contextMenuState = ref({ open: false, x: 0 });
-contextMenuState.value = { open: false, x: 0, y: 0 } as typeof contextMenuState.value & { y: number };
+contextMenuState.value = { open: false, x: 0, y: 0 } as typeof contextMenuState.value & {
+  y: number;
+};
 const contextMenuGroups = ref<ReturnType<typeof buildMenuGroups>>([]);
 const submenuDirection = ref<'left' | 'right'>('right');
 
@@ -552,7 +554,11 @@ const openContextMenu = (event: MouseEvent): void => {
   if (!editorView) return;
   const nextPosition = clampMenuPosition(event.clientX, event.clientY);
   contextMenuGroups.value = buildMenuGroups();
-  contextMenuState.value = { open: true, x: nextPosition.x, y: nextPosition.y } as typeof contextMenuState.value & { y: number };
+  contextMenuState.value = {
+    open: true,
+    x: nextPosition.x,
+    y: nextPosition.y,
+  } as typeof contextMenuState.value & { y: number };
   submenuDirection.value =
     nextPosition.x + MENU_WIDTH + SUBMENU_SAFE_WIDTH + VIEWPORT_PADDING > window.innerWidth
       ? 'left'
@@ -1019,7 +1025,7 @@ defineExpose<IEditorExpose>({
   focusEditor,
   insertSnippet,
   revealPosition,
- layoutEditor,
+  layoutEditor,
 });
 </script>
 
