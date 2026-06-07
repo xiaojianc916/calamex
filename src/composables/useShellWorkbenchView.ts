@@ -261,7 +261,7 @@ export const useShellWorkbenchView = (onReady: () => void) => {
       currentDocumentId,
     ]);
     isApplyingDocumentNavigation = true;
-    workbench.activateDocument(targetDocumentId);
+    void workbench.activateDocument(targetDocumentId);
   };
 
   const navigateDocumentForward = (): void => {
@@ -282,7 +282,7 @@ export const useShellWorkbenchView = (onReady: () => void) => {
       currentDocumentId,
     ]);
     isApplyingDocumentNavigation = true;
-    workbench.activateDocument(targetDocumentId);
+    void workbench.activateDocument(targetDocumentId);
   };
 
   const gitBranchName = computed(() => gitStore.status.headBranchName ?? null);

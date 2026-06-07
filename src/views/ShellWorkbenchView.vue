@@ -51,6 +51,11 @@
                           :has-workspace="Boolean(editorStore.workspaceRootPath)" :is-desktop-runtime="isDesktopRuntime"
                           @create="createNewDocument" @open="openDocument" @open-folder="openFolder" />
 
+                        <div v-else-if="isActiveTextBufferLoading"
+                          class="flex h-full min-h-0 flex-1 items-center justify-center px-6 text-sm text-muted-foreground">
+                          <span>正在加载 </span><span class="font-medium text-foreground" v-text="editorStore.document.name" /><span>…</span>
+                        </div>
+
                         <DeferredSmartScriptEditor v-else-if="editorStore.document.kind === 'text'" :ref="bindEditorRef"
                           :key="editorStore.document.id"
                           :document-id="editorStore.document.id" :document-path="editorStore.document.path"
@@ -97,6 +102,11 @@
                     <EmptyEditorState v-if="!editorStore.hasActiveDocument"
                       :has-workspace="Boolean(editorStore.workspaceRootPath)" :is-desktop-runtime="isDesktopRuntime"
                       @create="createNewDocument" @open="openDocument" @open-folder="openFolder" />
+
+                    <div v-else-if="isActiveTextBufferLoading"
+                      class="flex h-full min-h-0 flex-1 items-center justify-center px-6 text-sm text-muted-foreground">
+                      <span>正在加载 </span><span class="font-medium text-foreground" v-text="editorStore.document.name" /><span>…</span>
+                    </div>
 
                     <DeferredSmartScriptEditor v-else-if="editorStore.document.kind === 'text'" :ref="bindEditorRef"
                       :key="editorStore.document.id"
@@ -232,6 +242,9 @@ useLsp(visibleWorkspaceRootPath);
 
 const isTerminalAllowed = computed(() => !isAiMode.value);
 const isTerminalPanelVisible = computed(() => isTerminalAllowed.value && isTerminalVisible.value);
+const isActiveTextBufferLoading = computed(
+  () => editorStore.document.kind === 'text' && editorStore.document.bufferLoaded === false,
+);
 const aiAgentStore = useAiAgentStore();
 const terminalAgentRunStatuses = new Set(['completed', 'failed', 'cancelled']);
 const terminalPlanStatuses = new Set(['completed', 'failed', 'rejected']);

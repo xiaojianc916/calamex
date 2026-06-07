@@ -47,6 +47,9 @@ const trimTrailingWhitespace = (content: string): string =>
 
 const isTextDocument = (document: IEditorDocument): boolean => document.kind === 'text';
 
+const isLoadedTextDocument = (document: IEditorDocument): boolean =>
+  isTextDocument(document) && document.bufferLoaded !== false;
+
 export const useDocumentPersistence = ({
   appStore,
   editorStore,
@@ -108,9 +111,12 @@ export const useDocumentPersistence = ({
     return getRelativeFileSystemPath(path, workspaceRootPath) === null ? null : workspaceRootPath;
   };
 
+  const loadTextPayload = async (path: string): Promise<IScriptFilePayload> =>
+    tauriService.loadScript(path, resolveWorkspaceRootForPath(path));
+
   const applySaveConventionsToDocument = (documentId: string): IEditorDocument | null => {
     const targetDocument = editorStore.getDocumentById(documentId);
-    if (!targetDocument || !isTextDocument(targetDocument)) {
+    if (!targetDocument || !isLoadedTextDocument(targetDocument)) {
       return null;
     }
 
@@ -129,6 +135,12 @@ export const useDocumentPersistence = ({
         throw new Error('当前目标不是可由 shfmt 处理的脚本文本。');
       }
 
+      if (existingDocument.bufferLoaded === false) {
+        const payload = await loadTextPayload(path);
+        editorStore.applyDocumentPayload(existingDocument.id, payload);
+        return payload;
+      }
+
       return {
         path: existingDocument.path,
         name: existingDocument.name,
@@ -137,7 +149,7 @@ export const useDocumentPersistence = ({
       };
     }
 
-    return tauriService.loadScript(path, resolveWorkspaceRootForPath(path));
+    return loadTextPayload(path);
   };
 
   const persistTextDocument = async ({
@@ -182,6 +194,10 @@ export const useDocumentPersistence = ({
       return warnAndReturnFalse('当前图片预览不支持 shfmt 格式化。');
     }
 
+    if (targetDocument.bufferLoaded === false) {
+      return warnAndReturnFalse('当前文件内容尚未加载，请先切换到该标签页后再格式化。');
+    }
+
     try {
       const formattedContent = await formatShellScriptWithWasm(
         targetDocument.content,
@@ -211,8 +227,17 @@ export const useDocumentPersistence = ({
   };
 
   const prepareDocumentForSave = async (documentId: string): Promise<IEditorDocument | null> => {
+    const currentDocument = editorStore.getDocumentById(documentId);
+    if (currentDocument?.kind === 'text' && currentDocument.bufferLoaded === false) {
+      if (!currentDocument.path) {
+        return null;
+      }
+      const payload = await loadTextPayload(currentDocument.path);
+      editorStore.applyDocumentPayload(documentId, payload);
+    }
+
     const preparedDocument = applySaveConventionsToDocument(documentId);
-    if (!preparedDocument || !isTextDocument(preparedDocument)) {
+    if (!preparedDocument || !isLoadedTextDocument(preparedDocument)) {
       return preparedDocument;
     }
 
@@ -279,7 +304,7 @@ export const useDocumentPersistence = ({
       return false;
     }
 
-    if (!isTextDocument(targetDocument)) {
+    if (!isLoadedTextDocument(targetDocument)) {
       return warnAndReturnFalse('当前图片预览为只读模式，暂不支持另存为。');
     }
 
@@ -313,7 +338,7 @@ export const useDocumentPersistence = ({
       return false;
     }
 
-    if (!isTextDocument(targetDocument)) {
+    if (!isLoadedTextDocument(targetDocument)) {
       return warnAndReturnFalse('当前图片预览为只读模式，无需保存。');
     }
 
