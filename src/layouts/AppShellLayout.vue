@@ -207,10 +207,6 @@ const startWindowResize = async (direction: TResizeDirection, event: MouseEvent)
     await appWindow?.startResizeDragging(direction);
   } catch (error) {
     console.warn('窗口边缘拉伸失败', error);
-  } finally {
-    // 与起始的 START 事件配对：无论拖拽正常结束还是失败，都必须派发 END。
-    // 否则 useShellWorkbenchViewportState 的 isShellWindowResizing 会永久卡在 true，
-    // 导致编辑器视口的 ResizeObserver 更新被持续屏蔽（内部组件拖拽后不跟手）。
     window.dispatchEvent(new Event(SHELL_WINDOW_RESIZE_END_EVENT));
   }
 };

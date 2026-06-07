@@ -85,6 +85,20 @@ export const useWindowResizeState = () => {
     window.dispatchEvent(new Event(SHELL_WINDOW_RESIZE_FRAME_EVENT));
   };
 
+  const scheduleResizeClassRemoval = (delayMs: number): void => {
+    clearResizeTimer();
+    timer = window.setTimeout(() => {
+      const wasResizing = html.classList.contains('is-resizing');
+      cancelResizeFramePump();
+      html.classList.remove('is-resizing');
+      interactiveResizePhase = 'idle';
+      timer = undefined;
+      if (wasResizing) {
+        window.dispatchEvent(new Event(SHELL_WINDOW_RESIZE_SETTLED_EVENT));
+      }
+    }, delayMs);
+  };
+
   const queueResizeFramePump = (): void => {
     if (resizeFramePumpId !== undefined) {
       return;
@@ -114,20 +128,6 @@ export const useWindowResizeState = () => {
     queueResizeFramePump();
   };
 
-  const scheduleResizeClassRemoval = (delayMs: number): void => {
-    clearResizeTimer();
-    timer = window.setTimeout(() => {
-      const wasResizing = html.classList.contains('is-resizing');
-      cancelResizeFramePump();
-      html.classList.remove('is-resizing');
-      interactiveResizePhase = 'idle';
-      timer = undefined;
-      if (wasResizing) {
-        window.dispatchEvent(new Event(SHELL_WINDOW_RESIZE_SETTLED_EVENT));
-      }
-    }, delayMs);
-  };
-
   const beginResizePhase = (): void => {
     if (interactiveResizePhase === 'idle') {
       window.dispatchEvent(new Event(SHELL_WINDOW_RESIZE_START_EVENT));
@@ -139,6 +139,12 @@ export const useWindowResizeState = () => {
   const markResizing = (): void => {
     beginResizePhase();
     dispatchResizeFrame();
+
+    if (interactiveResizePhase === 'active') {
+      scheduleResizeClassRemoval(RESIZE_IDLE_RESET_DELAY_MS);
+      return;
+    }
+
     interactiveResizePhase = 'settling';
     scheduleResizeClassRemoval(RESIZE_IDLE_RESET_DELAY_MS);
   };
