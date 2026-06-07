@@ -11,6 +11,7 @@ import { tauriService } from '@/services/tauri';
 import { useAppStore } from '@/store/app';
 import { useEditorStore } from '@/store/editor';
 import { useGitStore } from '@/store/git';
+import { isAppError } from '@/types/app-error';
 import type {
   ICommandTemplate,
   IExecutionEnvironment,
@@ -28,6 +29,13 @@ const EMPTY_ENVIRONMENT: IExecutionEnvironment = {
   executors: [],
 };
 const WORKBENCH_RUNTIME_WAIT_MS = 160;
+
+type TCancelableDetectEnvironment = (options?: {
+  signal?: AbortSignal;
+}) => Promise<IExecutionEnvironment>;
+
+const isCanceledIpcError = (error: unknown): boolean =>
+  isAppError(error) && error.code === 'ipc.canceled';
 
 const isTextDocument = (document: { kind: string }): boolean => document.kind === 'text';
 
@@ -49,12 +57,25 @@ export const useWorkbench = () => {
   useTheme();
   useWindowResizeState();
   let executionEnvironmentSyncTimerId: number | null = null;
+  let executionEnvironmentRequestId = 0;
+  let executionEnvironmentAbortController: AbortController | null = null;
 
-  onScopeDispose(() => {
+  const clearExecutionEnvironmentSyncTimer = (): void => {
     if (executionEnvironmentSyncTimerId !== null) {
       window.clearTimeout(executionEnvironmentSyncTimerId);
       executionEnvironmentSyncTimerId = null;
     }
+  };
+
+  const cancelExecutionEnvironmentSync = (): void => {
+    executionEnvironmentRequestId += 1;
+    clearExecutionEnvironmentSyncTimer();
+    executionEnvironmentAbortController?.abort();
+    executionEnvironmentAbortController = null;
+  };
+
+  onScopeDispose(() => {
+    cancelExecutionEnvironmentSync();
   });
 
   const reportError = (scene: string, error: unknown, fallbackMessage: string): void => {
@@ -64,8 +85,19 @@ export const useWorkbench = () => {
   };
 
   const syncExecutionEnvironment = async (): Promise<void> => {
+    executionEnvironmentAbortController?.abort();
+    const requestId = executionEnvironmentRequestId + 1;
+    executionEnvironmentRequestId = requestId;
+    const abortController = new AbortController();
+    executionEnvironmentAbortController = abortController;
+
     try {
-      const environment = await tauriService.detectEnvironment();
+      const detectEnvironment = tauriService.detectEnvironment as TCancelableDetectEnvironment;
+      const environment = await detectEnvironment({ signal: abortController.signal });
+      if (requestId !== executionEnvironmentRequestId || abortController.signal.aborted) {
+        return;
+      }
+
       editorStore.setEnvironment(environment);
       editorStore.selectedExecutor = DEFAULT_EXECUTOR;
       editorStore.appendLog(
@@ -76,7 +108,19 @@ export const useWorkbench = () => {
           : '当前系统未发现可用的 WSL2 运行环境，建议先安装或启用 WSL2。',
       );
     } catch (error) {
+      if (
+        requestId !== executionEnvironmentRequestId ||
+        abortController.signal.aborted ||
+        isCanceledIpcError(error)
+      ) {
+        return;
+      }
+
       reportError('执行环境检测失败', error, '执行环境检测失败');
+    } finally {
+      if (requestId === executionEnvironmentRequestId) {
+        executionEnvironmentAbortController = null;
+      }
     }
   };
 
@@ -173,6 +217,7 @@ export const useWorkbench = () => {
 
     const runtimeReady = await waitForDesktopRuntime(WORKBENCH_RUNTIME_WAIT_MS);
     if (!runtimeReady) {
+      cancelExecutionEnvironmentSync();
       gitStore.reset();
       editorStore.setEnvironment(EMPTY_ENVIRONMENT);
       editorStore.selectedExecutor = DEFAULT_EXECUTOR;
@@ -188,6 +233,7 @@ export const useWorkbench = () => {
 
     editorStore.setEnvironment(EMPTY_ENVIRONMENT);
     editorStore.selectedExecutor = DEFAULT_EXECUTOR;
+    clearExecutionEnvironmentSyncTimer();
     executionEnvironmentSyncTimerId = window.setTimeout(() => {
       executionEnvironmentSyncTimerId = null;
       void syncExecutionEnvironment();
