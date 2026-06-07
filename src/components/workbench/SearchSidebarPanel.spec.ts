@@ -46,7 +46,7 @@ vi.mock('@/components/ui/input', () => ({
     props: ['modelValue'],
     emits: ['update:modelValue'],
     template:
-      '<input :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />',
+      '<input :value="modelValue" @input="$emit(\\'update:modelValue\\', $event.target.value)" />',
   },
 }));
 
@@ -160,6 +160,7 @@ describe('SearchSidebarPanel', () => {
         query: 'foo',
         scope: 'all',
         useStructural: false,
+        contentFuzzy: false,
         limit: 2000,
       }),
       expect.objectContaining({ signal: expect.anything() }),
@@ -180,6 +181,33 @@ describe('SearchSidebarPanel', () => {
       .findAll('.search-panel-chip')
       .find((chip) => chip.text().includes('内容'));
     expect(contentChip?.classes()).toContain('is-active');
+  });
+
+  it('开启内容模糊匹配后向后端下发 contentFuzzy=true，并与正则互斥', async () => {
+    const wrapper = mountPanel();
+    await wrapper.find('input[aria-label="搜索关键字"]').setValue('foo');
+    await flushDebouncedSearch();
+
+    const fuzzyButton = wrapper.get('button[title="内容模糊匹配"]');
+    await fuzzyButton.trigger('click');
+    await flushDebouncedSearch();
+
+    expect(fuzzyButton.classes()).toContain('is-active');
+    expect(tauriServiceMock.searchWorkspace).toHaveBeenLastCalledWith(
+      expect.objectContaining({ contentFuzzy: true, useRegex: false }),
+      expect.objectContaining({ signal: expect.anything() }),
+    );
+
+    // 开启正则应自动关闭内容模糊，避免两种内容匹配方式同时生效。
+    const regexButton = wrapper.get('button[title="正则表达式"]');
+    await regexButton.trigger('click');
+    await flushDebouncedSearch();
+
+    expect(fuzzyButton.classes()).not.toContain('is-active');
+    expect(tauriServiceMock.searchWorkspace).toHaveBeenLastCalledWith(
+      expect.objectContaining({ contentFuzzy: false, useRegex: true }),
+      expect.objectContaining({ signal: expect.anything() }),
+    );
   });
 
   it('未展开路径过滤时切换过滤开关不应触发重复后端检索', async () => {
