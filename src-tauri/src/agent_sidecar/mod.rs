@@ -1429,6 +1429,8 @@ mod tests {
     };
     use std::fs;
     use std::process::Command;
+    use std::sync::OnceLock;
+    use std::time::Duration;
 
     #[test]
     fn normalize_base_url_uses_default_when_env_is_empty() {

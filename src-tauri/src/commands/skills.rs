@@ -216,8 +216,9 @@ fn allocate_slug(root: &Path, name: &str) -> Result<String, String> {
 /// 解析 `SKILL.md`：提取 YAML frontmatter 的 name / description，其余为正文。
 fn parse_skill_document(raw: &str) -> ParsedSkill {
     let normalized = raw.replace("\r\n", "\n");
-    if let Some(rest) = normalized.strip_prefix("---\n") {
-        if let Some(end) = rest.find("\n---") {
+    if let Some(rest) = normalized.strip_prefix("---\n")
+        && let Some(end) = rest.find("\n---")
+    {
             let front = &rest[..end];
             let after = &rest[end + 4..];
             let body = after.trim_start_matches('\n').to_string();
@@ -235,7 +236,6 @@ fn parse_skill_document(raw: &str) -> ParsedSkill {
                 description,
                 body,
             };
-        }
     }
     ParsedSkill {
         name: String::new(),

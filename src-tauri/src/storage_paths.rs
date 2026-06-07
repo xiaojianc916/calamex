@@ -148,11 +148,11 @@ fn migrate_path(from: &Path, to: &Path) {
     if !from.exists() || to.exists() {
         return;
     }
-    if let Some(parent) = to.parent() {
-        if let Err(error) = fs::create_dir_all(parent) {
-            log_migration_warn("create-parent-failed", to, &error.to_string());
-            return;
-        }
+    if let Some(parent) = to.parent()
+        && let Err(error) = fs::create_dir_all(parent)
+    {
+        log_migration_warn("create-parent-failed", to, &error.to_string());
+        return;
     }
     if fs::rename(from, to).is_ok() {
         return;
