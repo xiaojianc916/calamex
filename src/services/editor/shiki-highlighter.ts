@@ -49,6 +49,10 @@ type TShikiWorkerResponse = {
   error?: string;
 };
 
+type TShikiWorkerTokenizeResult =
+  | { status: 'tokens'; tokens: IShikiThemedToken[][] }
+  | { status: 'unavailable' | 'failed' | 'timeout' };
+
 let highlighterPromise: Promise<HighlighterCore> | null = null;
 let highlighterInstance: HighlighterCore | null = null;
 let shikiWorker: Worker | null = null;
@@ -219,10 +223,10 @@ const getShikiWorker = (): Worker | null => {
 const tokenizeWithWorkerOnly = (
   code: string,
   language: string,
-): Promise<IShikiThemedToken[][] | null> | null => {
+): Promise<TShikiWorkerTokenizeResult> => {
   const worker = getShikiWorker();
   if (!worker) {
-    return null;
+    return Promise.resolve({ status: 'unavailable' });
   }
 
   const request: TShikiWorkerRequest = {
@@ -239,35 +243,39 @@ const tokenizeWithWorkerOnly = (
       worker.removeEventListener('message', handleMessage);
       worker.removeEventListener('error', handleError);
     };
-    const finish = (tokens: IShikiThemedToken[][] | null): void => {
+    const finish = (result: TShikiWorkerTokenizeResult): void => {
       if (settled) {
         return;
       }
       settled = true;
       cleanup();
-      resolve(tokens);
+      resolve(result);
     };
     const handleMessage = (event: MessageEvent<TShikiWorkerResponse>): void => {
       if (event.data.id !== request.id) {
         return;
       }
-      if (event.data.error) {
-        logger.error({ event: 'shiki.worker.tokenize_failed', err: event.data.error, language });
-        finish(null);
+      if (event.data.error || !event.data.tokens) {
+        logger.error({
+          event: 'shiki.worker.tokenize_failed',
+          err: event.data.error ?? 'empty tokens',
+          language,
+        });
+        finish({ status: 'failed' });
         return;
       }
-      finish(event.data.tokens);
+      finish({ status: 'tokens', tokens: event.data.tokens });
     };
     const handleError = (event: ErrorEvent): void => {
       shikiWorkerBroken = true;
       logger.error({ event: 'shiki.worker.runtime_failed', err: event.message });
       shikiWorker?.terminate();
       shikiWorker = null;
-      finish(null);
+      finish({ status: 'failed' });
     };
     timeoutId = setTimeout(() => {
       logger.error({ event: 'shiki.worker.timeout', language });
-      finish(null);
+      finish({ status: 'timeout' });
     }, SHIKI_WORKER_TIMEOUT_MS);
 
     worker.addEventListener('message', handleMessage);
@@ -299,7 +307,8 @@ export const tokenizeWithShikiSync = (
 
 /**
  * Worker 优先高亮：将 Shiki/Oniguruma tokenize 放到独立线程执行。
- * Worker 不可用、超时或失败时回退到主线程异步路径，保证功能可用。
+ * Worker 不可用或运行失败时回退到主线程异步路径，保证功能可用；单次 Worker 超时则
+ * 直接放弃本轮高亮，避免把疑似重任务重新搬回 UI 线程造成卡顿。
  */
 export const tokenizeWithShikiWorker = async (
   code: string,
@@ -315,13 +324,16 @@ export const tokenizeWithShikiWorker = async (
     return cached;
   }
 
-  const workerTokens = await tokenizeWithWorkerOnly(code, language);
-  if (workerTokens) {
-    cacheTokensIfEligible(code, shikiId, workerTokens);
-    return workerTokens;
+  const workerResult = await tokenizeWithWorkerOnly(code, language);
+  if (workerResult.status === 'tokens') {
+    cacheTokensIfEligible(code, shikiId, workerResult.tokens);
+    return workerResult.tokens;
+  }
+  if (workerResult.status === 'timeout') {
+    return null;
   }
 
-  // Worker 路径失败时才退回主线程。这里仍走异步入口，避免调用方关心 fallback 细节。
+  // Worker 不可用或运行失败时才退回主线程。这里仍走异步入口，避免调用方关心 fallback 细节。
   return tokenizeWithShiki(code, language);
 };
 
