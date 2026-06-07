@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { addDisposableEventListener, requestDisposableAnimationFrame } from '@/utils/dom-lifecycle';
+import {
+  addDisposableEventListener,
+  requestDisposableAnimationFrame,
+  requestDisposableTimeout,
+} from '@/utils/dom-lifecycle';
 
 describe('dom-lifecycle', () => {
   describe('addDisposableEventListener', () => {
@@ -66,6 +70,47 @@ describe('dom-lifecycle', () => {
 
       expect(callback).toHaveBeenCalledWith(16);
       expect(cancelAnimationFrame).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('requestDisposableTimeout', () => {
+    it('dispose 会取消尚未触发的 timeout', () => {
+      const callback = vi.fn();
+      const setTimeout = vi.fn(() => 13);
+      const clearTimeout = vi.fn();
+
+      const dispose = requestDisposableTimeout(callback, 160, {
+        setTimeout,
+        clearTimeout,
+      });
+      dispose();
+      dispose();
+
+      expect(setTimeout).toHaveBeenCalledTimes(1);
+      expect(setTimeout).toHaveBeenCalledWith(expect.any(Function), 160);
+      expect(clearTimeout).toHaveBeenCalledOnce();
+      expect(clearTimeout).toHaveBeenCalledWith(13);
+      expect(callback).not.toHaveBeenCalled();
+    });
+
+    it('timeout 触发后 disposer 不会重复取消', () => {
+      const callback = vi.fn();
+      const clearTimeout = vi.fn();
+      let timeoutCallback: (() => void) | null = null;
+      const setTimeout = vi.fn((nextCallback: () => void) => {
+        timeoutCallback = nextCallback;
+        return 21;
+      });
+
+      const dispose = requestDisposableTimeout(callback, 200, {
+        setTimeout,
+        clearTimeout,
+      });
+      timeoutCallback?.();
+      dispose();
+
+      expect(callback).toHaveBeenCalledOnce();
+      expect(clearTimeout).not.toHaveBeenCalled();
     });
   });
 });

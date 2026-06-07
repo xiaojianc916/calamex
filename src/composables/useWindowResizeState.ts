@@ -1,5 +1,9 @@
 import { onScopeDispose } from 'vue';
-import { addDisposableEventListener, requestDisposableAnimationFrame } from '@/utils/dom-lifecycle';
+import {
+  addDisposableEventListener,
+  requestDisposableAnimationFrame,
+  requestDisposableTimeout,
+} from '@/utils/dom-lifecycle';
 import { createDisposableBag, createMutableDisposable } from '@/utils/disposable';
 import { logger } from '@/utils/logger';
 import {
@@ -57,21 +61,16 @@ const warnResizeListenerFailure = (err: unknown): void => {
 
 export const useWindowResizeState = () => {
   const html = document.documentElement;
+  const resizeClassRemovalTimer = createMutableDisposable();
   const resizeEventListeners = createMutableDisposable();
   const resizeFramePumpFrame = createMutableDisposable();
   const tauriResizeListener = createMutableDisposable();
-  let timer: number | undefined;
   let resizeFramePumpStartedAt = 0;
   let isDisposed = false;
   let interactiveResizePhase: TInteractiveResizePhase = 'idle';
 
   const clearResizeTimer = (): void => {
-    if (timer === undefined) {
-      return;
-    }
-
-    window.clearTimeout(timer);
-    timer = undefined;
+    resizeClassRemovalTimer.clear();
   };
 
   const cancelResizeFramePump = (): void => {
@@ -84,16 +83,18 @@ export const useWindowResizeState = () => {
 
   const scheduleResizeClassRemoval = (delayMs: number): void => {
     clearResizeTimer();
-    timer = window.setTimeout(() => {
-      const wasResizing = html.classList.contains('is-resizing');
-      cancelResizeFramePump();
-      html.classList.remove('is-resizing');
-      interactiveResizePhase = 'idle';
-      timer = undefined;
-      if (wasResizing) {
-        window.dispatchEvent(new Event(SHELL_WINDOW_RESIZE_SETTLED_EVENT));
-      }
-    }, delayMs);
+    resizeClassRemovalTimer.set(
+      requestDisposableTimeout(() => {
+        resizeClassRemovalTimer.clear();
+        const wasResizing = html.classList.contains('is-resizing');
+        cancelResizeFramePump();
+        html.classList.remove('is-resizing');
+        interactiveResizePhase = 'idle';
+        if (wasResizing) {
+          window.dispatchEvent(new Event(SHELL_WINDOW_RESIZE_SETTLED_EVENT));
+        }
+      }, delayMs),
+    );
   };
 
   const queueResizeFramePump = (): void => {

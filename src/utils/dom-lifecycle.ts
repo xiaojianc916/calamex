@@ -40,3 +40,27 @@ export const requestDisposableAnimationFrame = (
     frameId = null;
   };
 };
+
+export const requestDisposableTimeout = (
+  callback: () => void,
+  delayMs: number,
+  targetWindow: Pick<Window, 'setTimeout' | 'clearTimeout'> = window,
+): DomDisposable => {
+  let timeoutId: number | null = targetWindow.setTimeout(() => {
+    const scheduledTimeoutId = timeoutId;
+    timeoutId = null;
+
+    if (scheduledTimeoutId !== null) {
+      callback();
+    }
+  }, delayMs);
+
+  return () => {
+    if (timeoutId === null) {
+      return;
+    }
+
+    targetWindow.clearTimeout(timeoutId);
+    timeoutId = null;
+  };
+};
