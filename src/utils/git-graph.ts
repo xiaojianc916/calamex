@@ -24,6 +24,8 @@ export interface IGitGraphLayout {
   laneCount: number;
 }
 
+export const GIT_GRAPH_LAYOUT_CACHE_LIMIT = 16;
+
 const GIT_GRAPH_LANE_COLORS: string[] = [
   '#4f9dde',
   '#e0598b',
@@ -35,11 +37,58 @@ const GIT_GRAPH_LANE_COLORS: string[] = [
   '#c7923e',
 ];
 
+const gitGraphLayoutCache = new Map<string, IGitGraphLayout>();
+
 export function resolveGitGraphLaneColor(lane: number): string {
   const total = GIT_GRAPH_LANE_COLORS.length;
   const index = ((lane % total) + total) % total;
   return GIT_GRAPH_LANE_COLORS[index];
 }
+
+const appendLengthPrefixed = (parts: string[], value: string): void => {
+  parts.push(String(value.length), ':', value);
+};
+
+export function createGitGraphLayoutCacheKey(commits: IGitGraphInputCommit[]): string {
+  const parts: string[] = [String(commits.length), '|'];
+  for (const commit of commits) {
+    appendLengthPrefixed(parts, commit.id);
+    const parents = commit.parentIds ?? [];
+    parts.push('(', String(parents.length), ')');
+    for (const parentId of parents) {
+      appendLengthPrefixed(parts, parentId);
+    }
+    parts.push(';');
+  }
+  return parts.join('');
+}
+
+export function clearGitGraphLayoutCache(): void {
+  gitGraphLayoutCache.clear();
+}
+
+const getCachedGitGraphLayout = (cacheKey: string): IGitGraphLayout | undefined => {
+  const cached = gitGraphLayoutCache.get(cacheKey);
+  if (!cached) {
+    return undefined;
+  }
+
+  // Map 删除后重插即可维护 LRU 最近访问顺序。
+  gitGraphLayoutCache.delete(cacheKey);
+  gitGraphLayoutCache.set(cacheKey, cached);
+  return cached;
+};
+
+const setCachedGitGraphLayout = (cacheKey: string, layout: IGitGraphLayout): void => {
+  gitGraphLayoutCache.set(cacheKey, layout);
+  while (gitGraphLayoutCache.size > GIT_GRAPH_LAYOUT_CACHE_LIMIT) {
+    const oldestKey = gitGraphLayoutCache.keys().next().value;
+    if (oldestKey === undefined) {
+      break;
+    }
+    gitGraphLayoutCache.delete(oldestKey);
+  }
+};
 
 // 二叉最小堆：维护「空闲泳道下标」的候选集合，支持 O(log n) 取最小。
 // 配合「惰性删除」使用：泳道被占用/越界时不立即从堆中移除，而是在取最小
@@ -112,6 +161,18 @@ function firstFreeLane(lanes: Array<string | null>, freeLaneHeap: MinLaneHeap): 
 }
 
 export function buildGitGraph(commits: IGitGraphInputCommit[]): IGitGraphLayout {
+  const cacheKey = createGitGraphLayoutCacheKey(commits);
+  const cached = getCachedGitGraphLayout(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const layout = buildGitGraphUncached(commits);
+  setCachedGitGraphLayout(cacheKey, layout);
+  return layout;
+}
+
+function buildGitGraphUncached(commits: IGitGraphInputCommit[]): IGitGraphLayout {
   let lanes: Array<string | null> = [];
   // 维护 “提交 id -> 当前所在泳道” 的索引，避免每个父提交都线性扫描整条泳道数组。
   // 不变量：在本算法中，任一提交 id 在任一时刻至多占用一条泳道（父提交首次出现时

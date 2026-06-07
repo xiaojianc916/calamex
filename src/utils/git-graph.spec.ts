@@ -1,8 +1,18 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import type { IGitGraphInputCommit } from './git-graph';
-import { buildGitGraph, resolveGitGraphLaneColor } from './git-graph';
+import {
+  buildGitGraph,
+  clearGitGraphLayoutCache,
+  createGitGraphLayoutCacheKey,
+  GIT_GRAPH_LAYOUT_CACHE_LIMIT,
+  resolveGitGraphLaneColor,
+} from './git-graph';
 
 describe('buildGitGraph', () => {
+  beforeEach(() => {
+    clearGitGraphLayoutCache();
+  });
+
   it('单分支线性历史只占用一条泳道', () => {
     const commits: IGitGraphInputCommit[] = [
       { id: 'a', parentIds: ['b'] },
@@ -150,6 +160,36 @@ describe('buildGitGraph', () => {
     ];
 
     expect(buildGitGraph(commits)).toEqual(buildGitGraph(commits));
+  });
+
+  it('相同提交拓扑会复用缓存布局', () => {
+    const commits: IGitGraphInputCommit[] = [
+      { id: 'A', parentIds: ['B'] },
+      { id: 'B', parentIds: [] },
+    ];
+
+    const firstLayout = buildGitGraph(commits);
+    const secondLayout = buildGitGraph(commits.map((commit) => ({ ...commit })));
+
+    expect(secondLayout).toBe(firstLayout);
+  });
+
+  it('缓存 key 使用长度前缀，避免提交 id 与分隔符碰撞', () => {
+    const left: IGitGraphInputCommit[] = [{ id: 'a:1', parentIds: ['b;2'] }];
+    const right: IGitGraphInputCommit[] = [{ id: 'a', parentIds: ['1:b', '2'] }];
+
+    expect(createGitGraphLayoutCacheKey(left)).not.toBe(createGitGraphLayoutCacheKey(right));
+  });
+
+  it('布局缓存超过上限时淘汰最久未使用项', () => {
+    const firstCommits: IGitGraphInputCommit[] = [{ id: 'commit-0', parentIds: [] }];
+    const firstLayout = buildGitGraph(firstCommits);
+
+    for (let index = 1; index <= GIT_GRAPH_LAYOUT_CACHE_LIMIT; index += 1) {
+      buildGitGraph([{ id: `commit-${index}`, parentIds: [] }]);
+    }
+
+    expect(buildGitGraph(firstCommits)).not.toBe(firstLayout);
   });
 
   it('泳道颜色按调色板循环取值', () => {

@@ -119,6 +119,20 @@
   - 之后：每页追加为 O(page)，避免复制旧历史。
 - 取舍：Vue/Pinia 对数组 push 保持响应式；为了降低风险，新增单测验证分页追加结果、offset 传参，以及 append 时复用现有数组引用。
 
+## C4：Git 历史图布局 LRU 记忆化
+
+- 文件：`src/utils/git-graph.ts`
+- 问题：Git 历史图布局虽已用 Map + 最小堆优化单次计算，但父组件刷新、悬浮卡片状态变化或相同提交数组重建时，仍可能对同一提交拓扑重复构建 lanes 与 edge graph。
+- 算法：为 `buildGitGraph` 增加 16 项 LRU 布局缓存：
+  - key 基于提交数量、提交 id、parentIds，并使用长度前缀编码，避免普通分隔符拼接导致碰撞。
+  - 命中时直接返回已有 layout，并刷新 LRU 顺序。
+  - 超过 16 项后淘汰最久未使用的布局。
+- 复杂度：
+  - 之前：相同拓扑重复构图仍为 O(commits + edges)。
+  - 之后：相同拓扑命中为 O(key construction) + O(1) Map 访问；避免重复 lane / edge 分配。
+- 取舍：不做复杂 append-aware 增量 Git graph（容易影响 merge/fork 语义），先用低风险 memoization 覆盖常见重复渲染场景。
+- 验证：新增单测覆盖相同拓扑复用、长度前缀 key 防碰撞，以及超过上限淘汰最久未使用布局。
+
 ## 建议验证命令
 
 ```bash
