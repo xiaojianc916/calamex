@@ -64,7 +64,13 @@ const createButtonLabel = (): string => {
 const createButtonTitle = (): string => {
   if (currentStatus?.authenticated) {
     const displayName = currentStatus.name || currentStatus.login || 'GitHub';
-    return `已连接 ${displayName}`;
+    const source =
+      currentStatus.source === 'github-cli'
+        ? 'GitHub CLI'
+        : currentStatus.source === 'git-credential'
+          ? 'Git Credential'
+          : 'GitHub';
+    return `已通过 ${source} 连接 ${displayName}`;
   }
 
   return currentStatus?.message || '连接 GitHub 以显示账号与作者信息';
@@ -77,6 +83,7 @@ const getSnapshot = (repositoryRootPath: string | null): string =>
     authenticated: currentStatus?.authenticated ?? false,
     login: currentStatus?.login ?? null,
     avatarUrl: currentStatus?.avatarUrl ?? null,
+    source: currentStatus?.source ?? null,
     message: currentStatus?.message ?? null,
   });
 

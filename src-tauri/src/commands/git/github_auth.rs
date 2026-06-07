@@ -33,8 +33,14 @@ pub struct GitHubAuthStatusPayload {
 
 #[derive(Clone)]
 struct GitHubAuthCredentialCacheEntry {
-    token: Option<String>,
+    credential: Option<GitHubResolvedCredential>,
     expires_at: Instant,
+}
+
+#[derive(Clone)]
+struct GitHubResolvedCredential {
+    token: String,
+    source: String,
 }
 
 struct GitHubAuthTarget {
@@ -76,7 +82,7 @@ fn unauthenticated(message: impl Into<String>) -> GitHubAuthStatusPayload {
     }
 }
 
-fn authenticated(user: GitHubAuthenticatedUser) -> GitHubAuthStatusPayload {
+fn authenticated(user: GitHubAuthenticatedUser, source: String) -> GitHubAuthStatusPayload {
     GitHubAuthStatusPayload {
         authenticated: true,
         login: Some(user.login),
@@ -84,7 +90,7 @@ fn authenticated(user: GitHubAuthenticatedUser) -> GitHubAuthStatusPayload {
         avatar_url: user.avatar_url,
         html_url: user.html_url,
         email: user.email,
-        source: Some("git-credential".to_string()),
+        source: Some(source),
         message: None,
     }
 }
@@ -183,7 +189,7 @@ fn clear_github_auth_credential_cache_for_host(host: &str) {
 async fn resolve_github_auth_credential(
     repository_root: &std::path::Path,
     host: &str,
-) -> Option<String> {
+) -> Option<GitHubResolvedCredential> {
     let cache_key = host.to_ascii_lowercase();
     let now = Instant::now();
 
@@ -193,59 +199,97 @@ async fn resolve_github_auth_credential(
         .and_then(|cache| cache.get(&cache_key).cloned())
     {
         if cached.expires_at > now {
-            return cached.token;
+            return cached.credential;
         }
     }
 
-    let token = async {
-        let mut command = tokio::process::Command::new("git");
-        command
-            .arg("-C")
-            .arg(repository_root)
-            .arg("credential")
-            .arg("fill")
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null());
-
-        let mut child = command.spawn().ok()?;
-        {
-            let mut stdin = child.stdin.take()?;
-            let query = format!("protocol=https\nhost={host}\n\n");
-            stdin.write_all(query.as_bytes()).await.ok()?;
-        }
-
-        let output = child.wait_with_output().await.ok()?;
-        if !output.status.success() {
-            return None;
-        }
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        for line in stdout.lines() {
-            if let Some(token) = line.strip_prefix("password=") {
-                let token = token.trim();
-                if !token.is_empty() {
-                    return Some(token.to_string());
-                }
-            }
-        }
-
-        None
-    }
-    .await;
+    let credential = resolve_git_credential_token(repository_root, host)
+        .await
+        .map(|token| GitHubResolvedCredential {
+            token,
+            source: "git-credential".to_string(),
+        })
+        .or_else(|| {
+            resolve_github_cli_token(host)
+                .map(|token| GitHubResolvedCredential {
+                    token,
+                    source: "github-cli".to_string(),
+                })
+        });
 
     if let Ok(mut cache) = github_auth_credential_cache().lock() {
         cache.insert(
             cache_key,
             GitHubAuthCredentialCacheEntry {
-                token: token.clone(),
+                credential: credential.clone(),
                 expires_at: now + GITHUB_AUTH_CREDENTIAL_CACHE_TTL,
             },
         );
     }
 
-    token
+    credential
+}
+
+async fn resolve_git_credential_token(repository_root: &std::path::Path, host: &str) -> Option<String> {
+    let mut command = tokio::process::Command::new("git");
+    command
+        .arg("-C")
+        .arg(repository_root)
+        .arg("credential")
+        .arg("fill")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null());
+
+    let mut child = command.spawn().ok()?;
+    {
+        let mut stdin = child.stdin.take()?;
+        let query = format!("protocol=https\nhost={host}\n\n");
+        stdin.write_all(query.as_bytes()).await.ok()?;
+    }
+
+    let output = child.wait_with_output().await.ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    parse_git_credential_password(&String::from_utf8_lossy(&output.stdout))
+}
+
+fn resolve_github_cli_token(host: &str) -> Option<String> {
+    let output = std::process::Command::new("gh")
+        .arg("auth")
+        .arg("token")
+        .arg("--hostname")
+        .arg(host)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let token = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if token.is_empty() {
+        return None;
+    }
+
+    Some(token)
+}
+
+fn parse_git_credential_password(output: &str) -> Option<String> {
+    for line in output.lines() {
+        if let Some(token) = line.strip_prefix("password=") {
+            let token = token.trim();
+            if !token.is_empty() {
+                return Some(token.to_string());
+            }
+        }
+    }
+
+    None
 }
 
 fn build_github_auth_client(token: &str) -> Result<reqwest::Client, String> {
@@ -274,14 +318,14 @@ fn build_github_auth_client(token: &str) -> Result<reqwest::Client, String> {
 async fn fetch_github_auth_status(
     target: &GitHubAuthTarget,
 ) -> Result<GitHubAuthStatusPayload, String> {
-    let Some(token) = resolve_github_auth_credential(&target.repository_root, &target.host).await
+    let Some(credential) = resolve_github_auth_credential(&target.repository_root, &target.host).await
     else {
         return Ok(unauthenticated(
             "未发现可用的 GitHub 凭据。请先通过 GitHub CLI、Git Credential Manager 或一次 git push 完成 GitHub 登录。",
         ));
     };
 
-    let client = build_github_auth_client(&token)?;
+    let client = build_github_auth_client(&credential.token)?;
     let response = client
         .get(format!("{}/user", target.api_base))
         .send()
@@ -315,7 +359,7 @@ async fn fetch_github_auth_status(
     let user: GitHubAuthenticatedUser = serde_json::from_str(&body)
         .map_err(|error| format!("解析 GitHub 用户信息失败：{error}"))?;
 
-    Ok(authenticated(user))
+    Ok(authenticated(user, credential.source))
 }
 
 #[tauri::command]
@@ -345,6 +389,36 @@ pub async fn disconnect_github(
     let target = resolve_github_auth_target(&payload.repository_root_path)?;
     clear_github_auth_credential_cache_for_host(&target.host);
     Ok(unauthenticated(
-        "已清除 Calamex 当前会话中的 GitHub 登录缓存；系统 Git 凭据仍由操作系统或 Git Credential Manager 管理。",
+        "已清除 Calamex 当前会话中的 GitHub 登录缓存；系统 Git 凭据仍由操作系统、GitHub CLI 或 Git Credential Manager 管理。",
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_github_remote_host_supports_common_remote_urls() {
+        assert_eq!(
+            parse_github_remote_host("git@github.com:owner/repo.git"),
+            Some("github.com".to_string())
+        );
+        assert_eq!(
+            parse_github_remote_host("https://github.com/owner/repo.git"),
+            Some("github.com".to_string())
+        );
+        assert_eq!(
+            parse_github_remote_host("ssh://git@github.enterprise.local/owner/repo.git"),
+            Some("github.enterprise.local".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_git_credential_password_extracts_password_field() {
+        assert_eq!(
+            parse_git_credential_password("protocol=https\nhost=github.com\nusername=x\npassword=gho_token\n"),
+            Some("gho_token".to_string())
+        );
+        assert_eq!(parse_git_credential_password("username=x\n"), None);
+    }
 }
