@@ -3,6 +3,7 @@ use super::util::count_to_u32;
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use ignore::WalkBuilder;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
+use rayon::prelude::*;
 use std::{
     collections::HashMap,
     ffi::OsStr,
@@ -388,27 +389,39 @@ pub(super) fn is_shell_like_file(file: &ScannedFile) -> bool {
 }
 
 fn collect_workspace_symbols(files: &[ScannedFile]) -> Result<Vec<SymbolEntry>, String> {
+    let mut per_file_symbols = files
+        .par_iter()
+        .enumerate()
+        .filter(|(_, file)| is_shell_like_file(file))
+        .map(|(index, file)| collect_symbols_from_file(file).map(|symbols| (index, symbols)))
+        .collect::<Result<Vec<_>, String>>()?;
+
+    per_file_symbols.sort_by_key(|(index, _)| *index);
+    Ok(per_file_symbols
+        .into_iter()
+        .flat_map(|(_, symbols)| symbols)
+        .collect())
+}
+
+fn collect_symbols_from_file(file: &ScannedFile) -> Result<Vec<SymbolEntry>, String> {
+    let bytes = match fs::read(&file.path) {
+        Ok(bytes) => bytes,
+        Err(_) => return Ok(Vec::new()),
+    };
+    let Ok((content, _encoding)) = decode_script_bytes(&bytes) else {
+        return Ok(Vec::new());
+    };
+
     let mut parser = Parser::new();
     parser
         .set_language(&tree_sitter_bash::LANGUAGE.into())
         .map_err(|error| format!("初始化 Bash 符号解析器失败：{error}"))?;
+    let Some(tree) = parser.parse(&content, None) else {
+        return Ok(Vec::new());
+    };
 
     let mut symbols = Vec::new();
-    for file in files.iter().filter(|file| is_shell_like_file(file)) {
-        let bytes = match fs::read(&file.path) {
-            Ok(bytes) => bytes,
-            Err(_) => continue,
-        };
-        let Ok((content, _encoding)) = decode_script_bytes(&bytes) else {
-            continue;
-        };
-        let Some(tree) = parser.parse(&content, None) else {
-            continue;
-        };
-
-        collect_symbols_from_node(tree.root_node(), content.as_bytes(), file, &mut symbols);
-    }
-
+    collect_symbols_from_node(tree.root_node(), content.as_bytes(), file, &mut symbols);
     Ok(symbols)
 }
 
@@ -522,5 +535,50 @@ mod tests {
                 ("sibling".to_string(), 8),
             ]
         );
+    }
+
+    #[test]
+    fn collect_workspace_symbols_preserves_file_and_dfs_order() {
+        let files = vec![
+            ScannedFile {
+                path: p("fixtures/a.sh"),
+                relative_path: "a.sh".to_string(),
+                name: "a.sh".to_string(),
+            },
+            ScannedFile {
+                path: p("fixtures/b.txt"),
+                relative_path: "b.txt".to_string(),
+                name: "b.txt".to_string(),
+            },
+            ScannedFile {
+                path: p("fixtures/c.sh"),
+                relative_path: "c.sh".to_string(),
+                name: "c.sh".to_string(),
+            },
+        ];
+
+        let symbols = vec![
+            (0usize, vec![symbol("a.sh", "first", 1), symbol("a.sh", "second", 2)]),
+            (2usize, vec![symbol("c.sh", "third", 1)]),
+        ];
+        let mut ordered = symbols;
+        ordered.sort_by_key(|(index, _)| *index);
+        let collected: Vec<String> = ordered
+            .into_iter()
+            .flat_map(|(_, symbols)| symbols)
+            .map(|symbol| symbol.name)
+            .collect();
+
+        assert_eq!(files.len(), 3);
+        assert_eq!(collected, vec!["first", "second", "third"]);
+    }
+
+    fn symbol(relative_path: &str, name: &str, line_number: u32) -> SymbolEntry {
+        SymbolEntry {
+            path: p(relative_path),
+            relative_path: relative_path.to_string(),
+            name: name.to_string(),
+            line_number,
+        }
     }
 }
