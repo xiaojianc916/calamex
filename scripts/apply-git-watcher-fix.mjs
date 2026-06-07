@@ -51,7 +51,7 @@ for (const probe of ['fn is_ignored_change', 'struct WorkspaceFsEvent', 'IGNORED
 
 /** @type {Step[]} */
 const STEPS = [
-  // 0) 兜底:若本地仍把 ".git" 留在 IGNORED_DIR_NAMES 里,移除它(当前 main 已无)。
+  // 0) 兜底:若本地仍把 ".git" 留在 IGNORED_DIR_NAMES 里,移除它。
   {
     id: 'drop-.git-from-IGNORED_DIR_NAMES',
     marker: '__never_skip_via_marker__',
@@ -61,12 +61,22 @@ const STEPS = [
   },
 
   // 1) 新增 .git 内部高频目录白名单常量。
+  //    锚在稳定的 is_ignored_dir_name 函数后插入,绕开常量块排版差异。
   {
     id: 'add-IGNORED_GIT_INTERNAL_DIRS',
     marker: 'IGNORED_GIT_INTERNAL_DIRS',
-    find: '    "__pycache__",\n];\n',
+    find:
+      'fn is_ignored_dir_name(name: &str) -> bool {\n' +
+      '    IGNORED_DIR_NAMES\n' +
+      '        .iter()\n' +
+      '        .any(|ignored| os_str_eq(OsStr::new(name), OsStr::new(ignored)))\n' +
+      '}\n',
     replace:
-      '    "__pycache__",\n];\n' +
+      'fn is_ignored_dir_name(name: &str) -> bool {\n' +
+      '    IGNORED_DIR_NAMES\n' +
+      '        .iter()\n' +
+      '        .any(|ignored| os_str_eq(OsStr::new(name), OsStr::new(ignored)))\n' +
+      '}\n' +
       '\n' +
       '/// .git 内部高频/无意义子目录(如 .git/objects/**):继续忽略以免 commit/gc 刷屏;\n' +
       '/// 但 .git 顶层状态文件(HEAD/index/packed-refs)与 .git/refs、.git/logs 不在此列,\n' +
@@ -234,7 +244,7 @@ for (const step of STEPS) {
       skipped += 1;
       continue;
     }
-    die(`步骤 ${step.id} 找不到锚点。文件可能已偏离预期版本,请人工核对。`);
+    die(`步骤 ${step.id} 找不到锚点。请把本地该文件相关片段贴给我,我按你的实际内容重对锚点。`);
   }
   if (count > 1) {
     die(`步骤 ${step.id} 锚点出现 ${count} 次(歧义),拒绝盲改。`);
