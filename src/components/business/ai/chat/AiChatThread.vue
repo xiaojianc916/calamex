@@ -218,6 +218,7 @@ const hasContextCompressionMarker = (message: IAiChatMessage): boolean =>
   border-radius: 999px;
   background: transparent;
   background-clip: content-box;
+  transition: background-color 180ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 
 .ai-chat-list.is-scrollbar-active :deep(> div > div)::-webkit-scrollbar-thumb {
