@@ -24,6 +24,7 @@ pub fn builder() -> Builder<tauri::Wry> {
             skills::save_skill,
             skills::delete_skill,
             window_stage::apply_window_stage,
+            window::open_external_url,
             window::set_window_background,
             workspace_fs::create_workspace_path,
             workspace_fs::delete_workspace_path,

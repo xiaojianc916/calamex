@@ -133,14 +133,12 @@ const handleButtonClick = async (): Promise<void> => {
     return;
   }
 
+  promptGitHubLogin();
   isLoading = true;
   renderAllGithubAuthHeaders();
 
   try {
     currentStatus = await connectGithub(repositoryRootPath);
-    if (!currentStatus.authenticated) {
-      promptGitHubLogin();
-    }
   } catch (error) {
     currentStatus = {
       authenticated: false,
@@ -173,12 +171,12 @@ const handleSwitchAccount = async (): Promise<void> => {
   }
 
   isMenuOpen = false;
+  promptGitHubLogin();
   isLoading = true;
   renderAllGithubAuthHeaders();
 
   try {
     currentStatus = await disconnectGithub(repositoryRootPath);
-    promptGitHubLogin();
   } catch (error) {
     currentStatus = {
       authenticated: false,
