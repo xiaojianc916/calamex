@@ -111,7 +111,7 @@ const toStepFinalAnswer = (
 });
 
 type TSegmentOutcome = {
-  kind: 'gate' | 'awaiting' | 'done' | 'error';
+  kind: 'gate' | 'awaiting' | 'done' | 'error' | 'stale';
   run: IAiAgentRun;
 };
 
@@ -127,6 +127,9 @@ export const useAiAgentRun = () => {
   // 协作式暂停 / 已放行计划门标记。
   const pausedRuns = new Set<string>();
   const startedRuns = new Set<string>();
+  // runId -> 当前前端生命周期 token。暂停/取消/重新执行会递增或清除 token，
+  // 让已经在途的 resume 结果和迟到流事件无法覆盖新的本地终态。
+  const runLifecycleTokens = new Map<string, number>();
 
   const getRuns = (): IAiAgentRun[] => unref(store.runs);
   const getActiveRun = (): IAiAgentRun | null => unref(store.activeRun);
@@ -143,6 +146,17 @@ export const useAiAgentRun = () => {
     approvedAt = store.approvedAt,
   ): void => {
     store.setPlanStatus(status, approvedAt);
+  };
+
+  const bumpRunLifecycleToken = (runId: string): number => {
+    const token = (runLifecycleTokens.get(runId) ?? 0) + 1;
+    runLifecycleTokens.set(runId, token);
+    return token;
+  };
+
+  const isRunLifecycleCurrent = (runId: string, token: number): boolean => {
+    const run = getRuns().find((item) => item.id === runId) ?? null;
+    return runLifecycleTokens.get(runId) === token && Boolean(run) && !isTerminalRunStatus(run!.status);
   };
 
   const applyRunPayload = (run: IAiAgentRun): IAiAgentRun => {
@@ -171,6 +185,7 @@ export const useAiAgentRun = () => {
     }
     pausedRuns.delete(runId);
     startedRuns.delete(runId);
+    runLifecycleTokens.delete(runId);
   };
 
   const createLocalRun = (goal: string, steps: IAiTaskPlanStep[]): IAiAgentRun => {
@@ -304,7 +319,7 @@ export const useAiAgentRun = () => {
   };
 
   const appendLiveActivities = (runId: string, events: readonly TAgentUiEvent[]): void => {
-    const stepId = getActiveRun()?.currentStepId;
+    const stepId = getRuns().find((run) => run.id === runId)?.currentStepId ?? null;
     if (!stepId) {
       return;
     }
@@ -350,17 +365,26 @@ export const useAiAgentRun = () => {
     decision: TAgentSidecarOrchestrateDecision,
     advanceOnGate: boolean,
     options: ISidecarStepLoopOptions,
+    lifecycleToken: number,
   ): Promise<TSegmentOutcome> => {
     const { projection } = await resumeOrchestration({
       runId: orchestrationRunId,
       decision,
-      onLiveEvents: (events) => appendLiveActivities(runId, events),
+      onLiveEvents: (events) => {
+        if (isRunLifecycleCurrent(runId, lifecycleToken)) {
+          appendLiveActivities(runId, events);
+        }
+      },
     });
+
+    if (!isRunLifecycleCurrent(runId, lifecycleToken)) {
+      return { kind: 'stale', run: getRunOrThrow(runId) };
+    }
 
     if (projection.usage) {
       store.setLatestOfficialUsage(projection.usage);
     }
-    const stepId = getActiveRun()?.currentStepId ?? null;
+    const stepId = getRuns().find((run) => run.id === runId)?.currentStepId ?? null;
     if (stepId) {
       store.appendStepToolResults(
         runId,
@@ -369,6 +393,10 @@ export const useAiAgentRun = () => {
       );
     }
     await refreshChangedDocs(projection, options.workspaceRootPath);
+
+    if (!isRunLifecycleCurrent(runId, lifecycleToken)) {
+      return { kind: 'stale', run: getRunOrThrow(runId) };
+    }
 
     if (projection.errorMessage) {
       return { kind: 'error', run: failRun(runId, projection.errorMessage) };
@@ -398,16 +426,21 @@ export const useAiAgentRun = () => {
     firstDecision: TAgentSidecarOrchestrateDecision,
     firstAdvance: boolean,
     options: ISidecarStepLoopOptions,
+    lifecycleToken: number,
   ): Promise<IAiAgentRun> => {
     let decision = firstDecision;
     let advance = firstAdvance;
     for (;;) {
+      if (!isRunLifecycleCurrent(runId, lifecycleToken)) {
+        return getRunOrThrow(runId);
+      }
       const outcome = await runOrchestrationSegment(
         runId,
         orchestrationRunId,
         decision,
         advance,
         options,
+        lifecycleToken,
       );
       if (outcome.kind !== 'gate') {
         return outcome.run;
@@ -449,11 +482,12 @@ export const useAiAgentRun = () => {
     }
     const run = await runPlan(goal, steps, options.context ?? []);
     startedRuns.add(run.id);
+    const lifecycleToken = bumpRunLifecycleToken(run.id);
     // 第一段 = resume('approve'):清掉计划审批门,不执行 step(故 advance=false)。
     return driveToCompletion(run.id, orchestrationRunId, 'approve', false, {
       ...(options.context ? { context: options.context } : {}),
       workspaceRootPath: options.workspaceRootPath ?? null,
-    });
+    }, lifecycleToken);
   };
 
   const continueRunToCompletion = async (
@@ -465,10 +499,11 @@ export const useAiAgentRun = () => {
       throw new Error('当前没有可继续的编排 run。');
     }
     pausedRuns.delete(runId);
+    const lifecycleToken = bumpRunLifecycleToken(runId);
     return driveToCompletion(runId, orchestrationRunId, 'continue', true, {
       ...(options.context ? { context: options.context } : {}),
       workspaceRootPath: options.workspaceRootPath ?? null,
-    });
+    }, lifecycleToken);
   };
 
   const runStep = async (runId: string, stepId?: string): Promise<IAiAgentRun> => {
@@ -515,6 +550,7 @@ export const useAiAgentRun = () => {
         ? 'continue'
         : 'approve';
       startedRuns.add(runId);
+      const lifecycleToken = bumpRunLifecycleToken(runId);
       setPlanStatus('executing', store.approvedAt);
       const outcome = await runOrchestrationSegment(
         runId,
@@ -525,6 +561,7 @@ export const useAiAgentRun = () => {
           ...(options.context ? { context: options.context } : {}),
           workspaceRootPath: options.workspaceRootPath ?? null,
         },
+        lifecycleToken,
       );
       return outcome.run;
     } catch (error) {
@@ -558,12 +595,14 @@ export const useAiAgentRun = () => {
       return cancelRunLocal(entry.runId);
     }
     // 允许(approve)/ 跳过(reject):续跑被工具审批挂起的那一步,然后自动跑到底。
+    const lifecycleToken = bumpRunLifecycleToken(entry.runId);
     return driveToCompletion(
       entry.runId,
       entry.orchestrationRunId,
       orchestrateDecision,
       true,
       entry.options,
+      lifecycleToken,
     );
   };
 
@@ -582,6 +621,7 @@ export const useAiAgentRun = () => {
   const pauseRun = async (runId: string): Promise<IAiAgentRun> => {
     try {
       pausedRuns.add(runId);
+      runLifecycleTokens.delete(runId);
       return updateRun(runId, (run) =>
         isTerminalRunStatus(run.status)
           ? run
@@ -614,6 +654,7 @@ export const useAiAgentRun = () => {
     }
     try {
       const orchestrationRunId = store.orchestrationRunId;
+      runLifecycleTokens.delete(runId);
       if (orchestrationRunId) {
         try {
           await resumeOrchestration({ runId: orchestrationRunId, decision: 'cancel' });

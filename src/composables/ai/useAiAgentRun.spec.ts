@@ -36,6 +36,32 @@ vi.mock('@/services/ipc/ai.service', () => ({
   aiService: {},
 }));
 
+const createDeferred = <T>() => {
+  let resolveValue: ((value: T) => void) | undefined;
+  let rejectValue: ((reason?: unknown) => void) | undefined;
+  const promise = new Promise<T>((resolve, reject) => {
+    resolveValue = resolve;
+    rejectValue = reject;
+  });
+
+  return {
+    promise,
+    resolve(value: T): void {
+      if (!resolveValue) throw new Error('deferred resolve is not ready');
+      resolveValue(value);
+    },
+    reject(reason?: unknown): void {
+      if (!rejectValue) throw new Error('deferred reject is not ready');
+      rejectValue(reason);
+    },
+  };
+};
+
+const flushMicrotasks = async (): Promise<void> => {
+  await Promise.resolve();
+  await Promise.resolve();
+};
+
 const createStep = (
   index: number,
   status: IAiTaskPlanStep['status'] = 'pending',
@@ -212,6 +238,34 @@ describe('useAiAgentRun', () => {
     expect(store.pendingToolConfirmation).toBeNull();
     expect(finalRun.status).toBe('completed');
     expect(decisionsOf()).toEqual(['approve', 'continue', 'approve', 'continue']);
+  });
+
+  it('取消中的 run 会忽略随后到达的完成结果', async () => {
+    const deferred = createDeferred<ReturnType<typeof doneResult>>();
+    orchestrateMock.resumeOrchestration.mockReturnValueOnce(deferred.promise);
+
+    const agentRun = useAiAgentRun();
+    const store = useAiAgentStore();
+    const steps = createRunSteps();
+    seedApprovedPlan(store, '实现 Step Runtime', steps);
+
+    const runPromise = agentRun.runPlanToCompletion('实现 Step Runtime', steps, {
+      context: [],
+      workspaceRootPath: 'd:/com.xiaojianc/my_desktop_app',
+    });
+    await flushMicrotasks();
+
+    const runId = store.activeRun?.id;
+    expect(runId).toBeTruthy();
+
+    orchestrateMock.resumeOrchestration.mockResolvedValueOnce(doneResult('取消确认完成。'));
+    await agentRun.cancelRun(runId ?? '');
+    deferred.resolve(doneResult('迟到的完成结果'));
+    await runPromise;
+
+    expect(store.activeRun?.status).toBe('cancelled');
+    expect(store.activeRun?.steps[0]?.status).toBe('cancelled');
+    expect(store.getStepFinalAnswers(runId ?? '')).toHaveLength(0);
   });
 
   it('暂停、继续、取消 run 都在本地回写 store', async () => {
