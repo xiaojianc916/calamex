@@ -56,4 +56,42 @@ describe('text-preview', () => {
     expect(preview).toContain('路径：');
     expect(preview).not.toContain('摘要：');
   });
+
+  it('多字段预览的总渲染长度不超过字符预算', () => {
+    const preview = formatPrioritizedFieldPreview(
+      [
+        { label: 'A', value: 'x'.repeat(50), priority: 90 },
+        { label: 'B', value: 'y'.repeat(50), priority: 60 },
+        { label: 'C', value: 'z'.repeat(50), priority: 30 },
+      ],
+      {
+        maxFields: 3,
+        maxGraphemes: 48,
+      },
+    );
+
+    expect([...preview].length).toBeLessThanOrEqual(48);
+    expect(preview).toContain('A：');
+  });
+
+  it('预算紧张时高优先级字段保留更多字符', () => {
+    const preview = formatPrioritizedFieldPreview(
+      [
+        { label: '高', value: '高优先级字段需要尽量完整地展示出来内容', priority: 100 },
+        { label: '低', value: '低优先级字段在空间不足时应当被更多地截断掉', priority: 10 },
+      ],
+      {
+        maxFields: 2,
+        maxGraphemes: 40,
+      },
+    );
+
+    const parts = preview.split(' · ');
+    const highPart = parts.find((part) => part.startsWith('高：')) ?? '';
+    const lowPart = parts.find((part) => part.startsWith('低：')) ?? '';
+
+    expect(preview).toContain('高：');
+    expect(preview).toContain('低：');
+    expect([...highPart].length).toBeGreaterThan([...lowPart].length);
+  });
 });

@@ -572,45 +572,50 @@ const allocateFieldBudgets = (
     getInitialFieldBudget(field, safeAvailableBudget, totalPriority, locale),
   );
 
-  while (sumNumbers(budgets) > safeAvailableBudget) {
-    const removableIndex = fields
-      .map((field, index) => ({
-        index,
-        priority: field.priority,
-        budget: budgets[index] ?? 0,
-      }))
-      .filter((item) => item.budget > 0)
+  const totalBudget = sumNumbers(budgets);
+
+  if (totalBudget > safeAvailableBudget) {
+    // 需要回收的额度：按（优先级升序，下标降序）依次把各字段扣减到 0。
+    // 这与旧实现 “每次 -1 并重排” 的逐步结果完全一致，但用一次排序 + 一次遍历完成，
+    // 复杂度从 O(B·F·logF) 降到 O(F·logF)。
+    let surplus = totalBudget - safeAvailableBudget;
+    const reclaimOrder = fields
+      .map((field, index) => ({ index, priority: priorities[index] ?? 1 }))
       .sort(
         (left, right) =>
           comparePriorityAsc(left.priority, right.priority) || right.index - left.index,
-      )[0];
+      );
 
-    if (!removableIndex) {
-      break;
+    for (const { index } of reclaimOrder) {
+      if (surplus <= 0) {
+        break;
+      }
+
+      const reclaimable = Math.min(surplus, budgets[index] ?? 0);
+      budgets[index] = (budgets[index] ?? 0) - reclaimable;
+      surplus -= reclaimable;
     }
-
-    budgets[removableIndex.index] = Math.max(0, (budgets[removableIndex.index] ?? 0) - 1);
-  }
-
-  while (sumNumbers(budgets) < safeAvailableBudget) {
-    const expandableIndex = fields
-      .map((field, index) => ({
-        index,
-        priority: field.priority,
-        budget: budgets[index] ?? 0,
-        need: needs[index] ?? 0,
-      }))
-      .filter((item) => item.budget < item.need)
+  } else if (totalBudget < safeAvailableBudget) {
+    // 需要补足的额度：按（优先级降序，下标升序）依次把各字段补到其 need 上限。
+    // 同样与旧的 “每次 +1 并重排” 逐步逼近实现结果一致。
+    let deficit = safeAvailableBudget - totalBudget;
+    const grantOrder = fields
+      .map((field, index) => ({ index, priority: priorities[index] ?? 1 }))
       .sort(
         (left, right) =>
           comparePriorityDesc(left.priority, right.priority) || left.index - right.index,
-      )[0];
+      );
 
-    if (!expandableIndex) {
-      break;
+    for (const { index } of grantOrder) {
+      if (deficit <= 0) {
+        break;
+      }
+
+      const capacity = Math.max(0, (needs[index] ?? 0) - (budgets[index] ?? 0));
+      const grantable = Math.min(deficit, capacity);
+      budgets[index] = (budgets[index] ?? 0) + grantable;
+      deficit -= grantable;
     }
-
-    budgets[expandableIndex.index] = (budgets[expandableIndex.index] ?? 0) + 1;
   }
 
   return budgets.map((budget) => Math.max(0, Math.floor(budget)));
