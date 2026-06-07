@@ -11,6 +11,7 @@ import type {
   IShellCommandValueSuggestionSpec,
   IShellCompletionEntry,
 } from '@/types/shell-completion';
+import { computeFuzzyScore } from '@/utils/fuzzy-score';
 
 const MAX_SUGGESTIONS = 80;
 
@@ -621,22 +622,26 @@ const resolveCompletionContext = (
   };
 };
 
-const matchesPrefix = (entry: IShellCompletionEntry, partial: string): boolean => {
+// 模糊匹配门控：当「label / 别名为查询子序列」时命中（fzf 式评分见 utils/fuzzy-score），
+// 同时保留对 detail 描述的子串搜索。相比此前的 startsWith，'gt' 也能命中 'git'，
+// 让更优的对齐候选进入排序。
+const entryMatchesQuery = (entry: IShellCompletionEntry, partial: string): boolean => {
   if (!partial) {
     return true;
   }
-  const normalizedPartial = partial.toLowerCase();
-  const label = entry.label.toLowerCase();
-  const detail = entry.detail.toLowerCase();
-  const aliases =
-    entry.aliases?.some((alias) => alias.toLowerCase().startsWith(normalizedPartial)) ?? false;
-  return label.startsWith(normalizedPartial) || detail.includes(normalizedPartial) || aliases;
+  if (computeFuzzyScore(entry.label, partial) !== null) {
+    return true;
+  }
+  if (entry.aliases?.some((alias) => computeFuzzyScore(alias, partial) !== null)) {
+    return true;
+  }
+  return entry.detail.toLowerCase().includes(partial.toLowerCase());
 };
 
 const filterEntries = (
   entries: IShellCompletionEntry[],
   partial: string,
-): IShellCompletionEntry[] => entries.filter((entry) => matchesPrefix(entry, partial));
+): IShellCompletionEntry[] => entries.filter((entry) => entryMatchesQuery(entry, partial));
 
 const createCommandEntries = (labels: string[], priority: number): IShellCompletionEntry[] =>
   labels.map((label) => ({
@@ -1178,6 +1183,22 @@ const resolveCodeMirrorCompletionType = (
   }
 };
 
+// 当前补全上下文的「有效查询串」：与下方计算 from 偏移所用的前缀保持一致。
+const resolveActiveQuery = (context: ICompletionContext): string =>
+  context.variableContext
+    ? context.variableContext.partial
+    : context.optionPrefix || context.wordPrefix;
+
+// 把模糊匹配得分折成 (-1, 1) 的微调量：仅在「同 priority 档位内」按匹配质量打破并列，
+// 不跨档（priority 差 ≥ 1，而微调量绝对值 < 1），因此不会扰动既有的优先级排序。
+const resolveScoreBoost = (entry: IShellCompletionEntry, query: string): number => {
+  if (!query) {
+    return 0;
+  }
+  const score = computeFuzzyScore(entry.label, query);
+  return score === null ? 0 : Math.tanh(score / 64);
+};
+
 const toCodeMirrorCompletion = (
   entry: IShellCompletionEntry,
   context: ICompletionContext,
@@ -1188,7 +1209,7 @@ const toCodeMirrorCompletion = (
     detail: entry.detail,
     info: entry.documentation,
     type: resolveCodeMirrorCompletionType(entry.kind),
-    boost: -1 * (entry.priority ?? 99),
+    boost: -1 * (entry.priority ?? 99) + resolveScoreBoost(entry, resolveActiveQuery(context)),
   };
 
   if (entry.insertAsSnippet) {

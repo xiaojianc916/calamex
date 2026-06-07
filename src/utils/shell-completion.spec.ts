@@ -142,6 +142,15 @@ describe('shell-completion provider', () => {
     const previousTreeArgument = mocks.parserParse.mock.calls[1][1];
     expect(previousTreeArgument).toBe(mocks.parserParse.mock.results[0].value);
   });
+
+  it('模糊匹配可命中非前缀候选（如 "gt" → "git"）', async () => {
+    mocks.parserInit.mockResolvedValue(undefined);
+    const runCompletion = createSource();
+
+    const result = await runCompletion('gt', 2);
+
+    expect(result?.options.some((entry) => entry.label === 'git')).toBe(true);
+  });
 });
 
 describe('getUtf8ByteLength', () => {
