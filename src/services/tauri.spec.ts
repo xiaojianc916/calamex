@@ -213,6 +213,44 @@ describe('tauriService', () => {
     expect(caughtError).toBeInstanceOf(AppError);
   });
 
+  it('Git 仓库状态支持取消，已取消时不触发 invoke', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const getStatus = tauriService.getGitRepositoryStatus as unknown as (
+      workspaceRootPath?: string | null,
+      options?: { signal?: AbortSignal },
+    ) => Promise<unknown>;
+
+    await expect(getStatus('D:/repo', { signal: controller.signal })).rejects.toMatchObject({
+      code: 'ipc.canceled',
+      scope: 'ipc',
+    });
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it('Git 危险变更操作支持取消，已取消时不触发 invoke', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const discardPaths = tauriService.discardGitPaths as unknown as (
+      payload: Parameters<typeof tauriService.discardGitPaths>[0],
+      options?: { signal?: AbortSignal },
+    ) => Promise<unknown>;
+
+    await expect(
+      discardPaths(
+        {
+          repositoryRootPath: 'D:/repo',
+          paths: ['D:/repo/demo.sh'],
+        },
+        { signal: controller.signal },
+      ),
+    ).rejects.toMatchObject({
+      code: 'ipc.canceled',
+      scope: 'ipc',
+    });
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
   it('SSH 配置主机列表支持取消，已取消时不触发 invoke', async () => {
     const controller = new AbortController();
     controller.abort();

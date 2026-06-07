@@ -2,6 +2,7 @@ import { commands } from '@/bindings/tauri';
 import type { IGitCommitFileDiffPayload, IGitDiffPreviewPayload } from '@/types/git';
 import type { ITauriService } from '@/types/tauri';
 import { callSpectaCommand, invokeTauriCommand } from './tauri.ipc-runtime';
+import type { IIpcCallOptions } from './tauri.ipc-types';
 
 type TGitTauriService = Pick<
   ITauriService,
@@ -36,30 +37,32 @@ type TGitTauriService = Pick<
 >;
 
 export const gitTauriService: TGitTauriService = {
-  getGitRepositoryStatus(workspaceRootPath) {
+  getGitRepositoryStatus(workspaceRootPath, options?: IIpcCallOptions) {
     return callSpectaCommand(
       {
         command: 'get_git_repository_status',
         guardHint: '读取 Git 仓库状态',
         idempotent: true,
         input: { workspaceRootPath },
+        signal: options?.signal,
       },
       () => commands.getGitRepositoryStatus(workspaceRootPath ?? null),
     );
   },
 
-  initGitRepository(workspaceRootPath) {
+  initGitRepository(workspaceRootPath, options?: IIpcCallOptions) {
     return callSpectaCommand(
       {
         command: 'init_git_repository',
         guardHint: '初始化 Git 仓库',
         input: { workspaceRootPath },
+        signal: options?.signal,
       },
       () => commands.initGitRepository(workspaceRootPath ?? null),
     );
   },
 
-  listGitCommitHistory(payload) {
+  listGitCommitHistory(payload, options?: IIpcCallOptions) {
     return callSpectaCommand(
       {
         command: 'list_git_commit_history',
@@ -67,12 +70,13 @@ export const gitTauriService: TGitTauriService = {
         idempotent: true,
         timeoutMs: 20_000,
         input: payload,
+        signal: options?.signal,
       },
       () => commands.listGitCommitHistory(payload),
     );
   },
 
-  getGitCommitDetail(payload) {
+  getGitCommitDetail(payload, options?: IIpcCallOptions) {
     return callSpectaCommand(
       {
         command: 'get_git_commit_detail',
@@ -80,12 +84,13 @@ export const gitTauriService: TGitTauriService = {
         idempotent: true,
         timeoutMs: 20_000,
         input: payload,
+        signal: options?.signal,
       },
       () => commands.getGitCommitDetail(payload),
     );
   },
 
-  getGitCommitFileDiff(payload) {
+  getGitCommitFileDiff(payload, options?: IIpcCallOptions) {
     return callSpectaCommand(
       {
         command: 'get_git_commit_file_diff',
@@ -93,12 +98,13 @@ export const gitTauriService: TGitTauriService = {
         idempotent: true,
         timeoutMs: 20_000,
         input: payload,
+        signal: options?.signal,
       },
       () => invokeTauriCommand<IGitCommitFileDiffPayload>('get_git_commit_file_diff', { payload }),
     );
   },
 
-  getGitCommitFileDiffPreview(payload) {
+  getGitCommitFileDiffPreview(payload, options?: IIpcCallOptions) {
     return callSpectaCommand(
       {
         command: 'get_git_commit_file_diff_preview',
@@ -106,25 +112,27 @@ export const gitTauriService: TGitTauriService = {
         idempotent: true,
         timeoutMs: 20_000,
         input: payload,
+        signal: options?.signal,
       },
       () =>
         invokeTauriCommand<IGitDiffPreviewPayload>('get_git_commit_file_diff_preview', { payload }),
     );
   },
 
-  listGitBranches(payload) {
+  listGitBranches(payload, options?: IIpcCallOptions) {
     return callSpectaCommand(
       {
         command: 'list_git_branches',
         guardHint: '读取 Git 分支列表',
         idempotent: true,
         input: payload,
+        signal: options?.signal,
       },
       () => commands.listGitBranches(payload),
     );
   },
 
-  checkoutGitBranch(payload) {
+  checkoutGitBranch(payload, options?: IIpcCallOptions) {
     return callSpectaCommand(
       {
         command: 'checkout_git_branch',
@@ -132,12 +140,13 @@ export const gitTauriService: TGitTauriService = {
         audit: 'sensitive',
         timeoutMs: 20_000,
         input: payload,
+        signal: options?.signal,
       },
       () => commands.checkoutGitBranch(payload),
     );
   },
 
-  checkoutGitCommit(payload) {
+  checkoutGitCommit(payload, options?: IIpcCallOptions) {
     return callSpectaCommand(
       {
         command: 'checkout_git_commit',
@@ -145,12 +154,13 @@ export const gitTauriService: TGitTauriService = {
         audit: 'sensitive',
         timeoutMs: 20_000,
         input: payload,
+        signal: options?.signal,
       },
       () => commands.checkoutGitCommit(payload),
     );
   },
 
-  createGitBranch(payload) {
+  createGitBranch(payload, options?: IIpcCallOptions) {
     return callSpectaCommand(
       {
         command: 'create_git_branch',
@@ -158,12 +168,13 @@ export const gitTauriService: TGitTauriService = {
         audit: 'sensitive',
         timeoutMs: 20_000,
         input: payload,
+        signal: options?.signal,
       },
       () => commands.createGitBranch(payload),
     );
   },
 
-  revertGitCommit(payload) {
+  revertGitCommit(payload, options?: IIpcCallOptions) {
     return callSpectaCommand(
       {
         command: 'revert_git_commit',
@@ -171,12 +182,13 @@ export const gitTauriService: TGitTauriService = {
         audit: 'sensitive',
         timeoutMs: 20_000,
         input: payload,
+        signal: options?.signal,
       },
       () => commands.revertGitCommit(payload),
     );
   },
 
-  setGitRemote(payload) {
+  setGitRemote(payload, options?: IIpcCallOptions) {
     return callSpectaCommand(
       {
         command: 'set_git_remote',
@@ -184,24 +196,26 @@ export const gitTauriService: TGitTauriService = {
         audit: 'sensitive',
         timeoutMs: 15_000,
         input: payload,
+        signal: options?.signal,
       },
       () => commands.setGitRemote(payload),
     );
   },
 
-  getGitFileBaseline(path) {
+  getGitFileBaseline(path, options?: IIpcCallOptions) {
     return callSpectaCommand(
       {
         command: 'get_git_file_baseline',
         guardHint: '读取 Git 文件基线',
         idempotent: true,
         input: { path },
+        signal: options?.signal,
       },
       () => commands.getGitFileBaseline(path),
     );
   },
 
-  getGitDiffPreview(payload) {
+  getGitDiffPreview(payload, options?: IIpcCallOptions) {
     return callSpectaCommand(
       {
         command: 'get_git_diff_preview',
@@ -209,31 +223,39 @@ export const gitTauriService: TGitTauriService = {
         idempotent: true,
         timeoutMs: 20_000,
         input: payload,
+        signal: options?.signal,
       },
       () => commands.getGitDiffPreview(payload),
     );
   },
 
-  stageGitPaths(payload) {
+  stageGitPaths(payload, options?: IIpcCallOptions) {
     return callSpectaCommand(
-      { command: 'stage_git_paths', guardHint: '暂存 Git 变更', timeoutMs: 20_000, input: payload },
+      {
+        command: 'stage_git_paths',
+        guardHint: '暂存 Git 变更',
+        timeoutMs: 20_000,
+        input: payload,
+        signal: options?.signal,
+      },
       () => commands.stageGitPaths(payload),
     );
   },
 
-  unstageGitPaths(payload) {
+  unstageGitPaths(payload, options?: IIpcCallOptions) {
     return callSpectaCommand(
       {
         command: 'unstage_git_paths',
         guardHint: '取消暂存 Git 变更',
         timeoutMs: 20_000,
         input: payload,
+        signal: options?.signal,
       },
       () => commands.unstageGitPaths(payload),
     );
   },
 
-  discardGitPaths(payload) {
+  discardGitPaths(payload, options?: IIpcCallOptions) {
     return callSpectaCommand(
       {
         command: 'discard_git_paths',
@@ -241,12 +263,13 @@ export const gitTauriService: TGitTauriService = {
         audit: 'sensitive',
         timeoutMs: 20_000,
         input: payload,
+        signal: options?.signal,
       },
       () => commands.discardGitPaths(payload),
     );
   },
 
-  commitGitIndex(payload) {
+  commitGitIndex(payload, options?: IIpcCallOptions) {
     return callSpectaCommand(
       {
         command: 'commit_git_index',
@@ -254,24 +277,26 @@ export const gitTauriService: TGitTauriService = {
         audit: 'sensitive',
         timeoutMs: 20_000,
         input: payload,
+        signal: options?.signal,
       },
       () => commands.commitGitIndex(payload),
     );
   },
 
-  listGitStashes(payload) {
+  listGitStashes(payload, options?: IIpcCallOptions) {
     return callSpectaCommand(
       {
         command: 'list_git_stashes',
         guardHint: '读取 Git 贮藏列表',
         idempotent: true,
         input: payload,
+        signal: options?.signal,
       },
       () => commands.listGitStashes(payload),
     );
   },
 
-  saveGitStash(payload) {
+  saveGitStash(payload, options?: IIpcCallOptions) {
     return callSpectaCommand(
       {
         command: 'save_git_stash',
@@ -279,12 +304,13 @@ export const gitTauriService: TGitTauriService = {
         audit: 'sensitive',
         timeoutMs: 20_000,
         input: payload,
+        signal: options?.signal,
       },
       () => commands.saveGitStash(payload),
     );
   },
 
-  applyGitStash(payload) {
+  applyGitStash(payload, options?: IIpcCallOptions) {
     return callSpectaCommand(
       {
         command: 'apply_git_stash',
@@ -292,12 +318,13 @@ export const gitTauriService: TGitTauriService = {
         audit: 'sensitive',
         timeoutMs: 20_000,
         input: payload,
+        signal: options?.signal,
       },
       () => commands.applyGitStash(payload),
     );
   },
 
-  dropGitStash(payload) {
+  dropGitStash(payload, options?: IIpcCallOptions) {
     return callSpectaCommand(
       {
         command: 'drop_git_stash',
@@ -305,24 +332,26 @@ export const gitTauriService: TGitTauriService = {
         audit: 'sensitive',
         timeoutMs: 20_000,
         input: payload,
+        signal: options?.signal,
       },
       () => commands.dropGitStash(payload),
     );
   },
 
-  getGitPullRequestSupport(payload) {
+  getGitPullRequestSupport(payload, options?: IIpcCallOptions) {
     return callSpectaCommand(
       {
         command: 'get_git_pull_request_support',
         guardHint: '读取 Git 远端 Pull Request 支持信息',
         idempotent: true,
         input: payload,
+        signal: options?.signal,
       },
       () => commands.getGitPullRequestSupport(payload),
     );
   },
 
-  listGitPullRequests(payload) {
+  listGitPullRequests(payload, options?: IIpcCallOptions) {
     return callSpectaCommand(
       {
         command: 'list_git_pull_requests',
@@ -330,12 +359,13 @@ export const gitTauriService: TGitTauriService = {
         idempotent: true,
         timeoutMs: 20_000,
         input: payload,
+        signal: options?.signal,
       },
       () => commands.listGitPullRequests(payload),
     );
   },
 
-  getGitPullRequestDetail(payload) {
+  getGitPullRequestDetail(payload, options?: IIpcCallOptions) {
     return callSpectaCommand(
       {
         command: 'get_git_pull_request_detail',
@@ -343,12 +373,13 @@ export const gitTauriService: TGitTauriService = {
         idempotent: true,
         timeoutMs: 20_000,
         input: payload,
+        signal: options?.signal,
       },
       () => commands.getGitPullRequestDetail(payload),
     );
   },
 
-  createGitPullRequest(payload) {
+  createGitPullRequest(payload, options?: IIpcCallOptions) {
     return callSpectaCommand(
       {
         command: 'create_git_pull_request',
@@ -356,12 +387,13 @@ export const gitTauriService: TGitTauriService = {
         audit: 'sensitive',
         timeoutMs: 30_000,
         input: payload,
+        signal: options?.signal,
       },
       () => commands.createGitPullRequest(payload),
     );
   },
 
-  mergeGitPullRequest(payload) {
+  mergeGitPullRequest(payload, options?: IIpcCallOptions) {
     return callSpectaCommand(
       {
         command: 'merge_git_pull_request',
@@ -369,12 +401,13 @@ export const gitTauriService: TGitTauriService = {
         audit: 'sensitive',
         timeoutMs: 30_000,
         input: payload,
+        signal: options?.signal,
       },
       () => commands.mergeGitPullRequest(payload),
     );
   },
 
-  closeGitPullRequest(payload) {
+  closeGitPullRequest(payload, options?: IIpcCallOptions) {
     return callSpectaCommand(
       {
         command: 'close_git_pull_request',
@@ -382,6 +415,7 @@ export const gitTauriService: TGitTauriService = {
         audit: 'sensitive',
         timeoutMs: 20_000,
         input: payload,
+        signal: options?.signal,
       },
       () => commands.closeGitPullRequest(payload),
     );
