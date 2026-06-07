@@ -243,6 +243,7 @@ const mountPanel = async (
   status = createStatus(),
   propsOverrides: Partial<{ activePath: string | null }> = {},
 ) => {
+  tauriServiceMock.getGitRepositoryStatus.mockReset();
   tauriServiceMock.getGitRepositoryStatus.mockResolvedValue(status);
   const wrapper = mount(SourceControlPanel, {
     props: {
@@ -553,8 +554,10 @@ describe('SourceControlPanel', () => {
     expect(wrapper.find('.source-control-history-toolbar').exists()).toBe(false);
     expect(wrapper.findAll('.source-control-history-item')).toHaveLength(2);
     expect(wrapper.find('.source-control-history-item').classes()).toContain('is-active');
-    expect(wrapper.find('.git-history-graph-message-text').text()).toBe('fix: 修正边界处理');
-    expect(wrapper.text()).toContain('test');
+    expect(wrapper.findAll('.git-history-graph-message-text').map((item) => item.text())).toEqual([
+      'fix: 修正边界处理',
+      'feat: 初始化项目',
+    ]);
   });
 
   it('分支标签里的切换按钮会调用 checkout_git_branch', async () => {

@@ -60,6 +60,7 @@ describe('useLsp lifecycle', () => {
 
     expect(lspBridgeMock.start).toHaveBeenCalledWith('D:/repo');
     expect(lsp.status.value).toBe('running');
+    lspBridgeMock.stop.mockClear();
 
     scope.stop();
     await flush();
