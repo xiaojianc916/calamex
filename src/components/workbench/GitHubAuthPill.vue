@@ -26,7 +26,7 @@
         :class="authStore.isLoading && !authStore.status.authenticated ? 'icon-[lucide--loader-circle]' : 'icon-[lucide--github]'"
         aria-hidden="true"
       />
-      <span class="source-control-github-auth-label"> authStore.displayLabel </span>
+      <span class="source-control-github-auth-label" v-text="authStore.displayLabel" />
     </button>
 
     <div v-if="isMenuOpen && authStore.isAuthenticated" class="source-control-github-auth-menu">
