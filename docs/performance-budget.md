@@ -143,3 +143,50 @@
   且与正则互斥。
 - 验证：`cargo clippy`、`cargo test`、`pnpm test`、`pnpm typecheck`、`pnpm lint`；
   其中 `cargo build` 需重新生成 `src/bindings/tauri.ts`（新增 `contentFuzzy` 字段）。
+
+## LSP didChange 增量同步
+
+- 文件：`src-tauri/src/commands/lsp/{types.rs,commands.rs}`、`src/services/editor/lsp-bridge.ts`
+- 问题：编辑器每次 debounce 后都把整份文档作为 `textDocument/didChange` 发送给
+  bash-language-server。大脚本中只改一两个字符时仍需序列化、IPC、JSON 解析完整内容，
+  热路径成本与文件大小线性相关。
+- 算法：采用 LSP 标准的 range-based incremental sync。前端把单次 CodeMirror 事务的
+  ChangeSet 转为 UTF-16 LSP range；后端新增 `LspContentChange`/`LspRange`/`LspPosition` 并在
+  `lsp_did_change` 中优先透传 `contentChanges`。如果 debounce 窗口内合并了多次事务，
+  为避免跨事务 range 重映射复杂度，安全退回 full sync。
+- 复杂度（设文件大小 n、改动片段总长 d）：
+  - 之前：每次变更 O(n) 传输与解析。
+  - 之后：单事务主路径 O(d) 传输与解析；多事务合并/异常场景保持 O(n) fallback。
+- 正确性：LSP 初始化已声明 `positionEncodings: ["utf-16"]`，CodeMirror 位置同为 UTF-16 offset；
+  只在 range 基准明确的单事务内启用增量，多事务合并退回 full sync，避免错位。
+- 验证：建议本机执行 `pnpm test src/services/editor/lsp-bridge.spec.ts`（若存在）、`pnpm typecheck`、
+  `cd src-tauri && cargo test lsp`、`cargo clippy`。
+
+## 结构化搜索的文件级并行 AST 匹配
+
+- 文件：`src-tauri/src/commands/search/find.rs`
+- 问题：`search_structural_contents` 逐文件串行执行“读盘 → 解码 → ast-grep Bash AST 构建 → pattern 匹配”。
+  结构化搜索是 CPU 型路径，大仓库内候选 shell 文件多时无法利用多核。
+- 算法：按文件粒度并行。用 `par_iter().enumerate()` 过滤 shell-like 文件后并行执行单文件 AST
+  匹配；每个文件局部最多收集 `limit` 条结果；最后按原文件 index 排序归并并截断到全局 limit。
+- 复杂度（设 shell 文件数 F、单文件 AST 成本 c、核数 P）：
+  - 之前：O(F·c) 串行墙钟。
+  - 之后：O(F·c / P) 并行墙钟（总工作量不变，受 IO 与调度开销约束）。
+- 正确性：最终仍按原扫描文件顺序归并并截断，结果顺序和 limit 截断点稳定；每个 worker 只写本地
+  Vec，无共享可变状态。
+- 验证：`cargo test -p calamex commands::search`、`cargo clippy`、`cargo test`；本机用结构化搜索大仓库对比墙钟耗时。
+
+## 工作区 watcher 事件 HashMap 合并
+
+- 文件：`src-tauri/src/commands/workspace_watcher.rs`
+- 问题：去抖窗口内的原始 notify 事件会先展开成 `Vec<FsChange>`，再对所有变更做全量
+  `sort_by + dedup_by`。构建、依赖安装、git 操作等事件风暴中，重复路径很多，对原始事件数 n
+  做 O(n log n) 排序浪费明显。
+- 算法：哈希表在线合并。展开事件时直接用 `HashMap<path, kind>` 聚合同一路径，只保留 severity
+  最高的 kind（Removed > Renamed > Created > Modified），最后仅对唯一路径数 u 排序输出，保证前端事件稳定。
+- 复杂度：
+  - 之前：O(n log n) 时间 + O(n) 临时结果。
+  - 之后：O(n + u log u) 时间 + O(u) 聚合结果；当重复路径多时 u ≪ n。
+- 正确性：severity 规则保持不变；最终仍按 path 排序。新增单测覆盖同一路径多事件时保留最高 severity、
+  多路径输出按 path 稳定排序。
+- 验证：`cargo test -p calamex workspace_watcher`、`cargo clippy`、`cargo test`。
