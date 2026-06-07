@@ -628,7 +628,7 @@ mod tests {
     #[test]
     fn fuzzy_prefilter_ignores_non_ascii_for_safety() {
         let prefilter = FuzzyLinePrefilter::new("部署a", false).expect("应创建预过滤器");
-        assert!(prefilter.may_match("a"));
+        assert!(prefilter.may_match("xxa"));
         assert!(!prefilter.may_match("部署"));
     }
 }
