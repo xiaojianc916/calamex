@@ -35,7 +35,7 @@ describe('buildLspContentChanges', () => {
       {
         range: {
           start: { line: 0, character: 2 },
-          end: { line: 2, character: 0 },
+          end: { line: 2, character: 1 },
         },
         rangeLength: 7,
         text: 'X',

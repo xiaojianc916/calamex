@@ -1,4 +1,5 @@
 import { mount } from '@vue/test-utils';
+import { createPinia } from 'pinia';
 import { describe, expect, it } from 'vitest';
 import type { IWorkspaceEntry } from '@/types/editor';
 import WorkspaceTreeNode from './WorkspaceTreeNode.vue';
@@ -24,6 +25,9 @@ const mountTree = (entry: IWorkspaceEntry) =>
       activeDirty: false,
       contextMenuPath: null,
       rootPath: rootEntry.path,
+    },
+    global: {
+      plugins: [createPinia()],
     },
   });
 
