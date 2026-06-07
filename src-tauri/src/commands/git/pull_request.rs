@@ -74,6 +74,8 @@ pub fn set_git_remote(
     let subcommand = if remote_already_exists { "set-url" } else { "add" };
     run_git_remote_subcommand(&repository_root, subcommand, &remote_name, &remote_url)?;
 
+    clear_github_pull_request_cache_for_repository(&payload.repository_root_path);
+
     get_git_pull_request_support(GitRepositoryRootRequest {
         repository_root_path: payload.repository_root_path,
     })
@@ -231,9 +233,20 @@ fn build_pull_request_urls(
 // 结构体就近定义于此（子模块可访问父模块私有项，故无需改动 git.rs）。
 // ===========================================================================
 
-use reqwest::header::{ACCEPT, AUTHORIZATION, HeaderMap, HeaderName, HeaderValue};
+use reqwest::header::{
+    ACCEPT, AUTHORIZATION, ETAG, HeaderMap, HeaderName, HeaderValue, IF_NONE_MATCH,
+};
 use serde::{Deserialize, Serialize};
+use std::{
+    collections::HashMap,
+    sync::{Mutex, OnceLock},
+    time::{Duration, Instant},
+};
 use tokio::io::AsyncWriteExt;
+
+const GITHUB_CREDENTIAL_CACHE_TTL: Duration = Duration::from_secs(5 * 60);
+const GITHUB_PULL_REQUEST_FRESH_TTL: Duration = Duration::from_secs(15);
+const GITHUB_PULL_REQUEST_STALE_IF_ERROR_TTL: Duration = Duration::from_secs(5 * 60);
 
 #[derive(Debug, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -321,18 +334,18 @@ struct GitHubRepositoryTarget {
     repository_root: std::path::PathBuf,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 struct GitHubUser {
     login: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 struct GitHubBranchRef {
     #[serde(rename = "ref")]
     ref_name: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 struct GitHubPullRequest {
     number: u32,
     title: String,
@@ -362,6 +375,91 @@ struct GitHubPullRequest {
     mergeable: Option<bool>,
     #[serde(default)]
     mergeable_state: Option<String>,
+}
+
+#[derive(Clone)]
+struct GitHubCredentialCacheEntry {
+    token: Option<String>,
+    expires_at: Instant,
+}
+
+#[derive(Clone)]
+struct GitHubPullRequestCacheEntry {
+    etag: Option<String>,
+    pull_requests: Vec<GitHubPullRequest>,
+    fetched_at: Instant,
+}
+
+static GITHUB_CREDENTIAL_CACHE: OnceLock<Mutex<HashMap<String, GitHubCredentialCacheEntry>>> =
+    OnceLock::new();
+static GITHUB_PULL_REQUEST_CACHE: OnceLock<Mutex<HashMap<String, GitHubPullRequestCacheEntry>>> =
+    OnceLock::new();
+
+fn github_credential_cache() -> &'static Mutex<HashMap<String, GitHubCredentialCacheEntry>> {
+    GITHUB_CREDENTIAL_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn github_pull_request_cache() -> &'static Mutex<HashMap<String, GitHubPullRequestCacheEntry>> {
+    GITHUB_PULL_REQUEST_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn clear_github_pull_request_cache_for_repository(repository_root_path: &str) {
+    let normalized_root = normalize_path_for_git(Path::new(repository_root_path))
+        .to_string_lossy()
+        .to_string();
+    let Ok(mut cache) = github_pull_request_cache().lock() else {
+        return;
+    };
+    cache.retain(|key, _| !key.starts_with(&format!("{normalized_root}|")));
+}
+
+fn pull_request_cache_key(target: &GitHubRepositoryTarget, state: &str) -> String {
+    [
+        target.repository_root.to_string_lossy().as_ref(),
+        target.api_base.as_str(),
+        target.owner.as_str(),
+        target.repo.as_str(),
+        state,
+    ]
+    .join("|")
+}
+
+fn cached_pull_requests(cache_key: &str) -> Option<GitHubPullRequestCacheEntry> {
+    github_pull_request_cache()
+        .lock()
+        .ok()
+        .and_then(|cache| cache.get(cache_key).cloned())
+}
+
+fn remember_pull_requests(
+    cache_key: String,
+    etag: Option<String>,
+    pull_requests: Vec<GitHubPullRequest>,
+) {
+    if let Ok(mut cache) = github_pull_request_cache().lock() {
+        cache.insert(
+            cache_key,
+            GitHubPullRequestCacheEntry {
+                etag,
+                pull_requests,
+                fetched_at: Instant::now(),
+            },
+        );
+    }
+}
+
+fn touch_pull_request_cache(cache_key: &str) {
+    if let Ok(mut cache) = github_pull_request_cache().lock() {
+        if let Some(entry) = cache.get_mut(cache_key) {
+            entry.fetched_at = Instant::now();
+        }
+    }
+}
+
+fn map_pull_request_list(
+    pull_requests: &[GitHubPullRequest],
+) -> Vec<GitPullRequestSummaryPayload> {
+    pull_requests.iter().map(map_pull_request_summary).collect()
 }
 
 fn resolve_github_repository_target(
@@ -413,37 +511,65 @@ fn resolve_github_repository_target(
 }
 
 async fn resolve_github_credential(repository_root: &std::path::Path, host: &str) -> Option<String> {
-    let mut command = tokio::process::Command::new("git");
-    command
-        .arg("-C")
-        .arg(repository_root)
-        .arg("credential")
-        .arg("fill")
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null());
+    let cache_key = host.to_ascii_lowercase();
+    let now = Instant::now();
 
-    let mut child = command.spawn().ok()?;
+    if let Some(cached) = github_credential_cache()
+        .lock()
+        .ok()
+        .and_then(|cache| cache.get(&cache_key).cloned())
     {
-        let mut stdin = child.stdin.take()?;
-        let query = format!("protocol=https\nhost={host}\n\n");
-        stdin.write_all(query.as_bytes()).await.ok()?;
-    }
-    let output = child.wait_with_output().await.ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    for line in stdout.lines() {
-        if let Some(token) = line.strip_prefix("password=") {
-            let token = token.trim();
-            if !token.is_empty() {
-                return Some(token.to_string());
-            }
+        if cached.expires_at > now {
+            return cached.token;
         }
     }
-    None
+
+    let token = async {
+        let mut command = tokio::process::Command::new("git");
+        command
+            .arg("-C")
+            .arg(repository_root)
+            .arg("credential")
+            .arg("fill")
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null());
+
+        let mut child = command.spawn().ok()?;
+        {
+            let mut stdin = child.stdin.take()?;
+            let query = format!("protocol=https\nhost={host}\n\n");
+            stdin.write_all(query.as_bytes()).await.ok()?;
+        }
+        let output = child.wait_with_output().await.ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        for line in stdout.lines() {
+            if let Some(token) = line.strip_prefix("password=") {
+                let token = token.trim();
+                if !token.is_empty() {
+                    return Some(token.to_string());
+                }
+            }
+        }
+        None
+    }
+    .await;
+
+    if let Ok(mut cache) = github_credential_cache().lock() {
+        cache.insert(
+            cache_key,
+            GitHubCredentialCacheEntry {
+                token: token.clone(),
+                expires_at: now + GITHUB_CREDENTIAL_CACHE_TTL,
+            },
+        );
+    }
+
+    token
 }
 
 fn build_github_client(token: Option<&str>) -> Result<reqwest::Client, String> {
@@ -569,21 +695,65 @@ pub async fn list_git_pull_requests(
         Some("all") => "all",
         _ => "open",
     };
+    let cache_key = pull_request_cache_key(&target, state);
+    let cached = cached_pull_requests(&cache_key);
+
+    if let Some(cached) = cached.as_ref() {
+        if cached.fetched_at.elapsed() <= GITHUB_PULL_REQUEST_FRESH_TTL {
+            return Ok(map_pull_request_list(&cached.pull_requests));
+        }
+    }
+
     let url = format!(
         "{}/repos/{}/{}/pulls?state={}&per_page=50&sort=updated&direction=desc",
         target.api_base, target.owner, target.repo, state
     );
 
-    let response = client
-        .get(&url)
+    let mut request = client.get(&url);
+    if let Some(etag) = cached.as_ref().and_then(|entry| entry.etag.as_deref()) {
+        request = request.header(IF_NONE_MATCH, etag);
+    }
+
+    let response = request
         .send()
         .await
         .map_err(|error| annotate_auth_error(format!("请求 GitHub 失败：{error}"), has_token))?;
+
+    if response.status().as_u16() == 304 {
+        if let Some(cached) = cached {
+            touch_pull_request_cache(&cache_key);
+            return Ok(map_pull_request_list(&cached.pull_requests));
+        }
+    }
+
+    if !response.status().is_success() {
+        if let Some(cached) = cached {
+            if cached.fetched_at.elapsed() <= GITHUB_PULL_REQUEST_STALE_IF_ERROR_TTL {
+                return Ok(map_pull_request_list(&cached.pull_requests));
+            }
+        }
+
+        return read_github_json::<Vec<GitHubPullRequest>>(response)
+            .await
+            .map(|pull_requests| {
+                remember_pull_requests(cache_key, None, pull_requests.clone());
+                map_pull_request_list(&pull_requests)
+            })
+            .map_err(|error| annotate_auth_error(error, has_token));
+    }
+
+    let etag = response
+        .headers()
+        .get(ETAG)
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_string);
     let pull_requests: Vec<GitHubPullRequest> = read_github_json(response)
         .await
         .map_err(|error| annotate_auth_error(error, has_token))?;
 
-    Ok(pull_requests.iter().map(map_pull_request_summary).collect())
+    remember_pull_requests(cache_key, etag, pull_requests.clone());
+    Ok(map_pull_request_list(&pull_requests))
 }
 
 #[tauri::command]
@@ -653,6 +823,10 @@ pub async fn create_git_pull_request(
         .await
         .map_err(|error| annotate_auth_error(error, has_token))?;
 
+    clear_github_pull_request_cache_for_repository(
+        target.repository_root.to_string_lossy().as_ref(),
+    );
+
     Ok(map_pull_request_summary(&pull_request))
 }
 
@@ -685,6 +859,10 @@ pub async fn merge_git_pull_request(
     let _: serde_json::Value = read_github_json(response)
         .await
         .map_err(|error| annotate_auth_error(error, has_token))?;
+
+    clear_github_pull_request_cache_for_repository(
+        target.repository_root.to_string_lossy().as_ref(),
+    );
 
     let detail_url = format!(
         "{}/repos/{}/{}/pulls/{}",
@@ -726,6 +904,10 @@ pub async fn close_git_pull_request(
     let pull_request: GitHubPullRequest = read_github_json(response)
         .await
         .map_err(|error| annotate_auth_error(error, has_token))?;
+
+    clear_github_pull_request_cache_for_repository(
+        target.repository_root.to_string_lossy().as_ref(),
+    );
 
     Ok(map_pull_request_summary(&pull_request))
 }
