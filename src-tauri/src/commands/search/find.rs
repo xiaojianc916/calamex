@@ -265,64 +265,84 @@ pub(super) fn search_structural_contents(
     query: &str,
     limit: usize,
 ) -> Result<Vec<WorkspaceSearchResult>, String> {
+    if limit == 0 {
+        return Ok(Vec::new());
+    }
+
     let pattern = build_structural_pattern(query)?;
     let lang = SupportLang::Bash;
-    let mut results = Vec::new();
 
-    for file in files.iter().filter(|file| is_shell_like_file(file)) {
+    // AST 解析/匹配是 CPU 型工作。按文件并行解析，但每个文件只保留至多 limit 条，
+    // 再按原文件顺序归并并截断，保证输出与串行版的稳定顺序一致。
+    let mut per_file = files
+        .par_iter()
+        .enumerate()
+        .filter(|(_, file)| is_shell_like_file(file))
+        .map(|(index, file)| {
+            let mut local = Vec::new();
+            let bytes = match fs::read(&file.path) {
+                Ok(bytes) => bytes,
+                Err(_) => return Ok((index, local)),
+            };
+            let Ok((content, _encoding)) = decode_script_bytes(&bytes) else {
+                return Ok((index, local));
+            };
+            let root = lang.ast_grep(&content);
+
+            for node_match in root.root().find_all(&pattern) {
+                let start = node_match.start_pos();
+                let line_range = line_range_at_byte_offset(&content, node_match.range().start);
+                let line = &content[line_range.clone()];
+                let match_start = node_match
+                    .range()
+                    .start
+                    .saturating_sub(line_range.start)
+                    .min(line.len());
+                let match_end = node_match
+                    .range()
+                    .end
+                    .saturating_sub(line_range.start)
+                    .min(line.len())
+                    .max(match_start);
+                local.push(WorkspaceSearchResult {
+                    path: file.path.to_string_lossy().to_string(),
+                    relative_path: file.relative_path.clone(),
+                    name: file.name.clone(),
+                    kind: WorkspaceSearchResultKind::Content,
+                    line_number: Some(count_to_u32(start.line() + 1, "行号")?),
+                    line_text: Some(trim_line(line)),
+                    match_start: Some(count_to_u32(
+                        byte_to_char_offset(line, match_start),
+                        "匹配起始列",
+                    )?),
+                    match_end: Some(count_to_u32(
+                        byte_to_char_offset(line, match_end),
+                        "匹配结束列",
+                    )?),
+                    score: i64_to_i32(
+                        ((start.line() + 1) as i64 * 4) + start.byte_point().1 as i64,
+                        "搜索评分",
+                    )?,
+                });
+
+                if local.len() >= limit {
+                    break;
+                }
+            }
+
+            Ok((index, local))
+        })
+        .collect::<Result<Vec<(usize, Vec<WorkspaceSearchResult>)>, String>>()?;
+
+    per_file.sort_by_key(|(index, _)| *index);
+
+    let mut results = Vec::new();
+    for (_, file_results) in per_file {
         if results.len() >= limit {
             break;
         }
-
-        let bytes = match fs::read(&file.path) {
-            Ok(bytes) => bytes,
-            Err(_) => continue,
-        };
-        let Ok((content, _encoding)) = decode_script_bytes(&bytes) else {
-            continue;
-        };
-        let root = lang.ast_grep(&content);
-
-        for node_match in root.root().find_all(&pattern) {
-            let start = node_match.start_pos();
-            let line_range = line_range_at_byte_offset(&content, node_match.range().start);
-            let line = &content[line_range.clone()];
-            let match_start = node_match
-                .range()
-                .start
-                .saturating_sub(line_range.start)
-                .min(line.len());
-            let match_end = node_match
-                .range()
-                .end
-                .saturating_sub(line_range.start)
-                .min(line.len())
-                .max(match_start);
-            results.push(WorkspaceSearchResult {
-                path: file.path.to_string_lossy().to_string(),
-                relative_path: file.relative_path.clone(),
-                name: file.name.clone(),
-                kind: WorkspaceSearchResultKind::Content,
-                line_number: Some(count_to_u32(start.line() + 1, "行号")?),
-                line_text: Some(trim_line(line)),
-                match_start: Some(count_to_u32(
-                    byte_to_char_offset(line, match_start),
-                    "匹配起始列",
-                )?),
-                match_end: Some(count_to_u32(
-                    byte_to_char_offset(line, match_end),
-                    "匹配结束列",
-                )?),
-                score: i64_to_i32(
-                    ((start.line() + 1) as i64 * 4) + start.byte_point().1 as i64,
-                    "搜索评分",
-                )?,
-            });
-
-            if results.len() >= limit {
-                break;
-            }
-        }
+        let remaining = limit - results.len();
+        results.extend(file_results.into_iter().take(remaining));
     }
 
     Ok(results)
