@@ -62,14 +62,9 @@ withDefaults(
 .ai-panel-frame__header {
   position: relative;
   z-index: 3;
-  display: grid;
   min-width: 0;
   min-height: 52px;
   height: 52px;
-  grid-template-columns: minmax(0, min(48%, 320px)) auto;
-  align-items: center;
-  gap: 8px;
-  padding: 12px 18px 10px;
   color: var(--text-secondary);
   font-size: 12px;
   font-weight: 500;
@@ -79,11 +74,16 @@ withDefaults(
 }
 
 .ai-panel-frame__mark {
+  position: absolute;
+  top: 12px;
+  left: 18px;
   display: inline-flex;
+  width: min(48%, 320px);
   min-width: 0;
-  max-width: 100%;
+  height: 30px;
   align-items: center;
   gap: 10px;
+  overflow: hidden;
   color: var(--text-primary);
   contain: layout paint;
   transform: translateZ(0);
@@ -91,11 +91,14 @@ withDefaults(
 }
 
 .ai-panel-frame__actions {
+  position: absolute;
+  top: 12px;
+  right: 18px;
   display: inline-flex;
   min-width: 0;
-  flex: 0 0 auto;
+  height: 30px;
   align-items: center;
-  justify-self: end;
+  justify-content: flex-end;
   gap: 8px;
   contain: layout paint;
   transform: translateZ(0);
