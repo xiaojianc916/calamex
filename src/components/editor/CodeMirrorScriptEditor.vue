@@ -304,6 +304,37 @@ const resolveSelectionLineWindow = (input: {
   };
 };
 
+const resolveSelectionViewportFocusLine = (
+  view: EditorView,
+  startLine: number,
+  endLine: number,
+  fallbackLine: number,
+): number => {
+  let bestStartLine: number | null = null;
+  let bestEndLine: number | null = null;
+  let bestVisibleLineCount = 0;
+
+  for (const visibleRange of view.visibleRanges) {
+    const visibleStartLine = view.state.doc.lineAt(visibleRange.from).number;
+    const visibleEndLine = view.state.doc.lineAt(Math.max(visibleRange.from, visibleRange.to - 1)).number;
+    const intersectionStartLine = Math.max(startLine, visibleStartLine);
+    const intersectionEndLine = Math.min(endLine, visibleEndLine);
+    const visibleLineCount = intersectionEndLine - intersectionStartLine + 1;
+
+    if (visibleLineCount > bestVisibleLineCount) {
+      bestStartLine = intersectionStartLine;
+      bestEndLine = intersectionEndLine;
+      bestVisibleLineCount = visibleLineCount;
+    }
+  }
+
+  if (bestStartLine !== null && bestEndLine !== null) {
+    return Math.floor((bestStartLine + bestEndLine) / 2);
+  }
+
+  return fallbackLine;
+};
+
 const resolveSingleLineSelectionSummaryText = (
   view: EditorView,
   range: SelectionRange,
@@ -340,7 +371,8 @@ const resolveMultiLineSelectionSummaryText = (
   startLine: number,
   endLine: number,
 ): TSelectionSummaryText => {
-  const currentLine = view.state.doc.lineAt(Math.min(Math.max(range.head, range.from), range.to)).number;
+  const fallbackLine = view.state.doc.lineAt(Math.min(Math.max(range.head, range.from), range.to)).number;
+  const currentLine = resolveSelectionViewportFocusLine(view, startLine, endLine, fallbackLine);
   const window = resolveSelectionLineWindow({
     startLine,
     endLine,
