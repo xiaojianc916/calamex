@@ -8,14 +8,31 @@ use std::{
     sync::{Mutex, OnceLock},
     time::{Duration, Instant},
 };
-use tokio::io::AsyncWriteExt;
+use tokio::{io::AsyncWriteExt, time::sleep};
 
 const GITHUB_AUTH_CREDENTIAL_CACHE_TTL: Duration = Duration::from_secs(5 * 60);
+const GITHUB_DEVICE_AUTH_MAX_WAIT: Duration = Duration::from_secs(120);
+const GITHUB_DEVICE_AUTH_SCOPE: &str = "read:user user:email repo";
+const GITHUB_KEYRING_SERVICE: &str = "calamex.github";
+
+// GitHub OAuth client IDs are public identifiers. This mirrors VS Code's
+// device-code strategy: use a native-app flow that does not require a client
+// secret, then store the resulting token in the OS keyring.
+const GITHUB_OAUTH_CLIENT_ID: &str = "01ab8ac9400c4e429b23";
 
 #[derive(Debug, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct GitHubAuthRequest {
     repository_root_path: String,
+}
+
+#[derive(Debug, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubDeviceAuthCompleteRequest {
+    repository_root_path: String,
+    device_code: String,
+    #[specta(type = u32)]
+    interval: u64,
 }
 
 #[derive(Debug, Serialize, Clone, specta::Type)]
@@ -29,6 +46,18 @@ pub struct GitHubAuthStatusPayload {
     email: Option<String>,
     source: Option<String>,
     message: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubDeviceAuthPayload {
+    device_code: String,
+    user_code: String,
+    verification_uri: String,
+    #[specta(type = u32)]
+    interval: u64,
+    #[specta(type = u32)]
+    expires_in: u64,
 }
 
 #[derive(Clone)]
@@ -46,6 +75,7 @@ struct GitHubResolvedCredential {
 struct GitHubAuthTarget {
     host: String,
     api_base: String,
+    auth_base: String,
     repository_root: PathBuf,
 }
 
@@ -60,6 +90,25 @@ struct GitHubAuthenticatedUser {
     html_url: Option<String>,
     #[serde(default)]
     email: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct GitHubDeviceCodeResponse {
+    device_code: String,
+    user_code: String,
+    verification_uri: String,
+    interval: u64,
+    expires_in: u64,
+}
+
+#[derive(Deserialize)]
+struct GitHubOAuthTokenResponse {
+    #[serde(default)]
+    access_token: Option<String>,
+    #[serde(default)]
+    error: Option<String>,
+    #[serde(default)]
+    error_description: Option<String>,
 }
 
 static GITHUB_AUTH_CREDENTIAL_CACHE: OnceLock<Mutex<HashMap<String, GitHubAuthCredentialCacheEntry>>> =
@@ -161,6 +210,15 @@ fn resolve_github_api_base(host: &str) -> String {
     }
 }
 
+fn resolve_github_auth_base(host: &str) -> String {
+    let normalized_host = host.to_ascii_lowercase();
+    if normalized_host == "github.com" {
+        "https://github.com".to_string()
+    } else {
+        format!("https://{host}")
+    }
+}
+
 fn resolve_github_auth_target(repository_root_path: &str) -> Result<GitHubAuthTarget, String> {
     let repository = open_repository_from_root(repository_root_path)?;
     let repository_root = resolve_repository_root(&repository)?;
@@ -178,11 +236,10 @@ fn resolve_github_auth_target(repository_root_path: &str) -> Result<GitHubAuthTa
         return Err("当前仓库远程不是 GitHub，暂不需要 GitHub 登录。".to_string());
     }
 
-    let api_base = resolve_github_api_base(&host);
-
     Ok(GitHubAuthTarget {
+        api_base: resolve_github_api_base(&host),
+        auth_base: resolve_github_auth_base(&host),
         host,
-        api_base,
         repository_root,
     })
 }
@@ -191,6 +248,51 @@ fn clear_github_auth_credential_cache_for_host(host: &str) {
     if let Ok(mut cache) = github_auth_credential_cache().lock() {
         cache.remove(&host.to_ascii_lowercase());
     }
+}
+
+fn github_keyring_account(host: &str) -> String {
+    format!("oauth:{}", host.to_ascii_lowercase())
+}
+
+fn get_keyring_token(host: &str) -> Option<String> {
+    let account = github_keyring_account(host);
+    let entry = keyring::Entry::new(GITHUB_KEYRING_SERVICE, &account).ok()?;
+    let token = entry.get_password().ok()?;
+    if token.trim().is_empty() {
+        return None;
+    }
+    Some(token)
+}
+
+fn save_keyring_token(host: &str, token: &str) -> Result<(), String> {
+    let account = github_keyring_account(host);
+    let token = token.to_string();
+    keyring::Entry::new(GITHUB_KEYRING_SERVICE, &account)
+        .map_err(|error| format!("无法创建 GitHub 凭据条目：{error}"))?
+        .set_password(&token)
+        .map_err(|error| format!("无法保存 GitHub 凭据：{error}"))
+}
+
+fn delete_keyring_token(host: &str) -> Result<(), String> {
+    let account = github_keyring_account(host);
+    let entry = keyring::Entry::new(GITHUB_KEYRING_SERVICE, &account)
+        .map_err(|error| format!("无法创建 GitHub 凭据条目：{error}"))?;
+    match entry.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(error) => Err(format!("无法删除 GitHub 凭据：{error}")),
+    }
+}
+
+async fn resolve_keyring_credential(host: &str) -> Option<GitHubResolvedCredential> {
+    let host = host.to_string();
+    tokio::task::spawn_blocking(move || get_keyring_token(&host))
+        .await
+        .ok()
+        .flatten()
+        .map(|token| GitHubResolvedCredential {
+            token,
+            source: "calamex-oauth".to_string(),
+        })
 }
 
 async fn resolve_github_auth_credential(
@@ -210,17 +312,21 @@ async fn resolve_github_auth_credential(
         }
     }
 
-    let credential = resolve_git_credential_token(repository_root, host)
+    let credential = resolve_keyring_credential(host)
         .await
-        .map(|token| GitHubResolvedCredential {
-            token,
-            source: "git-credential".to_string(),
-        })
         .or_else(|| {
             resolve_github_cli_token(host).map(|token| GitHubResolvedCredential {
                 token,
                 source: "github-cli".to_string(),
             })
+        })
+        .or_else(|| {
+            futures_executor::block_on(resolve_git_credential_token(repository_root, host)).map(
+                |token| GitHubResolvedCredential {
+                    token,
+                    source: "git-credential".to_string(),
+                },
+            )
         });
 
     if let Ok(mut cache) = github_auth_credential_cache().lock() {
@@ -324,13 +430,20 @@ fn build_github_auth_client(token: &str) -> Result<reqwest::Client, String> {
         .map_err(|error| format!("创建 GitHub 登录客户端失败：{error}"))
 }
 
+fn build_github_oauth_client() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .user_agent("calamex-github-auth")
+        .build()
+        .map_err(|error| format!("创建 GitHub 授权客户端失败：{error}"))
+}
+
 async fn fetch_github_auth_status(
     target: &GitHubAuthTarget,
 ) -> Result<GitHubAuthStatusPayload, String> {
     let Some(credential) = resolve_github_auth_credential(&target.repository_root, &target.host).await
     else {
         return Ok(unauthenticated(
-            "未发现可用的 GitHub 凭据。请先通过 GitHub CLI、Git Credential Manager 或一次 git push 完成 GitHub 登录。",
+            "未发现可用的 GitHub 凭据。请先连接 GitHub 账号。",
         ));
     };
 
@@ -371,12 +484,135 @@ async fn fetch_github_auth_status(
     Ok(authenticated(user, credential.source))
 }
 
+async fn request_github_device_code(
+    target: &GitHubAuthTarget,
+) -> Result<GitHubDeviceAuthPayload, String> {
+    let client = build_github_oauth_client()?;
+    let response = client
+        .post(format!("{}/login/device/code", target.auth_base))
+        .header(ACCEPT, "application/json")
+        .form(&[
+            ("client_id", GITHUB_OAUTH_CLIENT_ID),
+            ("scope", GITHUB_DEVICE_AUTH_SCOPE),
+        ])
+        .send()
+        .await
+        .map_err(|error| format!("请求 GitHub 设备授权码失败：{error}"))?;
+
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .map_err(|error| format!("读取 GitHub 设备授权码失败：{error}"))?;
+
+    if !status.is_success() {
+        return Err(format!("请求 GitHub 设备授权码失败（{}）：{body}", status.as_u16()));
+    }
+
+    let payload: GitHubDeviceCodeResponse = serde_json::from_str(&body)
+        .map_err(|error| format!("解析 GitHub 设备授权码失败：{error}"))?;
+
+    Ok(GitHubDeviceAuthPayload {
+        device_code: payload.device_code,
+        user_code: payload.user_code,
+        verification_uri: payload.verification_uri,
+        interval: payload.interval.max(1),
+        expires_in: payload.expires_in,
+    })
+}
+
+async fn poll_github_device_token(
+    target: &GitHubAuthTarget,
+    request: &GitHubDeviceAuthCompleteRequest,
+) -> Result<String, String> {
+    let client = build_github_oauth_client()?;
+    let started_at = Instant::now();
+    let mut interval = request.interval.max(1);
+
+    while started_at.elapsed() < GITHUB_DEVICE_AUTH_MAX_WAIT {
+        sleep(Duration::from_secs(interval)).await;
+
+        let response = client
+            .post(format!("{}/login/oauth/access_token", target.auth_base))
+            .header(ACCEPT, "application/json")
+            .form(&[
+                ("client_id", GITHUB_OAUTH_CLIENT_ID),
+                ("device_code", request.device_code.as_str()),
+                (
+                    "grant_type",
+                    "urn:ietf:params:oauth:grant-type:device_code",
+                ),
+            ])
+            .send()
+            .await
+            .map_err(|error| format!("请求 GitHub 访问令牌失败：{error}"))?;
+
+        let body = response
+            .text()
+            .await
+            .map_err(|error| format!("读取 GitHub 访问令牌失败：{error}"))?;
+        let token_response: GitHubOAuthTokenResponse = serde_json::from_str(&body)
+            .map_err(|error| format!("解析 GitHub 访问令牌失败：{error}"))?;
+
+        if let Some(token) = token_response.access_token {
+            if !token.trim().is_empty() {
+                return Ok(token);
+            }
+        }
+
+        match token_response.error.as_deref() {
+            Some("authorization_pending") => continue,
+            Some("slow_down") => {
+                interval += 5;
+            }
+            Some("expired_token") => return Err("GitHub 授权码已过期，请重新连接。".to_string()),
+            Some("access_denied") => return Err("GitHub 授权已取消。".to_string()),
+            Some(error) => {
+                return Err(
+                    token_response
+                        .error_description
+                        .unwrap_or_else(|| format!("GitHub 授权失败：{error}")),
+                );
+            }
+            None => return Err("GitHub 授权响应缺少访问令牌。".to_string()),
+        }
+    }
+
+    Err("GitHub 授权等待超时，请重新连接。".to_string())
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn get_github_auth_status(
     payload: GitHubAuthRequest,
 ) -> Result<GitHubAuthStatusPayload, String> {
     let target = resolve_github_auth_target(&payload.repository_root_path)?;
+    fetch_github_auth_status(&target).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn begin_github_device_auth(
+    payload: GitHubAuthRequest,
+) -> Result<GitHubDeviceAuthPayload, String> {
+    let target = resolve_github_auth_target(&payload.repository_root_path)?;
+    clear_github_auth_credential_cache_for_host(&target.host);
+    request_github_device_code(&target).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn complete_github_device_auth(
+    payload: GitHubDeviceAuthCompleteRequest,
+) -> Result<GitHubAuthStatusPayload, String> {
+    let target = resolve_github_auth_target(&payload.repository_root_path)?;
+    clear_github_auth_credential_cache_for_host(&target.host);
+    let token = poll_github_device_token(&target, &payload).await?;
+    let host = target.host.clone();
+    tokio::task::spawn_blocking(move || save_keyring_token(&host, &token))
+        .await
+        .map_err(|error| format!("保存 GitHub 凭据任务异常终止：{error}"))??;
+    clear_github_auth_credential_cache_for_host(&target.host);
     fetch_github_auth_status(&target).await
 }
 
@@ -396,10 +632,12 @@ pub async fn disconnect_github(
     payload: GitHubAuthRequest,
 ) -> Result<GitHubAuthStatusPayload, String> {
     let target = resolve_github_auth_target(&payload.repository_root_path)?;
+    let host = target.host.clone();
+    tokio::task::spawn_blocking(move || delete_keyring_token(&host))
+        .await
+        .map_err(|error| format!("删除 GitHub 凭据任务异常终止：{error}"))??;
     clear_github_auth_credential_cache_for_host(&target.host);
-    Ok(unauthenticated(
-        "已清除 Calamex 当前会话中的 GitHub 登录缓存；系统 Git 凭据仍由操作系统、GitHub CLI 或 Git Credential Manager 管理。",
-    ))
+    Ok(unauthenticated("已断开 GitHub 账号。"))
 }
 
 #[cfg(test)]
@@ -429,6 +667,20 @@ mod tests {
             resolve_github_api_base("github.enterprise.local"),
             "https://api.github.enterprise.local"
         );
+    }
+
+    #[test]
+    fn resolve_github_auth_base_targets_browser_origin() {
+        assert_eq!(resolve_github_auth_base("github.com"), "https://github.com");
+        assert_eq!(
+            resolve_github_auth_base("github.enterprise.local"),
+            "https://github.enterprise.local"
+        );
+    }
+
+    #[test]
+    fn github_keyring_account_scopes_by_host() {
+        assert_eq!(github_keyring_account("GitHub.com"), "oauth:github.com");
     }
 
     #[test]

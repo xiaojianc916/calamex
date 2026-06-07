@@ -49,6 +49,8 @@ pub fn builder() -> Builder<tauri::Wry> {
             git::diff::get_git_commit_file_diff,
             git::diff::get_git_commit_file_diff_preview,
             git::github_auth::get_github_auth_status,
+            git::github_auth::begin_github_device_auth,
+            git::github_auth::complete_github_device_auth,
             git::github_auth::connect_github,
             git::github_auth::disconnect_github,
             git::history::list_git_commit_history,
