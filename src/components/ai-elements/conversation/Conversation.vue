@@ -51,7 +51,7 @@ const emit = defineEmits<{
 
 const SCROLL_BOTTOM_RESTORE_THRESHOLD = 4;
 const SCROLLBAR_IDLE_HIDE_DELAY_MS = 900;
-const SCROLLBAR_GUTTER_WIDTH = 12;
+const SCROLLBAR_GUTTER_WIDTH = 4;
 const stickToBottomRef = ref<{ scrollRef: HTMLElement | null } | null>(null);
 const delegatedProps = reactiveOmit(
   props,

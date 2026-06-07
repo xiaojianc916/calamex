@@ -200,15 +200,8 @@ const hasContextCompressionMarker = (message: IAiChatMessage): boolean =>
   scrollbar-width: thin;
 }
 
-.ai-chat-list.is-scrollbar-active :deep(> div > div),
-.ai-chat-list:focus-within :deep(> div > div) {
+.ai-chat-list.is-scrollbar-active :deep(> div > div) {
   scrollbar-color: color-mix(in srgb, var(--text-primary) 18%, transparent) transparent;
-}
-
-@media (hover: hover) {
-  .ai-chat-list:hover :deep(> div > div) {
-    scrollbar-color: color-mix(in srgb, var(--text-primary) 18%, transparent) transparent;
-  }
 }
 
 .ai-chat-list :deep(> div > div)::-webkit-scrollbar {
@@ -227,15 +220,8 @@ const hasContextCompressionMarker = (message: IAiChatMessage): boolean =>
   background-clip: content-box;
 }
 
-.ai-chat-list.is-scrollbar-active :deep(> div > div)::-webkit-scrollbar-thumb,
-.ai-chat-list:focus-within :deep(> div > div)::-webkit-scrollbar-thumb {
+.ai-chat-list.is-scrollbar-active :deep(> div > div)::-webkit-scrollbar-thumb {
   background-color: color-mix(in srgb, var(--text-primary) 18%, transparent);
-}
-
-@media (hover: hover) {
-  .ai-chat-list:hover :deep(> div > div)::-webkit-scrollbar-thumb {
-    background-color: color-mix(in srgb, var(--text-primary) 18%, transparent);
-  }
 }
 
 .ai-chat-list :deep(> div > div)::-webkit-scrollbar-thumb:hover {
