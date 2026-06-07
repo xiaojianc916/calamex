@@ -79,6 +79,15 @@ const createPullRequestCacheKey = (repositoryRootPath: string, state: string): s
 const createPullRequestDetailCacheKey = (repositoryRootPath: string, number: number): string =>
   `${normalizeFileSystemPath(repositoryRootPath)}|${number}`;
 
+const createCommitDetailCacheKey = (repositoryRootPath: string, commitId: string): string =>
+  `${normalizeFileSystemPath(repositoryRootPath)}|${commitId}`;
+
+const createCommitFileCacheKey = (
+  repositoryRootPath: string,
+  commitId: string,
+  relativePath: string,
+): string => `${normalizeFileSystemPath(repositoryRootPath)}|${commitId}:${relativePath}`;
+
 const shouldIncludePullRequestInState = (
   pullRequest: IGitPullRequestSummaryPayload,
   state: 'open' | 'closed' | 'all',
@@ -123,6 +132,11 @@ type TLoadPullRequestOptions = {
   force?: boolean;
 };
 
+type TRepositoryMutationLifecycle = {
+  requestId: number;
+  repositoryRootPath: string;
+};
+
 export const useGitStore = defineStore('git', () => {
   const status = ref<IGitRepositoryStatusPayload>(createEmptyGitRepositoryStatus());
   const isLoading = ref(false);
@@ -158,6 +172,7 @@ export const useGitStore = defineStore('git', () => {
   const commitFileDiffPreviewCache = ref<Record<string, IGitDiffPreviewPayload>>({});
 
   let statusRequestId = 0;
+  let mutationRequestId = 0;
   let commitHistoryRequestId = 0;
   let branchesRequestId = 0;
   let stashesRequestId = 0;
@@ -193,9 +208,20 @@ export const useGitStore = defineStore('git', () => {
     () => commitHistoryHasMore.value && commitHistoryNextOffset.value !== null,
   );
 
+  const isRepositoryRootCurrent = (repositoryRootPath: string | null | undefined): boolean =>
+    Boolean(repositoryRootPath) &&
+    areFileSystemPathsEqual(status.value.repositoryRootPath, repositoryRootPath);
+
+  const isRepositoryMutationCurrent = (lifecycle: TRepositoryMutationLifecycle): boolean =>
+    lifecycle.requestId === mutationRequestId && isRepositoryRootCurrent(lifecycle.repositoryRootPath);
+
   const clearBaselineCache = (): void => {
     baselineCache.value = {};
     baselineEpoch.value += 1;
+    pendingBaselineRequests.clear();
+    pendingCommitDetailRequests.clear();
+    pendingCommitFileDiffRequests.clear();
+    pendingCommitFileDiffPreviewRequests.clear();
     commitDetailCache.value = {};
     commitFileDiffCache.value = {};
     commitFileDiffPreviewCache.value = {};
@@ -273,7 +299,26 @@ export const useGitStore = defineStore('git', () => {
       delete nextCache[cacheKey];
       baselineCache.value = nextCache;
     }
+    pendingBaselineRequests.delete(cacheKey);
     baselineEpoch.value += 1;
+  };
+
+  const requireRepositoryRootPath = (): string => {
+    const repositoryRootPath = status.value.repositoryRootPath;
+    if (!repositoryRootPath) {
+      throw new Error(MSG_GIT_NO_REPOSITORY_IN_WORKSPACE);
+    }
+    return repositoryRootPath;
+  };
+
+  const beginRepositoryMutation = (): TRepositoryMutationLifecycle => {
+    const repositoryRootPath = requireRepositoryRootPath();
+    // 任何写操作开始时都让旧的 status refresh 失效，避免写操作执行期间旧状态回灌。
+    statusRequestId += 1;
+    return {
+      requestId: ++mutationRequestId,
+      repositoryRootPath,
+    };
   };
 
   const getFileBaseline = async (path: string): Promise<IGitFileBaselinePayload> => {
@@ -285,10 +330,11 @@ export const useGitStore = defineStore('git', () => {
     if (pending) return pending;
 
     const epochAtRequest = baselineEpoch.value;
+    const repositoryRootPath = status.value.repositoryRootPath;
     const request = tauriService
       .getGitFileBaseline(path)
       .then((payload) => {
-        if (epochAtRequest === baselineEpoch.value) {
+        if (epochAtRequest === baselineEpoch.value && isRepositoryRootCurrent(repositoryRootPath)) {
           baselineCache.value = {
             ...baselineCache.value,
             [cacheKey]: payload,
@@ -305,29 +351,33 @@ export const useGitStore = defineStore('git', () => {
   };
 
   const loadCommitDetail = async (commitId: string): Promise<IGitCommitDetailPayload> => {
-    const cached = commitDetailCache.value[commitId];
+    const repositoryRootPath = requireRepositoryRootPath();
+    const cacheKey = createCommitDetailCacheKey(repositoryRootPath, commitId);
+    const cached = commitDetailCache.value[cacheKey];
     if (cached) return cached;
 
-    const pending = pendingCommitDetailRequests.get(commitId);
+    const pending = pendingCommitDetailRequests.get(cacheKey);
     if (pending) return pending;
 
     const request = tauriService
       .getGitCommitDetail({
-        repositoryRootPath: requireRepositoryRootPath(),
+        repositoryRootPath,
         commitId,
       })
       .then((payload) => {
-        commitDetailCache.value = {
-          ...commitDetailCache.value,
-          [commitId]: payload,
-        };
+        if (isRepositoryRootCurrent(repositoryRootPath)) {
+          commitDetailCache.value = {
+            ...commitDetailCache.value,
+            [cacheKey]: payload,
+          };
+        }
         return payload;
       })
       .finally(() => {
-        pendingCommitDetailRequests.delete(commitId);
+        pendingCommitDetailRequests.delete(cacheKey);
       });
 
-    pendingCommitDetailRequests.set(commitId, request);
+    pendingCommitDetailRequests.set(cacheKey, request);
     return request;
   };
 
@@ -335,7 +385,8 @@ export const useGitStore = defineStore('git', () => {
     commitId: string,
     relativePath: string,
   ): Promise<IGitCommitFileDiffPayload> => {
-    const cacheKey = `${commitId}:${relativePath}`;
+    const repositoryRootPath = requireRepositoryRootPath();
+    const cacheKey = createCommitFileCacheKey(repositoryRootPath, commitId, relativePath);
     const cached = commitFileDiffCache.value[cacheKey];
     if (cached) return cached;
 
@@ -344,15 +395,17 @@ export const useGitStore = defineStore('git', () => {
 
     const request = tauriService
       .getGitCommitFileDiff({
-        repositoryRootPath: requireRepositoryRootPath(),
+        repositoryRootPath,
         commitId,
         relativePath,
       })
       .then((payload) => {
-        commitFileDiffCache.value = {
-          ...commitFileDiffCache.value,
-          [cacheKey]: payload,
-        };
+        if (isRepositoryRootCurrent(repositoryRootPath)) {
+          commitFileDiffCache.value = {
+            ...commitFileDiffCache.value,
+            [cacheKey]: payload,
+          };
+        }
         return payload;
       })
       .finally(() => {
@@ -367,7 +420,8 @@ export const useGitStore = defineStore('git', () => {
     commitId: string,
     relativePath: string,
   ): Promise<IGitDiffPreviewPayload> => {
-    const cacheKey = `${commitId}:${relativePath}`;
+    const repositoryRootPath = requireRepositoryRootPath();
+    const cacheKey = createCommitFileCacheKey(repositoryRootPath, commitId, relativePath);
     const cached = commitFileDiffPreviewCache.value[cacheKey];
     if (cached) return cached;
 
@@ -376,15 +430,17 @@ export const useGitStore = defineStore('git', () => {
 
     const request = tauriService
       .getGitCommitFileDiffPreview({
-        repositoryRootPath: requireRepositoryRootPath(),
+        repositoryRootPath,
         commitId,
         relativePath,
       })
       .then((payload) => {
-        commitFileDiffPreviewCache.value = {
-          ...commitFileDiffPreviewCache.value,
-          [cacheKey]: payload,
-        };
+        if (isRepositoryRootCurrent(repositoryRootPath)) {
+          commitFileDiffPreviewCache.value = {
+            ...commitFileDiffPreviewCache.value,
+            [cacheKey]: payload,
+          };
+        }
         return payload;
       })
       .finally(() => {
@@ -397,6 +453,7 @@ export const useGitStore = defineStore('git', () => {
 
   const reset = (): void => {
     statusRequestId += 1;
+    mutationRequestId += 1;
     commitHistoryRequestId += 1;
     branchesRequestId += 1;
     stashesRequestId += 1;
@@ -431,7 +488,11 @@ export const useGitStore = defineStore('git', () => {
 
   const applyStatusFromMutation = (
     payload: IGitRepositoryStatusPayload,
+    lifecycle: TRepositoryMutationLifecycle,
   ): IGitRepositoryStatusPayload => {
+    if (!isRepositoryMutationCurrent(lifecycle)) {
+      return status.value;
+    }
     statusRequestId += 1;
     isLoading.value = false;
     return applyStatus(payload);
@@ -486,14 +547,6 @@ export const useGitStore = defineStore('git', () => {
       assertInitializedRepositoryStatus,
     );
 
-  const requireRepositoryRootPath = (): string => {
-    const repositoryRootPath = status.value.repositoryRootPath;
-    if (!repositoryRootPath) {
-      throw new Error(MSG_GIT_NO_REPOSITORY_IN_WORKSPACE);
-    }
-    return repositoryRootPath;
-  };
-
   const runPathsMutation = async (
     paths: string[],
     mutate: TPathsMutator,
@@ -501,12 +554,16 @@ export const useGitStore = defineStore('git', () => {
   ): Promise<IGitRepositoryStatusPayload> => {
     const deduplicatedPaths = deduplicatePaths(paths);
     if (deduplicatedPaths.length === 0) return status.value;
+    const lifecycle = beginRepositoryMutation();
     const payload = await mutate({
-      repositoryRootPath: requireRepositoryRootPath(),
+      repositoryRootPath: lifecycle.repositoryRootPath,
       paths: deduplicatedPaths,
     });
+    if (!isRepositoryMutationCurrent(lifecycle)) {
+      return status.value;
+    }
     onSuccess?.(deduplicatedPaths);
-    return applyStatusFromMutation(payload);
+    return applyStatusFromMutation(payload, lifecycle);
   };
 
   const stagePaths = (paths: string[]): Promise<IGitRepositoryStatusPayload> =>
@@ -523,18 +580,23 @@ export const useGitStore = defineStore('git', () => {
     );
 
   const commitIndex = async (message: string): Promise<IGitCommitResultPayload> => {
+    const lifecycle = beginRepositoryMutation();
     isCommitting.value = true;
     try {
       const payload = await tauriService.commitGitIndex({
-        repositoryRootPath: requireRepositoryRootPath(),
+        repositoryRootPath: lifecycle.repositoryRootPath,
         message,
         paths: [],
       });
-      applyStatusFromMutation(payload.status);
-      clearBaselineCache();
+      if (isRepositoryMutationCurrent(lifecycle)) {
+        applyStatusFromMutation(payload.status, lifecycle);
+        clearBaselineCache();
+      }
       return payload;
     } finally {
-      isCommitting.value = false;
+      if (lifecycle.requestId === mutationRequestId) {
+        isCommitting.value = false;
+      }
     }
   };
 
@@ -545,15 +607,18 @@ export const useGitStore = defineStore('git', () => {
     const append = options?.append ?? false;
     const nextOffset = append ? commitHistoryNextOffset.value : 0;
     if (append && nextOffset === null) return commitHistory.value;
+    const repositoryRootPath = requireRepositoryRootPath();
     const requestId = ++commitHistoryRequestId;
     isCommitHistoryLoading.value = true;
     try {
       const payload = await tauriService.listGitCommitHistory({
-        repositoryRootPath: requireRepositoryRootPath(),
+        repositoryRootPath,
         offset: nextOffset ?? 0,
         limit: options?.limit ?? null,
       });
-      if (requestId !== commitHistoryRequestId) return commitHistory.value;
+      if (requestId !== commitHistoryRequestId || !isRepositoryRootCurrent(repositoryRootPath)) {
+        return commitHistory.value;
+      }
       commitHistory.value = append ? [...commitHistory.value, ...payload.entries] : payload.entries;
       commitHistoryHasMore.value = payload.hasMore;
       commitHistoryNextOffset.value = payload.nextOffset;
@@ -566,13 +631,14 @@ export const useGitStore = defineStore('git', () => {
   };
 
   const loadBranches = async (): Promise<IGitBranchPayload[]> => {
+    const repositoryRootPath = requireRepositoryRootPath();
     const requestId = ++branchesRequestId;
     isBranchesLoading.value = true;
     try {
-      const payload = await tauriService.listGitBranches({
-        repositoryRootPath: requireRepositoryRootPath(),
-      });
-      if (requestId !== branchesRequestId) return branches.value;
+      const payload = await tauriService.listGitBranches({ repositoryRootPath });
+      if (requestId !== branchesRequestId || !isRepositoryRootCurrent(repositoryRootPath)) {
+        return branches.value;
+      }
       branches.value = payload.branches;
       return branches.value;
     } finally {
@@ -583,13 +649,14 @@ export const useGitStore = defineStore('git', () => {
   };
 
   const loadStashes = async (): Promise<IGitStashEntryPayload[]> => {
+    const repositoryRootPath = requireRepositoryRootPath();
     const requestId = ++stashesRequestId;
     isStashesLoading.value = true;
     try {
-      const payload = await tauriService.listGitStashes({
-        repositoryRootPath: requireRepositoryRootPath(),
-      });
-      if (requestId !== stashesRequestId) return stashes.value;
+      const payload = await tauriService.listGitStashes({ repositoryRootPath });
+      if (requestId !== stashesRequestId || !isRepositoryRootCurrent(repositoryRootPath)) {
+        return stashes.value;
+      }
       stashes.value = payload.entries;
       return stashes.value;
     } finally {
@@ -602,14 +669,13 @@ export const useGitStore = defineStore('git', () => {
   const loadPullRequestSupport = async (): Promise<IGitPullRequestSupportPayload> => {
     if (pendingPullRequestSupportRequest) return pendingPullRequestSupportRequest;
 
+    const repositoryRootPath = requireRepositoryRootPath();
     const requestId = ++pullRequestSupportRequestId;
     isPullRequestSupportLoading.value = true;
     const request = tauriService
-      .getGitPullRequestSupport({
-        repositoryRootPath: requireRepositoryRootPath(),
-      })
+      .getGitPullRequestSupport({ repositoryRootPath })
       .then((payload) => {
-        if (requestId === pullRequestSupportRequestId) {
+        if (requestId === pullRequestSupportRequestId && isRepositoryRootCurrent(repositoryRootPath)) {
           pullRequestSupport.value = payload;
         }
         return requestId === pullRequestSupportRequestId ? pullRequestSupport.value : payload;
@@ -687,11 +753,13 @@ export const useGitStore = defineStore('git', () => {
         state: selectedState,
       })
       .then((payload) => {
-        pullRequestListCache.value = {
-          ...pullRequestListCache.value,
-          [cacheKey]: payload,
-        };
-        if (requestId === pullRequestsRequestId) {
+        if (isRepositoryRootCurrent(repositoryRootPath)) {
+          pullRequestListCache.value = {
+            ...pullRequestListCache.value,
+            [cacheKey]: payload,
+          };
+        }
+        if (requestId === pullRequestsRequestId && isRepositoryRootCurrent(repositoryRootPath)) {
           pullRequests.value = payload;
         }
         return requestId === pullRequestsRequestId ? pullRequests.value : payload;
@@ -727,11 +795,13 @@ export const useGitStore = defineStore('git', () => {
         number,
       })
       .then((payload) => {
-        pullRequestDetailCache.value = {
-          ...pullRequestDetailCache.value,
-          [cacheKey]: payload,
-        };
-        if (requestId === pullRequestDetailRequestId) {
+        if (isRepositoryRootCurrent(repositoryRootPath)) {
+          pullRequestDetailCache.value = {
+            ...pullRequestDetailCache.value,
+            [cacheKey]: payload,
+          };
+        }
+        if (requestId === pullRequestDetailRequestId && isRepositoryRootCurrent(repositoryRootPath)) {
           pullRequestDetail.value = payload;
         }
         return payload;
@@ -754,11 +824,14 @@ export const useGitStore = defineStore('git', () => {
     head: string;
     draft: boolean | null;
   }): Promise<IGitPullRequestSummaryPayload> => {
+    const lifecycle = beginRepositoryMutation();
     const result = await tauriService.createGitPullRequest({
-      repositoryRootPath: requireRepositoryRootPath(),
+      repositoryRootPath: lifecycle.repositoryRootPath,
       ...payload,
     });
-    applyPullRequestSummaryMutation(result);
+    if (isRepositoryMutationCurrent(lifecycle)) {
+      applyPullRequestSummaryMutation(result);
+    }
     return result;
   };
 
@@ -766,21 +839,27 @@ export const useGitStore = defineStore('git', () => {
     number: number,
     mergeMethod: string | null,
   ): Promise<IGitPullRequestSummaryPayload> => {
+    const lifecycle = beginRepositoryMutation();
     const result = await tauriService.mergeGitPullRequest({
-      repositoryRootPath: requireRepositoryRootPath(),
+      repositoryRootPath: lifecycle.repositoryRootPath,
       number,
       mergeMethod,
     });
-    applyPullRequestSummaryMutation(result);
+    if (isRepositoryMutationCurrent(lifecycle)) {
+      applyPullRequestSummaryMutation(result);
+    }
     return result;
   };
 
   const closePullRequest = async (number: number): Promise<IGitPullRequestSummaryPayload> => {
+    const lifecycle = beginRepositoryMutation();
     const result = await tauriService.closeGitPullRequest({
-      repositoryRootPath: requireRepositoryRootPath(),
+      repositoryRootPath: lifecycle.repositoryRootPath,
       number,
     });
-    applyPullRequestSummaryMutation(result);
+    if (isRepositoryMutationCurrent(lifecycle)) {
+      applyPullRequestSummaryMutation(result);
+    }
     return result;
   };
 
@@ -788,102 +867,129 @@ export const useGitStore = defineStore('git', () => {
     remoteName: string,
     remoteUrl: string,
   ): Promise<IGitPullRequestSupportPayload> => {
+    const lifecycle = beginRepositoryMutation();
     isSettingRemote.value = true;
     try {
       const payload = await tauriService.setGitRemote({
-        repositoryRootPath: requireRepositoryRootPath(),
+        repositoryRootPath: lifecycle.repositoryRootPath,
         remoteName,
         remoteUrl,
       });
-      pullRequestSupportRequestId += 1;
-      pendingPullRequestSupportRequest = null;
-      pullRequestSupport.value = payload;
-      resetPullRequests();
-      return pullRequestSupport.value;
+      if (isRepositoryMutationCurrent(lifecycle)) {
+        pullRequestSupportRequestId += 1;
+        pendingPullRequestSupportRequest = null;
+        pullRequestSupport.value = payload;
+        resetPullRequests();
+        return pullRequestSupport.value;
+      }
+      return payload;
     } finally {
-      isSettingRemote.value = false;
+      if (lifecycle.requestId === mutationRequestId) {
+        isSettingRemote.value = false;
+      }
     }
   };
 
   const checkoutBranch = async (branchName: string): Promise<IGitRepositoryStatusPayload> => {
+    const lifecycle = beginRepositoryMutation();
     const payload = await tauriService.checkoutGitBranch({
-      repositoryRootPath: requireRepositoryRootPath(),
+      repositoryRootPath: lifecycle.repositoryRootPath,
       branchName,
     });
-    clearBaselineCache();
-    resetBranches();
-    return applyStatusFromMutation(payload);
+    if (isRepositoryMutationCurrent(lifecycle)) {
+      clearBaselineCache();
+      resetBranches();
+    }
+    return applyStatusFromMutation(payload, lifecycle);
   };
 
   const checkoutCommit = async (commitId: string): Promise<IGitRepositoryStatusPayload> => {
+    const lifecycle = beginRepositoryMutation();
     const payload = await tauriService.checkoutGitCommit({
-      repositoryRootPath: requireRepositoryRootPath(),
+      repositoryRootPath: lifecycle.repositoryRootPath,
       commitId,
     });
-    clearBaselineCache();
-    resetBranches();
-    void loadCommitHistory();
-    return applyStatusFromMutation(payload);
+    if (isRepositoryMutationCurrent(lifecycle)) {
+      clearBaselineCache();
+      resetBranches();
+      void loadCommitHistory();
+    }
+    return applyStatusFromMutation(payload, lifecycle);
   };
 
   const revertCommit = async (commitId: string): Promise<IGitRepositoryStatusPayload> => {
+    const lifecycle = beginRepositoryMutation();
     const payload = await tauriService.revertGitCommit({
-      repositoryRootPath: requireRepositoryRootPath(),
+      repositoryRootPath: lifecycle.repositoryRootPath,
       commitId,
     });
-    clearBaselineCache();
-    return applyStatusFromMutation(payload);
+    if (isRepositoryMutationCurrent(lifecycle)) {
+      clearBaselineCache();
+    }
+    return applyStatusFromMutation(payload, lifecycle);
   };
 
   const createBranch = async (
     branchName: string,
     checkout: boolean,
   ): Promise<IGitRepositoryStatusPayload> => {
+    const lifecycle = beginRepositoryMutation();
     const payload = await tauriService.createGitBranch({
-      repositoryRootPath: requireRepositoryRootPath(),
+      repositoryRootPath: lifecycle.repositoryRootPath,
       branchName,
       checkout,
     });
-    if (checkout) clearBaselineCache();
-    resetBranches();
-    return applyStatusFromMutation(payload);
+    if (isRepositoryMutationCurrent(lifecycle)) {
+      if (checkout) clearBaselineCache();
+      resetBranches();
+    }
+    return applyStatusFromMutation(payload, lifecycle);
   };
 
   const saveStash = async (
     message: string | null,
     includeUntracked: boolean,
   ): Promise<IGitRepositoryStatusPayload> => {
+    const lifecycle = beginRepositoryMutation();
     const payload = await tauriService.saveGitStash({
-      repositoryRootPath: requireRepositoryRootPath(),
+      repositoryRootPath: lifecycle.repositoryRootPath,
       message,
       includeUntracked,
     });
-    clearBaselineCache();
-    resetStashes();
-    return applyStatusFromMutation(payload);
+    if (isRepositoryMutationCurrent(lifecycle)) {
+      clearBaselineCache();
+      resetStashes();
+    }
+    return applyStatusFromMutation(payload, lifecycle);
   };
 
   const applyStash = async (
     stashIndex: number,
     pop: boolean,
   ): Promise<IGitRepositoryStatusPayload> => {
+    const lifecycle = beginRepositoryMutation();
     const payload = await tauriService.applyGitStash({
-      repositoryRootPath: requireRepositoryRootPath(),
+      repositoryRootPath: lifecycle.repositoryRootPath,
       stashIndex,
       pop,
     });
-    clearBaselineCache();
-    resetStashes();
-    return applyStatusFromMutation(payload);
+    if (isRepositoryMutationCurrent(lifecycle)) {
+      clearBaselineCache();
+      resetStashes();
+    }
+    return applyStatusFromMutation(payload, lifecycle);
   };
 
   const dropStash = async (stashIndex: number): Promise<IGitRepositoryStatusPayload> => {
+    const lifecycle = beginRepositoryMutation();
     const payload = await tauriService.dropGitStash({
-      repositoryRootPath: requireRepositoryRootPath(),
+      repositoryRootPath: lifecycle.repositoryRootPath,
       stashIndex,
     });
-    resetStashes();
-    return applyStatusFromMutation(payload);
+    if (isRepositoryMutationCurrent(lifecycle)) {
+      resetStashes();
+    }
+    return applyStatusFromMutation(payload, lifecycle);
   };
 
   return {
