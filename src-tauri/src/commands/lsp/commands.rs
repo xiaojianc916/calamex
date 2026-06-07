@@ -19,6 +19,8 @@ use super::types::{
     PendingMap,
 };
 
+const LSP_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
+
 #[tauri::command]
 #[specta::specta]
 pub async fn lsp_start(
@@ -27,6 +29,8 @@ pub async fn lsp_start(
     workspace_root: String,
 ) -> Result<(), String> {
     // 整条启动路径串行化,杜绝双实例。
+    // 与 VS Code LanguageClient 的 start/stop lifecycle guard 同向：stop 必须等待 start
+    // 完成后再执行,避免 Starting 期间 stop 看见旧 Stopped 状态而漏停新进程。
     let _startup_guard = manager.startup.lock().await;
 
     // 先把已有实例彻底停掉(不再用 TOCTOU 模式)。
@@ -180,6 +184,9 @@ pub async fn lsp_start(
 #[tauri::command]
 #[specta::specta]
 pub async fn lsp_stop(manager: tauri::State<'_, LspManager>) -> Result<(), String> {
+    // stop 与 start 共享同一生命周期锁。这样若用户在 initialize 期间触发 stop，
+    // stop 会等待 start 完成并停止新实例，而不是在 session 仍为 Stopped 时提前返回。
+    let _startup_guard = manager.startup.lock().await;
     stop_inner(&manager.session, &manager.pending).await;
     Ok(())
 }
@@ -202,7 +209,7 @@ async fn stop_inner(session: &Arc<Mutex<LspSession>>, pending: &PendingMap) {
 
     // 先尝试优雅 shutdown:此刻进程仍存活,能正常回 shutdown 响应并自行退出。
     // 必须早于 kill_tx——否则 watcher 会 drop child 触发 kill_on_drop,把进程杀死,
-    // 导致 shutdown 响应永远不到、resp_rx 既不 resolve 也不 close,白白吃满 500ms。
+    // 导致 shutdown 响应永远不到。超时窗口对齐 VS Code LanguageClient 默认 shutdown timeout。
     if let Some(stdin) = stdin {
         let (resp_tx, resp_rx) = oneshot::channel::<Value>();
         let shutdown_id = i64::MAX;
@@ -211,8 +218,7 @@ async fn stop_inner(session: &Arc<Mutex<LspSession>>, pending: &PendingMap) {
         let shutdown = frame_message(&jsonrpc_request(shutdown_id, "shutdown", Value::Null));
         let _ = write_framed(&stdin, &shutdown).await;
 
-        // 最多等 500ms(进程存活时通常很快 resolve,提前返回)
-        let _ = timeout(Duration::from_millis(500), resp_rx).await;
+        let _ = timeout(LSP_SHUTDOWN_TIMEOUT, resp_rx).await;
         pending.lock().await.remove(&shutdown_id);
 
         let exit = frame_message(&jsonrpc_notify("exit", Value::Null));

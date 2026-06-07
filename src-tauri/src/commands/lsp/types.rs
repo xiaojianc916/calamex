@@ -100,7 +100,10 @@ impl LspSession {
 pub struct LspManager {
     pub(crate) session: Arc<Mutex<LspSession>>,
     pub(crate) pending: PendingMap,
-    /// 串行化 `lsp_start` 的整条路径，防止两次启动并发产生双实例。
+    /// 串行化 `lsp_start` / `lsp_stop` 的整条生命周期路径。
+    ///
+    /// 参考 VS Code LanguageClient 的 start/stop guard：stop 不能在 start initialize
+    /// 尚未写入 Running session 时提前 no-op，否则会留下刚启动的新进程。
     pub(crate) startup: Mutex<()>,
 }
 
