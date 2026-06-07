@@ -57,10 +57,8 @@ const runExclusive = (operation: () => Promise<void>): Promise<void> => {
 
 const startLspInternal = async (root: string, token: number): Promise<void> => {
   if (!isLifecycleCurrent(token, root)) return;
-
   status.value = 'starting';
   error.value = null;
-
   try {
     await lspBridge.start(root);
     if (!isLifecycleCurrent(token, root)) return;
@@ -75,7 +73,6 @@ const startLspInternal = async (root: string, token: number): Promise<void> => {
 const stopLspInternal = async (token: number, nextStatus: LspStatus = 'stopped'): Promise<void> => {
   clearAutoRestartTimer();
   clearStabilityTimer();
-
   try {
     await lspBridge.stop();
   } catch {
@@ -177,7 +174,6 @@ const startLspShared = (root: string): Promise<void> => {
   autoRestartCount = 0;
   clearAutoRestartTimer();
   clearStabilityTimer();
-
   return runExclusive(() => startLspInternal(root, token));
 };
 
@@ -186,7 +182,6 @@ const stopLspShared = (): Promise<void> => {
   lifecycleToken += 1;
   const token = lifecycleToken;
   activeWorkspaceRoot = null;
-
   return runExclusive(() => stopLspInternal(token, 'stopped'));
 };
 
@@ -198,7 +193,6 @@ const restartLspShared = (): Promise<void> => {
   autoRestartCount = 0;
   clearAutoRestartTimer();
   clearStabilityTimer();
-
   return runExclusive(async () => {
     await stopLspInternal(token, root ? 'stopped' : 'idle');
     if (!isLifecycleCurrent(token, root)) return;
