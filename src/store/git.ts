@@ -21,7 +21,8 @@ import { areFileSystemPathsEqual, normalizeFileSystemPath } from '@/utils/path';
 const MSG_GIT_INIT_NO_REPOSITORY = 'Git 初始化后仍未检测到仓库。';
 const MSG_GIT_NO_REPOSITORY_IN_WORKSPACE = '当前工作区未检测到 Git 仓库。';
 const PULL_REQUEST_BACKGROUND_PRELOAD_DELAY_MS = 1200;
-const PULL_REQUEST_DETAIL_PRELOAD_LIMIT = 3;
+const PULL_REQUEST_DETAIL_PRELOAD_LIMIT = 20;
+const PULL_REQUEST_DETAIL_PRELOAD_CONCURRENCY = 4;
 const PULL_REQUEST_DETAIL_CACHE_LIMIT = 20;
 
 const formatGitInitMismatch = (expectedPath: string, actualPath: string): string =>
@@ -124,6 +125,9 @@ type TPathsMutator = (request: TPathsMutationRequest) => Promise<IGitRepositoryS
 
 type TLoadPullRequestOptions = {
   force?: boolean;
+  preloadDetails?: boolean;
+  updateActive?: boolean;
+  visibleLoading?: boolean;
 };
 
 type TLoadPullRequestDetailOptions = {
@@ -173,6 +177,7 @@ export const useGitStore = defineStore('git', () => {
   let pullRequestSupportRequestId = 0;
   let pullRequestsRequestId = 0;
   let pullRequestDetailRequestId = 0;
+  let pullRequestDetailPreloadEpoch = 0;
   let pullRequestPreloadTimer: ReturnType<typeof setTimeout> | null = null;
 
   const pendingBaselineRequests = new Map<string, Promise<IGitFileBaselinePayload>>();
@@ -286,6 +291,7 @@ export const useGitStore = defineStore('git', () => {
   const resetPullRequests = (): void => {
     pullRequestsRequestId += 1;
     pullRequestDetailRequestId += 1;
+    pullRequestDetailPreloadEpoch += 1;
     clearPullRequestPreloadTimer();
     pullRequests.value = [];
     pullRequestStateFilter.value = 'open';
@@ -443,6 +449,7 @@ export const useGitStore = defineStore('git', () => {
     pullRequestSupportRequestId += 1;
     pullRequestsRequestId += 1;
     pullRequestDetailRequestId += 1;
+    pullRequestDetailPreloadEpoch += 1;
     clearPullRequestPreloadTimer();
 
     isLoading.value = false;
@@ -717,15 +724,35 @@ export const useGitStore = defineStore('git', () => {
     );
   };
 
+  const runPullRequestDetailPreloadQueue = async (
+    entries: IGitPullRequestSummaryPayload[],
+    epoch: number,
+  ): Promise<void> => {
+    const candidates = entries.slice(0, PULL_REQUEST_DETAIL_PRELOAD_LIMIT);
+    let nextIndex = 0;
+
+    const preloadNext = async (): Promise<void> => {
+      while (epoch === pullRequestDetailPreloadEpoch && nextIndex < candidates.length) {
+        const pullRequest = candidates[nextIndex];
+        nextIndex += 1;
+        await loadPullRequestDetail(pullRequest.number, {
+          updateActive: false,
+          visibleLoading: false,
+        }).catch(() => undefined);
+      }
+    };
+
+    const workerCount = Math.min(PULL_REQUEST_DETAIL_PRELOAD_CONCURRENCY, candidates.length);
+    await Promise.all(Array.from({ length: workerCount }, preloadNext));
+  };
+
   const preloadTopPullRequestDetails = (
     entries: IGitPullRequestSummaryPayload[],
   ): void => {
-    for (const pullRequest of entries.slice(0, PULL_REQUEST_DETAIL_PRELOAD_LIMIT)) {
-      void loadPullRequestDetail(pullRequest.number, {
-        updateActive: false,
-        visibleLoading: false,
-      }).catch(() => undefined);
-    }
+    if (entries.length === 0) return;
+    pullRequestDetailPreloadEpoch += 1;
+    const epoch = pullRequestDetailPreloadEpoch;
+    void runPullRequestDetailPreloadQueue(entries, epoch);
   };
 
   const loadPullRequests = async (
@@ -733,22 +760,46 @@ export const useGitStore = defineStore('git', () => {
     options?: TLoadPullRequestOptions,
   ): Promise<IGitPullRequestSummaryPayload[]> => {
     const selectedState = normalizePullRequestState(state ?? pullRequestStateFilter.value);
-    pullRequestStateFilter.value = selectedState;
+    const updateActive = options?.updateActive ?? true;
+    const visibleLoading = options?.visibleLoading ?? updateActive;
+    const shouldPreloadDetails = options?.preloadDetails ?? true;
+
+    if (updateActive) {
+      pullRequestStateFilter.value = selectedState;
+    }
 
     const repositoryRootPath = requireRepositoryRootPath();
     const cacheKey = createPullRequestCacheKey(repositoryRootPath, selectedState);
     const cached = pullRequestListCache.value[cacheKey];
-    if (cached) pullRequests.value = cached;
+    if (cached && updateActive) pullRequests.value = cached;
 
     if (options?.force) {
       pendingPullRequestListRequests.delete(cacheKey);
     } else {
       const pending = pendingPullRequestListRequests.get(cacheKey);
-      if (pending) return pending.catch(() => cached ?? pullRequests.value);
+      if (pending) {
+        if (!updateActive) return pending.catch(() => cached ?? []);
+        const requestId = ++pullRequestsRequestId;
+        if (visibleLoading) isPullRequestsLoading.value = true;
+        try {
+          const payload = await pending;
+          if (requestId === pullRequestsRequestId) {
+            pullRequests.value = pullRequestListCache.value[cacheKey] ?? payload;
+          }
+          return requestId === pullRequestsRequestId ? pullRequests.value : payload;
+        } catch (error) {
+          if (cached) return cached;
+          throw error;
+        } finally {
+          if (visibleLoading && requestId === pullRequestsRequestId) {
+            isPullRequestsLoading.value = false;
+          }
+        }
+      }
     }
 
-    const requestId = ++pullRequestsRequestId;
-    isPullRequestsLoading.value = true;
+    const requestId = updateActive ? ++pullRequestsRequestId : pullRequestsRequestId;
+    if (visibleLoading) isPullRequestsLoading.value = true;
     const request = tauriService
       .listGitPullRequests({
         repositoryRootPath,
@@ -759,11 +810,13 @@ export const useGitStore = defineStore('git', () => {
           ...pullRequestListCache.value,
           [cacheKey]: payload,
         };
-        if (requestId === pullRequestsRequestId) {
+        if (updateActive && requestId === pullRequestsRequestId) {
           pullRequests.value = payload;
         }
-        preloadTopPullRequestDetails(payload);
-        return requestId === pullRequestsRequestId ? pullRequests.value : payload;
+        if (shouldPreloadDetails) {
+          preloadTopPullRequestDetails(payload);
+        }
+        return updateActive && requestId === pullRequestsRequestId ? pullRequests.value : payload;
       })
       .catch((error) => {
         if (cached) return cached;
@@ -771,7 +824,7 @@ export const useGitStore = defineStore('git', () => {
       })
       .finally(() => {
         pendingPullRequestListRequests.delete(cacheKey);
-        if (requestId === pullRequestsRequestId) {
+        if (visibleLoading && requestId === pullRequestsRequestId) {
           isPullRequestsLoading.value = false;
         }
       });
@@ -785,7 +838,7 @@ export const useGitStore = defineStore('git', () => {
     options?: TLoadPullRequestDetailOptions,
   ): Promise<IGitPullRequestDetailPayload> => {
     const updateActive = options?.updateActive ?? true;
-    const visibleLoading = options?.visibleLoading ?? true;
+    const visibleLoading = options?.visibleLoading ?? updateActive;
     const repositoryRootPath = requireRepositoryRootPath();
     const cacheKey = createPullRequestDetailCacheKey(repositoryRootPath, number);
     const cached = pullRequestDetailCache.value[cacheKey];
@@ -796,9 +849,24 @@ export const useGitStore = defineStore('git', () => {
     }
 
     const pending = pendingPullRequestDetailRequests.get(cacheKey);
-    if (pending) return pending;
+    if (pending) {
+      if (!updateActive) return pending;
+      const requestId = ++pullRequestDetailRequestId;
+      if (visibleLoading) isPullRequestDetailLoading.value = true;
+      try {
+        const payload = await pending;
+        if (requestId === pullRequestDetailRequestId) {
+          pullRequestDetail.value = payload;
+        }
+        return payload;
+      } finally {
+        if (visibleLoading && requestId === pullRequestDetailRequestId) {
+          isPullRequestDetailLoading.value = false;
+        }
+      }
+    }
 
-    const requestId = ++pullRequestDetailRequestId;
+    const requestId = updateActive ? ++pullRequestDetailRequestId : pullRequestDetailRequestId;
     if (visibleLoading) isPullRequestDetailLoading.value = true;
     const request = tauriService
       .getGitPullRequestDetail({
@@ -823,12 +891,41 @@ export const useGitStore = defineStore('git', () => {
     return request;
   };
 
+  const ensurePullRequestsLoaded = async (
+    state?: string,
+  ): Promise<IGitPullRequestSummaryPayload[]> => {
+    const support = await loadPullRequestSupport();
+    if (!support.available) return [];
+    return loadPullRequests(state, {
+      preloadDetails: true,
+      updateActive: true,
+      visibleLoading: true,
+    });
+  };
+
+  const refreshPullRequests = async (
+    state?: string,
+  ): Promise<IGitPullRequestSummaryPayload[]> => {
+    const support = await loadPullRequestSupport();
+    if (!support.available) return [];
+    return loadPullRequests(state, {
+      force: true,
+      preloadDetails: true,
+      updateActive: true,
+      visibleLoading: true,
+    });
+  };
+
   const preloadPullRequestsInBackground = async (): Promise<void> => {
     if (!hasRepository.value) return;
     try {
       const support = await loadPullRequestSupport();
       if (!support.available) return;
-      await loadPullRequests('open');
+      await loadPullRequests('open', {
+        preloadDetails: true,
+        updateActive: false,
+        visibleLoading: false,
+      });
     } catch {
       // Background PR preloading is best-effort only.
     }
@@ -1018,6 +1115,8 @@ export const useGitStore = defineStore('git', () => {
     loadPullRequestSupport,
     loadPullRequests,
     loadPullRequestDetail,
+    ensurePullRequestsLoaded,
+    refreshPullRequests,
     preloadPullRequestsInBackground,
     createPullRequest,
     mergePullRequest,
