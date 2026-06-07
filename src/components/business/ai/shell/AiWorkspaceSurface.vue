@@ -56,7 +56,6 @@ const handleRestartSidecar = async (): Promise<void> => {
 
 <template>
   <Card
-    data-shell-resize-responder
     class="ai-assistant-card flex h-full min-h-0 w-full flex-1 gap-0 rounded-none border-0 bg-transparent py-0 shadow-none"
   >
     <CardContent class="ai-workspace-shell flex min-h-0 flex-1 px-0 pb-0 pt-0">
@@ -76,7 +75,6 @@ const handleRestartSidecar = async (): Promise<void> => {
               <button
                 v-if="!isRightSidebarVisible"
                 type="button"
-                data-shell-resize-fixed-layer
                 class="ai-icon-button ai-right-sidebar-toggle-btn"
                 :aria-label="isRightSidebarVisible ? '收起右侧面板' : '展开右侧面板'"
                 :aria-expanded="isRightSidebarVisible"
@@ -86,7 +84,6 @@ const handleRestartSidecar = async (): Promise<void> => {
               </button>
               <button
                 type="button"
-                data-shell-resize-fixed-layer
                 class="ai-icon-button ai-right-sidebar-toggle-btn ai-sidecar-restart-btn"
                 title="重启 Agent sidecar"
                 aria-label="重启 Agent sidecar"
@@ -108,10 +105,9 @@ const handleRestartSidecar = async (): Promise<void> => {
           :class="isRightSidebarVisible ? 'w-[320px]' : 'w-0'"
         >
           <div v-if="isRightSidebarVisible" class="ai-workspace-right-sidebar__inner">
-            <div class="ai-workspace-right-sidebar__header" data-shell-resize-fixed-layer>
+            <div class="ai-workspace-right-sidebar__header">
               <button
                 type="button"
-                data-shell-resize-fixed-layer
                 class="ai-icon-button ai-right-sidebar-toggle-btn"
                 aria-label="收起右侧面板"
                 aria-expanded="true"
@@ -121,7 +117,6 @@ const handleRestartSidecar = async (): Promise<void> => {
               </button>
               <button
                 type="button"
-                data-shell-resize-fixed-layer
                 class="ai-icon-button ai-right-sidebar-toggle-btn ai-sidecar-restart-btn"
                 title="重启 Agent sidecar"
                 aria-label="重启 Agent sidecar"
@@ -185,9 +180,6 @@ const handleRestartSidecar = async (): Promise<void> => {
   justify-content: flex-end;
   gap: 4px;
   padding: 12px 18px 10px;
-  contain: layout paint;
-  transform: translateZ(0);
-  backface-visibility: hidden;
 }
 
 .ai-workspace-right-sidebar__empty {
@@ -214,9 +206,6 @@ const handleRestartSidecar = async (): Promise<void> => {
   border-radius: 6px;
   background: transparent;
   color: var(--text-tertiary);
-  contain: layout paint;
-  transform: translateZ(0);
-  backface-visibility: hidden;
 }
 
 .ai-right-sidebar-toggle-btn:hover {
@@ -251,19 +240,9 @@ const handleRestartSidecar = async (): Promise<void> => {
 
 :global(html.is-resizing) .ai-workspace-right-sidebar,
 :global(html.is-resizing) .ai-workspace-right-sidebar__header,
-:global(html.is-resizing) .ai-right-sidebar-toggle-btn,
-:global(html.is-resizing) [data-shell-resize-fixed-layer] {
+:global(html.is-resizing) .ai-right-sidebar-toggle-btn {
   animation: none !important;
   transition: none !important;
-}
-
-:global(html.is-resizing) .ai-workspace-right-sidebar__header,
-:global(html.is-resizing) .ai-right-sidebar-toggle-btn,
-:global(html.is-resizing) [data-shell-resize-fixed-layer] {
-  contain: layout paint;
-  transform: translateZ(0);
-  backface-visibility: hidden;
-  will-change: transform;
 }
 
 :global(html.is-resizing) .ai-right-sidebar-toggle-btn {
