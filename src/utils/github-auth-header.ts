@@ -1,4 +1,8 @@
-import { connectGithub, getGithubAuthStatus } from '@/services/tauri.github-auth';
+import {
+  connectGithub,
+  disconnectGithub,
+  getGithubAuthStatus,
+} from '@/services/tauri.github-auth';
 import { useGitStore } from '@/store/git';
 import type { IGitHubAuthStatusPayload } from '@/services/tauri.github-auth';
 import { openExternalUrl } from '@/utils/browser';
@@ -12,6 +16,7 @@ let currentStatus: IGitHubAuthStatusPayload | null = null;
 let isLoading = false;
 let isStarted = false;
 let renderQueued = false;
+let isMenuOpen = false;
 
 const getRepositoryRootPath = (): string | null => {
   try {
@@ -21,13 +26,18 @@ const getRepositoryRootPath = (): string | null => {
   }
 };
 
-const createIcon = (name: 'github' | 'loader'): HTMLSpanElement => {
+const createIcon = (name: 'github' | 'loader' | 'external' | 'switch'): HTMLSpanElement => {
   const icon = document.createElement('span');
   icon.setAttribute('aria-hidden', 'true');
-  icon.className =
+  icon.className = `source-control-github-auth-icon ${
     name === 'github'
-      ? 'source-control-github-auth-icon icon-[lucide--github]'
-      : 'source-control-github-auth-icon icon-[lucide--loader-circle]';
+      ? 'icon-[lucide--github]'
+      : name === 'loader'
+        ? 'icon-[lucide--loader-circle]'
+        : name === 'external'
+          ? 'icon-[lucide--external-link]'
+          : 'icon-[lucide--refresh-cw]'
+  }`;
   return icon;
 };
 
@@ -80,6 +90,7 @@ const getSnapshot = (repositoryRootPath: string | null): string =>
   JSON.stringify({
     repositoryRootPath,
     isLoading,
+    isMenuOpen,
     authenticated: currentStatus?.authenticated ?? false,
     login: currentStatus?.login ?? null,
     avatarUrl: currentStatus?.avatarUrl ?? null,
@@ -87,15 +98,33 @@ const getSnapshot = (repositoryRootPath: string | null): string =>
     message: currentStatus?.message ?? null,
   });
 
+const closeMenu = (): void => {
+  if (!isMenuOpen) {
+    return;
+  }
+  isMenuOpen = false;
+  renderAllGithubAuthHeaders();
+};
+
+const promptGitHubLogin = (): void => {
+  openExternalUrl(GITHUB_LOGIN_URL);
+};
+
+const refreshCurrentRepositoryAuth = (): void => {
+  const repositoryRootPath = getRepositoryRootPath();
+  if (repositoryRootPath) {
+    void refreshAuthStatusForRepository(repositoryRootPath);
+  }
+};
+
 const handleButtonClick = async (): Promise<void> => {
   if (isLoading) {
     return;
   }
 
   if (currentStatus?.authenticated) {
-    if (currentStatus.htmlUrl) {
-      openExternalUrl(currentStatus.htmlUrl);
-    }
+    isMenuOpen = !isMenuOpen;
+    renderAllGithubAuthHeaders();
     return;
   }
 
@@ -110,7 +139,7 @@ const handleButtonClick = async (): Promise<void> => {
   try {
     currentStatus = await connectGithub(repositoryRootPath);
     if (!currentStatus.authenticated) {
-      openExternalUrl(GITHUB_LOGIN_URL);
+      promptGitHubLogin();
     }
   } catch (error) {
     currentStatus = {
@@ -129,6 +158,79 @@ const handleButtonClick = async (): Promise<void> => {
   }
 };
 
+const handleOpenProfile = (): void => {
+  const htmlUrl = currentStatus?.htmlUrl;
+  closeMenu();
+  if (htmlUrl) {
+    openExternalUrl(htmlUrl);
+  }
+};
+
+const handleSwitchAccount = async (): Promise<void> => {
+  const repositoryRootPath = getRepositoryRootPath();
+  if (!repositoryRootPath || isLoading) {
+    return;
+  }
+
+  isMenuOpen = false;
+  isLoading = true;
+  renderAllGithubAuthHeaders();
+
+  try {
+    currentStatus = await disconnectGithub(repositoryRootPath);
+    promptGitHubLogin();
+  } catch (error) {
+    currentStatus = {
+      authenticated: false,
+      login: null,
+      name: null,
+      avatarUrl: null,
+      htmlUrl: null,
+      email: null,
+      source: null,
+      message: error instanceof Error ? error.message : '切换 GitHub 账号失败',
+    };
+  } finally {
+    isLoading = false;
+    renderAllGithubAuthHeaders();
+  }
+};
+
+const createMenuButton = (
+  iconName: 'external' | 'switch',
+  label: string,
+  onClick: () => void,
+): HTMLButtonElement => {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'source-control-github-auth-menu-btn';
+  button.title = label;
+  button.setAttribute('aria-label', label);
+  button.append(createIcon(iconName));
+  button.addEventListener('click', (event) => {
+    event.stopPropagation();
+    onClick();
+  });
+  return button;
+};
+
+const createAccountMenu = (): HTMLDivElement => {
+  const menu = document.createElement('div');
+  menu.className = 'source-control-github-auth-menu';
+  menu.addEventListener('click', (event) => {
+    event.stopPropagation();
+  });
+
+  menu.append(
+    createMenuButton('external', '打开 GitHub', handleOpenProfile),
+    createMenuButton('switch', '切换账号', () => {
+      void handleSwitchAccount();
+    }),
+  );
+
+  return menu;
+};
+
 const renderGithubAuthHeader = (container: Element, repositoryRootPath: string | null): void => {
   if (!(container instanceof HTMLElement)) {
     return;
@@ -143,15 +245,20 @@ const renderGithubAuthHeader = (container: Element, repositoryRootPath: string |
   container.classList.add('is-github-auth-slot');
   container.replaceChildren();
 
+  const wrapper = document.createElement('div');
+  wrapper.className = 'source-control-github-auth-wrap';
+
   const button = document.createElement('button');
   button.type = 'button';
   button.className = 'source-control-github-auth';
   button.disabled = isLoading || !repositoryRootPath;
   button.title = createButtonTitle();
   button.setAttribute('aria-label', button.title);
+  button.setAttribute('aria-expanded', String(isMenuOpen && Boolean(currentStatus?.authenticated)));
   button.classList.toggle('is-connected', Boolean(currentStatus?.authenticated));
   button.classList.toggle('is-loading', isLoading);
-  button.addEventListener('click', () => {
+  button.addEventListener('click', (event) => {
+    event.stopPropagation();
     void handleButtonClick();
   });
 
@@ -165,7 +272,13 @@ const renderGithubAuthHeader = (container: Element, repositoryRootPath: string |
   label.textContent = createButtonLabel();
   button.append(label);
 
-  container.append(button);
+  wrapper.append(button);
+
+  if (currentStatus?.authenticated && isMenuOpen) {
+    wrapper.append(createAccountMenu());
+  }
+
+  container.append(wrapper);
 };
 
 const renderAllGithubAuthHeaders = (): void => {
@@ -207,6 +320,7 @@ const syncGithubAuthHeader = (): void => {
   if (repositoryRootPath !== currentRepositoryRoot) {
     currentRepositoryRoot = repositoryRootPath;
     currentStatus = null;
+    isMenuOpen = false;
     if (repositoryRootPath) {
       void refreshAuthStatusForRepository(repositoryRootPath);
     }
@@ -227,6 +341,20 @@ const queueRender = (): void => {
   });
 };
 
+const handleDocumentPointerDown = (event: PointerEvent): void => {
+  if (
+    event.target instanceof Element &&
+    event.target.closest('.source-control-github-auth-wrap')
+  ) {
+    return;
+  }
+  closeMenu();
+};
+
+const handleWindowFocus = (): void => {
+  refreshCurrentRepositoryAuth();
+};
+
 export const initGitHubAuthHeaderEnhancement = (): void => {
   if (isStarted || typeof window === 'undefined' || typeof document === 'undefined') {
     return;
@@ -239,6 +367,8 @@ export const initGitHubAuthHeaderEnhancement = (): void => {
     subtree: true,
     characterData: true,
   });
+  document.addEventListener('pointerdown', handleDocumentPointerDown, true);
+  window.addEventListener('focus', handleWindowFocus);
 
   queueRender();
 };
@@ -246,5 +376,8 @@ export const initGitHubAuthHeaderEnhancement = (): void => {
 export const stopGitHubAuthHeaderEnhancement = (): void => {
   observer?.disconnect();
   observer = null;
+  document.removeEventListener('pointerdown', handleDocumentPointerDown, true);
+  window.removeEventListener('focus', handleWindowFocus);
   isStarted = false;
+  isMenuOpen = false;
 };
