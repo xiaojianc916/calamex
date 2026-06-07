@@ -92,3 +92,54 @@
   在 switched 时取事件值、否则保持原值，与 resolve_alt_screen_state_after_data 一致；其余抑制
   窗口逻辑不变。
 - 验证：`cargo test -p calamex`、`cargo clippy`、`cargo test`。
+
+## 工作区搜索结果的 top-k 堆选择
+
+- 文件：`src-tauri/src/commands/search/find.rs`
+- 问题：文件名 / 符号搜索原先把全部命中收集进 `Vec`，整体 `sort` 后再 `truncate` 到
+  limit。命中数远大于 limit（大仓库模糊匹配常见）时，对 n 条结果做 O(n log n) 全量排序
+  纯属浪费——最终只展示前 limit（默认 200）条。
+- 算法：定长最小堆 top-k 选择。用容量为 k 的 `BinaryHeap<RankedResult>`（按 score 反序，
+  使堆顶为“当前最差”）边扫描边维护：未满则入堆，已满且更优则替换堆顶，否则丢弃；最后
+  `into_sorted_results` 一次性出堆并按 (score, relative_path) 稳定排序返回。
+- 复杂度（设命中 n 条、取前 k 条）：
+  - 之前：O(n log n)（全量排序）+ O(n) 额外内存。
+  - 之后：O(n log k) 时间 + O(k) 内存；k ≪ n 时显著下降（n=50k、k=200 约省一个数量级）。
+- 正确性：最终顺序与“全量排序后取前 k”完全一致（同样的 (score, relative_path) 次序）；
+  并列项排序键稳定。新增单测覆盖：少于 k 条全保留、超过 k 条只保留最优 k、并列项按
+  relative_path 决胜。
+- 验证：`cargo test -p calamex commands::search`、`cargo clippy`、`cargo test`。
+
+## 内容搜索的并行化（rayon）
+
+- 文件：`src-tauri/src/commands/search/find.rs`、`src-tauri/Cargo.toml`（`rayon` 可选依赖，
+  随 `desktop` 特性启用）。
+- 问题：内容搜索 `search_file_contents` 原先串行遍历候选文件，逐个读盘 + 正则扫描。文件数
+  多时（全仓库内容检索）单线程吞吐受限，无法利用多核。
+- 算法：按文件粒度并行。用 `par_iter` 对候选文件并发执行“读盘 + 单文件扫描”，每个文件
+  产出局部命中向量，再按文件原始顺序归并并截断到 limit。文件之间无共享可变状态，正则
+  matcher 以 `Sync` 引用跨线程共享（只读）。
+- 复杂度（设文件数 F、单文件扫描成本 c、核数 P）：
+  - 之前：O(F·c) 串行。
+  - 之后：O(F·c / P) 并行墙钟（受 IO 带宽与调度开销约束）；总工作量不变。
+- 正确性：结果集合与串行版一致；按文件顺序归并后再截断，保证 limit 截断点稳定、可复现。
+  匹配 matcher 只读共享不引入数据竞争。
+- 验证：`cargo clippy`、`cargo test`；本机用大仓库内容检索对比墙钟耗时后补录实测。
+
+## 内容模糊匹配（nucleo 子序列）+ 高亮区间回填
+
+- 文件：`src-tauri/src/commands/search/{find.rs,types.rs}`、前端 `SearchSidebarPanel.vue`。
+- 问题：内容搜索此前只有“精确 / 正则”两种模式。用户记不全确切串、只记得几个零散字符时，
+  精确匹配召回为 0，正则又要求手写表达式，门槛高。
+- 算法：可选的子序列模糊匹配（请求新增 `content_fuzzy`，默认 false=精确，开启=内容走模糊）。
+  解析一次 `nucleo` 模式后用 `par_iter` 按文件并行，对每个非空行做子序列匹配；命中则记录
+  匹配字符下标区间（首末下标）回填到结果 `match_start/match_end`，前端复用既有紧凑高亮路径
+  直接渲染。模糊与正则在前端互斥（同时开启语义不清），文件名/符号一律保持原模糊匹配不受开关影响。
+- 复杂度（设候选行 L、行均长 m、核数 P）：
+  - 子序列匹配单行 O(m)，整体 O(L·m / P) 并行；模式仅解析一次，避免每行重建。
+- 正确性：`content_fuzzy=false` 时行为与原精确内容搜索逐字节一致（新增单测断言模糊子序列
+  在精确模式下不命中）；`true` 时命中子序列并返回非空高亮区间（新增单测断言 query "dapnow"
+  命中 "deploy_app_now" 且 match_start < match_end）。前端新增单测断言开关下发 `contentFuzzy`
+  且与正则互斥。
+- 验证：`cargo clippy`、`cargo test`、`pnpm test`、`pnpm typecheck`、`pnpm lint`；
+  其中 `cargo build` 需重新生成 `src/bindings/tauri.ts`（新增 `contentFuzzy` 字段）。
