@@ -243,34 +243,57 @@ pub(super) fn remove_untracked_worktree_path(
     repository_root: &Path,
     relative_path: &Path,
 ) -> Result<(), String> {
-    let target_path = repository_root.join(relative_path);
-    if !target_path.exists() {
-        return Ok(());
-    }
-
-    let canonical_root = normalize_path_for_git(
-        &repository_root
-            .canonicalize()
-            .map_err(|e| format!("读取 Git 工作区根目录失败：{e}"))?,
-    );
-    let canonical_target = normalize_path_for_git(
-        &target_path
-            .canonicalize()
-            .map_err(|e| format!("读取未跟踪文件路径失败：{e}"))?,
-    );
-
-    if !canonical_target.starts_with(&canonical_root) {
+    // 纵深防御：relative_path 来自 resolve_pathspecs，已保证为「不含 `..` 的相对路径」，
+    // 目标必然落在工作区根目录之内。此处仅做词法越界校验，不调用 canonicalize ——
+    // 因为 canonicalize 会跟随目标自身的符号链接 / junction，把「指向工作区外部的链接」
+    // 解析成外部真实路径，从而把本应允许删除的链接误判为「工作区之外」而拒绝删除。
+    if relative_path.is_absolute()
+        || relative_path
+            .components()
+            .any(|component| matches!(component, Component::ParentDir))
+    {
         return Err("拒绝删除 Git 工作区之外的未跟踪路径。".into());
     }
 
-    let metadata = fs::symlink_metadata(&target_path).map_err(|e| format!("读取未跟踪路径元数据失败：{e}"))?;
-    if metadata.is_dir() {
+    let target_path = repository_root.join(relative_path);
+
+    // 用 symlink_metadata 读取目标本体，绝不跟随符号链接：
+    // - 目标已不存在（含手动删除）时幂等返回；
+    // - 损坏的符号链接也能被识别并删除；
+    // - 指向工作区外部的符号链接 / junction，删除的是链接本身，而非其指向的内容。
+    let metadata = match fs::symlink_metadata(&target_path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(format!("读取未跟踪路径元数据失败：{error}")),
+    };
+
+    let file_type = metadata.file_type();
+    if file_type.is_symlink() {
+        // 符号链接（含指向目录的链接 / junction）：删除链接本体，绝不递归删除其目标内容。
+        remove_symlink_path(&target_path)?;
+    } else if file_type.is_dir() {
         fs::remove_dir_all(&target_path).map_err(|e| format!("删除未跟踪目录失败：{e}"))?;
     } else {
         fs::remove_file(&target_path).map_err(|e| format!("删除未跟踪文件失败：{e}"))?;
     }
 
     Ok(())
+}
+
+/// 删除符号链接本体（不触碰其指向的目标内容）。
+#[cfg(windows)]
+fn remove_symlink_path(target_path: &Path) -> Result<(), String> {
+    // Windows 下目录符号链接 / junction 需用 remove_dir 删除链接本体，
+    // 文件符号链接用 remove_file；先按目录删除，失败再退回文件删除。
+    fs::remove_dir(target_path)
+        .or_else(|_| fs::remove_file(target_path))
+        .map_err(|e| format!("删除未跟踪符号链接失败：{e}"))
+}
+
+/// 删除符号链接本体（不触碰其指向的目标内容）。
+#[cfg(not(windows))]
+fn remove_symlink_path(target_path: &Path) -> Result<(), String> {
+    fs::remove_file(target_path).map_err(|e| format!("删除未跟踪符号链接失败：{e}"))
 }
 
 fn resolve_single_relative_path(repository_root: &Path, path: &str) -> Result<PathBuf, String> {
