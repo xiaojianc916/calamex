@@ -21,19 +21,14 @@ const getRepositoryRootPath = (): string | null => {
   }
 };
 
-const createGitHubIcon = (): SVGSVGElement => {
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  svg.setAttribute('viewBox', '0 0 16 16');
-  svg.setAttribute('aria-hidden', 'true');
-  svg.classList.add('source-control-github-auth-icon');
-
-  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-  path.setAttribute(
-    'd',
-    'M8 .2a8 8 0 0 0-2.53 15.6c.4.07.55-.17.55-.38v-1.32c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.06-.49.06-.49.8.06 1.23.83 1.23.83.72 1.23 1.88.87 2.34.67.07-.52.28-.87.51-1.07-1.78-.2-3.65-.89-3.65-3.95 0-.87.31-1.58.82-2.14-.08-.2-.36-1.02.08-2.11 0 0 .67-.21 2.2.82A7.64 7.64 0 0 1 8 3.86c.68 0 1.36.09 2 .27 1.52-1.03 2.19-.82 2.19-.82.44 1.09.16 1.91.08 2.11.51.56.82 1.27.82 2.14 0 3.07-1.87 3.75-3.66 3.95.29.25.54.73.54 1.48v2.2c0 .21.14.46.55.38A8 8 0 0 0 8 .2Z',
-  );
-  svg.append(path);
-  return svg;
+const createIcon = (name: 'github' | 'loader'): HTMLSpanElement => {
+  const icon = document.createElement('span');
+  icon.setAttribute('aria-hidden', 'true');
+  icon.className =
+    name === 'github'
+      ? 'source-control-github-auth-icon icon-[lucide--github]'
+      : 'source-control-github-auth-icon icon-[lucide--loader-circle]';
+  return icon;
 };
 
 const createAvatar = (status: IGitHubAuthStatusPayload): HTMLElement => {
@@ -46,34 +41,39 @@ const createAvatar = (status: IGitHubAuthStatusPayload): HTMLElement => {
     return image;
   }
 
-  return createGitHubIcon();
+  return createIcon('github');
+};
+
+const resolveCredentialSourceLabel = (source: string | null): string => {
+  switch (source) {
+    case 'github-cli':
+      return 'GitHub CLI';
+    case 'git-credential':
+      return 'Git Credential';
+    default:
+      return 'GitHub';
+  }
 };
 
 const createButtonLabel = (): string => {
   if (isLoading) {
-    return 'GitHub...';
+    return '连接中';
   }
 
   if (currentStatus?.authenticated) {
     return currentStatus.login ?? 'GitHub';
   }
 
-  return '连接 GitHub';
+  return 'GitHub';
 };
 
 const createButtonTitle = (): string => {
   if (currentStatus?.authenticated) {
     const displayName = currentStatus.name || currentStatus.login || 'GitHub';
-    const source =
-      currentStatus.source === 'github-cli'
-        ? 'GitHub CLI'
-        : currentStatus.source === 'git-credential'
-          ? 'Git Credential'
-          : 'GitHub';
-    return `已通过 ${source} 连接 ${displayName}`;
+    return `已通过 ${resolveCredentialSourceLabel(currentStatus.source)} 连接 ${displayName}`;
   }
 
-  return currentStatus?.message || '连接 GitHub 以显示账号与作者信息';
+  return currentStatus?.message || '连接 GitHub 账号';
 };
 
 const getSnapshot = (repositoryRootPath: string | null): string =>
@@ -155,7 +155,9 @@ const renderGithubAuthHeader = (container: Element, repositoryRootPath: string |
     void handleButtonClick();
   });
 
-  const visual = currentStatus?.authenticated ? createAvatar(currentStatus) : createGitHubIcon();
+  const visual = currentStatus?.authenticated
+    ? createAvatar(currentStatus)
+    : createIcon(isLoading ? 'loader' : 'github');
   button.append(visual);
 
   const label = document.createElement('span');

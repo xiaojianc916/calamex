@@ -6,7 +6,7 @@
 
 .source-control-github-auth {
   display: inline-flex;
-  max-width: 138px;
+  max-width: 116px;
   min-height: 24px;
   align-items: center;
   gap: 6px;
@@ -52,7 +52,11 @@
 }
 
 .source-control-github-auth-icon {
-  fill: currentColor;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: currentColor;
+  font-size: 15px;
 }
 
 .source-control-github-auth-avatar {
@@ -67,7 +71,21 @@
   white-space: nowrap;
 }
 
+.source-control-github-auth.is-loading .source-control-github-auth-icon {
+  animation: source-control-github-auth-spin 900ms linear infinite;
+}
+
 .source-control-github-auth.is-loading .source-control-github-auth-icon,
 .source-control-github-auth.is-loading .source-control-github-auth-avatar {
-  opacity: 0.62;
+  opacity: 0.72;
+}
+
+@keyframes source-control-github-auth-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
 }
