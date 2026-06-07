@@ -31,6 +31,9 @@ const SSH_TRANSFER_TIMEOUT_MS = SSH_CONNECT_BUDGET_MS + 330_000; // 后端传输
 const SSH_PREVIEW_READ_TIMEOUT_MS = SSH_CONNECT_BUDGET_MS + 75_000; // 后端预览读 60s，总 105s
 const SSH_MUTATION_TIMEOUT_MS = SSH_CONNECT_BUDGET_MS + 45_000; // 后端写/删/改/建目录 ≈ 30s，总 75s
 
+const isCanceledIpcError = (error: unknown): boolean =>
+  isAppError(error) && error.code === 'ipc.canceled';
+
 const testSshConnectionIpc = (
   payload: TSshRequest<'testSshConnection'>,
   options?: IIpcCallOptions,
@@ -307,7 +310,7 @@ const withChangedHostKeyPrompt = <TInput extends ISshHostKeyEndpoint, TOutput>(
         throw error;
       }
 
-      await trustSshHostKeyIpc({ host: input.host, port: input.port });
+      await trustSshHostKeyIpc({ host: input.host, port: input.port }, options);
       return operation(input, options);
     }
   };
@@ -326,7 +329,7 @@ const testSshConnectionWithHostKeyPrompt: typeof testSshConnectionIpc = async (i
     return result;
   }
 
-  await trustSshHostKeyIpc({ host: endpoint.host, port: endpoint.port });
+  await trustSshHostKeyIpc({ host: endpoint.host, port: endpoint.port }, options);
   return testSshConnectionIpc(input, options);
 };
 
@@ -394,7 +397,10 @@ const uploadSshFileWithOverwritePrompt = async (
   let targetExists = false;
   try {
     targetExists = await remoteUploadTargetExists(payload, options);
-  } catch {
+  } catch (error) {
+    if (isCanceledIpcError(error)) {
+      throw error;
+    }
     // 探测失败不应阻断上传：退化为直接上传，由后端安全替换保证覆盖的原子性。
     targetExists = false;
   }
@@ -433,7 +439,7 @@ export const sshTauriService: TSshTauriService = {
 
   getSshPassword: getSshPasswordIpc,
 
-  listSshConfigHosts: () => listSshConfigHostsIpc(),
+  listSshConfigHosts: (options?: IIpcCallOptions) => listSshConfigHostsIpc(options),
 
   listSshDirectory: withChangedHostKeyPrompt(listSshDirectoryIpc),
 

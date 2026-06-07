@@ -213,6 +213,48 @@ describe('tauriService', () => {
     expect(caughtError).toBeInstanceOf(AppError);
   });
 
+  it('SSH 配置主机列表支持取消，已取消时不触发 invoke', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const listHosts = tauriService.listSshConfigHosts as unknown as (
+      options?: { signal?: AbortSignal },
+    ) => Promise<unknown>;
+
+    await expect(listHosts({ signal: controller.signal })).rejects.toMatchObject({
+      code: 'ipc.canceled',
+      scope: 'ipc',
+    });
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it('SSH 目录读取支持取消，已取消时不触发 invoke', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const listDirectory = tauriService.listSshDirectory as unknown as (
+      payload: Parameters<typeof tauriService.listSshDirectory>[0],
+      options?: { signal?: AbortSignal },
+    ) => Promise<unknown>;
+
+    await expect(
+      listDirectory(
+        {
+          host: 'example.com',
+          port: 22,
+          username: 'root',
+          authMode: 'password',
+          identityPath: null,
+          password: 'password',
+          path: '.',
+        },
+        { signal: controller.signal },
+      ),
+    ).rejects.toMatchObject({
+      code: 'ipc.canceled',
+      scope: 'ipc',
+    });
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
   it('agentSidecarResolveApproval 复用 sidecar 长任务超时预算', async () => {
     vi.useFakeTimers();
     invokeMock.mockImplementation(() => new Promise(() => undefined));
