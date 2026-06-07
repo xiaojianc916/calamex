@@ -31,15 +31,31 @@ const reversePatchLine = (line: string): string => {
   return line;
 };
 
+const PATH_EQUALITY_NORMALIZE_OPTIONS = {
+  collapseDuplicateSeparators: true,
+  trimTrailingSeparator: true,
+} as const;
+
+/**
+ * 与 areFileSystemPathsEqual 完全相同的归一化口径，用作 Set 的成员 key。
+ * 二者必须保持一致：否则同一文件可能在 Set 里被算成两个不同 key，导致回滚集漏文件。
+ */
+const toPathEqualityKey = (path: string): string =>
+  normalizeFileSystemPath(path, PATH_EQUALITY_NORMALIZE_OPTIONS);
+
 export const buildReversePatchSet = (
   patches: readonly IAiPatchSet[] | undefined,
   summary: IAiAgentPatchSummary,
 ): IAiPatchSet | null => {
+  // 把 summary 的文件路径预归一化进 Set：成员判断 O(1)。
+  // 原实现对每个补丁文件都做 summary.files.some(... areFileSystemPathsEqual) 线性扫描，
+  // 总复杂度 O(补丁文件数 × summary 文件数)，且每次比较都重复归一化两条路径；
+  // 现在降到 O(补丁文件数 + summary 文件数)，每条路径只归一化一次。
+  const summaryPathKeys = new Set(summary.files.map((file) => toPathEqualityKey(file.path)));
+
   const files = (patches ?? [])
     .flatMap((patch) => patch.files)
-    .filter((patchFile) =>
-      summary.files.some((file) => areFileSystemPathsEqual(file.path, patchFile.path)),
-    )
+    .filter((patchFile) => summaryPathKeys.has(toPathEqualityKey(patchFile.path)))
     .map((file) => ({
       path: file.path,
       originalHash: file.originalHash,
