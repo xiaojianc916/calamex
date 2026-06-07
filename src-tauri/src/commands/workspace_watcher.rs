@@ -64,7 +64,6 @@ const NATIVE_RECURSIVE: bool = false;
 /// git 仓库），这些目录在依赖安装 / 构建 / git 操作时也会喷出成千上万条无意义
 /// 事件、灌满去抖窗口、拖垮前端刷新。语义对齐编辑器通行的 watcher 排除清单。
 const IGNORED_DIR_NAMES: &[&str] = &[
-    ".git",
     ".hg",
     ".svn",
     "node_modules",
