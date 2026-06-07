@@ -215,7 +215,9 @@ fn resolve_github_auth_base(host: &str) -> String {
     if normalized_host == "github.com" {
         "https://github.com".to_string()
     } else {
-        format!("https://{host}")
+        let mut auth_base = "https://".to_string();
+        auth_base.push_str(host);
+        auth_base
     }
 }
 
@@ -312,22 +314,21 @@ async fn resolve_github_auth_credential(
         }
     }
 
-    let credential = resolve_keyring_credential(host)
-        .await
-        .or_else(|| {
-            resolve_github_cli_token(host).map(|token| GitHubResolvedCredential {
-                token,
-                source: "github-cli".to_string(),
-            })
+    let credential = if let Some(credential) = resolve_keyring_credential(host).await {
+        Some(credential)
+    } else if let Some(token) = resolve_github_cli_token(host) {
+        Some(GitHubResolvedCredential {
+            token,
+            source: "github-cli".to_string(),
         })
-        .or_else(|| {
-            futures_executor::block_on(resolve_git_credential_token(repository_root, host)).map(
-                |token| GitHubResolvedCredential {
-                    token,
-                    source: "git-credential".to_string(),
-                },
-            )
-        });
+    } else {
+        resolve_git_credential_token(repository_root, host)
+            .await
+            .map(|token| GitHubResolvedCredential {
+                token,
+                source: "git-credential".to_string(),
+            })
+    };
 
     if let Ok(mut cache) = github_auth_credential_cache().lock() {
         cache.insert(
