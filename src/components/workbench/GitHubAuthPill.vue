@@ -67,9 +67,14 @@
         </button>
       </div>
 
-      <div class="source-control-github-device-status">
-        <span class="source-control-github-device-pulse" aria-hidden="true" />
-        <span>等待授权确认</span>
+      <div class="source-control-github-device-footer">
+        <div class="source-control-github-device-status">
+          <span class="source-control-github-device-pulse" aria-hidden="true" />
+          <span>等待授权确认</span>
+        </div>
+        <button type="button" class="source-control-github-device-cancel" @click="handleCancelAuth">
+          取消
+        </button>
       </div>
     </section>
 
@@ -107,7 +112,9 @@ const props = defineProps<{
 const authStore = useGitHubAuthStore();
 const isMenuOpen = ref(false);
 const disabled = computed(
-  () => !props.repositoryRootPath || (authStore.isLoading && !authStore.status.authenticated),
+  () =>
+    !props.repositoryRootPath ||
+    (authStore.isLoading && !authStore.status.authenticated && !authStore.deviceAuth),
 );
 
 const closeMenu = (): void => {
@@ -136,6 +143,10 @@ const handleCopyCode = async (): Promise<void> => {
 
 const handleReopenPage = (): void => {
   authStore.reopenVerificationPage();
+};
+
+const handleCancelAuth = (): void => {
+  authStore.cancelDeviceAuth();
 };
 
 const handleOpenProfile = (): void => {

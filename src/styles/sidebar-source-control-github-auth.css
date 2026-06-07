@@ -239,14 +239,36 @@
   color: #fff;
 }
 
+.source-control-github-device-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 12px;
+}
+
 .source-control-github-device-status {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  margin-top: 12px;
   color: rgba(71, 85, 105, 0.68);
   font-size: 11.5px;
   line-height: 1;
+}
+
+.source-control-github-device-cancel {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: rgba(71, 85, 105, 0.64);
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.source-control-github-device-cancel:hover {
+  color: rgba(15, 23, 42, 0.88);
 }
 
 .source-control-github-device-pulse {
