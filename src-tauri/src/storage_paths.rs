@@ -222,9 +222,9 @@ mod tests {
     use std::collections::HashMap;
     use std::ffi::OsString;
 
-    fn lookup(
-        map: &HashMap<&'static str, &'static str>,
-    ) -> impl Fn(&str) -> Option<OsString> + '_ {
+    fn lookup<'a>(
+        map: &'a HashMap<&'static str, &'static str>,
+    ) -> impl Fn(&str) -> Option<OsString> + 'a {
         move |key| map.get(key).map(|value| OsString::from(*value))
     }
 

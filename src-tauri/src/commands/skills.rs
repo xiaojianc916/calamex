@@ -15,7 +15,7 @@ use crate::storage_paths::roaming_root;
 use std::{
     fs,
     path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
+    time::UNIX_EPOCH,
 };
 
 /// 单个技能说明文件名（Mastra 技能约定）。
@@ -61,7 +61,7 @@ pub fn list_skills() -> Result<SkillListPayload, String> {
         });
     }
 
-    skills.sort_by(|left, right| left.name.to_lowercase().cmp(&right.name.to_lowercase()));
+    skills.sort_by_key(|left| left.name.to_lowercase());
 
     Ok(SkillListPayload {
         root_path: root.to_string_lossy().to_string(),
