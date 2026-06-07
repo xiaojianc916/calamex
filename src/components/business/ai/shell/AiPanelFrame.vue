@@ -26,11 +26,11 @@ withDefaults(
     :aria-label="decorative ? undefined : ariaLabel"
     :aria-hidden="decorative ? 'true' : undefined"
   >
-    <header class="ai-panel-frame__header">
-      <div class="ai-panel-frame__mark">
+    <header class="ai-panel-frame__header" data-shell-resize-fixed-layer>
+      <div class="ai-panel-frame__mark" data-shell-resize-fixed-layer>
         <slot name="mark" />
       </div>
-      <div class="ai-panel-frame__actions">
+      <div class="ai-panel-frame__actions" data-shell-resize-fixed-layer>
         <slot name="actions" />
       </div>
     </header>
@@ -47,13 +47,13 @@ withDefaults(
 
 <style scoped>
 .ai-panel-frame {
-  display: flex;
+  display: grid;
   width: 100%;
   min-width: 0;
   height: 100%;
   min-height: 0;
   flex: 1;
-  flex-direction: column;
+  grid-template-rows: 52px minmax(0, 1fr) auto;
   overflow-x: hidden;
   background: var(--ai-panel-frame-bg, var(--sidebar-bg));
   color: var(--text-primary);
@@ -61,39 +61,51 @@ withDefaults(
 
 .ai-panel-frame__header {
   position: relative;
-  display: flex;
-  flex: 0 0 auto;
+  z-index: 3;
+  display: grid;
+  min-width: 0;
   min-height: 52px;
+  height: 52px;
+  grid-template-columns: minmax(0, min(48%, 320px)) auto;
   align-items: center;
   gap: 8px;
   padding: 12px 18px 10px;
   color: var(--text-secondary);
   font-size: 12px;
   font-weight: 500;
+  contain: layout paint;
+  transform: translateZ(0);
+  backface-visibility: hidden;
 }
 
 .ai-panel-frame__mark {
   display: inline-flex;
   min-width: 0;
-  max-width: min(48%, 320px);
-  flex: 0 1 auto;
+  max-width: 100%;
   align-items: center;
   gap: 10px;
   color: var(--text-primary);
+  contain: layout paint;
+  transform: translateZ(0);
+  backface-visibility: hidden;
 }
 
 .ai-panel-frame__actions {
   display: inline-flex;
+  min-width: 0;
   flex: 0 0 auto;
   align-items: center;
+  justify-self: end;
   gap: 8px;
-  margin-left: auto;
+  contain: layout paint;
+  transform: translateZ(0);
+  backface-visibility: hidden;
 }
 
 .ai-panel-frame__body {
   display: flex;
   min-height: 0;
-  flex: 1;
+  min-width: 0;
   flex-direction: column;
   overflow: hidden;
 }
@@ -101,6 +113,14 @@ withDefaults(
 .ai-panel-frame__composer {
   position: relative;
   z-index: 1;
-  flex: 0 0 auto;
+  min-width: 0;
+}
+
+:global(html.is-resizing) .ai-panel-frame__header,
+:global(html.is-resizing) .ai-panel-frame__mark,
+:global(html.is-resizing) .ai-panel-frame__actions {
+  animation: none !important;
+  transition: none !important;
+  will-change: transform;
 }
 </style>
