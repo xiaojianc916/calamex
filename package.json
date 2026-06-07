@@ -5,10 +5,11 @@
   "type": "module",
   "packageManager": "pnpm@11.4.0",
   "engines": {
-    "node": ">=24"
+    "node": ">=26"
   },
   "scripts": {
     "check:env": "tsx scripts/check-dev-env.ts",
+    "check:rolldown": "tsx scripts/check-rolldown-ready.ts",
     "generate:shell-catalog": "tsx scripts/generate-shell-command-catalog.ts",
     "dev": "pnpm run generate:shell-catalog && vite --host 0.0.0.0 --port 1420",
     "pretauri:dev": "tsx scripts/check-dev-env.ts",
@@ -16,6 +17,8 @@
     "preview": "vite preview",
     "format": "biome check --write src/",
     "lint": "biome check src/",
+    "lint:ox": "pnpm dlx oxlint@1.68.0 src agent-sidecar/src scripts",
+    "lint:all": "pnpm lint && pnpm lint:ox",
     "typecheck": "vue-tsc --noEmit",
     "size-limit": "pnpm run build && size-limit",
     "test": "vitest run",
