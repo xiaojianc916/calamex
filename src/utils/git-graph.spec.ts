@@ -96,6 +96,62 @@ describe('buildGitGraph', () => {
     expect(octoRow?.edges.filter((edge) => edge.type === 'out').length).toBe(2);
   });
 
+  it('多轮 fork/merge 循环下泳道数保持最小并被复用（最小堆取最小空闲泳道）', () => {
+    const commits: IGitGraphInputCommit[] = [
+      { id: 'A', parentIds: ['B', 'C'] },
+      { id: 'B', parentIds: ['D'] },
+      { id: 'C', parentIds: ['D'] },
+      { id: 'D', parentIds: ['E', 'F'] },
+      { id: 'E', parentIds: ['G'] },
+      { id: 'F', parentIds: ['G'] },
+      { id: 'G', parentIds: [] },
+    ];
+
+    const layout = buildGitGraph(commits);
+
+    // 并发度始终为 2；释放的泳道应被复用而不是不断分配新泳道。
+    expect(layout.rows.length).toBe(7);
+    expect(layout.laneCount).toBe(2);
+  });
+
+  it('所有边与节点的泳道下标都在 [0, laneCount) 范围内', () => {
+    const commits: IGitGraphInputCommit[] = [
+      { id: 'A', parentIds: ['B', 'C'] },
+      { id: 'B', parentIds: ['D'] },
+      { id: 'C', parentIds: ['E'] },
+      { id: 'D', parentIds: ['F'] },
+      { id: 'E', parentIds: ['F'] },
+      { id: 'F', parentIds: [] },
+    ];
+
+    const layout = buildGitGraph(commits);
+
+    for (const row of layout.rows) {
+      expect(row.lane).toBeGreaterThanOrEqual(0);
+      expect(row.lane).toBeLessThan(layout.laneCount);
+      for (const edge of row.edges) {
+        expect(edge.fromLane).toBeGreaterThanOrEqual(0);
+        expect(edge.fromLane).toBeLessThan(layout.laneCount);
+        expect(edge.toLane).toBeGreaterThanOrEqual(0);
+        expect(edge.toLane).toBeLessThan(layout.laneCount);
+      }
+    }
+  });
+
+  it('纯函数：相同输入重跑产生完全一致的布局', () => {
+    const commits: IGitGraphInputCommit[] = [
+      { id: 'A', parentIds: ['B', 'C'] },
+      { id: 'B', parentIds: ['D'] },
+      { id: 'C', parentIds: ['D'] },
+      { id: 'D', parentIds: ['E', 'F'] },
+      { id: 'E', parentIds: ['G'] },
+      { id: 'F', parentIds: ['G'] },
+      { id: 'G', parentIds: [] },
+    ];
+
+    expect(buildGitGraph(commits)).toEqual(buildGitGraph(commits));
+  });
+
   it('泳道颜色按调色板循环取值', () => {
     expect(resolveGitGraphLaneColor(0)).toBe(resolveGitGraphLaneColor(8));
     expect(resolveGitGraphLaneColor(-1)).toBe(resolveGitGraphLaneColor(7));
