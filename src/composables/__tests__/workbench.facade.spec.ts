@@ -32,6 +32,7 @@ const {
   mockTauriService: {
     detectEnvironment: vi.fn(),
     getGitRepositoryStatus: vi.fn(),
+    getGitDiffPreview: vi.fn(),
     listWorkspaceEntries: vi.fn(),
     loadScript: vi.fn(),
     saveScript: vi.fn(),
@@ -157,6 +158,25 @@ const createEmptyGitStatusPayload = () => ({
   conflictedCount: 0,
   files: [],
   lastCommit: null,
+});
+
+const createDeferred = <T,>() => {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((innerResolve, innerReject) => {
+    resolve = innerResolve;
+    reject = innerReject;
+  });
+  return { promise, resolve, reject };
+};
+
+const createScriptPayload = (path: string, content = '#!/bin/bash\necho ok') => ({
+  path,
+  name: path.split('/').pop() ?? 'script.sh',
+  content,
+  encoding: 'utf-8' as const,
+  lineCount: content.split('\n').length,
+  charCount: content.length,
 });
 
 // ─────────────────────────────────────────────
@@ -305,14 +325,7 @@ describe('useWorkbench 特征化快照', () => {
 
       mockTauriService.loadScript.mockImplementation((path: string) => {
         if (path === '/tmp/alive.sh') {
-          return Promise.resolve({
-            path,
-            name: 'alive.sh',
-            content: '#!/bin/bash\necho alive',
-            encoding: 'utf-8',
-            lineCount: 2,
-            charCount: 21,
-          });
+          return Promise.resolve(createScriptPayload(path, '#!/bin/bash\necho alive'));
         }
         return Promise.reject(new Error('not found'));
       });
@@ -357,14 +370,7 @@ describe('useWorkbench 特征化快照', () => {
         entries: [],
       });
       mockTauriService.loadScript.mockImplementation((path: string) =>
-        Promise.resolve({
-          path,
-          name: path.endsWith('a.sh') ? 'a.sh' : 'b.sh',
-          content: '#!/bin/bash\necho ok',
-          encoding: 'utf-8',
-          lineCount: 2,
-          charCount: 20,
-        }),
+        Promise.resolve(createScriptPayload(path)),
       );
 
       await workbench.restoreSession();
@@ -495,6 +501,48 @@ describe('useWorkbench 特征化快照', () => {
       expect(editorStore.documents.length).toBe(0);
       expect(editorStore.workspaceRootPath).toBe('/next-workspace');
       expect(mockTauriService.getGitRepositoryStatus).toHaveBeenCalledWith('/next-workspace');
+    });
+  });
+
+  describe('openDocumentByPath()', () => {
+    it('工作区切换后忽略旧文件读取结果，避免旧标签回灌', async () => {
+      editorStore.setWorkspaceRootPath('/workspace-a');
+      const deferred = createDeferred<ReturnType<typeof createScriptPayload>>();
+      mockTauriService.loadScript.mockReturnValueOnce(deferred.promise);
+
+      const opening = workbench.openDocumentByPath('/workspace-a/old.sh');
+      expect(mockTauriService.loadScript).toHaveBeenCalledWith(
+        '/workspace-a/old.sh',
+        '/workspace-a',
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
+
+      editorStore.setWorkspaceRootPath('/workspace-b');
+      deferred.resolve(createScriptPayload('/workspace-a/old.sh'));
+      await opening;
+
+      expect(editorStore.documents).toHaveLength(0);
+      expect(mockMessages.success).not.toHaveBeenCalledWith('已打开 old.sh');
+    });
+
+    it('连续打开文件时取消前一个未完成读取，只保留最新文件', async () => {
+      editorStore.setWorkspaceRootPath('/workspace');
+      const first = createDeferred<ReturnType<typeof createScriptPayload>>();
+      const second = createDeferred<ReturnType<typeof createScriptPayload>>();
+      mockTauriService.loadScript.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+
+      const firstOpening = workbench.openDocumentByPath('/workspace/first.sh');
+      const firstSignal = mockTauriService.loadScript.mock.calls[0]?.[2]?.signal as AbortSignal;
+
+      const secondOpening = workbench.openDocumentByPath('/workspace/second.sh');
+      expect(firstSignal.aborted).toBe(true);
+
+      first.resolve(createScriptPayload('/workspace/first.sh'));
+      second.resolve(createScriptPayload('/workspace/second.sh'));
+      await Promise.all([firstOpening, secondOpening]);
+
+      expect(editorStore.documents.map((document) => document.path)).toEqual(['/workspace/second.sh']);
+      expect(editorStore.document.path).toBe('/workspace/second.sh');
     });
   });
 

@@ -1,14 +1,15 @@
+import { onScopeDispose } from 'vue';
 import type { useMessage } from '@/composables/useMessage';
 import { WORKBENCH_TAB_LIMITS } from '@/constants/workbench';
 import { tauriService } from '@/services/tauri';
 import type { useEditorStore } from '@/store/editor';
-import type { IEditorDocument } from '@/types/editor';
+import { isAppError } from '@/types/app-error';
+import type { IEditorDocument, IWorkspaceDirectoryPayload } from '@/types/editor';
 import type { IGitDiffPreviewPayload, IGitDiffPreviewRequest } from '@/types/git';
 import type { TSessionSnapshot, TSessionTabKind } from '@/types/session';
 import { waitForDesktopRuntime } from '@/utils/desktop-runtime';
 import { isImageAssetPath } from '@/utils/file-assets';
-import { getPathBaseName, getRelativeFileSystemPath } from '@/utils/path';
-import { isWorkspaceRootAccessible } from '@/utils/workspace';
+import { areFileSystemPathsEqual, getPathBaseName, getRelativeFileSystemPath } from '@/utils/path';
 
 // ---------------------------------------------------------------------------
 // Local types
@@ -28,6 +29,28 @@ type TRestoredSessionTab = {
 type TRestorableSessionSnapshot = Pick<TSessionSnapshot, 'workspaceRoot' | 'activeTabPath'> & {
   openTabs: Array<Pick<TSessionSnapshot['openTabs'][number], 'path' | 'order' | 'kind'>>;
 };
+
+type TDocumentIoLifecycle = {
+  token: number;
+  signal: AbortSignal;
+};
+
+type TCancelableLoadScript = (
+  path: string,
+  workspaceRootPath?: string | null,
+  options?: { signal?: AbortSignal },
+) => ReturnType<typeof tauriService.loadScript>;
+
+type TCancelableListWorkspaceEntries = (
+  path?: string,
+  rootPath?: string,
+  options?: { signal?: AbortSignal },
+) => Promise<IWorkspaceDirectoryPayload>;
+
+type TCancelableGetGitDiffPreview = (
+  request: IGitDiffPreviewRequest,
+  options?: { signal?: AbortSignal },
+) => ReturnType<typeof tauriService.getGitDiffPreview>;
 
 interface IUseWorkbenchDocumentIOOptions {
   editorStore: TEditorStore;
@@ -98,6 +121,9 @@ const scopedWorkspaceRootForPath = (
   return getRelativeFileSystemPath(path, workspaceRoot) === null ? null : workspaceRoot;
 };
 
+const isCanceledIpcError = (error: unknown): boolean =>
+  isAppError(error) && error.code === 'ipc.canceled';
+
 // ---------------------------------------------------------------------------
 // Composable
 // ---------------------------------------------------------------------------
@@ -110,6 +136,43 @@ export const useWorkbenchDocumentIO = ({
   ensureDirtyDocumentsHandled,
   refreshGitRepositoryStatus,
 }: IUseWorkbenchDocumentIOOptions) => {
+  let documentIoLifecycleToken = 0;
+  let activeDocumentIoAbortController: AbortController | null = null;
+
+  const loadScriptWithOptions = tauriService.loadScript as TCancelableLoadScript;
+  const listWorkspaceEntriesWithOptions =
+    tauriService.listWorkspaceEntries as TCancelableListWorkspaceEntries;
+  const getGitDiffPreviewWithOptions =
+    tauriService.getGitDiffPreview as TCancelableGetGitDiffPreview;
+
+  const invalidateDocumentIoLifecycle = (): void => {
+    documentIoLifecycleToken += 1;
+    activeDocumentIoAbortController?.abort();
+    activeDocumentIoAbortController = null;
+  };
+
+  const beginDocumentIoLifecycle = (): TDocumentIoLifecycle => {
+    invalidateDocumentIoLifecycle();
+    const controller = new AbortController();
+    activeDocumentIoAbortController = controller;
+    return {
+      token: documentIoLifecycleToken,
+      signal: controller.signal,
+    };
+  };
+
+  const isDocumentIoLifecycleCurrent = (lifecycle: TDocumentIoLifecycle): boolean =>
+    lifecycle.token === documentIoLifecycleToken && !lifecycle.signal.aborted;
+
+  const isWorkspaceRootCurrent = (workspaceRootPath: string | null | undefined): boolean => {
+    if (!workspaceRootPath) return true;
+    return areFileSystemPathsEqual(workspaceRootPath, editorStore.workspaceRootPath);
+  };
+
+  onScopeDispose(() => {
+    invalidateDocumentIoLifecycle();
+  });
+
   // -----------------------------------------------------------------------
   // Tab quota & notifications
   // -----------------------------------------------------------------------
@@ -201,24 +264,38 @@ export const useWorkbenchDocumentIO = ({
   const loadDocumentFromPath = async (
     path: string,
     scene: string,
-    workspaceRootPath?: string | null,
-  ): Promise<void> => {
+    workspaceRootPath: string | null | undefined,
+    lifecycle: TDocumentIoLifecycle,
+  ): Promise<boolean> => {
     if (isImageAssetPath(path)) {
+      if (!isDocumentIoLifecycleCurrent(lifecycle) || !isWorkspaceRootCurrent(workspaceRootPath)) {
+        return false;
+      }
       const imageName = getPathBaseName(path);
       openTabAndNotify(scene, 'image', path, imageName, () =>
         editorStore.openImageDocument(path, imageName),
       );
-      return;
+      return true;
     }
 
-    const payload = await tauriService.loadScript(
+    const payload = await loadScriptWithOptions(
       path,
       scopedWorkspaceRootForPath(path, workspaceRootPath),
+      { signal: lifecycle.signal },
     );
+
+    if (!isDocumentIoLifecycleCurrent(lifecycle) || !isWorkspaceRootCurrent(workspaceRootPath)) {
+      return false;
+    }
+
     openScriptPayload(payload, scene);
+    return true;
   };
 
-  const ensureDocumentBufferLoaded = async (documentId: string): Promise<void> => {
+  const ensureDocumentBufferLoaded = async (
+    documentId: string,
+    lifecycle: TDocumentIoLifecycle = beginDocumentIoLifecycle(),
+  ): Promise<void> => {
     const targetDocument = editorStore.getDocumentById(documentId);
     if (
       !targetDocument ||
@@ -233,6 +310,7 @@ export const useWorkbenchDocumentIO = ({
       targetDocument.path,
       '加载标签页内容',
       editorStore.workspaceRootPath,
+      lifecycle,
     );
   };
 
@@ -240,17 +318,27 @@ export const useWorkbenchDocumentIO = ({
   // Session restoration
   // -----------------------------------------------------------------------
 
-  const restoreWorkspaceRoot = async (workspaceRoot: string): Promise<void> => {
-    const accessible = await isWorkspaceRootAccessible(
-      workspaceRoot,
-      tauriService.listWorkspaceEntries,
-    );
-    if (accessible) {
-      editorStore.setWorkspaceRootPath(workspaceRoot);
-      return;
+  const restoreWorkspaceRoot = async (
+    workspaceRoot: string,
+    lifecycle: TDocumentIoLifecycle,
+  ): Promise<boolean> => {
+    try {
+      await listWorkspaceEntriesWithOptions(undefined, workspaceRoot, { signal: lifecycle.signal });
+    } catch (error) {
+      if (isCanceledIpcError(error) || !isDocumentIoLifecycleCurrent(lifecycle)) {
+        return false;
+      }
+      editorStore.setWorkspaceRootPath(null);
+      notifier.warning('上次的工作区已失效，已重置');
+      return false;
     }
-    editorStore.setWorkspaceRootPath(null);
-    notifier.warning('上次的工作区已失效，已重置');
+
+    if (!isDocumentIoLifecycleCurrent(lifecycle)) {
+      return false;
+    }
+
+    editorStore.setWorkspaceRootPath(workspaceRoot);
+    return true;
   };
 
   const restoreOpenTabs = async (
@@ -302,28 +390,36 @@ export const useWorkbenchDocumentIO = ({
   };
 
   const restoreSession = async (sessionSnapshot: TSessionSnapshot): Promise<void> => {
+    const lifecycle = beginDocumentIoLifecycle();
     const runtimeReady = await waitForDesktopRuntime(120);
-    if (!runtimeReady) return;
+    if (!runtimeReady || !isDocumentIoLifecycleCurrent(lifecycle)) return;
 
     const snapshot = pickRestorableSessionSnapshot(sessionSnapshot);
     if (!snapshot.workspaceRoot && snapshot.openTabs.length === 0) return;
 
     if (snapshot.workspaceRoot) {
-      await restoreWorkspaceRoot(snapshot.workspaceRoot);
+      await restoreWorkspaceRoot(snapshot.workspaceRoot, lifecycle);
+      if (!isDocumentIoLifecycleCurrent(lifecycle)) return;
     }
     if (snapshot.openTabs.length === 0) return;
 
+    if (!isDocumentIoLifecycleCurrent(lifecycle)) return;
     editorStore.clearDocuments();
 
     const aliveTabs = await restoreOpenTabs(snapshot.openTabs);
+    if (!isDocumentIoLifecycleCurrent(lifecycle)) return;
+
     aliveTabs.forEach(applyRestoredTab);
 
     if (aliveTabs.length === 0) return;
 
     const activeDocument = restoreActiveDocument(snapshot.activeTabPath);
     if (activeDocument) {
-      await ensureDocumentBufferLoaded(activeDocument.id);
-      if (editorStore.restoreDraftForDocument(activeDocument.id)) {
+      await ensureDocumentBufferLoaded(activeDocument.id, lifecycle);
+      if (
+        isDocumentIoLifecycleCurrent(lifecycle) &&
+        editorStore.restoreDraftForDocument(activeDocument.id)
+      ) {
         notifier.info('已恢复 1 个文件未保存的修改');
       }
     }
@@ -347,8 +443,10 @@ export const useWorkbenchDocumentIO = ({
     try {
       const path = await tauriService.pickOpenPath();
       if (!path) return;
-      await loadDocumentFromPath(path, '打开脚本');
+      const lifecycle = beginDocumentIoLifecycle();
+      await loadDocumentFromPath(path, '打开脚本', null, lifecycle);
     } catch (error) {
+      if (isCanceledIpcError(error)) return;
       reportError('打开脚本失败', error, '打开脚本失败');
     }
   };
@@ -364,6 +462,7 @@ export const useWorkbenchDocumentIO = ({
       );
       if (!canSwitchWorkspace) return;
 
+      invalidateDocumentIoLifecycle();
       editorStore.clearDocuments();
       editorStore.setWorkspaceRootPath(path);
       void refreshGitRepositoryStatus(path);
@@ -371,29 +470,46 @@ export const useWorkbenchDocumentIO = ({
       editorStore.appendLog('success', '打开文件夹', buildLogDetail('资源目录', path));
       notifier.success(`已打开文件夹 ${getPathBaseName(path)}`);
     } catch (error) {
+      if (isCanceledIpcError(error)) return;
       reportError('打开文件夹失败', error, '打开文件夹失败');
     }
   };
 
   const openDocumentByPath = async (path: string): Promise<void> => {
+    const lifecycle = beginDocumentIoLifecycle();
     try {
       const existingDocument = editorStore.findDocumentByPath(path);
       if (existingDocument) {
         // 频繁切换文件时，toast + appendLog 会带来额外渲染/布局开销；这里默认静默切换。
         editorStore.setActiveDocument(existingDocument.id);
-        await ensureDocumentBufferLoaded(existingDocument.id);
+        await ensureDocumentBufferLoaded(existingDocument.id, lifecycle);
         return;
       }
 
-      await loadDocumentFromPath(path, '资源管理器打开文件', editorStore.workspaceRootPath);
+      await loadDocumentFromPath(
+        path,
+        '资源管理器打开文件',
+        editorStore.workspaceRootPath,
+        lifecycle,
+      );
     } catch (error) {
+      if (isCanceledIpcError(error)) return;
       reportError('打开资源文件失败', error, '打开资源文件失败');
     }
   };
 
   const openGitDiffPreview = async (request: IGitDiffPreviewRequest): Promise<void> => {
+    const lifecycle = beginDocumentIoLifecycle();
+    const workspaceRootPathAtStart = editorStore.workspaceRootPath;
     try {
-      const preview = await tauriService.getGitDiffPreview(request);
+      const preview = await getGitDiffPreviewWithOptions(request, { signal: lifecycle.signal });
+      if (
+        !isDocumentIoLifecycleCurrent(lifecycle) ||
+        !isWorkspaceRootCurrent(workspaceRootPathAtStart)
+      ) {
+        return;
+      }
+
       const existing = editorStore.documents.find(
         (item) =>
           item.kind === 'git-diff' &&
@@ -416,6 +532,7 @@ export const useWorkbenchDocumentIO = ({
         preview.isEmpty ? '没有可显示的 Diff' : `已打开 Diff ${preview.relativePath}`,
       );
     } catch (error) {
+      if (isCanceledIpcError(error)) return;
       reportError('打开 Git Diff 失败', error, '打开 Git Diff 失败');
     }
   };
