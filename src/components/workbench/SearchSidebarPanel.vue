@@ -182,7 +182,6 @@
       </div>
 
       <template v-else>
-        <!-- ① 新增：结果多时走虚拟化 -->
         <div v-if="shouldVirtualizeSearch" class="search-panel-virtual-spacer"
           :style="{ height: `${searchTotalSize}px` }">
           <template v-for="entry in windowedSearchRows" :key="entry.key">
@@ -221,7 +220,6 @@
           </template>
         </div>
 
-        <!-- ② 原样保留：结果少时不虚拟化 -->
         <template v-else>
           <article v-for="group in searchResultGroups" :key="group.path" class="search-panel-result-group">
 
@@ -277,6 +275,7 @@ import {
   useSidecarChangedDocumentRefresh,
 } from '@/composables/useSidecarChangedDocumentRefresh';
 import { tauriService } from '@/services/tauri';
+import { isAppError } from '@/types/app-error';
 import type { IWorkbenchOpenFileRequest, IWorkspaceDirectoryPayload } from '@/types/editor';
 import type {
   IWorkspaceReplacementFilePreview,
@@ -287,6 +286,7 @@ import type {
   TWorkspaceSearchScope,
 } from '@/types/search';
 import { toErrorMessage } from '@/utils/error';
+import { areFileSystemPathsEqual } from '@/utils/path';
 import type {
   IFlatSearchRow,
   IReplacementFileView,
@@ -333,6 +333,17 @@ const SEARCH_VIRTUALIZE_THRESHOLD = 100;
 const SEARCH_GROUP_ROW_HEIGHT = 28;
 const SEARCH_LINE_ROW_HEIGHT = 24;
 
+type TReplacementApplyLifecycle = {
+  requestId: number;
+  workspaceRootPath: string | null;
+  signal: AbortSignal;
+};
+
+type TCancelableApplyWorkspaceReplacement = (
+  payload: Parameters<typeof tauriService.applyWorkspaceReplacement>[0],
+  options?: { signal?: AbortSignal },
+) => ReturnType<typeof tauriService.applyWorkspaceReplacement>;
+
 const searchQuery = ref('');
 const replacementQuery = ref('');
 const includePattern = ref('');
@@ -341,17 +352,11 @@ const activeScope = ref<TWorkspaceSearchScope>('all');
 const matchCase = ref(false);
 const wholeWord = ref(false);
 const useRegex = ref(false);
-// contentFuzzy：仅影响内容搜索。开启后内容改用后端 nucleo 子序列模糊匹配（默认精确），
-//   与正则互斥：两者都改写内容匹配方式，同时开启语义不清。文件名/符号始终为模糊，不受此开关影响。
 const contentFuzzy = ref(false);
 const useStructural = ref(false);
 const showPathFilters = ref(false);
 const searchIndexing = ref(false);
 const searchError = ref('');
-// replaceRunning：替换流程「整体忙碌」标志，覆盖「生成预览」与「写入磁盘」两个阶段，
-//   用于禁用「全部替换」按钮并显示其加载态。
-// replacementApplying：仅表示「正在把替换写入磁盘」（整页或单行），用于禁用单行的
-//   替换/跳过按钮并防止 apply 重入。两者语义不同，不可合并。
 const replaceRunning = ref(false);
 const replacementApplying = ref(false);
 const replacementApplyingLineId = ref<string | null>(null);
@@ -366,12 +371,47 @@ const scannedFileCount = ref(0);
 const backendResults = ref<IWorkspaceSearchResult[]>([]);
 let searchRequestId = 0;
 let replacementPreviewRequestId = 0;
+let replacementApplyRequestId = 0;
 let searchTimer: ReturnType<typeof setTimeout> | null = null;
 let replacementPreviewTimer: ReturnType<typeof setTimeout> | null = null;
 let activeAbortController: AbortController | null = null;
 let activeReplacementPreviewAbortController: AbortController | null = null;
+let activeReplacementApplyAbortController: AbortController | null = null;
 const message = useMessage();
 const { refreshSidecarChangedDocuments } = useSidecarChangedDocumentRefresh();
+const applyWorkspaceReplacementWithOptions =
+  tauriService.applyWorkspaceReplacement as TCancelableApplyWorkspaceReplacement;
+
+const isCanceledIpcError = (error: unknown): boolean =>
+  isAppError(error) && error.code === 'ipc.canceled';
+
+const isWorkspaceRootCurrent = (workspaceRootPath: string | null | undefined): boolean =>
+  !workspaceRootPath || areFileSystemPathsEqual(workspaceRootPath, props.workspaceRootPath);
+
+const beginReplacementApplyLifecycle = (): TReplacementApplyLifecycle => {
+  replacementApplyRequestId += 1;
+  activeReplacementApplyAbortController?.abort();
+  const controller = new AbortController();
+  activeReplacementApplyAbortController = controller;
+  return {
+    requestId: replacementApplyRequestId,
+    workspaceRootPath: props.workspaceRootPath,
+    signal: controller.signal,
+  };
+};
+
+const isReplacementApplyLifecycleCurrent = (lifecycle: TReplacementApplyLifecycle): boolean =>
+  lifecycle.requestId === replacementApplyRequestId &&
+  !lifecycle.signal.aborted &&
+  isWorkspaceRootCurrent(lifecycle.workspaceRootPath);
+
+const invalidateReplacementApplyLifecycle = (): void => {
+  replacementApplyRequestId += 1;
+  activeReplacementApplyAbortController?.abort();
+  activeReplacementApplyAbortController = null;
+  replacementApplying.value = false;
+  replacementApplyingLineId.value = null;
+};
 
 const matcher = computed(() =>
   createSearchMatcher({
@@ -386,10 +426,6 @@ const matcherError = computed(() => matcher.value.errorMessage);
 const hasSearchQuery = computed(() => searchQuery.value.trim().length > 0);
 const includePatterns = computed(() => splitPatternList(includePattern.value));
 const excludePatterns = computed(() => splitPatternList(excludePattern.value));
-
-// 仅在「展开路径过滤且非结构化搜索」时，过滤规则才真正下发后端。统一用这两个计算值
-// 作为「生效的过滤规则」：当未启用过滤时，编辑包含/排除输入框不会进入依赖追踪，
-// 从而避免触发结果完全相同的重复后端检索。
 const effectiveIncludePatterns = computed(() =>
   showPathFilters.value && !useStructural.value ? includePatterns.value : [],
 );
@@ -413,10 +449,6 @@ const toResultItem = (result: IWorkspaceSearchResult): ISearchResultItem => {
     relativePath: result.relativePath,
     resultKey: `${result.kind}:${result.path}:${result.lineNumber ?? 0}:${result.matchStart ?? -1}:${result.matchEnd ?? -1}`,
     reason: result.kind,
-    // 内容命中：直接用后端返回的字符（码点）区间做紧凑高亮，与后端 byte_to_char_offset
-    // 完全对齐（模糊命中也会返回覆盖区间）。文件名/符号命中：后端用 nucleo 模糊匹配且不返回区间，
-    // 这里退化为前端的精确/正则高亮——可能与后端模糊命中不完全一致（模糊命中时甚至无高亮）。属于已知取舍：
-    // 仅作视觉提示，不影响定位与打开。
     snippetSegments:
       result.kind === 'content' && preview.range
         ? buildCompactHighlightedSegments(preview.text, preview.range, SEARCH_RESULT_CONTEXT_CHARS)
@@ -429,16 +461,12 @@ const toResultItem = (result: IWorkspaceSearchResult): ISearchResultItem => {
 };
 
 const allResults = computed(() => backendResults.value.map(toResultItem));
-const searchResultsByScope = computed<Record<TWorkspaceSearchScope, ISearchResultItem[]>>(() => {
-  const nextResults: Record<TWorkspaceSearchScope, ISearchResultItem[]> = {
-    all: allResults.value,
-    'file-name': allResults.value.filter((result) => result.reason === 'file-name'),
-    symbol: allResults.value.filter((result) => result.reason === 'symbol'),
-    content: allResults.value.filter((result) => result.reason === 'content'),
-  };
-
-  return nextResults;
-});
+const searchResultsByScope = computed<Record<TWorkspaceSearchScope, ISearchResultItem[]>>(() => ({
+  all: allResults.value,
+  'file-name': allResults.value.filter((result) => result.reason === 'file-name'),
+  symbol: allResults.value.filter((result) => result.reason === 'symbol'),
+  content: allResults.value.filter((result) => result.reason === 'content'),
+}));
 
 const scopeChips = computed(() =>
   (Object.keys(SEARCH_SCOPE_LABELS) as TWorkspaceSearchScope[]).map((scopeKey) => ({
@@ -451,14 +479,12 @@ const scopeChips = computed(() =>
 const activeResults = computed(() => searchResultsByScope.value[activeScope.value]);
 const searchResultGroups = computed<ISearchResultGroup[]>(() => {
   const groups = new Map<string, ISearchResultGroup>();
-
   for (const result of activeResults.value) {
     const existing = groups.get(result.path);
     if (existing) {
       existing.results.push(result);
       continue;
     }
-
     groups.set(result.path, {
       path: result.path,
       name: getFileName(result.relativePath),
@@ -466,7 +492,6 @@ const searchResultGroups = computed<ISearchResultGroup[]>(() => {
       results: [result],
     });
   }
-
   return Array.from(groups.values());
 });
 
@@ -508,14 +533,8 @@ const searchTotalSize = computed(() =>
 
 const windowedSearchRows = computed(() =>
   (shouldVirtualizeSearch.value ? searchVirtualizer.value.getVirtualItems() : [])
-    .map((item) => ({
-      key: String(item.key),
-      start: item.start,
-      row: flatSearchRows.value[item.index],
-    }))
-    .filter((entry): entry is { key: string; start: number; row: IFlatSearchRow } =>
-      Boolean(entry.row),
-    ),
+    .map((item) => ({ key: String(item.key), start: item.start, row: flatSearchRows.value[item.index] }))
+    .filter((entry): entry is { key: string; start: number; row: IFlatSearchRow } => Boolean(entry.row)),
 );
 
 watch(flatSearchRows, () => {
@@ -523,74 +542,42 @@ watch(flatSearchRows, () => {
 });
 
 const canApplyReplacement = computed(
-  () =>
-    !replaceRunning.value &&
-    hasSearchQuery.value &&
-    props.isDesktopRuntime &&
-    Boolean(props.workspaceRootPath),
+  () => !replaceRunning.value && hasSearchQuery.value && props.isDesktopRuntime && Boolean(props.workspaceRootPath),
 );
 
 const toReplacementLineView = (line: IWorkspaceReplacementLinePreview): IReplacementLineView => {
   const beforeLine = trimBoundaryWhitespace(line.beforeLine);
   const afterLine = trimBoundaryWhitespace(line.afterLine);
-
-  return {
-    ...line,
-    beforeLine,
-    afterLine,
-    segments: buildReplacementLineSegments(beforeLine, afterLine),
-  };
+  return { ...line, beforeLine, afterLine, segments: buildReplacementLineSegments(beforeLine, afterLine) };
 };
 
-const toReplacementFileView = (
-  file: IWorkspaceReplacementFilePreview,
-): IReplacementFileView | null => {
+const toReplacementFileView = (file: IWorkspaceReplacementFilePreview): IReplacementFileView | null => {
   const visibleLinePreviews = file.linePreviews
     .filter((line) => !skippedReplacementLineIds.value.has(line.id))
     .map(toReplacementLineView);
-
-  if (visibleLinePreviews.length === 0) {
-    return null;
-  }
-
+  if (visibleLinePreviews.length === 0) return null;
   return {
     ...file,
     name: getFileName(file.relativePath),
     parentPath: getParentPath(file.relativePath),
     visibleLinePreviews,
-    visibleReplacementCount: visibleLinePreviews.reduce(
-      (total, line) => total + line.replacementCount,
-      0,
-    ),
+    visibleReplacementCount: visibleLinePreviews.reduce((total, line) => total + line.replacementCount, 0),
   };
 };
 
 const visibleReplacementFiles = computed<IReplacementFileView[]>(() => {
   const preview = replacementPreview.value;
-  if (!preview) {
-    return [];
-  }
-
-  return preview.files
-    .map(toReplacementFileView)
-    .filter((file): file is IReplacementFileView => Boolean(file));
+  if (!preview) return [];
+  return preview.files.map(toReplacementFileView).filter((file): file is IReplacementFileView => Boolean(file));
 });
 
-const isSearchResultGroupCollapsed = (path: string): boolean =>
-  collapsedSearchResultPaths.value.has(path);
-
+const isSearchResultGroupCollapsed = (path: string): boolean => collapsedSearchResultPaths.value.has(path);
 const toggleSearchResultGroup = (path: string): void => {
   collapsedSearchResultPaths.value = toggleReadonlySetValue(collapsedSearchResultPaths.value, path);
 };
-
-const isReplacementFileCollapsed = (path: string): boolean =>
-  collapsedReplacementFilePaths.value.has(path);
-
+const isReplacementFileCollapsed = (path: string): boolean => collapsedReplacementFilePaths.value.has(path);
 const toggleReplacementFile = (path: string): void => {
-  collapsedReplacementFilePaths.value = toggleReadonlySetValue(
-    collapsedReplacementFilePaths.value,
-    path,
-  );
+  collapsedReplacementFilePaths.value = toggleReadonlySetValue(collapsedReplacementFilePaths.value, path);
 };
 
 const resetReplacementPreview = (): void => {
@@ -598,57 +585,38 @@ const resetReplacementPreview = (): void => {
     clearTimeout(replacementPreviewTimer);
     replacementPreviewTimer = null;
   }
-
   replacementPreviewRequestId += 1;
   activeReplacementPreviewAbortController?.abort();
   activeReplacementPreviewAbortController = null;
+  invalidateReplacementApplyLifecycle();
+  replaceRunning.value = false;
   replacementPreviewOpen.value = false;
   replacementPreview.value = null;
   replacementPreviewRequest.value = null;
-  replacementApplyingLineId.value = null;
   skippedReplacementLineIds.value = new Set<string>();
   collapsedReplacementFilePaths.value = new Set<string>();
 };
 
 const toggleSearchOption = (option: TSearchToggleOption): void => {
-  if (useStructural.value) {
-    useStructural.value = false;
-  }
-
-  if (option === 'matchCase') {
-    matchCase.value = !matchCase.value;
-    return;
-  }
-
-  if (option === 'wholeWord') {
-    wholeWord.value = !wholeWord.value;
-    return;
-  }
-
+  if (useStructural.value) useStructural.value = false;
+  if (option === 'matchCase') { matchCase.value = !matchCase.value; return; }
+  if (option === 'wholeWord') { wholeWord.value = !wholeWord.value; return; }
   if (option === 'useRegex') {
     useRegex.value = !useRegex.value;
-    // 正则与内容模糊互斥：两者都改写内容匹配方式。
-    if (useRegex.value) {
-      contentFuzzy.value = false;
-    }
+    if (useRegex.value) contentFuzzy.value = false;
     return;
   }
-
   if (option === 'contentFuzzy') {
     contentFuzzy.value = !contentFuzzy.value;
-    if (contentFuzzy.value) {
-      useRegex.value = false;
-    }
+    if (contentFuzzy.value) useRegex.value = false;
     return;
   }
-
   showPathFilters.value = !showPathFilters.value;
 };
 
 const toggleStructuralSearch = (): void => {
   const nextStructural = !useStructural.value;
   useStructural.value = nextStructural;
-
   if (nextStructural) {
     matchCase.value = false;
     wholeWord.value = false;
@@ -660,30 +628,15 @@ const toggleStructuralSearch = (): void => {
 };
 
 const cancelPendingSearch = (): void => {
-  if (searchTimer) {
-    clearTimeout(searchTimer);
-    searchTimer = null;
-  }
-
-  if (replacementPreviewTimer) {
-    clearTimeout(replacementPreviewTimer);
-    replacementPreviewTimer = null;
-  }
-
-  if (activeAbortController) {
-    activeAbortController.abort();
-    activeAbortController = null;
-  }
-
-  if (activeReplacementPreviewAbortController) {
-    activeReplacementPreviewAbortController.abort();
-    activeReplacementPreviewAbortController = null;
-  }
+  if (searchTimer) { clearTimeout(searchTimer); searchTimer = null; }
+  if (replacementPreviewTimer) { clearTimeout(replacementPreviewTimer); replacementPreviewTimer = null; }
+  activeAbortController?.abort();
+  activeAbortController = null;
+  activeReplacementPreviewAbortController?.abort();
+  activeReplacementPreviewAbortController = null;
+  invalidateReplacementApplyLifecycle();
 };
 
-// 作废所有在途搜索请求：递增 requestId 让迟到的响应被丢弃，并中止已发出的请求。
-// 否则在清空结果后，旧请求 resolve 时其 requestId 仍等于全局值，会把过期结果回灌
-// （例如把合法查询改成非法正则后，旧的合法结果又被写回）。
 const invalidateInFlightSearch = (): void => {
   searchRequestId += 1;
   activeAbortController?.abort();
@@ -698,22 +651,7 @@ const clearSearchResults = (): void => {
 };
 
 const runSearch = async (): Promise<void> => {
-  // 以下三种情况都不应发起后端检索，且都必须作废在途请求，防止之前发出的检索结果
-  // 在清空后又被写回。
-  if (!props.isDesktopRuntime || !props.workspaceRootPath) {
-    invalidateInFlightSearch();
-    clearSearchResults();
-    return;
-  }
-
-  if (matcherError.value) {
-    invalidateInFlightSearch();
-    clearSearchResults();
-    return;
-  }
-
-  // 空查询无需触发后端检索：直接清空结果，回到初始空状态。
-  if (!hasSearchQuery.value) {
+  if (!props.isDesktopRuntime || !props.workspaceRootPath || matcherError.value || !hasSearchQuery.value) {
     invalidateInFlightSearch();
     clearSearchResults();
     return;
@@ -728,38 +666,25 @@ const runSearch = async (): Promise<void> => {
   searchError.value = '';
 
   try {
-    const payload = await tauriService.searchWorkspace(
-      {
-        workspaceRootPath: props.workspaceRootPath,
-        query: searchQuery.value.trim(),
-        // 后端一次性返回全部范围（文件名/符号/内容）的命中，scope 分面切换完全由前端
-        // searchResultsByScope 即时过滤，因此固定下发 'all'，避免切 chip 时重新请求后端。
-        scope: 'all',
-        matchCase: matchCase.value,
-        wholeWord: wholeWord.value,
-        useRegex: useRegex.value,
-        useStructural: useStructural.value,
-        contentFuzzy: contentFuzzy.value,
-        includePatterns: effectiveIncludePatterns.value,
-        excludePatterns: effectiveExcludePatterns.value,
-        limit: SEARCH_RESULT_LIMIT,
-      },
-      {
-        signal: abortController.signal,
-      },
-    );
+    const payload = await tauriService.searchWorkspace({
+      workspaceRootPath: props.workspaceRootPath,
+      query: searchQuery.value.trim(),
+      scope: 'all',
+      matchCase: matchCase.value,
+      wholeWord: wholeWord.value,
+      useRegex: useRegex.value,
+      useStructural: useStructural.value,
+      contentFuzzy: contentFuzzy.value,
+      includePatterns: effectiveIncludePatterns.value,
+      excludePatterns: effectiveExcludePatterns.value,
+      limit: SEARCH_RESULT_LIMIT,
+    }, { signal: abortController.signal });
 
-    if (requestId !== searchRequestId) {
-      return;
-    }
-
+    if (requestId !== searchRequestId) return;
     scannedFileCount.value = payload.scannedFileCount;
     backendResults.value = payload.results;
   } catch (error) {
-    if (abortController.signal.aborted || requestId !== searchRequestId) {
-      return;
-    }
-
+    if (abortController.signal.aborted || requestId !== searchRequestId) return;
     backendResults.value = [];
     searchError.value = toErrorMessage(error, '搜索失败。');
   } finally {
@@ -771,10 +696,7 @@ const runSearch = async (): Promise<void> => {
 };
 
 const scheduleSearch = (): void => {
-  if (searchTimer) {
-    clearTimeout(searchTimer);
-  }
-
+  if (searchTimer) clearTimeout(searchTimer);
   searchTimer = setTimeout(() => {
     searchTimer = null;
     void runSearch();
@@ -782,10 +704,7 @@ const scheduleSearch = (): void => {
 };
 
 const buildReplacementRequest = (): IWorkspaceReplacementRequest | null => {
-  if (!props.workspaceRootPath) {
-    return null;
-  }
-
+  if (!props.workspaceRootPath) return null;
   return {
     workspaceRootPath: props.workspaceRootPath,
     query: searchQuery.value.trim(),
@@ -801,45 +720,28 @@ const buildReplacementRequest = (): IWorkspaceReplacementRequest | null => {
 };
 
 const previewReplacementToSearch = async (source: 'manual' | 'auto'): Promise<boolean> => {
-  if (replaceRunning.value) {
-    return false;
-  }
-
+  if (replaceRunning.value) return false;
   const query = searchQuery.value.trim();
   if (!hasSearchQuery.value) {
-    if (source === 'manual') {
-      message.warning('请先输入搜索内容。');
-    }
+    if (source === 'manual') message.warning('请先输入搜索内容。');
     return false;
   }
-
   if (!useRegex.value && !useStructural.value && query === replacementQuery.value) {
-    if (source === 'manual') {
-      message.warning('替换内容与搜索内容相同，无需替换。');
-    } else {
-      resetReplacementPreview();
-    }
+    if (source === 'manual') message.warning('替换内容与搜索内容相同，无需替换。');
+    else resetReplacementPreview();
     return false;
   }
-
   if (!props.isDesktopRuntime) {
-    if (source === 'manual') {
-      message.warning('浏览器预览不支持写入文件，请在 Tauri 桌面端使用替换。');
-    }
+    if (source === 'manual') message.warning('浏览器预览不支持写入文件，请在 Tauri 桌面端使用替换。');
     return false;
   }
-
   if (!props.workspaceRootPath) {
-    if (source === 'manual') {
-      message.warning('请先打开工作区后再替换。');
-    }
+    if (source === 'manual') message.warning('请先打开工作区后再替换。');
     return false;
   }
 
   const request = buildReplacementRequest();
-  if (!request) {
-    return false;
-  }
+  if (!request) return false;
   const requestId = replacementPreviewRequestId + 1;
   replacementPreviewRequestId = requestId;
   activeReplacementPreviewAbortController?.abort();
@@ -853,40 +755,23 @@ const previewReplacementToSearch = async (source: 'manual' | 'auto'): Promise<bo
   skippedReplacementLineIds.value = new Set<string>();
 
   try {
-    const preview = await tauriService.previewWorkspaceReplacement(request, {
-      signal: abortController.signal,
-    });
-
-    if (requestId !== replacementPreviewRequestId) {
-      return false;
-    }
-
+    const preview = await tauriService.previewWorkspaceReplacement(request, { signal: abortController.signal });
+    if (requestId !== replacementPreviewRequestId || !isWorkspaceRootCurrent(request.workspaceRootPath)) return false;
     if (preview.fileCount === 0) {
       replacementPreviewOpen.value = false;
-      if (source === 'manual') {
-        message.warning('当前没有可替换的内容匹配结果。');
-      }
+      if (source === 'manual') message.warning('当前没有可替换的内容匹配结果。');
       return false;
     }
-
     replacementPreview.value = preview;
     replacementPreviewRequest.value = request;
     return true;
   } catch (error) {
-    // 中止属于正常的竞态取消（更新的请求已接管），不应弹错或污染搜索错误状态。
-    if (abortController.signal.aborted || requestId !== replacementPreviewRequestId) {
-      return false;
-    }
-
+    if (abortController.signal.aborted || requestId !== replacementPreviewRequestId) return false;
     replacementPreviewOpen.value = false;
-    if (source === 'manual') {
-      message.error(toErrorMessage(error, '替换失败。'));
-    } else {
-      searchError.value = toErrorMessage(error, '替换预览失败。');
-    }
+    if (source === 'manual') message.error(toErrorMessage(error, '替换失败。'));
+    else searchError.value = toErrorMessage(error, '替换预览失败。');
     return false;
   } finally {
-    // 仅当自己仍是最新请求时才复位忙碌态/控制器；被取代时交给接管的请求处理。
     if (requestId === replacementPreviewRequestId) {
       replaceRunning.value = false;
       activeReplacementPreviewAbortController = null;
@@ -899,37 +784,26 @@ const handleReplacementAction = async (): Promise<void> => {
     await confirmReplacementPreview();
     return;
   }
-
   const hasPreview = await previewReplacementToSearch('manual');
-  if (hasPreview) {
-    await confirmReplacementPreview();
-  }
+  if (hasPreview) await confirmReplacementPreview();
 };
 
 const scheduleReplacementPreview = (): void => {
-  if (replacementPreviewTimer) {
-    clearTimeout(replacementPreviewTimer);
-  }
-
+  if (replacementPreviewTimer) clearTimeout(replacementPreviewTimer);
   replacementPreviewTimer = setTimeout(() => {
     replacementPreviewTimer = null;
     void previewReplacementToSearch('auto');
   }, SEARCH_DEBOUNCE_MS);
 };
 
-const retainVisibleSkippedReplacementLines = (
-  preview: IWorkspaceReplacementPreviewPayload,
-): void => {
-  const visibleLineIds = new Set(
-    preview.files.flatMap((file) => file.linePreviews.map((line) => line.id)),
-  );
-  skippedReplacementLineIds.value = new Set(
-    [...skippedReplacementLineIds.value].filter((lineId) => visibleLineIds.has(lineId)),
-  );
+const retainVisibleSkippedReplacementLines = (preview: IWorkspaceReplacementPreviewPayload): void => {
+  const visibleLineIds = new Set(preview.files.flatMap((file) => file.linePreviews.map((line) => line.id)));
+  skippedReplacementLineIds.value = new Set([...skippedReplacementLineIds.value].filter((lineId) => visibleLineIds.has(lineId)));
 };
 
 const refreshReplacementPreviewAfterLineApply = async (
   request: IWorkspaceReplacementRequest,
+  lifecycle: TReplacementApplyLifecycle,
 ): Promise<void> => {
   const requestId = replacementPreviewRequestId + 1;
   replacementPreviewRequestId = requestId;
@@ -939,33 +813,22 @@ const refreshReplacementPreviewAfterLineApply = async (
   replacementPreviewOpen.value = true;
 
   try {
-    const preview = await tauriService.previewWorkspaceReplacement(request, {
-      signal: abortController.signal,
-    });
-    if (requestId !== replacementPreviewRequestId) {
-      return;
-    }
-
+    const preview = await tauriService.previewWorkspaceReplacement(request, { signal: abortController.signal });
+    if (requestId !== replacementPreviewRequestId || !isReplacementApplyLifecycleCurrent(lifecycle)) return;
     if (preview.fileCount === 0) {
       replacementPreview.value = null;
       replacementPreviewRequest.value = request;
       skippedReplacementLineIds.value = new Set<string>();
       return;
     }
-
     replacementPreview.value = preview;
     replacementPreviewRequest.value = request;
     retainVisibleSkippedReplacementLines(preview);
   } catch (error) {
-    if (abortController.signal.aborted || requestId !== replacementPreviewRequestId) {
-      return;
-    }
-
+    if (abortController.signal.aborted || requestId !== replacementPreviewRequestId || !isReplacementApplyLifecycleCurrent(lifecycle)) return;
     message.error(toErrorMessage(error, '刷新替换预览失败。'));
   } finally {
-    if (requestId === replacementPreviewRequestId) {
-      activeReplacementPreviewAbortController = null;
-    }
+    if (requestId === replacementPreviewRequestId) activeReplacementPreviewAbortController = null;
   }
 };
 
@@ -975,89 +838,79 @@ const reportReplacementRefreshOutcome = (
   successMessage: string,
 ): void => {
   const issues: string[] = [];
-
-  if (refreshResult.skippedDirtyNames.length > 0) {
-    issues.push(`${refreshResult.skippedDirtyNames.join('、')} 有未保存改动，已跳过自动刷新`);
-  }
-
-  if (refreshResult.failedNames.length > 0) {
-    issues.push(`${refreshResult.failedNames.join('、')} 刷新失败，请手动重新打开`);
-  }
-
-  // 跳过与失败可能同时发生，合并到一条提示，避免漏报其中一类。
+  if (refreshResult.skippedDirtyNames.length > 0) issues.push(`${refreshResult.skippedDirtyNames.join('、')} 有未保存改动，已跳过自动刷新`);
+  if (refreshResult.failedNames.length > 0) issues.push(`${refreshResult.failedNames.join('、')} 刷新失败，请手动重新打开`);
   if (issues.length > 0) {
     message.warning(`已替换 ${replacementCount} 处内容，但 ${issues.join('；')}。`);
     return;
   }
-
   message.success(successMessage);
 };
 
-// 「应用替换 + 同步刷新已变更文档」是整页替换与单行替换的公共流程，抽出以避免两处
-// 逻辑漂移（如刷新参数不一致）。调用方各自处理预览的开/合。
 const applyReplacementAndRefresh = async (
   request: IWorkspaceReplacementRequest,
   expectedFiles: Array<{ path: string; beforeHash: string; includedMatchIds: string[] }>,
+  lifecycle: TReplacementApplyLifecycle,
 ) => {
-  const payload = await tauriService.applyWorkspaceReplacement({ request, expectedFiles });
+  const payload = await applyWorkspaceReplacementWithOptions(
+    { request, expectedFiles },
+    { signal: lifecycle.signal },
+  );
+  if (!isReplacementApplyLifecycleCurrent(lifecycle)) return null;
   const refreshResult = await refreshSidecarChangedDocuments({
     changedFilePaths: payload.files.map((changedFile: { path: string }) => changedFile.path),
     hasFileMutations: true,
     workspaceRootPath: payload.rootPath,
   });
-
+  if (!isReplacementApplyLifecycleCurrent(lifecycle)) return null;
   return { payload, refreshResult };
 };
 
 const confirmReplacementPreview = async (): Promise<void> => {
   const request = replacementPreviewRequest.value;
   const files = visibleReplacementFiles.value;
-
-  if (!request || replacementApplying.value) {
-    return;
-  }
-
+  if (!request || replacementApplying.value) return;
   if (files.length === 0) {
     message.warning('当前没有待替换项。');
     return;
   }
 
+  const lifecycle = beginReplacementApplyLifecycle();
   replacementApplying.value = true;
   replaceRunning.value = true;
 
   try {
-    const payload = await tauriService.applyWorkspaceReplacement({
+    const result = await applyReplacementAndRefresh(
       request,
-      expectedFiles: files.map((file) => ({
+      files.map((file) => ({
         path: file.path,
         beforeHash: file.beforeHash,
         includedMatchIds: file.visibleLinePreviews.map((line) => line.id),
       })),
-    });
-    const refreshResult = await refreshSidecarChangedDocuments({
-      changedFilePaths: payload.files.map((changedFile: { path: string }) => changedFile.path),
-      hasFileMutations: true,
-      workspaceRootPath: payload.rootPath,
-    });
-
+      lifecycle,
+    );
+    if (!result || !isReplacementApplyLifecycleCurrent(lifecycle)) return;
+    const { payload, refreshResult } = result;
     replacementPreviewOpen.value = false;
     replacementPreview.value = null;
     replacementPreviewRequest.value = null;
     replacementPreviewRequestId += 1;
-
     reportReplacementRefreshOutcome(
       refreshResult,
       payload.replacementCount,
       `已替换 ${payload.changedFileCount} 个文件中的 ${payload.replacementCount} 处内容。`,
     );
-
     void runSearch();
   } catch (error) {
+    if (lifecycle.signal.aborted || !isReplacementApplyLifecycleCurrent(lifecycle) || isCanceledIpcError(error)) return;
     message.error(toErrorMessage(error, '替换失败。'));
   } finally {
-    replacementApplying.value = false;
-    replaceRunning.value = false;
-    replacementApplyingLineId.value = null;
+    if (lifecycle.requestId === replacementApplyRequestId) {
+      replacementApplying.value = false;
+      replaceRunning.value = false;
+      replacementApplyingLineId.value = null;
+      activeReplacementApplyAbortController = null;
+    }
   }
 };
 
@@ -1065,144 +918,104 @@ const skipReplacementLine = (lineId: string): void => {
   skippedReplacementLineIds.value = new Set([...skippedReplacementLineIds.value, lineId]);
 };
 
-const replaceReplacementLine = async (
-  file: IReplacementFileView,
-  line: IReplacementLineView,
-): Promise<void> => {
+const replaceReplacementLine = async (file: IReplacementFileView, line: IReplacementLineView): Promise<void> => {
   const request = replacementPreviewRequest.value;
-  if (!request || replacementApplying.value) {
-    return;
-  }
+  if (!request || replacementApplying.value) return;
 
+  const lifecycle = beginReplacementApplyLifecycle();
   replacementApplying.value = true;
   replaceRunning.value = true;
   replacementApplyingLineId.value = line.id;
 
   try {
-    const { payload, refreshResult } = await applyReplacementAndRefresh(request, [
-      {
-        path: file.path,
-        beforeHash: file.beforeHash,
-        includedMatchIds: [line.id],
-      },
-    ]);
-
-    // 单行替换：仅刷新预览（移除已应用的该行、保留其余待替换项），不要套用「全部替换」的
-    // 收尾逻辑（关闭整个预览面板 + 作废预览请求）。
-    await refreshReplacementPreviewAfterLineApply(request);
-
-    reportReplacementRefreshOutcome(
-      refreshResult,
-      payload.replacementCount,
-      `已替换 ${payload.replacementCount} 处内容。`,
-    );
-
+    const result = await applyReplacementAndRefresh(request, [{
+      path: file.path,
+      beforeHash: file.beforeHash,
+      includedMatchIds: [line.id],
+    }], lifecycle);
+    if (!result || !isReplacementApplyLifecycleCurrent(lifecycle)) return;
+    const { payload, refreshResult } = result;
+    await refreshReplacementPreviewAfterLineApply(request, lifecycle);
+    if (!isReplacementApplyLifecycleCurrent(lifecycle)) return;
+    reportReplacementRefreshOutcome(refreshResult, payload.replacementCount, `已替换 ${payload.replacementCount} 处内容。`);
     void runSearch();
   } catch (error) {
+    if (lifecycle.signal.aborted || !isReplacementApplyLifecycleCurrent(lifecycle) || isCanceledIpcError(error)) return;
     message.error(toErrorMessage(error, '替换失败。'));
   } finally {
-    replacementApplying.value = false;
-    replaceRunning.value = false;
-    replacementApplyingLineId.value = null;
+    if (lifecycle.requestId === replacementApplyRequestId) {
+      replacementApplying.value = false;
+      replaceRunning.value = false;
+      replacementApplyingLineId.value = null;
+      activeReplacementApplyAbortController = null;
+    }
   }
 };
 
-const emitOpenFile = (payload: IWorkbenchOpenFileRequest): void => {
-  emit('open-file', payload);
-};
-
+const emitOpenFile = (payload: IWorkbenchOpenFileRequest): void => emit('open-file', payload);
 const handleReplacementLineOpen = (path: string, lineNumber: number): void => {
   selectedResultKey.value = null;
   emitOpenFile({ path, lineNumber, column: 1 });
 };
-
 const handleSearchResultOpen = (result: ISearchResultItem): void => {
   selectedResultKey.value = result.resultKey;
-  emitOpenFile({
-    path: result.path,
-    lineNumber: result.lineNumber,
-    column: result.matchStart === null ? 1 : result.matchStart + 1,
-  });
+  emitOpenFile({ path: result.path, lineNumber: result.lineNumber, column: result.matchStart === null ? 1 : result.matchStart + 1 });
 };
 
-watch(
-  [
-    () => props.isDesktopRuntime,
-    () => props.workspaceRootPath,
-    searchQuery,
-    matchCase,
-    wholeWord,
-    useRegex,
-    contentFuzzy,
-    useStructural,
-    // 用「生效过滤值」的序列化结果作为依赖：未启用路径过滤、或过滤为空时，
-    // 编辑包含/排除输入框或切换过滤开关都不会改变下发内容，从而不触发重复检索。
-    () => effectiveIncludePatterns.value.join('\n'),
-    () => effectiveExcludePatterns.value.join('\n'),
-  ],
-  scheduleSearch,
-  { immediate: true },
-);
-
-watch(
+watch([
+  () => props.isDesktopRuntime,
   () => props.workspaceRootPath,
-  () => {
-    searchQuery.value = '';
-    replacementQuery.value = '';
-    includePattern.value = '';
-    excludePattern.value = '';
-    activeScope.value = 'all';
-    // 同步重置搜索选项，避免遗留「结构化模式 + scope=all」等自相矛盾的组合
-    // （结构化搜索本应锁定 content 范围）。
-    matchCase.value = false;
-    wholeWord.value = false;
-    useRegex.value = false;
-    contentFuzzy.value = false;
-    useStructural.value = false;
-    showPathFilters.value = false;
-    selectedResultKey.value = null;
-    resetReplacementPreview();
-  },
-);
+  searchQuery,
+  matchCase,
+  wholeWord,
+  useRegex,
+  contentFuzzy,
+  useStructural,
+  () => effectiveIncludePatterns.value.join('\n'),
+  () => effectiveExcludePatterns.value.join('\n'),
+], scheduleSearch, { immediate: true });
 
-watch(
-  [
-    searchQuery,
-    replacementQuery,
-    matchCase,
-    wholeWord,
-    useRegex,
-    useStructural,
-    () => effectiveIncludePatterns.value.join('\n'),
-    () => effectiveExcludePatterns.value.join('\n'),
-    () => props.workspaceRootPath,
-  ],
-  () => {
-    if (replacementApplying.value) {
-      return;
-    }
+watch(() => props.workspaceRootPath, () => {
+  searchQuery.value = '';
+  replacementQuery.value = '';
+  includePattern.value = '';
+  excludePattern.value = '';
+  activeScope.value = 'all';
+  matchCase.value = false;
+  wholeWord.value = false;
+  useRegex.value = false;
+  contentFuzzy.value = false;
+  useStructural.value = false;
+  showPathFilters.value = false;
+  selectedResultKey.value = null;
+  resetReplacementPreview();
+});
 
-    const shouldPreviewReplacement =
-      replacementQuery.value.length > 0 &&
-      hasSearchQuery.value &&
-      props.isDesktopRuntime &&
-      Boolean(props.workspaceRootPath) &&
-      !matcherError.value;
-
-    if (shouldPreviewReplacement) {
-      scheduleReplacementPreview();
-    } else {
-      resetReplacementPreview();
-    }
-  },
-);
+watch([
+  searchQuery,
+  replacementQuery,
+  matchCase,
+  wholeWord,
+  useRegex,
+  useStructural,
+  () => effectiveIncludePatterns.value.join('\n'),
+  () => effectiveExcludePatterns.value.join('\n'),
+  () => props.workspaceRootPath,
+], () => {
+  if (replacementApplying.value) return;
+  const shouldPreviewReplacement =
+    replacementQuery.value.length > 0 &&
+    hasSearchQuery.value &&
+    props.isDesktopRuntime &&
+    Boolean(props.workspaceRootPath) &&
+    !matcherError.value;
+  if (shouldPreviewReplacement) scheduleReplacementPreview();
+  else resetReplacementPreview();
+});
 
 watch(activeResults, (results) => {
   const availableKeys = new Set(results.map((result) => result.resultKey));
-
-  if (selectedResultKey.value && !availableKeys.has(selectedResultKey.value)) {
-    selectedResultKey.value = null;
-  }
+  if (selectedResultKey.value && !availableKeys.has(selectedResultKey.value)) selectedResultKey.value = null;
 });
 
 onScopeDispose(cancelPendingSearch);
