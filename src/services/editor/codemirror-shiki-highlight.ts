@@ -6,13 +6,13 @@ import {
   ViewPlugin,
   type ViewUpdate,
 } from '@codemirror/view';
+import { tokenizeWithShikiWorker } from '@/services/editor/shiki-highlighter';
 import {
   type IShikiThemedToken,
   resolveShikiLanguageId,
   SHIKI_BACKGROUND,
   SHIKI_FOREGROUND,
-  tokenizeWithShikiWorker,
-} from '@/services/editor/shiki-highlighter';
+} from '@/services/editor/shiki-shared';
 
 /** 编辑器与代码渲染统一使用的等宽字体，按要求以 Consolas 为首选。 */
 export const EDITOR_FONT_FAMILY =
@@ -60,6 +60,7 @@ type TShikiHighlightSlice = {
 
 type TShikiWorkerHighlightResult = {
   requestId: number;
+  docVersion: number;
   language: string;
   startLine: number;
   endLine: number;
@@ -232,7 +233,7 @@ const buildDecorationsFromTokenLines = (
 ): DecorationSet => {
   const { doc } = view.state;
   const builder = new RangeSetBuilder<Decoration>();
-  const lineCount = Math.min(lines.length, endLine - startLine + 1);
+  const lineCount = Math.min(lines.length, endLine - startLine + 1, doc.lines - startLine + 1);
   for (let index = 0; index < lineCount; index += 1) {
     const lineTokens = lines[index];
     if (!lineTokens || lineTokens.length === 0) {
@@ -267,6 +268,7 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
     private recomputeTimer: number | null = null;
     private nextRequestId = 1;
     private latestRequestId = 0;
+    private docVersion = 0;
     // 已成功高亮的语言与行范围；用于滚动时判断当前可见区是否已被覆盖，覆盖则跳过重算。
     private highlightedLanguage: string | null = null;
     private highlightedStartLine: number | null = null;
@@ -278,6 +280,10 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
     }
 
     update(update: ViewUpdate): void {
+      if (update.docChanged) {
+        this.docVersion += 1;
+      }
+
       const workerResult = this.takeWorkerResult(update);
       if (workerResult) {
         this.applyWorkerResult(update.view, workerResult);
@@ -370,6 +376,7 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
       }
 
       const requestId = this.nextRequestId;
+      const docVersion = this.docVersion;
       this.nextRequestId += 1;
       this.latestRequestId = requestId;
       void tokenizeWithShikiWorker(slice.code, language).then((tokens) => {
@@ -380,6 +387,7 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
           view.dispatch({
             effects: shikiWorkerResultEffect.of({
               requestId,
+              docVersion,
               language,
               startLine: slice.startLine,
               endLine: slice.endLine,
@@ -407,6 +415,7 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
       const language = view.state.field(shikiLanguageField, false) ?? 'text';
       if (
         result.requestId !== this.latestRequestId ||
+        result.docVersion !== this.docVersion ||
         result.language !== language ||
         !result.tokens
       ) {

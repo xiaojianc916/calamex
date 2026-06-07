@@ -1,11 +1,20 @@
 import { createHighlighterCore, type HighlighterCore } from 'shiki/core';
 import { createOnigurumaEngine } from 'shiki/engine/oniguruma';
-import {
-  CODEMIRROR_GITHUB_LIGHT_BACKGROUND,
-  CODEMIRROR_GITHUB_LIGHT_FOREGROUND,
-} from '@/services/editor/codemirror-github-light-highlight';
-import { resolveCodeMirrorLanguageId } from '@/services/editor/codemirror-language';
 import { logger } from '@/utils/logger';
+import {
+  type IShikiThemedToken,
+  SHIKI_LANG_LOADERS,
+  SHIKI_THEME_NAME,
+  resolveShikiLanguageId,
+} from './shiki-shared';
+
+export {
+  type IShikiThemedToken,
+  SHIKI_BACKGROUND,
+  SHIKI_FOREGROUND,
+  SHIKI_THEME_NAME,
+  resolveShikiLanguageId,
+} from './shiki-shared';
 
 /**
  * 专业版 Shiki 高亮服务。
@@ -22,25 +31,11 @@ import { logger } from '@/utils/logger';
  *   为每个语法生成独立 chunk，真正做到按需加载。
  */
 
-export const SHIKI_THEME_NAME = 'github-light';
-export const SHIKI_FOREGROUND = CODEMIRROR_GITHUB_LIGHT_FOREGROUND;
-export const SHIKI_BACKGROUND = CODEMIRROR_GITHUB_LIGHT_BACKGROUND;
-
 // CodeMirror 调用方已经把单次切片限制在 200 KiB 内；这里再加 LRU 条目上限，避免
 // 滚动/布局重复触发同一窗口 tokenize 时反复跑 Oniguruma，同时避免缓存无界增长。
 const MAX_TOKENIZE_CACHE_ENTRIES = 32;
 const MAX_TOKENIZE_CACHE_CODE_LENGTH = 200_000;
 const SHIKI_WORKER_TIMEOUT_MS = 4000;
-
-/** Shiki token 的最小结构（避免直接依赖 shiki 的类型导出路径）。 */
-export interface IShikiThemedToken {
-  content: string;
-  offset: number;
-  color?: string;
-  bgColor?: string;
-  /** 位标志：1=italic, 2=bold, 4=underline（与 Shiki FontStyle 一致）。 */
-  fontStyle?: number;
-}
 
 type TShikiWorkerRequest = {
   id: number;
@@ -54,57 +49,6 @@ type TShikiWorkerResponse = {
   error?: string;
 };
 
-// 语法按需加载器：key = Shiki 语言 id，value = 动态 import。
-// 仅声明确定存在于 @shikijs/langs 的语言，避免 Vite 构建期解析失败。
-const LANG_LOADERS: Record<string, () => Promise<unknown>> = {
-  bash: () => import('@shikijs/langs/bash'),
-  c: () => import('@shikijs/langs/c'),
-  cpp: () => import('@shikijs/langs/cpp'),
-  csharp: () => import('@shikijs/langs/csharp'),
-  css: () => import('@shikijs/langs/css'),
-  diff: () => import('@shikijs/langs/diff'),
-  docker: () => import('@shikijs/langs/docker'),
-  go: () => import('@shikijs/langs/go'),
-  html: () => import('@shikijs/langs/html'),
-  ini: () => import('@shikijs/langs/ini'),
-  java: () => import('@shikijs/langs/java'),
-  javascript: () => import('@shikijs/langs/javascript'),
-  json: () => import('@shikijs/langs/json'),
-  jsonc: () => import('@shikijs/langs/jsonc'),
-  jsx: () => import('@shikijs/langs/jsx'),
-  kotlin: () => import('@shikijs/langs/kotlin'),
-  less: () => import('@shikijs/langs/less'),
-  lua: () => import('@shikijs/langs/lua'),
-  markdown: () => import('@shikijs/langs/markdown'),
-  powershell: () => import('@shikijs/langs/powershell'),
-  python: () => import('@shikijs/langs/python'),
-  ruby: () => import('@shikijs/langs/ruby'),
-  rust: () => import('@shikijs/langs/rust'),
-  scala: () => import('@shikijs/langs/scala'),
-  scss: () => import('@shikijs/langs/scss'),
-  sql: () => import('@shikijs/langs/sql'),
-  swift: () => import('@shikijs/langs/swift'),
-  toml: () => import('@shikijs/langs/toml'),
-  tsx: () => import('@shikijs/langs/tsx'),
-  typescript: () => import('@shikijs/langs/typescript'),
-  vue: () => import('@shikijs/langs/vue'),
-  xml: () => import('@shikijs/langs/xml'),
-  yaml: () => import('@shikijs/langs/yaml'),
-};
-
-// app 内部语言 id -> Shiki 语言 id 的差异映射。未列出的按同名处理。
-const APP_TO_SHIKI: Record<string, string> = {
-  shell: 'bash',
-  sh: 'bash',
-  zsh: 'bash',
-  dockerfile: 'docker',
-  md: 'markdown',
-  ts: 'typescript',
-  js: 'javascript',
-  yml: 'yaml',
-  svg: 'xml',
-};
-
 let highlighterPromise: Promise<HighlighterCore> | null = null;
 let highlighterInstance: HighlighterCore | null = null;
 let shikiWorker: Worker | null = null;
@@ -114,16 +58,6 @@ let nextWorkerRequestId = 1;
 const loadedLanguages = new Set<string>();
 const pendingLanguages = new Map<string, Promise<boolean>>();
 const tokenizeCache = new Map<string, IShikiThemedToken[][]>();
-
-/** 把传入语言解析成受支持的 Shiki 语言 id；不支持时返回 null。 */
-export const resolveShikiLanguageId = (language: string): string | null => {
-  const appId = resolveCodeMirrorLanguageId(language);
-  if (!appId || appId === 'text') {
-    return null;
-  }
-  const shikiId = APP_TO_SHIKI[appId] ?? appId;
-  return shikiId in LANG_LOADERS ? shikiId : null;
-};
 
 /** 创建（或复用）highlighter 单例，仅加载 github-light 主题，语法后续按需注入。 */
 export const ensureHighlighter = (): Promise<HighlighterCore> => {
@@ -166,7 +100,7 @@ export const ensureShikiLanguage = async (language: string): Promise<string | nu
 
   let pending = pendingLanguages.get(shikiId);
   if (!pending) {
-    const loader = LANG_LOADERS[shikiId];
+    const loader = SHIKI_LANG_LOADERS[shikiId];
     if (!loader) {
       return null;
     }
@@ -299,8 +233,9 @@ const tokenizeWithWorkerOnly = (
 
   return new Promise((resolve) => {
     let settled = false;
+    let timeoutId: ReturnType<typeof setTimeout>;
     const cleanup = (): void => {
-      window.clearTimeout(timeoutId);
+      clearTimeout(timeoutId);
       worker.removeEventListener('message', handleMessage);
       worker.removeEventListener('error', handleError);
     };
@@ -330,7 +265,7 @@ const tokenizeWithWorkerOnly = (
       shikiWorker = null;
       finish(null);
     };
-    const timeoutId = window.setTimeout(() => {
+    timeoutId = setTimeout(() => {
       logger.error({ event: 'shiki.worker.timeout', language });
       finish(null);
     }, SHIKI_WORKER_TIMEOUT_MS);
