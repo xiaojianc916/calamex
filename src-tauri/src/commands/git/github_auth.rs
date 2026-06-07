@@ -101,7 +101,6 @@ fn find_preferred_remote_url(repository: &Repository) -> Result<Option<String>, 
         .iter()
         .map(|name| name.as_bstr().to_str_lossy().into_owned())
         .collect();
-
     remote_list.sort_by_key(|name| if name == "origin" { 0 } else { 1 });
 
     for name in &remote_list {
@@ -109,11 +108,9 @@ fn find_preferred_remote_url(repository: &Repository) -> Result<Option<String>, 
             Ok(remote) => remote,
             Err(_) => continue,
         };
-
         let Some(remote_url) = remote.url(gix::remote::Direction::Fetch) else {
             continue;
         };
-
         let value = remote_url.to_bstring().to_str_lossy().into_owned();
         if !value.trim().is_empty() {
             return Ok(Some(value));
@@ -155,29 +152,24 @@ fn resolve_github_api_base(host: &str) -> String {
     if normalized_host == "github.com" {
         "https://api.github.com".to_string()
     } else {
-        format!("https://api.{host}")
+        format!("https://api.{}", host)
     }
 }
 
 fn resolve_github_auth_target(repository_root_path: &str) -> Result<GitHubAuthTarget, String> {
     let repository = open_repository_from_root(repository_root_path)?;
     let repository_root = resolve_repository_root(&repository)?;
-
     let Some(remote_url) = find_preferred_remote_url(&repository)? else {
         return Err("当前仓库没有可用的远程地址，请先配置 GitHub 远程仓库。".to_string());
     };
-
     let Some(host) = parse_github_remote_host(&remote_url) else {
         return Err("无法解析当前仓库的 GitHub 远程地址。".to_string());
     };
-
     let normalized_host = host.to_ascii_lowercase();
     if normalized_host != "github.com" && !normalized_host.contains("github.") {
         return Err("当前仓库远程不是 GitHub，暂不需要 GitHub 登录。".to_string());
     }
-
     let api_base = resolve_github_api_base(&host);
-
     Ok(GitHubAuthTarget {
         host,
         api_base,
@@ -325,8 +317,7 @@ fn build_github_auth_client(token: &str) -> Result<reqwest::Client, String> {
 async fn fetch_github_auth_status(
     target: &GitHubAuthTarget,
 ) -> Result<GitHubAuthStatusPayload, String> {
-    let Some(credential) = resolve_github_auth_credential(&target.repository_root, &target.host).await
-    else {
+    let Some(credential) = resolve_github_auth_credential(&target.repository_root, &target.host).await else {
         return Ok(unauthenticated(
             "未发现可用的 GitHub 凭据。请先通过 GitHub CLI、Git Credential Manager 或一次 git push 完成 GitHub 登录。",
         ));

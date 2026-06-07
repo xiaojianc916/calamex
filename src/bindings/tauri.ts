@@ -68,6 +68,9 @@ export const commands = {
 	 *  复用与工作区/暂存区 Diff 相同的只读 Diff 视图（GitDiffViewer / openGitDiffDocument）。
 	 */
 	getGitCommitFileDiffPreview: (payload: GitCommitFileDiffRequest) => __TAURI_INVOKE<GitDiffPreviewPayload>("get_git_commit_file_diff_preview", { payload }),
+	getGithubAuthStatus: (payload: GitHubAuthRequest) => __TAURI_INVOKE<GitHubAuthStatusPayload>("get_github_auth_status", { payload }),
+	connectGithub: (payload: GitHubAuthRequest) => __TAURI_INVOKE<GitHubAuthStatusPayload>("connect_github", { payload }),
+	disconnectGithub: (payload: GitHubAuthRequest) => __TAURI_INVOKE<GitHubAuthStatusPayload>("disconnect_github", { payload }),
 	listGitCommitHistory: (payload: GitCommitHistoryRequest) => __TAURI_INVOKE<GitCommitHistoryPayload>("list_git_commit_history", { payload }),
 	/**
 	 *  读取单个提交的详细信息（用于历史悬浮卡片）：提交元数据 + 相对首个父提交的
@@ -1086,6 +1089,21 @@ export type GitFileStatusPayload = {
 	worktreeStatus: string | null,
 	isConflicted: boolean,
 	isUntracked: boolean,
+};
+
+export type GitHubAuthRequest = {
+	repositoryRootPath: string,
+};
+
+export type GitHubAuthStatusPayload = {
+	authenticated: boolean,
+	login: string | null,
+	name: string | null,
+	avatarUrl: string | null,
+	htmlUrl: string | null,
+	email: string | null,
+	source: string | null,
+	message: string | null,
 };
 
 export type GitPathOperationRequest = {

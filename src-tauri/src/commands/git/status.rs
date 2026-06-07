@@ -71,7 +71,6 @@ pub fn stage_git_paths(
         .open_index()
         .map_err(|error| format!("读取 Git 索引失败：{error}"))?;
     let mut changed = false;
-
     for file in &status.files {
         let rel = file.relative_path.as_str();
         if !pathspecs
@@ -80,10 +79,12 @@ pub fn stage_git_paths(
         {
             continue;
         }
+
         // 已暂存且无工作区改动 / 非未跟踪的文件无需重复写入。
         if file.worktree_status.is_none() && !file.is_untracked {
             continue;
         }
+
         let absolute_path = repository_root.join(Path::new(rel));
         let worktree_deleted = file.worktree_status.as_deref() == Some("deleted");
         if worktree_deleted || !path_exists_in_worktree(&absolute_path) {
@@ -146,7 +147,6 @@ pub fn unstage_git_paths(
     // 空仓库（unborn）时为 None，对应全部从索引移除。
     let head_tree = repository.head_tree().ok();
     let mut changed = false;
-
     for rel in &targets {
         let head_entry = match &head_tree {
             Some(tree) => {
@@ -155,6 +155,7 @@ pub fn unstage_git_paths(
             }
             None => None,
         };
+
         match head_entry {
             Some(entry) => {
                 let mode = entry.mode();
@@ -168,6 +169,7 @@ pub fn unstage_git_paths(
                 } else {
                     Some(gix::index::entry::Mode::FILE)
                 };
+
                 if let Some(index_mode) = index_mode {
                     let object_id = entry.id().detach();
                     upsert_index_entry(&mut index, rel, object_id, index_mode);
@@ -300,7 +302,6 @@ pub(super) fn build_git_repository_status_payload(
 ) -> Result<GitRepositoryStatusPayload, String> {
     let repository_root = resolve_repository_root(repository)?;
     let status = build_git_status_via_gix(repository)?;
-
     let last_commit = resolve_head_commit(repository)
         .ok()
         .flatten()
@@ -319,9 +320,7 @@ pub(super) fn build_git_repository_status_payload(
             .as_deref()
             .map(|oid| oid.chars().take(7).collect::<String>()),
         is_detached: status.detached,
-        is_clean: status.staged_count == 0
-            && status.unstaged_count == 0
-            && status.untracked_count == 0,
+        is_clean: status.staged_count == 0 && status.unstaged_count == 0 && status.untracked_count == 0,
         ahead: status.ahead,
         behind: status.behind,
         staged_count: status.staged_count,
@@ -351,7 +350,6 @@ struct StatusAccum {
 /// `git status --porcelain=v2 --branch --untracked-files=all --ignored=no`，避免依赖系统安装的 git。
 fn build_git_status_via_gix(repository: &Repository) -> Result<StatusAccum, String> {
     let repository_root = resolve_repository_root(repository)?;
-
     let mut accum = StatusAccum {
         head_branch: None,
         head_short_name: None,
@@ -393,9 +391,7 @@ fn build_git_status_via_gix(repository: &Repository) -> Result<StatusAccum, Stri
     }
 
     // 文件状态。
-    let mut files: std::collections::BTreeMap<String, GitFileStatusPayload> =
-        std::collections::BTreeMap::new();
-
+    let mut files: std::collections::BTreeMap<String, GitFileStatusPayload> = std::collections::BTreeMap::new();
     let iter = repository
         .status(gix::progress::Discard)
         .map_err(|error| format!("读取 Git 状态失败：{error}"))?
@@ -481,10 +477,12 @@ fn apply_tree_index_change(
 ) {
     use gix::diff::index::ChangeRef;
     let entry = status_entry_mut(repository_root, files, location);
+
     // 冲突状态优先，不被暂存状态覆盖。
     if entry.index_status.as_deref() == Some("conflicted") {
         return;
     }
+
     match change {
         ChangeRef::Addition { .. } => {
             entry.index_status = Some("added".to_string());
@@ -495,11 +493,7 @@ fn apply_tree_index_change(
         ChangeRef::Modification { .. } => {
             entry.index_status = Some("modified".to_string());
         }
-        ChangeRef::Rewrite {
-            source_location,
-            copy,
-            ..
-        } => {
+        ChangeRef::Rewrite { source_location, copy, .. } => {
             entry.index_status = Some(if *copy { "copied" } else { "renamed" }.to_string());
             let source = source_location.to_str_lossy().into_owned();
             let source_path = Path::new(&source);
@@ -524,6 +518,7 @@ fn apply_index_worktree_change(
     use gix::status::index_worktree::iter::Summary;
     let summary = change.summary();
     let entry = status_entry_mut(repository_root, files, location);
+
     match summary {
         Some(Summary::Conflict) => {
             entry.index_status = Some("conflicted".to_string());
@@ -588,6 +583,7 @@ fn build_git_file_baseline_payload(
     let relative_path = resolve_relative_path(&repository_root, file_path)?;
     let relative_path_string = path_to_forward_slashes(&relative_path);
     let is_tracked = is_tracked_git_path(&repository_root, &relative_path)?;
+
     if !is_tracked {
         return Ok(GitFileBaselinePayload {
             available: true,
@@ -599,6 +595,7 @@ fn build_git_file_baseline_payload(
             content: None,
         });
     }
+
     let object_spec = format!("HEAD:{relative_path_string}");
     let content = read_git_revision_text(&repository_root, &object_spec)?;
     Ok(GitFileBaselinePayload {
@@ -621,8 +618,7 @@ pub(super) fn is_tracked_git_path(
     relative_path: &Path,
 ) -> Result<bool, String> {
     // 通过 gix 查询索引判断路径是否被 Git 跟踪（等价于 `git ls-files --error-unmatch`），避免依赖系统安装的 git。
-    let repository =
-        gix::open(repository_root).map_err(|error| format!("打开 Git 仓库失败：{error}"))?;
+    let repository = gix::open(repository_root).map_err(|error| format!("打开 Git 仓库失败：{error}"))?;
     let index = repository
         .index_or_empty()
         .map_err(|error| format!("读取 Git 索引失败：{error}"))?;
@@ -636,8 +632,7 @@ pub(super) fn read_git_revision_text(
     object_spec: &str,
 ) -> Result<Option<String>, String> {
     // 通过 gix 解析修订规格（如 `HEAD:path`）并读取 blob 内容（等价于 `git cat-file -p <spec>`），避免依赖系统安装的 git。
-    let repository =
-        gix::open(repository_root).map_err(|error| format!("打开 Git 仓库失败：{error}"))?;
+    let repository = gix::open(repository_root).map_err(|error| format!("打开 Git 仓库失败：{error}"))?;
     let object_id = match repository.rev_parse_single(object_spec) {
         Ok(id) => id,
         Err(_) => return Ok(None),
@@ -666,6 +661,7 @@ fn assert_git_identity_configured(repository: &Repository) -> Result<(), String>
         .string("user.email")
         .map(|value| value.to_str_lossy().trim().to_string())
         .unwrap_or_default();
+
     if name.is_empty() || email.is_empty() {
         return Err(
             "尚未配置 Git 提交身份：请设置 user.name 与 user.email（可在仓库的 .git/config 或全局 Git 配置中设置）后再提交。"
@@ -681,7 +677,12 @@ fn assert_git_identity_configured(repository: &Repository) -> Result<(), String>
 
 /// 判断 pathspec 是否匹配候选相对路径：精确相等或作为目录前缀。
 fn pathspec_matches(pathspec: &str, candidate: &str) -> bool {
-    candidate == pathspec || candidate.starts_with(&format!("{pathspec}/"))
+    if candidate == pathspec {
+        return true;
+    }
+    candidate
+        .strip_prefix(pathspec)
+        .is_some_and(|suffix| suffix.as_bytes().first() == Some(&b'/'))
 }
 
 /// 工作区中是否存在该路径（含损坏的符号链接）。
@@ -698,12 +699,12 @@ fn write_worktree_blob(
         .map_err(|error| format!("读取文件元数据失败：{error}"))?;
     let bytes = if metadata.file_type().is_symlink() {
         // 符号链接：blob 内容即链接目标（使用正斜杠，匹配 Git 存储约定）。
-        let target =
-            fs::read_link(absolute_path).map_err(|error| format!("读取符号链接失败：{error}"))?;
+        let target = fs::read_link(absolute_path).map_err(|error| format!("读取符号链接失败：{error}"))?;
         target.to_string_lossy().replace('\\', "/").into_bytes()
     } else {
         fs::read(absolute_path).map_err(|error| format!("读取工作区文件失败：{error}"))?
     };
+
     repository
         .write_blob(bytes)
         .map(|id| id.detach())
@@ -715,9 +716,11 @@ fn index_mode_for_worktree_file(absolute_path: &Path) -> Result<gix::index::entr
     use gix::index::entry::Mode;
     let metadata = fs::symlink_metadata(absolute_path)
         .map_err(|error| format!("读取文件元数据失败：{error}"))?;
+
     if metadata.file_type().is_symlink() {
         return Ok(Mode::SYMLINK);
     }
+
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -725,6 +728,7 @@ fn index_mode_for_worktree_file(absolute_path: &Path) -> Result<gix::index::entr
             return Ok(Mode::FILE_EXECUTABLE);
         }
     }
+
     Ok(Mode::FILE)
 }
 
@@ -768,9 +772,11 @@ fn restore_worktree_from_index_blob(
         .map_err(|error| format!("读取 Git 对象失败：{error}"))?;
     let bytes = object.data.as_slice();
     let target_path = repository_root.join(Path::new(relative_path));
+
     if let Some(parent) = target_path.parent() {
         fs::create_dir_all(parent).map_err(|error| format!("创建目录失败：{error}"))?;
     }
+
     if mode == Mode::SYMLINK {
         let link_target = String::from_utf8_lossy(bytes).into_owned();
         recreate_symlink(&target_path, &link_target)?;
@@ -780,6 +786,7 @@ fn restore_worktree_from_index_blob(
             let _ = fs::remove_file(&target_path);
         }
         fs::write(&target_path, bytes).map_err(|error| format!("写入工作区文件失败：{error}"))?;
+
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -788,6 +795,7 @@ fn restore_worktree_from_index_blob(
             }
         }
     }
+
     Ok(())
 }
 
@@ -814,6 +822,7 @@ fn build_tree_from_full_index(
     let empty_tree = repository.empty_tree();
     let mut editor = gix::object::tree::Editor::new(&empty_tree)
         .map_err(|error| format!("创建树编辑器失败：{error}"))?;
+
     for entry in index.entries() {
         let path = entry.path(index).to_str_lossy().into_owned();
         editor
@@ -824,6 +833,7 @@ fn build_tree_from_full_index(
             )
             .map_err(|error| format!("写入树条目失败：{error}"))?;
     }
+
     editor
         .write()
         .map(|id| id.detach())
@@ -857,11 +867,10 @@ fn build_tree_from_selected_index_paths(
             targets.insert(path.clone());
         }
     }
+
     // 精确给出的 pathspec 即使索引中已不存在（已暂存删除）也需处理。
     for pathspec in pathspecs {
-        let covered = index_paths
-            .iter()
-            .any(|path| path == pathspec || path.starts_with(&format!("{pathspec}/")));
+        let covered = index_paths.iter().any(|path| pathspec_matches(pathspec, path));
         if !covered {
             targets.insert(pathspec.clone());
         }
@@ -903,5 +912,30 @@ fn tree_entry_kind_from_index_mode(mode: gix::index::entry::Mode) -> gix::object
         EntryKind::BlobExecutable
     } else {
         EntryKind::Blob
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pathspec_matches;
+
+    #[test]
+    fn pathspec_matches_exact_file() {
+        assert!(pathspec_matches("src/app.rs", "src/app.rs"));
+        assert!(!pathspec_matches("src/app.rs", "src/app.rs.bak"));
+    }
+
+    #[test]
+    fn pathspec_matches_directory_prefix_without_allocating_separator() {
+        assert!(pathspec_matches("src", "src/app.rs"));
+        assert!(pathspec_matches("src", "src/nested/app.rs"));
+        assert!(!pathspec_matches("src", "src-old/app.rs"));
+        assert!(!pathspec_matches("src", "source/app.rs"));
+    }
+
+    #[test]
+    fn pathspec_matches_nested_directory_boundary() {
+        assert!(pathspec_matches("src/components", "src/components/Button.vue"));
+        assert!(!pathspec_matches("src/components", "src/components-old/Button.vue"));
     }
 }
