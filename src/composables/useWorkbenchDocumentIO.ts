@@ -1,7 +1,8 @@
+import { WORKBENCH_TAB_LIMITS } from '@/constants/workbench';
 import type { useMessage } from '@/composables/useMessage';
 import { tauriService } from '@/services/tauri';
 import type { useEditorStore } from '@/store/editor';
-import type { IEditorDocument, IScriptFilePayload } from '@/types/editor';
+import type { IEditorDocument } from '@/types/editor';
 import type { IGitDiffPreviewPayload, IGitDiffPreviewRequest } from '@/types/git';
 import type { TSessionSnapshot, TSessionTabKind } from '@/types/session';
 import { waitForDesktopRuntime } from '@/utils/desktop-runtime';
@@ -19,9 +20,8 @@ type TWorkbenchOpenTarget = 'file' | 'image';
 
 type TRestoredSessionTab = {
   kind: TSessionTabKind;
-  imagePath?: string;
-  imageName?: string;
-  payload?: IScriptFilePayload;
+  path: string;
+  name: string;
   order: number;
 };
 
@@ -44,8 +44,6 @@ interface IUseWorkbenchDocumentIOOptions {
 // ---------------------------------------------------------------------------
 // Constants & module-level helpers
 // ---------------------------------------------------------------------------
-
-const MAX_OPEN_TABS = 30;
 
 /** 文件 / 图片打开后的日志短语。 */
 const ACTION_LABEL_TABLE: Record<TWorkbenchOpenTarget, { reused: string; opened: string }> = {
@@ -118,7 +116,7 @@ export const useWorkbenchDocumentIO = ({
 
   const ensureCanOpenNewTab = (): boolean => {
     if (editorStore.canOpenMoreTabs) return true;
-    notifier.warning(`最多只能同时打开 ${MAX_OPEN_TABS} 个标签页`);
+    notifier.warning(`最多只能同时打开 ${WORKBENCH_TAB_LIMITS.maxOpenTabs} 个标签页`);
     return false;
   };
 
@@ -191,7 +189,7 @@ export const useWorkbenchDocumentIO = ({
   // Document loaders
   // -----------------------------------------------------------------------
 
-  const openScriptPayload = (payload: IScriptFilePayload, scene: string): void => {
+  const openScriptPayload = (payload: Awaited<ReturnType<typeof tauriService.loadScript>>, scene: string): void => {
     openTabAndNotify(scene, 'file', payload.path, payload.name, () =>
       editorStore.openDocumentTab(payload),
     );
@@ -217,6 +215,24 @@ export const useWorkbenchDocumentIO = ({
     openScriptPayload(payload, scene);
   };
 
+  const ensureDocumentBufferLoaded = async (documentId: string): Promise<void> => {
+    const targetDocument = editorStore.getDocumentById(documentId);
+    if (
+      !targetDocument ||
+      targetDocument.kind !== 'text' ||
+      targetDocument.bufferLoaded !== false ||
+      !targetDocument.path
+    ) {
+      return;
+    }
+
+    await loadDocumentFromPath(
+      targetDocument.path,
+      '加载标签页内容',
+      editorStore.workspaceRootPath,
+    );
+  };
+
   // -----------------------------------------------------------------------
   // Session restoration
   // -----------------------------------------------------------------------
@@ -236,62 +252,50 @@ export const useWorkbenchDocumentIO = ({
 
   const restoreOpenTabs = async (
     openTabs: TRestorableSessionSnapshot['openTabs'],
-    workspaceRoot: string | null,
   ): Promise<TRestoredSessionTab[]> => {
-    const loadedTabs = await Promise.all(
-      openTabs.map(async (tab): Promise<TRestoredSessionTab | null> => {
-        try {
-          const kind = resolveSessionTabKind(tab);
-          if (kind === 'image') {
-            return {
-              kind,
-              imagePath: tab.path,
-              imageName: getPathBaseName(tab.path),
-              order: tab.order,
-            };
-          }
-          const payload = await tauriService.loadScript(
-            tab.path,
-            scopedWorkspaceRootForPath(tab.path, workspaceRoot),
-          );
-          return { kind, payload, order: tab.order };
-        } catch {
-          notifier.info(`文件已不可用，已从会话移除：${tab.path}`);
-          return null;
-        }
-      }),
-    );
-    return loadedTabs.filter(isRestoredSessionTab).sort((left, right) => left.order - right.order);
+    const restoredTabs = openTabs
+      .map((tab): TRestoredSessionTab | null => {
+        const kind = resolveSessionTabKind(tab);
+        return {
+          kind,
+          path: tab.path,
+          name: getPathBaseName(tab.path),
+          order: tab.order,
+        };
+      })
+      .filter(isRestoredSessionTab)
+      .sort((left, right) => left.order - right.order);
+
+    return restoredTabs;
   };
 
   /**
    * 把单个还原后的 tab 派发回 editorStore。
-   * 文本文档打开后尝试用草稿恢复未保存内容，返回是否恢复了草稿。
+   * 恢复阶段只还原标签元数据；文本正文按需加载，避免启动时一次性读取大量文件。
    */
-  const applyRestoredTab = (tab: TRestoredSessionTab): boolean => {
-    if (tab.kind === 'image' && tab.imagePath && tab.imageName) {
-      editorStore.openImageDocument(tab.imagePath, tab.imageName);
-      return false;
+  const applyRestoredTab = (tab: TRestoredSessionTab): void => {
+    if (tab.kind === 'image') {
+      editorStore.openImageDocument(tab.path, tab.name);
+      return;
     }
-    if (tab.payload) {
-      const { document: openedDocument } = editorStore.openDocumentTab(tab.payload);
-      return editorStore.restoreDraftForDocument(openedDocument.id);
-    }
-    return false;
+
+    editorStore.openUnloadedTextDocumentTab(tab.path, tab.name);
   };
 
-  const restoreActiveDocument = (activePath: string | null): void => {
+  const restoreActiveDocument = (activePath: string | null): IEditorDocument | null => {
     if (activePath) {
       const activeDocument = editorStore.findDocumentByPath(activePath);
       if (activeDocument) {
         editorStore.setActiveDocument(activeDocument.id);
-        return;
+        return activeDocument;
       }
     }
     const firstDocument = editorStore.documents[0];
     if (firstDocument) {
       editorStore.setActiveDocument(firstDocument.id);
+      return firstDocument;
     }
+    return null;
   };
 
   const restoreSession = async (sessionSnapshot: TSessionSnapshot): Promise<void> => {
@@ -308,20 +312,17 @@ export const useWorkbenchDocumentIO = ({
 
     editorStore.clearDocuments();
 
-    const aliveTabs = await restoreOpenTabs(snapshot.openTabs, snapshot.workspaceRoot);
-    let restoredDraftCount = 0;
-    aliveTabs.forEach((tab) => {
-      if (applyRestoredTab(tab)) {
-        restoredDraftCount += 1;
-      }
-    });
+    const aliveTabs = await restoreOpenTabs(snapshot.openTabs);
+    aliveTabs.forEach(applyRestoredTab);
 
     if (aliveTabs.length === 0) return;
 
-    restoreActiveDocument(snapshot.activeTabPath);
-
-    if (restoredDraftCount > 0) {
-      notifier.info(`已恢复 ${restoredDraftCount} 个文件未保存的修改`);
+    const activeDocument = restoreActiveDocument(snapshot.activeTabPath);
+    if (activeDocument) {
+      await ensureDocumentBufferLoaded(activeDocument.id);
+      if (editorStore.restoreDraftForDocument(activeDocument.id)) {
+        notifier.info('已恢复 1 个文件未保存的修改');
+      }
     }
   };
 
@@ -377,6 +378,7 @@ export const useWorkbenchDocumentIO = ({
       if (existingDocument) {
         // 频繁切换文件时，toast + appendLog 会带来额外渲染/布局开销；这里默认静默切换。
         editorStore.setActiveDocument(existingDocument.id);
+        await ensureDocumentBufferLoaded(existingDocument.id);
         return;
       }
 
@@ -445,5 +447,6 @@ export const useWorkbenchDocumentIO = ({
     openDocumentByPath,
     openGitDiffPreview,
     openGitDiffPreviewPayload,
+    ensureDocumentBufferLoaded,
   };
 };
