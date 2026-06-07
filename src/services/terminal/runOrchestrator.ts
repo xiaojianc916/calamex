@@ -75,7 +75,7 @@ const buildTerminalDispatchRequest = (
  * Application-level terminal/script run lifecycle.
  *
  * A run is a background task owned by the application, not by the current Vue
- * route, terminal panel, or composable instance.  Keeping the event listeners,
+ * route, terminal panel, or composable instance. Keeping the event listeners,
  * output buffer, completion timeout and active-run metadata in this singleton
  * prevents view switches from tearing down a still-running task.
  */
@@ -165,7 +165,9 @@ export class TerminalRunOrchestrator {
     this.terminalFacade.dispose();
     this.resetBufferedTerminalOutput();
     this.clearTerminalRunFallbackTimer();
-    this.clearActiveTerminalRunState();
+    if (this.binding) {
+      this.clearActiveTerminalRunState();
+    }
     this.binding = null;
   }
 
@@ -297,7 +299,9 @@ export class TerminalRunOrchestrator {
       return true;
     }
 
-    return this.editorStore.runLogs.some((item) => item.runId === runId && isTerminalRunFinalLog(item));
+    return this.editorStore.runLogs.some(
+      (item) => item.runId === runId && isTerminalRunFinalLog(item),
+    );
   }
 
   private failTerminalRun(
