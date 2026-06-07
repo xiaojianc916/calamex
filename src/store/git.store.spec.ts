@@ -1,12 +1,8 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { IGitRepositoryStatusPayload } from '@/types/git';
+import type { IGitPullRequestSummaryPayload, IGitRepositoryStatusPayload } from '@/types/git';
 
 import { useGitStore } from './git';
-
-// ---------------------------------------------------------------------------
-// Test fixtures & helpers
-// ---------------------------------------------------------------------------
 
 const WORKSPACE_ROOT = 'D:/repo';
 const PARENT_WORKSPACE_ROOT = 'D:/parent';
@@ -21,7 +17,6 @@ interface IDeferred<T> {
 }
 
 const createDeferred = <T>(): IDeferred<T> => {
-  // Promise executor 是同步执行的，下面两个 ! 在 Promise 构造完成前就会被赋值。
   let resolve!: IDeferred<T>['resolve'];
   let reject!: IDeferred<T>['reject'];
   const promise = new Promise<T>((promiseResolve, promiseReject) => {
@@ -55,6 +50,23 @@ const createStatus = (
   ...overrides,
 });
 
+const createPullRequest = (
+  overrides: Partial<IGitPullRequestSummaryPayload> = {},
+): IGitPullRequestSummaryPayload => ({
+  number: 1,
+  title: 'feat: initial pull request',
+  state: 'open',
+  isDraft: false,
+  author: 'octocat',
+  headRef: 'feature/demo',
+  baseRef: 'main',
+  htmlUrl: 'https://github.com/owner/repo/pull/1',
+  createdAt: '2026-04-28T00:00:00.000Z',
+  updatedAt: '2026-04-28T00:00:00.000Z',
+  comments: 0,
+  ...overrides,
+});
+
 const createUnavailableStatus = (): IGitRepositoryStatusPayload =>
   createStatus({
     available: false,
@@ -66,22 +78,15 @@ const createUnavailableStatus = (): IGitRepositoryStatusPayload =>
     headShortName: null,
   });
 
-// ---------------------------------------------------------------------------
-// Module mocks
-// ---------------------------------------------------------------------------
-
 const tauriServiceMock = vi.hoisted(() => ({
   getGitRepositoryStatus: vi.fn(),
   initGitRepository: vi.fn(),
+  listGitPullRequests: vi.fn(),
 }));
 
 vi.mock('@/services/tauri', () => ({
   tauriService: tauriServiceMock,
 }));
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 describe('useGitStore', () => {
   beforeEach(() => {
@@ -92,22 +97,18 @@ describe('useGitStore', () => {
   it('初始化仓库结果不会被旧刷新请求覆盖回未初始化状态', async () => {
     const gitStore = useGitStore();
 
-    // 1) 先发一个永远悬挂的 refresh，让它的 statusRequestId 抢先占位但不解析。
     const staleRefresh = createDeferred<IGitRepositoryStatusPayload>();
     tauriServiceMock.getGitRepositoryStatus.mockReturnValueOnce(staleRefresh.promise);
 
-    // 2) 紧跟一个 init,它会把 statusRequestId 推到下一个值并立刻完成。
     const initializedStatus = createStatus();
     tauriServiceMock.initGitRepository.mockResolvedValueOnce(initializedStatus);
 
     const refreshPromise = gitStore.refreshRepositoryStatus(WORKSPACE_ROOT);
     await gitStore.initRepository(WORKSPACE_ROOT);
 
-    // init 已经成功落盘。
     expect(gitStore.status.available).toBe(true);
     expect(gitStore.status.repositoryRootPath).toBe(WORKSPACE_ROOT);
 
-    // 3) 现在让陈旧的 refresh 拿到一份 unavailable 结果——它必须被 staleness 检查丢弃。
     staleRefresh.resolve(createUnavailableStatus());
     await refreshPromise;
 
@@ -119,7 +120,6 @@ describe('useGitStore', () => {
   it('初始化返回非当前工作区仓库时会报错且不写入状态', async () => {
     const gitStore = useGitStore();
 
-    // 故意让 init 返回一个父目录仓库的状态，模拟 git init 命中了上层已存在的 .git。
     const parentRepositoryStatus = createStatus({
       repositoryRootPath: PARENT_WORKSPACE_ROOT,
       repositoryName: 'parent',
@@ -129,9 +129,58 @@ describe('useGitStore', () => {
 
     await expect(gitStore.initRepository(WORKSPACE_ROOT)).rejects.toThrow(MSG_INIT_MISMATCH);
 
-    // 抛错走 finally → isLoading 复位；但 applyStatus 没有被调用，状态保持默认空。
     expect(gitStore.status.available).toBe(false);
     expect(gitStore.status.repositoryRootPath).toBeNull();
     expect(gitStore.isLoading).toBe(false);
+  });
+
+  it('拉取请求列表会合并并发请求并复用缓存', async () => {
+    const gitStore = useGitStore();
+    tauriServiceMock.getGitRepositoryStatus.mockResolvedValueOnce(createStatus());
+    await gitStore.refreshRepositoryStatus(WORKSPACE_ROOT);
+
+    const deferred = createDeferred<IGitPullRequestSummaryPayload[]>();
+    tauriServiceMock.listGitPullRequests.mockReturnValueOnce(deferred.promise);
+
+    const firstRequest = gitStore.loadPullRequests('open');
+    const secondRequest = gitStore.loadPullRequests('open');
+
+    expect(tauriServiceMock.listGitPullRequests).toHaveBeenCalledTimes(1);
+    expect(tauriServiceMock.listGitPullRequests).toHaveBeenCalledWith({
+      repositoryRootPath: WORKSPACE_ROOT,
+      state: 'open',
+    });
+
+    const firstPayload = [createPullRequest({ title: 'feat: cached pr' })];
+    deferred.resolve(firstPayload);
+    await expect(firstRequest).resolves.toEqual(firstPayload);
+    await expect(secondRequest).resolves.toEqual(firstPayload);
+    expect(gitStore.pullRequests[0]?.title).toBe('feat: cached pr');
+
+    await expect(gitStore.loadPullRequests('open')).resolves.toEqual(firstPayload);
+    expect(tauriServiceMock.listGitPullRequests).toHaveBeenCalledTimes(1);
+  });
+
+  it('强制刷新拉取请求时先保留缓存再更新结果', async () => {
+    const gitStore = useGitStore();
+    tauriServiceMock.getGitRepositoryStatus.mockResolvedValueOnce(createStatus());
+    await gitStore.refreshRepositoryStatus(WORKSPACE_ROOT);
+
+    tauriServiceMock.listGitPullRequests.mockResolvedValueOnce([
+      createPullRequest({ title: 'feat: old pr' }),
+    ]);
+    await gitStore.loadPullRequests('open');
+
+    const deferred = createDeferred<IGitPullRequestSummaryPayload[]>();
+    tauriServiceMock.listGitPullRequests.mockReturnValueOnce(deferred.promise);
+
+    const refreshPromise = gitStore.loadPullRequests('open', { force: true });
+    expect(gitStore.pullRequests[0]?.title).toBe('feat: old pr');
+
+    const nextPayload = [createPullRequest({ number: 2, title: 'feat: fresh pr' })];
+    deferred.resolve(nextPayload);
+    await expect(refreshPromise).resolves.toEqual(nextPayload);
+
+    expect(gitStore.pullRequests[0]?.title).toBe('feat: fresh pr');
   });
 });
