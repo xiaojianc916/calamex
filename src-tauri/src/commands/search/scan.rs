@@ -389,18 +389,22 @@ pub(super) fn is_shell_like_file(file: &ScannedFile) -> bool {
 }
 
 fn collect_workspace_symbols(files: &[ScannedFile]) -> Result<Vec<SymbolEntry>, String> {
-    let mut per_file_symbols = files
+    let per_file_symbols = files
         .par_iter()
         .enumerate()
         .filter(|(_, file)| is_shell_like_file(file))
         .map(|(index, file)| collect_symbols_from_file(file).map(|symbols| (index, symbols)))
         .collect::<Result<Vec<_>, String>>()?;
 
+    Ok(flatten_symbol_batches(per_file_symbols))
+}
+
+fn flatten_symbol_batches(mut per_file_symbols: Vec<(usize, Vec<SymbolEntry>)>) -> Vec<SymbolEntry> {
     per_file_symbols.sort_by_key(|(index, _)| *index);
-    Ok(per_file_symbols
+    per_file_symbols
         .into_iter()
         .flat_map(|(_, symbols)| symbols)
-        .collect())
+        .collect()
 }
 
 fn collect_symbols_from_file(file: &ScannedFile) -> Result<Vec<SymbolEntry>, String> {
@@ -538,38 +542,15 @@ mod tests {
     }
 
     #[test]
-    fn collect_workspace_symbols_preserves_file_and_dfs_order() {
-        let files = vec![
-            ScannedFile {
-                path: p("fixtures/a.sh"),
-                relative_path: "a.sh".to_string(),
-                name: "a.sh".to_string(),
-            },
-            ScannedFile {
-                path: p("fixtures/b.txt"),
-                relative_path: "b.txt".to_string(),
-                name: "b.txt".to_string(),
-            },
-            ScannedFile {
-                path: p("fixtures/c.sh"),
-                relative_path: "c.sh".to_string(),
-                name: "c.sh".to_string(),
-            },
-        ];
-
-        let symbols = vec![
-            (0usize, vec![symbol("a.sh", "first", 1), symbol("a.sh", "second", 2)]),
+    fn flatten_symbol_batches_preserves_file_and_dfs_order() {
+        let collected: Vec<String> = flatten_symbol_batches(vec![
             (2usize, vec![symbol("c.sh", "third", 1)]),
-        ];
-        let mut ordered = symbols;
-        ordered.sort_by_key(|(index, _)| *index);
-        let collected: Vec<String> = ordered
-            .into_iter()
-            .flat_map(|(_, symbols)| symbols)
-            .map(|symbol| symbol.name)
-            .collect();
+            (0usize, vec![symbol("a.sh", "first", 1), symbol("a.sh", "second", 2)]),
+        ])
+        .into_iter()
+        .map(|symbol| symbol.name)
+        .collect();
 
-        assert_eq!(files.len(), 3);
         assert_eq!(collected, vec!["first", "second", "third"]);
     }
 
