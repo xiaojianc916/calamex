@@ -12,6 +12,14 @@
   - 之后：普通单文件变化为 O(C + N log N 的最终稳定排序)，其中 C 为变更路径数；目录/事件风暴保持 O(N) fallback，优先保证正确性。
 - 正确性：仍复用原有跳过目录/扩展名规则；删除目录且缓存中存在子文件时回退全量扫描，避免 stale entries。新增单测覆盖增量新增/删除与删除目录 fallback。
 
+## A2：终端隐藏输出有界 backlog
+
+- 文件：`src/terminal/session.ts`
+- 问题：终端面板隐藏时，输出会先累计到隐藏 backlog，长时间运行高输出命令可能导致字符串无界增长，恢复可见时还会一次性回放过多内容。
+- 算法：将隐藏 backlog 改为“保留最新内容”的有界缓冲，容量为 512 KiB；超过预算时丢弃最旧输出，并在回放内容前加入灰色省略提示。
+- 取舍：离屏状态下极端长输出不再保证完整保留，但可显著降低内存和恢复可见时的卡顿风险；可见状态下的正常终端输出路径不受影响。
+- 验证：需重点回归“隐藏终端 → 运行大量输出 → 再显示终端”的恢复、滚动到底部、run completed 回调时序。
+
 ## B2：内容模糊搜索的轻量必要条件预过滤
 
 - 文件：`src-tauri/src/commands/search/find.rs`
@@ -33,9 +41,8 @@
 
 ## 当前仍需拆小批次推进的项
 
-- A2：终端隐藏输出有界 backlog。影响 `TerminalSession` 离屏写入/可见恢复路径，需要配套前端测试或手动回归。
 - A3：Shiki Worker 化。会影响编辑器高亮初始化、worker 打包、fallback 路径，建议单独提交。
-- B1：Bash 符号级 mtime/hash 增量 AST 缓存。需要设计 per-file AST/symbol 缓存失效与 watcher 事件合并策略，建议在 A1 稳定后继续。
+- B1：Bash 符号级 mtime/hash 增量 AST 缓存。当前已有工作区级符号缓存与 A1 的 dirty 失效；若继续细化到 per-file mtime/hash，需要设计 per-file AST/symbol 缓存失效与 watcher 事件合并策略，建议在 A1 稳定后继续。
 
 ## 建议验证命令
 

@@ -62,6 +62,10 @@ const TERMINAL_BUFFER_DIAGNOSTIC_PREVIEW_LENGTH = 160;
 const TERMINAL_BELL_VISUAL_FLASH_MS = 120;
 // 初始绘制恢复时，从游标行向上有界扫描的最大行数，避免大 scrollback 下线性扫整缓冲。
 const TERMINAL_RENDERABLE_CONTENT_SCAN_ROWS = 256;
+// 离屏期间只保留最新输出，避免终端面板长时间隐藏时字符串 backlog 无界增长。
+const TERMINAL_HIDDEN_WRITE_BACKLOG_MAX_CHARS = 512 * 1024;
+const TERMINAL_HIDDEN_WRITE_BACKLOG_OMITTED_MARKER =
+  '\r\n\x1b[90m[已省略部分离屏终端输出以保持界面流畅]\x1b[0m\r\n';
 
 const ANSI_ESCAPE = String.fromCharCode(27);
 const ANSI_ESCAPE_CHARACTER_PATTERN = new RegExp(ANSI_ESCAPE, 'gu');
@@ -1306,6 +1310,32 @@ export class TerminalSession {
     });
   }
 
+  private _appendHiddenTerminalWriteBacklog(value: string): void {
+    if (!value) return;
+
+    const previous = this._hiddenTerminalWriteBacklog.startsWith(
+      TERMINAL_HIDDEN_WRITE_BACKLOG_OMITTED_MARKER,
+    )
+      ? this._hiddenTerminalWriteBacklog.slice(
+          TERMINAL_HIDDEN_WRITE_BACKLOG_OMITTED_MARKER.length,
+        )
+      : this._hiddenTerminalWriteBacklog;
+    const combined = `${previous}${value}`;
+    if (combined.length <= TERMINAL_HIDDEN_WRITE_BACKLOG_MAX_CHARS) {
+      this._hiddenTerminalWriteBacklog = combined;
+      return;
+    }
+
+    const tailBudget = Math.max(
+      0,
+      TERMINAL_HIDDEN_WRITE_BACKLOG_MAX_CHARS -
+        TERMINAL_HIDDEN_WRITE_BACKLOG_OMITTED_MARKER.length,
+    );
+    this._hiddenTerminalWriteBacklog = `${TERMINAL_HIDDEN_WRITE_BACKLOG_OMITTED_MARKER}${combined.slice(
+      Math.max(0, combined.length - tailBudget),
+    )}`;
+  }
+
   private _flushTerminalWriteBufferNow(options?: {
     afterWrite?: () => void;
     forceLayout?: boolean;
@@ -1325,7 +1355,7 @@ export class TerminalSession {
     }
     if (!this._visible) {
       if (this._bufferedTerminalWrite) {
-        this._hiddenTerminalWriteBacklog += this._bufferedTerminalWrite;
+        this._appendHiddenTerminalWriteBacklog(this._bufferedTerminalWrite);
         this._bufferedTerminalWrite = '';
       }
       if (this._pendingScrollToBottomAfterWrite) {
@@ -1402,7 +1432,7 @@ export class TerminalSession {
     if (!value) return;
     const normalizedValue = normalizeTerminalAnsiForTheme(value, this._theme);
     if (!this._visible) {
-      this._hiddenTerminalWriteBacklog += normalizedValue;
+      this._appendHiddenTerminalWriteBacklog(normalizedValue);
       if (options?.scrollToBottom) this._pendingHiddenScrollToBottom = true;
       return;
     }
