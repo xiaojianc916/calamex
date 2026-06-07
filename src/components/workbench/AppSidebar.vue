@@ -92,6 +92,7 @@ import { useDialog } from '@/composables/useDialog';
 import { useMessage } from '@/composables/useMessage';
 import { tauriService } from '@/services/tauri';
 import { useAppStore } from '@/store/app';
+import { useGitStore } from '@/store/git';
 import type { TWorkbenchSidebarView } from '@/types/app';
 import type {
   IActiveRunSummary,
@@ -107,6 +108,7 @@ import type { IGitDiffPreviewRequest } from '@/types/git';
 import { writeFileSystemPathToClipboard } from '@/utils/clipboard';
 import { toErrorMessage } from '@/utils/error';
 import {
+  areFileSystemPathsEqual,
   formatFileSystemPathForDisplay,
   getPathBaseName,
   getRelativeFileSystemPath,
@@ -168,6 +170,7 @@ const emit = defineEmits<{
 const message = useMessage();
 const dialog = useDialog();
 const appStore = useAppStore();
+const gitStore = useGitStore();
 
 const root = ref<IWorkspaceDirectoryPayload | null>(null);
 const rootLoading = ref(false);
@@ -968,6 +971,15 @@ const flushPendingFsReloads = useDebounceFn(async (): Promise<void> => {
     await loadDirectoryEntries(dir);
   }
 }, 80);
+const refreshGitStatusAfterFsEvent = useDebounceFn(async (): Promise<void> => {
+  const rootPath = root.value?.rootPath ?? props.workspaceRootPath;
+  if (!rootPath) return;
+  try {
+    await gitStore.refreshRepositoryStatus(rootPath);
+  } catch (error) {
+    console.warn('[AppSidebar] Failed to refresh Git status after workspace file change.', error);
+  }
+}, 120);
 
 function stopWorkspaceFileWatcher(): void {
   const wasWatching = fsEventUnlisten !== null || isFsWatcherStarting;
@@ -986,25 +998,39 @@ async function startWorkspaceFileWatcher(): Promise<void> {
   if (fsEventUnlisten || isFsWatcherStarting) return;
   isFsWatcherStarting = true;
   try {
+    if (!fsEventUnlisten) {
+      fsEventUnlisten = await events.workspaceFsEvent.listen((e) => {
+        handleFileSystemEvent(e.payload);
+      });
+    }
+    if (!areFileSystemPathsEqual(root.value?.rootPath ?? null, rootPath)) {
+      fsEventUnlisten?.();
+      fsEventUnlisten = null;
+      return;
+    }
     try {
       await tauriService.startWorkspaceWatching(rootPath);
-    } catch {}
-    if (fsEventUnlisten) return;
-    fsEventUnlisten = await events.workspaceFsEvent.listen((e) => {
-      handleFileSystemEvent(e.payload);
-    });
+    } catch (error) {
+      console.warn('[AppSidebar] Failed to start workspace file watcher.', error);
+      fsEventUnlisten?.();
+      fsEventUnlisten = null;
+    }
   } finally {
     isFsWatcherStarting = false;
   }
 }
 
 function handleFileSystemEvent(payload: WorkspaceFsEvent): void {
-  if (!root.value || payload.rootPath !== root.value.rootPath) return;
+  if (!root.value || !areFileSystemPathsEqual(payload.rootPath, root.value.rootPath)) return;
   for (const change of payload.changes) {
+    if (change.kind === 'removed' || change.kind === 'renamed') {
+      pruneWorkspaceSubtreeState(change.path);
+    }
     const parent = resolveParentPathForMutation(change.path);
     if (parent) pendingFsReloadDirs.add(parent);
   }
   void flushPendingFsReloads();
+  void refreshGitStatusAfterFsEvent();
 }
 
 onMounted(() => {
