@@ -1,7 +1,11 @@
 import { createHighlighterCore, type HighlighterCore } from 'shiki/core';
 import { createOnigurumaEngine } from 'shiki/engine/oniguruma';
-import { resolveCodeMirrorLanguageId } from '@/services/editor/codemirror-language';
-import { SHIKI_THEME_NAME, type IShikiThemedToken } from '@/services/editor/shiki-highlighter';
+import {
+  type IShikiThemedToken,
+  SHIKI_LANG_LOADERS,
+  SHIKI_THEME_NAME,
+  resolveShikiLanguageId,
+} from './shiki-shared';
 
 type TShikiWorkerRequest = {
   id: number;
@@ -15,66 +19,9 @@ type TShikiWorkerResponse = {
   error?: string;
 };
 
-const LANG_LOADERS: Record<string, () => Promise<unknown>> = {
-  bash: () => import('@shikijs/langs/bash'),
-  c: () => import('@shikijs/langs/c'),
-  cpp: () => import('@shikijs/langs/cpp'),
-  csharp: () => import('@shikijs/langs/csharp'),
-  css: () => import('@shikijs/langs/css'),
-  diff: () => import('@shikijs/langs/diff'),
-  docker: () => import('@shikijs/langs/docker'),
-  go: () => import('@shikijs/langs/go'),
-  html: () => import('@shikijs/langs/html'),
-  ini: () => import('@shikijs/langs/ini'),
-  java: () => import('@shikijs/langs/java'),
-  javascript: () => import('@shikijs/langs/javascript'),
-  json: () => import('@shikijs/langs/json'),
-  jsonc: () => import('@shikijs/langs/jsonc'),
-  jsx: () => import('@shikijs/langs/jsx'),
-  kotlin: () => import('@shikijs/langs/kotlin'),
-  less: () => import('@shikijs/langs/less'),
-  lua: () => import('@shikijs/langs/lua'),
-  markdown: () => import('@shikijs/langs/markdown'),
-  powershell: () => import('@shikijs/langs/powershell'),
-  python: () => import('@shikijs/langs/python'),
-  ruby: () => import('@shikijs/langs/ruby'),
-  rust: () => import('@shikijs/langs/rust'),
-  scala: () => import('@shikijs/langs/scala'),
-  scss: () => import('@shikijs/langs/scss'),
-  sql: () => import('@shikijs/langs/sql'),
-  swift: () => import('@shikijs/langs/swift'),
-  toml: () => import('@shikijs/langs/toml'),
-  tsx: () => import('@shikijs/langs/tsx'),
-  typescript: () => import('@shikijs/langs/typescript'),
-  vue: () => import('@shikijs/langs/vue'),
-  xml: () => import('@shikijs/langs/xml'),
-  yaml: () => import('@shikijs/langs/yaml'),
-};
-
-const APP_TO_SHIKI: Record<string, string> = {
-  shell: 'bash',
-  sh: 'bash',
-  zsh: 'bash',
-  dockerfile: 'docker',
-  md: 'markdown',
-  ts: 'typescript',
-  js: 'javascript',
-  yml: 'yaml',
-  svg: 'xml',
-};
-
 let highlighterPromise: Promise<HighlighterCore> | null = null;
 const loadedLanguages = new Set<string>();
 const pendingLanguages = new Map<string, Promise<boolean>>();
-
-const resolveShikiLanguageId = (language: string): string | null => {
-  const appId = resolveCodeMirrorLanguageId(language);
-  if (!appId || appId === 'text') {
-    return null;
-  }
-  const shikiId = APP_TO_SHIKI[appId] ?? appId;
-  return shikiId in LANG_LOADERS ? shikiId : null;
-};
 
 const ensureHighlighter = (): Promise<HighlighterCore> => {
   if (!highlighterPromise) {
@@ -101,10 +48,14 @@ const ensureLanguage = async (language: string): Promise<string | null> => {
 
   let pending = pendingLanguages.get(shikiId);
   if (!pending) {
+    const loader = SHIKI_LANG_LOADERS[shikiId];
+    if (!loader) {
+      return null;
+    }
     pending = (async () => {
       try {
         const highlighter = await ensureHighlighter();
-        const mod = (await LANG_LOADERS[shikiId]()) as { default?: unknown };
+        const mod = (await loader()) as { default?: unknown };
         await highlighter.loadLanguage((mod.default ?? mod) as never);
         loadedLanguages.add(shikiId);
         return true;
