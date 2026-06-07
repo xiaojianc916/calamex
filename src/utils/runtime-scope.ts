@@ -84,15 +84,30 @@ export const createRuntimeScope = (name: string): RuntimeScope => {
         return () => undefined;
       }
 
-      const timerId: ReturnType<typeof globalThis.setTimeout> = globalThis.setTimeout(() => {
-        if (!abortController.signal.aborted) {
+      let removeFromScope = (): void => undefined;
+      let timerId: ReturnType<typeof globalThis.setTimeout> | null = globalThis.setTimeout(() => {
+        const currentTimerId = timerId;
+        timerId = null;
+        removeFromScope();
+
+        if (currentTimerId !== null && !abortController.signal.aborted) {
           callback();
         }
       }, delayMs);
 
-      return disposables.add(() => {
+      const disposeTimer = (): void => {
+        if (timerId === null) {
+          return;
+        }
         globalThis.clearTimeout(timerId);
-      });
+        timerId = null;
+      };
+      removeFromScope = disposables.add(disposeTimer);
+
+      return () => {
+        disposeTimer();
+        removeFromScope();
+      };
     },
 
     dispose() {

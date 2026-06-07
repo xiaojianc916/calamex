@@ -105,4 +105,40 @@ describe('createRuntimeScope', () => {
       vi.useRealTimers();
     }
   });
+
+  it('定时器触发后会从作用域移除，后续 dispose 不会重复清理', async () => {
+    vi.useFakeTimers();
+    try {
+      const scope = createRuntimeScope('root');
+      const callback = vi.fn();
+      const cleanup = vi.fn();
+
+      scope.add(cleanup);
+      scope.setTimeout(callback, 10);
+      await vi.advanceTimersByTimeAsync(10);
+      await scope.dispose();
+
+      expect(callback).toHaveBeenCalledTimes(1);
+      expect(cleanup).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('手动取消定时器后会从作用域移除，后续 dispose 不会再触发回调', async () => {
+    vi.useFakeTimers();
+    try {
+      const scope = createRuntimeScope('root');
+      const callback = vi.fn();
+
+      const cancel = scope.setTimeout(callback, 10);
+      cancel();
+      await vi.runAllTimersAsync();
+      await scope.dispose();
+
+      expect(callback).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
