@@ -65,10 +65,11 @@ withDefaults(
   min-width: 0;
   min-height: 52px;
   height: 52px;
+  overflow: visible;
   color: var(--text-secondary);
   font-size: 12px;
   font-weight: 500;
-  contain: layout paint;
+  contain: layout;
   transform: translateZ(0);
   backface-visibility: hidden;
 }
@@ -100,7 +101,8 @@ withDefaults(
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
-  contain: layout paint;
+  overflow: visible;
+  contain: layout;
   transform: translateZ(0);
   backface-visibility: hidden;
 }
