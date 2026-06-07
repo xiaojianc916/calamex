@@ -1,0 +1,52 @@
+.source-control-sidebar {
+  --scm-commit: #16a34a;
+  --scm-commit-hover: #15803d;
+  --scm-commit-active: #166534;
+}
+
+.source-control-commit-input {
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    background 0.15s ease;
+}
+
+.source-control-commit-input:focus {
+  border-color: var(--scm-commit);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--scm-commit) 18%, transparent);
+}
+
+.source-control-btn {
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease,
+    box-shadow 0.12s ease,
+    color 0.12s ease,
+    transform 0.12s ease;
+}
+
+.source-control-btn-primary {
+  border-color: var(--scm-commit);
+  background: var(--scm-commit);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.22) inset,
+    0 8px 18px color-mix(in srgb, var(--scm-commit) 20%, transparent);
+  color: #ffffff;
+}
+
+.source-control-btn-primary:hover:not(:disabled) {
+  border-color: var(--scm-commit-hover);
+  background: var(--scm-commit-hover);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.2) inset,
+    0 10px 22px color-mix(in srgb, var(--scm-commit-hover) 24%, transparent);
+  color: #ffffff;
+  filter: none;
+}
+
+.source-control-btn-primary:active:not(:disabled) {
+  border-color: var(--scm-commit-active);
+  background: var(--scm-commit-active);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.16) inset;
+  transform: translateY(1px);
+}
