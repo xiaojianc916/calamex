@@ -18,9 +18,7 @@ const createSummary = (paths: readonly string[]): IAiAgentPatchSummary => ({
   patchRef: 'patch-ref-1',
 });
 
-const createPatch = (
-  files: ReadonlyArray<{ path: string; lines?: string[] }>,
-): IAiPatchSet => ({
+const createPatch = (files: ReadonlyArray<{ path: string; lines?: string[] }>): IAiPatchSet => ({
   summary: 'AI 修改',
   files: files.map((file) => ({
     path: file.path,

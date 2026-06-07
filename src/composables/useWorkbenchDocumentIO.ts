@@ -1,5 +1,5 @@
-import { WORKBENCH_TAB_LIMITS } from '@/constants/workbench';
 import type { useMessage } from '@/composables/useMessage';
+import { WORKBENCH_TAB_LIMITS } from '@/constants/workbench';
 import { tauriService } from '@/services/tauri';
 import type { useEditorStore } from '@/store/editor';
 import type { IEditorDocument } from '@/types/editor';
@@ -189,7 +189,10 @@ export const useWorkbenchDocumentIO = ({
   // Document loaders
   // -----------------------------------------------------------------------
 
-  const openScriptPayload = (payload: Awaited<ReturnType<typeof tauriService.loadScript>>, scene: string): void => {
+  const openScriptPayload = (
+    payload: Awaited<ReturnType<typeof tauriService.loadScript>>,
+    scene: string,
+  ): void => {
     openTabAndNotify(scene, 'file', payload.path, payload.name, () =>
       editorStore.openDocumentTab(payload),
     );

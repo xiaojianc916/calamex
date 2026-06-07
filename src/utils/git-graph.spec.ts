@@ -75,9 +75,9 @@ describe('buildGitGraph', () => {
     const pRow = layout.rows.find((row) => row.id === 'p');
     expect(pRow?.lane).toBe(0);
     // p 只占用一条泳道，后续两个子提交通过分叉连线汇入它。
-    expect(
-      layout.rows.filter((row) => row.edges.some((edge) => edge.type === 'out')).length,
-    ).toBe(2);
+    expect(layout.rows.filter((row) => row.edges.some((edge) => edge.type === 'out')).length).toBe(
+      2,
+    );
   });
 
   it('章鱼式合并（三个父提交）展开到三条泳道且连线完整', () => {

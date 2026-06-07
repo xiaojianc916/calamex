@@ -148,9 +148,7 @@ export function buildGitGraph(commits: IGitGraphInputCommit[]): IGitGraphLayout 
       const parentId = parents[parentIndex];
 
       // O(1) 复用父提交已占用的泳道（取代对 afterLanes 的整体扫描）。
-      const existingLane = laneByCommit.has(parentId)
-        ? (laneByCommit.get(parentId) as number)
-        : -1;
+      const existingLane = laneByCommit.has(parentId) ? (laneByCommit.get(parentId) as number) : -1;
       if (existingLane !== -1) {
         outLanes.push(existingLane);
         continue;

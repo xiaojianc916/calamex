@@ -293,7 +293,10 @@ export const useEditorStore = defineStore(
         .sort((left, right) => {
           const leftTime = Date.parse(left.lastAccessedAt ?? '');
           const rightTime = Date.parse(right.lastAccessedAt ?? '');
-          return (Number.isFinite(leftTime) ? leftTime : 0) - (Number.isFinite(rightTime) ? rightTime : 0);
+          return (
+            (Number.isFinite(leftTime) ? leftTime : 0) -
+            (Number.isFinite(rightTime) ? rightTime : 0)
+          );
         });
 
       const overflow = candidates.length - MAX_LOADED_CLEAN_TEXT_BUFFERS;
@@ -545,7 +548,11 @@ export const useEditorStore = defineStore(
      */
     const restoreDraftForDocument = (documentId: string): boolean => {
       const targetDocument = getDocumentById(documentId);
-      if (targetDocument?.kind !== 'text' || !targetDocument.path || targetDocument.bufferLoaded === false) {
+      if (
+        targetDocument?.kind !== 'text' ||
+        !targetDocument.path ||
+        targetDocument.bufferLoaded === false
+      ) {
         return false;
       }
       const draft = getDocumentDraft(targetDocument.path);
@@ -861,7 +868,10 @@ export const useEditorStore = defineStore(
 
     const unloadDocumentBuffer = (documentId: string): boolean => {
       const targetDocument = getDocumentById(documentId);
-      if (!targetDocument || !isUnloadableCleanTextDocument(targetDocument, activeDocumentId.value)) {
+      if (
+        !targetDocument ||
+        !isUnloadableCleanTextDocument(targetDocument, activeDocumentId.value)
+      ) {
         return false;
       }
 
@@ -887,7 +897,11 @@ export const useEditorStore = defineStore(
 
     const runDraftCapture = (documentId: string): void => {
       const targetDocument = getDocumentById(documentId);
-      if (targetDocument?.kind !== 'text' || !targetDocument.path || targetDocument.bufferLoaded === false) {
+      if (
+        targetDocument?.kind !== 'text' ||
+        !targetDocument.path ||
+        targetDocument.bufferLoaded === false
+      ) {
         return;
       }
       captureDocumentDraft(

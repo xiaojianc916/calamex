@@ -154,11 +154,7 @@ const myersEditScript = (a: string, b: string): TEditOp[] | null => {
  * 把 Myers 操作序列折叠成「最小变更区间」数组（按原文档坐标，升序、互不重叠）。
  * 连续的删除/插入合并为一个 change；纯插入产出 from===to，纯删除产出 insert===''。
  */
-const buildChanges = (
-  ops: readonly TEditOp[],
-  b: string,
-  aStart: number,
-): IDocChange[] => {
+const buildChanges = (ops: readonly TEditOp[], b: string, aStart: number): IDocChange[] => {
   const changes: IDocChange[] = [];
   let posA = 0;
   let posB = 0;

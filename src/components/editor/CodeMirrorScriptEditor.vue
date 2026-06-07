@@ -169,7 +169,17 @@ const analysisDiagnosticsSignature = computed(() => {
   const analysis = analysisState.value;
   if (!analysis.available) return 'unavailable';
   return analysis.diagnostics
-    .map((item) => [item.line, item.column, item.endLine, item.endColumn, item.level, item.code, item.message].join('\u001f'))
+    .map((item) =>
+      [
+        item.line,
+        item.column,
+        item.endLine,
+        item.endColumn,
+        item.level,
+        item.code,
+        item.message,
+      ].join('\u001f'),
+    )
     .join('\u001e');
 });
 const contextMenuState = ref({ open: false, x: 0 });
@@ -319,7 +329,9 @@ const resolveSelectionViewportFocusLine = (
 
   for (const visibleRange of view.visibleRanges) {
     const visibleStartLine = view.state.doc.lineAt(visibleRange.from).number;
-    const visibleEndLine = view.state.doc.lineAt(Math.max(visibleRange.from, visibleRange.to - 1)).number;
+    const visibleEndLine = view.state.doc.lineAt(
+      Math.max(visibleRange.from, visibleRange.to - 1),
+    ).number;
     const intersectionStartLine = Math.max(startLine, visibleStartLine);
     const intersectionEndLine = Math.min(endLine, visibleEndLine);
     const visibleLineCount = intersectionEndLine - intersectionStartLine + 1;
@@ -374,7 +386,9 @@ const resolveMultiLineSelectionSummaryText = (
   startLine: number,
   endLine: number,
 ): TSelectionSummaryText => {
-  const fallbackLine = view.state.doc.lineAt(Math.min(Math.max(range.head, range.from), range.to)).number;
+  const fallbackLine = view.state.doc.lineAt(
+    Math.min(Math.max(range.head, range.from), range.to),
+  ).number;
   const currentLine = resolveSelectionViewportFocusLine(view, startLine, endLine, fallbackLine);
   const window = resolveSelectionLineWindow({
     startLine,
@@ -1060,10 +1074,7 @@ watch(
   },
 );
 
-watch(
-  analysisDiagnosticsSignature,
-  () => syncDiagnostics(),
-);
+watch(analysisDiagnosticsSignature, () => syncDiagnostics());
 
 watch(
   () => props.editorSettings,
