@@ -63,6 +63,38 @@ const intlWithSegmenter = Intl as typeof Intl & {
 const segmenterCache = new Map<string, ITextPreviewSegmenter | null>();
 const ellipsisGraphemeCountCache = new Map<string, number>();
 
+// 字素切分在补全候选与活动行预览的热路径上会对相同字符串反复调用（clip、count、
+// 语义边界查找等会各自重切一遍同一段文本）。这里用「有界 LRU」缓存
+// (locale, value) -> 字素数组：命中直接复用上次结果，避免重复构造 Segmenter
+// 迭代或回退扫描。容量上限防止长会话内存无界增长，超限时淘汰最久未访问的键。
+const GRAPHEME_SEGMENT_CACHE_LIMIT = 1024;
+const graphemeSegmentCache = new Map<string, string[]>();
+
+const touchGraphemeSegmentCache = (cacheKey: string): string[] | undefined => {
+  const cached = graphemeSegmentCache.get(cacheKey);
+  if (cached === undefined) {
+    return undefined;
+  }
+
+  // 命中后把该键移到 Map 末尾，让最久未访问的键留在头部以便优先淘汰（LRU）。
+  graphemeSegmentCache.delete(cacheKey);
+  graphemeSegmentCache.set(cacheKey, cached);
+  return cached;
+};
+
+const storeGraphemeSegmentCache = (cacheKey: string, segments: string[]): void => {
+  graphemeSegmentCache.set(cacheKey, segments);
+
+  while (graphemeSegmentCache.size > GRAPHEME_SEGMENT_CACHE_LIMIT) {
+    const oldestKey = graphemeSegmentCache.keys().next().value;
+    if (oldestKey === undefined) {
+      break;
+    }
+
+    graphemeSegmentCache.delete(oldestKey);
+  }
+};
+
 const toSafeInteger = (value: number, fallback: number): number => {
   if (!Number.isFinite(value)) {
     return fallback;
@@ -189,7 +221,7 @@ const splitSentencesFallback = (value: string): string[] => {
   return segments?.filter(Boolean) ?? [value];
 };
 
-const segmentText = (
+const computeSegments = (
   value: string,
   granularity: TTextPreviewSegmentGranularity,
   locale?: TTextPreviewLocale,
@@ -211,8 +243,34 @@ const segmentText = (
   return splitGraphemesFallback(value);
 };
 
-export const splitTextGraphemes = (value: string, locale?: TTextPreviewLocale): string[] =>
-  segmentText(value, 'grapheme', locale);
+const segmentGraphemes = (value: string, locale?: TTextPreviewLocale): string[] => {
+  if (!value) {
+    return [];
+  }
+
+  const cacheKey = `${getLocaleCacheKey(getEffectiveLocale(locale))}\u0000${value}`;
+  const cached = touchGraphemeSegmentCache(cacheKey);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  const segments = computeSegments(value, 'grapheme', locale);
+  storeGraphemeSegmentCache(cacheKey, segments);
+  return segments;
+};
+
+const segmentText = (
+  value: string,
+  granularity: TTextPreviewSegmentGranularity,
+  locale?: TTextPreviewLocale,
+): string[] =>
+  granularity === 'grapheme'
+    ? segmentGraphemes(value, locale)
+    : computeSegments(value, granularity, locale);
+
+export const splitTextGraphemes = (value: string, locale?: TTextPreviewLocale): string[] => [
+  ...segmentText(value, 'grapheme', locale),
+];
 
 const normalizePreviewText = (value: string): string =>
   value.normalize('NFC').replace(/\s+/gu, ' ').trim();

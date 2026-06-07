@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { clipTextPreview, formatPrioritizedFieldPreview } from '@/utils/text-preview';
+import {
+  clipTextPreview,
+  formatPrioritizedFieldPreview,
+  splitTextGraphemes,
+} from '@/utils/text-preview';
 
 describe('text-preview', () => {
   it('优先在句子边界裁剪中文预览', () => {
@@ -93,5 +97,41 @@ describe('text-preview', () => {
     expect(preview).toContain('高：');
     expect(preview).toContain('低：');
     expect([...highPart].length).toBeGreaterThan([...lowPart].length);
+  });
+
+  it('字素切分对组合字符与 emoji 保持完整，且重复调用结果稳定', () => {
+    const sample = 'a\u0301🙂🇨🇳é结尾';
+    const first = splitTextGraphemes(sample);
+    const second = splitTextGraphemes(sample);
+
+    // 合成的 é、emoji、区域旗帜都应作为单个字素，不被拆散为多个码点。
+    expect(first.join('')).toBe(sample);
+    expect(first).toContain('🙂');
+    expect(first).not.toContain('\u0301');
+    // 命中缓存（第二次）应得到与首次完全一致的切分结果。
+    expect(second).toEqual(first);
+  });
+
+  it('记忆化缓存不会被外部修改污染（返回防御性拷贝）', () => {
+    const sample = '缓存隔离测试内容';
+    const firstCall = splitTextGraphemes(sample);
+    const originalLength = firstCall.length;
+
+    // 改动导出的数组不应影响内部缓存，后续调用仍返回完整结果。
+    firstCall.length = 0;
+    firstCall.push('污染');
+
+    const secondCall = splitTextGraphemes(sample);
+    expect(secondCall.length).toBe(originalLength);
+    expect(secondCall.join('')).toBe(sample);
+  });
+
+  it('记忆化不改变裁剪结果（与无缓存语义一致）', () => {
+    const value = '今天热点新闻已获取。第二句继续补充更多背景信息。';
+    const a = clipTextPreview(value, { maxGraphemes: 16 });
+    const b = clipTextPreview(value, { maxGraphemes: 16 });
+
+    expect(a).toBe('今天热点新闻已获取。...');
+    expect(b).toBe(a);
   });
 });
