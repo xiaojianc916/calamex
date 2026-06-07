@@ -14,6 +14,7 @@ use nucleo_matcher::{
     Config, Matcher as NucleoMatcher, Utf32Str,
     pattern::{CaseMatching, Normalization, Pattern as NucleoPattern},
 };
+use rayon::prelude::*;
 use std::{cmp::Ordering, collections::BinaryHeap, fs, io, path::Path};
 
 /// 包装搜索结果以便放入有界最大堆。
@@ -121,27 +122,41 @@ pub(super) fn search_file_contents(
     payload: &WorkspaceSearchRequest,
     limit: usize,
 ) -> Result<Vec<WorkspaceSearchResult>, String> {
+    if limit == 0 {
+        return Ok(Vec::new());
+    }
+
     let pattern = if payload.use_regex {
         query.to_string()
     } else {
         regex::escape(query)
     };
 
+    // 复用同一个不可变 matcher：grep 的 RegexMatcher 是 Sync，可在 rayon 工作线程间共享。
     let matcher = RegexMatcherBuilder::new()
         .case_insensitive(!payload.match_case)
         .word(payload.whole_word)
         .build(&pattern)
         .map_err(|error| format!("内容搜索表达式无效：{error}"))?;
 
-    let mut results = Vec::new();
+    // 并行扫描各文件：每个文件最多收集 limit 条，避免单文件无界扫描；collect 保持与
+    // files 相同的顺序，随后按文件顺序拼接并截断到全局 limit，输出与串行实现逐项一致。
+    let per_file = files
+        .par_iter()
+        .map(|file| {
+            let mut local = Vec::new();
+            search_one_file_content(file, &matcher, limit, &mut local)?;
+            Ok(local)
+        })
+        .collect::<Result<Vec<Vec<WorkspaceSearchResult>>, String>>()?;
 
-    for file in files {
+    let mut results = Vec::new();
+    for file_results in per_file {
         if results.len() >= limit {
             break;
         }
-
         let remaining = limit - results.len();
-        search_one_file_content(file, &matcher, remaining, &mut results)?;
+        results.extend(file_results.into_iter().take(remaining));
     }
 
     Ok(results)
