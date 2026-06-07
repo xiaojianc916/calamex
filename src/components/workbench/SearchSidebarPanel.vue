@@ -59,7 +59,7 @@
 
       <button type="button" class="search-panel-option-btn" :class="{ 'is-active': contentFuzzy }"
         :aria-pressed="contentFuzzy" title="内容模糊匹配" @click="toggleSearchOption('contentFuzzy')">
-        <span aria-hidden="true" class="icon-[lucide--sparkles]" />
+        <span aria-hidden="true" class="icon-[lucide--waves]" />
       </button>
 
       <button type="button" class="search-panel-option-btn" :class="{ 'is-active': showPathFilters }"
