@@ -39,6 +39,30 @@ pub struct LspHoverResult {
     pub contents: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct LspPosition {
+    pub line: u32,
+    pub character: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct LspRange {
+    pub start: LspPosition,
+    pub end: LspPosition,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct LspContentChange {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub range: Option<LspRange>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub range_length: Option<u32>,
+    pub text: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum LspState {
     Stopped,

@@ -15,7 +15,8 @@ use super::discovery::{resolve_lsp_command, resolve_shellcheck_executable};
 use super::io::{read_lsp_stdout, send_request, write_framed};
 use super::protocol::{frame_message, jsonrpc_notify, jsonrpc_request, path_to_uri};
 use super::types::{
-    LspCompletionItem, LspHoverResult, LspManager, LspSession, LspState, PendingMap,
+    LspCompletionItem, LspContentChange, LspHoverResult, LspManager, LspSession, LspState,
+    PendingMap,
 };
 
 #[tauri::command]
@@ -200,28 +201,28 @@ async fn stop_inner(session: &Arc<Mutex<LspSession>>, pending: &PendingMap) {
     }
 
     // 先尝试优雅 shutdown:此刻进程仍存活,能正常回 shutdown 响应并自行退出。
-   // 必须早于 kill_tx——否则 watcher 会 drop child 触发 kill_on_drop,把进程杀死,
-   // 导致 shutdown 响应永远不到、resp_rx 既不 resolve 也不 close,白白吃满 500ms。
-if let Some(stdin) = stdin {
-    let (resp_tx, resp_rx) = oneshot::channel::<Value>();
-    let shutdown_id = i64::MAX;
-    pending.lock().await.insert(shutdown_id, resp_tx);
+    // 必须早于 kill_tx——否则 watcher 会 drop child 触发 kill_on_drop,把进程杀死,
+    // 导致 shutdown 响应永远不到、resp_rx 既不 resolve 也不 close,白白吃满 500ms。
+    if let Some(stdin) = stdin {
+        let (resp_tx, resp_rx) = oneshot::channel::<Value>();
+        let shutdown_id = i64::MAX;
+        pending.lock().await.insert(shutdown_id, resp_tx);
 
-    let shutdown = frame_message(&jsonrpc_request(shutdown_id, "shutdown", Value::Null));
-    let _ = write_framed(&stdin, &shutdown).await;
+        let shutdown = frame_message(&jsonrpc_request(shutdown_id, "shutdown", Value::Null));
+        let _ = write_framed(&stdin, &shutdown).await;
 
-    // 最多等 500ms(进程存活时通常很快 resolve,提前返回)
-    let _ = timeout(Duration::from_millis(500), resp_rx).await;
-    pending.lock().await.remove(&shutdown_id);
+        // 最多等 500ms(进程存活时通常很快 resolve,提前返回)
+        let _ = timeout(Duration::from_millis(500), resp_rx).await;
+        pending.lock().await.remove(&shutdown_id);
 
-    let exit = frame_message(&jsonrpc_notify("exit", Value::Null));
-    let _ = write_framed(&stdin, &exit).await;
-}
+        let exit = frame_message(&jsonrpc_notify("exit", Value::Null));
+        let _ = write_framed(&stdin, &exit).await;
+    }
 
-// 再通知 watcher 退出:drop child → kill_on_drop 仅作为"不听话才强杀"的兜底。
-if let Some(tx) = kill_tx {
-    let _ = tx.send(());
-}
+    // 再通知 watcher 退出:drop child → kill_on_drop 仅作为"不听话才强杀"的兜底。
+    if let Some(tx) = kill_tx {
+        let _ = tx.send(());
+    }
     // 子进程依赖 `kill_on_drop` 在 Child 被 drop 时强杀(watcher 持有 child)。
     // watcher 在 kill_rx 触发后即返回,Child 随之被 drop。
     log::info!("bash-language-server 已停止");
@@ -290,11 +291,17 @@ pub async fn lsp_did_change(
     file_path: String,
     content: String,
     version: u32,
+    changes: Option<Vec<LspContentChange>>,
 ) -> Result<(), String> {
     let (stdin, uri, _) = require_running_with_uri(&manager, &file_path, false).await?;
+    let content_changes = match changes {
+        Some(changes) if !changes.is_empty() => serde_json::to_value(changes)
+            .map_err(|error| format!("序列化 LSP 增量变更失败: {error}"))?,
+        _ => serde_json::json!([{ "text": content }]),
+    };
     let params = serde_json::json!({
         "textDocument": { "uri": uri, "version": version },
-        "contentChanges": [{ "text": content }]
+        "contentChanges": content_changes
     });
     let msg = frame_message(&jsonrpc_notify("textDocument/didChange", params));
     write_framed(&stdin, &msg).await
