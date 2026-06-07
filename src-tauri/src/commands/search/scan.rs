@@ -431,9 +431,20 @@ fn collect_symbols_from_node(
         });
     }
 
-    for child_index in 0..node.named_child_count() {
-        if let Some(child) = node.named_child(child_index as u32) {
-            collect_symbols_from_node(child, source, file, symbols);
+    // 用 TreeCursor 线性遍历命名子节点：goto_first_child/goto_next_sibling 每步均为
+    // O(1)，整层 O(k)。相比 named_child(i) 每次从头数到第 i 个孩子的 O(i)（整层累计
+    // O(k^2)），整棵树从 O(n^2) 量级降到 O(n)。仅下降到命名子节点，DFS 前序顺序与上面的
+    // 函数识别逻辑保持完全一致。
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            let child = cursor.node();
+            if child.is_named() {
+                collect_symbols_from_node(child, source, file, symbols);
+            }
+            if !cursor.goto_next_sibling() {
+                break;
+            }
         }
     }
 }
@@ -478,5 +489,38 @@ mod tests {
             &root,
             &p("/workspace/node_modules/project/node_modules/pkg/index.js")
         ));
+    }
+
+    #[test]
+    fn collect_symbols_walks_named_nodes_in_dfs_preorder() {
+        let source =
+            "#!/bin/bash\nouter() {\n  inner() {\n    echo hi\n  }\n  inner\n}\nsibling() {\n  echo bye\n}\n";
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_bash::LANGUAGE.into())
+            .expect("加载 Bash 语法失败");
+        let tree = parser.parse(source, None).expect("解析 Bash 失败");
+
+        let file = ScannedFile {
+            path: p("/workspace/app/script.sh"),
+            relative_path: "script.sh".to_string(),
+            name: "script.sh".to_string(),
+        };
+
+        let mut symbols = Vec::new();
+        collect_symbols_from_node(tree.root_node(), source.as_bytes(), &file, &mut symbols);
+
+        let collected: Vec<(String, u32)> = symbols
+            .iter()
+            .map(|symbol| (symbol.name.clone(), symbol.line_number))
+            .collect();
+        assert_eq!(
+            collected,
+            vec![
+                ("outer".to_string(), 2),
+                ("inner".to_string(), 3),
+                ("sibling".to_string(), 8),
+            ]
+        );
     }
 }
