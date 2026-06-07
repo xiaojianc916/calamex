@@ -52,6 +52,10 @@ pub struct WorkspaceSearchRequest {
     pub(crate) use_regex: bool,
     #[serde(default)]
     pub(crate) use_structural: bool,
+    // 仅作用于内容搜索：开启后内容改用 nucleo 子序列模糊匹配（默认精确/正则）。
+    // 与 use_regex / whole_word 互斥：开启模糊时这两项被忽略（前端也会关闭正则）。
+    #[serde(default)]
+    pub(crate) content_fuzzy: bool,
     #[serde(default)]
     pub(crate) include_patterns: Vec<String>,
     #[serde(default)]

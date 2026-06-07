@@ -14,6 +14,7 @@ use nucleo_matcher::{
     Config, Matcher as NucleoMatcher, Utf32Str,
     pattern::{CaseMatching, Normalization, Pattern as NucleoPattern},
 };
+use rayon::prelude::*;
 use std::{cmp::Ordering, collections::BinaryHeap, fs, io, path::Path};
 
 /// 包装搜索结果以便放入有界最大堆。
@@ -121,30 +122,142 @@ pub(super) fn search_file_contents(
     payload: &WorkspaceSearchRequest,
     limit: usize,
 ) -> Result<Vec<WorkspaceSearchResult>, String> {
+    if limit == 0 {
+        return Ok(Vec::new());
+    }
+
+    if payload.content_fuzzy {
+        return search_fuzzy_file_contents(files, query, payload.match_case, limit);
+    }
+
     let pattern = if payload.use_regex {
         query.to_string()
     } else {
         regex::escape(query)
     };
 
+    // 复用同一个不可变 matcher：grep 的 RegexMatcher 是 Sync，可在 rayon 工作线程间共享。
     let matcher = RegexMatcherBuilder::new()
         .case_insensitive(!payload.match_case)
         .word(payload.whole_word)
         .build(&pattern)
         .map_err(|error| format!("内容搜索表达式无效：{error}"))?;
 
-    let mut results = Vec::new();
+    // 并行扫描各文件：每个文件最多收集 limit 条，避免单文件无界扫描；collect 保持与
+    // files 相同的顺序，随后按文件顺序拼接并截断到全局 limit，输出与串行实现逐项一致。
+    let per_file = files
+        .par_iter()
+        .map(|file| {
+            let mut local = Vec::new();
+            search_one_file_content(file, &matcher, limit, &mut local)?;
+            Ok(local)
+        })
+        .collect::<Result<Vec<Vec<WorkspaceSearchResult>>, String>>()?;
 
-    for file in files {
+    let mut results = Vec::new();
+    for file_results in per_file {
         if results.len() >= limit {
             break;
         }
-
         let remaining = limit - results.len();
-        search_one_file_content(file, &matcher, remaining, &mut results)?;
+        results.extend(file_results.into_iter().take(remaining));
     }
 
     Ok(results)
+}
+
+/// 内容模糊搜索：逐文件、逐行用 nucleo 做子序列模糊匹配。与精确/正则路径一样
+/// 并行化，但这是“功能”而非“性能”路径：逐行模糊比 ripgrep 更贵，仅在用户显式开启时生效。
+fn search_fuzzy_file_contents(
+    files: &[ScannedFile],
+    query: &str,
+    match_case: bool,
+    limit: usize,
+) -> Result<Vec<WorkspaceSearchResult>, String> {
+    let case_matching = if match_case {
+        CaseMatching::Respect
+    } else {
+        CaseMatching::Ignore
+    };
+    let pattern = NucleoPattern::parse(query, case_matching, Normalization::Smart);
+
+    let per_file = files
+        .par_iter()
+        .map(|file| search_one_file_fuzzy(file, &pattern, limit))
+        .collect::<Result<Vec<Vec<WorkspaceSearchResult>>, String>>()?;
+
+    let mut results = Vec::new();
+    for file_results in per_file {
+        if results.len() >= limit {
+            break;
+        }
+        let remaining = limit - results.len();
+        results.extend(file_results.into_iter().take(remaining));
+    }
+
+    Ok(results)
+}
+
+fn search_one_file_fuzzy(
+    file: &ScannedFile,
+    pattern: &NucleoPattern,
+    limit: usize,
+) -> Result<Vec<WorkspaceSearchResult>, String> {
+    let mut local = Vec::new();
+    let bytes = match fs::read(&file.path) {
+        Ok(bytes) => bytes,
+        Err(_) => return Ok(local),
+    };
+    let Ok((content, _encoding)) = decode_script_bytes(&bytes) else {
+        return Ok(local);
+    };
+
+    let mut matcher = NucleoMatcher::new(Config::DEFAULT);
+    let mut utf32_buffer = Vec::new();
+    let mut indices: Vec<u32> = Vec::new();
+
+    for (line_index, line) in content.lines().enumerate() {
+        if local.len() >= limit {
+            break;
+        }
+        if line.is_empty() {
+            continue;
+        }
+
+        let haystack = Utf32Str::new(line, &mut utf32_buffer);
+        indices.clear();
+        if pattern
+            .indices(haystack, &mut matcher, &mut indices)
+            .is_none()
+        {
+            continue;
+        }
+        if indices.is_empty() {
+            continue;
+        }
+
+        // nucleo 返回的是非连续的字符（码点）下标；用 [首, 尾+1] 作为单一覆盖区间，
+        // 适配现有单区间高亮 schema（与 byte_to_char_offset 同为码点偏移，前端按码点切片）。
+        let first = indices.iter().copied().min().unwrap_or(0);
+        let last = indices.iter().copied().max().unwrap_or(first);
+        let line_number = count_to_u32(line_index + 1, "行号")?;
+
+        local.push(WorkspaceSearchResult {
+            path: file.path.to_string_lossy().to_string(),
+            relative_path: file.relative_path.clone(),
+            name: file.name.clone(),
+            kind: WorkspaceSearchResultKind::Content,
+            line_number: Some(line_number),
+            line_text: Some(trim_line(line)),
+            match_start: Some(first),
+            match_end: Some(last + 1),
+            // 与精确内容命中保持一致的评分量级（line*4 + 列），确保 all 范围下
+            // 文件名命中（负分）仍排在内容命中之前，且内容内部按位置排序。
+            score: i64_to_i32((line_number as i64 * 4) + first as i64, "搜索评分")?,
+        });
+    }
+
+    Ok(local)
 }
 
 pub(super) fn search_structural_contents(

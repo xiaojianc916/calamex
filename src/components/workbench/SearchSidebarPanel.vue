@@ -57,6 +57,11 @@
         <span aria-hidden="true" class="icon-[lucide--regex]" />
       </button>
 
+      <button type="button" class="search-panel-option-btn" :class="{ 'is-active': contentFuzzy }"
+        :aria-pressed="contentFuzzy" title="内容模糊匹配" @click="toggleSearchOption('contentFuzzy')">
+        <span aria-hidden="true" class="icon-[lucide--sparkles]" />
+      </button>
+
       <button type="button" class="search-panel-option-btn" :class="{ 'is-active': showPathFilters }"
         :aria-pressed="showPathFilters" title="包含 / 排除路径" @click="toggleSearchOption('showPathFilters')">
         <span aria-hidden="true" class="icon-[lucide--list-filter]" />
@@ -336,6 +341,9 @@ const activeScope = ref<TWorkspaceSearchScope>('all');
 const matchCase = ref(false);
 const wholeWord = ref(false);
 const useRegex = ref(false);
+// contentFuzzy：仅影响内容搜索。开启后内容改用后端 nucleo 子序列模糊匹配（默认精确），
+//   与正则互斥：两者都改写内容匹配方式，同时开启语义不清。文件名/符号始终为模糊，不受此开关影响。
+const contentFuzzy = ref(false);
 const useStructural = ref(false);
 const showPathFilters = ref(false);
 const searchIndexing = ref(false);
@@ -406,8 +414,8 @@ const toResultItem = (result: IWorkspaceSearchResult): ISearchResultItem => {
     resultKey: `${result.kind}:${result.path}:${result.lineNumber ?? 0}:${result.matchStart ?? -1}:${result.matchEnd ?? -1}`,
     reason: result.kind,
     // 内容命中：直接用后端返回的字符（码点）区间做紧凑高亮，与后端 byte_to_char_offset
-    // 完全对齐。文件名/符号命中：后端用 nucleo 模糊匹配且不返回区间，这里退化为前端的
-    // 精确/正则高亮——可能与后端模糊命中不完全一致（模糊命中时甚至无高亮）。属于已知取舍：
+    // 完全对齐（模糊命中也会返回覆盖区间）。文件名/符号命中：后端用 nucleo 模糊匹配且不返回区间，
+    // 这里退化为前端的精确/正则高亮——可能与后端模糊命中不完全一致（模糊命中时甚至无高亮）。属于已知取舍：
     // 仅作视觉提示，不影响定位与打开。
     snippetSegments:
       result.kind === 'content' && preview.range
@@ -619,6 +627,18 @@ const toggleSearchOption = (option: TSearchToggleOption): void => {
 
   if (option === 'useRegex') {
     useRegex.value = !useRegex.value;
+    // 正则与内容模糊互斥：两者都改写内容匹配方式。
+    if (useRegex.value) {
+      contentFuzzy.value = false;
+    }
+    return;
+  }
+
+  if (option === 'contentFuzzy') {
+    contentFuzzy.value = !contentFuzzy.value;
+    if (contentFuzzy.value) {
+      useRegex.value = false;
+    }
     return;
   }
 
@@ -633,6 +653,7 @@ const toggleStructuralSearch = (): void => {
     matchCase.value = false;
     wholeWord.value = false;
     useRegex.value = false;
+    contentFuzzy.value = false;
     showPathFilters.value = false;
     activeScope.value = 'content';
   }
@@ -718,6 +739,7 @@ const runSearch = async (): Promise<void> => {
         wholeWord: wholeWord.value,
         useRegex: useRegex.value,
         useStructural: useStructural.value,
+        contentFuzzy: contentFuzzy.value,
         includePatterns: effectiveIncludePatterns.value,
         excludePatterns: effectiveExcludePatterns.value,
         limit: SEARCH_RESULT_LIMIT,
@@ -1111,6 +1133,7 @@ watch(
     matchCase,
     wholeWord,
     useRegex,
+    contentFuzzy,
     useStructural,
     // 用「生效过滤值」的序列化结果作为依赖：未启用路径过滤、或过滤为空时，
     // 编辑包含/排除输入框或切换过滤开关都不会改变下发内容，从而不触发重复检索。
@@ -1134,6 +1157,7 @@ watch(
     matchCase.value = false;
     wholeWord.value = false;
     useRegex.value = false;
+    contentFuzzy.value = false;
     useStructural.value = false;
     showPathFilters.value = false;
     selectedResultKey.value = null;

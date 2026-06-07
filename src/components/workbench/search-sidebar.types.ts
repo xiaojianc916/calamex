@@ -5,7 +5,12 @@ import type {
 } from '@/types/search';
 
 export type TSearchReason = TWorkspaceSearchResultKind;
-export type TSearchToggleOption = 'matchCase' | 'wholeWord' | 'useRegex' | 'showPathFilters';
+export type TSearchToggleOption =
+  | 'matchCase'
+  | 'wholeWord'
+  | 'useRegex'
+  | 'contentFuzzy'
+  | 'showPathFilters';
 export type TReplacementSegmentKind = 'equal' | 'removed' | 'added' | 'empty';
 export type TReplacementSegmentPart = 'whole' | 'prefix' | 'removed' | 'added' | 'suffix';
 
