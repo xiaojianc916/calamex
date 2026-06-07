@@ -3,6 +3,7 @@ import { commands, type ScriptFilePayload } from '@/bindings/tauri';
 import type { ITauriService } from '@/types/tauri';
 import { measureScriptContentInput } from './tauri.ipc-metrics';
 import { callSpectaCommand, pickDialogPath } from './tauri.ipc-runtime';
+import type { IIpcCallOptions } from './tauri.ipc-types';
 
 const openFileFilters = [
   {
@@ -48,19 +49,20 @@ type TWorkspaceTauriService = Pick<
 };
 
 export const workspaceTauriService: TWorkspaceTauriService = {
-  analyzeScript(payload) {
+  analyzeScript(payload, options?: IIpcCallOptions) {
     return callSpectaCommand(
       {
         command: 'analyze_script',
         guardHint: '执行 ShellCheck 实时诊断',
         idempotent: true,
         input: payload,
+        signal: options?.signal,
       },
       () => commands.analyzeScript(payload),
     );
   },
 
-  formatScript(payload) {
+  formatScript(payload, options?: IIpcCallOptions) {
     return callSpectaCommand(
       {
         command: 'format_script',
@@ -70,6 +72,7 @@ export const workspaceTauriService: TWorkspaceTauriService = {
         timeoutMs: 15_000,
         input: payload,
         measureInput: measureScriptContentInput,
+        signal: options?.signal,
       },
       () => commands.formatScript(payload),
     );
@@ -120,13 +123,14 @@ export const workspaceTauriService: TWorkspaceTauriService = {
     );
   },
 
-  loadScript(path, workspaceRootPath) {
+  loadScript(path, workspaceRootPath, options?: IIpcCallOptions) {
     return callSpectaCommand(
       {
         command: 'load_script',
         guardHint: '读取脚本文件',
         idempotent: true,
         input: { path, workspaceRootPath: workspaceRootPath ?? null },
+        signal: options?.signal,
       },
       () =>
         invoke<ScriptFilePayload>('load_script', {
@@ -136,97 +140,105 @@ export const workspaceTauriService: TWorkspaceTauriService = {
     );
   },
 
-  loadImageAsset(path) {
+  loadImageAsset(path, options?: IIpcCallOptions) {
     return callSpectaCommand(
       {
         command: 'load_image_asset',
         guardHint: '读取图片资源',
         idempotent: true,
         input: { path },
+        signal: options?.signal,
       },
       () => commands.loadImageAsset(path),
     );
   },
 
-  saveScript(payload) {
+  saveScript(payload, options?: IIpcCallOptions) {
     return callSpectaCommand(
       {
         command: 'save_script',
         guardHint: '写入脚本文件',
         input: payload,
         measureInput: measureScriptContentInput,
+        signal: options?.signal,
       },
       () => commands.saveScript(payload),
     );
   },
 
-  detectEnvironment() {
+  detectEnvironment(options?: IIpcCallOptions) {
     return callSpectaCommand(
       {
         command: 'detect_execution_environment',
         guardHint: '检测执行环境',
         idempotent: true,
         input: undefined,
+        signal: options?.signal,
       },
       () => commands.detectExecutionEnvironment(),
     );
   },
 
-  listWorkspaceEntries(path, rootPath) {
+  listWorkspaceEntries(path, rootPath, options?: IIpcCallOptions) {
     return callSpectaCommand(
       {
         command: 'list_workspace_entries',
         guardHint: '读取工作区目录',
         idempotent: true,
         input: { path, rootPath },
+        signal: options?.signal,
       },
       () => commands.listWorkspaceEntries(path ?? null, rootPath ?? null),
     );
   },
 
-  createWorkspacePath(payload) {
+  createWorkspacePath(payload, options?: IIpcCallOptions) {
     return callSpectaCommand(
       {
         command: 'create_workspace_path',
         guardHint: '创建工作区资源',
         audit: 'sensitive',
         input: payload,
+        signal: options?.signal,
       },
       () => commands.createWorkspacePath(payload),
     );
   },
 
-  renameWorkspacePath(payload) {
+  renameWorkspacePath(payload, options?: IIpcCallOptions) {
     return callSpectaCommand(
       {
         command: 'rename_workspace_path',
         guardHint: '重命名工作区资源',
         audit: 'sensitive',
         input: payload,
+        signal: options?.signal,
       },
       () => commands.renameWorkspacePath(payload),
     );
   },
 
-  deleteWorkspacePath(payload) {
+  deleteWorkspacePath(payload, options?: IIpcCallOptions) {
     return callSpectaCommand(
       {
         command: 'delete_workspace_path',
         guardHint: '删除工作区资源',
         audit: 'sensitive',
         input: payload,
+        signal: options?.signal,
       },
       () => commands.deleteWorkspacePath(payload),
     );
   },
 
-  startWorkspaceWatching(rootPath: string) {
+  startWorkspaceWatching(rootPath: string, options?: IIpcCallOptions) {
     return callSpectaCommand<void>(
       {
         command: 'start_workspace_watching',
         guardHint: '启动文件监听',
         audit: 'info',
         input: rootPath,
+        signal: options?.signal,
       },
       async () => {
         await commands.startWorkspaceWatching(rootPath);
@@ -234,13 +246,14 @@ export const workspaceTauriService: TWorkspaceTauriService = {
     );
   },
 
-  stopWorkspaceWatching() {
+  stopWorkspaceWatching(options?: IIpcCallOptions) {
     return callSpectaCommand<void>(
       {
         command: 'stop_workspace_watching',
         guardHint: '停止文件监听',
         audit: 'info',
         input: undefined,
+        signal: options?.signal,
       },
       async () => {
         await commands.stopWorkspaceWatching();
@@ -288,7 +301,7 @@ export const workspaceTauriService: TWorkspaceTauriService = {
     );
   },
 
-  applyWorkspaceReplacement(payload) {
+  applyWorkspaceReplacement(payload, options?: IIpcCallOptions) {
     const commandPayload = {
       request: {
         ...payload.request,
@@ -305,6 +318,7 @@ export const workspaceTauriService: TWorkspaceTauriService = {
         audit: 'sensitive',
         timeoutMs: 30_000,
         input: commandPayload,
+        signal: options?.signal,
       },
       () => commands.applyWorkspaceReplacement(commandPayload),
     );

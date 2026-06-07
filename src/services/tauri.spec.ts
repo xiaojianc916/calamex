@@ -213,6 +213,69 @@ describe('tauriService', () => {
     expect(caughtError).toBeInstanceOf(AppError);
   });
 
+  it('Workspace 文件读取支持取消，已取消时不触发 invoke', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const loadScript = tauriService.loadScript as unknown as (
+      path: string,
+      workspaceRootPath?: string | null,
+      options?: { signal?: AbortSignal },
+    ) => Promise<unknown>;
+
+    await expect(loadScript('D:/repo/demo.sh', 'D:/repo', { signal: controller.signal })).rejects.toMatchObject({
+      code: 'ipc.canceled',
+      scope: 'ipc',
+    });
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it('Workspace 目录读取支持取消，已取消时不触发 invoke', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const listEntries = tauriService.listWorkspaceEntries as unknown as (
+      path?: string,
+      rootPath?: string,
+      options?: { signal?: AbortSignal },
+    ) => Promise<unknown>;
+
+    await expect(listEntries(undefined, 'D:/repo', { signal: controller.signal })).rejects.toMatchObject({
+      code: 'ipc.canceled',
+      scope: 'ipc',
+    });
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it('Workspace 替换应用支持取消，已取消时不触发 invoke', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const applyReplacement = tauriService.applyWorkspaceReplacement as unknown as (
+      payload: Parameters<typeof tauriService.applyWorkspaceReplacement>[0],
+      options?: { signal?: AbortSignal },
+    ) => Promise<unknown>;
+
+    await expect(
+      applyReplacement(
+        {
+          request: {
+            rootPath: 'D:/repo',
+            query: 'old',
+            replacement: 'new',
+            matchCase: false,
+            includePatterns: [],
+            excludePatterns: [],
+            limit: null,
+          },
+          expectedFiles: [],
+        },
+        { signal: controller.signal },
+      ),
+    ).rejects.toMatchObject({
+      code: 'ipc.canceled',
+      scope: 'ipc',
+    });
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
   it('Git 仓库状态支持取消，已取消时不触发 invoke', async () => {
     const controller = new AbortController();
     controller.abort();
