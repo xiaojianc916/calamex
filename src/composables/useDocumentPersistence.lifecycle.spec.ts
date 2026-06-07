@@ -117,6 +117,7 @@ describe('useDocumentPersistence lifecycle guards', () => {
     });
 
     const saving = persistence.saveDocument(documentId);
+    await Promise.resolve();
 
     expect(mockTauriService.saveScript).toHaveBeenCalledWith(
       expect.objectContaining({
