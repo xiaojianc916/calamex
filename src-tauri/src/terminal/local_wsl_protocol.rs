@@ -145,50 +145,10 @@ fn validate_terminal_size(cols: u16, rows: u16) -> Result<(), LocalWslTerminalEx
     Ok(())
 }
 
-#[derive(Default)]
-pub struct LocalWslUtf8ChunkDecoder {
-    pending: Vec<u8>,
-}
-
-impl LocalWslUtf8ChunkDecoder {
-    pub fn decode_into(&mut self, input: &[u8], output: &mut String, last: bool) {
-        if !input.is_empty() {
-            self.pending.extend_from_slice(input);
-        }
-        loop {
-            if self.pending.is_empty() {
-                return;
-            }
-            match std::str::from_utf8(&self.pending) {
-                Ok(valid) => {
-                    output.push_str(valid);
-                    self.pending.clear();
-                    return;
-                }
-                Err(error) => {
-                    let valid_up_to = error.valid_up_to();
-                    if valid_up_to > 0 {
-                        let valid_prefix = std::str::from_utf8(&self.pending[..valid_up_to])
-                            .expect("valid_up_to guarantees the prefix is valid UTF-8");
-                        output.push_str(valid_prefix);
-                        self.pending.drain(..valid_up_to);
-                        continue;
-                    }
-                    if let Some(error_len) = error.error_len() {
-                        output.push('\u{FFFD}');
-                        self.pending.drain(..error_len);
-                        continue;
-                    }
-                    if last {
-                        output.push('\u{FFFD}');
-                        self.pending.clear();
-                    }
-                    return;
-                }
-            }
-        }
-    }
-}
+// PTY 字节流的增量 UTF-8 解码器统一由 terminal::utf8_decoder 提供。这里保留
+// LocalWslUtf8ChunkDecoder 名称作为零成本别名，供本域 PTY 读线程复用，
+// 避免在本模块内重复实现一份相同的解码逻辑（不造第二个轮子）。
+pub use super::utf8_decoder::Utf8ChunkDecoder as LocalWslUtf8ChunkDecoder;
 
 #[cfg(test)]
 mod tests {
@@ -237,15 +197,5 @@ mod tests {
             .validate()
             .is_err()
         );
-    }
-
-    #[test]
-    fn utf8_decoder_keeps_split_multibyte_character() {
-        let mut decoder = LocalWslUtf8ChunkDecoder::default();
-        let bytes = "你".as_bytes();
-        let mut output = String::new();
-        decoder.decode_into(&bytes[..1], &mut output, false);
-        decoder.decode_into(&bytes[1..], &mut output, true);
-        assert_eq!(output, "你");
     }
 }

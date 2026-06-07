@@ -35,3 +35,24 @@
   对齐逻辑保持不变，不会把 CSI 序列切在中段。新增单测覆盖：未超限不裁剪、超限回落到低水位、
   多字节边界安全、对齐到换行之后、重复追加始终不超过上限。
 - 验证：`cargo test -p calamex terminal::snapshot`、`cargo clippy`、`cargo test`。
+
+## Utf8ChunkDecoder：PTY 增量 UTF-8 解码的零拷贝快路径与去重
+
+- 文件：`src-tauri/src/terminal/utf8_decoder.rs`（唯一实现，新增快路径）、
+  `src-tauri/src/terminal/local_wsl_protocol.rs`（删除重复实现，改为零成本别名）；
+  调用方：`src-tauri/src/terminal/wsl_pty.rs` 的两个 PTY 读线程。
+- 问题：① 两个 PTY 读线程每次 read 8 KiB 都把整块字节 `extend_from_slice` 进内部
+  `pending` 再 `from_utf8`，即便本块整体合法（绝大多数情况）也要多一次整块拷贝；
+  ② 存在两份近乎相同的解码器（`Utf8ChunkDecoder` 与 `LocalWslUtf8ChunkDecoder`），
+  违反“不造第二个轮子”。
+- 算法：空 `pending` 零拷贝快路径 + 去重。无残留字节时直接对本次输入 `from_utf8`：
+  整块合法则零拷贝直接 `push_str`；仅结尾切断一个多字节字符时，只把不完整残尾（<4 字节）
+  暂存，其余直接输出。含真正非法字节的少数情况回退到原有逐段循环（U+FFFD 替代）。
+  并把两份解码器合并为单一 `Utf8ChunkDecoder`，旧名保留为零成本类型别名。
+- 复杂度（设单次输入 k 字节）：
+  - 之前：每次 read 必有一次 O(k) 整块拷贝进 `pending`（无论是否合法）。
+  - 之后：合法 / 仅尾部切断的主路径无额外拷贝（仅暂存 <4 字节残尾），O(k) 仅为
+    `from_utf8` 校验本身；非法字节回退路径与原实现一致。
+- 正确性：解码结果与原实现逐字节等价；新增单测覆盖整块合法、跨 read 切断、中段非法字节、
+  结尾不完整 + last 收尾、空输入收尾等情况。去重后行为由 `Utf8ChunkDecoder` 单一实现保证。
+- 验证：`cargo test -p calamex terminal::utf8_decoder`、`cargo clippy`、`cargo test`。
