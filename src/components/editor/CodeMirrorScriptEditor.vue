@@ -105,7 +105,9 @@ const SUBMENU_SAFE_WIDTH = 224;
 const VIEWPORT_PADDING = 12;
 const MENU_ROOT_SELECTOR = '.linear-context-menu-root';
 const MENU_TRIGGER_SELECTOR = '.linear-context-menu-trigger';
-const SELECTION_SUMMARY_TEXT_LIMIT = 4_000;
+const SELECTION_SUMMARY_CONTEXT_LINES = 60;
+const SELECTION_SUMMARY_LONG_LINE_THRESHOLD = 4_000;
+const SELECTION_SUMMARY_LONG_LINE_CONTEXT_CHARS = 100;
 
 const createEmptyAnalysis = (): IAnalyzeScriptPayload => ({
   available: true,
@@ -262,34 +264,119 @@ const resolveSelectedText = (): string => {
   return line.text;
 };
 
-const resolveSelectionTextPreview = (
-  text: string,
-  limit: number,
-): { preview: string; truncated: boolean } => {
-  let count = 0;
-  let preview = '';
-  for (const char of text) {
-    if (count >= limit) return { preview, truncated: true };
-    preview += char;
-    count += 1;
+type TSelectionSummaryText = { text: string; truncated: boolean };
+
+const withDefaultSelectionTruncation = (result: TSelectionSummaryText): string =>
+  result.truncated ? `${result.text}\n[已截断]` : result.text;
+
+const resolveSelectionLineWindow = (input: {
+  startLine: number;
+  endLine: number;
+  currentLine: number;
+  contextLines: number;
+}): { startLine: number; endLine: number; truncated: boolean } => {
+  const totalLines = input.endLine - input.startLine + 1;
+  const maxLines = input.contextLines * 2 + 1;
+  if (totalLines <= maxLines) {
+    return { startLine: input.startLine, endLine: input.endLine, truncated: false };
   }
-  return { preview, truncated: false };
+
+  const currentLine = Math.min(Math.max(input.currentLine, input.startLine), input.endLine);
+  const linesBefore = currentLine - input.startLine;
+  const linesAfter = input.endLine - currentLine;
+  let before = Math.min(input.contextLines, linesBefore);
+  let after = Math.min(input.contextLines, linesAfter);
+
+  const spareBefore = input.contextLines - before;
+  if (spareBefore > 0) {
+    after = Math.min(linesAfter, after + spareBefore);
+  }
+
+  const spareAfter = input.contextLines - after;
+  if (spareAfter > 0) {
+    before = Math.min(linesBefore, before + spareAfter);
+  }
+
+  return {
+    startLine: currentLine - before,
+    endLine: currentLine + after,
+    truncated: true,
+  };
+};
+
+const resolveSingleLineSelectionSummaryText = (
+  view: EditorView,
+  range: SelectionRange,
+): TSelectionSummaryText => {
+  if (range.to - range.from <= SELECTION_SUMMARY_LONG_LINE_THRESHOLD) {
+    return { text: view.state.doc.sliceString(range.from, range.to), truncated: false };
+  }
+
+  let visibleFrom: number | null = null;
+  let visibleTo: number | null = null;
+  for (const visibleRange of view.visibleRanges) {
+    const from = Math.max(range.from, visibleRange.from);
+    const to = Math.min(range.to, visibleRange.to);
+    if (from < to && (visibleFrom === null || to - from > visibleTo - visibleFrom)) {
+      visibleFrom = from;
+      visibleTo = to;
+    }
+  }
+
+  const fallbackPosition = Math.min(Math.max(range.head, range.from), range.to);
+  const anchorFrom = visibleFrom ?? fallbackPosition;
+  const anchorTo = visibleTo ?? fallbackPosition;
+  const from = Math.max(range.from, anchorFrom - SELECTION_SUMMARY_LONG_LINE_CONTEXT_CHARS);
+  const to = Math.min(range.to, anchorTo + SELECTION_SUMMARY_LONG_LINE_CONTEXT_CHARS);
+  return {
+    text: view.state.doc.sliceString(from, to),
+    truncated: from > range.from || to < range.to,
+  };
+};
+
+const resolveMultiLineSelectionSummaryText = (
+  view: EditorView,
+  range: SelectionRange,
+  startLine: number,
+  endLine: number,
+): TSelectionSummaryText => {
+  const currentLine = view.state.doc.lineAt(Math.min(Math.max(range.head, range.from), range.to)).number;
+  const window = resolveSelectionLineWindow({
+    startLine,
+    endLine,
+    currentLine,
+    contextLines: SELECTION_SUMMARY_CONTEXT_LINES,
+  });
+
+  const lines: string[] = [];
+  for (let lineNumber = window.startLine; lineNumber <= window.endLine; lineNumber += 1) {
+    const line = view.state.doc.line(lineNumber);
+    const from = lineNumber === startLine ? Math.max(line.from, range.from) : line.from;
+    const to = lineNumber === endLine ? Math.min(line.to, range.to) : line.to;
+    lines.push(view.state.doc.sliceString(from, to));
+  }
+
+  return { text: lines.join('\n'), truncated: window.truncated };
 };
 
 const resolveSelectionSummary = (): IEditorSelectionSummary | null => {
   const view = editorView;
   const range = view?.state.selection.main;
   if (!view || !range || range.empty) return null;
-  const selectedText = selectionRangeToText(view, range);
-  if (!selectedText.trim()) return null;
-  const { preview, truncated } = resolveSelectionTextPreview(
-    selectedText,
-    SELECTION_SUMMARY_TEXT_LIMIT,
-  );
+
+  const effectiveTo = Math.max(range.from, range.to - 1);
+  const startLine = view.state.doc.lineAt(range.from).number;
+  const endLine = view.state.doc.lineAt(effectiveTo).number;
+  const summaryText =
+    startLine === endLine
+      ? resolveSingleLineSelectionSummaryText(view, range)
+      : resolveMultiLineSelectionSummaryText(view, range, startLine, endLine);
+  if (!summaryText.text.trim()) return null;
+
   return {
-    text: truncated ? `${preview}\n[已截断]` : selectedText,
-    startLine: view.state.doc.lineAt(range.from).number,
-    endLine: view.state.doc.lineAt(range.to).number,
+    text: withDefaultSelectionTruncation(summaryText),
+    startLine,
+    endLine,
   };
 };
 
