@@ -1,5 +1,6 @@
 import { onScopeDispose } from 'vue';
 import { addDisposableEventListener, requestDisposableAnimationFrame } from '@/utils/dom-lifecycle';
+import { createDisposableBag, createMutableDisposable } from '@/utils/disposable';
 import { logger } from '@/utils/logger';
 import {
   SHELL_WINDOW_RESIZE_END_EVENT,
@@ -56,10 +57,10 @@ const warnResizeListenerFailure = (err: unknown): void => {
 
 export const useWindowResizeState = () => {
   const html = document.documentElement;
+  const resizeEventListeners = createMutableDisposable();
+  const resizeFramePumpFrame = createMutableDisposable();
+  const tauriResizeListener = createMutableDisposable();
   let timer: number | undefined;
-  let unlisten: (() => void) | undefined;
-  let detachResizeEventListeners: (() => void) | undefined;
-  let cancelResizeFramePumpFrame: (() => void) | undefined;
   let resizeFramePumpStartedAt = 0;
   let isDisposed = false;
   let interactiveResizePhase: TInteractiveResizePhase = 'idle';
@@ -74,8 +75,7 @@ export const useWindowResizeState = () => {
   };
 
   const cancelResizeFramePump = (): void => {
-    cancelResizeFramePumpFrame?.();
-    cancelResizeFramePumpFrame = undefined;
+    resizeFramePumpFrame.clear();
   };
 
   const dispatchResizeFrame = (): void => {
@@ -97,27 +97,29 @@ export const useWindowResizeState = () => {
   };
 
   const queueResizeFramePump = (): void => {
-    if (cancelResizeFramePumpFrame) {
+    if (resizeFramePumpFrame.value) {
       return;
     }
 
-    cancelResizeFramePumpFrame = requestDisposableAnimationFrame(() => {
-      cancelResizeFramePumpFrame = undefined;
+    resizeFramePumpFrame.set(
+      requestDisposableAnimationFrame(() => {
+        resizeFramePumpFrame.clear();
 
-      if (isDisposed || interactiveResizePhase !== 'active') {
-        return;
-      }
+        if (isDisposed || interactiveResizePhase !== 'active') {
+          return;
+        }
 
-      dispatchResizeFrame();
+        dispatchResizeFrame();
 
-      if (Date.now() - resizeFramePumpStartedAt > INTERACTIVE_RESIZE_FRAME_PUMP_MAX_MS) {
-        interactiveResizePhase = 'settling';
-        scheduleResizeClassRemoval(INTERACTIVE_RESIZE_SETTLE_MS);
-        return;
-      }
+        if (Date.now() - resizeFramePumpStartedAt > INTERACTIVE_RESIZE_FRAME_PUMP_MAX_MS) {
+          interactiveResizePhase = 'settling';
+          scheduleResizeClassRemoval(INTERACTIVE_RESIZE_SETTLE_MS);
+          return;
+        }
 
-      queueResizeFramePump();
-    });
+        queueResizeFramePump();
+      }),
+    );
   };
 
   const startResizeFramePump = (): void => {
@@ -166,8 +168,8 @@ export const useWindowResizeState = () => {
     interactiveResizePhase = 'idle';
     clearResizeTimer();
     cancelResizeFramePump();
-    unlisten?.();
-    detachResizeEventListeners?.();
+    tauriResizeListener.clear();
+    resizeEventListeners.clear();
     html.classList.remove('is-resizing');
   });
 
@@ -178,21 +180,12 @@ export const useWindowResizeState = () => {
     const handleResizeEnd = (): void => {
       endInteractiveResize();
     };
-    const detachResizeStartListener = addDisposableEventListener(
-      window,
-      SHELL_WINDOW_RESIZE_START_EVENT,
-      handleResizeStart,
+    const listeners = createDisposableBag();
+    listeners.add(
+      addDisposableEventListener(window, SHELL_WINDOW_RESIZE_START_EVENT, handleResizeStart),
     );
-    const detachResizeEndListener = addDisposableEventListener(
-      window,
-      SHELL_WINDOW_RESIZE_END_EVENT,
-      handleResizeEnd,
-    );
-
-    detachResizeEventListeners = () => {
-      detachResizeEndListener();
-      detachResizeStartListener();
-    };
+    listeners.add(addDisposableEventListener(window, SHELL_WINDOW_RESIZE_END_EVENT, handleResizeEnd));
+    resizeEventListeners.set(() => listeners.dispose());
   }
 
   if (!hasTauriWindowRuntime()) {
@@ -236,7 +229,7 @@ export const useWindowResizeState = () => {
         return;
       }
 
-      unlisten = off;
+      tauriResizeListener.set(off);
     } catch (err) {
       warnResizeListenerFailure(err);
     }

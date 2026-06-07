@@ -6,10 +6,23 @@ export type DisposableBag = {
   dispose(): Promise<void>;
 };
 
+export type MutableDisposable = {
+  readonly disposed: boolean;
+  readonly value: Disposable | null;
+  set(disposable: Disposable | null): void;
+  clear(): void;
+  clearAndLeak(): Disposable | null;
+  dispose(): Promise<void>;
+};
+
 const reportLateDisposeError = (error: unknown): void => {
   globalThis.setTimeout(() => {
     throw error;
   }, 0);
+};
+
+const disposeInBackground = (disposable: Disposable): void => {
+  void Promise.resolve().then(disposable).catch(reportLateDisposeError);
 };
 
 export const createDisposableBag = (): DisposableBag => {
@@ -30,7 +43,7 @@ export const createDisposableBag = (): DisposableBag => {
 
     add(disposable: Disposable) {
       if (disposed) {
-        void Promise.resolve().then(disposable).catch(reportLateDisposeError);
+        disposeInBackground(disposable);
         return () => undefined;
       }
 
@@ -68,6 +81,66 @@ export const createDisposableBag = (): DisposableBag => {
       }
       if (errors.length > 1) {
         throw new AggregateError(errors, 'Failed to dispose runtime resources');
+      }
+    },
+  };
+};
+
+export const createMutableDisposable = (): MutableDisposable => {
+  let value: Disposable | null = null;
+  let disposed = false;
+
+  const set = (nextValue: Disposable | null): void => {
+    if (disposed) {
+      if (nextValue) {
+        disposeInBackground(nextValue);
+      }
+      return;
+    }
+
+    if (nextValue === value) {
+      return;
+    }
+
+    const previousValue = value;
+    value = nextValue;
+
+    if (previousValue) {
+      disposeInBackground(previousValue);
+    }
+  };
+
+  return {
+    get disposed() {
+      return disposed;
+    },
+
+    get value() {
+      return disposed ? null : value;
+    },
+
+    set,
+
+    clear() {
+      set(null);
+    },
+
+    clearAndLeak() {
+      const leaked = value;
+      value = null;
+      return leaked;
+    },
+
+    async dispose() {
+      if (disposed) {
+        return;
+      }
+
+      disposed = true;
+      const disposable = value;
+      value = null;
+      if (disposable) {
+        await disposable();
       }
     },
   };

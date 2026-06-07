@@ -1,5 +1,6 @@
 import { onBeforeUnmount, onMounted } from 'vue';
 import { addDisposableEventListener, requestDisposableAnimationFrame } from '@/utils/dom-lifecycle';
+import { createDisposableBag, createMutableDisposable } from '@/utils/disposable';
 import {
   SHELL_WINDOW_RESIZE_END_EVENT,
   SHELL_WINDOW_RESIZE_FRAME_EVENT,
@@ -35,45 +36,47 @@ export const useShellResizeFrameScheduler = ({
   onSettled,
   settledFrames = 2,
 }: IUseShellResizeFrameSchedulerOptions): void => {
-  let cancelScheduledFrame: (() => void) | null = null;
-  let cancelScheduledSettledFrame: (() => void) | null = null;
-  let disposeResizeListeners: (() => void) | null = null;
+  const resizeListeners = createMutableDisposable();
+  const scheduledFrame = createMutableDisposable();
+  const scheduledSettledFrame = createMutableDisposable();
   let pendingSettledFrames = 0;
 
   const cancelFrame = (): void => {
-    cancelScheduledFrame?.();
-    cancelScheduledFrame = null;
+    scheduledFrame.clear();
   };
 
   const cancelSettledFrames = (): void => {
-    cancelScheduledSettledFrame?.();
-    cancelScheduledSettledFrame = null;
+    scheduledSettledFrame.clear();
     pendingSettledFrames = 0;
   };
 
   const scheduleFrame = (): void => {
-    if (!onFrame || cancelScheduledFrame) {
+    if (!onFrame || scheduledFrame.value) {
       return;
     }
 
-    cancelScheduledFrame = requestDisposableAnimationFrame(() => {
-      cancelScheduledFrame = null;
-      onFrame();
-    });
+    scheduledFrame.set(
+      requestDisposableAnimationFrame(() => {
+        scheduledFrame.clear();
+        onFrame();
+      }),
+    );
   };
 
   const pumpSettledFrames = (): void => {
     if (pendingSettledFrames <= 0) {
-      cancelScheduledSettledFrame = null;
+      scheduledSettledFrame.clear();
       return;
     }
 
-    cancelScheduledSettledFrame = requestDisposableAnimationFrame(() => {
-      cancelScheduledSettledFrame = null;
-      onFrame?.();
-      pendingSettledFrames -= 1;
-      pumpSettledFrames();
-    });
+    scheduledSettledFrame.set(
+      requestDisposableAnimationFrame(() => {
+        scheduledSettledFrame.clear();
+        onFrame?.();
+        pendingSettledFrames -= 1;
+        pumpSettledFrames();
+      }),
+    );
   };
 
   const handleStart = (): void => {
@@ -101,23 +104,16 @@ export const useShellResizeFrameScheduler = ({
   };
 
   onMounted(() => {
-    const disposables = [
-      addDisposableEventListener(window, SHELL_WINDOW_RESIZE_START_EVENT, handleStart),
-      addDisposableEventListener(window, SHELL_WINDOW_RESIZE_FRAME_EVENT, handleFrame),
-      addDisposableEventListener(window, SHELL_WINDOW_RESIZE_END_EVENT, handleEnd),
-      addDisposableEventListener(window, SHELL_WINDOW_RESIZE_SETTLED_EVENT, handleSettled),
-    ];
-
-    disposeResizeListeners = () => {
-      for (const dispose of disposables.splice(0).reverse()) {
-        dispose();
-      }
-      disposeResizeListeners = null;
-    };
+    const listeners = createDisposableBag();
+    listeners.add(addDisposableEventListener(window, SHELL_WINDOW_RESIZE_START_EVENT, handleStart));
+    listeners.add(addDisposableEventListener(window, SHELL_WINDOW_RESIZE_FRAME_EVENT, handleFrame));
+    listeners.add(addDisposableEventListener(window, SHELL_WINDOW_RESIZE_END_EVENT, handleEnd));
+    listeners.add(addDisposableEventListener(window, SHELL_WINDOW_RESIZE_SETTLED_EVENT, handleSettled));
+    resizeListeners.set(() => listeners.dispose());
   });
 
   onBeforeUnmount(() => {
-    disposeResizeListeners?.();
+    resizeListeners.clear();
     cancelFrame();
     cancelSettledFrames();
   });
