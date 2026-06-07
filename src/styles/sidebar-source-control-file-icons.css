@@ -1,4 +1,4 @@
-/* Git 状态标记：保留 M/U/A/D/R/T/! 字母语义，做成更清晰的状态徽标。 */
+/* Git 状态标记：保留 M/U/A/D/R/T/! 字母语义，仅用颜色表达状态。 */
 .source-control-file-tag {
   display: inline-flex;
   width: 18px;
@@ -6,40 +6,47 @@
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
-  border: 1px solid color-mix(in srgb, currentColor 38%, transparent);
-  border-radius: 6px;
-  background: color-mix(in srgb, currentColor 10%, transparent);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, white 42%, transparent);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
   font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
   line-height: 1;
   letter-spacing: -0.04em;
 }
 
 .source-control-file-tag.is-modified {
-  background: color-mix(in srgb, var(--scm-yellow) 12%, transparent);
-  color: color-mix(in srgb, var(--scm-yellow) 86%, #8a5a00);
+  color: #d97706;
 }
 
 .source-control-file-tag.is-added {
-  background: color-mix(in srgb, var(--scm-green) 12%, transparent);
-  color: color-mix(in srgb, var(--scm-green) 86%, #166534);
+  color: #16a34a;
 }
 
-.source-control-file-tag.is-deleted,
+.source-control-file-tag.is-deleted {
+  color: #dc2626;
+}
+
 .source-control-file-tag.is-conflicted {
-  background: color-mix(in srgb, var(--scm-red) 12%, transparent);
-  color: color-mix(in srgb, var(--scm-red) 86%, #991b1b);
+  color: #ef4444;
 }
 
 .source-control-file-tag.is-renamed {
-  background: color-mix(in srgb, var(--scm-blue) 12%, transparent);
-  color: color-mix(in srgb, var(--scm-blue) 86%, #1d4ed8);
+  color: #2563eb;
 }
 
-.source-control-file-tag.is-untracked,
 .source-control-file-tag.is-typechange {
-  background: color-mix(in srgb, var(--scm-accent) 12%, transparent);
-  color: var(--scm-accent);
+  color: #9333ea;
+}
+
+.source-control-file-tag.is-untracked {
+  color: #7c3aed;
+}
+
+.source-control-file:hover,
+.source-control-file.is-active,
+.source-control-file.is-context-target {
+  background: #eceff2;
 }
