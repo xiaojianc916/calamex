@@ -11,7 +11,7 @@
 //! - **Windows / macOS**：对根目录做**单次递归监听**（内核级递归，近乎 O(1) 成本，
 //!   无树遍历、无 watch 句柄爆炸、无「新建目录补监听」的竞态窗口）；忽略目录在事件层过滤。
 //! - **Linux (inotify)**：inotify 无原生递归，会给每个子目录单独加 watch，故必须先用
-//!   `ignore::WalkBuilder` 剪枝（跳过 node_modules / target / .git…）再逐目录非递归监听，
+//!   `ignore::WalkBuilder` 剪枝（跳过 node_modules / target / .git 内部高频目录…）再逐目录非递归监听，
 //!   并在目录增删时动态跟进。
 //!
 //! ## 其它
@@ -63,6 +63,10 @@ const NATIVE_RECURSIVE: bool = false;
 /// 作为 `.gitignore` 之外的兜底黑名单：即便仓库没有写 .gitignore（或根本不是
 /// git 仓库），这些目录在依赖安装 / 构建 / git 操作时也会喷出成千上万条无意义
 /// 事件、灌满去抖窗口、拖垮前端刷新。语义对齐编辑器通行的 watcher 排除清单。
+///
+/// 注意：`.git` **不在**此整目录黑名单内——其内部高频目录另由
+/// `IGNORED_GIT_INTERNAL_DIRS` 精细处理，从而放行 .git 顶层状态文件 / refs / logs，
+/// 让外部 git commit / checkout / pull 能触发前端 git 面板刷新。
 const IGNORED_DIR_NAMES: &[&str] = &[
     ".hg",
     ".svn",
@@ -346,8 +350,10 @@ fn maintain_watches(watcher: &mut RecommendedWatcher, root: &Path, event: &Event
 /// - 尊重 `.gitignore` / `.ignore` / 全局 gitignore / `.git/info/exclude`
 ///   （由 ignore crate 处理；`parents(true)` 让子树遍历也能读到祖先的忽略规则）；
 /// - 叠加固定黑名单 `IGNORED_DIR_NAMES` 作为兜底：即便仓库没写 .gitignore，
-///   node_modules / target / .git 等也绝不进入；
-/// - 隐藏目录不一刀切跳过（`hidden(false)`），交给上面两条规则决定，
+///   node_modules / target 等也绝不进入；
+/// - 对 `.git`：本体（及 refs/logs 等状态目录）保留监听，仅剪掉 `objects` 等
+///   `IGNORED_GIT_INTERNAL_DIRS` 高频内部目录，避免 commit/gc 刷屏又不漏掉状态变更；
+/// - 隐藏目录不一刀切跳过（`hidden(false)`），交给上面几条规则决定，
 ///   这样 .vscode 等用户关心的隐藏目录仍可被监听。
 fn collect_watch_dirs(start: &Path) -> Vec<PathBuf> {
     let walker = WalkBuilder::new(start)
@@ -365,11 +371,24 @@ fn collect_watch_dirs(start: &Path) -> Vec<PathBuf> {
             if !entry.file_type().is_some_and(|ft| ft.is_dir()) {
                 return true;
             }
-            entry
-                .file_name()
-                .to_str()
-                .map(|name| !is_ignored_dir_name(name))
-                .unwrap_or(true)
+            let Some(name) = entry.file_name().to_str() else {
+                return true;
+            };
+            if is_ignored_dir_name(name) {
+                return false;
+            }
+            // .git 内部仅保留 refs/logs 等状态目录，剪掉 objects 等高频目录：
+            // 让外部 git 操作写入的引用/日志能触发监听，又不被对象库刷屏。
+            if IGNORED_GIT_INTERNAL_DIRS
+                .iter()
+                .any(|dir| os_str_eq(OsStr::new(name), OsStr::new(dir)))
+                && entry.path().components().any(|component| {
+                    matches!(component, Component::Normal(n) if os_str_eq(n, OsStr::new(".git")))
+                })
+            {
+                return false;
+            }
+            true
         })
         .build();
 
@@ -471,12 +490,46 @@ fn is_ignored_dir_name(name: &str) -> bool {
         .any(|ignored| os_str_eq(OsStr::new(name), OsStr::new(ignored)))
 }
 
+/// `.git` 内部高频 / 无意义子目录：继续忽略以免 commit / gc / fetch 刷屏。
+///
+/// 注意：`.git` 顶层状态文件（HEAD / index / packed-refs）以及 `.git/refs`、
+/// `.git/logs` **不在**此列，予以放行，让外部 git commit / checkout / pull
+/// 写入的状态能触发前端 git 面板刷新。
+const IGNORED_GIT_INTERNAL_DIRS: &[&str] = &["objects", "lfs", "tmp", "fsmonitor--daemon"];
+
+/// 判断相对路径是否落在 `.git` 内部的高频忽略子目录里（如 `.git/objects/**`）。
+///
+/// 仅当相对路径第一段是 `.git` 且第二段命中 `IGNORED_GIT_INTERNAL_DIRS` 时为 true。
+/// `.git/HEAD`、`.git/index`、`.git/refs/**`、`.git/logs/**` 等放行，
+/// 以便外部 git 操作能驱动前端 git 面板刷新。
+fn is_ignored_git_internal(relative: &Path) -> bool {
+    let mut normals = relative.components().filter_map(|component| match component {
+        Component::Normal(name) => Some(name),
+        _ => None,
+    });
+    match normals.next() {
+        Some(first) if os_str_eq(first, OsStr::new(".git")) => match normals.next() {
+            Some(second) => IGNORED_GIT_INTERNAL_DIRS
+                .iter()
+                .any(|dir| os_str_eq(second, OsStr::new(dir))),
+            // `.git` 顶层文件（HEAD / index / packed-refs）：放行
+            None => false,
+        },
+        _ => false,
+    }
+}
+
 /// 判断变更路径是否落在监听根下被忽略的目录内。
 fn is_ignored_change(root: &Path, path: &Path) -> bool {
     let Some(relative) = relativize(root, path) else {
         // 无法判定归属（前缀形态不一致等）时放行，避免漏报真实改动。
         return false;
     };
+    // `.git`：只忽略高频内部目录（objects 等），放行顶层状态文件 / refs / logs，
+    // 这样外部 git commit / checkout / pull 能触发前端刷新。
+    if is_ignored_git_internal(&relative) {
+        return true;
+    }
     relative.components().any(|component| match component {
         Component::Normal(name) => IGNORED_DIR_NAMES
             .iter()
@@ -530,10 +583,23 @@ mod tests {
     fn ignores_dependency_build_and_vcs_dirs() {
         let root = p("/ws");
         assert!(is_ignored_change(&root, &p("/ws/node_modules/lodash/index.js")));
-        assert!(is_ignored_change(&root, &p("/ws/.git/HEAD")));
         assert!(is_ignored_change(&root, &p("/ws/src-tauri/target/debug/app")));
         assert!(is_ignored_change(&root, &p("/ws/web/dist/bundle.js")));
         assert!(is_ignored_change(&root, &p("/ws/api/__pycache__/mod.pyc")));
+        // .git 内部高频目录仍忽略（避免 commit / gc / fetch 刷屏）
+        assert!(is_ignored_change(&root, &p("/ws/.git/objects/ab/cdef")));
+        assert!(is_ignored_change(&root, &p("/ws/.git/lfs/objects/aa/bb")));
+    }
+
+    #[test]
+    fn keeps_git_state_file_changes() {
+        let root = p("/ws");
+        // 外部 commit / checkout / pull 写入的 .git 状态文件必须放行，否则面板不刷新
+        assert!(!is_ignored_change(&root, &p("/ws/.git/HEAD")));
+        assert!(!is_ignored_change(&root, &p("/ws/.git/index")));
+        assert!(!is_ignored_change(&root, &p("/ws/.git/packed-refs")));
+        assert!(!is_ignored_change(&root, &p("/ws/.git/refs/heads/main")));
+        assert!(!is_ignored_change(&root, &p("/ws/.git/logs/HEAD")));
     }
 
     #[test]
@@ -572,7 +638,8 @@ mod tests {
     fn ignored_dir_name_matching() {
         assert!(is_ignored_dir_name("node_modules"));
         assert!(is_ignored_dir_name("target"));
-        assert!(is_ignored_dir_name(".git"));
+        // .git 改为按子路径精细判定（见 is_ignored_git_internal），不再整目录忽略
+        assert!(!is_ignored_dir_name(".git"));
         assert!(!is_ignored_dir_name("src"));
         assert!(!is_ignored_dir_name("targets"));
     }
