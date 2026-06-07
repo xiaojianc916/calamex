@@ -1697,6 +1697,7 @@ export type WorkspaceSearchRequest = {
 	wholeWord: boolean,
 	useRegex: boolean,
 	useStructural?: boolean,
+	contentFuzzy?: boolean,
 	includePatterns?: string[],
 	excludePatterns?: string[],
 	limit: number | null,

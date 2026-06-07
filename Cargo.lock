@@ -590,6 +590,7 @@ dependencies = [
  "parking_lot",
  "pin-project-lite",
  "portable-pty",
+ "rayon",
  "regex",
  "relative-path",
  "reqwest 0.12.28",
