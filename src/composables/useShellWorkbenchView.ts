@@ -306,6 +306,7 @@ export const useShellWorkbenchView = (onReady: () => void) => {
     diagnosticsPanelMotionClass,
     diagnosticsPanelStyle,
     handleShellWindowResizeStart,
+    handleShellWindowResizeFrame,
     handleShellWindowResizeEnd,
     handleShellWindowResizeSettled,
     mount: mountViewportState,
@@ -323,8 +324,8 @@ export const useShellWorkbenchView = (onReady: () => void) => {
     });
   };
 
-  const handleShellWindowResizeFrame = (): void => {
-    handleShellWindowResizeEnd();
+  const handleShellWindowResizeFrameEvent = (): void => {
+    handleShellWindowResizeFrame();
     scheduleEditorLayoutDuringWindowResize();
   };
 
@@ -722,7 +723,7 @@ export const useShellWorkbenchView = (onReady: () => void) => {
     isStartupShellPrimed.value = true;
     markStartup('shell-workbench-mounted');
     window.addEventListener(SHELL_WINDOW_RESIZE_START_EVENT, handleShellWindowResizeStart);
-    window.addEventListener(SHELL_WINDOW_RESIZE_FRAME_EVENT, handleShellWindowResizeFrame);
+    window.addEventListener(SHELL_WINDOW_RESIZE_FRAME_EVENT, handleShellWindowResizeFrameEvent);
     window.addEventListener(SHELL_WINDOW_RESIZE_END_EVENT, handleShellWindowResizeEnd);
     window.addEventListener(SHELL_WINDOW_RESIZE_SETTLED_EVENT, handleShellWindowResizeSettled);
 
@@ -736,7 +737,7 @@ export const useShellWorkbenchView = (onReady: () => void) => {
   onBeforeUnmount(() => {
     isUnmounted = true;
     window.removeEventListener(SHELL_WINDOW_RESIZE_START_EVENT, handleShellWindowResizeStart);
-    window.removeEventListener(SHELL_WINDOW_RESIZE_FRAME_EVENT, handleShellWindowResizeFrame);
+    window.removeEventListener(SHELL_WINDOW_RESIZE_FRAME_EVENT, handleShellWindowResizeFrameEvent);
     window.removeEventListener(SHELL_WINDOW_RESIZE_END_EVENT, handleShellWindowResizeEnd);
     window.removeEventListener(SHELL_WINDOW_RESIZE_SETTLED_EVENT, handleShellWindowResizeSettled);
     globalKeydownCleanup?.();

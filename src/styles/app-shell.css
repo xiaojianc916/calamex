@@ -59,6 +59,18 @@ html.is-resizing .ai-workspace-right-sidebar,
 html.is-resizing .ai-icon-button,
 html.is-resizing .ai-suggestion-empty :is(button),
 html.is-resizing .ai-chat-scroll-button,
+html.is-resizing .ai-message,
+html.is-resizing .ai-message-bubble,
+html.is-resizing .ai-message-option-button,
+html.is-resizing .ai-message-copy-button,
+html.is-resizing .ai-tool-call,
+html.is-resizing .ai-runtime-timeline,
+html.is-resizing .ai-runtime-chain-header,
+html.is-resizing .ai-runtime-terminal-toggle,
+html.is-resizing .ai-runtime-terminal,
+html.is-resizing .ai-markdown,
+html.is-resizing .markstream-vue,
+html.is-resizing .markdown-renderer,
 html.is-resizing .cm-editor,
 html.is-resizing .cm-scroller,
 html.is-resizing .cm-gutters,
@@ -99,8 +111,35 @@ html.is-resizing .git-diff-viewer-surface {
   min-height: 0;
 }
 
-html.is-resizing .ai-panel-frame__composer {
+html.is-resizing .ai-message,
+html.is-resizing .ai-message-bubble,
+html.is-resizing .ai-message-changed-files,
+html.is-resizing .ai-runtime-timeline,
+html.is-resizing .ai-markdown,
+html.is-resizing .markstream-vue,
+html.is-resizing .markdown-renderer {
+  contain: layout paint;
   min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+html.is-resizing .ai-panel-frame__composer,
+html.is-resizing .ai-composer,
+html.is-resizing .ai-composer-surface,
+html.is-resizing .ai-prompt-shell,
+html.is-resizing .ai-prompt-editor-wrap,
+html.is-resizing .ai-toolbar-row {
+  min-width: 0;
+}
+
+html.is-resizing .ai-token-content,
+html.is-resizing .ai-settings-menu,
+html.is-resizing .ai-model-content,
+html.is-resizing .cm-tooltip,
+html.is-resizing .cm-tooltip-autocomplete,
+html.is-resizing .cm-tooltip-hover {
+  pointer-events: none;
 }
 
 .app-shell-pane,

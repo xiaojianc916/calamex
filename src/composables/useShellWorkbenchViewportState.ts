@@ -155,22 +155,28 @@ export const useShellWorkbenchViewportState = (options: IUseShellWorkbenchViewpo
     };
   };
 
+  const queueCurrentViewportSize = (): void => {
+    const snapshot = captureCurrentViewportSize();
+    if (!snapshot) return;
+    queueEditorViewportResize(snapshot.width, snapshot.height);
+  };
+
   const handleShellWindowResizeStart = (): void => {
     diagnosticsTransitionsEnabled.value = false;
     if (diagnosticsResizeSettleTimerId !== null) {
       window.clearTimeout(diagnosticsResizeSettleTimerId);
       diagnosticsResizeSettleTimerId = null;
     }
+    queueCurrentViewportSize();
+  };
+
+  const handleShellWindowResizeFrame = (): void => {
+    diagnosticsTransitionsEnabled.value = false;
+    queueCurrentViewportSize();
   };
 
   const handleShellWindowResizeEnd = (): void => {
-    const snapshot = captureCurrentViewportSize();
-    if (snapshot) {
-      pendingEditorViewportSize = snapshot;
-      if (editorViewportResizeFrameId === null) {
-        editorViewportResizeFrameId = window.requestAnimationFrame(flushEditorViewportResize);
-      }
-    }
+    queueCurrentViewportSize();
   };
 
   const handleShellWindowResizeSettled = (): void => {
@@ -228,6 +234,7 @@ export const useShellWorkbenchViewportState = (options: IUseShellWorkbenchViewpo
     diagnosticsPanelMotionClass,
     diagnosticsPanelStyle,
     handleShellWindowResizeStart,
+    handleShellWindowResizeFrame,
     handleShellWindowResizeEnd,
     handleShellWindowResizeSettled,
     mount,
