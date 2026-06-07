@@ -18,7 +18,7 @@ use crate::terminal::{
     },
     dispatch::build_terminal_run_command_for_local_wsl,
     local_wsl_protocol::{
-        LocalWslTerminalOpenInteractiveRequest, LocalWslTerminalRunScriptRequest,
+        LocalWslTerminalOpenInteractiveRequest, LocalWslTerminalRunScriptRequest, SIGNAL_MODE_KILL,
     },
     types::TerminalState,
     visual::{TerminalRunVisualTracker, extract_prompt_from_terminal_snapshot},
@@ -36,8 +36,9 @@ use super::state::{
     get_terminal_snapshot, lock_terminal_sessions, mark_terminal_resize_repaint_suppression,
     remove_pending_switch_input, remove_terminal_interactive_visual_state,
     remove_terminal_session, remove_terminal_snapshot, resolve_terminal_start_directory,
-    set_terminal_snapshot, should_recreate_terminal_session, take_and_prepend_pending_switch_input,
-    terminate_terminal_session, try_mark_active_terminal_run, update_terminal_geometry,
+    set_terminal_snapshot, should_recreate_terminal_session, take_active_terminal_run_for_session,
+    take_and_prepend_pending_switch_input, terminate_terminal_session, try_mark_active_terminal_run,
+    update_terminal_geometry,
 };
 use super::to_wsl_path;
 
@@ -229,6 +230,9 @@ pub fn close_terminal_session(
     remove_terminal_snapshot(&terminal_state, &payload.session_id)?;
     remove_terminal_interactive_visual_state(&terminal_state, &payload.session_id)?;
     remove_pending_switch_input(&terminal_state, &payload.session_id);
+    if let Some(run_handle) = take_active_terminal_run_for_session(&terminal_state, &payload.session_id) {
+        let _ = run_handle.cancel(SIGNAL_MODE_KILL);
+    }
     let Some(session) = removed_session else {
         return Ok(());
     };
@@ -284,11 +288,11 @@ pub fn dispatch_script_to_terminal(
 
     try_mark_active_terminal_run(&terminal_state, &payload.session_id, &payload.run_id)?;
     let is_first_active_run = active_terminal_run_count(&terminal_state) == 1;
-    if is_first_active_run
-        && let Err(error) = transition_terminal_state(&app, TerminalState::SwitchingToRun)
-    {
-        clear_active_terminal_run(&terminal_state, &payload.run_id);
-        return Err(error);
+    if is_first_active_run {
+        if let Err(error) = transition_terminal_state(&app, TerminalState::SwitchingToRun) {
+            clear_active_terminal_run(&terminal_state, &payload.run_id);
+            return Err(error);
+        }
     }
 
     let started_at = Instant::now();

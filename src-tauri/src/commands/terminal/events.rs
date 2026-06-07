@@ -374,15 +374,15 @@ pub(super) fn handle_local_wsl_interactive_terminal_event(
             );
         }
         LocalWslTerminalServerPayload::InteractiveError(payload) => {
-            if let Some(message_session_id) = payload.session_id.as_ref()
-                && message_session_id == session_id
-            {
-                emit_terminal_interactive_output(
-                    app,
-                    state,
-                    session_id,
-                    format!("{}\n", payload.message),
-                );
+            if let Some(message_session_id) = payload.session_id.as_ref() {
+                if message_session_id == session_id {
+                    emit_terminal_interactive_output(
+                        app,
+                        state,
+                        session_id,
+                        format!("{}\n", payload.message),
+                    );
+                }
             }
             remove_interactive_terminal_after_exit(state, session_id);
             mark_terminal_interactive_exited(
