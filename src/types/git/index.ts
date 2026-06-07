@@ -80,6 +80,35 @@ export type IGitPathOperationRequest = GitPathOperationRequest;
 export type IGitCommitRequest = GitCommitRequest;
 export type IGitCommitResultPayload = GitCommitResultPayload;
 
+// ── GitHub auth (手动定义直到 tauri-specta 重新生成绑定) ─────────────────────
+export interface IGitHubAuthRequest {
+  repositoryRootPath: string;
+}
+
+export interface IGitHubDeviceAuthCompleteRequest extends IGitHubAuthRequest {
+  deviceCode: string;
+  interval: number;
+}
+
+export interface IGitHubAuthStatusPayload {
+  authenticated: boolean;
+  login: string | null;
+  name: string | null;
+  avatarUrl: string | null;
+  htmlUrl: string | null;
+  email: string | null;
+  source: string | null;
+  message: string | null;
+}
+
+export interface IGitHubDeviceAuthPayload {
+  deviceCode: string;
+  userCode: string;
+  verificationUri: string;
+  interval: number;
+  expiresIn: number;
+}
+
 // ── commit file diff (手动定义直到 tauri-specta 重新生成绑定) ──────────────────
 export interface IGitDiffLine {
   tag: string; // 'add' | 'remove' | 'context'
