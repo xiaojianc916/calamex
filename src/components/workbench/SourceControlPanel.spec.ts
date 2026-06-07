@@ -258,6 +258,7 @@ const mountPanel = async (
     },
   });
   await flushPromises();
+  await flushPromises();
   return wrapper;
 };
 
@@ -552,8 +553,8 @@ describe('SourceControlPanel', () => {
     expect(wrapper.find('.source-control-history-toolbar').exists()).toBe(false);
     expect(wrapper.findAll('.source-control-history-item')).toHaveLength(2);
     expect(wrapper.find('.source-control-history-item').classes()).toContain('is-active');
-    expect(wrapper.find('.source-control-history-author').text()).toBe('test');
-    expect(wrapper.text()).toContain('fix: 修正边界处理');
+    expect(wrapper.find('.git-history-graph-message-text').text()).toBe('fix: 修正边界处理');
+    expect(wrapper.text()).toContain('test');
   });
 
   it('分支标签里的切换按钮会调用 checkout_git_branch', async () => {
@@ -576,12 +577,12 @@ describe('SourceControlPanel', () => {
     await branchTab?.trigger('click');
     await flushPromises();
 
-    const checkoutButton = wrapper
-      .findAll('.source-control-btn')
-      .find((button) => button.text() === '切换');
-    expect(checkoutButton).toBeDefined();
+    const branchRow = wrapper
+      .findAll('.source-control-branch-row')
+      .find((row) => row.text().includes('feature/demo'));
+    expect(branchRow).toBeDefined();
 
-    await checkoutButton?.trigger('click');
+    await branchRow?.trigger('click');
     await flushPromises();
 
     expect(tauriServiceMock.checkoutGitBranch).toHaveBeenCalledWith({

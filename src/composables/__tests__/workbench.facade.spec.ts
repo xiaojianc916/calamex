@@ -7,7 +7,9 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type EffectScope, effectScope } from 'vue';
+import { WORKBENCH_TAB_LIMITS } from '@/constants/workbench';
 import { __resetTerminalEventBusForTesting } from '@/services/terminal/eventBus';
+import { __resetTerminalRunOrchestratorForTesting } from '@/services/terminal/runOrchestrator';
 import { useAppStore } from '@/store/app';
 import { useEditorStore } from '@/store/editor';
 import { useTerminalRegistryStore } from '@/terminal/registry';
@@ -192,9 +194,10 @@ describe('useWorkbench 特征化快照', () => {
     setActivePinia(createPinia());
     capturedTerminalEventListeners.clear();
     capturedTerminalEventListenerSets.clear();
-    // 终端事件总线是跨测试单例，start() 幂等。重置它，确保每个用例都会
-    // 通过 mockListen 重新注册监听，避免前一个用例 start() 后本用例取不到 handler。
+    // 终端事件总线和运行编排器都是跨测试单例。一起重置，确保每个用例都会
+    // 用当前 mockListen 重新注册监听，避免前一个用例的 singleton 污染本用例。
     __resetTerminalEventBusForTesting();
+    __resetTerminalRunOrchestratorForTesting();
 
     scope = effectScope();
     scope.run(() => {
@@ -212,6 +215,7 @@ describe('useWorkbench 特征化快照', () => {
 
   afterEach(() => {
     scope.stop();
+    __resetTerminalRunOrchestratorForTesting();
   });
 
   // ── 1. canRun / canSave 计算属性 ──
@@ -276,8 +280,8 @@ describe('useWorkbench 特征化快照', () => {
       expect(doc?.content).toContain('set -euo pipefail');
     });
 
-    it('标签页达到 30 时阻止继续新建并提示', () => {
-      for (let index = 0; index < 30; index += 1) {
+    it('标签页达到上限时阻止继续新建并提示', () => {
+      for (let index = 0; index < WORKBENCH_TAB_LIMITS.maxOpenTabs; index += 1) {
         editorStore.openDocumentTab({
           path: `/tmp/${index}.sh`,
           name: `${index}.sh`,
@@ -290,7 +294,7 @@ describe('useWorkbench 特征化快照', () => {
 
       workbench.createNewDocument();
 
-      expect(editorStore.documents.length).toBe(30);
+      expect(editorStore.documents.length).toBe(WORKBENCH_TAB_LIMITS.maxOpenTabs);
       expect(mockMessages.warning).toHaveBeenCalled();
     });
   });
@@ -353,7 +357,7 @@ describe('useWorkbench 特征化快照', () => {
       expect(mockTauriService.loadScript).not.toHaveBeenCalled();
     });
 
-    it('??????????????????????', async () => {
+    it('恢复工作区会保留标签顺序并激活旧会话中的活动标签', async () => {
       editorStore.sessionSnapshot = {
         ...editorStore.sessionSnapshot,
         workspaceRoot: '/workspace',
@@ -385,7 +389,7 @@ describe('useWorkbench 特征化快照', () => {
   });
 
   describe('initialize()', () => {
-    it('???????????????/????', async () => {
+    it('无启动工作区时只检测环境不打开文件或目录', async () => {
       mockTauriService.detectEnvironment.mockResolvedValueOnce({
         hasAny: true,
         executors: [],
@@ -858,7 +862,7 @@ describe('useWorkbench 特征化快照', () => {
       expect(editorStore.isRunning).toBe(true);
     });
 
-    it('作用域销毁时清理运行中状态', async () => {
+    it('作用域销毁时保留应用级运行态，由编排器显式重置时清理', async () => {
       editorStore.createDocumentTab({ content: '#!/bin/bash\necho hi' });
       editorStore.setEnvironment({ hasAny: true, executors: [], recommended: 'wsl' });
 
@@ -876,6 +880,11 @@ describe('useWorkbench 特征化快照', () => {
       expect(editorStore.pendingTerminalRunId).not.toBeNull();
 
       scope.stop();
+
+      expect(editorStore.isRunning).toBe(true);
+      expect(editorStore.pendingTerminalRunId).not.toBeNull();
+
+      __resetTerminalRunOrchestratorForTesting();
 
       expect(editorStore.isRunning).toBe(false);
       expect(editorStore.pendingTerminalRunId).toBeNull();
