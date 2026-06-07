@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, useAttrs, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, useAttrs, watch } from 'vue';
 import {
   Context,
   ContextContent,
@@ -43,6 +43,11 @@ import { skillsTauriService } from '@/services/tauri.skills';
 import type { IAiAttachedFile, IAiConfigPayload, TAiAgentNetworkPermission } from '@/types/ai';
 import { isAiAssistantMode, type TAiAssistantMode } from '@/types/ai/assistant-mode';
 import type { ISelectedSkill, ISkillSummary } from '@/types/ai/skill';
+import {
+  SHELL_WINDOW_RESIZE_END_EVENT,
+  SHELL_WINDOW_RESIZE_SETTLED_EVENT,
+  SHELL_WINDOW_RESIZE_START_EVENT,
+} from '@/utils/window-resize-events';
 
 interface IAiPromptModeOption {
   key: TAiAssistantMode;
@@ -111,10 +116,16 @@ const surfaceRef = ref<HTMLFormElement | null>(null);
 const editorRef = ref<HTMLDivElement | null>(null);
 const isComposing = ref(false);
 const isModeSubmenuOpen = ref(false);
+const isShellWindowResizing = ref(false);
 const pendingAttachmentDrafts = ref<IAiAttachedFile[]>([]);
 
 // 编辑器内容程序化写入时为 true，避免输入事件回环。
 let isApplyingExternalValue = false;
+let editorInputFrameId: number | null = null;
+let skillPreloadTimerId: number | null = null;
+let skillsLoaded = false;
+let skillsLoadingPromise: Promise<void> | null = null;
+let resizeLifecycleCleanup: (() => void) | null = null;
 
 // 技能 / 斜杠菜单状态。
 const skills = ref<ISkillSummary[]>([]);
@@ -449,18 +460,45 @@ const syncFromEditor = (): void => {
   selectedSkills.value = skills;
 };
 
-const onEditorInput = (): void => {
-  if (isApplyingExternalValue) {
+const cancelEditorInputFrame = (): void => {
+  if (editorInputFrameId === null) {
     return;
   }
+
+  window.cancelAnimationFrame(editorInputFrameId);
+  editorInputFrameId = null;
+};
+
+const flushEditorInputFrame = (): void => {
+  editorInputFrameId = null;
   syncFromEditor();
   updateSlashStateFromCaret();
 };
 
-const onCompositionEnd = (): void => {
-  isComposing.value = false;
+const flushEditorInputNow = (): void => {
+  cancelEditorInputFrame();
   syncFromEditor();
   updateSlashStateFromCaret();
+};
+
+const scheduleEditorInputSync = (): void => {
+  if (editorInputFrameId !== null) {
+    return;
+  }
+
+  editorInputFrameId = window.requestAnimationFrame(flushEditorInputFrame);
+};
+
+const onEditorInput = (): void => {
+  if (isApplyingExternalValue) {
+    return;
+  }
+  scheduleEditorInputSync();
+};
+
+const onCompositionEnd = (): void => {
+  isComposing.value = false;
+  flushEditorInputNow();
 };
 
 const insertSkillPill = (skill: ISelectedSkill): void => {
@@ -520,12 +558,37 @@ const insertLineBreakAtCaret = (): void => {
 // 技能 / 斜杠菜单
 // -------------------------------------------------------------------------
 const loadSkills = async (): Promise<void> => {
-  try {
-    const result = await skillsTauriService.listSkills();
-    skills.value = [...result.skills];
-  } catch {
-    skills.value = [];
+  if (skillsLoaded) {
+    return;
   }
+  if (skillsLoadingPromise) {
+    return skillsLoadingPromise;
+  }
+
+  skillsLoadingPromise = (async () => {
+    try {
+      const result = await skillsTauriService.listSkills();
+      skills.value = [...result.skills];
+      skillsLoaded = true;
+    } catch {
+      skills.value = [];
+    } finally {
+      skillsLoadingPromise = null;
+    }
+  })();
+
+  return skillsLoadingPromise;
+};
+
+const scheduleSkillsPreload = (): void => {
+  if (skillsLoaded || skillsLoadingPromise || skillPreloadTimerId !== null) {
+    return;
+  }
+
+  skillPreloadTimerId = window.setTimeout(() => {
+    skillPreloadTimerId = null;
+    void loadSkills();
+  }, 240);
 };
 
 const refreshSlashAnchorRect = (): void => {
@@ -556,6 +619,7 @@ const handleSelectSkill = (slug: string): void => {
 };
 
 const handleSubmit = (): void => {
+  flushEditorInputNow();
   if (props.disabled || !canSubmit.value) {
     return;
   }
@@ -595,7 +659,12 @@ const handleOpenPersonalization = (): void => {
 };
 
 const handlePrewarmIntent = (): void => {
+  if (isShellWindowResizing.value) {
+    return;
+  }
+
   emit('prewarm');
+  void loadSkills();
 };
 
 const handleRemoveAttachment = (id: string): void => {
@@ -657,6 +726,7 @@ const handlePaste = (event: ClipboardEvent): void => {
   if (text) {
     event.preventDefault();
     document.execCommand('insertText', false, text);
+    scheduleEditorInputSync();
   }
 };
 
@@ -681,6 +751,27 @@ const handleKeyDown = (event: KeyboardEvent): void => {
 
 const handleStop = (): void => {
   emit('stop');
+};
+
+const bindResizeLifecycle = (): void => {
+  const handleResizeStart = (): void => {
+    isShellWindowResizing.value = true;
+    closeSlashMenu();
+    isModeSubmenuOpen.value = false;
+  };
+  const handleResizeEnd = (): void => {
+    isShellWindowResizing.value = false;
+  };
+
+  window.addEventListener(SHELL_WINDOW_RESIZE_START_EVENT, handleResizeStart);
+  window.addEventListener(SHELL_WINDOW_RESIZE_END_EVENT, handleResizeEnd);
+  window.addEventListener(SHELL_WINDOW_RESIZE_SETTLED_EVENT, handleResizeEnd);
+  resizeLifecycleCleanup = () => {
+    window.removeEventListener(SHELL_WINDOW_RESIZE_START_EVENT, handleResizeStart);
+    window.removeEventListener(SHELL_WINDOW_RESIZE_END_EVENT, handleResizeEnd);
+    window.removeEventListener(SHELL_WINDOW_RESIZE_SETTLED_EVENT, handleResizeEnd);
+    resizeLifecycleCleanup = null;
+  };
 };
 
 // 外部写入 modelValue / selectedSkills（如填充建议、发送后清空）时同步重建编辑器内容。
@@ -708,13 +799,23 @@ watch(
 );
 
 onMounted(() => {
-  void loadSkills();
+  bindResizeLifecycle();
+  scheduleSkillsPreload();
   applyValueToEditor(modelValue.value ?? '', selectedSkills.value ?? []);
+});
+
+onBeforeUnmount(() => {
+  resizeLifecycleCleanup?.();
+  cancelEditorInputFrame();
+  if (skillPreloadTimerId !== null) {
+    window.clearTimeout(skillPreloadTimerId);
+    skillPreloadTimerId = null;
+  }
 });
 </script>
 
 <template>
-  <footer class="ai-composer">
+  <footer data-shell-resize-responder class="ai-composer">
     <form ref="surfaceRef" class="ai-composer-surface" v-bind="attrs" @submit.prevent="handleSubmit">
       <input
         ref="fileInputRef"
@@ -1016,6 +1117,7 @@ onMounted(() => {
   box-sizing: border-box;
   margin-inline: auto;
   padding: 0 12px 28px;
+  contain: layout;
 }
 
 .ai-composer-surface {
@@ -1023,6 +1125,7 @@ onMounted(() => {
   min-width: 0;
   display: grid;
   gap: 8px;
+  contain: layout;
 }
 
 .ai-prompt-shell {
@@ -1033,6 +1136,9 @@ onMounted(() => {
   box-shadow: 0 1px 2px color-mix(in srgb, var(--text-primary) 8%, transparent),
     0 14px 30px color-mix(in srgb, var(--text-primary) 6%, transparent);
   overflow: hidden;
+  contain: layout paint;
+  transform: translateZ(0);
+  backface-visibility: hidden;
 }
 
 .ai-prompt-shell:focus-within {
@@ -1056,6 +1162,7 @@ onMounted(() => {
   position: relative;
   width: 100%;
   min-width: 0;
+  contain: layout paint;
 }
 
 .ai-prompt-textarea {
@@ -1073,10 +1180,13 @@ onMounted(() => {
   outline: none;
   resize: none;
   overflow-y: auto;
+  overflow-anchor: none;
   overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   scrollbar-width: thin;
   scrollbar-color: var(--ai-prompt-scrollbar-thumb) transparent;
   text-align: left;
+  contain: layout paint;
 }
 
 .ai-prompt-editor {
@@ -1161,6 +1271,7 @@ onMounted(() => {
   margin-top: 10px;
   padding: 0 10px 10px 14px;
   background: var(--panel-bg);
+  contain: layout paint;
 }
 
 .ai-toolbar-left {
@@ -1309,6 +1420,20 @@ onMounted(() => {
   padding: 7px 10px;
   font-size: 13px;
   line-height: 1.2;
+}
+
+:global(html.is-resizing) .ai-composer,
+:global(html.is-resizing) .ai-composer-surface,
+:global(html.is-resizing) .ai-prompt-shell,
+:global(html.is-resizing) .ai-prompt-editor-wrap,
+:global(html.is-resizing) .ai-prompt-textarea,
+:global(html.is-resizing) .ai-toolbar-row {
+  animation: none !important;
+  transition: none !important;
+}
+
+:global(html.is-resizing) .ai-prompt-shell {
+  box-shadow: none;
 }
 
 @media (max-width: 960px) {
