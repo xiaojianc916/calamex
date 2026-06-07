@@ -85,6 +85,7 @@ const ENABLE_OBSERVATIONAL_MEMORY_BUFFERING_ENV =
 
 const trimmedNonEmptyStringSchema = z.string().trim().min(1);
 const optionalTrimmedStringSchema = trimmedNonEmptyStringSchema.optional();
+
 // 放宽 lastStopReason 规则：允许字段省略、传 null、传空字符串。当模型无停止原因时，
 // 无需强制填充内容，空值/省略/null 均为合法值，避免模型因校验规则被迫编造内容。
 const nullableOptionalTrimmedStringSchema = z.string().trim().nullable().optional();

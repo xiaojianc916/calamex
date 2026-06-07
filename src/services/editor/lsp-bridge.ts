@@ -4,17 +4,16 @@
  * 把 bash-language-server 的诊断 / 补全 / 悬停接入 CM6。
  *
  * Goals:
- *   - 单一全局 diagnostics 监听 + 按 filePath 分派(多编辑器、同文件多订阅者都安全)
- *   - 监听 Rust 端 `lsp-crashed` 事件，自动切回 stopped 并清屏诊断
- *   - completion / hover 前自动 flush 未发的 didChange，且 flush 串行化
- *   - didOpen → didChange 因果链:didChange/completion/hover 都等 openPromise
- *   - attach / detach 严格成对，双重 attach 自动 detach 旧的，无监听泄漏
- *   - lspBridge.start 自动去重 + HMR 兼容单例
- *   - filePath 跨前后端归一化(POSIX 正斜杠)，避免 Windows 反斜杠错配
- *   - 跟踪已打开文档，崩溃自动重启后重放 didOpen，恢复诊断/补全
- *   - 诊断不自行 dispatch，交由上层与 ShellCheck 合并为单一来源(见 createLspExtension 的 onDiagnostics)
+ * - 单一全局 diagnostics 监听 + 按 filePath 分派(多编辑器、同文件多订阅者都安全)
+ * - 监听 Rust 端 `lsp-crashed` 事件，自动切回 stopped 并清屏诊断
+ * - completion / hover 前自动 flush 未发的 didChange，且 flush 串行化
+ * - didOpen → didChange 因果链:didChange/completion/hover 都等 openPromise
+ * - attach / detach 严格成对，双重 attach 自动 detach 旧的，无监听泄漏
+ * - lspBridge.start 自动去重 + HMR 兼容单例
+ * - filePath 跨前后端归一化(POSIX 正斜杠)，避免 Windows 反斜杠错配
+ * - 跟踪已打开文档，崩溃自动重启后重放 didOpen，恢复诊断/补全
+ * - 诊断不自行 dispatch，交由上层与 ShellCheck 合并为单一来源(见 createLspExtension 的 onDiagnostics)
  */
-
 import type {
   Completion,
   CompletionContext,
@@ -105,6 +104,7 @@ export function createLucideCompletionIcon(type: string): HTMLElement {
 // ============================================================================
 type TauriCore = typeof import('@tauri-apps/api/core');
 type TauriEvent = typeof import('@tauri-apps/api/event');
+
 let corePromise: Promise<TauriCore> | null = null;
 let eventPromise: Promise<TauriEvent> | null = null;
 
@@ -113,6 +113,7 @@ async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Prom
   const core = await corePromise;
   return core.invoke<T>(cmd, args);
 }
+
 async function tauriListen<T>(event: string, handler: (payload: T) => void): Promise<UnlistenFn> {
   eventPromise ??= import('@tauri-apps/api/event');
   const ev = await eventPromise;
@@ -133,13 +134,16 @@ interface LspDiag {
   code: string | null;
   source: string | null;
 }
+
 interface LspDiagEvent {
   filePath: string;
   diagnostics: LspDiag[];
 }
+
 interface LspCrashedEvent {
   exitStatus?: string;
 }
+
 interface LspItem {
   label: string;
   insertText: string | null;
@@ -147,8 +151,25 @@ interface LspItem {
   detail: string | null;
   documentation: string | null;
 }
+
 interface LspHover {
   contents: string;
+}
+
+export interface LspPosition {
+  line: number;
+  character: number;
+}
+
+export interface LspRange {
+  start: LspPosition;
+  end: LspPosition;
+}
+
+export interface LspContentChange {
+  range: LspRange;
+  rangeLength: number;
+  text: string;
 }
 
 // ============================================================================
@@ -177,14 +198,45 @@ function normalizePath(p: string): string {
   return cleaned.replace(/\\/g, '/');
 }
 
+const docPositionToLsp = (doc: Text, position: number): LspPosition => {
+  const line = doc.lineAt(position);
+  return { line: line.number - 1, character: position - line.from };
+};
+
+/**
+ * 把单次 CodeMirror 事务的 ChangeSet 转为 LSP 增量变更。
+ *
+ * CodeMirror 与 LSP 当前协商的 positionEncoding 均为 UTF-16，因此 `position - line.from`
+ * 可直接作为 LSP character。这里只处理“单次事务内”的增量；多次事务在 debounce
+ * 窗口内合并时会安全退回 full sync，避免跨事务 range 需要重映射而引入复杂度。
+ */
+export const buildLspContentChanges = (
+  update: Pick<ViewUpdate, 'changes' | 'startState'>,
+): LspContentChange[] => {
+  const changes: LspContentChange[] = [];
+  update.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+    changes.push({
+      range: {
+        start: docPositionToLsp(update.startState.doc, fromA),
+        end: docPositionToLsp(update.startState.doc, toA),
+      },
+      rangeLength: toA - fromA,
+      text: inserted.toString(),
+    });
+  });
+  return changes;
+};
+
 // ============================================================================
 // Bridge 单例
 // ============================================================================
 type FileHandler = (diags: LspDiag[]) => void;
+
 export type BridgeStateEvent =
   | { type: 'started' }
   | { type: 'stopped' }
   | { type: 'crashed'; exitStatus?: string };
+
 export type BridgeStateListener = (e: BridgeStateEvent) => void;
 
 interface OpenDocument {
@@ -199,12 +251,14 @@ class LspBridge {
   private startPromise: Promise<void> | null = null;
   private unlistenDiagnostics: UnlistenFn | null = null;
   private unlistenCrashed: UnlistenFn | null = null;
+
   /** 同一文件可有多个订阅者(diff 视图、并排编辑等场景) */
   private fileHandlers = new Map<string, Set<FileHandler>>();
+
   /**
    * 已打开文档的最新快照，按 filePath 去重。用于:
-   *  1) 启动前到达的 didOpen 排队;
-   *  2) 崩溃自动重启后重放 didOpen，恢复服务端文档状态。
+   * 1) 启动前到达的 didOpen 排队;
+   * 2) 崩溃自动重启后重放 didOpen，恢复服务端文档状态。
    */
   private openDocuments = new Map<string, OpenDocument>();
   private stateListeners = new Set<BridgeStateListener>();
@@ -216,6 +270,7 @@ class LspBridge {
     this.startPromise = (async () => {
       // 幂等:重启(尤其崩溃后)前先拆掉可能残留的监听，避免重复注册导致泄漏
       this.tearDownListeners();
+
       // 先建监听，避免 didOpen → 第一波诊断丢失
       this.unlistenDiagnostics = await tauriListen<LspDiagEvent>('lsp-diagnostics', (e) => {
         const key = normalizePath(e.filePath);
@@ -229,6 +284,7 @@ class LspBridge {
           }
         }
       });
+
       this.unlistenCrashed = await tauriListen<LspCrashedEvent>('lsp-crashed', (payload) => {
         this.onBackendCrashed(payload?.exitStatus);
       });
@@ -268,6 +324,7 @@ class LspBridge {
     this.clearAllDiagnostics();
     this.fileHandlers.clear();
     this.tearDownListeners();
+
     try {
       await tauriInvoke<void>('lsp_stop');
     } catch (err) {
@@ -309,12 +366,8 @@ class LspBridge {
   async didOpen(filePath: string, content: string, languageId: string): Promise<void> {
     const key = normalizePath(filePath);
     // 记录最新快照:崩溃重启重放、启动前排队都依赖它
-    this.openDocuments.set(key, {
-      filePath: key,
-      content,
-      languageId,
-      version: 1,
-    });
+    this.openDocuments.set(key, { filePath: key, content, languageId, version: 1 });
+
     if (this.startPromise) {
       try {
         await this.startPromise;
@@ -322,18 +375,20 @@ class LspBridge {
         return;
       }
     }
+
     if (this.started) {
-      await tauriInvoke<void>('lsp_did_open', {
-        filePath: key,
-        content,
-        languageId,
-      });
+      await tauriInvoke<void>('lsp_did_open', { filePath: key, content, languageId });
     }
     // 未启动:已记入 openDocuments，待 start 成功后由 replayOpenDocuments 重放
   }
 
   /** @returns 是否真正发送出去(false = 当前未启动，调用方应自行处理重发) */
-  async didChange(filePath: string, content: string, version: number): Promise<boolean> {
+  async didChange(
+    filePath: string,
+    content: string,
+    version: number,
+    changes?: LspContentChange[],
+  ): Promise<boolean> {
     const key = normalizePath(filePath);
     const doc = this.openDocuments.get(key);
     if (doc) {
@@ -341,10 +396,12 @@ class LspBridge {
       doc.version = version;
     }
     if (!this.started) return false;
+
     await tauriInvoke<void>('lsp_did_change', {
       filePath: key,
       content,
       version,
+      changes: changes && changes.length > 0 ? changes : null,
     });
     return true;
   }
@@ -375,7 +432,6 @@ class LspBridge {
   }
 
   // --- 内部 ----------------------------------------------------------------
-
   private tearDownListeners() {
     this.unlistenDiagnostics?.();
     this.unlistenDiagnostics = null;
@@ -435,6 +491,7 @@ declare global {
   // eslint-disable-next-line no-var
   var __lspBridge__: LspBridge | undefined;
 }
+
 const existingLspBridge = globalThis.__lspBridge__ ?? new LspBridge();
 globalThis.__lspBridge__ = existingLspBridge;
 export const lspBridge: LspBridge = existingLspBridge;
@@ -470,6 +527,7 @@ function severityToCm6(sev: number): 'error' | 'warning' | 'info' | 'hint' {
       return 'error';
   }
 }
+
 function lspKindToType(kind: number | null): string {
   // LSP CompletionItemKind 1..=25 → CM6 type 字符串(只覆盖 bash 常见)
   switch (kind) {
@@ -536,7 +594,6 @@ function lspDiagToPositioned(d: LspDiag, doc: Text): Diagnostic {
 // ============================================================================
 // Markdown → HTML 轻量渲染（LSP 文档专用）
 // ============================================================================
-
 /**
  * 把 bash-language-server 返回的 man-page 风格 markdown 转成 HTML。
  * 支持 ```lang 代码块（用 CodeMirror/Lezer 静态高亮）、行内代码、段落。
@@ -546,7 +603,6 @@ async function renderLspDoc(md: string): Promise<string> {
   try {
     // 统一换行符，避免 Windows \r\n 导致正则不匹配
     const normalized = md.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-
     // 分离代码块和普通文本
     const parts: Array<
       { type: 'code'; lang: string; code: string } | { type: 'text'; text: string }
@@ -556,10 +612,7 @@ async function renderLspDoc(md: string): Promise<string> {
     let match = codeBlockRe.exec(normalized);
     while (match !== null) {
       if (match.index > lastIndex) {
-        parts.push({
-          type: 'text',
-          text: normalized.slice(lastIndex, match.index),
-        });
+        parts.push({ type: 'text', text: normalized.slice(lastIndex, match.index) });
       }
       parts.push({
         type: 'code',
@@ -572,7 +625,6 @@ async function renderLspDoc(md: string): Promise<string> {
     if (lastIndex < normalized.length) {
       parts.push({ type: 'text', text: normalized.slice(lastIndex) });
     }
-
     // 如果没有任何代码块也没有文本 → 兜底：整个内容按文本段落渲染
     if (parts.length === 0 && normalized.trim()) {
       parts.push({ type: 'text', text: normalized });
@@ -605,9 +657,7 @@ function renderTextBlock(text: string): string {
     .split(/\n{2,}/)
     .map((p) => p.trim())
     .filter(Boolean);
-
   if (paragraphs.length === 0) return '';
-
   return paragraphs
     .map((p) => {
       const escaped = escapeHtml(p);
@@ -668,6 +718,8 @@ export function createLspExtension(opts: LspExtensionOptions): LspExtensionHandl
   let changeTimer: ReturnType<typeof setTimeout> | null = null;
   let openPromise: Promise<void> | null = null;
   let flushInFlight: Promise<void> | null = null;
+  let pendingChangeBatch: LspContentChange[] | null = null;
+  let pendingChangeCount = 0;
 
   function cancelTimer() {
     if (changeTimer) {
@@ -688,12 +740,22 @@ export function createLspExtension(opts: LspExtensionOptions): LspExtensionHandl
     }
     if (detached) return;
     cancelTimer();
+
     const v = docVersion;
     // 用 view.state 做权威 snapshot,fallback 到 getContent
     const content = view?.state.doc.toString() ?? getContent();
+    const changes =
+      pendingChangeCount === 1 && pendingChangeBatch && pendingChangeBatch.length > 0
+        ? pendingChangeBatch
+        : undefined;
+
     try {
-      const sent = await lspBridge.didChange(filePath, content, v);
-      if (sent) lastSentVersion = v;
+      const sent = await lspBridge.didChange(filePath, content, v, changes);
+      if (sent) {
+        lastSentVersion = v;
+        pendingChangeBatch = null;
+        pendingChangeCount = 0;
+      }
     } catch (err) {
       onError(err);
     }
@@ -757,10 +819,12 @@ export function createLspExtension(opts: LspExtensionOptions): LspExtensionHandl
     try {
       await flushPendingChanges();
       if (detached) return null;
+
       const pos = ctx.pos;
       const line = ctx.state.doc.lineAt(pos);
       const items = await lspBridge.completion(filePath, line.number - 1, pos - line.from);
       if (!items.length) return null;
+
       return {
         from: word ? word.from : pos,
         options: items.map(
@@ -798,9 +862,11 @@ export function createLspExtension(opts: LspExtensionOptions): LspExtensionHandl
     try {
       await flushPendingChanges();
       if (detached) return null;
+
       const line = v.state.doc.lineAt(pos);
       const result = await lspBridge.hover(filePath, line.number - 1, pos - line.from);
       if (!result?.contents) return null;
+
       // 异步渲染 markdown → HTML（CodeMirror/Lezer 代码高亮）
       const html = await renderLspDoc(result.contents);
       return {
@@ -827,6 +893,14 @@ export function createLspExtension(opts: LspExtensionOptions): LspExtensionHandl
     if (!view) view = update.view;
     if (update.docChanged) {
       docVersion++;
+      if (pendingChangeCount === 0) {
+        pendingChangeBatch = buildLspContentChanges(update);
+      } else {
+        // 多个事务跨 debounce 窗口合并时，各 range 分别基于不同旧文档。
+        // 为保持正确性，安全退回 full sync；下一轮 flush 成功后再恢复增量快路径。
+        pendingChangeBatch = null;
+      }
+      pendingChangeCount++;
       scheduleDidChange();
     }
   });
@@ -839,6 +913,8 @@ export function createLspExtension(opts: LspExtensionOptions): LspExtensionHandl
     cancelTimer();
     flushInFlight = null;
     openPromise = null;
+    pendingChangeBatch = null;
+    pendingChangeCount = 0;
     if (unregisterDiag) {
       unregisterDiag();
       unregisterDiag = null;
@@ -860,6 +936,8 @@ export function createLspExtension(opts: LspExtensionOptions): LspExtensionHandl
       docVersion = 1;
       lastSentVersion = 1;
       flushInFlight = null;
+      pendingChangeBatch = null;
+      pendingChangeCount = 0;
       unregisterDiag = lspBridge.registerFile(filePath, onDiagnostics);
       openPromise = lspBridge.didOpen(filePath, getContent(), languageId).catch((err) => {
         onError(err);

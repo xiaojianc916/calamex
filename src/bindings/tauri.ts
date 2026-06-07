@@ -155,7 +155,7 @@ export const commands = {
 	lspStart: (workspaceRoot: string) => __TAURI_INVOKE<null>("lsp_start", { workspaceRoot }),
 	lspStop: () => __TAURI_INVOKE<null>("lsp_stop"),
 	lspDidOpen: (filePath: string, content: string, languageId: string) => __TAURI_INVOKE<null>("lsp_did_open", { filePath, content, languageId }),
-	lspDidChange: (filePath: string, content: string, version: number) => __TAURI_INVOKE<null>("lsp_did_change", { filePath, content, version }),
+	lspDidChange: (filePath: string, content: string, version: number, changes: LspContentChange_Deserialize[] | null) => __TAURI_INVOKE<null>("lsp_did_change", { filePath, content, version, changes }),
 	lspDidClose: (filePath: string) => __TAURI_INVOKE<null>("lsp_did_close", { filePath }),
 	lspCompletion: (filePath: string, line: number, column: number) => __TAURI_INVOKE<LspCompletionItem[]>("lsp_completion", { filePath, line, column }),
 	lspHover: (filePath: string, line: number, column: number) => __TAURI_INVOKE<{
@@ -1255,8 +1255,32 @@ export type LspCompletionItem = {
 	documentation: string | null,
 };
 
+export type LspContentChange = LspContentChange_Serialize | LspContentChange_Deserialize;
+
+export type LspContentChange_Deserialize = {
+	range: LspRange | null,
+	rangeLength: number | null,
+	text: string,
+};
+
+export type LspContentChange_Serialize = {
+	range?: LspRange | null,
+	rangeLength?: number | null,
+	text: string,
+};
+
 export type LspHoverResult = {
 	contents: string,
+};
+
+export type LspPosition = {
+	line: number,
+	character: number,
+};
+
+export type LspRange = {
+	start: LspPosition,
+	end: LspPosition,
 };
 
 export type SaveScriptRequest = {

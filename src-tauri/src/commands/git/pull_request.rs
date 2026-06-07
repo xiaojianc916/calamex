@@ -14,6 +14,7 @@ pub fn get_git_pull_request_support(
     payload: GitRepositoryRootRequest,
 ) -> Result<GitPullRequestSupportPayload, String> {
     let repository = open_repository_from_root(&payload.repository_root_path)?;
+
     let Some((remote_name, remote_url)) = find_preferred_git_remote(&repository)? else {
         return Ok(GitPullRequestSupportPayload {
             available: false,
@@ -24,6 +25,7 @@ pub fn get_git_pull_request_support(
             create_pull_request_url: None,
         });
     };
+
     let Some(parsed_remote) = parse_git_remote_repository_url(&remote_url) else {
         return Ok(GitPullRequestSupportPayload {
             available: false,
@@ -37,8 +39,7 @@ pub fn get_git_pull_request_support(
 
     let provider = resolve_pull_request_provider(&parsed_remote.host);
     let repository_url = parsed_remote.repository_url;
-    let (pull_requests_url, create_pull_request_url) =
-        build_pull_request_urls(provider, &repository_url);
+    let (pull_requests_url, create_pull_request_url) = build_pull_request_urls(provider, &repository_url);
 
     Ok(GitPullRequestSupportPayload {
         available: pull_requests_url.is_some() || create_pull_request_url.is_some(),
@@ -57,6 +58,7 @@ pub fn set_git_remote(
 ) -> Result<GitPullRequestSupportPayload, String> {
     let remote_name = payload.remote_name.trim().to_string();
     let remote_url = payload.remote_url.trim().to_string();
+
     if remote_name.is_empty() {
         return Err("远程名称不能为空。".to_string());
     }
@@ -66,6 +68,7 @@ pub fn set_git_remote(
 
     let repository = open_repository_from_root(&payload.repository_root_path)?;
     let repository_root = resolve_repository_root(&repository)?;
+
     let remote_already_exists = repository
         .remote_names()
         .iter()
@@ -75,7 +78,6 @@ pub fn set_git_remote(
     run_git_remote_subcommand(&repository_root, subcommand, &remote_name, &remote_url)?;
 
     clear_github_pull_request_cache_for_repository(&payload.repository_root_path);
-
     get_git_pull_request_support(GitRepositoryRootRequest {
         repository_root_path: payload.repository_root_path,
     })
@@ -117,6 +119,7 @@ fn find_preferred_git_remote(repository: &Repository) -> Result<Option<(String, 
         .iter()
         .map(|n| n.as_bstr().to_str_lossy().into_owned())
         .collect();
+
     remote_list.sort_by_key(|name| if name == "origin" { 0 } else { 1 });
 
     for name in &remote_list {
@@ -124,15 +127,19 @@ fn find_preferred_git_remote(repository: &Repository) -> Result<Option<(String, 
             Ok(r) => r,
             Err(_) => continue,
         };
+
         let Some(remote_url) = remote.url(gix::remote::Direction::Fetch) else {
             continue;
         };
+
         let url_str = remote_url.to_bstring().to_str_lossy().into_owned();
         if url_str.trim().is_empty() {
             continue;
         }
+
         return Ok(Some((name.clone(), url_str)));
     }
+
     Ok(None)
 }
 
@@ -168,12 +175,14 @@ fn parse_git_remote_repository_url(url: &str) -> Option<ParsedGitRemoteRepositor
     if repository_path.is_empty() {
         return None;
     }
+
     let repository_path = repository_path
         .strip_suffix(".git")
         .unwrap_or(repository_path)
         .to_string();
 
     let repository_url = ["https://", host.as_str(), "/", repository_path.as_str()].concat();
+
     Some(ParsedGitRemoteRepositoryUrl {
         host,
         repository_url,
@@ -232,7 +241,6 @@ fn build_pull_request_urls(
 // Token 复用本机 git 凭据（git credential fill），无需用户另填 PAT。
 // 结构体就近定义于此（子模块可访问父模块私有项，故无需改动 git.rs）。
 // ===========================================================================
-
 use reqwest::header::{
     ACCEPT, AUTHORIZATION, ETAG, HeaderMap, HeaderName, HeaderValue, IF_NONE_MATCH,
 };
@@ -390,10 +398,8 @@ struct GitHubPullRequestCacheEntry {
     fetched_at: Instant,
 }
 
-static GITHUB_CREDENTIAL_CACHE: OnceLock<Mutex<HashMap<String, GitHubCredentialCacheEntry>>> =
-    OnceLock::new();
-static GITHUB_PULL_REQUEST_CACHE: OnceLock<Mutex<HashMap<String, GitHubPullRequestCacheEntry>>> =
-    OnceLock::new();
+static GITHUB_CREDENTIAL_CACHE: OnceLock<Mutex<HashMap<String, GitHubCredentialCacheEntry>>> = OnceLock::new();
+static GITHUB_PULL_REQUEST_CACHE: OnceLock<Mutex<HashMap<String, GitHubPullRequestCacheEntry>>> = OnceLock::new();
 
 fn github_credential_cache() -> &'static Mutex<HashMap<String, GitHubCredentialCacheEntry>> {
     GITHUB_CREDENTIAL_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
@@ -407,9 +413,11 @@ fn clear_github_pull_request_cache_for_repository(repository_root_path: &str) {
     let normalized_root = normalize_path_for_git(Path::new(repository_root_path))
         .to_string_lossy()
         .to_string();
+
     let Ok(mut cache) = github_pull_request_cache().lock() else {
         return;
     };
+
     cache.retain(|key, _| !key.starts_with(&format!("{normalized_root}|")));
 }
 
@@ -467,12 +475,15 @@ fn resolve_github_repository_target(
 ) -> Result<GitHubRepositoryTarget, String> {
     let repository = open_repository_from_root(repository_root_path)?;
     let repository_root = resolve_repository_root(&repository)?;
+
     let Some((_, remote_url)) = find_preferred_git_remote(&repository)? else {
         return Err("当前仓库没有可用的远程地址，请先配置远程后再使用 Pull Request。".to_string());
     };
+
     let Some(parsed) = parse_git_remote_repository_url(&remote_url) else {
         return Err("无法解析当前仓库的远程地址。".to_string());
     };
+
     if resolve_pull_request_provider(&parsed.host) != "github" {
         return Err("当前仅支持 GitHub 仓库的 Pull Request。".to_string());
     }
@@ -483,6 +494,7 @@ fn resolve_github_repository_target(
         .and_then(|rest| rest.split_once('/'))
         .map(|(_, path)| path.trim_matches('/').to_string())
         .unwrap_or_default();
+
     let mut segments = path_part.splitn(2, '/');
     let owner = segments.next().unwrap_or_default().trim().to_string();
     let repo = segments
@@ -491,6 +503,7 @@ fn resolve_github_repository_target(
         .trim()
         .trim_end_matches('/')
         .to_string();
+
     if owner.is_empty() || repo.is_empty() {
         return Err("无法从远程地址解析出 GitHub 的 owner/repo。".to_string());
     }
@@ -498,7 +511,7 @@ fn resolve_github_repository_target(
     let api_base = if parsed.host.eq_ignore_ascii_case("github.com") {
         "https://api.github.com".to_string()
     } else {
-        format!("https://{}/api/v3", parsed.host)
+        format!("https://api.{}", parsed.host)
     };
 
     Ok(GitHubRepositoryTarget {
@@ -542,10 +555,12 @@ async fn resolve_github_credential(repository_root: &std::path::Path, host: &str
             let query = format!("protocol=https\nhost={host}\n\n");
             stdin.write_all(query.as_bytes()).await.ok()?;
         }
+
         let output = child.wait_with_output().await.ok()?;
         if !output.status.success() {
             return None;
         }
+
         let stdout = String::from_utf8_lossy(&output.stdout);
         for line in stdout.lines() {
             if let Some(token) = line.strip_prefix("password=") {
@@ -555,6 +570,7 @@ async fn resolve_github_credential(repository_root: &std::path::Path, host: &str
                 }
             }
         }
+
         None
     }
     .await;
@@ -582,12 +598,14 @@ fn build_github_client(token: Option<&str>) -> Result<reqwest::Client, String> {
         HeaderName::from_static("x-github-api-version"),
         HeaderValue::from_static("2022-11-28"),
     );
+
     if let Some(token) = token {
         let mut value = HeaderValue::from_str(&format!("Bearer {token}"))
             .map_err(|_| "GitHub 凭据包含非法字符。".to_string())?;
         value.set_sensitive(true);
         headers.insert(AUTHORIZATION, value);
     }
+
     reqwest::Client::builder()
         .user_agent("calamex-git-panel")
         .default_headers(headers)
@@ -613,6 +631,7 @@ async fn read_github_json<T: serde::de::DeserializeOwned>(
         .text()
         .await
         .map_err(|error| format!("读取 GitHub 响应失败：{error}"))?;
+
     if !status.is_success() {
         let message = serde_json::from_str::<serde_json::Value>(&body)
             .ok()
@@ -624,11 +643,13 @@ async fn read_github_json<T: serde::de::DeserializeOwned>(
             })
             .filter(|message| !message.is_empty())
             .unwrap_or_else(|| body.clone());
+
         return Err(format!(
             "GitHub API 返回错误（{}）：{message}",
             status.as_u16()
         ));
     }
+
     serde_json::from_str::<T>(&body).map_err(|error| format!("解析 GitHub 响应失败：{error}"))
 }
 
@@ -638,6 +659,7 @@ fn map_pull_request_summary(pull_request: &GitHubPullRequest) -> GitPullRequestS
     } else {
         pull_request.state.clone()
     };
+
     GitPullRequestSummaryPayload {
         number: pull_request.number,
         title: pull_request.title.clone(),
@@ -659,6 +681,7 @@ fn map_pull_request_detail(pull_request: &GitHubPullRequest) -> GitPullRequestDe
     } else {
         pull_request.state.clone()
     };
+
     GitPullRequestDetailPayload {
         number: pull_request.number,
         title: pull_request.title.clone(),
@@ -695,6 +718,7 @@ pub async fn list_git_pull_requests(
         Some("all") => "all",
         _ => "open",
     };
+
     let cache_key = pull_request_cache_key(&target, state);
     let cached = cached_pull_requests(&cache_key);
 
@@ -748,6 +772,7 @@ pub async fn list_git_pull_requests(
         .and_then(|value| value.to_str().ok())
         .filter(|value| !value.trim().is_empty())
         .map(str::to_string);
+
     let pull_requests: Vec<GitHubPullRequest> = read_github_json(response)
         .await
         .map_err(|error| annotate_auth_error(error, has_token))?;
@@ -770,11 +795,13 @@ pub async fn get_git_pull_request_detail(
         "{}/repos/{}/{}/pulls/{}",
         target.api_base, target.owner, target.repo, payload.number
     );
+
     let response = client
         .get(&url)
         .send()
         .await
         .map_err(|error| annotate_auth_error(format!("请求 GitHub 失败：{error}"), has_token))?;
+
     let pull_request: GitHubPullRequest = read_github_json(response)
         .await
         .map_err(|error| annotate_auth_error(error, has_token))?;
@@ -790,6 +817,7 @@ pub async fn create_git_pull_request(
     let title = payload.title.trim().to_string();
     let base = payload.base.trim().to_string();
     let head = payload.head.trim().to_string();
+
     if title.is_empty() {
         return Err("Pull Request 标题不能为空。".to_string());
     }
@@ -809,16 +837,19 @@ pub async fn create_git_pull_request(
         "body": payload.body.unwrap_or_default(),
         "draft": payload.draft.unwrap_or(false),
     });
+
     let url = format!(
         "{}/repos/{}/{}/pulls",
         target.api_base, target.owner, target.repo
     );
+
     let response = client
         .post(&url)
         .json(&request_body)
         .send()
         .await
         .map_err(|error| annotate_auth_error(format!("请求 GitHub 失败：{error}"), has_token))?;
+
     let pull_request: GitHubPullRequest = read_github_json(response)
         .await
         .map_err(|error| annotate_auth_error(error, has_token))?;
@@ -845,17 +876,23 @@ pub async fn merge_git_pull_request(
         Some("rebase") => "rebase",
         _ => "merge",
     };
-    let request_body = serde_json::json!({ "merge_method": merge_method });
+
+    let request_body = serde_json::json!({
+        "merge_method": merge_method
+    });
+
     let merge_url = format!(
         "{}/repos/{}/{}/pulls/{}/merge",
         target.api_base, target.owner, target.repo, payload.number
     );
+
     let response = client
         .put(&merge_url)
         .json(&request_body)
         .send()
         .await
         .map_err(|error| annotate_auth_error(format!("请求 GitHub 失败：{error}"), has_token))?;
+
     let _: serde_json::Value = read_github_json(response)
         .await
         .map_err(|error| annotate_auth_error(error, has_token))?;
@@ -868,11 +905,13 @@ pub async fn merge_git_pull_request(
         "{}/repos/{}/{}/pulls/{}",
         target.api_base, target.owner, target.repo, payload.number
     );
+
     let detail_response = client
         .get(&detail_url)
         .send()
         .await
         .map_err(|error| annotate_auth_error(format!("请求 GitHub 失败：{error}"), has_token))?;
+
     let pull_request: GitHubPullRequest = read_github_json(detail_response)
         .await
         .map_err(|error| annotate_auth_error(error, has_token))?;
@@ -890,17 +929,22 @@ pub async fn close_git_pull_request(
     let has_token = token.is_some();
     let client = build_github_client(token.as_deref())?;
 
-    let request_body = serde_json::json!({ "state": "closed" });
+    let request_body = serde_json::json!({
+        "state": "closed"
+    });
+
     let url = format!(
         "{}/repos/{}/{}/pulls/{}",
         target.api_base, target.owner, target.repo, payload.number
     );
+
     let response = client
         .patch(&url)
         .json(&request_body)
         .send()
         .await
         .map_err(|error| annotate_auth_error(format!("请求 GitHub 失败：{error}"), has_token))?;
+
     let pull_request: GitHubPullRequest = read_github_json(response)
         .await
         .map_err(|error| annotate_auth_error(error, has_token))?;
