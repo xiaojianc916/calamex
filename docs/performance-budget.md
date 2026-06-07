@@ -192,6 +192,22 @@
 - 验证：建议本机执行 `cargo test -p calamex commands::search`、`cargo clippy`、`cargo test`；
   用大仓库替换预览对比墙钟耗时。
 
+## Bash 符号索引的文件级并行解析
+
+- 文件：`src-tauri/src/commands/search/scan.rs`
+- 问题：`workspace_cache_symbols` 首次构建或缓存失效时，原先串行遍历 shell-like 文件并逐个执行
+  tree-sitter Bash 解析。大仓库脚本多时，符号搜索第一次响应会被单线程 AST 构建拖慢。
+- 算法：按文件粒度并行。用 `par_iter().enumerate()` 并发执行单文件读盘、解码、Parser 初始化、AST 解析
+  与 DFS 符号收集；每个 worker 只返回本文件符号列表，最终按原文件 index 排序后展平。
+- 复杂度（设 shell 文件数 F、单文件解析成本 c、核数 P）：
+  - 之前：O(F·c) 串行墙钟。
+  - 之后：O(F·c / P) 并行墙钟（总工作量不变，受 IO 与调度开销约束）；最终排序 O(s log s)，
+    s 为含符号的文件数。
+- 正确性：单文件内部仍使用原 DFS 逻辑，保留函数发现顺序；跨文件按扫描 index 重新排序，避免并发调度
+  改变符号结果顺序。新增单测覆盖跨文件顺序与文件内 DFS 顺序不变。
+- 验证：建议本机执行 `cargo test -p calamex commands::search::scan`、`cargo clippy`、`cargo test`；
+  用包含大量 shell 脚本的大仓库对比首次符号搜索耗时。
+
 ## 工作区 watcher 事件 HashMap 合并
 
 - 文件：`src-tauri/src/commands/workspace_watcher.rs`
