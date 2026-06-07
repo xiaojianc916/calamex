@@ -2,10 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 // 避免在测试环境加载真实 Shiki/Oniguruma 包；本用例只验证纯决策/计算函数。
 vi.mock('@/services/editor/shiki-highlighter', () => ({
-  ensureShikiLanguage: vi.fn(),
-  isShikiLanguageLoaded: vi.fn(() => false),
   resolveShikiLanguageId: vi.fn(() => null),
-  tokenizeWithShikiSync: vi.fn(() => null),
+  tokenizeWithShikiWorker: vi.fn(() => Promise.resolve(null)),
   SHIKI_BACKGROUND: '#ffffff',
   SHIKI_FOREGROUND: '#000000',
 }));
@@ -16,6 +14,17 @@ import {
 } from './codemirror-shiki-highlight';
 
 describe('resolveShikiHighlightUpdateAction', () => {
+  it('Worker 结果事务只应用结果，不额外重算', () => {
+    expect(
+      resolveShikiHighlightUpdateAction({
+        languageChanged: false,
+        recomputeRequested: false,
+        workerResultReceived: true,
+        docChanged: false,
+      }),
+    ).toBe('skip');
+  });
+
   it('语言切换时立即重算', () => {
     expect(
       resolveShikiHighlightUpdateAction({
@@ -26,7 +35,7 @@ describe('resolveShikiHighlightUpdateAction', () => {
     ).toBe('recompute');
   });
 
-  it('收到重算请求（语法加载完成/防抖超时）时重算', () => {
+  it('收到重算请求（防抖超时）时重算', () => {
     expect(
       resolveShikiHighlightUpdateAction({
         languageChanged: false,
