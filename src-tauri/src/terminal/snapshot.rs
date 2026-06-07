@@ -3,6 +3,14 @@ use std::time::Instant;
 /// 终端快照保留的**字节**上限（不是字符数）。160 KiB。
 pub const TERMINAL_SNAPSHOT_MAX_LENGTH: usize = 160 * 1024;
 
+/// 触发裁剪后回落到的低水位（上限的约 75%，120 KiB）。
+///
+/// 仅当快照超过 [`TERMINAL_SNAPSHOT_MAX_LENGTH`] 时才裁剪，且一次性裁到本低水位，
+/// 而非每次都贴着上限裁。这样在持续输出时，裁剪只会在快照再增长约 25%（约 40 KiB）后
+/// 才发生一次，把 `String::drain` 的均摊成本从 O(n)/次追加 降到 O(1)/次追加
+/// （详见 docs/performance-budget.md）。
+const TERMINAL_SNAPSHOT_TRIM_TARGET: usize = TERMINAL_SNAPSHOT_MAX_LENGTH * 3 / 4;
+
 #[derive(Clone, Copy, Default)]
 pub struct TerminalInteractiveVisualState {
     pub resize_repaint_suppress_until: Option<Instant>,
@@ -12,7 +20,9 @@ pub struct TerminalInteractiveVisualState {
 /// 将快照裁剪到 [`TERMINAL_SNAPSHOT_MAX_LENGTH`] 以内。
 ///
 /// 裁剪策略：
-/// 1. 按字节裁掉头部多余部分，保留 UTF-8 字符边界。
+/// 1. 仅当超过上限时才裁剪；一次性按字节裁到低水位 [`TERMINAL_SNAPSHOT_TRIM_TARGET`]，
+///    为后续追加预留约 25% 增长空间（摊还裁剪，避免每次追加都触发整段头部搬移）。
+///    裁剪保留 UTF-8 字符边界。
 /// 2. 进一步向前推进到下一个 `ESC` 或 `\n`，避免把新起点切在 CSI 序列中段，
 ///    防止下游 vt100 解析时把残片当成乱码渲染。
 ///    若 1 KiB 内找不到对齐点，则放弃对齐保持字节边界（避免极端情况下整段被吃掉）。
@@ -20,7 +30,8 @@ pub fn trim_terminal_snapshot(snapshot: &mut String) {
     if snapshot.len() <= TERMINAL_SNAPSHOT_MAX_LENGTH {
         return;
     }
-    let excess = snapshot.len() - TERMINAL_SNAPSHOT_MAX_LENGTH;
+    // 裁到低水位（而非贴着上限），给后续追加留出约 25% 的增长空间，实现摊还化。
+    let excess = snapshot.len() - TERMINAL_SNAPSHOT_TRIM_TARGET;
     let mut boundary = advance_char_boundary(snapshot, excess);
 
     // 对齐到下一个 ESC 或换行；最多前移 1 KiB，避免吞掉过多内容。
@@ -79,4 +90,79 @@ pub fn is_likely_interactive_resize_repaint_frame(data: &str) -> bool {
     data.contains("\x1b[H")
         && data.contains("\x1b[K")
         && (data.contains("To run a command as administrator") || data.contains("sudo <command>"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn trim_is_noop_under_cap() {
+        let mut snapshot = "a".repeat(TERMINAL_SNAPSHOT_MAX_LENGTH);
+        let before = snapshot.clone();
+        trim_terminal_snapshot(&mut snapshot);
+        assert_eq!(snapshot, before, "未超过上限不应裁剪");
+    }
+
+    #[test]
+    fn trim_drops_to_low_water_mark() {
+        // 全 ASCII、无 ESC/换行：裁剪应精确回落到低水位，而非贴着上限。
+        let mut snapshot = "a".repeat(TERMINAL_SNAPSHOT_MAX_LENGTH + 1024);
+        trim_terminal_snapshot(&mut snapshot);
+        assert_eq!(
+            snapshot.len(),
+            TERMINAL_SNAPSHOT_TRIM_TARGET,
+            "应一次性裁到低水位，为后续追加留出空间"
+        );
+        assert!(snapshot.len() <= TERMINAL_SNAPSHOT_MAX_LENGTH);
+    }
+
+    #[test]
+    fn trim_preserves_utf8_char_boundary() {
+        // 多字节字符（每个 3 字节）：裁剪点必须落在字符边界，结果仍是合法 UTF-8。
+        let mut snapshot = "你".repeat(TERMINAL_SNAPSHOT_MAX_LENGTH);
+        trim_terminal_snapshot(&mut snapshot);
+        assert!(snapshot.len() <= TERMINAL_SNAPSHOT_MAX_LENGTH);
+        // 低水位附近（最多多保留 2 字节用于对齐到字符边界）。
+        assert!(snapshot.len() <= TERMINAL_SNAPSHOT_TRIM_TARGET + 2);
+        assert!(
+            snapshot.chars().all(|c| c == '你'),
+            "裁剪不得在多字节字符中间切断"
+        );
+    }
+
+    #[test]
+    fn trim_aligns_to_newline_after_byte_cut() {
+        // 构造让“按字节裁剪点”落在第一段 'a' 中、其后 <1KiB 处有换行：
+        // 裁剪应对齐到换行之后，头部 'a' 与换行一并裁掉，只剩 'b'。
+        let tail_len = TERMINAL_SNAPSHOT_TRIM_TARGET - 512;
+        let head_len = TERMINAL_SNAPSHOT_MAX_LENGTH - tail_len;
+        let mut snapshot = String::new();
+        snapshot.push_str(&"a".repeat(head_len));
+        snapshot.push('\n');
+        snapshot.push_str(&"b".repeat(tail_len));
+        assert!(snapshot.len() > TERMINAL_SNAPSHOT_MAX_LENGTH);
+        trim_terminal_snapshot(&mut snapshot);
+        assert!(snapshot.len() <= TERMINAL_SNAPSHOT_MAX_LENGTH);
+        assert!(
+            snapshot.bytes().all(|b| b == b'b'),
+            "应对齐到换行之后：头部 'a' 与换行都被裁掉，只剩 'b'"
+        );
+        assert_eq!(snapshot.len(), tail_len);
+    }
+
+    #[test]
+    fn repeated_appends_stay_bounded() {
+        // 模拟真实追加循环：持续追加远超上限的总量，快照长度必须始终不超过上限。
+        let mut snapshot = String::new();
+        let chunk = "x".repeat(4096);
+        for _ in 0..1000 {
+            snapshot.push_str(&chunk);
+            trim_terminal_snapshot(&mut snapshot);
+            assert!(
+                snapshot.len() <= TERMINAL_SNAPSHOT_MAX_LENGTH,
+                "快照长度必须始终不超过上限"
+            );
+        }
+    }
 }

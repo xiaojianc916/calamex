@@ -139,14 +139,26 @@ const toSuggestion = (message: string): Suggestion => {
   return { title, message, isLoading: false };
 };
 
-/** 从词池里去重并随机挑选 DISPLAY_COUNT 条，避免每次都一样。 */
-const pickFromPool = (pool: readonly string[]): Suggestion[] => {
-  const unique = Array.from(new Set(pool.map((item) => item.trim()).filter(Boolean)));
-  for (let i = unique.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(Math.random() * (i + 1));
+/** 去重 + 去空白：归一化词池，保证候选项互不相同。 */
+const dedupePool = (pool: readonly string[]): string[] =>
+  Array.from(new Set(pool.map((item) => item.trim()).filter(Boolean)));
+
+/** 静态兜底池只需去重一次，后续每次抽取直接复用。 */
+const STATIC_POOL_UNIQUE: readonly string[] = dedupePool(STATIC_POOL);
+
+/**
+ * 从词池里去重并随机挑选至多 DISPLAY_COUNT 条，避免每次都一样。
+ * 用部分 Fisher–Yates：只洗前 k 个位置（k = 展示数），把全量 O(n) 洗牌降到 O(k)，
+ * 且每次只把选中的元素与其后随机位置交换，统计上等价于完整洗牌后取前 k 个。
+ */
+export const pickFromPool = (pool: readonly string[]): Suggestion[] => {
+  const unique = pool === STATIC_POOL ? STATIC_POOL_UNIQUE.slice() : dedupePool(pool);
+  const pickCount = Math.min(DISPLAY_COUNT, unique.length);
+  for (let i = 0; i < pickCount; i += 1) {
+    const j = i + Math.floor(Math.random() * (unique.length - i));
     [unique[i], unique[j]] = [unique[j], unique[i]];
   }
-  return unique.slice(0, DISPLAY_COUNT).map(toSuggestion);
+  return unique.slice(0, pickCount).map(toSuggestion);
 };
 
 const withContent = (items: readonly Suggestion[]): Suggestion[] =>
