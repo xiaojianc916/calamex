@@ -3,6 +3,7 @@ import type { useMessage } from '@/composables/useMessage';
 import type { useGitStore } from '@/store/git';
 import type { IGitFileStatusPayload } from '@/types/git';
 import { toErrorMessage } from '@/utils/error';
+import { areFileSystemPathsEqual } from '@/utils/path';
 import type { TGitSectionKey } from './useSourceControlContextMenu';
 
 export type TGitEntryActionKey = 'stage' | 'unstage' | 'discard';
@@ -37,6 +38,14 @@ const collectPaths = (entries: IGitFileStatusPayload[]): string[] =>
   entries.map((entry) => entry.path);
 
 export const useSourceControlActions = (options: IUseSourceControlActionsOptions) => {
+  const isWorkspaceRootCurrent = (workspaceRootPath: string | null): boolean => {
+    const currentWorkspaceRootPath = options.getWorkspaceRootPath();
+    if (!workspaceRootPath || !currentWorkspaceRootPath) {
+      return workspaceRootPath === currentWorkspaceRootPath;
+    }
+    return areFileSystemPathsEqual(workspaceRootPath, currentWorkspaceRootPath);
+  };
+
   const confirmDangerAction = async (config: {
     title: string;
     description: string;
@@ -82,15 +91,20 @@ export const useSourceControlActions = (options: IUseSourceControlActionsOptions
       return;
     }
 
+    const workspaceRootPathAtStart = options.getWorkspaceRootPath();
+
     try {
       const didRun = await options.runWithPending(config.pendingKey, async () => {
         await config.mutate(config.paths);
       });
-      if (!didRun) {
+      if (!didRun || !isWorkspaceRootCurrent(workspaceRootPathAtStart)) {
         return;
       }
       options.message.success(config.successMessage(config.paths.length));
     } catch (error) {
+      if (!isWorkspaceRootCurrent(workspaceRootPathAtStart)) {
+        return;
+      }
       options.message.error(toErrorMessage(error, config.errorMessage));
     }
   };
@@ -148,12 +162,15 @@ export const useSourceControlActions = (options: IUseSourceControlActionsOptions
         await options.gitStore.initRepository(workspaceRootPath);
       });
 
-      if (!didRun) {
+      if (!didRun || !isWorkspaceRootCurrent(workspaceRootPath)) {
         return;
       }
 
       options.message.success('Git 仓库已初始化');
     } catch (error) {
+      if (!isWorkspaceRootCurrent(workspaceRootPath)) {
+        return;
+      }
       const errorMessage = toErrorMessage(error, '初始化 Git 仓库失败');
       options.setSourceControlActionError(errorMessage);
       options.message.error(errorMessage);
@@ -172,18 +189,27 @@ export const useSourceControlActions = (options: IUseSourceControlActionsOptions
       return;
     }
 
+    const workspaceRootPathAtStart = options.getWorkspaceRootPath();
+
     try {
       await options.runWithPending('commit', async () => {
         const result = await options.gitStore.commitIndex(nextCommitMessage);
+        if (!isWorkspaceRootCurrent(workspaceRootPathAtStart)) {
+          return;
+        }
         options.setCommitMessage('');
         options.message.success(`已创建提交 ${result.commitId?.slice(0, 7) ?? ''}`);
       });
     } catch (error) {
+      if (!isWorkspaceRootCurrent(workspaceRootPathAtStart)) {
+        return;
+      }
       options.message.error(toErrorMessage(error, '创建 Git 提交失败'));
     }
   };
 
   const handleDiscardEntry = async (entry: IGitFileStatusPayload): Promise<void> => {
+    const workspaceRootPathAtStart = options.getWorkspaceRootPath();
     const confirmed = await confirmDangerAction({
       title: entry.isUntracked ? '删除未跟踪文件？' : '放弃此文件的未暂存更改？',
       description: entry.isUntracked
@@ -191,7 +217,7 @@ export const useSourceControlActions = (options: IUseSourceControlActionsOptions
         : `将把 ${entry.relativePath} 的工作区内容恢复到索引/HEAD。此操作无法撤销。`,
       confirmText: entry.isUntracked ? '删除文件' : '放弃更改',
     });
-    if (!confirmed) {
+    if (!confirmed || !isWorkspaceRootCurrent(workspaceRootPathAtStart)) {
       return;
     }
 
@@ -199,11 +225,14 @@ export const useSourceControlActions = (options: IUseSourceControlActionsOptions
       const didRun = await options.runWithPending(`discard:${entry.path}`, async () => {
         await options.gitStore.discardPaths([entry.path]);
       });
-      if (!didRun) {
+      if (!didRun || !isWorkspaceRootCurrent(workspaceRootPathAtStart)) {
         return;
       }
       options.message.success(`已放弃更改 ${entry.fileName}`);
     } catch (error) {
+      if (!isWorkspaceRootCurrent(workspaceRootPathAtStart)) {
+        return;
+      }
       options.message.error(toErrorMessage(error, `放弃更改 ${entry.fileName} 失败`));
     }
   };
@@ -216,12 +245,14 @@ export const useSourceControlActions = (options: IUseSourceControlActionsOptions
       return;
     }
 
+    const workspaceRootPathAtStart = options.getWorkspaceRootPath();
+
     try {
       if (sectionKey === 'staged') {
         const didRun = await options.runWithPending(`unstage:${entry.path}`, async () => {
           await options.gitStore.unstagePaths([entry.path]);
         });
-        if (!didRun) {
+        if (!didRun || !isWorkspaceRootCurrent(workspaceRootPathAtStart)) {
           return;
         }
         options.message.success(`已取消暂存 ${entry.fileName}`);
@@ -231,11 +262,14 @@ export const useSourceControlActions = (options: IUseSourceControlActionsOptions
       const didRun = await options.runWithPending(`stage:${entry.path}`, async () => {
         await options.gitStore.stagePaths([entry.path]);
       });
-      if (!didRun) {
+      if (!didRun || !isWorkspaceRootCurrent(workspaceRootPathAtStart)) {
         return;
       }
       options.message.success(`已暂存 ${entry.fileName}`);
     } catch (error) {
+      if (!isWorkspaceRootCurrent(workspaceRootPathAtStart)) {
+        return;
+      }
       options.message.error(toErrorMessage(error, 'Git 变更操作失败'));
     }
   };
