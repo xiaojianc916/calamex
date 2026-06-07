@@ -1,18 +1,21 @@
 import {
-  connectGithub,
+  beginGithubDeviceAuth,
+  completeGithubDeviceAuth,
   disconnectGithub,
   getGithubAuthStatus,
 } from '@/services/tauri.github-auth';
 import { useGitStore } from '@/store/git';
-import type { IGitHubAuthStatusPayload } from '@/services/tauri.github-auth';
+import type {
+  IGitHubAuthStatusPayload,
+  IGitHubDeviceAuthPayload,
+} from '@/services/tauri.github-auth';
 import { openExternalUrl } from '@/utils/browser';
+import { tryWriteClipboardText } from '@/utils/clipboard';
 
 const BRANCH_SYNC_SELECTOR = '.source-control-branch-sync';
-const GITHUB_LOGIN_URL = 'https://github.com/login';
-const GITHUB_ACCOUNT_SWITCH_URL = 'https://github.com/logout';
 const AUTH_CACHE_PREFIX = 'calamex.githubAuth.';
 const AUTH_CACHE_TTL_MS = 5 * 60 * 1000;
-const AUTH_SWITCH_GRACE_MS = 60 * 1000;
+const POST_BROWSER_AUTH_REFRESH_MS = 1500;
 
 type CachedAuthStatus = {
   status: IGitHubAuthStatusPayload;
@@ -24,11 +27,13 @@ let currentRepositoryRoot: string | null = null;
 let currentStatus: IGitHubAuthStatusPayload | null = null;
 let currentStatusUpdatedAt = 0;
 let pendingAuthRequest: Promise<IGitHubAuthStatusPayload> | null = null;
+let pendingDeviceAuth: Promise<IGitHubAuthStatusPayload> | null = null;
+let currentDeviceAuth: IGitHubDeviceAuthPayload | null = null;
 let isLoading = false;
 let isStarted = false;
 let renderQueued = false;
 let isMenuOpen = false;
-let suppressAutoDetectUntil = 0;
+let lastBrowserAuthOpenedAt = 0;
 
 const getRepositoryRootPath = (): string | null => {
   try {
@@ -81,21 +86,13 @@ const getCacheKey = (repositoryRootPath: string): string =>
   `${AUTH_CACHE_PREFIX}${encodeURIComponent(repositoryRootPath)}`;
 
 const readCachedStatus = (repositoryRootPath: string): CachedAuthStatus | null => {
-  if (typeof sessionStorage === 'undefined') {
-    return null;
-  }
+  if (typeof sessionStorage === 'undefined') return null;
 
   try {
     const raw = sessionStorage.getItem(getCacheKey(repositoryRootPath));
-    if (!raw) {
-      return null;
-    }
-
+    if (!raw) return null;
     const cached = JSON.parse(raw) as CachedAuthStatus;
-    if (!cached?.status || typeof cached.updatedAt !== 'number') {
-      return null;
-    }
-
+    if (!cached?.status || typeof cached.updatedAt !== 'number') return null;
     return cached;
   } catch {
     return null;
@@ -103,9 +100,7 @@ const readCachedStatus = (repositoryRootPath: string): CachedAuthStatus | null =
 };
 
 const writeCachedStatus = (repositoryRootPath: string, status: IGitHubAuthStatusPayload): void => {
-  if (typeof sessionStorage === 'undefined') {
-    return;
-  }
+  if (typeof sessionStorage === 'undefined') return;
 
   try {
     sessionStorage.setItem(
@@ -118,9 +113,7 @@ const writeCachedStatus = (repositoryRootPath: string, status: IGitHubAuthStatus
 };
 
 const clearCachedStatus = (repositoryRootPath: string): void => {
-  if (typeof sessionStorage === 'undefined') {
-    return;
-  }
+  if (typeof sessionStorage === 'undefined') return;
 
   try {
     sessionStorage.removeItem(getCacheKey(repositoryRootPath));
@@ -131,6 +124,8 @@ const clearCachedStatus = (repositoryRootPath: string): void => {
 
 const resolveCredentialSourceLabel = (source: string | null): string => {
   switch (source) {
+    case 'calamex-oauth':
+      return 'Calamex OAuth';
     case 'github-cli':
       return 'GitHub CLI';
     case 'git-credential':
@@ -141,6 +136,10 @@ const resolveCredentialSourceLabel = (source: string | null): string => {
 };
 
 const createButtonLabel = (): string => {
+  if (currentDeviceAuth) {
+    return currentDeviceAuth.userCode;
+  }
+
   if (isLoading && !currentStatus) {
     return '连接中';
   }
@@ -153,6 +152,10 @@ const createButtonLabel = (): string => {
 };
 
 const createButtonTitle = (): string => {
+  if (currentDeviceAuth) {
+    return `GitHub 验证码 ${currentDeviceAuth.userCode} 已复制，浏览器完成授权后会自动连接。`;
+  }
+
   if (currentStatus?.authenticated) {
     const displayName = currentStatus.name || currentStatus.login || 'GitHub';
     return `已通过 ${resolveCredentialSourceLabel(currentStatus.source)} 连接 ${displayName}`;
@@ -166,6 +169,7 @@ const getSnapshot = (repositoryRootPath: string | null): string =>
     repositoryRootPath,
     isLoading: isLoading && !currentStatus,
     isMenuOpen,
+    deviceUserCode: currentDeviceAuth?.userCode ?? null,
     authenticated: currentStatus?.authenticated ?? false,
     login: currentStatus?.login ?? null,
     avatarUrl: currentStatus?.avatarUrl ?? null,
@@ -174,23 +178,24 @@ const getSnapshot = (repositoryRootPath: string | null): string =>
   });
 
 const closeMenu = (): void => {
-  if (!isMenuOpen) {
-    return;
-  }
+  if (!isMenuOpen) return;
   isMenuOpen = false;
   renderAllGithubAuthHeaders();
 };
 
-const openGitHubLogin = (): void => {
-  openExternalUrl(GITHUB_LOGIN_URL);
-};
-
-const openGitHubAccountSwitch = (): void => {
-  openExternalUrl(GITHUB_ACCOUNT_SWITCH_URL);
+const buildVerificationUri = (deviceAuth: IGitHubDeviceAuthPayload): string => {
+  const separator = deviceAuth.verificationUri.includes('?') ? '&' : '?';
+  return `${deviceAuth.verificationUri}${separator}prompt=select_account`;
 };
 
 const shouldUseCachedStatus = (): boolean =>
   Boolean(currentStatus) && Date.now() - currentStatusUpdatedAt < AUTH_CACHE_TTL_MS;
+
+const applyStatus = (repositoryRootPath: string, status: IGitHubAuthStatusPayload): void => {
+  currentStatus = status;
+  currentStatusUpdatedAt = Date.now();
+  writeCachedStatus(repositoryRootPath, status);
+};
 
 const refreshAuthStatusForRepository = async (
   repositoryRootPath: string,
@@ -201,9 +206,7 @@ const refreshAuthStatusForRepository = async (
     return currentStatus;
   }
 
-  if (pendingAuthRequest) {
-    return pendingAuthRequest;
-  }
+  if (pendingAuthRequest) return pendingAuthRequest;
 
   if (options?.visibleLoading || !currentStatus) {
     isLoading = true;
@@ -212,18 +215,14 @@ const refreshAuthStatusForRepository = async (
 
   pendingAuthRequest = getGithubAuthStatus(repositoryRootPath)
     .then((status) => {
-      currentStatus = status;
-      currentStatusUpdatedAt = Date.now();
-      writeCachedStatus(repositoryRootPath, status);
+      applyStatus(repositoryRootPath, status);
       return status;
     })
     .catch((error: unknown) => {
       const status = createEmptyStatus(
         error instanceof Error ? error.message : '读取 GitHub 登录状态失败',
       );
-      currentStatus = status;
-      currentStatusUpdatedAt = Date.now();
-      writeCachedStatus(repositoryRootPath, status);
+      applyStatus(repositoryRootPath, status);
       return status;
     })
     .finally(() => {
@@ -235,10 +234,46 @@ const refreshAuthStatusForRepository = async (
   return pendingAuthRequest;
 };
 
-const handleButtonClick = async (): Promise<void> => {
-  if (isLoading && !currentStatus) {
-    return;
+const startDeviceAuth = async (repositoryRootPath: string): Promise<void> => {
+  if (pendingDeviceAuth) return;
+
+  isLoading = true;
+  currentDeviceAuth = null;
+  renderAllGithubAuthHeaders();
+
+  try {
+    const deviceAuth = await beginGithubDeviceAuth(repositoryRootPath);
+    currentDeviceAuth = deviceAuth;
+    currentStatus = createEmptyStatus('请在浏览器完成 GitHub 授权。');
+    currentStatusUpdatedAt = Date.now();
+    void tryWriteClipboardText(deviceAuth.userCode);
+    lastBrowserAuthOpenedAt = Date.now();
+    openExternalUrl(buildVerificationUri(deviceAuth));
+    renderAllGithubAuthHeaders();
+
+    pendingDeviceAuth = completeGithubDeviceAuth({
+      repositoryRootPath,
+      deviceCode: deviceAuth.deviceCode,
+      interval: deviceAuth.interval,
+    });
+
+    const status = await pendingDeviceAuth;
+    applyStatus(repositoryRootPath, status);
+  } catch (error) {
+    applyStatus(
+      repositoryRootPath,
+      createEmptyStatus(error instanceof Error ? error.message : 'GitHub 授权失败'),
+    );
+  } finally {
+    pendingDeviceAuth = null;
+    currentDeviceAuth = null;
+    isLoading = false;
+    renderAllGithubAuthHeaders();
   }
+};
+
+const handleButtonClick = async (): Promise<void> => {
+  if (pendingDeviceAuth || (isLoading && !currentStatus)) return;
 
   if (currentStatus?.authenticated) {
     isMenuOpen = !isMenuOpen;
@@ -247,48 +282,23 @@ const handleButtonClick = async (): Promise<void> => {
   }
 
   const repositoryRootPath = getRepositoryRootPath();
-  if (!repositoryRootPath) {
-    return;
-  }
+  if (!repositoryRootPath) return;
 
-  openGitHubLogin();
-  isLoading = true;
-  renderAllGithubAuthHeaders();
-
-  try {
-    const status = await connectGithub(repositoryRootPath);
-    currentStatus = status;
-    currentStatusUpdatedAt = Date.now();
-    writeCachedStatus(repositoryRootPath, status);
-  } catch (error) {
-    currentStatus = createEmptyStatus(
-      error instanceof Error ? error.message : '连接 GitHub 失败',
-    );
-    currentStatusUpdatedAt = Date.now();
-    writeCachedStatus(repositoryRootPath, currentStatus);
-  } finally {
-    isLoading = false;
-    renderAllGithubAuthHeaders();
-  }
+  await startDeviceAuth(repositoryRootPath);
 };
 
 const handleOpenProfile = (): void => {
   const htmlUrl = currentStatus?.htmlUrl;
   closeMenu();
-  if (htmlUrl) {
-    openExternalUrl(htmlUrl);
-  }
+  if (htmlUrl) openExternalUrl(htmlUrl);
 };
 
 const handleSwitchAccount = async (): Promise<void> => {
   const repositoryRootPath = getRepositoryRootPath();
-  if (!repositoryRootPath || (isLoading && !currentStatus)) {
-    return;
-  }
+  if (!repositoryRootPath || pendingDeviceAuth || (isLoading && !currentStatus)) return;
 
   isMenuOpen = false;
-  suppressAutoDetectUntil = Date.now() + AUTH_SWITCH_GRACE_MS;
-  currentStatus = createEmptyStatus('已进入账号切换流程。');
+  currentStatus = createEmptyStatus('请在浏览器选择 GitHub 账号。');
   currentStatusUpdatedAt = Date.now();
   clearCachedStatus(repositoryRootPath);
   renderAllGithubAuthHeaders();
@@ -296,10 +306,10 @@ const handleSwitchAccount = async (): Promise<void> => {
   try {
     await disconnectGithub(repositoryRootPath);
   } catch {
-    // Switching is still useful even if clearing the app-side cache fails.
+    // The new OAuth token will replace the app credential after authorization.
   }
 
-  openGitHubAccountSwitch();
+  await startDeviceAuth(repositoryRootPath);
 };
 
 const createMenuButton = (
@@ -338,14 +348,10 @@ const createAccountMenu = (): HTMLDivElement => {
 };
 
 const renderGithubAuthHeader = (container: Element, repositoryRootPath: string | null): void => {
-  if (!(container instanceof HTMLElement)) {
-    return;
-  }
+  if (!(container instanceof HTMLElement)) return;
 
   const snapshot = getSnapshot(repositoryRootPath);
-  if (container.dataset.githubAuthSnapshot === snapshot) {
-    return;
-  }
+  if (container.dataset.githubAuthSnapshot === snapshot) return;
 
   container.dataset.githubAuthSnapshot = snapshot;
   container.classList.add('is-github-auth-slot');
@@ -388,9 +394,7 @@ const renderGithubAuthHeader = (container: Element, repositoryRootPath: string |
 };
 
 const renderAllGithubAuthHeaders = (): void => {
-  if (typeof document === 'undefined') {
-    return;
-  }
+  if (typeof document === 'undefined') return;
 
   const repositoryRootPath = getRepositoryRootPath();
   for (const container of document.querySelectorAll(BRANCH_SYNC_SELECTOR)) {
@@ -405,6 +409,8 @@ const syncGithubAuthHeader = (): void => {
     currentStatus = null;
     currentStatusUpdatedAt = 0;
     pendingAuthRequest = null;
+    pendingDeviceAuth = null;
+    currentDeviceAuth = null;
     isLoading = false;
     isMenuOpen = false;
 
@@ -415,11 +421,9 @@ const syncGithubAuthHeader = (): void => {
         currentStatusUpdatedAt = cached.updatedAt;
       }
 
-      if (Date.now() >= suppressAutoDetectUntil) {
-        void refreshAuthStatusForRepository(repositoryRootPath, {
-          visibleLoading: !currentStatus,
-        });
-      }
+      void refreshAuthStatusForRepository(repositoryRootPath, {
+        visibleLoading: !currentStatus,
+      });
     }
   }
 
@@ -427,9 +431,7 @@ const syncGithubAuthHeader = (): void => {
 };
 
 const queueRender = (): void => {
-  if (renderQueued) {
-    return;
-  }
+  if (renderQueued) return;
 
   renderQueued = true;
   queueMicrotask(() => {
@@ -448,10 +450,23 @@ const handleDocumentPointerDown = (event: PointerEvent): void => {
   closeMenu();
 };
 
-export const initGitHubAuthHeaderEnhancement = (): void => {
-  if (isStarted || typeof window === 'undefined' || typeof document === 'undefined') {
+const handleWindowFocus = (): void => {
+  const repositoryRootPath = getRepositoryRootPath();
+  if (!repositoryRootPath || Date.now() - lastBrowserAuthOpenedAt < POST_BROWSER_AUTH_REFRESH_MS) {
     return;
   }
+
+  if (lastBrowserAuthOpenedAt > 0 || Date.now() - currentStatusUpdatedAt >= AUTH_CACHE_TTL_MS) {
+    lastBrowserAuthOpenedAt = 0;
+    void refreshAuthStatusForRepository(repositoryRootPath, {
+      force: true,
+      visibleLoading: false,
+    });
+  }
+};
+
+export const initGitHubAuthHeaderEnhancement = (): void => {
+  if (isStarted || typeof window === 'undefined' || typeof document === 'undefined') return;
 
   isStarted = true;
   observer = new MutationObserver(queueRender);
@@ -461,6 +476,7 @@ export const initGitHubAuthHeaderEnhancement = (): void => {
     characterData: true,
   });
   document.addEventListener('pointerdown', handleDocumentPointerDown, true);
+  window.addEventListener('focus', handleWindowFocus);
 
   queueRender();
 };
@@ -469,6 +485,7 @@ export const stopGitHubAuthHeaderEnhancement = (): void => {
   observer?.disconnect();
   observer = null;
   document.removeEventListener('pointerdown', handleDocumentPointerDown, true);
+  window.removeEventListener('focus', handleWindowFocus);
   isStarted = false;
   isMenuOpen = false;
 };

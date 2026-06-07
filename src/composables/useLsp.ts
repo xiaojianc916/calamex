@@ -152,13 +152,16 @@ const setWorkspaceRoot = (root: string | null): Promise<void> => {
 
   lifecycleToken += 1;
   const token = lifecycleToken;
+  const previousRoot = activeWorkspaceRoot;
   activeWorkspaceRoot = root;
   autoRestartCount = 0;
   clearAutoRestartTimer();
   clearStabilityTimer();
 
   return runExclusive(async () => {
-    await stopLspInternal(token, root ? 'stopped' : 'idle');
+    if (previousRoot !== null || root === null) {
+      await stopLspInternal(token, root ? 'stopped' : 'idle');
+    }
     if (!isLifecycleCurrent(token, root)) return;
     if (root) {
       await startLspInternal(root, token);
