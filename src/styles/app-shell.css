@@ -55,6 +55,56 @@ html.is-resizing [data-shell-resize-responder] {
   backface-visibility: hidden;
 }
 
+html.is-resizing .ai-composer,
+html.is-resizing .ai-composer-surface,
+html.is-resizing .ai-prompt-shell,
+html.is-resizing .ai-prompt-editor-wrap,
+html.is-resizing .ai-toolbar-row {
+  contain: layout;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  will-change: transform;
+}
+
+html.is-resizing .ai-prompt-shell {
+  overflow: hidden;
+  box-shadow: none !important;
+}
+
+html.is-resizing .ai-prompt-textarea {
+  min-height: 56px;
+  scrollbar-color: transparent transparent;
+}
+
+html.is-resizing .ai-prompt-textarea::-webkit-scrollbar-thumb {
+  background: transparent !important;
+}
+
+html.is-resizing .ai-toolbar-row {
+  display: flex;
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+
+html.is-resizing .ai-toolbar-left,
+html.is-resizing .ai-token-trigger,
+html.is-resizing .ai-send-button {
+  flex: 0 0 auto;
+}
+
+html.is-resizing .ai-model-trigger {
+  min-width: 0;
+  max-width: min(220px, 32vw);
+  flex: 0 1 auto;
+}
+
+html.is-resizing .ai-model-trigger__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 html.is-resizing .ai-workspace-right-sidebar,
 html.is-resizing .ai-icon-button,
 html.is-resizing .ai-suggestion-empty :is(button),
