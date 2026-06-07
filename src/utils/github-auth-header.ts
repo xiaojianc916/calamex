@@ -8,11 +8,12 @@ import type { IGitHubAuthStatusPayload } from '@/services/tauri.github-auth';
 import { openExternalUrl } from '@/utils/browser';
 
 const BRANCH_SYNC_SELECTOR = '.source-control-branch-sync';
-const GITHUB_LOGIN_URL = 'https://github.com/login';
-const GITHUB_ACCOUNT_SWITCH_URL = 'https://github.com/logout';
+const GITHUB_OAUTH_AUTHORIZE_URL =
+  'https://github.com/login/oauth/authorize?client_id=01ab8ac9400c4e429b23&scope=read:user%20user:email%20repo&prompt=select_account';
 const AUTH_CACHE_PREFIX = 'calamex.githubAuth.';
 const AUTH_CACHE_TTL_MS = 5 * 60 * 1000;
 const AUTH_SWITCH_GRACE_MS = 60 * 1000;
+const POST_BROWSER_AUTH_REFRESH_MS = 1500;
 
 type CachedAuthStatus = {
   status: IGitHubAuthStatusPayload;
@@ -29,6 +30,7 @@ let isStarted = false;
 let renderQueued = false;
 let isMenuOpen = false;
 let suppressAutoDetectUntil = 0;
+let lastBrowserAuthOpenedAt = 0;
 
 const getRepositoryRootPath = (): string | null => {
   try {
@@ -181,12 +183,9 @@ const closeMenu = (): void => {
   renderAllGithubAuthHeaders();
 };
 
-const openGitHubLogin = (): void => {
-  openExternalUrl(GITHUB_LOGIN_URL);
-};
-
-const openGitHubAccountSwitch = (): void => {
-  openExternalUrl(GITHUB_ACCOUNT_SWITCH_URL);
+const openGitHubAccountSelection = (): void => {
+  lastBrowserAuthOpenedAt = Date.now();
+  openExternalUrl(GITHUB_OAUTH_AUTHORIZE_URL);
 };
 
 const shouldUseCachedStatus = (): boolean =>
@@ -251,7 +250,7 @@ const handleButtonClick = async (): Promise<void> => {
     return;
   }
 
-  openGitHubLogin();
+  openGitHubAccountSelection();
   isLoading = true;
   renderAllGithubAuthHeaders();
 
@@ -299,7 +298,7 @@ const handleSwitchAccount = async (): Promise<void> => {
     // Switching is still useful even if clearing the app-side cache fails.
   }
 
-  openGitHubAccountSwitch();
+  openGitHubAccountSelection();
 };
 
 const createMenuButton = (
@@ -448,6 +447,22 @@ const handleDocumentPointerDown = (event: PointerEvent): void => {
   closeMenu();
 };
 
+const handleWindowFocus = (): void => {
+  const repositoryRootPath = getRepositoryRootPath();
+  if (!repositoryRootPath || Date.now() - lastBrowserAuthOpenedAt < POST_BROWSER_AUTH_REFRESH_MS) {
+    return;
+  }
+
+  if (lastBrowserAuthOpenedAt > 0 || Date.now() - currentStatusUpdatedAt >= AUTH_CACHE_TTL_MS) {
+    lastBrowserAuthOpenedAt = 0;
+    suppressAutoDetectUntil = 0;
+    void refreshAuthStatusForRepository(repositoryRootPath, {
+      force: true,
+      visibleLoading: false,
+    });
+  }
+};
+
 export const initGitHubAuthHeaderEnhancement = (): void => {
   if (isStarted || typeof window === 'undefined' || typeof document === 'undefined') {
     return;
@@ -461,6 +476,7 @@ export const initGitHubAuthHeaderEnhancement = (): void => {
     characterData: true,
   });
   document.addEventListener('pointerdown', handleDocumentPointerDown, true);
+  window.addEventListener('focus', handleWindowFocus);
 
   queueRender();
 };
@@ -469,6 +485,7 @@ export const stopGitHubAuthHeaderEnhancement = (): void => {
   observer?.disconnect();
   observer = null;
   document.removeEventListener('pointerdown', handleDocumentPointerDown, true);
+  window.removeEventListener('focus', handleWindowFocus);
   isStarted = false;
   isMenuOpen = false;
 };
