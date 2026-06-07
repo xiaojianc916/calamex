@@ -1,6 +1,7 @@
 import { storeToRefs } from 'pinia';
 import { computed } from 'vue';
 import { tauriService } from '@/services/tauri';
+import { getTerminalRunOrchestrator } from '@/services/terminal/runOrchestrator';
 import { useEditorStore } from '@/store/editor';
 import { useTerminalRunRoutingStore } from '@/store/terminalRunRouting';
 
@@ -18,6 +19,8 @@ import { useTerminalRunRoutingStore } from '@/store/terminalRunRouting';
  *  1. 若存在当前 runId，则尽力请求后端优雅取消（后端找不到该运行属于预期内的
  *     情况，忽略其错误）。
  *  2. 无论后端取消是否成功，都强制复位前端运行态（包括运行归属会话），重新打开运行闸门。
+ *  3. 同步通知应用级运行编排器忘记当前 run，避免迟到的 completed 事件又把已停止
+ *     的运行写回历史。
  */
 export const useTerminalRunControl = () => {
   const editorStore = useEditorStore();
@@ -28,6 +31,7 @@ export const useTerminalRunControl = () => {
 
   /** 仅复位运行相关状态，不触碰文档、日志、终端输出与工作区。 */
   const forceResetRunState = (): void => {
+    getTerminalRunOrchestrator().resetActiveRunLifecycle();
     editorStore.isRunning = false;
     editorStore.setPendingTerminalRunId(null);
     editorStore.setActiveRunSummary(null);

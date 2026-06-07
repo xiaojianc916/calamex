@@ -1,14 +1,21 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { cancelTerminalRun } = vi.hoisted(() => ({
+const { cancelTerminalRun, resetActiveRunLifecycle } = vi.hoisted(() => ({
   cancelTerminalRun: vi.fn(),
+  resetActiveRunLifecycle: vi.fn(),
 }));
 
 vi.mock('@/services/tauri', () => ({
   tauriService: {
     cancelTerminalRun,
   },
+}));
+
+vi.mock('@/services/terminal/runOrchestrator', () => ({
+  getTerminalRunOrchestrator: () => ({
+    resetActiveRunLifecycle,
+  }),
 }));
 
 import { useTerminalRunControl } from '@/composables/useTerminalRunControl';
@@ -20,6 +27,7 @@ describe('useTerminalRunControl', () => {
     setActivePinia(createPinia());
     cancelTerminalRun.mockReset();
     cancelTerminalRun.mockResolvedValue(undefined);
+    resetActiveRunLifecycle.mockReset();
   });
 
   it('存在 runId 时请求后端优雅取消并复位运行态（含运行归属会话）', async () => {
@@ -33,6 +41,7 @@ describe('useTerminalRunControl', () => {
     await stopRun();
 
     expect(cancelTerminalRun).toHaveBeenCalledWith({ runId: 'run-1', mode: 'graceful' });
+    expect(resetActiveRunLifecycle).toHaveBeenCalledOnce();
     expect(isRunning.value).toBe(false);
     expect(store.pendingTerminalRunId).toBeNull();
     expect(store.activeRunSummary).toBeNull();
@@ -49,6 +58,7 @@ describe('useTerminalRunControl', () => {
     await stopRun();
 
     expect(cancelTerminalRun).toHaveBeenCalledTimes(1);
+    expect(resetActiveRunLifecycle).toHaveBeenCalledOnce();
     expect(store.isRunning).toBe(false);
     expect(store.pendingTerminalRunId).toBeNull();
   });
@@ -63,6 +73,7 @@ describe('useTerminalRunControl', () => {
     await stopRun();
 
     expect(cancelTerminalRun).not.toHaveBeenCalled();
+    expect(resetActiveRunLifecycle).toHaveBeenCalledOnce();
     expect(store.isRunning).toBe(false);
     expect(canStopRun.value).toBe(false);
   });

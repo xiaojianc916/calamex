@@ -159,12 +159,25 @@ export class TerminalRunOrchestrator {
     this.finalizeTerminalRun(payload);
   }
 
+  /**
+   * Explicit user/system reset path.
+   *
+   * This is different from Vue scope disposal: reset means the current run should
+   * be forgotten by the app-level orchestrator, so late run-completed events from
+   * a cancelled/stale backend process cannot recreate history or reopen the run
+   * gate after the user already chose Stop/Reset.
+   */
+  resetActiveRunLifecycle(): void {
+    this.resetBufferedTerminalOutput();
+    this.clearTerminalRunFallbackTimer();
+    this.activeTerminalRunMeta = null;
+  }
+
   dispose(): void {
     this.terminalRunListenerVersion += 1;
     this.clearTerminalRunEventListeners();
     this.terminalFacade.dispose();
-    this.resetBufferedTerminalOutput();
-    this.clearTerminalRunFallbackTimer();
+    this.resetActiveRunLifecycle();
     if (this.binding) {
       this.clearActiveTerminalRunState();
     }
