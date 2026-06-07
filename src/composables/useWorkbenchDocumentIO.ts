@@ -389,6 +389,42 @@ export const useWorkbenchDocumentIO = ({
     return null;
   };
 
+  const tryLoadRestoredDocument = async (
+    document: IEditorDocument,
+    lifecycle: TDocumentIoLifecycle,
+  ): Promise<IEditorDocument | null> => {
+    try {
+      await ensureDocumentBufferLoaded(document.id, lifecycle);
+      return isDocumentIoLifecycleCurrent(lifecycle)
+        ? (editorStore.getDocumentById(document.id) ?? null)
+        : null;
+    } catch (error) {
+      if (isCanceledIpcError(error) || !isDocumentIoLifecycleCurrent(lifecycle)) {
+        return null;
+      }
+      editorStore.closeDocument(document.id);
+      notifier.info('上次会话中部分文件已失效，已跳过');
+      return null;
+    }
+  };
+
+  const restoreActiveDocumentBuffer = async (
+    activeDocument: IEditorDocument,
+    lifecycle: TDocumentIoLifecycle,
+  ): Promise<IEditorDocument | null> => {
+    const loadedActiveDocument = await tryLoadRestoredDocument(activeDocument, lifecycle);
+    if (loadedActiveDocument || !isDocumentIoLifecycleCurrent(lifecycle)) {
+      return loadedActiveDocument;
+    }
+
+    const fallbackDocument = editorStore.getDocumentById();
+    if (!fallbackDocument) {
+      return null;
+    }
+
+    return tryLoadRestoredDocument(fallbackDocument, lifecycle);
+  };
+
   const restoreSession = async (sessionSnapshot: TSessionSnapshot): Promise<void> => {
     const lifecycle = beginDocumentIoLifecycle();
     const runtimeReady = await waitForDesktopRuntime(120);
@@ -415,10 +451,11 @@ export const useWorkbenchDocumentIO = ({
 
     const activeDocument = restoreActiveDocument(snapshot.activeTabPath);
     if (activeDocument) {
-      await ensureDocumentBufferLoaded(activeDocument.id, lifecycle);
+      const loadedActiveDocument = await restoreActiveDocumentBuffer(activeDocument, lifecycle);
       if (
+        loadedActiveDocument &&
         isDocumentIoLifecycleCurrent(lifecycle) &&
-        editorStore.restoreDraftForDocument(activeDocument.id)
+        editorStore.restoreDraftForDocument(loadedActiveDocument.id)
       ) {
         notifier.info('已恢复 1 个文件未保存的修改');
       }
