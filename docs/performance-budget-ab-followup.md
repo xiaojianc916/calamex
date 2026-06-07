@@ -30,6 +30,21 @@
   - 之后：重复窗口命中为 O(1) Map 访问；最多缓存 32 个不超过 200 KiB 的切片结果，避免无界增长。
 - 取舍：这是 Worker 化前的低风险热路径优化，不改变渲染模型、不改打包配置、不引入跨线程通信；真正 Worker 化仍建议单独提交。
 
+## B1：Bash 符号级 mtime/hash 增量 AST 缓存
+
+- 文件：`src-tauri/src/commands/search/scan.rs`
+- 问题：此前 Bash 符号已有工作区级聚合缓存，但任何有效文件变更都会清空聚合符号缓存；下一次符号搜索需要重新解析所有 shell-like 文件。
+- 算法：保留 per-file 符号缓存 `HashMap<relative_path, CachedSymbolFile>`：
+  - 文件 `len + mtime` 未变时直接复用符号结果，不读取文件、不跑 tree-sitter。
+  - `mtime` 变化时读取文件并计算内容 hash；hash 未变则复用旧符号，仅刷新 fingerprint。
+  - 只有 hash 也变化时才重新 decode + tree-sitter 解析该文件。
+  - 聚合符号索引仍按文件顺序扁平化，保证结果稳定。
+- 复杂度：
+  - 之前：任一有效文件变更后符号搜索可能 O(S * parse) 重建全部 shell-like 文件符号，其中 S 为 shell-like 文件数。
+  - 之后：未变文件为 O(1) metadata 检查；mtime 变但内容未变为 O(file bytes) hash；真正变更文件才付出 parse 成本。
+- 取舍：使用标准库哈希作为缓存相等性短路，不作为安全散列；若读取失败或无法 decode，按空符号结果缓存/返回，优先保证搜索不中断。
+- 验证：新增单测覆盖 metadata 命中复用与 mtime 变化但 hash 相同复用。
+
 ## B2：内容模糊搜索的轻量必要条件预过滤
 
 - 文件：`src-tauri/src/commands/search/find.rs`
@@ -52,7 +67,6 @@
 ## 当前仍需拆小批次推进的项
 
 - A3b：Shiki Worker 化。会影响编辑器高亮初始化、worker 打包、fallback 路径，建议单独提交。
-- B1：Bash 符号级 mtime/hash 增量 AST 缓存。当前已有工作区级符号缓存与 A1 的 dirty 失效；若继续细化到 per-file mtime/hash，需要设计 per-file AST/symbol 缓存失效与 watcher 事件合并策略，建议在 A1 稳定后继续。
 
 ## 建议验证命令
 

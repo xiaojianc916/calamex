@@ -5,14 +5,16 @@ use ignore::WalkBuilder;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use rayon::prelude::*;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet, hash_map::DefaultHasher},
     ffi::OsStr,
     fs,
+    hash::{Hash, Hasher},
     path::{Component, Path, PathBuf},
     sync::{
         Arc, Mutex, OnceLock,
         atomic::{AtomicBool, Ordering},
     },
+    time::UNIX_EPOCH,
 };
 use tree_sitter::{Node, Parser};
 
@@ -60,16 +62,31 @@ pub(super) struct PathFilters {
 pub(super) struct WorkspaceFileCache {
     files: Arc<Vec<ScannedFile>>,
     symbols: Option<Arc<Vec<SymbolEntry>>>,
+    symbol_files: HashMap<String, CachedSymbolFile>,
     dirty: Arc<AtomicBool>,
     changed_paths: Arc<Mutex<Vec<PathBuf>>>,
     _watcher: RecommendedWatcher,
 }
 
+#[derive(Clone)]
 pub(super) struct SymbolEntry {
     pub(super) path: PathBuf,
     pub(super) relative_path: String,
     pub(super) name: String,
     pub(super) line_number: u32,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct SymbolFileFingerprint {
+    len: u64,
+    modified_nanos: Option<u128>,
+    content_hash: Option<u64>,
+}
+
+#[derive(Clone)]
+struct CachedSymbolFile {
+    fingerprint: SymbolFileFingerprint,
+    symbols: Vec<SymbolEntry>,
 }
 
 pub(super) static WORKSPACE_FILE_CACHES: OnceLock<Mutex<HashMap<String, WorkspaceFileCache>>> =
@@ -138,6 +155,7 @@ fn workspace_cache_files(root: &Path) -> Result<Arc<Vec<ScannedFile>>, String> {
                 cache.files.as_slice(),
                 changed_paths,
             )?);
+            // 文件列表变化只使聚合符号索引过期；per-file 符号缓存保留，后续按 mtime/hash 复用。
             cache.symbols = None;
         }
         return Ok(Arc::clone(&cache.files));
@@ -187,6 +205,7 @@ fn workspace_cache_files(root: &Path) -> Result<Arc<Vec<ScannedFile>>, String> {
         WorkspaceFileCache {
             files: Arc::clone(&files),
             symbols: None,
+            symbol_files: HashMap::new(),
             dirty,
             changed_paths,
             _watcher: watcher,
@@ -212,14 +231,27 @@ pub(super) fn workspace_cache_symbols(root: &Path) -> Result<Arc<Vec<SymbolEntry
         }
     }
 
-    // 确保文件列表已建立；dirty 时这里会刷新文件列表并清空旧的符号缓存。
+    // 确保文件列表已建立；dirty 时这里会刷新文件列表并使聚合符号索引过期。
     let files = workspace_cache_files(root)?;
-    let symbols = Arc::new(collect_workspace_symbols(files.as_slice())?);
+    let cached_symbol_files = {
+        let guard = caches
+            .lock()
+            .map_err(|_| "搜索索引状态已损坏，请重启应用后重试。".to_string())?;
+        guard
+            .get(&cache_key)
+            .map(|cache| cache.symbol_files.clone())
+            .unwrap_or_default()
+    };
+
+    let (symbols, refreshed_symbol_files) =
+        collect_workspace_symbols(files.as_slice(), &cached_symbol_files)?;
+    let symbols = Arc::new(symbols);
 
     let mut guard = caches
         .lock()
         .map_err(|_| "搜索索引状态已损坏，请重启应用后重试。".to_string())?;
     if let Some(cache) = guard.get_mut(&cache_key) {
+        cache.symbol_files = refreshed_symbol_files;
         cache.symbols = Some(Arc::clone(&symbols));
     }
     Ok(symbols)
@@ -479,15 +511,33 @@ pub(super) fn is_shell_like_file(file: &ScannedFile) -> bool {
         || file.name.eq_ignore_ascii_case(".profile")
 }
 
-fn collect_workspace_symbols(files: &[ScannedFile]) -> Result<Vec<SymbolEntry>, String> {
+fn collect_workspace_symbols(
+    files: &[ScannedFile],
+    cached_files: &HashMap<String, CachedSymbolFile>,
+) -> Result<(Vec<SymbolEntry>, HashMap<String, CachedSymbolFile>), String> {
     let per_file_symbols = files
         .par_iter()
         .enumerate()
         .filter(|(_, file)| is_shell_like_file(file))
-        .map(|(index, file)| collect_symbols_from_file(file).map(|symbols| (index, symbols)))
+        .map(|(index, file)| {
+            let cached = cached_files.get(&file.relative_path);
+            collect_symbols_from_file(file, cached)
+                .map(|symbols| (index, file.relative_path.clone(), symbols))
+        })
         .collect::<Result<Vec<_>, String>>()?;
 
-    Ok(flatten_symbol_batches(per_file_symbols))
+    let flattened = flatten_symbol_batches(
+        per_file_symbols
+            .iter()
+            .map(|(index, _relative_path, cached_file)| (*index, cached_file.symbols.clone()))
+            .collect(),
+    );
+    let refreshed_cache = per_file_symbols
+        .into_iter()
+        .map(|(_index, relative_path, cached_file)| (relative_path, cached_file))
+        .collect();
+
+    Ok((flattened, refreshed_cache))
 }
 
 fn flatten_symbol_batches(mut per_file_symbols: Vec<(usize, Vec<SymbolEntry>)>) -> Vec<SymbolEntry> {
@@ -498,12 +548,84 @@ fn flatten_symbol_batches(mut per_file_symbols: Vec<(usize, Vec<SymbolEntry>)>) 
         .collect()
 }
 
-fn collect_symbols_from_file(file: &ScannedFile) -> Result<Vec<SymbolEntry>, String> {
+fn collect_symbols_from_file(
+    file: &ScannedFile,
+    cached: Option<&CachedSymbolFile>,
+) -> Result<CachedSymbolFile, String> {
+    let metadata = match fs::metadata(&file.path) {
+        Ok(metadata) => metadata,
+        Err(_) => {
+            return Ok(CachedSymbolFile {
+                fingerprint: SymbolFileFingerprint {
+                    len: 0,
+                    modified_nanos: None,
+                    content_hash: None,
+                },
+                symbols: Vec::new(),
+            });
+        }
+    };
+    let len = metadata.len();
+    let modified_nanos = metadata
+        .modified()
+        .ok()
+        .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_nanos());
+
+    if let Some(cached) = cached
+        && cached.fingerprint.content_hash.is_some()
+        && cached.fingerprint.len == len
+        && cached.fingerprint.modified_nanos == modified_nanos
+    {
+        return Ok(cached.clone());
+    }
+
     let bytes = match fs::read(&file.path) {
         Ok(bytes) => bytes,
-        Err(_) => return Ok(Vec::new()),
+        Err(_) => {
+            return Ok(CachedSymbolFile {
+                fingerprint: SymbolFileFingerprint {
+                    len,
+                    modified_nanos,
+                    content_hash: None,
+                },
+                symbols: Vec::new(),
+            });
+        }
     };
-    let Ok((content, _encoding)) = decode_script_bytes(&bytes) else {
+    let content_hash = hash_symbol_file_bytes(&bytes);
+    let fingerprint = SymbolFileFingerprint {
+        len,
+        modified_nanos,
+        content_hash: Some(content_hash),
+    };
+
+    if let Some(cached) = cached
+        && cached.fingerprint.content_hash == Some(content_hash)
+    {
+        return Ok(CachedSymbolFile {
+            fingerprint,
+            symbols: cached.symbols.clone(),
+        });
+    }
+
+    Ok(CachedSymbolFile {
+        fingerprint,
+        symbols: parse_symbols_from_file_bytes(file, &bytes)?,
+    })
+}
+
+fn hash_symbol_file_bytes(bytes: &[u8]) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn parse_symbols_from_file_bytes(
+    file: &ScannedFile,
+    bytes: &[u8],
+) -> Result<Vec<SymbolEntry>, String> {
+    let Ok((content, _encoding)) = decode_script_bytes(bytes) else {
         return Ok(Vec::new());
     };
 
@@ -676,6 +798,64 @@ mod tests {
                 ("sibling".to_string(), 8),
             ]
         );
+    }
+
+    #[test]
+    fn collect_symbols_from_file_reuses_cached_symbols_when_metadata_matches() {
+        let root = temp_root();
+        fs::create_dir_all(&root).expect("应创建临时目录");
+        let path = root.join("script.sh");
+        fs::write(&path, "cached_name() {\n  echo cached\n}\n").expect("应写入测试文件");
+
+        let file = ScannedFile {
+            path: path.clone(),
+            relative_path: "script.sh".to_string(),
+            name: "script.sh".to_string(),
+        };
+        let first = collect_symbols_from_file(&file, None).expect("应解析初始符号");
+        let cached = CachedSymbolFile {
+            fingerprint: first.fingerprint.clone(),
+            symbols: vec![symbol("script.sh", "sentinel", 99)],
+        };
+
+        let reused = collect_symbols_from_file(&file, Some(&cached)).expect("应复用缓存符号");
+        let collected: Vec<String> = reused
+            .symbols
+            .into_iter()
+            .map(|symbol| symbol.name)
+            .collect();
+        assert_eq!(collected, vec!["sentinel".to_string()]);
+
+        fs::remove_dir_all(&root).expect("应清理临时目录");
+    }
+
+    #[test]
+    fn collect_symbols_from_file_reuses_cached_symbols_when_hash_matches_after_mtime_change() {
+        let root = temp_root();
+        fs::create_dir_all(&root).expect("应创建临时目录");
+        let path = root.join("script.sh");
+        let content = "same_body() {\n  echo same\n}\n";
+        fs::write(&path, content).expect("应写入测试文件");
+
+        let file = ScannedFile {
+            path: path.clone(),
+            relative_path: "script.sh".to_string(),
+            name: "script.sh".to_string(),
+        };
+        let mut cached = collect_symbols_from_file(&file, None).expect("应解析初始符号");
+        cached.fingerprint.modified_nanos =
+            cached.fingerprint.modified_nanos.map(|modified| modified.saturating_sub(1));
+        cached.symbols = vec![symbol("script.sh", "hash_reused", 7)];
+
+        let reused = collect_symbols_from_file(&file, Some(&cached)).expect("应按 hash 复用缓存");
+        let collected: Vec<String> = reused
+            .symbols
+            .into_iter()
+            .map(|symbol| symbol.name)
+            .collect();
+        assert_eq!(collected, vec!["hash_reused".to_string()]);
+
+        fs::remove_dir_all(&root).expect("应清理临时目录");
     }
 
     #[test]
