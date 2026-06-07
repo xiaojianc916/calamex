@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import {
   ChainOfThought,
   ChainOfThoughtContent,
@@ -31,6 +31,11 @@ import {
   TASK_ICON_MAP,
   tokenizeInlineMarkdown,
 } from './runtime-timeline';
+import {
+  SHELL_WINDOW_RESIZE_END_EVENT,
+  SHELL_WINDOW_RESIZE_SETTLED_EVENT,
+  SHELL_WINDOW_RESIZE_START_EVENT,
+} from '@/utils/window-resize-events';
 
 const props = withDefaults(
   defineProps<{
@@ -44,9 +49,18 @@ const props = withDefaults(
   },
 );
 
-const timelineItems = computed(() => buildTimelineItems(props.events, props.isWaitingConfirmation));
+const frozenTimelineEvents = ref<readonly TAgentRuntimeEvent[] | null>(null);
+const frozenWaitingConfirmation = ref(false);
+const activeTimelineEvents = computed(() => frozenTimelineEvents.value ?? props.events);
+const activeWaitingConfirmation = computed(() =>
+  frozenTimelineEvents.value ? frozenWaitingConfirmation.value : props.isWaitingConfirmation,
+);
+const timelineItems = computed(() =>
+  buildTimelineItems([...activeTimelineEvents.value], activeWaitingConfirmation.value),
+);
 const expandedTerminalNodeIds = ref<Set<string>>(new Set());
 const clearedTerminalNodeOffsets = ref<Record<string, number>>({});
+let resizeLifecycleCleanup: (() => void) | null = null;
 
 const shouldRenderTimeline = computed(
   () => timelineItems.value.length > 0 || props.isStreaming || props.isWaitingConfirmation,
@@ -117,6 +131,37 @@ const getTaskStepStatus = (node: ITaskNodeItem): 'complete' | 'active' | 'pendin
 };
 
 const shouldShowTaskStatus = (node: ITaskNodeItem): boolean => node.status !== 'succeeded';
+
+const bindResizeLifecycle = (): void => {
+  const handleResizeStart = (): void => {
+    if (!frozenTimelineEvents.value) {
+      frozenTimelineEvents.value = [...props.events];
+      frozenWaitingConfirmation.value = props.isWaitingConfirmation;
+    }
+  };
+  const handleResizeEnd = (): void => {
+    frozenTimelineEvents.value = null;
+    frozenWaitingConfirmation.value = false;
+  };
+
+  window.addEventListener(SHELL_WINDOW_RESIZE_START_EVENT, handleResizeStart);
+  window.addEventListener(SHELL_WINDOW_RESIZE_END_EVENT, handleResizeEnd);
+  window.addEventListener(SHELL_WINDOW_RESIZE_SETTLED_EVENT, handleResizeEnd);
+  resizeLifecycleCleanup = () => {
+    window.removeEventListener(SHELL_WINDOW_RESIZE_START_EVENT, handleResizeStart);
+    window.removeEventListener(SHELL_WINDOW_RESIZE_END_EVENT, handleResizeEnd);
+    window.removeEventListener(SHELL_WINDOW_RESIZE_SETTLED_EVENT, handleResizeEnd);
+    resizeLifecycleCleanup = null;
+  };
+};
+
+onMounted(() => {
+  bindResizeLifecycle();
+});
+
+onBeforeUnmount(() => {
+  resizeLifecycleCleanup?.();
+});
 </script>
 
 <template>

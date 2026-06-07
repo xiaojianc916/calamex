@@ -9,11 +9,16 @@ import MarkdownRender, {
   setCustomComponents,
   setDefaultI18nMap,
 } from 'markstream-vue';
-import { computed, onBeforeUnmount, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import AiMarkdownCodeBlock from '@/components/business/ai/chat/AiMarkdownCodeBlock.vue';
 import AiMarkdownTable from '@/components/business/ai/chat/AiMarkdownTable.vue';
 import { normalizeAiMath } from '@/components/business/ai/chat/normalize-math';
 import type { IAiChatStreamRenderState } from '@/types/ai';
+import {
+  SHELL_WINDOW_RESIZE_END_EVENT,
+  SHELL_WINDOW_RESIZE_SETTLED_EVENT,
+  SHELL_WINDOW_RESIZE_START_EVENT,
+} from '@/utils/window-resize-events';
 
 type TI18nMap = Parameters<typeof setDefaultI18nMap>[0];
 
@@ -60,7 +65,9 @@ const props = defineProps<{
   streamStatus?: IAiChatStreamRenderState['status'];
 }>();
 
-const renderContent = computed(() => normalizeAiMath(props.content));
+const normalizedContent = computed(() => normalizeAiMath(props.content));
+const renderContent = ref(normalizeAiMath(props.content));
+const isShellWindowResizing = ref(false);
 const isFinal = computed(
   () => props.streamStatus !== 'streaming' && props.streamStatus !== 'waiting-confirmation',
 );
@@ -73,11 +80,51 @@ const isFinal = computed(
 //  - max-live-nodes 始终为 0：启用增量/批量渲染，且不在 final 时跳变。
 //  - typewriter 关闭：不再显示一个字一个字蹦出的打字光标；平滑输出仍由 smooth-streaming +
 //    max-live-nodes=0 提供。final 只负责让未闭合的 Markdown 结构（如未闭合代码块/公式）定型。
-const smoothStreaming = 'auto' as const;
+const smoothStreaming = computed(() => (isShellWindowResizing.value ? 'off' : ('auto' as const)));
 const typewriter = false as const;
 // 始终关闭虚拟化(max-live-nodes=0)：既启用增量/批量渲染，也保证 final 收尾时平滑分发不被中断。
 const maxLiveNodes = 0;
 const rendererId = computed(() => `ai-message-${props.messageId}`);
+let pendingRenderContent: string | null = null;
+let resizeLifecycleCleanup: (() => void) | null = null;
+
+const flushPendingRenderContent = (): void => {
+  if (pendingRenderContent === null) {
+    return;
+  }
+
+  renderContent.value = pendingRenderContent;
+  pendingRenderContent = null;
+};
+
+watch(normalizedContent, (nextContent) => {
+  if (isShellWindowResizing.value) {
+    pendingRenderContent = nextContent;
+    return;
+  }
+
+  renderContent.value = nextContent;
+});
+
+const bindResizeLifecycle = (): void => {
+  const handleResizeStart = (): void => {
+    isShellWindowResizing.value = true;
+  };
+  const handleResizeEnd = (): void => {
+    isShellWindowResizing.value = false;
+    window.requestAnimationFrame(flushPendingRenderContent);
+  };
+
+  window.addEventListener(SHELL_WINDOW_RESIZE_START_EVENT, handleResizeStart);
+  window.addEventListener(SHELL_WINDOW_RESIZE_END_EVENT, handleResizeEnd);
+  window.addEventListener(SHELL_WINDOW_RESIZE_SETTLED_EVENT, handleResizeEnd);
+  resizeLifecycleCleanup = () => {
+    window.removeEventListener(SHELL_WINDOW_RESIZE_START_EVENT, handleResizeStart);
+    window.removeEventListener(SHELL_WINDOW_RESIZE_END_EVENT, handleResizeEnd);
+    window.removeEventListener(SHELL_WINDOW_RESIZE_SETTLED_EVENT, handleResizeEnd);
+    resizeLifecycleCleanup = null;
+  };
+};
 
 const stopCodeBlockMapping = watch(
   rendererId,
@@ -91,7 +138,12 @@ const stopCodeBlockMapping = watch(
   { immediate: true },
 );
 
+onMounted(() => {
+  bindResizeLifecycle();
+});
+
 onBeforeUnmount(() => {
+  resizeLifecycleCleanup?.();
   stopCodeBlockMapping();
   removeCustomComponents(rendererId.value);
 });
