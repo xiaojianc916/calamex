@@ -98,10 +98,33 @@
 - 取舍：仍保留后端 nucleo 作为真实模糊排序来源；只缓存短期交互结果，不改变排序与匹配语义。
 - 验证：新增单测覆盖 LRU 淘汰、命中刷新与已有 key 更新。
 
+## C2：Git pathspec 零分配目录匹配
+
+- 文件：`src-tauri/src/commands/git/status.rs`
+- 问题：stage / unstage / 部分提交构建树时会在循环中反复调用 pathspec 匹配；旧实现通过 `format!("{pathspec}/")` 构造目录前缀，容易在大量文件或目录级操作时产生重复短字符串分配。
+- 算法：改为边界检查式匹配：先判断候选路径与 pathspec 精确相等；否则用 `strip_prefix(pathspec)` 取得后缀，并检查后缀首字节是否为 `/`。同时复用同一 helper 覆盖部分提交的目录覆盖判断。
+- 复杂度：
+  - 匹配语义保持“精确文件或目录前缀”。
+  - 每次匹配仍为 O(path length)，但从带分配的前缀构造降为零分配边界判断。
+- 取舍：不引入复杂 glob/pathspec 引擎，只优化当前已有语义；避免把简单文件/目录选择过度升级成完整 Git pathspec 解析。
+- 验证：新增单测覆盖精确文件、目录前缀、`src` 不误匹配 `src-old`、嵌套目录边界等情况。
+
+## C3：Git 历史分页原地追加
+
+- 文件：`src/store/git.ts`
+- 问题：提交历史分页加载更多时，旧实现使用 `[...commitHistory, ...entries]` 创建新数组；历史越长，每次 append 都需要复制既有全部提交。
+- 算法：非 append 请求仍整体替换数组；append 请求改为 `commitHistory.value.push(...entries)`，复用现有响应式数组，仅追加新页。
+- 复杂度：
+  - 之前：每页追加为 O(existing + page) 且分配新数组。
+  - 之后：每页追加为 O(page)，避免复制旧历史。
+- 取舍：Vue/Pinia 对数组 push 保持响应式；为了降低风险，新增单测验证分页追加结果、offset 传参，以及 append 时复用现有数组引用。
+
 ## 建议验证命令
 
 ```bash
 cd src-tauri
+cargo test -p calamex commands::git::status
+cargo test -p calamex commands::git
 cargo test -p calamex commands::search::find
 cargo test -p calamex commands::search::replace
 cargo test -p calamex commands::search::scan

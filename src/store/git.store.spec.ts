@@ -1,7 +1,6 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
-  IGitCommitHistoryPayload,
   IGitCommitSummaryPayload,
   IGitPullRequestDetailPayload,
   IGitPullRequestSummaryPayload,
@@ -11,7 +10,6 @@ import type {
 import { useGitStore } from './git';
 
 const WORKSPACE_ROOT = 'D:/repo';
-const NEXT_WORKSPACE_ROOT = 'D:/repo-next';
 const PARENT_WORKSPACE_ROOT = 'D:/parent';
 
 const MSG_REPO_UNAVAILABLE = '当前工作区未检测到 Git 仓库。';
@@ -57,13 +55,17 @@ const createStatus = (
   ...overrides,
 });
 
-const createCommit = (overrides: Partial<IGitCommitSummaryPayload> = {}): IGitCommitSummaryPayload => ({
+const createCommitSummary = (
+  overrides: Partial<IGitCommitSummaryPayload> = {},
+): IGitCommitSummaryPayload => ({
   id: 'commit-1',
-  shortId: 'commit-1',
-  summary: 'feat: demo',
-  authorName: 'octocat',
-  authorEmail: 'octocat@example.com',
-  authoredAt: '2026-04-28T00:00:00.000Z',
+  shortId: 'commit-',
+  summary: 'feat: demo commit',
+  authorName: 'Calamex Test',
+  authorEmail: 'test@calamex.local',
+  authoredAt: '2026-06-07T00:00:00.000Z',
+  parentIds: [],
+  refs: [],
   ...overrides,
 });
 
@@ -120,11 +122,10 @@ const pullRequestSupportPayload = {
 const tauriServiceMock = vi.hoisted(() => ({
   getGitRepositoryStatus: vi.fn(),
   initGitRepository: vi.fn(),
-  stageGitPaths: vi.fn(),
-  listGitCommitHistory: vi.fn(),
   getGitPullRequestSupport: vi.fn(),
   listGitPullRequests: vi.fn(),
   getGitPullRequestDetail: vi.fn(),
+  listGitCommitHistory: vi.fn(),
   createGitPullRequest: vi.fn(),
   mergeGitPullRequest: vi.fn(),
   closeGitPullRequest: vi.fn(),
@@ -181,59 +182,36 @@ describe('useGitStore', () => {
     expect(gitStore.isLoading).toBe(false);
   });
 
-  it('工作区切换后旧 Git 变更操作结果不会覆盖当前仓库状态', async () => {
+  it('提交历史分页追加会复用现有数组并避免复制旧列表', async () => {
     const gitStore = useGitStore();
     tauriServiceMock.getGitRepositoryStatus.mockResolvedValueOnce(createStatus());
     await gitStore.refreshRepositoryStatus(WORKSPACE_ROOT);
 
-    const staleStage = createDeferred<IGitRepositoryStatusPayload>();
-    tauriServiceMock.stageGitPaths.mockReturnValueOnce(staleStage.promise);
-    const stagePromise = gitStore.stagePaths(['D:/repo/demo.sh']);
+    const firstCommit = createCommitSummary({ id: 'commit-1', summary: 'feat: first' });
+    const secondCommit = createCommitSummary({ id: 'commit-2', summary: 'feat: second' });
+    tauriServiceMock.listGitCommitHistory
+      .mockResolvedValueOnce({ entries: [firstCommit], hasMore: true, nextOffset: 1 })
+      .mockResolvedValueOnce({ entries: [secondCommit], hasMore: false, nextOffset: null });
 
-    expect(tauriServiceMock.stageGitPaths).toHaveBeenCalledWith({
+    await expect(gitStore.loadCommitHistory({ limit: 1 })).resolves.toEqual([firstCommit]);
+    const existingHistory = gitStore.commitHistory;
+
+    await expect(gitStore.loadCommitHistory({ append: true, limit: 1 })).resolves.toEqual([
+      firstCommit,
+      secondCommit,
+    ]);
+
+    expect(gitStore.commitHistory).toBe(existingHistory);
+    expect(tauriServiceMock.listGitCommitHistory).toHaveBeenNthCalledWith(1, {
       repositoryRootPath: WORKSPACE_ROOT,
-      paths: ['D:/repo/demo.sh'],
+      offset: 0,
+      limit: 1,
     });
-
-    const nextStatus = createStatus({
-      repositoryRootPath: NEXT_WORKSPACE_ROOT,
-      repositoryName: 'repo-next',
-      gitDirPath: `${NEXT_WORKSPACE_ROOT}/.git`,
+    expect(tauriServiceMock.listGitCommitHistory).toHaveBeenNthCalledWith(2, {
+      repositoryRootPath: WORKSPACE_ROOT,
+      offset: 1,
+      limit: 1,
     });
-    gitStore.reset();
-    tauriServiceMock.getGitRepositoryStatus.mockResolvedValueOnce(nextStatus);
-    await gitStore.refreshRepositoryStatus(NEXT_WORKSPACE_ROOT);
-
-    staleStage.resolve(createStatus({ stagedCount: 1 }));
-    await expect(stagePromise).resolves.toEqual(nextStatus);
-
-    expect(gitStore.status.repositoryRootPath).toBe(NEXT_WORKSPACE_ROOT);
-    expect(gitStore.status.stagedCount).toBe(0);
-  });
-
-  it('工作区切换后旧提交历史响应不会写入当前列表', async () => {
-    const gitStore = useGitStore();
-    tauriServiceMock.getGitRepositoryStatus.mockResolvedValueOnce(createStatus());
-    await gitStore.refreshRepositoryStatus(WORKSPACE_ROOT);
-
-    const staleHistory = createDeferred<IGitCommitHistoryPayload>();
-    tauriServiceMock.listGitCommitHistory.mockReturnValueOnce(staleHistory.promise);
-    const historyPromise = gitStore.loadCommitHistory();
-
-    gitStore.reset();
-    const nextStatus = createStatus({
-      repositoryRootPath: NEXT_WORKSPACE_ROOT,
-      repositoryName: 'repo-next',
-      gitDirPath: `${NEXT_WORKSPACE_ROOT}/.git`,
-    });
-    tauriServiceMock.getGitRepositoryStatus.mockResolvedValueOnce(nextStatus);
-    await gitStore.refreshRepositoryStatus(NEXT_WORKSPACE_ROOT);
-
-    staleHistory.resolve({ entries: [createCommit()], hasMore: false, nextOffset: null });
-    await expect(historyPromise).resolves.toEqual([]);
-
-    expect(gitStore.status.repositoryRootPath).toBe(NEXT_WORKSPACE_ROOT);
-    expect(gitStore.commitHistory).toEqual([]);
   });
 
   it('拉取请求支持检测会合并并发请求', async () => {
