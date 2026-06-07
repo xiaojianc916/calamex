@@ -18,6 +18,7 @@
 @import './styles/sidebar-source-control.css';
 @import './styles/sidebar-source-control-commit.css';
 @import './styles/sidebar-source-control-file-icons.css';
+@import './styles/sidebar-source-control-github-auth.css';
 @import './styles/sidebar-source-control-pr.css';
 @import './styles/sidebar-source-control-history.css';
 @import './styles/editor-tabs.css';

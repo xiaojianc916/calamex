@@ -1,0 +1,73 @@
+.source-control-branch-sync.is-github-auth-slot {
+  margin-left: auto;
+  min-width: 0;
+  flex: 0 0 auto;
+}
+
+.source-control-github-auth {
+  display: inline-flex;
+  max-width: 138px;
+  min-height: 24px;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid color-mix(in srgb, var(--scm-border) 88%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--scm-bg-elev) 86%, transparent);
+  padding: 3px 8px 3px 6px;
+  color: var(--scm-text-dim);
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease,
+    opacity 120ms ease;
+}
+
+.source-control-github-auth:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--scm-accent) 34%, var(--scm-border));
+  background: color-mix(in srgb, var(--scm-accent) 10%, var(--scm-bg-elev));
+  color: var(--scm-text);
+}
+
+.source-control-github-auth.is-connected {
+  border-color: color-mix(in srgb, var(--scm-green) 30%, var(--scm-border));
+  background: color-mix(in srgb, var(--scm-green) 9%, var(--scm-bg-elev));
+  color: var(--scm-text);
+}
+
+.source-control-github-auth:disabled {
+  cursor: default;
+  opacity: 0.58;
+}
+
+.source-control-github-auth-icon,
+.source-control-github-auth-avatar {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+}
+
+.source-control-github-auth-icon {
+  fill: currentColor;
+}
+
+.source-control-github-auth-avatar {
+  border-radius: 999px;
+  object-fit: cover;
+}
+
+.source-control-github-auth-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.source-control-github-auth.is-loading .source-control-github-auth-icon,
+.source-control-github-auth.is-loading .source-control-github-auth-avatar {
+  opacity: 0.62;
+}

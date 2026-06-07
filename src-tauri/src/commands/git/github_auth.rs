@@ -180,7 +180,10 @@ fn clear_github_auth_credential_cache_for_host(host: &str) {
     }
 }
 
-async fn resolve_github_auth_credential(repository_root: &std::path::Path, host: &str) -> Option<String> {
+async fn resolve_github_auth_credential(
+    repository_root: &std::path::Path,
+    host: &str,
+) -> Option<String> {
     let cache_key = host.to_ascii_lowercase();
     let now = Instant::now();
 
@@ -268,8 +271,11 @@ fn build_github_auth_client(token: &str) -> Result<reqwest::Client, String> {
         .map_err(|error| format!("创建 GitHub 登录客户端失败：{error}"))
 }
 
-async fn fetch_github_auth_status(target: &GitHubAuthTarget) -> Result<GitHubAuthStatusPayload, String> {
-    let Some(token) = resolve_github_auth_credential(&target.repository_root, &target.host).await else {
+async fn fetch_github_auth_status(
+    target: &GitHubAuthTarget,
+) -> Result<GitHubAuthStatusPayload, String> {
+    let Some(token) = resolve_github_auth_credential(&target.repository_root, &target.host).await
+    else {
         return Ok(unauthenticated(
             "未发现可用的 GitHub 凭据。请先通过 GitHub CLI、Git Credential Manager 或一次 git push 完成 GitHub 登录。",
         ));
@@ -292,7 +298,12 @@ async fn fetch_github_auth_status(target: &GitHubAuthTarget) -> Result<GitHubAut
         clear_github_auth_credential_cache_for_host(&target.host);
         let message = serde_json::from_str::<serde_json::Value>(&body)
             .ok()
-            .and_then(|value| value.get("message").and_then(|message| message.as_str()).map(str::to_string))
+            .and_then(|value| {
+                value
+                    .get("message")
+                    .and_then(|message| message.as_str())
+                    .map(str::to_string)
+            })
             .filter(|message| !message.is_empty())
             .unwrap_or_else(|| body.clone());
         return Ok(unauthenticated(format!(

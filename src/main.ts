@@ -7,6 +7,7 @@ import { initAppTooltipSystem } from './utils/app-tooltip';
 import { MAIN_WINDOW_LABEL } from './utils/app-window';
 import { renderFatalBootstrapError } from './utils/bootstrap-fatal-error';
 import { initEditorScrollbarActivity } from './utils/editor-scrollbar-activity';
+import { initGitHubAuthHeaderEnhancement } from './utils/github-auth-header';
 import { registerRuntimeDiagnostics, setRuntimeError } from './utils/runtime-diagnostics';
 import { markStartup, reportStartupTimings } from './utils/startup-profiler';
 
@@ -128,6 +129,7 @@ const bootstrap = async (): Promise<void> => {
     app.mount('#app');
     markStartup('vue-mounted');
 
+    initGitHubAuthHeaderEnhancement();
     initAppTooltipSystem();
     initEditorScrollbarActivity();
     markStartup('tooltip-system-ready');
