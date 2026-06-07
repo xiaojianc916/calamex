@@ -11,6 +11,7 @@ use super::types::{
 use super::util::{count_to_u32, hash_text};
 use ast_grep_core::Pattern as AstPattern;
 use ast_grep_language::{LanguageExt, SupportLang};
+use rayon::prelude::*;
 use std::{
     collections::HashSet,
     fs,
@@ -55,17 +56,18 @@ pub(super) fn build_replacement_previews(
     plan: &ReplacementPlan,
     limit: usize,
 ) -> Result<Vec<FileReplacementPreview>, String> {
-    let mut previews = Vec::new();
-    for file in files {
-        if let Some(preview) = build_file_replacement_preview(workspace_root, file, payload, plan)?
-        {
-            if previews.len() >= limit {
-                return Err(format!(
-                    "替换范围超过 {limit} 个文件，请缩小搜索词或路径过滤后重试。"
-                ));
-            }
-            previews.push(preview);
-        }
+    let mut previews = files
+        .par_iter()
+        .map(|file| build_file_replacement_preview(workspace_root, file, payload, plan))
+        .collect::<Result<Vec<_>, String>>()?
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+
+    if previews.len() > limit {
+        return Err(format!(
+            "替换范围超过 {limit} 个文件，请缩小搜索词或路径过滤后重试。"
+        ));
     }
 
     previews.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
