@@ -1,6 +1,6 @@
 import type { Event, UnlistenFn } from '@tauri-apps/api/event';
 import { createPinia, setActivePinia } from 'pinia';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createTerminalEventBus,
   type ITerminalEventBus,
@@ -151,6 +151,10 @@ const createTauriMock = (): TTerminalFacadeTauri => ({
 describe('terminal facade suite 1', () => {
   beforeEach(() => {
     setActivePinia(createPinia());
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('terminal facade case 1', async () => {
@@ -403,9 +407,35 @@ describe('terminal facade suite 1', () => {
       });
     }
   });
+
+  it('clears switching input retry timer on dispose', async () => {
+    vi.useFakeTimers();
+    const clearTimeoutSpy = vi.spyOn(window, 'clearTimeout');
+    const eventBus = new FakeTerminalEventBus();
+    const tauri = createTauriMock();
+    const facade = useTerminalFacade({ tauri, eventBus });
+
+    await facade.ensureView();
+    eventBus.emitStateChanged({
+      from: 'idle_interactive',
+      to: 'switching_to_run',
+      atMs: 1777104000100,
+    });
+    await facade.writeInputForCurrentState(new TextEncoder().encode('queued-input'));
+
+    facade.dispose();
+    vi.advanceTimersByTime(50);
+
+    expect(clearTimeoutSpy).toHaveBeenCalledOnce();
+    expect(tauri.writeTerminalInput).not.toHaveBeenCalled();
+  });
 });
 
 describe('terminal facade suite 2', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('terminal facade case 8', async () => {
     const handlers = new Map<string, (event: Event<unknown>) => void>();
     const listenMock: TTerminalListen = vi.fn(async (eventName, handler) => {

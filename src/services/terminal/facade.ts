@@ -15,6 +15,8 @@ import {
   type TTerminalCancelMode,
   type TTerminalRuntimeState,
 } from '@/types/terminal';
+import { createDisposableBag, createMutableDisposable } from '@/utils/disposable';
+import { requestDisposableTimeout } from '@/utils/dom-lifecycle';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -77,18 +79,11 @@ export const useTerminalFacade = (options: ITerminalFacadeOptions = {}): ITermin
   const terminalDataHandlers = new Set<TTerminalDataHandler>();
   const switchingInputBuffer: Uint8Array[] = [];
   const inputDecodersBySession = new Map<string, TextDecoder>();
+  const inputBufferTimer = createMutableDisposable();
+  const eventBridgeListeners = createMutableDisposable();
 
   let eventBridgeStarted = false;
-  let inputBufferTimerId: number | null = null;
   let switchingInputBufferBytes = 0;
-
-  let terminalDataUnlisten: TTerminalUnsubscribe | null = null;
-  let runChunkUnlisten: TTerminalUnsubscribe | null = null;
-  let runStartedUnlisten: TTerminalUnsubscribe | null = null;
-  let runCompletedUnlisten: TTerminalUnsubscribe | null = null;
-  let interactiveReadyUnlisten: TTerminalUnsubscribe | null = null;
-  let interactiveExitedUnlisten: TTerminalUnsubscribe | null = null;
-  let stateChangedUnlisten: TTerminalUnsubscribe | null = null;
   let eventBridgePromise: Promise<void> | null = null;
 
   /**
@@ -156,18 +151,17 @@ export const useTerminalFacade = (options: ITerminalFacadeOptions = {}): ITermin
   };
 
   const clearInputBufferTimer = (): void => {
-    if (inputBufferTimerId === null) {
-      return;
-    }
-    window.clearTimeout(inputBufferTimerId);
-    inputBufferTimerId = null;
+    inputBufferTimer.clear();
   };
 
   const scheduleSwitchingInputFlush = (): void => {
     clearInputBufferTimer();
-    inputBufferTimerId = window.setTimeout(() => {
-      void flushSwitchingInputBuffer();
-    }, SWITCHING_INPUT_FLUSH_RETRY_MS);
+    inputBufferTimer.set(
+      requestDisposableTimeout(() => {
+        inputBufferTimer.clearAndLeak();
+        void flushSwitchingInputBuffer();
+      }, SWITCHING_INPUT_FLUSH_RETRY_MS),
+    );
   };
 
   const flushSwitchingInputBuffer = async (): Promise<void> => {
@@ -231,6 +225,10 @@ export const useTerminalFacade = (options: ITerminalFacadeOptions = {}): ITermin
     }
   };
 
+  const clearEventBridgeListeners = (): void => {
+    eventBridgeListeners.clear();
+  };
+
   const ensureEventBridge = async (): Promise<void> => {
     if (eventBridgeStarted) {
       return;
@@ -239,17 +237,16 @@ export const useTerminalFacade = (options: ITerminalFacadeOptions = {}): ITermin
       return eventBridgePromise;
     }
 
-    if (!terminalDataUnlisten) {
-      terminalDataUnlisten = eventBus.onTerminalData(emitTerminalData);
-    }
-    if (!runChunkUnlisten) {
-      runChunkUnlisten = eventBus.onRunChunk((payload) => {
+    const listeners = createDisposableBag();
+    listeners.add(eventBus.onTerminalData(emitTerminalData));
+    listeners.add(
+      eventBus.onRunChunk((payload) => {
         runtimeStore.recordRunChunk(payload.runId, payload.data);
         runStore.appendChunk(payload);
-      });
-    }
-    if (!runStartedUnlisten) {
-      runStartedUnlisten = eventBus.onRunStarted((payload) => {
+      }),
+    );
+    listeners.add(
+      eventBus.onRunStarted((payload) => {
         // R1+R2 修复:只在 dispatch 已返回 (pending handle 存在) 时才
         // activate;否则只缓存 payload,等 dispatchScript 完成后处理。
         if (pendingRunHandles.has(payload.runId)) {
@@ -257,38 +254,39 @@ export const useTerminalFacade = (options: ITerminalFacadeOptions = {}): ITermin
         } else {
           pendingRunStartedPayloads.set(payload.runId, payload);
         }
-      });
-    }
-    if (!runCompletedUnlisten) {
-      runCompletedUnlisten = eventBus.onRunCompleted((payload) => {
+      }),
+    );
+    listeners.add(
+      eventBus.onRunCompleted((payload) => {
         runStore.completeRun(payload);
         runtimeStore.markRunCompleted(payload.runId, payload.exitCode, payload.finishedAt);
         pendingRunHandles.delete(payload.runId);
         pendingRunStartedPayloads.delete(payload.runId);
         clearInputDecoder(payload.sessionId);
-      });
-    }
-    if (!interactiveReadyUnlisten) {
-      interactiveReadyUnlisten = eventBus.onInteractiveReady(() => {
+      }),
+    );
+    listeners.add(
+      eventBus.onInteractiveReady(() => {
         runtimeStore.markInteractiveReady();
-      });
-    }
-    if (!interactiveExitedUnlisten) {
-      interactiveExitedUnlisten = eventBus.onInteractiveExited((payload) => {
+      }),
+    );
+    listeners.add(
+      eventBus.onInteractiveExited((payload) => {
         if (payload.sessionId === interactiveSessionId) {
           runtimeStore.markInteractiveExited();
         }
         clearInputDecoder(payload.sessionId);
-      });
-    }
-    if (!stateChangedUnlisten) {
-      stateChangedUnlisten = eventBus.onStateChanged((payload) => {
+      }),
+    );
+    listeners.add(
+      eventBus.onStateChanged((payload) => {
         runtimeStore.applyStateChanged(payload);
         if (switchingInputBuffer.length > 0 && routeInput(state.value, activeRun.value)) {
           void flushSwitchingInputBuffer();
         }
-      });
-    }
+      }),
+    );
+    eventBridgeListeners.set(() => listeners.dispose());
 
     eventBridgePromise = eventBus
       .start()
@@ -296,20 +294,7 @@ export const useTerminalFacade = (options: ITerminalFacadeOptions = {}): ITermin
         eventBridgeStarted = true;
       })
       .catch((error: unknown) => {
-        terminalDataUnlisten?.();
-        runChunkUnlisten?.();
-        runStartedUnlisten?.();
-        runCompletedUnlisten?.();
-        interactiveReadyUnlisten?.();
-        interactiveExitedUnlisten?.();
-        stateChangedUnlisten?.();
-        terminalDataUnlisten = null;
-        runChunkUnlisten = null;
-        runStartedUnlisten = null;
-        runCompletedUnlisten = null;
-        interactiveReadyUnlisten = null;
-        interactiveExitedUnlisten = null;
-        stateChangedUnlisten = null;
+        clearEventBridgeListeners();
         throw error;
       })
       .finally(() => {
@@ -438,20 +423,7 @@ export const useTerminalFacade = (options: ITerminalFacadeOptions = {}): ITermin
     switchingInputBufferBytes = 0;
     inputDecodersBySession.clear();
     terminalDataHandlers.clear();
-    terminalDataUnlisten?.();
-    runChunkUnlisten?.();
-    runStartedUnlisten?.();
-    runCompletedUnlisten?.();
-    interactiveReadyUnlisten?.();
-    interactiveExitedUnlisten?.();
-    stateChangedUnlisten?.();
-    terminalDataUnlisten = null;
-    runChunkUnlisten = null;
-    runStartedUnlisten = null;
-    runCompletedUnlisten = null;
-    interactiveReadyUnlisten = null;
-    interactiveExitedUnlisten = null;
-    stateChangedUnlisten = null;
+    clearEventBridgeListeners();
     pendingRunHandles.clear();
     pendingRunStartedPayloads.clear();
     eventBridgeStarted = false;
