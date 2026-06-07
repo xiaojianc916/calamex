@@ -80,16 +80,23 @@ const queueRender = (): void => {
   });
 };
 
+const observeSourceControlSidebar = (): void => {
+  const sidebar = document.querySelector('.source-control-sidebar');
+  if (!sidebar) return;
+
+  observer?.disconnect();
+  observer = new MutationObserver(queueRender);
+  observer.observe(sidebar, {
+    childList: true,
+    subtree: true,
+  });
+};
+
 export const initGitHubAuthHeaderEnhancement = (): void => {
   if (isStarted || typeof window === 'undefined' || typeof document === 'undefined') return;
 
   isStarted = true;
-  observer = new MutationObserver(queueRender);
-  observer.observe(document.body, {
-    childList: true,
-    subtree: true,
-  });
-
+  observeSourceControlSidebar();
   queueRender();
 };
 
