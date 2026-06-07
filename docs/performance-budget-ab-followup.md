@@ -20,6 +20,16 @@
 - 取舍：离屏状态下极端长输出不再保证完整保留，但可显著降低内存和恢复可见时的卡顿风险；可见状态下的正常终端输出路径不受影响。
 - 验证：需重点回归“隐藏终端 → 运行大量输出 → 再显示终端”的恢复、滚动到底部、run completed 回调时序。
 
+## A3a：Shiki 可见区 token LRU 缓存
+
+- 文件：`src/services/editor/shiki-highlighter.ts`
+- 问题：编辑器已有可见区切片与防抖，但滚动、布局刷新、语言 ready effect 等路径可能对相同代码窗口重复调用 Shiki/Oniguruma tokenize。
+- 算法：在 Shiki highlighter 层增加固定 32 项的 LRU token 缓存，key 为 `shikiId + code slice`；命中时直接复用 token 行，未命中才进入 `codeToTokensBase`。
+- 复杂度：
+  - 之前：重复窗口高亮每次都付出 O(slice) tokenize 成本。
+  - 之后：重复窗口命中为 O(1) Map 访问；最多缓存 32 个不超过 200 KiB 的切片结果，避免无界增长。
+- 取舍：这是 Worker 化前的低风险热路径优化，不改变渲染模型、不改打包配置、不引入跨线程通信；真正 Worker 化仍建议单独提交。
+
 ## B2：内容模糊搜索的轻量必要条件预过滤
 
 - 文件：`src-tauri/src/commands/search/find.rs`
@@ -41,7 +51,7 @@
 
 ## 当前仍需拆小批次推进的项
 
-- A3：Shiki Worker 化。会影响编辑器高亮初始化、worker 打包、fallback 路径，建议单独提交。
+- A3b：Shiki Worker 化。会影响编辑器高亮初始化、worker 打包、fallback 路径，建议单独提交。
 - B1：Bash 符号级 mtime/hash 增量 AST 缓存。当前已有工作区级符号缓存与 A1 的 dirty 失效；若继续细化到 per-file mtime/hash，需要设计 per-file AST/symbol 缓存失效与 watcher 事件合并策略，建议在 A1 稳定后继续。
 
 ## 建议验证命令

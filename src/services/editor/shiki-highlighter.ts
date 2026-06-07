@@ -26,6 +26,11 @@ export const SHIKI_THEME_NAME = 'github-light';
 export const SHIKI_FOREGROUND = CODEMIRROR_GITHUB_LIGHT_FOREGROUND;
 export const SHIKI_BACKGROUND = CODEMIRROR_GITHUB_LIGHT_BACKGROUND;
 
+// CodeMirror 调用方已经把单次切片限制在 200 KiB 内；这里再加 LRU 条目上限，避免
+// 滚动/布局重复触发同一窗口 tokenize 时反复跑 Oniguruma，同时避免缓存无界增长。
+const MAX_TOKENIZE_CACHE_ENTRIES = 32;
+const MAX_TOKENIZE_CACHE_CODE_LENGTH = 200_000;
+
 /** Shiki token 的最小结构（避免直接依赖 shiki 的类型导出路径）。 */
 export interface IShikiThemedToken {
   content: string;
@@ -91,6 +96,7 @@ let highlighterPromise: Promise<HighlighterCore> | null = null;
 let highlighterInstance: HighlighterCore | null = null;
 const loadedLanguages = new Set<string>();
 const pendingLanguages = new Map<string, Promise<boolean>>();
+const tokenizeCache = new Map<string, IShikiThemedToken[][]>();
 
 /** 把传入语言解析成受支持的 Shiki 语言 id；不支持时返回 null。 */
 export const resolveShikiLanguageId = (language: string): string | null => {
@@ -168,16 +174,56 @@ export const ensureShikiLanguage = async (language: string): Promise<string | nu
   return loaded ? shikiId : null;
 };
 
+const tokenCacheKey = (code: string, shikiId: string): string => `${shikiId}\u0000${code}`;
+
+const getCachedTokens = (cacheKey: string): IShikiThemedToken[][] | null => {
+  const cached = tokenizeCache.get(cacheKey);
+  if (!cached) {
+    return null;
+  }
+  // Map 删除后重插入即可维护 LRU 最近访问顺序。
+  tokenizeCache.delete(cacheKey);
+  tokenizeCache.set(cacheKey, cached);
+  return cached;
+};
+
+const setCachedTokens = (cacheKey: string, tokens: IShikiThemedToken[][]): void => {
+  if (tokenizeCache.has(cacheKey)) {
+    tokenizeCache.delete(cacheKey);
+  }
+  while (tokenizeCache.size >= MAX_TOKENIZE_CACHE_ENTRIES) {
+    const oldestKey = tokenizeCache.keys().next().value;
+    if (!oldestKey) {
+      break;
+    }
+    tokenizeCache.delete(oldestKey);
+  }
+  tokenizeCache.set(cacheKey, tokens);
+};
+
 const tokenize = (
   highlighter: HighlighterCore,
   code: string,
   shikiId: string,
 ): IShikiThemedToken[][] | null => {
+  const canCache = code.length <= MAX_TOKENIZE_CACHE_CODE_LENGTH;
+  const cacheKey = canCache ? tokenCacheKey(code, shikiId) : null;
+  if (cacheKey) {
+    const cached = getCachedTokens(cacheKey);
+    if (cached) {
+      return cached;
+    }
+  }
+
   try {
-    return highlighter.codeToTokensBase(code, {
+    const tokens = highlighter.codeToTokensBase(code, {
       lang: shikiId,
       theme: SHIKI_THEME_NAME,
     }) as unknown as IShikiThemedToken[][];
+    if (cacheKey) {
+      setCachedTokens(cacheKey, tokens);
+    }
+    return tokens;
   } catch (error) {
     logger.error({ event: 'shiki.tokenize_failed', err: error, shikiId });
     return null;
