@@ -20,6 +20,9 @@ import { areFileSystemPathsEqual, normalizeFileSystemPath } from '@/utils/path';
 
 const MSG_GIT_INIT_NO_REPOSITORY = 'Git 初始化后仍未检测到仓库。';
 const MSG_GIT_NO_REPOSITORY_IN_WORKSPACE = '当前工作区未检测到 Git 仓库。';
+const PULL_REQUEST_BACKGROUND_PRELOAD_DELAY_MS = 1200;
+const PULL_REQUEST_DETAIL_PRELOAD_LIMIT = 3;
+const PULL_REQUEST_DETAIL_CACHE_LIMIT = 20;
 
 const formatGitInitMismatch = (expectedPath: string, actualPath: string): string =>
   `Git 初始化目标不一致:期望 ${expectedPath},实际 ${actualPath}。`;
@@ -123,6 +126,11 @@ type TLoadPullRequestOptions = {
   force?: boolean;
 };
 
+type TLoadPullRequestDetailOptions = {
+  updateActive?: boolean;
+  visibleLoading?: boolean;
+};
+
 export const useGitStore = defineStore('git', () => {
   const status = ref<IGitRepositoryStatusPayload>(createEmptyGitRepositoryStatus());
   const isLoading = ref(false);
@@ -152,6 +160,7 @@ export const useGitStore = defineStore('git', () => {
   const isPullRequestDetailLoading = ref(false);
   const pullRequestListCache = ref<Record<string, IGitPullRequestSummaryPayload[]>>({});
   const pullRequestDetailCache = ref<Record<string, IGitPullRequestDetailPayload>>({});
+  const pullRequestDetailCacheOrder = ref<string[]>([]);
 
   const commitDetailCache = ref<Record<string, IGitCommitDetailPayload>>({});
   const commitFileDiffCache = ref<Record<string, IGitCommitFileDiffPayload>>({});
@@ -164,6 +173,7 @@ export const useGitStore = defineStore('git', () => {
   let pullRequestSupportRequestId = 0;
   let pullRequestsRequestId = 0;
   let pullRequestDetailRequestId = 0;
+  let pullRequestPreloadTimer: ReturnType<typeof setTimeout> | null = null;
 
   const pendingBaselineRequests = new Map<string, Promise<IGitFileBaselinePayload>>();
   const pendingCommitDetailRequests = new Map<string, Promise<IGitCommitDetailPayload>>();
@@ -192,6 +202,13 @@ export const useGitStore = defineStore('git', () => {
   const canLoadMoreCommitHistory = computed(
     () => commitHistoryHasMore.value && commitHistoryNextOffset.value !== null,
   );
+
+  const clearPullRequestPreloadTimer = (): void => {
+    if (pullRequestPreloadTimer !== null) {
+      clearTimeout(pullRequestPreloadTimer);
+      pullRequestPreloadTimer = null;
+    }
+  };
 
   const clearBaselineCache = (): void => {
     baselineCache.value = {};
@@ -232,6 +249,7 @@ export const useGitStore = defineStore('git', () => {
   const invalidatePullRequestDetailCache = (pullRequestNumber?: number): void => {
     if (pullRequestNumber === undefined) {
       pullRequestDetailCache.value = {};
+      pullRequestDetailCacheOrder.value = [];
       pendingPullRequestDetailRequests.clear();
       return;
     }
@@ -241,12 +259,34 @@ export const useGitStore = defineStore('git', () => {
     const nextCache = { ...pullRequestDetailCache.value };
     delete nextCache[cacheKey];
     pullRequestDetailCache.value = nextCache;
+    pullRequestDetailCacheOrder.value = pullRequestDetailCacheOrder.value.filter((key) => key !== cacheKey);
     pendingPullRequestDetailRequests.delete(cacheKey);
+  };
+
+  const rememberPullRequestDetail = (
+    cacheKey: string,
+    payload: IGitPullRequestDetailPayload,
+  ): void => {
+    const nextCache = {
+      ...pullRequestDetailCache.value,
+      [cacheKey]: payload,
+    };
+    const nextOrder = [
+      cacheKey,
+      ...pullRequestDetailCacheOrder.value.filter((key) => key !== cacheKey),
+    ];
+    while (nextOrder.length > PULL_REQUEST_DETAIL_CACHE_LIMIT) {
+      const evicted = nextOrder.pop();
+      if (evicted) delete nextCache[evicted];
+    }
+    pullRequestDetailCache.value = nextCache;
+    pullRequestDetailCacheOrder.value = nextOrder;
   };
 
   const resetPullRequests = (): void => {
     pullRequestsRequestId += 1;
     pullRequestDetailRequestId += 1;
+    clearPullRequestPreloadTimer();
     pullRequests.value = [];
     pullRequestStateFilter.value = 'open';
     pullRequestDetail.value = null;
@@ -403,6 +443,7 @@ export const useGitStore = defineStore('git', () => {
     pullRequestSupportRequestId += 1;
     pullRequestsRequestId += 1;
     pullRequestDetailRequestId += 1;
+    clearPullRequestPreloadTimer();
 
     isLoading.value = false;
     isCommitting.value = false;
@@ -418,6 +459,15 @@ export const useGitStore = defineStore('git', () => {
     resetSupplementaryData();
   };
 
+  const schedulePullRequestPreload = (): void => {
+    clearPullRequestPreloadTimer();
+    if (!hasRepository.value) return;
+    pullRequestPreloadTimer = setTimeout(() => {
+      pullRequestPreloadTimer = null;
+      void preloadPullRequestsInBackground();
+    }, PULL_REQUEST_BACKGROUND_PRELOAD_DELAY_MS);
+  };
+
   const applyStatus = (payload: IGitRepositoryStatusPayload): IGitRepositoryStatusPayload => {
     const previousRepositoryRoot = normalizeFileSystemPath(status.value.repositoryRootPath);
     const nextRepositoryRoot = normalizeFileSystemPath(payload.repositoryRootPath);
@@ -425,6 +475,9 @@ export const useGitStore = defineStore('git', () => {
     if (previousRepositoryRoot !== nextRepositoryRoot || !payload.available) {
       clearBaselineCache();
       resetSupplementaryData();
+    }
+    if (payload.available && payload.repositoryRootPath) {
+      schedulePullRequestPreload();
     }
     return payload;
   };
@@ -664,6 +717,17 @@ export const useGitStore = defineStore('git', () => {
     );
   };
 
+  const preloadTopPullRequestDetails = (
+    entries: IGitPullRequestSummaryPayload[],
+  ): void => {
+    for (const pullRequest of entries.slice(0, PULL_REQUEST_DETAIL_PRELOAD_LIMIT)) {
+      void loadPullRequestDetail(pullRequest.number, {
+        updateActive: false,
+        visibleLoading: false,
+      }).catch(() => undefined);
+    }
+  };
+
   const loadPullRequests = async (
     state?: string,
     options?: TLoadPullRequestOptions,
@@ -674,14 +738,14 @@ export const useGitStore = defineStore('git', () => {
     const repositoryRootPath = requireRepositoryRootPath();
     const cacheKey = createPullRequestCacheKey(repositoryRootPath, selectedState);
     const cached = pullRequestListCache.value[cacheKey];
-    if (cached && !options?.force) {
-      pullRequests.value = cached;
-      return cached;
-    }
     if (cached) pullRequests.value = cached;
 
-    const pending = pendingPullRequestListRequests.get(cacheKey);
-    if (pending) return pending;
+    if (options?.force) {
+      pendingPullRequestListRequests.delete(cacheKey);
+    } else {
+      const pending = pendingPullRequestListRequests.get(cacheKey);
+      if (pending) return pending.catch(() => cached ?? pullRequests.value);
+    }
 
     const requestId = ++pullRequestsRequestId;
     isPullRequestsLoading.value = true;
@@ -698,7 +762,12 @@ export const useGitStore = defineStore('git', () => {
         if (requestId === pullRequestsRequestId) {
           pullRequests.value = payload;
         }
+        preloadTopPullRequestDetails(payload);
         return requestId === pullRequestsRequestId ? pullRequests.value : payload;
+      })
+      .catch((error) => {
+        if (cached) return cached;
+        throw error;
       })
       .finally(() => {
         pendingPullRequestListRequests.delete(cacheKey);
@@ -711,12 +780,18 @@ export const useGitStore = defineStore('git', () => {
     return request;
   };
 
-  const loadPullRequestDetail = async (number: number): Promise<IGitPullRequestDetailPayload> => {
+  const loadPullRequestDetail = async (
+    number: number,
+    options?: TLoadPullRequestDetailOptions,
+  ): Promise<IGitPullRequestDetailPayload> => {
+    const updateActive = options?.updateActive ?? true;
+    const visibleLoading = options?.visibleLoading ?? true;
     const repositoryRootPath = requireRepositoryRootPath();
     const cacheKey = createPullRequestDetailCacheKey(repositoryRootPath, number);
     const cached = pullRequestDetailCache.value[cacheKey];
     if (cached) {
-      pullRequestDetail.value = cached;
+      rememberPullRequestDetail(cacheKey, cached);
+      if (updateActive) pullRequestDetail.value = cached;
       return cached;
     }
 
@@ -724,31 +799,39 @@ export const useGitStore = defineStore('git', () => {
     if (pending) return pending;
 
     const requestId = ++pullRequestDetailRequestId;
-    isPullRequestDetailLoading.value = true;
+    if (visibleLoading) isPullRequestDetailLoading.value = true;
     const request = tauriService
       .getGitPullRequestDetail({
         repositoryRootPath,
         number,
       })
       .then((payload) => {
-        pullRequestDetailCache.value = {
-          ...pullRequestDetailCache.value,
-          [cacheKey]: payload,
-        };
-        if (requestId === pullRequestDetailRequestId) {
+        rememberPullRequestDetail(cacheKey, payload);
+        if (updateActive && requestId === pullRequestDetailRequestId) {
           pullRequestDetail.value = payload;
         }
         return payload;
       })
       .finally(() => {
         pendingPullRequestDetailRequests.delete(cacheKey);
-        if (requestId === pullRequestDetailRequestId) {
+        if (visibleLoading && requestId === pullRequestDetailRequestId) {
           isPullRequestDetailLoading.value = false;
         }
       });
 
     pendingPullRequestDetailRequests.set(cacheKey, request);
     return request;
+  };
+
+  const preloadPullRequestsInBackground = async (): Promise<void> => {
+    if (!hasRepository.value) return;
+    try {
+      const support = await loadPullRequestSupport();
+      if (!support.available) return;
+      await loadPullRequests('open');
+    } catch {
+      // Background PR preloading is best-effort only.
+    }
   };
 
   const createPullRequest = async (payload: {
@@ -935,6 +1018,7 @@ export const useGitStore = defineStore('git', () => {
     loadPullRequestSupport,
     loadPullRequests,
     loadPullRequestDetail,
+    preloadPullRequestsInBackground,
     createPullRequest,
     mergePullRequest,
     closePullRequest,
