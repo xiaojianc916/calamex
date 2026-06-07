@@ -13,7 +13,7 @@ const mockMessages = vi.hoisted(() => ({
 }));
 
 const mockTauriService = vi.hoisted(() => ({
-  detectEnvironment: vi.fn<[], Promise<IExecutionEnvironment>>(),
+  detectEnvironment: vi.fn<[{ signal?: AbortSignal }?], Promise<IExecutionEnvironment>>(),
 }));
 
 vi.mock('@/composables/useMessage', () => ({
@@ -127,9 +127,7 @@ describe('useWorkbench lifecycle', () => {
     await vi.runOnlyPendingTimersAsync();
     await flush();
 
-    const options = mockTauriService.detectEnvironment.mock.calls[0]?.[0] as
-      | { signal?: AbortSignal }
-      | undefined;
+    const options = mockTauriService.detectEnvironment.mock.calls[0]?.[0];
     expect(options?.signal).toBeInstanceOf(AbortSignal);
     expect(options?.signal?.aborted).toBe(false);
 
