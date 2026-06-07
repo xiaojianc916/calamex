@@ -86,6 +86,7 @@ import type {
 } from '@/types/editor';
 import type { IEditorSettings } from '@/types/settings';
 import { tryReadClipboardText, writeClipboardText } from '@/utils/clipboard';
+import { computeDocChanges } from '@/utils/editor-doc-diff';
 import { resolveLanguageForPath } from '@/utils/editor-language';
 
 interface IEditorExpose {
@@ -95,9 +96,9 @@ interface IEditorExpose {
   layoutEditor: () => void;
 }
 
-// ──────────────────────────────────────────────────────────
+// ──────────────────────────────
 // Constants
-// ──────────────────────────────────────────────────────────
+// ──────────────────────────────
 const VIEW_STATE_SAVE_DEBOUNCE_MS = 500;
 const MENU_WIDTH = 224;
 const MENU_MAX_HEIGHT = 320;
@@ -116,9 +117,9 @@ const createEmptyAnalysis = (): IAnalyzeScriptPayload => ({
   diagnostics: [],
 });
 
-// ──────────────────────────────────────────────────────────
+// ──────────────────────────────
 // Lazy / cached shell completion source
-// ──────────────────────────────────────────────────────────
+// ──────────────────────────────
 // `import('@/utils/shell-completion')` 自身会被打包器缓存，但每次 completion 都
 // 重新 `.then(...)` 并重新 `createShellCodeMirrorCompletionSource()` 仍有不必要的
 // 微开销，且每次都拿到一个新的 source 实例，影响内部可能的状态复用。
@@ -200,9 +201,9 @@ const inlineCompletionController = createCodeMirrorInlineCompletionController({
   getLanguage: () => getCurrentLanguage(),
 });
 
-// ──────────────────────────────────────────────────────────
+// ──────────────────────────────
 // Completion / language
-// ──────────────────────────────────────────────────────────
+// ──────────────────────────────
 const buildCompletionExtension = (
   editorSettings: IEditorSettings,
   language: string,
@@ -243,9 +244,9 @@ const buildCompletionExtension = (
 const getCurrentLanguage = (): string =>
   resolveLanguageForPath(props.documentPath, props.documentName);
 
-// ──────────────────────────────────────────────────────────
+// ──────────────────────────────
 // Selection helpers
-// ──────────────────────────────────────────────────────────
+// ──────────────────────────────
 const lineColumnToOffset = (view: EditorView, line: number, column: number): number => {
   const lineInfo = view.state.doc.line(Math.min(Math.max(1, line), view.state.doc.lines));
   return Math.min(lineInfo.to, lineInfo.from + Math.max(0, column - 1));
@@ -424,9 +425,9 @@ const emitSelectionSummary = (): void => {
   emit('selection-change', resolveSelectionSummary());
 };
 
-// ──────────────────────────────────────────────────────────
+// ──────────────────────────────
 // View state persist / restore
-// ──────────────────────────────────────────────────────────
+// ──────────────────────────────
 const clearViewStateSaveTimer = (): void => {
   if (viewStateSaveTimerId !== null) {
     window.clearTimeout(viewStateSaveTimerId);
@@ -496,9 +497,9 @@ const restoreViewStateForPath = (path: string | null | undefined): void => {
   }
 };
 
-// ──────────────────────────────────────────────────────────
+// ──────────────────────────────
 // Diagnostics
-// ──────────────────────────────────────────────────────────
+// ──────────────────────────────
 const toDiagnosticSeverity = (level: TScriptDiagnosticSeverity): Diagnostic['severity'] => {
   switch (level) {
     case 'error':
@@ -554,9 +555,9 @@ const syncDiagnostics = (): void => {
   applyDiagnostics();
 };
 
-// ──────────────────────────────────────────────────────────
+// ──────────────────────────────
 // Layout / window resize coordination
-// ──────────────────────────────────────────────────────────
+// ──────────────────────────────
 const layoutEditor = (): void => {
   editorView?.requestMeasure();
 };
@@ -594,9 +595,9 @@ useShellResizeFrameScheduler({
   settledFrames: 3,
 });
 
-// ──────────────────────────────────────────────────────────
+// ──────────────────────────────
 // Context menu
-// ──────────────────────────────────────────────────────────
+// ──────────────────────────────
 const closeContextMenu = (): void => {
   contextMenuState.value.open = false;
   contextMenuGroups.value = [];
@@ -731,9 +732,9 @@ const closeMenuOnWindowChange = (): void => {
   if (contextMenuState.value.open) closeContextMenu();
 };
 
-// ──────────────────────────────────────────────────────────
+// ──────────────────────────────
 // Clipboard
-// ──────────────────────────────────────────────────────────
+// ──────────────────────────────
 const copyEditorSelection = async (): Promise<void> => {
   const text = resolveSelectedText();
   if (text.trim()) await writeClipboardText(text);
@@ -766,9 +767,9 @@ const pasteIntoEditor = async (): Promise<void> => {
   view.focus();
 };
 
-// ──────────────────────────────────────────────────────────
+// ──────────────────────────────
 // Context menu item dispatch
-// ──────────────────────────────────────────────────────────
+// ──────────────────────────────
 const handleContextMenuItemSelect = async (item: IEditorContextMenuItem): Promise<void> => {
   const view = editorView;
   closeContextMenu();
@@ -816,9 +817,9 @@ const handleContextMenuItemSelect = async (item: IEditorContextMenuItem): Promis
   }
 };
 
-// ──────────────────────────────────────────────────────────
+// ──────────────────────────────
 // Editor lifecycle
-// ──────────────────────────────────────────────────────────
+// ──────────────────────────────
 const handleEditorUpdate = (update: ViewUpdate): void => {
   if (update.docChanged && !suppressModelValueEmit) {
     closeContextMenu();
@@ -1019,39 +1020,9 @@ const reconfigureSettings = (): void => {
   scheduleEditorLayout();
 };
 
-// 计算把 current 变成 next 所需的“最小连续改动区间”:跳过公共前缀/后缀,只 dispatch
-// 真正变化的中间段。相比整文档替换,可保留未变区域的折叠/选区,也产生更细粒度的撤销
-// 历史、避免大文档整篇重建。注:按 UTF-16 code unit 计算;即便前后缀恰好落在代理对
-// 中间,prefix + insert + suffix 仍逐 code unit 等于 next,结果文档完全正确。
-const computeMinimalDocChange = (
-  current: string,
-  next: string,
-): { from: number; to: number; insert: string } => {
-  const currentLength = current.length;
-  const nextLength = next.length;
-  let prefix = 0;
-  const maxPrefix = Math.min(currentLength, nextLength);
-  while (prefix < maxPrefix && current.charCodeAt(prefix) === next.charCodeAt(prefix)) {
-    prefix += 1;
-  }
-  let suffix = 0;
-  const maxSuffix = Math.min(currentLength, nextLength) - prefix;
-  while (
-    suffix < maxSuffix &&
-    current.charCodeAt(currentLength - 1 - suffix) === next.charCodeAt(nextLength - 1 - suffix)
-  ) {
-    suffix += 1;
-  }
-  return {
-    from: prefix,
-    to: currentLength - suffix,
-    insert: next.slice(prefix, nextLength - suffix),
-  };
-};
-
-// ──────────────────────────────────────────────────────────
+// ──────────────────────────────
 // Watchers
-// ──────────────────────────────────────────────────────────
+// ──────────────────────────────
 watch(
   () => [props.documentPath, props.documentName] as const,
   ([nextPath], [previousPath]) => {
@@ -1077,11 +1048,12 @@ watch(
       return;
     }
     // 外部真正改了内容（载入文件 / 格式化 / AI 补丁等）：只替换最小变化区间,保留未变
-    // 区域的折叠/选区,避免整篇替换清空这些状态。
+    // 区域的折叠/选区,避免整篇替换清空这些状态。Myers 最短编辑脚本可产出多个
+    // 互不相邻的最小变更区间，详见 utils/editor-doc-diff。
     lastSyncedModelValue = value;
     suppressModelValueEmit = true;
     try {
-      view.dispatch({ changes: computeMinimalDocChange(current, value) });
+      view.dispatch({ changes: computeDocChanges(current, value) });
     } finally {
       suppressModelValueEmit = false;
     }
@@ -1099,9 +1071,9 @@ watch(
   { deep: true },
 );
 
-// ──────────────────────────────────────────────────────────
+// ──────────────────────────────
 // Mount / unmount
-// ──────────────────────────────────────────────────────────
+// ──────────────────────────────
 onMounted(() => {
   createEditor();
   window.addEventListener('pointerdown', handleWindowPointerDown, true);
@@ -1138,9 +1110,9 @@ onBeforeUnmount(() => {
   editorView = null;
 });
 
-// ──────────────────────────────────────────────────────────
+// ──────────────────────────────
 // Public methods
-// ──────────────────────────────────────────────────────────
+// ──────────────────────────────
 const focusEditor = (): void => {
   editorView?.focus();
 };
