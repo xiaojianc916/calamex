@@ -1,6 +1,11 @@
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
-import { tauriService } from '@/services/tauri';
+import {
+  beginGithubDeviceAuth,
+  completeGithubDeviceAuth,
+  disconnectGithub,
+  getGithubAuthStatus,
+} from '@/services/tauri.github-auth';
 import type { IGitHubAuthStatusPayload, IGitHubDeviceAuthPayload } from '@/types/git';
 import { openExternalUrl } from '@/utils/browser';
 import { tryWriteClipboardText } from '@/utils/clipboard';
@@ -147,8 +152,7 @@ export const useGitHubAuthStore = defineStore('github-auth', () => {
       isLoading.value = true;
     }
 
-    pendingStatusRequest = tauriService
-      .getGithubAuthStatus({ repositoryRootPath: rootPath })
+    pendingStatusRequest = getGithubAuthStatus(rootPath)
       .then((payload) => {
         if (requestId !== statusRequestId) return status.value;
         return applyStatus(payload);
@@ -201,15 +205,14 @@ export const useGitHubAuthStore = defineStore('github-auth', () => {
     isAuthorizing.value = true;
     deviceAuth.value = null;
 
-    pendingDeviceAuthRequest = tauriService
-      .beginGithubDeviceAuth({ repositoryRootPath: rootPath })
+    pendingDeviceAuthRequest = beginGithubDeviceAuth(rootPath)
       .then(async (payload) => {
         deviceAuth.value = payload;
         status.value = createEmptyGithubAuthStatus('请在浏览器完成 GitHub 授权。');
         statusUpdatedAt = Date.now();
         void tryWriteClipboardText(payload.userCode);
         openExternalUrl(buildVerificationUri(payload));
-        return tauriService.completeGithubDeviceAuth({
+        return completeGithubDeviceAuth({
           repositoryRootPath: rootPath,
           deviceCode: payload.deviceCode,
           interval: payload.interval,
@@ -240,7 +243,7 @@ export const useGitHubAuthStore = defineStore('github-auth', () => {
     statusUpdatedAt = Date.now();
 
     try {
-      await tauriService.disconnectGithub({ repositoryRootPath: rootPath });
+      await disconnectGithub(rootPath);
     } catch {
       // A fresh OAuth token will replace Calamex's saved credential after authorization.
     }
