@@ -150,6 +150,15 @@ fn parse_github_remote_host(url: &str) -> Option<String> {
     None
 }
 
+fn resolve_github_api_base(host: &str) -> String {
+    let normalized_host = host.to_ascii_lowercase();
+    if normalized_host == "github.com" {
+        "https://api.github.com".to_string()
+    } else {
+        format!("https://api.{host}")
+    }
+}
+
 fn resolve_github_auth_target(repository_root_path: &str) -> Result<GitHubAuthTarget, String> {
     let repository = open_repository_from_root(repository_root_path)?;
     let repository_root = resolve_repository_root(&repository)?;
@@ -167,11 +176,7 @@ fn resolve_github_auth_target(repository_root_path: &str) -> Result<GitHubAuthTa
         return Err("当前仓库远程不是 GitHub，暂不需要 GitHub 登录。".to_string());
     }
 
-    let api_base = if normalized_host == "github.com" {
-        "https://api.github.com".to_string()
-    } else {
-        format!("https://api.{host}")
-    };
+    let api_base = resolve_github_api_base(&host);
 
     Ok(GitHubAuthTarget {
         host,
@@ -412,6 +417,15 @@ mod tests {
         assert_eq!(
             parse_github_remote_host("ssh://git@github.enterprise.local/owner/repo.git"),
             Some("github.enterprise.local".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_github_api_base_omits_literal_braces() {
+        assert_eq!(resolve_github_api_base("github.com"), "https://api.github.com");
+        assert_eq!(
+            resolve_github_api_base("github.enterprise.local"),
+            "https://api.github.enterprise.local"
         );
     }
 
