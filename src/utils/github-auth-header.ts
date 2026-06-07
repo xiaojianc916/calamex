@@ -4,10 +4,12 @@ import { pinia } from '@/store';
 import { useGitStore } from '@/store/git';
 
 const BRANCH_SYNC_SELECTOR = '.source-control-branch-sync';
+const SOURCE_CONTROL_SIDEBAR_SELECTOR = '.source-control-sidebar';
 
 let observer: MutationObserver | null = null;
 let isStarted = false;
 let renderQueued = false;
+let observedRoot: Element | null = null;
 
 const mountedApps = new WeakMap<HTMLElement, App<Element>>();
 const mountedContainers = new Set<HTMLElement>();
@@ -60,9 +62,27 @@ const unmountDetachedHeaders = (): void => {
   }
 };
 
+const observeRoot = (root: Element): void => {
+  if (observedRoot === root) return;
+
+  observer?.disconnect();
+  observer = new MutationObserver(queueRender);
+  observer.observe(root, {
+    childList: true,
+    subtree: true,
+  });
+  observedRoot = root;
+};
+
+const syncObserverRoot = (): void => {
+  const sidebar = document.querySelector(SOURCE_CONTROL_SIDEBAR_SELECTOR);
+  observeRoot(sidebar ?? document.body);
+};
+
 const syncGithubAuthHeaders = (): void => {
   if (typeof document === 'undefined') return;
 
+  syncObserverRoot();
   unmountDetachedHeaders();
 
   for (const container of document.querySelectorAll(BRANCH_SYNC_SELECTOR)) {
@@ -80,29 +100,18 @@ const queueRender = (): void => {
   });
 };
 
-const observeSourceControlSidebar = (): void => {
-  const sidebar = document.querySelector('.source-control-sidebar');
-  if (!sidebar) return;
-
-  observer?.disconnect();
-  observer = new MutationObserver(queueRender);
-  observer.observe(sidebar, {
-    childList: true,
-    subtree: true,
-  });
-};
-
 export const initGitHubAuthHeaderEnhancement = (): void => {
   if (isStarted || typeof window === 'undefined' || typeof document === 'undefined') return;
 
   isStarted = true;
-  observeSourceControlSidebar();
+  syncObserverRoot();
   queueRender();
 };
 
 export const stopGitHubAuthHeaderEnhancement = (): void => {
   observer?.disconnect();
   observer = null;
+  observedRoot = null;
 
   for (const container of mountedContainers) {
     unmountGithubAuthHeader(container);
