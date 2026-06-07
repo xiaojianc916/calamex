@@ -49,6 +49,78 @@ impl Ord for RankedResult {
     }
 }
 
+/// 内容模糊搜索的轻量预过滤器。
+///
+/// 只检查不会造成误杀的必要条件：行长度至少能容纳 query 的非空白字符，
+/// 且 query 中出现过的 ASCII 字母/数字必须也出现在候选行里。真正的排序与子序列
+/// 匹配仍交给 nucleo；这里仅在进入较贵 matcher 前剪掉明显不可能命中的行。
+#[derive(Clone)]
+struct FuzzyLinePrefilter {
+    min_chars: usize,
+    required_ascii: Vec<u8>,
+    match_case: bool,
+}
+
+impl FuzzyLinePrefilter {
+    fn new(query: &str, match_case: bool) -> Option<Self> {
+        let min_chars = query.chars().filter(|ch| !ch.is_whitespace()).count();
+        let mut required_ascii = Vec::new();
+
+        for byte in query.bytes() {
+            if !byte.is_ascii_alphanumeric() {
+                continue;
+            }
+            let normalized = normalize_prefilter_ascii(byte, match_case);
+            if !required_ascii.contains(&normalized) {
+                required_ascii.push(normalized);
+            }
+        }
+
+        if min_chars == 0 && required_ascii.is_empty() {
+            return None;
+        }
+
+        Some(Self {
+            min_chars,
+            required_ascii,
+            match_case,
+        })
+    }
+
+    fn may_match(&self, line: &str) -> bool {
+        if line.chars().count() < self.min_chars {
+            return false;
+        }
+        if self.required_ascii.is_empty() {
+            return true;
+        }
+
+        let mut missing = self.required_ascii.clone();
+        for byte in line.bytes() {
+            if !byte.is_ascii() {
+                continue;
+            }
+            let normalized = normalize_prefilter_ascii(byte, self.match_case);
+            if let Some(index) = missing.iter().position(|candidate| *candidate == normalized) {
+                missing.swap_remove(index);
+                if missing.is_empty() {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+}
+
+fn normalize_prefilter_ascii(byte: u8, match_case: bool) -> u8 {
+    if match_case {
+        byte
+    } else {
+        byte.to_ascii_lowercase()
+    }
+}
+
 /// 将结果推入有界堆，仅保留分数最低（最优）的 `limit` 个。
 fn push_bounded_result(
     heap: &mut BinaryHeap<RankedResult>,
@@ -180,10 +252,11 @@ fn search_fuzzy_file_contents(
         CaseMatching::Ignore
     };
     let pattern = NucleoPattern::parse(query, case_matching, Normalization::Smart);
+    let prefilter = FuzzyLinePrefilter::new(query, match_case);
 
     let per_file = files
         .par_iter()
-        .map(|file| search_one_file_fuzzy(file, &pattern, limit))
+        .map(|file| search_one_file_fuzzy(file, &pattern, prefilter.as_ref(), limit))
         .collect::<Result<Vec<Vec<WorkspaceSearchResult>>, String>>()?;
 
     let mut results = Vec::new();
@@ -201,6 +274,7 @@ fn search_fuzzy_file_contents(
 fn search_one_file_fuzzy(
     file: &ScannedFile,
     pattern: &NucleoPattern,
+    prefilter: Option<&FuzzyLinePrefilter>,
     limit: usize,
 ) -> Result<Vec<WorkspaceSearchResult>, String> {
     let mut local = Vec::new();
@@ -221,6 +295,9 @@ fn search_one_file_fuzzy(
             break;
         }
         if line.is_empty() {
+            continue;
+        }
+        if prefilter.is_some_and(|prefilter| !prefilter.may_match(line)) {
             continue;
         }
 
@@ -532,5 +609,26 @@ mod tests {
         let mut heap: BinaryHeap<RankedResult> = BinaryHeap::new();
         push_bounded_result(&mut heap, make_result(10, "a"), 0);
         assert!(into_sorted_results(heap).is_empty());
+    }
+
+    #[test]
+    fn fuzzy_prefilter_rejects_lines_missing_required_ascii() {
+        let prefilter = FuzzyLinePrefilter::new("dapnow", false).expect("应创建预过滤器");
+        assert!(prefilter.may_match("deploy_app_now"));
+        assert!(!prefilter.may_match("deploy_app"));
+    }
+
+    #[test]
+    fn fuzzy_prefilter_respects_case_sensitive_queries() {
+        let prefilter = FuzzyLinePrefilter::new("API", true).expect("应创建预过滤器");
+        assert!(prefilter.may_match("call API now"));
+        assert!(!prefilter.may_match("call api now"));
+    }
+
+    #[test]
+    fn fuzzy_prefilter_ignores_non_ascii_for_safety() {
+        let prefilter = FuzzyLinePrefilter::new("部署a", false).expect("应创建预过滤器");
+        assert!(prefilter.may_match("a"));
+        assert!(!prefilter.may_match("部署"));
     }
 }

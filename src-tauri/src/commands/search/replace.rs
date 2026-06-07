@@ -19,6 +19,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
+const MAX_REPLACEMENT_DIFF_INPUT_BYTES: usize = 512 * 1024;
+const MAX_REPLACEMENT_DIFF_EDIT_COUNT: usize = 2_000;
+
 pub(super) struct RegexReplacement {
     regex: regex::Regex,
     replacement: String,
@@ -110,8 +113,12 @@ pub(super) fn build_file_replacement_preview(
 
     let before_hash = hash_text(&content);
     let after_hash = hash_text(&after_content);
-    let (diff, diff_truncated) =
-        build_replacement_diff(&file.relative_path, &content, &after_content);
+    let (diff, diff_truncated) = build_budgeted_replacement_diff(
+        &file.relative_path,
+        &content,
+        &after_content,
+        replacement_count,
+    );
 
     Ok(Some(FileReplacementPreview {
         path: file.path.clone(),
@@ -283,6 +290,31 @@ pub(super) fn apply_replacement_edits(content: &str, edits: &[ReplacementEdit]) 
     after_content
 }
 
+fn build_budgeted_replacement_diff(
+    relative_path: &str,
+    before_content: &str,
+    after_content: &str,
+    replacement_count: usize,
+) -> (String, bool) {
+    let total_input_bytes = before_content
+        .len()
+        .saturating_add(after_content.len());
+    if total_input_bytes > MAX_REPLACEMENT_DIFF_INPUT_BYTES
+        || replacement_count > MAX_REPLACEMENT_DIFF_EDIT_COUNT
+    {
+        return (
+            format!(
+                "Diff 过大已省略：{relative_path}（{replacement_count} 次替换，{} → {} 字节）。请使用行级预览确认变更。",
+                before_content.len(),
+                after_content.len()
+            ),
+            true,
+        );
+    }
+
+    build_replacement_diff(relative_path, before_content, after_content)
+}
+
 fn retain_non_overlapping_edits(mut edits: Vec<ReplacementEdit>) -> Vec<ReplacementEdit> {
     edits.sort_by(|left, right| {
         left.range
@@ -331,4 +363,42 @@ pub(super) fn select_replacement_edits(
         .flatten()
         .collect::<Vec<_>>();
     Ok(selected)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn budgeted_replacement_diff_uses_regular_diff_for_small_inputs() {
+        let (diff, truncated) =
+            build_budgeted_replacement_diff("script.sh", "echo old\n", "echo new\n", 1);
+        assert!(!truncated);
+        assert!(diff.contains("script.sh"));
+    }
+
+    #[test]
+    fn budgeted_replacement_diff_omits_oversized_inputs() {
+        let before = "a".repeat(MAX_REPLACEMENT_DIFF_INPUT_BYTES / 2 + 1);
+        let after = "b".repeat(MAX_REPLACEMENT_DIFF_INPUT_BYTES / 2 + 1);
+
+        let (diff, truncated) = build_budgeted_replacement_diff("large.sh", &before, &after, 1);
+
+        assert!(truncated);
+        assert!(diff.contains("Diff 过大已省略"));
+        assert!(diff.contains("large.sh"));
+    }
+
+    #[test]
+    fn budgeted_replacement_diff_omits_too_many_edits() {
+        let (diff, truncated) = build_budgeted_replacement_diff(
+            "many.sh",
+            "echo old\n",
+            "echo new\n",
+            MAX_REPLACEMENT_DIFF_EDIT_COUNT + 1,
+        );
+
+        assert!(truncated);
+        assert!(diff.contains("Diff 过大已省略"));
+    }
 }
