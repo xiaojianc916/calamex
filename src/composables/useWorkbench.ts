@@ -31,11 +31,15 @@ const WORKBENCH_RUNTIME_WAIT_MS = 160;
 
 const isTextDocument = (document: { kind: string }): boolean => document.kind === 'text';
 
+const isLoadedTextDocument = (document: { kind: string; bufferLoaded?: boolean }): boolean =>
+  isTextDocument(document) && document.bufferLoaded !== false;
+
 const isShellScriptDocument = (document: {
   kind: string;
   path: string | null;
   name: string;
-}): boolean => isTextDocument(document) && isShellScriptPath(document.path ?? document.name);
+  bufferLoaded?: boolean;
+}): boolean => isLoadedTextDocument(document) && isShellScriptPath(document.path ?? document.name);
 
 export const useWorkbench = () => {
   const appStore = useAppStore();
@@ -90,7 +94,7 @@ export const useWorkbench = () => {
   });
 
   const canSave = computed(
-    () => editorStore.hasActiveDocument && isTextDocument(editorStore.document),
+    () => editorStore.hasActiveDocument && isLoadedTextDocument(editorStore.document),
   );
 
   const flushSession = async (): Promise<void> => {
@@ -152,6 +156,7 @@ export const useWorkbench = () => {
     openDocumentByPath,
     openGitDiffPreview,
     openGitDiffPreviewPayload,
+    ensureDocumentBufferLoaded,
   } = useWorkbenchDocumentIO({
     editorStore,
     notifier,
@@ -193,16 +198,20 @@ export const useWorkbench = () => {
     };
   };
 
-  const activateDocument = (documentId: string): void => {
+  const activateDocument = async (documentId: string): Promise<void> => {
     editorStore.setActiveDocument(documentId);
+    await ensureDocumentBufferLoaded(documentId);
   };
 
   const updateContent = (value: string): void => {
+    if (editorStore.document.bufferLoaded === false) {
+      return;
+    }
     editorStore.updateActiveDocumentContent(value);
   };
 
   const updateEncoding = (value: TDocumentEncoding): void => {
-    if (!editorStore.hasActiveDocument) {
+    if (!editorStore.hasActiveDocument || editorStore.document.bufferLoaded === false) {
       return;
     }
 
@@ -236,6 +245,7 @@ export const useWorkbench = () => {
     openDocumentByPath,
     openGitDiffPreview,
     openGitDiffPreviewPayload,
+    ensureDocumentBufferLoaded,
     formatDocumentWithShfmt,
     formatWorkspaceFileByPath,
     saveDocument,
