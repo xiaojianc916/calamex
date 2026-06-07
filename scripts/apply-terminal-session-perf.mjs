@@ -1,10 +1,7 @@
 #!/usr/bin/env node
 // scripts/apply-terminal-session-perf.mjs
 // 用法（仓库根目录执行）： node scripts/apply-terminal-session-perf.mjs
-// 作用：对 src/terminal/session.ts 套用前端终端热路径微优化：
-//   - Item 4(前端)：alt-screen 序列单次扫描，替代原先同一段数据扫描三遍
-//   - Item 6：初始绘制恢复改为从游标行向上有界扫描，避免大 scrollback 全量线性扫描
-//   - Item 7：去掉 Math.min(...keys()) 展开，改线性求最小，消除大集合 RangeError 风险
+// 作用：对 src/terminal/session.ts 套用前端终端热路径微优化（Item 4 前端 / 6 / 7）。
 // 特性：幂等（已套用则跳过）、fail-closed（锚点匹配数≠1 即中止且不落盘）、无备份文件。
 
 import { readFile, writeFile } from 'node:fs/promises';
@@ -36,9 +33,9 @@ const resolveAltScreenActiveAfterData = (current: boolean, data: string): boolea
   return next;
 };`,
     replace: `/**
- * 单次扫描同时得出：本段数据是否含 alt-screen 切换序列（switched），以及在 current
- * 基础上应用所有切换后的最终 alt-screen 状态（activeAfter）。
- * 取代原先 hasAltScreenSwitch + resolveAltScreenActiveAfterData 各扫一遍的写法。
+ * 单次扫描即可同时得出：本段数据是否含 alt-screen 切换序列（switched），
+ * 以及在 current 基础上应用所有切换后的最终 alt-screen 状态（activeAfter）。
+ * 将同一段数据的 alt-screen 正则扫描从两遍合并为一遍。
  */
 const scanInteractiveAltScreenSwitch = (
   current: boolean,
@@ -147,7 +144,7 @@ const TERMINAL_RENDERABLE_CONTENT_SCAN_ROWS = 256;`,
     name: 'Item7：_recoverRunVisualSeqGap 去掉 Math.min 展开',
     marker: 'let lowestPendingSeq = Number.POSITIVE_INFINITY;',
     find: `    const lowestPendingSeq = Math.min(...transaction.pending.keys());`,
-    replace: `    // pending 必非空（上方已对 size === 0 提前返回）。用线性求最小取代 Math.min(...keys)，
+    replace: `    // pending 必非空（上方已对 size === 0 提前返回）。用线性求最小取代展开式 Math.min，
     // 避免 pending 较大时把全部键展开为实参（可能触发 RangeError）；此路径仅在罕见的
     // 乱序缺口恢复定时器触发，pending 规模小，线性扫描足矣，无需在热路径维护增量最小值。
     let lowestPendingSeq = Number.POSITIVE_INFINITY;
@@ -186,10 +183,11 @@ async function main() {
     applied.push(edit.name);
   }
 
-  // 安全护栏：套用完成后不应再残留旧 helper 的任何引用，否则中止不落盘。
-  for (const stale of ['hasAltScreenSwitch', 'resolveAltScreenActiveAfterData']) {
-    if (next.includes(stale)) {
-      console.error(`✗ 套用后仍残留旧引用 "${stale}"，可能存在未覆盖的调用点。已中止，未写入。`);
+  // 安全护栏：套用后不应再残留旧 helper 的“调用形式”（带左括号），否则中止不落盘。
+  // 注意只匹配调用点，不匹配注释里出现的名字。
+  for (const staleCall of ['hasAltScreenSwitch(', 'resolveAltScreenActiveAfterData(']) {
+    if (next.includes(staleCall)) {
+      console.error(`✗ 套用后仍残留旧调用 "${staleCall}…"，可能存在未覆盖的调用点。已中止，未写入。`);
       process.exit(3);
     }
   }

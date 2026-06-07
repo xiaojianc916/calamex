@@ -60,6 +60,8 @@ const TERMINAL_RUN_SEPARATOR_PREFIX = '──── run #';
 const TERMINAL_BUFFER_DIAGNOSTIC_LINE_COUNT = 14;
 const TERMINAL_BUFFER_DIAGNOSTIC_PREVIEW_LENGTH = 160;
 const TERMINAL_BELL_VISUAL_FLASH_MS = 120;
+// 初始绘制恢复时，从游标行向上有界扫描的最大行数，避免大 scrollback 下线性扫整缓冲。
+const TERMINAL_RENDERABLE_CONTENT_SCAN_ROWS = 256;
 
 const ANSI_ESCAPE = String.fromCharCode(27);
 const ANSI_ESCAPE_CHARACTER_PATTERN = new RegExp(ANSI_ESCAPE, 'gu');
@@ -166,22 +168,27 @@ const encodeTerminalInputForDiagnostics = (data: string): Uint8Array => {
 const isFirstRunChunkFrame = (payload: ITerminalDataEvent): boolean =>
   payload.source === 'run' && typeof payload.runSeq === 'number' && payload.runSeq === 1;
 
-const hasAltScreenSwitch = (data: string): boolean => {
+/**
+ * 单次扫描即可同时得出：本段数据是否含 alt-screen 切换序列（switched），
+ * 以及在 current 基础上应用所有切换后的最终 alt-screen 状态（activeAfter）。
+ * 将同一段数据的 alt-screen 正则扫描从两遍合并为一遍。
+ */
+const scanInteractiveAltScreenSwitch = (
+  current: boolean,
+  data: string,
+): { switched: boolean; activeAfter: boolean } => {
   ANSI_ALT_SCREEN_SWITCH_PATTERN.lastIndex = 0;
-  return ANSI_ALT_SCREEN_SWITCH_PATTERN.test(data);
-};
-
-const resolveAltScreenActiveAfterData = (current: boolean, data: string): boolean => {
-  let next = current;
-  ANSI_ALT_SCREEN_SWITCH_PATTERN.lastIndex = 0;
+  let switched = false;
+  let activeAfter = current;
   for (
     let match = ANSI_ALT_SCREEN_SWITCH_PATTERN.exec(data);
     match !== null;
     match = ANSI_ALT_SCREEN_SWITCH_PATTERN.exec(data)
   ) {
-    next = match[1] === 'h';
+    switched = true;
+    activeAfter = match[1] === 'h';
   }
-  return next;
+  return { switched, activeAfter };
 };
 
 const isLikelyInteractiveResizeRepaintFrame = (data: string): boolean =>
@@ -1458,7 +1465,13 @@ export class TerminalSession {
     if (!transaction || transaction.pending.size === 0) {
       return;
     }
-    const lowestPendingSeq = Math.min(...transaction.pending.keys());
+    // pending 必非空（上方已对 size === 0 提前返回）。用线性求最小取代展开式 Math.min，
+    // 避免 pending 较大时把全部键展开为实参（可能触发 RangeError）；此路径仅在罕见的
+    // 乱序缺口恢复定时器触发，pending 规模小，线性扫描足矣，无需在热路径维护增量最小值。
+    let lowestPendingSeq = Number.POSITIVE_INFINITY;
+    for (const seq of transaction.pending.keys()) {
+      if (seq < lowestPendingSeq) lowestPendingSeq = seq;
+    }
     if (!transaction.pending.has(transaction.nextSeq)) {
       transaction.nextSeq = lowestPendingSeq;
       console.warn('[terminal] terminal:data runSeq 缺口，已按当前可见事务放行。', {
@@ -1534,15 +1547,17 @@ export class TerminalSession {
 
     if (event.payload.source === 'interactive' || !event.payload.source) {
       const wasAltScreenActive = this._interactiveAltScreenActive;
-      const hasAltScreenControl = hasAltScreenSwitch(event.payload.data);
-      this._interactiveAltScreenActive = resolveAltScreenActiveAfterData(
+      // 单次扫描同时得出本段是否含 alt-screen 切换与应用后的最终状态，
+      // 并把 switched 直接传入抑制判定，避免对同一段数据重复扫描（原先共三遍）。
+      const altScreen = scanInteractiveAltScreenSwitch(
         this._interactiveAltScreenActive,
         event.payload.data,
       );
+      this._interactiveAltScreenActive = altScreen.activeAfter;
       if (
         !wasAltScreenActive &&
-        !hasAltScreenControl &&
-        this._shouldSuppressInteractiveResizeRepaint(event.payload.data)
+        !altScreen.switched &&
+        this._shouldSuppressInteractiveResizeRepaint(event.payload.data, altScreen.switched)
       ) {
         this._emitBufferDiagnostic('interactive-resize-repaint-suppressed', event.payload.data);
         return;
@@ -1736,10 +1751,13 @@ export class TerminalSession {
       Date.now() + TERMINAL_RESIZE_REPAINT_SUPPRESSION_MS;
   }
 
-  private _shouldSuppressInteractiveResizeRepaint(data: string): boolean {
+  private _shouldSuppressInteractiveResizeRepaint(
+    data: string,
+    hasAltScreenControl: boolean,
+  ): boolean {
     if (this._interactiveAltScreenActive) return false;
     if (Date.now() > this._interactiveResizeRepaintSuppressUntilMs) return false;
-    if (hasAltScreenSwitch(data)) return false;
+    if (hasAltScreenControl) return false;
     return isLikelyInteractiveResizeRepaintFrame(data);
   }
 
@@ -1747,7 +1765,13 @@ export class TerminalSession {
     const terminal = this._terminalRef.value;
     if (!terminal) return false;
     const buf = terminal.buffer.active;
-    for (let i = 0; i < buf.length; i++) {
+    const bufferLength = buf.length;
+    if (bufferLength <= 0) return false;
+    // 内容必然位于游标行及其上方，从游标行向上有界扫描固定行数即可。
+    const cursorLineIndex = Math.max(0, buf.baseY + buf.cursorY);
+    const lastIndex = Math.min(bufferLength - 1, cursorLineIndex);
+    const firstIndex = Math.max(0, lastIndex - TERMINAL_RENDERABLE_CONTENT_SCAN_ROWS + 1);
+    for (let i = lastIndex; i >= firstIndex; i -= 1) {
       const line = buf.getLine(i);
       if (line?.translateToString(true).trim().length) return true;
     }
