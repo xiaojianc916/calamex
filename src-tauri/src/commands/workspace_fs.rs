@@ -473,6 +473,10 @@ fn resolve_image_mime_type(path: &Path) -> Result<&'static str, String> {
     }
 }
 
+fn is_workspace_directory_entry(path: &Path, file_type: &fs::FileType) -> bool {
+    file_type.is_dir() || fs::metadata(path).is_ok_and(|metadata| metadata.is_dir())
+}
+
 fn read_workspace_entries(directory: &Path) -> Result<Vec<WorkspaceEntry>, String> {
     let read_dir = fs::read_dir(directory).map_err(|error| format!("读取资源目录失败：{error}"))?;
     let mut entries = Vec::new();
@@ -485,7 +489,7 @@ fn read_workspace_entries(directory: &Path) -> Result<Vec<WorkspaceEntry>, Strin
         let file_type = entry
             .file_type()
             .map_err(|error| format!("读取资源类型失败：{error}"))?;
-        let is_directory = file_type.is_dir();
+        let is_directory = is_workspace_directory_entry(&path, &file_type);
 
         entries.push(WorkspaceEntry {
             path: path.to_string_lossy().to_string(),
@@ -561,7 +565,7 @@ fn encode_with_encoding_name(content: &str, label: &str) -> Result<Vec<u8>, Stri
 
 #[cfg(test)]
 mod tests {
-    use super::{atomic_write, resolve_save_script_path, resolve_script_file_path};
+    use super::{atomic_write, read_workspace_entries, resolve_save_script_path, resolve_script_file_path};
     use std::{fs, thread};
 
     #[test]
@@ -605,6 +609,51 @@ mod tests {
         .expect_err("outside save target should be rejected");
 
         assert!(error.contains("仅允许读写当前资源根目录内的脚本文件"));
+        fs::remove_dir_all(test_dir).expect("remove temp dir");
+    }
+
+    #[test]
+    fn read_workspace_entries_classifies_real_directories() {
+        let test_dir = std::env::temp_dir().join(format!(
+            "calamex-workspace-dir-kind-{}",
+            jiff::Timestamp::now().as_nanosecond()
+        ));
+        let directory = test_dir.join(".calamex-skills");
+        fs::create_dir_all(&directory).expect("create directory");
+
+        let entries = read_workspace_entries(&test_dir).expect("read workspace entries");
+        let entry = entries
+            .iter()
+            .find(|entry| entry.name == ".calamex-skills")
+            .expect("directory entry exists");
+
+        assert_eq!(entry.kind.as_str(), "directory");
+        assert!(entry.has_children);
+
+        fs::remove_dir_all(test_dir).expect("remove temp dir");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_workspace_entries_follows_directory_symlinks() {
+        let test_dir = std::env::temp_dir().join(format!(
+            "calamex-workspace-symlink-kind-{}",
+            jiff::Timestamp::now().as_nanosecond()
+        ));
+        let target = test_dir.join("target-dir");
+        let link = test_dir.join("linked-dir");
+        fs::create_dir_all(&target).expect("create target directory");
+        std::os::unix::fs::symlink(&target, &link).expect("create directory symlink");
+
+        let entries = read_workspace_entries(&test_dir).expect("read workspace entries");
+        let entry = entries
+            .iter()
+            .find(|entry| entry.name == "linked-dir")
+            .expect("symlink entry exists");
+
+        assert_eq!(entry.kind.as_str(), "directory");
+        assert!(entry.has_children);
+
         fs::remove_dir_all(test_dir).expect("remove temp dir");
     }
 
