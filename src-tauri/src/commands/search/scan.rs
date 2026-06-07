@@ -43,6 +43,7 @@ const SKIPPED_SEARCH_EXTENSIONS: &[&str] = &[
     "tgz", "tif", "tiff", "ttf", "wasm", "wav", "webm", "webp", "woff", "woff2", "xls", "xlsx",
     "xz", "zip", "zst",
 ];
+const MAX_INCREMENTAL_SEARCH_EVENT_PATHS: usize = 512;
 
 #[derive(Clone)]
 pub(super) struct ScannedFile {
@@ -60,6 +61,7 @@ pub(super) struct WorkspaceFileCache {
     files: Arc<Vec<ScannedFile>>,
     symbols: Option<Arc<Vec<SymbolEntry>>>,
     dirty: Arc<AtomicBool>,
+    changed_paths: Arc<Mutex<Vec<PathBuf>>>,
     _watcher: RecommendedWatcher,
 }
 
@@ -125,7 +127,17 @@ fn workspace_cache_files(root: &Path) -> Result<Arc<Vec<ScannedFile>>, String> {
 
     if let Some(cache) = guard.get_mut(&cache_key) {
         if cache.dirty.swap(false, Ordering::AcqRel) {
-            cache.files = Arc::new(scan_workspace_files_uncached(root)?);
+            let changed_paths = cache
+                .changed_paths
+                .lock()
+                .map_err(|_| "搜索索引状态已损坏，请重启应用后重试。".to_string())?
+                .drain(..)
+                .collect::<Vec<_>>();
+            cache.files = Arc::new(refresh_workspace_files(
+                root,
+                cache.files.as_slice(),
+                changed_paths,
+            )?);
             cache.symbols = None;
         }
         return Ok(Arc::clone(&cache.files));
@@ -133,21 +145,36 @@ fn workspace_cache_files(root: &Path) -> Result<Arc<Vec<ScannedFile>>, String> {
 
     let dirty = Arc::new(AtomicBool::new(false));
     let watcher_dirty = Arc::clone(&dirty);
+    let changed_paths = Arc::new(Mutex::new(Vec::new()));
+    let watcher_changed_paths = Arc::clone(&changed_paths);
     let watcher_root = root.to_path_buf();
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
         let Ok(event) = event else {
             return;
         };
         // 搜索缓存只关心「会进入搜索索引」的源文件变更。构建产物、依赖目录、
-        // VCS 内部文件等高频噪音即使被底层递归 watcher 上报，也不应把缓存标脏，
-        // 否则 npm install / cargo build / git 操作会让下一次搜索反复重建索引。
-        if event
+        // VCS 内部文件等高频噪音即使被底层递归 watcher 上报，也不应把缓存标脏。
+        let changed = event
             .paths
             .iter()
-            .any(|path| !is_unsearchable_event_path(&watcher_root, path))
-        {
-            watcher_dirty.store(true, Ordering::Release);
+            .filter(|path| !is_unsearchable_event_path(&watcher_root, path))
+            .cloned()
+            .collect::<Vec<_>>();
+        if changed.is_empty() {
+            return;
         }
+
+        if let Ok(mut paths) = watcher_changed_paths.lock() {
+            for path in changed {
+                if paths.len() >= MAX_INCREMENTAL_SEARCH_EVENT_PATHS {
+                    // 事件风暴下放弃增量路径，下一次搜索走一次全量重扫，优先保证正确性。
+                    paths.clear();
+                    break;
+                }
+                paths.push(path);
+            }
+        }
+        watcher_dirty.store(true, Ordering::Release);
     })
     .map_err(|error| format!("启动工作区文件监听失败：{error}"))?;
     watcher
@@ -161,6 +188,7 @@ fn workspace_cache_files(root: &Path) -> Result<Arc<Vec<ScannedFile>>, String> {
             files: Arc::clone(&files),
             symbols: None,
             dirty,
+            changed_paths,
             _watcher: watcher,
         },
     );
@@ -243,6 +271,69 @@ fn scan_workspace_files_uncached(root: &Path) -> Result<Vec<ScannedFile>, String
 
     files.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
     Ok(files)
+}
+
+fn refresh_workspace_files(
+    root: &Path,
+    current: &[ScannedFile],
+    changed_paths: Vec<PathBuf>,
+) -> Result<Vec<ScannedFile>, String> {
+    if changed_paths.is_empty() {
+        return scan_workspace_files_uncached(root);
+    }
+
+    let mut files = current
+        .iter()
+        .cloned()
+        .map(|file| (file.relative_path.clone(), file))
+        .collect::<HashMap<_, _>>();
+
+    for path in changed_paths {
+        let path = path.canonicalize().unwrap_or(path);
+        let Some(relative) = relativize(root, &path) else {
+            return scan_workspace_files_uncached(root);
+        };
+        let relative_path = relative.to_string_lossy().replace('\\', "/");
+        if relative_path.is_empty() {
+            return scan_workspace_files_uncached(root);
+        }
+
+        if !path.exists() {
+            files.remove(&relative_path);
+            let prefix = format!("{relative_path}/");
+            if files.keys().any(|key| key.starts_with(&prefix)) {
+                return scan_workspace_files_uncached(root);
+            }
+            continue;
+        }
+
+        if path.is_dir() {
+            return scan_workspace_files_uncached(root);
+        }
+
+        if is_unsearchable_workspace_path(root, &path, false) || !path.is_file() {
+            files.remove(&relative_path);
+            continue;
+        }
+
+        let name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default()
+            .to_string();
+        files.insert(
+            relative_path.clone(),
+            ScannedFile {
+                path,
+                relative_path,
+                name,
+            },
+        );
+    }
+
+    let mut refreshed = files.into_values().collect::<Vec<_>>();
+    refreshed.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
+    Ok(refreshed)
 }
 
 fn is_unsearchable_workspace_path(root: &Path, path: &Path, is_dir: bool) -> bool {
@@ -469,9 +560,21 @@ fn collect_symbols_from_node(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn p(value: &str) -> PathBuf {
         PathBuf::from(value)
+    }
+
+    fn temp_root() -> PathBuf {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("系统时间应可用")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "calamex-search-scan-test-{}-{suffix}",
+            std::process::id()
+        ))
     }
 
     #[test]
@@ -506,6 +609,40 @@ mod tests {
             &root,
             &p("/workspace/node_modules/project/node_modules/pkg/index.js")
         ));
+    }
+
+    #[test]
+    fn refresh_workspace_files_incrementally_adds_and_removes_files() {
+        let root = temp_root();
+        fs::create_dir_all(&root).expect("应创建临时目录");
+        let file = root.join("script.sh");
+        fs::write(&file, "echo hi\n").expect("应写入测试文件");
+
+        let files = refresh_workspace_files(&root, &[], vec![file.clone()]).expect("应增量添加文件");
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].relative_path, "script.sh");
+
+        fs::remove_file(&file).expect("应删除测试文件");
+        let files = refresh_workspace_files(&root, &files, vec![file]).expect("应增量删除文件");
+        assert!(files.is_empty());
+
+        fs::remove_dir_all(&root).expect("应清理临时目录");
+    }
+
+    #[test]
+    fn refresh_workspace_files_falls_back_when_deleted_dir_had_children() {
+        let root = temp_root();
+        fs::create_dir_all(root.join("scripts")).expect("应创建临时目录");
+        let child = ScannedFile {
+            path: root.join("scripts/a.sh"),
+            relative_path: "scripts/a.sh".to_string(),
+            name: "a.sh".to_string(),
+        };
+        fs::remove_dir_all(&root).expect("应删除临时目录");
+
+        let files = refresh_workspace_files(&root, &[child], vec![root.join("scripts")])
+            .expect("应安全回退到全量扫描");
+        assert!(files.is_empty());
     }
 
     #[test]
