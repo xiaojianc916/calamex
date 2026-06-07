@@ -27,9 +27,13 @@ use super::wsl::bash_quote;
 
 const TERMINAL_READ_BUFFER_BYTES: usize = 8192;
 
+/// 持续高吞吐输出时，把多次 read 的解码结果攒批到该字节阈值再发一次事件，
+/// 减少 Tauri IPC 事件数（前端已有 16ms 写入合批，这里在源头做合批）。
+const TERMINAL_OUTPUT_COALESCE_BYTES: usize = 32 * 1024;
+
 /// 同步驱动 wsl.exe 写脚本 / 清理临时文件时的硬超时。
 /// 某些 Windows 环境下 wsl.exe 可能长时间挂起（参见 script_run.rs 对健康探测的刻意规避），
-/// 这里给同步子进程加超时兜底，避免命令线程被永久阻塞、反复触发后耗尽线程池导致 UI 冻结。
+// 这里给同步子进程加超时兜底，避免命令线程被永久阻塞、反复触发后耗尽线程池导致 UI 冻结。
 const WSL_SYNC_COMMAND_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Debug, Error)]
@@ -353,17 +357,18 @@ where
 
             let mut decoder = LocalWslUtf8ChunkDecoder::default();
             let mut buffer = [0u8; TERMINAL_READ_BUFFER_BYTES];
+            // 攒批缓冲：多次 read 的解码结果先累加在这里，按启发式决定何时发事件。
+            let mut pending_out = String::new();
             loop {
                 match reader.read(&mut buffer) {
                     Ok(0) => break,
                     Ok(read) => {
-                        let mut decoded = String::new();
-                        decoder.decode_into(&buffer[..read], &mut decoded, false);
-                        if !decoded.is_empty() {
+                        decoder.decode_into(&buffer[..read], &mut pending_out, false);
+                        if should_flush_terminal_output(pending_out.len(), read, buffer.len()) {
                             on_event(LocalWslTerminalServerPayload::InteractiveData(
                                 LocalWslTerminalInteractiveData {
                                     session_id: session_id.clone(),
-                                    data: decoded,
+                                    data: std::mem::take(&mut pending_out),
                                 },
                             ));
                         }
@@ -377,13 +382,13 @@ where
                 }
             }
 
-            let mut tail = String::new();
-            decoder.decode_into(&[], &mut tail, true);
-            if !tail.is_empty() {
+            // 收尾：补全解码器残尾，并把最后攒批的输出一次性发出。
+            decoder.decode_into(&[], &mut pending_out, true);
+            if !pending_out.is_empty() {
                 on_event(LocalWslTerminalServerPayload::InteractiveData(
                     LocalWslTerminalInteractiveData {
                         session_id: session_id.clone(),
-                        data: tail,
+                        data: pending_out,
                     },
                 ));
             }
@@ -428,17 +433,18 @@ where
 
             let mut decoder = LocalWslUtf8ChunkDecoder::default();
             let mut buffer = [0u8; TERMINAL_READ_BUFFER_BYTES];
+            // 攒批缓冲：多次 read 的解码结果先累加在这里，按启发式决定何时发事件。
+            let mut pending_out = String::new();
             loop {
                 match reader.read(&mut buffer) {
                     Ok(0) => break,
                     Ok(read) => {
-                        let mut decoded = String::new();
-                        decoder.decode_into(&buffer[..read], &mut decoded, false);
-                        if !decoded.is_empty() {
+                        decoder.decode_into(&buffer[..read], &mut pending_out, false);
+                        if should_flush_terminal_output(pending_out.len(), read, buffer.len()) {
                             on_event(LocalWslTerminalServerPayload::RunChunk(
                                 LocalWslTerminalRunChunk {
                                     run_id: run_id.clone(),
-                                    data: decoded,
+                                    data: std::mem::take(&mut pending_out),
                                 },
                             ));
                         }
@@ -450,13 +456,13 @@ where
                 }
             }
 
-            let mut tail = String::new();
-            decoder.decode_into(&[], &mut tail, true);
-            if !tail.is_empty() {
+            // 收尾：补全解码器残尾，并把最后攒批的输出一次性发出。
+            decoder.decode_into(&[], &mut pending_out, true);
+            if !pending_out.is_empty() {
                 on_event(LocalWslTerminalServerPayload::RunChunk(
                     LocalWslTerminalRunChunk {
                         run_id: run_id.clone(),
-                        data: tail,
+                        data: pending_out,
                     },
                 ));
             }
@@ -473,6 +479,19 @@ where
         })
         .map(|_| ())
         .map_err(|error| LocalWslPtyError::Open(error.to_string()))
+}
+
+/// 判断是否应把已攒批的输出立即作为一个事件发出。
+///
+/// 启发式：当本次 read 读满了整个缓冲（`last_read == buffer_len`）时，说明管道仍处于
+/// 饱和突发中，继续攒批以减少 IPC 次数；一旦某次 read 未读满（突发已排空，常见于交互
+/// 单字符回显），立即 flush 以保证低延迟。攒批超过阈值也会强制 flush，避免无界增长。
+fn should_flush_terminal_output(pending_len: usize, last_read: usize, buffer_len: usize) -> bool {
+    if pending_len == 0 {
+        return false;
+    }
+    let saturated = last_read == buffer_len;
+    !saturated || pending_len >= TERMINAL_OUTPUT_COALESCE_BYTES
 }
 
 /// 在 `timeout` 内轮询等待子进程结束：
@@ -623,6 +642,29 @@ mod tests {
     #[test]
     fn now_unix_ms_is_positive() {
         assert!(now_unix_ms() > 0);
+    }
+
+    #[test]
+    fn coalesces_while_saturated_and_flushes_on_drain() {
+        let buf = TERMINAL_READ_BUFFER_BYTES;
+        // 攒批为空：不发。
+        assert!(!should_flush_terminal_output(0, buf, buf));
+        // 饱和（读满）且未达阈值：继续攒批。
+        assert!(!should_flush_terminal_output(1024, buf, buf));
+        // 饱和但已超过阈值：强制 flush。
+        assert!(should_flush_terminal_output(
+            TERMINAL_OUTPUT_COALESCE_BYTES,
+            buf,
+            buf
+        ));
+        assert!(should_flush_terminal_output(
+            TERMINAL_OUTPUT_COALESCE_BYTES + 1,
+            buf,
+            buf
+        ));
+        // 未读满（突发排空）：立即 flush，保证交互低延迟。
+        assert!(should_flush_terminal_output(1, buf - 1, buf));
+        assert!(should_flush_terminal_output(50, 50, buf));
     }
 
     #[test]

@@ -56,3 +56,24 @@
 - 正确性：解码结果与原实现逐字节等价；新增单测覆盖整块合法、跨 read 切断、中段非法字节、
   结尾不完整 + last 收尾、空输入收尾等情况。去重后行为由 `Utf8ChunkDecoder` 单一实现保证。
 - 验证：`cargo test -p calamex terminal::utf8_decoder`、`cargo clippy`、`cargo test`。
+
+## 终端 PTY 输出事件的源头合批
+
+- 文件：`src-tauri/src/terminal/wsl_pty.rs`（两个 PTY 读线程）
+- 问题：交互与运行读线程每次 `reader.read`（8 KiB）都直接 `on_event` 发一个 Tauri
+  事件（InteractiveData / RunChunk）。高吞吐输出（构建日志、`cat` 大文件、`yes`）下
+  会以每 8 KiB 一次的频率洪水般创建 IPC 事件，序列化与 JS 事件处理开销随之上升。
+  （前端 session.ts 已有 16ms 写入合批，但源头未合批。）
+- 算法：“饱和则攒批、排空即 flush”启发式合批。把多次 read 的解码结果累加到 `pending_out`：
+  当本次 read 读满整个缓冲（`read == buffer.len()`，表明管道仍饱和）时继续攒批；一旦
+  未读满（突发已排空，常见于交互单字符回显）立即 flush 以保低延迟；攒批超 32 KiB 强制
+  flush 避免无界增长；读线程结束时补全解码残尾并一次性 flush 剩余。判决逻辑抽为纯函数
+  `should_flush_terminal_output` 以便单测。
+- 复杂度（设突发输出共 N 字节，缓冲 B=8 KiB，阈值 T=32 KiB）：
+  - 之前：事件数 ≈ N/B（每读一次发一个）。
+  - 之后：突发期间事件数 ≈ N/T（约降为原来的 1/4）；交互小输出仍立即发出，延迟不变。
+- 正确性：所有字节最终按原顺序送达前端（只是合并成更少的事件）；交互回显不被扣留（未读满
+  立即 flush）；空解码结果不会发出空事件（`pending_len == 0` 守卫）。新增单测覆盖启发式
+  的四种边界（空攒批、饱和未达阈、饱和超阈、未读满）。
+- 验证：`cargo test -p calamex terminal::wsl_pty`、`cargo clippy`、`cargo test`；本机手动复测：
+  `cat` 一个数 MB 文件观察滚动流畅度与 CPU 占用。
