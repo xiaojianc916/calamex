@@ -446,6 +446,7 @@ const loadWorkspaceRoot = async (workspaceKey: string): Promise<void> => {
     root.value = null;
     loadedWorkspaceKey.value = null;
     clearTreeState();
+    stopWorkspaceFileWatcher();
     return;
   }
   const requestId = rootRequestId + 1;
@@ -455,6 +456,7 @@ const loadWorkspaceRoot = async (workspaceKey: string): Promise<void> => {
   root.value = null;
   loadedWorkspaceKey.value = null;
   clearTreeState();
+  stopWorkspaceFileWatcher();
   try {
     const payload = await resolveWorkspaceRootPayload(
       props.workspaceRootPath,
@@ -960,33 +962,92 @@ interface WorkspaceFsEvent {
   changes: FsChange[];
   rootPath: string;
 }
+type TWorkspaceWatcherLifecycle = {
+  id: number;
+  rootPath: string;
+};
+
 let fsEventUnlisten: (() => void) | null = null;
 let isFsWatcherStarting = false;
+let workspaceWatcherLifecycleId = 0;
+let activeWorkspaceWatcherLifecycle: TWorkspaceWatcherLifecycle | null = null;
 const pendingFsReloadDirs = new Set<string>();
-const flushPendingFsReloads = useDebounceFn(async (): Promise<void> => {
-  const dirs = [...pendingFsReloadDirs];
-  pendingFsReloadDirs.clear();
-  for (const dir of dirs) {
-    if (childrenMap[dir] === undefined) continue;
-    await loadDirectoryEntries(dir);
-  }
-}, 80);
-const refreshGitStatusAfterFsEvent = useDebounceFn(async (): Promise<void> => {
-  const rootPath = root.value?.rootPath ?? props.workspaceRootPath;
-  if (!rootPath) return;
-  try {
-    await gitStore.refreshRepositoryStatus(rootPath);
-  } catch (error) {
-    console.warn('[AppSidebar] Failed to refresh Git status after workspace file change.', error);
-  }
-}, 120);
 
-function stopWorkspaceFileWatcher(): void {
-  const wasWatching = fsEventUnlisten !== null || isFsWatcherStarting;
-  fsEventUnlisten?.();
-  fsEventUnlisten = null;
+const beginWorkspaceWatcherLifecycle = (rootPath: string): TWorkspaceWatcherLifecycle => {
+  const lifecycle = {
+    id: workspaceWatcherLifecycleId + 1,
+    rootPath,
+  };
+  workspaceWatcherLifecycleId = lifecycle.id;
+  activeWorkspaceWatcherLifecycle = lifecycle;
+  return lifecycle;
+};
+
+const isWorkspaceWatcherLifecycleCurrent = (lifecycle: TWorkspaceWatcherLifecycle): boolean =>
+  activeWorkspaceWatcherLifecycle?.id === lifecycle.id &&
+  areFileSystemPathsEqual(activeWorkspaceWatcherLifecycle.rootPath, lifecycle.rootPath) &&
+  areFileSystemPathsEqual(root.value?.rootPath ?? null, lifecycle.rootPath);
+
+const invalidateWorkspaceWatcherLifecycle = (): boolean => {
+  const wasWatching =
+    fsEventUnlisten !== null || isFsWatcherStarting || activeWorkspaceWatcherLifecycle !== null;
+
+  workspaceWatcherLifecycleId += 1;
+  activeWorkspaceWatcherLifecycle = null;
   isFsWatcherStarting = false;
   pendingFsReloadDirs.clear();
+
+  const unlisten = fsEventUnlisten;
+  fsEventUnlisten = null;
+  unlisten?.();
+
+  return wasWatching;
+};
+
+const flushPendingFsReloads = useDebounceFn(
+  async (lifecycle: TWorkspaceWatcherLifecycle): Promise<void> => {
+    if (!isWorkspaceWatcherLifecycleCurrent(lifecycle)) {
+      return;
+    }
+
+    const dirs = [...pendingFsReloadDirs];
+    pendingFsReloadDirs.clear();
+
+    for (const dir of dirs) {
+      if (!isWorkspaceWatcherLifecycleCurrent(lifecycle)) {
+        return;
+      }
+      if (childrenMap[dir] === undefined) {
+        continue;
+      }
+      await loadDirectoryEntries(dir);
+    }
+  },
+  80,
+);
+
+const refreshGitStatusAfterFsEvent = useDebounceFn(
+  async (lifecycle: TWorkspaceWatcherLifecycle): Promise<void> => {
+    if (!isWorkspaceWatcherLifecycleCurrent(lifecycle)) {
+      return;
+    }
+
+    try {
+      await gitStore.refreshRepositoryStatus(lifecycle.rootPath);
+    } catch (error) {
+      if (isWorkspaceWatcherLifecycleCurrent(lifecycle)) {
+        console.warn(
+          '[AppSidebar] Failed to refresh Git status after workspace file change.',
+          error,
+        );
+      }
+    }
+  },
+  120,
+);
+
+function stopWorkspaceFileWatcher(): void {
+  const wasWatching = invalidateWorkspaceWatcherLifecycle();
   if (wasWatching) {
     void tauriService.stopWorkspaceWatching();
   }
@@ -996,43 +1057,60 @@ async function startWorkspaceFileWatcher(): Promise<void> {
   const rootPath = root.value?.rootPath;
   if (!rootPath) return;
   if (fsEventUnlisten || isFsWatcherStarting) return;
+
+  const lifecycle = beginWorkspaceWatcherLifecycle(rootPath);
   isFsWatcherStarting = true;
+
   try {
-    if (!fsEventUnlisten) {
-      fsEventUnlisten = await events.workspaceFsEvent.listen((e) => {
-        handleFileSystemEvent(e.payload);
-      });
-    }
-    if (!areFileSystemPathsEqual(root.value?.rootPath ?? null, rootPath)) {
-      fsEventUnlisten?.();
-      fsEventUnlisten = null;
+    const unlisten = await events.workspaceFsEvent.listen((e) => {
+      handleFileSystemEvent(e.payload);
+    });
+
+    if (!isWorkspaceWatcherLifecycleCurrent(lifecycle)) {
+      unlisten();
       return;
     }
+
+    fsEventUnlisten = unlisten;
+
     try {
-      await tauriService.startWorkspaceWatching(rootPath);
+      await tauriService.startWorkspaceWatching(lifecycle.rootPath);
     } catch (error) {
+      if (!isWorkspaceWatcherLifecycleCurrent(lifecycle)) {
+        return;
+      }
+
       console.warn('[AppSidebar] Failed to start workspace file watcher.', error);
       fsEventUnlisten?.();
       fsEventUnlisten = null;
+      activeWorkspaceWatcherLifecycle = null;
     }
   } finally {
-    isFsWatcherStarting = false;
+    if (activeWorkspaceWatcherLifecycle?.id === lifecycle.id) {
+      isFsWatcherStarting = false;
+    }
   }
 }
 
 function handleFileSystemEvent(payload: WorkspaceFsEvent): void {
-  if (!root.value || !areFileSystemPathsEqual(payload.rootPath, root.value.rootPath)) return;
+  const lifecycle = activeWorkspaceWatcherLifecycle;
+  if (!lifecycle || !isWorkspaceWatcherLifecycleCurrent(lifecycle)) return;
+  if (!areFileSystemPathsEqual(payload.rootPath, lifecycle.rootPath)) return;
+
   for (const change of payload.changes) {
     if (change.kind === 'removed' || change.kind === 'renamed') {
       pruneWorkspaceSubtreeState(change.path);
     }
-    const parent = resolveParentPathForMutation(change.path);
-    if (parent) pendingFsReloadDirs.add(parent);
-  }
-  void flushPendingFsReloads();
-  void refreshGitStatusAfterFsEvent();
-}
 
+    const parent = resolveParentPathForMutation(change.path);
+    if (parent && getRelativeFileSystemPath(parent, lifecycle.rootPath) !== null) {
+      pendingFsReloadDirs.add(parent);
+    }
+  }
+
+  void flushPendingFsReloads(lifecycle);
+  void refreshGitStatusAfterFsEvent(lifecycle);
+}
 onMounted(() => {
   if (root.value?.rootPath) {
     void startWorkspaceFileWatcher();
