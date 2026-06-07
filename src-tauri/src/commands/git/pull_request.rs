@@ -398,8 +398,16 @@ struct GitHubPullRequestCacheEntry {
     fetched_at: Instant,
 }
 
+#[derive(Clone)]
+struct GitHubPullRequestDetailCacheEntry {
+    etag: Option<String>,
+    pull_request: GitHubPullRequest,
+    fetched_at: Instant,
+}
+
 static GITHUB_CREDENTIAL_CACHE: OnceLock<Mutex<HashMap<String, GitHubCredentialCacheEntry>>> = OnceLock::new();
 static GITHUB_PULL_REQUEST_CACHE: OnceLock<Mutex<HashMap<String, GitHubPullRequestCacheEntry>>> = OnceLock::new();
+static GITHUB_PULL_REQUEST_DETAIL_CACHE: OnceLock<Mutex<HashMap<String, GitHubPullRequestDetailCacheEntry>>> = OnceLock::new();
 
 fn github_credential_cache() -> &'static Mutex<HashMap<String, GitHubCredentialCacheEntry>> {
     GITHUB_CREDENTIAL_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
@@ -409,16 +417,22 @@ fn github_pull_request_cache() -> &'static Mutex<HashMap<String, GitHubPullReque
     GITHUB_PULL_REQUEST_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+fn github_pull_request_detail_cache() -> &'static Mutex<HashMap<String, GitHubPullRequestDetailCacheEntry>> {
+    GITHUB_PULL_REQUEST_DETAIL_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
 fn clear_github_pull_request_cache_for_repository(repository_root_path: &str) {
     let normalized_root = normalize_path_for_git(Path::new(repository_root_path))
         .to_string_lossy()
         .to_string();
+    let repository_prefix = format!("{normalized_root}|");
 
-    let Ok(mut cache) = github_pull_request_cache().lock() else {
-        return;
-    };
-
-    cache.retain(|key, _| !key.starts_with(&format!("{normalized_root}|")));
+    if let Ok(mut cache) = github_pull_request_cache().lock() {
+        cache.retain(|key, _| !key.starts_with(&repository_prefix));
+    }
+    if let Ok(mut cache) = github_pull_request_detail_cache().lock() {
+        cache.retain(|key, _| !key.starts_with(&repository_prefix));
+    }
 }
 
 fn pull_request_cache_key(target: &GitHubRepositoryTarget, state: &str) -> String {
@@ -432,8 +446,26 @@ fn pull_request_cache_key(target: &GitHubRepositoryTarget, state: &str) -> Strin
     .join("|")
 }
 
+fn pull_request_detail_cache_key(target: &GitHubRepositoryTarget, number: u32) -> String {
+    [
+        target.repository_root.to_string_lossy().as_ref(),
+        target.api_base.as_str(),
+        target.owner.as_str(),
+        target.repo.as_str(),
+        number.to_string().as_str(),
+    ]
+    .join("|")
+}
+
 fn cached_pull_requests(cache_key: &str) -> Option<GitHubPullRequestCacheEntry> {
     github_pull_request_cache()
+        .lock()
+        .ok()
+        .and_then(|cache| cache.get(cache_key).cloned())
+}
+
+fn cached_pull_request_detail(cache_key: &str) -> Option<GitHubPullRequestDetailCacheEntry> {
+    github_pull_request_detail_cache()
         .lock()
         .ok()
         .and_then(|cache| cache.get(cache_key).cloned())
@@ -456,8 +488,33 @@ fn remember_pull_requests(
     }
 }
 
+fn remember_pull_request_detail(
+    cache_key: String,
+    etag: Option<String>,
+    pull_request: GitHubPullRequest,
+) {
+    if let Ok(mut cache) = github_pull_request_detail_cache().lock() {
+        cache.insert(
+            cache_key,
+            GitHubPullRequestDetailCacheEntry {
+                etag,
+                pull_request,
+                fetched_at: Instant::now(),
+            },
+        );
+    }
+}
+
 fn touch_pull_request_cache(cache_key: &str) {
     if let Ok(mut cache) = github_pull_request_cache().lock() {
+        if let Some(entry) = cache.get_mut(cache_key) {
+            entry.fetched_at = Instant::now();
+        }
+    }
+}
+
+fn touch_pull_request_detail_cache(cache_key: &str) {
+    if let Ok(mut cache) = github_pull_request_detail_cache().lock() {
         if let Some(entry) = cache.get_mut(cache_key) {
             entry.fetched_at = Instant::now();
         }
@@ -511,7 +568,9 @@ fn resolve_github_repository_target(
     let api_base = if parsed.host.eq_ignore_ascii_case("github.com") {
         "https://api.github.com".to_string()
     } else {
-        format!("https://api.{}", parsed.host)
+        let mut api_base = "https://api.".to_string();
+        api_base.push_str(&parsed.host);
+        api_base
     };
 
     Ok(GitHubRepositoryTarget {
@@ -790,22 +849,72 @@ pub async fn get_git_pull_request_detail(
     let token = resolve_github_credential(&target.repository_root, &target.host).await;
     let has_token = token.is_some();
     let client = build_github_client(token.as_deref())?;
+    let cache_key = pull_request_detail_cache_key(&target, payload.number);
+    let cached = cached_pull_request_detail(&cache_key);
+
+    if let Some(cached) = cached.as_ref() {
+        if cached.fetched_at.elapsed() <= GITHUB_PULL_REQUEST_FRESH_TTL {
+            return Ok(map_pull_request_detail(&cached.pull_request));
+        }
+    }
 
     let url = format!(
         "{}/repos/{}/{}/pulls/{}",
         target.api_base, target.owner, target.repo, payload.number
     );
 
-    let response = client
-        .get(&url)
-        .send()
-        .await
-        .map_err(|error| annotate_auth_error(format!("请求 GitHub 失败：{error}"), has_token))?;
+    let mut request = client.get(&url);
+    if let Some(etag) = cached.as_ref().and_then(|entry| entry.etag.as_deref()) {
+        request = request.header(IF_NONE_MATCH, etag);
+    }
+
+    let response = match request.send().await {
+        Ok(response) => response,
+        Err(error) => {
+            if let Some(cached) = cached {
+                if cached.fetched_at.elapsed() <= GITHUB_PULL_REQUEST_STALE_IF_ERROR_TTL {
+                    return Ok(map_pull_request_detail(&cached.pull_request));
+                }
+            }
+            return Err(annotate_auth_error(format!("请求 GitHub 失败：{error}"), has_token));
+        }
+    };
+
+    if response.status().as_u16() == 304 {
+        if let Some(cached) = cached {
+            touch_pull_request_detail_cache(&cache_key);
+            return Ok(map_pull_request_detail(&cached.pull_request));
+        }
+    }
+
+    if !response.status().is_success() {
+        if let Some(cached) = cached {
+            if cached.fetched_at.elapsed() <= GITHUB_PULL_REQUEST_STALE_IF_ERROR_TTL {
+                return Ok(map_pull_request_detail(&cached.pull_request));
+            }
+        }
+
+        return read_github_json::<GitHubPullRequest>(response)
+            .await
+            .map(|pull_request| {
+                remember_pull_request_detail(cache_key, None, pull_request.clone());
+                map_pull_request_detail(&pull_request)
+            })
+            .map_err(|error| annotate_auth_error(error, has_token));
+    }
+
+    let etag = response
+        .headers()
+        .get(ETAG)
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_string);
 
     let pull_request: GitHubPullRequest = read_github_json(response)
         .await
         .map_err(|error| annotate_auth_error(error, has_token))?;
 
+    remember_pull_request_detail(cache_key, etag, pull_request.clone());
     Ok(map_pull_request_detail(&pull_request))
 }
 
