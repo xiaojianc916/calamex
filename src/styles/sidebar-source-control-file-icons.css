@@ -1,34 +1,45 @@
-/* Git 状态标记：使用 Iconify + Lucide 官方图标，不再手写 SVG。 */
+/* Git 状态标记：保留 M/U/A/D/R/T/! 字母语义，做成更清晰的状态徽标。 */
 .source-control-file-tag {
-  @apply icon-[lucide--file-pen-line];
-
+  display: inline-flex;
   width: 18px;
   height: 18px;
   flex-shrink: 0;
-  font-size: 0;
-  line-height: 0;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, currentColor 38%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 42%, transparent);
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.04em;
+}
+
+.source-control-file-tag.is-modified {
+  background: color-mix(in srgb, var(--scm-yellow) 12%, transparent);
+  color: color-mix(in srgb, var(--scm-yellow) 86%, #8a5a00);
 }
 
 .source-control-file-tag.is-added {
-  @apply icon-[lucide--file-plus];
+  background: color-mix(in srgb, var(--scm-green) 12%, transparent);
+  color: color-mix(in srgb, var(--scm-green) 86%, #166534);
 }
 
-.source-control-file-tag.is-deleted {
-  @apply icon-[lucide--file-minus];
+.source-control-file-tag.is-deleted,
+.source-control-file-tag.is-conflicted {
+  background: color-mix(in srgb, var(--scm-red) 12%, transparent);
+  color: color-mix(in srgb, var(--scm-red) 86%, #991b1b);
 }
 
 .source-control-file-tag.is-renamed {
-  @apply icon-[lucide--git-compare-arrows];
+  background: color-mix(in srgb, var(--scm-blue) 12%, transparent);
+  color: color-mix(in srgb, var(--scm-blue) 86%, #1d4ed8);
 }
 
+.source-control-file-tag.is-untracked,
 .source-control-file-tag.is-typechange {
-  @apply icon-[lucide--file-cog];
-}
-
-.source-control-file-tag.is-untracked {
-  @apply icon-[lucide--file-question-mark];
-}
-
-.source-control-file-tag.is-conflicted {
-  @apply icon-[lucide--triangle-alert];
+  background: color-mix(in srgb, var(--scm-accent) 12%, transparent);
+  color: var(--scm-accent);
 }

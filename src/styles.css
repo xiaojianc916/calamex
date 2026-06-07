@@ -1,7 +1,6 @@
 /* 入口：仅保留 vendor @import 与分片清单；具体样式见 src/styles/。 */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 @import 'tailwindcss';
-@plugin '@iconify/tailwind4';
 @import './assets/css/tailwind.css';
 @import 'markstream-vue/index.css';
 @import 'tw-animate-css';
