@@ -393,7 +393,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
 
     current.content = aiStream.content.value;
     current.stream = {
-      ...(current.stream ?? {}),
+      ...current.stream,
       status: mapStreamStatus(aiStream.status.value),
     };
 
@@ -575,7 +575,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       const nextUsage = streamTokenSnapshot?.usage ?? message.stream?.usage;
       const stream = streamStatus
         ? {
-            ...(message.stream ?? {}),
+            ...message.stream,
             status: streamStatus,
             ...(nextActivityText !== undefined ? { activityText: nextActivityText } : {}),
             ...(nextRuntimeEvents?.length ? { runtimeEvents: nextRuntimeEvents } : {}),
@@ -1136,7 +1136,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
               toolCallId: 'apply_file_edits',
               confirmedByUser: true,
               workspaceRootPath: options.workspaceRootPath.value,
-              ...(patchMetadata ?? {}),
+              ...patchMetadata,
             },
           });
       const currentAppliedPaths = result.appliedFiles.map((file) => file.path);
@@ -2341,7 +2341,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
 
     if (activeAssistantMessage.value) {
       activeAssistantMessage.value.stream = {
-        ...(activeAssistantMessage.value.stream ?? {}),
+        ...activeAssistantMessage.value.stream,
         status: 'cancelled',
       };
       activeAssistantMessage.value.content = aiStream.content.value;

@@ -101,7 +101,7 @@ export const executeWindowsHostCommand = async (
     ];
     const env = {
         ...createHostCommandEnv(),
-        ...(options?.env ?? {}),
+        ...options?.env,
     };
     let stdout = '';
     let stderr = '';
@@ -450,7 +450,7 @@ export const allowWorkspaceWriteAfterVerifiedRead = async (
         ? toolConfig
         : {};
     const relaxedToolsConfig: WorkspaceToolsConfig = {
-        ...(originalToolsConfig ?? {}),
+        ...originalToolsConfig,
         [WORKSPACE_TOOLS.FILESYSTEM.WRITE_FILE]: {
             ...writeFileConfig,
             requireReadBeforeWrite: async ({ args }): Promise<boolean> => {

@@ -29,7 +29,7 @@
 ## 五、提交与决策
 - 单分支 `main`（trunk-based），squash 合入；Conventional Commits（lefthook + commitlint 强制）。
 - 关键决策沉淀为 ADR（`docs/adr/`）；已 accepted 的 ADR 不就地重写。
-- 冲突优先级：**安全 > 类型安全 > 可测性 > 可维护性 > 性能 > 风格**；缺数据先停下确认，不猜测。
+- 冲突优先级：**安全 > 类型安全 > 可测性 > 可维护性 > 性能 > 风格**；缺数据先停下确认，不猜测
 
 
 \---
@@ -167,5 +167,3 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 
 \*\*These guidelines are working if:\*\* fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
-
-

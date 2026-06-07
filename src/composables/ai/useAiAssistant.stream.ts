@@ -47,7 +47,7 @@ export const mergeStreamTokenSnapshot = (
   event: IAiChatStreamEventPayload,
 ): IAiChatStreamRenderState => {
   const nextStream: IAiChatStreamRenderState = {
-    ...(stream ?? {}),
+    ...stream,
     status: stream?.status ?? 'streaming',
   };
 

@@ -127,7 +127,7 @@ export const resolveConfiguredRuntimeName = (
         return configured;
     }
     throw new Error(
-        `Unsupported AGENT_RUNTIME: \"${configured}\". Expected one of: ${SUPPORTED_AGENT_RUNTIMES.join(', ')}.`,
+        `Unsupported AGENT_RUNTIME: "${configured}". Expected one of: ${SUPPORTED_AGENT_RUNTIMES.join(', ')}.`,
     );
 };
 

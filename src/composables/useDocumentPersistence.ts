@@ -92,9 +92,7 @@ export const useDocumentPersistence = ({
   ): false => {
     const message = toErrorMessage(error, fallbackMessage);
     editorStore.appendLog('error', title, message);
-    notifier.error(title, {
-      ...(message === title ? {} : { description: message }),
-    });
+    notifier.error(title, message === title ? {} : { description: message });
     return false;
   };
 
@@ -203,9 +201,10 @@ export const useDocumentPersistence = ({
       const message = toErrorMessage(error, 'shfmt 格式化失败');
       editorStore.appendLog('error', 'shfmt 格式化失败', message);
       if (!options?.suppressErrorMessage) {
-        notifier.error('shfmt 格式化失败', {
-          ...(message === 'shfmt 格式化失败' ? {} : { description: message }),
-        });
+        notifier.error(
+          'shfmt 格式化失败',
+          message === 'shfmt 格式化失败' ? {} : { description: message },
+        );
       }
       return false;
     }
