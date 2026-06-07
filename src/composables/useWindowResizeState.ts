@@ -1,4 +1,5 @@
 import { onScopeDispose } from 'vue';
+import { addDisposableEventListener, requestDisposableAnimationFrame } from '@/utils/dom-lifecycle';
 import { logger } from '@/utils/logger';
 import {
   SHELL_WINDOW_RESIZE_END_EVENT,
@@ -57,8 +58,8 @@ export const useWindowResizeState = () => {
   const html = document.documentElement;
   let timer: number | undefined;
   let unlisten: (() => void) | undefined;
-  let detachResizeStartListener: (() => void) | undefined;
-  let resizeFramePumpId: number | undefined;
+  let detachResizeEventListeners: (() => void) | undefined;
+  let cancelResizeFramePumpFrame: (() => void) | undefined;
   let resizeFramePumpStartedAt = 0;
   let isDisposed = false;
   let interactiveResizePhase: TInteractiveResizePhase = 'idle';
@@ -73,12 +74,8 @@ export const useWindowResizeState = () => {
   };
 
   const cancelResizeFramePump = (): void => {
-    if (resizeFramePumpId === undefined) {
-      return;
-    }
-
-    window.cancelAnimationFrame(resizeFramePumpId);
-    resizeFramePumpId = undefined;
+    cancelResizeFramePumpFrame?.();
+    cancelResizeFramePumpFrame = undefined;
   };
 
   const dispatchResizeFrame = (): void => {
@@ -100,12 +97,12 @@ export const useWindowResizeState = () => {
   };
 
   const queueResizeFramePump = (): void => {
-    if (resizeFramePumpId !== undefined) {
+    if (cancelResizeFramePumpFrame) {
       return;
     }
 
-    resizeFramePumpId = window.requestAnimationFrame(() => {
-      resizeFramePumpId = undefined;
+    cancelResizeFramePumpFrame = requestDisposableAnimationFrame(() => {
+      cancelResizeFramePumpFrame = undefined;
 
       if (isDisposed || interactiveResizePhase !== 'active') {
         return;
@@ -170,7 +167,7 @@ export const useWindowResizeState = () => {
     clearResizeTimer();
     cancelResizeFramePump();
     unlisten?.();
-    detachResizeStartListener?.();
+    detachResizeEventListeners?.();
     html.classList.remove('is-resizing');
   });
 
@@ -181,12 +178,20 @@ export const useWindowResizeState = () => {
     const handleResizeEnd = (): void => {
       endInteractiveResize();
     };
+    const detachResizeStartListener = addDisposableEventListener(
+      window,
+      SHELL_WINDOW_RESIZE_START_EVENT,
+      handleResizeStart,
+    );
+    const detachResizeEndListener = addDisposableEventListener(
+      window,
+      SHELL_WINDOW_RESIZE_END_EVENT,
+      handleResizeEnd,
+    );
 
-    window.addEventListener(SHELL_WINDOW_RESIZE_START_EVENT, handleResizeStart);
-    window.addEventListener(SHELL_WINDOW_RESIZE_END_EVENT, handleResizeEnd);
-    detachResizeStartListener = () => {
-      window.removeEventListener(SHELL_WINDOW_RESIZE_START_EVENT, handleResizeStart);
-      window.removeEventListener(SHELL_WINDOW_RESIZE_END_EVENT, handleResizeEnd);
+    detachResizeEventListeners = () => {
+      detachResizeEndListener();
+      detachResizeStartListener();
     };
   }
 
