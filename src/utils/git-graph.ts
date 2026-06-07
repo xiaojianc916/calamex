@@ -52,29 +52,29 @@ function firstFreeLane(lanes: Array<string | null>): number {
 
 export function buildGitGraph(commits: IGitGraphInputCommit[]): IGitGraphLayout {
   let lanes: Array<string | null> = [];
+  // 维护 “提交 id -> 当前所在泳道” 的索引，避免每个父提交都线性扫描整条泳道数组。
+  // 不变量：在本算法中，任一提交 id 在任一时刻至多占用一条泳道（父提交首次出现时
+  // 占位，后续子提交命中索引后复用同一泳道），因此一个 Map<string, number> 足以表达。
+  const laneByCommit = new Map<string, number>();
   const rows: IGitGraphRow[] = [];
   let laneCount = 0;
 
   for (let index = 0; index < commits.length; index += 1) {
     const commit = commits[index];
     const parents = commit.parentIds ? commit.parentIds.slice() : [];
-    const beforeLanes = lanes.slice();
+    const beforeLanes = lanes;
 
-    const incomingLanes: number[] = [];
-    for (let lane = 0; lane < beforeLanes.length; lane += 1) {
-      if (beforeLanes[lane] === commit.id) {
-        incomingLanes.push(lane);
-      }
-    }
-
-    const nodeLane = incomingLanes.length > 0 ? incomingLanes[0] : firstFreeLane(beforeLanes);
+    // O(1) 查到正在等待当前提交的泳道（取代对 beforeLanes 的整体扫描）。
+    const incomingLane = laneByCommit.has(commit.id) ? (laneByCommit.get(commit.id) as number) : -1;
+    const nodeLane = incomingLane >= 0 ? incomingLane : firstFreeLane(beforeLanes);
 
     const afterLanes = beforeLanes.slice();
     while (afterLanes.length <= nodeLane) {
       afterLanes.push(null);
     }
-    for (let i = 0; i < incomingLanes.length; i += 1) {
-      afterLanes[incomingLanes[i]] = null;
+    if (incomingLane >= 0) {
+      afterLanes[incomingLane] = null;
+      laneByCommit.delete(commit.id);
     }
     afterLanes[nodeLane] = null;
 
@@ -82,13 +82,10 @@ export function buildGitGraph(commits: IGitGraphInputCommit[]): IGitGraphLayout 
     for (let parentIndex = 0; parentIndex < parents.length; parentIndex += 1) {
       const parentId = parents[parentIndex];
 
-      let existingLane = -1;
-      for (let lane = 0; lane < afterLanes.length; lane += 1) {
-        if (afterLanes[lane] === parentId) {
-          existingLane = lane;
-          break;
-        }
-      }
+      // O(1) 复用父提交已占用的泳道（取代对 afterLanes 的整体扫描）。
+      const existingLane = laneByCommit.has(parentId)
+        ? (laneByCommit.get(parentId) as number)
+        : -1;
       if (existingLane !== -1) {
         outLanes.push(existingLane);
         continue;
@@ -99,6 +96,7 @@ export function buildGitGraph(commits: IGitGraphInputCommit[]): IGitGraphLayout 
         afterLanes.push(null);
       }
       afterLanes[targetLane] = parentId;
+      laneByCommit.set(parentId, targetLane);
       outLanes.push(targetLane);
     }
 

@@ -62,6 +62,40 @@ describe('buildGitGraph', () => {
     expect(wRow?.lane).toBe(0);
   });
 
+  it('多个子提交共享同一父提交时复用单条泳道', () => {
+    const commits: IGitGraphInputCommit[] = [
+      { id: 'a', parentIds: ['p'] },
+      { id: 'b', parentIds: ['p'] },
+      { id: 'c', parentIds: ['p'] },
+      { id: 'p', parentIds: [] },
+    ];
+
+    const layout = buildGitGraph(commits);
+
+    const pRow = layout.rows.find((row) => row.id === 'p');
+    expect(pRow?.lane).toBe(0);
+    // p 只占用一条泳道，后续两个子提交通过分叉连线汇入它。
+    expect(
+      layout.rows.filter((row) => row.edges.some((edge) => edge.type === 'out')).length,
+    ).toBe(2);
+  });
+
+  it('章鱼式合并（三个父提交）展开到三条泳道且连线完整', () => {
+    const commits: IGitGraphInputCommit[] = [
+      { id: 'octo', parentIds: ['p1', 'p2', 'p3'] },
+      { id: 'p1', parentIds: [] },
+      { id: 'p2', parentIds: [] },
+      { id: 'p3', parentIds: [] },
+    ];
+
+    const layout = buildGitGraph(commits);
+
+    expect(layout.laneCount).toBe(3);
+    const octoRow = layout.rows.find((row) => row.id === 'octo');
+    expect(octoRow?.lane).toBe(0);
+    expect(octoRow?.edges.filter((edge) => edge.type === 'out').length).toBe(2);
+  });
+
   it('泳道颜色按调色板循环取值', () => {
     expect(resolveGitGraphLaneColor(0)).toBe(resolveGitGraphLaneColor(8));
     expect(resolveGitGraphLaneColor(-1)).toBe(resolveGitGraphLaneColor(7));
