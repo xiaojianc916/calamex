@@ -105,8 +105,11 @@ export const useGitHubAuthStore = defineStore('github-auth', () => {
   let pendingDeviceAuthRequest: Promise<IGitHubAuthStatusPayload> | null = null;
 
   const isAuthenticated = computed(() => status.value.authenticated);
+  const verificationUrl = computed(() =>
+    deviceAuth.value ? buildVerificationUri(deviceAuth.value) : null,
+  );
   const displayLabel = computed(() => {
-    if (deviceAuth.value) return deviceAuth.value.userCode;
+    if (deviceAuth.value) return '等待授权';
     if (isLoading.value && !status.value.authenticated) return '连接中';
     return status.value.login ?? 'GitHub';
   });
@@ -196,6 +199,17 @@ export const useGitHubAuthStore = defineStore('github-auth', () => {
     void loadStatus({ visibleLoading: !cached });
   };
 
+  const copyDeviceCode = async (): Promise<boolean> => {
+    const userCode = deviceAuth.value?.userCode;
+    if (!userCode) return false;
+    return tryWriteClipboardText(userCode);
+  };
+
+  const reopenVerificationPage = (): void => {
+    const url = verificationUrl.value;
+    if (url) openExternalUrl(url);
+  };
+
   const startDeviceAuth = async (): Promise<IGitHubAuthStatusPayload> => {
     const rootPath = repositoryRootPath.value;
     if (!rootPath) return applyStatus(createEmptyGithubAuthStatus('当前工作区未检测到 Git 仓库。'));
@@ -210,8 +224,8 @@ export const useGitHubAuthStore = defineStore('github-auth', () => {
         deviceAuth.value = payload;
         status.value = createEmptyGithubAuthStatus('请在浏览器完成 GitHub 授权。');
         statusUpdatedAt = Date.now();
-        void tryWriteClipboardText(payload.userCode);
-        openExternalUrl(buildVerificationUri(payload));
+        void copyDeviceCode();
+        reopenVerificationPage();
         return completeGithubDeviceAuth({
           repositoryRootPath: rootPath,
           deviceCode: payload.deviceCode,
@@ -267,10 +281,13 @@ export const useGitHubAuthStore = defineStore('github-auth', () => {
     isLoading,
     isAuthorizing,
     isAuthenticated,
+    verificationUrl,
     displayLabel,
     title,
     setRepositoryRootPath,
     loadStatus,
+    copyDeviceCode,
+    reopenVerificationPage,
     startDeviceAuth,
     switchAccount,
     openProfile,

@@ -35,7 +35,8 @@
 }
 
 .source-control-github-auth:hover:not(:disabled),
-.source-control-github-auth[aria-expanded='true'] {
+.source-control-github-auth[aria-expanded='true'],
+.source-control-github-auth.is-authorizing {
   border-color: rgba(15, 23, 42, 0.14);
   background: #fff;
   color: rgba(15, 23, 42, 0.88);
@@ -78,19 +79,23 @@
   white-space: nowrap;
 }
 
-.source-control-github-auth-menu {
+.source-control-github-auth-menu,
+.source-control-github-device-card {
   position: absolute;
   top: calc(100% + 6px);
   right: 0;
   z-index: 20;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 18px 45px rgba(15, 23, 42, 0.14);
+  backdrop-filter: blur(16px);
+}
+
+.source-control-github-auth-menu {
   display: inline-flex;
   gap: 4px;
-  border: 1px solid rgba(15, 23, 42, 0.08);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.94);
   padding: 4px;
-  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.12);
-  backdrop-filter: blur(12px);
 }
 
 .source-control-github-auth-menu-btn {
@@ -114,6 +119,145 @@
   color: rgba(15, 23, 42, 0.9);
 }
 
+.source-control-github-device-card {
+  width: min(300px, calc(100vw - 32px));
+  border-radius: 18px;
+  padding: 14px;
+  color: rgba(15, 23, 42, 0.86);
+}
+
+.source-control-github-device-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.source-control-github-device-mark {
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #0f172a;
+  color: #fff;
+  font-size: 17px;
+}
+
+.source-control-github-device-title-group {
+  min-width: 0;
+}
+
+.source-control-github-device-title,
+.source-control-github-device-subtitle {
+  margin: 0;
+}
+
+.source-control-github-device-title {
+  color: rgba(15, 23, 42, 0.92);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.25;
+}
+
+.source-control-github-device-subtitle {
+  margin-top: 2px;
+  color: rgba(71, 85, 105, 0.78);
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+
+.source-control-github-device-code {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+  margin-top: 14px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, rgba(248, 250, 252, 0.95), rgba(255, 255, 255, 0.95));
+  padding: 12px 10px;
+  color: rgba(15, 23, 42, 0.92);
+  font-family:
+    ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Monaco,
+    Consolas,
+    'Liberation Mono',
+    monospace;
+  font-size: 22px;
+  font-weight: 750;
+  letter-spacing: 0.16em;
+  cursor: copy;
+}
+
+.source-control-github-device-code:hover {
+  border-color: rgba(15, 23, 42, 0.16);
+}
+
+.source-control-github-device-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.source-control-github-device-btn {
+  min-height: 30px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 10px;
+  background: #fff;
+  color: rgba(15, 23, 42, 0.74);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
+}
+
+.source-control-github-device-btn:hover {
+  border-color: rgba(15, 23, 42, 0.16);
+  background: rgba(248, 250, 252, 0.95);
+  color: rgba(15, 23, 42, 0.92);
+}
+
+.source-control-github-device-btn.is-primary {
+  border-color: #16a34a;
+  background: #16a34a;
+  color: #fff;
+}
+
+.source-control-github-device-btn.is-primary:hover {
+  border-color: #15803d;
+  background: #15803d;
+  color: #fff;
+}
+
+.source-control-github-device-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+  color: rgba(71, 85, 105, 0.68);
+  font-size: 11.5px;
+  line-height: 1;
+}
+
+.source-control-github-device-pulse {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: #16a34a;
+  box-shadow: 0 0 0 rgba(22, 163, 74, 0.35);
+  animation: source-control-github-device-pulse 1.4s ease-out infinite;
+}
+
 .source-control-github-auth.is-loading .source-control-github-auth-icon {
   animation: source-control-github-auth-spin 900ms linear infinite;
 }
@@ -130,5 +274,15 @@
 
   to {
     transform: rotate(360deg);
+  }
+}
+
+@keyframes source-control-github-device-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.35);
+  }
+
+  100% {
+    box-shadow: 0 0 0 8px rgba(22, 163, 74, 0);
   }
 }
