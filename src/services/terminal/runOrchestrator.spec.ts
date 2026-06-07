@@ -1,5 +1,5 @@
 import { createPinia, setActivePinia } from 'pinia';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { computed } from 'vue';
 import {
   __resetTerminalRunOrchestratorForTesting,
@@ -16,6 +16,10 @@ describe('terminal run orchestrator', () => {
   beforeEach(() => {
     setActivePinia(createPinia());
     __resetTerminalRunOrchestratorForTesting();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('returns an application-level singleton', () => {
@@ -41,5 +45,33 @@ describe('terminal run orchestrator', () => {
     await orchestrator.runScript();
 
     expect(notifier.warning).toHaveBeenCalledWith('已有脚本正在运行，请等待完成或先停止当前运行。');
+  });
+
+  it('manages completion fallback timer through a replaceable disposable', async () => {
+    vi.useFakeTimers();
+    const clearTimeoutSpy = vi.spyOn(window, 'clearTimeout');
+    const orchestrator = getTerminalRunOrchestrator();
+    const internals = orchestrator as unknown as {
+      scheduleTerminalRunCompletionTimeout(runId: string): void;
+      clearTerminalRunFallbackTimer(): void;
+      terminalRunFallbackTimer: { value: unknown };
+    };
+
+    internals.scheduleTerminalRunCompletionTimeout('run-1');
+    const firstTimer = internals.terminalRunFallbackTimer.value;
+
+    expect(firstTimer).toBeTypeOf('function');
+
+    internals.scheduleTerminalRunCompletionTimeout('run-2');
+    await Promise.resolve();
+
+    expect(internals.terminalRunFallbackTimer.value).not.toBe(firstTimer);
+    expect(clearTimeoutSpy).toHaveBeenCalledTimes(1);
+
+    internals.clearTerminalRunFallbackTimer();
+    await Promise.resolve();
+
+    expect(internals.terminalRunFallbackTimer.value).toBeNull();
+    expect(clearTimeoutSpy).toHaveBeenCalledTimes(2);
   });
 });

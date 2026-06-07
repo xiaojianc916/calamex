@@ -1,4 +1,3 @@
-import type { UnlistenFn } from '@tauri-apps/api/event';
 import type { ComputedRef } from 'vue';
 import { getTerminalEventBus } from '@/services/terminal/eventBus';
 import { useTerminalFacade } from '@/services/terminal/facade';
@@ -15,6 +14,8 @@ import {
   type ITerminalRunCompletedPayload,
 } from '@/types/terminal';
 import { waitForDesktopRuntime } from '@/utils/desktop-runtime';
+import { createDisposableBag, createMutableDisposable } from '@/utils/disposable';
+import { requestDisposableTimeout } from '@/utils/dom-lifecycle';
 import { toErrorMessage } from '@/utils/error';
 import { isShellScriptPath } from '@/utils/file-assets';
 import { DEFAULT_EXECUTOR, getExecutorLabel } from '@/utils/templates';
@@ -88,13 +89,11 @@ export class TerminalRunOrchestrator {
   private readonly tabsStore = useTerminalTabsStore();
 
   private bufferedTerminalOutputChunks: string[] = [];
-  private bufferedTerminalOutputTimerId: number | null = null;
-  private terminalRunFallbackTimerId: number | null = null;
+  private readonly bufferedTerminalOutputTimer = createMutableDisposable();
+  private readonly terminalRunFallbackTimer = createMutableDisposable();
+  private readonly terminalRunListeners = createMutableDisposable();
   private activeTerminalRunMeta: IActiveTerminalRunMeta | null = null;
   private hasEnsuredTerminalSession = false;
-  private terminalRunChunkUnlisten: UnlistenFn | null = null;
-  private terminalRunCompletedUnlisten: UnlistenFn | null = null;
-  private terminalExitUnlisten: UnlistenFn | null = null;
   private terminalRunListenerRegistration: Promise<void> | null = null;
   private terminalRunListenerVersion = 0;
 
@@ -146,13 +145,16 @@ export class TerminalRunOrchestrator {
     }
 
     this.bufferedTerminalOutputChunks.push(payload.data);
-    if (this.bufferedTerminalOutputTimerId !== null) {
+    if (this.bufferedTerminalOutputTimer.value !== null) {
       return;
     }
 
-    this.bufferedTerminalOutputTimerId = window.setTimeout(() => {
-      this.flushBufferedTerminalOutput();
-    }, TERMINAL_OUTPUT_BATCH_INTERVAL_MS);
+    this.bufferedTerminalOutputTimer.set(
+      requestDisposableTimeout(() => {
+        this.bufferedTerminalOutputTimer.clearAndLeak();
+        this.flushBufferedTerminalOutput();
+      }, TERMINAL_OUTPUT_BATCH_INTERVAL_MS),
+    );
   }
 
   handleIntegratedTerminalRunCompleted(payload: ITerminalRunCompletedPayload): void {
@@ -200,21 +202,11 @@ export class TerminalRunOrchestrator {
   }
 
   private clearBufferedTerminalOutputTimer(): void {
-    if (this.bufferedTerminalOutputTimerId === null) {
-      return;
-    }
-
-    window.clearTimeout(this.bufferedTerminalOutputTimerId);
-    this.bufferedTerminalOutputTimerId = null;
+    this.bufferedTerminalOutputTimer.clear();
   }
 
   private clearTerminalRunFallbackTimer(): void {
-    if (this.terminalRunFallbackTimerId === null) {
-      return;
-    }
-
-    window.clearTimeout(this.terminalRunFallbackTimerId);
-    this.terminalRunFallbackTimerId = null;
+    this.terminalRunFallbackTimer.clear();
   }
 
   private flushBufferedTerminalOutput(): void {
@@ -243,12 +235,7 @@ export class TerminalRunOrchestrator {
   }
 
   private clearTerminalRunEventListeners(): void {
-    this.terminalRunChunkUnlisten?.();
-    this.terminalRunCompletedUnlisten?.();
-    this.terminalExitUnlisten?.();
-    this.terminalRunChunkUnlisten = null;
-    this.terminalRunCompletedUnlisten = null;
-    this.terminalExitUnlisten = null;
+    this.terminalRunListeners.clear();
   }
 
   private appendRunLifecycleLog(
@@ -350,20 +337,22 @@ export class TerminalRunOrchestrator {
 
   private scheduleTerminalRunCompletionTimeout(runId: string): void {
     this.clearTerminalRunFallbackTimer();
-    this.terminalRunFallbackTimerId = window.setTimeout(() => {
-      this.terminalRunFallbackTimerId = null;
+    this.terminalRunFallbackTimer.set(
+      requestDisposableTimeout(() => {
+        this.terminalRunFallbackTimer.clearAndLeak();
 
-      if (!this.isCurrentTerminalRun(runId)) {
-        return;
-      }
+        if (!this.isCurrentTerminalRun(runId)) {
+          return;
+        }
 
-      this.failTerminalRun(
-        TERMINAL_RUN_LOG_TITLES.timeout,
-        '终端运行超时，已停止等待完成事件，请检查终端状态。',
-        TERMINAL_RUN_LOG_TITLES.timeout,
-        TERMINAL_RUN_LOG_CODES.timeout,
-      );
-    }, TERMINAL_RUN_COMPLETION_TIMEOUT_MS);
+        this.failTerminalRun(
+          TERMINAL_RUN_LOG_TITLES.timeout,
+          '终端运行超时，已停止等待完成事件，请检查终端状态。',
+          TERMINAL_RUN_LOG_TITLES.timeout,
+          TERMINAL_RUN_LOG_CODES.timeout,
+        );
+      }, TERMINAL_RUN_COMPLETION_TIMEOUT_MS),
+    );
   }
 
   private async ensureIntegratedTerminalSession(): Promise<void> {
@@ -522,7 +511,7 @@ export class TerminalRunOrchestrator {
   }
 
   private async ensureTerminalRunEventListeners(): Promise<void> {
-    if (this.terminalRunChunkUnlisten && this.terminalRunCompletedUnlisten && this.terminalExitUnlisten) {
+    if (this.terminalRunListeners.value !== null) {
       return;
     }
 
@@ -537,6 +526,7 @@ export class TerminalRunOrchestrator {
         return;
       }
 
+      const listeners = createDisposableBag();
       const runChunkUnlisten = this.terminalEventBus.onRunChunk((payload: ITerminalRunChunkPayload) => {
         this.appendTerminalOutput(payload);
       });
@@ -548,26 +538,23 @@ export class TerminalRunOrchestrator {
       const exitUnlisten = this.terminalEventBus.onInteractiveExited((payload: ITerminalExitEvent) => {
         this.handleIntegratedTerminalExit(payload);
       });
+      listeners.add(runChunkUnlisten);
+      listeners.add(runCompletedUnlisten);
+      listeners.add(exitUnlisten);
 
       if (this.terminalRunListenerVersion !== version) {
-        runChunkUnlisten();
-        runCompletedUnlisten();
-        exitUnlisten();
+        void listeners.dispose();
         return;
       }
 
       try {
         await this.terminalEventBus.start();
       } catch (error) {
-        runChunkUnlisten();
-        runCompletedUnlisten();
-        exitUnlisten();
+        void listeners.dispose();
         throw error;
       }
 
-      this.terminalRunChunkUnlisten = runChunkUnlisten;
-      this.terminalRunCompletedUnlisten = runCompletedUnlisten;
-      this.terminalExitUnlisten = exitUnlisten;
+      this.terminalRunListeners.set(() => listeners.dispose());
     })().finally(() => {
       this.terminalRunListenerRegistration = null;
     });
