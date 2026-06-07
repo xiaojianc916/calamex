@@ -111,4 +111,27 @@ describe('useLsp lifecycle', () => {
     expect(lspBridgeMock.stop).toHaveBeenCalled();
     scope.stop();
   });
+
+  it('稳定运行后会重置自动重启计数，避免历史崩溃影响后续健康实例', async () => {
+    const root = ref('D:/repo');
+    const scope = effectScope();
+
+    scope.run(() => {
+      useLsp(root);
+    });
+    await flush();
+
+    lspBridgeMock.emit({ type: 'crashed', exitStatus: '1' });
+    await vi.advanceTimersByTimeAsync(1000);
+    await flush();
+    lspBridgeMock.emit({ type: 'started' });
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    lspBridgeMock.emit({ type: 'crashed', exitStatus: '2' });
+    await vi.advanceTimersByTimeAsync(1000);
+    await flush();
+
+    expect(lspBridgeMock.start).toHaveBeenCalledTimes(3);
+    scope.stop();
+  });
 });

@@ -1,5 +1,6 @@
 import { computed, type MaybeRefOrGetter, onScopeDispose, ref, toRef, watch } from 'vue';
 import { type BridgeStateEvent, lspBridge } from '@/services/editor/lsp-bridge';
+import { createRunOnceScheduler, createSequencer, type Sequencer } from '@/utils/async-lifecycle';
 
 /**
  * LSP 状态枚举
@@ -25,35 +26,41 @@ const serverName = 'bash-language-server';
 let activeWorkspaceRoot: string | null = null;
 let lifecycleToken = 0;
 let autoRestartCount = 0;
-let autoRestartTimer: ReturnType<typeof setTimeout> | null = null;
-let stabilityTimer: ReturnType<typeof setTimeout> | null = null;
-let pendingOperation: Promise<void> = Promise.resolve();
+let operationSequencer: Sequencer = createSequencer();
+let scheduledAutoRestart: { root: string; token: number } | null = null;
+let scheduledStabilityToken: number | null = null;
 let stateSubscribed = false;
 let unsubscribeState: (() => void) | null = null;
 
-const clearAutoRestartTimer = (): void => {
-  if (autoRestartTimer !== null) {
-    clearTimeout(autoRestartTimer);
-    autoRestartTimer = null;
+const autoRestartScheduler = createRunOnceScheduler(() => {
+  const scheduled = scheduledAutoRestart;
+  scheduledAutoRestart = null;
+  if (!scheduled || !isLifecycleCurrent(scheduled.token, scheduled.root)) return;
+  void runExclusive(() => startLspInternal(scheduled.root, scheduled.token));
+}, AUTO_RESTART_BASE_DELAY_MS);
+
+const stabilityResetScheduler = createRunOnceScheduler(() => {
+  const token = scheduledStabilityToken;
+  scheduledStabilityToken = null;
+  if (token !== null && isLifecycleCurrent(token) && status.value === 'running') {
+    autoRestartCount = 0;
   }
+}, STABILITY_RESET_MS);
+
+const clearAutoRestartTimer = (): void => {
+  scheduledAutoRestart = null;
+  autoRestartScheduler.cancel();
 };
 
 const clearStabilityTimer = (): void => {
-  if (stabilityTimer !== null) {
-    clearTimeout(stabilityTimer);
-    stabilityTimer = null;
-  }
+  scheduledStabilityToken = null;
+  stabilityResetScheduler.cancel();
 };
 
 const isLifecycleCurrent = (token: number, root = activeWorkspaceRoot): boolean =>
   token === lifecycleToken && root === activeWorkspaceRoot;
 
-const runExclusive = (operation: () => Promise<void>): Promise<void> => {
-  const next = pendingOperation.then(operation, operation);
-  // 吞掉链上的 reject，避免单次失败阻断后续排队的操作。
-  pendingOperation = next.catch(() => {});
-  return next;
-};
+const runExclusive = (operation: () => Promise<void>): Promise<void> => operationSequencer.queue(operation);
 
 const startLspInternal = async (root: string, token: number): Promise<void> => {
   if (!isLifecycleCurrent(token, root)) return;
@@ -98,11 +105,8 @@ const scheduleAutoRestart = (): void => {
   const delay = AUTO_RESTART_BASE_DELAY_MS * 2 ** autoRestartCount;
   autoRestartCount += 1;
   clearAutoRestartTimer();
-  autoRestartTimer = setTimeout(() => {
-    autoRestartTimer = null;
-    if (!isLifecycleCurrent(token, root)) return;
-    void runExclusive(() => startLspInternal(root, token));
-  }, delay);
+  scheduledAutoRestart = { root, token };
+  autoRestartScheduler.schedule(delay);
 };
 
 const handleBridgeState = (event: BridgeStateEvent): void => {
@@ -113,12 +117,8 @@ const handleBridgeState = (event: BridgeStateEvent): void => {
       status.value = 'running';
       error.value = null;
       clearStabilityTimer();
-      stabilityTimer = setTimeout(() => {
-        stabilityTimer = null;
-        if (isLifecycleCurrent(token) && status.value === 'running') {
-          autoRestartCount = 0;
-        }
-      }, STABILITY_RESET_MS);
+      scheduledStabilityToken = token;
+      stabilityResetScheduler.schedule();
       break;
     case 'stopped':
       clearStabilityTimer();
@@ -147,7 +147,7 @@ const ensureStateSubscription = (): void => {
 const setWorkspaceRoot = (root: string | null): Promise<void> => {
   ensureStateSubscription();
   if (root === activeWorkspaceRoot) {
-    return pendingOperation;
+    return operationSequencer.pending;
   }
 
   lifecycleToken += 1;
@@ -215,7 +215,7 @@ export const __resetLspLifecycleForTesting = (): void => {
   unsubscribeState?.();
   unsubscribeState = null;
   stateSubscribed = false;
-  pendingOperation = Promise.resolve();
+  operationSequencer = createSequencer();
   status.value = 'idle';
   error.value = null;
 };
