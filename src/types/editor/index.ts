@@ -38,6 +38,14 @@ export interface IEditorDocument {
   path: string | null;
   name: string;
   kind: TDocumentKind;
+  /**
+   * 标签页与文本缓冲区分离：
+   * - true/undefined：正文已加载，可直接编辑/保存/诊断
+   * - false：仅保留标签元数据，正文已从内存卸载；激活时按 path 重新加载
+   */
+  bufferLoaded?: boolean;
+  /** 最近访问时间，用于淘汰久未使用且无未保存修改的文本缓冲区。 */
+  lastAccessedAt?: string;
   content: string;
   encoding: TDocumentEncoding;
   savedContent: string;

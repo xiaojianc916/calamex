@@ -105,6 +105,7 @@ const SUBMENU_SAFE_WIDTH = 224;
 const VIEWPORT_PADDING = 12;
 const MENU_ROOT_SELECTOR = '.linear-context-menu-root';
 const MENU_TRIGGER_SELECTOR = '.linear-context-menu-trigger';
+const SELECTION_SUMMARY_TEXT_LIMIT = 4_000;
 
 const createEmptyAnalysis = (): IAnalyzeScriptPayload => ({
   available: true,
@@ -161,6 +162,13 @@ const emit = defineEmits<{
 
 const containerRef = ref<HTMLElement | null>(null);
 const analysisState = computed(() => props.analysis ?? createEmptyAnalysis());
+const analysisDiagnosticsSignature = computed(() => {
+  const analysis = analysisState.value;
+  if (!analysis.available) return 'unavailable';
+  return analysis.diagnostics
+    .map((item) => [item.line, item.column, item.endLine, item.endColumn, item.level, item.code, item.message].join('\u001f'))
+    .join('\u001e');
+});
 const contextMenuState = ref({ open: false, x: 0 });
 contextMenuState.value = { open: false, x: 0, y: 0 } as typeof contextMenuState.value & {
   y: number;
@@ -256,15 +264,32 @@ const resolveSelectedText = (): string => {
   return line.text;
 };
 
+const resolveSelectionTextPreview = (
+  text: string,
+  limit: number,
+): { preview: string; truncated: boolean } => {
+  let count = 0;
+  let preview = '';
+  for (const char of text) {
+    if (count >= limit) return { preview, truncated: true };
+    preview += char;
+    count += 1;
+  }
+  return { preview, truncated: false };
+};
+
 const resolveSelectionSummary = (): IEditorSelectionSummary | null => {
   const view = editorView;
   const range = view?.state.selection.main;
   if (!view || !range || range.empty) return null;
   const selectedText = selectionRangeToText(view, range);
   if (!selectedText.trim()) return null;
-  const chars = [...selectedText];
+  const { preview, truncated } = resolveSelectionTextPreview(
+    selectedText,
+    SELECTION_SUMMARY_TEXT_LIMIT,
+  );
   return {
-    text: chars.length > 4_000 ? `${chars.slice(0, 4_000).join('')}\n[已截断]` : selectedText,
+    text: truncated ? `${preview}\n[已截断]` : selectedText,
     startLine: view.state.doc.lineAt(range.from).number,
     endLine: view.state.doc.lineAt(range.to).number,
   };
@@ -945,9 +970,8 @@ watch(
 );
 
 watch(
-  () => props.analysis,
+  analysisDiagnosticsSignature,
   () => syncDiagnostics(),
-  { deep: true },
 );
 
 watch(
