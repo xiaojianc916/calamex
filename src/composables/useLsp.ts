@@ -16,6 +16,8 @@ export type LspStatus = 'idle' | 'starting' | 'running' | 'stopped' | 'error';
 const MAX_AUTO_RESTARTS = 3;
 /** 自动重启基础退避时间（毫秒），按 2^n 退避 */
 const AUTO_RESTART_BASE_DELAY_MS = 1000;
+/** 参考 VS Code LanguageClient 默认错误处理器：只统计一个滚动窗口内的频繁崩溃 */
+const AUTO_RESTART_WINDOW_MS = 3 * 60 * 1000;
 /** 稳定运行超过此时长视为“健康”，重置自动重启计数（毫秒） */
 const STABILITY_RESET_MS = 30_000;
 
@@ -25,7 +27,7 @@ const serverName = 'bash-language-server';
 
 let activeWorkspaceRoot: string | null = null;
 let lifecycleToken = 0;
-let autoRestartCount = 0;
+let autoRestartTimestamps: number[] = [];
 let operationSequencer: Sequencer = createSequencer();
 let scheduledAutoRestart: { root: string; token: number } | null = null;
 let scheduledStabilityToken: number | null = null;
@@ -43,7 +45,7 @@ const stabilityResetScheduler = createRunOnceScheduler(() => {
   const token = scheduledStabilityToken;
   scheduledStabilityToken = null;
   if (token !== null && isLifecycleCurrent(token) && status.value === 'running') {
-    autoRestartCount = 0;
+    autoRestartTimestamps = [];
   }
 }, STABILITY_RESET_MS);
 
@@ -55,6 +57,24 @@ const clearAutoRestartTimer = (): void => {
 const clearStabilityTimer = (): void => {
   scheduledStabilityToken = null;
   stabilityResetScheduler.cancel();
+};
+
+const resetAutoRestartHistory = (): void => {
+  autoRestartTimestamps = [];
+};
+
+const recordAutoRestartAttempt = (): number | null => {
+  const now = Date.now();
+  autoRestartTimestamps = autoRestartTimestamps.filter(
+    (timestamp) => now - timestamp <= AUTO_RESTART_WINDOW_MS,
+  );
+
+  if (autoRestartTimestamps.length >= MAX_AUTO_RESTARTS) {
+    return null;
+  }
+
+  autoRestartTimestamps.push(now);
+  return autoRestartTimestamps.length - 1;
 };
 
 const isLifecycleCurrent = (token: number, root = activeWorkspaceRoot): boolean =>
@@ -97,13 +117,14 @@ const stopLspInternal = async (token: number, nextStatus: LspStatus = 'stopped')
 const scheduleAutoRestart = (): void => {
   const root = activeWorkspaceRoot;
   if (!root) return;
-  if (autoRestartCount >= MAX_AUTO_RESTARTS) {
+
+  const restartIndex = recordAutoRestartAttempt();
+  if (restartIndex === null) {
     return;
   }
 
   const token = lifecycleToken;
-  const delay = AUTO_RESTART_BASE_DELAY_MS * 2 ** autoRestartCount;
-  autoRestartCount += 1;
+  const delay = AUTO_RESTART_BASE_DELAY_MS * 2 ** restartIndex;
   clearAutoRestartTimer();
   scheduledAutoRestart = { root, token };
   autoRestartScheduler.schedule(delay);
@@ -153,7 +174,7 @@ const setWorkspaceRoot = (root: string | null): Promise<void> => {
   lifecycleToken += 1;
   const token = lifecycleToken;
   activeWorkspaceRoot = root;
-  autoRestartCount = 0;
+  resetAutoRestartHistory();
   clearAutoRestartTimer();
   clearStabilityTimer();
 
@@ -171,7 +192,7 @@ const startLspShared = (root: string): Promise<void> => {
   lifecycleToken += 1;
   const token = lifecycleToken;
   activeWorkspaceRoot = root;
-  autoRestartCount = 0;
+  resetAutoRestartHistory();
   clearAutoRestartTimer();
   clearStabilityTimer();
   return runExclusive(() => startLspInternal(root, token));
@@ -190,7 +211,7 @@ const restartLspShared = (): Promise<void> => {
   lifecycleToken += 1;
   const token = lifecycleToken;
   const root = activeWorkspaceRoot;
-  autoRestartCount = 0;
+  resetAutoRestartHistory();
   clearAutoRestartTimer();
   clearStabilityTimer();
   return runExclusive(async () => {
@@ -209,7 +230,7 @@ const restartLspShared = (): Promise<void> => {
 export const __resetLspLifecycleForTesting = (): void => {
   lifecycleToken += 1;
   activeWorkspaceRoot = null;
-  autoRestartCount = 0;
+  resetAutoRestartHistory();
   clearAutoRestartTimer();
   clearStabilityTimer();
   unsubscribeState?.();
