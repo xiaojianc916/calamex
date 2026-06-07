@@ -210,11 +210,10 @@ async fn resolve_github_auth_credential(
             source: "git-credential".to_string(),
         })
         .or_else(|| {
-            resolve_github_cli_token(host)
-                .map(|token| GitHubResolvedCredential {
-                    token,
-                    source: "github-cli".to_string(),
-                })
+            resolve_github_cli_token(host).map(|token| GitHubResolvedCredential {
+                token,
+                source: "github-cli".to_string(),
+            })
         });
 
     if let Ok(mut cache) = github_auth_credential_cache().lock() {
@@ -230,7 +229,10 @@ async fn resolve_github_auth_credential(
     credential
 }
 
-async fn resolve_git_credential_token(repository_root: &std::path::Path, host: &str) -> Option<String> {
+async fn resolve_git_credential_token(
+    repository_root: &std::path::Path,
+    host: &str,
+) -> Option<String> {
     let mut command = tokio::process::Command::new("git");
     command
         .arg("-C")
