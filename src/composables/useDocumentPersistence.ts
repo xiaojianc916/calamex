@@ -23,11 +23,20 @@ type TUseDocumentPersistenceOptions = {
 
 type TTextSourceDocument = Pick<IScriptFilePayload, 'path' | 'name' | 'content' | 'encoding'>;
 
+type TLoadedTextDocumentSnapshot = {
+  id: string;
+  path: string | null;
+  name: string;
+  content: string;
+  encoding: TDocumentEncoding;
+};
+
 interface IPersistTextDocumentOptions {
   path: string;
   content: string;
   encoding: TDocumentEncoding;
   onSaved?: (payload: IScriptFilePayload) => void;
+  shouldApplyResult?: (payload: IScriptFilePayload) => boolean;
   resolveSuccessFeedback: (payload: IScriptFilePayload) => IEditorOperationFeedback;
   failureTitle: string;
   fallbackFailureMessage: string;
@@ -49,6 +58,22 @@ const isTextDocument = (document: IEditorDocument): boolean => document.kind ===
 
 const isLoadedTextDocument = (document: IEditorDocument): boolean =>
   isTextDocument(document) && document.bufferLoaded !== false;
+
+const createLoadedTextDocumentSnapshot = (
+  document: IEditorDocument,
+): TLoadedTextDocumentSnapshot | null => {
+  if (!isLoadedTextDocument(document)) {
+    return null;
+  }
+
+  return {
+    id: document.id,
+    path: document.path,
+    name: document.name,
+    content: document.content,
+    encoding: document.encoding,
+  };
+};
 
 export const useDocumentPersistence = ({
   appStore,
@@ -128,6 +153,34 @@ export const useDocumentPersistence = ({
     return editorStore.getDocumentById(documentId);
   };
 
+  const isLoadedTextDocumentSnapshotCurrent = (
+    documentId: string,
+    snapshot: TLoadedTextDocumentSnapshot,
+  ): boolean => {
+    const currentDocument = editorStore.getDocumentById(documentId);
+    return Boolean(
+      currentDocument &&
+        isLoadedTextDocument(currentDocument) &&
+        currentDocument.path === snapshot.path &&
+        currentDocument.name === snapshot.name &&
+        currentDocument.content === snapshot.content &&
+        currentDocument.encoding === snapshot.encoding,
+    );
+  };
+
+  const isUnloadedTextDocumentPathCurrent = (
+    documentId: string,
+    expectedPath: string | null,
+  ): boolean => {
+    const currentDocument = editorStore.getDocumentById(documentId);
+    return Boolean(
+      currentDocument &&
+        isTextDocument(currentDocument) &&
+        currentDocument.bufferLoaded === false &&
+        currentDocument.path === expectedPath,
+    );
+  };
+
   const loadTextSourceDocument = async (path: string): Promise<TTextSourceDocument> => {
     const existingDocument = editorStore.findDocumentByPath(path);
     if (existingDocument) {
@@ -136,8 +189,14 @@ export const useDocumentPersistence = ({
       }
 
       if (existingDocument.bufferLoaded === false) {
+        const documentId = existingDocument.id;
+        const expectedPath = existingDocument.path;
         const payload = await loadTextPayload(path);
-        editorStore.applyDocumentPayload(existingDocument.id, payload);
+
+        if (isUnloadedTextDocumentPathCurrent(documentId, expectedPath)) {
+          editorStore.applyDocumentPayload(documentId, payload);
+        }
+
         return payload;
       }
 
@@ -157,6 +216,7 @@ export const useDocumentPersistence = ({
     content,
     encoding,
     onSaved,
+    shouldApplyResult,
     resolveSuccessFeedback,
     failureTitle,
     fallbackFailureMessage,
@@ -170,8 +230,13 @@ export const useDocumentPersistence = ({
         workspaceRootPath: workspaceRootPath ?? resolveWorkspaceRootForPath(path),
       });
 
+      if (shouldApplyResult && !shouldApplyResult(payload)) {
+        void refreshGitRepositoryStatus(workspaceRootPath ?? resolveWorkspaceRootForPath(path));
+        return true;
+      }
+
       onSaved?.(payload);
-      void refreshGitRepositoryStatus();
+      void refreshGitRepositoryStatus(workspaceRootPath ?? resolveWorkspaceRootForPath(path));
       return notifyOperationSuccess(resolveSuccessFeedback(payload));
     } catch (error) {
       return reportPersistenceError(failureTitle, fallbackFailureMessage, error);
@@ -198,17 +263,26 @@ export const useDocumentPersistence = ({
       return warnAndReturnFalse('当前文件内容尚未加载，请先切换到该标签页后再格式化。');
     }
 
+    const snapshot = createLoadedTextDocumentSnapshot(targetDocument);
+    if (!snapshot) {
+      return false;
+    }
+
     try {
       const formattedContent = await formatShellScriptWithWasm(
-        targetDocument.content,
-        targetDocument.path ?? targetDocument.name,
+        snapshot.content,
+        snapshot.path ?? snapshot.name,
       );
-      const hasChanges = formattedContent !== targetDocument.content;
 
+      if (!isLoadedTextDocumentSnapshotCurrent(documentId, snapshot)) {
+        return false;
+      }
+
+      const hasChanges = formattedContent !== snapshot.content;
       editorStore.updateDocumentContent(documentId, formattedContent);
 
       if (!options?.suppressSuccessMessage) {
-        notifyOperationSuccess(buildCurrentDocumentFormatFeedback(targetDocument.name, hasChanges));
+        notifyOperationSuccess(buildCurrentDocumentFormatFeedback(snapshot.name, hasChanges));
       }
 
       return true;
@@ -232,7 +306,14 @@ export const useDocumentPersistence = ({
       if (!currentDocument.path) {
         return null;
       }
-      const payload = await loadTextPayload(currentDocument.path);
+
+      const expectedPath = currentDocument.path;
+      const payload = await loadTextPayload(expectedPath);
+
+      if (!isUnloadedTextDocumentPathCurrent(documentId, expectedPath)) {
+        return null;
+      }
+
       editorStore.applyDocumentPayload(documentId, payload);
     }
 
@@ -262,6 +343,11 @@ export const useDocumentPersistence = ({
   const formatWorkspaceFileByPath = async (path: string): Promise<boolean> => {
     try {
       const workspaceRootPath = resolveWorkspaceRootForPath(path);
+      const existingBeforeFormat = editorStore.findDocumentByPath(path);
+      const existingSnapshot =
+        existingBeforeFormat && isLoadedTextDocument(existingBeforeFormat)
+          ? createLoadedTextDocumentSnapshot(existingBeforeFormat)
+          : null;
       const sourceDocument = await loadTextSourceDocument(path);
       const formattedContent = await formatShellScriptWithWasm(
         sourceDocument.content,
@@ -276,9 +362,19 @@ export const useDocumentPersistence = ({
         workspaceRootPath,
         onSaved: (payload) => {
           const existingDocument = editorStore.findDocumentByPath(path);
-          if (existingDocument && isTextDocument(existingDocument)) {
-            editorStore.applyDocumentPayload(existingDocument.id, payload);
+          if (!existingDocument || !isTextDocument(existingDocument)) {
+            return;
           }
+
+          if (
+            existingSnapshot &&
+            existingDocument.id === existingSnapshot.id &&
+            !isLoadedTextDocumentSnapshotCurrent(existingSnapshot.id, existingSnapshot)
+          ) {
+            return;
+          }
+
+          editorStore.applyDocumentPayload(existingDocument.id, payload);
         },
         resolveSuccessFeedback: (payload) =>
           buildWorkspaceDocumentFormatFeedback(payload.name, payload.path, hasChanges),
@@ -308,9 +404,14 @@ export const useDocumentPersistence = ({
       return warnAndReturnFalse('当前图片预览为只读模式，暂不支持另存为。');
     }
 
+    const snapshot = createLoadedTextDocumentSnapshot(targetDocument);
+    if (!snapshot) {
+      return false;
+    }
+
     let targetPath: string | null;
     try {
-      targetPath = await tauriService.pickSavePath(targetDocument.path ?? targetDocument.name);
+      targetPath = await tauriService.pickSavePath(snapshot.path ?? snapshot.name);
     } catch (error) {
       return reportPersistenceError('另存为失败', '另存为失败', error);
     }
@@ -321,8 +422,9 @@ export const useDocumentPersistence = ({
 
     return persistTextDocument({
       path: targetPath,
-      content: targetDocument.content,
-      encoding: targetDocument.encoding,
+      content: snapshot.content,
+      encoding: snapshot.encoding,
+      shouldApplyResult: () => isLoadedTextDocumentSnapshotCurrent(documentId, snapshot),
       onSaved: (payload) => {
         editorStore.applyDocumentPayload(documentId, payload);
       },
@@ -346,10 +448,16 @@ export const useDocumentPersistence = ({
       return saveDocumentAs(documentId);
     }
 
+    const snapshot = createLoadedTextDocumentSnapshot(targetDocument);
+    if (!snapshot || !snapshot.path) {
+      return false;
+    }
+
     return persistTextDocument({
-      path: targetDocument.path,
-      content: targetDocument.content,
-      encoding: targetDocument.encoding,
+      path: snapshot.path,
+      content: snapshot.content,
+      encoding: snapshot.encoding,
+      shouldApplyResult: () => isLoadedTextDocumentSnapshotCurrent(documentId, snapshot),
       onSaved: (payload) => {
         editorStore.applyDocumentPayload(documentId, payload);
       },

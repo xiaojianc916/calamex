@@ -16,6 +16,7 @@ export const commands = {
 	saveSkill: (payload: SaveSkillRequest) => __TAURI_INVOKE<SkillDetailPayload>("save_skill", { payload }),
 	deleteSkill: (payload: DeleteSkillRequest) => __TAURI_INVOKE<DeleteSkillPayload>("delete_skill", { payload }),
 	applyWindowStage: (stage: WindowStage) => __TAURI_INVOKE<null>("apply_window_stage", { stage }),
+	openExternalUrl: (url: string) => __TAURI_INVOKE<null>("open_external_url", { url }),
 	setWindowBackground: (input: SetWindowBackgroundInput, traceId: string | null) => __TAURI_INVOKE<null>("set_window_background", { input, traceId }),
 	createWorkspacePath: (payload: WorkspacePathCreateRequest) => __TAURI_INVOKE<WorkspacePathCreatePayload>("create_workspace_path", { payload }),
 	deleteWorkspacePath: (payload: WorkspacePathDeleteRequest) => __TAURI_INVOKE<WorkspacePathDeletePayload>("delete_workspace_path", { payload }),
@@ -69,6 +70,8 @@ export const commands = {
 	 */
 	getGitCommitFileDiffPreview: (payload: GitCommitFileDiffRequest) => __TAURI_INVOKE<GitDiffPreviewPayload>("get_git_commit_file_diff_preview", { payload }),
 	getGithubAuthStatus: (payload: GitHubAuthRequest) => __TAURI_INVOKE<GitHubAuthStatusPayload>("get_github_auth_status", { payload }),
+	beginGithubDeviceAuth: (payload: GitHubAuthRequest) => __TAURI_INVOKE<GitHubDeviceAuthPayload>("begin_github_device_auth", { payload }),
+	completeGithubDeviceAuth: (payload: GitHubDeviceAuthCompleteRequest) => __TAURI_INVOKE<GitHubAuthStatusPayload>("complete_github_device_auth", { payload }),
 	connectGithub: (payload: GitHubAuthRequest) => __TAURI_INVOKE<GitHubAuthStatusPayload>("connect_github", { payload }),
 	disconnectGithub: (payload: GitHubAuthRequest) => __TAURI_INVOKE<GitHubAuthStatusPayload>("disconnect_github", { payload }),
 	listGitCommitHistory: (payload: GitCommitHistoryRequest) => __TAURI_INVOKE<GitCommitHistoryPayload>("list_git_commit_history", { payload }),
@@ -1104,6 +1107,20 @@ export type GitHubAuthStatusPayload = {
 	email: string | null,
 	source: string | null,
 	message: string | null,
+};
+
+export type GitHubDeviceAuthCompleteRequest = {
+	repositoryRootPath: string,
+	deviceCode: string,
+	interval: number,
+};
+
+export type GitHubDeviceAuthPayload = {
+	deviceCode: string,
+	userCode: string,
+	verificationUri: string,
+	interval: number,
+	expiresIn: number,
 };
 
 export type GitPathOperationRequest = {
