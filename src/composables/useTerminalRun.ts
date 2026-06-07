@@ -65,6 +65,11 @@ const buildTerminalDispatchRequest = (
   runId,
 });
 
+export const shouldKeepTerminalRunScopeAlive = (
+  isRunning: boolean,
+  currentRunId: string | null,
+): boolean => isRunning || (currentRunId?.trim().length ?? 0) > 0;
+
 export const useTerminalRun = ({ canRun, editorStore }: TUseTerminalRunOptions) => {
   const notifier = useMessage();
   const terminalRegistryStore = useTerminalRegistryStore();
@@ -77,6 +82,7 @@ export const useTerminalRun = ({ canRun, editorStore }: TUseTerminalRunOptions) 
   let bufferedTerminalOutputTimerId: number | null = null;
   let terminalRunFallbackTimerId: number | null = null;
   let isDisposed = false;
+  let isDetachedDuringActiveRun = false;
   let activeTerminalRunMeta: IActiveTerminalRunMeta | null = null;
   let hasEnsuredTerminalSession = false;
   let terminalRunChunkUnlisten: UnlistenFn | null = null;
@@ -140,6 +146,23 @@ export const useTerminalRun = ({ canRun, editorStore }: TUseTerminalRunOptions) 
     terminalRunChunkUnlisten = null;
     terminalRunCompletedUnlisten = null;
     terminalExitUnlisten = null;
+  };
+
+  const disposeTerminalRunResources = (): void => {
+    terminalRunListenerVersion += 1;
+    clearTerminalRunEventListeners();
+    terminalFacade.dispose();
+    resetBufferedTerminalOutput();
+    clearTerminalRunFallbackTimer();
+  };
+
+  const disposeDetachedTerminalRunScopeIfNeeded = (): void => {
+    if (!isDetachedDuringActiveRun) {
+      return;
+    }
+    isDisposed = true;
+    isDetachedDuringActiveRun = false;
+    disposeTerminalRunResources();
   };
 
   const appendRunLifecycleLog = (
@@ -228,6 +251,7 @@ export const useTerminalRun = ({ canRun, editorStore }: TUseTerminalRunOptions) 
 
     appendRunLifecycleLog('error', title, message, failedRunId, logCode);
     notifier.error(message);
+    disposeDetachedTerminalRunScopeIfNeeded();
   };
 
   const scheduleTerminalRunCompletionTimeout = (runId: string): void => {
@@ -473,6 +497,7 @@ export const useTerminalRun = ({ canRun, editorStore }: TUseTerminalRunOptions) 
       if (activeTerminalRunMeta?.runId === resolvedRunId) {
         clearActiveTerminalRunState();
       }
+      disposeDetachedTerminalRunScopeIfNeeded();
       return;
     }
 
@@ -511,6 +536,8 @@ export const useTerminalRun = ({ canRun, editorStore }: TUseTerminalRunOptions) 
     } else {
       notifier.error('脚本执行失败，请检查终端输出。');
     }
+
+    disposeDetachedTerminalRunScopeIfNeeded();
   };
 
   const handleIntegratedTerminalRunCompleted = (payload: ITerminalRunCompletedPayload): void => {
@@ -583,12 +610,16 @@ export const useTerminalRun = ({ canRun, editorStore }: TUseTerminalRunOptions) 
   };
 
   onScopeDispose(() => {
+    if (shouldKeepTerminalRunScopeAlive(editorStore.isRunning, getCurrentTerminalRunId())) {
+      // 运行中的脚本是应用级后台任务，不属于当前 Vue 组件实例。
+      // 页面/面板切换导致作用域卸载时，继续保留事件监听、输出缓冲和完成兜底计时器；
+      // 等 run 正常完成/失败后再由 finalize/fail 路径释放本作用域资源。
+      isDetachedDuringActiveRun = true;
+      return;
+    }
+
     isDisposed = true;
-    terminalRunListenerVersion += 1;
-    clearTerminalRunEventListeners();
-    terminalFacade.dispose();
-    resetBufferedTerminalOutput();
-    clearTerminalRunFallbackTimer();
+    disposeTerminalRunResources();
     clearActiveTerminalRunState();
   });
 
