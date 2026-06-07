@@ -14,7 +14,66 @@ use nucleo_matcher::{
     Config, Matcher as NucleoMatcher, Utf32Str,
     pattern::{CaseMatching, Normalization, Pattern as NucleoPattern},
 };
-use std::{fs, io, path::Path};
+use std::{cmp::Ordering, collections::BinaryHeap, fs, io, path::Path};
+
+/// 包装搜索结果以便放入有界最大堆。
+///
+/// 排序键为 `(score, relative_path)`：分数越小越靠前（与最终升序排序一致），
+/// 因此最大堆堆顶始终是“最不优先”的元素，超出容量时弹出堆顶即可保留 top-k。
+struct RankedResult(WorkspaceSearchResult);
+
+impl RankedResult {
+    fn sort_key(&self) -> (i32, &str) {
+        (self.0.score, self.0.relative_path.as_str())
+    }
+}
+
+impl PartialEq for RankedResult {
+    fn eq(&self, other: &Self) -> bool {
+        self.sort_key() == other.sort_key()
+    }
+}
+
+impl Eq for RankedResult {}
+
+impl PartialOrd for RankedResult {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for RankedResult {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.sort_key().cmp(&other.sort_key())
+    }
+}
+
+/// 将结果推入有界堆，仅保留分数最低（最优）的 `limit` 个。
+fn push_bounded_result(
+    heap: &mut BinaryHeap<RankedResult>,
+    result: WorkspaceSearchResult,
+    limit: usize,
+) {
+    if limit == 0 {
+        return;
+    }
+    heap.push(RankedResult(result));
+    if heap.len() > limit {
+        heap.pop();
+    }
+}
+
+/// 取出堆中结果并按 `(score, relative_path)` 升序排序后返回。
+fn into_sorted_results(heap: BinaryHeap<RankedResult>) -> Vec<WorkspaceSearchResult> {
+    let mut results: Vec<WorkspaceSearchResult> =
+        heap.into_iter().map(|ranked| ranked.0).collect();
+    results.sort_by(|left, right| {
+        left.score
+            .cmp(&right.score)
+            .then_with(|| left.relative_path.cmp(&right.relative_path))
+    });
+    results
+}
 
 pub(super) fn search_file_names(
     files: &[ScannedFile],
@@ -30,32 +89,30 @@ pub(super) fn search_file_names(
     let pattern = NucleoPattern::parse(query, case_matching, Normalization::Smart);
     let mut matcher = NucleoMatcher::new(Config::DEFAULT.match_paths());
     let mut utf32_buffer = Vec::new();
-    let mut results = Vec::new();
+    let mut heap: BinaryHeap<RankedResult> = BinaryHeap::new();
 
     for file in files {
         let haystack = Utf32Str::new(&file.relative_path, &mut utf32_buffer);
         if let Some(score) = pattern.score(haystack, &mut matcher) {
-            results.push(WorkspaceSearchResult {
-                path: file.path.to_string_lossy().to_string(),
-                relative_path: file.relative_path.clone(),
-                name: file.name.clone(),
-                kind: WorkspaceSearchResultKind::FileName,
-                line_number: None,
-                line_text: None,
-                match_start: None,
-                match_end: None,
-                score: i64_to_i32(-(score as i64), "搜索评分")?,
-            });
+            push_bounded_result(
+                &mut heap,
+                WorkspaceSearchResult {
+                    path: file.path.to_string_lossy().to_string(),
+                    relative_path: file.relative_path.clone(),
+                    name: file.name.clone(),
+                    kind: WorkspaceSearchResultKind::FileName,
+                    line_number: None,
+                    line_text: None,
+                    match_start: None,
+                    match_end: None,
+                    score: i64_to_i32(-(score as i64), "搜索评分")?,
+                },
+                limit,
+            );
         }
     }
 
-    results.sort_by(|left, right| {
-        left.score
-            .cmp(&right.score)
-            .then_with(|| left.relative_path.cmp(&right.relative_path))
-    });
-    results.truncate(limit);
-    Ok(results)
+    Ok(into_sorted_results(heap))
 }
 
 pub(super) fn search_file_contents(
@@ -174,7 +231,7 @@ pub(super) fn search_symbols(
     let pattern = NucleoPattern::parse(query, case_matching, Normalization::Smart);
     let mut matcher = NucleoMatcher::new(Config::DEFAULT.match_paths());
     let mut utf32_buffer = Vec::new();
-    let mut results = Vec::new();
+    let mut heap: BinaryHeap<RankedResult> = BinaryHeap::new();
 
     for symbol in symbols.iter() {
         if !passes_path_filters(&symbol.relative_path, filters) {
@@ -183,27 +240,25 @@ pub(super) fn search_symbols(
         let candidate = format!("{} {}", symbol.name, symbol.relative_path);
         let haystack = Utf32Str::new(&candidate, &mut utf32_buffer);
         if let Some(score) = pattern.score(haystack, &mut matcher) {
-            results.push(WorkspaceSearchResult {
-                path: symbol.path.to_string_lossy().to_string(),
-                relative_path: symbol.relative_path.clone(),
-                name: symbol.name.clone(),
-                kind: WorkspaceSearchResultKind::Symbol,
-                line_number: Some(symbol.line_number),
-                line_text: Some(format!("函数 {}", symbol.name)),
-                match_start: None,
-                match_end: None,
-                score: i64_to_i32(-(score as i64) + symbol.line_number as i64, "搜索评分")?,
-            });
+            push_bounded_result(
+                &mut heap,
+                WorkspaceSearchResult {
+                    path: symbol.path.to_string_lossy().to_string(),
+                    relative_path: symbol.relative_path.clone(),
+                    name: symbol.name.clone(),
+                    kind: WorkspaceSearchResultKind::Symbol,
+                    line_number: Some(symbol.line_number),
+                    line_text: Some(format!("函数 {}", symbol.name)),
+                    match_start: None,
+                    match_end: None,
+                    score: i64_to_i32(-(score as i64) + symbol.line_number as i64, "搜索评分")?,
+                },
+                limit,
+            );
         }
     }
 
-    results.sort_by(|left, right| {
-        left.score
-            .cmp(&right.score)
-            .then_with(|| left.relative_path.cmp(&right.relative_path))
-    });
-    results.truncate(limit);
-    Ok(results)
+    Ok(into_sorted_results(heap))
 }
 
 fn search_one_file_content(
@@ -290,4 +345,59 @@ fn search_one_file_content(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_result(score: i32, relative_path: &str) -> WorkspaceSearchResult {
+        WorkspaceSearchResult {
+            path: relative_path.to_string(),
+            relative_path: relative_path.to_string(),
+            name: relative_path.to_string(),
+            kind: WorkspaceSearchResultKind::FileName,
+            line_number: None,
+            line_text: None,
+            match_start: None,
+            match_end: None,
+            score,
+        }
+    }
+
+    #[test]
+    fn bounded_top_k_keeps_lowest_scores_in_order() {
+        let mut heap: BinaryHeap<RankedResult> = BinaryHeap::new();
+        push_bounded_result(&mut heap, make_result(40, "d"), 2);
+        push_bounded_result(&mut heap, make_result(10, "a"), 2);
+        push_bounded_result(&mut heap, make_result(30, "c"), 2);
+        push_bounded_result(&mut heap, make_result(20, "b"), 2);
+
+        let observed: Vec<(i32, String)> = into_sorted_results(heap)
+            .into_iter()
+            .map(|result| (result.score, result.relative_path))
+            .collect();
+        assert_eq!(observed, vec![(10, "a".to_string()), (20, "b".to_string())]);
+    }
+
+    #[test]
+    fn bounded_top_k_breaks_ties_by_relative_path() {
+        let mut heap: BinaryHeap<RankedResult> = BinaryHeap::new();
+        push_bounded_result(&mut heap, make_result(10, "y"), 2);
+        push_bounded_result(&mut heap, make_result(10, "x"), 2);
+        push_bounded_result(&mut heap, make_result(10, "z"), 2);
+
+        let observed: Vec<String> = into_sorted_results(heap)
+            .into_iter()
+            .map(|result| result.relative_path)
+            .collect();
+        assert_eq!(observed, vec!["x".to_string(), "y".to_string()]);
+    }
+
+    #[test]
+    fn bounded_top_k_with_zero_limit_is_empty() {
+        let mut heap: BinaryHeap<RankedResult> = BinaryHeap::new();
+        push_bounded_result(&mut heap, make_result(10, "a"), 0);
+        assert!(into_sorted_results(heap).is_empty());
+    }
 }
