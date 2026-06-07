@@ -104,19 +104,34 @@ const emit = defineEmits<{
   'inline-rename-cancel': [];
 }>();
 
+const isDirectoryLikeEntry = (entry: IWorkspaceEntry): boolean =>
+  entry.kind === 'directory' || entry.hasChildren;
+
+const normalizeTreeEntry = (entry: IWorkspaceEntry): IWorkspaceEntry => {
+  if (!isDirectoryLikeEntry(entry) || entry.kind === 'directory') {
+    return entry;
+  }
+  return {
+    ...entry,
+    kind: 'directory',
+    hasChildren: true,
+  };
+};
+
 // 把可见的树结构拍平成一维行列表，以便虚拟化与键盘导航。
 const rows = computed<TWorkspaceTreeRow[]>(() => {
   const result: TWorkspaceTreeRow[] = [];
   const draft = props.inlineCreateDraft;
 
   const walk = (node: IWorkspaceEntry, level: number): void => {
-    const isDirectory = node.kind === 'directory';
+    const isDirectory = isDirectoryLikeEntry(node);
+    const normalizedNode = normalizeTreeEntry(node);
     const expanded = isDirectory && props.expandedPaths.has(node.path);
 
     result.push({
       type: 'entry',
       key: node.path,
-      entry: node,
+      entry: normalizedNode,
       level,
       expanded,
       showChevron: isDirectory,
@@ -186,7 +201,7 @@ const entryNav = computed<TEntryNav[]>(() => {
       result.push({
         path: row.entry.path,
         level: row.level,
-        isDirectory: row.entry.kind === 'directory',
+        isDirectory: isDirectoryLikeEntry(row.entry),
         expanded: row.expanded,
       });
     }
@@ -303,7 +318,7 @@ const focusRowByPath = async (path: string): Promise<void> => {
 
 const onActivate = (entry: IWorkspaceEntry): void => {
   focusedPath.value = entry.path;
-  if (entry.kind === 'directory') {
+  if (isDirectoryLikeEntry(entry)) {
     emit('toggle-directory', entry.path);
   } else {
     emit('open-file', entry.path);
