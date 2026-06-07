@@ -70,4 +70,22 @@ describe('createSidecarLiveEventBuffer', () => {
     );
     expect(stageEvent?.text).toBe('思考A思考B');
   });
+
+  it('dispose 后忽略迟到 sidecar 事件，避免取消/切屏后的旧事件回写 UI', () => {
+    let flushCount = 0;
+    const buffer = createSidecarLiveEventBuffer(() => {
+      flushCount += 1;
+    });
+
+    buffer.push(messageDelta('取消前'));
+    buffer.flush();
+    expect(flushCount).toBe(1);
+
+    buffer.dispose();
+    buffer.push(messageDelta('迟到内容'));
+    buffer.flush();
+
+    expect(flushCount).toBe(1);
+    expect(buffer.events).toHaveLength(0);
+  });
 });

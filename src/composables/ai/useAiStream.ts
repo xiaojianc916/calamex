@@ -4,6 +4,13 @@ type TAiStreamStatus = 'idle' | 'streaming' | 'completed' | 'cancelled';
 
 export interface IUseAiStreamOptions {
   messageId?: string;
+  /**
+   * Scope disposal must not implicitly cancel an in-flight AI run. Components may be
+   * unmounted when the user switches panels/routes while the request is still owned
+   * by the chat/session lifecycle. In that case keep the current buffer intact so
+   * late completion/cancel handlers can still persist the correct terminal state.
+   */
+  preserveActiveOnDispose?: boolean;
 }
 
 export interface IAiStreamStartOptions {
@@ -21,10 +28,9 @@ export interface IAiStreamStartOptions {
  * 对外暴露的 API 与此前保持一致，避免影响上层调用方（如 useAiAssistant）。
  */
 export const useAiStream = (options: IUseAiStreamOptions = {}) => {
-  void options;
-
   const content = ref('');
   const status = ref<TAiStreamStatus>('idle');
+  const preserveActiveOnDispose = options.preserveActiveOnDispose !== false;
 
   const start = (startOptions: Readonly<IAiStreamStartOptions> = {}): void => {
     void startOptions;
@@ -58,6 +64,10 @@ export const useAiStream = (options: IUseAiStreamOptions = {}) => {
 
   if (getCurrentScope()) {
     onScopeDispose(() => {
+      if (preserveActiveOnDispose && status.value === 'streaming') {
+        return;
+      }
+
       content.value = '';
       status.value = 'idle';
     });

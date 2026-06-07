@@ -88,6 +88,17 @@ describe('useAiStream', () => {
     scope.stop();
   });
 
+  it('作用域释放时不隐式取消正在运行的 AI 流', () => {
+    const { stream, scope } = createStreamHarness();
+
+    stream.start();
+    stream.append('切屏前已经到达');
+    scope.stop();
+
+    expect(stream.content.value).toBe('切屏前已经到达');
+    expect(stream.status.value).toBe('streaming');
+  });
+
   it('保留跨 delta 的 emoji ZWJ 字符簇', () => {
     const { stream, scope } = createStreamHarness();
     const family = '👨‍👩‍👧‍👦';

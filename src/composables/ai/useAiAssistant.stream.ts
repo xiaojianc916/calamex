@@ -280,6 +280,7 @@ export const createSidecarLiveEventBuffer = (
   let pendingEvents: TAgentUiEvent[] = [];
   let scheduledFlush: TUiFlushHandle | null = null;
   let isFlushScheduled = false;
+  let isDisposed = false;
 
   const retainEvent = (event: TAgentUiEvent): void => {
     if (event.type !== 'message_delta') {
@@ -329,7 +330,7 @@ export const createSidecarLiveEventBuffer = (
     scheduledFlush = null;
     isFlushScheduled = false;
 
-    if (pendingEvents.length === 0) {
+    if (isDisposed || pendingEvents.length === 0) {
       return;
     }
 
@@ -344,6 +345,10 @@ export const createSidecarLiveEventBuffer = (
       return events;
     },
     push: (event) => {
+      if (isDisposed) {
+        return;
+      }
+
       if (event.type === 'message_delta') {
         retainPendingMessageDelta(event);
 
@@ -367,6 +372,7 @@ export const createSidecarLiveEventBuffer = (
     },
     flush,
     dispose: () => {
+      isDisposed = true;
       cancelUiFlush(scheduledFlush);
       scheduledFlush = null;
       isFlushScheduled = false;
