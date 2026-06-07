@@ -116,9 +116,13 @@ const parseExitCodeFromOutput = (output: string): number | null => {
 };
 
 const sortLogsAscending = (runLogs: IRunLogEntry[]): IRunLogEntry[] =>
-  [...runLogs].sort(
-    (left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime(),
-  );
+  // Schwartzian transform（装饰-排序-还原）：每条日志只解析一次时间戳，避免比较器
+  // 里反复 new Date().getTime()。该排序会随终端输出刷新被高频调用，把 Date 解析从
+  // O(n log n) 次降到 O(n) 次。首个 .map 已生成新数组，排序不会改动入参顺序。
+  runLogs
+    .map((entry) => ({ entry, sortKey: new Date(entry.createdAt).getTime() }))
+    .sort((left, right) => left.sortKey - right.sortKey)
+    .map((decorated) => decorated.entry);
 
 const parseTimestamp = (value: string | null | undefined): number | null => {
   if (!value) {
