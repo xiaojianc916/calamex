@@ -29,6 +29,7 @@ use notify::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::HashMap,
     ffi::OsStr,
     path::{Component, Path, PathBuf},
     sync::{
@@ -408,33 +409,18 @@ fn collect_watch_dirs(start: &Path) -> Vec<PathBuf> {
 /// 把攒下的一批原始事件展开、过滤、去重后，作为单个 `WorkspaceFsEvent` 推送到前端。
 fn flush_events(pending: &mut Vec<Event>, app: &AppHandle, root: &Path) {
     let events = std::mem::take(pending);
-
-    // 展开为 (path, kind) 列表，并丢弃落在被忽略目录内的变更（事件级兜底过滤：
-    // Linux 监听已不覆盖忽略目录；Win/Mac 递归监听覆盖全树，这里按 .gitignore/黑名单挡掉）。
-    // 每个事件可能携带多个路径（如 rename 携带 from/to）。
-    let mut changes: Vec<FsChange> = events
-        .iter()
-        .flat_map(|event| {
-            let kind = classify_event_kind(&event.kind);
-            event.paths.iter().filter_map(move |path| {
-                if is_ignored_change(root, path) {
-                    return None;
-                }
-                Some(FsChange {
-                    path: path.to_string_lossy().into_owned(),
-                    kind,
-                })
+    let changes = coalesce_changes(events.iter().flat_map(|event| {
+        let kind = classify_event_kind(&event.kind);
+        event.paths.iter().filter_map(move |path| {
+            if is_ignored_change(root, path) {
+                return None;
+            }
+            Some(FsChange {
+                path: path.to_string_lossy().into_owned(),
+                kind,
             })
         })
-        .collect();
-
-    // 去重：同路径保留 severity 最高的 kind
-    changes.sort_by(|a, b| {
-        a.path
-            .cmp(&b.path)
-            .then_with(|| severity(b.kind).cmp(&severity(a.kind)))
-    });
-    changes.dedup_by(|a, b| a.path == b.path);
+    }));
 
     if changes.is_empty() {
         return;
@@ -450,6 +436,31 @@ fn flush_events(pending: &mut Vec<Event>, app: &AppHandle, root: &Path) {
     if let Err(e) = payload.emit(app) {
         log::warn!("发送工作区文件事件失败: {e}");
     }
+}
+
+/// 同批事件按 path 聚合，仅保留 severity 最高的 kind，再按 path 排序保证输出稳定。
+///
+/// 原先做法是把所有事件展开成 Vec 后 sort + dedup，事件风暴中成本为 O(n log n)。
+/// 这里先用 HashMap 在线聚合为唯一路径数 u，再仅对 u 个路径排序：O(n + u log u)。
+fn coalesce_changes(changes: impl Iterator<Item = FsChange>) -> Vec<FsChange> {
+    let mut by_path: HashMap<String, FsChangeKind> = HashMap::new();
+    for change in changes {
+        by_path
+            .entry(change.path)
+            .and_modify(|kind| {
+                if severity(change.kind) > severity(*kind) {
+                    *kind = change.kind;
+                }
+            })
+            .or_insert(change.kind);
+    }
+
+    let mut changes: Vec<FsChange> = by_path
+        .into_iter()
+        .map(|(path, kind)| FsChange { path, kind })
+        .collect();
+    changes.sort_by(|left, right| left.path.cmp(&right.path));
+    changes
 }
 
 /// notify EventKind → 内部 FsChangeKind
@@ -577,6 +588,38 @@ mod tests {
 
     fn p(value: &str) -> PathBuf {
         PathBuf::from(value)
+    }
+
+    fn change(path: &str, kind: FsChangeKind) -> FsChange {
+        FsChange {
+            path: path.to_string(),
+            kind,
+        }
+    }
+
+    #[test]
+    fn coalesces_changes_by_highest_severity_and_path_order() {
+        let observed = coalesce_changes(
+            [
+                change("/ws/b.sh", FsChangeKind::Modified),
+                change("/ws/a.sh", FsChangeKind::Created),
+                change("/ws/b.sh", FsChangeKind::Removed),
+                change("/ws/a.sh", FsChangeKind::Modified),
+            ]
+            .into_iter(),
+        );
+
+        let observed: Vec<(String, FsChangeKind)> = observed
+            .into_iter()
+            .map(|change| (change.path, change.kind))
+            .collect();
+        assert_eq!(
+            observed,
+            vec![
+                ("/ws/a.sh".to_string(), FsChangeKind::Created),
+                ("/ws/b.sh".to_string(), FsChangeKind::Removed),
+            ]
+        );
     }
 
     #[test]
