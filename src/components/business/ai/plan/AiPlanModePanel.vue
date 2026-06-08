@@ -144,7 +144,7 @@ const toggleCollapsed = (): void => {
         :aria-label="collapseLabel" @click="toggleCollapsed">
         <span class="icon-[lucide--chevron-down] ai-plan-caret" :class="{ 'is-collapsed': isCollapsed }"
           aria-hidden="true" />
-        <h3>{{ todoTitle }}</h3>
+        <h3 v-text="todoTitle"></h3>
       </button>
       <div class="ai-plan-header-actions">
         <button v-if="canResumeRun" type="button" class="ai-plan-resume-button" :disabled="isRunActionPending"
@@ -152,7 +152,7 @@ const toggleCollapsed = (): void => {
           <span aria-hidden="true" class="icon-[lucide--play]" />
           <span>继续</span>
         </button>
-        <span class="ai-plan-state-label">{{ planStateLabel }}</span>
+        <span class="ai-plan-state-label" v-text="planStateLabel"></span>
       </div>
     </header>
 
