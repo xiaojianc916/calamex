@@ -22,6 +22,7 @@ const MSG_GIT_INIT_NO_REPOSITORY = 'Git 初始化后仍未检测到仓库。';
 const MSG_GIT_NO_REPOSITORY_IN_WORKSPACE = '当前工作区未检测到 Git 仓库。';
 const PULL_REQUEST_BACKGROUND_PRELOAD_DELAY_MS = 1200;
 const PULL_REQUEST_LIST_REVALIDATE_INTERVAL_MS = 30_000;
+const PULL_REQUEST_DETAIL_REVALIDATE_INTERVAL_MS = 30_000;
 const PULL_REQUEST_DETAIL_PRELOAD_LIMIT = 20;
 const PULL_REQUEST_DETAIL_PRELOAD_CONCURRENCY = 4;
 const PULL_REQUEST_DETAIL_CACHE_LIMIT = 20;
@@ -167,6 +168,7 @@ export const useGitStore = defineStore('git', () => {
   const pullRequestListCache = ref<Record<string, IGitPullRequestSummaryPayload[]>>({});
   const pullRequestListFetchedAt = ref<Record<string, number>>({});
   const pullRequestDetailCache = ref<Record<string, IGitPullRequestDetailPayload>>({});
+  const pullRequestDetailFetchedAt = ref<Record<string, number>>({});
   const pullRequestDetailCacheOrder = ref<string[]>([]);
 
   const commitDetailCache = ref<Record<string, IGitCommitDetailPayload>>({});
@@ -255,6 +257,7 @@ export const useGitStore = defineStore('git', () => {
   const invalidatePullRequestDetailCache = (pullRequestNumber?: number): void => {
     if (pullRequestNumber === undefined) {
       pullRequestDetailCache.value = {};
+      pullRequestDetailFetchedAt.value = {};
       pullRequestDetailCacheOrder.value = [];
       pendingPullRequestDetailRequests.clear();
       return;
@@ -263,8 +266,11 @@ export const useGitStore = defineStore('git', () => {
     if (!repositoryRootPath) return;
     const cacheKey = createPullRequestDetailCacheKey(repositoryRootPath, pullRequestNumber);
     const nextCache = { ...pullRequestDetailCache.value };
+    const nextFetchedAt = { ...pullRequestDetailFetchedAt.value };
     delete nextCache[cacheKey];
+    delete nextFetchedAt[cacheKey];
     pullRequestDetailCache.value = nextCache;
+    pullRequestDetailFetchedAt.value = nextFetchedAt;
     pullRequestDetailCacheOrder.value = pullRequestDetailCacheOrder.value.filter(
       (key) => key !== cacheKey,
     );
@@ -859,11 +865,13 @@ export const useGitStore = defineStore('git', () => {
     const cacheKey = createPullRequestDetailCacheKey(repositoryRootPath, number);
     const pending = pendingPullRequestDetailRequests.get(cacheKey);
     const cached = pullRequestDetailCache.value[cacheKey];
+    const fetchedAt = pullRequestDetailFetchedAt.value[cacheKey] ?? 0;
+    const shouldRevalidate = Date.now() - fetchedAt >= PULL_REQUEST_DETAIL_REVALIDATE_INTERVAL_MS;
     if (cached && !force) {
       rememberPullRequestDetail(cacheKey, cached);
       if (updateActive) {
         pullRequestDetail.value = cached;
-        if (!pending) {
+        if (!pending && shouldRevalidate) {
           void loadPullRequestDetail(number, {
             force: true,
             updateActive: true,

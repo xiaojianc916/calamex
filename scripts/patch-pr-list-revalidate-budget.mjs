@@ -8,8 +8,16 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const root = resolve(__dirname, '..');
 
+function readProjectFile(relativePath) {
+  return readFileSync(resolve(root, relativePath), 'utf8');
+}
+
+function writeProjectFile(relativePath, text) {
+  writeFileSync(resolve(root, relativePath), text, 'utf8');
+}
+
 function countOccurrences(text, needle) {
-  if (needle.length === 0) return 0;
+  if (!needle) return 0;
 
   let count = 0;
   let index = 0;
@@ -22,49 +30,65 @@ function countOccurrences(text, needle) {
   }
 }
 
-function replaceExact(relativePath, oldText, newText, expectedCount = 1) {
-  const filePath = resolve(root, relativePath);
-  const text = readFileSync(filePath, 'utf8');
+function replaceOnce(relativePath, oldText, newText, label) {
+  const text = readProjectFile(relativePath);
   const count = countOccurrences(text, oldText);
 
-  if (count !== expectedCount) {
+  if (count !== 1) {
     throw new Error(
       [
-        `${relativePath}: expected ${expectedCount} occurrence(s), found ${count}.`,
+        `${relativePath}: ${label}`,
+        `expected 1 occurrence, found ${count}.`,
         'Refusing to modify because the file may have changed.',
       ].join('\n'),
     );
   }
 
-  writeFileSync(filePath, text.split(oldText).join(newText), 'utf8');
-  console.log(`patched ${relativePath}: ${expectedCount} replacement(s)`);
+  writeProjectFile(relativePath, text.replace(oldText, newText));
+  console.log(`patched ${relativePath}: ${label}`);
 }
 
-// 1. Add a small revalidation budget.
-// This is not a TTL-only strategy: manual refresh still force-bypasses it.
-// It only prevents repeated automatic SWR refreshes caused by tab switching / rerenders.
-replaceExact(
-  'src/store/git.ts',
+function replaceOnceUnlessContains(relativePath, oldText, newText, alreadyAppliedNeedle, label) {
+  const text = readProjectFile(relativePath);
+
+  if (text.includes(alreadyAppliedNeedle)) {
+    console.log(`skipped ${relativePath}: ${label} already applied`);
+    return;
+  }
+
+  replaceOnce(relativePath, oldText, newText, label);
+}
+
+const file = 'src/store/git.ts';
+
+// 1. Add automatic PR list revalidation budget.
+// Manual refresh still uses force:true and bypasses this budget.
+replaceOnceUnlessContains(
+  file,
   `const PULL_REQUEST_BACKGROUND_PRELOAD_DELAY_MS = 1200;
 const PULL_REQUEST_DETAIL_PRELOAD_LIMIT = 20;`,
   `const PULL_REQUEST_BACKGROUND_PRELOAD_DELAY_MS = 1200;
 const PULL_REQUEST_LIST_REVALIDATE_INTERVAL_MS = 30_000;
 const PULL_REQUEST_DETAIL_PRELOAD_LIMIT = 20;`,
+  'PULL_REQUEST_LIST_REVALIDATE_INTERVAL_MS',
+  'add PR list revalidation interval',
 );
 
-// 2. Track the last successful fetch time per repository + PR state.
-replaceExact(
-  'src/store/git.ts',
+// 2. Track last successful list fetch time per repository/state cache key.
+replaceOnceUnlessContains(
+  file,
   `  const pullRequestListCache = ref<Record<string, IGitPullRequestSummaryPayload[]>>({});
   const pullRequestDetailCache = ref<Record<string, IGitPullRequestDetailPayload>>({});`,
   `  const pullRequestListCache = ref<Record<string, IGitPullRequestSummaryPayload[]>>({});
   const pullRequestListFetchedAt = ref<Record<string, number>>({});
   const pullRequestDetailCache = ref<Record<string, IGitPullRequestDetailPayload>>({});`,
+  'pullRequestListFetchedAt',
+  'track PR list freshness',
 );
 
-// 3. Invalidate freshness metadata together with the list cache.
-replaceExact(
-  'src/store/git.ts',
+// 3. Clear freshness metadata with list cache.
+replaceOnceUnlessContains(
+  file,
   `  const invalidatePullRequestListCache = (): void => {
     pullRequestListCache.value = {};
     pendingPullRequestListRequests.clear();
@@ -74,13 +98,15 @@ replaceExact(
     pullRequestListFetchedAt.value = {};
     pendingPullRequestListRequests.clear();
   };`,
+  `pullRequestListFetchedAt.value = {};`,
+  'invalidate PR list freshness metadata',
 );
 
-// 4. When a mutation updates cached PR lists, also mark those cache entries as fresh.
-// This mirrors GitHub Desktop's store-first update approach: local mutation result updates store,
-// then explicit refresh paths can still reconcile with the server.
-replaceExact(
-  'src/store/git.ts',
+// 4. Mark mutation-updated cache entries as fresh.
+// This matches GitHub Desktop's store-first mutation pattern:
+// update local cache immediately, then explicit refresh can still reconcile.
+replaceOnceUnlessContains(
+  file,
   `    const nextCache = { ...pullRequestListCache.value };
     for (const cacheKey of cacheKeys) {
       const state = normalizePullRequestState(cacheKey.split('|').pop());
@@ -107,35 +133,44 @@ replaceExact(
 
     pullRequestListCache.value = nextCache;
     pullRequestListFetchedAt.value = nextFetchedAt;`,
+  'const nextFetchedAt = { ...pullRequestListFetchedAt.value };',
+  'mark mutation-updated PR lists fresh',
 );
 
-// 5. Add the revalidation budget to automatic SWR loads.
-// Cached data still displays instantly. If it was refreshed very recently, skip the network.
-// Manual refresh passes force: true and bypasses this block.
-replaceExact(
-  'src/store/git.ts',
-  `    const cacheKey = createPullRequestCacheKey(repositoryRootPath, selectedState);
+// 5. Apply the revalidation budget to automatic SWR.
+// Cached list still displays immediately.
+// If recently fetched, skip network.
+// Manual refresh force:true bypasses this block.
+replaceOnceUnlessContains(
+  file,
+  `    const repositoryRootPath = requireRepositoryRootPath();
+    const cacheKey = createPullRequestCacheKey(repositoryRootPath, selectedState);
     const cached = pullRequestListCache.value[cacheKey];
     if (cached && updateActive) pullRequests.value = cached;
 
     if (options?.force) {`,
-  `    const cacheKey = createPullRequestCacheKey(repositoryRootPath, selectedState);
+  `    const repositoryRootPath = requireRepositoryRootPath();
+    const cacheKey = createPullRequestCacheKey(repositoryRootPath, selectedState);
     const cached = pullRequestListCache.value[cacheKey];
     if (cached && updateActive) pullRequests.value = cached;
 
     const fetchedAt = pullRequestListFetchedAt.value[cacheKey] ?? 0;
-    const isFresh =
-      Date.now() - fetchedAt < PULL_REQUEST_LIST_REVALIDATE_INTERVAL_MS;
+    const isFresh = Date.now() - fetchedAt < PULL_REQUEST_LIST_REVALIDATE_INTERVAL_MS;
     if (cached && !options?.force && isFresh) {
+      if (shouldPreloadDetails) {
+        preloadTopPullRequestDetails(cached);
+      }
       return cached;
     }
 
     if (options?.force) {`,
+  'const fetchedAt = pullRequestListFetchedAt.value[cacheKey] ?? 0;',
+  'apply PR list SWR revalidation budget',
 );
 
-// 6. Store the successful fetch timestamp with the list payload.
-replaceExact(
-  'src/store/git.ts',
+// 6. Store successful fetch timestamp.
+replaceOnceUnlessContains(
+  file,
   `        pullRequestListCache.value = {
           ...pullRequestListCache.value,
           [cacheKey]: payload,
@@ -150,6 +185,8 @@ replaceExact(
           [cacheKey]: Date.now(),
         };
         if (updateActive && requestId === pullRequestsRequestId) {`,
+  'pullRequestListFetchedAt.value = {',
+  'store PR list successful fetch timestamp',
 );
 
 console.log('done');
