@@ -85,6 +85,7 @@ export const useTerminalFacade = (options: ITerminalFacadeOptions = {}): ITermin
   let eventBridgeStarted = false;
   let switchingInputBufferBytes = 0;
   let eventBridgePromise: Promise<void> | null = null;
+  let eventBridgeVersion = 0;
 
   /**
    * 两端同步协议:
@@ -226,17 +227,20 @@ export const useTerminalFacade = (options: ITerminalFacadeOptions = {}): ITermin
   };
 
   const clearEventBridgeListeners = (): void => {
+    eventBridgeVersion += 1;
+    eventBridgeStarted = false;
     eventBridgeListeners.clear();
   };
 
   const ensureEventBridge = async (): Promise<void> => {
-    if (eventBridgeStarted) {
+    if (eventBridgeStarted && eventBridgeListeners.value !== null) {
       return;
     }
     if (eventBridgePromise) {
       return eventBridgePromise;
     }
 
+    const version = eventBridgeVersion;
     const listeners = createDisposableBag();
     listeners.add(eventBus.onTerminalData(emitTerminalData));
     listeners.add(
@@ -291,14 +295,24 @@ export const useTerminalFacade = (options: ITerminalFacadeOptions = {}): ITermin
     eventBridgePromise = eventBus
       .start()
       .then(() => {
+        // `dispose()` may run while the shared event bus is still starting. Mirror
+        // VS Code's version-token lifecycle guards: stale starts must not mark
+        // this facade as started after its listeners were already disposed.
+        if (eventBridgeVersion !== version || eventBridgeListeners.value === null) {
+          return;
+        }
         eventBridgeStarted = true;
       })
       .catch((error: unknown) => {
-        clearEventBridgeListeners();
+        if (eventBridgeVersion === version) {
+          clearEventBridgeListeners();
+        }
         throw error;
       })
       .finally(() => {
-        eventBridgePromise = null;
+        if (eventBridgeVersion === version) {
+          eventBridgePromise = null;
+        }
       });
 
     return eventBridgePromise;
@@ -426,7 +440,6 @@ export const useTerminalFacade = (options: ITerminalFacadeOptions = {}): ITermin
     clearEventBridgeListeners();
     pendingRunHandles.clear();
     pendingRunStartedPayloads.clear();
-    eventBridgeStarted = false;
     eventBridgePromise = null;
     // 故意不调用 eventBus.stop() —— 见上方 jsdoc。
   };
