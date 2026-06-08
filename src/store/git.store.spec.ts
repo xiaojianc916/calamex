@@ -440,4 +440,72 @@ describe('useGitStore', () => {
       vi.useRealTimers();
     }
   });
+
+  it('拉取请求列表刷新结果未变化时会复用旧数组引用', async () => {
+    const gitStore = useGitStore();
+    tauriServiceMock.getGitRepositoryStatus.mockResolvedValueOnce(createStatus());
+    await gitStore.refreshRepositoryStatus(WORKSPACE_ROOT);
+
+    const initialPullRequests = [
+      createPullRequest({ number: 1, title: 'feat: stable pr' }),
+      createPullRequest({
+        number: 2,
+        title: 'fix: stable pr',
+        htmlUrl: 'https://github.com/owner/repo/pull/2',
+      }),
+    ];
+
+    tauriServiceMock.listGitPullRequests.mockResolvedValueOnce(initialPullRequests);
+
+    await expect(gitStore.loadPullRequests('open', { preloadDetails: false })).resolves.toEqual(
+      initialPullRequests,
+    );
+
+    const cachedReference = gitStore.pullRequests;
+
+    tauriServiceMock.listGitPullRequests.mockResolvedValueOnce([
+      createPullRequest({ number: 1, title: 'feat: stable pr' }),
+      createPullRequest({
+        number: 2,
+        title: 'fix: stable pr',
+        htmlUrl: 'https://github.com/owner/repo/pull/2',
+      }),
+    ]);
+
+    await expect(
+      gitStore.loadPullRequests('open', {
+        force: true,
+        preloadDetails: false,
+      }),
+    ).resolves.toEqual(initialPullRequests);
+
+    expect(gitStore.pullRequests).toBe(cachedReference);
+    expect(tauriServiceMock.listGitPullRequests).toHaveBeenCalledTimes(2);
+  });
+
+  it('拉取请求列表刷新结果变化时会替换数组引用并更新内容', async () => {
+    const gitStore = useGitStore();
+    tauriServiceMock.getGitRepositoryStatus.mockResolvedValueOnce(createStatus());
+    await gitStore.refreshRepositoryStatus(WORKSPACE_ROOT);
+
+    tauriServiceMock.listGitPullRequests.mockResolvedValueOnce([
+      createPullRequest({ number: 1, title: 'feat: old title' }),
+    ]);
+
+    await gitStore.loadPullRequests('open', { preloadDetails: false });
+
+    const cachedReference = gitStore.pullRequests;
+
+    tauriServiceMock.listGitPullRequests.mockResolvedValueOnce([
+      createPullRequest({ number: 1, title: 'feat: new title' }),
+    ]);
+
+    await gitStore.loadPullRequests('open', {
+      force: true,
+      preloadDetails: false,
+    });
+
+    expect(gitStore.pullRequests).not.toBe(cachedReference);
+    expect(gitStore.pullRequests[0]?.title).toBe('feat: new title');
+  });
 });
