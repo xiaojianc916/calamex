@@ -531,6 +531,31 @@ export const useGitStore = defineStore('git', () => {
     ];
   };
 
+  const shouldPreloadPullRequestDetail = (
+    repositoryRootPath: string,
+    pullRequestNumber: number,
+  ): boolean => {
+    const cacheKey = createPullRequestDetailCacheKey(
+      repositoryRootPath,
+      pullRequestNumber,
+      pullRequestSupport.value.repositoryUrl,
+    );
+
+    hydratePullRequestDetailCache(cacheKey);
+
+    if (pendingPullRequestDetailRequests.has(cacheKey)) {
+      return false;
+    }
+
+    const cached = pullRequestDetailCache.value[cacheKey];
+    if (!cached) {
+      return true;
+    }
+
+    const fetchedAt = pullRequestDetailFetchedAt.value[cacheKey] ?? 0;
+    return Date.now() - fetchedAt >= PULL_REQUEST_DETAIL_REVALIDATE_INTERVAL_MS;
+  };
+
   const rememberPullRequestDetail = (
     cacheKey: string,
     payload: IGitPullRequestDetailPayload,
@@ -1046,7 +1071,14 @@ export const useGitStore = defineStore('git', () => {
     entries: IGitPullRequestSummaryPayload[],
     epoch: number,
   ): Promise<void> => {
-    const candidates = entries.slice(0, PULL_REQUEST_DETAIL_PRELOAD_LIMIT);
+    const repositoryRootPath = status.value.repositoryRootPath;
+    if (!repositoryRootPath) return;
+
+    const candidates = entries
+      .slice(0, PULL_REQUEST_DETAIL_PRELOAD_LIMIT)
+      .filter((pullRequest) =>
+        shouldPreloadPullRequestDetail(repositoryRootPath, pullRequest.number),
+      );
     let nextIndex = 0;
 
     const preloadNext = async (): Promise<void> => {
