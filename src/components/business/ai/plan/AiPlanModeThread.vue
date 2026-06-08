@@ -27,12 +27,6 @@ interface IAiPlanThreadScrollState {
   distanceFromBottom: number;
 }
 
-interface IAiPlanThreadStat {
-  id: string;
-  label: string;
-  value: string;
-}
-
 const props = withDefaults(
   defineProps<{
     goal: string;
@@ -100,77 +94,6 @@ const emit = defineEmits<{
   scrollStateChange: [state: IAiPlanThreadScrollState];
 }>();
 
-const executionSteps = computed(() => props.activeRun?.steps ?? props.steps);
-const completedStepCount = computed(
-  () => executionSteps.value.filter((step) => step.status === 'done').length,
-);
-const failedStepCount = computed(
-  () =>
-    executionSteps.value.filter((step) => step.status === 'failed' || step.status === 'cancelled')
-      .length,
-);
-const totalStepCount = computed(() => executionSteps.value.length);
-const activeStep = computed(() => {
-  const run = props.activeRun;
-
-  if (!run) {
-    return props.steps.find((step) => step.isActive) ?? null;
-  }
-
-  if (run.currentStepId) {
-    return run.steps.find((step) => step.id === run.currentStepId) ?? null;
-  }
-
-  return run.steps.find((step) => step.status === 'running') ?? null;
-});
-const statusLabel = computed(() => {
-  if (props.isClassifying) {
-    return '判断任务复杂度';
-  }
-
-  if (props.isPlanning) {
-    return '生成结构化计划';
-  }
-
-  if (props.isApproving) {
-    return '批准计划中';
-  }
-
-  if (props.activeRun) {
-    switch (props.activeRun.status) {
-      case 'running-plan':
-      case 'running-step':
-        return '计划执行中';
-      case 'waiting-for-tool-confirmation':
-        return '等待工具确认';
-      case 'paused':
-        return '计划已暂停';
-      case 'completed':
-        return '计划已完成';
-      case 'failed':
-        return '计划执行失败';
-      case 'cancelled':
-        return '计划已取消';
-      default:
-        return '等待执行';
-    }
-  }
-
-  if (props.approvedAt) {
-    return '计划已批准';
-  }
-
-  if (props.steps.length > 0) {
-    return '等待确认计划';
-  }
-
-  return '等待生成计划';
-});
-const planStats = computed<IAiPlanThreadStat[]>(() => [
-  { id: 'total', label: '步骤', value: String(totalStepCount.value) },
-  { id: 'done', label: '完成', value: String(completedStepCount.value) },
-  { id: 'failed', label: '异常', value: String(failedStepCount.value) },
-]);
 const shouldShowPlanCard = computed(
   () => props.steps.length > 0 && !props.activeRun && !props.approvedAt,
 );
@@ -184,6 +107,9 @@ const shouldShowRunPanel = computed(
     props.status === 'executing' ||
     props.status === 'completed' ||
     props.status === 'failed',
+);
+const shouldRenderReadonlySteps = computed(
+  () => props.steps.length > 0 && !shouldShowPlanCard.value && !shouldShowRunPanel.value,
 );
 const shouldRenderEmptyState = computed(
   () =>
@@ -213,42 +139,22 @@ const handleScrollStateChange = (state: IAiPlanThreadScrollState): void => {
     @scroll-state-change="handleScrollStateChange"
   >
     <ConversationContent class="ai-plan-mode-thread__content" :class="{ 'is-empty': shouldRenderEmptyState }">
-      <ConversationEmptyState
-        v-if="shouldRenderEmptyState"
-        class="ai-plan-empty-state"
-        title="Plan 尚未开始"
-        description="描述一个复杂目标后，Plan 会先拆解步骤、风险和确认点。"
-      >
-        <template #icon>
-          <span class="icon-[lucide--list-checks] size-6" />
-        </template>
-      </ConversationEmptyState>
+      <slot v-if="shouldRenderEmptyState" name="empty">
+        <ConversationEmptyState
+          class="ai-plan-empty-state"
+          title="Plan 尚未开始"
+          description="描述一个复杂目标后，Plan 会先拆解步骤、风险和确认点。"
+        >
+          <template #icon>
+            <span class="icon-[lucide--list-checks] size-6" />
+          </template>
+        </ConversationEmptyState>
+      </slot>
 
       <template v-else>
-        <section class="ai-plan-thread-activity" aria-label="Plan 活动概览">
-          <header class="ai-plan-thread-activity__header">
-            <span class="ai-plan-thread-activity__icon" aria-hidden="true">
-              <span class="icon-[lucide--route]" />
-            </span>
-            <div class="ai-plan-thread-activity__copy">
-              <strong v-text="statusLabel"></strong>
-              <span v-if="activeStep" v-text="activeStep.title"></span>
-              <span v-else-if="goal" v-text="goal"></span>
-              <span v-else>等待用户目标</span>
-            </div>
-          </header>
-
-          <div class="ai-plan-thread-stats" aria-label="Plan 统计">
-            <div v-for="stat in planStats" :key="stat.id" class="ai-plan-thread-stat">
-              <span v-text="stat.label"></span>
-              <strong v-text="stat.value"></strong>
-            </div>
-          </div>
-        </section>
-
         <AiPlanConfirmationMessage
           v-if="shouldShowPlanCard"
-          class="ai-plan-thread-confirmation"
+          class="ai-plan-thread-entry ai-plan-thread-confirmation"
           standalone
           :goal="goal"
           :summary="summary"
@@ -268,7 +174,7 @@ const handleScrollStateChange = (state: IAiPlanThreadScrollState): void => {
 
         <AiPlanModePanel
           v-if="shouldShowRunPanel"
-          class="ai-plan-thread-run-panel"
+          class="ai-plan-thread-entry ai-plan-thread-run-panel"
           :goal="goal"
           :plan-summary="summary"
           :plan-status="status"
@@ -306,7 +212,7 @@ const handleScrollStateChange = (state: IAiPlanThreadScrollState): void => {
           @resolve-tool-confirmation="emit('resolveToolConfirmation', $event)"
         />
 
-        <section v-else-if="steps.length && !shouldShowPlanCard" class="ai-plan-thread-readonly" aria-label="Plan 步骤快照">
+        <section v-else-if="shouldRenderReadonlySteps" class="ai-plan-thread-entry ai-plan-thread-readonly" aria-label="Plan 步骤快照">
           <h3>计划步骤</h3>
           <ol>
             <li v-for="step in steps" :key="step.id" :class="[`is-${step.status}`, `risk-${step.riskLevel}`]">
@@ -319,7 +225,7 @@ const handleScrollStateChange = (state: IAiPlanThreadScrollState): void => {
           </ol>
         </section>
 
-        <AiErrorNotice v-if="errorMessage && !shouldShowRunPanel" class="ai-plan-thread-error" :message="errorMessage" />
+        <AiErrorNotice v-if="errorMessage && !shouldShowRunPanel" class="ai-plan-thread-entry ai-plan-thread-error" :message="errorMessage" />
       </template>
     </ConversationContent>
     <ConversationScrollButton v-if="!shouldRenderEmptyState" class="ai-plan-scroll-button" />
@@ -346,7 +252,7 @@ const handleScrollStateChange = (state: IAiPlanThreadScrollState): void => {
 
 .ai-plan-mode-thread__content {
   min-width: 0;
-  gap: 18px;
+  gap: 14px;
   min-height: 100%;
   overflow-x: hidden;
   padding: 16px 16px 24px;
@@ -360,109 +266,38 @@ const handleScrollStateChange = (state: IAiPlanThreadScrollState): void => {
   color: var(--text-tertiary);
 }
 
-.ai-plan-thread-activity,
+.ai-plan-thread-entry {
+  width: min(100%, 760px);
+  align-self: flex-start;
+}
+
+.ai-plan-thread-run-panel {
+  --ai-plan-panel-width: 100%;
+  max-width: none;
+  margin-inline: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.ai-plan-thread-confirmation :deep(.ai-element-plan) {
+  width: min(100%, 760px);
+}
+
 .ai-plan-thread-readonly {
   display: grid;
-  width: min(100%, 760px);
-  gap: 12px;
-  border: 1px solid color-mix(in srgb, var(--shell-divider) 86%, transparent);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--surface-soft) 62%, transparent);
-  padding: 12px;
-}
-
-.ai-plan-thread-activity__header {
-  display: flex;
-  min-width: 0;
-  align-items: center;
   gap: 10px;
+  padding-left: 12px;
+  padding-right: 88px;
 }
 
-.ai-plan-thread-activity__icon {
-  display: inline-grid;
-  width: 28px;
-  height: 28px;
-  flex: 0 0 auto;
-  place-items: center;
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--accent-strong) 10%, transparent);
-  color: var(--accent-strong);
-}
-
-.ai-plan-thread-activity__icon svg {
-  width: 16px;
-  height: 16px;
-  stroke-width: 2;
-}
-
-.ai-plan-thread-activity__copy {
-  display: grid;
-  min-width: 0;
-  gap: 2px;
-}
-
-.ai-plan-thread-activity__copy strong,
 .ai-plan-thread-readonly h3 {
   margin: 0;
   color: var(--text-primary);
   font-size: 13px;
   font-weight: 650;
   line-height: 18px;
-}
-
-.ai-plan-thread-activity__copy span {
-  overflow: hidden;
-  color: var(--text-tertiary);
-  font-size: 12px;
-  line-height: 17px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.ai-plan-thread-stats {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.ai-plan-thread-stat {
-  display: grid;
-  gap: 2px;
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--panel-bg) 78%, transparent);
-  padding: 8px;
-}
-
-.ai-plan-thread-stat span {
-  color: var(--text-tertiary);
-  font-size: 11px;
-  line-height: 15px;
-}
-
-.ai-plan-thread-stat strong {
-  color: var(--text-primary);
-  font-size: 16px;
-  font-weight: 650;
-  line-height: 20px;
-}
-
-.ai-plan-thread-confirmation,
-.ai-plan-thread-run-panel {
-  width: min(100%, 760px);
-  max-width: none;
-}
-
-.ai-plan-thread-run-panel {
-  --ai-plan-panel-width: 100%;
-  margin-inline: 0;
-  border: 1px solid color-mix(in srgb, var(--shell-divider) 86%, transparent);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--surface-soft) 62%, transparent);
-  padding: 12px;
-}
-
-.ai-plan-thread-confirmation :deep(.ai-element-plan) {
-  width: min(100%, 760px);
 }
 
 .ai-plan-thread-readonly ol {
@@ -519,7 +354,8 @@ const handleScrollStateChange = (state: IAiPlanThreadScrollState): void => {
 }
 
 .ai-plan-thread-error {
-  width: min(100%, 760px);
+  padding-left: 12px;
+  padding-right: 88px;
 }
 
 .ai-plan-scroll-button {
