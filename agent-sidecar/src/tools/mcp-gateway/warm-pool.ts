@@ -61,6 +61,7 @@ export class McpGatewayWarmPool {
   private readonly toolCallCounts = new Map<string, number>();
   private readonly listAllInflight = new Map<string, Promise<IMcpGatewayCatalogCollection>>();
   private disconnectAllPromise: Promise<void> | null = null;
+  private isDisposed = false;
 
   constructor(options: IMcpGatewayPoolOptions) {
     this.createBundle = options.createBundle;
@@ -353,6 +354,7 @@ export class McpGatewayWarmPool {
   }
 
   async disconnectAll(): Promise<void> {
+    this.isDisposed = true;
     if (this.disconnectAllPromise) {
       return this.disconnectAllPromise;
     }
@@ -409,7 +411,13 @@ export class McpGatewayWarmPool {
     workspaceRootPath?: string;
     metricSink?: IMcpGatewayMetricSink;
   }): Promise<IMcpGatewayPoolEntry> {
+    if (this.isDisposed) {
+      throw new Error('MCP gateway warm pool 已关闭。');
+    }
     await this.evictExpired();
+    if (this.isDisposed) {
+      throw new Error('MCP gateway warm pool 已关闭。');
+    }
     const key = createPoolKey(input.workspaceRootPath, input.serverName, this.pinnedServersIgnoreWorkspace);
     const existing = this.entries.get(key);
     if (existing?.bundle) {
@@ -431,6 +439,9 @@ export class McpGatewayWarmPool {
       ...(input.workspaceRootPath ? { workspaceRootPath: input.workspaceRootPath } : {}),
       serverNames: [input.serverName],
     }).then((bundle) => {
+      if (this.isDisposed) {
+        return bundle.disconnectAll().catch(() => undefined).then(() => entry);
+      }
       entry.bundle = bundle;
       delete entry.creating;
       entry.lastUsedAt = this.now();
@@ -502,7 +513,7 @@ export class McpGatewayWarmPool {
 
   private scheduleIdleDisconnect(entry: IMcpGatewayPoolEntry): void {
     this.clearIdleTimer(entry);
-    if (!entry.bundle || this.pinnedServers.has(entry.serverName)) {
+    if (this.isDisposed || !entry.bundle || this.pinnedServers.has(entry.serverName)) {
       return;
     }
     entry.idleTimer = setTimeout(() => {

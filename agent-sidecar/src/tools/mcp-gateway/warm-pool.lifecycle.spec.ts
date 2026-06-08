@@ -74,4 +74,59 @@ describe('MCP gateway warm pool lifecycle', () => {
 
     assert.equal(disconnectCalls, 1);
   });
+
+  it('rejects new MCP work after terminal shutdown starts', async () => {
+    let releaseCreate: ((bundle: Awaited<ReturnType<Parameters<typeof createMcpGatewayWarmPool>[0]['createBundle']>>) => void) | null = null;
+    let disconnectCalls = 0;
+    const createBundlePromise = new Promise<Awaited<ReturnType<Parameters<typeof createMcpGatewayWarmPool>[0]['createBundle']>>>((resolveCreate) => {
+      releaseCreate = resolveCreate;
+    });
+    const pool = createMcpGatewayWarmPool({
+      createBundle: async () => createBundlePromise,
+      ttlIdleMs: 60_000,
+    });
+    const tools = pool.createTools({ profile: 'write' });
+    const executeCall = tools.mcp_call_tool.execute;
+
+    assert.equal(typeof executeCall, 'function');
+    if (!executeCall) {
+      throw new Error('mcp_call_tool execute 不可用。');
+    }
+
+    const firstCall = executeCall({
+      serverName: 'git',
+      toolName: 'status',
+      arguments: {},
+    }, makeToolExecutionContext());
+    const shutdown = pool.disconnectAll();
+
+    releaseCreate?.({
+      configs: [createMockStdioConfig('git')],
+      errors: [],
+      tools: {
+        git_status: createTool({
+          id: 'git_status',
+          description: '读取 Git 状态',
+          inputSchema: z.object({}),
+          execute: async () => ({ status: 'clean' }),
+        }),
+      },
+      disconnectAll: async () => {
+        disconnectCalls += 1;
+      },
+    });
+
+    await assert.rejects(firstCall, /未完成初始化|已关闭/u);
+    await shutdown;
+
+    assert.equal(disconnectCalls, 1);
+    await assert.rejects(
+      async () => executeCall({
+        serverName: 'git',
+        toolName: 'status',
+        arguments: {},
+      }, makeToolExecutionContext()),
+      /MCP gateway warm pool 已关闭/u,
+    );
+  });
 });
