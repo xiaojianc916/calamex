@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 
+import { ApprovalPrompt, buildToolConfirmationApproval } from '@/components/ai-elements/approval';
 import { Button } from '@/components/ui/button';
-import type {
-  IAiToolConfirmationOption,
-  IAiToolConfirmationRequest,
-  TAiToolConfirmationDecision,
-  TAiToolConfirmationOptionId,
+import {
+  AI_TOOL_CONFIRMATION_DECISIONS,
+  type IAiToolConfirmationRequest,
+  type TAiToolConfirmationDecision,
 } from '@/types/ai';
 
 import { formatElapsedCompact } from './format-elapsed';
@@ -74,34 +74,12 @@ const detailText = computed(() => {
   return detail ? detail : null;
 });
 
-const confirmationOptions = computed<IAiToolConfirmationOption[]>(() => {
-  const confirmation = props.confirmation;
+const approval = computed(() =>
+  props.confirmation ? buildToolConfirmationApproval(props.confirmation) : null,
+);
 
-  if (!confirmation) {
-    return [];
-  }
-
-  return confirmation.options.filter(
-    (option) => option.id === 'allow-once' || option.id === 'stop',
-  );
-});
-
-const optionVariant = (option: IAiToolConfirmationOption): 'default' | 'outline' | 'ghost' => {
-  if (option.tone === 'primary') {
-    return 'default';
-  }
-
-  if (option.tone === 'danger') {
-    return 'outline';
-  }
-
-  return 'ghost';
-};
-
-const isConfirmationDecision = (
-  id: TAiToolConfirmationOptionId,
-): id is TAiToolConfirmationDecision =>
-  id === 'allow-once' || id === 'allow-run' || id === 'skip' || id === 'stop';
+const isConfirmationDecision = (id: string): id is TAiToolConfirmationDecision =>
+  (AI_TOOL_CONFIRMATION_DECISIONS as readonly string[]).includes(id);
 
 const handlePause = (): void => {
   emit('pause');
@@ -115,10 +93,23 @@ const handleCancel = (): void => {
   emit('cancel');
 };
 
-const handleResolve = (option: IAiToolConfirmationOption): void => {
-  if (isConfirmationDecision(option.id)) {
-    emit('resolve', option.id);
+const handleApprovalSelect = (id: string): void => {
+  if (props.busy) {
+    return;
   }
+
+  if (isConfirmationDecision(id)) {
+    emit('resolve', id);
+  }
+};
+
+const handleApprovalCancel = (): void => {
+  if (props.busy) {
+    return;
+  }
+
+  // 对齐 Codex:Esc 始终等价于拒绝/取消当前请求。
+  emit('resolve', 'stop');
 };
 </script>
 
@@ -133,43 +124,55 @@ const handleResolve = (option: IAiToolConfirmationOption): void => {
     role="status"
     aria-live="polite"
   >
-    <div class="run-status__line">
-      <span class="run-status__icon" aria-hidden="true">
-        <span
-          v-if="isPaused"
-          class="run-status__glyph icon-[lucide--circle-pause]"
-        />
-        <span
-          v-else
-          class="run-status__glyph icon-[lucide--loader-circle] animate-spin"
-        />
-      </span>
+    <ApprovalPrompt
+      v-if="isAwaitingConfirmation && approval"
+      :title="approval.title"
+      :options="approval.options"
+      :disabled="busy"
+      @select="handleApprovalSelect"
+      @cancel="handleApprovalCancel"
+    >
+      <template v-if="approval.summary || approval.impact" #context>
+        <div class="run-status__confirm-context">
+          <p
+            v-if="approval.summary"
+            class="run-status__confirm-summary"
+            v-text="approval.summary"
+          />
+          <code
+            v-if="approval.impact"
+            class="run-status__confirm-impact"
+            :title="approval.impact"
+            v-text="approval.impact"
+          />
+        </div>
+      </template>
+    </ApprovalPrompt>
 
-      <span class="run-status__header" v-text="header" />
+    <template v-else>
+      <div class="run-status__line">
+        <span class="run-status__icon" aria-hidden="true">
+          <span
+            v-if="isPaused"
+            class="run-status__glyph icon-[lucide--circle-pause]"
+          />
+          <span
+            v-else
+            class="run-status__glyph icon-[lucide--loader-circle] animate-spin"
+          />
+        </span>
 
-      <span v-if="!isAwaitingConfirmation" class="run-status__meta">
-        <span class="run-status__elapsed" v-text="elapsedLabel" />
-        <span v-if="progressLabel" class="run-status__dot" aria-hidden="true">·</span>
-        <span v-if="progressLabel" class="run-status__progress" v-text="progressLabel" />
-      </span>
+        <span class="run-status__header" v-text="header" />
 
-      <span class="run-status__spacer" />
+        <span class="run-status__meta">
+          <span class="run-status__elapsed" v-text="elapsedLabel" />
+          <span v-if="progressLabel" class="run-status__dot" aria-hidden="true">·</span>
+          <span v-if="progressLabel" class="run-status__progress" v-text="progressLabel" />
+        </span>
 
-      <span class="run-status__actions">
-        <template v-if="isAwaitingConfirmation">
-          <Button
-            v-for="option in confirmationOptions"
-            :key="option.id"
-            :variant="optionVariant(option)"
-            size="sm"
-            class="run-status__btn"
-            :disabled="busy"
-            @click="handleResolve(option)"
-          >
-            <span v-text="option.label" />
-          </Button>
-        </template>
-        <template v-else>
+        <span class="run-status__spacer" />
+
+        <span class="run-status__actions">
           <Button
             v-if="isPaused && canResume"
             variant="ghost"
@@ -206,14 +209,14 @@ const handleResolve = (option: IAiToolConfirmationOption): void => {
             <span class="run-status__btn-glyph icon-[lucide--x]" aria-hidden="true" />
             <span class="run-status__btn-label">取消</span>
           </Button>
-        </template>
-      </span>
-    </div>
+        </span>
+      </div>
 
-    <p v-if="detailText" class="run-status__detail">
-      <span class="run-status__branch" aria-hidden="true">└</span>
-      <span class="run-status__detail-text" :title="detailText" v-text="detailText" />
-    </p>
+      <p v-if="detailText" class="run-status__detail">
+        <span class="run-status__branch" aria-hidden="true">└</span>
+        <span class="run-status__detail-text" :title="detailText" v-text="detailText" />
+      </p>
+    </template>
   </div>
 </template>
 
@@ -227,6 +230,35 @@ const handleResolve = (option: IAiToolConfirmationOption): void => {
   color: var(--text-secondary);
   font-size: 12px;
   line-height: 18px;
+}
+
+.run-status.is-awaiting {
+  padding: 0;
+  gap: 0;
+}
+
+.run-status__confirm-context {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.run-status__confirm-summary {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.run-status__confirm-impact {
+  min-width: 0;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 16px;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .run-status__line {

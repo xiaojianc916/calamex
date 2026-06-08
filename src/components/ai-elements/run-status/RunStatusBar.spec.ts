@@ -66,12 +66,11 @@ describe('RunStatusBar', () => {
     expect(wrapper.emitted('resume')).toHaveLength(1);
   });
 
-  it('渲染 header / detail 来自 props,仅暴露 allow/stop 确认选项并回传决定', async () => {
+  it('等待确认时呈现 Codex 风格审批列表并回传决定', async () => {
     const wrapper = mount(RunStatusBar, {
       props: {
         phase: 'awaiting-confirmation',
-        header: '是否允许写入文件？',
-        detail: '将修改 2 个文件',
+        header: '等待确认',
         confirmation: buildConfirmation(),
       },
     });
@@ -79,18 +78,30 @@ describe('RunStatusBar', () => {
     expect(wrapper.text()).toContain('是否允许写入文件？');
     expect(wrapper.text()).toContain('将修改 2 个文件');
 
-    const buttons = wrapper.findAll('button');
-    const allowButton = buttons.find((button) => button.text().includes('允许'));
-    const stopButton = buttons.find((button) => button.text().includes('停止'));
-    const detailsButton = buttons.find((button) => button.text().includes('了解更多'));
+    const options = wrapper.findAll('.approval-prompt__option');
+    const labels = options.map((option) => option.text());
+    expect(labels.some((text) => text.includes('允许'))).toBe(true);
+    expect(labels.some((text) => text.includes('停止'))).toBe(true);
+    expect(labels.some((text) => text.includes('了解更多'))).toBe(false);
 
-    expect(allowButton).toBeDefined();
-    expect(stopButton).toBeDefined();
-    expect(detailsButton).toBeUndefined();
-
-    await allowButton?.trigger('click');
+    const allowOption = options.find((option) => option.text().includes('允许'));
+    await allowOption?.trigger('click');
 
     expect(wrapper.emitted('resolve')?.[0]).toEqual(['allow-once']);
+  });
+
+  it('在审批列表上按 Esc 等价于停止', async () => {
+    const wrapper = mount(RunStatusBar, {
+      props: {
+        phase: 'awaiting-confirmation',
+        header: '等待确认',
+        confirmation: buildConfirmation(),
+      },
+    });
+
+    await wrapper.find('.approval-prompt').trigger('keydown', { key: 'Escape' });
+
+    expect(wrapper.emitted('resolve')?.[0]).toEqual(['stop']);
   });
 
   it('hides run controls while awaiting confirmation', () => {
