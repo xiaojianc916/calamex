@@ -24,6 +24,7 @@ const PULL_REQUEST_BACKGROUND_PRELOAD_DELAY_MS = 1200;
 const PULL_REQUEST_BACKGROUND_PRELOAD_RETRY_INTERVAL_MS = 60_000;
 const PULL_REQUEST_LIST_REVALIDATE_INTERVAL_MS = 30_000;
 const PULL_REQUEST_DETAIL_REVALIDATE_INTERVAL_MS = 30_000;
+const PULL_REQUEST_REVALIDATE_FAILURE_RETRY_INTERVAL_MS = 60_000;
 const PULL_REQUEST_DETAIL_PRELOAD_LIMIT = 20;
 const PULL_REQUEST_DETAIL_PRELOAD_CONCURRENCY = 4;
 const PULL_REQUEST_DETAIL_CACHE_LIMIT = 20;
@@ -319,6 +320,9 @@ const arePullRequestSummaryListsEqual = (
   return left.every((entry, index) => arePullRequestSummariesEqual(entry, right[index]));
 };
 
+const isPullRequestRevalidateFailureCoolingDown = (failedAt: number | undefined): boolean =>
+  Boolean(failedAt && Date.now() - failedAt < PULL_REQUEST_REVALIDATE_FAILURE_RETRY_INTERVAL_MS);
+
 type TStatusFetcher = (workspaceRootPath: string) => Promise<IGitRepositoryStatusPayload>;
 
 type TPathsMutationRequest = {
@@ -372,6 +376,8 @@ export const useGitStore = defineStore('git', () => {
   const pullRequestListFetchedAt = ref<Record<string, number>>({});
   const pullRequestDetailCache = ref<Record<string, IGitPullRequestDetailPayload>>({});
   const pullRequestDetailFetchedAt = ref<Record<string, number>>({});
+  const pullRequestListRevalidateFailedAt = ref<Record<string, number>>({});
+  const pullRequestDetailRevalidateFailedAt = ref<Record<string, number>>({});
   const pullRequestDetailCacheOrder = ref<string[]>([]);
 
   const commitDetailCache = ref<Record<string, IGitCommitDetailPayload>>({});
@@ -469,6 +475,7 @@ export const useGitStore = defineStore('git', () => {
   const invalidatePullRequestListCache = (): void => {
     pullRequestListCache.value = {};
     pullRequestListFetchedAt.value = {};
+    pullRequestListRevalidateFailedAt.value = {};
     pendingPullRequestListRequests.clear();
   };
 
@@ -512,6 +519,7 @@ export const useGitStore = defineStore('git', () => {
     if (pullRequestNumber === undefined) {
       pullRequestDetailCache.value = {};
       pullRequestDetailFetchedAt.value = {};
+      pullRequestDetailRevalidateFailedAt.value = {};
       pullRequestDetailCacheOrder.value = [];
       pendingPullRequestDetailRequests.clear();
       return;
@@ -525,10 +533,13 @@ export const useGitStore = defineStore('git', () => {
     );
     const nextCache = { ...pullRequestDetailCache.value };
     const nextFetchedAt = { ...pullRequestDetailFetchedAt.value };
+    const nextFailedAt = { ...pullRequestDetailRevalidateFailedAt.value };
     delete nextCache[cacheKey];
     delete nextFetchedAt[cacheKey];
+    delete nextFailedAt[cacheKey];
     pullRequestDetailCache.value = nextCache;
     pullRequestDetailFetchedAt.value = nextFetchedAt;
+    pullRequestDetailRevalidateFailedAt.value = nextFailedAt;
     pullRequestDetailCacheOrder.value = pullRequestDetailCacheOrder.value.filter(
       (key) => key !== cacheKey,
     );
@@ -597,6 +608,34 @@ export const useGitStore = defineStore('git', () => {
     pullRequestDetailFetchedAt.value = nextFetchedAt;
     pullRequestDetailCacheOrder.value = nextOrder;
     writePersistedPullRequestDetail(cacheKey, payload, fetchedAt);
+  };
+
+  const markPullRequestListRevalidateFailed = (cacheKey: string): void => {
+    pullRequestListRevalidateFailedAt.value = {
+      ...pullRequestListRevalidateFailedAt.value,
+      [cacheKey]: Date.now(),
+    };
+  };
+
+  const clearPullRequestListRevalidateFailure = (cacheKey: string): void => {
+    if (!pullRequestListRevalidateFailedAt.value[cacheKey]) return;
+    const nextFailedAt = { ...pullRequestListRevalidateFailedAt.value };
+    delete nextFailedAt[cacheKey];
+    pullRequestListRevalidateFailedAt.value = nextFailedAt;
+  };
+
+  const markPullRequestDetailRevalidateFailed = (cacheKey: string): void => {
+    pullRequestDetailRevalidateFailedAt.value = {
+      ...pullRequestDetailRevalidateFailedAt.value,
+      [cacheKey]: Date.now(),
+    };
+  };
+
+  const clearPullRequestDetailRevalidateFailure = (cacheKey: string): void => {
+    if (!pullRequestDetailRevalidateFailedAt.value[cacheKey]) return;
+    const nextFailedAt = { ...pullRequestDetailRevalidateFailedAt.value };
+    delete nextFailedAt[cacheKey];
+    pullRequestDetailRevalidateFailedAt.value = nextFailedAt;
   };
 
   const resetPullRequests = (): void => {
@@ -1160,7 +1199,11 @@ export const useGitStore = defineStore('git', () => {
 
     const fetchedAt = pullRequestListFetchedAt.value[cacheKey] ?? 0;
     const isFresh = Date.now() - fetchedAt < PULL_REQUEST_LIST_REVALIDATE_INTERVAL_MS;
-    if (cached && !options?.force && isFresh) {
+    const isRevalidateFailureCoolingDown = isPullRequestRevalidateFailureCoolingDown(
+      pullRequestListRevalidateFailedAt.value[cacheKey],
+    );
+
+    if (cached && !options?.force && (isFresh || isRevalidateFailureCoolingDown)) {
       if (shouldPreloadDetails) {
         preloadTopPullRequestDetails(cached);
       }
@@ -1219,6 +1262,7 @@ export const useGitStore = defineStore('git', () => {
           [cacheKey]: fetchedAt,
         };
         writePersistedPullRequestList(cacheKey, nextPayload, fetchedAt);
+        clearPullRequestListRevalidateFailure(cacheKey);
         writePersistedPullRequestList(cacheKey, nextPayload, fetchedAt);
         if (updateActive && requestId === pullRequestsRequestId) {
           pullRequests.value = nextPayload;
@@ -1231,7 +1275,10 @@ export const useGitStore = defineStore('git', () => {
           : nextPayload;
       })
       .catch((error) => {
-        if (cached) return cached;
+        if (cached) {
+          markPullRequestListRevalidateFailed(cacheKey);
+          return cached;
+        }
         throw error;
       })
       .finally(() => {
@@ -1264,6 +1311,9 @@ export const useGitStore = defineStore('git', () => {
     const cached = pullRequestDetailCache.value[cacheKey];
     const fetchedAt = pullRequestDetailFetchedAt.value[cacheKey] ?? 0;
     const shouldRevalidate = Date.now() - fetchedAt >= PULL_REQUEST_DETAIL_REVALIDATE_INTERVAL_MS;
+    const isRevalidateFailureCoolingDown = isPullRequestRevalidateFailureCoolingDown(
+      pullRequestDetailRevalidateFailedAt.value[cacheKey],
+    );
     if (cached && !force) {
       touchPullRequestDetailCache(cacheKey);
 
@@ -1271,7 +1321,7 @@ export const useGitStore = defineStore('git', () => {
         pullRequestDetail.value = cached;
       }
 
-      if (!pending && shouldRevalidate) {
+      if (!pending && shouldRevalidate && !isRevalidateFailureCoolingDown) {
         void loadPullRequestDetail(number, {
           force: true,
           updateActive,
@@ -1311,10 +1361,18 @@ export const useGitStore = defineStore('git', () => {
         }
 
         rememberPullRequestDetail(cacheKey, payload);
+        clearPullRequestDetailRevalidateFailure(cacheKey);
         if (updateActive && requestId === pullRequestDetailRequestId) {
           pullRequestDetail.value = payload;
         }
         return payload;
+      })
+      .catch((error) => {
+        if (cached) {
+          markPullRequestDetailRevalidateFailed(cacheKey);
+          return cached;
+        }
+        throw error;
       })
       .finally(() => {
         pendingPullRequestDetailRequests.delete(cacheKey);
