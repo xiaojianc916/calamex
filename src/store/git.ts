@@ -968,6 +968,7 @@ export const useGitStore = defineStore('git', () => {
         state,
       );
       nextFetchedAt[cacheKey] = now;
+      writePersistedPullRequestList(cacheKey, nextCache[cacheKey]);
       writePersistedPullRequestList(cacheKey, nextCache[cacheKey], now);
     }
 
@@ -1084,6 +1085,7 @@ export const useGitStore = defineStore('git', () => {
           ...pullRequestListFetchedAt.value,
           [cacheKey]: fetchedAt,
         };
+        writePersistedPullRequestList(cacheKey, nextPayload);
         writePersistedPullRequestList(cacheKey, nextPayload, fetchedAt);
         if (updateActive && requestId === pullRequestsRequestId) {
           pullRequests.value = nextPayload;
