@@ -319,10 +319,10 @@ importers:
         specifier: ^0.17.3
         version: 0.17.3
       '@mastra/agent-browser':
-        specifier: ^0.3.0
-        version: 0.3.0(@mastra/core@1.41.0(@bufbuild/protobuf@2.12.0)(ai@6.0.197(zod@4.4.3))(express@5.2.1)(rxjs@7.8.2)(zod@4.4.3))(zod@4.4.3)
+        specifier: ^0.2.2
+        version: 0.2.2(@mastra/core@1.41.0(@bufbuild/protobuf@2.12.0)(ai@6.0.197(zod@4.4.3))(express@5.2.1)(rxjs@7.8.2)(zod@4.4.3))(zod@4.4.3)
       '@mastra/core':
-        specifier: ^1.41.0
+        specifier: ^1.40.0
         version: 1.41.0(@bufbuild/protobuf@2.12.0)(ai@6.0.197(zod@4.4.3))(express@5.2.1)(rxjs@7.8.2)(zod@4.4.3)
       '@mastra/libsql':
         specifier: ^1.12.1
@@ -343,7 +343,7 @@ importers:
         specifier: ^2025.12.18
         version: 2025.12.18(zod@4.4.3)
       '@upstash/context7-mcp':
-        specifier: ^3.1.0
+        specifier: ^3.0.0
         version: 3.1.0
       eventsource-parser:
         specifier: ^3.1.0
@@ -355,7 +355,7 @@ importers:
         specifier: ^5.3.0
         version: 5.3.0
       undici:
-        specifier: ^8.4.1
+        specifier: ^8.3.0
         version: 8.4.1
       vscode-jsonrpc:
         specifier: ^9.0.0
@@ -368,7 +368,7 @@ importers:
         version: 4.4.3
     devDependencies:
       '@types/node':
-        specifier: ^25.9.2
+        specifier: ^25.9.1
         version: 25.9.2
       esbuild:
         specifier: ^0.28.0
@@ -1192,8 +1192,8 @@ packages:
   '@marijn/find-cluster-break@1.0.2':
     resolution: {integrity: sha512-l0h88YhZFyKdXIFNfSWpyjStDjGHwZ/U7iobcK1cQQD8sejsONdQtTVU+1wVN1PBw40PiiHB1vA5S7VTfQiP9g==}
 
-  '@mastra/agent-browser@0.3.0':
-    resolution: {integrity: sha512-pS43G2FATVj/XiU1kHoatqLthdkjyHO/Ecfy228E7bWX0AnHFhYbZc9lieHWSANN+6QURCJwywN+GgG5TBkUQg==}
+  '@mastra/agent-browser@0.2.2':
+    resolution: {integrity: sha512-KuieN7osjnAaSCMeGkuzy4VPPyWfhwrwIbHgf4vpTs2VGbiuI1jfH0EYoyyKASBgcKIUypXod0rbakHUN+VMzQ==}
     engines: {node: '>=22.13.0'}
     peerDependencies:
       '@mastra/core': '>=1.22.0-0 <2.0.0-0'
@@ -7238,7 +7238,7 @@ snapshots:
 
   '@marijn/find-cluster-break@1.0.2': {}
 
-  '@mastra/agent-browser@0.3.0(@mastra/core@1.41.0(@bufbuild/protobuf@2.12.0)(ai@6.0.197(zod@4.4.3))(express@5.2.1)(rxjs@7.8.2)(zod@4.4.3))(zod@4.4.3)':
+  '@mastra/agent-browser@0.2.2(@mastra/core@1.41.0(@bufbuild/protobuf@2.12.0)(ai@6.0.197(zod@4.4.3))(express@5.2.1)(rxjs@7.8.2)(zod@4.4.3))(zod@4.4.3)':
     dependencies:
       '@mastra/core': 1.41.0(@bufbuild/protobuf@2.12.0)(ai@6.0.197(zod@4.4.3))(express@5.2.1)(rxjs@7.8.2)(zod@4.4.3)
       agent-browser: 0.19.0
