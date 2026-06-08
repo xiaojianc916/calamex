@@ -188,10 +188,7 @@ export const useGitStore = defineStore('git', () => {
     string,
     Promise<IGitPullRequestSummaryPayload[]>
   >();
-  const pendingPullRequestDetailRequests = new Map<
-    string,
-    Promise<IGitPullRequestDetailPayload>
-  >();
+  const pendingPullRequestDetailRequests = new Map<string, Promise<IGitPullRequestDetailPayload>>();
   let pendingPullRequestSupportRequest: Promise<IGitPullRequestSupportPayload> | null = null;
 
   const hasRepository = computed(
@@ -264,7 +261,9 @@ export const useGitStore = defineStore('git', () => {
     const nextCache = { ...pullRequestDetailCache.value };
     delete nextCache[cacheKey];
     pullRequestDetailCache.value = nextCache;
-    pullRequestDetailCacheOrder.value = pullRequestDetailCacheOrder.value.filter((key) => key !== cacheKey);
+    pullRequestDetailCacheOrder.value = pullRequestDetailCacheOrder.value.filter(
+      (key) => key !== cacheKey,
+    );
     pendingPullRequestDetailRequests.delete(cacheKey);
   };
 
@@ -689,9 +688,7 @@ export const useGitStore = defineStore('git', () => {
     return request;
   };
 
-  const applyPullRequestSummaryMutation = (
-    pullRequest: IGitPullRequestSummaryPayload,
-  ): void => {
+  const applyPullRequestSummaryMutation = (pullRequest: IGitPullRequestSummaryPayload): void => {
     const repositoryRootPath = status.value.repositoryRootPath;
     if (!repositoryRootPath) return;
 
@@ -701,7 +698,9 @@ export const useGitStore = defineStore('git', () => {
 
     const repositoryCachePrefix = `${normalizeFileSystemPath(repositoryRootPath)}|`;
     const cacheKeys = new Set<string>(
-      Object.keys(pullRequestListCache.value).filter((key) => key.startsWith(repositoryCachePrefix)),
+      Object.keys(pullRequestListCache.value).filter((key) =>
+        key.startsWith(repositoryCachePrefix),
+      ),
     );
     cacheKeys.add(createPullRequestCacheKey(repositoryRootPath, pullRequestStateFilter.value));
     cacheKeys.add(createPullRequestCacheKey(repositoryRootPath, 'all'));
@@ -743,12 +742,10 @@ export const useGitStore = defineStore('git', () => {
     };
 
     const workerCount = Math.min(PULL_REQUEST_DETAIL_PRELOAD_CONCURRENCY, candidates.length);
-    await Promise.all(Array.from({ length: workerCount }, preloadNext));
+    await Promise.all(Array.from({ length: workerCount }, () => preloadNext()));
   };
 
-  const preloadTopPullRequestDetails = (
-    entries: IGitPullRequestSummaryPayload[],
-  ): void => {
+  const preloadTopPullRequestDetails = (entries: IGitPullRequestSummaryPayload[]): void => {
     if (entries.length === 0) return;
     pullRequestDetailPreloadEpoch += 1;
     const epoch = pullRequestDetailPreloadEpoch;
@@ -903,9 +900,7 @@ export const useGitStore = defineStore('git', () => {
     });
   };
 
-  const refreshPullRequests = async (
-    state?: string,
-  ): Promise<IGitPullRequestSummaryPayload[]> => {
+  const refreshPullRequests = async (state?: string): Promise<IGitPullRequestSummaryPayload[]> => {
     const support = await loadPullRequestSupport();
     if (!support.available) return [];
     return loadPullRequests(state, {

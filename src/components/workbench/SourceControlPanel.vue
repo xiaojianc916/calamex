@@ -868,10 +868,7 @@ async function ensureActiveTabData(tabKey: TGitNavKey): Promise<void> {
       return;
     }
 
-    await gitStore.loadPullRequestSupport();
-    if (gitStore.pullRequestSupport.available) {
-      await gitStore.loadPullRequests();
-    }
+    await gitStore.ensurePullRequestsLoaded(pullRequestStateFilter.value);
   } catch (error) {
     const fallbackMessage =
       tabKey === 'history'
@@ -1005,7 +1002,7 @@ const handleSelectPullRequestFilter = async (
     return;
   }
   try {
-    await gitStore.loadPullRequests(stateKey);
+    await gitStore.ensurePullRequestsLoaded(stateKey);
   } catch (error) {
     message.error(toErrorMessage(error, '读取 Pull Request 列表失败'));
   }
@@ -1050,7 +1047,7 @@ const handleSubmitCreatePullRequest = async (): Promise<void> => {
       head: createPullRequestHead.value.trim(),
       draft: createPullRequestDraft.value,
     });
-    await gitStore.loadPullRequests(pullRequestStateFilter.value);
+    await gitStore.refreshPullRequests(pullRequestStateFilter.value);
     pullRequestView.value = 'list';
     message.success('已创建 Pull Request');
   } catch (error) {
@@ -1076,7 +1073,7 @@ const handleMergePullRequest = async (
   isMutatingPullRequest.value = true;
   try {
     await gitStore.mergePullRequest(pullRequest.number, mergeMethod.value);
-    await gitStore.loadPullRequests(pullRequestStateFilter.value);
+    await gitStore.refreshPullRequests(pullRequestStateFilter.value);
     pullRequestView.value = 'list';
     activePullRequestNumber.value = null;
     message.success(`已合并 #${pullRequest.number}`);
@@ -1103,7 +1100,7 @@ const handleClosePullRequest = async (
   isMutatingPullRequest.value = true;
   try {
     await gitStore.closePullRequest(pullRequest.number);
-    await gitStore.loadPullRequests(pullRequestStateFilter.value);
+    await gitStore.refreshPullRequests(pullRequestStateFilter.value);
     pullRequestView.value = 'list';
     activePullRequestNumber.value = null;
     message.success(`已关闭 #${pullRequest.number}`);
@@ -1873,10 +1870,7 @@ const handleDropStash = async (entry: IGitStashEntryPayload): Promise<void> => {
 
 const handleReloadPullRequestSupport = async (): Promise<void> => {
   try {
-    await gitStore.loadPullRequestSupport();
-    if (gitStore.pullRequestSupport.available) {
-      await gitStore.loadPullRequests();
-    }
+    await gitStore.refreshPullRequests(pullRequestStateFilter.value);
   } catch (error) {
     message.error(toErrorMessage(error, '读取 Pull Request 列表失败'));
   }
