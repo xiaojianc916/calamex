@@ -19,6 +19,7 @@ const SHELL_INTERPOLATION_PATTERNS: readonly RegExp[] = [
 const RM_FLAG_PATTERN = /^-(?=[A-Za-z]*[rR])(?=[A-Za-z]*[fF])[A-Za-z]+$/u;
 const RM_LONG_RECURSIVE_FLAGS = new Set(['--recursive']);
 const RM_LONG_FORCE_FLAGS = new Set(['--force']);
+const MAX_NESTED_SHELL_ANALYSIS_DEPTH = 4;
 
 const stripMatchingQuotes = (value: string): string => {
     if (value.length < 2) {
@@ -277,8 +278,22 @@ const analyzeRmCommand = (words: readonly string[]): ITerminalCommandSafetyResul
 export const commandContainsShellInterpolation = (command: string): boolean =>
     SHELL_INTERPOLATION_PATTERNS.some((pattern) => pattern.test(command));
 
-export const analyzeTerminalCommandSafety = (
+const collectNestedShellFragments = (command: string): string[] => {
+    const fragments: string[] = [];
+    for (const pattern of [/\$\(([^()]*)\)/gu, /`([^`]*)`/gu, /[<>]\(([^()]*)\)/gu]) {
+        for (const match of command.matchAll(pattern)) {
+            const fragment = match[1]?.trim();
+            if (fragment) {
+                fragments.push(fragment);
+            }
+        }
+    }
+    return fragments;
+};
+
+const analyzeTerminalCommandSafetyInner = (
     command: string,
+    depth: number,
 ): ITerminalCommandSafetyResult => {
     const commands = splitShellCommands(command);
     if (!commands) {
@@ -307,6 +322,18 @@ export const analyzeTerminalCommandSafety = (
         }
     }
 
+    if (depth < MAX_NESTED_SHELL_ANALYSIS_DEPTH) {
+        for (const fragment of collectNestedShellFragments(command)) {
+            const nested = analyzeTerminalCommandSafetyInner(fragment, depth + 1);
+            if (nested.status === 'unsafe') {
+                return {
+                    ...nested,
+                    commands: [...commands, ...nested.commands],
+                };
+            }
+        }
+    }
+
     if (commandContainsShellInterpolation(command)) {
         return {
             status: 'unsupported',
@@ -320,3 +347,7 @@ export const analyzeTerminalCommandSafety = (
         commands,
     };
 };
+
+export const analyzeTerminalCommandSafety = (
+    command: string,
+): ITerminalCommandSafetyResult => analyzeTerminalCommandSafetyInner(command, 0);
