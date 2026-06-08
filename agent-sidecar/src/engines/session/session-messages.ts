@@ -11,6 +11,19 @@ import { toRecord } from '../utils.js';
 const IMAGE_ATTACHMENT_MODEL_PART_MARKER = 'AI_SDK_IMAGE_PART_JSON:';
 const SUPPORTED_IMAGE_PART_SOURCE_PATTERN = /^(?:data:image\/[a-z0-9.+-]+;base64,|https?:\/\/|file:\/\/)/iu;
 
+export const COMPACTION_HANDOFF_PROMPT = `You are compacting this conversation into a handoff for another agent that will resume the work.
+
+Include:
+- Goal: what the user is ultimately trying to achieve
+- State: progress so far, current blockers, and decisions made
+- Context: constraints, preferences, and critical data/examples/references needed to continue
+- Next: the specific steps that remain
+- Pitfalls: anything tried that didn't work
+
+Write it so the next agent can act without re-asking the user. Be concise and well-structured.`;
+
+export const COMPACTION_RESUME_USER_MESSAGE_PREFIX = 'The previous conversation was compacted. Use this summary as context:';
+
 export type TAgentSessionMessageKind = 'user' | 'assistant' | 'system' | 'tool' | 'compaction';
 export type TAgentSessionMessageSource = 'conversation' | 'prompt' | 'runtime' | 'compaction';
 
@@ -44,6 +57,7 @@ export interface IAgentSessionToolMessage extends IAgentSessionMessageBase {
 
 export interface IAgentSessionCompactionMessage extends IAgentSessionMessageBase {
   readonly kind: 'compaction';
+  readonly source: 'compaction';
   readonly summary: string;
 }
 
@@ -81,6 +95,24 @@ export const getSessionMessageText = (
     .map((part) => part.text)
     .join('\n');
 };
+
+export const buildCompactionResumeUserPrompt = (summary: string): string => {
+  const trimmedSummary = summary.trim();
+
+  return trimmedSummary.length > 0
+    ? `${COMPACTION_RESUME_USER_MESSAGE_PREFIX}\n\n${trimmedSummary}`
+    : COMPACTION_RESUME_USER_MESSAGE_PREFIX;
+};
+
+export const createAgentSessionCompactionMessage = (input: {
+  id: string;
+  summary: string;
+}): IAgentSessionCompactionMessage => ({
+  id: input.id,
+  kind: 'compaction',
+  source: 'compaction',
+  summary: input.summary.trim(),
+});
 
 const parseImagePartCarrier = (line: string): TImagePartCarrier | null => {
   const markerIndex = line.indexOf(IMAGE_ATTACHMENT_MODEL_PART_MARKER);
@@ -347,12 +379,23 @@ export const createAgentSessionMessagesFromRuntimeInput = (
 export const buildMastraMessagesFromSessionMessages = (
   messages: readonly TAgentSessionMessage[],
 ): TMastraChatMessage[] => messages
-  .filter((message): message is IAgentSessionUserMessage | IAgentSessionAssistantMessage =>
-    message.kind === 'user' || message.kind === 'assistant')
-  .map<TMastraChatMessage>((message) => ({
-    role: message.kind,
-    content: message.content,
-  }));
+  .flatMap<TMastraChatMessage>((message) => {
+    if (message.kind === 'user' || message.kind === 'assistant') {
+      return [{
+        role: message.kind,
+        content: message.content,
+      }];
+    }
+
+    if (message.kind === 'compaction') {
+      return [{
+        role: 'user',
+        content: buildCompactionResumeUserPrompt(message.summary),
+      }];
+    }
+
+    return [];
+  });
 
 export const buildMastraMessages = (input: IAgentRuntimeInput): TMastraChatMessage[] =>
   buildMastraMessagesFromSessionMessages(createAgentSessionMessagesFromRuntimeInput(input));

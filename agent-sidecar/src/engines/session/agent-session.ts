@@ -3,7 +3,7 @@ import type { IAgentRuntimeRunOptions, TAgentRuntimeOutputEvent } from '../contr
 import type { TAgentMode } from '../contracts/runtime-input.js';
 import { createRuntimeEventFactory, createSessionId, pushUiEvent } from '../utils.js';
 import { DEFAULT_EXECUTION_AGENT_ID } from '../types.js';
-import type { TAgentSessionMessage } from './session-messages.js';
+import { createAgentSessionCompactionMessage, type TAgentSessionMessage } from './session-messages.js';
 
 export interface ICreateAgentExecutionSessionOptions {
   sessionId?: string | undefined;
@@ -49,6 +49,17 @@ export interface IFailAgentExecutionTurnOptions {
 export interface ISuspendAgentExecutionTurnOptions {
   reason?: string | undefined;
   completedAt?: string | undefined;
+}
+
+export interface IAgentSessionContextCompaction {
+  readonly id: string;
+  readonly summary: string;
+  readonly createdAt: string;
+}
+
+export interface IAppendContextCompactionOptions {
+  id?: string | undefined;
+  createdAt?: string | undefined;
 }
 
 export interface IAgentSessionResourceHandle {
@@ -133,6 +144,8 @@ export class AgentExecutionSession {
 
   readonly messages: TAgentSessionMessage[] = [];
 
+  readonly contextCompactions: IAgentSessionContextCompaction[] = [];
+
   private readonly now: (() => string) | undefined;
 
   private readonly runtimeEventFactories = new Map<string, (draft: TAgentRuntimeEventDraft) => TAgentRuntimeOutputEvent>();
@@ -182,6 +195,24 @@ export class AgentExecutionSession {
 
   appendMessages(messages: readonly TAgentSessionMessage[]): void {
     this.messages.push(...messages);
+  }
+
+  appendContextCompaction(
+    summary: string,
+    options: IAppendContextCompactionOptions = {},
+  ): IAgentSessionContextCompaction {
+    const compaction: IAgentSessionContextCompaction = {
+      id: options.id ?? createSessionId('context-compaction'),
+      summary: summary.trim(),
+      createdAt: options.createdAt ?? this.getTimestamp(),
+    };
+
+    this.contextCompactions.push(compaction);
+    this.appendMessage(createAgentSessionCompactionMessage({
+      id: compaction.id,
+      summary: compaction.summary,
+    }));
+    return compaction;
   }
 
   completeTurn(turnId: string, options: ICompleteAgentExecutionTurnOptions = {}): IAgentExecutionTurn | null {

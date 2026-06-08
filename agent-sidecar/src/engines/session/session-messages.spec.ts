@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  COMPACTION_HANDOFF_PROMPT,
+  COMPACTION_RESUME_USER_MESSAGE_PREFIX,
   buildMastraMessagesFromSessionMessages,
+  createAgentSessionCompactionMessage,
   createAgentSessionMessagesFromRuntimeInput,
 } from './session-messages.js';
 import type { IAgentRuntimeInput } from '../contracts/runtime-input.js';
@@ -83,4 +86,35 @@ test('createAgentSessionMessagesFromRuntimeInput keeps image parts on the final 
       mediaType: 'image/png',
     },
   ]);
+});
+
+test('compaction messages replay as Zed-style user handoff context', () => {
+  const compactionMessage = createAgentSessionCompactionMessage({
+    id: 'compaction-1',
+    summary: 'Goal: 完善 AI 架构\nNext: 继续落地。',
+  });
+
+  const mastraMessages = buildMastraMessagesFromSessionMessages([
+    compactionMessage,
+    {
+      id: 'runtime-message:1',
+      kind: 'user',
+      source: 'prompt',
+      content: '继续。',
+    },
+  ]);
+
+  assert.equal(compactionMessage.source, 'compaction');
+  assert.equal(mastraMessages[0]?.role, 'user');
+  assert.equal(
+    mastraMessages[0]?.content,
+    `${COMPACTION_RESUME_USER_MESSAGE_PREFIX}\n\nGoal: 完善 AI 架构\nNext: 继续落地。`,
+  );
+  assert.equal(mastraMessages[1]?.content, '继续。');
+});
+
+test('compaction handoff prompt keeps the Zed-required sections', () => {
+  for (const section of ['Goal', 'State', 'Context', 'Next', 'Pitfalls']) {
+    assert.match(COMPACTION_HANDOFF_PROMPT, new RegExp(`\\b${section}\\b`, 'u'));
+  }
 });

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { createAgentExecutionSession } from './agent-session.js';
+import { buildMastraMessagesFromSessionMessages, COMPACTION_RESUME_USER_MESSAGE_PREFIX } from './session-messages.js';
 
 test('AgentExecutionSession creates stable session/run ids and stores pushed events', () => {
   const delivered: string[] = [];
@@ -113,6 +114,29 @@ test('AgentExecutionSession stores session messages as aggregate state', () => {
   }]);
 
   assert.deepEqual(session.messages.map((message) => message.id), ['message-1', 'message-2']);
+});
+
+test('AgentExecutionSession records compaction handoff as replayable session state', () => {
+  const session = createAgentExecutionSession({
+    now: () => '2026-01-01T00:00:00.000Z',
+  });
+
+  const compaction = session.appendContextCompaction('Goal: 继续重构\nNext: 接入执行流', {
+    id: 'compaction-1',
+  });
+  const mastraMessages = buildMastraMessagesFromSessionMessages(session.messages);
+
+  assert.deepEqual(compaction, {
+    id: 'compaction-1',
+    summary: 'Goal: 继续重构\nNext: 接入执行流',
+    createdAt: '2026-01-01T00:00:00.000Z',
+  });
+  assert.equal(session.contextCompactions.length, 1);
+  assert.equal(session.messages[0]?.kind, 'compaction');
+  assert.equal(
+    mastraMessages[0]?.content,
+    `${COMPACTION_RESUME_USER_MESSAGE_PREFIX}\n\nGoal: 继续重构\nNext: 接入执行流`,
+  );
 });
 
 test('AgentExecutionSession disposes resources in reverse acquisition order', async () => {
