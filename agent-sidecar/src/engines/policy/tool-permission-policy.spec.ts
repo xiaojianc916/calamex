@@ -26,6 +26,9 @@ test('analyzeTerminalCommandSafety：识别灾难性 rm 目标', () => {
         'rm -rf ..',
         "'rm' -rf '/'",
         'ls && rm -rf /',
+        'echo $(rm -rf /)',
+        'echo `rm -rf /`',
+        'cat <(rm -rf /)',
     ]) {
         assert.equal(analyzeTerminalCommandSafety(command).status, 'unsafe', command);
     }
