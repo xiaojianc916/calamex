@@ -337,19 +337,40 @@ const mountPanel = (assistantMock: ReturnType<typeof createAssistantMock>) =>
         AiChatThread: defineComponent({
           props: ['messages', 'isTyping', 'typingLabel', 'hasExtraContent'],
           template:
-            '<section data-testid="chat-thread"><slot name="empty" /><article v-for="message in messages" :key="message.id" :data-role="message.role" v-text="message.content" /><slot name="after-messages" /></section>',
+            '<section data-testid="chat-thread"><slot name="empty" /><template v-for="message in messages.filter((entry) => !entry.id.startsWith(\'agent-flow:\'))" :key="message.id"><article :data-role="message.role" v-text="message.content" /><slot name="after-message" :message="message" /></template><slot name="after-messages" /></section>',
         }),
-        AiAgentModePanel: defineComponent({
-          props: ['messages', 'toolConfirmation', 'errorMessage'],
-          emits: ['resolveToolConfirmation'],
+        AiAssistantSuggestionEmpty: defineComponent({
+          props: ['suggestionRows', 'disabled'],
+          emits: ['select'],
           template:
-            '<section data-testid="agent-mode-panel"><article v-for="message in messages" :key="message.id" v-text="message.content" /><strong v-if="toolConfirmation" data-testid="agent-tool-confirmation" v-text="toolConfirmation.question" /><p v-if="errorMessage" v-text="errorMessage" /></section>',
+            '<div data-testid="suggestion-empty"><button v-for="suggestion in suggestionRows.flat()" :key="suggestion.title" data-testid="suggestion-chip" :disabled="disabled" @click="$emit(\'select\', suggestion.message)" v-text="suggestion.title" /></div>',
         }),
-        AiPlanModeThread: defineComponent({
-          props: ['goal', 'steps', 'toolConfirmation', 'errorMessage'],
-          emits: ['resolveToolConfirmation'],
+        AiAssistantCheckpointEntry: defineComponent({
+          props: ['label', 'disabled', 'restoring'],
+          emits: ['restore'],
           template:
-            '<section data-testid="plan-mode-thread"><h2 v-text="goal" /><ol><li v-for="step in steps" :key="step.id" v-text="step.title" /></ol><strong v-if="toolConfirmation" data-testid="plan-tool-confirmation" v-text="toolConfirmation.question" /><p v-if="errorMessage" v-text="errorMessage" /></section>',
+            '<button data-testid="checkpoint-entry" :disabled="disabled" @click="$emit(\'restore\')" v-text="label" />',
+        }),
+        AiAssistantThreadExtras: defineComponent({
+          props: [
+            'planConfirmationVisible',
+            'planActiveGoal',
+            'planSummary',
+            'planStatus',
+            'planSteps',
+            'planIsPlanning',
+            'planIsApproving',
+            'canEditPlan',
+            'canApprovePlan',
+            'planApprovedAt',
+            'directToolConfirmationVisible',
+            'visibleDirectToolConfirmation',
+            'isAgentRunActionPending',
+            'errorMessage',
+          ],
+          emits: ['updateStepTitle', 'removeStep', 'regenerate', 'reject', 'approve', 'resolveToolConfirmation'],
+          template:
+            '<section data-testid="thread-extras"><div v-if="planConfirmationVisible" data-testid="plan-confirmation"><ol><li v-for="step in planSteps" :key="step.id" v-text="step.title" /></ol><button data-testid="approve-plan" :disabled="!canApprovePlan" @click="$emit(\'approve\')">批准</button></div><strong v-if="directToolConfirmationVisible && visibleDirectToolConfirmation" data-testid="tool-confirmation" v-text="visibleDirectToolConfirmation.question" /><p v-if="errorMessage" data-testid="error" v-text="errorMessage" /></section>',
         }),
         AiPromptInput: defineComponent({
           emits: ['submit', 'update:activeMode'],
@@ -359,11 +380,6 @@ const mountPanel = (assistantMock: ReturnType<typeof createAssistantMock>) =>
         AiProviderSettings: defineComponent({ template: '<div />' }),
         AiPlanModePanel: defineComponent({ template: '<div data-testid="composer-plan-panel" />' }),
         AiWebSourcesPanel: defineComponent({ template: '<div />' }),
-        AiErrorNotice: defineComponent({ props: ['message'], template: '<p data-testid="error" v-text="message" />' }),
-        Checkpoint: defineComponent({ template: '<div><slot /></div>' }),
-        CheckpointTrigger: defineComponent({ template: '<button><slot /></button>' }),
-        CheckpointIcon: defineComponent({ template: '<span />' }),
-        Loader: defineComponent({ template: '<span />' }),
         teleport: true,
       },
     },
@@ -414,7 +430,7 @@ describe('AiAssistantPanel', () => {
     vi.clearAllMocks();
   });
 
-  it('keeps ordinary answer rendering as chat-mode only', () => {
+  it('renders a single unified thread surface for chat mode', () => {
     const assistantMock = createAssistantMock([
       createMessage('message-user', 'user', '解释当前文件'),
       createMessage('message-assistant', 'assistant', '这是普通聊天回复'),
@@ -425,12 +441,12 @@ describe('AiAssistantPanel', () => {
     const wrapper = mountPanel(assistantMock);
 
     expect(wrapper.find('[data-testid="chat-thread"]').exists()).toBe(true);
-    expect(wrapper.find('[data-testid="agent-mode-panel"]').exists()).toBe(false);
-    expect(wrapper.find('[data-testid="plan-mode-thread"]').exists()).toBe(false);
     expect(wrapper.get('[data-testid="chat-thread"]').text()).toContain('这是普通聊天回复');
+    expect(wrapper.find('[data-testid="plan-confirmation"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="tool-confirmation"]').exists()).toBe(false);
   });
 
-  it('renders Agent mode through its execution panel instead of the chat thread', () => {
+  it('renders Agent mode in the unified thread and surfaces tool confirmation as a thread extra', () => {
     const assistantMock = createAssistantMock([
       createMessage('message-user', 'user', '修改这个项目'),
       createMessage('message-assistant', 'assistant', 'Agent 最终回复'),
@@ -453,13 +469,12 @@ describe('AiAssistantPanel', () => {
 
     const wrapper = mountPanel(assistantMock);
 
-    expect(wrapper.find('[data-testid="chat-thread"]').exists()).toBe(false);
-    expect(wrapper.find('[data-testid="agent-mode-panel"]').exists()).toBe(true);
-    expect(wrapper.find('[data-testid="plan-mode-thread"]').exists()).toBe(false);
-    expect(wrapper.get('[data-testid="agent-tool-confirmation"]').text()).toContain('允许执行 pnpm test 吗？');
+    expect(wrapper.find('[data-testid="chat-thread"]').exists()).toBe(true);
+    expect(wrapper.get('[data-testid="chat-thread"]').text()).toContain('Agent 最终回复');
+    expect(wrapper.get('[data-testid="tool-confirmation"]').text()).toContain('允许执行 pnpm test 吗？');
   });
 
-  it('renders Plan mode through the structured plan thread instead of chat messages', () => {
+  it('renders Plan mode in the unified thread with the plan confirmation extra', () => {
     const assistantMock = createAssistantMock([
       createMessage('message-user', 'user', '重构 AI 模式 UI'),
     ]);
@@ -469,20 +484,18 @@ describe('AiAssistantPanel', () => {
     assistantMock.agentPlan.store.planStatus = 'pending_approval';
     assistantMock.agentPlan.store.steps = [
       createPlanStep('plan-step-1', '审查模式边界'),
-      createPlanStep('plan-step-2', '接线专属面板'),
+      createPlanStep('plan-step-2', '接线统一线程'),
     ];
     useAiAssistantMock.mockReturnValue(assistantMock);
 
     const wrapper = mountPanel(assistantMock);
 
-    expect(wrapper.find('[data-testid="chat-thread"]').exists()).toBe(false);
-    expect(wrapper.find('[data-testid="agent-mode-panel"]').exists()).toBe(false);
-    expect(wrapper.find('[data-testid="plan-mode-thread"]').exists()).toBe(true);
-    expect(wrapper.get('[data-testid="plan-mode-thread"]').text()).toContain('审查模式边界');
+    expect(wrapper.find('[data-testid="chat-thread"]').exists()).toBe(true);
+    expect(wrapper.get('[data-testid="plan-confirmation"]').text()).toContain('审查模式边界');
     expect(wrapper.find('[data-testid="composer-plan-panel"]').exists()).toBe(false);
   });
 
-  it('does not inject synthetic plan progress messages into rendered chat content', () => {
+  it('does not render synthetic plan progress messages in the unified thread', () => {
     const assistantMock = createAssistantMock([
       createMessage('message-user', 'user', '继续执行计划'),
     ]);
@@ -512,12 +525,12 @@ describe('AiAssistantPanel', () => {
 
     const wrapper = mountPanel(assistantMock);
 
-    expect(wrapper.find('[data-testid="chat-thread"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="chat-thread"]').exists()).toBe(true);
     expect(wrapper.text()).not.toContain('AI 正在自动使用工具');
-    expect(wrapper.get('[data-testid="plan-mode-thread"]').text()).toContain('读取源码');
+    expect(wrapper.find('[data-testid="composer-plan-panel"]').exists()).toBe(true);
   });
 
-  it('keeps plan execution token accounting private and uses neutral tool wording', () => {
+  it('keeps plan execution token accounting in the token context only', () => {
     const assistantMock = createAssistantMock([
       createMessage('message-user', 'user', '执行计划'),
     ]);
@@ -543,28 +556,38 @@ describe('AiAssistantPanel', () => {
 
     expect(latestTokenContextArgs).not.toBeNull();
     expect(latestTokenContextArgs?.messages.value).toHaveLength(1);
-    expect(latestTokenContextArgs?.messages.value[0]?.content).toContain('工具活动：');
-    expect(latestTokenContextArgs?.messages.value[0]?.content).not.toContain('AI 正在自动使用工具');
+    expect(latestTokenContextArgs?.messages.value[0]?.content).toContain('正在读取 AiAssistantPanel.vue');
   });
 
-  it('switches from Agent to Plan by rendering the plan thread surface', async () => {
+  it('keeps the same unified thread surface when switching from Agent to Plan', async () => {
     const assistantMock = createAssistantMock([
-      createMessage('message-user', 'user', '拆成计划再做'),
+      createMessage('message-user', 'user', '换个模式继续'),
     ]);
     assistantMock.activeMode.value = 'agent';
-    assistantMock.agentPlan.store.hasPlan = true;
-    assistantMock.agentPlan.store.activeGoal = '拆成计划再做';
-    assistantMock.agentPlan.store.steps = [createPlanStep('plan-step-1', '展示计划')];
     useAiAssistantMock.mockReturnValue(assistantMock);
 
     const wrapper = mountPanel(assistantMock);
 
-    expect(wrapper.find('[data-testid="agent-mode-panel"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="chat-thread"]').exists()).toBe(true);
 
     await wrapper.get('[data-testid="switch-plan"]').trigger('click');
 
     expect(assistantMock.activeMode.value).toBe('plan');
-    expect(wrapper.find('[data-testid="agent-mode-panel"]').exists()).toBe(false);
-    expect(wrapper.find('[data-testid="plan-mode-thread"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="chat-thread"]').exists()).toBe(true);
+  });
+
+  it('renders the shared suggestion pool and sends the picked suggestion', async () => {
+    const assistantMock = createAssistantMock([]);
+    assistantMock.activeMode.value = 'agent';
+    useAiAssistantMock.mockReturnValue(assistantMock);
+
+    const wrapper = mountPanel(assistantMock);
+
+    expect(wrapper.find('[data-testid="suggestion-empty"]').exists()).toBe(true);
+
+    await wrapper.get('[data-testid="suggestion-chip"]').trigger('click');
+
+    expect(assistantMock.draft.value).toBe('讲一个科学小知识');
+    expect(assistantMock.sendMessage).toHaveBeenCalledTimes(1);
   });
 });
