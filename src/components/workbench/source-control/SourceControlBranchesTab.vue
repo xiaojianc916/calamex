@@ -7,7 +7,7 @@
           :disabled="isBranchesLoading || isBusy" @click="handleReloadBranches">
           <span aria-hidden="true" class="icon-[lucide--refresh-cw]" />
         </button>
-        <p class="source-control-branches-summary"> branchesPanelSummary </p>
+        <p class="source-control-branches-summary" v-text="branchesPanelSummary" />
       </div>
     </div>
 
@@ -43,7 +43,7 @@
           </button>
         </div>
 
-        <p v-if="branchCreateError" class="source-control-branch-create-error"> branchCreateError </p>
+        <p v-if="branchCreateError" class="source-control-branch-create-error" v-text="branchCreateError" />
       </form>
     </div>
 
@@ -55,8 +55,8 @@
     <template v-else-if="filteredBranchEntries.length > 0">
       <section v-for="group in branchGroups" :key="group.key" class="source-control-branch-group">
         <div class="source-control-branch-group-header">
-          <span> group.title </span>
-          <span class="source-control-branch-group-count"> group.entries.length </span>
+          <span v-text="group.title" />
+          <span class="source-control-branch-group-count" v-text="group.entries.length" />
         </div>
 
         <div class="source-control-branch-list">
@@ -74,8 +74,8 @@
             </svg>
 
             <div class="source-control-branch-row-body">
-              <span class="source-control-branch-row-name"> entry.shorthand </span>
-              <span v-if="resolveBranchMeta(entry)" class="source-control-branch-row-meta"> resolveBranchMeta(entry) </span>
+              <span class="source-control-branch-row-name" v-text="entry.shorthand" />
+              <span v-if="resolveBranchMeta(entry)" class="source-control-branch-row-meta" v-text="resolveBranchMeta(entry)" />
             </div>
 
             <span v-if="entry.isCurrent" class="source-control-branch-row-current">当前</span>
@@ -85,7 +85,7 @@
       </section>
     </template>
 
-    <p v-else class="source-control-info-note source-control-branches-note"> branchesEmptyText </p>
+    <p v-else class="source-control-info-note source-control-branches-note" v-text="branchesEmptyText" />
   </section>
 </template>
 

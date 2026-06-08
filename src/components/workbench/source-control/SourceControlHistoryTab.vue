@@ -7,7 +7,7 @@
           :disabled="isCommitHistoryLoading || isBusy" @click="handleReloadCommitHistory">
           <span aria-hidden="true" class="icon-[lucide--refresh-cw]" />
         </button>
-        <p class="source-control-history-summary"> historyPanelTitle </p>
+        <p class="source-control-history-summary" v-text="historyPanelTitle" />
       </div>
     </div>
 
@@ -23,7 +23,7 @@
       :behind="status.behind"
     />
 
-    <p v-else class="source-control-info-note source-control-history-note"> historyEmptyText </p>
+    <p v-else class="source-control-info-note source-control-history-note" v-text="historyEmptyText" />
   </section>
 </template>
 

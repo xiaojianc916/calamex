@@ -2,7 +2,7 @@
   <section class="source-control-info-panel source-control-stash-panel">
     <div class="source-control-stash-header">
       <p class="source-control-stash-heading">贮藏</p>
-      <p class="source-control-stash-summary"> stashPanelTitle </p>
+      <p class="source-control-stash-summary" v-text="stashPanelTitle" />
     </div>
 
     <div class="source-control-stash-toolbar">
@@ -32,11 +32,11 @@
         :class="{ 'is-open': isStashOpen(entry.stashId) }">
         <button type="button" class="source-control-stash-head" :aria-expanded="isStashOpen(entry.stashId)"
           @click="toggleStashOpen(entry.stashId)">
-          <span class="source-control-stash-ref"> resolveStashIndexLabel(entry) </span>
+          <span class="source-control-stash-ref" v-text="resolveStashIndexLabel(entry)" />
 
           <span class="source-control-stash-info">
-            <span class="source-control-stash-title"> resolveStashTitle(entry) </span>
-            <span class="source-control-stash-meta"> resolveStashMeta(entry) </span>
+            <span class="source-control-stash-title" v-text="resolveStashTitle(entry)" />
+            <span class="source-control-stash-meta" v-text="resolveStashMeta(entry)" />
           </span>
 
           <svg class="source-control-stash-chevron" viewBox="0 0 24 24" aria-hidden="true">
@@ -48,17 +48,17 @@
           <div class="source-control-stash-details">
             <div class="source-control-stash-detail">
               <span class="source-control-stash-detail-label">引用</span>
-              <span class="source-control-stash-detail-value"> entry.stashId </span>
+              <span class="source-control-stash-detail-value" v-text="entry.stashId" />
             </div>
 
             <div v-if="entry.branchName" class="source-control-stash-detail">
               <span class="source-control-stash-detail-label">分支</span>
-              <span class="source-control-stash-detail-value"> entry.branchName </span>
+              <span class="source-control-stash-detail-value" v-text="entry.branchName" />
             </div>
 
             <div v-if="entry.commitShortId" class="source-control-stash-detail">
               <span class="source-control-stash-detail-label">基线</span>
-              <span class="source-control-stash-detail-value"> entry.commitShortId </span>
+              <span class="source-control-stash-detail-value" v-text="entry.commitShortId" />
             </div>
           </div>
 
@@ -81,7 +81,7 @@
       </article>
     </div>
 
-    <p v-else class="source-control-info-note source-control-stash-note"> stashEmptyText </p>
+    <p v-else class="source-control-info-note source-control-stash-note" v-text="stashEmptyText" />
   </section>
 </template>
 

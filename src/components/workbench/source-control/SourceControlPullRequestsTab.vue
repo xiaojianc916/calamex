@@ -3,9 +3,8 @@
     <div class="source-control-pull-requests-header">
       <p class="source-control-pull-requests-heading">Pull requests</p>
       <div class="source-control-pull-requests-header-actions">
-        <span v-if="pullRequestSupport.available" class="source-control-pull-requests-provider">
-          pullRequestProviderLabel
-        </span>
+        <span v-if="pullRequestSupport.available" class="source-control-pull-requests-provider"
+          v-text="pullRequestProviderLabel" />
         <button type="button" class="source-control-pull-requests-refresh" aria-label="刷新 Pull Request"
           title="刷新 Pull Request"
           :disabled="isPullRequestSupportLoading || isPullRequestsLoading || isSettingRemote || isBusy"
@@ -29,9 +28,8 @@
               <button v-for="filter in pullRequestFilters" :key="filter.key" type="button"
                 class="source-control-pr-filter-btn"
                 :class="{ 'is-active': pullRequestStateFilter === filter.key }"
-                :disabled="isPullRequestsLoading" @click="handleSelectPullRequestFilter(filter.key)">
-                filter.label
-              </button>
+                :disabled="isPullRequestsLoading" @click="handleSelectPullRequestFilter(filter.key)"
+                v-text="filter.label" />
             </div>
             <button type="button" class="source-control-pr-action-btn is-primary"
               :disabled="isPullRequestsLoading || isBusy" @click="handleStartCreatePullRequest">
@@ -49,16 +47,15 @@
             <button v-for="pullRequest in pullRequests" :key="pullRequest.number" type="button"
               class="source-control-pr-item" @click="handleOpenPullRequest(pullRequest.number)">
               <span class="source-control-pr-item-head">
-                <span class="source-control-pr-item-title">pullRequest.title</span>
-                <span class="source-control-pr-state" :class="'is-' + resolvePullRequestStateTone(pullRequest)">
-                  resolvePullRequestStateLabel(pullRequest)
-                </span>
+                <span class="source-control-pr-item-title" v-text="pullRequest.title" />
+                <span class="source-control-pr-state" :class="'is-' + resolvePullRequestStateTone(pullRequest)"
+                  v-text="resolvePullRequestStateLabel(pullRequest)" />
               </span>
-              <span class="source-control-pr-item-meta">resolvePullRequestMeta(pullRequest)</span>
+              <span class="source-control-pr-item-meta" v-text="resolvePullRequestMeta(pullRequest)" />
             </button>
           </div>
 
-          <p v-else class="source-control-pr-empty">pullRequestsEmptyText</p>
+          <p v-else class="source-control-pr-empty" v-text="pullRequestsEmptyText" />
         </template>
 
         <template v-else-if="pullRequestView === 'detail'">
@@ -74,18 +71,17 @@
 
           <div v-else-if="pullRequestDetail" class="source-control-pr-detail">
             <div class="source-control-pr-detail-head">
-              <span class="source-control-pr-detail-title">pullRequestDetail.title</span>
-              <span class="source-control-pr-state" :class="'is-' + resolvePullRequestStateTone(pullRequestDetail)">
-                resolvePullRequestStateLabel(pullRequestDetail)
-              </span>
+              <span class="source-control-pr-detail-title" v-text="pullRequestDetail.title" />
+              <span class="source-control-pr-state" :class="'is-' + resolvePullRequestStateTone(pullRequestDetail)"
+                v-text="resolvePullRequestStateLabel(pullRequestDetail)" />
             </div>
-            <p class="source-control-pr-detail-meta">resolvePullRequestMeta(pullRequestDetail)</p>
+            <p class="source-control-pr-detail-meta" v-text="resolvePullRequestMeta(pullRequestDetail)" />
             <div class="source-control-pr-detail-stats">
-              <span class="source-control-pr-stat is-add">+pullRequestDetail.additions ?? 0</span>
-              <span class="source-control-pr-stat is-del">-pullRequestDetail.deletions ?? 0</span>
-              <span class="source-control-pr-stat">pullRequestDetail.changedFiles ?? 0 个文件</span>
+              <span class="source-control-pr-stat is-add" v-text="'+' + (pullRequestDetail.additions ?? 0)" />
+              <span class="source-control-pr-stat is-del" v-text="'-' + (pullRequestDetail.deletions ?? 0)" />
+              <span class="source-control-pr-stat" v-text="(pullRequestDetail.changedFiles ?? 0) + ' 个文件'" />
             </div>
-            <p v-if="pullRequestDetail.body" class="source-control-pr-detail-body">pullRequestDetail.body</p>
+            <p v-if="pullRequestDetail.body" class="source-control-pr-detail-body" v-text="pullRequestDetail.body" />
             <p v-else class="source-control-pr-detail-body is-empty">这个 Pull Request 没有描述。</p>
 
             <div class="source-control-pr-merge-row">
@@ -139,22 +135,21 @@
               <input v-model="createPullRequestDraft" type="checkbox" :disabled="isCreatingPullRequest" />
               <span>创建为草稿 PR</span>
             </label>
-            <p v-if="createPullRequestError" class="source-control-pr-form-error">createPullRequestError</p>
+            <p v-if="createPullRequestError" class="source-control-pr-form-error" v-text="createPullRequestError" />
             <div class="source-control-pr-create-actions">
               <button type="button" class="source-control-pr-action-btn"
                 :disabled="isCreatingPullRequest" @click="handleBackToPullRequestList">取消</button>
               <button type="submit" class="source-control-pr-action-btn is-primary"
-                :disabled="isCreatingPullRequest || !canSubmitCreatePullRequest">
-                isCreatingPullRequest ? '创建中…' : '创建 PR'
-              </button>
+                :disabled="isCreatingPullRequest || !canSubmitCreatePullRequest"
+                v-text="isCreatingPullRequest ? '创建中…' : '创建 PR'" />
             </div>
           </form>
         </template>
       </template>
 
       <template v-else>
-        <p class="source-control-info-title">pullRequestPanelTitle</p>
-        <p class="source-control-info-text">pullRequestPanelText</p>
+        <p class="source-control-info-title" v-text="pullRequestPanelTitle" />
+        <p class="source-control-info-text" v-text="pullRequestPanelText" />
       </template>
 
       <div class="source-control-pull-requests-config">
@@ -177,14 +172,13 @@
               :class="{ 'is-invalid': Boolean(remoteFormError) }"
               placeholder="https://github.com/owner/repo.git" :disabled="isSettingRemote" spellcheck="false" />
           </label>
-          <p v-if="remoteFormError" class="source-control-pr-form-error">remoteFormError</p>
+          <p v-if="remoteFormError" class="source-control-pr-form-error" v-text="remoteFormError" />
           <div class="source-control-pr-create-actions">
             <button type="button" class="source-control-pr-action-btn"
               :disabled="isSettingRemote" @click="handleCancelRemoteForm">取消</button>
             <button type="submit" class="source-control-pr-action-btn is-primary"
-              :disabled="isSettingRemote || !canSubmitRemoteForm">
-              isSettingRemote ? '保存中…' : '保存'
-            </button>
+              :disabled="isSettingRemote || !canSubmitRemoteForm"
+              v-text="isSettingRemote ? '保存中…' : '保存'" />
           </div>
         </form>
       </div>
