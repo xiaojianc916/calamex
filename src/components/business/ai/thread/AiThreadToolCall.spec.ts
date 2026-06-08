@@ -99,7 +99,13 @@ describe('AiThreadToolCall', () => {
           {
             type: 'diff',
             id: 'c1',
-            file: { path: 'src/a.ts', status: 'modified', additions: 1, deletions: 0, diffRef: 'd1' },
+            file: {
+              path: 'src/a.ts',
+              status: 'modified',
+              additions: 1,
+              deletions: 0,
+              diffRef: 'd1',
+            },
             patchSummaryId: 'sum1',
           },
         ]),

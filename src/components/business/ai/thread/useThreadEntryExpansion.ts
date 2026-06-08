@@ -1,5 +1,5 @@
-import { reactive, watch } from 'vue';
 import type { ComputedRef, Ref } from 'vue';
+import { reactive, watch } from 'vue';
 import type { IAiThreadReasoningEntry, TAiThreadEntry } from './projection';
 
 export interface IThreadEntryExpansion {
@@ -45,10 +45,7 @@ export function useThreadEntryExpansion(
         return;
       }
 
-      if (
-        autoExpandedReasoningId !== null &&
-        !userToggledReasoning.has(autoExpandedReasoningId)
-      ) {
+      if (autoExpandedReasoningId !== null && !userToggledReasoning.has(autoExpandedReasoningId)) {
         expandedReasoning.delete(autoExpandedReasoningId);
       }
 

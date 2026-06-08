@@ -102,9 +102,7 @@ const confirmationOptions = computed<IAiToolConfirmationOption[]>(() => {
   );
 });
 
-const optionVariant = (
-  option: IAiToolConfirmationOption,
-): 'default' | 'outline' | 'ghost' => {
+const optionVariant = (option: IAiToolConfirmationOption): 'default' | 'outline' | 'ghost' => {
   if (option.tone === 'primary') {
     return 'default';
   }

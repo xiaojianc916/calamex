@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { nextTick, ref } from 'vue';
-import type {
-  IAiThreadReasoningEntry,
-  IAiThreadToolCallEntry,
-  TAiThreadEntry,
-} from './projection';
+import type { IAiThreadReasoningEntry, IAiThreadToolCallEntry, TAiThreadEntry } from './projection';
 import { useThreadEntryExpansion } from './useThreadEntryExpansion';
 
 const toolEntry = (overrides: Partial<IAiThreadToolCallEntry> = {}): IAiThreadToolCallEntry => ({
