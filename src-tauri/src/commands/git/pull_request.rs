@@ -255,6 +255,8 @@ use tokio::io::AsyncWriteExt;
 const GITHUB_CREDENTIAL_CACHE_TTL: Duration = Duration::from_secs(5 * 60);
 const GITHUB_PULL_REQUEST_FRESH_TTL: Duration = Duration::from_secs(15);
 const GITHUB_PULL_REQUEST_STALE_IF_ERROR_TTL: Duration = Duration::from_secs(5 * 60);
+const GITHUB_PULL_REQUEST_LIST_PAGE_SIZE: u32 = 50;
+const GITHUB_PULL_REQUEST_LIST_MAX_PAGES: u32 = 5;
 
 #[derive(Debug, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -682,6 +684,15 @@ fn annotate_auth_error(error: String, has_token: bool) -> String {
     }
 }
 
+fn github_response_has_next_page(response: &reqwest::Response) -> bool {
+    response
+        .headers()
+        .get(reqwest::header::LINK)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.split(',').any(|part| part.contains("rel=\"next\"")))
+        .unwrap_or(false)
+}
+
 async fn read_github_json<T: serde::de::DeserializeOwned>(
     response: reqwest::Response,
 ) -> Result<T, String> {
@@ -787,57 +798,82 @@ pub async fn list_git_pull_requests(
         }
     }
 
-    let url = format!(
-        "{}/repos/{}/{}/pulls?state={}&per_page=50&sort=updated&direction=desc",
-        target.api_base, target.owner, target.repo, state
-    );
+    let mut all_pull_requests: Vec<GitHubPullRequest> = Vec::new();
+    let mut first_page_etag: Option<String> = None;
 
-    let mut request = client.get(&url);
-    if let Some(etag) = cached.as_ref().and_then(|entry| entry.etag.as_deref()) {
-        request = request.header(IF_NONE_MATCH, etag);
-    }
+    for page in 1..=GITHUB_PULL_REQUEST_LIST_MAX_PAGES {
+        let url = format!(
+            "{}/repos/{}/{}/pulls?state={}&per_page={}&page={}&sort=updated&direction=desc",
+            target.api_base,
+            target.owner,
+            target.repo,
+            state,
+            GITHUB_PULL_REQUEST_LIST_PAGE_SIZE,
+            page
+        );
 
-    let response = request
-        .send()
-        .await
-        .map_err(|error| annotate_auth_error(format!("请求 GitHub 失败：{error}"), has_token))?;
+        let mut request = client.get(&url);
 
-    if response.status().as_u16() == 304 {
-        if let Some(cached) = cached {
-            touch_pull_request_cache(&cache_key);
-            return Ok(map_pull_request_list(&cached.pull_requests));
+        // ETag is only safe for the exact first-page query. If page 1 returns
+        // 304, reuse the cached aggregate and avoid walking later pages.
+        if page == 1 {
+            if let Some(etag) = cached.as_ref().and_then(|entry| entry.etag.as_deref()) {
+                request = request.header(IF_NONE_MATCH, etag);
+            }
         }
-    }
 
-    if !response.status().is_success() {
-        if let Some(cached) = cached {
-            if cached.fetched_at.elapsed() <= GITHUB_PULL_REQUEST_STALE_IF_ERROR_TTL {
+        let response = request
+            .send()
+            .await
+            .map_err(|error| annotate_auth_error(format!("请求 GitHub 失败：{error}"), has_token))?;
+
+        if page == 1 && response.status().as_u16() == 304 {
+            if let Some(cached) = cached {
+                touch_pull_request_cache(&cache_key);
                 return Ok(map_pull_request_list(&cached.pull_requests));
             }
         }
 
-        return read_github_json::<Vec<GitHubPullRequest>>(response)
+        if !response.status().is_success() {
+            if let Some(cached) = cached {
+                if cached.fetched_at.elapsed() <= GITHUB_PULL_REQUEST_STALE_IF_ERROR_TTL {
+                    return Ok(map_pull_request_list(&cached.pull_requests));
+                }
+            }
+
+            return read_github_json::<Vec<GitHubPullRequest>>(response)
+                .await
+                .map(|pull_requests| {
+                    remember_pull_requests(cache_key, None, pull_requests.clone());
+                    map_pull_request_list(&pull_requests)
+                })
+                .map_err(|error| annotate_auth_error(error, has_token));
+        }
+
+        if page == 1 {
+            first_page_etag = response
+                .headers()
+                .get(ETAG)
+                .and_then(|value| value.to_str().ok())
+                .filter(|value| !value.trim().is_empty())
+                .map(str::to_string);
+        }
+
+        let has_next_page = github_response_has_next_page(&response);
+        let mut page_pull_requests: Vec<GitHubPullRequest> = read_github_json(response)
             .await
-            .map(|pull_requests| {
-                remember_pull_requests(cache_key, None, pull_requests.clone());
-                map_pull_request_list(&pull_requests)
-            })
-            .map_err(|error| annotate_auth_error(error, has_token));
+            .map_err(|error| annotate_auth_error(error, has_token))?;
+
+        let page_is_empty = page_pull_requests.is_empty();
+        all_pull_requests.append(&mut page_pull_requests);
+
+        if page_is_empty || !has_next_page {
+            break;
+        }
     }
 
-    let etag = response
-        .headers()
-        .get(ETAG)
-        .and_then(|value| value.to_str().ok())
-        .filter(|value| !value.trim().is_empty())
-        .map(str::to_string);
-
-    let pull_requests: Vec<GitHubPullRequest> = read_github_json(response)
-        .await
-        .map_err(|error| annotate_auth_error(error, has_token))?;
-
-    remember_pull_requests(cache_key, etag, pull_requests.clone());
-    Ok(map_pull_request_list(&pull_requests))
+    remember_pull_requests(cache_key, first_page_etag, all_pull_requests.clone());
+    Ok(map_pull_request_list(&all_pull_requests))
 }
 
 #[tauri::command]
