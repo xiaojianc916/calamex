@@ -1,6 +1,36 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createMastraAgentOutputProcessors } from './workspace.js';
+import {
+    DEFAULT_MASTRA_INPUT_TOKEN_LIMIT,
+    createMastraAgentInputProcessors,
+    createMastraAgentOutputProcessors,
+    resolveMastraInputTokenLimit,
+} from './workspace.js';
+
+test('input processors use Mastra official TokenLimiterProcessor for context trimming', () => {
+    const processors = createMastraAgentInputProcessors({ env: {} });
+    const processorIds = processors.map((processor) => processor.id);
+
+    assert.deepEqual(processorIds, ['unicode-normalizer', 'token-limiter']);
+
+    const tokenLimiter = processors.find((processor) => processor.id === 'token-limiter');
+    assert.ok(tokenLimiter);
+    assert.equal(
+        (tokenLimiter as { getMaxTokens: () => number }).getMaxTokens(),
+        DEFAULT_MASTRA_INPUT_TOKEN_LIMIT,
+    );
+});
+
+test('resolveMastraInputTokenLimit supports env override and disable switch', () => {
+    assert.equal(
+        resolveMastraInputTokenLimit({ AGENT_SIDECAR_INPUT_TOKEN_LIMIT: '12000' }),
+        12_000,
+    );
+    assert.equal(
+        resolveMastraInputTokenLimit({ AGENT_SIDECAR_INPUT_TOKEN_LIMIT: 'false' }),
+        null,
+    );
+});
 
 test('output processors stay streaming-safe (no buffering / no coalescing)', () => {
     const processors = createMastraAgentOutputProcessors();

@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { AgentBrowser } from '@mastra/agent-browser';
 import type { MastraBrowser } from '@mastra/core/browser';
-import { UnicodeNormalizer, type InputProcessorOrWorkflow, type OutputProcessorOrWorkflow } from '@mastra/core/processors';
+import { TokenLimiterProcessor, UnicodeNormalizer, type InputProcessorOrWorkflow, type OutputProcessorOrWorkflow } from '@mastra/core/processors';
 import { LocalFilesystem, LocalSandbox, Workspace, WORKSPACE_TOOLS, type AnyWorkspace, type CommandResult, type ExecuteCommandOptions, type WorkspaceToolsConfig } from '@mastra/core/workspace';
 import { MastraStorageExporter, Observability, SensitiveDataFilter } from '@mastra/observability';
 import type { IAgentContextReferenceInput, IAgentRuntimeInput } from './contracts/runtime-input.js';
@@ -14,6 +14,10 @@ import { toNonEmptyString } from './utils.js';
 import { resolveWorkspaceDirectory } from './context/context.js';
 
 export const isWindowsRuntime = (): boolean => process.platform === 'win32';
+
+export const AGENT_SIDECAR_INPUT_TOKEN_LIMIT_ENV = 'AGENT_SIDECAR_INPUT_TOKEN_LIMIT';
+export const DEFAULT_MASTRA_INPUT_TOKEN_LIMIT = 64_000;
+export const MIN_MASTRA_INPUT_TOKEN_LIMIT = 4_096;
 
 export const resolveWindowsPowerShellExecutable = (): string => {
     const systemRoot = toNonEmptyString(process.env.SystemRoot)
@@ -244,14 +248,59 @@ export const createHostLocalSandbox = (
 export const shouldRedactWorkspacePreview = (toolName: string): boolean =>
     MASTRA_WORKSPACE_REDACTED_PREVIEW_TOOL_NAMES.has(toolName);
 
-export const createMastraAgentInputProcessors = (): InputProcessorOrWorkflow[] => [
-    new UnicodeNormalizer({
-        stripControlChars: true,
-        preserveEmojis: true,
-        collapseWhitespace: false,
-        trim: false,
-    }),
-];
+const isDisabledInputTokenLimit = (value: string): boolean => {
+    const normalized = value.trim().toLowerCase();
+    return normalized === '0'
+        || normalized === 'false'
+        || normalized === 'no'
+        || normalized === 'off';
+};
+
+export const resolveMastraInputTokenLimit = (
+    env: NodeJS.ProcessEnv = process.env,
+): number | null => {
+    const configured = toNonEmptyString(env[AGENT_SIDECAR_INPUT_TOKEN_LIMIT_ENV]);
+    if (!configured) {
+        return DEFAULT_MASTRA_INPUT_TOKEN_LIMIT;
+    }
+
+    if (isDisabledInputTokenLimit(configured)) {
+        return null;
+    }
+
+    const parsed = Number(configured);
+    if (Number.isSafeInteger(parsed) && parsed > 0) {
+        return Math.max(MIN_MASTRA_INPUT_TOKEN_LIMIT, parsed);
+    }
+
+    console.warn(
+        `[agent-sidecar] ${AGENT_SIDECAR_INPUT_TOKEN_LIMIT_ENV}="${configured}" is not a positive integer; ` +
+        `falling back to ${DEFAULT_MASTRA_INPUT_TOKEN_LIMIT}.`,
+    );
+    return DEFAULT_MASTRA_INPUT_TOKEN_LIMIT;
+};
+
+export const createMastraAgentInputProcessors = (
+    options: { env?: NodeJS.ProcessEnv | undefined } = {},
+): InputProcessorOrWorkflow[] => {
+    const tokenLimit = resolveMastraInputTokenLimit(options.env);
+    return [
+        new UnicodeNormalizer({
+            stripControlChars: true,
+            preserveEmojis: true,
+            collapseWhitespace: false,
+            trim: false,
+        }),
+        ...(tokenLimit ? [new TokenLimiterProcessor({
+            limit: tokenLimit,
+            // Zed-style compaction keeps a coherent suffix of recent context.
+            // Mastra's official TokenLimiterProcessor should do the same here:
+            // avoid best-fit gaps that can separate a tool result from the user
+            // or assistant message that made it meaningful.
+            trimMode: 'contiguous',
+        })] : []),
+    ];
+};
 
 // 流式聊天 / Agent 的最终回答必须逐 token 实时下发。
 // 此前输出侧挂了基于大模型的 PIIDetector（strategy:'redact' + lastMessageOnly），
