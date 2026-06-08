@@ -1197,16 +1197,19 @@ export const useGitStore = defineStore('git', () => {
     const shouldRevalidate = Date.now() - fetchedAt >= PULL_REQUEST_DETAIL_REVALIDATE_INTERVAL_MS;
     if (cached && !force) {
       touchPullRequestDetailCache(cacheKey);
+
       if (updateActive) {
         pullRequestDetail.value = cached;
-        if (!pending && shouldRevalidate) {
-          void loadPullRequestDetail(number, {
-            force: true,
-            updateActive: true,
-            visibleLoading: false,
-          }).catch(() => undefined);
-        }
       }
+
+      if (!pending && shouldRevalidate) {
+        void loadPullRequestDetail(number, {
+          force: true,
+          updateActive,
+          visibleLoading: false,
+        }).catch(() => undefined);
+      }
+
       return cached;
     }
     if (pending) {
