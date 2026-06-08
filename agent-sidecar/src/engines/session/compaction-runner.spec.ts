@@ -39,6 +39,7 @@ test('runContextCompaction streams lifecycle events and returns compacted contin
     generateSummary: async (request, context) => {
       assert.equal(context.compactionId.startsWith('context-compaction-'), true);
       assert.equal(request.handoffPrompt, COMPACTION_HANDOFF_PROMPT);
+      assert.equal(request.retainedUserMessageByteBudget, 64);
       assert.deepEqual(request.messages.map((message) => message.content), [
         'older request',
         'active request',
@@ -65,6 +66,7 @@ test('runContextCompaction streams lifecycle events and returns compacted contin
   ]);
   assert.deepEqual(deliveredEventTypes, ['agent_event', 'agent_event', 'agent_event', 'agent_event']);
   assert.equal(session.messages[0]?.kind, 'compaction');
+  assert.equal(session.events.at(-1)?.event.retainedUserMessageByteBudget, 64);
 });
 
 test('runContextCompaction rejects empty summaries instead of recording unusable handoffs', async () => {

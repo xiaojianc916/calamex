@@ -32,6 +32,7 @@ test('buildContextCompactionGenerationRequest appends the Zed-style handoff prom
 
   assert.equal(request.handoffPrompt, COMPACTION_HANDOFF_PROMPT);
   assert.equal(request.retainedUserMessageCount, 3);
+  assert.equal(request.retainedUserMessageByteBudget, 128);
   assert.deepEqual(request.messages.map((message) => message.role), ['user', 'user', 'user', 'user']);
   assert.deepEqual(request.messages.map((message) => message.content), [
     'first user request',

@@ -1,5 +1,5 @@
 import type { TMastraChatMessage } from '../types.js';
-import { retainRecentUserMessageTexts } from '../budget/context-budget-policy.js';
+import { COMPACTION_RETAINED_USER_MESSAGES_BYTE_BUDGET, retainRecentUserMessageTexts } from '../budget/context-budget-policy.js';
 import {
   buildCompactionResumeUserPrompt,
   COMPACTION_HANDOFF_PROMPT,
@@ -17,6 +17,7 @@ export interface IContextCompactionGenerationRequest {
   readonly handoffPrompt: string;
   readonly retainedUserMessageCount: number;
   readonly retainedUserMessageByteCount: number;
+  readonly retainedUserMessageByteBudget: number;
 }
 
 export interface IBuildContextCompactionContinuationMessagesInput {
@@ -31,6 +32,11 @@ const normalizeHandoffPrompt = (prompt: string | undefined): string => {
   const trimmed = prompt?.trim();
   return trimmed && trimmed.length > 0 ? trimmed : COMPACTION_HANDOFF_PROMPT;
 };
+
+const normalizeByteBudget = (budget: number | undefined): number =>
+  Number.isFinite(budget) && budget !== undefined && budget > 0
+    ? Math.floor(budget)
+    : COMPACTION_RETAINED_USER_MESSAGES_BYTE_BUDGET;
 
 const cloneMastraMessage = (message: TMastraChatMessage): TMastraChatMessage => {
   if (message.role === 'assistant') {
@@ -64,9 +70,10 @@ export const buildContextCompactionGenerationRequest = (
   input: IBuildContextCompactionGenerationRequestInput,
 ): IContextCompactionGenerationRequest => {
   const handoffPrompt = normalizeHandoffPrompt(input.handoffPrompt);
+  const retainedUserMessageByteBudget = normalizeByteBudget(input.retainedUserMessageByteBudget);
   const retainedUserMessages = retainRecentUserMessageTexts(
     input.messages,
-    input.retainedUserMessageByteBudget,
+    retainedUserMessageByteBudget,
   );
   const messages: TMastraChatMessage[] = [
     ...retainedUserMessages.map<TMastraChatMessage>((content) => ({
@@ -84,6 +91,7 @@ export const buildContextCompactionGenerationRequest = (
     handoffPrompt,
     retainedUserMessageCount: retainedUserMessages.length,
     retainedUserMessageByteCount: countUtf8Bytes(retainedUserMessages),
+    retainedUserMessageByteBudget,
   };
 };
 

@@ -145,7 +145,7 @@ export const runContextCompaction = async (
     compactionId: started.id,
     reason,
     summaryCharCount: completed.summary.length,
-    retainedUserMessageByteBudget: generationRequest.retainedUserMessageByteCount,
+    retainedUserMessageByteBudget: generationRequest.retainedUserMessageByteBudget,
     sourceMessageCount,
   }, input.options, input.runId);
 
