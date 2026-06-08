@@ -7,6 +7,11 @@ import {
 } from '@mastra/core/llm';
 
 import {
+  resolveAgentModelCapabilities,
+  selectPreferredBackgroundModelId,
+  type IAgentModelCapabilities,
+} from './capabilities.js';
+import {
   AGENT_SIDECAR_DEEPSEEK_PROVIDER_ID,
   createDeepSeekGatewayModelId,
   createDeepSeekMastraGateway,
@@ -20,16 +25,6 @@ const REFLECTOR_MODEL_ID_ENV = 'AGENT_SIDECAR_REFLECTOR_MODEL';
 
 const DEFAULT_MODEL_ID = 'deepseek/deepseek-v4-pro';
 const ALLOWED_BASE_URL_PROTOCOLS: ReadonlySet<string> = new Set(['http:', 'https:']);
-
-const SMALL_MODEL_BY_PROVIDER: Readonly<Record<string, string>> = {
-  openai: 'openai/gpt-5.4-mini',
-  anthropic: 'anthropic/claude-haiku-4-5',
-  deepseek: 'deepseek/deepseek-v4-flash',
-  google: 'google/gemini-3.1-flash-lite',
-  alibaba: 'alibaba/qwen3.6-flash',
-  zhipuai: 'zhipuai/glm-4.7-flash',
-  moonshotai: 'moonshotai/kimi-k2-turbo-preview',
-};
 
 const readEnv = (
   key: string,
@@ -148,6 +143,7 @@ export interface IMastraResolvedModelConfig {
   providerId: string;
   providerModelId: string;
   model: MastraModelConfig;
+  capabilities: IAgentModelCapabilities;
   customGateways: MastraModelGateway[];
   apiKey: string;
   baseUrl?: string | undefined;
@@ -171,6 +167,11 @@ export const createMastraOpenAICompatibleModelConfig = (
     providerModelId,
   } = resolveProviderModelId(normalizedModelId);
   const baseUrl = resolveProviderBaseUrl(providerId, options.baseUrl?.trim() ?? null);
+  const capabilities = resolveAgentModelCapabilities({
+    providerId,
+    providerModelId,
+    modelId: normalizedModelId,
+  });
   const customGateways = createCustomGateways({
     providerId,
     apiKey,
@@ -181,6 +182,7 @@ export const createMastraOpenAICompatibleModelConfig = (
     modelId: normalizedModelId,
     providerId,
     providerModelId,
+    capabilities,
     apiKey,
     ...(baseUrl ? { baseUrl } : {}),
     model: createMastraModel({
@@ -231,15 +233,12 @@ export const createMastraModelConfigFromEnv = (
   });
 };
 
-const resolveSmallModelId = (baseModel: IMastraResolvedModelConfig): string =>
-  SMALL_MODEL_BY_PROVIDER[baseModel.providerId] ?? baseModel.modelId;
-
 const resolveBackgroundModelOverride = (
   envKey: string,
   baseModel: IMastraResolvedModelConfig,
   env: NodeJS.ProcessEnv = process.env,
 ): IMastraResolvedModelConfig => {
-  const modelId = readEnv(envKey, env) ?? resolveSmallModelId(baseModel);
+  const modelId = readEnv(envKey, env) ?? selectPreferredBackgroundModelId(baseModel.capabilities);
   return createMastraOpenAICompatibleModelConfig({
     modelId,
     apiKey: baseModel.apiKey,
