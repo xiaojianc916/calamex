@@ -40,7 +40,14 @@ export interface IWarmupResult {
   reason?: string;
 }
 
+type TWarmupOptions = {
+  signal?: AbortSignal;
+};
+
 const lastWarmupByKey = new Map<string, number>();
+const backgroundWarmupTimers = new Map<number, ReturnType<typeof setTimeout>>();
+const backgroundWarmupControllers = new Set<AbortController>();
+let nextBackgroundWarmupId = 0;
 
 const trimTrailingSlash = (value: string): string => value.trim().replace(/\/+$/u, '');
 
@@ -97,7 +104,10 @@ const isRecentlyWarmed = (key: string): boolean => {
   return warmedAt !== undefined && Date.now() - warmedAt < RECENT_WARMUP_TTL_MS;
 };
 
-export const warmupLlmConnection = async (input: unknown): Promise<IWarmupResult> => {
+export const warmupLlmConnection = async (
+  input: unknown,
+  options: TWarmupOptions = {},
+): Promise<IWarmupResult> => {
   const startedAt = performance.now();
   const payload = warmupRequestSchema.parse(input);
   const modelConfig = payload.modelConfig;
@@ -154,7 +164,14 @@ export const warmupLlmConnection = async (input: unknown): Promise<IWarmupResult
   }
 
   const controller = new AbortController();
+  const abortWarmup = (): void => controller.abort(options.signal?.reason);
+  if (options.signal?.aborted) {
+    abortWarmup();
+  } else {
+    options.signal?.addEventListener('abort', abortWarmup, { once: true });
+  }
   const timeout = setTimeout(() => controller.abort(), WARMUP_TIMEOUT_MS);
+  timeout.unref?.();
 
   try {
     const response = await fetch(buildWarmupUrl(providerId, baseUrl), {
@@ -184,6 +201,7 @@ export const warmupLlmConnection = async (input: unknown): Promise<IWarmupResult
     };
   } finally {
     clearTimeout(timeout);
+    options.signal?.removeEventListener('abort', abortWarmup);
   }
 };
 
@@ -208,9 +226,29 @@ export const logWarmupResult = (trigger: string, result: IWarmupResult): void =>
   console.warn(serialized);
 };
 
+export const disposeWarmupScheduler = (): void => {
+  for (const timer of backgroundWarmupTimers.values()) {
+    clearTimeout(timer);
+  }
+  backgroundWarmupTimers.clear();
+
+  for (const controller of backgroundWarmupControllers) {
+    controller.abort();
+  }
+  backgroundWarmupControllers.clear();
+};
+
 export const scheduleBackgroundWarmup = (input: unknown, trigger: string): void => {
-  setTimeout(() => {
-    void warmupLlmConnection(input)
+  const warmupId = nextBackgroundWarmupId;
+  nextBackgroundWarmupId += 1;
+
+  const timer = setTimeout(() => {
+    backgroundWarmupTimers.delete(warmupId);
+
+    const controller = new AbortController();
+    backgroundWarmupControllers.add(controller);
+
+    void warmupLlmConnection(input, { signal: controller.signal })
       .then((result) => logWarmupResult(trigger, result))
       .catch((error) => {
         console.warn(JSON.stringify({
@@ -225,6 +263,11 @@ export const scheduleBackgroundWarmup = (input: unknown, trigger: string): void 
           skipped: true,
           reason: error instanceof Error ? error.message : String(error),
         }));
+      })
+      .finally(() => {
+        backgroundWarmupControllers.delete(controller);
       });
   }, 0);
+  timer.unref?.();
+  backgroundWarmupTimers.set(warmupId, timer);
 };

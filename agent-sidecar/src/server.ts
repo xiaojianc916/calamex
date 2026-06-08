@@ -17,7 +17,7 @@ import {
 } from './web/types.js';
 import { disposeWebService, fetchWeb, searchWeb } from './web/service.js';
 import { configureGlobalHttpTransport } from './http/transport.js';
-import { scheduleBackgroundWarmup } from './http/warmup.js';
+import { disposeWarmupScheduler, scheduleBackgroundWarmup } from './http/warmup.js';
 import {
   agentSidecarChatRequestSchema,
   agentSidecarOrchestrateRequestSchema,
@@ -137,6 +137,12 @@ export const createAgentSidecarServer = (
       }
       orchestrationRunTimers.clear();
       orchestrationRuns.clear();
+
+      try {
+        disposeWarmupScheduler();
+      } catch (error) {
+        logProcessEvent('warmup.dispose.failed', error);
+      }
 
       try {
         await runtime.dispose?.();
