@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 
+import { withTimeout as withTimeoutOrReject } from '../timeout.js'
 import { createMastraMcpClientBundle } from '../tools/mcp.js'
 import {
   aiWebFetchInputSchema,
@@ -137,6 +138,7 @@ const ensureMcpSuccess = (value: unknown, fallbackMessage: string): string => {
 // ---------------------------------------------------------------------------
 
 let sharedBundlePromise: Promise<TMcpBundle> | null = null
+let disposeWebServicePromise: Promise<void> | null = null
 let shutdownHookRegistered = false
 
 /**
@@ -145,13 +147,20 @@ let shutdownHookRegistered = false
  * 确保关闭流程结束前 tavily 子进程已被回收，不留孤儿。
  */
 export const disposeWebService = async (): Promise<void> => {
+  if (disposeWebServicePromise) return disposeWebServicePromise
+
   const pending = sharedBundlePromise
   sharedBundlePromise = null
   if (!pending) return
-  await pending.then(
+
+  disposeWebServicePromise = pending.then(
     (bundle) => bundle.disconnectAll().catch(() => undefined),
     () => undefined,
-  )
+  ).finally(() => {
+    disposeWebServicePromise = null
+  })
+
+  return disposeWebServicePromise
 }
 
 const registerShutdownHook = (): void => {
@@ -180,28 +189,6 @@ const getSharedBundle = async (): Promise<TMcpBundle> => {
   return sharedBundlePromise
 }
 
-const withTimeout = async <T>(
-  promise: Promise<T>,
-  timeoutMs: number,
-  label: string,
-): Promise<T> => {
-  if (timeoutMs <= 0) return promise
-  let timer: ReturnType<typeof setTimeout> | undefined
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(
-          () => reject(new Error(`Tavily 工具调用超时(${timeoutMs}ms)：${label}`)),
-          timeoutMs,
-        )
-      }),
-    ])
-  } finally {
-    if (timer) clearTimeout(timer)
-  }
-}
-
 const executeTavilyTool = async (
   toolName: TTavilyToolName,
   args: Record<string, unknown>,
@@ -213,7 +200,11 @@ const executeTavilyTool = async (
   }
 
   const invoke = (payload: unknown): Promise<unknown> =>
-    withTimeout(tool.execute(payload), TAVILY_TOOL_TIMEOUT_MS, toolName)
+    withTimeoutOrReject(
+      tool.execute(payload),
+      TAVILY_TOOL_TIMEOUT_MS,
+      () => new Error(`Tavily 工具调用超时(${TAVILY_TOOL_TIMEOUT_MS}ms)：${toolName}`),
+    )
 
   try {
     return await invoke(args)
