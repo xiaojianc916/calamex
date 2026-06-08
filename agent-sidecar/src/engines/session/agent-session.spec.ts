@@ -67,3 +67,86 @@ test('AgentExecutionSession reuses one sequence per run id', () => {
   assert.equal(checkpoint.event.runId, 'run-2');
   assert.equal(checkpoint.event.seq, 0);
 });
+
+test('AgentExecutionSession records turn lifecycle as session state', () => {
+  const session = createAgentExecutionSession({
+    sessionId: 'session-1',
+    runId: 'run-1',
+    now: () => '2026-01-01T00:00:00.000Z',
+  });
+
+  const turn = session.startTurn({
+    turnId: 'turn-1',
+    mode: 'agent',
+    goal: '重构执行层',
+    modelId: 'deepseek/deepseek-v4-pro',
+  });
+
+  assert.equal(turn.id, 'turn-1');
+  assert.equal(turn.runId, 'run-1');
+  assert.equal(turn.status, 'running');
+  assert.equal(turn.startedAt, '2026-01-01T00:00:00.000Z');
+  assert.equal(session.turns.length, 1);
+
+  const completed = session.completeTurn('turn-1', { result: 'done' });
+
+  assert.equal(completed?.status, 'completed');
+  assert.equal(completed?.result, 'done');
+  assert.equal(completed?.completedAt, '2026-01-01T00:00:00.000Z');
+  assert.equal(session.turns[0]?.status, 'completed');
+});
+
+test('AgentExecutionSession disposes resources in reverse acquisition order', async () => {
+  const disposed: string[] = [];
+  const session = createAgentExecutionSession();
+  const scope = session.createResourceScope('turn');
+
+  scope.add({
+    name: 'mcp-bundle',
+    dispose: () => disposed.push('mcp-bundle'),
+  });
+  scope.add({
+    name: 'workspace',
+    dispose: () => disposed.push('workspace'),
+  });
+
+  const dispositions = await scope.disposeAll();
+
+  assert.deepEqual(disposed, ['workspace', 'mcp-bundle']);
+  assert.deepEqual(dispositions, [
+    { name: 'workspace', ok: true },
+    { name: 'mcp-bundle', ok: true },
+  ]);
+  assert.equal(scope.size, 0);
+  assert.deepEqual(await scope.disposeAll(), []);
+});
+
+test('AgentExecutionSession resource disposal is best-effort', async () => {
+  const disposed: string[] = [];
+  const session = createAgentExecutionSession();
+  const scope = session.createResourceScope('turn');
+
+  scope.add({
+    name: 'first',
+    dispose: () => disposed.push('first'),
+  });
+  scope.add({
+    name: 'broken',
+    dispose: () => {
+      throw new Error('boom');
+    },
+  });
+  scope.add({
+    name: 'last',
+    dispose: () => disposed.push('last'),
+  });
+
+  const dispositions = await scope.disposeAll();
+
+  assert.deepEqual(disposed, ['last', 'first']);
+  assert.deepEqual(dispositions, [
+    { name: 'last', ok: true },
+    { name: 'broken', ok: false, errorMessage: 'boom' },
+    { name: 'first', ok: true },
+  ]);
+});
