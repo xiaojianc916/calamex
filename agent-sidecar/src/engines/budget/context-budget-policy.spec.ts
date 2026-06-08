@@ -21,13 +21,13 @@ const createCapabilities = (overrides: {
 
 test('resolveContextBudgetDecision follows Zed-style remaining-token headroom', () => {
   const decision = resolveContextBudgetDecision({
-    projectedInputTokens: 20_000,
+    projectedInputTokens: 24_000,
     capabilities: createCapabilities(),
   });
 
   assert.equal(decision.kind, 'compact_recommended');
   assert.equal(decision.availableInputTokens, 64_000);
-  assert.equal(decision.remainingInputTokens, 44_000);
+  assert.equal(decision.remainingInputTokens, 40_000);
   assert.equal(decision.compactionRemainingTokenBudget, DEFAULT_CONTEXT_COMPACTION_REMAINING_TOKEN_BUDGET);
   assert.equal(decision.compactionSupported, true);
   assert.equal(decision.retainedUserMessageByteBudget, COMPACTION_RETAINED_USER_MESSAGES_BYTE_BUDGET);
