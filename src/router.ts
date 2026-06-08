@@ -9,6 +9,10 @@ const router = createRouter({
       name: 'shell-workbench',
       component: ShellWorkbenchView,
     },
+    {
+      path: '/:pathMatch(.*)*',
+      redirect: '/',
+    },
   ],
 });
 
