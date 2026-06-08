@@ -3,7 +3,7 @@ import { createDeepSeekReasoningRunPrefix, evictDeepSeekReasoningByPrefix, runWi
 import { decodeApprovalRequestId, isApprovedDecision } from './utils.js';
 import { createDeepSeekPayloadEventSink } from '../budget/budget.js';
 import { createExecutionRequestContext } from '../context/context.js';
-import { normalizeMastraError } from '../messages.js';
+import { normalizeMastraError } from '../errors.js';
 import { createErrorResponse } from '../responses.js';
 import { DEFAULT_EXECUTION_AGENT_ID } from '../types.js';
 import type { IMastraAgentStreamLike, IMastraApprovalOptions, IPlanWorkflowStepTracker } from '../types.js';

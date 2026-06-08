@@ -5,7 +5,7 @@ import { createMastraMemoryReference, createMastraMemoryScope } from './context/
 import { createMastraMemoryForModel, createMastraModelConfig, resolveMastraModelConfig } from './agent/factory.js';
 import { createAcontextTokenEventDraft, createDeepSeekPayloadEventSink } from './budget/budget.js';
 import { createExecutionRequestContext } from './context/context.js';
-import { normalizeMastraError } from './messages.js';
+import { normalizeMastraError } from './errors.js';
 import { resolveAgentExecutionPolicy } from './policy/execution-policy.js';
 import { createApprovedPlanExecutionContext, createErrorResponse } from './responses.js';
 import { createAgentExecutionSession } from './session/agent-session.js';
