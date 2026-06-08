@@ -3,9 +3,11 @@ export { default as AiThreadChangedFilesSummary } from './AiThreadChangedFilesSu
 export { default as AiThreadContextCompaction } from './AiThreadContextCompaction.vue';
 export { default as AiThreadPlanControl } from './AiThreadPlanControl.vue';
 export { default as AiThreadReasoning } from './AiThreadReasoning.vue';
+export { default as AiThreadRunStatusBar } from './AiThreadRunStatusBar.vue';
 export { default as AiThreadTimeline } from './AiThreadTimeline.vue';
 export { default as AiThreadToolCall } from './AiThreadToolCall.vue';
 export { default as AiThreadUserMessage } from './AiThreadUserMessage.vue';
 export * from './projection';
 export type { IAiThreadPlanDetails } from './types';
 export { type IThreadEntryExpansion, useThreadEntryExpansion } from './useThreadEntryExpansion';
+export { useElapsedSeconds } from './useElapsedSeconds';

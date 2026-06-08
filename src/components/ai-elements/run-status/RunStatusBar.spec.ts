@@ -66,15 +66,17 @@ describe('RunStatusBar', () => {
     expect(wrapper.emitted('resume')).toHaveLength(1);
   });
 
-  it('renders only allow/stop confirmation options and emits the decision', async () => {
+  it('渲染 header / detail 来自 props,仅暴露 allow/stop 确认选项并回传决定', async () => {
     const wrapper = mount(RunStatusBar, {
       props: {
         phase: 'awaiting-confirmation',
-        header: '等待确认',
+        header: '是否允许写入文件？',
+        detail: '将修改 2 个文件',
         confirmation: buildConfirmation(),
       },
     });
 
+    expect(wrapper.text()).toContain('是否允许写入文件？');
     expect(wrapper.text()).toContain('将修改 2 个文件');
 
     const buttons = wrapper.findAll('button');

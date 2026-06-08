@@ -6,6 +6,7 @@ import type {
   IAiToolConfirmationOption,
   IAiToolConfirmationRequest,
   TAiToolConfirmationDecision,
+  TAiToolConfirmationOptionId,
 } from '@/types/ai';
 
 import { formatElapsedCompact } from './format-elapsed';
@@ -68,24 +69,7 @@ const progressLabel = computed(() => {
   return `${done}/${progress.total}`;
 });
 
-const headerText = computed(() => {
-  const confirmation = props.confirmation;
-
-  if (isAwaitingConfirmation.value && confirmation) {
-    return confirmation.summary.trim() || confirmation.toolName;
-  }
-
-  return props.header;
-});
-
 const detailText = computed(() => {
-  const confirmation = props.confirmation;
-
-  if (isAwaitingConfirmation.value && confirmation) {
-    const impact = confirmation.impact?.trim();
-    return impact || null;
-  }
-
   const detail = props.detail?.trim();
   return detail ? detail : null;
 });
@@ -114,6 +98,11 @@ const optionVariant = (option: IAiToolConfirmationOption): 'default' | 'outline'
   return 'ghost';
 };
 
+const isConfirmationDecision = (
+  id: TAiToolConfirmationOptionId,
+): id is TAiToolConfirmationDecision =>
+  id === 'allow-once' || id === 'allow-run' || id === 'skip' || id === 'stop';
+
 const handlePause = (): void => {
   emit('pause');
 };
@@ -127,7 +116,9 @@ const handleCancel = (): void => {
 };
 
 const handleResolve = (option: IAiToolConfirmationOption): void => {
-  emit('resolve', option.id);
+  if (isConfirmationDecision(option.id)) {
+    emit('resolve', option.id);
+  }
 };
 </script>
 
@@ -154,7 +145,7 @@ const handleResolve = (option: IAiToolConfirmationOption): void => {
         />
       </span>
 
-      <span class="run-status__header" v-text="headerText" />
+      <span class="run-status__header" v-text="header" />
 
       <span v-if="!isAwaitingConfirmation" class="run-status__meta">
         <span class="run-status__elapsed" v-text="elapsedLabel" />
