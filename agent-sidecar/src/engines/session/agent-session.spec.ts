@@ -128,8 +128,11 @@ test('AgentExecutionSession records compaction handoff as replayable session sta
 
   assert.deepEqual(compaction, {
     id: 'compaction-1',
+    status: 'completed',
+    reason: 'budget',
     summary: 'Goal: 继续重构\nNext: 接入执行流',
     createdAt: '2026-01-01T00:00:00.000Z',
+    completedAt: '2026-01-01T00:00:00.000Z',
   });
   assert.equal(session.contextCompactions.length, 1);
   assert.equal(session.messages[0]?.kind, 'compaction');
@@ -137,6 +140,70 @@ test('AgentExecutionSession records compaction handoff as replayable session sta
     mastraMessages[0]?.content,
     `${COMPACTION_RESUME_USER_MESSAGE_PREFIX}\n\nGoal: 继续重构\nNext: 接入执行流`,
   );
+});
+
+test('AgentExecutionSession models streaming compaction lifecycle events', () => {
+  const deliveredTypes: string[] = [];
+  const session = createAgentExecutionSession({
+    sessionId: 'session-1',
+    runId: 'run-1',
+    now: () => '2026-01-01T00:00:00.000Z',
+  });
+  const started = session.startContextCompaction({
+    id: 'compaction-1',
+    reason: 'budget',
+  });
+
+  session.pushRuntimeEvent({
+    type: 'acontext.context_compaction.started',
+    visibility: 'debug',
+    level: 'info',
+    compactionId: started.id,
+    reason: started.reason,
+    sourceMessageCount: session.messages.length,
+  }, {
+    onEvent: (event) => deliveredTypes.push(event.type),
+  });
+
+  const updated = session.appendContextCompactionDelta(started.id, {
+    summaryDelta: 'Goal: 继续重构',
+  });
+
+  session.pushRuntimeEvent({
+    type: 'acontext.context_compaction.updated',
+    visibility: 'debug',
+    level: 'info',
+    compactionId: started.id,
+    summaryDeltaCharCount: 'Goal: 继续重构'.length,
+    summaryCharCount: updated?.summary.length ?? 0,
+  }, {
+    onEvent: (event) => deliveredTypes.push(event.type),
+  });
+
+  const completed = session.completeContextCompaction(started.id, {
+    summary: `${updated?.summary ?? ''}\nNext: 接入执行流`,
+  });
+
+  session.pushRuntimeEvent({
+    type: 'acontext.context_compaction.completed',
+    visibility: 'debug',
+    level: 'info',
+    compactionId: started.id,
+    reason: started.reason,
+    summaryCharCount: completed?.summary.length ?? 0,
+    sourceMessageCount: session.messages.length,
+  }, {
+    onEvent: (event) => deliveredTypes.push(event.type),
+  });
+
+  assert.equal(completed?.status, 'completed');
+  assert.equal(session.messages[0]?.kind, 'compaction');
+  assert.deepEqual(deliveredTypes, ['agent_event', 'agent_event', 'agent_event']);
+  assert.deepEqual(session.events.map((event) => event.event.type), [
+    'acontext.context_compaction.started',
+    'acontext.context_compaction.updated',
+    'acontext.context_compaction.completed',
+  ]);
 });
 
 test('AgentExecutionSession disposes resources in reverse acquisition order', async () => {

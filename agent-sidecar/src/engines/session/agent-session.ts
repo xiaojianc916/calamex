@@ -1,4 +1,4 @@
-import type { TAgentRuntimeEventDraft } from '../../streaming/stream-types.js';
+import type { TAgentRuntimeEventDraft, TContextCompactionReason } from '../../streaming/stream-types.js';
 import type { IAgentRuntimeRunOptions, TAgentRuntimeOutputEvent } from '../contracts/runtime-contracts.js';
 import type { TAgentMode } from '../contracts/runtime-input.js';
 import { createRuntimeEventFactory, createSessionId, pushUiEvent } from '../utils.js';
@@ -51,15 +51,37 @@ export interface ISuspendAgentExecutionTurnOptions {
   completedAt?: string | undefined;
 }
 
+export type TAgentSessionContextCompactionStatus = 'running' | 'completed';
+
 export interface IAgentSessionContextCompaction {
   readonly id: string;
+  readonly status: TAgentSessionContextCompactionStatus;
+  readonly reason: TContextCompactionReason;
   readonly summary: string;
   readonly createdAt: string;
+  readonly completedAt?: string | undefined;
+}
+
+export interface IStartContextCompactionOptions {
+  id?: string | undefined;
+  reason?: TContextCompactionReason | undefined;
+  createdAt?: string | undefined;
+}
+
+export interface IAppendContextCompactionDeltaOptions {
+  summaryDelta: string;
+}
+
+export interface ICompleteContextCompactionOptions {
+  summary?: string | undefined;
+  completedAt?: string | undefined;
 }
 
 export interface IAppendContextCompactionOptions {
   id?: string | undefined;
+  reason?: TContextCompactionReason | undefined;
   createdAt?: string | undefined;
+  completedAt?: string | undefined;
 }
 
 export interface IAgentSessionResourceHandle {
@@ -197,22 +219,78 @@ export class AgentExecutionSession {
     this.messages.push(...messages);
   }
 
-  appendContextCompaction(
-    summary: string,
-    options: IAppendContextCompactionOptions = {},
-  ): IAgentSessionContextCompaction {
+  startContextCompaction(options: IStartContextCompactionOptions = {}): IAgentSessionContextCompaction {
     const compaction: IAgentSessionContextCompaction = {
       id: options.id ?? createSessionId('context-compaction'),
-      summary: summary.trim(),
+      status: 'running',
+      reason: options.reason ?? 'budget',
+      summary: '',
       createdAt: options.createdAt ?? this.getTimestamp(),
     };
 
     this.contextCompactions.push(compaction);
-    this.appendMessage(createAgentSessionCompactionMessage({
-      id: compaction.id,
-      summary: compaction.summary,
-    }));
     return compaction;
+  }
+
+  appendContextCompactionDelta(
+    compactionId: string,
+    options: IAppendContextCompactionDeltaOptions,
+  ): IAgentSessionContextCompaction | null {
+    const current = this.findContextCompaction(compactionId);
+
+    if (!current) {
+      return null;
+    }
+
+    return this.replaceContextCompaction(compactionId, {
+      ...current,
+      summary: `${current.summary}${options.summaryDelta}`,
+    });
+  }
+
+  completeContextCompaction(
+    compactionId: string,
+    options: ICompleteContextCompactionOptions = {},
+  ): IAgentSessionContextCompaction | null {
+    const current = this.findContextCompaction(compactionId);
+
+    if (!current) {
+      return null;
+    }
+
+    const summary = options.summary !== undefined ? options.summary.trim() : current.summary.trim();
+    const completed = this.replaceContextCompaction(compactionId, {
+      ...current,
+      status: 'completed',
+      summary,
+      completedAt: options.completedAt ?? this.getTimestamp(),
+    });
+
+    if (completed && summary.length > 0) {
+      this.appendMessage(createAgentSessionCompactionMessage({
+        id: completed.id,
+        summary,
+      }));
+    }
+
+    return completed;
+  }
+
+  appendContextCompaction(
+    summary: string,
+    options: IAppendContextCompactionOptions = {},
+  ): IAgentSessionContextCompaction {
+    const started = this.startContextCompaction({
+      id: options.id,
+      reason: options.reason,
+      createdAt: options.createdAt,
+    });
+    const completed = this.completeContextCompaction(started.id, {
+      summary,
+      completedAt: options.completedAt,
+    });
+
+    return completed ?? started;
   }
 
   completeTurn(turnId: string, options: ICompleteAgentExecutionTurnOptions = {}): IAgentExecutionTurn | null {
@@ -259,6 +337,24 @@ export class AgentExecutionSession {
 
   private getTimestamp(): string {
     return this.now ? this.now() : new Date().toISOString();
+  }
+
+  private findContextCompaction(compactionId: string): IAgentSessionContextCompaction | null {
+    return this.contextCompactions.find((compaction) => compaction.id === compactionId) ?? null;
+  }
+
+  private replaceContextCompaction(
+    compactionId: string,
+    replacement: IAgentSessionContextCompaction,
+  ): IAgentSessionContextCompaction | null {
+    const compactionIndex = this.contextCompactions.findIndex((compaction) => compaction.id === compactionId);
+
+    if (compactionIndex < 0) {
+      return null;
+    }
+
+    this.contextCompactions[compactionIndex] = replacement;
+    return replacement;
   }
 
   private updateTurn(

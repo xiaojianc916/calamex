@@ -23,6 +23,9 @@ export const AGENT_RUNTIME_EVENT_TYPES = [
   'acontext.provider_payload.checked',
   'acontext.tool_summary.recorded',
   'acontext.memory.compressed',
+  'acontext.context_compaction.started',
+  'acontext.context_compaction.updated',
+  'acontext.context_compaction.completed',
   'rollback.checkpoint.created',
   'rollback.checkpoint.failed',
   'rollback.restore.started',
@@ -45,6 +48,8 @@ export type TAgentRuntimeLevel = 'debug' | 'info' | 'warn' | 'error';
 export type TToolRiskLevel = 'low' | 'medium' | 'high';
 
 export type TContextBudgetDecisionKind = 'within_budget' | 'compact_recommended' | 'warn_context_limit';
+
+export type TContextCompactionReason = 'budget' | 'manual' | 'provider_native';
 
 export interface IAgentRuntimeEventBase {
   id: string;
@@ -233,6 +238,31 @@ export interface IAgentAcontextMemoryCompressedEvent extends IAgentRuntimeEventB
   triggeredBy?: 'threshold' | 'ttl' | 'provider_change';
 }
 
+export interface IAgentAcontextContextCompactionStartedEvent extends IAgentRuntimeEventBase {
+  type: 'acontext.context_compaction.started';
+  compactionId: string;
+  reason: TContextCompactionReason;
+  sourceMessageCount?: number;
+  projectedInputTokens?: number;
+  remainingInputTokens?: number;
+}
+
+export interface IAgentAcontextContextCompactionUpdatedEvent extends IAgentRuntimeEventBase {
+  type: 'acontext.context_compaction.updated';
+  compactionId: string;
+  summaryDeltaCharCount: number;
+  summaryCharCount: number;
+}
+
+export interface IAgentAcontextContextCompactionCompletedEvent extends IAgentRuntimeEventBase {
+  type: 'acontext.context_compaction.completed';
+  compactionId: string;
+  reason: TContextCompactionReason;
+  summaryCharCount: number;
+  retainedUserMessageByteBudget?: number;
+  sourceMessageCount?: number;
+}
+
 // -----------------------------------------------------------------------
 // Rollback
 // -----------------------------------------------------------------------
@@ -301,6 +331,9 @@ export type TAgentRuntimeEvent =
   | IAgentAcontextProviderPayloadEvent
   | IAgentAcontextToolSummaryEvent
   | IAgentAcontextMemoryCompressedEvent
+  | IAgentAcontextContextCompactionStartedEvent
+  | IAgentAcontextContextCompactionUpdatedEvent
+  | IAgentAcontextContextCompactionCompletedEvent
   | IAgentCheckpointEvent
   | IAgentRollbackEvent
   | IAgentSideEffectEvent
