@@ -2,18 +2,14 @@
 import { useFrontendTool } from '@copilotkit/vue';
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { z } from 'zod';
-import Checkpoint from '@/components/ai-elements/checkpoint/Checkpoint.vue';
-import CheckpointIcon from '@/components/ai-elements/checkpoint/CheckpointIcon.vue';
-import CheckpointTrigger from '@/components/ai-elements/checkpoint/CheckpointTrigger.vue';
-import { Loader } from '@/components/ai-elements/loader';
-import AiAgentModePanel from '@/components/business/ai/agent/AiAgentModePanel.vue';
 import AiChatThread from '@/components/business/ai/chat/AiChatThread.vue';
-import AiErrorNotice from '@/components/business/ai/chat/AiErrorNotice.vue';
 import AiPromptInput from '@/components/business/ai/chat/AiPromptInput.vue';
 import AiPlanModePanel from '@/components/business/ai/plan/AiPlanModePanel.vue';
-import AiPlanModeThread from '@/components/business/ai/plan/AiPlanModeThread.vue';
 import AiProviderIcon from '@/components/business/ai/provider/AiProviderIcon.vue';
 import AiProviderSettings from '@/components/business/ai/provider/AiProviderSettings.vue';
+import AiAssistantCheckpointEntry from '@/components/business/ai/shell/AiAssistantCheckpointEntry.vue';
+import AiAssistantSuggestionEmpty from '@/components/business/ai/shell/AiAssistantSuggestionEmpty.vue';
+import AiAssistantThreadExtras from '@/components/business/ai/shell/AiAssistantThreadExtras.vue';
 import AiPanelFrame from '@/components/business/ai/shell/AiPanelFrame.vue';
 import AiWebSourcesPanel from '@/components/business/ai/web/AiWebSourcesPanel.vue';
 import { useAiAgentNetwork } from '@/composables/ai/useAiAgentNetwork';
@@ -148,7 +144,6 @@ const suggestionRows = computed(() =>
   splitSuggestionsIntoRows(suggestionPool.suggestions.value, 3),
 );
 
-// Share editor state with CopilotKit agent.
 useCopilotContext({
   document: documentRef,
   activeRun: activeRunRef,
@@ -158,8 +153,6 @@ useCopilotContext({
   workspaceRootPath: workspaceRootPathRef,
 });
 
-// Register CopilotKit frontend tools — replaces manual tool activity tracking.
-// Catch-all registration for Mastra tools; HITL intercepts approval-required events.
 try {
   useFrontendTool({ name: '*', parameters: z.object({}).passthrough(), handler: async () => 'ok' });
 } catch {
@@ -286,6 +279,25 @@ const hasPlannedAgentState = computed(
     Boolean(planStatus.value) ||
     Boolean(planActiveRun.value),
 );
+const isPlanConfirmationStatus = computed(
+  () =>
+    planStatus.value === 'pending_approval' ||
+    planStatus.value === 'draft' ||
+    planStatus.value === 'rejected' ||
+    !planStatus.value,
+);
+const planConfirmationVisible = computed(() => {
+  if (assistant.activeMode.value !== 'plan') {
+    return false;
+  }
+
+  return (
+    planSteps.value.length > 0 &&
+    !planActiveRun.value &&
+    !planApprovedAt.value &&
+    isPlanConfirmationStatus.value
+  );
+});
 const canApprovePlan = computed(
   () =>
     planSteps.value.length >= 2 &&
@@ -319,9 +331,13 @@ const planProgressVisible = computed(() => {
     planStatus.value === 'failed'
   );
 });
-const composerPlanProgressVisible = computed(
-  () => planProgressVisible.value && assistant.activeMode.value !== 'plan',
-);
+const directToolConfirmationVisible = computed(() => {
+  if (assistant.activeMode.value !== 'agent') {
+    return false;
+  }
+
+  return Boolean(visibleDirectToolConfirmation.value) && !planProgressVisible.value;
+});
 const composerDisabled = computed(
   () => assistant.isSending.value || Boolean(visibleDirectToolConfirmation.value),
 );
@@ -512,7 +528,7 @@ const activeAgentFlowMessage = computed<IAiChatMessage | null>(() => {
   } else if (run && isTerminalRun) {
     content = buildPlanRunFinalAnswer(run, stepFinalAnswers);
   } else if (latestToolCall) {
-    content = `工具活动：${latestToolCall.summary}`;
+    content = `AI 正在自动使用工具：${latestToolCall.summary}`;
   }
 
   return {
@@ -525,7 +541,18 @@ const activeAgentFlowMessage = computed<IAiChatMessage | null>(() => {
   };
 });
 
-const threadMessages = computed<IAiChatMessage[]>(() => assistant.messages.value);
+const threadMessages = computed<IAiChatMessage[]>(() => {
+  const flowMessage = activeAgentFlowMessage.value;
+
+  if (!flowMessage) {
+    return assistant.messages.value;
+  }
+
+  return [
+    ...assistant.messages.value.filter((message) => message.id !== flowMessage.id),
+    flowMessage,
+  ];
+});
 const tokenUsageMessages = computed<IAiChatMessage[]>(() => {
   if (assistant.activeMode.value === 'plan') {
     return activeAgentFlowMessage.value ? [activeAgentFlowMessage.value] : [];
@@ -740,9 +767,6 @@ const handleSuggestionSelect = async (suggestion: string): Promise<void> => {
     return;
   }
 
-  // Fill the composer then send through the real pipeline so this behaves
-  // exactly like the user typing the suggestion and pressing send: the user
-  // bubble shows in the thread and the composer clears.
   assistant.draft.value = suggestion;
   await assistant.sendMessage();
 };
@@ -752,8 +776,6 @@ const handleSubmitMessage = async (): Promise<void> => {
     return;
   }
 
-  // Route through useAiAssistant so chat/agent/plan modes, streaming, patches
-  // and conversation-title generation all keep working from a single source.
   await assistant.sendMessage();
 };
 
@@ -1238,70 +1260,38 @@ onBeforeUnmount(() => {
     </template>
 
     <template #body>
-      <AiChatThread v-if="assistant.activeMode.value === 'chat'" :messages="threadMessages" :is-typing="assistant.isSending.value"
-        :platform-id="aiIconPlatformId" :provider-label="aiIconTitle"
-        :conversation-id="assistant.activeConversationId.value" :workspace-root-path="workspaceRootPath"
-        :scroll-state="assistant.activeConversationScrollState.value" :typing-label="assistantTypingLabel"
-        :has-extra-content="Boolean(assistant.errorMessage.value)"
+      <AiChatThread :messages="threadMessages" :is-typing="assistant.isSending.value" :platform-id="aiIconPlatformId"
+        :provider-label="aiIconTitle" :conversation-id="assistant.activeConversationId.value"
+        :workspace-root-path="workspaceRootPath" :scroll-state="assistant.activeConversationScrollState.value"
+        :typing-label="assistantTypingLabel" :has-extra-content="planConfirmationVisible || directToolConfirmationVisible"
         :reverting-changed-files-summary-id="assistant.revertingChangedFilesSummaryId.value"
         :pinning-changed-files-summary-id="assistant.pinningChangedFilesSummaryId.value"
         @scroll-state-change="handleConversationScrollStateChange"
         @changed-files-rollback="assistant.rollbackChangedFilesSummary"
         @changed-files-pin="assistant.setChangedFilesSummaryPin">
         <template #empty>
-          <div class="ai-suggestion-empty">
-            <h2 class="ai-suggestion-greeting">有什么我能帮你的吗？</h2>
-            <div v-for="(suggestionRow, rowIndex) in suggestionRows" :key="rowIndex" class="ai-suggestion-row">
-              <button v-for="suggestion in suggestionRow" :key="suggestion.message" type="button"
-                class="ai-suggestion-chip" :disabled="composerDisabled"
-                @click="handleSuggestionSelect(suggestion.message)" v-text="suggestion.title"></button>
-            </div>
-          </div>
+          <AiAssistantSuggestionEmpty :suggestion-rows="suggestionRows" :disabled="composerDisabled"
+            @select="handleSuggestionSelect" />
         </template>
         <template #after-message="{ message }">
-          <Checkpoint v-if="getConversationCheckpoint(message.id)" class="ai-conversation-checkpoint">
-            <CheckpointTrigger class="ai-conversation-checkpoint__trigger" :disabled="isConversationCheckpointDisabled"
-              @click="handleRestoreConversationCheckpoint(message.id)">
-              <CheckpointIcon class="ai-conversation-checkpoint__icon" aria-hidden="true" />
-              <span class="ai-conversation-checkpoint__label" v-text="getConversationCheckpointLabel(message.id)"></span>
-              <Loader v-if="isConversationCheckpointRestoring(message.id)" class="ai-conversation-checkpoint__loader"
-                :size="12" />
-              <span v-else class="ai-conversation-checkpoint__spacer" aria-hidden="true"></span>
-            </CheckpointTrigger>
-          </Checkpoint>
+          <AiAssistantCheckpointEntry v-if="getConversationCheckpoint(message.id)"
+            :label="getConversationCheckpointLabel(message.id)" :disabled="isConversationCheckpointDisabled"
+            :restoring="isConversationCheckpointRestoring(message.id)"
+            @restore="handleRestoreConversationCheckpoint(message.id)" />
         </template>
         <template #after-messages>
-          <AiErrorNotice v-if="assistant.errorMessage.value" :message="assistant.errorMessage.value" />
+          <AiAssistantThreadExtras :plan-confirmation-visible="planConfirmationVisible" :plan-active-goal="planActiveGoal"
+            :plan-summary="planSummary" :plan-status="planStatus" :plan-steps="planSteps"
+            :plan-is-planning="planIsPlanning" :plan-is-approving="planIsApproving" :can-edit-plan="canEditPlan"
+            :can-approve-plan="canApprovePlan" :plan-approved-at="planApprovedAt"
+            :direct-tool-confirmation-visible="directToolConfirmationVisible"
+            :visible-direct-tool-confirmation="visibleDirectToolConfirmation"
+            :is-agent-run-action-pending="isAgentRunActionPending" :error-message="assistant.errorMessage.value"
+            @update-step-title="handleUpdatePlanStepTitle" @remove-step="handleRemovePlanStep"
+            @regenerate="handleRegeneratePlan" @reject="handleRejectPlan" @approve="handleApprovePlan"
+            @resolve-tool-confirmation="handleResolveToolConfirmation" />
         </template>
       </AiChatThread>
-
-      <AiAgentModePanel v-else-if="assistant.activeMode.value === 'agent'" :messages="assistant.messages.value"
-        :is-typing="assistant.isSending.value" :conversation-id="assistant.activeConversationId.value"
-        :workspace-root-path="workspaceRootPath" :scroll-state="assistant.activeConversationScrollState.value"
-        :reverting-changed-files-summary-id="assistant.revertingChangedFilesSummaryId.value"
-        :pinning-changed-files-summary-id="assistant.pinningChangedFilesSummaryId.value"
-        :tool-confirmation="visibleDirectToolConfirmation" :is-run-action-pending="isAgentRunActionPending"
-        :error-message="assistant.errorMessage.value" @scroll-state-change="handleConversationScrollStateChange"
-        @changed-files-rollback="assistant.rollbackChangedFilesSummary"
-        @changed-files-pin="assistant.setChangedFilesSummaryPin"
-        @resolve-tool-confirmation="handleResolveToolConfirmation" />
-
-      <AiPlanModeThread v-else :goal="planActiveGoal" :summary="planSummary" :status="planStatus"
-        :plan-id="planId" :plan-version="planVersion" :plan-thread-id="planThreadId"
-        :plan-created-at="planCreatedAt" :plan-updated-at="planUpdatedAt" :plan-executed-at="planExecutedAt"
-        :plan-rejection-reason="planRejectionReason" :plan-error-message="planExecutionErrorMessage"
-        :plan-versions="planVersions" :steps="planSteps" :classification-reason="planClassificationReason"
-        :is-classifying="planIsClassifying" :is-planning="planIsPlanning" :is-approving="planIsApproving"
-        :can-edit="canEditPlan" :can-approve="canApprovePlan" :approved-at="planApprovedAt"
-        :active-run="planActiveRun" :is-run-action-pending="isAgentRunActionPending"
-        :web-activity="webSources.activity.value" :tool-activity="planActiveToolActivity"
-        :tool-confirmation="planPendingToolConfirmation" :error-message="planErrorMessage"
-        :conversation-id="assistant.activeConversationId.value" :scroll-state="assistant.activeConversationScrollState.value"
-        @scroll-state-change="handleConversationScrollStateChange" @update-step-title="handleUpdatePlanStepTitle"
-        @remove-step="handleRemovePlanStep" @regenerate="handleRegeneratePlan" @reject="handleRejectPlan"
-        @reset="handleResetPlan" @approve="handleApprovePlan" @run-step="handleRunStep" @pause-run="handlePauseRun"
-        @resume-run="handleResumeRun" @cancel-run="handleCancelRun"
-        @resolve-tool-confirmation="handleResolveToolConfirmation" />
     </template>
 
     <template #composer>
@@ -1321,8 +1311,8 @@ onBeforeUnmount(() => {
         :activity="planProgressVisible ? null : webSources.activity.value" :error-message="webSources.errorMessage.value"
         :is-searching="webSources.isSearching.value" :network-permission="networkPermission"
         @search="handleSearchWebSources" @fetch-source="handleFetchWebSource" @clear="webSources.clear" />
-      <div class="ai-composer-shell" :class="{ 'has-plan': composerPlanProgressVisible }">
-        <AiPlanModePanel v-if="composerPlanProgressVisible" :goal="planActiveGoal" :plan-summary="planSummary"
+      <div class="ai-composer-shell" :class="{ 'has-plan': planProgressVisible }">
+        <AiPlanModePanel v-if="planProgressVisible" :goal="planActiveGoal" :plan-summary="planSummary"
           :plan-status="planStatus" :plan-id="planId" :plan-version="planVersion" :plan-thread-id="planThreadId"
           :plan-created-at="planCreatedAt" :plan-updated-at="planUpdatedAt" :plan-executed-at="planExecutedAt"
           :plan-rejection-reason="planRejectionReason" :plan-error-message="planExecutionErrorMessage"
@@ -1609,8 +1599,6 @@ onBeforeUnmount(() => {
   text-align: center;
 }
 
-.ai-patch-entry,
-.ai-conversation-checkpoint,
 .ai-file-rollback-entry {
   display: flex;
   align-items: center;
@@ -1618,48 +1606,6 @@ onBeforeUnmount(() => {
   padding: 8px 12px 0;
 }
 
-.ai-conversation-checkpoint {
-  padding-left: 0px;
-  color: var(--text-quaternary);
-}
-
-.ai-conversation-checkpoint__trigger {
-  display: inline-grid;
-  grid-template-columns: auto 1fr auto;
-  align-items: center;
-  gap: 6px;
-  height: auto;
-  border: 0;
-  padding: 0 2px;
-  color: inherit;
-  font-size: 11px;
-  font-weight: 500;
-  line-height: 16px;
-  white-space: nowrap;
-}
-
-.ai-conversation-checkpoint__label {
-  text-align: center;
-}
-
-.ai-conversation-checkpoint__trigger:hover {
-  color: var(--text-secondary);
-}
-
-.ai-conversation-checkpoint__trigger:disabled {
-  cursor: default;
-  opacity: 0.72;
-}
-
-.ai-conversation-checkpoint__icon,
-.ai-conversation-checkpoint__loader,
-.ai-conversation-checkpoint__spacer {
-  width: 12px;
-  height: 12px;
-  flex: 0 0 auto;
-}
-
-.ai-patch-entry__line,
 .ai-file-rollback-entry__line {
   height: 1px;
   flex: 1 1 auto;
@@ -1667,7 +1613,6 @@ onBeforeUnmount(() => {
   background: color-mix(in srgb, var(--shell-divider) 86%, transparent);
 }
 
-.ai-patch-entry__button,
 .ai-file-rollback-entry__button,
 .ai-button {
   height: 28px;
@@ -1677,7 +1622,6 @@ onBeforeUnmount(() => {
   font-weight: 500;
 }
 
-.ai-patch-entry__button,
 .ai-file-rollback-entry__button {
   display: inline-flex;
   align-items: center;
@@ -1691,18 +1635,15 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 
-.ai-patch-entry__button:hover,
 .ai-file-rollback-entry__button:not(:disabled):hover {
   color: var(--text-primary);
 }
 
-.ai-patch-entry__button:focus-visible,
 .ai-file-rollback-entry__button:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--accent-strong) 60%, transparent);
   outline-offset: 4px;
 }
 
-.ai-patch-entry__button svg,
 .ai-file-rollback-entry__button svg {
   width: 14px;
   height: 14px;
@@ -1759,79 +1700,6 @@ onBeforeUnmount(() => {
 .ai-composer-shell :global(.ai-composer) {
   background: var(--ai-composer-surface);
   padding: 0 10px 10px;
-}
-
-.ai-suggestion-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  width: 100%;
-  min-width: 0;
-  gap: 6px;
-  padding: clamp(64px, 20vh, 200px) 16px 0;
-}
-
-.ai-suggestion-greeting {
-  margin: 0 0 18px;
-  color: var(--text-primary);
-  font-size: 26px;
-  font-weight: 600;
-  line-height: 1.35;
-  letter-spacing: -0.01em;
-  text-align: center;
-}
-
-.ai-suggestion-row {
-  display: flex;
-  max-width: 100%;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: center;
-  gap: 8px 10px;
-}
-
-.ai-suggestion-empty :deep(button) {
-  display: inline-flex;
-  min-width: 0;
-  max-width: min(100%, 360px);
-  min-height: 34px;
-  flex: 0 1 auto;
-  align-items: center;
-  justify-content: center;
-  border: 0 !important;
-  border-radius: var(--radius-md) !important;
-  background-color: color-mix(in srgb, var(--surface-soft) 62%, transparent) !important;
-  color: var(--text-secondary) !important;
-  cursor: pointer;
-  font-size: 13px !important;
-  font-weight: 500 !important;
-  line-height: 18px;
-  padding: 7px 17px !important;
-  text-align: center;
-  box-shadow: none !important;
-  transition:
-    background-color var(--motion-duration-fast) var(--motion-easing-emphasized),
-    color var(--motion-duration-fast) var(--motion-easing-emphasized),
-    transform var(--motion-duration-fast) var(--motion-easing-emphasized);
-}
-
-.ai-suggestion-empty :deep(button:hover) {
-  background-color: color-mix(in srgb, var(--surface-soft) 100%, transparent) !important;
-  color: var(--text-primary) !important;
-}
-
-.ai-suggestion-empty :deep(button:active) {
-  transform: scale(0.985);
-}
-
-.ai-suggestion-empty :deep(button:focus-visible) {
-  outline: 2px solid color-mix(in srgb, var(--accent-strong) 44%, transparent);
-  outline-offset: 3px;
-}
-
-.ai-suggestion-empty :deep(button:disabled) {
-  cursor: default;
-  opacity: 0.58;
 }
 
 .ai-dialog-backdrop {
