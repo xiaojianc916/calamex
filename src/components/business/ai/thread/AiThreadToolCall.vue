@@ -103,17 +103,18 @@ const getHunkCode = (hunk: IAiDiffHunkPreview): string =>
     </template>
     <template #title>
       <span class="ai-thread-tool-call__title">
-        <span class="ai-thread-tool-call__action"> entry.title </span>
+        <span class="ai-thread-tool-call__action" v-text="entry.title" />
         <span
           v-if="primaryTag"
           class="ai-thread-tool-call__target"
           :title="primaryTag"
-        > primaryTag </span>
+          v-text="primaryTag"
+        />
       </span>
     </template>
     <template #meta>
-      <span v-if="webSourceLabel" class="ai-thread-tool-call__meta-item"> webSourceLabel </span>
-      <span v-if="entry.tail" class="ai-thread-tool-call__meta-item"> entry.tail </span>
+      <span v-if="webSourceLabel" class="ai-thread-tool-call__meta-item" v-text="webSourceLabel" />
+      <span v-if="entry.tail" class="ai-thread-tool-call__meta-item" v-text="entry.tail" />
     </template>
     <template #content>
       <div class="ai-thread-tool-call__content">
@@ -131,15 +132,19 @@ const getHunkCode = (hunk: IAiDiffHunkPreview): string =>
             :is-streaming="item.streaming"
           >
             <TerminalHeader>
-              <TerminalTitle> item.title </TerminalTitle>
+              <TerminalTitle><span v-text="item.title" /></TerminalTitle>
             </TerminalHeader>
             <TerminalContent />
           </Terminal>
           <div v-if="item.type === 'diff'" class="ai-thread-tool-call__diff">
             <div class="ai-thread-tool-call__diff-head">
-              <span class="ai-thread-tool-call__diff-path" :title="item.file.path"> item.file.path </span>
-              <span class="ai-thread-tool-call__diff-stat is-add">+ item.file.additions </span>
-              <span class="ai-thread-tool-call__diff-stat is-delete">- item.file.deletions </span>
+              <span
+                class="ai-thread-tool-call__diff-path"
+                :title="item.file.path"
+                v-text="item.file.path"
+              />
+              <span class="ai-thread-tool-call__diff-stat is-add">+<span v-text="item.file.additions" /></span>
+              <span class="ai-thread-tool-call__diff-stat is-delete">-<span v-text="item.file.deletions" /></span>
             </div>
             <div
               v-for="hunk in resolveHunks(item.file.path)"
@@ -156,7 +161,7 @@ const getHunkCode = (hunk: IAiDiffHunkPreview): string =>
                   class="ai-thread-tool-call__line"
                   :class="`is-${line.kind}`"
                 >
-                  <span class="ai-thread-tool-call__line-number"> getLineNumber(line) </span>
+                  <span class="ai-thread-tool-call__line-number" v-text="getLineNumber(line)" />
                 </div>
               </div>
               <CodeBlock

@@ -57,7 +57,7 @@ const handleUpdateOpen = (value: boolean): void => {
           <slot name="leading" />
         </span>
         <span class="min-w-0 flex-1 truncate text-foreground">
-          <slot name="title"> props.title </slot>
+          <slot name="title"><span v-text="props.title" /></slot>
         </span>
         <span class="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
           <slot name="meta" />
