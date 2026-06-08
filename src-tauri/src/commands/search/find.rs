@@ -111,6 +111,34 @@ impl FuzzyLinePrefilter {
 
         false
     }
+
+    /// 文件级候选筛除（第 4 点两阶段检索的「candidate generation」轻量版）：
+    /// 直接在原始字节上检查 query 要求的 ASCII 字符是否全部出现；缺任意一个，
+    /// 则整文件不可能有命中行，可在更贵的解码 / 逐行 nucleo 之前整文件跳过。
+    ///
+    /// 只看 ASCII 字节，且 ASCII 在 UTF-8 / Latin1 等超集编码里编码一致，故无需先解码，
+    /// 也不会误杀（required_ascii 为空时返回 true，交回逐行阶段处理）。
+    fn bytes_may_match(&self, bytes: &[u8]) -> bool {
+        if self.required_ascii.is_empty() {
+            return true;
+        }
+
+        let mut missing = self.required_ascii.clone();
+        for byte in bytes {
+            if !byte.is_ascii() {
+                continue;
+            }
+            let normalized = normalize_prefilter_ascii(*byte, self.match_case);
+            if let Some(index) = missing.iter().position(|candidate| *candidate == normalized) {
+                missing.swap_remove(index);
+                if missing.is_empty() {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
 }
 
 fn normalize_prefilter_ascii(byte: u8, match_case: bool) -> u8 {
@@ -282,6 +310,11 @@ fn search_one_file_fuzzy(
         Ok(bytes) => bytes,
         Err(_) => return Ok(local),
     };
+    // 文件级候选筛除：query 要求的 ASCII 字符若整文件都没有，逐行必然全部落空，
+    // 在更贵的解码（编码探测 + 转码）之前整文件跳过。
+    if prefilter.is_some_and(|prefilter| !prefilter.bytes_may_match(&bytes)) {
+        return Ok(local);
+    }
     let Ok((content, _encoding)) = decode_script_bytes(&bytes) else {
         return Ok(local);
     };
@@ -630,5 +663,14 @@ mod tests {
         let prefilter = FuzzyLinePrefilter::new("部署a", false).expect("应创建预过滤器");
         assert!(prefilter.may_match("xxa"));
         assert!(!prefilter.may_match("部署"));
+    }
+
+    #[test]
+    fn fuzzy_prefilter_rejects_whole_file_missing_required_ascii() {
+        let prefilter = FuzzyLinePrefilter::new("dapnow", false).expect("应创建预过滤器");
+        // 整文件含全部要求字符 -> 不跳过（交给逐行精筛）
+        assert!(prefilter.bytes_may_match(b"deploy_app_now run"));
+        // 整文件缺少字符 w -> 直接整文件跳过
+        assert!(!prefilter.bytes_may_match(b"deploy app on prod"));
     }
 }

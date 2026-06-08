@@ -249,7 +249,9 @@ fn run_watch_loop(
     setup_initial_watches(&mut watcher, &root);
 
     // 自实现尾沿去抖：攒到一批事件，安静 DEBOUNCE_DURATION 或攒满 MAX_DEBOUNCE 后吐出。
-    let mut pending: Vec<Event> = Vec::new();
+    // 在线聚合：事件一到就按 path 折叠进 HashMap（只留最高 severity 的 kind），而非先攒
+    // 原始 Vec<Event> 到 flush 才去重。事件风暴下内存从 O(原始事件数) 降到 O(唯一路径数)。
+    let mut pending: HashMap<String, FsChangeKind> = HashMap::new();
     let mut first_at: Option<Instant> = None;
 
     loop {
@@ -262,10 +264,14 @@ fn run_watch_loop(
                 if !NATIVE_RECURSIVE {
                     maintain_watches(&mut watcher, &root, &event);
                 }
+                ingest_event(&mut pending, &root, &event);
+                // 整批都是被忽略的噪音（构建/依赖/.git objects 等）时不开窗，避免空 flush。
+                if pending.is_empty() {
+                    continue;
+                }
                 if first_at.is_none() {
                     first_at = Some(Instant::now());
                 }
-                pending.push(event);
                 // 事件风暴下的强制上限：攒太久也要吐一次，避免饿死前端刷新。
                 if first_at.is_some_and(|t| t.elapsed() >= MAX_DEBOUNCE) {
                     flush_events(&mut pending, &app, &root);
@@ -406,25 +412,32 @@ fn collect_watch_dirs(start: &Path) -> Vec<PathBuf> {
 // 事件处理
 // ============================================================================
 
-/// 把攒下的一批原始事件展开、过滤、去重后，作为单个 `WorkspaceFsEvent` 推送到前端。
-fn flush_events(pending: &mut Vec<Event>, app: &AppHandle, root: &Path) {
-    let events = std::mem::take(pending);
-    let changes = coalesce_changes(events.iter().flat_map(|event| {
-        let kind = classify_event_kind(&event.kind);
-        event.paths.iter().filter_map(move |path| {
-            if is_ignored_change(root, path) {
-                return None;
-            }
-            Some(FsChange {
+/// 把事件折叠进在线聚合表：分类 + 过滤忽略目录后，按 path 合并保留最高 severity。
+///
+/// 相比原先「先攒原始 Vec<Event>、flush 时才展开去重」，这里在事件到达时即完成
+/// 分类/过滤/去重，事件风暴下内存只随唯一路径数增长。
+fn ingest_event(pending: &mut HashMap<String, FsChangeKind>, root: &Path, event: &Event) {
+    let kind = classify_event_kind(&event.kind);
+    for path in &event.paths {
+        if is_ignored_change(root, path) {
+            continue;
+        }
+        merge_change(
+            pending,
+            FsChange {
                 path: path.to_string_lossy().into_owned(),
                 kind,
-            })
-        })
-    }));
+            },
+        );
+    }
+}
 
-    if changes.is_empty() {
+/// 把已在线聚合好的一批变更按 path 排序后，作为单个 `WorkspaceFsEvent` 推送到前端。
+fn flush_events(pending: &mut HashMap<String, FsChangeKind>, app: &AppHandle, root: &Path) {
+    if pending.is_empty() {
         return;
     }
+    let changes = drain_sorted(std::mem::take(pending));
 
     let payload = WorkspaceFsEvent {
         changes,
@@ -438,23 +451,23 @@ fn flush_events(pending: &mut Vec<Event>, app: &AppHandle, root: &Path) {
     }
 }
 
-/// 同批事件按 path 聚合，仅保留 severity 最高的 kind，再按 path 排序保证输出稳定。
-///
-/// 原先做法是把所有事件展开成 Vec 后 sort + dedup，事件风暴中成本为 O(n log n)。
-/// 这里先用 HashMap 在线聚合为唯一路径数 u，再仅对 u 个路径排序：O(n + u log u)。
-fn coalesce_changes(changes: impl Iterator<Item = FsChange>) -> Vec<FsChange> {
-    let mut by_path: HashMap<String, FsChangeKind> = HashMap::new();
-    for change in changes {
-        by_path
-            .entry(change.path)
-            .and_modify(|kind| {
-                if severity(change.kind) > severity(*kind) {
-                    *kind = change.kind;
-                }
-            })
-            .or_insert(change.kind);
-    }
+/// 把单条变更折叠进按 path 聚合表：仅保留 severity 最高的 kind。
+fn merge_change(by_path: &mut HashMap<String, FsChangeKind>, change: FsChange) {
+    by_path
+        .entry(change.path)
+        .and_modify(|kind| {
+            if severity(change.kind) > severity(*kind) {
+                *kind = change.kind;
+            }
+        })
+        .or_insert(change.kind);
+}
 
+/// 把在线聚合表展开为按 path 升序排序的稳定列表。
+///
+/// 事件循环已改为在线聚合（见 `ingest_event`），不再先攒原始事件再 flush 去重：
+/// 内存只随唯一路径数 u 增长，flush 仅对 u 个路径排序，O(u log u)。
+fn drain_sorted(by_path: HashMap<String, FsChangeKind>) -> Vec<FsChange> {
     let mut changes: Vec<FsChange> = by_path
         .into_iter()
         .map(|(path, kind)| FsChange { path, kind })
@@ -599,17 +612,17 @@ mod tests {
 
     #[test]
     fn coalesces_changes_by_highest_severity_and_path_order() {
-        let observed = coalesce_changes(
-            [
-                change("/ws/b.sh", FsChangeKind::Modified),
-                change("/ws/a.sh", FsChangeKind::Created),
-                change("/ws/b.sh", FsChangeKind::Removed),
-                change("/ws/a.sh", FsChangeKind::Modified),
-            ]
-            .into_iter(),
-        );
+        let mut by_path = HashMap::new();
+        for entry in [
+            change("/ws/b.sh", FsChangeKind::Modified),
+            change("/ws/a.sh", FsChangeKind::Created),
+            change("/ws/b.sh", FsChangeKind::Removed),
+            change("/ws/a.sh", FsChangeKind::Modified),
+        ] {
+            merge_change(&mut by_path, entry);
+        }
 
-        let observed: Vec<(String, FsChangeKind)> = observed
+        let observed: Vec<(String, FsChangeKind)> = drain_sorted(by_path)
             .into_iter()
             .map(|change| (change.path, change.kind))
             .collect();
