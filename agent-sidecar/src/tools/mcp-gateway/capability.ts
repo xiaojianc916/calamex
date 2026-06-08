@@ -1,25 +1,24 @@
+import { createMcpToolDescriptor, resolveDescriptorApprovalDefault, type IAgentToolDescriptor } from '../../engines/policy/tool-descriptor.js';
 import { toRecord } from '../../engines/utils.js';
 import type { TMcpServerName } from '../mcp.js';
 
 // ── MCP 工具能力模型（capability model）─────────────────────────────
-// 是否需要人工审批，不再依据工具名形态猜测，而是依据 MCP 协议层 server 在
-// `tools/list` 自报的 tool annotations（readOnlyHint / destructiveHint / ...）。
-// @mastra/mcp 会把这些注解透传到 Mastra 工具的 `tool.mcp.annotations` 上
-// （见 @mastra/mcp client.ts 与 CHANGELOG：annotations 同时转发给
-//  requireToolApproval 回调，并挂在 tool.mcp.annotations 供消费）。
+// MCP 工具不再维护一套独立的“审批判断逻辑”。能力判定只负责把 MCP 协议层
+// annotations 转换为 Calamex 统一的 IAgentToolDescriptor；是否默认审批则复用
+// engines/policy/tool-descriptor.ts 中的 descriptor 规则。
 //
-// 信任模型（这就是“白名单”的优雅形态，按 server 粒度、可论证）：
-//   - 注解是 hint，不是保证（MCP spec 明确：除非来自受信任 server，否则
-//     必须视为不可信）。calamex 的全部 MCP server 均由本进程按固定版本
-//     spawn、完全受控（见 mcp.ts），属于 provenance-trusted，故可据其注解
-//     做能力判定。
-//   - 对**整库无副作用**的 server（纯推理 / 纯文档检索）做 server 级信任，
-//     无条件免审批；这是按 server 粒度的白名单，而非逐个工具名猜测。
-//   - 其余一律 fail-closed：只有能**正向证明只读**时才免审批。
+// 这对应两边专业实现的取长补短：
+//   - Mastra 官方 @mastra/mcp 会把 tools/list 的 annotations 透传到
+//     tool.mcp.annotations，并支持动态 requireToolApproval。
+//   - Zed 的工具权限体系以稳定工具名、明确 kind、mutates/default approval
+//     形成单一策略面，而不是在调用点散落多个 allow/confirm 判断。
+//
+// 信任模型：
+//   - annotations 是 hint，不是保证；仅对本进程固定配置并启动的可信 server
+//     使用其 readOnlyHint 做能力判定。
+//   - 整库无副作用 server 使用 server 级信任白名单。
+//   - 其余 fail-closed：未知能力按 mutatesState=true 建 descriptor，默认 confirm。
 
-// MCP tool annotations（hint）。字段语义见 MCP spec 2025-11-25。
-// server 整体省略 annotations 时该对象为 undefined（@mastra/mcp 不自动填
-// 默认值），据此可区分“未声明”与“声明为安全”。
 export interface IMcpToolAnnotations {
   title?: string;
   readOnlyHint?: boolean;
@@ -72,11 +71,19 @@ export const resolveMcpToolCapability = (
   return 'write';
 };
 
-// 审批门控（fail-closed）：仅当能**正向证明只读**时免审批；
-// write 与 unknown（server 未自报注解）一律要求人工审批。
-// 取代旧的“按工具名猜测写动词才审批”逻辑——后者会让名字不匹配的危险工具
-// （例如 sqlite-mcp 的 query 跑 DELETE、或任意自定义命名的写工具）静默绕过审批。
-export const requiresMcpToolApproval = (
+export const createMcpGatewayToolDescriptor = (
   serverName: TMcpServerName,
+  toolName: string,
   annotations: IMcpToolAnnotations | undefined,
-): boolean => resolveMcpToolCapability(serverName, annotations) !== 'readonly';
+): IAgentToolDescriptor => {
+  const capability = resolveMcpToolCapability(serverName, annotations);
+  return createMcpToolDescriptor(serverName, toolName, capability !== 'readonly');
+};
+
+export const resolveMcpToolApprovalDefault = (
+  serverName: TMcpServerName,
+  toolName: string,
+  annotations: IMcpToolAnnotations | undefined,
+): boolean => resolveDescriptorApprovalDefault(
+  createMcpGatewayToolDescriptor(serverName, toolName, annotations),
+) === 'confirm';

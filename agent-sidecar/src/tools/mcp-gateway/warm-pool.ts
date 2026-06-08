@@ -17,7 +17,7 @@ import type {
 import {
   SIDE_EFFECT_FREE_SERVERS,
   readMcpToolAnnotations,
-  requiresMcpToolApproval,
+  resolveMcpToolApprovalDefault,
 } from './capability.js';
 import {
   MCP_GATEWAY_TOOL_NAMES,
@@ -152,10 +152,10 @@ export class McpGatewayWarmPool {
     };
   }
 
-  // 判定某次 MCP 工具调用是否需要人工审批：依据 server 在 tools/list 自报、
-  // 经 @mastra/mcp 透传到 tool.mcp.annotations 的能力注解，不依赖工具名形态。
-  // 任何无法正向判定为只读的情况（含未自报注解、解析失败、启动失败）一律
-  // fail-closed 要求审批。
+  // 判定某次 MCP 工具调用是否需要人工审批：先把 @mastra/mcp 从 tools/list
+  // 透传出的 annotations 归一成 Calamex 的 IAgentToolDescriptor，再复用统一
+  // descriptor approval 规则。这样 MCP、workspace、browser/internal 工具不再
+  // 各自维护一套审批默认值。
   async requiresToolApproval(input: {
     serverName: TMcpServerName;
     toolName: string;
@@ -176,7 +176,7 @@ export class McpGatewayWarmPool {
           return true;
         }
         const annotations = readMcpToolAnnotations(resolved.tool);
-        return requiresMcpToolApproval(input.serverName, annotations);
+        return resolveMcpToolApprovalDefault(input.serverName, resolved.name, annotations);
       });
     } catch {
       // 启动 / 列举工具失败 → 无法判定能力 → fail-closed。
