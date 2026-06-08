@@ -60,6 +60,7 @@ export class McpGatewayWarmPool {
   private readonly catalog = new Map<string, IMcpGatewayCatalog>();
   private readonly toolCallCounts = new Map<string, number>();
   private readonly listAllInflight = new Map<string, Promise<IMcpGatewayCatalogCollection>>();
+  private disconnectAllPromise: Promise<void> | null = null;
 
   constructor(options: IMcpGatewayPoolOptions) {
     this.createBundle = options.createBundle;
@@ -352,6 +353,16 @@ export class McpGatewayWarmPool {
   }
 
   async disconnectAll(): Promise<void> {
+    if (this.disconnectAllPromise) {
+      return this.disconnectAllPromise;
+    }
+    this.disconnectAllPromise = this.disconnectAllEntries().finally(() => {
+      this.disconnectAllPromise = null;
+    });
+    return this.disconnectAllPromise;
+  }
+
+  private async disconnectAllEntries(): Promise<void> {
     const entries = [...this.entries.values()];
     this.entries.clear();
     this.catalog.clear();
@@ -363,7 +374,12 @@ export class McpGatewayWarmPool {
       if (entry.creating) {
         await entry.creating.catch(() => undefined);
       }
-      await entry.bundle?.disconnectAll().catch(() => undefined);
+      // createBundle 完成路径会重新 schedule idle timer；断开前必须再清一次，避免 stale timer 挂到已移除 entry。
+      this.clearIdleTimer(entry);
+      const bundle = entry.bundle;
+      delete entry.bundle;
+      delete entry.creating;
+      await bundle?.disconnectAll().catch(() => undefined);
     }));
   }
 
