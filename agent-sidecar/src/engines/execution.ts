@@ -5,10 +5,11 @@ import { createMastraMemoryReference, createMastraMemoryScope } from './context/
 import { createMastraMemoryForModel, createMastraModelConfig, resolveMastraModelConfig } from './agent/factory.js';
 import { createAcontextTokenEventDraft, createDeepSeekPayloadEventSink } from './budget/budget.js';
 import { createExecutionRequestContext } from './context/context.js';
-import { buildMastraMessages, normalizeMastraError } from './messages.js';
+import { normalizeMastraError } from './messages.js';
 import { resolveAgentExecutionPolicy } from './policy/execution-policy.js';
 import { createApprovedPlanExecutionContext, createErrorResponse } from './responses.js';
 import { createAgentExecutionSession } from './session/agent-session.js';
+import { buildMastraMessagesFromSessionMessages, createAgentSessionMessagesFromRuntimeInput } from './session/session-messages.js';
 import { createDoneOutputEvent } from './stream/stream-utils.js';
 import { loadMastraMcpTools } from './tools/tools.js';
 import { DEFAULT_EXECUTION_AGENT_ID, DEFAULT_EXECUTION_AGENT_NAME } from './types.js';
@@ -161,7 +162,9 @@ export class MastraRuntimeExecution extends MastraRuntimeValidation {
                 runId: requestedRunId,
                 onRequestPayload: payloadEventSink.onRequestPayload,
             }, async () => {
-                const mastraMessages = buildMastraMessages(memoryInput);
+                const sessionMessages = createAgentSessionMessagesFromRuntimeInput(memoryInput);
+                executionSession.appendMessages(sessionMessages);
+                const mastraMessages = buildMastraMessagesFromSessionMessages(sessionMessages);
                 const toolChoice: IMastraGenerateOptions['toolChoice'] = hasAgentTools ? 'auto' : 'none';
                 const executionHandle = await this.createExecutionHandle({
                     id: DEFAULT_EXECUTION_AGENT_ID,

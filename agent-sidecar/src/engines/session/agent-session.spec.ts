@@ -96,6 +96,25 @@ test('AgentExecutionSession records turn lifecycle as session state', () => {
   assert.equal(session.turns[0]?.status, 'completed');
 });
 
+test('AgentExecutionSession stores session messages as aggregate state', () => {
+  const session = createAgentExecutionSession();
+
+  session.appendMessage({
+    id: 'message-1',
+    kind: 'user',
+    source: 'conversation',
+    content: '继续重构',
+  });
+  session.appendMessages([{
+    id: 'message-2',
+    kind: 'assistant',
+    source: 'runtime',
+    content: '收到',
+  }]);
+
+  assert.deepEqual(session.messages.map((message) => message.id), ['message-1', 'message-2']);
+});
+
 test('AgentExecutionSession disposes resources in reverse acquisition order', async () => {
   const disposed: string[] = [];
   const session = createAgentExecutionSession();

@@ -3,6 +3,7 @@ import type { IAgentRuntimeRunOptions, TAgentRuntimeOutputEvent } from '../contr
 import type { TAgentMode } from '../contracts/runtime-input.js';
 import { createRuntimeEventFactory, createSessionId, pushUiEvent } from '../utils.js';
 import { DEFAULT_EXECUTION_AGENT_ID } from '../types.js';
+import type { TAgentSessionMessage } from './session-messages.js';
 
 export interface ICreateAgentExecutionSessionOptions {
   sessionId?: string | undefined;
@@ -130,6 +131,8 @@ export class AgentExecutionSession {
 
   readonly turns: IAgentExecutionTurn[] = [];
 
+  readonly messages: TAgentSessionMessage[] = [];
+
   private readonly now: (() => string) | undefined;
 
   private readonly runtimeEventFactories = new Map<string, (draft: TAgentRuntimeEventDraft) => TAgentRuntimeOutputEvent>();
@@ -171,6 +174,14 @@ export class AgentExecutionSession {
 
     this.turns.push(turn);
     return turn;
+  }
+
+  appendMessage(message: TAgentSessionMessage): void {
+    this.messages.push(message);
+  }
+
+  appendMessages(messages: readonly TAgentSessionMessage[]): void {
+    this.messages.push(...messages);
   }
 
   completeTurn(turnId: string, options: ICompleteAgentExecutionTurnOptions = {}): IAgentExecutionTurn | null {
