@@ -4,6 +4,8 @@ import {
     DEFAULT_MASTRA_INPUT_TOKEN_LIMIT,
     createMastraAgentInputProcessors,
     createMastraAgentOutputProcessors,
+    createWorkspaceSensitivePathApprovalGate,
+    extractWorkspaceToolPathInput,
     resolveMastraInputTokenLimit,
 } from './workspace.js';
 
@@ -46,4 +48,27 @@ test('output processors stay streaming-safe (no buffering / no coalescing)', () 
         0,
         'Output processors must be empty so the final answer streams token-by-token.',
     );
+});
+
+test('extractWorkspaceToolPathInput reads Mastra workspace path args defensively', () => {
+    assert.equal(extractWorkspaceToolPathInput({ path: 'src/main.ts' }), 'src/main.ts');
+    assert.equal(extractWorkspaceToolPathInput({ path: '' }), null);
+    assert.equal(extractWorkspaceToolPathInput({ content: 'hello' }), null);
+    assert.equal(extractWorkspaceToolPathInput(null), null);
+});
+
+test('workspace sensitive-path approval gate composes Mastra dynamic approval with Calamex policy', () => {
+    const gate = createWorkspaceSensitivePathApprovalGate('workspace.edit_file', false);
+
+    assert.equal(gate({ args: { path: 'src/main.ts' } }), false);
+    assert.equal(gate({ args: { path: 'safe/../.env.local' } }), true);
+    assert.equal(gate({ args: { path: '.agents/foo/../skills/review/SKILL.md' } }), true);
+    assert.equal(gate({ args: { path: 'src/../.zed/settings.json' } }), true);
+});
+
+test('workspace sensitive-path approval gate preserves default approval posture', () => {
+    const gate = createWorkspaceSensitivePathApprovalGate('workspace.write_file', true);
+
+    assert.equal(gate({ args: { path: 'src/main.ts' } }), true);
+    assert.equal(gate({ args: { path: '.env.local' } }), true);
 });
