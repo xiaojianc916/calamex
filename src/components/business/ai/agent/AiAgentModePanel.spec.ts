@@ -71,7 +71,7 @@ const globalStubs = {
     props: ['confirmation', 'disabled'],
     emits: ['resolve'],
     template:
-      '<button class="tool-confirmation-stub" :disabled="disabled" @click="$emit(\'resolve\', \'allow-once\')"> confirmation.question </button>',
+      '<button class="tool-confirmation-stub" :disabled="disabled" v-text="confirmation.question" @click="$emit(\'resolve\', \'allow-once\')" />',
   },
 };
 
