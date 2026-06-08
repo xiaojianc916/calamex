@@ -5,7 +5,9 @@ import { analyzeTerminalCommandSafety } from './command-safety.js';
 import {
     createMcpToolPermissionName,
     decidePathToolPermission,
+    decideSensitivePathToolPermission,
     decideToolPermission,
+    findSensitiveToolPath,
     mostRestrictiveToolPermissionDecision,
     type IToolPermissionPolicy,
 } from './tool-permission-policy.js';
@@ -149,6 +151,42 @@ test('decidePathToolPermission：raw path 与 normalized path 取最严格结果
         policy,
     });
     assert.equal(result.kind, 'confirm');
+});
+
+test('findSensitiveToolPath：识别会改变 agent 行为或泄露 secret 的敏感路径', () => {
+    assert.equal(findSensitiveToolPath('safe/../.mastracode/memory.db')?.kind, 'agent_memory');
+    assert.equal(findSensitiveToolPath('.agents/foo/../skills/review/SKILL.md')?.kind, 'agent_skills');
+    assert.equal(findSensitiveToolPath('./apps/api/.env.local')?.kind, 'environment');
+    assert.equal(findSensitiveToolPath('src/../.zed/settings.json')?.kind, 'ide_settings');
+    assert.equal(findSensitiveToolPath('src/main.ts'), null);
+});
+
+test('decideSensitivePathToolPermission：敏感路径即使基础策略 allow 也升级为 confirm', () => {
+    const result = decideSensitivePathToolPermission({
+        toolName: 'workspace.edit_file',
+        inputs: ['packages/app/../.env.local'],
+        policy: { defaultMode: 'allow' },
+    });
+
+    assert.equal(result.kind, 'confirm');
+    assert.match(result.reason ?? '', /environment/u);
+});
+
+test('decideSensitivePathToolPermission：显式 deny 仍然优先于敏感路径 confirm', () => {
+    const result = decideSensitivePathToolPermission({
+        toolName: 'workspace.edit_file',
+        inputs: ['.env.local'],
+        policy: {
+            defaultMode: 'allow',
+            tools: {
+                'workspace.edit_file': {
+                    alwaysDeny: [{ pattern: '^\\.env' }],
+                },
+            },
+        },
+    });
+
+    assert.equal(result.kind, 'deny');
 });
 
 test('createMcpToolPermissionName：MCP 工具命名空间不与内置工具碰撞', () => {

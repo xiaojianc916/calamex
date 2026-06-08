@@ -6,6 +6,11 @@ import {
 
 export type TToolPermissionMode = 'allow' | 'confirm' | 'deny';
 export type TToolPermissionDecisionKind = 'allow' | 'confirm' | 'deny';
+export type TSensitiveToolPathKind =
+    | 'agent_memory'
+    | 'agent_skills'
+    | 'environment'
+    | 'ide_settings';
 
 export interface IToolPermissionDecision {
     kind: TToolPermissionDecisionKind;
@@ -33,6 +38,12 @@ export interface IDecideToolPermissionInput {
     toolName: string;
     inputs: string[];
     policy: IToolPermissionPolicy;
+}
+
+export interface ISensitiveToolPathMatch {
+    kind: TSensitiveToolPathKind;
+    path: string;
+    reason: string;
 }
 
 export const TERMINAL_TOOL_PERMISSION_NAME = 'terminal';
@@ -185,6 +196,73 @@ export const mostRestrictiveToolPermissionDecision = (
     DECISION_RANK[first.kind] >= DECISION_RANK[second.kind] ? first : second
 );
 
+const splitNormalizedPathComponents = (path: string): string[] =>
+    normalizePosixPathLexically(path)
+        .split('/')
+        .filter((component) => component.length > 0)
+        .map((component) => component.toLowerCase());
+
+const hasComponent = (components: readonly string[], value: string): boolean =>
+    components.includes(value.toLowerCase());
+
+const hasAdjacentComponents = (
+    components: readonly string[],
+    first: string,
+    second: string,
+): boolean => components.some((component, index) =>
+    component === first.toLowerCase() && components[index + 1] === second.toLowerCase(),
+);
+
+const isEnvironmentFileName = (value: string): boolean =>
+    value === '.env' || value.startsWith('.env.') || value.endsWith('.env');
+
+export const findSensitiveToolPath = (rawPath: string): ISensitiveToolPathMatch | null => {
+    const normalized = normalizePosixPathLexically(rawPath);
+    const components = splitNormalizedPathComponents(rawPath);
+    const fileName = components.at(-1) ?? '';
+
+    if (hasComponent(components, '.mastracode')) {
+        return {
+            kind: 'agent_memory',
+            path: normalized,
+            reason: 'path touches Calamex/Mastra agent memory identity files',
+        };
+    }
+
+    if (
+        hasComponent(components, '.calamex-skills')
+        || hasAdjacentComponents(components, '.agents', 'skills')
+    ) {
+        return {
+            kind: 'agent_skills',
+            path: normalized,
+            reason: 'path touches agent skills that can alter future agent behavior',
+        };
+    }
+
+    if (isEnvironmentFileName(fileName)) {
+        return {
+            kind: 'environment',
+            path: normalized,
+            reason: 'path may contain environment variables or secrets',
+        };
+    }
+
+    if (
+        hasComponent(components, '.zed')
+        || hasComponent(components, '.cursor')
+        || hasAdjacentComponents(components, '.vscode', 'settings.json')
+    ) {
+        return {
+            kind: 'ide_settings',
+            path: normalized,
+            reason: 'path touches IDE or agent settings',
+        };
+    }
+
+    return null;
+};
+
 export const decidePathToolPermission = (
     input: IDecideToolPermissionInput,
 ): IToolPermissionDecision => {
@@ -199,4 +277,26 @@ export const decidePathToolPermission = (
         inputs: normalizedInputs,
     });
     return mostRestrictiveToolPermissionDecision(rawDecision, normalizedDecision);
+};
+
+export const decideSensitivePathToolPermission = (
+    input: IDecideToolPermissionInput,
+): IToolPermissionDecision => {
+    const baseDecision = decidePathToolPermission(input);
+    if (baseDecision.kind === 'deny') {
+        return baseDecision;
+    }
+
+    const sensitivePath = input.inputs
+        .map(findSensitiveToolPath)
+        .find((match): match is ISensitiveToolPathMatch => match !== null);
+
+    if (!sensitivePath) {
+        return baseDecision;
+    }
+
+    return mostRestrictiveToolPermissionDecision(
+        baseDecision,
+        decision('confirm', sensitivePath.reason),
+    );
 };
