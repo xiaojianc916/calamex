@@ -8,6 +8,7 @@ import { pushUiEvent, toRecord } from '../utils.js';
 import type { IMastraToolBudgetStats, TAcontextProviderPayloadEventDraft, TAcontextTokenEventDraft, TMastraChatMessage, TRuntimeEventFactory } from '../types.js';
 import { countJsonChars, countTextChars, estimateInputTokensByChars, stringifyForJson } from '../../text-metrics.js';
 import { resolveContextBudgetDecision } from './context-budget-policy.js';
+import { resolveContextManagementStrategy } from './context-strategy-policy.js';
 
 // Char/token helpers now live in ../../text-metrics.js. Re-exported here so the
 // existing import surface of this module is preserved.
@@ -118,6 +119,8 @@ export const createAcontextTokenEventDraft = (input: {
     workspaceEnabled: boolean;
     browserEnabled: boolean;
     memoryEnabled: boolean;
+    observationalMemoryEnabled?: boolean | undefined;
+    semanticRecallEnabled?: boolean | undefined;
     maxSteps: number;
     toolChoice: 'auto' | 'none';
     modelCapabilities?: Pick<IAgentModelCapabilities, 'contextWindowTokens' | 'maxOutputTokens'> | undefined;
@@ -136,10 +139,20 @@ export const createAcontextTokenEventDraft = (input: {
         toolsText,
     ].join('\n');
     const projectedInputTokens = estimateInputTokensByChars(inputText);
+    const observationalMemoryEnabled = input.observationalMemoryEnabled ?? false;
+    const semanticRecallEnabled = input.semanticRecallEnabled ?? false;
     const contextBudget = input.modelCapabilities
         ? resolveContextBudgetDecision({
             projectedInputTokens,
             capabilities: input.modelCapabilities,
+        })
+        : null;
+    const contextStrategy = contextBudget
+        ? resolveContextManagementStrategy({
+            contextBudgetDecision: contextBudget.kind,
+            mastraMemoryEnabled: input.memoryEnabled,
+            observationalMemoryEnabled,
+            semanticRecallEnabled,
         })
         : null;
 
@@ -164,6 +177,8 @@ export const createAcontextTokenEventDraft = (input: {
         workspaceEnabled: input.workspaceEnabled,
         browserEnabled: input.browserEnabled,
         memoryEnabled: input.memoryEnabled,
+        observationalMemoryEnabled,
+        semanticRecallEnabled,
         maxSteps: input.maxSteps,
         toolChoice: input.toolChoice,
         tokenEstimateMethod: 'char_heuristic',
@@ -176,6 +191,12 @@ export const createAcontextTokenEventDraft = (input: {
             compactionSupported: contextBudget.compactionSupported,
             contextBudgetDecision: contextBudget.kind,
             retainedUserMessageByteBudget: contextBudget.retainedUserMessageByteBudget,
+        } : {}),
+        ...(contextStrategy ? {
+            contextManagementOwner: contextStrategy.owner,
+            shouldRunZedStyleCompaction: contextStrategy.shouldRunZedStyleCompaction,
+            shouldRelyOnMastraMemory: contextStrategy.shouldRelyOnMastraMemory,
+            contextManagementReason: contextStrategy.reason,
         } : {}),
     };
 };

@@ -1,10 +1,6 @@
-import type { TContextBudgetDecisionKind } from '../../streaming/stream-types.js';
+import type { TContextBudgetDecisionKind, TContextManagementOwner } from '../../streaming/stream-types.js';
 
-export type TContextManagementOwner =
-  | 'mastra_memory'
-  | 'zed_style_compaction'
-  | 'runtime_warning'
-  | 'none';
+export type { TContextManagementOwner };
 
 export interface IContextManagementStrategyInput {
   readonly contextBudgetDecision?: TContextBudgetDecisionKind | undefined;

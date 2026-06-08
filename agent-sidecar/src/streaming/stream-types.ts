@@ -49,6 +49,12 @@ export type TToolRiskLevel = 'low' | 'medium' | 'high';
 
 export type TContextBudgetDecisionKind = 'within_budget' | 'compact_recommended' | 'warn_context_limit';
 
+export type TContextManagementOwner =
+  | 'mastra_memory'
+  | 'zed_style_compaction'
+  | 'runtime_warning'
+  | 'none';
+
 export type TContextCompactionReason = 'budget' | 'manual' | 'provider_native';
 
 export interface IAgentRuntimeEventBase {
@@ -185,6 +191,8 @@ export interface IAgentAcontextTokenEvent extends IAgentRuntimeEventBase {
   workspaceEnabled?: boolean;
   browserEnabled?: boolean;
   memoryEnabled?: boolean;
+  observationalMemoryEnabled?: boolean;
+  semanticRecallEnabled?: boolean;
   maxSteps?: number;
   toolChoice?: 'auto' | 'none';
   contextWindowTokens?: number;
@@ -194,6 +202,10 @@ export interface IAgentAcontextTokenEvent extends IAgentRuntimeEventBase {
   compactionRemainingTokenBudget?: number;
   compactionSupported?: boolean;
   contextBudgetDecision?: TContextBudgetDecisionKind;
+  contextManagementOwner?: TContextManagementOwner;
+  shouldRunZedStyleCompaction?: boolean;
+  shouldRelyOnMastraMemory?: boolean;
+  contextManagementReason?: string;
   retainedUserMessageByteBudget?: number;
   tokenEstimateMethod?: 'char_heuristic';
 }

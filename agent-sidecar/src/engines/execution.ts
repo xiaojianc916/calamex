@@ -1,7 +1,7 @@
 import { MastraRuntimeValidation } from './validation.js';
 import { createDeepSeekReasoningRunPrefix, evictDeepSeekReasoningByPrefix, runWithDeepSeekReasoningContext } from '../models/providers/deepseek-reasoning-fetch.js';
 import { buildSystemPrompt } from './prompts/system-prompt.js';
-import { createMastraMemoryReference, createMastraMemoryScope } from './context/memory.js';
+import { createMastraMemoryReference, createMastraMemoryScope, resolveObservationalMemoryEnabled, resolveSemanticRecallEnabled } from './context/memory.js';
 import { createMastraMemoryForModel, createMastraModelConfig, resolveMastraModelConfig } from './agent/factory.js';
 import { createAcontextTokenEventDraft, createDeepSeekPayloadEventSink } from './budget/budget.js';
 import { createExecutionRequestContext } from './context/context.js';
@@ -137,6 +137,8 @@ export class MastraRuntimeExecution extends MastraRuntimeValidation {
             createMastraMemoryScope(memoryInput, sessionId, { resourceScope: 'session' }),
         );
         const agentMemory = createMastraMemoryForModel(modelConfig);
+        const observationalMemoryEnabled = resolveObservationalMemoryEnabled();
+        const semanticRecallEnabled = resolveSemanticRecallEnabled();
         const createRequestedRunEvent = executionSession.createRuntimeEventFactory();
         const systemPrompt = [
             buildSystemPrompt(memoryInput, modelConfig.modelId),
@@ -211,6 +213,8 @@ export class MastraRuntimeExecution extends MastraRuntimeValidation {
                     workspaceEnabled: Boolean(workspace),
                     browserEnabled: Boolean(browser),
                     memoryEnabled: true,
+                    observationalMemoryEnabled,
+                    semanticRecallEnabled,
                     maxSteps,
                     toolChoice,
                     modelCapabilities: modelConfig.capabilities,
