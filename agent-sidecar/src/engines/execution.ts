@@ -8,14 +8,15 @@ import { createExecutionRequestContext } from './context/context.js';
 import { buildMastraMessages, normalizeMastraError } from './messages.js';
 import { resolveAgentExecutionPolicy } from './policy/execution-policy.js';
 import { createApprovedPlanExecutionContext, createErrorResponse } from './responses.js';
+import { createAgentExecutionSession } from './session/agent-session.js';
 import { createDoneOutputEvent } from './stream/stream-utils.js';
 import { loadMastraMcpTools } from './tools/tools.js';
 import { DEFAULT_EXECUTION_AGENT_ID, DEFAULT_EXECUTION_AGENT_NAME } from './types.js';
 import type { IMastraGenerateOptions } from './types.js';
-import { attachMcpGatewayMetrics, createRuntimeEventFactory, createSessionId, pushUiEvent, toNonEmptyString } from './utils.js';
+import { attachMcpGatewayMetrics, toNonEmptyString } from './utils.js';
 import { createMastraAgentInputProcessors, createMastraAgentOutputProcessors, destroyMastraBrowser, destroyMastraWorkspace } from './workspace.js';
 import type { TAgentPlanRecord } from './plan/plan-store.js';
-import type { IAgentRuntimeResponse, IAgentRuntimeRunOptions, TAgentRuntimeOutputEvent } from './contracts/runtime-contracts.js';
+import type { IAgentRuntimeResponse, IAgentRuntimeRunOptions } from './contracts/runtime-contracts.js';
 import type { IAgentRuntimeInput } from './contracts/runtime-input.js';
 
 export class MastraRuntimeExecution extends MastraRuntimeValidation {
@@ -27,12 +28,16 @@ export class MastraRuntimeExecution extends MastraRuntimeValidation {
             ...input,
             mode: 'agent',
         };
-        const sessionId = normalizedInput.sessionId ?? createSessionId('mastra-execute');
-        const events: TAgentRuntimeOutputEvent[] = [];
+        const executionSession = createAgentExecutionSession({
+            sessionId: normalizedInput.sessionId,
+            runId: options.context?.requestId,
+            agentId: DEFAULT_EXECUTION_AGENT_ID,
+            ...(this.now ? { now: this.now } : {}),
+        });
+        const { sessionId, events, requestedRunId } = executionSession;
         const planId = toNonEmptyString(normalizedInput.planId);
         const planStepId = toNonEmptyString(normalizedInput.planStepId);
         const planVersion = normalizedInput.planVersion;
-        const requestedRunId = options.context?.requestId ?? createSessionId('mastra-run');
 
         if (!planId || !planStepId || !Number.isInteger(planVersion) || Number(planVersion) <= 0) {
             return createErrorResponse(
@@ -107,12 +112,7 @@ export class MastraRuntimeExecution extends MastraRuntimeValidation {
             createMastraMemoryScope(memoryInput, sessionId, { resourceScope: 'session' }),
         );
         const agentMemory = createMastraMemoryForModel(modelConfig);
-        const createRequestedRunEvent = createRuntimeEventFactory({
-            runId: requestedRunId,
-            sessionId,
-            agentId: DEFAULT_EXECUTION_AGENT_ID,
-            ...(this.now ? { now: this.now } : {}),
-        });
+        const createRequestedRunEvent = executionSession.createRuntimeEventFactory();
         const systemPrompt = [
             buildSystemPrompt(memoryInput, modelConfig.modelId),
             createApprovedPlanExecutionContext(approvedPlanRecord, planStepId),
@@ -161,16 +161,11 @@ export class MastraRuntimeExecution extends MastraRuntimeValidation {
                 const checkpointRunId = stream.runId ?? requestedRunId;
                 const createCheckpointEvent = checkpointRunId === requestedRunId
                     ? createRequestedRunEvent
-                    : createRuntimeEventFactory({
-                        runId: checkpointRunId,
-                        sessionId,
-                        agentId: DEFAULT_EXECUTION_AGENT_ID,
-                        ...(this.now ? { now: this.now } : {}),
-                    });
+                    : executionSession.createRuntimeEventFactory(checkpointRunId);
 
                 payloadEventSink.attachRuntimeEventFactory(createCheckpointEvent);
                 attachMcpGatewayMetrics(mcpGatewayMetrics, console);
-                pushUiEvent(events, createCheckpointEvent(createAcontextTokenEventDraft({
+                executionSession.push(createCheckpointEvent(createAcontextTokenEventDraft({
                     systemPrompt,
                     messages: mastraMessages,
                     contextReferences: normalizedInput.context ?? [],
@@ -182,7 +177,7 @@ export class MastraRuntimeExecution extends MastraRuntimeValidation {
                     maxSteps,
                     toolChoice,
                 })), options);
-                pushUiEvent(events, createCheckpointEvent({
+                executionSession.push(createCheckpointEvent({
                     type: 'rollback.checkpoint.created',
                     visibility: 'user',
                     level: 'info',
@@ -252,7 +247,7 @@ export class MastraRuntimeExecution extends MastraRuntimeValidation {
                     resultRef: checkpointRunId,
                 });
 
-                pushUiEvent(events, createDoneOutputEvent(result, streamSummary.doneTokenSnapshot), options);
+                executionSession.push(createDoneOutputEvent(result, streamSummary.doneTokenSnapshot), options);
 
                 return {
                     sessionId,
@@ -268,7 +263,7 @@ export class MastraRuntimeExecution extends MastraRuntimeValidation {
                 error: normalizeMastraError(error),
                 retryable: true,
             }).catch(() => undefined);
-            pushUiEvent(events, createRequestedRunEvent({
+            executionSession.push(createRequestedRunEvent({
                 type: 'rollback.checkpoint.failed',
                 visibility: 'user',
                 level: 'error',
