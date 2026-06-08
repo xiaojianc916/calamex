@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { createServer } from 'node:http';
+import { createServer, type Server } from 'node:http';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -70,6 +70,13 @@ export const SIDECAR_IMPLEMENTATION_VERSION = 'deepseek-reasoning-transport-v6-p
 // 超时未 resume 则回收，避免长负 sidecar 永久持有被放弃的 run。
 const ORCHESTRATION_RUN_TTL_MS = 30 * 60 * 1000;
 
+export type TAgentSidecarServer = Server & {
+  /**
+   * 释放 server 作用域持有的长生命周期资源。幂等，且并发调用共享同一个 Promise。
+   */
+  disposeResources: () => Promise<void>;
+};
+
 const logProcessEvent = (event: string, error: unknown): void => {
   console.error(JSON.stringify({
     level: 'error',
@@ -86,7 +93,7 @@ const logProcessEvent = (event: string, error: unknown): void => {
 
 export const createAgentSidecarServer = (
   options: { runtime?: IAgentSidecarRuntime; authToken?: string | null } = {},
-) => {
+): TAgentSidecarServer => {
   const runtime = options.runtime ?? createConfiguredRuntime();
   const authToken = options.authToken !== undefined
     ? normalizeSidecarToken(options.authToken)
@@ -96,7 +103,7 @@ export const createAgentSidecarServer = (
   // 实例即可跨 HTTP 请求 resume；跨进程 / 回收后则由 Phase 3b 从 libsql 快照重建。
   const orchestrationRuns = new Map<string, TPlanOrchestrationRun>();
   const orchestrationRunTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  let disposed = false;
+  let disposeResourcesPromise: Promise<void> | null = null;
 
   const forgetOrchestrationRun = (runId: string): void => {
     orchestrationRuns.delete(runId);
@@ -119,30 +126,33 @@ export const createAgentSidecarServer = (
     orchestrationRunTimers.set(runId, timer);
   };
 
-  const disposeServerResources = async (): Promise<void> => {
-    if (disposed) {
-      return;
-    }
-    disposed = true;
-
-    for (const timer of orchestrationRunTimers.values()) {
-      clearTimeout(timer);
-    }
-    orchestrationRunTimers.clear();
-    orchestrationRuns.clear();
-
-    try {
-      await runtime.dispose?.();
-    } catch (error) {
-      logProcessEvent('runtime.dispose.failed', error);
+  const disposeServerResources = (): Promise<void> => {
+    if (disposeResourcesPromise) {
+      return disposeResourcesPromise;
     }
 
-    try {
-      // web 搜索使用独立的共享 tavily MCP bundle，关闭时一并断开，避免遗留子进程。
-      await disposeWebService();
-    } catch (error) {
-      logProcessEvent('web.dispose.failed', error);
-    }
+    disposeResourcesPromise = (async () => {
+      for (const timer of orchestrationRunTimers.values()) {
+        clearTimeout(timer);
+      }
+      orchestrationRunTimers.clear();
+      orchestrationRuns.clear();
+
+      try {
+        await runtime.dispose?.();
+      } catch (error) {
+        logProcessEvent('runtime.dispose.failed', error);
+      }
+
+      try {
+        // web 搜索使用独立的共享 tavily MCP bundle，关闭时一并断开，避免遗留子进程。
+        await disposeWebService();
+      } catch (error) {
+        logProcessEvent('web.dispose.failed', error);
+      }
+    })();
+
+    return disposeResourcesPromise;
   };
 
   // /agent/chat, /agent/chat/stream, /model/chat and /model/chat/stream all
@@ -462,10 +472,11 @@ export const createAgentSidecarServer = (
     writeJson(response, 404, {
       error: '未知 sidecar 路由。',
     });
-  });
+  }) as TAgentSidecarServer;
 
+  server.disposeResources = disposeServerResources;
   server.once('close', () => {
-    void disposeServerResources();
+    void server.disposeResources();
   });
 
   return server;
@@ -497,21 +508,17 @@ if (isEntrypoint()) {
     }
     shuttingDown = true;
     try {
-      server.close();
+      await new Promise<void>((resolveClose) => {
+        if (!server.listening) {
+          resolveClose();
+          return;
+        }
+        server.close(() => resolveClose());
+      });
     } catch {
-      // 忽略关闭 HTTP server 时的异常。
+      // 忽略关闭 HTTP server 时的异常，仍继续释放 server 作用域资源。
     }
-    try {
-      await runtime.dispose?.();
-    } catch {
-      // 资源释放尽力而为，忽略清理期间的异常。
-    }
-    try {
-      // web 搜索使用独立的共享 tavily MCP bundle，关闭时一并断开，避免遗留子进程。
-      await disposeWebService();
-    } catch {
-      // 同样尽力而为，忽略清理期间的异常。
-    }
+    await server.disposeResources();
     process.exit(code);
   };
 

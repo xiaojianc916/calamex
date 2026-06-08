@@ -57,7 +57,7 @@ const createOrchestrationStreamRuntime = (
 
 const startServer = async (
   runtime: IAgentSidecarRuntime,
-): Promise<{ baseUrl: string; close: () => Promise<void> }> => {
+): Promise<{ baseUrl: string; close: () => Promise<void>; disposeResources: () => Promise<void> }> => {
   const server = createAgentSidecarServer({ runtime, authToken: null });
 
   await new Promise<void>((resolve, reject) => {
@@ -87,6 +87,7 @@ const startServer = async (
           resolve();
         });
       }),
+    disposeResources: () => server.disposeResources(),
   };
 };
 
@@ -260,5 +261,38 @@ describe('Agent sidecar orchestration stream routes', () => {
     await waitForMicrotask();
 
     assert.equal(disposeCalls, 1);
+  });
+
+  it('shares one disposal promise when close and explicit disposal race', async () => {
+    process.env[ORCHESTRATION_FLAG] = '1';
+    let disposeCalls = 0;
+    let disposeFinished = false;
+    let releaseDispose: (() => void) | undefined;
+    const runtime = {
+      ...createOrchestrationStreamRuntime([], 'success', { ok: true }),
+      dispose: async () => {
+        disposeCalls += 1;
+        await new Promise<void>((resolve) => {
+          releaseDispose = resolve;
+        });
+        disposeFinished = true;
+      },
+    } as unknown as IAgentSidecarRuntime;
+    const server = await startServer(runtime);
+
+    const closePromise = server.close();
+    await waitForMicrotask();
+    const explicitDisposePromise = server.disposeResources();
+
+    assert.equal(disposeCalls, 1);
+    assert.equal(disposeFinished, false);
+    assert.ok(releaseDispose, 'expected disposal to have started');
+
+    releaseDispose();
+    await Promise.all([closePromise, explicitDisposePromise]);
+    await server.disposeResources();
+
+    assert.equal(disposeCalls, 1);
+    assert.equal(disposeFinished, true);
   });
 });
