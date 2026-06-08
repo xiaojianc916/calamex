@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useFrontendTool } from '@copilotkit/vue';
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { z } from 'zod';
 import AiChatThread from '@/components/business/ai/chat/AiChatThread.vue';
 import AiPromptInput from '@/components/business/ai/chat/AiPromptInput.vue';
@@ -11,10 +11,13 @@ import AiAssistantCheckpointEntry from '@/components/business/ai/shell/AiAssista
 import AiAssistantSuggestionEmpty from '@/components/business/ai/shell/AiAssistantSuggestionEmpty.vue';
 import AiAssistantThreadExtras from '@/components/business/ai/shell/AiAssistantThreadExtras.vue';
 import AiPanelFrame from '@/components/business/ai/shell/AiPanelFrame.vue';
+import { splitSuggestionsIntoRows } from '@/components/business/ai/shell/split-suggestions';
 import AiWebSourcesPanel from '@/components/business/ai/web/AiWebSourcesPanel.vue';
 import { useAiAgentNetwork } from '@/composables/ai/useAiAgentNetwork';
 import { useAiAgentRun } from '@/composables/ai/useAiAgentRun';
-import { type IAiConversationCheckpoint, useAiAssistant } from '@/composables/ai/useAiAssistant';
+import { useAiAssistant } from '@/composables/ai/useAiAssistant';
+import { useAiConversationCheckpoints } from '@/composables/ai/useAiConversationCheckpoints';
+import { useAiConversationHistory } from '@/composables/ai/useAiConversationHistory';
 import { useAiTokenContext } from '@/composables/ai/useAiTokenContext';
 import { useAiWebSources } from '@/composables/ai/useAiWebSources';
 import { useCopilotContext } from '@/composables/ai/useCopilotContext';
@@ -43,71 +46,6 @@ import type {
 } from '@/types/editor';
 import type { IGitDiffPreviewPayload, IGitRepositoryStatusPayload } from '@/types/git';
 import { toErrorMessage } from '@/utils/error';
-
-const splitSuggestionsIntoRows = <T extends { title: string }>(
-  items: readonly T[],
-  rowCount: number,
-): T[][] => {
-  if (items.length === 0) {
-    return [];
-  }
-
-  const effectiveRowCount = Math.min(rowCount, items.length);
-
-  if (effectiveRowCount <= 1) {
-    return [items.slice()];
-  }
-
-  const totalWeight = items.reduce((sum, item) => sum + item.title.length + 2, 0);
-  const targetWeight = totalWeight / effectiveRowCount;
-
-  const rows: T[][] = [];
-  let currentRow: T[] = [];
-  let currentWeight = 0;
-  let rowsRemaining = effectiveRowCount;
-
-  items.forEach((item, index) => {
-    currentRow.push(item);
-    currentWeight += item.title.length + 2;
-
-    const rowsLeftAfterBreak = rowsRemaining - 1;
-    const itemsLeftAfterCurrent = items.length - index - 1;
-    const shouldBreakRow =
-      rowsLeftAfterBreak > 0 &&
-      currentWeight >= targetWeight &&
-      itemsLeftAfterCurrent >= rowsLeftAfterBreak;
-
-    if (shouldBreakRow) {
-      rows.push(currentRow);
-      currentRow = [];
-      currentWeight = 0;
-      rowsRemaining -= 1;
-    }
-  });
-
-  if (currentRow.length > 0) {
-    rows.push(currentRow);
-  }
-
-  return rows;
-};
-
-const MAX_HISTORY_THREADS = 20;
-
-const HISTORY_TIME_FORMAT = new Intl.DateTimeFormat('zh-CN', {
-  hour: '2-digit',
-  minute: '2-digit',
-  hour12: false,
-});
-const HISTORY_DATE_FORMAT_SAME_YEAR = new Intl.DateTimeFormat('zh-CN', {
-  month: '2-digit',
-  day: '2-digit',
-});
-const HISTORY_DATE_FORMAT_FULL = new Intl.DateTimeFormat('zh-CN', {
-  year: 'numeric',
-  month: '2-digit',
-  day: '2-digit',
-});
 
 const props = defineProps<{
   document: IEditorDocument;
@@ -164,10 +102,33 @@ const settingsApiKey = ref('');
 const settingsTavilyApiKey = ref('');
 const isAgentRunActionPending = ref(false);
 const isPromptModelSaving = ref(false);
-const isHistoryOpen = ref(false);
-const pendingDeleteThreadId = ref<string | null>(null);
-const historyAnchorRef = ref<HTMLElement | null>(null);
-const historyPopoverRef = ref<HTMLElement | null>(null);
+
+const {
+  isHistoryOpen,
+  historyAnchorRef,
+  historyPopoverRef,
+  historyThreads,
+  activeHistoryThread,
+  getHistoryMessageCountLabel,
+  getHistoryTimestampLabel,
+  deleteDialogTitle,
+  deleteDialogDescription,
+  toggleHistoryPopover,
+  closeHistory,
+  startNewConversation,
+  openHistoryThread,
+  openDeleteConversationDialog,
+  cancelClearConversation,
+  confirmClearConversation,
+} = useAiConversationHistory(assistant);
+const {
+  isConversationCheckpointDisabled,
+  getConversationCheckpoint,
+  isConversationCheckpointRestoring,
+  getConversationCheckpointLabel,
+  handleRestoreConversationCheckpoint,
+} = useAiConversationCheckpoints(assistant);
+
 const currentServicePlatform = computed(() =>
   findAiServicePlatformByModel(assistant.config.value.selectedModel),
 );
@@ -190,37 +151,6 @@ const providerMarkTitle = computed(() => {
 
   return `${aiIconTitle.value} · ${selectedModel}`;
 });
-const historyThreads = computed(() =>
-  [...assistant.historyThreads.value]
-    .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
-    .slice(0, MAX_HISTORY_THREADS),
-);
-const activeHistoryThread = computed(
-  () =>
-    assistant.historyThreads.value.find(
-      (thread) => thread.id === assistant.activeConversationId.value,
-    ) ?? null,
-);
-const pendingDeleteThread = computed(
-  () =>
-    assistant.historyThreads.value.find((thread) => thread.id === pendingDeleteThreadId.value) ??
-    null,
-);
-const conversationCheckpointByMessageId = computed<Record<string, IAiConversationCheckpoint>>(
-  () => {
-    const checkpointMap: Record<string, IAiConversationCheckpoint> = {};
-
-    assistant.conversationCheckpoints.value.forEach((checkpoint) => {
-      checkpointMap[checkpoint.messageId] = checkpoint;
-    });
-
-    return checkpointMap;
-  },
-);
-const isCheckpointRestorePending = computed(() => assistant.restoringCheckpointId.value !== null);
-const isConversationCheckpointDisabled = computed(
-  () => assistant.isSending.value || isCheckpointRestorePending.value,
-);
 const planStore = computed(() => assistant.agentPlan.store);
 
 const planHasPlan = computed(() => planStore.value.hasPlan);
@@ -676,39 +606,11 @@ const fileRollbackLabel = computed(() => {
 });
 const isFileRollbackDisabled = computed(() => fileRollbackPrompt.value?.status !== 'ready');
 
-const isHistoryEventInside = (eventTarget: EventTarget | null): boolean => {
-  const targetNode = eventTarget instanceof Node ? eventTarget : null;
-
-  if (!targetNode) {
-    return false;
-  }
-
-  return Boolean(
-    historyAnchorRef.value?.contains(targetNode) || historyPopoverRef.value?.contains(targetNode),
-  );
-};
-
-const handleHistoryPointerDown = (event: PointerEvent): void => {
-  if (!isHistoryOpen.value || assistant.isClearDialogOpen.value) {
-    return;
-  }
-
-  if (isHistoryEventInside(event.target)) {
-    return;
-  }
-
-  isHistoryOpen.value = false;
-};
-
-const toggleHistoryPopover = (): void => {
-  isHistoryOpen.value = !isHistoryOpen.value;
-};
-
 const openSettings = (): void => {
   settingsDraft.value = cloneAiConfigPayload(assistant.config.value);
   settingsApiKey.value = '';
   settingsTavilyApiKey.value = '';
-  isHistoryOpen.value = false;
+  closeHistory();
   assistant.isSettingsOpen.value = true;
   assistant
     .loadTavilyApiKey()
@@ -718,48 +620,6 @@ const openSettings = (): void => {
       }
     })
     .catch(() => undefined);
-};
-
-const startNewConversation = (): void => {
-  if (assistant.isSending.value) {
-    assistant.stopCurrentRequest();
-  }
-  isHistoryOpen.value = false;
-  assistant.startNewConversation();
-};
-
-const openHistoryThread = (threadId: string): void => {
-  if (assistant.isSending.value) {
-    assistant.stopCurrentRequest();
-  }
-  assistant.switchConversation(threadId);
-  isHistoryOpen.value = false;
-};
-
-const openDeleteConversationDialog = (threadId: string): void => {
-  pendingDeleteThreadId.value = threadId;
-  assistant.isClearDialogOpen.value = true;
-};
-
-const cancelClearConversation = (): void => {
-  pendingDeleteThreadId.value = null;
-  assistant.isClearDialogOpen.value = false;
-};
-
-const confirmClearConversation = (): void => {
-  const threadId = pendingDeleteThreadId.value;
-  pendingDeleteThreadId.value = null;
-  assistant.isClearDialogOpen.value = false;
-
-  if (!threadId) {
-    return;
-  }
-
-  if (assistant.isSending.value && threadId === assistant.activeConversationId.value) {
-    assistant.stopCurrentRequest();
-  }
-
-  assistant.deleteConversation(threadId);
 };
 
 const handleSuggestionSelect = async (suggestion: string): Promise<void> => {
@@ -779,65 +639,6 @@ const handleSubmitMessage = async (): Promise<void> => {
   await assistant.sendMessage();
 };
 
-const getHistoryTimeLabel = (timestampText: string): string => {
-  const timestamp = Date.parse(timestampText);
-  if (!Number.isFinite(timestamp)) return '刚刚';
-  return HISTORY_TIME_FORMAT.format(new Date(timestamp));
-};
-
-const getHistoryTimestampLabel = (timestampText: string): string => {
-  const timestamp = Date.parse(timestampText);
-  if (!Number.isFinite(timestamp)) return '刚刚';
-  const date = new Date(timestamp);
-  const now = new Date();
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  const startOfDate = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
-  const dayDiff = Math.round((startOfToday - startOfDate) / (24 * 60 * 60 * 1000));
-  if (dayDiff <= 0) return `今天 ${HISTORY_TIME_FORMAT.format(date)}`;
-  if (dayDiff === 1) return `昨天 ${HISTORY_TIME_FORMAT.format(date)}`;
-  const formatter =
-    date.getFullYear() === now.getFullYear()
-      ? HISTORY_DATE_FORMAT_SAME_YEAR
-      : HISTORY_DATE_FORMAT_FULL;
-  return formatter.format(date);
-};
-
-const getConversationCheckpoint = (messageId: string): IAiConversationCheckpoint | null =>
-  conversationCheckpointByMessageId.value[messageId] ?? null;
-
-const isConversationCheckpointRestoring = (messageId: string): boolean => {
-  const checkpoint = getConversationCheckpoint(messageId);
-
-  return checkpoint !== null && assistant.restoringCheckpointId.value === checkpoint.id;
-};
-
-const getConversationCheckpointLabel = (messageId: string): string => {
-  const checkpoint = getConversationCheckpoint(messageId);
-
-  if (!checkpoint) {
-    return '';
-  }
-
-  if (assistant.restoringCheckpointId.value === checkpoint.id) {
-    return '正在恢复检查点';
-  }
-
-  return `恢复到 ${getHistoryTimeLabel(checkpoint.createdAt)} 检查点`;
-};
-
-const handleRestoreConversationCheckpoint = async (messageId: string): Promise<void> => {
-  const checkpoint = getConversationCheckpoint(messageId);
-
-  if (!checkpoint || isConversationCheckpointDisabled.value) {
-    return;
-  }
-
-  await assistant.restoreConversationCheckpoint(checkpoint.id);
-};
-
-const getHistoryMessageCountLabel = (messages: IAiChatMessage[]): string =>
-  `${messages.length} 条消息`;
-
 const handleConversationScrollStateChange = (state: {
   scrollTop: number;
   scrollHeight: number;
@@ -849,23 +650,6 @@ const handleConversationScrollStateChange = (state: {
     updatedAt: new Date().toISOString(),
   });
 };
-
-const deleteDialogTitle = computed<string>(() => {
-  const thread = pendingDeleteThread.value;
-
-  if (!thread) {
-    return '删除对话记录？';
-  }
-
-  return `删除“${thread.title}”？`;
-});
-
-const deleteDialogDescription = computed<string>(() => {
-  const thread = pendingDeleteThread.value;
-  const messageCountLabel = thread ? getHistoryMessageCountLabel(thread.messages) : '这条记录';
-
-  return `只会删除这条对话记录（${messageCountLabel}），不会删除文件或其他对话。`;
-});
 
 const setPlanError = (error: unknown, fallback: string): void => {
   setPlanErrorMessage(toErrorMessage(error, fallback));
@@ -1175,7 +959,6 @@ const restorePersistedPlanUiState = async (): Promise<void> => {
 };
 
 onMounted(() => {
-  document.addEventListener('pointerdown', handleHistoryPointerDown);
   restorePersistedPlanUiState().catch((error) => {
     setPlanError(error, '恢复计划状态失败。');
   });
@@ -1185,10 +968,6 @@ onMounted(() => {
       settingsDraft.value = cloneAiConfigPayload(assistant.config.value);
     })
     .catch(() => undefined);
-});
-
-onBeforeUnmount(() => {
-  document.removeEventListener('pointerdown', handleHistoryPointerDown);
 });
 </script>
 
