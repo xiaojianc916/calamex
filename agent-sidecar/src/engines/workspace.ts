@@ -12,12 +12,48 @@ import type { IMastraTextModeExecutionPlan, IMastraToolLoadPlan, TMastraToolProf
 import { MASTRA_WORKSPACE_REDACTED_PREVIEW_TOOL_NAMES, WINDOWS_POWERSHELL_CORE_RELATIVE_PATH, WINDOWS_POWERSHELL_RELATIVE_PATH } from './types.js';
 import { toNonEmptyString } from './utils.js';
 import { resolveWorkspaceDirectory } from './context/context.js';
+import { decideSensitivePathToolPermission, type IToolPermissionPolicy } from './policy/tool-permission-policy.js';
 
 export const isWindowsRuntime = (): boolean => process.platform === 'win32';
 
 export const AGENT_SIDECAR_INPUT_TOKEN_LIMIT_ENV = 'AGENT_SIDECAR_INPUT_TOKEN_LIMIT';
 export const DEFAULT_MASTRA_INPUT_TOKEN_LIMIT = 64_000;
 export const MIN_MASTRA_INPUT_TOKEN_LIMIT = 4_096;
+
+const WORKSPACE_SENSITIVE_PATH_POLICY: IToolPermissionPolicy = {
+    defaultMode: 'allow',
+};
+
+export interface IWorkspaceToolApprovalContext {
+    args: Record<string, unknown>;
+}
+
+export const extractWorkspaceToolPathInput = (args: unknown): string | null => {
+    if (!args || typeof args !== 'object') {
+        return null;
+    }
+
+    const path = (args as Record<string, unknown>).path;
+    return typeof path === 'string' && path.trim().length > 0 ? path : null;
+};
+
+export const createWorkspaceSensitivePathApprovalGate = (
+    toolName: string,
+    defaultRequiresApproval: boolean,
+): ((context: IWorkspaceToolApprovalContext) => boolean) => ({ args }) => {
+    const path = extractWorkspaceToolPathInput(args);
+    if (!path) {
+        return defaultRequiresApproval;
+    }
+
+    const permission = decideSensitivePathToolPermission({
+        toolName,
+        inputs: [path],
+        policy: WORKSPACE_SENSITIVE_PATH_POLICY,
+    });
+
+    return defaultRequiresApproval || permission.kind !== 'allow';
+};
 
 export const resolveWindowsPowerShellExecutable = (): string => {
     const systemRoot = toNonEmptyString(process.env.SystemRoot)
@@ -418,26 +454,26 @@ export const createMastraWorkspace = async (
             },
             [WORKSPACE_TOOLS.FILESYSTEM.WRITE_FILE]: {
                 enabled: profile === 'write',
-                requireApproval: true,
+                requireApproval: createWorkspaceSensitivePathApprovalGate('workspace.write_file', true),
                 requireReadBeforeWrite: true,
             },
             [WORKSPACE_TOOLS.FILESYSTEM.EDIT_FILE]: {
                 enabled: profile === 'write',
-                requireApproval: true,
+                requireApproval: createWorkspaceSensitivePathApprovalGate('workspace.edit_file', true),
                 requireReadBeforeWrite: true,
             },
             [WORKSPACE_TOOLS.FILESYSTEM.AST_EDIT]: {
                 enabled: profile === 'write',
-                requireApproval: true,
+                requireApproval: createWorkspaceSensitivePathApprovalGate('workspace.edit_file', true),
                 requireReadBeforeWrite: true,
             },
             [WORKSPACE_TOOLS.FILESYSTEM.DELETE]: {
                 enabled: profile === 'write',
-                requireApproval: true,
+                requireApproval: createWorkspaceSensitivePathApprovalGate('workspace.delete', true),
             },
             [WORKSPACE_TOOLS.FILESYSTEM.MKDIR]: {
                 enabled: profile === 'write',
-                requireApproval: true,
+                requireApproval: createWorkspaceSensitivePathApprovalGate('workspace.mkdir', true),
             },
             [WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND]: {
                 enabled: profile === 'write',
