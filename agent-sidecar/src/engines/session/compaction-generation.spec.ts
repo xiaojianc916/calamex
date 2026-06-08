@@ -1,8 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { COMPACTION_HANDOFF_PROMPT } from './session-messages.js';
-import { buildContextCompactionGenerationRequest } from './compaction-generation.js';
+import {
+  buildContextCompactionContinuationMessages,
+  buildContextCompactionGenerationRequest,
+} from './compaction-generation.js';
+import {
+  COMPACTION_HANDOFF_PROMPT,
+  COMPACTION_RESUME_USER_MESSAGE_PREFIX,
+} from './session-messages.js';
 import type { TMastraChatMessage } from '../types.js';
 
 const createMessages = (): TMastraChatMessage[] => [
@@ -59,4 +65,62 @@ test('buildContextCompactionGenerationRequest allows a custom handoff prompt for
   assert.deepEqual(request.messages, [{ role: 'user', content: 'Summarize as handoff.' }]);
   assert.equal(request.retainedUserMessageCount, 0);
   assert.equal(request.retainedUserMessageByteCount, 0);
+});
+
+test('buildContextCompactionContinuationMessages keeps the active user prompt after the summary', () => {
+  const messages: TMastraChatMessage[] = [
+    { role: 'user', content: 'old request' },
+    { role: 'assistant', content: 'old answer' },
+    { role: 'user', content: 'current request' },
+  ];
+
+  const compacted = buildContextCompactionContinuationMessages({
+    messages,
+    summary: 'Goal: keep working\nNext: answer current request',
+  });
+
+  assert.deepEqual(compacted, [
+    {
+      role: 'user',
+      content: `${COMPACTION_RESUME_USER_MESSAGE_PREFIX}\n\nGoal: keep working\nNext: answer current request`,
+    },
+    { role: 'user', content: 'current request' },
+  ]);
+});
+
+test('buildContextCompactionContinuationMessages preserves image parts on the active user prompt', () => {
+  const activePrompt: TMastraChatMessage = {
+    role: 'user',
+    content: [
+      { type: 'text', text: 'current visual request' },
+      { type: 'image', image: 'file:///tmp/screenshot.png' },
+    ],
+  };
+  const compacted = buildContextCompactionContinuationMessages({
+    messages: [
+      { role: 'user', content: 'old request' },
+      { role: 'assistant', content: 'old answer' },
+      activePrompt,
+    ],
+    summary: 'Goal: inspect image context',
+  });
+
+  assert.deepEqual(compacted, [
+    {
+      role: 'user',
+      content: `${COMPACTION_RESUME_USER_MESSAGE_PREFIX}\n\nGoal: inspect image context`,
+    },
+    activePrompt,
+  ]);
+  assert.notEqual(compacted[1], activePrompt);
+});
+
+test('buildContextCompactionContinuationMessages leaves messages unchanged when summary is empty', () => {
+  assert.deepEqual(
+    buildContextCompactionContinuationMessages({
+      messages: createMessages(),
+      summary: '   ',
+    }),
+    createMessages(),
+  );
 });
