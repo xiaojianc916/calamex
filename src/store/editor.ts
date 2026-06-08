@@ -7,6 +7,7 @@ import type { IAiDiffEditorPreview } from '@/types/ai/patch';
 import type {
   IActiveRunSummary,
   IAnalyzeScriptPayload,
+  ICommandTemplate,
   IEditorDocument,
   IEditorSelectionSummary,
   IExecutionEnvironment,
@@ -25,6 +26,7 @@ import { computeDocumentMetrics } from '@/utils/document-metrics';
 import { createUniqueId } from '@/utils/id';
 import { formatFileSystemTextForDisplay, normalizeFileSystemPath } from '@/utils/path';
 import { DEFAULT_EXECUTOR, DEFAULT_SCRIPT } from '@/utils/templates';
+import { createTerminalOutputBuffer } from '@/utils/terminal-output-buffer';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -57,32 +59,6 @@ type TPersistableTabKind = (typeof PERSISTABLE_TAB_KINDS)[number];
 // ---------------------------------------------------------------------------
 // Pure helpers
 // ---------------------------------------------------------------------------
-
-/** 把可能在 UTF-16 代理对中间截断的字符串按 code point 边界修正。 */
-const clampToCodeUnitBoundary = (value: string, maxLength: number): string => {
-  if (value.length <= maxLength) return value;
-  let sliced = value.slice(value.length - maxLength);
-  // 若第一个 code unit 是低位代理项,则跳过一个字符,避免单独的半个代理对
-  const firstCode = sliced.charCodeAt(0);
-  if (firstCode >= 0xdc00 && firstCode <= 0xdfff) {
-    sliced = sliced.slice(1);
-  }
-  return sliced;
-};
-
-const trimLeadingCodeUnitBoundary = (value: string, startIndex: number): string => {
-  if (startIndex <= 0) return value;
-  if (startIndex >= value.length) return '';
-  let sliced = value.slice(startIndex);
-  if (!sliced) {
-    return '';
-  }
-  const firstCode = sliced.charCodeAt(0);
-  if (firstCode >= 0xdc00 && firstCode <= 0xdfff) {
-    sliced = sliced.slice(1);
-  }
-  return sliced;
-};
 
 const isPersistableTabKind = (kind: IEditorDocument['kind']): kind is TPersistableTabKind =>
   (PERSISTABLE_TAB_KINDS as readonly string[]).includes(kind);
@@ -250,7 +226,10 @@ export const useEditorStore = defineStore(
     const cursorColumn = ref(1);
     const activeSelectionSummary = ref<IEditorSelectionSummary | null>(null);
     const selectedExecutor = ref<TExecutorKind>(DEFAULT_EXECUTOR);
-    const terminalOutputChunks = ref<string[]>([]);
+    const terminalOutputBuffer = createTerminalOutputBuffer({
+      maxLength: MAX_TERMINAL_OUTPUT_LENGTH,
+      maxChunkLength: MAX_TERMINAL_OUTPUT_CHUNK_LENGTH,
+    });
     const terminalOutputLength = ref(0);
     const terminalOutputVersion = ref(0);
     const runLogs = ref<IRunLogEntry[]>([]);
@@ -592,61 +571,28 @@ export const useEditorStore = defineStore(
 
     // Actions: terminal output
 
-    const getTerminalOutputSnapshot = (): string => terminalOutputChunks.value.join('');
-
-    const setTerminalOutputChunks = (chunks: string[]): void => {
-      const sanitizedChunks = chunks.filter((chunk) => chunk.length > 0);
-      terminalOutputChunks.value = sanitizedChunks;
-      terminalOutputLength.value = sanitizedChunks.reduce(
-        (total, chunk) => total + chunk.length,
-        0,
-      );
+    const syncTerminalOutputMetadata = (): void => {
+      terminalOutputLength.value = terminalOutputBuffer.length;
       terminalOutputVersion.value += 1;
+    };
+
+    const getTerminalOutputSnapshot = (): string => terminalOutputBuffer.toString();
+
+    const setTerminalOutputChunks = (chunks: readonly string[]): void => {
+      terminalOutputBuffer.replaceWithChunks(chunks);
+      syncTerminalOutputMetadata();
     };
 
     const appendTerminalOutputChunk = (value: string): void => {
-      if (!value) {
+      if (!terminalOutputBuffer.append(value)) {
         return;
       }
-      const nextChunks = terminalOutputChunks.value;
-      const lastChunkIndex = nextChunks.length - 1;
-      if (
-        lastChunkIndex >= 0 &&
-        nextChunks[lastChunkIndex].length + value.length <= MAX_TERMINAL_OUTPUT_CHUNK_LENGTH
-      ) {
-        nextChunks[lastChunkIndex] += value;
-      } else {
-        nextChunks.push(value);
-      }
-
-      let nextLength = terminalOutputLength.value + value.length;
-      let overflow = nextLength - MAX_TERMINAL_OUTPUT_LENGTH;
-      while (overflow > 0 && nextChunks.length > 0) {
-        const firstChunk = nextChunks[0];
-        if (firstChunk.length <= overflow) {
-          overflow -= firstChunk.length;
-          nextLength -= firstChunk.length;
-          nextChunks.shift();
-          continue;
-        }
-        const trimmedChunk = trimLeadingCodeUnitBoundary(firstChunk, overflow);
-        nextLength -= firstChunk.length - trimmedChunk.length;
-        overflow = 0;
-        if (trimmedChunk.length > 0) {
-          nextChunks[0] = trimmedChunk;
-        } else {
-          nextChunks.shift();
-        }
-      }
-
-      terminalOutputChunks.value = nextChunks;
-      terminalOutputLength.value = nextLength;
-      terminalOutputVersion.value += 1;
+      syncTerminalOutputMetadata();
     };
 
     const setTerminalOutput = (value: string): void => {
-      const clampedValue = clampToCodeUnitBoundary(value, MAX_TERMINAL_OUTPUT_LENGTH);
-      setTerminalOutputChunks(clampedValue ? [clampedValue] : []);
+      terminalOutputBuffer.replaceWithText(value);
+      syncTerminalOutputMetadata();
     };
 
     /** 历史 API 别名;与 appendTerminalOutputChunk 完全同义。新代码可任选其一。 */
