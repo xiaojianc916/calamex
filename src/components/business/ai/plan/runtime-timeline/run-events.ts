@@ -31,7 +31,7 @@ const describeLargestTokenBudgetSource = (event: TTokenBudgetRuntimeEvent): stri
 
 const describeTokenBudgetEvent = (event: TTokenBudgetRuntimeEvent): string => {
   const segments = [
-    event.projectedInputTokensAvailable
+    event.projectedInputTokens !== undefined
       ? `上下文预算检查，预计输入 token：${formatOptionalNumber(event.projectedInputTokens) ?? '未知'}`
       : '上下文预算检查完成',
     describeLargestTokenBudgetSource(event),
@@ -43,6 +43,12 @@ const describeTokenBudgetEvent = (event: TTokenBudgetRuntimeEvent): string => {
     segments.push(
       mcpToolCount ? `工具 ${toolCount} 个（MCP ${mcpToolCount} 个）` : `工具 ${toolCount} 个`,
     );
+  }
+
+  if (event.contextManagementOwner === 'mastra_memory') {
+    segments.push('上下文管理：Mastra Memory');
+  } else if (event.contextManagementOwner === 'zed_style_compaction') {
+    segments.push('上下文管理：会话压缩');
   }
 
   return segments.filter((segment): segment is string => Boolean(segment)).join('；');
@@ -67,6 +73,21 @@ const describeProviderPayloadEvent = (event: TProviderPayloadRuntimeEvent): stri
   return segments.filter((segment): segment is string => Boolean(segment)).join('；');
 };
 
+const describeContextCompactionReason = (
+  reason: 'budget' | 'manual' | 'provider_native',
+): string => {
+  switch (reason) {
+    case 'budget':
+      return '上下文预算';
+    case 'manual':
+      return '手动触发';
+    case 'provider_native':
+      return '模型原生上下文管理';
+    default:
+      return '上下文管理';
+  }
+};
+
 export const describeRunEvent = (event: TAgentRuntimeEvent): string | null => {
   switch (event.type) {
     case 'agent.run.started':
@@ -79,8 +100,8 @@ export const describeRunEvent = (event: TAgentRuntimeEvent): string | null => {
       return `Agent 执行失败：${event.errorMessage}`;
 
     case 'agent.model.started':
-      return event.projectedInputTokensAvailable
-        ? `模型调用开始，预计输入 token：${event.projectedInputTokens ?? 0}`
+      return event.projectedInputTokens !== undefined
+        ? `模型调用开始，预计输入 token：${event.projectedInputTokens}`
         : '模型调用开始';
 
     case 'agent.model.completed':
@@ -93,6 +114,15 @@ export const describeRunEvent = (event: TAgentRuntimeEvent): string | null => {
 
     case 'acontext.provider_payload.checked':
       return describeProviderPayloadEvent(event);
+
+    case 'acontext.context_compaction.started':
+      return `开始整理上下文（${describeContextCompactionReason(event.reason)}）`;
+
+    case 'acontext.context_compaction.updated':
+      return null;
+
+    case 'acontext.context_compaction.completed':
+      return `上下文整理完成：摘要 ${formatOptionalNumber(event.summaryCharCount) ?? '0'} 字符`;
 
     case 'agent.text.delta':
     case 'agent.tool.progress':
