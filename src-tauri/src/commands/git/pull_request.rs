@@ -447,14 +447,14 @@ fn pull_request_cache_key(target: &GitHubRepositoryTarget, state: &str) -> Strin
 }
 
 fn pull_request_detail_cache_key(target: &GitHubRepositoryTarget, number: u32) -> String {
-    [
-        target.repository_root.to_string_lossy().as_ref(),
-        target.api_base.as_str(),
-        target.owner.as_str(),
-        target.repo.as_str(),
-        number.to_string().as_str(),
-    ]
-    .join("|")
+    format!(
+        "{}|{}|{}|{}|{}",
+        target.repository_root.to_string_lossy(),
+        target.api_base,
+        target.owner,
+        target.repo,
+        number,
+    )
 }
 
 fn cached_pull_requests(cache_key: &str) -> Option<GitHubPullRequestCacheEntry> {

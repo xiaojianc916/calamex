@@ -131,6 +131,7 @@ type TLoadPullRequestOptions = {
 };
 
 type TLoadPullRequestDetailOptions = {
+  force?: boolean;
   updateActive?: boolean;
   visibleLoading?: boolean;
 };
@@ -836,16 +837,25 @@ export const useGitStore = defineStore('git', () => {
   ): Promise<IGitPullRequestDetailPayload> => {
     const updateActive = options?.updateActive ?? true;
     const visibleLoading = options?.visibleLoading ?? updateActive;
+    const force = options?.force ?? false;
     const repositoryRootPath = requireRepositoryRootPath();
     const cacheKey = createPullRequestDetailCacheKey(repositoryRootPath, number);
+    const pending = pendingPullRequestDetailRequests.get(cacheKey);
     const cached = pullRequestDetailCache.value[cacheKey];
-    if (cached) {
+    if (cached && !force) {
       rememberPullRequestDetail(cacheKey, cached);
-      if (updateActive) pullRequestDetail.value = cached;
+      if (updateActive) {
+        pullRequestDetail.value = cached;
+        if (!pending) {
+          void loadPullRequestDetail(number, {
+            force: true,
+            updateActive: true,
+            visibleLoading: false,
+          }).catch(() => undefined);
+        }
+      }
       return cached;
     }
-
-    const pending = pendingPullRequestDetailRequests.get(cacheKey);
     if (pending) {
       if (!updateActive) return pending;
       const requestId = ++pullRequestDetailRequestId;

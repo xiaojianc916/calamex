@@ -13,20 +13,44 @@ const filePath = resolve(root, relativePath);
 
 const text = readFileSync(filePath, 'utf8');
 
-const startMarker = 'fn pull_request_detail_cache_key(target: &GitHubRepositoryTarget, number: u32) -> String {';
-const endMarker = '\n\nfn cached_pull_requests';
+const functionSignature =
+  'fn pull_request_detail_cache_key(target: &GitHubRepositoryTarget, number: u32) -> String';
 
-const start = text.indexOf(startMarker);
-if (start === -1) {
-  throw new Error(`${relativePath}: function start not found`);
+const signatureStart = text.indexOf(functionSignature);
+
+if (signatureStart === -1) {
+  throw new Error(`${relativePath}: function signature not found`);
 }
 
-const end = text.indexOf(endMarker, start);
-if (end === -1) {
-  throw new Error(`${relativePath}: next function marker not found`);
+const openBrace = text.indexOf('{', signatureStart);
+
+if (openBrace === -1) {
+  throw new Error(`${relativePath}: function opening brace not found`);
 }
 
-const currentFunction = text.slice(start, end);
+let depth = 0;
+let functionEnd = -1;
+
+for (let i = openBrace; i < text.length; i += 1) {
+  const char = text[i];
+
+  if (char === '{') {
+    depth += 1;
+  } else if (char === '}') {
+    depth -= 1;
+
+    if (depth === 0) {
+      functionEnd = i + 1;
+      break;
+    }
+  }
+}
+
+if (functionEnd === -1) {
+  throw new Error(`${relativePath}: function closing brace not found`);
+}
+
+const currentFunction = text.slice(signatureStart, functionEnd);
 
 if (currentFunction.includes('number.to_string().as_str()')) {
   const replacement = `fn pull_request_detail_cache_key(target: &GitHubRepositoryTarget, number: u32) -> String {
@@ -40,7 +64,7 @@ if (currentFunction.includes('number.to_string().as_str()')) {
     )
 }`;
 
-  const nextText = text.slice(0, start) + replacement + text.slice(end);
+  const nextText = text.slice(0, signatureStart) + replacement + text.slice(functionEnd);
   writeFileSync(filePath, nextText, 'utf8');
   console.log(`patched ${relativePath}: fixed temporary string borrow`);
 } else if (currentFunction.includes('format!(')) {
