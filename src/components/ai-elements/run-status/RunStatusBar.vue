@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { CirclePause, LoaderCircle, Pause, Play, X } from 'lucide-vue-next';
 import { computed } from 'vue';
 
 import { Button } from '@/components/ui/button';
@@ -147,8 +146,14 @@ const handleResolve = (option: IAiToolConfirmationOption): void => {
   >
     <div class="run-status__line">
       <span class="run-status__icon" aria-hidden="true">
-        <CirclePause v-if="isPaused" class="run-status__glyph" />
-        <LoaderCircle v-else class="run-status__glyph is-spinning" />
+        <span
+          v-if="isPaused"
+          class="run-status__glyph icon-[lucide--circle-pause]"
+        />
+        <span
+          v-else
+          class="run-status__glyph icon-[lucide--loader-circle] animate-spin"
+        />
       </span>
 
       <span class="run-status__header" v-text="headerText" />
@@ -185,7 +190,7 @@ const handleResolve = (option: IAiToolConfirmationOption): void => {
             aria-label="继续"
             @click="handleResume"
           >
-            <Play class="run-status__btn-glyph" aria-hidden="true" />
+            <span class="run-status__btn-glyph icon-[lucide--play]" aria-hidden="true" />
             <span class="run-status__btn-label">继续</span>
           </Button>
           <Button
@@ -197,7 +202,7 @@ const handleResolve = (option: IAiToolConfirmationOption): void => {
             aria-label="暂停"
             @click="handlePause"
           >
-            <Pause class="run-status__btn-glyph" aria-hidden="true" />
+            <span class="run-status__btn-glyph icon-[lucide--pause]" aria-hidden="true" />
             <span class="run-status__btn-label">暂停</span>
           </Button>
           <Button
@@ -209,7 +214,7 @@ const handleResolve = (option: IAiToolConfirmationOption): void => {
             aria-label="取消"
             @click="handleCancel"
           >
-            <X class="run-status__btn-glyph" aria-hidden="true" />
+            <span class="run-status__btn-glyph icon-[lucide--x]" aria-hidden="true" />
             <span class="run-status__btn-label">取消</span>
           </Button>
         </template>
@@ -251,10 +256,6 @@ const handleResolve = (option: IAiToolConfirmationOption): void => {
 .run-status__glyph {
   width: 14px;
   height: 14px;
-}
-
-.run-status__glyph.is-spinning {
-  animation: run-status-spin 1s linear infinite;
 }
 
 .run-status__header {
@@ -345,12 +346,6 @@ const handleResolve = (option: IAiToolConfirmationOption): void => {
   -webkit-box-orient: vertical;
 }
 
-@keyframes run-status-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 @keyframes run-status-shimmer {
   from {
     background-position: 200% 0;
@@ -361,7 +356,7 @@ const handleResolve = (option: IAiToolConfirmationOption): void => {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .run-status__glyph.is-spinning {
+  .run-status__glyph.animate-spin {
     animation: none;
   }
 
