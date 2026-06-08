@@ -787,6 +787,9 @@ export const useGitStore = defineStore('git', () => {
     const fetchedAt = pullRequestListFetchedAt.value[cacheKey] ?? 0;
     const isFresh = Date.now() - fetchedAt < PULL_REQUEST_LIST_REVALIDATE_INTERVAL_MS;
     if (cached && !options?.force && isFresh) {
+      if (shouldPreloadDetails) {
+        preloadTopPullRequestDetails(cached);
+      }
       return cached;
     }
 
