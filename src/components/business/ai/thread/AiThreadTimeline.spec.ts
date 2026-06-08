@@ -1,6 +1,7 @@
 import { mount } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { nextTick } from 'vue';
+import { h, nextTick } from 'vue';
+import type { IAiChatMessage } from '@/types/ai';
 import type {
   IAiThreadAssistantTextEntry,
   IAiThreadChangedFilesSummaryEntry,
@@ -170,5 +171,28 @@ describe('AiThreadTimeline', () => {
 
     expect(wrapper.emitted('planApprove')).toHaveLength(1);
     expect(wrapper.emitted('planUpdateStepTitle')?.[0]).toEqual(['step-1', '新标题']);
+  });
+
+  it('在每条来源消息的末尾条目处注入 after-message 作用域插槽', () => {
+    const message: IAiChatMessage = {
+      id: 'm1',
+      role: 'user',
+      content: 'hello',
+      createdAt: '2026-04-28T10:00:00.000Z',
+      references: [],
+    };
+    buildThreadEntriesMock.mockReturnValue([userEntry, assistantEntry]);
+
+    const wrapper = mount(AiThreadTimeline, {
+      props: { messages: [message] },
+      slots: {
+        'after-message': ({ message: boundaryMessage }: { message: IAiChatMessage }) =>
+          h('div', { class: 'boundary-stub' }, boundaryMessage.id),
+      },
+      global: { stubs },
+    });
+
+    expect(wrapper.findAll('.boundary-stub')).toHaveLength(1);
+    expect(wrapper.find('.boundary-stub').text()).toBe('m1');
   });
 });

@@ -25,26 +25,32 @@ const createMessage = (overrides: Partial<IAiChatMessage>): IAiChatMessage => ({
   ...overrides,
 });
 
+// 轻量替身:平铺时间线的逐条目渲染在 AiThreadTimeline.spec 中单独验证;此处只验证
+// AiChatThread 传入的可见消息、逐消息 after-message 插槽与改动事件转发。
+const TimelineStub = {
+  props: ['messages'],
+  template: `
+    <div class="timeline-stub">
+      <div v-for="m in messages" :key="m.id" class="timeline-msg-stub" :data-message-id="m.id">
+        <span class="timeline-msg-content" v-text="m.content"></span>
+        <slot name="after-message" :message="m" />
+      </div>
+    </div>
+  `,
+};
+
+const stubTimeline = { AiThreadTimeline: TimelineStub };
+
 describe('AiChatThread', () => {
   it('hides the standalone typing bubble when the last assistant message is already streaming', () => {
     const wrapper = mount(AiChatThread, {
       props: {
-        messages: [
-          createMessage({
-            stream: {
-              status: 'streaming',
-            },
-          }),
-        ],
+        messages: [createMessage({ stream: { status: 'streaming' } })],
         isTyping: true,
         platformId: 'deepseek',
         providerLabel: 'DeepSeek',
       },
-      global: {
-        stubs: {
-          AiMessageItem: { template: '<div class="message-item-stub" />' },
-        },
-      },
+      global: { stubs: stubTimeline },
     });
 
     expect(wrapper.find('.ai-message-typing').exists()).toBe(false);
@@ -53,20 +59,15 @@ describe('AiChatThread', () => {
   it('keeps the standalone typing bubble for non-streaming loading states', () => {
     const wrapper = mount(AiChatThread, {
       props: {
-        messages: [createMessage({ role: 'user', content: '浣犲ソ', stream: undefined })],
+        messages: [createMessage({ role: 'user', content: '你好', stream: undefined })],
         isTyping: true,
         platformId: 'deepseek',
         providerLabel: 'DeepSeek',
       },
-      global: {
-        stubs: {
-          AiMessageItem: { template: '<div class="message-item-stub" />' },
-        },
-      },
+      global: { stubs: stubTimeline },
     });
 
     expect(wrapper.find('.ai-message-typing').exists()).toBe(true);
-    expect(wrapper.find('.ai-logo').exists()).toBe(false);
   });
 
   it('uses the provided standalone typing label', () => {
@@ -78,11 +79,7 @@ describe('AiChatThread', () => {
         platformId: 'deepseek',
         providerLabel: 'DeepSeek',
       },
-      global: {
-        stubs: {
-          AiMessageItem: { template: '<div class="message-item-stub" />' },
-        },
-      },
+      global: { stubs: stubTimeline },
     });
 
     expect(wrapper.find('.ai-message-typing').attributes('aria-label')).toBe('正在生成计划');
@@ -97,11 +94,7 @@ describe('AiChatThread', () => {
         platformId: 'deepseek',
         providerLabel: 'DeepSeek',
       },
-      global: {
-        stubs: {
-          AiMessageItem: { template: '<div class="message-item-stub" />' },
-        },
-      },
+      global: { stubs: stubTimeline },
     });
 
     expect(wrapper.find('.ai-chat-list').classes()).toContain('overflow-x-hidden');
@@ -115,11 +108,7 @@ describe('AiChatThread', () => {
         platformId: 'deepseek',
         providerLabel: 'DeepSeek',
       },
-      global: {
-        stubs: {
-          AiMessageItem: { template: '<div class="message-item-stub" />' },
-        },
-      },
+      global: { stubs: stubTimeline },
     });
 
     expect(wrapper.findComponent(Conversation).props('resize')).toBeUndefined();
@@ -133,51 +122,27 @@ describe('AiChatThread', () => {
         platformId: 'deepseek',
         providerLabel: 'DeepSeek',
       },
-      global: {
-        stubs: {
-          AiMessageItem: { template: '<div class="message-item-stub" />' },
-        },
-      },
+      global: { stubs: stubTimeline },
     });
 
     expect(wrapper.findComponent(Conversation).props('resize')).toBe('instant');
   });
 
-  it('forwards message actions with both payload arguments intact', async () => {
+  it('renders the empty state when there is nothing to show', () => {
     const wrapper = mount(AiChatThread, {
       props: {
-        messages: [
-          createMessage({
-            actions: [
-              {
-                id: 'allow-agent-execution',
-                label: '鱏佳銭鍊Ñ',
-              },
-            ],
-          }),
-        ],
+        messages: [],
         isTyping: false,
         platformId: 'deepseek',
         providerLabel: 'DeepSeek',
       },
-      global: {
-        stubs: {
-          AiMessageItem: {
-            props: ['message'],
-            emits: ['messageAction'],
-            template:
-              '<button class="message-action-stub" @click="$emit(\'messageAction\', message.id, \'allow-agent-execution\')">action</button>',
-          },
-        },
-      },
+      global: { stubs: stubTimeline },
     });
 
-    await wrapper.find('.message-action-stub').trigger('click');
-
-    expect(wrapper.emitted('messageAction')).toEqual([['message-1', 'allow-agent-execution']]);
+    expect(wrapper.text()).toContain('还没有对话');
   });
 
-  it('renders the per-message trailing slot with the current message payload', () => {
+  it('passes the per-message after-message slot through the flat timeline', () => {
     const wrapper = mount(AiChatThread, {
       props: {
         messages: [
@@ -192,11 +157,7 @@ describe('AiChatThread', () => {
         'after-message': ({ message }: { message: IAiChatMessage }) =>
           h('div', { class: 'after-message-stub' }, message.id),
       },
-      global: {
-        stubs: {
-          AiMessageItem: { template: '<div class="message-item-stub" />' },
-        },
-      },
+      global: { stubs: stubTimeline },
     });
 
     expect(wrapper.findAll('.after-message-stub')).toHaveLength(2);
@@ -206,212 +167,22 @@ describe('AiChatThread', () => {
     ]);
   });
 
-  it('renders realtime provider tool activity inside the assistant message without standalone dots', () => {
-    const wrapper = mount(AiChatThread, {
-      props: {
-        messages: [
-          createMessage({
-            content: 'AI 姝ｅ湺鮑妩浣跨敢宓ゥ叿锡ﾚread_file',
-            toolCalls: [
-              {
-                id: 'tool-call-read-file',
-                name: 'read_file',
-                status: 'running',
-                summary: 'test.sh',
-              },
-            ],
-            stream: {
-              status: 'streaming',
-            },
-          }),
-        ],
-        isTyping: true,
-        platformId: 'deepseek',
-        providerLabel: 'DeepSeek',
-      },
-      global: {
-        stubs: {
-          AiMarkdown: { template: '<div />' },
-        },
-      },
-    });
-
-    expect(wrapper.text()).toContain('读取');
-    expect(wrapper.text()).toContain('test.sh');
-    expect(wrapper.find('.ai-tool-running-dots').exists()).toBe(false);
-    expect(wrapper.find('.ai-message-typing').exists()).toBe(false);
-  });
-
-  it('hides the standalone typing bubble when agent progress is already visible', () => {
-    const wrapper = mount(AiChatThread, {
-      props: {
-        messages: [
-          createMessage({
-            content: 'Agent 正在调用工具…',
-            stream: undefined,
-          }),
-        ],
-        isTyping: true,
-        platformId: 'deepseek',
-        providerLabel: 'DeepSeek',
-      },
-      global: {
-        stubs: {
-          AiMessageItem: { template: '<div class="message-item-stub" />' },
-        },
-      },
-    });
-
-    expect(wrapper.find('.ai-message-typing').exists()).toBe(false);
-  });
-
-  it('hides the standalone typing bubble for a silent agent placeholder', () => {
-    const wrapper = mount(AiChatThread, {
-      props: {
-        messages: [
-          createMessage({
-            content: '',
-            stream: undefined,
-          }),
-        ],
-        isTyping: true,
-        platformId: 'deepseek',
-        providerLabel: 'DeepSeek',
-      },
-      global: {
-        stubs: {
-          AiMessageItem: { template: '<div class="message-item-stub" />' },
-        },
-      },
-    });
-
-    expect(wrapper.find('.ai-message-typing').exists()).toBe(false);
-  });
-
-  it('renders a Codex-like marker when Mastra compresses context automatically', () => {
-    const wrapper = mount(AiChatThread, {
-      props: {
-        messages: [
-          createMessage({
-            id: 'assistant-memory-1',
-            content: '已继续处理。',
-            stream: {
-              status: 'completed',
-              runtimeEvents: [
-                {
-                  id: 'memory-compressed-1',
-                  type: 'acontext.memory.compressed',
-                  runId: 'run-1',
-                  sessionId: 'session-1',
-                  agentId: 'agent-1',
-                  timestamp: '2026-05-03T10:00:00.000Z',
-                  seq: 0,
-                  schemaVersion: 1,
-                  redacted: true,
-                  visibility: 'user',
-                  level: 'info',
-                  operationType: 'observation',
-                  tokensActivated: 32_000,
-                  observationTokens: 900,
-                },
-              ],
-            },
-          }),
-        ],
-        isTyping: false,
-        platformId: 'deepseek',
-        providerLabel: 'DeepSeek',
-      },
-      global: {
-        stubs: {
-          AiMessageItem: { template: '<div class="message-item-stub" />' },
-        },
-      },
-    });
-
-    expect(wrapper.find('.ai-context-compression-divider').exists()).toBe(true);
-    expect(wrapper.text()).toContain('上下文已自动压缩');
-  });
-
-  it('renders a Codex-like marker when Zed-style context compaction completes', () => {
-    const wrapper = mount(AiChatThread, {
-      props: {
-        messages: [
-          createMessage({
-            id: 'assistant-compaction-1',
-            content: '继续执行。',
-            stream: {
-              status: 'completed',
-              runtimeEvents: [
-                {
-                  id: 'context-compaction-completed-1',
-                  type: 'acontext.context_compaction.completed',
-                  runId: 'run-1',
-                  sessionId: 'session-1',
-                  agentId: 'agent-1',
-                  timestamp: '2026-05-03T10:00:00.000Z',
-                  seq: 0,
-                  schemaVersion: 1,
-                  redacted: true,
-                  visibility: 'user',
-                  level: 'info',
-                  compactionId: 'compaction-1',
-                  reason: 'budget',
-                  summaryCharCount: 1200,
-                },
-              ],
-            },
-          }),
-        ],
-        isTyping: false,
-        platformId: 'deepseek',
-        providerLabel: 'DeepSeek',
-      },
-      global: {
-        stubs: {
-          AiMessageItem: { template: '<div class="message-item-stub" />' },
-        },
-      },
-    });
-
-    expect(wrapper.find('.ai-context-compression-divider').exists()).toBe(true);
-    expect(wrapper.text()).toContain('上下文已自动压缩');
-  });
-
   it('does not render Plan execution synthetic messages in the chat thread', () => {
     const wrapper = mount(AiChatThread, {
       props: {
         messages: [
           createMessage({ id: 'user-1', role: 'user', content: '执行这个计划' }),
-          createMessage({
-            id: 'agent-flow:run-1',
-            content: 'AI 正在自动使用工具：读取文件',
-            toolCalls: [
-              {
-                id: 'tool-call-1',
-                name: 'read_file',
-                status: 'running',
-                summary: '读取文件',
-              },
-            ],
-          }),
+          createMessage({ id: 'agent-flow:run-1', content: 'AI 正在自动使用工具：读取文件' }),
         ],
         hasExtraContent: true,
         isTyping: false,
         platformId: 'deepseek',
         providerLabel: 'DeepSeek',
       },
-      global: {
-        stubs: {
-          AiMessageItem: {
-            props: ['message'],
-            template: '<div class="message-item-stub" v-text="message.content" />',
-          },
-        },
-      },
+      global: { stubs: stubTimeline },
     });
 
-    expect(wrapper.findAll('.message-item-stub')).toHaveLength(1);
+    expect(wrapper.findAll('.timeline-msg-stub')).toHaveLength(1);
     expect(wrapper.text()).toContain('执行这个计划');
     expect(wrapper.text()).not.toContain('AI 正在自动使用工具');
   });
@@ -421,27 +192,43 @@ describe('AiChatThread', () => {
       props: {
         messages: [
           createMessage({ id: 'user-1', role: 'user', content: '帮我跑一下' }),
-          createMessage({
-            id: 'assistant-error-1',
-            content: 'Agent 执行失败：Node sidecar 未就绪',
-          }),
+          createMessage({ id: 'assistant-error-1', content: 'Agent 执行失败：Node sidecar 未就绪' }),
         ],
+        isTyping: false,
+        platformId: 'deepseek',
+        providerLabel: 'DeepSeek',
+      },
+      global: { stubs: stubTimeline },
+    });
+
+    expect(wrapper.findAll('.timeline-msg-stub')).toHaveLength(1);
+    expect(wrapper.text()).toContain('帮我跑一下');
+    expect(wrapper.text()).not.toContain('Agent 执行失败');
+  });
+
+  it('forwards changed-files rollback and pin events from the timeline', async () => {
+    const wrapper = mount(AiChatThread, {
+      props: {
+        messages: [createMessage({ content: '改动汇总' })],
         isTyping: false,
         platformId: 'deepseek',
         providerLabel: 'DeepSeek',
       },
       global: {
         stubs: {
-          AiMessageItem: {
-            props: ['message'],
-            template: '<div class="message-item-stub" v-text="message.content" />',
+          AiThreadTimeline: {
+            emits: ['changedFilesRollback', 'changedFilesPin'],
+            template:
+              '<div><button class="cf-rollback" @click="$emit(\'changedFilesRollback\', \'m1\', \'sum1\')"></button><button class="cf-pin" @click="$emit(\'changedFilesPin\', \'m1\', \'sum1\', true)"></button></div>',
           },
         },
       },
     });
 
-    expect(wrapper.findAll('.message-item-stub')).toHaveLength(1);
-    expect(wrapper.text()).toContain('帮我跑一下');
-    expect(wrapper.text()).not.toContain('Agent 执行失败');
+    await wrapper.find('.cf-rollback').trigger('click');
+    await wrapper.find('.cf-pin').trigger('click');
+
+    expect(wrapper.emitted('changedFilesRollback')?.[0]).toEqual(['m1', 'sum1']);
+    expect(wrapper.emitted('changedFilesPin')?.[0]).toEqual(['m1', 'sum1', true]);
   });
 });

@@ -44,6 +44,22 @@ const messagesById = computed(() => {
   return map;
 });
 
+// 每条来源消息的“最后一个条目”id 集合;平铺渲染时据此在消息边界注入逐消息附加
+// 内容(如对话检查点),与 Zed `acp_thread` 把检查点挂在消息末尾的做法一致,而
+// 不破坏单一线性时间线。
+const lastEntryIdByMessage = computed(() => {
+  const lastById = new Map<string, string>();
+
+  for (const entry of entries.value) {
+    lastById.set(entry.messageId, entry.id);
+  }
+
+  return new Set(lastById.values());
+});
+
+const isMessageBoundary = (entry: TAiThreadEntry): boolean =>
+  lastEntryIdByMessage.value.has(entry.id);
+
 const patchesFor = (messageId: string): readonly IAiPatchSet[] =>
   messagesById.value.get(messageId)?.patches ?? [];
 </script>
@@ -103,6 +119,11 @@ const patchesFor = (messageId: string): readonly IAiPatchSet[] =>
         :is-pinning="pinningChangedFilesSummaryId === entry.summary.id"
         @undo="(messageId: string, summaryId: string) => emit('changedFilesRollback', messageId, summaryId)"
         @pin="(messageId: string, summaryId: string, pinned: boolean) => emit('changedFilesPin', messageId, summaryId, pinned)"
+      />
+      <slot
+        v-if="isMessageBoundary(entry) && messagesById.get(entry.messageId)"
+        name="after-message"
+        :message="messagesById.get(entry.messageId)"
       />
     </template>
   </div>

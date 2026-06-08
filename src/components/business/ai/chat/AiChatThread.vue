@@ -7,10 +7,9 @@ import {
   ConversationScrollButton,
 } from '@/components/ai-elements/conversation';
 import { Message } from '@/components/ai-elements/message';
+import AiThreadTimeline from '@/components/business/ai/thread/AiThreadTimeline.vue';
 import type { TAiServicePlatformId } from '@/constants/ai/providers';
-import type { IAiChatMessage, TAiChatMessageActionId } from '@/types/ai';
-import type { TAgentRuntimeEvent } from '@/types/ai/sidecar';
-import AiMessageItem from './AiMessageItem.vue';
+import type { IAiChatMessage } from '@/types/ai';
 import AiThinkingStatus from './AiThinkingStatus.vue';
 
 interface IAiChatScrollState {
@@ -24,6 +23,8 @@ const props = withDefaults(
   defineProps<{
     messages: IAiChatMessage[];
     isTyping: boolean;
+    // platformId / providerLabel 由面板传入,作为稳定的对外契约保留(平铺时间线本身
+    // 不再渲染逐消息的 provider 标识),避免父级绑定退化成 DOM 透传属性。
     platformId: TAiServicePlatformId;
     providerLabel: string;
     typingLabel?: string;
@@ -46,7 +47,6 @@ const props = withDefaults(
 );
 
 const emit = defineEmits<{
-  messageAction: [messageId: string, actionId: TAiChatMessageActionId];
   changedFilesRollback: [messageId: string, summaryId: string];
   changedFilesPin: [messageId: string, summaryId: string, pinned: boolean];
   scrollStateChange: [state: IAiChatScrollState];
@@ -58,16 +58,12 @@ const TOOL_PROGRESS_PREFIXES = [
   'Agent 正在调用工具…',
   'Agent 正在根据你的确认继续执行…',
 ] as const;
-// 报错只在输入框上方以一条居中提示线呈现，因此这些“把报错当回复”的助手占位消息
-// 不再进入对话流，避免同一个错误出现两次。
+// 报错只在输入框上方以一条居中提示线呈现,因此这些“把报错当回复”的助手占位消息
+// 不再进入对话流,避免同一个错误出现两次。
 const ERROR_REPLY_PREFIXES = ['Agent 执行失败：', 'AI 上下文收集失败：', '计划生成失败：'] as const;
-// Plan 执行态已经由专属 Plan 面板承载；这个旧的 synthetic assistant message
-// 只保留给 token usage 估算，不能再混入 Chat thread。
+// Plan 执行态的工具活动由真实运行时事件驱动平铺时间线;这个旧的 synthetic assistant
+// message 仅保留给 token usage 估算,不能再混入会话时间线。
 const PLAN_AGENT_FLOW_MESSAGE_ID_PREFIX = 'agent-flow:';
-const CONTEXT_COMPRESSION_EVENT_TYPES = new Set<TAgentRuntimeEvent['type']>([
-  'acontext.memory.compressed',
-  'acontext.context_compaction.completed',
-]);
 
 const isErrorReplyMessage = (message: IAiChatMessage): boolean => {
   if (message.role !== 'assistant') {
@@ -119,23 +115,8 @@ const shouldRenderEmptyState = computed(
     !shouldRenderStandaloneTyping.value,
 );
 
-const lastAssistantMessageId = computed(() => {
-  for (let index = visibleMessages.value.length - 1; index >= 0; index -= 1) {
-    const message = visibleMessages.value[index];
-
-    if (message?.role === 'assistant') {
-      return message.id;
-    }
-  }
-
-  return null;
-});
 const conversationInitialScroll = computed(() => !props.scrollState);
 const conversationResizeMode = computed(() => (props.isTyping ? undefined : 'instant'));
-
-const handleMessageAction = (messageId: string, actionId: TAiChatMessageActionId): void => {
-  emit('messageAction', messageId, actionId);
-};
 
 const handleChangedFilesRollback = (messageId: string, summaryId: string): void => {
   emit('changedFilesRollback', messageId, summaryId);
@@ -148,11 +129,6 @@ const handleChangedFilesPin = (messageId: string, summaryId: string, pinned: boo
 const handleScrollStateChange = (state: IAiChatScrollState): void => {
   emit('scrollStateChange', state);
 };
-
-const hasContextCompressionMarker = (message: IAiChatMessage): boolean =>
-  Boolean(
-    message.stream?.runtimeEvents?.some((event) => CONTEXT_COMPRESSION_EVENT_TYPES.has(event.type)),
-  );
 </script>
 
 <template>
@@ -165,28 +141,19 @@ const hasContextCompressionMarker = (message: IAiChatMessage): boolean =>
       <slot v-if="shouldRenderEmptyState" name="empty">
         <ConversationEmptyState class="ai-chat-empty-state" title="还没有对话" description="选择一个提示词，或直接输入你的问题。">
           <template #icon>
-            <span class="icon-[lucide--message-square] size-6"  />
+            <span class="icon-[lucide--message-square] size-6" />
           </template>
         </ConversationEmptyState>
       </slot>
       <template v-else>
-        <slot name="before-messages" />
-        <template v-for="message in visibleMessages" :key="message.id">
-          <slot v-if="message.id === lastAssistantMessageId" name="before-last-assistant" :message="message" />
-          <AiMessageItem :message="message" :platform-id="platformId" :provider-label="providerLabel"
-            :workspace-root-path="workspaceRootPath"
-            :reverting-changed-files-summary-id="revertingChangedFilesSummaryId"
-            :pinning-changed-files-summary-id="pinningChangedFilesSummaryId" @message-action="handleMessageAction"
-            @changed-files-rollback="handleChangedFilesRollback" @changed-files-pin="handleChangedFilesPin" />
-          <div v-if="hasContextCompressionMarker(message)" class="ai-context-compression-divider" role="status"
-            aria-label="上下文已自动压缩">
-            <span class="ai-context-compression-divider__label">
-              <span class="icon-[lucide--archive] ai-context-compression-divider__icon" aria-hidden="true"  />
-              <span>上下文已自动压缩</span>
-            </span>
-          </div>
-          <slot name="after-message" :message="message" />
-        </template>
+        <AiThreadTimeline :messages="visibleMessages" :workspace-root-path="workspaceRootPath"
+          :reverting-changed-files-summary-id="revertingChangedFilesSummaryId"
+          :pinning-changed-files-summary-id="pinningChangedFilesSummaryId"
+          @changed-files-rollback="handleChangedFilesRollback" @changed-files-pin="handleChangedFilesPin">
+          <template #after-message="{ message }">
+            <slot name="after-message" :message="message" />
+          </template>
+        </AiThreadTimeline>
         <slot name="after-messages" />
         <Message v-if="shouldRenderStandaloneTyping" from="assistant" class="ai-message-typing"
           :aria-label="typingLabel">
@@ -268,40 +235,5 @@ const hasContextCompressionMarker = (message: IAiChatMessage): boolean =>
   display: flex;
   min-width: 0;
   align-items: flex-start;
-}
-
-.ai-context-compression-divider {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 10px;
-  color: var(--text-tertiary);
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 18px;
-}
-
-.ai-context-compression-divider::before,
-.ai-context-compression-divider::after {
-  height: 1px;
-  min-width: 24px;
-  flex: 1 1 0;
-  background: color-mix(in srgb, var(--shell-divider) 86%, transparent);
-  content: '';
-}
-
-.ai-context-compression-divider__label {
-  display: inline-flex;
-  min-width: 0;
-  align-items: center;
-  gap: 6px;
-  white-space: nowrap;
-}
-
-.ai-context-compression-divider__icon {
-  width: 14px;
-  height: 14px;
-  flex: 0 0 auto;
-  stroke-width: 1.8;
 }
 </style>
