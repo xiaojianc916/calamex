@@ -2,7 +2,11 @@ import { mount } from '@vue/test-utils';
 import { describe, expect, it, vi } from 'vitest';
 
 import AiAgentModePanel from '@/components/business/ai/agent/AiAgentModePanel.vue';
-import type { IAiChatMessage, IAiChatStreamRenderState } from '@/types/ai';
+import type {
+  IAiChatMessage,
+  IAiChatStreamRenderState,
+  IAiToolConfirmationRequest,
+} from '@/types/ai';
 
 type AiRuntimeEvent = NonNullable<IAiChatStreamRenderState['runtimeEvents']>[number];
 
@@ -42,6 +46,35 @@ const createRuntimeEvent = (overrides: Partial<AiRuntimeEvent>): AiRuntimeEvent 
     ...(overrides as object),
   }) as AiRuntimeEvent;
 
+const createToolConfirmation = (): IAiToolConfirmationRequest => ({
+  id: 'confirmation-1',
+  runId: 'run-1',
+  stepId: 'step-1',
+  toolName: 'run_test',
+  question: '允许 Agent 运行测试吗？',
+  summary: 'Agent 需要运行测试验证改动。',
+  riskLevel: 'medium',
+  reversible: true,
+  createdAt: '2026-05-03T10:00:00.000Z',
+  options: [
+    { id: 'allow-once', label: '允许一次', tone: 'primary' },
+    { id: 'stop', label: '停止', tone: 'danger' },
+  ],
+});
+
+const globalStubs = {
+  AiMarkdown: {
+    props: ['content'],
+    template: '<div class="markdown-stub" v-text="content" />',
+  },
+  AiToolConfirmationCard: {
+    props: ['confirmation', 'disabled'],
+    emits: ['resolve'],
+    template:
+      '<button class="tool-confirmation-stub" :disabled="disabled" @click="$emit(\'resolve\', \'allow-once\')"> confirmation.question </button>',
+  },
+};
+
 describe('AiAgentModePanel', () => {
   it('renders runtime timeline as the primary agent-mode surface', () => {
     const wrapper = mount(AiAgentModePanel, {
@@ -69,18 +102,15 @@ describe('AiAgentModePanel', () => {
         isTyping: true,
       },
       global: {
-        stubs: {
-          AiMarkdown: {
-            props: ['content'],
-            template: '<div class="markdown-stub" v-text="content" />',
-          },
-        },
+        stubs: globalStubs,
       },
     });
 
     expect(wrapper.find('.ai-runtime-timeline').exists()).toBe(true);
+    expect(wrapper.find('.ai-agent-activity-bar').exists()).toBe(true);
     expect(wrapper.text()).toContain('检查项目结构');
     expect(wrapper.text()).toContain('我先确认项目结构。');
+    expect(wrapper.text()).toContain('list_dir');
     expect(wrapper.find('.ai-agent-final-answer').exists()).toBe(false);
   });
 
@@ -101,12 +131,7 @@ describe('AiAgentModePanel', () => {
         isTyping: true,
       },
       global: {
-        stubs: {
-          AiMarkdown: {
-            props: ['content'],
-            template: '<div class="markdown-stub" v-text="content" />',
-          },
-        },
+        stubs: globalStubs,
       },
     });
 
@@ -143,10 +168,77 @@ describe('AiAgentModePanel', () => {
         ],
         isTyping: true,
       },
+      global: {
+        stubs: globalStubs,
+      },
     });
 
     expect(wrapper.find('.ai-runtime-timeline').exists()).toBe(true);
     expect(wrapper.text()).toContain('正在思考');
     expect(wrapper.text()).not.toContain('上下文预算检查');
+  });
+
+  it('renders Zed-like activity bar for pending permission and forwards the decision', async () => {
+    const wrapper = mount(AiAgentModePanel, {
+      props: {
+        messages: [createMessage({ id: 'user-1', role: 'user', content: '运行测试' })],
+        isTyping: true,
+        toolConfirmation: createToolConfirmation(),
+        isRunActionPending: false,
+      },
+      global: {
+        stubs: globalStubs,
+      },
+    });
+
+    expect(wrapper.find('.ai-agent-activity-bar').exists()).toBe(true);
+    expect(wrapper.text()).toContain('等待工具确认');
+    expect(wrapper.text()).toContain('允许 Agent 运行测试吗？');
+
+    await wrapper.get('.tool-confirmation-stub').trigger('click');
+
+    expect(wrapper.emitted('resolveToolConfirmation')).toEqual([['allow-once']]);
+  });
+
+  it('renders context compaction activity outside ordinary assistant final answers', () => {
+    const wrapper = mount(AiAgentModePanel, {
+      props: {
+        messages: [
+          createMessage({
+            id: 'assistant-compaction-1',
+            content: '继续执行。',
+            stream: {
+              status: 'completed',
+              finalAnswerStarted: true,
+              runtimeEvents: [
+                createRuntimeEvent({
+                  id: 'context-compaction-started-1',
+                  type: 'acontext.context_compaction.started',
+                  compactionId: 'compaction-1',
+                  reason: 'budget',
+                  projectedInputTokens: 128000,
+                }),
+                createRuntimeEvent({
+                  id: 'context-compaction-completed-1',
+                  type: 'acontext.context_compaction.completed',
+                  compactionId: 'compaction-1',
+                  reason: 'budget',
+                  summaryCharCount: 1200,
+                }),
+              ],
+            },
+          }),
+        ],
+        isTyping: false,
+      },
+      global: {
+        stubs: globalStubs,
+      },
+    });
+
+    expect(wrapper.find('.ai-agent-activity-bar').exists()).toBe(true);
+    expect(wrapper.text()).toContain('上下文整理开始');
+    expect(wrapper.text()).toContain('上下文整理完成');
+    expect(wrapper.text()).toContain('继续执行。');
   });
 });
