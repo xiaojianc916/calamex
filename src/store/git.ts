@@ -82,11 +82,24 @@ const normalizePullRequestState = (state?: string): 'open' | 'closed' | 'all' =>
   return 'open';
 };
 
-const createPullRequestCacheKey = (repositoryRootPath: string, state: string): string =>
-  `${normalizeFileSystemPath(repositoryRootPath)}|${state}`;
+const createPullRequestRepositoryScope = (repositoryUrl?: string | null): string => {
+  const normalizedRepositoryUrl = repositoryUrl?.trim().toLowerCase();
+  return normalizedRepositoryUrl || 'unknown';
+};
 
-const createPullRequestDetailCacheKey = (repositoryRootPath: string, number: number): string =>
-  `${normalizeFileSystemPath(repositoryRootPath)}|${number}`;
+const createPullRequestCacheKey = (
+  repositoryRootPath: string,
+  state: string,
+  repositoryUrl?: string | null,
+): string =>
+  `${normalizeFileSystemPath(repositoryRootPath)}|${createPullRequestRepositoryScope(repositoryUrl)}|${state}`;
+
+const createPullRequestDetailCacheKey = (
+  repositoryRootPath: string,
+  number: number,
+  repositoryUrl?: string | null,
+): string =>
+  `${normalizeFileSystemPath(repositoryRootPath)}|${createPullRequestRepositoryScope(repositoryUrl)}|${number}`;
 
 type TPersistedPullRequestListCache = {
   version: number;
@@ -493,7 +506,11 @@ export const useGitStore = defineStore('git', () => {
     }
     const repositoryRootPath = status.value.repositoryRootPath;
     if (!repositoryRootPath) return;
-    const cacheKey = createPullRequestDetailCacheKey(repositoryRootPath, pullRequestNumber);
+    const cacheKey = createPullRequestDetailCacheKey(
+      repositoryRootPath,
+      pullRequestNumber,
+      pullRequestSupport.value.repositoryUrl,
+    );
     const nextCache = { ...pullRequestDetailCache.value };
     const nextFetchedAt = { ...pullRequestDetailFetchedAt.value };
     delete nextCache[cacheKey];
@@ -988,8 +1005,16 @@ export const useGitStore = defineStore('git', () => {
         key.startsWith(repositoryCachePrefix),
       ),
     );
-    cacheKeys.add(createPullRequestCacheKey(repositoryRootPath, pullRequestStateFilter.value));
-    cacheKeys.add(createPullRequestCacheKey(repositoryRootPath, 'all'));
+    cacheKeys.add(
+      createPullRequestCacheKey(
+        repositoryRootPath,
+        pullRequestStateFilter.value,
+        pullRequestSupport.value.repositoryUrl,
+      ),
+    );
+    cacheKeys.add(
+      createPullRequestCacheKey(repositoryRootPath, 'all', pullRequestSupport.value.repositoryUrl),
+    );
 
     const nextCache = { ...pullRequestListCache.value };
     const nextFetchedAt = { ...pullRequestListFetchedAt.value };
@@ -1058,7 +1083,11 @@ export const useGitStore = defineStore('git', () => {
     }
 
     const repositoryRootPath = requireRepositoryRootPath();
-    const cacheKey = createPullRequestCacheKey(repositoryRootPath, selectedState);
+    const cacheKey = createPullRequestCacheKey(
+      repositoryRootPath,
+      selectedState,
+      pullRequestSupport.value.repositoryUrl,
+    );
     hydratePullRequestListCache(cacheKey);
     const cached = pullRequestListCache.value[cacheKey];
     if (cached && updateActive) pullRequests.value = cached;
@@ -1154,7 +1183,11 @@ export const useGitStore = defineStore('git', () => {
     const visibleLoading = options?.visibleLoading ?? updateActive;
     const force = options?.force ?? false;
     const repositoryRootPath = requireRepositoryRootPath();
-    const cacheKey = createPullRequestDetailCacheKey(repositoryRootPath, number);
+    const cacheKey = createPullRequestDetailCacheKey(
+      repositoryRootPath,
+      number,
+      pullRequestSupport.value.repositoryUrl,
+    );
     hydratePullRequestDetailCache(cacheKey);
     const pending = pendingPullRequestDetailRequests.get(cacheKey);
     const cached = pullRequestDetailCache.value[cacheKey];
