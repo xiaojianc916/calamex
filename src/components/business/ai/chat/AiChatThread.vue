@@ -9,6 +9,7 @@ import {
 import { Message } from '@/components/ai-elements/message';
 import type { TAiServicePlatformId } from '@/constants/ai/providers';
 import type { IAiChatMessage, TAiChatMessageActionId } from '@/types/ai';
+import type { TAgentRuntimeEvent } from '@/types/ai/sidecar';
 import AiMessageItem from './AiMessageItem.vue';
 import AiThinkingStatus from './AiThinkingStatus.vue';
 
@@ -60,7 +61,13 @@ const TOOL_PROGRESS_PREFIXES = [
 // 报错只在输入框上方以一条居中提示线呈现，因此这些“把报错当回复”的助手占位消息
 // 不再进入对话流，避免同一个错误出现两次。
 const ERROR_REPLY_PREFIXES = ['Agent 执行失败：', 'AI 上下文收集失败：', '计划生成失败：'] as const;
-const CONTEXT_COMPRESSION_EVENT_TYPE = 'acontext.memory.compressed';
+// Plan 执行态已经由专属 Plan 面板承载；这个旧的 synthetic assistant message
+// 只保留给 token usage 估算，不能再混入 Chat thread。
+const PLAN_AGENT_FLOW_MESSAGE_ID_PREFIX = 'agent-flow:';
+const CONTEXT_COMPRESSION_EVENT_TYPES = new Set<TAgentRuntimeEvent['type']>([
+  'acontext.memory.compressed',
+  'acontext.context_compaction.completed',
+]);
 
 const isErrorReplyMessage = (message: IAiChatMessage): boolean => {
   if (message.role !== 'assistant') {
@@ -76,8 +83,11 @@ const isErrorReplyMessage = (message: IAiChatMessage): boolean => {
   return ERROR_REPLY_PREFIXES.some((prefix) => content.startsWith(prefix));
 };
 
+const isPlanAgentFlowMessage = (message: IAiChatMessage): boolean =>
+  message.role === 'assistant' && message.id.startsWith(PLAN_AGENT_FLOW_MESSAGE_ID_PREFIX);
+
 const visibleMessages = computed<IAiChatMessage[]>(() =>
-  props.messages.filter((message) => !isErrorReplyMessage(message)),
+  props.messages.filter((message) => !isErrorReplyMessage(message) && !isPlanAgentFlowMessage(message)),
 );
 
 const hasInlineProgressMessage = computed(() => {
@@ -139,7 +149,7 @@ const handleScrollStateChange = (state: IAiChatScrollState): void => {
 
 const hasContextCompressionMarker = (message: IAiChatMessage): boolean =>
   Boolean(
-    message.stream?.runtimeEvents?.some((event) => event.type === CONTEXT_COMPRESSION_EVENT_TYPE),
+    message.stream?.runtimeEvents?.some((event) => CONTEXT_COMPRESSION_EVENT_TYPES.has(event.type)),
   );
 </script>
 

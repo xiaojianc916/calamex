@@ -333,6 +333,89 @@ describe('AiChatThread', () => {
     expect(wrapper.text()).toContain('上下文已自动压缩');
   });
 
+  it('renders a Codex-like marker when Zed-style context compaction completes', () => {
+    const wrapper = mount(AiChatThread, {
+      props: {
+        messages: [
+          createMessage({
+            id: 'assistant-compaction-1',
+            content: '继续执行。',
+            stream: {
+              status: 'completed',
+              runtimeEvents: [
+                {
+                  id: 'context-compaction-completed-1',
+                  type: 'acontext.context_compaction.completed',
+                  runId: 'run-1',
+                  sessionId: 'session-1',
+                  agentId: 'agent-1',
+                  timestamp: '2026-05-03T10:00:00.000Z',
+                  seq: 0,
+                  schemaVersion: 1,
+                  redacted: true,
+                  visibility: 'user',
+                  level: 'info',
+                  compactionId: 'compaction-1',
+                  reason: 'budget',
+                  summaryCharCount: 1200,
+                },
+              ],
+            },
+          }),
+        ],
+        isTyping: false,
+        platformId: 'deepseek',
+        providerLabel: 'DeepSeek',
+      },
+      global: {
+        stubs: {
+          AiMessageItem: { template: '<div class="message-item-stub" />' },
+        },
+      },
+    });
+
+    expect(wrapper.find('.ai-context-compression-divider').exists()).toBe(true);
+    expect(wrapper.text()).toContain('上下文已自动压缩');
+  });
+
+  it('does not render Plan execution synthetic messages in the chat thread', () => {
+    const wrapper = mount(AiChatThread, {
+      props: {
+        messages: [
+          createMessage({ id: 'user-1', role: 'user', content: '执行这个计划' }),
+          createMessage({
+            id: 'agent-flow:run-1',
+            content: 'AI 正在自动使用工具：读取文件',
+            toolCalls: [
+              {
+                id: 'tool-call-1',
+                name: 'read_file',
+                status: 'running',
+                summary: '读取文件',
+              },
+            ],
+          }),
+        ],
+        hasExtraContent: true,
+        isTyping: false,
+        platformId: 'deepseek',
+        providerLabel: 'DeepSeek',
+      },
+      global: {
+        stubs: {
+          AiMessageItem: {
+            props: ['message'],
+            template: '<div class="message-item-stub" v-text="message.content" />',
+          },
+        },
+      },
+    });
+
+    expect(wrapper.findAll('.message-item-stub')).toHaveLength(1);
+    expect(wrapper.text()).toContain('执行这个计划');
+    expect(wrapper.text()).not.toContain('AI 正在自动使用工具');
+  });
+
   it('过滤掉以错误前缀开头的助手回复消息', () => {
     const wrapper = mount(AiChatThread, {
       props: {
