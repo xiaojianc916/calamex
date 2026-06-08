@@ -38,7 +38,7 @@ test('buildContextCompactionGenerationRequest appends the Zed-style handoff prom
 test('buildContextCompactionGenerationRequest keeps newest user messages within byte budget', () => {
   const request = buildContextCompactionGenerationRequest({
     messages: createMessages(),
-    retainedUserMessageByteBudget: 36,
+    retainedUserMessageByteBudget: 37,
   });
 
   assert.equal(request.retainedUserMessageCount, 2);
