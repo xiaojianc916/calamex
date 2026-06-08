@@ -21,6 +21,7 @@ import { areFileSystemPathsEqual, normalizeFileSystemPath } from '@/utils/path';
 const MSG_GIT_INIT_NO_REPOSITORY = 'Git 初始化后仍未检测到仓库。';
 const MSG_GIT_NO_REPOSITORY_IN_WORKSPACE = '当前工作区未检测到 Git 仓库。';
 const PULL_REQUEST_BACKGROUND_PRELOAD_DELAY_MS = 1200;
+const PULL_REQUEST_LIST_REVALIDATE_INTERVAL_MS = 30_000;
 const PULL_REQUEST_DETAIL_PRELOAD_LIMIT = 20;
 const PULL_REQUEST_DETAIL_PRELOAD_CONCURRENCY = 4;
 const PULL_REQUEST_DETAIL_CACHE_LIMIT = 20;
@@ -164,6 +165,7 @@ export const useGitStore = defineStore('git', () => {
   const pullRequestDetail = ref<IGitPullRequestDetailPayload | null>(null);
   const isPullRequestDetailLoading = ref(false);
   const pullRequestListCache = ref<Record<string, IGitPullRequestSummaryPayload[]>>({});
+  const pullRequestListFetchedAt = ref<Record<string, number>>({});
   const pullRequestDetailCache = ref<Record<string, IGitPullRequestDetailPayload>>({});
   const pullRequestDetailCacheOrder = ref<string[]>([]);
 
@@ -246,6 +248,7 @@ export const useGitStore = defineStore('git', () => {
 
   const invalidatePullRequestListCache = (): void => {
     pullRequestListCache.value = {};
+    pullRequestListFetchedAt.value = {};
     pendingPullRequestListRequests.clear();
   };
 
@@ -707,6 +710,8 @@ export const useGitStore = defineStore('git', () => {
     cacheKeys.add(createPullRequestCacheKey(repositoryRootPath, 'all'));
 
     const nextCache = { ...pullRequestListCache.value };
+    const nextFetchedAt = { ...pullRequestListFetchedAt.value };
+    const now = Date.now();
     for (const cacheKey of cacheKeys) {
       const state = normalizePullRequestState(cacheKey.split('|').pop());
       nextCache[cacheKey] = updatePullRequestListForState(
@@ -714,9 +719,11 @@ export const useGitStore = defineStore('git', () => {
         pullRequest,
         state,
       );
+      nextFetchedAt[cacheKey] = now;
     }
 
     pullRequestListCache.value = nextCache;
+    pullRequestListFetchedAt.value = nextFetchedAt;
     pullRequests.value = updatePullRequestListForState(
       pullRequests.value,
       pullRequest,
@@ -771,6 +778,12 @@ export const useGitStore = defineStore('git', () => {
     const cached = pullRequestListCache.value[cacheKey];
     if (cached && updateActive) pullRequests.value = cached;
 
+    const fetchedAt = pullRequestListFetchedAt.value[cacheKey] ?? 0;
+    const isFresh = Date.now() - fetchedAt < PULL_REQUEST_LIST_REVALIDATE_INTERVAL_MS;
+    if (cached && !options?.force && isFresh) {
+      return cached;
+    }
+
     if (options?.force) {
       pendingPullRequestListRequests.delete(cacheKey);
     } else {
@@ -807,6 +820,10 @@ export const useGitStore = defineStore('git', () => {
         pullRequestListCache.value = {
           ...pullRequestListCache.value,
           [cacheKey]: payload,
+        };
+        pullRequestListFetchedAt.value = {
+          ...pullRequestListFetchedAt.value,
+          [cacheKey]: Date.now(),
         };
         if (updateActive && requestId === pullRequestsRequestId) {
           pullRequests.value = payload;
