@@ -766,7 +766,9 @@ describe('MCP sidecar config', () => {
         disconnectCalls += 1;
       },
     };
-    const bundleWithClient = bundle as typeof bundle & { client: typeof client };
+    const bundleWithClient = bundle as Omit<typeof bundle, 'client'> & {
+      client: typeof client | null;
+    };
     bundleWithClient.client = client;
 
     await Promise.all([
