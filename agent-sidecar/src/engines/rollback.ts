@@ -1,7 +1,7 @@
 import { MastraRuntimeApproval } from './approval-client/client.js';
 import { createMastraModelConfig, resolveMastraModelConfig } from './agent/factory.js';
 import { extractRestoreResultText, resolveSystemPromptFromSnapshot, resolveWorkspaceRootPathFromSnapshot } from './context/context.js';
-import { normalizeMastraError } from './messages.js';
+import { normalizeMastraError } from './errors.js';
 import { createErrorResponse } from './responses.js';
 import { createMastraPlanOrchestrationDeps } from './plan/orchestration-deps.js';
 import { PLAN_ORCHESTRATION_WORKFLOW_ID, createPlanOrchestrationWorkflow, type TPlanOrchestrationWorkflow } from './plan/orchestration-workflow.js';

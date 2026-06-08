@@ -10,7 +10,7 @@ import { buildSystemPrompt } from './prompts/system-prompt.js';
 import { createMastraMemoryReference, createMastraMemoryScope } from './context/memory.js';
 import { createMastraMemoryForModel, createMastraModelConfig, defaultCreateAgent, defaultCreateExecutionHandle, defaultCreateResumableAgentHandle, defaultCreateStorage, resolveMastraModelConfig } from './agent/factory.js';
 import { encodeApprovalRequestId, extractApprovalToolPath, getChunkRunId } from './approval-client/utils.js';
-import { normalizeMastraError } from './messages.js';
+import { normalizeMastraError } from './errors.js';
 import { createApprovalRequest, createApprovedPlanExecutionContext, deriveApprovalRisk } from './responses.js';
 import { aggregateDoneTokenSnapshot, createOmMemoryCompressedEventDraft, createSandboxToolProgressPreview, extractFinishTokenSnapshot, getReasoningDelta, getTextDelta, isErrorChunk, isSandboxDataChunk, isTextDeltaChunk, isToolCallChunk, isToolCallSuspendedChunk, isToolErrorChunk, isToolResultChunk } from './stream/stream-utils.js';
 import { loadMastraMcpTools } from './tools/tools.js';

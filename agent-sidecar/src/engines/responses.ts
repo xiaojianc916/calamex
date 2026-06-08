@@ -1,10 +1,10 @@
+import { WORKSPACE_TOOLS } from '@mastra/core/workspace';
 import type { ToolCallPayload } from '@mastra/core/stream';
 import type { TAgentPlan } from '../schemas/plan.js';
 import type { TAgentPlanRecord } from './plan/plan-store.js';
 import type { IAgentRuntimeResponse, IAgentRuntimeRunOptions, TAgentRuntimeOutputEvent } from './contracts/runtime-contracts.js';
-import { pushUiEvent, toRecord } from './utils.js';
+import { pushUiEvent, toNonEmptyString, toRecord } from './utils.js';
 import { encodeApprovalRequestId, extractApprovalToolPath } from './approval-client/utils.js';
-import { formatApprovalSummary } from './messages.js';
 
 export type TApprovalRiskLevel = 'low' | 'medium' | 'high';
 
@@ -143,6 +143,21 @@ const collectApprovalRiskSignals = (toolName: string, args: unknown): string => 
     const parts: string[] = [toolName];
     collectApprovalSignalsFromValue(args, parts, 0);
     return parts.join(' ').toLowerCase();
+};
+
+export const formatApprovalSummary = (payload: ToolCallPayload): string => {
+    if (payload.args === undefined) {
+        return `${payload.toolName} 请求执行，但当前没有可展示的参数。`;
+    }
+
+    if (payload.toolName === WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND) {
+        const command = toNonEmptyString(toRecord(payload.args)?.command);
+        return command
+            ? `请求执行命令：${command}`
+            : '请求执行命令，请确认是否继续。';
+    }
+
+    return `${payload.toolName} 请求执行，参数内容已收敛显示，请确认是否继续。`;
 };
 
 /**

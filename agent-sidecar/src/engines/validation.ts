@@ -4,7 +4,7 @@ import { agentPlanDeltaSchema, agentPlanValidationReportSchema } from '../schema
 import { createMastraMemoryReference, createMastraMemoryScope } from './context/memory.js';
 import { createMastraMemoryForModel, createMastraModelConfig, resolveMastraModelConfig } from './agent/factory.js';
 import { createAcontextTokenEventDraft, createDeepSeekPayloadEventSink } from './budget/budget.js';
-import { normalizeMastraError } from './messages.js';
+import { normalizeMastraError } from './errors.js';
 import { applyAgentPlanDelta, parsePlanDelta, parseValidationReport } from './plan/plan-utils.js';
 import { createErrorResponse, createPlanResponse } from './responses.js';
 import { createDoneOutputEvent } from './stream/stream-utils.js';
