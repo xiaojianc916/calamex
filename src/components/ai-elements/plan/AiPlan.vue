@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
+
+import { ApprovalPrompt, type IApprovalPromptOption } from '@/components/ai-elements/approval';
 import type { IAiTaskPlanStep } from '@/types/ai';
 import type { TAgentPlanStatus } from '@/types/ai/sidecar';
 
@@ -47,7 +49,7 @@ const approvalLabel = computed(() => {
     return props.canApprove ? '启动运行' : '已批准';
   }
 
-  return props.isApproving ? '批准中...' : '批准并启动';
+  return props.isApproving ? '批准中…' : '批准并启动';
 });
 
 const canReject = computed(
@@ -59,6 +61,48 @@ const canReject = computed(
     props.status !== 'completed' &&
     props.status !== 'failed',
 );
+
+const approveOptionLabel = computed(() =>
+  props.isApproving ? '批准中…' : '批准并启动',
+);
+
+/**
+ * 对齐 Codex `approval_overlay.rs`:仅列出当前可执行的决策选项,
+ * 按与 Codex apply-patch 审批一致的顺序(接受 → 重试/变体 → 拒绝)。
+ */
+const planOptions = computed<IApprovalPromptOption[]>(() => {
+  const options: IApprovalPromptOption[] = [];
+
+  if (props.canApprove) {
+    options.push({ id: 'approve', label: approveOptionLabel.value, shortcut: 'y' });
+  }
+
+  if (!props.isPlanning && !props.isApproving) {
+    options.push({ id: 'regenerate', label: '重新生成', shortcut: 'r' });
+  }
+
+  if (canReject.value) {
+    options.push({ id: 'reject', label: '拒绝', shortcut: 'n', tone: 'danger' });
+  }
+
+  return options;
+});
+
+const approvalTitle = computed(() =>
+  props.canApprove ? '是否按此计划开始执行？' : '需要调整这份计划吗？',
+);
+
+const statusNote = computed(() => {
+  if (planOptions.value.length > 0) {
+    return null;
+  }
+
+  if (props.isPlanning) {
+    return '正在生成计划…';
+  }
+
+  return approvalLabel.value;
+});
 
 const getInputValue = (event: Event): string =>
   event.target instanceof HTMLInputElement ? event.target.value : '';
@@ -87,6 +131,39 @@ const handleTitleBlur = (step: IAiTaskPlanStep, event: Event): void => {
 const toggleCollapsed = (): void => {
   isCollapsed.value = !isCollapsed.value;
 };
+
+const handlePlanSelect = (id: string): void => {
+  if (props.isPlanning || props.isApproving) {
+    return;
+  }
+
+  if (id === 'approve') {
+    if (props.canApprove) {
+      emit('approve');
+    }
+    return;
+  }
+
+  if (id === 'regenerate') {
+    emit('regenerate');
+    return;
+  }
+
+  if (id === 'reject' && canReject.value) {
+    emit('reject');
+  }
+};
+
+const handlePlanCancel = (): void => {
+  if (props.isPlanning || props.isApproving) {
+    return;
+  }
+
+  // 对齐 Codex:Esc 等价于拒绝当前请求。
+  if (canReject.value) {
+    emit('reject');
+  }
+};
 </script>
 
 <template>
@@ -94,7 +171,7 @@ const toggleCollapsed = (): void => {
     <header class="ai-element-plan-header">
       <div class="ai-element-plan-title-group">
         <span class="icon-[lucide--file-text] ai-element-plan-title-icon" aria-hidden="true" />
-        <h3 class="ai-element-plan-title">{{ goal || '确认计划' }}</h3>
+        <h3 class="ai-element-plan-title" v-text="goal" />
       </div>
       <button type="button" class="ai-element-plan-collapse" :aria-expanded="!isCollapsed"
         :aria-label="isCollapsed ? '展开计划' : '收起计划'" @click="toggleCollapsed">
@@ -107,7 +184,7 @@ const toggleCollapsed = (): void => {
       <div v-if="!isCollapsed" class="ai-element-plan-content">
         <section class="ai-element-plan-section" aria-label="计划概览">
           <h4>概览</h4>
-          <p>{{ overviewText }}</p>
+          <p v-text="overviewText" />
         </section>
 
         <section class="ai-element-plan-section" aria-label="关键步骤">
@@ -115,11 +192,11 @@ const toggleCollapsed = (): void => {
           <ol class="ai-element-plan-steps">
             <li v-for="step in steps" :key="step.id" class="ai-element-plan-step"
               :class="[`is-${step.status}`, `risk-${step.riskLevel}`]">
-              <span class="ai-element-plan-step-bullet" aria-hidden="true"></span>
+              <span class="ai-element-plan-step-bullet" aria-hidden="true" />
               <input v-if="canEdit" class="ai-element-plan-step-title" :value="step.title" aria-label="编辑计划步骤标题"
                 :disabled="isPlanning" @keydown.enter.prevent="handleTitleEnter(step.id, $event)"
                 @blur="handleTitleBlur(step, $event)" />
-              <span v-else class="ai-element-plan-step-title is-readonly">{{ step.title }}</span>
+              <span v-else class="ai-element-plan-step-title is-readonly" v-text="step.title" />
               <button v-if="canEdit" type="button" class="ai-plan-step-remove"
                 :disabled="steps.length <= MIN_STEP_COUNT || isPlanning" aria-label="删除计划步骤" title="删除计划步骤"
                 @click="emit('removeStep', step.id)">
@@ -129,22 +206,10 @@ const toggleCollapsed = (): void => {
           </ol>
         </section>
 
-        <footer class="ai-element-plan-actions">
-          <button type="button" class="ai-plan-button" :disabled="isPlanning || isApproving"
-            @click="emit('regenerate')">
-            <span aria-hidden="true" class="icon-[lucide--rotate-cw]" />
-            重生成
-          </button>
-          <button type="button" class="ai-plan-button" :disabled="isPlanning || isApproving || !canReject"
-            @click="emit('reject')">
-            <span aria-hidden="true" class="icon-[lucide--x]" />
-            拒绝
-          </button>
-          <button type="button" class="ai-plan-button is-primary" :disabled="!canApprove || isPlanning || isApproving"
-            @click="emit('approve')">
-            <span aria-hidden="true" class="icon-[lucide--check]" />
-            {{ approvalLabel }}
-          </button>
+        <footer class="ai-element-plan-approval">
+          <ApprovalPrompt v-if="planOptions.length > 0" :title="approvalTitle" :options="planOptions"
+            :disabled="isPlanning || isApproving" @select="handlePlanSelect" @cancel="handlePlanCancel" />
+          <p v-else class="ai-element-plan-status" v-text="statusNote" />
         </footer>
       </div>
     </Transition>
@@ -163,8 +228,6 @@ const toggleCollapsed = (): void => {
   --ai-plan-padding: calc(var(--app-density-scale) * 1.25rem);
   --ai-plan-bullet-size: calc(var(--app-density-scale) * 0.3125rem);
   --ai-plan-remove-size: calc(var(--app-density-scale) * 1.375rem);
-  --ai-plan-action-height: calc(var(--app-density-scale) * 1.875rem);
-  --ai-plan-action-padding-inline: calc(var(--app-density-scale) * 0.625rem);
   --ai-plan-font-sm: calc(var(--app-ui-font-size) * 0.92);
   --ai-plan-font-md: calc(var(--app-ui-font-size) * 1);
   --ai-plan-font-lg: calc(var(--app-ui-font-size) * 1.22);
@@ -274,14 +337,6 @@ const toggleCollapsed = (): void => {
   transform: translateY(0);
 }
 
-.ai-element-plan-summary {
-  margin: 0;
-  max-width: calc(var(--app-density-scale) * 42rem);
-  color: var(--text-secondary);
-  font-size: var(--ai-plan-font-md);
-  line-height: 1.5;
-}
-
 .ai-element-plan-section {
   display: grid;
   gap: var(--ai-plan-gap-md);
@@ -375,56 +430,22 @@ const toggleCollapsed = (): void => {
   cursor: not-allowed;
 }
 
-.ai-plan-step-remove svg,
-.ai-plan-button svg {
+.ai-plan-step-remove svg {
   width: var(--ai-plan-icon-size);
   height: var(--ai-plan-icon-size);
   stroke-width: 2;
 }
 
-.ai-element-plan-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--ai-plan-gap-md);
-  justify-content: flex-end;
-}
-
-.ai-plan-button {
-  display: inline-flex;
-  height: var(--ai-plan-action-height);
-  align-items: center;
+.ai-element-plan-approval {
+  display: grid;
   gap: var(--ai-plan-gap-sm);
-  border: var(--ai-plan-border-width) solid color-mix(in srgb, var(--shell-divider) 88%, transparent);
-  border-radius: var(--radius-sm);
-  color: var(--text-secondary);
+}
+
+.ai-element-plan-status {
+  margin: 0;
+  color: var(--text-tertiary);
   font-size: var(--ai-plan-font-sm);
-  padding: 0 var(--ai-plan-action-padding-inline);
-  transition:
-    background-color var(--motion-duration-fast) var(--motion-easing-standard),
-    border-color var(--motion-duration-fast) var(--motion-easing-standard),
-    color var(--motion-duration-fast) var(--motion-easing-standard),
-    transform var(--motion-duration-fast) var(--motion-easing-standard);
-}
-
-.ai-plan-button.is-primary {
-  margin-left: auto;
-  border-color: color-mix(in srgb, var(--accent-strong) 35%, var(--shell-divider));
-  background: color-mix(in srgb, var(--accent-strong) 16%, transparent);
-  color: var(--text-primary);
-}
-
-.ai-plan-button:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--surface-hover) 72%, transparent);
-  color: var(--text-primary);
-}
-
-.ai-plan-button:active:not(:disabled) {
-  transform: scale(0.97);
-}
-
-.ai-plan-button:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
+  line-height: 1.5;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -432,8 +453,7 @@ const toggleCollapsed = (): void => {
   .ai-element-plan-collapse,
   .ai-element-plan-collapse-icon,
   .ai-element-plan-content-enter-active,
-  .ai-element-plan-content-leave-active,
-  .ai-plan-button {
+  .ai-element-plan-content-leave-active {
     transition-duration: 1ms;
   }
 
