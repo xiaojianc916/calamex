@@ -386,6 +386,7 @@ export const useGitStore = defineStore('git', () => {
   let pullRequestsRequestId = 0;
   let pullRequestDetailRequestId = 0;
   let pullRequestDetailPreloadEpoch = 0;
+  let pullRequestCacheEpoch = 0;
   let pullRequestPreloadTimer: ReturnType<typeof setTimeout> | null = null;
   let scheduledPullRequestPreloadRepositoryKey: string | null = null;
   const pullRequestBackgroundPreloadAttemptedAt = new Map<string, number>();
@@ -591,6 +592,7 @@ export const useGitStore = defineStore('git', () => {
     pullRequestsRequestId += 1;
     pullRequestDetailRequestId += 1;
     pullRequestDetailPreloadEpoch += 1;
+    pullRequestCacheEpoch += 1;
     clearPullRequestPreloadTimer();
     pullRequests.value = [];
     pullRequestStateFilter.value = 'open';
@@ -1123,6 +1125,7 @@ export const useGitStore = defineStore('git', () => {
       pullRequestSupport.value.repositoryUrl,
     );
     hydratePullRequestListCache(cacheKey);
+    const cacheEpochAtRequest = pullRequestCacheEpoch;
     const cached = pullRequestListCache.value[cacheKey];
     if (cached && updateActive) pullRequests.value = cached;
 
@@ -1168,6 +1171,10 @@ export const useGitStore = defineStore('git', () => {
         state: selectedState,
       })
       .then((payload) => {
+        if (cacheEpochAtRequest !== pullRequestCacheEpoch) {
+          return updateActive && requestId === pullRequestsRequestId ? pullRequests.value : payload;
+        }
+
         const previousCachedPullRequests = pullRequestListCache.value[cacheKey];
         const nextPayload = arePullRequestSummaryListsEqual(previousCachedPullRequests, payload)
           ? previousCachedPullRequests
@@ -1223,6 +1230,7 @@ export const useGitStore = defineStore('git', () => {
       pullRequestSupport.value.repositoryUrl,
     );
     hydratePullRequestDetailCache(cacheKey);
+    const detailCacheEpochAtRequest = pullRequestCacheEpoch;
     const pending = pendingPullRequestDetailRequests.get(cacheKey);
     const cached = pullRequestDetailCache.value[cacheKey];
     const fetchedAt = pullRequestDetailFetchedAt.value[cacheKey] ?? 0;
@@ -1269,6 +1277,10 @@ export const useGitStore = defineStore('git', () => {
         number,
       })
       .then((payload) => {
+        if (detailCacheEpochAtRequest !== pullRequestCacheEpoch) {
+          return payload;
+        }
+
         rememberPullRequestDetail(cacheKey, payload);
         if (updateActive && requestId === pullRequestDetailRequestId) {
           pullRequestDetail.value = payload;
