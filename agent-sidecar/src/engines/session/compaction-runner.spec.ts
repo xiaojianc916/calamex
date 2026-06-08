@@ -66,7 +66,12 @@ test('runContextCompaction streams lifecycle events and returns compacted contin
   ]);
   assert.deepEqual(deliveredEventTypes, ['agent_event', 'agent_event', 'agent_event', 'agent_event']);
   assert.equal(session.messages[0]?.kind, 'compaction');
-  assert.equal(session.events.at(-1)?.event.retainedUserMessageByteBudget, 64);
+
+  const completedEvent = session.events.at(-1)?.event;
+  assert.equal(completedEvent?.type, 'acontext.context_compaction.completed');
+  if (completedEvent?.type === 'acontext.context_compaction.completed') {
+    assert.equal(completedEvent.retainedUserMessageByteBudget, 64);
+  }
 });
 
 test('runContextCompaction rejects empty summaries instead of recording unusable handoffs', async () => {
