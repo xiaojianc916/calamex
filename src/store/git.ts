@@ -21,6 +21,7 @@ import { areFileSystemPathsEqual, normalizeFileSystemPath } from '@/utils/path';
 const MSG_GIT_INIT_NO_REPOSITORY = 'Git 初始化后仍未检测到仓库。';
 const MSG_GIT_NO_REPOSITORY_IN_WORKSPACE = '当前工作区未检测到 Git 仓库。';
 const PULL_REQUEST_BACKGROUND_PRELOAD_DELAY_MS = 1200;
+const PULL_REQUEST_BACKGROUND_PRELOAD_RETRY_INTERVAL_MS = 60_000;
 const PULL_REQUEST_LIST_REVALIDATE_INTERVAL_MS = 30_000;
 const PULL_REQUEST_DETAIL_REVALIDATE_INTERVAL_MS = 30_000;
 const PULL_REQUEST_DETAIL_PRELOAD_LIMIT = 20;
@@ -373,6 +374,8 @@ export const useGitStore = defineStore('git', () => {
   let pullRequestDetailRequestId = 0;
   let pullRequestDetailPreloadEpoch = 0;
   let pullRequestPreloadTimer: ReturnType<typeof setTimeout> | null = null;
+  let scheduledPullRequestPreloadRepositoryKey: string | null = null;
+  const pullRequestBackgroundPreloadAttemptedAt = new Map<string, number>();
 
   const pendingBaselineRequests = new Map<string, Promise<IGitFileBaselinePayload>>();
   const pendingCommitDetailRequests = new Map<string, Promise<IGitCommitDetailPayload>>();
@@ -404,6 +407,7 @@ export const useGitStore = defineStore('git', () => {
       clearTimeout(pullRequestPreloadTimer);
       pullRequestPreloadTimer = null;
     }
+    scheduledPullRequestPreloadRepositoryKey = null;
   };
 
   const clearBaselineCache = (): void => {
@@ -718,10 +722,40 @@ export const useGitStore = defineStore('git', () => {
   };
 
   const schedulePullRequestPreload = (): void => {
+    const repositoryRootPath = status.value.repositoryRootPath;
+    if (!hasRepository.value || !repositoryRootPath) {
+      clearPullRequestPreloadTimer();
+      return;
+    }
+
+    const repositoryKey = normalizeFileSystemPath(repositoryRootPath);
+    if (!repositoryKey) {
+      clearPullRequestPreloadTimer();
+      return;
+    }
+
+    const lastAttemptedAt = pullRequestBackgroundPreloadAttemptedAt.get(repositoryKey) ?? 0;
+    const isWithinRetryBudget =
+      Date.now() - lastAttemptedAt < PULL_REQUEST_BACKGROUND_PRELOAD_RETRY_INTERVAL_MS;
+
+    if (isWithinRetryBudget) {
+      return;
+    }
+
+    if (
+      pullRequestPreloadTimer !== null &&
+      scheduledPullRequestPreloadRepositoryKey === repositoryKey
+    ) {
+      return;
+    }
+
     clearPullRequestPreloadTimer();
-    if (!hasRepository.value) return;
+    scheduledPullRequestPreloadRepositoryKey = repositoryKey;
+
     pullRequestPreloadTimer = setTimeout(() => {
       pullRequestPreloadTimer = null;
+      scheduledPullRequestPreloadRepositoryKey = null;
+      pullRequestBackgroundPreloadAttemptedAt.set(repositoryKey, Date.now());
       void preloadPullRequestsInBackground();
     }, PULL_REQUEST_BACKGROUND_PRELOAD_DELAY_MS);
   };
