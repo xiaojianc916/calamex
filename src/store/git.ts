@@ -116,6 +116,30 @@ const updatePullRequestListForState = (
   return entries.filter((entry) => entry.number !== pullRequest.number);
 };
 
+const arePullRequestSummariesEqual = (
+  left: IGitPullRequestSummaryPayload,
+  right: IGitPullRequestSummaryPayload,
+): boolean =>
+  left.number === right.number &&
+  left.title === right.title &&
+  left.state === right.state &&
+  left.isDraft === right.isDraft &&
+  left.author === right.author &&
+  left.headRef === right.headRef &&
+  left.baseRef === right.baseRef &&
+  left.htmlUrl === right.htmlUrl &&
+  left.createdAt === right.createdAt &&
+  left.updatedAt === right.updatedAt &&
+  left.comments === right.comments;
+
+const arePullRequestSummaryListsEqual = (
+  left: IGitPullRequestSummaryPayload[] | undefined,
+  right: IGitPullRequestSummaryPayload[],
+): left is IGitPullRequestSummaryPayload[] => {
+  if (!left || left.length !== right.length) return false;
+  return left.every((entry, index) => arePullRequestSummariesEqual(entry, right[index]));
+};
+
 type TStatusFetcher = (workspaceRootPath: string) => Promise<IGitRepositoryStatusPayload>;
 
 type TPathsMutationRequest = {
@@ -826,21 +850,28 @@ export const useGitStore = defineStore('git', () => {
         state: selectedState,
       })
       .then((payload) => {
+        const previousCachedPullRequests = pullRequestListCache.value[cacheKey];
+        const nextPayload = arePullRequestSummaryListsEqual(previousCachedPullRequests, payload)
+          ? previousCachedPullRequests
+          : payload;
+
         pullRequestListCache.value = {
           ...pullRequestListCache.value,
-          [cacheKey]: payload,
+          [cacheKey]: nextPayload,
         };
         pullRequestListFetchedAt.value = {
           ...pullRequestListFetchedAt.value,
           [cacheKey]: Date.now(),
         };
         if (updateActive && requestId === pullRequestsRequestId) {
-          pullRequests.value = payload;
+          pullRequests.value = nextPayload;
         }
         if (shouldPreloadDetails) {
-          preloadTopPullRequestDetails(payload);
+          preloadTopPullRequestDetails(nextPayload);
         }
-        return updateActive && requestId === pullRequestsRequestId ? pullRequests.value : payload;
+        return updateActive && requestId === pullRequestsRequestId
+          ? pullRequests.value
+          : nextPayload;
       })
       .catch((error) => {
         if (cached) return cached;

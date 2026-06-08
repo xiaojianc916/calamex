@@ -342,4 +342,102 @@ describe('useGitStore', () => {
 
     await expect(gitStore.loadPullRequests('all')).resolves.toEqual([mergedPullRequest]);
   });
+
+  it('新鲜拉取请求列表缓存命中时不会重复拉列表但会继续预热详情', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-08T00:00:00.000Z'));
+
+    try {
+      const gitStore = useGitStore();
+      tauriServiceMock.getGitRepositoryStatus.mockResolvedValueOnce(createStatus());
+      await gitStore.refreshRepositoryStatus(WORKSPACE_ROOT);
+
+      const pullRequests = [
+        createPullRequest({ number: 1, title: 'feat: first pr' }),
+        createPullRequest({
+          number: 2,
+          title: 'feat: second pr',
+          htmlUrl: 'https://github.com/owner/repo/pull/2',
+        }),
+      ];
+
+      tauriServiceMock.listGitPullRequests.mockResolvedValueOnce(pullRequests);
+
+      await expect(gitStore.loadPullRequests('open', { preloadDetails: false })).resolves.toEqual(
+        pullRequests,
+      );
+
+      expect(tauriServiceMock.listGitPullRequests).toHaveBeenCalledTimes(1);
+      expect(tauriServiceMock.getGitPullRequestDetail).not.toHaveBeenCalled();
+
+      tauriServiceMock.getGitPullRequestDetail.mockImplementation(({ number }) =>
+        Promise.resolve(
+          createPullRequestDetail({
+            number,
+            title: `feat: detail ${number}`,
+            htmlUrl: `https://github.com/owner/repo/pull/${number}`,
+          }),
+        ),
+      );
+
+      await expect(gitStore.loadPullRequests('open')).resolves.toEqual(pullRequests);
+
+      expect(tauriServiceMock.listGitPullRequests).toHaveBeenCalledTimes(1);
+      expect(tauriServiceMock.getGitPullRequestDetail).toHaveBeenCalledWith({
+        repositoryRootPath: WORKSPACE_ROOT,
+        number: 1,
+      });
+      expect(tauriServiceMock.getGitPullRequestDetail).toHaveBeenCalledWith({
+        repositoryRootPath: WORKSPACE_ROOT,
+        number: 2,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('拉取请求详情缓存命中会按刷新预算静默 revalidate', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-08T00:00:00.000Z'));
+
+    try {
+      const gitStore = useGitStore();
+      tauriServiceMock.getGitRepositoryStatus.mockResolvedValueOnce(createStatus());
+      await gitStore.refreshRepositoryStatus(WORKSPACE_ROOT);
+
+      const cachedDetail = createPullRequestDetail({
+        number: 1,
+        title: 'feat: cached detail',
+      });
+      const revalidatedDetail = createPullRequestDetail({
+        number: 1,
+        title: 'feat: revalidated detail',
+      });
+
+      tauriServiceMock.getGitPullRequestDetail.mockResolvedValueOnce(cachedDetail);
+
+      await expect(gitStore.loadPullRequestDetail(1)).resolves.toEqual(cachedDetail);
+      expect(tauriServiceMock.getGitPullRequestDetail).toHaveBeenCalledTimes(1);
+      expect(gitStore.pullRequestDetail?.title).toBe('feat: cached detail');
+
+      tauriServiceMock.getGitPullRequestDetail.mockResolvedValueOnce(revalidatedDetail);
+
+      await expect(gitStore.loadPullRequestDetail(1)).resolves.toEqual(cachedDetail);
+
+      expect(tauriServiceMock.getGitPullRequestDetail).toHaveBeenCalledTimes(1);
+      expect(gitStore.pullRequestDetail?.title).toBe('feat: cached detail');
+
+      await vi.advanceTimersByTimeAsync(30_001);
+
+      await expect(gitStore.loadPullRequestDetail(1)).resolves.toEqual(cachedDetail);
+
+      expect(tauriServiceMock.getGitPullRequestDetail).toHaveBeenCalledTimes(2);
+
+      await Promise.resolve();
+
+      expect(gitStore.pullRequestDetail?.title).toBe('feat: revalidated detail');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
