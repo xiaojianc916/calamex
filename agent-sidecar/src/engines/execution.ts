@@ -89,6 +89,14 @@ export class MastraRuntimeExecution extends MastraRuntimeValidation {
             );
         }
 
+        const executionTurn = executionSession.startTurn({
+            runId: requestedRunId,
+            mode: normalizedInput.mode,
+            goal: normalizedInput.goal,
+            modelId: modelConfig.modelId,
+        });
+        const turnResourceScope = executionSession.createResourceScope(`turn:${executionTurn.id}`);
+
         const {
             bundle: mcpBundle,
             tools: mastraTools,
@@ -105,6 +113,22 @@ export class MastraRuntimeExecution extends MastraRuntimeValidation {
             'write',
             memoryInput,
         );
+        turnResourceScope.add({
+            name: 'mcp-bundle',
+            dispose: () => mcpBundle.disconnectAll(),
+        });
+        if (workspace) {
+            turnResourceScope.add({
+                name: 'workspace',
+                dispose: () => destroyMastraWorkspace(workspace),
+            });
+        }
+        if (browser) {
+            turnResourceScope.add({
+                name: 'browser',
+                dispose: () => destroyMastraBrowser(browser),
+            });
+        }
         const hasAgentTools = hasTools || Boolean(workspace) || Boolean(browser);
         const executionPolicy = resolveAgentExecutionPolicy();
         const maxSteps = hasAgentTools ? executionPolicy.maxSteps : 1;
@@ -118,8 +142,18 @@ export class MastraRuntimeExecution extends MastraRuntimeValidation {
             createApprovedPlanExecutionContext(approvedPlanRecord, planStepId),
         ].join('\n\n');
         const payloadEventSink = createDeepSeekPayloadEventSink(events, options);
-        let shouldDisconnectBundle = true;
+        let shouldReleaseTurnResources = true;
         let streamCleanup: (() => void) | undefined;
+        turnResourceScope.add({
+            name: 'deepseek-reasoning-cache',
+            dispose: () => evictDeepSeekReasoningByPrefix(createDeepSeekReasoningRunPrefix(sessionId, requestedRunId)),
+        });
+        turnResourceScope.add({
+            name: 'stream-cleanup',
+            dispose: () => {
+                streamCleanup?.();
+            },
+        });
 
         try {
             return await runWithDeepSeekReasoningContext({
@@ -200,9 +234,10 @@ export class MastraRuntimeExecution extends MastraRuntimeValidation {
                         stepId: planStepId,
                     },
                 );
-                shouldDisconnectBundle = streamSummary.releaseResources;
+                shouldReleaseTurnResources = streamSummary.releaseResources;
 
                 if (streamSummary.streamErrorMessage) {
+                    executionSession.failTurn(executionTurn.id, { errorMessage: streamSummary.streamErrorMessage });
                     await this.planWorkflowStore.failStep({
                         planId,
                         version: Number(planVersion),
@@ -219,6 +254,7 @@ export class MastraRuntimeExecution extends MastraRuntimeValidation {
                 }
 
                 if (streamSummary.pendingApproval) {
+                    executionSession.suspendTurn(executionTurn.id, { reason: 'tool_external_wait' });
                     await this.planWorkflowStore.suspend({
                         planId,
                         version: Number(planVersion),
@@ -247,6 +283,7 @@ export class MastraRuntimeExecution extends MastraRuntimeValidation {
                     resultRef: checkpointRunId,
                 });
 
+                executionSession.completeTurn(executionTurn.id, { result });
                 executionSession.push(createDoneOutputEvent(result, streamSummary.doneTokenSnapshot), options);
 
                 return {
@@ -256,11 +293,13 @@ export class MastraRuntimeExecution extends MastraRuntimeValidation {
                 };
             });
         } catch (error) {
+            const errorMessage = normalizeMastraError(error);
+            executionSession.failTurn(executionTurn.id, { errorMessage });
             await this.planWorkflowStore.failStep({
                 planId,
                 version: Number(planVersion),
                 stepId: planStepId,
-                error: normalizeMastraError(error),
+                error: errorMessage,
                 retryable: true,
             }).catch(() => undefined);
             executionSession.push(createRequestedRunEvent({
@@ -268,22 +307,18 @@ export class MastraRuntimeExecution extends MastraRuntimeValidation {
                 visibility: 'user',
                 level: 'error',
                 snapshotId: requestedRunId,
-                errorMessage: normalizeMastraError(error),
+                errorMessage,
             }), options);
 
             return createErrorResponse(
                 sessionId,
-                `Mastra Agent 执行失败：${normalizeMastraError(error)}`,
+                `Mastra Agent 执行失败：${errorMessage}`,
                 events,
                 options,
             );
         } finally {
-            if (shouldDisconnectBundle) {
-                evictDeepSeekReasoningByPrefix(createDeepSeekReasoningRunPrefix(sessionId, requestedRunId));
-                streamCleanup?.();
-                await mcpBundle.disconnectAll();
-                await destroyMastraWorkspace(workspace);
-                await destroyMastraBrowser(browser);
+            if (shouldReleaseTurnResources) {
+                await turnResourceScope.disposeAll();
             }
         }
     }
