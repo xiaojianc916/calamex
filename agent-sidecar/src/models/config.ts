@@ -19,6 +19,7 @@ const OBSERVER_MODEL_ID_ENV = 'AGENT_SIDECAR_OBSERVER_MODEL';
 const REFLECTOR_MODEL_ID_ENV = 'AGENT_SIDECAR_REFLECTOR_MODEL';
 
 const DEFAULT_MODEL_ID = 'deepseek/deepseek-v4-pro';
+const ALLOWED_BASE_URL_PROTOCOLS: ReadonlySet<string> = new Set(['http:', 'https:']);
 
 const SMALL_MODEL_BY_PROVIDER: Readonly<Record<string, string>> = {
   openai: 'openai/gpt-5.4-mini',
@@ -41,11 +42,18 @@ const readEnv = (
 const normalizeBaseUrl = (value: string): string =>
   value.trim().replace(/\/+$/u, '');
 
-const assertValidUrl = (value: string, source: string): string => {
+const assertValidHttpUrl = (value: string, source: string): string => {
+  let url: URL;
   try {
-    new URL(value);
+    url = new URL(value);
   } catch {
     throw new Error(`[mastra-model-config] ${source} 不是合法的 URL: "${value}"`);
+  }
+
+  if (!ALLOWED_BASE_URL_PROTOCOLS.has(url.protocol)) {
+    throw new Error(
+      `[mastra-model-config] ${source} 仅允许 http/https 协议，收到: "${url.protocol}"`,
+    );
   }
 
   return value;
@@ -81,7 +89,7 @@ const resolveProviderBaseUrl = (
     return undefined;
   }
 
-  return assertValidUrl(normalizeBaseUrl(rawBaseUrl), BASE_URL_ENV);
+  return assertValidHttpUrl(normalizeBaseUrl(rawBaseUrl), BASE_URL_ENV);
 };
 
 const createCustomGateways = (options: {
