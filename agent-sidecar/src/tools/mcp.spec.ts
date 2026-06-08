@@ -750,4 +750,32 @@ describe('MCP sidecar config', () => {
       await bundle.disconnectAll();
     }
   });
+
+  it('disconnects MCP client bundles at most once', async () => {
+    const bundle = await createMastraMcpClientBundle({
+      workspaceRootPath: WORKSPACE_ROOT,
+      env: {
+        AGENT_MCP_MEMORY_FILE_PATH: MEMORY_FILE_PATH,
+      },
+      platform: 'win32',
+      serverNames: [],
+    });
+    let disconnectCalls = 0;
+    const client = {
+      disconnect: async () => {
+        disconnectCalls += 1;
+      },
+    };
+    const bundleWithClient = bundle as typeof bundle & { client: typeof client };
+    bundleWithClient.client = client;
+
+    await Promise.all([
+      bundleWithClient.disconnectAll(),
+      bundleWithClient.disconnectAll(),
+      bundleWithClient.disconnectAll(),
+    ]);
+    await bundleWithClient.disconnectAll();
+
+    assert.equal(disconnectCalls, 1);
+  });
 });

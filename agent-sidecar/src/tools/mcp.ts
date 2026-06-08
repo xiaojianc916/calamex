@@ -575,15 +575,25 @@ export const createMastraMcpClientBundle = async (
     throw error;
   }
 
+  let disconnectPromise: Promise<void> | null = null;
   const disconnectAll = async (): Promise<void> => {
-    if (!client) {
-      return;
+    if (disconnectPromise) {
+      return disconnectPromise;
     }
-    try {
-      await withTimeoutFallback(client.disconnect(), MCP_DISCONNECT_TIMEOUT_MS, undefined);
-    } catch (error) {
-      console.warn(`[mcp] disconnect failed: ${error instanceof Error ? error.message : String(error)}`);
+    const clientToDisconnect = client;
+    client = null;
+    if (!clientToDisconnect) {
+      disconnectPromise = Promise.resolve();
+      return disconnectPromise;
     }
+    disconnectPromise = (async () => {
+      try {
+        await withTimeoutFallback(clientToDisconnect.disconnect(), MCP_DISCONNECT_TIMEOUT_MS, undefined);
+      } catch (error) {
+        console.warn(`[mcp] disconnect failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    })();
+    return disconnectPromise;
   };
 
   return {
