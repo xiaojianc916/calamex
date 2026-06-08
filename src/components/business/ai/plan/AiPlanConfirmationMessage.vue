@@ -4,17 +4,23 @@ import { AiPlan } from '@/components/ai-elements/plan';
 import type { IAiTaskPlanStep } from '@/types/ai';
 import type { TAgentPlanStatus } from '@/types/ai/sidecar';
 
-defineProps<{
-  goal: string;
-  summary: string | null;
-  status: TAgentPlanStatus | null;
-  steps: IAiTaskPlanStep[];
-  isPlanning: boolean;
-  isApproving: boolean;
-  canEdit: boolean;
-  canApprove: boolean;
-  approvedAt: string | null;
-}>();
+withDefaults(
+  defineProps<{
+    goal: string;
+    summary: string | null;
+    status: TAgentPlanStatus | null;
+    steps: IAiTaskPlanStep[];
+    isPlanning: boolean;
+    isApproving: boolean;
+    canEdit: boolean;
+    canApprove: boolean;
+    approvedAt: string | null;
+    standalone?: boolean;
+  }>(),
+  {
+    standalone: false,
+  },
+);
 
 const emit = defineEmits<{
   updateStepTitle: [stepId: string, title: string];
@@ -26,7 +32,12 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <Message from="assistant" class="ai-plan-confirmation-message">
+  <component
+    :is="standalone ? 'section' : Message"
+    :from="standalone ? undefined : 'assistant'"
+    class="ai-plan-confirmation-message"
+    :class="{ 'is-standalone': standalone }"
+  >
     <AiPlan
       class="ai-plan-confirmation-message__plan"
       :goal="goal"
@@ -44,7 +55,7 @@ const emit = defineEmits<{
       @reject="emit('reject')"
       @approve="emit('approve')"
     />
-  </Message>
+  </component>
 </template>
 
 <style scoped>
@@ -56,7 +67,17 @@ const emit = defineEmits<{
   padding-right: calc(var(--app-density-scale) * 5.5rem);
 }
 
+.ai-plan-confirmation-message.is-standalone {
+  display: block;
+  padding-left: 0;
+  padding-right: 0;
+}
+
 .ai-plan-confirmation-message__plan {
   width: min(100%, calc(var(--app-density-scale) * 45rem));
+}
+
+.ai-plan-confirmation-message.is-standalone .ai-plan-confirmation-message__plan {
+  width: min(100%, 760px);
 }
 </style>
