@@ -33,6 +33,7 @@ import type {
 import { readClipboardText, writeClipboardText } from '@/utils/clipboard';
 import { waitForDesktopRuntime } from '@/utils/desktop-runtime';
 import { toErrorMessage } from '@/utils/error';
+import { createHiddenWriteBacklog } from '@/utils/hidden-write-backlog';
 import {
   SHELL_WINDOW_RESIZE_END_EVENT,
   SHELL_WINDOW_RESIZE_FRAME_EVENT,
@@ -64,6 +65,7 @@ const TERMINAL_BELL_VISUAL_FLASH_MS = 120;
 const TERMINAL_RENDERABLE_CONTENT_SCAN_ROWS = 256;
 // 离屏期间只保留最新输出，避免终端面板长时间隐藏时字符串 backlog 无界增长。
 const TERMINAL_HIDDEN_WRITE_BACKLOG_MAX_CHARS = 512 * 1024;
+const TERMINAL_HIDDEN_WRITE_BACKLOG_CHUNK_CHARS = 8 * 1024;
 const TERMINAL_HIDDEN_WRITE_BACKLOG_OMITTED_MARKER =
   '\r\n\x1b[90m[已省略部分离屏终端输出以保持界面流畅]\x1b[0m\r\n';
 
@@ -420,7 +422,11 @@ export class TerminalSession {
 
   // -- Private: write buffer -----------------------------------------------
   private _bufferedTerminalWrite = '';
-  private _hiddenTerminalWriteBacklog = '';
+  private readonly _hiddenWriteBacklog = createHiddenWriteBacklog({
+    maxChars: TERMINAL_HIDDEN_WRITE_BACKLOG_MAX_CHARS,
+    maxChunkChars: TERMINAL_HIDDEN_WRITE_BACKLOG_CHUNK_CHARS,
+    omittedMarker: TERMINAL_HIDDEN_WRITE_BACKLOG_OMITTED_MARKER,
+  });
   private _pendingScrollToBottomAfterWrite = false;
   private _pendingHiddenScrollToBottom = false;
   private _shouldFitBeforeNextVisibleWrite = false;
@@ -517,7 +523,7 @@ export class TerminalSession {
       refresh: true,
       scrollToBottom: true,
     });
-    if (this._hiddenTerminalWriteBacklog) {
+    if (!this._hiddenWriteBacklog.isEmpty) {
       this._shouldFitBeforeNextVisibleWrite = true;
       this._flushTerminalWriteBufferNow({ forceLayout: true });
     }
@@ -628,7 +634,7 @@ export class TerminalSession {
       if (!payload.created && payload.initialOutput) {
         terminal.reset();
         this._bufferedTerminalWrite = '';
-        this._hiddenTerminalWriteBacklog = '';
+        this._hiddenWriteBacklog.clear();
         this._pendingScrollToBottomAfterWrite = false;
         this._pendingHiddenScrollToBottom = false;
         this._isAutoFollowEnabled = true;
@@ -886,7 +892,7 @@ export class TerminalSession {
 
     this._resetTerminalRunCapture();
     this._bufferedTerminalWrite = '';
-    this._hiddenTerminalWriteBacklog = '';
+    this._hiddenWriteBacklog.clear();
     this._pendingTerminalWriteCallbacks.length = 0;
     this._isTerminalWriteInFlight = false;
     this._pendingScrollToBottomAfterWrite = false;
@@ -985,7 +991,7 @@ export class TerminalSession {
       visible: this._visible,
       activeRunId: this._activeRunId,
       pendingWriteChars: this._bufferedTerminalWrite.length,
-      hiddenBacklogChars: this._hiddenTerminalWriteBacklog.length,
+      hiddenBacklogChars: this._hiddenWriteBacklog.length,
       hostWidth: this._hostEl?.clientWidth ?? null,
       hostHeight: this._hostEl?.clientHeight ?? null,
       writePreview: writePreview === null ? null : previewTerminalDiagnosticText(writePreview),
@@ -1310,32 +1316,6 @@ export class TerminalSession {
     });
   }
 
-  private _appendHiddenTerminalWriteBacklog(value: string): void {
-    if (!value) return;
-
-    const previous = this._hiddenTerminalWriteBacklog.startsWith(
-      TERMINAL_HIDDEN_WRITE_BACKLOG_OMITTED_MARKER,
-    )
-      ? this._hiddenTerminalWriteBacklog.slice(
-          TERMINAL_HIDDEN_WRITE_BACKLOG_OMITTED_MARKER.length,
-        )
-      : this._hiddenTerminalWriteBacklog;
-    const combined = `${previous}${value}`;
-    if (combined.length <= TERMINAL_HIDDEN_WRITE_BACKLOG_MAX_CHARS) {
-      this._hiddenTerminalWriteBacklog = combined;
-      return;
-    }
-
-    const tailBudget = Math.max(
-      0,
-      TERMINAL_HIDDEN_WRITE_BACKLOG_MAX_CHARS -
-        TERMINAL_HIDDEN_WRITE_BACKLOG_OMITTED_MARKER.length,
-    );
-    this._hiddenTerminalWriteBacklog = `${TERMINAL_HIDDEN_WRITE_BACKLOG_OMITTED_MARKER}${combined.slice(
-      Math.max(0, combined.length - tailBudget),
-    )}`;
-  }
-
   private _flushTerminalWriteBufferNow(options?: {
     afterWrite?: () => void;
     forceLayout?: boolean;
@@ -1355,7 +1335,7 @@ export class TerminalSession {
     }
     if (!this._visible) {
       if (this._bufferedTerminalWrite) {
-        this._appendHiddenTerminalWriteBacklog(this._bufferedTerminalWrite);
+        this._hiddenWriteBacklog.append(this._bufferedTerminalWrite);
         this._bufferedTerminalWrite = '';
       }
       if (this._pendingScrollToBottomAfterWrite) {
@@ -1365,9 +1345,8 @@ export class TerminalSession {
       return;
     }
     if (this._isTerminalWriteInFlight) return;
-    if (this._hiddenTerminalWriteBacklog) {
-      this._bufferedTerminalWrite = `${this._hiddenTerminalWriteBacklog}${this._bufferedTerminalWrite}`;
-      this._hiddenTerminalWriteBacklog = '';
+    if (!this._hiddenWriteBacklog.isEmpty) {
+      this._bufferedTerminalWrite = `${this._hiddenWriteBacklog.drain()}${this._bufferedTerminalWrite}`;
       if (this._pendingHiddenScrollToBottom) {
         this._pendingScrollToBottomAfterWrite = true;
         this._pendingHiddenScrollToBottom = false;
@@ -1432,7 +1411,7 @@ export class TerminalSession {
     if (!value) return;
     const normalizedValue = normalizeTerminalAnsiForTheme(value, this._theme);
     if (!this._visible) {
-      this._appendHiddenTerminalWriteBacklog(normalizedValue);
+      this._hiddenWriteBacklog.append(normalizedValue);
       if (options?.scrollToBottom) this._pendingHiddenScrollToBottom = true;
       return;
     }

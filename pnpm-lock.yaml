@@ -271,10 +271,10 @@ importers:
         specifier: ^17.4.3
         version: 17.4.3
       happy-dom:
-        specifier: ^20.10.1
+        specifier: ^20.10.2
         version: 20.10.2
       knip:
-        specifier: ^6.16.0
+        specifier: ^6.16.1
         version: 6.16.1
       lefthook:
         specifier: ^2.1.9
@@ -304,8 +304,8 @@ importers:
         specifier: ^4.1.8
         version: 4.1.8(@opentelemetry/api@1.9.1)(@types/node@25.9.2)(@vitest/coverage-v8@4.1.8)(happy-dom@20.10.2)(vite@8.0.16(@types/node@25.9.2)(esbuild@0.28.0)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))
       vue-tsc:
-        specifier: ^3.3.3
-        version: 3.3.3(typescript@6.0.3)
+        specifier: ^3.3.4
+        version: 3.3.4(typescript@6.0.3)
 
   agent-sidecar:
     dependencies:
@@ -355,8 +355,8 @@ importers:
         specifier: ^5.3.0
         version: 5.3.0
       undici:
-        specifier: ^8.4.0
-        version: 8.4.0
+        specifier: ^8.4.1
+        version: 8.4.1
       vscode-jsonrpc:
         specifier: ^9.0.0
         version: 9.0.0
@@ -2316,8 +2316,8 @@ packages:
   '@vue/devtools-shared@8.1.2':
     resolution: {integrity: sha512-X9RyVFYAdkBe4IUf5v48TxBF/6QPmF8CmWrDAjXzfUHrgQ/HGfTC1A6TqgXqZ03ye66l3AD51BAGD69IvKM9sw==}
 
-  '@vue/language-core@3.3.3':
-    resolution: {integrity: sha512-X6p+7nfY7vVT6dQwUJ+v0Jfq/lwIfhL2jMi91dQ3ln4hnlGXlxsDu/FNkeyHYgvYtyQy18ZX76IZy7X4diDbiQ==}
+  '@vue/language-core@3.3.4':
+    resolution: {integrity: sha512-IuHqQ5zGGOE7CXP72VX6A42IVeIzYv4WAhO6arej11TRNqtdZfGyH8Yr2FOCaDX0dSQG+JwULLoFHGY1igYVjQ==}
 
   '@vue/reactivity@3.5.35':
     resolution: {integrity: sha512-tVc+SsHConvh/Lz64qq1pP3rYArBmK42xonovEcxY74SQtvctZodG/zhq54P5dr38cVuw25d27cPNRdlMidpGQ==}
@@ -2932,8 +2932,8 @@ packages:
       cosmiconfig: '>=9'
       typescript: '>=5'
 
-  cosmiconfig@9.0.1:
-    resolution: {integrity: sha512-hr4ihw+DBqcvrsEDioRO31Z17x71pUYoNe/4h6Z0wB72p7MU7/9gH8Q3s12NFhHPfYBBOV3qyfUxmr/Yn3shnQ==}
+  cosmiconfig@9.0.2:
+    resolution: {integrity: sha512-gtTZxTDau1wL7Y7zifc2dd8jHSK/k6BTx/2Xp/BpdlAdnlYWFVt7qhJqgwi7637yRwRQ3qL4ZidbB4I8tA5VOg==}
     engines: {node: '>=14'}
     peerDependencies:
       typescript: '>=4.9.5'
@@ -3836,8 +3836,8 @@ packages:
   hey-listen@1.0.8:
     resolution: {integrity: sha512-COpmrF2NOg4TBWUJ5UVyaCU2A88wEMkUPK4hNqyCkqHbxT92BbvfjoSozkAIIm6XhicGlJHhFdullInrdhwU8Q==}
 
-  hono@4.12.23:
-    resolution: {integrity: sha512-eIaZ9qDgu7XV0pxOCrg7/WhnQ6Ivm22UcxhXx/A3dcbqbbYgBEkc6e/J/s7j2tS96zoB0S9VBdLwQNCWwUo4LA==}
+  hono@4.12.24:
+    resolution: {integrity: sha512-I36D1s+HgQc55KbhEr4iybfxv/9o1zdpw+XEM6dJa91LqQD0HCoSGdxpRJCZE+aavs87j4V3Ls2OJzq8C/U4iw==}
     engines: {node: '>=16.9.0'}
 
   hookable@5.5.3:
@@ -5770,8 +5770,8 @@ packages:
     resolution: {integrity: sha512-uZsKNuzQxDMUY6M3pIMvy5tvlGmtq8XJ2oLAkfRKGNu+1VQAIvLy2xIVG5ATZl5wDXl/tddByAWCizRbOme+TA==}
     engines: {node: '>=20.18.1'}
 
-  undici@8.4.0:
-    resolution: {integrity: sha512-tDR4LgFBeV7YBWOFMlmbhtrnFVWuZ6HKbkG+88/csQdhK2tPlW78PnLI2VRjIQtTlslvgSZ4R43WBE+4g6rhng==}
+  undici@8.4.1:
+    resolution: {integrity: sha512-RNHlB4fxZK0IrkhBsxhlbx7s8kFWwr7rzzOqj5nvZugw3ig3RsB7KW3zVlV0eu8POl+rx5d1hmL7rRg0z1owow==}
     engines: {node: '>=22.19.0'}
 
   unicorn-magic@0.3.0:
@@ -5971,8 +5971,8 @@ packages:
   vscode-uri@3.1.0:
     resolution: {integrity: sha512-/BpdSx+yCQGnCvecbyXdxHDkuk55/G3xwnC0GqY4gmQ3j+A+g8kzzgB4Nk/SINjqn6+waqw3EgbVF2QKExkRxQ==}
 
-  vue-component-type-helpers@3.3.3:
-    resolution: {integrity: sha512-x4nsFpy5Pe8fqPzp/5vkTPeTTDBpAx4WVtV47Ejt0+2FQrq4pRRsJs7JmYRqMFzTu/LW+pCWEjQ3YVCkPV7f9g==}
+  vue-component-type-helpers@3.3.4:
+    resolution: {integrity: sha512-joip1uZTaQR0nD23N400gIdJ7xY+WiiiMA/BCKz842gvGBknqDQAzklUvDEhqFvvrhQY8S2ZANBMu4X70VMFGw==}
 
   vue-demi@0.14.10:
     resolution: {integrity: sha512-nMZBOwuzabUO0nLgIcc6rycZEebF6eeUfaiQx9+WSk8e29IbLvPU9feI6tqW4kTo3hvoYAJkMh8n8D0fuISphg==}
@@ -6022,8 +6022,8 @@ packages:
     peerDependencies:
       vue: '>=3.3.0'
 
-  vue-tsc@3.3.3:
-    resolution: {integrity: sha512-SWUEG7YRUeDJHT7Xsuhf02elYX2gxPzzAII7OxDAh4KNOr4QHQ0Lls0YfnaO5GNd560CwVa2HTfdqmA5MqvRqQ==}
+  vue-tsc@3.3.4:
+    resolution: {integrity: sha512-XA/JqmQwS2GZmfgpjOEGdrKwaTSEuPwxpHa7/t6f4yiGrJb3gVHTPb9wBfByMNZwQ+xDXs41b8gaS2DKsOozUw==}
     hasBin: true
     peerDependencies:
       typescript: '>=5.0.0'
@@ -6199,8 +6199,8 @@ packages:
   yauzl@2.10.0:
     resolution: {integrity: sha512-p4a9I6X6nu6IhoGmBqAcbJy1mlC4j27vEPZX9F4L4/vZT3Lyq1VkFHw/V/PUcB9Buo+DG3iHkT0x3Qya58zc3g==}
 
-  yauzl@3.3.2:
-    resolution: {integrity: sha512-Md9ankxxN23wncAN8s7+Tn3Co52zLUPMtnrLAbVCnfG5d2tKBFfmygYSgXlqFgXObtzIgqkx7aNgDBpso9+4qA==}
+  yauzl@3.4.0:
+    resolution: {integrity: sha512-jIH9yLR9wqr0wOS0TpBvo/g/2UgZH5qePVbjgRliiF0BYvOZyaBknKsF+x9Iht0O6sqgnB93rCICdOZFecJuDw==}
     engines: {node: '>=12'}
 
   yoctocolors@2.1.2:
@@ -6701,8 +6701,8 @@ snapshots:
       '@commitlint/execute-rule': 21.0.1
       '@commitlint/resolve-extends': 21.0.1
       '@commitlint/types': 21.0.1
-      cosmiconfig: 9.0.1(typescript@6.0.3)
-      cosmiconfig-typescript-loader: 6.3.0(@types/node@25.9.2)(cosmiconfig@9.0.1(typescript@6.0.3))(typescript@6.0.3)
+      cosmiconfig: 9.0.2(typescript@6.0.3)
+      cosmiconfig-typescript-loader: 6.3.0(@types/node@25.9.2)(cosmiconfig@9.0.2(typescript@6.0.3))(typescript@6.0.3)
       es-toolkit: 1.47.0
       is-plain-obj: 4.1.0
       picocolors: 1.1.1
@@ -6991,9 +6991,9 @@ snapshots:
       - '@vue/composition-api'
       - vue
 
-  '@hono/node-server@1.19.14(hono@4.12.23)':
+  '@hono/node-server@1.19.14(hono@4.12.24)':
     dependencies:
-      hono: 4.12.23
+      hono: 4.12.24
 
   '@iconify-json/lucide@1.2.111':
     dependencies:
@@ -7365,7 +7365,7 @@ snapshots:
 
   '@modelcontextprotocol/sdk@1.26.0(zod@4.4.3)':
     dependencies:
-      '@hono/node-server': 1.19.14(hono@4.12.23)
+      '@hono/node-server': 1.19.14(hono@4.12.24)
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
       content-type: 1.0.5
@@ -7375,7 +7375,7 @@ snapshots:
       eventsource-parser: 3.1.0
       express: 5.2.1
       express-rate-limit: 8.5.2(express@5.2.1)
-      hono: 4.12.23
+      hono: 4.12.24
       jose: 6.2.3
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.1
@@ -7387,7 +7387,7 @@ snapshots:
 
   '@modelcontextprotocol/sdk@1.29.0(zod@4.4.3)':
     dependencies:
-      '@hono/node-server': 1.19.14(hono@4.12.23)
+      '@hono/node-server': 1.19.14(hono@4.12.24)
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
       content-type: 1.0.5
@@ -7397,7 +7397,7 @@ snapshots:
       eventsource-parser: 3.1.0
       express: 5.2.1
       express-rate-limit: 8.5.2(express@5.2.1)
-      hono: 4.12.23
+      hono: 4.12.24
       jose: 6.2.3
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.1
@@ -8363,7 +8363,7 @@ snapshots:
 
   '@vue/devtools-shared@8.1.2': {}
 
-  '@vue/language-core@3.3.3':
+  '@vue/language-core@3.3.4':
     dependencies:
       '@volar/language-core': 2.4.28
       '@vue/compiler-dom': 3.5.35
@@ -8402,7 +8402,7 @@ snapshots:
       '@vue/compiler-dom': 3.5.35
       js-beautify: 1.15.4
       vue: 3.5.35(typescript@6.0.3)
-      vue-component-type-helpers: 3.3.3
+      vue-component-type-helpers: 3.3.4
     optionalDependencies:
       '@vue/server-renderer': 3.5.35(vue@3.5.35(typescript@6.0.3))
 
@@ -8506,7 +8506,7 @@ snapshots:
     dependencies:
       file-type: 20.5.0
       get-stream: 6.0.1
-      yauzl: 3.3.2
+      yauzl: 3.4.0
     transitivePeerDependencies:
       - supports-color
 
@@ -9023,14 +9023,14 @@ snapshots:
     dependencies:
       layout-base: 2.0.1
 
-  cosmiconfig-typescript-loader@6.3.0(@types/node@25.9.2)(cosmiconfig@9.0.1(typescript@6.0.3))(typescript@6.0.3):
+  cosmiconfig-typescript-loader@6.3.0(@types/node@25.9.2)(cosmiconfig@9.0.2(typescript@6.0.3))(typescript@6.0.3):
     dependencies:
       '@types/node': 25.9.2
-      cosmiconfig: 9.0.1(typescript@6.0.3)
+      cosmiconfig: 9.0.2(typescript@6.0.3)
       jiti: 2.6.1
       typescript: 6.0.3
 
-  cosmiconfig@9.0.1(typescript@6.0.3):
+  cosmiconfig@9.0.2(typescript@6.0.3):
     dependencies:
       env-paths: 2.2.1
       import-fresh: 3.3.1
@@ -10069,7 +10069,7 @@ snapshots:
 
   hey-listen@1.0.8: {}
 
-  hono@4.12.23: {}
+  hono@4.12.24: {}
 
   hookable@5.5.3: {}
 
@@ -12172,7 +12172,7 @@ snapshots:
   tsconfig-paths-webpack-plugin@4.2.0:
     dependencies:
       chalk: 4.1.2
-      enhanced-resolve: 5.23.0
+      enhanced-resolve: 5.22.1
       tapable: 2.3.3
       tsconfig-paths: 4.2.0
 
@@ -12246,7 +12246,7 @@ snapshots:
 
   undici@7.27.2: {}
 
-  undici@8.4.0: {}
+  undici@8.4.1: {}
 
   unicorn-magic@0.3.0: {}
 
@@ -12414,7 +12414,7 @@ snapshots:
 
   vscode-uri@3.1.0: {}
 
-  vue-component-type-helpers@3.3.3: {}
+  vue-component-type-helpers@3.3.4: {}
 
   vue-demi@0.14.10(vue@3.5.35(typescript@6.0.3)):
     dependencies:
@@ -12451,10 +12451,10 @@ snapshots:
     dependencies:
       vue: 3.5.35(typescript@6.0.3)
 
-  vue-tsc@3.3.3(typescript@6.0.3):
+  vue-tsc@3.3.4(typescript@6.0.3):
     dependencies:
       '@volar/typescript': 2.4.28
-      '@vue/language-core': 3.3.3
+      '@vue/language-core': 3.3.4
       typescript: 6.0.3
 
   vue@3.5.35(typescript@6.0.3):
@@ -12656,7 +12656,7 @@ snapshots:
       buffer-crc32: 0.2.13
       fd-slicer: 1.1.0
 
-  yauzl@3.3.2:
+  yauzl@3.4.0:
     dependencies:
       pend: 1.2.0
 
