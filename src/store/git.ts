@@ -553,11 +553,13 @@ export const useGitStore = defineStore('git', () => {
       if (evicted) {
         delete nextCache[evicted];
         delete nextFetchedAt[evicted];
+        removePersistedPullRequestCache('detail', evicted);
       }
     }
     pullRequestDetailCache.value = nextCache;
     pullRequestDetailFetchedAt.value = nextFetchedAt;
     pullRequestDetailCacheOrder.value = nextOrder;
+    writePersistedPullRequestDetail(cacheKey, payload, fetchedAt);
   };
 
   const resetPullRequests = (): void => {
@@ -1027,7 +1029,7 @@ export const useGitStore = defineStore('git', () => {
         state,
       );
       nextFetchedAt[cacheKey] = now;
-      writePersistedPullRequestList(cacheKey, nextCache[cacheKey]);
+      writePersistedPullRequestList(cacheKey, nextCache[cacheKey], now);
       writePersistedPullRequestList(cacheKey, nextCache[cacheKey], now);
     }
 
@@ -1148,7 +1150,7 @@ export const useGitStore = defineStore('git', () => {
           ...pullRequestListFetchedAt.value,
           [cacheKey]: fetchedAt,
         };
-        writePersistedPullRequestList(cacheKey, nextPayload);
+        writePersistedPullRequestList(cacheKey, nextPayload, fetchedAt);
         writePersistedPullRequestList(cacheKey, nextPayload, fetchedAt);
         if (updateActive && requestId === pullRequestsRequestId) {
           pullRequests.value = nextPayload;
