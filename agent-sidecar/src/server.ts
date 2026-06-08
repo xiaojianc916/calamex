@@ -70,6 +70,16 @@ export const SIDECAR_IMPLEMENTATION_VERSION = 'deepseek-reasoning-transport-v6-p
 // 超时未 resume 则回收，避免长负 sidecar 永久持有被放弃的 run。
 const ORCHESTRATION_RUN_TTL_MS = 30 * 60 * 1000;
 
+const logProcessEvent = (event: string, error: unknown): void => {
+  console.error(JSON.stringify({
+    level: 'error',
+    scope: 'agent-sidecar',
+    event,
+    message: error instanceof Error ? error.message : String(error),
+    stack: error instanceof Error ? error.stack : undefined,
+  }));
+};
+
 // -----------------------------------------------------------------------
 // Server
 // -----------------------------------------------------------------------
@@ -86,6 +96,7 @@ export const createAgentSidecarServer = (
   // 实例即可跨 HTTP 请求 resume；跨进程 / 回收后则由 Phase 3b 从 libsql 快照重建。
   const orchestrationRuns = new Map<string, TPlanOrchestrationRun>();
   const orchestrationRunTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  let disposed = false;
 
   const forgetOrchestrationRun = (runId: string): void => {
     orchestrationRuns.delete(runId);
@@ -108,6 +119,32 @@ export const createAgentSidecarServer = (
     orchestrationRunTimers.set(runId, timer);
   };
 
+  const disposeServerResources = async (): Promise<void> => {
+    if (disposed) {
+      return;
+    }
+    disposed = true;
+
+    for (const timer of orchestrationRunTimers.values()) {
+      clearTimeout(timer);
+    }
+    orchestrationRunTimers.clear();
+    orchestrationRuns.clear();
+
+    try {
+      await runtime.dispose?.();
+    } catch (error) {
+      logProcessEvent('runtime.dispose.failed', error);
+    }
+
+    try {
+      // web 搜索使用独立的共享 tavily MCP bundle，关闭时一并断开，避免遗留子进程。
+      await disposeWebService();
+    } catch (error) {
+      logProcessEvent('web.dispose.failed', error);
+    }
+  };
+
   // /agent/chat, /agent/chat/stream, /model/chat and /model/chat/stream all
   // share this exact handler; the streaming vs non-streaming difference is
   // handled by the surrounding handlePost / handlePostStream wrapper.
@@ -120,7 +157,7 @@ export const createAgentSidecarServer = (
     return runtime.chat(toAgentInput(payload, 'ask'), options);
   };
 
-  return createServer((request, response) => {
+  const server = createServer((request, response) => {
     const url = request.url ?? '/';
     const parsedUrl = new URL(url, 'http://127.0.0.1');
 
@@ -426,6 +463,12 @@ export const createAgentSidecarServer = (
       error: '未知 sidecar 路由。',
     });
   });
+
+  server.once('close', () => {
+    void disposeServerResources();
+  });
+
+  return server;
 };
 
 const resolvePort = (): number => {
@@ -440,16 +483,6 @@ const resolvePort = (): number => {
 const isEntrypoint = (): boolean => {
   const entrypoint = process.argv[1];
   return entrypoint ? resolve(fileURLToPath(import.meta.url)) === resolve(entrypoint) : false;
-};
-
-const logProcessEvent = (event: string, error: unknown): void => {
-  console.error(JSON.stringify({
-    level: 'error',
-    scope: 'agent-sidecar',
-    event,
-    message: error instanceof Error ? error.message : String(error),
-    stack: error instanceof Error ? error.stack : undefined,
-  }));
 };
 
 if (isEntrypoint()) {

@@ -97,6 +97,10 @@ const parseNdjsonFrames = (body: string): TStreamChunk[] =>
     .filter((line) => line.length > 0)
     .map((line) => JSON.parse(line) as TStreamChunk);
 
+const waitForMicrotask = async (): Promise<void> => {
+  await Promise.resolve();
+};
+
 const ORCHESTRATION_FLAG = 'AGENT_ORCHESTRATION_WORKFLOW';
 
 describe('Agent sidecar orchestration stream routes', () => {
@@ -239,5 +243,22 @@ describe('Agent sidecar orchestration stream routes', () => {
     } finally {
       await server.close();
     }
+  });
+
+  it('disposes server-scoped resources when the HTTP server closes', async () => {
+    process.env[ORCHESTRATION_FLAG] = '1';
+    let disposeCalls = 0;
+    const runtime = {
+      ...createOrchestrationStreamRuntime([], 'success', { ok: true }),
+      dispose: async () => {
+        disposeCalls += 1;
+      },
+    } as unknown as IAgentSidecarRuntime;
+    const server = await startServer(runtime);
+
+    await server.close();
+    await waitForMicrotask();
+
+    assert.equal(disposeCalls, 1);
   });
 });
