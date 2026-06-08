@@ -20,6 +20,22 @@ test('deriveApprovalRisk：会读取网关工具的参数（mcp_call_tool）', (
     assert.equal(risk.reversible, false);
 });
 
+test('deriveApprovalRisk：会递归读取 MCP 网关规范 arguments 参数', () => {
+    const risk = deriveApprovalRisk({
+        toolName: 'mcp_call_tool',
+        args: {
+            serverName: 'git',
+            toolName: 'run_shell',
+            arguments: {
+                command: 'rm -rf /tmp/build',
+            },
+        },
+    });
+
+    assert.equal(risk.riskLevel, 'high');
+    assert.equal(risk.reversible, false);
+});
+
 test('deriveApprovalRisk：普通写操作判定为可逆的 medium', () => {
     const risk = deriveApprovalRisk({ toolName: 'create_or_update_file', args: { path: 'a.txt' } });
     assert.equal(risk.riskLevel, 'medium');
