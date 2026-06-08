@@ -576,33 +576,33 @@ export const createMastraMcpClientBundle = async (
   }
 
   let disconnectPromise: Promise<void> | null = null;
-  const disconnectAll = async (): Promise<void> => {
-    if (disconnectPromise) {
-      return disconnectPromise;
-    }
-    const clientToDisconnect = client;
-    client = null;
-    if (!clientToDisconnect) {
-      disconnectPromise = Promise.resolve();
-      return disconnectPromise;
-    }
-    disconnectPromise = (async () => {
-      try {
-        await withTimeoutFallback(clientToDisconnect.disconnect(), MCP_DISCONNECT_TIMEOUT_MS, undefined);
-      } catch (error) {
-        console.warn(`[mcp] disconnect failed: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    })();
-    return disconnectPromise;
-  };
-
-  return {
+  const bundle: IMastraMcpClientBundle = {
     client,
     configs,
     errors,
     tools,
-    disconnectAll,
+    disconnectAll: async () => {
+      if (disconnectPromise) {
+        return disconnectPromise;
+      }
+      const clientToDisconnect = bundle.client;
+      bundle.client = null;
+      if (!clientToDisconnect) {
+        disconnectPromise = Promise.resolve();
+        return disconnectPromise;
+      }
+      disconnectPromise = (async () => {
+        try {
+          await withTimeoutFallback(clientToDisconnect.disconnect(), MCP_DISCONNECT_TIMEOUT_MS, undefined);
+        } catch (error) {
+          console.warn(`[mcp] disconnect failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      })();
+      return disconnectPromise;
+    },
   };
+
+  return bundle;
 };
 
 export const getMcpRuntimeStatus = (options: IMcpConfigOptions = {}): IMcpRuntimeStatus => {
