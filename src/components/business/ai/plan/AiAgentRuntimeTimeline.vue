@@ -166,7 +166,7 @@ onBeforeUnmount(() => {
 
 <template>
   <ChainOfThought v-if="shouldRenderTimeline" class="ai-runtime-timeline" default-open
-    aria-label="Agent Chain of Thought">
+    aria-label="Agent execution timeline">
     <ChainOfThoughtHeader class="ai-runtime-chain-header">
       <Shimmer v-if="isStreaming || isWaitingConfirmation" as="span"
         class="ai-runtime-chain-label ai-runtime-chain-label--thinking">
@@ -177,7 +177,7 @@ onBeforeUnmount(() => {
 
     <ChainOfThoughtContent class="ai-runtime-chain-content">
       <template v-for="item in timelineItems" :key="item.id">
-        <ChainOfThoughtStep v-if="item.type === 'reasoning'" class="ai-runtime-step is-reasoning" label="Reasoning"
+        <ChainOfThoughtStep v-if="item.type === 'reasoning'" class="ai-runtime-step is-reasoning" label="推理摘要"
           status="complete">
           <template #icon>
             <span class="icon-[lucide--dot] ai-runtime-step-icon" aria-hidden="true" />

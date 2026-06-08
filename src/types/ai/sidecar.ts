@@ -140,14 +140,14 @@ export interface IDiffFile {
 }
 
 /* ============================================================================
- * Runtime events (backend → frontend, 22 variants, manual discriminated union)
+ * Runtime events (backend → frontend, manual discriminated union)
  *
  * ⚠️ 这是高漂移风险区域。新增事件类型务必同步更新:
  *    1. `AGENT_RUNTIME_EVENT_TYPES` 常量
  *    2. 对应 `IAgentXxxEvent` interface
  *    3. `TAgentRuntimeEvent` union
- *    4. backend Rust 一侧的事件 emitter
- *    5. zod schema(尚未创建)
+ *    4. backend runtime event contract
+ *    5. zod schema runtime base validation
  * ========================================================================== */
 
 export const AGENT_RUNTIME_EVENT_SCHEMA_VERSION = 1 as const;
@@ -167,6 +167,9 @@ export const AGENT_RUNTIME_EVENT_TYPES = [
   'acontext.provider_payload.checked',
   'acontext.tool_summary.recorded',
   'acontext.memory.compressed',
+  'acontext.context_compaction.started',
+  'acontext.context_compaction.updated',
+  'acontext.context_compaction.completed',
   'rollback.checkpoint.created',
   'rollback.checkpoint.failed',
   'rollback.restore.started',
@@ -184,6 +187,13 @@ export type TAgentRuntimeEventType = (typeof AGENT_RUNTIME_EVENT_TYPES)[number];
 
 export type TAgentRuntimeVisibility = 'user' | 'debug';
 export type TAgentRuntimeLevel = 'debug' | 'info' | 'warn' | 'error';
+export type TContextBudgetDecisionKind = 'within_budget' | 'compact_recommended' | 'warn_context_limit';
+export type TContextManagementOwner =
+  | 'mastra_memory'
+  | 'zed_style_compaction'
+  | 'runtime_warning'
+  | 'none';
+export type TContextCompactionReason = 'budget' | 'manual' | 'provider_native';
 
 export interface IAgentRuntimeEventBase {
   id: string;
@@ -203,6 +213,11 @@ export interface IAgentRuntimeEventBase {
   level?: TAgentRuntimeLevel;
   parentId?: string;
   spanId?: string;
+  /**
+   * Mastra 官方 trace id（来自 `agent.stream()` / `agent.generate()` 返回值）。
+   * 仅在 Mastra 提供时存在；前端可用于深链到 observability 平台。
+   */
+  traceId?: string;
 }
 
 export interface IAgentRunStartedEvent extends IAgentRuntimeEventBase {
@@ -222,8 +237,10 @@ export interface IAgentReasoningDeltaEvent extends IAgentRuntimeEventBase {
 
 export interface IAgentModelStartedEvent extends IAgentRuntimeEventBase {
   type: 'agent.model.started';
+  /** 仅在 Mastra 提供该字段时存在。可用性判定：`event.projectedInputTokens !== undefined`。 */
   projectedInputTokens?: number;
-  projectedInputTokensAvailable: boolean;
+  /** @deprecated backend 不再发送；保留为 optional 以兼容旧会话快照。 */
+  projectedInputTokensAvailable?: boolean;
 }
 
 export interface IAgentModelCompletedEvent extends IAgentRuntimeEventBase {
@@ -245,8 +262,8 @@ export interface IAgentToolProgressEvent extends IAgentRuntimeEventBase {
   type: 'agent.tool.progress';
   toolUseId?: string;
   toolName?: string;
-  /** 进度事件总有数据,因此必填(与其它事件的 *Preview 可选不同)。 */
-  dataPreview: string;
+  /** Mastra 进度事件可能只是心跳；无 data 时该字段缺省。 */
+  dataPreview?: string;
 }
 
 export interface IAgentToolCompletedEvent extends IAgentRuntimeEventBase {
@@ -256,6 +273,8 @@ export interface IAgentToolCompletedEvent extends IAgentRuntimeEventBase {
   ok: boolean;
   resultPreview?: string;
   errorMessage?: string;
+  /** Mastra `result.status` 的原始字符串（如 `'success'` / `'error'` / `'cancelled'`）。 */
+  status?: string;
 }
 
 export interface IAgentAcontextEnvelopeEvent extends IAgentRuntimeEventBase {
@@ -267,8 +286,10 @@ export interface IAgentAcontextEnvelopeEvent extends IAgentRuntimeEventBase {
 
 export interface IAgentAcontextTokenEvent extends IAgentRuntimeEventBase {
   type: 'acontext.token.checked';
+  /** 仅在估算可用时存在。 */
   projectedInputTokens?: number;
-  projectedInputTokensAvailable: boolean;
+  /** @deprecated backend 不再发送；保留为 optional 以兼容旧会话快照。 */
+  projectedInputTokensAvailable?: boolean;
   inputCharCount?: number;
   systemPromptCharCount?: number;
   messageCharCount?: number;
@@ -285,8 +306,22 @@ export interface IAgentAcontextTokenEvent extends IAgentRuntimeEventBase {
   workspaceEnabled?: boolean;
   browserEnabled?: boolean;
   memoryEnabled?: boolean;
+  observationalMemoryEnabled?: boolean;
+  semanticRecallEnabled?: boolean;
   maxSteps?: number;
   toolChoice?: 'auto' | 'none';
+  contextWindowTokens?: number;
+  maxOutputTokens?: number;
+  availableInputTokens?: number;
+  remainingInputTokens?: number;
+  compactionRemainingTokenBudget?: number;
+  compactionSupported?: boolean;
+  contextBudgetDecision?: TContextBudgetDecisionKind;
+  contextManagementOwner?: TContextManagementOwner;
+  shouldRunZedStyleCompaction?: boolean;
+  shouldRelyOnMastraMemory?: boolean;
+  contextManagementReason?: string;
+  retainedUserMessageByteBudget?: number;
   tokenEstimateMethod?: 'char_heuristic';
 }
 
@@ -298,7 +333,8 @@ export interface IAgentAcontextProviderPayloadEvent extends IAgentRuntimeEventBa
   requestIndex: number;
   requestBodyCharCount: number;
   projectedInputTokens: number;
-  projectedInputTokensAvailable: true;
+  /** @deprecated backend 不再发送；保留为 optional 以兼容旧会话快照。 */
+  projectedInputTokensAvailable?: true;
   messageCharCount: number;
   systemMessageCharCount: number;
   userMessageCharCount: number;
@@ -328,6 +364,31 @@ export interface IAgentAcontextMemoryCompressedEvent extends IAgentRuntimeEventB
   chunksActivated?: number;
   durationMs?: number;
   triggeredBy?: 'threshold' | 'ttl' | 'provider_change';
+}
+
+export interface IAgentAcontextContextCompactionStartedEvent extends IAgentRuntimeEventBase {
+  type: 'acontext.context_compaction.started';
+  compactionId: string;
+  reason: TContextCompactionReason;
+  sourceMessageCount?: number;
+  projectedInputTokens?: number;
+  remainingInputTokens?: number;
+}
+
+export interface IAgentAcontextContextCompactionUpdatedEvent extends IAgentRuntimeEventBase {
+  type: 'acontext.context_compaction.updated';
+  compactionId: string;
+  summaryDeltaCharCount: number;
+  summaryCharCount: number;
+}
+
+export interface IAgentAcontextContextCompactionCompletedEvent extends IAgentRuntimeEventBase {
+  type: 'acontext.context_compaction.completed';
+  compactionId: string;
+  reason: TContextCompactionReason;
+  summaryCharCount: number;
+  retainedUserMessageByteBudget?: number;
+  sourceMessageCount?: number;
 }
 
 export interface IAgentCheckpointEvent extends IAgentRuntimeEventBase {
@@ -390,6 +451,9 @@ export type TAgentRuntimeEvent =
   | IAgentAcontextProviderPayloadEvent
   | IAgentAcontextToolSummaryEvent
   | IAgentAcontextMemoryCompressedEvent
+  | IAgentAcontextContextCompactionStartedEvent
+  | IAgentAcontextContextCompactionUpdatedEvent
+  | IAgentAcontextContextCompactionCompletedEvent
   | IAgentCheckpointEvent
   | IAgentRollbackEvent
   | IAgentSideEffectEvent
@@ -408,6 +472,19 @@ export type TAgentRuntimeEventByType<TType extends TAgentRuntimeEventType> = Ext
   TAgentRuntimeEvent,
   { type: TType }
 >;
+
+// 编译期穷尽性检查：事件常量数组与 discriminated union 任一边漏写都会编译失败。
+type _MissingRuntimeEventInUnion = Exclude<TAgentRuntimeEventType, TAgentRuntimeEvent['type']>;
+type _MissingRuntimeEventInArray = Exclude<TAgentRuntimeEvent['type'], TAgentRuntimeEventType>;
+type _AssertRuntimeEventsExhaustive =
+  [_MissingRuntimeEventInUnion, _MissingRuntimeEventInArray] extends [never, never]
+    ? true
+    : {
+        missingInUnion: _MissingRuntimeEventInUnion;
+        missingInArray: _MissingRuntimeEventInArray;
+      };
+const _assertRuntimeEventsExhaustive: _AssertRuntimeEventsExhaustive = true;
+void _assertRuntimeEventsExhaustive;
 
 /* ============================================================================
  * UI events (sidecar response stream)
