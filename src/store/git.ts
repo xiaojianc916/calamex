@@ -30,6 +30,7 @@ const PULL_REQUEST_DETAIL_PRELOAD_CONCURRENCY = 4;
 const PULL_REQUEST_DETAIL_CACHE_LIMIT = 20;
 const PULL_REQUEST_PERSISTED_CACHE_PREFIX = 'calamex.gitPullRequests.';
 const PULL_REQUEST_PERSISTED_CACHE_VERSION = 1;
+const PULL_REQUEST_PERSISTED_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 const formatGitInitMismatch = (expectedPath: string, actualPath: string): string =>
   `Git 初始化目标不一致:期望 ${expectedPath},实际 ${actualPath}。`;
@@ -126,6 +127,18 @@ const getPullRequestPersistentStorage = (): Storage | null => {
   }
 };
 
+const getPersistedPullRequestSnapshotSavedAt = (value: {
+  savedAt?: unknown;
+  fetchedAt?: unknown;
+}): number | null => {
+  if (typeof value.savedAt === 'number') return value.savedAt;
+  if (typeof value.fetchedAt === 'number') return value.fetchedAt;
+  return null;
+};
+
+const isPersistedPullRequestSnapshotFreshEnough = (savedAt: number): boolean =>
+  Number.isFinite(savedAt) && Date.now() - savedAt <= PULL_REQUEST_PERSISTED_CACHE_MAX_AGE_MS;
+
 const readPersistedPullRequestList = (cacheKey: string): TPersistedPullRequestListCache | null => {
   const storage = getPullRequestPersistentStorage();
   if (!storage) return null;
@@ -160,6 +173,8 @@ const writePersistedPullRequestList = (
 ): void => {
   const storage = getPullRequestPersistentStorage();
   if (!storage) return;
+
+  prunePersistedPullRequestCaches();
 
   try {
     storage.setItem(
@@ -212,6 +227,8 @@ const writePersistedPullRequestDetail = (
   const storage = getPullRequestPersistentStorage();
   if (!storage) return;
 
+  prunePersistedPullRequestCaches();
+
   try {
     storage.setItem(
       createPullRequestPersistedCacheKey('detail', cacheKey),
@@ -223,6 +240,59 @@ const writePersistedPullRequestDetail = (
     );
   } catch {
     // Best-effort cache snapshot only.
+  }
+};
+
+const prunePersistedPullRequestCaches = (): void => {
+  const storage = getPullRequestPersistentStorage();
+  if (!storage) return;
+
+  const currentVersionPrefix = `${PULL_REQUEST_PERSISTED_CACHE_PREFIX + PULL_REQUEST_PERSISTED_CACHE_VERSION}.`;
+  const keysToRemove: string[] = [];
+
+  try {
+    for (let index = 0; index < storage.length; index += 1) {
+      const key = storage.key(index);
+      if (!key?.startsWith(PULL_REQUEST_PERSISTED_CACHE_PREFIX)) {
+        continue;
+      }
+
+      if (!key.startsWith(currentVersionPrefix)) {
+        keysToRemove.push(key);
+        continue;
+      }
+
+      const rawValue = storage.getItem(key);
+      if (!rawValue) {
+        keysToRemove.push(key);
+        continue;
+      }
+
+      try {
+        const parsed = JSON.parse(rawValue) as {
+          version?: unknown;
+          savedAt?: unknown;
+          fetchedAt?: unknown;
+        };
+        const savedAt = getPersistedPullRequestSnapshotSavedAt(parsed);
+
+        if (
+          parsed.version !== PULL_REQUEST_PERSISTED_CACHE_VERSION ||
+          savedAt === null ||
+          !isPersistedPullRequestSnapshotFreshEnough(savedAt)
+        ) {
+          keysToRemove.push(key);
+        }
+      } catch {
+        keysToRemove.push(key);
+      }
+    }
+
+    keysToRemove.forEach((key) => {
+      storage.removeItem(key);
+    });
+  } catch {
+    // Best-effort cache pruning only.
   }
 };
 
