@@ -1,31 +1,52 @@
-# Calamex Agent Sidecar 重构路线（Zed AI 源码覆盖版 v4）
+# Calamex Agent Sidecar 重构路线（Mastra Agent + Zed 架构取长补短版 v5）
 
-> 约束：Zed 的 agent / language_model / shell_command_parser 等模块包含 GPL 许可文件。Calamex 只参考架构边界、状态机、权限优先级、测试策略，不复制源码实现。
+> 约束：Zed 的 agent / language_model / shell_command_parser 等模块包含 GPL 许可文件。Calamex 可以深入参考其架构边界、状态机、权限优先级、测试策略，但实现必须服从 Calamex 的 TypeScript + Mastra Agent + Tauri 体系，不能把 Zed Rust/GPUI 架构生搬硬套。
 
-## 0. 这次复审的态度
+## 0. 修正后的原则
 
-上一版 v2 虽然比 v1 深，但仍然不够全面：它重点放在工具权限，覆盖面不足以支撑“方方面面都重构到专业水平”。v3 扩大到了 Zed AI 相关的 agent 生命周期、工具系统、权限、安全、sandbox、编辑会话、搜索/上下文、模型/provider、prompt、thread 持久化、ACP UI 协议、skills/subagent、测试基建等多个层面。
+这版明确修正一个风险：Calamex 不是要“复刻 Zed”，而是要把 **Mastra Agent 官方能力** 和 **Zed 专业 IDE Agent 架构** 取长补短。
 
-v4 继续第二批深读，重点补齐这些细节：MCP tool registry、文件/目录 move/copy/delete/create 的 symlink 与敏感设置审批、LSP symbol 工具、edit session streaming diff、provider 请求映射、thinking/signature replay、prompt/rules/skills 迁移、ACP session/model/permission/diff/terminal UI 抽象。
+- Mastra 明显更好的地方：Agent / durable agent / workflow / memory / processors / workspace / browser / observability / MCP 集成。这些已有官方能力时，优先使用官方能力，不手写平行替代品。
+- Zed 明显更好的地方：thread aggregate、tool permission state machine、sandbox/path safety、可回放 tool event、context compaction 生命周期、ACP UI event/diff/terminal 抽象、provider capability 显式化。这些是专业 IDE Agent 的工程边界，适合作为 Calamex 的外围架构约束。
+- Calamex 自己已有优势：plan / workflow / rollback / Tauri 前端事件协议 / MCP gateway / DeepSeek telemetry。不能因为参考 Zed 或 Mastra 而抹掉这些优势。
 
-结论：Calamex 不能只做一个 permission policy，也不能直接照搬 Zed。正确做法是建立一条**覆盖完整 AI 运行链路的重构主线**：
+因此，后续判断顺序是：
 
-1. 模型能力注册表；
-2. 工具描述符注册表；
-3. 权限与 sandbox envelope；
-4. session / turn 状态聚合；
-5. context budget 与 compaction；
-6. tool event replay；
-7. edit session；
-8. provider 错误与测试 fake provider。
+1. **Mastra 官方能力能稳定解决的问题，不手写替代实现。**
+2. **Zed 的做法用于补足 Mastra 没有覆盖的 IDE 级状态、权限、UI replay、diff、sandbox 边界。**
+3. **Calamex 的 runtime contract 作为隔离层，避免业务代码直接散落依赖 Mastra 内部细节。**
+4. **任何 custom compaction / custom edit session 都必须证明不是 Mastra 官方 memory / processors / workspace 已经能更好完成。**
 
-这不是“最小实现”，也不是“盲目过度工程化”。它是从 Zed 多个子系统抽象出来、适配 Calamex 当前 Tauri + Vue + Mastra 架构的路线。
+## 1. Mastra 官方能力复核结论
 
-## 1. Zed AI 相关源码覆盖清单
+本轮重新查看了 Mastra 官方 docs 与源码：
+
+- Memory overview：Mastra Memory 支持 conversation history、Observational Memory、Working Memory、Semantic Recall、memory processors。
+- `packages/core/src/memory/memory.ts`：`Memory` 会自动提供 WorkingMemory、MessageHistory、SemanticRecall input/output processors；旧 `processors` 构造参数已废弃，官方建议使用 Agent input/output processors 或直接把 memory 放入 processor pipeline。
+- `packages/core/src/agent/workflows/prepare-stream/prepare-memory-step.ts`：Agent 执行流会先创建 `MessageList`，再把 user messages 交给 memory processors 处理；resume 时会跳过 input processors，避免空 messageList 触发 TokenLimiter TripWire。
+- `packages/core/src/processors/processors/token-limiter.ts`：Mastra 已有 `TokenLimiterProcessor`，会保留 system messages、从最新消息开始按 token budget 保留，支持 output stream/result 限制。
+- Agent docs：官方建议通过 `mastra.getAgentById()` 获取 registered agent，以获得 shared storage/logger/registry；`.generate()` 适合完整响应，`.stream()` 适合实时流。
+
+Calamex 现有 `createMastraAgentMemory` 已经正确使用：
+
+- `@mastra/memory` 的 `Memory`
+- `LibSQLStore`
+- `LibSQLVector`
+- Working Memory schema
+- Observational Memory
+- Semantic Recall
+- resource/thread scope
+
+所以长上下文策略不能默认走手写 Zed-style compaction。正确策略是：
+
+- **主路径：Mastra Memory / Observational Memory / Semantic Recall / processors。**
+- **补充路径：Zed-style compaction 只作为 Mastra memory 不可用、未配置、或需要 IDE UI handoff/replay 时的 fallback。**
+
+## 2. Zed AI 相关源码覆盖清单
 
 已把覆盖面扩大到两批 100+ 个 AI 相关文件/目录。部分超大文件由 GitHub 返回截断，但已经读取到关键类型、常量、测试和调用路径。
 
-### 1.1 Agent / Thread / Persistence
+### 2.1 Agent / Thread / Persistence
 
 - `crates/agent/src/agent.rs`
 - `crates/agent/src/thread.rs`
@@ -38,9 +59,9 @@ v4 继续第二批深读，重点补齐这些细节：MCP tool registry、文件
 - `crates/agent/src/tests/mod.rs`
 - `crates/agent/src/tests/test_tools.rs`
 
-关键结论：Zed 的 thread 不是普通聊天数组，而是持久化 session aggregate：messages、tool uses/results、token usage、summary、model、profile、subagent_context、sandboxed temp dir、scroll/draft 状态都进可迁移 schema。
+关键结论：Zed 的 thread 不是普通聊天数组，而是持久化 session aggregate：messages、tool uses/results、token usage、summary、model、profile、subagent_context、sandboxed temp dir、scroll/draft 状态都进可迁移 schema。Calamex 应学习这种 aggregate 边界，但不应绕开 Mastra durable agent / memory。
 
-### 1.2 Tool Registry / Tool Implementations
+### 2.2 Tool Registry / Tool Implementations
 
 - `crates/agent/src/tools.rs`
 - `crates/agent/src/tools/context_server_registry.rs`
@@ -71,9 +92,9 @@ v4 继续第二批深读，重点补齐这些细节：MCP tool registry、文件
 - `crates/agent/src/tools/update_plan_tool.rs`
 - `crates/agent/src/tools/update_title_tool.rs`
 
-关键结论：Zed 的工具不是散落函数，而是每个工具都具备 kind、schema、initial title、run、replay、provider support、streaming input 能力。MCP 工具也通过 `mcp:<server_id>:<tool_name>` 形成稳定命名空间。Calamex 必须有统一 tool descriptor registry，否则权限、UI、模型能力过滤、预算都会继续碎片化。
+关键结论：Zed 的工具不是散落函数，而是每个工具都具备 kind、schema、initial title、run、replay、provider support、streaming input 能力。Calamex 应把这些作为 metadata / policy / UI replay 层，而工具实际执行仍优先走 Mastra workspace / MCP / browser 官方能力。
 
-### 1.3 Permission / Shell / Sandbox / Path Safety
+### 2.3 Permission / Shell / Sandbox / Path Safety
 
 - `crates/agent/src/tool_permissions.rs`
 - `crates/agent/src/tools/tool_permissions.rs`
@@ -84,7 +105,7 @@ v4 继续第二批深读，重点补齐这些细节：MCP tool registry、文件
 
 关键结论：Zed 安全不是“风险提示”，而是执行前决策。hardcoded deny 最高，then deny/confirm/allow/default。terminal 需要 shell AST / 子命令 / substitution / path normalization；文件操作还需要 symlink escape 检测、global skills 特例、敏感设置检测、单次审批去重、deny 策略优先。
 
-### 1.4 Prompt / Rules / Skills / Context
+### 2.4 Prompt / Rules / Skills / Context
 
 - `crates/agent/src/templates/system_prompt.hbs`
 - `crates/agent/src/templates/experimental_system_prompt.hbs`
@@ -101,9 +122,9 @@ v4 继续第二批深读，重点补齐这些细节：MCP tool registry、文件
 - `crates/prompt_store/src/prompts.rs`
 - `crates/prompt_store/src/rules_to_skills_migration.rs`
 
-关键结论：Zed 把 personal AGENTS、project rules、skills、sandbox 状态、可用工具、日期、模型名组合成可测试模板；skills 通过 envelope 隔离，并防止恶意 skill 逃逸 XML wrapper。旧 Rules 迁移也不是简单复制：default rule 迁移到 AGENTS.md，非 default rule 迁移到 model-disabled skill，并且非破坏、可重入、避免重复。
+关键结论：Zed 把 personal AGENTS、project rules、skills、sandbox 状态、可用工具、日期、模型名组合成可测试模板；skills 通过 envelope 隔离，并防止恶意 skill 逃逸 XML wrapper。Calamex 可借鉴 prompt envelope 和 rules/skills 隔离，但不应重复实现 Mastra memory processor 已覆盖的上下文注入。
 
-### 1.5 Model / Provider / API Key / Fake Provider
+### 2.5 Model / Provider / API Key / Fake Provider
 
 - `crates/language_model/src/language_model.rs`
 - `crates/language_model/src/registry.rs`
@@ -126,9 +147,9 @@ v4 继续第二批深读，重点补齐这些细节：MCP tool registry、文件
 - `crates/copilot/src/request.rs`
 - `crates/copilot/src/copilot_edit_prediction_delegate.rs`
 
-关键结论：Zed 模型层把 provider、model、auth、API key URL 绑定、capabilities、stream events、rate limit / overload / retry-after、fake provider 测试都做成显式层。OpenAI / Anthropic / Google 的 thinking、tool call、signature、cache、stop reason、usage 映射差异很大，Calamex 不能再只靠 modelId/baseUrl 字符串。
+关键结论：Zed 模型层把 provider、model、auth、API key URL 绑定、capabilities、stream events、rate limit / overload / retry-after、fake provider 测试都做成显式层。Calamex 应保留 Mastra model abstraction，同时用显式 capability registry 保护工具过滤、budget 和 provider-specific 兼容。
 
-### 1.6 ACP / UI Event / Diff / Terminal
+### 2.6 ACP / UI Event / Diff / Terminal
 
 - `crates/acp_thread/src/acp_thread.rs`
 - `crates/acp_thread/src/connection.rs`
@@ -136,105 +157,85 @@ v4 继续第二批深读，重点补齐这些细节：MCP tool registry、文件
 - `crates/acp_thread/src/mention.rs`
 - `crates/acp_thread/src/terminal.rs`
 
-关键结论：Zed 工具执行不是只给模型返回字符串，还同步维护 UI tool card、permission options、diff pending/finalized、terminal card、subagent meta、sandbox authorization meta。Calamex 的 stream events 要从“输出事件”升级为“可回放 tool event log”。
+关键结论：Zed 工具执行不是只给模型返回字符串，还同步维护 UI tool card、permission options、diff pending/finalized、terminal card、subagent meta、sandbox authorization meta。Calamex 的 stream events 要从“输出事件”升级为“可回放 tool event log”。这属于 Mastra 官方能力外的 IDE 产品层，应由 Calamex 自己补。
 
-## 2. 对 Calamex 当前方案的客观判断
+## 3. 对 Calamex 当前方案的客观判断
 
-### 2.1 已经正确的方向
+### 3.1 已经正确的方向
 
-- plan / workflow / rollback 已存在，这是 Calamex 独有优势；
+- Mastra durable agent / workflow / memory / workspace / browser / observability 已经接入，这是主干，应该继续利用；
+- plan / workflow / rollback 是 Calamex 独有优势；
 - MCP gateway capability 已有基础；
 - workspace read-before-write 与 approval 已有基础；
 - DeepSeek payload / token telemetry 已有基础；
 - runtime contract 已能隔离 Mastra 实现；
-- 已新增 `policy` 层、tool permission foundation、tool descriptor registry。
+- 已新增 `policy` 层、tool permission foundation、tool descriptor registry、model capability registry、session aggregate、context budget、compaction event 骨架。
 
-### 2.2 不足
+### 3.2 需要修正的不足
 
-- model capability 未显式化；
-- permission policy 尚未接入实际执行链路；
-- sandbox 仍是 host execution wrapper，不是 permission envelope；
-- session/run 状态分散在 execution、plan workflow、approval、stream cleanup；
-- context budget 仍停留在观测，没有 compaction decision；
-- edit/write 仍依赖 Mastra workspace 黑盒，缺 replayable edit session；
-- provider 错误映射和 fake provider 测试不足。
+- 之前的 compaction runner 容易被误解成要替代 Mastra Observational Memory；必须明确它只是 fallback / UI handoff orchestration，不是 memory 主路径。
+- context budget 不能只输出 `compact_recommended`，还要结合 Mastra memory 是否启用，决定 owner 是 `mastra_memory` 还是 `zed_style_compaction`。
+- edit/write 不应急着重写 Mastra workspace；应先补 Zed 风格的 permission/replay/diff 元数据层。
+- provider 错误映射和 fake provider 测试不足，但不应绕开 Mastra model abstraction。
 
-## 3. 新版总重构方案
+## 4. 新版总重构方案
 
-### Phase A：Source-grounded architecture ledger（已做）
+### Phase A：Source-grounded architecture ledger（持续）
 
-目标：不再凭印象写方案，而是把 Zed 相关源码按领域纳入方案证据。
+目标：不凭印象写方案，把 Mastra 官方能力和 Zed 专业 IDE agent 源码都作为证据。
 
-产物：本文件 v4。
+产物：本文件 v5。
 
-### Phase B：Tool Descriptor Registry（已落地基础版）
+### Phase B：Mastra Memory First Context Strategy（新增优先级最高）
 
-目标：像 Zed `tools.rs` 一样，建立统一工具元数据，而不是让 workspace/MCP/browser/internal 各自散落分类。
+目标：避免手写 compaction 抢 Mastra 官方 memory 的职责。
+
+新增：
+
+- `engines/budget/context-strategy-policy.ts`
+- `engines/budget/context-strategy-policy.spec.ts`
+
+策略：
+
+- `within_budget`：不压缩；
+- `warn_context_limit`：模型窗口太小，提示而不做无意义 compaction；
+- `compact_recommended + Observational Memory`：owner = `mastra_memory`；
+- `compact_recommended + Semantic Recall`：owner = `mastra_memory`；
+- `compact_recommended + no Mastra long-context memory`：owner = `zed_style_compaction` fallback。
+
+### Phase C：Tool Descriptor Registry（已落地基础版）
+
+目标：像 Zed `tools.rs` 一样，建立统一工具元数据，但执行仍优先走 Mastra workspace / MCP / browser 官方能力。
 
 已有：
 
 - `engines/policy/tool-descriptor.ts`
 - `engines/policy/tool-descriptor.spec.ts`
 
-### Phase C：Model Capability Registry（已落地基础版）
+### Phase D：Model Capability Registry（已落地基础版）
 
 目标：把模型能力用于工具过滤、context budget、output reserve，而不是只配置 modelId。
 
-新增：
+已有：
 
 - `models/capabilities.ts`
 - `models/capabilities.spec.ts`
+- `models/config.ts` 能返回 selected model capabilities。
 
-能力：
+### Phase E：Permission + Sandbox Envelope 接入执行链路
 
-- provider/model 显式解析；
-- supportsTools；
-- supportsStreamingTools；
-- supportsParallelToolCalls；
-- supportsImages；
-- supportsThinking；
-- supportsNetworkTools；
-- supportsPromptCacheKey；
-- contextWindowTokens；
-- maxOutputTokens；
-- toolSchemaFormat；
-- defaultThinkingEffort；
-- preferredSmallModelId。
-
-### Phase D：Permission + Sandbox Envelope 接入执行链路
-
-目标：`decideToolPermission` 不再只是纯函数，而是实际 gate。
+目标：Zed 式权限状态机作为 Mastra 工具执行前的外层 gate，而不是替换 Mastra 工具执行。
 
 接入点：
 
-- workspace execute/write/edit/delete/mkdir；
-- MCP gateway tool call；
-- browser/network tools；
+- Mastra workspace execute/write/edit/delete/mkdir 前；
+- MCP gateway tool call 前；
+- browser/network tools 前；
 - approval-client options。
 
-新增建议：
+### Phase F：Execution Session Aggregate
 
-- `engines/policy/sandbox-envelope.ts`
-- `engines/policy/tool-permission-adapter.ts`
-
-验收：
-
-- hardcoded deny 无 UI prompt 直接拒绝；
-- confirm 进入 approval-client；
-- allow 直接执行；
-- sensitive settings / skills 不提供 always allow；
-- symlink escape 或 outside-root 永远提升确认；
-- network/write path/unsandboxed escalation 单独审批。
-
-### Phase E：Execution Session Aggregate
-
-目标：减少 execution.ts 的隐式状态耦合。
-
-新增建议：
-
-- `engines/session/agent-session.ts`
-- `engines/session/session-resource-scope.ts`
-- `engines/session/session-events.ts`
+目标：减少 execution.ts 的隐式状态耦合，但不绕开 Mastra durable agent/workflow。
 
 字段：
 
@@ -245,25 +246,21 @@ v4 继续第二批深读，重点补齐这些细节：MCP tool registry、文件
 - tool calls；
 - resource cleanup handles；
 - checkpoint / rollback refs；
-- cancellation signal。
+- cancellation signal；
+- compaction lifecycle state。
 
-### Phase F：Context Budget + Compaction
+### Phase G：Context Budget + Compaction
 
-目标：把 token telemetry 变成执行决策。
-
-新增建议：
-
-- `engines/context/context-budget-policy.ts`
-- `engines/context/compaction-decision.ts`
+目标：把 token telemetry 变成决策，但决策必须先问 Mastra memory 是否已经能处理。
 
 规则：
 
-- system prompt、messages、context refs、tool schemas、output reserve 分项预算；
-- 大文件优先 outline / section read；
-- 超预算先 trim，再 summary compaction；
-- compaction 产物进入 session event log。
+- Mastra Memory enabled：优先 official processors / Observational Memory / Semantic Recall；
+- Zed-style compaction：只作为 fallback 或 UI handoff/replay 层；
+- compaction runner 不直接替代 memory，不直接绕开 durable agent；
+- 后续接入 execution.ts 前，必须保证不会重复压缩同一批上下文。
 
-### Phase G：Tool Event Replay
+### Phase H：Tool Event Replay
 
 目标：工具结果不仅给模型，还能恢复 UI。
 
@@ -275,61 +272,33 @@ v4 继续第二批深读，重点补齐这些细节：MCP tool registry、文件
 - approvalRecord；
 - replayPayload。
 
-### Phase H：Edit Session / Dirty Buffer / Diff Finalization
+### Phase I：Edit Session / Dirty Buffer / Diff Finalization
 
-目标：长期减少对 Mastra edit/write 黑盒的依赖。
+目标：补 Zed 的 IDE 级编辑安全，而不是替换 Mastra workspace。
 
-不应立即全面重写，但要按 Zed 的 edit_session 设计建立 Calamex 自己的 abstraction：
+应先加：
 
 - read-before-write mtime；
 - dirty user edit 冲突；
-- streaming diff；
+- streaming diff metadata；
 - pending/finalized；
 - reject/accept rollback；
 - failed partial edit 仍保留 diff。
 
-## 4. 本轮已落地代码
+## 5. 当前最高优先级
 
-### 4.1 Tool Descriptor Registry
-
-新增文件：
-
-- `agent-sidecar/src/engines/policy/tool-descriptor.ts`
-- `agent-sidecar/src/engines/policy/tool-descriptor.spec.ts`
-
-### 4.2 Model Capability Registry
-
-新增文件：
-
-- `agent-sidecar/src/models/capabilities.ts`
-- `agent-sidecar/src/models/capabilities.spec.ts`
-
-更新文件：
-
-- `agent-sidecar/src/models/index.ts`
-
-新增能力：
-
-- provider/model 能力显式化；
-- DeepSeek / OpenAI / Anthropic / Google / OpenRouter / Qwen / GLM / Kimi 能力默认值；
-- thinking 模型族规则；
-- Google Gemini 3 默认 thinking effort；
-- background small model 选择；
-- fail-soft unknown provider；
-- 单测覆盖 provider/model 解析、thinking、unknown provider、错误输入。
-
-## 5. 后续最高优先级
-
-1. 把 `capabilities` 接进 `createMastraOpenAICompatibleModelConfig` 的返回值，成为 selected model 的运行时属性。
-2. 把 `tool-descriptor` 和 `tool-permission-policy` 接入 `loadMastraMcpTools` / workspace config。
-3. 建立 session resource scope，把 cleanup/cancel/reasoning eviction 统一。
-4. 再开始 edit session 抽象，避免现在半吊子重写文件编辑。
+1. 把 `context-strategy-policy` 接进 `createAcontextTokenEventDraft` 或 execution telemetry，让每次 token check 明确 owner：Mastra memory / Zed-style compaction / warning / none。
+2. 检查是否能用 Mastra `TokenLimiterProcessor` 替代部分手写 token trimming；如果能，用官方 processor，保留 Calamex telemetry wrapper。
+3. compaction runner 暂不直接接入主执行流，直到确认不会与 Observational Memory / Semantic Recall 重复。
+4. 把 Zed 权限状态机接到 Mastra tool 执行前，而不是重写工具执行。
 
 ## 6. 专业性判断
 
-这版继续追加第二批 Zed AI 源码深读，并从 Zed 的 provider registry / model capability / provider-specific request mapper 中抽出 Calamex 当前最缺的模型能力层。
+这版路线的核心变化是：**Mastra 做 Agent runtime 主干，Zed 做 IDE agent 工程边界参考，Calamex 做产品级 runtime contract 和 UI/rollback/approval 整合。**
 
-同时仍避免两个极端：
+这才是取长补短：
 
-- 不糊弄：继续落地 model capability registry，并保留单测；
-- 不过度工程化：没有照搬 Zed 的 provider trait / GPUI registry，而是先让 Calamex 的模型选择拥有明确能力边界。
+- 不糊弄：继续保留 Zed 源码证据和架构严谨性；
+- 不生搬硬套：Mastra 已经有 Memory / processors / durable agent 的地方不重复造轮子；
+- 不过度工程化：custom code 只写在 Mastra 官方能力外的边界层；
+- 不新旧杂糅：每个模块必须有明确 owner 和职责边界。
