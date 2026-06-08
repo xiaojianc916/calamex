@@ -14,6 +14,7 @@ vi.mock('@/services/editor/shiki-shared', () => ({
 import {
   computeShikiHighlightRange,
   resolveShikiHighlightUpdateAction,
+  tokenStyleDeclarations,
 } from './codemirror-shiki-highlight';
 
 describe('resolveShikiHighlightUpdateAction', () => {
@@ -138,5 +139,31 @@ describe('computeShikiHighlightRange', () => {
         fromDocumentStart: false,
       }),
     ).toEqual({ startLine: 260, endLine: 400 });
+  });
+});
+
+describe('tokenStyleDeclarations', () => {
+  it('仅有前景色时只产出 color 声明', () => {
+    expect(tokenStyleDeclarations({ content: 'x', offset: 0, color: '#24292f' })).toBe(
+      'color:#24292f',
+    );
+  });
+
+  it('组合前景色 / 背景色与 italic+bold+underline 字形', () => {
+    expect(
+      tokenStyleDeclarations({
+        content: 'x',
+        offset: 0,
+        color: '#cf222e',
+        bgColor: '#ffffff',
+        fontStyle: 1 | 2 | 4,
+      }),
+    ).toBe(
+      'color:#cf222e;background-color:#ffffff;font-style:italic;font-weight:600;text-decoration:underline',
+    );
+  });
+
+  it('无任何样式信息时产出空串', () => {
+    expect(tokenStyleDeclarations({ content: 'x', offset: 0 })).toBe('');
   });
 });

@@ -30,7 +30,7 @@ const HIGHLIGHT_OVERSCAN_LINES = 40;
 const HIGHLIGHT_RECOMPUTE_DEBOUNCE_MS = 90;
 
 // Shiki token 样式种类远少于 token 数量。缓存 Decoration.mark 可避免滚动/重算时
-// 为同一 style 字符串反复分配短生命周期对象；设置上限避免异常主题造成无界增长。
+// 为同一 class 反复分配短生命周期对象；设置上限避免异常主题造成无界增长。
 const MAX_TOKEN_DECORATION_CACHE_SIZE = 512;
 
 const FONT_STYLE_ITALIC = 1;
@@ -133,7 +133,12 @@ const shikiLanguageField = StateField.define<string>({
   },
 });
 
-const tokenInlineStyle = (token: IShikiThemedToken): string => {
+/**
+ * 把一个 Shiki token 编译成 CSS 声明串（color / background-color / font-style /
+ * font-weight / text-decoration）。取值与此前内联 style 逐字一致，仅承载方式改变，
+ * 因此不影响 github-light 的呈现。导出以便单测做取值校验。
+ */
+export const tokenStyleDeclarations = (token: IShikiThemedToken): string => {
   const declarations: string[] = [];
   if (token.color) {
     declarations.push(`color:${token.color}`);
@@ -156,20 +161,61 @@ const tokenInlineStyle = (token: IShikiThemedToken): string => {
   return declarations.join(';');
 };
 
-const tokenDecoration = (style: string): Decoration => {
-  const cached = tokenDecorationCache.get(style);
+// style 声明串 → 稳定 class 名。固定 github-light 主题下 Shiki 产出的样式种类有限，
+// 故 class 注册表规模受主题约束、实际有界；规则一旦注入即常驻（持续被 token 引用），
+// 不随下方 Decoration LRU 缓存淘汰而移除。
+const tokenClassByDeclarations = new Map<string, string>();
+let tokenStyleSheetElement: HTMLStyleElement | null = null;
+let nextTokenClassId = 0;
+
+const ensureTokenStyleSheet = (): CSSStyleSheet | null => {
+  if (typeof document === 'undefined') {
+    return null;
+  }
+  let element = tokenStyleSheetElement;
+  if (!element) {
+    element = document.createElement('style');
+    element.setAttribute('data-cm-shiki-tokens', '');
+    document.head.appendChild(element);
+    tokenStyleSheetElement = element;
+  }
+  return element.sheet;
+};
+
+/** 取（或惰性创建）某 style 声明串对应的 CSS class，并把规则注入文档样式表。 */
+const tokenClassForDeclarations = (declarations: string): string => {
+  const existing = tokenClassByDeclarations.get(declarations);
+  if (existing) {
+    return existing;
+  }
+  const className = `cm-shk-${nextTokenClassId}`;
+  nextTokenClassId += 1;
+  const sheet = ensureTokenStyleSheet();
+  if (sheet) {
+    try {
+      sheet.insertRule(`.${className}{${declarations}}`, sheet.cssRules.length);
+    } catch {
+      // insertRule 在极端环境下可能抛错：忽略，class 仍登记以保持映射稳定。
+    }
+  }
+  tokenClassByDeclarations.set(declarations, className);
+  return className;
+};
+
+const tokenDecoration = (className: string): Decoration => {
+  const cached = tokenDecorationCache.get(className);
   if (cached) {
     return cached;
   }
 
-  const decoration = Decoration.mark({ attributes: { style } });
+  const decoration = Decoration.mark({ class: className });
   if (tokenDecorationCache.size >= MAX_TOKEN_DECORATION_CACHE_SIZE) {
     const oldestKey = tokenDecorationCache.keys().next().value;
     if (oldestKey) {
       tokenDecorationCache.delete(oldestKey);
     }
   }
-  tokenDecorationCache.set(style, decoration);
+  tokenDecorationCache.set(className, decoration);
   return decoration;
 };
 
@@ -252,9 +298,9 @@ const buildDecorationsFromTokenLines = (
       if (from >= to) {
         continue;
       }
-      const style = tokenInlineStyle(token);
-      if (style) {
-        builder.add(from, to, tokenDecoration(style));
+      const declarations = tokenStyleDeclarations(token);
+      if (declarations) {
+        builder.add(from, to, tokenDecoration(tokenClassForDeclarations(declarations)));
       }
     }
   }
