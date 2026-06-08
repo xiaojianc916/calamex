@@ -1,179 +1,251 @@
-# Calamex Agent Sidecar 重构路线（参考 Zed Agent）
+# Calamex Agent Sidecar 重构路线（Zed 对照版 v2）
 
-> 本文记录对 Calamex `agent-sidecar` 与 Zed Agent / Language Model 源码的对照结论。Zed 相关源码包含 GPL 组件，本项目只参考工程思想和边界设计，不复制源码实现。
+> 约束：Zed 的 agent / language_model / shell_command_parser 多个模块带 GPL 许可证。本项目只吸收工程边界、状态机思想和安全优先级，不复制实现代码。
 
-## 对照过的 Zed 模块
+## 0. 对上一版方案的复审结论
 
-- `crates/language_model/src/language_model.rs`：模型 / provider trait、能力声明、流式事件抽象。
-- `crates/language_model/src/registry.rs`：模型注册表、默认模型、fast model、后台模型选择。
-- `crates/language_model/src/api_key.rs`：API key 来源、URL 绑定、加载状态。
-- `crates/open_ai/src/open_ai.rs`、`crates/anthropic/src/anthropic.rs`、`crates/open_router/src/open_router.rs`：provider 请求结构、能力字段、错误分类、rate limit/overload 映射。
-- `crates/agent/src/thread.rs`：thread 生命周期、消息持久化、工具回放、token usage、自动压缩、取消和重试。
-- `crates/agent/src/tool_permissions.rs`：工具权限优先级、hardcoded deny、命令拆解、most-restrictive 规则。
-- `crates/agent/src/sandboxing.rs`：sandbox 请求 / thread grant / persistent grant / effective policy。
-- `crates/agent/src/tools.rs` 与具体工具：工具注册、重复名称检查、provider 能力过滤。
+上一版方案方向没有错，但确实偏粗：它把“策略层、session 层、模型能力、上下文压缩”列出来了，却没有充分展开 Zed 的真实细节，也没有回答两个关键问题：
 
-## 当前 Calamex 已具备的基础
+1. 哪些是必须马上做的基础设施，哪些是未来才需要的抽象？
+2. 如何避免“最小实现糊弄”和“照搬 Zed 过度工程化”两个极端？
 
-- runtime contract 已按接口分层，当前实现是 Mastra runtime。
-- plan / execution / validation / rollback 已分模块，不是单文件堆叠。
-- MCP gateway 已有 capability 模型，并能根据 MCP annotations 进行审批判定。
-- workspace 工具有 contained filesystem、read-before-write、审批、Windows PowerShell 适配。
-- output budget / tool schema budget / provider payload telemetry 已经形成基础观测。
-- request-scoped model config 已存在，DeepSeek gateway 已能统一接入 reasoning fetch。
+这版方案按 Zed 实际源码重新拆解：Zed 的专业性主要来自**运行状态机 + 权限决策 + 工具事件流 + 可回放编辑会话 + 模型能力注册表 + context budget**，不是来自某个单点技巧。因此 Calamex 应该分层重构，但每一层都要有明确验收，不做空泛目录拆分。
 
-## 主要差距
+## 1. 已深入对照的 Zed 设计点
 
-### 1. 执行策略还散在流程里
+### 1.1 Agent / Thread 生命周期
 
-Zed 把 agent 行为边界显式建模为 thread、profile、tool permission、sandbox grants、model capability 等多个稳定层。Calamex 目前仍有部分执行边界直接写在 `execution.ts` 流程里，例如工具步数上限。
+Zed `NativeAgent` / `Thread` 的关键不是“有一个 agent 类”，而是明确持有：
 
-重构方向：建立 `engines/policy/`，把执行步数、审批策略、工具能力过滤、上下文压缩阈值等运行边界逐步集中到策略层。
+- sessions / pending_sessions；
+- project state 与 project context watch；
+- models / skills_state；
+- thread messages、pending_message、running_turn；
+- tool registry、tool use event stream；
+- token usage、summary / compaction 状态；
+- sandbox grants、subagent context；
+- cancellation 与 retry 边界。
 
-### 2. 工具权限需要从“风险展示”升级到“权限决策模型”
+Calamex 当前分散在 Mastra runtime、plan store、workflow store、approval-client、stream-utils、workspace 中。问题不是模块数量，而是缺一个“本轮执行状态聚合”。
 
-Calamex 已改进 approval risk signal，但距离 Zed 的权限系统还有差距：Zed 有 hardcoded security deny、用户规则优先级、命令拆解、路径规范化、most-restrictive 合并。
+### 1.2 工具注册与 provider 能力过滤
 
-重构方向：新增 sidecar 原生 tool permission policy：
+Zed `tools.rs` 体现了几个质量点：
 
-1. hardcoded deny 永远最高优先级；
-2. deny > confirm > allow > tool default > global default；
-3. terminal 命令需要命令拆解 / 注入检测；
-4. path 类工具需要 raw path + normalized path 取最严格结果；
-5. MCP 工具用 `mcp:<server>:<tool>` 命名空间，避免和内置工具碰撞。
+- 所有内置工具名集中注册；
+- 编译期检查重复工具名；
+- 工具是否支持某 provider 是显式能力；
+- 工具 schema 与 streaming input 能力是工具元数据；
+- 添加工具不只是在 registry 里加一项，还要进入 profile allowlist 与权限 UI。
 
-### 3. Sandbox / host command 边界还需要显式授权模型
+Calamex 当前工具来自 Mastra workspace + MCP gateway + browser，工具来源更多，但缺一个统一 tool descriptor。
 
-Zed 把 sandbox escalation 拆成 network、write subtree、all writes、unsandboxed，并支持 thread grants 与 persistent grants。Calamex 目前 workspace sandbox 更多依赖 Mastra/LocalSandbox 包装，策略表达还不够显式。
+### 1.3 Terminal 权限与 shell 安全
 
-重构方向：建立 Calamex 自己的 command permission envelope：
+Zed `tool_permissions.rs` / `shell_command_parser` 的重点：
 
-- command baseline approval；
-- network / write path / unsandboxed escalation；
-- approval once 与 thread-scope grant 分离；
-- 每次实际执行时计算 effective policy，而不是只看本次 request。
+- hardcoded security deny 永远最高，用户配置也不能绕过；
+- deny > confirm > allow > tool default > global default；
+- terminal 命令要解析为子命令，链式命令中任一危险命令都要影响整体决策；
+- shell interpolation / substitution 默认不适合自动批准；
+- 允许规则必须覆盖所有子命令，不能只匹配开头；
+- `rm` 这类破坏性命令要检查 root / home / current / parent，并做路径规范化；
+- allow-always pattern 只从可信命令前缀生成，拒绝 `./script` 和绝对路径脚本。
 
-### 4. Thread / session 语义应继续收敛
+Calamex 原本只有 approval risk 展示，不是权限决策。现在已开始补 `engines/policy`，这应成为 Phase 1 的核心。
 
-Zed 的 `Thread` 同时管理消息、pending turn、取消、回放、token usage、summary、subagent、工具结果。Calamex 现在依赖 Mastra memory + plan store + workflow store，多处状态之间需要更清晰的 session aggregate。
+### 1.4 Sandbox escalation
 
-重构方向：建立轻量 `AgentSession` 层，统一记录：
+Zed `sandboxing.rs` 没有把 sandbox 做成一个 bool，而是拆为：
 
-- sessionId / runId / planId；
-- current turn state；
-- pending approval；
-- token usage snapshot；
-- resource handles；
-- checkpoint / rollback reference。
+- network；
+- concrete write paths；
+- allow all writes；
+- unsandboxed；
+- thread grants；
+- persistent grants；
+- effective request。
 
-### 5. 上下文压缩应从“观测”升级到“决策”
+Calamex 当前 `LocalSandbox({ isolation: 'none' })` 适配 Windows host execution，严格意义上还不是等价 sandbox。Calamex 应该先做“权限 envelope”和“执行前策略”，再考虑 OS sandbox。
 
-Zed 在 thread turn 中根据模型 context window 做自动 compaction，并把 compaction 作为消息历史的一部分。Calamex 目前有 token 估算事件，但还未形成可执行的 compaction decision。
+### 1.5 Edit / Write 工具事件流
 
-重构方向：
+Zed `edit_file_tool.rs` / `write_file_tool.rs` 的重点：
 
-- 从 model capability 获取 context window / max output；
-- 预估 prompt + messages + tools + context；
-- 超阈值时触发 deterministic trimming 或 summary compaction；
-- compaction 结果作为显式事件和可回放记录保存。
+- 支持 streaming input，partial 到达时打开 buffer / 更新 diff；
+- diff 有 pending / finalized；
+- replay 不重跑工具，只重建 UI 状态；
+- dirty buffer 冲突让用户选择保留或丢弃；
+- 敏感路径（settings、skills）不提供 always allow；
+- `..` traversal 要用规范化路径再次检查；
+- 失败时保留已产生 diff 与错误上下文。
 
-## 分阶段方案
+Calamex 目前依赖 Mastra workspace 的 write/edit 工具，缺少自己可回放的 edit session 层。这是中期大重构，不应仓促半吊子实现。
 
-### Phase 0：策略基线（已开始）
+### 1.6 模型能力与 provider registry
 
-目标：先把散落常量迁到策略层，降低后续大改风险。
+Zed language_model 层把模型能力显式化：tools、tool choice、streaming tools、images、thinking、context window、output token limit、schema format、provider auth state、默认模型、fast model、summary model。
 
-- 新增 `engines/policy/execution-policy.ts`。
-- `AGENT_EXECUTION_MAX_STEPS` 支持环境变量覆盖，并带上下限。
-- `execution.ts` 只消费策略结果，不直接持有策略常量。
+Calamex 当前 model config 已有 baseUrl / apiKey / observer / reflector，但还缺 capability registry。这个不应只是枚举模型名，而要服务于工具过滤、context budget、输出 token 策略。
 
-### Phase 1：工具权限策略
+## 2. Calamex 重构总体判断
 
-目标：把审批从 UI risk 提示升级为真正的 permission decision。
+### 2.1 不是“推倒重写”
 
-建议新增：
+Calamex 已经有：plan/workflow、MCP gateway capability、workspace read-before-write、DeepSeek payload 观测、runtime contract。推倒重写会破坏已有可用路径，不专业。
 
-- `engines/policy/tool-permission-policy.ts`
+### 2.2 也不能只做“最小实现”
+
+只新增一个常量文件确实太轻。正确做法是：每轮落地一个**可测试、可接入、可扩展**的核心边界。Phase 1 应直接实现 tool permission decision 的基础纯函数，而不是继续只做文档。
+
+### 2.3 防止过度工程化的原则
+
+不提前复制 Zed 的完整 Thread / GPUI / buffer / action_log。Calamex 是 Tauri + Vue + Mastra，应该保留自身架构，只借鉴边界：
+
+- 纯策略函数先行；
+- runtime 接入其次；
+- UI/持久化最后；
+- 每一步有测试和回读。
+
+## 3. 修订后的分阶段路线
+
+### Phase 1：Tool Permission Decision（正在落地）
+
+目标：把审批从 risk label 升级为真实 permission policy。
+
+已新增基础：
+
 - `engines/policy/command-safety.ts`
-- `engines/policy/path-safety.ts`
+- `engines/policy/tool-permission-policy.ts`
+- `engines/policy/tool-permission-policy.spec.ts`
+
+当前范围：
+
+- hardcoded catastrophic `rm` deny；
+- shell chain 拆分；
+- interpolation/substitution fail closed；
+- deny > confirm > allow > default；
+- terminal allow 必须覆盖全部子命令；
+- path raw + normalized 取最严格；
+- MCP 工具命名空间：`mcp:<server>:<tool>`。
+
+下一步接入点：
+
+- `responses.ts` 的 `deriveApprovalRisk` 继续负责 UI 风险展示；
+- `approval-client` / workspace approval 需要接入 `decideToolPermission`，形成真正 allow/confirm/deny；
+- MCP gateway 根据 annotations 生成默认 rules。
 
 验收：
 
-- dangerous terminal command 被 hardcoded deny；
-- always allow 不可绕过 hardcoded deny；
-- chained command 中任一危险子命令可被识别；
-- raw path 与 normalized path 取最严格决策；
-- MCP 工具名 namespace 不与本地工具碰撞。
+- `rm -rf /`、`rm -rf ~`、`rm -rf .` 永远 deny；
+- `git status && npm install` 不能被 `^git` allow 误放行；
+- `.zed` / skills traversal 需要 confirm；
+- MCP 工具不和内置 terminal/edit/write 碰撞。
 
-### Phase 2：Execution session aggregate
+### Phase 2：Tool Descriptor Registry
 
-目标：减少 execution / approval / rollback / workflow store 之间的隐式状态耦合。
+目标：统一 Mastra workspace、MCP、browser、本地工具的元数据。
 
-建议新增：
+建议结构：
 
-- `engines/session/agent-session.ts`
-- `engines/session/session-store.ts`
-- `engines/session/resource-scope.ts`
+```ts
+interface IAgentToolDescriptor {
+  name: string;
+  source: 'workspace' | 'mcp' | 'browser' | 'internal';
+  kind: 'read' | 'write' | 'execute' | 'network' | 'edit';
+  supportsStreamingInput: boolean;
+  requiresApprovalByDefault: boolean;
+  modelCapabilityRequired?: 'tools' | 'streamingTools' | 'images';
+}
+```
 
-验收：
+这不是过度工程化，因为 Calamex 工具来源已经多，缺统一 descriptor 会继续让权限、预算、UI 都各管一套。
 
-- pending approval 生命周期集中管理；
-- stream cleanup / MCP disconnect / workspace destroy 统一由 resource scope 释放；
-- replay / resume / rollback 能读取同一 session snapshot。
+### Phase 3：Execution Session Aggregate
 
-### Phase 3：上下文预算与压缩决策
+目标：建立轻量 session aggregate，不复制 Zed Thread。
 
-目标：把 token telemetry 变为可执行决策。
+应包含：
 
-建议新增：
+- sessionId / runId / planId / stepId；
+- current turn status；
+- pending approvals；
+- resource scope；
+- token usage snapshot；
+- checkpoint refs；
+- cancellation signal。
 
-- `engines/context/context-budget-policy.ts`
-- `engines/context/compaction.ts`
+不要一开始做完整持久化 thread，只先让当前执行链路收敛。
 
-验收：
+### Phase 4：Resource Scope 与取消传播
 
-- 工具 schema、system prompt、messages、UI context 分项预算；
-- 超预算前能 deterministic trim；
-- 超过安全阈值能产生 summary compaction；
-- compaction 事件可见、可回放、可调试。
+目标：把 `streamCleanup`、MCP disconnect、workspace destroy、browser close、reasoning context eviction 收敛成资源作用域。
 
-### Phase 4：模型能力注册表
+Zed 的经验是 running turn 取消必须集中传播；Calamex 当前 finally 能释放资源，但语义分散。
 
-目标：让 provider/model 能力成为显式数据，而不是靠 prompt 或字符串推断。
+### Phase 5：Context Budget / Compaction Decision
 
-建议新增：
+目标：把 token telemetry 变成决策。
 
-- `models/model-capabilities.ts`
-- `models/model-registry.ts`
+需要依赖 Phase 6 的 model capability，但可以先建立接口：
 
-能力字段：
+- system prompt budget；
+- messages budget；
+- context refs budget；
+- tool schema budget；
+- output reserve；
+- deterministic trim；
+- summary compaction。
+
+### Phase 6：Model Capability Registry
+
+目标：让模型选择影响工具、上下文、输出预算。
+
+字段：
 
 - supportsTools；
+- supportsToolChoice；
+- supportsStreamingTools；
 - supportsImages；
 - supportsThinking；
-- supportsStreamingTools；
 - contextWindow；
 - maxOutputTokens；
+- schemaFormat；
 - preferredSmallModel；
-- provider quirks。
+- provider error mapping。
 
-### Phase 5：工具结果与回放标准化
+### Phase 7：Edit Session / Replay
 
-目标：把工具调用 UI、模型上下文、debug output 三者分开。
+目标：逐步减少对 Mastra workspace edit/write 黑盒行为的依赖。
 
-参考 Zed：tool replay 不重新执行工具，只重建 UI 状态。
+不建议马上做，因为这会牵涉前端 diff UI、文件系统、dirty buffer、rollback。应先完成权限和 session aggregate。
 
-建议：
+最终目标：
 
-- tool result content：给模型；
-- raw output：给调试；
-- replay event：给 UI；
-- approval record：给审计。
+- edit/write 输出可回放；
+- dirty user edit 不被覆盖；
+- diff pending/finalized；
+- read-before-write 和 approval 统一由 policy 决策。
 
-## 质量原则
+## 4. 当前代码落地说明
 
-- 边界必须显式：model、tool、permission、sandbox、session、context budget 不混在一个流程函数里。
-- fail closed：不确定是否安全时走确认或拒绝，不默认放行。
-- 策略可测试：所有策略函数都应是纯函数或接近纯函数，优先单元测试覆盖。
-- 状态可回放：执行、审批、工具结果、压缩都要能形成稳定事件。
-- 不复制 GPL 源码：只采用架构思想，代码保持 Calamex 自有实现。
+这版已经不只是文档：新增了可测试的权限策略基础。它仍不是最终接入，但已经是后续接入 approval/workspace/MCP 的核心纯函数层。
+
+为什么先纯函数：
+
+- 和 Zed 一样，权限判断必须可单测；
+- 直接接入 runtime 前先把 deny/confirm/allow 优先级稳定；
+- 避免在 stream 执行路径里调试安全策略。
+
+## 5. 专业性判断
+
+这版方案相比上一版更合理：
+
+- 不再只是列模块名，而是按 Zed 的真实机制拆解；
+- 没有假装已经“看完整个 Zed”，而是明确哪些机制已对照、哪些需要继续深挖；
+- 不复制 Zed GPL 源码；
+- 不推倒 Calamex 现有 runtime；
+- 不停留在最小常量迁移，开始落地 tool permission 基础；
+- 不提前做完整 Thread/Editor buffer/action log，避免过度工程化。
+
+下一轮最应该做：把 `decideToolPermission` 接入实际 approval 流程，并让 workspace execute/write/edit 在执行前产生 deny/confirm/allow，而不是只展示 risk label。
