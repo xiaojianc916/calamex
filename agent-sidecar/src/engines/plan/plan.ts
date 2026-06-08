@@ -119,6 +119,7 @@ export class MastraRuntimePlan extends MastraRuntimeChat {
                     memoryEnabled: true,
                     maxSteps: generateOptions.maxSteps ?? 1,
                     toolChoice,
+                    modelCapabilities: modelConfig.capabilities,
                 })), options);
                 const generated = await agent.generate(mastraMessages, generateOptions);
                 const parsedPlan = normalizeGeneratedAgentPlan(generated.object, input.goal);

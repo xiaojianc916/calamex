@@ -1,11 +1,13 @@
 import type { ToolsInput } from '@mastra/core/agent';
 import { z } from 'zod';
 import type { IDeepSeekRequestPayloadStats } from '../../models/providers/deepseek-reasoning-fetch.js';
+import type { IAgentModelCapabilities } from '../../models/capabilities.js';
 import type { IAgentRuntimeRunOptions, TAgentRuntimeOutputEvent } from '../contracts/runtime-contracts.js';
 import type { IAgentContextReferenceInput } from '../contracts/runtime-input.js';
 import { pushUiEvent, toRecord } from '../utils.js';
 import type { IMastraToolBudgetStats, TAcontextProviderPayloadEventDraft, TAcontextTokenEventDraft, TMastraChatMessage, TRuntimeEventFactory } from '../types.js';
 import { countJsonChars, countTextChars, estimateInputTokensByChars, stringifyForJson } from '../../text-metrics.js';
+import { resolveContextBudgetDecision } from './context-budget-policy.js';
 
 // Char/token helpers now live in ../../text-metrics.js. Re-exported here so the
 // existing import surface of this module is preserved.
@@ -118,6 +120,7 @@ export const createAcontextTokenEventDraft = (input: {
     memoryEnabled: boolean;
     maxSteps: number;
     toolChoice: 'auto' | 'none';
+    modelCapabilities?: Pick<IAgentModelCapabilities, 'contextWindowTokens' | 'maxOutputTokens'> | undefined;
 }): TAcontextTokenEventDraft => {
     const messagesText = stringifyForBudget(input.messages);
     const toolsText = stringifyForBudget(Object.entries(input.tools).map(([name, tool]) =>
@@ -132,12 +135,19 @@ export const createAcontextTokenEventDraft = (input: {
         messagesText,
         toolsText,
     ].join('\n');
+    const projectedInputTokens = estimateInputTokensByChars(inputText);
+    const contextBudget = input.modelCapabilities
+        ? resolveContextBudgetDecision({
+            projectedInputTokens,
+            capabilities: input.modelCapabilities,
+        })
+        : null;
 
     return {
         type: 'acontext.token.checked',
         visibility: 'debug',
         level: 'info',
-        projectedInputTokens: estimateInputTokensByChars(inputText),
+        projectedInputTokens,
         inputCharCount: systemPromptCharCount + messageCharCount + toolSchemaCharCount,
         systemPromptCharCount,
         messageCharCount,
@@ -157,6 +167,16 @@ export const createAcontextTokenEventDraft = (input: {
         maxSteps: input.maxSteps,
         toolChoice: input.toolChoice,
         tokenEstimateMethod: 'char_heuristic',
+        ...(contextBudget ? {
+            contextWindowTokens: contextBudget.contextWindowTokens,
+            maxOutputTokens: contextBudget.maxOutputTokens,
+            availableInputTokens: contextBudget.availableInputTokens,
+            remainingInputTokens: contextBudget.remainingInputTokens,
+            compactionRemainingTokenBudget: contextBudget.compactionRemainingTokenBudget,
+            compactionSupported: contextBudget.compactionSupported,
+            contextBudgetDecision: contextBudget.kind,
+            retainedUserMessageByteBudget: contextBudget.retainedUserMessageByteBudget,
+        } : {}),
     };
 };
 

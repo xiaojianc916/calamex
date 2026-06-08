@@ -44,6 +44,8 @@ export type TAgentRuntimeLevel = 'debug' | 'info' | 'warn' | 'error';
 
 export type TToolRiskLevel = 'low' | 'medium' | 'high';
 
+export type TContextBudgetDecisionKind = 'within_budget' | 'compact_recommended' | 'warn_context_limit';
+
 export interface IAgentRuntimeEventBase {
   id: string;
   type: TAgentRuntimeEventType;
@@ -180,6 +182,14 @@ export interface IAgentAcontextTokenEvent extends IAgentRuntimeEventBase {
   memoryEnabled?: boolean;
   maxSteps?: number;
   toolChoice?: 'auto' | 'none';
+  contextWindowTokens?: number;
+  maxOutputTokens?: number;
+  availableInputTokens?: number;
+  remainingInputTokens?: number;
+  compactionRemainingTokenBudget?: number;
+  compactionSupported?: boolean;
+  contextBudgetDecision?: TContextBudgetDecisionKind;
+  retainedUserMessageByteBudget?: number;
   tokenEstimateMethod?: 'char_heuristic';
 }
 

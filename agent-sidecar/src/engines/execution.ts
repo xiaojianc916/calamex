@@ -213,6 +213,7 @@ export class MastraRuntimeExecution extends MastraRuntimeValidation {
                     memoryEnabled: true,
                     maxSteps,
                     toolChoice,
+                    modelCapabilities: modelConfig.capabilities,
                 })), options);
                 executionSession.push(createCheckpointEvent({
                     type: 'rollback.checkpoint.created',
