@@ -55,7 +55,10 @@ pub async fn ensure_terminal_session(
     update_terminal_geometry(payload.cols, payload.rows);
 
     let (terminal_cwd, created) = {
-        let creation_guard = terminal_state
+        // Serialize the full create path with close/shutdown. This mirrors VS Code's
+        // process lifecycle guard: a close issued while a pty is still being created must
+        // not observe "no session" and return before the new process is inserted.
+        let _creation_guard = terminal_state
             .creation_guard
             .lock()
             .map_err(|_| "终端会话创建锁已损坏。".to_string())?;
@@ -91,8 +94,6 @@ pub async fn ensure_terminal_session(
             .transpose()?
             .unwrap_or_else(|| DEFAULT_WSL_INTERACTIVE_CWD.to_string());
 
-        drop(creation_guard);
-
         let event_app = app.clone();
         let event_state = terminal_state.clone();
         let event_session_id = payload.session_id.clone();
@@ -114,37 +115,31 @@ pub async fn ensure_terminal_session(
         )
         .map_err(|error| error.to_string())?;
 
-        {
-            let _creation_guard = terminal_state
-                .creation_guard
-                .lock()
-                .map_err(|_| "终端会话创建锁已损坏。".to_string())?;
-            if get_terminal_session(&terminal_state, &payload.session_id)?.is_some() {
-                let _ = handle.close();
-                return Ok(TerminalSessionPayload {
-                    session_id: payload.session_id,
-                    cwd: terminal_cwd.clone(),
-                    shell_label: "WSL2".into(),
-                    created: false,
-                    initial_output: None,
-                });
-            }
-
-            let session = Arc::new(TerminalSession {
-                handle,
-                working_directory: terminal_cwd.clone(),
+        if get_terminal_session(&terminal_state, &payload.session_id)?.is_some() {
+            let _ = handle.close();
+            return Ok(TerminalSessionPayload {
+                session_id: payload.session_id,
+                cwd: terminal_cwd.clone(),
+                shell_label: "WSL2".into(),
+                created: false,
+                initial_output: None,
             });
-            let mut sessions = match lock_terminal_sessions(&terminal_state) {
-                Ok(sessions) => sessions,
-                Err(error) => {
-                    let _ = terminate_terminal_session(session.as_ref());
-                    return Err(error);
-                }
-            };
-            sessions.insert(payload.session_id.clone(), Arc::clone(&session));
-            set_terminal_snapshot(&terminal_state, &payload.session_id, String::new())?;
-            remove_terminal_interactive_visual_state(&terminal_state, &payload.session_id)?;
         }
+
+        let session = Arc::new(TerminalSession {
+            handle,
+            working_directory: terminal_cwd.clone(),
+        });
+        let mut sessions = match lock_terminal_sessions(&terminal_state) {
+            Ok(sessions) => sessions,
+            Err(error) => {
+                let _ = terminate_terminal_session(session.as_ref());
+                return Err(error);
+            }
+        };
+        sessions.insert(payload.session_id.clone(), Arc::clone(&session));
+        set_terminal_snapshot(&terminal_state, &payload.session_id, String::new())?;
+        remove_terminal_interactive_visual_state(&terminal_state, &payload.session_id)?;
 
         (terminal_cwd, true)
     };
@@ -226,6 +221,12 @@ pub fn close_terminal_session(
     payload: CloseTerminalSessionRequest,
 ) -> Result<(), String> {
     let terminal_state = state.inner().clone();
+    // Pair close with ensure_terminal_session's create guard so close cannot miss a
+    // session that is between process spawn and registry insertion.
+    let _creation_guard = terminal_state
+        .creation_guard
+        .lock()
+        .map_err(|_| "终端会话创建锁已损坏。".to_string())?;
     let removed_session = remove_terminal_session(&terminal_state, &payload.session_id)?;
     remove_terminal_snapshot(&terminal_state, &payload.session_id)?;
     remove_terminal_interactive_visual_state(&terminal_state, &payload.session_id)?;
@@ -240,6 +241,10 @@ pub fn close_terminal_session(
 }
 
 pub fn shutdown_all_terminal_sessions(state: &TerminalSessionState) -> Result<(), String> {
+    let _creation_guard = state
+        .creation_guard
+        .lock()
+        .map_err(|_| "终端会话创建锁已损坏。".to_string())?;
     let sessions = {
         let mut sessions_map = lock_terminal_sessions(state)?;
         sessions_map
