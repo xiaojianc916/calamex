@@ -79,4 +79,34 @@ describe('useAiConversationCheckpoints', () => {
     expect(checkpoints.isConversationCheckpointDisabled.value).toBe(true);
   });
 
-  it('发送中时禁用检查点
+  it('发送中时禁用检查点并跳过恢复', async () => {
+    const { assistant, isSending, restoreConversationCheckpoint } = createAssistantStub();
+    const checkpoints = withSetup(() => useAiConversationCheckpoints(assistant));
+
+    isSending.value = true;
+
+    expect(checkpoints.isConversationCheckpointDisabled.value).toBe(true);
+
+    await checkpoints.handleRestoreConversationCheckpoint('m-1');
+
+    expect(restoreConversationCheckpoint).not.toHaveBeenCalled();
+  });
+
+  it('可用时调用恢复接口', async () => {
+    const { assistant, restoreConversationCheckpoint } = createAssistantStub();
+    const checkpoints = withSetup(() => useAiConversationCheckpoints(assistant));
+
+    await checkpoints.handleRestoreConversationCheckpoint('m-1');
+
+    expect(restoreConversationCheckpoint).toHaveBeenCalledWith('cp-1');
+  });
+
+  it('未知消息不触发恢复', async () => {
+    const { assistant, restoreConversationCheckpoint } = createAssistantStub();
+    const checkpoints = withSetup(() => useAiConversationCheckpoints(assistant));
+
+    await checkpoints.handleRestoreConversationCheckpoint('missing');
+
+    expect(restoreConversationCheckpoint).not.toHaveBeenCalled();
+  });
+});
