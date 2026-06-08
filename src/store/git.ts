@@ -449,6 +449,17 @@ export const useGitStore = defineStore('git', () => {
     stashes.value = [];
   };
 
+  const createPullRequestSupportIdentity = (support: IGitPullRequestSupportPayload): string =>
+    [support.provider || 'unknown', support.remoteName || '', support.repositoryUrl || ''].join(
+      '|',
+    );
+
+  const hasPullRequestSupportIdentityChanged = (
+    previous: IGitPullRequestSupportPayload,
+    next: IGitPullRequestSupportPayload,
+  ): boolean =>
+    createPullRequestSupportIdentity(previous) !== createPullRequestSupportIdentity(next);
+
   const resetPullRequestSupport = (): void => {
     pullRequestSupportRequestId += 1;
     pendingPullRequestSupportRequest = null;
@@ -589,6 +600,19 @@ export const useGitStore = defineStore('git', () => {
   };
 
   const resetPullRequests = (): void => {
+    pullRequestsRequestId += 1;
+    pullRequestDetailRequestId += 1;
+    pullRequestDetailPreloadEpoch += 1;
+    pullRequestCacheEpoch += 1;
+    clearPullRequestPreloadTimer();
+    pullRequests.value = [];
+    pullRequestStateFilter.value = 'open';
+    pullRequestDetail.value = null;
+    invalidatePullRequestListCache();
+    invalidatePullRequestDetailCache();
+  };
+
+  const resetPullRequestDataForSupportChange = (): void => {
     pullRequestsRequestId += 1;
     pullRequestDetailRequestId += 1;
     pullRequestDetailPreloadEpoch += 1;
@@ -1005,6 +1029,11 @@ export const useGitStore = defineStore('git', () => {
       })
       .then((payload) => {
         if (requestId === pullRequestSupportRequestId) {
+          const previousSupport = pullRequestSupport.value;
+          if (hasPullRequestSupportIdentityChanged(previousSupport, payload)) {
+            removePersistedPullRequestCachesForRepository(status.value.repositoryRootPath);
+            resetPullRequestDataForSupportChange();
+          }
           pullRequestSupport.value = payload;
         }
         return requestId === pullRequestSupportRequestId ? pullRequestSupport.value : payload;
