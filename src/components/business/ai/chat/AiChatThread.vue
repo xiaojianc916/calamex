@@ -87,7 +87,9 @@ const isPlanAgentFlowMessage = (message: IAiChatMessage): boolean =>
   message.role === 'assistant' && message.id.startsWith(PLAN_AGENT_FLOW_MESSAGE_ID_PREFIX);
 
 const visibleMessages = computed<IAiChatMessage[]>(() =>
-  props.messages.filter((message) => !isErrorReplyMessage(message) && !isPlanAgentFlowMessage(message)),
+  props.messages.filter(
+    (message) => !isErrorReplyMessage(message) && !isPlanAgentFlowMessage(message),
+  ),
 );
 
 const hasInlineProgressMessage = computed(() => {

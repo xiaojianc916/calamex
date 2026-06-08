@@ -46,7 +46,10 @@ export const createSequencer = (): Sequencer => {
  * Repeated schedule() calls cancel the previous pending run and schedule exactly one
  * future run. The scheduler can also be cancelled, flushed, or disposed.
  */
-export const createRunOnceScheduler = (runner: () => void, defaultDelayMs: number): RunOnceScheduler => {
+export const createRunOnceScheduler = (
+  runner: () => void,
+  defaultDelayMs: number,
+): RunOnceScheduler => {
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
   let disposed = false;
   let activeRunner: (() => void) | null = runner;

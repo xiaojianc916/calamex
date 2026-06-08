@@ -57,10 +57,7 @@ const readCachedStatus = (repositoryRootPath: string): ICachedGitHubAuthStatus |
   }
 };
 
-const writeCachedStatus = (
-  repositoryRootPath: string,
-  status: IGitHubAuthStatusPayload,
-): void => {
+const writeCachedStatus = (repositoryRootPath: string, status: IGitHubAuthStatusPayload): void => {
   const storage = resolveStorage();
   if (!storage) return;
 

@@ -86,7 +86,9 @@ const resolveGithubCommitApiUrl = (repoUrl: string, commitId: string): string | 
   const [, host, owner, repo] = match;
   const cleanRepo = repo.replace(/\.git$/, '');
   const apiBase =
-    host.toLowerCase() === 'github.com' ? 'https://api.github.com' : ['https://api.', host].join('');
+    host.toLowerCase() === 'github.com'
+      ? 'https://api.github.com'
+      : ['https://api.', host].join('');
   return `${apiBase}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(cleanRepo)}/commits/${commitId}`;
 };
 
@@ -109,7 +111,11 @@ export const fetchGithubCommitAuthorSnapshot = async (
     .then(async (response) => {
       if (!response.ok) return null;
       const value = (await response.json()) as {
-        author?: { login?: string | null; avatar_url?: string | null; html_url?: string | null } | null;
+        author?: {
+          login?: string | null;
+          avatar_url?: string | null;
+          html_url?: string | null;
+        } | null;
         commit?: { author?: { name?: string | null } | null } | null;
       };
       const snapshot: IGitHubCommitAuthorSnapshot = {

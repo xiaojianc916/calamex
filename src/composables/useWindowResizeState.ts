@@ -1,10 +1,10 @@
 import { onScopeDispose } from 'vue';
+import { createDisposableBag, createMutableDisposable } from '@/utils/disposable';
 import {
   addDisposableEventListener,
   requestDisposableAnimationFrame,
   requestDisposableTimeout,
 } from '@/utils/dom-lifecycle';
-import { createDisposableBag, createMutableDisposable } from '@/utils/disposable';
 import { logger } from '@/utils/logger';
 import {
   SHELL_WINDOW_RESIZE_END_EVENT,
@@ -185,7 +185,9 @@ export const useWindowResizeState = () => {
     listeners.add(
       addDisposableEventListener(window, SHELL_WINDOW_RESIZE_START_EVENT, handleResizeStart),
     );
-    listeners.add(addDisposableEventListener(window, SHELL_WINDOW_RESIZE_END_EVENT, handleResizeEnd));
+    listeners.add(
+      addDisposableEventListener(window, SHELL_WINDOW_RESIZE_END_EVENT, handleResizeEnd),
+    );
     resizeEventListeners.set(() => listeners.dispose());
   }
 

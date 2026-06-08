@@ -533,8 +533,14 @@ const searchTotalSize = computed(() =>
 
 const windowedSearchRows = computed(() =>
   (shouldVirtualizeSearch.value ? searchVirtualizer.value.getVirtualItems() : [])
-    .map((item) => ({ key: String(item.key), start: item.start, row: flatSearchRows.value[item.index] }))
-    .filter((entry): entry is { key: string; start: number; row: IFlatSearchRow } => Boolean(entry.row)),
+    .map((item) => ({
+      key: String(item.key),
+      start: item.start,
+      row: flatSearchRows.value[item.index],
+    }))
+    .filter((entry): entry is { key: string; start: number; row: IFlatSearchRow } =>
+      Boolean(entry.row),
+    ),
 );
 
 watch(flatSearchRows, () => {
@@ -542,16 +548,27 @@ watch(flatSearchRows, () => {
 });
 
 const canApplyReplacement = computed(
-  () => !replaceRunning.value && hasSearchQuery.value && props.isDesktopRuntime && Boolean(props.workspaceRootPath),
+  () =>
+    !replaceRunning.value &&
+    hasSearchQuery.value &&
+    props.isDesktopRuntime &&
+    Boolean(props.workspaceRootPath),
 );
 
 const toReplacementLineView = (line: IWorkspaceReplacementLinePreview): IReplacementLineView => {
   const beforeLine = trimBoundaryWhitespace(line.beforeLine);
   const afterLine = trimBoundaryWhitespace(line.afterLine);
-  return { ...line, beforeLine, afterLine, segments: buildReplacementLineSegments(beforeLine, afterLine) };
+  return {
+    ...line,
+    beforeLine,
+    afterLine,
+    segments: buildReplacementLineSegments(beforeLine, afterLine),
+  };
 };
 
-const toReplacementFileView = (file: IWorkspaceReplacementFilePreview): IReplacementFileView | null => {
+const toReplacementFileView = (
+  file: IWorkspaceReplacementFilePreview,
+): IReplacementFileView | null => {
   const visibleLinePreviews = file.linePreviews
     .filter((line) => !skippedReplacementLineIds.value.has(line.id))
     .map(toReplacementLineView);
@@ -561,23 +578,33 @@ const toReplacementFileView = (file: IWorkspaceReplacementFilePreview): IReplace
     name: getFileName(file.relativePath),
     parentPath: getParentPath(file.relativePath),
     visibleLinePreviews,
-    visibleReplacementCount: visibleLinePreviews.reduce((total, line) => total + line.replacementCount, 0),
+    visibleReplacementCount: visibleLinePreviews.reduce(
+      (total, line) => total + line.replacementCount,
+      0,
+    ),
   };
 };
 
 const visibleReplacementFiles = computed<IReplacementFileView[]>(() => {
   const preview = replacementPreview.value;
   if (!preview) return [];
-  return preview.files.map(toReplacementFileView).filter((file): file is IReplacementFileView => Boolean(file));
+  return preview.files
+    .map(toReplacementFileView)
+    .filter((file): file is IReplacementFileView => Boolean(file));
 });
 
-const isSearchResultGroupCollapsed = (path: string): boolean => collapsedSearchResultPaths.value.has(path);
+const isSearchResultGroupCollapsed = (path: string): boolean =>
+  collapsedSearchResultPaths.value.has(path);
 const toggleSearchResultGroup = (path: string): void => {
   collapsedSearchResultPaths.value = toggleReadonlySetValue(collapsedSearchResultPaths.value, path);
 };
-const isReplacementFileCollapsed = (path: string): boolean => collapsedReplacementFilePaths.value.has(path);
+const isReplacementFileCollapsed = (path: string): boolean =>
+  collapsedReplacementFilePaths.value.has(path);
 const toggleReplacementFile = (path: string): void => {
-  collapsedReplacementFilePaths.value = toggleReadonlySetValue(collapsedReplacementFilePaths.value, path);
+  collapsedReplacementFilePaths.value = toggleReadonlySetValue(
+    collapsedReplacementFilePaths.value,
+    path,
+  );
 };
 
 const resetReplacementPreview = (): void => {
@@ -599,8 +626,14 @@ const resetReplacementPreview = (): void => {
 
 const toggleSearchOption = (option: TSearchToggleOption): void => {
   if (useStructural.value) useStructural.value = false;
-  if (option === 'matchCase') { matchCase.value = !matchCase.value; return; }
-  if (option === 'wholeWord') { wholeWord.value = !wholeWord.value; return; }
+  if (option === 'matchCase') {
+    matchCase.value = !matchCase.value;
+    return;
+  }
+  if (option === 'wholeWord') {
+    wholeWord.value = !wholeWord.value;
+    return;
+  }
   if (option === 'useRegex') {
     useRegex.value = !useRegex.value;
     if (useRegex.value) contentFuzzy.value = false;
@@ -628,8 +661,14 @@ const toggleStructuralSearch = (): void => {
 };
 
 const cancelPendingSearch = (): void => {
-  if (searchTimer) { clearTimeout(searchTimer); searchTimer = null; }
-  if (replacementPreviewTimer) { clearTimeout(replacementPreviewTimer); replacementPreviewTimer = null; }
+  if (searchTimer) {
+    clearTimeout(searchTimer);
+    searchTimer = null;
+  }
+  if (replacementPreviewTimer) {
+    clearTimeout(replacementPreviewTimer);
+    replacementPreviewTimer = null;
+  }
   activeAbortController?.abort();
   activeAbortController = null;
   activeReplacementPreviewAbortController?.abort();
@@ -651,7 +690,12 @@ const clearSearchResults = (): void => {
 };
 
 const runSearch = async (): Promise<void> => {
-  if (!props.isDesktopRuntime || !props.workspaceRootPath || matcherError.value || !hasSearchQuery.value) {
+  if (
+    !props.isDesktopRuntime ||
+    !props.workspaceRootPath ||
+    matcherError.value ||
+    !hasSearchQuery.value
+  ) {
     invalidateInFlightSearch();
     clearSearchResults();
     return;
@@ -666,19 +710,22 @@ const runSearch = async (): Promise<void> => {
   searchError.value = '';
 
   try {
-    const payload = await tauriService.searchWorkspace({
-      workspaceRootPath: props.workspaceRootPath,
-      query: searchQuery.value.trim(),
-      scope: 'all',
-      matchCase: matchCase.value,
-      wholeWord: wholeWord.value,
-      useRegex: useRegex.value,
-      useStructural: useStructural.value,
-      contentFuzzy: contentFuzzy.value,
-      includePatterns: effectiveIncludePatterns.value,
-      excludePatterns: effectiveExcludePatterns.value,
-      limit: SEARCH_RESULT_LIMIT,
-    }, { signal: abortController.signal });
+    const payload = await tauriService.searchWorkspace(
+      {
+        workspaceRootPath: props.workspaceRootPath,
+        query: searchQuery.value.trim(),
+        scope: 'all',
+        matchCase: matchCase.value,
+        wholeWord: wholeWord.value,
+        useRegex: useRegex.value,
+        useStructural: useStructural.value,
+        contentFuzzy: contentFuzzy.value,
+        includePatterns: effectiveIncludePatterns.value,
+        excludePatterns: effectiveExcludePatterns.value,
+        limit: SEARCH_RESULT_LIMIT,
+      },
+      { signal: abortController.signal },
+    );
 
     if (requestId !== searchRequestId) return;
     scannedFileCount.value = payload.scannedFileCount;
@@ -732,7 +779,8 @@ const previewReplacementToSearch = async (source: 'manual' | 'auto'): Promise<bo
     return false;
   }
   if (!props.isDesktopRuntime) {
-    if (source === 'manual') message.warning('浏览器预览不支持写入文件，请在 Tauri 桌面端使用替换。');
+    if (source === 'manual')
+      message.warning('浏览器预览不支持写入文件，请在 Tauri 桌面端使用替换。');
     return false;
   }
   if (!props.workspaceRootPath) {
@@ -755,8 +803,14 @@ const previewReplacementToSearch = async (source: 'manual' | 'auto'): Promise<bo
   skippedReplacementLineIds.value = new Set<string>();
 
   try {
-    const preview = await tauriService.previewWorkspaceReplacement(request, { signal: abortController.signal });
-    if (requestId !== replacementPreviewRequestId || !isWorkspaceRootCurrent(request.workspaceRootPath)) return false;
+    const preview = await tauriService.previewWorkspaceReplacement(request, {
+      signal: abortController.signal,
+    });
+    if (
+      requestId !== replacementPreviewRequestId ||
+      !isWorkspaceRootCurrent(request.workspaceRootPath)
+    )
+      return false;
     if (preview.fileCount === 0) {
       replacementPreviewOpen.value = false;
       if (source === 'manual') message.warning('当前没有可替换的内容匹配结果。');
@@ -796,9 +850,15 @@ const scheduleReplacementPreview = (): void => {
   }, SEARCH_DEBOUNCE_MS);
 };
 
-const retainVisibleSkippedReplacementLines = (preview: IWorkspaceReplacementPreviewPayload): void => {
-  const visibleLineIds = new Set(preview.files.flatMap((file) => file.linePreviews.map((line) => line.id)));
-  skippedReplacementLineIds.value = new Set([...skippedReplacementLineIds.value].filter((lineId) => visibleLineIds.has(lineId)));
+const retainVisibleSkippedReplacementLines = (
+  preview: IWorkspaceReplacementPreviewPayload,
+): void => {
+  const visibleLineIds = new Set(
+    preview.files.flatMap((file) => file.linePreviews.map((line) => line.id)),
+  );
+  skippedReplacementLineIds.value = new Set(
+    [...skippedReplacementLineIds.value].filter((lineId) => visibleLineIds.has(lineId)),
+  );
 };
 
 const refreshReplacementPreviewAfterLineApply = async (
@@ -813,8 +873,11 @@ const refreshReplacementPreviewAfterLineApply = async (
   replacementPreviewOpen.value = true;
 
   try {
-    const preview = await tauriService.previewWorkspaceReplacement(request, { signal: abortController.signal });
-    if (requestId !== replacementPreviewRequestId || !isReplacementApplyLifecycleCurrent(lifecycle)) return;
+    const preview = await tauriService.previewWorkspaceReplacement(request, {
+      signal: abortController.signal,
+    });
+    if (requestId !== replacementPreviewRequestId || !isReplacementApplyLifecycleCurrent(lifecycle))
+      return;
     if (preview.fileCount === 0) {
       replacementPreview.value = null;
       replacementPreviewRequest.value = request;
@@ -825,7 +888,12 @@ const refreshReplacementPreviewAfterLineApply = async (
     replacementPreviewRequest.value = request;
     retainVisibleSkippedReplacementLines(preview);
   } catch (error) {
-    if (abortController.signal.aborted || requestId !== replacementPreviewRequestId || !isReplacementApplyLifecycleCurrent(lifecycle)) return;
+    if (
+      abortController.signal.aborted ||
+      requestId !== replacementPreviewRequestId ||
+      !isReplacementApplyLifecycleCurrent(lifecycle)
+    )
+      return;
     message.error(toErrorMessage(error, '刷新替换预览失败。'));
   } finally {
     if (requestId === replacementPreviewRequestId) activeReplacementPreviewAbortController = null;
@@ -838,8 +906,10 @@ const reportReplacementRefreshOutcome = (
   successMessage: string,
 ): void => {
   const issues: string[] = [];
-  if (refreshResult.skippedDirtyNames.length > 0) issues.push(`${refreshResult.skippedDirtyNames.join('、')} 有未保存改动，已跳过自动刷新`);
-  if (refreshResult.failedNames.length > 0) issues.push(`${refreshResult.failedNames.join('、')} 刷新失败，请手动重新打开`);
+  if (refreshResult.skippedDirtyNames.length > 0)
+    issues.push(`${refreshResult.skippedDirtyNames.join('、')} 有未保存改动，已跳过自动刷新`);
+  if (refreshResult.failedNames.length > 0)
+    issues.push(`${refreshResult.failedNames.join('、')} 刷新失败，请手动重新打开`);
   if (issues.length > 0) {
     message.warning(`已替换 ${replacementCount} 处内容，但 ${issues.join('；')}。`);
     return;
@@ -902,7 +972,12 @@ const confirmReplacementPreview = async (): Promise<void> => {
     );
     void runSearch();
   } catch (error) {
-    if (lifecycle.signal.aborted || !isReplacementApplyLifecycleCurrent(lifecycle) || isCanceledIpcError(error)) return;
+    if (
+      lifecycle.signal.aborted ||
+      !isReplacementApplyLifecycleCurrent(lifecycle) ||
+      isCanceledIpcError(error)
+    )
+      return;
     message.error(toErrorMessage(error, '替换失败。'));
   } finally {
     if (lifecycle.requestId === replacementApplyRequestId) {
@@ -918,7 +993,10 @@ const skipReplacementLine = (lineId: string): void => {
   skippedReplacementLineIds.value = new Set([...skippedReplacementLineIds.value, lineId]);
 };
 
-const replaceReplacementLine = async (file: IReplacementFileView, line: IReplacementLineView): Promise<void> => {
+const replaceReplacementLine = async (
+  file: IReplacementFileView,
+  line: IReplacementLineView,
+): Promise<void> => {
   const request = replacementPreviewRequest.value;
   if (!request || replacementApplying.value) return;
 
@@ -928,19 +1006,34 @@ const replaceReplacementLine = async (file: IReplacementFileView, line: IReplace
   replacementApplyingLineId.value = line.id;
 
   try {
-    const result = await applyReplacementAndRefresh(request, [{
-      path: file.path,
-      beforeHash: file.beforeHash,
-      includedMatchIds: [line.id],
-    }], lifecycle);
+    const result = await applyReplacementAndRefresh(
+      request,
+      [
+        {
+          path: file.path,
+          beforeHash: file.beforeHash,
+          includedMatchIds: [line.id],
+        },
+      ],
+      lifecycle,
+    );
     if (!result || !isReplacementApplyLifecycleCurrent(lifecycle)) return;
     const { payload, refreshResult } = result;
     await refreshReplacementPreviewAfterLineApply(request, lifecycle);
     if (!isReplacementApplyLifecycleCurrent(lifecycle)) return;
-    reportReplacementRefreshOutcome(refreshResult, payload.replacementCount, `已替换 ${payload.replacementCount} 处内容。`);
+    reportReplacementRefreshOutcome(
+      refreshResult,
+      payload.replacementCount,
+      `已替换 ${payload.replacementCount} 处内容。`,
+    );
     void runSearch();
   } catch (error) {
-    if (lifecycle.signal.aborted || !isReplacementApplyLifecycleCurrent(lifecycle) || isCanceledIpcError(error)) return;
+    if (
+      lifecycle.signal.aborted ||
+      !isReplacementApplyLifecycleCurrent(lifecycle) ||
+      isCanceledIpcError(error)
+    )
+      return;
     message.error(toErrorMessage(error, '替换失败。'));
   } finally {
     if (lifecycle.requestId === replacementApplyRequestId) {
@@ -959,63 +1052,78 @@ const handleReplacementLineOpen = (path: string, lineNumber: number): void => {
 };
 const handleSearchResultOpen = (result: ISearchResultItem): void => {
   selectedResultKey.value = result.resultKey;
-  emitOpenFile({ path: result.path, lineNumber: result.lineNumber, column: result.matchStart === null ? 1 : result.matchStart + 1 });
+  emitOpenFile({
+    path: result.path,
+    lineNumber: result.lineNumber,
+    column: result.matchStart === null ? 1 : result.matchStart + 1,
+  });
 };
 
-watch([
-  () => props.isDesktopRuntime,
-  () => props.workspaceRootPath,
-  searchQuery,
-  matchCase,
-  wholeWord,
-  useRegex,
-  contentFuzzy,
-  useStructural,
-  () => effectiveIncludePatterns.value.join('\n'),
-  () => effectiveExcludePatterns.value.join('\n'),
-], scheduleSearch, { immediate: true });
+watch(
+  [
+    () => props.isDesktopRuntime,
+    () => props.workspaceRootPath,
+    searchQuery,
+    matchCase,
+    wholeWord,
+    useRegex,
+    contentFuzzy,
+    useStructural,
+    () => effectiveIncludePatterns.value.join('\n'),
+    () => effectiveExcludePatterns.value.join('\n'),
+  ],
+  scheduleSearch,
+  { immediate: true },
+);
 
-watch(() => props.workspaceRootPath, () => {
-  searchQuery.value = '';
-  replacementQuery.value = '';
-  includePattern.value = '';
-  excludePattern.value = '';
-  activeScope.value = 'all';
-  matchCase.value = false;
-  wholeWord.value = false;
-  useRegex.value = false;
-  contentFuzzy.value = false;
-  useStructural.value = false;
-  showPathFilters.value = false;
-  selectedResultKey.value = null;
-  resetReplacementPreview();
-});
-
-watch([
-  searchQuery,
-  replacementQuery,
-  matchCase,
-  wholeWord,
-  useRegex,
-  useStructural,
-  () => effectiveIncludePatterns.value.join('\n'),
-  () => effectiveExcludePatterns.value.join('\n'),
+watch(
   () => props.workspaceRootPath,
-], () => {
-  if (replacementApplying.value) return;
-  const shouldPreviewReplacement =
-    replacementQuery.value.length > 0 &&
-    hasSearchQuery.value &&
-    props.isDesktopRuntime &&
-    Boolean(props.workspaceRootPath) &&
-    !matcherError.value;
-  if (shouldPreviewReplacement) scheduleReplacementPreview();
-  else resetReplacementPreview();
-});
+  () => {
+    searchQuery.value = '';
+    replacementQuery.value = '';
+    includePattern.value = '';
+    excludePattern.value = '';
+    activeScope.value = 'all';
+    matchCase.value = false;
+    wholeWord.value = false;
+    useRegex.value = false;
+    contentFuzzy.value = false;
+    useStructural.value = false;
+    showPathFilters.value = false;
+    selectedResultKey.value = null;
+    resetReplacementPreview();
+  },
+);
+
+watch(
+  [
+    searchQuery,
+    replacementQuery,
+    matchCase,
+    wholeWord,
+    useRegex,
+    useStructural,
+    () => effectiveIncludePatterns.value.join('\n'),
+    () => effectiveExcludePatterns.value.join('\n'),
+    () => props.workspaceRootPath,
+  ],
+  () => {
+    if (replacementApplying.value) return;
+    const shouldPreviewReplacement =
+      replacementQuery.value.length > 0 &&
+      hasSearchQuery.value &&
+      props.isDesktopRuntime &&
+      Boolean(props.workspaceRootPath) &&
+      !matcherError.value;
+    if (shouldPreviewReplacement) scheduleReplacementPreview();
+    else resetReplacementPreview();
+  },
+);
 
 watch(activeResults, (results) => {
   const availableKeys = new Set(results.map((result) => result.resultKey));
-  if (selectedResultKey.value && !availableKeys.has(selectedResultKey.value)) selectedResultKey.value = null;
+  if (selectedResultKey.value && !availableKeys.has(selectedResultKey.value))
+    selectedResultKey.value = null;
 });
 
 onScopeDispose(cancelPendingSearch);

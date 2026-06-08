@@ -156,7 +156,9 @@ export const useAiAgentRun = () => {
 
   const isRunLifecycleCurrent = (runId: string, token: number): boolean => {
     const run = getRuns().find((item) => item.id === runId) ?? null;
-    return runLifecycleTokens.get(runId) === token && Boolean(run) && !isTerminalRunStatus(run!.status);
+    return (
+      runLifecycleTokens.get(runId) === token && Boolean(run) && !isTerminalRunStatus(run!.status)
+    );
   };
 
   const applyRunPayload = (run: IAiAgentRun): IAiAgentRun => {
@@ -484,10 +486,17 @@ export const useAiAgentRun = () => {
     startedRuns.add(run.id);
     const lifecycleToken = bumpRunLifecycleToken(run.id);
     // 第一段 = resume('approve'):清掉计划审批门,不执行 step(故 advance=false)。
-    return driveToCompletion(run.id, orchestrationRunId, 'approve', false, {
-      ...(options.context ? { context: options.context } : {}),
-      workspaceRootPath: options.workspaceRootPath ?? null,
-    }, lifecycleToken);
+    return driveToCompletion(
+      run.id,
+      orchestrationRunId,
+      'approve',
+      false,
+      {
+        ...(options.context ? { context: options.context } : {}),
+        workspaceRootPath: options.workspaceRootPath ?? null,
+      },
+      lifecycleToken,
+    );
   };
 
   const continueRunToCompletion = async (
@@ -500,10 +509,17 @@ export const useAiAgentRun = () => {
     }
     pausedRuns.delete(runId);
     const lifecycleToken = bumpRunLifecycleToken(runId);
-    return driveToCompletion(runId, orchestrationRunId, 'continue', true, {
-      ...(options.context ? { context: options.context } : {}),
-      workspaceRootPath: options.workspaceRootPath ?? null,
-    }, lifecycleToken);
+    return driveToCompletion(
+      runId,
+      orchestrationRunId,
+      'continue',
+      true,
+      {
+        ...(options.context ? { context: options.context } : {}),
+        workspaceRootPath: options.workspaceRootPath ?? null,
+      },
+      lifecycleToken,
+    );
   };
 
   const runStep = async (runId: string, stepId?: string): Promise<IAiAgentRun> => {

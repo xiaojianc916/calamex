@@ -1,6 +1,4 @@
-export type LatestTaskResult<T> =
-  | { status: 'completed'; value: T }
-  | { status: 'canceled' };
+export type LatestTaskResult<T> = { status: 'completed'; value: T } | { status: 'canceled' };
 
 export type LatestTaskRunner = {
   readonly signal: AbortSignal | null;

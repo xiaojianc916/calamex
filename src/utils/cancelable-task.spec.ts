@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createLatestTaskRunner } from '@/utils/cancelable-task';
 
-const createDeferred = <T,>() => {
+const createDeferred = <T>() => {
   const state: {
     resolve?: (value: T) => void;
     reject?: (reason?: unknown) => void;

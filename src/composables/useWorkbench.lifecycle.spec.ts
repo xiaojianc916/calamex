@@ -82,7 +82,7 @@ vi.mock('@/services/session/store', () => ({
   saveSession: vi.fn(() => Promise.resolve()),
 }));
 
-const createDeferred = <T,>() => {
+const createDeferred = <T>() => {
   let resolve!: (value: T) => void;
   let reject!: (reason?: unknown) => void;
   const promise = new Promise<T>((innerResolve, innerReject) => {

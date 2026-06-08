@@ -54,10 +54,13 @@ vi.mock('@/components/workbench/ExplorerEntryIcon.vue', () => ({
 }));
 
 vi.mock('@/components/common/InlineError.vue', () => ({
-  default: { props: ['title', 'message'], template: '<div class="inline-error"> title  message </div>' },
+  default: {
+    props: ['title', 'message'],
+    template: '<div class="inline-error"> title  message </div>',
+  },
 }));
 
-const createDeferred = <T,>() => {
+const createDeferred = <T>() => {
   let resolve!: (value: T) => void;
   let reject!: (reason?: unknown) => void;
   const promise = new Promise<T>((innerResolve, innerReject) => {
@@ -170,7 +173,8 @@ describe('SearchSidebarPanel replacement lifecycle', () => {
 
     await wrapper.get('button[title="全部替换"]').trigger('click');
     await flushPromises();
-    const signal = tauriServiceMock.applyWorkspaceReplacement.mock.calls[0]?.[1]?.signal as AbortSignal;
+    const signal = tauriServiceMock.applyWorkspaceReplacement.mock.calls[0]?.[1]
+      ?.signal as AbortSignal;
 
     await wrapper.setProps({ workspaceRootPath: 'D:/next-repo' });
     expect(signal.aborted).toBe(true);
@@ -179,8 +183,6 @@ describe('SearchSidebarPanel replacement lifecycle', () => {
     await flushPromises();
 
     expect(refreshMock.refreshSidecarChangedDocuments).not.toHaveBeenCalled();
-    expect(messageMock.success).not.toHaveBeenCalledWith(
-      '已替换 1 个文件中的 1 处内容。',
-    );
+    expect(messageMock.success).not.toHaveBeenCalledWith('已替换 1 个文件中的 1 处内容。');
   });
 });

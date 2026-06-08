@@ -1,4 +1,4 @@
-import { computed, createApp, defineComponent, h, type App } from 'vue';
+import { type App, computed, createApp, defineComponent, h } from 'vue';
 import GitHubAuthPill from '@/components/workbench/GitHubAuthPill.vue';
 import { pinia } from '@/store';
 import { useGitStore } from '@/store/git';

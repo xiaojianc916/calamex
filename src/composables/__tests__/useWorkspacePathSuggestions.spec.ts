@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  getBoundedCacheValue,
-  setBoundedCacheValue,
-} from '../useWorkspacePathSuggestions';
+import { getBoundedCacheValue, setBoundedCacheValue } from '../useWorkspacePathSuggestions';
 
 describe('bounded workspace path suggestion cache', () => {
   it('evicts the least recently used entry when the cache exceeds the limit', () => {

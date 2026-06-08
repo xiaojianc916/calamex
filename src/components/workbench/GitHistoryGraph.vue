@@ -204,8 +204,8 @@ import type {
 } from '@/components/common/linear-context-menu.types';
 import {
   fetchGithubCommitAuthorSnapshot,
-  readCachedGithubCommitAuthor,
   type IGitHubCommitAuthorSnapshot,
+  readCachedGithubCommitAuthor,
 } from '@/services/github-author';
 import { useEditorStore } from '@/store/editor';
 import { useGitStore } from '@/store/git';
@@ -406,9 +406,12 @@ const hoverAuthorName = computed<string>(
   () => hoverDetail.value?.authorName ?? hoverCommit.value?.authorName ?? '',
 );
 const hoverAuthorDisplayName = computed<string>(
-  () => hoverAuthorSnapshot.value?.login ?? hoverAuthorSnapshot.value?.name ?? hoverAuthorName.value,
+  () =>
+    hoverAuthorSnapshot.value?.login ?? hoverAuthorSnapshot.value?.name ?? hoverAuthorName.value,
 );
-const hoverAuthorAvatarUrl = computed<string | null>(() => hoverAuthorSnapshot.value?.avatarUrl ?? null);
+const hoverAuthorAvatarUrl = computed<string | null>(
+  () => hoverAuthorSnapshot.value?.avatarUrl ?? null,
+);
 const hoverAuthoredAt = computed<string>(
   () => hoverDetail.value?.authoredAt ?? hoverCommit.value?.authoredAt ?? '',
 );

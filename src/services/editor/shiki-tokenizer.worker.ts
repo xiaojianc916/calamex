@@ -2,9 +2,9 @@ import { createHighlighterCore, type HighlighterCore } from 'shiki/core';
 import { createOnigurumaEngine } from 'shiki/engine/oniguruma';
 import {
   type IShikiThemedToken,
+  resolveShikiLanguageId,
   SHIKI_LANG_LOADERS,
   SHIKI_THEME_NAME,
-  resolveShikiLanguageId,
 } from './shiki-shared';
 
 type TShikiWorkerRequest = {
@@ -69,10 +69,7 @@ const ensureLanguage = async (language: string): Promise<string | null> => {
   return (await pending) ? shikiId : null;
 };
 
-const tokenize = async (
-  code: string,
-  language: string,
-): Promise<IShikiThemedToken[][] | null> => {
+const tokenize = async (code: string, language: string): Promise<IShikiThemedToken[][] | null> => {
   const shikiId = await ensureLanguage(language);
   if (!shikiId) {
     return null;

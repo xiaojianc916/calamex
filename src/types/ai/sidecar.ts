@@ -187,7 +187,10 @@ export type TAgentRuntimeEventType = (typeof AGENT_RUNTIME_EVENT_TYPES)[number];
 
 export type TAgentRuntimeVisibility = 'user' | 'debug';
 export type TAgentRuntimeLevel = 'debug' | 'info' | 'warn' | 'error';
-export type TContextBudgetDecisionKind = 'within_budget' | 'compact_recommended' | 'warn_context_limit';
+export type TContextBudgetDecisionKind =
+  | 'within_budget'
+  | 'compact_recommended'
+  | 'warn_context_limit';
 export type TContextManagementOwner =
   | 'mastra_memory'
   | 'zed_style_compaction'
@@ -476,13 +479,15 @@ export type TAgentRuntimeEventByType<TType extends TAgentRuntimeEventType> = Ext
 // 编译期穷尽性检查：事件常量数组与 discriminated union 任一边漏写都会编译失败。
 type _MissingRuntimeEventInUnion = Exclude<TAgentRuntimeEventType, TAgentRuntimeEvent['type']>;
 type _MissingRuntimeEventInArray = Exclude<TAgentRuntimeEvent['type'], TAgentRuntimeEventType>;
-type _AssertRuntimeEventsExhaustive =
-  [_MissingRuntimeEventInUnion, _MissingRuntimeEventInArray] extends [never, never]
-    ? true
-    : {
-        missingInUnion: _MissingRuntimeEventInUnion;
-        missingInArray: _MissingRuntimeEventInArray;
-      };
+type _AssertRuntimeEventsExhaustive = [
+  _MissingRuntimeEventInUnion,
+  _MissingRuntimeEventInArray,
+] extends [never, never]
+  ? true
+  : {
+      missingInUnion: _MissingRuntimeEventInUnion;
+      missingInArray: _MissingRuntimeEventInArray;
+    };
 const _assertRuntimeEventsExhaustive: _AssertRuntimeEventsExhaustive = true;
 void _assertRuntimeEventsExhaustive;
 

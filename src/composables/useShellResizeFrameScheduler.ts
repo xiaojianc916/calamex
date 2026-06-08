@@ -1,6 +1,6 @@
 import { onBeforeUnmount, onMounted } from 'vue';
-import { addDisposableEventListener, requestDisposableAnimationFrame } from '@/utils/dom-lifecycle';
 import { createDisposableBag, createMutableDisposable } from '@/utils/disposable';
+import { addDisposableEventListener, requestDisposableAnimationFrame } from '@/utils/dom-lifecycle';
 import {
   SHELL_WINDOW_RESIZE_END_EVENT,
   SHELL_WINDOW_RESIZE_FRAME_EVENT,
@@ -108,7 +108,9 @@ export const useShellResizeFrameScheduler = ({
     listeners.add(addDisposableEventListener(window, SHELL_WINDOW_RESIZE_START_EVENT, handleStart));
     listeners.add(addDisposableEventListener(window, SHELL_WINDOW_RESIZE_FRAME_EVENT, handleFrame));
     listeners.add(addDisposableEventListener(window, SHELL_WINDOW_RESIZE_END_EVENT, handleEnd));
-    listeners.add(addDisposableEventListener(window, SHELL_WINDOW_RESIZE_SETTLED_EVENT, handleSettled));
+    listeners.add(
+      addDisposableEventListener(window, SHELL_WINDOW_RESIZE_SETTLED_EVENT, handleSettled),
+    );
     resizeListeners.set(() => listeners.dispose());
   });
 

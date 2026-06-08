@@ -80,7 +80,8 @@ const recordAutoRestartAttempt = (): number | null => {
 const isLifecycleCurrent = (token: number, root = activeWorkspaceRoot): boolean =>
   token === lifecycleToken && root === activeWorkspaceRoot;
 
-const runExclusive = (operation: () => Promise<void>): Promise<void> => operationSequencer.queue(operation);
+const runExclusive = (operation: () => Promise<void>): Promise<void> =>
+  operationSequencer.queue(operation);
 
 const startLspInternal = async (root: string, token: number): Promise<void> => {
   if (!isLifecycleCurrent(token, root)) return;

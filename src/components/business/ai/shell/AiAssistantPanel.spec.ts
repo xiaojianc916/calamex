@@ -368,7 +368,14 @@ const mountPanel = (assistantMock: ReturnType<typeof createAssistantMock>) =>
             'isAgentRunActionPending',
             'errorMessage',
           ],
-          emits: ['updateStepTitle', 'removeStep', 'regenerate', 'reject', 'approve', 'resolveToolConfirmation'],
+          emits: [
+            'updateStepTitle',
+            'removeStep',
+            'regenerate',
+            'reject',
+            'approve',
+            'resolveToolConfirmation',
+          ],
           template:
             '<section data-testid="thread-extras"><div v-if="planConfirmationVisible" data-testid="plan-confirmation"><ol><li v-for="step in planSteps" :key="step.id" v-text="step.title" /></ol><button data-testid="approve-plan" :disabled="!canApprovePlan" @click="$emit(\'approve\')">批准</button></div><strong v-if="directToolConfirmationVisible && visibleDirectToolConfirmation" data-testid="tool-confirmation" v-text="visibleDirectToolConfirmation.question" /><p v-if="errorMessage" data-testid="error" v-text="errorMessage" /></section>',
         }),
@@ -471,7 +478,9 @@ describe('AiAssistantPanel', () => {
 
     expect(wrapper.find('[data-testid="chat-thread"]').exists()).toBe(true);
     expect(wrapper.get('[data-testid="chat-thread"]').text()).toContain('Agent 最终回复');
-    expect(wrapper.get('[data-testid="tool-confirmation"]').text()).toContain('允许执行 pnpm test 吗？');
+    expect(wrapper.get('[data-testid="tool-confirmation"]').text()).toContain(
+      '允许执行 pnpm test 吗？',
+    );
   });
 
   it('renders Plan mode in the unified thread with the plan confirmation extra', () => {
@@ -531,9 +540,7 @@ describe('AiAssistantPanel', () => {
   });
 
   it('keeps plan execution token accounting in the token context only', () => {
-    const assistantMock = createAssistantMock([
-      createMessage('message-user', 'user', '执行计划'),
-    ]);
+    const assistantMock = createAssistantMock([createMessage('message-user', 'user', '执行计划')]);
     const steps = [createPlanStep('plan-step-1', '读取源码', 'running')];
     const activeRun = createAgentRun(steps, 'plan-step-1');
     assistantMock.activeMode.value = 'plan';
@@ -556,7 +563,9 @@ describe('AiAssistantPanel', () => {
 
     expect(latestTokenContextArgs).not.toBeNull();
     expect(latestTokenContextArgs?.messages.value).toHaveLength(1);
-    expect(latestTokenContextArgs?.messages.value[0]?.content).toContain('正在读取 AiAssistantPanel.vue');
+    expect(latestTokenContextArgs?.messages.value[0]?.content).toContain(
+      '正在读取 AiAssistantPanel.vue',
+    );
   });
 
   it('keeps the same unified thread surface when switching from Agent to Plan', async () => {

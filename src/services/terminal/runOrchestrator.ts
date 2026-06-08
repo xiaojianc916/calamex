@@ -421,7 +421,12 @@ export class TerminalRunOrchestrator {
     this.resetBufferedTerminalOutput();
     this.editorStore.lastRunResult = null;
     this.editorStore.setTerminalOutput('');
-    this.activeTerminalRunMeta = createActiveTerminalRunMeta(runId, startedAt, 'bash', usedTempFile);
+    this.activeTerminalRunMeta = createActiveTerminalRunMeta(
+      runId,
+      startedAt,
+      'bash',
+      usedTempFile,
+    );
     this.appendRunLifecycleLog(
       'info',
       TERMINAL_RUN_LOG_TITLES.start,
@@ -446,7 +451,11 @@ export class TerminalRunOrchestrator {
     const runId = this.primeTerminalRun(document);
 
     try {
-      const dispatchResult = await this.dispatchScriptToIntegratedTerminal(document, runId, sessionId);
+      const dispatchResult = await this.dispatchScriptToIntegratedTerminal(
+        document,
+        runId,
+        sessionId,
+      );
       if (!this.isCurrentTerminalRun(runId)) {
         return;
       }
@@ -527,17 +536,21 @@ export class TerminalRunOrchestrator {
       }
 
       const listeners = createDisposableBag();
-      const runChunkUnlisten = this.terminalEventBus.onRunChunk((payload: ITerminalRunChunkPayload) => {
-        this.appendTerminalOutput(payload);
-      });
+      const runChunkUnlisten = this.terminalEventBus.onRunChunk(
+        (payload: ITerminalRunChunkPayload) => {
+          this.appendTerminalOutput(payload);
+        },
+      );
       const runCompletedUnlisten = this.terminalEventBus.onRunCompleted(
         (payload: ITerminalRunCompletedPayload) => {
           this.handleIntegratedTerminalRunCompleted(payload);
         },
       );
-      const exitUnlisten = this.terminalEventBus.onInteractiveExited((payload: ITerminalExitEvent) => {
-        this.handleIntegratedTerminalExit(payload);
-      });
+      const exitUnlisten = this.terminalEventBus.onInteractiveExited(
+        (payload: ITerminalExitEvent) => {
+          this.handleIntegratedTerminalExit(payload);
+        },
+      );
       listeners.add(runChunkUnlisten);
       listeners.add(runCompletedUnlisten);
       listeners.add(exitUnlisten);

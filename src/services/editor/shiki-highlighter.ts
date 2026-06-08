@@ -3,17 +3,17 @@ import { createOnigurumaEngine } from 'shiki/engine/oniguruma';
 import { logger } from '@/utils/logger';
 import {
   type IShikiThemedToken,
+  resolveShikiLanguageId,
   SHIKI_LANG_LOADERS,
   SHIKI_THEME_NAME,
-  resolveShikiLanguageId,
 } from './shiki-shared';
 
 export {
   type IShikiThemedToken,
+  resolveShikiLanguageId,
   SHIKI_BACKGROUND,
   SHIKI_FOREGROUND,
   SHIKI_THEME_NAME,
-  resolveShikiLanguageId,
 } from './shiki-shared';
 
 /**

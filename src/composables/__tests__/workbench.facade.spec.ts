@@ -162,7 +162,7 @@ const createEmptyGitStatusPayload = () => ({
   lastCommit: null,
 });
 
-const createDeferred = <T,>() => {
+const createDeferred = <T>() => {
   let resolve!: (value: T) => void;
   let reject!: (reason?: unknown) => void;
   const promise = new Promise<T>((innerResolve, innerReject) => {
@@ -533,7 +533,9 @@ describe('useWorkbench 特征化快照', () => {
       editorStore.setWorkspaceRootPath('/workspace');
       const first = createDeferred<ReturnType<typeof createScriptPayload>>();
       const second = createDeferred<ReturnType<typeof createScriptPayload>>();
-      mockTauriService.loadScript.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+      mockTauriService.loadScript
+        .mockReturnValueOnce(first.promise)
+        .mockReturnValueOnce(second.promise);
 
       const firstOpening = workbench.openDocumentByPath('/workspace/first.sh');
       const firstSignal = mockTauriService.loadScript.mock.calls[0]?.[2]?.signal as AbortSignal;
@@ -545,7 +547,9 @@ describe('useWorkbench 特征化快照', () => {
       second.resolve(createScriptPayload('/workspace/second.sh'));
       await Promise.all([firstOpening, secondOpening]);
 
-      expect(editorStore.documents.map((document) => document.path)).toEqual(['/workspace/second.sh']);
+      expect(editorStore.documents.map((document) => document.path)).toEqual([
+        '/workspace/second.sh',
+      ]);
       expect(editorStore.document.path).toBe('/workspace/second.sh');
     });
   });

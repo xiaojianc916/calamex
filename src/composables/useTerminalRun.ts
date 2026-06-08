@@ -5,10 +5,7 @@ import {
   type TTerminalRunNotifier,
 } from '@/services/terminal/runOrchestrator';
 import type { useEditorStore } from '@/store/editor';
-import type {
-  ITerminalRunChunkPayload,
-  ITerminalRunCompletedPayload,
-} from '@/types/terminal';
+import type { ITerminalRunChunkPayload, ITerminalRunCompletedPayload } from '@/types/terminal';
 
 type TEditorStore = ReturnType<typeof useEditorStore>;
 

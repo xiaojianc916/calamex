@@ -222,7 +222,9 @@ describe('tauriService', () => {
       options?: { signal?: AbortSignal },
     ) => Promise<unknown>;
 
-    await expect(loadScript('D:/repo/demo.sh', 'D:/repo', { signal: controller.signal })).rejects.toMatchObject({
+    await expect(
+      loadScript('D:/repo/demo.sh', 'D:/repo', { signal: controller.signal }),
+    ).rejects.toMatchObject({
       code: 'ipc.canceled',
       scope: 'ipc',
     });
@@ -238,7 +240,9 @@ describe('tauriService', () => {
       options?: { signal?: AbortSignal },
     ) => Promise<unknown>;
 
-    await expect(listEntries(undefined, 'D:/repo', { signal: controller.signal })).rejects.toMatchObject({
+    await expect(
+      listEntries(undefined, 'D:/repo', { signal: controller.signal }),
+    ).rejects.toMatchObject({
       code: 'ipc.canceled',
       scope: 'ipc',
     });
@@ -317,9 +321,9 @@ describe('tauriService', () => {
   it('SSH 配置主机列表支持取消，已取消时不触发 invoke', async () => {
     const controller = new AbortController();
     controller.abort();
-    const listHosts = tauriService.listSshConfigHosts as unknown as (
-      options?: { signal?: AbortSignal },
-    ) => Promise<unknown>;
+    const listHosts = tauriService.listSshConfigHosts as unknown as (options?: {
+      signal?: AbortSignal;
+    }) => Promise<unknown>;
 
     await expect(listHosts({ signal: controller.signal })).rejects.toMatchObject({
       code: 'ipc.canceled',

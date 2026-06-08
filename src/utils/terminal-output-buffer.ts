@@ -80,10 +80,7 @@ export const createTerminalOutputBuffer = ({
     }
 
     const lastIndex = chunks.length - 1;
-    if (
-      lastIndex >= head &&
-      chunks[lastIndex].length + value.length <= maxChunkLength
-    ) {
+    if (lastIndex >= head && chunks[lastIndex].length + value.length <= maxChunkLength) {
       chunks[lastIndex] += value;
     } else {
       chunks.push(value);

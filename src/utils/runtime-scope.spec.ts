@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createRuntimeScope } from '@/utils/runtime-scope';
 
-const createDeferred = <T,>() => {
+const createDeferred = <T>() => {
   const state: {
     resolve?: (value: T) => void;
   } = {};
