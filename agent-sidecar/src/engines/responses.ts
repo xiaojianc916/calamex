@@ -2,7 +2,7 @@ import type { ToolCallPayload } from '@mastra/core/stream';
 import type { TAgentPlan } from '../schemas/plan.js';
 import type { TAgentPlanRecord } from './plan/plan-store.js';
 import type { IAgentRuntimeResponse, IAgentRuntimeRunOptions, TAgentRuntimeOutputEvent } from './contracts/runtime-contracts.js';
-import { pushUiEvent } from './utils.js';
+import { pushUiEvent, toRecord } from './utils.js';
 import { encodeApprovalRequestId, extractApprovalToolPath } from './approval-client/utils.js';
 import { formatApprovalSummary } from './messages.js';
 
@@ -54,17 +54,94 @@ const APPROVAL_WRITE_PATTERNS: readonly RegExp[] = [
     /insert/,
 ];
 
-const collectApprovalRiskSignals = (toolName: string, args: unknown): string => {
-    const parts: string[] = [toolName];
-    if (args && typeof args === 'object') {
-        const record = args as Record<string, unknown>;
-        for (const key of ['tool', 'toolName', 'name', 'server', 'serverName', 'command', 'method', 'action']) {
-            const value = record[key];
-            if (typeof value === 'string' && value.trim().length > 0) {
-                parts.push(value);
+const MAX_APPROVAL_SIGNAL_DEPTH = 4;
+const MAX_APPROVAL_SIGNAL_COUNT = 64;
+const MAX_APPROVAL_SIGNAL_STRING_CHARS = 1_000;
+
+const APPROVAL_SIGNAL_KEYS: ReadonlySet<string> = new Set([
+    'action',
+    'command',
+    'method',
+    'name',
+    'server',
+    'servername',
+    'shell',
+    'tool',
+    'toolname',
+]);
+
+const APPROVAL_SIGNAL_CONTAINER_KEYS: ReadonlySet<string> = new Set([
+    'args',
+    'arguments',
+    'context',
+    'input',
+    'parameters',
+    'payload',
+]);
+
+const pushApprovalSignal = (parts: string[], value: string): void => {
+    if (parts.length >= MAX_APPROVAL_SIGNAL_COUNT) {
+        return;
+    }
+
+    const normalized = value.replace(/\s+/gu, ' ').trim();
+    if (!normalized) {
+        return;
+    }
+
+    parts.push(normalized.slice(0, MAX_APPROVAL_SIGNAL_STRING_CHARS));
+};
+
+const collectApprovalSignalsFromValue = (
+    value: unknown,
+    parts: string[],
+    depth: number,
+): void => {
+    if (depth > MAX_APPROVAL_SIGNAL_DEPTH || parts.length >= MAX_APPROVAL_SIGNAL_COUNT) {
+        return;
+    }
+
+    if (typeof value === 'string') {
+        pushApprovalSignal(parts, value);
+        return;
+    }
+
+    if (!value || typeof value !== 'object') {
+        return;
+    }
+
+    if (Array.isArray(value)) {
+        for (const item of value) {
+            collectApprovalSignalsFromValue(item, parts, depth + 1);
+            if (parts.length >= MAX_APPROVAL_SIGNAL_COUNT) {
+                return;
             }
         }
+        return;
     }
+
+    const record = toRecord(value);
+    if (!record) {
+        return;
+    }
+
+    for (const [key, item] of Object.entries(record)) {
+        const normalizedKey = key.trim().toLowerCase();
+        if (
+            APPROVAL_SIGNAL_KEYS.has(normalizedKey)
+            || APPROVAL_SIGNAL_CONTAINER_KEYS.has(normalizedKey)
+        ) {
+            collectApprovalSignalsFromValue(item, parts, depth + 1);
+        }
+        if (parts.length >= MAX_APPROVAL_SIGNAL_COUNT) {
+            return;
+        }
+    }
+};
+
+const collectApprovalRiskSignals = (toolName: string, args: unknown): string => {
+    const parts: string[] = [toolName];
+    collectApprovalSignalsFromValue(args, parts, 0);
     return parts.join(' ').toLowerCase();
 };
 
