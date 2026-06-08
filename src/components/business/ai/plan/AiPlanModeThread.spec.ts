@@ -86,9 +86,10 @@ describe('AiPlanModeThread', () => {
     expect(wrapper.text()).toContain('收集上下文');
     expect(wrapper.text()).toContain('修改代码');
     expect(wrapper.find('.ai-plan-thread-confirmation').exists()).toBe(true);
+    expect(wrapper.find('.ai-plan-thread-confirmation.is-standalone').exists()).toBe(true);
   });
 
-  it('renders active run progress as readonly plan snapshot', () => {
+  it('renders active run progress as the Plan run panel', () => {
     const steps = [
       createStep(0, { status: 'done' }),
       createStep(1, { status: 'running' }),
@@ -103,7 +104,8 @@ describe('AiPlanModeThread', () => {
     expect(wrapper.text()).toContain('计划执行中');
     expect(wrapper.text()).toContain('修改代码');
     expect(wrapper.text()).toContain('完成');
-    expect(wrapper.find('.ai-plan-thread-readonly').exists()).toBe(true);
+    expect(wrapper.find('.ai-plan-thread-run-panel').exists()).toBe(true);
+    expect(wrapper.find('.ai-plan-thread-readonly').exists()).toBe(false);
     expect(wrapper.find('.ai-plan-thread-confirmation').exists()).toBe(false);
   });
 

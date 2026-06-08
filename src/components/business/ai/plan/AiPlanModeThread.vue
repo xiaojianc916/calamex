@@ -8,7 +8,16 @@ import {
 } from '@/components/ai-elements/conversation';
 import AiErrorNotice from '@/components/business/ai/chat/AiErrorNotice.vue';
 import AiPlanConfirmationMessage from '@/components/business/ai/plan/AiPlanConfirmationMessage.vue';
-import type { IAiAgentRun, IAiTaskPlanStep } from '@/types/ai';
+import AiPlanModePanel from '@/components/business/ai/plan/AiPlanModePanel.vue';
+import type {
+  IAiAgentPlanVersionSummary,
+  IAiAgentRun,
+  IAiTaskPlanStep,
+  IAiToolActivityInline,
+  IAiToolConfirmationRequest,
+  IAiWebActivity,
+  TAiToolConfirmationDecision,
+} from '@/types/ai';
 import type { TAgentPlanStatus } from '@/types/ai/sidecar';
 
 interface IAiPlanThreadScrollState {
@@ -29,7 +38,17 @@ const props = withDefaults(
     goal: string;
     summary: string | null;
     status: TAgentPlanStatus | null;
+    planId?: string | null;
+    planVersion?: number | null;
+    planThreadId?: string | null;
+    planCreatedAt?: string | null;
+    planUpdatedAt?: string | null;
+    planExecutedAt?: string | null;
+    planRejectionReason?: string | null;
+    planErrorMessage?: string | null;
+    planVersions?: IAiAgentPlanVersionSummary[];
     steps: IAiTaskPlanStep[];
+    classificationReason?: string;
     isClassifying: boolean;
     isPlanning: boolean;
     isApproving: boolean;
@@ -37,11 +56,29 @@ const props = withDefaults(
     canApprove: boolean;
     approvedAt: string | null;
     activeRun: IAiAgentRun | null;
+    isRunActionPending?: boolean;
+    webActivity?: IAiWebActivity | null;
+    toolActivity?: IAiToolActivityInline | null;
+    toolConfirmation?: IAiToolConfirmationRequest | null;
     errorMessage?: string;
     conversationId?: string | null;
     scrollState?: IAiPlanThreadScrollState | null;
   }>(),
   {
+    planId: null,
+    planVersion: null,
+    planThreadId: null,
+    planCreatedAt: null,
+    planUpdatedAt: null,
+    planExecutedAt: null,
+    planRejectionReason: null,
+    planErrorMessage: null,
+    planVersions: () => [],
+    classificationReason: '',
+    isRunActionPending: false,
+    webActivity: null,
+    toolActivity: null,
+    toolConfirmation: null,
     errorMessage: '',
     conversationId: null,
     scrollState: null,
@@ -53,20 +90,26 @@ const emit = defineEmits<{
   removeStep: [stepId: string];
   regenerate: [];
   reject: [];
+  reset: [];
   approve: [];
+  runStep: [];
+  pauseRun: [];
+  resumeRun: [];
+  cancelRun: [];
+  resolveToolConfirmation: [decision: TAiToolConfirmationDecision];
   scrollStateChange: [state: IAiPlanThreadScrollState];
 }>();
 
+const executionSteps = computed(() => props.activeRun?.steps ?? props.steps);
 const completedStepCount = computed(
-  () => (props.activeRun?.steps ?? props.steps).filter((step) => step.status === 'done').length,
+  () => executionSteps.value.filter((step) => step.status === 'done').length,
 );
 const failedStepCount = computed(
   () =>
-    (props.activeRun?.steps ?? props.steps).filter(
-      (step) => step.status === 'failed' || step.status === 'cancelled',
-    ).length,
+    executionSteps.value.filter((step) => step.status === 'failed' || step.status === 'cancelled')
+      .length,
 );
-const totalStepCount = computed(() => (props.activeRun?.steps ?? props.steps).length);
+const totalStepCount = computed(() => executionSteps.value.length);
 const activeStep = computed(() => {
   const run = props.activeRun;
 
@@ -131,6 +174,17 @@ const planStats = computed<IAiPlanThreadStat[]>(() => [
 const shouldShowPlanCard = computed(
   () => props.steps.length > 0 && !props.activeRun && !props.approvedAt,
 );
+const shouldShowRunPanel = computed(
+  () =>
+    Boolean(props.activeRun) ||
+    Boolean(props.toolActivity) ||
+    Boolean(props.toolConfirmation && props.activeRun) ||
+    Boolean(props.approvedAt) ||
+    props.status === 'approved' ||
+    props.status === 'executing' ||
+    props.status === 'completed' ||
+    props.status === 'failed',
+);
 const shouldRenderEmptyState = computed(
   () =>
     props.steps.length === 0 &&
@@ -148,14 +202,23 @@ const handleScrollStateChange = (state: IAiPlanThreadScrollState): void => {
 </script>
 
 <template>
-  <Conversation class="relative size-full overflow-x-hidden ai-plan-mode-thread" aria-label="Plan 模式"
-    :initial="conversationInitialScroll" :resize="conversationResizeMode" :restore-key="conversationId"
+  <Conversation
+    class="relative size-full overflow-x-hidden ai-plan-mode-thread"
+    aria-label="Plan 模式"
+    :initial="conversationInitialScroll"
+    :resize="conversationResizeMode"
+    :restore-key="conversationId"
     :initial-scroll-top="scrollState?.scrollTop ?? null"
     :initial-distance-from-bottom="scrollState?.distanceFromBottom ?? null"
-    @scroll-state-change="handleScrollStateChange">
+    @scroll-state-change="handleScrollStateChange"
+  >
     <ConversationContent class="ai-plan-mode-thread__content" :class="{ 'is-empty': shouldRenderEmptyState }">
-      <ConversationEmptyState v-if="shouldRenderEmptyState" class="ai-plan-empty-state" title="Plan 尚未开始"
-        description="描述一个复杂目标后，Plan 会先拆解步骤、风险和确认点。">
+      <ConversationEmptyState
+        v-if="shouldRenderEmptyState"
+        class="ai-plan-empty-state"
+        title="Plan 尚未开始"
+        description="描述一个复杂目标后，Plan 会先拆解步骤、风险和确认点。"
+      >
         <template #icon>
           <span class="icon-[lucide--list-checks] size-6" />
         </template>
@@ -183,14 +246,67 @@ const handleScrollStateChange = (state: IAiPlanThreadScrollState): void => {
           </div>
         </section>
 
-        <AiPlanConfirmationMessage v-if="shouldShowPlanCard" class="ai-plan-thread-confirmation" :goal="goal"
-          :summary="summary" :status="status" :steps="steps" :is-planning="isPlanning" :is-approving="isApproving"
-          :can-edit="canEdit" :can-approve="canApprove" :approved-at="approvedAt"
+        <AiPlanConfirmationMessage
+          v-if="shouldShowPlanCard"
+          class="ai-plan-thread-confirmation"
+          standalone
+          :goal="goal"
+          :summary="summary"
+          :status="status"
+          :steps="steps"
+          :is-planning="isPlanning"
+          :is-approving="isApproving"
+          :can-edit="canEdit"
+          :can-approve="canApprove"
+          :approved-at="approvedAt"
           @update-step-title="(stepId, title) => emit('updateStepTitle', stepId, title)"
-          @remove-step="emit('removeStep', $event)" @regenerate="emit('regenerate')" @reject="emit('reject')"
-          @approve="emit('approve')" />
+          @remove-step="emit('removeStep', $event)"
+          @regenerate="emit('regenerate')"
+          @reject="emit('reject')"
+          @approve="emit('approve')"
+        />
 
-        <section v-else-if="steps.length" class="ai-plan-thread-readonly" aria-label="Plan 步骤快照">
+        <AiPlanModePanel
+          v-if="shouldShowRunPanel"
+          class="ai-plan-thread-run-panel"
+          :goal="goal"
+          :plan-summary="summary"
+          :plan-status="status"
+          :plan-id="planId"
+          :plan-version="planVersion"
+          :plan-thread-id="planThreadId"
+          :plan-created-at="planCreatedAt"
+          :plan-updated-at="planUpdatedAt"
+          :plan-executed-at="planExecutedAt"
+          :plan-rejection-reason="planRejectionReason"
+          :plan-error-message="planErrorMessage"
+          :plan-versions="planVersions"
+          :steps="steps"
+          :classification-reason="classificationReason"
+          :error-message="errorMessage"
+          :is-classifying="isClassifying"
+          :is-planning="isPlanning"
+          :is-approving="isApproving"
+          :approved-at="approvedAt"
+          :active-run="activeRun"
+          :is-run-action-pending="isRunActionPending"
+          :web-activity="webActivity"
+          :tool-activity="toolActivity"
+          :tool-confirmation="toolConfirmation"
+          @update-step-title="(stepId, title) => emit('updateStepTitle', stepId, title)"
+          @remove-step="emit('removeStep', $event)"
+          @regenerate="emit('regenerate')"
+          @reject="emit('reject')"
+          @approve="emit('approve')"
+          @reset="emit('reset')"
+          @run-step="emit('runStep')"
+          @pause-run="emit('pauseRun')"
+          @resume-run="emit('resumeRun')"
+          @cancel-run="emit('cancelRun')"
+          @resolve-tool-confirmation="emit('resolveToolConfirmation', $event)"
+        />
+
+        <section v-else-if="steps.length && !shouldShowPlanCard" class="ai-plan-thread-readonly" aria-label="Plan 步骤快照">
           <h3>计划步骤</h3>
           <ol>
             <li v-for="step in steps" :key="step.id" :class="[`is-${step.status}`, `risk-${step.riskLevel}`]">
@@ -203,7 +319,7 @@ const handleScrollStateChange = (state: IAiPlanThreadScrollState): void => {
           </ol>
         </section>
 
-        <AiErrorNotice v-if="errorMessage" class="ai-plan-thread-error" :message="errorMessage" />
+        <AiErrorNotice v-if="errorMessage && !shouldShowRunPanel" class="ai-plan-thread-error" :message="errorMessage" />
       </template>
     </ConversationContent>
     <ConversationScrollButton v-if="!shouldRenderEmptyState" class="ai-plan-scroll-button" />
@@ -330,10 +446,19 @@ const handleScrollStateChange = (state: IAiPlanThreadScrollState): void => {
   line-height: 20px;
 }
 
-.ai-plan-thread-confirmation {
+.ai-plan-thread-confirmation,
+.ai-plan-thread-run-panel {
+  width: min(100%, 760px);
   max-width: none;
-  padding-left: 0;
-  padding-right: 0;
+}
+
+.ai-plan-thread-run-panel {
+  --ai-plan-panel-width: 100%;
+  margin-inline: 0;
+  border: 1px solid color-mix(in srgb, var(--shell-divider) 86%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface-soft) 62%, transparent);
+  padding: 12px;
 }
 
 .ai-plan-thread-confirmation :deep(.ai-element-plan) {
