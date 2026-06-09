@@ -4,14 +4,17 @@ import { computed, onMounted, ref } from 'vue';
 import { z } from 'zod';
 import AiChatThread from '@/components/business/ai/chat/AiChatThread.vue';
 import AiPromptInput from '@/components/business/ai/chat/AiPromptInput.vue';
-import AiPlanModePanel from '@/components/business/ai/plan/AiPlanModePanel.vue';
 import AiProviderIcon from '@/components/business/ai/provider/AiProviderIcon.vue';
 import AiProviderSettings from '@/components/business/ai/provider/AiProviderSettings.vue';
 import AiAssistantCheckpointEntry from '@/components/business/ai/shell/AiAssistantCheckpointEntry.vue';
 import AiAssistantSuggestionEmpty from '@/components/business/ai/shell/AiAssistantSuggestionEmpty.vue';
-import AiAssistantThreadExtras from '@/components/business/ai/shell/AiAssistantThreadExtras.vue';
 import AiPanelFrame from '@/components/business/ai/shell/AiPanelFrame.vue';
 import { splitSuggestionsIntoRows } from '@/components/business/ai/shell/split-suggestions';
+import AiThreadRunStatusBar from '@/components/business/ai/thread/AiThreadRunStatusBar.vue';
+import {
+  buildPlanControlMessage,
+  deriveThreadPlanDetails,
+} from '@/components/business/ai/thread/projection';
 import AiWebSourcesPanel from '@/components/business/ai/web/AiWebSourcesPanel.vue';
 import { useAiAgentNetwork } from '@/composables/ai/useAiAgentNetwork';
 import { useAiAgentRun } from '@/composables/ai/useAiAgentRun';
@@ -156,21 +159,13 @@ const planStore = computed(() => assistant.agentPlan.store);
 const planHasPlan = computed(() => planStore.value.hasPlan);
 const planIsClassifying = computed(() => planStore.value.isClassifying);
 const planIsPlanning = computed(() => planStore.value.isPlanning);
-const planClassificationReason = computed(() => planStore.value.classificationReason);
 const planErrorMessage = computed(() => planStore.value.errorMessage);
 const planIsApproving = computed(() => planStore.value.isApproving);
 const planApprovedAt = computed(() => planStore.value.approvedAt);
 const planSummary = computed(() => planStore.value.planSummary);
 const planStatus = computed(() => planStore.value.planStatus);
 const planId = computed(() => planStore.value.planId);
-const planVersion = computed(() => planStore.value.planVersion);
-const planThreadId = computed(() => planStore.value.planThreadId);
 const planCreatedAt = computed(() => planStore.value.planCreatedAt);
-const planUpdatedAt = computed(() => planStore.value.planUpdatedAt);
-const planExecutedAt = computed(() => planStore.value.planExecutedAt);
-const planRejectionReason = computed(() => planStore.value.planRejectionReason);
-const planExecutionErrorMessage = computed(() => planStore.value.planErrorMessage);
-const planVersions = computed(() => planStore.value.planVersions);
 const planActiveRun = computed<IAiAgentRun | null>(() => planStore.value.activeRun);
 const planActiveToolActivity = computed<IAiToolActivityInline | null>(
   () => planStore.value.activeToolActivity,
@@ -228,23 +223,30 @@ const planConfirmationVisible = computed(() => {
     isPlanConfirmationStatus.value
   );
 });
-const canApprovePlan = computed(
-  () =>
-    planSteps.value.length >= 2 &&
-    planSteps.value.length <= 6 &&
-    !planActiveRun.value &&
-    !planApprovedAt.value &&
-    (planStatus.value === 'pending_approval' || planStatus.value === 'draft' || !planStatus.value),
+// Plan 审批不再是输入框上方的独立面板,而是平铺时间线里的一条 plan-control 条目:
+// 这里把它合成成一条 assistant 消息追加进可见时间线,运行态明细由投影层派生。
+const planControlMessage = computed(() =>
+  buildPlanControlMessage({
+    goal: planActiveGoal.value,
+    references: [],
+    isAwaitingApproval: planConfirmationVisible.value,
+    createdAt: planCreatedAt.value ?? new Date().toISOString(),
+  }),
 );
-const canEditPlan = computed(
-  () =>
-    !planActiveRun.value &&
-    !planApprovedAt.value &&
-    !planIsPlanning.value &&
-    !planIsApproving.value &&
-    !planIsClassifying.value &&
-    (planStatus.value === 'draft' || !planStatus.value),
+const threadPlanDetails = computed(() =>
+  deriveThreadPlanDetails({
+    summary: planSummary.value,
+    status: planStatus.value,
+    steps: planSteps.value,
+    isPlanning: planIsPlanning.value,
+    isApproving: planIsApproving.value,
+    isClassifying: planIsClassifying.value,
+    approvedAt: planApprovedAt.value,
+    hasActiveRun: Boolean(planActiveRun.value),
+  }),
 );
+// 运行进度/工具确认收敛到输入框上方的 Codex 风格细条;只在计划真正执行(有 run)或
+// 出现工具确认时显示,用于抑制 Web 来源面板里重复的活动指示。
 const planProgressVisible = computed(() => {
   if (assistant.activeMode.value !== 'plan') {
     return false;
@@ -260,13 +262,6 @@ const planProgressVisible = computed(() => {
     planStatus.value === 'completed' ||
     planStatus.value === 'failed'
   );
-});
-const directToolConfirmationVisible = computed(() => {
-  if (assistant.activeMode.value !== 'agent') {
-    return false;
-  }
-
-  return Boolean(visibleDirectToolConfirmation.value) && !planProgressVisible.value;
 });
 const composerDisabled = computed(
   () => assistant.isSending.value || Boolean(visibleDirectToolConfirmation.value),
@@ -471,6 +466,8 @@ const activeAgentFlowMessage = computed<IAiChatMessage | null>(() => {
   };
 });
 
+// 旧的 agent-flow synthetic message 仅用于 token usage 估算,不再进入可见时间线;
+// AiChatThread 会按 `agent-flow:` 前缀将其过滤掉。
 const threadMessages = computed<IAiChatMessage[]>(() => {
   const flowMessage = activeAgentFlowMessage.value;
 
@@ -482,6 +479,16 @@ const threadMessages = computed<IAiChatMessage[]>(() => {
     ...assistant.messages.value.filter((message) => message.id !== flowMessage.id),
     flowMessage,
   ];
+});
+// 真正喂给平铺时间线的消息:真实会话消息 + 可选的 plan-control 审批条目。
+const visibleThreadMessages = computed<IAiChatMessage[]>(() => {
+  const controlMessage = planControlMessage.value;
+
+  if (!controlMessage) {
+    return assistant.messages.value;
+  }
+
+  return [...assistant.messages.value, controlMessage];
 });
 const tokenUsageMessages = computed<IAiChatMessage[]>(() => {
   if (assistant.activeMode.value === 'plan') {
@@ -799,10 +806,6 @@ const handleApprovePlan = async (): Promise<void> => {
   }
 };
 
-const handleResetPlan = (): void => {
-  assistant.agentPlan.resetPlan();
-};
-
 const handleRejectPlan = async (): Promise<void> => {
   try {
     await assistant.agentPlan.rejectPlan('用户拒绝当前计划。');
@@ -811,17 +814,6 @@ const handleRejectPlan = async (): Promise<void> => {
   }
 };
 
-const handleRunStep = async (): Promise<void> => {
-  await withAgentRunAction(
-    (runId) =>
-      agentRun.runStepWithSidecar(runId, {
-        goal: planActiveGoal.value,
-        context: assistant.buildSidecarContextReferences(),
-        workspaceRootPath: props.workspaceRootPath,
-      }),
-    '执行 Agent step 失败。',
-  );
-};
 const handlePauseRun = async (): Promise<void> => {
   await withAgentRunAction((runId) => agentRun.pauseRun(runId), '暂停 Agent run 失败。');
 };
@@ -1039,15 +1031,18 @@ onMounted(() => {
     </template>
 
     <template #body>
-      <AiChatThread :messages="threadMessages" :is-typing="assistant.isSending.value" :platform-id="aiIconPlatformId"
-        :provider-label="aiIconTitle" :conversation-id="assistant.activeConversationId.value"
-        :workspace-root-path="workspaceRootPath" :scroll-state="assistant.activeConversationScrollState.value"
-        :typing-label="assistantTypingLabel" :has-extra-content="planConfirmationVisible || directToolConfirmationVisible"
+      <AiChatThread :messages="visibleThreadMessages" :is-typing="assistant.isSending.value"
+        :platform-id="aiIconPlatformId" :provider-label="aiIconTitle"
+        :conversation-id="assistant.activeConversationId.value" :workspace-root-path="workspaceRootPath"
+        :scroll-state="assistant.activeConversationScrollState.value" :typing-label="assistantTypingLabel"
+        :plan-details="threadPlanDetails"
         :reverting-changed-files-summary-id="assistant.revertingChangedFilesSummaryId.value"
         :pinning-changed-files-summary-id="assistant.pinningChangedFilesSummaryId.value"
         @scroll-state-change="handleConversationScrollStateChange"
         @changed-files-rollback="assistant.rollbackChangedFilesSummary"
-        @changed-files-pin="assistant.setChangedFilesSummaryPin">
+        @changed-files-pin="assistant.setChangedFilesSummaryPin" @plan-approve="handleApprovePlan"
+        @plan-reject="handleRejectPlan" @plan-regenerate="handleRegeneratePlan"
+        @plan-update-step-title="handleUpdatePlanStepTitle" @plan-remove-step="handleRemovePlanStep">
         <template #empty>
           <AiAssistantSuggestionEmpty :suggestion-rows="suggestionRows" :disabled="composerDisabled"
             @select="handleSuggestionSelect" />
@@ -1057,18 +1052,6 @@ onMounted(() => {
             :label="getConversationCheckpointLabel(message.id)" :disabled="isConversationCheckpointDisabled"
             :restoring="isConversationCheckpointRestoring(message.id)"
             @restore="handleRestoreConversationCheckpoint(message.id)" />
-        </template>
-        <template #after-messages>
-          <AiAssistantThreadExtras :plan-confirmation-visible="planConfirmationVisible" :plan-active-goal="planActiveGoal"
-            :plan-summary="planSummary" :plan-status="planStatus" :plan-steps="planSteps"
-            :plan-is-planning="planIsPlanning" :plan-is-approving="planIsApproving" :can-edit-plan="canEditPlan"
-            :can-approve-plan="canApprovePlan" :plan-approved-at="planApprovedAt"
-            :direct-tool-confirmation-visible="directToolConfirmationVisible"
-            :visible-direct-tool-confirmation="visibleDirectToolConfirmation"
-            :is-agent-run-action-pending="isAgentRunActionPending" :error-message="assistant.errorMessage.value"
-            @update-step-title="handleUpdatePlanStepTitle" @remove-step="handleRemovePlanStep"
-            @regenerate="handleRegeneratePlan" @reject="handleRejectPlan" @approve="handleApprovePlan"
-            @resolve-tool-confirmation="handleResolveToolConfirmation" />
         </template>
       </AiChatThread>
     </template>
@@ -1090,20 +1073,10 @@ onMounted(() => {
         :activity="planProgressVisible ? null : webSources.activity.value" :error-message="webSources.errorMessage.value"
         :is-searching="webSources.isSearching.value" :network-permission="networkPermission"
         @search="handleSearchWebSources" @fetch-source="handleFetchWebSource" @clear="webSources.clear" />
-      <div class="ai-composer-shell" :class="{ 'has-plan': planProgressVisible }">
-        <AiPlanModePanel v-if="planProgressVisible" :goal="planActiveGoal" :plan-summary="planSummary"
-          :plan-status="planStatus" :plan-id="planId" :plan-version="planVersion" :plan-thread-id="planThreadId"
-          :plan-created-at="planCreatedAt" :plan-updated-at="planUpdatedAt" :plan-executed-at="planExecutedAt"
-          :plan-rejection-reason="planRejectionReason" :plan-error-message="planExecutionErrorMessage"
-          :plan-versions="planVersions" :steps="planSteps" :classification-reason="planClassificationReason"
-          :error-message="planErrorMessage" :is-classifying="planIsClassifying" :is-planning="planIsPlanning"
-          :is-approving="planIsApproving" :approved-at="planApprovedAt" :active-run="planActiveRun"
-          :is-run-action-pending="isAgentRunActionPending" :web-activity="webSources.activity.value"
-          :tool-activity="planActiveToolActivity" :tool-confirmation="planPendingToolConfirmation"
-          @update-step-title="handleUpdatePlanStepTitle" @remove-step="handleRemovePlanStep"
-          @regenerate="handleRegeneratePlan" @reject="handleRejectPlan" @approve="handleApprovePlan"
-          @reset="handleResetPlan" @run-step="handleRunStep" @pause-run="handlePauseRun" @resume-run="handleResumeRun"
-          @cancel-run="handleCancelRun" @resolve-tool-confirmation="handleResolveToolConfirmation" />
+      <div class="ai-composer-shell">
+        <AiThreadRunStatusBar :run="planActiveRun" :confirmation="visibleDirectToolConfirmation"
+          :busy="isAgentRunActionPending" @pause="handlePauseRun" @resume="handleResumeRun" @cancel="handleCancelRun"
+          @resolve="handleResolveToolConfirmation" />
         <AiPromptInput v-model="assistant.draft.value" v-model:active-mode="assistant.activeMode.value"
           :disabled="composerDisabled" :stop-visible="assistant.isSending.value"
           :error-message="assistant.errorMessage.value" :submit-label="submitLabel" :config="assistant.config.value"
@@ -1464,16 +1437,6 @@ onMounted(() => {
       color-mix(in srgb, var(--ai-composer-surface) 10%, transparent) 82%,
       transparent 100%);
   content: '';
-}
-
-.ai-composer-shell.has-plan {
-  background: transparent;
-}
-
-.ai-composer-shell :global(.ai-plan-mode-panel) {
-  border-top: 0;
-  background: transparent;
-  padding: 0 0 calc(var(--app-density-scale) * 0.125rem);
 }
 
 .ai-composer-shell :global(.ai-composer) {
