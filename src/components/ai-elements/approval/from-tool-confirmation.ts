@@ -1,7 +1,4 @@
-import type {
-  IAiToolConfirmationRequest,
-  TAiToolConfirmationOptionId,
-} from '@/types/ai';
+import type { IAiToolConfirmationRequest, TAiToolConfirmationOptionId } from '@/types/ai';
 
 import type { IApprovalPromptOption } from './types';
 

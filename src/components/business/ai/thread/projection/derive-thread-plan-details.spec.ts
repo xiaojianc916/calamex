@@ -71,9 +71,7 @@ describe('deriveThreadPlanDetails', () => {
   });
 
   it('pending_approval 可批准但不可编辑(非草稿态)', () => {
-    const details = deriveThreadPlanDetails(
-      createInput({ status: 'pending_approval' }),
-    );
+    const details = deriveThreadPlanDetails(createInput({ status: 'pending_approval' }));
     expect(details.canApprove).toBe(true);
     expect(details.canEdit).toBe(false);
   });
@@ -85,17 +83,15 @@ describe('deriveThreadPlanDetails', () => {
   });
 
   it('步骤数低于下限时不可批准', () => {
-    const steps = Array.from(
-      { length: THREAD_PLAN_MIN_APPROVABLE_STEPS - 1 },
-      (_, index) => createStep(`s${index}`),
+    const steps = Array.from({ length: THREAD_PLAN_MIN_APPROVABLE_STEPS - 1 }, (_, index) =>
+      createStep(`s${index}`),
     );
     expect(deriveThreadPlanDetails(createInput({ steps })).canApprove).toBe(false);
   });
 
   it('步骤数高于上限时不可批准', () => {
-    const steps = Array.from(
-      { length: THREAD_PLAN_MAX_APPROVABLE_STEPS + 1 },
-      (_, index) => createStep(`s${index}`),
+    const steps = Array.from({ length: THREAD_PLAN_MAX_APPROVABLE_STEPS + 1 }, (_, index) =>
+      createStep(`s${index}`),
     );
     expect(deriveThreadPlanDetails(createInput({ steps })).canApprove).toBe(false);
   });

@@ -62,9 +62,7 @@ const canReject = computed(
     props.status !== 'failed',
 );
 
-const approveOptionLabel = computed(() =>
-  props.isApproving ? '批准中…' : '批准并启动',
-);
+const approveOptionLabel = computed(() => (props.isApproving ? '批准中…' : '批准并启动'));
 
 /**
  * 对齐 Codex `approval_overlay.rs`:仅列出当前可执行的决策选项,

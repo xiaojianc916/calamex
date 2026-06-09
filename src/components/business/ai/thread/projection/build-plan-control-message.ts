@@ -31,9 +31,7 @@ export interface IPlanControlMessageInput {
  * 据此把条目阶段映射为 `awaiting-approval`。`content` 留空,投影时跳过 assistant
  * 文本条目,只产出 `plan-control` 条目。
  */
-export const buildPlanControlMessage = (
-  input: IPlanControlMessageInput,
-): IAiChatMessage | null => {
+export const buildPlanControlMessage = (input: IPlanControlMessageInput): IAiChatMessage | null => {
   if (!input.isAwaitingApproval) {
     return null;
   }

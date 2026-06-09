@@ -1,21 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import type {
-  IAiTaskPlanStep,
-  IAiToolConfirmationRequest,
-  TAiAgentRunStatus,
-} from '@/types/ai';
+import type { IAiTaskPlanStep, IAiToolConfirmationRequest, TAiAgentRunStatus } from '@/types/ai';
 
-import {
-  deriveRunStatus,
-  describeAgentRunStatus,
-  type IRunStatusInput,
-} from './derive-run-status';
+import { deriveRunStatus, describeAgentRunStatus, type IRunStatusInput } from './derive-run-status';
 
-const createStep = (
-  id: string,
-  status: IAiTaskPlanStep['status'],
-): IAiTaskPlanStep => ({
+const createStep = (id: string, status: IAiTaskPlanStep['status']): IAiTaskPlanStep => ({
   id,
   index: 0,
   title: `步骤 ${id}`,
@@ -47,9 +36,7 @@ const createConfirmation = (
   ...overrides,
 });
 
-const createInput = (
-  overrides: Partial<IRunStatusInput> = {},
-): IRunStatusInput => ({
+const createInput = (overrides: Partial<IRunStatusInput> = {}): IRunStatusInput => ({
   run: null,
   confirmation: null,
   ...overrides,
@@ -101,9 +88,7 @@ describe('deriveRunStatus', () => {
   });
 
   it('确认存在但无 run 时进度为 null', () => {
-    const result = deriveRunStatus(
-      createInput({ confirmation: createConfirmation() }),
-    );
+    const result = deriveRunStatus(createInput({ confirmation: createConfirmation() }));
     expect(result?.phase).toBe('awaiting-confirmation');
     expect(result?.progress).toBeNull();
   });
@@ -159,20 +144,17 @@ describe('deriveRunStatus', () => {
 
   it('等待计划批准且无确认时不呈现(交由时间线内联审批)', () => {
     expect(
-      deriveRunStatus(
-        createInput({ run: { status: 'waiting-for-plan-approval', steps: [] } }),
-      ),
+      deriveRunStatus(createInput({ run: { status: 'waiting-for-plan-approval', steps: [] } })),
     ).toBeNull();
   });
 
-  it.each<TAiAgentRunStatus>(['completed', 'failed', 'cancelled'])(
-    '终态 %s 不呈现状态条',
-    (status) => {
-      expect(
-        deriveRunStatus(
-          createInput({ run: { status, steps: [createStep('a', 'done')] } }),
-        ),
-      ).toBeNull();
-    },
-  );
+  it.each<TAiAgentRunStatus>([
+    'completed',
+    'failed',
+    'cancelled',
+  ])('终态 %s 不呈现状态条', (status) => {
+    expect(
+      deriveRunStatus(createInput({ run: { status, steps: [createStep('a', 'done')] } })),
+    ).toBeNull();
+  });
 });

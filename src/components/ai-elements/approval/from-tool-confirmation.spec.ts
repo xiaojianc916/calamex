@@ -52,9 +52,7 @@ describe('buildToolConfirmationApproval', () => {
   });
 
   it('问句为空时标题回退到工具名', () => {
-    const approval = buildToolConfirmationApproval(
-      buildConfirmation({ question: '   ' }),
-    );
+    const approval = buildToolConfirmationApproval(buildConfirmation({ question: '   ' }));
 
     expect(approval.title).toBe('auto_apply_patch');
   });

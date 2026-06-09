@@ -9,5 +9,5 @@ export { default as AiThreadToolCall } from './AiThreadToolCall.vue';
 export { default as AiThreadUserMessage } from './AiThreadUserMessage.vue';
 export * from './projection';
 export type { IAiThreadPlanDetails } from './types';
-export { type IThreadEntryExpansion, useThreadEntryExpansion } from './useThreadEntryExpansion';
 export { useElapsedSeconds } from './useElapsedSeconds';
+export { type IThreadEntryExpansion, useThreadEntryExpansion } from './useThreadEntryExpansion';

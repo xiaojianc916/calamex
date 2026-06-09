@@ -108,9 +108,7 @@ describe('AiThreadRunStatusBar', () => {
     const bar = wrapper.findComponent(RunStatusBar);
     expect(bar.props('phase')).toBe('awaiting-confirmation');
 
-    const allowButton = wrapper
-      .findAll('button')
-      .find((button) => button.text().includes('允许'));
+    const allowButton = wrapper.findAll('button').find((button) => button.text().includes('允许'));
     await allowButton?.trigger('click');
 
     expect(wrapper.emitted('resolve')?.[0]).toEqual(['allow-once']);

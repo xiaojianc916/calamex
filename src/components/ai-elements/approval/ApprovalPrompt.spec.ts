@@ -1,6 +1,6 @@
 import { mount } from '@vue/test-utils';
-import { nextTick } from 'vue';
 import { describe, expect, it } from 'vitest';
+import { nextTick } from 'vue';
 
 import ApprovalPrompt from './ApprovalPrompt.vue';
 import type { IApprovalPromptOption } from './types';

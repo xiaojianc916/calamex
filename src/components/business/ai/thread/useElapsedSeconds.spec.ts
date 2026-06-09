@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { effectScope, nextTick, ref, type Ref } from 'vue';
+import { effectScope, nextTick, type Ref, ref } from 'vue';
 
 import { useElapsedSeconds } from './useElapsedSeconds';
 

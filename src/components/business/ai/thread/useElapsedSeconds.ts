@@ -1,4 +1,4 @@
-import { onScopeDispose, ref, watch, type Ref } from 'vue';
+import { onScopeDispose, type Ref, ref, watch } from 'vue';
 
 /**
  * 计算并按秒滴答更新「自 startedAt 起的已用秒数」。

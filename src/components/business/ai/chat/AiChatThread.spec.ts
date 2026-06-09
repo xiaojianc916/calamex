@@ -207,7 +207,10 @@ describe('AiChatThread', () => {
       props: {
         messages: [
           createMessage({ id: 'user-1', role: 'user', content: '帮我跑一下' }),
-          createMessage({ id: 'assistant-error-1', content: 'Agent 执行失败：Node sidecar 未就绪' }),
+          createMessage({
+            id: 'assistant-error-1',
+            content: 'Agent 执行失败：Node sidecar 未就绪',
+          }),
         ],
         isTyping: false,
         platformId: 'deepseek',
@@ -234,7 +237,7 @@ describe('AiChatThread', () => {
           AiThreadTimeline: {
             emits: ['changedFilesRollback', 'changedFilesPin'],
             template:
-              '<div><button class="cf-rollback" @click="$emit(\'changedFilesRollback\', \'m1\', \'sum1\')"></button><button class="cf-pin" @click="$emit(\'changedFilesPin\', \'m1\', \'sum1\', true)"></button></div>',
+              "<div><button class=\"cf-rollback\" @click=\"$emit('changedFilesRollback', 'm1', 'sum1')\"></button><button class=\"cf-pin\" @click=\"$emit('changedFilesPin', 'm1', 'sum1', true)\"></button></div>",
           },
         },
       },
@@ -259,14 +262,17 @@ describe('AiChatThread', () => {
       },
       global: {
         stubs: {
-          AiThreadTimeline: { props: ['messages', 'planDetails'], template: '<div class="timeline-stub" />' },
+          AiThreadTimeline: {
+            props: ['messages', 'planDetails'],
+            template: '<div class="timeline-stub" />',
+          },
         },
       },
     });
 
-    expect(
-      wrapper.findComponent({ name: 'AiThreadTimeline' }).props('planDetails'),
-    ).toEqual(planDetails);
+    expect(wrapper.findComponent({ name: 'AiThreadTimeline' }).props('planDetails')).toEqual(
+      planDetails,
+    );
   });
 
   it('forwards plan approval and edit events from the timeline to the panel', async () => {

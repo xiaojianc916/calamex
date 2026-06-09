@@ -47,9 +47,7 @@ const isDraftLikeStatus = (status: TAgentPlanStatus | null): boolean =>
  *   或草稿 / 未定状态。
  * - 可编辑:无活动 run、未批准,且不在分类 / 生成 / 批准中,处于草稿 / 未定状态。
  */
-export const deriveThreadPlanDetails = (
-  input: IThreadPlanDetailsInput,
-): IAiThreadPlanDetails => {
+export const deriveThreadPlanDetails = (input: IThreadPlanDetailsInput): IAiThreadPlanDetails => {
   const steps = [...input.steps];
   const isApproved = Boolean(input.approvedAt);
   const draftLike = isDraftLikeStatus(input.status);

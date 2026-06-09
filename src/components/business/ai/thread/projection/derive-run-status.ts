@@ -10,11 +10,7 @@
  * run 状态 → header 文案逐条复刻 `AiPlanModePanel.runStatusLabel`,进度
  * (done / total)复刻其 `completedStepCount` / `totalStepCount`,不发明新语义。
  */
-import type {
-  IAiTaskPlanStep,
-  IAiToolConfirmationRequest,
-  TAiAgentRunStatus,
-} from '@/types/ai';
+import type { IAiTaskPlanStep, IAiToolConfirmationRequest, TAiAgentRunStatus } from '@/types/ai';
 
 /** 状态条阶段。 */
 export type TRunStatusPhase = 'running' | 'paused' | 'awaiting-confirmation';
@@ -70,9 +66,7 @@ export const describeAgentRunStatus = (status: TAiAgentRunStatus): string => {
 };
 
 /** 步骤集合 → 进度;无步骤时返回 null(不展示进度)。 */
-const deriveProgress = (
-  steps: readonly IAiTaskPlanStep[],
-): IRunStatusProgress | null => {
+const deriveProgress = (steps: readonly IAiTaskPlanStep[]): IRunStatusProgress | null => {
   const total = steps.length;
   if (total === 0) {
     return null;
@@ -82,9 +76,7 @@ const deriveProgress = (
 };
 
 /** 当前正在执行的步骤标题作为细节行(对齐 Zed / Codex 展示“当前步骤”)。 */
-const deriveRunningStepDetail = (
-  steps: readonly IAiTaskPlanStep[],
-): string | null => {
+const deriveRunningStepDetail = (steps: readonly IAiTaskPlanStep[]): string | null => {
   const runningStep = steps.find((step) => step.status === 'running');
   const title = runningStep?.title.trim() ?? '';
   return title.length > 0 ? title : null;
@@ -105,9 +97,7 @@ const normalizeSummary = (summary: string): string | null => {
  * 3. run 运行中(`running-plan` / `running-step`)→ `running`(可暂停 / 取消)。
  * 4. 其余(等待批准 → 时间线内联审批;终态;无 run)→ 不呈现(null)。
  */
-export const deriveRunStatus = (
-  input: IRunStatusInput,
-): IRunStatusViewModel | null => {
+export const deriveRunStatus = (input: IRunStatusInput): IRunStatusViewModel | null => {
   const { run, confirmation } = input;
 
   if (confirmation !== null) {

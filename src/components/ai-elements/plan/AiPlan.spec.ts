@@ -24,7 +24,10 @@ const buildProps = (overrides: Record<string, unknown> = {}) => ({
   goal: '实现登录页',
   summary: '分两步完成',
   status: 'pending_approval' as TAgentPlanStatus,
-  steps: [buildStep({ id: 's1', title: '步骤一' }), buildStep({ id: 's2', index: 1, title: '步骤二' })],
+  steps: [
+    buildStep({ id: 's1', title: '步骤一' }),
+    buildStep({ id: 's2', index: 1, title: '步骤二' }),
+  ],
   isPlanning: false,
   isApproving: false,
   canEdit: true,

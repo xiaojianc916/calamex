@@ -1,6 +1,6 @@
 import { mount } from '@vue/test-utils';
-import { defineComponent, ref } from 'vue';
 import { describe, expect, it, vi } from 'vitest';
+import { defineComponent, ref } from 'vue';
 
 import type { useAiAssistant } from '@/composables/ai/useAiAssistant';
 
