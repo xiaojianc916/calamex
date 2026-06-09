@@ -322,10 +322,10 @@ importers:
         specifier: ^0.17.3
         version: 0.17.3
       '@mastra/agent-browser':
-        specifier: ^0.2.2
-        version: 0.2.2(@mastra/core@1.41.0(@bufbuild/protobuf@2.12.0)(ai@6.0.198(zod@4.4.3))(express@5.2.1)(rxjs@7.8.2)(zod@4.4.3))(zod@4.4.3)
+        specifier: ^0.3.0
+        version: 0.3.0(@mastra/core@1.41.0(@bufbuild/protobuf@2.12.0)(ai@6.0.198(zod@4.4.3))(express@5.2.1)(rxjs@7.8.2)(zod@4.4.3))(zod@4.4.3)
       '@mastra/core':
-        specifier: ^1.40.0
+        specifier: ^1.41.0
         version: 1.41.0(@bufbuild/protobuf@2.12.0)(ai@6.0.198(zod@4.4.3))(express@5.2.1)(rxjs@7.8.2)(zod@4.4.3)
       '@mastra/libsql':
         specifier: ^1.12.1
@@ -346,7 +346,7 @@ importers:
         specifier: ^2025.12.18
         version: 2025.12.18(zod@4.4.3)
       '@upstash/context7-mcp':
-        specifier: ^3.0.0
+        specifier: ^3.1.0
         version: 3.1.0
       eventsource-parser:
         specifier: ^3.1.0
@@ -358,7 +358,7 @@ importers:
         specifier: ^5.3.0
         version: 5.3.0
       undici:
-        specifier: ^8.3.0
+        specifier: ^8.4.1
         version: 8.4.1
       vscode-jsonrpc:
         specifier: ^9.0.0
@@ -371,7 +371,7 @@ importers:
         version: 4.4.3
     devDependencies:
       '@types/node':
-        specifier: ^25.9.1
+        specifier: ^25.9.2
         version: 25.9.2
       esbuild:
         specifier: ^0.28.0
@@ -1195,8 +1195,8 @@ packages:
   '@marijn/find-cluster-break@1.0.2':
     resolution: {integrity: sha512-l0h88YhZFyKdXIFNfSWpyjStDjGHwZ/U7iobcK1cQQD8sejsONdQtTVU+1wVN1PBw40PiiHB1vA5S7VTfQiP9g==}
 
-  '@mastra/agent-browser@0.2.2':
-    resolution: {integrity: sha512-KuieN7osjnAaSCMeGkuzy4VPPyWfhwrwIbHgf4vpTs2VGbiuI1jfH0EYoyyKASBgcKIUypXod0rbakHUN+VMzQ==}
+  '@mastra/agent-browser@0.3.0':
+    resolution: {integrity: sha512-pS43G2FATVj/XiU1kHoatqLthdkjyHO/Ecfy228E7bWX0AnHFhYbZc9lieHWSANN+6QURCJwywN+GgG5TBkUQg==}
     engines: {node: '>=22.13.0'}
     peerDependencies:
       '@mastra/core': '>=1.22.0-0 <2.0.0-0'
@@ -1568,11 +1568,11 @@ packages:
     engines: {node: '>=18'}
     hasBin: true
 
-  '@posthog/core@1.30.10':
-    resolution: {integrity: sha512-R7Z5jDB3ugwfSujMmRd5osPPR6L6BqfcaSNcYOekzRMZ4Jklq74p05xByP09EnUvKXb5czI+RQVCITTWRWuFXw==}
+  '@posthog/core@1.30.13':
+    resolution: {integrity: sha512-d+4r6spHsllDUNc9LLJ3bT7GCiN9aurTMv1XKweyvOcujYq/w+PcjqxfZeOQZ2x9recdp+o9Z+hWgnuA2Sk4lw==}
 
-  '@posthog/types@1.382.0':
-    resolution: {integrity: sha512-iK4OcSgvtmS9FZ9EUpvwlRZmHCLXaZ3+6dbRjkE7q9LL0zHLewxJH84H6uGvCw8aGzxs5rIliZqPHgimTcQEaw==}
+  '@posthog/types@1.383.2':
+    resolution: {integrity: sha512-rci/AXDgu3s+5H32bIDipXlIiM++Z5A4VB7LKs6IX0jW1JrcJ8zA3hX1HcKKQWkA4MqoEt8gWphrZt4HgMSrrg==}
 
   '@preact/signals-core@1.14.2':
     resolution: {integrity: sha512-RZHdBj9ZF4n40Rp4jS052EHHjBWf96P9oNdXPfhQTovCuWY9iQn3Gq+gOTJSgBO9A/JBuPfMOWsSX/lIU9Pc/A==}
@@ -3842,8 +3842,8 @@ packages:
   hey-listen@1.0.8:
     resolution: {integrity: sha512-COpmrF2NOg4TBWUJ5UVyaCU2A88wEMkUPK4hNqyCkqHbxT92BbvfjoSozkAIIm6XhicGlJHhFdullInrdhwU8Q==}
 
-  hono@4.12.24:
-    resolution: {integrity: sha512-I36D1s+HgQc55KbhEr4iybfxv/9o1zdpw+XEM6dJa91LqQD0HCoSGdxpRJCZE+aavs87j4V3Ls2OJzq8C/U4iw==}
+  hono@4.12.25:
+    resolution: {integrity: sha512-2NFaIyNVgJmBs/ecmtGzlmluTFs5cHEWGTdu0t1HBwYzoGXOL5nUQBRMXsXWla5i4KkG//QMzVP88m1+I3fdAQ==}
     engines: {node: '>=16.9.0'}
 
   hookable@5.5.3:
@@ -5035,8 +5035,8 @@ packages:
     resolution: {integrity: sha512-FfR8sjd4em2T6fb3I2MwAJU7HWVMr9zba+enmQeeWFfCbm+UOC/0X4DS8XtpUTMwWMGbjKYP7xjfNekzyGmB3A==}
     engines: {node: ^10 || ^12 || >=14}
 
-  posthog-node@5.36.4:
-    resolution: {integrity: sha512-N+1WiypMHf3SO3NNoXTUFRzX98TuM5w4bDCm8RenYPf0rvX6r8v+yH6IzL1g/Me+wWA5+sfE1JZ6kGV6pWTZyQ==}
+  posthog-node@5.36.7:
+    resolution: {integrity: sha512-NZJHYJZj/MGAEnDij4ksO38pI7mDmYHtp0/MkjN593x4WKL/GVAAg9PAe5X61tbDq4a02R6E/wlqXWV5vE++QQ==}
     engines: {node: ^20.20.0 || >=22.22.0}
     peerDependencies:
       rxjs: ^7.0.0
@@ -5405,8 +5405,8 @@ packages:
     resolution: {integrity: sha512-WPS/HvHQTYnHisLo9McqBHOJk2FkHO/tlpvldyrnem4aeQp4hai3gythswg6p01oSoTl58rcpiFAjF2br2Ak2A==}
     engines: {node: '>= 0.4'}
 
-  side-channel@1.1.0:
-    resolution: {integrity: sha512-ZX99e6tRweoUXqR+VBrslhda51Nh5MTQwou5tnUDgbtyM0dBgmhEDtWGP/xbKn6hqfPRHujUNwz5fy/wbbhnpw==}
+  side-channel@1.1.1:
+    resolution: {integrity: sha512-6x6dK6zJdpTzF4sQeNYxwtvBzf6Eg4GtlesS94HOvTudUeyK2WXAaIfmDgsyslYrRBeFIlsi54AYsFGUuhmvrQ==}
     engines: {node: '>= 0.4'}
 
   siginfo@2.0.0:
@@ -6997,9 +6997,9 @@ snapshots:
       - '@vue/composition-api'
       - vue
 
-  '@hono/node-server@1.19.14(hono@4.12.24)':
+  '@hono/node-server@1.19.14(hono@4.12.25)':
     dependencies:
-      hono: 4.12.24
+      hono: 4.12.25
 
   '@iconify-json/lucide@1.2.111':
     dependencies:
@@ -7244,7 +7244,7 @@ snapshots:
 
   '@marijn/find-cluster-break@1.0.2': {}
 
-  '@mastra/agent-browser@0.2.2(@mastra/core@1.41.0(@bufbuild/protobuf@2.12.0)(ai@6.0.198(zod@4.4.3))(express@5.2.1)(rxjs@7.8.2)(zod@4.4.3))(zod@4.4.3)':
+  '@mastra/agent-browser@0.3.0(@mastra/core@1.41.0(@bufbuild/protobuf@2.12.0)(ai@6.0.198(zod@4.4.3))(express@5.2.1)(rxjs@7.8.2)(zod@4.4.3))(zod@4.4.3)':
     dependencies:
       '@mastra/core': 1.41.0(@bufbuild/protobuf@2.12.0)(ai@6.0.198(zod@4.4.3))(express@5.2.1)(rxjs@7.8.2)(zod@4.4.3)
       agent-browser: 0.19.0
@@ -7284,7 +7284,7 @@ snapshots:
       p-map: 7.0.4
       p-retry: 7.1.1
       picomatch: 4.0.4
-      posthog-node: 5.36.4(rxjs@7.8.2)
+      posthog-node: 5.36.7(rxjs@7.8.2)
       tokenx: 1.3.0
       ws: 8.21.0
       xxhash-wasm: 1.1.0
@@ -7371,7 +7371,7 @@ snapshots:
 
   '@modelcontextprotocol/sdk@1.26.0(zod@4.4.3)':
     dependencies:
-      '@hono/node-server': 1.19.14(hono@4.12.24)
+      '@hono/node-server': 1.19.14(hono@4.12.25)
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
       content-type: 1.0.5
@@ -7381,7 +7381,7 @@ snapshots:
       eventsource-parser: 3.1.0
       express: 5.2.1
       express-rate-limit: 8.5.2(express@5.2.1)
-      hono: 4.12.24
+      hono: 4.12.25
       jose: 6.2.3
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.1
@@ -7393,7 +7393,7 @@ snapshots:
 
   '@modelcontextprotocol/sdk@1.29.0(zod@4.4.3)':
     dependencies:
-      '@hono/node-server': 1.19.14(hono@4.12.24)
+      '@hono/node-server': 1.19.14(hono@4.12.25)
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
       content-type: 1.0.5
@@ -7403,7 +7403,7 @@ snapshots:
       eventsource-parser: 3.1.0
       express: 5.2.1
       express-rate-limit: 8.5.2(express@5.2.1)
-      hono: 4.12.24
+      hono: 4.12.25
       jose: 6.2.3
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.1
@@ -7588,11 +7588,11 @@ snapshots:
     dependencies:
       playwright: 1.60.0
 
-  '@posthog/core@1.30.10':
+  '@posthog/core@1.30.13':
     dependencies:
-      '@posthog/types': 1.382.0
+      '@posthog/types': 1.383.2
 
-  '@posthog/types@1.382.0': {}
+  '@posthog/types@1.383.2': {}
 
   '@preact/signals-core@1.14.2': {}
 
@@ -10079,7 +10079,7 @@ snapshots:
 
   hey-listen@1.0.8: {}
 
-  hono@4.12.24: {}
+  hono@4.12.25: {}
 
   hookable@5.5.3: {}
 
@@ -11387,9 +11387,9 @@ snapshots:
       picocolors: 1.1.1
       source-map-js: 1.2.1
 
-  posthog-node@5.36.4(rxjs@7.8.2):
+  posthog-node@5.36.7(rxjs@7.8.2):
     dependencies:
-      '@posthog/core': 1.30.10
+      '@posthog/core': 1.30.13
     optionalDependencies:
       rxjs: 7.8.2
 
@@ -11457,7 +11457,7 @@ snapshots:
 
   qs@6.15.2:
     dependencies:
-      side-channel: 1.1.0
+      side-channel: 1.1.1
 
   quansync@0.2.11: {}
 
@@ -11848,7 +11848,7 @@ snapshots:
       object-inspect: 1.13.4
       side-channel-map: 1.0.1
 
-  side-channel@1.1.0:
+  side-channel@1.1.1:
     dependencies:
       es-errors: 1.3.0
       object-inspect: 1.13.4
