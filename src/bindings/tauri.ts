@@ -300,6 +300,13 @@ export type AgentSidecarOrchestrateRequest_Deserialize = {
 	sessionId: string | null,
 	goal: string,
 	threadId: string | null,
+	/**
+	 *  Per-run execution preference (`interactive` | `autonomous`), threaded
+	 *  through verbatim like `thread_id` and validated by the sidecar (Zod
+	 *  enum, defaults to `interactive`). Omitted from the body when blank so the
+	 *  sidecar applies its default; the Rust layer never interprets the value.
+	 */
+	executionMode: string | null,
 	modelConfig: AgentSidecarModelConfigPayload_Deserialize | null,
 };
 
@@ -307,6 +314,13 @@ export type AgentSidecarOrchestrateRequest_Serialize = {
 	sessionId?: string | null,
 	goal: string,
 	threadId?: string | null,
+	/**
+	 *  Per-run execution preference (`interactive` | `autonomous`), threaded
+	 *  through verbatim like `thread_id` and validated by the sidecar (Zod
+	 *  enum, defaults to `interactive`). Omitted from the body when blank so the
+	 *  sidecar applies its default; the Rust layer never interprets the value.
+	 */
+	executionMode?: string | null,
 	modelConfig?: AgentSidecarModelConfigPayload_Serialize | null,
 };
 
