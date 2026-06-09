@@ -535,46 +535,10 @@ export const useWorkbenchDocumentIO = ({
     }
   };
 
-  const openGitDiffPreview = async (request: IGitDiffPreviewRequest): Promise<void> => {
-    const lifecycle = beginDocumentIoLifecycle();
-    const workspaceRootPathAtStart = editorStore.workspaceRootPath;
-    try {
-      const preview = await getGitDiffPreviewWithOptions(request, { signal: lifecycle.signal });
-      if (
-        !isDocumentIoLifecycleCurrent(lifecycle) ||
-        !isWorkspaceRootCurrent(workspaceRootPathAtStart)
-      ) {
-        return;
-      }
-
-      const existing = editorStore.documents.find(
-        (item) =>
-          item.kind === 'git-diff' &&
-          item.gitDiffPreview !== undefined &&
-          isSameGitDiffPreview(item.gitDiffPreview, preview),
-      );
-
-      if (!existing && !ensureCanOpenNewTab()) {
-        return;
-      }
-
-      const { reusedExisting } = editorStore.openGitDiffDocument(preview);
-      const detail = buildLogDetail(
-        reusedExisting ? '切换到 Git Diff' : '已打开 Git Diff',
-        `${preview.relativePath} · ${preview.mode}`,
-      );
-
-      editorStore.appendLog(preview.isEmpty ? 'info' : 'success', '查看 Git Diff', detail);
-      notifier.success(
-        preview.isEmpty ? '没有可显示的 Diff' : `已打开 Diff ${preview.relativePath}`,
-      );
-    } catch (error) {
-      if (isCanceledIpcError(error)) return;
-      reportError('打开 Git Diff 失败', error, '打开 Git Diff 失败');
-    }
-  };
-
-  const openGitDiffPreviewPayload = (preview: IGitDiffPreviewPayload): void => {
+  const presentResolvedGitDiffPreview = (
+    preview: IGitDiffPreviewPayload,
+    options: { modeLabel: string; scene: string },
+  ): void => {
     const existing = editorStore.documents.find(
       (item) =>
         item.kind === 'git-diff' &&
@@ -589,11 +553,34 @@ export const useWorkbenchDocumentIO = ({
     const { reusedExisting } = editorStore.openGitDiffDocument(preview);
     const detail = buildLogDetail(
       reusedExisting ? '切换到 Git Diff' : '已打开 Git Diff',
-      `${preview.relativePath} · Patch`,
+      `${preview.relativePath} · ${options.modeLabel}`,
     );
 
-    editorStore.appendLog(preview.isEmpty ? 'info' : 'success', '查看 Patch Diff', detail);
+    editorStore.appendLog(preview.isEmpty ? 'info' : 'success', options.scene, detail);
     notifier.success(preview.isEmpty ? '没有可显示的 Diff' : `已打开 Diff ${preview.relativePath}`);
+  };
+
+  const openGitDiffPreview = async (request: IGitDiffPreviewRequest): Promise<void> => {
+    const lifecycle = beginDocumentIoLifecycle();
+    const workspaceRootPathAtStart = editorStore.workspaceRootPath;
+    try {
+      const preview = await getGitDiffPreviewWithOptions(request, { signal: lifecycle.signal });
+      if (
+        !isDocumentIoLifecycleCurrent(lifecycle) ||
+        !isWorkspaceRootCurrent(workspaceRootPathAtStart)
+      ) {
+        return;
+      }
+
+      presentResolvedGitDiffPreview(preview, { modeLabel: preview.mode, scene: '查看 Git Diff' });
+    } catch (error) {
+      if (isCanceledIpcError(error)) return;
+      reportError('打开 Git Diff 失败', error, '打开 Git Diff 失败');
+    }
+  };
+
+  const openGitDiffPreviewPayload = (preview: IGitDiffPreviewPayload): void => {
+    presentResolvedGitDiffPreview(preview, { modeLabel: 'Patch', scene: '查看 Patch Diff' });
   };
 
   return {

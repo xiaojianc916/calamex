@@ -107,8 +107,6 @@ export const useShellWorkbenchView = (onReady: () => void) => {
   const documentBackStack = ref<string[]>([]);
   const documentForwardStack = ref<string[]>([]);
   let isApplyingDocumentNavigation = false;
-  let isSyncingAiPanelWidth = false;
-  let isSyncingTerminalPanelHeight = false;
 
   let nativeCloseRequestedUnlisten: (() => void) | null = null;
   let isUnmounted = false;
@@ -134,50 +132,56 @@ export const useShellWorkbenchView = (onReady: () => void) => {
 
   const clampTerminalPanelHeight = (value: number): number => Math.max(140, Math.round(value));
 
-  watch(
-    () => workbench.appStore.aiPanelWidth,
-    (nextWidth) => {
-      // 防回环：若当前正在同步中则跳过
-      if (isSyncingAiPanelWidth) {
+  // 防回环：clamp 后写回 store 会再次触发本 watch，用闭包内 isSyncing 标志阻断回环。
+  const createClampedPanelSync = (
+    clamp: (value: number) => number,
+    applyClamped: (clampedValue: number) => void,
+    writeBack: (clampedValue: number) => void,
+  ): ((nextValue: number) => void) => {
+    let isSyncing = false;
+    return (nextValue) => {
+      if (isSyncing) {
         return;
       }
-      isSyncingAiPanelWidth = true;
-      const clampedWidth = clampAiPanelWidth(nextWidth);
-      if (clampedWidth !== aiPanelWidth.value) {
-        aiPanelWidth.value = clampedWidth;
+      isSyncing = true;
+      const clampedValue = clamp(nextValue);
+      applyClamped(clampedValue);
+      if (clampedValue !== nextValue) {
+        writeBack(clampedValue);
       }
+      isSyncing = false;
+    };
+  };
 
-      if (clampedWidth !== nextWidth) {
-        workbench.appStore.setAiPanelWidth(clampedWidth);
-      }
-      isSyncingAiPanelWidth = false;
-    },
+  watch(
+    () => workbench.appStore.aiPanelWidth,
+    createClampedPanelSync(
+      clampAiPanelWidth,
+      (clampedWidth) => {
+        if (clampedWidth !== aiPanelWidth.value) {
+          aiPanelWidth.value = clampedWidth;
+        }
+      },
+      (clampedWidth) => workbench.appStore.setAiPanelWidth(clampedWidth),
+    ),
     { immediate: true },
   );
 
   watch(
     () => workbench.appStore.terminalPanelHeight,
-    (nextHeight) => {
-      // 防回环：若当前正在同步中则跳过
-      if (isSyncingTerminalPanelHeight) {
-        return;
-      }
-      isSyncingTerminalPanelHeight = true;
-      const clampedHeight = clampTerminalPanelHeight(nextHeight);
+    createClampedPanelSync(
+      clampTerminalPanelHeight,
+      (clampedHeight) => {
+        if (clampedHeight !== terminalHeight.value && !isTerminalMaximized.value) {
+          terminalHeight.value = clampedHeight;
+        }
 
-      if (clampedHeight !== terminalHeight.value && !isTerminalMaximized.value) {
-        terminalHeight.value = clampedHeight;
-      }
-
-      if (clampedHeight !== terminalHeightBeforeMaximize.value) {
-        terminalHeightBeforeMaximize.value = clampedHeight;
-      }
-
-      if (clampedHeight !== nextHeight) {
-        workbench.appStore.setTerminalPanelHeight(clampedHeight);
-      }
-      isSyncingTerminalPanelHeight = false;
-    },
+        if (clampedHeight !== terminalHeightBeforeMaximize.value) {
+          terminalHeightBeforeMaximize.value = clampedHeight;
+        }
+      },
+      (clampedHeight) => workbench.appStore.setTerminalPanelHeight(clampedHeight),
+    ),
     { immediate: true },
   );
 
@@ -197,27 +201,20 @@ export const useShellWorkbenchView = (onReady: () => void) => {
     return adjacentDocument?.id ?? null;
   };
 
-  const canNavigateDocumentBack = computed(() => {
-    if (documentBackStack.value.length > 0) {
+  const canNavigateDocument = (direction: 'back' | 'forward'): boolean => {
+    const stack = direction === 'back' ? documentBackStack : documentForwardStack;
+    if (stack.value.length > 0) {
       return true;
     }
 
     const currentDocumentId = workbench.editorStore.activeDocumentId;
     return currentDocumentId
-      ? resolveAdjacentDocumentId(currentDocumentId, 'back') !== null
+      ? resolveAdjacentDocumentId(currentDocumentId, direction) !== null
       : false;
-  });
+  };
 
-  const canNavigateDocumentForward = computed(() => {
-    if (documentForwardStack.value.length > 0) {
-      return true;
-    }
-
-    const currentDocumentId = workbench.editorStore.activeDocumentId;
-    return currentDocumentId
-      ? resolveAdjacentDocumentId(currentDocumentId, 'forward') !== null
-      : false;
-  });
+  const canNavigateDocumentBack = computed(() => canNavigateDocument('back'));
+  const canNavigateDocumentForward = computed(() => canNavigateDocument('forward'));
 
   const hasDocumentInEditorStore = (documentId: string): boolean =>
     Boolean(workbench.editorStore.getDocumentById(documentId));
@@ -243,47 +240,29 @@ export const useShellWorkbenchView = (onReady: () => void) => {
     return null;
   };
 
-  const navigateDocumentBack = (): void => {
+  const navigateDocument = (direction: 'back' | 'forward'): void => {
     const currentDocumentId = workbench.editorStore.activeDocumentId;
     if (!currentDocumentId) {
       return;
     }
 
+    const sourceStack = direction === 'back' ? documentBackStack : documentForwardStack;
+    const targetStack = direction === 'back' ? documentForwardStack : documentBackStack;
+
     const targetDocumentId =
-      pickNextNavigableDocumentId(documentBackStack, currentDocumentId) ??
-      resolveAdjacentDocumentId(currentDocumentId, 'back');
+      pickNextNavigableDocumentId(sourceStack, currentDocumentId) ??
+      resolveAdjacentDocumentId(currentDocumentId, direction);
     if (!targetDocumentId) {
       return;
     }
 
-    documentForwardStack.value = trimDocumentNavHistory([
-      ...documentForwardStack.value,
-      currentDocumentId,
-    ]);
+    targetStack.value = trimDocumentNavHistory([...targetStack.value, currentDocumentId]);
     isApplyingDocumentNavigation = true;
     void workbench.activateDocument(targetDocumentId);
   };
 
-  const navigateDocumentForward = (): void => {
-    const currentDocumentId = workbench.editorStore.activeDocumentId;
-    if (!currentDocumentId) {
-      return;
-    }
-
-    const targetDocumentId =
-      pickNextNavigableDocumentId(documentForwardStack, currentDocumentId) ??
-      resolveAdjacentDocumentId(currentDocumentId, 'forward');
-    if (!targetDocumentId) {
-      return;
-    }
-
-    documentBackStack.value = trimDocumentNavHistory([
-      ...documentBackStack.value,
-      currentDocumentId,
-    ]);
-    isApplyingDocumentNavigation = true;
-    void workbench.activateDocument(targetDocumentId);
-  };
+  const navigateDocumentBack = (): void => navigateDocument('back');
+  const navigateDocumentForward = (): void => navigateDocument('forward');
 
   const gitBranchName = computed(() => gitStore.status.headBranchName ?? null);
   const gitAddedCount = computed(
