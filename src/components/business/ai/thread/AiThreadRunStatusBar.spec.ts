@@ -108,8 +108,11 @@ describe('AiThreadRunStatusBar', () => {
     const bar = wrapper.findComponent(RunStatusBar);
     expect(bar.props('phase')).toBe('awaiting-confirmation');
 
-    const allowButton = wrapper.findAll('button').find((button) => button.text().includes('允许'));
-    await allowButton?.trigger('click');
+    // ApprovalPrompt 把可选项渲染为 <li role="option">(对齐 Codex 选择浮层),非 <button>。
+    const allowOption = wrapper
+      .findAll('.approval-prompt__option')
+      .find((option) => option.text().includes('允许'));
+    await allowOption?.trigger('click');
 
     expect(wrapper.emitted('resolve')?.[0]).toEqual(['allow-once']);
     wrapper.unmount();
