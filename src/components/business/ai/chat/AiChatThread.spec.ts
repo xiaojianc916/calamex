@@ -4,6 +4,7 @@ import { h } from 'vue';
 
 import { Conversation } from '@/components/ai-elements/conversation';
 import AiChatThread from '@/components/business/ai/chat/AiChatThread.vue';
+import type { IAiThreadPlanDetails } from '@/components/business/ai/thread/types';
 import type { IAiChatMessage } from '@/types/ai';
 
 class ResizeObserverMock {
@@ -22,6 +23,20 @@ const createMessage = (overrides: Partial<IAiChatMessage>): IAiChatMessage => ({
   content: '',
   createdAt: '2026-04-28T10:00:00.000Z',
   references: [],
+  ...overrides,
+});
+
+const createPlanDetails = (
+  overrides: Partial<IAiThreadPlanDetails> = {},
+): IAiThreadPlanDetails => ({
+  summary: '重构面板接线',
+  status: 'pending_approval',
+  steps: [],
+  isPlanning: false,
+  isApproving: false,
+  canEdit: true,
+  canApprove: true,
+  approvedAt: null,
   ...overrides,
 });
 
@@ -230,5 +245,72 @@ describe('AiChatThread', () => {
 
     expect(wrapper.emitted('changedFilesRollback')?.[0]).toEqual(['m1', 'sum1']);
     expect(wrapper.emitted('changedFilesPin')?.[0]).toEqual(['m1', 'sum1', true]);
+  });
+
+  it('forwards plan details to the flat timeline so plan approval renders inline', () => {
+    const planDetails = createPlanDetails({ summary: '内联计划明细' });
+    const wrapper = mount(AiChatThread, {
+      props: {
+        messages: [createMessage({ id: 'thread-plan-control', content: '' })],
+        isTyping: false,
+        planDetails,
+        platformId: 'deepseek',
+        providerLabel: 'DeepSeek',
+      },
+      global: {
+        stubs: {
+          AiThreadTimeline: { props: ['messages', 'planDetails'], template: '<div class="timeline-stub" />' },
+        },
+      },
+    });
+
+    expect(
+      wrapper.findComponent({ name: 'AiThreadTimeline' }).props('planDetails'),
+    ).toEqual(planDetails);
+  });
+
+  it('forwards plan approval and edit events from the timeline to the panel', async () => {
+    const wrapper = mount(AiChatThread, {
+      props: {
+        messages: [createMessage({ id: 'thread-plan-control', content: '' })],
+        isTyping: false,
+        platformId: 'deepseek',
+        providerLabel: 'DeepSeek',
+      },
+      global: {
+        stubs: {
+          AiThreadTimeline: {
+            emits: [
+              'planApprove',
+              'planReject',
+              'planRegenerate',
+              'planUpdateStepTitle',
+              'planRemoveStep',
+            ],
+            template: `
+              <div>
+                <button class="plan-approve" @click="$emit('planApprove')"></button>
+                <button class="plan-reject" @click="$emit('planReject')"></button>
+                <button class="plan-regenerate" @click="$emit('planRegenerate')"></button>
+                <button class="plan-update" @click="$emit('planUpdateStepTitle', 'step-1', '新标题')"></button>
+                <button class="plan-remove" @click="$emit('planRemoveStep', 'step-2')"></button>
+              </div>
+            `,
+          },
+        },
+      },
+    });
+
+    await wrapper.find('.plan-approve').trigger('click');
+    await wrapper.find('.plan-reject').trigger('click');
+    await wrapper.find('.plan-regenerate').trigger('click');
+    await wrapper.find('.plan-update').trigger('click');
+    await wrapper.find('.plan-remove').trigger('click');
+
+    expect(wrapper.emitted('planApprove')).toHaveLength(1);
+    expect(wrapper.emitted('planReject')).toHaveLength(1);
+    expect(wrapper.emitted('planRegenerate')).toHaveLength(1);
+    expect(wrapper.emitted('planUpdateStepTitle')?.[0]).toEqual(['step-1', '新标题']);
+    expect(wrapper.emitted('planRemoveStep')?.[0]).toEqual(['step-2']);
   });
 });
