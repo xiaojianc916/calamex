@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Paperclip, Settings2 } from '@lucide/vue';
 import { computed, onBeforeUnmount, onMounted, ref, useAttrs, watch } from 'vue';
 import {
   Context,
@@ -842,6 +843,28 @@ const handleKeyDown = (event: KeyboardEvent): void => {
   handleSubmit();
 };
 
+const playIconBounce = (event: PointerEvent): void => {
+  const trigger = event.currentTarget;
+  if (!(trigger instanceof HTMLElement)) {
+    return;
+  }
+  const glyph = trigger.querySelector('svg');
+  if (!glyph) {
+    return;
+  }
+  glyph.classList.remove('is-icon-bouncing');
+  // 强制回流，确保连续点击都能重新触发动画
+  void glyph.getBoundingClientRect();
+  glyph.classList.add('is-icon-bouncing');
+};
+
+const endIconBounce = (event: AnimationEvent): void => {
+  const glyph = event.target;
+  if (glyph instanceof Element) {
+    glyph.classList.remove('is-icon-bouncing');
+  }
+};
+
 const handleStop = (): void => {
   emit('stop');
 };
@@ -938,8 +961,10 @@ onBeforeUnmount(() => {
                     :disabled="disabled"
                     aria-label="提供背景信息"
                     @click="handleOpenFileDialog"
+                    @pointerdown="playIconBounce"
+                    @animationend="endIconBounce"
                   >
-                    <span class="icon-[lucide--paperclip] size-4" />
+                    <Paperclip class="size-4" :stroke-width="1.5" />
                   </InputGroupButton>
                 </TooltipTrigger>
                 <TooltipContent
@@ -961,8 +986,10 @@ onBeforeUnmount(() => {
                   size="icon-xs"
                   :disabled="disabled"
                   aria-label="打开 AI 模式设置"
+                  @pointerdown="playIconBounce"
+                  @animationend="endIconBounce"
                 >
-                  <span class="icon-[lucide--settings-2] size-4" />
+                  <Settings2 class="size-4" :stroke-width="1.5" />
                 </InputGroupButton>
               </DropdownMenuTrigger>
               <DropdownMenuContent
@@ -1225,9 +1252,7 @@ onBeforeUnmount(() => {
     1px 0 0 0 #f4f4f3,
     0 2px 0 0 #f9f9f9,
     -2px 0 0 0 #fdfdfd,
-    2px 0 0 0 #fdfdfd,
-    0 1px 2px color-mix(in srgb, var(--text-primary) 8%, transparent),
-    0 14px 30px color-mix(in srgb, var(--text-primary) 6%, transparent);
+    2px 0 0 0 #fdfdfd;
   width: 100%;
   background: var(--panel-bg);
   border-width: 1px;
@@ -1406,6 +1431,38 @@ onBeforeUnmount(() => {
 .ai-token-trigger :deep(img) {
   width: var(--ai-composer-icon-size);
   height: var(--ai-composer-icon-size);
+}
+
+.ai-icon-action :deep(svg.is-icon-bouncing) {
+  transform-origin: center;
+  animation: ai-icon-bounce 460ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-icon-action :deep(svg.is-icon-bouncing) {
+    animation: none;
+  }
+}
+
+@keyframes ai-icon-bounce {
+  0% {
+    transform: scale(1);
+  }
+  25% {
+    transform: scale(0.82);
+  }
+  50% {
+    transform: scale(1.16);
+  }
+  70% {
+    transform: scale(0.94);
+  }
+  85% {
+    transform: scale(1.05);
+  }
+  100% {
+    transform: scale(1);
+  }
 }
 
 .ai-token-trigger {

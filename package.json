@@ -61,6 +61,7 @@
     "@copilotkit/core": "^1.59.5",
     "@copilotkit/vue": "^1.59.5",
     "@lezer/highlight": "^1.2.3",
+    "@lucide/vue": "^1.17.0",
     "@replit/codemirror-indentation-markers": "^6.5.3",
     "@shikijs/langs": "^4.2.0",
     "@shikijs/themes": "^4.2.0",
