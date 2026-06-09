@@ -8,8 +8,7 @@ const MULTILINE_THRESHOLD_WIDTH = 420;
 const POINTER_TOOLTIP_DELAY_MS = 3000;
 const POINTER_WATCHDOG_INTERVAL_MS = 80;
 
-// 原生 CSS 锚点定位（CSS Anchor Positioning）用到的名称与方位映射。
-// 仅在环境支持时启用；不支持时回退到下方的手动定位逻辑。
+// 原生 CSS 锚点定位（CSS Anchor Positioning）用到的锚点名与方位映射。
 const TOOLTIP_ANCHOR_NAME = '--app-tooltip-anchor';
 
 const POSITION_AREA_BY_PLACEMENT: Record<TTooltipPlacement, string> = {
@@ -33,20 +32,6 @@ declare global {
   }
 }
 
-// 检测是否支持原生 CSS 锚点定位。WKWebView / 较旧 webview 不支持时返回 false，
-// 由调用方回退到原有的手动坐标计算 + 滚动 / 缩放跟踪逻辑。
-const supportsCssAnchorPositioning = (): boolean => {
-  if (typeof CSS === 'undefined' || typeof CSS.supports !== 'function') {
-    return false;
-  }
-
-  return (
-    CSS.supports('anchor-name', TOOLTIP_ANCHOR_NAME) &&
-    CSS.supports('position-anchor', TOOLTIP_ANCHOR_NAME) &&
-    CSS.supports('position-area', 'top')
-  );
-};
-
 const disposeAppTooltipSystem = (): void => {
   if (typeof window === 'undefined') {
     return;
@@ -60,19 +45,6 @@ const disposeAppTooltipSystem = (): void => {
   cleanup();
   if (window.__SH_APP_TOOLTIP_CLEANUP__ === cleanup) {
     window.__SH_APP_TOOLTIP_CLEANUP__ = undefined;
-  }
-};
-
-const getPlacementCandidates = (preferredPlacement: TTooltipPlacement): TTooltipPlacement[] => {
-  switch (preferredPlacement) {
-    case 'bottom':
-      return ['bottom', 'top', 'right', 'left'];
-    case 'left':
-      return ['left', 'right', 'top', 'bottom'];
-    case 'right':
-      return ['right', 'left', 'top', 'bottom'];
-    default:
-      return ['top', 'bottom', 'right', 'left'];
   }
 };
 
@@ -100,10 +72,9 @@ const resolveTooltipPlacement = (value: string | null | undefined): TTooltipPlac
   return 'top';
 };
 
-const measureTooltip = (
-  tooltipElement: HTMLDivElement,
-  text: string,
-): { width: number; height: number } => {
+// 填充提示文本、限制最大宽度并判定是否多行（在屏外测量，避免闪烁）。
+// 具体位置交由原生 CSS 锚点定位计算，此处不再手算坐标。
+const prepareTooltipContent = (tooltipElement: HTMLDivElement, text: string): void => {
   const maxWidth = Math.min(MULTILINE_THRESHOLD_WIDTH, window.innerWidth - VIEWPORT_PADDING * 2);
 
   tooltipElement.textContent = text;
@@ -123,65 +94,6 @@ const measureTooltip = (
   if (nowrapWidth > maxWidth) {
     tooltipElement.classList.add('is-multiline');
   }
-
-  return {
-    width: tooltipElement.offsetWidth,
-    height: tooltipElement.offsetHeight,
-  };
-};
-
-const resolveTooltipPosition = (
-  targetRect: DOMRect,
-  tooltipWidth: number,
-  tooltipHeight: number,
-  placement: TTooltipPlacement,
-): { left: number; top: number } => {
-  const minLeft = VIEWPORT_PADDING;
-  const maxLeft = Math.max(VIEWPORT_PADDING, window.innerWidth - tooltipWidth - VIEWPORT_PADDING);
-  const minTop = VIEWPORT_PADDING;
-  const maxTop = Math.max(VIEWPORT_PADDING, window.innerHeight - tooltipHeight - VIEWPORT_PADDING);
-
-  switch (placement) {
-    case 'bottom':
-      return {
-        left: clamp(targetRect.left + (targetRect.width - tooltipWidth) / 2, minLeft, maxLeft),
-        top: clamp(targetRect.bottom + TOOLTIP_GAP, minTop, maxTop),
-      };
-    case 'left':
-      return {
-        left: clamp(targetRect.left - tooltipWidth - TOOLTIP_GAP, minLeft, maxLeft),
-        top: clamp(targetRect.top + (targetRect.height - tooltipHeight) / 2, minTop, maxTop),
-      };
-    case 'right':
-      return {
-        left: clamp(targetRect.right + TOOLTIP_GAP, minLeft, maxLeft),
-        top: clamp(targetRect.top + (targetRect.height - tooltipHeight) / 2, minTop, maxTop),
-      };
-    default:
-      return {
-        left: clamp(targetRect.left + (targetRect.width - tooltipWidth) / 2, minLeft, maxLeft),
-        top: clamp(targetRect.top - tooltipHeight - TOOLTIP_GAP, minTop, maxTop),
-      };
-  }
-};
-
-const resolveOverflowScore = (
-  position: { left: number; top: number },
-  tooltipWidth: number,
-  tooltipHeight: number,
-): number => {
-  const overflowLeft = Math.max(0, VIEWPORT_PADDING - position.left);
-  const overflowTop = Math.max(0, VIEWPORT_PADDING - position.top);
-  const overflowRight = Math.max(
-    0,
-    position.left + tooltipWidth + VIEWPORT_PADDING - window.innerWidth,
-  );
-  const overflowBottom = Math.max(
-    0,
-    position.top + tooltipHeight + VIEWPORT_PADDING - window.innerHeight,
-  );
-
-  return overflowLeft + overflowTop + overflowRight + overflowBottom;
 };
 
 export const initAppTooltipSystem = (): void => {
@@ -192,12 +104,10 @@ export const initAppTooltipSystem = (): void => {
   disposeAppTooltipSystem();
 
   const tooltipElement = ensureTooltipElement();
-  // 一次性探测环境能力：支持则走原生锚点定位，否则走手动定位回退。
-  const useCssAnchorPositioning = supportsCssAnchorPositioning();
   let activeTarget: HTMLElement | null = null;
   let activeSource: TTooltipActivationSource | null = null;
   let pendingTarget: HTMLElement | null = null;
-  // 原生锚点定位下当前被赋予 anchor-name 的目标，隐藏时需清理。
+  // 当前被赋予 anchor-name 的目标元素，隐藏时需清理。
   let anchoredTarget: HTMLElement | null = null;
   let lastPointerX = 0;
   let lastPointerY = 0;
@@ -205,7 +115,6 @@ export const initAppTooltipSystem = (): void => {
   let pendingShowTimeoutId: number | null = null;
   let pointerWatchdogId: number | null = null;
   let isPointerTracking = false;
-  let isViewportTracking = false;
 
   const clearPendingTooltip = (): void => {
     if (pendingShowTimeoutId !== null) {
@@ -251,26 +160,6 @@ export const initAppTooltipSystem = (): void => {
     isPointerTracking = false;
   };
 
-  const startViewportTracking = (): void => {
-    if (isViewportTracking) {
-      return;
-    }
-
-    document.addEventListener('scroll', syncTooltipPosition, true);
-    window.addEventListener('resize', syncTooltipPosition);
-    isViewportTracking = true;
-  };
-
-  const stopViewportTracking = (): void => {
-    if (!isViewportTracking) {
-      return;
-    }
-
-    document.removeEventListener('scroll', syncTooltipPosition, true);
-    window.removeEventListener('resize', syncTooltipPosition);
-    isViewportTracking = false;
-  };
-
   const isPointerOverTarget = (target: HTMLElement | null): boolean => {
     if (!target || !hasPointerPosition || !document.body.contains(target)) {
       return false;
@@ -313,7 +202,7 @@ export const initAppTooltipSystem = (): void => {
     }, POINTER_WATCHDOG_INTERVAL_MS);
   };
 
-  // 清理原生锚点定位遗留的内联样式：移除目标上的 anchor-name 与提示框上的 position-* 属性。
+  // 清理锚点定位遗留的内联样式：移除目标上的 anchor-name 与提示框上的 position-* / margin。
   const clearTooltipAnchor = (): void => {
     if (anchoredTarget) {
       anchoredTarget.style.removeProperty('anchor-name');
@@ -323,6 +212,7 @@ export const initAppTooltipSystem = (): void => {
     tooltipElement.style.removeProperty('position-anchor');
     tooltipElement.style.removeProperty('position-area');
     tooltipElement.style.removeProperty('position-try-fallbacks');
+    tooltipElement.style.removeProperty('margin');
   };
 
   const hideTooltip = (): void => {
@@ -331,7 +221,6 @@ export const initAppTooltipSystem = (): void => {
     activeSource = null;
     stopPointerWatchdog();
     stopPointerTracking();
-    stopViewportTracking();
     clearTooltipAnchor();
     tooltipElement.classList.remove(
       'is-visible',
@@ -346,50 +235,9 @@ export const initAppTooltipSystem = (): void => {
     tooltipElement.textContent = '';
   };
 
-  // 手动定位回退：沿用原有的候选方位越界打分 + 滚动 / 缩放跟踪。
-  const applyManualPositioning = (
-    target: HTMLElement,
-    width: number,
-    height: number,
-    preferredPlacement: TTooltipPlacement,
-    lockPlacement: boolean,
-  ): void => {
-    const targetRect = target.getBoundingClientRect();
-    const candidatePlacements = lockPlacement
-      ? [preferredPlacement]
-      : getPlacementCandidates(preferredPlacement);
-
-    let resolvedPlacement = candidatePlacements[0];
-    let resolvedPosition = resolveTooltipPosition(targetRect, width, height, resolvedPlacement);
-    let bestOverflowScore = resolveOverflowScore(resolvedPosition, width, height);
-
-    for (const placement of candidatePlacements) {
-      const position = resolveTooltipPosition(targetRect, width, height, placement);
-      const overflowScore = resolveOverflowScore(position, width, height);
-
-      if (overflowScore < bestOverflowScore) {
-        resolvedPlacement = placement;
-        resolvedPosition = position;
-        bestOverflowScore = overflowScore;
-      }
-
-      if (overflowScore === 0) {
-        resolvedPlacement = placement;
-        resolvedPosition = position;
-        break;
-      }
-    }
-
-    tooltipElement.classList.remove('is-top', 'is-bottom', 'is-left', 'is-right');
-    tooltipElement.classList.add(`is-${resolvedPlacement}`, 'is-visible');
-    tooltipElement.style.left = `${Math.round(resolvedPosition.left)}px`;
-    tooltipElement.style.top = `${Math.round(resolvedPosition.top)}px`;
-    startViewportTracking();
-  };
-
   // 原生锚点定位：在目标上声明 anchor-name，提示框通过 position-anchor 关联，
-  // position-area 选择方位，position-try-fallbacks 在越界时自动翻转。
-  // 滚动 / 缩放时由浏览器原生跟踪锚点，无需手动重算坐标。
+  // position-area 选择方位，position-try-fallbacks 在越界时自动翻转；滚动 / 缩放由
+  // 浏览器原生跟踪锚点，无需 JS 重算坐标或监听滚动。
   const applyAnchorPositioning = (
     target: HTMLElement,
     placement: TTooltipPlacement,
@@ -401,9 +249,11 @@ export const initAppTooltipSystem = (): void => {
     anchoredTarget = target;
     target.style.setProperty('anchor-name', TOOLTIP_ANCHOR_NAME);
 
-    // 交由锚点定位接管，清除手动定位的坐标。
-    tooltipElement.style.left = '';
-    tooltipElement.style.top = '';
+    // 覆盖 CSS 中作为隐藏停靠位的 left/top: -9999px，否则显式 inset 会压过 position-area。
+    tooltipElement.style.left = 'auto';
+    tooltipElement.style.top = 'auto';
+    // 用对称外边距重建原有的间隙：对称 margin 在 flip 翻转后仍能保证朝锐点一侧留白。
+    tooltipElement.style.margin = `${TOOLTIP_GAP}px`;
     tooltipElement.style.setProperty('position-anchor', TOOLTIP_ANCHOR_NAME);
     tooltipElement.style.setProperty('position-area', POSITION_AREA_BY_PLACEMENT[placement]);
     tooltipElement.style.setProperty(
@@ -424,15 +274,10 @@ export const initAppTooltipSystem = (): void => {
 
     activeTarget = target;
     activeSource = source;
-    const preferredPlacement = resolveTooltipPlacement(target.dataset.tooltipPlacement);
+    const placement = resolveTooltipPlacement(target.dataset.tooltipPlacement);
     const lockPlacement = target.dataset.tooltipLockPlacement === 'true';
-    const { width, height } = measureTooltip(tooltipElement, tooltipText);
-
-    if (useCssAnchorPositioning) {
-      applyAnchorPositioning(target, preferredPlacement, lockPlacement);
-    } else {
-      applyManualPositioning(target, width, height, preferredPlacement, lockPlacement);
-    }
+    prepareTooltipContent(tooltipElement, tooltipText);
+    applyAnchorPositioning(target, placement, lockPlacement);
 
     if (source === 'pointer') {
       startPointerTracking();
@@ -452,7 +297,6 @@ export const initAppTooltipSystem = (): void => {
     hideTooltip();
     pendingTarget = target;
     startPointerTracking();
-    startViewportTracking();
     pendingShowTimeoutId = window.setTimeout(() => {
       const nextTarget = pendingTarget;
       pendingShowTimeoutId = null;
@@ -464,24 +308,6 @@ export const initAppTooltipSystem = (): void => {
 
       renderTooltip(nextTarget, 'pointer');
     }, POINTER_TOOLTIP_DELAY_MS);
-  };
-
-  const syncTooltipPosition = (): void => {
-    if (!pendingTarget && !activeTarget) {
-      return;
-    }
-
-    if (pendingTarget && !document.body.contains(pendingTarget)) {
-      hideTooltip();
-      return;
-    }
-
-    if (!activeTarget || !document.body.contains(activeTarget)) {
-      hideTooltip();
-      return;
-    }
-
-    renderTooltip(activeTarget, activeSource ?? 'pointer');
   };
 
   const handlePointerMove = (event: PointerEvent): void => {
@@ -600,7 +426,6 @@ export const initAppTooltipSystem = (): void => {
     document.removeEventListener('pointerdown', handlePointerDown, true);
     document.documentElement.removeEventListener('mouseleave', handleDocumentMouseLeave);
     document.removeEventListener('visibilitychange', handleVisibilityChange);
-    stopViewportTracking();
     window.removeEventListener('blur', handleWindowBlur);
     window.removeEventListener('keydown', handleKeyDown);
     hideTooltip();
