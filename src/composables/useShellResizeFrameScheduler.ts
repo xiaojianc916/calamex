@@ -1,6 +1,7 @@
-import { onBeforeUnmount, onMounted } from 'vue';
-import { createDisposableBag, createMutableDisposable } from '@/utils/disposable';
-import { addDisposableEventListener, requestDisposableAnimationFrame } from '@/utils/dom-lifecycle';
+import { onBeforeUnmount } from 'vue';
+import { useEventListener } from '@vueuse/core';
+import { createMutableDisposable } from '@/utils/disposable';
+import { requestDisposableAnimationFrame } from '@/utils/dom-lifecycle';
 import {
   SHELL_WINDOW_RESIZE_END_EVENT,
   SHELL_WINDOW_RESIZE_FRAME_EVENT,
@@ -36,7 +37,6 @@ export const useShellResizeFrameScheduler = ({
   onSettled,
   settledFrames = 2,
 }: IUseShellResizeFrameSchedulerOptions): void => {
-  const resizeListeners = createMutableDisposable();
   const scheduledFrame = createMutableDisposable();
   const scheduledSettledFrame = createMutableDisposable();
   let pendingSettledFrames = 0;
@@ -103,19 +103,13 @@ export const useShellResizeFrameScheduler = ({
     pumpSettledFrames();
   };
 
-  onMounted(() => {
-    const listeners = createDisposableBag();
-    listeners.add(addDisposableEventListener(window, SHELL_WINDOW_RESIZE_START_EVENT, handleStart));
-    listeners.add(addDisposableEventListener(window, SHELL_WINDOW_RESIZE_FRAME_EVENT, handleFrame));
-    listeners.add(addDisposableEventListener(window, SHELL_WINDOW_RESIZE_END_EVENT, handleEnd));
-    listeners.add(
-      addDisposableEventListener(window, SHELL_WINDOW_RESIZE_SETTLED_EVENT, handleSettled),
-    );
-    resizeListeners.set(() => listeners.dispose());
-  });
+  // VueUse useEventListener 在 setup scope 注册，组件卸载时自动解绑，替代手写 disposable bag。
+  useEventListener(window, SHELL_WINDOW_RESIZE_START_EVENT, handleStart);
+  useEventListener(window, SHELL_WINDOW_RESIZE_FRAME_EVENT, handleFrame);
+  useEventListener(window, SHELL_WINDOW_RESIZE_END_EVENT, handleEnd);
+  useEventListener(window, SHELL_WINDOW_RESIZE_SETTLED_EVENT, handleSettled);
 
   onBeforeUnmount(() => {
-    resizeListeners.clear();
     cancelFrame();
     cancelSettledFrames();
   });

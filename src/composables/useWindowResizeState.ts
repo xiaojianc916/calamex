@@ -1,7 +1,7 @@
 import { onScopeDispose } from 'vue';
-import { createDisposableBag, createMutableDisposable } from '@/utils/disposable';
+import { useEventListener } from '@vueuse/core';
+import { createMutableDisposable } from '@/utils/disposable';
 import {
-  addDisposableEventListener,
   requestDisposableAnimationFrame,
   requestDisposableTimeout,
 } from '@/utils/dom-lifecycle';
@@ -62,7 +62,6 @@ const warnResizeListenerFailure = (err: unknown): void => {
 export const useWindowResizeState = () => {
   const html = document.documentElement;
   const resizeClassRemovalTimer = createMutableDisposable();
-  const resizeEventListeners = createMutableDisposable();
   const resizeFramePumpFrame = createMutableDisposable();
   const tauriResizeListener = createMutableDisposable();
   let resizeFramePumpStartedAt = 0;
@@ -170,25 +169,13 @@ export const useWindowResizeState = () => {
     clearResizeTimer();
     cancelResizeFramePump();
     tauriResizeListener.clear();
-    resizeEventListeners.clear();
     html.classList.remove('is-resizing');
   });
 
   if (typeof window !== 'undefined') {
-    const handleResizeStart = (): void => {
-      beginInteractiveResize();
-    };
-    const handleResizeEnd = (): void => {
-      endInteractiveResize();
-    };
-    const listeners = createDisposableBag();
-    listeners.add(
-      addDisposableEventListener(window, SHELL_WINDOW_RESIZE_START_EVENT, handleResizeStart),
-    );
-    listeners.add(
-      addDisposableEventListener(window, SHELL_WINDOW_RESIZE_END_EVENT, handleResizeEnd),
-    );
-    resizeEventListeners.set(() => listeners.dispose());
+    // VueUse useEventListener 注册的监听会随当前组件 scope 自动解绑，无需手写 disposable bag。
+    useEventListener(window, SHELL_WINDOW_RESIZE_START_EVENT, () => beginInteractiveResize());
+    useEventListener(window, SHELL_WINDOW_RESIZE_END_EVENT, () => endInteractiveResize());
   }
 
   if (!hasTauriWindowRuntime()) {
