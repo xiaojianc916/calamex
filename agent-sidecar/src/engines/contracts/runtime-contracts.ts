@@ -2,6 +2,7 @@ import {
     AGENT_SIDECAR_RESPONSE_SCHEMA_VERSION,
     type TAgentSidecarResponse,
     type TAgentUiEvent,
+    type TLanguageModelUsage,
 } from '../../schemas/events.js';
 
 // -----------------------------------------------------------------------------
@@ -50,6 +51,34 @@ export type TAgentRuntimeOutputEventType = (typeof AGENT_RUNTIME_OUTPUT_EVENT_TY
 export type TAgentRuntimeOutputEvent = TRuntimeUiEvent<TAgentRuntimeOutputEventType>;
 
 // -----------------------------------------------------------------------------
+// Token usage snapshot.
+// -----------------------------------------------------------------------------
+
+/**
+ * Aggregated token usage captured at the end of a run.
+ *
+ * Per ACP, token usage is **not** a terminal field on the prompt response; it
+ * is surfaced via a `session/update` `usage_update` notification. This snapshot
+ * is the runtime-internal carrier of that data: the ACP egress layer projects
+ * it into a `usage_update` (with `size` taken from the model's context window)
+ * when serializing the run. It is intentionally decoupled from any single UI
+ * event so no producer needs to fabricate a terminal event just to report it.
+ *
+ * The `usage` field mirrors {@link TLanguageModelUsage}; the flat
+ * prompt/completion/total counts are kept only for backward-compatible
+ * consumers and should be considered deprecated in favour of `usage`.
+ */
+export interface IAgentTokenUsageSnapshot {
+    /** @deprecated prefer `usage.inputTokens` */
+    readonly promptTokens?: number;
+    /** @deprecated prefer `usage.outputTokens` */
+    readonly completionTokens?: number;
+    /** @deprecated prefer `usage.totalTokens` */
+    readonly totalTokens?: number;
+    readonly usage?: TLanguageModelUsage | null;
+}
+
+// -----------------------------------------------------------------------------
 // Public response / option contracts.
 // -----------------------------------------------------------------------------
 
@@ -68,6 +97,14 @@ export interface IAgentRuntimeResponse {
     readonly events: ReadonlyArray<TAgentRuntimeOutputEvent>;
     /** Final assistant message text, or `null` if the run produced no message. */
     readonly result: string | null;
+    /**
+     * Aggregated token usage for the run, if available.
+     *
+     * Carried here (rather than on a terminal event) so the ACP egress layer
+     * can emit a `usage_update` session notification; see
+     * {@link IAgentTokenUsageSnapshot}.
+     */
+    readonly usage?: IAgentTokenUsageSnapshot;
 }
 
 export interface IAgentRuntimeContext {
