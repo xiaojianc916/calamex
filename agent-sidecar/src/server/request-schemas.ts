@@ -156,7 +156,7 @@ export const agentSidecarRollbackRestoreRequestSchema = z.object({
 // 由前端 ai-agent store 持久化偏好按次携带；缺省时退化为 interactive（取值与前端 execution-mode.ts 一致）。
 const executionModeRequestSchema = z.enum(['interactive', 'autonomous']).default('interactive');
 
-// Phase 2：原生编排 workflow 入口（默认关闭，AGENT_ORCHESTRATION_WORKFLOW=1 才启用）。
+// 原生编排 workflow 入口的请求体（编排为默认且唯一路径，无特性开关门控）。
 export const agentSidecarOrchestrateRequestSchema = z.object({
   goal: requiredNonEmptyStringSchema,
   threadId: optionalNonEmptyStringSchema,
@@ -164,10 +164,10 @@ export const agentSidecarOrchestrateRequestSchema = z.object({
   modelConfig: requestScopedModelConfigSchema.optional(),
 });
 
-// Phase 2b：恢复一个被挂起的编排 run（需携带 start 返回的 runId）。
+// 恢复一个被挂起的编排 run（需携带 start 返回的 runId）。
 // 三类挂起点统一走此入口：计划审批门(approve/reject)、工具审批(approve/reject)、
 // 逐步闸门(continue/cancel)；server 只透传 decision，step 内部读 suspendData.reason 解释。
-// Phase 3b：modelConfig 可选：内存未命中需从快照重建 run 时，用它传递请求级模型。
+// modelConfig 可选：内存未命中需从快照重建 run 时，用它传递请求级模型。
 export const agentSidecarOrchestrateResumeRequestSchema = z.object({
   runId: requiredNonEmptyStringSchema,
   decision: z.enum(['approve', 'reject', 'continue', 'cancel']),

@@ -7,15 +7,6 @@ import type { TPlanOrchestrationWorkflow } from '../engines/plan/orchestration-w
 // committed orchestration workflow 的 run 实例类型（createRun 可能同步或异步返回，统一 Awaited）。
 export type TPlanOrchestrationRun = Awaited<ReturnType<TPlanOrchestrationWorkflow['createRun']>>;
 
-// Orchestration is enabled by default; it is disabled only when
-// AGENT_ORCHESTRATION_WORKFLOW is explicitly set to '0' or 'false'. The flag was
-// only an off-by-default migration gate while the per-phase channel was primary;
-// the native orchestration channel is now the default path.
-export const isOrchestrationWorkflowDisabled = (): boolean => {
-  const raw = (process.env.AGENT_ORCHESTRATION_WORKFLOW ?? '').trim().toLowerCase();
-  return raw === '0' || raw === 'false';
-};
-
 // 编排 workflow 各 step 通过 step writer 写入内层 agent 运行时事件，Mastra 会把它包进
 // 形如 { type: 'workflow-step-output', payload: { output: <event> } } 的 chunk。这里只透出
 // 白名单（AGENT_RUNTIME_OUTPUT_EVENT_TYPES，共 11 类）内的运行时事件，丢弃所有 Mastra
