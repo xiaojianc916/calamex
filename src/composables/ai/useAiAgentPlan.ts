@@ -78,8 +78,11 @@ export const useAiAgentPlan = () => {
       const contextSnapshot = cloneContext(context);
 
       // 原生编排:启动单条 workflow run,跑到计划审批门挂起(plan_ready + suspend)。
+      // executionMode 作为 per-run 偏好随 goal/threadId 一同透传(默认 interactive),
+      // 由 sidecar 决定是否启用「校验 -> 重规划」自治闭环。
       const { payload, projection } = await startOrchestration({
         goal,
+        executionMode: store.executionMode,
         ...(options.threadId ? { threadId: options.threadId } : {}),
       });
 

@@ -23,6 +23,12 @@ pub struct AgentSidecarOrchestrateRequest {
     pub(crate) goal: String,
     #[serde(skip_serializing_if = "is_blank_optional_string")]
     pub(crate) thread_id: Option<String>,
+    /// Per-run execution preference (`interactive` | `autonomous`), threaded
+    /// through verbatim like `thread_id` and validated by the sidecar (Zod
+    /// enum, defaults to `interactive`). Omitted from the body when blank so the
+    /// sidecar applies its default; the Rust layer never interprets the value.
+    #[serde(skip_serializing_if = "is_blank_optional_string")]
+    pub(crate) execution_mode: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) model_config: Option<AgentSidecarModelConfigPayload>,
 }
