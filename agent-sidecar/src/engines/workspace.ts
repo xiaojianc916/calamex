@@ -434,6 +434,10 @@ export const createMastraWorkspace = async (
         // write_file / edit_file / ast_edit 之后自动回灌行级诊断。内置支持 TS/JS/Python/Go/Rust；
         // 缺失对应 language server 时仅该语言无结果，不影响工作区初始化。
         lsp: true,
+        // 开启 BM25 关键字检索（search / index 工具）：纯关键字、无需 embedder / vectorStore。
+        // 刻意不设 autoIndexPaths——不在 init() 时索引整个项目（避免 node_modules / target 撑爆启动耗时与内存），
+        // 改为按需：模型先用 index 工具索引关心的文件，再用 search 检索；语义 / 混合检索如需另配 vectorStore + embedder。
+        bm25: true,
         tools: {
             // 直接复用 Mastra 内置 read_file：已原生支持文本行区间（offset/limit）、cat -n 行号
             // （showLineNumbers 默认 true）、把图片/PDF 作为 media part 直接给模型查看、二进制安全
@@ -494,6 +498,14 @@ export const createMastraWorkspace = async (
             [WORKSPACE_TOOLS.LSP.LSP_INSPECT]: {
                 // 只读语义检查，对所有 profile 开放（含 readonly）。
                 enabled: true,
+            },
+            [WORKSPACE_TOOLS.SEARCH.SEARCH]: {
+                // BM25 检索：只读查询，对所有 profile 开放。
+                enabled: true,
+            },
+            [WORKSPACE_TOOLS.SEARCH.INDEX]: {
+                // 建索引需要写能力，只在可写工作区暴露；readonly 文件系统下 Mastra 会自动排除。
+                enabled: profile === 'write',
             },
         },
     });
