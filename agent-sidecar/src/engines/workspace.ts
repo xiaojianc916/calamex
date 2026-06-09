@@ -313,7 +313,7 @@ export const resolveMastraInputTokenLimit = (
     }
 
     console.warn(
-        `[agent-sidecar] ${AGENT_SIDECAR_INPUT_TOKEN_LIMIT_ENV}="${configured}" is not a positive integer; ` +
+        `[agent-sidecar] ${AGENT_SIDECAR_INPUT_TOKEN_LIMIT_ENV}=\"${configured}\" is not a positive integer; ` +
         `falling back to ${DEFAULT_MASTRA_INPUT_TOKEN_LIMIT}.`,
     );
     return DEFAULT_MASTRA_INPUT_TOKEN_LIMIT;
@@ -485,8 +485,8 @@ export const createMastraWorkspace = async (
         },
         tools: {
             // 直接复用 Mastra 内置 read_file：已原生支持文本行区间（offset/limit）、cat -n 行号
-            //（showLineNumbers 默认 true）、把图片/PDF 作为 media part 直接给模型查看、二进制安全
-            //（超限仅返回元数据，不灌 base64）。这些正是其相对手写实现的长处，只按需增强媒体识别。
+            //（showLineNumbers 输入参数默认 true，在 schema 层，非配置项）、把图片/PDF 作为 media part 直接给模型查看、
+            // 二进制安全（超限仅返回元数据，不灸 base64）。这些正是其相对手写实现的长处，只按需增强媒体识别。
             [WORKSPACE_TOOLS.FILESYSTEM.READ_FILE]: {
                 enabled: true,
                 // 取主流模型普遍支持的安全交集；不放开为 image/*，官方文档提示
@@ -494,15 +494,22 @@ export const createMastraWorkspace = async (
                 mediaTypes: ['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'application/pdf'],
                 // 内联媒体上限提升到 20 MiB，超限文件回退为仅元数据，避免 base64 撑爆上下文。
                 maxMediaBytes: 20 * 1024 * 1024,
+                // 官方 maxOutputTokens 默认仅 3000，读中等以上文件会被截断。作为主读取工具提到 16000，
+                // 兼顾“完整读取体验”与上下文预算；超过仍可用 offset/limit 继续分页。
+                maxOutputTokens: 16000,
             },
             [WORKSPACE_TOOLS.FILESYSTEM.LIST_FILES]: {
                 enabled: true,
+                // 大目录列举默认 3000 token 易截断，放宽到 8000。
+                maxOutputTokens: 8000,
             },
             [WORKSPACE_TOOLS.FILESYSTEM.FILE_STAT]: {
                 enabled: true,
             },
             [WORKSPACE_TOOLS.FILESYSTEM.GREP]: {
                 enabled: true,
+                // 全仓匹配命中多，默认 3000 token 易截断，放宽到 8000。
+                maxOutputTokens: 8000,
             },
             [WORKSPACE_TOOLS.FILESYSTEM.WRITE_FILE]: {
                 enabled: profile === 'write',
@@ -535,6 +542,8 @@ export const createMastraWorkspace = async (
             },
             [WORKSPACE_TOOLS.SANDBOX.GET_PROCESS_OUTPUT]: {
                 enabled: profile === 'write',
+                // 后台进程日志可能很长，默认 3000 token 易截断，放宽到 8000。
+                maxOutputTokens: 8000,
             },
             [WORKSPACE_TOOLS.SANDBOX.KILL_PROCESS]: {
                 enabled: profile === 'write',
@@ -543,10 +552,14 @@ export const createMastraWorkspace = async (
             [WORKSPACE_TOOLS.LSP.LSP_INSPECT]: {
                 // 只读语义检查，对所有 profile 开放（含 readonly）。
                 enabled: true,
+                // hover / 定义 / 引用 / 诊断聚合输出可能较长，放宽到 8000。
+                maxOutputTokens: 8000,
             },
             [WORKSPACE_TOOLS.SEARCH.SEARCH]: {
                 // BM25 检索：只读查询，对所有 profile 开放。
                 enabled: true,
+                // 排名结果列表可能较长，默认 3000 token 易截断，放宽到 8000。
+                maxOutputTokens: 8000,
             },
             [WORKSPACE_TOOLS.SEARCH.INDEX]: {
                 // 建索引需要写能力，只在可写工作区暴露；readonly 文件系统下 Mastra 会自动排除。
