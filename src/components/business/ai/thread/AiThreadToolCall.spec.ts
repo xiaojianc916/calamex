@@ -1,7 +1,6 @@
 import { mount } from '@vue/test-utils';
 import { describe, expect, it, vi } from 'vitest';
 import { Terminal } from '@/components/ai-elements/terminal';
-import { ThreadEntryDisclosure } from '@/components/ai-elements/thread-entry';
 import AiMarkdown from '@/components/business/ai/chat/AiMarkdown.vue';
 import { AiDiffHunkViewer } from '@/components/business/ai/edit';
 import type { IAiPatchSet } from '@/types/ai';
@@ -48,24 +47,41 @@ const baseEntry = (content: TAiThreadToolContent[]): IAiThreadToolCallEntry => (
 });
 
 describe('AiThreadToolCall', () => {
-  it('渲染标题、主标签与文本内容', () => {
+  it('渲染 Zed 风格 standalone 工具块标题、主标签与文本内容', () => {
     const wrapper = mount(AiThreadToolCall, {
       props: { entry: baseEntry([{ type: 'text', id: 'c1', markdown: 'done' }]), open: true },
       global: { stubs },
     });
 
+    expect(wrapper.classes()).toContain('ai-thread-tool-call');
+    expect(wrapper.attributes('data-state')).toBe('open');
     expect(wrapper.text()).toContain('读取文件');
     expect(wrapper.text()).toContain('src/a.ts');
     expect(wrapper.findComponent(AiMarkdown).exists()).toBe(true);
   });
 
-  it('无内容时作为静态行并禁用展开', () => {
+  it('点击 header 时切换展开状态', async () => {
+    const wrapper = mount(AiThreadToolCall, {
+      props: { entry: baseEntry([{ type: 'text', id: 'c1', markdown: 'done' }]), open: false },
+      global: { stubs },
+    });
+
+    await wrapper.find('.ai-thread-tool-call__header').trigger('click');
+
+    expect(wrapper.emitted('update:open')?.[0]).toEqual([true]);
+  });
+
+  it('无内容时作为静态工具块并禁用 header', async () => {
     const wrapper = mount(AiThreadToolCall, {
       props: { entry: baseEntry([]), open: false },
       global: { stubs },
     });
 
-    expect(wrapper.findComponent(ThreadEntryDisclosure).props('disabled')).toBe(true);
+    expect(wrapper.find('.ai-thread-tool-call__header').attributes('disabled')).toBeDefined();
+
+    await wrapper.find('.ai-thread-tool-call__header').trigger('click');
+
+    expect(wrapper.emitted('update:open')).toBeUndefined();
   });
 
   it('渲染终端内容', () => {
