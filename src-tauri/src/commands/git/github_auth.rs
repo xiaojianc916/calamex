@@ -93,6 +93,15 @@ struct GitHubAuthenticatedUser {
 }
 
 #[derive(Deserialize)]
+struct GitHubUserEmail {
+    email: String,
+    #[serde(default)]
+    primary: bool,
+    #[serde(default)]
+    verified: bool,
+}
+
+#[derive(Deserialize)]
 struct GitHubDeviceCodeResponse {
     device_code: String,
     user_code: String,
@@ -438,6 +447,33 @@ fn build_github_oauth_client() -> Result<reqwest::Client, String> {
         .map_err(|error| format!("创建 GitHub 授权客户端失败：{error}"))
 }
 
+async fn fetch_github_primary_email(
+    client: &reqwest::Client,
+    target: &GitHubAuthTarget,
+) -> Option<String> {
+    let response = client
+        .get(format!("{}/user/emails", target.api_base))
+        .send()
+        .await
+        .ok()?;
+
+    if !response.status().is_success() {
+        return None;
+    }
+
+    let emails: Vec<GitHubUserEmail> = response.json().await.ok()?;
+    emails
+        .iter()
+        .find(|email| email.primary && email.verified && !email.email.trim().is_empty())
+        .or_else(|| {
+            emails
+                .iter()
+                .find(|email| email.verified && !email.email.trim().is_empty())
+        })
+        .or_else(|| emails.iter().find(|email| !email.email.trim().is_empty()))
+        .map(|email| email.email.clone())
+}
+
 async fn fetch_github_auth_status(
     target: &GitHubAuthTarget,
 ) -> Result<GitHubAuthStatusPayload, String> {
@@ -479,8 +515,12 @@ async fn fetch_github_auth_status(
         )));
     }
 
-    let user: GitHubAuthenticatedUser = serde_json::from_str(&body)
+    let mut user: GitHubAuthenticatedUser = serde_json::from_str(&body)
         .map_err(|error| format!("解析 GitHub 用户信息失败：{error}"))?;
+
+    if user.email.as_deref().map(str::trim).unwrap_or_default().is_empty() {
+        user.email = fetch_github_primary_email(&client, target).await;
+    }
 
     Ok(authenticated(user, credential.source))
 }

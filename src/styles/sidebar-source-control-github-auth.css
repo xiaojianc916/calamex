@@ -103,8 +103,8 @@
 
 .source-control-github-menu-avatar,
 .source-control-github-menu-mark {
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   flex: 0 0 auto;
   border-radius: 999px;
 }
@@ -120,7 +120,7 @@
   justify-content: center;
   background: #0f172a;
   color: #fff;
-  font-size: 18px;
+  font-size: 16px;
 }
 
 .source-control-github-menu-profile-copy {
