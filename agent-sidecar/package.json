@@ -8,9 +8,9 @@
     "node": ">=26"
   },
   "scripts": {
-    "dev": "tsx --env-file=.env src/server.ts",
+    "dev": "tsx --env-file=.env src/acp/stdio-entry.ts",
     "build": "node build.mjs",
-    "start": "node dist/server.js",
+    "start": "node dist/acp/stdio-entry.js",
     "test": "node --import tsx --test \"src/**/*.spec.ts\"",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint:ox": "pnpm --dir .. lint:ox"
