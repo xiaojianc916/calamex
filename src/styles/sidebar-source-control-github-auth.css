@@ -37,8 +37,7 @@
     background 120ms ease,
     border-color 120ms ease,
     color 120ms ease,
-    opacity 120ms ease,
-    transform 120ms ease;
+    opacity 120ms ease;
 }
 
 .source-control-github-auth:hover:not(:disabled),
@@ -47,10 +46,6 @@
   border-color: rgba(15, 23, 42, 0.08);
   background: rgba(15, 23, 42, 0.06);
   color: rgba(15, 23, 42, 0.9);
-}
-
-.source-control-github-auth:active:not(:disabled) {
-  transform: translateY(1px);
 }
 
 .source-control-github-auth:disabled {
@@ -85,15 +80,13 @@
   top: calc(100% + 8px);
   right: 0;
   z-index: 30;
-  width: min(280px, calc(100vw - 32px));
+  width: min(252px, calc(100vw - 32px));
   border: 1px solid rgba(15, 23, 42, 0.1);
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.96);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.98);
   color: rgba(15, 23, 42, 0.88);
-  box-shadow:
-    0 20px 40px -24px rgba(15, 23, 42, 0.42),
-    0 8px 18px -12px rgba(15, 23, 42, 0.22);
-  backdrop-filter: blur(18px);
+  box-shadow: 0 8px 22px -18px rgba(15, 23, 42, 0.32);
+  backdrop-filter: blur(14px);
 }
 
 .source-control-github-menu {
@@ -168,7 +161,7 @@
 .source-control-github-menu-connect {
   width: 100%;
   border: 0;
-  border-radius: 10px;
+  border-radius: 8px;
   font-family: inherit;
   cursor: pointer;
   transition:
@@ -268,7 +261,7 @@
   justify-content: center;
   margin-top: 14px;
   border: 1px solid rgba(15, 23, 42, 0.08);
-  border-radius: 14px;
+  border-radius: 10px;
   background: linear-gradient(180deg, rgba(248, 250, 252, 0.95), rgba(255, 255, 255, 0.95));
   padding: 12px 10px;
   color: rgba(15, 23, 42, 0.92);
@@ -293,7 +286,7 @@
 .source-control-github-device-btn {
   min-height: 30px;
   border: 1px solid rgba(15, 23, 42, 0.08);
-  border-radius: 10px;
+  border-radius: 8px;
   background: #fff;
   color: rgba(15, 23, 42, 0.74);
   font-family: inherit;

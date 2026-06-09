@@ -49,7 +49,7 @@
           <span v-else class="source-control-github-menu-mark icon-[lucide--github]" aria-hidden="true" />
           <span class="source-control-github-menu-profile-copy">
             <strong v-text="displayName" />
-            <span v-if="authStore.status.login" v-text="authStore.status.login" />
+            <span v-if="profileSubtitle" v-text="profileSubtitle" />
           </span>
         </header>
 
@@ -167,6 +167,7 @@ const isPopoverOpen = computed(() => isMenuOpen.value || Boolean(authStore.devic
 const displayName = computed(
   () => authStore.status.name || authStore.status.login || 'GitHub',
 );
+const profileSubtitle = computed(() => authStore.status.email || authStore.status.login || '');
 
 const closeMenu = (): void => {
   isMenuOpen.value = false;
