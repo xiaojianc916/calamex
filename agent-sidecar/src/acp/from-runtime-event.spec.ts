@@ -169,6 +169,31 @@ test("agent.tool.completed 失败 → failed + 错误内容", () => {
 	assertAllValid(updates)
 })
 
+test("agent.plan.updated → plan（全量条目快照，1:1 对齐 ACP PlanEntry）", () => {
+	const updates = projectRuntimeEventToAcp(
+		createAgentRuntimeEvent(ctx, 18, {
+			type: "agent.plan.updated",
+			visibility: "user",
+			entries: [
+				{ content: "读取源码", priority: "high", status: "completed" },
+				{ content: "设计投影", priority: "medium", status: "in_progress" },
+				{ content: "补充测试", priority: "low", status: "pending" },
+			],
+		}),
+	)
+	assert.deepEqual(updates, [
+		{
+			sessionUpdate: "plan",
+			entries: [
+				{ content: "读取源码", priority: "high", status: "completed" },
+				{ content: "设计投影", priority: "medium", status: "in_progress" },
+				{ content: "补充测试", priority: "low", status: "pending" },
+			],
+		},
+	])
+	assertAllValid(updates)
+})
+
 test("纯遥测事件投影为空（链路外）", () => {
 	const telemetry = [
 		createAgentRuntimeEvent(ctx, 9, { type: "agent.run.started", visibility: "debug" }),

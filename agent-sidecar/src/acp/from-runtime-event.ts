@@ -1,11 +1,12 @@
 /**
  * 运行时富事件 → ACP SessionUpdate 投影。
  *
- * 这是 sidecar 内部 `TAgentRuntimeEvent`（见 ../streaming/stream-types，28 类）
+ * 这是 sidecar 内部 `TAgentRuntimeEvent`（见 ../streaming/stream-types，29 类）
  * 通向 ACP 线上协议的唯一边界：
  * - 模型文本增量  → agent_message_chunk
  * - 模型推理增量  → agent_thought_chunk
  * - 工具生命周期  → tool_call / tool_call_update
+ * - 计划快照      → plan（全量条目替换）
  *
  * 其余事件（运行生命周期、模型计量、acontext 预算、rollback、side-effect、
  * 消息记账、调试）属于「链路外」遥测：按 ACP 前向兼容约定，它们不进入
@@ -156,6 +157,20 @@ export const projectRuntimeEventToAcp = (
 				},
 			]
 		}
+		case "agent.plan.updated":
+			// ACP 计划是全量快照：client 以每条 plan 更新整体替换计划
+			// （见 plan.rs `Plan.entries`）。条目形状已 1:1 对齐 ACP PlanEntry，
+			// 显式重建对象以剔除任何 runtime-only 字段、并满足 schema。
+			return [
+				{
+					sessionUpdate: "plan",
+					entries: event.entries.map((entry) => ({
+						content: entry.content,
+						priority: entry.priority,
+						status: entry.status,
+					})),
+				},
+			]
 		// ---- 链路外遥测 / 生命周期 / 计量：不投影为 SessionUpdate。 ----
 		case "agent.run.started":
 		case "agent.run.completed":
