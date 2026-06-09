@@ -6,10 +6,12 @@
 //! 确认后调用 `trust_ssh_host_key` 记录新密钥。
 
 use super::DEFAULT_SSH_PORT;
+use atomic_write_file::AtomicWriteFile;
 use russh::keys::HashAlg;
 use std::{
     collections::HashMap,
     env, fs as std_fs,
+    io::Write,
     path::{Path, PathBuf},
     sync::{LazyLock, Mutex},
 };
@@ -147,25 +149,17 @@ fn replace_known_host_key_in(
         .map_err(|e| format!("写入 known_hosts 失败：{e}"))
 }
 
-/// 原子重写文件：先写入同目录下的临时文件，再 rename 覆盖目标，
-/// 避免重写过程中崩溃 / 断电把 known_hosts 截断、丢失既有可信主机条目。
+/// 原子重写文件：使用官方 `AtomicWriteFile`（唯一临时文件 + 原子 commit）覆盖目标，
+/// 既避免重写过程中崩溃 / 断电把 known_hosts 截断、丢失既有可信主机条目，也避免固定
+/// 临时名（旧实现的 `.known_hosts.tmp`）在并发信任不同主机时互相踩踏。
 fn atomic_rewrite(path: &Path, contents: &str) -> Result<(), String> {
-    let file_name = path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or("known_hosts");
-    let temp_path = match path.parent() {
-        Some(parent) if !parent.as_os_str().is_empty() => parent.join(format!(".{file_name}.tmp")),
-        _ => PathBuf::from(format!(".{file_name}.tmp")),
-    };
-
-    std_fs::write(&temp_path, contents.as_bytes())
+    let mut file = AtomicWriteFile::options()
+        .open(path)
         .map_err(|e| format!("写入 known_hosts 失败：{e}"))?;
-    if let Err(e) = std_fs::rename(&temp_path, path) {
-        let _ = std_fs::remove_file(&temp_path);
-        return Err(format!("写入 known_hosts 失败：{e}"));
-    }
-    Ok(())
+    file.write_all(contents.as_bytes())
+        .map_err(|e| format!("写入 known_hosts 失败：{e}"))?;
+    file.commit()
+        .map_err(|e| format!("写入 known_hosts 失败：{e}"))
 }
 
 fn known_hosts_line_targets_host(line: &str, host: &str, port: u16) -> bool {
