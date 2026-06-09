@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import LucideIcon from '@/components/ui/icon/LucideIcon.vue';
 // import type { InputGroupButtonVariants } from '@/components/ui/input-group'
 
 import type { ChatStatus } from 'ai';
@@ -25,10 +26,10 @@ const props = withDefaults(defineProps<Props>(), {
 });
 
 const icon = computed(() => {
-  if (props.status === 'submitted') return 'icon-[lucide--loader-circle]';
-  if (props.status === 'streaming') return 'icon-[lucide--square]';
-  if (props.status === 'error') return 'icon-[lucide--x]';
-  return 'icon-[lucide--corner-down-left]';
+  if (props.status === 'submitted') return 'loader-circle';
+  if (props.status === 'streaming') return 'square';
+  if (props.status === 'error') return 'x';
+  return 'corner-down-left';
 });
 
 const iconClass = computed(() => {
@@ -43,7 +44,7 @@ const iconClass = computed(() => {
   <InputGroupButton aria-label="Submit" :class="cn(props.class)" :size="props.size" :variant="props.variant"
     type="submit" v-bind="$attrs">
     <slot>
-      <span :class="[icon, iconClass]" />
+      <LucideIcon :name="icon" :class="iconClass" />
     </slot>
   </InputGroupButton>
 </template>

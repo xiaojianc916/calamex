@@ -111,8 +111,8 @@
             <header class="search-replace-inline-file-header">
               <button type="button" class="search-replace-inline-file-open"
                 :aria-expanded="!isReplacementFileCollapsed(file.path)" @click="toggleReplacementFile(file.path)">
-                <span class="search-replace-inline-chevron" aria-hidden="true"
-                  :class="isReplacementFileCollapsed(file.path) ? 'icon-[lucide--chevron-right]' : 'icon-[lucide--chevron-down]'" />
+                <LucideIcon class="search-replace-inline-chevron" aria-hidden="true"
+                  :name="isReplacementFileCollapsed(file.path) ? 'chevron-right' : 'chevron-down'" />
                 <span class="search-replace-inline-file-icon" aria-hidden="true">
                   <ExplorerEntryIcon kind="file" :path="file.path" />
                 </span>
@@ -189,8 +189,8 @@
               <button type="button" class="search-panel-result-group-open"
                 :aria-expanded="!isSearchResultGroupCollapsed(entry.row.group.path)"
                 @click="toggleSearchResultGroup(entry.row.group.path)">
-                <span class="search-panel-result-group-chevron" aria-hidden="true"
-                  :class="isSearchResultGroupCollapsed(entry.row.group.path) ? 'icon-[lucide--chevron-right]' : 'icon-[lucide--chevron-down]'" />
+                <LucideIcon class="search-panel-result-group-chevron" aria-hidden="true"
+                  :name="isSearchResultGroupCollapsed(entry.row.group.path) ? 'chevron-right' : 'chevron-down'" />
                 <span class="search-panel-result-group-icon" aria-hidden="true">
                   <ExplorerEntryIcon kind="file" :path="entry.row.group.path" />
                 </span>
@@ -225,8 +225,8 @@
             <header class="search-panel-result-group-header">
               <button type="button" class="search-panel-result-group-open"
                 :aria-expanded="!isSearchResultGroupCollapsed(group.path)" @click="toggleSearchResultGroup(group.path)">
-                <span class="search-panel-result-group-chevron" aria-hidden="true"
-                  :class="isSearchResultGroupCollapsed(group.path) ? 'icon-[lucide--chevron-right]' : 'icon-[lucide--chevron-down]'" />
+                <LucideIcon class="search-panel-result-group-chevron" aria-hidden="true"
+                  :name="isSearchResultGroupCollapsed(group.path) ? 'chevron-right' : 'chevron-down'" />
                 <span class="search-panel-result-group-icon" aria-hidden="true">
                   <ExplorerEntryIcon kind="file" :path="group.path" />
                 </span>
@@ -278,6 +278,7 @@ import {
 import { useVirtualizer } from '@tanstack/vue-virtual';
 import { computed, onScopeDispose, ref, watch } from 'vue';
 import InlineError from '@/components/common/InlineError.vue';
+import LucideIcon from '@/components/ui/icon/LucideIcon.vue';
 import { Input } from '@/components/ui/input';
 import ExplorerEntryIcon from '@/components/workbench/ExplorerEntryIcon.vue';
 import PathFilterInput from '@/components/workbench/PathFilterInput.vue';
@@ -500,7 +501,11 @@ const toResultItem = (result: IWorkspaceSearchResult): ISearchResultItem => {
           : trimBoundaryWhitespaceWithRange(rawSnippetText, rawMatchRange);
       cachedSegments =
         result.kind === 'content' && preview.range
-          ? buildCompactHighlightedSegments(preview.text, preview.range, SEARCH_RESULT_CONTEXT_CHARS)
+          ? buildCompactHighlightedSegments(
+              preview.text,
+              preview.range,
+              SEARCH_RESULT_CONTEXT_CHARS,
+            )
           : matcher.value.highlight(trimBoundaryWhitespace(preview.text));
       return cachedSegments;
     },

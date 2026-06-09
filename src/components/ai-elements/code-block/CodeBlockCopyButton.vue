@@ -3,6 +3,7 @@ import { reactiveOmit } from '@vueuse/core';
 import type { HTMLAttributes } from 'vue';
 import { computed, onBeforeUnmount, ref } from 'vue';
 import { Button } from '@/components/ui/button';
+import LucideIcon from '@/components/ui/icon/LucideIcon.vue';
 import { cn } from '@/lib/utils';
 import { useCodeBlockContext } from './context';
 
@@ -31,7 +32,7 @@ const { code } = useCodeBlockContext();
 const isCopied = ref(false);
 let resetTimer: ReturnType<typeof setTimeout> | undefined;
 
-const icon = computed(() => (isCopied.value ? 'icon-[lucide--check]' : 'icon-[lucide--copy]'));
+const icon = computed(() => (isCopied.value ? 'check' : 'copy'));
 
 async function copyToClipboard(): Promise<void> {
   if (typeof window === 'undefined' || !navigator?.clipboard?.writeText) {
@@ -67,7 +68,7 @@ onBeforeUnmount(() => {
   <Button data-slot="code-block-copy-button" v-bind="delegatedProps" :class="cn('shrink-0', props.class)" size="icon"
     variant="ghost" @click="copyToClipboard">
     <slot>
-      <span :class="[icon, 'size-3.5']" />
+      <LucideIcon :name="icon" class="size-3.5" />
     </slot>
   </Button>
 </template>

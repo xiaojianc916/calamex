@@ -31,10 +31,10 @@
           @error="handleAuthAvatarError"
         />
       </span>
-      <span
+      <LucideIcon
         v-else
         class="source-control-github-auth-icon"
-        :class="authStore.isLoading && !authStore.status.authenticated ? 'icon-[lucide--loader-circle]' : 'icon-[lucide--github]'"
+        :name="authStore.isLoading && !authStore.status.authenticated ? 'loader-circle' : 'github'"
         aria-hidden="true"
       />
     </button>
@@ -168,6 +168,7 @@
 <script setup lang="ts">
 import { ExternalLink, Github, RefreshCw } from '@lucide/vue';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import LucideIcon from '@/components/ui/icon/LucideIcon.vue';
 import { useGitHubAuthStore } from '@/store/github-auth';
 
 const props = defineProps<{

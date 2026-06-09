@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { HTMLAttributes } from 'vue';
 import { computed } from 'vue';
+import LucideIcon from '@/components/ui/icon/LucideIcon.vue';
 import { cn } from '@/lib/utils';
 
 /**
@@ -34,21 +35,21 @@ interface IStatusGlyph {
 }
 
 const STATUS_GLYPHS: Record<ThreadToolStatus, IStatusGlyph> = {
-  pending: { icon: 'icon-[lucide--circle]', tone: 'text-muted-foreground', label: '等待中' },
+  pending: { icon: 'circle', tone: 'text-muted-foreground', label: '等待中' },
   running: {
-    icon: 'icon-[lucide--loader-circle] animate-spin',
-    tone: 'text-muted-foreground',
+    icon: 'loader-circle',
+    tone: 'text-muted-foreground animate-spin',
     label: '进行中',
   },
   'awaiting-confirmation': {
-    icon: 'icon-[lucide--circle-alert]',
+    icon: 'circle-alert',
     tone: 'text-amber-500',
     label: '等待确认',
   },
   succeeded: { icon: null, tone: 'text-muted-foreground', label: '已完成' },
-  failed: { icon: 'icon-[lucide--circle-alert]', tone: 'text-red-500', label: '失败' },
-  denied: { icon: 'icon-[lucide--ban]', tone: 'text-red-500', label: '已拒绝' },
-  canceled: { icon: 'icon-[lucide--circle-slash]', tone: 'text-muted-foreground', label: '已取消' },
+  failed: { icon: 'circle-alert', tone: 'text-red-500', label: '失败' },
+  denied: { icon: 'ban', tone: 'text-red-500', label: '已拒绝' },
+  canceled: { icon: 'circle-slash', tone: 'text-muted-foreground', label: '已取消' },
 };
 
 const glyph = computed<IStatusGlyph>(() => STATUS_GLYPHS[props.status]);
@@ -61,6 +62,6 @@ const glyph = computed<IStatusGlyph>(() => STATUS_GLYPHS[props.status]);
     :aria-label="glyph.label"
     :data-status="props.status"
   >
-    <span v-if="glyph.icon" :class="cn('size-3.5', glyph.icon, glyph.tone)" aria-hidden="true" />
+    <LucideIcon v-if="glyph.icon" :name="glyph.icon" :class="cn('size-3.5', glyph.tone)" aria-hidden="true" />
   </span>
 </template>

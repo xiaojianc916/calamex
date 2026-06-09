@@ -41,6 +41,7 @@ import {
   isItalic,
   isUnderline,
 } from '@/components/ai-elements/code-block/utils';
+import LucideIcon from '@/components/ui/icon/LucideIcon.vue';
 import { useMessage } from '@/composables/useMessage';
 import { light as lightThemeRoles } from '@/themes/variants/light';
 import type { ISshFileItem } from '@/types/ssh';
@@ -396,9 +397,7 @@ watch(
 );
 
 const previewFileIcon = computed(() =>
-  languageInfo.value.codeMirrorLanguage === 'text'
-    ? 'icon-[lucide--file-text]'
-    : 'icon-[lucide--file-code-2]',
+  languageInfo.value.codeMirrorLanguage === 'text' ? 'file-text' : 'file-code-2',
 );
 const editorHighlightStyle = computed<CSSProperties>(() => ({
   transform: `translate(${-editorScrollLeft.value}px, ${-editorScrollTop.value}px)`,
@@ -831,7 +830,7 @@ onBeforeUnmount(() => {
       <section class="ssh-preview-dialog" role="dialog" aria-modal="true" aria-label="SSH 文件预览">
         <header class="ssh-preview-dialog__header">
           <div class="ssh-preview-dialog__file-icon" aria-hidden="true">
-            <span :class="[previewFileIcon, 'size-4']" />
+            <LucideIcon :name="previewFileIcon" class="size-4" />
           </div>
 
           <div class="ssh-preview-dialog__title-group">

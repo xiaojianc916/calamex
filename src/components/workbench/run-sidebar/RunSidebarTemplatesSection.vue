@@ -12,6 +12,7 @@ import {
   Trash2,
 } from '@lucide/vue';
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import LucideIcon from '@/components/ui/icon/LucideIcon.vue';
 import {
   type IPhase,
   type ISnippetCategory,
@@ -25,111 +26,111 @@ import {
 // ═══════════════════════════════════════════════
 const iconMap: Record<string, string> = {
   // 类别图标
-  star: 'icon-[lucide--star]',
-  clock: 'icon-[lucide--clock]',
-  rocket: 'icon-[lucide--rocket]',
-  'book-open': 'icon-[lucide--book-open]',
-  terminal: 'icon-[lucide--terminal]',
-  settings: 'icon-[lucide--settings]',
-  'shield-check': 'icon-[lucide--shield-check]',
-  lock: 'icon-[lucide--lock]',
-  type: 'icon-[lucide--type]',
-  braces: 'icon-[lucide--braces]',
-  calendar: 'icon-[lucide--calendar]',
-  database: 'icon-[lucide--database]',
-  'message-square': 'icon-[lucide--message-square]',
-  list: 'icon-[lucide--list]',
-  loader: 'icon-[lucide--loader]',
-  'file-text': 'icon-[lucide--file-text]',
-  'git-branch': 'icon-[lucide--git-branch]',
-  folder: 'icon-[lucide--folder]',
-  'file-search': 'icon-[lucide--file-search]',
-  cpu: 'icon-[lucide--cpu]',
-  globe: 'icon-[lucide--globe]',
-  'bar-chart-2': 'icon-[lucide--chart-bar]', // ChartBar
-  bell: 'icon-[lucide--bell]',
-  'alert-triangle': 'icon-[lucide--alert-triangle]',
-  'trash-2': 'icon-[lucide--trash-2]',
-  'log-out': 'icon-[lucide--log-out]',
-  bug: 'icon-[lucide--bug]',
-  shield: 'icon-[lucide--shield]',
-  'test-tube': 'icon-[lucide--test-tube]',
+  star: 'star',
+  clock: 'clock',
+  rocket: 'rocket',
+  'book-open': 'book-open',
+  terminal: 'terminal',
+  settings: 'settings',
+  'shield-check': 'shield-check',
+  lock: 'lock',
+  type: 'type',
+  braces: 'braces',
+  calendar: 'calendar',
+  database: 'database',
+  'message-square': 'message-square',
+  list: 'list',
+  loader: 'loader',
+  'file-text': 'file-text',
+  'git-branch': 'git-branch',
+  folder: 'folder',
+  'file-search': 'file-search',
+  cpu: 'cpu',
+  globe: 'globe',
+  'bar-chart-2': 'chart-bar', // ChartBar
+  bell: 'bell',
+  'alert-triangle': 'alert-triangle',
+  'trash-2': 'trash-2',
+  'log-out': 'log-out',
+  bug: 'bug',
+  shield: 'shield',
+  'test-tube': 'test-tube',
   // 片段图标
-  info: 'icon-[lucide--info]',
-  'rotate-cw': 'icon-[lucide--rotate-cw]',
-  'refresh-cw': 'icon-[lucide--refresh-cw]',
-  hash: 'icon-[lucide--hash]',
-  tag: 'icon-[lucide--tag]',
-  'help-circle': 'icon-[lucide--help-circle]',
-  flag: 'icon-[lucide--flag]',
-  'arrow-right': 'icon-[lucide--arrow-right]',
-  key: 'icon-[lucide--key]',
-  layers: 'icon-[lucide--layers]',
-  file: 'icon-[lucide--file]',
-  search: 'icon-[lucide--search]',
-  package: 'icon-[lucide--package]',
-  monitor: 'icon-[lucide--monitor]',
-  'user-check': 'icon-[lucide--user-check]',
-  'hard-drive': 'icon-[lucide--hard-drive]',
-  scissors: 'icon-[lucide--scissors]',
-  'arrow-down-az': 'icon-[lucide--arrow-down-a-z]', // 路径是 a-z
-  'arrow-up-az': 'icon-[lucide--arrow-up-a-z]', // 路径是 a-z
-  replace: 'icon-[lucide--replace]',
-  'text-cursor-input': 'icon-[lucide--text-cursor-input]',
-  'at-sign': 'icon-[lucide--at-sign]',
-  brackets: 'icon-[lucide--brackets]',
-  repeat: 'icon-[lucide--repeat]',
-  'git-branch-plus': 'icon-[lucide--git-branch-plus]',
-  combine: 'icon-[lucide--combine]',
-  'calendar-minus': 'icon-[lucide--calendar-minus]',
-  'calendar-clock': 'icon-[lucide--calendar-clock]',
-  filter: 'icon-[lucide--filter]',
-  wrench: 'icon-[lucide--wrench]',
-  'arrow-left-right': 'icon-[lucide--arrow-left-right]',
-  'mouse-pointer': 'icon-[lucide--mouse-pointer]',
-  'chevron-right': 'icon-[lucide--chevron-right]',
-  'list-ordered': 'icon-[lucide--list-ordered]',
-  'octagon-alert': 'icon-[lucide--octagon-alert]',
-  save: 'icon-[lucide--save]',
-  'timer-off': 'icon-[lucide--timer-off]',
-  'git-fork': 'icon-[lucide--git-fork]',
-  'file-check': 'icon-[lucide--file-check]',
-  'file-plus': 'icon-[lucide--file-plus]',
-  'file-clock': 'icon-[lucide--file-clock]',
-  'file-x': 'icon-[lucide--file-x]',
-  copy: 'icon-[lucide--copy]',
-  ruler: 'icon-[lucide--ruler]',
-  table: 'icon-[lucide--table-2]', // Table2
-  'arrow-up-down': 'icon-[lucide--arrow-up-down]',
-  cone: 'icon-[lucide--cone]',
-  ban: 'icon-[lucide--ban]',
-  send: 'icon-[lucide--send]',
-  plug: 'icon-[lucide--plug]',
-  mail: 'icon-[lucide--mail]',
-  webhook: 'icon-[lucide--webhook]',
-  'message-circle': 'icon-[lucide--message-circle]',
-  'bell-ring': 'icon-[lucide--bell-ring]',
-  skull: 'icon-[lucide--skull]',
-  asterisk: 'icon-[lucide--asterisk]',
-  broom: 'icon-[lucide--brush]', // Brush
-  'folder-x': 'icon-[lucide--folder-x]',
-  'undo-2': 'icon-[lucide--undo-2]',
-  code: 'icon-[lucide--code-xml]', // CodeXml
-  'terminal-square': 'icon-[lucide--square-terminal]', // SquareTerminal
-  'eye-off': 'icon-[lucide--eye-off]',
-  equal: 'icon-[lucide--equal]',
-  'grid-3x3': 'icon-[lucide--grid-3x3]',
-  'file-code': 'icon-[lucide--file-code]',
-  check: 'icon-[lucide--check]',
-  'shield-alert': 'icon-[lucide--alert-triangle]', // 近似
-  regex: 'icon-[lucide--brackets]', // 近似
-  'text-cursor': 'icon-[lucide--text-cursor-input]', // 近似
-  'bar-chart': 'icon-[lucide--chart-bar]', // ChartBar
-  pipeline: 'icon-[lucide--file]', // 近似
+  info: 'info',
+  'rotate-cw': 'rotate-cw',
+  'refresh-cw': 'refresh-cw',
+  hash: 'hash',
+  tag: 'tag',
+  'help-circle': 'help-circle',
+  flag: 'flag',
+  'arrow-right': 'arrow-right',
+  key: 'key',
+  layers: 'layers',
+  file: 'file',
+  search: 'search',
+  package: 'package',
+  monitor: 'monitor',
+  'user-check': 'user-check',
+  'hard-drive': 'hard-drive',
+  scissors: 'scissors',
+  'arrow-down-az': 'arrow-down-a-z', // 路径是 a-z
+  'arrow-up-az': 'arrow-up-a-z', // 路径是 a-z
+  replace: 'replace',
+  'text-cursor-input': 'text-cursor-input',
+  'at-sign': 'at-sign',
+  brackets: 'brackets',
+  repeat: 'repeat',
+  'git-branch-plus': 'git-branch-plus',
+  combine: 'combine',
+  'calendar-minus': 'calendar-minus',
+  'calendar-clock': 'calendar-clock',
+  filter: 'filter',
+  wrench: 'wrench',
+  'arrow-left-right': 'arrow-left-right',
+  'mouse-pointer': 'mouse-pointer',
+  'chevron-right': 'chevron-right',
+  'list-ordered': 'list-ordered',
+  'octagon-alert': 'octagon-alert',
+  save: 'save',
+  'timer-off': 'timer-off',
+  'git-fork': 'git-fork',
+  'file-check': 'file-check',
+  'file-plus': 'file-plus',
+  'file-clock': 'file-clock',
+  'file-x': 'file-x',
+  copy: 'copy',
+  ruler: 'ruler',
+  table: 'table-2', // Table2
+  'arrow-up-down': 'arrow-up-down',
+  cone: 'cone',
+  ban: 'ban',
+  send: 'send',
+  plug: 'plug',
+  mail: 'mail',
+  webhook: 'webhook',
+  'message-circle': 'message-circle',
+  'bell-ring': 'bell-ring',
+  skull: 'skull',
+  asterisk: 'asterisk',
+  broom: 'brush', // Brush
+  'folder-x': 'folder-x',
+  'undo-2': 'undo-2',
+  code: 'code-xml', // CodeXml
+  'terminal-square': 'square-terminal', // SquareTerminal
+  'eye-off': 'eye-off',
+  equal: 'equal',
+  'grid-3x3': 'grid-3x3',
+  'file-code': 'file-code',
+  check: 'check',
+  'shield-alert': 'alert-triangle', // 近似
+  regex: 'brackets', // 近似
+  'text-cursor': 'text-cursor-input', // 近似
+  'bar-chart': 'chart-bar', // ChartBar
+  pipeline: 'file', // 近似
 };
 
 function getIcon(name: string): string {
-  return iconMap[name] ?? 'icon-[lucide--file-code]';
+  return iconMap[name] ?? 'file-code';
 }
 
 // ═══════════════════════════════════════════════
@@ -328,7 +329,7 @@ onBeforeUnmount(() => {
           <button class="template-cat-row" @click="toggleCategory(phase.id, catIdx)">
             <ChevronRight class="template-chev" />
             <span class="template-cat-icon">
-              <span :class="[getIcon(cat.icon), 'template-cat-svg']" />
+              <LucideIcon :name="getIcon(cat.icon)" class="template-cat-svg" />
             </span>
             <span class="template-cat-name">
               {{ cat.name }}
@@ -341,7 +342,7 @@ onBeforeUnmount(() => {
           <div class="template-snips">
             <div v-for="item in cat.items" :key="`${phase.id}-${catIdx}-${item.trigger}`" class="template-snip"
               @click="handleSnippetClick(item)">
-              <span :class="[getIcon(item.icon), 'template-snip-ic']" />
+              <LucideIcon :name="getIcon(item.icon)" class="template-snip-ic" />
               <span class="template-snip-trigger">{{ item.trigger }}</span>
               <span class="template-snip-desc">{{ item.description }}</span>
               <span class="template-snip-actions">

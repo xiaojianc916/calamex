@@ -6,7 +6,7 @@
         class="git-history-graph-group-header"
         :class="'git-history-graph-group-' + group.tone"
       >
-        <span :class="group.icon" class="git-history-graph-group-icon" aria-hidden="true" />
+        <LucideIcon :name="group.icon" class="git-history-graph-group-icon" aria-hidden="true" />
         <span class="git-history-graph-group-title" v-text="group.title" />
         <span class="git-history-graph-group-count" v-text="group.count" />
       </header>
@@ -53,7 +53,7 @@
               class="git-history-graph-ref"
               :class="refClass(commitRef)"
             >
-              <span :class="refIcon(commitRef)" class="git-history-graph-ref-icon" aria-hidden="true" />
+              <LucideIcon :name="refIcon(commitRef)" class="git-history-graph-ref-icon" aria-hidden="true" />
               <span class="git-history-graph-ref-name" v-text="commitRef.name" />
             </span>
           </div>
@@ -81,7 +81,7 @@
                 @click="handleFileClick(file)"
               >
                 <span class="git-history-graph-filelist-icon" :class="'is-' + file.status" aria-hidden="true">
-                  <span :class="resolveFileIcon(file.status)" />
+                  <LucideIcon :name="resolveFileIcon(file.status)" />
                 </span>
                 <span class="git-history-graph-filelist-name" v-text="file.fileName" />
                 <span v-if="file.previousRelativePath" class="git-history-graph-filelist-renamed" v-text="'← ' + file.previousRelativePath" />
@@ -197,12 +197,12 @@
 <script setup lang="ts">
 import { ArrowDown, Copy, Github, LoaderCircle, UserRound } from '@lucide/vue';
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
-
 import LinearContextMenu from '@/components/common/LinearContextMenu.vue';
 import type {
   ILinearContextMenuGroup,
   ILinearContextMenuItem,
 } from '@/components/common/linear-context-menu.types';
+import LucideIcon from '@/components/ui/icon/LucideIcon.vue';
 import {
   fetchGithubCommitAuthorSnapshot,
   type IGitHubCommitAuthorSnapshot,
@@ -374,7 +374,7 @@ const renderGroups = computed<IGraphGroup[]>(() => {
     groups.push({
       key: 'outgoing',
       title: '传出更改',
-      icon: 'icon-[lucide--arrow-up]',
+      icon: 'arrow-up',
       tone: 'outgoing',
       count: outgoingRows.value.length,
       showHeader: true,
@@ -384,7 +384,7 @@ const renderGroups = computed<IGraphGroup[]>(() => {
   groups.push({
     key: 'history',
     title: '历史',
-    icon: 'icon-[lucide--git-commit-horizontal]',
+    icon: 'git-commit-horizontal',
     tone: 'history',
     count: historyRows.value.length,
     showHeader: outgoingRows.value.length > 0,
@@ -458,20 +458,20 @@ const refClass = (commitRef: IGitCommitRef): Record<string, boolean> => ({
 });
 
 const refIcon = (commitRef: IGitCommitRef): string =>
-  commitRef.kind === 'remoteBranch' ? 'icon-[lucide--cloud]' : 'icon-[lucide--git-branch]';
+  commitRef.kind === 'remoteBranch' ? 'cloud' : 'git-branch';
 
 const resolveFileIcon = (status: string): string => {
   switch (status) {
     case 'added':
-      return 'icon-[lucide--file-plus]';
+      return 'file-plus';
     case 'deleted':
-      return 'icon-[lucide--file-minus]';
+      return 'file-minus';
     case 'renamed':
-      return 'icon-[lucide--file-symlink]';
+      return 'file-symlink';
     case 'binary':
-      return 'icon-[lucide--file-digit]';
+      return 'file-digit';
     default:
-      return 'icon-[lucide--file-pen-line]';
+      return 'file-pen-line';
   }
 };
 

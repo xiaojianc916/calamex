@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, type HTMLAttributes, type VNode } from 'vue';
+import LucideIcon from '@/components/ui/icon/LucideIcon.vue';
 import { cn } from '@/lib/utils';
 import { useAttachmentContext } from './context';
 import type { TAttachmentMediaCategory } from './types';
@@ -24,12 +25,12 @@ const showVideo = computed(
 );
 
 const iconMap: Record<TAttachmentMediaCategory, string> = {
-  image: 'icon-[lucide--image]',
-  video: 'icon-[lucide--video]',
-  audio: 'icon-[lucide--music-2]',
-  source: 'icon-[lucide--globe]',
-  document: 'icon-[lucide--file-text]',
-  unknown: 'icon-[lucide--paperclip]',
+  image: 'image',
+  video: 'video',
+  audio: 'music-2',
+  source: 'globe',
+  document: 'file-text',
+  unknown: 'paperclip',
 };
 
 const iconComponent = computed(() => iconMap[mediaCategory.value]);
@@ -51,6 +52,6 @@ const imageAlt = computed(
       draggable="false">
     <video v-else-if="showVideo" class="size-full object-cover" muted :src="fileUrl" />
     <component :is="props.fallbackIcon" v-else-if="props.fallbackIcon" />
-    <span v-else :class="cn(iconComponent, iconSize, 'text-muted-foreground')" />
+    <LucideIcon v-else :name="iconComponent" :class="cn(iconSize, 'text-muted-foreground')" />
   </div>
 </template>

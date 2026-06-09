@@ -1,6 +1,7 @@
 import { mount } from '@vue/test-utils';
 import { describe, expect, it } from 'vitest';
 import ThreadToolStatusIcon from '@/components/ai-elements/thread-entry/ThreadToolStatusIcon.vue';
+import LucideIcon from '@/components/ui/icon/LucideIcon.vue';
 
 describe('ThreadToolStatusIcon', () => {
   it('成功状态保持 Zed 风格克制，不显示绿色大对勾', () => {
@@ -14,8 +15,8 @@ describe('ThreadToolStatusIcon', () => {
   it('运行中状态使用克制的旋转加载图标', () => {
     const wrapper = mount(ThreadToolStatusIcon, { props: { status: 'running' } });
 
-    const icon = wrapper.find('span[aria-hidden="true"]');
-    expect(icon.classes()).toContain('icon-[lucide--loader-circle]');
+    const icon = wrapper.findComponent(LucideIcon);
+    expect(icon.props('name')).toBe('loader-circle');
     expect(icon.classes()).toContain('animate-spin');
     expect(icon.classes()).toContain('text-muted-foreground');
   });
@@ -23,8 +24,8 @@ describe('ThreadToolStatusIcon', () => {
   it('失败状态使用警告图标', () => {
     const wrapper = mount(ThreadToolStatusIcon, { props: { status: 'failed' } });
 
-    const icon = wrapper.find('span[aria-hidden="true"]');
-    expect(icon.classes()).toContain('icon-[lucide--circle-alert]');
+    const icon = wrapper.findComponent(LucideIcon);
+    expect(icon.props('name')).toBe('circle-alert');
     expect(icon.classes()).toContain('text-red-500');
   });
 
