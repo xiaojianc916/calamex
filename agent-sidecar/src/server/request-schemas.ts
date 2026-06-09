@@ -152,10 +152,15 @@ export const agentSidecarRollbackRestoreRequestSchema = z.object({
   modelConfig: requestScopedModelConfigSchema.optional(),
 });
 
+// 执行模式：interactive=人值守逐步执行（默认）；autonomous=自主执行（自动校验+重规划闭环）。
+// 由前端 ai-agent store 持久化偏好按次携带；缺省时退化为 interactive（取值与前端 execution-mode.ts 一致）。
+const executionModeRequestSchema = z.enum(['interactive', 'autonomous']).default('interactive');
+
 // Phase 2：原生编排 workflow 入口（默认关闭，AGENT_ORCHESTRATION_WORKFLOW=1 才启用）。
 export const agentSidecarOrchestrateRequestSchema = z.object({
   goal: requiredNonEmptyStringSchema,
   threadId: optionalNonEmptyStringSchema,
+  executionMode: executionModeRequestSchema,
   modelConfig: requestScopedModelConfigSchema.optional(),
 });
 

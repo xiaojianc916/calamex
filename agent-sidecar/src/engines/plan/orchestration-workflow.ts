@@ -28,6 +28,14 @@ import type { TAgentRuntimeOutputEvent } from '../contracts/runtime-contracts.js
  *   单步=手动 resume('continue') 一次；继续=恢复自动恢复；取消=resume('cancel')。
  * 因 Mastra resume 会整段重跑 execute，本步做成可重入：cursor 从 suspendData 恢复；
  * 用 gateClearedForCursor 保证一次 'continue' 恰好执行一个 step，然后在下个 cursor 处重新设闸。
+ *
+ * 执行模式（executionMode）：
+ * - interactive（默认）：人值守逐步执行——保留 step_gate 与工具审批，但所有 step 跑完即终态，
+ *   不做自动 validate+replan 闭环；由用户在每个闸门全程把关。
+ *   对标 LangGraph plan-and-execute 的 should_end 条件边（执行后直接 END、不接 replan 节点）
+ *   与 Cline 人驱动 plan→act（无自动重规划循环）。
+ * - autonomous：自主执行——在 interactive 的基础上，额外启用「validate→按需 replan」闭环（外层 .dountil）。
+ * executionMode 在计划生成时随 workflow 输入确定，并贯穿整个 cycleContext（执行期不可变）。
  */
 
 // 重规划次数上限，防止验证反复失败时无限循环。
@@ -85,11 +93,17 @@ export interface IPlanOrchestrationDeps {
 
 export const PLAN_ORCHESTRATION_WORKFLOW_ID = 'calamex-plan-orchestration';
 
+// 执行模式：interactive=人值守逐步执行（默认·轻量门控）；autonomous=自主执行（自动校验+重规划闭环）。
+// 取值与前端 src/types/ai/execution-mode.ts 保持一致（两个 package 各自定义，不共享类型）。
+const executionModeSchema = z.enum(['interactive', 'autonomous']);
+
 // 在步骤之间流转的统一上下文（每个 step 的 output 即下个 step 的 input）
 const cycleContextSchema = z.object({
 	planId: z.string().min(1),
 	version: z.number().int().positive(),
 	threadId: z.string().min(1),
+	// 执行模式贯穿整轮编排，执行期不可变（计划生成时确定）。
+	executionMode: executionModeSchema,
 	stepIds: z.array(z.string().min(1)),
 	cursor: z.number().int().nonnegative(), // 下一个待执行 step 的下标
 	rejected: z.boolean(),
@@ -123,6 +137,8 @@ type TSuspendBreakpoint =
 const workflowInputSchema = z.object({
 	goal: z.string().min(1),
 	threadId: z.string().min(1).nullable(),
+	// 默认 interactive：未携带该字段的旧调用方退化为人值守轻量模式（无自动重规划）。
+	executionMode: executionModeSchema.default('interactive'),
 });
 const workflowOutputSchema = z.object({
 	planId: z.string().min(1),
@@ -165,6 +181,7 @@ export const createPlanOrchestrationWorkflow = (deps: IPlanOrchestrationDeps) =>
 			}, emit);
 			return {
 				...plan,
+				executionMode: inputData.executionMode,
 				cursor: 0,
 				rejected: false,
 				validationPassed: false,
@@ -319,13 +336,20 @@ export const createPlanOrchestrationWorkflow = (deps: IPlanOrchestrationDeps) =>
 
 			const advanced: TCycleContext = { ...ctx, cursor };
 
-			// 2) 验证
+			// interactive（默认·人值守）：所有 step 跑完即终态，跳过自动 validate+replan 闭环——
+			// 由用户在每个 step_gate 全程把关。对标 LangGraph plan-and-execute 的 should_end 条件边
+			// （执行后直接走 END、不接 replan 节点）与 Cline 人驱动 plan→act（无自动重规划循环）。
+			if (advanced.executionMode !== 'autonomous') {
+				return { ...advanced, validationPassed: true };
+			}
+
+			// 2) 验证（autonomous）
 			const report = await deps.validate({ planId: advanced.planId, version: advanced.version }, emit);
 			if (!report.needsReplan) {
 				return { ...advanced, validationPassed: true, lastSummary: report.summary };
 			}
 
-			// 3) 需要重规划
+			// 3) 需要重规划（autonomous）
 			if (advanced.replanCount >= MAX_REPLANS) {
 				return {
 					...advanced,
