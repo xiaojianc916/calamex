@@ -13,7 +13,6 @@ import { MASTRA_WORKSPACE_REDACTED_PREVIEW_TOOL_NAMES, WINDOWS_POWERSHELL_CORE_R
 import { toNonEmptyString } from './utils.js';
 import { resolveWorkspaceDirectory } from './context/context.js';
 import { decideSensitivePathToolPermission, type IToolPermissionPolicy } from './policy/tool-permission-policy.js';
-import type { IWorkspaceReadLedger } from './tools/read-ledger.js';
 
 export const isWindowsRuntime = (): boolean => process.platform === 'win32';
 
@@ -54,27 +53,6 @@ export const createWorkspaceSensitivePathApprovalGate = (
     });
 
     return defaultRequiresApproval || permission.kind !== 'allow';
-};
-
-// 「读后写」闸门：禁用 Mastra 内置 read_file 后，edit_file/write_file/ast_edit 的
-// requireReadBeforeWrite 不再依赖内置读取记账，改由唯一的 read_file 工具向账本
-// 登记。返回 true = 仍需先读（闸门生效），false = 该路径已读且未变、可直接写。
-// mtime 陈旧判定与下方 allowWorkspaceWriteAfterVerifiedRead 一致。
-export const createReadBeforeWriteGate = (
-    filesystem: LocalFilesystem,
-    readLedger: IWorkspaceReadLedger,
-): ((context: IWorkspaceToolApprovalContext) => Promise<boolean>) => async ({ args }) => {
-    const path = extractWorkspaceToolPathInput(args);
-    if (!path) {
-        return true;
-    }
-
-    try {
-        const currentStat = await filesystem.stat(path);
-        return !readLedger.isFresh(path, currentStat.modifiedAt.getTime());
-    } catch {
-        return true;
-    }
 };
 
 export const resolveWindowsPowerShellExecutable = (): string => {
@@ -440,7 +418,6 @@ export const bridgeSkillsIntoWorkspace = (workspaceDirectory: string): string | 
 export const createMastraWorkspace = async (
     workspaceRootPath?: string,
     profile: TMastraToolProfile = 'write',
-    readLedger?: IWorkspaceReadLedger,
 ): Promise<AnyWorkspace | undefined> => {
     const workspaceDirectory = resolveWorkspaceDirectory(workspaceRootPath);
 
@@ -457,12 +434,6 @@ export const createMastraWorkspace = async (
         readOnly: profile === 'readonly',
     });
 
-    // 读后写闸门：提供账本时由账本记账判定（配合被禁用的内置 read_file），
-    // 否则保持原有 true 语义（始终要求先读）。
-    const requireReadBeforeWrite = readLedger
-        ? createReadBeforeWriteGate(filesystem, readLedger)
-        : true;
-
     const workspace = new Workspace({
         filesystem,
         sandbox: createHostLocalSandbox({
@@ -471,10 +442,16 @@ export const createMastraWorkspace = async (
         }),
         ...(bridgedSkillsPath ? { skills: [bridgedSkillsPath] } : {}),
         tools: {
-            // 内置 read_file 已被独立的 Zed 风格 read_file 工具（tools/read-file.ts）取代，
-            // 此处禁用，避免新旧两套读取工具并存。
+            // 直接复用 Mastra 内置 read_file：已原生支持文本行区间、把图片/PDF 作为
+            // media part 直接给模型查看、二进制安全（超限仅返回元数据，不灌 base64）。
+            // 这些正是它相对 Zed 的长处，因此不再手写并行的读取工具，只按需增强媒体识别。
             [WORKSPACE_TOOLS.FILESYSTEM.READ_FILE]: {
-                enabled: false,
+                enabled: true,
+                // 取主流模型普遍支持的安全交集；不放开为 image/*，官方文档提示
+                // 部分模型会对 SVG/BMP/HEIC 等格式失败。
+                mediaTypes: ['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'application/pdf'],
+                // 内联媒体上限提升到 20 MiB，超限文件回退为仅元数据，避免 base64 撑爆上下文。
+                maxMediaBytes: 20 * 1024 * 1024,
             },
             [WORKSPACE_TOOLS.FILESYSTEM.LIST_FILES]: {
                 enabled: true,
@@ -488,17 +465,17 @@ export const createMastraWorkspace = async (
             [WORKSPACE_TOOLS.FILESYSTEM.WRITE_FILE]: {
                 enabled: profile === 'write',
                 requireApproval: createWorkspaceSensitivePathApprovalGate('workspace.write_file', true),
-                requireReadBeforeWrite,
+                requireReadBeforeWrite: true,
             },
             [WORKSPACE_TOOLS.FILESYSTEM.EDIT_FILE]: {
                 enabled: profile === 'write',
                 requireApproval: createWorkspaceSensitivePathApprovalGate('workspace.edit_file', true),
-                requireReadBeforeWrite,
+                requireReadBeforeWrite: true,
             },
             [WORKSPACE_TOOLS.FILESYSTEM.AST_EDIT]: {
                 enabled: profile === 'write',
                 requireApproval: createWorkspaceSensitivePathApprovalGate('workspace.edit_file', true),
-                requireReadBeforeWrite,
+                requireReadBeforeWrite: true,
             },
             [WORKSPACE_TOOLS.FILESYSTEM.DELETE]: {
                 enabled: profile === 'write',
