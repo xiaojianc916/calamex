@@ -230,13 +230,8 @@ export const createPlanResponse = (
         errorMessage: record.errorMessage,
         plan: record.plan,
     };
-    const doneEvent: TAgentRuntimeOutputEvent = {
-        type: 'done',
-        result: doneResult,
-    };
 
     pushUiEvent(events, planEvent, options);
-    pushUiEvent(events, doneEvent, options);
 
     return {
         sessionId,
@@ -257,10 +252,6 @@ export const createPlanRecordResponse = (
         type: 'plan_record',
         record,
         versions,
-    }, options);
-    pushUiEvent(events, {
-        type: 'done',
-        result: message,
     }, options);
 
     return {
