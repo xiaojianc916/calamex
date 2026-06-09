@@ -17,8 +17,8 @@
           aria-label="关闭终端"
           @click.stop="emit('close', tab.sessionId)"
         >
-          <span aria-hidden="true" class="terminal-tab-icon-glyph terminal-tab-icon-default icon-[lucide--square-terminal]" />
-          <span aria-hidden="true" class="terminal-tab-icon-glyph terminal-tab-icon-close icon-[lucide--x]" />
+          <SquareTerminal class="terminal-tab-icon-glyph terminal-tab-icon-default" aria-hidden="true" />
+          <X class="terminal-tab-icon-glyph terminal-tab-icon-close" aria-hidden="true" />
         </span>
         <span class="terminal-tab-label" v-text="'终端 ' + (index + 1)" />
       </div>
@@ -30,12 +30,13 @@
       aria-label="新建终端"
       @click="emit('new')"
     >
-      <span aria-hidden="true" class="icon-[lucide--plus]" />
+      <Plus aria-hidden="true" />
     </button>
   </div>
 </template>
 
 <script setup lang="ts">
+import { Plus, SquareTerminal, X } from '@lucide/vue';
 import type { ITerminalTab } from '@/store/terminalTabs';
 
 defineProps<{

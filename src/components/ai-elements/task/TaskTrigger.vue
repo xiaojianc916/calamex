@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ChevronDown } from '@lucide/vue';
 import type { HTMLAttributes } from 'vue';
 import { CollapsibleTrigger } from '@/components/ui/collapsible';
 import { cn } from '@/lib/utils';
@@ -32,8 +33,7 @@ const statusMap: Record<TaskStatus, { icon: string; class: string }> = {
                text-muted-foreground transition-colors hover:text-foreground">
         <span :class="['size-4 shrink-0', statusMap[props.status].icon, statusMap[props.status].class]" />
         <span class="truncate text-foreground">{{ props.title }}</span>
-        <span class="icon-[lucide--chevron-down] ml-auto size-4 shrink-0 transition-transform
-                 group-data-[state=open]:rotate-180" />
+        <ChevronDown class="ml-auto size-4 shrink-0 transition-transform group-data-[state=open]:rotate-180" />
       </button>
     </slot>
   </CollapsibleTrigger>

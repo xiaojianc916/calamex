@@ -19,7 +19,7 @@
           @mousedown.prevent
           @click.stop="removeChip(index)"
         >
-          <span class="icon-[lucide--x]" aria-hidden="true" />
+          <X aria-hidden="true" />
         </button>
       </span>
 
@@ -66,7 +66,7 @@
             title="进入目录浏览子项"
             @mousedown.prevent.stop="drillIntoSuggestion(index)"
           >
-            <span class="icon-[lucide--chevron-right]" aria-hidden="true" />
+            <ChevronRight aria-hidden="true" />
           </button>
         </li>
       </ul>
@@ -75,6 +75,7 @@
 </template>
 
 <script setup lang="ts">
+import { ChevronRight, X } from '@lucide/vue';
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import ExplorerEntryIcon from '@/components/workbench/ExplorerEntryIcon.vue';
 import { useWorkspacePathSuggestions } from '@/composables/useWorkspacePathSuggestions';

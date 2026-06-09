@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useFrontendTool } from '@copilotkit/vue';
+import { SquarePen, Trash2 } from '@lucide/vue';
 import { computed, onMounted, ref } from 'vue';
 import { z } from 'zod';
 import AiChatThread from '@/components/business/ai/chat/AiChatThread.vue';
@@ -976,7 +977,7 @@ onMounted(() => {
 
     <template #actions>
       <button type="button" class="ai-icon-button" aria-label="新建对话" @click="startNewConversation">
-        <span aria-hidden="true" class="icon-[lucide--square-pen]" />
+        <SquarePen aria-hidden="true" />
       </button>
       <button type="button" class="ai-icon-button" aria-label="AI 设置" @click="openSettings">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
@@ -1003,7 +1004,7 @@ onMounted(() => {
             </div>
             <button v-if="activeHistoryThread" type="button" class="ai-history-clear-icon" aria-label="删除当前对话记录"
               @click="openDeleteConversationDialog(activeHistoryThread.id)">
-              <span aria-hidden="true" class="icon-[lucide--trash-2]" />
+              <Trash2 aria-hidden="true" />
             </button>
           </header>
           <div v-if="historyThreads.length" class="ai-history-scroll-area">
@@ -1019,7 +1020,7 @@ onMounted(() => {
                 </button>
                 <button type="button" class="ai-history-delete-button" aria-label="删除这条对话记录"
                   @click.stop="openDeleteConversationDialog(thread.id)">
-                  <span aria-hidden="true" class="icon-[lucide--trash-2]" />
+                  <Trash2 aria-hidden="true" />
                 </button>
               </article>
             </div>

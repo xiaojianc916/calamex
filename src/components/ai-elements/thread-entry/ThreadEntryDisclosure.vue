@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ChevronDown, ChevronRight } from '@lucide/vue';
 import type { HTMLAttributes } from 'vue';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { cn } from '@/lib/utils';
@@ -59,11 +60,7 @@ const handleUpdateOpen = (value: boolean): void => {
         type="button"
         class="group flex w-full min-w-0 items-center gap-2 py-1 text-left text-sm text-muted-foreground transition-colors hover:text-foreground disabled:cursor-default disabled:hover:text-muted-foreground"
       >
-        <span
-          v-if="props.leadingChevron && !props.disabled"
-          class="thread-entry-disclosure__chevron thread-entry-disclosure__chevron--leading icon-[lucide--chevron-right] size-4 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-90"
-          aria-hidden="true"
-        />
+        <ChevronRight class="thread-entry-disclosure__chevron thread-entry-disclosure__chevron--leading size-4 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-90" v-if="props.leadingChevron && !props.disabled" aria-hidden="true" />
         <span class="flex size-4 shrink-0 items-center justify-center">
           <slot name="leading" />
         </span>
@@ -73,11 +70,7 @@ const handleUpdateOpen = (value: boolean): void => {
         <span class="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
           <slot name="meta" />
         </span>
-        <span
-          v-if="!props.disabled && !props.leadingChevron"
-          class="thread-entry-disclosure__chevron icon-[lucide--chevron-down] size-4 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-180"
-          aria-hidden="true"
-        />
+        <ChevronDown class="thread-entry-disclosure__chevron size-4 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" v-if="!props.disabled && !props.leadingChevron" aria-hidden="true" />
       </button>
     </CollapsibleTrigger>
     <CollapsibleContent

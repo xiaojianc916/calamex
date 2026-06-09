@@ -20,7 +20,7 @@
         class="source-control-github-auth-avatar-frame"
         aria-hidden="true"
       >
-        <span class="source-control-github-auth-icon icon-[lucide--github]" />
+        <Github class="source-control-github-auth-icon" />
         <img
           v-show="isAuthAvatarLoaded"
           class="source-control-github-auth-avatar"
@@ -53,7 +53,7 @@
             class="source-control-github-menu-avatar-frame"
             aria-hidden="true"
           >
-            <span class="source-control-github-menu-mark icon-[lucide--github]" />
+            <Github class="source-control-github-menu-mark" />
             <img
               v-show="isMenuAvatarLoaded"
               class="source-control-github-menu-avatar"
@@ -64,7 +64,7 @@
               @error="handleMenuAvatarError"
             />
           </span>
-          <span v-else class="source-control-github-menu-mark icon-[lucide--github]" aria-hidden="true" />
+          <Github class="source-control-github-menu-mark" v-else aria-hidden="true" />
           <span class="source-control-github-menu-profile-copy">
             <strong v-text="displayName" />
             <span v-if="profileSubtitle" v-text="profileSubtitle" />
@@ -79,7 +79,7 @@
             role="menuitem"
             @click="handleOpenProfile"
           >
-            <span class="icon-[lucide--external-link]" aria-hidden="true" />
+            <ExternalLink aria-hidden="true" />
             <span>打开 GitHub 主页</span>
           </button>
           <button
@@ -89,7 +89,7 @@
             :disabled="!canStartAuth"
             @click="handleSwitchAccount"
           >
-            <span class="icon-[lucide--refresh-cw]" aria-hidden="true" />
+            <RefreshCw aria-hidden="true" />
             <span>切换账号</span>
           </button>
         </div>
@@ -97,7 +97,7 @@
 
       <template v-else>
         <header class="source-control-github-menu-profile">
-          <span class="source-control-github-menu-mark icon-[lucide--github]" aria-hidden="true" />
+          <Github class="source-control-github-menu-mark" aria-hidden="true" />
           <span class="source-control-github-menu-profile-copy">
             <strong>GitHub</strong>
             <span v-text="authStore.status.message || '连接账号后可查看 Pull Request 与远程信息。'" />
@@ -122,7 +122,7 @@
       @click.stop
     >
       <div class="source-control-github-device-head">
-        <span class="source-control-github-device-mark icon-[lucide--github]" aria-hidden="true" />
+        <Github class="source-control-github-device-mark" aria-hidden="true" />
         <div class="source-control-github-device-title-group">
           <p class="source-control-github-device-title">GitHub 授权</p>
           <p class="source-control-github-device-subtitle">验证码已复制，浏览器完成后会自动连接</p>
@@ -166,6 +166,7 @@
 </template>
 
 <script setup lang="ts">
+import { ExternalLink, Github, RefreshCw } from '@lucide/vue';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useGitHubAuthStore } from '@/store/github-auth';
 

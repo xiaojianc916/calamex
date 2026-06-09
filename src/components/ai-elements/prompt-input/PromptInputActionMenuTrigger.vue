@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Plus } from '@lucide/vue';
 import type { DropdownMenuTriggerProps } from 'reka-ui';
 import type { HTMLAttributes } from 'vue';
 import { DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
@@ -14,7 +15,7 @@ const props = defineProps<Props>();
 <template>
   <DropdownMenuTrigger as-child>
     <PromptInputButton :class="props.class" v-bind="props">
-      <slot><span class="icon-[lucide--plus] size-4"  /></slot>
+      <slot><Plus class="size-4" /></slot>
     </PromptInputButton>
   </DropdownMenuTrigger>
 </template>

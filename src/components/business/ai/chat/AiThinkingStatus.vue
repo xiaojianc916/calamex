@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Brain } from '@lucide/vue';
 import { Shimmer } from '@/components/ai-elements/shimmer';
 
 defineProps<{
@@ -8,7 +9,7 @@ defineProps<{
 
 <template>
   <div class="ai-thinking-status" role="status" aria-live="polite">
-    <span class="icon-[lucide--brain] ai-thinking-status__icon" aria-hidden="true"  />
+    <Brain class="ai-thinking-status__icon" aria-hidden="true" />
     <Shimmer as="span" class="ai-thinking-status__label">
       {{ label }}
     </Shimmer>

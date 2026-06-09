@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { RotateCcw, ShieldAlert } from '@lucide/vue';
 import { computed, ref } from 'vue';
 import ErrorDetails from '@/components/common/ErrorDetails.vue';
 import { Button } from '@/components/ui/button';
@@ -51,7 +52,7 @@ const copyDiagnostics = async (): Promise<void> => {
   <section class="app-fatal-error" role="alert" aria-live="assertive">
     <div class="app-fatal-error__panel">
       <div class="app-fatal-error__icon">
-        <span class="icon-[lucide--shield-alert] size-5"  />
+        <ShieldAlert class="size-5" />
       </div>
       <div class="app-fatal-error__content">
         <h1 class="app-fatal-error__title">{{ props.title }}</h1>
@@ -62,7 +63,7 @@ const copyDiagnostics = async (): Promise<void> => {
         </div>
         <div class="app-fatal-error__actions">
           <Button size="sm" class="h-8 px-3 text-[12px]" @click="reloadWindow">
-            <span class="icon-[lucide--rotate-ccw] size-3.5"  />
+            <RotateCcw class="size-3.5" />
             重新加载界面
           </Button>
           <Button

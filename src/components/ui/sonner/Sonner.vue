@@ -1,4 +1,5 @@
 <script lang="ts" setup>
+import { CircleCheck, Info, LoaderCircle, OctagonX, TriangleAlert, X } from '@lucide/vue';
 import type { ToasterProps } from 'vue-sonner';
 import { Toaster as Sonner } from 'vue-sonner';
 import { cn } from '@/lib/utils';
@@ -14,24 +15,24 @@ const props = defineProps<ToasterProps>();
     '--border-radius': 'var(--radius)',
   }" v-bind="props">
     <template #success-icon>
-      <span class="icon-[lucide--circle-check] size-4" />
+      <CircleCheck class="size-4" />
     </template>
     <template #info-icon>
-      <span class="icon-[lucide--info] size-4" />
+      <Info class="size-4" />
     </template>
     <template #warning-icon>
-      <span class="icon-[lucide--triangle-alert] size-4" />
+      <TriangleAlert class="size-4" />
     </template>
     <template #error-icon>
-      <span class="icon-[lucide--octagon-x] size-4" />
+      <OctagonX class="size-4" />
     </template>
     <template #loading-icon>
       <div>
-        <span class="icon-[lucide--loader-circle] size-4 animate-spin" />
+        <LoaderCircle class="size-4 animate-spin" />
       </div>
     </template>
     <template #close-icon>
-      <span class="icon-[lucide--x] size-4" />
+      <X class="size-4" />
     </template>
   </Sonner>
 </template>

@@ -5,7 +5,7 @@
       <div class="source-control-branches-header-actions">
         <button type="button" class="source-control-branches-refresh" aria-label="刷新分支" title="刷新分支"
           :disabled="isBranchesLoading || isBusy" @click="handleReloadBranches">
-          <span aria-hidden="true" class="icon-[lucide--refresh-cw]" />
+          <RefreshCw aria-hidden="true" />
         </button>
         <p class="source-control-branches-summary" v-text="branchesPanelSummary" />
       </div>
@@ -90,6 +90,7 @@
 </template>
 
 <script setup lang="ts">
+import { RefreshCw } from '@lucide/vue';
 import { computed, nextTick, ref } from 'vue';
 import { useMessage } from '@/composables/useMessage';
 import { useGitStore } from '@/store/git';

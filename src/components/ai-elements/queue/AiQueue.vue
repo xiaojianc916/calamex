@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { AlertCircle, Check, Circle, LoaderCircle, Trash2 } from '@lucide/vue';
 export type TAiQueueItemStatus =
   | 'pending'
   | 'running'
@@ -55,21 +56,19 @@ const handleLabelBlur = (item: IAiQueueItem, event: Event): void => {
 <template>
   <ol class="ai-element-queue" aria-label="计划流程状态">
     <li v-for="item in items" :key="item.id" class="ai-element-queue-item" :class="`is-${item.status}`">
-      <span v-if="item.status === 'running'"
-        class="icon-[lucide--loader-circle] ai-element-queue-icon ai-plan-status-icon is-spinning" aria-hidden="true" />
+      <LoaderCircle class="ai-element-queue-icon ai-plan-status-icon is-spinning" v-if="item.status === 'running'" aria-hidden="true" />
       <span v-else-if="item.status === 'done'" class="ai-element-queue-indicator" aria-hidden="true">
-        <span class="icon-[lucide--check] ai-element-queue-check" />
+        <Check class="ai-element-queue-check" />
       </span>
-      <span v-else-if="item.status === 'failed' || item.status === 'cancelled'"
-        class="icon-[lucide--alert-circle] ai-element-queue-icon" aria-hidden="true" />
-      <span v-else class="icon-[lucide--circle] ai-element-queue-icon" aria-hidden="true" />
+      <AlertCircle class="ai-element-queue-icon" v-else-if="item.status === 'failed' || item.status === 'cancelled'" aria-hidden="true" />
+      <Circle class="ai-element-queue-icon" v-else aria-hidden="true" />
       <input v-if="item.editable" class="ai-element-queue-label ai-element-queue-input" :value="item.label"
         aria-label="编辑计划步骤标题" :disabled="item.inputDisabled" @keydown.enter.prevent="handleLabelEnter(item.id, $event)"
         @blur="handleLabelBlur(item, $event)" />
       <span v-else class="ai-element-queue-label">{{ item.label }}</span>
       <button v-if="item.removable" type="button" class="ai-element-queue-action ai-plan-step-remove"
         :disabled="item.removeDisabled" aria-label="删除计划步骤" title="删除计划步骤" @click="emit('removeItem', item.id)">
-        <span aria-hidden="true" class="icon-[lucide--trash-2]" />
+        <Trash2 aria-hidden="true" />
       </button>
     </li>
   </ol>

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ChevronUp } from '@lucide/vue';
 import { reactiveOmit } from '@vueuse/core';
 import type { SelectScrollUpButtonProps } from 'reka-ui';
 import { SelectScrollUpButton, useForwardProps } from 'reka-ui';
@@ -19,7 +20,7 @@ const forwardedProps = useForwardProps(delegatedProps);
     :class="cn('flex cursor-default items-center justify-center py-1', props.class)"
   >
     <slot>
-      <span class="icon-[lucide--chevron-up] size-4"  />
+      <ChevronUp class="size-4" />
     </slot>
   </SelectScrollUpButton>
 </template>

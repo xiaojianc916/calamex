@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ChevronDown, FileCode, Globe } from '@lucide/vue';
 import { computed } from 'vue';
 import CodeBlock from '@/components/ai-elements/code-block/CodeBlock.vue';
 import {
@@ -106,17 +107,13 @@ const resolveHunks = (filePath: string): IAiDiffHunkPreview[] =>
           class="ai-thread-tool-call__web-pill"
           :aria-label="`${webSourceCount} 个网络来源`"
         >
-          <span class="ai-thread-tool-call__web-icon icon-[lucide--globe] size-3" aria-hidden="true" />
+          <Globe class="ai-thread-tool-call__web-icon size-3" aria-hidden="true" />
           <span v-text="`${webSourceCount} 个来源`" />
         </span>
         <span v-if="entry.tail" class="ai-thread-tool-call__tail" v-text="entry.tail" />
         <ThreadToolStatusIcon class="ai-thread-tool-call__status" :status="entry.status" />
       </span>
-      <span
-        v-if="hasContent"
-        class="ai-thread-tool-call__chevron icon-[lucide--chevron-down] size-4"
-        aria-hidden="true"
-      />
+      <ChevronDown class="ai-thread-tool-call__chevron size-4" v-if="hasContent" aria-hidden="true" />
       <span v-else class="ai-thread-tool-call__chevron-spacer" aria-hidden="true" />
     </button>
 
@@ -149,7 +146,7 @@ const resolveHunks = (filePath: string): IAiDiffHunkPreview[] =>
         </Terminal>
         <div v-if="item.type === 'diff'" class="ai-thread-tool-call__diff">
           <div class="ai-thread-tool-call__diff-head">
-            <span class="ai-thread-tool-call__diff-icon icon-[lucide--file-code] size-3.5" aria-hidden="true" />
+            <FileCode class="ai-thread-tool-call__diff-icon size-3.5" aria-hidden="true" />
             <span
               class="ai-thread-tool-call__diff-path"
               :title="item.file.path"

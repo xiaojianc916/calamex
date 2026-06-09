@@ -1,5 +1,21 @@
 <script setup lang="ts">
-import { Paperclip, Settings2 } from '@lucide/vue';
+import {
+  ArrowUp,
+  Bot,
+  Check,
+  ChevronRight,
+  Globe,
+  MessageCircle,
+  Network,
+  Paintbrush,
+  Paperclip,
+  Plus,
+  Route,
+  Settings2,
+  SlidersHorizontal,
+  Square,
+  Workflow,
+} from '@lucide/vue';
 import { computed, onBeforeUnmount, onMounted, ref, useAttrs, watch } from 'vue';
 import {
   Context,
@@ -33,7 +49,6 @@ import {
   SelectSeparator,
   SelectTrigger,
 } from '@/components/ui/select';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import type { IAiTokenContextProps } from '@/composables/ai/useAiTokenContext';
 import type { TAiServicePlatformId } from '@/constants/ai/providers';
 import {
@@ -843,28 +858,6 @@ const handleKeyDown = (event: KeyboardEvent): void => {
   handleSubmit();
 };
 
-const playIconBounce = (event: PointerEvent): void => {
-  const trigger = event.currentTarget;
-  if (!(trigger instanceof HTMLElement)) {
-    return;
-  }
-  const glyph = trigger.querySelector('svg');
-  if (!glyph) {
-    return;
-  }
-  glyph.classList.remove('is-icon-bouncing');
-  // 强制回流，确保连续点击都能重新触发动画
-  void glyph.getBoundingClientRect();
-  glyph.classList.add('is-icon-bouncing');
-};
-
-const endIconBounce = (event: AnimationEvent): void => {
-  const glyph = event.target;
-  if (glyph instanceof Element) {
-    glyph.classList.remove('is-icon-bouncing');
-  }
-};
-
 const handleStop = (): void => {
   emit('stop');
 };
@@ -950,33 +943,17 @@ onBeforeUnmount(() => {
         </div>
         <InputGroupAddon align="block-end" class="ai-toolbar-row">
           <div class="ai-toolbar-left">
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger as-child>
-                  <InputGroupButton
-                    type="button"
-                    variant="ghost"
-                    class="ai-icon-action ai-attachment-button"
-                    size="icon-xs"
-                    :disabled="disabled"
-                    aria-label="提供背景信息"
-                    @click="handleOpenFileDialog"
-                    @pointerdown="playIconBounce"
-                    @animationend="endIconBounce"
-                  >
-                    <Paperclip class="size-4" :stroke-width="1.5" />
-                  </InputGroupButton>
-                </TooltipTrigger>
-                <TooltipContent
-                  side="top"
-                  align="start"
-                  :side-offset="10"
-                  class="ai-composer-tooltip"
-                >
-                  <p>提供背景信息</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
+            <InputGroupButton
+              type="button"
+              variant="ghost"
+              class="ai-icon-action ai-attachment-button"
+              size="icon-xs"
+              :disabled="disabled"
+              aria-label="提供背景信息"
+              @click="handleOpenFileDialog"
+            >
+              <Paperclip class="size-4" :stroke-width="1.5" />
+            </InputGroupButton>
             <DropdownMenu>
               <DropdownMenuTrigger as-child>
                 <InputGroupButton
@@ -986,8 +963,6 @@ onBeforeUnmount(() => {
                   size="icon-xs"
                   :disabled="disabled"
                   aria-label="打开 AI 模式设置"
-                  @pointerdown="playIconBounce"
-                  @animationend="endIconBounce"
                 >
                   <Settings2 class="size-4" :stroke-width="1.5" />
                 </InputGroupButton>
@@ -1003,7 +978,7 @@ onBeforeUnmount(() => {
                   :disabled="disabled || isNetworkPermissionSaving"
                   @select.prevent="toggleNetworkPermission"
                 >
-                  <span class="icon-[lucide--globe] ai-settings-menu-icon" />
+                  <Globe class="ai-settings-menu-icon" />
                   <span class="ai-settings-menu-label">网络访问权限</span>
                   <button
                     type="button"
@@ -1020,15 +995,15 @@ onBeforeUnmount(() => {
                   class="ai-settings-menu-item"
                   @select.prevent="handleOpenInformationSources"
                 >
-                  <span class="icon-[lucide--network] ai-settings-menu-icon" />
+                  <Network class="ai-settings-menu-icon" />
                   <span class="ai-settings-menu-label">我的信息源</span>
-                  <span class="icon-[lucide--chevron-right] ai-settings-menu-chevron" />
+                  <ChevronRight class="ai-settings-menu-chevron" />
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   class="ai-settings-menu-item"
                   @select.prevent="openSkillsManager"
                 >
-                  <span class="icon-[lucide--plus] ai-settings-menu-icon" />
+                  <Plus class="ai-settings-menu-icon" />
                   <span class="ai-settings-menu-label">添加skill</span>
                 </DropdownMenuItem>
                 <DropdownMenuItem
@@ -1038,10 +1013,10 @@ onBeforeUnmount(() => {
                   @select.prevent
                   @click.stop="openModeSubmenu"
                 >
-                  <span class="icon-[lucide--route] ai-settings-menu-icon" />
+                  <Route class="ai-settings-menu-icon" />
                   <span class="ai-settings-menu-label">模式</span>
                   <span class="ai-settings-menu-value" v-text="activeModeOption.label"></span>
-                  <span class="icon-[lucide--chevron-right] ai-settings-menu-chevron" />
+                  <ChevronRight class="ai-settings-menu-chevron" />
                   <div
                     v-if="isModeSubmenuOpen"
                     ref="modeSubmenuRef"
@@ -1057,18 +1032,9 @@ onBeforeUnmount(() => {
                       :class="{ 'is-active': activeMode === option.key }"
                       @click="selectModeOption(option.key)"
                     >
-                      <span
-                        v-if="option.key === 'chat'"
-                        class="icon-[lucide--message-circle] ai-mode-submenu-icon"
-                      />
-                      <span
-                        v-else-if="option.key === 'plan'"
-                        class="icon-[lucide--workflow] ai-mode-submenu-icon"
-                      />
-                      <span
-                        v-else
-                        class="icon-[lucide--sliders-horizontal] ai-mode-submenu-icon"
-                      />
+                      <MessageCircle class="ai-mode-submenu-icon" v-if="option.key === 'chat'" />
+                      <Workflow class="ai-mode-submenu-icon" v-else-if="option.key === 'plan'" />
+                      <SlidersHorizontal class="ai-mode-submenu-icon" v-else />
                       <span class="ai-mode-submenu-copy">
                         <span class="ai-mode-submenu-label" v-text="option.label"></span>
                         <span
@@ -1076,10 +1042,7 @@ onBeforeUnmount(() => {
                           v-text="option.description"
                         ></span>
                       </span>
-                      <span
-                        v-if="activeMode === option.key"
-                        class="icon-[lucide--check] ai-mode-submenu-check"
-                      />
+                      <Check class="ai-mode-submenu-check" v-if="activeMode === option.key" />
                     </button>
                   </div>
                 </DropdownMenuItem>
@@ -1089,7 +1052,7 @@ onBeforeUnmount(() => {
                   :disabled="disabled"
                   @select.prevent="toggleExecutionMode"
                 >
-                  <span class="icon-[lucide--bot] ai-settings-menu-icon" />
+                  <Bot class="ai-settings-menu-icon" />
                   <span class="ai-settings-menu-label">自主plan模式</span>
                   <button
                     type="button"
@@ -1106,7 +1069,7 @@ onBeforeUnmount(() => {
                   class="ai-settings-menu-item"
                   @select.prevent="handleOpenPersonalization"
                 >
-                  <span class="icon-[lucide--paintbrush] ai-settings-menu-icon" />
+                  <Paintbrush class="ai-settings-menu-icon" />
                   <span class="ai-settings-menu-label">个性化</span>
                 </DropdownMenuItem>
               </DropdownMenuContent>
@@ -1191,7 +1154,7 @@ onBeforeUnmount(() => {
             aria-label="停止"
             @click="handleStop"
           >
-            <span class="icon-[lucide--square] size-4" />
+            <Square class="size-4" />
             <span class="sr-only">Stop</span>
           </InputGroupButton>
           <InputGroupButton
@@ -1203,7 +1166,7 @@ onBeforeUnmount(() => {
             :disabled="disabled || !canSubmit"
             :aria-label="submitLabel"
           >
-            <span class="icon-[lucide--arrow-up] size-4" />
+            <ArrowUp class="size-4" />
             <span class="sr-only">Send</span>
           </InputGroupButton>
         </InputGroupAddon>
@@ -1433,38 +1396,6 @@ onBeforeUnmount(() => {
   height: var(--ai-composer-icon-size);
 }
 
-.ai-icon-action :deep(svg.is-icon-bouncing) {
-  transform-origin: center;
-  animation: ai-icon-bounce 460ms cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .ai-icon-action :deep(svg.is-icon-bouncing) {
-    animation: none;
-  }
-}
-
-@keyframes ai-icon-bounce {
-  0% {
-    transform: scale(1);
-  }
-  25% {
-    transform: scale(0.82);
-  }
-  50% {
-    transform: scale(1.16);
-  }
-  70% {
-    transform: scale(0.94);
-  }
-  85% {
-    transform: scale(1.05);
-  }
-  100% {
-    transform: scale(1);
-  }
-}
-
 .ai-token-trigger {
   width: var(--ai-composer-control-size);
   height: var(--ai-composer-control-size);
@@ -1565,15 +1496,6 @@ onBeforeUnmount(() => {
 
 .ai-model-trigger> :deep(svg:last-child) {
   display: none;
-}
-
-.ai-composer-tooltip {
-  border-radius: 6px;
-  background: var(--text-primary);
-  color: var(--panel-bg);
-  padding: 7px 10px;
-  font-size: 13px;
-  line-height: 1.2;
 }
 
 @media (max-width: 960px) {

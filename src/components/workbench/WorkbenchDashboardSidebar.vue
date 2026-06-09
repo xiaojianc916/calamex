@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { FolderTree, GitBranch, LibraryBig, Search, TerminalSquare } from '@lucide/vue';
 import { computed, ref, watch } from 'vue';
 import AppSidebar from '@/components/workbench/AppSidebar.vue';
 import type { TWorkbenchSidebarView } from '@/types/app';
@@ -104,11 +105,11 @@ v-for="item in sidebarTabs" :key="item.view" type="button"
                     :class="{ 'is-active': props.activeView === item.view }" :aria-label="item.label"
                     :aria-pressed="props.activeView === item.view" @click="emit('select-view', item.view)">
                     <span class="workbench-dashboard-sidebar__toolbar-icon" aria-hidden="true">
-                        <span v-if="item.view === 'explorer'" class="icon-[lucide--folder-tree]" />
-                        <span v-else-if="item.view === 'search'" class="icon-[lucide--search]" />
-                        <span v-else-if="item.view === 'source-control'" class="icon-[lucide--git-branch]" />
-                        <span v-else-if="item.view === 'run'" class="icon-[lucide--library-big]" />
-                        <span v-else class="icon-[lucide--terminal-square]" />
+                        <FolderTree v-if="item.view === 'explorer'" />
+                        <Search v-else-if="item.view === 'search'" />
+                        <GitBranch v-else-if="item.view === 'source-control'" />
+                        <LibraryBig v-else-if="item.view === 'run'" />
+                        <TerminalSquare v-else />
                     </span>
 
                     <span class="workbench-dashboard-sidebar__toolbar-label-wrap" aria-hidden="true">

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ChevronDown, ChevronUp, File } from '@lucide/vue';
 import { computed, ref } from 'vue';
 import {
   CodeBlock,
@@ -64,7 +65,7 @@ function handleError(error: Error): void {
         :language="codeMirrorLanguage">
         <CodeBlockHeader class="ai-reasoning-code-block__header">
             <CodeBlockTitle class="ai-reasoning-code-block__title">
-                <span :size="15" aria-hidden="true" class="icon-[lucide--file]" />
+                <File :size="15" aria-hidden="true" />
                 <CodeBlockFilename class="ai-reasoning-code-block__filename">
                     {{ filename }}
                 </CodeBlockFilename>
@@ -75,8 +76,8 @@ function handleError(error: Error): void {
                 <button type="button" class="ai-reasoning-code-block__icon-button"
                     :aria-label="isExpanded ? '折叠代码块' : '展开代码块'" :title="isExpanded ? '折叠代码块' : '展开代码块'"
                     :aria-expanded="isExpanded" @click="toggleExpanded">
-                    <span v-if="isExpanded" :size="15" aria-hidden="true" class="icon-[lucide--chevron-up]" />
-                    <span v-else :size="15" aria-hidden="true" class="icon-[lucide--chevron-down]" />
+                    <ChevronUp v-if="isExpanded" :size="15" aria-hidden="true" />
+                    <ChevronDown v-else :size="15" aria-hidden="true" />
                 </button>
                 <CodeBlockCopyButton class="ai-reasoning-code-block__copy" aria-label="复制代码" title="复制代码"
                     @copy="handleCopy" @error="handleError" />

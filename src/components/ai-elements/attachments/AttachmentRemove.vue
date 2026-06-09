@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { X } from '@lucide/vue';
 import type { HTMLAttributes } from 'vue';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -50,7 +51,7 @@ function handleClick(event: Event): void {
     @click="handleClick"
   >
     <slot>
-      <span class="icon-[lucide--x]" />
+      <X />
     </slot>
     <span class="sr-only">{{ props.label }}</span>
   </Button>

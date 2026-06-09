@@ -65,7 +65,7 @@
           class="git-history-graph-filelist"
         >
           <div v-if="expandedLoading && !expandedDetail" class="git-history-graph-filelist-loading">
-            <span class="icon-[lucide--loader-circle] git-history-graph-filelist-spinner" aria-hidden="true" />
+            <LoaderCircle class="git-history-graph-filelist-spinner" aria-hidden="true" />
             <span v-text="'正在读取文件列表…'" />
           </div>
           <template v-else-if="expandedDetail && expandedDetail.files.length > 0">
@@ -106,7 +106,7 @@
     />
 
     <section v-if="behind > 0" class="git-history-graph-incoming-note">
-      <span class="icon-[lucide--arrow-down] git-history-graph-group-icon" aria-hidden="true" />
+      <ArrowDown class="git-history-graph-group-icon" aria-hidden="true" />
       <span v-text="'传入更改 ' + behind + ' 条 · 拉取后查看'" />
     </section>
 
@@ -139,7 +139,7 @@
               referrerpolicy="no-referrer"
             />
             <span v-else class="git-history-graph-hovercard-avatar is-placeholder" aria-hidden="true">
-              <span class="icon-[lucide--user-round]" />
+              <UserRound />
             </span>
             <div class="git-history-graph-hovercard-author-block">
               <span class="git-history-graph-hovercard-author" v-text="hoverAuthorDisplayName" />
@@ -176,7 +176,7 @@
               aria-label="复制完整提交哈希"
               @click="copyHoverCommitId"
             >
-              <span class="icon-[lucide--copy]" aria-hidden="true" />
+              <Copy aria-hidden="true" />
             </button>
             <button
               v-if="hoverGithubCommitUrl"
@@ -184,7 +184,7 @@
               class="git-history-graph-hovercard-open"
               @click="openHoverCommitOnGithub"
             >
-              <span class="icon-[lucide--github]" aria-hidden="true" />
+              <Github aria-hidden="true" />
               <span>在 GitHub 上打开</span>
             </button>
           </div>
@@ -195,6 +195,7 @@
 </template>
 
 <script setup lang="ts">
+import { ArrowDown, Copy, Github, LoaderCircle, UserRound } from '@lucide/vue';
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 
 import LinearContextMenu from '@/components/common/LinearContextMenu.vue';

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Image } from '@lucide/vue';
 import type { DropdownMenuItemProps } from 'reka-ui';
 import DropdownMenuItem from '@/components/ui/dropdown-menu/DropdownMenuItem.vue';
 import { usePromptInput } from './context';
@@ -14,7 +15,7 @@ const { openFileDialog } = usePromptInput();
 
 <template>
   <DropdownMenuItem @select.prevent="openFileDialog">
-    <span class="icon-[lucide--image] mr-2 size-4"  />
+    <Image class="mr-2 size-4" />
     {{ props.label || 'Add photos or files' }}
   </DropdownMenuItem>
 </template>

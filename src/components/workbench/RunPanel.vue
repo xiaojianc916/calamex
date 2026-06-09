@@ -15,25 +15,25 @@
           class="icon-button app-tooltip-target run-panel-action-button run-panel-action-button--stop"
           data-tooltip="停止 / 重置运行" data-tooltip-placement="top" aria-label="停止 / 重置运行"
           @click="void handleStopRun()">
-          <span aria-hidden="true" class="icon-[lucide--square]" />
+          <Square aria-hidden="true" />
         </button>
 
         <button type="button" class="icon-button app-tooltip-target run-panel-action-button" data-tooltip="重连终端"
           data-tooltip-placement="top" aria-label="重连终端" @click="void handleRestartTerminal()">
-          <span aria-hidden="true" class="icon-[lucide--refresh-ccw]" />
+          <RefreshCcw aria-hidden="true" />
         </button>
 
         <button type="button" class="icon-button app-tooltip-target run-panel-action-button" data-tooltip="清屏"
           data-tooltip-placement="top" aria-label="清屏" :disabled="!isTerminalReady" @click="void handleClearTerminal()">
-          <span aria-hidden="true" class="icon-[lucide--eraser]" />
+          <Eraser aria-hidden="true" />
         </button>
 
         <button type="button" class="icon-button app-tooltip-target run-panel-action-button"
           :data-tooltip="props.isMaximized ? '还原终端高度' : '最大化终端'" data-tooltip-placement="top"
           :aria-label="props.isMaximized ? '还原终端高度' : '最大化终端'" :aria-pressed="props.isMaximized"
           @click="$emit('toggle-maximize')">
-          <span v-if="!props.isMaximized" aria-hidden="true" class="icon-[lucide--maximize-2]" />
-          <span v-else aria-hidden="true" class="icon-[lucide--minimize-2]" />
+          <Maximize2 v-if="!props.isMaximized" aria-hidden="true" />
+          <Minimize2 v-else aria-hidden="true" />
         </button>
       </div>
     </header>
@@ -61,6 +61,7 @@
 </template>
 
 <script setup lang="ts">
+import { Eraser, Maximize2, Minimize2, RefreshCcw, Square } from '@lucide/vue';
 import { storeToRefs } from 'pinia';
 import { computed, nextTick, onMounted, watch } from 'vue';
 import EmbeddedTerminal from '@/components/workbench/EmbeddedTerminal.vue';

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Clock3, Eye, EyeOff, RefreshCw, Server, Unplug } from '@lucide/vue';
 import '@/assets/css/ssh-sidebar.css';
 import { toTypedSchema } from '@vee-validate/zod';
 import { storeToRefs } from 'pinia';
@@ -1131,8 +1132,8 @@ onBeforeUnmount(() => {
                   :aria-invalid="Boolean(connectionFieldErrors.password)" />
                 <button type="button" class="ssh-password-toggle" :aria-label="isPasswordVisible ? '隐藏密码' : '显示密码'"
                   :title="isPasswordVisible ? '隐藏密码' : '显示密码'" @click="isPasswordVisible = !isPasswordVisible">
-                  <span v-if="isPasswordVisible" aria-hidden="true" class="icon-[lucide--eye]" />
-                  <span v-else aria-hidden="true" class="icon-[lucide--eye-off]" />
+                  <Eye v-if="isPasswordVisible" aria-hidden="true" />
+                  <EyeOff v-else aria-hidden="true" />
                 </button>
               </div>
               <FieldError v-if="connectionFieldErrors.password" :message="connectionFieldErrors.password" />
@@ -1157,7 +1158,7 @@ onBeforeUnmount(() => {
       </form>
 
       <section v-else-if="isDisconnected" class="ssh-empty-state ssh-empty-state--disconnected" aria-label="SSH 未连接状态">
-        <span class="icon-[lucide--server] ssh-empty-icon" aria-hidden="true" />
+        <Server class="ssh-empty-icon" aria-hidden="true" />
 
         <div class="ssh-empty-copy">
           <div class="ssh-empty-title ssh-empty-title--disconnected">尚未连接到远程主机</div>
@@ -1189,7 +1190,7 @@ onBeforeUnmount(() => {
           <button v-for="connection in normalizedRecentConnections" :key="connection.id" type="button"
             class="ssh-recent-item ssh-recent-item--disconnected" @click="handleSelectRecentConnection(connection)">
             <span class="ssh-recent-icon ssh-recent-icon--disconnected" aria-hidden="true">
-              <span class="icon-[lucide--clock-3]" />
+              <Clock3 />
             </span>
 
             <span class="ssh-recent-info">
@@ -1244,11 +1245,11 @@ onBeforeUnmount(() => {
           <div class="ssh-path-actions">
             <button type="button" class="ssh-path-action" aria-label="断开 SSH 连接" title="断开连接"
               @click="disconnectSshSession">
-              <span aria-hidden="true" class="icon-[lucide--unplug]" />
+              <Unplug aria-hidden="true" />
             </button>
             <button type="button" class="ssh-path-action" :disabled="isRemoteDirectoryLoading" aria-label="刷新远端目录"
               title="刷新远端目录" @click="refreshCurrentRemoteDirectory">
-              <span aria-hidden="true" class="icon-[lucide--refresh-cw]" />
+              <RefreshCw aria-hidden="true" />
             </button>
           </div>
         </div>

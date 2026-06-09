@@ -17,7 +17,7 @@
 
       <button type="button" class="source-control-btn source-control-stash-toolbar-btn"
         :disabled="isStashesLoading || isBusy" @click="handleReloadStashes">
-        <span aria-hidden="true" class="icon-[lucide--refresh-cw]" />
+        <RefreshCw aria-hidden="true" />
         <span>刷新</span>
       </button>
     </div>
@@ -86,6 +86,7 @@
 </template>
 
 <script setup lang="ts">
+import { RefreshCw } from '@lucide/vue';
 import { computed, ref, watch } from 'vue';
 import { useDialog } from '@/composables/useDialog';
 import { useMessage } from '@/composables/useMessage';

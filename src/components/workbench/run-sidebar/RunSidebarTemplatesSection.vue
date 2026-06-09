@@ -1,4 +1,16 @@
 <script setup lang="ts">
+import {
+  Check,
+  ChevronRight,
+  Copy,
+  Eye,
+  MoreHorizontal,
+  Pencil,
+  Pin,
+  Plus,
+  Search,
+  Trash2,
+} from '@lucide/vue';
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import {
   type IPhase,
@@ -291,7 +303,7 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="template-search-row">
-        <span class="icon-[lucide--search] template-search-icon" />
+        <Search class="template-search-icon" />
         <input ref="searchInputRef" v-model="searchQuery" type="text" placeholder="搜索触发词或描述" />
       </div>
     </div>
@@ -314,7 +326,7 @@ onBeforeUnmount(() => {
           'template-cat--open': isCategoryOpen(phase.id, catIdx),
         }" :style="{ '--phase-c': phase.color }">
           <button class="template-cat-row" @click="toggleCategory(phase.id, catIdx)">
-            <span class="icon-[lucide--chevron-right] template-chev" />
+            <ChevronRight class="template-chev" />
             <span class="template-cat-icon">
               <span :class="[getIcon(cat.icon), 'template-cat-svg']" />
             </span>
@@ -334,10 +346,10 @@ onBeforeUnmount(() => {
               <span class="template-snip-desc">{{ item.description }}</span>
               <span class="template-snip-actions">
                 <button class="template-snip-btn" title="插入到光标" @click.stop="handleSnippetClick(item)">
-                  <span class="icon-[lucide--plus] template-snip-btn-svg" />
+                  <Plus class="template-snip-btn-svg" />
                 </button>
                 <button class="template-snip-btn" title="更多" @click.stop="openContextMenu($event, item)">
-                  <span class="icon-[lucide--more-horizontal] template-snip-btn-svg" />
+                  <MoreHorizontal class="template-snip-btn-svg" />
                 </button>
               </span>
             </div>
@@ -353,34 +365,34 @@ onBeforeUnmount(() => {
         top: contextMenuPos.y + 'px',
       }">
         <button class="template-menu-item" @click="handleMenuAction('insert')">
-          <span class="icon-[lucide--plus] template-menu-icon" />
+          <Plus class="template-menu-icon" />
           插入到光标
           <span class="template-menu-kbd">↵</span>
         </button>
         <button class="template-menu-item" @click="handleMenuAction('copy-trigger')">
-          <span class="icon-[lucide--copy] template-menu-icon" />
+          <Copy class="template-menu-icon" />
           复制触发词
         </button>
         <button class="template-menu-item" @click="handleMenuAction('copy-code')">
-          <span class="icon-[lucide--copy] template-menu-icon" />
+          <Copy class="template-menu-icon" />
           复制完整代码
         </button>
         <div class="template-menu-sep"></div>
         <button class="template-menu-item" @click="handleMenuAction('pin')">
-          <span class="icon-[lucide--pin] template-menu-icon" />
+          <Pin class="template-menu-icon" />
           钉到收藏
         </button>
         <button class="template-menu-item" @click="handleMenuAction('view')">
-          <span class="icon-[lucide--eye] template-menu-icon" />
+          <Eye class="template-menu-icon" />
           在编辑器中查看
         </button>
         <button class="template-menu-item" @click="handleMenuAction('edit')">
-          <span class="icon-[lucide--pencil] template-menu-icon" />
+          <Pencil class="template-menu-icon" />
           编辑片段
         </button>
         <div class="template-menu-sep"></div>
         <button class="template-menu-item template-menu-item--danger" @click="handleMenuAction('delete')">
-          <span class="icon-[lucide--trash-2] template-menu-icon" />
+          <Trash2 class="template-menu-icon" />
           删除
         </button>
       </div>
@@ -389,7 +401,7 @@ onBeforeUnmount(() => {
     <!-- ═══ Toast ═══ -->
     <Teleport to="body">
       <div class="template-toast" :class="{ 'template-toast--on': toastVisible }">
-        <span class="icon-[lucide--check] template-toast-icon" />
+        <Check class="template-toast-icon" />
         <span>{{ toastMessage }}</span>
       </div>
     </Teleport>

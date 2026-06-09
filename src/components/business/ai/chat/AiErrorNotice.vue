@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Check, CircleAlert } from '@lucide/vue';
 import { computed, onBeforeUnmount, ref } from 'vue';
 import { tryWriteClipboardText } from '@/utils/clipboard';
 
@@ -49,8 +50,8 @@ onBeforeUnmount(() => {
   <div v-if="normalizedMessage" class="ai-error-notice" role="alert">
     <span class="ai-error-notice__line" aria-hidden="true"></span>
     <button type="button" class="ai-error-notice__body" :title="copyHint" :aria-label="copyHint" @click="handleCopy">
-      <span v-if="copied" class="icon-[lucide--check] ai-error-notice__icon is-copied" aria-hidden="true"></span>
-      <span v-else class="icon-[lucide--circle-alert] ai-error-notice__icon" aria-hidden="true"></span>
+      <Check class="ai-error-notice__icon is-copied" v-if="copied" aria-hidden="true" />
+      <CircleAlert class="ai-error-notice__icon" v-else aria-hidden="true" />
       <span class="ai-error-notice__text" v-text="normalizedMessage"></span>
     </button>
     <span class="ai-error-notice__line" aria-hidden="true"></span>

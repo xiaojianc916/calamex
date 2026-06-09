@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ChevronDown } from '@lucide/vue';
 import { ref } from 'vue';
 import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -21,10 +22,7 @@ const isOpen = ref(false);
     <CollapsibleTrigger as-child>
       <Button variant="ghost" size="sm" class="h-7 px-2 text-[12px] text-[var(--text-tertiary)]">
         {{ props.label }}
-        <span
-          class="icon-[lucide--chevron-down] size-3 transition-transform duration-[var(--motion-duration-fast)]"
-          :class="isOpen ? 'rotate-180' : ''"
-         />
+        <ChevronDown class="size-3 transition-transform duration-[var(--motion-duration-fast)]" :class="isOpen ? 'rotate-180' : ''" />
       </Button>
     </CollapsibleTrigger>
     <CollapsibleContent>

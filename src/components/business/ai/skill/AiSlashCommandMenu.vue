@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Sparkles, Terminal } from '@lucide/vue';
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import type { ISkillSummary } from '@/types/ai/skill';
 
@@ -187,7 +188,7 @@ onBeforeUnmount(() => {
             class="slash-item slash-item--disabled"
             disabled
           >
-            <span class="icon-[lucide--terminal] slash-item__icon" aria-hidden="true" />
+            <Terminal class="slash-item__icon" aria-hidden="true" />
             <span class="slash-item__text">
               <span class="slash-item__name" v-text="command.name" />
               <span class="slash-item__desc" v-text="command.description" />
@@ -199,7 +200,7 @@ onBeforeUnmount(() => {
         <section class="slash-section">
           <p class="slash-section__title">技能</p>
           <p v-if="filteredSkills.length === 0" class="slash-empty">
-            <span class="icon-[lucide--sparkles]" aria-hidden="true" />
+            <Sparkles aria-hidden="true" />
             没有匹配的技能
           </p>
           <button
@@ -213,7 +214,7 @@ onBeforeUnmount(() => {
             @mouseenter="activeIndex = index"
             @click="onSelect(skill.slug)"
           >
-            <span class="icon-[lucide--sparkles] slash-item__icon" aria-hidden="true" />
+            <Sparkles class="slash-item__icon" aria-hidden="true" />
             <span class="slash-item__text">
               <span class="slash-item__name" v-text="skill.name" />
               <span v-if="skill.description" class="slash-item__desc" v-text="skill.description" />

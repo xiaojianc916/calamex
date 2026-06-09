@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { LoaderCircle, TriangleAlert } from '@lucide/vue';
 import PhotoSwipeLightbox from 'photoswipe/lightbox';
 import type { TAttachmentData, TAttachmentVariant } from '@/components/ai-elements/attachments';
 import {
@@ -389,10 +390,10 @@ onBeforeUnmount(() => {
           </AttachmentHoverCard>
 
           <span v-if="isAttachmentBusy(entry.item)" class="ai-attachment-processing-overlay" aria-label="附件处理中">
-            <span class="icon-[lucide--loader-circle] ai-attachment-processing-spinner" aria-hidden="true" />
+            <LoaderCircle class="ai-attachment-processing-spinner" aria-hidden="true" />
           </span>
           <span v-else-if="isAttachmentFailed(entry.item)" class="ai-attachment-failed-overlay" aria-label="附件处理失败">
-            <span class="icon-[lucide--triangle-alert] ai-attachment-failed-icon" aria-hidden="true" />
+            <TriangleAlert class="ai-attachment-failed-icon" aria-hidden="true" />
           </span>
 
           <AttachmentInfo class="ai-attachment-inline-info" />
@@ -435,10 +436,10 @@ onBeforeUnmount(() => {
             <AttachmentPreview class="ai-attachment-preview-media" />
           </div>
           <span v-if="isAttachmentBusy(entry.item)" class="ai-attachment-processing-overlay" aria-label="附件处理中">
-            <span class="icon-[lucide--loader-circle] ai-attachment-processing-spinner" aria-hidden="true" />
+            <LoaderCircle class="ai-attachment-processing-spinner" aria-hidden="true" />
           </span>
           <span v-else-if="isAttachmentFailed(entry.item)" class="ai-attachment-failed-overlay" aria-label="附件处理失败">
-            <span class="icon-[lucide--triangle-alert] ai-attachment-failed-icon" aria-hidden="true" />
+            <TriangleAlert class="ai-attachment-failed-icon" aria-hidden="true" />
           </span>
           <span class="sr-only" v-text="entry.item.name" />
           <AttachmentRemove v-if="removable" class="ai-image-attachment-preview-remove" label="移除附件" />

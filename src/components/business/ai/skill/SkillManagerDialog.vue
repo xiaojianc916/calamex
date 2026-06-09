@@ -1,4 +1,17 @@
 <script setup lang="ts">
+import {
+  ArrowLeft,
+  BookOpen,
+  Folder,
+  LoaderCircle,
+  Pencil,
+  Plus,
+  Save,
+  Sparkles,
+  Trash2,
+  TriangleAlert,
+  X,
+} from '@lucide/vue';
 import { computed, reactive, ref, watch } from 'vue';
 import { skillsTauriService } from '@/services/tauri.skills';
 import type { ISkillSummary } from '@/types/ai/skill';
@@ -148,16 +161,16 @@ watch(
       <div class="skill-dialog" role="dialog" aria-modal="true" aria-label="技能管理">
         <header class="skill-dialog__header">
           <div class="skill-dialog__heading">
-            <span class="icon-[lucide--book-open] skill-dialog__heading-icon" aria-hidden="true" />
+            <BookOpen class="skill-dialog__heading-icon" aria-hidden="true" />
             <span>技能管理</span>
           </div>
           <button type="button" class="skill-icon-btn" aria-label="关闭" @click="requestClose">
-            <span class="icon-[lucide--x]" aria-hidden="true" />
+            <X aria-hidden="true" />
           </button>
         </header>
 
         <p v-if="errorMessage" class="skill-error">
-          <span class="icon-[lucide--triangle-alert]" aria-hidden="true" />
+          <TriangleAlert aria-hidden="true" />
           <span v-text="errorMessage" />
         </p>
 
@@ -165,22 +178,22 @@ watch(
         <div v-if="mode === 'list'" class="skill-body">
           <div class="skill-toolbar">
             <p class="skill-root" :title="rootPath">
-              <span class="icon-[lucide--folder]" aria-hidden="true" />
+              <Folder aria-hidden="true" />
               全局技能库
             </p>
             <button type="button" class="skill-btn skill-btn--primary" @click="openCreate">
-              <span class="icon-[lucide--plus]" aria-hidden="true" />
+              <Plus aria-hidden="true" />
               新建技能
             </button>
           </div>
 
           <div class="skill-list">
             <p v-if="listLoading" class="skill-hint">
-              <span class="icon-[lucide--loader-circle] skill-spin" aria-hidden="true" />
+              <LoaderCircle class="skill-spin" aria-hidden="true" />
               加载中…
             </p>
             <p v-else-if="skills.length === 0" class="skill-hint">
-              <span class="icon-[lucide--sparkles]" aria-hidden="true" />
+              <Sparkles aria-hidden="true" />
               还没有技能,点击「新建技能」开始创建
             </p>
             <article
@@ -191,7 +204,7 @@ watch(
               @click="openEditor(skill.slug)"
             >
               <div class="skill-card__main">
-                <span class="icon-[lucide--sparkles] skill-card__icon" aria-hidden="true" />
+                <Sparkles class="skill-card__icon" aria-hidden="true" />
                 <div class="skill-card__text">
                   <p class="skill-card__name" v-text="skill.name" />
                   <p class="skill-card__desc" v-text="skill.description" />
@@ -204,7 +217,7 @@ watch(
                   aria-label="编辑"
                   @click.stop="openEditor(skill.slug)"
                 >
-                  <span class="icon-[lucide--pencil]" aria-hidden="true" />
+                  <Pencil aria-hidden="true" />
                 </button>
                 <button
                   type="button"
@@ -213,7 +226,7 @@ watch(
                   :disabled="busy"
                   @click.stop="deleteSkill(skill.slug)"
                 >
-                  <span class="icon-[lucide--trash-2]" aria-hidden="true" />
+                  <Trash2 aria-hidden="true" />
                 </button>
               </div>
             </article>
@@ -223,7 +236,7 @@ watch(
         <!-- 编辑 / 新建视图 -->
         <div v-else class="skill-body">
           <button type="button" class="skill-back" :disabled="busy" @click="backToList">
-            <span class="icon-[lucide--arrow-left]" aria-hidden="true" />
+            <ArrowLeft aria-hidden="true" />
             返回列表
           </button>
 
@@ -253,12 +266,8 @@ watch(
           <div class="skill-footer-actions">
             <button type="button" class="skill-btn" :disabled="busy" @click="backToList">取消</button>
             <button type="button" class="skill-btn skill-btn--primary" :disabled="!canSave" @click="saveSkill">
-              <span
-                v-if="busy"
-                class="icon-[lucide--loader-circle] skill-spin"
-                aria-hidden="true"
-              />
-              <span v-else class="icon-[lucide--save]" aria-hidden="true" />
+              <LoaderCircle class="skill-spin" v-if="busy" aria-hidden="true" />
+              <Save v-else aria-hidden="true" />
               保存
             </button>
           </div>

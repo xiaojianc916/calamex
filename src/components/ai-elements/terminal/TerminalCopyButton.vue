@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Copy } from '@lucide/vue';
 import type { HTMLAttributes } from 'vue';
 import { inject } from 'vue';
 import { cn } from '@/lib/utils';
@@ -22,6 +23,6 @@ const handleCopy = async (): Promise<void> => {
     title="复制终端输出"
     @click="handleCopy"
   >
-    <span aria-hidden="true" class="icon-[lucide--copy]" />
+    <Copy aria-hidden="true" />
   </button>
 </template>

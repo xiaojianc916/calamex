@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Trash2 } from '@lucide/vue';
 import type { HTMLAttributes } from 'vue';
 import { inject } from 'vue';
 import { cn } from '@/lib/utils';
@@ -20,6 +21,6 @@ const handleClear = (): void => {
     title="清空终端输出"
     @click="handleClear"
   >
-    <span aria-hidden="true" class="icon-[lucide--trash-2]" />
+    <Trash2 aria-hidden="true" />
   </button>
 </template>

@@ -3,7 +3,7 @@
     <div class="search-panel-query-stack">
       <div class="search-panel-input-shell">
         <span class="search-panel-input-icon" aria-hidden="true">
-          <span class="icon-[lucide--search]" />
+          <Search />
         </span>
 
         <Input v-model="searchQuery" class="search-panel-input" type="text" aria-label="搜索关键字"
@@ -11,13 +11,13 @@
 
         <button v-if="hasSearchQuery" type="button" class="search-panel-clear-btn" aria-label="清空搜索" title="清空搜索"
           @click.stop="searchQuery = ''">
-          <span aria-hidden="true" class="icon-[lucide--x]" />
+          <X aria-hidden="true" />
         </button>
       </div>
 
       <div class="search-panel-input-shell search-panel-replace-shell">
         <span class="search-panel-input-icon" aria-hidden="true">
-          <span class="icon-[lucide--replace]" />
+          <Replace />
         </span>
 
         <Input v-model="replacementQuery" class="search-panel-input" type="text" aria-label="替换内容"
@@ -26,8 +26,8 @@
 
         <button type="button" class="search-panel-apply-btn" :disabled="!canApplyReplacement" aria-label="全部替换"
           title="全部替换" @click.stop="handleReplacementAction">
-          <span v-if="replaceRunning" class="icon-[lucide--loader-circle] search-panel-spin" aria-hidden="true" />
-          <span v-else aria-hidden="true" class="icon-[lucide--check]" />
+          <LoaderCircle class="search-panel-spin" v-if="replaceRunning" aria-hidden="true" />
+          <Check v-else aria-hidden="true" />
         </button>
       </div>
     </div>
@@ -44,33 +44,33 @@
     <div class="search-panel-option-row" aria-label="搜索选项">
       <button type="button" class="search-panel-option-btn" :class="{ 'is-active': matchCase }"
         :aria-pressed="matchCase" title="区分大小写" @click="toggleSearchOption('matchCase')">
-        <span aria-hidden="true" class="icon-[lucide--case-sensitive]" />
+        <CaseSensitive aria-hidden="true" />
       </button>
 
       <button type="button" class="search-panel-option-btn" :class="{ 'is-active': wholeWord }"
         :aria-pressed="wholeWord" title="全字匹配" @click="toggleSearchOption('wholeWord')">
-        <span aria-hidden="true" class="icon-[lucide--whole-word]" />
+        <WholeWord aria-hidden="true" />
       </button>
 
       <button type="button" class="search-panel-option-btn" :class="{ 'is-active': useRegex }" :aria-pressed="useRegex"
         title="正则表达式" @click="toggleSearchOption('useRegex')">
-        <span aria-hidden="true" class="icon-[lucide--regex]" />
+        <Regex aria-hidden="true" />
       </button>
 
       <button type="button" class="search-panel-option-btn" :class="{ 'is-active': contentFuzzy }"
         :aria-pressed="contentFuzzy" title="内容模糊匹配" @click="toggleSearchOption('contentFuzzy')">
-        <span aria-hidden="true" class="icon-[lucide--waves]" />
+        <Waves aria-hidden="true" />
       </button>
 
       <button type="button" class="search-panel-option-btn" :class="{ 'is-active': showPathFilters }"
         :aria-pressed="showPathFilters" title="包含 / 排除路径" @click="toggleSearchOption('showPathFilters')">
-        <span aria-hidden="true" class="icon-[lucide--list-filter]" />
+        <ListFilter aria-hidden="true" />
       </button>
 
       <button type="button" class="search-panel-option-btn search-panel-option-structural"
         :class="{ 'is-active': useStructural }" :aria-pressed="useStructural" title="结构化搜索与替换"
         @click="toggleStructuralSearch">
-        <span aria-hidden="true" class="icon-[lucide--braces]" />
+        <Braces aria-hidden="true" />
       </button>
     </div>
 
@@ -97,7 +97,7 @@
     <div ref="resultsScrollRef" class="search-panel-results" role="listbox">
       <div v-if="replacementPreviewOpen" class="search-replace-inline">
         <div v-if="replaceRunning && !replacementPreview" class="search-replace-inline-empty">
-          <span class="icon-[lucide--loader-circle] search-panel-spin" aria-hidden="true" />
+          <LoaderCircle class="search-panel-spin" aria-hidden="true" />
           <span>正在生成替换预览…</span>
         </div>
 
@@ -112,7 +112,7 @@
               <button type="button" class="search-replace-inline-file-open"
                 :aria-expanded="!isReplacementFileCollapsed(file.path)" @click="toggleReplacementFile(file.path)">
                 <span class="search-replace-inline-chevron" aria-hidden="true"
-                  v-text="isReplacementFileCollapsed(file.path) ? '▸' : '▾'" />
+                  :class="isReplacementFileCollapsed(file.path) ? 'icon-[lucide--chevron-right]' : 'icon-[lucide--chevron-down]'" />
                 <span class="search-replace-inline-file-icon" aria-hidden="true">
                   <ExplorerEntryIcon kind="file" :path="file.path" />
                 </span>
@@ -138,13 +138,12 @@
                 <span class="search-replace-inline-line-actions">
                   <button type="button" class="search-replace-inline-icon-btn" :disabled="replacementApplying"
                     aria-label="替换此处" title="替换此处" @click.stop="replaceReplacementLine(file, line)">
-                    <span v-if="replacementApplyingLineId === line.id"
-                      class="icon-[lucide--loader-circle] search-panel-spin" aria-hidden="true" />
-                    <span v-else aria-hidden="true" class="icon-[lucide--replace]" />
+                    <LoaderCircle class="search-panel-spin" v-if="replacementApplyingLineId === line.id" aria-hidden="true" />
+                    <Replace v-else aria-hidden="true" />
                   </button>
                   <button type="button" class="search-replace-inline-icon-btn" :disabled="replacementApplying"
                     aria-label="跳过此处" title="跳过此处" @click.stop="skipReplacementLine(line.id)">
-                    <span aria-hidden="true" class="icon-[lucide--x]" />
+                    <X aria-hidden="true" />
                   </button>
                 </span>
               </div>
@@ -164,7 +163,7 @@
       </div>
 
       <div v-else-if="searchIndexing && scannedFileCount === 0" class="search-panel-empty-state">
-        <span class="icon-[lucide--loader-circle] search-panel-spin" aria-hidden="true" />
+        <LoaderCircle class="search-panel-spin" aria-hidden="true" />
         <p class="search-panel-empty-text">正在搜索工作区…</p>
       </div>
 
@@ -191,7 +190,7 @@
                 :aria-expanded="!isSearchResultGroupCollapsed(entry.row.group.path)"
                 @click="toggleSearchResultGroup(entry.row.group.path)">
                 <span class="search-panel-result-group-chevron" aria-hidden="true"
-                  v-text="isSearchResultGroupCollapsed(entry.row.group.path) ? '▸' : '▾'" />
+                  :class="isSearchResultGroupCollapsed(entry.row.group.path) ? 'icon-[lucide--chevron-right]' : 'icon-[lucide--chevron-down]'" />
                 <span class="search-panel-result-group-icon" aria-hidden="true">
                   <ExplorerEntryIcon kind="file" :path="entry.row.group.path" />
                 </span>
@@ -227,7 +226,7 @@
               <button type="button" class="search-panel-result-group-open"
                 :aria-expanded="!isSearchResultGroupCollapsed(group.path)" @click="toggleSearchResultGroup(group.path)">
                 <span class="search-panel-result-group-chevron" aria-hidden="true"
-                  v-text="isSearchResultGroupCollapsed(group.path) ? '▸' : '▾'" />
+                  :class="isSearchResultGroupCollapsed(group.path) ? 'icon-[lucide--chevron-right]' : 'icon-[lucide--chevron-down]'" />
                 <span class="search-panel-result-group-icon" aria-hidden="true">
                   <ExplorerEntryIcon kind="file" :path="group.path" />
                 </span>
@@ -263,6 +262,19 @@
 </template>
 
 <script setup lang="ts">
+import {
+  Braces,
+  CaseSensitive,
+  Check,
+  ListFilter,
+  LoaderCircle,
+  Regex,
+  Replace,
+  Search,
+  Waves,
+  WholeWord,
+  X,
+} from '@lucide/vue';
 import { useVirtualizer } from '@tanstack/vue-virtual';
 import { computed, onScopeDispose, ref, watch } from 'vue';
 import InlineError from '@/components/common/InlineError.vue';

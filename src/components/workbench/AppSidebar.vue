@@ -9,7 +9,7 @@
       <div v-else-if="rootLoading && !root" class="explorer-empty-state">正在读取资源目录...</div>
       <Empty v-else-if="!workspaceRootPath" class="explorer-empty-state explorer-empty-state--raised">
         <EmptyHeader class="gap-1.5">
-          <EmptyMedia class="h-auto w-auto rounded-none border-0 bg-transparent p-0 shadow-none"> <span class="icon-[lucide--folder-open] h-14 w-14" /> </EmptyMedia>
+          <EmptyMedia class="h-auto w-auto rounded-none border-0 bg-transparent p-0 shadow-none"> <FolderOpen class="h-14 w-14" /> </EmptyMedia>
           <EmptyTitle class="text-[12px] font-medium">尚未打开工作区</EmptyTitle>
           <EmptyDescription class="text-[11px] leading-5"> 点击 <button type="button" class="explorer-empty-action" @click="emit('open-folder')"> adding files </button> <span> 打开一个文件夹。</span> </EmptyDescription>
         </EmptyHeader>
@@ -17,7 +17,7 @@
       <div v-else-if="!root" class="explorer-empty-state">正在准备资源树...</div>
       <Empty v-else-if="isExplorerWorkspaceEmpty" class="explorer-empty-state explorer-empty-state--raised">
         <EmptyHeader class="gap-1.5">
-          <EmptyMedia class="h-auto w-auto rounded-none border-0 bg-transparent p-0 shadow-none"> <span class="icon-[lucide--folder-open] h-14 w-14" /> </EmptyMedia>
+          <EmptyMedia class="h-auto w-auto rounded-none border-0 bg-transparent p-0 shadow-none"> <FolderOpen class="h-14 w-14" /> </EmptyMedia>
           <EmptyTitle class="text-[12px] font-medium">This folder is empty</EmptyTitle>
           <EmptyDescription class="text-[11px] leading-5"> Start by <button type="button" class="explorer-empty-action" @click="emit('open-folder')"> adding files </button> <span> or creating new folders.</span> </EmptyDescription>
         </EmptyHeader>
@@ -62,6 +62,7 @@
 </template>
 
 <script setup lang="ts">
+import { FolderOpen } from '@lucide/vue';
 import { useDebounceFn, useEventListener } from '@vueuse/core';
 import {
   computed,

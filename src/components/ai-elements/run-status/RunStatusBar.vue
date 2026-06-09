@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { CirclePause, LoaderCircle, Pause, Play, X } from '@lucide/vue';
 import { computed } from 'vue';
 
 import { ApprovalPrompt, buildToolConfirmationApproval } from '@/components/ai-elements/approval';
@@ -152,14 +153,8 @@ const handleApprovalCancel = (): void => {
     <template v-else>
       <div class="run-status__line">
         <span class="run-status__icon" aria-hidden="true">
-          <span
-            v-if="isPaused"
-            class="run-status__glyph icon-[lucide--circle-pause]"
-          />
-          <span
-            v-else
-            class="run-status__glyph icon-[lucide--loader-circle] animate-spin"
-          />
+          <CirclePause class="run-status__glyph" v-if="isPaused" />
+          <LoaderCircle class="run-status__glyph animate-spin" v-else />
         </span>
 
         <span class="run-status__header" v-text="header" />
@@ -182,7 +177,7 @@ const handleApprovalCancel = (): void => {
             aria-label="继续"
             @click="handleResume"
           >
-            <span class="run-status__btn-glyph icon-[lucide--play]" aria-hidden="true" />
+            <Play class="run-status__btn-glyph" aria-hidden="true" />
             <span class="run-status__btn-label">继续</span>
           </Button>
           <Button
@@ -194,7 +189,7 @@ const handleApprovalCancel = (): void => {
             aria-label="暂停"
             @click="handlePause"
           >
-            <span class="run-status__btn-glyph icon-[lucide--pause]" aria-hidden="true" />
+            <Pause class="run-status__btn-glyph" aria-hidden="true" />
             <span class="run-status__btn-label">暂停</span>
           </Button>
           <Button
@@ -206,7 +201,7 @@ const handleApprovalCancel = (): void => {
             aria-label="取消"
             @click="handleCancel"
           >
-            <span class="run-status__btn-glyph icon-[lucide--x]" aria-hidden="true" />
+            <X class="run-status__btn-glyph" aria-hidden="true" />
             <span class="run-status__btn-label">取消</span>
           </Button>
         </span>

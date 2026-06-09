@@ -1,4 +1,26 @@
 <script setup lang="ts">
+import {
+  ChevronDown,
+  ChevronUp,
+  Clock3,
+  Copy,
+  CornerDownLeft,
+  Download,
+  HardDrive,
+  IndentIncrease,
+  Languages,
+  ListOrdered,
+  MapPin,
+  PencilLine,
+  RefreshCw,
+  Save,
+  Search,
+  ShieldCheck,
+  Terminal,
+  TextWrap,
+  UserRound,
+  X,
+} from '@lucide/vue';
 import { useVirtualizer } from '@tanstack/vue-virtual';
 import {
   type ComponentPublicInstance,
@@ -820,43 +842,43 @@ onBeforeUnmount(() => {
           <div class="ssh-preview-dialog__actions">
             <button type="button" class="ssh-preview-dialog__icon-button" :disabled="!canOpenSearch"
               title="搜索 (Ctrl/Cmd + F)" aria-label="搜索" @click="focusSearch">
-              <span aria-hidden="true" class="icon-[lucide--search]" />
+              <Search aria-hidden="true" />
             </button>
             <button type="button" class="ssh-preview-dialog__icon-button" :title="isWrapped ? '关闭自动换行' : '开启自动换行'"
               :aria-label="isWrapped ? '关闭自动换行' : '开启自动换行'" @click="isWrapped = !isWrapped">
-              <span aria-hidden="true" class="icon-[lucide--text-wrap]" />
+              <TextWrap aria-hidden="true" />
             </button>
             <button type="button" class="ssh-preview-dialog__icon-button" :disabled="!canReload"
               title="重新加载 (Ctrl/Cmd + R)" aria-label="重新加载" @click="requestReload">
-              <span aria-hidden="true" class="icon-[lucide--refresh-cw]" />
+              <RefreshCw aria-hidden="true" />
             </button>
 
             <span class="ssh-preview-dialog__divider" aria-hidden="true" />
 
             <button type="button" class="ssh-preview-dialog__action-button" :disabled="!canCopy" @click="requestCopy">
-              <span aria-hidden="true" class="icon-[lucide--copy]" />
+              <Copy aria-hidden="true" />
               <span>复制</span>
             </button>
             <button type="button" class="ssh-preview-dialog__action-button" :disabled="!canDownload"
               @click="requestDownload">
-              <span aria-hidden="true" class="icon-[lucide--download]" />
+              <Download aria-hidden="true" />
               <span>下载</span>
             </button>
             <button v-if="isEditing" type="button" class="ssh-preview-dialog__action-button" :disabled="props.isSaving"
               @click="cancelEditMode">
-              <span aria-hidden="true" class="icon-[lucide--x]" />
+              <X aria-hidden="true" />
               <span>取消编辑</span>
             </button>
             <button v-if="isEditing" type="button"
               class="ssh-preview-dialog__action-button ssh-preview-dialog__action-button--primary" :disabled="!canSave"
               @click="requestSave">
-              <span aria-hidden="true" class="icon-[lucide--save]" />
+              <Save aria-hidden="true" />
               <span>{{ props.isSaving ? '保存中…' : '保存' }}</span>
             </button>
             <button v-else type="button"
               class="ssh-preview-dialog__action-button ssh-preview-dialog__action-button--primary"
               :disabled="!canToggleEdit" @click="openEditMode">
-              <span aria-hidden="true" class="icon-[lucide--pencil-line]" />
+              <PencilLine aria-hidden="true" />
               <span>编辑</span>
             </button>
 
@@ -864,44 +886,44 @@ onBeforeUnmount(() => {
 
             <button type="button" class="ssh-preview-dialog__icon-button" :disabled="!canClose" title="关闭 (Esc)"
               aria-label="关闭" @click="requestClose">
-              <span aria-hidden="true" class="icon-[lucide--x]" />
+              <X aria-hidden="true" />
             </button>
           </div>
         </header>
 
         <div class="ssh-preview-dialog__meta">
           <span class="ssh-preview-dialog__meta-item">
-            <span aria-hidden="true" class="icon-[lucide--hard-drive]" />
+            <HardDrive aria-hidden="true" />
             <span class="ssh-preview-dialog__meta-label">大小</span>
             <b>{{ byteSizeLabel }}</b>
           </span>
           <span class="ssh-preview-dialog__meta-item">
-            <span aria-hidden="true" class="icon-[lucide--list-ordered]" />
+            <ListOrdered aria-hidden="true" />
             <span class="ssh-preview-dialog__meta-label">行数</span>
             <b>{{ lineCountLabel }}</b>
           </span>
           <span class="ssh-preview-dialog__meta-item">
-            <span aria-hidden="true" class="icon-[lucide--languages]" />
+            <Languages aria-hidden="true" />
             <span class="ssh-preview-dialog__meta-label">编码</span>
             <span class="ssh-preview-dialog__badge">{{ encodingLabel }}</span>
           </span>
           <span class="ssh-preview-dialog__meta-item">
-            <span aria-hidden="true" class="icon-[lucide--corner-down-left]" />
+            <CornerDownLeft aria-hidden="true" />
             <span class="ssh-preview-dialog__meta-label">换行</span>
             <span class="ssh-preview-dialog__badge">{{ lineEndingLabel }}</span>
           </span>
           <span class="ssh-preview-dialog__meta-item">
-            <span aria-hidden="true" class="icon-[lucide--shield-check]" />
+            <ShieldCheck aria-hidden="true" />
             <span class="ssh-preview-dialog__meta-label">权限</span>
             <span class="ssh-preview-dialog__mono">{{ payload?.permission ?? '—' }}</span>
           </span>
           <span class="ssh-preview-dialog__meta-item">
-            <span aria-hidden="true" class="icon-[lucide--user-round]" />
+            <UserRound aria-hidden="true" />
             <span class="ssh-preview-dialog__meta-label">所有者</span>
             <b>{{ payload?.owner ?? '—' }}</b>
           </span>
           <span class="ssh-preview-dialog__meta-item">
-            <span aria-hidden="true" class="icon-[lucide--clock-3]" />
+            <Clock3 aria-hidden="true" />
             <span class="ssh-preview-dialog__meta-label">修改</span>
             <b>{{ modifiedAtLabel }}</b>
           </span>
@@ -913,7 +935,7 @@ onBeforeUnmount(() => {
 
         <div class="ssh-preview-dialog__toolbar" :class="{ 'is-open': isSearchOpen }">
           <div class="ssh-preview-dialog__search">
-            <span aria-hidden="true" class="icon-[lucide--search]" />
+            <Search aria-hidden="true" />
             <input ref="searchInputRef" v-model="searchQuery" type="text" placeholder="在文件中查找…" autocomplete="off"
               @keydown="handleSearchInputKeydown">
             <span class="ssh-preview-dialog__search-count">{{ findCountLabel }}</span>
@@ -921,14 +943,14 @@ onBeforeUnmount(() => {
 
           <button type="button" class="ssh-preview-dialog__icon-button" :disabled="indexedHits.length === 0"
             aria-label="上一处" @click="stepSearchHit(-1)">
-            <span aria-hidden="true" class="icon-[lucide--chevron-up]" />
+            <ChevronUp aria-hidden="true" />
           </button>
           <button type="button" class="ssh-preview-dialog__icon-button" :disabled="indexedHits.length === 0"
             aria-label="下一处" @click="stepSearchHit(1)">
-            <span aria-hidden="true" class="icon-[lucide--chevron-down]" />
+            <ChevronDown aria-hidden="true" />
           </button>
           <button type="button" class="ssh-preview-dialog__icon-button" aria-label="关闭搜索" @click="closeSearch">
-            <span aria-hidden="true" class="icon-[lucide--x]" />
+            <X aria-hidden="true" />
           </button>
         </div>
 
@@ -1012,11 +1034,11 @@ onBeforeUnmount(() => {
 
         <footer class="ssh-preview-dialog__footer">
           <span class="ssh-preview-dialog__footer-segment">
-            <span aria-hidden="true" class="icon-[lucide--terminal]" />
+            <Terminal aria-hidden="true" />
             <span>{{ languageInfo.label }}</span>
           </span>
           <span class="ssh-preview-dialog__footer-segment">
-            <span aria-hidden="true" class="icon-[lucide--map-pin]" />
+            <MapPin aria-hidden="true" />
             <b>行 {{ cursorPosition.line }}, 列 {{ cursorPosition.column }}</b>
           </span>
 
@@ -1024,11 +1046,11 @@ onBeforeUnmount(() => {
 
           <button type="button" class="ssh-preview-dialog__footer-segment ssh-preview-dialog__footer-segment--button"
             @click="isWrapped = !isWrapped">
-            <span aria-hidden="true" class="icon-[lucide--text-wrap]" />
+            <TextWrap aria-hidden="true" />
             <span>换行 {{ isWrapped ? '开' : '关' }}</span>
           </button>
           <span class="ssh-preview-dialog__footer-segment">
-            <span aria-hidden="true" class="icon-[lucide--indent-increase]" />
+            <IndentIncrease aria-hidden="true" />
             <span>Tab=2</span>
           </span>
           <span class="ssh-preview-dialog__footer-segment">{{ encodingLabel }}</span>

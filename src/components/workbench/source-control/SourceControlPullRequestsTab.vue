@@ -9,7 +9,7 @@
           title="刷新 Pull Request"
           :disabled="isPullRequestSupportLoading || isPullRequestsLoading || isSettingRemote || isBusy"
           @click="handleReloadPullRequestSupport">
-          <span aria-hidden="true" class="icon-[lucide--refresh-cw]" />
+          <RefreshCw aria-hidden="true" />
         </button>
       </div>
     </div>
@@ -187,6 +187,7 @@
 </template>
 
 <script setup lang="ts">
+import { RefreshCw } from '@lucide/vue';
 import { computed, ref } from 'vue';
 import { useDialog } from '@/composables/useDialog';
 import { useMessage } from '@/composables/useMessage';

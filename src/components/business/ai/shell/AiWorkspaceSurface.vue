@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { PanelRight, RotateCw } from '@lucide/vue';
 import { ref } from 'vue';
 import AiAssistantPanel from '@/components/business/ai/shell/AiAssistantPanel.vue';
 import { Card, CardContent } from '@/components/ui/card';
@@ -80,7 +81,7 @@ const handleRestartSidecar = async (): Promise<void> => {
                 :aria-expanded="isRightSidebarVisible"
                 @click="toggleRightSidebar"
               >
-                <span aria-hidden="true" class="icon-[lucide--panel-right]" />
+                <PanelRight aria-hidden="true" />
               </button>
               <button
                 type="button"
@@ -90,11 +91,8 @@ const handleRestartSidecar = async (): Promise<void> => {
                 :disabled="isRestartingSidecar"
                 @click="void handleRestartSidecar()"
               >
-                <span
-                  :class="{ 'ai-sidecar-restart-btn__icon--spinning': isRestartingSidecar }"
-                  aria-hidden="true"
-                  class="icon-[lucide--rotate-cw]"
-                />
+                <RotateCw :class="{ 'ai-sidecar-restart-btn__icon--spinning': isRestartingSidecar }"
+                  aria-hidden="true" />
               </button>
             </template>
           </AiAssistantPanel>
@@ -113,7 +111,7 @@ const handleRestartSidecar = async (): Promise<void> => {
                 aria-expanded="true"
                 @click="toggleRightSidebar"
               >
-                <span aria-hidden="true" class="icon-[lucide--panel-right]" />
+                <PanelRight aria-hidden="true" />
               </button>
               <button
                 type="button"
@@ -123,11 +121,8 @@ const handleRestartSidecar = async (): Promise<void> => {
                 :disabled="isRestartingSidecar"
                 @click="void handleRestartSidecar()"
               >
-                <span
-                  :class="{ 'ai-sidecar-restart-btn__icon--spinning': isRestartingSidecar }"
-                  aria-hidden="true"
-                  class="icon-[lucide--rotate-cw]"
-                />
+                <RotateCw :class="{ 'ai-sidecar-restart-btn__icon--spinning': isRestartingSidecar }"
+                  aria-hidden="true" />
               </button>
             </div>
             <p class="ai-workspace-right-sidebar__empty">这里还没有内容</p>

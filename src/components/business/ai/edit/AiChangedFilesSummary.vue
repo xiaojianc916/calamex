@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ChevronDown, ExternalLink, Maximize2, Pin, PinOff, Undo2 } from '@lucide/vue';
 import { computed, ref } from 'vue';
 import CodeBlock from '@/components/ai-elements/code-block/CodeBlock.vue';
 import {
@@ -159,16 +160,16 @@ const handlePin = (): void => {
       <div class="ai-changed-files-actions">
         <button type="button" class="ai-changed-files-action is-icon-only" :class="{ 'is-active': isPinned }"
           :disabled="isPinning" :aria-label="pinLabel" :title="pinLabel" @click="handlePin">
-          <span v-if="isPinned" aria-hidden="true" class="icon-[lucide--pin-off]" />
-          <span v-else aria-hidden="true" class="icon-[lucide--pin]" />
+          <PinOff v-if="isPinned" aria-hidden="true" />
+          <Pin v-else aria-hidden="true" />
         </button>
         <button type="button" class="ai-changed-files-action" :disabled="isReverting || isReverted"
           :aria-label="undoLabel" @click="handleUndo">
           <span>{{ undoLabel }}</span>
-          <span aria-hidden="true" class="icon-[lucide--undo-2]" />
+          <Undo2 aria-hidden="true" />
         </button>
-        <span class="ai-changed-files-action" aria-hidden="true">审核 <span class="icon-[lucide--external-link]" /></span>
-        <span class="ai-changed-files-action is-icon-only"><span class="icon-[lucide--maximize-2]" /></span>
+        <span class="ai-changed-files-action" aria-hidden="true">审核 <ExternalLink /></span>
+        <span class="ai-changed-files-action is-icon-only"><Maximize2 /></span>
       </div>
     </header>
 
@@ -181,7 +182,7 @@ const handlePin = (): void => {
             <span class="ai-changed-file-stat is-add">+{{ file.additions }}</span>
             <span class="ai-changed-file-stat is-delete">-{{ file.deletions }}</span>
           </span>
-          <span class="icon-[lucide--chevron-down] ai-changed-file-chevron" aria-hidden="true" />
+          <ChevronDown class="ai-changed-file-chevron" aria-hidden="true" />
         </button>
 
         <div v-if="isFileOpen(file) && hunks.length > 0" class="ai-changed-file-diff">

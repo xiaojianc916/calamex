@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Check } from '@lucide/vue';
 import { reactiveOmit } from '@vueuse/core';
 import type { ContextMenuCheckboxItemEmits, ContextMenuCheckboxItemProps } from 'reka-ui';
 import { ContextMenuCheckboxItem, ContextMenuItemIndicator, useForwardPropsEmits } from 'reka-ui';
@@ -19,7 +20,7 @@ data-slot="context-menu-checkbox-item" v-bind="forwarded"
         <span class="pointer-events-none absolute left-2 flex size-3.5 items-center justify-center">
             <ContextMenuItemIndicator>
                 <slot name="indicator-icon">
-                    <span class="icon-[lucide--check] size-4"  />
+                    <Check class="size-4" />
                 </slot>
             </ContextMenuItemIndicator>
         </span>

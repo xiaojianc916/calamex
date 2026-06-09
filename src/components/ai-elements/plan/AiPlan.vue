@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ChevronUp, FileText, Trash2 } from '@lucide/vue';
 import { computed, ref } from 'vue';
 
 import { ApprovalPrompt, type IApprovalPromptOption } from '@/components/ai-elements/approval';
@@ -168,12 +169,12 @@ const handlePlanCancel = (): void => {
   <section class="ai-element-plan" :class="{ 'is-collapsed': isCollapsed }" aria-label="已生成计划">
     <header class="ai-element-plan-header">
       <div class="ai-element-plan-title-group">
-        <span class="icon-[lucide--file-text] ai-element-plan-title-icon" aria-hidden="true" />
+        <FileText class="ai-element-plan-title-icon" aria-hidden="true" />
         <h3 class="ai-element-plan-title" v-text="goal" />
       </div>
       <button type="button" class="ai-element-plan-collapse" :aria-expanded="!isCollapsed"
         :aria-label="isCollapsed ? '展开计划' : '收起计划'" @click="toggleCollapsed">
-        <span class="icon-[lucide--chevron-up] ai-element-plan-collapse-icon" :class="{ 'is-collapsed': isCollapsed }"
+        <ChevronUp class="ai-element-plan-collapse-icon" :class="{ 'is-collapsed': isCollapsed }"
           aria-hidden="true" />
       </button>
     </header>
@@ -198,7 +199,7 @@ const handlePlanCancel = (): void => {
               <button v-if="canEdit" type="button" class="ai-plan-step-remove"
                 :disabled="steps.length <= MIN_STEP_COUNT || isPlanning" aria-label="删除计划步骤" title="删除计划步骤"
                 @click="emit('removeStep', step.id)">
-                <span aria-hidden="true" class="icon-[lucide--trash-2]" />
+                <Trash2 aria-hidden="true" />
               </button>
             </li>
           </ol>

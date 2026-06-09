@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { CircleAlert, Info, OctagonX, TriangleAlert } from '@lucide/vue';
 import { computed } from 'vue';
 import ErrorDetails from '@/components/common/ErrorDetails.vue';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -34,10 +35,10 @@ const alertVariant = computed(() =>
     :variant="alertVariant"
     class="border-[var(--border-subtle)] bg-[var(--surface-soft)] text-[var(--text-primary)]"
   >
-    <span v-if="props.severity === 'info'" class="icon-[lucide--info] text-[var(--statusbar-accent)]"  />
-    <span v-else-if="props.severity === 'warning'" class="icon-[lucide--triangle-alert] text-[var(--warning)]"  />
-    <span v-else-if="props.severity === 'fatal'" class="icon-[lucide--octagon-x] text-[var(--danger)]"  />
-    <span v-else class="icon-[lucide--circle-alert] text-[var(--danger)]"  />
+    <Info class="text-[var(--statusbar-accent)]" v-if="props.severity === 'info'" />
+    <TriangleAlert class="text-[var(--warning)]" v-else-if="props.severity === 'warning'" />
+    <OctagonX class="text-[var(--danger)]" v-else-if="props.severity === 'fatal'" />
+    <CircleAlert class="text-[var(--danger)]" v-else />
     <div class="min-w-0">
       <AlertTitle class="text-[13px] text-[var(--text-primary)]">
         {{ props.title }}

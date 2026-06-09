@@ -1,4 +1,17 @@
 <script setup lang="ts">
+import {
+  ArrowLeft,
+  Check,
+  Eye,
+  EyeOff,
+  Gauge,
+  Pencil,
+  Plus,
+  Search,
+  TriangleAlert,
+  X,
+  Zap,
+} from '@lucide/vue';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import AiProviderIcon from '@/components/business/ai/provider/AiProviderIcon.vue';
 import { Button } from '@/components/ui/button';
@@ -505,21 +518,21 @@ watch(
         <header class="ai-credential-head" :data-pane="pane">
           <Button v-if="pane === 'form'" class="ai-credential-icon-button" variant="ghost" size="icon-sm" type="button"
             aria-label="返回" @click="openList">
-            <span aria-hidden="true" class="icon-[lucide--arrow-left]" />
+            <ArrowLeft aria-hidden="true" />
           </Button>
           <h2 id="ai-credential-title" class="ai-credential-title">
              {{ pane === 'form' ? '编辑凭证' : 'AI 凭证' }} 
           </h2>
           <Button v-if="pane === 'list'" class="ai-credential-head-action" variant="outline" size="sm" type="button"
             @click="openForm()">
-            <span aria-hidden="true" class="icon-[lucide--plus]" />
+            <Plus aria-hidden="true" />
             添加
           </Button>
         </header>
 
         <section v-if="pane === 'list'" class="ai-credential-pane" aria-label="AI 凭证列表">
           <div class="ai-credential-search">
-            <span class="icon-[lucide--search] ai-credential-search__icon" aria-hidden="true" />
+            <Search class="ai-credential-search__icon" aria-hidden="true" />
             <Input v-model="searchText" class="ai-credential-search__input" placeholder="搜索厂商或模型"
               aria-label="搜索厂商或模型" />
           </div>
@@ -536,7 +549,7 @@ watch(
                     <div class="ai-credential-row__name">
                       <span>{{ row.alias }}</span>
                       <span v-if="row.isNarratorProvider" class="ai-credential-default-mark" aria-label="默认小模型厂商" title="默认小模型">
-                        <span aria-hidden="true" class="icon-[lucide--gauge] ai-credential-default-mark__icon" />
+                        <Gauge class="ai-credential-default-mark__icon" aria-hidden="true" />
                       </span>
                     </div>
                     <div class="ai-credential-row__key">
@@ -550,7 +563,7 @@ watch(
                           <Button class="ai-credential-icon-button" variant="ghost" size="icon-sm" type="button"
                             :disabled="isSaving" :aria-label="`设为小模型：${row.preset.label}`"
                             @click="setProviderAsRoleDefault(row.preset, 'narrator')">
-                            <span aria-hidden="true" class="icon-[lucide--gauge]" />
+                            <Gauge aria-hidden="true" />
                           </Button>
                         </TooltipTrigger>
                         <TooltipContent>设为小模型</TooltipContent>
@@ -560,8 +573,8 @@ watch(
                           <Button class="ai-credential-icon-button" variant="ghost" size="icon-sm" type="button"
                             :aria-label="row.hasCredentials ? `编辑 ${row.preset.label} 凭证` : `添加 ${row.preset.label} 凭证`"
                             @click="openForm(row.preset.id)">
-                            <span v-if="row.hasCredentials" aria-hidden="true" class="icon-[lucide--pencil]" />
-                            <span v-else aria-hidden="true" class="icon-[lucide--plus]" />
+                            <Pencil v-if="row.hasCredentials" aria-hidden="true" />
+                            <Plus v-else aria-hidden="true" />
                           </Button>
                         </TooltipTrigger>
                         <TooltipContent>{{ row.hasCredentials ? '编辑' : '添加' }}</TooltipContent>
@@ -581,9 +594,9 @@ watch(
             </div>
           </div>
           <div v-if="feedbackText" class="ai-credential-list-status" :class="`is-${feedbackTone}`">
-            <span v-if="feedbackTone === 'success'" aria-hidden="true" class="icon-[lucide--check]" />
-            <span v-else-if="feedbackTone === 'error'" aria-hidden="true" class="icon-[lucide--x]" />
-            <span v-else aria-hidden="true" class="icon-[lucide--triangle-alert]" />
+            <Check v-if="feedbackTone === 'success'" aria-hidden="true" />
+            <X v-else-if="feedbackTone === 'error'" aria-hidden="true" />
+            <TriangleAlert v-else aria-hidden="true" />
             <span>{{ feedbackText }}</span>
           </div>
         </section>
@@ -610,7 +623,7 @@ watch(
                     @click="handleProviderChange(provider.id)">
                     <AiProviderIcon class="ai-credential-select-icon" :platform-id="provider.id" decorative />
                     <span>{{ provider.label }}</span>
-                    <span aria-hidden="true" class="icon-[lucide--check]" />
+                    <Check aria-hidden="true" />
                   </button>
                 </div>
               </div>
@@ -638,8 +651,8 @@ watch(
                   :aria-invalid="providerKeyError ? 'true' : 'false'" />
                 <Button class="ai-credential-key-toggle" variant="ghost" size="icon-sm" type="button"
                   :aria-label="isKeyVisible ? '隐藏 API Key' : '显示 API Key'" @click="isKeyVisible = !isKeyVisible">
-                  <span v-if="isKeyVisible" aria-hidden="true" class="icon-[lucide--eye-off]" />
-                  <span v-else aria-hidden="true" class="icon-[lucide--eye]" />
+                  <EyeOff v-if="isKeyVisible" aria-hidden="true" />
+                  <Eye v-else aria-hidden="true" />
                 </Button>
               </div>
               <p class="ai-credential-field-msg" :class="{ 'is-error': providerKeyError }">
@@ -669,7 +682,7 @@ watch(
                     @click="handleSmallModelChange(model.id)">
                     <AiProviderIcon class="ai-credential-select-icon" :platform-id="selectedProviderId" decorative />
                     <span>{{ model.label }}</span>
-                    <span aria-hidden="true" class="icon-[lucide--check]" />
+                    <Check aria-hidden="true" />
                   </button>
                 </div>
               </div>
@@ -701,8 +714,8 @@ watch(
                     size="icon-sm" type="button"
                     :aria-label="isTavilyKeyVisible ? '隐藏 Tavily API Key' : '显示 Tavily API Key'"
                     @click="isTavilyKeyVisible = !isTavilyKeyVisible">
-                    <span v-if="isTavilyKeyVisible" aria-hidden="true" class="icon-[lucide--eye-off]" />
-                    <span v-else aria-hidden="true" class="icon-[lucide--eye]" />
+                    <EyeOff v-if="isTavilyKeyVisible" aria-hidden="true" />
+                    <Eye v-else aria-hidden="true" />
                   </Button>
                   <Button class="ai-credential-inline-save" variant="ghost" size="sm" type="button" data-save-tavily
                     :disabled="isSaving" @click="saveTavily">
@@ -717,13 +730,13 @@ watch(
           <footer class="ai-credential-foot">
             <Button class="ai-credential-test" variant="outline" size="sm" type="button"
               :disabled="!canTestSelectedProvider" @click="testSelectedProvider">
-              <span aria-hidden="true" class="icon-[lucide--zap]" />
+              <Zap aria-hidden="true" />
               测试
             </Button>
             <div v-if="feedbackText" class="ai-credential-status" :class="`is-${feedbackTone}`">
-              <span v-if="feedbackTone === 'success'" aria-hidden="true" class="icon-[lucide--check]" />
-              <span v-else-if="feedbackTone === 'error'" aria-hidden="true" class="icon-[lucide--x]" />
-              <span v-else aria-hidden="true" class="icon-[lucide--triangle-alert]" />
+              <Check v-if="feedbackTone === 'success'" aria-hidden="true" />
+              <X v-else-if="feedbackTone === 'error'" aria-hidden="true" />
+              <TriangleAlert v-else aria-hidden="true" />
               <span>{{ feedbackText }}</span>
             </div>
             <div class="ai-credential-spacer"></div>

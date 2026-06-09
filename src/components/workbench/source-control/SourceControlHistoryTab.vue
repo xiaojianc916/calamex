@@ -5,7 +5,7 @@
       <div class="source-control-history-header-actions">
         <button type="button" class="source-control-history-refresh" aria-label="刷新历史" title="刷新历史"
           :disabled="isCommitHistoryLoading || isBusy" @click="handleReloadCommitHistory">
-          <span aria-hidden="true" class="icon-[lucide--refresh-cw]" />
+          <RefreshCw aria-hidden="true" />
         </button>
         <p class="source-control-history-summary" v-text="historyPanelTitle" />
       </div>
@@ -28,6 +28,7 @@
 </template>
 
 <script setup lang="ts">
+import { RefreshCw } from '@lucide/vue';
 import { computed } from 'vue';
 import GitHistoryGraph from '@/components/workbench/GitHistoryGraph.vue';
 import { useMessage } from '@/composables/useMessage';

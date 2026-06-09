@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ChevronDown, ChevronUp, File } from '@lucide/vue';
 import type { CodeBlockNodeProps } from 'markstream-vue';
 import { computed, ref, watch } from 'vue';
 import {
@@ -96,7 +97,7 @@ function handleError(error: Error): void {
   >
     <CodeBlockHeader class="ai-markdown-code-block__header">
       <CodeBlockTitle class="ai-markdown-code-block__title">
-        <span :size="15" aria-hidden="true" class="icon-[lucide--file]" />
+        <File :size="15" aria-hidden="true" />
         <CodeBlockFilename class="ai-markdown-code-block__filename">
           {{ filename }}
         </CodeBlockFilename>
@@ -112,8 +113,8 @@ function handleError(error: Error): void {
           :aria-expanded="isExpanded"
           @click="toggleExpanded"
         >
-          <span v-if="isExpanded" :size="15" aria-hidden="true" class="icon-[lucide--chevron-up]" />
-          <span v-else :size="15" aria-hidden="true" class="icon-[lucide--chevron-down]" />
+          <ChevronUp v-if="isExpanded" :size="15" aria-hidden="true" />
+          <ChevronDown v-else :size="15" aria-hidden="true" />
         </button>
         <CodeBlockCopyButton
           class="ai-markdown-code-block__copy"

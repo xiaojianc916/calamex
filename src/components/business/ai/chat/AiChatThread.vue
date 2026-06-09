@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { MessageSquare } from '@lucide/vue';
 import { computed } from 'vue';
 import {
   Conversation,
@@ -150,7 +151,7 @@ const handleScrollStateChange = (state: IAiChatScrollState): void => {
       <slot v-if="shouldRenderEmptyState" name="empty">
         <ConversationEmptyState class="ai-chat-empty-state" title="还没有对话" description="选择一个提示词，或直接输入你的问题。">
           <template #icon>
-            <span class="icon-[lucide--message-square] size-6" />
+            <MessageSquare class="size-6" />
           </template>
         </ConversationEmptyState>
       </slot>

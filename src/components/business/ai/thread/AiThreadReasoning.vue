@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Brain, BrainCircuit } from '@lucide/vue';
 import { computed } from 'vue';
 import { ThreadEntryDisclosure } from '@/components/ai-elements/thread-entry';
 import AiMarkdown from '@/components/business/ai/chat/AiMarkdown.vue';
@@ -36,12 +37,8 @@ const streamStatus = computed<IAiChatStreamRenderState['status'] | undefined>(()
     @update:open="emit('update:open', $event)"
   >
     <template #leading>
-      <span
-        v-if="entry.streaming"
-        class="icon-[lucide--brain-circuit] size-4 text-blue-500"
-        aria-hidden="true"
-      />
-      <span v-else class="icon-[lucide--brain] size-4 text-muted-foreground" aria-hidden="true" />
+      <BrainCircuit class="size-4 text-blue-500" v-if="entry.streaming" aria-hidden="true" />
+      <Brain class="size-4 text-muted-foreground" v-else aria-hidden="true" />
     </template>
     <template #content>
       <AiMarkdown
