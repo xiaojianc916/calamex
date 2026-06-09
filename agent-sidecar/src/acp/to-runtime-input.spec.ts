@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 
-import type { TContentBlock } from "./protocol.js"
+import type { ContentBlock } from "@agentclientprotocol/sdk"
 import {
 	buildPromptRuntimeInput,
 	contentBlockToText,
@@ -9,7 +9,7 @@ import {
 } from "./to-runtime-input.js"
 
 test("文本块拼接为 goal 与单条 user 消息", () => {
-	const prompt: TContentBlock[] = [
+	const prompt: ContentBlock[] = [
 		{ type: "text", text: "第一段" },
 		{ type: "text", text: "第二段" },
 	]
@@ -42,7 +42,7 @@ test("resource：有内联 text 用 text，无则用 uri", () => {
 		contentBlockToText({
 			type: "resource",
 			resource: { uri: "file:///b.ts", text: "内联内容" },
-		} as TContentBlock),
+		} as ContentBlock),
 		"内联内容",
 	)
 	assert.equal(
@@ -63,7 +63,7 @@ test("image / audio 无内联文本被跳过", () => {
 		contentBlockToText({ type: "audio", data: "x", mimeType: "audio/wav" }),
 		null,
 	)
-	const prompt: TContentBlock[] = [
+	const prompt: ContentBlock[] = [
 		{ type: "text", text: "看图" },
 		{ type: "image", data: "x", mimeType: "image/png" },
 	]

@@ -5,9 +5,9 @@ import {
 	AcpSessionRegistry,
 	type IAcpSessionCreateParams,
 } from "./session-registry.js"
-import type { TMcpServer } from "./mcp-server.js"
+import type { McpServer } from "@agentclientprotocol/sdk"
 
-const stdioServer: TMcpServer = {
+const stdioServer: McpServer = {
 	name: "fs",
 	command: "node",
 	args: ["server.js"],

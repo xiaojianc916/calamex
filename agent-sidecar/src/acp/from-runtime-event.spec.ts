@@ -4,7 +4,6 @@ import {
 	createAgentRuntimeEvent,
 	type IAgentRuntimeEventContext,
 } from "../streaming/stream-types.js"
-import { sessionUpdateSchema } from "./protocol.js"
 import {
 	inferToolKind,
 	projectRuntimeEventToAcp,
@@ -18,12 +17,6 @@ const ctx: IAgentRuntimeEventContext = {
 	now: () => "2026-01-01T00:00:00.000Z",
 }
 
-const assertAllValid = (updates: unknown[]): void => {
-	for (const update of updates) {
-		sessionUpdateSchema.parse(update)
-	}
-}
-
 test("agent.text.delta → agent_message_chunk", () => {
 	const updates = projectRuntimeEventToAcp(
 		createAgentRuntimeEvent(ctx, 1, {
@@ -35,7 +28,6 @@ test("agent.text.delta → agent_message_chunk", () => {
 	assert.deepEqual(updates, [
 		{ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "你好" } },
 	])
-	assertAllValid(updates)
 })
 
 test("agent.reasoning.delta → agent_thought_chunk", () => {
@@ -49,7 +41,6 @@ test("agent.reasoning.delta → agent_thought_chunk", () => {
 	assert.deepEqual(updates, [
 		{ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "thinking" } },
 	])
-	assertAllValid(updates)
 })
 
 test("agent.tool.started → tool_call（复用 toolUseId、推断 kind）", () => {
@@ -72,7 +63,6 @@ test("agent.tool.started → tool_call（复用 toolUseId、推断 kind）", () 
 			rawInput: '{"path":"a.ts"}',
 		},
 	])
-	assertAllValid(updates)
 })
 
 test("agent.tool.started 缺 toolUseId 时回退到 toolName", () => {
@@ -92,7 +82,6 @@ test("agent.tool.started 缺 toolUseId 时回退到 toolName", () => {
 			status: "in_progress",
 		},
 	])
-	assertAllValid(updates)
 })
 
 test("agent.tool.progress → tool_call_update（含进度内容）", () => {
@@ -112,7 +101,6 @@ test("agent.tool.progress → tool_call_update（含进度内容）", () => {
 			content: [{ type: "content", content: { type: "text", text: "50%" } }],
 		},
 	])
-	assertAllValid(updates)
 })
 
 test("agent.tool.progress 无 id 时跳过", () => {
@@ -144,7 +132,6 @@ test("agent.tool.completed 成功 → completed + rawOutput", () => {
 			rawOutput: "done",
 		},
 	])
-	assertAllValid(updates)
 })
 
 test("agent.tool.completed 失败 → failed + 错误内容", () => {
@@ -166,7 +153,6 @@ test("agent.tool.completed 失败 → failed + 错误内容", () => {
 			content: [{ type: "content", content: { type: "text", text: "boom" } }],
 		},
 	])
-	assertAllValid(updates)
 })
 
 test("agent.plan.updated → plan（全量条目快照，1:1 对齐 ACP PlanEntry）", () => {
@@ -191,7 +177,6 @@ test("agent.plan.updated → plan（全量条目快照，1:1 对齐 ACP PlanEntr
 			],
 		},
 	])
-	assertAllValid(updates)
 })
 
 test("纯遥测事件投影为空（链路外）", () => {
@@ -229,7 +214,6 @@ test("projectRuntimeEventsToAcp 保序聚合", () => {
 	assert.equal(updates.length, 2)
 	assert.equal(updates[0]?.sessionUpdate, "agent_message_chunk")
 	assert.equal(updates[1]?.sessionUpdate, "tool_call")
-	assertAllValid(updates)
 })
 
 test("inferToolKind 映射", () => {

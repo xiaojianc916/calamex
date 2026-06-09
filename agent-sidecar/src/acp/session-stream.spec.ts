@@ -4,7 +4,6 @@ import {
 	createAgentRuntimeEvent,
 	type IAgentRuntimeEventContext,
 } from "../streaming/stream-types.js"
-import { sessionNotificationSchema } from "./protocol.js"
 import {
 	toSessionNotifications,
 	toSessionNotificationStream,
@@ -35,9 +34,6 @@ test("单条文本增量 → 带 sessionId 的 agent_message_chunk 通知", () =
 			},
 		},
 	])
-	for (const notification of notifications) {
-		sessionNotificationSchema.parse(notification)
-	}
 })
 
 test("遥测事件不产生通知", () => {
@@ -63,7 +59,4 @@ test("批量成帧保序且跳过遥测", () => {
 	assert.equal(notifications[0]?.update.sessionUpdate, "agent_message_chunk")
 	assert.equal(notifications[1]?.update.sessionUpdate, "tool_call")
 	assert.equal(notifications[0]?.sessionId, "s1")
-	for (const notification of notifications) {
-		sessionNotificationSchema.parse(notification)
-	}
 })
