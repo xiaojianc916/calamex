@@ -361,17 +361,11 @@ fn atomic_write(file_path: &Path, bytes: &[u8]) -> Result<(), String> {
 }
 
 pub(crate) fn decode_script_bytes(bytes: &[u8]) -> Result<(String, DocumentEncoding), String> {
-    if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
-        let content = String::from_utf8(bytes[3..].to_vec()).map_err(|error| error.to_string())?;
-        return Ok((content, DocumentEncoding::Utf8Bom));
-    }
-
-    if bytes.starts_with(&[0xFF, 0xFE]) {
-        return decode_with_encoding(&bytes[2..], UTF_16LE, DocumentEncoding::Utf16le);
-    }
-
-    if bytes.starts_with(&[0xFE, 0xFF]) {
-        return decode_with_encoding(&bytes[2..], UTF_16BE, DocumentEncoding::Utf16be);
+    // 优先用 encoding_rs 官方 BOM 嗅探替代手写的字节前缀比较：
+    // `for_bom` 返回 (编码, BOM 字节数)，据此映射到内部编码并在剥掉 BOM 后解码。
+    if let Some((encoding, bom_length)) = encoding_rs::Encoding::for_bom(bytes) {
+        let document_encoding = bom_document_encoding(encoding)?;
+        return decode_with_encoding(&bytes[bom_length..], encoding, document_encoding);
     }
 
     if bytes.contains(&0) {
@@ -389,6 +383,24 @@ pub(crate) fn decode_script_bytes(bytes: &[u8]) -> Result<(String, DocumentEncod
     }
 
     Err("无法识别文件编码，请确认脚本是否为常见 UTF-8 / GB 编码。".into())
+}
+
+/// 把 `encoding_rs::Encoding::for_bom` 嗅探到的编码映射为内部 `DocumentEncoding`。
+///
+/// `for_bom` 仅会返回 UTF-8 / UTF-16LE / UTF-16BE 三种带 BOM 的编码，这里据此映射；
+/// 其余分支仅作防御，正常不会命中。
+fn bom_document_encoding(
+    encoding: &'static encoding_rs::Encoding,
+) -> Result<DocumentEncoding, String> {
+    if encoding == UTF_8 {
+        Ok(DocumentEncoding::Utf8Bom)
+    } else if encoding == UTF_16LE {
+        Ok(DocumentEncoding::Utf16le)
+    } else if encoding == UTF_16BE {
+        Ok(DocumentEncoding::Utf16be)
+    } else {
+        Err("无法识别文件 BOM 对应的编码。".into())
+    }
 }
 
 pub(crate) fn encode_script_content(
@@ -565,8 +577,60 @@ fn encode_with_encoding_name(content: &str, label: &str) -> Result<Vec<u8>, Stri
 
 #[cfg(test)]
 mod tests {
-    use super::{atomic_write, read_workspace_entries, resolve_save_script_path, resolve_script_file_path};
+    use super::{
+        atomic_write, decode_script_bytes, read_workspace_entries, resolve_save_script_path,
+        resolve_script_file_path,
+    };
     use std::{fs, thread};
+
+    #[test]
+    fn decodes_utf8_bom_and_strips_marker() {
+        let mut bytes = vec![0xEF, 0xBB, 0xBF];
+        bytes.extend_from_slice("echo hi".as_bytes());
+        let (content, encoding) = decode_script_bytes(&bytes).expect("decode utf-8 bom");
+        assert_eq!(content, "echo hi");
+        assert_eq!(encoding.as_str(), "utf-8-bom");
+    }
+
+    #[test]
+    fn decodes_utf16le_bom() {
+        let bytes = [0xFF, 0xFE, 0x48, 0x00, 0x69, 0x00];
+        let (content, encoding) = decode_script_bytes(&bytes).expect("decode utf-16le bom");
+        assert_eq!(content, "Hi");
+        assert_eq!(encoding.as_str(), "utf-16le");
+    }
+
+    #[test]
+    fn decodes_utf16be_bom() {
+        let bytes = [0xFE, 0xFF, 0x00, 0x48, 0x00, 0x69];
+        let (content, encoding) = decode_script_bytes(&bytes).expect("decode utf-16be bom");
+        assert_eq!(content, "Hi");
+        assert_eq!(encoding.as_str(), "utf-16be");
+    }
+
+    #[test]
+    fn decodes_plain_utf8_without_bom() {
+        let (content, encoding) =
+            decode_script_bytes("echo hi".as_bytes()).expect("decode plain utf-8");
+        assert_eq!(content, "echo hi");
+        assert_eq!(encoding.as_str(), "utf-8");
+    }
+
+    #[test]
+    fn falls_back_to_gb18030_for_non_utf8_bytes() {
+        // GB18030 编码的“中”（0xD6 0xD0）不是合法 UTF-8，且不含 BOM / NUL，应回退到 GB18030。
+        let bytes = [0xD6, 0xD0];
+        let (content, encoding) = decode_script_bytes(&bytes).expect("decode gb18030");
+        assert_eq!(content, "中");
+        assert_eq!(encoding.as_str(), "gb18030");
+    }
+
+    #[test]
+    fn rejects_binary_content_with_nul_byte() {
+        let bytes = [0x68, 0x00, 0x69];
+        let error = decode_script_bytes(&bytes).expect_err("binary content should be rejected");
+        assert!(error.contains("二进制"));
+    }
 
     #[test]
     fn rejects_workspace_script_reads_outside_root() {
