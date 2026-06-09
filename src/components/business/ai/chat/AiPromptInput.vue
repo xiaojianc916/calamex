@@ -1218,19 +1218,35 @@ onBeforeUnmount(() => {
 }
 
 .ai-prompt-shell {
+  --ai-prompt-layered-shadow:
+    0 -1px 0 0 #f6f6f5,
+    0 1px 0 0 #f0f0ef,
+    -1px 0 0 0 #f4f4f3,
+    1px 0 0 0 #f4f4f3,
+    0 2px 0 0 #f9f9f9,
+    -2px 0 0 0 #fdfdfd,
+    2px 0 0 0 #fdfdfd,
+    0 1px 2px color-mix(in srgb, var(--text-primary) 8%, transparent),
+    0 14px 30px color-mix(in srgb, var(--text-primary) 6%, transparent);
   width: 100%;
   background: var(--panel-bg);
-  border: 1px solid #efeeec;
+  border-width: 1px;
+  border-style: solid;
+  border-top-color: #efeeec;
+  border-bottom-color: #e9e8e6;
+  border-left-color: #ecebe9;
+  border-right-color: #ecebe9;
   border-radius: 18px;
-  box-shadow: 0 1px 2px color-mix(in srgb, var(--text-primary) 8%, transparent),
-    0 14px 30px color-mix(in srgb, var(--text-primary) 6%, transparent);
+  box-shadow: var(--ai-prompt-layered-shadow);
   overflow: hidden;
 }
 
 .ai-prompt-shell:focus-within {
-  border-color: #efeeec;
-  box-shadow: 0 1px 2px color-mix(in srgb, var(--text-primary) 8%, transparent),
-    0 14px 30px color-mix(in srgb, var(--text-primary) 6%, transparent);
+  border-top-color: #efeeec;
+  border-bottom-color: #e9e8e6;
+  border-left-color: #ecebe9;
+  border-right-color: #ecebe9;
+  box-shadow: var(--ai-prompt-layered-shadow);
 }
 
 .ai-prompt-shell :deep([data-slot='input-group-control']:focus-visible),

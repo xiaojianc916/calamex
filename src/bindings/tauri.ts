@@ -16,7 +16,6 @@ export const commands = {
 	saveSkill: (payload: SaveSkillRequest) => __TAURI_INVOKE<SkillDetailPayload>("save_skill", { payload }),
 	deleteSkill: (payload: DeleteSkillRequest) => __TAURI_INVOKE<DeleteSkillPayload>("delete_skill", { payload }),
 	applyWindowStage: (stage: WindowStage) => __TAURI_INVOKE<null>("apply_window_stage", { stage }),
-	openExternalUrl: (url: string) => __TAURI_INVOKE<null>("open_external_url", { url }),
 	setWindowBackground: (input: SetWindowBackgroundInput, traceId: string | null) => __TAURI_INVOKE<null>("set_window_background", { input, traceId }),
 	createWorkspacePath: (payload: WorkspacePathCreateRequest) => __TAURI_INVOKE<WorkspacePathCreatePayload>("create_workspace_path", { payload }),
 	deleteWorkspacePath: (payload: WorkspacePathDeleteRequest) => __TAURI_INVOKE<WorkspacePathDeletePayload>("delete_workspace_path", { payload }),
