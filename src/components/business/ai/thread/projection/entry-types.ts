@@ -23,6 +23,7 @@ import type { IAiAgentChangedFile, IAiAgentPatchSummary } from '@/types/ai/patch
  * 由工具调用条目自身懒展开,而不是独立卡片。
  */
 export type TAiThreadToolContent =
+  | { type: 'raw'; id: string; title: 'Raw Input' | 'Output'; code: string }
   | { type: 'text'; id: string; markdown: string }
   | { type: 'diff'; id: string; file: IAiAgentChangedFile; patchSummaryId: string }
   | { type: 'terminal'; id: string; title: string; output: string; streaming: boolean };

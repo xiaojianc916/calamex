@@ -47,6 +47,8 @@ export interface ITaskNodeItem {
   terminalOutput?: string;
   terminalTitle?: string;
   terminalStreaming?: boolean;
+  rawInput?: string;
+  rawOutput?: string;
 }
 
 export type TTimelineItem =

@@ -80,6 +80,8 @@ export const createToolNode = (
         : previousNode?.terminalOutput,
       terminalTitle: commandProgress ? 'Windows 终端' : previousNode?.terminalTitle,
       terminalStreaming: commandProgress?.terminalStreaming ?? previousNode?.terminalStreaming,
+      rawInput: previousNode?.rawInput,
+      rawOutput: previousNode?.rawOutput,
     };
   }
 
@@ -120,6 +122,8 @@ export const createToolNode = (
       terminalOutput: commandTerminalOutput,
       terminalTitle: COMMAND_TOOL_NAMES.has(toolName) ? 'Windows 终端' : undefined,
       terminalStreaming: COMMAND_TOOL_NAMES.has(toolName),
+      rawInput: event.inputPreview,
+      rawOutput: previousNode?.rawOutput,
     };
   }
 
@@ -148,6 +152,8 @@ export const createToolNode = (
     terminalOutput: commandTerminalOutput ?? previousNode?.terminalOutput,
     terminalTitle: COMMAND_TOOL_NAMES.has(toolName) ? 'Windows 终端' : previousNode?.terminalTitle,
     terminalStreaming: false,
+    rawInput: previousNode?.rawInput,
+    rawOutput: event.resultPreview ?? event.errorMessage,
   };
 };
 

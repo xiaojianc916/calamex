@@ -35,6 +35,107 @@ const fileNameOf = (filePath: string): string => {
   return segments[segments.length - 1] ?? filePath;
 };
 
+const isNonEmpty = (value: string | undefined): value is string => Boolean(value?.trim());
+
+const parseJsonRecord = (value: string | undefined): Record<string, unknown> | null => {
+  if (!isNonEmpty(value)) {
+    return null;
+  }
+
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+};
+
+const stringifyCandidate = (value: unknown): string | undefined =>
+  typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
+
+const getFirstStringField = (
+  record: Record<string, unknown> | null,
+  keys: readonly string[],
+): string | undefined => {
+  if (!record) {
+    return undefined;
+  }
+
+  for (const key of keys) {
+    const value = stringifyCandidate(record[key]);
+
+    if (value) {
+      return value;
+    }
+  }
+
+  return undefined;
+};
+
+const humanizeToolName = (toolName: string): string =>
+  toolName
+    .replace(/^mcp_/u, '')
+    .replace(/[_-]+/gu, ' ')
+    .replace(/\s+/gu, ' ')
+    .trim()
+    .replace(/^./u, (character) => character.toUpperCase());
+
+const buildZedToolTitle = (toolName: string | undefined, fallback: string, rawInput?: string): string => {
+  if (!toolName) {
+    return fallback;
+  }
+
+  const normalized = toolName.toLowerCase();
+  const input = parseJsonRecord(rawInput);
+  const regex = getFirstStringField(input, ['regex', 'pattern']);
+  const query = getFirstStringField(input, ['query', 'search', 'text']);
+  const path = getFirstStringField(input, ['path', 'filePath', 'file', 'include_pattern', 'includePattern']);
+  const command = getFirstStringField(input, ['command', 'cmd', 'script']);
+  const url = getFirstStringField(input, ['url', 'href']);
+
+  if (/(grep|search_text|search_files|file_search|semantic_search|mastra_workspace_grep)/u.test(normalized)) {
+    if (regex) {
+      return `Search files for regex ${regex}`;
+    }
+
+    if (query) {
+      return `Search files for ${query}`;
+    }
+  }
+
+  if (/search_symbols|listcodeusages|renamesymbol/u.test(normalized)) {
+    return `Search symbols for ${query ?? regex ?? path ?? humanizeToolName(toolName)}`;
+  }
+
+  if (/read.*file|read_text_file|read_file_window|get_file_info/u.test(normalized)) {
+    return `Read file ${path ?? query ?? humanizeToolName(toolName)}`;
+  }
+
+  if (/list_dir|list_directory|directory_tree|list_workspace_entries/u.test(normalized)) {
+    return `List directory ${path ?? humanizeToolName(toolName)}`;
+  }
+
+  if (/write_file|create_file|edit_file|apply_patch|apply_file_edits|workspace_edit|workspace_write/u.test(normalized)) {
+    return `Edit file ${path ?? query ?? humanizeToolName(toolName)}`;
+  }
+
+  if (/run_command|run_in_terminal|execute_command|send_to_terminal/u.test(normalized)) {
+    return `Run command ${command ?? humanizeToolName(toolName)}`;
+  }
+
+  if (/web_search|tavily|search_web/u.test(normalized)) {
+    return `Search the web for ${query ?? regex ?? humanizeToolName(toolName)}`;
+  }
+
+  if (/fetch|browser|navigate/u.test(normalized)) {
+    return `Open ${url ?? query ?? humanizeToolName(toolName)}`;
+  }
+
+  return humanizeToolName(toolName);
+};
+
 /** 工具名是否属于“写入 / 编辑”类(用于无法按路径关联时的兜底归属)。 */
 const isEditLikeToolName = (toolName: string | undefined): boolean => {
   if (toolName === undefined) {
@@ -91,14 +192,36 @@ const resolveToolStatusFromNode = (node: ITaskNodeItem): TAiThreadToolStatus => 
   return node.status;
 };
 
-/** 运行时任务节点 → 工具调用展开内容(此处仅终端;Diff 另行按改动汇总关联)。 */
+const pushRawContent = (
+  content: TAiThreadToolContent[],
+  id: string,
+  title: 'Raw Input' | 'Output',
+  code: string | undefined,
+): void => {
+  if (!isNonEmpty(code)) {
+    return;
+  }
+
+  content.push({
+    type: 'raw',
+    id,
+    title,
+    code,
+  });
+};
+
+/** 运行时任务节点 → 工具调用展开内容(原始输入输出 / 终端;Diff 另行按改动汇总关联)。 */
 const buildToolContentFromNode = (node: ITaskNodeItem): TAiThreadToolContent[] => {
   const content: TAiThreadToolContent[] = [];
+
+  pushRawContent(content, `${node.id}:raw-input`, 'Raw Input', node.rawInput);
+  pushRawContent(content, `${node.id}:raw-output`, 'Output', node.rawOutput);
+
   if (node.terminalOutput !== undefined && node.terminalOutput.length > 0) {
     content.push({
       type: 'terminal',
       id: `${node.id}:terminal`,
-      title: node.terminalTitle ?? '终端',
+      title: node.terminalTitle ?? 'Terminal',
       output: node.terminalOutput,
       streaming: node.terminalStreaming ?? false,
     });
@@ -118,7 +241,7 @@ const mapTaskItemToToolEntry = (
     messageId,
     toolName: node.toolName,
     icon: node.icon,
-    title: node.action,
+    title: buildZedToolTitle(node.toolName, node.action, node.rawInput),
     tags: node.tags,
     tail: node.tail,
     status: resolveToolStatusFromNode(node),
@@ -141,7 +264,7 @@ const mapWireToolCallToToolEntry = (
     toolName: toolCall.name,
     // 复用项目既有图标解析;'system' 是合法的运行时工具大类兜底。
     icon: resolveRuntimeToolIcon(toolCall.name, 'system'),
-    title,
+    title: buildZedToolTitle(toolCall.name, title),
     tags: toolCall.targetPreview !== undefined ? [toolCall.targetPreview] : [],
     status: toolCall.status,
     content: [],
