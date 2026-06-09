@@ -1,5 +1,4 @@
 import type { ToolCallChunk, ToolResultChunk } from '@mastra/core/stream';
-import { type TAgentRuntimeOutputEvent } from '../contracts/runtime-contracts.js';
 import { createRuntimePreview } from '../utils.js';
 import { type TDoneTokenSnapshot, type TCompatibleReasoningDeltaChunk, type TCompatibleToolResultPayload, type TMastraErrorChunk, type TMastraFinishChunk, type TMastraStreamChunk, type TMastraTextDeltaChunk, type TMastraToolCallApprovalChunk, type TMastraToolCallSuspendedChunk, type TMastraToolErrorChunk, type TOmDataChunk, type TOmMemoryCompressedEventDraft, type TSandboxDataChunk } from '../types.js';
 import { toJsonValue, toRecord } from '../utils.js';
@@ -277,18 +276,6 @@ export const extractFinishTokenSnapshot = (chunk: TMastraStreamChunk): TDoneToke
     isFinishChunk(chunk)
         ? parseDoneTokenSnapshot(chunk.payload.output?.usage)
         : undefined;
-
-export const createDoneOutputEvent = (
-    result: string,
-    tokenSnapshot?: TDoneTokenSnapshot,
-): Extract<TAgentRuntimeOutputEvent, { type: 'done' }> => ({
-    type: 'done',
-    result,
-    ...(tokenSnapshot?.promptTokens !== undefined ? { promptTokens: tokenSnapshot.promptTokens } : {}),
-    ...(tokenSnapshot?.completionTokens !== undefined ? { completionTokens: tokenSnapshot.completionTokens } : {}),
-    ...(tokenSnapshot?.totalTokens !== undefined ? { totalTokens: tokenSnapshot.totalTokens } : {}),
-    ...(tokenSnapshot?.usage ? { usage: tokenSnapshot.usage } : {}),
-});
 
 export const isOmDataChunk = (chunk: TMastraStreamChunk): chunk is TOmDataChunk =>
     chunk.type === 'data-om-activation' || chunk.type === 'data-om-observation-end';

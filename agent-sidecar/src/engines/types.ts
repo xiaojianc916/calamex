@@ -13,7 +13,7 @@ import type { TMcpServerName } from '../tools/mcp.js';
 import type { createMastraAgentMemory } from './context/memory.js';
 import type { IAgentPlanStore, TAgentPlanRecord } from './plan/plan-store.js';
 import type { IAgentPlanWorkflowStore } from './plan/plan-workflow-store.js';
-import type { TAgentRuntimeOutputEvent } from './contracts/runtime-contracts.js';
+import type { IAgentTokenUsageSnapshot, TAgentRuntimeOutputEvent } from './contracts/runtime-contracts.js';
 import type { TRollbackStepPath } from './contracts/runtime-input.js';
 
 export const DEFAULT_MASTRA_LOG_FILE = './.agent-sidecar/mastra.log';
@@ -295,9 +295,15 @@ export interface IMastraTextStreamSummary {
     doneTokenSnapshot?: TDoneTokenSnapshot;
 }
 
-export type TDoneTokenSnapshot = Pick<Extract<TAgentRuntimeOutputEvent, {
-    type: 'done';
-}>, 'promptTokens' | 'completionTokens' | 'totalTokens' | 'usage'>;
+/**
+ * 模型流抵达 `finish` chunk 时聚合得到的 token 用量快照。
+ *
+ * 它是规范类型 {@link IAgentTokenUsageSnapshot} 的别名：运行时从 `finish` chunk
+ * 累积（见 `aggregateDoneTokenSnapshot`），并承载于 {@link IAgentRuntimeResponse.usage}，
+ * 由 ACP egress 层据此投影出 `session/update` 的 `usage_update` 通知。它不再与任何
+ * UI 事件变体耦合。
+ */
+export type TDoneTokenSnapshot = IAgentTokenUsageSnapshot;
 
 export interface IPlanWorkflowStepTracker {
     planId: string;

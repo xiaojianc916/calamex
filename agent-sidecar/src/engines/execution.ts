@@ -10,7 +10,6 @@ import { resolveAgentExecutionPolicy } from './policy/execution-policy.js';
 import { createApprovedPlanExecutionContext, createErrorResponse } from './responses.js';
 import { createAgentExecutionSession } from './session/agent-session.js';
 import { buildMastraMessagesFromSessionMessages, createAgentSessionMessagesFromRuntimeInput } from './session/session-messages.js';
-import { createDoneOutputEvent } from './stream/stream-utils.js';
 import { loadMastraMcpTools } from './tools/tools.js';
 import { DEFAULT_EXECUTION_AGENT_ID, DEFAULT_EXECUTION_AGENT_NAME } from './types.js';
 import type { IMastraGenerateOptions } from './types.js';
@@ -292,12 +291,12 @@ export class MastraRuntimeExecution extends MastraRuntimeValidation {
                 });
 
                 executionSession.completeTurn(executionTurn.id, { result });
-                executionSession.push(createDoneOutputEvent(result, streamSummary.doneTokenSnapshot), options);
 
                 return {
                     sessionId,
                     events,
                     result,
+                    ...(streamSummary.doneTokenSnapshot ? { usage: streamSummary.doneTokenSnapshot } : {}),
                 };
             });
         } catch (error) {

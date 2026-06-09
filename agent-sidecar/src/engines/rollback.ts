@@ -207,10 +207,6 @@ export class MastraRuntime extends MastraRuntimeApproval {
                     savedAsLatest: true,
                     message: restoreMessage,
                 }), options);
-                pushUiEvent(events, {
-                    type: 'done',
-                    result: restoreMessage,
-                }, options);
 
                 return {
                     sessionId,

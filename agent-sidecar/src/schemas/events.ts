@@ -5,6 +5,7 @@ import {
   type TAgentRuntimeEvent,
 } from '../streaming/stream-types.js';
 import type { JSONValue } from '../types/json-value.js';
+import { languageModelUsageSchema, type TLanguageModelUsage } from '../models/usage.js';
 import { agentPlanRecordSchema, agentPlanSchema, agentPlanStatusSchema } from './plan.js';
 
 // ----------------------------------------------------------------------
@@ -88,36 +89,11 @@ export const agentRuntimeEventSchema = z.object({
 }).passthrough();
 
 /**
- * 语言模型用量。严格模式：未知字段不再隐式 passthrough，
- * 任何未来扩展请走 `raw` 信封。
+ * 语言模型用量契约已上移到 `../models/usage.js`（canonical 单一真相源）。
+ * 此处再导出，保持本 wire-schema 文件被淘汰前的公共导出面不变。
+ * 传输翻转删除本文件时，依赖方应直接从 `../models/usage.js` 引入。
  */
-export const languageModelUsageSchema = z.object({
-  inputTokens: z.number().nonnegative(),
-  inputTokenDetails: z
-    .object({
-      noCacheTokens: z.number().nonnegative(),
-      cacheReadTokens: z.number().nonnegative(),
-      cacheWriteTokens: z.number().nonnegative(),
-    })
-    .strict()
-    .optional(),
-  outputTokens: z.number().nonnegative(),
-  outputTokenDetails: z
-    .object({
-      textTokens: z.number().nonnegative(),
-      reasoningTokens: z.number().nonnegative(),
-    })
-    .strict()
-    .optional(),
-  totalTokens: z.number().nonnegative(),
-  // 与 inputTokenDetails.cacheReadTokens 等价 —— 优先用 inputTokenDetails。
-  // 兼容旧 caller。
-  cachedInputTokens: z.number().nonnegative().optional(),
-  reasoningTokens: z.number().nonnegative().optional(),
-  raw: z.unknown().optional(),
-}).strict();
-
-export type TLanguageModelUsage = z.infer<typeof languageModelUsageSchema>;
+export { languageModelUsageSchema, type TLanguageModelUsage };
 
 // ----------------------------------------------------------------------
 // UI events
