@@ -3,6 +3,8 @@
  *
  * - protocol：ACP 线上协议契约（单一事实来源）。
  * - from-runtime-event：运行时富事件 → SessionUpdate 的唯一投影边界。
+ * - session-stream：投影结果 → session/update 通知信封的出口成帧。
  */
 export * from "./protocol"
 export * from "./from-runtime-event"
+export * from "./session-stream"
