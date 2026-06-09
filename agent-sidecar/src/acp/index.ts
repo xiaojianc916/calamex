@@ -1,5 +1,8 @@
 /**
- * ACP 协议契约的对外桶文件。整个 AI 栈应从 `@xiaojianc/agent-sidecar` 的 acp 模块
- * 引入协议类型与解析器，而非各处自行定义。
+ * ACP 模块对外入口（barrel）。
+ *
+ * - protocol：ACP 线上协议契约（单一事实来源）。
+ * - from-runtime-event：运行时富事件 → SessionUpdate 的唯一投影边界。
  */
 export * from "./protocol"
+export * from "./from-runtime-event"
