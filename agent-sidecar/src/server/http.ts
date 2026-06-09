@@ -11,11 +11,17 @@ import {
 import type { IAgentRuntimeInput, TAgentMode } from '../engines/contracts/runtime-input.js';
 import type { TAgentSidecarResponse } from '../schemas/events.js';
 import { agentSidecarResponseSchema } from '../schemas/events.js';
+import { createAcpProjector } from '../acp/index.js';
 import { logWarmupResult, warmupLlmConnection } from '../http/warmup.js';
 import { baseAgentRequestSchema } from './request-schemas.js';
 
 const MAX_REQUEST_BYTES = 2 * 1024 * 1024;
 const DEFAULT_RUNTIME_TIMEOUT_MS = 30 * 60 * 1000;
+
+// PR-1：ACP 双发开关。默认关闭；置为 '1' 时在既有 { type:'event' } NDJSON 帧旁
+// 额外加性发出 { type:'acp', update } 帧（ACP SessionUpdate）。旧客户端忽略未知帧，
+// 故关闭即零回归、开启亦不破坏既有协议——为后续 ACP 化提供可灰度的迁移基线。
+const ACP_DUAL_EMIT_ENABLED = process.env.SIDECAR_ACP_DUAL_EMIT === '1';
 
 // -----------------------------------------------------------------------
 // HTTP utilities
@@ -272,11 +278,18 @@ export const handlePostStream = async (
   try {
     const body = await readBody(request);
     writeStreamHeaders(response);
+    // 双发开启时，为本次请求创建独立投影器（工具调用关联状态按请求隔离）。
+    const acp = ACP_DUAL_EMIT_ENABLED ? createAcpProjector() : null;
     const payload = await handler(body, createRuntimeRunOptions(request, (event) => {
       writeNdjsonFrame(response, {
         type: 'event',
         event: toAgentUiEvent(event),
       });
+      if (acp) {
+        for (const update of acp.project(event)) {
+          writeNdjsonFrame(response, { type: 'acp', update });
+        }
+      }
     }));
     writeNdjsonFrame(response, {
       type: 'response',
