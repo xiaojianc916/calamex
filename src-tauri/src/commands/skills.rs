@@ -12,8 +12,10 @@ use crate::commands::contracts::{
     SkillSummaryPayload,
 };
 use crate::storage_paths::roaming_root;
+use atomic_write_file::AtomicWriteFile;
 use std::{
     fs,
+    io::Write,
     path::{Path, PathBuf},
     time::UNIX_EPOCH,
 };
@@ -292,23 +294,16 @@ fn ensure_within_size_limit(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// 原子写入：先写入同目录临时文件，再 rename 覆盖目标，避免中途崩溃截断原文件。
+/// 原子写入：由 atomic-write-file 在目标同目录创建唯一临时文件，完整写入后 commit 覆盖目标，
+/// 避免固定临时文件名在并发保存时互相覆盖 / 删除（与 `workspace_fs` 的原子写入保持一致）。
 fn atomic_write(file_path: &Path, bytes: &[u8]) -> Result<(), String> {
-    let file_name = file_path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .ok_or_else(|| "无法解析目标文件名。".to_string())?;
-    let temp_path = match file_path.parent() {
-        Some(parent) if !parent.as_os_str().is_empty() => parent.join(format!(".{file_name}.tmp")),
-        _ => PathBuf::from(format!(".{file_name}.tmp")),
-    };
-
-    fs::write(&temp_path, bytes).map_err(|error| format!("保存技能失败：{error}"))?;
-    if let Err(error) = fs::rename(&temp_path, file_path) {
-        let _ = fs::remove_file(&temp_path);
-        return Err(format!("保存技能失败：{error}"));
-    }
-    Ok(())
+    let mut file = AtomicWriteFile::options()
+        .open(file_path)
+        .map_err(|error| format!("保存技能失败：{error}"))?;
+    file.write_all(bytes)
+        .map_err(|error| format!("保存技能失败：{error}"))?;
+    file.commit()
+        .map_err(|error| format!("保存技能失败：{error}"))
 }
 
 #[cfg(test)]
