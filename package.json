@@ -67,6 +67,7 @@
     "@tanstack/vue-virtual": "^3.13.28",
     "@tauri-apps/api": "^2.11.0",
     "@tauri-apps/plugin-dialog": "^2.7.1",
+    "@tauri-apps/plugin-opener": "^2.5.4",
     "@tauri-apps/plugin-store": "^2.4.3",
     "@texel/color": "^1.1.11",
     "@vee-validate/zod": "^4.15.1",
