@@ -8,11 +8,44 @@ const MULTILINE_THRESHOLD_WIDTH = 420;
 const POINTER_TOOLTIP_DELAY_MS = 3000;
 const POINTER_WATCHDOG_INTERVAL_MS = 80;
 
+// 原生 CSS 锚点定位（CSS Anchor Positioning）用到的名称与方位映射。
+// 仅在环境支持时启用；不支持时回退到下方的手动定位逻辑。
+const TOOLTIP_ANCHOR_NAME = '--app-tooltip-anchor';
+
+const POSITION_AREA_BY_PLACEMENT: Record<TTooltipPlacement, string> = {
+  top: 'top',
+  bottom: 'bottom',
+  left: 'left',
+  right: 'right',
+};
+
+// position-try-fallbacks：越界时让浏览器自动翻转到对侧 / 垂直方向，等价于原本的候选方位打分。
+const POSITION_TRY_FALLBACKS_BY_PLACEMENT: Record<TTooltipPlacement, string> = {
+  top: 'flip-block, flip-inline',
+  bottom: 'flip-block, flip-inline',
+  left: 'flip-inline, flip-block',
+  right: 'flip-inline, flip-block',
+};
+
 declare global {
   interface Window {
     __SH_APP_TOOLTIP_CLEANUP__?: (() => void) | undefined;
   }
 }
+
+// 检测是否支持原生 CSS 锚点定位。WKWebView / 较旧 webview 不支持时返回 false，
+// 由调用方回退到原有的手动坐标计算 + 滚动 / 缩放跟踪逻辑。
+const supportsCssAnchorPositioning = (): boolean => {
+  if (typeof CSS === 'undefined' || typeof CSS.supports !== 'function') {
+    return false;
+  }
+
+  return (
+    CSS.supports('anchor-name', TOOLTIP_ANCHOR_NAME) &&
+    CSS.supports('position-anchor', TOOLTIP_ANCHOR_NAME) &&
+    CSS.supports('position-area', 'top')
+  );
+};
 
 const disposeAppTooltipSystem = (): void => {
   if (typeof window === 'undefined') {
@@ -159,9 +192,13 @@ export const initAppTooltipSystem = (): void => {
   disposeAppTooltipSystem();
 
   const tooltipElement = ensureTooltipElement();
+  // 一次性探测环境能力：支持则走原生锚点定位，否则走手动定位回退。
+  const useCssAnchorPositioning = supportsCssAnchorPositioning();
   let activeTarget: HTMLElement | null = null;
   let activeSource: TTooltipActivationSource | null = null;
   let pendingTarget: HTMLElement | null = null;
+  // 原生锚点定位下当前被赋予 anchor-name 的目标，隐藏时需清理。
+  let anchoredTarget: HTMLElement | null = null;
   let lastPointerX = 0;
   let lastPointerY = 0;
   let hasPointerPosition = false;
@@ -276,6 +313,18 @@ export const initAppTooltipSystem = (): void => {
     }, POINTER_WATCHDOG_INTERVAL_MS);
   };
 
+  // 清理原生锚点定位遗留的内联样式：移除目标上的 anchor-name 与提示框上的 position-* 属性。
+  const clearTooltipAnchor = (): void => {
+    if (anchoredTarget) {
+      anchoredTarget.style.removeProperty('anchor-name');
+      anchoredTarget = null;
+    }
+
+    tooltipElement.style.removeProperty('position-anchor');
+    tooltipElement.style.removeProperty('position-area');
+    tooltipElement.style.removeProperty('position-try-fallbacks');
+  };
+
   const hideTooltip = (): void => {
     clearPendingTooltip();
     activeTarget = null;
@@ -283,6 +332,7 @@ export const initAppTooltipSystem = (): void => {
     stopPointerWatchdog();
     stopPointerTracking();
     stopViewportTracking();
+    clearTooltipAnchor();
     tooltipElement.classList.remove(
       'is-visible',
       'is-top',
@@ -296,20 +346,15 @@ export const initAppTooltipSystem = (): void => {
     tooltipElement.textContent = '';
   };
 
-  const renderTooltip = (target: HTMLElement, source: TTooltipActivationSource): void => {
-    const tooltipText = target.dataset.tooltip?.trim();
-    if (!tooltipText) {
-      hideTooltip();
-      return;
-    }
-
-    activeTarget = target;
-    activeSource = source;
-    const preferredPlacement = resolveTooltipPlacement(target.dataset.tooltipPlacement);
-    const lockPlacement = target.dataset.tooltipLockPlacement === 'true';
-    const { width, height } = measureTooltip(tooltipElement, tooltipText);
+  // 手动定位回退：沿用原有的候选方位越界打分 + 滚动 / 缩放跟踪。
+  const applyManualPositioning = (
+    target: HTMLElement,
+    width: number,
+    height: number,
+    preferredPlacement: TTooltipPlacement,
+    lockPlacement: boolean,
+  ): void => {
     const targetRect = target.getBoundingClientRect();
-
     const candidatePlacements = lockPlacement
       ? [preferredPlacement]
       : getPlacementCandidates(preferredPlacement);
@@ -340,6 +385,55 @@ export const initAppTooltipSystem = (): void => {
     tooltipElement.style.left = `${Math.round(resolvedPosition.left)}px`;
     tooltipElement.style.top = `${Math.round(resolvedPosition.top)}px`;
     startViewportTracking();
+  };
+
+  // 原生锚点定位：在目标上声明 anchor-name，提示框通过 position-anchor 关联，
+  // position-area 选择方位，position-try-fallbacks 在越界时自动翻转。
+  // 滚动 / 缩放时由浏览器原生跟踪锚点，无需手动重算坐标。
+  const applyAnchorPositioning = (
+    target: HTMLElement,
+    placement: TTooltipPlacement,
+    lockPlacement: boolean,
+  ): void => {
+    if (anchoredTarget && anchoredTarget !== target) {
+      anchoredTarget.style.removeProperty('anchor-name');
+    }
+    anchoredTarget = target;
+    target.style.setProperty('anchor-name', TOOLTIP_ANCHOR_NAME);
+
+    // 交由锚点定位接管，清除手动定位的坐标。
+    tooltipElement.style.left = '';
+    tooltipElement.style.top = '';
+    tooltipElement.style.setProperty('position-anchor', TOOLTIP_ANCHOR_NAME);
+    tooltipElement.style.setProperty('position-area', POSITION_AREA_BY_PLACEMENT[placement]);
+    tooltipElement.style.setProperty(
+      'position-try-fallbacks',
+      lockPlacement ? 'none' : POSITION_TRY_FALLBACKS_BY_PLACEMENT[placement],
+    );
+
+    tooltipElement.classList.remove('is-top', 'is-bottom', 'is-left', 'is-right');
+    tooltipElement.classList.add(`is-${placement}`, 'is-visible');
+  };
+
+  const renderTooltip = (target: HTMLElement, source: TTooltipActivationSource): void => {
+    const tooltipText = target.dataset.tooltip?.trim();
+    if (!tooltipText) {
+      hideTooltip();
+      return;
+    }
+
+    activeTarget = target;
+    activeSource = source;
+    const preferredPlacement = resolveTooltipPlacement(target.dataset.tooltipPlacement);
+    const lockPlacement = target.dataset.tooltipLockPlacement === 'true';
+    const { width, height } = measureTooltip(tooltipElement, tooltipText);
+
+    if (useCssAnchorPositioning) {
+      applyAnchorPositioning(target, preferredPlacement, lockPlacement);
+    } else {
+      applyManualPositioning(target, width, height, preferredPlacement, lockPlacement);
+    }
+
     if (source === 'pointer') {
       startPointerTracking();
       ensurePointerWatchdog();
