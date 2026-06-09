@@ -1,5 +1,7 @@
 use super::*;
+use atomic_write_file::AtomicWriteFile;
 use gix::bstr::ByteSlice;
+use std::io::Write;
 
 #[tauri::command]
 #[specta::specta]
@@ -163,16 +165,10 @@ pub fn create_git_branch(
                 );
             }
             // 直接把 HEAD 指向新分支名，分支引用待首次提交时由 Git 自动创建。
-            // 原子写入：先写临时文件再 rename 覆盖，避免写一半导致 HEAD 损坏。
-            let git_dir = repository.git_dir();
-            let head_path = git_dir.join("HEAD");
-            let temp_path = git_dir.join("HEAD.calamex.tmp");
+            // 原子写入：由 atomic-write-file 在同目录创建唯一临时文件并 commit 覆盖，
+            // 避免写一半导致 .git/HEAD 损坏，也避免固定临时名在并发 / 重入时互相覆盖。
             let content = format!("ref: refs/heads/{branch_name}\n");
-            fs::write(&temp_path, content).map_err(|error| format!("更新 HEAD 失败：{error}"))?;
-            fs::rename(&temp_path, &head_path).map_err(|error| {
-                let _ = fs::remove_file(&temp_path);
-                format!("更新 HEAD 失败：{error}")
-            })?;
+            write_git_head_atomically(repository.git_dir(), &content)?;
         }
     }
 
@@ -180,52 +176,11 @@ pub fn create_git_branch(
     super::status::build_git_repository_status_payload(&repository)
 }
 
+/// 校验分支名是否符合 git check-ref-format（partial ref）。
+/// 直接复用 gix 官方的 `gix::validate::reference::name_partial`，与 git 自身规则保持一致，
+/// 避免手写规则与 git 行为漂移（拒绝空格、`~^:?*[`、`..`、`@{`、控制字符、首尾 `/`、`.lock` 等）。
 fn is_valid_git_branch_name(name: &str) -> bool {
-    if name.is_empty() {
-        return false;
-    }
-    if name.starts_with('.') || name.ends_with('.') {
-        return false;
-    }
-    if name.ends_with(".lock") {
-        return false;
-    }
-    if name.contains("..") {
-        return false;
-    }
-    if name.contains(' ')
-        || name.contains('~')
-        || name.contains('^')
-        || name.contains(':')
-        || name.contains('?')
-        || name.contains('*')
-        || name.contains('[')
-    {
-        return false;
-    }
-    if name.contains("@{") {
-        return false;
-    }
-    if name.as_bytes().iter().any(|&b| b == 0x7f || b < 0x20) {
-        return false;
-    }
-    if name.starts_with('/') || name.ends_with('/') {
-        return false;
-    }
-    // 逐路径段校验（参照 git check-ref-format）：以 "/" 分隔的每个路径段都不能为空、
-    // 不能以 "." 开头、不能以 ".lock" 结尾；空段同时排除了连续 "//" 的情况。
-    for component in name.split('/') {
-        if component.is_empty() {
-            return false;
-        }
-        if component.starts_with('.') {
-            return false;
-        }
-        if component.ends_with(".lock") {
-            return false;
-        }
-    }
-    true
+    !name.is_empty() && gix::validate::reference::name_partial(gix::bstr::BStr::new(name)).is_ok()
 }
 
 fn resolve_branch_sort_key(branch: &GitBranchPayload) -> (usize, usize, &str) {
@@ -521,16 +476,22 @@ fn checkout_update_head(
     } else {
         format!("{target_commit_id}\n")
     };
-    let git_dir = repository.git_dir();
+    // 原子写入：由 atomic-write-file 在同目录创建唯一临时文件并 commit 覆盖目标，
+    // 避免进程在写一半时崩溃导致 .git/HEAD 被截断/损坏，也避免固定临时名并发互相覆盖。
+    write_git_head_atomically(repository.git_dir(), &content)
+}
+
+/// 原子写入 `.git/HEAD`：在 git 目录内创建唯一临时文件，完整写入后 commit 覆盖目标，
+/// 避免写一半导致 HEAD 损坏，也避免固定临时名在并发 / 重入时互相覆盖（与 workspace_fs / skills 一致）。
+fn write_git_head_atomically(git_dir: &Path, content: &str) -> Result<(), String> {
     let head_path = git_dir.join("HEAD");
-    // 原子写入：先写入同目录临时文件，再 rename 覆盖目标，避免进程在写一半时
-    // 崩溃导致 .git/HEAD 被截断/损坏（同一文件系统内 rename 是原子操作）。
-    let temp_path = git_dir.join("HEAD.calamex.tmp");
-    fs::write(&temp_path, content).map_err(|error| format!("更新 HEAD 失败：{error}"))?;
-    fs::rename(&temp_path, &head_path).map_err(|error| {
-        let _ = fs::remove_file(&temp_path);
-        format!("更新 HEAD 失败：{error}")
-    })
+    let mut file = AtomicWriteFile::options()
+        .open(&head_path)
+        .map_err(|error| format!("更新 HEAD 失败：{error}"))?;
+    file.write_all(content.as_bytes())
+        .map_err(|error| format!("更新 HEAD 失败：{error}"))?;
+    file.commit()
+        .map_err(|error| format!("更新 HEAD 失败：{error}"))
 }
 
 /// 从工作区删除某路径（忽略不存在的情况）。
