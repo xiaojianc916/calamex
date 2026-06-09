@@ -42,6 +42,7 @@ import {
 import { skillsTauriService } from '@/services/tauri.skills';
 import type { IAiAttachedFile, IAiConfigPayload, TAiAgentNetworkPermission } from '@/types/ai';
 import { isAiAssistantMode, type TAiAssistantMode } from '@/types/ai/assistant-mode';
+import type { TAiExecutionMode } from '@/types/ai/execution-mode';
 import type { ISelectedSkill, ISkillSummary } from '@/types/ai/skill';
 
 interface IAiPromptModeOption {
@@ -91,6 +92,7 @@ const props = defineProps<{
   isModelSaving?: boolean;
   networkPermission: TAiAgentNetworkPermission;
   isNetworkPermissionSaving?: boolean;
+  executionMode: TAiExecutionMode;
   resolveAttachment: (file: File) => Promise<boolean>;
 }>();
 
@@ -100,6 +102,7 @@ const emit = defineEmits<{
   removeFile: [id: string];
   modelChange: [modelId: string];
   networkPermissionChange: [permission: TAiAgentNetworkPermission];
+  executionModeChange: [mode: TAiExecutionMode];
   informationSourcesOpen: [];
   personalizationOpen: [];
   prewarm: [];
@@ -240,11 +243,17 @@ const modelSelectDisabled = computed(() => props.disabled || props.isModelSaving
 
 const networkPermissionEnabled = computed(() => props.networkPermission === 'allowed-this-run');
 
+// 执行自主性:autonomous = 开启「自主 plan 模式」(批准后无人值守闭环);
+// 默认 interactive = 逐步门控。对标 Cline Auto-approve / Cursor Auto-run。
+const executionAutonomous = computed(() => props.executionMode === 'autonomous');
+
 const activeModeOption = computed(
   () => modeOptions.find((option) => option.key === activeMode.value) ?? modeOptions[0],
 );
 
 const networkPermissionLabel = computed(() => (networkPermissionEnabled.value ? '已允许' : '询问'));
+
+const executionModeLabel = computed(() => (executionAutonomous.value ? '已开启' : '已关闭'));
 
 const normalizePendingAttachmentName = (file: File): string => {
   const normalizedName = file.name.trim();
@@ -586,6 +595,15 @@ const toggleNetworkPermission = (): void => {
   emit('networkPermissionChange', networkPermissionEnabled.value ? 'ask' : 'allowed-this-run');
 };
 
+// 切换自主 plan 模式:interactive(逐步门控) ⇄ autonomous(无人值守闭环)。
+// executionMode 是本地同步状态,无需 saving 态。
+const toggleExecutionMode = (): void => {
+  if (props.disabled) {
+    return;
+  }
+  emit('executionModeChange', executionAutonomous.value ? 'interactive' : 'autonomous');
+};
+
 const handleOpenInformationSources = (): void => {
   emit('informationSourcesOpen');
 };
@@ -882,6 +900,25 @@ onMounted(() => {
                       />
                     </button>
                   </div>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  v-if="activeMode === 'plan'"
+                  class="ai-settings-menu-item"
+                  :disabled="disabled"
+                  @select.prevent="toggleExecutionMode"
+                >
+                  <span class="icon-[lucide--bot] ai-settings-menu-icon" />
+                  <span class="ai-settings-menu-label">自主plan模式</span>
+                  <button
+                    type="button"
+                    class="ai-network-switch"
+                    :class="{ 'is-on': executionAutonomous }"
+                    :aria-pressed="executionAutonomous"
+                    tabindex="-1"
+                  >
+                    <span class="ai-network-switch__thumb" aria-hidden="true"></span>
+                    <span class="sr-only" v-text="executionModeLabel"></span>
+                  </button>
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   class="ai-settings-menu-item"

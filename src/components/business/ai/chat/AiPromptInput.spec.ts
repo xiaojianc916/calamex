@@ -31,6 +31,7 @@ interface IAiPromptInputTestProps {
   hasAttachments: boolean;
   config: ReturnType<typeof createDefaultAiConfigPayload>;
   networkPermission: 'ask' | 'allowed-this-run' | 'denied';
+  executionMode: 'interactive' | 'autonomous';
   tokenContext?: IAiTokenContextProps;
   resolveAttachment: (file: File) => Promise<boolean>;
   'onUpdate:modelValue': (value: string) => void;
@@ -48,6 +49,7 @@ const mountPromptInput = (overrides: Partial<IAiPromptInputTestProps> = {}) =>
       hasAttachments: false,
       config: createDefaultAiConfigPayload(),
       networkPermission: 'ask',
+      executionMode: 'interactive',
       resolveAttachment: () => Promise.resolve(true),
       'onUpdate:modelValue': () => undefined,
       ...overrides,
