@@ -160,7 +160,7 @@ describe('SearchSidebarPanel', () => {
         scope: 'all',
         useStructural: false,
         contentFuzzy: false,
-        limit: 2000,
+        limit: 50000,
       }),
       expect.objectContaining({ signal: expect.anything() }),
     );

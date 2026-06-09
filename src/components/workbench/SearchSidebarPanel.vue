@@ -301,6 +301,7 @@ import { toErrorMessage } from '@/utils/error';
 import { areFileSystemPathsEqual } from '@/utils/path';
 import type {
   IFlatSearchRow,
+  IHighlightedSegment,
   IReplacementFileView,
   IReplacementLineView,
   ISearchResultGroup,
@@ -338,7 +339,9 @@ const SEARCH_SCOPE_LABELS: Record<TWorkspaceSearchScope, string> = {
 };
 
 const SEARCH_DEBOUNCE_MS = 180;
-const SEARCH_RESULT_LIMIT = 2000;
+// 内容命中以「每处匹配」为单位，单个超大文件可能贡献上万条；后端 MAX_SEARCH_LIMIT 已同步提到
+// 50000，这里前端上限与之对齐。结果再多也由虚拟滚动 + 惰性高亮分段承接，不会一次性预处理全部。
+const SEARCH_RESULT_LIMIT = 50000;
 const SEARCH_RESULT_CONTEXT_CHARS = 28;
 const REPLACEMENT_FILE_LIMIT = 200;
 const SEARCH_VIRTUALIZE_THRESHOLD = 100;
@@ -472,25 +475,35 @@ const effectiveExcludePatterns = computed(() =>
 );
 
 const toResultItem = (result: IWorkspaceSearchResult): ISearchResultItem => {
-  const rawSnippetText = result.lineText ?? result.name;
-  const rawMatchRange =
-    result.matchStart !== null && result.matchEnd !== null
-      ? ([result.matchStart, result.matchEnd] as [number, number])
-      : null;
-  const preview =
-    result.lineText === null
-      ? { text: rawSnippetText, range: rawMatchRange }
-      : trimBoundaryWhitespaceWithRange(rawSnippetText, rawMatchRange);
+  // 高亮分段（buildCompactHighlightedSegments / matcher.highlight）只有在该行真正渲染时才需要。
+  // 结果上限提升到数万后，eager 地为每条结果预计算分段会成为 O(n) 预处理瓶颈（虚拟滚动只省 DOM、
+  // 不省这步计算），因此改为惰性 getter + 闭包缓存：仅当模板访问可见行的 snippetSegments 时才计算一次。
+  // 缓存无需手动失效——查询/选项一变就会触发新搜索 → 新 backendResults → allResults 重算出带全新
+  // getter 的结果项。
+  let cachedSegments: IHighlightedSegment[] | null = null;
 
   return {
     path: result.path,
     relativePath: result.relativePath,
     resultKey: `${result.kind}:${result.path}:${result.lineNumber ?? 0}:${result.matchStart ?? -1}:${result.matchEnd ?? -1}`,
     reason: result.kind,
-    snippetSegments:
-      result.kind === 'content' && preview.range
-        ? buildCompactHighlightedSegments(preview.text, preview.range, SEARCH_RESULT_CONTEXT_CHARS)
-        : matcher.value.highlight(trimBoundaryWhitespace(preview.text)),
+    get snippetSegments(): IHighlightedSegment[] {
+      if (cachedSegments) return cachedSegments;
+      const rawSnippetText = result.lineText ?? result.name;
+      const rawMatchRange =
+        result.matchStart !== null && result.matchEnd !== null
+          ? ([result.matchStart, result.matchEnd] as [number, number])
+          : null;
+      const preview =
+        result.lineText === null
+          ? { text: rawSnippetText, range: rawMatchRange }
+          : trimBoundaryWhitespaceWithRange(rawSnippetText, rawMatchRange);
+      cachedSegments =
+        result.kind === 'content' && preview.range
+          ? buildCompactHighlightedSegments(preview.text, preview.range, SEARCH_RESULT_CONTEXT_CHARS)
+          : matcher.value.highlight(trimBoundaryWhitespace(preview.text));
+      return cachedSegments;
+    },
     score: result.score,
     lineNumber: result.lineNumber,
     matchStart: result.matchStart,
