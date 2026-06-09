@@ -30,10 +30,20 @@ const EMPTY_ENVIRONMENT: IExecutionEnvironment = {
   executors: [],
 };
 const WORKBENCH_RUNTIME_WAIT_MS = 160;
+// Git 状态刷新通常来自保存文件、工作区 watcher、Git 面板操作等高频入口。
+// 用短 debounce 聚合同一波文件系统事件；若已有刷新在途，则只排队最新一次，避免
+// N 个 watcher 事件触发 N 次完整 git status。
+const GIT_STATUS_REFRESH_DEBOUNCE_MS = 240;
 
 type TCancelableDetectEnvironment = (options?: {
   signal?: AbortSignal;
 }) => Promise<IExecutionEnvironment>;
+
+type TQueuedGitStatusRefresh = {
+  workspaceRootPath: string;
+  resolve: () => void;
+  reject: (error: unknown) => void;
+};
 
 const isCanceledIpcError = (error: unknown): boolean =>
   isAppError(error) && error.code === 'ipc.canceled';
@@ -60,6 +70,9 @@ export const useWorkbench = () => {
   const runtimeScope = createRuntimeScope('workbench');
   const executionEnvironmentRunner = runtimeScope.latestTask('execution-environment');
   let cancelExecutionEnvironmentSyncTimer: (() => void) | null = null;
+  let cancelGitStatusRefreshTimer: (() => void) | null = null;
+  let queuedGitStatusRefreshes: TQueuedGitStatusRefresh[] = [];
+  let inFlightGitStatusRefresh: Promise<void> | null = null;
 
   const clearExecutionEnvironmentSyncTimer = (): void => {
     cancelExecutionEnvironmentSyncTimer?.();
@@ -69,6 +82,11 @@ export const useWorkbench = () => {
   const cancelExecutionEnvironmentSync = (): void => {
     clearExecutionEnvironmentSyncTimer();
     executionEnvironmentRunner.cancel();
+  };
+
+  const clearGitStatusRefreshTimer = (): void => {
+    cancelGitStatusRefreshTimer?.();
+    cancelGitStatusRefreshTimer = null;
   };
 
   onScopeDispose(() => {
@@ -131,20 +149,72 @@ export const useWorkbench = () => {
     await saveSession(editorStore.sessionSnapshot);
   };
 
-  const refreshGitRepositoryStatus = async (
-    workspaceRootPath: string | null = editorStore.workspaceRootPath,
-  ): Promise<void> => {
-    if (!workspaceRootPath) {
-      gitStore.reset();
-      return;
-    }
-
+  const runGitRepositoryStatusRefresh = async (workspaceRootPath: string): Promise<void> => {
     try {
       await gitStore.refreshRepositoryStatus(workspaceRootPath);
     } catch (error) {
       const message = toErrorMessage(error, '刷新 Git 状态失败');
       editorStore.appendLog('error', '刷新 Git 状态失败', message);
     }
+  };
+
+  const flushGitStatusRefreshQueue = (): void => {
+    clearGitStatusRefreshTimer();
+    if (inFlightGitStatusRefresh || queuedGitStatusRefreshes.length === 0) {
+      return;
+    }
+
+    const queuedRefreshes = queuedGitStatusRefreshes;
+    queuedGitStatusRefreshes = [];
+    // 同一批队列只刷新最后一次请求的工作区。前面的请求与它共享结果，避免旧路径/旧事件
+    // 把 watcher 高频刷新放大成多次完整 status。
+    const workspaceRootPath = queuedRefreshes[queuedRefreshes.length - 1].workspaceRootPath;
+
+    inFlightGitStatusRefresh = runGitRepositoryStatusRefresh(workspaceRootPath)
+      .then(() => {
+        queuedRefreshes.forEach((entry) => entry.resolve());
+      })
+      .catch((error) => {
+        queuedRefreshes.forEach((entry) => entry.reject(error));
+      })
+      .finally(() => {
+        inFlightGitStatusRefresh = null;
+        if (queuedGitStatusRefreshes.length > 0) {
+          cancelGitStatusRefreshTimer = runtimeScope.setTimeout(() => {
+            cancelGitStatusRefreshTimer = null;
+            flushGitStatusRefreshQueue();
+          }, 0);
+        }
+      });
+  };
+
+  const scheduleGitStatusRefreshQueue = (): void => {
+    if (inFlightGitStatusRefresh) {
+      return;
+    }
+
+    clearGitStatusRefreshTimer();
+    cancelGitStatusRefreshTimer = runtimeScope.setTimeout(() => {
+      cancelGitStatusRefreshTimer = null;
+      flushGitStatusRefreshQueue();
+    }, GIT_STATUS_REFRESH_DEBOUNCE_MS);
+  };
+
+  const refreshGitRepositoryStatus = (
+    workspaceRootPath: string | null = editorStore.workspaceRootPath,
+  ): Promise<void> => {
+    if (!workspaceRootPath) {
+      clearGitStatusRefreshTimer();
+      queuedGitStatusRefreshes.forEach((entry) => entry.resolve());
+      queuedGitStatusRefreshes = [];
+      gitStore.reset();
+      return Promise.resolve();
+    }
+
+    return new Promise<void>((resolve, reject) => {
+      queuedGitStatusRefreshes.push({ workspaceRootPath, resolve, reject });
+      scheduleGitStatusRefreshQueue();
+    });
   };
 
   const {

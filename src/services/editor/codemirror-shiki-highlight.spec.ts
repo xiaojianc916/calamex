@@ -13,6 +13,8 @@ vi.mock('@/services/editor/shiki-shared', () => ({
 
 import {
   computeShikiHighlightRange,
+  createShikiHighlightRequestKey,
+  isShikiHighlightRangeCovered,
   resolveShikiHighlightUpdateAction,
 } from './codemirror-shiki-highlight';
 
@@ -138,5 +140,65 @@ describe('computeShikiHighlightRange', () => {
         fromDocumentStart: false,
       }),
     ).toEqual({ startLine: 260, endLine: 400 });
+  });
+});
+
+describe('isShikiHighlightRangeCovered', () => {
+  it('请求范围完全落在已覆盖范围内时返回 true', () => {
+    expect(
+      isShikiHighlightRangeCovered({
+        coveredStartLine: 1,
+        coveredEndLine: 200,
+        requestedStartLine: 80,
+        requestedEndLine: 120,
+      }),
+    ).toBe(true);
+  });
+
+  it('已覆盖范围缺失或只部分相交时返回 false', () => {
+    expect(
+      isShikiHighlightRangeCovered({
+        coveredStartLine: null,
+        coveredEndLine: 200,
+        requestedStartLine: 80,
+        requestedEndLine: 120,
+      }),
+    ).toBe(false);
+
+    expect(
+      isShikiHighlightRangeCovered({
+        coveredStartLine: 80,
+        coveredEndLine: 120,
+        requestedStartLine: 60,
+        requestedEndLine: 100,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe('createShikiHighlightRequestKey', () => {
+  it('同一文档版本、语言和切片范围生成稳定 key', () => {
+    expect(
+      createShikiHighlightRequestKey({
+        language: 'typescript',
+        docVersion: 3,
+        startLine: 1,
+        endLine: 120,
+        codeLength: 4096,
+      }),
+    ).toBe('typescript:3:1:120:4096');
+  });
+
+  it('文档版本变化会得到不同 key，避免旧切片复用', () => {
+    const base = {
+      language: 'typescript',
+      startLine: 1,
+      endLine: 120,
+      codeLength: 4096,
+    };
+
+    expect(createShikiHighlightRequestKey({ ...base, docVersion: 3 })).not.toBe(
+      createShikiHighlightRequestKey({ ...base, docVersion: 4 }),
+    );
   });
 });

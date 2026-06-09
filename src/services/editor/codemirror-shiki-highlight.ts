@@ -29,6 +29,10 @@ const HIGHLIGHT_OVERSCAN_LINES = 40;
 // 输入停顿后过多久触发一次重算（毫秒）；过小会让连续输入仍频繁重算，过大高亮滞后明显。
 const HIGHLIGHT_RECOMPUTE_DEBOUNCE_MS = 90;
 
+// 视口滚动触发的重算使用 rAF 合帧：一帧内多次 viewportChanged 只提交一次 Worker 任务。
+// 不做大块 debounce，避免快速滚动后可见区高亮明显滞后。
+const HIGHLIGHT_VIEWPORT_FRAME_FALLBACK_MS = 16;
+
 // Shiki token 样式种类远少于 token 数量。缓存 Decoration.mark 可避免滚动/重算时
 // 为同一 style 字符串反复分配短生命周期对象；设置上限避免异常主题造成无界增长。
 const MAX_TOKEN_DECORATION_CACHE_SIZE = 512;
@@ -65,6 +69,15 @@ type TShikiWorkerHighlightResult = {
   startLine: number;
   endLine: number;
   tokens: IShikiThemedToken[][] | null;
+};
+
+type TShikiHighlightRequestIdentity = {
+  key: string;
+  requestId: number;
+  docVersion: number;
+  language: string;
+  startLine: number;
+  endLine: number;
 };
 
 /**
@@ -120,6 +133,32 @@ export const computeShikiHighlightRange = (input: {
     : Math.max(1, input.firstVisibleLine - input.overscanLines);
   return { startLine, endLine };
 };
+
+export const isShikiHighlightRangeCovered = (input: {
+  coveredStartLine: number | null;
+  coveredEndLine: number | null;
+  requestedStartLine: number;
+  requestedEndLine: number;
+}): boolean =>
+  input.coveredStartLine !== null &&
+  input.coveredEndLine !== null &&
+  input.requestedStartLine >= input.coveredStartLine &&
+  input.requestedEndLine <= input.coveredEndLine;
+
+export const createShikiHighlightRequestKey = (input: {
+  language: string;
+  docVersion: number;
+  startLine: number;
+  endLine: number;
+  codeLength: number;
+}): string =>
+  [
+    input.language,
+    input.docVersion,
+    input.startLine,
+    input.endLine,
+    input.codeLength,
+  ].join(':');
 
 const shikiLanguageField = StateField.define<string>({
   create: () => 'text',
@@ -266,9 +305,11 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
     decorations: DecorationSet;
     private destroyed = false;
     private recomputeTimer: number | null = null;
+    private viewportRecomputeTimer: number | null = null;
     private nextRequestId = 1;
     private latestRequestId = 0;
     private docVersion = 0;
+    private pendingRequest: TShikiHighlightRequestIdentity | null = null;
     // 已成功高亮的语言与行范围；用于滚动时判断当前可见区是否已被覆盖，覆盖则跳过重算。
     private highlightedLanguage: string | null = null;
     private highlightedStartLine: number | null = null;
@@ -305,7 +346,14 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
       });
 
       if (action === 'recompute') {
+        if (!languageChanged && !recomputeRequested && update.viewportChanged) {
+          // 仅滚动时按 animation frame 合并，避免滚动事件洪水反复打 Worker。
+          this.scheduleViewportRecompute(update.view);
+          return;
+        }
+
         this.cancelScheduledRecompute();
+        this.cancelScheduledViewportRecompute();
         // 语言切换 / 防抖重算请求需强制重建；仅滚动则允许复用已覆盖范围。
         const allowReuse = !languageChanged && !recomputeRequested;
         this.recompute(update.view, { allowReuse });
@@ -317,6 +365,8 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
         // 先作废缓存，再由防抖重算按最新视口重建。
         this.decorations = this.decorations.map(update.changes);
         this.invalidateHighlightedRange();
+        this.pendingRequest = null;
+        this.cancelScheduledViewportRecompute();
         this.scheduleRecompute(update.view);
       }
     }
@@ -324,6 +374,8 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
     destroy(): void {
       this.destroyed = true;
       this.cancelScheduledRecompute();
+      this.cancelScheduledViewportRecompute();
+      this.pendingRequest = null;
     }
 
     private invalidateHighlightedRange(): void {
@@ -337,6 +389,18 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
         window.clearTimeout(this.recomputeTimer);
         this.recomputeTimer = null;
       }
+    }
+
+    private cancelScheduledViewportRecompute(): void {
+      if (this.viewportRecomputeTimer === null) {
+        return;
+      }
+      if (typeof window.cancelAnimationFrame === 'function') {
+        window.cancelAnimationFrame(this.viewportRecomputeTimer);
+      } else {
+        window.clearTimeout(this.viewportRecomputeTimer);
+      }
+      this.viewportRecomputeTimer = null;
     }
 
     private scheduleRecompute(view: EditorView): void {
@@ -355,11 +419,32 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
       }, HIGHLIGHT_RECOMPUTE_DEBOUNCE_MS);
     }
 
+    private scheduleViewportRecompute(view: EditorView): void {
+      if (this.viewportRecomputeTimer !== null) {
+        return;
+      }
+      const run = (): void => {
+        this.viewportRecomputeTimer = null;
+        if (this.destroyed) {
+          return;
+        }
+        this.recompute(view, { allowReuse: true });
+      };
+
+      if (typeof window.requestAnimationFrame === 'function') {
+        this.viewportRecomputeTimer = window.requestAnimationFrame(run);
+        return;
+      }
+
+      this.viewportRecomputeTimer = window.setTimeout(run, HIGHLIGHT_VIEWPORT_FRAME_FALLBACK_MS);
+    }
+
     private recompute(view: EditorView, options: { allowReuse: boolean }): void {
       const language = view.state.field(shikiLanguageField, false) ?? 'text';
       if (!resolveShikiLanguageId(language)) {
         this.decorations = Decoration.none;
         this.invalidateHighlightedRange();
+        this.pendingRequest = null;
         return;
       }
 
@@ -372,32 +457,72 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
       if (!slice) {
         this.decorations = Decoration.none;
         this.invalidateHighlightedRange();
+        this.pendingRequest = null;
+        return;
+      }
+
+      const docVersion = this.docVersion;
+      const requestKey = createShikiHighlightRequestKey({
+        language,
+        docVersion,
+        startLine: slice.startLine,
+        endLine: slice.endLine,
+        codeLength: slice.code.length,
+      });
+
+      if (
+        options.allowReuse &&
+        this.pendingRequest &&
+        this.pendingRequest.language === language &&
+        this.pendingRequest.docVersion === docVersion &&
+        (this.pendingRequest.key === requestKey ||
+          isShikiHighlightRangeCovered({
+            coveredStartLine: this.pendingRequest.startLine,
+            coveredEndLine: this.pendingRequest.endLine,
+            requestedStartLine: slice.startLine,
+            requestedEndLine: slice.endLine,
+          }))
+      ) {
         return;
       }
 
       const requestId = this.nextRequestId;
-      const docVersion = this.docVersion;
       this.nextRequestId += 1;
       this.latestRequestId = requestId;
-      void tokenizeWithShikiWorker(slice.code, language).then((tokens) => {
-        if (this.destroyed) {
-          return;
-        }
-        try {
-          view.dispatch({
-            effects: shikiWorkerResultEffect.of({
-              requestId,
-              docVersion,
-              language,
-              startLine: slice.startLine,
-              endLine: slice.endLine,
-              tokens,
-            }),
-          });
-        } catch {
-          // view 已销毁，忽略。
-        }
-      });
+      this.pendingRequest = {
+        key: requestKey,
+        requestId,
+        docVersion,
+        language,
+        startLine: slice.startLine,
+        endLine: slice.endLine,
+      };
+
+      void tokenizeWithShikiWorker(slice.code, language)
+        .then((tokens) => {
+          if (this.destroyed) {
+            return;
+          }
+          try {
+            view.dispatch({
+              effects: shikiWorkerResultEffect.of({
+                requestId,
+                docVersion,
+                language,
+                startLine: slice.startLine,
+                endLine: slice.endLine,
+                tokens,
+              }),
+            });
+          } catch {
+            // view 已销毁，忽略。
+          }
+        })
+        .finally(() => {
+          if (this.pendingRequest?.requestId === requestId) {
+            this.pendingRequest = null;
+          }
+        });
     }
 
     private takeWorkerResult(update: ViewUpdate): TShikiWorkerHighlightResult | null {
@@ -434,11 +559,7 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
     }
 
     private isVisibleRangeHighlighted(view: EditorView, language: string): boolean {
-      if (
-        this.highlightedLanguage !== language ||
-        this.highlightedStartLine === null ||
-        this.highlightedEndLine === null
-      ) {
+      if (this.highlightedLanguage !== language) {
         return false;
       }
       const { visibleRanges } = view;
@@ -448,9 +569,12 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
       const { doc } = view.state;
       const firstVisibleLine = doc.lineAt(visibleRanges[0].from).number;
       const lastVisibleLine = doc.lineAt(visibleRanges[visibleRanges.length - 1].to).number;
-      return (
-        firstVisibleLine >= this.highlightedStartLine && lastVisibleLine <= this.highlightedEndLine
-      );
+      return isShikiHighlightRangeCovered({
+        coveredStartLine: this.highlightedStartLine,
+        coveredEndLine: this.highlightedEndLine,
+        requestedStartLine: firstVisibleLine,
+        requestedEndLine: lastVisibleLine,
+      });
     }
   },
   {
