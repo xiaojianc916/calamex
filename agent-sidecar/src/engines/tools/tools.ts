@@ -13,6 +13,7 @@ import { createMastraBrowser, createMastraWorkspace } from '../workspace.js';
 import { CURRENT_FILE_TOOL_CONTENT_MAX_CHARS, CURRENT_FILE_TOOL_MODEL_OUTPUT_MAX_CHARS, MAX_CONSECUTIVE_SIMILAR_TOOL_ERRORS, type IMastraMcpBundle, type IMastraToolBudgetStats, type TMastraToolProfile } from '../types.js';
 import { isExecutableToolLike, toNonEmptyString, toRecord } from '../utils.js';
 import { createMastraToolLoadPlan } from '../workspace.js';
+import { formatWithLineNumbers } from './read-file-format.js';
 
 export const findCurrentFileReference = (
     contextReferences: readonly IAgentContextReferenceInput[] = [],
@@ -31,22 +32,26 @@ export const createUiContextTools = (
     return {
         read_current_file: createTool({
             id: 'read_current_file',
-            description: 'Read the current editor file preview only when the user asks about the current file. Takes no arguments; output is capped, use mastra_workspace_read_file with line ranges when more content is needed.',
+            description: 'Read a line-numbered preview of the current editor file (cat -n style: line numbers reflect the file\u0027s real line numbers). Use only when the user asks about the current file. Takes no arguments; output is capped \u2014 use mastra_workspace_read_file with start_line/end_line for full content or specific sections.',
             inputSchema: z.object({}).passthrough(),
             execute: async () => {
-                const content = truncateModelOutputText(
+                const preview = truncateModelOutputText(
                     currentFile.contentPreview,
                     CURRENT_FILE_TOOL_CONTENT_MAX_CHARS,
+                    { includeNotice: false },
                 );
+                // 行号锚定到文件真实行号：引用自带行区间时以其起始行为基准，否则从第 1 行起。
+                // 与 Zed read_file 的 cat -n 输出对齐，便于据此用 start_line/end_line 精确续读或编辑。
+                const baseLine = currentFile.range?.startLine ?? 1;
 
                 return {
                     path: currentFile.path,
                     label: currentFile.label,
                     range: currentFile.range,
                     redacted: currentFile.redacted,
-                    content: content.text,
-                    truncated: content.truncated,
-                    originalCharCount: content.originalCharCount,
+                    content: formatWithLineNumbers(preview.text, baseLine),
+                    truncated: preview.truncated,
+                    originalCharCount: preview.originalCharCount,
                 };
             },
             toModelOutput: (output) => createJsonToolModelOutput(compactModelOutput(output, {
