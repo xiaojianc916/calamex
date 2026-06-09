@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "window",
-  "description": "Window domain permissions for native window lifecycle and titlebar interactions. Commands: apply_window_stage / begin_startup_transition / finalize_startup_transition / set_window_background.",
+  "description": "Window domain permissions for native window lifecycle and titlebar interactions. Commands: apply_window_stage / begin_startup_transition / finalize_startup_transition / set_window_background. Also grants opener:allow-open-url so external links open via the official opener plugin.",
   "windows": [
     "main",
     "welcome"
@@ -12,6 +12,7 @@
     "core:window:allow-minimize",
     "core:window:allow-toggle-maximize",
     "core:window:allow-close",
-    "core:window:allow-destroy"
+    "core:window:allow-destroy",
+    "opener:allow-open-url"
   ]
 }

@@ -1,4 +1,4 @@
-import { invokeTauriCommand } from '@/services/tauri.ipc-runtime';
+import { openUrl } from '@tauri-apps/plugin-opener';
 
 const openWithWindow = (url: string): void => {
   if (typeof window === 'undefined') {
@@ -9,7 +9,7 @@ const openWithWindow = (url: string): void => {
 };
 
 export const openExternalUrl = (url: string): void => {
-  void invokeTauriCommand<void>('open_external_url', { url }).catch(() => {
+  void openUrl(url).catch(() => {
     openWithWindow(url);
   });
 };
