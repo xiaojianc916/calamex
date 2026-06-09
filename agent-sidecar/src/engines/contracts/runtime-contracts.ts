@@ -35,14 +35,19 @@ type TRuntimeUiEvent<TType extends TAgentUiEvent['type']> = Extract<
  * 终态终止事件 `done` 同样已移除：依据 ACP，turn 的最终结果由 prompt 响应的
  * `result` 承载、token 用量经 `session/update` 的 `usage_update` 通知投影（见
  * {@link IAgentTokenUsageSnapshot} 与 {@link IAgentRuntimeResponse.usage}），均不再
- * 需要一个独立的终止 UI 事件。至此白名单精确收敛为实际发射的 5 种。
+ * 需要一个独立的终止 UI 事件。
+ *
+ * 扁平错误事件 `error` 亦已移除：依据 ACP，失败的 turn 由响应的
+ * {@link IAgentRuntimeResponse.errorMessage} 承载，并在 egress 映射为 JSON-RPC
+ * error / 带外信号，运行时不再发射独立的错误 UI 事件；遗留 wire 帧由 http 边界
+ * shim（{@link toAgentSidecarResponse} 与 handlePostStream）临时重建，待前端迁移
+ * 至 ACP（U4）后连同 shim 一并删除。至此白名单精确收敛为实际发射的 4 种。
  */
 export const AGENT_RUNTIME_OUTPUT_EVENT_TYPES = [
     'agent_event',
     'plan_ready',
     'plan_record',
     'approval_required',
-    'error',
 ] as const satisfies ReadonlyArray<TAgentUiEvent['type']>;
 
 export type TAgentRuntimeOutputEventType = (typeof AGENT_RUNTIME_OUTPUT_EVENT_TYPES)[number];
@@ -104,6 +109,17 @@ export interface IAgentRuntimeResponse {
     /** Final assistant message text, or `null` if the run produced no message. */
     readonly result: string | null;
     /**
+     * Human-readable failure message when the run errored, otherwise absent.
+     *
+     * Per ACP, a failed turn is not modelled as a UI event: it is surfaced via
+     * the prompt response (mapped to a JSON-RPC error / out-of-band signal by
+     * the egress layer). This field is the runtime-internal carrier of that
+     * message. When set, `result` is `null`. The legacy UI-side `error` frame
+     * is reconstructed at the transport boundary (see {@link toAgentSidecarResponse}
+     * and handlePostStream) until the frontend migrates to ACP (U4).
+     */
+    readonly errorMessage?: string;
+    /**
      * Aggregated token usage for the run, if available.
      *
      * Carried here (rather than on a terminal event) so the ACP egress layer
@@ -152,6 +168,10 @@ export const toAgentUiEvent = (event: TAgentRuntimeOutputEvent): TAgentUiEvent =
  * not mutate the original response. Individual event objects are shared by
  * reference (they are themselves immutable in practice).
  *
+ * 边界倒计时 shim：当响应携带 `errorMessage` 时，向信封 events 末尾追加一条遗留
+ * `error` UI 事件，使未迁移的前端 / Rust 在旧协议下错误展示行为保持不变。待前端
+ * 迁移至 ACP（U4）后，errorMessage 将直接映射为 JSON-RPC error，本 shim 删除。
+ *
  * Note: `requestId` is intentionally dropped here — it lives on the internal
  * runtime contract but is not part of the public sidecar response envelope.
  * If the IPC layer needs it for correlation, it should read it directly from
@@ -162,7 +182,9 @@ export const toAgentSidecarResponse = (
 ): TAgentSidecarResponse => ({
     schemaVersion: AGENT_SIDECAR_RESPONSE_SCHEMA_VERSION,
     sessionId: response.sessionId,
-    events: response.events.slice(),
+    events: response.errorMessage
+        ? [...response.events, { type: 'error' as const, message: response.errorMessage }]
+        : response.events.slice(),
     result: response.result,
 });
 

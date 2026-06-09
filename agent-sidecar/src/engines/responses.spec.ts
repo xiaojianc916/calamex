@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { deriveApprovalRisk } from './responses.js';
+import { createErrorResponse, deriveApprovalRisk } from './responses.js';
+import type { TAgentRuntimeOutputEvent } from './contracts/runtime-contracts.js';
 
 test('deriveApprovalRisk：不可逆的 git 操作判定为 high / 不可逆', () => {
     for (const toolName of ['git_push', 'push_files', 'merge_pull_request', 'delete_file']) {
@@ -46,4 +47,19 @@ test('deriveApprovalRisk：只读操作判定为 low', () => {
     const risk = deriveApprovalRisk({ toolName: 'get_file_contents', args: { path: 'a.txt' } });
     assert.equal(risk.riskLevel, 'low');
     assert.equal(risk.reversible, true);
+});
+
+test('createErrorResponse：ACP 原生——不产 UI 事件，错误经 errorMessage 承载', () => {
+    const events: TAgentRuntimeOutputEvent[] = [];
+    let emitted = 0;
+    const response = createErrorResponse('session-1', '模型未配置', events, {
+        onEvent: () => {
+            emitted += 1;
+        },
+    });
+
+    assert.equal(response.result, null);
+    assert.equal(response.errorMessage, '模型未配置');
+    assert.equal(response.events.length, 0);
+    assert.equal(emitted, 0);
 });

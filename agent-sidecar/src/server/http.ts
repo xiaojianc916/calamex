@@ -278,6 +278,15 @@ export const handlePostStream = async (
         event: toAgentUiEvent(event),
       });
     }));
+    // 边界倒计时 shim：运行时已不再把错误当 UI 事件（改由 errorMessage 承载），
+    // 这里在响应帧前补发一条遗留 `error` 事件帧，使未迁移前端的错误展示与旧行为
+    // 逐字节等价；待前端迁移至 ACP（U4）后删除。
+    if (payload.errorMessage) {
+      writeNdjsonFrame(response, {
+        type: 'event',
+        event: { type: 'error', message: payload.errorMessage },
+      });
+    }
     writeNdjsonFrame(response, {
       type: 'response',
       response: toValidatedSidecarResponse(payload),
