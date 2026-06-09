@@ -61,9 +61,9 @@ import { useResizeObserver } from '@vueuse/core';
 import type { ComponentPublicInstance } from 'vue';
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import WorkspaceTreeRow from '@/components/workbench/WorkspaceTreeRow.vue';
+import { buildWorkspaceTreeRows, isDirectoryLikeEntry } from '@/components/workbench/workspace-tree-model';
 import type { TWorkspaceTreeRow } from '@/components/workbench/workspace-tree.types';
 import type { IWorkspaceEntry } from '@/types/editor';
-import { areFileSystemPathsEqual } from '@/utils/path';
 
 // 保留原组件名，避免影响 AppSidebar 的引用与测试中的 stub。
 defineOptions({ name: 'WorkspaceTreeNode' });
@@ -104,88 +104,18 @@ const emit = defineEmits<{
   'inline-rename-cancel': [];
 }>();
 
-const isDirectoryLikeEntry = (entry: IWorkspaceEntry): boolean =>
-  entry.kind === 'directory' || entry.hasChildren;
-
-const normalizeTreeEntry = (entry: IWorkspaceEntry): IWorkspaceEntry => {
-  if (!isDirectoryLikeEntry(entry) || entry.kind === 'directory') {
-    return entry;
-  }
-  return {
-    ...entry,
-    kind: 'directory',
-    hasChildren: true,
-  };
-};
-
 // 把可见的树结构拍平成一维行列表，以便虚拟化与键盘导航。
-const rows = computed<TWorkspaceTreeRow[]>(() => {
-  const result: TWorkspaceTreeRow[] = [];
-  const draft = props.inlineCreateDraft;
-
-  const walk = (node: IWorkspaceEntry, level: number): void => {
-    const isDirectory = isDirectoryLikeEntry(node);
-    const normalizedNode = normalizeTreeEntry(node);
-    const expanded = isDirectory && props.expandedPaths.has(node.path);
-
-    result.push({
-      type: 'entry',
-      key: node.path,
-      entry: normalizedNode,
-      level,
-      expanded,
-      showChevron: isDirectory,
-    });
-
-    if (!isDirectory || !expanded) {
-      return;
-    }
-
-    const rawChildren = props.childrenMap[node.path];
-    const isLoading = props.loadingPaths[node.path] === true;
-    const showInlineCreate =
-      draft?.open === true && areFileSystemPathsEqual(draft.parentPath, node.path);
-
-    if (rawChildren === undefined) {
-      if (isLoading) {
-        result.push({ type: 'loading', key: `${node.path}::loading`, level: level + 1 });
-      }
-      if (showInlineCreate) {
-        result.push({
-          type: 'inline-create',
-          key: `${node.path}::inline-create`,
-          parentPath: node.path,
-          level,
-        });
-      }
-      return;
-    }
-
-    for (const child of rawChildren) {
-      walk(child, level + 1);
-    }
-
-    if (isLoading) {
-      result.push({ type: 'loading', key: `${node.path}::loading`, level: level + 1 });
-    }
-
-    if (showInlineCreate) {
-      result.push({
-        type: 'inline-create',
-        key: `${node.path}::inline-create`,
-        parentPath: node.path,
-        level,
-      });
-    }
-
-    if (rawChildren.length === 0 && !showInlineCreate && !isLoading) {
-      result.push({ type: 'empty', key: `${node.path}::empty`, level: level + 1 });
-    }
-  };
-
-  walk(props.entry, props.level);
-  return result;
-});
+// 具体构建逻辑放在纯函数中，避免递归组件热路径难以测试，也避免深目录链消耗调用栈。
+const rows = computed<TWorkspaceTreeRow[]>(() =>
+  buildWorkspaceTreeRows({
+    entry: props.entry,
+    level: props.level,
+    childrenMap: props.childrenMap,
+    expandedPaths: props.expandedPaths,
+    loadingPaths: props.loadingPaths,
+    inlineCreateDraft: props.inlineCreateDraft,
+  }),
+);
 
 type TEntryNav = {
   path: string;

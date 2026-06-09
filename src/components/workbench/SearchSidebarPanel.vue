@@ -333,6 +333,13 @@ const SEARCH_VIRTUALIZE_THRESHOLD = 100;
 const SEARCH_GROUP_ROW_HEIGHT = 28;
 const SEARCH_LINE_ROW_HEIGHT = 24;
 
+type TSearchLifecycle = {
+  requestId: number;
+  workspaceRootPath: string | null;
+  query: string;
+  signal: AbortSignal;
+};
+
 type TReplacementApplyLifecycle = {
   requestId: number;
   workspaceRootPath: string | null;
@@ -387,6 +394,25 @@ const isCanceledIpcError = (error: unknown): boolean =>
 
 const isWorkspaceRootCurrent = (workspaceRootPath: string | null | undefined): boolean =>
   !workspaceRootPath || areFileSystemPathsEqual(workspaceRootPath, props.workspaceRootPath);
+
+const beginSearchLifecycle = (query: string): TSearchLifecycle => {
+  searchRequestId += 1;
+  activeAbortController?.abort();
+  const controller = new AbortController();
+  activeAbortController = controller;
+  return {
+    requestId: searchRequestId,
+    workspaceRootPath: props.workspaceRootPath,
+    query,
+    signal: controller.signal,
+  };
+};
+
+const isSearchLifecycleCurrent = (lifecycle: TSearchLifecycle): boolean =>
+  lifecycle.requestId === searchRequestId &&
+  !lifecycle.signal.aborted &&
+  isWorkspaceRootCurrent(lifecycle.workspaceRootPath) &&
+  searchQuery.value.trim() === lifecycle.query;
 
 const beginReplacementApplyLifecycle = (): TReplacementApplyLifecycle => {
   replacementApplyRequestId += 1;
@@ -690,30 +716,27 @@ const clearSearchResults = (): void => {
 };
 
 const runSearch = async (): Promise<void> => {
+  const query = searchQuery.value.trim();
   if (
     !props.isDesktopRuntime ||
     !props.workspaceRootPath ||
     matcherError.value ||
-    !hasSearchQuery.value
+    query.length === 0
   ) {
     invalidateInFlightSearch();
     clearSearchResults();
     return;
   }
 
-  const requestId = searchRequestId + 1;
-  searchRequestId = requestId;
-  activeAbortController?.abort();
-  const abortController = new AbortController();
-  activeAbortController = abortController;
+  const lifecycle = beginSearchLifecycle(query);
   searchIndexing.value = true;
   searchError.value = '';
 
   try {
     const payload = await tauriService.searchWorkspace(
       {
-        workspaceRootPath: props.workspaceRootPath,
-        query: searchQuery.value.trim(),
+        workspaceRootPath: lifecycle.workspaceRootPath!,
+        query: lifecycle.query,
         scope: 'all',
         matchCase: matchCase.value,
         wholeWord: wholeWord.value,
@@ -724,18 +747,18 @@ const runSearch = async (): Promise<void> => {
         excludePatterns: effectiveExcludePatterns.value,
         limit: SEARCH_RESULT_LIMIT,
       },
-      { signal: abortController.signal },
+      { signal: lifecycle.signal },
     );
 
-    if (requestId !== searchRequestId) return;
+    if (!isSearchLifecycleCurrent(lifecycle)) return;
     scannedFileCount.value = payload.scannedFileCount;
     backendResults.value = payload.results;
   } catch (error) {
-    if (abortController.signal.aborted || requestId !== searchRequestId) return;
+    if (lifecycle.signal.aborted || !isSearchLifecycleCurrent(lifecycle)) return;
     backendResults.value = [];
     searchError.value = toErrorMessage(error, '搜索失败。');
   } finally {
-    if (requestId === searchRequestId) {
+    if (lifecycle.requestId === searchRequestId) {
       searchIndexing.value = false;
       activeAbortController = null;
     }
@@ -743,6 +766,9 @@ const runSearch = async (): Promise<void> => {
 };
 
 const scheduleSearch = (): void => {
+  // 新输入/过滤条件一到达就取消旧 IPC，而不是等下一次 debounce 触发后再取消。
+  // 这让高频输入下的搜索调度变成 last-write-wins：旧请求既不继续占用前端等待预算，也不会短暂回写旧结果。
+  invalidateInFlightSearch();
   if (searchTimer) clearTimeout(searchTimer);
   searchTimer = setTimeout(() => {
     searchTimer = null;

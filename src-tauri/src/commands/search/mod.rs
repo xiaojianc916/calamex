@@ -1,5 +1,6 @@
 mod find;
 mod preview;
+mod ranking;
 mod replace;
 mod scan;
 mod types;
@@ -9,6 +10,7 @@ pub use types::*;
 
 use super::{encode_script_content, resolve_workspace_root};
 use find::{search_file_contents, search_file_names, search_structural_contents, search_symbols};
+use ranking::sort_ranked_search_results;
 use replace::{
     apply_replacement_edits, build_file_replacement_preview, build_replacement_plan,
     build_replacement_preview_payload, build_replacement_previews, select_replacement_edits,
@@ -94,14 +96,10 @@ pub fn search_workspace(payload: WorkspaceSearchRequest) -> Result<WorkspaceSear
         )?);
     }
 
-    // 按分数排序以便“全部”视图呈现稳定顺序。注意：all 范围下每个类别已各自限额为
-    // limit，这里不再跨类别截断到单个 limit，以免文件名命中（分数恒为大负数）占满名额后，
-    // 内容/符号结果被整体挤掉。
-    results.sort_by(|left, right| {
-        left.score
-            .cmp(&right.score)
-            .then_with(|| left.relative_path.cmp(&right.relative_path))
-    });
+    // 轻量混合排序：各搜索器仍使用自己的高性能候选生成与 top-k，最终合并时再加入
+    // kind / basename exact / prefix / path depth 等 IDE 常用排序特征。all 范围下仍不跨类别
+    // 截断到单个 limit，避免文件名命中占满名额后挤掉内容/符号结果。
+    sort_ranked_search_results(&mut results, &query, payload.match_case);
 
     Ok(WorkspaceSearchPayload {
         root_path: workspace_root.to_string_lossy().to_string(),

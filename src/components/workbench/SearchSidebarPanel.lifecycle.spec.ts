@@ -43,7 +43,7 @@ vi.mock('@/composables/useSidecarChangedDocumentRefresh', () => ({
 vi.mock('@/components/ui/input', () => ({
   Input: {
     props: ['modelValue'],
-    emits: ['update:modelValue'],
+    emits: ['update:modelValue', 'keydown'],
     template:
       '<input :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" @keydown.enter="$emit(\'keydown\', $event)" />',
   },
@@ -140,6 +140,77 @@ describe('SearchSidebarPanel replacement lifecycle', () => {
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it('输入新查询时立即取消旧搜索并抑制旧结果回写', async () => {
+    const firstSearch = createDeferred<{
+      rootPath: string;
+      scannedFileCount: number;
+      results: Array<{
+        path: string;
+        relativePath: string;
+        name: string;
+        kind: 'file-name';
+        lineNumber: null;
+        lineText: null;
+        matchStart: null;
+        matchEnd: null;
+        score: number;
+      }>;
+    }>();
+    tauriServiceMock.searchWorkspace.mockReturnValueOnce(firstSearch.promise).mockResolvedValueOnce({
+      rootPath: 'D:/repo',
+      scannedFileCount: 1,
+      results: [
+        {
+          path: 'D:/repo/bar.sh',
+          relativePath: 'bar.sh',
+          name: 'bar.sh',
+          kind: 'file-name',
+          lineNumber: null,
+          lineText: null,
+          matchStart: null,
+          matchEnd: null,
+          score: -10,
+        },
+      ],
+    });
+
+    const wrapper = mountPanel();
+    await wrapper.find('input[aria-label="搜索关键字"]').setValue('foo');
+    await flushDebounce();
+    expect(tauriServiceMock.searchWorkspace).toHaveBeenCalledTimes(1);
+
+    const firstSignal = tauriServiceMock.searchWorkspace.mock.calls[0]?.[1]?.signal as AbortSignal;
+    await wrapper.find('input[aria-label="搜索关键字"]').setValue('bar');
+
+    expect(firstSignal.aborted).toBe(true);
+
+    firstSearch.resolve({
+      rootPath: 'D:/repo',
+      scannedFileCount: 1,
+      results: [
+        {
+          path: 'D:/repo/foo.sh',
+          relativePath: 'foo.sh',
+          name: 'foo.sh',
+          kind: 'file-name',
+          lineNumber: null,
+          lineText: null,
+          matchStart: null,
+          matchEnd: null,
+          score: -100,
+        },
+      ],
+    });
+    await flushPromises();
+
+    expect(wrapper.text()).not.toContain('foo.sh');
+
+    await flushDebounce();
+
+    expect(tauriServiceMock.searchWorkspace).toHaveBeenCalledTimes(2);
+    expect(wrapper.text()).toContain('bar.sh');
   });
 
   it('应用替换时向后端传入取消信号', async () => {
