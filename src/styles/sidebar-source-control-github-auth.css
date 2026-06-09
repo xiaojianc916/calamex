@@ -56,8 +56,8 @@
 .source-control-github-auth-icon,
 .source-control-github-auth-avatar,
 .source-control-github-auth-avatar-frame {
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   flex: 0 0 auto;
 }
 
@@ -76,7 +76,7 @@
   align-items: center;
   justify-content: center;
   color: currentColor;
-  font-size: 18px;
+  font-size: 16px;
 }
 
 .source-control-github-auth-avatar {
