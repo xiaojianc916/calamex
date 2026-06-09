@@ -1,5 +1,7 @@
 use super::*;
+use atomic_write_file::AtomicWriteFile;
 use gix::bstr::ByteSlice;
+use std::io::Write;
 
 #[tauri::command]
 #[specta::specta]
@@ -243,8 +245,7 @@ fn drop_stash_by_index(repository: &Repository, target_index: usize) -> Result<(
         .next()
         .and_then(|meta| meta.split(' ').nth(1))
         .ok_or_else(|| "贮藏 reflog 格式异常。".to_string())?;
-    fs::write(&stash_ref_path, [new_oid, "\n"].concat())
-        .map_err(|error| format!("写入 refs/stash 失败：{error}"))?;
+    write_stash_ref_atomically(&stash_ref_path, &[new_oid, "\n"].concat())?;
 
     let mut rebuilt = lines.join("\n");
     rebuilt.push('\n');
@@ -252,6 +253,18 @@ fn drop_stash_by_index(repository: &Repository, target_index: usize) -> Result<(
     // 松散 refs/stash 已更新；若该引用曾被打包进 packed-refs，移除打包条目避免其继续生效。
     prune_packed_stash_ref(git_dir)?;
     Ok(())
+}
+
+/// 原子写入 refs/stash：由 atomic-write-file 在同目录创建唯一临时文件并 commit 覆盖目标，
+/// 避免写一半导致引用损坏，也避免固定临时名在并发 / 重入时互相覆盖（与 branches / skills 一致）。
+fn write_stash_ref_atomically(stash_ref_path: &Path, content: &str) -> Result<(), String> {
+    let mut file = AtomicWriteFile::options()
+        .open(stash_ref_path)
+        .map_err(|error| format!("写入 refs/stash 失败：{error}"))?;
+    file.write_all(content.as_bytes())
+        .map_err(|error| format!("写入 refs/stash 失败：{error}"))?;
+    file.commit()
+        .map_err(|error| format!("写入 refs/stash 失败：{error}"))
 }
 
 /// 从 .git/packed-refs 中移除 refs/stash 行（若存在）。
@@ -672,7 +685,6 @@ fn store_new_stash(
     seconds: i64,
     message: &str,
 ) -> Result<(), String> {
-    use std::io::Write;
     let git_dir = repository.git_dir();
 
     let refs_dir = git_dir.join("refs");
@@ -700,13 +712,7 @@ fn store_new_stash(
     file.write_all(line.as_bytes())
         .map_err(|error| format!("写入贮藏 reflog 失败：{error}"))?;
 
-    let temp_path = refs_dir.join("stash.calamex.tmp");
-    fs::write(&temp_path, format!("{new_oid}\n"))
-        .map_err(|error| format!("写入 refs/stash 失败：{error}"))?;
-    fs::rename(&temp_path, &stash_ref_path).map_err(|error| {
-        let _ = fs::remove_file(&temp_path);
-        format!("写入 refs/stash 失败：{error}")
-    })?;
+    write_stash_ref_atomically(&stash_ref_path, &format!("{new_oid}\n"))?;
     Ok(())
 }
 
