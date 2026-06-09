@@ -7,8 +7,12 @@ import {
 	parseSessionUpdate,
 	planEntrySchema,
 	requestPermissionOutcomeSchema,
+	requestPermissionRequest,
+	requestPermissionRequestSchema,
+	requestPermissionResponseSchema,
 	sessionUpdateSchema,
 	textBlock,
+	toolCallUpdateSchema,
 	toolKindSchema,
 } from "./protocol"
 
@@ -108,5 +112,67 @@ test("request_permission 结果联合解析", () => {
 	assert.equal(
 		requestPermissionOutcomeSchema.safeParse({ outcome: "cancelled" }).success,
 		true,
+	)
+})
+
+test("toolCallUpdateSchema 解析完整工具调用更新（title 可选）", () => {
+	const update = {
+		toolCallId: "call-1",
+		title: "写入文件",
+		kind: "edit" as const,
+		status: "in_progress" as const,
+		content: [{ type: "diff" as const, path: "a.ts", newText: "new" }],
+	}
+	assert.equal(toolCallUpdateSchema.safeParse(update).success, true)
+	// title 省略仍合法（部分更新）。
+	assert.equal(
+		toolCallUpdateSchema.safeParse({ toolCallId: "call-2" }).success,
+		true,
+	)
+})
+
+test("requestPermissionRequest 构造合法请求（toolCall 为完整 ToolCallUpdate）", () => {
+	const request = requestPermissionRequest(
+		"session-1",
+		{ toolCallId: "call-1", title: "删除文件", kind: "delete" },
+		[
+			{ optionId: "allow", name: "允许一次", kind: "allow_once" },
+			{ optionId: "reject", name: "拒绝", kind: "reject_once" },
+		],
+	)
+	const result = requestPermissionRequestSchema.safeParse(request)
+	assert.equal(result.success, true)
+	assert.equal(request.toolCall.toolCallId, "call-1")
+	assert.equal(request.options.length, 2)
+})
+
+test("requestPermissionResponse 解析 selected/cancelled 并保留 _meta", () => {
+	const selected = requestPermissionResponseSchema.safeParse({
+		outcome: { outcome: "selected", optionId: "allow" },
+		_meta: { source: "client" },
+	})
+	assert.equal(selected.success, true)
+	if (selected.success) {
+		assert.equal(selected.data.outcome.outcome, "selected")
+		assert.equal(
+			(selected.data as Record<string, unknown>)._meta !== undefined,
+			true,
+		)
+	}
+	assert.equal(
+		requestPermissionResponseSchema.safeParse({
+			outcome: { outcome: "cancelled" },
+		}).success,
+		true,
+	)
+})
+
+test("requestPermissionRequest 缺少必填 toolCall 时 schema 拒绝", () => {
+	assert.equal(
+		requestPermissionRequestSchema.safeParse({
+			sessionId: "s-1",
+			options: [],
+		}).success,
+		false,
 	)
 })

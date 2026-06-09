@@ -105,6 +105,17 @@ const toolCallFields = {
 	rawOutput: z.unknown().optional(),
 }
 
+/**
+ * ToolCallUpdate —— 工具调用的部分更新（ACP `ToolCallUpdate`）。
+ *
+ * 即 `tool_call_update` 通知去掉 sessionUpdate 判别后的载荷，也是
+ * `session/request_permission` 请求中描述待审批工具调用的形状。title 可选。
+ */
+export const toolCallUpdateSchema = z
+	.object({ title: z.string().optional(), ...toolCallFields })
+	.passthrough()
+export type TToolCallUpdate = z.infer<typeof toolCallUpdateSchema>
+
 // ---------------------------------------------------------------------------
 // Plan —— 计划条目
 // ---------------------------------------------------------------------------
@@ -211,7 +222,7 @@ export type TPermissionOption = z.infer<typeof permissionOptionSchema>
 export const requestPermissionRequestSchema = z
 	.object({
 		sessionId: z.string(),
-		toolCall: z.object({ toolCallId: z.string() }).passthrough(),
+		toolCall: toolCallUpdateSchema,
 		options: z.array(permissionOptionSchema),
 	})
 	.passthrough()
@@ -226,3 +237,25 @@ export const requestPermissionOutcomeSchema = z.discriminatedUnion("outcome", [
 export type TRequestPermissionOutcome = z.infer<
 	typeof requestPermissionOutcomeSchema
 >
+
+export const requestPermissionResponseSchema = z
+	.object({ outcome: requestPermissionOutcomeSchema })
+	.passthrough()
+export type TRequestPermissionResponse = z.infer<
+	typeof requestPermissionResponseSchema
+>
+
+/**
+ * 构造一条 `session/request_permission` 请求（Agent → Client 方向）。
+ * sidecar 作为 ACP Agent，在工具调用需要授权时发出该请求，并解析 Client 回复的
+ * {@link TRequestPermissionResponse}.outcome 决定继续 / 取消。
+ */
+export const requestPermissionRequest = (
+	sessionId: string,
+	toolCall: TToolCallUpdate,
+	options: readonly TPermissionOption[],
+): TRequestPermissionRequest => ({
+	sessionId,
+	toolCall,
+	options: [...options],
+})
