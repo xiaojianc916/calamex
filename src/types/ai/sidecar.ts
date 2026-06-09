@@ -1,5 +1,6 @@
 import type { IAiLanguageModelUsage } from '@/types/ai';
 import type { IAiContextReference } from '@/types/ai/context';
+import type { TAiExecutionMode } from '@/types/ai/execution-mode';
 
 /* ============================================================================
  * Mode / role / status enums
@@ -640,6 +641,12 @@ export interface IAgentSidecarOrchestrateRequest {
   sessionId?: string;
   goal: string;
   threadId?: string;
+  /**
+   * Per-run execution preference. Threaded through verbatim like `threadId`
+   * (the sidecar validates it and defaults to `interactive`). Omitted from the
+   * request body when undefined so the sidecar applies its own default.
+   */
+  executionMode?: TAiExecutionMode;
   modelConfig?: IAgentSidecarModelConfig;
 }
 

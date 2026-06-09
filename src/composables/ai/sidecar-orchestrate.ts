@@ -20,6 +20,7 @@ import type {
   TAgentSidecarOrchestrateDecision,
   TAgentUiEvent,
 } from '@/types/ai/sidecar';
+import type { TAiExecutionMode } from '@/types/ai/execution-mode';
 
 /* ============================================================================
  * Native orchestration (Mastra createWorkflow) frontend driver.
@@ -30,7 +31,7 @@ import type {
  * `ai:sidecar-stream` 窗口事件流式推送的 TAgentUiEvent。
  *
  * 关键事实（与 server.ts / orchestrate.rs 一致）：
- *  - start  -> sidecarOrchestrate({ sessionId, goal, threadId? })，事件以调用方
+ *  - start  -> sidecarOrchestrate({ sessionId, goal, threadId?, executionMode? })，事件以调用方
  *    传入的 sessionId 打标，可按 sessionId 过滤订阅。
  *  - resume -> sidecarOrchestrateResume({ runId, decision, reason? })，resume 请求
  *    无 sessionId 字段，Rust 内部用随机 sessionId 打标，前端不可知；编排在面板内
@@ -211,6 +212,7 @@ const createOrchestrationSessionId = (): string => {
 export const startOrchestration = async (args: {
   goal: string;
   threadId?: string | null;
+  executionMode?: TAiExecutionMode;
   onLiveEvents?: TOrchestrateLiveHandler;
 }): Promise<IOrchestrateRunResult> => {
   const sessionId = createOrchestrationSessionId();
@@ -229,6 +231,7 @@ export const startOrchestration = async (args: {
       sessionId,
       goal: args.goal,
       ...(args.threadId ? { threadId: args.threadId } : {}),
+      ...(args.executionMode ? { executionMode: args.executionMode } : {}),
     });
   } finally {
     unlisten();
