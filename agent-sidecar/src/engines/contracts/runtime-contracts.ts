@@ -22,17 +22,18 @@ type TRuntimeUiEvent<TType extends TAgentUiEvent['type']> = Extract<
  * - When a new UI event is added to `TAgentUiEvent`, you must explicitly opt
  *   it in here. The `assertRuntimeEventTypeCovered` check below makes the
  *   intent visible at compile time but does **not** auto-include new variants.
+ *
+ * NOTE（ACP 原生重写，U3a）：正文增量与工具生命周期已全面收敛为富事件
+ * `agent_event`（agent.text.delta / agent.tool.*），故 `message_delta` / `tool_start`
+ * 已零生产端；`message_clear` / `diff_ready` 在 sidecar 从未有生产端。四者均已从
+ * 本白名单移除，使运行时产出类型精确收敛为实际发射的 7 种。
  */
 export const AGENT_RUNTIME_OUTPUT_EVENT_TYPES = [
-    'message_delta',
-    'message_clear',
     'agent_event',
     'plan_ready',
     'plan_record',
-    'tool_start',
     'tool_result',
     'approval_required',
-    'diff_ready',
     'done',
     'error',
 ] as const satisfies ReadonlyArray<TAgentUiEvent['type']>;
