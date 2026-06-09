@@ -8,6 +8,7 @@ import {
 } from '@/components/ai-elements/conversation';
 import { Message } from '@/components/ai-elements/message';
 import AiThreadTimeline from '@/components/business/ai/thread/AiThreadTimeline.vue';
+import type { IAiThreadPlanDetails } from '@/components/business/ai/thread/types';
 import type { TAiServicePlatformId } from '@/constants/ai/providers';
 import type { IAiChatMessage } from '@/types/ai';
 import AiThinkingStatus from './AiThinkingStatus.vue';
@@ -32,6 +33,8 @@ const props = withDefaults(
     workspaceRootPath?: string | null;
     scrollState?: IAiChatScrollState | null;
     hasExtraContent?: boolean;
+    // Plan 控制条目(等待批准)的运行态明细;由面板按当前计划注入,渲染层无状态。
+    planDetails?: IAiThreadPlanDetails;
     revertingChangedFilesSummaryId?: string | null;
     pinningChangedFilesSummaryId?: string | null;
   }>(),
@@ -41,6 +44,7 @@ const props = withDefaults(
     workspaceRootPath: null,
     scrollState: null,
     hasExtraContent: false,
+    planDetails: undefined,
     revertingChangedFilesSummaryId: null,
     pinningChangedFilesSummaryId: null,
   },
@@ -50,6 +54,11 @@ const emit = defineEmits<{
   changedFilesRollback: [messageId: string, summaryId: string];
   changedFilesPin: [messageId: string, summaryId: string, pinned: boolean];
   scrollStateChange: [state: IAiChatScrollState];
+  planApprove: [];
+  planReject: [];
+  planRegenerate: [];
+  planUpdateStepTitle: [stepId: string, title: string];
+  planRemoveStep: [stepId: string];
 }>();
 
 const TOOL_PROGRESS_PREFIXES = [
@@ -147,9 +156,14 @@ const handleScrollStateChange = (state: IAiChatScrollState): void => {
       </slot>
       <template v-else>
         <AiThreadTimeline :messages="visibleMessages" :workspace-root-path="workspaceRootPath"
+          :plan-details="planDetails"
           :reverting-changed-files-summary-id="revertingChangedFilesSummaryId"
           :pinning-changed-files-summary-id="pinningChangedFilesSummaryId"
-          @changed-files-rollback="handleChangedFilesRollback" @changed-files-pin="handleChangedFilesPin">
+          @changed-files-rollback="handleChangedFilesRollback" @changed-files-pin="handleChangedFilesPin"
+          @plan-approve="emit('planApprove')" @plan-reject="emit('planReject')"
+          @plan-regenerate="emit('planRegenerate')"
+          @plan-update-step-title="(stepId: string, title: string) => emit('planUpdateStepTitle', stepId, title)"
+          @plan-remove-step="emit('planRemoveStep', $event)">
           <template #after-message="{ message }">
             <slot name="after-message" :message="message" />
           </template>
