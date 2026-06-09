@@ -64,6 +64,21 @@ describe('aiAgent store step details', () => {
     expect(restored.mode).toBe('plan');
   });
 
+  it('默认执行模式为 interactive，并在刷新后恢复用户切换的自主模式', async () => {
+    createPersistedPinia();
+    const store = useAiAgentStore();
+
+    expect(store.executionMode).toBe('interactive');
+
+    store.setExecutionMode('autonomous');
+    await nextTick();
+
+    createPersistedPinia();
+    const restored = useAiAgentStore();
+
+    expect(restored.executionMode).toBe('autonomous');
+  });
+
   it('保存 step 的 Web Sources 摘要与工具结果，不保存网页全文', () => {
     const store = useAiAgentStore();
 

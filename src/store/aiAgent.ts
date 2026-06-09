@@ -29,6 +29,11 @@ import {
   aiToolConfirmationRequestSchema,
 } from '@/types/ai/agent.schema';
 import { AI_ASSISTANT_MODES, type TAiAssistantMode } from '@/types/ai/assistant-mode';
+import {
+  AI_EXECUTION_MODES,
+  AI_EXECUTION_MODE_DEFAULT,
+  type TAiExecutionMode,
+} from '@/types/ai/execution-mode';
 import { aiContextReferenceSchema } from '@/types/ai/context.schema';
 import { aiChatMessageSchema, aiLanguageModelUsageSchema } from '@/types/ai/schema';
 import { AGENT_PLAN_STATUSES } from '@/types/ai/sidecar';
@@ -55,6 +60,7 @@ export type TAiAgentPanelMode = TAiAssistantMode;
 // ---------------------------------------------------------------------------
 
 const aiAgentPanelModeSchema = z.enum(AI_ASSISTANT_MODES);
+const aiExecutionModeSchema = z.enum(AI_EXECUTION_MODES);
 const agentPlanStatusSchema = z.enum(AGENT_PLAN_STATUSES);
 const nullablePersistedTextSchema = z.string().min(1).nullable();
 
@@ -79,6 +85,9 @@ const aiPersistedSidecarAgentSessionSchema = z.object({
 const aiAgentPersistSchema = z.object({
   mode: aiAgentPanelModeSchema,
   networkPermission: aiAgentNetworkPermissionSchema,
+  // 执行自主性:interactive(默认,逐步门控) / autonomous(自主 plan 模式)。
+  // default(...) 兼容尚未写入该字段的旧持久化数据。
+  executionMode: aiExecutionModeSchema.default(AI_EXECUTION_MODE_DEFAULT),
   activeGoal: z.string(),
   steps: z.array(aiTaskPlanStepSchema).max(6),
   classification: aiAgentTaskClassificationSchema.nullable(),
@@ -258,9 +267,10 @@ const isSameToolActivity = (a: IAiToolActivityInline, b: IAiToolActivityInline):
 export const useAiAgentStore = defineStore(
   'ai-agent',
   () => {
-    // ── State ───────────────────────────────────────────────────
+    // ── State ──────────────────────────────
     const mode = ref<TAiAgentPanelMode>('agent');
     const networkPermission = ref<TAiAgentNetworkPermission>('ask');
+    const executionMode = ref<TAiExecutionMode>(AI_EXECUTION_MODE_DEFAULT);
     const activeGoal = ref<string>('');
     const steps = ref<IAiTaskPlanStep[]>([]);
     const classification = ref<TAiAgentTaskClassification | null>(null);
@@ -298,7 +308,7 @@ export const useAiAgentStore = defineStore(
     const pendingSidecarAgentSession = ref<IAiPersistedSidecarAgentSession | null>(null);
     const errorMessage = ref<string>('');
 
-    // ── Getters ────────────────────────────────────────────────
+    // ── Getters ───────────────────────────
     const hasPlan = computed(() => steps.value.length > 0);
 
     const activeRun = computed(
@@ -319,7 +329,7 @@ export const useAiAgentStore = defineStore(
       return findLatestActiveToolActivity(Object.values(toolActivities.value).flat());
     });
 
-    // ── Internal helpers ────────────────────────────────────────
+    // ── Internal helpers ───────────────────────
 
     const getStepDetailKey = (runId: string, stepId: string): string => `${runId}:${stepId}`;
 
@@ -359,7 +369,7 @@ export const useAiAgentStore = defineStore(
       totalOfficialUsage.value = null;
     };
 
-    // ── Actions: classification & plan lifecycle ────────────────────────
+    // ── Actions: classification & plan lifecycle ────────────
 
     const setClassification = (payload: IAiAgentClassifyTaskPayload): void => {
       classification.value = payload.classification;
@@ -402,6 +412,10 @@ export const useAiAgentStore = defineStore(
 
     const setNetworkPermission = (permission: TAiAgentNetworkPermission): void => {
       networkPermission.value = permission;
+    };
+
+    const setExecutionMode = (next: TAiExecutionMode): void => {
+      executionMode.value = next;
     };
 
     const setMode = (nextMode: TAiAgentPanelMode): void => {
@@ -482,7 +496,7 @@ export const useAiAgentStore = defineStore(
       activeRunId.value = null;
     };
 
-    // ── Actions: runs ────────────────────────────────────────────
+    // ── Actions: runs ─────────────────────────────
 
     const upsertRun = (run: IAiAgentRun): void => {
       activeRunId.value = run.id;
@@ -521,7 +535,7 @@ export const useAiAgentStore = defineStore(
       });
     };
 
-    // ── Actions: usage ──────────────────────────────────────────
+    // ── Actions: usage ──────────────────────────
 
     const setLatestOfficialUsage = (usage: IAiLanguageModelUsage | null): void => {
       latestOfficialUsageResolved.value = true;
@@ -544,7 +558,7 @@ export const useAiAgentStore = defineStore(
       totalOfficialUsage.value = null;
     };
 
-    // ── Actions: step details / final answers / patches ──────────────────
+    // ── Actions: step details / final answers / patches ────────────
 
     const getStepDetail = (runId: string, stepId: string): IAiAgentStepDetail | null =>
       stepDetails.value[getStepDetailKey(runId, stepId)] ?? null;
@@ -608,7 +622,7 @@ export const useAiAgentStore = defineStore(
       };
     };
 
-    // ── Actions: tool activities & confirmations ────────────────────────
+    // ── Actions: tool activities & confirmations ───────────────────
 
     const getToolActivities = (runId: string): IAiToolActivityInline[] =>
       toolActivities.value[runId] ?? [];
@@ -647,6 +661,7 @@ export const useAiAgentStore = defineStore(
       // state
       mode,
       networkPermission,
+      executionMode,
       activeGoal,
       steps,
       classification,
@@ -693,6 +708,7 @@ export const useAiAgentStore = defineStore(
       getToolActivities,
       // actions
       setNetworkPermission,
+      setExecutionMode,
       setMode,
       setClassification,
       beginPlanning,
@@ -727,6 +743,7 @@ export const useAiAgentStore = defineStore(
       pick: [
         'mode',
         'networkPermission',
+        'executionMode',
         'activeGoal',
         'steps',
         'classification',
