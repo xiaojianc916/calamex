@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, useAttrs, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, useAttrs, watch } from 'vue';
 import {
   Context,
   ContextContent,
@@ -69,6 +69,11 @@ interface ISlashAnchorRect {
   width: number;
 }
 
+interface IPoint {
+  x: number;
+  y: number;
+}
+
 /** 输入框纯文本（不含技能胶囊） */
 const modelValue = defineModel<string>({ required: true });
 
@@ -114,10 +119,13 @@ const surfaceRef = ref<HTMLFormElement | null>(null);
 const editorRef = ref<HTMLDivElement | null>(null);
 const isComposing = ref(false);
 const isModeSubmenuOpen = ref(false);
+const modeMenuItemElement = ref<HTMLElement | null>(null);
+const modeSubmenuRef = ref<HTMLElement | null>(null);
 const pendingAttachmentDrafts = ref<IAiAttachedFile[]>([]);
 
 // 编辑器内容程序化写入时为 true，避免输入事件回环。
 let isApplyingExternalValue = false;
+let modeSubmenuCloseTimer: ReturnType<typeof setTimeout> | null = null;
 
 // 技能 / 斜杠菜单状态。
 const skills = ref<ISkillSummary[]>([]);
@@ -125,6 +133,8 @@ const slashOpen = ref(false);
 const slashQuery = ref('');
 const slashAnchorRect = ref<ISlashAnchorRect | null>(null);
 const skillsManagerOpen = ref(false);
+
+const MODE_SUBMENU_CLOSE_DELAY_MS = 180;
 
 const modeOptions: IAiPromptModeOption[] = [
   { key: 'chat', label: 'chat', description: '仅回答，不进行编辑' },
@@ -307,6 +317,141 @@ const queueAttachmentFile = async (file: File): Promise<void> => {
       : attachment,
   );
 };
+
+// -------------------------------------------------------------------------
+// 二级菜单 hover intent：安全走廊算法
+// -------------------------------------------------------------------------
+const clearModeSubmenuCloseTimer = (): void => {
+  if (modeSubmenuCloseTimer === null) {
+    return;
+  }
+
+  clearTimeout(modeSubmenuCloseTimer);
+  modeSubmenuCloseTimer = null;
+};
+
+const closeModeSubmenu = (): void => {
+  clearModeSubmenuCloseTimer();
+  isModeSubmenuOpen.value = false;
+};
+
+const openModeSubmenu = (): void => {
+  clearModeSubmenuCloseTimer();
+  isModeSubmenuOpen.value = true;
+};
+
+const scheduleModeSubmenuClose = (): void => {
+  clearModeSubmenuCloseTimer();
+  modeSubmenuCloseTimer = setTimeout(() => {
+    isModeSubmenuOpen.value = false;
+    modeSubmenuCloseTimer = null;
+  }, MODE_SUBMENU_CLOSE_DELAY_MS);
+};
+
+const isPointInsideRect = (point: IPoint, rect: DOMRect, padding = 0): boolean =>
+  point.x >= rect.left - padding &&
+  point.x <= rect.right + padding &&
+  point.y >= rect.top - padding &&
+  point.y <= rect.bottom + padding;
+
+const isPointInsideConvexPolygon = (point: IPoint, polygon: readonly IPoint[]): boolean => {
+  if (polygon.length < 3) {
+    return false;
+  }
+
+  let sign = 0;
+
+  for (let index = 0; index < polygon.length; index += 1) {
+    const current = polygon[index];
+    const next = polygon[(index + 1) % polygon.length];
+
+    if (!current || !next) {
+      return false;
+    }
+
+    const cross =
+      (next.x - current.x) * (point.y - current.y) -
+      (next.y - current.y) * (point.x - current.x);
+
+    if (Math.abs(cross) < 0.01) {
+      continue;
+    }
+
+    const currentSign = cross > 0 ? 1 : -1;
+
+    if (sign === 0) {
+      sign = currentSign;
+    } else if (sign !== currentSign) {
+      return false;
+    }
+  }
+
+  return true;
+};
+
+const isPointerInModeSubmenuIntentArea = (event: PointerEvent): boolean => {
+  const trigger = modeMenuItemElement.value;
+  const submenu = modeSubmenuRef.value;
+
+  if (!trigger || !submenu) {
+    return false;
+  }
+
+  const point = { x: event.clientX, y: event.clientY };
+  const triggerRect = trigger.getBoundingClientRect();
+  const submenuRect = submenu.getBoundingClientRect();
+
+  if (isPointInsideRect(point, triggerRect, 8) || isPointInsideRect(point, submenuRect, 8)) {
+    return true;
+  }
+
+  const bridge: IPoint[] = [
+    { x: triggerRect.right - 2, y: triggerRect.top - 10 },
+    { x: submenuRect.left + 2, y: submenuRect.top - 14 },
+    { x: submenuRect.left + 2, y: submenuRect.bottom + 14 },
+    { x: triggerRect.right - 2, y: triggerRect.bottom + 10 },
+  ];
+
+  return isPointInsideConvexPolygon(point, bridge);
+};
+
+const handleModeSubmenuDocumentPointerMove = (event: PointerEvent): void => {
+  if (!isModeSubmenuOpen.value) {
+    return;
+  }
+
+  if (isPointerInModeSubmenuIntentArea(event)) {
+    clearModeSubmenuCloseTimer();
+    return;
+  }
+
+  scheduleModeSubmenuClose();
+};
+
+const handleModeMenuItemPointerEnter = (event: PointerEvent): void => {
+  modeMenuItemElement.value = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+  openModeSubmenu();
+};
+
+const selectModeOption = (value: TAiAssistantMode): void => {
+  handleModeChange(value);
+  closeModeSubmenu();
+};
+
+watch(isModeSubmenuOpen, (open) => {
+  if (typeof document === 'undefined') {
+    return;
+  }
+
+  if (open) {
+    document.addEventListener('pointermove', handleModeSubmenuDocumentPointerMove, {
+      passive: true,
+    });
+  } else {
+    document.removeEventListener('pointermove', handleModeSubmenuDocumentPointerMove);
+    clearModeSubmenuCloseTimer();
+  }
+});
 
 // -------------------------------------------------------------------------
 // 富文本输入：纯文本 + 内联技能胶囊
@@ -729,6 +874,14 @@ onMounted(() => {
   void loadSkills();
   applyValueToEditor(modelValue.value ?? '', selectedSkills.value ?? []);
 });
+
+onBeforeUnmount(() => {
+  clearModeSubmenuCloseTimer();
+
+  if (typeof document !== 'undefined') {
+    document.removeEventListener('pointermove', handleModeSubmenuDocumentPointerMove);
+  }
+});
 </script>
 
 <template>
@@ -853,9 +1006,10 @@ onMounted(() => {
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   class="ai-settings-menu-item is-mode"
-                  @pointerenter="isModeSubmenuOpen = true"
-                  @pointerleave="isModeSubmenuOpen = false"
+                  @pointerenter="handleModeMenuItemPointerEnter"
+                  @pointerleave="scheduleModeSubmenuClose"
                   @select.prevent
+                  @click.stop="openModeSubmenu"
                 >
                   <span class="icon-[lucide--route] ai-settings-menu-icon" />
                   <span class="ai-settings-menu-label">模式</span>
@@ -863,9 +1017,10 @@ onMounted(() => {
                   <span class="icon-[lucide--chevron-right] ai-settings-menu-chevron" />
                   <div
                     v-if="isModeSubmenuOpen"
+                    ref="modeSubmenuRef"
                     class="ai-mode-submenu"
-                    @pointerenter="isModeSubmenuOpen = true"
-                    @pointerleave="isModeSubmenuOpen = false"
+                    @pointerenter="openModeSubmenu"
+                    @pointerleave="scheduleModeSubmenuClose"
                   >
                     <button
                       v-for="option in modeOptions"
@@ -873,7 +1028,7 @@ onMounted(() => {
                       type="button"
                       class="ai-mode-submenu-item"
                       :class="{ 'is-active': activeMode === option.key }"
-                      @click="handleModeChange(option.key); isModeSubmenuOpen = false"
+                      @click="selectModeOption(option.key)"
                     >
                       <span
                         v-if="option.key === 'chat'"
@@ -1491,6 +1646,15 @@ onMounted(() => {
     var(--ai-menu-shadow);
 }
 
+.ai-mode-submenu::before {
+  position: absolute;
+  top: -8px;
+  bottom: -8px;
+  left: -12px;
+  width: 12px;
+  content: '';
+}
+
 .ai-mode-submenu-item {
   display: grid;
   grid-template-columns: 20px minmax(0, 1fr) 18px;
@@ -1595,6 +1759,6 @@ onMounted(() => {
 }
 
 .ai-token-content [data-slot='context-content-footer'] {
-     background: color-mix(in srgb, var(--text-primary) 4%, transparent); 
-     }
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
+}
 </style>
