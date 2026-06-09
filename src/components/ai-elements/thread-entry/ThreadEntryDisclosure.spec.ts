@@ -38,6 +38,18 @@ describe('ThreadEntryDisclosure', () => {
     expect(wrapper.text()).toContain('终端输出');
   });
 
+  it('leadingChevron 时折叠箭头渲染在行首', () => {
+    const wrapper = mount(ThreadEntryDisclosure, {
+      props: { title: '读取文件', open: false, leadingChevron: true },
+      slots: { leading: '<i class="leading-stub" />' },
+    });
+
+    const chevron = wrapper.find('.thread-entry-disclosure__chevron');
+
+    expect(chevron.exists()).toBe(true);
+    expect(chevron.classes()).toContain('thread-entry-disclosure__chevron--leading');
+  });
+
   it('禁用时不渲染折叠箭头与折叠区，且点击不再 emit', async () => {
     const wrapper = mount(ThreadEntryDisclosure, {
       props: { title: '上下文整理', open: false, disabled: true },

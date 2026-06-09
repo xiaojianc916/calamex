@@ -31,7 +31,7 @@ const emit = defineEmits<{
 
 const hasContent = computed(() => props.entry.content.length > 0);
 const primaryTag = computed(() => props.entry.tags[0] ?? '');
-// 行首图标改为“工具专属图标”（对齐 Zed 的 tool-call 行首），执行状态改放到行尾。
+// 行首：折叠箭头（▶/▼）+ 工具专属图标；执行状态移到行尾（对齐 Zed 工具调用行）。
 const toolIconClass = computed(() => TASK_ICON_MAP[props.entry.icon] ?? TASK_ICON_MAP.system);
 const webSourceCount = computed(() => props.entry.webSearchSources?.length ?? 0);
 
@@ -69,6 +69,7 @@ const resolveHunks = (filePath: string): IAiDiffHunkPreview[] =>
     class="ai-thread-tool-call"
     :open="open"
     :disabled="!hasContent"
+    leading-chevron
     @update:open="emit('update:open', $event)"
   >
     <template #leading>
