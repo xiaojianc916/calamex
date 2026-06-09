@@ -27,18 +27,20 @@ type TRuntimeUiEvent<TType extends TAgentUiEvent['type']> = Extract<
  * NOTE（ACP 原生重写，U3a）：正文增量与工具生命周期已全面收敛为富事件
  * `agent_event`（agent.text.delta / agent.tool.*），故 `message_delta` / `tool_start`
  * 已零生产端；`message_clear` / `diff_ready` 在 sidecar 从未有生产端。四者均已从
- * 本白名单移除。
+ * 本白名单移除。扁平的工具完成事件 `tool_result` 同样已被富事件
+ * `agent.tool.completed` 取代（validator / replanner / base 兜底审批三处生产端均已
+ * 改写），零生产端后从白名单移除；前端事件适配层对扁平与富两种形态产出完全一致的
+ * AG-UI 输出（TOOL_CALL_END + TOOL_CALL_RESULT），故为无损收敛。
  *
  * 终态终止事件 `done` 同样已移除：依据 ACP，turn 的最终结果由 prompt 响应的
  * `result` 承载、token 用量经 `session/update` 的 `usage_update` 通知投影（见
  * {@link IAgentTokenUsageSnapshot} 与 {@link IAgentRuntimeResponse.usage}），均不再
- * 需要一个独立的终止 UI 事件。至此白名单精确收敛为实际发射的 6 种。
+ * 需要一个独立的终止 UI 事件。至此白名单精确收敛为实际发射的 5 种。
  */
 export const AGENT_RUNTIME_OUTPUT_EVENT_TYPES = [
     'agent_event',
     'plan_ready',
     'plan_record',
-    'tool_result',
     'approval_required',
     'error',
 ] as const satisfies ReadonlyArray<TAgentUiEvent['type']>;
