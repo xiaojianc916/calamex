@@ -16,7 +16,7 @@ import {
   formatAiPatchDisplayPath,
 } from '@/components/business/ai/edit/patch-preview';
 import { TASK_ICON_MAP } from '@/components/business/ai/plan/runtime-timeline';
-import { cn } from '@/lib/utils';
+import LucideIcon from '@/components/ui/icon/LucideIcon.vue';
 import type { IAiDiffHunkPreview, IAiPatchSet } from '@/types/ai';
 import type { IAiThreadToolCallEntry } from './projection';
 
@@ -97,7 +97,7 @@ const resolveHunks = (filePath: string): IAiDiffHunkPreview[] =>
       :aria-expanded="isExpanded"
       @click="toggleOpen"
     >
-      <span :class="cn('ai-thread-tool-call__tool-icon size-4', toolIconClass)" aria-hidden="true" />
+      <LucideIcon :name="toolIconClass" class="ai-thread-tool-call__tool-icon size-4" aria-hidden="true" />
       <span class="ai-thread-tool-call__label">
         <span class="ai-thread-tool-call__action" v-text="entry.title" />
       </span>
