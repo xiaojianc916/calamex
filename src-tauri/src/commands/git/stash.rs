@@ -249,22 +249,27 @@ fn drop_stash_by_index(repository: &Repository, target_index: usize) -> Result<(
 
     let mut rebuilt = lines.join("\n");
     rebuilt.push('\n');
-    fs::write(&reflog_path, rebuilt).map_err(|error| format!("写入贮藏 reflog 失败：{error}"))?;
+    rewrite_file_atomically(&reflog_path, &rebuilt, "写入贮藏 reflog 失败")?;
     // 松散 refs/stash 已更新；若该引用曾被打包进 packed-refs，移除打包条目避免其继续生效。
     prune_packed_stash_ref(git_dir)?;
     Ok(())
 }
 
-/// 原子写入 refs/stash：由 atomic-write-file 在同目录创建唯一临时文件并 commit 覆盖目标，
-/// 避免写一半导致引用损坏，也避免固定临时名在并发 / 重入时互相覆盖（与 branches / skills 一致）。
-fn write_stash_ref_atomically(stash_ref_path: &Path, content: &str) -> Result<(), String> {
+/// 原子改写整个文件：由 atomic-write-file 在同目录创建唯一临时文件并 commit 覆盖目标，
+/// 避免写到一半导致文件损坏，也避免固定临时名在并发 / 重入时互相覆盖（与 branches / skills 一致）。
+fn rewrite_file_atomically(path: &Path, content: &str, error_context: &str) -> Result<(), String> {
     let mut file = AtomicWriteFile::options()
-        .open(stash_ref_path)
-        .map_err(|error| format!("写入 refs/stash 失败：{error}"))?;
+        .open(path)
+        .map_err(|error| format!("{error_context}：{error}"))?;
     file.write_all(content.as_bytes())
-        .map_err(|error| format!("写入 refs/stash 失败：{error}"))?;
+        .map_err(|error| format!("{error_context}：{error}"))?;
     file.commit()
-        .map_err(|error| format!("写入 refs/stash 失败：{error}"))
+        .map_err(|error| format!("{error_context}：{error}"))
+}
+
+/// 原子写入 refs/stash（与 branches / skills 的原子写入惯例一致）。
+fn write_stash_ref_atomically(stash_ref_path: &Path, content: &str) -> Result<(), String> {
+    rewrite_file_atomically(stash_ref_path, content, "写入 refs/stash 失败")
 }
 
 /// 从 .git/packed-refs 中移除 refs/stash 行（若存在）。
@@ -306,8 +311,7 @@ fn prune_packed_stash_ref(git_dir: &Path) -> Result<(), String> {
     }
 
     if changed {
-        fs::write(&packed_path, output)
-            .map_err(|error| format!("写入 packed-refs 失败：{error}"))?;
+        rewrite_file_atomically(&packed_path, &output, "写入 packed-refs 失败")?;
     }
     Ok(())
 }
@@ -1175,5 +1179,60 @@ fn tree_entry_kind_from_index_mode(mode: gix::index::entry::Mode) -> gix::object
         EntryKind::BlobExecutable
     } else {
         EntryKind::Blob
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    /// 创建一个唯一的临时目录充当 .git 目录（纯 std，不引入额外依赖）。
+    fn make_temp_git_dir(label: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "calamex-stash-{label}-{}-{nanos}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&path).expect("create temp git dir");
+        path
+    }
+
+    #[test]
+    fn prune_packed_stash_ref_removes_stash_entry_and_peeled_line() {
+        let git_dir = make_temp_git_dir("prune-stash");
+        let packed_path = git_dir.join("packed-refs");
+        fs::write(
+            &packed_path,
+            "# pack-refs with: peeled fully-peeled sorted\n\
+             1111111111111111111111111111111111111111 refs/heads/main\n\
+             2222222222222222222222222222222222222222 refs/stash\n\
+             ^3333333333333333333333333333333333333333\n\
+             4444444444444444444444444444444444444444 refs/tags/v1\n",
+        )
+        .expect("write packed-refs");
+
+        prune_packed_stash_ref(&git_dir).expect("prune packed refs/stash");
+
+        let rebuilt = fs::read_to_string(&packed_path).expect("read packed-refs");
+        // refs/stash 行及其紧随的 peeled "^" 行都应被移除。
+        assert!(!rebuilt.contains("refs/stash"));
+        assert!(!rebuilt.contains('^'));
+        // 其余引用应原样保留。
+        assert!(rebuilt.contains("refs/heads/main"));
+        assert!(rebuilt.contains("refs/tags/v1"));
+
+        let _ = fs::remove_dir_all(&git_dir);
+    }
+
+    #[test]
+    fn prune_packed_stash_ref_is_noop_when_packed_refs_absent() {
+        let git_dir = make_temp_git_dir("prune-missing");
+        // 没有 packed-refs 文件时应安全返回 Ok 而不报错。
+        prune_packed_stash_ref(&git_dir).expect("prune without packed-refs");
+        let _ = fs::remove_dir_all(&git_dir);
     }
 }
