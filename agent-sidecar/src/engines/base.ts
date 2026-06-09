@@ -381,13 +381,16 @@ export class MastraRuntimeBase {
                 }
 
                 visibleText += nextText;
-                // Emit only the incremental text; the frontend accumulates it.
-                // The terminal done event still carries the full result.
-                pushUiEvent(events, {
-                    type: 'message_delta',
-                    text: nextText,
-                    phase: 'final',
-                }, options);
+                // 仅发射增量富事件 agent.text.delta（visibility:'user'）；
+                // 正文增量经 egress 投影为 ACP agent_message_chunk，完整结果由 prompt 响应承载。
+                if (createRuntimeEvent) {
+                    pushUiEvent(events, createRuntimeEvent({
+                        type: 'agent.text.delta',
+                        visibility: 'user',
+                        level: 'info',
+                        text: nextText,
+                    }), options);
+                }
                 continue;
             }
 
@@ -401,7 +404,6 @@ export class MastraRuntimeBase {
                     });
                 }
 
-                const input = chunk.payload.args === undefined ? null : toJsonValue(chunk.payload.args);
                 const pendingToolCallIds = pendingToolCallIdsByName.get(chunk.payload.toolName) ?? [];
                 pendingToolCallIds.push(chunk.payload.toolCallId);
                 pendingToolCallIdsByName.set(chunk.payload.toolName, pendingToolCallIds);
@@ -421,12 +423,6 @@ export class MastraRuntimeBase {
                         ...(inputPreview ? { inputPreview } : {}),
                     }), options);
                 }
-
-                pushUiEvent(events, {
-                    type: 'tool_start',
-                    toolName: chunk.payload.toolName,
-                    input,
-                }, options);
                 continue;
             }
 
@@ -440,7 +436,6 @@ export class MastraRuntimeBase {
                     });
                 }
 
-                const output = toJsonValue(chunk.payload.result);
                 const pendingToolCallIds = pendingToolCallIdsByName.get(chunk.payload.toolName) ?? [];
                 // 始终从队列出队一个，避免 toolCallId 存在时残留条目无限累积。
                 const queuedToolCallId = pendingToolCallIds.shift();
@@ -465,12 +460,6 @@ export class MastraRuntimeBase {
                         ...(resultPreview ? { resultPreview } : {}),
                     }), options);
                 }
-
-                pushUiEvent(events, {
-                    type: 'tool_result',
-                    toolName: chunk.payload.toolName,
-                    output,
-                }, options);
                 continue;
             }
 
@@ -540,14 +529,6 @@ export class MastraRuntimeBase {
                         errorMessage,
                     }), options);
                 }
-
-                pushUiEvent(events, {
-                    type: 'tool_result',
-                    toolName: chunk.payload.toolName,
-                    output: toJsonValue({
-                        error: errorMessage,
-                    }),
-                }, options);
                 continue;
             }
 
