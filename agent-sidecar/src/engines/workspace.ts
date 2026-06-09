@@ -13,6 +13,7 @@ import { MASTRA_WORKSPACE_REDACTED_PREVIEW_TOOL_NAMES, WINDOWS_POWERSHELL_CORE_R
 import { toNonEmptyString } from './utils.js';
 import { resolveWorkspaceDirectory } from './context/context.js';
 import { decideSensitivePathToolPermission, type IToolPermissionPolicy } from './policy/tool-permission-policy.js';
+import { warmWorkspaceSearchIndex } from './search-index.js';
 
 export const isWindowsRuntime = (): boolean => process.platform === 'win32';
 
@@ -435,13 +436,15 @@ export const createMastraWorkspace = async (
         // 缺失对应 language server 时仅该语言无结果，不影响工作区初始化。
         lsp: true,
         // 开启 BM25 关键字检索（search / index 工具）：纯关键字、无需 embedder / vectorStore。
-        // 刻意不设 autoIndexPaths——不在 init() 时索引整个项目（避免 node_modules / target 撑爆启动耗时与内存），
-        // 改为按需：模型先用 index 工具索引关心的文件，再用 search 检索；语义 / 混合检索如需另配 vectorStore + embedder。
+        // 刻意不用 autoIndexPaths：它无法排除目录、也不读 .gitignore，递归会 walk 进嵌套的
+        // node_modules / target 撑爆启动耗时与内存。改为 init() 后由 warmWorkspaceSearchIndex 在后台
+        // 预热——自带目录层 denylist 剪枝（含嵌套），跳过依赖 / 构建产物，对任意工作区布局都安全。
+        // 语义 / 混合检索如需另配 vectorStore + embedder。
         bm25: true,
         tools: {
             // 直接复用 Mastra 内置 read_file：已原生支持文本行区间（offset/limit）、cat -n 行号
-            // （showLineNumbers 默认 true）、把图片/PDF 作为 media part 直接给模型查看、二进制安全
-            // （超限仅返回元数据，不灌 base64）。这些正是其相对手写实现的长处，只按需增强媒体识别。
+            //（showLineNumbers 默认 true）、把图片/PDF 作为 media part 直接给模型查看、二进制安全
+            //（超限仅返回元数据，不灌 base64）。这些正是其相对手写实现的长处，只按需增强媒体识别。
             [WORKSPACE_TOOLS.FILESYSTEM.READ_FILE]: {
                 enabled: true,
                 // 取主流模型普遍支持的安全交集；不放开为 image/*，官方文档提示
@@ -511,6 +514,12 @@ export const createMastraWorkspace = async (
     });
 
     await workspace.init();
+
+    // 启动后台预热 BM25 索引：非阻塞（不 await），不拖慢工作区就绪。
+    // warmWorkspaceSearchIndex 内部在目录层剪枝掉 node_modules / target / dist 等（含嵌套），
+    // 且自吞所有错误（best-effort），不会影响工作区可用性。
+    void warmWorkspaceSearchIndex(workspace).catch(() => undefined);
+
     return workspace;
 };
 
