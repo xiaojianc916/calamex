@@ -57,17 +57,19 @@ const attachmentItems = computed(() =>
 .ai-thread-user-message {
   display: flex;
   flex-direction: column;
+  align-items: flex-end;
   gap: 6px;
   width: 100%;
   min-width: 0;
 }
 
 .ai-thread-user-message__attachments {
+  align-self: flex-end;
   max-width: min(520px, 100%);
 }
 
 .ai-thread-user-message__body {
-  align-self: flex-start;
+  align-self: flex-end;
   min-width: 0;
   max-width: 100%;
   border-radius: 10px;
