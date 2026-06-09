@@ -1,8 +1,6 @@
 use super::*;
 use gix::bstr::ByteSlice;
 
-const AUTHORITY_PATH_REMOTE_SCHEMES: &[&str] = &["ssh://", "https://", "http://", "git://"];
-
 struct ParsedGitRemoteRepositoryUrl {
     host: String,
     repository_url: String,
@@ -143,55 +141,35 @@ fn find_preferred_git_remote(repository: &Repository) -> Result<Option<(String, 
     Ok(None)
 }
 
+/// 使用 gix 官方 Git URL 解析器解析 host 与 path（支持 scp 风格 git@host:path 及
+/// ssh/https/git 等 scheme），仅保留 app 专属的 .git 去尾与规范化为 https 链接的逻辑。
 fn parse_git_remote_repository_url(url: &str) -> Option<ParsedGitRemoteRepositoryUrl> {
     let trimmed = url.trim();
     if trimmed.is_empty() {
         return None;
     }
 
-    let (host, raw_path) = if let Some(rest) = trimmed.strip_prefix("git@") {
-        let (host, path) = rest.split_once(':')?;
-        (host.to_string(), path.to_string())
-    } else if let Some(rest) = AUTHORITY_PATH_REMOTE_SCHEMES
-        .iter()
-        .find_map(|scheme| trimmed.strip_prefix(scheme))
-    {
-        parse_authority_path_remote(rest)?
-    } else {
-        return None;
-    };
-
-    let host = host
-        .split('@')
-        .next_back()
-        .unwrap_or(host.as_str())
-        .split(':')
-        .next()
-        .unwrap_or(host.as_str())
-        .trim_matches('/')
-        .to_string();
-
-    let repository_path = raw_path.trim_matches('/');
-    if repository_path.is_empty() {
+    let parsed = gix::url::parse(gix::bstr::BStr::new(trimmed)).ok()?;
+    let host = parsed.host()?.trim().to_string();
+    if host.is_empty() {
         return None;
     }
 
+    let path = parsed.path.to_str_lossy();
+    let repository_path = path.trim_matches('/');
+    if repository_path.is_empty() {
+        return None;
+    }
     let repository_path = repository_path
         .strip_suffix(".git")
-        .unwrap_or(repository_path)
-        .to_string();
+        .unwrap_or(repository_path);
 
-    let repository_url = ["https://", host.as_str(), "/", repository_path.as_str()].concat();
+    let repository_url = ["https://", host.as_str(), "/", repository_path].concat();
 
     Some(ParsedGitRemoteRepositoryUrl {
         host,
         repository_url,
     })
-}
-
-fn parse_authority_path_remote(input: &str) -> Option<(String, String)> {
-    let (authority, path) = input.split_once('/')?;
-    Some((authority.to_string(), path.to_string()))
 }
 
 fn resolve_pull_request_provider(host: &str) -> &'static str {
@@ -1099,4 +1077,54 @@ pub async fn close_git_pull_request(
     );
 
     Ok(map_pull_request_summary(&pull_request))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_git_remote_repository_url_supports_scp_style() {
+        let parsed = parse_git_remote_repository_url("git@github.com:owner/repo.git").unwrap();
+        assert_eq!(parsed.host, "github.com");
+        assert_eq!(parsed.repository_url, "https://github.com/owner/repo");
+    }
+
+    #[test]
+    fn parse_git_remote_repository_url_supports_ssh_scheme() {
+        let parsed =
+            parse_git_remote_repository_url("ssh://git@github.com:22/owner/repo.git").unwrap();
+        assert_eq!(parsed.host, "github.com");
+        assert_eq!(parsed.repository_url, "https://github.com/owner/repo");
+    }
+
+    #[test]
+    fn parse_git_remote_repository_url_supports_https_scheme() {
+        let parsed =
+            parse_git_remote_repository_url("https://github.com/owner/repo.git").unwrap();
+        assert_eq!(parsed.host, "github.com");
+        assert_eq!(parsed.repository_url, "https://github.com/owner/repo");
+    }
+
+    #[test]
+    fn parse_git_remote_repository_url_keeps_nested_path() {
+        let parsed =
+            parse_git_remote_repository_url("https://gitlab.com/group/sub/repo.git").unwrap();
+        assert_eq!(parsed.host, "gitlab.com");
+        assert_eq!(parsed.repository_url, "https://gitlab.com/group/sub/repo");
+    }
+
+    #[test]
+    fn parse_git_remote_repository_url_rejects_blank_and_local_path() {
+        assert!(parse_git_remote_repository_url("   ").is_none());
+        assert!(parse_git_remote_repository_url("/home/user/repo").is_none());
+    }
+
+    #[test]
+    fn resolve_pull_request_provider_detects_known_hosts() {
+        assert_eq!(resolve_pull_request_provider("github.com"), "github");
+        assert_eq!(resolve_pull_request_provider("gitlab.com"), "gitlab");
+        assert_eq!(resolve_pull_request_provider("bitbucket.org"), "bitbucket");
+        assert_eq!(resolve_pull_request_provider("example.com"), "unknown");
+    }
 }

@@ -181,31 +181,20 @@ fn find_preferred_remote_url(repository: &Repository) -> Result<Option<String>, 
     Ok(None)
 }
 
+/// 使用 gix 官方 Git URL 解析器提取 host（支持 scp 风格 git@host:path 及 ssh/https/git 等 scheme），
+/// 避免手写 scheme/authority 拆分。
 fn parse_github_remote_host(url: &str) -> Option<String> {
     let trimmed = url.trim();
-    if let Some(rest) = trimmed.strip_prefix("git@") {
-        let (host, _) = rest.split_once(':')?;
-        return Some(host.trim().to_string());
+    if trimmed.is_empty() {
+        return None;
     }
-
-    for scheme in ["https://", "http://", "ssh://", "git://"] {
-        if let Some(rest) = trimmed.strip_prefix(scheme) {
-            let authority = rest.split('/').next()?.trim();
-            let host = authority
-                .split('@')
-                .next_back()
-                .unwrap_or(authority)
-                .split(':')
-                .next()
-                .unwrap_or(authority)
-                .trim_matches('/');
-            if !host.is_empty() {
-                return Some(host.to_string());
-            }
-        }
+    let parsed = gix::url::parse(gix::bstr::BStr::new(trimmed)).ok()?;
+    let host = parsed.host()?.trim();
+    if host.is_empty() {
+        None
+    } else {
+        Some(host.to_string())
     }
-
-    None
 }
 
 fn resolve_github_api_base(host: &str) -> String {
@@ -699,6 +688,20 @@ mod tests {
             parse_github_remote_host("ssh://git@github.enterprise.local/owner/repo.git"),
             Some("github.enterprise.local".to_string())
         );
+    }
+
+    #[test]
+    fn parse_github_remote_host_supports_scp_and_ssh_variants() {
+        assert_eq!(
+            parse_github_remote_host("git@github.enterprise.local:owner/repo.git"),
+            Some("github.enterprise.local".to_string())
+        );
+        assert_eq!(
+            parse_github_remote_host("ssh://git@github.com:22/owner/repo.git"),
+            Some("github.com".to_string())
+        );
+        assert_eq!(parse_github_remote_host("/local/path/repo"), None);
+        assert_eq!(parse_github_remote_host("   "), None);
     }
 
     #[test]
