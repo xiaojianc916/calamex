@@ -3,6 +3,7 @@ import type { AnyWorkspace } from '@mastra/core/workspace';
 import { z } from 'zod';
 
 import { truncateModelOutputText } from '../models/output-budget.js';
+import type { IWorkspaceReadLedger } from '../engines/tools/read-ledger.js';
 import {
   formatNumberedFileSlice,
   formatWithLineNumbers,
@@ -117,8 +118,8 @@ export const buildLargeFileGuidance = (
 export const buildReadFileResult = (params: {
   path: string;
   content: string;
-  startLine?: number | null;
-  endLine?: number | null;
+  startLine?: number | null | undefined;
+  endLine?: number | null | undefined;
   maxFullLines?: number;
   maxOutputChars?: number;
 }): IReadFileResult => {
@@ -202,6 +203,7 @@ const readFileToolDescription = [
 
 export const createMastraReadFileTool = (
   workspace: AnyWorkspace,
+  readLedger: IWorkspaceReadLedger,
 ): Record<'read_file', ReturnType<typeof createTool>> => ({
   read_file: createTool({
     id: 'read_file',
@@ -214,13 +216,22 @@ export const createMastraReadFileTool = (
       if (!filesystem) {
         return buildReadFileErrorResult(path, new Error('workspace filesystem is unavailable'));
       }
+      let content: string;
       try {
         const raw = await filesystem.readFile(path, { encoding: 'utf-8' });
-        const content = typeof raw === 'string' ? raw : String(raw);
-        return buildReadFileResult({ path, content, startLine: start_line, endLine: end_line });
+        content = typeof raw === 'string' ? raw : String(raw);
       } catch (error) {
         return buildReadFileErrorResult(path, error);
       }
+      // 登记「读后写」账本：成功读取后记录 mtime，使后续 edit_file/write_file 的
+      // read-before-write 闸门可据此放行（替代被禁用的 Mastra 内置 read_file 的读取记账）。
+      try {
+        const stat = await filesystem.stat(path);
+        readLedger.record(path, stat.modifiedAt.getTime());
+      } catch {
+        // stat 失败不影响读取结果；闸门会在写入时因缺少新鲜记录而要求重新读取。
+      }
+      return buildReadFileResult({ path, content, startLine: start_line, endLine: end_line });
     },
   }),
 });

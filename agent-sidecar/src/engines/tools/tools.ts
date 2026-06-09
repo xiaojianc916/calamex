@@ -15,6 +15,7 @@ import { CURRENT_FILE_TOOL_CONTENT_MAX_CHARS, CURRENT_FILE_TOOL_MODEL_OUTPUT_MAX
 import { isExecutableToolLike, toNonEmptyString, toRecord } from '../utils.js';
 import { createMastraToolLoadPlan } from '../workspace.js';
 import { formatWithLineNumbers } from './read-file-format.js';
+import { createWorkspaceReadLedger } from './read-ledger.js';
 
 export const findCurrentFileReference = (
     contextReferences: readonly IAgentContextReferenceInput[] = [],
@@ -146,8 +147,9 @@ export const loadMastraMcpTools = async (
 }> => {
     const toolLoadPlan = createMastraToolLoadPlan(input, workspaceRootPath, contextReferences);
     const bundle = createMcpGatewayRunBundle();
+    const readLedger = createWorkspaceReadLedger();
     const workspace = toolLoadPlan.workspaceEnabled
-        ? await createMastraWorkspace(workspaceRootPath, profile)
+        ? await createMastraWorkspace(workspaceRootPath, profile, readLedger)
         : undefined;
     const browser = toolLoadPlan.browserEnabled ? createMastraBrowser() : undefined;
     const mcpGatewayMetrics = mcpGatewayPool.createMetricBuffer();
@@ -157,7 +159,7 @@ export const loadMastraMcpTools = async (
         metricSink: mcpGatewayMetrics,
     });
     const uiContextTools = createUiContextTools(contextReferences);
-    const readFileTools = workspace ? createMastraReadFileTool(workspace) : {};
+    const readFileTools = workspace ? createMastraReadFileTool(workspace, readLedger) : {};
     const nativeTimeTools = createMastraTimeTools();
     const logTools = loggerRef ? createMastraLogTools(loggerRef) : {};
     const rawTools: ToolsInput = {
