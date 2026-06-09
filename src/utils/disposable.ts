@@ -1,12 +1,12 @@
 export type Disposable = () => void | Promise<void>;
 
-export type DisposableBag = {
+export type DisposableBag = AsyncDisposable & {
   readonly disposed: boolean;
   add(disposable: Disposable): () => void;
   dispose(): Promise<void>;
 };
 
-export type MutableDisposable = {
+export type MutableDisposable = AsyncDisposable & {
   readonly disposed: boolean;
   readonly value: Disposable | null;
   set(disposable: Disposable | null): void;
@@ -83,6 +83,10 @@ export const createDisposableBag = (): DisposableBag => {
         throw new AggregateError(errors, 'Failed to dispose runtime resources');
       }
     },
+
+    [Symbol.asyncDispose]() {
+      return this.dispose();
+    },
   };
 };
 
@@ -142,6 +146,10 @@ export const createMutableDisposable = (): MutableDisposable => {
       if (disposable) {
         await disposable();
       }
+    },
+
+    [Symbol.asyncDispose]() {
+      return this.dispose();
     },
   };
 };
