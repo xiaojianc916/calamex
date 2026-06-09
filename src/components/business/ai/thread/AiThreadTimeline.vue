@@ -62,31 +62,42 @@ const isMessageBoundary = (entry: TAiThreadEntry): boolean =>
 
 const patchesFor = (messageId: string): readonly IAiPatchSet[] =>
   messagesById.value.get(messageId)?.patches ?? [];
+
+const shouldAddUserReplyGap = (entry: TAiThreadEntry, index: number): boolean => {
+  const previousEntry = entries.value[index - 1];
+
+  return previousEntry?.kind === 'user-message' && entry.kind !== 'user-message';
+};
+
+const entryClass = (entry: TAiThreadEntry, index: number) => [
+  'ai-thread-timeline__entry',
+  { 'ai-thread-timeline__entry--after-user': shouldAddUserReplyGap(entry, index) },
+];
 </script>
 
 <template>
   <div class="ai-thread-timeline">
-    <template v-for="entry in entries" :key="entry.id">
+    <template v-for="(entry, index) in entries" :key="entry.id">
       <AiThreadUserMessage
         v-if="entry.kind === 'user-message'"
-        class="ai-thread-timeline__entry"
+        :class="entryClass(entry, index)"
         :entry="entry"
       />
       <AiThreadAssistantText
         v-if="entry.kind === 'assistant-text'"
-        class="ai-thread-timeline__entry"
+        :class="entryClass(entry, index)"
         :entry="entry"
       />
       <AiThreadReasoning
         v-if="entry.kind === 'reasoning'"
-        class="ai-thread-timeline__entry"
+        :class="entryClass(entry, index)"
         :entry="entry"
         :open="expansion.isExpanded(entry)"
         @update:open="expansion.setExpanded(entry, $event)"
       />
       <AiThreadToolCall
         v-if="entry.kind === 'tool-call'"
-        class="ai-thread-timeline__entry"
+        :class="entryClass(entry, index)"
         :entry="entry"
         :open="expansion.isExpanded(entry)"
         :patches="patchesFor(entry.messageId)"
@@ -95,7 +106,7 @@ const patchesFor = (messageId: string): readonly IAiPatchSet[] =>
       />
       <AiThreadPlanControl
         v-if="entry.kind === 'plan-control'"
-        class="ai-thread-timeline__entry"
+        :class="entryClass(entry, index)"
         :entry="entry"
         :details="planDetails"
         @approve="emit('planApprove')"
@@ -106,12 +117,12 @@ const patchesFor = (messageId: string): readonly IAiPatchSet[] =>
       />
       <AiThreadContextCompaction
         v-if="entry.kind === 'context-compaction'"
-        class="ai-thread-timeline__entry"
+        :class="entryClass(entry, index)"
         :entry="entry"
       />
       <AiThreadChangedFilesSummary
         v-if="entry.kind === 'changed-files-summary'"
-        class="ai-thread-timeline__entry"
+        :class="entryClass(entry, index)"
         :entry="entry"
         :patches="patchesFor(entry.messageId)"
         :workspace-root-path="workspaceRootPath"
@@ -133,7 +144,7 @@ const patchesFor = (messageId: string): readonly IAiPatchSet[] =>
 .ai-thread-timeline {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 10px;
   width: 100%;
   min-width: 0;
 }
@@ -141,5 +152,9 @@ const patchesFor = (messageId: string): readonly IAiPatchSet[] =>
 .ai-thread-timeline__entry {
   min-width: 0;
   max-width: 100%;
+}
+
+.ai-thread-timeline__entry--after-user {
+  margin-top: 8px;
 }
 </style>
