@@ -12,6 +12,7 @@
  * - from-runtime-event：运行时富事件 → SessionUpdate 的唯一投影边界。
  * - session-stream：投影结果 → session/update 通知信封的出口成帧。
  * - usage：done token 快照 → usage_update 的纯映射。
+ * - turn-egress：一次 prompt 回合的整体出口组装（过程通知 + 收尾 usage_update + prompt 响应）。
  */
 export * from "./protocol"
 export * from "./jsonrpc"
@@ -24,3 +25,4 @@ export * from "./new-session"
 export * from "./from-runtime-event"
 export * from "./session-stream"
 export * from "./usage"
+export * from "./turn-egress"
