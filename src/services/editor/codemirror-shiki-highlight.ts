@@ -152,13 +152,7 @@ export const createShikiHighlightRequestKey = (input: {
   endLine: number;
   codeLength: number;
 }): string =>
-  [
-    input.language,
-    input.docVersion,
-    input.startLine,
-    input.endLine,
-    input.codeLength,
-  ].join(':');
+  [input.language, input.docVersion, input.startLine, input.endLine, input.codeLength].join(':');
 
 const shikiLanguageField = StateField.define<string>({
   create: () => 'text',

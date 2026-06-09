@@ -14,13 +14,13 @@ import type {
   IAiToolCall,
   IAiToolConfirmationRequest,
 } from '@/types/ai';
+import type { TAiExecutionMode } from '@/types/ai/execution-mode';
 import type {
   IAgentPlan,
   IAgentSidecarOrchestratePayload,
   TAgentSidecarOrchestrateDecision,
   TAgentUiEvent,
 } from '@/types/ai/sidecar';
-import type { TAiExecutionMode } from '@/types/ai/execution-mode';
 
 /* ============================================================================
  * Native orchestration (Mastra createWorkflow) frontend driver.

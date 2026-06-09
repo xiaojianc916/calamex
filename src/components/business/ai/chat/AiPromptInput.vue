@@ -370,8 +370,7 @@ const isPointInsideConvexPolygon = (point: IPoint, polygon: readonly IPoint[]): 
     }
 
     const cross =
-      (next.x - current.x) * (point.y - current.y) -
-      (next.y - current.y) * (point.x - current.x);
+      (next.x - current.x) * (point.y - current.y) - (next.y - current.y) * (point.x - current.x);
 
     if (Math.abs(cross) < 0.01) {
       continue;
@@ -429,7 +428,8 @@ const handleModeSubmenuDocumentPointerMove = (event: PointerEvent): void => {
 };
 
 const handleModeMenuItemPointerEnter = (event: PointerEvent): void => {
-  modeMenuItemElement.value = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+  modeMenuItemElement.value =
+    event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
   openModeSubmenu();
 };
 

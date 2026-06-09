@@ -82,7 +82,11 @@ const humanizeToolName = (toolName: string): string =>
     .trim()
     .replace(/^./u, (character) => character.toUpperCase());
 
-const buildZedToolTitle = (toolName: string | undefined, fallback: string, rawInput?: string): string => {
+const buildZedToolTitle = (
+  toolName: string | undefined,
+  fallback: string,
+  rawInput?: string,
+): string => {
   if (!toolName) {
     return fallback;
   }
@@ -91,11 +95,21 @@ const buildZedToolTitle = (toolName: string | undefined, fallback: string, rawIn
   const input = parseJsonRecord(rawInput);
   const regex = getFirstStringField(input, ['regex', 'pattern']);
   const query = getFirstStringField(input, ['query', 'search', 'text']);
-  const path = getFirstStringField(input, ['path', 'filePath', 'file', 'include_pattern', 'includePattern']);
+  const path = getFirstStringField(input, [
+    'path',
+    'filePath',
+    'file',
+    'include_pattern',
+    'includePattern',
+  ]);
   const command = getFirstStringField(input, ['command', 'cmd', 'script']);
   const url = getFirstStringField(input, ['url', 'href']);
 
-  if (/(grep|search_text|search_files|file_search|semantic_search|mastra_workspace_grep)/u.test(normalized)) {
+  if (
+    /(grep|search_text|search_files|file_search|semantic_search|mastra_workspace_grep)/u.test(
+      normalized,
+    )
+  ) {
     if (regex) {
       return `Search files for regex ${regex}`;
     }
@@ -117,7 +131,11 @@ const buildZedToolTitle = (toolName: string | undefined, fallback: string, rawIn
     return `List directory ${path ?? humanizeToolName(toolName)}`;
   }
 
-  if (/write_file|create_file|edit_file|apply_patch|apply_file_edits|workspace_edit|workspace_write/u.test(normalized)) {
+  if (
+    /write_file|create_file|edit_file|apply_patch|apply_file_edits|workspace_edit|workspace_write/u.test(
+      normalized,
+    )
+  ) {
     return `Edit file ${path ?? query ?? humanizeToolName(toolName)}`;
   }
 

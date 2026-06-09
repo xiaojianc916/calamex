@@ -172,10 +172,14 @@ export const useWorkbench = () => {
 
     inFlightGitStatusRefresh = runGitRepositoryStatusRefresh(workspaceRootPath)
       .then(() => {
-        queuedRefreshes.forEach((entry) => entry.resolve());
+        queuedRefreshes.forEach((entry) => {
+          entry.resolve();
+        });
       })
       .catch((error) => {
-        queuedRefreshes.forEach((entry) => entry.reject(error));
+        queuedRefreshes.forEach((entry) => {
+          entry.reject(error);
+        });
       })
       .finally(() => {
         inFlightGitStatusRefresh = null;
@@ -205,7 +209,9 @@ export const useWorkbench = () => {
   ): Promise<void> => {
     if (!workspaceRootPath) {
       clearGitStatusRefreshTimer();
-      queuedGitStatusRefreshes.forEach((entry) => entry.resolve());
+      queuedGitStatusRefreshes.forEach((entry) => {
+        entry.resolve();
+      });
       queuedGitStatusRefreshes = [];
       gitStore.reset();
       return Promise.resolve();

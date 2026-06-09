@@ -1,10 +1,7 @@
-import { onScopeDispose } from 'vue';
 import { useEventListener } from '@vueuse/core';
+import { onScopeDispose } from 'vue';
 import { createMutableDisposable } from '@/utils/disposable';
-import {
-  requestDisposableAnimationFrame,
-  requestDisposableTimeout,
-} from '@/utils/dom-lifecycle';
+import { requestDisposableAnimationFrame, requestDisposableTimeout } from '@/utils/dom-lifecycle';
 import { logger } from '@/utils/logger';
 import {
   SHELL_WINDOW_RESIZE_END_EVENT,

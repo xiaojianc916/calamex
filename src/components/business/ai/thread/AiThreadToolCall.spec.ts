@@ -80,7 +80,10 @@ describe('AiThreadToolCall', () => {
 
   it('点击 header 时切换展开状态', async () => {
     const wrapper = mount(AiThreadToolCall, {
-      props: { entry: baseEntry([{ type: 'raw', id: 'raw-input', title: 'Raw Input', code: '{}' }]), open: false },
+      props: {
+        entry: baseEntry([{ type: 'raw', id: 'raw-input', title: 'Raw Input', code: '{}' }]),
+        open: false,
+      },
       global: { stubs },
     });
 

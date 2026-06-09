@@ -186,9 +186,7 @@ const isButtonDisabled = computed(
 );
 const canStartAuth = computed(() => Boolean(props.repositoryRootPath) && !authStore.isLoading);
 const isPopoverOpen = computed(() => isMenuOpen.value || Boolean(authStore.deviceAuth));
-const displayName = computed(
-  () => authStore.status.name || authStore.status.login || 'GitHub',
-);
+const displayName = computed(() => authStore.status.name || authStore.status.login || 'GitHub');
 const profileSubtitle = computed(() => authStore.status.email || authStore.status.login || '');
 const rawAvatarUrl = computed(() =>
   authStore.status.authenticated ? authStore.status.avatarUrl || '' : '',

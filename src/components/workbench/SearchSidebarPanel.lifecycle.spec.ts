@@ -158,23 +158,25 @@ describe('SearchSidebarPanel replacement lifecycle', () => {
         score: number;
       }>;
     }>();
-    tauriServiceMock.searchWorkspace.mockReturnValueOnce(firstSearch.promise).mockResolvedValueOnce({
-      rootPath: 'D:/repo',
-      scannedFileCount: 1,
-      results: [
-        {
-          path: 'D:/repo/bar.sh',
-          relativePath: 'bar.sh',
-          name: 'bar.sh',
-          kind: 'file-name',
-          lineNumber: null,
-          lineText: null,
-          matchStart: null,
-          matchEnd: null,
-          score: -10,
-        },
-      ],
-    });
+    tauriServiceMock.searchWorkspace
+      .mockReturnValueOnce(firstSearch.promise)
+      .mockResolvedValueOnce({
+        rootPath: 'D:/repo',
+        scannedFileCount: 1,
+        results: [
+          {
+            path: 'D:/repo/bar.sh',
+            relativePath: 'bar.sh',
+            name: 'bar.sh',
+            kind: 'file-name',
+            lineNumber: null,
+            lineText: null,
+            matchStart: null,
+            matchEnd: null,
+            score: -10,
+          },
+        ],
+      });
 
     const wrapper = mountPanel();
     await wrapper.find('input[aria-label="搜索关键字"]').setValue('foo');

@@ -111,7 +111,8 @@ export const buildWorkspaceTreeRows = ({
     const rawChildren = childrenMap[node.path];
     const isLoading = loadingPaths[node.path] === true;
     const showInlineCreate =
-      inlineCreateDraft?.open === true && areFileSystemPathsEqual(inlineCreateDraft.parentPath, node.path);
+      inlineCreateDraft?.open === true &&
+      areFileSystemPathsEqual(inlineCreateDraft.parentPath, node.path);
 
     if (rawChildren === undefined) {
       if (showInlineCreate) {

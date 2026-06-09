@@ -61,8 +61,11 @@ import { useResizeObserver } from '@vueuse/core';
 import type { ComponentPublicInstance } from 'vue';
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import WorkspaceTreeRow from '@/components/workbench/WorkspaceTreeRow.vue';
-import { buildWorkspaceTreeRows, isDirectoryLikeEntry } from '@/components/workbench/workspace-tree-model';
 import type { TWorkspaceTreeRow } from '@/components/workbench/workspace-tree.types';
+import {
+  buildWorkspaceTreeRows,
+  isDirectoryLikeEntry,
+} from '@/components/workbench/workspace-tree-model';
 import type { IWorkspaceEntry } from '@/types/editor';
 
 // 保留原组件名，避免影响 AppSidebar 的引用与测试中的 stub。

@@ -45,7 +45,10 @@ const toggleOpen = (): void => {
 
 const rawLanguage = (code: string): string => {
   const trimmed = code.trim();
-  if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+  if (
+    (trimmed.startsWith('{') && trimmed.endsWith('}')) ||
+    (trimmed.startsWith('[') && trimmed.endsWith(']'))
+  ) {
     return 'json';
   }
   return 'text';

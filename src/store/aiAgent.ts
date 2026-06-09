@@ -29,12 +29,12 @@ import {
   aiToolConfirmationRequestSchema,
 } from '@/types/ai/agent.schema';
 import { AI_ASSISTANT_MODES, type TAiAssistantMode } from '@/types/ai/assistant-mode';
+import { aiContextReferenceSchema } from '@/types/ai/context.schema';
 import {
-  AI_EXECUTION_MODES,
   AI_EXECUTION_MODE_DEFAULT,
+  AI_EXECUTION_MODES,
   type TAiExecutionMode,
 } from '@/types/ai/execution-mode';
-import { aiContextReferenceSchema } from '@/types/ai/context.schema';
 import { aiChatMessageSchema, aiLanguageModelUsageSchema } from '@/types/ai/schema';
 import { AGENT_PLAN_STATUSES } from '@/types/ai/sidecar';
 import { aiToolActivityInlineSchema } from '@/types/ai/stream.schema';

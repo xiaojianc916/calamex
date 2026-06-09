@@ -2,8 +2,8 @@ import { mount } from '@vue/test-utils';
 import { createPinia } from 'pinia';
 import { describe, expect, it } from 'vitest';
 import type { IWorkspaceEntry } from '@/types/editor';
-import { buildWorkspaceTreeRows } from './workspace-tree-model';
 import WorkspaceTreeNode from './WorkspaceTreeNode.vue';
+import { buildWorkspaceTreeRows } from './workspace-tree-model';
 
 const rootEntry: IWorkspaceEntry = {
   path: 'D:/repo',
