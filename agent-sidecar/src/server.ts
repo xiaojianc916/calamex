@@ -40,7 +40,6 @@ import {
 } from './server/http.js';
 import {
   extractOrchestrationAgentEvent,
-  isOrchestrationWorkflowDisabled,
   type TPlanOrchestrationRun,
 } from './server/orchestration-events.js';
 
@@ -66,8 +65,8 @@ const DEFAULT_PORT = 39871;
 export const SIDECAR_PROTOCOL_VERSION = '7';
 export const SIDECAR_IMPLEMENTATION_VERSION = 'deepseek-reasoning-transport-v6-plan-history';
 
-// Phase 2b：内存中保留的「已挂起、等待审批 resume」编排 run 的最长存活时间。
-// 超时未 resume 则回收，避免长负 sidecar 永久持有被放弃的 run。
+// 内存中保留的「已挂起、等待审批 resume」编排 run 的最长存活时间。
+// 超时未 resume 则回收，避免长跑 sidecar 永久持有被放弃的 run。
 const ORCHESTRATION_RUN_TTL_MS = 30 * 60 * 1000;
 
 export type TAgentSidecarServer = Server & {
@@ -99,8 +98,8 @@ export const createAgentSidecarServer = (
     ? normalizeSidecarToken(options.authToken)
     : normalizeSidecarToken(process.env.AGENT_SIDECAR_TOKEN);
 
-  // Phase 2b：挂起中的编排 run 注册表。sidecar 是长跑进程，同一进程内保留 run
-  // 实例即可跨 HTTP 请求 resume；跨进程 / 回收后则由 Phase 3b 从 libsql 快照重建。
+  // 挂起中的编排 run 注册表。sidecar 是长跑进程，同一进程内保留 run
+  // 实例即可跨 HTTP 请求 resume；跨进程 / 回收后则从 libsql 快照重建。
   const orchestrationRuns = new Map<string, TPlanOrchestrationRun>();
   const orchestrationRunTimers = new Map<string, ReturnType<typeof setTimeout>>();
   let disposeResourcesPromise: Promise<void> | null = null;
@@ -121,7 +120,7 @@ export const createAgentSidecarServer = (
       clearTimeout(existing);
     }
     const timer = setTimeout(() => forgetOrchestrationRun(runId), ORCHESTRATION_RUN_TTL_MS);
-    // 不让悬挂的回收计时器阻止进程退出。
+    // 不让惬挂的回收计时器阻止进程退出。
     timer.unref?.();
     orchestrationRunTimers.set(runId, timer);
   };
@@ -269,13 +268,7 @@ export const createAgentSidecarServer = (
     }
 
     if (request.method === 'POST' && url === '/agent/plan/orchestrate') {
-      // Phase 2：原生编排 workflow 新路径。默认关闭；未开启时与未知路由一致（旧行为完全不变）。
-      if (isOrchestrationWorkflowDisabled()) {
-        writeJson(response, 404, {
-          error: '未知 sidecar 路由。',
-        });
-        return;
-      }
+      // 原生编排 workflow 入口（非流式）：跑到计划审批门 suspend 或终态。
       void handlePlainPost(request, response, async (body) => {
         const payload = agentSidecarOrchestrateRequestSchema.parse(body);
         if (typeof runtime.buildPlanOrchestrationWorkflow !== 'function') {
@@ -299,15 +292,8 @@ export const createAgentSidecarServer = (
     }
 
     if (request.method === 'POST' && url === '/agent/plan/orchestrate/stream') {
-      // Phase 2c-1：原生编排 workflow 的流式入口。同样默认关闭。
-      // 用 run.stream() 把 workflow 执行事件以 NDJSON 逐帧推给客户端，达到与旧
-      // /stream 路径的功能对等；首帧先回 runId 便于挂起后 resume。
-      if (isOrchestrationWorkflowDisabled()) {
-        writeJson(response, 404, {
-          error: '未知 sidecar 路由。',
-        });
-        return;
-      }
+      // 原生编排 workflow 的流式入口：用 run.stream() 把 workflow 执行事件以 NDJSON
+      // 逐帧推给客户端，达到与旧 /stream 路径的功能对等；首帧先回 runId 便于挂起后 resume。
       void (async () => {
         let runId: string | null = null;
         try {
@@ -363,17 +349,11 @@ export const createAgentSidecarServer = (
     }
 
     if (request.method === 'POST' && url === '/agent/plan/orchestrate/resume') {
-      // Phase 2b：恢复被挂起的编排 run（计划审批门 / 工具审批 / 逐步闸门通用）。同样默认关闭。
-      if (isOrchestrationWorkflowDisabled()) {
-        writeJson(response, 404, {
-          error: '未知 sidecar 路由。',
-        });
-        return;
-      }
+      // 恢复被挂起的编排 run（计划审批门 / 工具审批 / 逐步闸门通用）。
       void handlePlainPost(request, response, async (body) => {
         const payload = agentSidecarOrchestrateResumeRequestSchema.parse(body);
-        // Phase 3b：先查内存快路径；未命中（进程重启 / TTL 回收）时，借助 Phase 3a
-        // 已落 libsql 的快照，用 createRun({ runId }) 重建同一 run 再 resume。
+        // 先查内存快路径；未命中（进程重启 / TTL 回收）时，借助已落 libsql
+        // 的快照，用 createRun({ runId }) 重建同一 run 再 resume。
         let run = orchestrationRuns.get(payload.runId);
         if (!run) {
           if (typeof runtime.buildPlanOrchestrationWorkflow !== 'function') {
@@ -404,16 +384,10 @@ export const createAgentSidecarServer = (
     }
 
     if (request.method === 'POST' && url === '/agent/plan/orchestrate/resume/stream') {
-      // Phase 2c-2：编排挂起点的「流式」恢复入口。同样默认关闭。
-      // 与非流式 /orchestrate/resume 等价，但用 run.resumeStream() 把恢复之后
-      // （执行 → 验证 → 重规划 → finish，含逐步闸门）阶段的内层 agent 事件以 NDJSON 逐帧推给客户端，
-      // 帧协议与 /orchestrate/stream 完全一致（meta → event* → response）。
-      if (isOrchestrationWorkflowDisabled()) {
-        writeJson(response, 404, {
-          error: '未知 sidecar 路由。',
-        });
-        return;
-      }
+      // 编排挂起点的「流式」恢复入口：与非流式 /orchestrate/resume 等价，但用
+      // run.resumeStream() 把恢复之后（执行 → 验证 → 重规划 → finish，含逐步闸门）阶段的
+      // 内层 agent 事件以 NDJSON 逐帧推给客户端，帧协议与 /orchestrate/stream 完全一致
+      // （meta → event* → response）。
       void (async () => {
         let runId: string | null = null;
         try {

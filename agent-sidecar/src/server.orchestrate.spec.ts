@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import type { AddressInfo } from 'node:net';
-import { afterEach, beforeEach, describe, it } from 'node:test';
+import { describe, it } from 'node:test';
 
 import { createAgentSidecarServer } from './server.js';
 import type { IAgentSidecarRuntime } from './engines/runtime.js';
 
 // 原生编排 workflow 的流式路由（/agent/plan/orchestrate/stream 与
 // /agent/plan/orchestrate/resume/stream）单测。
-// 仅验证 server 层职责：feature flag 门控 + NDJSON 帧协议（meta → event* → response）
+// 仅验证 server 层职责：NDJSON 帧协议（meta → event* → response）
 // + 把 workflow chunk 解包成 agent UI 事件（白名单过滤，丢弃 Mastra 内部帧）。
 // workflow 执行本身用最小桩替身，不触达真实 Mastra runtime。
 
@@ -120,50 +120,8 @@ const waitForMicrotask = async (): Promise<void> => {
   await Promise.resolve();
 };
 
-const ORCHESTRATION_FLAG = 'AGENT_ORCHESTRATION_WORKFLOW';
-
 describe('Agent sidecar orchestration stream routes', () => {
-  let previousFlag: string | undefined;
-
-  beforeEach(() => {
-    previousFlag = process.env[ORCHESTRATION_FLAG];
-  });
-
-  afterEach(() => {
-    if (previousFlag === undefined) {
-      delete process.env[ORCHESTRATION_FLAG];
-    } else {
-      process.env[ORCHESTRATION_FLAG] = previousFlag;
-    }
-  });
-
-  it('returns 404 when the orchestration workflow flag is explicitly disabled', async () => {
-    process.env[ORCHESTRATION_FLAG] = '0';
-    // 门控关闭时必须在触达 runtime 之前短路：workflow 桩一旦被构建即抛错。
-    const runtime = {
-      name: 'mastra',
-      version: 'orchestrate-stream-test',
-      buildPlanOrchestrationWorkflow: () => {
-        throw new Error('workflow should not be built when the flag is disabled');
-      },
-    } as unknown as IAgentSidecarRuntime;
-    const server = await startServer(runtime);
-
-    try {
-      const response = await fetch(`${server.baseUrl}/agent/plan/orchestrate/stream`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ goal: 'do something' }),
-      });
-
-      assert.equal(response.status, 404);
-    } finally {
-      await server.close();
-    }
-  });
-
-  it('streams meta, unpacked agent events, and the final response frame when enabled', async () => {
-    process.env[ORCHESTRATION_FLAG] = '1';
+  it('streams meta, unpacked agent events, and the final response frame', async () => {
     const runtime = createOrchestrationStreamRuntime(STREAM_CHUNKS, 'success', { ok: true });
     const server = await startServer(runtime);
 
@@ -202,7 +160,6 @@ describe('Agent sidecar orchestration stream routes', () => {
   });
 
   it('forwards an explicit executionMode into the workflow run input', async () => {
-    process.env[ORCHESTRATION_FLAG] = '1';
     let capturedInput: Record<string, unknown> | undefined;
     const runtime = createOrchestrationInputCapturingRuntime((inputData) => {
       capturedInput = inputData;
@@ -227,7 +184,6 @@ describe('Agent sidecar orchestration stream routes', () => {
   });
 
   it('defaults executionMode to interactive when the request omits it', async () => {
-    process.env[ORCHESTRATION_FLAG] = '1';
     let capturedInput: Record<string, unknown> | undefined;
     const runtime = createOrchestrationInputCapturingRuntime((inputData) => {
       capturedInput = inputData;
@@ -250,32 +206,7 @@ describe('Agent sidecar orchestration stream routes', () => {
     }
   });
 
-  it('returns 404 for the resume stream route when the flag is explicitly disabled', async () => {
-    process.env[ORCHESTRATION_FLAG] = '0';
-    const runtime = {
-      name: 'mastra',
-      version: 'orchestrate-stream-test',
-      buildPlanOrchestrationWorkflow: () => {
-        throw new Error('workflow should not be built when the flag is disabled');
-      },
-    } as unknown as IAgentSidecarRuntime;
-    const server = await startServer(runtime);
-
-    try {
-      const response = await fetch(`${server.baseUrl}/agent/plan/orchestrate/resume/stream`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ runId: 'run-1', decision: 'approve' }),
-      });
-
-      assert.equal(response.status, 404);
-    } finally {
-      await server.close();
-    }
-  });
-
   it('streams resumed agent events and the final response frame from resumeStream', async () => {
-    process.env[ORCHESTRATION_FLAG] = '1';
     const runtime = createOrchestrationStreamRuntime(STREAM_CHUNKS, 'success', { resumed: true });
     const server = await startServer(runtime);
 
@@ -314,7 +245,6 @@ describe('Agent sidecar orchestration stream routes', () => {
   });
 
   it('disposes server-scoped resources when the HTTP server closes', async () => {
-    process.env[ORCHESTRATION_FLAG] = '1';
     let disposeCalls = 0;
     const runtime = {
       ...createOrchestrationStreamRuntime([], 'success', { ok: true }),
@@ -331,7 +261,6 @@ describe('Agent sidecar orchestration stream routes', () => {
   });
 
   it('shares one disposal promise when close and explicit disposal race', async () => {
-    process.env[ORCHESTRATION_FLAG] = '1';
     let disposeCalls = 0;
     let disposeFinished = false;
     let releaseDispose: (() => void) | undefined;
