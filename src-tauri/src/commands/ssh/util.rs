@@ -48,20 +48,18 @@ pub(crate) fn validate_remote_mutation_name(path: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// 截断到最后一个完整 UTF-8 码点边界，避免预览文本被截在多字节字符中间。
+/// `Utf8Error::valid_up_to()` 直接给出最大的合法前缀长度，无需逐字节反向回退；
+/// 若开头即非法则 valid_up_to() 为 0，截断后为空，与原行为一致。
 pub(crate) fn truncate_at_utf8_boundary(mut raw: Vec<u8>) -> Vec<u8> {
-    if std::str::from_utf8(&raw).is_ok() {
-        return raw;
-    }
-    let mut end = raw.len();
-    while end > 0 {
-        end -= 1;
-        if std::str::from_utf8(&raw[..end]).is_ok() {
-            raw.truncate(end);
-            return raw;
+    match std::str::from_utf8(&raw) {
+        Ok(_) => raw,
+        Err(error) => {
+            let valid = error.valid_up_to();
+            raw.truncate(valid);
+            raw
         }
     }
-    raw.clear();
-    raw
 }
 
 pub(crate) fn decode_remote_preview_text(raw: Vec<u8>) -> Result<(String, String, String), String> {
