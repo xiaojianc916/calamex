@@ -22,7 +22,7 @@ import type {
 	IAgentRuntimeModelConfigInput,
 	TAgentMode,
 } from "../engines/contracts/runtime-input.js"
-import type { TContentBlock } from "./protocol.js"
+import type { ContentBlock } from "@agentclientprotocol/sdk"
 
 /** prompt 文本为空时的 goal 兑底，与 http.ts toAgentInput 的语义保持一致。 */
 const EMPTY_PROMPT_GOAL = "继续当前任务"
@@ -30,7 +30,7 @@ const EMPTY_PROMPT_GOAL = "继续当前任务"
 /**
  * 把单个内容块投影为可并入 user 消息的纯文本片段；无文本可投影时返回 null。
  */
-export const contentBlockToText = (block: TContentBlock): string | null => {
+export const contentBlockToText = (block: ContentBlock): string | null => {
 	switch (block.type) {
 		case "text":
 			return block.text
@@ -50,7 +50,7 @@ export const contentBlockToText = (block: TContentBlock): string | null => {
 }
 
 /** 把 prompt 的内容块序列拼接为单条 user 消息正文（保序，丢弃空片段）。 */
-export const promptToUserText = (prompt: readonly TContentBlock[]): string =>
+export const promptToUserText = (prompt: readonly ContentBlock[]): string =>
 	prompt
 		.map(contentBlockToText)
 		.filter((text): text is string => text !== null && text.length > 0)
@@ -60,7 +60,7 @@ export const promptToUserText = (prompt: readonly TContentBlock[]): string =>
 export interface IPromptRuntimeInputParams {
 	sessionId: string
 	mode: TAgentMode
-	prompt: readonly TContentBlock[]
+	prompt: readonly ContentBlock[]
 	workspaceRootPath?: string
 	threadId?: string
 	modelConfig?: IAgentRuntimeModelConfigInput

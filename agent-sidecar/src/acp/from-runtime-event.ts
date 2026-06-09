@@ -17,18 +17,18 @@
  * 用 toolName 猜测 id 的脆弱做法。本模块为纯函数，无 I/O、无状态。
  */
 import type { TAgentRuntimeEvent } from "../streaming/stream-types.js"
-import {
-	textBlock,
-	type TSessionUpdate,
-	type TToolCallContent,
-	type TToolKind,
-} from "./protocol.js"
+import type {
+	SessionUpdate,
+	ToolCallContent,
+	ToolKind,
+} from "@agentclientprotocol/sdk"
+import { textBlock } from "./helpers.js"
 
 /**
  * 从工具名启发式推断 ACP ToolKind。kind 仅用于 UI 图标/分组，推断不准
  * 不影响协议正确性（schema 对未知值 .catch("other")）。
  */
-export const inferToolKind = (toolName: string): TToolKind => {
+export const inferToolKind = (toolName: string): ToolKind => {
 	const name = toolName.toLowerCase()
 	const has = (...needles: string[]): boolean =>
 		needles.some((needle) => name.includes(needle))
@@ -90,7 +90,7 @@ const assertNever = (event: never): never => {
  */
 export const projectRuntimeEventToAcp = (
 	event: TAgentRuntimeEvent,
-): TSessionUpdate[] => {
+): SessionUpdate[] => {
 	switch (event.type) {
 		case "agent.text.delta":
 			return [
@@ -137,7 +137,7 @@ export const projectRuntimeEventToAcp = (
 		case "agent.tool.completed": {
 			const toolCallId = resolveToolCallId(event)
 			if (toolCallId === null) return []
-			const content: TToolCallContent[] = []
+			const content: ToolCallContent[] = []
 			if (
 				!event.ok &&
 				typeof event.errorMessage === "string" &&
@@ -204,4 +204,4 @@ export const projectRuntimeEventToAcp = (
 /** 批量投影：保序 flatMap。 */
 export const projectRuntimeEventsToAcp = (
 	events: ReadonlyArray<TAgentRuntimeEvent>,
-): TSessionUpdate[] => events.flatMap((event) => projectRuntimeEventToAcp(event))
+): SessionUpdate[] => events.flatMap((event) => projectRuntimeEventToAcp(event))
