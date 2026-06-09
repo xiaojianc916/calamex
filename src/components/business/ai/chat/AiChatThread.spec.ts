@@ -43,6 +43,7 @@ const createPlanDetails = (
 // 轻量替身:平铺时间线的逐条目渲染在 AiThreadTimeline.spec 中单独验证;此处只验证
 // AiChatThread 传入的可见消息、逐消息 after-message 插槽与改动事件转发。
 const TimelineStub = {
+  name: 'AiThreadTimeline',
   props: ['messages'],
   template: `
     <div class="timeline-stub">
@@ -235,6 +236,7 @@ describe('AiChatThread', () => {
       global: {
         stubs: {
           AiThreadTimeline: {
+            name: 'AiThreadTimeline',
             emits: ['changedFilesRollback', 'changedFilesPin'],
             template:
               "<div><button class=\"cf-rollback\" @click=\"$emit('changedFilesRollback', 'm1', 'sum1')\"></button><button class=\"cf-pin\" @click=\"$emit('changedFilesPin', 'm1', 'sum1', true)\"></button></div>",
@@ -263,6 +265,7 @@ describe('AiChatThread', () => {
       global: {
         stubs: {
           AiThreadTimeline: {
+            name: 'AiThreadTimeline',
             props: ['messages', 'planDetails'],
             template: '<div class="timeline-stub" />',
           },
@@ -286,6 +289,7 @@ describe('AiChatThread', () => {
       global: {
         stubs: {
           AiThreadTimeline: {
+            name: 'AiThreadTimeline',
             emits: [
               'planApprove',
               'planReject',
