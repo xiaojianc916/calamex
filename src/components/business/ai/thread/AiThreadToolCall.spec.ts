@@ -1,9 +1,9 @@
 import { mount } from '@vue/test-utils';
 import { describe, expect, it, vi } from 'vitest';
-import CodeBlock from '@/components/ai-elements/code-block/CodeBlock.vue';
 import { Terminal } from '@/components/ai-elements/terminal';
 import { ThreadEntryDisclosure } from '@/components/ai-elements/thread-entry';
 import AiMarkdown from '@/components/business/ai/chat/AiMarkdown.vue';
+import { AiDiffHunkViewer } from '@/components/business/ai/edit';
 import type { IAiPatchSet } from '@/types/ai';
 import AiThreadToolCall from './AiThreadToolCall.vue';
 import type { IAiThreadToolCallEntry, TAiThreadToolContent } from './projection';
@@ -33,7 +33,7 @@ const stubs = {
   TerminalHeader: true,
   TerminalTitle: true,
   TerminalContent: true,
-  CodeBlock: true,
+  AiDiffHunkViewer: true,
 };
 
 const baseEntry = (content: TAiThreadToolContent[]): IAiThreadToolCallEntry => ({
@@ -82,7 +82,7 @@ describe('AiThreadToolCall', () => {
     expect(wrapper.findComponent(Terminal).exists()).toBe(true);
   });
 
-  it('按补丁解析并内联渲染 diff hunks', () => {
+  it('按补丁解析并复用 diff 卡片渲染 hunks', () => {
     const patch: IAiPatchSet = {
       summary: 'x',
       files: [
@@ -117,6 +117,6 @@ describe('AiThreadToolCall', () => {
     });
 
     expect(wrapper.text()).toContain('src/a.ts');
-    expect(wrapper.findAllComponents(CodeBlock).length).toBe(1);
+    expect(wrapper.findAllComponents(AiDiffHunkViewer).length).toBe(1);
   });
 });
