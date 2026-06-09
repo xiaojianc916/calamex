@@ -54,10 +54,21 @@
 }
 
 .source-control-github-auth-icon,
-.source-control-github-auth-avatar {
+.source-control-github-auth-avatar,
+.source-control-github-auth-avatar-frame {
   width: 20px;
   height: 20px;
   flex: 0 0 auto;
+}
+
+.source-control-github-auth-avatar-frame,
+.source-control-github-menu-avatar-frame {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 999px;
 }
 
 .source-control-github-auth-icon {
@@ -69,6 +80,8 @@
 }
 
 .source-control-github-auth-avatar {
+  position: absolute;
+  inset: 0;
   border-radius: 999px;
   object-fit: cover;
   box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.1);
@@ -102,6 +115,7 @@
 }
 
 .source-control-github-menu-avatar,
+.source-control-github-menu-avatar-frame,
 .source-control-github-menu-mark {
   width: 28px;
   height: 28px;
@@ -110,6 +124,8 @@
 }
 
 .source-control-github-menu-avatar {
+  position: absolute;
+  inset: 0;
   object-fit: cover;
   box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.1);
 }

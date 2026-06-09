@@ -15,13 +15,22 @@
       aria-haspopup="menu"
       @click.stop="handlePrimaryClick"
     >
-      <img
-        v-if="authStore.status.authenticated && authStore.status.avatarUrl"
-        class="source-control-github-auth-avatar"
-        :src="authStore.status.avatarUrl"
-        alt=""
-        referrerpolicy="no-referrer"
-      />
+      <span
+        v-if="authAvatarUrl"
+        class="source-control-github-auth-avatar-frame"
+        aria-hidden="true"
+      >
+        <span class="source-control-github-auth-icon icon-[lucide--github]" />
+        <img
+          v-show="isAuthAvatarLoaded"
+          class="source-control-github-auth-avatar"
+          :src="authAvatarUrl"
+          alt=""
+          referrerpolicy="no-referrer"
+          @load="handleAuthAvatarLoad"
+          @error="handleAuthAvatarError"
+        />
+      </span>
       <span
         v-else
         class="source-control-github-auth-icon"
@@ -39,13 +48,22 @@
     >
       <template v-if="authStore.isAuthenticated">
         <header class="source-control-github-menu-profile">
-          <img
-            v-if="authStore.status.avatarUrl"
-            class="source-control-github-menu-avatar"
-            :src="authStore.status.avatarUrl"
-            alt=""
-            referrerpolicy="no-referrer"
-          />
+          <span
+            v-if="menuAvatarUrl"
+            class="source-control-github-menu-avatar-frame"
+            aria-hidden="true"
+          >
+            <span class="source-control-github-menu-mark icon-[lucide--github]" />
+            <img
+              v-show="isMenuAvatarLoaded"
+              class="source-control-github-menu-avatar"
+              :src="menuAvatarUrl"
+              alt=""
+              referrerpolicy="no-referrer"
+              @load="handleMenuAvatarLoad"
+              @error="handleMenuAvatarError"
+            />
+          </span>
           <span v-else class="source-control-github-menu-mark icon-[lucide--github]" aria-hidden="true" />
           <span class="source-control-github-menu-profile-copy">
             <strong v-text="displayName" />
@@ -158,6 +176,10 @@ const props = defineProps<{
 const authStore = useGitHubAuthStore();
 const rootRef = ref<HTMLElement | null>(null);
 const isMenuOpen = ref(false);
+const isAuthAvatarLoaded = ref(false);
+const isMenuAvatarLoaded = ref(false);
+const authAvatarLoadFailed = ref(false);
+const menuAvatarLoadFailed = ref(false);
 
 const isButtonDisabled = computed(
   () => authStore.isLoading && !authStore.status.authenticated && !authStore.deviceAuth,
@@ -168,6 +190,15 @@ const displayName = computed(
   () => authStore.status.name || authStore.status.login || 'GitHub',
 );
 const profileSubtitle = computed(() => authStore.status.email || authStore.status.login || '');
+const rawAvatarUrl = computed(() =>
+  authStore.status.authenticated ? authStore.status.avatarUrl || '' : '',
+);
+const authAvatarUrl = computed(() =>
+  rawAvatarUrl.value && !authAvatarLoadFailed.value ? rawAvatarUrl.value : '',
+);
+const menuAvatarUrl = computed(() =>
+  rawAvatarUrl.value && !menuAvatarLoadFailed.value ? rawAvatarUrl.value : '',
+);
 
 const closeMenu = (): void => {
   isMenuOpen.value = false;
@@ -176,6 +207,24 @@ const closeMenu = (): void => {
 const handlePrimaryClick = (): void => {
   if (isButtonDisabled.value) return;
   isMenuOpen.value = !isMenuOpen.value;
+};
+
+const handleAuthAvatarLoad = (): void => {
+  isAuthAvatarLoaded.value = true;
+};
+
+const handleAuthAvatarError = (): void => {
+  authAvatarLoadFailed.value = true;
+  isAuthAvatarLoaded.value = false;
+};
+
+const handleMenuAvatarLoad = (): void => {
+  isMenuAvatarLoaded.value = true;
+};
+
+const handleMenuAvatarError = (): void => {
+  menuAvatarLoadFailed.value = true;
+  isMenuAvatarLoaded.value = false;
 };
 
 const handleStartAuth = async (): Promise<void> => {
@@ -228,6 +277,13 @@ watch(
   },
   { immediate: true },
 );
+
+watch(rawAvatarUrl, () => {
+  isAuthAvatarLoaded.value = false;
+  isMenuAvatarLoaded.value = false;
+  authAvatarLoadFailed.value = false;
+  menuAvatarLoadFailed.value = false;
+});
 
 onMounted(() => {
   window.addEventListener('pointerdown', handleWindowPointerDown, true);
