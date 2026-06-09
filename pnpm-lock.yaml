@@ -9,11 +9,11 @@ importers:
   .:
     dependencies:
       '@ag-ui/client':
-        specifier: ^0.0.55
-        version: 0.0.55
+        specifier: ^0.0.56
+        version: 0.0.56
       '@ag-ui/core':
-        specifier: ^0.0.55
-        version: 0.0.55
+        specifier: ^0.0.56
+        version: 0.0.56
       '@codemirror/autocomplete':
         specifier: ^6.20.3
         version: 6.20.3
@@ -66,11 +66,11 @@ importers:
         specifier: ^6.5.3
         version: 6.5.3
       '@codemirror/lint':
-        specifier: ^6.9.6
-        version: 6.9.6
+        specifier: ^6.9.7
+        version: 6.9.7
       '@codemirror/merge':
-        specifier: ^6.12.1
-        version: 6.12.1
+        specifier: ^6.12.2
+        version: 6.12.2
       '@codemirror/search':
         specifier: ^6.7.0
         version: 6.7.0
@@ -78,11 +78,11 @@ importers:
         specifier: ^6.6.0
         version: 6.6.0
       '@codemirror/view':
-        specifier: ^6.43.0
-        version: 6.43.0
+        specifier: ^6.43.1
+        version: 6.43.1
       '@copilotkit/core':
         specifier: ^1.59.5
-        version: 1.59.5(@ag-ui/core@0.0.55)(zod@4.4.3)
+        version: 1.59.5(@ag-ui/core@0.0.56)(zod@4.4.3)
       '@copilotkit/vue':
         specifier: ^1.59.5
         version: 1.59.5(typescript@6.0.3)(vue@3.5.35(typescript@6.0.3))
@@ -91,7 +91,7 @@ importers:
         version: 1.2.3
       '@replit/codemirror-indentation-markers':
         specifier: ^6.5.3
-        version: 6.5.3(@codemirror/language@6.12.3)(@codemirror/state@6.6.0)(@codemirror/view@6.43.0)
+        version: 6.5.3(@codemirror/language@6.12.3)(@codemirror/state@6.6.0)(@codemirror/view@6.43.1)
       '@shikijs/langs':
         specifier: ^4.2.0
         version: 4.2.0
@@ -144,8 +144,8 @@ importers:
         specifier: ^6.0.0
         version: 6.0.0
       ai:
-        specifier: ^6.0.197
-        version: 6.0.197(zod@4.4.3)
+        specifier: ^6.0.198
+        version: 6.0.198(zod@4.4.3)
       bash-language-server:
         specifier: ^5.6.0
         version: 5.6.0
@@ -168,8 +168,8 @@ importers:
         specifier: 1.0.1-beta.5
         version: 1.0.1-beta.5(katex@0.17.0)(mermaid@11.15.0)(vue@3.5.35(typescript@6.0.3))
       motion-v:
-        specifier: 2.2.1
-        version: 2.2.1(@vueuse/core@14.3.0(vue@3.5.35(typescript@6.0.3)))(vue@3.5.35(typescript@6.0.3))
+        specifier: 2.3.0
+        version: 2.3.0(@vueuse/core@14.3.0(vue@3.5.35(typescript@6.0.3)))(vue@3.5.35(typescript@6.0.3))
       pathe:
         specifier: ^2.0.3
         version: 2.0.3
@@ -323,25 +323,25 @@ importers:
         version: 0.17.3
       '@mastra/agent-browser':
         specifier: ^0.2.2
-        version: 0.2.2(@mastra/core@1.41.0(@bufbuild/protobuf@2.12.0)(ai@6.0.197(zod@4.4.3))(express@5.2.1)(rxjs@7.8.2)(zod@4.4.3))(zod@4.4.3)
+        version: 0.2.2(@mastra/core@1.41.0(@bufbuild/protobuf@2.12.0)(ai@6.0.198(zod@4.4.3))(express@5.2.1)(rxjs@7.8.2)(zod@4.4.3))(zod@4.4.3)
       '@mastra/core':
         specifier: ^1.40.0
-        version: 1.41.0(@bufbuild/protobuf@2.12.0)(ai@6.0.197(zod@4.4.3))(express@5.2.1)(rxjs@7.8.2)(zod@4.4.3)
+        version: 1.41.0(@bufbuild/protobuf@2.12.0)(ai@6.0.198(zod@4.4.3))(express@5.2.1)(rxjs@7.8.2)(zod@4.4.3)
       '@mastra/libsql':
         specifier: ^1.12.1
-        version: 1.12.1(@mastra/core@1.41.0(@bufbuild/protobuf@2.12.0)(ai@6.0.197(zod@4.4.3))(express@5.2.1)(rxjs@7.8.2)(zod@4.4.3))
+        version: 1.12.1(@mastra/core@1.41.0(@bufbuild/protobuf@2.12.0)(ai@6.0.198(zod@4.4.3))(express@5.2.1)(rxjs@7.8.2)(zod@4.4.3))
       '@mastra/loggers':
         specifier: ^1.1.2
-        version: 1.1.2(@mastra/core@1.41.0(@bufbuild/protobuf@2.12.0)(ai@6.0.197(zod@4.4.3))(express@5.2.1)(rxjs@7.8.2)(zod@4.4.3))
+        version: 1.1.2(@mastra/core@1.41.0(@bufbuild/protobuf@2.12.0)(ai@6.0.198(zod@4.4.3))(express@5.2.1)(rxjs@7.8.2)(zod@4.4.3))
       '@mastra/mcp':
         specifier: ^1.9.1
-        version: 1.9.1(@mastra/core@1.41.0(@bufbuild/protobuf@2.12.0)(ai@6.0.197(zod@4.4.3))(express@5.2.1)(rxjs@7.8.2)(zod@4.4.3))(zod@4.4.3)
+        version: 1.9.1(@mastra/core@1.41.0(@bufbuild/protobuf@2.12.0)(ai@6.0.198(zod@4.4.3))(express@5.2.1)(rxjs@7.8.2)(zod@4.4.3))(zod@4.4.3)
       '@mastra/memory':
         specifier: ^1.20.2
-        version: 1.20.2(@mastra/core@1.41.0(@bufbuild/protobuf@2.12.0)(ai@6.0.197(zod@4.4.3))(express@5.2.1)(rxjs@7.8.2)(zod@4.4.3))(zod@4.4.3)
+        version: 1.20.2(@mastra/core@1.41.0(@bufbuild/protobuf@2.12.0)(ai@6.0.198(zod@4.4.3))(express@5.2.1)(rxjs@7.8.2)(zod@4.4.3))(zod@4.4.3)
       '@mastra/observability':
         specifier: ^1.14.1
-        version: 1.14.1(@mastra/core@1.41.0(@bufbuild/protobuf@2.12.0)(ai@6.0.197(zod@4.4.3))(express@5.2.1)(rxjs@7.8.2)(zod@4.4.3))(zod@4.4.3)
+        version: 1.14.1(@mastra/core@1.41.0(@bufbuild/protobuf@2.12.0)(ai@6.0.198(zod@4.4.3))(express@5.2.1)(rxjs@7.8.2)(zod@4.4.3))(zod@4.4.3)
       '@modelcontextprotocol/server-sequential-thinking':
         specifier: ^2025.12.18
         version: 2025.12.18(zod@4.4.3)
@@ -406,29 +406,29 @@ packages:
   '@ag-ui/client@0.0.53':
     resolution: {integrity: sha512-Mkup36KUp0KXy9v89QtAOWDUoh8H1s1Vgl4zvQv9HqXuAK1TkbtpXJHpbgZJXIxTqd54KT6yCurmC2UkOP7FDQ==}
 
-  '@ag-ui/client@0.0.55':
-    resolution: {integrity: sha512-cyTY0S1UK3ynFCtLh6XPkxECQiYL6XvFcAei5FD4yYzln5agSCZ3cAmdD86mwE4UbS5teS3Nci8Q5tEAjrRRgA==}
+  '@ag-ui/client@0.0.56':
+    resolution: {integrity: sha512-dxen4qVnDQB1xC9x1nND9W/plidoy0qwDarUPuasHCrtlkMl1EUlc+rNJM7Lr1NtnRmGHHX8gHrSeUXP3vPVHA==}
 
   '@ag-ui/core@0.0.53':
     resolution: {integrity: sha512-11UocR7fFdMWw503bWCX2IOK15vbWfxT11Mn9xOiPBVO/UVcn57ywGrlLL4UaBlPgmUTvuzr2yYR2ElSqiN2wQ==}
 
-  '@ag-ui/core@0.0.55':
-    resolution: {integrity: sha512-Pj7Ke0NsCxbCFgI3xK5YE56LaMRxnXnyeDUgDFTYxeF6KZDcSf5E0x2gB6/37w6bE0hcn/LRNPFd8Es18eIEzA==}
+  '@ag-ui/core@0.0.56':
+    resolution: {integrity: sha512-PD26s7qk8dG6/TOGmOv23ByTaGwJs2Wzm53OwsM40jSjio3xmswGZzDaFpjMNP6FsASNGovCPB8xICAyWhYx8A==}
 
   '@ag-ui/encoder@0.0.53':
     resolution: {integrity: sha512-bAOcfVdm6U4H6G6tW+DZfwPEQm1w/snVBTwaFn9nJcEMW69M7/HZuwvEc/7Zo0rK1jRL32N/j60PwTAeky19fw==}
 
-  '@ag-ui/encoder@0.0.55':
-    resolution: {integrity: sha512-co4RB8kCatQ/+sBOR+nmNMzuKKWynHD73U/MTn9yG8rdznG51KuAPlQAwTP03VChFgO5GfNqEAzcGf5dR6jyMg==}
+  '@ag-ui/encoder@0.0.56':
+    resolution: {integrity: sha512-JkR7OGby8hBUOOlrvli0bArM5qvfCoavj3ajUp8324n20wYMrfN+/TR3GUm7wW1japrV+2dS7JEVX5dylrPF1A==}
 
   '@ag-ui/proto@0.0.53':
     resolution: {integrity: sha512-swjz22xWT8YUZt5OhmUwkARDQdwt8XM1hmGZbQrhRnNPXKwrKJX9ELlbnQ4iFUQIKkMWpphzE3vA3yNKs2bbKw==}
 
-  '@ag-ui/proto@0.0.55':
-    resolution: {integrity: sha512-DNavmWA/dL3u4mpB+g/NPzF7XrYLjVFgmS8CnSOsenrmO64XVoR5RrbQghzaKvP9VNkhvdFI9tllpItfE3Pryw==}
+  '@ag-ui/proto@0.0.56':
+    resolution: {integrity: sha512-D72l/Xa3vHRBJtlxa+gG3VcycrEwDCHwCTh8BGkyrnRdraYPFl92eeWSV0tnF9+i7xLyNqCdww+NgCoPlrdhZQ==}
 
-  '@ai-sdk/gateway@3.0.125':
-    resolution: {integrity: sha512-tocl7cUDoTpmhZqeW8XVKMMznZQwwQAEunF0VyNKmf64qt8NbMIAEiet/vRMzh7Jr9WcFeb6EZjmhLTP4Qx2Og==}
+  '@ai-sdk/gateway@3.0.126':
+    resolution: {integrity: sha512-OHwcwdVkzLo7Rx4eeFyyH3e/vlsYg11HIgKPf5yH6jkptI1Kzq8BX9xZPIBq4BrLBTF2p6pgvWqRfy6AvARGkQ==}
     engines: {node: '>=18'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
@@ -702,11 +702,11 @@ packages:
   '@codemirror/legacy-modes@6.5.3':
     resolution: {integrity: sha512-xCsmIzH78MyWkib9jlPaaun57XNkfbMIhagfaZVd0iLTqlpw3jXaIcbZm72MTmmn64eTZpBVNjbyYh+QXnxRsg==}
 
-  '@codemirror/lint@6.9.6':
-    resolution: {integrity: sha512-6Kp7r6XfCi/D/5sdXieMfg9pJU1bUEx96WITuLU6ESaKizCz0QHFMjY/TaFSbigDdEAIgi93itLBIUETP4oK+A==}
+  '@codemirror/lint@6.9.7':
+    resolution: {integrity: sha512-28/+iWLYxKxsvGYhSYL7zaCZqLz5+FFFDq9tVsvGv9kv8RY4fFAchJ5WX9M3YrrRlTIsECjsXPqeNgnSmNP2dg==}
 
-  '@codemirror/merge@6.12.1':
-    resolution: {integrity: sha512-GA8hBq2T+IFM0sb5fk8CunTrqOulA3zurJmHtzcU15EMnL8aYpVINfJ5bkfd53M4ikwoew4Y1ydtSaAlk6+B1w==}
+  '@codemirror/merge@6.12.2':
+    resolution: {integrity: sha512-V8JvyAPjHbPupqP7BeMcsdsYCbyPij74jxIbaIJDORI+VZzW44zFmon8bF+oxGWvOKhcRmkiUMXd8MxHr3YA2w==}
 
   '@codemirror/search@6.7.0':
     resolution: {integrity: sha512-ZvGm99wc/s2cITtMT15LFdn8aH/aS+V+DqyGq/N5ZlV5vWtH+nILvC2nw0zX7ByNoHHDZ2IxxdW38O0tc5nVHg==}
@@ -714,8 +714,8 @@ packages:
   '@codemirror/state@6.6.0':
     resolution: {integrity: sha512-4nbvra5R5EtiCzr9BTHiTLc+MLXK2QGiAVYMyi8PkQd3SR+6ixar/Q/01Fa21TBIDOZXgeWV4WppsQolSreAPQ==}
 
-  '@codemirror/view@6.43.0':
-    resolution: {integrity: sha512-V7ZCLQO3Jus9hzh2jVCCPW3mO4IBMr43O37PqSUYautJSnnJF41YlgLw21x0fLJTYvJ+Vkm6Gp+qKGH9pltgXA==}
+  '@codemirror/view@6.43.1':
+    resolution: {integrity: sha512-+BIjw/AG3tDQ4pJgTLPYdAW25eDE66YsvM4LKyVPgGzVgZ4a9Wj1SRX8kPVKgBDdPt8oHtZ15F0qx7p0oOHdHw==}
 
   '@commitlint/cli@21.0.2':
     resolution: {integrity: sha512-YMmfLbqBg+ZRvvmPhc+cilSQFrh/AgzVgCT1U/OifmUZEwPbvCtA8rN//YNaF9d5eoZphxVMGYtmwA2QgQORgg==}
@@ -2482,8 +2482,8 @@ packages:
     resolution: {integrity: sha512-Ull7jF/OO4P+Zm/SHKCOyJPRcPIGe0nvHPM+/E611qzYIyKGoSMfv2UozIs878uB4bI++cHeAUzitOXyjiawBQ==}
     hasBin: true
 
-  ai@6.0.197:
-    resolution: {integrity: sha512-U3KsjkqwQXGHC0u0VeUDqUaNaBS/uQc7v4Vj92Cjv5lPx5DIyRBQYk4Hipy5vwD9AQKIG8uRvdaN9R+pAvrtcQ==}
+  ai@6.0.198:
+    resolution: {integrity: sha512-NEXlYGu3n7VTG6cn3SAeimfy60FLH/R5uRpl7zqDu0BLtIuoY1lALBGoJzltoVqd/iFQH1asIy/VqZqLPDWv0w==}
     engines: {node: '>=18'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
@@ -4708,8 +4708,8 @@ packages:
   motion-utils@12.39.0:
     resolution: {integrity: sha512-8nadJAJjTtqRkmRF36FoJTrywK9nnFmnPwnSMyxaOCU7GDjN9RTMJIxx9De8ErM+vpPhMccr/6fo5WciyQLnMQ==}
 
-  motion-v@2.2.1:
-    resolution: {integrity: sha512-BYbABe1Ep/u33dHOrK+8SoVU2MuiQqT94JOYsgrge8QbrwkKf2lS6rHW2QyzP6t89wcyBvzZeLQQwfrx76dj9A==}
+  motion-v@2.3.0:
+    resolution: {integrity: sha512-J0CCfXtICCni9RjotDUBOs57xNpYI9yyBSohEOxaRHrmjwOtlw291fhRu/mdgEdSasys96R028YDDOAtWBbRaA==}
     peerDependencies:
       '@vueuse/core': '>=10.0.0'
       vue: '>=3.0.0'
@@ -5335,8 +5335,8 @@ packages:
     engines: {node: '>=10'}
     hasBin: true
 
-  semver@7.8.2:
-    resolution: {integrity: sha512-c8jsqUZm3omBOI66G90z1Dyw5z622G8oLG+omfsHBJf3CWQTlOcwOjvOG6wtiNfW6anKm/eA39LMwMtMez2TiQ==}
+  semver@7.8.3:
+    resolution: {integrity: sha512-wnilbGyMxzbY7dNOl7jpKbLSjcfeweJWU5j4+u5qW+6/wuGD9KzIGOyZnQVSBM9E7DtWaaH3CyHkppYrKYoxwg==}
     engines: {node: '>=10'}
     hasBin: true
 
@@ -6269,11 +6269,11 @@ snapshots:
       uuid: 11.1.1
       zod: 3.25.76
 
-  '@ag-ui/client@0.0.55':
+  '@ag-ui/client@0.0.56':
     dependencies:
-      '@ag-ui/core': 0.0.55
-      '@ag-ui/encoder': 0.0.55
-      '@ag-ui/proto': 0.0.55
+      '@ag-ui/core': 0.0.56
+      '@ag-ui/encoder': 0.0.56
+      '@ag-ui/proto': 0.0.56
       '@types/uuid': 10.0.0
       compare-versions: 6.1.1
       fast-json-patch: 3.1.1
@@ -6286,7 +6286,7 @@ snapshots:
     dependencies:
       zod: 3.25.76
 
-  '@ag-ui/core@0.0.55':
+  '@ag-ui/core@0.0.56':
     dependencies:
       zod: 3.25.76
 
@@ -6295,10 +6295,10 @@ snapshots:
       '@ag-ui/core': 0.0.53
       '@ag-ui/proto': 0.0.53
 
-  '@ag-ui/encoder@0.0.55':
+  '@ag-ui/encoder@0.0.56':
     dependencies:
-      '@ag-ui/core': 0.0.55
-      '@ag-ui/proto': 0.0.55
+      '@ag-ui/core': 0.0.56
+      '@ag-ui/proto': 0.0.56
 
   '@ag-ui/proto@0.0.53':
     dependencies:
@@ -6306,13 +6306,13 @@ snapshots:
       '@bufbuild/protobuf': 2.12.0
       '@protobuf-ts/protoc': 2.11.1
 
-  '@ag-ui/proto@0.0.55':
+  '@ag-ui/proto@0.0.56':
     dependencies:
-      '@ag-ui/core': 0.0.55
+      '@ag-ui/core': 0.0.56
       '@bufbuild/protobuf': 2.12.0
       '@protobuf-ts/protoc': 2.11.1
 
-  '@ai-sdk/gateway@3.0.125(zod@4.4.3)':
+  '@ai-sdk/gateway@3.0.126(zod@4.4.3)':
     dependencies:
       '@ai-sdk/provider': 3.0.10
       '@ai-sdk/provider-utils': 4.0.27(zod@4.4.3)
@@ -6495,14 +6495,14 @@ snapshots:
     dependencies:
       '@codemirror/language': 6.12.3
       '@codemirror/state': 6.6.0
-      '@codemirror/view': 6.43.0
+      '@codemirror/view': 6.43.1
       '@lezer/common': 1.5.2
 
   '@codemirror/commands@6.10.3':
     dependencies:
       '@codemirror/language': 6.12.3
       '@codemirror/state': 6.6.0
-      '@codemirror/view': 6.43.0
+      '@codemirror/view': 6.43.1
       '@lezer/common': 1.5.2
 
   '@codemirror/lang-cpp@6.0.3':
@@ -6533,7 +6533,7 @@ snapshots:
       '@codemirror/lang-javascript': 6.2.5
       '@codemirror/language': 6.12.3
       '@codemirror/state': 6.6.0
-      '@codemirror/view': 6.43.0
+      '@codemirror/view': 6.43.1
       '@lezer/common': 1.5.2
       '@lezer/css': 1.3.3
       '@lezer/html': 1.3.13
@@ -6547,9 +6547,9 @@ snapshots:
     dependencies:
       '@codemirror/autocomplete': 6.20.3
       '@codemirror/language': 6.12.3
-      '@codemirror/lint': 6.9.6
+      '@codemirror/lint': 6.9.7
       '@codemirror/state': 6.6.0
-      '@codemirror/view': 6.43.0
+      '@codemirror/view': 6.43.1
       '@lezer/common': 1.5.2
       '@lezer/javascript': 1.5.4
 
@@ -6564,7 +6564,7 @@ snapshots:
       '@codemirror/lang-html': 6.4.11
       '@codemirror/language': 6.12.3
       '@codemirror/state': 6.6.0
-      '@codemirror/view': 6.43.0
+      '@codemirror/view': 6.43.1
       '@lezer/common': 1.5.2
       '@lezer/markdown': 1.6.4
 
@@ -6604,14 +6604,14 @@ snapshots:
       '@codemirror/autocomplete': 6.20.3
       '@codemirror/language': 6.12.3
       '@codemirror/state': 6.6.0
-      '@codemirror/view': 6.43.0
+      '@codemirror/view': 6.43.1
       '@lezer/common': 1.5.2
       '@lezer/xml': 1.0.6
 
   '@codemirror/language@6.12.3':
     dependencies:
       '@codemirror/state': 6.6.0
-      '@codemirror/view': 6.43.0
+      '@codemirror/view': 6.43.1
       '@lezer/common': 1.5.2
       '@lezer/highlight': 1.2.3
       '@lezer/lr': 1.4.10
@@ -6621,31 +6621,31 @@ snapshots:
     dependencies:
       '@codemirror/language': 6.12.3
 
-  '@codemirror/lint@6.9.6':
+  '@codemirror/lint@6.9.7':
     dependencies:
       '@codemirror/state': 6.6.0
-      '@codemirror/view': 6.43.0
+      '@codemirror/view': 6.43.1
       crelt: 1.0.6
 
-  '@codemirror/merge@6.12.1':
+  '@codemirror/merge@6.12.2':
     dependencies:
       '@codemirror/language': 6.12.3
       '@codemirror/state': 6.6.0
-      '@codemirror/view': 6.43.0
+      '@codemirror/view': 6.43.1
       '@lezer/highlight': 1.2.3
       style-mod: 4.1.3
 
   '@codemirror/search@6.7.0':
     dependencies:
       '@codemirror/state': 6.6.0
-      '@codemirror/view': 6.43.0
+      '@codemirror/view': 6.43.1
       crelt: 1.0.6
 
   '@codemirror/state@6.6.0':
     dependencies:
       '@marijn/find-cluster-break': 1.0.2
 
-  '@codemirror/view@6.43.0':
+  '@codemirror/view@6.43.1':
     dependencies:
       '@codemirror/state': 6.6.0
       crelt: 1.0.6
@@ -6692,7 +6692,7 @@ snapshots:
   '@commitlint/is-ignored@21.0.2':
     dependencies:
       '@commitlint/types': 21.0.1
-      semver: 7.8.2
+      semver: 7.8.3
 
   '@commitlint/lint@21.0.2':
     dependencies:
@@ -6764,7 +6764,7 @@ snapshots:
     dependencies:
       '@simple-libs/child-process-utils': 1.0.2
       '@simple-libs/stream-utils': 1.2.0
-      semver: 7.8.2
+      semver: 7.8.3
     optionalDependencies:
       conventional-commits-parser: 6.4.0
 
@@ -6781,10 +6781,10 @@ snapshots:
       - encoding
       - zod
 
-  '@copilotkit/core@1.59.5(@ag-ui/core@0.0.55)(zod@4.4.3)':
+  '@copilotkit/core@1.59.5(@ag-ui/core@0.0.56)(zod@4.4.3)':
     dependencies:
       '@ag-ui/client': 0.0.53
-      '@copilotkit/shared': 1.59.5(@ag-ui/core@0.0.55)
+      '@copilotkit/shared': 1.59.5(@ag-ui/core@0.0.56)
       '@tanstack/pacer': 0.20.1
       phoenix: 1.8.7
       rxjs: 7.8.1
@@ -6812,10 +6812,10 @@ snapshots:
     transitivePeerDependencies:
       - encoding
 
-  '@copilotkit/shared@1.59.5(@ag-ui/core@0.0.55)':
+  '@copilotkit/shared@1.59.5(@ag-ui/core@0.0.56)':
     dependencies:
       '@ag-ui/client': 0.0.53
-      '@ag-ui/core': 0.0.55
+      '@ag-ui/core': 0.0.56
       '@copilotkit/license-verifier': 0.4.2
       '@segment/analytics-node': 2.3.0
       '@standard-schema/spec': 1.1.0
@@ -6974,7 +6974,7 @@ snapshots:
 
   '@fig/autocomplete-helpers@1.0.7':
     dependencies:
-      semver: 7.8.2
+      semver: 7.8.3
       typescript: 4.9.5
 
   '@floating-ui/core@1.7.5':
@@ -7244,9 +7244,9 @@ snapshots:
 
   '@marijn/find-cluster-break@1.0.2': {}
 
-  '@mastra/agent-browser@0.2.2(@mastra/core@1.41.0(@bufbuild/protobuf@2.12.0)(ai@6.0.197(zod@4.4.3))(express@5.2.1)(rxjs@7.8.2)(zod@4.4.3))(zod@4.4.3)':
+  '@mastra/agent-browser@0.2.2(@mastra/core@1.41.0(@bufbuild/protobuf@2.12.0)(ai@6.0.198(zod@4.4.3))(express@5.2.1)(rxjs@7.8.2)(zod@4.4.3))(zod@4.4.3)':
     dependencies:
-      '@mastra/core': 1.41.0(@bufbuild/protobuf@2.12.0)(ai@6.0.197(zod@4.4.3))(express@5.2.1)(rxjs@7.8.2)(zod@4.4.3)
+      '@mastra/core': 1.41.0(@bufbuild/protobuf@2.12.0)(ai@6.0.198(zod@4.4.3))(express@5.2.1)(rxjs@7.8.2)(zod@4.4.3)
       agent-browser: 0.19.0
       zod: 4.4.3
     transitivePeerDependencies:
@@ -7258,7 +7258,7 @@ snapshots:
       - supports-color
       - utf-8-validate
 
-  '@mastra/core@1.41.0(@bufbuild/protobuf@2.12.0)(ai@6.0.197(zod@4.4.3))(express@5.2.1)(rxjs@7.8.2)(zod@4.4.3)':
+  '@mastra/core@1.41.0(@bufbuild/protobuf@2.12.0)(ai@6.0.198(zod@4.4.3))(express@5.2.1)(rxjs@7.8.2)(zod@4.4.3)':
     dependencies:
       '@a2a-js/sdk': 0.3.13(@bufbuild/protobuf@2.12.0)(express@5.2.1)
       '@ai-sdk/provider-utils-v5': '@ai-sdk/provider-utils@3.0.25(zod@4.4.3)'
@@ -7272,7 +7272,7 @@ snapshots:
       '@sindresorhus/slugify': 2.2.1
       '@standard-schema/spec': 1.1.0
       ajv: 8.20.0
-      chat: 4.30.0(ai@6.0.197(zod@4.4.3))(zod@4.4.3)
+      chat: 4.30.0(ai@6.0.198(zod@4.4.3))(zod@4.4.3)
       croner: 10.0.1
       dotenv: 17.4.2
       execa: 9.6.1
@@ -7300,23 +7300,23 @@ snapshots:
       - supports-color
       - utf-8-validate
 
-  '@mastra/libsql@1.12.1(@mastra/core@1.41.0(@bufbuild/protobuf@2.12.0)(ai@6.0.197(zod@4.4.3))(express@5.2.1)(rxjs@7.8.2)(zod@4.4.3))':
+  '@mastra/libsql@1.12.1(@mastra/core@1.41.0(@bufbuild/protobuf@2.12.0)(ai@6.0.198(zod@4.4.3))(express@5.2.1)(rxjs@7.8.2)(zod@4.4.3))':
     dependencies:
       '@libsql/client': 0.15.15
-      '@mastra/core': 1.41.0(@bufbuild/protobuf@2.12.0)(ai@6.0.197(zod@4.4.3))(express@5.2.1)(rxjs@7.8.2)(zod@4.4.3)
+      '@mastra/core': 1.41.0(@bufbuild/protobuf@2.12.0)(ai@6.0.198(zod@4.4.3))(express@5.2.1)(rxjs@7.8.2)(zod@4.4.3)
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
 
-  '@mastra/loggers@1.1.2(@mastra/core@1.41.0(@bufbuild/protobuf@2.12.0)(ai@6.0.197(zod@4.4.3))(express@5.2.1)(rxjs@7.8.2)(zod@4.4.3))':
+  '@mastra/loggers@1.1.2(@mastra/core@1.41.0(@bufbuild/protobuf@2.12.0)(ai@6.0.198(zod@4.4.3))(express@5.2.1)(rxjs@7.8.2)(zod@4.4.3))':
     dependencies:
-      '@mastra/core': 1.41.0(@bufbuild/protobuf@2.12.0)(ai@6.0.197(zod@4.4.3))(express@5.2.1)(rxjs@7.8.2)(zod@4.4.3)
+      '@mastra/core': 1.41.0(@bufbuild/protobuf@2.12.0)(ai@6.0.198(zod@4.4.3))(express@5.2.1)(rxjs@7.8.2)(zod@4.4.3)
       pino: 10.3.1
       pino-pretty: 13.1.3
 
-  '@mastra/mcp@1.9.1(@mastra/core@1.41.0(@bufbuild/protobuf@2.12.0)(ai@6.0.197(zod@4.4.3))(express@5.2.1)(rxjs@7.8.2)(zod@4.4.3))(zod@4.4.3)':
+  '@mastra/mcp@1.9.1(@mastra/core@1.41.0(@bufbuild/protobuf@2.12.0)(ai@6.0.198(zod@4.4.3))(express@5.2.1)(rxjs@7.8.2)(zod@4.4.3))(zod@4.4.3)':
     dependencies:
-      '@mastra/core': 1.41.0(@bufbuild/protobuf@2.12.0)(ai@6.0.197(zod@4.4.3))(express@5.2.1)(rxjs@7.8.2)(zod@4.4.3)
+      '@mastra/core': 1.41.0(@bufbuild/protobuf@2.12.0)(ai@6.0.198(zod@4.4.3))(express@5.2.1)(rxjs@7.8.2)(zod@4.4.3)
       '@modelcontextprotocol/ext-apps': 1.7.4(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.4.3)
       '@modelcontextprotocol/sdk': 1.29.0(zod@4.4.3)
       exit-hook: 5.1.0
@@ -7328,9 +7328,9 @@ snapshots:
       - supports-color
       - zod
 
-  '@mastra/memory@1.20.2(@mastra/core@1.41.0(@bufbuild/protobuf@2.12.0)(ai@6.0.197(zod@4.4.3))(express@5.2.1)(rxjs@7.8.2)(zod@4.4.3))(zod@4.4.3)':
+  '@mastra/memory@1.20.2(@mastra/core@1.41.0(@bufbuild/protobuf@2.12.0)(ai@6.0.198(zod@4.4.3))(express@5.2.1)(rxjs@7.8.2)(zod@4.4.3))(zod@4.4.3)':
     dependencies:
-      '@mastra/core': 1.41.0(@bufbuild/protobuf@2.12.0)(ai@6.0.197(zod@4.4.3))(express@5.2.1)(rxjs@7.8.2)(zod@4.4.3)
+      '@mastra/core': 1.41.0(@bufbuild/protobuf@2.12.0)(ai@6.0.198(zod@4.4.3))(express@5.2.1)(rxjs@7.8.2)(zod@4.4.3)
       '@mastra/schema-compat': 1.2.11(zod@4.4.3)
       async-mutex: 0.5.0
       diff: 8.0.4
@@ -7344,9 +7344,9 @@ snapshots:
       - supports-color
       - zod
 
-  '@mastra/observability@1.14.1(@mastra/core@1.41.0(@bufbuild/protobuf@2.12.0)(ai@6.0.197(zod@4.4.3))(express@5.2.1)(rxjs@7.8.2)(zod@4.4.3))(zod@4.4.3)':
+  '@mastra/observability@1.14.1(@mastra/core@1.41.0(@bufbuild/protobuf@2.12.0)(ai@6.0.198(zod@4.4.3))(express@5.2.1)(rxjs@7.8.2)(zod@4.4.3))(zod@4.4.3)':
     dependencies:
-      '@mastra/core': 1.41.0(@bufbuild/protobuf@2.12.0)(ai@6.0.197(zod@4.4.3))(express@5.2.1)(rxjs@7.8.2)(zod@4.4.3)
+      '@mastra/core': 1.41.0(@bufbuild/protobuf@2.12.0)(ai@6.0.198(zod@4.4.3))(express@5.2.1)(rxjs@7.8.2)(zod@4.4.3)
       zod: 4.4.3
 
   '@mastra/schema-compat@1.2.11(zod@4.4.3)':
@@ -7608,7 +7608,7 @@ snapshots:
       extract-zip: 2.0.1
       progress: 2.0.3
       proxy-agent: 6.5.0
-      semver: 7.8.2
+      semver: 7.8.3
       tar-fs: 3.1.2
       yargs: 17.7.2
     transitivePeerDependencies:
@@ -7617,11 +7617,11 @@ snapshots:
       - react-native-b4a
       - supports-color
 
-  '@replit/codemirror-indentation-markers@6.5.3(@codemirror/language@6.12.3)(@codemirror/state@6.6.0)(@codemirror/view@6.43.0)':
+  '@replit/codemirror-indentation-markers@6.5.3(@codemirror/language@6.12.3)(@codemirror/state@6.6.0)(@codemirror/view@6.43.1)':
     dependencies:
       '@codemirror/language': 6.12.3
       '@codemirror/state': 6.6.0
-      '@codemirror/view': 6.43.0
+      '@codemirror/view': 6.43.1
 
   '@rolldown/binding-android-arm64@1.0.3':
     optional: true
@@ -8495,7 +8495,7 @@ snapshots:
     dependencies:
       '@fig/autocomplete-generators': 2.4.0
       '@fig/autocomplete-helpers': 1.0.7
-      semver: 7.8.2
+      semver: 7.8.3
       strip-json-comments: 5.0.3
       yaml: 2.9.0
 
@@ -8583,9 +8583,9 @@ snapshots:
       - supports-color
       - utf-8-validate
 
-  ai@6.0.197(zod@4.4.3):
+  ai@6.0.198(zod@4.4.3):
     dependencies:
-      '@ai-sdk/gateway': 3.0.125(zod@4.4.3)
+      '@ai-sdk/gateway': 3.0.126(zod@4.4.3)
       '@ai-sdk/provider': 3.0.10
       '@ai-sdk/provider-utils': 4.0.27(zod@4.4.3)
       '@opentelemetry/api': 1.9.1
@@ -8871,7 +8871,7 @@ snapshots:
 
   character-entities@2.0.2: {}
 
-  chat@4.30.0(ai@6.0.197(zod@4.4.3))(zod@4.4.3):
+  chat@4.30.0(ai@6.0.198(zod@4.4.3))(zod@4.4.3):
     dependencies:
       '@workflow/serde': 4.1.0-beta.2
       mdast-util-to-string: 4.0.0
@@ -8881,7 +8881,7 @@ snapshots:
       remend: 1.3.0
       unified: 11.0.5
     optionalDependencies:
-      ai: 6.0.197(zod@4.4.3)
+      ai: 6.0.198(zod@4.4.3)
       zod: 4.4.3
     transitivePeerDependencies:
       - supports-color
@@ -9483,14 +9483,14 @@ snapshots:
       '@one-ini/wasm': 0.1.1
       commander: 10.0.1
       minimatch: 9.0.9
-      semver: 7.8.2
+      semver: 7.8.3
 
   editorconfig@2.0.1:
     dependencies:
       '@one-ini/wasm': 0.2.0
       commander: 13.1.0
       minimatch: 10.0.1
-      semver: 7.8.2
+      semver: 7.8.3
 
   ee-first@1.1.1: {}
 
@@ -9939,7 +9939,7 @@ snapshots:
       es6-error: 4.1.1
       matcher: 3.0.0
       roarr: 2.15.4
-      semver: 7.8.2
+      semver: 7.8.3
       serialize-error: 7.0.1
 
   global-directory@4.0.1:
@@ -10563,7 +10563,7 @@ snapshots:
 
   make-dir@4.0.0:
     dependencies:
-      semver: 7.8.2
+      semver: 7.8.3
 
   markdown-it-container@4.0.0: {}
 
@@ -11029,7 +11029,7 @@ snapshots:
 
   motion-utils@12.39.0: {}
 
-  motion-v@2.2.1(@vueuse/core@14.3.0(vue@3.5.35(typescript@6.0.3)))(vue@3.5.35(typescript@6.0.3)):
+  motion-v@2.3.0(@vueuse/core@14.3.0(vue@3.5.35(typescript@6.0.3)))(vue@3.5.35(typescript@6.0.3)):
     dependencies:
       '@vueuse/core': 14.3.0(vue@3.5.35(typescript@6.0.3))
       framer-motion: 12.40.0
@@ -11089,7 +11089,7 @@ snapshots:
       bluebird: 3.7.2
       lodash: 4.18.1
       rimraf: 5.0.10
-      semver: 7.8.2
+      semver: 7.8.3
       source-map-support: 0.5.21
       teen_process: 2.3.3
       uuid: 11.1.1
@@ -11735,7 +11735,7 @@ snapshots:
 
   semver@7.8.1: {}
 
-  semver@7.8.2: {}
+  semver@7.8.3: {}
 
   send@1.2.1:
     dependencies:
