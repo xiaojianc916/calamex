@@ -55,6 +55,24 @@ const createOrchestrationStreamRuntime = (
     }),
   }) as unknown as IAgentSidecarRuntime;
 
+// 捕获 run.start() 收到的 inputData 的最小桩替身，用于断言 server 层把请求
+// 字段（如 executionMode）正确透传进 workflow 运行输入。仅覆盖非流式 /orchestrate 路由。
+const createOrchestrationInputCapturingRuntime = (
+  capture: (inputData: Record<string, unknown>) => void,
+): IAgentSidecarRuntime =>
+  ({
+    name: 'mastra',
+    version: 'orchestrate-input-test',
+    buildPlanOrchestrationWorkflow: () => ({
+      createRun: async () => ({
+        start: async ({ inputData }: { inputData: Record<string, unknown> }) => {
+          capture(inputData);
+          return { status: 'success', result: { ok: true } };
+        },
+      }),
+    }),
+  }) as unknown as IAgentSidecarRuntime;
+
 const startServer = async (
   runtime: IAgentSidecarRuntime,
 ): Promise<{ baseUrl: string; close: () => Promise<void>; disposeResources: () => Promise<void> }> => {
@@ -178,6 +196,55 @@ describe('Agent sidecar orchestration stream routes', () => {
       assert.deepEqual(responseFrame.result, { ok: true });
       // 末帧 runId 与首帧一致，便于客户端在挂起后用同一 runId 调用 resume。
       assert.equal(responseFrame.runId, metaFrame.runId);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('forwards an explicit executionMode into the workflow run input', async () => {
+    process.env[ORCHESTRATION_FLAG] = '1';
+    let capturedInput: Record<string, unknown> | undefined;
+    const runtime = createOrchestrationInputCapturingRuntime((inputData) => {
+      capturedInput = inputData;
+    });
+    const server = await startServer(runtime);
+
+    try {
+      const response = await fetch(`${server.baseUrl}/agent/plan/orchestrate`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ goal: 'do something', executionMode: 'autonomous' }),
+      });
+
+      assert.equal(response.status, 200);
+      assert.ok(capturedInput, 'expected start() to receive inputData');
+      // autonomous 显式传入时，server 必须原样透传进 workflow 运行输入。
+      assert.equal(capturedInput.executionMode, 'autonomous');
+      assert.equal(capturedInput.goal, 'do something');
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('defaults executionMode to interactive when the request omits it', async () => {
+    process.env[ORCHESTRATION_FLAG] = '1';
+    let capturedInput: Record<string, unknown> | undefined;
+    const runtime = createOrchestrationInputCapturingRuntime((inputData) => {
+      capturedInput = inputData;
+    });
+    const server = await startServer(runtime);
+
+    try {
+      const response = await fetch(`${server.baseUrl}/agent/plan/orchestrate`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ goal: 'do something' }),
+      });
+
+      assert.equal(response.status, 200);
+      assert.ok(capturedInput, 'expected start() to receive inputData');
+      // 未携带该字段时退化为 interactive（人值守轻量模式，无自动重规划闭环）。
+      assert.equal(capturedInput.executionMode, 'interactive');
     } finally {
       await server.close();
     }

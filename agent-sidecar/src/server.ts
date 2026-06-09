@@ -288,7 +288,7 @@ export const createAgentSidecarServer = (
         rememberOrchestrationRun(runId, run);
         // 首切片：跑到审批门 suspend 或终态。suspended 时保留 run 供后续 resume。
         const result = await run.start({
-          inputData: { goal: payload.goal, threadId: payload.threadId ?? null },
+          inputData: { goal: payload.goal, threadId: payload.threadId ?? null, executionMode: payload.executionMode },
         });
         if (result.status !== 'suspended') {
           forgetOrchestrationRun(runId);
@@ -325,7 +325,7 @@ export const createAgentSidecarServer = (
           // run.stream() 返回 async-iterable 的 WorkflowRunOutput；closeOnSuspend
           // 默认 true：approval-gate 挂起时流自动闭合，客户端据此转去调用 resume。
           const stream = run.stream({
-            inputData: { goal: payload.goal, threadId: payload.threadId ?? null },
+            inputData: { goal: payload.goal, threadId: payload.threadId ?? null, executionMode: payload.executionMode },
           });
           for await (const chunk of stream) {
             // 只把白名单内的内层 agent 事件解包成与 /stream 同构的帧；丢弃 Mastra 内部帧。
