@@ -133,7 +133,7 @@ const patchesFor = (messageId: string): readonly IAiPatchSet[] =>
 .ai-thread-timeline {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 14px;
   width: 100%;
   min-width: 0;
 }

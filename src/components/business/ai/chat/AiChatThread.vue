@@ -223,11 +223,15 @@ const handleScrollStateChange = (state: IAiChatScrollState): void => {
 }
 
 .ai-chat-list__content {
+  box-sizing: border-box;
+  width: min(100%, 710px);
+  max-width: 860px;
   min-width: 0;
   gap: 32px;
   min-height: 100%;
+  margin-inline: auto;
   overflow-x: hidden;
-  padding: 16px 16px 24px;
+  padding: 18px 12px 28px;
 }
 
 .ai-chat-list__content.is-empty {
