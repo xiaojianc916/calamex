@@ -76,6 +76,31 @@ export type {
   TAiToolConfirmationOptionId,
   TAiToolConfirmationOptionTone,
 } from '@/types/ai/agent';
+
+/**
+ * Runtime const arrays backing the agent literal-union types above.
+ *
+ * 这些必须用 **值** 形式 re-export(不能并入上面的 `export type` 块),
+ * 否则 `as const` 数组会在构建期被擦除,运行期 `import { AI_* } from '@/types/ai'`
+ * 直接抛 "does not provide an export named ..."。barrel 作为唯一公共入口,
+ * 需同时承载类型与其背后的值。
+ */
+export {
+  AI_AGENT_NETWORK_PERMISSIONS,
+  AI_AGENT_PERMISSION_SCOPES,
+  AI_AGENT_PLAN_REFERENCE_TYPES,
+  AI_AGENT_PLAN_RISK_LEVELS,
+  AI_AGENT_PLAN_STEP_KINDS,
+  AI_AGENT_PLAN_STEP_STATUSES,
+  AI_AGENT_RUN_STATUSES,
+  AI_AGENT_TASK_CLASSIFICATIONS,
+  AI_AGENT_TIMELINE_ITEM_STATUSES,
+  AI_AGENT_TIMELINE_ITEM_TYPES,
+  AI_TOOL_CONFIRMATION_DECISIONS,
+  AI_TOOL_CONFIRMATION_OPTION_IDS,
+  AI_TOOL_CONFIRMATION_OPTION_TONES,
+} from '@/types/ai/agent';
+
 export type {
   IAiContextRange,
   IAiContextReference,
