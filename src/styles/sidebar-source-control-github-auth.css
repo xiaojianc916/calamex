@@ -34,8 +34,6 @@
   line-height: 1;
   cursor: pointer;
   transition:
-    background 120ms ease,
-    border-color 120ms ease,
     color 120ms ease,
     opacity 120ms ease;
 }
@@ -43,8 +41,8 @@
 .source-control-github-auth:hover:not(:disabled),
 .source-control-github-auth[aria-expanded='true'],
 .source-control-github-auth.is-authorizing {
-  border-color: rgba(15, 23, 42, 0.08);
-  background: rgba(15, 23, 42, 0.06);
+  border-color: transparent;
+  background: transparent;
   color: rgba(15, 23, 42, 0.9);
 }
 
