@@ -7,6 +7,7 @@ import { compactModelOutput, truncateModelOutputText } from '../../models/output
 import { createMcpGatewayRunBundle, type McpGatewayMetricBuffer, type McpGatewayWarmPool } from '../../tools/mcp-gateway.js';
 import { createMastraLogTools, type IMastraLogToolsRef } from '../../tools/log.js';
 import { createMastraTimeTools } from '../../tools/time.js';
+import { createMastraReadFileTool } from '../../tools/read-file.js';
 import type { IAgentContextReferenceInput, IAgentRuntimeInput } from '../contracts/runtime-input.js';
 import { createJsonToolModelOutput, countProviderToolSchemaChars } from '../budget/budget.js';
 import { createMastraBrowser, createMastraWorkspace } from '../workspace.js';
@@ -32,7 +33,7 @@ export const createUiContextTools = (
     return {
         read_current_file: createTool({
             id: 'read_current_file',
-            description: 'Read a line-numbered preview of the current editor file (cat -n style: line numbers reflect the file\u0027s real line numbers). Use only when the user asks about the current file. Takes no arguments; output is capped \u2014 use mastra_workspace_read_file with start_line/end_line for full content or specific sections.',
+            description: 'Read a line-numbered preview of the current editor file (cat -n style: line numbers reflect the file\u0027s real line numbers). Use only when the user asks about the current file. Takes no arguments; output is capped \u2014 use read_file with start_line/end_line for full content or specific sections.',
             inputSchema: z.object({}).passthrough(),
             execute: async () => {
                 const preview = truncateModelOutputText(
@@ -156,10 +157,12 @@ export const loadMastraMcpTools = async (
         metricSink: mcpGatewayMetrics,
     });
     const uiContextTools = createUiContextTools(contextReferences);
+    const readFileTools = workspace ? createMastraReadFileTool(workspace) : {};
     const nativeTimeTools = createMastraTimeTools();
     const logTools = loggerRef ? createMastraLogTools(loggerRef) : {};
     const rawTools: ToolsInput = {
         ...mcpGatewayTools,
+        ...readFileTools,
         ...uiContextTools,
         ...nativeTimeTools,
         ...logTools,
@@ -176,7 +179,7 @@ export const loadMastraMcpTools = async (
             mcpServerCount: 0,
             mcpServerNames: [],
             uiContextToolCount: Object.keys(uiContextTools).length,
-            nativeToolCount: Object.keys(nativeTimeTools).length + (workspace ? 1 : 0),
+            nativeToolCount: Object.keys(nativeTimeTools).length + Object.keys(readFileTools).length + (workspace ? 1 : 0),
             logToolCount: Object.keys(logTools).length,
             toolSchemaCharCount: countProviderToolSchemaChars(tools),
             toolLoadStrategy: toolLoadPlan.strategy,
