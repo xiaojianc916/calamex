@@ -6,14 +6,10 @@
   background: transparent;
 }
 
-.source-control-branch-sync.is-github-auth-slot {
-  margin-left: auto;
-  min-width: 0;
-  flex: 0 0 auto;
-}
-
-.source-control-github-auth-native-slot {
-  display: inline-flex;
+.source-control-branch-sync.is-github-auth-slot,
+.source-control-github-auth-native-slot,
+.source-control-branch .source-control-github-auth-wrap {
+  display: none;
 }
 
 .source-control-github-auth-wrap {
