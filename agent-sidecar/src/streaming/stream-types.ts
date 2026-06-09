@@ -17,6 +17,7 @@ export const AGENT_RUNTIME_EVENT_TYPES = [
   'agent.tool.started',
   'agent.tool.progress',
   'agent.tool.completed',
+  'agent.plan.updated',
   'acontext.envelope.injected',
   'acontext.envelope.replaced',
   'acontext.token.checked',
@@ -158,6 +159,37 @@ export interface IAgentToolCompletedEvent extends IAgentRuntimeEventBase {
   errorMessage?: string;
   /** Mastra `result.status` 的原始字符串（如 `'success'` / `'error'` / `'cancelled'`）。 */
   status?: string;
+}
+
+// -----------------------------------------------------------------------
+// Plan（执行计划快照）
+// -----------------------------------------------------------------------
+
+/** 计划条目优先级。镜像 ACP `PlanEntryPriority`（high|medium|low）。 */
+export type TAgentPlanEntryPriority = 'high' | 'medium' | 'low';
+
+/**
+ * 计划条目执行状态。镜像 ACP `PlanEntryStatus`——**只有三态**
+ * （pending|in_progress|completed），不含 failed/cancelled：ACP 的计划是
+ * 「进度可见性」模型而非结果记账，失败/取消由运行生命周期与工具事件承载。
+ */
+export type TAgentPlanEntryStatus = 'pending' | 'in_progress' | 'completed';
+
+/** 单个计划条目。形状 1:1 对齐 ACP 稳定 `PlanEntry`（content/priority/status）。 */
+export interface IAgentRuntimePlanEntry {
+  content: string;
+  priority: TAgentPlanEntryPriority;
+  status: TAgentPlanEntryStatus;
+}
+
+export interface IAgentPlanUpdatedEvent extends IAgentRuntimeEventBase {
+  type: 'agent.plan.updated';
+  /**
+   * 计划全量快照：每次更新都包含**全部**条目及其当前状态。
+   * 这是 ACP 的硬约束——client 以每条 `plan` 更新整体替换计划，
+   * 故此处禁止只发增量（见 ACP plan.rs `Plan.entries` 文档）。
+   */
+  entries: IAgentRuntimePlanEntry[];
 }
 
 // -----------------------------------------------------------------------
@@ -338,6 +370,7 @@ export type TAgentRuntimeEvent =
   | IAgentToolStartedEvent
   | IAgentToolProgressEvent
   | IAgentToolCompletedEvent
+  | IAgentPlanUpdatedEvent
   | IAgentAcontextEnvelopeEvent
   | IAgentAcontextTokenEvent
   | IAgentAcontextProviderPayloadEvent

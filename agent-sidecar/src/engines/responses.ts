@@ -230,13 +230,8 @@ export const createPlanResponse = (
         errorMessage: record.errorMessage,
         plan: record.plan,
     };
-    const doneEvent: TAgentRuntimeOutputEvent = {
-        type: 'done',
-        result: doneResult,
-    };
 
     pushUiEvent(events, planEvent, options);
-    pushUiEvent(events, doneEvent, options);
 
     return {
         sessionId,
@@ -258,10 +253,6 @@ export const createPlanRecordResponse = (
         record,
         versions,
     }, options);
-    pushUiEvent(events, {
-        type: 'done',
-        result: message,
-    }, options);
 
     return {
         sessionId,
@@ -274,18 +265,15 @@ export const createErrorResponse = (
     sessionId: string,
     message: string,
     events: TAgentRuntimeOutputEvent[] = [],
-    options: IAgentRuntimeRunOptions = {},
+    _options: IAgentRuntimeRunOptions = {},
 ): IAgentRuntimeResponse => {
-    const errorEvent: TAgentRuntimeOutputEvent = {
-        type: 'error',
-        message,
-    };
-
-    options.onEvent?.(errorEvent);
-
+    // ACP 原生：失败的 turn 不再制造扁平 `error` UI 事件，错误改由响应上的
+    // `errorMessage` 承载——egress 据此映射 JSON-RPC error / 带外信号。遗留 wire
+    // 的 `error` 帧由 http 边界 shim 临时重建（U4 删除前端旧协议时一并删除）。
     return {
         sessionId,
-        events: [...events, errorEvent],
+        events,
         result: null,
+        errorMessage: message,
     };
 };

@@ -7,7 +7,7 @@ import { normalizeMastraError } from '../errors.js';
 import { createErrorResponse } from '../responses.js';
 import { DEFAULT_EXECUTION_AGENT_ID } from '../types.js';
 import type { IMastraAgentStreamLike, IMastraApprovalOptions, IPlanWorkflowStepTracker } from '../types.js';
-import { createRuntimeEventFactory, createSessionId, pushUiEvent, toNonEmptyString } from '../utils.js';
+import { createRuntimeEventFactory, createSessionId, toNonEmptyString } from '../utils.js';
 import { allowWorkspaceWriteAfterVerifiedRead, destroyMastraBrowser, destroyMastraWorkspace } from '../workspace.js';
 import type { IAgentRuntimeResponse, IAgentRuntimeRunOptions, TAgentRuntimeOutputEvent } from '../contracts/runtime-contracts.js';
 import type { IApprovalResolutionInput } from '../contracts/runtime-input.js';
@@ -216,15 +216,11 @@ export class MastraRuntimeApproval extends MastraRuntimeExecution {
                     }).catch(() => undefined);
                 }
 
-                pushUiEvent(events, {
-                    type: 'done',
-                    result,
-                }, options);
-
                 return {
                     sessionId,
                     events,
                     result,
+                    ...(streamSummary.doneTokenSnapshot ? { usage: streamSummary.doneTokenSnapshot } : {}),
                 };
             });
         } catch (error) {

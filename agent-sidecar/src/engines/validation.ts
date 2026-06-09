@@ -7,11 +7,10 @@ import { createAcontextTokenEventDraft, createDeepSeekPayloadEventSink } from '.
 import { normalizeMastraError } from './errors.js';
 import { applyAgentPlanDelta, parsePlanDelta, parseValidationReport } from './plan/plan-utils.js';
 import { createErrorResponse, createPlanResponse } from './responses.js';
-import { createDoneOutputEvent } from './stream/stream-utils.js';
 import { loadMastraMcpTools } from './tools/tools.js';
 import { DEFAULT_REPLANNER_AGENT_ID, DEFAULT_VALIDATOR_AGENT_ID } from './types.js';
 import type { IMastraGenerateOptions, TMastraChatMessage } from './types.js';
-import { attachMcpGatewayMetrics, createRuntimeEventFactory, createSessionId, pushUiEvent, toJsonValue, toNonEmptyString } from './utils.js';
+import { attachMcpGatewayMetrics, createRuntimeEventFactory, createRuntimePreview, createSessionId, pushUiEvent, toNonEmptyString } from './utils.js';
 import { createMastraAgentInputProcessors, createMastraAgentOutputProcessors, destroyMastraBrowser, destroyMastraWorkspace } from './workspace.js';
 import type { IAgentRuntimeResponse, IAgentRuntimeRunOptions, TAgentRuntimeOutputEvent } from './contracts/runtime-contracts.js';
 import type { IAgentRuntimeInput } from './contracts/runtime-input.js';
@@ -243,16 +242,18 @@ export class MastraRuntimeValidation extends MastraRuntimePlan {
                     ? `验证完成：${report.summary}，需要重新规划。`
                     : `验证完成：${report.summary}`;
 
-                pushUiEvent(events, {
-                    type: 'tool_result',
+                pushUiEvent(events, createRuntimeEvent({
+                    type: 'agent.tool.completed',
+                    visibility: 'user',
+                    level: 'info',
                     toolName: 'plan_validator',
-                    output: toJsonValue({
+                    ok: true,
+                    resultPreview: createRuntimePreview({
                         report,
                         workflowPhase: projectedWorkflow.phase,
                         workflowStatus: projectedWorkflow.status,
                     }),
-                }, options);
-                pushUiEvent(events, createDoneOutputEvent(result), options);
+                }), options);
 
                 return {
                     sessionId,
@@ -421,15 +422,18 @@ export class MastraRuntimeValidation extends MastraRuntimePlan {
                     delta,
                 });
 
-                pushUiEvent(events, {
-                    type: 'tool_result',
+                pushUiEvent(events, createRuntimeEvent({
+                    type: 'agent.tool.completed',
+                    visibility: 'user',
+                    level: 'info',
                     toolName: 'plan_replanner',
-                    output: toJsonValue({
+                    ok: true,
+                    resultPreview: createRuntimePreview({
                         fromVersion: record.version,
                         toVersion: nextRecord.version,
                         delta,
                     }),
-                }, options);
+                }), options);
 
                 return createPlanResponse(sessionId, nextRecord, events, options);
             });

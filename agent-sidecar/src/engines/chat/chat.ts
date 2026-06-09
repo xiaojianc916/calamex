@@ -9,7 +9,6 @@ import { createExecutionRequestContext } from '../context/context.js';
 import { normalizeMastraError } from '../errors.js';
 import { buildMastraMessages, hasImageAttachmentParts, isVisionModelId } from '../session/session-messages.js';
 import { createErrorResponse } from '../responses.js';
-import { createDoneOutputEvent } from '../stream/stream-utils.js';
 import { loadMastraMcpTools } from '../tools/tools.js';
 import { DEFAULT_EXECUTION_AGENT_ID, DEFAULT_EXECUTION_AGENT_NAME } from '../types.js';
 import type { IMastraGenerateOptions } from '../types.js';
@@ -212,17 +211,12 @@ export class MastraRuntimeChat extends MastraRuntimeBase {
                 const result = streamSummary.visibleText.trim().length > 0
                     ? streamSummary.visibleText
                     : 'Agent 已完成。';
-                const doneEvent: TAgentRuntimeOutputEvent = createDoneOutputEvent(
-                    result,
-                    streamSummary.doneTokenSnapshot,
-                );
-
-                pushUiEvent(events, doneEvent, options);
 
                 return {
                     sessionId,
                     events,
                     result,
+                    ...(streamSummary.doneTokenSnapshot ? { usage: streamSummary.doneTokenSnapshot } : {}),
                 };
             });
         } catch (error) {
