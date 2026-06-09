@@ -24,7 +24,10 @@ use std::fs;
 use util::{count_to_u32, require_replacement_query, u64_to_u32};
 
 const DEFAULT_SEARCH_LIMIT: usize = 200;
-const MAX_SEARCH_LIMIT: usize = 2000;
+// 内容命中是逐行计数而非逐文件，单个超大文件（如 Cargo.lock）可能产生上万条命中。
+// 配合 find::merge_per_file_results 的轮转合并，将上限抬高到 50000，让常规查询不再被截断，
+// 前端再以虚拟列表 + 惰性高亮承接渲染。
+const MAX_SEARCH_LIMIT: usize = 50000;
 const DEFAULT_REPLACEMENT_FILE_LIMIT: usize = 100;
 const MAX_REPLACEMENT_FILE_LIMIT: usize = 500;
 

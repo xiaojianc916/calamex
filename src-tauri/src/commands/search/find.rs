@@ -176,6 +176,48 @@ fn into_sorted_results(heap: BinaryHeap<RankedResult>) -> Vec<WorkspaceSearchRes
     results
 }
 
+/// 将各文件的命中合并到全局 `limit`。
+///
+/// 总命中不超过 `limit` 时按文件顺序直接展开，保持与串行扫描一致的稳定顺序；一旦超过
+/// `limit`，改为按文件轮转取数（round-robin），让每个文件都能贡献一部分命中，避免单个
+/// 超大文件（如 Cargo.lock 等锁文件 / 生成文件）凭扫描顺序占满全部名额、把其它文件整体
+/// 挤出结果。最终顺序仍由上层 sort_ranked_search_results 决定，这里只负责“留下哪些”。
+fn merge_per_file_results(
+    per_file: Vec<Vec<WorkspaceSearchResult>>,
+    limit: usize,
+) -> Vec<WorkspaceSearchResult> {
+    if limit == 0 {
+        return Vec::new();
+    }
+
+    let total: usize = per_file.iter().map(|file_results| file_results.len()).sum();
+    if total <= limit {
+        return per_file.into_iter().flatten().collect();
+    }
+
+    let mut iterators: Vec<_> = per_file
+        .into_iter()
+        .map(|file_results| file_results.into_iter())
+        .collect();
+    let mut results = Vec::with_capacity(limit);
+    let mut progressed = true;
+    while progressed && results.len() < limit {
+        progressed = false;
+        for iterator in iterators.iter_mut() {
+            let Some(result) = iterator.next() else {
+                continue;
+            };
+            results.push(result);
+            progressed = true;
+            if results.len() >= limit {
+                break;
+            }
+        }
+    }
+
+    results
+}
+
 pub(super) fn search_file_names(
     files: &[ScannedFile],
     query: &str,
@@ -244,7 +286,8 @@ pub(super) fn search_file_contents(
         .map_err(|error| format!("内容搜索表达式无效：{error}"))?;
 
     // 并行扫描各文件：每个文件最多收集 limit 条，避免单文件无界扫描；collect 保持与
-    // files 相同的顺序，随后按文件顺序拼接并截断到全局 limit，输出与串行实现逐项一致。
+    // files 相同的顺序，随后按文件轮转合并并截断到全局 limit，避免单个文件（如锁文件）
+    // 凭扫描顺序占满名额而挤掉其它文件。
     let per_file = files
         .par_iter()
         .map(|file| {
@@ -254,16 +297,7 @@ pub(super) fn search_file_contents(
         })
         .collect::<Result<Vec<Vec<WorkspaceSearchResult>>, String>>()?;
 
-    let mut results = Vec::new();
-    for file_results in per_file {
-        if results.len() >= limit {
-            break;
-        }
-        let remaining = limit - results.len();
-        results.extend(file_results.into_iter().take(remaining));
-    }
-
-    Ok(results)
+    Ok(merge_per_file_results(per_file, limit))
 }
 
 /// 内容模糊搜索：逐文件、逐行用 nucleo 做子序列模糊匹配。与精确/正则路径一样
@@ -287,16 +321,7 @@ fn search_fuzzy_file_contents(
         .map(|file| search_one_file_fuzzy(file, &pattern, prefilter.as_ref(), limit))
         .collect::<Result<Vec<Vec<WorkspaceSearchResult>>, String>>()?;
 
-    let mut results = Vec::new();
-    for file_results in per_file {
-        if results.len() >= limit {
-            break;
-        }
-        let remaining = limit - results.len();
-        results.extend(file_results.into_iter().take(remaining));
-    }
-
-    Ok(results)
+    Ok(merge_per_file_results(per_file, limit))
 }
 
 fn search_one_file_fuzzy(
@@ -446,16 +471,12 @@ pub(super) fn search_structural_contents(
 
     per_file.sort_by_key(|(index, _)| *index);
 
-    let mut results = Vec::new();
-    for (_, file_results) in per_file {
-        if results.len() >= limit {
-            break;
-        }
-        let remaining = limit - results.len();
-        results.extend(file_results.into_iter().take(remaining));
-    }
+    let ordered: Vec<Vec<WorkspaceSearchResult>> = per_file
+        .into_iter()
+        .map(|(_, file_results)| file_results)
+        .collect();
 
-    Ok(results)
+    Ok(merge_per_file_results(ordered, limit))
 }
 
 pub(super) fn search_symbols(
@@ -642,6 +663,47 @@ mod tests {
         let mut heap: BinaryHeap<RankedResult> = BinaryHeap::new();
         push_bounded_result(&mut heap, make_result(10, "a"), 0);
         assert!(into_sorted_results(heap).is_empty());
+    }
+
+    #[test]
+    fn merge_per_file_results_flattens_in_file_order_within_limit() {
+        let per_file = vec![
+            vec![make_result(1, "a"), make_result(2, "a")],
+            vec![make_result(3, "b")],
+        ];
+        let observed: Vec<(i32, String)> = merge_per_file_results(per_file, 10)
+            .into_iter()
+            .map(|result| (result.score, result.relative_path))
+            .collect();
+        assert_eq!(
+            observed,
+            vec![
+                (1, "a".to_string()),
+                (2, "a".to_string()),
+                (3, "b".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn merge_per_file_results_round_robins_when_over_limit() {
+        // 第一个文件命中很多、第二个文件只有一条；超出 limit 时仍应给小文件留出名额，
+        // 而不是被大文件按顺序占满后整体挤掉。
+        let big_file: Vec<WorkspaceSearchResult> =
+            (0..10).map(|_| make_result(1, "big")).collect();
+        let small_file = vec![make_result(1, "small")];
+        let merged = merge_per_file_results(vec![big_file, small_file], 3);
+        assert_eq!(merged.len(), 3);
+        assert!(
+            merged.iter().any(|result| result.relative_path == "small"),
+            "轮转合并应保证小文件也能进入结果"
+        );
+    }
+
+    #[test]
+    fn merge_per_file_results_with_zero_limit_is_empty() {
+        let per_file = vec![vec![make_result(1, "a")]];
+        assert!(merge_per_file_results(per_file, 0).is_empty());
     }
 
     #[test]
