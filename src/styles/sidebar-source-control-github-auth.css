@@ -24,36 +24,37 @@
 
 .source-control-github-auth {
   display: inline-flex;
-  max-width: 116px;
-  min-height: 24px;
+  width: 28px;
+  height: 28px;
   align-items: center;
-  gap: 6px;
-  border: 1px solid rgba(15, 23, 42, 0.08);
+  justify-content: center;
+  overflow: hidden;
+  border: 1px solid transparent;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.86);
-  padding: 3px 8px 3px 6px;
-  color: rgba(15, 23, 42, 0.68);
+  background: transparent;
+  padding: 0;
+  color: rgba(15, 23, 42, 0.72);
   font-family: inherit;
-  font-size: 11.5px;
-  font-weight: 500;
   line-height: 1;
   cursor: pointer;
   transition:
     background 120ms ease,
     border-color 120ms ease,
     color 120ms ease,
-    opacity 120ms ease;
+    opacity 120ms ease,
+    transform 120ms ease;
 }
 
 .source-control-github-auth:hover:not(:disabled),
+.source-control-github-auth[aria-expanded='true'],
 .source-control-github-auth.is-authorizing {
-  border-color: rgba(15, 23, 42, 0.14);
-  background: #fff;
-  color: rgba(15, 23, 42, 0.88);
+  border-color: rgba(15, 23, 42, 0.08);
+  background: rgba(15, 23, 42, 0.06);
+  color: rgba(15, 23, 42, 0.9);
 }
 
-.source-control-github-auth.is-connected {
-  color: rgba(15, 23, 42, 0.86);
+.source-control-github-auth:active:not(:disabled) {
+  transform: translateY(1px);
 }
 
 .source-control-github-auth:disabled {
@@ -61,51 +62,10 @@
   opacity: 0.58;
 }
 
-.source-control-github-auth-inline-action {
-  display: inline-flex;
-  width: 0;
-  height: 24px;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-  margin-left: 0;
-  border: 1px solid rgba(15, 23, 42, 0.08);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.92);
-  color: rgba(15, 23, 42, 0.58);
-  opacity: 0;
-  transform: translateX(-4px) scale(0.94);
-  pointer-events: none;
-  cursor: pointer;
-  transition:
-    width 160ms cubic-bezier(0.23, 1, 0.32, 1),
-    margin-left 160ms cubic-bezier(0.23, 1, 0.32, 1),
-    opacity 120ms ease,
-    transform 160ms cubic-bezier(0.23, 1, 0.32, 1),
-    background 120ms ease,
-    border-color 120ms ease,
-    color 120ms ease;
-}
-
-.source-control-github-auth-wrap:hover .source-control-github-auth-inline-action,
-.source-control-github-auth-wrap:focus-within .source-control-github-auth-inline-action {
-  width: 24px;
-  margin-left: 4px;
-  opacity: 1;
-  transform: translateX(0) scale(1);
-  pointer-events: auto;
-}
-
-.source-control-github-auth-inline-action:hover {
-  border-color: rgba(15, 23, 42, 0.14);
-  background: #fff;
-  color: rgba(15, 23, 42, 0.9);
-}
-
 .source-control-github-auth-icon,
 .source-control-github-auth-avatar {
-  width: 15px;
-  height: 15px;
+  width: 20px;
+  height: 20px;
   flex: 0 0 auto;
 }
 
@@ -114,33 +74,153 @@
   align-items: center;
   justify-content: center;
   color: currentColor;
-  font-size: 15px;
+  font-size: 18px;
 }
 
 .source-control-github-auth-avatar {
   border-radius: 999px;
   object-fit: cover;
+  box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.1);
 }
 
-.source-control-github-auth-label {
+.source-control-github-menu,
+.source-control-github-device-card {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 30;
+  width: min(280px, calc(100vw - 32px));
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.96);
+  color: rgba(15, 23, 42, 0.88);
+  box-shadow:
+    0 20px 40px -24px rgba(15, 23, 42, 0.42),
+    0 8px 18px -12px rgba(15, 23, 42, 0.22);
+  backdrop-filter: blur(18px);
+}
+
+.source-control-github-menu {
+  padding: 8px;
+}
+
+.source-control-github-menu-profile {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+}
+
+.source-control-github-menu-avatar,
+.source-control-github-menu-mark {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+}
+
+.source-control-github-menu-avatar {
+  object-fit: cover;
+  box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.1);
+}
+
+.source-control-github-menu-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #0f172a;
+  color: #fff;
+  font-size: 18px;
+}
+
+.source-control-github-menu-profile-copy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.source-control-github-menu-profile-copy strong,
+.source-control-github-menu-profile-copy span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.source-control-github-menu-profile-copy strong {
+  color: rgba(15, 23, 42, 0.94);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.2;
+}
+
+.source-control-github-menu-profile-copy span {
+  color: rgba(71, 85, 105, 0.76);
+  font-size: 11.5px;
+  line-height: 1.3;
+}
+
+.source-control-github-menu-actions {
+  display: grid;
+  gap: 2px;
+  border-top: 1px solid rgba(15, 23, 42, 0.08);
+  padding-top: 6px;
+}
+
+.source-control-github-menu-item,
+.source-control-github-menu-connect {
+  width: 100%;
+  border: 0;
+  border-radius: 10px;
+  font-family: inherit;
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    color 120ms ease,
+    opacity 120ms ease;
+}
+
+.source-control-github-menu-item {
+  display: flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+  padding: 0 8px;
+  color: rgba(15, 23, 42, 0.78);
+  font-size: 12px;
+  font-weight: 560;
+  text-align: left;
+}
+
+.source-control-github-menu-item:hover:not(:disabled) {
+  background: rgba(15, 23, 42, 0.06);
+  color: rgba(15, 23, 42, 0.95);
+}
+
+.source-control-github-menu-item:disabled,
+.source-control-github-menu-connect:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.source-control-github-menu-connect {
+  min-height: 34px;
+  margin-top: 4px;
+  background: #0f172a;
+  padding: 0 12px;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.source-control-github-menu-connect:hover:not(:disabled) {
+  background: #1e293b;
+}
+
 .source-control-github-device-card {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  z-index: 20;
-  width: min(300px, calc(100vw - 32px));
-  border: 1px solid rgba(15, 23, 42, 0.08);
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.96);
   padding: 14px;
-  color: rgba(15, 23, 42, 0.86);
-  backdrop-filter: blur(16px);
 }
 
 .source-control-github-device-head {

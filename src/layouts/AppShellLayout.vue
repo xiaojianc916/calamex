@@ -8,6 +8,10 @@ v-for="handle in resizeHandles" :key="handle.direction" class="window-resize-han
                 <div class="app-window-drag-region" @mousedown.prevent="startWindowDrag" />
             </template>
 
+            <div v-if="isDesktopRuntime" class="app-titlebar-github-auth" data-no-window-drag>
+                <GitHubAuthPill :repository-root-path="gitHubAuthRepositoryRootPath" />
+            </div>
+
             <div v-if="isDesktopRuntime" class="app-window-controls" data-no-window-drag>
                 <button class="app-window-control-button" type="button" aria-label="最小化" @click="handleMinimize">
                     <svg viewBox="0 0 12 12" aria-hidden="true">
@@ -59,6 +63,8 @@ v-for="handle in resizeHandles" :key="handle.direction" class="window-resize-han
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import GitHubAuthPill from '@/components/workbench/GitHubAuthPill.vue';
+import { useGitStore } from '@/store/git';
 import {
   SHELL_WINDOW_RESIZE_END_EVENT,
   SHELL_WINDOW_RESIZE_START_EVENT,
@@ -93,6 +99,8 @@ const emit = defineEmits<{
   'close-request': [];
 }>();
 
+const gitStore = useGitStore();
+const gitHubAuthRepositoryRootPath = computed(() => gitStore.status.repositoryRootPath);
 const isMaximized = ref(false);
 let isLayoutUnmounted = false;
 let unlistenWindowResized: (() => void) | null = null;

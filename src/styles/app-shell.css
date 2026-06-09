@@ -167,11 +167,24 @@ html.is-resizing .cm-tooltip-hover {
 .app-window-drag-region {
   position: absolute;
   top: 0;
-  right: 144px;
+  right: 188px;
   left: 104px;
   z-index: calc(var(--workbench-motion-layer-overlay) - 1);
   height: var(--workbench-content-top-offset);
   user-select: none;
+}
+
+.app-titlebar-github-auth {
+  position: absolute;
+  top: 0;
+  right: 144px;
+  z-index: var(--workbench-motion-layer-overlay);
+  display: flex;
+  width: 44px;
+  height: var(--workbench-content-top-offset);
+  align-items: center;
+  justify-content: center;
+  background: transparent;
 }
 
 .app-window-controls {

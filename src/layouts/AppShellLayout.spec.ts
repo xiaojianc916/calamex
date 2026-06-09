@@ -1,4 +1,5 @@
 import { flushPromises, mount } from '@vue/test-utils';
+import { createPinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import AppShellLayout from '@/layouts/AppShellLayout.vue';
 
@@ -28,6 +29,9 @@ describe('AppShellLayout window interactions', () => {
       slots: {
         default: '<div data-testid="content">content</div>',
       },
+      global: {
+        plugins: [createPinia()],
+      },
     });
 
     await flushPromises();
@@ -46,6 +50,9 @@ describe('AppShellLayout window interactions', () => {
       },
       slots: {
         default: '<div data-testid="content">content</div>',
+      },
+      global: {
+        plugins: [createPinia()],
       },
     });
 
