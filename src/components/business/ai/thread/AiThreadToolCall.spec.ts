@@ -1,5 +1,6 @@
 import { mount } from '@vue/test-utils';
 import { describe, expect, it, vi } from 'vitest';
+import CodeBlock from '@/components/ai-elements/code-block/CodeBlock.vue';
 import { Terminal } from '@/components/ai-elements/terminal';
 import AiMarkdown from '@/components/business/ai/chat/AiMarkdown.vue';
 import { AiDiffHunkViewer } from '@/components/business/ai/edit';
@@ -33,21 +34,22 @@ const stubs = {
   TerminalTitle: true,
   TerminalContent: true,
   AiDiffHunkViewer: true,
+  CodeBlock: true,
 };
 
 const baseEntry = (content: TAiThreadToolContent[]): IAiThreadToolCallEntry => ({
   kind: 'tool-call',
   id: 't1',
   messageId: 'm1',
-  icon: 'file',
-  title: '读取文件',
-  tags: ['src/a.ts'],
+  icon: 'search',
+  title: 'Search files for regex shikiLanguage',
+  tags: [],
   status: 'succeeded',
   content,
 });
 
 describe('AiThreadToolCall', () => {
-  it('渲染 Zed 风格 standalone 工具块标题、主标签与文本内容', () => {
+  it('渲染 Zed 风格工具行标题与文本内容', () => {
     const wrapper = mount(AiThreadToolCall, {
       props: { entry: baseEntry([{ type: 'text', id: 'c1', markdown: 'done' }]), open: true },
       global: { stubs },
@@ -55,14 +57,30 @@ describe('AiThreadToolCall', () => {
 
     expect(wrapper.classes()).toContain('ai-thread-tool-call');
     expect(wrapper.attributes('data-state')).toBe('open');
-    expect(wrapper.text()).toContain('读取文件');
-    expect(wrapper.text()).toContain('src/a.ts');
+    expect(wrapper.text()).toContain('Search files for regex shikiLanguage');
     expect(wrapper.findComponent(AiMarkdown).exists()).toBe(true);
+  });
+
+  it('渲染 Raw Input / Output 展开块', () => {
+    const wrapper = mount(AiThreadToolCall, {
+      props: {
+        entry: baseEntry([
+          { type: 'raw', id: 'raw-input', title: 'Raw Input', code: '{"regex":"abc"}' },
+          { type: 'raw', id: 'raw-output', title: 'Output', code: 'matches' },
+        ]),
+        open: true,
+      },
+      global: { stubs },
+    });
+
+    expect(wrapper.text()).toContain('Raw Input:');
+    expect(wrapper.text()).toContain('Output:');
+    expect(wrapper.findAllComponents(CodeBlock).length).toBe(2);
   });
 
   it('点击 header 时切换展开状态', async () => {
     const wrapper = mount(AiThreadToolCall, {
-      props: { entry: baseEntry([{ type: 'text', id: 'c1', markdown: 'done' }]), open: false },
+      props: { entry: baseEntry([{ type: 'raw', id: 'raw-input', title: 'Raw Input', code: '{}' }]), open: false },
       global: { stubs },
     });
 
