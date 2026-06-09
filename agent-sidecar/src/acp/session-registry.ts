@@ -17,7 +17,7 @@ import type {
 	IAgentRuntimeModelConfigInput,
 	TAgentMode,
 } from "../engines/contracts/runtime-input.js"
-import type { TMcpServer } from "./mcp-server.js"
+import type { McpServer } from "@agentclientprotocol/sdk"
 
 /**
  * 单个会话的可变状态。
@@ -27,7 +27,7 @@ import type { TMcpServer } from "./mcp-server.js"
 export interface IAcpSessionState {
 	readonly sessionId: string
 	readonly workspaceRootPath: string
-	readonly mcpServers: readonly TMcpServer[]
+	readonly mcpServers: readonly McpServer[]
 	mode: TAgentMode
 	modelConfig?: IAgentRuntimeModelConfigInput
 	abortController: AbortController | null
@@ -36,7 +36,7 @@ export interface IAcpSessionState {
 /** create() 入参：来自 session/new 的 cwd、客户端声明的 mcpServers、初始模式与可选模型配置。 */
 export interface IAcpSessionCreateParams {
 	workspaceRootPath: string
-	mcpServers: readonly TMcpServer[]
+	mcpServers: readonly McpServer[]
 	mode: TAgentMode
 	modelConfig?: IAgentRuntimeModelConfigInput
 }

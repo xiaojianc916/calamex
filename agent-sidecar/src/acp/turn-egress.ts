@@ -15,27 +15,27 @@
  * 窗口缺失或无 token 数据时，按 ACP 前向兼容约定静默省略该通知（见 ./usage）。
  */
 import type { TAgentRuntimeEvent } from "../streaming/stream-types.js"
-import type { TSessionNotification } from "./protocol.js"
-import {
-	promptResponse,
-	type TPromptResponse,
-	type TStopReason,
-} from "./prompt-turn.js"
+import type {
+	PromptResponse,
+	SessionNotification,
+	StopReason,
+} from "@agentclientprotocol/sdk"
+import { promptResponse } from "./helpers.js"
 import { toSessionNotificationStream } from "./session-stream.js"
 import { toUsageUpdate, type IUsageSnapshotInput } from "./usage.js"
 
 /** 回合收尾所需的计量与终止信息。 */
 export interface ITurnTrailerInput {
 	sessionId: string
-	stopReason: TStopReason
+	stopReason: StopReason
 	usage?: IUsageSnapshotInput | null
 	contextWindowTokens?: number | null
 }
 
 /** 回合收尾的线上输出：收尾通知（usage_update，可能为空）+ prompt 响应。 */
 export interface ITurnTrailer {
-	notifications: TSessionNotification[]
-	response: TPromptResponse
+	notifications: SessionNotification[]
+	response: PromptResponse
 }
 
 /**
@@ -43,7 +43,7 @@ export interface ITurnTrailer {
  * 否则 notifications 为空——调用方无需自行判空。
  */
 export const buildTurnTrailer = (input: ITurnTrailerInput): ITurnTrailer => {
-	const notifications: TSessionNotification[] = []
+	const notifications: SessionNotification[] = []
 	const usageUpdate =
 		input.usage != null && typeof input.contextWindowTokens === "number"
 			? toUsageUpdate(input.usage, input.contextWindowTokens)
@@ -56,8 +56,8 @@ export const buildTurnTrailer = (input: ITurnTrailerInput): ITurnTrailer => {
 
 /** 一次回合的完整 ACP 出口：过程通知 + 收尾通知 + 响应。 */
 export interface ITurnEgress {
-	notifications: TSessionNotification[]
-	response: TPromptResponse
+	notifications: SessionNotification[]
+	response: PromptResponse
 }
 
 /**
