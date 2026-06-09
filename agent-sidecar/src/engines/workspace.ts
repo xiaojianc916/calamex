@@ -1,7 +1,8 @@
 import { existsSync, mkdirSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, parse } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { AgentBrowser } from '@mastra/agent-browser';
 import type { MastraBrowser } from '@mastra/core/browser';
 import { TokenLimiterProcessor, UnicodeNormalizer, type InputProcessorOrWorkflow, type OutputProcessorOrWorkflow } from '@mastra/core/processors';
@@ -14,6 +15,7 @@ import { toNonEmptyString } from './utils.js';
 import { resolveWorkspaceDirectory } from './context/context.js';
 import { decideSensitivePathToolPermission, type IToolPermissionPolicy } from './policy/tool-permission-policy.js';
 import { warmWorkspaceSearchIndex } from './search-index.js';
+import { createWorkspaceBm25TokenizeOptions } from './bm25-tokenizer.js';
 
 export const isWindowsRuntime = (): boolean => process.platform === 'win32';
 
@@ -401,6 +403,33 @@ export const ensureGlobalSkillsDirectory = (): string | null => {
     return globalSkillsDir;
 };
 
+// 解析 sidecar 自身所在的包根目录（其 node_modules 内含 typescript-language-server 与
+// typescript）。返回值用作 LSP 的 searchPaths：当用户打开的工作区自身未安装这些 language
+// server 时，LSP 仍可回退到 sidecar 自带的实现（searchPaths 排在项目根 + cwd 之后，纯增量、
+// 只增不减，对任意工作区布局都安全）。最佳努力，解析失败返回 []，此时省略 searchPaths。
+const resolveBundledLspSearchPaths = (): string[] => {
+    try {
+        let current = dirname(fileURLToPath(import.meta.url));
+        const filesystemRoot = parse(current).root;
+        while (true) {
+            if (existsSync(join(current, 'node_modules', 'typescript-language-server'))) {
+                return [current];
+            }
+            if (current === filesystemRoot) {
+                break;
+            }
+            const parent = dirname(current);
+            if (parent === current) {
+                break;
+            }
+            current = parent;
+        }
+    } catch {
+        // 忽略：解析失败时回退到 LSP 默认查找（项目根 + process.cwd()）。
+    }
+    return [];
+};
+
 export const createMastraWorkspace = async (
     workspaceRootPath?: string,
     profile: TMastraToolProfile = 'write',
@@ -414,6 +443,10 @@ export const createMastraWorkspace = async (
     // 全局技能目录：用 allowedPaths 放行到工作区外，取代此前的 .calamex-skills 符号链接桥接；
     // 失败则降级为不自动加载技能，不阻断工作区创建。
     const globalSkillsDir = ensureGlobalSkillsDirectory();
+
+    // 预解析 LSP 兜底搜索路径（指向 sidecar 自带的 typescript-language-server / typescript），
+    // 供「打开任意文件夹」且该文件夹未本地安装 language server 时回退使用。
+    const lspSearchPaths = resolveBundledLspSearchPaths();
 
     const filesystem = new LocalFilesystem({
         basePath: workspaceDirectory,
@@ -432,15 +465,24 @@ export const createMastraWorkspace = async (
         }),
         ...(globalSkillsDir ? { skills: [globalSkillsDir] } : {}),
         // 开启 LSP 语义检查：在 read_file / grep 之外补充 hover / 定义 / 实现，并在
-        // write_file / edit_file / ast_edit 之后自动回灌行级诊断。内置支持 TS/JS/Python/Go/Rust；
+        // write_file / edit_file / ast_edit 之后自动回灸行级诊断。内置支持 TS/JS/Python/Go/Rust；
         // 缺失对应 language server 时仅该语言无结果，不影响工作区初始化。
-        lsp: true,
+        // - searchPaths 指向 sidecar 自身包根，使「打开任意文件夹」时仍能解析到自带的
+        //   typescript-language-server / typescript（排在项目根 + cwd 之后，纯增量、只增不减）；
+        // - initTimeout 放宽到 30s，给大型仓库 TS server 冷启动留足时间，避免首个文件误判为无诊断。
+        lsp: {
+            initTimeout: 30_000,
+            ...(lspSearchPaths.length > 0 ? { searchPaths: lspSearchPaths } : {}),
+        },
         // 开启 BM25 关键字检索（search / index 工具）：纯关键字、无需 embedder / vectorStore。
         // 刻意不用 autoIndexPaths：它无法排除目录、也不读 .gitignore，递归会 walk 进嵌套的
         // node_modules / target 撑爆启动耗时与内存。改为 init() 后由 warmWorkspaceSearchIndex 在后台
         // 预热——自带目录层 denylist 剪枝（含嵌套），跳过依赖 / 构建产物，对任意工作区布局都安全。
+        // tokenize.tokenizer 注入 CJK 感知分词（重叠二元组 + 西文管线），让中文注释 / 文档可被检索；
         // 语义 / 混合检索如需另配 vectorStore + embedder。
-        bm25: true,
+        bm25: {
+            tokenize: createWorkspaceBm25TokenizeOptions(),
+        },
         tools: {
             // 直接复用 Mastra 内置 read_file：已原生支持文本行区间（offset/limit）、cat -n 行号
             //（showLineNumbers 默认 true）、把图片/PDF 作为 media part 直接给模型查看、二进制安全
