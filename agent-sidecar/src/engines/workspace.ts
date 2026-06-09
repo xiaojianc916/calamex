@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, symlinkSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -369,9 +369,6 @@ export const createMastraObservability = (): Observability => new Observability(
     },
 });
 
-/// 桥接进工作区的全局技能目录链接名。
-const BRIDGED_SKILLS_DIR_NAME = '.calamex-skills';
-
 // 解析全局技能目录：优先 CALAMEX_SKILLS_DIR 环境变量，其次回退到
 // %APPDATA%/.calamex/skills（与 Rust 侧 storage_paths::roaming_root 保持一致）。
 export const resolveGlobalSkillsDirectory = (): string | null => {
@@ -388,10 +385,9 @@ export const resolveGlobalSkillsDirectory = (): string | null => {
     return join(roamingBase, '.calamex', 'skills');
 };
 
-// 把全局技能目录桥接进受限工作区内，使 Mastra 的 skills 能在 contained
-// 文件系统内解析到。返回用于 Workspace.skills 的相对路径，失败则返回 null
-//（降级为不自动加载，不阻断工作区创建）。
-export const bridgeSkillsIntoWorkspace = (workspaceDirectory: string): string | null => {
+// 确保全局技能目录存在并返回其绝对路径（最佳努力；失败则返回 null，降级为不自动加载技能）。
+// 该目录改由 LocalFilesystem.allowedPaths 放行，无需再在受限工作区内创建 .calamex-skills 符号链接。
+export const ensureGlobalSkillsDirectory = (): string | null => {
     const globalSkillsDir = resolveGlobalSkillsDirectory();
     if (!globalSkillsDir) {
         return null;
@@ -401,18 +397,7 @@ export const bridgeSkillsIntoWorkspace = (workspaceDirectory: string): string | 
     } catch {
         return null;
     }
-
-    const linkPath = join(workspaceDirectory, BRIDGED_SKILLS_DIR_NAME);
-    try {
-        if (existsSync(linkPath)) {
-            // 已存在（可能是上一轮创建的链接）：直接复用。
-            return `./${BRIDGED_SKILLS_DIR_NAME}`;
-        }
-        symlinkSync(globalSkillsDir, linkPath, isWindowsRuntime() ? 'junction' : 'dir');
-        return `./${BRIDGED_SKILLS_DIR_NAME}`;
-    } catch {
-        return null;
-    }
+    return globalSkillsDir;
 };
 
 export const createMastraWorkspace = async (
@@ -425,13 +410,17 @@ export const createMastraWorkspace = async (
         return undefined;
     }
 
-    // 尽力桥接全局技能库；成功时交给 Mastra 自动索引 / 加载，失败则静默跳过。
-    const bridgedSkillsPath = bridgeSkillsIntoWorkspace(workspaceDirectory);
+    // 全局技能目录：用 allowedPaths 放行到工作区外，取代此前的 .calamex-skills 符号链接桥接；
+    // 失败则降级为不自动加载技能，不阻断工作区创建。
+    const globalSkillsDir = ensureGlobalSkillsDirectory();
 
     const filesystem = new LocalFilesystem({
         basePath: workspaceDirectory,
         contained: true,
         readOnly: profile === 'readonly',
+        // contained 仍开启（防路径穿越 / 防符号链接逃逸），仅通过 allowedPaths 精确放行全局技能目录，
+        // 使 Mastra skills 能解析到工作区外的该目录，同时不牺牲容器化安全约束。
+        ...(globalSkillsDir ? { allowedPaths: [globalSkillsDir] } : {}),
     });
 
     const workspace = new Workspace({
@@ -440,11 +429,15 @@ export const createMastraWorkspace = async (
             workingDirectory: workspaceDirectory,
             env: createHostCommandEnv(),
         }),
-        ...(bridgedSkillsPath ? { skills: [bridgedSkillsPath] } : {}),
+        ...(globalSkillsDir ? { skills: [globalSkillsDir] } : {}),
+        // 开启 LSP 语义检查：在 read_file / grep 之外补充 hover / 定义 / 实现，并在
+        // write_file / edit_file / ast_edit 之后自动回灌行级诊断。内置支持 TS/JS/Python/Go/Rust；
+        // 缺失对应 language server 时仅该语言无结果，不影响工作区初始化。
+        lsp: true,
         tools: {
-            // 直接复用 Mastra 内置 read_file：已原生支持文本行区间、把图片/PDF 作为
-            // media part 直接给模型查看、二进制安全（超限仅返回元数据，不灌 base64）。
-            // 这些正是它相对 Zed 的长处，因此不再手写并行的读取工具，只按需增强媒体识别。
+            // 直接复用 Mastra 内置 read_file：已原生支持文本行区间（offset/limit）、cat -n 行号
+            // （showLineNumbers 默认 true）、把图片/PDF 作为 media part 直接给模型查看、二进制安全
+            // （超限仅返回元数据，不灌 base64）。这些正是其相对手写实现的长处，只按需增强媒体识别。
             [WORKSPACE_TOOLS.FILESYSTEM.READ_FILE]: {
                 enabled: true,
                 // 取主流模型普遍支持的安全交集；不放开为 image/*，官方文档提示
@@ -488,6 +481,8 @@ export const createMastraWorkspace = async (
             [WORKSPACE_TOOLS.SANDBOX.EXECUTE_COMMAND]: {
                 enabled: profile === 'write',
                 requireApproval: true,
+                // 默认 2000 token 易截断构建 / 测试 / 类型检查输出；放宽到 5000，仍保留尾部截断护栏。
+                maxOutputTokens: 5000,
             },
             [WORKSPACE_TOOLS.SANDBOX.GET_PROCESS_OUTPUT]: {
                 enabled: profile === 'write',
@@ -495,6 +490,10 @@ export const createMastraWorkspace = async (
             [WORKSPACE_TOOLS.SANDBOX.KILL_PROCESS]: {
                 enabled: profile === 'write',
                 requireApproval: true,
+            },
+            [WORKSPACE_TOOLS.LSP.LSP_INSPECT]: {
+                // 只读语义检查，对所有 profile 开放（含 readonly）。
+                enabled: true,
             },
         },
     });
