@@ -22,49 +22,6 @@ fn resolve_window_label(label: Option<&str>) -> &str {
     label.unwrap_or("main")
 }
 
-fn validate_external_url(url: &str) -> Result<(), String> {
-    let trimmed = url.trim();
-    if trimmed.starts_with("https://") || trimmed.starts_with("http://") {
-        return Ok(());
-    }
-
-    Err("只允许打开 http 或 https 外部链接。".to_string())
-}
-
-#[cfg(target_os = "windows")]
-fn open_url_with_system_browser(url: &str) -> Result<(), String> {
-    std::process::Command::new("cmd")
-        .args(["/C", "start", "", url])
-        .spawn()
-        .map_err(|error| format!("打开浏览器失败：{error}"))?;
-    Ok(())
-}
-
-#[cfg(target_os = "macos")]
-fn open_url_with_system_browser(url: &str) -> Result<(), String> {
-    std::process::Command::new("open")
-        .arg(url)
-        .spawn()
-        .map_err(|error| format!("打开浏览器失败：{error}"))?;
-    Ok(())
-}
-
-#[cfg(all(unix, not(target_os = "macos")))]
-fn open_url_with_system_browser(url: &str) -> Result<(), String> {
-    std::process::Command::new("xdg-open")
-        .arg(url)
-        .spawn()
-        .map_err(|error| format!("打开浏览器失败：{error}"))?;
-    Ok(())
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn open_external_url(url: String) -> Result<(), String> {
-    validate_external_url(&url)?;
-    open_url_with_system_browser(url.trim())
-}
-
 #[tauri::command]
 #[specta::specta]
 pub async fn set_window_background(
@@ -97,7 +54,7 @@ pub async fn set_window_background(
 
 #[cfg(test)]
 mod tests {
-    use super::{resolve_window_label, validate_external_url};
+    use super::resolve_window_label;
 
     #[test]
     fn resolve_window_label_defaults_to_main_when_missing() {
@@ -107,17 +64,5 @@ mod tests {
     #[test]
     fn resolve_window_label_keeps_explicit_label() {
         assert_eq!(resolve_window_label(Some("preview")), "preview");
-    }
-
-    #[test]
-    fn validate_external_url_allows_http_urls() {
-        assert!(validate_external_url("https://github.com/login").is_ok());
-        assert!(validate_external_url("http://localhost:1420").is_ok());
-    }
-
-    #[test]
-    fn validate_external_url_rejects_non_web_urls() {
-        assert!(validate_external_url("file:///tmp/a").is_err());
-        assert!(validate_external_url("javascript:alert(1)").is_err());
     }
 }
