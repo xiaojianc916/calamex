@@ -166,8 +166,9 @@
 </template>
 
 <script setup lang="ts">
-import { ExternalLink, Github, RefreshCw } from '@lucide/vue';
+import { ExternalLink, RefreshCw } from '@lucide/vue';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import Github from '@/components/ui/icon/GithubIcon.vue';
 import LucideIcon from '@/components/ui/icon/LucideIcon.vue';
 import { useGitHubAuthStore } from '@/store/github-auth';
 

@@ -2,8 +2,6 @@
  * Tailwind v4 + shadcn-vue  |  .dark class-driven theme
  * ============================================================ */
 
-@plugin '@iconify/tailwind4';
-
 @custom-variant dark (&:is(.dark *));
 
 /* ============================================================

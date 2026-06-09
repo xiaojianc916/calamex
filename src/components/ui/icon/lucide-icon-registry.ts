@@ -68,7 +68,6 @@ import {
   GitBranchPlus,
   GitCommitHorizontal,
   GitFork,
-  Github,
   Globe,
   Grid3x3,
   HardDrive,
@@ -133,6 +132,7 @@ import {
   X,
 } from '@lucide/vue';
 import type { Component } from 'vue';
+import GithubIcon from './GithubIcon.vue';
 
 export const lucideIconRegistry = {
   activity: Activity,

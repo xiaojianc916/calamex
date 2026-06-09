@@ -195,13 +195,14 @@
 </template>
 
 <script setup lang="ts">
-import { ArrowDown, Copy, Github, LoaderCircle, UserRound } from '@lucide/vue';
+import { ArrowDown, Copy, LoaderCircle, UserRound } from '@lucide/vue';
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import LinearContextMenu from '@/components/common/LinearContextMenu.vue';
 import type {
   ILinearContextMenuGroup,
   ILinearContextMenuItem,
 } from '@/components/common/linear-context-menu.types';
+import Github from '@/components/ui/icon/GithubIcon.vue';
 import LucideIcon from '@/components/ui/icon/LucideIcon.vue';
 import {
   fetchGithubCommitAuthorSnapshot,
