@@ -334,10 +334,19 @@ const mountPanel = (assistantMock: ReturnType<typeof createAssistantMock>) =>
         AiProviderIcon: defineComponent({
           template: '<span class="ai-provider-icon" />',
         }),
+        // 平铺时间线替身:plan 审批不再是独立面板,而是 messages 里 id 为 thread-plan-control
+        // 的一条条目,步骤明细由 planDetails 传入并就地渲染,审批事件向上冒泡。
         AiChatThread: defineComponent({
-          props: ['messages', 'isTyping', 'typingLabel', 'hasExtraContent'],
+          props: ['messages', 'isTyping', 'typingLabel', 'planDetails'],
+          emits: [
+            'planApprove',
+            'planReject',
+            'planRegenerate',
+            'planUpdateStepTitle',
+            'planRemoveStep',
+          ],
           template:
-            '<section data-testid="chat-thread"><slot name="empty" /><template v-for="message in messages.filter((entry) => !entry.id.startsWith(\'agent-flow:\'))" :key="message.id"><article :data-role="message.role" v-text="message.content" /><slot name="after-message" :message="message" /></template><slot name="after-messages" /></section>',
+            '<section data-testid="chat-thread"><slot name="empty" /><template v-for="message in messages.filter((entry) => !entry.id.startsWith(\'agent-flow:\'))" :key="message.id"><div v-if="message.id === \'thread-plan-control\'" data-testid="plan-confirmation"><ol><li v-for="step in (planDetails?.steps ?? [])" :key="step.id" v-text="step.title" /></ol><button data-testid="approve-plan" :disabled="!planDetails?.canApprove" @click="$emit(\'planApprove\')">批准</button></div><article v-else :data-role="message.role" v-text="message.content" /><slot name="after-message" :message="message" /></template></section>',
         }),
         AiAssistantSuggestionEmpty: defineComponent({
           props: ['suggestionRows', 'disabled'],
@@ -351,33 +360,12 @@ const mountPanel = (assistantMock: ReturnType<typeof createAssistantMock>) =>
           template:
             '<button data-testid="checkpoint-entry" :disabled="disabled" @click="$emit(\'restore\')" v-text="label" />',
         }),
-        AiAssistantThreadExtras: defineComponent({
-          props: [
-            'planConfirmationVisible',
-            'planActiveGoal',
-            'planSummary',
-            'planStatus',
-            'planSteps',
-            'planIsPlanning',
-            'planIsApproving',
-            'canEditPlan',
-            'canApprovePlan',
-            'planApprovedAt',
-            'directToolConfirmationVisible',
-            'visibleDirectToolConfirmation',
-            'isAgentRunActionPending',
-            'errorMessage',
-          ],
-          emits: [
-            'updateStepTitle',
-            'removeStep',
-            'regenerate',
-            'reject',
-            'approve',
-            'resolveToolConfirmation',
-          ],
+        // 输入框上方的 Codex 风格运行细条:运行进度 + 工具/计划确认都收敛到这里。
+        AiThreadRunStatusBar: defineComponent({
+          props: ['run', 'confirmation', 'busy'],
+          emits: ['pause', 'resume', 'cancel', 'resolve'],
           template:
-            '<section data-testid="thread-extras"><div v-if="planConfirmationVisible" data-testid="plan-confirmation"><ol><li v-for="step in planSteps" :key="step.id" v-text="step.title" /></ol><button data-testid="approve-plan" :disabled="!canApprovePlan" @click="$emit(\'approve\')">批准</button></div><strong v-if="directToolConfirmationVisible && visibleDirectToolConfirmation" data-testid="tool-confirmation" v-text="visibleDirectToolConfirmation.question" /><p v-if="errorMessage" data-testid="error" v-text="errorMessage" /></section>',
+            '<div v-if="run || confirmation" data-testid="run-status-bar"><strong v-if="confirmation" data-testid="tool-confirmation" v-text="confirmation.question" /><button v-if="confirmation" data-testid="resolve-confirmation" @click="$emit(\'resolve\', \'allow-once\')">允许</button></div>',
         }),
         AiPromptInput: defineComponent({
           emits: ['submit', 'update:activeMode'],
@@ -385,7 +373,6 @@ const mountPanel = (assistantMock: ReturnType<typeof createAssistantMock>) =>
             '<div data-testid="prompt-input"><button data-testid="switch-plan" @click="$emit(\'update:activeMode\', \'plan\')">切到 Plan</button><button data-testid="submit" @click="$emit(\'submit\')">发送</button></div>',
         }),
         AiProviderSettings: defineComponent({ template: '<div />' }),
-        AiPlanModePanel: defineComponent({ template: '<div data-testid="composer-plan-panel" />' }),
         AiWebSourcesPanel: defineComponent({ template: '<div />' }),
         teleport: true,
       },
@@ -450,10 +437,11 @@ describe('AiAssistantPanel', () => {
     expect(wrapper.find('[data-testid="chat-thread"]').exists()).toBe(true);
     expect(wrapper.get('[data-testid="chat-thread"]').text()).toContain('这是普通聊天回复');
     expect(wrapper.find('[data-testid="plan-confirmation"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="run-status-bar"]').exists()).toBe(false);
     expect(wrapper.find('[data-testid="tool-confirmation"]').exists()).toBe(false);
   });
 
-  it('renders Agent mode in the unified thread and surfaces tool confirmation as a thread extra', () => {
+  it('surfaces a direct tool confirmation in the run status bar above the composer', () => {
     const assistantMock = createAssistantMock([
       createMessage('message-user', 'user', '修改这个项目'),
       createMessage('message-assistant', 'assistant', 'Agent 最终回复'),
@@ -478,12 +466,40 @@ describe('AiAssistantPanel', () => {
 
     expect(wrapper.find('[data-testid="chat-thread"]').exists()).toBe(true);
     expect(wrapper.get('[data-testid="chat-thread"]').text()).toContain('Agent 最终回复');
+    expect(wrapper.get('[data-testid="run-status-bar"]').exists()).toBe(true);
     expect(wrapper.get('[data-testid="tool-confirmation"]').text()).toContain(
       '允许执行 pnpm test 吗？',
     );
   });
 
-  it('renders Plan mode in the unified thread with the plan confirmation extra', () => {
+  it('routes a tool confirmation decision from the run status bar to the assistant', async () => {
+    const assistantMock = createAssistantMock([
+      createMessage('message-user', 'user', '修改这个项目'),
+    ]);
+    assistantMock.activeMode.value = 'agent';
+    assistantMock.agentPlan.store.pendingToolConfirmation = {
+      id: 'confirmation-1',
+      runId: 'run-1',
+      stepId: 'step-1',
+      toolName: 'run_command',
+      question: '允许执行 pnpm test 吗？',
+      summary: '运行验证命令',
+      riskLevel: 'medium',
+      impact: '会在当前工作区执行命令。',
+      reversible: false,
+      createdAt: '2026-04-29T00:00:00.000Z',
+      options: [{ id: 'allow-once', label: '允许', tone: 'primary' }],
+    };
+    useAiAssistantMock.mockReturnValue(assistantMock);
+
+    const wrapper = mountPanel(assistantMock);
+
+    await wrapper.get('[data-testid="resolve-confirmation"]').trigger('click');
+
+    expect(assistantMock.resolveSidecarToolConfirmation).toHaveBeenCalledWith('allow-once');
+  });
+
+  it('renders Plan approval as an inline plan-control entry in the unified thread', () => {
     const assistantMock = createAssistantMock([
       createMessage('message-user', 'user', '重构 AI 模式 UI'),
     ]);
@@ -501,7 +517,42 @@ describe('AiAssistantPanel', () => {
 
     expect(wrapper.find('[data-testid="chat-thread"]').exists()).toBe(true);
     expect(wrapper.get('[data-testid="plan-confirmation"]').text()).toContain('审查模式边界');
-    expect(wrapper.find('[data-testid="composer-plan-panel"]').exists()).toBe(false);
+    expect(wrapper.get('[data-testid="approve-plan"]').attributes('disabled')).toBeUndefined();
+    expect(wrapper.find('[data-testid="run-status-bar"]').exists()).toBe(false);
+  });
+
+  it('forwards the inline plan approval to the agent run pipeline', async () => {
+    const assistantMock = createAssistantMock([
+      createMessage('message-user', 'user', '重构 AI 模式 UI'),
+    ]);
+    const agentRunMock = {
+      runPlanToCompletion: vi.fn().mockResolvedValue(undefined),
+      runStepWithSidecar: vi.fn().mockResolvedValue(null),
+      pauseRun: vi.fn().mockResolvedValue(null),
+      resumeRun: vi.fn().mockResolvedValue(null),
+      continueRunToCompletion: vi.fn().mockResolvedValue(undefined),
+      cancelRun: vi.fn().mockResolvedValue(null),
+      hasSidecarStepToolConfirmation: vi.fn(() => false),
+      resolveSidecarStepToolConfirmation: vi.fn().mockResolvedValue(null),
+    };
+    useAiAgentRunMock.mockReturnValue(agentRunMock);
+    assistantMock.activeMode.value = 'plan';
+    assistantMock.agentPlan.store.hasPlan = true;
+    assistantMock.agentPlan.store.activeGoal = '重构 AI 模式 UI';
+    assistantMock.agentPlan.store.planStatus = 'pending_approval';
+    assistantMock.agentPlan.store.steps = [
+      createPlanStep('plan-step-1', '审查模式边界'),
+      createPlanStep('plan-step-2', '接线统一线程'),
+    ];
+    useAiAssistantMock.mockReturnValue(assistantMock);
+
+    const wrapper = mountPanel(assistantMock);
+
+    await wrapper.get('[data-testid="approve-plan"]').trigger('click');
+    await Promise.resolve();
+
+    expect(assistantMock.agentPlan.approvePlan).toHaveBeenCalledTimes(1);
+    expect(agentRunMock.runPlanToCompletion).toHaveBeenCalledTimes(1);
   });
 
   it('does not render synthetic plan progress messages in the unified thread', () => {
@@ -535,8 +586,9 @@ describe('AiAssistantPanel', () => {
     const wrapper = mountPanel(assistantMock);
 
     expect(wrapper.find('[data-testid="chat-thread"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="plan-confirmation"]').exists()).toBe(false);
     expect(wrapper.text()).not.toContain('AI 正在自动使用工具');
-    expect(wrapper.find('[data-testid="composer-plan-panel"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="run-status-bar"]').exists()).toBe(true);
   });
 
   it('keeps plan execution token accounting in the token context only', () => {
