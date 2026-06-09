@@ -9,14 +9,14 @@ import type { TMcpServerName } from '../tools/mcp.js';
 import { buildSystemPrompt } from './prompts/system-prompt.js';
 import { createMastraMemoryReference, createMastraMemoryScope } from './context/memory.js';
 import { createMastraMemoryForModel, createMastraModelConfig, defaultCreateAgent, defaultCreateExecutionHandle, defaultCreateResumableAgentHandle, defaultCreateStorage, resolveMastraModelConfig } from './agent/factory.js';
-import { encodeApprovalRequestId, extractApprovalToolPath, getChunkRunId } from './approval-client/utils.js';
+import { decodeApprovalRequestId, encodeApprovalRequestId, extractApprovalToolPath, getChunkRunId } from './approval-client/utils.js';
 import { normalizeMastraError } from './errors.js';
 import { createApprovalRequest, createApprovedPlanExecutionContext, deriveApprovalRisk } from './responses.js';
 import { aggregateDoneTokenSnapshot, createOmMemoryCompressedEventDraft, createSandboxToolProgressPreview, extractFinishTokenSnapshot, getReasoningDelta, getTextDelta, isErrorChunk, isSandboxDataChunk, isTextDeltaChunk, isToolCallChunk, isToolCallSuspendedChunk, isToolErrorChunk, isToolResultChunk } from './stream/stream-utils.js';
 import { loadMastraMcpTools } from './tools/tools.js';
 import { DEFAULT_EXECUTION_AGENT_ID, DEFAULT_EXECUTION_AGENT_NAME } from './types.js';
 import type { IMastraAgentConfig, IMastraAgentLike, IMastraAgentStreamLike, IMastraApprovalExecutionContext, IMastraExecutionHandle, IMastraMcpBundle, IMastraPendingApproval, IMastraResumableAgentHandle, IMastraRuntimeDeps, IMastraStorageLike, IMastraTextStreamSummary, IMastraWorkflowSnapshotLike, IPlanWorkflowStepTracker, TDoneTokenSnapshot, TMastraStreamChunk, TMastraToolCallApprovalChunk, TMastraToolCallSuspendedChunk, TRuntimeEventFactory } from './types.js';
-import { createWorkspaceRuntimeInputPreview, createWorkspaceRuntimeResultPreview, isNodeTestProcess, pushUiEvent, toJsonValue } from './utils.js';
+import { createRuntimeEventFactory, createRuntimePreview, createWorkspaceRuntimeInputPreview, createWorkspaceRuntimeResultPreview, isNodeTestProcess, pushUiEvent, toJsonValue } from './utils.js';
 import { createMastraAgentInputProcessors, createMastraAgentOutputProcessors, destroyMastraBrowser, destroyMastraWorkspace } from './workspace.js';
 import { createAgentPlanStore } from './plan/plan-store.js';
 import type { IAgentPlanStore, TAgentPlanRecord } from './plan/plan-store.js';
@@ -559,14 +559,27 @@ export class MastraRuntimeBase {
         const result = '审批结果已记录，等待下一次 Agent 执行继续消费。';
         const events: TAgentRuntimeOutputEvent[] = [];
 
-        pushUiEvent(events, {
-            type: 'tool_result',
+        // 复用真实 runId（来自审批 token），使该事件的链路元数据与原始 turn 一致；
+        // toolName 维持 'approval' 以保持前端事件适配层的工具配对/结果渲染不变。
+        const decoded = decodeApprovalRequestId(input.requestId);
+        const createRuntimeEvent = createRuntimeEventFactory({
+            runId: decoded?.runId ?? sessionId,
+            sessionId,
+            agentId: DEFAULT_EXECUTION_AGENT_ID,
+            ...(this.now ? { now: this.now } : {}),
+        });
+
+        pushUiEvent(events, createRuntimeEvent({
+            type: 'agent.tool.completed',
+            visibility: 'user',
+            level: 'info',
             toolName: 'approval',
-            output: {
+            ok: true,
+            resultPreview: createRuntimePreview({
                 requestId: input.requestId,
                 decision: input.decision,
-            },
-        }, options);
+            }),
+        }), options);
 
         return {
             sessionId,
