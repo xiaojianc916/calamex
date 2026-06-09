@@ -567,10 +567,6 @@ export class MastraRuntimeBase {
                 decision: input.decision,
             },
         }, options);
-        pushUiEvent(events, {
-            type: 'done',
-            result,
-        }, options);
 
         return {
             sessionId,
