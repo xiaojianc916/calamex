@@ -104,6 +104,14 @@ pub fn search_workspace(payload: WorkspaceSearchRequest) -> Result<WorkspaceSear
     // 截断到单个 limit，避免文件名命中占满名额后挤掉内容/符号结果。
     sort_ranked_search_results(&mut results, &query, payload.match_case);
 
+    // all 范围会把文件名/内容/符号三类命中各自取到 limit，合并后总量最多可达约 3×limit。
+    // 排序后给单次响应设一个总量上限，避免极端 limit 下回传给前端的负载膨胀（前端按相同上限消费）。
+    // 注意：这里不能截断到 limit —— all 范围下文件名命中常会占满 limit，截断到 limit 会把内容/
+    // 符号结果整体挤掉（见 all_scope_keeps_content_results_when_file_name_matches_fill_limit）。
+    if results.len() > MAX_SEARCH_LIMIT {
+        results.truncate(MAX_SEARCH_LIMIT);
+    }
+
     Ok(WorkspaceSearchPayload {
         root_path: workspace_root.to_string_lossy().to_string(),
         scanned_file_count: count_to_u32(files.len(), "扫描文件数")?,
