@@ -6,6 +6,7 @@
 
 mod approval;
 mod client;
+mod host;
 mod launch;
 mod turn;
 
@@ -26,3 +27,6 @@ pub use launch::build_acp_client_config;
 
 #[allow(unused_imports)]
 pub use turn::TurnAccumulator;
+
+#[allow(unused_imports)]
+pub use host::{AcpChatTurn, AcpHost, ApprovalEmitter, StreamEmitter};
