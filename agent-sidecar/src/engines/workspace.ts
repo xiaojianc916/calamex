@@ -313,7 +313,7 @@ export const resolveMastraInputTokenLimit = (
     }
 
     console.warn(
-        `[agent-sidecar] ${AGENT_SIDECAR_INPUT_TOKEN_LIMIT_ENV}=\"${configured}\" is not a positive integer; ` +
+        `[agent-sidecar] ${AGENT_SIDECAR_INPUT_TOKEN_LIMIT_ENV}="${configured}" is not a positive integer; ` +
         `falling back to ${DEFAULT_MASTRA_INPUT_TOKEN_LIMIT}.`,
     );
     return DEFAULT_MASTRA_INPUT_TOKEN_LIMIT;

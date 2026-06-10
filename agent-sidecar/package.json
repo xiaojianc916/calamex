@@ -13,7 +13,8 @@
     "start": "node dist/acp/stdio-entry.js",
     "test": "node --import tsx --test \"src/**/*.spec.ts\"",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint:ox": "pnpm --dir .. lint:ox"
+    "lint:ox": "pnpm --dir .. lint:ox",
+    "fix": "pnpm format && pnpm fix:ox"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.25.0",
