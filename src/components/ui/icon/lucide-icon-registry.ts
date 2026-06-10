@@ -202,7 +202,7 @@ export const lucideIconRegistry = {
   'git-branch-plus': GitBranchPlus,
   'git-commit-horizontal': GitCommitHorizontal,
   'git-fork': GitFork,
-  github: Github,
+  github: GithubIcon,
   globe: Globe,
   'grid-3x3': Grid3x3,
   'hard-drive': HardDrive,
