@@ -1,13 +1,16 @@
 use super::types::{WorkspaceSearchResult, WorkspaceSearchResultKind};
 use std::cmp::Ordering;
 
-const KIND_FILE_NAME_BONUS: i64 = 3_000;
-const KIND_SYMBOL_BONUS: i64 = 2_200;
-const EXACT_NAME_BONUS: i64 = 6_000;
-const PREFIX_NAME_BONUS: i64 = 3_000;
-const CONTAINS_NAME_BONUS: i64 = 1_200;
-const PATH_PREFIX_BONUS: i64 = 800;
-const PATH_DEPTH_PENALTY: i64 = 32;
+/// 名称匹配档位（数值越小越优先）：精确 > 前缀 > 包含 > 无。
+const NAME_MATCH_EXACT: u8 = 0;
+const NAME_MATCH_PREFIX: u8 = 1;
+const NAME_MATCH_CONTAINS: u8 = 2;
+const NAME_MATCH_NONE: u8 = 3;
+
+/// 结果类型档位（数值越小越优先）：文件名 > 符号 > 内容。
+const KIND_RANK_FILE_NAME: u8 = 0;
+const KIND_RANK_SYMBOL: u8 = 1;
+const KIND_RANK_CONTENT: u8 = 2;
 
 /// 最终搜索结果排序的轻量混合排序层。
 ///
@@ -15,6 +18,9 @@ const PATH_DEPTH_PENALTY: i64 = 32;
 /// 这里只在最终合并处加入实用的 IDE 排序特征：结果类型、文件名精确度、路径深度和原始 matcher
 /// 分数。这样不会引入索引数据库或语义向量的复杂度，却能让“直接打开文件/函数”的命中稳定排在
 /// 深层内容命中前。
+///
+/// 采用字典序分层比较而非加权求和：语义信号（类型、名称匹配档位、路径前缀）依次比较，
+/// 原始 matcher 分数只在同一语义档位内作为决胜项，避免“精确文件名命中”等强信号被分数幅值压过。
 pub(super) fn sort_ranked_search_results(
     results: &mut [WorkspaceSearchResult],
     query: &str,
@@ -29,35 +35,50 @@ fn compare_search_results(
     query: &str,
     match_case: bool,
 ) -> Ordering {
-    hybrid_score(left, query, match_case)
-        .cmp(&hybrid_score(right, query, match_case))
+    sort_key(left, query, match_case)
+        .cmp(&sort_key(right, query, match_case))
         .then_with(|| left.relative_path.cmp(&right.relative_path))
         .then_with(|| left.name.cmp(&right.name))
         .then_with(|| left.line_number.cmp(&right.line_number))
         .then_with(|| left.match_start.cmp(&right.match_start))
 }
 
-fn hybrid_score(result: &WorkspaceSearchResult, query: &str, match_case: bool) -> i64 {
-    let mut score = result.score as i64 * 16;
-    score += path_depth(&result.relative_path) * PATH_DEPTH_PENALTY;
+/// 排序键：元组按字段先后逐项比较，数值越小越靠前。
+///
+/// 顺序：结果类型 → 名称匹配档位 → 路径前缀是否命中 → 原始 matcher 分数 → 路径深度。
+fn sort_key(
+    result: &WorkspaceSearchResult,
+    query: &str,
+    match_case: bool,
+) -> (u8, u8, u8, i64, i64) {
+    let kind_rank = match result.kind {
+        WorkspaceSearchResultKind::FileName => KIND_RANK_FILE_NAME,
+        WorkspaceSearchResultKind::Symbol => KIND_RANK_SYMBOL,
+        WorkspaceSearchResultKind::Content => KIND_RANK_CONTENT,
+    };
 
-    match result.kind {
-        WorkspaceSearchResultKind::FileName => {
-            score -= KIND_FILE_NAME_BONUS;
-            score -= text_match_bonus(&result.name, query, match_case);
-            score -= path_match_bonus(&result.relative_path, query, match_case);
+    // 名称匹配档位仅对“文件名 / 符号”命中有意义；内容命中保持中性档位，
+    // 仅由路径前缀、原始分数与路径深度决定其内部次序。
+    let name_match_rank = match result.kind {
+        WorkspaceSearchResultKind::FileName | WorkspaceSearchResultKind::Symbol => {
+            name_match_rank(&result.name, query, match_case)
         }
-        WorkspaceSearchResultKind::Symbol => {
-            score -= KIND_SYMBOL_BONUS;
-            score -= text_match_bonus(&result.name, query, match_case);
-            score -= path_match_bonus(&result.relative_path, query, match_case) / 2;
-        }
-        WorkspaceSearchResultKind::Content => {
-            score -= path_match_bonus(&result.relative_path, query, match_case) / 4;
-        }
-    }
+        WorkspaceSearchResultKind::Content => NAME_MATCH_NONE,
+    };
 
-    score
+    let path_prefix_rank = if path_starts_with_query(&result.relative_path, query, match_case) {
+        0
+    } else {
+        1
+    };
+
+    (
+        kind_rank,
+        name_match_rank,
+        path_prefix_rank,
+        result.score as i64,
+        path_depth(&result.relative_path),
+    )
 }
 
 fn path_depth(relative_path: &str) -> i64 {
@@ -68,36 +89,32 @@ fn path_depth(relative_path: &str) -> i64 {
         .saturating_sub(1) as i64
 }
 
-fn text_match_bonus(value: &str, query: &str, match_case: bool) -> i64 {
+fn name_match_rank(value: &str, query: &str, match_case: bool) -> u8 {
     let normalized_value = normalize(value, match_case);
     let normalized_query = normalize(query.trim(), match_case);
     if normalized_query.is_empty() {
-        return 0;
+        return NAME_MATCH_NONE;
     }
 
     if normalized_value == normalized_query {
-        return EXACT_NAME_BONUS;
+        NAME_MATCH_EXACT
+    } else if normalized_value.starts_with(&normalized_query) {
+        NAME_MATCH_PREFIX
+    } else if normalized_value.contains(&normalized_query) {
+        NAME_MATCH_CONTAINS
+    } else {
+        NAME_MATCH_NONE
     }
-    if normalized_value.starts_with(&normalized_query) {
-        return PREFIX_NAME_BONUS;
-    }
-    if normalized_value.contains(&normalized_query) {
-        return CONTAINS_NAME_BONUS;
-    }
-    0
 }
 
-fn path_match_bonus(relative_path: &str, query: &str, match_case: bool) -> i64 {
+fn path_starts_with_query(relative_path: &str, query: &str, match_case: bool) -> bool {
     let normalized_path = normalize(relative_path, match_case);
     let normalized_query = normalize(query.trim(), match_case);
     if normalized_query.is_empty() {
-        return 0;
+        return false;
     }
 
-    if normalized_path.starts_with(&normalized_query) {
-        return PATH_PREFIX_BONUS;
-    }
-    0
+    normalized_path.starts_with(&normalized_query)
 }
 
 fn normalize(value: &str, match_case: bool) -> String {
