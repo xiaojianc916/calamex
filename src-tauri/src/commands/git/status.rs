@@ -67,9 +67,7 @@ pub fn stage_git_paths(
     // 通过 gix 计算当前状态，得到所有可暂存的变更文件（已遵循 .gitignore），
     // 避免依赖系统安装的 git（等价 `git add -- <pathspec>`）。
     let status = build_git_status_via_gix(&repository)?;
-    let mut index = repository
-        .open_index()
-        .map_err(|error| format!("读取 Git 索引失败：{error}"))?;
+    let mut index = open_mut_index_or_empty(&repository)?;
     let mut changed = false;
     for file in &status.files {
         let rel = file.relative_path.as_str();
@@ -123,9 +121,7 @@ pub fn unstage_git_paths(
         return build_git_repository_status_payload(&repository);
     }
 
-    let mut index = repository
-        .open_index()
-        .map_err(|error| format!("读取 Git 索引失败：{error}"))?;
+    let mut index = open_mut_index_or_empty(&repository)?;
 
     // 收集需要重置的路径：索引中匹配 pathspec 的条目，以及精确给出的 pathspec
     //（覆盖「已暂存删除」——HEAD 有、索引无的情况）。
@@ -213,9 +209,7 @@ pub fn commit_git_index(payload: GitCommitRequest) -> Result<GitCommitResultPayl
     assert_git_identity_configured(&repository)?;
 
     // 读取索引；存在未解决的合并冲突（stage != 0）时拒绝提交。
-    let index = repository
-        .open_index()
-        .map_err(|error| format!("读取 Git 索引失败：{error}"))?;
+    let index = open_mut_index_or_empty(&repository)?;
     if index.entries().iter().any(|entry| entry.stage_raw() != 0) {
         return Err("存在未解决的合并冲突，无法提交。".into());
     }
@@ -674,6 +668,27 @@ fn assert_git_identity_configured(repository: &Repository) -> Result<(), String>
 // ---------------------------------------------------------------------------
 // 基于 gix 的索引 / 工作区写操作辅助函数（供 stage / unstage / discard / commit 使用）。
 // ---------------------------------------------------------------------------
+
+/// 打开可写的仓库索引；当 `.git/index` 文件尚不存在（新建 / 尚无提交的 unborn 仓库）时
+/// 回退为内存中的空索引。
+///
+/// gix 的 `open_index()` 在索引文件缺失时会返回
+/// "An IO error occurred while opening the index"。这里与本文件其它读路径使用的
+/// `index_or_empty()` 语义保持一致，但返回可写的 `gix::index::File`，
+/// 以便 stage / unstage / commit 修改后通过 `index.write(..)` 写回。
+fn open_mut_index_or_empty(repository: &Repository) -> Result<gix::index::File, String> {
+    let index_path = repository.git_dir().join("index");
+    if index_path.exists() {
+        repository
+            .open_index()
+            .map_err(|error| format!("读取 Git 索引失败：{error}"))
+    } else {
+        Ok(gix::index::File::from_state(
+            gix::index::State::new(repository.object_hash()),
+            index_path,
+        ))
+    }
+}
 
 /// 判断 pathspec 是否匹配候选相对路径：精确相等或作为目录前缀。
 fn pathspec_matches(pathspec: &str, candidate: &str) -> bool {
