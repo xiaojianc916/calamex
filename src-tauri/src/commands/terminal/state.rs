@@ -177,11 +177,28 @@ pub(super) fn try_mark_active_terminal_run(
     if active_runs.contains_key(run_id) {
         return Err(format!("运行任务已存在：{run_id}"));
     }
-    if let Some(active_run) = active_runs
+    // 兜底：若该会话既有的活动运行其底层进程实际已结束（读线程已在 child.wait 返回后
+    // 置位 is_finished），但因完成事件丢失 / 读线程异常等原因未能清理 active_runs，则
+    // 视为陈旧条目就地回收，避免该会话被永久卡在「已有脚本正在运行」而再也无法发起新
+    // 运行。仅在确证已结束时回收，绝不误清仍在运行的脚本；句柄尚未绑定（刚 mark、未
+    // attach）时一律按「仍在进行」处理。
+    let existing_run = active_runs
         .values()
         .find(|active_run| active_run.session_id == session_id)
-    {
-        return Err(format!("当前终端已有脚本正在运行：{}", active_run.run_id));
+        .map(|active_run| {
+            let finished = active_run
+                .run_handle
+                .as_ref()
+                .map(|handle| handle.is_finished())
+                .unwrap_or(false);
+            (active_run.run_id.clone(), finished)
+        });
+    if let Some((existing_run_id, finished)) = existing_run {
+        if finished {
+            active_runs.remove(&existing_run_id);
+        } else {
+            return Err(format!("当前终端已有脚本正在运行：{existing_run_id}"));
+        }
     }
     active_runs.insert(
         run_id.to_string(),
@@ -215,6 +232,20 @@ pub(super) fn clear_active_terminal_run(state: &TerminalSessionState, run_id: &s
         return;
     };
     active_runs.remove(run_id);
+}
+
+/// 退出清理：取出并清空所有活动运行的句柄，供调用方逐个 kill。
+/// 运行脚本走独立的运行 PTY，与交互会话句柄无关——仅关闭 / drain 交互会话不会终止
+/// 它们，应用退出时若不显式接管，会遗留无人管理的孤儿 wsl.exe 进程。锁中毒时返回空表
+/// （尽力而为，不阻断退出流程）。
+pub(super) fn drain_active_terminal_runs(state: &TerminalSessionState) -> Vec<LocalWslRunHandle> {
+    let Ok(mut active_runs) = state.active_runs.lock() else {
+        return Vec::new();
+    };
+    active_runs
+        .drain()
+        .filter_map(|(_, run)| run.run_handle)
+        .collect()
 }
 
 /// 会话作用域地接管活动运行：仅当当前活动运行归属指定会话时，才取出其句柄并清空活动
