@@ -106,10 +106,16 @@ const bootstrap = async (): Promise<void> => {
     });
     markStartup('shell-catalog-prefetch-scheduled');
 
-    // session 与 ai-conversation 持久化都是异步 hydrate，必须在 app.use(pinia) 前
-    // 完成;二者相互独立，并行 await 以不增加首屏延迟。
+    // session 快照是首屏(编辑器/工作区状态)恢复所必需的，仍在挂载前阻塞 await。
+    // 而 ai-conversation 历史只有懒加载的 AI 面板才会用到——首屏并不需要它就位。
+    // 因此把它移出挂载关键路径：在后台并发启动 hydrate，不 await。它带有 300ms 超时
+    // 与 reconcile 数据安全逻辑，会在用户真正打开 AI 面板前完成，且绝不会用空态覆盖
+    // 磁盘上的历史(详见 debouncedPersistStorage)。
     markStartup('session-storage-hydrate-start');
-    await Promise.all([hydrateSessionStorage(), hydrateAiConversationStorage()]);
+    void hydrateAiConversationStorage().catch((error: unknown) => {
+      console.warn('AI 会话历史后台 hydrate 失败', error);
+    });
+    await hydrateSessionStorage();
     markStartup('session-storage-hydrated');
 
     const app = createApp(App);
