@@ -5,7 +5,6 @@ import BrowserContextMenuHost from '@/components/common/BrowserContextMenuHost.v
 import FatalErrorScreen from '@/components/common/FatalErrorScreen.vue';
 import { Toaster } from '@/components/ui/sonner';
 import { useWindowResizeState } from '@/composables/useWindowResizeState';
-import CopilotKitProvider from '@/copilotkit/CopilotKitProvider.vue';
 import { applyWindowStage, setWindowBackground } from '@/services/ipc/window.service';
 import { runtimeErrorState } from '@/utils/runtime-diagnostics';
 import { markStartup, reportStartupTimings } from '@/utils/startup-profiler';
@@ -131,10 +130,8 @@ onMounted(() => {
       :code="runtimeErrorState.code"
       :trace-id="runtimeErrorState.traceId"
     />
-    <CopilotKitProvider v-else>
-      <router-view v-slot="{ Component: RouteComponent, route: routeRecord }">
-        <component :is="RouteComponent" :key="routeRecord.fullPath" @ready="handleWorkbenchReady" />
-      </router-view>
-    </CopilotKitProvider>
+    <router-view v-else v-slot="{ Component: RouteComponent, route: routeRecord }">
+      <component :is="RouteComponent" :key="routeRecord.fullPath" @ready="handleWorkbenchReady" />
+    </router-view>
   </div>
 </template>
