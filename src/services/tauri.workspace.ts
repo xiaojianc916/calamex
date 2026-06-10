@@ -1,5 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
-import { commands, type ScriptFilePayload } from '@/bindings/tauri';
+import { commands } from '@/bindings/tauri';
 import type { ITauriService } from '@/types/tauri';
 import { measureScriptContentInput } from './tauri.ipc-metrics';
 import { callSpectaCommand, pickDialogPath } from './tauri.ipc-runtime';
@@ -132,11 +131,7 @@ export const workspaceTauriService: TWorkspaceTauriService = {
         input: { path, workspaceRootPath: workspaceRootPath ?? null },
         signal: options?.signal,
       },
-      () =>
-        invoke<ScriptFilePayload>('load_script', {
-          path,
-          workspaceRootPath: workspaceRootPath ?? null,
-        }),
+      () => commands.loadScript(path, workspaceRootPath ?? null),
     );
   },
 

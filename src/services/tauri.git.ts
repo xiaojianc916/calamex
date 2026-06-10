@@ -1,7 +1,6 @@
 import { commands } from '@/bindings/tauri';
-import type { IGitCommitFileDiffPayload, IGitDiffPreviewPayload } from '@/types/git';
 import type { ITauriService } from '@/types/tauri';
-import { callSpectaCommand, invokeTauriCommand } from './tauri.ipc-runtime';
+import { callSpectaCommand } from './tauri.ipc-runtime';
 import type { IIpcCallOptions } from './tauri.ipc-types';
 
 type TGitTauriService = Pick<
@@ -100,7 +99,7 @@ export const gitTauriService: TGitTauriService = {
         input: payload,
         signal: options?.signal,
       },
-      () => invokeTauriCommand<IGitCommitFileDiffPayload>('get_git_commit_file_diff', { payload }),
+      () => commands.getGitCommitFileDiff(payload),
     );
   },
 
@@ -114,8 +113,7 @@ export const gitTauriService: TGitTauriService = {
         input: payload,
         signal: options?.signal,
       },
-      () =>
-        invokeTauriCommand<IGitDiffPreviewPayload>('get_git_commit_file_diff_preview', { payload }),
+      () => commands.getGitCommitFileDiffPreview(payload),
     );
   },
 
