@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import LegacyRunPanel from '@/components/workbench/RunPanel.vue';
-import type { ITerminalSettings, TThemeMode } from '@/types/app';
+import type { TThemeMode } from '@/types/app';
+import type { ITerminalSettings } from '@/types/settings';
+import type { ITerminalRunCompletedPayload } from '@/types/terminal';
 
 const props = defineProps<{
   theme: TThemeMode;
@@ -12,7 +14,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   hide: [];
   'toggle-maximize': [];
-  'terminal-run-completed': [];
+  'terminal-run-completed': [payload: ITerminalRunCompletedPayload];
 }>();
 </script>
 
@@ -24,6 +26,6 @@ const emit = defineEmits<{
     :is-maximized="props.isMaximized"
     @hide="emit('hide')"
     @toggle-maximize="emit('toggle-maximize')"
-    @terminal-run-completed="emit('terminal-run-completed')"
+    @terminal-run-completed="emit('terminal-run-completed', $event)"
   />
 </template>
