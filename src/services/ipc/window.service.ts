@@ -1,7 +1,5 @@
-import { z } from 'zod';
-import type { SetWindowBackgroundInput, WindowStage } from '@/bindings/tauri';
-import { defineIpc } from '@/services/tauri';
-import { zTauriVoid } from '@/services/tauri.contracts';
+import { commands, type SetWindowBackgroundInput, type WindowStage } from '@/bindings/tauri';
+import { callSpectaCommand } from '@/services/tauri.ipc-runtime';
 
 export type TSetWindowBackgroundRequest = Omit<SetWindowBackgroundInput, 'label' | 'a'> &
   Partial<Pick<SetWindowBackgroundInput, 'a'>> & {
@@ -12,29 +10,6 @@ export type TWindowStageRequest = {
   readonly stage: WindowStage;
 };
 
-const windowStageRequestSchema = z.object({
-  stage: z.enum(['main']),
-});
-
-const applyWindowStageIpc = defineIpc({
-  name: 'apply_window_stage',
-  guardHint: 'apply window stage',
-  inSchema: windowStageRequestSchema,
-  outSchema: zTauriVoid,
-  timeoutMs: 1_000,
-  idempotent: true,
-  audit: 'info',
-  mapArgs: (input) => ({ stage: input.stage }),
-});
-
-const setWindowBackgroundRequestSchema = z.object({
-  label: z.string().nullable().optional(),
-  r: z.number().int().min(0).max(255),
-  g: z.number().int().min(0).max(255),
-  b: z.number().int().min(0).max(255),
-  a: z.number().int().min(0).max(255).optional(),
-});
-
 const toWindowBackgroundInput = (input: TSetWindowBackgroundRequest): SetWindowBackgroundInput => ({
   label: input.label ?? null,
   r: input.r,
@@ -43,22 +18,34 @@ const toWindowBackgroundInput = (input: TSetWindowBackgroundRequest): SetWindowB
   a: input.a ?? 255,
 });
 
-const setWindowBackgroundIpc = defineIpc({
-  name: 'set_window_background',
-  guardHint: 'sync native window background',
-  inSchema: setWindowBackgroundRequestSchema,
-  outSchema: zTauriVoid,
-  timeoutMs: 1_000,
-  idempotent: true,
-  audit: 'none',
-  mapArgs: (input, context) => ({
-    input: toWindowBackgroundInput(input),
-    traceId: context.traceId,
-  }),
-});
-
-export const setWindowBackground = (input: TSetWindowBackgroundRequest): Promise<void> =>
-  setWindowBackgroundIpc(input);
+export const setWindowBackground = (input: TSetWindowBackgroundRequest): Promise<void> => {
+  const commandInput = toWindowBackgroundInput(input);
+  return callSpectaCommand<void>(
+    {
+      command: 'set_window_background',
+      guardHint: 'sync native window background',
+      timeoutMs: 1_000,
+      idempotent: true,
+      audit: 'none',
+      input: commandInput,
+    },
+    async ({ traceId }) => {
+      await commands.setWindowBackground(commandInput, traceId);
+    },
+  );
+};
 
 export const applyWindowStage = (input: TWindowStageRequest): Promise<void> =>
-  applyWindowStageIpc(input);
+  callSpectaCommand<void>(
+    {
+      command: 'apply_window_stage',
+      guardHint: 'apply window stage',
+      timeoutMs: 1_000,
+      idempotent: true,
+      audit: 'info',
+      input: { stage: input.stage },
+    },
+    async () => {
+      await commands.applyWindowStage(input.stage);
+    },
+  );

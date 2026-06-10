@@ -221,7 +221,7 @@ export const runInstrumentedIpc = async <TResult>(
 
 export const callSpectaCommand = <T>(
   options: ISpectaCommandOptions,
-  run: () => Promise<T>,
+  run: (context: { traceId: string }) => Promise<T>,
 ): Promise<T> =>
   runInstrumentedIpc<T>(
     {
@@ -247,7 +247,7 @@ export const callSpectaCommand = <T>(
       }
 
       await assertDesktopRuntime(options.guardHint);
-      const invocation = run();
+      const invocation = run({ traceId });
       invocation.catch(() => undefined);
       const output = await raceWithTimeoutAndAbort(invocation, {
         timeoutMs,
