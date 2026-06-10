@@ -9,9 +9,10 @@
  * - prompt            → 按模式路由到 runtime.chat/plan/execute；过程中的运行时输出事件
  *                       经 output-event-stream 投影为 session/update 通知即时下发，
  *                       回合内若出现待裁决审批，经 session/request_permission 取得裁决后
- *                       回灨 resolveApproval 续跑(见 approval-bridge.ts)，直至无待裁决审批，
+ *                       回灌 resolveApproval 续跑(见 approval-bridge.ts)，直至无待裁决审批，
  *                       回合收尾经 turn-egress 发可选 usage_update + 返回 PromptResponse。
  * - cancel            → 中止该会话当前回合的 AbortController(映射 runtime context.signal)。
+ * - extMethod         → 受理本 Agent 公示的带外能力(检查点回滚 / web 检索抓取 / 预热 / 健康探活)。
  *
  * 设计要点：
  * - 依赖注入(connection / runtime / registry / 生成器)，与 JSON-RPC 传输解耦，可单测。
@@ -54,16 +55,25 @@ import type {
 	TAgentRuntimeOutputEvent,
 } from "../engines/runtime.js"
 import { resolveAgentModelCapabilitiesFromModelId } from "../models/capabilities.js"
+import { logWarmupResult, warmupLlmConnection } from "../models/llm-warmup.js"
+import { getMcpRuntimeStatus } from "../tools/mcp.js"
+import { fetchWeb, searchWeb } from "../web/service.js"
 import {
 	findPendingApproval,
 	toApprovalDecision,
 	toRequestPermissionRequest,
 } from "./approval-bridge.js"
 import {
+	buildHealthExtResult,
 	CALAMEX_AGENT_CAPABILITY_META,
 	CHECKPOINT_RESTORE_METHOD,
+	HEALTH_METHOD,
 	parseCheckpointRestoreParams,
 	toCheckpointRestoreExtResult,
+	toWarmupExtResult,
+	WARMUP_METHOD,
+	WEB_FETCH_METHOD,
+	WEB_SEARCH_METHOD,
 } from "./ext-methods.js"
 import { promptResponse } from "./helpers.js"
 import { toSessionNotificationsFromOutputEvent } from "./output-event-stream.js"
@@ -194,7 +204,7 @@ export class CalamexAcpAgent implements Agent {
 			protocolVersion: PROTOCOL_VERSION,
 			agentCapabilities: {
 				loadSession: false,
-				// 带外能力(目前仅检查点回滚)以命名空间扩展方法公示；见 ext-methods.ts。
+				// 带外能力(检查点回滚 / web 检索抓取 / 预热 / 健康探活)以命名空间扩展方法公示；见 ext-methods.ts。
 				_meta: CALAMEX_AGENT_CAPABILITY_META,
 			},
 		}
@@ -263,8 +273,8 @@ export class CalamexAcpAgent implements Agent {
 			const runMethod = this.runtime[RUNTIME_METHOD_BY_MODE[state.mode]]
 			let response = await runMethod(input, runOptions())
 			// 会话内审批编排循环：每当本次运行以待裁决审批收尾，就向 client 发起
-			// session/request_permission，取得裁决后回灨 resolveApproval 续跑同一回合，
-			// 直至不再有待裁决审批。因 Agent 全连接共享同一 runtime 实例，回灨必命中
+			// session/request_permission，取得裁决后回灌 resolveApproval 续跑同一回合，
+			// 直至不再有待裁决审批。因 Agent 全连接共享同一 runtime 实例，回灌必命中
 			// 引擎内存中的 pendingApprovals 缓存(端到端事实见 approval-bridge.ts)。
 			while (true) {
 				// 取消优先：若本回合被 cancel，以 cancelled 收场(ACP 约定)。
@@ -337,10 +347,20 @@ export class CalamexAcpAgent implements Agent {
 		method: string,
 		params: Record<string, unknown>,
 	): Promise<Record<string, unknown>> {
-		if (method === CHECKPOINT_RESTORE_METHOD) {
-			return this.handleCheckpointRestore(params)
+		switch (method) {
+			case CHECKPOINT_RESTORE_METHOD:
+				return this.handleCheckpointRestore(params)
+			case WEB_SEARCH_METHOD:
+				return searchWeb(params)
+			case WEB_FETCH_METHOD:
+				return fetchWeb(params)
+			case WARMUP_METHOD:
+				return this.handleWarmup(params)
+			case HEALTH_METHOD:
+				return this.handleHealth()
+			default:
+				throw RequestError.methodNotFound(method)
 		}
-		throw RequestError.methodNotFound(method)
 	}
 
 	/**
@@ -373,6 +393,30 @@ export class CalamexAcpAgent implements Agent {
 			throw new Error(response.errorMessage)
 		}
 		return toCheckpointRestoreExtResult(response)
+	}
+
+	/**
+	 * 受理 LLM 连接预热扩展方法。预热与 prompt 回合无关，是宿主启动时的一次性带外调用；
+	 * 复用 warmupLlmConnection 的内部 zod 校验，并沿用旧 /agent/warmup 端点的 explicit 触发日志。
+	 */
+	private async handleWarmup(
+		params: Record<string, unknown>,
+	): Promise<Record<string, unknown>> {
+		const result = await warmupLlmConnection(params)
+		logWarmupResult("explicit", result)
+		return toWarmupExtResult(result)
+	}
+
+	/**
+	 * 受理健康/活性探活扩展方法。逐字节镜像旧 http `/health` 负载：运行时引擎身份 +
+	 * 当前 MCP 配置快照(getMcpRuntimeStatus 按环境重新推导，与旧探活同语义)。
+	 */
+	private handleHealth(): Record<string, unknown> {
+		return buildHealthExtResult({
+			engine: this.runtime.name,
+			version: this.runtime.version ?? null,
+			mcp: getMcpRuntimeStatus(),
+		})
 	}
 
 	/**
