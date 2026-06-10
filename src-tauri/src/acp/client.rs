@@ -12,7 +12,8 @@
 //!     `node dist/acp/stdio-entry.js`,由 crate 负责行分帧 / stderr 收集 /
 //!     drop 时杀子进程。
 //!   * `connect_with(transport, |cx| async {...})` 内运行长生命周期命令循环,宿主侧
-//!     (Tauri 命令)经 mpsc 投递 NewSession / Prompt / SetSessionMode / Cancel / Shutdown。
+//!     (Tauri 命令)经 mpsc 投递 NewSession / Prompt / SetSessionMode / RestoreCheckpoint /
+//!     Cancel / Shutdown。
 
 // 过渡期:本模块尚未接线到宿主命令(公开 API 暂无调用点)。接线后移除该 allow。
 #![allow(dead_code)]
@@ -22,6 +23,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
 
 use agent_client_protocol::schema::{
@@ -31,8 +33,8 @@ use agent_client_protocol::schema::{
     SessionNotification, SetSessionModeRequest, StopReason, TextContent,
 };
 use agent_client_protocol::{
-    AcpAgent, Agent, BoxFuture, Client, ConnectionTo, Responder, on_receive_notification,
-    on_receive_request,
+    AcpAgent, Agent, BoxFuture, Client, ConnectionTo, JsonRpcRequest, Responder,
+    on_receive_notification, on_receive_request,
 };
 
 /// webview 流式帧:对齐现有 `ai:sidecar-stream` 的 `{sessionId, seq, event}` 契约。
@@ -57,6 +59,42 @@ pub enum PermissionDecision {
 /// 权限解析器:收到官方 `RequestPermissionRequest`,异步返回决策(等待用户审批)。
 pub type PermissionResolver =
     Arc<dyn Fn(RequestPermissionRequest) -> BoxFuture<'static, PermissionDecision> + Send + Sync>;
+
+/// 检查点回滚扩展方法的请求级模型配置。
+/// 字段镜像 sidecar `ext-methods.ts` 的 `modelConfigParamsSchema`(camelCase 线格式)。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CheckpointRestoreModelConfig {
+    pub model_id: String,
+    pub api_key: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+}
+
+/// 检查点回滚扩展方法的请求。
+///
+/// 这是 SDK 官方推荐的扩展方法落地方式:用 `#[derive(JsonRpcRequest)]` + `#[request(...)]`
+/// 把一个一等的带类型请求接入,`cx.send_request(...)` 原生可发,响应按 id 定型解析,
+/// 不经枚举回退通道,因此无需 `_` 前缀。线方法名与 sidecar 的 `CHECKPOINT_RESTORE_METHOD`
+/// (`calamex.dev/checkpoint/restore`)逐字一致;TS SDK 的 AgentSideConnection 对未知方法
+/// 直接 `agent.extMethod(method, params)`(原样透传、不剥前缀),故两侧对得上。
+/// 字段镜像 sidecar `ext-methods.ts` 的 `checkpointRestoreParamsSchema`。
+/// 响应为整封 sidecar 响应信封(schemaVersion + sessionId + events + result),
+/// 以 `serde_json::Value` 原样回传,交由宿主侧既有 `AgentSidecarResponsePayload` 解析。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, JsonRpcRequest)]
+#[serde(rename_all = "camelCase")]
+#[request(method = "calamex.dev/checkpoint/restore", response = Value)]
+pub struct CheckpointRestoreRequest {
+    pub run_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snapshot_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub step: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_config: Option<CheckpointRestoreModelConfig>,
+}
 
 /// 启动配置。`command` 为 sidecar 的 ACP stdio 入口启动命令;`env` 注入到子进程环境。
 pub struct AcpClientConfig {
@@ -89,6 +127,10 @@ enum Command {
         session_id: SessionId,
         mode_id: SessionModeId,
         reply: oneshot::Sender<Result<(), String>>,
+    },
+    RestoreCheckpoint {
+        request: CheckpointRestoreRequest,
+        reply: oneshot::Sender<Result<Value, String>>,
     },
     Cancel {
         session_id: SessionId,
@@ -151,6 +193,24 @@ impl AcpClientHandle {
                 mode_id,
                 reply,
             })
+            .map_err(|_| AcpClientError::NotRunning)?;
+        rx.await
+            .map_err(|_| AcpClientError::NotRunning)?
+            .map_err(AcpClientError::Protocol)
+    }
+
+    /// 触发检查点回滚(扩展方法 `calamex.dev/checkpoint/restore`)。
+    ///
+    /// 这是 ACP 标准会话回合之外的「带外」能力,经 sidecar 公示的扩展方法通道下发;
+    /// 标准客户端(如 Zed)不识别该方法会安全忽略,核心会话流不受影响。
+    /// 返回 sidecar 的整封响应信封(`serde_json::Value`),由宿主侧解析。
+    pub async fn restore_checkpoint(
+        &self,
+        request: CheckpointRestoreRequest,
+    ) -> Result<Value, AcpClientError> {
+        let (reply, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(Command::RestoreCheckpoint { request, reply })
             .map_err(|_| AcpClientError::NotRunning)?;
         rx.await
             .map_err(|_| AcpClientError::NotRunning)?
@@ -293,6 +353,10 @@ pub fn spawn_acp_client(
                                 .await;
                             let _ = reply.send(res.map(|_| ()).map_err(|e| e.to_string()));
                         }
+                        Command::RestoreCheckpoint { request, reply } => {
+                            let res = cx.send_request(request).block_task().await;
+                            let _ = reply.send(res.map_err(|e| e.to_string()));
+                        }
                         Command::Cancel { session_id } => {
                             if let Err(error) =
                                 cx.send_notification(CancelNotification::new(session_id))
@@ -355,5 +419,28 @@ mod tests {
         assert_eq!(value["sessionId"], "sess_1");
         assert_eq!(value["seq"], 7);
         assert_eq!(value["event"]["kind"], "agent_message_chunk");
+    }
+
+    #[test]
+    fn checkpoint_restore_request_serializes_to_camel_case_params() {
+        let request = CheckpointRestoreRequest {
+            run_id: "run_1".to_string(),
+            snapshot_id: Some("snap_1".to_string()),
+            step: None,
+            session_id: None,
+            model_config: Some(CheckpointRestoreModelConfig {
+                model_id: "deepseek/deepseek-v4-pro".to_string(),
+                api_key: "secret".to_string(),
+                base_url: None,
+            }),
+        };
+        let value = serde_json::to_value(&request).unwrap();
+        assert_eq!(value["runId"], "run_1");
+        assert_eq!(value["snapshotId"], "snap_1");
+        assert!(value.get("step").is_none());
+        assert!(value.get("sessionId").is_none());
+        assert_eq!(value["modelConfig"]["modelId"], "deepseek/deepseek-v4-pro");
+        assert_eq!(value["modelConfig"]["apiKey"], "secret");
+        assert!(value["modelConfig"].get("baseUrl").is_none());
     }
 }
