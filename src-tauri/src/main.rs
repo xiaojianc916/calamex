@@ -292,6 +292,39 @@ storage_paths::migrate_legacy_storage();
                 }
             });
 
+            // 兜底显示：窗口配置 visible:false，正常路径由前端 App.vue 挂载后调用
+            // apply_window_stage 显示窗口。但若前端在隐藏态停滞（如 WebView2 在不可见
+            // 窗口下挂起渲染/计时，导致 reveal 始终不执行），窗口会永远滞留系统托盘、
+            // 从托盘强制打开则是白屏。此处兜底：约 2.5s 后若主窗口仍不可见，则由 Rust
+            // 主动显示，打破“Rust 等前端、前端隐藏态又跑不动”的死锁。show 幂等，前端
+            // 正常路径提前显示时此处自动跳过。
+            {
+                let app_handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(2500));
+                    let Some(window) = app_handle.get_webview_window(MAIN_WINDOW_LABEL) else {
+                        return;
+                    };
+                    if window.is_visible().unwrap_or(false) {
+                        return;
+                    }
+                    eprintln!(
+                        "{}",
+                        serde_json::json!({
+                            "level": "warn",
+                            "scope": "startup",
+                            "event": "tauri.window.fallback-reveal",
+                            "detail": "main window still hidden ~2500ms after setup; revealing from native side",
+                        })
+                    );
+                    // 兜底前先把原生底色同步为应用底色(#fafafa)，尽量减小首帧纯白。
+                    let _ =
+                        window.set_background_color(Some(tauri::window::Color(250, 250, 250, 255)));
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                });
+            }
+
             emit_startup_step("tauri.setup.done", app_started_at, setup_started_at);
             Ok(())
         });
