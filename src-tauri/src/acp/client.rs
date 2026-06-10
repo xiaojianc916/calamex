@@ -31,7 +31,8 @@ use agent_client_protocol::schema::{
     StopReason, TextContent,
 };
 use agent_client_protocol::{
-    AcpAgent, BoxFuture, Client, on_receive_notification, on_receive_request,
+    AcpAgent, BoxFuture, Client, ConnectionTo, Responder, on_receive_notification,
+    on_receive_request,
 };
 
 /// webview 流式帧:对齐现有 `ai:sidecar-stream` 的 `{sessionId, seq, event}` 契约。
@@ -198,8 +199,11 @@ pub fn spawn_acp_client(
                 on_receive_notification!(),
             )
             // 权限请求:异步交给上层审批 UI 决策。
+            // 参数类型显式标注:handlers.rs 要求 AsyncFnMut(Req, Responder<Req::Response>, ConnectionTo<Counterpart>)。
             .on_receive_request(
-                move |req: RequestPermissionRequest, responder, _cx| {
+                move |req: RequestPermissionRequest,
+                      responder: Responder<RequestPermissionResponse>,
+                      _cx: ConnectionTo<Client>| {
                     let resolver = resolver.clone();
                     async move {
                         let outcome = match resolver(req).await {
