@@ -6,13 +6,16 @@
 //!
 //! 设计完全对齐官方 Rust crate `agent-client-protocol`(git 钉到 v0.14.0 的 SACP
 //! 角色/构建器模型),不自创 JSON-RPC:
-//!   * 用 `Client::builder()` 注册 `on_receive_notification`(把流式 `session/update`
+//!   * 用 `Client.builder()` 注册 `on_receive_notification`(把流式 `session/update`
 //!     转发给 webview)与 `on_receive_request`(把权限请求路由给上层审批 UI)。
 //!   * 用 `AcpAgent::from_str(...)` 作 stdio 传输:派生子进程
 //!     `node dist/acp/stdio-entry.js`,由 crate 负责行分帧 / stderr 收集 /
 //!     drop 时杀子进程。
 //!   * `connect_with(transport, |cx| async {...})` 内运行长生命周期命令循环,宿主侧
 //!     (Tauri 命令)经 mpsc 投递 NewSession / Prompt / Cancel / Shutdown。
+
+// 过渡期:本模块尚未接线到宿主命令(公开 API 暂无调用点)。接线后移除该 allow。
+#![allow(dead_code)]
 
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -168,7 +171,8 @@ pub fn spawn_acp_client(
     let notif_seq = seq.clone();
 
     tokio::spawn(async move {
-        let result = Client::builder()
+        let result = Client
+            .builder()
             .name("calamex")
             // 流式 session/update:Client 默认 dispatch 返回 Handled::No,通知会落到此处理器。
             .on_receive_notification(

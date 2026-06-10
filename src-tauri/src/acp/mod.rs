@@ -6,6 +6,8 @@
 
 mod client;
 
+// 过渡期:本模块尚未接线到宿主命令,公开项暂时无人引用。接线后移除该 allow。
+#[allow(unused_imports)]
 pub use client::{
     AcpClientConfig, AcpClientError, AcpClientHandle, AcpStreamFrame, EventSink,
     PermissionDecision, PermissionResolver, spawn_acp_client,
