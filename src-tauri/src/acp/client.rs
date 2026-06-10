@@ -8,9 +8,10 @@
 //! 角色/构建器模型),不自创 JSON-RPC:
 //!   * 用 `Client.builder()` 注册 `on_receive_notification`(把流式 `session/update`
 //!     转发给 webview)与 `on_receive_request`(把权限请求路由给上层审批 UI)。
-//!   * 用 `AcpAgent::from_str(...)` 作 stdio 传输:派生子进程
+//!   * 用 `AcpAgent::from_args(...)` 作 stdio 传输:派生子进程
 //!     `node dist/acp/stdio-entry.js`,由 crate 负责行分帧 / stderr 收集 /
-//!     drop 时杀子进程。
+//!     drop 时杀子进程。采用结构化词元而非单一命令行字符串,规避
+//!     `shell_words::split` 对含空格 / 反斜杠路径(尤其 Windows)的误分词。
 //!   * `connect_with(transport, |cx| async {...})` 内运行长生命周期命令循环,宿主侧
 //!     (Tauri 命令)经 mpsc 投递 NewSession / Prompt / SetSessionMode / RestoreCheckpoint /
 //!     Cancel / Shutdown。
@@ -19,7 +20,6 @@
 #![allow(dead_code)]
 
 use std::path::PathBuf;
-use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -96,9 +96,17 @@ pub struct CheckpointRestoreRequest {
     pub model_config: Option<CheckpointRestoreModelConfig>,
 }
 
-/// 启动配置。`command` 为 sidecar 的 ACP stdio 入口启动命令;`env` 注入到子进程环境。
+/// 启动配置。采用结构化字段而非单一命令行字符串:
+///   * `program`:ACP stdio 入口可执行程序(如 node 的绝对路径);
+///   * `args`:传给程序的参数(如 `dist/acp/stdio-entry.js`);
+///   * `env`:注入到子进程环境的变量。
+///
+/// 经 `AcpAgent::from_args` 逐词元传入(每个词元为独立元素,不经 shell 分词),
+/// 从而规避 `from_str` 内 `shell_words::split` 对含空格 / 反斜杠路径(尤其 Windows)
+/// 的误分词。
 pub struct AcpClientConfig {
-    pub command: String,
+    pub program: String,
+    pub args: Vec<String>,
     pub env: Vec<(String, String)>,
 }
 
@@ -230,15 +238,18 @@ impl AcpClientHandle {
     }
 }
 
-/// 拼接 `AcpAgent::from_str` 可解析的命令行:前导 `KEY=val` 词元作为子进程环境变量。
-fn build_command_line(config: &AcpClientConfig) -> String {
-    let mut parts: Vec<String> = config
+/// 构造 `AcpAgent::from_args` 所需的词元序列:前导 `NAME=value` 为子进程环境变量,
+/// 其后为程序与其参数。每个词元都是独立元素,不经 shell 分词,因此 Windows 下含
+/// 空格的 node / 入口路径也安全(规避 `from_str` 的 `shell_words::split` 风险)。
+fn build_agent_args(config: &AcpClientConfig) -> Vec<String> {
+    let mut args: Vec<String> = config
         .env
         .iter()
         .map(|(k, v)| format!("{k}={v}"))
         .collect();
-    parts.push(config.command.clone());
-    parts.join(" ")
+    args.push(config.program.clone());
+    args.extend(config.args.iter().cloned());
+    args
 }
 
 /// 启动常驻 ACP 客户端连接任务,返回宿主侧命令句柄。
@@ -250,8 +261,7 @@ pub fn spawn_acp_client(
     sink: EventSink,
     resolver: PermissionResolver,
 ) -> Result<AcpClientHandle, AcpClientError> {
-    let command_line = build_command_line(&config);
-    let transport = AcpAgent::from_str(&command_line)
+    let transport = AcpAgent::from_args(build_agent_args(&config))
         .map_err(|e| AcpClientError::Transport(e.to_string()))?;
 
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<Command>();
@@ -385,27 +395,58 @@ mod tests {
     use super::*;
 
     #[test]
-    fn build_command_line_injects_env_prefix() {
+    fn build_agent_args_prefixes_env_then_program_and_args() {
         let config = AcpClientConfig {
-            command: "node dist/acp/stdio-entry.js".to_string(),
+            program: "node".to_string(),
+            args: vec!["dist/acp/stdio-entry.js".to_string()],
             env: vec![
                 ("AGENT_SIDECAR_TOKEN".to_string(), "secret".to_string()),
                 ("AGENT_SIDECAR_PORT".to_string(), "39871".to_string()),
             ],
         };
         assert_eq!(
-            build_command_line(&config),
-            "AGENT_SIDECAR_TOKEN=secret AGENT_SIDECAR_PORT=39871 node dist/acp/stdio-entry.js"
+            build_agent_args(&config),
+            vec![
+                "AGENT_SIDECAR_TOKEN=secret".to_string(),
+                "AGENT_SIDECAR_PORT=39871".to_string(),
+                "node".to_string(),
+                "dist/acp/stdio-entry.js".to_string(),
+            ]
         );
     }
 
     #[test]
-    fn build_command_line_without_env_is_bare_command() {
+    fn build_agent_args_without_env_is_program_then_args() {
         let config = AcpClientConfig {
-            command: "node dist/acp/stdio-entry.js".to_string(),
+            program: "node".to_string(),
+            args: vec!["dist/acp/stdio-entry.js".to_string()],
             env: vec![],
         };
-        assert_eq!(build_command_line(&config), "node dist/acp/stdio-entry.js");
+        assert_eq!(
+            build_agent_args(&config),
+            vec![
+                "node".to_string(),
+                "dist/acp/stdio-entry.js".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn build_agent_args_preserves_spaces_in_paths() {
+        // 这正是本次修复要防范的回归:Windows 含空格 / 反斜杠的路径作为独立词元
+        // 完整保留,不被 shell 分词拆碎(旧 from_str 路径会把它拆成多个参数)。
+        let config = AcpClientConfig {
+            program: r"C:\Program Files\nodejs\node.exe".to_string(),
+            args: vec![r"C:\My Apps\calamex\dist\acp\stdio-entry.js".to_string()],
+            env: vec![],
+        };
+        assert_eq!(
+            build_agent_args(&config),
+            vec![
+                r"C:\Program Files\nodejs\node.exe".to_string(),
+                r"C:\My Apps\calamex\dist\acp\stdio-entry.js".to_string(),
+            ]
+        );
     }
 
     #[test]
