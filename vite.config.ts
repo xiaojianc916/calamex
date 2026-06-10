@@ -46,7 +46,7 @@ export default defineConfig(({ command }) => ({
         manualChunks(id) {
           const normalizedId = id.replace(/\\/g, '/');
 
-          // ── 核心框架 ────────────────────────────────────────────────────
+          // ── 核心框架 ───────────────────────────────────
           if (
             normalizedId.includes('/node_modules/vue/') ||
             normalizedId.includes('/node_modules/vue-router/') ||
@@ -55,12 +55,55 @@ export default defineConfig(({ command }) => ({
             return 'vendor-core';
           }
 
-          // ── xterm ──────────────────────────────────────────────────────
+          // ── 编辑器内核（CodeMirror / Lezer）───────────────
+          if (
+            normalizedId.includes('/node_modules/@codemirror/') ||
+            normalizedId.includes('/node_modules/@lezer/') ||
+            normalizedId.includes('/node_modules/codemirror/')
+          ) {
+            return 'vendor-codemirror';
+          }
+
+          // ── 语法高亮（Shiki）───────────────────────
+          if (
+            normalizedId.includes('/node_modules/shiki/') ||
+            normalizedId.includes('/node_modules/@shikijs/')
+          ) {
+            return 'vendor-shiki';
+          }
+
+          // ── AI 运行时（CopilotKit / ai SDK）───────────────
+          if (
+            normalizedId.includes('/node_modules/@copilotkit/') ||
+            normalizedId.includes('/node_modules/ai/')
+          ) {
+            return 'vendor-ai';
+          }
+
+          // ── Markdown / 数学公式渲染 ───────────────────
+          if (
+            normalizedId.includes('/node_modules/markstream-vue/') ||
+            normalizedId.includes('/node_modules/katex/')
+          ) {
+            return 'vendor-markdown';
+          }
+
+          // ── UI 基础库 ─────────────────────────────
+          if (
+            normalizedId.includes('/node_modules/reka-ui/') ||
+            normalizedId.includes('/node_modules/motion-v/') ||
+            normalizedId.includes('/node_modules/photoswipe/') ||
+            normalizedId.includes('/node_modules/@lucide/')
+          ) {
+            return 'vendor-ui';
+          }
+
+          // ── xterm ───────────────────────────────
           if (normalizedId.includes('/node_modules/@xterm/')) {
             return 'vendor-xterm';
           }
 
-          // ── shell 分析 ─────────────────────────────────────────────────
+          // ── shell 分析 ──────────────────────────
           if (
             normalizedId.includes('/node_modules/web-tree-sitter/') ||
             normalizedId.includes('/node_modules/tree-sitter-bash/') ||
