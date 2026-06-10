@@ -31,7 +31,7 @@ use agent_client_protocol::schema::{
     StopReason, TextContent,
 };
 use agent_client_protocol::{
-    AcpAgent, BoxFuture, Client, ConnectionTo, Responder, on_receive_notification,
+    AcpAgent, Agent, BoxFuture, Client, ConnectionTo, Responder, on_receive_notification,
     on_receive_request,
 };
 
@@ -199,11 +199,12 @@ pub fn spawn_acp_client(
                 on_receive_notification!(),
             )
             // 权限请求:异步交给上层审批 UI 决策。
-            // 参数类型显式标注:handlers.rs 要求 AsyncFnMut(Req, Responder<Req::Response>, ConnectionTo<Counterpart>)。
+            // 参数类型:handlers.rs 要求 AsyncFnMut(Req, Responder<Req::Response>, ConnectionTo<Host::Counterpart>)。
+            // Host=Client,故连接参数是 ConnectionTo<Agent>(Client::Counterpart = Agent)。
             .on_receive_request(
                 move |req: RequestPermissionRequest,
                       responder: Responder<RequestPermissionResponse>,
-                      _cx: ConnectionTo<Client>| {
+                      _cx: ConnectionTo<Agent>| {
                     let resolver = resolver.clone();
                     async move {
                         let outcome = match resolver(req).await {
