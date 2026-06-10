@@ -1,8 +1,12 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 
-import type { SessionNotification } from "@agentclientprotocol/sdk"
+import type {
+	RequestPermissionRequest,
+	SessionNotification,
+} from "@agentclientprotocol/sdk"
 
+import { encodeApprovalRequestId } from "../engines/approval-client/utils.js"
 import type {
 	IAgentRuntimeResponse,
 	IAgentRuntimeRunOptions,
@@ -12,8 +16,11 @@ import type { IAgentSidecarRuntime } from "../engines/runtime.js"
 import { createAgentRuntimeEvent } from "../streaming/stream-types.js"
 import { CalamexAcpAgent, type IAcpAgentConnection } from "./agent.js"
 
-// 记录型假连接:收集所有下发的 session/update 通知。
-const recordingConnection = (): {
+// 记录型假连接:收集所有下发的 session/update 通知;requestPermission 默认抛错
+// (未配置即视为用例不应触发审批),可由参数注入确定化的裁决处理器。
+const recordingConnection = (
+	requestPermission?: IAcpAgentConnection["requestPermission"],
+): {
 	connection: IAcpAgentConnection
 	notifications: SessionNotification[]
 } => {
@@ -22,6 +29,11 @@ const recordingConnection = (): {
 		sessionUpdate: async (params) => {
 			notifications.push(params)
 		},
+		requestPermission:
+			requestPermission ??
+			(async () => {
+				throw new Error("本用例未配置 requestPermission")
+			}),
 	}
 	return { connection, notifications }
 }
@@ -99,6 +111,66 @@ test("prompt 把 agent_event 投影为 session/update,并在收尾发 usage_upda
 	assert.ok(usage, "应有 usage_update 通知")
 	assert.equal((usage.update as { used: number }).used, 1200)
 	assert.equal((usage.update as { size: number }).size, 128_000)
+})
+
+test("prompt 在工具审批挂起时发起 request_permission,批准后回灌 resolveApproval 续跑", async () => {
+	const approvals: RequestPermissionRequest[] = []
+	const { connection } = recordingConnection(async (request) => {
+		approvals.push(request)
+		return { outcome: { outcome: "selected", optionId: "allow-once" } }
+	})
+	const pendingRequest = {
+		id: encodeApprovalRequestId("run-9", "tool-7"),
+		toolName: "shell",
+		question: "运行命令?",
+		summary: "rm -rf /tmp/x",
+		riskLevel: "high" as const,
+		reversible: false,
+		createdAt: "2026-01-01T00:00:00.000Z",
+	}
+	let executeCalls = 0
+	const resolveCalls: Array<{ requestId: string; decision: string }> = []
+	const runtime = makeRuntime(
+		async (input) => {
+			executeCalls += 1
+			return {
+				sessionId: input.sessionId ?? "",
+				events: [
+					{ type: "approval_required" as const, request: pendingRequest },
+				],
+				result: null,
+			}
+		},
+		{
+			resolveApproval: async (input) => {
+				resolveCalls.push({
+					requestId: input.requestId,
+					decision: input.decision,
+				})
+				return {
+					sessionId: input.sessionId ?? "",
+					events: [],
+					result: "完成",
+					usage: { totalTokens: 10 },
+				}
+			},
+		},
+	)
+	const agent = new CalamexAcpAgent(connection, runtime)
+	const { sessionId } = await agent.newSession({ cwd: "/w", mcpServers: [] })
+	const response = await agent.prompt({
+		sessionId,
+		prompt: [{ type: "text", text: "go" }],
+	})
+	assert.equal(response.stopReason, "end_turn")
+	assert.equal(executeCalls, 1)
+	assert.equal(approvals.length, 1)
+	// 权限请求的 toolCallId 应是从审批 token 解码出的原始 Mastra toolCallId。
+	assert.equal(approvals[0]?.toolCall.toolCallId, "tool-7")
+	// 裁决应以 approval_required 的 request.id 原样回灌,且映射为 approve。
+	assert.deepEqual(resolveCalls, [
+		{ requestId: pendingRequest.id, decision: "approve" },
+	])
 })
 
 test("prompt 在回合被 cancel 后返回 cancelled", async () => {
