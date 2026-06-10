@@ -14,7 +14,7 @@ export default defineConfig(({ command }) => ({
       template: 'treemap', // 还可选 'sunburst' / 'network'
       gzipSize: true,
       brotliSize: true,
-      open: true,
+      open: false,
     }),
   ],
   clearScreen: false,
