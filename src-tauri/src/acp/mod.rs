@@ -4,6 +4,7 @@
 //! `acp_client` 门控。完成全量切换后，本目录将成为 agent-sidecar 唯一的接入层，
 //! 旧 HTTP/NDJSON 实现随之删除。
 
+mod approval;
 mod client;
 mod launch;
 mod turn;
@@ -13,6 +14,11 @@ mod turn;
 pub use client::{
     AcpClientConfig, AcpClientError, AcpClientHandle, AcpStreamFrame, EventSink,
     PermissionDecision, PermissionResolver, spawn_acp_client,
+};
+
+#[allow(unused_imports)]
+pub use approval::{
+    ApprovalError, ApprovalOptionInfo, ApprovalRegistry, ApprovalRequestInfo,
 };
 
 #[allow(unused_imports)]
