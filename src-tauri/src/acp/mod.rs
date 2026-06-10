@@ -5,6 +5,7 @@
 //! 旧 HTTP/NDJSON 实现随之删除。
 
 mod client;
+mod launch;
 mod turn;
 
 // 过渡期：本模块尚未接线到宿主命令，公开项暂时无人引用。接线后移除该 allow。
@@ -13,6 +14,9 @@ pub use client::{
     AcpClientConfig, AcpClientError, AcpClientHandle, AcpStreamFrame, EventSink,
     PermissionDecision, PermissionResolver, spawn_acp_client,
 };
+
+#[allow(unused_imports)]
+pub use launch::build_acp_client_config;
 
 #[allow(unused_imports)]
 pub use turn::TurnAccumulator;
