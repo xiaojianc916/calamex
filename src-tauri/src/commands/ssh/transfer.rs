@@ -204,6 +204,9 @@ async fn download_file_inner(
         }
     }
     drop(tx);
+    // 主动关闭远程读句柄，及时释放底层 SFTP 通道资源（与 read_file_inner 保持一致），
+    // 不必等到函数返回、file 离开作用域时才隐式关闭。
+    let _ = file.shutdown().await;
 
     let written = write_handle
         .await

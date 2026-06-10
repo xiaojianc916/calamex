@@ -9,7 +9,10 @@
 
 use std::{
     io::{Read, Write},
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -110,11 +113,20 @@ pub struct LocalWslRunHandle {
     run_id: String,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
     killer: Arc<Mutex<Box<dyn ChildKiller + Send + Sync>>>,
+    /// 读线程在脚本进程结束（child.wait 返回）后置位。供上层在「完成事件未能清理
+    /// active_runs」的异常路径下，确证该运行确已结束、可安全回收陈旧条目，
+    /// 而不必依赖一定会送达的完成事件。
+    finished: Arc<AtomicBool>,
 }
 
 impl LocalWslRunHandle {
     pub fn run_id(&self) -> &str {
         &self.run_id
+    }
+
+    /// 底层脚本进程是否已结束（读线程在 child.wait 返回后置位）。
+    pub fn is_finished(&self) -> bool {
+        self.finished.load(Ordering::SeqCst)
     }
 
     pub async fn write_input(&self, data: String) -> Result<(), LocalWslPtyError> {
@@ -309,6 +321,7 @@ where
     let killer = child.clone_killer();
     let mut cleanup_killer = child.clone_killer();
     let pid = child.process_id().unwrap_or_default();
+    let finished = Arc::new(AtomicBool::new(false));
 
     spawn_run_reader(
         run_id.clone(),
@@ -317,6 +330,7 @@ where
         reader,
         child,
         pair.master,
+        Arc::clone(&finished),
         on_event,
     )
     .inspect_err(|_error| {
@@ -329,6 +343,7 @@ where
         run_id,
         writer: Arc::new(Mutex::new(writer)),
         killer: Arc::new(Mutex::new(killer)),
+        finished,
     })
 }
 
@@ -406,6 +421,7 @@ where
         .map_err(|error| LocalWslPtyError::Open(error.to_string()))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_run_reader<F>(
     run_id: String,
     pid: u32,
@@ -413,6 +429,7 @@ fn spawn_run_reader<F>(
     mut reader: Box<dyn Read + Send>,
     mut child: Box<dyn Child + Send + Sync>,
     master: Box<dyn MasterPty + Send>,
+    finished: Arc<AtomicBool>,
     mut on_event: F,
 ) -> Result<(), LocalWslPtyError>
 where
@@ -469,6 +486,9 @@ where
 
             let exit_code = child.wait().ok().map(|status| status.exit_code() as i32);
             cleanup_wsl_paths(&cleanup_paths);
+            // 标记运行已结束：即便随后的 RunCompleted 完成事件未能让上层清理 active_runs，
+            // 上层仍可据此（is_finished）确证该运行确已结束、安全回收陈旧条目。
+            finished.store(true, Ordering::SeqCst);
             on_event(LocalWslTerminalServerPayload::RunCompleted(
                 LocalWslTerminalRunCompleted {
                     run_id,

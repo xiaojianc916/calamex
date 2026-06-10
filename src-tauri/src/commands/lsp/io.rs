@@ -17,6 +17,11 @@ use super::protocol::{
 };
 use super::types::PendingMap;
 
+/// 读 body 时的单次分块上限：body 可能声明为接近 10 MiB 上限，一次性
+/// `vec![0u8; len]` 会按声明值预分配整块。改为按此上限分块累积，
+/// 避免为偶发的大消息预占大块内存。
+const LSP_BODY_READ_CHUNK_BYTES: usize = 64 * 1024;
+
 /// 把数据写入 LSP stdin。**不要在持有 session 锁时调用**——先取 stdin 句柄再 drop 锁。
 pub(crate) async fn write_framed(
     stdin: &Arc<Mutex<ChildStdin>>,
@@ -70,10 +75,23 @@ pub(crate) async fn read_lsp_stdout(
             None => continue,
         };
 
-        // 2) 读 body
-        let mut body = vec![0u8; len];
-        if let Err(e) = reader.read_exact(&mut body).await {
-            log::warn!("LSP stdout body 读取失败: {e}");
+        // 2) 读 body：按块累积，避免为接近上限的 body 一次性预分配整段缓冲。
+        // len 由上方 match 护栏保证 > 0，故 chunk 非空、take ≥ 1。
+        let mut body = Vec::with_capacity(len.min(LSP_BODY_READ_CHUNK_BYTES));
+        let mut chunk = vec![0u8; len.min(LSP_BODY_READ_CHUNK_BYTES)];
+        let mut remaining = len;
+        let mut body_read_failed = false;
+        while remaining > 0 {
+            let take = remaining.min(chunk.len());
+            if let Err(e) = reader.read_exact(&mut chunk[..take]).await {
+                log::warn!("LSP stdout body 读取失败: {e}");
+                body_read_failed = true;
+                break;
+            }
+            body.extend_from_slice(&chunk[..take]);
+            remaining -= take;
+        }
+        if body_read_failed {
             return;
         }
         let msg: Value = match serde_json::from_slice(&body) {
