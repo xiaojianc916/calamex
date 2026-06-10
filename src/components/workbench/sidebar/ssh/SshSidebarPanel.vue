@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import LegacySshSidebarPanel from '@/components/workbench/SshSidebarPanel.vue';
 
-defineOptions({ inheritAttrs: false });
+const emit = defineEmits<{
+  'open-terminal': [];
+}>();
 </script>
 
 <template>
-  <LegacySshSidebarPanel v-bind="$attrs" />
+  <LegacySshSidebarPanel @open-terminal="emit('open-terminal')" />
 </template>
