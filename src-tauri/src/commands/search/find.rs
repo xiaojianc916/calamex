@@ -15,39 +15,7 @@ use nucleo_matcher::{
     pattern::{CaseMatching, Normalization, Pattern as NucleoPattern},
 };
 use rayon::prelude::*;
-use std::{cmp::Ordering, collections::BinaryHeap, fs, io, path::Path};
-
-/// 包装搜索结果以便放入有界最大堆。
-///
-/// 排序键为 `(score, relative_path)`：分数越小越靠前（与最终升序排序一致），
-/// 因此最大堆堆顶始终是“最不优先”的元素，超出容量时弹出堆顶即可保留 top-k。
-struct RankedResult(WorkspaceSearchResult);
-
-impl RankedResult {
-    fn sort_key(&self) -> (i32, &str) {
-        (self.0.score, self.0.relative_path.as_str())
-    }
-}
-
-impl PartialEq for RankedResult {
-    fn eq(&self, other: &Self) -> bool {
-        self.sort_key() == other.sort_key()
-    }
-}
-
-impl Eq for RankedResult {}
-
-impl PartialOrd for RankedResult {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for RankedResult {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.sort_key().cmp(&other.sort_key())
-    }
-}
+use std::{fs, io, path::Path};
 
 /// 内容模糊搜索的轻量预过滤器。
 ///
@@ -112,7 +80,7 @@ impl FuzzyLinePrefilter {
         false
     }
 
-    /// 文件级候选筛除（第 4 点两阶段检索的「candidate generation」轻量版）：
+    /// 文件级候选筛除（第 4 点两阶段检索的「andidate generation」轻量版）：
     /// 直接在原始字节上检查 query 要求的 ASCII 字符是否全部出现；缺任意一个，
     /// 则整文件不可能有命中行，可在更贵的解码 / 逐行 nucleo 之前整文件跳过。
     ///
@@ -149,31 +117,17 @@ fn normalize_prefilter_ascii(byte: u8, match_case: bool) -> u8 {
     }
 }
 
-/// 将结果推入有界堆，仅保留分数最低（最优）的 `limit` 个。
-fn push_bounded_result(
-    heap: &mut BinaryHeap<RankedResult>,
-    result: WorkspaceSearchResult,
-    limit: usize,
-) {
-    if limit == 0 {
-        return;
-    }
-    heap.push(RankedResult(result));
-    if heap.len() > limit {
-        heap.pop();
-    }
-}
-
-/// 取出堆中结果并按 `(score, relative_path)` 升序排序后返回。
-fn into_sorted_results(heap: BinaryHeap<RankedResult>) -> Vec<WorkspaceSearchResult> {
-    let mut results: Vec<WorkspaceSearchResult> =
-        heap.into_iter().map(|ranked| ranked.0).collect();
+/// 按 `(score, relative_path)` 升序排序后截断到 `limit`。
+///
+/// 分数越小越优先（文件名/符号命中为负分），并列时按 relative_path 字典序稳定排序，
+/// 与旧的有界堆 into_sorted_results 输出顺序完全一致。
+fn sort_and_truncate_results(results: &mut Vec<WorkspaceSearchResult>, limit: usize) {
     results.sort_by(|left, right| {
         left.score
             .cmp(&right.score)
             .then_with(|| left.relative_path.cmp(&right.relative_path))
     });
-    results
+    results.truncate(limit);
 }
 
 /// 将各文件的命中合并到全局 `limit`。
@@ -224,22 +178,35 @@ pub(super) fn search_file_names(
     match_case: bool,
     limit: usize,
 ) -> Result<Vec<WorkspaceSearchResult>, String> {
+    if limit == 0 {
+        return Ok(Vec::new());
+    }
+
     let case_matching = if match_case {
         CaseMatching::Respect
     } else {
         CaseMatching::Ignore
     };
     let pattern = NucleoPattern::parse(query, case_matching, Normalization::Smart);
-    let mut matcher = NucleoMatcher::new(Config::DEFAULT.match_paths());
-    let mut utf32_buffer = Vec::new();
-    let mut heap: BinaryHeap<RankedResult> = BinaryHeap::new();
 
-    for file in files {
-        let haystack = Utf32Str::new(&file.relative_path, &mut utf32_buffer);
-        if let Some(score) = pattern.score(haystack, &mut matcher) {
-            push_bounded_result(
-                &mut heap,
-                WorkspaceSearchResult {
+    // 并行打分：每个 rayon 工作线程通过 map_init 维护自己的 NucleoMatcher 与 Utf32 缓冲，
+    // matcher 始终线程本地、不跨线程，因此无需 NucleoMatcher: Send。先收集全部命中再统一
+    // 排序截断到 limit；候选量等于命中文件数，远小于内容命中，全量收集成本可忽略。
+    let mut scored = files
+        .par_iter()
+        .map_init(
+            || {
+                (
+                    NucleoMatcher::new(Config::DEFAULT.match_paths()),
+                    Vec::<char>::new(),
+                )
+            },
+            |(matcher, utf32_buffer), file| -> Result<Option<WorkspaceSearchResult>, String> {
+                let haystack = Utf32Str::new(&file.relative_path, utf32_buffer);
+                let Some(score) = pattern.score(haystack, matcher) else {
+                    return Ok(None);
+                };
+                Ok(Some(WorkspaceSearchResult {
                     path: file.path.to_string_lossy().to_string(),
                     relative_path: file.relative_path.clone(),
                     name: file.name.clone(),
@@ -249,13 +216,14 @@ pub(super) fn search_file_names(
                     match_start: None,
                     match_end: None,
                     score: i64_to_i32(-(score as i64), "搜索评分")?,
-                },
-                limit,
-            );
-        }
-    }
+                }))
+            },
+        )
+        .filter_map(|result| result.transpose())
+        .collect::<Result<Vec<WorkspaceSearchResult>, String>>()?;
 
-    Ok(into_sorted_results(heap))
+    sort_and_truncate_results(&mut scored, limit);
+    Ok(scored)
 }
 
 pub(super) fn search_file_contents(
@@ -486,6 +454,10 @@ pub(super) fn search_symbols(
     match_case: bool,
     limit: usize,
 ) -> Result<Vec<WorkspaceSearchResult>, String> {
+    if limit == 0 {
+        return Ok(Vec::new());
+    }
+
     let symbols = workspace_cache_symbols(root)?;
     let case_matching = if match_case {
         CaseMatching::Respect
@@ -493,20 +465,26 @@ pub(super) fn search_symbols(
         CaseMatching::Ignore
     };
     let pattern = NucleoPattern::parse(query, case_matching, Normalization::Smart);
-    let mut matcher = NucleoMatcher::new(Config::DEFAULT.match_paths());
-    let mut utf32_buffer = Vec::new();
-    let mut heap: BinaryHeap<RankedResult> = BinaryHeap::new();
 
-    for symbol in symbols.iter() {
-        if !passes_path_filters(&symbol.relative_path, filters) {
-            continue;
-        }
-        let candidate = format!("{} {}", symbol.name, symbol.relative_path);
-        let haystack = Utf32Str::new(&candidate, &mut utf32_buffer);
-        if let Some(score) = pattern.score(haystack, &mut matcher) {
-            push_bounded_result(
-                &mut heap,
-                WorkspaceSearchResult {
+    // 与文件名搜索一致：先按路径过滤，再用 map_init 在各线程本地 matcher 上并行打分，
+    // 最后统一排序截断。symbols 为 Arc<Vec<SymbolEntry>>，par_iter 经 Deref 解析。
+    let mut scored = symbols
+        .par_iter()
+        .filter(|symbol| passes_path_filters(&symbol.relative_path, filters))
+        .map_init(
+            || {
+                (
+                    NucleoMatcher::new(Config::DEFAULT.match_paths()),
+                    Vec::<char>::new(),
+                )
+            },
+            |(matcher, utf32_buffer), symbol| -> Result<Option<WorkspaceSearchResult>, String> {
+                let candidate = format!("{} {}", symbol.name, symbol.relative_path);
+                let haystack = Utf32Str::new(&candidate, utf32_buffer);
+                let Some(score) = pattern.score(haystack, matcher) else {
+                    return Ok(None);
+                };
+                Ok(Some(WorkspaceSearchResult {
                     path: symbol.path.to_string_lossy().to_string(),
                     relative_path: symbol.relative_path.clone(),
                     name: symbol.name.clone(),
@@ -516,13 +494,14 @@ pub(super) fn search_symbols(
                     match_start: None,
                     match_end: None,
                     score: i64_to_i32(-(score as i64) + symbol.line_number as i64, "搜索评分")?,
-                },
-                limit,
-            );
-        }
-    }
+                }))
+            },
+        )
+        .filter_map(|result| result.transpose())
+        .collect::<Result<Vec<WorkspaceSearchResult>, String>>()?;
 
-    Ok(into_sorted_results(heap))
+    sort_and_truncate_results(&mut scored, limit);
+    Ok(scored)
 }
 
 fn search_one_file_content(
@@ -630,14 +609,15 @@ mod tests {
     }
 
     #[test]
-    fn bounded_top_k_keeps_lowest_scores_in_order() {
-        let mut heap: BinaryHeap<RankedResult> = BinaryHeap::new();
-        push_bounded_result(&mut heap, make_result(40, "d"), 2);
-        push_bounded_result(&mut heap, make_result(10, "a"), 2);
-        push_bounded_result(&mut heap, make_result(30, "c"), 2);
-        push_bounded_result(&mut heap, make_result(20, "b"), 2);
-
-        let observed: Vec<(i32, String)> = into_sorted_results(heap)
+    fn sort_and_truncate_results_orders_by_score_then_path_and_caps() {
+        let mut results = vec![
+            make_result(40, "d"),
+            make_result(10, "a"),
+            make_result(30, "c"),
+            make_result(20, "b"),
+        ];
+        sort_and_truncate_results(&mut results, 2);
+        let observed: Vec<(i32, String)> = results
             .into_iter()
             .map(|result| (result.score, result.relative_path))
             .collect();
@@ -645,24 +625,18 @@ mod tests {
     }
 
     #[test]
-    fn bounded_top_k_breaks_ties_by_relative_path() {
-        let mut heap: BinaryHeap<RankedResult> = BinaryHeap::new();
-        push_bounded_result(&mut heap, make_result(10, "y"), 2);
-        push_bounded_result(&mut heap, make_result(10, "x"), 2);
-        push_bounded_result(&mut heap, make_result(10, "z"), 2);
-
-        let observed: Vec<String> = into_sorted_results(heap)
+    fn sort_and_truncate_results_breaks_ties_by_relative_path() {
+        let mut results = vec![
+            make_result(10, "y"),
+            make_result(10, "x"),
+            make_result(10, "z"),
+        ];
+        sort_and_truncate_results(&mut results, 2);
+        let observed: Vec<String> = results
             .into_iter()
             .map(|result| result.relative_path)
             .collect();
         assert_eq!(observed, vec!["x".to_string(), "y".to_string()]);
-    }
-
-    #[test]
-    fn bounded_top_k_with_zero_limit_is_empty() {
-        let mut heap: BinaryHeap<RankedResult> = BinaryHeap::new();
-        push_bounded_result(&mut heap, make_result(10, "a"), 0);
-        assert!(into_sorted_results(heap).is_empty());
     }
 
     #[test]
