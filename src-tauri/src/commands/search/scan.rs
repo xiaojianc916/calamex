@@ -155,8 +155,8 @@ fn workspace_cache_files(root: &Path) -> Result<Arc<Vec<ScannedFile>>, String> {
     let caches = WORKSPACE_FILE_CACHES.get_or_init(|| Mutex::new(HashMap::new()));
 
     // 持锁只做轻量判断：命中且未脏直接返回缓存；命中但脏则取出增量刷新所需的数据后立即
-    // 释放锁，把可能很重的目录遍历放到锁外执行，避免单个全局锁在整目录 walk 期间阻塞
-    // 其它（乃至其它工作区的）搜索。
+    // 释放锁，把可能很重的目录遍历放到锁外执行，避免单个全局锁在整目录 walk 期间阻塞其它
+    // （乃至其它工作区的）搜索。
     enum CacheAction {
         Fresh(Arc<Vec<ScannedFile>>),
         Refresh {
@@ -488,4 +488,461 @@ fn relativize(root: &Path, path: &Path) -> Option<PathBuf> {
         match root_components.next() {
             None => return Some(path_components.as_path().to_path_buf()),
             Some(root_component) => {
-                let path_component = path
+                let path_component = path_components.next()?;
+                if !os_str_eq(root_component.as_os_str(), path_component.as_os_str()) {
+                    return None;
+                }
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+fn os_str_eq(left: &OsStr, right: &OsStr) -> bool {
+    left.eq_ignore_ascii_case(right)
+}
+
+#[cfg(not(windows))]
+fn os_str_eq(left: &OsStr, right: &OsStr) -> bool {
+    left == right
+}
+
+pub(super) fn passes_path_filters(relative_path: &str, filters: &PathFilters) -> bool {
+    if let Some(include) = &filters.include
+        && !include.is_match(relative_path)
+    {
+        return false;
+    }
+
+    if let Some(exclude) = &filters.exclude
+        && exclude.is_match(relative_path)
+    {
+        return false;
+    }
+
+    true
+}
+
+pub(super) fn relative_path(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+pub(super) fn scanned_file_from_path(
+    workspace_root: &Path,
+    path: PathBuf,
+) -> Result<ScannedFile, String> {
+    let name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| "无法解析替换文件名。".to_string())?
+        .to_string();
+    Ok(ScannedFile {
+        relative_path: relative_path(workspace_root, &path),
+        path,
+        name,
+    })
+}
+
+pub(super) fn resolve_existing_workspace_file(
+    workspace_root: &Path,
+    raw_path: &str,
+) -> Result<PathBuf, String> {
+    let path = PathBuf::from(raw_path)
+        .canonicalize()
+        .map_err(|error| format!("解析替换文件失败：{error}"))?;
+    if !path.starts_with(workspace_root) {
+        return Err("仅允许替换当前工作区内的文件。".to_string());
+    }
+    if !path.is_file() {
+        return Err("替换目标不是有效文件。".to_string());
+    }
+    Ok(path)
+}
+
+pub(super) fn is_shell_like_file(file: &ScannedFile) -> bool {
+    let extension = file
+        .path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase());
+
+    matches!(
+        extension.as_deref(),
+        Some("sh" | "bash" | "zsh" | "ksh" | "bats")
+    ) || file.name.eq_ignore_ascii_case("bashrc")
+        || file.name.eq_ignore_ascii_case(".bashrc")
+        || file.name.eq_ignore_ascii_case(".profile")
+}
+
+fn collect_workspace_symbols(
+    files: &[ScannedFile],
+    cached_files: &HashMap<String, CachedSymbolFile>,
+) -> Result<(Vec<SymbolEntry>, HashMap<String, CachedSymbolFile>), String> {
+    let per_file_symbols = files
+        .par_iter()
+        .enumerate()
+        .filter(|(_, file)| is_shell_like_file(file))
+        .map(|(index, file)| {
+            let cached = cached_files.get(&file.relative_path);
+            collect_symbols_from_file(file, cached)
+                .map(|symbols| (index, file.relative_path.clone(), symbols))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+
+    let flattened = flatten_symbol_batches(
+        per_file_symbols
+            .iter()
+            .map(|(index, _relative_path, cached_file)| (*index, cached_file.symbols.clone()))
+            .collect(),
+    );
+    let refreshed_cache = per_file_symbols
+        .into_iter()
+        .map(|(_index, relative_path, cached_file)| (relative_path, cached_file))
+        .collect();
+
+    Ok((flattened, refreshed_cache))
+}
+
+fn flatten_symbol_batches(mut per_file_symbols: Vec<(usize, Vec<SymbolEntry>)>) -> Vec<SymbolEntry> {
+    per_file_symbols.sort_by_key(|(index, _)| *index);
+    per_file_symbols
+        .into_iter()
+        .flat_map(|(_, symbols)| symbols)
+        .collect()
+}
+
+fn collect_symbols_from_file(
+    file: &ScannedFile,
+    cached: Option<&CachedSymbolFile>,
+) -> Result<CachedSymbolFile, String> {
+    let metadata = match fs::metadata(&file.path) {
+        Ok(metadata) => metadata,
+        Err(_) => {
+            return Ok(CachedSymbolFile {
+                fingerprint: SymbolFileFingerprint {
+                    len: 0,
+                    modified_nanos: None,
+                    content_hash: None,
+                },
+                symbols: Vec::new(),
+            });
+        }
+    };
+    let len = metadata.len();
+    let modified_nanos = metadata
+        .modified()
+        .ok()
+        .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_nanos());
+
+    if let Some(cached) = cached
+        && cached.fingerprint.content_hash.is_some()
+        && cached.fingerprint.len == len
+        && cached.fingerprint.modified_nanos == modified_nanos
+    {
+        return Ok(cached.clone());
+    }
+
+    let bytes = match fs::read(&file.path) {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            return Ok(CachedSymbolFile {
+                fingerprint: SymbolFileFingerprint {
+                    len,
+                    modified_nanos,
+                    content_hash: None,
+                },
+                symbols: Vec::new(),
+            });
+        }
+    };
+    let content_hash = hash_symbol_file_bytes(&bytes);
+    let fingerprint = SymbolFileFingerprint {
+        len,
+        modified_nanos,
+        content_hash: Some(content_hash),
+    };
+
+    if let Some(cached) = cached
+        && cached.fingerprint.content_hash == Some(content_hash)
+    {
+        return Ok(CachedSymbolFile {
+            fingerprint,
+            symbols: cached.symbols.clone(),
+        });
+    }
+
+    Ok(CachedSymbolFile {
+        fingerprint,
+        symbols: parse_symbols_from_file_bytes(file, &bytes)?,
+    })
+}
+
+fn hash_symbol_file_bytes(bytes: &[u8]) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn parse_symbols_from_file_bytes(
+    file: &ScannedFile,
+    bytes: &[u8],
+) -> Result<Vec<SymbolEntry>, String> {
+    let Ok((content, _encoding)) = decode_script_bytes(bytes) else {
+        return Ok(Vec::new());
+    };
+
+    let mut parser = Parser::new();
+    parser
+        .set_language(&tree_sitter_bash::LANGUAGE.into())
+        .map_err(|error| format!("初始化 Bash 符号解析器失败：{error}"))?;
+    let Some(tree) = parser.parse(&content, None) else {
+        return Ok(Vec::new());
+    };
+
+    let mut symbols = Vec::new();
+    collect_symbols_from_node(tree.root_node(), content.as_bytes(), file, &mut symbols);
+    Ok(symbols)
+}
+
+fn collect_symbols_from_node(
+    node: Node<'_>,
+    source: &[u8],
+    file: &ScannedFile,
+    symbols: &mut Vec<SymbolEntry>,
+) {
+    if node.kind() == "function_definition"
+        && let Some(name_node) = node.child_by_field_name("name")
+        && let Ok(name) = name_node.utf8_text(source)
+        && let Ok(line_number) = count_to_u32(name_node.start_position().row + 1, "行号")
+    {
+        symbols.push(SymbolEntry {
+            path: file.path.clone(),
+            relative_path: file.relative_path.clone(),
+            name: name.to_string(),
+            line_number,
+        });
+    }
+
+    // 用 TreeCursor 线性遍历命名子节点：goto_first_child/goto_next_sibling 每步均为
+    // O(1)，整层 O(k)。相比 named_child(i) 每次从头数到第 i 个孩子的 O(i)（整层累计
+    // O(k^2)），整棵树从 O(n^2) 量级降到 O(n)。仅下降到命名子节点，DFS 前序顺序与上面的
+    // 函数识别逻辑保持完全一致。
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            let child = cursor.node();
+            if child.is_named() {
+                collect_symbols_from_node(child, source, file, symbols);
+            }
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn p(value: &str) -> PathBuf {
+        PathBuf::from(value)
+    }
+
+    fn temp_root() -> PathBuf {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("系统时间应可用")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "calamex-search-scan-test-{}-{suffix}",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn search_watcher_ignores_noisy_dependency_and_build_events() {
+        let root = p("/workspace/app");
+        assert!(is_unsearchable_event_path(
+            &root,
+            &p("/workspace/app/node_modules/pkg/index.js")
+        ));
+        assert!(is_unsearchable_event_path(
+            &root,
+            &p("/workspace/app/src-tauri/target/debug/app")
+        ));
+        assert!(is_unsearchable_event_path(
+            &root,
+            &p("/workspace/app/.git/objects/aa/hash")
+        ));
+        assert!(!is_unsearchable_event_path(
+            &root,
+            &p("/workspace/app/src/main.sh")
+        ));
+    }
+
+    #[test]
+    fn search_watcher_does_not_ignore_root_named_like_dependency_dir() {
+        let root = p("/workspace/node_modules/project");
+        assert!(!is_unsearchable_event_path(
+            &root,
+            &p("/workspace/node_modules/project/src/main.sh")
+        ));
+        assert!(is_unsearchable_event_path(
+            &root,
+            &p("/workspace/node_modules/project/node_modules/pkg/index.js")
+        ));
+    }
+
+    #[test]
+    fn refresh_workspace_files_incrementally_adds_and_removes_files() {
+        let root = temp_root();
+        fs::create_dir_all(&root).expect("应创建临时目录");
+        let file = root.join("script.sh");
+        fs::write(&file, "echo hi\n").expect("应写入测试文件");
+
+        let files = refresh_workspace_files(&root, &[], vec![file.clone()]).expect("应增量添加文件");
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].relative_path, "script.sh");
+
+        fs::remove_file(&file).expect("应删除测试文件");
+        let files = refresh_workspace_files(&root, &files, vec![file]).expect("应增量删除文件");
+        assert!(files.is_empty());
+
+        fs::remove_dir_all(&root).expect("应清理临时目录");
+    }
+
+    #[test]
+    fn refresh_workspace_files_falls_back_when_deleted_dir_had_children() {
+        let root = temp_root();
+        fs::create_dir_all(root.join("scripts")).expect("应创建临时目录");
+        let child = ScannedFile {
+            path: root.join("scripts/a.sh"),
+            relative_path: "scripts/a.sh".to_string(),
+            name: "a.sh".to_string(),
+        };
+        fs::remove_dir_all(&root).expect("应删除临时目录");
+
+        let files = refresh_workspace_files(&root, &[child], vec![root.join("scripts")])
+            .expect("应安全回退到全量扫描");
+        assert!(files.is_empty());
+    }
+
+    #[test]
+    fn collect_symbols_walks_named_nodes_in_dfs_preorder() {
+        let source =
+            "#!/bin/bash\nouter() {\n  inner() {\n    echo hi\n  }\n  inner\n}\nsibling() {\n  echo bye\n}\n";
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_bash::LANGUAGE.into())
+            .expect("加载 Bash 语法失败");
+        let tree = parser.parse(source, None).expect("解析 Bash 失败");
+
+        let file = ScannedFile {
+            path: p("/workspace/app/script.sh"),
+            relative_path: "script.sh".to_string(),
+            name: "script.sh".to_string(),
+        };
+
+        let mut symbols = Vec::new();
+        collect_symbols_from_node(tree.root_node(), source.as_bytes(), &file, &mut symbols);
+
+        let collected: Vec<(String, u32)> = symbols
+            .iter()
+            .map(|symbol| (symbol.name.clone(), symbol.line_number))
+            .collect();
+        assert_eq!(
+            collected,
+            vec![
+                ("outer".to_string(), 2),
+                ("inner".to_string(), 3),
+                ("sibling".to_string(), 8),
+            ]
+        );
+    }
+
+    #[test]
+    fn collect_symbols_from_file_reuses_cached_symbols_when_metadata_matches() {
+        let root = temp_root();
+        fs::create_dir_all(&root).expect("应创建临时目录");
+        let path = root.join("script.sh");
+        fs::write(&path, "cached_name() {\n  echo cached\n}\n").expect("应写入测试文件");
+
+        let file = ScannedFile {
+            path: path.clone(),
+            relative_path: "script.sh".to_string(),
+            name: "script.sh".to_string(),
+        };
+        let first = collect_symbols_from_file(&file, None).expect("应解析初始符号");
+        let cached = CachedSymbolFile {
+            fingerprint: first.fingerprint.clone(),
+            symbols: vec![symbol("script.sh", "sentinel", 99)],
+        };
+
+        let reused = collect_symbols_from_file(&file, Some(&cached)).expect("应复用缓存符号");
+        let collected: Vec<String> = reused
+            .symbols
+            .into_iter()
+            .map(|symbol| symbol.name)
+            .collect();
+        assert_eq!(collected, vec!["sentinel".to_string()]);
+
+        fs::remove_dir_all(&root).expect("应清理临时目录");
+    }
+
+    #[test]
+    fn collect_symbols_from_file_reuses_cached_symbols_when_hash_matches_after_mtime_change() {
+        let root = temp_root();
+        fs::create_dir_all(&root).expect("应创建临时目录");
+        let path = root.join("script.sh");
+        let content = "same_body() {\n  echo same\n}\n";
+        fs::write(&path, content).expect("应写入测试文件");
+
+        let file = ScannedFile {
+            path: path.clone(),
+            relative_path: "script.sh".to_string(),
+            name: "script.sh".to_string(),
+        };
+        let mut cached = collect_symbols_from_file(&file, None).expect("应解析初始符号");
+        cached.fingerprint.modified_nanos =
+            cached.fingerprint.modified_nanos.map(|modified| modified.saturating_sub(1));
+        cached.symbols = vec![symbol("script.sh", "hash_reused", 7)];
+
+        let reused = collect_symbols_from_file(&file, Some(&cached)).expect("应按 hash 复用缓存");
+        let collected: Vec<String> = reused
+            .symbols
+            .into_iter()
+            .map(|symbol| symbol.name)
+            .collect();
+        assert_eq!(collected, vec!["hash_reused".to_string()]);
+
+        fs::remove_dir_all(&root).expect("应清理临时目录");
+    }
+
+    #[test]
+    fn flatten_symbol_batches_preserves_file_and_dfs_order() {
+        let collected: Vec<String> = flatten_symbol_batches(vec![
+            (2usize, vec![symbol("c.sh", "third", 1)]),
+            (0usize, vec![symbol("a.sh", "first", 1), symbol("a.sh", "second", 2)]),
+        ])
+        .into_iter()
+        .map(|symbol| symbol.name)
+        .collect();
+
+        assert_eq!(collected, vec!["first", "second", "third"]);
+    }
+
+    fn symbol(relative_path: &str, name: &str, line_number: u32) -> SymbolEntry {
+        SymbolEntry {
+            path: p(relative_path),
+            relative_path: relative_path.to_string(),
+            name: name.to_string(),
+            line_number,
+        }
+    }
+}
