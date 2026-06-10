@@ -1,4 +1,5 @@
-import { callSpectaCommand, invokeTauriCommand } from './tauri.ipc-runtime';
+import { commands } from '@/bindings/tauri';
+import { callSpectaCommand } from './tauri.ipc-runtime';
 import type { IIpcCallOptions } from './tauri.ipc-types';
 
 export interface IGitHubAuthRequest {
@@ -46,10 +47,7 @@ export const getGithubAuthStatus = (
       input: { repositoryRootPath },
       signal: options?.signal,
     },
-    () =>
-      invokeTauriCommand<IGitHubAuthStatusPayload>('get_github_auth_status', {
-        payload: createRequest(repositoryRootPath),
-      }),
+    () => commands.getGithubAuthStatus(createRequest(repositoryRootPath)),
   );
 
 export const beginGithubDeviceAuth = (
@@ -65,10 +63,7 @@ export const beginGithubDeviceAuth = (
       input: { repositoryRootPath },
       signal: options?.signal,
     },
-    () =>
-      invokeTauriCommand<IGitHubDeviceAuthPayload>('begin_github_device_auth', {
-        payload: createRequest(repositoryRootPath),
-      }),
+    () => commands.beginGithubDeviceAuth(createRequest(repositoryRootPath)),
   );
 
 export const completeGithubDeviceAuth = (
@@ -87,10 +82,7 @@ export const completeGithubDeviceAuth = (
       },
       signal: options?.signal,
     },
-    () =>
-      invokeTauriCommand<IGitHubAuthStatusPayload>('complete_github_device_auth', {
-        payload,
-      }),
+    () => commands.completeGithubDeviceAuth(payload),
   );
 
 export const connectGithub = (
@@ -106,10 +98,7 @@ export const connectGithub = (
       input: { repositoryRootPath },
       signal: options?.signal,
     },
-    () =>
-      invokeTauriCommand<IGitHubAuthStatusPayload>('connect_github', {
-        payload: createRequest(repositoryRootPath),
-      }),
+    () => commands.connectGithub(createRequest(repositoryRootPath)),
   );
 
 export const disconnectGithub = (
@@ -125,8 +114,5 @@ export const disconnectGithub = (
       input: { repositoryRootPath },
       signal: options?.signal,
     },
-    () =>
-      invokeTauriCommand<IGitHubAuthStatusPayload>('disconnect_github', {
-        payload: createRequest(repositoryRootPath),
-      }),
+    () => commands.disconnectGithub(createRequest(repositoryRootPath)),
   );
