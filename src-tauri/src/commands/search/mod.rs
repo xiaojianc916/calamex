@@ -16,8 +16,7 @@ use replace::{
     build_replacement_preview_payload, build_replacement_previews, select_replacement_edits,
 };
 use scan::{
-    build_path_filters, resolve_existing_workspace_file, scan_workspace_files,
-    scanned_file_from_path,
+    build_path_filters, resolve_existing_workspace_file, scan_workspace_files, scanned_file_from_path,
 };
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -36,11 +35,13 @@ const MAX_REPLACEMENT_FILE_LIMIT: usize = 500;
 pub fn search_workspace(payload: WorkspaceSearchRequest) -> Result<WorkspaceSearchPayload, String> {
     let workspace_root = resolve_workspace_root(Some(payload.workspace_root_path.clone()))?;
     let query = payload.query.trim().to_string();
+
     let limit = payload
         .limit
         .map(|value| value as usize)
         .unwrap_or(DEFAULT_SEARCH_LIMIT)
         .min(MAX_SEARCH_LIMIT);
+
     let filters = build_path_filters(&payload.include_patterns, &payload.exclude_patterns)?;
     let files = scan_workspace_files(&workspace_root, &filters)?;
 
@@ -72,6 +73,7 @@ pub fn search_workspace(payload: WorkspaceSearchRequest) -> Result<WorkspaceSear
         } else {
             limit - results.len()
         };
+
         if payload.use_structural {
             results.extend(search_structural_contents(&files, &query, content_limit)?);
         } else {
@@ -90,6 +92,7 @@ pub fn search_workspace(payload: WorkspaceSearchRequest) -> Result<WorkspaceSear
         } else {
             limit - results.len()
         };
+
         results.extend(search_symbols(
             &workspace_root,
             &filters,
@@ -126,16 +129,18 @@ pub fn preview_workspace_replacement(
 ) -> Result<WorkspaceReplacementPreviewPayload, String> {
     let workspace_root = resolve_workspace_root(Some(payload.workspace_root_path.clone()))?;
     let query = require_replacement_query(&payload.query)?;
+
     let limit = payload
         .limit
         .map(|value| value as usize)
         .unwrap_or(DEFAULT_REPLACEMENT_FILE_LIMIT)
         .min(MAX_REPLACEMENT_FILE_LIMIT);
+
     let filters = build_path_filters(&payload.include_patterns, &payload.exclude_patterns)?;
     let files = scan_workspace_files(&workspace_root, &filters)?;
-
     let plan = build_replacement_plan(&payload, &query)?;
     let previews = build_replacement_previews(&workspace_root, &files, &payload, &plan, limit)?;
+
     build_replacement_preview_payload(workspace_root, previews)
 }
 
@@ -146,6 +151,7 @@ pub fn apply_workspace_replacement(
 ) -> Result<WorkspaceReplacementApplyPayload, String> {
     let workspace_root = resolve_workspace_root(Some(payload.request.workspace_root_path.clone()))?;
     let query = require_replacement_query(&payload.request.query)?;
+
     if payload.expected_files.is_empty() {
         return Err("替换预览已失效，请重新生成预览后再应用。".to_string());
     }
@@ -153,6 +159,7 @@ pub fn apply_workspace_replacement(
     let mut expected_paths = HashSet::new();
     let mut expected_hashes = HashMap::new();
     let mut expected_included_match_ids = HashMap::new();
+
     for expected_file in payload.expected_files {
         let file_path = resolve_existing_workspace_file(&workspace_root, &expected_file.path)?;
         if !expected_paths.insert(file_path.clone()) {
@@ -165,8 +172,10 @@ pub fn apply_workspace_replacement(
     let plan = build_replacement_plan(&payload.request, &query)?;
     let mut applied_files = Vec::new();
     let mut replacement_count = 0usize;
+
     for file_path in expected_paths {
         let file = scanned_file_from_path(&workspace_root, file_path)?;
+
         let Some(replacement) =
             build_file_replacement_preview(&workspace_root, &file, &payload.request, &plan)?
         else {
@@ -179,6 +188,7 @@ pub fn apply_workspace_replacement(
         let expected_hash = expected_hashes
             .get(&file.path)
             .ok_or_else(|| "替换预览状态不完整，请重新生成预览后再应用。".to_string())?;
+
         if replacement.before_hash != *expected_hash {
             return Err(format!(
                 "文件 {} 在预览后已变更，请重新生成预览。",
@@ -189,17 +199,21 @@ pub fn apply_workspace_replacement(
         let included_match_ids = expected_included_match_ids
             .get(&file.path)
             .ok_or_else(|| "替换预览状态不完整，请重新生成预览后再应用。".to_string())?;
+
         let selected_edits = select_replacement_edits(&replacement, included_match_ids)?;
         if selected_edits.is_empty() {
             continue;
         }
+
         let after_content = apply_replacement_edits(&replacement.before_content, &selected_edits);
         let selected_replacement_count = selected_edits.len();
 
         let bytes = encode_script_content(&after_content, &replacement.encoding)
             .map_err(|error| format!("编码替换结果失败({}): {error}", replacement.relative_path))?;
+
         fs::write(&replacement.path, bytes)
             .map_err(|error| format!("写入替换结果失败({}): {error}", replacement.relative_path))?;
+
         let byte_size = fs::metadata(&replacement.path)
             .map(|metadata| metadata.len())
             .unwrap_or(0);
@@ -214,12 +228,41 @@ pub fn apply_workspace_replacement(
     }
 
     applied_files.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
+
     Ok(WorkspaceReplacementApplyPayload {
         root_path: workspace_root.to_string_lossy().to_string(),
         changed_file_count: count_to_u32(applied_files.len(), "变更文件数")?,
         replacement_count: count_to_u32(replacement_count, "替换数量")?,
         files: applied_files,
     })
+}
+
+/// 在工作区打开时后台预热搜索索引：提前建立文件清单缓存（含变更监听）与 Bash 符号索引，
+/// 让用户首次在侧边栏「搜索」输入时省去全量目录遍历 / tree-sitter 解析的冷启动开销。
+///
+/// 完全在后台线程执行且吞掉所有错误：预热是纯优化，失败时下一次真正搜索会照常按需构建，
+/// 不影响工作区打开流程或向用户报错。通过 resolve_workspace_root 复用与 search_workspace
+/// 完全一致的根解析逻辑，确保预热写入的缓存键与后续搜索查找的键完全一致。
+pub fn prewarm_workspace_search_index(workspace_root_path: String) {
+    std::thread::Builder::new()
+        .name("search-index-prewarm".into())
+        .spawn(move || {
+            let Ok(workspace_root) = resolve_workspace_root(Some(workspace_root_path)) else {
+                return;
+            };
+
+            // 空规则（无 include/exclude）：预热整份文件清单缓存，并顺带安装搜索专用的递归变更监听。
+            let Ok(filters) = build_path_filters(&[], &[]) else {
+                return;
+            };
+            if scan_workspace_files(&workspace_root, &filters).is_err() {
+                return;
+            }
+
+            // 预热 Bash 符号索引，让首个符号 / 全部范围搜索免去全量 tree-sitter 解析。
+            let _ = scan::workspace_cache_symbols(&workspace_root);
+        })
+        .ok();
 }
 
 #[cfg(test)]
@@ -238,8 +281,11 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("系统时间应晚于 Unix epoch")
             .as_nanos();
-        let root =
-            env::temp_dir().join(format!("calamex-search-{name}-{}-{suffix}", process::id()));
+
+        let root = env::temp_dir().join(format!(
+            "calamex-search-{name}-{}-{suffix}",
+            process::id()
+        ));
         fs::create_dir_all(&root).expect("应能创建测试工作区");
         root.canonicalize().expect("应能解析测试工作区")
     }
@@ -289,12 +335,9 @@ mod tests {
     }
 
     fn cleanup_workspace(root: PathBuf) {
-        if let Some(caches) = WORKSPACE_FILE_CACHES.get()
-            && let Ok(mut guard) = caches.lock()
-        {
+        if let Some(caches) = WORKSPACE_FILE_CACHES.get() && let Ok(mut guard) = caches.lock() {
             guard.remove(&root.to_string_lossy().to_string());
         }
-
         let _ = fs::remove_dir_all(root);
     }
 
@@ -315,6 +358,7 @@ mod tests {
             expected_files,
         })
         .expect("应能应用替换");
+
         assert_eq!(applied.changed_file_count, 1);
         assert_eq!(applied.replacement_count, 2);
         assert_eq!(
@@ -344,6 +388,7 @@ mod tests {
             expected_files,
         })
         .expect("应能应用正则替换");
+
         assert_eq!(
             fs::read_to_string(file).expect("应能读取替换后的文件"),
             "echo bar-12\necho bar-34\n"
@@ -379,6 +424,7 @@ mod tests {
             }],
         })
         .expect("应能只替换同一行中的单个命中");
+
         assert_eq!(
             fs::read_to_string(file).expect("应能读取替换后的文件"),
             "echo new old\n"
@@ -395,6 +441,7 @@ mod tests {
 
         let preview = preview_workspace_replacement(request.clone()).expect("应能生成替换预览");
         let first_line = preview.files[0].line_previews[0].id.clone();
+
         apply_workspace_replacement(WorkspaceReplacementApplyRequest {
             request,
             expected_files: vec![WorkspaceReplacementExpectedFile {
@@ -404,6 +451,7 @@ mod tests {
             }],
         })
         .expect("应能只应用单行替换");
+
         assert_eq!(
             fs::read_to_string(file).expect("应能读取替换后的文件"),
             "echo new\necho old\n"
@@ -494,24 +542,18 @@ mod tests {
         })
         .expect("应能搜索工作区");
 
-        assert!(
-            payload
-                .results
-                .iter()
-                .any(|result| result.path == script.to_string_lossy())
-        );
-        assert!(
-            !payload
-                .results
-                .iter()
-                .any(|result| result.relative_path.starts_with(".git/"))
-        );
-        assert!(
-            !payload
-                .results
-                .iter()
-                .any(|result| result.relative_path == "asset.png")
-        );
+        assert!(payload
+            .results
+            .iter()
+            .any(|result| result.path == script.to_string_lossy()));
+        assert!(!payload
+            .results
+            .iter()
+            .any(|result| result.relative_path.starts_with(".git/")));
+        assert!(!payload
+            .results
+            .iter()
+            .any(|result| result.relative_path == "asset.png"));
 
         cleanup_workspace(root);
     }
@@ -522,8 +564,7 @@ mod tests {
         let file = write_workspace_file(&root, "script.sh", "foo 1\nfoo 2\nbar 3\n");
         let request = replacement_request(&root, "foo $A", "baz $A", false, true);
 
-        let preview =
-            preview_workspace_replacement(request.clone()).expect("应能生成结构化替换预览");
+        let preview = preview_workspace_replacement(request.clone()).expect("应能生成结构化替换预览");
         assert_eq!(preview.file_count, 1);
         assert_eq!(preview.replacement_count, 2);
 
@@ -533,6 +574,7 @@ mod tests {
             expected_files,
         })
         .expect("应能应用结构化替换");
+
         assert_eq!(
             fs::read_to_string(file).expect("应能读取替换后的文件"),
             "baz 1\nbaz 2\nbar 3\n"
@@ -546,10 +588,11 @@ mod tests {
         let root = temp_workspace("hash");
         let file = write_workspace_file(&root, "script.sh", "echo old\n");
         let request = replacement_request(&root, "old", "new", false, false);
+
         let preview = preview_workspace_replacement(request.clone()).expect("应能生成替换预览");
         let expected_files = expected_files(&preview);
-
         fs::write(&file, b"echo old\n# changed\n").expect("应能模拟预览后的文件变更");
+
         let error = match apply_workspace_replacement(WorkspaceReplacementApplyRequest {
             request,
             expected_files,
@@ -565,7 +608,7 @@ mod tests {
     #[test]
     fn symbol_search_returns_function_definitions() {
         let root = temp_workspace("symbol");
-        write_workspace_file(&root, "script.sh", "deploy_app() {\n    echo deploy\n}\n");
+        write_workspace_file(&root, "script.sh", "deploy_app() {\n echo deploy\n}\n");
 
         let payload = search_workspace(WorkspaceSearchRequest {
             workspace_root_path: root.to_string_lossy().to_string(),
@@ -614,7 +657,6 @@ mod tests {
         })
         .expect("应能执行全部范围搜索");
 
-        // 文件名命中已占满 limit=2，但 all 范围下内容结果仍应保留（修复前会被整体截断丢掉）。
         assert!(payload.results.iter().any(|result| {
             matches!(result.kind, WorkspaceSearchResultKind::Content)
                 && result.path == content_file.to_string_lossy()
@@ -647,6 +689,7 @@ mod tests {
         let result = &payload.results[0];
         assert!(matches!(result.kind, WorkspaceSearchResultKind::Content));
         assert_eq!(result.line_number, Some(1));
+
         let match_start = result.match_start.expect("模糊命中应返回起始列");
         let match_end = result.match_end.expect("模糊命中应返回结束列");
         assert!(match_start < match_end);
@@ -675,7 +718,6 @@ mod tests {
         .expect("应能执行精确内容搜索");
 
         assert!(payload.results.is_empty());
-
         cleanup_workspace(root);
     }
 }
