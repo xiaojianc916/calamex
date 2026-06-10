@@ -12,7 +12,7 @@
 //!     `node dist/acp/stdio-entry.js`,由 crate 负责行分帧 / stderr 收集 /
 //!     drop 时杀子进程。
 //!   * `connect_with(transport, |cx| async {...})` 内运行长生命周期命令循环,宿主侧
-//!     (Tauri 命令)经 mpsc 投递 NewSession / Prompt / Cancel / Shutdown。
+//!     (Tauri 命令)经 mpsc 投递 NewSession / Prompt / SetSessionMode / Cancel / Shutdown。
 
 // 过渡期:本模块尚未接线到宿主命令(公开 API 暂无调用点)。接线后移除该 allow。
 #![allow(dead_code)]
@@ -27,8 +27,8 @@ use tokio::sync::{mpsc, oneshot};
 use agent_client_protocol::schema::{
     CancelNotification, ContentBlock, InitializeRequest, NewSessionRequest, PermissionOptionId,
     PromptRequest, ProtocolVersion, RequestPermissionOutcome, RequestPermissionRequest,
-    RequestPermissionResponse, SelectedPermissionOutcome, SessionId, SessionNotification,
-    StopReason, TextContent,
+    RequestPermissionResponse, SelectedPermissionOutcome, SessionId, SessionModeId,
+    SessionNotification, SetSessionModeRequest, StopReason, TextContent,
 };
 use agent_client_protocol::{
     AcpAgent, Agent, BoxFuture, Client, ConnectionTo, Responder, on_receive_notification,
@@ -85,6 +85,11 @@ enum Command {
         text: String,
         reply: oneshot::Sender<Result<StopReason, String>>,
     },
+    SetSessionMode {
+        session_id: SessionId,
+        mode_id: SessionModeId,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
     Cancel {
         session_id: SessionId,
     },
@@ -120,6 +125,30 @@ impl AcpClientHandle {
             .send(Command::Prompt {
                 session_id,
                 text,
+                reply,
+            })
+            .map_err(|_| AcpClientError::NotRunning)?;
+        rx.await
+            .map_err(|_| AcpClientError::NotRunning)?
+            .map_err(AcpClientError::Protocol)
+    }
+
+    /// 设置会话模式(`session/set_mode`)。
+    ///
+    /// 用于在 ask / plan / agent / patch / review 等模式间切换;`mode_id` 须取自
+    /// 会话当前可用模式(`session/new` 响应或 `current_mode_update` 通知公示的 `modes`)。
+    /// 由调用方构造 `SessionModeId`,本模块不臆造其构造方式,对齐官方
+    /// `SetSessionModeRequest::new(session_id, mode_id)`。
+    pub async fn set_session_mode(
+        &self,
+        session_id: SessionId,
+        mode_id: SessionModeId,
+    ) -> Result<(), AcpClientError> {
+        let (reply, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(Command::SetSessionMode {
+                session_id,
+                mode_id,
                 reply,
             })
             .map_err(|_| AcpClientError::NotRunning)?;
@@ -252,6 +281,17 @@ pub fn spawn_acp_client(
                             let res = cx.send_request(req).block_task().await;
                             let _ = reply
                                 .send(res.map(|r| r.stop_reason).map_err(|e| e.to_string()));
+                        }
+                        Command::SetSessionMode {
+                            session_id,
+                            mode_id,
+                            reply,
+                        } => {
+                            let res = cx
+                                .send_request(SetSessionModeRequest::new(session_id, mode_id))
+                                .block_task()
+                                .await;
+                            let _ = reply.send(res.map(|_| ()).map_err(|e| e.to_string()));
                         }
                         Command::Cancel { session_id } => {
                             if let Err(error) =
