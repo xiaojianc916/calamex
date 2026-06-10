@@ -8,6 +8,8 @@
  * - setSessionMode    → 校验 modeId 为 TAgentMode 后切换该会话运行模式。
  * - prompt            → 按模式路由到 runtime.chat/plan/execute;过程中的运行时输出事件
  *                       经 output-event-stream 投影为 session/update 通知即时下发,
+ *                       回合内若出现待裁决审批,经 session/request_permission 取得裁决后
+ *                       回灌 resolveApproval 续跑(见 approval-bridge.ts),直至无待裁决审批,
  *                       回合收尾经 turn-egress 发可选 usage_update + 返回 PromptResponse。
  * - cancel            → 中止该会话当前回合的 AbortController(映射 runtime context.signal)。
  *
@@ -31,13 +33,18 @@ import {
 	type NewSessionResponse,
 	type PromptRequest,
 	type PromptResponse,
+	type RequestPermissionRequest,
+	type RequestPermissionResponse,
 	type SessionNotification,
 	type SetSessionModeRequest,
 	type SetSessionModeResponse,
 } from "@agentclientprotocol/sdk"
 import { randomUUID } from "node:crypto"
 
-import type { IAgentTokenUsageSnapshot } from "../engines/contracts/runtime-contracts.js"
+import type {
+	IAgentRuntimeRunOptions,
+	IAgentTokenUsageSnapshot,
+} from "../engines/contracts/runtime-contracts.js"
 import {
 	AGENT_MODES,
 	type TAgentMode,
@@ -47,6 +54,11 @@ import type {
 	TAgentRuntimeOutputEvent,
 } from "../engines/runtime.js"
 import { resolveAgentModelCapabilitiesFromModelId } from "../models/capabilities.js"
+import {
+	findPendingApproval,
+	toApprovalDecision,
+	toRequestPermissionRequest,
+} from "./approval-bridge.js"
 import { promptResponse } from "./helpers.js"
 import { toSessionNotificationsFromOutputEvent } from "./output-event-stream.js"
 import { AcpSessionRegistry } from "./session-registry.js"
@@ -55,11 +67,14 @@ import { buildTurnTrailer } from "./turn-egress.js"
 import type { IUsageSnapshotInput } from "./usage.js"
 
 /**
- * Agent 向 client 推送 session/update 通知所需的最小连接面。
+ * Agent 向 client 推送 session/update 通知、并在回合内发起反向权限请求所需的最小连接面。
  * SDK 的 AgentSideConnection 结构上满足本接口;抽象出来便于单测注入假连接。
  */
 export interface IAcpAgentConnection {
 	sessionUpdate(params: SessionNotification): Promise<void>
+	requestPermission(
+		params: RequestPermissionRequest,
+	): Promise<RequestPermissionResponse>
 }
 
 /** 构造参数(均可选,便于测试确定化)。 */
@@ -218,6 +233,15 @@ export class CalamexAcpAgent implements Agent {
 		if (!controller) {
 			throw sessionNotFound(params.sessionId)
 		}
+		// 每次运行时调用共享的 onEvent 投影与运行上下文(requestId 逐次新生,用于日志关联)。
+		const runOptions = (): IAgentRuntimeRunOptions => ({
+			onEvent: (event) => this.emitOutputEvent(params.sessionId, event),
+			context: {
+				requestId: this.generateRequestId(),
+				signal: controller.signal,
+				timeoutMs: this.turnTimeoutMs,
+			},
+		})
 		try {
 			const input = buildPromptRuntimeInput({
 				sessionId: params.sessionId,
@@ -227,21 +251,46 @@ export class CalamexAcpAgent implements Agent {
 				...(state.modelConfig ? { modelConfig: state.modelConfig } : {}),
 			})
 			const runMethod = this.runtime[RUNTIME_METHOD_BY_MODE[state.mode]]
-			const response = await runMethod(input, {
-				onEvent: (event) => this.emitOutputEvent(params.sessionId, event),
-				context: {
-					requestId: this.generateRequestId(),
-					signal: controller.signal,
-					timeoutMs: this.turnTimeoutMs,
-				},
-			})
-			// 取消优先:若本回合被 cancel,以 cancelled 收场(ACP 约定)。
-			if (controller.signal.aborted) {
-				return promptResponse("cancelled")
-			}
-			// 失败的回合:依 ACP 映射为 JSON-RPC error(报错由 SDK 包装),不占用 stopReason。
-			if (response.errorMessage) {
-				throw new Error(response.errorMessage)
+			let response = await runMethod(input, runOptions())
+			// 会话内审批编排循环:每当本次运行以待裁决审批收尾,就向 client 发起
+			// session/request_permission,取得裁决后回灌 resolveApproval 续跑同一回合,
+			// 直至不再有待裁决审批。因 Agent 全连接共享同一 runtime 实例,回灌必命中
+			// 引擎内存中的 pendingApprovals 缓存(端到端事实见 approval-bridge.ts)。
+			while (true) {
+				// 取消优先:若本回合被 cancel,以 cancelled 收场(ACP 约定)。
+				if (controller.signal.aborted) {
+					return promptResponse("cancelled")
+				}
+				// 失败的回合:依 ACP 映射为 JSON-RPC error(报错由 SDK 包装),不占用 stopReason。
+				if (response.errorMessage) {
+					throw new Error(response.errorMessage)
+				}
+				const pending = findPendingApproval(response.events)
+				if (!pending) {
+					break
+				}
+				const permission = await this.connection.requestPermission(
+					toRequestPermissionRequest(params.sessionId, pending),
+				)
+				if (controller.signal.aborted) {
+					return promptResponse("cancelled")
+				}
+				const decision = toApprovalDecision(permission)
+				if (decision === "cancel") {
+					// 客户端在权限请求挂起期间取消了本回合:以 cancelled 收场;
+					// 引擎侧挂起的运行由其 TTL 驱逐自动回收。
+					return promptResponse("cancelled")
+				}
+				response = await this.runtime.resolveApproval(
+					{
+						requestId: pending.id,
+						decision,
+						sessionId: params.sessionId,
+						workspaceRootPath: state.workspaceRootPath,
+						...(state.modelConfig ? { modelConfig: state.modelConfig } : {}),
+					},
+					runOptions(),
+				)
 			}
 			const trailer = buildTurnTrailer({
 				sessionId: params.sessionId,
