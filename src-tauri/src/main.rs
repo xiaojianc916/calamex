@@ -2,6 +2,8 @@
 #![allow(rust_2024_compatibility)]
 
 mod agent_sidecar;
+#[cfg(feature = "acp_client")]
+mod acp;
 mod ai;
 mod assets;
 #[macro_use]

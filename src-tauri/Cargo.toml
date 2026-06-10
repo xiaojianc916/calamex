@@ -11,6 +11,9 @@ tauri-build = { version = "2.5.6", features = [], optional = true }
 
 [features]
 default = ["desktop"]
+# 迁移期临时门控:启用宿主侧官方 ACP stdio 客户端(`cargo build --features acp_client`)。
+# 默认构建不启用,保证 main 分支默认编译不受影响、整步可逆。
+acp_client = ["dep:agent-client-protocol"]
 desktop = [
   "dep:atomic-write-file",
   "dep:blake3",
@@ -45,6 +48,9 @@ desktop = [
 ]
 
 [dependencies]
+# 官方 Agent Client Protocol Rust SDK。钉到 v0.14.0 的 SACP 角色/构建器 API
+# (该 rev 自身把 schema 依赖钉在已发布的 agent-client-protocol-schema =0.13.6)。
+agent-client-protocol = { git = "https://github.com/agentclientprotocol/rust-sdk", rev = "98b9792a014569f87404d48ed7521431369948c5", optional = true }
 bytes = "1.7"
 parking_lot = "0.12"
 pin-project-lite = "0.2"
