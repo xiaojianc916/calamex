@@ -27,6 +27,7 @@ import type {
 import { decodeApprovalRequestId } from "../engines/approval-client/utils.js"
 import type { TAgentRuntimeOutputEvent } from "../engines/contracts/runtime-contracts.js"
 import type { TApprovalDecision } from "../engines/contracts/runtime-input.js"
+import { inferToolKind } from "./from-runtime-event.js"
 import { textBlock } from "./helpers.js"
 
 /** 运行时 approval_required 输出事件（从权威联合类型收窄，避免字段臆造）。 */
@@ -73,8 +74,11 @@ export const findPendingApproval = (
  *
  * toolCall.toolCallId 取自审批 token 解码出的原始 Mastra toolCallId，使本权限请求与回合内
  * 已下发的 tool_call / tool_call_update 通知（其 toolUseId 同源）正确配对；解码失败时退回 request.id。
- * 仅提供「允许一次 / 拒绝」两个选项——审批门控的是有副作用的工具调用，故 kind 取 'execute'，
- * 不在此臆造更细的工具类目或「永久允许」策略。
+ * toolCall.kind 复用 from-runtime-event 的 inferToolKind(request.toolName)，与同一 toolUseId 的
+ * tool_call / tool_call_update 通知保持一致的 UI 分类（kind 仅用于图标/分组，schema 对未知值
+ * .catch("other")；审批「判定」另由 MCP annotations 决定，不受此处影响）。镜像 codex-acp
+ * 「按工具语义赋 kind、认不出用 Other」的做法，不在此另立名字映射，也不臆造「永久允许」策略。
+ * 仅提供「允许一次 / 拒绝」两个选项。
  */
 export const toRequestPermissionRequest = (
 	sessionId: string,
@@ -93,7 +97,7 @@ export const toRequestPermissionRequest = (
 			toolCallId,
 			status: "pending",
 			title: request.question,
-			kind: "execute",
+			kind: inferToolKind(request.toolName),
 			content: [{ type: "content", content: textBlock(request.summary) }],
 		},
 	}
