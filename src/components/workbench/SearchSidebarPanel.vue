@@ -162,7 +162,7 @@
         <p class="search-panel-empty-text">先打开一个目录，再在这里按文件名或路径快速定位。</p>
       </div>
 
-      <div v-else-if="searchIndexing && scannedFileCount === 0" class="search-panel-empty-state">
+      <div v-else-if="searchIndexing && backendResults.length === 0" class="search-panel-empty-state">
         <LoaderCircle class="search-panel-spin" aria-hidden="true" />
         <p class="search-panel-empty-text">正在搜索工作区…</p>
       </div>
@@ -296,6 +296,7 @@ import type {
   IWorkspaceReplacementPreviewPayload,
   IWorkspaceReplacementRequest,
   IWorkspaceSearchResult,
+  IWorkspaceSearchStreamEvent,
   TWorkspaceSearchScope,
 } from '@/types/search';
 import { toErrorMessage } from '@/utils/error';
@@ -393,6 +394,9 @@ const selectedResultKey = ref<string | null>(null);
 const scannedFileCount = ref(0);
 const backendResults = ref<IWorkspaceSearchResult[]>([]);
 let searchRequestId = 0;
+// 当前正在「流水」接收批次的搜索 id（= 对应搜索的 requestId / streamToken）。命令最终 resolve 后
+// 归零，使任何尾随的流式事件被忽略，避免污染权威排序结果。
+let streamingSearchId = 0;
 let replacementPreviewRequestId = 0;
 let replacementApplyRequestId = 0;
 let searchTimer: ReturnType<typeof setTimeout> | null = null;
@@ -734,6 +738,8 @@ const cancelPendingSearch = (): void => {
 
 const invalidateInFlightSearch = (): void => {
   searchRequestId += 1;
+  // 取消在途搜索的同时停止接收其流式批次，否则迟到事件可能把结果写回到已清空的列表。
+  streamingSearchId = 0;
   activeAbortController?.abort();
   activeAbortController = null;
 };
@@ -743,6 +749,14 @@ const clearSearchResults = (): void => {
   backendResults.value = [];
   searchIndexing.value = false;
   searchError.value = '';
+};
+
+// 后端按发现顺序分批 emit 的内容命中：仅当事件 searchId 命中当前在途搜索（streamToken 对账）时
+// 才追加，形成「流水」式呈现。命令最终 resolve 后会把 streamingSearchId 归零并整体替换为权威排序
+// 结果，因此命令返回后的尾随事件、以及旧搜索的迟到事件都会被自动忽略。
+const handleSearchStreamEvent = (payload: IWorkspaceSearchStreamEvent): void => {
+  if (payload.searchId !== streamingSearchId || payload.results.length === 0) return;
+  backendResults.value = backendResults.value.concat(payload.results);
 };
 
 const runSearch = async (): Promise<void> => {
@@ -759,6 +773,10 @@ const runSearch = async (): Promise<void> => {
   }
 
   const lifecycle = beginSearchLifecycle(query);
+  // 标记本次为正在流式接收的搜索，并清空旧结果：随后到达的批次事件按 requestId 追加到空列表，
+  // 实现「边搜边出」；命令 resolve 时再用权威排序结果整体替换。
+  streamingSearchId = lifecycle.requestId;
+  backendResults.value = [];
   searchIndexing.value = true;
   searchError.value = '';
 
@@ -776,15 +794,20 @@ const runSearch = async (): Promise<void> => {
         includePatterns: effectiveIncludePatterns.value,
         excludePatterns: effectiveExcludePatterns.value,
         limit: SEARCH_RESULT_LIMIT,
+        // 带上 streamToken：后端据此按发现顺序分批 emit 内容命中，事件回带同一 id 供前端对账。
+        streamToken: lifecycle.requestId,
       },
       { signal: lifecycle.signal },
     );
 
     if (!isSearchLifecycleCurrent(lifecycle)) return;
+    // 命令已返回权威的全局排序结果：先停止追加流式批次，再用最终结果整体替换流式列表。
+    streamingSearchId = 0;
     scannedFileCount.value = payload.scannedFileCount;
     backendResults.value = payload.results;
   } catch (error) {
     if (lifecycle.signal.aborted || !isSearchLifecycleCurrent(lifecycle)) return;
+    streamingSearchId = 0;
     backendResults.value = [];
     searchError.value = toErrorMessage(error, '搜索失败。');
   } finally {
@@ -1182,5 +1205,26 @@ watch(activeResults, (results) => {
     selectedResultKey.value = null;
 });
 
-onScopeDispose(cancelPendingSearch);
+// 桌面端挂载时订阅一次后端流式搜索事件；浏览器预览下 assertDesktopRuntime 会抛出，吞掉即可
+// （该环境本就不跑本地搜索）。组件卸载时注销监听，避免泄漏。
+let streamListenerDisposed = false;
+let unlistenSearchStream: (() => void) | null = null;
+if (props.isDesktopRuntime) {
+  void (async () => {
+    try {
+      const unlisten = await tauriService.onWorkspaceSearchStream(handleSearchStreamEvent);
+      if (streamListenerDisposed) unlisten();
+      else unlistenSearchStream = unlisten;
+    } catch {
+      // 非桌面运行时不支持事件监听，忽略。
+    }
+  })();
+}
+
+onScopeDispose(() => {
+  cancelPendingSearch();
+  streamListenerDisposed = true;
+  unlistenSearchStream?.();
+  unlistenSearchStream = null;
+});
 </script>
