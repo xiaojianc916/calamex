@@ -134,6 +134,11 @@ fn run_exit_cleanup<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>) {
 
     // 3) 默认 agent-sidecar：杀掉其进程树（连同派生的 Node / MCP / uvx 子进程）
     agent_sidecar::shutdown_default_sidecar();
+
+    // 4) ACP 宿主连接（feature `acp_client`）：关停常驻 stdio 连接，子进程随之回收。
+    //    对齐 Zed「连接实体 drop 即关停」语义；幂等，未建立时为空操作。
+    #[cfg(feature = "acp_client")]
+    app_handle.state::<acp::AcpRuntime>().shutdown();
 }
 
 fn request_app_exit<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>) {
@@ -264,6 +269,13 @@ fn main() {
         .setup(move |app| {
             let setup_started_at = Instant::now();
             emit_startup_event("tauri.setup.start", app_started_at);
+
+            // ACP 宿主连接（feature `acp_client`）：注册进程级托管状态持有者。连接本身按 Zed
+            // 做法懒建立（首个 AI 请求经 AcpRuntime::get_or_spawn 时才派生 stdio 子进程），
+            // 此处仅登记持有者，App 启动期不派生任何额外子进程。
+            #[cfg(feature = "acp_client")]
+            app.manage(acp::AcpRuntime::default());
+
             // 统一本地存储：首启把历史分散目录迁移到 .calamex 根（幂等、绝不阻断启动）。
 storage_paths::migrate_legacy_storage();
 
