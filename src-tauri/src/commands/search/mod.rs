@@ -3,6 +3,7 @@ mod preview;
 mod ranking;
 mod replace;
 mod scan;
+mod stream;
 mod types;
 mod util;
 
@@ -20,6 +21,8 @@ use scan::{
 };
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use stream::{ContentBatchSink, SearchStreamSink};
+use tauri::AppHandle;
 use util::{count_to_u32, require_replacement_query, u64_to_u32};
 
 const DEFAULT_SEARCH_LIMIT: usize = 200;
@@ -32,7 +35,19 @@ const MAX_REPLACEMENT_FILE_LIMIT: usize = 500;
 
 #[tauri::command]
 #[specta::specta]
-pub fn search_workspace(payload: WorkspaceSearchRequest) -> Result<WorkspaceSearchPayload, String> {
+pub fn search_workspace(
+    app: AppHandle,
+    payload: WorkspaceSearchRequest,
+) -> Result<WorkspaceSearchPayload, String> {
+    // 仅当前端带上 streamToken 时才建立流式推送；search_id 让前端把分批事件对应到本次请求。
+    let stream = payload.stream_token.map(|search_id| (&app, search_id));
+    search_workspace_impl(payload, stream)
+}
+
+fn search_workspace_impl(
+    payload: WorkspaceSearchRequest,
+    stream: Option<(&AppHandle, u32)>,
+) -> Result<WorkspaceSearchPayload, String> {
     let workspace_root = resolve_workspace_root(Some(payload.workspace_root_path.clone()))?;
     let query = payload.query.trim().to_string();
 
@@ -75,14 +90,29 @@ pub fn search_workspace(payload: WorkspaceSearchRequest) -> Result<WorkspaceSear
         };
 
         if payload.use_structural {
+            // 结构化内容搜索保持一次性返回（AST 解析通常很快，且非本次流式收益重点）。
             results.extend(search_structural_contents(&files, &query, content_limit)?);
         } else {
+            // 普通内容搜索是最慢、收益最大的路径：带上 sink 时按文件发现顺序分批流式推送，
+            // 命令仍返回全局最终排序结果（前端在 resolve 后整体替换流式列表）。
+            let sink = stream.map(|(app, search_id)| {
+                SearchStreamSink::new(
+                    app,
+                    search_id,
+                    workspace_root.to_string_lossy().to_string(),
+                    MAX_SEARCH_LIMIT,
+                )
+            });
             results.extend(search_file_contents(
                 &files,
                 &query,
                 &payload,
                 content_limit,
+                sink.as_ref().map(|sink| sink as &dyn ContentBatchSink),
             )?);
+            if let Some(sink) = sink.as_ref() {
+                sink.finish();
+            }
         }
     }
 
@@ -465,19 +495,23 @@ mod tests {
         let root = temp_workspace("same-line-search");
         write_workspace_file(&root, "script.sh", "echo needle needle\n");
 
-        let payload = search_workspace(WorkspaceSearchRequest {
-            workspace_root_path: root.to_string_lossy().to_string(),
-            query: "needle".to_string(),
-            scope: WorkspaceSearchScope::Content,
-            match_case: true,
-            whole_word: false,
-            use_regex: false,
-            use_structural: false,
-            content_fuzzy: false,
-            include_patterns: Vec::new(),
-            exclude_patterns: Vec::new(),
-            limit: Some(20),
-        })
+        let payload = search_workspace_impl(
+            WorkspaceSearchRequest {
+                workspace_root_path: root.to_string_lossy().to_string(),
+                query: "needle".to_string(),
+                scope: WorkspaceSearchScope::Content,
+                match_case: true,
+                whole_word: false,
+                use_regex: false,
+                use_structural: false,
+                content_fuzzy: false,
+                include_patterns: Vec::new(),
+                exclude_patterns: Vec::new(),
+                limit: Some(20),
+                stream_token: None,
+            },
+            None,
+        )
         .expect("应能搜索工作区");
 
         assert_eq!(payload.results.len(), 2);
@@ -496,19 +530,23 @@ mod tests {
         let root = temp_workspace("structural-range");
         write_workspace_file(&root, "script.sh", "prefix\nfoo 123\n");
 
-        let payload = search_workspace(WorkspaceSearchRequest {
-            workspace_root_path: root.to_string_lossy().to_string(),
-            query: "foo $A".to_string(),
-            scope: WorkspaceSearchScope::Content,
-            match_case: true,
-            whole_word: false,
-            use_regex: false,
-            use_structural: true,
-            content_fuzzy: false,
-            include_patterns: Vec::new(),
-            exclude_patterns: Vec::new(),
-            limit: Some(20),
-        })
+        let payload = search_workspace_impl(
+            WorkspaceSearchRequest {
+                workspace_root_path: root.to_string_lossy().to_string(),
+                query: "foo $A".to_string(),
+                scope: WorkspaceSearchScope::Content,
+                match_case: true,
+                whole_word: false,
+                use_regex: false,
+                use_structural: true,
+                content_fuzzy: false,
+                include_patterns: Vec::new(),
+                exclude_patterns: Vec::new(),
+                limit: Some(20),
+                stream_token: None,
+            },
+            None,
+        )
         .expect("应能执行结构化搜索");
 
         assert_eq!(payload.results.len(), 1);
@@ -527,19 +565,23 @@ mod tests {
         write_workspace_file(&root, "asset.png", "needle\n");
         let script = write_workspace_file(&root, "script.sh", "needle\n");
 
-        let payload = search_workspace(WorkspaceSearchRequest {
-            workspace_root_path: root.to_string_lossy().to_string(),
-            query: "needle".to_string(),
-            scope: WorkspaceSearchScope::All,
-            match_case: true,
-            whole_word: false,
-            use_regex: false,
-            use_structural: false,
-            content_fuzzy: false,
-            include_patterns: Vec::new(),
-            exclude_patterns: Vec::new(),
-            limit: Some(20),
-        })
+        let payload = search_workspace_impl(
+            WorkspaceSearchRequest {
+                workspace_root_path: root.to_string_lossy().to_string(),
+                query: "needle".to_string(),
+                scope: WorkspaceSearchScope::All,
+                match_case: true,
+                whole_word: false,
+                use_regex: false,
+                use_structural: false,
+                content_fuzzy: false,
+                include_patterns: Vec::new(),
+                exclude_patterns: Vec::new(),
+                limit: Some(20),
+                stream_token: None,
+            },
+            None,
+        )
         .expect("应能搜索工作区");
 
         assert!(payload
@@ -610,19 +652,23 @@ mod tests {
         let root = temp_workspace("symbol");
         write_workspace_file(&root, "script.sh", "deploy_app() {\n echo deploy\n}\n");
 
-        let payload = search_workspace(WorkspaceSearchRequest {
-            workspace_root_path: root.to_string_lossy().to_string(),
-            query: "deploy_app".to_string(),
-            scope: WorkspaceSearchScope::Symbol,
-            match_case: false,
-            whole_word: false,
-            use_regex: false,
-            use_structural: false,
-            content_fuzzy: false,
-            include_patterns: Vec::new(),
-            exclude_patterns: Vec::new(),
-            limit: Some(20),
-        })
+        let payload = search_workspace_impl(
+            WorkspaceSearchRequest {
+                workspace_root_path: root.to_string_lossy().to_string(),
+                query: "deploy_app".to_string(),
+                scope: WorkspaceSearchScope::Symbol,
+                match_case: false,
+                whole_word: false,
+                use_regex: false,
+                use_structural: false,
+                content_fuzzy: false,
+                include_patterns: Vec::new(),
+                exclude_patterns: Vec::new(),
+                limit: Some(20),
+                stream_token: None,
+            },
+            None,
+        )
         .expect("应能执行符号搜索");
 
         assert!(payload.results.iter().any(|result| {
@@ -642,19 +688,23 @@ mod tests {
         write_workspace_file(&root, "needle_c.txt", "gamma\n");
         let content_file = write_workspace_file(&root, "content.sh", "echo needle\n");
 
-        let payload = search_workspace(WorkspaceSearchRequest {
-            workspace_root_path: root.to_string_lossy().to_string(),
-            query: "needle".to_string(),
-            scope: WorkspaceSearchScope::All,
-            match_case: false,
-            whole_word: false,
-            use_regex: false,
-            use_structural: false,
-            content_fuzzy: false,
-            include_patterns: Vec::new(),
-            exclude_patterns: Vec::new(),
-            limit: Some(2),
-        })
+        let payload = search_workspace_impl(
+            WorkspaceSearchRequest {
+                workspace_root_path: root.to_string_lossy().to_string(),
+                query: "needle".to_string(),
+                scope: WorkspaceSearchScope::All,
+                match_case: false,
+                whole_word: false,
+                use_regex: false,
+                use_structural: false,
+                content_fuzzy: false,
+                include_patterns: Vec::new(),
+                exclude_patterns: Vec::new(),
+                limit: Some(2),
+                stream_token: None,
+            },
+            None,
+        )
         .expect("应能执行全部范围搜索");
 
         assert!(payload.results.iter().any(|result| {
@@ -670,19 +720,23 @@ mod tests {
         let root = temp_workspace("fuzzy-content");
         write_workspace_file(&root, "script.sh", "echo deploy_app_now\n");
 
-        let payload = search_workspace(WorkspaceSearchRequest {
-            workspace_root_path: root.to_string_lossy().to_string(),
-            query: "dapnow".to_string(),
-            scope: WorkspaceSearchScope::Content,
-            match_case: false,
-            whole_word: false,
-            use_regex: false,
-            use_structural: false,
-            content_fuzzy: true,
-            include_patterns: Vec::new(),
-            exclude_patterns: Vec::new(),
-            limit: Some(20),
-        })
+        let payload = search_workspace_impl(
+            WorkspaceSearchRequest {
+                workspace_root_path: root.to_string_lossy().to_string(),
+                query: "dapnow".to_string(),
+                scope: WorkspaceSearchScope::Content,
+                match_case: false,
+                whole_word: false,
+                use_regex: false,
+                use_structural: false,
+                content_fuzzy: true,
+                include_patterns: Vec::new(),
+                exclude_patterns: Vec::new(),
+                limit: Some(20),
+                stream_token: None,
+            },
+            None,
+        )
         .expect("应能执行模糊内容搜索");
 
         assert_eq!(payload.results.len(), 1);
@@ -702,19 +756,23 @@ mod tests {
         let root = temp_workspace("exact-no-fuzzy");
         write_workspace_file(&root, "script.sh", "echo deploy_app_now\n");
 
-        let payload = search_workspace(WorkspaceSearchRequest {
-            workspace_root_path: root.to_string_lossy().to_string(),
-            query: "dapnow".to_string(),
-            scope: WorkspaceSearchScope::Content,
-            match_case: false,
-            whole_word: false,
-            use_regex: false,
-            use_structural: false,
-            content_fuzzy: false,
-            include_patterns: Vec::new(),
-            exclude_patterns: Vec::new(),
-            limit: Some(20),
-        })
+        let payload = search_workspace_impl(
+            WorkspaceSearchRequest {
+                workspace_root_path: root.to_string_lossy().to_string(),
+                query: "dapnow".to_string(),
+                scope: WorkspaceSearchScope::Content,
+                match_case: false,
+                whole_word: false,
+                use_regex: false,
+                use_structural: false,
+                content_fuzzy: false,
+                include_patterns: Vec::new(),
+                exclude_patterns: Vec::new(),
+                limit: Some(20),
+                stream_token: None,
+            },
+            None,
+        )
         .expect("应能执行精确内容搜索");
 
         assert!(payload.results.is_empty());

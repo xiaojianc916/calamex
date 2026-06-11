@@ -4,6 +4,7 @@ use super::replace::build_structural_pattern;
 use super::scan::{
     PathFilters, ScannedFile, is_shell_like_file, passes_path_filters, workspace_cache_symbols,
 };
+use super::stream::ContentBatchSink;
 use super::types::{WorkspaceSearchRequest, WorkspaceSearchResult, WorkspaceSearchResultKind};
 use super::util::{byte_to_char_offset, count_to_u32, i64_to_i32, trim_line, u64_to_u32};
 use ast_grep_language::{LanguageExt, SupportLang};
@@ -231,13 +232,14 @@ pub(super) fn search_file_contents(
     query: &str,
     payload: &WorkspaceSearchRequest,
     limit: usize,
+    sink: Option<&dyn ContentBatchSink>,
 ) -> Result<Vec<WorkspaceSearchResult>, String> {
     if limit == 0 {
         return Ok(Vec::new());
     }
 
     if payload.content_fuzzy {
-        return search_fuzzy_file_contents(files, query, payload.match_case, limit);
+        return search_fuzzy_file_contents(files, query, payload.match_case, limit, sink);
     }
 
     let pattern = if payload.use_regex {
@@ -261,6 +263,11 @@ pub(super) fn search_file_contents(
         .map(|file| {
             let mut local = Vec::new();
             search_one_file_content(file, &matcher, limit, &mut local)?;
+            // 流式推送：每个文件命中一旦产生即按发现顺序交给 sink（sink 内部按条数/时间节流，
+            // 且对空切片为 no-op）。命令仍返回经全局排序的最终结果。
+            if let Some(sink) = sink {
+                sink.push(&local);
+            }
             Ok(local)
         })
         .collect::<Result<Vec<Vec<WorkspaceSearchResult>>, String>>()?;
@@ -275,6 +282,7 @@ fn search_fuzzy_file_contents(
     query: &str,
     match_case: bool,
     limit: usize,
+    sink: Option<&dyn ContentBatchSink>,
 ) -> Result<Vec<WorkspaceSearchResult>, String> {
     let case_matching = if match_case {
         CaseMatching::Respect
@@ -286,7 +294,14 @@ fn search_fuzzy_file_contents(
 
     let per_file = files
         .par_iter()
-        .map(|file| search_one_file_fuzzy(file, &pattern, prefilter.as_ref(), limit))
+        .map(|file| {
+            let local = search_one_file_fuzzy(file, &pattern, prefilter.as_ref(), limit)?;
+            // 流式推送：与精确/正则路径一致，按文件发现顺序把命中交给 sink。
+            if let Some(sink) = sink {
+                sink.push(&local);
+            }
+            Ok(local)
+        })
         .collect::<Result<Vec<Vec<WorkspaceSearchResult>>, String>>()?;
 
     Ok(merge_per_file_results(per_file, limit))
