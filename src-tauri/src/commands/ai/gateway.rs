@@ -65,9 +65,11 @@ pub fn ai_save_credentials(payload: AiSaveCredentialsRequest) -> Result<AiConfig
 #[tauri::command]
 #[specta::specta]
 pub async fn ai_test_provider_config(
+    app: AppHandle,
     payload: AiProviderConnectionRequest,
 ) -> Result<AiProviderTestPayload, String> {
     match gateway::test_provider_config(
+        &app,
         payload.role.as_deref(),
         payload.provider_id.as_deref(),
         &payload.provider_type,
@@ -96,9 +98,11 @@ pub async fn ai_test_provider_config(
 #[tauri::command]
 #[specta::specta]
 pub async fn ai_connect_provider(
+    app: AppHandle,
     payload: AiProviderConnectionRequest,
 ) -> Result<AiProviderConnectionPayload, String> {
     let config = gateway::connect_provider(
+        &app,
         payload.role.as_deref(),
         payload.provider_id.as_deref(),
         &payload.provider_type,
@@ -131,8 +135,8 @@ pub fn ai_clear_credentials() -> Result<(), String> {
 
 #[tauri::command]
 #[specta::specta]
-pub async fn ai_test_provider() -> Result<AiProviderTestPayload, String> {
-    match gateway::test_provider().await {
+pub async fn ai_test_provider(app: AppHandle) -> Result<AiProviderTestPayload, String> {
+    match gateway::test_provider(&app).await {
         Ok(message) => Ok(AiProviderTestPayload {
             ok: true,
             code: "AI_PROVIDER_READY".to_string(),

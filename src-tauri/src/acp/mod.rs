@@ -9,6 +9,7 @@ mod bridge;
 mod client;
 mod host;
 mod launch;
+mod runtime;
 mod turn;
 
 // 过渡期：本模块尚未接线到宿主命令，公开项暂时无人引用。接线后移除该 allow。
@@ -35,3 +36,7 @@ pub use turn::TurnAccumulator;
 
 #[allow(unused_imports)]
 pub use host::{AcpChatTurn, AcpHost, ApprovalEmitter, StreamEmitter};
+
+// 进程级生命周期：把单一 AcpHost 作为 Tauri 托管状态持有（对齐 Zed 连接持有模型）。
+#[allow(unused_imports)]
+pub use runtime::AcpRuntime;

@@ -2,8 +2,9 @@ use super::config::{
     AiProviderConnectionCandidate, build_provider_connection_candidate, save_connected_model,
 };
 use super::*;
-use crate::agent_sidecar;
-use crate::commands::contracts::{AgentSidecarChatRequest, AgentSidecarMessagePayload};
+use crate::commands::contracts::{
+    AgentSidecarChatRequest, AgentSidecarMessagePayload, AgentSidecarResponsePayload,
+};
 
 fn build_test_request(
     candidate: &AiProviderConnectionCandidate,
@@ -43,11 +44,53 @@ fn build_test_request(
     })
 }
 
+/// 执行一次性「工具型」模型透传（连接测试专用）。
+///
+/// 对齐 Zed 把这类 model-backed 工具调用作为独立模型请求、与 Agent 会话回合分离的做法：
+/// 连接测试是一次性请求，故走 `calamex.dev/model/chat` 原始透传，而非标准会话回合
+/// （`session/prompt`）的工具循环。
+/// - `acp_client` 启用：经宿主托管的常驻 `AcpHost`（懒建立、单连接复用）下发；连接
+///   测试请求由 `build_test_request` 自带显式 `model_config`，无需在此补齐。
+/// - 否则：保持既有 HTTP sidecar `model_chat_once` 路径（迁移期不翻默认、不删旧）。
+#[cfg(feature = "acp_client")]
+async fn run_test_model_chat(
+    app: &AppHandle,
+    request: AgentSidecarChatRequest,
+) -> Result<AgentSidecarResponsePayload, String> {
+    let host = app
+        .state::<crate::acp::AcpRuntime>()
+        .get_or_spawn(app)
+        .map_err(|error| {
+            errors::error(
+                "AI_PROVIDER_UNAVAILABLE",
+                format!("无法建立 ACP 宿主连接：{error}"),
+            )
+        })?;
+
+    host.model_chat(crate::acp::chat_request_to_model_chat_ext(request))
+        .await
+        .map_err(|error| {
+            errors::error(
+                "AI_PROVIDER_UNAVAILABLE",
+                format!("ACP 模型透传失败：{error}"),
+            )
+        })
+}
+
+#[cfg(not(feature = "acp_client"))]
+async fn run_test_model_chat(
+    _app: &AppHandle,
+    request: AgentSidecarChatRequest,
+) -> Result<AgentSidecarResponsePayload, String> {
+    crate::agent_sidecar::model_chat_once(request).await
+}
+
 async fn test_provider_connection_candidate(
+    app: &AppHandle,
     candidate: &AiProviderConnectionCandidate,
 ) -> Result<String, String> {
     let started_at = std::time::Instant::now();
-    let response = agent_sidecar::model_chat_once(build_test_request(candidate)?).await?;
+    let response = run_test_model_chat(app, build_test_request(candidate)?).await?;
     let reply = response.result.unwrap_or_default();
     let reply = reply.trim();
 
@@ -76,7 +119,7 @@ async fn test_provider_connection_candidate(
     ))
 }
 
-pub async fn test_provider() -> Result<String, String> {
+pub async fn test_provider(app: &AppHandle) -> Result<String, String> {
     let config = current_config()?;
     let selected_model = config
         .selected_model
@@ -95,11 +138,12 @@ pub async fn test_provider() -> Result<String, String> {
         agent_enabled: config.agent_enabled,
     };
 
-    test_provider_connection_candidate(&candidate).await
+    test_provider_connection_candidate(app, &candidate).await
 }
 
 #[allow(clippy::too_many_arguments)]
 pub async fn test_provider_config(
+    app: &AppHandle,
     _role: Option<&str>,
     provider_id: Option<&str>,
     provider_type: &str,
@@ -122,11 +166,12 @@ pub async fn test_provider_config(
         false,
     )?;
 
-    test_provider_connection_candidate(&candidate).await
+    test_provider_connection_candidate(app, &candidate).await
 }
 
 #[allow(clippy::too_many_arguments)]
 pub async fn connect_provider(
+    app: &AppHandle,
     role: Option<&str>,
     provider_id: Option<&str>,
     provider_type: &str,
@@ -150,7 +195,7 @@ pub async fn connect_provider(
         true,
     )?;
 
-    test_provider_connection_candidate(&candidate).await?;
+    test_provider_connection_candidate(app, &candidate).await?;
 
     save_connected_model(role, candidate)
 }
