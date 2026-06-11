@@ -35,13 +35,22 @@ const MAX_REPLACEMENT_FILE_LIMIT: usize = 500;
 
 #[tauri::command]
 #[specta::specta]
-pub fn search_workspace(
+pub async fn search_workspace(
     app: AppHandle,
     payload: WorkspaceSearchRequest,
 ) -> Result<WorkspaceSearchPayload, String> {
-    // 仅当前端带上 streamToken 时才建立流式推送；search_id 让前端把分批事件对应到本次请求。
-    let stream = payload.stream_token.map(|search_id| (&app, search_id));
-    search_workspace_impl(payload, stream)
+    // 同步命令会占满 Tauri 主线程：内容搜索期间通过 workspace-search-stream emit 的批次事件
+    // 需经主线程事件循环投递给 webview，主线程被搜索阻塞时这些事件只能排队，直到命令 return
+    // 后才一次性涌出（表现为「全部搜完才显示」，流式改造毫无可见效果）。
+    // 改为异步命令 + spawn_blocking：把阻塞搜索（含 rayon 并行扫描）放到阻塞线程池执行，
+    // 主线程事件循环保持空闲，从而能在搜索进行中实时投递流式批次事件，实现真正的「边搜边出」。
+    tauri::async_runtime::spawn_blocking(move || {
+        // 仅当前端带上 streamToken 时才建立流式推送；search_id 让前端把分批事件对应到本次请求。
+        let stream = payload.stream_token.map(|search_id| (&app, search_id));
+        search_workspace_impl(payload, stream)
+    })
+    .await
+    .map_err(|error| format!("搜索任务执行失败：{error}"))?
 }
 
 fn search_workspace_impl(
