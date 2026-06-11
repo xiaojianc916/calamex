@@ -7,7 +7,8 @@
 //! `agent-sidecar/src/acp/agent.ts`）与 Zed `agent_ui/acp_thread.rs` 的回合模型，
 //! 不自创协议语义：
 //!   * `client`   —— 常驻 stdio 连接 + 命令句柄（new_session / prompt /
-//!     set_session_mode / restore_checkpoint / cancel / shutdown）；
+//!     set_session_mode / restore_checkpoint / web_search / web_fetch / warmup /
+//!     health / cancel / shutdown）；
 //!   * `approval` —— 回合内反向 `session/request_permission` 的挂起登记表；
 //!   * `turn`     —— 把一回合的 `session/update` 通知重建为既有响应信封。
 //!
@@ -35,12 +36,16 @@ use std::sync::{Arc, Mutex};
 
 use agent_client_protocol::schema::{SessionId, SessionModeId, ToolCallId};
 
-use crate::commands::contracts::AgentSidecarResponsePayload;
+use crate::commands::contracts::{
+    AgentSidecarHealthPayload, AgentSidecarResponsePayload, AgentSidecarWarmupPayload,
+    AiWebFetchPayload, AiWebSearchPayload,
+};
 
 use super::approval::{ApprovalError, ApprovalRegistry, ApprovalRequestInfo};
 use super::client::{
     spawn_acp_client, AcpClientConfig, AcpClientError, AcpClientHandle, AcpStreamFrame,
-    CheckpointRestoreRequest, EventSink,
+    CheckpointRestoreRequest, EventSink, HealthExtRequest, WarmupExtRequest, WebFetchExtRequest,
+    WebSearchExtRequest,
 };
 use super::turn::TurnAccumulator;
 
@@ -178,6 +183,65 @@ impl AcpHost {
             AcpClientError::Protocol(format!(
                 "invalid checkpoint restore response envelope: {error}"
             ))
+        })
+    }
+
+    /// 联网搜索（扩展方法 `calamex.dev/web/search`）。
+    ///
+    /// 与检查点回滚同属标准会话回合之外的「带外」能力，经 sidecar 公示的扩展方法
+    /// 通道下发；标准客户端不识别该方法会安全忽略。入参为客户端层扩展请求类型
+    /// （与 contract 的转换由接线层负责，同 restore_checkpoint）；sidecar 按
+    /// `aiWebSearchPayloadSchema` 回传，此处解析为既有 `AiWebSearchPayload` 契约，与原
+    /// HTTP `web_search` 的返回同形（前端无感）。
+    pub async fn web_search(
+        &self,
+        request: WebSearchExtRequest,
+    ) -> Result<AiWebSearchPayload, AcpClientError> {
+        let value = self.handle.web_search(request).await?;
+        serde_json::from_value(value).map_err(|error| {
+            AcpClientError::Protocol(format!("invalid web search response payload: {error}"))
+        })
+    }
+
+    /// 联网抓取（扩展方法 `calamex.dev/web/fetch`）。
+    ///
+    /// 经 sidecar 公示的扩展方法通道下发。入参为客户端层扩展请求类型；sidecar 按
+    /// `aiWebFetchPayloadSchema` 回传，此处解析为既有 `AiWebFetchPayload` 契约，与原
+    /// HTTP `web_fetch` 的返回同形。
+    pub async fn web_fetch(
+        &self,
+        request: WebFetchExtRequest,
+    ) -> Result<AiWebFetchPayload, AcpClientError> {
+        let value = self.handle.web_fetch(request).await?;
+        serde_json::from_value(value).map_err(|error| {
+            AcpClientError::Protocol(format!("invalid web fetch response payload: {error}"))
+        })
+    }
+
+    /// 预热模型连接（扩展方法 `calamex.dev/warmup`）。
+    ///
+    /// 经 sidecar 公示的扩展方法通道下发；`request` 可携带可选 `modelConfig`，缺省时
+    /// sidecar 退回到启动期由环境变量解析的默认模型配置。sidecar 按 `toWarmupExtResult`
+    /// 回传，此处解析为既有 `AgentSidecarWarmupPayload` 契约，与原 HTTP `warmup` 的返回同形。
+    pub async fn warmup(
+        &self,
+        request: WarmupExtRequest,
+    ) -> Result<AgentSidecarWarmupPayload, AcpClientError> {
+        let value = self.handle.warmup(request).await?;
+        serde_json::from_value(value).map_err(|error| {
+            AcpClientError::Protocol(format!("invalid warmup response payload: {error}"))
+        })
+    }
+
+    /// 探测 sidecar 健康状态（扩展方法 `calamex.dev/health`）。
+    ///
+    /// 该方法无入参（线形序列化为 `{}`），故宿主侧内部构造空请求。sidecar 按
+    /// `buildHealthExtResult` 回传，此处解析为既有 `AgentSidecarHealthPayload` 契约，与原
+    /// HTTP `health` 的返回同形。
+    pub async fn health(&self) -> Result<AgentSidecarHealthPayload, AcpClientError> {
+        let value = self.handle.health(HealthExtRequest {}).await?;
+        serde_json::from_value(value).map_err(|error| {
+            AcpClientError::Protocol(format!("invalid health response payload: {error}"))
         })
     }
 
