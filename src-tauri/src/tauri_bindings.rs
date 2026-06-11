@@ -11,7 +11,10 @@ use tauri_specta::{Builder, ErrorHandlingMode, collect_commands, collect_events}
 pub fn builder() -> Builder<tauri::Wry> {
     Builder::<tauri::Wry>::new()
         .error_handling(ErrorHandlingMode::Throw)
-        .events(collect_events![workspace_watcher::WorkspaceFsEvent,])
+        .events(collect_events![
+            workspace_watcher::WorkspaceFsEvent,
+            search::WorkspaceSearchStreamEvent,
+        ])
         .commands(collect_commands![
             script_run::detect_execution_environment,
             search::apply_workspace_replacement,

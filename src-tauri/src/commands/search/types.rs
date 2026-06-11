@@ -31,7 +31,7 @@ impl WorkspaceSearchScope {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Type)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Type)]
 pub enum WorkspaceSearchResultKind {
     #[serde(rename = "file-name")]
     FileName,
@@ -61,6 +61,11 @@ pub struct WorkspaceSearchRequest {
     #[serde(default)]
     pub(crate) exclude_patterns: Vec<String>,
     pub(crate) limit: Option<u32>,
+    // 内容搜索流式推送的关联标识：非 None 时后端会按发现顺序通过
+    // WorkspaceSearchStreamEvent 分批推送内容命中，事件里回带这个 search_id，
+    // 让前端把分批结果对应到当前在途请求；None 表示沿用一次性返回。
+    #[serde(default)]
+    pub(crate) stream_token: Option<u32>,
 }
 
 #[derive(Debug, Serialize, Type)]
@@ -71,7 +76,7 @@ pub struct WorkspaceSearchPayload {
     pub(crate) results: Vec<WorkspaceSearchResult>,
 }
 
-#[derive(Debug, Serialize, Type)]
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceSearchResult {
     pub(crate) path: String,
@@ -83,6 +88,26 @@ pub struct WorkspaceSearchResult {
     pub(crate) match_start: Option<u32>,
     pub(crate) match_end: Option<u32>,
     pub(crate) score: i32,
+}
+
+/// 内容搜索流式推送事件。
+///
+/// 仿照 workspace_watcher::WorkspaceFsEvent，通过手动 impl tauri_specta::Event 让该类型
+/// 既出现在生成的 TS 绑定 events.workspaceSearchStreamEvent 中，又提供类型化的 .emit(app)。
+/// 事件名固定为 workspace-search-stream。
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceSearchStreamEvent {
+    /// 关联的请求标识，对应 WorkspaceSearchRequest.stream_token；前端据此对账当前在途搜索。
+    pub search_id: u32,
+    /// 解析后的工作区根目录绝对路径。
+    pub root_path: String,
+    /// 本批次的内容命中（按发现顺序，未做全局排序）。
+    pub results: Vec<WorkspaceSearchResult>,
+}
+
+impl tauri_specta::Event for WorkspaceSearchStreamEvent {
+    const NAME: &'static str = "workspace-search-stream";
 }
 
 #[derive(Debug, Deserialize, Clone, Type)]
