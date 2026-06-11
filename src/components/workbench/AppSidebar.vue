@@ -84,10 +84,10 @@ import {
 import WorkspaceTreeNode from '@/components/workbench/WorkspaceTreeNode.vue';
 import { useWorkspaceExplorerContextMenu } from '@/components/workbench/sidebar/explorer/useWorkspaceExplorerContextMenu';
 import { useWorkspaceExplorerMutations } from '@/components/workbench/sidebar/explorer/useWorkspaceExplorerMutations';
+import { useWorkspaceExplorerRoot } from '@/components/workbench/sidebar/explorer/useWorkspaceExplorerRoot';
 import { useWorkspaceExplorerTree } from '@/components/workbench/sidebar/explorer/useWorkspaceExplorerTree';
 import { useWorkspaceFileWatcher } from '@/components/workbench/sidebar/explorer/useWorkspaceFileWatcher';
 import { useMessage } from '@/composables/useMessage';
-import { tauriService } from '@/services/tauri';
 import { useAppStore } from '@/store/app';
 import type { TWorkbenchSidebarView } from '@/types/app';
 import type {
@@ -96,15 +96,12 @@ import type {
   IEditorDocument,
   IRunHistoryEntry,
   IWorkspaceDirectoryPayload,
-  IWorkspaceEntry,
   TExecutorKind,
   TWorkbenchOpenFilePayload,
 } from '@/types/editor';
 import type { IGitDiffPreviewRequest } from '@/types/git';
 import { writeFileSystemPathToClipboard } from '@/utils/clipboard';
-import { toErrorMessage } from '@/utils/error';
-import { formatFileSystemPathForDisplay, getPathBaseName } from '@/utils/path';
-import { resolveWorkspaceKey, resolveWorkspaceRootPayload } from '@/utils/workspace';
+import { resolveWorkspaceKey } from '@/utils/workspace';
 
 const DeferredLinearContextMenu = defineAsyncComponent({
   loader: () => import('@/components/common/LinearContextMenu.vue'),
@@ -161,14 +158,9 @@ const emit = defineEmits<{
 const message = useMessage();
 const appStore = useAppStore();
 
-const root = ref<IWorkspaceDirectoryPayload | null>(null);
-const rootLoading = ref(false);
-const loadError = ref('');
 const explorerSectionRef = ref<HTMLElement | null>(null);
 const isExplorerScrollbarActive = ref(false);
-const loadedWorkspaceKey = ref<string | null>(null);
 
-let rootRequestId = 0;
 let explorerScrollbarIdleTimer: ReturnType<typeof setTimeout> | null = null;
 
 const clearExplorerScrollbarIdleTimer = (): void => {
@@ -286,102 +278,38 @@ const {
   pruneWorkspaceSubtreeState,
 } = useWorkspaceExplorerTree({
   getRoot: () => root.value,
-  getActiveRequestId: () => rootRequestId,
+  getActiveRequestId: () => getActiveRequestId(),
   getSelectedPath: () => selectedExplorerPath.value,
   onExplorerStateChange: (payload) => emit('explorer-state-change', payload),
 });
 
-const isExplorerWorkspaceEmpty = computed(() => {
-  if (!root.value) {
-    return false;
-  }
-  const rootEntries = childrenMap[root.value.rootPath] ?? root.value.entries;
-  return rootEntries.length === 0;
+const {
+  root,
+  rootLoading,
+  loadError,
+  loadedWorkspaceKey,
+  getActiveRequestId,
+  isExplorerWorkspaceEmpty,
+  rootEntry,
+  loadWorkspaceRoot,
+  handleRefreshExplorer,
+} = useWorkspaceExplorerRoot({
+  isDesktopRuntime: () => props.isDesktopRuntime,
+  getWorkspaceRootPath: () => props.workspaceRootPath,
+  getPreloadedWorkspaceRoot: () => props.preloadedWorkspaceRoot,
+  getStartupExpandedPaths: () => props.startupExplorerExpandedPaths,
+  childrenMap,
+  clearTreeState,
+  resetTreeForRoot,
+  loadStartupExpandedDirectories,
+  startWorkspaceFileWatcher: () => startWorkspaceFileWatcher(),
 });
-
-const rootEntry = computed<IWorkspaceEntry | null>(() => {
-  if (!root.value) {
-    return null;
-  }
-  const rootEntries = childrenMap[root.value.rootPath] ?? root.value.entries;
-  const displayRootPath = formatFileSystemPathForDisplay(
-    root.value.rootName || root.value.rootPath,
-  );
-  const displayRootName = getPathBaseName(displayRootPath) || displayRootPath;
-  return {
-    path: root.value.rootPath,
-    name: displayRootName,
-    kind: 'directory',
-    hasChildren: rootEntries.length > 0,
-  };
-});
-
-const applyWorkspaceRootPayload = (
-  payload: IWorkspaceDirectoryPayload,
-  workspaceKey: string,
-): void => {
-  rootLoading.value = false;
-  loadError.value = '';
-  root.value = payload;
-  loadedWorkspaceKey.value = workspaceKey;
-  resetTreeForRoot(payload, props.startupExplorerExpandedPaths);
-};
-
-const loadWorkspaceRoot = async (workspaceKey: string): Promise<void> => {
-  if (!props.isDesktopRuntime) {
-    return;
-  }
-  if (!props.workspaceRootPath) {
-    rootLoading.value = false;
-    loadError.value = '';
-    root.value = null;
-    loadedWorkspaceKey.value = null;
-    clearTreeState();
-    return;
-  }
-  const requestId = rootRequestId + 1;
-  rootRequestId = requestId;
-  rootLoading.value = true;
-  loadError.value = '';
-  root.value = null;
-  loadedWorkspaceKey.value = null;
-  clearTreeState();
-  try {
-    const payload = await resolveWorkspaceRootPayload(
-      props.workspaceRootPath,
-      props.preloadedWorkspaceRoot,
-      tauriService.listWorkspaceEntries,
-    );
-    if (requestId !== rootRequestId) {
-      return;
-    }
-    applyWorkspaceRootPayload(payload, workspaceKey);
-    void loadStartupExpandedDirectories();
-    void startWorkspaceFileWatcher();
-  } catch (error) {
-    if (requestId !== rootRequestId) {
-      return;
-    }
-    root.value = null;
-    loadedWorkspaceKey.value = null;
-    loadError.value = toErrorMessage(error, '读取工作区目录失败');
-  } finally {
-    if (requestId === rootRequestId) {
-      rootLoading.value = false;
-    }
-  }
-};
 
 const handleOpenFile = (payload: TWorkbenchOpenFilePayload): void => {
   emit('open-file', payload);
 };
 const handleOpenGitDiff = (payload: IGitDiffPreviewRequest): void => {
   emit('open-git-diff', payload);
-};
-
-const handleRefreshExplorer = async (): Promise<void> => {
-  const workspaceKey = resolveWorkspaceKey(props.workspaceRootPath);
-  await loadWorkspaceRoot(workspaceKey);
 };
 
 const {
