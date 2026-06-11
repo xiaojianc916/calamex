@@ -23,25 +23,31 @@ import {
 export const EDITOR_FONT_FAMILY =
   "Consolas, 'Cascadia Mono', 'SF Mono', 'JetBrains Mono', Menlo, Monaco, 'Courier New', monospace";
 
-// 单次 tokenize 切片的字节上限：默认从文档开头切到可见区下沿，超大文件超过此上限时
-// 退化为仅切可见区窗口；窗口切片仍超限（极端长行，如压缩成一行的文件）则放弃高亮，
-// 避免 Worker 任务过重。注意这是“切片”上限而非“整文档”上限。
+// 单次 tokenize 切片的字节上限：Worker 回退路径默认从文档开头切到可见区下沿，超过
+// 此上限时退化为仅切可见区窗口；窗口切片仍超限（极端长行，如压缩成一行的文件）
+// 则放弃高亮，避免 Worker 任务过重。注意这是“切片”上限而非“整文档”上限。
 const MAX_HIGHLIGHT_SLICE_LENGTH = 200_000;
 
-// 同步着色的切片字节上限：语法已在主线程加载、且切片不超过此值时，直接在主线程
-// tokenize 并即时着色，消除滚动时“新行先露白、等 Worker 回包才补色”的闪烁；超过则
-// 仍交给 Worker 异步处理，避免阻塞 UI 线程。取值远小于 Worker 切片上限，保证单帧
-// 同步 tokenize 的耗时可控（典型超大文件退化窗口切片远小于此值，故仍可同步着色）。
+// 同步着色的切片字节上限：语法已在主线程加载、且可见区窗口切片不超过此值时，
+// 直接在主线程 tokenize 并即时着色。取值远小于 Worker 切片上限，保证单帧同步
+// tokenize 的耗时可控（可见区窗口仅几百行，典型远小于此值）。超过则回退到 Worker。
 const MAX_SYNC_HIGHLIGHT_SLICE_LENGTH = 50_000;
 
-// 可见区上下额外着色的行数：平滑滚动时的着色衔接缓冲，并作为超大文件窗口退化时的缓冲。
-// 取较大值以覆盖快速滚动单帧的跨度，减少滚动越界触发重算的频率，降低闪烁概率。
+// 可见区下方额外着色的行数：平滑滚动时的下方衔接缓冲。取较大值以覆盖快速滚动
+// 单帧的跨度，减少滚动越界触发重算的频率，降低闪烁概率。
 const HIGHLIGHT_OVERSCAN_LINES = 120;
+
+// 同步着色时可见区上方的 lead-in 行数：不从文档开头切片时，从可见区上沿向上多取
+// 这些行作为语法状态的“启动上下文”，使块注释/heredoc/多行字符串等跨行结构在
+// 可见区配色尽量正确。取较大值以覆盖绝大多数现实代码的跨行跨度；极端超长跨行
+// 结构（距视口上千行的块注释）是专业编辑器靠“每行状态缓存”解决的罕见场景，
+// 此处以“零闪烁”为优先权衡，从文档开头的完全正确着色由 Worker 回退路径提供。
+const SYNC_HIGHLIGHT_LEAD_IN_LINES = 200;
 
 // 输入停顿后过多久触发一次重算（毫秒）；过小会让连续输入仍频繁重算，过大高亮滞后明显。
 const HIGHLIGHT_RECOMPUTE_DEBOUNCE_MS = 90;
 
-// 视口滚动触发的重算使用 rAF 合帧：一帧内多次 viewportChanged 只提交一次 Worker 任务。
+// 视口滚动触发的重算使用 rAF 合帧：一帧内多次 viewportChanged 只提交一次重算。
 // 不做大块 debounce，避免快速滚动后可见区高亮明显滞后。
 const HIGHLIGHT_VIEWPORT_FRAME_FALLBACK_MS = 16;
 
@@ -59,7 +65,7 @@ const tokenDecorationCache = new Map<string, Decoration>();
 const setShikiLanguageEffect = StateEffect.define<string>();
 // Worker 异步 tokenize 完成后借此 effect 应用 decorations。
 const shikiWorkerResultEffect = StateEffect.define<TShikiWorkerHighlightResult>();
-// 防抖超时触发的重算信号。
+// 防抖超时 / 语法预热完成触发的重算信号。
 const shikiRecomputeEffect = StateEffect.define<null>();
 
 /** 供外部在语言切换时派发，通知高亮插件更新语言。 */
@@ -125,12 +131,12 @@ export const resolveShikiHighlightUpdateAction = (input: {
 
 /**
  * 纯函数：计算需要 tokenize 的行范围 [startLine, endLine]（1-based，含端点）。
- * - endLine：可见区下沿 + overscan，并夹取到文档末行；视口下方内容不影响可见区配色，无需 tokenize。
+ * - endLine：可见区下沿 + overscanLines，并夹取到文档末行；视口下方内容不影响可见区配色。
  * - startLine：
- *   - fromDocumentStart=true：固定为第 1 行，使 Shiki 语法状态从真实边界续算，
- *     保证 heredoc/多行字符串/块注释等跨行结构在可见区配色正确（默认路径）。
- *   - fromDocumentStart=false：可见区上沿 - overscan（夹取到第 1 行）的窗口，
- *     仅在从头切片超出体积上限的超大文件时退化使用。
+ *   - fromDocumentStart=true：固定为第 1 行，使 Shiki 语法状态从真实边界续算（完全正确）。
+ *   - fromDocumentStart=false：可见区上沿 - leadInLines（夹取到第 1 行）的窗口。
+ * leadInLines 未传时默认等于 overscanLines（向后兼容旧调用点）；同步路径传入较大的 lead-in
+ * 以获取足够的语法启动上下文，而下方 overscan 可以较小，两者非对称。
  */
 export const computeShikiHighlightRange = (input: {
   firstVisibleLine: number;
@@ -138,11 +144,13 @@ export const computeShikiHighlightRange = (input: {
   totalLines: number;
   overscanLines: number;
   fromDocumentStart: boolean;
+  leadInLines?: number;
 }): { startLine: number; endLine: number } => {
+  const leadInLines = input.leadInLines ?? input.overscanLines;
   const endLine = Math.min(input.totalLines, input.lastVisibleLine + input.overscanLines);
   const startLine = input.fromDocumentStart
     ? 1
-    : Math.max(1, input.firstVisibleLine - input.overscanLines);
+    : Math.max(1, input.firstVisibleLine - leadInLines);
   return { startLine, endLine };
 };
 
@@ -230,10 +238,18 @@ const tokenDecoration = (style: string): Decoration => {
   return decoration;
 };
 
-// 仅截取当前可见行所需的切片，单次成本与可见行数相关而非文档总长，
-// 避免大文件编辑/滚动时提交过重 Worker 任务。默认从文档首行起切片以保证跨行结构
-// 在可见区配色正确（见 computeShikiHighlightRange）。返回所用行范围供调用方做复用判定。
-const computeShikiHighlightSlice = (view: EditorView): TShikiHighlightSlice | null => {
+/**
+ * 截取需要 tokenize 的切片，单次成本与可见行数相关而非文档总长。
+ * - fromDocumentStart=true（Worker 回退）：从文档首行切起，跨行结构完全正确；超过体积
+ *   上限则退化为可见区窗口。
+ * - fromDocumentStart=false（同步快路径）：仅切 [视口顶 - leadInLines .. 视口底 + overscan]
+ *   的有界窗口，切片恒小，使主线程同步 tokenize 耗时可控。
+ * 窗口切片仍超体积上限（极端长行）时返回 null，调用方据此放弃高亮。返回所用行范围供复用判定。
+ */
+const computeShikiHighlightSlice = (
+  view: EditorView,
+  options: { fromDocumentStart: boolean; leadInLines?: number },
+): TShikiHighlightSlice | null => {
   const { doc } = view.state;
   if (doc.length === 0) {
     return null;
@@ -247,32 +263,34 @@ const computeShikiHighlightSlice = (view: EditorView): TShikiHighlightSlice | nu
   const firstVisibleLine = doc.lineAt(visibleRanges[0].from).number;
   const lastVisibleLine = doc.lineAt(visibleRanges[visibleRanges.length - 1].to).number;
 
-  // 先尝试从文档开头切片：语法状态从真实边界续算，跨多行结构在可见区配色正确。
-  let range = computeShikiHighlightRange({
-    firstVisibleLine,
-    lastVisibleLine,
-    totalLines: doc.lines,
-    overscanLines: HIGHLIGHT_OVERSCAN_LINES,
-    fromDocumentStart: true,
-  });
-  let sliceFrom = doc.line(range.startLine).from;
-  let sliceTo = doc.line(range.endLine).to;
-
-  // 从头切片过大（超大文件）时退化为可见区窗口，控制单次 tokenize 成本。
-  if (sliceTo - sliceFrom > MAX_HIGHLIGHT_SLICE_LENGTH) {
-    range = computeShikiHighlightRange({
+  const buildSlice = (
+    fromDocumentStart: boolean,
+  ): { range: { startLine: number; endLine: number }; sliceFrom: number; sliceTo: number } => {
+    const range = computeShikiHighlightRange({
       firstVisibleLine,
       lastVisibleLine,
       totalLines: doc.lines,
       overscanLines: HIGHLIGHT_OVERSCAN_LINES,
-      fromDocumentStart: false,
+      leadInLines: options.leadInLines ?? HIGHLIGHT_OVERSCAN_LINES,
+      fromDocumentStart,
     });
-    sliceFrom = doc.line(range.startLine).from;
-    sliceTo = doc.line(range.endLine).to;
-    // 窗口切片仍超限（极端长行）时放弃高亮，避免 Worker 任务过重。
-    if (sliceTo - sliceFrom > MAX_HIGHLIGHT_SLICE_LENGTH) {
-      return null;
-    }
+    return {
+      range,
+      sliceFrom: doc.line(range.startLine).from,
+      sliceTo: doc.line(range.endLine).to,
+    };
+  };
+
+  let { range, sliceFrom, sliceTo } = buildSlice(options.fromDocumentStart);
+
+  // 仅 fromDocumentStart 模式可能切片过大（超大文件），退化为可见区窗口；窗口模式本就有界。
+  if (options.fromDocumentStart && sliceTo - sliceFrom > MAX_HIGHLIGHT_SLICE_LENGTH) {
+    ({ range, sliceFrom, sliceTo } = buildSlice(false));
+  }
+
+  // 窗口切片仍超限（极端长行）时放弃高亮，避免任务过重。
+  if (sliceTo - sliceFrom > MAX_HIGHLIGHT_SLICE_LENGTH) {
+    return null;
   }
 
   return {
@@ -328,6 +346,8 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
     private latestRequestId = 0;
     private docVersion = 0;
     private pendingRequest: TShikiHighlightRequestIdentity | null = null;
+    // 已发起主线程预热的语言；避免每次 recompute 重复创建微任务，失败则复位以允许重试。
+    private warmedLanguage: string | null = null;
     // 已成功高亮的语言与行范围；用于滚动时判断当前可见区是否已被覆盖，覆盖则跳过重算。
     private highlightedLanguage: string | null = null;
     private highlightedStartLine: number | null = null;
@@ -365,7 +385,7 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
 
       if (action === 'recompute') {
         if (!languageChanged && !recomputeRequested && update.viewportChanged) {
-          // 仅滚动时按 animation frame 合并，避免滚动事件洪水反复打 Worker。
+          // 仅滚动时按 animation frame 合并，避免滚动事件洪水反复重算。
           this.scheduleViewportRecompute(update.view);
           return;
         }
@@ -440,7 +460,7 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
           return;
         }
         try {
-          // 派发重算 effect，让插件在下一次 update 中对当前视口提交一次 Worker tokenize。
+          // 派发重算 effect，让插件在下一次 update 中对当前视口重算。
           view.dispatch({ effects: shikiRecomputeEffect.of(null) });
         } catch {
           // view 已销毁，忽略。
@@ -468,6 +488,36 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
       this.viewportRecomputeTimer = window.setTimeout(run, HIGHLIGHT_VIEWPORT_FRAME_FALLBACK_MS);
     }
 
+    // 主线程语法预热（幂等）：Worker 有独立 highlighter 实例，主线程 loadedLanguages 仅在显式
+    // 预热后才会填充，而这是同步快路径可用的前提。借鉴 VS Code / Monaco——语法在初始化时加载，
+    // 而非等到滚动时才异步拉取。预热完成后派发一次重算，使当前视口立即切到同步路径。
+    private warmMainThreadLanguage(view: EditorView, language: string): void {
+      if (this.warmedLanguage === language) {
+        return;
+      }
+      this.warmedLanguage = language;
+      void ensureShikiLanguage(language).then((shikiId) => {
+        if (this.destroyed) {
+          return;
+        }
+        if (!shikiId) {
+          // 预热失败（不支持/加载出错）：复位以便后续重试，避免永久停留在 Worker 路径。
+          if (this.warmedLanguage === language) {
+            this.warmedLanguage = null;
+          }
+          return;
+        }
+        if (view.state.field(shikiLanguageField, false) !== language) {
+          return;
+        }
+        try {
+          view.dispatch({ effects: shikiRecomputeEffect.of(null) });
+        } catch {
+          // view 已销毁，忽略。
+        }
+      });
+    }
+
     private recompute(view: EditorView, options: { allowReuse: boolean }): void {
       const language = view.state.field(shikiLanguageField, false) ?? 'text';
       if (!resolveShikiLanguageId(language)) {
@@ -477,12 +527,55 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
         return;
       }
 
-      // 复用：语言未变且已高亮范围已覆盖当前可见区时，滚动无需重新 tokenize（零开销且不会露白）。
+      // 预热主线程语法，使后续滚动能走同步快路径。
+      this.warmMainThreadLanguage(view, language);
+
+      // 复用：语言未变且已高亮范围已覆盖当前可见区时，滚动无需重算（零开销且不会露白）。
       if (options.allowReuse && this.isVisibleRangeHighlighted(view, language)) {
         return;
       }
 
-      const slice = computeShikiHighlightSlice(view);
+      // —— 同步快路径（主线程、可见区窗口、即时着色，零闪烁/零露白）——
+      // 借鉴 CodeMirror 6：高亮采用主线程、小增量、同步解析；对“可见区窗口”（而非从文档
+      // 开头）同步 tokenize，切片有界且小，主线程耗时可控，新行一出现即着色。
+      if (isShikiLanguageLoaded(language)) {
+        const syncSlice = computeShikiHighlightSlice(view, {
+          fromDocumentStart: false,
+          leadInLines: SYNC_HIGHLIGHT_LEAD_IN_LINES,
+        });
+        if (
+          syncSlice &&
+          shouldHighlightSynchronously({
+            languageLoaded: true,
+            sliceCodeLength: syncSlice.code.length,
+            maxSyncSliceLength: MAX_SYNC_HIGHLIGHT_SLICE_LENGTH,
+          })
+        ) {
+          const tokens = tokenizeWithShikiSync(syncSlice.code, language);
+          if (tokens) {
+            // 作废仍在途的旧 Worker 请求，避免其回包覆盖本次同步结果。
+            this.latestRequestId = this.nextRequestId;
+            this.nextRequestId += 1;
+            this.pendingRequest = null;
+            this.decorations = buildDecorationsFromTokenLines(
+              view,
+              syncSlice.startLine,
+              syncSlice.endLine,
+              tokens,
+            );
+            this.highlightedLanguage = language;
+            this.highlightedStartLine = syncSlice.startLine;
+            this.highlightedEndLine = syncSlice.endLine;
+            return;
+          }
+        }
+      }
+
+      // —— Worker 回退 ——
+      // 仅在首屏语法尚未预热完成、或极端长行切片过大无法同步时走此路。从文档开头切片以
+      // 保证跨行结构（heredoc/块注释/模板字符串）在可见区配色正确；旧装饰在途期间保留，
+      // 不清空，避免露白。预热完成后的后续滚动都会走上面的同步快路径。
+      const slice = computeShikiHighlightSlice(view, { fromDocumentStart: true });
       if (!slice) {
         this.decorations = Decoration.none;
         this.invalidateHighlightedRange();
@@ -513,42 +606,6 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
           }))
       ) {
         return;
-      }
-
-      // 同步快路径：语法已在主线程加载且切片不大时，直接 tokenize 并即时着色，
-      // 消除滚动暴露的新行“先露白、等 Worker 回包才补色”造成的闪烁/空白。
-      const languageLoadedOnMainThread = isShikiLanguageLoaded(language);
-      if (
-        shouldHighlightSynchronously({
-          languageLoaded: languageLoadedOnMainThread,
-          sliceCodeLength: slice.code.length,
-          maxSyncSliceLength: MAX_SYNC_HIGHLIGHT_SLICE_LENGTH,
-        })
-      ) {
-        const tokens = tokenizeWithShikiSync(slice.code, language);
-        if (tokens) {
-          // 提升 latestRequestId 作废仍在途的旧 Worker 请求，避免其回包覆盖本次同步结果。
-          this.latestRequestId = this.nextRequestId;
-          this.nextRequestId += 1;
-          this.pendingRequest = null;
-          this.decorations = buildDecorationsFromTokenLines(
-            view,
-            slice.startLine,
-            slice.endLine,
-            tokens,
-          );
-          this.highlightedLanguage = language;
-          this.highlightedStartLine = slice.startLine;
-          this.highlightedEndLine = slice.endLine;
-          return;
-        }
-      } else if (
-        !languageLoadedOnMainThread &&
-        slice.code.length <= MAX_SYNC_HIGHLIGHT_SLICE_LENGTH
-      ) {
-        // 主线程语法尚未就绪：后台预热（不阻塞本轮），使后续滚动可走同步快路径消除闪烁。
-        // 本轮仍走下方 Worker 异步着色，保证首屏可用；旧装饰在途期间保留，避免露白。
-        void ensureShikiLanguage(language);
       }
 
       const requestId = this.nextRequestId;
@@ -720,26 +777,4 @@ export const shikiEditorChromeTheme = EditorView.theme(
     '.cm-fold-pill:hover': {
       backgroundColor: 'rgba(175, 184, 193, 0.34)',
     },
-    // 固定 4px 正圆：flex-shrink:0 锁死三点尺寸恒等，偶数边长+整数 gap 避免亚像素发虚。
-    '.cm-fold-pill-dot': {
-      flexShrink: 0,
-      width: '3px',
-      height: '3px',
-      borderRadius: '50%',
-      backgroundColor: '#a8b1b9', // 由 #6e7781 调淡
-    },
-    '.cm-fold-pill:hover .cm-fold-pill-dot': {
-      backgroundColor: '#8c949c', // hover 也相应调淡
-    },
-  },
-  { dark: false },
-);
-
-/**
- * Shiki 语法高亮扩展（不含 chrome 主题，便于调用方控制主题叠加顺序）。
- * @param initialLanguage 初始 app 语言 id。
- */
-export const shikiHighlightExtension = (initialLanguage = 'text'): Extension => [
-  shikiLanguageField.init(() => initialLanguage),
-  shikiHighlightPlugin,
-];
+    // 固定 4px 正圆：flex-shrink:0 锁死
