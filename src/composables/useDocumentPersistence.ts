@@ -317,12 +317,15 @@ export const useDocumentPersistence = ({
       editorStore.applyDocumentPayload(documentId, payload);
     }
 
-    const preparedDocument = applySaveConventionsToDocument(documentId);
-    if (!preparedDocument || !isLoadedTextDocument(preparedDocument)) {
-      return preparedDocument;
-    }
-
+    // 开启“保存时格式化”时，先跑 shfmt 再统一规范化（仅此一次写回内容）。
+    // 不再在格式化前额外规范化一次——那次写回会立刻被格式化结果覆盖，却已多触发一次
+    // 编辑器重排/重着色，是保存时“一闪一闪”的主因之一。
     if (appStore.settings.editor.formatOnSave) {
+      const candidate = editorStore.getDocumentById(documentId);
+      if (!candidate || !isLoadedTextDocument(candidate)) {
+        return applySaveConventionsToDocument(documentId);
+      }
+
       const formatted = await formatDocumentWithShfmt(documentId, {
         suppressSuccessMessage: true,
         suppressErrorMessage: true,
@@ -331,13 +334,12 @@ export const useDocumentPersistence = ({
         // 格式化失败（通常是脚本存在语法错误）不应阻断保存：
         // 跳过格式化，提示用户后按保存约定保存原始内容。
         notifier.warning('保存时格式化失败，已跳过格式化直接保存，请检查脚本语法。');
-        return applySaveConventionsToDocument(documentId);
       }
 
       return applySaveConventionsToDocument(documentId);
     }
 
-    return preparedDocument;
+    return applySaveConventionsToDocument(documentId);
   };
 
   const formatWorkspaceFileByPath = async (path: string): Promise<boolean> => {
