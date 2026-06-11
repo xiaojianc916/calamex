@@ -172,11 +172,13 @@
             <button
               type="button"
               class="git-history-graph-hovercard-action"
+              :class="{ 'is-copied': commitIdCopied }"
               title="复制完整提交哈希"
               aria-label="复制完整提交哈希"
               @click="copyHoverCommitId"
             >
-              <Copy aria-hidden="true" />
+              <Check v-if="commitIdCopied" aria-hidden="true" />
+              <Copy v-else aria-hidden="true" />
             </button>
             <button
               v-if="hoverGithubCommitUrl"
@@ -195,7 +197,7 @@
 </template>
 
 <script setup lang="ts">
-import { ArrowDown, Copy, LoaderCircle, UserRound } from '@lucide/vue';
+import { ArrowDown, Check, Copy, LoaderCircle, UserRound } from '@lucide/vue';
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import LinearContextMenu from '@/components/common/LinearContextMenu.vue';
 import type {
@@ -295,6 +297,9 @@ const hoverCommit = ref<IGitCommitSummaryPayload | null>(null);
 const hoverDetail = ref<IGitCommitDetailPayload | null>(null);
 const hoverLoading = ref(false);
 const hoverAuthorSnapshot = ref<IGitHubCommitAuthorSnapshot | null>(null);
+// 复制提交哈希成功后短暂显示对勾,1.6s 后自动恢复复制图标。
+const commitIdCopied = ref(false);
+let commitIdCopiedTimer: ReturnType<typeof setTimeout> | null = null;
 const hoverCardRef = ref<HTMLElement | null>(null);
 let hoverOpenTimer: ReturnType<typeof setTimeout> | null = null;
 let hoverCloseTimer: ReturnType<typeof setTimeout> | null = null;
@@ -598,6 +603,11 @@ const closeHoverCard = (): void => {
   hoverDetail.value = null;
   hoverAuthorSnapshot.value = null;
   hoverLoading.value = false;
+  if (commitIdCopiedTimer !== null) {
+    clearTimeout(commitIdCopiedTimer);
+    commitIdCopiedTimer = null;
+  }
+  commitIdCopied.value = false;
 };
 
 // req4: 悬浮卡片智能排位。先按行右/左侧给初始位置,再用实测尺寸夹取进视口,避免被边缘遮挡。
@@ -691,7 +701,14 @@ const handleCardLeave = (): void => {
 
 const copyHoverCommitId = async (): Promise<void> => {
   const commitId = hoverDetail.value?.id ?? hoverCommit.value?.id;
-  if (commitId) await writeClipboardText(commitId);
+  if (!commitId) return;
+  await writeClipboardText(commitId);
+  commitIdCopied.value = true;
+  if (commitIdCopiedTimer !== null) clearTimeout(commitIdCopiedTimer);
+  commitIdCopiedTimer = setTimeout(() => {
+    commitIdCopied.value = false;
+    commitIdCopiedTimer = null;
+  }, 1600);
 };
 
 const openHoverCommitOnGithub = (): void => {
@@ -893,6 +910,10 @@ onBeforeUnmount(() => {
   if (scrollSettleTimer !== null) {
     clearTimeout(scrollSettleTimer);
     scrollSettleTimer = null;
+  }
+  if (commitIdCopiedTimer !== null) {
+    clearTimeout(commitIdCopiedTimer);
+    commitIdCopiedTimer = null;
   }
   disconnectHistoryObserver();
   teardownHistoryScrollListener();
@@ -1265,9 +1286,15 @@ onBeforeUnmount(() => {
 }
 
 .git-history-graph-hovercard-action {
-  width: 22px;
-  height: 22px;
+  width: 18px;
+  height: 18px;
   border-radius: 4px;
+  margin-right: 4px;
+}
+
+.git-history-graph-hovercard-action > svg {
+  width: 13px;
+  height: 13px;
 }
 
 .git-history-graph-hovercard-open {
@@ -1280,14 +1307,26 @@ onBeforeUnmount(() => {
   color: #0969da;
 }
 
-.git-history-graph-hovercard-action:hover,
 .git-history-graph-hovercard-open:hover {
   background: rgba(129, 139, 152, 0.15);
   color: #1f2328;
 }
 
-.git-history-graph-hovercard-open > span:first-child {
-  width: 13px;
-  height: 13px;
+/* 复制按钮 hover 不改背景,仅图标本身高亮 */
+.git-history-graph-hovercard-action:hover {
+  background: transparent;
+  color: #1f2328;
+}
+
+/* 复制成功后的对勾用绿色强调,1.6s 后恢复 */
+.git-history-graph-hovercard-action.is-copied,
+.git-history-graph-hovercard-action.is-copied:hover {
+  color: #1a7f37;
+}
+
+.git-history-graph-hovercard-open > svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
 }
 </style>

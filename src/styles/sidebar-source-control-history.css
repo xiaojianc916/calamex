@@ -45,3 +45,15 @@
 .source-control-history-refresh:disabled > span {
   animation: source-control-history-refresh-spin 0.8s linear infinite;
 }
+
+/* 隐藏历史界面的滚动条:仅当 .source-control-scroll 内渲染历史面板时隐藏,
+   变更/分支/PR 等其它标签的滚动条不受影响,滚动行为保持不变。 */
+.source-control-scroll:has(.source-control-history-panel) {
+  scrollbar-width: none;
+}
+
+.source-control-scroll:has(.source-control-history-panel)::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
