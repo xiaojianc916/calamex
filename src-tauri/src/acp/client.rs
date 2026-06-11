@@ -14,7 +14,7 @@
 //!     `shell_words::split` 对含空格 / 反斜杠路径(尤其 Windows)的误分词。
 //!   * `connect_with(transport, |cx| async {...})` 内运行长生命周期命令循环,宿主侧
 //!     (Tauri 命令)经 mpsc 投递 NewSession / Prompt / SetSessionMode / RestoreCheckpoint /
-//!     WebSearch / WebFetch / Warmup / Health / Cancel / Shutdown。
+//!     ModelChat / WebSearch / WebFetch / Warmup / Health / Cancel / Shutdown。
 
 // 过渡期:本模块尚未接线到宿主命令(公开 API 暂无调用点)。接线后移除该 allow。
 #![allow(dead_code)]
@@ -95,6 +95,53 @@ pub struct CheckpointRestoreRequest {
     pub step: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_config: Option<ExtModelConfig>,
+}
+
+/// `calamex.dev/model/chat` 扩展方法的单条消息。
+///
+/// 字段镜像 sidecar `ext-methods.ts` 的 `modelChatMessageSchema`(camelCase 线格式):
+/// `role` 覆盖四类(system/user/assistant/tool),`content` 为纯文本;`tool_call_id`/`name`
+/// 仅在工具消息回放时出现,可选透传。`role` 的合法取值由 sidecar 端 zod 统一校验,宿主侧
+/// 以字符串原样透传、不在此重复其取值表(同 `WebSearchExtRequest.intent` 的处理),避免与
+/// sidecar 的单一来源漂移。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelChatMessage {
+    pub role: String,
+    pub content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+/// `calamex.dev/model/chat` 扩展方法的请求(原始模型透传,仿 Zed 的独立模型请求)。
+///
+/// 这是 ACP 标准会话回合(`session/prompt`)之外的「带外」工具型模型调用:一次性、无工具、
+/// 无记忆、不读历史、不套 agent 系统提示;调用方 messages(含 system)原样下发。承载标题
+/// 生成 / 行内补全 / 连接测试等「工具型」请求——对齐 Zed 把这类 model-backed 功能
+/// (Thread title、Inline Assistant、Edit Prediction、Git commit message)与 Agent Panel 的
+/// 智能体回合分离为独立模型请求的做法,而非塞进 agent thread 的工具循环。
+///
+/// 落地方式与同文件的 checkpoint/restore 等扩展一致:`#[derive(JsonRpcRequest)]` +
+/// `#[request(...)]` 接入一等带类型请求,`cx.send_request(...)` 原生可发。线方法名与 sidecar
+/// 的 `MODEL_CHAT_METHOD`(`calamex.dev/model/chat`)逐字一致。字段镜像 sidecar
+/// `modelChatParamsSchema`。响应为整封 sidecar 响应信封(`toModelChatExtResult =
+/// toAgentSidecarResponse`,与 chat/checkpoint 同构:schemaVersion + sessionId + events +
+/// result),以 `serde_json::Value` 原样回传,交由宿主侧既有 `AgentSidecarResponsePayload` 解析。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, JsonRpcRequest)]
+#[serde(rename_all = "camelCase")]
+#[request(method = "calamex.dev/model/chat", response = Value)]
+pub struct ModelChatExtRequest {
+    pub messages: Vec<ModelChatMessage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub goal: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_root_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model_config: Option<ExtModelConfig>,
 }
@@ -194,6 +241,10 @@ enum Command {
         request: CheckpointRestoreRequest,
         reply: oneshot::Sender<Result<Value, String>>,
     },
+    ModelChat {
+        request: ModelChatExtRequest,
+        reply: oneshot::Sender<Result<Value, String>>,
+    },
     WebSearch {
         request: WebSearchExtRequest,
         reply: oneshot::Sender<Result<Value, String>>,
@@ -289,6 +340,24 @@ impl AcpClientHandle {
         let (reply, rx) = oneshot::channel();
         self.cmd_tx
             .send(Command::RestoreCheckpoint { request, reply })
+            .map_err(|_| AcpClientError::NotRunning)?;
+        rx.await
+            .map_err(|_| AcpClientError::NotRunning)?
+            .map_err(AcpClientError::Protocol)
+    }
+
+    /// 原始模型透传(扩展方法 `calamex.dev/model/chat`)。
+    ///
+    /// 与检查点回滚同属标准会话回合之外的「带外」能力,经 sidecar 公示的扩展方法通道下发;
+    /// 标准客户端(如 Zed)不识别该方法会安全忽略。承载标题生成 / 行内补全 / 连接测试等
+    /// 一次性「工具型」模型调用。返回 sidecar 的整封响应信封(`serde_json::Value`),由宿主侧解析。
+    pub async fn model_chat(
+        &self,
+        request: ModelChatExtRequest,
+    ) -> Result<Value, AcpClientError> {
+        let (reply, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(Command::ModelChat { request, reply })
             .map_err(|_| AcpClientError::NotRunning)?;
         rx.await
             .map_err(|_| AcpClientError::NotRunning)?
@@ -500,6 +569,10 @@ pub fn spawn_acp_client(
                             let res = cx.send_request(request).block_task().await;
                             let _ = reply.send(res.map_err(|e| e.to_string()));
                         }
+                        Command::ModelChat { request, reply } => {
+                            let res = cx.send_request(request).block_task().await;
+                            let _ = reply.send(res.map_err(|e| e.to_string()));
+                        }
                         Command::WebSearch { request, reply } => {
                             let res = cx.send_request(request).block_task().await;
                             let _ = reply.send(res.map_err(|e| e.to_string()));
@@ -632,6 +705,60 @@ mod tests {
         assert_eq!(value["modelConfig"]["modelId"], "deepseek/deepseek-v4-pro");
         assert_eq!(value["modelConfig"]["apiKey"], "secret");
         assert!(value["modelConfig"].get("baseUrl").is_none());
+    }
+
+    #[test]
+    fn model_chat_request_serializes_to_camel_case_params() {
+        let request = ModelChatExtRequest {
+            messages: vec![
+                ModelChatMessage {
+                    role: "system".to_string(),
+                    content: "你是标题生成器".to_string(),
+                    tool_call_id: None,
+                    name: None,
+                },
+                ModelChatMessage {
+                    role: "user".to_string(),
+                    content: "请为这段对话生成标题".to_string(),
+                    tool_call_id: None,
+                    name: None,
+                },
+            ],
+            goal: None,
+            session_id: None,
+            workspace_root_path: None,
+            model_config: Some(ExtModelConfig {
+                model_id: "zhipuai/glm-4.7-flash".to_string(),
+                api_key: "secret".to_string(),
+                base_url: None,
+            }),
+        };
+        let value = serde_json::to_value(&request).unwrap();
+        assert_eq!(value["messages"][0]["role"], "system");
+        assert_eq!(value["messages"][0]["content"], "你是标题生成器");
+        assert!(value["messages"][0].get("toolCallId").is_none());
+        assert!(value["messages"][0].get("name").is_none());
+        assert_eq!(value["messages"][1]["role"], "user");
+        assert!(value.get("goal").is_none());
+        assert!(value.get("sessionId").is_none());
+        assert!(value.get("workspaceRootPath").is_none());
+        assert_eq!(value["modelConfig"]["modelId"], "zhipuai/glm-4.7-flash");
+        assert_eq!(value["modelConfig"]["apiKey"], "secret");
+    }
+
+    #[test]
+    fn model_chat_message_serializes_optional_tool_fields_when_present() {
+        let message = ModelChatMessage {
+            role: "tool".to_string(),
+            content: "{\"ok\":true}".to_string(),
+            tool_call_id: Some("call_1".to_string()),
+            name: Some("get_time".to_string()),
+        };
+        let value = serde_json::to_value(&message).unwrap();
+        assert_eq!(value["role"], "tool");
+        assert_eq!(value["content"], "{\"ok\":true}");
+        assert_eq!(value["toolCallId"], "call_1");
+        assert_eq!(value["name"], "get_time");
     }
 
     #[test]

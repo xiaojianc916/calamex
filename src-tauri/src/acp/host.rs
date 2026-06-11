@@ -7,8 +7,8 @@
 //! `agent-sidecar/src/acp/agent.ts`）与 Zed `agent_ui/acp_thread.rs` 的回合模型，
 //! 不自创协议语义：
 //!   * `client`   —— 常驻 stdio 连接 + 命令句柄（new_session / prompt /
-//!     set_session_mode / restore_checkpoint / web_search / web_fetch / warmup /
-//!     health / cancel / shutdown）；
+//!     set_session_mode / restore_checkpoint / model_chat / web_search / web_fetch /
+//!     warmup / health / cancel / shutdown）；
 //!   * `approval` —— 回合内反向 `session/request_permission` 的挂起登记表；
 //!   * `turn`     —— 把一回合的 `session/update` 通知重建为既有响应信封。
 //!
@@ -44,8 +44,8 @@ use crate::commands::contracts::{
 use super::approval::{ApprovalError, ApprovalRegistry, ApprovalRequestInfo};
 use super::client::{
     spawn_acp_client, AcpClientConfig, AcpClientError, AcpClientHandle, AcpStreamFrame,
-    CheckpointRestoreRequest, EventSink, HealthExtRequest, WarmupExtRequest, WebFetchExtRequest,
-    WebSearchExtRequest,
+    CheckpointRestoreRequest, EventSink, HealthExtRequest, ModelChatExtRequest, WarmupExtRequest,
+    WebFetchExtRequest, WebSearchExtRequest,
 };
 use super::turn::TurnAccumulator;
 
@@ -183,6 +183,24 @@ impl AcpHost {
             AcpClientError::Protocol(format!(
                 "invalid checkpoint restore response envelope: {error}"
             ))
+        })
+    }
+
+    /// 原始模型透传（扩展方法 `calamex.dev/model/chat`）。
+    ///
+    /// 标准会话回合之外的「带外」工具型模型调用，经 sidecar 公示的扩展方法通道下发；
+    /// 承载标题生成 / 行内补全 / 连接测试等一次性请求（仿 Zed 把这类 model-backed 功能
+    /// 与 Agent Panel 智能体回合分离为独立模型请求）。sidecar 把响应投影为与 chat 同构的
+    /// 信封（`toModelChatExtResult = toAgentSidecarResponse`，schemaVersion + sessionId +
+    /// events + result），故此处直接复用既有 `AgentSidecarResponsePayload` 解析（同
+    /// restore_checkpoint，多余的 `schemaVersion` 字段按 serde 默认忽略）。
+    pub async fn model_chat(
+        &self,
+        request: ModelChatExtRequest,
+    ) -> Result<AgentSidecarResponsePayload, AcpClientError> {
+        let value = self.handle.model_chat(request).await?;
+        serde_json::from_value(value).map_err(|error| {
+            AcpClientError::Protocol(format!("invalid model chat response envelope: {error}"))
         })
     }
 
