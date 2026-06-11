@@ -85,10 +85,7 @@ import LinearContextMenu from '@/components/common/LinearContextMenu.vue';
 import type { ILinearContextMenuItem } from '@/components/common/linear-context-menu.types';
 import { useDialog } from '@/composables/useDialog';
 import { useMessage } from '@/composables/useMessage';
-import {
-  type TGitEntryActionKey,
-  useSourceControlActions,
-} from '@/composables/useSourceControlActions';
+import { type TGitEntryActionKey, useSourceControlActions } from '@/composables/useSourceControlActions';
 import {
   type TGitSectionKey,
   type TSourceControlMenuGroup,
@@ -135,10 +132,7 @@ const props = defineProps<{
   runWithPending: (key: string, task: () => Promise<void>) => Promise<boolean>;
   syncRepositoryStatus: (
     workspaceRootPath: string,
-    options?: {
-      showSuccessMessage?: boolean;
-      showErrorMessage?: boolean;
-    },
+    options?: { showSuccessMessage?: boolean; showErrorMessage?: boolean },
   ) => Promise<void>;
   setSourceControlActionError: (value: string | null) => void;
 }>();
@@ -152,11 +146,7 @@ const gitStore = useGitStore();
 const message = useMessage();
 const dialog = useDialog();
 const commitMessage = ref('');
-const scmMenuState = reactive<ISourceControlMenuState>({
-  open: false,
-  x: 0,
-  y: 0,
-});
+const scmMenuState = reactive<ISourceControlMenuState>({ open: false, x: 0, y: 0 });
 const scmContextTargetPath = ref<string | null>(null);
 const scmMenuGroups = ref<TSourceControlMenuGroup[]>([]);
 const collapsedSections = reactive<Record<TGitSectionKey, boolean>>({
@@ -230,7 +220,6 @@ const changedEntries = computed(() =>
 );
 const untrackedEntries = computed(() => status.value.files.filter((entry) => entry.isUntracked));
 const stageableEntries = computed(() => [...changedEntries.value, ...untrackedEntries.value]);
-// 放弃全部的目标集合与可暂存集合完全一致(已跟踪改动 + 未跟踪文件),复用同一个 computed。
 const discardableEntries = stageableEntries;
 const stagedPaths = computed(() => stagedEntries.value.map((entry) => entry.path));
 const canStageAll = computed(() => stageableEntries.value.length > 0 && !isBusy.value);
@@ -239,39 +228,18 @@ const canDiscardAll = computed(() => discardableEntries.value.length > 0 && !isB
 
 const sections = computed<IGitSection[]>(() => {
   const nextSections: IGitSection[] = [];
-
   if (conflictedEntries.value.length > 0) {
-    nextSections.push({
-      key: 'conflicts',
-      title: '冲突',
-      entries: conflictedEntries.value,
-    });
+    nextSections.push({ key: 'conflicts', title: '冲突', entries: conflictedEntries.value });
   }
-
   if (stagedEntries.value.length > 0) {
-    nextSections.push({
-      key: 'staged',
-      title: '已暂存',
-      entries: stagedEntries.value,
-    });
+    nextSections.push({ key: 'staged', title: '已暂存', entries: stagedEntries.value });
   }
-
   if (changedEntries.value.length > 0) {
-    nextSections.push({
-      key: 'changes',
-      title: '变更',
-      entries: changedEntries.value,
-    });
+    nextSections.push({ key: 'changes', title: '变更', entries: changedEntries.value });
   }
-
   if (untrackedEntries.value.length > 0) {
-    nextSections.push({
-      key: 'untracked',
-      title: '未跟踪',
-      entries: untrackedEntries.value,
-    });
+    nextSections.push({ key: 'untracked', title: '未跟踪', entries: untrackedEntries.value });
   }
-
   return nextSections;
 });
 
@@ -300,10 +268,7 @@ const filteredSections = computed<IGitSection[]>(() => {
             return haystack.includes(keyword);
           });
 
-      return {
-        ...section,
-        entries,
-      };
+      return { ...section, entries };
     })
     .filter((section) => section.entries.length > 0);
 });
@@ -314,11 +279,8 @@ const hasVisibleChanges = computed(() =>
 const canCommit = computed(
   () => status.value.stagedCount > 0 && commitMessage.value.trim().length > 0 && !isBusy.value,
 );
-
 const emptyChangesTitle = computed(() => '没有匹配的变更');
-
 const emptyChangesText = computed(() => '试试搜索文件名、目录、状态，或者清空搜索关键字。');
-
 const commitButtonLabel = computed(() =>
   props.pendingAction === 'commit' ? '提交中...' : '提交更改',
 );
@@ -381,7 +343,6 @@ const resolveEntryDisplayName = (entry: IGitFileStatusPayload): string => {
   if (entry.fileName) {
     return entry.fileName;
   }
-
   return getPathBaseName(entry.relativePath) || entry.relativePath;
 };
 
@@ -389,7 +350,6 @@ const resolveEntryDirectory = (entry: IGitFileStatusPayload): string => {
   if (entry.previousRelativePath) {
     return `${entry.previousRelativePath} → ${entry.relativePath}`;
   }
-
   return getPathDirectory(entry.relativePath);
 };
 
@@ -400,7 +360,6 @@ const resolveEntryActionTitle = (
   if (sectionKey === 'staged') {
     return `取消暂存 ${entry.fileName}`;
   }
-
   return `暂存 ${entry.fileName}`;
 };
 
@@ -411,28 +370,12 @@ const resolveEntryActions = (
   if (sectionKey === 'conflicts') {
     return [];
   }
-
   if (sectionKey === 'staged') {
-    return [
-      {
-        key: 'unstage',
-        title: resolveEntryActionTitle(sectionKey, entry),
-        icon: 'minus',
-      },
-    ];
+    return [{ key: 'unstage', title: resolveEntryActionTitle(sectionKey, entry), icon: 'minus' }];
   }
-
   return [
-    {
-      key: 'discard',
-      title: `放弃更改 ${entry.fileName}`,
-      icon: 'trash',
-    },
-    {
-      key: 'stage',
-      title: resolveEntryActionTitle(sectionKey, entry),
-      icon: 'plus',
-    },
+    { key: 'discard', title: `放弃更改 ${entry.fileName}`, icon: 'trash' },
+    { key: 'stage', title: resolveEntryActionTitle(sectionKey, entry), icon: 'plus' },
   ];
 };
 
@@ -452,4 +395,152 @@ const handleOpenFile = (path: string): void => {
 const resolveDiffMode = (sectionKey: TGitSectionKey): TGitDiffMode =>
   sectionKey === 'staged' ? 'staged' : 'worktree';
 
-const handleOpenDiff = (s
+const handleOpenDiff = (sectionKey: TGitSectionKey, entry: IGitFileStatusPayload): void => {
+  const repositoryRootPath = status.value.repositoryRootPath;
+  if (!repositoryRootPath) {
+    message.warning('当前工作区未检测到 Git 仓库。');
+    return;
+  }
+  emit('open-diff', {
+    repositoryRootPath,
+    path: entry.path,
+    mode: resolveDiffMode(sectionKey),
+  });
+};
+
+const {
+  handleRefresh,
+  handleStageAll,
+  handleUnstageAll,
+  handleDiscardAll,
+  handleCommit,
+  handleDiscardEntry,
+  handleSectionAction,
+  handleEntryAction,
+} = useSourceControlActions({
+  gitStore,
+  message,
+  dialog,
+  getWorkspaceRootPath: () => props.workspaceRootPath,
+  getStageableEntries: () => stageableEntries.value,
+  getStagedPaths: () => stagedPaths.value,
+  getDiscardableEntries: () => discardableEntries.value,
+  getStagedCount: () => status.value.stagedCount,
+  getCommitMessage: () => commitMessage.value,
+  setCommitMessage: (value) => {
+    commitMessage.value = value;
+  },
+  runWithPending: props.runWithPending,
+  setSourceControlActionError: props.setSourceControlActionError,
+  syncRepositoryStatus: props.syncRepositoryStatus,
+});
+
+const {
+  buildRepositoryMenuGroups,
+  buildEntryMenuGroups,
+  handleContextMenuSelect: dispatchContextMenuSelect,
+} = useSourceControlContextMenu({
+  isBusy: () => isBusy.value,
+  canStageAll: () => canStageAll.value,
+  canUnstageAll: () => canUnstageAll.value,
+  canDiscardAll: () => canDiscardAll.value,
+  canCommit: () => canCommit.value,
+  onRefresh: handleRefresh,
+  onStageAll: handleStageAll,
+  onUnstageAll: handleUnstageAll,
+  onDiscardAll: handleDiscardAll,
+  onCommit: handleCommit,
+  onOpenDiff: handleOpenDiff,
+  onOpenFile: handleOpenFile,
+  onCopyPath: async (path) => {
+    await writeFileSystemPathToClipboard(path);
+    message.success('已复制文件路径');
+  },
+  onStageEntry: handleSectionAction,
+  onUnstageEntry: async (entry) => {
+    await handleSectionAction('staged', entry);
+  },
+  onDiscardEntry: handleDiscardEntry,
+});
+
+const handleMoreActions = (event: MouseEvent): void => {
+  const target = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+  const rect = target?.getBoundingClientRect();
+  openSourceControlMenu(
+    {
+      x: rect ? rect.right - SOURCE_CONTROL_MENU_WIDTH : event.clientX,
+      y: rect ? rect.bottom + 6 : event.clientY,
+    },
+    buildRepositoryMenuGroups(),
+    null,
+  );
+};
+
+const handleEntryContextMenu = (
+  event: MouseEvent,
+  sectionKey: TGitSectionKey,
+  entry: IGitFileStatusPayload,
+): void => {
+  openSourceControlMenu(
+    { x: event.clientX, y: event.clientY },
+    buildEntryMenuGroups(sectionKey, entry),
+    entry.path,
+  );
+};
+
+const handleContextMenuSelect = async (item: ILinearContextMenuItem): Promise<void> => {
+  closeSourceControlMenu();
+  await dispatchContextMenuSelect(item);
+};
+
+const isTargetInsideSourceControlMenu = (target: EventTarget | null): boolean =>
+  target instanceof Element && target.closest(SOURCE_CONTROL_MENU_ROOT_SELECTOR) !== null;
+
+const handleWindowPointerDown = (event: PointerEvent): void => {
+  if (!scmMenuState.open || isTargetInsideSourceControlMenu(event.target)) {
+    return;
+  }
+  closeSourceControlMenu();
+};
+
+const handleWindowKeydown = (event: KeyboardEvent): void => {
+  if (scmMenuState.open && event.key === 'Escape') {
+    closeSourceControlMenu();
+  }
+};
+
+const handleWindowResize = (): void => {
+  if (scmMenuState.open) {
+    closeSourceControlMenu();
+  }
+};
+
+onMounted(() => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  window.addEventListener('pointerdown', handleWindowPointerDown, true);
+  window.addEventListener('keydown', handleWindowKeydown);
+  window.addEventListener('resize', handleWindowResize);
+  window.addEventListener('blur', handleWindowResize);
+});
+
+onBeforeUnmount(() => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  window.removeEventListener('pointerdown', handleWindowPointerDown, true);
+  window.removeEventListener('keydown', handleWindowKeydown);
+  window.removeEventListener('resize', handleWindowResize);
+  window.removeEventListener('blur', handleWindowResize);
+});
+
+watch(
+  () => props.workspaceRootPath,
+  () => {
+    commitMessage.value = '';
+    resetSectionCollapse();
+    closeSourceControlMenu();
+  },
+);
+</script>
