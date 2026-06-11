@@ -21,149 +21,57 @@
 - 只清理**本次改动产生的**废弃导入/变量/函数。
 - 按域拆模块，拒绝“上帝文件”；资深工程师看了觉得繁杂就重构。
 
-## 四、质量门槛
+## 四、 先思考，再编码
+**核心原则**：不主观臆断、不隐瞒疑问、主动说明方案取舍。
+
+动手实现前，请遵守以下要求：
+- 明确列出所有预设条件，存有疑问就主动询问。
+- 若需求存在多种解读方式，全部罗列出来，不要私自选定方案。
+- 若有更简洁的实现思路，请主动提出；必要时拒绝冗余设计。
+- 遇到模糊不清的内容立即暂停，指明疑点并进行确认。
+
+## 五、 简约至上
+**核心原则**：用最少代码解决问题，不做额外拓展。
+
+- 只实现需求指定的功能，不额外新增功能。
+- 仅单次使用的代码，不做抽象封装。
+- 未被要求的灵活性、可配置性，一律不额外设计。
+- 不为理论上不可能出现的场景编写异常处理逻辑。
+- 若一段代码本可精简（例如200行代码可缩至50行），务必重构简化。
+
+自我审视：资深工程师是否会认为这段代码过于繁琐？若是，立即精简。
+
+## 六、 精准改动
+**核心原则**：只修改必要代码，仅清理自身改动产生的冗余内容。
+
+### 编辑现有代码时
+- 不擅自优化周边代码、注释与代码格式。
+- 不对运行正常的代码进行重构。
+- 遵循原有编码风格，即便和个人习惯不符也保持一致。
+- 发现无关的废弃代码，仅做标注提醒，不擅自删除。
+
+### 处理改动衍生的冗余内容
+- 删除因本次修改而失效的导入项、变量、函数。
+- 若无明确要求，不删除原本就存在的废弃代码。
+
+校验标准：每一行修改的代码，都必须和用户需求直接相关。
+
+## 七、 目标驱动执行
+**核心原则**：明确验收标准，反复核验直至达标。
+
+将任务转化为**可核验目标**：
+- 「增加校验逻辑」→ 先编写非法输入测试用例，再编码使测试通过
+- 「修复漏洞」→ 先编写可复现问题的测试用例，再完成修复
+- 「重构代码X」→ 确保重构前后所有测试均可正常运行
+
+多步骤任务，请先梳理简要执行计划：
+
+
+## 八、质量门槛
 - 提交前本地绿灯：`pnpm lint` + `pnpm typecheck` + `pnpm test`；改 Rust 加 `src-tauri/` 内 `cargo clippy && cargo test`；大改跑 `pnpm guard`。
 - 覆盖率：全局 ≥ 80%，核心域 ≥ 90%；新逻辑必补测试，改动同步更新受影响的用例。
 - 性能改动附前后对比数据，不超 `docs/performance-budget.md`；体积由 `pnpm size-limit` 守护。
 
-## 五、提交与决策
+## 九、提交与决策
 - 单分支 `main`（trunk-based），squash 合入；Conventional Commits（lefthook + commitlint 强制）。
 - 关键决策沉淀为 ADR（`docs/adr/`）；已 accepted 的 ADR 不就地重写。
-- 冲突优先级：**安全 > 类型安全 > 可测性 > 可维护性 > 性能 > 风格**；缺数据先停下确认，不猜测
-
-
-\---
-
-name: karpathy-guidelines
-
-description: Behavioral guidelines to reduce common LLM coding mistakes: think before coding, simplicity first, surgical changes, goal-driven execution
-
-\---
-
-
-
-Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
-
-
-
-\*\*Tradeoff:\*\* These guidelines bias toward caution over speed. For trivial tasks, use judgment.
-
-
-
-\## 1. Think Before Coding
-
-
-
-\*\*Don't assume. Don't hide confusion. Surface tradeoffs.\*\*
-
-
-
-Before implementing:
-
-\- State your assumptions explicitly. If uncertain, ask.
-
-\- If multiple interpretations exist, present them - don't pick silently.
-
-\- If a simpler approach exists, say so. Push back when warranted.
-
-\- If something is unclear, stop. Name what's confusing. Ask.
-
-
-
-\## 2. Simplicity First
-
-
-
-\*\*Minimum code that solves the problem. Nothing speculative.\*\*
-
-
-
-\- No features beyond what was asked.
-
-\- No abstractions for single-use code.
-
-\- No "flexibility" or "configurability" that wasn't requested.
-
-\- No error handling for impossible scenarios.
-
-\- If you write 200 lines and it could be 50, rewrite it.
-
-
-
-Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
-
-
-
-\## 3. Surgical Changes
-
-
-
-\*\*Touch only what you must. Clean up only your own mess.\*\*
-
-
-
-When editing existing code:
-
-\- Don't "improve" adjacent code, comments, or formatting.
-
-\- Don't refactor things that aren't broken.
-
-\- Match existing style, even if you'd do it differently.
-
-\- If you notice unrelated dead code, mention it - don't delete it.
-
-
-
-When your changes create orphans:
-
-\- Remove imports/variables/functions that YOUR changes made unused.
-
-\- Don't remove pre-existing dead code unless asked.
-
-
-
-The test: Every changed line should trace directly to the user's request.
-
-
-
-\## 4. Goal-Driven Execution
-
-
-
-\*\*Define success criteria. Loop until verified.\*\*
-
-
-
-Transform tasks into verifiable goals:
-
-\- "Add validation" → "Write tests for invalid inputs, then make them pass"
-
-\- "Fix the bug" → "Write a test that reproduces it, then make it pass"
-
-\- "Refactor X" → "Ensure tests pass before and after"
-
-
-
-For multi-step tasks, state a brief plan:
-
-```
-
-1\. \[Step] → verify: \[check]
-
-2\. \[Step] → verify: \[check]
-
-3\. \[Step] → verify: \[check]
-
-```
-
-
-
-Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
-
-
-
-\---
-
-
-
-\*\*These guidelines are working if:\*\* fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
