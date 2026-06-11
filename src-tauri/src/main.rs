@@ -186,9 +186,10 @@ fn setup_system_tray<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<()
 // === WebView 平台相关 ====================================================
 
 #[cfg(windows)]
-fn disable_webview_default_context_menu<R: tauri::Runtime>(
-    webview_window: &tauri::WebviewWindow<R>,
-) {
+fn harden_webview_settings<R: tauri::Runtime>(webview_window: &tauri::WebviewWindow<R>) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings3;
+    use windows_core::Interface;
+
     let label = webview_window.label().to_string();
     let label_for_inner = label.clone();
     let access_result = webview_window.with_webview(move |webview| unsafe {
@@ -196,10 +197,21 @@ fn disable_webview_default_context_menu<R: tauri::Runtime>(
             .controller()
             .CoreWebView2()
             .and_then(|core| core.Settings())
-            .and_then(|settings| settings.SetAreDefaultContextMenusEnabled(false));
+            .and_then(|settings| {
+                // 1) 关闭默认右键菜单（保持既有行为）。
+                settings.SetAreDefaultContextMenusEnabled(false)?;
+                // 2) 关闭浏览器加速键。WebView2 宿主层会把 Ctrl+S 当作“保存网页”
+                //    加速键处理，触发一次全屏白屏；JS 的 preventDefault 无法可靠拦截
+                //    宿主级加速键，必须在 WebView2 设置层关闭。应用自身的
+                //    Ctrl+S=保存、Mod+Enter=运行等快捷键由前端键位绑定接管，不受影响；
+                //    CodeMirror 自带的 Ctrl+F 查找也将不再被浏览器查找栏抢占。
+                let settings3 = settings.cast::<ICoreWebView2Settings3>()?;
+                settings3.SetAreBrowserAcceleratorKeysEnabled(false)?;
+                Ok(())
+            });
         if let Err(error) = outcome {
             eprintln!(
-                "failed to disable default WebView2 context menu for window {label_for_inner}: {error}"
+                "failed to harden WebView2 settings for window {label_for_inner}: {error}"
             );
         }
     });
@@ -209,10 +221,7 @@ fn disable_webview_default_context_menu<R: tauri::Runtime>(
 }
 
 #[cfg(not(windows))]
-fn disable_webview_default_context_menu<R: tauri::Runtime>(
-    _webview_window: &tauri::WebviewWindow<R>,
-) {
-}
+fn harden_webview_settings<R: tauri::Runtime>(_webview_window: &tauri::WebviewWindow<R>) {}
 
 // === main ================================================================
 
@@ -282,7 +291,7 @@ storage_paths::migrate_legacy_storage();
 
             timed_step!("tauri.setup.webview-settings-ready", app_started_at, {
                 for webview_window in app.webview_windows().into_values() {
-                    disable_webview_default_context_menu(&webview_window);
+                    harden_webview_settings(&webview_window);
                 }
             });
 
