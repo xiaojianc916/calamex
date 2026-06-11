@@ -466,4 +466,57 @@ watch(
     isExplorerView,
     () => props.preloadedWorkspaceRoot,
   ],
-  ([ready, workspaceRootPath,
+  ([ready, workspaceRootPath, explorer]) => {
+    if (!ready || !explorer) {
+      return;
+    }
+    const workspaceKey = resolveWorkspaceKey(workspaceRootPath);
+    if (loadedWorkspaceKey.value === workspaceKey && root.value) {
+      return;
+    }
+    void loadWorkspaceRoot(workspaceKey);
+  },
+  { immediate: true },
+);
+
+watch(
+  () => props.workspaceRootPath,
+  () => {
+    closeInlineCreateDraft();
+    stopWorkspaceFileWatcher();
+  },
+);
+
+onMounted(() => {
+  if (root.value?.rootPath) {
+    void startWorkspaceFileWatcher();
+  }
+});
+onBeforeUnmount(() => {
+  closeInlineCreateDraft();
+  cancelInlineRename();
+  clearExplorerScrollbarIdleTimer();
+  stopWorkspaceFileWatcher();
+});
+</script>
+
+<style scoped>
+.explorer-empty-action {
+  color: var(--accent-strong);
+  font-weight: 500;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+.explorer-empty-action:hover {
+  color: color-mix(in srgb, var(--accent-strong) 84%, white);
+}
+.explorer-empty-action:focus-visible {
+  outline: none;
+  border-radius: 4px;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ring) 32%, transparent);
+}
+.explorer-empty-state--raised {
+  transform: translateY(-52px);
+}
+</style>
