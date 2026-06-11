@@ -5,6 +5,7 @@
 //! 旧 HTTP/NDJSON 实现随之删除。
 
 mod approval;
+mod bridge;
 mod client;
 mod host;
 mod launch;
@@ -24,6 +25,10 @@ pub use approval::{
 
 #[allow(unused_imports)]
 pub use launch::build_acp_client_config;
+
+// 接线层：把 Tauri 契约请求投影为客户端层 ACP 扩展请求（接线前暂无调用点）。
+#[allow(unused_imports)]
+pub use bridge::chat_request_to_model_chat_ext;
 
 #[allow(unused_imports)]
 pub use turn::TurnAccumulator;
