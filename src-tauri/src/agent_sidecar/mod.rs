@@ -1467,4 +1467,272 @@ mod tests {
         assert_eq!(
             canonicalize_local_base_url("http://localhost:39871".to_string()),
             DEFAULT_SIDECAR_URL
-        
+        );
+        assert_eq!(
+            canonicalize_local_base_url("http://[::1]:39871".to_string()),
+            DEFAULT_SIDECAR_URL
+        );
+        assert_eq!(
+            canonicalize_local_base_url("http://127.0.0.1:39871".to_string()),
+            DEFAULT_SIDECAR_URL
+        );
+        assert_eq!(
+            canonicalize_local_base_url("https://agent.example.com".to_string()),
+            "https://agent.example.com"
+        );
+    }
+
+    #[test]
+    fn clamp_startup_timeout_uses_default_and_bounds() {
+        assert_eq!(
+            clamp_startup_timeout_seconds(None),
+            SIDECAR_STARTUP_TIMEOUT_DEFAULT_SECONDS
+        );
+        assert_eq!(
+            clamp_startup_timeout_seconds(Some("   ")),
+            SIDECAR_STARTUP_TIMEOUT_DEFAULT_SECONDS
+        );
+        assert_eq!(
+            clamp_startup_timeout_seconds(Some("not-a-number")),
+            SIDECAR_STARTUP_TIMEOUT_DEFAULT_SECONDS
+        );
+        assert_eq!(
+            clamp_startup_timeout_seconds(Some("1")),
+            SIDECAR_STARTUP_TIMEOUT_MIN_SECONDS
+        );
+        assert_eq!(
+            clamp_startup_timeout_seconds(Some("99999")),
+            SIDECAR_STARTUP_TIMEOUT_MAX_SECONDS
+        );
+        assert_eq!(clamp_startup_timeout_seconds(Some("30")), 30);
+    }
+
+    #[test]
+    fn startup_not_ready_error_is_retryable() {
+        let error = "AGENT_SIDECAR_UNAVAILABLE: Node sidecar 已尝试启动，但未在 20 秒内就绪。";
+        assert!(is_retryable_narrator_sidecar_error(error));
+        assert!(!is_retryable_narrator_sidecar_error(
+            "AGENT_SIDECAR_CONTRACT_ERROR: sidecar 响应无法解析"
+        ));
+    }
+
+    #[test]
+    fn answer_delta_text_extracts_only_final_phase_message_deltas() {
+        let implicit_final = serde_json::json!({ "type": "message_delta", "text": "你好" });
+        assert_eq!(answer_delta_text(&implicit_final).as_deref(), Some("你好"));
+
+        let explicit_final =
+            serde_json::json!({ "type": "message_delta", "text": "世界", "phase": "final" });
+        assert_eq!(answer_delta_text(&explicit_final).as_deref(), Some("世界"));
+
+        let stage_event =
+            serde_json::json!({ "type": "message_delta", "text": "思考中", "phase": "stage" });
+        assert_eq!(answer_delta_text(&stage_event), None);
+
+        let empty_event = serde_json::json!({ "type": "message_delta", "text": "" });
+        assert_eq!(answer_delta_text(&empty_event), None);
+
+        let other_event = serde_json::json!({ "type": "tool_start", "toolName": "x", "input": {} });
+        assert_eq!(answer_delta_text(&other_event), None);
+    }
+
+    #[test]
+    fn parses_sidecar_listener_pid_from_netstat_output() {
+        let output = r#"
+  Proto  Local Address          Foreign Address        State           PID
+  TCP    127.0.0.1:39871        0.0.0.0:0              LISTENING       1234
+  TCP    [::1]:39871            [::]:0                 LISTENING       1234
+  TCP    127.0.0.1:39872        0.0.0.0:0              LISTENING       5678
+"#;
+
+        assert_eq!(parse_netstat_listening_pids(output, 39871), vec![1234]);
+    }
+
+    #[test]
+    fn sidecar_stream_line_buffer_waits_for_complete_utf8_line() {
+        let line =
+            "{\"type\":\"event\",\"event\":{\"type\":\"message_delta\",\"text\":\"你好🙂\"}}\n";
+        let split_at = line.find('你').expect("line should contain chinese") + 2;
+        let bytes = line.as_bytes();
+        let mut buffer = Vec::new();
+
+        buffer.extend_from_slice(&bytes[..split_at]);
+        let lines = drain_complete_sidecar_stream_lines(&mut buffer, "/agent/chat/stream")
+            .expect("partial chunk should not decode incomplete utf8");
+        assert!(lines.is_empty());
+
+        buffer.extend_from_slice(&bytes[split_at..]);
+        let lines = drain_complete_sidecar_stream_lines(&mut buffer, "/agent/chat/stream")
+            .expect("complete line should decode");
+
+        assert_eq!(lines, vec![line.trim_end_matches('\n').to_string()]);
+        assert!(!lines[0].contains('\u{fffd}'));
+        assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn sidecar_stream_line_buffer_ignores_whitespace_tail() {
+        assert!(!has_non_whitespace_bytes(b"\r\n\t "));
+        assert!(has_non_whitespace_bytes(b"\n{}"));
+    }
+
+    #[test]
+    fn sidecar_stream_buffer_rejects_unterminated_oversized_line() {
+        assert!(ensure_sidecar_stream_buffer_within_limit(0, "/agent/chat/stream").is_ok());
+        assert!(
+            ensure_sidecar_stream_buffer_within_limit(
+                SIDECAR_STREAM_MAX_LINE_BYTES,
+                "/agent/chat/stream"
+            )
+            .is_ok()
+        );
+        let error = ensure_sidecar_stream_buffer_within_limit(
+            SIDECAR_STREAM_MAX_LINE_BYTES + 1,
+            "/agent/chat/stream",
+        )
+        .expect_err("超过上限的未完成行应被拒绝");
+        assert!(error.contains("AGENT_SIDECAR_STREAM_ERROR"));
+        assert!(error.contains("/agent/chat/stream"));
+    }
+
+    #[test]
+    fn injects_tavily_key_from_sidecar_dotenv_when_user_env_is_missing() {
+        let sidecar_root =
+            std::env::temp_dir().join(format!("xiaojianc-sidecar-env-test-{}", std::process::id()));
+
+        fs::create_dir_all(&sidecar_root).expect("temp sidecar root should be created");
+        fs::write(
+            sidecar_root.join(".env"),
+            "# comment\nXIAOJIANC_TEST_TAVILY_KEY=tvly-test-from-dotenv\n",
+        )
+        .expect("dotenv should be written");
+
+        let mut command = Command::new("node");
+        inject_sidecar_dotenv_key_if_present(
+            &mut command,
+            &sidecar_root,
+            "XIAOJIANC_TEST_TAVILY_KEY",
+        );
+
+        let injected = command
+            .get_envs()
+            .find(|(key, _)| key.to_string_lossy() == "XIAOJIANC_TEST_TAVILY_KEY")
+            .and_then(|(_, value)| value.map(|item| item.to_string_lossy().to_string()));
+
+        assert_eq!(injected.as_deref(), Some("tvly-test-from-dotenv"));
+
+        fs::remove_dir_all(sidecar_root).expect("temp sidecar root should be removed");
+    }
+
+    #[test]
+    fn sidecar_health_is_runtime_name_agnostic() {
+        let ready_payload = SidecarHealthProbePayload {
+            ok: true,
+            _engine: Some("mastra".to_string()),
+            protocol_version: Some("7".to_string()),
+            implementation_version: Some(
+                "deepseek-reasoning-transport-v6-plan-history".to_string(),
+            ),
+        };
+        let stale_payload = SidecarHealthProbePayload {
+            ok: true,
+            _engine: Some("custom-runtime".to_string()),
+            protocol_version: Some("6".to_string()),
+            implementation_version: None,
+        };
+        let unavailable_payload = SidecarHealthProbePayload {
+            ok: false,
+            _engine: Some("legacy-runtime".to_string()),
+            protocol_version: Some("7".to_string()),
+            implementation_version: Some(
+                "deepseek-reasoning-transport-v6-plan-history".to_string(),
+            ),
+        };
+
+        assert_eq!(
+            classify_sidecar_health(&ready_payload),
+            SidecarHealthStatus::Ready
+        );
+        assert_eq!(
+            classify_sidecar_health(&stale_payload),
+            SidecarHealthStatus::Stale
+        );
+        assert_eq!(
+            classify_sidecar_health(&unavailable_payload),
+            SidecarHealthStatus::Unavailable
+        );
+    }
+
+    #[test]
+    fn model_provider_id_uses_model_prefix() {
+        assert_eq!(
+            model_provider_id("deepseek/deepseek-v4-pro").unwrap(),
+            "deepseek"
+        );
+        assert_eq!(model_provider_id(" openai/gpt-5.5 ").unwrap(), "openai");
+        assert!(model_provider_id("gpt-5.5").is_err());
+    }
+
+    #[test]
+    fn crashed_sidecar_error_message_is_actionable() {
+        let message = crashed_sidecar_error_message(Some(1));
+        assert!(message.starts_with("AGENT_SIDECAR_CRASHED:"));
+        assert!(message.contains("退出码 1"));
+        assert!(message.contains("pnpm install"));
+        assert!(crashed_sidecar_error_message(None).contains("退出码 未知"));
+    }
+
+    #[test]
+    fn is_crashed_sidecar_error_only_matches_crash_prefix() {
+        assert!(is_crashed_sidecar_error(&crashed_sidecar_error_message(
+            Some(1)
+        )));
+        assert!(!is_crashed_sidecar_error(
+            "AGENT_SIDECAR_UNAVAILABLE: Node sidecar 已尝试启动，但未在 20 秒内就绪。"
+        ));
+    }
+
+    #[test]
+    fn crashed_sidecar_error_is_not_narrator_retryable() {
+        // 启动即崩溃是确定性故障，narrator 重试路径不应把它当作可重试错误。
+        assert!(!is_retryable_narrator_sidecar_error(
+            &crashed_sidecar_error_message(Some(1))
+        ));
+    }
+
+    #[test]
+    fn sidecar_runtime_dir_lives_under_unified_brand_root() {
+        // 运行时目录应落在统一品牌根 `.calamex` 下的 `ai-service` 子目录，
+        // 与 storage_paths::local_root() 保持一致（主目录优先，缺失时回退临时目录）。
+        let dir = sidecar_runtime_dir();
+        assert!(dir.ends_with("ai-service"));
+        assert!(
+            dir.parent()
+                .is_some_and(|parent| parent.ends_with(".calamex"))
+        );
+    }
+
+    #[test]
+    fn shared_client_builds_then_reuses_cached_instance() {
+        static CELL: OnceLock<reqwest::Client> = OnceLock::new();
+        assert!(CELL.get().is_none(), "cell 起始应为空");
+
+        let _first =
+            shared_client(&CELL, Duration::from_secs(5)).expect("首次调用应构建并缓存 client");
+        assert!(CELL.get().is_some(), "首次调用后 cell 应被填充");
+
+        // 第二次传入不同 timeout：应命中已缓存实例（早返回复用分支），不再 rebuild。
+        let _second =
+            shared_client(&CELL, Duration::from_secs(600)).expect("再次调用应复用已缓存 client");
+        assert!(CELL.get().is_some());
+    }
+
+    #[test]
+    fn long_and_health_clients_build_and_reuse_without_error() {
+        // 覆盖两个公共封装：首次构建 + 二次取用（命中 OnceLock 复用分支），均不应报错。
+        let _first = client().expect("长超时 client 应构建成功");
+        let _second = client().expect("长超时 client 应复用成功");
+        let _health_first = health_client().expect("health client 应构建成功");
+        let _health_second = health_client().expect("health client 应复用成功");
+    }
+}
