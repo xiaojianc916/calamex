@@ -1210,33 +1210,33 @@ onBeforeUnmount(() => {
 }
 
 .ai-prompt-shell {
-  --ai-prompt-layered-shadow:
-    0 -1px 0 0 #f6f6f5,
-    0 1px 0 0 #f0f0ef,
-    -1px 0 0 0 #f4f4f3,
-    1px 0 0 0 #f4f4f3,
-    0 2px 0 0 #f9f9f9,
-    -2px 0 0 0 #fdfdfd,
-    2px 0 0 0 #fdfdfd;
+  position: relative;
   width: 100%;
   background: var(--panel-bg);
-  border-width: 1px;
-  border-style: solid;
-  border-top-color: #efeeec;
-  border-bottom-color: #e9e8e6;
-  border-left-color: #ecebe9;
-  border-right-color: #ecebe9;
+  border: none;
   border-radius: 18px;
-  box-shadow: var(--ai-prompt-layered-shadow);
+  box-shadow: none;
   overflow: hidden;
 }
 
-.ai-prompt-shell:focus-within {
-  border-top-color: #efeeec;
-  border-bottom-color: #e9e8e6;
-  border-left-color: #ecebe9;
-  border-right-color: #ecebe9;
-  box-shadow: var(--ai-prompt-layered-shadow);
+.ai-prompt-shell::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow:
+    inset 0 0 0 1px #fefefe,
+    inset 0 0 0 2px #f5f5f4,
+    inset 0 0 0 3px #eeedeb;
+}
+
+.ai-prompt-shell:focus-within::after {
+  box-shadow:
+    inset 0 0 0 1px #fefefe,
+    inset 0 0 0 2px #f5f5f4,
+    inset 0 0 0 3px #eeedeb;
 }
 
 .ai-prompt-shell :deep([data-slot='input-group-control']:focus-visible),
