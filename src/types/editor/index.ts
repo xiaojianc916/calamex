@@ -5,6 +5,8 @@ import type {
   ExecutionEnvironment,
   ExecutionOption,
   ExecutorKind,
+  FormatDocumentPayload,
+  FormatDocumentRequest,
   FormatScriptPayload,
   FormatScriptRequest,
   ImageAssetPayload,
@@ -169,3 +171,7 @@ export type ISaveScriptRequest = SaveScriptRequest;
 export type IFormatScriptRequest = FormatScriptRequest;
 
 export type IFormatScriptPayload = FormatScriptPayload;
+
+export type IFormatDocumentRequest = FormatDocumentRequest;
+
+export type IFormatDocumentPayload = FormatDocumentPayload;

@@ -28,6 +28,7 @@ type TWorkspaceTauriService = Pick<
   ITauriService,
   | 'analyzeScript'
   | 'formatScript'
+  | 'formatDocument'
   | 'loadScript'
   | 'loadImageAsset'
   | 'saveScript'
@@ -77,6 +78,21 @@ export const workspaceTauriService: TWorkspaceTauriService = {
         signal: options?.signal,
       },
       () => commands.formatScript(payload),
+    );
+  },
+
+  formatDocument(payload, options?: IIpcCallOptions) {
+    return callSpectaCommand(
+      {
+        command: 'format_document',
+        guardHint: '调用多语言 formatter 格式化文档',
+        // 后端 External formatter 守卫超时 12s (FORMAT_TIMEOUT)，前端预算需高于它。
+        timeoutMs: 15_000,
+        input: payload,
+        measureInput: measureScriptContentInput,
+        signal: options?.signal,
+      },
+      () => commands.formatDocument(payload),
     );
   },
 
