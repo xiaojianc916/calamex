@@ -63,7 +63,7 @@
 
 <script setup lang="ts">
 import { FolderOpen } from '@lucide/vue';
-import { useDebounceFn, useEventListener } from '@vueuse/core';
+import { useEventListener } from '@vueuse/core';
 import {
   computed,
   defineAsyncComponent,
@@ -74,7 +74,6 @@ import {
   ref,
   watch,
 } from 'vue';
-import { events } from '@/bindings/tauri';
 import InlineError from '@/components/common/InlineError.vue';
 import type {
   ILinearContextMenuGroup,
@@ -89,11 +88,11 @@ import {
   EmptyTitle,
 } from '@/components/ui/empty';
 import WorkspaceTreeNode from '@/components/workbench/WorkspaceTreeNode.vue';
+import { useWorkspaceFileWatcher } from '@/components/workbench/sidebar/explorer/useWorkspaceFileWatcher';
 import { useDialog } from '@/composables/useDialog';
 import { useMessage } from '@/composables/useMessage';
 import { tauriService } from '@/services/tauri';
 import { useAppStore } from '@/store/app';
-import { useGitStore } from '@/store/git';
 import type { TWorkbenchSidebarView } from '@/types/app';
 import type {
   IActiveRunSummary,
@@ -171,7 +170,6 @@ const emit = defineEmits<{
 const message = useMessage();
 const dialog = useDialog();
 const appStore = useAppStore();
-const gitStore = useGitStore();
 
 const root = ref<IWorkspaceDirectoryPayload | null>(null);
 const rootLoading = ref(false);
@@ -925,86 +923,14 @@ const handleWindowKeydown = (event: KeyboardEvent): void => {
 useEventListener(window, 'pointerdown', handleWindowPointerDown, true);
 useEventListener(window, 'keydown', handleWindowKeydown);
 
-interface FsChange {
-  path: string;
-  kind: 'created' | 'modified' | 'removed' | 'renamed';
-}
-interface WorkspaceFsEvent {
-  changes: FsChange[];
-  rootPath: string;
-}
-let fsEventUnlisten: (() => void) | null = null;
-let isFsWatcherStarting = false;
-const pendingFsReloadDirs = new Set<string>();
-const flushPendingFsReloads = useDebounceFn(async (): Promise<void> => {
-  const dirs = [...pendingFsReloadDirs];
-  pendingFsReloadDirs.clear();
-  for (const dir of dirs) {
-    if (childrenMap[dir] === undefined) continue;
-    await loadDirectoryEntries(dir);
-  }
-}, 80);
-const refreshGitStatusAfterFsEvent = useDebounceFn(async (): Promise<void> => {
-  const rootPath = root.value?.rootPath ?? props.workspaceRootPath;
-  if (!rootPath) return;
-  try {
-    await gitStore.refreshRepositoryStatus(rootPath);
-  } catch (error) {
-    console.warn('[AppSidebar] Failed to refresh Git status after workspace file change.', error);
-  }
-}, 120);
-
-function stopWorkspaceFileWatcher(): void {
-  const wasWatching = fsEventUnlisten !== null || isFsWatcherStarting;
-  fsEventUnlisten?.();
-  fsEventUnlisten = null;
-  isFsWatcherStarting = false;
-  pendingFsReloadDirs.clear();
-  if (wasWatching) {
-    void tauriService.stopWorkspaceWatching();
-  }
-}
-
-async function startWorkspaceFileWatcher(): Promise<void> {
-  const rootPath = root.value?.rootPath;
-  if (!rootPath) return;
-  if (fsEventUnlisten || isFsWatcherStarting) return;
-  isFsWatcherStarting = true;
-  try {
-    if (!fsEventUnlisten) {
-      fsEventUnlisten = await events.workspaceFsEvent.listen((e) => {
-        handleFileSystemEvent(e.payload);
-      });
-    }
-    if (!areFileSystemPathsEqual(root.value?.rootPath ?? null, rootPath)) {
-      fsEventUnlisten?.();
-      fsEventUnlisten = null;
-      return;
-    }
-    try {
-      await tauriService.startWorkspaceWatching(rootPath);
-    } catch (error) {
-      console.warn('[AppSidebar] Failed to start workspace file watcher.', error);
-      fsEventUnlisten?.();
-      fsEventUnlisten = null;
-    }
-  } finally {
-    isFsWatcherStarting = false;
-  }
-}
-
-function handleFileSystemEvent(payload: WorkspaceFsEvent): void {
-  if (!root.value || !areFileSystemPathsEqual(payload.rootPath, root.value.rootPath)) return;
-  for (const change of payload.changes) {
-    if (change.kind === 'removed' || change.kind === 'renamed') {
-      pruneWorkspaceSubtreeState(change.path);
-    }
-    const parent = resolveParentPathForMutation(change.path);
-    if (parent) pendingFsReloadDirs.add(parent);
-  }
-  void flushPendingFsReloads();
-  void refreshGitStatusAfterFsEvent();
-}
+const { startWorkspaceFileWatcher, stopWorkspaceFileWatcher } = useWorkspaceFileWatcher({
+  root,
+  getWorkspaceRootPath: () => props.workspaceRootPath,
+  childrenMap,
+  loadDirectoryEntries,
+  pruneWorkspaceSubtreeState,
+  resolveParentPathForMutation,
+});
 
 watch(
   [
