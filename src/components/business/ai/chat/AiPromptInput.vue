@@ -1381,8 +1381,12 @@ onBeforeUnmount(() => {
   background: transparent;
   color: var(--text-secondary);
   box-shadow: none;
-  transition: background-color 140ms cubic-bezier(0.23, 1, 0.32, 1),
-    transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
+  transition: background-color 140ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.ai-icon-action:active {
+  transform: none;
+  scale: 1;
 }
 
 .ai-icon-action:hover:not(:disabled),
@@ -1762,6 +1766,16 @@ onBeforeUnmount(() => {
 
 .ai-token-content {
   overflow: hidden;
+  border: none;
+  box-shadow:
+    inset 0 0 0 1px #fefefe,
+    inset 0 0 0 2px #f5f5f4,
+    inset 0 0 0 3px #eeedeb,
+    var(--ai-menu-shadow);
+}
+
+.ai-token-content > :not([hidden]) ~ :not([hidden]) {
+  border-top: 1px solid #f0f0ef;
 }
 
 .ai-token-content [data-slot='context-content-footer'] {

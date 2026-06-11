@@ -10,7 +10,7 @@ const props = defineProps<{
 
 <template>
   <HoverCardContent
-    :class="cn('min-w-60 divide-y overflow-hidden p-0', props.class)"
+    :class="cn('min-w-60 divide-y overflow-hidden border-0 p-0 shadow-none', props.class)"
     v-bind="$attrs"
   >
     <slot />
