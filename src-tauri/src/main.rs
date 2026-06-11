@@ -187,9 +187,6 @@ fn setup_system_tray<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<()
 
 #[cfg(windows)]
 fn harden_webview_settings<R: tauri::Runtime>(webview_window: &tauri::WebviewWindow<R>) {
-    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings3;
-    use windows_core::Interface;
-
     let label = webview_window.label().to_string();
     let label_for_inner = label.clone();
     let access_result = webview_window.with_webview(move |webview| unsafe {
@@ -198,15 +195,9 @@ fn harden_webview_settings<R: tauri::Runtime>(webview_window: &tauri::WebviewWin
             .CoreWebView2()
             .and_then(|core| core.Settings())
             .and_then(|settings| {
-                // 1) 关闭默认右键菜单（保持既有行为）。
+                // 只关闭默认右键菜单，保留 F12 / Ctrl+Shift+I 等浏览器调试快捷键。
+                // Ctrl+S 的白屏问题不能靠关闭所有浏览器加速键来规避，否则会破坏调试入口。
                 settings.SetAreDefaultContextMenusEnabled(false)?;
-                // 2) 关闭浏览器加速键。WebView2 宿主层会把 Ctrl+S 当作“保存网页”
-                //    加速键处理，触发一次全屏白屏；JS 的 preventDefault 无法可靠拦截
-                //    宿主级加速键，必须在 WebView2 设置层关闭。应用自身的
-                //    Ctrl+S=保存、Mod+Enter=运行等快捷键由前端键位绑定接管，不受影响；
-                //    CodeMirror 自带的 Ctrl+F 查找也将不再被浏览器查找栏抢占。
-                let settings3 = settings.cast::<ICoreWebView2Settings3>()?;
-                settings3.SetAreBrowserAcceleratorKeysEnabled(false)?;
                 Ok(())
             });
         if let Err(error) = outcome {
