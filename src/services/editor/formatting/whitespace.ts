@@ -4,12 +4,9 @@ import type { IWhitespaceConventions } from './types';
 export const normalizeLineEndings = (content: string): string =>
   content.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 
-/** 去除每行行尾的空格与制表符。 */
+/** 去除每行行尾的空格与制表符。避免 split/map 整篇分配，保存路径上保持单次线性扫描。 */
 export const trimTrailingWhitespace = (content: string): string =>
-  content
-    .split('\n')
-    .map((line) => line.replace(/[\t ]+$/u, ''))
-    .join('\n');
+  content.replace(/[\t ]+(?=\n|$)/gu, '');
 
 /** 按需保证 / 去除文件末尾换行。 */
 export const applyFinalNewline = (content: string, insertFinalNewline: boolean): string => {

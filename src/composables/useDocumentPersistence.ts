@@ -226,6 +226,35 @@ export const useDocumentPersistence = ({
     }
   };
 
+  const markCurrentDocumentSavedWithoutContentChurn = (
+    documentId: string,
+    snapshot: TLoadedTextDocumentSnapshot,
+    payload: IScriptFilePayload,
+  ): boolean => {
+    const currentDocument = editorStore.getDocumentById(documentId);
+    if (
+      !currentDocument ||
+      !isLoadedTextDocument(currentDocument) ||
+      currentDocument.path !== snapshot.path ||
+      payload.path !== snapshot.path ||
+      currentDocument.name !== snapshot.name ||
+      payload.name !== snapshot.name ||
+      currentDocument.content !== payload.content ||
+      currentDocument.encoding !== payload.encoding
+    ) {
+      return false;
+    }
+
+    // 保存成功时，当前编辑器里的 content 已经是落盘内容。这里不要再走
+    // applyDocumentPayload：它会整篇重新赋值并重算 metrics，触发 Vue/CodeMirror 的外部同步链路。
+    // 只需要更新保存基线和 dirty 状态即可。
+    currentDocument.savedContent = payload.content;
+    currentDocument.savedEncoding = payload.encoding;
+    currentDocument.isDirty = false;
+    editorStore.clearDocumentDraft(payload.path);
+    return true;
+  };
+
   // 手动格式化当前文档：按语言解析 formatter（shell→shfmt(WASM)，其余→External 子进程，未命中退 whitespace 兜底/无操作）。
   // 结果写回 store 后，由编辑器的 computeDocChanges 以单事务最小 diff 应用。
   const formatDocumentWithShfmt = async (
@@ -484,6 +513,9 @@ export const useDocumentPersistence = ({
       encoding: snapshot.encoding,
       shouldApplyResult: () => isLoadedTextDocumentSnapshotCurrent(documentId, snapshot),
       onSaved: (payload) => {
+        if (markCurrentDocumentSavedWithoutContentChurn(documentId, snapshot, payload)) {
+          return;
+        }
         editorStore.applyDocumentPayload(documentId, payload);
       },
       resolveSuccessFeedback: (payload) => buildDocumentSaveFeedback('save', payload.path),

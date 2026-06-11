@@ -1,13 +1,15 @@
 /**
  * 编辑器「外部文档同步」差分。
  *
- * 背景：当外部来源（载入新版本、shfmt 格式化、AI 补丁等）整篇替换 modelValue 时，
+ * 背景：当外部来源（载入新版本、格式化、AI 补丁等）整篇替换 modelValue 时，
  * 若把整段当作一次 replace 下发，未变区域的折叠/选区/标记会被清空、撤销历史退化成
  * 一大步、大文档整段重渲染。
  *
- * 这里直接复用 CodeMirror 官方 `@codemirror/merge` 的 `diff()`（内部即 Myers O(ND)
- * 最短编辑脚本，与 git/diff 同源算法），产出多个互不相邻的最小变更区间。CodeMirror
- * 一次 dispatch 多个 change，未变区域原样保留，撤销粒度更细、重渲染面积更小。
+ * 小文本仍复用 CodeMirror 官方 `@codemirror/merge` 的 `diff()`（Myers O(ND) 最短编辑脚本），
+ * 产出多个互不相邻的最小变更区间。大文本 / 大范围变化则改用线性前后缀单区间替换：
+ * 保存时格式化、行尾空白归一、换行归一常会在很多行制造小差异，Myers 即使有 scanLimit
+ * 也可能在渲染主线程上形成可感知卡顿；线性算法牺牲一部分最小 diff 粒度，换取稳定的 O(n)
+ * 上界，避免 Ctrl+S 保存路径把 WebView 绘制线程卡到露出整窗白底。
  *
  * `diff()` 返回的 Change 以「文档 A / 文档 B」坐标表示：插入时 toA===fromA，删除时
  * toB===fromB。这里折算为 CodeMirror ChangeSpec 形态 { from, to, insert }。
@@ -36,6 +38,15 @@ export interface IDocChange {
 const DIFF_CONFIG = { scanLimit: 500 };
 
 /**
+ * 超过该规模后不再使用 Myers。保存路径上同步 diff 发生在渲染主线程，宁可少保留一些
+ * 未变区间，也不能让 Ctrl+S 因多处 whitespace 变化卡住整帧绘制。
+ */
+const MYERS_TOTAL_LENGTH_LIMIT = 160_000;
+
+/** 单次外部同步涉及的文本变化跨度超过该值时，使用线性单区间替换。 */
+const MYERS_CHANGED_SPAN_LIMIT = 48_000;
+
+/**
  * 把一组变更区间应用到源串，返回结果串。
  * 要求 changes 升序且互不重叠（computeDocChanges 的产出满足该约束）。
  * 同时用于 computeDocChanges 内部自校验。
@@ -52,8 +63,57 @@ export const applyDocChanges = (source: string, changes: readonly IDocChange[]):
   return result;
 };
 
+const computeSingleRangeChange = (current: string, next: string): IDocChange[] => {
+  if (current === next) {
+    return [];
+  }
+
+  let prefixLength = 0;
+  const maxPrefixLength = Math.min(current.length, next.length);
+  while (
+    prefixLength < maxPrefixLength &&
+    current.charCodeAt(prefixLength) === next.charCodeAt(prefixLength)
+  ) {
+    prefixLength += 1;
+  }
+
+  let currentSuffixIndex = current.length;
+  let nextSuffixIndex = next.length;
+  while (
+    currentSuffixIndex > prefixLength &&
+    nextSuffixIndex > prefixLength &&
+    current.charCodeAt(currentSuffixIndex - 1) === next.charCodeAt(nextSuffixIndex - 1)
+  ) {
+    currentSuffixIndex -= 1;
+    nextSuffixIndex -= 1;
+  }
+
+  return [
+    {
+      from: prefixLength,
+      to: currentSuffixIndex,
+      insert: next.slice(prefixLength, nextSuffixIndex),
+    },
+  ];
+};
+
+const shouldUseLinearSingleRange = (current: string, next: string): boolean => {
+  if (current.length + next.length > MYERS_TOTAL_LENGTH_LIMIT) {
+    return true;
+  }
+
+  const singleRange = computeSingleRangeChange(current, next)[0];
+  if (!singleRange) {
+    return false;
+  }
+
+  return (
+    singleRange.to - singleRange.from + singleRange.insert.length > MYERS_CHANGED_SPAN_LIMIT
+  );
+};
+
 /**
- * 计算把 current 变成 next 所需的「最小变更区间」集合。
+ * 计算把 current 变成 next 所需的变更区间集合。
  * 返回的数组可直接作为 CodeMirror dispatch 的 changes（ChangeSpec[]）。
  * current === next 时返回空数组（无变更）。
  */
@@ -64,6 +124,10 @@ export const computeDocChanges = (current: string, next: string): IDocChange[] =
 
   // diff 失败 / 自校验不通过时的安全兜底：整段替换。
   const singleReplacement: IDocChange[] = [{ from: 0, to: current.length, insert: next }];
+
+  if (shouldUseLinearSingleRange(current, next)) {
+    return computeSingleRangeChange(current, next);
+  }
 
   const changes = diff(current, next, DIFF_CONFIG).map<IDocChange>((change) => ({
     from: change.fromA,
