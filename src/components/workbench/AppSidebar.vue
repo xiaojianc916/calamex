@@ -2,34 +2,7 @@
 <aside class="app-sidebar-shell flex h-full min-h-0 min-w-0 flex-col overflow-hidden" :class="{ 'source-control-sidebar-host': isSourceControlView, 'explorer-sidebar-host': isExplorerView, 'search-sidebar-host': isSearchView, 'ssh-sidebar-host': isSshView, }" >
   <!-- 性能优化：侧边栏切换时避免频繁 mount/unmount 大面板（文件树、搜索、Git 等）。 改为常驻挂载 + v-show 切换可见性，以减少切换时的同步渲染/布局开销。 相关数据加载仍由各面板内部的 watch 条件控制（例如仅在 explorer view 时加载树）。 -->
   <SourceControlPanel v-show="isSourceControlView" class="h-full min-h-0 w-full flex-1" :is-desktop-runtime="isDesktopRuntime" :workspace-root-path="workspaceRootPath" :active-path="document.path" @open-file="handleOpenFile" @open-diff="handleOpenGitDiff" />
-  <section ref="explorerSectionRef" v-show="isExplorerView" class="explorer-sidebar" :class="{ 'is-scrollbar-active': isExplorerScrollbarActive }" aria-label="资源管理器" >
-    <div class="explorer-tree" @scroll.passive="handleExplorerTreeScroll" @contextmenu.prevent="handleEmptyAreaContextMenu">
-      <div v-if="!isDesktopRuntime" class="explorer-empty-state"> 浏览器预览模式下不显示本地目录树，请在 Tauri 桌面端查看资源文件。 </div>
-      <div v-else-if="loadError" class="explorer-empty-state"> <InlineError title="无法读取工作区目录" :message="loadError" /> </div>
-      <div v-else-if="rootLoading && !root" class="explorer-empty-state">正在读取资源目录...</div>
-      <Empty v-else-if="!workspaceRootPath" class="explorer-empty-state explorer-empty-state--raised">
-        <EmptyHeader class="gap-1.5">
-          <EmptyMedia class="h-auto w-auto rounded-none border-0 bg-transparent p-0 shadow-none"> <FolderOpen class="h-14 w-14" /> </EmptyMedia>
-          <EmptyTitle class="text-[12px] font-medium">尚未打开工作区</EmptyTitle>
-          <EmptyDescription class="text-[11px] leading-5"> 点击 <button type="button" class="explorer-empty-action" @click="emit('open-folder')"> adding files </button> <span> 打开一个文件夹。</span> </EmptyDescription>
-        </EmptyHeader>
-      </Empty>
-      <div v-else-if="!root" class="explorer-empty-state">正在准备资源树...</div>
-      <Empty v-else-if="isExplorerWorkspaceEmpty" class="explorer-empty-state explorer-empty-state--raised">
-        <EmptyHeader class="gap-1.5">
-          <EmptyMedia class="h-auto w-auto rounded-none border-0 bg-transparent p-0 shadow-none"> <FolderOpen class="h-14 w-14" /> </EmptyMedia>
-          <EmptyTitle class="text-[12px] font-medium">This folder is empty</EmptyTitle>
-          <EmptyDescription class="text-[11px] leading-5"> Start by <button type="button" class="explorer-empty-action" @click="emit('open-folder')"> adding files </button> <span> or creating new folders.</span> </EmptyDescription>
-        </EmptyHeader>
-      </Empty>
-      <template v-else>
-        <div class="explorer-file-tree font-mono text-sm" role="tree" aria-label="文件资源树">
-          <WorkspaceTreeNode v-if="rootEntry" :entry="rootEntry" :level="0" :children-map="childrenMap" :expanded-paths="manualExpandedPaths" :loading-paths="loadingPaths" :active-path="document.path" :active-dirty="document.isDirty" :context-menu-path="explorerContextMenuHighlightPath" :inline-create-draft="inlineCreateDraft" :root-path="root.rootPath" :inline-rename-draft="inlineRenameDraft" @toggle-directory="void toggleExplorerPath($event)" @open-file="handleOpenFile" @context-menu="handleEntryContextMenu" @inline-create-input="handleInlineCreateInputValue" @inline-create-blur="handleInlineCreateBlur" @inline-create-confirm="void confirmInlineCreateWorkspaceEntry()" @inline-create-cancel="cancelInlineCreateWorkspaceEntry" @inline-rename-input="inlineRenameDraft.value = $event" @inline-rename-confirm="void confirmInlineRename()" @inline-rename-cancel="cancelInlineRename" />
-        </div>
-      </template>
-    </div>
-    <DeferredLinearContextMenu v-if="explorerContextMenu.open" :open="explorerContextMenu.open" :x="explorerContextMenu.x" :y="explorerContextMenu.y" :groups="explorerContextMenuGroups" :theme="appStore.theme" :submenu-direction="explorerContextMenu.x > 280 ? 'left' : 'right'" @select="handleExplorerContextMenuSelect" />
-  </section>
+  <WorkspaceExplorerPanel v-show="isExplorerView" :document="document" :is-active="isExplorerView" :is-desktop-runtime="isDesktopRuntime" :workspace-root-path="workspaceRootPath" :preloaded-workspace-root="preloadedWorkspaceRoot" :startup-explorer-expanded-paths="startupExplorerExpandedPaths" :startup-explorer-selected-path="startupExplorerSelectedPath" @open-file="handleOpenFile" @open-folder="emit('open-folder')" @explorer-state-change="emit('explorer-state-change', $event)" />
   <DeferredSearchSidebarPanel v-show="isSearchView" :document-path="document.path" :is-desktop-runtime="isDesktopRuntime" :workspace-root-path="workspaceRootPath" :preloaded-workspace-root="preloadedWorkspaceRoot" @open-file="handleOpenFile" />
   <DeferredRunSidebarPanel v-show="isRunView" :document="document" :has-active-document="Boolean(document.id)" :is-desktop-runtime="isDesktopRuntime" :can-run="canRun" :is-running="isRunning" :has-run-artifacts="hasRunArtifacts" :active-run="activeRun" :run-history="runHistory" :command-templates="commandTemplates" :executor="executor" @run="emit('run')" @create-document="emit('create-document')" @open-terminal="emit('open-terminal')" @insert-template="emit('insert-template', $event)" @clear-run-history="emit('clear-run-history')" />
   <div v-show="isSshView" class="ssh-sidebar-host-shell flex min-h-0 w-full flex-1 flex-col overflow-hidden" >
@@ -62,33 +35,9 @@
 </template>
 
 <script setup lang="ts">
-import { FolderOpen } from '@lucide/vue';
-import { useEventListener } from '@vueuse/core';
-import {
-  computed,
-  defineAsyncComponent,
-  onBeforeUnmount,
-  onMounted,
-  ref,
-  watch,
-} from 'vue';
-import InlineError from '@/components/common/InlineError.vue';
+import { computed, defineAsyncComponent } from 'vue';
 import { Button } from '@/components/ui/button';
-import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from '@/components/ui/empty';
-import WorkspaceTreeNode from '@/components/workbench/WorkspaceTreeNode.vue';
-import { useWorkspaceExplorerContextMenu } from '@/components/workbench/sidebar/explorer/useWorkspaceExplorerContextMenu';
-import { useWorkspaceExplorerMutations } from '@/components/workbench/sidebar/explorer/useWorkspaceExplorerMutations';
-import { useWorkspaceExplorerRoot } from '@/components/workbench/sidebar/explorer/useWorkspaceExplorerRoot';
-import { useWorkspaceExplorerTree } from '@/components/workbench/sidebar/explorer/useWorkspaceExplorerTree';
-import { useWorkspaceFileWatcher } from '@/components/workbench/sidebar/explorer/useWorkspaceFileWatcher';
-import { useMessage } from '@/composables/useMessage';
-import { useAppStore } from '@/store/app';
+import WorkspaceExplorerPanel from '@/components/workbench/sidebar/explorer/WorkspaceExplorerPanel.vue';
 import type { TWorkbenchSidebarView } from '@/types/app';
 import type {
   IActiveRunSummary,
@@ -100,13 +49,7 @@ import type {
   TWorkbenchOpenFilePayload,
 } from '@/types/editor';
 import type { IGitDiffPreviewRequest } from '@/types/git';
-import { writeFileSystemPathToClipboard } from '@/utils/clipboard';
-import { resolveWorkspaceKey } from '@/utils/workspace';
 
-const DeferredLinearContextMenu = defineAsyncComponent({
-  loader: () => import('@/components/common/LinearContextMenu.vue'),
-  suspensible: false,
-});
 const SourceControlPanel = defineAsyncComponent({
   loader: () => import('@/components/workbench/SourceControlPanel.vue'),
   suspensible: false,
@@ -123,8 +66,6 @@ const DeferredSshSidebarPanel = defineAsyncComponent({
   loader: () => import('@/components/workbench/SshSidebarPanel.vue'),
   suspensible: false,
 });
-
-const EXPLORER_SCROLLBAR_IDLE_HIDE_DELAY_MS = 900;
 
 const props = defineProps<{
   document: IEditorDocument;
@@ -154,30 +95,6 @@ const emit = defineEmits<{
   'clear-run-history': [];
   'explorer-state-change': [payload: { expandedPaths: string[]; selectedPath: string | null }];
 }>();
-
-const message = useMessage();
-const appStore = useAppStore();
-
-const explorerSectionRef = ref<HTMLElement | null>(null);
-const isExplorerScrollbarActive = ref(false);
-
-let explorerScrollbarIdleTimer: ReturnType<typeof setTimeout> | null = null;
-
-const clearExplorerScrollbarIdleTimer = (): void => {
-  if (explorerScrollbarIdleTimer !== null) {
-    clearTimeout(explorerScrollbarIdleTimer);
-    explorerScrollbarIdleTimer = null;
-  }
-};
-
-const handleExplorerTreeScroll = (): void => {
-  clearExplorerScrollbarIdleTimer();
-  isExplorerScrollbarActive.value = true;
-  explorerScrollbarIdleTimer = setTimeout(() => {
-    explorerScrollbarIdleTimer = null;
-    isExplorerScrollbarActive.value = false;
-  }, EXPLORER_SCROLLBAR_IDLE_HIDE_DELAY_MS);
-};
 
 const SIDEBAR_META: Record<
   TWorkbenchSidebarView,
@@ -260,191 +177,10 @@ const isRunView = computed(() => props.view === 'run');
 const isSshView = computed(() => props.view === 'extensions');
 const panelMeta = computed(() => SIDEBAR_META[props.view] ?? SIDEBAR_META.ai);
 
-const selectedExplorerPath = computed(
-  () => props.document.path ?? props.startupExplorerSelectedPath ?? undefined,
-);
-
-const {
-  childrenMap,
-  manualExpandedPaths,
-  loadingPaths,
-  clearTreeState,
-  resetTreeForRoot,
-  loadDirectoryEntries,
-  loadStartupExpandedDirectories,
-  expandExplorerPath,
-  toggleExplorerPath,
-  resolveParentPathForMutation,
-  pruneWorkspaceSubtreeState,
-} = useWorkspaceExplorerTree({
-  getRoot: () => root.value,
-  getActiveRequestId: () => getActiveRequestId(),
-  getSelectedPath: () => selectedExplorerPath.value,
-  onExplorerStateChange: (payload) => emit('explorer-state-change', payload),
-});
-
-const {
-  root,
-  rootLoading,
-  loadError,
-  loadedWorkspaceKey,
-  getActiveRequestId,
-  isExplorerWorkspaceEmpty,
-  rootEntry,
-  loadWorkspaceRoot,
-  handleRefreshExplorer,
-} = useWorkspaceExplorerRoot({
-  isDesktopRuntime: () => props.isDesktopRuntime,
-  getWorkspaceRootPath: () => props.workspaceRootPath,
-  getPreloadedWorkspaceRoot: () => props.preloadedWorkspaceRoot,
-  getStartupExpandedPaths: () => props.startupExplorerExpandedPaths,
-  childrenMap,
-  clearTreeState,
-  resetTreeForRoot,
-  loadStartupExpandedDirectories,
-  startWorkspaceFileWatcher: () => startWorkspaceFileWatcher(),
-});
-
 const handleOpenFile = (payload: TWorkbenchOpenFilePayload): void => {
   emit('open-file', payload);
 };
 const handleOpenGitDiff = (payload: IGitDiffPreviewRequest): void => {
   emit('open-git-diff', payload);
 };
-
-const {
-  inlineCreateDraft,
-  inlineRenameDraft,
-  closeInlineCreateDraft,
-  handleInlineCreateInputValue,
-  handleInlineCreateBlur,
-  confirmInlineCreateWorkspaceEntry,
-  cancelInlineCreateWorkspaceEntry,
-  confirmInlineRename,
-  cancelInlineRename,
-  handleCreateWorkspaceEntry,
-  handleRenameWorkspaceEntry,
-  handleDeleteWorkspaceEntry,
-} = useWorkspaceExplorerMutations({
-  getRoot: () => root.value,
-  getWorkspaceRootPath: () => props.workspaceRootPath,
-  getSectionElement: () => explorerSectionRef.value,
-  expandExplorerPath,
-  loadDirectoryEntries,
-  refreshExplorer: handleRefreshExplorer,
-  pruneWorkspaceSubtreeState,
-  resolveParentPathForMutation,
-  onOpenFile: handleOpenFile,
-});
-
-const {
-  explorerContextMenu,
-  explorerContextMenuGroups,
-  explorerContextMenuHighlightPath,
-  closeExplorerContextMenu,
-  handleEntryContextMenu,
-  handleEmptyAreaContextMenu,
-  handleExplorerContextMenuSelect,
-} = useWorkspaceExplorerContextMenu({
-  resolveRootPath: () => root.value?.rootPath ?? null,
-  resolveEmptyAreaTarget: () =>
-    root.value
-      ? {
-          path: root.value.rootPath,
-          name: rootEntry.value?.name ?? root.value.rootName ?? root.value.rootPath,
-          kind: 'directory',
-          isRoot: true,
-        }
-      : null,
-  onCreate: handleCreateWorkspaceEntry,
-  onRename: handleRenameWorkspaceEntry,
-  onDelete: handleDeleteWorkspaceEntry,
-  onCopyPath: async (target) => {
-    await writeFileSystemPathToClipboard(target.path);
-    message.success('已复制路径');
-  },
-  onOpenFolder: () => emit('open-folder'),
-});
-
-const handleWindowKeydown = (event: KeyboardEvent): void => {
-  if (explorerContextMenu.open && event.key === 'Escape') {
-    closeExplorerContextMenu();
-    return;
-  }
-  if (inlineCreateDraft.open && event.key === 'Escape') {
-    cancelInlineCreateWorkspaceEntry();
-  }
-};
-
-useEventListener(window, 'keydown', handleWindowKeydown);
-
-const { startWorkspaceFileWatcher, stopWorkspaceFileWatcher } = useWorkspaceFileWatcher({
-  root,
-  getWorkspaceRootPath: () => props.workspaceRootPath,
-  childrenMap,
-  loadDirectoryEntries,
-  pruneWorkspaceSubtreeState,
-  resolveParentPathForMutation,
-});
-
-watch(
-  [
-    () => props.isDesktopRuntime,
-    () => props.workspaceRootPath,
-    isExplorerView,
-    () => props.preloadedWorkspaceRoot,
-  ],
-  ([ready, workspaceRootPath, explorer]) => {
-    if (!ready || !explorer) {
-      return;
-    }
-    const workspaceKey = resolveWorkspaceKey(workspaceRootPath);
-    if (loadedWorkspaceKey.value === workspaceKey && root.value) {
-      return;
-    }
-    void loadWorkspaceRoot(workspaceKey);
-  },
-  { immediate: true },
-);
-
-watch(
-  () => props.workspaceRootPath,
-  () => {
-    closeInlineCreateDraft();
-    stopWorkspaceFileWatcher();
-  },
-);
-
-onMounted(() => {
-  if (root.value?.rootPath) {
-    void startWorkspaceFileWatcher();
-  }
-});
-onBeforeUnmount(() => {
-  closeInlineCreateDraft();
-  cancelInlineRename();
-  clearExplorerScrollbarIdleTimer();
-  stopWorkspaceFileWatcher();
-});
 </script>
-
-<style scoped>
-.explorer-empty-action {
-  color: var(--accent-strong);
-  font-weight: 500;
-  text-decoration: underline;
-  text-decoration-thickness: 1px;
-  text-underline-offset: 3px;
-}
-.explorer-empty-action:hover {
-  color: color-mix(in srgb, var(--accent-strong) 84%, white);
-}
-.explorer-empty-action:focus-visible {
-  outline: none;
-  border-radius: 4px;
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ring) 32%, transparent);
-}
-.explorer-empty-state--raised {
-  transform: translateY(-52px);
-}
-</style>
