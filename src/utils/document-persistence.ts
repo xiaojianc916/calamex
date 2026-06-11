@@ -8,11 +8,11 @@ export const buildCurrentDocumentFormatFeedback = (
   documentName: string,
   hasChanges: boolean,
 ): IEditorOperationFeedback => ({
-  logTitle: 'shfmt 格式化',
+  logTitle: '格式化',
   logDetail: hasChanges
     ? `已格式化当前文件：${documentName}。`
-    : `当前文件已符合 shfmt 格式：${documentName}。`,
-  toastMessage: hasChanges ? '已通过 shfmt 格式化当前文件' : '当前文件已符合 shfmt 格式',
+    : `当前文件已符合格式规范：${documentName}。`,
+  toastMessage: hasChanges ? '已格式化当前文件' : '当前文件已符合格式规范',
 });
 
 export const buildWorkspaceDocumentFormatFeedback = (
@@ -20,11 +20,11 @@ export const buildWorkspaceDocumentFormatFeedback = (
   documentPath: string,
   hasChanges: boolean,
 ): IEditorOperationFeedback => ({
-  logTitle: 'shfmt 格式化',
+  logTitle: '格式化',
   logDetail: `${hasChanges ? '已格式化文件' : '已检查文件'}：${documentPath}`,
   toastMessage: hasChanges
-    ? `已通过 shfmt 格式化 ${documentName}`
-    : `${documentName} 已符合 shfmt 格式`,
+    ? `已格式化 ${documentName}`
+    : `${documentName} 已符合格式规范`,
 });
 
 export const buildDocumentSaveFeedback = (

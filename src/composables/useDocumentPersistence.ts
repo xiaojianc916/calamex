@@ -168,7 +168,7 @@ export const useDocumentPersistence = ({
     const existingDocument = editorStore.findDocumentByPath(path);
     if (existingDocument) {
       if (!isTextDocument(existingDocument)) {
-        throw new Error('当前目标不是可由 shfmt 处理的脚本文本。');
+        throw new Error('当前目标不是可格式化的文本文件。');
       }
 
       if (existingDocument.bufferLoaded === false) {
@@ -226,7 +226,7 @@ export const useDocumentPersistence = ({
     }
   };
 
-  // 手动格式化当前文档：按语言解析 formatter（shell→shfmt，其余暂走 whitespace 兜底/无操作）。
+  // 手动格式化当前文档：按语言解析 formatter（shell→shfmt(WASM)，其余→External 子进程，未命中退 whitespace 兜底/无操作）。
   // 结果写回 store 后，由编辑器的 computeDocChanges 以单事务最小 diff 应用。
   const formatDocumentWithShfmt = async (
     documentId = editorStore.document.id,
@@ -241,7 +241,7 @@ export const useDocumentPersistence = ({
     }
 
     if (!isTextDocument(targetDocument)) {
-      return warnAndReturnFalse('当前图片预览不支持 shfmt 格式化。');
+      return warnAndReturnFalse('当前图片预览不支持格式化。');
     }
 
     if (targetDocument.bufferLoaded === false) {
@@ -269,12 +269,12 @@ export const useDocumentPersistence = ({
 
     if (result.formatterFailed) {
       // 始终记录错误日志，便于排查；但在保存路径下可抑制弹窗（由调用方给出更友好的提示）。
-      const message = result.formatterError ?? 'shfmt 格式化失败';
-      editorStore.appendLog('error', 'shfmt 格式化失败', message);
+      const message = result.formatterError ?? '格式化失败';
+      editorStore.appendLog('error', '格式化失败', message);
       if (!options?.suppressErrorMessage) {
         notifier.error(
-          'shfmt 格式化失败',
-          message === 'shfmt 格式化失败' ? {} : { description: message },
+          '格式化失败',
+          message === '格式化失败' ? {} : { description: message },
         );
       }
       return false;
@@ -340,7 +340,7 @@ export const useDocumentPersistence = ({
       if (result.formatterFailed) {
         // 格式化失败（通常是脚本语法错误）不应阻断保存：记录日志、提示用户，
         // 仍按 whitespace 约定保存（管线在 formatter 失败时已应用 whitespace）。
-        editorStore.appendLog('error', 'shfmt 格式化失败', result.formatterError ?? 'shfmt 格式化失败');
+        editorStore.appendLog('error', '格式化失败', result.formatterError ?? '格式化失败');
         notifier.warning('保存时格式化失败，已跳过格式化直接保存，请检查脚本语法。');
       }
 
@@ -375,9 +375,9 @@ export const useDocumentPersistence = ({
 
       if (result.formatterFailed) {
         return reportPersistenceError(
-          '工作区文件 shfmt 格式化失败',
-          '工作区文件 shfmt 格式化失败',
-          new Error(result.formatterError ?? '工作区文件 shfmt 格式化失败'),
+          '工作区文件格式化失败',
+          '工作区文件格式化失败',
+          new Error(result.formatterError ?? '工作区文件格式化失败'),
         );
       }
 
@@ -407,15 +407,15 @@ export const useDocumentPersistence = ({
         },
         resolveSuccessFeedback: (payload) =>
           buildWorkspaceDocumentFormatFeedback(payload.name, payload.path, hasChanges),
-        failureTitle: '工作区文件 shfmt 格式化失败',
-        fallbackFailureMessage: '工作区文件 shfmt 格式化失败',
+        failureTitle: '工作区文件格式化失败',
+        fallbackFailureMessage: '工作区文件格式化失败',
       });
     } catch (error) {
-      if (error instanceof Error && error.message === '当前目标不是可由 shfmt 处理的脚本文本。') {
+      if (error instanceof Error && error.message === '当前目标不是可格式化的文本文件。') {
         return warnAndReturnFalse(error.message);
       }
 
-      return reportPersistenceError('工作区文件 shfmt 格式化失败', '工作区文件 shfmt 格式化失败', error);
+      return reportPersistenceError('工作区文件格式化失败', '工作区文件格式化失败', error);
     }
   };
 

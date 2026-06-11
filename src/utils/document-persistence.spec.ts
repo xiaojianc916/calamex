@@ -8,23 +8,23 @@ import {
 describe('document-persistence helpers', () => {
   it('生成当前文档格式化反馈', () => {
     expect(buildCurrentDocumentFormatFeedback('demo.sh', true)).toEqual({
-      logTitle: 'shfmt 格式化',
+      logTitle: '格式化',
       logDetail: '已格式化当前文件：demo.sh。',
-      toastMessage: '已通过 shfmt 格式化当前文件',
+      toastMessage: '已格式化当前文件',
     });
 
     expect(buildCurrentDocumentFormatFeedback('demo.sh', false)).toEqual({
-      logTitle: 'shfmt 格式化',
-      logDetail: '当前文件已符合 shfmt 格式：demo.sh。',
-      toastMessage: '当前文件已符合 shfmt 格式',
+      logTitle: '格式化',
+      logDetail: '当前文件已符合格式规范：demo.sh。',
+      toastMessage: '当前文件已符合格式规范',
     });
   });
 
   it('生成工作区文件格式化反馈', () => {
     expect(buildWorkspaceDocumentFormatFeedback('demo.sh', '/workspace/demo.sh', true)).toEqual({
-      logTitle: 'shfmt 格式化',
+      logTitle: '格式化',
       logDetail: '已格式化文件：/workspace/demo.sh',
-      toastMessage: '已通过 shfmt 格式化 demo.sh',
+      toastMessage: '已格式化 demo.sh',
     });
   });
 
