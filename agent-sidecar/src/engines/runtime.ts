@@ -92,6 +92,16 @@ export interface IAgentSidecarRuntime {
     restoreCheckpoint: TRuntimeMethod<ICheckpointRestoreInput>;
 
     /**
+     * 可选：原始模型透传（仿 Zed 独立模型请求）。
+     * 一次性、无工具、无记忆、不读历史、不套 agent 系统提示；调用方 messages（含 system）
+     * 原样下发给模型，承载标题生成 / 行内补全 / 连接测试等「工具型」模型调用——这些调用
+     * 不应被 ask 模式自建的 Calamex 助手人格污染（见 engines/prompts/system-prompt.ts）。
+     * 仅带外扩展方法 `calamex.dev/model/chat` 使用；不实现时该扩展返回 methodNotFound，
+     * agent 会话主流程不受影响。
+     */
+    modelChat?: TRuntimeMethod<IAgentRuntimeInput>;
+
+    /**
      * 可选：构建原生 Mastra 计划编排 workflow（Phase 2，默认关）。
      * 仅 server.ts 的 `/agent/plan/orchestrate` 在 `AGENT_ORCHESTRATION_WORKFLOW=1`
      * 时使用；不实现时该路由返回 404，旧路径不受影响。

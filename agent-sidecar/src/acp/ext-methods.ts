@@ -9,6 +9,9 @@
  *
  * 扩展清单（均挂在同一 calamex.dev 命名空间下，镜像 checkpoint/restore 先例）：
  * - checkpoint/restore：检查点回滚（runtime.restoreCheckpoint）。
+ * - model/chat：原始模型透传（runtime.modelChat）——一次性、无工具/记忆/历史、不套 agent
+ *   系统提示，调用方 messages（含 system）原样下发；承载标题生成 / 行内补全 / 连接测试等
+ *   「工具型」模型调用，仿 Zed 的独立模型请求；不实现该可选能力时返回 methodNotFound。
  * - web/search、web/fetch：应用级网络检索/抓取（由宿主的 ai::tools 调用，非 agent 工具）。
  * - warmup：LLM 连接预热（宿主启动时显式调用，缩短首 prompt 首字延迟）。
  * - health：健康/活性探活 + MCP 运行状态快照。
@@ -26,7 +29,11 @@ import {
 	toAgentSidecarResponse,
 	type IAgentRuntimeResponse,
 } from "../engines/contracts/runtime-contracts.js"
-import type { ICheckpointRestoreInput } from "../engines/contracts/runtime-input.js"
+import type {
+	IAgentMessageInput,
+	IAgentRuntimeInput,
+	ICheckpointRestoreInput,
+} from "../engines/contracts/runtime-input.js"
 import type { TAgentSidecarResponse } from "../schemas/events.js"
 
 /** 我方扩展命名空间（反向域名，避免与其他 ACP 实现的扩展冲突）。 */
@@ -34,6 +41,12 @@ export const CALAMEX_EXT_NAMESPACE = "calamex.dev"
 
 /** 检查点回滚扩展方法名（域名前缀 + 资源/动作，镜像 ACP 的 `session/prompt` 命名风格）。 */
 export const CHECKPOINT_RESTORE_METHOD = `${CALAMEX_EXT_NAMESPACE}/checkpoint/restore`
+
+/**
+ * 原始模型透传扩展方法名（仿 Zed 的独立模型请求）。
+ * 一次性、无工具、无记忆、不读历史、不套 agent 系统提示；调用方 messages（含 system）原样下发。
+ */
+export const MODEL_CHAT_METHOD = `${CALAMEX_EXT_NAMESPACE}/model/chat`
 
 /** 网络检索/抓取扩展方法名。 */
 export const WEB_SEARCH_METHOD = `${CALAMEX_EXT_NAMESPACE}/web/search`
@@ -62,6 +75,7 @@ export const CALAMEX_AGENT_CAPABILITY_META: Record<string, unknown> = {
 	[CALAMEX_EXT_NAMESPACE]: {
 		extMethods: {
 			checkpointRestore: CHECKPOINT_RESTORE_METHOD,
+			modelChat: MODEL_CHAT_METHOD,
 			webSearch: WEB_SEARCH_METHOD,
 			webFetch: WEB_FETCH_METHOD,
 			warmup: WARMUP_METHOD,
@@ -119,6 +133,68 @@ export const parseCheckpointRestoreParams = (
  * 直接复用既有解析器。过程事件（若有可投影者）已在调用期经 session/update 下发。
  */
 export const toCheckpointRestoreExtResult = (
+	response: IAgentRuntimeResponse,
+): TAgentSidecarResponse => toAgentSidecarResponse(response)
+
+/**
+ * 原始模型透传单条消息 schema。role 覆盖四类（system/user/assistant/tool），content 为纯文本；
+ * 与 `IAgentMessageInput` 结构兼容。toolCallId/name 仅在工具消息回放时出现，可选透传。
+ */
+const modelChatMessageSchema = z.object({
+	role: z.enum(["system", "user", "assistant", "tool"]),
+	content: z.string(),
+	toolCallId: z.string().trim().min(1).optional(),
+	name: z.string().trim().min(1).optional(),
+})
+
+/**
+ * 原始模型透传扩展方法的入参 schema。messages 至少一条；goal/sessionId/workspaceRootPath/
+ * modelConfig 均可选。语义：调用方完全掌控 prompt（含 system），sidecar 不附加任何人格。
+ */
+export const modelChatParamsSchema = z.object({
+	messages: z.array(modelChatMessageSchema).min(1),
+	goal: z.string().optional(),
+	sessionId: z.string().trim().min(1).optional(),
+	workspaceRootPath: z.string().trim().min(1).optional(),
+	modelConfig: modelConfigParamsSchema.optional(),
+})
+
+/**
+ * 校验并投影扩展入参为运行时输入。mode 固定为 ask（runtime.modelChat 不据 mode 自建系统
+ * 提示，故仅作类型完备占位）；可选字段仅在提供时写入，与 buildPromptRuntimeInput 同风格。
+ * 入参非法时抛出 ZodError，由 SDK 连接层映射为 JSON-RPC error。
+ */
+export const parseModelChatParams = (
+	params: Record<string, unknown>,
+): IAgentRuntimeInput => {
+	const parsed = modelChatParamsSchema.parse(params)
+	const messages: IAgentMessageInput[] = parsed.messages.map((message) => ({
+		role: message.role,
+		content: message.content,
+		...(message.toolCallId !== undefined
+			? { toolCallId: message.toolCallId }
+			: {}),
+		...(message.name !== undefined ? { name: message.name } : {}),
+	}))
+	return {
+		mode: "ask",
+		goal: parsed.goal ?? "",
+		messages,
+		...(parsed.sessionId !== undefined ? { sessionId: parsed.sessionId } : {}),
+		...(parsed.workspaceRootPath !== undefined
+			? { workspaceRootPath: parsed.workspaceRootPath }
+			: {}),
+		...(parsed.modelConfig !== undefined
+			? { modelConfig: parsed.modelConfig }
+			: {}),
+	}
+}
+
+/**
+ * 把原始模型透传的响应投影为扩展方法结果。复用 toAgentSidecarResponse，与 chat/checkpoint
+ * 完全同构（schemaVersion + sessionId + events + result），宿主可直接复用既有解析器。
+ */
+export const toModelChatExtResult = (
 	response: IAgentRuntimeResponse,
 ): TAgentSidecarResponse => toAgentSidecarResponse(response)
 

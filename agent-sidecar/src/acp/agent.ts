@@ -12,7 +12,7 @@
  *                       回灌 resolveApproval 续跑(见 approval-bridge.ts)，直至无待裁决审批，
  *                       回合收尾经 turn-egress 发可选 usage_update + 返回 PromptResponse。
  * - cancel            → 中止该会话当前回合的 AbortController(映射 runtime context.signal)。
- * - extMethod         → 受理本 Agent 公示的带外能力(检查点回滚 / web 检索抓取 / 预热 / 健康探活)。
+ * - extMethod         → 受理本 Agent 公示的带外能力(检查点回滚 / 模型透传 / web 检索抓取 / 预热 / 健康探活)。
  *
  * 设计要点：
  * - 依赖注入(connection / runtime / registry / 生成器)，与 JSON-RPC 传输解耦，可单测。
@@ -68,8 +68,11 @@ import {
 	CALAMEX_AGENT_CAPABILITY_META,
 	CHECKPOINT_RESTORE_METHOD,
 	HEALTH_METHOD,
+	MODEL_CHAT_METHOD,
 	parseCheckpointRestoreParams,
+	parseModelChatParams,
 	toCheckpointRestoreExtResult,
+	toModelChatExtResult,
 	toWarmupExtResult,
 	WARMUP_METHOD,
 	WEB_FETCH_METHOD,
@@ -204,7 +207,7 @@ export class CalamexAcpAgent implements Agent {
 			protocolVersion: PROTOCOL_VERSION,
 			agentCapabilities: {
 				loadSession: false,
-				// 带外能力(检查点回滚 / web 检索抓取 / 预热 / 健康探活)以命名空间扩展方法公示；见 ext-methods.ts。
+				// 带外能力(检查点回滚 / 模型透传 / web 检索抓取 / 预热 / 健康探活)以命名空间扩展方法公示；见 ext-methods.ts。
 				_meta: CALAMEX_AGENT_CAPABILITY_META,
 			},
 		}
@@ -350,6 +353,8 @@ export class CalamexAcpAgent implements Agent {
 		switch (method) {
 			case CHECKPOINT_RESTORE_METHOD:
 				return this.handleCheckpointRestore(params)
+			case MODEL_CHAT_METHOD:
+				return this.handleModelChat(params)
 			case WEB_SEARCH_METHOD:
 				return searchWeb(params)
 			case WEB_FETCH_METHOD:
@@ -393,6 +398,36 @@ export class CalamexAcpAgent implements Agent {
 			throw new Error(response.errorMessage)
 		}
 		return toCheckpointRestoreExtResult(response)
+	}
+
+	/**
+	 * 受理原始模型透传扩展方法(model/chat)。这是「工具型」一次性模型调用
+	 * (标题生成 / 行内补全 / 连接测试)的带外入口，仿 Zed 的独立模型请求：
+	 * 不属于任何 prompt 回合，故不经会话登记表、不投影 session/update，用本调用作用域的
+	 * AbortController。调用方 messages(含 system)由 runtime.modelChat 原样下发，绝不套
+	 * ask 模式自建的 Calamex 助手系统提示。运行时未实现该可选能力时以 methodNotFound 拒绝；
+	 * 失败依 ACP 约定映射为 JSON-RPC error(由 SDK 包装)。
+	 */
+	private async handleModelChat(
+		params: Record<string, unknown>,
+	): Promise<Record<string, unknown>> {
+		if (!this.runtime.modelChat) {
+			throw RequestError.methodNotFound(MODEL_CHAT_METHOD)
+		}
+		const input = parseModelChatParams(params)
+		const controller = new AbortController()
+		const options: IAgentRuntimeRunOptions = {
+			context: {
+				requestId: this.generateRequestId(),
+				signal: controller.signal,
+				timeoutMs: this.turnTimeoutMs,
+			},
+		}
+		const response = await this.runtime.modelChat(input, options)
+		if (response.errorMessage) {
+			throw new Error(response.errorMessage)
+		}
+		return toModelChatExtResult(response)
 	}
 
 	/**

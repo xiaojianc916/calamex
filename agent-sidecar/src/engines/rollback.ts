@@ -5,12 +5,13 @@ import { normalizeMastraError } from './errors.js';
 import { createErrorResponse } from './responses.js';
 import { createMastraPlanOrchestrationDeps } from './plan/orchestration-deps.js';
 import { PLAN_ORCHESTRATION_WORKFLOW_ID, createPlanOrchestrationWorkflow, type TPlanOrchestrationWorkflow } from './plan/orchestration-workflow.js';
+import { getSessionMessageText } from './session/session-messages.js';
 import { loadMastraMcpTools } from './tools/tools.js';
-import { DEFAULT_EXECUTION_AGENT_ID, DEFAULT_EXECUTION_AGENT_NAME, DEFAULT_ROLLBACK_STEP } from './types.js';
+import { DEFAULT_EXECUTION_AGENT_ID, DEFAULT_EXECUTION_AGENT_NAME, DEFAULT_ROLLBACK_STEP, type TMastraChatMessage } from './types.js';
 import { createMastraRequestContext, createRuntimeEventFactory, createSessionId, pushUiEvent, requestContextToRecord } from './utils.js';
 import { createMastraAgentInputProcessors, createMastraAgentOutputProcessors, destroyMastraBrowser, destroyMastraWorkspace } from './workspace.js';
 import type { IAgentRuntimeResponse, IAgentRuntimeRunOptions, TAgentRuntimeOutputEvent } from './contracts/runtime-contracts.js';
-import type { IAgentRuntimeModelConfigInput, ICheckpointRestoreInput } from './contracts/runtime-input.js';
+import type { IAgentRuntimeInput, IAgentRuntimeModelConfigInput, ICheckpointRestoreInput } from './contracts/runtime-input.js';
 import { DurableStepIds } from '@mastra/core/agent/durable';
 import { Mastra } from '@mastra/core/mastra';
 
@@ -60,6 +61,95 @@ export class MastraRuntime extends MastraRuntimeApproval {
         return mastra.getWorkflowById(
             PLAN_ORCHESTRATION_WORKFLOW_ID as never,
         ) as unknown as TPlanOrchestrationWorkflow;
+    }
+
+    /**
+     * 原始模型透传（仿 Zed 独立模型请求的 utility 用法：标题生成 / 行内补全 / 连接测试）。
+     *
+     * 与 chat/plan/execute 的本质区别——**不**调用 buildSystemPrompt、不挂工具、不挂记忆、
+     * 不读会话历史、不投影过程事件。调用方传入的 system 消息合并为 instructions，其余
+     * user/assistant 消息按原序映射为模型消息后直接 generate。这些「工具型」一次性调用
+     * 必须由调用方完全掌控 prompt，绝不能被 ask 模式自建的 Calamex 助手人格 / Agent 模式
+     * 指令 / 工具策略污染（见 prompts/system-prompt.ts 的 buildSystemPrompt）。
+     *
+     * 非流式：utility 调用要的是完整结果，故用 agent.generate 而非 stream。
+     * DeepSeek reasoning 透传 shim 仅在回放「带 tool_calls 的 assistant 消息」时生效，
+     * 本路径无工具调用，故无需 runWithDeepSeekReasoningContext 包裹
+     * （见 models/providers/deepseek-reasoning-fetch.ts）。
+     */
+    async modelChat(
+        input: IAgentRuntimeInput,
+        options: IAgentRuntimeRunOptions = {},
+    ): Promise<IAgentRuntimeResponse> {
+        const sessionId = input.sessionId ?? createSessionId('mastra-model-chat');
+        const events: TAgentRuntimeOutputEvent[] = [];
+        const modelConfig = resolveMastraModelConfig(
+            this.readModelConfig,
+            input.modelConfig,
+        );
+
+        if (!modelConfig) {
+            return createErrorResponse(
+                sessionId,
+                'AI 模型未配置：请先在应用设置中完成模型配置。',
+                events,
+                options,
+            );
+        }
+
+        // system → instructions（合并、保序、去空）；调用方未给 system 时 instructions 为空，
+        // 不臆造任何人格——这正是「原始透传」的语义。
+        const instructions = input.messages
+            .filter((message) => message.role === 'system')
+            .map((message) => getSessionMessageText(message.content).trim())
+            .filter((text) => text.length > 0)
+            .join('\n\n');
+
+        // 其余角色按原序映射为模型消息（逐分支构造以匹配 TMastraChatMessage 的可辨识联合）。
+        const conversation = input.messages.flatMap<TMastraChatMessage>((message) => {
+            if (message.role !== 'user' && message.role !== 'assistant') {
+                return [];
+            }
+            const content = getSessionMessageText(message.content);
+            if (content.trim().length === 0) {
+                return [];
+            }
+            return message.role === 'user'
+                ? [{ role: 'user', content }]
+                : [{ role: 'assistant', content }];
+        });
+
+        if (conversation.length === 0) {
+            return createErrorResponse(
+                sessionId,
+                '原始模型透传至少需要一条非空的 user/assistant 消息。',
+                events,
+                options,
+            );
+        }
+
+        try {
+            const agent = this.createAgent({
+                id: DEFAULT_EXECUTION_AGENT_ID,
+                name: DEFAULT_EXECUTION_AGENT_NAME,
+                instructions,
+                model: createMastraModelConfig(modelConfig),
+            });
+            const result = await agent.generate(conversation, {
+                ...(options.context?.signal
+                    ? { abortSignal: options.context.signal }
+                    : {}),
+            });
+            const text = typeof result.text === 'string' ? result.text : '';
+            return { sessionId, events, result: text };
+        } catch (error) {
+            return createErrorResponse(
+                sessionId,
+                `原始模型透传失败：${normalizeMastraError(error)}`,
+                events,
+                options,
+            );
+        }
     }
 
     async restoreCheckpoint(
