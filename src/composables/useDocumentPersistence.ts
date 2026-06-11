@@ -1,4 +1,5 @@
 import { useMessage } from '@/composables/useMessage';
+import { applyWhitespaceConventions, resolveFormatter, runFormatPipeline } from '@/services/editor/formatting';
 import { tauriService } from '@/services/tauri';
 import type { useAppStore } from '@/store/app';
 import type { useEditorStore } from '@/store/editor';
@@ -9,6 +10,7 @@ import {
   buildWorkspaceDocumentFormatFeedback,
   type IEditorOperationFeedback,
 } from '@/utils/document-persistence';
+import { resolveLanguageForPath } from '@/utils/editor-language';
 import { toErrorMessage } from '@/utils/error';
 import { getRelativeFileSystemPath } from '@/utils/path';
 
@@ -42,17 +44,6 @@ interface IPersistTextDocumentOptions {
   fallbackFailureMessage: string;
   workspaceRootPath?: string | null;
 }
-
-const formatShellScriptWithWasm = async (source: string, path?: string | null): Promise<string> => {
-  const { formatShellScript } = await import('@/utils/shfmt');
-  return formatShellScript(source, path);
-};
-
-const trimTrailingWhitespace = (content: string): string =>
-  content
-    .split('\n')
-    .map((line) => line.replace(/[\t ]+$/u, ''))
-    .join('\n');
 
 const isTextDocument = (document: IEditorDocument): boolean => document.kind === 'text';
 
@@ -92,21 +83,13 @@ export const useDocumentPersistence = ({
     return `${normalizedShebang}\n\n${strictModeBlock}main() {\n  echo "Hello SH Editor"\n}\n\nmain "$@"\n`;
   };
 
-  const normalizeDocumentContentForSave = (content: string): string => {
-    let nextContent = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const buildWhitespaceConventions = () => ({
+    trimTrailingWhitespace: appStore.settings.editor.trimTrailingWhitespace,
+    insertFinalNewline: appStore.settings.editor.insertFinalNewline,
+  });
 
-    if (appStore.settings.editor.trimTrailingWhitespace) {
-      nextContent = trimTrailingWhitespace(nextContent);
-    }
-
-    if (appStore.settings.editor.insertFinalNewline) {
-      nextContent = nextContent.length > 0 ? nextContent.replace(/[\r\n]*$/u, '\n') : '';
-    } else {
-      nextContent = nextContent.replace(/[\r\n]+$/u, '');
-    }
-
-    return nextContent;
-  };
+  const normalizeDocumentContentForSave = (content: string): string =>
+    applyWhitespaceConventions(content, buildWhitespaceConventions());
 
   const warnAndReturnFalse = (message: string): false => {
     notifier.warning(message);
@@ -243,6 +226,8 @@ export const useDocumentPersistence = ({
     }
   };
 
+  // 手动格式化当前文档：按语言解析 formatter（shell→shfmt，其余暂走 whitespace 兜底/无操作）。
+  // 结果写回 store 后，由编辑器的 computeDocChanges 以单事务最小 diff 应用。
   const formatDocumentWithShfmt = async (
     documentId = editorStore.document.id,
     options?: {
@@ -268,27 +253,23 @@ export const useDocumentPersistence = ({
       return false;
     }
 
-    try {
-      const formattedContent = await formatShellScriptWithWasm(
-        snapshot.content,
-        snapshot.path ?? snapshot.name,
-      );
+    const languageId = resolveLanguageForPath(snapshot.path, snapshot.name);
+    const result = await runFormatPipeline({
+      text: snapshot.content,
+      path: snapshot.path ?? snapshot.name,
+      languageId,
+      trigger: 'manual',
+      formatter: resolveFormatter(languageId),
+      whitespace: null,
+    });
 
-      if (!isLoadedTextDocumentSnapshotCurrent(documentId, snapshot)) {
-        return false;
-      }
+    if (!isLoadedTextDocumentSnapshotCurrent(documentId, snapshot)) {
+      return false;
+    }
 
-      const hasChanges = formattedContent !== snapshot.content;
-      editorStore.updateDocumentContent(documentId, formattedContent);
-
-      if (!options?.suppressSuccessMessage) {
-        notifyOperationSuccess(buildCurrentDocumentFormatFeedback(snapshot.name, hasChanges));
-      }
-
-      return true;
-    } catch (error) {
+    if (result.formatterFailed) {
       // 始终记录错误日志，便于排查；但在保存路径下可抑制弹窗（由调用方给出更友好的提示）。
-      const message = toErrorMessage(error, 'shfmt 格式化失败');
+      const message = result.formatterError ?? 'shfmt 格式化失败';
       editorStore.appendLog('error', 'shfmt 格式化失败', message);
       if (!options?.suppressErrorMessage) {
         notifier.error(
@@ -298,6 +279,17 @@ export const useDocumentPersistence = ({
       }
       return false;
     }
+
+    const hasChanges = result.kind === 'changed';
+    if (hasChanges) {
+      editorStore.updateDocumentContent(documentId, result.text);
+    }
+
+    if (!options?.suppressSuccessMessage) {
+      notifyOperationSuccess(buildCurrentDocumentFormatFeedback(snapshot.name, hasChanges));
+    }
+
+    return true;
   };
 
   const prepareDocumentForSave = async (documentId: string): Promise<IEditorDocument | null> => {
@@ -317,8 +309,8 @@ export const useDocumentPersistence = ({
       editorStore.applyDocumentPayload(documentId, payload);
     }
 
-    // 开启“保存时格式化”时，先跑 shfmt 再统一规范化（仅此一次写回内容）。
-    // 不再在格式化前额外规范化一次——那次写回会立刻被格式化结果覆盖，却已多触发一次
+    // 开启“保存时格式化”时，按语言解析 formatter 跑格式化，并在同一管线里完成 whitespace
+    // 规范化——只写回一次内容。旧实现先写回格式化结果、再写回规范化结果，多触发一次
     // 编辑器重排/重着色，是保存时“一闪一闪”的主因之一。
     if (appStore.settings.editor.formatOnSave) {
       const candidate = editorStore.getDocumentById(documentId);
@@ -326,17 +318,37 @@ export const useDocumentPersistence = ({
         return applySaveConventionsToDocument(documentId);
       }
 
-      const formatted = await formatDocumentWithShfmt(documentId, {
-        suppressSuccessMessage: true,
-        suppressErrorMessage: true,
+      const snapshot = createLoadedTextDocumentSnapshot(candidate);
+      if (!snapshot) {
+        return null;
+      }
+
+      const languageId = resolveLanguageForPath(snapshot.path, snapshot.name);
+      const result = await runFormatPipeline({
+        text: snapshot.content,
+        path: snapshot.path ?? snapshot.name,
+        languageId,
+        trigger: 'save',
+        formatter: resolveFormatter(languageId),
+        whitespace: buildWhitespaceConventions(),
       });
-      if (!formatted) {
-        // 格式化失败（通常是脚本存在语法错误）不应阻断保存：
-        // 跳过格式化，提示用户后按保存约定保存原始内容。
+
+      if (!isLoadedTextDocumentSnapshotCurrent(documentId, snapshot)) {
+        return applySaveConventionsToDocument(documentId);
+      }
+
+      if (result.formatterFailed) {
+        // 格式化失败（通常是脚本语法错误）不应阻断保存：记录日志、提示用户，
+        // 仍按 whitespace 约定保存（管线在 formatter 失败时已应用 whitespace）。
+        editorStore.appendLog('error', 'shfmt 格式化失败', result.formatterError ?? 'shfmt 格式化失败');
         notifier.warning('保存时格式化失败，已跳过格式化直接保存，请检查脚本语法。');
       }
 
-      return applySaveConventionsToDocument(documentId);
+      if (result.kind === 'changed') {
+        editorStore.updateDocumentContent(documentId, result.text);
+      }
+
+      return editorStore.getDocumentById(documentId);
     }
 
     return applySaveConventionsToDocument(documentId);
@@ -351,11 +363,26 @@ export const useDocumentPersistence = ({
           ? createLoadedTextDocumentSnapshot(existingBeforeFormat)
           : null;
       const sourceDocument = await loadTextSourceDocument(path);
-      const formattedContent = await formatShellScriptWithWasm(
-        sourceDocument.content,
-        sourceDocument.path ?? sourceDocument.name,
-      );
-      const hasChanges = formattedContent !== sourceDocument.content;
+      const languageId = resolveLanguageForPath(sourceDocument.path, sourceDocument.name);
+      const result = await runFormatPipeline({
+        text: sourceDocument.content,
+        path: sourceDocument.path ?? sourceDocument.name,
+        languageId,
+        trigger: 'manual',
+        formatter: resolveFormatter(languageId),
+        whitespace: null,
+      });
+
+      if (result.formatterFailed) {
+        return reportPersistenceError(
+          '工作区文件 shfmt 格式化失败',
+          '工作区文件 shfmt 格式化失败',
+          new Error(result.formatterError ?? '工作区文件 shfmt 格式化失败'),
+        );
+      }
+
+      const hasChanges = result.kind === 'changed';
+      const formattedContent = hasChanges ? result.text : sourceDocument.content;
 
       return persistTextDocument({
         path,
@@ -388,11 +415,7 @@ export const useDocumentPersistence = ({
         return warnAndReturnFalse(error.message);
       }
 
-      return reportPersistenceError(
-        '工作区文件 shfmt 格式化失败',
-        '工作区文件 shfmt 格式化失败',
-        error,
-      );
+      return reportPersistenceError('工作区文件 shfmt 格式化失败', '工作区文件 shfmt 格式化失败', error);
     }
   };
 
