@@ -1,7 +1,9 @@
 import { commands } from '@/bindings/tauri';
+import type { IWorkspaceSearchStreamEvent } from '@/types/search';
 import type { ITauriService } from '@/types/tauri';
+import { assertDesktopRuntime } from '@/utils/desktop-runtime';
 import { measureScriptContentInput } from './tauri.ipc-metrics';
-import { callSpectaCommand, pickDialogPath } from './tauri.ipc-runtime';
+import { callSpectaCommand, loadTauriEvent, pickDialogPath } from './tauri.ipc-runtime';
 import type { IIpcCallOptions } from './tauri.ipc-types';
 
 const openFileFilters = [
@@ -37,6 +39,7 @@ type TWorkspaceTauriService = Pick<
   | 'startWorkspaceWatching'
   | 'stopWorkspaceWatching'
   | 'searchWorkspace'
+  | 'onWorkspaceSearchStream'
   | 'previewWorkspaceReplacement'
   | 'applyWorkspaceReplacement'
 > & {
@@ -261,6 +264,7 @@ export const workspaceTauriService: TWorkspaceTauriService = {
       includePatterns: payload.includePatterns,
       excludePatterns: payload.excludePatterns,
       limit: payload.limit ?? null,
+      streamToken: payload.streamToken ?? null,
     };
     return callSpectaCommand(
       {
@@ -273,6 +277,16 @@ export const workspaceTauriService: TWorkspaceTauriService = {
       },
       () => commands.searchWorkspace(commandPayload),
     );
+  },
+
+  // 订阅后端 workspace-search-stream 事件：内容搜索按文件发现顺序分批 emit，前端据 streamToken 追加。
+  // 仅桌面端可用——assertDesktopRuntime 在浏览器预览下会抛出，由调用方吞掉。
+  async onWorkspaceSearchStream(handler) {
+    await assertDesktopRuntime('监听流式搜索结果');
+    const { listen } = await loadTauriEvent();
+    return listen<IWorkspaceSearchStreamEvent>('workspace-search-stream', (event) => {
+      handler(event.payload);
+    });
   },
 
   previewWorkspaceReplacement(payload, options) {

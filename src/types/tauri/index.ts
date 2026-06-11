@@ -112,6 +112,7 @@ import type {
   IWorkspaceReplacementRequest,
   IWorkspaceSearchPayload,
   IWorkspaceSearchRequest,
+  IWorkspaceSearchStreamEvent,
 } from '../search';
 import type {
   ICancelTerminalRunRequest,
@@ -307,6 +308,9 @@ export interface ITauriService {
     payload: IWorkspaceSearchRequest,
     options?: ITauriCallOptions,
   ): Promise<IWorkspaceSearchPayload>;
+  onWorkspaceSearchStream(
+    handler: (payload: IWorkspaceSearchStreamEvent) => void,
+  ): Promise<() => void>;
   previewWorkspaceReplacement(
     payload: IWorkspaceReplacementRequest,
     options?: ITauriCallOptions,
