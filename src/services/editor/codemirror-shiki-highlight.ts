@@ -6,7 +6,12 @@ import {
   ViewPlugin,
   type ViewUpdate,
 } from '@codemirror/view';
-import { tokenizeWithShikiWorker } from '@/services/editor/shiki-highlighter';
+import {
+  ensureShikiLanguage,
+  isShikiLanguageLoaded,
+  tokenizeWithShikiSync,
+  tokenizeWithShikiWorker,
+} from '@/services/editor/shiki-highlighter';
 import {
   type IShikiThemedToken,
   resolveShikiLanguageId,
@@ -23,8 +28,15 @@ export const EDITOR_FONT_FAMILY =
 // 避免 Worker 任务过重。注意这是“切片”上限而非“整文档”上限。
 const MAX_HIGHLIGHT_SLICE_LENGTH = 200_000;
 
-// 可见区上下额外着色的行数：平滑向下滚动时的着色衔接，并作为超大文件窗口退化时的缓冲。
-const HIGHLIGHT_OVERSCAN_LINES = 40;
+// 同步着色的切片字节上限：语法已在主线程加载、且切片不超过此值时，直接在主线程
+// tokenize 并即时着色，消除滚动时“新行先露白、等 Worker 回包才补色”的闪烁；超过则
+// 仍交给 Worker 异步处理，避免阻塞 UI 线程。取值远小于 Worker 切片上限，保证单帧
+// 同步 tokenize 的耗时可控（典型超大文件退化窗口切片远小于此值，故仍可同步着色）。
+const MAX_SYNC_HIGHLIGHT_SLICE_LENGTH = 50_000;
+
+// 可见区上下额外着色的行数：平滑滚动时的着色衔接缓冲，并作为超大文件窗口退化时的缓冲。
+// 取较大值以覆盖快速滚动单帧的跨度，减少滚动越界触发重算的频率，降低闪烁概率。
+const HIGHLIGHT_OVERSCAN_LINES = 120;
 
 // 输入停顿后过多久触发一次重算（毫秒）；过小会让连续输入仍频繁重算，过大高亮滞后明显。
 const HIGHLIGHT_RECOMPUTE_DEBOUNCE_MS = 90;
@@ -153,6 +165,18 @@ export const createShikiHighlightRequestKey = (input: {
   codeLength: number;
 }): string =>
   [input.language, input.docVersion, input.startLine, input.endLine, input.codeLength].join(':');
+
+/**
+ * 纯函数：判断本次重算是否走“主线程同步着色”快路径。
+ * 仅当目标语法已在主线程加载、且切片体积不超过上限时返回 true：此时可在当前 update 内
+ * 同步 tokenize 并立即着色，避免滚动暴露的新行先以无色渲染、等 Worker 回包才补色的闪烁。
+ * 语法未加载或切片过大时返回 false，回退到 Worker 异步路径，避免阻塞 UI 线程。
+ */
+export const shouldHighlightSynchronously = (input: {
+  languageLoaded: boolean;
+  sliceCodeLength: number;
+  maxSyncSliceLength: number;
+}): boolean => input.languageLoaded && input.sliceCodeLength <= input.maxSyncSliceLength;
 
 const shikiLanguageField = StateField.define<string>({
   create: () => 'text',
@@ -489,6 +513,42 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
           }))
       ) {
         return;
+      }
+
+      // 同步快路径：语法已在主线程加载且切片不大时，直接 tokenize 并即时着色，
+      // 消除滚动暴露的新行“先露白、等 Worker 回包才补色”造成的闪烁/空白。
+      const languageLoadedOnMainThread = isShikiLanguageLoaded(language);
+      if (
+        shouldHighlightSynchronously({
+          languageLoaded: languageLoadedOnMainThread,
+          sliceCodeLength: slice.code.length,
+          maxSyncSliceLength: MAX_SYNC_HIGHLIGHT_SLICE_LENGTH,
+        })
+      ) {
+        const tokens = tokenizeWithShikiSync(slice.code, language);
+        if (tokens) {
+          // 提升 latestRequestId 作废仍在途的旧 Worker 请求，避免其回包覆盖本次同步结果。
+          this.latestRequestId = this.nextRequestId;
+          this.nextRequestId += 1;
+          this.pendingRequest = null;
+          this.decorations = buildDecorationsFromTokenLines(
+            view,
+            slice.startLine,
+            slice.endLine,
+            tokens,
+          );
+          this.highlightedLanguage = language;
+          this.highlightedStartLine = slice.startLine;
+          this.highlightedEndLine = slice.endLine;
+          return;
+        }
+      } else if (
+        !languageLoadedOnMainThread &&
+        slice.code.length <= MAX_SYNC_HIGHLIGHT_SLICE_LENGTH
+      ) {
+        // 主线程语法尚未就绪：后台预热（不阻塞本轮），使后续滚动可走同步快路径消除闪烁。
+        // 本轮仍走下方 Worker 异步着色，保证首屏可用；旧装饰在途期间保留，避免露白。
+        void ensureShikiLanguage(language);
       }
 
       const requestId = this.nextRequestId;

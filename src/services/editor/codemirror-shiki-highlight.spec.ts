@@ -3,6 +3,9 @@ import { describe, expect, it, vi } from 'vitest';
 // 避免在测试环境加载真实 Shiki/Oniguruma 包；本用例只验证纯决策/计算函数。
 vi.mock('@/services/editor/shiki-highlighter', () => ({
   tokenizeWithShikiWorker: vi.fn(() => Promise.resolve(null)),
+  tokenizeWithShikiSync: vi.fn(() => null),
+  isShikiLanguageLoaded: vi.fn(() => false),
+  ensureShikiLanguage: vi.fn(() => Promise.resolve(null)),
 }));
 
 vi.mock('@/services/editor/shiki-shared', () => ({
@@ -16,6 +19,7 @@ import {
   createShikiHighlightRequestKey,
   isShikiHighlightRangeCovered,
   resolveShikiHighlightUpdateAction,
+  shouldHighlightSynchronously,
 } from './codemirror-shiki-highlight';
 
 describe('resolveShikiHighlightUpdateAction', () => {
@@ -200,5 +204,47 @@ describe('createShikiHighlightRequestKey', () => {
     expect(createShikiHighlightRequestKey({ ...base, docVersion: 3 })).not.toBe(
       createShikiHighlightRequestKey({ ...base, docVersion: 4 }),
     );
+  });
+});
+
+describe('shouldHighlightSynchronously', () => {
+  it('语法已加载且切片不超过上限时走同步着色', () => {
+    expect(
+      shouldHighlightSynchronously({
+        languageLoaded: true,
+        sliceCodeLength: 12_000,
+        maxSyncSliceLength: 50_000,
+      }),
+    ).toBe(true);
+  });
+
+  it('语法未加载时不走同步着色（回退 Worker）', () => {
+    expect(
+      shouldHighlightSynchronously({
+        languageLoaded: false,
+        sliceCodeLength: 12_000,
+        maxSyncSliceLength: 50_000,
+      }),
+    ).toBe(false);
+  });
+
+  it('切片超过上限时不走同步着色，避免阻塞 UI 线程', () => {
+    expect(
+      shouldHighlightSynchronously({
+        languageLoaded: true,
+        sliceCodeLength: 80_000,
+        maxSyncSliceLength: 50_000,
+      }),
+    ).toBe(false);
+  });
+
+  it('切片长度等于上限时仍允许同步着色（边界含端点）', () => {
+    expect(
+      shouldHighlightSynchronously({
+        languageLoaded: true,
+        sliceCodeLength: 50_000,
+        maxSyncSliceLength: 50_000,
+      }),
+    ).toBe(true);
   });
 });
