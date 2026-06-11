@@ -1,75 +1,6 @@
-<template>
-  <div ref="rootEl" class="explorer-tree-flat" role="presentation" @keydown="onKeydown">
-    <template v-if="!shouldVirtualize">
-      <WorkspaceTreeRow
-        v-for="row in rows"
-        :key="row.key"
-        :row="row"
-        :active-path="activePath"
-        :active-dirty="activeDirty"
-        :context-menu-path="contextMenuPath"
-        :tabbable="row.type === 'entry' && row.entry.path === effectiveFocusPath"
-        :inline-create-draft="inlineCreateDraft"
-        :inline-rename-draft="inlineRenameDraft"
-        @activate="onActivate"
-        @contextmenu="(payload) => emit('context-menu', payload)"
-        @inline-create-input="(value) => emit('inline-create-input', value)"
-        @inline-create-blur="emit('inline-create-blur')"
-        @inline-create-confirm="emit('inline-create-confirm')"
-        @inline-create-cancel="emit('inline-create-cancel')"
-        @inline-rename-input="(value) => emit('inline-rename-input', value)"
-        @inline-rename-confirm="emit('inline-rename-confirm')"
-        @inline-rename-cancel="emit('inline-rename-cancel')"
-      />
-    </template>
-
-    <div v-else class="explorer-tree-virtual-sizer" :style="{ height: `${totalSize}px` }">
-      <div
-        v-for="item in virtualItems"
-        :key="item.key"
-        :ref="measureRef"
-        :data-index="item.index"
-        class="explorer-tree-virtual-item"
-        :style="{ transform: `translateY(${item.start - scrollMargin}px)` }"
-      >
-        <WorkspaceTreeRow
-          :row="item.row"
-          :active-path="activePath"
-          :active-dirty="activeDirty"
-          :context-menu-path="contextMenuPath"
-          :tabbable="item.row.type === 'entry' && item.row.entry.path === effectiveFocusPath"
-          :inline-create-draft="inlineCreateDraft"
-          :inline-rename-draft="inlineRenameDraft"
-          @activate="onActivate"
-          @contextmenu="(payload) => emit('context-menu', payload)"
-          @inline-create-input="(value) => emit('inline-create-input', value)"
-          @inline-create-blur="emit('inline-create-blur')"
-          @inline-create-confirm="emit('inline-create-confirm')"
-          @inline-create-cancel="emit('inline-create-cancel')"
-          @inline-rename-input="(value) => emit('inline-rename-input', value)"
-          @inline-rename-confirm="emit('inline-rename-confirm')"
-          @inline-rename-cancel="emit('inline-rename-cancel')"
-        />
-      </div>
-    </div>
-  </div>
-</template>
-
 <script setup lang="ts">
-import { useVirtualizer } from '@tanstack/vue-virtual';
-import { useResizeObserver } from '@vueuse/core';
-import type { ComponentPublicInstance } from 'vue';
-import { computed, nextTick, onMounted, ref, watch } from 'vue';
-import WorkspaceTreeRow from '@/components/workbench/WorkspaceTreeRow.vue';
-import type { TWorkspaceTreeRow } from '@/components/workbench/workspace-tree.types';
-import {
-  buildWorkspaceTreeRows,
-  isDirectoryLikeEntry,
-} from '@/components/workbench/workspace-tree-model';
+import DomainWorkspaceTreeNode from '@/components/workbench/sidebar/explorer/WorkspaceTreeNode.vue';
 import type { IWorkspaceEntry } from '@/types/editor';
-
-// 保留原组件名，避免影响 AppSidebar 的引用与测试中的 stub。
-defineOptions({ name: 'WorkspaceTreeNode' });
 
 const props = defineProps<{
   entry: IWorkspaceEntry;
@@ -106,267 +37,30 @@ const emit = defineEmits<{
   'inline-rename-confirm': [];
   'inline-rename-cancel': [];
 }>();
-
-// 把可见的树结构拍平成一维行列表，以便虚拟化与键盘导航。
-// 具体构建逻辑放在纯函数中，避免递归组件热路径难以测试，也避免深目录链消耗调用栈。
-const rows = computed<TWorkspaceTreeRow[]>(() =>
-  buildWorkspaceTreeRows({
-    entry: props.entry,
-    level: props.level,
-    childrenMap: props.childrenMap,
-    expandedPaths: props.expandedPaths,
-    loadingPaths: props.loadingPaths,
-    inlineCreateDraft: props.inlineCreateDraft,
-  }),
-);
-
-type TEntryNav = {
-  path: string;
-  level: number;
-  isDirectory: boolean;
-  expanded: boolean;
-};
-
-const entryNav = computed<TEntryNav[]>(() => {
-  const result: TEntryNav[] = [];
-  for (const row of rows.value) {
-    if (row.type === 'entry') {
-      result.push({
-        path: row.entry.path,
-        level: row.level,
-        isDirectory: isDirectoryLikeEntry(row.entry),
-        expanded: row.expanded,
-      });
-    }
-  }
-  return result;
-});
-
-const focusedPath = ref<string | null>(null);
-const effectiveFocusPath = computed<string | null>(
-  () => focusedPath.value ?? entryNav.value[0]?.path ?? null,
-);
-
-// 虚拟化：仅在行数超过阈值时启用，避免在 happy-dom 零高容器下渲染 0 行。
-const VIRTUALIZE_THRESHOLD = 100;
-const rootEl = ref<HTMLElement | null>(null);
-const scrollMargin = ref(0);
-const shouldVirtualize = computed(() => rows.value.length > VIRTUALIZE_THRESHOLD);
-
-const getScrollElement = (): HTMLElement | null => {
-  if (!shouldVirtualize.value) {
-    return null;
-  }
-  const root = rootEl.value;
-  if (!root) {
-    return null;
-  }
-  return root.closest('.explorer-tree') as HTMLElement | null;
-};
-
-const virtualizerOptions = computed(() => ({
-  count: rows.value.length,
-  getScrollElement,
-  estimateSize: () => 28,
-  overscan: 12,
-  scrollMargin: scrollMargin.value,
-  getItemKey: (index: number): string => rows.value[index]?.key ?? String(index),
-}));
-
-const virtualizer = useVirtualizer<HTMLElement, HTMLElement>(virtualizerOptions);
-const totalSize = computed(() => virtualizer.value.getTotalSize());
-
-const virtualItems = computed(() => {
-  const all = rows.value;
-  const result: Array<{ key: string; index: number; start: number; row: TWorkspaceTreeRow }> = [];
-  for (const item of virtualizer.value.getVirtualItems()) {
-    const row = all[item.index];
-    if (row) {
-      result.push({ key: row.key, index: item.index, start: item.start, row });
-    }
-  }
-  return result;
-});
-
-const measureRef = (el: Element | ComponentPublicInstance | null): void => {
-  if (el instanceof HTMLElement) {
-    virtualizer.value.measureElement(el);
-  }
-};
-
-const recomputeScrollMargin = (): void => {
-  if (!shouldVirtualize.value) {
-    scrollMargin.value = 0;
-    return;
-  }
-  const scroller = getScrollElement();
-  const sizer = rootEl.value;
-  if (!scroller || !sizer) {
-    return;
-  }
-  const scrollerRect = scroller.getBoundingClientRect();
-  const sizerRect = sizer.getBoundingClientRect();
-  scrollMargin.value = sizerRect.top - scrollerRect.top + scroller.scrollTop;
-};
-
-useResizeObserver(rootEl, () => recomputeScrollMargin());
-useResizeObserver(
-  () => getScrollElement(),
-  () => recomputeScrollMargin(),
-);
-onMounted(() => recomputeScrollMargin());
-watch(
-  () => rows.value.length,
-  () => {
-    void nextTick(recomputeScrollMargin);
-  },
-);
-
-const findRowEl = (path: string): HTMLElement | null => {
-  const root = rootEl.value;
-  if (!root) {
-    return null;
-  }
-  const candidates = root.querySelectorAll('[data-tree-path]');
-  for (const candidate of Array.from(candidates)) {
-    if (candidate instanceof HTMLElement && candidate.dataset.treePath === path) {
-      return candidate;
-    }
-  }
-  return null;
-};
-
-const focusRowByPath = async (path: string): Promise<void> => {
-  focusedPath.value = path;
-  if (shouldVirtualize.value) {
-    const index = rows.value.findIndex((row) => row.type === 'entry' && row.entry.path === path);
-    if (index >= 0) {
-      virtualizer.value.scrollToIndex(index, { align: 'auto' });
-      await nextTick();
-    }
-  }
-  await nextTick();
-  findRowEl(path)?.focus();
-};
-
-const onActivate = (entry: IWorkspaceEntry): void => {
-  focusedPath.value = entry.path;
-  if (isDirectoryLikeEntry(entry)) {
-    emit('toggle-directory', entry.path);
-  } else {
-    emit('open-file', entry.path);
-  }
-};
-
-const onKeydown = (event: KeyboardEvent): void => {
-  // 不劫持行内输入框（新建 / 重命名）的按键。
-  if (event.target instanceof HTMLInputElement) {
-    return;
-  }
-  const nav = entryNav.value;
-  if (nav.length === 0) {
-    return;
-  }
-  const currentPath = focusedPath.value ?? nav[0]?.path ?? null;
-  const rawIdx = nav.findIndex((item) => item.path === currentPath);
-  const idx = rawIdx < 0 ? 0 : rawIdx;
-  const current = nav[idx];
-  if (!current) {
-    return;
-  }
-
-  switch (event.key) {
-    case 'ArrowDown': {
-      event.preventDefault();
-      const next = nav[Math.min(idx + 1, nav.length - 1)];
-      if (next) {
-        void focusRowByPath(next.path);
-      }
-      break;
-    }
-    case 'ArrowUp': {
-      event.preventDefault();
-      const prev = nav[Math.max(idx - 1, 0)];
-      if (prev) {
-        void focusRowByPath(prev.path);
-      }
-      break;
-    }
-    case 'Home': {
-      event.preventDefault();
-      const first = nav[0];
-      if (first) {
-        void focusRowByPath(first.path);
-      }
-      break;
-    }
-    case 'End': {
-      event.preventDefault();
-      const last = nav[nav.length - 1];
-      if (last) {
-        void focusRowByPath(last.path);
-      }
-      break;
-    }
-    case 'ArrowRight': {
-      event.preventDefault();
-      if (!current.isDirectory) {
-        break;
-      }
-      if (!current.expanded) {
-        emit('toggle-directory', current.path);
-      } else {
-        const next = nav[idx + 1];
-        if (next && next.level > current.level) {
-          void focusRowByPath(next.path);
-        }
-      }
-      break;
-    }
-    case 'ArrowLeft': {
-      event.preventDefault();
-      if (current.isDirectory && current.expanded) {
-        emit('toggle-directory', current.path);
-        break;
-      }
-      for (let i = idx - 1; i >= 0; i--) {
-        const candidate = nav[i];
-        if (candidate && candidate.level < current.level) {
-          void focusRowByPath(candidate.path);
-          break;
-        }
-      }
-      break;
-    }
-    case 'Enter': {
-      event.preventDefault();
-      if (current.isDirectory) {
-        emit('toggle-directory', current.path);
-      } else {
-        emit('open-file', current.path);
-      }
-      break;
-    }
-    default:
-      break;
-  }
-};
 </script>
 
-<style scoped>
-.explorer-tree-flat {
-  display: block;
-}
-
-.explorer-tree-virtual-sizer {
-  position: relative;
-  width: 100%;
-}
-
-.explorer-tree-virtual-item {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-}
-</style>
+<template>
+  <DomainWorkspaceTreeNode
+    :entry="props.entry"
+    :level="props.level"
+    :children-map="props.childrenMap"
+    :expanded-paths="props.expandedPaths"
+    :loading-paths="props.loadingPaths"
+    :active-path="props.activePath"
+    :active-dirty="props.activeDirty"
+    :context-menu-path="props.contextMenuPath"
+    :root-path="props.rootPath"
+    :inline-create-draft="props.inlineCreateDraft"
+    :inline-rename-draft="props.inlineRenameDraft"
+    @toggle-directory="emit('toggle-directory', $event)"
+    @open-file="emit('open-file', $event)"
+    @context-menu="emit('context-menu', $event)"
+    @inline-create-input="emit('inline-create-input', $event)"
+    @inline-create-blur="emit('inline-create-blur')"
+    @inline-create-confirm="emit('inline-create-confirm')"
+    @inline-create-cancel="emit('inline-create-cancel')"
+    @inline-rename-input="emit('inline-rename-input', $event)"
+    @inline-rename-confirm="emit('inline-rename-confirm')"
+    @inline-rename-cancel="emit('inline-rename-cancel')"
+  />
+</template>

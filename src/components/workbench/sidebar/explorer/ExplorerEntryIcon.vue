@@ -1,8 +1,17 @@
+<template>
+  <FileEntryIcon
+    :kind="kind"
+    :path="path"
+    :expanded="expanded"
+    class="explorer-entry-icon"
+  />
+</template>
+
 <script setup lang="ts">
-import LegacyExplorerEntryIcon from '@/components/workbench/ExplorerEntryIcon.vue';
+import FileEntryIcon from '@/components/common/FileEntryIcon.vue';
 import type { TFileIconEntryKind } from '@/types/file-icon';
 
-const props = withDefaults(
+withDefaults(
   defineProps<{
     kind: TFileIconEntryKind;
     path?: string | null;
@@ -14,11 +23,3 @@ const props = withDefaults(
   },
 );
 </script>
-
-<template>
-  <LegacyExplorerEntryIcon
-    :kind="props.kind"
-    :path="props.path"
-    :expanded="props.expanded"
-  />
-</template>
