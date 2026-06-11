@@ -356,12 +356,23 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
 
       if (action === 'remap') {
         // 仅按编辑位移映射已有高亮，避免每次按键重新 tokenize；位移后缓存的行号已失效，
-        // 先作废缓存，再由防抖重算按最新视口重建。
+        // 先作废缓存，再重算按最新视口重建。
         this.decorations = this.decorations.map(update.changes);
         this.invalidateHighlightedRange();
         this.pendingRequest = null;
         this.cancelScheduledViewportRecompute();
-        this.scheduleRecompute(update.view);
+        // 连续键入（input/delete/move）走防抖，避免每次按键都重 tokenize；而保存时格式化、
+        // 载入文件、AI 补丁等“程序化整段替换”不带用户事件标记，其重排区间会丢色，若再等
+        // 90ms 防抖才重算会出现一段明显的“未着色”白闪。这类变更立即重算，把空窗压到最小。
+        const isUserTyping = update.transactions.some(
+          (tr) => tr.isUserEvent('input') || tr.isUserEvent('delete') || tr.isUserEvent('move'),
+        );
+        if (isUserTyping) {
+          this.scheduleRecompute(update.view);
+        } else {
+          this.cancelScheduledRecompute();
+          this.recompute(update.view, { allowReuse: false });
+        }
       }
     }
 
