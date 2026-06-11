@@ -75,17 +75,11 @@
       class="h-4 w-4 shrink-0"
     />
 
-    <input
-      class="explorer-inline-create-input explorer-inline-rename-input"
-      type="text"
-      aria-label="重命名文件"
+    <WorkspaceInlineRenameInput
       :value="inlineRenameDraft?.value ?? row.entry.name"
       @input="onRenameInput"
-      @blur="emit('inline-rename-confirm')"
-      @pointerdown.stop
-      @click.stop
-      @keydown.enter.prevent.stop="emit('inline-rename-confirm')"
-      @keydown.esc.prevent.stop="emit('inline-rename-cancel')"
+      @confirm="emit('inline-rename-confirm')"
+      @cancel="emit('inline-rename-cancel')"
     />
     <span v-if="showDirtyMarker" class="explorer-tree-meta">M</span>
   </div>
@@ -119,14 +113,13 @@
       class="h-4 w-4 shrink-0"
     />
 
-    <input
-      class="explorer-inline-create-input"
+    <WorkspaceInlineCreateInput
       :value="inlineCreateDraft?.value ?? ''"
       :placeholder="inlineCreateDraft?.placeholder ?? ''"
       @input="onCreateInput"
       @blur="emit('inline-create-blur')"
-      @keydown.enter.prevent.stop="emit('inline-create-confirm')"
-      @keydown.esc.prevent.stop="emit('inline-create-cancel')"
+      @confirm="emit('inline-create-confirm')"
+      @cancel="emit('inline-create-cancel')"
     />
   </div>
 </template>
@@ -135,6 +128,8 @@
 import type { CSSProperties } from 'vue';
 import { computed } from 'vue';
 import ExplorerEntryIcon from '@/components/workbench/sidebar/explorer/ExplorerEntryIcon.vue';
+import WorkspaceInlineCreateInput from '@/components/workbench/sidebar/explorer/WorkspaceInlineCreateInput.vue';
+import WorkspaceInlineRenameInput from '@/components/workbench/sidebar/explorer/WorkspaceInlineRenameInput.vue';
 import type { TWorkspaceTreeRow } from '@/components/workbench/sidebar/explorer/workspace-tree.types';
 import type { IWorkspaceEntry } from '@/types/editor';
 import { areFileSystemPathsEqual } from '@/utils/path';
@@ -203,81 +198,11 @@ const inlineCreateStyle = computed<CSSProperties>(() => ({
   paddingLeft: `${18 + (props.row.level + 1) * 18}px`,
 }));
 
-const onCreateInput = (event: Event): void => {
-  if (event.target instanceof HTMLInputElement) {
-    emit('inline-create-input', event.target.value);
-  }
+const onCreateInput = (value: string): void => {
+  emit('inline-create-input', value);
 };
 
-const onRenameInput = (event: Event): void => {
-  if (event.target instanceof HTMLInputElement) {
-    emit('inline-rename-input', event.target.value);
-  }
+const onRenameInput = (value: string): void => {
+  emit('inline-rename-input', value);
 };
 </script>
-
-<style scoped>
-/*
- * 内联“新建文件/文件夹”输入框：与重命名输入框保持一致的轻量样式。
- * 高度固定 20px（原 28px），去掉撑大的实心边框盒，改用 1px 描边 box-shadow，
- * flex 自适应宽度，避免新建时把整行撑高。
- */
-.explorer-inline-create-input {
-  flex: 1;
-  width: auto;
-  min-width: 0;
-  height: 20px;
-  margin: 0;
-  padding: 0 6px;
-  border: 0;
-  border-radius: 5px;
-  background: #ffffff;
-  color: #1f2328;
-  font-size: 13px;
-  line-height: 20px;
-  outline: none;
-  box-shadow: 0 0 0 1px rgba(31, 35, 40, 0.18);
-  transition: box-shadow 120ms ease;
-}
-
-.explorer-inline-create-input:hover {
-  box-shadow: 0 0 0 1px rgba(31, 35, 40, 0.32);
-}
-
-.explorer-inline-create-input:focus {
-  box-shadow:
-    0 0 0 1px #4493f8,
-    0 0 0 3px rgba(68, 147, 248, 0.2);
-}
-
-/*
- * 重命名输入框：白色主题（按用户要求保留硬编码颜色）。
- * 重命名行内没有文件名文字 span（被输入框替换），所以行高由输入框决定。
- * 高度固定为一行文字的行盒高度 20px，与普通文件行严格一致，重命名前后不跳也不偏高。
- */
-.explorer-inline-rename-input {
-  flex: 1;
-  width: auto;
-  min-width: 0;
-  height: 20px;
-  margin: 0;
-  padding: 0 6px;
-  border: 0;
-  border-radius: 5px;
-  background: #ffffff;
-  color: #1f2328;
-  font-size: 13px;
-  line-height: 20px;
-  box-shadow: 0 0 0 1px rgba(31, 35, 40, 0.18);
-}
-
-.explorer-inline-rename-input:hover {
-  box-shadow: 0 0 0 1px rgba(31, 35, 40, 0.32);
-}
-
-.explorer-inline-rename-input:focus {
-  box-shadow:
-    0 0 0 1px #4493f8,
-    0 0 0 3px rgba(68, 147, 248, 0.2);
-}
-</style>
