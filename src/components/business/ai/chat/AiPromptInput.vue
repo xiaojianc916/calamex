@@ -1765,20 +1765,22 @@ onBeforeUnmount(() => {
 }
 
 .ai-token-content {
+  position: relative;
   overflow: hidden;
   border: none;
+  box-shadow: var(--ai-menu-shadow);
+}
+
+.ai-token-content::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  pointer-events: none;
   box-shadow:
-    inset 0 0 0 1px #fefefe,
-    inset 0 0 0 2px #f5f5f4,
-    inset 0 0 0 3px #eeedeb,
-    var(--ai-menu-shadow);
-}
-
-.ai-token-content > :not([hidden]) ~ :not([hidden]) {
-  border-top: 1px solid #f0f0ef;
-}
-
-.ai-token-content [data-slot='context-content-footer'] {
-  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
+    inset 0 0 0 1px #fefefe,   /* 最外 1px */
+    inset 0 0 0 2px #f5f5f4,   /* 中间 1px */
+    inset 0 0 0 3px #eeedeb;   /* 最里 1px(从里到外 eeedeb→f5f5f4→fefefe) */
 }
 </style>
