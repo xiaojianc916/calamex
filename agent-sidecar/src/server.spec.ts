@@ -71,6 +71,8 @@ import {
 import { ensureMastraLogFile } from './tools/log.js';
 import { createMastraTimeTools } from './tools/time.js';
 
+type TFakeRuntimeOutputEvent = Awaited<ReturnType<IAgentSidecarRuntime['chat']>>['events'][number];
+
 const unsupportedRuntimeResponse = async (
   ...args: Parameters<IAgentSidecarRuntime['chat']>
 ): Promise<Awaited<ReturnType<IAgentSidecarRuntime['chat']>>> => {
@@ -4708,7 +4710,7 @@ describe('Agent sidecar protocol golden tests', () => {
         type: 'done',
         result: 'hello world',
       },
-    ] as const;
+    ] as unknown as TFakeRuntimeOutputEvent[];
     const runtime = createFakeRuntime({
       chat: async (input, options) => {
         capturedInput = input;
@@ -4775,7 +4777,7 @@ describe('Agent sidecar protocol golden tests', () => {
         options?.onEvent?.({
           type: 'message_delta',
           text: 'partial',
-        });
+        } as unknown as TFakeRuntimeOutputEvent);
 
         throw new Error('runtime exploded');
       },
@@ -4853,7 +4855,15 @@ describe('Agent sidecar protocol golden tests', () => {
       const response = await fetch(`${server.baseUrl}/health`);
 
       assert.equal(response.status, 200);
-      const payload = await response.json();
+      const payload = await response.json() as {
+        ok: unknown;
+        status: unknown;
+        engine: unknown;
+        version: unknown;
+        protocolVersion: unknown;
+        implementationVersion: unknown;
+        mcp?: { configuredServers: unknown; serverNames: unknown; errors: unknown };
+      };
 
       assert.equal(payload.ok, true);
       assert.equal(payload.status, 'ready');
