@@ -161,9 +161,7 @@ export const computeShikiHighlightRange = (input: {
 }): { startLine: number; endLine: number } => {
   const leadInLines = input.leadInLines ?? input.overscanLines;
   const endLine = Math.min(input.totalLines, input.lastVisibleLine + input.overscanLines);
-  const startLine = input.fromDocumentStart
-    ? 1
-    : Math.max(1, input.firstVisibleLine - leadInLines);
+  const startLine = input.fromDocumentStart ? 1 : Math.max(1, input.firstVisibleLine - leadInLines);
   return { startLine, endLine };
 };
 

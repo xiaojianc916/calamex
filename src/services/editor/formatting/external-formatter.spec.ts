@@ -38,8 +38,8 @@ describe('externalFormatter', () => {
       throw new Error('boom');
     });
 
-    await expect(
-      formatter.format({ text: 'x', path: null, languageId: 'go' }),
-    ).rejects.toThrow('boom');
+    await expect(formatter.format({ text: 'x', path: null, languageId: 'go' })).rejects.toThrow(
+      'boom',
+    );
   });
 });

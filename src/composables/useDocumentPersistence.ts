@@ -1,5 +1,9 @@
 import { useMessage } from '@/composables/useMessage';
-import { applyWhitespaceConventions, resolveFormatter, runFormatPipeline } from '@/services/editor/formatting';
+import {
+  applyWhitespaceConventions,
+  resolveFormatter,
+  runFormatPipeline,
+} from '@/services/editor/formatting';
 import { tauriService } from '@/services/tauri';
 import type { useAppStore } from '@/store/app';
 import type { useEditorStore } from '@/store/editor';
@@ -301,10 +305,7 @@ export const useDocumentPersistence = ({
       const message = result.formatterError ?? '格式化失败';
       editorStore.appendLog('error', '格式化失败', message);
       if (!options?.suppressErrorMessage) {
-        notifier.error(
-          '格式化失败',
-          message === '格式化失败' ? {} : { description: message },
-        );
+        notifier.error('格式化失败', message === '格式化失败' ? {} : { description: message });
       }
       return false;
     }

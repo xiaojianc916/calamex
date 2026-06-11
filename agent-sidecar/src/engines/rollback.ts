@@ -135,11 +135,9 @@ export class MastraRuntime extends MastraRuntimeApproval {
                 instructions,
                 model: createMastraModelConfig(modelConfig),
             });
-            const result = await agent.generate(conversation, {
-                ...(options.context?.signal
+            const result = await agent.generate(conversation, (options.context?.signal
                     ? { abortSignal: options.context.signal }
-                    : {}),
-            });
+                    : {}));
             const text = typeof result.text === 'string' ? result.text : '';
             return { sessionId, events, result: text };
         } catch (error) {

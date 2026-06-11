@@ -107,9 +107,7 @@ const shouldUseLinearSingleRange = (current: string, next: string): boolean => {
     return false;
   }
 
-  return (
-    singleRange.to - singleRange.from + singleRange.insert.length > MYERS_CHANGED_SPAN_LIMIT
-  );
+  return singleRange.to - singleRange.from + singleRange.insert.length > MYERS_CHANGED_SPAN_LIMIT;
 };
 
 /**

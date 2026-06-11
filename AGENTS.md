@@ -64,14 +64,17 @@
 - 「修复漏洞」→ 先编写可复现问题的测试用例，再完成修复
 - 「重构代码X」→ 确保重构前后所有测试均可正常运行
 
-多步骤任务，请先梳理简要执行计划：
+## 八、多步骤任务，请先梳理简要执行计划：
+ [执行步骤] → 核验标准：[检查项]
+ [执行步骤] → 核验标准：[检查项]
+ [执行步骤] → 核验标准：[检查项]
 
 
-## 八、质量门槛
+## 九、质量门槛
 - 提交前本地绿灯：`pnpm lint` + `pnpm typecheck` + `pnpm test`；改 Rust 加 `src-tauri/` 内 `cargo clippy && cargo test`；大改跑 `pnpm guard`。
 - 覆盖率：全局 ≥ 80%，核心域 ≥ 90%；新逻辑必补测试，改动同步更新受影响的用例。
 - 性能改动附前后对比数据，不超 `docs/performance-budget.md`；体积由 `pnpm size-limit` 守护。
 
-## 九、提交与决策
+## 十、提交与决策
 - 单分支 `main`（trunk-based），squash 合入；Conventional Commits（lefthook + commitlint 强制）。
 - 关键决策沉淀为 ADR（`docs/adr/`）；已 accepted 的 ADR 不就地重写。

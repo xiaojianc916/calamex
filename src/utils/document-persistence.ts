@@ -22,9 +22,7 @@ export const buildWorkspaceDocumentFormatFeedback = (
 ): IEditorOperationFeedback => ({
   logTitle: '格式化',
   logDetail: `${hasChanges ? '已格式化文件' : '已检查文件'}：${documentPath}`,
-  toastMessage: hasChanges
-    ? `已格式化 ${documentName}`
-    : `${documentName} 已符合格式规范`,
+  toastMessage: hasChanges ? `已格式化 ${documentName}` : `${documentName} 已符合格式规范`,
 });
 
 export const buildDocumentSaveFeedback = (
