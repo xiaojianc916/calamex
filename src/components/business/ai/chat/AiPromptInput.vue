@@ -720,7 +720,7 @@ const openSkillsManager = (): void => {
   skillsManagerOpen.value = true;
 };
 
-// 选择技能：在光标处插入胶囊并去重，技能本身随 selectedSkills 上抛由发送时附加指令。
+// 选择技能：在光标处插入胶囊并去重，技能本身随 selectedSkills 上抩由发送时附加指令。
 const handleSelectSkill = (slug: string): void => {
   const summary = skills.value.find((item) => item.slug === slug);
   const name = summary?.name?.trim() || slug;
@@ -1761,7 +1761,7 @@ onBeforeUnmount(() => {
   position: relative;
   overflow: hidden;
   border: none;
-  box-shadow: var(--ai-menu-shadow);
+  box-shadow: none;
 }
 
 .ai-token-content::before {
