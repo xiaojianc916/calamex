@@ -75,10 +75,6 @@ import {
   watch,
 } from 'vue';
 import InlineError from '@/components/common/InlineError.vue';
-import type {
-  ILinearContextMenuGroup,
-  ILinearContextMenuItem,
-} from '@/components/common/linear-context-menu.types';
 import { Button } from '@/components/ui/button';
 import {
   Empty,
@@ -88,6 +84,10 @@ import {
   EmptyTitle,
 } from '@/components/ui/empty';
 import WorkspaceTreeNode from '@/components/workbench/WorkspaceTreeNode.vue';
+import {
+  type IExplorerContextTarget,
+  useWorkspaceExplorerContextMenu,
+} from '@/components/workbench/sidebar/explorer/useWorkspaceExplorerContextMenu';
 import { useWorkspaceFileWatcher } from '@/components/workbench/sidebar/explorer/useWorkspaceFileWatcher';
 import { useDialog } from '@/composables/useDialog';
 import { useMessage } from '@/composables/useMessage';
@@ -184,27 +184,6 @@ const pendingReloadAgainPaths = new Set<string>();
 let rootRequestId = 0;
 let explorerScrollbarIdleTimer: ReturnType<typeof setTimeout> | null = null;
 
-type TExplorerContextMenuAction =
-  | 'open'
-  | 'new-file'
-  | 'new-directory'
-  | 'rename'
-  | 'delete'
-  | 'copy-path'
-  | 'refresh'
-  | 'open-folder';
-interface IExplorerContextMenuItem extends ILinearContextMenuItem {
-  action: TExplorerContextMenuAction;
-}
-interface IExplorerContextTarget {
-  path: string;
-  name: string;
-  kind: 'directory' | 'file';
-  isRoot: boolean;
-}
-
-const explorerContextMenu = reactive({ open: false, x: 0, y: 0 });
-const explorerContextTarget = ref<IExplorerContextTarget | null>(null);
 const inlineCreateDraft = reactive({
   open: false,
   parentPath: null as string | null,
@@ -231,67 +210,6 @@ const handleExplorerTreeScroll = (): void => {
     isExplorerScrollbarActive.value = false;
   }, EXPLORER_SCROLLBAR_IDLE_HIDE_DELAY_MS);
 };
-
-const explorerContextMenuGroups = computed<ILinearContextMenuGroup<IExplorerContextMenuItem>[]>(
-  () => {
-    const target = explorerContextTarget.value;
-    const canCreate = target?.kind === 'directory';
-    const canMutate = Boolean(target && !target.isRoot);
-    return [
-      {
-        key: 'primary',
-        items: [
-          {
-            key: 'new-file',
-            label: '新建文件',
-            icon: 'plus',
-            shortcut: ['Ctrl', 'N'],
-            action: 'new-file',
-            disabled: !canCreate,
-          },
-          {
-            key: 'new-directory',
-            label: '新建文件夹',
-            icon: 'plus',
-            shortcut: ['Ctrl', 'Shift', 'N'],
-            action: 'new-directory',
-            disabled: !canCreate,
-          },
-          {
-            key: 'rename',
-            label: '重命名',
-            icon: 'comment',
-            shortcut: ['F2'],
-            action: 'rename',
-            disabled: !canMutate,
-          },
-        ],
-      },
-      {
-        key: 'secondary',
-        items: [
-          {
-            key: 'delete',
-            label: '移动到回收站',
-            icon: 'trash',
-            shortcut: ['Del'],
-            action: 'delete',
-            disabled: !canMutate,
-          },
-          {
-            key: 'copy-path',
-            label: '复制路径',
-            icon: 'copy',
-            shortcut: ['Ctrl', 'Shift', 'C'],
-            action: 'copy-path',
-            disabled: !target,
-          },
-          { key: 'open-folder', label: '打开文件夹', icon: 'open-external', action: 'open-folder' },
-        ],
-      },
-    ];
-  },
-);
 
 const SIDEBAR_META: Record<
   TWorkbenchSidebarView,
@@ -401,9 +319,6 @@ const rootEntry = computed<IWorkspaceEntry | null>(() => {
 
 const selectedExplorerPath = computed(
   () => props.document.path ?? props.startupExplorerSelectedPath ?? undefined,
-);
-const explorerContextMenuHighlightPath = computed(() =>
-  explorerContextMenu.open ? (explorerContextTarget.value?.path ?? null) : null,
 );
 
 const clearTreeState = (): void => {
@@ -553,39 +468,6 @@ const toggleExplorerPath = async (path: string): Promise<void> => {
     return;
   }
   await expandExplorerPath(path);
-};
-
-const closeExplorerContextMenu = (): void => {
-  explorerContextMenu.open = false;
-  explorerContextTarget.value = null;
-};
-
-const openExplorerContextMenu = (event: MouseEvent, target: IExplorerContextTarget): void => {
-  explorerContextMenu.x = Math.min(event.clientX, Math.max(12, window.innerWidth - 236));
-  explorerContextMenu.y = Math.min(event.clientY, Math.max(12, window.innerHeight - 300));
-  explorerContextTarget.value = target;
-  explorerContextMenu.open = true;
-};
-
-const handleEntryContextMenu = (payload: { event: MouseEvent; entry: IWorkspaceEntry }): void => {
-  openExplorerContextMenu(payload.event, {
-    path: payload.entry.path,
-    name: payload.entry.name,
-    kind: payload.entry.kind,
-    isRoot: payload.entry.path === root.value?.rootPath,
-  });
-};
-
-const handleEmptyAreaContextMenu = (event: MouseEvent): void => {
-  if (!root.value) {
-    return;
-  }
-  openExplorerContextMenu(event, {
-    path: root.value.rootPath,
-    name: rootEntry.value?.name ?? root.value.rootName ?? root.value.rootPath,
-    kind: 'directory',
-    isRoot: true,
-  });
 };
 
 const handleOpenFile = (payload: TWorkbenchOpenFilePayload): void => {
@@ -865,49 +747,34 @@ const handleDeleteWorkspaceEntry = async (target: IExplorerContextTarget): Promi
   }
 };
 
-const handleExplorerContextMenuSelect = async (item: ILinearContextMenuItem): Promise<void> => {
-  const actionItem = item as IExplorerContextMenuItem;
-  const target = explorerContextTarget.value;
-  closeExplorerContextMenu();
-  if (actionItem.disabled) {
-    return;
-  }
-  switch (actionItem.action) {
-    case 'new-file':
-      await handleCreateWorkspaceEntry('file', target);
-      return;
-    case 'new-directory':
-      await handleCreateWorkspaceEntry('directory', target);
-      return;
-    case 'rename':
-      if (target) await handleRenameWorkspaceEntry(target);
-      return;
-    case 'delete':
-      if (target) await handleDeleteWorkspaceEntry(target);
-      return;
-    case 'copy-path':
-      if (target) {
-        await writeFileSystemPathToClipboard(target.path);
-        message.success('已复制路径');
-      }
-      return;
-    case 'open-folder':
-      emit('open-folder');
-      return;
-    default:
-      return;
-  }
-};
-
-const handleWindowPointerDown = (event: PointerEvent): void => {
-  if (
-    explorerContextMenu.open &&
-    event.target instanceof Element &&
-    event.target.closest('.linear-context-menu-root') === null
-  ) {
-    closeExplorerContextMenu();
-  }
-};
+const {
+  explorerContextMenu,
+  explorerContextMenuGroups,
+  explorerContextMenuHighlightPath,
+  closeExplorerContextMenu,
+  handleEntryContextMenu,
+  handleEmptyAreaContextMenu,
+  handleExplorerContextMenuSelect,
+} = useWorkspaceExplorerContextMenu({
+  resolveRootPath: () => root.value?.rootPath ?? null,
+  resolveEmptyAreaTarget: () =>
+    root.value
+      ? {
+          path: root.value.rootPath,
+          name: rootEntry.value?.name ?? root.value.rootName ?? root.value.rootPath,
+          kind: 'directory',
+          isRoot: true,
+        }
+      : null,
+  onCreate: handleCreateWorkspaceEntry,
+  onRename: handleRenameWorkspaceEntry,
+  onDelete: handleDeleteWorkspaceEntry,
+  onCopyPath: async (target) => {
+    await writeFileSystemPathToClipboard(target.path);
+    message.success('已复制路径');
+  },
+  onOpenFolder: () => emit('open-folder'),
+});
 
 const handleWindowKeydown = (event: KeyboardEvent): void => {
   if (explorerContextMenu.open && event.key === 'Escape') {
@@ -919,7 +786,6 @@ const handleWindowKeydown = (event: KeyboardEvent): void => {
   }
 };
 
-useEventListener(window, 'pointerdown', handleWindowPointerDown, true);
 useEventListener(window, 'keydown', handleWindowKeydown);
 
 const { startWorkspaceFileWatcher, stopWorkspaceFileWatcher } = useWorkspaceFileWatcher({
