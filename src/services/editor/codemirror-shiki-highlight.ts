@@ -75,6 +75,8 @@ export const setShikiLanguage = (language: string): StateEffect<string> =>
 
 export type TShikiHighlightUpdateAction = 'recompute' | 'remap' | 'skip';
 
+type TShikiDocChangeRecomputeTiming = 'debounced' | 'post-paint';
+
 type TShikiHighlightSlice = {
   code: string;
   startLine: number;
@@ -129,6 +131,16 @@ export const resolveShikiHighlightUpdateAction = (input: {
   }
   return 'skip';
 };
+
+/**
+ * 文档变更后的高亮重算时机。
+ * - 用户输入继续防抖，避免每个按键都 tokenize。
+ * - 保存/格式化/AI patch/载入文件这类程序化变更必须等当前帧先画出来，再重算高亮；
+ *   否则同步 tokenize 会堵在 CodeMirror 当前 update 事务里，造成 Ctrl+S 全屏白屏卡顿。
+ */
+export const resolveShikiDocChangeRecomputeTiming = (input: {
+  isUserTyping: boolean;
+}): TShikiDocChangeRecomputeTiming => (input.isUserTyping ? 'debounced' : 'post-paint');
 
 /**
  * 纯函数：计算需要 tokenize 的行范围 [startLine, endLine]（1-based，含端点）。
@@ -374,6 +386,7 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
     decorations: DecorationSet;
     private destroyed = false;
     private recomputeTimer: number | null = null;
+    private recomputeFrame: number | null = null;
     private nextRequestId = 1;
     private latestRequestId = 0;
     private docVersion = 0;
@@ -430,21 +443,21 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
       }
 
       if (action === 'remap') {
-        // 仅按编辑位移映射已有高亮，避免按键时的白闪；docVersion 已自增，按行缓存将在下一次
-        // recompute 的 ensureCacheContext 中整体作废（行号已随编辑位移失效）。
+        // 先只做位移映射，避免文档变更当场清空高亮装饰。docVersion 已自增，按行缓存会在
+        // 下一次 recompute 的 ensureCacheContext 中整体作废（行号已随编辑位移失效）。
         this.decorations = this.decorations.map(update.changes);
         this.pendingRequest = null;
-        // 连续键入（input/delete/move）走防抖，避免每次按键都重 tokenize；而保存时格式化、
-        // 载入文件、AI 补丁等“程序化整段替换”不带用户事件标记，其重排区间会丢色，若再等
-        // 90ms 防抖才重算会出现一段明显的“未着色”白闪。这类变更立即重算，把空窗压到最小。
         const isUserTyping = update.transactions.some(
           (tr) => tr.isUserEvent('input') || tr.isUserEvent('delete') || tr.isUserEvent('move'),
         );
-        if (isUserTyping) {
+        const timing = resolveShikiDocChangeRecomputeTiming({ isUserTyping });
+        if (timing === 'debounced') {
           this.scheduleRecompute(update.view);
         } else {
-          this.cancelScheduledRecompute();
-          this.recompute(update.view, { allowReuse: false });
+          // 保存/格式化/AI patch/载入文件等程序化变更不能在当前 CodeMirror update 事务里
+          // 立即同步 tokenize。否则 Ctrl+S 会把 WebView 渲染线程堵到整窗白屏。先让当前帧
+          // 完成绘制，再在下一轮任务派发重算 effect。
+          this.schedulePostPaintRecompute(update.view);
         }
       }
     }
@@ -461,22 +474,41 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
         window.clearTimeout(this.recomputeTimer);
         this.recomputeTimer = null;
       }
+      if (this.recomputeFrame !== null) {
+        window.cancelAnimationFrame(this.recomputeFrame);
+        this.recomputeFrame = null;
+      }
+    }
+
+    private dispatchRecompute(view: EditorView): void {
+      if (this.destroyed) {
+        return;
+      }
+      try {
+        // 派发重算 effect，让插件在下一次 update 中对当前视口重算。
+        view.dispatch({ effects: shikiRecomputeEffect.of(null) });
+      } catch {
+        // view 已销毁，忽略。
+      }
     }
 
     private scheduleRecompute(view: EditorView): void {
       this.cancelScheduledRecompute();
       this.recomputeTimer = window.setTimeout(() => {
         this.recomputeTimer = null;
-        if (this.destroyed) {
-          return;
-        }
-        try {
-          // 派发重算 effect，让插件在下一次 update 中对当前视口重算。
-          view.dispatch({ effects: shikiRecomputeEffect.of(null) });
-        } catch {
-          // view 已销毁，忽略。
-        }
+        this.dispatchRecompute(view);
       }, HIGHLIGHT_RECOMPUTE_DEBOUNCE_MS);
+    }
+
+    private schedulePostPaintRecompute(view: EditorView): void {
+      this.cancelScheduledRecompute();
+      this.recomputeFrame = window.requestAnimationFrame(() => {
+        this.recomputeFrame = null;
+        this.recomputeTimer = window.setTimeout(() => {
+          this.recomputeTimer = null;
+          this.dispatchRecompute(view);
+        }, 0);
+      });
     }
 
     // 主线程语法预热（幂等）：Worker 有独立 highlighter 实例，主线程 loadedLanguages 仅在显式
