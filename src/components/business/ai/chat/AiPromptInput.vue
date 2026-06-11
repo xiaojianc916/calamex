@@ -1550,8 +1550,10 @@ onBeforeUnmount(() => {
   width: min(300px, calc(100vw - 24px));
   padding: 5px;
   overflow: visible;
+  border: 1px solid #eeedeb;
+  border-radius: 8px;
+  box-shadow: var(--ai-menu-shadow);
 }
-
 .ai-settings-menu-item {
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr) auto auto;
@@ -1697,12 +1699,19 @@ onBeforeUnmount(() => {
 }
 
 .ai-model-content {
-  width: min(360px, calc(100vw - 24px));
-  max-height: min(520px, calc(100vh - 112px));
+  width: min(330px, calc(100vw - 24px));
+  max-height: min(460px, calc(100vh - 112px));
   overflow-y: auto;
-  padding: 9px;
+  padding: 8px;
+  border: 1px solid var(--ai-menu-border);
+  border-radius: 10px;
+  box-shadow: var(--ai-menu-shadow);
 }
 
+.ai-model-content [data-slot='select-scroll-up-button'],
+.ai-model-content [data-slot='select-scroll-down-button'] {
+  display: none;
+}
 .ai-model-section-label {
   display: flex;
   align-items: center;

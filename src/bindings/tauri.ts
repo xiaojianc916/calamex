@@ -11,6 +11,7 @@ export const commands = {
 	searchWorkspace: (payload: WorkspaceSearchRequest) => __TAURI_INVOKE<WorkspaceSearchPayload>("search_workspace", { payload }),
 	analyzeScript: (payload: AnalyzeScriptRequest) => __TAURI_INVOKE<AnalyzeScriptPayload>("analyze_script", { payload }),
 	formatScript: (payload: FormatScriptRequest) => __TAURI_INVOKE<FormatScriptPayload>("format_script", { payload }),
+	formatDocument: (payload: FormatDocumentRequest) => __TAURI_INVOKE<FormatDocumentPayload>("format_document", { payload }),
 	listSkills: () => __TAURI_INVOKE<SkillListPayload>("list_skills"),
 	readSkill: (slug: string) => __TAURI_INVOKE<SkillDetailPayload>("read_skill", { slug }),
 	saveSkill: (payload: SaveSkillRequest) => __TAURI_INVOKE<SkillDetailPayload>("save_skill", { payload }),
@@ -905,6 +906,28 @@ export type ExecutionOption = {
 };
 
 export type ExecutorKind = "wsl";
+
+export type FormatDocumentPayload = {
+	/**  格式化后的全文；未命中可用 formatter 时原样回传入参 content。 */
+	content: string,
+	/**
+	 *  实际使用的 formatter id（如 "shfmt" / "prettier" / "biome"）。
+	 *  None 表示该语言无专用 External formatter 或未发现可用二进制，
+	 *  前端据此退回 whitespace 归一。
+	 */
+	formatterId: string | null,
+	lineCount: number,
+	charCount: number,
+};
+
+export type FormatDocumentRequest = {
+	/**  待格式化的全文。 */
+	content: string,
+	/**  由前端 resolveLanguageForPath 解析出的语言 id（如 "shell" / "typescript" / "python"）。 */
+	languageId: string,
+	/**  可选文件路径，供 formatter 选择 parser / 读取就近配置（如 prettier 按文件名）。 */
+	path: string | null,
+};
 
 export type FormatScriptPayload = {
 	content: string,
