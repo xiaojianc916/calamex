@@ -108,7 +108,6 @@ import type { IGitDiffPreviewRequest } from '@/types/git';
 import { writeFileSystemPathToClipboard } from '@/utils/clipboard';
 import { toErrorMessage } from '@/utils/error';
 import {
-  areFileSystemPathsEqual,
   formatFileSystemPathForDisplay,
   getPathBaseName,
   getRelativeFileSystemPath,
