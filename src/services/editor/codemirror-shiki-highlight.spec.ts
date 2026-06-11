@@ -145,6 +145,44 @@ describe('computeShikiHighlightRange', () => {
       }),
     ).toEqual({ startLine: 260, endLine: 400 });
   });
+
+  it('lead-in 与 overscan 非对称：上沿用 leadInLines，下沿用 overscanLines', () => {
+    expect(
+      computeShikiHighlightRange({
+        firstVisibleLine: 300,
+        lastVisibleLine: 360,
+        totalLines: 1000,
+        overscanLines: 120,
+        leadInLines: 200,
+        fromDocumentStart: false,
+      }),
+    ).toEqual({ startLine: 100, endLine: 480 });
+  });
+
+  it('leadInLines 未传时默认等于 overscanLines（向后兼容旧调用点）', () => {
+    expect(
+      computeShikiHighlightRange({
+        firstVisibleLine: 300,
+        lastVisibleLine: 360,
+        totalLines: 1000,
+        overscanLines: 50,
+        fromDocumentStart: false,
+      }),
+    ).toEqual({ startLine: 250, endLine: 410 });
+  });
+
+  it('fromDocumentStart=true 时 leadInLines 不影响上沿（恒为第 1 行）', () => {
+    expect(
+      computeShikiHighlightRange({
+        firstVisibleLine: 300,
+        lastVisibleLine: 360,
+        totalLines: 1000,
+        overscanLines: 120,
+        leadInLines: 200,
+        fromDocumentStart: true,
+      }),
+    ).toEqual({ startLine: 1, endLine: 480 });
+  });
 });
 
 describe('isShikiHighlightRangeCovered', () => {

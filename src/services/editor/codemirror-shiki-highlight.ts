@@ -777,4 +777,26 @@ export const shikiEditorChromeTheme = EditorView.theme(
     '.cm-fold-pill:hover': {
       backgroundColor: 'rgba(175, 184, 193, 0.34)',
     },
-    // 固定 4px 正圆：flex-shrink:0 锁死
+    // 固定 4px 正圆：flex-shrink:0 锁死三点尺寸恒等，偶数边长+整数 gap 避免亚像素发虚。
+    '.cm-fold-pill-dot': {
+      flexShrink: 0,
+      width: '3px',
+      height: '3px',
+      borderRadius: '50%',
+      backgroundColor: '#a8b1b9', // 由 #6e7781 调淡
+    },
+    '.cm-fold-pill:hover .cm-fold-pill-dot': {
+      backgroundColor: '#8c949c', // hover 也相应调淡
+    },
+  },
+  { dark: false },
+);
+
+/**
+ * Shiki 语法高亮扩展（不含 chrome 主题，便于调用方控制主题叠加顺序）。
+ * @param initialLanguage 初始 app 语言 id。
+ */
+export const shikiHighlightExtension = (initialLanguage = 'text'): Extension => [
+  shikiLanguageField.init(() => initialLanguage),
+  shikiHighlightPlugin,
+];
