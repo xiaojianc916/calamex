@@ -47,13 +47,14 @@ const SYNC_HIGHLIGHT_LEAD_IN_LINES = 200;
 // 输入停顿后过多久触发一次重算（毫秒）；过小会让连续输入仍频繁重算，过大高亮滞后明显。
 const HIGHLIGHT_RECOMPUTE_DEBOUNCE_MS = 90;
 
-// 视口滚动触发的重算使用 rAF 合帧：一帧内多次 viewportChanged 只提交一次重算。
-// 不做大块 debounce，避免快速滚动后可见区高亮明显滞后。
-const HIGHLIGHT_VIEWPORT_FRAME_FALLBACK_MS = 16;
-
 // Shiki token 样式种类远少于 token 数量。缓存 Decoration.mark 可避免滚动/重算时
 // 为同一 style 字符串反复分配短生命周期对象；设置上限避免异常主题造成无界增长。
 const MAX_TOKEN_DECORATION_CACHE_SIZE = 512;
+
+// 按行 token 缓存的行数上限：滚动浏览过的行的 token 会被缓存以便回滚时零重算；
+// 超大文件全程滚动可能缓存大量行，设上限并按最旧插入淘汰，避免内存无界增长。
+// 被淘汰的行若再次进入视口会重新 tokenize（仍是有界的可见区切片，成本可控）。
+const MAX_LINE_TOKEN_CACHE_LINES = 6_000;
 
 const FONT_STYLE_ITALIC = 1;
 const FONT_STYLE_BOLD = 2;
@@ -173,6 +174,33 @@ export const createShikiHighlightRequestKey = (input: {
   codeLength: number;
 }): string =>
   [input.language, input.docVersion, input.startLine, input.endLine, input.codeLength].join(':');
+
+/**
+ * 纯函数：在 [startLine, endLine] 中找出尚未命中按行缓存的最小包络范围。
+ * - 全部命中缓存时返回 null（调用方据此跳过 tokenize，直接用缓存同步重建装饰，零开销）。
+ * - 否则返回 [首个缺失行, 末个缺失行]，中间已缓存的行也含在内（包络范围，便于一次性补齐）。
+ * isCached 以谓词形式传入，使本函数保持纯粹且易测（无需依赖具体缓存实现）。
+ */
+export const findUncachedLineRange = (input: {
+  startLine: number;
+  endLine: number;
+  isCached: (lineNumber: number) => boolean;
+}): { startLine: number; endLine: number } | null => {
+  let firstMissing: number | null = null;
+  let lastMissing: number | null = null;
+  for (let line = input.startLine; line <= input.endLine; line += 1) {
+    if (!input.isCached(line)) {
+      if (firstMissing === null) {
+        firstMissing = line;
+      }
+      lastMissing = line;
+    }
+  }
+  if (firstMissing === null || lastMissing === null) {
+    return null;
+  }
+  return { startLine: firstMissing, endLine: lastMissing };
+};
 
 /**
  * 纯函数：判断本次重算是否走“主线程同步着色”快路径。
@@ -300,21 +328,26 @@ const computeShikiHighlightSlice = (
   };
 };
 
-const buildDecorationsFromTokenLines = (
+/**
+ * 从按行 token 缓存构建 [startLine, endLine] 区间的装饰集合。
+ * 仅渲染缓存命中的行；未命中的行不产生装饰（呈纯文本），由调用方在同步/Worker 路径补齐后
+ * 重建。RangeSetBuilder 要求按位置升序添加：按行升序、行内 token 顺序累加可天然满足。
+ */
+const buildDecorationsFromLineCache = (
   view: EditorView,
   startLine: number,
   endLine: number,
-  lines: IShikiThemedToken[][],
+  cache: Map<number, IShikiThemedToken[]>,
 ): DecorationSet => {
   const { doc } = view.state;
   const builder = new RangeSetBuilder<Decoration>();
-  const lineCount = Math.min(lines.length, endLine - startLine + 1, doc.lines - startLine + 1);
-  for (let index = 0; index < lineCount; index += 1) {
-    const lineTokens = lines[index];
+  const lastLine = Math.min(endLine, doc.lines);
+  for (let lineNumber = Math.max(1, startLine); lineNumber <= lastLine; lineNumber += 1) {
+    const lineTokens = cache.get(lineNumber);
     if (!lineTokens || lineTokens.length === 0) {
       continue;
     }
-    const docLine = doc.line(startLine + index);
+    const docLine = doc.line(lineNumber);
     let position = docLine.from;
     for (const token of lineTokens) {
       const length = token.content.length;
@@ -341,17 +374,18 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
     decorations: DecorationSet;
     private destroyed = false;
     private recomputeTimer: number | null = null;
-    private viewportRecomputeTimer: number | null = null;
     private nextRequestId = 1;
     private latestRequestId = 0;
     private docVersion = 0;
     private pendingRequest: TShikiHighlightRequestIdentity | null = null;
     // 已发起主线程预热的语言；避免每次 recompute 重复创建微任务，失败则复位以允许重试。
     private warmedLanguage: string | null = null;
-    // 已成功高亮的语言与行范围；用于滚动时判断当前可见区是否已被覆盖，覆盖则跳过重算。
-    private highlightedLanguage: string | null = null;
-    private highlightedStartLine: number | null = null;
-    private highlightedEndLine: number | null = null;
+    // 按行 token 缓存：key=文档行号(1-based)，value=该行 token。仅对 (cacheLanguage,
+    // cacheDocVersion) 有效；语言或文档版本变化时整体作废。命中缓存的可见区可零 tokenize
+    // 同步重建装饰，是“滚动零闪烁”的核心：来回滚动看过的行无需重算，新行一出现即着色。
+    private lineTokenCache = new Map<number, IShikiThemedToken[]>();
+    private cacheLanguage: string | null = null;
+    private cacheDocVersion = -1;
 
     constructor(view: EditorView) {
       this.decorations = Decoration.none;
@@ -384,27 +418,22 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
       });
 
       if (action === 'recompute') {
-        if (!languageChanged && !recomputeRequested && update.viewportChanged) {
-          // 仅滚动时按 animation frame 合并，避免滚动事件洪水反复重算。
-          this.scheduleViewportRecompute(update.view);
-          return;
-        }
-
+        // 滚动（viewportChanged）此处同步重算，而非旧实现的 rAF 合帧：rAF 会让 CM 当帧先用
+        // 旧装饰画出新滚出来的行（无色），下一帧才补色，造成每次滚动必现 1 帧露白闪烁。
+        // 借助按行缓存，同步重算在命中缓存时仅重建装饰（极廉价），未命中也只同步 tokenize
+        // 一个有界窗口，故可安全地在 update() 内同步完成，使新行首帧即着色。
         this.cancelScheduledRecompute();
-        this.cancelScheduledViewportRecompute();
-        // 语言切换 / 防抖重算请求需强制重建；仅滚动则允许复用已覆盖范围。
+        // 语言切换 / 防抖重算请求需强制重建；仅滚动则允许复用缓存与在途 Worker 请求。
         const allowReuse = !languageChanged && !recomputeRequested;
         this.recompute(update.view, { allowReuse });
         return;
       }
 
       if (action === 'remap') {
-        // 仅按编辑位移映射已有高亮，避免每次按键重新 tokenize；位移后缓存的行号已失效，
-        // 先作废缓存，再重算按最新视口重建。
+        // 仅按编辑位移映射已有高亮，避免按键时的白闪；docVersion 已自增，按行缓存将在下一次
+        // recompute 的 ensureCacheContext 中整体作废（行号已随编辑位移失效）。
         this.decorations = this.decorations.map(update.changes);
-        this.invalidateHighlightedRange();
         this.pendingRequest = null;
-        this.cancelScheduledViewportRecompute();
         // 连续键入（input/delete/move）走防抖，避免每次按键都重 tokenize；而保存时格式化、
         // 载入文件、AI 补丁等“程序化整段替换”不带用户事件标记，其重排区间会丢色，若再等
         // 90ms 防抖才重算会出现一段明显的“未着色”白闪。这类变更立即重算，把空窗压到最小。
@@ -423,14 +452,8 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
     destroy(): void {
       this.destroyed = true;
       this.cancelScheduledRecompute();
-      this.cancelScheduledViewportRecompute();
       this.pendingRequest = null;
-    }
-
-    private invalidateHighlightedRange(): void {
-      this.highlightedLanguage = null;
-      this.highlightedStartLine = null;
-      this.highlightedEndLine = null;
+      this.lineTokenCache.clear();
     }
 
     private cancelScheduledRecompute(): void {
@@ -438,18 +461,6 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
         window.clearTimeout(this.recomputeTimer);
         this.recomputeTimer = null;
       }
-    }
-
-    private cancelScheduledViewportRecompute(): void {
-      if (this.viewportRecomputeTimer === null) {
-        return;
-      }
-      if (typeof window.cancelAnimationFrame === 'function') {
-        window.cancelAnimationFrame(this.viewportRecomputeTimer);
-      } else {
-        window.clearTimeout(this.viewportRecomputeTimer);
-      }
-      this.viewportRecomputeTimer = null;
     }
 
     private scheduleRecompute(view: EditorView): void {
@@ -466,26 +477,6 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
           // view 已销毁，忽略。
         }
       }, HIGHLIGHT_RECOMPUTE_DEBOUNCE_MS);
-    }
-
-    private scheduleViewportRecompute(view: EditorView): void {
-      if (this.viewportRecomputeTimer !== null) {
-        return;
-      }
-      const run = (): void => {
-        this.viewportRecomputeTimer = null;
-        if (this.destroyed) {
-          return;
-        }
-        this.recompute(view, { allowReuse: true });
-      };
-
-      if (typeof window.requestAnimationFrame === 'function') {
-        this.viewportRecomputeTimer = window.requestAnimationFrame(run);
-        return;
-      }
-
-      this.viewportRecomputeTimer = window.setTimeout(run, HIGHLIGHT_VIEWPORT_FRAME_FALLBACK_MS);
     }
 
     // 主线程语法预热（幂等）：Worker 有独立 highlighter 实例，主线程 loadedLanguages 仅在显式
@@ -518,26 +509,108 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
       });
     }
 
+    /** 语言或文档版本变化时整体作废按行缓存（行号/语法状态已失效）。 */
+    private ensureCacheContext(language: string): void {
+      if (this.cacheLanguage !== language || this.cacheDocVersion !== this.docVersion) {
+        this.lineTokenCache.clear();
+        this.cacheLanguage = language;
+        this.cacheDocVersion = this.docVersion;
+      }
+    }
+
+    /** 把一段切片的 token 按文档行号写入按行缓存，并按上限淘汰最旧行。 */
+    private cacheSliceLines(sliceStartLine: number, lines: IShikiThemedToken[][]): void {
+      for (let index = 0; index < lines.length; index += 1) {
+        this.lineTokenCache.set(sliceStartLine + index, lines[index] ?? []);
+      }
+      while (this.lineTokenCache.size > MAX_LINE_TOKEN_CACHE_LINES) {
+        const oldestKey = this.lineTokenCache.keys().next().value;
+        if (oldestKey === undefined) {
+          break;
+        }
+        this.lineTokenCache.delete(oldestKey);
+      }
+    }
+
+    private getVisibleLineRange(view: EditorView): { first: number; last: number } | null {
+      const { visibleRanges } = view;
+      if (visibleRanges.length === 0) {
+        return null;
+      }
+      const { doc } = view.state;
+      return {
+        first: doc.lineAt(visibleRanges[0].from).number,
+        last: doc.lineAt(visibleRanges[visibleRanges.length - 1].to).number,
+      };
+    }
+
+    /** 按当前视口 + overscan 从按行缓存重建装饰（同步、零 tokenize）。 */
+    private renderViewportFromCache(view: EditorView): void {
+      const visible = this.getVisibleLineRange(view);
+      if (!visible) {
+        return;
+      }
+      const renderRange = computeShikiHighlightRange({
+        firstVisibleLine: visible.first,
+        lastVisibleLine: visible.last,
+        totalLines: view.state.doc.lines,
+        overscanLines: HIGHLIGHT_OVERSCAN_LINES,
+        leadInLines: HIGHLIGHT_OVERSCAN_LINES,
+        fromDocumentStart: false,
+      });
+      this.decorations = buildDecorationsFromLineCache(
+        view,
+        renderRange.startLine,
+        renderRange.endLine,
+        this.lineTokenCache,
+      );
+    }
+
     private recompute(view: EditorView, options: { allowReuse: boolean }): void {
       const language = view.state.field(shikiLanguageField, false) ?? 'text';
       if (!resolveShikiLanguageId(language)) {
         this.decorations = Decoration.none;
-        this.invalidateHighlightedRange();
+        this.lineTokenCache.clear();
+        this.cacheLanguage = null;
+        this.cacheDocVersion = -1;
         this.pendingRequest = null;
         return;
       }
 
       // 预热主线程语法，使后续滚动能走同步快路径。
       this.warmMainThreadLanguage(view, language);
+      // 语言/文档版本变化时作废按行缓存。
+      this.ensureCacheContext(language);
 
-      // 复用：语言未变且已高亮范围已覆盖当前可见区时，滚动无需重算（零开销且不会露白）。
-      if (options.allowReuse && this.isVisibleRangeHighlighted(view, language)) {
+      const visible = this.getVisibleLineRange(view);
+      if (!visible) {
+        return;
+      }
+
+      const renderRange = computeShikiHighlightRange({
+        firstVisibleLine: visible.first,
+        lastVisibleLine: visible.last,
+        totalLines: view.state.doc.lines,
+        overscanLines: HIGHLIGHT_OVERSCAN_LINES,
+        leadInLines: HIGHLIGHT_OVERSCAN_LINES,
+        fromDocumentStart: false,
+      });
+
+      // 渲染范围已全部命中缓存：直接同步重建装饰，零 tokenize、零露白（含来回滚动）。
+      const uncached = findUncachedLineRange({
+        startLine: renderRange.startLine,
+        endLine: renderRange.endLine,
+        isCached: (lineNumber) => this.lineTokenCache.has(lineNumber),
+      });
+      if (uncached === null) {
+        this.renderViewportFromCache(view);
         return;
       }
 
       // —— 同步快路径（主线程、可见区窗口、即时着色，零闪烁/零露白）——
-      // 借鉴 CodeMirror 6：高亮采用主线程、小增量、同步解析；对“可见区窗口”（而非从文档
-      // 开头）同步 tokenize，切片有界且小，主线程耗时可控，新行一出现即着色。
+      // 借鉴 CodeMirror 6 / VS Code：高亮采用主线程小增量同步解析。对“可见区窗口”（含
+      // lead-in 上下文）同步 tokenize，切片有界且小，主线程耗时可控；结果按行入缓存，新行
+      // 在当前 update 即着色，绝不晚一帧。
       if (isShikiLanguageLoaded(language)) {
         const syncSlice = computeShikiHighlightSlice(view, {
           fromDocumentStart: false,
@@ -553,33 +626,25 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
         ) {
           const tokens = tokenizeWithShikiSync(syncSlice.code, language);
           if (tokens) {
+            this.cacheSliceLines(syncSlice.startLine, tokens);
             // 作废仍在途的旧 Worker 请求，避免其回包覆盖本次同步结果。
             this.latestRequestId = this.nextRequestId;
             this.nextRequestId += 1;
             this.pendingRequest = null;
-            this.decorations = buildDecorationsFromTokenLines(
-              view,
-              syncSlice.startLine,
-              syncSlice.endLine,
-              tokens,
-            );
-            this.highlightedLanguage = language;
-            this.highlightedStartLine = syncSlice.startLine;
-            this.highlightedEndLine = syncSlice.endLine;
+            this.renderViewportFromCache(view);
             return;
           }
         }
       }
 
       // —— Worker 回退 ——
-      // 仅在首屏语法尚未预热完成、或极端长行切片过大无法同步时走此路。从文档开头切片以
-      // 保证跨行结构（heredoc/块注释/模板字符串）在可见区配色正确；旧装饰在途期间保留，
-      // 不清空，避免露白。预热完成后的后续滚动都会走上面的同步快路径。
+      // 仅在首屏语法尚未预热完成、或极端长行切片过大无法同步时走此路。先用现有缓存（可能为
+      // 部分命中）同步重建，已着色的行保持不变、不清空、不露白；再从文档开头切片交给 Worker，
+      // 保证跨行结构配色正确，回包后入缓存重建。预热完成后的后续滚动都会走上面的同步快路径。
+      this.renderViewportFromCache(view);
+
       const slice = computeShikiHighlightSlice(view, { fromDocumentStart: true });
       if (!slice) {
-        this.decorations = Decoration.none;
-        this.invalidateHighlightedRange();
-        this.pendingRequest = null;
         return;
       }
 
@@ -669,34 +734,10 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
         return;
       }
 
-      this.decorations = buildDecorationsFromTokenLines(
-        view,
-        result.startLine,
-        result.endLine,
-        result.tokens,
-      );
-      this.highlightedLanguage = result.language;
-      this.highlightedStartLine = result.startLine;
-      this.highlightedEndLine = result.endLine;
-    }
-
-    private isVisibleRangeHighlighted(view: EditorView, language: string): boolean {
-      if (this.highlightedLanguage !== language) {
-        return false;
-      }
-      const { visibleRanges } = view;
-      if (visibleRanges.length === 0) {
-        return false;
-      }
-      const { doc } = view.state;
-      const firstVisibleLine = doc.lineAt(visibleRanges[0].from).number;
-      const lastVisibleLine = doc.lineAt(visibleRanges[visibleRanges.length - 1].to).number;
-      return isShikiHighlightRangeCovered({
-        coveredStartLine: this.highlightedStartLine,
-        coveredEndLine: this.highlightedEndLine,
-        requestedStartLine: firstVisibleLine,
-        requestedEndLine: lastVisibleLine,
-      });
+      // 回包结果按行入缓存（docVersion 已校验一致），再按当前视口重建装饰。
+      this.ensureCacheContext(language);
+      this.cacheSliceLines(result.startLine, result.tokens);
+      this.renderViewportFromCache(view);
     }
   },
   {

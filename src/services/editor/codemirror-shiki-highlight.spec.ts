@@ -17,6 +17,7 @@ vi.mock('@/services/editor/shiki-shared', () => ({
 import {
   computeShikiHighlightRange,
   createShikiHighlightRequestKey,
+  findUncachedLineRange,
   isShikiHighlightRangeCovered,
   resolveShikiHighlightUpdateAction,
   shouldHighlightSynchronously,
@@ -284,5 +285,42 @@ describe('shouldHighlightSynchronously', () => {
         maxSyncSliceLength: 50_000,
       }),
     ).toBe(true);
+  });
+});
+
+describe('findUncachedLineRange', () => {
+  it('全部命中缓存时返回 null（无需重新 tokenize）', () => {
+    const cached = new Set([1, 2, 3, 4, 5]);
+    expect(
+      findUncachedLineRange({ startLine: 1, endLine: 5, isCached: (line) => cached.has(line) }),
+    ).toBeNull();
+  });
+
+  it('返回缺失行的最小包络范围', () => {
+    const cached = new Set([1, 2, 5]);
+    expect(
+      findUncachedLineRange({ startLine: 1, endLine: 5, isCached: (line) => cached.has(line) }),
+    ).toEqual({ startLine: 3, endLine: 4 });
+  });
+
+  it('缺失行不连续时返回首末包络（含中间已缓存行）', () => {
+    const cached = new Set([1, 3, 5]);
+    expect(
+      findUncachedLineRange({ startLine: 1, endLine: 5, isCached: (line) => cached.has(line) }),
+    ).toEqual({ startLine: 2, endLine: 4 });
+  });
+
+  it('整段都未缓存时返回整段', () => {
+    const cached = new Set<number>();
+    expect(
+      findUncachedLineRange({ startLine: 10, endLine: 14, isCached: (line) => cached.has(line) }),
+    ).toEqual({ startLine: 10, endLine: 14 });
+  });
+
+  it('仅末尾未缓存时上沿等于首个缺失行', () => {
+    const cached = new Set([10, 11, 12]);
+    expect(
+      findUncachedLineRange({ startLine: 10, endLine: 14, isCached: (line) => cached.has(line) }),
+    ).toEqual({ startLine: 13, endLine: 14 });
   });
 });
