@@ -14,7 +14,7 @@
 //!     `shell_words::split` 对含空格 / 反斜杠路径(尤其 Windows)的误分词。
 //!   * `connect_with(transport, |cx| async {...})` 内运行长生命周期命令循环,宿主侧
 //!     (Tauri 命令)经 mpsc 投递 NewSession / Prompt / SetSessionMode / RestoreCheckpoint /
-//!     Cancel / Shutdown。
+//!     WebSearch / WebFetch / Warmup / Health / Cancel / Shutdown。
 
 // 过渡期:本模块尚未接线到宿主命令(公开 API 暂无调用点)。接线后移除该 allow。
 #![allow(dead_code)]
@@ -60,11 +60,14 @@ pub enum PermissionDecision {
 pub type PermissionResolver =
     Arc<dyn Fn(RequestPermissionRequest) -> BoxFuture<'static, PermissionDecision> + Send + Sync>;
 
-/// 检查点回滚扩展方法的请求级模型配置。
-/// 字段镜像 sidecar `ext-methods.ts` 的 `modelConfigParamsSchema`(camelCase 线格式)。
+/// 扩展方法的请求级模型配置(检查点回滚 / 预热共用)。
+///
+/// 字段镜像 sidecar 的请求级模型配置 schema:`ext-methods.ts` 的
+/// `modelConfigParamsSchema`(检查点回滚)与 `models/llm-warmup.ts` 的
+/// `requestScopedModelConfigSchema`(预热)同形,二者均为 camelCase 线格式。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CheckpointRestoreModelConfig {
+pub struct ExtModelConfig {
     pub model_id: String,
     pub api_key: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -93,8 +96,59 @@ pub struct CheckpointRestoreRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub model_config: Option<CheckpointRestoreModelConfig>,
+    pub model_config: Option<ExtModelConfig>,
 }
+
+/// `calamex.dev/web/search` 扩展方法的请求。
+///
+/// 字段镜像 sidecar `web/types.ts` 的 `aiWebSearchInputSchema`(camelCase 线格式)。
+/// `intent` / `recency` 的合法取值由 sidecar 端 zod 统一校验,宿主侧以字符串原样透传、
+/// 不在此重复其取值表,避免与 sidecar 的单一来源漂移。
+/// 响应为 `aiWebSearchPayloadSchema`,以 `serde_json::Value` 原样回传交由宿主侧解析。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, JsonRpcRequest)]
+#[serde(rename_all = "camelCase")]
+#[request(method = "calamex.dev/web/search", response = Value)]
+pub struct WebSearchExtRequest {
+    pub query: String,
+    pub intent: String,
+    pub max_results: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recency: Option<String>,
+}
+
+/// `calamex.dev/web/fetch` 扩展方法的请求。
+///
+/// 字段镜像 sidecar `web/types.ts` 的 `aiWebFetchInputSchema`(camelCase 线格式)。
+/// 响应为 `aiWebFetchPayloadSchema`,以 `serde_json::Value` 原样回传交由宿主侧解析。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, JsonRpcRequest)]
+#[serde(rename_all = "camelCase")]
+#[request(method = "calamex.dev/web/fetch", response = Value)]
+pub struct WebFetchExtRequest {
+    pub url: String,
+    pub reason: String,
+    pub max_bytes: u64,
+}
+
+/// `calamex.dev/warmup` 扩展方法的请求。
+///
+/// 字段镜像 sidecar `ext-methods.ts` 的 `warmupParamsSchema`(可选 `modelConfig`)。
+/// 缺省 `model_config` 时,sidecar 退回到从启动期环境解析的默认模型配置。
+/// 响应为预热结果信封,以 `serde_json::Value` 原样回传交由宿主侧解析。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, JsonRpcRequest)]
+#[serde(rename_all = "camelCase")]
+#[request(method = "calamex.dev/warmup", response = Value)]
+pub struct WarmupExtRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_config: Option<ExtModelConfig>,
+}
+
+/// `calamex.dev/health` 扩展方法的请求(无参数,序列化为 `{}`)。
+///
+/// 响应为健康信息信封,以 `serde_json::Value` 原样回传交由宿主侧解析。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, JsonRpcRequest)]
+#[serde(rename_all = "camelCase")]
+#[request(method = "calamex.dev/health", response = Value)]
+pub struct HealthExtRequest {}
 
 /// 启动配置。采用结构化字段而非单一命令行字符串:
 ///   * `program`:ACP stdio 入口可执行程序(如 node 的绝对路径);
@@ -138,6 +192,22 @@ enum Command {
     },
     RestoreCheckpoint {
         request: CheckpointRestoreRequest,
+        reply: oneshot::Sender<Result<Value, String>>,
+    },
+    WebSearch {
+        request: WebSearchExtRequest,
+        reply: oneshot::Sender<Result<Value, String>>,
+    },
+    WebFetch {
+        request: WebFetchExtRequest,
+        reply: oneshot::Sender<Result<Value, String>>,
+    },
+    Warmup {
+        request: WarmupExtRequest,
+        reply: oneshot::Sender<Result<Value, String>>,
+    },
+    Health {
+        request: HealthExtRequest,
         reply: oneshot::Sender<Result<Value, String>>,
     },
     Cancel {
@@ -219,6 +289,69 @@ impl AcpClientHandle {
         let (reply, rx) = oneshot::channel();
         self.cmd_tx
             .send(Command::RestoreCheckpoint { request, reply })
+            .map_err(|_| AcpClientError::NotRunning)?;
+        rx.await
+            .map_err(|_| AcpClientError::NotRunning)?
+            .map_err(AcpClientError::Protocol)
+    }
+
+    /// 联网搜索(扩展方法 `calamex.dev/web/search`)。
+    ///
+    /// 与检查点回滚同属标准会话回合之外的「带外」能力,经 sidecar 公示的扩展方法通道下发;
+    /// 标准客户端不识别该方法会安全忽略。返回 sidecar 的搜索结果信封(`serde_json::Value`),
+    /// 由宿主侧解析为既有的 web 搜索结果契约。
+    pub async fn web_search(
+        &self,
+        request: WebSearchExtRequest,
+    ) -> Result<Value, AcpClientError> {
+        let (reply, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(Command::WebSearch { request, reply })
+            .map_err(|_| AcpClientError::NotRunning)?;
+        rx.await
+            .map_err(|_| AcpClientError::NotRunning)?
+            .map_err(AcpClientError::Protocol)
+    }
+
+    /// 联网抓取(扩展方法 `calamex.dev/web/fetch`)。
+    ///
+    /// 经 sidecar 公示的扩展方法通道下发。返回 sidecar 的抓取结果信封(`serde_json::Value`),
+    /// 由宿主侧解析为既有的 web 抓取结果契约。
+    pub async fn web_fetch(
+        &self,
+        request: WebFetchExtRequest,
+    ) -> Result<Value, AcpClientError> {
+        let (reply, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(Command::WebFetch { request, reply })
+            .map_err(|_| AcpClientError::NotRunning)?;
+        rx.await
+            .map_err(|_| AcpClientError::NotRunning)?
+            .map_err(AcpClientError::Protocol)
+    }
+
+    /// 预热模型连接(扩展方法 `calamex.dev/warmup`)。
+    ///
+    /// 经 sidecar 公示的扩展方法通道下发。返回 sidecar 的预热结果信封(`serde_json::Value`),
+    /// 由宿主侧解析为既有的预热结果契约。
+    pub async fn warmup(&self, request: WarmupExtRequest) -> Result<Value, AcpClientError> {
+        let (reply, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(Command::Warmup { request, reply })
+            .map_err(|_| AcpClientError::NotRunning)?;
+        rx.await
+            .map_err(|_| AcpClientError::NotRunning)?
+            .map_err(AcpClientError::Protocol)
+    }
+
+    /// 探测 sidecar 健康状态(扩展方法 `calamex.dev/health`)。
+    ///
+    /// 经 sidecar 公示的扩展方法通道下发。返回 sidecar 的健康信息信封(`serde_json::Value`),
+    /// 由宿主侧解析为既有的健康状态契约。
+    pub async fn health(&self, request: HealthExtRequest) -> Result<Value, AcpClientError> {
+        let (reply, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(Command::Health { request, reply })
             .map_err(|_| AcpClientError::NotRunning)?;
         rx.await
             .map_err(|_| AcpClientError::NotRunning)?
@@ -367,6 +500,22 @@ pub fn spawn_acp_client(
                             let res = cx.send_request(request).block_task().await;
                             let _ = reply.send(res.map_err(|e| e.to_string()));
                         }
+                        Command::WebSearch { request, reply } => {
+                            let res = cx.send_request(request).block_task().await;
+                            let _ = reply.send(res.map_err(|e| e.to_string()));
+                        }
+                        Command::WebFetch { request, reply } => {
+                            let res = cx.send_request(request).block_task().await;
+                            let _ = reply.send(res.map_err(|e| e.to_string()));
+                        }
+                        Command::Warmup { request, reply } => {
+                            let res = cx.send_request(request).block_task().await;
+                            let _ = reply.send(res.map_err(|e| e.to_string()));
+                        }
+                        Command::Health { request, reply } => {
+                            let res = cx.send_request(request).block_task().await;
+                            let _ = reply.send(res.map_err(|e| e.to_string()));
+                        }
                         Command::Cancel { session_id } => {
                             if let Err(error) =
                                 cx.send_notification(CancelNotification::new(session_id))
@@ -469,7 +618,7 @@ mod tests {
             snapshot_id: Some("snap_1".to_string()),
             step: None,
             session_id: None,
-            model_config: Some(CheckpointRestoreModelConfig {
+            model_config: Some(ExtModelConfig {
                 model_id: "deepseek/deepseek-v4-pro".to_string(),
                 api_key: "secret".to_string(),
                 base_url: None,
@@ -483,5 +632,57 @@ mod tests {
         assert_eq!(value["modelConfig"]["modelId"], "deepseek/deepseek-v4-pro");
         assert_eq!(value["modelConfig"]["apiKey"], "secret");
         assert!(value["modelConfig"].get("baseUrl").is_none());
+    }
+
+    #[test]
+    fn web_search_request_serializes_to_camel_case_params() {
+        let request = WebSearchExtRequest {
+            query: "rust acp sdk".to_string(),
+            intent: "official-docs".to_string(),
+            max_results: 5,
+            recency: None,
+        };
+        let value = serde_json::to_value(&request).unwrap();
+        assert_eq!(value["query"], "rust acp sdk");
+        assert_eq!(value["intent"], "official-docs");
+        assert_eq!(value["maxResults"], 5);
+        assert!(value.get("recency").is_none());
+    }
+
+    #[test]
+    fn web_fetch_request_serializes_to_camel_case_params() {
+        let request = WebFetchExtRequest {
+            url: "https://example.com/doc".to_string(),
+            reason: "read official docs".to_string(),
+            max_bytes: 4096,
+        };
+        let value = serde_json::to_value(&request).unwrap();
+        assert_eq!(value["url"], "https://example.com/doc");
+        assert_eq!(value["reason"], "read official docs");
+        assert_eq!(value["maxBytes"], 4096);
+    }
+
+    #[test]
+    fn warmup_request_serializes_optional_model_config() {
+        let without = serde_json::to_value(&WarmupExtRequest { model_config: None }).unwrap();
+        assert!(without.get("modelConfig").is_none());
+
+        let with_config = WarmupExtRequest {
+            model_config: Some(ExtModelConfig {
+                model_id: "deepseek/deepseek-v4-pro".to_string(),
+                api_key: "secret".to_string(),
+                base_url: None,
+            }),
+        };
+        let value = serde_json::to_value(&with_config).unwrap();
+        assert_eq!(value["modelConfig"]["modelId"], "deepseek/deepseek-v4-pro");
+        assert_eq!(value["modelConfig"]["apiKey"], "secret");
+        assert!(value["modelConfig"].get("baseUrl").is_none());
+    }
+
+    #[test]
+    fn health_request_serializes_to_empty_object() {
+        let value = serde_json::to_value(&HealthExtRequest {}).unwrap();
+        assert_eq!(value, serde_json::json!({}));
     }
 }
