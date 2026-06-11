@@ -1,6 +1,5 @@
 <script setup lang="ts">
-import '@/assets/css/run-sidebar.css';
-import RunSidebarTemplatesSection from '@/components/workbench/run-sidebar/RunSidebarTemplatesSection.vue';
+import RunSidebarPanel from '@/components/workbench/sidebar/run/RunSidebarPanel.vue';
 import type {
   IActiveRunSummary,
   ICommandTemplate,
@@ -9,7 +8,7 @@ import type {
   TExecutorKind,
 } from '@/types/editor';
 
-defineProps<{
+const props = defineProps<{
   document: IEditorDocument;
   hasActiveDocument: boolean;
   isDesktopRuntime: boolean;
@@ -32,7 +31,5 @@ defineEmits<{
 </script>
 
 <template>
-    <section class="run-sidebar-shell" aria-label="运行侧边栏">
-        <RunSidebarTemplatesSection />
-    </section>
+  <RunSidebarPanel v-bind="props" />
 </template>
