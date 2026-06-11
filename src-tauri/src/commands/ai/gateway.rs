@@ -153,9 +153,10 @@ pub async fn ai_test_provider(app: AppHandle) -> Result<AiProviderTestPayload, S
 #[tauri::command]
 #[specta::specta]
 pub async fn ai_generate_conversation_title(
+    app: AppHandle,
     payload: AiConversationTitleRequest,
 ) -> Result<AiConversationTitlePayload, String> {
-    gateway::generate_conversation_title(payload).await
+    gateway::generate_conversation_title(&app, payload).await
 }
 
 #[tauri::command]
@@ -201,9 +202,10 @@ pub fn ai_cancel(payload: AiCancelRequest) -> Result<(), String> {
 #[tauri::command]
 #[specta::specta]
 pub async fn ai_inline_complete(
+    app: AppHandle,
     payload: AiInlineCompletionRequest,
 ) -> Result<AiInlineCompletionResult, String> {
-    let result = gateway::inline_complete(payload).await?;
+    let result = gateway::inline_complete(&app, payload).await?;
     Ok(AiInlineCompletionResult {
         insert_text: result.insert_text,
         range: AiInlineCompletionRangePayload {

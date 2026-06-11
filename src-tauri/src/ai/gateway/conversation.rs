@@ -25,6 +25,37 @@ fn sidecar_events_result_text(
     payload.result.clone().unwrap_or_default()
 }
 
+/// ACP 路径下的一次性模型调用辅助。
+///
+/// 若 request 尚未携带 model_config，则用传入的 model_config 补齐；
+/// 随后通过托管态 AcpRuntime 获取（或惰性启动）ACP 宿主，发起 model/chat 透传。
+/// 仅在 feature = "acp_client" 下编译，不影响默认构建。
+#[cfg(feature = "acp_client")]
+async fn run_model_chat_via_acp(
+    app: &AppHandle,
+    mut request: AgentSidecarChatRequest,
+    model_config: crate::commands::contracts::AgentSidecarModelConfigPayload,
+) -> Result<crate::commands::contracts::AgentSidecarResponsePayload, String> {
+    request.model_config.get_or_insert(model_config);
+    let host = app
+        .state::<crate::acp::AcpRuntime>()
+        .get_or_spawn(app)
+        .map_err(|error| {
+            errors::error(
+                "AI_PROVIDER_UNAVAILABLE",
+                format!("无法建立 ACP 宿主连接：{error}"),
+            )
+        })?;
+    host.model_chat(crate::acp::chat_request_to_model_chat_ext(request))
+        .await
+        .map_err(|error| {
+            errors::error(
+                "AI_PROVIDER_UNAVAILABLE",
+                format!("ACP 模型透传失败：{error}"),
+            )
+        })
+}
+
 /// 从 sidecar 事件流中提取最终 `done` 事件携带的官方用量（authoritative usage）。
 ///
 /// sidecar 已在 `done` 事件里回传 Mastra/ai-sdk 的真实 `usage`（见 agent-sidecar
@@ -90,6 +121,7 @@ fn parse_done_event_usage(events: &[serde_json::Value]) -> Option<AiProviderUsag
 }
 
 pub async fn generate_conversation_title(
+    app: &AppHandle,
     payload: AiConversationTitleRequest,
 ) -> Result<AiConversationTitlePayload, String> {
     let config = current_config()?;
@@ -119,7 +151,7 @@ pub async fn generate_conversation_title(
             &assistant_message,
         )),
     ]);
-    let sidecar_response = agent_sidecar::narrator_model_chat_once(AgentSidecarChatRequest {
+    let request_payload = AgentSidecarChatRequest {
         session_id: None,
         mode: Some("ask".to_string()),
         goal: Some("生成会话标题".to_string()),
@@ -128,8 +160,16 @@ pub async fn generate_conversation_title(
         context: Vec::new(),
         model_config: None,
         thread_id: None,
-    })
-    .await?;
+    };
+    #[cfg(feature = "acp_client")]
+    let sidecar_response =
+        run_model_chat_via_acp(app, request_payload, agent_sidecar::narrator_sidecar_model_config()?)
+            .await?;
+    #[cfg(not(feature = "acp_client"))]
+    let sidecar_response = {
+        let _ = app;
+        agent_sidecar::narrator_model_chat_once(request_payload).await?
+    };
     let title = normalize_conversation_title(&sidecar_events_result_text(&sidecar_response));
 
     if title.chars().count() < MIN_GENERATED_TITLE_CHARS {
@@ -386,6 +426,7 @@ pub async fn chat_stream(
 }
 
 pub async fn inline_complete(
+    app: &AppHandle,
     payload: AiInlineCompletionRequest,
 ) -> Result<AiInlineCompletionResult, String> {
     let config = current_config()?;
@@ -400,7 +441,7 @@ pub async fn inline_complete(
         content: prompt,
     }]);
 
-    let response = agent_sidecar::model_chat_once(AgentSidecarChatRequest {
+    let request_payload = AgentSidecarChatRequest {
         session_id: None,
         mode: Some("ask".to_string()),
         goal: Some("生成行内补全".to_string()),
@@ -409,8 +450,16 @@ pub async fn inline_complete(
         context: Vec::new(),
         model_config: None,
         thread_id: None,
-    })
-    .await?;
+    };
+    #[cfg(feature = "acp_client")]
+    let response =
+        run_model_chat_via_acp(app, request_payload, agent_sidecar::current_sidecar_model_config()?)
+            .await?;
+    #[cfg(not(feature = "acp_client"))]
+    let response = {
+        let _ = app;
+        agent_sidecar::model_chat_once(request_payload).await?
+    };
 
     Ok(AiInlineCompletionResult {
         insert_text: sidecar_events_result_text(&response),
@@ -551,26 +600,26 @@ pub(super) fn normalize_conversation_title(value: &str) -> String {
             || matches!(
                 item,
                 '"' | '\''
-                    | '“'
-                    | '”'
-                    | '‘'
-                    | '’'
-                    | '《'
-                    | '》'
-                    | '【'
-                    | '】'
-                    | '「'
-                    | '」'
-                    | '『'
-                    | '』'
-                    | '。'
-                    | '，'
+                    | '\u{201c}'
+                    | '\u{201d}'
+                    | '\u{2018}'
+                    | '\u{2019}'
+                    | '\u{300a}'
+                    | '\u{300b}'
+                    | '\u{3010}'
+                    | '\u{3011}'
+                    | '\u{300c}'
+                    | '\u{300d}'
+                    | '\u{300e}'
+                    | '\u{300f}'
+                    | '\u{3002}'
+                    | '\u{ff0c}'
                     | ','
                     | '.'
                     | ':'
-                    | '：'
+                    | '\u{ff1a}'
                     | '-'
-                    | '—'
+                    | '\u{2014}'
             )
     });
 
