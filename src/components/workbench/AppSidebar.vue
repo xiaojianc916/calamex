@@ -69,7 +69,6 @@ import {
   defineAsyncComponent,
   onBeforeUnmount,
   onMounted,
-  reactive,
   ref,
   watch,
 } from 'vue';
@@ -85,6 +84,7 @@ import {
 import WorkspaceTreeNode from '@/components/workbench/WorkspaceTreeNode.vue';
 import { useWorkspaceExplorerContextMenu } from '@/components/workbench/sidebar/explorer/useWorkspaceExplorerContextMenu';
 import { useWorkspaceExplorerMutations } from '@/components/workbench/sidebar/explorer/useWorkspaceExplorerMutations';
+import { useWorkspaceExplorerTree } from '@/components/workbench/sidebar/explorer/useWorkspaceExplorerTree';
 import { useWorkspaceFileWatcher } from '@/components/workbench/sidebar/explorer/useWorkspaceFileWatcher';
 import { useMessage } from '@/composables/useMessage';
 import { tauriService } from '@/services/tauri';
@@ -103,11 +103,7 @@ import type {
 import type { IGitDiffPreviewRequest } from '@/types/git';
 import { writeFileSystemPathToClipboard } from '@/utils/clipboard';
 import { toErrorMessage } from '@/utils/error';
-import {
-  formatFileSystemPathForDisplay,
-  getPathBaseName,
-  getRelativeFileSystemPath,
-} from '@/utils/path';
+import { formatFileSystemPathForDisplay, getPathBaseName } from '@/utils/path';
 import { resolveWorkspaceKey, resolveWorkspaceRootPayload } from '@/utils/workspace';
 
 const DeferredLinearContextMenu = defineAsyncComponent({
@@ -170,12 +166,8 @@ const rootLoading = ref(false);
 const loadError = ref('');
 const explorerSectionRef = ref<HTMLElement | null>(null);
 const isExplorerScrollbarActive = ref(false);
-const childrenMap = reactive<Record<string, IWorkspaceEntry[]>>({});
-const manualExpandedPaths = ref<Set<string>>(new Set());
-const loadingPaths = reactive<Record<string, boolean>>({});
 const loadedWorkspaceKey = ref<string | null>(null);
 
-const pendingReloadAgainPaths = new Set<string>();
 let rootRequestId = 0;
 let explorerScrollbarIdleTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -276,6 +268,29 @@ const isRunView = computed(() => props.view === 'run');
 const isSshView = computed(() => props.view === 'extensions');
 const panelMeta = computed(() => SIDEBAR_META[props.view] ?? SIDEBAR_META.ai);
 
+const selectedExplorerPath = computed(
+  () => props.document.path ?? props.startupExplorerSelectedPath ?? undefined,
+);
+
+const {
+  childrenMap,
+  manualExpandedPaths,
+  loadingPaths,
+  clearTreeState,
+  resetTreeForRoot,
+  loadDirectoryEntries,
+  loadStartupExpandedDirectories,
+  expandExplorerPath,
+  toggleExplorerPath,
+  resolveParentPathForMutation,
+  pruneWorkspaceSubtreeState,
+} = useWorkspaceExplorerTree({
+  getRoot: () => root.value,
+  getActiveRequestId: () => rootRequestId,
+  getSelectedPath: () => selectedExplorerPath.value,
+  onExplorerStateChange: (payload) => emit('explorer-state-change', payload),
+});
+
 const isExplorerWorkspaceEmpty = computed(() => {
   if (!root.value) {
     return false;
@@ -301,21 +316,6 @@ const rootEntry = computed<IWorkspaceEntry | null>(() => {
   };
 });
 
-const selectedExplorerPath = computed(
-  () => props.document.path ?? props.startupExplorerSelectedPath ?? undefined,
-);
-
-const clearTreeState = (): void => {
-  Object.keys(childrenMap).forEach((path) => {
-    delete childrenMap[path];
-  });
-  Object.keys(loadingPaths).forEach((path) => {
-    delete loadingPaths[path];
-  });
-  pendingReloadAgainPaths.clear();
-  manualExpandedPaths.value = new Set();
-};
-
 const applyWorkspaceRootPayload = (
   payload: IWorkspaceDirectoryPayload,
   workspaceKey: string,
@@ -324,13 +324,7 @@ const applyWorkspaceRootPayload = (
   loadError.value = '';
   root.value = payload;
   loadedWorkspaceKey.value = workspaceKey;
-  clearTreeState();
-  childrenMap[payload.rootPath] = payload.entries;
-  const scopedExpandedPaths = props.startupExplorerExpandedPaths.filter(
-    (path) => getRelativeFileSystemPath(path, payload.rootPath) !== null,
-  );
-  manualExpandedPaths.value = new Set([payload.rootPath, ...scopedExpandedPaths]);
-  emitExplorerStateChange();
+  resetTreeForRoot(payload, props.startupExplorerExpandedPaths);
 };
 
 const loadWorkspaceRoot = async (workspaceKey: string): Promise<void> => {
@@ -378,92 +372,8 @@ const loadWorkspaceRoot = async (workspaceKey: string): Promise<void> => {
   }
 };
 
-const loadDirectoryEntries = async (
-  path: string,
-  options: { silent?: boolean } = {},
-): Promise<void> => {
-  if (loadingPaths[path]) {
-    pendingReloadAgainPaths.add(path);
-    return;
-  }
-  const requestId = rootRequestId;
-  loadingPaths[path] = true;
-  try {
-    const payload = await tauriService.listWorkspaceEntries(path, root.value?.rootPath);
-    if (requestId !== rootRequestId) {
-      return;
-    }
-    childrenMap[path] = payload.entries;
-  } catch (error) {
-    if (requestId !== rootRequestId) {
-      return;
-    }
-    if (!options.silent) {
-      message.error(toErrorMessage(error, '读取目录失败'));
-    }
-    childrenMap[path] = [];
-  } finally {
-    if (requestId === rootRequestId) {
-      loadingPaths[path] = false;
-    }
-  }
-  if (pendingReloadAgainPaths.delete(path) && requestId === rootRequestId) {
-    await loadDirectoryEntries(path, options);
-  }
-};
-
-const loadStartupExpandedDirectories = async (): Promise<void> => {
-  if (!root.value) {
-    return;
-  }
-  const rootPath = root.value.rootPath;
-  const pendingPaths = [...manualExpandedPaths.value].filter(
-    (path) => path !== rootPath && childrenMap[path] === undefined,
-  );
-  for (const path of pendingPaths) {
-    if (!manualExpandedPaths.value.has(path)) {
-      continue;
-    }
-    await loadDirectoryEntries(path, { silent: true });
-  }
-};
-
-const expandExplorerPath = async (path: string): Promise<void> => {
-  if (!root.value) {
-    return;
-  }
-  if (!manualExpandedPaths.value.has(path)) {
-    const nextExpandedPaths = new Set(manualExpandedPaths.value);
-    nextExpandedPaths.add(path);
-    manualExpandedPaths.value = nextExpandedPaths;
-    emitExplorerStateChange();
-  }
-  if (path !== root.value.rootPath && childrenMap[path] === undefined) {
-    await loadDirectoryEntries(path);
-  }
-};
-
-const toggleExplorerPath = async (path: string): Promise<void> => {
-  if (manualExpandedPaths.value.has(path)) {
-    const nextExpandedPaths = new Set(manualExpandedPaths.value);
-    nextExpandedPaths.delete(path);
-    manualExpandedPaths.value = nextExpandedPaths;
-    emitExplorerStateChange();
-    return;
-  }
-  await expandExplorerPath(path);
-};
-
 const handleOpenFile = (payload: TWorkbenchOpenFilePayload): void => {
   emit('open-file', payload);
-};
-const emitExplorerStateChange = (
-  selectedPath: string | null | undefined = selectedExplorerPath.value ?? null,
-): void => {
-  emit('explorer-state-change', {
-    expandedPaths: [...manualExpandedPaths.value],
-    selectedPath: selectedPath ?? null,
-  });
 };
 const handleOpenGitDiff = (payload: IGitDiffPreviewRequest): void => {
   emit('open-git-diff', payload);
@@ -472,42 +382,6 @@ const handleOpenGitDiff = (payload: IGitDiffPreviewRequest): void => {
 const handleRefreshExplorer = async (): Promise<void> => {
   const workspaceKey = resolveWorkspaceKey(props.workspaceRootPath);
   await loadWorkspaceRoot(workspaceKey);
-};
-
-const resolveParentPathForMutation = (path: string): string | null => {
-  const lastSlashIndex = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
-  if (lastSlashIndex <= 0) {
-    return null;
-  }
-  return path.slice(0, lastSlashIndex);
-};
-
-const pruneWorkspaceSubtreeState = (path: string): void => {
-  const isUnder = (candidate: string): boolean =>
-    getRelativeFileSystemPath(candidate, path) !== null;
-  Object.keys(childrenMap).forEach((key) => {
-    if (isUnder(key)) {
-      delete childrenMap[key];
-    }
-  });
-  Object.keys(loadingPaths).forEach((key) => {
-    if (isUnder(key)) {
-      delete loadingPaths[key];
-    }
-  });
-  let mutated = false;
-  const nextExpandedPaths = new Set<string>();
-  manualExpandedPaths.value.forEach((expanded) => {
-    if (isUnder(expanded)) {
-      mutated = true;
-    } else {
-      nextExpandedPaths.add(expanded);
-    }
-  });
-  if (mutated) {
-    manualExpandedPaths.value = nextExpandedPaths;
-    emitExplorerStateChange();
-  }
 };
 
 const {
@@ -592,57 +466,4 @@ watch(
     isExplorerView,
     () => props.preloadedWorkspaceRoot,
   ],
-  ([ready, workspaceRootPath, explorer]) => {
-    if (!ready || !explorer) {
-      return;
-    }
-    const workspaceKey = resolveWorkspaceKey(workspaceRootPath);
-    if (loadedWorkspaceKey.value === workspaceKey && root.value) {
-      return;
-    }
-    void loadWorkspaceRoot(workspaceKey);
-  },
-  { immediate: true },
-);
-
-watch(
-  () => props.workspaceRootPath,
-  () => {
-    closeInlineCreateDraft();
-    stopWorkspaceFileWatcher();
-  },
-);
-
-onMounted(() => {
-  if (root.value?.rootPath) {
-    void startWorkspaceFileWatcher();
-  }
-});
-onBeforeUnmount(() => {
-  closeInlineCreateDraft();
-  cancelInlineRename();
-  clearExplorerScrollbarIdleTimer();
-  stopWorkspaceFileWatcher();
-});
-</script>
-
-<style scoped>
-.explorer-empty-action {
-  color: var(--accent-strong);
-  font-weight: 500;
-  text-decoration: underline;
-  text-decoration-thickness: 1px;
-  text-underline-offset: 3px;
-}
-.explorer-empty-action:hover {
-  color: color-mix(in srgb, var(--accent-strong) 84%, white);
-}
-.explorer-empty-action:focus-visible {
-  outline: none;
-  border-radius: 4px;
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ring) 32%, transparent);
-}
-.explorer-empty-state--raised {
-  transform: translateY(-52px);
-}
-</style>
+  ([ready, workspaceRootPath,
