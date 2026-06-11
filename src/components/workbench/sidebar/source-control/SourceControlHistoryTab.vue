@@ -1,64 +1,95 @@
+<template>
+  <section class="source-control-info-panel source-control-history-panel">
+    <div class="source-control-history-header">
+      <p class="source-control-history-heading">History</p>
+      <div class="source-control-history-header-actions">
+        <button type="button" class="source-control-history-refresh" aria-label="刷新历史" title="刷新历史"
+          :disabled="isCommitHistoryLoading || isBusy" @click="handleReloadCommitHistory">
+          <RefreshCw aria-hidden="true" />
+        </button>
+        <p class="source-control-history-summary" v-text="historyPanelTitle" />
+      </div>
+    </div>
+
+    <div v-if="isCommitHistoryLoading && filteredCommitHistory.length === 0"
+      class="source-control-info-note source-control-history-note">
+      正在读取 Git 提交历史…
+    </div>
+
+    <GitHistoryGraph
+      v-else-if="filteredCommitHistory.length > 0"
+      :commits="filteredCommitHistory"
+      :ahead="status.ahead"
+      :behind="status.behind"
+    />
+
+    <p v-else class="source-control-info-note source-control-history-note" v-text="historyEmptyText" />
+  </section>
+</template>
+
 <script setup lang="ts">
 import { RefreshCw } from '@lucide/vue';
 import { computed } from 'vue';
+import { useMessage } from '@/composables/useMessage';
 import { useGitStore } from '@/store/git';
 import type { IGitCommitSummaryPayload } from '@/types/git';
+import { toErrorMessage } from '@/utils/error';
 import GitHistoryGraph from './GitHistoryGraph.vue';
 
-const props = defineProps<{ searchQuery: string; isBusy: boolean }>();
+const props = defineProps<{
+  searchQuery: string;
+  isBusy: boolean;
+}>();
 
 const gitStore = useGitStore();
+const message = useMessage();
 
-const matchesSearchQuery = (commit: IGitCommitSummaryPayload, query: string): boolean => {
-  const needle = query.trim().toLowerCase();
-  if (!needle) return true;
-  return (
-    commit.summary.toLowerCase().includes(needle) ||
-    commit.shortId.toLowerCase().includes(needle) ||
-    commit.id.toLowerCase().includes(needle) ||
-    commit.authorName.toLowerCase().includes(needle)
-  );
+const status = computed(() => gitStore.status);
+const commitHistoryEntries = computed<IGitCommitSummaryPayload[]>(() => gitStore.commitHistory);
+const isCommitHistoryLoading = computed(() => gitStore.isCommitHistoryLoading);
+
+const matchesSearchQuery = (parts: Array<string | null | undefined>): boolean => {
+  const keyword = props.searchQuery.trim().toLowerCase();
+  if (!keyword) {
+    return true;
+  }
+
+  return parts
+    .filter((value): value is string => Boolean(value && value.trim().length > 0))
+    .join(' ')
+    .toLowerCase()
+    .includes(keyword);
 };
 
-const filteredCommitHistory = computed<IGitCommitSummaryPayload[]>(() =>
-  gitStore.commitHistory.filter((commit) => matchesSearchQuery(commit, props.searchQuery)),
+const filteredCommitHistory = computed(() =>
+  commitHistoryEntries.value.filter((entry) =>
+    matchesSearchQuery([entry.summary, entry.shortId, entry.authorName]),
+  ),
 );
 
-const historyPanelTitle = computed<string>(() => `历史记录 (${filteredCommitHistory.value.length})`);
+const historyPanelTitle = computed(() => {
+  if (props.searchQuery.trim()) {
+    return `匹配 ${filteredCommitHistory.value.length} 条`;
+  }
 
-const historyEmptyText = computed<string>(() =>
-  props.searchQuery.trim() ? '没有匹配的提交' : '暂无提交记录',
+  const visibleCount = commitHistoryEntries.value.length || (status.value.lastCommit ? 1 : 0);
+
+  if (visibleCount > 0) {
+    return `最近 ${visibleCount} 条`;
+  }
+
+  return isCommitHistoryLoading.value ? '正在同步' : '暂无提交';
+});
+
+const historyEmptyText = computed(() =>
+  props.searchQuery.trim() ? '没有匹配的提交记录。' : '当前仓库还没有提交记录。',
 );
 
-const handleReloadCommitHistory = (): void => {
-  void gitStore.loadCommitHistory().catch((error) => {
-    console.error('[SourceControlHistoryTab] reload commit history failed:', error);
-  });
+const handleReloadCommitHistory = async (): Promise<void> => {
+  try {
+    await gitStore.loadCommitHistory();
+  } catch (error) {
+    message.error(toErrorMessage(error, '读取 Git 提交历史失败'));
+  }
 };
 </script>
-
-<template>
-  <div class="source-control-history-tab">
-    <header class="source-control-history-tab-header">
-      <span class="source-control-history-tab-title" v-text="historyPanelTitle" />
-      <button
-        type="button"
-        class="source-control-history-tab-reload"
-        :disabled="isBusy"
-        title="重新加载历史"
-        aria-label="重新加载历史"
-        @click="handleReloadCommitHistory"
-      >
-        <RefreshCw :class="{ 'is-spinning': isBusy }" aria-hidden="true" />
-      </button>
-    </header>
-
-    <GitHistoryGraph
-      v-if="filteredCommitHistory.length > 0"
-      :commits="filteredCommitHistory"
-      :ahead="gitStore.status.ahead"
-      :behind="gitStore.status.behind"
-    />
-    <p v-else class="source-control-history-tab-empty" v-text="historyEmptyText" />
-  </div>
-</template>

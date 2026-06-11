@@ -106,10 +106,6 @@ const refIcon = (commitRef: IGitCommitRef): string =>
   background: rgba(129, 139, 152, 0.12);
 }
 
-.git-history-graph-row.source-control-history-item.is-active {
-  background: rgba(9, 105, 218, 0.1);
-}
-
 .git-history-graph-row.source-control-history-item.is-expanded {
   background: rgba(9, 105, 218, 0.07);
   border-radius: 6px 6px 0 0;
