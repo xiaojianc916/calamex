@@ -1210,33 +1210,33 @@ onBeforeUnmount(() => {
 }
 
 .ai-prompt-shell {
-  position: relative;
+  --ai-prompt-layered-shadow:
+    0 -1px 0 0 #f6f6f5,
+    0 1px 0 0 #f0f0ef,
+    -1px 0 0 0 #f4f4f3,
+    1px 0 0 0 #f4f4f3,
+    0 2px 0 0 #f9f9f9,
+    -2px 0 0 0 #fdfdfd,
+    2px 0 0 0 #fdfdfd;
   width: 100%;
   background: var(--panel-bg);
-  border: none;
+  border-width: 1px;
+  border-style: solid;
+  border-top-color: #efeeec;
+  border-bottom-color: #e9e8e6;
+  border-left-color: #ecebe9;
+  border-right-color: #ecebe9;
   border-radius: 18px;
-  box-shadow: none;
+  box-shadow: var(--ai-prompt-layered-shadow);
   overflow: hidden;
 }
 
-.ai-prompt-shell::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  z-index: 2;
-  border-radius: inherit;
-  pointer-events: none;
-  box-shadow:
-    inset 0 0 0 1px #fefefe,
-    inset 0 0 0 2px #f5f5f4,
-    inset 0 0 0 3px #eeedeb;
-}
-
-.ai-prompt-shell:focus-within::after {
-  box-shadow:
-    inset 0 0 0 1px #fefefe,
-    inset 0 0 0 2px #f5f5f4,
-    inset 0 0 0 3px #eeedeb;
+.ai-prompt-shell:focus-within {
+  border-top-color: #efeeec;
+  border-bottom-color: #e9e8e6;
+  border-left-color: #ecebe9;
+  border-right-color: #ecebe9;
+  box-shadow: var(--ai-prompt-layered-shadow);
 }
 
 .ai-prompt-shell :deep([data-slot='input-group-control']:focus-visible),
@@ -1779,11 +1779,6 @@ onBeforeUnmount(() => {
   border-radius: inherit;
   pointer-events: none;
   box-shadow:
-<<<<<<< HEAD
-    inset 0 0 0 1px #fefefe,   /* 最外 1px */
-    inset 0 0 0 2px #f5f5f4,   /* 中间 1px */
-    inset 0 0 0 3px #eeedeb;   /* 最里 1px(从里到外 eeedeb→f5f5f4→fefefe) */
-=======
     inset 0 0 0 1px #fefefe,
     inset 0 0 0 2px #f5f5f4,
     inset 0 0 0 3px #eeedeb;
@@ -1795,6 +1790,5 @@ onBeforeUnmount(() => {
 
 .ai-token-content [data-slot='context-content-footer'] {
   background: color-mix(in srgb, var(--text-primary) 4%, transparent);
->>>>>>> 5ff9aaeb9c122071b2bcae0ecf2e820e22a070c7
 }
 </style>
