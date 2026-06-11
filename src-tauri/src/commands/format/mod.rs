@@ -13,7 +13,7 @@
 mod registry;
 mod runner;
 
-use super::{DocumentEncoding, FormatDocumentPayload, FormatDocumentRequest};
+use super::{FormatDocumentPayload, FormatDocumentRequest};
 use registry::resolve_external_formatter;
 use runner::run_external_formatter;
 
@@ -24,34 +24,32 @@ pub async fn format_document(
 ) -> Result<FormatDocumentPayload, String> {
     // 空白或纯空白内容：无需调用任何 formatter，原样回传。
     if payload.content.trim().is_empty() {
-        return finalize_payload(payload.content, payload.encoding, None);
+        return finalize_payload(payload.content, None);
     }
 
     let Some(spec) = resolve_external_formatter(&payload.language_id) else {
         // 该语言无专用 External formatter：交给前端做 whitespace 归一。
-        return finalize_payload(payload.content, payload.encoding, None);
+        return finalize_payload(payload.content, None);
     };
 
     let Some(resolved) = spec.discover(payload.path.as_deref()) else {
         // 有默认 formatter 但未发现可用二进制：同样退回前端 whitespace。
-        return finalize_payload(payload.content, payload.encoding, None);
+        return finalize_payload(payload.content, None);
     };
 
     let formatted = run_external_formatter(&resolved, &payload.content).await?;
 
-    finalize_payload(formatted, payload.encoding, Some(spec.id.to_string()))
+    finalize_payload(formatted, Some(spec.id.to_string()))
 }
 
 fn finalize_payload(
     content: String,
-    encoding: DocumentEncoding,
     formatter_id: Option<String>,
 ) -> Result<FormatDocumentPayload, String> {
     Ok(FormatDocumentPayload {
         line_count: count_to_u32(super::line_count(&content), "文档行数")?,
         char_count: count_to_u32(content.chars().count(), "文档字符数")?,
         content,
-        encoding,
         formatter_id,
     })
 }

@@ -65,6 +65,8 @@ import type {
   IAnalyzeScriptPayload,
   IAnalyzeScriptRequest,
   IExecutionEnvironment,
+  IFormatDocumentPayload,
+  IFormatDocumentRequest,
   IFormatScriptPayload,
   IFormatScriptRequest,
   IImageAssetPayload,
@@ -294,6 +296,7 @@ export interface ITauriService {
   ): Promise<() => void>;
   analyzeScript(payload: IAnalyzeScriptRequest): Promise<IAnalyzeScriptPayload>;
   formatScript(payload: IFormatScriptRequest): Promise<IFormatScriptPayload>;
+  formatDocument(payload: IFormatDocumentRequest): Promise<IFormatDocumentPayload>;
   loadScript(path: string, workspaceRootPath?: string | null): Promise<IScriptFilePayload>;
   loadImageAsset(path: string): Promise<IImageAssetPayload>;
   saveScript(payload: TWorkspaceScopedSaveScriptRequest): Promise<IScriptFilePayload>;
