@@ -1,18 +1,7 @@
 <script setup lang="ts">
-import {
-  Check,
-  ChevronRight,
-  Copy,
-  Eye,
-  MoreHorizontal,
-  Pencil,
-  Pin,
-  Plus,
-  Search,
-  Trash2,
-} from '@lucide/vue';
+import { Check, Copy, Eye, Pencil, Pin, Plus, Search, Trash2 } from '@lucide/vue';
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
-import LucideIcon from '@/components/ui/icon/LucideIcon.vue';
+import RunTemplateCategory from './RunTemplateCategory.vue';
 import {
   type IPhase,
   type ISnippetCategory,
@@ -20,118 +9,6 @@ import {
   TEMPLATE_PHASES,
   type TPhaseId,
 } from './templateCatalog';
-
-// ═══════════════
-// 图标映射（值为 Tailwind mask 类名）
-// ═══════════════
-const iconMap: Record<string, string> = {
-  // 类别图标
-  star: 'star',
-  clock: 'clock',
-  rocket: 'rocket',
-  'book-open': 'book-open',
-  terminal: 'terminal',
-  settings: 'settings',
-  'shield-check': 'shield-check',
-  lock: 'lock',
-  type: 'type',
-  braces: 'braces',
-  calendar: 'calendar',
-  database: 'database',
-  'message-square': 'message-square',
-  list: 'list',
-  loader: 'loader',
-  'file-text': 'file-text',
-  'git-branch': 'git-branch',
-  folder: 'folder',
-  'file-search': 'file-search',
-  cpu: 'cpu',
-  globe: 'globe',
-  'bar-chart-2': 'chart-bar', // ChartBar
-  bell: 'bell',
-  'alert-triangle': 'alert-triangle',
-  'trash-2': 'trash-2',
-  'log-out': 'log-out',
-  bug: 'bug',
-  shield: 'shield',
-  'test-tube': 'test-tube',
-  // 片段图标
-  info: 'info',
-  'rotate-cw': 'rotate-cw',
-  'refresh-cw': 'refresh-cw',
-  hash: 'hash',
-  tag: 'tag',
-  'help-circle': 'help-circle',
-  flag: 'flag',
-  'arrow-right': 'arrow-right',
-  key: 'key',
-  layers: 'layers',
-  file: 'file',
-  search: 'search',
-  package: 'package',
-  monitor: 'monitor',
-  'user-check': 'user-check',
-  'hard-drive': 'hard-drive',
-  scissors: 'scissors',
-  'arrow-down-az': 'arrow-down-a-z', // 路径是 a-z
-  'arrow-up-az': 'arrow-up-a-z', // 路径是 a-z
-  replace: 'replace',
-  'text-cursor-input': 'text-cursor-input',
-  'at-sign': 'at-sign',
-  brackets: 'brackets',
-  repeat: 'repeat',
-  'git-branch-plus': 'git-branch-plus',
-  combine: 'combine',
-  'calendar-minus': 'calendar-minus',
-  'calendar-clock': 'calendar-clock',
-  filter: 'filter',
-  wrench: 'wrench',
-  'arrow-left-right': 'arrow-left-right',
-  'mouse-pointer': 'mouse-pointer',
-  'chevron-right': 'chevron-right',
-  'list-ordered': 'list-ordered',
-  'octagon-alert': 'octagon-alert',
-  save: 'save',
-  'timer-off': 'timer-off',
-  'git-fork': 'git-fork',
-  'file-check': 'file-check',
-  'file-plus': 'file-plus',
-  'file-clock': 'file-clock',
-  'file-x': 'file-x',
-  copy: 'copy',
-  ruler: 'ruler',
-  table: 'table-2', // Table2
-  'arrow-up-down': 'arrow-up-down',
-  cone: 'cone',
-  ban: 'ban',
-  send: 'send',
-  plug: 'plug',
-  mail: 'mail',
-  webhook: 'webhook',
-  'message-circle': 'message-circle',
-  'bell-ring': 'bell-ring',
-  skull: 'skull',
-  asterisk: 'asterisk',
-  broom: 'brush', // Brush
-  'folder-x': 'folder-x',
-  'undo-2': 'undo-2',
-  code: 'code-xml', // CodeXml
-  'terminal-square': 'square-terminal', // SquareTerminal
-  'eye-off': 'eye-off',
-  equal: 'equal',
-  'grid-3x3': 'grid-3x3',
-  'file-code': 'file-code',
-  check: 'check',
-  'shield-alert': 'alert-triangle', // 近似
-  regex: 'brackets', // 近似
-  'text-cursor': 'text-cursor-input', // 近似
-  'bar-chart': 'chart-bar', // ChartBar
-  pipeline: 'file', // 近似
-};
-
-function getIcon(name: string): string {
-  return iconMap[name] ?? 'file-code';
-}
 
 // ═══════════════
 // 状态
@@ -153,12 +30,12 @@ const normalizedQuery = computed(() => normalizeText(searchQuery.value));
 
 function snippetMatchesQuery(
   item: ISnippetItem,
-  _category: ISnippetCategory,
+  category: ISnippetCategory,
   phase: IPhase,
 ): boolean {
   if (normalizedQuery.value.length === 0) return true;
   const searchText = normalizeText(
-    [item.trigger, item.description, phase.label, _category.name].join(' '),
+    [item.trigger, item.description, phase.label, category.name].join(' '),
   );
   return searchText.includes(normalizedQuery.value);
 }
@@ -166,7 +43,7 @@ function snippetMatchesQuery(
 // ── 可见的阶段（搜索过滤后） ──
 const visiblePhases = computed(() =>
   TEMPLATE_PHASES.map((phase) => {
-    // "我的" 阶段不在搜索中过滤
+    // “我的” 阶段不在搜索中过滤
     if (phase.id === 'mine') return phase;
     const filteredCategories = phase.categories
       .map((cat) => ({
@@ -299,9 +176,7 @@ onBeforeUnmount(() => {
   <section class="template-sidebar" aria-label="Shell 片段库">
     <!-- ═══ Header ═══ -->
     <div class="template-header">
-      <div class="template-title-row">
-
-      </div>
+      <div class="template-title-row"></div>
 
       <div class="template-search-row">
         <Search class="template-search-icon" />
@@ -311,7 +186,7 @@ onBeforeUnmount(() => {
 
     <!-- ═══ 树形列表 ═══ -->
     <div class="template-scroll">
-      <template v-for="(phase, _phaseIdx) in visiblePhases" :key="phase.id">
+      <template v-for="phase in visiblePhases" :key="phase.id">
         <!-- 横切分隔线 -->
         <div v-if="phase.id === 'cro'" class="template-divider">
           <span>横切 · Cross-cutting</span>
@@ -323,47 +198,24 @@ onBeforeUnmount(() => {
         </div>
 
         <!-- 类别列表 -->
-        <div v-for="(cat, catIdx) in phase.categories" :key="`${phase.id}-${catIdx}`" class="template-cat" :class="{
-          'template-cat--open': isCategoryOpen(phase.id, catIdx),
-        }" :style="{ '--phase-c': phase.color }">
-          <button class="template-cat-row" @click="toggleCategory(phase.id, catIdx)">
-            <ChevronRight class="template-chev" />
-            <span class="template-cat-icon">
-              <LucideIcon :name="getIcon(cat.icon)" class="template-cat-svg" />
-            </span>
-            <span class="template-cat-name">
-               cat.name 
-              <span v-if="cat.isNew" class="template-cat-new">新</span>
-            </span>
-            <span class="template-cat-badge"> cat.items.length </span>
-          </button>
-
-          <!-- 片段列表 -->
-          <div class="template-snips">
-            <div v-for="item in cat.items" :key="`${phase.id}-${catIdx}-${item.trigger}`" class="template-snip"
-              @click="handleSnippetClick(item)">
-              <LucideIcon :name="getIcon(item.icon)" class="template-snip-ic" />
-              <span class="template-snip-trigger"> item.trigger </span>
-              <span class="template-snip-desc"> item.description </span>
-              <span class="template-snip-actions">
-                <button class="template-snip-btn" title="插入到光标" @click.stop="handleSnippetClick(item)">
-                  <Plus class="template-snip-btn-svg" />
-                </button>
-                <button class="template-snip-btn" title="更多" @click.stop="openContextMenu($event, item)">
-                  <MoreHorizontal class="template-snip-btn-svg" />
-                </button>
-              </span>
-            </div>
-          </div>
-        </div>
+        <RunTemplateCategory
+          v-for="(cat, catIdx) in phase.categories"
+          :key="`${phase.id}-${catIdx}`"
+          :category="cat"
+          :color="phase.color"
+          :open="isCategoryOpen(phase.id, catIdx)"
+          @toggle="toggleCategory(phase.id, catIdx)"
+          @insert="handleSnippetClick"
+          @context-menu="openContextMenu"
+        />
       </template>
     </div>
 
     <!-- ═══ 右键菜单 ═══ -->
     <Teleport to="body">
       <div id="template-context-menu" class="template-menu" :class="{ 'template-menu--on': contextMenuOpen }" :style="{
-        left: contextMenuPos.x + 'px',
-        top: contextMenuPos.y + 'px',
+        left: `${contextMenuPos.x}px`,
+        top: `${contextMenuPos.y}px`,
       }">
         <button class="template-menu-item" @click="handleMenuAction('insert')">
           <Plus class="template-menu-icon" />
@@ -411,7 +263,7 @@ onBeforeUnmount(() => {
 
 <style scoped>
 /* ═══════════════════════
-   Shell 片段库侧栏
+   Shell 片段库侧栏（协调器外壳）
    ═══════════════════════ */
 
 .template-sidebar {
@@ -439,37 +291,6 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 8px;
   padding: 0 2px 10px;
-}
-
-.template-title-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 5px;
-  background: color-mix(in srgb, var(--accent-strong, #6366f1) 14%, transparent);
-  color: var(--accent-strong, #6366f1);
-}
-
-.template-title-svg {
-  width: 14px;
-  height: 14px;
-  stroke-width: 1.75;
-}
-
-.template-title-text {
-  flex: 1;
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-}
-
-.template-title-count {
-  font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
-  font-size: 11px;
-  color: var(--text-quaternary, #a1a1aa);
-  font-variant-numeric: tabular-nums;
 }
 
 /* ── 搜索 ── */
@@ -508,17 +329,6 @@ onBeforeUnmount(() => {
 
 .template-search-row input::placeholder {
   color: var(--text-quaternary, #a1a1aa);
-}
-
-.template-kbd {
-  font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
-  font-size: 11px;
-  color: var(--text-quaternary, #a1a1aa);
-  padding: 1px 5px;
-  border: 1px solid var(--shell-divider, #e4e4e7);
-  border-radius: 3px;
-  background: #fafafa;
-  flex-shrink: 0;
 }
 
 /* ── 滚动区 ── */
@@ -581,232 +391,6 @@ onBeforeUnmount(() => {
   flex: 1;
   height: 1px;
   background: var(--shell-divider, #e4e4e7);
-}
-
-/* ── 类别行 ── */
-.template-cat {
-  position: relative;
-}
-
-.template-cat-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 6px 12px 6px 14px;
-  font-size: 13px;
-  color: var(--text-secondary, #3f3f46);
-  text-align: left;
-  background: transparent;
-  border: 0;
-  cursor: pointer;
-  font-family: inherit;
-  transition: background 100ms ease;
-}
-
-.template-cat-row:hover {
-  background: color-mix(in srgb, var(--surface-hover, #f1f1f2) 100%, transparent);
-}
-
-.template-chev {
-  width: 11px;
-  height: 11px;
-  stroke-width: 2.25;
-  flex-shrink: 0;
-  color: var(--text-quaternary, #a1a1aa);
-  transition: transform 140ms ease;
-}
-
-.template-cat--open>.template-cat-row .template-chev {
-  transform: rotate(90deg);
-}
-
-.template-cat-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  flex-shrink: 0;
-  color: var(--phase-c, var(--text-tertiary));
-}
-
-.template-cat-svg {
-  width: 14px;
-  height: 14px;
-  stroke-width: 1.75;
-}
-
-.template-cat-name {
-  flex: 1;
-  text-align: left;
-  font-weight: 500;
-}
-
-.template-cat-badge {
-  font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
-  font-size: 11px;
-  color: var(--text-quaternary, #a1a1aa);
-  font-variant-numeric: tabular-nums;
-}
-
-.template-cat-new {
-  display: inline-block;
-  font-size: 9px;
-  font-weight: 700;
-  color: var(--accent-strong, #6366f1);
-  padding: 1px 5px;
-  background: color-mix(in srgb, var(--accent-strong, #6366f1) 14%, transparent);
-  border-radius: 3px;
-  margin-left: 4px;
-  letter-spacing: 0.04em;
-  vertical-align: middle;
-}
-
-/* ── 片段列表 + 竖向引导线 ── */
-.template-snips {
-  display: none;
-  padding: 2px 0 4px;
-  position: relative;
-}
-
-.template-cat--open>.template-snips {
-  display: block;
-}
-
-.template-cat--open>.template-snips::before {
-  content: "";
-  position: absolute;
-  left: 27px;
-  top: 0;
-  bottom: 4px;
-  width: 1px;
-  background: var(--shell-divider, #d4d4d8);
-}
-
-/* ── 片段行 ── */
-.template-snip {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  width: 100%;
-  padding: 5px 8px 5px 38px;
-  text-align: left;
-  cursor: pointer;
-  position: relative;
-  min-height: 30px;
-  background: transparent;
-  border: 0;
-  font-family: inherit;
-  transition: background 100ms ease;
-}
-
-.template-snip:hover {
-  background: color-mix(in srgb, var(--surface-hover, #f1f1f2) 100%, transparent);
-}
-
-.template-snip:hover .template-snip-actions {
-  opacity: 1;
-}
-
-.template-snip:hover .template-snip-ic {
-  color: var(--phase-c, var(--text-secondary));
-}
-
-.template-snip:hover::before {
-  content: "";
-  position: absolute;
-  left: 27px;
-  top: 50%;
-  width: 5px;
-  height: 1px;
-  background: var(--phase-c, var(--text-quaternary));
-  transform: translateY(-50%);
-}
-
-.template-snip-ic {
-  width: 13px;
-  height: 13px;
-  stroke-width: 1.75;
-  flex-shrink: 0;
-  color: var(--text-quaternary, #a1a1aa);
-  transition: color 100ms ease;
-}
-
-.template-snip-trigger {
-  font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
-  font-size: 12.5px;
-  color: var(--text-primary);
-  font-weight: 500;
-  flex-shrink: 0;
-  min-width: 56px;
-}
-
-.template-snip-desc {
-  font-size: 12px;
-  color: var(--text-tertiary, #71717a);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  flex: 1;
-}
-
-.template-snip-actions {
-  display: flex;
-  align-items: center;
-  gap: 1px;
-  opacity: 0;
-  transition: opacity 100ms ease;
-  flex-shrink: 0;
-}
-
-.template-snip-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 4px;
-  color: var(--text-tertiary, #71717a);
-  background: transparent;
-  border: 0;
-  cursor: pointer;
-  font-family: inherit;
-  transition: all 100ms ease;
-}
-
-.template-snip-btn:hover {
-  background: color-mix(in srgb, var(--surface-hover, #ebebec) 100%, transparent);
-  color: var(--text-primary);
-}
-
-.template-snip-btn-svg {
-  width: 12px;
-  height: 12px;
-  stroke-width: 2;
-}
-
-/* ── Footer ── */
-.template-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 14px;
-  border-top: 1px solid var(--shell-divider, #e4e4e7);
-  font-size: 11px;
-  color: var(--text-quaternary, #a1a1aa);
-}
-
-.template-foot-hint {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.template-foot-icon {
-  width: 12px;
-  height: 12px;
-  stroke-width: 2;
 }
 
 /* ── 右键菜单 ── */
@@ -927,12 +511,6 @@ onBeforeUnmount(() => {
 @media (prefers-reduced-motion: reduce) {
 
   .template-search-row,
-  .template-chev,
-  .template-cat-row,
-  .template-snip,
-  .template-snip-ic,
-  .template-snip-actions,
-  .template-snip-btn,
   .template-menu,
   .template-menu-item,
   .template-toast {
