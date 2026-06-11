@@ -171,6 +171,7 @@ export const commands = {
 /** Events */
 export const events = {
 	workspaceFsEvent: makeEvent<WorkspaceFsEvent>("workspace-fs-event"),
+	workspaceSearchStream: makeEvent<WorkspaceSearchStreamEvent>("workspace-search-stream"),
 };
 
 /* Types */
@@ -1773,6 +1774,7 @@ export type WorkspaceSearchRequest = {
 	includePatterns?: string[],
 	excludePatterns?: string[],
 	limit: number | null,
+	streamToken?: number | null,
 };
 
 export type WorkspaceSearchResult = {
@@ -1790,6 +1792,22 @@ export type WorkspaceSearchResult = {
 export type WorkspaceSearchResultKind = "file-name" | "content" | "symbol";
 
 export type WorkspaceSearchScope = "all" | "file-name" | "symbol" | "content";
+
+/**
+ *  内容搜索流式推送事件。
+ * 
+ *  仿照 workspace_watcher::WorkspaceFsEvent，通过手动 impl tauri_specta::Event 让该类型
+ *  既出现在生成的 TS 绑定 events.workspaceSearchStreamEvent 中，又提供类型化的 .emit(app)。
+ *  事件名固定为 workspace-search-stream。
+ */
+export type WorkspaceSearchStreamEvent = {
+	/**  关联的请求标识，对应 WorkspaceSearchRequest.stream_token；前端据此对账当前在途搜索。 */
+	searchId: number,
+	/**  解析后的工作区根目录绝对路径。 */
+	rootPath: string,
+	/**  本批次的内容命中（按发现顺序，未做全局排序）。 */
+	results: WorkspaceSearchResult[],
+};
 
 /* Tauri Specta runtime */
 type EventEmit<T> = [T] extends [null] ? () => Promise<void> : (payload: T) => Promise<void>;
