@@ -18,11 +18,19 @@ export default defineConfig(({ command }) => ({
     }),
   ],
   clearScreen: false,
+  // shfmt 在 module worker(new Worker(url, { type: 'module' }))里加载 WASM 版 @wasm-fmt/shfmt。
+  // Vite 默认把 worker 产物打成 'iife'：dev 用浏览器原生 ESM worker 正常，但打包后 iife 产物
+  // 无法承载该 ESM-only 的 WASM 包，worker 加载即触发 'error' → 主线程永久回退 → 每次保存同步跑
+  // WASM 冻结渲染线程 → WebView 合成出纯白窗口底色(整屏白屏)。显式指定 'es' 让 worker 以
+  // ES module 形式打包，使其在打包后的应用里也能正确离线加载，从而真正在 worker 线程执行。
+  worker: {
+    format: 'es',
+  },
   server: {
     port: 1420,
     strictPort: true,
     watch: {
-      // Cargo workspace 把编译产物放在仓库根目录的 target/（不是 src-tauri/target/）。
+      // Cargo workspace 把编译产物放在仓库根目录的 target/(不是 src-tauri/target/)。
       // Vite 不能监听这里：Windows 上被锁住的 calamex.exe 会触发 EBUSY 并使 dev server 崩溃。
       ignored: ['**/target/**', '**/src-tauri/**'],
     },
@@ -55,7 +63,7 @@ export default defineConfig(({ command }) => ({
             return 'vendor-core';
           }
 
-          // ── 编辑器内核（CodeMirror / Lezer）───────────────
+          // ── 编辑器内核(CodeMirror / Lezer)───────────────
           if (
             normalizedId.includes('/node_modules/@codemirror/') ||
             normalizedId.includes('/node_modules/@lezer/') ||
@@ -64,7 +72,7 @@ export default defineConfig(({ command }) => ({
             return 'vendor-codemirror';
           }
 
-          // ── 语法高亮（Shiki）───────────────────────
+          // ── 语法高亮(Shiki)───────────────────────
           if (
             normalizedId.includes('/node_modules/shiki/') ||
             normalizedId.includes('/node_modules/@shikijs/')
@@ -72,7 +80,7 @@ export default defineConfig(({ command }) => ({
             return 'vendor-shiki';
           }
 
-          // ── AI 运行时（CopilotKit / ai SDK）───────────────
+          // ── AI 运行时(CopilotKit / ai SDK)───────────────
           if (
             normalizedId.includes('/node_modules/@copilotkit/') ||
             normalizedId.includes('/node_modules/ai/')
