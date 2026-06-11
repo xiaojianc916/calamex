@@ -1765,13 +1765,23 @@ onBeforeUnmount(() => {
 }
 
 .ai-token-content {
+  position: relative;
   overflow: hidden;
   border: none;
+  box-shadow: var(--ai-menu-shadow);
+}
+
+.ai-token-content::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  pointer-events: none;
   box-shadow:
     inset 0 0 0 1px #fefefe,
     inset 0 0 0 2px #f5f5f4,
-    inset 0 0 0 3px #eeedeb,
-    var(--ai-menu-shadow);
+    inset 0 0 0 3px #eeedeb;
 }
 
 .ai-token-content > :not([hidden]) ~ :not([hidden]) {
