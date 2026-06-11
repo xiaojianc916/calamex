@@ -13,7 +13,7 @@ import DropdownMenuContent from '@/components/ui/dropdown-menu/DropdownMenuConte
 import DropdownMenuItem from '@/components/ui/dropdown-menu/DropdownMenuItem.vue';
 import DropdownMenuTrigger from '@/components/ui/dropdown-menu/DropdownMenuTrigger.vue';
 import type { ISshPathSegment } from '@/types/ssh';
-import type { TSshBreadcrumbItem } from './useSshRemoteDirectory';
+import type { TSshBreadcrumbItem } from './ssh-sidebar.types';
 
 defineProps<{
   items: TSshBreadcrumbItem[];

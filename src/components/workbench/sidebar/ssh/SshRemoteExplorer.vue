@@ -3,7 +3,7 @@ import { RefreshCw, Unplug } from '@lucide/vue';
 import type { ISshFileItem, ISshPathSegment } from '@/types/ssh';
 import SshRemoteBreadcrumb from './SshRemoteBreadcrumb.vue';
 import SshRemoteFileList from './SshRemoteFileList.vue';
-import type { TSshBreadcrumbItem } from './useSshRemoteDirectory';
+import type { TSshBreadcrumbItem } from './ssh-sidebar.types';
 
 defineProps<{
   breadcrumbItems: TSshBreadcrumbItem[];
