@@ -186,6 +186,8 @@ const hasRequiredCapability = (
         case 'network':
             return capabilities.supportsNetworkTools === true;
     }
+
+    return false;
 };
 
 export const filterToolDescriptorsForModel = (

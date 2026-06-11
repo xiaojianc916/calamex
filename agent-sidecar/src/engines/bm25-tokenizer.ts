@@ -1,4 +1,8 @@
-import type { TokenizeOptions } from '@mastra/core/workspace';
+// @mastra/core/workspace 1.41 不再导出 TokenizeOptions（其 BM25Config 仅含 { k1, b }）。
+// 这里内置仅覆盖本模块实际所需 tokenizer 字段的等价结构定义。
+interface TokenizeOptions {
+    tokenizer: (text: string) => string[];
+}
 
 /**
  * 工作区 BM25 检索的 CJK 感知分词器。

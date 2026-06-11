@@ -18,7 +18,7 @@ test('input processors use Mastra official TokenLimiterProcessor for context tri
     const tokenLimiter = processors.find((processor) => processor.id === 'token-limiter');
     assert.ok(tokenLimiter);
     assert.equal(
-        (tokenLimiter as { getMaxTokens: () => number }).getMaxTokens(),
+        (tokenLimiter as unknown as { getMaxTokens: () => number }).getMaxTokens(),
         DEFAULT_MASTRA_INPUT_TOKEN_LIMIT,
     );
 });

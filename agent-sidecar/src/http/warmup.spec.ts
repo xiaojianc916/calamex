@@ -41,13 +41,13 @@ describe('background LLM warmup lifecycle', () => {
 
   it('aborts an active warmup when the scheduler is disposed', async () => {
     let fetchCalls = 0;
-    let capturedSignal: AbortSignal | null = null;
+    let capturedSignal: AbortSignal | null = null as AbortSignal | null;
     let resolveFetchStarted: (() => void) | undefined;
     const fetchStarted = new Promise<void>((resolve) => {
       resolveFetchStarted = resolve;
     });
 
-    globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
+    globalThis.fetch = ((_input: string | URL | Request, init?: RequestInit) => {
       fetchCalls += 1;
       capturedSignal = init?.signal ?? null;
       resolveFetchStarted?.();

@@ -21,6 +21,7 @@ export type {
 export {
   createMcpGatewayToolDescriptor,
   readMcpToolAnnotations,
+  requiresMcpToolApproval,
   resolveMcpToolApprovalDefault,
   resolveMcpToolCapability,
 } from './mcp-gateway/capability.js';

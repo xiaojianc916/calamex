@@ -49,7 +49,7 @@ test("resource：有内联 text 用 text，无则用 uri", () => {
 		contentBlockToText({
 			type: "resource",
 			resource: { uri: "file:///c.ts" },
-		}),
+		} as ContentBlock),
 		"引用：file:///c.ts",
 	)
 })

@@ -355,7 +355,7 @@ export const createAgentSessionMessagesFromRuntimeInput = (
   for (let index = conversationMessages.length - 1; index >= 0; index -= 1) {
     if (conversationMessages[index]?.kind === 'user') {
       return conversationMessages.map((message, messageIndex) =>
-        messageIndex === index
+        messageIndex === index && message.kind === 'user'
           ? {
             ...message,
             source: 'prompt',
@@ -380,9 +380,16 @@ export const buildMastraMessagesFromSessionMessages = (
   messages: readonly TAgentSessionMessage[],
 ): TMastraChatMessage[] => messages
   .flatMap<TMastraChatMessage>((message) => {
-    if (message.kind === 'user' || message.kind === 'assistant') {
+    if (message.kind === 'user') {
       return [{
-        role: message.kind,
+        role: 'user',
+        content: message.content,
+      }];
+    }
+
+    if (message.kind === 'assistant') {
+      return [{
+        role: 'assistant',
         content: message.content,
       }];
     }

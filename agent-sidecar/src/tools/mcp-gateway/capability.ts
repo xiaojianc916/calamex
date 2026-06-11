@@ -87,3 +87,10 @@ export const resolveMcpToolApprovalDefault = (
 ): boolean => resolveDescriptorApprovalDefault(
   createMcpGatewayToolDescriptor(serverName, toolName, annotations),
 ) === 'confirm';
+
+// 工具名无关的审批门面：MCP 审批默认只取决于 server 与 annotations，不依赖具体 toolName，
+// 故以空 toolName 复用 descriptor 审批规则。
+export const requiresMcpToolApproval = (
+  serverName: TMcpServerName,
+  annotations: IMcpToolAnnotations | undefined,
+): boolean => resolveMcpToolApprovalDefault(serverName, '', annotations);

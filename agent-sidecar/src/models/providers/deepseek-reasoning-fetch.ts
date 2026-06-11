@@ -574,7 +574,7 @@ const shouldHandleRequest = (body: unknown): body is TJsonRecord =>
   isRecord(body) && Array.isArray(body.messages);
 
 const readRequestJsonBody = async (
-  input: RequestInfo | URL,
+  input: string | URL | Request,
   init?: RequestInit,
 ): Promise<TJsonRecord | null> => {
   const rawBody = init?.body;
@@ -598,10 +598,10 @@ const readRequestJsonBody = async (
 };
 
 const createRequestWithJsonBody = (
-  input: RequestInfo | URL,
+  input: string | URL | Request,
   init: RequestInit | undefined,
   body: TJsonRecord,
-): [RequestInfo | URL, RequestInit | undefined] => {
+): [string | URL | Request, RequestInit | undefined] => {
   const nextBody = JSON.stringify(body);
   if (input instanceof Request && init?.body === undefined) {
     return [new Request(input, { body: nextBody }), undefined];
@@ -610,9 +610,9 @@ const createRequestWithJsonBody = (
 };
 
 const prepareOutboundRequest = async (
-  input: RequestInfo | URL,
+  input: string | URL | Request,
   init?: RequestInit,
-): Promise<[RequestInfo | URL, RequestInit | undefined]> => {
+): Promise<[string | URL | Request, RequestInit | undefined]> => {
   const context = deepseekReasoningContext.getStore();
   try {
     const body = await readRequestJsonBody(input, init);

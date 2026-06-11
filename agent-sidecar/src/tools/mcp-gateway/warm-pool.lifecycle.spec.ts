@@ -21,7 +21,7 @@ const createMockStdioConfig = (name: string): IMcpServerConfig => ({
 describe('MCP gateway warm pool lifecycle', () => {
   it('shares one shutdown task when disconnectAll is called concurrently', async () => {
     let disconnectCalls = 0;
-    let releaseDisconnect: (() => void) | null = null;
+    let releaseDisconnect!: () => void;
     const disconnectStarted = new Promise<void>((resolveStarted) => {
       releaseDisconnect = resolveStarted;
     });
@@ -76,7 +76,7 @@ describe('MCP gateway warm pool lifecycle', () => {
   });
 
   it('rejects new MCP work after terminal shutdown starts', async () => {
-    let releaseCreate: ((bundle: Awaited<ReturnType<Parameters<typeof createMcpGatewayWarmPool>[0]['createBundle']>>) => void) | null = null;
+    let releaseCreate!: (bundle: Awaited<ReturnType<Parameters<typeof createMcpGatewayWarmPool>[0]['createBundle']>>) => void;
     let disconnectCalls = 0;
     const createBundlePromise = new Promise<Awaited<ReturnType<Parameters<typeof createMcpGatewayWarmPool>[0]['createBundle']>>>((resolveCreate) => {
       releaseCreate = resolveCreate;

@@ -15,7 +15,6 @@ import { toNonEmptyString } from './utils.js';
 import { resolveWorkspaceDirectory } from './context/context.js';
 import { decideSensitivePathToolPermission, type IToolPermissionPolicy } from './policy/tool-permission-policy.js';
 import { warmWorkspaceSearchIndex } from './search-index.js';
-import { createWorkspaceBm25TokenizeOptions } from './bm25-tokenizer.js';
 
 export const isWindowsRuntime = (): boolean => process.platform === 'win32';
 
@@ -480,9 +479,10 @@ export const createMastraWorkspace = async (
         // 预热——自带目录层 denylist 剪枝（含嵌套），跳过依赖 / 构建产物，对任意工作区布局都安全。
         // tokenize.tokenizer 注入 CJK 感知分词（重叠二元组 + 西文管线），让中文注释 / 文档可被检索；
         // 语义 / 混合检索如需另配 vectorStore + embedder。
-        bm25: {
-            tokenize: createWorkspaceBm25TokenizeOptions(),
-        },
+        // BM25 关键字检索：@mastra/core 1.41 的 WorkspaceConfig.bm25 仅接受 boolean | { k1, b }，
+        // 不再转发自定义 tokenize（见 mastra issue #17636），即便传入也会在运行时被忽略。
+        // 故改用 bm25: true 启用内置分词；CJK 感知分词器（bm25-tokenizer.ts）暂留待 Mastra 支持后再接回。
+        bm25: true,
         tools: {
             // 直接复用 Mastra 内置 read_file：已原生支持文本行区间（offset/limit）、cat -n 行号
             //（showLineNumbers 输入参数默认 true，在 schema 层，非配置项）、把图片/PDF 作为 media part 直接给模型查看、

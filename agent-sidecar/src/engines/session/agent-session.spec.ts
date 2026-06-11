@@ -61,6 +61,9 @@ test('AgentExecutionSession reuses one sequence per run id', () => {
     name: 'checkpoint',
   });
 
+  if (first.type !== 'agent_event' || second.type !== 'agent_event' || checkpoint.type !== 'agent_event') {
+    throw new Error('expected agent_event outputs');
+  }
   assert.equal(first.event.runId, 'run-1');
   assert.equal(first.event.seq, 0);
   assert.equal(second.event.runId, 'run-1');
@@ -199,7 +202,7 @@ test('AgentExecutionSession models streaming compaction lifecycle events', () =>
   assert.equal(completed?.status, 'completed');
   assert.equal(session.messages[0]?.kind, 'compaction');
   assert.deepEqual(deliveredTypes, ['agent_event', 'agent_event', 'agent_event']);
-  assert.deepEqual(session.events.map((event) => event.event.type), [
+  assert.deepEqual(session.events.map((event) => (event.type === 'agent_event' ? event.event.type : event.type)), [
     'acontext.context_compaction.started',
     'acontext.context_compaction.updated',
     'acontext.context_compaction.completed',
@@ -213,11 +216,11 @@ test('AgentExecutionSession disposes resources in reverse acquisition order', as
 
   scope.add({
     name: 'mcp-bundle',
-    dispose: () => disposed.push('mcp-bundle'),
+    dispose: () => { disposed.push('mcp-bundle'); },
   });
   scope.add({
     name: 'workspace',
-    dispose: () => disposed.push('workspace'),
+    dispose: () => { disposed.push('workspace'); },
   });
 
   const dispositions = await scope.disposeAll();
@@ -238,7 +241,7 @@ test('AgentExecutionSession resource disposal is best-effort', async () => {
 
   scope.add({
     name: 'first',
-    dispose: () => disposed.push('first'),
+    dispose: () => { disposed.push('first'); },
   });
   scope.add({
     name: 'broken',
@@ -248,7 +251,7 @@ test('AgentExecutionSession resource disposal is best-effort', async () => {
   });
   scope.add({
     name: 'last',
-    dispose: () => disposed.push('last'),
+    dispose: () => { disposed.push('last'); },
   });
 
   const dispositions = await scope.disposeAll();

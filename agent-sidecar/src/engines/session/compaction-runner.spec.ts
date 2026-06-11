@@ -58,7 +58,7 @@ test('runContextCompaction streams lifecycle events and returns compacted contin
     },
     { role: 'user', content: 'active request' },
   ]);
-  assert.deepEqual(session.events.map((event) => event.event.type), [
+  assert.deepEqual(session.events.map((event) => (event.type === 'agent_event' ? event.event.type : event.type)), [
     'acontext.context_compaction.started',
     'acontext.context_compaction.updated',
     'acontext.context_compaction.updated',
@@ -67,7 +67,8 @@ test('runContextCompaction streams lifecycle events and returns compacted contin
   assert.deepEqual(deliveredEventTypes, ['agent_event', 'agent_event', 'agent_event', 'agent_event']);
   assert.equal(session.messages[0]?.kind, 'compaction');
 
-  const completedEvent = session.events.at(-1)?.event;
+  const lastEvent = session.events.at(-1);
+  const completedEvent = lastEvent?.type === 'agent_event' ? lastEvent.event : undefined;
   assert.equal(completedEvent?.type, 'acontext.context_compaction.completed');
   if (completedEvent?.type === 'acontext.context_compaction.completed') {
     assert.equal(completedEvent.retainedUserMessageByteBudget, 64);

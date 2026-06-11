@@ -42,6 +42,7 @@ import {
 } from './engines/runtime.js';
 import { allowWorkspaceWriteAfterVerifiedRead } from './engines/workspace.js';
 import type { IMastraResolvedModelConfig } from './models/config.js';
+import { resolveAgentModelCapabilities } from './models/capabilities.js';
 import {
   createMastraObserverModelConfig,
   createMastraReflectorModelConfig,
@@ -183,26 +184,37 @@ const unsupportedPlanReplan = async (
 
 const createTestModelConfig = (
   overrides: Partial<IMastraResolvedModelConfig> = {},
-): IMastraResolvedModelConfig => ({
-  modelId: 'deepseek/deepseek-chat',
-  providerId: 'deepseek',
-  providerModelId: 'deepseek-chat',
-  apiKey: 'test-key',
-  baseUrl: 'https://example.com/v1',
-  customGateways: [
-    createDeepSeekMastraGateway({
-      apiKey: 'test-key',
-      baseUrl: 'https://example.com/v1',
-    }),
-  ],
-  model: new ModelRouterLanguageModel({
+): IMastraResolvedModelConfig => {
+  const base = {
+    modelId: 'deepseek/deepseek-chat',
     providerId: 'deepseek',
-    modelId: 'deepseek-chat',
+    providerModelId: 'deepseek-chat',
     apiKey: 'test-key',
-    url: 'https://example.com/v1',
-  }),
-  ...overrides,
-});
+    baseUrl: 'https://example.com/v1',
+    customGateways: [
+      createDeepSeekMastraGateway({
+        apiKey: 'test-key',
+        baseUrl: 'https://example.com/v1',
+      }),
+    ],
+    model: new ModelRouterLanguageModel({
+      providerId: 'deepseek',
+      modelId: 'deepseek-chat',
+      apiKey: 'test-key',
+      url: 'https://example.com/v1',
+    }),
+    ...overrides,
+  };
+
+  return {
+    ...base,
+    capabilities: overrides.capabilities ?? resolveAgentModelCapabilities({
+      providerId: base.providerId,
+      providerModelId: base.providerModelId,
+      modelId: base.modelId,
+    }),
+  };
+};
 
 const createFakeRuntime = (
   overrides: Partial<IAgentSidecarRuntime> = {},
@@ -863,7 +875,7 @@ describe('DeepSeek reasoning fetch middleware', () => {
     const capturedBodies: unknown[] = [];
     let callCount = 0;
 
-    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit): Promise<Response> => {
       callCount += 1;
 
       if (callCount === 1) {
@@ -924,7 +936,7 @@ describe('DeepSeek reasoning fetch middleware', () => {
     const originalFetch = globalThis.fetch;
     const capturedBodies: unknown[] = [];
 
-    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit): Promise<Response> => {
       capturedBodies.push(JSON.parse(String(init?.body)) as unknown);
       return new Response(JSON.stringify({ choices: [{ message: { role: 'assistant', content: '完成' } }] }), {
         headers: { 'content-type': 'application/json' },
@@ -1041,7 +1053,7 @@ describe('DeepSeek reasoning fetch middleware', () => {
     const capturedBodies: unknown[] = [];
     let callCount = 0;
 
-    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit): Promise<Response> => {
       callCount += 1;
 
       if (callCount === 1) {
@@ -1110,7 +1122,7 @@ describe('DeepSeek reasoning fetch middleware', () => {
     const capturedBodies: unknown[] = [];
     let callCount = 0;
 
-    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit): Promise<Response> => {
       callCount += 1;
 
       if (callCount === 1) {
@@ -1960,7 +1972,7 @@ describe('Mastra runtime chat', () => {
       ],
       context: [],
     });
-    const doneEvent = stripTokenBudgetEvents(response.events).find((event) => event.type === 'done');
+    const doneEvent = stripTokenBudgetEvents(response.events).find((event) => (event as { type?: unknown }).type === 'done');
 
     assert.deepEqual(doneEvent, {
       type: 'done',

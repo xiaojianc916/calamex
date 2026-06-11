@@ -259,7 +259,7 @@ describe('MCP gateway warm pool', () => {
     );
 
     assert.equal(createBundleCalls, MCP_SERVER_NAMES.length);
-    assert.equal(new Set(catalogs.map((catalog) => catalog)).size, 1);
+    assert.equal(new Set(catalogs.map((catalog: unknown) => catalog)).size, 1);
 
     await pool.disconnectAll();
   });
