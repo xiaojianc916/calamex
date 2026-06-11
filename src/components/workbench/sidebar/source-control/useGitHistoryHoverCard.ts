@@ -88,5 +88,186 @@ export function useGitHistoryHoverCard(options: IUseGitHistoryHoverCardOptions) 
     hoverLoading.value = false;
   };
 
-  // 悬浮卡片智能排位。先按行右/左侧给初始位置，再用实测尺寸夹取进视口。
-  
+  const positionHoverCard = (rect: DOMRect): { x: number; y: number } => {
+    const margin = 8;
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    let x = rect.right + margin;
+    if (x + HOVER_CARD_WIDTH > viewportWidth - margin) {
+      const leftX = rect.left - HOVER_CARD_WIDTH - margin;
+      x = leftX >= margin ? leftX : Math.max(margin, viewportWidth - HOVER_CARD_WIDTH - margin);
+    }
+    if (x < margin) x = margin;
+    let y = rect.top;
+    if (y + HOVER_CARD_EST_HEIGHT > viewportHeight - margin) {
+      y = viewportHeight - HOVER_CARD_EST_HEIGHT - margin;
+    }
+    if (y < margin) y = margin;
+    return { x, y };
+  };
+
+  const adjustHoverCardPosition = async (): Promise<void> => {
+    if (typeof window === 'undefined') return;
+    await nextTick();
+    const el = getCardEl();
+    if (!el || !hover.open) return;
+    const margin = 8;
+    const rect = el.getBoundingClientRect();
+    let x = hover.x;
+    let y = hover.y;
+    if (rect.right > window.innerWidth - margin) x = window.innerWidth - rect.width - margin;
+    if (x < margin) x = margin;
+    if (rect.bottom > window.innerHeight - margin) y = window.innerHeight - rect.height - margin;
+    if (y < margin) y = margin;
+    hover.x = x;
+    hover.y = y;
+  };
+
+  const hydrateHoverGithubAuthor = async (commit: IGitCommitSummaryPayload): Promise<void> => {
+    let repoUrl = gitStore.pullRequestSupport.repositoryUrl;
+    if (!repoUrl) {
+      try {
+        repoUrl = (await gitStore.loadPullRequestSupport()).repositoryUrl;
+      } catch {
+        repoUrl = null;
+      }
+    }
+    if (!repoUrl) return;
+    const cached = readCachedGithubCommitAuthor(repoUrl, commit);
+    if (cached) {
+      if (hover.commitId === commit.id) hoverAuthorSnapshot.value = cached;
+      return;
+    }
+    const snapshot = await fetchGithubCommitAuthorSnapshot(repoUrl, commit);
+    if (snapshot && hover.commitId === commit.id) {
+      hoverAuthorSnapshot.value = snapshot;
+      void adjustHoverCardPosition();
+    }
+  };
+
+  const openHoverCard = async (rect: DOMRect, commit: IGitCommitSummaryPayload): Promise<void> => {
+    if (isScrolling.value) return;
+    const position = positionHoverCard(rect);
+    hover.x = position.x;
+    hover.y = position.y;
+    hover.commitId = commit.id;
+    hoverCommit.value = commit;
+    hoverAuthorSnapshot.value = null;
+    hover.open = true;
+    void adjustHoverCardPosition();
+    void hydrateHoverGithubAuthor(commit);
+    if (hoverDetail.value?.id === commit.id) return;
+    hoverDetail.value = null;
+    hoverLoading.value = true;
+    try {
+      const detail = await gitStore.loadCommitDetail(commit.id);
+      if (hover.commitId === commit.id) {
+        hoverDetail.value = detail;
+        void adjustHoverCardPosition();
+      }
+    } catch {
+      // 详情加载失败时保留摘要回退。
+    } finally {
+      if (hover.commitId === commit.id) hoverLoading.value = false;
+    }
+  };
+
+  const handleRowEnter = (event: MouseEvent, commit: IGitCommitSummaryPayload): void => {
+    if (isMenuOpen() || isScrolling.value) return;
+    clearHoverCloseTimer();
+    const target = event.currentTarget;
+    if (!(target instanceof HTMLElement)) return;
+    const rect = target.getBoundingClientRect();
+    clearHoverOpenTimer();
+    hoverOpenTimer = setTimeout(() => {
+      void openHoverCard(rect, commit);
+    }, HOVER_OPEN_DELAY);
+  };
+
+  const handleRowLeave = (): void => {
+    clearHoverOpenTimer();
+    clearHoverCloseTimer();
+    hoverCloseTimer = setTimeout(closeHoverCard, HOVER_CLOSE_DELAY);
+  };
+
+  const handleCardEnter = (): void => {
+    clearHoverCloseTimer();
+  };
+
+  const handleCardLeave = (): void => {
+    handleRowLeave();
+  };
+
+  const copyHoverCommitId = async (): Promise<void> => {
+    const commitId = hoverDetail.value?.id ?? hoverCommit.value?.id;
+    if (commitId) await writeClipboardText(commitId);
+  };
+
+  const openHoverCommitOnGithub = (): void => {
+    const url = hoverGithubCommitUrl.value;
+    if (url) openExternalUrl(url);
+  };
+
+  const handleHistoryScroll = (): void => {
+    isScrolling.value = true;
+    clearHoverOpenTimer();
+    if (hover.open) closeHoverCard();
+    if (scrollSettleTimer !== null) clearTimeout(scrollSettleTimer);
+    scrollSettleTimer = setTimeout(() => {
+      isScrolling.value = false;
+    }, 180);
+  };
+
+  const teardownHistoryScrollListener = (): void => {
+    if (historyScrollTarget) {
+      historyScrollTarget.removeEventListener('scroll', handleHistoryScroll, historyScrollCapture);
+      historyScrollTarget = null;
+    }
+  };
+
+  const setupHistoryScrollListener = (): void => {
+    teardownHistoryScrollListener();
+    if (typeof window === 'undefined') return;
+    const scrollEl = getRootEl()?.closest('.source-control-scroll') ?? null;
+    if (scrollEl instanceof HTMLElement) {
+      historyScrollTarget = scrollEl;
+      historyScrollCapture = false;
+      scrollEl.addEventListener('scroll', handleHistoryScroll, { passive: true });
+    } else {
+      historyScrollTarget = window;
+      historyScrollCapture = true;
+      window.addEventListener('scroll', handleHistoryScroll, { passive: true, capture: true });
+    }
+  };
+
+  onMounted(() => {
+    setupHistoryScrollListener();
+  });
+
+  onBeforeUnmount(() => {
+    clearHoverTimers();
+    if (scrollSettleTimer !== null) {
+      clearTimeout(scrollSettleTimer);
+      scrollSettleTimer = null;
+    }
+    teardownHistoryScrollListener();
+  });
+
+  return {
+    hover,
+    hoverCommit,
+    hoverDetail,
+    hoverLoading,
+    hoverAuthorSnapshot,
+    hoverGithubCommitUrl,
+    isScrolling,
+    handleRowEnter,
+    handleRowLeave,
+    handleCardEnter,
+    handleCardLeave,
+    copyHoverCommitId,
+    openHoverCommitOnGithub,
+    closeHoverCard,
+    clearHoverTimers,
+  };
+}
