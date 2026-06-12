@@ -155,15 +155,10 @@
 
         <p class="git-history-graph-hovercard-message" v-text="hoverMessage" />
         <div class="git-history-graph-hovercard-stats">
-          <span
-            v-if="hoverLoading && !hoverDetail"
-            class="git-history-graph-hovercard-loading"
-            v-text="'正在统计变更…'"
-          />
-          <template v-else-if="hoverDetail">
-            <span class="git-history-graph-hovercard-files" v-text="'已更改 ' + hoverDetail.fileCount + ' 个文件'" />
-            <span v-if="hoverDetail.additions > 0" class="git-history-graph-hovercard-add" v-text="'+' + hoverDetail.additions" />
-            <span v-if="hoverDetail.deletions > 0" class="git-history-graph-hovercard-del" v-text="'-' + hoverDetail.deletions" />
+          <template v-if="hoverStats">
+            <span class="git-history-graph-hovercard-files" v-text="'已更改 ' + hoverStats.fileCount + ' 个文件'" />
+            <span v-if="hoverStats.additions > 0" class="git-history-graph-hovercard-add" v-text="'+' + hoverStats.additions" />
+            <span v-if="hoverStats.deletions > 0" class="git-history-graph-hovercard-del" v-text="'-' + hoverStats.deletions" />
           </template>
         </div>
         <div class="git-history-graph-hovercard-foot">
@@ -426,6 +421,11 @@ const hoverShortId = computed<string>(
   () => hoverDetail.value?.shortId ?? hoverCommit.value?.shortId ?? '',
 );
 
+const hoverStats = computed(() => {
+  const commitId = hover.commitId;
+  return commitId ? gitStore.getCommitStats(commitId) : null;
+});
+
 const menuGroups = computed<ILinearContextMenuGroup[]>(() => {
   if (!menu.commit) return [];
   const repoUrl = gitStore.pullRequestSupport.repositoryUrl;
@@ -656,22 +656,14 @@ const openHoverCard = async (rect: DOMRect, commit: IGitCommitSummaryPayload): P
   hoverCommit.value = commit;
   hoverAuthorSnapshot.value = null;
   hover.open = true;
+  hoverLoading.value = false;
+
+  // Hover 是高频轻交互：不能主动触发 getGitCommitDetail。
+  // commit stats 由提交成功 / 历史加载后的后台队列慢慢计算并缓存；
+  // hover 只读缓存，快速滑过历史列表不会堆积重型 diff 任务。
+  hoverDetail.value = gitStore.commitDetailCache[commit.id] ?? null;
   void adjustHoverCardPosition();
   void hydrateHoverGithubAuthor(commit);
-  if (hoverDetail.value?.id === commit.id) return;
-  hoverDetail.value = null;
-  hoverLoading.value = true;
-  try {
-    const detail = await gitStore.loadCommitDetail(commit.id);
-    if (hover.commitId === commit.id) {
-      hoverDetail.value = detail;
-      void adjustHoverCardPosition();
-    }
-  } catch {
-    // 详情失败时保留摘要回退
-  } finally {
-    if (hover.commitId === commit.id) hoverLoading.value = false;
-  }
 };
 
 const handleRowEnter = (event: MouseEvent, commit: IGitCommitSummaryPayload): void => {

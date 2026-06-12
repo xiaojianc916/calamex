@@ -31,6 +31,12 @@ const PULL_REQUEST_DETAIL_CACHE_LIMIT = 20;
 const PULL_REQUEST_PERSISTED_CACHE_PREFIX = 'calamex.gitPullRequests.';
 const PULL_REQUEST_PERSISTED_CACHE_VERSION = 1;
 const PULL_REQUEST_PERSISTED_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const GIT_COMMIT_STATS_PERSISTED_CACHE_PREFIX = 'calamex.gitCommitStats.';
+const GIT_COMMIT_STATS_PERSISTED_CACHE_VERSION = 1;
+const GIT_COMMIT_STATS_PERSISTED_CACHE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+const GIT_COMMIT_STATS_CACHE_LIMIT = 500;
+const GIT_COMMIT_STATS_BACKGROUND_BATCH_LIMIT = 30;
+const GIT_COMMIT_STATS_BACKGROUND_DELAY_MS = 320;
 
 const formatGitInitMismatch = (expectedPath: string, actualPath: string): string =>
   `Git 初始化目标不一致:期望 ${expectedPath},实际 ${actualPath}。`;
@@ -102,6 +108,13 @@ const createPullRequestDetailCacheKey = (
   repositoryUrl?: string | null,
 ): string =>
   `${normalizeFileSystemPath(repositoryRootPath)}|${createPullRequestRepositoryScope(repositoryUrl)}|${number}`;
+
+const createGitCommitStatsCacheKey = (
+  repositoryRootPath: string,
+  commitId: string,
+  repositoryUrl?: string | null,
+): string =>
+  `${normalizeFileSystemPath(repositoryRootPath)}|${createPullRequestRepositoryScope(repositoryUrl)}|${commitId}`;
 
 type TPersistedPullRequestListCache = {
   version: number;
@@ -240,6 +253,71 @@ const writePersistedPullRequestDetail = (
     );
   } catch {
     // Best-effort cache snapshot only.
+  }
+};
+
+const createGitCommitStatsPersistedCacheKey = (cacheKey: string): string =>
+  `${GIT_COMMIT_STATS_PERSISTED_CACHE_PREFIX}${GIT_COMMIT_STATS_PERSISTED_CACHE_VERSION}.${encodeURIComponent(cacheKey)}`;
+
+const readPersistedGitCommitStats = (cacheKey: string): TPersistedGitCommitStatsCache | null => {
+  const storage = getPullRequestPersistentStorage();
+  if (!storage) return null;
+
+  try {
+    const rawValue = storage.getItem(createGitCommitStatsPersistedCacheKey(cacheKey));
+    if (!rawValue) return null;
+
+    const parsed = JSON.parse(rawValue) as Partial<TPersistedGitCommitStatsCache>;
+    if (
+      parsed.version !== GIT_COMMIT_STATS_PERSISTED_CACHE_VERSION ||
+      typeof parsed.fetchedAt !== 'number' ||
+      !parsed.payload ||
+      parsed.payload.commitId.length === 0 ||
+      Date.now() - parsed.fetchedAt > GIT_COMMIT_STATS_PERSISTED_CACHE_MAX_AGE_MS
+    ) {
+      return null;
+    }
+
+    return {
+      version: GIT_COMMIT_STATS_PERSISTED_CACHE_VERSION,
+      fetchedAt: parsed.fetchedAt,
+      payload: parsed.payload,
+    };
+  } catch {
+    return null;
+  }
+};
+
+const writePersistedGitCommitStats = (
+  cacheKey: string,
+  payload: TGitCommitStatsPayload,
+  fetchedAt: number,
+): void => {
+  const storage = getPullRequestPersistentStorage();
+  if (!storage) return;
+
+  try {
+    storage.setItem(
+      createGitCommitStatsPersistedCacheKey(cacheKey),
+      JSON.stringify({
+        version: GIT_COMMIT_STATS_PERSISTED_CACHE_VERSION,
+        fetchedAt,
+        payload,
+      } satisfies TPersistedGitCommitStatsCache),
+    );
+  } catch {
+    // Best-effort cache snapshot only.
+  }
+};
+
+const removePersistedGitCommitStats = (cacheKey: string): void => {
+  const storage = getPullRequestPersistentStorage();
+  if (!storage) return;
+
+  try {
+    storage.removeItem(createGitCommitStatsPersistedCacheKey(cacheKey));
+  } catch {
+    // Best-effort cache cleanup only.
   }
 };
 
@@ -415,6 +493,20 @@ type TLoadPullRequestDetailOptions = {
   visibleLoading?: boolean;
 };
 
+type TGitCommitStatsPayload = {
+  commitId: string;
+  fileCount: number;
+  additions: number;
+  deletions: number;
+  computedAt: number;
+};
+
+type TPersistedGitCommitStatsCache = {
+  version: number;
+  fetchedAt: number;
+  payload: TGitCommitStatsPayload;
+};
+
 export const useGitStore = defineStore('git', () => {
   const status = ref<IGitRepositoryStatusPayload>(createEmptyGitRepositoryStatus());
   const isLoading = ref(false);
@@ -451,6 +543,8 @@ export const useGitStore = defineStore('git', () => {
   const pullRequestDetailCacheOrder = ref<string[]>([]);
 
   const commitDetailCache = ref<Record<string, IGitCommitDetailPayload>>({});
+  const commitStatsCache = ref<Record<string, TGitCommitStatsPayload>>({});
+  const commitStatsCacheOrder = ref<string[]>([]);
   const commitFileDiffCache = ref<Record<string, IGitCommitFileDiffPayload>>({});
   const commitFileDiffPreviewCache = ref<Record<string, IGitDiffPreviewPayload>>({});
 
@@ -465,6 +559,10 @@ export const useGitStore = defineStore('git', () => {
   let pullRequestCacheEpoch = 0;
   let pullRequestPreloadTimer: ReturnType<typeof setTimeout> | null = null;
   let scheduledPullRequestPreloadRepositoryKey: string | null = null;
+  let commitStatsBackgroundTimer: ReturnType<typeof setTimeout> | null = null;
+  let isCommitStatsBackgroundRunning = false;
+  const queuedCommitStatsIds = new Set<string>();
+  const pendingCommitStatsRequests = new Set<string>();
   const pullRequestBackgroundPreloadAttemptedAt = new Map<string, number>();
 
   const pendingBaselineRequests = new Map<string, Promise<IGitFileBaselinePayload>>();
@@ -500,12 +598,23 @@ export const useGitStore = defineStore('git', () => {
     scheduledPullRequestPreloadRepositoryKey = null;
   };
 
+  const clearCommitStatsBackgroundQueue = (): void => {
+    if (commitStatsBackgroundTimer !== null) {
+      clearTimeout(commitStatsBackgroundTimer);
+      commitStatsBackgroundTimer = null;
+    }
+    queuedCommitStatsIds.clear();
+    pendingCommitStatsRequests.clear();
+    isCommitStatsBackgroundRunning = false;
+  };
+
   const clearBaselineCache = (): void => {
     baselineCache.value = {};
     baselineEpoch.value += 1;
     commitDetailCache.value = {};
     commitFileDiffCache.value = {};
     commitFileDiffPreviewCache.value = {};
+    clearCommitStatsBackgroundQueue();
   };
 
   const resetCommitHistory = (): void => {
@@ -756,6 +865,83 @@ export const useGitStore = defineStore('git', () => {
     baselineEpoch.value += 1;
   };
 
+  const resolveCommitStatsCacheKey = (commitId: string): string | null => {
+    const repositoryRootPath = status.value.repositoryRootPath;
+    if (!repositoryRootPath || !commitId) return null;
+    return createGitCommitStatsCacheKey(
+      repositoryRootPath,
+      commitId,
+      pullRequestSupport.value.repositoryUrl,
+    );
+  };
+
+  const touchCommitStatsCache = (cacheKey: string): void => {
+    if (!commitStatsCache.value[cacheKey]) return;
+    commitStatsCacheOrder.value = [
+      cacheKey,
+      ...commitStatsCacheOrder.value.filter((key) => key !== cacheKey),
+    ];
+  };
+
+  const rememberCommitStats = (detail: IGitCommitDetailPayload): void => {
+    const cacheKey = resolveCommitStatsCacheKey(detail.id);
+    if (!cacheKey) return;
+
+    const computedAt = Date.now();
+    const payload: TGitCommitStatsPayload = {
+      commitId: detail.id,
+      fileCount: detail.fileCount,
+      additions: detail.additions,
+      deletions: detail.deletions,
+      computedAt,
+    };
+
+    const nextCache = {
+      ...commitStatsCache.value,
+      [cacheKey]: payload,
+    };
+    const nextOrder = [cacheKey, ...commitStatsCacheOrder.value.filter((key) => key !== cacheKey)];
+
+    while (nextOrder.length > GIT_COMMIT_STATS_CACHE_LIMIT) {
+      const evicted = nextOrder.pop();
+      if (evicted) {
+        delete nextCache[evicted];
+        removePersistedGitCommitStats(evicted);
+      }
+    }
+
+    commitStatsCache.value = nextCache;
+    commitStatsCacheOrder.value = nextOrder;
+    writePersistedGitCommitStats(cacheKey, payload, computedAt);
+  };
+
+  const hydrateCommitStatsCache = (cacheKey: string): void => {
+    if (commitStatsCache.value[cacheKey]) {
+      touchCommitStatsCache(cacheKey);
+      return;
+    }
+
+    const persisted = readPersistedGitCommitStats(cacheKey);
+    if (!persisted) return;
+
+    commitStatsCache.value = {
+      ...commitStatsCache.value,
+      [cacheKey]: persisted.payload,
+    };
+    commitStatsCacheOrder.value = [
+      cacheKey,
+      ...commitStatsCacheOrder.value.filter((key) => key !== cacheKey),
+    ].slice(0, GIT_COMMIT_STATS_CACHE_LIMIT);
+  };
+
+  const getCommitStats = (commitId: string): TGitCommitStatsPayload | null => {
+    const cacheKey = resolveCommitStatsCacheKey(commitId);
+    if (!cacheKey) return null;
+
+    hydrateCommitStatsCache(cacheKey);
+    return commitStatsCache.value[cacheKey] ?? null;
+  };
+
   const getFileBaseline = async (path: string): Promise<IGitFileBaselinePayload> => {
     const cacheKey = normalizeFileSystemPath(path);
     const cached = baselineCache.value[cacheKey];
@@ -801,6 +987,7 @@ export const useGitStore = defineStore('git', () => {
           ...commitDetailCache.value,
           [commitId]: payload,
         };
+        rememberCommitStats(payload);
         return payload;
       })
       .finally(() => {
@@ -875,6 +1062,73 @@ export const useGitStore = defineStore('git', () => {
     return request;
   };
 
+  const drainCommitStatsBackgroundQueue = async (): Promise<void> => {
+    if (isCommitStatsBackgroundRunning) return;
+
+    isCommitStatsBackgroundRunning = true;
+    try {
+      while (queuedCommitStatsIds.size > 0) {
+        const commitId = queuedCommitStatsIds.values().next().value;
+        if (!commitId) break;
+
+        queuedCommitStatsIds.delete(commitId);
+
+        if (getCommitStats(commitId) || pendingCommitStatsRequests.has(commitId)) {
+          continue;
+        }
+
+        pendingCommitStatsRequests.add(commitId);
+        try {
+          await loadCommitDetail(commitId);
+        } catch {
+          // Commit stats are pure background optimization.
+        } finally {
+          pendingCommitStatsRequests.delete(commitId);
+        }
+      }
+    } finally {
+      isCommitStatsBackgroundRunning = false;
+    }
+  };
+
+  const scheduleCommitStatsBackgroundQueue = (): void => {
+    if (commitStatsBackgroundTimer !== null || isCommitStatsBackgroundRunning) return;
+
+    const run = (): void => {
+      commitStatsBackgroundTimer = null;
+      void drainCommitStatsBackgroundQueue();
+    };
+
+    if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
+      const idleId = window.requestIdleCallback(run, {
+        timeout: GIT_COMMIT_STATS_BACKGROUND_DELAY_MS * 4,
+      });
+      commitStatsBackgroundTimer = setTimeout(() => {
+        window.cancelIdleCallback?.(idleId);
+        run();
+      }, GIT_COMMIT_STATS_BACKGROUND_DELAY_MS * 4);
+      return;
+    }
+
+    commitStatsBackgroundTimer = setTimeout(run, GIT_COMMIT_STATS_BACKGROUND_DELAY_MS);
+  };
+
+  const enqueueCommitStats = (commitId: string): void => {
+    if (!status.value.repositoryRootPath || !commitId || getCommitStats(commitId)) return;
+    if (pendingCommitStatsRequests.has(commitId)) return;
+    queuedCommitStatsIds.add(commitId);
+    scheduleCommitStatsBackgroundQueue();
+  };
+
+  const enqueueCommitStatsForCommits = (
+    commits: readonly IGitCommitSummaryPayload[],
+    limit = GIT_COMMIT_STATS_BACKGROUND_BATCH_LIMIT,
+  ): void => {
+    for (const item of commits.slice(0, limit)) {
+      enqueueCommitStats(item.id);
+    }
+  };
+
   const reset = (): void => {
     statusRequestId += 1;
     commitHistoryRequestId += 1;
@@ -885,6 +1139,7 @@ export const useGitStore = defineStore('git', () => {
     pullRequestDetailRequestId += 1;
     pullRequestDetailPreloadEpoch += 1;
     clearPullRequestPreloadTimer();
+    clearCommitStatsBackgroundQueue();
 
     isLoading.value = false;
     isCommitting.value = false;
@@ -1056,6 +1311,9 @@ export const useGitStore = defineStore('git', () => {
       });
       applyStatusFromMutation(payload.status);
       clearBaselineCache();
+      if (payload.commitId) {
+        enqueueCommitStats(payload.commitId);
+      }
       return payload;
     } finally {
       isCommitting.value = false;
@@ -1083,6 +1341,7 @@ export const useGitStore = defineStore('git', () => {
       } else {
         commitHistory.value = payload.entries;
       }
+      enqueueCommitStatsForCommits(payload.entries);
       commitHistoryHasMore.value = payload.hasMore;
       commitHistoryNextOffset.value = payload.nextOffset;
       return commitHistory.value;
@@ -1653,6 +1912,7 @@ export const useGitStore = defineStore('git', () => {
     pullRequestDetail,
     isPullRequestDetailLoading,
     commitDetailCache,
+    commitStatsCache,
     commitFileDiffCache,
     commitFileDiffPreviewCache,
     hasRepository,
@@ -1669,6 +1929,9 @@ export const useGitStore = defineStore('git', () => {
     commitIndex,
     loadCommitHistory,
     loadCommitDetail,
+    getCommitStats,
+    enqueueCommitStats,
+    enqueueCommitStatsForCommits,
     loadCommitFileDiff,
     loadCommitFileDiffPreview,
     loadBranches,
