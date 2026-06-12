@@ -586,8 +586,40 @@ export const destroyMastraWorkspace = async (workspace: AnyWorkspace | undefined
     await workspace.destroy().catch(() => undefined);
 };
 
+// 内置浏览器 CDP 端口：与前端 AGENT_WEBVIEW_CDP_PORT（src/services/ipc/agent-webview.service.ts）
+// 及 Rust 侧 agent_webview 命令的 remote-debugging-port 保持一致。默认 9333；
+// 宿主可经环境变量 CALAMEX_AGENT_WEBVIEW_CDP_PORT 注入覆盖，作为跨进程的端口兜底来源。
+const AGENT_WEBVIEW_CDP_PORT =
+    Number.parseInt(process.env.CALAMEX_AGENT_WEBVIEW_CDP_PORT ?? '', 10) || 9333;
+
+// 在「连接时」动态解析原生内置 webview 的 browser 级 CDP WebSocket 端点。
+// 原生 webview 以 --remote-debugging-port 暴露 CDP，其 ws 端点形如
+// ws://127.0.0.1:<port>/devtools/browser/<uuid>，<uuid> 运行时动态生成、无法硬编码，
+// 故经 /json/version 在连接时解析。预览面板未打开时此处抛错，仅影响该次浏览器工具调用，
+// 不影响 Agent 的其余能力——cdpUrl 的函数形态正是为这种惰性解析设计。
+const resolveAgentWebviewCdpWebSocketUrl = async (): Promise<string> => {
+    const endpoint = `http://127.0.0.1:${AGENT_WEBVIEW_CDP_PORT}/json/version`;
+    const response = await fetch(endpoint);
+    if (!response.ok) {
+        throw new Error(
+            `内置浏览器 CDP 端点不可用（HTTP ${response.status}）：请先在侧边栏打开网页预览面板，再让 AI 操作内置浏览器。`,
+        );
+    }
+    const info = (await response.json()) as { webSocketDebuggerUrl?: unknown };
+    const wsUrl = typeof info.webSocketDebuggerUrl === 'string' ? info.webSocketDebuggerUrl : '';
+    if (!wsUrl) {
+        throw new Error('内置浏览器 CDP 端点未返回 webSocketDebuggerUrl，无法连接内置浏览器。');
+    }
+    return wsUrl;
+};
+
+// 经 CDP 连接到「用户可见的原生内置 webview」（由 src-tauri 的 agent_webview 命令以
+// remote-debugging-port 暴露），让 AI 直接操作侧边栏里的内置浏览器，而非另起一个不可见的
+// 无头 Chromium。cdpUrl 用函数形态：连接时动态解析 browser 级 ws 端点（端口固定、uuid 动态）。
+// 提供 cdpUrl 后 scope 自动回退为 'shared'（无法再 spawn 新实例），无需手写 scope；
+// 不传 headless、不排除任何浏览器工具（含 browser_screenshot），即用户要求的「全部能力打开」。
 export const createMastraBrowser = (): MastraBrowser => new AgentBrowser({
-    headless: true,
+    cdpUrl: resolveAgentWebviewCdpWebSocketUrl,
 });
 
 export const destroyMastraBrowser = async (browser: MastraBrowser | undefined): Promise<void> => {
@@ -660,10 +692,18 @@ export const createMastraToolLoadPlan = (
     void input;
     void contextReferences;
 
+    // Agent 模式默认开启内置浏览器：经 CDP 连接用户可见的原生 webview（见 createMastraBrowser）。
+    // 真正的连接惰性发生在首次浏览器工具调用，预览面板未打开时仅该工具报错，不影响其余能力。
+    const browserEnabled = true;
+
     return {
         workspaceEnabled: workspaceAvailable,
-        browserEnabled: false,
-        strategy: workspaceAvailable ? 'gateway+workspace' : 'gateway',
+        browserEnabled,
+        strategy: [
+            'gateway',
+            ...(workspaceAvailable ? ['workspace'] : []),
+            'browser',
+        ].join('+'),
     };
 };
 
