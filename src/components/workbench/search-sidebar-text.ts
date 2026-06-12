@@ -196,9 +196,7 @@ export const buildMatchSegments = (
 // 把高亮分段标注成命中锚定的 prefix / core / suffix：首个命中之前全部为 prefix（左侧截断），
 // 末个命中之后全部为 suffix（右侧截断），命中及其之间为 core（不收缩、始终可见）。
 // 整行无命中（文件名/符号行可能没有可高亮片段）时整段视为 suffix，交给 CSS 右侧省略。
-export const toAnchoredSnippetSegments = (
-  segments: IHighlightedSegment[],
-): ISnippetSegment[] => {
+export const toAnchoredSnippetSegments = (segments: IHighlightedSegment[]): ISnippetSegment[] => {
   const visible = segments.filter((segment) => segment.text.length > 0);
   if (visible.length === 0) {
     return [];
