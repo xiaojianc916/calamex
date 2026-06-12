@@ -1755,7 +1755,11 @@ export type WorkspaceReplacementLinePreview = {
 	id: string,
 	lineNumber: number,
 	beforeLine: string,
-	afterLine: string,
+	insertedText: string,
+	matchStart: number,
+	matchEnd: number,
+	truncatedStart: boolean,
+	truncatedEnd: boolean,
 	replacementCount: number,
 };
 
