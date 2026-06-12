@@ -62,12 +62,12 @@ const formatTimestamp = (value: IWebPreviewConsoleLog['timestamp']): string => {
   flex: 0 0 168px;
   flex-direction: column;
   border-top: 1px solid var(--border-subtle);
-  background: #fafafa;
+  background: #f9f9fa;
 }
 
 .ai-web-preview-console__header {
   padding: 8px 12px;
-  border-bottom: 1px solid var(--border-subtle);
+  background: #f9f9fa;
   color: var(--text-secondary);
   font-size: 11px;
   font-weight: 600;
@@ -85,6 +85,7 @@ const formatTimestamp = (value: IWebPreviewConsoleLog['timestamp']): string => {
   overflow: auto;
   list-style: none;
   padding: 10px 12px 12px;
+  background: #f9f9fa;
 }
 
 .ai-web-preview-console__item {
@@ -146,5 +147,6 @@ const formatTimestamp = (value: IWebPreviewConsoleLog['timestamp']): string => {
   font-size: 12px;
   padding: 16px;
   text-align: center;
+  background: #f9f9fa;
 }
 </style>
