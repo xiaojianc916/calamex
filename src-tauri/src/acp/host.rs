@@ -38,7 +38,7 @@ use agent_client_protocol::schema::{SessionId, SessionModeId, ToolCallId};
 
 use crate::commands::contracts::{
     AgentSidecarHealthPayload, AgentSidecarResponsePayload, AgentSidecarWarmupPayload,
-    AiWebFetchPayload, AiWebSearchPayload,
+    AiContextReferencePayload, AiWebFetchPayload, AiWebSearchPayload,
 };
 
 use super::approval::{ApprovalError, ApprovalRegistry, ApprovalRequestInfo};
@@ -72,6 +72,11 @@ pub struct AcpChatTurn {
     pub prompt: String,
     /// 新建会话时作为 cwd（→ sidecar workspaceRootPath）；复用会话时忽略。
     pub workspace_root_path: Option<String>,
+    /// 本回合随附的上下文引用（@文件 / 选区 / 符号等），由接线层从
+    /// `AgentSidecarChatRequest.context` 投影而来；经 `bridge` 进一步投影为 ACP
+    /// `resource` / `resource_link` 内容块附加到 prompt。空切片表示无附加上下文，
+    /// 此时仅投影用户文本块（与既有行为等价）。
+    pub context: Vec<AiContextReferencePayload>,
 }
 
 /// 宿主侧 ACP 编排句柄。可作为 Tauri 托管状态长驻：内部三个协作件均为
@@ -143,9 +148,9 @@ impl AcpHost {
 
         self.begin_turn(&session_key);
         // 把本回合用户输入投影为 ACP prompt 内容块（经接线层 `bridge` 统一构造，
-        // 与 client 层「只下发、不臆造内容块形态」的分层一致）。本期上下文引用尚未
-        // 接入 `AcpChatTurn`（#6.2 接线轮再透传），故以空引用切片投影，仅含用户文本块。
-        let blocks = super::bridge::user_turn_to_content_blocks(&turn.prompt, &[]);
+        // 与 client 层「只下发、不臆造内容块形态」的分层一致）：用户文本块 +
+        // 本回合随附的上下文引用（@文件 / 选区 / 符号等）一并投影。
+        let blocks = super::bridge::user_turn_to_content_blocks(&turn.prompt, &turn.context);
         let prompt_result = self.handle.prompt(session_id, blocks).await;
         let accumulator = self.end_turn(&session_key);
 
