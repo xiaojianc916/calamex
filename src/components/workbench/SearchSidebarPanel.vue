@@ -1247,4 +1247,39 @@ watch(
       replacementQuery.value.length > 0 &&
       hasSearchQuery.value &&
       props.isDesktopRuntime &&
-      Boolean(props
+      Boolean(props.workspaceRootPath) &&
+      !matcherError.value;
+    if (shouldPreviewReplacement) scheduleReplacementPreview();
+    else resetReplacementPreview();
+  },
+);
+
+watch(activeResults, (results) => {
+  const availableKeys = new Set(results.map((result) => result.resultKey));
+  if (selectedResultKey.value && !availableKeys.has(selectedResultKey.value))
+    selectedResultKey.value = null;
+});
+
+// 桌面端挂载时订阅一次后端流式搜索事件；浏览器预览下 assertDesktopRuntime 会抛出，吞掉即可
+// （该环境本就不跑本地搜索）。组件卸载时注销监听，避免泄漏。
+let streamListenerDisposed = false;
+let unlistenSearchStream: (() => void) | null = null;
+if (props.isDesktopRuntime) {
+  void (async () => {
+    try {
+      const unlisten = await tauriService.onWorkspaceSearchStream(handleSearchStreamEvent);
+      if (streamListenerDisposed) unlisten();
+      else unlistenSearchStream = unlisten;
+    } catch {
+      // 非桌面运行时不支持事件监听，忽略。
+    }
+  })();
+}
+
+onScopeDispose(() => {
+  cancelPendingSearch();
+  streamListenerDisposed = true;
+  unlistenSearchStream?.();
+  unlistenSearchStream = null;
+});
+</script>
