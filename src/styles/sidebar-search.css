@@ -380,6 +380,11 @@
   line-height: 1;
 }
 
+.search-panel-result-group-chevron svg {
+  width: 14px;
+  height: 14px;
+}
+
 .search-panel-result-group-icon {
   display: inline-flex;
   flex-shrink: 0;
@@ -429,12 +434,12 @@
 .search-panel-result-line {
   position: relative;
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
   width: 100%;
   height: 24px;
   overflow: hidden;
-  padding: 0 8px 0 0;
+  padding: 0 8px 0 34px;
   border: 0;
   background: transparent;
   color: inherit;
@@ -461,11 +466,7 @@
 }
 
 .search-panel-result-line-number {
-  color: var(--search-text-subtle);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  line-height: 24px;
-  text-align: right;
+  display: none;
 }
 
 .search-panel-result-line-body {
