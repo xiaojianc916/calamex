@@ -225,50 +225,137 @@ export const getParentPath = (relativePath: string): string => {
   return segments.slice(0, -1).join('/');
 };
 
+export interface IBuildReplacementLineSegmentsOptions {
+  // 命中区间（基于 beforeLine 的 UTF-16 下标）。提供后用于完整标注被替换片段，
+  // 避免最小公共前后缀把同一 token 拆碎（如 23→24 退化成 3→4）。
+  matchRange?: [number, number] | null;
+  // 首/尾公共片段保留的上下文字符数（按码点计）。超出部分用省略号收拢，
+  // 且省略号只出现在最外侧（前缀最前、后缀最后）。0 表示不收拢。
+  contextSize?: number;
+}
+
+// 校验命中区间是否与 before/after 自洽：区间之外的前后缀必须在两侧完全一致，
+// 否则说明该区间并非真正被替换的部分，回退到最小字符 diff 更稳妥。
+const isUsableMatchRange = (
+  matchRange: [number, number] | null | undefined,
+  beforeLine: string,
+  afterLine: string,
+): matchRange is [number, number] => {
+  if (!matchRange) {
+    return false;
+  }
+
+  const [matchStart, matchEnd] = matchRange;
+  if (!Number.isInteger(matchStart) || !Number.isInteger(matchEnd)) {
+    return false;
+  }
+  if (matchStart < 0 || matchStart > matchEnd || matchEnd > beforeLine.length) {
+    return false;
+  }
+
+  const suffixLength = beforeLine.length - matchEnd;
+  const addedEnd = afterLine.length - suffixLength;
+  if (addedEnd < matchStart) {
+    return false;
+  }
+
+  return (
+    beforeLine.slice(0, matchStart) === afterLine.slice(0, matchStart) &&
+    beforeLine.slice(matchEnd) === afterLine.slice(addedEnd)
+  );
+};
+
+// 将首/尾公共片段收拢到给定上下文长度内，并把省略号放到最外侧：
+// 前缀保留末尾 contextSize 个字符并在最前加省略号；后缀保留开头 contextSize
+// 个字符并在最后加省略号。长度未超出或 contextSize<=0 时原样返回。
+const windowEdgeText = (
+  text: string,
+  side: 'prefix' | 'suffix',
+  contextSize: number,
+): string => {
+  if (contextSize <= 0) {
+    return text;
+  }
+
+  const characters = Array.from(text);
+  if (characters.length <= contextSize) {
+    return text;
+  }
+
+  if (side === 'prefix') {
+    return `${COMPACT_PREVIEW_ELLIPSIS}${characters.slice(characters.length - contextSize).join('')}`;
+  }
+
+  return `${characters.slice(0, contextSize).join('')}${COMPACT_PREVIEW_ELLIPSIS}`;
+};
+
 export const buildReplacementLineSegments = (
   beforeLine: string,
   afterLine: string,
+  options: IBuildReplacementLineSegmentsOptions = {},
 ): IReplacementLineSegment[] => {
   if (beforeLine === afterLine) {
     return [{ text: beforeLine, kind: 'equal', part: 'whole' }];
   }
 
-  const beforeCharacters = Array.from(beforeLine);
-  const afterCharacters = Array.from(afterLine);
-  let prefixLength = 0;
+  const { matchRange = null, contextSize = 0 } = options;
 
-  while (
-    prefixLength < beforeCharacters.length &&
-    prefixLength < afterCharacters.length &&
-    beforeCharacters[prefixLength] === afterCharacters[prefixLength]
-  ) {
-    prefixLength += 1;
+  let prefixText: string;
+  let removedText: string;
+  let addedText: string;
+  let suffixText: string;
+
+  if (isUsableMatchRange(matchRange, beforeLine, afterLine)) {
+    // 已知精确命中区间：直接按区间切出完整的被替换片段，保留整个 token（如 23→24）。
+    const [matchStart, matchEnd] = matchRange;
+    const suffixLength = beforeLine.length - matchEnd;
+    const addedEnd = afterLine.length - suffixLength;
+    prefixText = beforeLine.slice(0, matchStart);
+    removedText = beforeLine.slice(matchStart, matchEnd);
+    addedText = afterLine.slice(matchStart, addedEnd);
+    suffixText = beforeLine.slice(matchEnd);
+  } else {
+    // 回退：按最小公共前后缀切分（按码点比较，避免拆分代理对）。
+    const beforeCharacters = Array.from(beforeLine);
+    const afterCharacters = Array.from(afterLine);
+    let prefixLength = 0;
+
+    while (
+      prefixLength < beforeCharacters.length &&
+      prefixLength < afterCharacters.length &&
+      beforeCharacters[prefixLength] === afterCharacters[prefixLength]
+    ) {
+      prefixLength += 1;
+    }
+
+    let suffixLength = 0;
+    while (
+      suffixLength < beforeCharacters.length - prefixLength &&
+      suffixLength < afterCharacters.length - prefixLength &&
+      beforeCharacters[beforeCharacters.length - 1 - suffixLength] ===
+        afterCharacters[afterCharacters.length - 1 - suffixLength]
+    ) {
+      suffixLength += 1;
+    }
+
+    prefixText = beforeCharacters.slice(0, prefixLength).join('');
+    removedText = beforeCharacters
+      .slice(prefixLength, beforeCharacters.length - suffixLength)
+      .join('');
+    addedText = afterCharacters
+      .slice(prefixLength, afterCharacters.length - suffixLength)
+      .join('');
+    suffixText = beforeCharacters.slice(beforeCharacters.length - suffixLength).join('');
   }
 
-  let suffixLength = 0;
-  while (
-    suffixLength < beforeCharacters.length - prefixLength &&
-    suffixLength < afterCharacters.length - prefixLength &&
-    beforeCharacters[beforeCharacters.length - 1 - suffixLength] ===
-      afterCharacters[afterCharacters.length - 1 - suffixLength]
-  ) {
-    suffixLength += 1;
-  }
-
-  const prefixText = beforeCharacters.slice(0, prefixLength).join('');
-  const removedText = beforeCharacters
-    .slice(prefixLength, beforeCharacters.length - suffixLength)
-    .join('');
-  const addedText = afterCharacters
-    .slice(prefixLength, afterCharacters.length - suffixLength)
-    .join('');
-  const suffixText = beforeCharacters.slice(beforeCharacters.length - suffixLength).join('');
+  const windowedPrefixText = windowEdgeText(prefixText, 'prefix', contextSize);
+  const windowedSuffixText = windowEdgeText(suffixText, 'suffix', contextSize);
 
   return [
-    { text: prefixText, kind: prefixText ? 'equal' : 'empty', part: 'prefix' },
+    { text: windowedPrefixText, kind: windowedPrefixText ? 'equal' : 'empty', part: 'prefix' },
     { text: removedText, kind: removedText ? 'removed' : 'empty', part: 'removed' },
     { text: addedText, kind: addedText ? 'added' : 'empty', part: 'added' },
-    { text: suffixText, kind: suffixText ? 'equal' : 'empty', part: 'suffix' },
+    { text: windowedSuffixText, kind: windowedSuffixText ? 'equal' : 'empty', part: 'suffix' },
   ];
 };
 
@@ -335,4 +422,32 @@ export const createSearchMatcher = (options: ICreateSearchMatcherOptions): ISear
         collectPlainMatchRanges(value, query, options.matchCase, options.wholeWord),
       ),
   };
+};
+
+// 在 value 上用给定 matcher 计算唯一命中区间（UTF-16 下标）。仅当恰好命中一次时
+// 返回区间；0 次或多次（无法确定替换的是哪一处）以及空查询/结构化模式均返回 null。
+export const singleMatchRange = (
+  matcher: ISearchMatcher,
+  value: string,
+): [number, number] | null => {
+  if (!matcher.hasQuery) {
+    return null;
+  }
+
+  let index = 0;
+  let matchedCount = 0;
+  let matchedRange: [number, number] | null = null;
+
+  for (const segment of matcher.highlight(value)) {
+    if (segment.matched) {
+      matchedCount += 1;
+      if (matchedCount > 1) {
+        return null;
+      }
+      matchedRange = [index, index + segment.text.length];
+    }
+    index += segment.text.length;
+  }
+
+  return matchedCount === 1 ? matchedRange : null;
 };

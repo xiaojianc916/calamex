@@ -661,6 +661,12 @@
   flex: 0 1 auto;
 }
 
+/* 前缀的省略号已在数据层放到最前（…+末尾上下文），这里关掉 CSS 末尾省略，
+   避免在命中前再出现一个截断省略号。后缀仍保留 ellipsis（省略号在最后侧）。 */
+.search-replace-inline-segment.is-prefix {
+  text-overflow: clip;
+}
+
 .search-replace-inline-segment.is-removed,
 .search-replace-inline-segment.is-added {
   flex: 0 0 auto;
