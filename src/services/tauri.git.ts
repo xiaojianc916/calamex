@@ -1,7 +1,104 @@
 import { commands } from '@/bindings/tauri';
 import type { ITauriService } from '@/types/tauri';
+import { buildPayloadMetrics } from './tauri.ipc-metrics';
 import { callSpectaCommand } from './tauri.ipc-runtime';
 import type { IIpcCallOptions } from './tauri.ipc-types';
+
+const textByteLength = (value: unknown): number => {
+  if (typeof value !== 'string' || value.length === 0) return 0;
+  return typeof TextEncoder !== 'undefined' ? new TextEncoder().encode(value).length : value.length;
+};
+
+const shallowStringBytes = (value: unknown): number => {
+  if (!value || typeof value !== 'object') return textByteLength(value);
+  let total = 0;
+  for (const fieldValue of Object.values(value as Record<string, unknown>)) {
+    if (typeof fieldValue === 'string') {
+      total += textByteLength(fieldValue);
+    } else if (typeof fieldValue === 'number' || typeof fieldValue === 'boolean') {
+      total += 8;
+    }
+  }
+  return total;
+};
+
+const measureGitCommitDetailOutput = (output: unknown) => {
+  if (!output || typeof output !== 'object') return buildPayloadMetrics(output);
+
+  const payload = output as {
+    files?: Array<Record<string, unknown>>;
+    body?: string;
+    summary?: string;
+    authorName?: string;
+    authorEmail?: string;
+    authoredAt?: string;
+    id?: string;
+    shortId?: string;
+  };
+
+  const baseBytes =
+    textByteLength(payload.id) +
+    textByteLength(payload.shortId) +
+    textByteLength(payload.summary) +
+    textByteLength(payload.body) +
+    textByteLength(payload.authorName) +
+    textByteLength(payload.authorEmail) +
+    textByteLength(payload.authoredAt);
+
+  const filesBytes = Array.isArray(payload.files)
+    ? payload.files.reduce((total, file) => total + shallowStringBytes(file) + 24, 0)
+    : 0;
+
+  return { bytes: baseBytes + filesBytes + 96 };
+};
+
+const measureGitDiffPayloadOutput = (output: unknown) => {
+  if (!output || typeof output !== 'object') return buildPayloadMetrics(output);
+
+  const payload = output as {
+    originalContent?: string;
+    modifiedContent?: string;
+    relativePath?: string;
+    fileName?: string;
+    title?: string;
+    mode?: string;
+    id?: string;
+    repositoryRootPath?: string;
+    path?: string;
+    hunks?: Array<{
+      lines?: Array<{
+        content?: string;
+        tag?: string;
+        oldLine?: number | null;
+        newLine?: number | null;
+      }>;
+    }>;
+  };
+
+  let bytes =
+    textByteLength(payload.id) +
+    textByteLength(payload.repositoryRootPath) +
+    textByteLength(payload.path) +
+    textByteLength(payload.relativePath) +
+    textByteLength(payload.fileName) +
+    textByteLength(payload.title) +
+    textByteLength(payload.mode) +
+    textByteLength(payload.originalContent) +
+    textByteLength(payload.modifiedContent) +
+    96;
+
+  if (Array.isArray(payload.hunks)) {
+    for (const hunk of payload.hunks) {
+      bytes += 32;
+      if (!Array.isArray(hunk.lines)) continue;
+      for (const line of hunk.lines) {
+        bytes += textByteLength(line.content) + textByteLength(line.tag) + 16;
+      }
+    }
+  }
+
+  return { bytes };
+};
 
 type TGitTauriService = Pick<
   ITauriService,
@@ -84,6 +181,7 @@ export const gitTauriService: TGitTauriService = {
         timeoutMs: 20_000,
         input: payload,
         signal: options?.signal,
+        measureOutput: measureGitCommitDetailOutput,
       },
       () => commands.getGitCommitDetail(payload),
     );
@@ -98,6 +196,7 @@ export const gitTauriService: TGitTauriService = {
         timeoutMs: 20_000,
         input: payload,
         signal: options?.signal,
+        measureOutput: measureGitDiffPayloadOutput,
       },
       () => commands.getGitCommitFileDiff(payload),
     );
@@ -112,6 +211,7 @@ export const gitTauriService: TGitTauriService = {
         timeoutMs: 20_000,
         input: payload,
         signal: options?.signal,
+        measureOutput: measureGitDiffPayloadOutput,
       },
       () => commands.getGitCommitFileDiffPreview(payload),
     );
@@ -222,6 +322,7 @@ export const gitTauriService: TGitTauriService = {
         timeoutMs: 20_000,
         input: payload,
         signal: options?.signal,
+        measureOutput: measureGitDiffPayloadOutput,
       },
       () => commands.getGitDiffPreview(payload),
     );

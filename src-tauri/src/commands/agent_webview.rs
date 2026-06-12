@@ -139,9 +139,10 @@ pub async fn agent_webview_create(
             input.remote_debugging_port
         );
 
-        let builder = tauri::webview::WebviewBuilder::new(AGENT_WEBVIEW_LABEL, WebviewUrl::External(url))
-            .data_directory(profile_dir)
-            .additional_browser_args(browser_args.as_str());
+        let builder =
+            tauri::webview::WebviewBuilder::new(AGENT_WEBVIEW_LABEL, WebviewUrl::External(url))
+                .data_directory(profile_dir)
+                .additional_browser_args(browser_args.as_str());
 
         window
             .add_child(
@@ -157,7 +158,10 @@ pub async fn agent_webview_create(
     #[cfg(not(feature = "native_webview"))]
     {
         let _ = (&app, &input, &trace_id);
-        Err("native_webview feature is disabled; rebuild with `--features native_webview`".to_string())
+        Err(
+            "native_webview feature is disabled; rebuild with `--features native_webview`"
+                .to_string(),
+        )
     }
 }
 
@@ -188,7 +192,10 @@ pub async fn agent_webview_set_bounds(
     #[cfg(not(feature = "native_webview"))]
     {
         let _ = (&app, &input, &trace_id);
-        Err("native_webview feature is disabled; rebuild with `--features native_webview`".to_string())
+        Err(
+            "native_webview feature is disabled; rebuild with `--features native_webview`"
+                .to_string(),
+        )
     }
 }
 
@@ -218,7 +225,10 @@ pub async fn agent_webview_set_visible(
     #[cfg(not(feature = "native_webview"))]
     {
         let _ = (&app, &input, &trace_id);
-        Err("native_webview feature is disabled; rebuild with `--features native_webview`".to_string())
+        Err(
+            "native_webview feature is disabled; rebuild with `--features native_webview`"
+                .to_string(),
+        )
     }
 }
 
@@ -243,17 +253,17 @@ pub async fn agent_webview_navigate(
     #[cfg(not(feature = "native_webview"))]
     {
         let _ = (&app, &input, &trace_id);
-        Err("native_webview feature is disabled; rebuild with `--features native_webview`".to_string())
+        Err(
+            "native_webview feature is disabled; rebuild with `--features native_webview`"
+                .to_string(),
+        )
     }
 }
 
 /// 销毁子 webview(整步可逆:关闭即回到无原生承载状态)。幂等:不存在则视作成功。
 #[tauri::command]
 #[specta::specta]
-pub async fn agent_webview_destroy(
-    app: AppHandle,
-    trace_id: Option<String>,
-) -> Result<(), String> {
+pub async fn agent_webview_destroy(app: AppHandle, trace_id: Option<String>) -> Result<(), String> {
     #[cfg(feature = "native_webview")]
     {
         use tauri::Manager;
@@ -267,6 +277,9 @@ pub async fn agent_webview_destroy(
     #[cfg(not(feature = "native_webview"))]
     {
         let _ = (&app, &trace_id);
-        Err("native_webview feature is disabled; rebuild with `--features native_webview`".to_string())
+        Err(
+            "native_webview feature is disabled; rebuild with `--features native_webview`"
+                .to_string(),
+        )
     }
 }

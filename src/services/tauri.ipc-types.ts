@@ -46,6 +46,7 @@ export interface IDefineIpcOptions<
   audit?: TIpcAuditLevel;
   errorMap?: TErrorMap;
   measureInput?: (input: z.output<TInSchema>) => IPayloadMetrics;
+  measureOutput?: (output: z.output<TOutSchema>) => IPayloadMetrics;
   mapArgs?: (
     input: z.output<TInSchema>,
     context: { traceId: string },
@@ -71,6 +72,7 @@ export interface ISpectaCommandOptions {
   audit?: TIpcAuditLevel;
   input?: unknown;
   measureInput?: (input: Record<string, unknown>) => IPayloadMetrics;
+  measureOutput?: (output: unknown) => IPayloadMetrics;
   errorMap?: TErrorMap;
 }
 

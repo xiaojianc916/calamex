@@ -6,7 +6,8 @@ import type { IAiChatMessage } from '@/types/ai';
 
 type AiAssistantApi = ReturnType<typeof useAiAssistant>;
 
-const MAX_HISTORY_THREADS = 20;
+const HISTORY_PAGE_SIZE = 20;
+const HISTORY_LOAD_MORE_THRESHOLD_PX = 64;
 
 /**
  * 从 AiAssistantPanel 抽出的会话历史浮层逻辑：历史列表、新建/切换/删除对话，
@@ -17,11 +18,18 @@ export const useAiConversationHistory = (assistant: AiAssistantApi) => {
   const pendingDeleteThreadId = ref<string | null>(null);
   const historyAnchorRef = ref<HTMLElement | null>(null);
   const historyPopoverRef = ref<HTMLElement | null>(null);
+  const visibleHistoryLimit = ref(HISTORY_PAGE_SIZE);
 
+  const sortedHistoryThreads = computed(() =>
+    [...assistant.historyThreads.value].sort(
+      (first, second) => Date.parse(second.updatedAt) - Date.parse(first.updatedAt),
+    ),
+  );
   const historyThreads = computed(() =>
-    [...assistant.historyThreads.value]
-      .sort((first, second) => Date.parse(second.updatedAt) - Date.parse(first.updatedAt))
-      .slice(0, MAX_HISTORY_THREADS),
+    sortedHistoryThreads.value.slice(0, visibleHistoryLimit.value),
+  );
+  const hasMoreHistoryThreads = computed(
+    () => visibleHistoryLimit.value < sortedHistoryThreads.value.length,
   );
   const activeHistoryThread = computed(
     () =>
@@ -37,6 +45,28 @@ export const useAiConversationHistory = (assistant: AiAssistantApi) => {
 
   const getHistoryMessageCountLabel = (messages: IAiChatMessage[]): string =>
     `${messages.length} 条消息`;
+
+  const resetHistoryPagination = (): void => {
+    visibleHistoryLimit.value = HISTORY_PAGE_SIZE;
+  };
+
+  const loadMoreHistoryThreads = (): void => {
+    if (!hasMoreHistoryThreads.value) return;
+    visibleHistoryLimit.value = Math.min(
+      visibleHistoryLimit.value + HISTORY_PAGE_SIZE,
+      sortedHistoryThreads.value.length,
+    );
+  };
+
+  const handleHistoryScroll = (event: Event): void => {
+    const target = event.currentTarget;
+    if (!(target instanceof HTMLElement)) return;
+
+    const distanceFromBottom = target.scrollHeight - target.scrollTop - target.clientHeight;
+    if (distanceFromBottom <= HISTORY_LOAD_MORE_THRESHOLD_PX) {
+      loadMoreHistoryThreads();
+    }
+  };
 
   const deleteDialogTitle = computed<string>(() => {
     const thread = pendingDeleteThread.value;
@@ -80,11 +110,16 @@ export const useAiConversationHistory = (assistant: AiAssistantApi) => {
   };
 
   const toggleHistoryPopover = (): void => {
-    isHistoryOpen.value = !isHistoryOpen.value;
+    const nextOpen = !isHistoryOpen.value;
+    if (nextOpen) {
+      resetHistoryPagination();
+    }
+    isHistoryOpen.value = nextOpen;
   };
 
   const closeHistory = (): void => {
     isHistoryOpen.value = false;
+    resetHistoryPagination();
   };
 
   const startNewConversation = (): void => {
@@ -144,6 +179,7 @@ export const useAiConversationHistory = (assistant: AiAssistantApi) => {
     historyAnchorRef,
     historyPopoverRef,
     historyThreads,
+    hasMoreHistoryThreads,
     activeHistoryThread,
     pendingDeleteThread,
     getHistoryMessageCountLabel,
@@ -152,6 +188,7 @@ export const useAiConversationHistory = (assistant: AiAssistantApi) => {
     deleteDialogDescription,
     toggleHistoryPopover,
     closeHistory,
+    handleHistoryScroll,
     startNewConversation,
     openHistoryThread,
     openDeleteConversationDialog,

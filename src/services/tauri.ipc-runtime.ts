@@ -256,7 +256,10 @@ export const callSpectaCommand = <T>(
       });
 
       if (shouldAudit) {
-        reportOutputBytes(buildPayloadMetrics(output).bytes);
+        const outputMetrics = options.measureOutput
+          ? options.measureOutput(output)
+          : buildPayloadMetrics(output);
+        reportOutputBytes(outputMetrics.bytes);
       }
 
       return output;

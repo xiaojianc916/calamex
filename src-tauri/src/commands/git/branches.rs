@@ -205,7 +205,7 @@ fn build_git_branch_payload_from_ref(
 
     let (ahead, behind, upstream_name) = if kind == "local" {
         let upstream_name = resolve_branch_upstream(repository_root, shorthand);
-        let (ahead, behind) = if upstream_name.is_some() {
+        let (ahead, behind) = if is_current && upstream_name.is_some() {
             resolve_ahead_behind_cli(repository_root, shorthand)?
         } else {
             (0, 0)

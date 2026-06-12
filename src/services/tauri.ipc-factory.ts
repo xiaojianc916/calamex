@@ -113,7 +113,10 @@ export const defineIpc = <TInSchema extends z.ZodTypeAny, TOutSchema extends z.Z
         }
 
         if (shouldAudit) {
-          reportOutputBytes(buildPayloadMetrics(rawOutput).bytes);
+          const outputMetrics = options.measureOutput
+            ? options.measureOutput(parsedOutput.data)
+            : buildPayloadMetrics(rawOutput);
+          reportOutputBytes(outputMetrics.bytes);
         }
 
         return parsedOutput.data;

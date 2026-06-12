@@ -62,6 +62,7 @@ const createAssistantStub = () => {
 
   return {
     assistant,
+    historyThreads,
     activeConversationId,
     isClearDialogOpen,
     isSending,
@@ -78,6 +79,32 @@ describe('useAiConversationHistory', () => {
     const history = withSetup(() => useAiConversationHistory(assistant));
 
     expect(history.historyThreads.value.map((thread) => thread.id)).toEqual(['b', 'c', 'a']);
+  });
+
+  it('默认只渲染 20 条历史，滚动到底部附近每次追加 20 条', () => {
+    const { assistant, historyThreads: sourceThreads } = createAssistantStub();
+    sourceThreads.value = Array.from({ length: 45 }, (_, index) => {
+      const id = `thread-${index + 1}`;
+      return createThread(id, new Date(Date.UTC(2026, 5, 1, 10, index, 0)).toISOString(), 1);
+    });
+
+    const history = withSetup(() => useAiConversationHistory(assistant));
+    expect(history.historyThreads.value).toHaveLength(20);
+    expect(history.hasMoreHistoryThreads.value).toBe(true);
+
+    const scrollTarget = document.createElement('div');
+    Object.defineProperties(scrollTarget, {
+      scrollHeight: { value: 1000, configurable: true },
+      clientHeight: { value: 400, configurable: true },
+      scrollTop: { value: 600, configurable: true },
+    });
+
+    history.handleHistoryScroll({ currentTarget: scrollTarget } as unknown as Event);
+    expect(history.historyThreads.value).toHaveLength(40);
+
+    history.handleHistoryScroll({ currentTarget: scrollTarget } as unknown as Event);
+    expect(history.historyThreads.value).toHaveLength(45);
+    expect(history.hasMoreHistoryThreads.value).toBe(false);
   });
 
   it('识别当前会话', () => {

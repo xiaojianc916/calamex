@@ -120,6 +120,7 @@ const {
   historyAnchorRef,
   historyPopoverRef,
   historyThreads,
+  hasMoreHistoryThreads,
   activeHistoryThread,
   getHistoryMessageCountLabel,
   getHistoryTimestampLabel,
@@ -127,6 +128,7 @@ const {
   deleteDialogDescription,
   toggleHistoryPopover,
   closeHistory,
+  handleHistoryScroll,
   startNewConversation,
   openHistoryThread,
   openDeleteConversationDialog,
@@ -1015,7 +1017,7 @@ onMounted(() => {
               <Trash2 aria-hidden="true" />
             </button>
           </header>
-          <div v-if="historyThreads.length" class="ai-history-scroll-area">
+          <div v-if="historyThreads.length" class="ai-history-scroll-area" @scroll="handleHistoryScroll">
             <div class="ai-history-list">
               <article v-for="thread in historyThreads" :key="thread.id" class="ai-history-item"
                 :class="{ 'is-active': thread.id === assistant.activeConversationId.value }">
@@ -1032,6 +1034,7 @@ onMounted(() => {
                 </button>
               </article>
             </div>
+            <div v-if="hasMoreHistoryThreads" class="ai-history-load-sentinel" aria-hidden="true"></div>
           </div>
           <div v-else class="ai-history-empty">暂无对话记录</div>
         </section>
@@ -1268,6 +1271,12 @@ onMounted(() => {
   flex-direction: column;
   gap: 8px;
   padding: 8px;
+}
+
+.ai-history-load-sentinel {
+  width: 100%;
+  height: 1px;
+  flex: 0 0 auto;
 }
 
 .ai-history-item {

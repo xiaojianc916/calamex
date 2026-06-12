@@ -16,7 +16,7 @@ import {
 // ---------------------------------------------------------------------------
 // Public constants & types
 // ---------------------------------------------------------------------------
-export const AI_CONVERSATION_HISTORY_LIMIT = 20;
+export const AI_CONVERSATION_HISTORY_LIMIT = 200;
 const TEMPORARY_TITLE_MAX_CHARS = 24;
 const GENERATED_TITLE_MAX_CHARS = 10;
 

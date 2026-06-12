@@ -70,22 +70,24 @@ describe('useAiConversationStore', () => {
     expect(store.historyThreads[0]?.messages).toEqual(firstThreadMessages);
   });
 
-  it('只保留最近 20 个会话', () => {
+  it('只保留最近的会话存储上限', () => {
     const store = useAiConversationStore();
     store.replaceMessages([createMessage(1)]);
-    for (let index = 2; index <= 22; index += 1) {
+    for (let index = 2; index <= AI_CONVERSATION_HISTORY_LIMIT + 2; index += 1) {
       store.startNewThread();
       store.replaceMessages([createMessage(index)]);
     }
     expect(store.historyThreads).toHaveLength(AI_CONVERSATION_HISTORY_LIMIT);
     expect(store.historyThreads[0]?.messages[0]?.id).toBe('message-3');
-    expect(store.historyThreads.at(-1)?.messages[0]?.id).toBe('message-22');
+    expect(store.historyThreads.at(-1)?.messages[0]?.id).toBe(
+      `message-${AI_CONVERSATION_HISTORY_LIMIT + 2}`,
+    );
   });
 
   it('裁剪过期会话时会连同会话内全部图片预览一起移除', () => {
     const store = useAiConversationStore();
     store.replaceMessages([createImageMessage(1)]);
-    for (let index = 2; index <= 22; index += 1) {
+    for (let index = 2; index <= AI_CONVERSATION_HISTORY_LIMIT + 2; index += 1) {
       store.startNewThread();
       store.replaceMessages([createImageMessage(index)]);
     }
@@ -101,21 +103,25 @@ describe('useAiConversationStore', () => {
     expect(retainedPreviewSources).not.toContain('data:image/png;base64,thread-1-image-1');
     expect(retainedPreviewSources).not.toContain('data:image/png;base64,thread-2-image-2');
     expect(retainedPreviewSources).toContain('data:image/png;base64,thread-3-image-1');
-    expect(retainedPreviewSources).toContain('data:image/png;base64,thread-22-image-2');
+    expect(retainedPreviewSources).toContain(
+      `data:image/png;base64,thread-${AI_CONVERSATION_HISTORY_LIMIT + 2}-image-2`,
+    );
   });
 
-  it('当前空白新会话不占用 20 个历史会话名额', () => {
+  it('当前空白新会话不占用历史会话名额', () => {
     const store = useAiConversationStore();
     store.replaceMessages([createMessage(1)]);
-    for (let index = 2; index <= 21; index += 1) {
+    for (let index = 2; index <= AI_CONVERSATION_HISTORY_LIMIT; index += 1) {
       store.startNewThread();
       store.replaceMessages([createMessage(index)]);
     }
     store.startNewThread();
     expect(store.historyThreads).toHaveLength(AI_CONVERSATION_HISTORY_LIMIT);
     expect(store.activeMessages).toHaveLength(0);
-    expect(store.historyThreads[0]?.messages[0]?.id).toBe('message-2');
-    expect(store.historyThreads.at(-1)?.messages[0]?.id).toBe('message-21');
+    expect(store.historyThreads[0]?.messages[0]?.id).toBe('message-1');
+    expect(store.historyThreads.at(-1)?.messages[0]?.id).toBe(
+      `message-${AI_CONVERSATION_HISTORY_LIMIT}`,
+    );
   });
 
   it('清空当前对话时只删除当前会话', () => {
