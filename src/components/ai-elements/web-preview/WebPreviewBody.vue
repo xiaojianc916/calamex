@@ -24,13 +24,6 @@ const props = withDefaults(
 const preview = inject(WebPreviewKey, null);
 const resolvedSrc = computed(() => props.src ?? preview?.currentUrl.value ?? '');
 
-/**
- * 原生承载是否不可用。
- * 非桌面运行时(浏览器预览)或未开启 `native_webview` feature 时,创建会失败,
- * 此时回退到 iframe —— 保证默认构建行为与改造前一致、整步可逆。
- */
-const nativeUnavailable = ref(false);
-
 const hostRef = ref<HTMLDivElement | null>(null);
 
 let frameId: number | null = null;
@@ -64,7 +57,7 @@ const pushBounds = async (): Promise<void> => {
   try {
     await setAgentWebviewBounds(bounds);
   } catch {
-    // 瞬时同步失败可忽略,下一帧按最新 rect 重试。
+    // 瞬时同步失败可忽略，下一帧按最新 rect 重试。
     lastBoundsKey = '';
   }
 };
@@ -108,8 +101,7 @@ const ensureCreated = async (): Promise<void> => {
     lastBoundsKey = `${bounds.x}|${bounds.y}|${bounds.width}|${bounds.height}`;
     startLoop();
   } catch {
-    // 原生承载不可用 → 回退 iframe。
-    nativeUnavailable.value = true;
+    // 原生承载创建失败（如非桌面运行时）：保留空占位，不阻断 UI。
     created = false;
   } finally {
     creating = false;
@@ -131,7 +123,7 @@ const teardown = async (): Promise<void> => {
 };
 
 onMounted(() => {
-  if (!nativeUnavailable.value && resolvedSrc.value) {
+  if (resolvedSrc.value) {
     void ensureCreated();
   }
 });
@@ -139,9 +131,6 @@ onMounted(() => {
 watch(
   resolvedSrc,
   async (next) => {
-    if (nativeUnavailable.value) {
-      return;
-    }
     if (!next) {
       if (created) {
         stopLoop();
@@ -182,23 +171,12 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="ai-web-preview-body" data-slot="web-preview-body">
-    <!-- 原生承载:占位元素仅用于测量布局;原生 webview 覆盖在它的屏幕坐标之上 -->
-    <div v-if="!nativeUnavailable" ref="hostRef" class="ai-web-preview-body__host">
+    <!-- 原生承载：占位元素仅用于测量布局；原生 webview 覆盖在它的屏幕坐标之上 -->
+    <div ref="hostRef" class="ai-web-preview-body__host" :aria-label="props.title">
       <div v-if="!resolvedSrc" class="ai-web-preview-body__empty">
         输入地址后即可在这里预览页面
       </div>
     </div>
-
-    <!-- 回退:iframe(非桌面运行时 / 未开启 native_webview),行为与改造前一致 -->
-    <template v-else>
-      <iframe
-        v-if="resolvedSrc"
-        :src="resolvedSrc"
-        :title="props.title"
-        class="ai-web-preview-body__frame"
-      />
-      <div v-else class="ai-web-preview-body__empty">输入地址后即可在这里预览页面</div>
-    </template>
   </section>
 </template>
 
@@ -220,15 +198,6 @@ onBeforeUnmount(() => {
   flex: 1;
   align-items: center;
   justify-content: center;
-  background: #ffffff;
-}
-
-.ai-web-preview-body__frame {
-  width: 100%;
-  min-width: 0;
-  min-height: 0;
-  flex: 1;
-  border: 0;
   background: #ffffff;
 }
 

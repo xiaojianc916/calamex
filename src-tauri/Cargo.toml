@@ -10,13 +10,14 @@ default-run = "calamex"
 tauri-build = { version = "2.5.6", features = [], optional = true }
 
 [features]
-default = ["desktop"]
-# 迁移期临时门控:启用宿主侧官方 ACP stdio 客户端(`cargo build --features acp_client`)。
-# 默认构建不启用,保证 main 分支默认编译不受影响、整步可逆。
+default = ["desktop", "native_webview"]
+# 迁移期临时门控：启用宿主侧官方 ACP stdio 客户端（`cargo build --features acp_client`）。
+# 默认构建不启用，保证 main 分支默认编译不受影响、整步可逆。
 acp_client = ["dep:agent-client-protocol"]
-# 迁移期临时门控:原生承载内置浏览器(Tauri multiwebview 子 webview + 独立 user-data-folder + CDP 远程调试端口)。
-# 默认不启用,保证 main 默认构建零影响、整步可逆(`cargo build --features native_webview` 才启用)。
-# 启用 tauri/unstable 以使用 Window::add_child 多 webview API;用弱依赖 `tauri?/unstable` 避免独立打开可选的 tauri 依赖。
+# 原生承载内置浏览器（Tauri multiwebview 子 webview + 独立 user-data-folder + CDP 远程调试端口）。
+# 默认启用（随 desktop 进 default）：AI 操作内置浏览器是产品核心能力，需开箱即用，不再走 iframe 旧路。
+# 如需最小依赖构建可 `--no-default-features` 关闭（届时走 cfg stub 返回 Err）。
+# 启用 tauri/unstable 以使用 Window::add_child 多 webview API；用弱依赖 `tauri?/unstable`。
 native_webview = ["tauri?/unstable"]
 desktop = [
   "dep:atomic-write-file",
@@ -53,7 +54,7 @@ desktop = [
 
 [dependencies]
 # 官方 Agent Client Protocol Rust SDK。钉到 v0.14.0 的 SACP 角色/构建器 API
-# (该 rev 自身把 schema 依赖钉在已发布的 agent-client-protocol-schema =0.13.6)。
+# （该 rev 自身把 schema 依赖钉在已发布的 agent-client-protocol-schema =0.13.6）。
 agent-client-protocol = { git = "https://github.com/agentclientprotocol/rust-sdk", rev = "98b9792a014569f87404d48ed7521431369948c5", optional = true }
 bytes = "1.7"
 parking_lot = "0.12"
