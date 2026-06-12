@@ -1,8 +1,8 @@
 use crate::commands::lsp::commands as lsp_commands;
 use crate::commands::terminal::commands as terminal_commands;
 use crate::commands::{
-    agent_sidecar, ai, format, git, script_run, search, shell_tools, skills, ssh, window,
-    window_stage, workspace_fs, workspace_watcher,
+    agent_sidecar, agent_webview, ai, format, git, script_run, search, shell_tools, skills, ssh,
+    window, window_stage, workspace_fs, workspace_watcher,
 };
 use specta_typescript::Typescript;
 use std::path::PathBuf;
@@ -98,6 +98,11 @@ pub fn builder() -> Builder<tauri::Wry> {
             agent_sidecar::agent_sidecar_restore_checkpoint,
             agent_sidecar::agent_sidecar_orchestrate,
             agent_sidecar::agent_sidecar_orchestrate_resume,
+            agent_webview::agent_webview_create,
+            agent_webview::agent_webview_set_bounds,
+            agent_webview::agent_webview_set_visible,
+            agent_webview::agent_webview_navigate,
+            agent_webview::agent_webview_destroy,
             ai::gateway::ai_get_config,
             ai::gateway::ai_save_config,
             ai::gateway::ai_save_credentials,

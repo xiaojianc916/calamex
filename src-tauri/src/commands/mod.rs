@@ -1,4 +1,5 @@
 pub(crate) mod agent_sidecar;
+pub(crate) mod agent_webview;
 pub(crate) mod ai;
 pub(crate) mod contracts;
 pub(crate) mod format;
