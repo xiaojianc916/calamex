@@ -136,6 +136,12 @@
   color: var(--search-text-subtle);
 }
 
+.search-panel-apply-btn.is-armed,
+.search-panel-apply-btn.is-armed:hover {
+  background: var(--search-accent-soft);
+  color: var(--search-accent);
+}
+
 .search-panel-clear-btn svg,
 .search-panel-apply-btn svg {
   width: 12px;

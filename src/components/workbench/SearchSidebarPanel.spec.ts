@@ -4,6 +4,7 @@ import type { WorkspaceSearchPayload, WorkspaceSearchResult } from '@/bindings/t
 import SearchSidebarPanel from './SearchSidebarPanel.vue';
 
 const SEARCH_DEBOUNCE_MS = 180;
+const APPLY_CONFIRM_WINDOW_MS = 2200;
 
 const tauriServiceMock = vi.hoisted(() => ({
   searchWorkspace: vi.fn(),
@@ -108,6 +109,13 @@ const flushDebouncedSearch = async (): Promise<void> => {
   await flushPromises();
   vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS + 20);
   await flushPromises();
+};
+
+const armReplaceButton = async (): Promise<void> => {
+  tauriServiceMock.previewWorkspaceReplacement.mockResolvedValue({
+    fileCount: 0,
+    files: [],
+  });
 };
 
 describe('SearchSidebarPanel', () => {
@@ -265,5 +273,53 @@ describe('SearchSidebarPanel', () => {
       expect.objectContaining({ query: 'foo', replacement: 'bar' }),
       expect.objectContaining({ signal: expect.anything() }),
     );
+  });
+
+  it('全部替换采用二次确认：首次点击仅进入确认态，不立即执行替换', async () => {
+    await armReplaceButton();
+    const wrapper = mountPanel();
+    await wrapper.find('input[aria-label="搜索关键字"]').setValue('foo');
+    await flushDebouncedSearch();
+    await wrapper.find('input[aria-label="替换内容"]').setValue('bar');
+    await flushDebouncedSearch();
+    tauriServiceMock.previewWorkspaceReplacement.mockClear();
+
+    // 首次点击：仅武装确认态，aria-label 变为「确认全部替换」，且不调用任何替换后端。
+    await wrapper.get('button[aria-label="全部替换"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.find('button[aria-label="确认全部替换"]').exists()).toBe(true);
+    expect(tauriServiceMock.applyWorkspaceReplacement).not.toHaveBeenCalled();
+    expect(tauriServiceMock.previewWorkspaceReplacement).not.toHaveBeenCalled();
+
+    // 确认窗口内再次点击：真正进入替换流程（先生成预览）。
+    await wrapper.get('button[aria-label="确认全部替换"]').trigger('click');
+    await flushPromises();
+    expect(tauriServiceMock.previewWorkspaceReplacement).toHaveBeenCalled();
+  });
+
+  it('全部替换确认态在 2.2 秒内未再次点击会自动复位', async () => {
+    await armReplaceButton();
+    const wrapper = mountPanel();
+    await wrapper.find('input[aria-label="搜索关键字"]').setValue('foo');
+    await flushDebouncedSearch();
+    await wrapper.find('input[aria-label="替换内容"]').setValue('bar');
+    await flushDebouncedSearch();
+    tauriServiceMock.applyWorkspaceReplacement.mockClear();
+
+    await wrapper.get('button[aria-label="全部替换"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.find('button[aria-label="确认全部替换"]').exists()).toBe(true);
+
+    // 超过确认窗口未再次点击：确认态自动复位为「全部替换」。
+    vi.advanceTimersByTime(APPLY_CONFIRM_WINDOW_MS + 20);
+    await flushPromises();
+    expect(wrapper.find('button[aria-label="确认全部替换"]').exists()).toBe(false);
+    expect(wrapper.find('button[aria-label="全部替换"]').exists()).toBe(true);
+
+    // 复位后再次单击只会重新进入确认态，不会直接执行替换。
+    await wrapper.get('button[aria-label="全部替换"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.find('button[aria-label="确认全部替换"]').exists()).toBe(true);
+    expect(tauriServiceMock.applyWorkspaceReplacement).not.toHaveBeenCalled();
   });
 });
