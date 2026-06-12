@@ -260,6 +260,93 @@ pub async fn agent_webview_navigate(
     }
 }
 
+/// 后退一步(地址栏后退按钮)。
+/// CDP 化之前先用宿主级 `eval` 调用标准 History API:`eval` 对跨域外部页同样生效,
+/// 零新依赖即可让按钮即时可用。canGoBack/canGoForward 的禁用态留待 CDP 阶段补齐。
+#[tauri::command]
+#[specta::specta]
+pub async fn agent_webview_back(app: AppHandle, trace_id: Option<String>) -> Result<(), String> {
+    #[cfg(feature = "native_webview")]
+    {
+        use tauri::Manager;
+        let _ = &trace_id;
+        let webview = app
+            .get_webview(AGENT_WEBVIEW_LABEL)
+            .ok_or_else(|| "agent webview not found".to_string())?;
+        webview
+            .eval("window.history.back();")
+            .map_err(|e| format!("history.back eval failed: {e}"))
+    }
+
+    #[cfg(not(feature = "native_webview"))]
+    {
+        let _ = (&app, &trace_id);
+        Err("native_webview feature is disabled; rebuild with `--features native_webview`".to_string())
+    }
+}
+
+/// 前进一步(地址栏前进按钮)。
+#[tauri::command]
+#[specta::specta]
+pub async fn agent_webview_forward(app: AppHandle, trace_id: Option<String>) -> Result<(), String> {
+    #[cfg(feature = "native_webview")]
+    {
+        use tauri::Manager;
+        let _ = &trace_id;
+        let webview = app
+            .get_webview(AGENT_WEBVIEW_LABEL)
+            .ok_or_else(|| "agent webview not found".to_string())?;
+        webview
+            .eval("window.history.forward();")
+            .map_err(|e| format!("history.forward eval failed: {e}"))
+    }
+
+    #[cfg(not(feature = "native_webview"))]
+    {
+        let _ = (&app, &trace_id);
+        Err("native_webview feature is disabled; rebuild with `--features native_webview`".to_string())
+    }
+}
+
+/// 刷新当前页(替代前端 refreshKey 重建,直接命中原生页)。
+#[tauri::command]
+#[specta::specta]
+pub async fn agent_webview_reload(app: AppHandle, trace_id: Option<String>) -> Result<(), String> {
+    #[cfg(feature = "native_webview")]
+    {
+        use tauri::Manager;
+        let _ = &trace_id;
+        let webview = app
+            .get_webview(AGENT_WEBVIEW_LABEL)
+            .ok_or_else(|| "agent webview not found".to_string())?;
+        webview
+            .eval("window.location.reload();")
+            .map_err(|e| format!("location.reload eval failed: {e}"))
+    }
+
+    #[cfg(not(feature = "native_webview"))]
+    {
+        let _ = (&app, &trace_id);
+        Err("native_webview feature is disabled; rebuild with `--features native_webview`".to_string())
+    }
+}
+
+/// 在系统默认浏览器中打开指定 URL(官方 tauri-plugin-opener;从 Rust 侧调用,无需额外前端授权)。
+/// 与原生承载无关,不门控在 native_webview 之下。
+#[tauri::command]
+#[specta::specta]
+pub async fn agent_webview_open_external(
+    app: AppHandle,
+    input: AgentWebviewNavigateInput,
+    trace_id: Option<String>,
+) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let _ = &trace_id;
+    app.opener()
+        .open_url(input.url, None::<&str>)
+        .map_err(|e| format!("open_url failed: {e}"))
+}
+
 /// 销毁子 webview(整步可逆:关闭即回到无原生承载状态)。幂等:不存在则视作成功。
 #[tauri::command]
 #[specta::specta]
