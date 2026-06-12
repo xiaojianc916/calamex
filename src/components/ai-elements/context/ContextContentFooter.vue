@@ -11,7 +11,7 @@ const props = defineProps<{
 const { cost, usageSource } = useContextValue();
 const costLabel = computed(() => (usageSource.value === 'official' ? 'usage 成本' : '预计成本'));
 
-const totalCost = computed(() => cost.value?.totalCostText ?? '暂无价格');
+const totalCost = computed(() => cost.value?.totalCostText ?? '');
 </script>
 
 <template>
