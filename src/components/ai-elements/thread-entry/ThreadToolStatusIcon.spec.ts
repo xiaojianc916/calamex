@@ -21,12 +21,25 @@ describe('ThreadToolStatusIcon', () => {
     expect(icon.classes()).toContain('text-muted-foreground');
   });
 
-  it('失败状态使用警告图标', () => {
+  it('失败状态使用警告图标，并以 --danger 设计 token 着色', () => {
     const wrapper = mount(ThreadToolStatusIcon, { props: { status: 'failed' } });
 
     const icon = wrapper.findComponent(LucideIcon);
     expect(icon.props('name')).toBe('circle-alert');
-    expect(icon.classes()).toContain('text-red-500');
+    // 颜色收口：不再使用 Tailwind 调色板硬编码(text-red-500)，改由 --danger token 驱动。
+    expect(icon.classes()).not.toContain('text-red-500');
+    expect(icon.attributes('style')).toContain('var(--danger)');
+  });
+
+  it('等待确认状态以 --warning 设计 token 着色', () => {
+    const wrapper = mount(ThreadToolStatusIcon, {
+      props: { status: 'awaiting-confirmation' },
+    });
+
+    const icon = wrapper.findComponent(LucideIcon);
+    expect(icon.props('name')).toBe('circle-alert');
+    expect(icon.classes()).not.toContain('text-amber-500');
+    expect(icon.attributes('style')).toContain('var(--warning)');
   });
 
   it('为状态提供可访问的中文标签', () => {

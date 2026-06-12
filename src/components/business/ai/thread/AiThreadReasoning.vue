@@ -37,7 +37,13 @@ const streamStatus = computed<IAiChatStreamRenderState['status'] | undefined>(()
     @update:open="emit('update:open', $event)"
   >
     <template #leading>
-      <BrainCircuit class="size-4 text-blue-500" v-if="entry.streaming" aria-hidden="true" />
+      <!-- 流式推理用强调色(--accent)做活跃提示;收口自原 text-blue-500 硬编码,改由设计 token 驱动,随主题/One Light 作用域联动。 -->
+      <BrainCircuit
+        class="size-4"
+        :style="{ color: 'var(--accent)' }"
+        v-if="entry.streaming"
+        aria-hidden="true"
+      />
       <Brain class="size-4 text-muted-foreground" v-else aria-hidden="true" />
     </template>
     <template #content>
