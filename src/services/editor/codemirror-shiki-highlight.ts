@@ -31,18 +31,22 @@ const MAX_HIGHLIGHT_SLICE_LENGTH = 200_000;
 // 同步着色的切片字节上限：语法已在主线程加载、且可见区窗口切片不超过此值时，
 // 直接在主线程 tokenize 并即时着色。取值远小于 Worker 切片上限，保证单帧同步
 // tokenize 的耗时可控（可见区窗口仅几百行，典型远小于此值）。超过则回退到 Worker。
-const MAX_SYNC_HIGHLIGHT_SLICE_LENGTH = 20_000;
+const MAX_SYNC_HIGHLIGHT_SLICE_LENGTH = 28_000;
 
 // 可见区下方额外着色的行数：平滑滚动时的下方衔接缓冲。取较大值以覆盖快速滚动
 // 单帧的跨度，减少滚动越界触发重算的频率，降低闪烁概率。
-const HIGHLIGHT_OVERSCAN_LINES = 48;
+const HIGHLIGHT_OVERSCAN_LINES = 72;
 
 // 同步着色时可见区上方的 lead-in 行数：不从文档开头切片时，从可见区上沿向上多取
 // 这些行作为语法状态的“启动上下文”，使块注释/heredoc/多行字符串等跨行结构在
 // 可见区配色尽量正确。取较大值以覆盖绝大多数现实代码的跨行跨度；极端超长跨行
 // 结构（距视口上千行的块注释）是专业编辑器靠“每行状态缓存”解决的罕见场景，
 // 此处以“零闪烁”为优先权衡，从文档开头的完全正确着色由 Worker 回退路径提供。
-const SYNC_HIGHLIGHT_LEAD_IN_LINES = 80;
+const SYNC_HIGHLIGHT_LEAD_IN_LINES = 120;
+
+// 滚动同步补色预算：只有少量新行进入视口时才在当前 update 内同步 tokenize。
+// 这接近 VS Code / Monaco 的体验取向：小滚动不牺牲高亮，大跨度跳滚不阻塞滚动首帧。
+const SCROLL_SYNC_UNCACHED_LINE_LIMIT = 32;
 
 // 输入停顿后过多久触发一次重算（毫秒）；过小会让连续输入仍频繁重算，过大高亮滞后明显。
 const HIGHLIGHT_RECOMPUTE_DEBOUNCE_MS = 90;
@@ -430,10 +434,15 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
 
       if (action === 'recompute') {
         if (update.viewportChanged && !languageChanged && !recomputeRequested) {
-          // 滚动必须优先保证 CodeMirror 的虚拟 DOM 首帧补齐。
-          // 旧逻辑会在 viewportChanged 的当前 update 内同步 Shiki tokenize，
-          // 几百行文件快速滚动时容易堵住渲染线程，表现为大片空白/延迟加载。
-          // 这里先用按行缓存立即重建已有装饰；新滚入区域的高亮延后一帧补齐。
+          // 专业编辑器的滚动策略不是“牺牲高亮”，而是“预算内同步，超预算让路给滚动”：
+          // - 慢速/小范围滚动：新进入视口的未缓存行很少，当前 update 内同步补高亮；
+          // - 快速/大跨度滚动：先让 CodeMirror 虚拟滚动把文本首帧画出来，下一帧补高亮。
+          if (this.canFillScrollViewportSynchronously(update.view)) {
+            this.cancelScheduledRecompute();
+            this.recompute(update.view, { allowReuse: true });
+            return;
+          }
+
           this.renderViewportFromCache(update.view);
           this.schedulePostPaintRecompute(update.view);
           return;
@@ -603,6 +612,58 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
         renderRange.startLine,
         renderRange.endLine,
         this.lineTokenCache,
+      );
+    }
+
+    private canFillScrollViewportSynchronously(view: EditorView): boolean {
+      const language = view.state.field(shikiLanguageField, false) ?? 'text';
+      if (!resolveShikiLanguageId(language) || !isShikiLanguageLoaded(language)) {
+        return false;
+      }
+
+      this.ensureCacheContext(language);
+
+      const visible = this.getVisibleLineRange(view);
+      if (!visible) {
+        return false;
+      }
+
+      const renderRange = computeShikiHighlightRange({
+        firstVisibleLine: visible.first,
+        lastVisibleLine: visible.last,
+        totalLines: view.state.doc.lines,
+        overscanLines: HIGHLIGHT_OVERSCAN_LINES,
+        leadInLines: HIGHLIGHT_OVERSCAN_LINES,
+        fromDocumentStart: false,
+      });
+
+      const uncached = findUncachedLineRange({
+        startLine: renderRange.startLine,
+        endLine: renderRange.endLine,
+        isCached: (lineNumber) => this.lineTokenCache.has(lineNumber),
+      });
+
+      if (uncached === null) {
+        return true;
+      }
+
+      const uncachedLineCount = uncached.endLine - uncached.startLine + 1;
+      if (uncachedLineCount > SCROLL_SYNC_UNCACHED_LINE_LIMIT) {
+        return false;
+      }
+
+      const syncSlice = computeShikiHighlightSlice(view, {
+        fromDocumentStart: false,
+        leadInLines: SYNC_HIGHLIGHT_LEAD_IN_LINES,
+      });
+
+      return Boolean(
+        syncSlice &&
+          shouldHighlightSynchronously({
+            languageLoaded: true,
+            sliceCodeLength: syncSlice.code.length,
+            maxSyncSliceLength: MAX_SYNC_HIGHLIGHT_SLICE_LENGTH,
+          }),
       );
     }
 
