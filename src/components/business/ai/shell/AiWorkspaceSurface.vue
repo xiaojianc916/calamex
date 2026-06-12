@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { PanelRight, RotateCw } from '@lucide/vue';
-import { computed, onBeforeUnmount, ref } from 'vue';
+import { computed, defineAsyncComponent, onBeforeUnmount, ref } from 'vue';
 import AiAssistantPanel from '@/components/business/ai/shell/AiAssistantPanel.vue';
-import AiWebPreviewSidebar from '@/components/business/ai/shell/AiWebPreviewSidebar.vue';
 import { Card, CardContent } from '@/components/ui/card';
 import { useMessage } from '@/composables/useMessage';
 import { aiService } from '@/services/ipc/ai.service';
@@ -18,6 +17,11 @@ import { toErrorMessage } from '@/utils/error';
 const DEFAULT_RIGHT_SIDEBAR_WIDTH = 480;
 const RIGHT_SIDEBAR_MIN_WIDTH = 360;
 const RIGHT_SIDEBAR_MAX_WIDTH = 720;
+
+const DeferredAiWebPreviewSidebar = defineAsyncComponent({
+  loader: () => import('@/components/business/ai/shell/AiWebPreviewSidebar.vue'),
+  suspensible: false,
+});
 
 defineProps<{
   document: IEditorDocument;
@@ -214,7 +218,7 @@ onBeforeUnmount(() => {
             @mousedown="startRightSidebarResize"
           />
           <div v-if="isRightSidebarVisible" class="ai-workspace-right-sidebar__inner">
-            <AiWebPreviewSidebar class="min-h-0 flex-1" @close-sidebar="toggleRightSidebar" />
+            <DeferredAiWebPreviewSidebar class="min-h-0 flex-1" @close-sidebar="toggleRightSidebar" />
           </div>
         </aside>
       </div>

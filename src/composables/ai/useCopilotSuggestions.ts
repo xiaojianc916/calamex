@@ -132,6 +132,8 @@ const POOL_TOPICS = [
 const DISPLAY_COUNT = 9;
 /** 建议标题最大展示长度，超出截断加省略号。 */
 const TITLE_MAX_LENGTH = 15;
+/** AI 面板先完成首帧展示，再在后台慢慢加载动态建议池。 */
+const BACKGROUND_POOL_START_DELAY_MS = 1_200;
 
 const toSuggestion = (message: string): Suggestion => {
   const title =
@@ -194,6 +196,13 @@ export const useCopilotSuggestions = (): IUseCopilotSuggestionsResult => {
   // 组件卸载后停止后台重试，并清理待触发的定时器，避免泄漏与无谓调用。
   let disposed = false;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const clearRetryTimer = (): void => {
+    if (retryTimer !== null) {
+      clearTimeout(retryTimer);
+      retryTimer = null;
+    }
+  };
 
   const applyPool = (pool: readonly string[] | undefined | null): boolean => {
     if (pool && pool.length > 0) {
@@ -260,15 +269,17 @@ export const useCopilotSuggestions = (): IUseCopilotSuggestionsResult => {
   };
 
   onMounted(() => {
-    void ensurePool();
+    // 动态建议池不是 AI 面板首屏必要内容：先显示静态兜底，等界面首帧稳定后
+    // 再后台读取缓存 / 生成词池，避免挂载阶段唤醒 sidecar 或 narrator 小模型。
+    retryTimer = setTimeout(() => {
+      retryTimer = null;
+      void ensurePool();
+    }, BACKGROUND_POOL_START_DELAY_MS);
   });
 
   onBeforeUnmount(() => {
     disposed = true;
-    if (retryTimer !== null) {
-      clearTimeout(retryTimer);
-      retryTimer = null;
-    }
+    clearRetryTimer();
   });
 
   // 优先级：narrator 池 -> CopilotKit 池 -> 静态兜底，始终能兑出内容。
