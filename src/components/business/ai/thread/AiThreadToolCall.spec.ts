@@ -61,6 +61,38 @@ describe('AiThreadToolCall', () => {
     expect(wrapper.findComponent(AiMarkdown).exists()).toBe(true);
   });
 
+  it('缺省结构化字段时回退渲染整段 title,不出现参数 chip', () => {
+    const wrapper = mount(AiThreadToolCall, {
+      props: { entry: baseEntry([]), open: false },
+      global: { stubs },
+    });
+
+    expect(wrapper.find('.ai-thread-tool-call__action').text()).toBe(
+      'Search files for regex shikiLanguage',
+    );
+    expect(wrapper.find('.ai-thread-tool-call__argument').exists()).toBe(false);
+  });
+
+  it('以两段式渲染工具动词与参数 code chip', () => {
+    const wrapper = mount(AiThreadToolCall, {
+      props: {
+        entry: {
+          ...baseEntry([]),
+          title: 'Read file src/services/editor/codemirror-language.ts',
+          titleVerb: 'Read file',
+          titleArgument: 'src/services/editor/codemirror-language.ts',
+        },
+        open: false,
+      },
+      global: { stubs },
+    });
+
+    expect(wrapper.find('.ai-thread-tool-call__action').text()).toBe('Read file');
+    const argument = wrapper.find('.ai-thread-tool-call__argument');
+    expect(argument.exists()).toBe(true);
+    expect(argument.text()).toBe('src/services/editor/codemirror-language.ts');
+  });
+
   it('渲染 Raw Input / Output 展开块', () => {
     const wrapper = mount(AiThreadToolCall, {
       props: {

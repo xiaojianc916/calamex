@@ -36,6 +36,11 @@ const isExpanded = computed(() => hasContent.value && props.open);
 const toolIconClass = computed(() => TASK_ICON_MAP[props.entry.icon] ?? TASK_ICON_MAP.system);
 const webSourceCount = computed(() => props.entry.webSearchSources?.length ?? 0);
 
+// Zed 风格两段式标题:动词(verb)与参数(argument)分开展示;缺省结构化字段时
+// 回退到整段 title 字符串,保证向后兼容。
+const labelVerb = computed(() => props.entry.titleVerb ?? props.entry.title);
+const labelArgument = computed(() => props.entry.titleArgument);
+
 const toggleOpen = (): void => {
   if (!hasContent.value) {
     return;
@@ -55,8 +60,8 @@ const rawLanguage = (code: string): string => {
   return 'text';
 };
 
-// 复用「已更改文件」汇总完全一致的 hunk 解析：按多种路径键归一化后匹配，避免内联
-// diff 与汇总卡片出现行为差异（不另造一套解析逻辑）。
+// 复用「已更改文件」汇总完全一致的 hunk 解析:按多种路径键归一化后匹配,避免内联
+// diff 与汇总卡片出现行为差异(不另造一套解析逻辑)。
 const patchHunksByPath = computed(() => {
   const entries = new Map<string, IAiDiffHunkPreview[]>();
 
@@ -95,11 +100,18 @@ const resolveHunks = (filePath: string): IAiDiffHunkPreview[] =>
       class="ai-thread-tool-call__header"
       :disabled="!hasContent"
       :aria-expanded="isExpanded"
+      :title="entry.title"
       @click="toggleOpen"
     >
       <LucideIcon :name="toolIconClass" class="ai-thread-tool-call__tool-icon size-4" aria-hidden="true" />
       <span class="ai-thread-tool-call__label">
-        <span class="ai-thread-tool-call__action" v-text="entry.title" />
+        <span class="ai-thread-tool-call__action" v-text="labelVerb" />
+        <code
+          v-if="labelArgument"
+          class="ai-thread-tool-call__argument"
+          :title="labelArgument"
+          v-text="labelArgument"
+        />
       </span>
       <span class="ai-thread-tool-call__meta">
         <span
@@ -222,16 +234,34 @@ const resolveHunks = (filePath: string): IAiDiffHunkPreview[] =>
 .ai-thread-tool-call__label {
   display: inline-flex;
   min-width: 0;
-  align-items: baseline;
+  align-items: center;
+  gap: 6px;
 }
 
 .ai-thread-tool-call__action {
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   color: var(--text-secondary);
   font-size: 13px;
   font-weight: 400;
   line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Zed 风格:工具参数(路径 / 命令 / 正则)以浅灰圆角 code chip 呈现,与动词区分。 */
+.ai-thread-tool-call__argument {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--surface-soft, #f6f6f6) 80%, transparent);
+  padding: 0 6px;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 18px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

@@ -82,13 +82,26 @@ const humanizeToolName = (toolName: string): string =>
     .trim()
     .replace(/^./u, (character) => character.toUpperCase());
 
-const buildZedToolTitle = (
+/**
+ * Zed 风格工具标题的结构化表示:`verb` 为动作动词,`argument` 为其参数
+ * (路径 / 命令 / 正则等)。渲染层据此作“动词 + 参数 code chip”两段式展示。
+ */
+interface IZedToolLabel {
+  verb: string;
+  argument?: string;
+}
+
+/** 结构化标题 → 完整标题字符串(作为可访问名称与按路径关联 diff 的唯一依据)。 */
+const labelTitle = (label: IZedToolLabel): string =>
+  label.argument === undefined ? label.verb : `${label.verb} ${label.argument}`;
+
+const buildZedToolLabel = (
   toolName: string | undefined,
   fallback: string,
   rawInput?: string,
-): string => {
+): IZedToolLabel => {
   if (!toolName) {
-    return fallback;
+    return { verb: fallback };
   }
 
   const normalized = toolName.toLowerCase();
@@ -111,24 +124,27 @@ const buildZedToolTitle = (
     )
   ) {
     if (regex) {
-      return `Search files for regex ${regex}`;
+      return { verb: 'Search files for regex', argument: regex };
     }
 
     if (query) {
-      return `Search files for ${query}`;
+      return { verb: 'Search files for', argument: query };
     }
   }
 
   if (/search_symbols|listcodeusages|renamesymbol/u.test(normalized)) {
-    return `Search symbols for ${query ?? regex ?? path ?? humanizeToolName(toolName)}`;
+    return {
+      verb: 'Search symbols for',
+      argument: query ?? regex ?? path ?? humanizeToolName(toolName),
+    };
   }
 
   if (/read.*file|read_text_file|read_file_window|get_file_info/u.test(normalized)) {
-    return `Read file ${path ?? query ?? humanizeToolName(toolName)}`;
+    return { verb: 'Read file', argument: path ?? query ?? humanizeToolName(toolName) };
   }
 
   if (/list_dir|list_directory|directory_tree|list_workspace_entries/u.test(normalized)) {
-    return `List directory ${path ?? humanizeToolName(toolName)}`;
+    return { verb: 'List directory', argument: path ?? humanizeToolName(toolName) };
   }
 
   if (
@@ -136,22 +152,22 @@ const buildZedToolTitle = (
       normalized,
     )
   ) {
-    return `Edit file ${path ?? query ?? humanizeToolName(toolName)}`;
+    return { verb: 'Edit file', argument: path ?? query ?? humanizeToolName(toolName) };
   }
 
   if (/run_command|run_in_terminal|execute_command|send_to_terminal/u.test(normalized)) {
-    return `Run command ${command ?? humanizeToolName(toolName)}`;
+    return { verb: 'Run command', argument: command ?? humanizeToolName(toolName) };
   }
 
   if (/web_search|tavily|search_web/u.test(normalized)) {
-    return `Search the web for ${query ?? regex ?? humanizeToolName(toolName)}`;
+    return { verb: 'Search the web for', argument: query ?? regex ?? humanizeToolName(toolName) };
   }
 
   if (/fetch|browser|navigate/u.test(normalized)) {
-    return `Open ${url ?? query ?? humanizeToolName(toolName)}`;
+    return { verb: 'Open', argument: url ?? query ?? humanizeToolName(toolName) };
   }
 
-  return humanizeToolName(toolName);
+  return { verb: humanizeToolName(toolName) };
 };
 
 /** 工具名是否属于“写入 / 编辑”类(用于无法按路径关联时的兜底归属)。 */
@@ -253,13 +269,16 @@ const mapTaskItemToToolEntry = (
   item: Extract<TTimelineItem, { type: 'task' }>,
 ): IAiThreadToolCallEntry => {
   const { node } = item;
+  const label = buildZedToolLabel(node.toolName, node.action, node.rawInput);
   return {
     kind: 'tool-call',
     id: `${messageId}:${item.id}`,
     messageId,
     toolName: node.toolName,
     icon: node.icon,
-    title: buildZedToolTitle(node.toolName, node.action, node.rawInput),
+    title: labelTitle(label),
+    titleVerb: label.verb,
+    titleArgument: label.argument,
     tags: node.tags,
     tail: node.tail,
     status: resolveToolStatusFromNode(node),
@@ -274,7 +293,8 @@ const mapWireToolCallToToolEntry = (
   messageId: string,
   toolCall: IAiToolCall,
 ): IAiThreadToolCallEntry => {
-  const title = toolCall.summary.trim().length > 0 ? toolCall.summary : toolCall.name;
+  const fallback = toolCall.summary.trim().length > 0 ? toolCall.summary : toolCall.name;
+  const label = buildZedToolLabel(toolCall.name, fallback);
   return {
     kind: 'tool-call',
     id: `${messageId}:tool:${toolCall.id}`,
@@ -282,7 +302,9 @@ const mapWireToolCallToToolEntry = (
     toolName: toolCall.name,
     // 复用项目既有图标解析;'system' 是合法的运行时工具大类兜底。
     icon: resolveRuntimeToolIcon(toolCall.name, 'system'),
-    title: buildZedToolTitle(toolCall.name, title),
+    title: labelTitle(label),
+    titleVerb: label.verb,
+    titleArgument: label.argument,
     tags: toolCall.targetPreview !== undefined ? [toolCall.targetPreview] : [],
     status: toolCall.status,
     content: [],

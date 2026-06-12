@@ -85,6 +85,14 @@ export interface IAiThreadToolCallEntry extends IAiThreadEntryBase {
   toolName?: string;
   icon: TTaskIcon;
   title: string;
+  /**
+   * 结构化标题(对齐 Zed 工具行的「动词 + 参数」两段式展示):`titleVerb` 为动作
+   * 动词(如 “Read file” / “Edit file” / “Run command”),`titleArgument` 为其参数
+   * (路径 / 命令 / 正则等)。两者均可缺省;缺省时渲染层回退到整段 `title` 字符串。
+   * `title` 仍保留为完整字符串,作为可访问名称与按路径关联 diff 的依据(单一数据源)。
+   */
+  titleVerb?: string;
+  titleArgument?: string;
   tags: string[];
   tail?: string;
   status: TAiThreadToolStatus;
