@@ -998,6 +998,35 @@ export const useGitStore = defineStore('git', () => {
     return request;
   };
 
+  const loadCommitStatsOnly = async (commitId: string): Promise<void> => {
+    if (getCommitStats(commitId)) return;
+
+    const pending = pendingCommitDetailRequests.get(commitId);
+    if (pending) {
+      const payload = await pending;
+      rememberCommitStats(payload);
+      return;
+    }
+
+    const request = tauriService
+      .getGitCommitDetail({
+        repositoryRootPath: requireRepositoryRootPath(),
+        commitId,
+      })
+      .then((payload) => {
+        // 后台 stats 只保存轻量统计，不污染完整 commitDetailCache。
+        // 完整 files[] 仍然只在用户点击展开 commit 时由 loadCommitDetail 写入缓存。
+        rememberCommitStats(payload);
+        return payload;
+      })
+      .finally(() => {
+        pendingCommitDetailRequests.delete(commitId);
+      });
+
+    pendingCommitDetailRequests.set(commitId, request);
+    await request;
+  };
+
   const loadCommitFileDiff = async (
     commitId: string,
     relativePath: string,
@@ -1079,7 +1108,7 @@ export const useGitStore = defineStore('git', () => {
 
         pendingCommitStatsRequests.add(commitId);
         try {
-          await loadCommitDetail(commitId);
+          await loadCommitStatsOnly(commitId);
         } catch {
           // Commit stats are pure background optimization.
         } finally {
