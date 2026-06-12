@@ -1459,7 +1459,7 @@ export const useGitStore = defineStore('git', () => {
     const support = await loadPullRequestSupport();
     if (!support.available) return [];
     return loadPullRequests(state, {
-      preloadDetails: true,
+      preloadDetails: false,
       updateActive: true,
       visibleLoading: true,
     });
@@ -1470,7 +1470,7 @@ export const useGitStore = defineStore('git', () => {
     if (!support.available) return [];
     return loadPullRequests(state, {
       force: true,
-      preloadDetails: true,
+      preloadDetails: false,
       updateActive: true,
       visibleLoading: true,
     });

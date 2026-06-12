@@ -556,6 +556,7 @@ const collapsedReplacementFilePaths = ref<ReadonlySet<string>>(new Set<string>()
 const selectedResultKey = ref<string | null>(null);
 const scannedFileCount = ref(0);
 const backendResults = ref<IWorkspaceSearchResult[]>([]);
+const searchResultItems = ref<ISearchResultItem[]>([]);
 
 let searchRequestId = 0;
 // 当前正在「流水」接收批次的搜索 id（= 对应搜索的 requestId / streamToken）。命令最终 resolve 后
@@ -687,7 +688,7 @@ const toResultItem = (result: IWorkspaceSearchResult): ISearchResultItem => {
   };
 };
 
-const allResults = computed(() => backendResults.value.map(toResultItem));
+const allResults = computed(() => searchResultItems.value);
 
 const searchResultsByScope = computed<Record<TWorkspaceSearchScope, ISearchResultItem[]>>(() => ({
   all: allResults.value,
@@ -942,6 +943,7 @@ const invalidateInFlightSearch = (): void => {
 const clearSearchResults = (): void => {
   scannedFileCount.value = 0;
   backendResults.value = [];
+  searchResultItems.value = [];
   searchIndexing.value = false;
   searchError.value = '';
 };
@@ -952,6 +954,7 @@ const clearSearchResults = (): void => {
 const handleSearchStreamEvent = (payload: IWorkspaceSearchStreamEvent): void => {
   if (payload.searchId !== streamingSearchId || payload.results.length === 0) return;
   backendResults.value.push(...payload.results);
+  searchResultItems.value.push(...payload.results.map(toResultItem));
 };
 
 const runSearch = async (): Promise<void> => {
@@ -972,6 +975,7 @@ const runSearch = async (): Promise<void> => {
   // 实现「边搜边出」；命令 resolve 时再用权威排序结果整体替换。
   streamingSearchId = lifecycle.requestId;
   backendResults.value = [];
+  searchResultItems.value = [];
   searchIndexing.value = true;
   searchError.value = '';
 
@@ -1000,10 +1004,12 @@ const runSearch = async (): Promise<void> => {
     streamingSearchId = 0;
     scannedFileCount.value = payload.scannedFileCount;
     backendResults.value = payload.results;
+    searchResultItems.value = payload.results.map(toResultItem);
   } catch (error) {
     if (lifecycle.signal.aborted || !isSearchLifecycleCurrent(lifecycle)) return;
     streamingSearchId = 0;
     backendResults.value = [];
+    searchResultItems.value = [];
     searchError.value = toErrorMessage(error, '搜索失败。');
   } finally {
     if (lifecycle.requestId === searchRequestId) {
