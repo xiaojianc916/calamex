@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { MessageSquare } from '@lucide/vue';
-import { computed } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 import {
   Conversation,
   ConversationContent,
@@ -92,10 +92,154 @@ const isErrorReplyMessage = (message: IAiChatMessage): boolean => {
 const isPlanAgentFlowMessage = (message: IAiChatMessage): boolean =>
   message.role === 'assistant' && message.id.startsWith(PLAN_AGENT_FLOW_MESSAGE_ID_PREFIX);
 
+const HISTORY_MESSAGE_INITIAL_COUNT = 80;
+const HISTORY_MESSAGE_LOAD_STEP = 40;
+const HISTORY_SCROLL_PRELOAD_THRESHOLD_PX = 96;
+const RESTORED_SCROLL_FROM_BOTTOM_THRESHOLD_PX = 4;
+const VIEWPORT_FILL_PADDING_PX = 32;
+
 const visibleMessages = computed<IAiChatMessage[]>(() =>
   props.messages.filter(
     (message) => !isErrorReplyMessage(message) && !isPlanAgentFlowMessage(message),
   ),
+);
+
+const conversationRootRef = ref<{ $el?: Element } | null>(null);
+const loadedVisibleMessageCount = ref(HISTORY_MESSAGE_INITIAL_COUNT);
+
+const shouldPreserveRestoredViewport = (): boolean => {
+  const scrollState = props.scrollState;
+
+  return Boolean(
+    scrollState && scrollState.distanceFromBottom > RESTORED_SCROLL_FROM_BOTTOM_THRESHOLD_PX,
+  );
+};
+
+const getInitialLoadedMessageCount = (messageCount: number): number => {
+  if (shouldPreserveRestoredViewport()) {
+    // 已恢复到历史中间位置时，当前第一眼可能是任意旧消息。
+    // 由于当前滚动状态没有保存“首个可见 message id / 消息高度缓存”，这里优先保证视觉不变，
+    // 不做窗口裁剪，避免打开后跳到底部或缺失首屏消息。
+    return messageCount;
+  }
+
+  return Math.min(messageCount, HISTORY_MESSAGE_INITIAL_COUNT);
+};
+
+const renderedMessages = computed<IAiChatMessage[]>(() => {
+  const messages = visibleMessages.value;
+  const loadedCount = Math.min(loadedVisibleMessageCount.value, messages.length);
+
+  if (loadedCount >= messages.length) {
+    return messages;
+  }
+
+  return messages.slice(messages.length - loadedCount);
+});
+
+const getConversationScrollElement = (): HTMLElement | null => {
+  const root = conversationRootRef.value?.$el;
+
+  if (!(root instanceof Element)) {
+    return null;
+  }
+
+  return root.querySelector(':scope > div > div');
+};
+
+const ensureRenderedHistoryFillsViewport = async (): Promise<void> => {
+  await nextTick();
+
+  const scrollElement = getConversationScrollElement();
+
+  if (!scrollElement || shouldPreserveRestoredViewport()) {
+    return;
+  }
+
+  let remainingMessages = visibleMessages.value.length - loadedVisibleMessageCount.value;
+
+  while (
+    remainingMessages > 0 &&
+    scrollElement.scrollHeight <= scrollElement.clientHeight + VIEWPORT_FILL_PADDING_PX
+  ) {
+    loadedVisibleMessageCount.value = Math.min(
+      visibleMessages.value.length,
+      loadedVisibleMessageCount.value + HISTORY_MESSAGE_LOAD_STEP,
+    );
+
+    await nextTick();
+    remainingMessages = visibleMessages.value.length - loadedVisibleMessageCount.value;
+  }
+
+  // 首屏是底部视角时，补足首屏高度后仍保持在底部，避免视觉位置变化。
+  scrollElement.scrollTop = Math.max(0, scrollElement.scrollHeight - scrollElement.clientHeight);
+};
+
+const resetRenderedHistoryWindow = (): void => {
+  loadedVisibleMessageCount.value = getInitialLoadedMessageCount(visibleMessages.value.length);
+  void ensureRenderedHistoryFillsViewport();
+};
+
+const loadOlderVisibleMessages = async (): Promise<void> => {
+  if (loadedVisibleMessageCount.value >= visibleMessages.value.length) {
+    return;
+  }
+
+  const scrollElement = getConversationScrollElement();
+  const previousScrollHeight = scrollElement?.scrollHeight ?? null;
+  const previousScrollTop = scrollElement?.scrollTop ?? null;
+
+  loadedVisibleMessageCount.value = Math.min(
+    visibleMessages.value.length,
+    loadedVisibleMessageCount.value + HISTORY_MESSAGE_LOAD_STEP,
+  );
+
+  await nextTick();
+
+  if (scrollElement && previousScrollHeight !== null && previousScrollTop !== null) {
+    const scrollHeightDelta = scrollElement.scrollHeight - previousScrollHeight;
+    scrollElement.scrollTop = previousScrollTop + scrollHeightDelta;
+  }
+};
+
+watch(
+  () => props.conversationId,
+  () => {
+    resetRenderedHistoryWindow();
+  },
+  { immediate: true },
+);
+
+watch(
+  () => props.scrollState?.distanceFromBottom ?? null,
+  () => {
+    if (shouldPreserveRestoredViewport()) {
+      loadedVisibleMessageCount.value = visibleMessages.value.length;
+    }
+  },
+  { immediate: true },
+);
+
+watch(
+  () => visibleMessages.value.length,
+  (nextLength, previousLength) => {
+    if (shouldPreserveRestoredViewport()) {
+      loadedVisibleMessageCount.value = nextLength;
+      return;
+    }
+
+    if (nextLength <= loadedVisibleMessageCount.value) {
+      loadedVisibleMessageCount.value = nextLength;
+      return;
+    }
+
+    if (previousLength === 0) {
+      resetRenderedHistoryWindow();
+      return;
+    }
+
+    void ensureRenderedHistoryFillsViewport();
+  },
 );
 
 const hasInlineProgressMessage = computed(() => {
@@ -137,12 +281,16 @@ const handleChangedFilesPin = (messageId: string, summaryId: string, pinned: boo
 };
 
 const handleScrollStateChange = (state: IAiChatScrollState): void => {
+  if (state.scrollTop <= HISTORY_SCROLL_PRELOAD_THRESHOLD_PX) {
+    void loadOlderVisibleMessages();
+  }
+
   emit('scrollStateChange', state);
 };
 </script>
 
 <template>
-  <Conversation class="relative size-full overflow-x-hidden ai-chat-list" aria-label="AI 对话记录"
+  <Conversation ref="conversationRootRef" class="relative size-full overflow-x-hidden ai-chat-list" aria-label="AI 对话记录"
     :initial="conversationInitialScroll" :resize="conversationResizeMode" :restore-key="conversationId"
     :initial-scroll-top="scrollState?.scrollTop ?? null"
     :initial-distance-from-bottom="scrollState?.distanceFromBottom ?? null"
@@ -156,7 +304,7 @@ const handleScrollStateChange = (state: IAiChatScrollState): void => {
         </ConversationEmptyState>
       </slot>
       <template v-else>
-        <AiThreadTimeline :messages="visibleMessages" :workspace-root-path="workspaceRootPath"
+        <AiThreadTimeline :messages="renderedMessages" :workspace-root-path="workspaceRootPath"
           :plan-details="planDetails"
           :reverting-changed-files-summary-id="revertingChangedFilesSummaryId"
           :pinning-changed-files-summary-id="pinningChangedFilesSummaryId"

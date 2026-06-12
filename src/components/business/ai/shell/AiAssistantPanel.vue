@@ -1099,7 +1099,7 @@ onMounted(() => {
           @prewarm="handlePromptPrewarm" />
       </div>
 
-      <DeferredAiProviderSettings v-model:draft="settingsDraft" v-model:api-key="settingsApiKey"
+      <DeferredAiProviderSettings v-if="assistant.isSettingsOpen.value" v-model:draft="settingsDraft" v-model:api-key="settingsApiKey"
         v-model:tavily-api-key="settingsTavilyApiKey" :open="assistant.isSettingsOpen.value"
         :config="assistant.config.value" @close="assistant.isSettingsOpen.value = false" @save="saveSettings"
         @test-provider="testProvider" @save-tavily-key="saveTavilyKey" />
