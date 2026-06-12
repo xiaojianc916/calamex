@@ -5,29 +5,49 @@
         <span class="search-panel-input-icon" aria-hidden="true">
           <Search />
         </span>
-
-        <Input v-model="searchQuery" class="search-panel-input" type="text" aria-label="搜索关键字"
-          :placeholder="useStructural ? '输入 ast-grep 模式…' : '输入关键字搜索…'" autocomplete="off" spellcheck="false" />
-
-        <button v-if="hasSearchQuery" type="button" class="search-panel-clear-btn" aria-label="清空搜索" title="清空搜索"
-          @click.stop="searchQuery = ''">
+        <Input
+          v-model="searchQuery"
+          class="search-panel-input"
+          type="text"
+          aria-label="搜索关键字"
+          :placeholder="useStructural ? '输入 ast-grep 模式…' : '输入关键字搜索…'"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <button
+          v-if="hasSearchQuery"
+          type="button"
+          class="search-panel-clear-btn"
+          aria-label="清空搜索"
+          title="清空搜索"
+          @click.stop="searchQuery = ''"
+        >
           <X aria-hidden="true" />
         </button>
       </div>
-
       <div class="search-panel-input-shell search-panel-replace-shell">
         <span class="search-panel-input-icon" aria-hidden="true">
           <Replace />
         </span>
-
-        <Input v-model="replacementQuery" class="search-panel-input" type="text" aria-label="替换内容"
-          :placeholder="useStructural ? '输入 ast-grep 替换…' : '输入替换内容…'" autocomplete="off" spellcheck="false"
-          @keydown.enter="handleApplyButtonAction" />
-
-        <button type="button" class="search-panel-apply-btn" :class="{ 'is-armed': applyConfirmArmed }"
-          :disabled="!canApplyReplacement" :aria-label="applyConfirmArmed ? '确认全部替换' : '全部替换'"
+        <Input
+          v-model="replacementQuery"
+          class="search-panel-input"
+          type="text"
+          aria-label="替换内容"
+          :placeholder="useStructural ? '输入 ast-grep 替换…' : '输入替换内容…'"
+          autocomplete="off"
+          spellcheck="false"
+          @keydown.enter="handleApplyButtonAction"
+        />
+        <button
+          type="button"
+          class="search-panel-apply-btn"
+          :class="{ 'is-armed': applyConfirmArmed }"
+          :disabled="!canApplyReplacement"
+          :aria-label="applyConfirmArmed ? '确认全部替换' : '全部替换'"
           :title="applyConfirmArmed ? '再次点击确认全部替换（超时自动取消）' : '全部替换'"
-          @click.stop="handleApplyButtonAction">
+          @click.stop="handleApplyButtonAction"
+        >
           <LoaderCircle class="search-panel-spin" v-if="replaceRunning" aria-hidden="true" />
           <CheckCheck v-else-if="applyConfirmArmed" aria-hidden="true" />
           <Check v-else aria-hidden="true" />
@@ -36,43 +56,79 @@
     </div>
 
     <div class="search-panel-chip-row">
-      <button v-for="chip in scopeChips" :key="chip.key" type="button" class="search-panel-chip"
-        :class="{ 'is-active': activeScope === chip.key }" :aria-pressed="activeScope === chip.key"
-        @click="activeScope = chip.key">
+      <button
+        v-for="chip in scopeChips"
+        :key="chip.key"
+        type="button"
+        class="search-panel-chip"
+        :class="{ 'is-active': activeScope === chip.key }"
+        :aria-pressed="activeScope === chip.key"
+        @click="activeScope = chip.key"
+      >
         <span v-text="chip.label" />
         <span class="search-panel-chip-count" v-text="chip.count" />
       </button>
     </div>
 
     <div class="search-panel-option-row" aria-label="搜索选项">
-      <button type="button" class="search-panel-option-btn" :class="{ 'is-active': matchCase }"
-        :aria-pressed="matchCase" title="区分大小写" @click="toggleSearchOption('matchCase')">
+      <button
+        type="button"
+        class="search-panel-option-btn"
+        :class="{ 'is-active': matchCase }"
+        :aria-pressed="matchCase"
+        title="区分大小写"
+        @click="toggleSearchOption('matchCase')"
+      >
         <CaseSensitive aria-hidden="true" />
       </button>
-
-      <button type="button" class="search-panel-option-btn" :class="{ 'is-active': wholeWord }"
-        :aria-pressed="wholeWord" title="全字匹配" @click="toggleSearchOption('wholeWord')">
+      <button
+        type="button"
+        class="search-panel-option-btn"
+        :class="{ 'is-active': wholeWord }"
+        :aria-pressed="wholeWord"
+        title="全字匹配"
+        @click="toggleSearchOption('wholeWord')"
+      >
         <WholeWord aria-hidden="true" />
       </button>
-
-      <button type="button" class="search-panel-option-btn" :class="{ 'is-active': useRegex }" :aria-pressed="useRegex"
-        title="正则表达式" @click="toggleSearchOption('useRegex')">
+      <button
+        type="button"
+        class="search-panel-option-btn"
+        :class="{ 'is-active': useRegex }"
+        :aria-pressed="useRegex"
+        title="正则表达式"
+        @click="toggleSearchOption('useRegex')"
+      >
         <Regex aria-hidden="true" />
       </button>
-
-      <button type="button" class="search-panel-option-btn" :class="{ 'is-active': contentFuzzy }"
-        :aria-pressed="contentFuzzy" title="内容模糊匹配" @click="toggleSearchOption('contentFuzzy')">
+      <button
+        type="button"
+        class="search-panel-option-btn"
+        :class="{ 'is-active': contentFuzzy }"
+        :aria-pressed="contentFuzzy"
+        title="内容模糊匹配"
+        @click="toggleSearchOption('contentFuzzy')"
+      >
         <Waves aria-hidden="true" />
       </button>
-
-      <button type="button" class="search-panel-option-btn" :class="{ 'is-active': showPathFilters }"
-        :aria-pressed="showPathFilters" title="包含 / 排除路径" @click="toggleSearchOption('showPathFilters')">
+      <button
+        type="button"
+        class="search-panel-option-btn"
+        :class="{ 'is-active': showPathFilters }"
+        :aria-pressed="showPathFilters"
+        title="包含 / 排除路径"
+        @click="toggleSearchOption('showPathFilters')"
+      >
         <ListFilter aria-hidden="true" />
       </button>
-
-      <button type="button" class="search-panel-option-btn search-panel-option-structural"
-        :class="{ 'is-active': useStructural }" :aria-pressed="useStructural" title="结构化搜索与替换"
-        @click="toggleStructuralSearch">
+      <button
+        type="button"
+        class="search-panel-option-btn search-panel-option-structural"
+        :class="{ 'is-active': useStructural }"
+        :aria-pressed="useStructural"
+        title="结构化搜索与替换"
+        @click="toggleStructuralSearch"
+      >
         <Braces aria-hidden="true" />
       </button>
     </div>
@@ -86,7 +142,6 @@
         :is-desktop-runtime="props.isDesktopRuntime"
         :match-case="matchCase"
       />
-
       <PathFilterInput
         v-model="excludePattern"
         label="排除"
@@ -103,49 +158,85 @@
           <LoaderCircle class="search-panel-spin" aria-hidden="true" />
           <span>正在生成替换预览…</span>
         </div>
-
         <div v-else-if="visibleReplacementFiles.length === 0" class="search-panel-empty-state">
           <p class="search-panel-empty-title">没有待替换项</p>
           <p class="search-panel-empty-text">当前预览中的命中项已全部跳过。</p>
         </div>
-
         <template v-else>
-          <article v-for="file in visibleReplacementFiles" :key="file.path" class="search-replace-inline-file">
+          <article
+            v-for="file in visibleReplacementFiles"
+            :key="file.path"
+            class="search-replace-inline-file"
+          >
             <header class="search-replace-inline-file-header">
-              <button type="button" class="search-replace-inline-file-open"
-                :aria-expanded="!isReplacementFileCollapsed(file.path)" @click="toggleReplacementFile(file.path)">
+              <button
+                type="button"
+                class="search-replace-inline-file-open"
+                :aria-expanded="!isReplacementFileCollapsed(file.path)"
+                @click="toggleReplacementFile(file.path)"
+              >
                 <span class="search-replace-inline-file-icon" aria-hidden="true">
                   <ExplorerEntryIcon kind="file" :path="file.path" />
                 </span>
                 <span class="search-replace-inline-file-name" v-text="file.name" />
-                <LucideIcon class="search-replace-inline-chevron" aria-hidden="true"
-                  :name="isReplacementFileCollapsed(file.path) ? 'chevron-right' : 'chevron-down'" />
+                <LucideIcon
+                  class="search-replace-inline-chevron"
+                  aria-hidden="true"
+                  :name="isReplacementFileCollapsed(file.path) ? 'chevron-right' : 'chevron-down'"
+                />
                 <span class="search-replace-inline-file-path" v-text="file.parentPath" />
               </button>
               <span class="search-replace-inline-count" v-text="file.visibleReplacementCount" />
             </header>
-
             <template v-if="!isReplacementFileCollapsed(file.path)">
-              <div v-for="line in file.visibleLinePreviews" :key="line.id" class="search-replace-inline-line"
-                role="option" tabindex="0" @click="handleReplacementLineOpen(file.path, line.lineNumber)"
+              <div
+                v-for="line in file.visibleLinePreviews"
+                :key="line.id"
+                class="search-replace-inline-line"
+                role="option"
+                tabindex="0"
+                @click="handleReplacementLineOpen(file.path, line.lineNumber)"
                 @keydown.enter="handleReplacementLineOpen(file.path, line.lineNumber)"
-                @keydown.space.prevent="handleReplacementLineOpen(file.path, line.lineNumber)">
+                @keydown.space.prevent="handleReplacementLineOpen(file.path, line.lineNumber)"
+              >
                 <span class="search-replace-inline-line-number" v-text="line.lineNumber" />
                 <span class="search-replace-inline-code">
-                  <template v-for="(segment, segmentIndex) in line.segments" :key="`${line.id}-${segmentIndex}`">
-                    <span v-if="segment.kind !== 'empty'" class="search-replace-inline-segment"
-                      :class="[`is-${segment.kind}`, `is-${segment.part}`]" v-text="segment.text" />
+                  <template
+                    v-for="(segment, segmentIndex) in line.segments"
+                    :key="`${line.id}-${segmentIndex}`"
+                  >
+                    <span
+                      v-if="segment.kind !== 'empty'"
+                      class="search-replace-inline-segment"
+                      :class="[`is-${segment.kind}`, `is-${segment.part}`]"
+                      v-text="segment.text"
+                    />
                   </template>
                 </span>
-
                 <span class="search-replace-inline-line-actions">
-                  <button type="button" class="search-replace-inline-icon-btn" :disabled="replacementApplying"
-                    aria-label="替换此处" title="替换此处" @click.stop="replaceReplacementLine(file, line)">
-                    <LoaderCircle class="search-panel-spin" v-if="replacementApplyingLineId === line.id" aria-hidden="true" />
+                  <button
+                    type="button"
+                    class="search-replace-inline-icon-btn"
+                    :disabled="replacementApplying"
+                    aria-label="替换此处"
+                    title="替换此处"
+                    @click.stop="replaceReplacementLine(file, line)"
+                  >
+                    <LoaderCircle
+                      class="search-panel-spin"
+                      v-if="replacementApplyingLineId === line.id"
+                      aria-hidden="true"
+                    />
                     <Replace v-else aria-hidden="true" />
                   </button>
-                  <button type="button" class="search-replace-inline-icon-btn" :disabled="replacementApplying"
-                    aria-label="跳过此处" title="跳过此处" @click.stop="skipReplacementLine(line.id)">
+                  <button
+                    type="button"
+                    class="search-replace-inline-icon-btn"
+                    :disabled="replacementApplying"
+                    aria-label="跳过此处"
+                    title="跳过此处"
+                    @click.stop="skipReplacementLine(line.id)"
+                  >
                     <X aria-hidden="true" />
                   </button>
                 </span>
@@ -159,62 +250,99 @@
         <p class="search-panel-empty-title">浏览器预览不提供本地搜索</p>
         <p class="search-panel-empty-text">请在 Tauri 桌面端打开工作区后使用搜索面板。</p>
       </div>
-
       <div v-else-if="!props.workspaceRootPath" class="search-panel-empty-state">
         <p class="search-panel-empty-title">尚未打开工作区</p>
         <p class="search-panel-empty-text">先打开一个目录，再在这里按文件名或路径快速定位。</p>
       </div>
-
-      <div v-else-if="searchIndexing && backendResults.length === 0" class="search-panel-empty-state">
+      <div
+        v-else-if="searchIndexing && backendResults.length === 0"
+        class="search-panel-empty-state"
+      >
         <LoaderCircle class="search-panel-spin" aria-hidden="true" />
         <p class="search-panel-empty-text">正在搜索工作区…</p>
       </div>
-
       <div v-else-if="searchError" class="search-panel-empty-state">
         <InlineError title="无法完成搜索" :message="searchError" />
       </div>
-
       <div v-else-if="matcherError" class="search-panel-empty-state">
         <InlineError title="正则表达式无效" :message="matcherError" severity="warning" />
       </div>
       <template v-else-if="!hasSearchQuery" />
-      <div v-else-if="hasSearchQuery && activeResults.length === 0" class="search-panel-empty-state">
+      <div
+        v-else-if="hasSearchQuery && activeResults.length === 0"
+        class="search-panel-empty-state"
+      >
         <p class="search-panel-empty-title">没有匹配结果</p>
         <p class="search-panel-empty-text">试试更短的关键字，或调整大小写、正则和路径过滤条件。</p>
       </div>
 
       <template v-else>
-        <div v-if="shouldVirtualizeSearch" class="search-panel-virtual-spacer"
-          :style="{ height: `${searchTotalSize}px` }">
+        <div
+          v-if="shouldVirtualizeSearch"
+          class="search-panel-virtual-spacer"
+          :style="{ height: `${searchTotalSize}px` }"
+        >
           <template v-for="entry in windowedSearchRows" :key="entry.key">
-            <header v-if="entry.row.kind === 'group'" class="search-panel-result-group-header search-panel-virtual-row"
-              :style="{ transform: `translateY(${entry.start}px)` }">
-              <button type="button" class="search-panel-result-group-open"
+            <header
+              v-if="entry.row.kind === 'group'"
+              class="search-panel-result-group-header search-panel-virtual-row"
+              :style="{ transform: `translateY(${entry.start}px)` }"
+            >
+              <button
+                type="button"
+                class="search-panel-result-group-open"
                 :aria-expanded="!isSearchResultGroupCollapsed(entry.row.group.path)"
-                @click="toggleSearchResultGroup(entry.row.group.path)">
+                @click="toggleSearchResultGroup(entry.row.group.path)"
+              >
                 <span class="search-panel-result-group-icon" aria-hidden="true">
                   <ExplorerEntryIcon kind="file" :path="entry.row.group.path" />
                 </span>
                 <span class="search-panel-result-group-name" v-text="entry.row.group.name" />
-                <LucideIcon class="search-panel-result-group-chevron" aria-hidden="true"
-                  :name="isSearchResultGroupCollapsed(entry.row.group.path) ? 'chevron-right' : 'chevron-down'" />
+                <LucideIcon
+                  class="search-panel-result-group-chevron"
+                  aria-hidden="true"
+                  :name="
+                    isSearchResultGroupCollapsed(entry.row.group.path)
+                      ? 'chevron-right'
+                      : 'chevron-down'
+                  "
+                />
                 <span class="search-panel-result-group-path" v-text="entry.row.group.parentPath" />
               </button>
-              <span class="search-panel-result-group-count" v-text="entry.row.group.results.length" />
+              <span
+                class="search-panel-result-group-count"
+                v-text="entry.row.group.results.length"
+              />
             </header>
-
-            <button v-else type="button" class="search-panel-result-line search-panel-virtual-row"
-              :class="{ 'is-selected': selectedResultKey === entry.row.result?.resultKey }" role="option"
+            <button
+              v-else
+              type="button"
+              class="search-panel-result-line search-panel-virtual-row"
+              :class="{ 'is-selected': selectedResultKey === entry.row.result?.resultKey }"
+              role="option"
               :aria-selected="selectedResultKey === entry.row.result?.resultKey"
               :style="{ transform: `translateY(${entry.start}px)` }"
-              @click="entry.row.result && handleSearchResultOpen(entry.row.result)">
+              @click="entry.row.result && handleSearchResultOpen(entry.row.result)"
+            >
               <span class="search-panel-result-line-number" v-text="entry.row.result?.lineNumber" />
               <span class="search-panel-result-line-body">
                 <span class="search-panel-result-snippet">
-                  <template v-for="(segment, index) in entry.row.result?.snippetSegments ?? []"
-                    :key="`${entry.row.result?.resultKey}-snippet-${index}`">
-                    <mark v-if="segment.matched" class="search-panel-result-snippet-match" v-text="segment.text" />
-                    <span v-else class="search-panel-result-snippet-context" v-text="segment.text" />
+                  <template
+                    v-for="(segment, index) in entry.row.result?.snippetSegments ?? []"
+                    :key="`${entry.row.result?.resultKey}-snippet-${index}`"
+                  >
+                    <mark
+                      v-if="segment.matched"
+                      class="search-panel-result-snippet-match"
+                      :class="`is-${segment.part}`"
+                      v-text="segment.text"
+                    />
+                    <span
+                      v-else
+                      class="search-panel-result-snippet-context"
+                      :class="`is-${segment.part}`"
+                      v-text="segment.text"
+                    />
                   </template>
                 </span>
               </span>
@@ -223,35 +351,63 @@
         </div>
 
         <template v-else>
-          <article v-for="group in searchResultGroups" :key="group.path" class="search-panel-result-group">
-
+          <article
+            v-for="group in searchResultGroups"
+            :key="group.path"
+            class="search-panel-result-group"
+          >
             <header class="search-panel-result-group-header">
-              <button type="button" class="search-panel-result-group-open"
-                :aria-expanded="!isSearchResultGroupCollapsed(group.path)" @click="toggleSearchResultGroup(group.path)">
+              <button
+                type="button"
+                class="search-panel-result-group-open"
+                :aria-expanded="!isSearchResultGroupCollapsed(group.path)"
+                @click="toggleSearchResultGroup(group.path)"
+              >
                 <span class="search-panel-result-group-icon" aria-hidden="true">
                   <ExplorerEntryIcon kind="file" :path="group.path" />
                 </span>
                 <span class="search-panel-result-group-name" v-text="group.name" />
-                <LucideIcon class="search-panel-result-group-chevron" aria-hidden="true"
-                  :name="isSearchResultGroupCollapsed(group.path) ? 'chevron-right' : 'chevron-down'" />
+                <LucideIcon
+                  class="search-panel-result-group-chevron"
+                  aria-hidden="true"
+                  :name="
+                    isSearchResultGroupCollapsed(group.path) ? 'chevron-right' : 'chevron-down'
+                  "
+                />
                 <span class="search-panel-result-group-path" v-text="group.parentPath" />
               </button>
               <span class="search-panel-result-group-count" v-text="group.results.length" />
             </header>
-
             <template v-if="!isSearchResultGroupCollapsed(group.path)">
-              <button v-for="result in group.results" :key="result.resultKey" type="button"
-                class="search-panel-result-line" :class="{ 'is-selected': selectedResultKey === result.resultKey }"
-                role="option" :aria-selected="selectedResultKey === result.resultKey"
-                @click="handleSearchResultOpen(result)">
+              <button
+                v-for="result in group.results"
+                :key="result.resultKey"
+                type="button"
+                class="search-panel-result-line"
+                :class="{ 'is-selected': selectedResultKey === result.resultKey }"
+                role="option"
+                :aria-selected="selectedResultKey === result.resultKey"
+                @click="handleSearchResultOpen(result)"
+              >
                 <span class="search-panel-result-line-number" v-text="result.lineNumber" />
-
                 <span class="search-panel-result-line-body">
                   <span class="search-panel-result-snippet">
-                    <template v-for="(segment, index) in result.snippetSegments"
-                      :key="`${result.resultKey}-snippet-${index}`">
-                      <mark v-if="segment.matched" class="search-panel-result-snippet-match" v-text="segment.text" />
-                      <span v-else class="search-panel-result-snippet-context" v-text="segment.text" />
+                    <template
+                      v-for="(segment, index) in result.snippetSegments"
+                      :key="`${result.resultKey}-snippet-${index}`"
+                    >
+                      <mark
+                        v-if="segment.matched"
+                        class="search-panel-result-snippet-match"
+                        :class="`is-${segment.part}`"
+                        v-text="segment.text"
+                      />
+                      <span
+                        v-else
+                        class="search-panel-result-snippet-context"
+                        :class="`is-${segment.part}`"
+                        v-text="segment.text"
+                      />
                     </template>
                   </span>
                 </span>
@@ -307,22 +463,21 @@ import { toErrorMessage } from '@/utils/error';
 import { areFileSystemPathsEqual } from '@/utils/path';
 import type {
   IFlatSearchRow,
-  IHighlightedSegment,
   IReplacementFileView,
   IReplacementLineView,
-  ISearchMatcher,
   ISearchResultGroup,
   ISearchResultItem,
+  ISnippetSegment,
   TSearchToggleOption,
 } from './search-sidebar.types';
 import {
-  buildCompactHighlightedSegments,
+  buildMatchSegments,
   buildReplacementLineSegments,
   createSearchMatcher,
   getFileName,
   getParentPath,
-  singleMatchRange,
   splitPatternList,
+  toAnchoredSnippetSegments,
   toggleReadonlySetValue,
   trimBoundaryWhitespace,
   trimBoundaryWhitespaceWithRange,
@@ -350,9 +505,6 @@ const SEARCH_DEBOUNCE_MS = 180;
 // 内容命中以「每处匹配」为单位，单个超大文件可能贡献上万条；后端 MAX_SEARCH_LIMIT 已同步提到
 // 50000，这里前端上限与之对齐。结果再多也由虚拟滚动 + 惰性高亮分段承接，不会一次性预处理全部。
 const SEARCH_RESULT_LIMIT = 50000;
-const SEARCH_RESULT_CONTEXT_CHARS = 28;
-// 替换预览每行首/尾公共片段保留的上下文字符数，超出部分用省略号收拢（省略号只在最外侧）。
-const REPLACEMENT_PREVIEW_CONTEXT_CHARS = 24;
 const REPLACEMENT_FILE_LIMIT = 200;
 // 「全部替换」二次确认窗口：首次点击仅武装确认态，须在该时间内再次点击才真正执行，超时自动复位。
 const APPLY_CONFIRM_WINDOW_MS = 2200;
@@ -404,6 +556,7 @@ const collapsedReplacementFilePaths = ref<ReadonlySet<string>>(new Set<string>()
 const selectedResultKey = ref<string | null>(null);
 const scannedFileCount = ref(0);
 const backendResults = ref<IWorkspaceSearchResult[]>([]);
+
 let searchRequestId = 0;
 // 当前正在「流水」接收批次的搜索 id（= 对应搜索的 requestId / streamToken）。命令最终 resolve 后
 // 归零，使任何尾随的流式事件被忽略，避免污染权威排序结果。
@@ -416,6 +569,7 @@ let applyConfirmTimer: ReturnType<typeof setTimeout> | null = null;
 let activeAbortController: AbortController | null = null;
 let activeReplacementPreviewAbortController: AbortController | null = null;
 let activeReplacementApplyAbortController: AbortController | null = null;
+
 const message = useMessage();
 const { refreshSidecarChangedDocuments } = useSidecarChangedDocumentRefresh();
 const applyWorkspaceReplacementWithOptions =
@@ -480,31 +634,32 @@ const matcher = computed(() =>
     useStructural: useStructural.value,
   }),
 );
+
 const matcherError = computed(() => matcher.value.errorMessage);
 const hasSearchQuery = computed(() => searchQuery.value.trim().length > 0);
 const includePatterns = computed(() => splitPatternList(includePattern.value));
 const excludePatterns = computed(() => splitPatternList(excludePattern.value));
+
 const effectiveIncludePatterns = computed(() =>
   showPathFilters.value && !useStructural.value ? includePatterns.value : [],
 );
+
 const effectiveExcludePatterns = computed(() =>
   showPathFilters.value && !useStructural.value ? excludePatterns.value : [],
 );
 
 const toResultItem = (result: IWorkspaceSearchResult): ISearchResultItem => {
-  // 高亮分段（buildCompactHighlightedSegments / matcher.highlight）只有在该行真正渲染时才需要。
-  // 结果上限提升到数万后，eager 地为每条结果预计算分段会成为 O(n) 预处理瓶颈（虚拟滚动只省 DOM、
-  // 不省这步计算），因此改为惰性 getter + 闭包缓存：仅当模板访问可见行的 snippetSegments 时才计算一次。
-  // 缓存无需手动失效——查询/选项一变就会触发新搜索 → 新 backendResults → allResults 重算出带全新
-  // getter 的结果项。
-  let cachedSegments: IHighlightedSegment[] | null = null;
-
+  // 高亮分段只有在该行真正渲染时才需要。结果上限提升到数万后，eager 地为每条结果预计算
+  // 分段会成为 O(n) 预处理瓶颈（虚拟滚动只省 DOM、不省这步计算），因此改为惰性 getter + 闭包缓存：
+  // 仅当模板访问可见行的 snippetSegments 时才计算一次。缓存无需手动失效——查询/选项一变就会触发
+  // 新搜索 → 新 backendResults → allResults 重算出带全新 getter 的结果项。
+  let cachedSegments: ISnippetSegment[] | null = null;
   return {
     path: result.path,
     relativePath: result.relativePath,
     resultKey: `${result.kind}:${result.path}:${result.lineNumber ?? 0}:${result.matchStart ?? -1}:${result.matchEnd ?? -1}`,
     reason: result.kind,
-    get snippetSegments(): IHighlightedSegment[] {
+    get snippetSegments(): ISnippetSegment[] {
       if (cachedSegments) return cachedSegments;
       const rawSnippetText = result.lineText ?? result.name;
       const rawMatchRange =
@@ -515,14 +670,14 @@ const toResultItem = (result: IWorkspaceSearchResult): ISearchResultItem => {
         result.lineText === null
           ? { text: rawSnippetText, range: rawMatchRange }
           : trimBoundaryWhitespaceWithRange(rawSnippetText, rawMatchRange);
-      cachedSegments =
+      // 命中锚定：内容命中按后端码点区间切出「完整前缀 + 命中 + 完整后缀」，文件名/符号行用 matcher
+      // 高亮整段；再标注 prefix/core/suffix，由 CSS 按真实像素截断并显示省略号。不再做固定字符窗口，
+      // 避免把中文从词中间斩断、并杜绝数据层乱拼的省略号。
+      const baseSegments =
         result.kind === 'content' && preview.range
-          ? buildCompactHighlightedSegments(
-              preview.text,
-              preview.range,
-              SEARCH_RESULT_CONTEXT_CHARS,
-            )
+          ? buildMatchSegments(preview.text, preview.range)
           : matcher.value.highlight(trimBoundaryWhitespace(preview.text));
+      cachedSegments = toAnchoredSnippetSegments(baseSegments);
       return cachedSegments;
     },
     score: result.score,
@@ -533,6 +688,7 @@ const toResultItem = (result: IWorkspaceSearchResult): ISearchResultItem => {
 };
 
 const allResults = computed(() => backendResults.value.map(toResultItem));
+
 const searchResultsByScope = computed<Record<TWorkspaceSearchScope, ISearchResultItem[]>>(() => ({
   all: allResults.value,
   'file-name': allResults.value.filter((result) => result.reason === 'file-name'),
@@ -549,6 +705,7 @@ const scopeChips = computed(() =>
 );
 
 const activeResults = computed(() => searchResultsByScope.value[activeScope.value]);
+
 const searchResultGroups = computed<ISearchResultGroup[]>(() => {
   const groups = new Map<string, ISearchResultGroup>();
   for (const result of activeResults.value) {
@@ -627,32 +784,25 @@ const canApplyReplacement = computed(
     Boolean(props.workspaceRootPath),
 );
 
-const toReplacementLineView = (
-  line: IWorkspaceReplacementLinePreview,
-  activeMatcher: ISearchMatcher,
-): IReplacementLineView => {
-  const beforeLine = trimBoundaryWhitespace(line.beforeLine);
-  const afterLine = trimBoundaryWhitespace(line.afterLine);
-  return {
-    ...line,
-    beforeLine,
-    afterLine,
-    // 用当前查询的唯一命中区间标注完整的被替换 token（如 23→24，而非最小字符 diff 的 3→4），
-    // 并按上下文窗口把过长的首尾收拢、省略号置于最外侧。
-    segments: buildReplacementLineSegments(beforeLine, afterLine, {
-      matchRange: singleMatchRange(activeMatcher, beforeLine),
-      contextSize: REPLACEMENT_PREVIEW_CONTEXT_CHARS,
-    }),
-  };
-};
+const toReplacementLineView = (line: IWorkspaceReplacementLinePreview): IReplacementLineView => ({
+  ...line,
+  // 后端已提供去缩进后的整行 beforeLine、替换文本 insertedText，以及基于 beforeLine 的 UTF-16
+  // 命中区间；直接据此切出 prefix/removed/added/suffix。不要再 trim beforeLine，否则会让命中偏移
+  // 与文本错位。视觉截断（含省略号）交给 CSS。
+  segments: buildReplacementLineSegments(
+    line.beforeLine,
+    line.insertedText,
+    line.matchStart,
+    line.matchEnd,
+  ),
+});
 
 const toReplacementFileView = (
   file: IWorkspaceReplacementFilePreview,
-  activeMatcher: ISearchMatcher,
 ): IReplacementFileView | null => {
   const visibleLinePreviews = file.linePreviews
     .filter((line) => !skippedReplacementLineIds.value.has(line.id))
-    .map((line) => toReplacementLineView(line, activeMatcher));
+    .map((line) => toReplacementLineView(line));
   if (visibleLinePreviews.length === 0) return null;
   return {
     ...file,
@@ -669,19 +819,21 @@ const toReplacementFileView = (
 const visibleReplacementFiles = computed<IReplacementFileView[]>(() => {
   const preview = replacementPreview.value;
   if (!preview) return [];
-  const activeMatcher = matcher.value;
   return preview.files
-    .map((file) => toReplacementFileView(file, activeMatcher))
+    .map((file) => toReplacementFileView(file))
     .filter((file): file is IReplacementFileView => Boolean(file));
 });
 
 const isSearchResultGroupCollapsed = (path: string): boolean =>
   collapsedSearchResultPaths.value.has(path);
+
 const toggleSearchResultGroup = (path: string): void => {
   collapsedSearchResultPaths.value = toggleReadonlySetValue(collapsedSearchResultPaths.value, path);
 };
+
 const isReplacementFileCollapsed = (path: string): boolean =>
   collapsedReplacementFilePaths.value.has(path);
+
 const toggleReplacementFile = (path: string): void => {
   collapsedReplacementFilePaths.value = toggleReadonlySetValue(
     collapsedReplacementFilePaths.value,
@@ -912,6 +1064,7 @@ const previewReplacementToSearch = async (source: 'manual' | 'auto'): Promise<bo
 
   const request = buildReplacementRequest();
   if (!request) return false;
+
   const requestId = replacementPreviewRequestId + 1;
   replacementPreviewRequestId = requestId;
   activeReplacementPreviewAbortController?.abort();
@@ -1139,13 +1292,7 @@ const replaceReplacementLine = async (
   try {
     const result = await applyReplacementAndRefresh(
       request,
-      [
-        {
-          path: file.path,
-          beforeHash: file.beforeHash,
-          includedMatchIds: [line.id],
-        },
-      ],
+      [{ path: file.path, beforeHash: file.beforeHash, includedMatchIds: [line.id] }],
       lifecycle,
     );
     if (!result || !isReplacementApplyLifecycleCurrent(lifecycle)) return;
@@ -1177,10 +1324,12 @@ const replaceReplacementLine = async (
 };
 
 const emitOpenFile = (payload: IWorkbenchOpenFileRequest): void => emit('open-file', payload);
+
 const handleReplacementLineOpen = (path: string, lineNumber: number): void => {
   selectedResultKey.value = null;
   emitOpenFile({ path, lineNumber, column: 1 });
 };
+
 const handleSearchResultOpen = (result: ISearchResultItem): void => {
   selectedResultKey.value = result.resultKey;
   emitOpenFile({
@@ -1264,6 +1413,7 @@ watch(activeResults, (results) => {
 // （该环境本就不跑本地搜索）。组件卸载时注销监听，避免泄漏。
 let streamListenerDisposed = false;
 let unlistenSearchStream: (() => void) | null = null;
+
 if (props.isDesktopRuntime) {
   void (async () => {
     try {
