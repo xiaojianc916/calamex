@@ -140,13 +140,7 @@ const handleToggleExpanded = (): void => {
         </WebPreviewNavigationButton>
       </WebPreviewNavigation>
 
-      <WebPreviewBody
-        :key="refreshKey"
-        class="min-h-0 flex-1"
-        :src="previewUrl"
-        title="AI Web preview"
-        appearance="light"
-      />
+      <WebPreviewBody :key="refreshKey" class="min-h-0 flex-1" :src="previewUrl" title="AI Web preview" />
 
       <WebPreviewConsole v-if="showConsole" :logs="logs" />
     </WebPreview>
