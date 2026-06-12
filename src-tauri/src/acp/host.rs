@@ -13,9 +13,13 @@
 //!   * `turn`     —— 把一回合的 `session/update` 通知重建为既有响应信封。
 //!
 //! 设计要点（均据一手源码核对，不臆造）：
-//!   * **会话即令牌**：ACP `SessionId` 由 sidecar 的 `newSession` 生成并经响应回传
-//!     前端，下一回合原样带回；故宿主无需自持会话映射表，`session_id` 直接透传
-//!     （见 agent.ts `newSession` / `prompt`）。
+//!   * **会话即线程**：对齐 Zed `session_id = thread.id()`——前端传稳定 `thread_id`，
+//!     宿主持有 `thread_id ↔ SessionId` 映射并跨回合复用同一 ACP 会话
+//!     （`ensure_session`）。该映射同时为「取消重键」提供回合中途即可用的稳定
+//!     `SessionId` 查找（`cancel_thread`），不再依赖前端回传 sessionId。ACP
+//!     `SessionId` 仍由 sidecar `newSession` 生成（见 agent.ts `newSession` /
+//!     `prompt`）；`chat` 仍接受显式 `session_id` 透传，接线层先 `ensure_session`
+//!     拿到稳定会话再投影回合入参。
 //!   * **模型配置不入 prompt**：模型凭据由 sidecar 进程环境变量在启动期解析
 //!     （见 agent.ts 头注与 models/config.ts、warmup-into-startup），故 `chat` 不在
 //!     回合内注入模型配置——不另立 ACP 之外的注入通道。
@@ -79,7 +83,7 @@ pub struct AcpChatTurn {
     pub context: Vec<AiContextReferencePayload>,
 }
 
-/// 宿主侧 ACP 编排句柄。可作为 Tauri 托管状态长驻：内部三个协作件均为
+/// 宿主侧 ACP 编排句柄。可作为 Tauri 托管状态长驻：内部协作件均为
 /// 可克隆/共享句柄，整体 `Send + Sync`。
 pub struct AcpHost {
     handle: AcpClientHandle,
@@ -87,6 +91,10 @@ pub struct AcpHost {
     /// 按 ACP `SessionId` 字符串键入的「当前回合」累积器。`EventSink` 据帧的
     /// `sessionId` 写入；`chat` 在 prompt 前 `begin_turn`、返回后 `end_turn`。
     turns: Arc<Mutex<HashMap<String, TurnAccumulator>>>,
+    /// `thread_id ↔ ACP SessionId` 映射（对齐 Zed `session_id = thread.id()`）。
+    /// 前端传稳定 `thread_id`，宿主据此跨回合复用同一 ACP 会话（`ensure_session`），
+    /// 并为「取消重键」提供回合中途可用的稳定 `SessionId` 查找（`cancel_thread`）。
+    sessions: Arc<Mutex<HashMap<String, SessionId>>>,
 }
 
 impl AcpHost {
@@ -118,7 +126,45 @@ impl AcpHost {
             handle,
             approvals,
             turns,
+            sessions: Arc::new(Mutex::new(HashMap::new())),
         })
+    }
+
+    /// 解析某 thread 对应的 ACP 会话（`thread_id ↔ SessionId`，贴 Zed 做法）：
+    /// 命中映射则跨回合复用既有 `SessionId`；否则按工作区根新建会话并登记。
+    ///
+    /// 这是「取消重键」的基石——回合开始前 `thread_id` 即已绑定稳定 `SessionId`，
+    /// 故 `cancel_thread` 可在回合中途定位会话下发 `session/cancel`。`thread_id`
+    /// 为空白时退化为「每次新建、不登记」（与无身份回合等价）。
+    ///
+    /// 锁不跨 `await` 持有：命中分支在表达式内即释放锁；未命中时先释放锁再
+    /// `new_session().await`，回来后再短暂持锁登记。
+    pub async fn ensure_session(
+        &self,
+        thread_id: &str,
+        workspace_root_path: Option<&str>,
+    ) -> Result<SessionId, AcpClientError> {
+        let thread_key = thread_id.trim();
+        if !thread_key.is_empty()
+            && let Some(existing) = self
+                .sessions
+                .lock()
+                .expect("acp host sessions mutex poisoned")
+                .get(thread_key)
+                .cloned()
+        {
+            return Ok(existing);
+        }
+
+        let cwd = workspace_cwd(workspace_root_path);
+        let session_id = self.handle.new_session(cwd).await?;
+        if !thread_key.is_empty() {
+            self.sessions
+                .lock()
+                .expect("acp host sessions mutex poisoned")
+                .insert(thread_key.to_string(), session_id.clone());
+        }
+        Ok(session_id)
     }
 
     /// 运行一次 `chat` 回合：复用/新建会话 → 可选切换模式 → prompt（阻塞至回合结束，
@@ -279,6 +325,27 @@ impl AcpHost {
         self.approvals.cancel_session(&session_id);
         if let Err(error) = self.handle.cancel(session_id) {
             log::warn!("acp host cancel failed: {error}");
+        }
+    }
+
+    /// 按 `thread_id` 取消当前回合（「取消重键」入口）：解析其绑定的 ACP
+    /// `SessionId` 后复用 `cancel`。该 thread 尚未绑定会话（从未发起过回合）或
+    /// `thread_id` 为空白时安全空操作，仅记一条 warn。
+    pub fn cancel_thread(&self, thread_id: &str) {
+        let thread_key = thread_id.trim();
+        if thread_key.is_empty() {
+            log::warn!("acp host cancel_thread: empty thread_id");
+            return;
+        }
+        let session_id = self
+            .sessions
+            .lock()
+            .expect("acp host sessions mutex poisoned")
+            .get(thread_key)
+            .cloned();
+        match session_id {
+            Some(session_id) => self.cancel(&session_id.to_string()),
+            None => log::warn!("acp host cancel_thread: no session bound for thread {thread_key}"),
         }
     }
 
