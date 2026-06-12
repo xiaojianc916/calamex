@@ -3,12 +3,11 @@ import {
   ArrowLeftIcon,
   ArrowRightIcon,
   ExternalLinkIcon,
-  Maximize2Icon,
   MousePointerClickIcon,
   PanelRightIcon,
   RefreshCcwIcon,
 } from '@lucide/vue';
-import { computed, ref, watch } from 'vue';
+import { ref, watch } from 'vue';
 import {
   type IWebPreviewConsoleLog,
   WebPreview,
@@ -39,7 +38,6 @@ const emit = defineEmits<{
 
 const previewUrl = ref(props.defaultUrl);
 const refreshKey = ref(0);
-const isExpanded = ref(false);
 const logs = ref<IWebPreviewConsoleLog[]>([
   {
     level: 'log',
@@ -66,8 +64,6 @@ watch(
     }
   },
 );
-
-const showConsole = computed(() => !isExpanded.value);
 
 const appendLog = (level: IWebPreviewConsoleLog['level'], message: string): void => {
   logs.value = [
@@ -104,20 +100,12 @@ const handleOpenExternal = (): void => {
   appendLog('log', 'Open in new tab requested');
   emit('open-external', previewUrl.value);
 };
-
-const handleToggleExpanded = (): void => {
-  isExpanded.value = !isExpanded.value;
-  appendLog('log', isExpanded.value ? 'Preview expanded' : 'Preview restored');
-};
 </script>
 
 <template>
   <section class="ai-web-preview-sidebar" data-testid="ai-web-preview-sidebar">
     <WebPreview class="ai-web-preview-sidebar__preview" :default-url="previewUrl" @url-change="handleUrlChange">
       <WebPreviewNavigation>
-        <WebPreviewNavigationButton tooltip="Close sidebar" @click="emit('close-sidebar')">
-          <PanelRightIcon class="size-4" />
-        </WebPreviewNavigationButton>
         <WebPreviewNavigationButton tooltip="Go back" @click="handleNavigationPlaceholder('Go back')">
           <ArrowLeftIcon class="size-4" />
         </WebPreviewNavigationButton>
@@ -136,11 +124,8 @@ const handleToggleExpanded = (): void => {
         <WebPreviewNavigationButton tooltip="Open in new tab" @click="handleOpenExternal">
           <ExternalLinkIcon class="size-4" />
         </WebPreviewNavigationButton>
-        <WebPreviewNavigationButton
-          :tooltip="isExpanded ? 'Restore' : 'Maximize'"
-          @click="handleToggleExpanded"
-        >
-          <Maximize2Icon class="size-4" />
+        <WebPreviewNavigationButton tooltip="Close sidebar" @click="emit('close-sidebar')">
+          <PanelRightIcon class="size-4" />
         </WebPreviewNavigationButton>
       </WebPreviewNavigation>
 
@@ -151,7 +136,7 @@ const handleToggleExpanded = (): void => {
         title="AI Web preview"
       />
 
-      <WebPreviewConsole v-if="showConsole" :logs="logs" />
+      <WebPreviewConsole :logs="logs" />
     </WebPreview>
   </section>
 </template>

@@ -15,7 +15,7 @@ describe('AiWebPreviewSidebar', () => {
     );
   });
 
-  it('emits close-sidebar from the leftmost navigation button', async () => {
+  it('emits close-sidebar from the close navigation button', async () => {
     const wrapper = mount(AiWebPreviewSidebar);
 
     await wrapper.get('[aria-label="Close sidebar"]').trigger('click');
@@ -35,11 +35,14 @@ describe('AiWebPreviewSidebar', () => {
     expect(wrapper.text()).toContain('URL changed to: https://example.com');
   });
 
-  it('collapses the console when maximize is toggled', async () => {
+  it('collapses the console body but keeps the header bar', async () => {
     const wrapper = mount(AiWebPreviewSidebar);
 
-    await wrapper.get('[aria-label="Maximize"]').trigger('click');
+    expect(wrapper.find('.ai-web-preview-console__list').exists()).toBe(true);
 
-    expect(wrapper.find('[data-testid="web-preview-console"]').exists()).toBe(false);
+    await wrapper.get('[data-testid="web-preview-console-toggle"]').trigger('click');
+
+    expect(wrapper.get('[data-testid="web-preview-console"]').exists()).toBe(true);
+    expect(wrapper.find('.ai-web-preview-console__list').exists()).toBe(false);
   });
 });

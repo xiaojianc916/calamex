@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import type { HTMLAttributes } from 'vue';
+import { ChevronDownIcon } from '@lucide/vue';
+import { computed, ref, type HTMLAttributes } from 'vue';
 import { cn } from '@/lib/utils';
 import type { IWebPreviewConsoleLog } from './context';
 
@@ -13,6 +14,14 @@ const props = withDefaults(
     class: undefined,
   },
 );
+
+const collapsed = ref(false);
+
+const toggleCollapsed = (): void => {
+  collapsed.value = !collapsed.value;
+};
+
+const toggleLabel = computed<string>(() => (collapsed.value ? '展开控制台' : '收起控制台'));
 
 const levelLabelMap: Record<IWebPreviewConsoleLog['level'], string> = {
   log: 'LOG',
@@ -32,26 +41,44 @@ const formatTimestamp = (value: IWebPreviewConsoleLog['timestamp']): string => {
 </script>
 
 <template>
-  <section :class="cn('ai-web-preview-console', props.class)" data-testid="web-preview-console">
-    <header class="ai-web-preview-console__header">Console</header>
-    <ul v-if="props.logs.length" class="ai-web-preview-console__list">
-      <li
-        v-for="(log, index) in props.logs"
-        :key="`${index}-${log.message}`"
-        class="ai-web-preview-console__item"
+  <section
+    :class="cn('ai-web-preview-console', collapsed && 'ai-web-preview-console--collapsed', props.class)"
+    data-testid="web-preview-console"
+  >
+    <header class="ai-web-preview-console__header">
+      <span class="ai-web-preview-console__title">Console</span>
+      <button
+        type="button"
+        class="ai-web-preview-console__toggle"
+        :title="toggleLabel"
+        :aria-label="toggleLabel"
+        :aria-expanded="!collapsed"
+        data-testid="web-preview-console-toggle"
+        @click="toggleCollapsed"
       >
-        <span
-          class="ai-web-preview-console__level"
-          :data-level="log.level"
-          v-text="levelLabelMap[log.level]"
-        />
-        <div class="ai-web-preview-console__message-group">
-          <p class="ai-web-preview-console__message" v-text="log.message" />
-          <time class="ai-web-preview-console__time" v-text="formatTimestamp(log.timestamp)" />
-        </div>
-      </li>
-    </ul>
-    <div v-else class="ai-web-preview-console__empty">No console output yet</div>
+        <ChevronDownIcon class="ai-web-preview-console__chevron" />
+      </button>
+    </header>
+    <template v-if="!collapsed">
+      <ul v-if="props.logs.length" class="ai-web-preview-console__list">
+        <li
+          v-for="(log, index) in props.logs"
+          :key="`${index}-${log.message}`"
+          class="ai-web-preview-console__item"
+        >
+          <span
+            class="ai-web-preview-console__level"
+            :data-level="log.level"
+            v-text="levelLabelMap[log.level]"
+          />
+          <div class="ai-web-preview-console__message-group">
+            <p class="ai-web-preview-console__message" v-text="log.message" />
+            <time class="ai-web-preview-console__time" v-text="formatTimestamp(log.timestamp)" />
+          </div>
+        </li>
+      </ul>
+      <div v-else class="ai-web-preview-console__empty">No console output yet</div>
+    </template>
   </section>
 </template>
 
@@ -65,14 +92,57 @@ const formatTimestamp = (value: IWebPreviewConsoleLog['timestamp']): string => {
   background: #f9f9fa;
 }
 
+.ai-web-preview-console--collapsed {
+  min-height: 0;
+  flex: 0 0 auto;
+}
+
 .ai-web-preview-console__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   padding: 8px 12px;
   background: #f9f9fa;
+}
+
+.ai-web-preview-console__title {
   color: var(--text-secondary);
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+}
+
+.ai-web-preview-console__toggle {
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-tertiary);
+  transition:
+    color 120ms ease,
+    background-color 120ms ease;
+}
+
+.ai-web-preview-console__toggle:hover {
+  background: #f1f1f3;
+  color: var(--text-primary);
+}
+
+.ai-web-preview-console__chevron {
+  width: 14px;
+  height: 14px;
+  stroke-width: 1.8;
+  transition: transform 140ms ease;
+}
+
+.ai-web-preview-console--collapsed .ai-web-preview-console__chevron {
+  transform: rotate(180deg);
 }
 
 .ai-web-preview-console__list {
