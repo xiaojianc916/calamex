@@ -14,6 +14,10 @@ default = ["desktop"]
 # 迁移期临时门控:启用宿主侧官方 ACP stdio 客户端(`cargo build --features acp_client`)。
 # 默认构建不启用,保证 main 分支默认编译不受影响、整步可逆。
 acp_client = ["dep:agent-client-protocol"]
+# 迁移期临时门控:原生 WebView2 承载(webview2-com 控制器内嵌 + CDP 远程调试端口)。
+# 默认不启用,保证 main 默认构建零影响、整步可逆(`cargo build --features native_webview` 才启用)。
+# webview2-com / windows-* 已是无条件 Windows 依赖,本 feature 仅门控新增 webview 模块的编译。
+native_webview = []
 desktop = [
   "dep:atomic-write-file",
   "dep:blake3",
