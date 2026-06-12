@@ -8,8 +8,20 @@ describe('AiWebPreviewSidebar', () => {
 
     expect(wrapper.get('[data-testid="ai-web-preview-sidebar"]').exists()).toBe(true);
     expect(wrapper.get('input').element).toBeInstanceOf(HTMLInputElement);
-    expect(wrapper.get('iframe').attributes('src')).toContain('preview-v0me-kzml7zc6fkcvbyhzrf47.vusercontent.net');
-    expect(wrapper.get('[data-testid="web-preview-console"]').text()).toContain('Page loaded successfully');
+    expect(wrapper.get('iframe').attributes('src')).toContain(
+      'preview-v0me-kzml7zc6fkcvbyhzrf47.vusercontent.net',
+    );
+    expect(wrapper.get('[data-testid="web-preview-console"]').text()).toContain(
+      'Page loaded successfully',
+    );
+  });
+
+  it('emits close-sidebar from the leftmost navigation button', async () => {
+    const wrapper = mount(AiWebPreviewSidebar);
+
+    await wrapper.get('[aria-label="Close sidebar"]').trigger('click');
+
+    expect(wrapper.emitted('close-sidebar')?.length).toBe(1);
   });
 
   it('updates the preview url from the location field', async () => {

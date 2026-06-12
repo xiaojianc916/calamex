@@ -5,6 +5,7 @@ import {
   ExternalLinkIcon,
   Maximize2Icon,
   MousePointerClickIcon,
+  PanelRightIcon,
   RefreshCcwIcon,
 } from '@lucide/vue';
 import { computed, ref, watch } from 'vue';
@@ -33,6 +34,7 @@ const props = withDefaults(
 const emit = defineEmits<{
   'url-change': [url: string];
   'open-external': [url: string];
+  'close-sidebar': [];
   select: [url: string];
 }>();
 
@@ -112,8 +114,11 @@ const handleToggleExpanded = (): void => {
 
 <template>
   <section class="ai-web-preview-sidebar" data-testid="ai-web-preview-sidebar">
-    <WebPreview class="flex min-h-0 flex-1" :default-url="previewUrl" @url-change="handleUrlChange">
+    <WebPreview class="ai-web-preview-sidebar__preview" :default-url="previewUrl" @url-change="handleUrlChange">
       <WebPreviewNavigation>
+        <WebPreviewNavigationButton tooltip="Close sidebar" @click="emit('close-sidebar')">
+          <PanelRightIcon class="size-4" />
+        </WebPreviewNavigationButton>
         <WebPreviewNavigationButton tooltip="Go back" @click="handleNavigationPlaceholder('Go back')">
           <ArrowLeftIcon class="size-4" />
         </WebPreviewNavigationButton>
@@ -140,7 +145,12 @@ const handleToggleExpanded = (): void => {
         </WebPreviewNavigationButton>
       </WebPreviewNavigation>
 
-      <WebPreviewBody :key="refreshKey" class="min-h-0 flex-1" :src="previewUrl" title="AI Web preview" />
+      <WebPreviewBody
+        :key="refreshKey"
+        class="ai-web-preview-sidebar__body"
+        :src="previewUrl"
+        title="AI Web preview"
+      />
 
       <WebPreviewConsole v-if="showConsole" :logs="logs" />
     </WebPreview>
@@ -153,6 +163,15 @@ const handleToggleExpanded = (): void => {
   min-width: 0;
   min-height: 0;
   flex: 1;
-  padding: 0 18px 18px;
+  background: #ffffff;
+}
+
+.ai-web-preview-sidebar__preview {
+  background: #ffffff;
+}
+
+.ai-web-preview-sidebar__body {
+  min-height: 0;
+  flex: 1;
 }
 </style>
