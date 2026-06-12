@@ -375,14 +375,11 @@
 
 .search-panel-result-group-chevron {
   flex-shrink: 0;
+  width: 14px;
+  height: 14px;
   color: var(--search-text-muted);
   font-size: 14px;
   line-height: 1;
-}
-
-.search-panel-result-group-chevron svg {
-  width: 14px;
-  height: 14px;
 }
 
 .search-panel-result-group-icon {
@@ -554,6 +551,8 @@
 
 .search-replace-inline-chevron {
   flex-shrink: 0;
+  width: 14px;
+  height: 14px;
   color: var(--search-text-muted);
   font-size: 14px;
   line-height: 1;
