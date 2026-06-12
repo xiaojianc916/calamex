@@ -6,15 +6,20 @@ const props = withDefaults(
   defineProps<{
     src?: string;
     title?: string;
+    appearance?: 'auto' | 'light';
   }>(),
   {
     src: undefined,
     title: 'Web preview',
+    appearance: 'auto',
   },
 );
 
 const preview = inject(WebPreviewKey, null);
 const resolvedSrc = computed(() => props.src ?? preview?.currentUrl.value ?? '');
+const frameClass = computed(() => ({
+  'ai-web-preview-body__frame--light': props.appearance === 'light',
+}));
 </script>
 
 <template>
@@ -23,7 +28,7 @@ const resolvedSrc = computed(() => props.src ?? preview?.currentUrl.value ?? '')
       v-if="resolvedSrc"
       :src="resolvedSrc"
       :title="props.title"
-      class="ai-web-preview-body__frame"
+      :class="['ai-web-preview-body__frame', frameClass]"
     />
     <div v-else class="ai-web-preview-body__empty">输入地址后即可在这里预览页面</div>
   </section>
@@ -45,6 +50,11 @@ const resolvedSrc = computed(() => props.src ?? preview?.currentUrl.value ?? '')
   flex: 1;
   border: 0;
   background: #ffffff;
+}
+
+.ai-web-preview-body__frame--light {
+  color-scheme: light;
+  filter: invert(1) hue-rotate(180deg);
 }
 
 .ai-web-preview-body__empty {
