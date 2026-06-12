@@ -307,10 +307,11 @@ fn record_frame(turns: &Mutex<HashMap<String, TurnAccumulator>>, frame: &AcpStre
     let Some(session_id) = frame.session_id.as_deref() else {
         return;
     };
-    if let Ok(mut map) = turns.lock() {
-        if let Some(accumulator) = map.get_mut(session_id) {
-            accumulator.record(frame.event.clone());
-        }
+    // let-chain（edition 2024）：仅在拿到锁且该会话有活动回合累积器时记录。
+    if let Ok(mut map) = turns.lock()
+        && let Some(accumulator) = map.get_mut(session_id)
+    {
+        accumulator.record(frame.event.clone());
     }
 }
 
