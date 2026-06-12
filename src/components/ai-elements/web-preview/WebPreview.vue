@@ -57,8 +57,6 @@ provide(WebPreviewKey, {
   flex: 1;
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid var(--border-subtle);
-  border-radius: 12px;
   background: #ffffff;
 }
 </style>

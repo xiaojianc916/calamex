@@ -92,8 +92,10 @@ const handleRestartSidecar = async (): Promise<void> => {
                 :disabled="isRestartingSidecar"
                 @click="void handleRestartSidecar()"
               >
-                <RotateCw :class="{ 'ai-sidecar-restart-btn__icon--spinning': isRestartingSidecar }"
-                  aria-hidden="true" />
+                <RotateCw
+                  :class="{ 'ai-sidecar-restart-btn__icon--spinning': isRestartingSidecar }"
+                  aria-hidden="true"
+                />
               </button>
             </template>
           </AiAssistantPanel>
@@ -104,29 +106,7 @@ const handleRestartSidecar = async (): Promise<void> => {
           :class="isRightSidebarVisible ? 'w-[320px]' : 'w-0'"
         >
           <div v-if="isRightSidebarVisible" class="ai-workspace-right-sidebar__inner">
-            <div class="ai-workspace-right-sidebar__header">
-              <button
-                type="button"
-                class="ai-icon-button ai-right-sidebar-toggle-btn"
-                aria-label="收起右侧面板"
-                aria-expanded="true"
-                @click="toggleRightSidebar"
-              >
-                <PanelRight aria-hidden="true" />
-              </button>
-              <button
-                type="button"
-                class="ai-icon-button ai-right-sidebar-toggle-btn ai-sidecar-restart-btn"
-                title="重启 Agent sidecar"
-                aria-label="重启 Agent sidecar"
-                :disabled="isRestartingSidecar"
-                @click="void handleRestartSidecar()"
-              >
-                <RotateCw :class="{ 'ai-sidecar-restart-btn__icon--spinning': isRestartingSidecar }"
-                  aria-hidden="true" />
-              </button>
-            </div>
-            <AiWebPreviewSidebar class="min-h-0 flex-1" />
+            <AiWebPreviewSidebar class="min-h-0 flex-1" @close-sidebar="toggleRightSidebar" />
           </div>
         </aside>
       </div>
@@ -156,6 +136,7 @@ const handleRestartSidecar = async (): Promise<void> => {
 .ai-workspace-right-sidebar {
   min-width: 0;
   border-left-color: var(--border-subtle);
+  background: #ffffff;
 }
 
 .ai-workspace-right-sidebar__inner {
@@ -167,15 +148,7 @@ const handleRestartSidecar = async (): Promise<void> => {
   align-items: stretch;
   justify-content: flex-start;
   padding: 0;
-}
-
-.ai-workspace-right-sidebar__header {
-  display: flex;
-  min-height: 52px;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 4px;
-  padding: 12px 18px 10px;
+  background: #ffffff;
 }
 
 .ai-right-sidebar-toggle-btn {
@@ -222,7 +195,6 @@ const handleRestartSidecar = async (): Promise<void> => {
 }
 
 :global(html.is-resizing) .ai-workspace-right-sidebar,
-:global(html.is-resizing) .ai-workspace-right-sidebar__header,
 :global(html.is-resizing) .ai-right-sidebar-toggle-btn {
   animation: none !important;
   transition: none !important;
