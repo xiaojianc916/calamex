@@ -442,7 +442,7 @@
   width: 100%;
   height: 24px;
   overflow: hidden;
-  padding: 0 8px 0 34px;
+  padding: 0 8px 0 21px;
   border: 0;
   background: transparent;
   color: inherit;
@@ -617,7 +617,7 @@
   width: 100%;
   height: 24px;
   overflow: hidden;
-  padding: 0 0 0 34px;
+  padding: 0 0 0 21px;
   color: var(--search-text);
   cursor: default;
   transition: background var(--motion-duration-dropdown-item) ease;
