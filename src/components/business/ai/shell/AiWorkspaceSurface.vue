@@ -62,6 +62,21 @@ const rightSidebarStyle = computed(() => ({
   width: isRightSidebarVisible.value ? `${rightSidebarWidth.value}px` : '0px',
 }));
 
+const applySidebarResizeInteractionState = (active: boolean): void => {
+  if (typeof document === 'undefined') {
+    return;
+  }
+
+  if (active) {
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    return;
+  }
+
+  document.body.style.removeProperty('cursor');
+  document.body.style.removeProperty('user-select');
+};
+
 const clearSidebarResizeListeners = (): void => {
   removeSidebarResizeListeners?.();
   removeSidebarResizeListeners = null;
@@ -69,7 +84,12 @@ const clearSidebarResizeListeners = (): void => {
 
 const stopRightSidebarResize = (): void => {
   isResizingSidebar.value = false;
+  applySidebarResizeInteractionState(false);
   clearSidebarResizeListeners();
+};
+
+const updateRightSidebarWidthFromCursor = (clientX: number): void => {
+  rightSidebarWidth.value = clampRightSidebarWidth(getViewportWidth() - clientX);
 };
 
 const toggleRightSidebar = (): void => {
@@ -108,10 +128,13 @@ const startRightSidebarResize = (event: MouseEvent): void => {
   }
 
   event.preventDefault();
+  stopRightSidebarResize();
   isResizingSidebar.value = true;
+  applySidebarResizeInteractionState(true);
+  updateRightSidebarWidthFromCursor(event.clientX);
 
   const handleMouseMove = (moveEvent: MouseEvent): void => {
-    rightSidebarWidth.value = clampRightSidebarWidth(getViewportWidth() - moveEvent.clientX);
+    updateRightSidebarWidthFromCursor(moveEvent.clientX);
   };
 
   const handleMouseUp = (): void => {
@@ -120,10 +143,12 @@ const startRightSidebarResize = (event: MouseEvent): void => {
 
   window.addEventListener('mousemove', handleMouseMove);
   window.addEventListener('mouseup', handleMouseUp, { once: true });
+  window.addEventListener('blur', handleMouseUp, { once: true });
 
   removeSidebarResizeListeners = () => {
     window.removeEventListener('mousemove', handleMouseMove);
     window.removeEventListener('mouseup', handleMouseUp);
+    window.removeEventListener('blur', handleMouseUp);
   };
 };
 
@@ -220,7 +245,7 @@ onBeforeUnmount(() => {
   position: relative;
   min-width: 0;
   border-left-color: var(--border-subtle);
-  transition: width 200ms ease;
+  transition: width 160ms ease;
 }
 
 .ai-workspace-right-sidebar--resizing {
@@ -231,11 +256,10 @@ onBeforeUnmount(() => {
   position: absolute;
   top: 0;
   bottom: 0;
-  left: 0;
-  z-index: 2;
-  width: 8px;
+  left: -6px;
+  z-index: 3;
+  width: 14px;
   cursor: col-resize;
-  transform: translateX(-50%);
 }
 
 .ai-workspace-right-sidebar__resize-handle::before {
@@ -247,6 +271,17 @@ onBeforeUnmount(() => {
   width: 1px;
   background: var(--border-subtle);
   transform: translateX(-50%);
+  transition: background-color 120ms ease, width 120ms ease;
+}
+
+.ai-workspace-right-sidebar__resize-handle:hover::before,
+.ai-workspace-right-sidebar--resizing .ai-workspace-right-sidebar__resize-handle::before {
+  width: 3px;
+  background: color-mix(in srgb, var(--accent-strong) 70%, var(--border-subtle));
+}
+
+.ai-workspace-right-sidebar--resizing :deep(iframe) {
+  pointer-events: none;
 }
 
 .ai-workspace-right-sidebar__inner {
