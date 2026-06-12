@@ -21,6 +21,7 @@
 //! - 同一时刻只有一个活跃监听；启动时若已有则「先建后换」，旧监听由原子标志位通知退出。
 //! - 去抖后通过强类型 specta 事件 `workspace-fs-event` 推送到前端。
 
+use super::search::prewarm_workspace_search_index;
 use arc_swap::ArcSwapOption;
 use ignore::WalkBuilder;
 use notify::{
@@ -217,6 +218,7 @@ pub fn start_workspace_watching(
     }
 
     log::info!("工作区文件监听已请求启动: {}", root.display());
+    prewarm_workspace_search_index(root.to_string_lossy().to_string());
     Ok(())
 }
 

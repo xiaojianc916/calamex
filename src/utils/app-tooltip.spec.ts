@@ -196,7 +196,7 @@ describe('initAppTooltipSystem', () => {
     expect(countPointerMoveRemoves()).toBe(1);
   });
 
-  it('空闲态不常驻监听 scroll/resize,只在需要定位时按需挂载', () => {
+  it('使用 CSS Anchor 定位时不挂载 scroll/resize 监听', () => {
     const target = createTooltipTarget();
     hoverHitTarget = target;
     const documentAddEventListenerSpy = vi.spyOn(document, 'addEventListener');
@@ -218,11 +218,11 @@ describe('initAppTooltipSystem', () => {
     expect(countWindowEventAdds('resize')).toBe(0);
 
     dispatchPointerOver(target);
-    expect(countDocumentEventAdds('scroll')).toBe(1);
-    expect(countWindowEventAdds('resize')).toBe(1);
+    expect(countDocumentEventAdds('scroll')).toBe(0);
+    expect(countWindowEventAdds('resize')).toBe(0);
 
     dispatchPointerOut(target);
-    expect(countDocumentEventRemoves('scroll')).toBe(1);
-    expect(countWindowEventRemoves('resize')).toBe(1);
+    expect(countDocumentEventRemoves('scroll')).toBe(0);
+    expect(countWindowEventRemoves('resize')).toBe(0);
   });
 });

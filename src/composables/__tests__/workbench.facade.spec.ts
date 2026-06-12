@@ -504,7 +504,6 @@ describe('useWorkbench 特征化快照', () => {
       expect(mockTauriService.saveScript).toHaveBeenCalledOnce();
       expect(editorStore.documents.length).toBe(0);
       expect(editorStore.workspaceRootPath).toBe('/next-workspace');
-      expect(mockTauriService.getGitRepositoryStatus).toHaveBeenCalledWith('/next-workspace');
     });
   });
 

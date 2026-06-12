@@ -139,6 +139,7 @@ describe('useGitStore', () => {
   beforeEach(() => {
     setActivePinia(createPinia());
     vi.clearAllMocks();
+    window.localStorage.clear();
     tauriServiceMock.getGitPullRequestSupport.mockResolvedValue(pullRequestSupportPayload);
   });
 
@@ -429,12 +430,9 @@ describe('useGitStore', () => {
 
       await vi.advanceTimersByTimeAsync(30_001);
 
-      await expect(gitStore.loadPullRequestDetail(1)).resolves.toEqual(cachedDetail);
+      await expect(gitStore.loadPullRequestDetail(1)).resolves.toEqual(revalidatedDetail);
 
       expect(tauriServiceMock.getGitPullRequestDetail).toHaveBeenCalledTimes(2);
-
-      await Promise.resolve();
-
       expect(gitStore.pullRequestDetail?.title).toBe('feat: revalidated detail');
     } finally {
       vi.useRealTimers();

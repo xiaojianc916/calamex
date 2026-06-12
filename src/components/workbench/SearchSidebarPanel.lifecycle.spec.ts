@@ -222,6 +222,8 @@ describe('SearchSidebarPanel replacement lifecycle', () => {
 
     await wrapper.get('button[title="全部替换"]').trigger('click');
     await flushPromises();
+    await wrapper.get('button[title="再次点击确认全部替换（超时自动取消）"]').trigger('click');
+    await flushPromises();
 
     expect(tauriServiceMock.applyWorkspaceReplacement).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -245,6 +247,8 @@ describe('SearchSidebarPanel replacement lifecycle', () => {
     await preparePreview(wrapper);
 
     await wrapper.get('button[title="全部替换"]').trigger('click');
+    await flushPromises();
+    await wrapper.get('button[title="再次点击确认全部替换（超时自动取消）"]').trigger('click');
     await flushPromises();
     const signal = tauriServiceMock.applyWorkspaceReplacement.mock.calls[0]?.[1]
       ?.signal as AbortSignal;

@@ -11,10 +11,11 @@
     "dev": "tsx --env-file=.env src/acp/stdio-entry.ts",
     "build": "node build.mjs",
     "start": "node dist/acp/stdio-entry.js",
-    "test": "node --import tsx --test \"src/**/*.spec.ts\"",
+    "test": "pnpm --dir .. exec vitest run --environment node \"agent-sidecar/src/**/*.spec.ts\"",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint:ox": "pnpm --dir .. lint:ox",
-    "fix": "pnpm format && pnpm fix:ox"
+    "fix": "pnpm format && pnpm fix:ox",
+    "test:node": "node --import tsx --test \"src/**/*.spec.ts\""
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.25.0",

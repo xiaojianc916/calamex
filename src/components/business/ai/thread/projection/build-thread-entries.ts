@@ -293,8 +293,9 @@ const mapWireToolCallToToolEntry = (
   messageId: string,
   toolCall: IAiToolCall,
 ): IAiThreadToolCallEntry => {
-  const fallback = toolCall.summary.trim().length > 0 ? toolCall.summary : toolCall.name;
-  const label = buildZedToolLabel(toolCall.name, fallback);
+  const summary = toolCall.summary.trim();
+  const fallback = summary.length > 0 ? summary : toolCall.name;
+  const label = summary.length > 0 ? { verb: summary } : buildZedToolLabel(toolCall.name, fallback);
   return {
     kind: 'tool-call',
     id: `${messageId}:tool:${toolCall.id}`,

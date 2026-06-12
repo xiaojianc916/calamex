@@ -34,6 +34,8 @@ describe('terminal run orchestrator', () => {
     const notifier = createNotifier();
     const editorStore = {
       isRunning: true,
+      setPendingTerminalRunId: vi.fn(),
+      setActiveRunSummary: vi.fn(),
     };
 
     orchestrator.bind({

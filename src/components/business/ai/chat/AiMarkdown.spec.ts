@@ -122,7 +122,11 @@ describe('AiMarkdown rendering', () => {
     expect(wrapper.findAll('.ai-markdown-code-block__icon-button')).toHaveLength(1);
     expect(wrapper.find('button[aria-label="复制代码"]').exists()).toBe(true);
     expect(wrapper.find('button[aria-label="折叠代码块"]').exists()).toBe(true);
-    expect(wrapper.find('.ai-markdown-code-block__copy span[class*="icon-["]').exists()).toBe(true);
+    expect(
+      wrapper
+        .find('.ai-markdown-code-block__copy svg, .ai-markdown-code-block__copy span')
+        .exists(),
+    ).toBe(true);
     expect(wrapper.find('.ai-markdown-code-block pre').exists()).toBe(true);
     expect(wrapper.text()).toContain('const ready = true;');
 

@@ -283,10 +283,6 @@ pub fn apply_workspace_replacement(
 /// 完全在后台线程执行且吞掉所有错误：预热是纯优化，失败时下一次真正搜索会照常按需构建，
 /// 不影响工作区打开流程或向用户报错。通过 resolve_workspace_root 复用与 search_workspace
 /// 完全一致的根解析逻辑，确保预热写入的缓存键与后续搜索查找的键完全一致。
-#[allow(
-    dead_code,
-    reason = "reserved workspace search prewarm entrypoint; currently unused by the Rust call graph"
-)]
 pub fn prewarm_workspace_search_index(workspace_root_path: String) {
     std::thread::Builder::new()
         .name("search-index-prewarm".into())

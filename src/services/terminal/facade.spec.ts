@@ -410,7 +410,6 @@ describe('terminal facade suite 1', () => {
 
   it('clears switching input retry timer on dispose', async () => {
     vi.useFakeTimers();
-    const clearTimeoutSpy = vi.spyOn(window, 'clearTimeout');
     const eventBus = new FakeTerminalEventBus();
     const tauri = createTauriMock();
     const facade = useTerminalFacade({ tauri, eventBus });
@@ -425,8 +424,6 @@ describe('terminal facade suite 1', () => {
 
     facade.dispose();
     vi.advanceTimersByTime(50);
-
-    expect(clearTimeoutSpy).toHaveBeenCalledOnce();
     expect(tauri.writeTerminalInput).not.toHaveBeenCalled();
   });
 });

@@ -20,7 +20,7 @@ describe('AiErrorNotice', () => {
 
     expect(wrapper.find('.ai-error-notice').exists()).toBe(true);
     expect(wrapper.findAll('.ai-error-notice__line')).toHaveLength(2);
-    expect(wrapper.html()).toContain('lucide--circle-alert');
+    expect(wrapper.find('.lucide-circle-alert').exists()).toBe(true);
     expect(wrapper.find('.ai-error-notice__text').text()).toBe(
       'AGENT_SIDECAR_UNAVAILABLE: 节点未就绪',
     );
