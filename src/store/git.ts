@@ -1482,7 +1482,7 @@ export const useGitStore = defineStore('git', () => {
       const support = await loadPullRequestSupport();
       if (!support.available) return;
       await loadPullRequests('open', {
-        preloadDetails: true,
+        preloadDetails: false,
         updateActive: false,
         visibleLoading: false,
       });

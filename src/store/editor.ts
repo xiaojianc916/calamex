@@ -22,7 +22,7 @@ import type {
 } from '@/types/editor';
 import type { IGitDiffPreviewPayload } from '@/types/git';
 import type { TDocumentDraft, TSessionSnapshot, TSessionWorkbenchState } from '@/types/session';
-import { computeDocumentMetrics } from '@/utils/document-metrics';
+import { computeDocumentMetrics, type IDocumentMetrics } from '@/utils/document-metrics';
 import { createUniqueId } from '@/utils/id';
 import { formatFileSystemTextForDisplay, normalizeFileSystemPath } from '@/utils/path';
 import { DEFAULT_EXECUTOR, DEFAULT_SCRIPT } from '@/utils/templates';
@@ -147,7 +147,10 @@ const createEmptySessionSnapshot = (): TSessionSnapshot => ({
   savedAt: new Date().toISOString(),
 });
 
-const syncDocumentState = (document: IEditorDocument): IEditorDocument => {
+const syncDocumentState = (
+  document: IEditorDocument,
+  metrics?: IDocumentMetrics,
+): IEditorDocument => {
   if (document.kind === 'text' && document.bufferLoaded === false) {
     document.content = '';
     document.savedContent = '';
@@ -157,7 +160,7 @@ const syncDocumentState = (document: IEditorDocument): IEditorDocument => {
     return document;
   }
 
-  const { lineCount, charCount } = computeDocumentMetrics(document.content);
+  const { lineCount, charCount } = metrics ?? computeDocumentMetrics(document.content);
   document.lineCount = lineCount;
   document.charCount = charCount;
   document.isDirty =
@@ -888,7 +891,11 @@ export const useEditorStore = defineStore(
       }, DRAFT_CAPTURE_DEBOUNCE_MS);
     };
 
-    const updateDocumentContent = (documentId: string, content: string): void => {
+    const updateDocumentContentWithMetrics = (
+      documentId: string,
+      content: string,
+      metrics: IDocumentMetrics,
+    ): void => {
       const targetDocument = getDocumentById(documentId);
       if (targetDocument?.kind !== 'text') {
         return;
@@ -896,11 +903,22 @@ export const useEditorStore = defineStore(
       targetDocument.bufferLoaded = true;
       targetDocument.content = content;
       touchDocumentAccess(targetDocument);
-      syncDocumentState(targetDocument);
+      syncDocumentState(targetDocument, metrics);
       // 内容变更后维护未保存草稿(与磁盘基线 savedContent 比较),写入防抖见上。
       if (targetDocument.path) {
         scheduleDraftCapture(targetDocument.id);
       }
+    };
+
+    const updateDocumentContent = (documentId: string, content: string): void => {
+      updateDocumentContentWithMetrics(documentId, content, computeDocumentMetrics(content));
+    };
+
+    const updateActiveDocumentContentWithMetrics = (
+      content: string,
+      metrics: IDocumentMetrics,
+    ): void => {
+      updateDocumentContentWithMetrics(document.value.id, content, metrics);
     };
 
     const updateActiveDocumentContent = (content: string): void => {
@@ -1137,7 +1155,9 @@ export const useEditorStore = defineStore(
       unloadDocumentBuffer,
       evictInactiveDocumentBuffers,
       updateDocumentContent,
+      updateDocumentContentWithMetrics,
       updateActiveDocumentContent,
+      updateActiveDocumentContentWithMetrics,
       updateDocumentEncoding,
       updateActiveDocumentEncoding,
       closeDocument,

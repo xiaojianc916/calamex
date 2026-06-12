@@ -30,7 +30,9 @@ describe('AiWebPreviewSidebar', () => {
     await wrapper.get('form').trigger('submit');
 
     expect(wrapper.emitted('url-change')?.[0]).toEqual(['https://example.com']);
-    expect(wrapper.get('iframe').attributes('src')).toBe('https://example.com');
+    expect(wrapper.find('iframe').exists()).toBe(false);
+    expect(wrapper.get('.ai-web-preview-body__host').exists()).toBe(true);
+    expect(wrapper.text()).toContain('URL changed to: https://example.com');
   });
 
   it('collapses the console when maximize is toggled', async () => {

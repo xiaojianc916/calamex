@@ -16,6 +16,7 @@ import type { TThemeMode } from '@/types/app';
 import type { IAnalyzeScriptPayload, IEditorSelectionSummary } from '@/types/editor';
 import type { IEditorSettings } from '@/types/settings';
 import { waitForDesktopRuntime } from '@/utils/desktop-runtime';
+import type { IDocumentMetrics } from '@/utils/document-metrics';
 import { toErrorMessage } from '@/utils/error';
 
 const ANALYSIS_INITIAL_DELAY_MS = 90;
@@ -49,7 +50,7 @@ const props = withDefaults(
 );
 
 const emit = defineEmits<{
-  'update:modelValue': [value: string];
+  'update:modelValue': [value: string, metrics?: IDocumentMetrics];
   'cursor-position-change': [line: number, column: number];
   'selection-change': [selection: IEditorSelectionSummary | null];
   'diagnostics-change': [documentId: string, payload: IAnalyzeScriptPayload];
@@ -225,8 +226,8 @@ const layoutEditor = (): void => {
   innerEditorRef.value?.layoutEditor();
 };
 
-const handleModelValueChange = (value: string): void => {
-  emit('update:modelValue', value);
+const handleModelValueChange = (value: string, metrics?: IDocumentMetrics): void => {
+  emit('update:modelValue', value, metrics);
 };
 
 const handleCursorPositionChange = (line: number, column: number): void => {

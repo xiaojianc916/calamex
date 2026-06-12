@@ -951,7 +951,7 @@ const clearSearchResults = (): void => {
 // 结果，因此命令返回后的尾随事件、以及旧搜索的迟到事件都会被自动忽略。
 const handleSearchStreamEvent = (payload: IWorkspaceSearchStreamEvent): void => {
   if (payload.searchId !== streamingSearchId || payload.results.length === 0) return;
-  backendResults.value = backendResults.value.concat(payload.results);
+  backendResults.value.push(...payload.results);
 };
 
 const runSearch = async (): Promise<void> => {

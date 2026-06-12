@@ -19,6 +19,7 @@ import type {
   TDocumentEncoding,
 } from '@/types/editor';
 import { desktopRuntimeReady, waitForDesktopRuntime } from '@/utils/desktop-runtime';
+import type { IDocumentMetrics } from '@/utils/document-metrics';
 import { toErrorMessage } from '@/utils/error';
 import { isShellScriptPath } from '@/utils/file-assets';
 import { createRuntimeScope } from '@/utils/runtime-scope';
@@ -311,8 +312,12 @@ export const useWorkbench = () => {
     await ensureDocumentBufferLoaded(documentId);
   };
 
-  const updateContent = (value: string): void => {
+  const updateContent = (value: string, metrics?: IDocumentMetrics): void => {
     if (editorStore.document.bufferLoaded === false) {
+      return;
+    }
+    if (metrics) {
+      editorStore.updateActiveDocumentContentWithMetrics(value, metrics);
       return;
     }
     editorStore.updateActiveDocumentContent(value);

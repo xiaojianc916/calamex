@@ -86,6 +86,7 @@ import type {
 } from '@/types/editor';
 import type { IEditorSettings } from '@/types/settings';
 import { tryReadClipboardText, writeClipboardText } from '@/utils/clipboard';
+import { computeDocumentMetrics, type IDocumentMetrics } from '@/utils/document-metrics';
 import { computeDocChanges } from '@/utils/editor-doc-diff';
 import { resolveLanguageForPath } from '@/utils/editor-language';
 
@@ -154,7 +155,7 @@ const props = withDefaults(
 );
 
 const emit = defineEmits<{
-  'update:modelValue': [value: string];
+  'update:modelValue': [value: string, metrics?: IDocumentMetrics];
   'cursor-position-change': [line: number, column: number];
   'selection-change': [selection: IEditorSelectionSummary | null];
   'format-request': [];
@@ -199,6 +200,7 @@ let suppressModelValueEmit = false;
 // 写入并已对齐的值。用于在 modelValue watcher 里做廉价的“回声”判定,避免每次按键
 // 都对整篇文档 toString() 比较一次。
 let lastSyncedModelValue: string | null = null;
+let lastDocumentMetrics: IDocumentMetrics = computeDocumentMetrics(props.modelValue);
 let previousContainerSize = { width: 0, height: 0 };
 
 const languageCompartment = new Compartment();
@@ -253,6 +255,27 @@ const buildCompletionExtension = (
 
 const getCurrentLanguage = (): string =>
   resolveLanguageForPath(props.documentPath, props.documentName);
+
+const normalizeDocumentMetrics = (metrics: IDocumentMetrics): IDocumentMetrics => ({
+  lineCount: Math.max(1, metrics.lineCount),
+  charCount: Math.max(0, metrics.charCount),
+});
+
+const applyDocumentMetricsFromChanges = (update: ViewUpdate): IDocumentMetrics => {
+  let lineCount = lastDocumentMetrics.lineCount;
+  let charCount = lastDocumentMetrics.charCount;
+
+  update.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+    const removedMetrics = computeDocumentMetrics(update.startState.doc.sliceString(fromA, toA));
+    const insertedMetrics = computeDocumentMetrics(inserted.toString());
+
+    lineCount += insertedMetrics.lineCount - removedMetrics.lineCount;
+    charCount += insertedMetrics.charCount - removedMetrics.charCount;
+  });
+
+  lastDocumentMetrics = normalizeDocumentMetrics({ lineCount, charCount });
+  return lastDocumentMetrics;
+};
 
 // ──────────────────────────────
 // Selection helpers
@@ -837,10 +860,11 @@ const handleContextMenuItemSelect = async (item: IEditorContextMenuItem): Promis
 const handleEditorUpdate = (update: ViewUpdate): void => {
   if (update.docChanged && !suppressModelValueEmit) {
     closeContextMenu();
+    const nextMetrics = applyDocumentMetricsFromChanges(update);
     const nextValue = update.state.doc.toString();
     // 记录本次对外同步的串,作为 v-model 回声的廉价判定依据(见 modelValue watcher)。
     lastSyncedModelValue = nextValue;
-    emit('update:modelValue', nextValue);
+    emit('update:modelValue', nextValue, nextMetrics);
   }
   if (update.selectionSet || update.docChanged) {
     emitCursorPosition(update.view);
@@ -960,6 +984,7 @@ const createEditor = (): void => {
   });
   // 初始文档串与父组件 v-model 已对齐,记录为同步基线,避免首个 echo 误判。
   lastSyncedModelValue = props.modelValue;
+  lastDocumentMetrics = computeDocumentMetrics(props.modelValue);
   emitCursorPosition(editorView);
   applyLanguageExtension(language);
   currentLsp?.attach(editorView);
@@ -1059,12 +1084,14 @@ watch(
     const current = view.state.doc.toString();
     if (current === value) {
       lastSyncedModelValue = value;
+      lastDocumentMetrics = computeDocumentMetrics(value);
       return;
     }
     // 外部真正改了内容（载入文件 / 格式化 / AI 补丁等）：只替换最小变化区间,保留未变
     // 区域的折叠/选区,避免整篇替换清空这些状态。Myers 最短编辑脚本可产出多个
     // 互不相邻的最小变更区间，详见 utils/editor-doc-diff。
     lastSyncedModelValue = value;
+    lastDocumentMetrics = computeDocumentMetrics(value);
     suppressModelValueEmit = true;
     try {
       view.dispatch({ changes: computeDocChanges(current, value) });
