@@ -2,6 +2,7 @@
 import { PanelRight, RotateCw } from '@lucide/vue';
 import { ref } from 'vue';
 import AiAssistantPanel from '@/components/business/ai/shell/AiAssistantPanel.vue';
+import AiWebPreviewSidebar from '@/components/business/ai/shell/AiWebPreviewSidebar.vue';
 import { Card, CardContent } from '@/components/ui/card';
 import { useMessage } from '@/composables/useMessage';
 import { aiService } from '@/services/ipc/ai.service';
@@ -125,7 +126,7 @@ const handleRestartSidecar = async (): Promise<void> => {
                   aria-hidden="true" />
               </button>
             </div>
-            <p class="ai-workspace-right-sidebar__empty">这里还没有内容</p>
+            <AiWebPreviewSidebar class="min-h-0 flex-1" />
           </div>
         </aside>
       </div>
@@ -175,19 +176,6 @@ const handleRestartSidecar = async (): Promise<void> => {
   justify-content: flex-end;
   gap: 4px;
   padding: 12px 18px 10px;
-}
-
-.ai-workspace-right-sidebar__empty {
-  display: flex;
-  flex: 1 1 auto;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-secondary);
-  font-size: 13px;
-  line-height: 20px;
-  margin: 0;
-  padding: 24px;
-  text-align: center;
 }
 
 .ai-right-sidebar-toggle-btn {
