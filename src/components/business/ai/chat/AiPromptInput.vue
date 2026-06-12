@@ -64,7 +64,6 @@ import type { ISelectedSkill, ISkillSummary } from '@/types/ai/skill';
 interface IAiPromptModeOption {
   key: TAiAssistantMode;
   label: string;
-  description: string;
 }
 
 interface IAiPromptModelOption {
@@ -153,9 +152,9 @@ const skillsManagerOpen = ref(false);
 const MODE_SUBMENU_CLOSE_DELAY_MS = 180;
 
 const modeOptions: IAiPromptModeOption[] = [
-  { key: 'chat', label: 'chat', description: '仅回答，不进行编辑' },
-  { key: 'agent', label: 'agent', description: '可以搜索、编辑等' },
-  { key: 'plan', label: 'plan', description: '先规划，然后在获得批准后执行' },
+  { key: 'chat', label: 'chat' },
+  { key: 'agent', label: 'agent' },
+  { key: 'plan', label: 'plan' },
 ];
 
 const emptyTokenContext: IAiTokenContextProps = {
@@ -1039,10 +1038,6 @@ onBeforeUnmount(() => {
                       <SlidersHorizontal class="ai-mode-submenu-icon" v-else />
                       <span class="ai-mode-submenu-copy">
                         <span class="ai-mode-submenu-label" v-text="option.label"></span>
-                        <span
-                          class="ai-mode-submenu-description"
-                          v-text="option.description"
-                        ></span>
                       </span>
                       <Check class="ai-mode-submenu-check" v-if="activeMode === option.key" />
                     </button>
@@ -1630,16 +1625,15 @@ onBeforeUnmount(() => {
   bottom: 0;
   z-index: 70;
   display: grid;
-  width: min(300px, calc(100vw - 24px));
+  width: min(200px, calc(100vw - 24px));
   max-height: min(240px, calc(100vh - 32px));
   overflow-y: auto;
   gap: 2px;
-  border: 1px solid var(--ai-menu-border);
-  border-radius: 12px;
+  border: 1px solid #eeedeb;
+  border-radius: 8px;
   background: var(--ai-menu-bg);
   padding: 5px;
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--text-primary) 2%, transparent),
-    var(--ai-menu-shadow);
+  box-shadow: var(--ai-menu-shadow);
 }
 
 .ai-mode-submenu::before {
@@ -1655,7 +1649,7 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-columns: 20px minmax(0, 1fr) 18px;
   gap: 9px;
-  min-height: 50px;
+  min-height: 34px;
   align-items: center;
   border: 0;
   border-radius: 7px;
@@ -1687,12 +1681,6 @@ onBeforeUnmount(() => {
   color: var(--ai-menu-text);
   font-size: 14px;
   line-height: 1.2;
-}
-
-.ai-mode-submenu-description {
-  color: var(--ai-menu-muted);
-  font-size: 12px;
-  line-height: 1.25;
 }
 
 .ai-model-content {
