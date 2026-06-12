@@ -9,6 +9,7 @@ describe('AiWebPreviewSidebar', () => {
     expect(wrapper.get('[data-testid="ai-web-preview-sidebar"]').exists()).toBe(true);
     expect(wrapper.get('input').element).toBeInstanceOf(HTMLInputElement);
     expect(wrapper.get('iframe').attributes('src')).toContain('preview-v0me-kzml7zc6fkcvbyhzrf47.vusercontent.net');
+    expect(wrapper.get('iframe').classes()).toContain('ai-web-preview-body__frame--light');
     expect(wrapper.get('[data-testid="web-preview-console"]').text()).toContain('Page loaded successfully');
   });
 
