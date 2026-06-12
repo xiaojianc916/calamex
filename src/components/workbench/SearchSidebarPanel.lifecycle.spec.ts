@@ -45,7 +45,7 @@ vi.mock('@/components/ui/input', () => ({
     props: ['modelValue'],
     emits: ['update:modelValue', 'keydown'],
     template:
-      '<input :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" @keydown.enter="$emit(\'keydown\', $event)" />',
+      '<input :value="modelValue" @input="$emit(\\'update:modelValue\\', $event.target.value)" @keydown.enter="$emit(\\'keydown\\', $event)" />',
   },
 }));
 
@@ -82,7 +82,11 @@ const replacementPreview = {
           id: 'match-1',
           lineNumber: 1,
           beforeLine: 'echo old',
-          afterLine: 'echo new',
+          insertedText: 'new',
+          matchStart: 5,
+          matchEnd: 8,
+          truncatedStart: false,
+          truncatedEnd: false,
           replacementCount: 1,
         },
       ],
