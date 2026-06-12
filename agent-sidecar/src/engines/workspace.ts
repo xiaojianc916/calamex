@@ -592,6 +592,10 @@ export const destroyMastraWorkspace = async (workspace: AnyWorkspace | undefined
 const AGENT_WEBVIEW_CDP_PORT =
     Number.parseInt(process.env.CALAMEX_AGENT_WEBVIEW_CDP_PORT ?? '', 10) || 9333;
 
+// 浏览器操作默认超时（ms）。Mastra AgentBrowser 默认 30_000；放宽到 60_000，
+// 让慢加载 / 网络重的页面（goto / wait 等）操作有更充裕的完成时间，强化操作鲁棒性。
+const AGENT_BROWSER_OPERATION_TIMEOUT_MS = 60_000;
+
 // 在「连接时」动态解析原生内置 webview 的 browser 级 CDP WebSocket 端点。
 // 原生 webview 以 --remote-debugging-port 暴露 CDP，其 ws 端点形如
 // ws://127.0.0.1:<port>/devtools/browser/<uuid>，<uuid> 运行时动态生成、无法硬编码，
@@ -616,10 +620,20 @@ const resolveAgentWebviewCdpWebSocketUrl = async (): Promise<string> => {
 // 经 CDP 连接到「用户可见的原生内置 webview」（由 src-tauri 的 agent_webview 命令以
 // remote-debugging-port 暴露），让 AI 直接操作侧边栏里的内置浏览器，而非另起一个不可见的
 // 无头 Chromium。cdpUrl 用函数形态：连接时动态解析 browser 级 ws 端点（端口固定、uuid 动态）。
-// 提供 cdpUrl 后 scope 自动回退为 'shared'（无法再 spawn 新实例），无需手写 scope；
-// 不传 headless、不排除任何浏览器工具（含 browser_screenshot），即用户要求的「全部能力打开」。
+// 提供 cdpUrl 后 scope 自动回退为 'shared'（无法再 spawn 新实例），无需手写 scope；不传 headless（连接既有浏览器时无意义）。
+//
+// 操作能力拉满（用户要求「尽量开启、加强操作能力」）：
+// - excludeTools 显式置空数组 → 16 个浏览器工具全部启用：browser_goto / snapshot / click /
+//   type / press / select / scroll / screenshot / close / hover / back / dialog / wait /
+//   tabs / drag / evaluate（含 JS 执行的逃生舱），不裁剪任何一个；
+// - timeout 放宽到 AGENT_BROWSER_OPERATION_TIMEOUT_MS（60s，默认仅 30s），慢页面操作不易过早超时；
+// - 刻意「不」设 viewport：本浏览器连接的是用户可见的原生侧栏 webview，设 viewport 会触发
+//   设备度量覆盖、强行缩放可见内容（与面板真实尺寸打架，重演拖拽缩放类问题）；保持不设，
+//   让其沿用原生 webview 的真实尺寸，截图与所见一致。
 export const createMastraBrowser = (): MastraBrowser => new AgentBrowser({
     cdpUrl: resolveAgentWebviewCdpWebSocketUrl,
+    timeout: AGENT_BROWSER_OPERATION_TIMEOUT_MS,
+    excludeTools: [],
 });
 
 export const destroyMastraBrowser = async (browser: MastraBrowser | undefined): Promise<void> => {
