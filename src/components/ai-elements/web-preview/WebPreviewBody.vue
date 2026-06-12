@@ -1,6 +1,14 @@
 <script setup lang="ts">
-import { computed, inject } from 'vue';
+import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { WebPreviewKey } from './context';
+import {
+  AGENT_WEBVIEW_CDP_PORT,
+  createAgentWebview,
+  destroyAgentWebview,
+  navigateAgentWebview,
+  setAgentWebviewBounds,
+  setAgentWebviewVisible,
+} from '@/services/ipc/agent-webview.service';
 
 const props = withDefaults(
   defineProps<{
@@ -15,17 +23,182 @@ const props = withDefaults(
 
 const preview = inject(WebPreviewKey, null);
 const resolvedSrc = computed(() => props.src ?? preview?.currentUrl.value ?? '');
+
+/**
+ * 原生承载是否不可用。
+ * 非桌面运行时(浏览器预览)或未开启 `native_webview` feature 时,创建会失败,
+ * 此时回退到 iframe —— 保证默认构建行为与改造前一致、整步可逆。
+ */
+const nativeUnavailable = ref(false);
+
+const hostRef = ref<HTMLDivElement | null>(null);
+
+let frameId: number | null = null;
+let created = false;
+let creating = false;
+let lastSrc = '';
+let lastBoundsKey = '';
+
+const measure = (): { x: number; y: number; width: number; height: number } | null => {
+  const el = hostRef.value;
+  if (!el) {
+    return null;
+  }
+  const rect = el.getBoundingClientRect();
+  return { x: rect.left, y: rect.top, width: rect.width, height: rect.height };
+};
+
+const pushBounds = async (): Promise<void> => {
+  if (!created) {
+    return;
+  }
+  const bounds = measure();
+  if (!bounds || bounds.width <= 0 || bounds.height <= 0) {
+    return;
+  }
+  const key = `${bounds.x}|${bounds.y}|${bounds.width}|${bounds.height}`;
+  if (key === lastBoundsKey) {
+    return;
+  }
+  lastBoundsKey = key;
+  try {
+    await setAgentWebviewBounds(bounds);
+  } catch {
+    // 瞬时同步失败可忽略,下一帧按最新 rect 重试。
+    lastBoundsKey = '';
+  }
+};
+
+const tick = (): void => {
+  if (!created) {
+    frameId = null;
+    return;
+  }
+  void pushBounds();
+  frameId = requestAnimationFrame(tick);
+};
+
+const startLoop = (): void => {
+  if (frameId === null) {
+    frameId = requestAnimationFrame(tick);
+  }
+};
+
+const stopLoop = (): void => {
+  if (frameId !== null) {
+    cancelAnimationFrame(frameId);
+    frameId = null;
+  }
+};
+
+const ensureCreated = async (): Promise<void> => {
+  if (created || creating) {
+    return;
+  }
+  const bounds = measure();
+  if (!bounds) {
+    return;
+  }
+  creating = true;
+  try {
+    const url = resolvedSrc.value;
+    await createAgentWebview({ url, remoteDebuggingPort: AGENT_WEBVIEW_CDP_PORT, ...bounds });
+    created = true;
+    lastSrc = url;
+    lastBoundsKey = `${bounds.x}|${bounds.y}|${bounds.width}|${bounds.height}`;
+    startLoop();
+  } catch {
+    // 原生承载不可用 → 回退 iframe。
+    nativeUnavailable.value = true;
+    created = false;
+  } finally {
+    creating = false;
+  }
+};
+
+const teardown = async (): Promise<void> => {
+  stopLoop();
+  if (!created) {
+    return;
+  }
+  created = false;
+  lastBoundsKey = '';
+  try {
+    await destroyAgentWebview();
+  } catch {
+    // 卸载阶段的销毁失败可忽略。
+  }
+};
+
+onMounted(() => {
+  if (!nativeUnavailable.value && resolvedSrc.value) {
+    void ensureCreated();
+  }
+});
+
+watch(
+  resolvedSrc,
+  async (next) => {
+    if (nativeUnavailable.value) {
+      return;
+    }
+    if (!next) {
+      if (created) {
+        stopLoop();
+        try {
+          await setAgentWebviewVisible({ visible: false });
+        } catch {
+          // ignore
+        }
+      }
+      return;
+    }
+    if (!created) {
+      await ensureCreated();
+      return;
+    }
+    if (next !== lastSrc) {
+      lastSrc = next;
+      try {
+        await navigateAgentWebview({ url: next });
+      } catch {
+        // ignore
+      }
+    }
+    try {
+      await setAgentWebviewVisible({ visible: true });
+    } catch {
+      // ignore
+    }
+    startLoop();
+  },
+  { flush: 'post' },
+);
+
+onBeforeUnmount(() => {
+  void teardown();
+});
 </script>
 
 <template>
   <section class="ai-web-preview-body" data-slot="web-preview-body">
-    <iframe
-      v-if="resolvedSrc"
-      :src="resolvedSrc"
-      :title="props.title"
-      class="ai-web-preview-body__frame"
-    />
-    <div v-else class="ai-web-preview-body__empty">输入地址后即可在这里预览页面</div>
+    <!-- 原生承载:占位元素仅用于测量布局;原生 webview 覆盖在它的屏幕坐标之上 -->
+    <div v-if="!nativeUnavailable" ref="hostRef" class="ai-web-preview-body__host">
+      <div v-if="!resolvedSrc" class="ai-web-preview-body__empty">
+        输入地址后即可在这里预览页面
+      </div>
+    </div>
+
+    <!-- 回退:iframe(非桌面运行时 / 未开启 native_webview),行为与改造前一致 -->
+    <template v-else>
+      <iframe
+        v-if="resolvedSrc"
+        :src="resolvedSrc"
+        :title="props.title"
+        class="ai-web-preview-body__frame"
+      />
+      <div v-else class="ai-web-preview-body__empty">输入地址后即可在这里预览页面</div>
+    </template>
   </section>
 </template>
 
@@ -35,6 +208,18 @@ const resolvedSrc = computed(() => props.src ?? preview?.currentUrl.value ?? '')
   min-width: 0;
   min-height: 0;
   flex: 1;
+  background: #ffffff;
+}
+
+.ai-web-preview-body__host {
+  position: relative;
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
   background: #ffffff;
 }
 
