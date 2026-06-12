@@ -1756,12 +1756,9 @@ export type WorkspaceReplacementLinePreview = {
 	lineNumber: number,
 	/**  命中所在行（已去掉行首缩进、未拼省略号）。 */
 	beforeLine: string,
-	/**  替换文本（前端据此构建 after 段与新增 diff）。 */
 	insertedText: string,
-	/**  命中区间在 before_line 中的起止（UTF-16 code unit 偏移）。 */
 	matchStart: number,
 	matchEnd: number,
-	/**  仅当超过安全上限、对应一侧有内容被丢弃时为真（前端据此渲染数据级省略号）。 */
 	truncatedStart: boolean,
 	truncatedEnd: boolean,
 	replacementCount: number,

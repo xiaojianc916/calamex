@@ -420,7 +420,9 @@ mod tests {
         assert_eq!(preview.replacement_count, 2);
         assert_eq!(preview.files[0].line_previews.len(), 2);
         assert_eq!(preview.files[0].line_previews[0].before_line, "echo foo-12");
-        assert_eq!(preview.files[0].line_previews[0].after_line, "echo bar-12");
+        assert_eq!(preview.files[0].line_previews[0].inserted_text, "bar-12");
+        assert_eq!(preview.files[0].line_previews[0].match_start, 5);
+        assert_eq!(preview.files[0].line_previews[0].match_end, 11);
 
         let expected_files = expected_files(&preview);
         apply_workspace_replacement(WorkspaceReplacementApplyRequest {
@@ -451,9 +453,13 @@ mod tests {
         assert_eq!(line_previews[1].replacement_count, 1);
         assert_ne!(line_previews[0].id, line_previews[1].id);
         assert_eq!(line_previews[0].before_line, "echo old old");
-        assert_eq!(line_previews[0].after_line, "echo new old");
+        assert_eq!(line_previews[0].inserted_text, "new");
+        assert_eq!(line_previews[0].match_start, 5);
+        assert_eq!(line_previews[0].match_end, 8);
         assert_eq!(line_previews[1].before_line, "echo old old");
-        assert_eq!(line_previews[1].after_line, "echo old new");
+        assert_eq!(line_previews[1].inserted_text, "new");
+        assert_eq!(line_previews[1].match_start, 9);
+        assert_eq!(line_previews[1].match_end, 12);
 
         apply_workspace_replacement(WorkspaceReplacementApplyRequest {
             request,
