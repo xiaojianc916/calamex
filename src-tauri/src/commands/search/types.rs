@@ -171,8 +171,16 @@ pub struct WorkspaceReplacementFilePreview {
 pub struct WorkspaceReplacementLinePreview {
     pub(crate) id: String,
     pub(crate) line_number: u32,
+    /// 命中所在行（已去掉行首缩进、未拼省略号）。
     pub(crate) before_line: String,
-    pub(crate) after_line: String,
+    /// 替换文本（前端据此构建 after 段与新增 diff）。
+    pub(crate) inserted_text: String,
+    /// 命中区间在 before_line 中的起止（UTF-16 code unit 偏移）。
+    pub(crate) match_start: u32,
+    pub(crate) match_end: u32,
+    /// 仅当超过安全上限、对应一侧有内容被丢弃时为真（前端据此渲染数据级省略号）。
+    pub(crate) truncated_start: bool,
+    pub(crate) truncated_end: bool,
     pub(crate) replacement_count: u32,
 }
 
