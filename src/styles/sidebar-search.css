@@ -617,7 +617,7 @@
   width: 100%;
   height: 24px;
   overflow: hidden;
-  padding: 0;
+  padding: 0 0 0 34px;
   color: var(--search-text);
   cursor: default;
   transition: background var(--motion-duration-dropdown-item) ease;
@@ -630,12 +630,7 @@
 }
 
 .search-replace-inline-line-number {
-  flex: 0 0 34px;
-  color: var(--search-text-subtle);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  line-height: 24px;
-  text-align: right;
+  display: none;
 }
 
 .search-replace-inline-code {
