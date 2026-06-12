@@ -35,7 +35,11 @@ const formatTimestamp = (value: IWebPreviewConsoleLog['timestamp']): string => {
   <section :class="cn('ai-web-preview-console', props.class)" data-testid="web-preview-console">
     <header class="ai-web-preview-console__header">Console</header>
     <ul v-if="props.logs.length" class="ai-web-preview-console__list">
-      <li v-for="(log, index) in props.logs" :key="`${index}-${log.message}`" class="ai-web-preview-console__item">
+      <li
+        v-for="(log, index) in props.logs"
+        :key="`${index}-${log.message}`"
+        class="ai-web-preview-console__item"
+      >
         <span class="ai-web-preview-console__level" :data-level="log.level">
            levelLabelMap[log.level] 
         </span>
