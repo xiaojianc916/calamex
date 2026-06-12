@@ -39,6 +39,12 @@ const NARRATOR_CHAT_RETRY_DELAYS_MS: &[u64] = &[1500, 3000, 5000, 9000, 16000, 3
 const SIDECAR_PROTOCOL_VERSION: &str = "7";
 const SIDECAR_IMPLEMENTATION_VERSION: &str = "deepseek-reasoning-transport-v6-plan-history";
 const DEFAULT_SIDECAR_PORT: u16 = 39871;
+/// 内置浏览器 CDP 端口透传：宿主 spawn sidecar 时把该端口经此环境变量注入子进程，
+/// 让 agent-sidecar 的 createMastraBrowser 经 /json/version 解析到「用户可见的原生
+/// 内置 webview」的 CDP ws 端点。默认 9333，与前端 agent-webview.service.ts 及 Rust
+/// agent_webview 命令的 remote-debugging-port 保持一致。
+const AGENT_WEBVIEW_CDP_PORT_ENV: &str = "CALAMEX_AGENT_WEBVIEW_CDP_PORT";
+const DEFAULT_AGENT_WEBVIEW_CDP_PORT: u16 = 9333;
 /// 流式响应中单个未完成行的字节上限（16 MiB）。正常 NDJSON 事件远小于此；
 /// 仅用于防御“始终不出现换行符的超长行”导致读缓冲无界增长 → OOM。
 /// 仅在缓冲区残留的“未完成行”超过此上限时触发，不改变正常按行解析 / 下发的
@@ -573,6 +579,21 @@ fn clamp_startup_timeout_seconds(raw: Option<&str>) -> u64 {
         .unwrap_or(SIDECAR_STARTUP_TIMEOUT_DEFAULT_SECONDS)
 }
 
+/// 解析注入给 sidecar 子进程的内置浏览器 CDP 端口：trim、空、非法、0 一律回落默认 9333。
+/// 仿 clamp_startup_timeout_seconds 的纯函数风格，便于单测覆盖。
+fn resolve_agent_webview_cdp_port(raw: Option<&str>) -> u16 {
+    raw.map(str::trim)
+        .filter(|value| !value.is_empty())
+        .and_then(|value| value.parse::<u16>().ok())
+        .filter(|port| *port != 0)
+        .unwrap_or(DEFAULT_AGENT_WEBVIEW_CDP_PORT)
+}
+
+/// 当前应注入子进程的内置浏览器 CDP 端口：优先进程 env / 用户环境变量，缺省回落默认值。
+fn agent_webview_cdp_port() -> u16 {
+    resolve_agent_webview_cdp_port(env_or_user_env(AGENT_WEBVIEW_CDP_PORT_ENV).as_deref())
+}
+
 async fn ensure_default_sidecar_available(base_url: &str) -> Result<(), String> {
     if !is_default_local_sidecar_url(base_url) {
         return Ok(());
@@ -968,6 +989,12 @@ fn spawn_default_sidecar() -> Result<Child, String> {
         .env(
             "NODE_COMPILE_CACHE",
             sidecar_runtime_dir().join("node-compile-cache"),
+        )
+        // 透传内置浏览器 CDP 端口：让 sidecar 的 createMastraBrowser 连接到用户可见的原生
+        // 内置 webview（remote-debugging-port 暴露的 CDP），而非另起一个不可见的无头 Chromium。
+        .env(
+            AGENT_WEBVIEW_CDP_PORT_ENV,
+            agent_webview_cdp_port().to_string(),
         );
 
     // 注入本地 sidecar 鉴权令牌：sidecar 端 server.ts 检测到该环境变量后，
@@ -1417,16 +1444,17 @@ pub async fn web_fetch(payload: AiWebFetchInput) -> Result<AiWebFetchPayload, St
 #[cfg(test)]
 mod tests {
     use super::{
-        DEFAULT_SIDECAR_URL, SIDECAR_STARTUP_TIMEOUT_DEFAULT_SECONDS,
-        SIDECAR_STARTUP_TIMEOUT_MAX_SECONDS, SIDECAR_STARTUP_TIMEOUT_MIN_SECONDS,
-        SIDECAR_STREAM_MAX_LINE_BYTES, SidecarHealthProbePayload, SidecarHealthStatus,
-        answer_delta_text, build_sidecar_url, canonicalize_local_base_url,
-        clamp_startup_timeout_seconds, classify_sidecar_health, client,
-        crashed_sidecar_error_message, drain_complete_sidecar_stream_lines,
+        DEFAULT_AGENT_WEBVIEW_CDP_PORT, DEFAULT_SIDECAR_URL,
+        SIDECAR_STARTUP_TIMEOUT_DEFAULT_SECONDS, SIDECAR_STARTUP_TIMEOUT_MAX_SECONDS,
+        SIDECAR_STARTUP_TIMEOUT_MIN_SECONDS, SIDECAR_STREAM_MAX_LINE_BYTES,
+        SidecarHealthProbePayload, SidecarHealthStatus, answer_delta_text, build_sidecar_url,
+        canonicalize_local_base_url, clamp_startup_timeout_seconds, classify_sidecar_health,
+        client, crashed_sidecar_error_message, drain_complete_sidecar_stream_lines,
         ensure_sidecar_stream_buffer_within_limit, has_non_whitespace_bytes, health_client,
         inject_sidecar_dotenv_key_if_present, is_crashed_sidecar_error,
         is_default_local_sidecar_url, is_retryable_narrator_sidecar_error, model_provider_id,
-        normalize_base_url, parse_netstat_listening_pids, shared_client, sidecar_runtime_dir,
+        normalize_base_url, parse_netstat_listening_pids, resolve_agent_webview_cdp_port,
+        shared_client, sidecar_runtime_dir,
     };
     use std::fs;
     use std::process::Command;
@@ -1506,6 +1534,27 @@ mod tests {
             SIDECAR_STARTUP_TIMEOUT_MAX_SECONDS
         );
         assert_eq!(clamp_startup_timeout_seconds(Some("30")), 30);
+    }
+
+    #[test]
+    fn resolve_agent_webview_cdp_port_uses_default_and_parses_override() {
+        assert_eq!(
+            resolve_agent_webview_cdp_port(None),
+            DEFAULT_AGENT_WEBVIEW_CDP_PORT
+        );
+        assert_eq!(
+            resolve_agent_webview_cdp_port(Some("   ")),
+            DEFAULT_AGENT_WEBVIEW_CDP_PORT
+        );
+        assert_eq!(
+            resolve_agent_webview_cdp_port(Some("not-a-port")),
+            DEFAULT_AGENT_WEBVIEW_CDP_PORT
+        );
+        assert_eq!(
+            resolve_agent_webview_cdp_port(Some("0")),
+            DEFAULT_AGENT_WEBVIEW_CDP_PORT
+        );
+        assert_eq!(resolve_agent_webview_cdp_port(Some("9444")), 9444);
     }
 
     #[test]
