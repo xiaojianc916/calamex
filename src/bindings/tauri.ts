@@ -124,6 +124,19 @@ export const commands = {
 	agentSidecarRestoreCheckpoint: (payload: AgentSidecarCheckpointRestoreRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarResponsePayload>("agent_sidecar_restore_checkpoint", { payload }),
 	agentSidecarOrchestrate: (payload: AgentSidecarOrchestrateRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarOrchestratePayload>("agent_sidecar_orchestrate", { payload }),
 	agentSidecarOrchestrateResume: (payload: AgentSidecarOrchestrateResumeRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarOrchestratePayload>("agent_sidecar_orchestrate_resume", { payload }),
+	/**
+	 *  创建(或复用)内置浏览器子 webview。
+	 *  幂等:若已存在则只更新位置/尺寸并导航,不重复创建。
+	 */
+	agentWebviewCreate: (input: AgentWebviewCreateInput, traceId: string | null) => __TAURI_INVOKE<null>("agent_webview_create", { input, traceId }),
+	/**  同步子 webview 的位置/尺寸(阶段2 由前端占位元素 ResizeObserver 驱动)。 */
+	agentWebviewSetBounds: (input: AgentWebviewBoundsInput, traceId: string | null) => __TAURI_INVOKE<null>("agent_webview_set_bounds", { input, traceId }),
+	/**  显示/隐藏子 webview(切走侧边栏、最小化、关闭时用)。 */
+	agentWebviewSetVisible: (input: AgentWebviewVisibleInput, traceId: string | null) => __TAURI_INVOKE<null>("agent_webview_set_visible", { input, traceId }),
+	/**  导航到新 URL(地址栏 / 前进后退用)。 */
+	agentWebviewNavigate: (input: AgentWebviewNavigateInput, traceId: string | null) => __TAURI_INVOKE<null>("agent_webview_navigate", { input, traceId }),
+	/**  销毁子 webview(整步可逆:关闭即回到无原生承载状态)。幂等:不存在则视作成功。 */
+	agentWebviewDestroy: (traceId: string | null) => __TAURI_INVOKE<null>("agent_webview_destroy", { traceId }),
 	aiGetConfig: () => __TAURI_INVOKE<AiConfigPayload>("ai_get_config"),
 	aiSaveConfig: (payload: AiSaveConfigRequest) => __TAURI_INVOKE<AiConfigPayload>("ai_save_config", { payload }),
 	aiSaveCredentials: (payload: AiSaveCredentialsRequest) => __TAURI_INVOKE<AiConfigPayload>("ai_save_credentials", { payload }),
@@ -363,6 +376,36 @@ export type AgentSidecarWarmupPayload = {
 	durationMs: number,
 	skipped: boolean,
 	reason: string | null,
+};
+
+export type AgentWebviewBoundsInput = {
+	x: number | null,
+	y: number | null,
+	width: number | null,
+	height: number | null,
+};
+
+export type AgentWebviewCreateInput = {
+	/**  初始加载的 URL。 */
+	url: string,
+	/**  CDP 远程调试端口(默认绑 127.0.0.1)。agent-sidecar 用它 connectOverCDP。 */
+	remoteDebuggingPort: number,
+	/**  相对宿主窗口左上角的逻辑横坐标(CSS 像素),来自前端占位元素 getBoundingClientRect。 */
+	x: number | null,
+	/**  相对宿主窗口左上角的逻辑纵坐标(CSS 像素)。 */
+	y: number | null,
+	/**  逻辑宽度(CSS 像素)。 */
+	width: number | null,
+	/**  逻辑高度(CSS 像素)。 */
+	height: number | null,
+};
+
+export type AgentWebviewNavigateInput = {
+	url: string,
+};
+
+export type AgentWebviewVisibleInput = {
+	visible: boolean,
 };
 
 export type AiAgentClassifyTaskPayload = {
