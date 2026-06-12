@@ -17,16 +17,20 @@
   letter-spacing: -0.04em;
 }
 
+/* 修改(M) */
 .source-control-file-tag.is-modified {
-  color: #d97706;
+  color: #ad8d63;
 }
 
-.source-control-file-tag.is-added {
-  color: #16a34a;
+/* 新增：已暂存(A)与未跟踪(U)都视为新增，无论是否跟踪都生效。 */
+.source-control-file-tag.is-added,
+.source-control-file-tag.is-untracked {
+  color: #5a9871;
 }
 
+/* 删除(D) */
 .source-control-file-tag.is-deleted {
-  color: #dc2626;
+  color: #bd6c5c;
 }
 
 .source-control-file-tag.is-conflicted {
@@ -41,16 +45,7 @@
   color: #9333ea;
 }
 
-.source-control-file-tag.is-untracked {
-  color: #7c3aed;
-}
-
-/* 新增(A)文件：文件名使用绿色高亮。 */
-.source-control-file-tag.is-added ~ .source-control-file-path .source-control-file-name {
-  color: #73c977;
-}
-
-/* 删除(D)文件：文件名添加删除线，直观表示删除。 */
+/* 删除(D)文件：文件名中间加一条横线表示删除（与跟踪状态无关）。 */
 .source-control-file-tag.is-deleted ~ .source-control-file-path .source-control-file-name {
   text-decoration: line-through;
 }
