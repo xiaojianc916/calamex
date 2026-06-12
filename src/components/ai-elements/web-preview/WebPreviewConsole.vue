@@ -40,12 +40,14 @@ const formatTimestamp = (value: IWebPreviewConsoleLog['timestamp']): string => {
         :key="`${index}-${log.message}`"
         class="ai-web-preview-console__item"
       >
-        <span class="ai-web-preview-console__level" :data-level="log.level">
-           levelLabelMap[log.level] 
-        </span>
+        <span
+          class="ai-web-preview-console__level"
+          :data-level="log.level"
+          v-text="levelLabelMap[log.level]"
+        />
         <div class="ai-web-preview-console__message-group">
-          <p class="ai-web-preview-console__message"> log.message </p>
-          <time class="ai-web-preview-console__time"> formatTimestamp(log.timestamp) </time>
+          <p class="ai-web-preview-console__message" v-text="log.message" />
+          <time class="ai-web-preview-console__time" v-text="formatTimestamp(log.timestamp)" />
         </div>
       </li>
     </ul>
