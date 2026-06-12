@@ -94,8 +94,12 @@ pub fn save_git_stash(payload: GitStashSaveRequest) -> Result<GitRepositoryStatu
     };
 
     // 构建工作区树（含已折叠的未跟踪文件，若启用）。
-    let worktree_tree_id =
-        build_worktree_tree(&repository, &repository_root, &status, payload.include_untracked)?;
+    let worktree_tree_id = build_worktree_tree(
+        &repository,
+        &repository_root,
+        &status,
+        payload.include_untracked,
+    )?;
     if worktree_tree_id == base_tree_id {
         return Err("当前没有可贮藏的改动。".into());
     }
@@ -129,10 +133,21 @@ pub fn save_git_stash(payload: GitStashSaveRequest) -> Result<GitRepositoryStatu
 
     // 手动更新 refs/stash 与 logs/refs/stash（gix 默认不会为 refs/stash 建 reflog，
     // 而 list/drop 依赖该 reflog，故手动写入，且与现有 drop 的手改方式保持一致）。
-    store_new_stash(&repository, stash_commit_id, &signature, seconds, &stash_message)?;
+    store_new_stash(
+        &repository,
+        stash_commit_id,
+        &signature,
+        seconds,
+        &stash_message,
+    )?;
 
     // 将工作区与索引恢复到 HEAD（等价 reset --hard + 清理已贮藏的未跟踪文件）。
-    reset_worktree_to_head(&repository, &repository_root, &status, payload.include_untracked)?;
+    reset_worktree_to_head(
+        &repository,
+        &repository_root,
+        &status,
+        payload.include_untracked,
+    )?;
 
     let repository = open_repository_from_root(&payload.repository_root_path)?;
     super::status::build_git_repository_status_payload(&repository)
@@ -559,8 +574,7 @@ fn is_short_git_commit_id(value: &str) -> bool {
 /// 解析第 `stash_index` 条贮藏（stash@{N}，0 = 最新）对应的提交 oid。
 fn resolve_stash_oid(repository: &Repository, stash_index: usize) -> Result<gix::ObjectId, String> {
     let reflog_path = repository.git_dir().join("logs").join("refs").join("stash");
-    let content =
-        fs::read_to_string(&reflog_path).map_err(|_| "指定的贮藏不存在。".to_string())?;
+    let content = fs::read_to_string(&reflog_path).map_err(|_| "指定的贮藏不存在。".to_string())?;
     let lines: Vec<&str> = content
         .lines()
         .filter(|line| !line.trim().is_empty())
@@ -664,7 +678,13 @@ fn reset_worktree_to_head(
                 }
                 let object_id = entry.id().detach();
                 let mode = index_mode_from_tree_mode(entry_mode);
-                restore_worktree_from_index_blob(repository, repository_root, rel, object_id, mode)?;
+                restore_worktree_from_index_blob(
+                    repository,
+                    repository_root,
+                    rel,
+                    object_id,
+                    mode,
+                )?;
                 upsert_index_entry(&mut index, rel, object_id, mode);
             }
             None => {
@@ -835,10 +855,20 @@ fn apply_stash_changes(
                     Some((ours_id, ours_mode)) => {
                         match try_text_merge(repository, previous_id, ours_id, id) {
                             TextMerge::Clean(bytes) => {
-                                write_bytes_to_worktree(repository_root, &path, &bytes, entry_mode)?;
+                                write_bytes_to_worktree(
+                                    repository_root,
+                                    &path,
+                                    &bytes,
+                                    entry_mode,
+                                )?;
                             }
                             TextMerge::Conflicted(bytes) => {
-                                write_bytes_to_worktree(repository_root, &path, &bytes, entry_mode)?;
+                                write_bytes_to_worktree(
+                                    repository_root,
+                                    &path,
+                                    &bytes,
+                                    entry_mode,
+                                )?;
                                 record_conflict(
                                     repository,
                                     &mut conflict_index,

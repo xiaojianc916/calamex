@@ -350,10 +350,8 @@ mod tests {
 
     #[test]
     fn windows_path_reference_uses_forward_slash_file_uri() {
-        let blocks = user_turn_to_content_blocks(
-            "",
-            &[reference("file", Some(r"C:\code\main.rs"), "x")],
-        );
+        let blocks =
+            user_turn_to_content_blocks("", &[reference("file", Some(r"C:\code\main.rs"), "x")]);
         let value = serde_json::to_value(&blocks[0]).expect("内容块应可序列化");
         assert_eq!(value["resource"]["uri"], "file:///C:/code/main.rs");
     }

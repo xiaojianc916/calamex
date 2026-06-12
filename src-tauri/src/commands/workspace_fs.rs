@@ -34,10 +34,7 @@ pub fn load_script(
 
 #[tauri::command]
 #[specta::specta]
-pub fn load_image_asset(
-    app: tauri::AppHandle,
-    path: String,
-) -> Result<ImageAssetPayload, String> {
+pub fn load_image_asset(app: tauri::AppHandle, path: String) -> Result<ImageAssetPayload, String> {
     let file_path = PathBuf::from(&path)
         .canonicalize()
         .map_err(|error| format!("读取图片资源失败：{error}"))?;
@@ -733,12 +730,17 @@ mod tests {
         let handles = (0..8)
             .map(|index| {
                 let file_path = file_path.clone();
-                thread::spawn(move || atomic_write(&file_path, format!("echo {index}\n").as_bytes()))
+                thread::spawn(move || {
+                    atomic_write(&file_path, format!("echo {index}\n").as_bytes())
+                })
             })
             .collect::<Vec<_>>();
 
         for handle in handles {
-            handle.join().expect("writer thread panicked").expect("writer failed");
+            handle
+                .join()
+                .expect("writer thread panicked")
+                .expect("writer failed");
         }
 
         let content = fs::read_to_string(&file_path).expect("read final file");

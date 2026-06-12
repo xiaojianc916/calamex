@@ -674,12 +674,16 @@ pub async fn rename_ssh_path(
 
     match timeout(SSH_CONNECT_TIMEOUT, open_authenticated_sftp(&params)).await {
         Ok(Ok(conn)) => {
-            let result = run_with_timeout(SSH_MUTATION_TIMEOUT, "重命名 SSH 远端路径超时。", async {
-                conn.sftp
-                    .rename(&old, &new)
-                    .await
-                    .map_err(|e| format!("重命名远程路径失败：{e}"))
-            })
+            let result = run_with_timeout(
+                SSH_MUTATION_TIMEOUT,
+                "重命名 SSH 远端路径超时。",
+                async {
+                    conn.sftp
+                        .rename(&old, &new)
+                        .await
+                        .map_err(|e| format!("重命名远程路径失败：{e}"))
+                },
+            )
             .await;
             let _ = conn.close().await;
             match result {
@@ -706,13 +710,14 @@ pub async fn create_ssh_directory(
 
     match timeout(SSH_CONNECT_TIMEOUT, open_authenticated_sftp(&params)).await {
         Ok(Ok(conn)) => {
-            let result = run_with_timeout(SSH_MUTATION_TIMEOUT, "创建 SSH 远端目录超时。", async {
-                conn.sftp
-                    .create_dir(&remote_path)
-                    .await
-                    .map_err(|e| format!("创建远程目录 {remote_path} 失败：{e}"))
-            })
-            .await;
+            let result =
+                run_with_timeout(SSH_MUTATION_TIMEOUT, "创建 SSH 远端目录超时。", async {
+                    conn.sftp
+                        .create_dir(&remote_path)
+                        .await
+                        .map_err(|e| format!("创建远程目录 {remote_path} 失败：{e}"))
+                })
+                .await;
             let _ = conn.close().await;
             match result {
                 Ok(()) => Ok(SshDirectoryCreatePayload { remote_path }),
@@ -774,8 +779,10 @@ mod tests {
 
     #[tokio::test]
     async fn run_with_timeout_returns_inner_result_when_fast() {
-        let ok = run_with_timeout(Duration::from_secs(5), "超时", async { Ok::<_, String>(7u8) })
-            .await;
+        let ok = run_with_timeout(Duration::from_secs(5), "超时", async {
+            Ok::<_, String>(7u8)
+        })
+        .await;
         assert_eq!(ok, Ok(7));
 
         let err = run_with_timeout(Duration::from_secs(5), "超时", async {

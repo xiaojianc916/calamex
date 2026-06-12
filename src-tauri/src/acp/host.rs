@@ -43,9 +43,9 @@ use crate::commands::contracts::{
 
 use super::approval::{ApprovalError, ApprovalRegistry, ApprovalRequestInfo};
 use super::client::{
-    spawn_acp_client, AcpClientConfig, AcpClientError, AcpClientHandle, AcpStreamFrame,
-    CheckpointRestoreRequest, EventSink, HealthExtRequest, ModelChatExtRequest, WarmupExtRequest,
-    WebFetchExtRequest, WebSearchExtRequest,
+    AcpClientConfig, AcpClientError, AcpClientHandle, AcpStreamFrame, CheckpointRestoreRequest,
+    EventSink, HealthExtRequest, ModelChatExtRequest, WarmupExtRequest, WebFetchExtRequest,
+    WebSearchExtRequest, spawn_acp_client,
 };
 use super::turn::TurnAccumulator;
 
@@ -404,7 +404,11 @@ mod tests {
         record_frame(&turns, &frame);
 
         assert_eq!(
-            turns.lock().unwrap().get("s1").map(TurnAccumulator::is_empty),
+            turns
+                .lock()
+                .unwrap()
+                .get("s1")
+                .map(TurnAccumulator::is_empty),
             Some(true)
         );
     }

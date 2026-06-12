@@ -271,7 +271,9 @@ pub(super) fn get_active_terminal_run_handle(
         .active_runs
         .lock()
         .map_err(|_| "终端运行状态已损坏。".to_string())?;
-    Ok(active_runs.get(run_id).and_then(|run| run.run_handle.clone()))
+    Ok(active_runs
+        .get(run_id)
+        .and_then(|run| run.run_handle.clone()))
 }
 
 pub(super) fn get_active_terminal_run_input_target(

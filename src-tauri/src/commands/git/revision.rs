@@ -33,8 +33,7 @@ pub fn revert_git_commit(
         .find_commit(object_id)
         .map_err(|error| format!("读取提交对象失败：{error}"))?;
 
-    let parent_ids: Vec<gix::ObjectId> =
-        commit.parent_ids().map(|id| id.detach()).collect();
+    let parent_ids: Vec<gix::ObjectId> = commit.parent_ids().map(|id| id.detach()).collect();
     if parent_ids.len() > 1 {
         return Err("暂不支持回滚合并提交（存在多个父提交）。".into());
     }

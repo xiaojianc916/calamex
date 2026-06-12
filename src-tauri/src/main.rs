@@ -1,9 +1,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 #![allow(rust_2024_compatibility)]
 
-mod agent_sidecar;
 #[cfg(feature = "acp_client")]
 mod acp;
+mod agent_sidecar;
 mod ai;
 mod assets;
 #[macro_use]
@@ -206,9 +206,7 @@ fn harden_webview_settings<R: tauri::Runtime>(webview_window: &tauri::WebviewWin
                 Ok(())
             });
         if let Err(error) = outcome {
-            eprintln!(
-                "failed to harden WebView2 settings for window {label_for_inner}: {error}"
-            );
+            eprintln!("failed to harden WebView2 settings for window {label_for_inner}: {error}");
         }
     });
     if let Err(error) = access_result {

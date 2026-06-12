@@ -120,10 +120,12 @@ struct GitHubOAuthTokenResponse {
     error_description: Option<String>,
 }
 
-static GITHUB_AUTH_CREDENTIAL_CACHE: OnceLock<Mutex<HashMap<String, GitHubAuthCredentialCacheEntry>>> =
-    OnceLock::new();
+static GITHUB_AUTH_CREDENTIAL_CACHE: OnceLock<
+    Mutex<HashMap<String, GitHubAuthCredentialCacheEntry>>,
+> = OnceLock::new();
 
-fn github_auth_credential_cache() -> &'static Mutex<HashMap<String, GitHubAuthCredentialCacheEntry>> {
+fn github_auth_credential_cache() -> &'static Mutex<HashMap<String, GitHubAuthCredentialCacheEntry>>
+{
     GITHUB_AUTH_CREDENTIAL_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -306,10 +308,9 @@ async fn resolve_github_auth_credential(
         .lock()
         .ok()
         .and_then(|cache| cache.get(&cache_key).cloned())
+        && cached.expires_at > now
     {
-        if cached.expires_at > now {
-            return cached.credential;
-        }
+        return cached.credential;
     }
 
     let credential = if let Some(credential) = resolve_keyring_credential(host).await {
@@ -466,7 +467,8 @@ async fn fetch_github_primary_email(
 async fn fetch_github_auth_status(
     target: &GitHubAuthTarget,
 ) -> Result<GitHubAuthStatusPayload, String> {
-    let Some(credential) = resolve_github_auth_credential(&target.repository_root, &target.host).await
+    let Some(credential) =
+        resolve_github_auth_credential(&target.repository_root, &target.host).await
     else {
         return Ok(unauthenticated(
             "未发现可用的 GitHub 凭据。请先连接 GitHub 账号。",
@@ -507,7 +509,13 @@ async fn fetch_github_auth_status(
     let mut user: GitHubAuthenticatedUser = serde_json::from_str(&body)
         .map_err(|error| format!("解析 GitHub 用户信息失败：{error}"))?;
 
-    if user.email.as_deref().map(str::trim).unwrap_or_default().is_empty() {
+    if user
+        .email
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or_default()
+        .is_empty()
+    {
         user.email = fetch_github_primary_email(&client, target).await;
     }
 
@@ -536,7 +544,10 @@ async fn request_github_device_code(
         .map_err(|error| format!("读取 GitHub 设备授权码失败：{error}"))?;
 
     if !status.is_success() {
-        return Err(format!("请求 GitHub 设备授权码失败（{}）：{body}", status.as_u16()));
+        return Err(format!(
+            "请求 GitHub 设备授权码失败（{}）：{body}",
+            status.as_u16()
+        ));
     }
 
     let payload: GitHubDeviceCodeResponse = serde_json::from_str(&body)
@@ -568,10 +579,7 @@ async fn poll_github_device_token(
             .form(&[
                 ("client_id", GITHUB_OAUTH_CLIENT_ID),
                 ("device_code", request.device_code.as_str()),
-                (
-                    "grant_type",
-                    "urn:ietf:params:oauth:grant-type:device_code",
-                ),
+                ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
             ])
             .send()
             .await
@@ -584,10 +592,10 @@ async fn poll_github_device_token(
         let token_response: GitHubOAuthTokenResponse = serde_json::from_str(&body)
             .map_err(|error| format!("解析 GitHub 访问令牌失败：{error}"))?;
 
-        if let Some(token) = token_response.access_token {
-            if !token.trim().is_empty() {
-                return Ok(token);
-            }
+        if let Some(token) = token_response.access_token
+            && !token.trim().is_empty()
+        {
+            return Ok(token);
         }
 
         match token_response.error.as_deref() {
@@ -598,11 +606,9 @@ async fn poll_github_device_token(
             Some("expired_token") => return Err("GitHub 授权码已过期，请重新连接。".to_string()),
             Some("access_denied") => return Err("GitHub 授权已取消。".to_string()),
             Some(error) => {
-                return Err(
-                    token_response
-                        .error_description
-                        .unwrap_or_else(|| format!("GitHub 授权失败：{error}")),
-                );
+                return Err(token_response
+                    .error_description
+                    .unwrap_or_else(|| format!("GitHub 授权失败：{error}")));
             }
             None => return Err("GitHub 授权响应缺少访问令牌。".to_string()),
         }
@@ -648,9 +654,7 @@ pub async fn complete_github_device_auth(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn connect_github(
-    payload: GitHubAuthRequest,
-) -> Result<GitHubAuthStatusPayload, String> {
+pub async fn connect_github(payload: GitHubAuthRequest) -> Result<GitHubAuthStatusPayload, String> {
     let target = resolve_github_auth_target(&payload.repository_root_path)?;
     clear_github_auth_credential_cache_for_host(&target.host);
     fetch_github_auth_status(&target).await
@@ -706,7 +710,10 @@ mod tests {
 
     #[test]
     fn resolve_github_api_base_omits_literal_braces() {
-        assert_eq!(resolve_github_api_base("github.com"), "https://api.github.com");
+        assert_eq!(
+            resolve_github_api_base("github.com"),
+            "https://api.github.com"
+        );
         assert_eq!(
             resolve_github_api_base("github.enterprise.local"),
             "https://api.github.enterprise.local"
@@ -730,7 +737,9 @@ mod tests {
     #[test]
     fn parse_git_credential_password_extracts_password_field() {
         assert_eq!(
-            parse_git_credential_password("protocol=https\nhost=github.com\nusername=x\npassword=gho_token\n"),
+            parse_git_credential_password(
+                "protocol=https\nhost=github.com\nusername=x\npassword=gho_token\n"
+            ),
             Some("gho_token".to_string())
         );
         assert_eq!(parse_git_credential_password("username=x\n"), None);

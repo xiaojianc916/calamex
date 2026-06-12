@@ -241,7 +241,9 @@ pub fn close_terminal_session(
     remove_terminal_snapshot(&terminal_state, &payload.session_id)?;
     remove_terminal_interactive_visual_state(&terminal_state, &payload.session_id)?;
     remove_pending_switch_input(&terminal_state, &payload.session_id);
-    if let Some(run_handle) = take_active_terminal_run_for_session(&terminal_state, &payload.session_id) {
+    if let Some(run_handle) =
+        take_active_terminal_run_for_session(&terminal_state, &payload.session_id)
+    {
         let _ = run_handle.cancel(SIGNAL_MODE_KILL);
     }
     let Some(session) = removed_session else {
@@ -308,11 +310,11 @@ pub fn dispatch_script_to_terminal(
 
     try_mark_active_terminal_run(&terminal_state, &payload.session_id, &payload.run_id)?;
     let is_first_active_run = active_terminal_run_count(&terminal_state) == 1;
-    if is_first_active_run {
-        if let Err(error) = transition_terminal_state(&app, TerminalState::SwitchingToRun) {
-            clear_active_terminal_run(&terminal_state, &payload.run_id);
-            return Err(error);
-        }
+    if is_first_active_run
+        && let Err(error) = transition_terminal_state(&app, TerminalState::SwitchingToRun)
+    {
+        clear_active_terminal_run(&terminal_state, &payload.run_id);
+        return Err(error);
     }
 
     let started_at = Instant::now();

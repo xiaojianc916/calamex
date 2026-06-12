@@ -355,10 +355,7 @@ impl AcpClientHandle {
     /// 与检查点回滚同属标准会话回合之外的「带外」能力,经 sidecar 公示的扩展方法通道下发;
     /// 标准客户端(如 Zed)不识别该方法会安全忽略。承载标题生成 / 行内补全 / 连接测试等
     /// 一次性「工具型」模型调用。返回 sidecar 的整封响应信封(`serde_json::Value`),由宿主侧解析。
-    pub async fn model_chat(
-        &self,
-        request: ModelChatExtRequest,
-    ) -> Result<Value, AcpClientError> {
+    pub async fn model_chat(&self, request: ModelChatExtRequest) -> Result<Value, AcpClientError> {
         let (reply, rx) = oneshot::channel();
         self.cmd_tx
             .send(Command::ModelChat { request, reply })
@@ -373,10 +370,7 @@ impl AcpClientHandle {
     /// 与检查点回滚同属标准会话回合之外的「带外」能力,经 sidecar 公示的扩展方法通道下发;
     /// 标准客户端不识别该方法会安全忽略。返回 sidecar 的搜索结果信封(`serde_json::Value`),
     /// 由宿主侧解析为既有的 web 搜索结果契约。
-    pub async fn web_search(
-        &self,
-        request: WebSearchExtRequest,
-    ) -> Result<Value, AcpClientError> {
+    pub async fn web_search(&self, request: WebSearchExtRequest) -> Result<Value, AcpClientError> {
         let (reply, rx) = oneshot::channel();
         self.cmd_tx
             .send(Command::WebSearch { request, reply })
@@ -390,10 +384,7 @@ impl AcpClientHandle {
     ///
     /// 经 sidecar 公示的扩展方法通道下发。返回 sidecar 的抓取结果信封(`serde_json::Value`),
     /// 由宿主侧解析为既有的 web 抓取结果契约。
-    pub async fn web_fetch(
-        &self,
-        request: WebFetchExtRequest,
-    ) -> Result<Value, AcpClientError> {
+    pub async fn web_fetch(&self, request: WebFetchExtRequest) -> Result<Value, AcpClientError> {
         let (reply, rx) = oneshot::channel();
         self.cmd_tx
             .send(Command::WebFetch { request, reply })
@@ -448,11 +439,7 @@ impl AcpClientHandle {
 /// 其后为程序与其参数。每个词元都是独立元素,不经 shell 分词,因此 Windows 下含
 /// 空格的 node / 入口路径也安全(规避 `from_str` 的 `shell_words::split` 风险)。
 fn build_agent_args(config: &AcpClientConfig) -> Vec<String> {
-    let mut args: Vec<String> = config
-        .env
-        .iter()
-        .map(|(k, v)| format!("{k}={v}"))
-        .collect();
+    let mut args: Vec<String> = config.env.iter().map(|(k, v)| format!("{k}={v}")).collect();
     args.push(config.program.clone());
     args.extend(config.args.iter().cloned());
     args
@@ -486,8 +473,7 @@ pub fn spawn_acp_client(
                     let sink = notif_sink.clone();
                     let seq = notif_seq.clone();
                     async move {
-                        let event =
-                            serde_json::to_value(&notif).unwrap_or(serde_json::Value::Null);
+                        let event = serde_json::to_value(&notif).unwrap_or(serde_json::Value::Null);
                         let session_id = event
                             .get("sessionId")
                             .and_then(|v| v.as_str())
@@ -514,13 +500,11 @@ pub fn spawn_acp_client(
                     async move {
                         let outcome = match resolver(req).await {
                             PermissionDecision::Selected(option_id) => {
-                                RequestPermissionOutcome::Selected(
-                                    SelectedPermissionOutcome::new(option_id),
-                                )
+                                RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(
+                                    option_id,
+                                ))
                             }
-                            PermissionDecision::Cancelled => {
-                                RequestPermissionOutcome::Cancelled
-                            }
+                            PermissionDecision::Cancelled => RequestPermissionOutcome::Cancelled,
                         };
                         responder.respond(RequestPermissionResponse::new(outcome))?;
                         Ok::<(), agent_client_protocol::Error>(())
@@ -542,8 +526,8 @@ pub fn spawn_acp_client(
                                 .send_request(NewSessionRequest::new(cwd))
                                 .block_task()
                                 .await;
-                            let _ = reply
-                                .send(res.map(|r| r.session_id).map_err(|e| e.to_string()));
+                            let _ =
+                                reply.send(res.map(|r| r.session_id).map_err(|e| e.to_string()));
                         }
                         Command::Prompt {
                             session_id,
@@ -552,8 +536,8 @@ pub fn spawn_acp_client(
                         } => {
                             let req = PromptRequest::new(session_id, blocks);
                             let res = cx.send_request(req).block_task().await;
-                            let _ = reply
-                                .send(res.map(|r| r.stop_reason).map_err(|e| e.to_string()));
+                            let _ =
+                                reply.send(res.map(|r| r.stop_reason).map_err(|e| e.to_string()));
                         }
                         Command::SetSessionMode {
                             session_id,
@@ -647,10 +631,7 @@ mod tests {
         };
         assert_eq!(
             build_agent_args(&config),
-            vec![
-                "node".to_string(),
-                "dist/acp/stdio-entry.js".to_string(),
-            ]
+            vec!["node".to_string(), "dist/acp/stdio-entry.js".to_string(),]
         );
     }
 

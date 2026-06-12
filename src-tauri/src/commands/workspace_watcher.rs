@@ -527,10 +527,12 @@ const IGNORED_GIT_INTERNAL_DIRS: &[&str] = &["objects", "lfs", "tmp", "fsmonitor
 /// `.git/HEAD`、`.git/index`、`.git/refs/**`、`.git/logs/**` 等放行，
 /// 以便外部 git 操作能驱动前端 git 面板刷新。
 fn is_ignored_git_internal(relative: &Path) -> bool {
-    let mut normals = relative.components().filter_map(|component| match component {
-        Component::Normal(name) => Some(name),
-        _ => None,
-    });
+    let mut normals = relative
+        .components()
+        .filter_map(|component| match component {
+            Component::Normal(name) => Some(name),
+            _ => None,
+        });
     match normals.next() {
         Some(first) if os_str_eq(first, OsStr::new(".git")) => match normals.next() {
             Some(second) => IGNORED_GIT_INTERNAL_DIRS
@@ -638,8 +640,14 @@ mod tests {
     #[test]
     fn ignores_dependency_build_and_vcs_dirs() {
         let root = p("/ws");
-        assert!(is_ignored_change(&root, &p("/ws/node_modules/lodash/index.js")));
-        assert!(is_ignored_change(&root, &p("/ws/src-tauri/target/debug/app")));
+        assert!(is_ignored_change(
+            &root,
+            &p("/ws/node_modules/lodash/index.js")
+        ));
+        assert!(is_ignored_change(
+            &root,
+            &p("/ws/src-tauri/target/debug/app")
+        ));
         assert!(is_ignored_change(&root, &p("/ws/web/dist/bundle.js")));
         assert!(is_ignored_change(&root, &p("/ws/api/__pycache__/mod.pyc")));
         // .git 内部高频目录仍忽略（避免 commit / gc / fetch 刷屏）
@@ -687,7 +695,10 @@ mod tests {
     fn unrelated_path_fails_open() {
         // 前缀不匹配时放行（返回 false），宁可多推一条也不漏报
         let root = p("/ws");
-        assert!(!is_ignored_change(&root, &p("/elsewhere/node_modules/x.js")));
+        assert!(!is_ignored_change(
+            &root,
+            &p("/elsewhere/node_modules/x.js")
+        ));
     }
 
     #[test]

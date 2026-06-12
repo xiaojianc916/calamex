@@ -159,8 +159,8 @@ mod agent_sidecar_contract_tests {
     use serde_json::{Map, Value};
 
     use super::{
-        AgentSidecarChatRequest, AgentSidecarCheckpointRestoreRequest,
-        AgentSidecarMessagePayload, AgentSidecarRollbackStepPath,
+        AgentSidecarChatRequest, AgentSidecarCheckpointRestoreRequest, AgentSidecarMessagePayload,
+        AgentSidecarRollbackStepPath,
     };
 
     fn sidecar_message() -> AgentSidecarMessagePayload {

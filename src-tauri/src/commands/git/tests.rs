@@ -536,13 +536,16 @@ fn git_commit_history_preserves_pipe_in_message() -> Result<(), String> {
     Ok(())
 }
 
-
 #[test]
 fn get_git_pull_request_support_parses_github_enterprise_remote() -> Result<(), String> {
     let temp = TempGitDir::new("pull-request-ghe")?;
     let _repo = temp.init_repository()?;
     let root = temp.repository_root()?;
-    add_remote(&temp.path, "origin", "git@github.example.com:platform/repo.git")?;
+    add_remote(
+        &temp.path,
+        "origin",
+        "git@github.example.com:platform/repo.git",
+    )?;
 
     let payload = get_git_pull_request_support(GitRepositoryRootRequest {
         repository_root_path: root.to_string_lossy().to_string(),
@@ -572,7 +575,11 @@ fn get_git_pull_request_support_prefers_origin_remote() -> Result<(), String> {
     let _repo = temp.init_repository()?;
     let root = temp.repository_root()?;
 
-    add_remote(&temp.path, "upstream", "https://github.com/upstream/repo.git")?;
+    add_remote(
+        &temp.path,
+        "upstream",
+        "https://github.com/upstream/repo.git",
+    )?;
     add_remote(&temp.path, "origin", "https://github.com/owner/repo.git")?;
 
     let payload = get_git_pull_request_support(GitRepositoryRootRequest {

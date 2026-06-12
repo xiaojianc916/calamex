@@ -237,9 +237,10 @@ impl SshConnectionPool {
         let mut evictable: Vec<(ConnKey, Option<Instant>)> = entries
             .iter()
             .filter_map(|(conn_key, slot)| match slot.try_lock() {
-                Ok(slot_guard) => {
-                    Some((conn_key.clone(), slot_guard.as_ref().map(|entry| entry.last_used)))
-                }
+                Ok(slot_guard) => Some((
+                    conn_key.clone(),
+                    slot_guard.as_ref().map(|entry| entry.last_used),
+                )),
                 Err(_) => None,
             })
             .collect();

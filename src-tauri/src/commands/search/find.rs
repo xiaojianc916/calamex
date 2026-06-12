@@ -70,7 +70,10 @@ impl FuzzyLinePrefilter {
                 continue;
             }
             let normalized = normalize_prefilter_ascii(byte, self.match_case);
-            if let Some(index) = missing.iter().position(|candidate| *candidate == normalized) {
+            if let Some(index) = missing
+                .iter()
+                .position(|candidate| *candidate == normalized)
+            {
                 missing.swap_remove(index);
                 if missing.is_empty() {
                     return true;
@@ -98,7 +101,10 @@ impl FuzzyLinePrefilter {
                 continue;
             }
             let normalized = normalize_prefilter_ascii(*byte, self.match_case);
-            if let Some(index) = missing.iter().position(|candidate| *candidate == normalized) {
+            if let Some(index) = missing
+                .iter()
+                .position(|candidate| *candidate == normalized)
+            {
                 missing.swap_remove(index);
                 if missing.is_empty() {
                     return true;
@@ -678,8 +684,7 @@ mod tests {
     fn merge_per_file_results_round_robins_when_over_limit() {
         // 第一个文件命中很多、第二个文件只有一条；超出 limit 时仍应给小文件留出名额，
         // 而不是被大文件按顺序占满后整体挤掉。
-        let big_file: Vec<WorkspaceSearchResult> =
-            (0..10).map(|_| make_result(1, "big")).collect();
+        let big_file: Vec<WorkspaceSearchResult> = (0..10).map(|_| make_result(1, "big")).collect();
         let small_file = vec![make_result(1, "small")];
         let merged = merge_per_file_results(vec![big_file, small_file], 3);
         assert_eq!(merged.len(), 3);

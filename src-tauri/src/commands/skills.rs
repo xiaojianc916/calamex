@@ -221,23 +221,23 @@ fn parse_skill_document(raw: &str) -> ParsedSkill {
     if let Some(rest) = normalized.strip_prefix("---\n")
         && let Some(end) = rest.find("\n---")
     {
-            let front = &rest[..end];
-            let after = &rest[end + 4..];
-            let body = after.trim_start_matches('\n').to_string();
-            let mut name = String::new();
-            let mut description = String::new();
-            for line in front.lines() {
-                if let Some(value) = line.strip_prefix("name:") {
-                    name = unquote(value);
-                } else if let Some(value) = line.strip_prefix("description:") {
-                    description = unquote(value);
-                }
+        let front = &rest[..end];
+        let after = &rest[end + 4..];
+        let body = after.trim_start_matches('\n').to_string();
+        let mut name = String::new();
+        let mut description = String::new();
+        for line in front.lines() {
+            if let Some(value) = line.strip_prefix("name:") {
+                name = unquote(value);
+            } else if let Some(value) = line.strip_prefix("description:") {
+                description = unquote(value);
             }
-            return ParsedSkill {
-                name,
-                description,
-                body,
-            };
+        }
+        return ParsedSkill {
+            name,
+            description,
+            body,
+        };
     }
     ParsedSkill {
         name: String::new(),

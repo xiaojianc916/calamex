@@ -174,10 +174,7 @@ fn health_client() -> Result<reqwest::Client, String> {
 /// 仅对默认本地 sidecar 的请求附加 Bearer 鉴权令牌；
 /// 通过 XIAOJIANC_AGENT_SIDECAR_URL 指向的自定义远端不附加，
 /// 避免把本地生成的令牌泄露给第三方端点。令牌缺失时原样返回（退回不鉴权的既有行为）。
-fn apply_sidecar_auth(
-    builder: reqwest::RequestBuilder,
-    base_url: &str,
-) -> reqwest::RequestBuilder {
+fn apply_sidecar_auth(builder: reqwest::RequestBuilder, base_url: &str) -> reqwest::RequestBuilder {
     if is_default_local_sidecar_url(base_url)
         && let Some(token) = sidecar_auth_token()
     {
@@ -1389,6 +1386,10 @@ where
     .await
 }
 
+#[allow(
+    dead_code,
+    reason = "reserved ACP/model bridge entrypoint; currently unused by the Rust call graph"
+)]
 pub async fn model_chat_once(
     mut payload: AgentSidecarChatRequest,
 ) -> Result<AgentSidecarResponsePayload, String> {
@@ -1420,12 +1421,12 @@ mod tests {
         SIDECAR_STARTUP_TIMEOUT_MAX_SECONDS, SIDECAR_STARTUP_TIMEOUT_MIN_SECONDS,
         SIDECAR_STREAM_MAX_LINE_BYTES, SidecarHealthProbePayload, SidecarHealthStatus,
         answer_delta_text, build_sidecar_url, canonicalize_local_base_url,
-        clamp_startup_timeout_seconds, classify_sidecar_health, crashed_sidecar_error_message,
-        drain_complete_sidecar_stream_lines, ensure_sidecar_stream_buffer_within_limit,
-        has_non_whitespace_bytes, inject_sidecar_dotenv_key_if_present, is_crashed_sidecar_error,
+        clamp_startup_timeout_seconds, classify_sidecar_health, client,
+        crashed_sidecar_error_message, drain_complete_sidecar_stream_lines,
+        ensure_sidecar_stream_buffer_within_limit, has_non_whitespace_bytes, health_client,
+        inject_sidecar_dotenv_key_if_present, is_crashed_sidecar_error,
         is_default_local_sidecar_url, is_retryable_narrator_sidecar_error, model_provider_id,
-        client, health_client, normalize_base_url, parse_netstat_listening_pids,
-        shared_client, sidecar_runtime_dir,
+        normalize_base_url, parse_netstat_listening_pids, shared_client, sidecar_runtime_dir,
     };
     use std::fs;
     use std::process::Command;

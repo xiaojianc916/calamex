@@ -314,7 +314,9 @@ pub(super) fn build_git_repository_status_payload(
             .as_deref()
             .map(|oid| oid.chars().take(7).collect::<String>()),
         is_detached: status.detached,
-        is_clean: status.staged_count == 0 && status.unstaged_count == 0 && status.untracked_count == 0,
+        is_clean: status.staged_count == 0
+            && status.unstaged_count == 0
+            && status.untracked_count == 0,
         ahead: status.ahead,
         behind: status.behind,
         staged_count: status.staged_count,
@@ -385,7 +387,8 @@ fn build_git_status_via_gix(repository: &Repository) -> Result<StatusAccum, Stri
     }
 
     // 文件状态。
-    let mut files: std::collections::BTreeMap<String, GitFileStatusPayload> = std::collections::BTreeMap::new();
+    let mut files: std::collections::BTreeMap<String, GitFileStatusPayload> =
+        std::collections::BTreeMap::new();
     let iter = repository
         .status(gix::progress::Discard)
         .map_err(|error| format!("读取 Git 状态失败：{error}"))?
@@ -487,7 +490,11 @@ fn apply_tree_index_change(
         ChangeRef::Modification { .. } => {
             entry.index_status = Some("modified".to_string());
         }
-        ChangeRef::Rewrite { source_location, copy, .. } => {
+        ChangeRef::Rewrite {
+            source_location,
+            copy,
+            ..
+        } => {
             entry.index_status = Some(if *copy { "copied" } else { "renamed" }.to_string());
             let source = source_location.to_str_lossy().into_owned();
             let source_path = Path::new(&source);
@@ -612,7 +619,8 @@ pub(super) fn is_tracked_git_path(
     relative_path: &Path,
 ) -> Result<bool, String> {
     // 通过 gix 查询索引判断路径是否被 Git 跟踪（等价于 `git ls-files --error-unmatch`），避免依赖系统安装的 git。
-    let repository = gix::open(repository_root).map_err(|error| format!("打开 Git 仓库失败：{error}"))?;
+    let repository =
+        gix::open(repository_root).map_err(|error| format!("打开 Git 仓库失败：{error}"))?;
     let index = repository
         .index_or_empty()
         .map_err(|error| format!("读取 Git 索引失败：{error}"))?;
@@ -626,7 +634,8 @@ pub(super) fn read_git_revision_text(
     object_spec: &str,
 ) -> Result<Option<String>, String> {
     // 通过 gix 解析修订规格（如 `HEAD:path`）并读取 blob 内容（等价于 `git cat-file -p <spec>`），避免依赖系统安装的 git。
-    let repository = gix::open(repository_root).map_err(|error| format!("打开 Git 仓库失败：{error}"))?;
+    let repository =
+        gix::open(repository_root).map_err(|error| format!("打开 Git 仓库失败：{error}"))?;
     let object_id = match repository.rev_parse_single(object_spec) {
         Ok(id) => id,
         Err(_) => return Ok(None),
@@ -714,7 +723,8 @@ fn write_worktree_blob(
         .map_err(|error| format!("读取文件元数据失败：{error}"))?;
     let bytes = if metadata.file_type().is_symlink() {
         // 符号链接：blob 内容即链接目标（使用正斜杠，匹配 Git 存储约定）。
-        let target = fs::read_link(absolute_path).map_err(|error| format!("读取符号链接失败：{error}"))?;
+        let target =
+            fs::read_link(absolute_path).map_err(|error| format!("读取符号链接失败：{error}"))?;
         target.to_string_lossy().replace('\\', "/").into_bytes()
     } else {
         fs::read(absolute_path).map_err(|error| format!("读取工作区文件失败：{error}"))?
@@ -885,7 +895,9 @@ fn build_tree_from_selected_index_paths(
 
     // 精确给出的 pathspec 即使索引中已不存在（已暂存删除）也需处理。
     for pathspec in pathspecs {
-        let covered = index_paths.iter().any(|path| pathspec_matches(pathspec, path));
+        let covered = index_paths
+            .iter()
+            .any(|path| pathspec_matches(pathspec, path));
         if !covered {
             targets.insert(pathspec.clone());
         }
@@ -950,7 +962,13 @@ mod tests {
 
     #[test]
     fn pathspec_matches_nested_directory_boundary() {
-        assert!(pathspec_matches("src/components", "src/components/Button.vue"));
-        assert!(!pathspec_matches("src/components", "src/components-old/Button.vue"));
+        assert!(pathspec_matches(
+            "src/components",
+            "src/components/Button.vue"
+        ));
+        assert!(!pathspec_matches(
+            "src/components",
+            "src/components-old/Button.vue"
+        ));
     }
 }

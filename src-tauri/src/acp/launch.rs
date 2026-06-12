@@ -54,10 +54,7 @@ pub fn build_acp_client_config() -> Result<AcpClientConfig, String> {
 /// 冷启动更快更稳);不存在时回退 `tsx + src/acp/stdio-entry.ts`,保持开发态与未构建
 /// 场景可用。均使用绝对路径(SDK 不设 cwd)。
 fn resolve_entry_args(sidecar_root: &Path) -> Result<Vec<String>, String> {
-    let compiled = sidecar_root
-        .join("dist")
-        .join("acp")
-        .join("stdio-entry.js");
+    let compiled = sidecar_root.join("dist").join("acp").join("stdio-entry.js");
     if compiled.is_file() {
         return Ok(vec![path_to_string(&compiled)]);
     }
@@ -67,10 +64,7 @@ fn resolve_entry_args(sidecar_root: &Path) -> Result<Vec<String>, String> {
         .join("tsx")
         .join("dist")
         .join("cli.mjs");
-    let entry = sidecar_root
-        .join("src")
-        .join("acp")
-        .join("stdio-entry.ts");
+    let entry = sidecar_root.join("src").join("acp").join("stdio-entry.ts");
 
     if !tsx_cli.is_file() {
         return Err(format!(
@@ -359,12 +353,18 @@ mod tests {
     fn find_dotenv_value_returns_none_for_missing_or_empty() {
         assert_eq!(find_dotenv_value("OTHER=x", "TAVILY_API_KEY"), None);
         assert_eq!(find_dotenv_value("TAVILY_API_KEY=", "TAVILY_API_KEY"), None);
-        assert_eq!(find_dotenv_value("TAVILY_API_KEY=   ", "TAVILY_API_KEY"), None);
+        assert_eq!(
+            find_dotenv_value("TAVILY_API_KEY=   ", "TAVILY_API_KEY"),
+            None
+        );
     }
 
     #[test]
     fn non_empty_string_trims_and_rejects_blank() {
-        assert_eq!(non_empty_string("  value  ".to_string()).as_deref(), Some("value"));
+        assert_eq!(
+            non_empty_string("  value  ".to_string()).as_deref(),
+            Some("value")
+        );
         assert_eq!(non_empty_string("   ".to_string()), None);
         assert_eq!(non_empty_string(String::new()), None);
     }
@@ -372,10 +372,7 @@ mod tests {
     #[test]
     fn path_to_string_roundtrips_simple_path() {
         let path = PathBuf::from("dist").join("acp").join("stdio-entry.js");
-        assert_eq!(
-            path_to_string(&path),
-            path.to_string_lossy().into_owned()
-        );
+        assert_eq!(path_to_string(&path), path.to_string_lossy().into_owned());
     }
 
     #[cfg(windows)]

@@ -396,12 +396,10 @@ fn resolve_git_workspace_root(workspace_root_path: Option<String>) -> Result<Pat
 fn resolve_head_commit(repository: &Repository) -> Result<Option<gix::Commit<'_>>, String> {
     match repository.head_commit() {
         Ok(commit) => Ok(Some(commit)),
-        Err(error) => {
-            match repository.head() {
-                Ok(head) if head.id().is_none() => Ok(None),
-                _ => Err(format!("读取 Git HEAD 提交失败：{error}")),
-            }
-        }
+        Err(error) => match repository.head() {
+            Ok(head) if head.id().is_none() => Ok(None),
+            _ => Err(format!("读取 Git HEAD 提交失败：{error}")),
+        },
     }
 }
 

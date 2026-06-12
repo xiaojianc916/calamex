@@ -606,7 +606,9 @@ fn collect_workspace_symbols(
     Ok((flattened, refreshed_cache))
 }
 
-fn flatten_symbol_batches(mut per_file_symbols: Vec<(usize, Vec<SymbolEntry>)>) -> Vec<SymbolEntry> {
+fn flatten_symbol_batches(
+    mut per_file_symbols: Vec<(usize, Vec<SymbolEntry>)>,
+) -> Vec<SymbolEntry> {
     per_file_symbols.sort_by_key(|(index, _)| *index);
     per_file_symbols
         .into_iter()
@@ -806,7 +808,8 @@ mod tests {
         let file = root.join("script.sh");
         fs::write(&file, "echo hi\n").expect("应写入测试文件");
 
-        let files = refresh_workspace_files(&root, &[], vec![file.clone()]).expect("应增量添加文件");
+        let files =
+            refresh_workspace_files(&root, &[], vec![file.clone()]).expect("应增量添加文件");
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].relative_path, "script.sh");
 
@@ -835,8 +838,7 @@ mod tests {
 
     #[test]
     fn collect_symbols_walks_named_nodes_in_dfs_preorder() {
-        let source =
-            "#!/bin/bash\nouter() {\n  inner() {\n    echo hi\n  }\n  inner\n}\nsibling() {\n  echo bye\n}\n";
+        let source = "#!/bin/bash\nouter() {\n  inner() {\n    echo hi\n  }\n  inner\n}\nsibling() {\n  echo bye\n}\n";
         let mut parser = Parser::new();
         parser
             .set_language(&tree_sitter_bash::LANGUAGE.into())
@@ -909,8 +911,10 @@ mod tests {
             name: "script.sh".to_string(),
         };
         let mut cached = collect_symbols_from_file(&file, None).expect("应解析初始符号");
-        cached.fingerprint.modified_nanos =
-            cached.fingerprint.modified_nanos.map(|modified| modified.saturating_sub(1));
+        cached.fingerprint.modified_nanos = cached
+            .fingerprint
+            .modified_nanos
+            .map(|modified| modified.saturating_sub(1));
         cached.symbols = vec![symbol("script.sh", "hash_reused", 7)];
 
         let reused = collect_symbols_from_file(&file, Some(&cached)).expect("应按 hash 复用缓存");
@@ -928,7 +932,10 @@ mod tests {
     fn flatten_symbol_batches_preserves_file_and_dfs_order() {
         let collected: Vec<String> = flatten_symbol_batches(vec![
             (2usize, vec![symbol("c.sh", "third", 1)]),
-            (0usize, vec![symbol("a.sh", "first", 1), symbol("a.sh", "second", 2)]),
+            (
+                0usize,
+                vec![symbol("a.sh", "first", 1), symbol("a.sh", "second", 2)],
+            ),
         ])
         .into_iter()
         .map(|symbol| symbol.name)

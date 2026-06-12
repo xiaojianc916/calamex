@@ -17,7 +17,8 @@ use replace::{
     build_replacement_preview_payload, build_replacement_previews, select_replacement_edits,
 };
 use scan::{
-    build_path_filters, resolve_existing_workspace_file, scan_workspace_files, scanned_file_from_path,
+    build_path_filters, resolve_existing_workspace_file, scan_workspace_files,
+    scanned_file_from_path,
 };
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -282,6 +283,10 @@ pub fn apply_workspace_replacement(
 /// 完全在后台线程执行且吞掉所有错误：预热是纯优化，失败时下一次真正搜索会照常按需构建，
 /// 不影响工作区打开流程或向用户报错。通过 resolve_workspace_root 复用与 search_workspace
 /// 完全一致的根解析逻辑，确保预热写入的缓存键与后续搜索查找的键完全一致。
+#[allow(
+    dead_code,
+    reason = "reserved workspace search prewarm entrypoint; currently unused by the Rust call graph"
+)]
 pub fn prewarm_workspace_search_index(workspace_root_path: String) {
     std::thread::Builder::new()
         .name("search-index-prewarm".into())
@@ -321,10 +326,8 @@ mod tests {
             .expect("系统时间应晚于 Unix epoch")
             .as_nanos();
 
-        let root = env::temp_dir().join(format!(
-            "calamex-search-{name}-{}-{suffix}",
-            process::id()
-        ));
+        let root =
+            env::temp_dir().join(format!("calamex-search-{name}-{}-{suffix}", process::id()));
         fs::create_dir_all(&root).expect("应能创建测试工作区");
         root.canonicalize().expect("应能解析测试工作区")
     }
@@ -374,7 +377,9 @@ mod tests {
     }
 
     fn cleanup_workspace(root: PathBuf) {
-        if let Some(caches) = WORKSPACE_FILE_CACHES.get() && let Ok(mut guard) = caches.lock() {
+        if let Some(caches) = WORKSPACE_FILE_CACHES.get()
+            && let Ok(mut guard) = caches.lock()
+        {
             guard.remove(&root.to_string_lossy().to_string());
         }
         let _ = fs::remove_dir_all(root);
@@ -593,18 +598,24 @@ mod tests {
         )
         .expect("应能搜索工作区");
 
-        assert!(payload
-            .results
-            .iter()
-            .any(|result| result.path == script.to_string_lossy()));
-        assert!(!payload
-            .results
-            .iter()
-            .any(|result| result.relative_path.starts_with(".git/")));
-        assert!(!payload
-            .results
-            .iter()
-            .any(|result| result.relative_path == "asset.png"));
+        assert!(
+            payload
+                .results
+                .iter()
+                .any(|result| result.path == script.to_string_lossy())
+        );
+        assert!(
+            !payload
+                .results
+                .iter()
+                .any(|result| result.relative_path.starts_with(".git/"))
+        );
+        assert!(
+            !payload
+                .results
+                .iter()
+                .any(|result| result.relative_path == "asset.png")
+        );
 
         cleanup_workspace(root);
     }
@@ -615,7 +626,8 @@ mod tests {
         let file = write_workspace_file(&root, "script.sh", "foo 1\nfoo 2\nbar 3\n");
         let request = replacement_request(&root, "foo $A", "baz $A", false, true);
 
-        let preview = preview_workspace_replacement(request.clone()).expect("应能生成结构化替换预览");
+        let preview =
+            preview_workspace_replacement(request.clone()).expect("应能生成结构化替换预览");
         assert_eq!(preview.file_count, 1);
         assert_eq!(preview.replacement_count, 2);
 

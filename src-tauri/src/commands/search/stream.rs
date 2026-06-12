@@ -167,7 +167,9 @@ mod tests {
     }
 
     fn batch(n: usize) -> Vec<WorkspaceSearchResult> {
-        (0..n).map(|i| content_result(&format!("f{i}.sh"))).collect()
+        (0..n)
+            .map(|i| content_result(&format!("f{i}.sh")))
+            .collect()
     }
 
     #[test]

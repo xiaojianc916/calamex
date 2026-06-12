@@ -27,7 +27,8 @@ pub fn get_git_diff_preview(
     let relative_path_text = path_to_forward_slashes(&relative_path);
 
     let content_pair = build_git_diff_content_pair(&repository_root, &relative_path, mode)?;
-    let is_empty = content_pair.original_content.replace('\r', "") == content_pair.modified_content.replace('\r', "");
+    let is_empty = content_pair.original_content.replace('\r', "")
+        == content_pair.modified_content.replace('\r', "");
 
     let mode_label = match mode {
         GitDiffMode::Staged => "已暂存",

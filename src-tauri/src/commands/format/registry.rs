@@ -173,7 +173,10 @@ mod tests {
     #[test]
     fn resolves_default_formatter_per_language() {
         assert_eq!(resolve_external_formatter("shell").unwrap().id, "shfmt");
-        assert_eq!(resolve_external_formatter("typescript").unwrap().id, "biome");
+        assert_eq!(
+            resolve_external_formatter("typescript").unwrap().id,
+            "biome"
+        );
         assert_eq!(resolve_external_formatter("json").unwrap().id, "biome");
         assert_eq!(resolve_external_formatter("css").unwrap().id, "prettier");
         assert_eq!(resolve_external_formatter("vue").unwrap().id, "prettier");
@@ -193,6 +196,9 @@ mod tests {
             "src/app.ts"
         );
         assert_eq!(effective_file_name(None, spec.synthetic_ext), "stdin.ts");
-        assert_eq!(effective_file_name(Some("   "), spec.synthetic_ext), "stdin.ts");
+        assert_eq!(
+            effective_file_name(Some("   "), spec.synthetic_ext),
+            "stdin.ts"
+        );
     }
 }

@@ -1,11 +1,11 @@
-use super::*;
-use crate::agent_sidecar;
-use crate::ai::provider::{AiProviderInputTokenDetails, AiProviderOutputTokenDetails};
-use crate::commands::contracts::{AgentSidecarChatRequest, AgentSidecarMessagePayload};
 use super::prompt::{
     build_context_block, build_conversation_title_prompt, build_identity_system_message,
     build_inline_prompt, clip_title_source,
 };
+use super::*;
+use crate::agent_sidecar;
+use crate::ai::provider::{AiProviderInputTokenDetails, AiProviderOutputTokenDetails};
+use crate::commands::contracts::{AgentSidecarChatRequest, AgentSidecarMessagePayload};
 
 fn to_sidecar_message_payloads(
     messages: Vec<AiProviderMessage>,
@@ -162,9 +162,12 @@ pub async fn generate_conversation_title(
         thread_id: None,
     };
     #[cfg(feature = "acp_client")]
-    let sidecar_response =
-        run_model_chat_via_acp(app, request_payload, agent_sidecar::narrator_sidecar_model_config()?)
-            .await?;
+    let sidecar_response = run_model_chat_via_acp(
+        app,
+        request_payload,
+        agent_sidecar::narrator_sidecar_model_config()?,
+    )
+    .await?;
     #[cfg(not(feature = "acp_client"))]
     let sidecar_response = {
         let _ = app;
@@ -452,9 +455,12 @@ pub async fn inline_complete(
         thread_id: None,
     };
     #[cfg(feature = "acp_client")]
-    let response =
-        run_model_chat_via_acp(app, request_payload, agent_sidecar::current_sidecar_model_config()?)
-            .await?;
+    let response = run_model_chat_via_acp(
+        app,
+        request_payload,
+        agent_sidecar::current_sidecar_model_config()?,
+    )
+    .await?;
     #[cfg(not(feature = "acp_client"))]
     let response = {
         let _ = app;
@@ -631,7 +637,6 @@ fn emit_stream_event(app: &AppHandle, payload: AiChatStreamEventPayload) {
         let _ = window.emit("ai:chat-stream", payload);
     }
 }
-
 
 #[cfg(test)]
 mod tests {

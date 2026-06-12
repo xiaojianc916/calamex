@@ -20,9 +20,7 @@ pub use client::{
 };
 
 #[allow(unused_imports)]
-pub use approval::{
-    ApprovalError, ApprovalOptionInfo, ApprovalRegistry, ApprovalRequestInfo,
-};
+pub use approval::{ApprovalError, ApprovalOptionInfo, ApprovalRegistry, ApprovalRequestInfo};
 
 #[allow(unused_imports)]
 pub use launch::build_acp_client_config;

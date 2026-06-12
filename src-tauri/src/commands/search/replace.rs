@@ -296,9 +296,7 @@ fn build_budgeted_replacement_diff(
     after_content: &str,
     replacement_count: usize,
 ) -> (String, bool) {
-    let total_input_bytes = before_content
-        .len()
-        .saturating_add(after_content.len());
+    let total_input_bytes = before_content.len().saturating_add(after_content.len());
     if total_input_bytes > MAX_REPLACEMENT_DIFF_INPUT_BYTES
         || replacement_count > MAX_REPLACEMENT_DIFF_EDIT_COUNT
     {

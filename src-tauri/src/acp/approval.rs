@@ -260,11 +260,7 @@ fn decide(options: &[ResolvedOption], decision: &str) -> PermissionDecision {
 }
 
 /// 在一个语义族（allow / reject）内选项：先精确匹配首选 kind，再同族兜底，仍无则取消。
-fn select_in_family(
-    options: &[ResolvedOption],
-    allow: bool,
-    remember: bool,
-) -> PermissionDecision {
+fn select_in_family(options: &[ResolvedOption], allow: bool, remember: bool) -> PermissionDecision {
     let preferred = match (allow, remember) {
         (true, false) => PermissionOptionKind::AllowOnce,
         (true, true) => PermissionOptionKind::AllowAlways,
@@ -343,7 +339,10 @@ mod tests {
     #[test]
     fn decide_matches_option_id_verbatim() {
         // sidecar optionId 即 decision 线值：逐字命中（Zed 做法）。
-        assert_eq!(selected(decide(&sidecar_options(), "allow-once")), "allow-once");
+        assert_eq!(
+            selected(decide(&sidecar_options(), "allow-once")),
+            "allow-once"
+        );
         assert_eq!(
             selected(decide(&sidecar_options(), "reject-once")),
             "reject-once"
@@ -393,7 +392,10 @@ mod tests {
         assert_eq!(kind_wire(PermissionOptionKind::AllowOnce), "allow_once");
         assert_eq!(kind_wire(PermissionOptionKind::AllowAlways), "allow_always");
         assert_eq!(kind_wire(PermissionOptionKind::RejectOnce), "reject_once");
-        assert_eq!(kind_wire(PermissionOptionKind::RejectAlways), "reject_always");
+        assert_eq!(
+            kind_wire(PermissionOptionKind::RejectAlways),
+            "reject_always"
+        );
     }
 
     #[test]

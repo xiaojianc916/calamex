@@ -18,9 +18,10 @@ use super::events::{
     next_terminal_data_seq, next_terminal_run_chunk_seq, sanitize_terminal_run_chunk,
 };
 use super::state::{
-    ActiveRunInputTarget, TerminalSessionState, active_terminal_run_count, append_terminal_snapshot,
-    buffer_pending_switch_input, clear_active_terminal_run, get_active_terminal_run_input_target,
-    get_terminal_snapshot, mark_terminal_resize_repaint_suppression, set_terminal_snapshot,
+    ActiveRunInputTarget, TerminalSessionState, active_terminal_run_count,
+    append_terminal_snapshot, buffer_pending_switch_input, clear_active_terminal_run,
+    get_active_terminal_run_input_target, get_terminal_snapshot,
+    mark_terminal_resize_repaint_suppression, set_terminal_snapshot,
     should_skip_snapshot_for_interactive_resize_repaint, take_active_terminal_run_for_session,
     take_and_prepend_pending_switch_input, try_mark_active_terminal_run,
 };
