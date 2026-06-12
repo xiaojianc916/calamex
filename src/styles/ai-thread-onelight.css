@@ -1,0 +1,45 @@
+/* ============================================================
+ * Zed "One Light" palette — scoped to AI assistant message UI
+ * ============================================================
+ *
+ * 目标:把 AI 助手发送的消息(正文 / 推理 / 工具调用)逐像素对齐 Zed 的
+ * Agent 回复界面。本文件只在 `.ai-thread-onelight` 作用域内覆盖底层原子
+ * design token;用户消息、输入框与其它工作台面板完全不受影响。
+ *
+ * 所有色值逐字摘自 zed-industries/zed:assets/themes/one/one.json 中的
+ * "One Light" 主题(去掉尾部 alpha 的 ff)。语义 token(--foreground、
+ * --muted-foreground、--border、--primary 以及 Tailwind 的 --color-*)
+ * 均通过各自的 var() 链在使用处惰性解析,因此此处只需覆盖原子层。
+ *
+ * 仅亮色:深色(One Dark)作用域留待后续提交。
+ * 可逆:从 styles.css 移除 @import 并去掉 `ai-thread-onelight` 类即可还原。
+ */
+
+.light .ai-thread-onelight,
+[data-theme='light'] .ai-thread-onelight {
+  /* 文本 */
+  --text-primary: #242529; /* text */
+  --text-secondary: #58585a; /* text.muted */
+  --text-tertiary: #7e8086; /* text.placeholder */
+  --text-quaternary: #7e8086; /* text.disabled */
+
+  /* 描边 / 分隔线 */
+  --border-subtle: #dfdfe0; /* border.variant */
+  --border-strong: #c9c9ca; /* border */
+  --shell-divider: #c9c9ca; /* border */
+
+  /* 面 / 填充 */
+  --surface-soft: #ebebec; /* surface.background / element.background */
+  --surface-soft-strong: #cacaca; /* element.active */
+  --surface-hover: #dfdfe0; /* element.hover */
+
+  /* 强调色 */
+  --accent: #5c78e2; /* text.accent */
+  --accent-strong: #5c78e2;
+  --accent-muted: #e2e2fa; /* info.background */
+
+  /* 状态色 */
+  --success: #669f59; /* success */
+  --warning: #a48819; /* warning */
+  --danger: #d36151; /* error */
+}

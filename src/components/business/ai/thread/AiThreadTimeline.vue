@@ -69,9 +69,22 @@ const shouldAddUserReplyGap = (entry: TAiThreadEntry, index: number): boolean =>
   return previousEntry?.kind === 'user-message' && entry.kind !== 'user-message';
 };
 
+// 仅 AI 助手发送的消息条目(正文 / 推理 / 工具调用)注入 Zed One Light 调色板,
+// 经由 `ai-thread-onelight` 作用域类局部覆盖 design token;用户消息与其它面板
+// 不受影响。语义 token(--foreground、--muted-foreground、Tailwind --color-* 等)
+// 通过各自的 var() 链在作用域内惰性解析,故此处只需标注作用域,无需逐组件改动。
+const ASSISTANT_MESSAGE_KINDS: ReadonlySet<TAiThreadEntry['kind']> = new Set([
+  'assistant-text',
+  'reasoning',
+  'tool-call',
+]);
+
 const entryClass = (entry: TAiThreadEntry, index: number) => [
   'ai-thread-timeline__entry',
-  { 'ai-thread-timeline__entry--after-user': shouldAddUserReplyGap(entry, index) },
+  {
+    'ai-thread-timeline__entry--after-user': shouldAddUserReplyGap(entry, index),
+    'ai-thread-onelight': ASSISTANT_MESSAGE_KINDS.has(entry.kind),
+  },
 ];
 </script>
 
