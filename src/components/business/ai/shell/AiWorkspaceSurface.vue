@@ -203,7 +203,7 @@ onBeforeUnmount(() => {
         </section>
 
         <aside
-          class="ai-workspace-right-sidebar shrink-0 overflow-hidden border-l bg-white"
+          class="ai-workspace-right-sidebar shrink-0 overflow-hidden bg-white"
           :class="{ 'ai-workspace-right-sidebar--resizing': isResizingSidebar }"
           :style="rightSidebarStyle"
         >
@@ -244,7 +244,6 @@ onBeforeUnmount(() => {
 .ai-workspace-right-sidebar {
   position: relative;
   min-width: 0;
-  border-left-color: var(--border-subtle);
   transition: width 160ms ease;
 }
 
@@ -269,7 +268,7 @@ onBeforeUnmount(() => {
   bottom: 0;
   left: 50%;
   width: 1px;
-  background: var(--border-subtle);
+  background: #eceef2;
   transform: translateX(-50%);
   transition: background-color 120ms ease, width 120ms ease;
 }
