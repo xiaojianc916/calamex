@@ -306,6 +306,7 @@ import type {
   IHighlightedSegment,
   IReplacementFileView,
   IReplacementLineView,
+  ISearchMatcher,
   ISearchResultGroup,
   ISearchResultItem,
   TSearchToggleOption,
@@ -316,6 +317,7 @@ import {
   createSearchMatcher,
   getFileName,
   getParentPath,
+  singleMatchRange,
   splitPatternList,
   toggleReadonlySetValue,
   trimBoundaryWhitespace,
@@ -345,6 +347,8 @@ const SEARCH_DEBOUNCE_MS = 180;
 // 50000，这里前端上限与之对齐。结果再多也由虚拟滚动 + 惰性高亮分段承接，不会一次性预处理全部。
 const SEARCH_RESULT_LIMIT = 50000;
 const SEARCH_RESULT_CONTEXT_CHARS = 28;
+// 替换预览每行首/尾公共片段保留的上下文字符数，超出部分用省略号收拢（省略号只在最外侧）。
+const REPLACEMENT_PREVIEW_CONTEXT_CHARS = 24;
 const REPLACEMENT_FILE_LIMIT = 200;
 const SEARCH_VIRTUALIZE_THRESHOLD = 100;
 const SEARCH_GROUP_ROW_HEIGHT = 28;
@@ -615,23 +619,32 @@ const canApplyReplacement = computed(
     Boolean(props.workspaceRootPath),
 );
 
-const toReplacementLineView = (line: IWorkspaceReplacementLinePreview): IReplacementLineView => {
+const toReplacementLineView = (
+  line: IWorkspaceReplacementLinePreview,
+  activeMatcher: ISearchMatcher,
+): IReplacementLineView => {
   const beforeLine = trimBoundaryWhitespace(line.beforeLine);
   const afterLine = trimBoundaryWhitespace(line.afterLine);
   return {
     ...line,
     beforeLine,
     afterLine,
-    segments: buildReplacementLineSegments(beforeLine, afterLine),
+    // 用当前查询的唯一命中区间标注完整的被替换 token（如 23→24，而非最小字符 diff 的 3→4），
+    // 并按上下文窗口把过长的首尾收拢、省略号置于最外侧。
+    segments: buildReplacementLineSegments(beforeLine, afterLine, {
+      matchRange: singleMatchRange(activeMatcher, beforeLine),
+      contextSize: REPLACEMENT_PREVIEW_CONTEXT_CHARS,
+    }),
   };
 };
 
 const toReplacementFileView = (
   file: IWorkspaceReplacementFilePreview,
+  activeMatcher: ISearchMatcher,
 ): IReplacementFileView | null => {
   const visibleLinePreviews = file.linePreviews
     .filter((line) => !skippedReplacementLineIds.value.has(line.id))
-    .map(toReplacementLineView);
+    .map((line) => toReplacementLineView(line, activeMatcher));
   if (visibleLinePreviews.length === 0) return null;
   return {
     ...file,
@@ -648,8 +661,9 @@ const toReplacementFileView = (
 const visibleReplacementFiles = computed<IReplacementFileView[]>(() => {
   const preview = replacementPreview.value;
   if (!preview) return [];
+  const activeMatcher = matcher.value;
   return preview.files
-    .map(toReplacementFileView)
+    .map((file) => toReplacementFileView(file, activeMatcher))
     .filter((file): file is IReplacementFileView => Boolean(file));
 });
 
