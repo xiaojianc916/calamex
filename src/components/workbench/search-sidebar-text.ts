@@ -268,11 +268,7 @@ const isUsableMatchRange = (
 // 将首/尾公共片段收拢到给定上下文长度内，并把省略号放到最外侧：
 // 前缀保留末尾 contextSize 个字符并在最前加省略号；后缀保留开头 contextSize
 // 个字符并在最后加省略号。长度未超出或 contextSize<=0 时原样返回。
-const windowEdgeText = (
-  text: string,
-  side: 'prefix' | 'suffix',
-  contextSize: number,
-): string => {
+const windowEdgeText = (text: string, side: 'prefix' | 'suffix', contextSize: number): string => {
   if (contextSize <= 0) {
     return text;
   }
@@ -342,9 +338,7 @@ export const buildReplacementLineSegments = (
     removedText = beforeCharacters
       .slice(prefixLength, beforeCharacters.length - suffixLength)
       .join('');
-    addedText = afterCharacters
-      .slice(prefixLength, afterCharacters.length - suffixLength)
-      .join('');
+    addedText = afterCharacters.slice(prefixLength, afterCharacters.length - suffixLength).join('');
     suffixText = beforeCharacters.slice(beforeCharacters.length - suffixLength).join('');
   }
 

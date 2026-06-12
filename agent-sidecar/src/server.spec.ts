@@ -4865,7 +4865,7 @@ describe('Agent sidecar protocol golden tests', () => {
         mcp?: { configuredServers: unknown; serverNames: unknown; errors: unknown };
       };
 
-      assert.equal(payload.ok, true);
+      assert.equal(payload.ok, true); 
       assert.equal(payload.status, 'ready');
       assert.equal(payload.engine, 'fake-runtime');
       assert.equal(payload.version, 'test-version');
