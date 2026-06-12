@@ -63,6 +63,8 @@ pub fn stage_git_paths(
     if pathspecs.is_empty() {
         return build_git_repository_status_payload(&repository);
     }
+    let exact_pathspecs: std::collections::HashSet<&str> =
+        pathspecs.iter().map(String::as_str).collect();
 
     // 通过 gix 计算当前状态，得到所有可暂存的变更文件（已遵循 .gitignore），
     // 避免依赖系统安装的 git（等价 `git add -- <pathspec>`）。
@@ -71,9 +73,10 @@ pub fn stage_git_paths(
     let mut changed = false;
     for file in &status.files {
         let rel = file.relative_path.as_str();
-        if !pathspecs
-            .iter()
-            .any(|pathspec| pathspec_matches(pathspec, rel))
+        if !exact_pathspecs.contains(rel)
+            && !pathspecs
+                .iter()
+                .any(|pathspec| pathspec_matches(pathspec, rel))
         {
             continue;
         }
@@ -120,6 +123,8 @@ pub fn unstage_git_paths(
     if pathspecs.is_empty() {
         return build_git_repository_status_payload(&repository);
     }
+    let exact_pathspecs: std::collections::HashSet<&str> =
+        pathspecs.iter().map(String::as_str).collect();
 
     let mut index = open_mut_index_or_empty(&repository)?;
 
@@ -128,9 +133,10 @@ pub fn unstage_git_paths(
     let mut targets: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for entry in index.entries() {
         let entry_path = entry.path(&index).to_str_lossy().into_owned();
-        if pathspecs
-            .iter()
-            .any(|pathspec| pathspec_matches(pathspec, &entry_path))
+        if exact_pathspecs.contains(entry_path.as_str())
+            || pathspecs
+                .iter()
+                .any(|pathspec| pathspec_matches(pathspec, &entry_path))
         {
             targets.insert(entry_path);
         }

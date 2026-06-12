@@ -27,8 +27,7 @@ pub fn get_git_diff_preview(
     let relative_path_text = path_to_forward_slashes(&relative_path);
 
     let content_pair = build_git_diff_content_pair(&repository_root, &relative_path, mode)?;
-    let is_empty = content_pair.original_content.replace('\r', "")
-        == content_pair.modified_content.replace('\r', "");
+    let is_empty = are_text_contents_equal_ignoring_cr(&content_pair.original_content, &content_pair.modified_content);
 
     let mode_label = match mode {
         GitDiffMode::Staged => "已暂存",
@@ -207,7 +206,7 @@ pub fn get_git_commit_file_diff_preview(
 
     let original_content = old_content_opt.unwrap_or_default();
     let modified_content = new_content_opt.unwrap_or_default();
-    let is_empty = original_content.replace('\r', "") == modified_content.replace('\r', "");
+    let is_empty = are_text_contents_equal_ignoring_cr(&original_content, &modified_content);
 
     let short = &commit_id[..commit_id.len().min(7)];
 
@@ -230,6 +229,12 @@ pub fn get_git_commit_file_diff_preview(
         modified_content,
         is_empty,
     })
+}
+
+fn are_text_contents_equal_ignoring_cr(left: &str, right: &str) -> bool {
+    left.bytes()
+        .filter(|byte| *byte != b'\r')
+        .eq(right.bytes().filter(|byte| *byte != b'\r'))
 }
 
 pub(super) fn parse_git_diff_mode(value: &str) -> Result<GitDiffMode, String> {

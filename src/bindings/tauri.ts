@@ -135,6 +135,21 @@ export const commands = {
 	agentWebviewSetVisible: (input: AgentWebviewVisibleInput, traceId: string | null) => __TAURI_INVOKE<null>("agent_webview_set_visible", { input, traceId }),
 	/**  导航到新 URL(地址栏 / 前进后退用)。 */
 	agentWebviewNavigate: (input: AgentWebviewNavigateInput, traceId: string | null) => __TAURI_INVOKE<null>("agent_webview_navigate", { input, traceId }),
+	/**
+	 *  后退一步(地址栏后退按钮)。
+	 *  CDP 化之前先用宿主级 `eval` 调用标准 History API:`eval` 对跨域外部页同样生效,
+	 *  零新依赖即可让按钮即时可用。canGoBack/canGoForward 的禁用态留待 CDP 阶段补齐。
+	 */
+	agentWebviewBack: (traceId: string | null) => __TAURI_INVOKE<null>("agent_webview_back", { traceId }),
+	/**  前进一步(地址栏前进按钮)。 */
+	agentWebviewForward: (traceId: string | null) => __TAURI_INVOKE<null>("agent_webview_forward", { traceId }),
+	/**  刷新当前页(替代前端 refreshKey 重建,直接命中原生页)。 */
+	agentWebviewReload: (traceId: string | null) => __TAURI_INVOKE<null>("agent_webview_reload", { traceId }),
+	/**
+	 *  在系统默认浏览器中打开指定 URL(官方 tauri-plugin-opener;从 Rust 侧调用,无需额外前端授权)。
+	 *  与原生承载无关,不门控在 native_webview 之下。
+	 */
+	agentWebviewOpenExternal: (input: AgentWebviewNavigateInput, traceId: string | null) => __TAURI_INVOKE<null>("agent_webview_open_external", { input, traceId }),
 	/**  销毁子 webview(整步可逆:关闭即回到无原生承载状态)。幂等:不存在则视作成功。 */
 	agentWebviewDestroy: (traceId: string | null) => __TAURI_INVOKE<null>("agent_webview_destroy", { traceId }),
 	aiGetConfig: () => __TAURI_INVOKE<AiConfigPayload>("ai_get_config"),

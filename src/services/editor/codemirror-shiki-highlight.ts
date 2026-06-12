@@ -31,18 +31,18 @@ const MAX_HIGHLIGHT_SLICE_LENGTH = 200_000;
 // 同步着色的切片字节上限：语法已在主线程加载、且可见区窗口切片不超过此值时，
 // 直接在主线程 tokenize 并即时着色。取值远小于 Worker 切片上限，保证单帧同步
 // tokenize 的耗时可控（可见区窗口仅几百行，典型远小于此值）。超过则回退到 Worker。
-const MAX_SYNC_HIGHLIGHT_SLICE_LENGTH = 50_000;
+const MAX_SYNC_HIGHLIGHT_SLICE_LENGTH = 20_000;
 
 // 可见区下方额外着色的行数：平滑滚动时的下方衔接缓冲。取较大值以覆盖快速滚动
 // 单帧的跨度，减少滚动越界触发重算的频率，降低闪烁概率。
-const HIGHLIGHT_OVERSCAN_LINES = 120;
+const HIGHLIGHT_OVERSCAN_LINES = 48;
 
 // 同步着色时可见区上方的 lead-in 行数：不从文档开头切片时，从可见区上沿向上多取
 // 这些行作为语法状态的“启动上下文”，使块注释/heredoc/多行字符串等跨行结构在
 // 可见区配色尽量正确。取较大值以覆盖绝大多数现实代码的跨行跨度；极端超长跨行
 // 结构（距视口上千行的块注释）是专业编辑器靠“每行状态缓存”解决的罕见场景，
 // 此处以“零闪烁”为优先权衡，从文档开头的完全正确着色由 Worker 回退路径提供。
-const SYNC_HIGHLIGHT_LEAD_IN_LINES = 200;
+const SYNC_HIGHLIGHT_LEAD_IN_LINES = 80;
 
 // 输入停顿后过多久触发一次重算（毫秒）；过小会让连续输入仍频繁重算，过大高亮滞后明显。
 const HIGHLIGHT_RECOMPUTE_DEBOUNCE_MS = 90;
@@ -429,6 +429,16 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
       });
 
       if (action === 'recompute') {
+        if (update.viewportChanged && !languageChanged && !recomputeRequested) {
+          // 滚动必须优先保证 CodeMirror 的虚拟 DOM 首帧补齐。
+          // 旧逻辑会在 viewportChanged 的当前 update 内同步 Shiki tokenize，
+          // 几百行文件快速滚动时容易堵住渲染线程，表现为大片空白/延迟加载。
+          // 这里先用按行缓存立即重建已有装饰；新滚入区域的高亮延后一帧补齐。
+          this.renderViewportFromCache(update.view);
+          this.schedulePostPaintRecompute(update.view);
+          return;
+        }
+
         // 滚动（viewportChanged）此处同步重算，而非旧实现的 rAF 合帧：rAF 会让 CM 当帧先用
         // 旧装饰画出新滚出来的行（无色），下一帧才补色，造成每次滚动必现 1 帧露白闪烁。
         // 借助按行缓存，同步重算在命中缓存时仅重建装饰（极廉价），未命中也只同步 tokenize
