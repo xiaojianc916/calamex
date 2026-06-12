@@ -113,10 +113,11 @@ pub async fn agent_webview_create(
             return Ok(());
         }
 
-        let host = app
-            .get_webview_window(HOST_WINDOW_LABEL)
+        // WebviewWindow 没有公开的 window() 方法(window 是私有字段);
+        // 直接用 Manager::get_window(label) 拿宿主 Window 用于 add_child。
+        let window = app
+            .get_window(HOST_WINDOW_LABEL)
             .ok_or_else(|| format!("host window `{HOST_WINDOW_LABEL}` not found"))?;
-        let window = host.window();
 
         // 独立 user-data-folder -> 独立 WebView2 进程/环境 -> CDP 端口只开在该进程上,
         // 主 UI 进程没有调试端口,实现与主 UI 的硬隔离。
