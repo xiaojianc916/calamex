@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { PanelRight, RotateCw } from '@lucide/vue';
-import { ref } from 'vue';
+import { computed, onBeforeUnmount, ref } from 'vue';
 import AiAssistantPanel from '@/components/business/ai/shell/AiAssistantPanel.vue';
 import AiWebPreviewSidebar from '@/components/business/ai/shell/AiWebPreviewSidebar.vue';
 import { Card, CardContent } from '@/components/ui/card';
@@ -14,6 +14,10 @@ import type {
 } from '@/types/editor';
 import type { IGitDiffPreviewPayload, IGitRepositoryStatusPayload } from '@/types/git';
 import { toErrorMessage } from '@/utils/error';
+
+const DEFAULT_RIGHT_SIDEBAR_WIDTH = 480;
+const RIGHT_SIDEBAR_MIN_WIDTH = 360;
+const RIGHT_SIDEBAR_MAX_WIDTH = 720;
 
 defineProps<{
   document: IEditorDocument;
@@ -29,11 +33,54 @@ const emit = defineEmits<{
 }>();
 
 const isRightSidebarVisible = ref(false);
+const rightSidebarWidth = ref(DEFAULT_RIGHT_SIDEBAR_WIDTH);
+const isResizingSidebar = ref(false);
 const isRestartingSidecar = ref(false);
 const message = useMessage();
+let removeSidebarResizeListeners: (() => void) | null = null;
+
+const getViewportWidth = (): number => {
+  if (typeof window === 'undefined') {
+    return RIGHT_SIDEBAR_MAX_WIDTH;
+  }
+
+  return window.innerWidth || document.documentElement.clientWidth || RIGHT_SIDEBAR_MAX_WIDTH;
+};
+
+const clampRightSidebarWidth = (nextWidth: number): number => {
+  const viewportWidth = getViewportWidth();
+  const viewportLimitedMaxWidth = Math.round(viewportWidth * 0.8);
+  const maxWidth = Math.max(
+    RIGHT_SIDEBAR_MIN_WIDTH,
+    Math.min(RIGHT_SIDEBAR_MAX_WIDTH, viewportLimitedMaxWidth),
+  );
+
+  return Math.min(maxWidth, Math.max(RIGHT_SIDEBAR_MIN_WIDTH, Math.round(nextWidth)));
+};
+
+const rightSidebarStyle = computed(() => ({
+  width: isRightSidebarVisible.value ? `${rightSidebarWidth.value}px` : '0px',
+}));
+
+const clearSidebarResizeListeners = (): void => {
+  removeSidebarResizeListeners?.();
+  removeSidebarResizeListeners = null;
+};
+
+const stopRightSidebarResize = (): void => {
+  isResizingSidebar.value = false;
+  clearSidebarResizeListeners();
+};
 
 const toggleRightSidebar = (): void => {
   isRightSidebarVisible.value = !isRightSidebarVisible.value;
+
+  if (isRightSidebarVisible.value) {
+    rightSidebarWidth.value = clampRightSidebarWidth(rightSidebarWidth.value);
+    return;
+  }
+
+  stopRightSidebarResize();
 };
 
 const handleRestartSidecar = async (): Promise<void> => {
@@ -54,6 +101,35 @@ const handleRestartSidecar = async (): Promise<void> => {
     isRestartingSidecar.value = false;
   }
 };
+
+const startRightSidebarResize = (event: MouseEvent): void => {
+  if (!isRightSidebarVisible.value || event.button !== 0 || typeof window === 'undefined') {
+    return;
+  }
+
+  event.preventDefault();
+  isResizingSidebar.value = true;
+
+  const handleMouseMove = (moveEvent: MouseEvent): void => {
+    rightSidebarWidth.value = clampRightSidebarWidth(getViewportWidth() - moveEvent.clientX);
+  };
+
+  const handleMouseUp = (): void => {
+    stopRightSidebarResize();
+  };
+
+  window.addEventListener('mousemove', handleMouseMove);
+  window.addEventListener('mouseup', handleMouseUp, { once: true });
+
+  removeSidebarResizeListeners = () => {
+    window.removeEventListener('mousemove', handleMouseMove);
+    window.removeEventListener('mouseup', handleMouseUp);
+  };
+};
+
+onBeforeUnmount(() => {
+  stopRightSidebarResize();
+});
 </script>
 
 <template>
@@ -102,9 +178,16 @@ const handleRestartSidecar = async (): Promise<void> => {
         </section>
 
         <aside
-          class="ai-workspace-right-sidebar shrink-0 overflow-hidden border-l transition-[width] duration-300 ease-out"
-          :class="isRightSidebarVisible ? 'w-[320px]' : 'w-0'"
+          class="ai-workspace-right-sidebar shrink-0 overflow-hidden border-l bg-white"
+          :class="{ 'ai-workspace-right-sidebar--resizing': isResizingSidebar }"
+          :style="rightSidebarStyle"
         >
+          <div
+            v-if="isRightSidebarVisible"
+            class="ai-workspace-right-sidebar__resize-handle"
+            data-testid="ai-right-sidebar-resize-handle"
+            @mousedown="startRightSidebarResize"
+          />
           <div v-if="isRightSidebarVisible" class="ai-workspace-right-sidebar__inner">
             <AiWebPreviewSidebar class="min-h-0 flex-1" @close-sidebar="toggleRightSidebar" />
           </div>
@@ -134,16 +217,43 @@ const handleRestartSidecar = async (): Promise<void> => {
 }
 
 .ai-workspace-right-sidebar {
+  position: relative;
   min-width: 0;
   border-left-color: var(--border-subtle);
-  background: #ffffff;
+  transition: width 200ms ease;
+}
+
+.ai-workspace-right-sidebar--resizing {
+  transition: none;
+}
+
+.ai-workspace-right-sidebar__resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 2;
+  width: 8px;
+  cursor: col-resize;
+  transform: translateX(-50%);
+}
+
+.ai-workspace-right-sidebar__resize-handle::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  background: var(--border-subtle);
+  transform: translateX(-50%);
 }
 
 .ai-workspace-right-sidebar__inner {
   display: flex;
   position: relative;
   flex-direction: column;
-  width: 320px;
+  width: 100%;
   height: 100%;
   align-items: stretch;
   justify-content: flex-start;
