@@ -3,14 +3,13 @@ import { describe, expect, it } from 'vitest';
 import AiWebPreviewSidebar from '@/components/business/ai/shell/AiWebPreviewSidebar.vue';
 
 describe('AiWebPreviewSidebar', () => {
-  it('renders the default preview scaffold', () => {
+  it('renders the default empty preview scaffold', () => {
     const wrapper = mount(AiWebPreviewSidebar);
 
     expect(wrapper.get('[data-testid="ai-web-preview-sidebar"]').exists()).toBe(true);
     expect(wrapper.get('input').element).toBeInstanceOf(HTMLInputElement);
-    expect(wrapper.get('iframe').attributes('src')).toContain(
-      'preview-v0me-kzml7zc6fkcvbyhzrf47.vusercontent.net',
-    );
+    expect(wrapper.find('iframe').exists()).toBe(false);
+    expect(wrapper.text()).toContain('输入地址后即可在这里预览页面');
     expect(wrapper.get('[data-testid="web-preview-console"]').text()).toContain(
       'Page loaded successfully',
     );

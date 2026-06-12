@@ -54,6 +54,8 @@ withDefaults(
   flex: 1;
   flex-direction: column;
   overflow-x: hidden;
+  border: 1px solid var(--border-subtle);
+  border-right: 0;
   background: var(--ai-panel-frame-bg, var(--sidebar-bg));
   color: var(--text-primary);
 }

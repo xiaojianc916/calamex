@@ -19,7 +19,6 @@ import {
   type IWebPreviewConsoleLog,
 } from '@/components/ai-elements/web-preview';
 
-const DEFAULT_PREVIEW_URL = 'https://preview-v0me-kzml7zc6fkcvbyhzrf47.vusercontent.net/';
 const MAX_CONSOLE_LOGS = 20;
 
 const props = withDefaults(
@@ -27,7 +26,7 @@ const props = withDefaults(
     defaultUrl?: string;
   }>(),
   {
-    defaultUrl: DEFAULT_PREVIEW_URL,
+    defaultUrl: '',
   },
 );
 
