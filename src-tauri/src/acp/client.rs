@@ -30,7 +30,7 @@ use agent_client_protocol::schema::{
     CancelNotification, ContentBlock, InitializeRequest, NewSessionRequest, PermissionOptionId,
     PromptRequest, ProtocolVersion, RequestPermissionOutcome, RequestPermissionRequest,
     RequestPermissionResponse, SelectedPermissionOutcome, SessionId, SessionModeId,
-    SessionNotification, SetSessionModeRequest, StopReason, TextContent,
+    SessionNotification, SetSessionModeRequest, StopReason,
 };
 use agent_client_protocol::{
     AcpAgent, Agent, BoxFuture, Client, ConnectionTo, JsonRpcRequest, Responder,
@@ -229,7 +229,7 @@ enum Command {
     },
     Prompt {
         session_id: SessionId,
-        text: String,
+        blocks: Vec<ContentBlock>,
         reply: oneshot::Sender<Result<StopReason, String>>,
     },
     SetSessionMode {
@@ -286,16 +286,20 @@ impl AcpClientHandle {
     }
 
     /// 发送一轮 prompt,阻塞直到该回合结束,返回 `session/prompt` 的 stop_reason。
+    ///
+    /// 入参为已投影好的 ACP 内容块序列(用户文本 + 上下文引用),由接线层
+    /// `bridge::user_turn_to_content_blocks` 统一构造;本层只负责原样下发,不在此
+    /// 臆造内容块形态,对齐官方 `PromptRequest::new(session_id, blocks)`。
     pub async fn prompt(
         &self,
         session_id: SessionId,
-        text: String,
+        blocks: Vec<ContentBlock>,
     ) -> Result<StopReason, AcpClientError> {
         let (reply, rx) = oneshot::channel();
         self.cmd_tx
             .send(Command::Prompt {
                 session_id,
-                text,
+                blocks,
                 reply,
             })
             .map_err(|_| AcpClientError::NotRunning)?;
@@ -543,13 +547,10 @@ pub fn spawn_acp_client(
                         }
                         Command::Prompt {
                             session_id,
-                            text,
+                            blocks,
                             reply,
                         } => {
-                            let req = PromptRequest::new(
-                                session_id,
-                                vec![ContentBlock::Text(TextContent::new(text))],
-                            );
+                            let req = PromptRequest::new(session_id, blocks);
                             let res = cx.send_request(req).block_task().await;
                             let _ = reply
                                 .send(res.map(|r| r.stop_reason).map_err(|e| e.to_string()));

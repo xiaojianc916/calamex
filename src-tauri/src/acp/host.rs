@@ -142,7 +142,11 @@ impl AcpHost {
         }
 
         self.begin_turn(&session_key);
-        let prompt_result = self.handle.prompt(session_id, turn.prompt).await;
+        // 把本回合用户输入投影为 ACP prompt 内容块（经接线层 `bridge` 统一构造，
+        // 与 client 层「只下发、不臆造内容块形态」的分层一致）。本期上下文引用尚未
+        // 接入 `AcpChatTurn`（#6.2 接线轮再透传），故以空引用切片投影，仅含用户文本块。
+        let blocks = super::bridge::user_turn_to_content_blocks(&turn.prompt, &[]);
+        let prompt_result = self.handle.prompt(session_id, blocks).await;
         let accumulator = self.end_turn(&session_key);
 
         // 无论回合成败都已回收累积器，避免泄漏；失败时错误上抛由宿主映射。
