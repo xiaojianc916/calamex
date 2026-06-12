@@ -22,11 +22,14 @@
 
         <Input v-model="replacementQuery" class="search-panel-input" type="text" aria-label="替换内容"
           :placeholder="useStructural ? '输入 ast-grep 替换…' : '输入替换内容…'" autocomplete="off" spellcheck="false"
-          @keydown.enter="handleReplacementAction" />
+          @keydown.enter="handleApplyButtonAction" />
 
-        <button type="button" class="search-panel-apply-btn" :disabled="!canApplyReplacement" aria-label="全部替换"
-          title="全部替换" @click.stop="handleReplacementAction">
+        <button type="button" class="search-panel-apply-btn" :class="{ 'is-armed': applyConfirmArmed }"
+          :disabled="!canApplyReplacement" :aria-label="applyConfirmArmed ? '确认全部替换' : '全部替换'"
+          :title="applyConfirmArmed ? '再次点击确认全部替换（超时自动取消）' : '全部替换'"
+          @click.stop="handleApplyButtonAction">
           <LoaderCircle class="search-panel-spin" v-if="replaceRunning" aria-hidden="true" />
+          <CheckCheck v-else-if="applyConfirmArmed" aria-hidden="true" />
           <Check v-else aria-hidden="true" />
         </button>
       </div>
@@ -266,6 +269,7 @@ import {
   Braces,
   CaseSensitive,
   Check,
+  CheckCheck,
   ListFilter,
   LoaderCircle,
   Regex,
@@ -350,6 +354,8 @@ const SEARCH_RESULT_CONTEXT_CHARS = 28;
 // 替换预览每行首/尾公共片段保留的上下文字符数，超出部分用省略号收拢（省略号只在最外侧）。
 const REPLACEMENT_PREVIEW_CONTEXT_CHARS = 24;
 const REPLACEMENT_FILE_LIMIT = 200;
+// 「全部替换」二次确认窗口：首次点击仅武装确认态，须在该时间内再次点击才真正执行，超时自动复位。
+const APPLY_CONFIRM_WINDOW_MS = 2200;
 const SEARCH_VIRTUALIZE_THRESHOLD = 100;
 const SEARCH_GROUP_ROW_HEIGHT = 28;
 const SEARCH_LINE_ROW_HEIGHT = 24;
@@ -388,6 +394,7 @@ const searchError = ref('');
 const replaceRunning = ref(false);
 const replacementApplying = ref(false);
 const replacementApplyingLineId = ref<string | null>(null);
+const applyConfirmArmed = ref(false);
 const replacementPreviewOpen = ref(false);
 const replacementPreview = ref<IWorkspaceReplacementPreviewPayload | null>(null);
 const replacementPreviewRequest = ref<IWorkspaceReplacementRequest | null>(null);
@@ -405,6 +412,7 @@ let replacementPreviewRequestId = 0;
 let replacementApplyRequestId = 0;
 let searchTimer: ReturnType<typeof setTimeout> | null = null;
 let replacementPreviewTimer: ReturnType<typeof setTimeout> | null = null;
+let applyConfirmTimer: ReturnType<typeof setTimeout> | null = null;
 let activeAbortController: AbortController | null = null;
 let activeReplacementPreviewAbortController: AbortController | null = null;
 let activeReplacementApplyAbortController: AbortController | null = null;
@@ -681,6 +689,25 @@ const toggleReplacementFile = (path: string): void => {
   );
 };
 
+const disarmApplyConfirm = (): void => {
+  if (applyConfirmTimer) {
+    clearTimeout(applyConfirmTimer);
+    applyConfirmTimer = null;
+  }
+  applyConfirmArmed.value = false;
+};
+
+// 「全部替换」二次确认：未武装时首次点击仅进入确认态并开启倒计时（不执行替换）；已武装时再次点击
+// 才真正触发替换。倒计时到点、替换目标变化或卸载都会复位，复位后必须重新二次确认。
+const armApplyConfirm = (): void => {
+  applyConfirmArmed.value = true;
+  if (applyConfirmTimer) clearTimeout(applyConfirmTimer);
+  applyConfirmTimer = setTimeout(() => {
+    applyConfirmTimer = null;
+    applyConfirmArmed.value = false;
+  }, APPLY_CONFIRM_WINDOW_MS);
+};
+
 const resetReplacementPreview = (): void => {
   if (replacementPreviewTimer) {
     clearTimeout(replacementPreviewTimer);
@@ -696,6 +723,7 @@ const resetReplacementPreview = (): void => {
   replacementPreviewRequest.value = null;
   skippedReplacementLineIds.value = new Set<string>();
   collapsedReplacementFilePaths.value = new Set<string>();
+  disarmApplyConfirm();
 };
 
 const toggleSearchOption = (option: TSearchToggleOption): void => {
@@ -748,6 +776,7 @@ const cancelPendingSearch = (): void => {
   activeReplacementPreviewAbortController?.abort();
   activeReplacementPreviewAbortController = null;
   invalidateReplacementApplyLifecycle();
+  disarmApplyConfirm();
 };
 
 const invalidateInFlightSearch = (): void => {
@@ -933,6 +962,15 @@ const handleReplacementAction = async (): Promise<void> => {
   }
   const hasPreview = await previewReplacementToSearch('manual');
   if (hasPreview) await confirmReplacementPreview();
+};
+
+const handleApplyButtonAction = async (): Promise<void> => {
+  if (applyConfirmArmed.value) {
+    disarmApplyConfirm();
+    await handleReplacementAction();
+    return;
+  }
+  armApplyConfirm();
 };
 
 const scheduleReplacementPreview = (): void => {
@@ -1201,44 +1239,12 @@ watch(
     () => props.workspaceRootPath,
   ],
   () => {
+    // 替换目标（搜索/替换词、匹配选项、路径过滤、工作区）一旦变化，原先武装的二次确认即失效，
+    // 必须重新点击确认，避免确认态停留在已经改变的目标上。
+    disarmApplyConfirm();
     if (replacementApplying.value) return;
     const shouldPreviewReplacement =
       replacementQuery.value.length > 0 &&
       hasSearchQuery.value &&
       props.isDesktopRuntime &&
-      Boolean(props.workspaceRootPath) &&
-      !matcherError.value;
-    if (shouldPreviewReplacement) scheduleReplacementPreview();
-    else resetReplacementPreview();
-  },
-);
-
-watch(activeResults, (results) => {
-  const availableKeys = new Set(results.map((result) => result.resultKey));
-  if (selectedResultKey.value && !availableKeys.has(selectedResultKey.value))
-    selectedResultKey.value = null;
-});
-
-// 桌面端挂载时订阅一次后端流式搜索事件；浏览器预览下 assertDesktopRuntime 会抛出，吞掉即可
-// （该环境本就不跑本地搜索）。组件卸载时注销监听，避免泄漏。
-let streamListenerDisposed = false;
-let unlistenSearchStream: (() => void) | null = null;
-if (props.isDesktopRuntime) {
-  void (async () => {
-    try {
-      const unlisten = await tauriService.onWorkspaceSearchStream(handleSearchStreamEvent);
-      if (streamListenerDisposed) unlisten();
-      else unlistenSearchStream = unlisten;
-    } catch {
-      // 非桌面运行时不支持事件监听，忽略。
-    }
-  })();
-}
-
-onScopeDispose(() => {
-  cancelPendingSearch();
-  streamListenerDisposed = true;
-  unlistenSearchStream?.();
-  unlistenSearchStream = null;
-});
-</script>
+      Boolean(props
