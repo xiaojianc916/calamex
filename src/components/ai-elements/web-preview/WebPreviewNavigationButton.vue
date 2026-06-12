@@ -36,19 +36,20 @@ const props = withDefaults(
   flex: 0 0 30px;
   align-items: center;
   justify-content: center;
-  border: 1px solid transparent;
+  border: 0;
   border-radius: 8px;
   background: transparent;
   color: var(--text-tertiary);
   transition:
     color 120ms ease,
     background-color 120ms ease,
-    border-color 120ms ease;
+    border-radius 120ms ease;
 }
 
 .ai-web-preview-navigation-button:hover:not(:disabled) {
-  border-color: var(--border-subtle);
-  background: color-mix(in srgb, var(--surface-hover) 72%, transparent);
+  border: 0;
+  border-radius: 6px;
+  background: #f4f4f5;
   color: var(--text-primary);
 }
 
