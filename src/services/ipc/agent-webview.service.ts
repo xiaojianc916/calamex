@@ -1,9 +1,9 @@
 import {
-  commands,
   type AgentWebviewBoundsInput,
   type AgentWebviewCreateInput,
   type AgentWebviewNavigateInput,
   type AgentWebviewVisibleInput,
+  commands,
 } from '@/bindings/tauri';
 import { callSpectaCommand } from '@/services/tauri.ipc-runtime';
 

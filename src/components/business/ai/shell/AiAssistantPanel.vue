@@ -1,12 +1,11 @@
 <script setup lang="ts">
 import { useFrontendTool } from '@copilotkit/vue';
 import { SquarePen, Trash2 } from '@lucide/vue';
-import { computed, onMounted, ref } from 'vue';
+import { computed, defineAsyncComponent, onMounted, ref } from 'vue';
 import { z } from 'zod';
 import AiChatThread from '@/components/business/ai/chat/AiChatThread.vue';
 import AiPromptInput from '@/components/business/ai/chat/AiPromptInput.vue';
 import AiProviderIcon from '@/components/business/ai/provider/AiProviderIcon.vue';
-import AiProviderSettings from '@/components/business/ai/provider/AiProviderSettings.vue';
 import AiAssistantCheckpointEntry from '@/components/business/ai/shell/AiAssistantCheckpointEntry.vue';
 import AiAssistantSuggestionEmpty from '@/components/business/ai/shell/AiAssistantSuggestionEmpty.vue';
 import AiPanelFrame from '@/components/business/ai/shell/AiPanelFrame.vue';
@@ -16,7 +15,6 @@ import {
   buildPlanControlMessage,
   deriveThreadPlanDetails,
 } from '@/components/business/ai/thread/projection';
-import AiWebSourcesPanel from '@/components/business/ai/web/AiWebSourcesPanel.vue';
 import { useAiAgentNetwork } from '@/composables/ai/useAiAgentNetwork';
 import { useAiAgentRun } from '@/composables/ai/useAiAgentRun';
 import { useAiAssistant } from '@/composables/ai/useAiAssistant';
@@ -63,6 +61,16 @@ const props = defineProps<{
 defineEmits<{
   'open-patch-diff': [payload: IGitDiffPreviewPayload];
 }>();
+
+const DeferredAiProviderSettings = defineAsyncComponent({
+  loader: () => import('@/components/business/ai/provider/AiProviderSettings.vue'),
+  suspensible: false,
+});
+
+const DeferredAiWebSourcesPanel = defineAsyncComponent({
+  loader: () => import('@/components/business/ai/web/AiWebSourcesPanel.vue'),
+  suspensible: false,
+});
 
 const documentRef = computed(() => props.document);
 const activeRunRef = computed(() => props.activeRun);
@@ -1070,7 +1078,7 @@ onMounted(() => {
         </button>
         <span class="ai-file-rollback-entry__line" aria-hidden="true"></span>
       </div>
-      <AiWebSourcesPanel v-if="webSourcesVisible" :sources="webSources.sources.value"
+      <DeferredAiWebSourcesPanel v-if="webSourcesVisible" :sources="webSources.sources.value"
         :activity="planProgressVisible ? null : webSources.activity.value" :error-message="webSources.errorMessage.value"
         :is-searching="webSources.isSearching.value" :network-permission="networkPermission"
         @search="handleSearchWebSources" @fetch-source="handleFetchWebSource" @clear="webSources.clear" />
@@ -1091,7 +1099,7 @@ onMounted(() => {
           @prewarm="handlePromptPrewarm" />
       </div>
 
-      <AiProviderSettings v-model:draft="settingsDraft" v-model:api-key="settingsApiKey"
+      <DeferredAiProviderSettings v-model:draft="settingsDraft" v-model:api-key="settingsApiKey"
         v-model:tavily-api-key="settingsTavilyApiKey" :open="assistant.isSettingsOpen.value"
         :config="assistant.config.value" @close="assistant.isSettingsOpen.value = false" @save="saveSettings"
         @test-provider="testProvider" @save-tavily-key="saveTavilyKey" />

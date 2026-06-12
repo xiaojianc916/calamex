@@ -87,7 +87,9 @@ describe('AiWorkspaceSurface', () => {
 
     await wrapper.get('[aria-label="展开右侧面板"]').trigger('click');
 
-    expect(wrapper.get('.ai-workspace-right-sidebar').attributes('style')).toContain('width: 480px');
+    expect(wrapper.get('.ai-workspace-right-sidebar').attributes('style')).toContain(
+      'width: 480px',
+    );
   });
 
   it('supports horizontal resizing of the right sidebar', async () => {
@@ -102,6 +104,8 @@ describe('AiWorkspaceSurface', () => {
     window.dispatchEvent(new MouseEvent('mousemove', { clientX: 560 }));
     await wrapper.vm.$nextTick();
 
-    expect(wrapper.get('.ai-workspace-right-sidebar').attributes('style')).toContain('width: 640px');
+    expect(wrapper.get('.ai-workspace-right-sidebar').attributes('style')).toContain(
+      'width: 640px',
+    );
   });
 });

@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { WebPreviewKey } from './context';
 import {
   AGENT_WEBVIEW_CDP_PORT,
   createAgentWebview,
@@ -9,6 +8,7 @@ import {
   setAgentWebviewBounds,
   setAgentWebviewVisible,
 } from '@/services/ipc/agent-webview.service';
+import { WebPreviewKey } from './context';
 
 const props = withDefaults(
   defineProps<{

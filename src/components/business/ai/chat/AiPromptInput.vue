@@ -148,6 +148,7 @@ const slashOpen = ref(false);
 const slashQuery = ref('');
 const slashAnchorRect = ref<ISlashAnchorRect | null>(null);
 const skillsManagerOpen = ref(false);
+let skillsLoadPromise: Promise<void> | null = null;
 
 const MODE_SUBMENU_CLOSE_DELAY_MS = 180;
 
@@ -595,12 +596,23 @@ const getSlashQueryAtCaret = (): string | null => {
   return match ? match[1] : null;
 };
 
+const ensureSkillsLoaded = (): Promise<void> => {
+  if (skills.value.length > 0) {
+    return Promise.resolve();
+  }
+
+  skillsLoadPromise ??= loadSkills().finally(() => {
+    skillsLoadPromise = null;
+  });
+  return skillsLoadPromise;
+};
+
 const updateSlashStateFromCaret = (): void => {
   const query = getSlashQueryAtCaret();
   if (query !== null) {
     slashQuery.value = query;
     if (!slashOpen.value) {
-      void loadSkills();
+      void ensureSkillsLoaded();
     }
     refreshSlashAnchorRect();
     slashOpen.value = true;
@@ -715,7 +727,7 @@ const closeSlashMenu = (): void => {
 
 const openSkillsManager = (): void => {
   closeSlashMenu();
-  void loadSkills();
+  void ensureSkillsLoaded();
   skillsManagerOpen.value = true;
 };
 
@@ -888,7 +900,6 @@ watch(
 );
 
 onMounted(() => {
-  void loadSkills();
   applyValueToEditor(modelValue.value ?? '', selectedSkills.value ?? []);
 });
 

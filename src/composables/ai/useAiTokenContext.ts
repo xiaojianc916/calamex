@@ -1,7 +1,6 @@
 import type { LanguageModelUsage } from 'ai';
-import { getContext } from 'tokenlens';
 import type { ComputedRef } from 'vue';
-import { computed } from 'vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { findModelContextWindow } from '@/constants/ai/providers';
 import type { IAiChatMessage } from '@/types/ai';
 import type { TAiAssistantMode } from '@/types/ai/assistant-mode';
@@ -242,18 +241,27 @@ const resolveAccumulatedStreamUsage = (
   return usage ? { source: 'official', usage } : undefined;
 };
 
-const resolveMaxTokens = (modelId: string | undefined): number => {
+type TTokenlensModule = typeof import('tokenlens');
+
+let tokenlensModulePromise: Promise<TTokenlensModule> | null = null;
+
+const loadTokenlensModule = (): Promise<TTokenlensModule> => {
+  tokenlensModulePromise ??= import('tokenlens');
+  return tokenlensModulePromise;
+};
+
+const resolveCatalogMaxTokens = (modelId: string | undefined): number => {
   if (!modelId) {
     return 0;
   }
 
-  // 优先用应用自己的模型目录(覆盖 Mastra 路由的别名/未来模型,tokenlens 目录可能不识别)。
+  // 首屏只查应用自己的轻量模型目录，避免 AI 面板挂载时同步拉入 tokenlens。
   const catalogContextWindow = findModelContextWindow(modelId);
-  if (isPositiveFiniteNumber(catalogContextWindow)) {
-    return catalogContextWindow;
-  }
+  return isPositiveFiniteNumber(catalogContextWindow) ? catalogContextWindow : 0;
+};
 
-  // 目录未命中或窗口未知时,兜底查 tokenlens;仍拿不到则返回 0(UI 显示"未知")。
+const resolveTokenlensMaxTokens = async (modelId: string): Promise<number> => {
+  const { getContext } = await loadTokenlensModule();
   const context = getContext({ modelId });
   const maxTokens = [
     context.maxTotal,
@@ -298,7 +306,47 @@ export const useAiTokenContext = (options: IUseAiTokenContextOptions) => {
     () => latestCompletedUsage.value?.usage ?? createUsage(0),
   );
   const usageSource = computed<TAiTokenUsageSource>(() => 'official');
-  const maxTokens = computed(() => resolveMaxTokens(normalizedModelId.value));
+  const maxTokens = ref(0);
+  let disposed = false;
+  let maxTokensTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const clearMaxTokensTimer = (): void => {
+    if (maxTokensTimer !== null) {
+      clearTimeout(maxTokensTimer);
+      maxTokensTimer = null;
+    }
+  };
+
+  watch(
+    normalizedModelId,
+    (modelId) => {
+      clearMaxTokensTimer();
+      const catalogMaxTokens = resolveCatalogMaxTokens(modelId);
+      maxTokens.value = catalogMaxTokens;
+
+      if (!modelId || catalogMaxTokens > 0) {
+        return;
+      }
+
+      // tokenlens 只作为首屏后的兜底目录：不阻塞 AI 主界面初次显示。
+      maxTokensTimer = setTimeout(() => {
+        maxTokensTimer = null;
+        void resolveTokenlensMaxTokens(modelId)
+          .then((resolvedMaxTokens) => {
+            if (!disposed && normalizedModelId.value === modelId && resolvedMaxTokens > 0) {
+              maxTokens.value = resolvedMaxTokens;
+            }
+          })
+          .catch(() => undefined);
+      }, 1_200);
+    },
+    { immediate: true },
+  );
+
+  onBeforeUnmount(() => {
+    disposed = true;
+    clearMaxTokensTimer();
+  });
 
   const contextProps = computed<IAiTokenContextProps>(() => ({
     usedTokens: usedTokens.value,

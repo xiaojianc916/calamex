@@ -10,13 +10,13 @@ import {
 } from '@lucide/vue';
 import { computed, ref, watch } from 'vue';
 import {
+  type IWebPreviewConsoleLog,
   WebPreview,
   WebPreviewBody,
   WebPreviewConsole,
   WebPreviewNavigation,
   WebPreviewNavigationButton,
   WebPreviewUrl,
-  type IWebPreviewConsoleLog,
 } from '@/components/ai-elements/web-preview';
 
 const MAX_CONSOLE_LOGS = 20;
