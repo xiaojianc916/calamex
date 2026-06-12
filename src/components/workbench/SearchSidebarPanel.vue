@@ -114,12 +114,12 @@
             <header class="search-replace-inline-file-header">
               <button type="button" class="search-replace-inline-file-open"
                 :aria-expanded="!isReplacementFileCollapsed(file.path)" @click="toggleReplacementFile(file.path)">
-                <LucideIcon class="search-replace-inline-chevron" aria-hidden="true"
-                  :name="isReplacementFileCollapsed(file.path) ? 'chevron-right' : 'chevron-down'" />
                 <span class="search-replace-inline-file-icon" aria-hidden="true">
                   <ExplorerEntryIcon kind="file" :path="file.path" />
                 </span>
                 <span class="search-replace-inline-file-name" v-text="file.name" />
+                <LucideIcon class="search-replace-inline-chevron" aria-hidden="true"
+                  :name="isReplacementFileCollapsed(file.path) ? 'chevron-right' : 'chevron-down'" />
                 <span class="search-replace-inline-file-path" v-text="file.parentPath" />
               </button>
               <span class="search-replace-inline-count" v-text="file.visibleReplacementCount" />
@@ -192,12 +192,12 @@
               <button type="button" class="search-panel-result-group-open"
                 :aria-expanded="!isSearchResultGroupCollapsed(entry.row.group.path)"
                 @click="toggleSearchResultGroup(entry.row.group.path)">
-                <LucideIcon class="search-panel-result-group-chevron" aria-hidden="true"
-                  :name="isSearchResultGroupCollapsed(entry.row.group.path) ? 'chevron-right' : 'chevron-down'" />
                 <span class="search-panel-result-group-icon" aria-hidden="true">
                   <ExplorerEntryIcon kind="file" :path="entry.row.group.path" />
                 </span>
                 <span class="search-panel-result-group-name" v-text="entry.row.group.name" />
+                <LucideIcon class="search-panel-result-group-chevron" aria-hidden="true"
+                  :name="isSearchResultGroupCollapsed(entry.row.group.path) ? 'chevron-right' : 'chevron-down'" />
                 <span class="search-panel-result-group-path" v-text="entry.row.group.parentPath" />
               </button>
               <span class="search-panel-result-group-count" v-text="entry.row.group.results.length" />
@@ -228,12 +228,12 @@
             <header class="search-panel-result-group-header">
               <button type="button" class="search-panel-result-group-open"
                 :aria-expanded="!isSearchResultGroupCollapsed(group.path)" @click="toggleSearchResultGroup(group.path)">
-                <LucideIcon class="search-panel-result-group-chevron" aria-hidden="true"
-                  :name="isSearchResultGroupCollapsed(group.path) ? 'chevron-right' : 'chevron-down'" />
                 <span class="search-panel-result-group-icon" aria-hidden="true">
                   <ExplorerEntryIcon kind="file" :path="group.path" />
                 </span>
                 <span class="search-panel-result-group-name" v-text="group.name" />
+                <LucideIcon class="search-panel-result-group-chevron" aria-hidden="true"
+                  :name="isSearchResultGroupCollapsed(group.path) ? 'chevron-right' : 'chevron-down'" />
                 <span class="search-panel-result-group-path" v-text="group.parentPath" />
               </button>
               <span class="search-panel-result-group-count" v-text="group.results.length" />
