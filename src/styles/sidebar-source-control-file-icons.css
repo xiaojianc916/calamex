@@ -45,6 +45,16 @@
   color: #7c3aed;
 }
 
+/* 新增(A)文件：文件名使用绿色高亮。 */
+.source-control-file-tag.is-added ~ .source-control-file-path .source-control-file-name {
+  color: #73c977;
+}
+
+/* 删除(D)文件：文件名添加删除线，直观表示删除。 */
+.source-control-file-tag.is-deleted ~ .source-control-file-path .source-control-file-name {
+  text-decoration: line-through;
+}
+
 .source-control-file:hover,
 .source-control-file.is-active,
 .source-control-file.is-context-target {
