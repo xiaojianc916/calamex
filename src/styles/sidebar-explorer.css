@@ -25,7 +25,7 @@
 .explorer-sidebar {
   --explorer-bg: #fafafa;
   --explorer-bg-hover: #f0f0f0;
-  --explorer-bg-active: var(--bg-s);
+  --explorer-bg-active: #e8e8e8;
   --explorer-text: var(--text-primary);
   --explorer-text-dim: var(--text-tertiary);
   --explorer-text-faint: var(--text-quaternary);
