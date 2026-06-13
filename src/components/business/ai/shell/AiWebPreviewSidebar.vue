@@ -105,8 +105,8 @@ const handleRefresh = (): void => {
   runNavAction(reloadAgentWebview);
 };
 
-// Enter element-picking mode: the native CDP overlay highlights nodes, and the first
-// inspected node comes back through onAgentWebviewElementPicked.
+// Enter element-picking mode: the injected @medv/finder picker highlights nodes, and the
+// clicked node comes back through onAgentWebviewElementPicked.
 const handleSelect = (): void => {
   if (isSelecting.value || pickedElement.value) {
     return;
@@ -132,7 +132,6 @@ const handleSelectSubmit = (comment: string): void => {
     url: picked.url,
     label: picked.label,
     outerHtml: picked.outerHtml,
-    screenshotBase64: picked.screenshotBase64,
     comment,
   });
   pickedElement.value = null;
@@ -239,7 +238,6 @@ onBeforeUnmount(() => {
       :label="pickedElement.label"
       :url="pickedElement.url"
       :outer-html="pickedElement.outerHtml"
-      :screenshot-base64="pickedElement.screenshotBase64"
       @submit="handleSelectSubmit"
       @cancel="handleSelectCancel"
     />
