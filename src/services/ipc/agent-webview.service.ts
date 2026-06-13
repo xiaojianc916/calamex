@@ -1,9 +1,12 @@
 import {
   type AgentWebviewBoundsInput,
+  type AgentWebviewConsoleEvent,
   type AgentWebviewCreateInput,
   type AgentWebviewNavigateInput,
+  type AgentWebviewNavigatedEvent,
   type AgentWebviewVisibleInput,
   commands,
+  events,
 } from '@/bindings/tauri';
 import { callSpectaCommand } from '@/services/tauri.ipc-runtime';
 
@@ -11,11 +14,12 @@ import { callSpectaCommand } from '@/services/tauri.ipc-runtime';
  * agent 内置浏览器的 CDP 远程调试端口(默认绑 127.0.0.1)。
  *
  * 单一事实来源:前端创建 webview 与 agent-sidecar `connectOverCDP` 必须用同一个端口。
- * 阶段4 接入 sidecar 时从本常量 import,避免两边硬编码不一致。
  */
 export const AGENT_WEBVIEW_CDP_PORT = 9333;
 
 export type TAgentWebviewBounds = AgentWebviewBoundsInput;
+export type TAgentWebviewNavigatedEvent = AgentWebviewNavigatedEvent;
+export type TAgentWebviewConsoleEvent = AgentWebviewConsoleEvent;
 
 /** 创建(或复用)内置浏览器子 webview。幂等:已存在则只更新位置/尺寸并导航。 */
 export const createAgentWebview = (input: AgentWebviewCreateInput): Promise<void> =>
@@ -80,6 +84,80 @@ export const navigateAgentWebview = (input: AgentWebviewNavigateInput): Promise<
       await commands.agentWebviewNavigate(input, traceId);
     },
   );
+
+/** 后退一步(CDP 真实历史)。 */
+export const backAgentWebview = (): Promise<void> =>
+  callSpectaCommand<void>(
+    {
+      command: 'agent_webview_back',
+      guardHint: 'agent webview back',
+      timeoutMs: 5_000,
+      idempotent: false,
+      audit: 'none',
+      input: {},
+    },
+    async ({ traceId }) => {
+      await commands.agentWebviewBack(traceId);
+    },
+  );
+
+/** 前进一步(CDP 真实历史)。 */
+export const forwardAgentWebview = (): Promise<void> =>
+  callSpectaCommand<void>(
+    {
+      command: 'agent_webview_forward',
+      guardHint: 'agent webview forward',
+      timeoutMs: 5_000,
+      idempotent: false,
+      audit: 'none',
+      input: {},
+    },
+    async ({ traceId }) => {
+      await commands.agentWebviewForward(traceId);
+    },
+  );
+
+/** 刷新当前页面(CDP Page.reload)。 */
+export const reloadAgentWebview = (): Promise<void> =>
+  callSpectaCommand<void>(
+    {
+      command: 'agent_webview_reload',
+      guardHint: 'agent webview reload',
+      timeoutMs: 5_000,
+      idempotent: false,
+      audit: 'none',
+      input: {},
+    },
+    async ({ traceId }) => {
+      await commands.agentWebviewReload(traceId);
+    },
+  );
+
+/** 在系统默认浏览器中打开 URL(官方 opener,Rust 侧)。 */
+export const openExternalAgentWebview = (input: AgentWebviewNavigateInput): Promise<void> =>
+  callSpectaCommand<void>(
+    {
+      command: 'agent_webview_open_external',
+      guardHint: 'open url in system browser',
+      timeoutMs: 5_000,
+      idempotent: false,
+      audit: 'info',
+      input,
+    },
+    async ({ traceId }) => {
+      await commands.agentWebviewOpenExternal(input, traceId);
+    },
+  );
+
+/** 订阅主框架导航事件(url + canGoBack/canGoForward)。返回 unlisten。 */
+export const onAgentWebviewNavigated = (
+  handler: (payload: AgentWebviewNavigatedEvent) => void,
+) => events.agentWebviewNavigatedEvent.listen((event) => handler(event.payload));
+
+/** 订阅页面控制台事件(console.* + 浏览器级日志)。返回 unlisten。 */
+export const onAgentWebviewConsole = (
+  handler: (payload: AgentWebviewConsoleEvent) => void,
+) => events.agentWebviewConsoleEvent.listen((event) => handler(event.payload));
 
 /** 销毁子 webview。幂等:不存在也视为成功。 */
 export const destroyAgentWebview = (): Promise<void> =>
