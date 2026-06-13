@@ -1,4 +1,4 @@
-import { computed, onScopeDispose, type Ref, ref, watch } from 'vue';
+import { computed, onScopeDispose, type Ref, ref, shallowRef, watch } from 'vue';
 import { tauriService } from '@/services/tauri';
 import type { IWorkbenchOpenFileRequest } from '@/types/editor';
 import type {
@@ -69,8 +69,10 @@ export const useWorkspaceSearch = (options: IUseWorkspaceSearchOptions) => {
   const collapsedSearchResultPaths = ref<ReadonlySet<string>>(new Set<string>());
   const selectedResultKey = ref<string | null>(null);
   const scannedFileCount = ref(0);
-  const backendResults = ref<IWorkspaceSearchResult[]>([]);
   const resultsScrollRef = ref<HTMLElement | null>(null);
+  const searchResultsRevision = ref(0);
+  const searchGroupsRevision = ref(0);
+  const resultChunks = shallowRef<ReadonlyArray<ReadonlyArray<IWorkspaceSearchResult>>>([]);
 
   let searchRequestId = 0;
   let searchTimer: ReturnType<typeof setTimeout> | null = null;
@@ -123,6 +125,26 @@ export const useWorkspaceSearch = (options: IUseWorkspaceSearchOptions) => {
     showPathFilters.value && !useStructural.value ? excludePatterns.value : [],
   );
 
+  const createEmptyResultsByScope = (): Record<TWorkspaceSearchScope, ISearchResultItem[]> => ({
+    all: [],
+    'file-name': [],
+    symbol: [],
+    content: [],
+  });
+
+  const createEmptyGroupsByScope = (): Record<
+    TWorkspaceSearchScope,
+    Map<string, ISearchResultGroup>
+  > => ({
+    all: new Map(),
+    'file-name': new Map(),
+    symbol: new Map(),
+    content: new Map(),
+  });
+
+  let searchResultsByScopeState = createEmptyResultsByScope();
+  let searchGroupsByScopeState = createEmptyGroupsByScope();
+
   const toResultItem = (result: IWorkspaceSearchResult): ISearchResultItem => {
     let cachedSegments: ISnippetSegment[] | null = null;
     return {
@@ -156,39 +178,64 @@ export const useWorkspaceSearch = (options: IUseWorkspaceSearchOptions) => {
     };
   };
 
-  const allResults = computed(() => backendResults.value.map(toResultItem));
-  const searchResultsByScope = computed<Record<TWorkspaceSearchScope, ISearchResultItem[]>>(() => ({
-    all: allResults.value,
-    'file-name': allResults.value.filter((result) => result.reason === 'file-name'),
-    symbol: allResults.value.filter((result) => result.reason === 'symbol'),
-    content: allResults.value.filter((result) => result.reason === 'content'),
-  }));
+  const appendResultToScope = (scope: TWorkspaceSearchScope, item: ISearchResultItem): void => {
+    searchResultsByScopeState[scope].push(item);
+    const groups = searchGroupsByScopeState[scope];
+    const existing = groups.get(item.path);
+    if (existing) {
+      existing.results.push(item);
+      return;
+    }
+    groups.set(item.path, {
+      path: item.path,
+      name: getFileName(item.relativePath),
+      parentPath: getParentPath(item.relativePath),
+      results: [item],
+    });
+  };
 
-  const scopeChips = computed(() =>
-    (Object.keys(SEARCH_SCOPE_LABELS) as TWorkspaceSearchScope[]).map((scopeKey) => ({
+  const appendBackendResults = (results: readonly IWorkspaceSearchResult[]): void => {
+    if (results.length === 0) {
+      return;
+    }
+    resultChunks.value = [...resultChunks.value, results];
+    for (const result of results) {
+      const item = toResultItem(result);
+      appendResultToScope('all', item);
+      appendResultToScope(item.reason, item);
+    }
+    searchResultsRevision.value += 1;
+    searchGroupsRevision.value += 1;
+  };
+
+  const replaceBackendResults = (results: readonly IWorkspaceSearchResult[]): void => {
+    resultChunks.value = [];
+    searchResultsByScopeState = createEmptyResultsByScope();
+    searchGroupsByScopeState = createEmptyGroupsByScope();
+    appendBackendResults(results);
+    if (results.length === 0) {
+      searchResultsRevision.value += 1;
+      searchGroupsRevision.value += 1;
+    }
+  };
+
+  const scopeChips = computed(() => {
+    searchResultsRevision.value;
+    return (Object.keys(SEARCH_SCOPE_LABELS) as TWorkspaceSearchScope[]).map((scopeKey) => ({
       key: scopeKey,
       label: SEARCH_SCOPE_LABELS[scopeKey],
-      count: searchResultsByScope.value[scopeKey].length,
-    })),
-  );
+      count: searchResultsByScopeState[scopeKey].length,
+    }));
+  });
 
-  const activeResults = computed(() => searchResultsByScope.value[activeScope.value]);
+  const activeResults = computed(() => {
+    searchResultsRevision.value;
+    return searchResultsByScopeState[activeScope.value];
+  });
+
   const searchResultGroups = computed<ISearchResultGroup[]>(() => {
-    const groups = new Map<string, ISearchResultGroup>();
-    for (const result of activeResults.value) {
-      const existing = groups.get(result.path);
-      if (existing) {
-        existing.results.push(result);
-        continue;
-      }
-      groups.set(result.path, {
-        path: result.path,
-        name: getFileName(result.relativePath),
-        parentPath: getParentPath(result.relativePath),
-        results: [result],
-      });
-    }
-    return Array.from(groups.values());
+    searchGroupsRevision.value;
+    return Array.from(searchGroupsByScopeState[activeScope.value].values());
   });
 
   const isSearchResultGroupCollapsed = (path: string): boolean =>

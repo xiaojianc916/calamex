@@ -150,6 +150,10 @@ pub(super) fn scan_workspace_files(
     ))
 }
 
+pub(super) fn workspace_cached_files_for_index(root: &Path) -> Result<Arc<Vec<ScannedFile>>, String> {
+    workspace_cache_files(root)
+}
+
 fn workspace_cache_files(root: &Path) -> Result<Arc<Vec<ScannedFile>>, String> {
     let cache_key = root.to_string_lossy().to_string();
     let caches = WORKSPACE_FILE_CACHES.get_or_init(|| Mutex::new(HashMap::new()));
@@ -210,6 +214,7 @@ fn workspace_cache_files(root: &Path) -> Result<Arc<Vec<ScannedFile>>, String> {
                 cache.files = Arc::clone(&refreshed);
                 // 文件列表变化只使聚合符号索引过期；per-file 符号缓存保留，后续按 mtime/hash 复用。
                 cache.symbols = None;
+                super::content_index::invalidate_workspace_content_index(root);
             }
             Ok(refreshed)
         }

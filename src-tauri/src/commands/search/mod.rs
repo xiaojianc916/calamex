@@ -1,3 +1,4 @@
+mod content_index;
 mod find;
 mod preview;
 mod ranking;
@@ -10,6 +11,7 @@ mod util;
 pub use types::*;
 
 use super::{encode_script_content, resolve_workspace_root};
+use content_index::{filter_literal_content_candidates, prewarm_workspace_content_index};
 use find::{search_file_contents, search_file_names, search_structural_contents, search_symbols};
 use ranking::sort_ranked_search_results;
 use replace::{
@@ -113,8 +115,18 @@ fn search_workspace_impl(
                     MAX_SEARCH_LIMIT,
                 )
             });
+            let indexed_content_candidates = filter_literal_content_candidates(
+                &workspace_root,
+                files.as_ref(),
+                &query,
+                &payload,
+            )?;
+            let content_files = indexed_content_candidates
+                .as_deref()
+                .unwrap_or_else(|| files.as_ref());
+
             results.extend(search_file_contents(
-                &files,
+                content_files,
                 &query,
                 &payload,
                 content_limit,
@@ -301,6 +313,7 @@ pub fn prewarm_workspace_search_index(workspace_root_path: String) {
 
             // 预热 Bash 符号索引，让首个符号 / 全部范围搜索免去全量 tree-sitter 解析。
             let _ = scan::workspace_cache_symbols(&workspace_root);
+            prewarm_workspace_content_index(&workspace_root);
         })
         .ok();
 }
