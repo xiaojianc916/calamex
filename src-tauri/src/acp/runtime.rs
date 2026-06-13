@@ -39,7 +39,7 @@ use super::host::{AcpHost, ApprovalEmitter, StreamEmitter};
 use super::launch::build_acp_client_config;
 
 /// 流式帧 webview 事件名：对齐 `client::AcpStreamFrame` 文档约定的 `ai:sidecar-stream` 契约。
-const ACP_STREAM_EVENT: &str = "ai:sidecar-stream";
+pub(crate) const ACP_STREAM_EVENT: &str = "ai:sidecar-stream";
 
 /// 回合内待决审批 webview 事件名：与流式事件并列的审批下沉口。
 const ACP_APPROVAL_EVENT: &str = "ai:sidecar-approval";
@@ -82,6 +82,20 @@ impl AcpRuntime {
         )?);
         *guard = Some(host.clone());
         Ok(host)
+    }
+
+    /// 取消指定线程（thread_id）当前进行中的回合；仅在 ACP 宿主已建立时生效。
+    ///
+    /// 缺省（宿主尚未懒建立）时为安全的空操作：取消本身绝不应触发 node 子进程派生。
+    pub fn cancel_thread(&self, thread_id: &str) {
+        if let Some(host) = self
+            .host
+            .lock()
+            .expect("acp runtime mutex poisoned")
+            .as_ref()
+        {
+            host.cancel_thread(thread_id);
+        }
     }
 
     /// 关停并释放常驻连接（App 统一退出清理调用）。幂等：未建立时为安全的空操作。

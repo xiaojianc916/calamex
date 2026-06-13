@@ -41,6 +41,10 @@ pub use host::{AcpChatTurn, AcpHost, ApprovalEmitter, StreamEmitter};
 #[allow(unused_imports)]
 pub use runtime::AcpRuntime;
 
+// 主聊天 ACP 路径复用「流式帧 webview 事件名」常量（runtime 内单一定义）。
+#[allow(unused_imports)]
+pub(crate) use runtime::ACP_STREAM_EVENT;
+
 // ACP session/update 通知 → 前端 TAgentUiEvent 的纯映射适配（接线前暂无调用点）。
 #[allow(unused_imports)]
 pub use ui_event::{build_done_ui_event, build_error_ui_event, session_notification_to_ui_event};

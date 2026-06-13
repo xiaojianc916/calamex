@@ -185,12 +185,31 @@ pub async fn ai_chat_stream(
         assistant_message_id: started.assistant_message_id,
         provider_type: started.provider_type,
         model: started.model,
+        session_id: started.session_id,
     })
 }
 
 #[tauri::command]
 #[specta::specta]
-pub fn ai_cancel(payload: AiCancelRequest) -> Result<(), String> {
+pub fn ai_cancel(app: AppHandle, payload: AiCancelRequest) -> Result<(), String> {
+    #[cfg(feature = "acp_client")]
+    {
+        if let Some(thread_id) = payload
+            .thread_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            use tauri::Manager as _;
+            app.state::<crate::acp::AcpRuntime>().cancel_thread(thread_id);
+            return Ok(());
+        }
+    }
+    #[cfg(not(feature = "acp_client"))]
+    {
+        let _ = &app;
+    }
+
     let stream_id = payload.stream_id.trim();
     if stream_id.is_empty() {
         return Err("AI_REQUEST_CANCELLED: streamId 不能为空。".to_string());

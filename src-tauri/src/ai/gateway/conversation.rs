@@ -192,6 +192,21 @@ pub async fn chat_stream(
     app: AppHandle,
     payload: AiChatRequest,
 ) -> Result<AiChatStreamStart, String> {
+    #[cfg(feature = "acp_client")]
+    {
+        chat_stream_via_acp(app, payload).await
+    }
+    #[cfg(not(feature = "acp_client"))]
+    {
+        chat_stream_legacy(app, payload).await
+    }
+}
+
+#[cfg(not(feature = "acp_client"))]
+async fn chat_stream_legacy(
+    app: AppHandle,
+    payload: AiChatRequest,
+) -> Result<AiChatStreamStart, String> {
     audit::emit(AiAuditEventKind::ChatStarted);
 
     let config = current_config()?;
@@ -425,7 +440,135 @@ pub async fn chat_stream(
         assistant_message_id,
         provider_type: response_provider_type,
         model,
+        session_id: None,
     })
+}
+
+#[cfg(feature = "acp_client")]
+async fn chat_stream_via_acp(
+    app: AppHandle,
+    payload: AiChatRequest,
+) -> Result<AiChatStreamStart, String> {
+    audit::emit(AiAuditEventKind::ChatStarted);
+
+    let config = current_config()?;
+    ensure_chat_enabled(&config)?;
+
+    let stream_id = next_runtime_id("ai-stream");
+    let assistant_message_id = next_runtime_id("assistant");
+    let response_provider_type = config.provider_type.clone();
+
+    let model = config
+        .selected_model
+        .clone()
+        .or_else(|| default_model(&config.provider_type))
+        .unwrap_or_else(|| DEFAULT_MASTRA_MODEL.to_string());
+
+    let input_references = payload.references.clone();
+    let messages = collect_messages(payload.messages, input_references.clone())?;
+    let prompt = messages
+        .into_iter()
+        .rev()
+        .find(|message| message.role == "user")
+        .map(|message| message.content)
+        .ok_or_else(|| errors::error("AI_RESPONSE_INVALID", "请输入要发送给 AI 的内容。"))?;
+
+    let thread_id = payload.thread_id.clone().unwrap_or_default();
+
+    let host = app
+        .state::<crate::acp::AcpRuntime>()
+        .get_or_spawn(&app)
+        .map_err(|error| {
+            errors::error(
+                "AI_PROVIDER_UNAVAILABLE",
+                format!("无法建立 ACP 宿主连接：{error}"),
+            )
+        })?;
+
+    let session_id = host
+        .ensure_session(&thread_id, None)
+        .await
+        .map_err(|error| {
+            errors::error(
+                "AI_PROVIDER_UNAVAILABLE",
+                format!("无法建立 ACP 会话：{error}"),
+            )
+        })?;
+    let session_key = session_id.to_string();
+
+    let task_app = app.clone();
+    let task_session_key = session_key.clone();
+    let task_context = input_references;
+
+    tokio::spawn(async move {
+        let turn = crate::acp::AcpChatTurn {
+            session_id: Some(task_session_key.clone()),
+            mode: Some("ask".to_string()),
+            prompt,
+            workspace_root_path: None,
+            context: task_context,
+        };
+
+        match host.chat(turn).await {
+            Ok(response) => {
+                audit::emit(AiAuditEventKind::ChatCompleted);
+                let result_text = response.result.clone().unwrap_or_default();
+                let usage = response
+                    .events
+                    .iter()
+                    .rev()
+                    .find(|event| {
+                        event.get("type").and_then(|value| value.as_str()) == Some("done")
+                    })
+                    .and_then(|event| event.get("usage").cloned())
+                    .filter(|usage| !usage.is_null());
+                emit_acp_stream_done(&task_app, &task_session_key, &result_text, usage);
+            }
+            Err(error) => {
+                audit::emit(AiAuditEventKind::ChatFailed);
+                emit_acp_stream_error(&task_app, &task_session_key, &error.to_string());
+            }
+        }
+    });
+
+    Ok(AiChatStreamStart {
+        stream_id,
+        assistant_message_id,
+        provider_type: response_provider_type,
+        model,
+        session_id: Some(session_key),
+    })
+}
+
+#[cfg(feature = "acp_client")]
+fn emit_acp_stream_frame(app: &AppHandle, session_key: &str, event: serde_json::Value) {
+    let frame = crate::acp::AcpStreamFrame {
+        session_id: Some(session_key.to_string()),
+        seq: 0,
+        event,
+    };
+    if let Err(error) = app.emit(crate::acp::ACP_STREAM_EVENT, &frame) {
+        log::warn!("failed to emit acp chat stream frame to webview: {error}");
+    }
+}
+
+#[cfg(feature = "acp_client")]
+fn emit_acp_stream_done(
+    app: &AppHandle,
+    session_key: &str,
+    result_text: &str,
+    usage: Option<serde_json::Value>,
+) {
+    emit_acp_stream_frame(
+        app,
+        session_key,
+        crate::acp::build_done_ui_event(result_text, usage),
+    );
+}
+
+#[cfg(feature = "acp_client")]
+fn emit_acp_stream_error(app: &AppHandle, session_key: &str, message: &str) {
+    emit_acp_stream_frame(app, session_key, crate::acp::build_error_ui_event(message));
 }
 
 pub async fn inline_complete(
