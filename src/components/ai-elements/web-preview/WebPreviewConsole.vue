@@ -2,7 +2,7 @@
 import { ChevronDownIcon } from '@lucide/vue';
 import { computed, type HTMLAttributes, ref } from 'vue';
 import { cn } from '@/lib/utils';
-import type { IWebPreviewConsoleLog } from './context';
+import type { IWebPreviewConsoleLog, TWebPreviewLogSource } from './context';
 
 const props = withDefaults(
   defineProps<{
@@ -22,6 +22,33 @@ const toggleCollapsed = (): void => {
 };
 
 const toggleLabel = computed<string>(() => (collapsed.value ? '展开控制台' : '收起控制台'));
+
+// Which stream the panel is showing. Defaults to our own shell diagnostics; the toggle
+// flips to logs forwarded from the inspected page (its console.log, CSP report-only, etc.).
+const activeSource = ref<TWebPreviewLogSource>('app');
+
+const sourceLabelMap: Record<TWebPreviewLogSource, string> = {
+  app: '应用',
+  page: '网页',
+};
+
+const sourceLabel = computed<string>(() => sourceLabelMap[activeSource.value]);
+
+const sourceToggleLabel = computed<string>(() =>
+  activeSource.value === 'app' ? '当前：应用日志（点击查看网页日志）' : '当前：网页日志（点击查看应用日志）',
+);
+
+const toggleSource = (): void => {
+  activeSource.value = activeSource.value === 'app' ? 'page' : 'app';
+};
+
+const visibleLogs = computed<IWebPreviewConsoleLog[]>(() =>
+  props.logs.filter((log) => (log.source ?? 'app') === activeSource.value),
+);
+
+const emptyLabel = computed<string>(() =>
+  activeSource.value === 'app' ? '暂无应用日志' : '暂无网页日志',
+);
 
 const levelLabelMap: Record<IWebPreviewConsoleLog['level'], string> = {
   log: 'LOG',
@@ -47,22 +74,34 @@ const formatTimestamp = (value: IWebPreviewConsoleLog['timestamp']): string => {
   >
     <header class="ai-web-preview-console__header">
       <span class="ai-web-preview-console__title">Console</span>
-      <button
-        type="button"
-        class="ai-web-preview-console__toggle"
-        :title="toggleLabel"
-        :aria-label="toggleLabel"
-        :aria-expanded="!collapsed"
-        data-testid="web-preview-console-toggle"
-        @click="toggleCollapsed"
-      >
-        <ChevronDownIcon class="ai-web-preview-console__chevron" />
-      </button>
+      <div class="ai-web-preview-console__actions">
+        <button
+          type="button"
+          class="ai-web-preview-console__source"
+          :title="sourceToggleLabel"
+          :aria-label="sourceToggleLabel"
+          data-testid="web-preview-console-source-toggle"
+          @click="toggleSource"
+        >
+          <span class="ai-web-preview-console__source-text" v-text="sourceLabel" />
+        </button>
+        <button
+          type="button"
+          class="ai-web-preview-console__toggle"
+          :title="toggleLabel"
+          :aria-label="toggleLabel"
+          :aria-expanded="!collapsed"
+          data-testid="web-preview-console-toggle"
+          @click="toggleCollapsed"
+        >
+          <ChevronDownIcon class="ai-web-preview-console__chevron" />
+        </button>
+      </div>
     </header>
     <template v-if="!collapsed">
-      <ul v-if="props.logs.length" class="ai-web-preview-console__list">
+      <ul v-if="visibleLogs.length" class="ai-web-preview-console__list">
         <li
-          v-for="(log, index) in props.logs"
+          v-for="(log, index) in visibleLogs"
           :key="`${index}-${log.message}`"
           class="ai-web-preview-console__item"
         >
@@ -77,7 +116,7 @@ const formatTimestamp = (value: IWebPreviewConsoleLog['timestamp']): string => {
           </div>
         </li>
       </ul>
-      <div v-else class="ai-web-preview-console__empty">No console output yet</div>
+      <div v-else class="ai-web-preview-console__empty" v-text="emptyLabel" />
     </template>
   </section>
 </template>
@@ -112,6 +151,37 @@ const formatTimestamp = (value: IWebPreviewConsoleLog['timestamp']): string => {
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+}
+
+.ai-web-preview-console__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ai-web-preview-console__source {
+  display: inline-flex;
+  height: 22px;
+  align-items: center;
+  padding: 0 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  background: #ffffff;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition:
+    color 120ms ease,
+    background-color 120ms ease,
+    border-color 120ms ease;
+}
+
+.ai-web-preview-console__source:hover {
+  border-color: var(--border-strong);
+  background: #f1f1f3;
+  color: var(--text-primary);
 }
 
 .ai-web-preview-console__toggle {
