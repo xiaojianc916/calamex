@@ -9,7 +9,8 @@
 //!   - back/forward = Page.getNavigationHistory + Page.navigateToHistoryEntry (real history),
 //!   - reload = Page.reload,
 //!   - console = subscribe Runtime.consoleAPICalled + Log.entryAdded,
-//!   - navigation state = subscribe Page.frameNavigated -> recompute url + canGoBack/canGoForward.
+//!   - navigation state = subscribe Page.frameNavigated -> recompute url + canGoBack/canGoForward,
+//!   - select = Overlay.setInspectMode + Overlay.inspectNodeRequested -> element context.
 //! The CDP connection is initiated from Rust (frontend never touches ws://, CSP unchanged).
 //!
 //! Gating: real impl compiles under `native_webview`; default build is an error stub.
@@ -85,6 +86,20 @@ pub struct AgentWebviewConsoleEvent {
     pub timestamp: f64,
 }
 
+/// User picked an element via the select/inspect tool -> element context for the AI.
+#[derive(Debug, Clone, Deserialize, Serialize, Type, tauri_specta::Event)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentWebviewElementPickedEvent {
+    /// Page URL the element was picked from.
+    pub url: String,
+    /// Short "tag#id.class" label for display.
+    pub label: String,
+    /// Truncated outerHTML for AI context.
+    pub outer_html: String,
+    /// PNG screenshot (base64, no data: prefix), cropped to the element. May be empty.
+    pub screenshot_base64: String,
+}
+
 // === CDP session (native_webview only) ===
 
 #[cfg(feature = "native_webview")]
@@ -92,7 +107,7 @@ struct CdpSession {
     // Keep the connection alive; dropping Browser closes CDP.
     _browser: chromiumoxide::Browser,
     page: chromiumoxide::Page,
-    // handler driver + 3 listener tasks; aborted on teardown.
+    // handler driver + listener tasks; aborted on teardown.
     tasks: Vec<tauri::async_runtime::JoinHandle<()>>,
 }
 
@@ -189,6 +204,165 @@ async fn emit_navigated(app: &AppHandle, page: &chromiumoxide::Page) {
     }
 }
 
+// Current main-frame URL (best-effort) from navigation history.
+#[cfg(feature = "native_webview")]
+async fn current_url(page: &chromiumoxide::Page) -> String {
+    use chromiumoxide::cdp::browser_protocol::page::GetNavigationHistoryParams;
+    if let Ok(resp) = page.execute(GetNavigationHistoryParams::default()).await {
+        let hist = resp.result;
+        return hist
+            .entries
+            .get(hist.current_index.max(0) as usize)
+            .map(|e| e.url.clone())
+            .unwrap_or_default();
+    }
+    String::new()
+}
+
+// Truncate to `max` chars with an ellipsis (keeps AI/console payloads bounded).
+#[cfg(feature = "native_webview")]
+fn truncate_str(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        let head: String = s.chars().take(max).collect();
+        format!("{head}\u{2026}")
+    }
+}
+
+// Build a short "tag#id.class" label from a serialized DOM.describeNode result (stable CDP keys).
+#[cfg(feature = "native_webview")]
+fn element_label(returns_value: &serde_json::Value) -> String {
+    let node = returns_value.get("node").unwrap_or(returns_value);
+    let tag = node
+        .get("nodeName")
+        .and_then(|v| v.as_str())
+        .unwrap_or("node")
+        .to_lowercase();
+    let mut id = String::new();
+    let mut classes = String::new();
+    if let Some(arr) = node.get("attributes").and_then(|v| v.as_array()) {
+        let mut i = 0;
+        while i + 1 < arr.len() {
+            let name = arr[i].as_str().unwrap_or("");
+            let value = arr[i + 1].as_str().unwrap_or("");
+            if name == "id" && !value.is_empty() {
+                id = format!("#{value}");
+            } else if name == "class" {
+                classes = value
+                    .split_whitespace()
+                    .map(|c| format!(".{c}"))
+                    .collect::<String>();
+            }
+            i += 2;
+        }
+    }
+    format!("{tag}{id}{classes}")
+}
+
+// Build a screenshot clip Viewport from a serialized DOM.getBoxModel result (content quad).
+#[cfg(feature = "native_webview")]
+fn box_model_clip(
+    returns_value: &serde_json::Value,
+) -> Option<chromiumoxide::cdp::browser_protocol::page::Viewport> {
+    use chromiumoxide::cdp::browser_protocol::page::Viewport;
+    let content = returns_value.get("model")?.get("content")?.as_array()?;
+    let x = content.first()?.as_f64()?;
+    let y = content.get(1)?.as_f64()?;
+    let x2 = content.get(4)?.as_f64()?;
+    let y2 = content.get(5)?.as_f64()?;
+    Some(Viewport {
+        x,
+        y,
+        width: (x2 - x).abs().max(1.0),
+        height: (y2 - y).abs().max(1.0),
+        scale: 1.0,
+    })
+}
+
+// Gather element context (label + outerHTML + cropped screenshot + url) for a picked node.
+#[cfg(feature = "native_webview")]
+async fn collect_picked_element(
+    page: &chromiumoxide::Page,
+    backend_node_id: chromiumoxide::cdp::browser_protocol::dom::BackendNodeId,
+) -> Option<AgentWebviewElementPickedEvent> {
+    use chromiumoxide::cdp::browser_protocol::dom::{
+        DescribeNodeParams, GetBoxModelParams, GetOuterHtmlParams,
+    };
+    use chromiumoxide::cdp::browser_protocol::page::{
+        CaptureScreenshotFormat, CaptureScreenshotParams,
+    };
+
+    let url = current_url(page).await;
+
+    let outer_html = match page
+        .execute(GetOuterHtmlParams {
+            backend_node_id: Some(backend_node_id.clone()),
+            ..Default::default()
+        })
+        .await
+    {
+        Ok(resp) => serde_json::to_value(&resp.result)
+            .ok()
+            .and_then(|v| {
+                v.get("outerHTML")
+                    .and_then(|s| s.as_str())
+                    .map(str::to_string)
+            })
+            .unwrap_or_default(),
+        Err(_) => String::new(),
+    };
+    let outer_html = truncate_str(&outer_html, 4000);
+
+    let label = match page
+        .execute(DescribeNodeParams {
+            backend_node_id: Some(backend_node_id.clone()),
+            ..Default::default()
+        })
+        .await
+    {
+        Ok(resp) => {
+            element_label(&serde_json::to_value(&resp.result).unwrap_or(serde_json::Value::Null))
+        }
+        Err(_) => String::new(),
+    };
+
+    let clip = match page
+        .execute(GetBoxModelParams {
+            backend_node_id: Some(backend_node_id.clone()),
+            ..Default::default()
+        })
+        .await
+    {
+        Ok(resp) => {
+            box_model_clip(&serde_json::to_value(&resp.result).unwrap_or(serde_json::Value::Null))
+        }
+        Err(_) => None,
+    };
+
+    let screenshot_base64 = match page
+        .execute(CaptureScreenshotParams {
+            format: Some(CaptureScreenshotFormat::Png),
+            clip,
+            ..Default::default()
+        })
+        .await
+    {
+        Ok(resp) => serde_json::to_value(&resp.result)
+            .ok()
+            .and_then(|v| v.get("data").and_then(|s| s.as_str()).map(str::to_string))
+            .unwrap_or_default(),
+        Err(_) => String::new(),
+    };
+
+    Some(AgentWebviewElementPickedEvent {
+        url,
+        label,
+        outer_html,
+        screenshot_base64,
+    })
+}
+
 // Establish persistent CDP session (background task, with retries: debug port needs a moment).
 #[cfg(feature = "native_webview")]
 async fn establish_cdp_session(app: AppHandle, port: u16) {
@@ -246,7 +420,7 @@ async fn establish_cdp_session(app: AppHandle, port: u16) {
         }
     };
 
-    // Enable Runtime/Log/Page domains so the events fire.
+    // Enable Runtime/Log/Page/DOM/Overlay domains so the events fire.
     let _ = page
         .execute(chromiumoxide::cdp::js_protocol::runtime::EnableParams::default())
         .await;
@@ -255,6 +429,12 @@ async fn establish_cdp_session(app: AppHandle, port: u16) {
         .await;
     let _ = page
         .execute(chromiumoxide::cdp::browser_protocol::page::EnableParams::default())
+        .await;
+    let _ = page
+        .execute(chromiumoxide::cdp::browser_protocol::dom::EnableParams::default())
+        .await;
+    let _ = page
+        .execute(chromiumoxide::cdp::browser_protocol::overlay::EnableParams::default())
         .await;
 
     let mut tasks = vec![handler_task];
@@ -321,6 +501,35 @@ async fn establish_cdp_session(app: AppHandle, port: u16) {
                     };
                     if is_main_frame {
                         emit_navigated(&app, &page).await;
+                    }
+                }
+            }
+        }));
+    }
+
+    // element pick (inspect mode) -> capture element context for the AI
+    {
+        let app = app.clone();
+        let page = page.clone();
+        tasks.push(tauri::async_runtime::spawn(async move {
+            use chromiumoxide::cdp::browser_protocol::overlay::{
+                EventInspectNodeRequested, InspectMode, SetInspectModeParams,
+            };
+            use futures::StreamExt;
+            use tauri_specta::Event;
+            if let Ok(mut stream) = page.event_listener::<EventInspectNodeRequested>().await {
+                while let Some(ev) = stream.next().await {
+                    // one-shot: leave inspect mode as soon as the user picks an element
+                    let _ = page
+                        .execute(SetInspectModeParams {
+                            mode: InspectMode::None,
+                            highlight_config: None,
+                        })
+                        .await;
+                    if let Some(payload) =
+                        collect_picked_element(&page, ev.backend_node_id.clone()).await
+                    {
+                        let _ = payload.emit(&app);
                     }
                 }
             }
@@ -598,6 +807,65 @@ pub async fn agent_webview_reload(app: AppHandle, trace_id: Option<String>) -> R
         page.reload()
             .await
             .map_err(|e| format!("reload failed: {e}"))?;
+        Ok(())
+    }
+
+    #[cfg(not(feature = "native_webview"))]
+    {
+        let _ = (&app, &trace_id);
+        Err("native_webview feature is disabled; rebuild with `--features native_webview`".to_string())
+    }
+}
+
+/// Enter element-pick (inspect) mode. The next element the user clicks is captured and
+/// surfaced via AgentWebviewElementPickedEvent.
+#[tauri::command]
+#[specta::specta]
+pub async fn agent_webview_start_select(
+    app: AppHandle,
+    trace_id: Option<String>,
+) -> Result<(), String> {
+    #[cfg(feature = "native_webview")]
+    {
+        use chromiumoxide::cdp::browser_protocol::overlay::{
+            HighlightConfig, InspectMode, SetInspectModeParams,
+        };
+        let _ = (&app, &trace_id);
+        let page = wait_for_cdp_page().await?;
+        page.execute(SetInspectModeParams {
+            mode: InspectMode::SearchForNode,
+            highlight_config: Some(HighlightConfig::default()),
+        })
+        .await
+        .map_err(|e| format!("setInspectMode failed: {e}"))?;
+        Ok(())
+    }
+
+    #[cfg(not(feature = "native_webview"))]
+    {
+        let _ = (&app, &trace_id);
+        Err("native_webview feature is disabled; rebuild with `--features native_webview`".to_string())
+    }
+}
+
+/// Exit element-pick (inspect) mode without picking.
+#[tauri::command]
+#[specta::specta]
+pub async fn agent_webview_cancel_select(
+    app: AppHandle,
+    trace_id: Option<String>,
+) -> Result<(), String> {
+    #[cfg(feature = "native_webview")]
+    {
+        use chromiumoxide::cdp::browser_protocol::overlay::{InspectMode, SetInspectModeParams};
+        let _ = (&app, &trace_id);
+        let page = wait_for_cdp_page().await?;
+        page.execute(SetInspectModeParams {
+            mode: InspectMode::None,
+            highlight_config: None,
+        })
+        .await
+        .map_err(|e| format!("setInspectMode failed: {e}"))?;
         Ok(())
     }
 
