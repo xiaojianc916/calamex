@@ -1,10 +1,20 @@
 use super::*;
+use super::worktree_io::collect_tree_file_changes;
 use gix::bstr::ByteSlice;
 use std::collections::HashMap;
 
 // 提交历史改用 gix 遍历实现，不再依赖系统 git。
 // 通过 `rev_walk` + `Sorting::ByCommitTime(NewestFirst)` 按提交时间倒序遍历，
 // 等价于 `git log`（最新在前）。时间取自 Info.commit_time（提交时间，秒）。
+
+/// 空字符串回退为占位标签，否则原样转为 String。
+fn or_label(value: &str, fallback: &str) -> String {
+    if value.is_empty() {
+        fallback.to_string()
+    } else {
+        value.to_string()
+    }
+}
 
 #[tauri::command]
 #[specta::specta]
@@ -93,16 +103,8 @@ pub fn list_git_commit_history(
         entries.push(GitCommitSummaryPayload {
             id: full_id,
             short_id,
-            summary: if summary.is_empty() {
-                "无提交说明".to_string()
-            } else {
-                summary.to_string()
-            },
-            author_name: if author_name.is_empty() {
-                "未知作者".to_string()
-            } else {
-                author_name.to_string()
-            },
+            summary: or_label(summary, "无提交说明"),
+            author_name: or_label(author_name, "未知作者"),
             author_email,
             authored_at,
             parent_ids,
@@ -186,7 +188,18 @@ pub fn get_git_commit_detail(
         None => repository.empty_tree().id().detach(),
     };
 
-    let files = collect_commit_file_changes(&repository, old_tree_id, new_tree_id)?;
+    let files: Vec<GitCommitFileChangePayload> =
+        collect_tree_file_changes(&repository, old_tree_id, new_tree_id)?
+            .into_iter()
+            .map(|change| GitCommitFileChangePayload {
+                relative_path: change.relative_path,
+                file_name: change.file_name,
+                previous_relative_path: change.previous_relative_path,
+                status: change.status,
+                additions: change.additions,
+                deletions: change.deletions,
+            })
+            .collect();
     let file_count = files.len();
     let additions = files
         .iter()
@@ -198,17 +211,9 @@ pub fn get_git_commit_detail(
     Ok(GitCommitDetailPayload {
         id: full_id,
         short_id,
-        summary: if summary.is_empty() {
-            "无提交说明".to_string()
-        } else {
-            summary.to_string()
-        },
+        summary: or_label(summary, "无提交说明"),
         body,
-        author_name: if author_name.is_empty() {
-            "未知作者".to_string()
-        } else {
-            author_name.to_string()
-        },
+        author_name: or_label(author_name, "未知作者"),
         author_email,
         authored_at,
         parent_ids,
@@ -218,135 +223,6 @@ pub fn get_git_commit_detail(
         deletions,
         files,
     })
-}
-
-/// 计算两棵树之间的文件级差异并逐文件统计增删行数（纯 gix，不依赖系统 git）。
-fn collect_commit_file_changes(
-    repository: &Repository,
-    old_tree_id: gix::ObjectId,
-    new_tree_id: gix::ObjectId,
-) -> Result<Vec<GitCommitFileChangePayload>, String> {
-    let old_tree = repository
-        .find_tree(old_tree_id)
-        .map_err(|error| format!("读取基线树失败：{error}"))?;
-    let new_tree = repository
-        .find_tree(new_tree_id)
-        .map_err(|error| format!("读取提交树失败：{error}"))?;
-    let changes = repository
-        .diff_tree_to_tree(Some(&old_tree), Some(&new_tree), None)
-        .map_err(|error| format!("计算提交差异失败：{error}"))?;
-
-    let mut files = Vec::new();
-    use gix::diff::tree_with_rewrites::Change;
-    for change in changes {
-        let (location, previous_location, old_id, new_id, base_status, entry_mode) = match change {
-            Change::Addition {
-                location,
-                id,
-                entry_mode,
-                ..
-            } => (location, None, None, Some(id), "added", entry_mode),
-            Change::Deletion {
-                location,
-                id,
-                entry_mode,
-                ..
-            } => (location, None, Some(id), None, "deleted", entry_mode),
-            Change::Modification {
-                location,
-                previous_id,
-                id,
-                entry_mode,
-                ..
-            } => (
-                location,
-                None,
-                Some(previous_id),
-                Some(id),
-                "modified",
-                entry_mode,
-            ),
-            Change::Rewrite {
-                source_location,
-                location,
-                source_id,
-                id,
-                entry_mode,
-                ..
-            } => (
-                location,
-                Some(source_location),
-                Some(source_id),
-                Some(id),
-                "renamed",
-                entry_mode,
-            ),
-        };
-
-        if entry_mode.is_tree() || entry_mode.is_commit() {
-            continue;
-        }
-
-        let old_bytes = old_id.and_then(|id| commit_blob_bytes(repository, id));
-        let new_bytes = new_id.and_then(|id| commit_blob_bytes(repository, id));
-        let (additions, deletions, is_binary) =
-            count_blob_line_changes(old_bytes.as_deref(), new_bytes.as_deref());
-        let status = if is_binary { "binary" } else { base_status }.to_string();
-
-        let path_string = location.to_str_lossy().into_owned();
-        let relative_path = Path::new(&path_string);
-        let file_name = relative_path
-            .file_name()
-            .and_then(|value| value.to_str())
-            .map(str::to_string)
-            .unwrap_or_else(|| path_string.clone());
-        let previous_relative_path = previous_location.map(|source| {
-            let source = source.to_str_lossy().into_owned();
-            path_to_forward_slashes(Path::new(&source))
-        });
-
-        files.push(GitCommitFileChangePayload {
-            relative_path: path_to_forward_slashes(relative_path),
-            file_name,
-            previous_relative_path,
-            status,
-            additions,
-            deletions,
-        });
-    }
-    Ok(files)
-}
-
-fn commit_blob_bytes(repository: &Repository, object_id: gix::ObjectId) -> Option<Vec<u8>> {
-    repository
-        .find_object(object_id)
-        .ok()
-        .map(|object| object.data.clone())
-}
-
-fn count_blob_line_changes(old: Option<&[u8]>, new: Option<&[u8]>) -> (u32, u32, bool) {
-    let is_binary =
-        old.is_some_and(|bytes| bytes.contains(&0)) || new.is_some_and(|bytes| bytes.contains(&0));
-    if is_binary {
-        return (0, 0, true);
-    }
-    let old_text = old
-        .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
-        .unwrap_or_default();
-    let new_text = new
-        .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
-        .unwrap_or_default();
-    let diff = similar::TextDiff::from_lines(&old_text, &new_text);
-    let mut additions = 0u32;
-    let mut deletions = 0u32;
-    for change in diff.iter_all_changes() {
-        match change.tag() {
-            similar::ChangeTag::Insert => additions = additions.saturating_add(1),
-            similar::ChangeTag::Delete => deletions = deletions.saturating_add(1),
-            similar::ChangeTag::Equal => {}
-        }
-    }
-    (additions, deletions, false)
 }
 
 /// 枚举本地分支与远程分支引用，按其指向的提交 ID 聚合装饰标签。
