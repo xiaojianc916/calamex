@@ -285,9 +285,10 @@ export const aiChatStreamPayloadSchema = z.object({
   /**
    * ACP 会话标识。chat 模式走 ACP host 时由后端 `chat_stream_via_acp` 回填,
    * 前端据此订阅 `ai:sidecar-stream` 上属于本轮的投影事件。legacy 路径不设置,
-   * 故为 `.optional()`,保持对旧后端的向后兼容。
+   * 故为 `.nullable().optional()`:对齐生成绑定的 `Option<String>` → `string | null`,
+   * 同时兼容旧后端不回填的情况。
    */
-  sessionId: z.string().min(1).optional(),
+  sessionId: z.string().min(1).nullable().optional(),
 });
 
 /**

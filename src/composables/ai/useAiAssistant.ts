@@ -20,7 +20,10 @@ import {
   projectSidecarEventsToToolState,
   projectSidecarExecuteResponse,
 } from '@/composables/ai/sidecar-events';
-import { subscribeSidecarSessionStream } from '@/composables/ai/sidecar-stream-listener';
+import {
+  subscribeSidecarSessionStream,
+  subscribeSidecarStreamWithPrebuffer,
+} from '@/composables/ai/sidecar-stream-listener';
 import { useAiAgentPlan } from '@/composables/ai/useAiAgentPlan';
 import { useAiStream } from '@/composables/ai/useAiStream';
 import {
@@ -1803,7 +1806,9 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
         settle();
       }
     });
-    let unlistenSidecarStream: (() => void) | null = null;
+    const sidecarStream = await subscribeSidecarStreamWithPrebuffer((event) => {
+      liveEventBuffer.push(event);
+    });
 
     try {
       const stream = await aiService.chatStream({
@@ -1820,9 +1825,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
         throw new Error('AI 流式响应缺少 sessionId,无法订阅 ACP 流。');
       }
 
-      unlistenSidecarStream = await subscribeSidecarSessionStream(sessionId, (event) => {
-        liveEventBuffer.push(event);
-      });
+      sidecarStream.bind(sessionId);
 
       await new Promise<void>((resolve) => {
         if (hasSettledStream) {
@@ -1846,7 +1849,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       }
     } finally {
       liveEventBuffer.dispose();
-      unlistenSidecarStream?.();
+      sidecarStream.dispose();
       activeStreamResolve.value = null;
       activeStreamId.value = null;
       activeAbortController.value = null;
