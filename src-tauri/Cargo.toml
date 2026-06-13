@@ -1,7 +1,7 @@
 [package]
 name = "calamex"
 version = "0.1.0"
-description = "面向 Windows 的 Linux Shell 脚本编辑器"
+description = "Linux Shell script editor for Windows"
 edition = "2024"
 build = "build.rs"
 default-run = "calamex"
@@ -11,14 +11,10 @@ tauri-build = { version = "2.5.6", features = [], optional = true }
 
 [features]
 default = ["desktop", "native_webview"]
-# 迁移期临时门控：启用宿主侧官方 ACP stdio 客户端（`cargo build --features acp_client`）。
-# 默认构建不启用，保证 main 分支默认编译不受影响、整步可逆。
 acp_client = ["dep:agent-client-protocol"]
-# 原生承载内置浏览器（Tauri multiwebview 子 webview + 独立 user-data-folder + CDP 远程调试端口）。
-# 默认启用（随 desktop 进 default）：AI 操作内置浏览器是产品核心能力，需开箱即用，不再走 iframe 旧路。
-# 如需最小依赖构建可 `--no-default-features` 关闭（届时走 cfg stub 返回 Err）。
-# 启用 tauri/unstable 以使用 Window::add_child 多 webview API；用弱依赖 `tauri?/unstable`。
-native_webview = ["tauri?/unstable"]
+# Native-hosted built-in browser (Tauri multiwebview child + isolated user-data-folder + CDP port).
+# CDP control plane needs chromiumoxide + futures (drives the event streams).
+native_webview = ["tauri?/unstable", "dep:chromiumoxide", "dep:futures"]
 desktop = [
   "dep:atomic-write-file",
   "dep:blake3",
@@ -53,8 +49,6 @@ desktop = [
 ]
 
 [dependencies]
-# 官方 Agent Client Protocol Rust SDK。钉到 v0.14.0 的 SACP 角色/构建器 API
-# （该 rev 自身把 schema 依赖钉在已发布的 agent-client-protocol-schema =0.13.6）。
 agent-client-protocol = { git = "https://github.com/agentclientprotocol/rust-sdk", rev = "98b9792a014569f87404d48ed7521431369948c5", optional = true }
 bytes = "1.7"
 parking_lot = "0.12"
@@ -62,8 +56,10 @@ pin-project-lite = "0.2"
 base64 = "0.22.1"
 ast-grep-core = { version = "0.42.2", default-features = false, features = ["tree-sitter"], optional = true }
 ast-grep-language = { version = "0.42.2", default-features = false, features = ["tree-sitter-bash"], optional = true }
+chromiumoxide = { version = "0.7", default-features = false, features = ["tokio-runtime"], optional = true }
 diffy-imara = { version = "0.3.2", optional = true }
 encoding_rs = { version = "0.8.35", optional = true }
+futures = { version = "0.3", optional = true }
 gix = { version = "0.84", default-features = false, features = ["max-performance-safe", "sha1", "revision", "index", "status", "blob-diff", "excludes", "tree-editor"], optional = true }
 globset = { version = "0.4.18", optional = true }
 grep-matcher = { version = "0.1.8", optional = true }
@@ -119,8 +115,6 @@ tauri-plugin-opener = "2.5.4"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Networking_WinSock", "Win32_System_Hypervisor"] }
-# WebView2 设置硬化所需：用于关闭浏览器加速键（修复 Ctrl+S 全屏白屏）。
-# 版本与 wry 0.55.1 解析出的传递依赖完全一致，避免重复 crate 版本导致 .cast() 类型不匹配。
 webview2-com = "=0.38.2"
 windows-core = "=0.61.2"
 
