@@ -37,6 +37,10 @@ const MAX_SYNC_HIGHLIGHT_SLICE_LENGTH = 28_000;
 // 单帧的跨度，减少滚动越界触发重算的频率，降低闪烁概率。
 const HIGHLIGHT_OVERSCAN_LINES = 72;
 
+// DecorationSet 只需要覆盖真实视口附近。
+// token 预取/缓存范围可以大，但 RangeSetBuilder 不应为大量屏幕外行重复创建 Decoration。
+const DECORATION_RENDER_MARGIN_LINES = 8;
+
 // 同步着色时可见区上方的 lead-in 行数：不从文档开头切片时，从可见区上沿向上多取
 // 这些行作为语法状态的“启动上下文”，使块注释/heredoc/多行字符串等跨行结构在
 // 可见区配色尽量正确。取较大值以覆盖绝大多数现实代码的跨行跨度；极端超长跨行
@@ -58,7 +62,12 @@ const MAX_TOKEN_DECORATION_CACHE_SIZE = 512;
 // 按行 token 缓存的行数上限：滚动浏览过的行的 token 会被缓存以便回滚时零重算；
 // 超大文件全程滚动可能缓存大量行，设上限并按最旧插入淘汰，避免内存无界增长。
 // 被淘汰的行若再次进入视口会重新 tokenize（仍是有界的可见区切片，成本可控）。
-const MAX_LINE_TOKEN_CACHE_LINES = 6_000;
+const MAX_LINE_TOKEN_CACHE_LINES = 20_000;
+
+// 超长单行保护：正常代码不受影响；minified/bundle/base64/压缩 JSON 等极端长行
+// 不为该行构建大量 Decoration，避免 RangeSetBuilder 与布局测量被单行拖垮。
+const MAX_DECORATED_LINE_LENGTH = 20_000;
+const MAX_DECORATED_LINE_TOKEN_COUNT = 2_000;
 
 const FONT_STYLE_ITALIC = 1;
 const FONT_STYLE_BOLD = 2;
@@ -98,6 +107,16 @@ type TShikiWorkerHighlightResult = {
 
 type TShikiHighlightRequestIdentity = {
   key: string;
+  requestId: number;
+  docVersion: number;
+  language: string;
+  startLine: number;
+  endLine: number;
+};
+
+type TQueuedShikiWorkerRequest = {
+  view: EditorView;
+  code: string;
   requestId: number;
   docVersion: number;
   language: string;
@@ -362,6 +381,14 @@ const buildDecorationsFromLineCache = (
       continue;
     }
     const docLine = doc.line(lineNumber);
+
+    if (
+      docLine.length > MAX_DECORATED_LINE_LENGTH ||
+      lineTokens.length > MAX_DECORATED_LINE_TOKEN_COUNT
+    ) {
+      continue;
+    }
+
     let position = docLine.from;
     for (const token of lineTokens) {
       const length = token.content.length;
@@ -393,6 +420,8 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
     private latestRequestId = 0;
     private docVersion = 0;
     private pendingRequest: TShikiHighlightRequestIdentity | null = null;
+    private activeWorkerRequestId: number | null = null;
+    private queuedWorkerRequest: TQueuedShikiWorkerRequest | null = null;
     // 已发起主线程预热的语言；避免每次 recompute 重复创建微任务，失败则复位以允许重试。
     private warmedLanguage: string | null = null;
     // 按行 token 缓存：key=文档行号(1-based)，value=该行 token。仅对 (cacheLanguage,
@@ -401,6 +430,9 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
     private lineTokenCache = new Map<number, IShikiThemedToken[]>();
     private cacheLanguage: string | null = null;
     private cacheDocVersion = -1;
+    private lineTokenCacheRevision = 0;
+    private decorationCacheKey: string | null = null;
+    private decorationCache: DecorationSet | null = null;
 
     constructor(view: EditorView) {
       this.decorations = Decoration.none;
@@ -483,7 +515,11 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
       this.destroyed = true;
       this.cancelScheduledRecompute();
       this.pendingRequest = null;
+      this.activeWorkerRequestId = null;
+      this.queuedWorkerRequest = null;
       this.lineTokenCache.clear();
+      this.decorationCacheKey = null;
+      this.decorationCache = null;
     }
 
     private cancelScheduledRecompute(): void {
@@ -562,6 +598,9 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
     private ensureCacheContext(language: string): void {
       if (this.cacheLanguage !== language || this.cacheDocVersion !== this.docVersion) {
         this.lineTokenCache.clear();
+        this.lineTokenCacheRevision += 1;
+        this.decorationCacheKey = null;
+        this.decorationCache = null;
         this.cacheLanguage = language;
         this.cacheDocVersion = this.docVersion;
       }
@@ -571,6 +610,11 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
     private cacheSliceLines(sliceStartLine: number, lines: IShikiThemedToken[][]): void {
       for (let index = 0; index < lines.length; index += 1) {
         this.lineTokenCache.set(sliceStartLine + index, lines[index] ?? []);
+      }
+      if (lines.length > 0) {
+        this.lineTokenCacheRevision += 1;
+        this.decorationCacheKey = null;
+        this.decorationCache = null;
       }
       while (this.lineTokenCache.size > MAX_LINE_TOKEN_CACHE_LINES) {
         const oldestKey = this.lineTokenCache.keys().next().value;
@@ -603,16 +647,32 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
         firstVisibleLine: visible.first,
         lastVisibleLine: visible.last,
         totalLines: view.state.doc.lines,
-        overscanLines: HIGHLIGHT_OVERSCAN_LINES,
-        leadInLines: HIGHLIGHT_OVERSCAN_LINES,
+        overscanLines: DECORATION_RENDER_MARGIN_LINES,
+        leadInLines: DECORATION_RENDER_MARGIN_LINES,
         fromDocumentStart: false,
       });
-      this.decorations = buildDecorationsFromLineCache(
+      const renderCacheKey = [
+        this.cacheLanguage ?? '',
+        this.cacheDocVersion,
+        this.lineTokenCacheRevision,
+        renderRange.startLine,
+        renderRange.endLine,
+      ].join(':');
+
+      if (this.decorationCacheKey === renderCacheKey && this.decorationCache) {
+        this.decorations = this.decorationCache;
+        return;
+      }
+
+      const decorations = buildDecorationsFromLineCache(
         view,
         renderRange.startLine,
         renderRange.endLine,
         this.lineTokenCache,
       );
+      this.decorationCacheKey = renderCacheKey;
+      this.decorationCache = decorations;
+      this.decorations = decorations;
     }
 
     private canFillScrollViewportSynchronously(view: EditorView): boolean {
@@ -672,6 +732,9 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
       if (!resolveShikiLanguageId(language)) {
         this.decorations = Decoration.none;
         this.lineTokenCache.clear();
+        this.lineTokenCacheRevision += 1;
+        this.decorationCacheKey = null;
+        this.decorationCache = null;
         this.cacheLanguage = null;
         this.cacheDocVersion = -1;
         this.pendingRequest = null;
@@ -786,19 +849,43 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
         endLine: slice.endLine,
       };
 
-      void tokenizeWithShikiWorker(slice.code, language)
+      this.enqueueWorkerTokenize({
+        view,
+        code: slice.code,
+        requestId,
+        docVersion,
+        language,
+        startLine: slice.startLine,
+        endLine: slice.endLine,
+      });
+    }
+
+    private enqueueWorkerTokenize(request: TQueuedShikiWorkerRequest): void {
+      if (this.activeWorkerRequestId !== null) {
+        this.queuedWorkerRequest = request;
+        return;
+      }
+
+      this.runWorkerTokenize(request);
+    }
+
+    private runWorkerTokenize(request: TQueuedShikiWorkerRequest): void {
+      this.activeWorkerRequestId = request.requestId;
+
+      void tokenizeWithShikiWorker(request.code, request.language)
         .then((tokens) => {
           if (this.destroyed) {
             return;
           }
+
           try {
-            view.dispatch({
+            request.view.dispatch({
               effects: shikiWorkerResultEffect.of({
-                requestId,
-                docVersion,
-                language,
-                startLine: slice.startLine,
-                endLine: slice.endLine,
+                requestId: request.requestId,
+                docVersion: request.docVersion,
+                language: request.language,
+                startLine: request.startLine,
+                endLine: request.endLine,
                 tokens,
               }),
             });
@@ -807,9 +894,32 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
           }
         })
         .finally(() => {
-          if (this.pendingRequest?.requestId === requestId) {
+          if (this.pendingRequest?.requestId === request.requestId) {
             this.pendingRequest = null;
           }
+
+          if (this.activeWorkerRequestId === request.requestId) {
+            this.activeWorkerRequestId = null;
+          }
+
+          const queued = this.queuedWorkerRequest;
+          this.queuedWorkerRequest = null;
+
+          if (!queued || this.destroyed) {
+            return;
+          }
+
+          const currentLanguage = queued.view.state.field(shikiLanguageField, false) ?? 'text';
+          const isStillLatest =
+            queued.requestId === this.latestRequestId &&
+            queued.docVersion === this.docVersion &&
+            queued.language === currentLanguage;
+
+          if (!isStillLatest) {
+            return;
+          }
+
+          this.runWorkerTokenize(queued);
         });
     }
 
