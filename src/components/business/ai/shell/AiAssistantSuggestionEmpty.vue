@@ -39,7 +39,7 @@ const emit = defineEmits<{
   width: 100%;
   min-width: 0;
   gap: 6px;
-  padding: clamp(64px, 20vh, 200px) 16px 0;
+  padding: 0 16px 0;
 }
 
 .ai-suggestion-greeting {

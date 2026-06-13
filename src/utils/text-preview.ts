@@ -638,7 +638,7 @@ const allocateFieldBudgets = (
     // 复杂度从 O(B·F·logF) 降到 O(F·logF)。
     let surplus = totalBudget - safeAvailableBudget;
     const reclaimOrder = fields
-      .map((field, index) => ({ index, priority: priorities[index] ?? 1 }))
+      .map((_field, index) => ({ index, priority: priorities[index] ?? 1 }))
       .sort(
         (left, right) =>
           comparePriorityAsc(left.priority, right.priority) || right.index - left.index,
@@ -658,7 +658,7 @@ const allocateFieldBudgets = (
     // 同样与旧的 “每次 +1 并重排” 逐步逼近实现结果一致。
     let deficit = safeAvailableBudget - totalBudget;
     const grantOrder = fields
-      .map((field, index) => ({ index, priority: priorities[index] ?? 1 }))
+      .map((_field, index) => ({ index, priority: priorities[index] ?? 1 }))
       .sort(
         (left, right) =>
           comparePriorityDesc(left.priority, right.priority) || left.index - right.index,

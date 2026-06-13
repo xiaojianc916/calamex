@@ -504,7 +504,7 @@ export const useDocumentPersistence = ({
     }
 
     const snapshot = createLoadedTextDocumentSnapshot(targetDocument);
-    if (!snapshot || !snapshot.path) {
+    if (!snapshot?.path) {
       return false;
     }
 

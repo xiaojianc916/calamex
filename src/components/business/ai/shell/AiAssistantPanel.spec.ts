@@ -315,7 +315,7 @@ const createAssistantMock = (messagesList: IAiChatMessage[] = []) => {
   };
 };
 
-const mountPanel = (assistantMock: ReturnType<typeof createAssistantMock>) =>
+const mountPanel = (_assistantMock: ReturnType<typeof createAssistantMock>) =>
   mount(AiAssistantPanel, {
     props: {
       document: createDocument(),

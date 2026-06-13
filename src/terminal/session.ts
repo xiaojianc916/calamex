@@ -421,7 +421,8 @@ export class TerminalSession {
   private _pendingLayoutAfterShellWindowResize = false;
 
   // -- Private: write buffer -----------------------------------------------
-  private _bufferedTerminalWrite = '';
+  private readonly _bufferedTerminalWriteChunks: string[] = [];
+  private _bufferedTerminalWriteLength = 0;
   private readonly _hiddenWriteBacklog = createHiddenWriteBacklog({
     maxChars: TERMINAL_HIDDEN_WRITE_BACKLOG_MAX_CHARS,
     maxChunkChars: TERMINAL_HIDDEN_WRITE_BACKLOG_CHUNK_CHARS,
@@ -633,7 +634,7 @@ export class TerminalSession {
       );
       if (!payload.created && payload.initialOutput) {
         terminal.reset();
-        this._bufferedTerminalWrite = '';
+        this._clearTerminalWriteBuffer();
         this._hiddenWriteBacklog.clear();
         this._pendingScrollToBottomAfterWrite = false;
         this._pendingHiddenScrollToBottom = false;
@@ -891,7 +892,7 @@ export class TerminalSession {
     this._clearRunVisualTransactions();
 
     this._resetTerminalRunCapture();
-    this._bufferedTerminalWrite = '';
+    this._clearTerminalWriteBuffer();
     this._hiddenWriteBacklog.clear();
     this._pendingTerminalWriteCallbacks.length = 0;
     this._isTerminalWriteInFlight = false;
@@ -990,7 +991,7 @@ export class TerminalSession {
       bufferLength,
       visible: this._visible,
       activeRunId: this._activeRunId,
-      pendingWriteChars: this._bufferedTerminalWrite.length,
+      pendingWriteChars: this._bufferedTerminalWriteLength,
       hiddenBacklogChars: this._hiddenWriteBacklog.length,
       hostWidth: this._hostEl?.clientWidth ?? null,
       hostHeight: this._hostEl?.clientHeight ?? null,
@@ -1171,7 +1172,7 @@ export class TerminalSession {
       this._scheduleViewportSync({ refresh: true, scrollToBottom: true });
     }
 
-    if (this._bufferedTerminalWrite || this._pendingTerminalWriteCallbacks.length > 0) {
+    if (this._hasPendingTerminalWrite() || this._pendingTerminalWriteCallbacks.length > 0) {
       this._scheduleTerminalWriteFlush();
     }
   }
@@ -1305,6 +1306,49 @@ export class TerminalSession {
 
   // -- Private: write buffer -----------------------------------------------
 
+  private _hasPendingTerminalWrite(): boolean {
+    return this._bufferedTerminalWriteLength > 0;
+  }
+
+  private _appendTerminalWriteBuffer(value: string): void {
+    if (!value) {
+      return;
+    }
+
+    this._bufferedTerminalWriteChunks.push(value);
+    this._bufferedTerminalWriteLength += value.length;
+  }
+
+  private _prependTerminalWriteBuffer(value: string): void {
+    if (!value) {
+      return;
+    }
+
+    this._bufferedTerminalWriteChunks.unshift(value);
+    this._bufferedTerminalWriteLength += value.length;
+  }
+
+  private _drainTerminalWriteBuffer(): string {
+    if (this._bufferedTerminalWriteLength === 0) {
+      return '';
+    }
+
+    if (this._bufferedTerminalWriteChunks.length === 1) {
+      const value = this._bufferedTerminalWriteChunks[0] ?? '';
+      this._clearTerminalWriteBuffer();
+      return value;
+    }
+
+    const value = this._bufferedTerminalWriteChunks.join('');
+    this._clearTerminalWriteBuffer();
+    return value;
+  }
+
+  private _clearTerminalWriteBuffer(): void {
+    this._bufferedTerminalWriteChunks.length = 0;
+    this._bufferedTerminalWriteLength = 0;
+  }
+
   private _flushPendingTerminalWriteCallbacks(): void {
     if (this._pendingTerminalWriteCallbacks.length === 0) return;
     const cbs = this._pendingTerminalWriteCallbacks.splice(
@@ -1334,10 +1378,12 @@ export class TerminalSession {
       return;
     }
     if (!this._visible) {
-      if (this._bufferedTerminalWrite) {
-        this._hiddenWriteBacklog.append(this._bufferedTerminalWrite);
-        this._bufferedTerminalWrite = '';
+      const bufferedWrite = this._drainTerminalWriteBuffer();
+
+      if (bufferedWrite) {
+        this._hiddenWriteBacklog.append(bufferedWrite);
       }
+
       if (this._pendingScrollToBottomAfterWrite) {
         this._pendingHiddenScrollToBottom = true;
         this._pendingScrollToBottomAfterWrite = false;
@@ -1346,13 +1392,14 @@ export class TerminalSession {
     }
     if (this._isTerminalWriteInFlight) return;
     if (!this._hiddenWriteBacklog.isEmpty) {
-      this._bufferedTerminalWrite = `${this._hiddenWriteBacklog.drain()}${this._bufferedTerminalWrite}`;
+      this._prependTerminalWriteBuffer(this._hiddenWriteBacklog.drain());
+
       if (this._pendingHiddenScrollToBottom) {
         this._pendingScrollToBottomAfterWrite = true;
         this._pendingHiddenScrollToBottom = false;
       }
     }
-    if (!this._bufferedTerminalWrite) {
+    if (!this._hasPendingTerminalWrite()) {
       if (options?.forceLayout || this._shouldFitBeforeNextVisibleWrite) {
         this._syncTerminalLayout();
         this._shouldFitBeforeNextVisibleWrite = false;
@@ -1365,9 +1412,8 @@ export class TerminalSession {
       this._syncTerminalLayout();
       this._shouldFitBeforeNextVisibleWrite = false;
     }
-    const chunk = this._bufferedTerminalWrite;
+    const chunk = this._drainTerminalWriteBuffer();
     const shouldScroll = this._pendingScrollToBottomAfterWrite;
-    this._bufferedTerminalWrite = '';
     this._pendingScrollToBottomAfterWrite = false;
     this._isTerminalWriteInFlight = true;
     this._emitBufferDiagnostic('xterm-write:before', chunk);
@@ -1382,7 +1428,7 @@ export class TerminalSession {
         this._emitBufferDiagnostic('initial-paint-recovery:after-layout');
         this._scheduleViewportSync({ refresh: true, scrollToBottom: true });
       }
-      if (this._bufferedTerminalWrite) {
+      if (this._hasPendingTerminalWrite()) {
         this._flushTerminalWriteBufferNow();
         return;
       }
@@ -1415,7 +1461,7 @@ export class TerminalSession {
       if (options?.scrollToBottom) this._pendingHiddenScrollToBottom = true;
       return;
     }
-    this._bufferedTerminalWrite += normalizedValue;
+    this._appendTerminalWriteBuffer(normalizedValue);
     if (options?.scrollToBottom) this._pendingScrollToBottomAfterWrite = true;
     this._scheduleTerminalWriteFlush();
   }

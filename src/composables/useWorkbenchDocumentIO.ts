@@ -298,8 +298,7 @@ export const useWorkbenchDocumentIO = ({
   ): Promise<void> => {
     const targetDocument = editorStore.getDocumentById(documentId);
     if (
-      !targetDocument ||
-      targetDocument.kind !== 'text' ||
+      targetDocument?.kind !== 'text' ||
       targetDocument.bufferLoaded !== false ||
       !targetDocument.path
     ) {

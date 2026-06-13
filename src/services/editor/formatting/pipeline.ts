@@ -20,7 +20,7 @@ export const runFormatPipeline = async ({
   let formatterFailed = false;
   let formatterError: string | undefined;
 
-  if (formatter && formatter.supports(languageId)) {
+  if (formatter?.supports(languageId)) {
     try {
       working = await formatter.format({ text: working, path, languageId });
     } catch (error) {

@@ -39,7 +39,7 @@ describe('hidden write backlog', () => {
       omittedMarker: MARKER,
     });
     backlog.append('a😀b');
-    expect(backlog.drain()).toBe(MARKER + '😀b');
+    expect(backlog.drain()).toBe(`${MARKER}😀b`);
   });
 
   it('drain / clear 后状态复位', () => {

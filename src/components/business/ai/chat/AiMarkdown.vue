@@ -53,6 +53,71 @@ const AI_MARKDOWN_COMPONENTS = {
   table: AiMarkdownTable,
 } satisfies Partial<CustomComponents>;
 
+const AI_MARKDOWN_STREAM_UPDATE_INTERVAL_MS = 48;
+const AI_MARKDOWN_FINAL_NORMALIZE_CACHE_LIMIT = 500;
+const AI_MARKDOWN_LONG_CONTENT_HEAD_SIGNATURE = 96;
+const AI_MARKDOWN_LONG_CONTENT_TAIL_SIGNATURE = 512;
+
+interface IAiMarkdownNormalizeCacheRecord {
+  content: string;
+  normalized: string;
+}
+
+const finalNormalizeCache = new Map<string, IAiMarkdownNormalizeCacheRecord>();
+
+const buildFinalNormalizeCacheKey = (messageId: string, content: string): string => {
+  if (content.length <= AI_MARKDOWN_LONG_CONTENT_TAIL_SIGNATURE) {
+    return `${messageId}:${content.length}:${content}`;
+  }
+
+  return [
+    messageId,
+    content.length,
+    content.slice(0, AI_MARKDOWN_LONG_CONTENT_HEAD_SIGNATURE),
+    content.slice(-AI_MARKDOWN_LONG_CONTENT_TAIL_SIGNATURE),
+  ].join(':');
+};
+
+const trimFinalNormalizeCache = (): void => {
+  while (finalNormalizeCache.size > AI_MARKDOWN_FINAL_NORMALIZE_CACHE_LIMIT) {
+    const firstKey = finalNormalizeCache.keys().next().value;
+
+    if (typeof firstKey !== 'string') {
+      break;
+    }
+
+    finalNormalizeCache.delete(firstKey);
+  }
+};
+
+const normalizeMarkdownContent = (
+  messageId: string,
+  content: string,
+  cacheable: boolean,
+): string => {
+  if (!cacheable) {
+    return normalizeAiMath(content);
+  }
+
+  const key = buildFinalNormalizeCacheKey(messageId, content);
+  const cached = finalNormalizeCache.get(key);
+
+  if (cached?.content === content) {
+    return cached.normalized;
+  }
+
+  const normalized = normalizeAiMath(content);
+
+  finalNormalizeCache.delete(key);
+  finalNormalizeCache.set(key, {
+    content,
+    normalized,
+  });
+  trimFinalNormalizeCache();
+
+  return normalized;
+};
+
 if (!isKatexEnabled()) {
   enableKatex();
 }
@@ -65,12 +130,14 @@ const props = defineProps<{
   streamStatus?: IAiChatStreamRenderState['status'];
 }>();
 
-const normalizedContent = computed(() => normalizeAiMath(props.content));
-const renderContent = ref(normalizeAiMath(props.content));
 const isShellWindowResizing = ref(false);
 const isFinal = computed(
   () => props.streamStatus !== 'streaming' && props.streamStatus !== 'waiting-confirmation',
 );
+const normalizedContent = computed(() =>
+  normalizeMarkdownContent(props.messageId, props.content, isFinal.value),
+);
+const renderContent = ref(normalizedContent.value);
 
 // 保留 markstream-vue 的平滑流式（smooth-streaming），但按用户要求关闭打字机光标效果。
 //
@@ -86,9 +153,21 @@ const typewriter = false as const;
 const maxLiveNodes = 0;
 const rendererId = computed(() => `ai-message-${props.messageId}`);
 let pendingRenderContent: string | null = null;
+let pendingRenderContentTimer: ReturnType<typeof window.setTimeout> | null = null;
 let resizeLifecycleCleanup: (() => void) | null = null;
 
+const clearPendingRenderContentTimer = (): void => {
+  if (pendingRenderContentTimer === null) {
+    return;
+  }
+
+  window.clearTimeout(pendingRenderContentTimer);
+  pendingRenderContentTimer = null;
+};
+
 const flushPendingRenderContent = (): void => {
+  clearPendingRenderContentTimer();
+
   if (pendingRenderContent === null) {
     return;
   }
@@ -97,14 +176,50 @@ const flushPendingRenderContent = (): void => {
   pendingRenderContent = null;
 };
 
-watch(normalizedContent, (nextContent) => {
-  if (isShellWindowResizing.value) {
-    pendingRenderContent = nextContent;
+const scheduleStreamingRenderContent = (nextContent: string): void => {
+  pendingRenderContent = nextContent;
+
+  if (pendingRenderContentTimer !== null) {
     return;
   }
 
-  renderContent.value = nextContent;
-});
+  pendingRenderContentTimer = window.setTimeout(() => {
+    pendingRenderContentTimer = null;
+    flushPendingRenderContent();
+  }, AI_MARKDOWN_STREAM_UPDATE_INTERVAL_MS);
+};
+
+watch(
+  normalizedContent,
+  (nextContent) => {
+    if (isShellWindowResizing.value) {
+      pendingRenderContent = nextContent;
+      return;
+    }
+
+    if (isFinal.value) {
+      pendingRenderContent = nextContent;
+      flushPendingRenderContent();
+      return;
+    }
+
+    scheduleStreamingRenderContent(nextContent);
+  },
+  { flush: 'pre' },
+);
+
+watch(
+  isFinal,
+  (final) => {
+    if (!final) {
+      return;
+    }
+
+    pendingRenderContent = normalizedContent.value;
+    flushPendingRenderContent();
+  },
+  { flush: 'pre' },
+);
 
 const bindResizeLifecycle = (): void => {
   const handleResizeStart = (): void => {
@@ -143,6 +258,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  clearPendingRenderContentTimer();
   resizeLifecycleCleanup?.();
   stopCodeBlockMapping();
   removeCustomComponents(rendererId.value);
