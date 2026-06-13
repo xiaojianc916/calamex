@@ -11,6 +11,13 @@ import type {
 import { toErrorMessage } from '@/utils/error';
 import { areFileSystemPathsEqual } from '@/utils/path';
 
+// 新建草稿刚打开后的“焦点保护窗口”。
+// 右键菜单（reka-ui ContextMenu）关闭时会把焦点还原到它的隐藏触发器上，
+// 从而把刚挂载的行内新建输入框挤掉焦点、触发一次“伪失焦”。
+// 在这个窗口内、且焦点落到菜单元素 / body 上的失焦，判定为这种竞态：
+// 重新夺回输入框焦点，而不是据此提交 / 取消草稿（否则会出现“打开即消失”）。
+const INLINE_CREATE_FOCUS_GRACE_MS = 300;
+
 export interface IUseWorkspaceExplorerMutationsOptions {
   /** Resolves the currently loaded workspace root payload, or null. */
   getRoot: () => IWorkspaceDirectoryPayload | null;
@@ -70,6 +77,8 @@ export function useWorkspaceExplorerMutations(options: IUseWorkspaceExplorerMuta
   const inlineRenameDraft = reactive({ path: null as string | null, value: '' });
   const isInlineCreateSubmitting = ref(false);
   const isInlineRenamePriming = ref(false);
+  // 最近一次打开新建草稿的时间戳，用于“焦点保护窗口”判定（见上方常量说明）。
+  let inlineCreateOpenedAt = 0;
 
   const waitNextFrame = (): Promise<void> => {
     return new Promise((resolve) => {
@@ -137,6 +146,8 @@ export function useWorkspaceExplorerMutations(options: IUseWorkspaceExplorerMuta
     inlineCreateDraft.kind = kind;
     inlineCreateDraft.value = '';
     inlineCreateDraft.placeholder = kind === 'directory' ? '文件夹名称' : '文件名称';
+    // 记录打开时间：紧随其后的右键菜单关闭会触发一次伪失焦，需要在保护窗口内忽略它。
+    inlineCreateOpenedAt = Date.now();
     await focusInlineCreateInput();
   };
 
@@ -211,9 +222,7 @@ export function useWorkspaceExplorerMutations(options: IUseWorkspaceExplorerMuta
       return;
     }
     const parentPathAtBlur = inlineCreateDraft.parentPath;
-    // 延后一帧再处理失焦：虚拟列表重渲染 / 滚动会让输入框瞬时失焦。
-    // 若一帧后焦点又回到新建输入框，或草稿已被关闭 / 切换到别的目录，则忽略本次失焦，
-    // 避免误把内容提交到错误的位置或意外取消草稿。
+    // 延后一帧再处理失焦：虚拟列表重渲染 / 滚动 / 右键菜单关闭都会让输入框瞬时失焦。
     void waitNextFrame().then(() => {
       if (!inlineCreateDraft.open || isInlineCreateSubmitting.value) {
         return;
@@ -221,10 +230,27 @@ export function useWorkspaceExplorerMutations(options: IUseWorkspaceExplorerMuta
       if (inlineCreateDraft.parentPath !== parentPathAtBlur) {
         return;
       }
-      const input = getSectionElement()?.querySelector('.explorer-inline-create-input') ?? null;
-      if (input && input === document.activeElement) {
+      const input = (getSectionElement()?.querySelector('.explorer-inline-create-input') ??
+        null) as HTMLInputElement | null;
+      const active = document.activeElement;
+      // 焦点仍在输入框上：本次失焦是瞬时抖动，忽略。
+      if (input && active === input) {
         return;
       }
+      // 草稿刚打开时，右键菜单关闭会把焦点还原到它的隐藏触发器（或落到 body）。
+      // 这种竞态导致的伪失焦不应取消草稿——重新夺回输入框焦点即可。
+      const withinGraceWindow = Date.now() - inlineCreateOpenedAt < INLINE_CREATE_FOCUS_GRACE_MS;
+      const focusStolenByMenuOrBody =
+        active === null ||
+        active === document.body ||
+        (active instanceof Element &&
+          active.closest('.linear-context-menu-trigger, .linear-context-menu-root') !== null);
+      if (input && withinGraceWindow && focusStolenByMenuOrBody) {
+        input.focus();
+        input.select();
+        return;
+      }
+      // 真实失焦：按既定语义处理（有内容则提交，空则取消）。
       void confirmInlineCreateWorkspaceEntry();
     });
   };
