@@ -15,7 +15,8 @@ const props = withDefaults(
   },
 );
 
-const collapsed = ref(false);
+// Start collapsed so the preview shows the page first; the user expands it from the toggle.
+const collapsed = ref(true);
 
 const toggleCollapsed = (): void => {
   collapsed.value = !collapsed.value;
