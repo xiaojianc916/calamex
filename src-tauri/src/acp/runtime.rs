@@ -15,7 +15,9 @@
 //!     stdio 子进程随之回收。
 //!
 //! 与 Tauri 事件解耦的 emit 闭包在此由 `AppHandle` 装配为「真实下沉口」：
-//!   * 流式帧 → webview 事件 `ai:sidecar-stream`（契约见 `client::AcpStreamFrame`）；
+//!   * 流式帧 → 经 `ui_event` 投影为前端 `TAgentUiEvent` 后转发到 webview 事件
+//!     `ai:sidecar-stream`（payload 形状 `{sessionId, seq, event}` 见 `client::AcpStreamFrame`；
+//!     event 为 `TAgentUiEvent`，对齐前端原生消费端 src/composables/ai/sidecar-events.ts）；
 //!   * 回合内待决审批 → webview 事件 `ai:sidecar-approval`（详情见 `approval::ApprovalRequestInfo`）。
 //!
 //! 一次性「工具型」`model/chat` 调用不产生 `session/update` 流式帧、亦不触发反向权限
@@ -91,10 +93,23 @@ impl AcpRuntime {
     }
 }
 
-/// 装配流式帧下沉口：把每条 `session/update` 帧转发到 webview 事件 `ai:sidecar-stream`。
+/// 装配流式帧下沉口：把每条 `session/update` 帧经 `ui_event` 投影为前端
+/// `TAgentUiEvent` 后转发到 webview 事件 `ai:sidecar-stream`，使 ACP 主聊天流可直接
+/// 复用既有前端原生消费端（src/composables/ai/sidecar-events.ts）。无对应 UI 事件的
+/// `session/update` 变体（工具/计划/usage_update 等，在 ask 主聊天回合不出现）跳过不下发；
+/// 回合累积器在 host 侧 `EventSink` 已先行消费原始帧，故此处投影不影响响应信封重建。
 fn stream_emitter<R: Runtime>(app: AppHandle<R>) -> StreamEmitter {
     Arc::new(move |frame: AcpStreamFrame| {
-        if let Err(error) = app.emit(ACP_STREAM_EVENT, &frame) {
+        let Some(ui_event) = super::ui_event::session_notification_to_ui_event(&frame.event)
+        else {
+            return;
+        };
+        let payload = AcpStreamFrame {
+            session_id: frame.session_id,
+            seq: frame.seq,
+            event: ui_event,
+        };
+        if let Err(error) = app.emit(ACP_STREAM_EVENT, &payload) {
             log::warn!("failed to emit acp stream frame to webview: {error}");
         }
     })
