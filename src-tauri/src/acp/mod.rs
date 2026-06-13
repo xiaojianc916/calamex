@@ -11,6 +11,7 @@ mod host;
 mod launch;
 mod runtime;
 mod turn;
+mod ui_event;
 
 // 过渡期：本模块尚未接线到宿主命令，公开项暂时无人引用。接线后移除该 allow。
 #[allow(unused_imports)]
@@ -39,3 +40,7 @@ pub use host::{AcpChatTurn, AcpHost, ApprovalEmitter, StreamEmitter};
 // 进程级生命周期：把单一 AcpHost 作为 Tauri 托管状态持有（对齐 Zed 连接持有模型）。
 #[allow(unused_imports)]
 pub use runtime::AcpRuntime;
+
+// ACP session/update 通知 → 前端 TAgentUiEvent 的纯映射适配（接线前暂无调用点）。
+#[allow(unused_imports)]
+pub use ui_event::{build_done_ui_event, build_error_ui_event, session_notification_to_ui_event};
