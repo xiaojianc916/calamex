@@ -2,6 +2,7 @@ import {
   type AgentWebviewBoundsInput,
   type AgentWebviewConsoleEvent,
   type AgentWebviewCreateInput,
+  type AgentWebviewElementPickedEvent,
   type AgentWebviewNavigatedEvent,
   type AgentWebviewNavigateInput,
   type AgentWebviewVisibleInput,
@@ -20,6 +21,7 @@ export const AGENT_WEBVIEW_CDP_PORT = 9333;
 export type TAgentWebviewBounds = AgentWebviewBoundsInput;
 export type TAgentWebviewNavigatedEvent = AgentWebviewNavigatedEvent;
 export type TAgentWebviewConsoleEvent = AgentWebviewConsoleEvent;
+export type TAgentWebviewElementPickedEvent = AgentWebviewElementPickedEvent;
 
 /** 创建(或复用)内置浏览器子 webview。幂等:已存在则只更新位置/尺寸并导航。 */
 export const createAgentWebview = (input: AgentWebviewCreateInput): Promise<void> =>
@@ -133,6 +135,38 @@ export const reloadAgentWebview = (): Promise<void> =>
     },
   );
 
+/** 进入「选择元素」模式(CDP Overlay.setInspectMode searchForNode,原生高亮)。 */
+export const startSelectAgentWebview = (): Promise<void> =>
+  callSpectaCommand<void>(
+    {
+      command: 'agent_webview_start_select',
+      guardHint: 'start agent webview element select',
+      timeoutMs: 5_000,
+      idempotent: false,
+      audit: 'info',
+      input: {},
+    },
+    async ({ traceId }) => {
+      await commands.agentWebviewStartSelect(traceId);
+    },
+  );
+
+/** 退出「选择元素」模式(CDP Overlay.setInspectMode none)。幂等:未在选择态也安全。 */
+export const cancelSelectAgentWebview = (): Promise<void> =>
+  callSpectaCommand<void>(
+    {
+      command: 'agent_webview_cancel_select',
+      guardHint: 'cancel agent webview element select',
+      timeoutMs: 5_000,
+      idempotent: true,
+      audit: 'none',
+      input: {},
+    },
+    async ({ traceId }) => {
+      await commands.agentWebviewCancelSelect(traceId);
+    },
+  );
+
 /** 在系统默认浏览器中打开 URL(官方 opener,Rust 侧)。 */
 export const openExternalAgentWebview = (input: AgentWebviewNavigateInput): Promise<void> =>
   callSpectaCommand<void>(
@@ -156,6 +190,11 @@ export const onAgentWebviewNavigated = (handler: (payload: AgentWebviewNavigated
 /** 订阅页面控制台事件(console.* + 浏览器级日志)。返回 unlisten。 */
 export const onAgentWebviewConsole = (handler: (payload: AgentWebviewConsoleEvent) => void) =>
   events.agentWebviewConsoleEvent.listen((event) => handler(event.payload));
+
+/** 订阅「选择元素」结果(label + outerHTML + 裁剪截图 + url)。返回 unlisten。 */
+export const onAgentWebviewElementPicked = (
+  handler: (payload: AgentWebviewElementPickedEvent) => void,
+) => events.agentWebviewElementPickedEvent.listen((event) => handler(event.payload));
 
 /** 销毁子 webview。幂等:不存在也视为成功。 */
 export const destroyAgentWebview = (): Promise<void> =>
