@@ -406,11 +406,12 @@ async fn establish_cdp_session(app: AppHandle, port: u16) {
 // CDP session is established by a background task after the webview is created, so for the
 // first moments after create the page handle may not exist yet. Wait (bounded) for it to land
 // instead of failing immediately, then return a cloned Page handle so callers operate without
-// holding the session lock across CDP round-trips. The ~4s bound stays under the frontend nav
-// command timeout (5s); a genuinely failed connect surfaces as a caught error.
+// holding the session lock across CDP round-trips. The ~10s bound matches the raised frontend
+// command timeout (12s) for CDP-backed commands, giving a cold-start debug port time to come
+// up; a genuinely failed connect still surfaces as a caught error.
 #[cfg(feature = "native_webview")]
 async fn wait_for_cdp_page() -> Result<chromiumoxide::Page, String> {
-    for _ in 0..40 {
+    for _ in 0..100 {
         if let Some(session) = cdp_session().lock().await.as_ref() {
             return Ok(session.page.clone());
         }
