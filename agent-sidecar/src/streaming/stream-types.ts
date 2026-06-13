@@ -21,7 +21,6 @@ export const AGENT_RUNTIME_EVENT_TYPES = [
   'acontext.envelope.injected',
   'acontext.envelope.replaced',
   'acontext.token.checked',
-  'acontext.provider_payload.checked',
   'acontext.tool_summary.recorded',
   'acontext.memory.compressed',
   'acontext.context_compaction.started',
@@ -242,28 +241,6 @@ export interface IAgentAcontextTokenEvent extends IAgentRuntimeEventBase {
   tokenEstimateMethod?: 'char_heuristic';
 }
 
-export interface IAgentAcontextProviderPayloadEvent extends IAgentRuntimeEventBase {
-  type: 'acontext.provider_payload.checked';
-  provider: 'deepseek';
-  model?: string;
-  stream?: boolean;
-  requestIndex: number;
-  requestBodyCharCount: number;
-  /** Payload 阶段已构建完请求体，tokens 必算得出。 */
-  projectedInputTokens: number;
-  messageCharCount: number;
-  systemMessageCharCount: number;
-  userMessageCharCount: number;
-  assistantMessageCharCount: number;
-  toolMessageCharCount: number;
-  reasoningReplayCharCount: number;
-  toolSchemaCharCount: number;
-  toolCount: number;
-  responseFormatCharCount: number;
-  reasoningInjected: boolean;
-  tokenEstimateMethod: 'char_heuristic';
-}
-
 export interface IAgentAcontextToolSummaryEvent extends IAgentRuntimeEventBase {
   type: 'acontext.tool_summary.recorded';
   toolName: string;
@@ -373,7 +350,6 @@ export type TAgentRuntimeEvent =
   | IAgentPlanUpdatedEvent
   | IAgentAcontextEnvelopeEvent
   | IAgentAcontextTokenEvent
-  | IAgentAcontextProviderPayloadEvent
   | IAgentAcontextToolSummaryEvent
   | IAgentAcontextMemoryCompressedEvent
   | IAgentAcontextContextCompactionStartedEvent

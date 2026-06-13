@@ -318,9 +318,6 @@ export type TOmMemoryCompressedEventDraft = Extract<TAgentRuntimeEventDraft, {
 export type TAcontextTokenEventDraft = Extract<TAgentRuntimeEventDraft, {
     type: 'acontext.token.checked';
 }>;
-export type TAcontextProviderPayloadEventDraft = Extract<TAgentRuntimeEventDraft, {
-    type: 'acontext.provider_payload.checked';
-}>;
 export type TMastraToolProfile = TMcpGatewayToolProfile;
 
 export interface IMastraToolLoadPlan {
