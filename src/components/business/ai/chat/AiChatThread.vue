@@ -82,6 +82,7 @@ const VIRTUAL_SCROLLER_BUFFER_PX = 1200;
 const BOTTOM_FOLLOW_THRESHOLD_PX = 56;
 const SCROLL_STATE_EMIT_THROTTLE_MS = 100;
 const SCROLLBAR_ACTIVE_MS = 900;
+const MESSAGE_SIZE_DEPENDENCY_CACHE_LIMIT = 300;
 
 const virtualScrollerRef = ref<unknown>(null);
 const isScrollbarActive = ref(false);
@@ -361,16 +362,50 @@ const planSizeSignature = computed(() =>
   ].join('|'),
 );
 
-const getMessageSizeDependencies = (message: IAiChatMessage): unknown[] => [
-  buildMessageContentSizeSignature(message.content),
-  message.stream?.status,
-  buildToolCallSizeSignature(message),
-  message.actions?.length ?? 0,
-  message.attachments?.length ?? 0,
-  planSizeSignature.value,
-  props.revertingChangedFilesSummaryId,
-  props.pinningChangedFilesSummaryId,
-];
+type TMessageSizeDependencyCacheEntry = {
+  signature: string;
+  dependencies: unknown[];
+};
+
+const messageSizeDependencyCache = new Map<string, TMessageSizeDependencyCacheEntry>();
+
+const trimMessageSizeDependencyCache = (currentMessageId: string): void => {
+  if (
+    messageSizeDependencyCache.size < MESSAGE_SIZE_DEPENDENCY_CACHE_LIMIT ||
+    messageSizeDependencyCache.has(currentMessageId)
+  ) {
+    return;
+  }
+
+  const firstKey = messageSizeDependencyCache.keys().next().value;
+  if (typeof firstKey === 'string') {
+    messageSizeDependencyCache.delete(firstKey);
+  }
+};
+
+const getMessageSizeDependencies = (message: IAiChatMessage): unknown[] => {
+  const dependencies = [
+    buildMessageContentSizeSignature(message.content),
+    message.stream?.status,
+    buildToolCallSizeSignature(message),
+    message.actions?.length ?? 0,
+    message.attachments?.length ?? 0,
+    planSizeSignature.value,
+    props.revertingChangedFilesSummaryId,
+    props.pinningChangedFilesSummaryId,
+  ];
+
+  const signature = dependencies.map((value) => String(value ?? '')).join('\u001f');
+  const cached = messageSizeDependencyCache.get(message.id);
+
+  if (cached?.signature === signature) {
+    return cached.dependencies;
+  }
+
+  trimMessageSizeDependencyCache(message.id);
+  messageSizeDependencyCache.set(message.id, { signature, dependencies });
+  return dependencies;
+};
 
 const handleDynamicItemResize = (): void => {
   if (!shouldFollowBottomAfterResize) {

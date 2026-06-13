@@ -252,6 +252,7 @@ export const useWorkspaceReplacement = (options: IUseWorkspaceReplacementOptions
         signal: abortController.signal,
       });
       if (
+        abortController.signal.aborted ||
         requestId !== replacementPreviewRequestId ||
         !isWorkspaceRootCurrent(request.workspaceRootPath)
       )
@@ -305,6 +306,7 @@ export const useWorkspaceReplacement = (options: IUseWorkspaceReplacementOptions
         signal: abortController.signal,
       });
       if (
+        abortController.signal.aborted ||
         requestId !== replacementPreviewRequestId ||
         !isReplacementApplyLifecycleCurrent(lifecycle)
       )

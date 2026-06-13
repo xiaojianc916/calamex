@@ -1,5 +1,5 @@
 import { useVirtualizer } from '@tanstack/vue-virtual';
-import { type ComputedRef, computed, type Ref, watch } from 'vue';
+import { type ComputedRef, computed, nextTick, type Ref, watch } from 'vue';
 import type { IFlatSearchRow } from './search-sidebar.types';
 
 const SEARCH_VIRTUALIZE_THRESHOLD = 100;
@@ -49,9 +49,28 @@ export const useSearchResultVirtualizer = (options: {
       .filter((entry): entry is IWindowedSearchRow => Boolean(entry.row)),
   );
 
-  watch(flatSearchRows, () => {
-    searchVirtualizer.value.measure();
-  });
+  let previousFirstRowKey: string | null = null;
+
+  watch(
+    flatSearchRows,
+    async (rows) => {
+      const nextFirstRowKey = rows[0]?.key ?? null;
+      const shouldResetScroll =
+        rows.length === 0 ||
+        (previousFirstRowKey !== null && nextFirstRowKey !== previousFirstRowKey);
+
+      previousFirstRowKey = nextFirstRowKey;
+
+      await nextTick();
+
+      if (shouldResetScroll) {
+        scrollRef.value?.scrollTo({ top: 0 });
+      }
+
+      searchVirtualizer.value.measure();
+    },
+    { flush: 'post' },
+  );
 
   return { shouldVirtualizeSearch, searchTotalSize, windowedSearchRows };
 };

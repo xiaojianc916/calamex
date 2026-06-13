@@ -476,7 +476,7 @@ export const useWorkspaceSearch = (options: IUseWorkspaceSearchOptions) => {
   });
 
   onScopeDispose(() => {
-    clearPendingStreamResults();
+    cancelPendingSearch();
     disposeSearchStream?.();
     disposeSearchStream = null;
   });

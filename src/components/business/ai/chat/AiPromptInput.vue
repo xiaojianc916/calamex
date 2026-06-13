@@ -627,9 +627,16 @@ const syncFromEditor = (): void => {
   if (isApplyingExternalValue) {
     return;
   }
+
   const { text, skills } = serializeEditor();
-  modelValue.value = text;
-  selectedSkills.value = skills;
+
+  if (modelValue.value !== text) {
+    modelValue.value = text;
+  }
+
+  if (!skillsEqual(selectedSkills.value ?? [], skills)) {
+    selectedSkills.value = skills;
+  }
 };
 
 const onEditorInput = (): void => {
@@ -739,9 +746,12 @@ const handleSelectSkill = (slug: string): void => {
 };
 
 const handleSubmit = (): void => {
+  syncFromEditor();
+
   if (props.disabled || !canSubmit.value) {
     return;
   }
+
   emit('submit');
 };
 
@@ -849,6 +859,8 @@ const handlePaste = (event: ClipboardEvent): void => {
   if (text) {
     event.preventDefault();
     document.execCommand('insertText', false, text);
+    syncFromEditor();
+    updateSlashStateFromCaret();
   }
 };
 
