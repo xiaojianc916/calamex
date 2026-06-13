@@ -1,4 +1,32 @@
-<script setup lang="ts">
+import fs from 'node:fs';
+import path from 'node:path';
+
+const repoRoot = process.cwd();
+const targetPath = path.join(
+  repoRoot,
+  'src/components/business/ai/chat/AiChatThread.vue',
+);
+const backupPath = `${targetPath}.bak-before-round20-final`;
+
+const fail = (message) => {
+  throw new Error(message);
+};
+
+if (!fs.existsSync(targetPath)) {
+  fail(`[missing] ${targetPath}`);
+}
+
+const current = fs.readFileSync(targetPath, 'utf8');
+
+if (!current.includes('AiThreadTimeline') || !current.includes('ConversationContent')) {
+  fail('[guard] 当前 AiChatThread.vue 结构异常，请先恢复文件或贴出当前内容。');
+}
+
+if (!fs.existsSync(backupPath)) {
+  fs.writeFileSync(backupPath, current);
+}
+
+const component = String.raw`<script setup lang="ts">
 import { MessageSquare } from '@lucide/vue';
 import { computed, nextTick, ref, watch } from 'vue';
 import {
@@ -671,3 +699,10 @@ const handleScrollStateChange = (state: IAiChatScrollState): void => {
   align-items: flex-start;
 }
 </style>
+`;
+
+fs.writeFileSync(targetPath, component);
+
+console.log('✅ Fixed Round 20 AI thread windowing');
+console.log(`🧷 Backup: ${path.relative(repoRoot, backupPath)}`);
+console.log(`📝 Updated: ${path.relative(repoRoot, targetPath)}`);
