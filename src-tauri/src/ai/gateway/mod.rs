@@ -1,9 +1,8 @@
 use super::audit::{self, AiAuditEventKind};
 use super::credential::CredentialStore;
 use super::errors;
-use super::provider::{AiProviderChatRequest, AiProviderMessage, AiProviderUsage};
+use super::provider::{AiProviderChatRequest, AiProviderMessage};
 use super::security::redaction::redact_text;
-use super::stream as stream_manager;
 use crate::ai::agent::planner::AgentPlanner;
 use crate::commands::contracts::{
     AiAgentClassifyTaskPayload, AiAgentClassifyTaskRequest, AiChatRequest, AiConfigPayload,
@@ -20,7 +19,7 @@ use std::sync::{
     Mutex, OnceLock,
     atomic::{AtomicU64, Ordering},
 };
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::AppHandle;
 
 mod config;
 mod connection;
@@ -112,21 +111,6 @@ impl Default for AiModelEndpointRuntimeConfig {
             base_url: None,
         }
     }
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AiChatStreamEventPayload {
-    pub stream_id: String,
-    pub assistant_message_id: String,
-    pub kind: String,
-    pub delta: Option<String>,
-    pub message: Option<String>,
-    pub model: Option<String>,
-    pub prompt_tokens: Option<u64>,
-    pub completion_tokens: Option<u64>,
-    pub total_tokens: Option<u64>,
-    pub usage: Option<AiProviderUsage>,
 }
 
 pub struct AiChatStreamStart {
