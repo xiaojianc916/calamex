@@ -1,4 +1,5 @@
 use super::*;
+use super::worktree_io::*;
 use crate::commands::workspace_fs::workspace_name;
 use gix::bstr::ByteSlice;
 
@@ -681,7 +682,8 @@ fn assert_git_identity_configured(repository: &Repository) -> Result<(), String>
 }
 
 // ---------------------------------------------------------------------------
-// 基于 gix 的索引 / 工作区写操作辅助函数（供 stage / unstage / discard / commit 使用）。
+// 基于 gix 的索引辅助函数（供 stage / unstage / commit 使用）。
+// 工作区 / 索引 / 树的通用读写操作集中在 super::worktree_io，经 `use super::worktree_io::*` 复用。
 // ---------------------------------------------------------------------------
 
 /// 打开可写的仓库索引；当 `.git/index` 文件尚不存在（新建 / 尚无提交的 unborn 仓库）时
@@ -713,162 +715,6 @@ fn pathspec_matches(pathspec: &str, candidate: &str) -> bool {
     candidate
         .strip_prefix(pathspec)
         .is_some_and(|suffix| suffix.as_bytes().first() == Some(&b'/'))
-}
-
-/// 工作区中是否存在该路径（含损坏的符号链接）。
-fn path_exists_in_worktree(absolute_path: &Path) -> bool {
-    fs::symlink_metadata(absolute_path).is_ok()
-}
-
-/// 将工作区文件内容写入对象库，返回 blob 的对象 ID。
-fn write_worktree_blob(
-    repository: &Repository,
-    absolute_path: &Path,
-) -> Result<gix::ObjectId, String> {
-    let metadata = fs::symlink_metadata(absolute_path)
-        .map_err(|error| format!("读取文件元数据失败：{error}"))?;
-    let bytes = if metadata.file_type().is_symlink() {
-        // 符号链接：blob 内容即链接目标（使用正斜杠，匹配 Git 存储约定）。
-        let target =
-            fs::read_link(absolute_path).map_err(|error| format!("读取符号链接失败：{error}"))?;
-        target.to_string_lossy().replace('\\', "/").into_bytes()
-    } else {
-        fs::read(absolute_path).map_err(|error| format!("读取工作区文件失败：{error}"))?
-    };
-
-    repository
-        .write_blob(bytes)
-        .map(|id| id.detach())
-        .map_err(|error| format!("写入 Git blob 失败：{error}"))
-}
-
-/// 依据工作区文件类型推断索引条目的文件模式。
-fn index_mode_for_worktree_file(absolute_path: &Path) -> Result<gix::index::entry::Mode, String> {
-    use gix::index::entry::Mode;
-    let metadata = fs::symlink_metadata(absolute_path)
-        .map_err(|error| format!("读取文件元数据失败：{error}"))?;
-
-    if metadata.file_type().is_symlink() {
-        return Ok(Mode::SYMLINK);
-    }
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if metadata.permissions().mode() & 0o111 != 0 {
-            return Ok(Mode::FILE_EXECUTABLE);
-        }
-    }
-
-    Ok(Mode::FILE)
-}
-
-/// 从索引移除某路径的所有条目（含各冲突阶段）。
-fn remove_index_path(index: &mut gix::index::File, relative_path: &str) {
-    index.remove_entries(|_, entry_path, _| entry_path.to_str_lossy().as_ref() == relative_path);
-}
-
-/// 索引中是否存在该精确路径。
-fn index_has_path(index: &gix::index::File, relative_path: &str) -> bool {
-    let path = gix::bstr::BStr::new(relative_path.as_bytes());
-    index.entry_by_path(path).is_some()
-}
-
-/// 插入或替换 stage-0 的索引条目（先移除同路径旧条目）。
-fn upsert_index_entry(
-    index: &mut gix::index::File,
-    relative_path: &str,
-    object_id: gix::ObjectId,
-    mode: gix::index::entry::Mode,
-) {
-    use gix::index::entry::{Flags, Stat};
-    remove_index_path(index, relative_path);
-    let path = gix::bstr::BStr::new(relative_path.as_bytes());
-    // path-length 存放于 flags 低 12 位（上限 0xFFF），stage 为 0。
-    let flags = Flags::from_bits_retain(relative_path.len().min(0xFFF) as _);
-    index.dangerously_push_entry(Stat::default(), object_id, flags, mode, path);
-}
-
-/// 将索引中记录的 blob 内容写回工作区文件（等价 `git checkout -- <path>`）。
-fn restore_worktree_from_index_blob(
-    repository: &Repository,
-    repository_root: &Path,
-    relative_path: &str,
-    object_id: gix::ObjectId,
-    mode: gix::index::entry::Mode,
-) -> Result<(), String> {
-    use gix::index::entry::Mode;
-    let object = repository
-        .find_object(object_id)
-        .map_err(|error| format!("读取 Git 对象失败：{error}"))?;
-    let bytes = object.data.as_slice();
-    let target_path = repository_root.join(Path::new(relative_path));
-
-    if let Some(parent) = target_path.parent() {
-        fs::create_dir_all(parent).map_err(|error| format!("创建目录失败：{error}"))?;
-    }
-
-    if mode == Mode::SYMLINK {
-        let link_target = String::from_utf8_lossy(bytes).into_owned();
-        recreate_symlink(&target_path, &link_target)?;
-    } else {
-        if fs::symlink_metadata(&target_path).is_ok() {
-            // 先移除既有文件 / 链接，避免写入时跟随旧符号链接。
-            let _ = fs::remove_file(&target_path);
-        }
-        fs::write(&target_path, bytes).map_err(|error| format!("写入工作区文件失败：{error}"))?;
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            if mode == Mode::FILE_EXECUTABLE {
-                let _ = fs::set_permissions(&target_path, fs::Permissions::from_mode(0o755));
-            }
-        }
-    }
-
-    Ok(())
-}
-
-#[cfg(unix)]
-fn recreate_symlink(target_path: &Path, link_target: &str) -> Result<(), String> {
-    let _ = fs::remove_file(target_path);
-    std::os::unix::fs::symlink(link_target, target_path)
-        .map_err(|error| format!("创建符号链接失败：{error}"))
-}
-
-#[cfg(windows)]
-fn recreate_symlink(target_path: &Path, link_target: &str) -> Result<(), String> {
-    // Windows 下退化为写入链接目标文本，避免符号链接权限问题。
-    let _ = fs::remove_file(target_path);
-    fs::write(target_path, link_target.as_bytes())
-        .map_err(|error| format!("写入符号链接占位失败：{error}"))
-}
-
-/// 将整个索引内容构建为一棵树，返回树对象 ID（等价 `git write-tree`）。
-fn build_tree_from_full_index(
-    repository: &Repository,
-    index: &gix::index::File,
-) -> Result<gix::ObjectId, String> {
-    let empty_tree = repository.empty_tree();
-    let mut editor = gix::object::tree::Editor::new(&empty_tree)
-        .map_err(|error| format!("创建树编辑器失败：{error}"))?;
-
-    for entry in index.entries() {
-        let path = entry.path(index).to_str_lossy().into_owned();
-        editor
-            .upsert(
-                path.as_str(),
-                tree_entry_kind_from_index_mode(entry.mode),
-                entry.id,
-            )
-            .map_err(|error| format!("写入树条目失败：{error}"))?;
-    }
-
-    editor
-        .write()
-        .map(|id| id.detach())
-        .map_err(|error| format!("写入树失败：{error}"))
 }
 
 /// 以 HEAD 树为基底，仅应用匹配 pathspec 的暂存改动，构建提交树（等价 `git commit -- <pathspec>` 的提交内容）。
@@ -933,19 +779,6 @@ fn build_tree_from_selected_index_paths(
         .write()
         .map(|id| id.detach())
         .map_err(|error| format!("写入树失败：{error}"))
-}
-
-/// 将索引条目的文件模式映射为树条目类型。
-fn tree_entry_kind_from_index_mode(mode: gix::index::entry::Mode) -> gix::object::tree::EntryKind {
-    use gix::index::entry::Mode;
-    use gix::object::tree::EntryKind;
-    if mode == Mode::SYMLINK {
-        EntryKind::Link
-    } else if mode == Mode::FILE_EXECUTABLE {
-        EntryKind::BlobExecutable
-    } else {
-        EntryKind::Blob
-    }
 }
 
 #[cfg(test)]
