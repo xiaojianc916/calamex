@@ -2,25 +2,11 @@ import { flushPromises, mount } from '@vue/test-utils';
 import { createPinia } from 'pinia';
 import { describe, expect, it, vi } from 'vitest';
 import type { IEditorDocument, IWorkspaceDirectoryPayload } from '@/types/editor';
-import AppSidebar from './AppSidebar.vue';
+import WorkspaceExplorerPanel from '../WorkspaceExplorerPanel.vue';
 
-const asyncPanelStub = (name: string) => ({
-  default: { name, render: () => null },
-});
-
-vi.mock('@/components/workbench/sidebar/ssh/SshSidebarPanel.vue', () =>
-  asyncPanelStub('SshSidebarPanel'),
-);
-vi.mock('@/components/workbench/sidebar/search/SearchSidebarPanel.vue', () =>
-  asyncPanelStub('SearchSidebarPanel'),
-);
-vi.mock('@/components/workbench/sidebar/run/RunSidebarPanel.vue', () =>
-  asyncPanelStub('RunSidebarPanel'),
-);
-vi.mock('@/components/workbench/sidebar/source-control/SourceControlPanel.vue', () =>
-  asyncPanelStub('SourceControlPanel'),
-);
-vi.mock('@/components/common/LinearContextMenu.vue', () => asyncPanelStub('LinearContextMenu'));
+vi.mock('@/components/common/LinearContextMenu.vue', () => ({
+  default: { name: 'LinearContextMenu', render: () => null },
+}));
 
 const documentFixture: IEditorDocument = {
   id: 'doc-1',
@@ -55,69 +41,28 @@ const populatedWorkspaceRoot: IWorkspaceDirectoryPayload = {
   ],
 };
 
-const mountExplorerSidebar = (document: IEditorDocument) => {
-  return mount(AppSidebar, {
+const mountPanel = (
+  document: IEditorDocument,
+  preloadedWorkspaceRoot: IWorkspaceDirectoryPayload,
+) =>
+  mount(WorkspaceExplorerPanel, {
     props: {
       document,
-      view: 'explorer',
+      isActive: true,
       isDesktopRuntime: true,
       workspaceRootPath: 'D:/repo',
-      preloadedWorkspaceRoot: populatedWorkspaceRoot,
+      preloadedWorkspaceRoot,
       startupExplorerExpandedPaths: [],
       startupExplorerSelectedPath: null,
-      canRun: true,
-      isRunning: false,
-      hasRunArtifacts: false,
-      activeRun: null,
-      runHistory: [],
-      commandTemplates: [],
-      executor: 'wsl',
     },
     global: {
       plugins: [createPinia()],
-      stubs: {
-        SourceControlPanel: true,
-        DeferredSearchSidebarPanel: true,
-        DeferredRunSidebarPanel: true,
-        DeferredSshSidebarPanel: true,
-        DeferredLinearContextMenu: true,
-      },
     },
   });
-};
 
-describe('AppSidebar', () => {
+describe('WorkspaceExplorerPanel', () => {
   it('空工作区时显示 Empty 装饰并允许打开文件夹', async () => {
-    const wrapper = mount(AppSidebar, {
-      props: {
-        document: documentFixture,
-        view: 'explorer',
-        isDesktopRuntime: true,
-        workspaceRootPath: 'D:/repo',
-        preloadedWorkspaceRoot: emptyWorkspaceRoot,
-        startupExplorerExpandedPaths: [],
-        startupExplorerSelectedPath: null,
-        canRun: true,
-        isRunning: false,
-        hasRunArtifacts: false,
-        activeRun: null,
-        runHistory: [],
-        commandTemplates: [],
-        executor: 'wsl',
-      },
-      global: {
-        plugins: [createPinia()],
-        stubs: {
-          SourceControlPanel: true,
-          DeferredSearchSidebarPanel: true,
-          DeferredRunSidebarPanel: true,
-          DeferredSshSidebarPanel: true,
-          DeferredLinearContextMenu: true,
-          FileTree: true,
-          WorkspaceTreeNode: true,
-        },
-      },
-    });
+    const wrapper = mountPanel(documentFixture, emptyWorkspaceRoot);
 
     await flushPromises();
 
@@ -129,7 +74,7 @@ describe('AppSidebar', () => {
   });
 
   it('右键未选中文件时会保留临时高亮，菜单关闭后清除', async () => {
-    const wrapper = mountExplorerSidebar(documentFixture);
+    const wrapper = mountPanel(documentFixture, populatedWorkspaceRoot);
 
     await flushPromises();
 
@@ -155,11 +100,14 @@ describe('AppSidebar', () => {
   });
 
   it('右键当前已选中文件时不叠加临时高亮类', async () => {
-    const wrapper = mountExplorerSidebar({
-      ...documentFixture,
-      path: 'D:/repo/demo.c',
-      name: 'demo.c',
-    });
+    const wrapper = mountPanel(
+      {
+        ...documentFixture,
+        path: 'D:/repo/demo.c',
+        name: 'demo.c',
+      },
+      populatedWorkspaceRoot,
+    );
 
     await flushPromises();
 

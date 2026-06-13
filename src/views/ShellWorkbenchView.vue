@@ -151,7 +151,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import StartupAiWorkbenchShell from '@/components/workbench/StartupAiWorkbenchShell.vue';
 import StartupWorkbenchShell from '@/components/workbench/StartupWorkbenchShell.vue';
-import WorkbenchDashboardSidebar from '@/components/workbench/WorkbenchDashboardSidebar.vue';
+import WorkbenchDashboardSidebar from '@/components/workbench/sidebar/WorkbenchDashboardSidebar.vue';
 import { useLsp } from '@/composables/useLsp';
 import { useShellWorkbenchView } from '@/composables/useShellWorkbenchView';
 import AppShellLayout from '@/layouts/AppShellLayout.vue';
