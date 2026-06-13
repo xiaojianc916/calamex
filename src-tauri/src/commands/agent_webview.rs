@@ -338,18 +338,30 @@ async fn establish_cdp_session(app: AppHandle, port: u16) {
     });
 }
 
+// CDP session is established by a background task after the webview is created, so for the
+// first moments after create the page handle may not exist yet. Wait (bounded) for it to land
+// instead of failing immediately, then return a cloned Page handle so callers operate without
+// holding the session lock across CDP round-trips. The ~4s bound stays under the frontend nav
+// command timeout (5s); a genuinely failed connect surfaces as a caught error.
+#[cfg(feature = "native_webview")]
+async fn wait_for_cdp_page() -> Result<chromiumoxide::Page, String> {
+    for _ in 0..40 {
+        if let Some(session) = cdp_session().lock().await.as_ref() {
+            return Ok(session.page.clone());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    Err("CDP session not ready (browser still connecting)".to_string())
+}
+
 // CDP history jump (delta=-1 back, +1 forward). Out-of-range is a silent success.
 #[cfg(feature = "native_webview")]
 async fn cdp_history_go(delta: i64) -> Result<(), String> {
     use chromiumoxide::cdp::browser_protocol::page::{
         GetNavigationHistoryParams, NavigateToHistoryEntryParams,
     };
-    let guard = cdp_session().lock().await;
-    let session = guard
-        .as_ref()
-        .ok_or_else(|| "CDP session not ready (browser still connecting)".to_string())?;
-    let resp = session
-        .page
+    let page = wait_for_cdp_page().await?;
+    let resp = page
         .execute(GetNavigationHistoryParams::default())
         .await
         .map_err(|e| format!("getNavigationHistory failed: {e}"))?;
@@ -359,9 +371,7 @@ async fn cdp_history_go(delta: i64) -> Result<(), String> {
         return Ok(());
     }
     let entry_id = hist.entries[target as usize].id;
-    session
-        .page
-        .execute(NavigateToHistoryEntryParams::new(entry_id))
+    page.execute(NavigateToHistoryEntryParams::new(entry_id))
         .await
         .map_err(|e| format!("navigateToHistoryEntry failed: {e}"))?;
     Ok(())
@@ -584,13 +594,8 @@ pub async fn agent_webview_reload(app: AppHandle, trace_id: Option<String>) -> R
     #[cfg(feature = "native_webview")]
     {
         let _ = (&app, &trace_id);
-        let guard = cdp_session().lock().await;
-        let session = guard
-            .as_ref()
-            .ok_or_else(|| "CDP session not ready (browser still connecting)".to_string())?;
-        session
-            .page
-            .reload()
+        let page = wait_for_cdp_page().await?;
+        page.reload()
             .await
             .map_err(|e| format!("reload failed: {e}"))?;
         Ok(())
