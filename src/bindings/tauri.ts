@@ -139,11 +139,11 @@ export const commands = {
 	/**  Reload current page (CDP Page.reload). */
 	agentWebviewReload: (traceId: string | null) => __TAURI_INVOKE<null>("agent_webview_reload", { traceId }),
 	/**
-	 *  Enter element-pick (inspect) mode. The next element the user clicks is captured and
-	 *  surfaced via AgentWebviewElementPickedEvent.
+	 *  Enter element-pick mode by injecting the @medv/finder picker. The next element the user
+	 *  clicks is captured and surfaced via AgentWebviewElementPickedEvent.
 	 */
 	agentWebviewStartSelect: (traceId: string | null) => __TAURI_INVOKE<null>("agent_webview_start_select", { traceId }),
-	/**  Exit element-pick (inspect) mode without picking. */
+	/**  Exit element-pick mode without picking (tears down the injected picker). */
 	agentWebviewCancelSelect: (traceId: string | null) => __TAURI_INVOKE<null>("agent_webview_cancel_select", { traceId }),
 	/**  Open the given URL in the system default browser (official tauri-plugin-opener, Rust-side). */
 	agentWebviewOpenExternal: (input: AgentWebviewNavigateInput, traceId: string | null) => __TAURI_INVOKE<null>("agent_webview_open_external", { input, traceId }),
@@ -418,16 +418,14 @@ export type AgentWebviewCreateInput = {
 	height: number | null,
 };
 
-/**  User picked an element via the select/inspect tool -> element context for the AI. */
+/**  User picked an element via the select tool -> element context for the AI. */
 export type AgentWebviewElementPickedEvent = {
 	/**  Page URL the element was picked from. */
 	url: string,
-	/**  Short "tag#id.class" label for display. */
+	/**  Robust CSS selector for the element (via @medv/finder). */
 	label: string,
 	/**  Truncated outerHTML for AI context. */
 	outerHtml: string,
-	/**  PNG screenshot (base64, no data: prefix), cropped to the element. May be empty. */
-	screenshotBase64: string,
 };
 
 export type AgentWebviewNavigateInput = {
