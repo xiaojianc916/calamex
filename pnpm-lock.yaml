@@ -15,8 +15,8 @@ importers:
         specifier: ^0.0.57
         version: 0.0.57
       '@agentclientprotocol/sdk':
-        specifier: ^0.25.0
-        version: 0.25.0(zod@4.4.3)
+        specifier: ^0.25.1
+        version: 0.25.1(zod@4.4.3)
       '@ai-sdk/deepseek':
         specifier: ^2.0.38
         version: 2.0.38(zod@4.4.3)
@@ -316,8 +316,8 @@ importers:
         specifier: ^4.1.8
         version: 4.1.8(@opentelemetry/api@1.9.1)(@types/node@25.9.3)(@vitest/coverage-v8@4.1.8)(happy-dom@20.10.3)(vite@8.0.16(@types/node@25.9.3)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))
       vue-tsc:
-        specifier: ^3.3.4
-        version: 3.3.4(typescript@6.0.3)
+        specifier: ^3.3.5
+        version: 3.3.5(typescript@6.0.3)
 
   agent-sidecar:
     dependencies:
@@ -429,6 +429,11 @@ packages:
 
   '@agentclientprotocol/sdk@0.25.0':
     resolution: {integrity: sha512-wU1VgXNtMvdVotX49txc3WJUDV+/QbLpsgjMvFhlRmp37osdLbI7L7y+iwAlQATwfjLxcv1r1p3ZxZBcXlGhcQ==}
+    peerDependencies:
+      zod: ^3.25.0 || ^4.0.0
+
+  '@agentclientprotocol/sdk@0.25.1':
+    resolution: {integrity: sha512-jx2rF3bdpGwZ75Q/meyEDLLbYmbtxk82Uh9hDCdxDvcEedBnNSF5hZAnL/kJR5VNz56JqwOmqnAqasC84MwwkQ==}
     peerDependencies:
       zod: ^3.25.0 || ^4.0.0
 
@@ -2314,8 +2319,8 @@ packages:
   '@vue/devtools-shared@8.1.2':
     resolution: {integrity: sha512-X9RyVFYAdkBe4IUf5v48TxBF/6QPmF8CmWrDAjXzfUHrgQ/HGfTC1A6TqgXqZ03ye66l3AD51BAGD69IvKM9sw==}
 
-  '@vue/language-core@3.3.4':
-    resolution: {integrity: sha512-IuHqQ5zGGOE7CXP72VX6A42IVeIzYv4WAhO6arej11TRNqtdZfGyH8Yr2FOCaDX0dSQG+JwULLoFHGY1igYVjQ==}
+  '@vue/language-core@3.3.5':
+    resolution: {integrity: sha512-UkKu5nhX89fg4VhlG/FOeI10G3cj/7radKT/cy9BT4Q9qJmJlSTAc/dP63Xqs29aypN4f39xUV6PsLNk/dcD6g==}
 
   '@vue/reactivity@3.5.38':
     resolution: {integrity: sha512-pG6LV/NDNRbKizcUjFFLAfjaL8mcv4DmR9avNcUw2gDHBzZneuS2TWCmp633ynzxz9YYKNeEPK2I8Wraqy2HUQ==}
@@ -5929,8 +5934,8 @@ packages:
   vscode-uri@3.1.0:
     resolution: {integrity: sha512-/BpdSx+yCQGnCvecbyXdxHDkuk55/G3xwnC0GqY4gmQ3j+A+g8kzzgB4Nk/SINjqn6+waqw3EgbVF2QKExkRxQ==}
 
-  vue-component-type-helpers@3.3.4:
-    resolution: {integrity: sha512-joip1uZTaQR0nD23N400gIdJ7xY+WiiiMA/BCKz842gvGBknqDQAzklUvDEhqFvvrhQY8S2ZANBMu4X70VMFGw==}
+  vue-component-type-helpers@3.3.5:
+    resolution: {integrity: sha512-Fe1jyPJoUGpJOYKOri44jduR7My4yYINOMJISuMAbmrs+L5LbIDUc8NTWZYY3EJLK0yPLuCmcd5zoCsE4k2/KA==}
 
   vue-demi@0.14.10:
     resolution: {integrity: sha512-nMZBOwuzabUO0nLgIcc6rycZEebF6eeUfaiQx9+WSk8e29IbLvPU9feI6tqW4kTo3hvoYAJkMh8n8D0fuISphg==}
@@ -5980,8 +5985,8 @@ packages:
     peerDependencies:
       vue: '>=3.3.0'
 
-  vue-tsc@3.3.4:
-    resolution: {integrity: sha512-XA/JqmQwS2GZmfgpjOEGdrKwaTSEuPwxpHa7/t6f4yiGrJb3gVHTPb9wBfByMNZwQ+xDXs41b8gaS2DKsOozUw==}
+  vue-tsc@3.3.5:
+    resolution: {integrity: sha512-Rzh/G2MmNlMSAMTiQEjDrsb4dgB/jbtEM47rVN2NtidF1dfb/q4w4QvpQBtW5+y3y5H27Hjh7deVwk+YB02fNg==}
     hasBin: true
     peerDependencies:
       typescript: '>=5.0.0'
@@ -6238,6 +6243,10 @@ snapshots:
       '@protobuf-ts/protoc': 2.11.1
 
   '@agentclientprotocol/sdk@0.25.0(zod@4.4.3)':
+    dependencies:
+      zod: 4.4.3
+
+  '@agentclientprotocol/sdk@0.25.1(zod@4.4.3)':
     dependencies:
       zod: 4.4.3
 
@@ -8249,7 +8258,7 @@ snapshots:
 
   '@vue/devtools-shared@8.1.2': {}
 
-  '@vue/language-core@3.3.4':
+  '@vue/language-core@3.3.5':
     dependencies:
       '@volar/language-core': 2.4.28
       '@vue/compiler-dom': 3.5.38
@@ -8288,7 +8297,7 @@ snapshots:
       '@vue/compiler-dom': 3.5.38
       js-beautify: 1.15.4
       vue: 3.5.38(typescript@6.0.3)
-      vue-component-type-helpers: 3.3.4
+      vue-component-type-helpers: 3.3.5
     optionalDependencies:
       '@vue/server-renderer': 3.5.38(vue@3.5.38(typescript@6.0.3))
 
@@ -12258,7 +12267,7 @@ snapshots:
 
   vscode-uri@3.1.0: {}
 
-  vue-component-type-helpers@3.3.4: {}
+  vue-component-type-helpers@3.3.5: {}
 
   vue-demi@0.14.10(vue@3.5.38(typescript@6.0.3)):
     dependencies:
@@ -12295,10 +12304,10 @@ snapshots:
     dependencies:
       vue: 3.5.38(typescript@6.0.3)
 
-  vue-tsc@3.3.4(typescript@6.0.3):
+  vue-tsc@3.3.5(typescript@6.0.3):
     dependencies:
       '@volar/typescript': 2.4.28
-      '@vue/language-core': 3.3.4
+      '@vue/language-core': 3.3.5
       typescript: 6.0.3
 
   vue-virtual-scroller@3.0.4(vue@3.5.38(typescript@6.0.3)):
