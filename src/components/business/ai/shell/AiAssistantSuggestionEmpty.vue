@@ -33,13 +33,14 @@ const emit = defineEmits<{
 
 <style scoped>
 .ai-suggestion-empty {
+  transform: translateY(clamp(-220px, -20vh, -128px));
+  margin-bottom: clamp(-220px, -20vh, -128px);
   display: flex;
   flex-direction: column;
   align-items: center;
   width: 100%;
   min-width: 0;
-  gap: 6px;
-  padding: 0 16px 0;
+  gap: 6px;  padding: 0 16px 0;
 }
 
 .ai-suggestion-greeting {

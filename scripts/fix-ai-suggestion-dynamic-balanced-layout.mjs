@@ -1,4 +1,40 @@
-/**
+import fs from 'node:fs';
+import path from 'node:path';
+
+const repoRoot = process.cwd();
+
+const splitFile = path.join(
+  repoRoot,
+  'src/components/business/ai/shell/split-suggestions.ts',
+);
+
+const specFile = path.join(
+  repoRoot,
+  'src/components/business/ai/shell/split-suggestions.spec.ts',
+);
+
+const panelFile = path.join(
+  repoRoot,
+  'src/components/business/ai/shell/AiAssistantPanel.vue',
+);
+
+const fail = (message) => {
+  throw new Error(message);
+};
+
+if (!fs.existsSync(splitFile)) {
+  fail(`[missing] ${path.relative(repoRoot, splitFile)}`);
+}
+
+if (!fs.existsSync(specFile)) {
+  fail(`[missing] ${path.relative(repoRoot, specFile)}`);
+}
+
+if (!fs.existsSync(panelFile)) {
+  fail(`[missing] ${path.relative(repoRoot, panelFile)}`);
+}
+
+const splitSource = `/**
  * 建议区布局算法。
  *
  * 需求：
@@ -41,7 +77,7 @@ const NINE_SUGGESTION_MIN_ROWS = 3;
 const NINE_SUGGESTION_MAX_ROWS = 4;
 
 const isCjkCharacter = (char: string): boolean =>
-  /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\u3040-\u30ff\uac00-\ud7af]/u.test(char);
+  /[\\u3400-\\u4dbf\\u4e00-\\u9fff\\uf900-\\ufaff\\u3040-\\u30ff\\uac00-\\ud7af]/u.test(char);
 
 const isAsciiLetterOrDigit = (char: string): boolean => /[a-z0-9]/iu.test(char);
 
@@ -53,7 +89,7 @@ const resolveSuggestionVisualWeight = (title: string): number => {
       weight += 2;
     } else if (isAsciiLetterOrDigit(char)) {
       weight += 1;
-    } else if (/\s/u.test(char)) {
+    } else if (/\\s/u.test(char)) {
       weight += 0.5;
     } else {
       weight += 0.8;
@@ -107,9 +143,7 @@ const buildDynamicCandidateRowCounts = (itemCount: number, maxRowCount: number):
   return result.length > 0 ? result : [maxFeasibleRows];
 };
 
-const createRows = <T extends TSuggestionLike>(
-  capacities: readonly number[],
-): ISuggestionRow<T>[] =>
+const createRows = <T extends TSuggestionLike>(capacities: readonly number[]): ISuggestionRow<T>[] =>
   capacities.map((capacity, index) => ({
     items: [],
     capacity,
@@ -184,11 +218,11 @@ const scoreRows = <T extends TSuggestionLike>(rows: readonly ISuggestionRow<T>[]
 const sortRowForReading = <T extends TSuggestionLike>(
   row: ISuggestionRow<T>,
 ): IWeightedSuggestion<T>[] =>
-  row.items.slice().sort((a, b) => b.weight - a.weight || a.index - b.index);
+  row.items
+    .slice()
+    .sort((a, b) => b.weight - a.weight || a.index - b.index);
 
-const normalizeRowsForReading = <T extends TSuggestionLike>(
-  rows: readonly ISuggestionRow<T>[],
-): T[][] =>
+const normalizeRowsForReading = <T extends TSuggestionLike>(rows: readonly ISuggestionRow<T>[]): T[][] =>
   rows
     .filter((row) => row.items.length > 0)
     .map((row) => sortRowForReading(row).map((weightedItem) => weightedItem.item));
@@ -248,3 +282,143 @@ export const splitSuggestionsIntoRows = <T extends TSuggestionLike>(
 
   return normalizeRowsForReading(chooseBestCandidate(candidates).rows);
 };
+`;
+
+fs.writeFileSync(splitFile, splitSource);
+
+const specSource = `import { describe, expect, it } from 'vitest';
+
+import { splitSuggestionsIntoRows } from './split-suggestions';
+
+describe('splitSuggestionsIntoRows', () => {
+  it('空数组返回空行集', () => {
+    expect(splitSuggestionsIntoRows([], 4)).toEqual([]);
+  });
+
+  it('rowCount 为 1 时返回单行副本', () => {
+    const items = [{ title: 'a' }, { title: 'b' }];
+    const rows = splitSuggestionsIntoRows(items, 1);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toEqual(items);
+    expect(rows[0]).not.toBe(items);
+  });
+
+  it('固定 9 个建议时动态选择 3 行或 4 行，且每行至少 2 个', () => {
+    const items = [
+      { title: '如何培养阅读习惯' },
+      { title: '介绍一部经典的治愈电影' },
+      { title: '为什么古建筑会倒塌' },
+      { title: '介绍一位历史人物' },
+      { title: '讲讲三分钟热度的原因' },
+      { title: '推荐几首轻音乐' },
+      { title: '为什么人会做梦？' },
+      { title: '油画的基本技法' },
+      { title: '哪些食物最健康？' },
+    ];
+
+    const rows = splitSuggestionsIntoRows(items, 4);
+
+    expect([3, 4]).toContain(rows.length);
+    expect(rows.every((row) => row.length >= 2)).toBe(true);
+    expect(rows.flat()).toHaveLength(9);
+    expect(new Set(rows.flat())).toEqual(new Set(items));
+  });
+
+  it('固定 9 个建议时会根据长度重排而不是按原顺序硬切', () => {
+    const items = [
+      { title: '短1' },
+      { title: '非常非常非常长的建议标题一' },
+      { title: '短2' },
+      { title: '中等长度建议' },
+      { title: '非常非常非常长的建议标题二' },
+      { title: '短3' },
+      { title: '中等长度建议二' },
+      { title: '短4' },
+      { title: '非常非常非常长的建议标题三' },
+    ];
+
+    const rows = splitSuggestionsIntoRows(items, 4);
+
+    expect([3, 4]).toContain(rows.length);
+    expect(rows.every((row) => row.length >= 2)).toBe(true);
+    expect(rows.flat()).toHaveLength(9);
+    expect(rows.flat()).not.toEqual(items);
+  });
+
+  it('短标题且 3 行已经均衡时，不会无脑固定成 4 行', () => {
+    const items = [
+      { title: '建议1' },
+      { title: '建议2' },
+      { title: '建议3' },
+      { title: '建议4' },
+      { title: '建议5' },
+      { title: '建议6' },
+      { title: '建议7' },
+      { title: '建议8' },
+      { title: '建议9' },
+    ];
+
+    const rows = splitSuggestionsIntoRows(items, 4);
+
+    expect(rows).toHaveLength(3);
+    expect(rows.map((row) => row.length)).toEqual([3, 3, 3]);
+  });
+
+  it('长短差距明显时，可以动态选择 4 行降低单行最大宽度', () => {
+    const items = [
+      { title: '非常非常非常长的建议标题一' },
+      { title: '非常非常非常长的建议标题二' },
+      { title: '非常非常非常长的建议标题三' },
+      { title: '非常非常非常长的建议标题四' },
+      { title: '短1' },
+      { title: '短2' },
+      { title: '短3' },
+      { title: '短4' },
+      { title: '短5' },
+    ];
+
+    const rows = splitSuggestionsIntoRows(items, 4);
+
+    expect(rows).toHaveLength(4);
+    expect(rows.every((row) => row.length >= 2)).toBe(true);
+    expect(rows.flat()).toHaveLength(9);
+  });
+
+  it('非 9 个建议时仍按最大行数动态均衡分行且不丢项', () => {
+    const items = [{ title: 'aaaa' }, { title: 'bbbbbbbb' }, { title: 'cc' }, { title: 'dddd' }];
+    const rows = splitSuggestionsIntoRows(items, 4);
+
+    expect(rows.every((row) => row.length >= 2)).toBe(true);
+    expect(rows.flat()).toHaveLength(4);
+    expect(new Set(rows.flat())).toEqual(new Set(items));
+  });
+});
+`;
+
+fs.writeFileSync(specFile, specSource);
+
+let panelSource = fs.readFileSync(panelFile, 'utf8');
+
+const callPattern =
+  /splitSuggestionsIntoRows\\(suggestionPool\\.suggestions\\.value,\\s*\\d+\\)/;
+
+if (!callPattern.test(panelSource)) {
+  fail('[guard] 找不到 AiAssistantPanel.vue 里的 splitSuggestionsIntoRows 调用。');
+}
+
+panelSource = panelSource.replace(
+  callPattern,
+  'splitSuggestionsIntoRows(suggestionPool.suggestions.value, 4)',
+);
+
+fs.writeFileSync(panelFile, panelSource);
+
+console.log('✅ Applied dynamic AI suggestion layout');
+console.log('✅ 9 suggestions now dynamically choose 3 or 4 rows');
+console.log('✅ No fixed 3+2+2+2 layout');
+console.log('✅ Reorders suggestions by visual title length');
+console.log('✅ Keeps at least 2 suggestions per row');
+console.log(`📝 Updated: ${path.relative(repoRoot, splitFile)}`);
+console.log(`📝 Updated: ${path.relative(repoRoot, specFile)}`);
+console.log(`📝 Updated: ${path.relative(repoRoot, panelFile)}`);
