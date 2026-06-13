@@ -44,7 +44,7 @@ const handleKeydown = (event: KeyboardEvent): void => {
 <template>
   <aside class="select-bubble" data-testid="ai-web-preview-select-bubble">
     <header class="select-bubble__header">
-      <span class="select-bubble__badge" :title="label"> label </span>
+      <span class="select-bubble__badge" :title="label" v-text="label" />
       <button
         type="button"
         class="select-bubble__close"
@@ -59,9 +59,9 @@ const handleKeydown = (event: KeyboardEvent): void => {
       <img class="select-bubble__thumb" :src="screenshotSrc" :alt="label" />
     </figure>
 
-    <pre class="select-bubble__html"><code> outerHtml </code></pre>
+    <pre class="select-bubble__html"><code v-text="outerHtml" /></pre>
 
-    <p class="select-bubble__url" :title="url"> url </p>
+    <p class="select-bubble__url" :title="url" v-text="url" />
 
     <textarea
       v-model="comment"
