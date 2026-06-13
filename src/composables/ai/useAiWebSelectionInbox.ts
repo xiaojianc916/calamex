@@ -2,14 +2,13 @@ import { ref } from 'vue';
 
 /**
  * Structured context captured when the user picks an element inside the built-in
- * browser preview (element label, source URL, outer HTML, screenshot, and an
- * optional comment).
+ * browser preview (CSS selector label, source URL, outer HTML, and an optional
+ * comment).
  */
 export interface IAiWebSelectionContext {
   url: string;
   label: string;
   outerHtml: string;
-  screenshotBase64: string;
   comment: string;
 }
 
