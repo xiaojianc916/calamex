@@ -16,6 +16,7 @@ pub fn builder() -> Builder<tauri::Wry> {
             search::WorkspaceSearchStreamEvent,
             agent_webview::AgentWebviewNavigatedEvent,
             agent_webview::AgentWebviewConsoleEvent,
+            agent_webview::AgentWebviewElementPickedEvent,
         ])
         .commands(collect_commands![
             script_run::detect_execution_environment,
@@ -107,6 +108,8 @@ pub fn builder() -> Builder<tauri::Wry> {
             agent_webview::agent_webview_back,
             agent_webview::agent_webview_forward,
             agent_webview::agent_webview_reload,
+            agent_webview::agent_webview_start_select,
+            agent_webview::agent_webview_cancel_select,
             agent_webview::agent_webview_open_external,
             agent_webview::agent_webview_destroy,
             ai::gateway::ai_get_config,
