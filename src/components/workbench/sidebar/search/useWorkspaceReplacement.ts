@@ -20,7 +20,6 @@ import {
   getFileName,
   getParentPath,
   toggleReadonlySetValue,
-  trimBoundaryWhitespace,
 } from './search-sidebar-text';
 
 const SEARCH_DEBOUNCE_MS = 180;
@@ -131,16 +130,17 @@ export const useWorkspaceReplacement = (options: IUseWorkspaceReplacementOptions
       Boolean(workspaceRootPath.value),
   );
 
-  const toReplacementLineView = (line: IWorkspaceReplacementLinePreview): IReplacementLineView => {
-    const beforeLine = trimBoundaryWhitespace(line.beforeLine);
-    const afterLine = trimBoundaryWhitespace(line.afterLine);
-    return {
-      ...line,
-      beforeLine,
-      afterLine,
-      segments: buildReplacementLineSegments(beforeLine, afterLine),
-    };
-  };
+  // beforeLine/insertedText 与 matchStart/matchEnd 均由后端给出（偏移基于 beforeLine 的 UTF-16 码元），
+  // 这里不再前端 trim，以免改变长度造成偏移错位；行首缩进已由后端去除，视觉截断交给 CSS。
+  const toReplacementLineView = (line: IWorkspaceReplacementLinePreview): IReplacementLineView => ({
+    ...line,
+    segments: buildReplacementLineSegments(
+      line.beforeLine,
+      line.insertedText,
+      line.matchStart,
+      line.matchEnd,
+    ),
+  });
 
   const toReplacementFileView = (
     file: IWorkspaceReplacementFilePreview,
