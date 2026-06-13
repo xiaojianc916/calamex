@@ -18,6 +18,7 @@ import {
   WebPreviewUrl,
 } from '@/components/ai-elements/web-preview';
 import AiWebPreviewSelectBubble from '@/components/business/ai/shell/AiWebPreviewSelectBubble.vue';
+import { useAiWebSelectionInbox } from '@/composables/ai/useAiWebSelectionInbox';
 import {
   backAgentWebview,
   cancelSelectAgentWebview,
@@ -46,16 +47,9 @@ const emit = defineEmits<{
   'url-change': [url: string];
   'open-external': [url: string];
   'close-sidebar': [];
-  'select-context': [
-    payload: {
-      url: string;
-      label: string;
-      outerHtml: string;
-      screenshotBase64: string;
-      comment: string;
-    },
-  ];
 }>();
+
+const webSelectionInbox = useAiWebSelectionInbox();
 
 const previewUrl = ref(props.defaultUrl);
 const canGoBack = ref(false);
@@ -125,6 +119,8 @@ const handleSelect = (): void => {
   });
 };
 
+// Hand the picked element (plus the user's comment) to the AI assistant via the
+// shared selection inbox; the assistant composable turns it into a chat message.
 const handleSelectSubmit = (comment: string): void => {
   const picked = pickedElement.value;
 
@@ -132,7 +128,7 @@ const handleSelectSubmit = (comment: string): void => {
     return;
   }
 
-  emit('select-context', {
+  webSelectionInbox.submitSelection({
     url: picked.url,
     label: picked.label,
     outerHtml: picked.outerHtml,
