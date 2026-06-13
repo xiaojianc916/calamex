@@ -134,6 +134,8 @@ const {
   toggleExplorerPath,
   resolveParentPathForMutation,
   pruneWorkspaceSubtreeState,
+  markDirectoryRecentlyRefreshed,
+  wasDirectoryRecentlyRefreshed,
 } = useWorkspaceExplorerTree({
   getRoot: () => root.value,
   getActiveRequestId: () => getActiveRequestId(),
@@ -184,10 +186,12 @@ const {
   getRoot: () => root.value,
   getWorkspaceRootPath: () => props.workspaceRootPath,
   getSectionElement: () => explorerSectionRef.value,
+  getDirectoryEntries: (path) => childrenMap[path],
   expandExplorerPath,
   loadDirectoryEntries,
   refreshExplorer: handleRefreshExplorer,
   pruneWorkspaceSubtreeState,
+  markDirectoryRecentlyRefreshed,
   resolveParentPathForMutation,
   onOpenFile: handleOpenFile,
 });
@@ -240,6 +244,7 @@ const { startWorkspaceFileWatcher, stopWorkspaceFileWatcher } = useWorkspaceFile
   loadDirectoryEntries,
   pruneWorkspaceSubtreeState,
   resolveParentPathForMutation,
+  wasDirectoryRecentlyRefreshed,
 });
 
 const isExplorerContentReady = computed(

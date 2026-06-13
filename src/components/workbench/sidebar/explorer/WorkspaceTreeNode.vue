@@ -249,6 +249,37 @@ const focusRowByPath = async (path: string): Promise<void> => {
   findRowEl(path)?.focus();
 };
 
+// 可靠地聚焦行内“新建”输入框：虚拟滚动下新建行可能不在渲染窗口内，
+// 先滚动到该行使其挂载，再聚焦。与 mutations 中的兜底聚焦逻辑幂等。
+const focusInlineCreateRow = async (): Promise<void> => {
+  const index = rows.value.findIndex((row) => row.type === 'inline-create');
+  if (index < 0) {
+    return;
+  }
+  if (shouldVirtualize.value) {
+    virtualizer.value.scrollToIndex(index, { align: 'auto' });
+    await nextTick();
+  }
+  await nextTick();
+  const input = (rootEl.value?.querySelector('.explorer-inline-create-input') ??
+    null) as HTMLInputElement | null;
+  if (!input) {
+    return;
+  }
+  input.focus();
+  input.select();
+};
+
+// 新建草稿打开（或切换到另一个父目录）时，把行内输入框滚入视口并聚焦。
+watch(
+  () => (props.inlineCreateDraft?.open === true ? (props.inlineCreateDraft.parentPath ?? '') : null),
+  (openParentPath) => {
+    if (openParentPath !== null) {
+      void focusInlineCreateRow();
+    }
+  },
+);
+
 const onActivate = (entry: IWorkspaceEntry): void => {
   focusedPath.value = entry.path;
   if (isDirectoryLikeEntry(entry)) {
