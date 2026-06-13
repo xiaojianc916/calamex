@@ -23,6 +23,7 @@ import {
 import { subscribeSidecarSessionStream } from '@/composables/ai/sidecar-stream-listener';
 import { useAiAgentPlan } from '@/composables/ai/useAiAgentPlan';
 import { useAiStream } from '@/composables/ai/useAiStream';
+import { type IAiWebSelectionContext, useAiWebSelectionInbox } from '@/composables/ai/useAiWebSelectionInbox';
 import { useSidecarChangedDocumentRefresh } from '@/composables/useSidecarChangedDocumentRefresh';
 import { aiService } from '@/services/ipc/ai.service';
 import { buildCurrentFileReference } from '@/services/ipc/ai-context.service';
@@ -2366,6 +2367,61 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     syncDisplayMessagesFromActiveThread();
     errorMessage.value = '';
   };
+
+  // -----------------------------------------------------------------------
+  // Built-in browser selection inbox
+  // -----------------------------------------------------------------------
+
+  const webSelectionInbox = useAiWebSelectionInbox();
+
+  const MAX_WEB_SELECTION_HTML_CHARS = 2_000;
+
+  const buildWebSelectionMessage = (selection: IAiWebSelectionContext): string => {
+    const htmlSnippet =
+      selection.outerHtml.length > MAX_WEB_SELECTION_HTML_CHARS
+        ? `${selection.outerHtml.slice(0, MAX_WEB_SELECTION_HTML_CHARS)}…`
+        : selection.outerHtml;
+    const lines = [
+      '我从内置浏览器选中了一个页面元素作为上下文：',
+      `- 元素：${selection.label}`,
+      `- 页面：${selection.url}`,
+    ];
+
+    const comment = selection.comment.trim();
+
+    if (comment) {
+      lines.push(`- 备注：${comment}`);
+    }
+
+    lines.push('', '元素 HTML：', '```html', htmlSnippet, '```');
+
+    return lines.join('\n');
+  };
+
+  const appendWebSelectionToDraft = (message: string): void => {
+    draft.value = draft.value.trim() ? `${draft.value.trimEnd()}\n\n${message}` : message;
+  };
+
+  watch(
+    () => webSelectionInbox.pendingSelection.value,
+    (selection) => {
+      if (!selection) {
+        return;
+      }
+
+      webSelectionInbox.consumeSelection();
+
+      const message = buildWebSelectionMessage(selection);
+
+      if (isSending.value) {
+        appendWebSelectionToDraft(message);
+        return;
+      }
+
+      draft.value = message;
+      void sendMessage();
+    },
+  );
 
   // -----------------------------------------------------------------------
   // Public surface
