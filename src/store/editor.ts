@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia';
-import { computed, ref, watch } from 'vue';
+import { computed, onScopeDispose, ref, watch } from 'vue';
 
 import { WORKBENCH_TAB_LIMITS } from '@/constants/workbench';
 import { tauriSessionStorage } from '@/store/plugins/tauriSessionStorage';
@@ -606,6 +606,7 @@ export const useEditorStore = defineStore(
     // Actions: document open / close
 
     const setActiveDocument = (documentId: string): void => {
+      flushPendingDraftCapture();
       const targetDocument = documents.value.find((item) => item.id === documentId);
       if (!targetDocument) {
         return;
@@ -872,6 +873,10 @@ export const useEditorStore = defineStore(
       }
     };
 
+    onScopeDispose(() => {
+      flushPendingDraftCapture();
+    });
+
     const scheduleDraftCapture = (documentId: string): void => {
       // 切到另一个文档前,先把上一个文档待写的草稿立即落定,避免防抖窗口内丢失。
       if (pendingDraftDocumentId !== null && pendingDraftDocumentId !== documentId) {
@@ -1062,6 +1067,7 @@ export const useEditorStore = defineStore(
     };
 
     const clearDocuments = (): void => {
+      flushPendingDraftCapture();
       documents.value = [];
       activeDocumentId.value = '';
       sessionSnapshot.value.openTabs = [];
@@ -1086,6 +1092,7 @@ export const useEditorStore = defineStore(
 
     // 切换工作区时重置执行器选择,与 setEnvironment 的会话内保留策略对齐。
     const clearWorkspaceSession = (): void => {
+      flushPendingDraftCapture();
       clearDocuments();
       workspaceRootPath.value = null;
       sessionSnapshot.value.workspaceRoot = null;

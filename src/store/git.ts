@@ -296,6 +296,8 @@ const writePersistedGitCommitStats = (
   const storage = getPullRequestPersistentStorage();
   if (!storage) return;
 
+  prunePersistedGitCommitStatsCaches();
+
   try {
     storage.setItem(
       createGitCommitStatsPersistedCacheKey(cacheKey),
@@ -318,6 +320,57 @@ const removePersistedGitCommitStats = (cacheKey: string): void => {
     storage.removeItem(createGitCommitStatsPersistedCacheKey(cacheKey));
   } catch {
     // Best-effort cache cleanup only.
+  }
+};
+
+const prunePersistedGitCommitStatsCaches = (): void => {
+  const storage = getPullRequestPersistentStorage();
+  if (!storage) return;
+
+  const currentVersionPrefix = `${GIT_COMMIT_STATS_PERSISTED_CACHE_PREFIX + GIT_COMMIT_STATS_PERSISTED_CACHE_VERSION}.`;
+  const keysToRemove: string[] = [];
+
+  try {
+    for (let index = 0; index < storage.length; index += 1) {
+      const key = storage.key(index);
+      if (!key?.startsWith(GIT_COMMIT_STATS_PERSISTED_CACHE_PREFIX)) {
+        continue;
+      }
+
+      if (!key.startsWith(currentVersionPrefix)) {
+        keysToRemove.push(key);
+        continue;
+      }
+
+      const rawValue = storage.getItem(key);
+      if (!rawValue) {
+        keysToRemove.push(key);
+        continue;
+      }
+
+      try {
+        const parsed = JSON.parse(rawValue) as {
+          version?: unknown;
+          fetchedAt?: unknown;
+        };
+
+        if (
+          parsed.version !== GIT_COMMIT_STATS_PERSISTED_CACHE_VERSION ||
+          typeof parsed.fetchedAt !== 'number' ||
+          Date.now() - parsed.fetchedAt > GIT_COMMIT_STATS_PERSISTED_CACHE_MAX_AGE_MS
+        ) {
+          keysToRemove.push(key);
+        }
+      } catch {
+        keysToRemove.push(key);
+      }
+    }
+
+    keysToRemove.forEach((key) => {
+      storage.removeItem(key);
+    });
+  } catch {
+    // Best-effort cache pruning only.
   }
 };
 
