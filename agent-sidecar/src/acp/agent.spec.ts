@@ -206,6 +206,10 @@ test("setSessionMode 拒绝非法模式,接受合法模式并路由到对应 run
 			return { sessionId: input.sessionId ?? "", events: [], result: null }
 		},
 		{
+			chat: async (input) => {
+				calls.push("chat")
+				return { sessionId: input.sessionId ?? "", events: [], result: null }
+			},
 			plan: async (input) => {
 				calls.push("plan")
 				return { sessionId: input.sessionId ?? "", events: [], result: null }
@@ -219,7 +223,9 @@ test("setSessionMode 拒绝非法模式,接受合法模式并路由到对应 run
 	)
 	await agent.setSessionMode({ sessionId, modeId: "plan" })
 	await agent.prompt({ sessionId, prompt: [{ type: "text", text: "x" }] })
-	assert.deepEqual(calls, ["plan"])
+	await agent.setSessionMode({ sessionId, modeId: "ask" })
+	await agent.prompt({ sessionId, prompt: [{ type: "text", text: "x" }] })
+	assert.deepEqual(calls, ["plan", "chat"])
 })
 
 test("prompt 对未知会话抛出错误", async () => {
