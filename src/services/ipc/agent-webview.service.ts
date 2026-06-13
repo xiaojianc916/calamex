@@ -135,7 +135,7 @@ export const reloadAgentWebview = (): Promise<void> =>
     },
   );
 
-/** 进入「选择元素」模式(CDP Overlay.setInspectMode searchForNode,原生高亮)。 */
+/** 进入「选择元素」模式(注入 @medv/finder 拾取脚本,页面内悬停高亮+点击捕获)。 */
 export const startSelectAgentWebview = (): Promise<void> =>
   callSpectaCommand<void>(
     {
@@ -151,7 +151,7 @@ export const startSelectAgentWebview = (): Promise<void> =>
     },
   );
 
-/** 退出「选择元素」模式(CDP Overlay.setInspectMode none)。幂等:未在选择态也安全。 */
+/** 退出「选择元素」模式(拆除注入的 finder 拾取脚本)。幂等:未在选择态也安全。 */
 export const cancelSelectAgentWebview = (): Promise<void> =>
   callSpectaCommand<void>(
     {
@@ -191,7 +191,7 @@ export const onAgentWebviewNavigated = (handler: (payload: AgentWebviewNavigated
 export const onAgentWebviewConsole = (handler: (payload: AgentWebviewConsoleEvent) => void) =>
   events.agentWebviewConsoleEvent.listen((event) => handler(event.payload));
 
-/** 订阅「选择元素」结果(label + outerHTML + 裁剪截图 + url)。返回 unlisten。 */
+/** 订阅「选择元素」结果(label=CSS 选择器 + outerHTML + url)。返回 unlisten。 */
 export const onAgentWebviewElementPicked = (
   handler: (payload: AgentWebviewElementPickedEvent) => void,
 ) => events.agentWebviewElementPickedEvent.listen((event) => handler(event.payload));
