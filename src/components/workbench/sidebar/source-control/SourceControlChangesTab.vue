@@ -1,12 +1,12 @@
 <template>
-  <div class="source-control-scroll">
+  <div ref="sourceControlScrollRef" class="source-control-scroll" @scroll.passive="handleSourceControlScroll">
     <section v-if="!hasVisibleChanges && searchQuery.trim()"
       class="source-control-empty-card source-control-empty-card-inline">
       <p class="source-control-empty-title"> emptyChangesTitle </p>
       <p class="source-control-empty-text"> emptyChangesText </p>
     </section>
 
-    <section v-for="section in filteredSections" :key="section.key" class="source-control-section"
+    <section v-for="section in visibleFilteredSections" :key="section.key" class="source-control-section"
       :class="{ 'is-collapsed': collapsedSections[section.key] }">
       <button type="button" class="source-control-section-header" @click="toggleSectionCollapse(section.key)">
         <svg class="source-control-section-chevron" viewBox="0 0 24 24" aria-hidden="true">
@@ -17,7 +17,7 @@
       </button>
 
       <div class="source-control-file-list">
-        <article v-for="entry in section.entries" :key="section.key + ':' + entry.path"
+        <article v-for="entry in section.visibleEntries" :key="section.key + ':' + entry.path"
           class="source-control-file" :class="{
             'is-active': isActivePath(entry.path),
             'is-context-target': isContextTargetPath(entry.path),
@@ -105,11 +105,18 @@ const SOURCE_CONTROL_MENU_WIDTH = 240;
 const SOURCE_CONTROL_MENU_HEIGHT = 320;
 const SOURCE_CONTROL_MENU_VIEWPORT_PADDING = 12;
 const SOURCE_CONTROL_MENU_ROOT_SELECTOR = '.linear-context-menu-root';
+const SOURCE_CONTROL_VISIBLE_ENTRY_PAGE_SIZE = 120;
+const SOURCE_CONTROL_LOAD_MORE_THRESHOLD_PX = 96;
 
 interface IGitSection {
   key: TGitSectionKey;
   title: string;
   entries: IGitFileStatusPayload[];
+}
+
+interface IVisibleGitSection extends IGitSection {
+  visibleEntries: IGitFileStatusPayload[];
+  hasMore: boolean;
 }
 
 interface IGitEntryAction {
@@ -146,6 +153,7 @@ const gitStore = useGitStore();
 const message = useMessage();
 const dialog = useDialog();
 const commitMessage = ref('');
+const sourceControlScrollRef = ref<HTMLElement | null>(null);
 const scmMenuState = reactive<ISourceControlMenuState>({ open: false, x: 0, y: 0 });
 const scmContextTargetPath = ref<string | null>(null);
 const scmMenuGroups = ref<TSourceControlMenuGroup[]>([]);
@@ -154,6 +162,12 @@ const collapsedSections = reactive<Record<TGitSectionKey, boolean>>({
   staged: false,
   changes: false,
   untracked: false,
+});
+const visibleEntryLimits = reactive<Record<TGitSectionKey, number>>({
+  conflicts: SOURCE_CONTROL_VISIBLE_ENTRY_PAGE_SIZE,
+  staged: SOURCE_CONTROL_VISIBLE_ENTRY_PAGE_SIZE,
+  changes: SOURCE_CONTROL_VISIBLE_ENTRY_PAGE_SIZE,
+  untracked: SOURCE_CONTROL_VISIBLE_ENTRY_PAGE_SIZE,
 });
 
 const status = computed(() => gitStore.status);
@@ -164,6 +178,13 @@ const resetSectionCollapse = (): void => {
   collapsedSections.staged = false;
   collapsedSections.changes = false;
   collapsedSections.untracked = false;
+};
+
+const resetVisibleEntryLimits = (): void => {
+  visibleEntryLimits.conflicts = SOURCE_CONTROL_VISIBLE_ENTRY_PAGE_SIZE;
+  visibleEntryLimits.staged = SOURCE_CONTROL_VISIBLE_ENTRY_PAGE_SIZE;
+  visibleEntryLimits.changes = SOURCE_CONTROL_VISIBLE_ENTRY_PAGE_SIZE;
+  visibleEntryLimits.untracked = SOURCE_CONTROL_VISIBLE_ENTRY_PAGE_SIZE;
 };
 
 const clampMenuPosition = (clientX: number, clientY: number): { x: number; y: number } => {
@@ -272,6 +293,52 @@ const filteredSections = computed<IGitSection[]>(() => {
     })
     .filter((section) => section.entries.length > 0);
 });
+
+const visibleFilteredSections = computed<IVisibleGitSection[]>(() =>
+  filteredSections.value.map((section) => {
+    const limit = visibleEntryLimits[section.key] ?? SOURCE_CONTROL_VISIBLE_ENTRY_PAGE_SIZE;
+    const visibleEntries = section.entries.slice(0, limit);
+    return {
+      ...section,
+      visibleEntries,
+      hasMore: visibleEntries.length < section.entries.length,
+    };
+  }),
+);
+
+const hasHiddenSourceControlEntries = computed(() =>
+  visibleFilteredSections.value.some((section) => section.hasMore),
+);
+
+const loadMoreVisibleSourceControlEntries = (): void => {
+  if (!hasHiddenSourceControlEntries.value) {
+    return;
+  }
+
+  for (const section of filteredSections.value) {
+    const currentLimit = visibleEntryLimits[section.key] ?? SOURCE_CONTROL_VISIBLE_ENTRY_PAGE_SIZE;
+    if (currentLimit >= section.entries.length) {
+      continue;
+    }
+
+    visibleEntryLimits[section.key] = Math.min(
+      currentLimit + SOURCE_CONTROL_VISIBLE_ENTRY_PAGE_SIZE,
+      section.entries.length,
+    );
+  }
+};
+
+const handleSourceControlScroll = (event: Event): void => {
+  const target = event.currentTarget;
+  if (!(target instanceof HTMLElement)) {
+    return;
+  }
+
+  const distanceFromBottom = target.scrollHeight - target.scrollTop - target.clientHeight;
+  if (distanceFromBottom <= SOURCE_CONTROL_LOAD_MORE_THRESHOLD_PX) {
+    loadMoreVisibleSourceControlEntries();
+  }
+};
 
 const hasVisibleChanges = computed(() =>
   filteredSections.value.some((section) => section.entries.length > 0),
@@ -540,7 +607,12 @@ watch(
   () => {
     commitMessage.value = '';
     resetSectionCollapse();
+    resetVisibleEntryLimits();
     closeSourceControlMenu();
   },
 );
+
+watch([() => props.searchQuery, () => status.value.files.length], () => {
+  resetVisibleEntryLimits();
+});
 </script>
