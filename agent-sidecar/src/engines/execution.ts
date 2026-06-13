@@ -1,9 +1,8 @@
 import { MastraRuntimeValidation } from './validation.js';
-import { createDeepSeekReasoningRunPrefix, evictDeepSeekReasoningByPrefix, runWithDeepSeekReasoningContext } from '../models/providers/deepseek-reasoning-fetch.js';
 import { buildSystemPrompt } from './prompts/system-prompt.js';
 import { createMastraMemoryReference, createMastraMemoryScope, resolveObservationalMemoryEnabled, resolveSemanticRecallEnabled } from './context/memory.js';
 import { createMastraMemoryForModel, createMastraModelConfig, resolveMastraModelConfig } from './agent/factory.js';
-import { createAcontextTokenEventDraft, createDeepSeekPayloadEventSink } from './budget/budget.js';
+import { createAcontextTokenEventDraft } from './budget/budget.js';
 import { createExecutionRequestContext } from './context/context.js';
 import { normalizeMastraError } from './errors.js';
 import { resolveAgentExecutionPolicy } from './policy/execution-policy.js';
@@ -143,13 +142,8 @@ export class MastraRuntimeExecution extends MastraRuntimeValidation {
             buildSystemPrompt(memoryInput, modelConfig.modelId),
             createApprovedPlanExecutionContext(approvedPlanRecord, planStepId),
         ].join('\n\n');
-        const payloadEventSink = createDeepSeekPayloadEventSink(events, options);
         let shouldReleaseTurnResources = true;
         let streamCleanup: (() => void) | undefined;
-        turnResourceScope.add({
-            name: 'deepseek-reasoning-cache',
-            dispose: () => evictDeepSeekReasoningByPrefix(createDeepSeekReasoningRunPrefix(sessionId, requestedRunId)),
-        });
         turnResourceScope.add({
             name: 'stream-cleanup',
             dispose: () => {
@@ -158,147 +152,140 @@ export class MastraRuntimeExecution extends MastraRuntimeValidation {
         });
 
         try {
-            return await runWithDeepSeekReasoningContext({
-                sessionId,
-                runId: requestedRunId,
-                onRequestPayload: payloadEventSink.onRequestPayload,
-            }, async () => {
-                const sessionMessages = createAgentSessionMessagesFromRuntimeInput(memoryInput);
-                executionSession.appendMessages(sessionMessages);
-                const mastraMessages = buildMastraMessagesFromSessionMessages(sessionMessages);
-                const toolChoice: IMastraGenerateOptions['toolChoice'] = hasAgentTools ? 'auto' : 'none';
-                const executionHandle = await this.createExecutionHandle({
-                    id: DEFAULT_EXECUTION_AGENT_ID,
-                    name: DEFAULT_EXECUTION_AGENT_NAME,
-                    instructions: systemPrompt,
-                    model: createMastraModelConfig(modelConfig),
-                    memory: agentMemory,
-                    ...(hasTools ? { tools: mastraTools } : {}),
-                    ...(workspace ? { workspace } : {}),
-                    ...(browser ? { browser } : {}),
-                    inputProcessors: createMastraAgentInputProcessors(),
-                    outputProcessors: createMastraAgentOutputProcessors(),
-                });
-                const stream = await executionHandle.agent.stream(
-                    mastraMessages,
-                    {
-                        maxSteps,
-                        toolChoice,
-                        memory,
-                        ...(options.context?.signal ? { abortSignal: options.context.signal } : {}),
-                        runId: requestedRunId,
-                        requestContext: createExecutionRequestContext(
-                            memoryInput,
-                            systemPrompt,
-                            memory,
-                            approvedPlanRecord,
-                        ),
-                    },
-                );
-                streamCleanup = stream.cleanup;
-                const checkpointRunId = stream.runId ?? requestedRunId;
-                const createCheckpointEvent = checkpointRunId === requestedRunId
-                    ? createRequestedRunEvent
-                    : executionSession.createRuntimeEventFactory(checkpointRunId);
-
-                payloadEventSink.attachRuntimeEventFactory(createCheckpointEvent);
-                attachMcpGatewayMetrics(mcpGatewayMetrics, console);
-                executionSession.push(createCheckpointEvent(createAcontextTokenEventDraft({
-                    systemPrompt,
-                    messages: mastraMessages,
-                    contextReferences: normalizedInput.context ?? [],
-                    tools: mastraTools,
-                    toolStats,
-                    workspaceEnabled: Boolean(workspace),
-                    browserEnabled: Boolean(browser),
-                    memoryEnabled: true,
-                    observationalMemoryEnabled,
-                    semanticRecallEnabled,
+            const sessionMessages = createAgentSessionMessagesFromRuntimeInput(memoryInput);
+            executionSession.appendMessages(sessionMessages);
+            const mastraMessages = buildMastraMessagesFromSessionMessages(sessionMessages);
+            const toolChoice: IMastraGenerateOptions['toolChoice'] = hasAgentTools ? 'auto' : 'none';
+            const executionHandle = await this.createExecutionHandle({
+                id: DEFAULT_EXECUTION_AGENT_ID,
+                name: DEFAULT_EXECUTION_AGENT_NAME,
+                instructions: systemPrompt,
+                model: createMastraModelConfig(modelConfig),
+                memory: agentMemory,
+                ...(hasTools ? { tools: mastraTools } : {}),
+                ...(workspace ? { workspace } : {}),
+                ...(browser ? { browser } : {}),
+                inputProcessors: createMastraAgentInputProcessors(),
+                outputProcessors: createMastraAgentOutputProcessors(),
+            });
+            const stream = await executionHandle.agent.stream(
+                mastraMessages,
+                {
                     maxSteps,
                     toolChoice,
-                    modelCapabilities: modelConfig.capabilities,
-                })), options);
-                executionSession.push(createCheckpointEvent({
-                    type: 'rollback.checkpoint.created',
-                    visibility: 'user',
-                    level: 'info',
-                    snapshotId: checkpointRunId,
-                }), options);
+                    memory,
+                    ...(options.context?.signal ? { abortSignal: options.context.signal } : {}),
+                    runId: requestedRunId,
+                    requestContext: createExecutionRequestContext(
+                        memoryInput,
+                        systemPrompt,
+                        memory,
+                        approvedPlanRecord,
+                    ),
+                },
+            );
+            streamCleanup = stream.cleanup;
+            const checkpointRunId = stream.runId ?? requestedRunId;
+            const createCheckpointEvent = checkpointRunId === requestedRunId
+                ? createRequestedRunEvent
+                : executionSession.createRuntimeEventFactory(checkpointRunId);
 
-                const streamSummary = await this.consumeTextStream(
-                    executionHandle.agent,
-                    mcpBundle,
-                    sessionId,
-                    stream,
-                    events,
-                    options,
-                    createCheckpointEvent,
-                    workspace,
-                    browser,
-                    {
-                        planId,
-                        version: Number(planVersion),
-                        stepId: planStepId,
-                    },
-                );
-                shouldReleaseTurnResources = streamSummary.releaseResources;
+            attachMcpGatewayMetrics(mcpGatewayMetrics, console);
+            executionSession.push(createCheckpointEvent(createAcontextTokenEventDraft({
+                systemPrompt,
+                messages: mastraMessages,
+                contextReferences: normalizedInput.context ?? [],
+                tools: mastraTools,
+                toolStats,
+                workspaceEnabled: Boolean(workspace),
+                browserEnabled: Boolean(browser),
+                memoryEnabled: true,
+                observationalMemoryEnabled,
+                semanticRecallEnabled,
+                maxSteps,
+                toolChoice,
+                modelCapabilities: modelConfig.capabilities,
+            })), options);
+            executionSession.push(createCheckpointEvent({
+                type: 'rollback.checkpoint.created',
+                visibility: 'user',
+                level: 'info',
+                snapshotId: checkpointRunId,
+            }), options);
 
-                if (streamSummary.streamErrorMessage) {
-                    executionSession.failTurn(executionTurn.id, { errorMessage: streamSummary.streamErrorMessage });
-                    await this.planWorkflowStore.failStep({
-                        planId,
-                        version: Number(planVersion),
-                        stepId: planStepId,
-                        error: streamSummary.streamErrorMessage,
-                        retryable: true,
-                    });
-                    return createErrorResponse(
-                        sessionId,
-                        `Mastra Agent 执行失败：${streamSummary.streamErrorMessage}`,
-                        events,
-                        options,
-                    );
-                }
-
-                if (streamSummary.pendingApproval) {
-                    executionSession.suspendTurn(executionTurn.id, { reason: 'tool_external_wait' });
-                    await this.planWorkflowStore.suspend({
-                        planId,
-                        version: Number(planVersion),
-                        reason: 'tool_external_wait',
-                        payload: {
-                            stepId: planStepId,
-                            runId: checkpointRunId,
-                        },
-                        allowedFields: ['decision', 'requestId'],
-                    });
-                    return {
-                        sessionId,
-                        events,
-                        result: null,
-                    };
-                }
-
-                const result = streamSummary.visibleText.trim().length > 0
-                    ? streamSummary.visibleText
-                    : 'Agent 已完成。';
-
-                await this.planWorkflowStore.completeStep({
+            const streamSummary = await this.consumeTextStream(
+                executionHandle.agent,
+                mcpBundle,
+                sessionId,
+                stream,
+                events,
+                options,
+                createCheckpointEvent,
+                workspace,
+                browser,
+                {
                     planId,
                     version: Number(planVersion),
                     stepId: planStepId,
-                    resultRef: checkpointRunId,
+                },
+            );
+            shouldReleaseTurnResources = streamSummary.releaseResources;
+
+            if (streamSummary.streamErrorMessage) {
+                executionSession.failTurn(executionTurn.id, { errorMessage: streamSummary.streamErrorMessage });
+                await this.planWorkflowStore.failStep({
+                    planId,
+                    version: Number(planVersion),
+                    stepId: planStepId,
+                    error: streamSummary.streamErrorMessage,
+                    retryable: true,
                 });
+                return createErrorResponse(
+                    sessionId,
+                    `Mastra Agent 执行失败：${streamSummary.streamErrorMessage}`,
+                    events,
+                    options,
+                );
+            }
 
-                executionSession.completeTurn(executionTurn.id, { result });
-
+            if (streamSummary.pendingApproval) {
+                executionSession.suspendTurn(executionTurn.id, { reason: 'tool_external_wait' });
+                await this.planWorkflowStore.suspend({
+                    planId,
+                    version: Number(planVersion),
+                    reason: 'tool_external_wait',
+                    payload: {
+                        stepId: planStepId,
+                        runId: checkpointRunId,
+                    },
+                    allowedFields: ['decision', 'requestId'],
+                });
                 return {
                     sessionId,
                     events,
-                    result,
-                    ...(streamSummary.doneTokenSnapshot ? { usage: streamSummary.doneTokenSnapshot } : {}),
+                    result: null,
                 };
+            }
+
+            const result = streamSummary.visibleText.trim().length > 0
+                ? streamSummary.visibleText
+                : 'Agent 已完成。';
+
+            await this.planWorkflowStore.completeStep({
+                planId,
+                version: Number(planVersion),
+                stepId: planStepId,
+                resultRef: checkpointRunId,
             });
+
+            executionSession.completeTurn(executionTurn.id, { result });
+
+            return {
+                sessionId,
+                events,
+                result,
+                ...(streamSummary.doneTokenSnapshot ? { usage: streamSummary.doneTokenSnapshot } : {}),
+            };
         } catch (error) {
             const errorMessage = normalizeMastraError(error);
             executionSession.failTurn(executionTurn.id, { errorMessage });

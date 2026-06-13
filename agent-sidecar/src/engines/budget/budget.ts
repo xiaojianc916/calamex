@@ -1,11 +1,9 @@
 import type { ToolsInput } from '@mastra/core/agent';
 import { z } from 'zod';
-import type { IDeepSeekRequestPayloadStats } from '../../models/providers/deepseek-reasoning-fetch.js';
 import type { IAgentModelCapabilities } from '../../models/capabilities.js';
-import type { IAgentRuntimeRunOptions, TAgentRuntimeOutputEvent } from '../contracts/runtime-contracts.js';
 import type { IAgentContextReferenceInput } from '../contracts/runtime-input.js';
-import { pushUiEvent, toRecord } from '../utils.js';
-import type { IMastraToolBudgetStats, TAcontextProviderPayloadEventDraft, TAcontextTokenEventDraft, TMastraChatMessage, TRuntimeEventFactory } from '../types.js';
+import { toRecord } from '../utils.js';
+import type { IMastraToolBudgetStats, TAcontextTokenEventDraft, TMastraChatMessage } from '../types.js';
 import { countJsonChars, countTextChars, estimateInputTokensByChars, stringifyForJson } from '../../text-metrics.js';
 import { resolveContextBudgetDecision } from './context-budget-policy.js';
 import { resolveContextManagementStrategy } from './context-strategy-policy.js';
@@ -198,70 +196,5 @@ export const createAcontextTokenEventDraft = (input: {
             shouldRelyOnMastraMemory: contextStrategy.shouldRelyOnMastraMemory,
             contextManagementReason: contextStrategy.reason,
         } : {}),
-    };
-};
-
-export const createAcontextProviderPayloadEventDraft = (
-    stats: IDeepSeekRequestPayloadStats,
-    requestIndex: number,
-): TAcontextProviderPayloadEventDraft => ({
-    type: 'acontext.provider_payload.checked',
-    visibility: 'debug',
-    level: 'info',
-    provider: stats.provider,
-    ...(stats.model ? { model: stats.model } : {}),
-    ...(stats.stream !== undefined ? { stream: stats.stream } : {}),
-    requestIndex,
-    requestBodyCharCount: stats.requestBodyCharCount,
-    projectedInputTokens: stats.projectedInputTokens,
-    messageCharCount: stats.messageCharCount,
-    systemMessageCharCount: stats.systemMessageCharCount,
-    userMessageCharCount: stats.userMessageCharCount,
-    assistantMessageCharCount: stats.assistantMessageCharCount,
-    toolMessageCharCount: stats.toolMessageCharCount,
-    reasoningReplayCharCount: stats.reasoningReplayCharCount,
-    toolSchemaCharCount: stats.toolSchemaCharCount,
-    toolCount: stats.toolCount,
-    responseFormatCharCount: stats.responseFormatCharCount,
-    reasoningInjected: stats.reasoningInjected,
-    tokenEstimateMethod: 'char_heuristic',
-});
-
-export const createDeepSeekPayloadEventSink = (
-    events: TAgentRuntimeOutputEvent[],
-    options: IAgentRuntimeRunOptions,
-): {
-    onRequestPayload: (stats: IDeepSeekRequestPayloadStats) => void;
-    attachRuntimeEventFactory: (factory: TRuntimeEventFactory) => void;
-} => {
-    const pending: TAcontextProviderPayloadEventDraft[] = [];
-    let runtimeEventFactory: TRuntimeEventFactory | null = null;
-    let requestIndex = 0;
-
-    const pushDraft = (draft: TAcontextProviderPayloadEventDraft): void => {
-        if (!runtimeEventFactory) {
-            pending.push(draft);
-            return;
-        }
-
-        pushUiEvent(events, runtimeEventFactory(draft), options);
-    };
-
-    return {
-        onRequestPayload: (stats) => {
-            requestIndex += 1;
-            pushDraft(createAcontextProviderPayloadEventDraft(stats, requestIndex));
-        },
-        attachRuntimeEventFactory: (factory) => {
-            runtimeEventFactory = factory;
-
-            while (pending.length > 0) {
-                const draft = pending.shift();
-
-                if (draft) {
-                    pushUiEvent(events, runtimeEventFactory(draft), options);
-                }
-            }
-        },
     };
 };
