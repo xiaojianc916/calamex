@@ -1,10 +1,7 @@
-use super::config::{
-    AiProviderConnectionCandidate, build_provider_connection_candidate, save_connected_model,
-};
+use super::config::{ AiProviderConnectionCandidate, build_provider_connection_candidate, save_connected_model, };
 use super::*;
-use crate::commands::contracts::{
-    AgentSidecarChatRequest, AgentSidecarMessagePayload, AgentSidecarResponsePayload,
-};
+use crate::commands::contracts::{ AgentSidecarChatRequest, AgentSidecarMessagePayload, AgentSidecarResponsePayload, };
+use tauri::Manager as _;
 
 fn build_test_request(
     candidate: &AiProviderConnectionCandidate,
@@ -15,6 +12,7 @@ fn build_test_request(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| errors::error("AI_PROVIDER_NOT_CONFIGURED", "请先选择模型。"))?;
+
     let api_key = candidate.api_key_for_test.trim();
     if api_key.is_empty() {
         return Err(errors::error("AI_PROVIDER_AUTH_FAILED", "请填写 API Key。"));
@@ -49,10 +47,6 @@ fn build_test_request(
 /// 对齐 Zed 把这类 model-backed 工具调用作为独立模型请求、与 Agent 会话回合分离的做法：
 /// 连接测试是一次性请求，故走 `calamex.dev/model/chat` 原始透传，而非标准会话回合
 /// （`session/prompt`）的工具循环。
-/// - `acp_client` 启用：经宿主托管的常驻 `AcpHost`（懒建立、单连接复用）下发；连接
-///   测试请求由 `build_test_request` 自带显式 `model_config`，无需在此补齐。
-/// - 否则：保持既有 HTTP sidecar `model_chat_once` 路径（迁移期不翻默认、不删旧）。
-#[cfg(feature = "acp_client")]
 async fn run_test_model_chat(
     app: &AppHandle,
     request: AgentSidecarChatRequest,
@@ -75,14 +69,6 @@ async fn run_test_model_chat(
                 format!("ACP 模型透传失败：{error}"),
             )
         })
-}
-
-#[cfg(not(feature = "acp_client"))]
-async fn run_test_model_chat(
-    _app: &AppHandle,
-    request: AgentSidecarChatRequest,
-) -> Result<AgentSidecarResponsePayload, String> {
-    crate::agent_sidecar::model_chat_once(request).await
 }
 
 async fn test_provider_connection_candidate(
@@ -126,6 +112,7 @@ pub async fn test_provider(app: &AppHandle) -> Result<String, String> {
         .clone()
         .or_else(|| default_model(&config.provider_type));
     let provider_id = validate_model_provider(selected_model.as_deref(), None)?;
+
     let candidate = AiProviderConnectionCandidate {
         provider_id,
         provider_type: config.provider_type.clone(),
@@ -196,6 +183,5 @@ pub async fn connect_provider(
     )?;
 
     test_provider_connection_candidate(app, &candidate).await?;
-
     save_connected_model(role, candidate)
 }

@@ -1,11 +1,11 @@
 use crate::ai::audit::{self, AiAuditEventKind};
 use crate::ai::gateway;
 use crate::commands::contracts::{
-    AiCancelRequest, AiChatRequest, AiChatStreamPayload, AiConfigPayload,
-    AiConversationTitlePayload, AiConversationTitleRequest, AiInlineCompletionRangePayload,
-    AiInlineCompletionRequest, AiInlineCompletionResult, AiProviderConnectionPayload,
-    AiProviderConnectionRequest, AiProviderTestPayload, AiSaveConfigRequest,
-    AiSaveCredentialsRequest, AiSuggestionPoolPayload, AiSuggestionPoolRequest,
+    AiCancelRequest, AiChatRequest, AiChatStreamPayload, AiConfigPayload, AiConversationTitlePayload,
+    AiConversationTitleRequest, AiInlineCompletionRangePayload, AiInlineCompletionRequest,
+    AiInlineCompletionResult, AiProviderConnectionPayload, AiProviderConnectionRequest,
+    AiProviderTestPayload, AiSaveConfigRequest, AiSaveCredentialsRequest, AiSuggestionPoolPayload,
+    AiSuggestionPoolRequest,
 };
 use tauri::AppHandle;
 
@@ -167,9 +167,10 @@ pub fn ai_get_suggestion_pool_cache() -> Result<Option<AiSuggestionPoolPayload>,
 #[tauri::command]
 #[specta::specta]
 pub async fn ai_generate_suggestion_pool(
+    app: AppHandle,
     payload: AiSuggestionPoolRequest,
 ) -> Result<AiSuggestionPoolPayload, String> {
-    gateway::generate_suggestion_pool(payload).await
+    gateway::generate_suggestion_pool(&app, payload).await
 }
 
 #[tauri::command]

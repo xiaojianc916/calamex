@@ -1,10 +1,8 @@
-use super::prompt::{
-    build_context_block, build_conversation_title_prompt, build_identity_system_message,
-    build_inline_prompt, clip_title_source,
-};
+use super::prompt::{ build_context_block, build_conversation_title_prompt, build_identity_system_message, build_inline_prompt, clip_title_source, };
 use super::*;
 use crate::agent_sidecar;
 use crate::commands::contracts::{AgentSidecarChatRequest, AgentSidecarMessagePayload};
+use tauri::{Emitter as _, Manager as _};
 
 fn to_sidecar_message_payloads(
     messages: Vec<AiProviderMessage>,
@@ -34,6 +32,7 @@ async fn run_model_chat_via_acp(
     model_config: crate::commands::contracts::AgentSidecarModelConfigPayload,
 ) -> Result<crate::commands::contracts::AgentSidecarResponsePayload, String> {
     request.model_config.get_or_insert(model_config);
+
     let host = app
         .state::<crate::acp::AcpRuntime>()
         .get_or_spawn(app)
@@ -43,6 +42,7 @@ async fn run_model_chat_via_acp(
                 format!("无法建立 ACP 宿主连接：{error}"),
             )
         })?;
+
     host.model_chat(crate::acp::chat_request_to_model_chat_ext(request))
         .await
         .map_err(|error| {
@@ -75,6 +75,7 @@ pub async fn generate_conversation_title(
         .selected_model
         .as_deref()
         .unwrap_or(DEFAULT_NARRATOR_MODEL);
+
     let request = AiProviderChatRequest::new(vec![
         AiProviderMessage::system(
             "你是会话标题生成器。只输出 5 到 10 个中文字符的标题，不要解释。",
@@ -84,6 +85,7 @@ pub async fn generate_conversation_title(
             &assistant_message,
         )),
     ]);
+
     let request_payload = AgentSidecarChatRequest {
         session_id: None,
         mode: Some("ask".to_string()),
@@ -94,12 +96,14 @@ pub async fn generate_conversation_title(
         model_config: None,
         thread_id: None,
     };
+
     let sidecar_response = run_model_chat_via_acp(
         app,
         request_payload,
         agent_sidecar::narrator_sidecar_model_config()?,
     )
     .await?;
+
     let title = normalize_conversation_title(&sidecar_events_result_text(&sidecar_response));
 
     if title.chars().count() < MIN_GENERATED_TITLE_CHARS {
@@ -127,14 +131,12 @@ async fn chat_stream_via_acp(
     payload: AiChatRequest,
 ) -> Result<AiChatStreamStart, String> {
     audit::emit(AiAuditEventKind::ChatStarted);
-
     let config = current_config()?;
     ensure_chat_enabled(&config)?;
 
     let stream_id = next_runtime_id("ai-stream");
     let assistant_message_id = next_runtime_id("assistant");
     let response_provider_type = config.provider_type.clone();
-
     let model = config
         .selected_model
         .clone()
@@ -143,6 +145,7 @@ async fn chat_stream_via_acp(
 
     let input_references = payload.references.clone();
     let messages = collect_messages(payload.messages, input_references.clone())?;
+
     let prompt = messages
         .into_iter()
         .rev()
@@ -199,6 +202,7 @@ async fn chat_stream_via_acp(
                     })
                     .and_then(|event| event.get("usage").cloned())
                     .filter(|usage| !usage.is_null());
+
                 emit_acp_stream_done(&task_app, &task_session_key, &result_text, usage);
             }
             Err(error) => {
@@ -250,7 +254,6 @@ pub async fn inline_complete(
     payload: AiInlineCompletionRequest,
 ) -> Result<AiInlineCompletionResult, String> {
     let config = current_config()?;
-
     if !config.inline_completion_enabled {
         return Ok(disabled_inline_complete(payload));
     }
@@ -271,6 +274,7 @@ pub async fn inline_complete(
         model_config: None,
         thread_id: None,
     };
+
     let response = run_model_chat_via_acp(
         app,
         request_payload,
@@ -300,7 +304,6 @@ fn collect_messages(
 ) -> Result<Vec<AiProviderMessage>, String> {
     if messages.is_empty() {
         audit::emit(AiAuditEventKind::ChatFailed);
-
         return Err(errors::error(
             "AI_RESPONSE_INVALID",
             "请输入要发送给 AI 的内容。",
@@ -309,7 +312,6 @@ fn collect_messages(
 
     if messages.len() > MAX_AI_MESSAGES {
         audit::emit(AiAuditEventKind::ChatFailed);
-
         return Err(errors::error(
             "AI_CONTEXT_TOO_LARGE",
             "对话轮次过多，请清空部分历史后重试。",
@@ -318,7 +320,6 @@ fn collect_messages(
 
     let context_block = build_context_block(&references);
     let last_user_index = messages.iter().rposition(|message| message.role == "user");
-
     let mut result = Vec::new();
 
     for (index, message) in messages.into_iter().enumerate() {
@@ -330,7 +331,6 @@ fn collect_messages(
         }
 
         let mut combined_content = message.content;
-
         if Some(index) == last_user_index && !context_block.trim().is_empty() {
             combined_content = format!(
                 "{combined_content}\n\n---\n以下是 IDE 收集的结构化上下文。上下文仅用于回答当前问题，不代表用户要求你直接修改文件；如需修改必须输出建议或 patch 预览。\n{context_block}"
@@ -343,7 +343,6 @@ fn collect_messages(
         if redacted.blocked {
             audit::emit(AiAuditEventKind::SecretDetected);
         }
-
         if redacted.text.trim().is_empty() {
             continue;
         }
@@ -356,7 +355,6 @@ fn collect_messages(
 
     if result.is_empty() {
         audit::emit(AiAuditEventKind::ChatFailed);
-
         return Err(errors::error(
             "AI_RESPONSE_INVALID",
             "请输入要发送给 AI 的内容。",
@@ -393,6 +391,7 @@ pub(super) fn normalize_conversation_title(value: &str) -> String {
         .find(|line| !line.trim().is_empty())
         .unwrap_or("")
         .trim();
+
     let mut title = first_line
         .trim_start_matches(['-', '*', '#'])
         .trim()
@@ -416,7 +415,8 @@ pub(super) fn normalize_conversation_title(value: &str) -> String {
         item.is_whitespace()
             || matches!(
                 item,
-                '"' | '\''
+                '"'
+                    | '\''
                     | '\u{201c}'
                     | '\u{201d}'
                     | '\u{2018}'
