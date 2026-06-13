@@ -72,8 +72,16 @@ watch(
   },
 );
 
-const appendLog = (level: IWebPreviewConsoleLog['level'], message: string): void => {
-  logs.value = [...logs.value, { level, message, timestamp: new Date() }].slice(-MAX_CONSOLE_LOGS);
+// `source` decides which console stream the entry shows up in: 'app' = our own shell
+// diagnostics (default), 'page' = forwarded from the inspected page's console / Log domain.
+const appendLog = (
+  level: IWebPreviewConsoleLog['level'],
+  message: string,
+  source: IWebPreviewConsoleLog['source'] = 'app',
+): void => {
+  logs.value = [...logs.value, { level, message, source, timestamp: new Date() }].slice(
+    -MAX_CONSOLE_LOGS,
+  );
 };
 
 // CDP console levels are already normalized to log/warn/error; defensive fallback only.
@@ -81,7 +89,7 @@ const mapConsoleLevel = (level: string): IWebPreviewConsoleLog['level'] =>
   level === 'error' ? 'error' : level === 'warn' ? 'warn' : 'log';
 
 // Navigation command failures (e.g. CDP still connecting) fall back to the console panel
-// instead of bubbling up as an unhandled async rejection.
+// instead of bubbling up as an unhandled async rejection. These are our own diagnostics.
 const runNavAction = (action: () => Promise<void>): void => {
   action().catch((error: unknown) => {
     appendLog('error', error instanceof Error ? error.message : String(error));
@@ -105,10 +113,23 @@ const handleRefresh = (): void => {
   runNavAction(reloadAgentWebview);
 };
 
-// Enter element-picking mode: the injected @medv/finder picker highlights nodes, and the
-// clicked node comes back through onAgentWebviewElementPicked.
+const handleSelectCancel = (): void => {
+  pickedElement.value = null;
+  isSelecting.value = false;
+  cancelSelectAgentWebview().catch((error: unknown) => {
+    appendLog('error', error instanceof Error ? error.message : String(error));
+  });
+};
+
+// Toggle element-picking mode. First click injects the @medv/finder picker (highlight box +
+// label badge on hover); clicking the icon again tears it down. A picked element comes back
+// through onAgentWebviewElementPicked.
 const handleSelect = (): void => {
-  if (isSelecting.value || pickedElement.value) {
+  if (isSelecting.value) {
+    handleSelectCancel();
+    return;
+  }
+  if (pickedElement.value) {
     return;
   }
 
@@ -138,14 +159,6 @@ const handleSelectSubmit = (comment: string): void => {
   isSelecting.value = false;
 };
 
-const handleSelectCancel = (): void => {
-  pickedElement.value = null;
-  isSelecting.value = false;
-  cancelSelectAgentWebview().catch((error: unknown) => {
-    appendLog('error', error instanceof Error ? error.message : String(error));
-  });
-};
-
 const handleOpenExternal = (): void => {
   const url = previewUrl.value;
   if (url) {
@@ -168,7 +181,7 @@ onMounted(() => {
     });
 
   void onAgentWebviewConsole((payload) => {
-    appendLog(mapConsoleLevel(payload.level), payload.message);
+    appendLog(mapConsoleLevel(payload.level), payload.message, 'page');
   })
     .then((unlisten) => {
       unlistenConsole = unlisten;
@@ -212,7 +225,11 @@ onBeforeUnmount(() => {
 
         <WebPreviewUrl />
 
-        <WebPreviewNavigationButton tooltip="Select element" :disabled="isSelecting" @click="handleSelect">
+        <WebPreviewNavigationButton
+          :tooltip="isSelecting ? 'Stop selecting' : 'Select element'"
+          :class="{ 'ai-web-preview-sidebar__select--active': isSelecting }"
+          @click="handleSelect"
+        >
           <MousePointerClickIcon class="size-4" />
         </WebPreviewNavigationButton>
         <WebPreviewNavigationButton tooltip="Open in new tab" @click="handleOpenExternal">
@@ -261,6 +278,11 @@ onBeforeUnmount(() => {
 .ai-web-preview-sidebar__body {
   min-height: 0;
   flex: 1;
+}
+
+.ai-web-preview-sidebar__select--active {
+  color: #6366f1;
+  background: rgba(99, 102, 241, 0.12);
 }
 
 .ai-web-preview-sidebar__bubble {
