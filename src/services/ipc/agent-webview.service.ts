@@ -2,8 +2,8 @@ import {
   type AgentWebviewBoundsInput,
   type AgentWebviewConsoleEvent,
   type AgentWebviewCreateInput,
-  type AgentWebviewNavigateInput,
   type AgentWebviewNavigatedEvent,
+  type AgentWebviewNavigateInput,
   type AgentWebviewVisibleInput,
   commands,
   events,
@@ -150,14 +150,12 @@ export const openExternalAgentWebview = (input: AgentWebviewNavigateInput): Prom
   );
 
 /** 订阅主框架导航事件(url + canGoBack/canGoForward)。返回 unlisten。 */
-export const onAgentWebviewNavigated = (
-  handler: (payload: AgentWebviewNavigatedEvent) => void,
-) => events.agentWebviewNavigatedEvent.listen((event) => handler(event.payload));
+export const onAgentWebviewNavigated = (handler: (payload: AgentWebviewNavigatedEvent) => void) =>
+  events.agentWebviewNavigatedEvent.listen((event) => handler(event.payload));
 
 /** 订阅页面控制台事件(console.* + 浏览器级日志)。返回 unlisten。 */
-export const onAgentWebviewConsole = (
-  handler: (payload: AgentWebviewConsoleEvent) => void,
-) => events.agentWebviewConsoleEvent.listen((event) => handler(event.payload));
+export const onAgentWebviewConsole = (handler: (payload: AgentWebviewConsoleEvent) => void) =>
+  events.agentWebviewConsoleEvent.listen((event) => handler(event.payload));
 
 /** 销毁子 webview。幂等:不存在也视为成功。 */
 export const destroyAgentWebview = (): Promise<void> =>

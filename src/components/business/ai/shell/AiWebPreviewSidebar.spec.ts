@@ -9,7 +9,9 @@ describe('AiWebPreviewSidebar', () => {
     expect(wrapper.get('[data-testid="ai-web-preview-sidebar"]').exists()).toBe(true);
     expect(wrapper.get('input').element).toBeInstanceOf(HTMLInputElement);
     expect(wrapper.find('iframe').exists()).toBe(false);
-    expect(wrapper.text()).toContain('\u8f93\u5165\u5730\u5740\u540e\u5373\u53ef\u5728\u8fd9\u91cc\u9884\u89c8\u9875\u9762');
+    expect(wrapper.text()).toContain(
+      '\u8f93\u5165\u5730\u5740\u540e\u5373\u53ef\u5728\u8fd9\u91cc\u9884\u89c8\u9875\u9762',
+    );
     expect(wrapper.get('[data-testid="web-preview-console"]').text()).toContain(
       'No console output yet',
     );
@@ -37,10 +39,12 @@ describe('AiWebPreviewSidebar', () => {
   it('disables back and forward until navigation reports availability', () => {
     const wrapper = mount(AiWebPreviewSidebar);
 
-    expect((wrapper.get('[aria-label="Go back"]').element as HTMLButtonElement).disabled).toBe(true);
-    expect(
-      (wrapper.get('[aria-label="Go forward"]').element as HTMLButtonElement).disabled,
-    ).toBe(true);
+    expect((wrapper.get('[aria-label="Go back"]').element as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+    expect((wrapper.get('[aria-label="Go forward"]').element as HTMLButtonElement).disabled).toBe(
+      true,
+    );
   });
 
   it('collapses the console body but keeps the header bar', async () => {

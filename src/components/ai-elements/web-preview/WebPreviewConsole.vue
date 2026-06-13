@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ChevronDownIcon } from '@lucide/vue';
-import { computed, ref, type HTMLAttributes } from 'vue';
+import { computed, type HTMLAttributes, ref } from 'vue';
 import { cn } from '@/lib/utils';
 import type { IWebPreviewConsoleLog } from './context';
 

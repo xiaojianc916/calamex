@@ -8,7 +8,7 @@ import AiThreadReasoning from '@/components/business/ai/thread/AiThreadReasoning
 import AiThreadToolCall from '@/components/business/ai/thread/AiThreadToolCall.vue';
 import AiThreadUserMessage from '@/components/business/ai/thread/AiThreadUserMessage.vue';
 import {
-  buildThreadEntries,
+  buildSingleMessageThreadEntries,
   type TAiThreadEntry,
 } from '@/components/business/ai/thread/projection';
 import type { IAiThreadPlanDetails } from '@/components/business/ai/thread/types';
@@ -33,7 +33,7 @@ const emit = defineEmits<{
   planRemoveStep: [stepId: string];
 }>();
 
-const entries = computed<TAiThreadEntry[]>(() => buildThreadEntries([props.message]));
+const entries = computed<TAiThreadEntry[]>(() => buildSingleMessageThreadEntries(props.message));
 
 const expansion = useThreadEntryExpansion(entries);
 
