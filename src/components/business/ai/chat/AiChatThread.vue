@@ -5,11 +5,11 @@ import { DynamicScroller, DynamicScrollerItem } from 'vue-virtual-scroller';
 import 'vue-virtual-scroller/dist/vue-virtual-scroller.css';
 import { ConversationEmptyState } from '@/components/ai-elements/conversation';
 import { Message } from '@/components/ai-elements/message';
-import AiThreadTimeline from '@/components/business/ai/thread/AiThreadTimeline.vue';
 import type { IAiThreadPlanDetails } from '@/components/business/ai/thread/types';
 import type { TAiServicePlatformId } from '@/constants/ai/providers';
 import type { IAiChatMessage } from '@/types/ai';
 import AiThinkingStatus from './AiThinkingStatus.vue';
+import AiThreadVirtualMessageItem from './AiThreadVirtualMessageItem.vue';
 
 interface IAiChatScrollState {
   scrollTop: number;
@@ -90,6 +90,8 @@ const showScrollButton = ref(false);
 let pendingBottomScrollFrame: number | null = null;
 let scrollbarTimer: ReturnType<typeof window.setTimeout> | null = null;
 let lastScrollStateEmitAt = 0;
+let shouldFollowBottomAfterResize = true;
+let lastKnownDistanceFromBottom = 0;
 
 const isErrorReplyMessage = (message: IAiChatMessage): boolean => {
   if (message.role !== 'assistant') {
@@ -193,6 +195,19 @@ const isNearBottom = (): boolean => {
   return getDistanceFromBottom(element) <= BOTTOM_FOLLOW_THRESHOLD_PX;
 };
 
+const rememberBottomFollowState = (): void => {
+  const element = getScrollerElement();
+
+  if (!element) {
+    shouldFollowBottomAfterResize = true;
+    lastKnownDistanceFromBottom = 0;
+    return;
+  }
+
+  lastKnownDistanceFromBottom = getDistanceFromBottom(element);
+  shouldFollowBottomAfterResize = lastKnownDistanceFromBottom <= BOTTOM_FOLLOW_THRESHOLD_PX;
+};
+
 const emitScrollState = (element: HTMLElement, force = false): void => {
   const now = performance.now();
 
@@ -291,6 +306,8 @@ const handleScrollerScroll = (event: Event): void => {
   activateScrollbar();
 
   const distanceFromBottom = getDistanceFromBottom(element);
+  lastKnownDistanceFromBottom = distanceFromBottom;
+  shouldFollowBottomAfterResize = distanceFromBottom <= BOTTOM_FOLLOW_THRESHOLD_PX;
   showScrollButton.value = distanceFromBottom > BOTTOM_FOLLOW_THRESHOLD_PX;
 
   emitScrollState(element);
@@ -304,16 +321,36 @@ const handleChangedFilesPin = (messageId: string, summaryId: string, pinned: boo
   emit('changedFilesPin', messageId, summaryId, pinned);
 };
 
+const handlePlanUpdateStepTitle = (stepId: string, title: string): void => {
+  emit('planUpdateStepTitle', stepId, title);
+};
+
+const handlePlanRemoveStep = (stepId: string): void => {
+  emit('planRemoveStep', stepId);
+};
+
 const getMessageSizeDependencies = (message: IAiChatMessage): unknown[] => [
   message.content,
   message.stream?.status,
   message.toolCalls?.length ?? 0,
+  message.toolCalls?.map((toolCall) => toolCall.status).join('|') ?? '',
   message.actions?.length ?? 0,
   message.attachments?.length ?? 0,
   props.planDetails?.status,
+  props.planDetails?.steps?.length ?? 0,
+  props.planDetails?.steps?.map((step) => `${step.id}:${step.status}:${step.title}`).join('|') ??
+    '',
   props.revertingChangedFilesSummaryId,
   props.pinningChangedFilesSummaryId,
 ];
+
+const handleDynamicItemResize = (): void => {
+  if (!shouldFollowBottomAfterResize) {
+    return;
+  }
+
+  void scrollToBottom('auto');
+};
 
 const bottomFollowSignature = computed(() => {
   const lastMessage = visibleMessages.value.at(-1);
@@ -341,11 +378,11 @@ watch(
 watch(
   bottomFollowSignature,
   async () => {
-    const shouldStickToBottom = isNearBottom();
+    rememberBottomFollowState();
 
     await nextTick();
 
-    if (shouldStickToBottom) {
+    if (shouldFollowBottomAfterResize) {
       await scrollToBottom('auto');
     }
   },
@@ -400,11 +437,13 @@ onBeforeUnmount(() => {
           :size-dependencies="
             item.type === 'message' ? getMessageSizeDependencies(item.message) : [props.isTyping]
           "
+          emit-resize
+          @resize="handleDynamicItemResize"
         >
           <div class="ai-chat-list__item">
-            <AiThreadTimeline
+            <AiThreadVirtualMessageItem
               v-if="item.type === 'message'"
-              :messages="[item.message]"
+              :message="item.message"
               :workspace-root-path="workspaceRootPath"
               :plan-details="planDetails"
               :reverting-changed-files-summary-id="revertingChangedFilesSummaryId"
@@ -414,15 +453,13 @@ onBeforeUnmount(() => {
               @plan-approve="emit('planApprove')"
               @plan-reject="emit('planReject')"
               @plan-regenerate="emit('planRegenerate')"
-              @plan-update-step-title="
-                (stepId: string, title: string) => emit('planUpdateStepTitle', stepId, title)
-              "
-              @plan-remove-step="emit('planRemoveStep', $event)"
+              @plan-update-step-title="handlePlanUpdateStepTitle"
+              @plan-remove-step="handlePlanRemoveStep"
             >
               <template #after-message="{ message }">
                 <slot name="after-message" :message="message" />
               </template>
-            </AiThreadTimeline>
+            </AiThreadVirtualMessageItem>
 
             <Message
               v-else

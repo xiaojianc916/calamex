@@ -124,33 +124,23 @@ export const commands = {
 	agentSidecarRestoreCheckpoint: (payload: AgentSidecarCheckpointRestoreRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarResponsePayload>("agent_sidecar_restore_checkpoint", { payload }),
 	agentSidecarOrchestrate: (payload: AgentSidecarOrchestrateRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarOrchestratePayload>("agent_sidecar_orchestrate", { payload }),
 	agentSidecarOrchestrateResume: (payload: AgentSidecarOrchestrateResumeRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarOrchestratePayload>("agent_sidecar_orchestrate_resume", { payload }),
-	/**
-	 *  创建(或复用)内置浏览器子 webview。
-	 *  幂等:若已存在则只更新位置/尺寸并导航,不重复创建。
-	 */
+	/**  Create (or reuse) the child webview and start the CDP control plane. Idempotent. */
 	agentWebviewCreate: (input: AgentWebviewCreateInput, traceId: string | null) => __TAURI_INVOKE<null>("agent_webview_create", { input, traceId }),
-	/**  同步子 webview 的位置/尺寸(阶段2 由前端占位元素 ResizeObserver 驱动)。 */
+	/**  Sync child webview bounds. */
 	agentWebviewSetBounds: (input: AgentWebviewBoundsInput, traceId: string | null) => __TAURI_INVOKE<null>("agent_webview_set_bounds", { input, traceId }),
-	/**  显示/隐藏子 webview(切走侧边栏、最小化、关闭时用)。 */
+	/**  Show/hide the child webview. */
 	agentWebviewSetVisible: (input: AgentWebviewVisibleInput, traceId: string | null) => __TAURI_INVOKE<null>("agent_webview_set_visible", { input, traceId }),
-	/**  导航到新 URL(地址栏 / 前进后退用)。 */
+	/**  Navigate to a new URL (address bar). */
 	agentWebviewNavigate: (input: AgentWebviewNavigateInput, traceId: string | null) => __TAURI_INVOKE<null>("agent_webview_navigate", { input, traceId }),
-	/**
-	 *  后退一步(地址栏后退按钮)。
-	 *  CDP 化之前先用宿主级 `eval` 调用标准 History API:`eval` 对跨域外部页同样生效,
-	 *  零新依赖即可让按钮即时可用。canGoBack/canGoForward 的禁用态留待 CDP 阶段补齐。
-	 */
+	/**  Back one entry (CDP real history). */
 	agentWebviewBack: (traceId: string | null) => __TAURI_INVOKE<null>("agent_webview_back", { traceId }),
-	/**  前进一步(地址栏前进按钮)。 */
+	/**  Forward one entry (CDP real history). */
 	agentWebviewForward: (traceId: string | null) => __TAURI_INVOKE<null>("agent_webview_forward", { traceId }),
-	/**  刷新当前页(替代前端 refreshKey 重建,直接命中原生页)。 */
+	/**  Reload current page (CDP Page.reload). */
 	agentWebviewReload: (traceId: string | null) => __TAURI_INVOKE<null>("agent_webview_reload", { traceId }),
-	/**
-	 *  在系统默认浏览器中打开指定 URL(官方 tauri-plugin-opener;从 Rust 侧调用,无需额外前端授权)。
-	 *  与原生承载无关,不门控在 native_webview 之下。
-	 */
+	/**  Open the given URL in the system default browser (official tauri-plugin-opener, Rust-side). */
 	agentWebviewOpenExternal: (input: AgentWebviewNavigateInput, traceId: string | null) => __TAURI_INVOKE<null>("agent_webview_open_external", { input, traceId }),
-	/**  销毁子 webview(整步可逆:关闭即回到无原生承载状态)。幂等:不存在则视作成功。 */
+	/**  Destroy the child webview and tear down the CDP session. Idempotent. */
 	agentWebviewDestroy: (traceId: string | null) => __TAURI_INVOKE<null>("agent_webview_destroy", { traceId }),
 	aiGetConfig: () => __TAURI_INVOKE<AiConfigPayload>("ai_get_config"),
 	aiSaveConfig: (payload: AiSaveConfigRequest) => __TAURI_INVOKE<AiConfigPayload>("ai_save_config", { payload }),
@@ -199,8 +189,10 @@ export const commands = {
 
 /** Events */
 export const events = {
+	agentWebviewConsoleEvent: makeEvent<AgentWebviewConsoleEvent>("agent-webview-console-event"),
+	agentWebviewNavigatedEvent: makeEvent<AgentWebviewNavigatedEvent>("agent-webview-navigated-event"),
 	workspaceFsEvent: makeEvent<WorkspaceFsEvent>("workspace-fs-event"),
-	workspaceSearchStream: makeEvent<WorkspaceSearchStreamEvent>("workspace-search-stream"),
+	workspaceSearchStreamEvent: makeEvent<WorkspaceSearchStreamEvent>("workspace-search-stream-event"),
 };
 
 /* Types */
@@ -400,23 +392,33 @@ export type AgentWebviewBoundsInput = {
 	height: number | null,
 };
 
+/**  One console line (console.* call or browser-level log entry). */
+export type AgentWebviewConsoleEvent = {
+	/**  "log" | "warn" | "error" */
+	level: string,
+	message: string,
+	/**  epoch milliseconds */
+	timestamp: number | null,
+};
+
 export type AgentWebviewCreateInput = {
-	/**  初始加载的 URL。 */
 	url: string,
-	/**  CDP 远程调试端口(默认绑 127.0.0.1)。agent-sidecar 用它 connectOverCDP。 */
 	remoteDebuggingPort: number,
-	/**  相对宿主窗口左上角的逻辑横坐标(CSS 像素),来自前端占位元素 getBoundingClientRect。 */
 	x: number | null,
-	/**  相对宿主窗口左上角的逻辑纵坐标(CSS 像素)。 */
 	y: number | null,
-	/**  逻辑宽度(CSS 像素)。 */
 	width: number | null,
-	/**  逻辑高度(CSS 像素)。 */
 	height: number | null,
 };
 
 export type AgentWebviewNavigateInput = {
 	url: string,
+};
+
+/**  Main-frame navigation completed -> push latest url + back/forward availability. */
+export type AgentWebviewNavigatedEvent = {
+	url: string,
+	canGoBack: boolean,
+	canGoForward: boolean,
 };
 
 export type AgentWebviewVisibleInput = {
@@ -1885,9 +1887,9 @@ export type WorkspaceSearchScope = "all" | "file-name" | "symbol" | "content";
 /**
  *  内容搜索流式推送事件。
  * 
- *  仿照 workspace_watcher::WorkspaceFsEvent，通过手动 impl tauri_specta::Event 让该类型
+ *  仿照 workspace_watcher::WorkspaceFsEvent，通过官方 derive tauri_specta::Event 让该类型
  *  既出现在生成的 TS 绑定 events.workspaceSearchStreamEvent 中，又提供类型化的 .emit(app)。
- *  事件名固定为 workspace-search-stream。
+ *  派生宏默认把 NAME 取为结构体名的 kebab-case，即 workspace-search-stream。
  */
 export type WorkspaceSearchStreamEvent = {
 	/**  关联的请求标识，对应 WorkspaceSearchRequest.stream_token；前端据此对账当前在途搜索。 */
