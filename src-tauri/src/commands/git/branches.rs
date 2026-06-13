@@ -204,9 +204,9 @@ fn build_git_branch_payload_from_ref(
     let is_current = is_current_branch(repository, reference);
 
     let (ahead, behind, upstream_name) = if kind == "local" {
-        let upstream_name = resolve_branch_upstream(repository_root, shorthand);
+        let upstream_name = resolve_branch_upstream(repository, shorthand);
         let (ahead, behind) = if is_current && upstream_name.is_some() {
-            resolve_ahead_behind_cli(repository_root, shorthand)?
+            resolve_ahead_behind_cli(repository, shorthand)?
         } else {
             (0, 0)
         };
@@ -240,10 +240,10 @@ fn is_current_branch(repository: &Repository, reference: &gix::Reference<'_>) ->
     head_ref.name().as_bstr() == reference.name().as_bstr()
 }
 
-fn resolve_branch_upstream(repository_root: &Path, branch_name: &str) -> Option<String> {
+fn resolve_branch_upstream(repository: &Repository, branch_name: &str) -> Option<String> {
     // 通过 gix 读取分支上游配置（branch.<name>.remote / branch.<name>.merge），
     // 拼出形如 "origin/main" 的上游短名，避免依赖系统安装的 git。
-    let repository = gix::open(repository_root).ok()?;
+    // 复用调用方已打开的 Repository，避免在 git status / 分支列举热路径上重复 gix::open。
     let config = repository.config_snapshot();
 
     let remote = config.string(format!("branch.{branch_name}.remote").as_str())?;
@@ -264,21 +264,19 @@ fn resolve_branch_upstream(repository_root: &Path, branch_name: &str) -> Option<
 }
 
 pub(super) fn resolve_ahead_behind_cli(
-    repository_root: &Path,
+    repository: &Repository,
     branch_name: &str,
 ) -> Result<(usize, usize), String> {
     // 比较「该分支」与「它自己的上游」，而不是当前 HEAD 的上游。
     // 通过 gix 的修订遍历计算 ahead/behind，等价于
     // `git rev-list --count --left-right <branch>...<upstream>`，避免依赖系统安装的 git。
-    let repository =
-        gix::open(repository_root).map_err(|error| format!("打开 Git 仓库失败：{error}"))?;
-
+    // 复用调用方已打开的 Repository，避免在 git status 热路径上重复 gix::open。
     let local_id = match repository.rev_parse_single(branch_name) {
         Ok(id) => id.detach(),
         Err(_) => return Ok((0, 0)),
     };
 
-    let upstream_name = match resolve_branch_upstream(repository_root, branch_name) {
+    let upstream_name = match resolve_branch_upstream(repository, branch_name) {
         Some(name) => name,
         None => return Ok((0, 0)),
     };

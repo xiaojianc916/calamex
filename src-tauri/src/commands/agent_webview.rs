@@ -20,6 +20,11 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 use tauri::AppHandle;
 
+// 关闭 native_webview 特性时各 stub 命令统一返回的错误文案：单一事实源，避免 10 处重复。
+#[cfg(not(feature = "native_webview"))]
+const NATIVE_WEBVIEW_DISABLED: &str =
+    "native_webview feature is disabled; rebuild with `--features native_webview`";
+
 #[cfg(feature = "native_webview")]
 const AGENT_WEBVIEW_LABEL: &str = "agent-browser";
 
@@ -143,16 +148,20 @@ fn now_ms() -> f64 {
         .unwrap_or(0.0)
 }
 
-// Map console.* type -> frontend level via serde string (avoids depending on enum variant idents).
+// 把任意 CDP 枚举序列化成它的 serde 字符串 tag（避免硬编码枚举变体名）。
+#[cfg(feature = "native_webview")]
+fn serde_tag<T: Serialize>(value: &T) -> Option<String> {
+    serde_json::to_value(value)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_string))
+}
+
+// Map console.* type -> frontend level.
 #[cfg(feature = "native_webview")]
 fn map_console_level(
     ty: &chromiumoxide::cdp::js_protocol::runtime::ConsoleApiCalledType,
 ) -> &'static str {
-    match serde_json::to_value(ty)
-        .ok()
-        .and_then(|v| v.as_str().map(str::to_string))
-        .as_deref()
-    {
+    match serde_tag(ty).as_deref() {
         Some("error") | Some("assert") => "error",
         Some("warning") => "warn",
         _ => "log",
@@ -161,11 +170,7 @@ fn map_console_level(
 
 #[cfg(feature = "native_webview")]
 fn map_log_level(level: &chromiumoxide::cdp::browser_protocol::log::LogEntryLevel) -> &'static str {
-    match serde_json::to_value(level)
-        .ok()
-        .and_then(|v| v.as_str().map(str::to_string))
-        .as_deref()
-    {
+    match serde_tag(level).as_deref() {
         Some("error") => "error",
         Some("warning") => "warn",
         _ => "log",
@@ -529,7 +534,7 @@ pub async fn agent_webview_create(
     #[cfg(not(feature = "native_webview"))]
     {
         let _ = (&app, &input, &trace_id);
-        Err("native_webview feature is disabled; rebuild with `--features native_webview`".to_string())
+        Err(NATIVE_WEBVIEW_DISABLED.to_string())
     }
 }
 
@@ -560,7 +565,7 @@ pub async fn agent_webview_set_bounds(
     #[cfg(not(feature = "native_webview"))]
     {
         let _ = (&app, &input, &trace_id);
-        Err("native_webview feature is disabled; rebuild with `--features native_webview`".to_string())
+        Err(NATIVE_WEBVIEW_DISABLED.to_string())
     }
 }
 
@@ -590,7 +595,7 @@ pub async fn agent_webview_set_visible(
     #[cfg(not(feature = "native_webview"))]
     {
         let _ = (&app, &input, &trace_id);
-        Err("native_webview feature is disabled; rebuild with `--features native_webview`".to_string())
+        Err(NATIVE_WEBVIEW_DISABLED.to_string())
     }
 }
 
@@ -615,7 +620,7 @@ pub async fn agent_webview_navigate(
     #[cfg(not(feature = "native_webview"))]
     {
         let _ = (&app, &input, &trace_id);
-        Err("native_webview feature is disabled; rebuild with `--features native_webview`".to_string())
+        Err(NATIVE_WEBVIEW_DISABLED.to_string())
     }
 }
 
@@ -632,7 +637,7 @@ pub async fn agent_webview_back(app: AppHandle, trace_id: Option<String>) -> Res
     #[cfg(not(feature = "native_webview"))]
     {
         let _ = (&app, &trace_id);
-        Err("native_webview feature is disabled; rebuild with `--features native_webview`".to_string())
+        Err(NATIVE_WEBVIEW_DISABLED.to_string())
     }
 }
 
@@ -649,7 +654,7 @@ pub async fn agent_webview_forward(app: AppHandle, trace_id: Option<String>) -> 
     #[cfg(not(feature = "native_webview"))]
     {
         let _ = (&app, &trace_id);
-        Err("native_webview feature is disabled; rebuild with `--features native_webview`".to_string())
+        Err(NATIVE_WEBVIEW_DISABLED.to_string())
     }
 }
 
@@ -670,7 +675,7 @@ pub async fn agent_webview_reload(app: AppHandle, trace_id: Option<String>) -> R
     #[cfg(not(feature = "native_webview"))]
     {
         let _ = (&app, &trace_id);
-        Err("native_webview feature is disabled; rebuild with `--features native_webview`".to_string())
+        Err(NATIVE_WEBVIEW_DISABLED.to_string())
     }
 }
 
@@ -695,7 +700,7 @@ pub async fn agent_webview_start_select(
     #[cfg(not(feature = "native_webview"))]
     {
         let _ = (&app, &trace_id);
-        Err("native_webview feature is disabled; rebuild with `--features native_webview`".to_string())
+        Err(NATIVE_WEBVIEW_DISABLED.to_string())
     }
 }
 
@@ -719,7 +724,7 @@ pub async fn agent_webview_cancel_select(
     #[cfg(not(feature = "native_webview"))]
     {
         let _ = (&app, &trace_id);
-        Err("native_webview feature is disabled; rebuild with `--features native_webview`".to_string())
+        Err(NATIVE_WEBVIEW_DISABLED.to_string())
     }
 }
 
@@ -761,6 +766,6 @@ pub async fn agent_webview_destroy(app: AppHandle, trace_id: Option<String>) -> 
     #[cfg(not(feature = "native_webview"))]
     {
         let _ = (&app, &trace_id);
-        Err("native_webview feature is disabled; rebuild with `--features native_webview`".to_string())
+        Err(NATIVE_WEBVIEW_DISABLED.to_string())
     }
 }

@@ -387,7 +387,7 @@ fn build_git_status_via_gix(repository: &Repository) -> Result<StatusAccum, Stri
 
     // 领先/落后：复用 branches 中基于 gix 的修订遍历实现。
     if let Some(branch) = accum.head_short_name.as_deref() {
-        let (ahead, behind) = super::branches::resolve_ahead_behind_cli(&repository_root, branch)?;
+        let (ahead, behind) = super::branches::resolve_ahead_behind_cli(repository, branch)?;
         accum.ahead = ahead;
         accum.behind = behind;
     }

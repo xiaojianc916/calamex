@@ -17,6 +17,9 @@ importers:
       '@agentclientprotocol/sdk':
         specifier: ^0.25.0
         version: 0.25.0(zod@4.4.3)
+      '@ai-sdk/deepseek':
+        specifier: ^2.0.38
+        version: 2.0.38(zod@4.4.3)
       '@codemirror/autocomplete':
         specifier: ^6.20.3
         version: 6.20.3
@@ -428,6 +431,12 @@ packages:
     resolution: {integrity: sha512-wU1VgXNtMvdVotX49txc3WJUDV+/QbLpsgjMvFhlRmp37osdLbI7L7y+iwAlQATwfjLxcv1r1p3ZxZBcXlGhcQ==}
     peerDependencies:
       zod: ^3.25.0 || ^4.0.0
+
+  '@ai-sdk/deepseek@2.0.38':
+    resolution: {integrity: sha512-IkBQPEfRUbPEcWzigT76KttqoDqM4FR8H8cp5pgAw5RdDN++nUoJa0uZan3LuOp4IC8BKGZABJCqB97CMIYLdQ==}
+    engines: {node: '>=18'}
+    peerDependencies:
+      zod: ^3.25.76 || ^4.1.8
 
   '@ai-sdk/gateway@3.0.130':
     resolution: {integrity: sha512-qenRdpoYM+2y8Ibj3Y7XngvfcG4NIpejaM+YqAKWXi3/N1qZYeIelrm19jxhIwQW0W/g7WUz0L2Agl7+FnwrQA==}
@@ -6230,6 +6239,12 @@ snapshots:
 
   '@agentclientprotocol/sdk@0.25.0(zod@4.4.3)':
     dependencies:
+      zod: 4.4.3
+
+  '@ai-sdk/deepseek@2.0.38(zod@4.4.3)':
+    dependencies:
+      '@ai-sdk/provider': 3.0.10
+      '@ai-sdk/provider-utils': 4.0.29(zod@4.4.3)
       zod: 4.4.3
 
   '@ai-sdk/gateway@3.0.130(zod@4.4.3)':

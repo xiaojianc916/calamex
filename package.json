@@ -38,6 +38,7 @@
     "@ag-ui/client": "^0.0.57",
     "@ag-ui/core": "^0.0.57",
     "@agentclientprotocol/sdk": "^0.25.0",
+    "@ai-sdk/deepseek": "^2.0.38",
     "@codemirror/autocomplete": "^6.20.3",
     "@codemirror/commands": "^6.10.3",
     "@codemirror/lang-cpp": "^6.0.3",
