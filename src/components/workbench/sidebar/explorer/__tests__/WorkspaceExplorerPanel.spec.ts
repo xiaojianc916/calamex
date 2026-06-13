@@ -5,6 +5,7 @@ import type { IEditorDocument, IWorkspaceDirectoryPayload } from '@/types/editor
 import WorkspaceExplorerPanel from '../WorkspaceExplorerPanel.vue';
 
 vi.mock('@/components/common/LinearContextMenu.vue', () => ({
+  __isTeleport: false,
   default: { name: 'LinearContextMenu', render: () => null },
 }));
 

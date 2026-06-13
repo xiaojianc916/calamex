@@ -22,6 +22,7 @@
 //! - 去抖后通过强类型 specta 事件 `workspace-fs-event` 推送到前端。
 
 use super::search::prewarm_workspace_search_index;
+use super::path_util::{os_str_eq, relativize};
 use arc_swap::ArcSwapOption;
 use ignore::WalkBuilder;
 use notify::{
@@ -560,39 +561,6 @@ fn is_ignored_change(root: &Path, path: &Path) -> bool {
             .any(|ignored| os_str_eq(name, OsStr::new(ignored))),
         _ => false,
     })
-}
-
-/// 按组件逐级剥掉监听根前缀，返回根 *之下* 的相对路径。
-///
-/// 仅比较相对组件可避免一个隐蔽陷阱：当用户把工作区直接开在名为
-/// `node_modules`（或 `target` 等）的目录里时，不应把整棵树误判为被忽略。
-/// 前缀形态不一致（罕见）时返回 `None`，调用方据此放行。
-fn relativize(root: &Path, path: &Path) -> Option<PathBuf> {
-    let mut root_components = root.components();
-    let mut path_components = path.components();
-    loop {
-        match root_components.next() {
-            None => return Some(path_components.as_path().to_path_buf()),
-            Some(root_component) => {
-                let path_component = path_components.next()?;
-                if !os_str_eq(root_component.as_os_str(), path_component.as_os_str()) {
-                    return None;
-                }
-            }
-        }
-    }
-}
-
-/// 路径组件相等性：Windows 上大小写不敏感，其它平台精确匹配。
-/// 与 `commands::git` 中仓库根前缀比较保持一致的跨平台语义。
-#[cfg(windows)]
-fn os_str_eq(left: &OsStr, right: &OsStr) -> bool {
-    left.eq_ignore_ascii_case(right)
-}
-
-#[cfg(not(windows))]
-fn os_str_eq(left: &OsStr, right: &OsStr) -> bool {
-    left == right
 }
 
 #[cfg(test)]

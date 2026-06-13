@@ -302,6 +302,7 @@ describe('AiChatThread', () => {
       },
       global: {
         stubs: {
+          ...threadStubs,
           AiThreadVirtualMessageItem: {
             name: 'AiThreadVirtualMessageItem',
             emits: ['changedFilesRollback', 'changedFilesPin'],
@@ -331,9 +332,10 @@ describe('AiChatThread', () => {
       },
       global: {
         stubs: {
+          ...threadStubs,
           AiThreadVirtualMessageItem: {
             name: 'AiThreadVirtualMessageItem',
-            props: ['messages', 'planDetails'],
+            props: ['message', 'planDetails'],
             template: '<div class="timeline-stub" />',
           },
         },
@@ -355,6 +357,7 @@ describe('AiChatThread', () => {
       },
       global: {
         stubs: {
+          ...threadStubs,
           AiThreadVirtualMessageItem: {
             name: 'AiThreadVirtualMessageItem',
             emits: [

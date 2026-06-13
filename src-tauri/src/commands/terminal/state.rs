@@ -157,6 +157,15 @@ pub(super) fn update_terminal_geometry(cols: u16, rows: u16) {
     geometry.rows = rows.max(1);
 }
 
+fn lock_active_terminal_runs(
+    state: &TerminalSessionState,
+) -> Result<std::sync::MutexGuard<'_, HashMap<String, TerminalActiveRun>>, String> {
+    state
+        .active_runs
+        .lock()
+        .map_err(|_| "终端运行状态已损坏。".to_string())
+}
+
 pub(super) fn active_terminal_run_count(state: &TerminalSessionState) -> usize {
     state
         .active_runs
@@ -170,10 +179,7 @@ pub(super) fn try_mark_active_terminal_run(
     session_id: &str,
     run_id: &str,
 ) -> Result<(), String> {
-    let mut active_runs = state
-        .active_runs
-        .lock()
-        .map_err(|_| "终端运行状态已损坏。".to_string())?;
+    let mut active_runs = lock_active_terminal_runs(state)?;
     if active_runs.contains_key(run_id) {
         return Err(format!("运行任务已存在：{run_id}"));
     }
@@ -216,10 +222,7 @@ pub(super) fn attach_active_terminal_run_handle(
     run_id: &str,
     handle: LocalWslRunHandle,
 ) -> Result<(), String> {
-    let mut active_runs = state
-        .active_runs
-        .lock()
-        .map_err(|_| "终端运行状态已损坏。".to_string())?;
+    let mut active_runs = lock_active_terminal_runs(state)?;
     let Some(active_run) = active_runs.get_mut(run_id) else {
         return Err("当前没有可绑定的运行任务。".to_string());
     };
@@ -267,10 +270,7 @@ pub(super) fn get_active_terminal_run_handle(
     state: &TerminalSessionState,
     run_id: &str,
 ) -> Result<Option<LocalWslRunHandle>, String> {
-    let active_runs = state
-        .active_runs
-        .lock()
-        .map_err(|_| "终端运行状态已损坏。".to_string())?;
+    let active_runs = lock_active_terminal_runs(state)?;
     Ok(active_runs
         .get(run_id)
         .and_then(|run| run.run_handle.clone()))
@@ -280,10 +280,7 @@ pub(super) fn get_active_terminal_run_input_target(
     state: &TerminalSessionState,
     session_id: &str,
 ) -> Result<ActiveRunInputTarget, String> {
-    let active_runs = state
-        .active_runs
-        .lock()
-        .map_err(|_| "终端运行状态已损坏。".to_string())?;
+    let active_runs = lock_active_terminal_runs(state)?;
     let Some(active_run) = active_runs
         .values()
         .find(|active_run| active_run.session_id == session_id)
@@ -409,16 +406,10 @@ pub(super) fn remove_interactive_terminal_after_exit(
     state: &TerminalSessionState,
     session_id: &str,
 ) {
-    if let Ok(mut sessions) = state.sessions.lock() {
-        sessions.remove(session_id);
-    }
-    if let Ok(mut snapshots) = state.snapshots.lock() {
-        snapshots.remove(session_id);
-    }
-    if let Ok(mut visual_states) = state.interactive_visual.lock() {
-        visual_states.remove(session_id);
-    }
-    if let Ok(mut pending) = state.pending_switch_input.lock() {
-        pending.remove(session_id);
-    }
+    // 尽力而为地清理该会话的全部状态，复用各自的 remove_* 辅助；
+    // 锁中毒时这些辅助返回 Err，这里一律忽略（与原先 if let Ok 的语义一致）。
+    let _ = remove_terminal_session(state, session_id);
+    let _ = remove_terminal_snapshot(state, session_id);
+    let _ = remove_terminal_interactive_visual_state(state, session_id);
+    remove_pending_switch_input(state, session_id);
 }

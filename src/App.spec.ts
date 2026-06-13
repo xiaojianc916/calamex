@@ -2,7 +2,7 @@ import { flushPromises, mount } from '@vue/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { defineComponent, nextTick } from 'vue';
 import { createMemoryHistory, createRouter } from 'vue-router';
-import App from '@/App.vue';
+import App from '@/app/App.vue';
 import { runtimeErrorState } from '@/utils/runtime-diagnostics';
 
 const applyWindowStageMock = vi.hoisted(() => vi.fn(() => Promise.resolve()));

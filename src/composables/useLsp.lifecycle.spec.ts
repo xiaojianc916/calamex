@@ -75,7 +75,10 @@ describe('useLsp lifecycle', () => {
   });
 
   it('工作区切换时旧启动结果不会覆盖新生命周期', async () => {
-    const firstStart = new Promise<void>((resolve) => setTimeout(resolve, 50));
+    let resolveFirstStart!: () => void;
+    const firstStart = new Promise<void>((resolve) => {
+      resolveFirstStart = resolve;
+    });
     lspBridgeMock.start.mockReturnValueOnce(firstStart).mockResolvedValueOnce(undefined);
     const root = ref('D:/repo-a');
     const scope = effectScope();
@@ -89,7 +92,7 @@ describe('useLsp lifecycle', () => {
 
     root.value = 'D:/repo-b';
     await flush();
-    await vi.advanceTimersByTimeAsync(50);
+    resolveFirstStart();
     await flush();
 
     expect(lspBridgeMock.start).toHaveBeenLastCalledWith('D:/repo-b');

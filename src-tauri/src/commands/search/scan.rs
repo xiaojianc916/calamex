@@ -1,4 +1,5 @@
 use super::super::decode_script_bytes;
+use super::super::path_util::{os_str_eq, relativize};
 use super::util::count_to_u32;
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use ignore::WalkBuilder;
@@ -484,32 +485,6 @@ fn is_unsearchable_event_path(root: &Path, path: &Path) -> bool {
     }
 
     is_unsearchable_workspace_path(root, path, false)
-}
-
-fn relativize(root: &Path, path: &Path) -> Option<PathBuf> {
-    let mut root_components = root.components();
-    let mut path_components = path.components();
-    loop {
-        match root_components.next() {
-            None => return Some(path_components.as_path().to_path_buf()),
-            Some(root_component) => {
-                let path_component = path_components.next()?;
-                if !os_str_eq(root_component.as_os_str(), path_component.as_os_str()) {
-                    return None;
-                }
-            }
-        }
-    }
-}
-
-#[cfg(windows)]
-fn os_str_eq(left: &OsStr, right: &OsStr) -> bool {
-    left.eq_ignore_ascii_case(right)
-}
-
-#[cfg(not(windows))]
-fn os_str_eq(left: &OsStr, right: &OsStr) -> bool {
-    left == right
 }
 
 pub(super) fn passes_path_filters(relative_path: &str, filters: &PathFilters) -> bool {

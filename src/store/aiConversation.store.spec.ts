@@ -1,5 +1,5 @@
 import { createPinia, setActivePinia } from 'pinia';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { IAiChatMessage } from '@/types/ai';
 import {
   AI_CONVERSATION_HISTORY_LIMIT,
@@ -161,24 +161,30 @@ describe('useAiConversationStore', () => {
     expect(store.historyThreads).toHaveLength(1);
   });
 
-  it('按会话保存滚动高度状态', () => {
-    const store = useAiConversationStore();
-    store.replaceMessages([createMessage(1)]);
-    const threadId = store.activeThreadId;
-    store.updateThreadScrollState(threadId ?? '', {
-      scrollTop: 320,
-      scrollHeight: 1280,
-      clientHeight: 640,
-      distanceFromBottom: 320,
-      updatedAt: '2026-05-10T12:00:00.000Z',
-    });
-    expect(store.activeThread?.scrollState).toEqual({
-      scrollTop: 320,
-      scrollHeight: 1280,
-      clientHeight: 640,
-      distanceFromBottom: 320,
-      updatedAt: '2026-05-10T12:00:00.000Z',
-    });
+  it('按会话保存滚动高度状态', async () => {
+    vi.useFakeTimers();
+    try {
+      const store = useAiConversationStore();
+      store.replaceMessages([createMessage(1)]);
+      const threadId = store.activeThreadId;
+      store.updateThreadScrollState(threadId ?? '', {
+        scrollTop: 320,
+        scrollHeight: 1280,
+        clientHeight: 640,
+        distanceFromBottom: 320,
+        updatedAt: '2026-05-10T12:00:00.000Z',
+      });
+      await vi.advanceTimersByTimeAsync(120);
+      expect(store.activeThread?.scrollState).toEqual({
+        scrollTop: 320,
+        scrollHeight: 1280,
+        clientHeight: 640,
+        distanceFromBottom: 320,
+        updatedAt: '2026-05-10T12:00:00.000Z',
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('用用户第一条消息作为临时标题', () => {

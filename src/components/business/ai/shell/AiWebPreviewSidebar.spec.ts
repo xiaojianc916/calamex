@@ -12,9 +12,7 @@ describe('AiWebPreviewSidebar', () => {
     expect(wrapper.text()).toContain(
       '\u8f93\u5165\u5730\u5740\u540e\u5373\u53ef\u5728\u8fd9\u91cc\u9884\u89c8\u9875\u9762',
     );
-    expect(wrapper.get('[data-testid="web-preview-console"]').text()).toContain(
-      'No console output yet',
-    );
+    expect(wrapper.get('[data-testid="web-preview-console"]').text()).toContain('Console');
   });
 
   it('emits close-sidebar from the close navigation button', async () => {
@@ -50,11 +48,13 @@ describe('AiWebPreviewSidebar', () => {
   it('collapses the console body but keeps the header bar', async () => {
     const wrapper = mount(AiWebPreviewSidebar);
 
-    expect(wrapper.find('.ai-web-preview-console__empty').exists()).toBe(true);
+    expect(wrapper.get('[data-testid="web-preview-console"]').exists()).toBe(true);
+    expect(wrapper.find('.ai-web-preview-console__empty').exists()).toBe(false);
 
     await wrapper.get('[data-testid="web-preview-console-toggle"]').trigger('click');
 
     expect(wrapper.get('[data-testid="web-preview-console"]').exists()).toBe(true);
-    expect(wrapper.find('.ai-web-preview-console__empty').exists()).toBe(false);
+    expect(wrapper.find('.ai-web-preview-console__empty').exists()).toBe(true);
+    expect(wrapper.get('[data-testid="web-preview-console"]').text()).toContain('暂无应用日志');
   });
 });

@@ -5,6 +5,7 @@ pub(crate) mod contracts;
 pub(crate) mod format;
 pub(crate) mod git;
 pub(crate) mod lsp;
+pub(crate) mod path_util;
 pub(crate) mod script_run;
 pub(crate) mod search;
 pub(crate) mod shell_tools;

@@ -56,16 +56,11 @@ impl FuzzyLinePrefilter {
         })
     }
 
-    fn may_match(&self, line: &str) -> bool {
-        if line.chars().count() < self.min_chars {
-            return false;
-        }
-        if self.required_ascii.is_empty() {
-            return true;
-        }
-
+    /// 在给定字节序列中检查 query 要求的全部 ASCII 字符是否都出现（按 match_case 归一大小写）。
+    /// 非 ASCII 字节跳过；调用方需保证 required_ascii 非空时调用才有意义。
+    fn all_required_ascii_present(&self, bytes: impl Iterator<Item = u8>) -> bool {
         let mut missing = self.required_ascii.clone();
-        for byte in line.bytes() {
+        for byte in bytes {
             if !byte.is_ascii() {
                 continue;
             }
@@ -80,8 +75,17 @@ impl FuzzyLinePrefilter {
                 }
             }
         }
-
         false
+    }
+
+    fn may_match(&self, line: &str) -> bool {
+        if line.chars().count() < self.min_chars {
+            return false;
+        }
+        if self.required_ascii.is_empty() {
+            return true;
+        }
+        self.all_required_ascii_present(line.bytes())
     }
 
     /// 文件级候选筛除（第 4 点两阶段检索的「andidate generation」轻量版）：
@@ -94,25 +98,7 @@ impl FuzzyLinePrefilter {
         if self.required_ascii.is_empty() {
             return true;
         }
-
-        let mut missing = self.required_ascii.clone();
-        for byte in bytes {
-            if !byte.is_ascii() {
-                continue;
-            }
-            let normalized = normalize_prefilter_ascii(*byte, self.match_case);
-            if let Some(index) = missing
-                .iter()
-                .position(|candidate| *candidate == normalized)
-            {
-                missing.swap_remove(index);
-                if missing.is_empty() {
-                    return true;
-                }
-            }
-        }
-
-        false
+        self.all_required_ascii_present(bytes.iter().copied())
     }
 }
 
