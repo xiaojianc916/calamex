@@ -4,7 +4,7 @@
   <SourceControlPanel v-show="isSourceControlView" class="h-full min-h-0 w-full flex-1" :is-desktop-runtime="isDesktopRuntime" :workspace-root-path="workspaceRootPath" :active-path="document.path" @open-file="handleOpenFile" @open-diff="handleOpenGitDiff" />
   <WorkspaceExplorerPanel v-show="isExplorerView" :document="document" :is-active="isExplorerView" :is-desktop-runtime="isDesktopRuntime" :workspace-root-path="workspaceRootPath" :preloaded-workspace-root="preloadedWorkspaceRoot" :startup-explorer-expanded-paths="startupExplorerExpandedPaths" :startup-explorer-selected-path="startupExplorerSelectedPath" @open-file="handleOpenFile" @open-folder="emit('open-folder')" @explorer-state-change="emit('explorer-state-change', $event)" />
   <DeferredSearchSidebarPanel v-show="isSearchView" :document-path="document.path" :is-desktop-runtime="isDesktopRuntime" :workspace-root-path="workspaceRootPath" :preloaded-workspace-root="preloadedWorkspaceRoot" @open-file="handleOpenFile" />
-  <DeferredRunSidebarPanel v-show="isRunView" :document="document" :has-active-document="Boolean(document.id)" :is-desktop-runtime="isDesktopRuntime" :can-run="canRun" :is-running="isRunning" :has-run-artifacts="hasRunArtifacts" :active-run="activeRun" :run-history="runHistory" :command-templates="commandTemplates" :executor="executor" @run="emit('run')" @create-document="emit('create-document')" @open-terminal="emit('open-terminal')" @insert-template="emit('insert-template', $event)" @clear-run-history="emit('clear-run-history')" />
+  <DeferredRunSidebarPanel v-show="isRunView" />
   <div v-show="isSshView" class="ssh-sidebar-host-shell flex min-h-0 w-full flex-1 flex-col overflow-hidden" >
     <DeferredSshSidebarPanel @open-terminal="emit('open-terminal')" />
   </div>
