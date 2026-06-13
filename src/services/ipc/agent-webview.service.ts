@@ -18,6 +18,15 @@ import { callSpectaCommand } from '@/services/tauri.ipc-runtime';
  */
 export const AGENT_WEBVIEW_CDP_PORT = 9333;
 
+/**
+ * 走 CDP 会话的命令超时(ms)。
+ *
+ * back/forward/reload/start_select/cancel_select 在后端要等 CDP 会话就绪(冷启动时
+ * 调试端口需要一点时间连上,后端 wait_for_cdp_page 上限 ~10s)。前端超时必须更宽,
+ * 否则会在连接落地前先报超时。navigate/create 走 host eval,不等 CDP,仍用 5s。
+ */
+const CDP_COMMAND_TIMEOUT_MS = 12_000;
+
 export type TAgentWebviewBounds = AgentWebviewBoundsInput;
 export type TAgentWebviewNavigatedEvent = AgentWebviewNavigatedEvent;
 export type TAgentWebviewConsoleEvent = AgentWebviewConsoleEvent;
@@ -93,7 +102,7 @@ export const backAgentWebview = (): Promise<void> =>
     {
       command: 'agent_webview_back',
       guardHint: 'agent webview back',
-      timeoutMs: 5_000,
+      timeoutMs: CDP_COMMAND_TIMEOUT_MS,
       idempotent: false,
       audit: 'none',
       input: {},
@@ -109,7 +118,7 @@ export const forwardAgentWebview = (): Promise<void> =>
     {
       command: 'agent_webview_forward',
       guardHint: 'agent webview forward',
-      timeoutMs: 5_000,
+      timeoutMs: CDP_COMMAND_TIMEOUT_MS,
       idempotent: false,
       audit: 'none',
       input: {},
@@ -125,7 +134,7 @@ export const reloadAgentWebview = (): Promise<void> =>
     {
       command: 'agent_webview_reload',
       guardHint: 'agent webview reload',
-      timeoutMs: 5_000,
+      timeoutMs: CDP_COMMAND_TIMEOUT_MS,
       idempotent: false,
       audit: 'none',
       input: {},
@@ -141,7 +150,7 @@ export const startSelectAgentWebview = (): Promise<void> =>
     {
       command: 'agent_webview_start_select',
       guardHint: 'start agent webview element select',
-      timeoutMs: 5_000,
+      timeoutMs: CDP_COMMAND_TIMEOUT_MS,
       idempotent: false,
       audit: 'info',
       input: {},
@@ -157,7 +166,7 @@ export const cancelSelectAgentWebview = (): Promise<void> =>
     {
       command: 'agent_webview_cancel_select',
       guardHint: 'cancel agent webview element select',
-      timeoutMs: 5_000,
+      timeoutMs: CDP_COMMAND_TIMEOUT_MS,
       idempotent: true,
       audit: 'none',
       input: {},
