@@ -194,7 +194,7 @@ onBeforeUnmount(() => {
         <!-- 阶段标签 -->
         <div v-else class="template-phase-label" :style="{ '--phase-c': phase.color }">
           <span class="template-phase-dot"></span>
-           phase.label 
+           {{ phase.label }} 
         </div>
 
         <!-- 类别列表 -->
@@ -255,7 +255,7 @@ onBeforeUnmount(() => {
     <Teleport to="body">
       <div class="template-toast" :class="{ 'template-toast--on': toastVisible }">
         <Check class="template-toast-icon" />
-        <span> toastMessage </span>
+        <span>{{ toastMessage }}</span>
       </div>
     </Teleport>
   </section>

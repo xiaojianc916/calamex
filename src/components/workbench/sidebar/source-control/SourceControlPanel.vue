@@ -200,11 +200,17 @@ interface IGitNavItem {
   active: boolean;
 }
 
-const props = defineProps<{
-  isDesktopRuntime: boolean;
-  workspaceRootPath: string | null;
-  activePath: string | null;
-}>();
+const props = withDefaults(
+  defineProps<{
+    isActive?: boolean;
+    isDesktopRuntime: boolean;
+    workspaceRootPath: string | null;
+    activePath: string | null;
+  }>(),
+  {
+    isActive: true,
+  },
+);
 
 const emit = defineEmits<{
   'open-file': [path: string];
@@ -431,7 +437,7 @@ watch(
 watch(
   () => activeTab.value,
   (nextTab) => {
-    if (!hasRepository.value || nextTab === 'changes') {
+    if (!props.isActive || !hasRepository.value || nextTab === 'changes') {
       return;
     }
 
@@ -440,13 +446,18 @@ watch(
 );
 
 watch(
-  [() => props.isDesktopRuntime, () => props.workspaceRootPath],
-  ([ready, workspaceRootPath]) => {
+  [() => props.isDesktopRuntime, () => props.workspaceRootPath, () => props.isActive],
+  ([ready, workspaceRootPath, active]) => {
+    if (!active) {
+      return;
+    }
+
     if (!ready || !workspaceRootPath) {
       gitStore.reset();
       sourceControlActionError.value = null;
       return;
     }
+
     void syncRepositoryStatus(workspaceRootPath);
   },
   { immediate: true },

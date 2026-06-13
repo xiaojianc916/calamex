@@ -80,7 +80,7 @@ const PLAN_AGENT_FLOW_MESSAGE_ID_PREFIX = 'agent-flow:';
 const VIRTUAL_SCROLLER_MIN_ITEM_SIZE = 96;
 const VIRTUAL_SCROLLER_BUFFER_PX = 1200;
 const BOTTOM_FOLLOW_THRESHOLD_PX = 56;
-const SCROLL_STATE_EMIT_THROTTLE_MS = 40;
+const SCROLL_STATE_EMIT_THROTTLE_MS = 100;
 const SCROLLBAR_ACTIVE_MS = 900;
 
 const virtualScrollerRef = ref<unknown>(null);
@@ -329,17 +329,45 @@ const handlePlanRemoveStep = (stepId: string): void => {
   emit('planRemoveStep', stepId);
 };
 
+const buildMessageContentSizeSignature = (content: string): string => {
+  if (content.length <= 256) {
+    return content;
+  }
+
+  // Height-affecting changes during streaming are overwhelmingly append-only. Keep a
+  // compact signature instead of handing DynamicScroller the whole markdown payload on
+  // every render. The tail preserves sensitivity to newly closed blocks/lists/code fences.
+  return `${content.length}:${content.slice(0, 64)}:${content.slice(-192)}`;
+};
+
+const buildToolCallSizeSignature = (message: IAiChatMessage): string =>
+  message.toolCalls
+    ?.map((toolCall) =>
+      [
+        toolCall.id,
+        toolCall.status,
+        toolCall.summary.length,
+        toolCall.targetPreview?.length ?? 0,
+      ].join(':'),
+    )
+    .join('|') ?? '';
+
+const planSizeSignature = computed(() =>
+  [
+    props.planDetails?.status ?? '',
+    props.planDetails?.steps
+      ?.map((step) => `${step.id}:${step.status}:${step.title.length}`)
+      .join('|') ?? '',
+  ].join('|'),
+);
+
 const getMessageSizeDependencies = (message: IAiChatMessage): unknown[] => [
-  message.content,
+  buildMessageContentSizeSignature(message.content),
   message.stream?.status,
-  message.toolCalls?.length ?? 0,
-  message.toolCalls?.map((toolCall) => toolCall.status).join('|') ?? '',
+  buildToolCallSizeSignature(message),
   message.actions?.length ?? 0,
   message.attachments?.length ?? 0,
-  props.planDetails?.status,
-  props.planDetails?.steps?.length ?? 0,
-  props.planDetails?.steps?.map((step) => `${step.id}:${step.status}:${step.title}`).join('|') ??
-    '',
+  planSizeSignature.value,
   props.revertingChangedFilesSummaryId,
   props.pinningChangedFilesSummaryId,
 ];

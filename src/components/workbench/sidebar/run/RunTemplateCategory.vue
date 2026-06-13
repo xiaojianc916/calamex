@@ -32,10 +32,10 @@ const emit = defineEmits<{
         <LucideIcon :name="getIcon(category.icon)" class="template-cat-svg" />
       </span>
       <span class="template-cat-name">
-         category.name 
+         {{ category.name }} 
         <span v-if="category.isNew" class="template-cat-new">新</span>
       </span>
-      <span class="template-cat-badge"> category.items.length </span>
+      <span class="template-cat-badge">{{ category.items.length }}</span>
     </button>
 
     <!-- 片段列表 -->

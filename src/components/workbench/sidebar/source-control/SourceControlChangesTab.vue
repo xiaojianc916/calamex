@@ -2,8 +2,8 @@
   <div ref="sourceControlScrollRef" class="source-control-scroll" @scroll.passive="handleSourceControlScroll">
     <section v-if="!hasVisibleChanges && searchQuery.trim()"
       class="source-control-empty-card source-control-empty-card-inline">
-      <p class="source-control-empty-title"> emptyChangesTitle </p>
-      <p class="source-control-empty-text"> emptyChangesText </p>
+      <p class="source-control-empty-title">{{ emptyChangesTitle }}</p>
+      <p class="source-control-empty-text">{{ emptyChangesText }}</p>
     </section>
 
     <section v-for="section in visibleFilteredSections" :key="section.key" class="source-control-section"
@@ -12,8 +12,8 @@
         <svg class="source-control-section-chevron" viewBox="0 0 24 24" aria-hidden="true">
           <polyline points="6 9 12 15 18 9" />
         </svg>
-        <span> section.title </span>
-        <span class="source-control-section-count"> section.entries.length </span>
+        <span>{{ section.title }}</span>
+        <span class="source-control-section-count">{{ section.entries.length }}</span>
       </button>
 
       <div class="source-control-file-list">
@@ -23,13 +23,11 @@
             'is-context-target': isContextTargetPath(entry.path),
           }" @contextmenu.prevent.stop="handleEntryContextMenu($event, section.key, entry)">
           <button type="button" class="source-control-file-main" @click="handleOpenFile(entry.path)">
-            <span class="source-control-file-tag" :class="'is-' + resolveEntryTagTone(section.key, entry)">
-               resolveEntryTag(section.key, entry) 
-            </span>
+            <span class="source-control-file-tag" :class="'is-' + resolveEntryTagTone(section.key, entry)">{{ resolveEntryTag(section.key, entry) }}</span>
 
             <span class="source-control-file-path">
-              <span class="source-control-file-name"> resolveEntryDisplayName(entry) </span>
-              <span class="source-control-file-dir"> resolveEntryDirectory(entry) </span>
+              <span class="source-control-file-name">{{ resolveEntryDisplayName(entry) }}</span>
+              <span class="source-control-file-dir">{{ resolveEntryDirectory(entry) }}</span>
             </span>
           </button>
 
@@ -63,7 +61,7 @@
     <div class="source-control-commit-actions">
       <button type="button" class="source-control-btn source-control-btn-primary" :disabled="!canCommit"
         @click="handleCommit">
-         commitButtonLabel 
+         {{ commitButtonLabel }} 
       </button>
 
       <button type="button" class="source-control-btn source-control-btn-icon" :disabled="isBusy"

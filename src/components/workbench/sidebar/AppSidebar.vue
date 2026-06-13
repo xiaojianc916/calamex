@@ -1,11 +1,11 @@
 <template>
 <aside class="app-sidebar-shell flex h-full min-h-0 min-w-0 flex-col overflow-hidden" :class="{ 'source-control-sidebar-host': isSourceControlView, 'explorer-sidebar-host': isExplorerView, 'search-sidebar-host': isSearchView, 'ssh-sidebar-host': isSshView, }" >
   <!-- 性能优化：侧边栏切换时避免频繁 mount/unmount 大面板（文件树、搜索、Git 等）。 改为常驻挂载 + v-show 切换可见性，以减少切换时的同步渲染/布局开销。 相关数据加载仍由各面板内部的 watch 条件控制（例如仅在 explorer view 时加载树）。 -->
-  <SourceControlPanel v-show="isSourceControlView" class="h-full min-h-0 w-full flex-1" :is-desktop-runtime="isDesktopRuntime" :workspace-root-path="workspaceRootPath" :active-path="document.path" @open-file="handleOpenFile" @open-diff="handleOpenGitDiff" />
+  <SourceControlPanel v-if="hasMountedSourceControl" v-show="isSourceControlView" class="h-full min-h-0 w-full flex-1" :is-active="isSourceControlView" :is-desktop-runtime="isDesktopRuntime" :workspace-root-path="workspaceRootPath" :active-path="document.path" @open-file="handleOpenFile" @open-diff="handleOpenGitDiff" />
   <WorkspaceExplorerPanel v-show="isExplorerView" :document="document" :is-active="isExplorerView" :is-desktop-runtime="isDesktopRuntime" :workspace-root-path="workspaceRootPath" :preloaded-workspace-root="preloadedWorkspaceRoot" :startup-explorer-expanded-paths="startupExplorerExpandedPaths" :startup-explorer-selected-path="startupExplorerSelectedPath" @open-file="handleOpenFile" @open-folder="emit('open-folder')" @explorer-state-change="emit('explorer-state-change', $event)" />
-  <DeferredSearchSidebarPanel v-show="isSearchView" :document-path="document.path" :is-desktop-runtime="isDesktopRuntime" :workspace-root-path="workspaceRootPath" :preloaded-workspace-root="preloadedWorkspaceRoot" @open-file="handleOpenFile" />
-  <DeferredRunSidebarPanel v-show="isRunView" />
-  <div v-show="isSshView" class="ssh-sidebar-host-shell flex min-h-0 w-full flex-1 flex-col overflow-hidden" >
+  <DeferredSearchSidebarPanel v-if="hasMountedSearch" v-show="isSearchView" :is-active="isSearchView" :document-path="document.path" :is-desktop-runtime="isDesktopRuntime" :workspace-root-path="workspaceRootPath" :preloaded-workspace-root="preloadedWorkspaceRoot" @open-file="handleOpenFile" />
+  <DeferredRunSidebarPanel v-if="hasMountedRun" v-show="isRunView" />
+  <div v-if="hasMountedSsh" v-show="isSshView" class="ssh-sidebar-host-shell flex min-h-0 w-full flex-1 flex-col overflow-hidden" >
     <DeferredSshSidebarPanel @open-terminal="emit('open-terminal')" />
   </div>
   <!-- fallback placeholder (rare) -->
@@ -35,7 +35,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, defineAsyncComponent } from 'vue';
+import { computed, defineAsyncComponent, ref, watch } from 'vue';
 import { Button } from '@/components/ui/button';
 import WorkspaceExplorerPanel from '@/components/workbench/sidebar/explorer/WorkspaceExplorerPanel.vue';
 import type { TWorkbenchSidebarView } from '@/types/app';
@@ -176,6 +176,29 @@ const isSourceControlView = computed(() => props.view === 'source-control');
 const isRunView = computed(() => props.view === 'run');
 const isSshView = computed(() => props.view === 'extensions');
 const panelMeta = computed(() => SIDEBAR_META[props.view] ?? SIDEBAR_META.ai);
+
+// Explorer is the default shell surface. Heavier panels are mounted lazily on first visit,
+// then kept alive with v-show so tab switching remains instant after the initial open.
+const hasMountedSourceControl = ref(false);
+const hasMountedSearch = ref(false);
+const hasMountedRun = ref(false);
+const hasMountedSsh = ref(false);
+
+watch(
+  () => props.view,
+  (view) => {
+    if (view === 'source-control') {
+      hasMountedSourceControl.value = true;
+    } else if (view === 'search') {
+      hasMountedSearch.value = true;
+    } else if (view === 'run') {
+      hasMountedRun.value = true;
+    } else if (view === 'extensions') {
+      hasMountedSsh.value = true;
+    }
+  },
+  { immediate: true },
+);
 
 const handleOpenFile = (payload: TWorkbenchOpenFilePayload): void => {
   emit('open-file', payload);

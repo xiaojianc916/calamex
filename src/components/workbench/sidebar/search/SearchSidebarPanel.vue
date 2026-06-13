@@ -103,12 +103,18 @@ import { useSearchResultVirtualizer } from './useSearchResultVirtualizer';
 import { useWorkspaceReplacement } from './useWorkspaceReplacement';
 import { useWorkspaceSearch } from './useWorkspaceSearch';
 
-const props = defineProps<{
-  documentPath: string | null;
-  isDesktopRuntime: boolean;
-  workspaceRootPath: string | null;
-  preloadedWorkspaceRoot: IWorkspaceDirectoryPayload | null;
-}>();
+const props = withDefaults(
+  defineProps<{
+    isActive?: boolean;
+    documentPath: string | null;
+    isDesktopRuntime: boolean;
+    workspaceRootPath: string | null;
+    preloadedWorkspaceRoot: IWorkspaceDirectoryPayload | null;
+  }>(),
+  {
+    isActive: true,
+  },
+);
 
 const emit = defineEmits<{
   'open-file': [payload: IWorkbenchOpenFileRequest];
@@ -204,6 +210,7 @@ const { shouldVirtualizeSearch, searchTotalSize, windowedSearchRows } = useSearc
 
 watch(
   [
+    () => props.isActive,
     () => props.isDesktopRuntime,
     () => props.workspaceRootPath,
     searchQuery,
@@ -215,7 +222,14 @@ watch(
     () => effectiveIncludePatterns.value.join('\n'),
     () => effectiveExcludePatterns.value.join('\n'),
   ],
-  scheduleSearch,
+  () => {
+    if (!props.isActive) {
+      cancelPendingSearch();
+      return;
+    }
+
+    scheduleSearch();
+  },
   { immediate: true },
 );
 
@@ -230,6 +244,7 @@ watch(
 
 watch(
   [
+    () => props.isActive,
     searchQuery,
     replacementQuery,
     matchCase,
@@ -241,6 +256,11 @@ watch(
     () => props.workspaceRootPath,
   ],
   () => {
+    if (!props.isActive) {
+      cancelPendingReplacement();
+      return;
+    }
+
     if (replacementApplying.value) return;
     const shouldPreviewReplacement =
       replacementQuery.value.length > 0 &&

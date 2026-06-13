@@ -19,6 +19,7 @@ import {
 export const AI_CONVERSATION_HISTORY_LIMIT = 200;
 const TEMPORARY_TITLE_MAX_CHARS = 24;
 const GENERATED_TITLE_MAX_CHARS = 10;
+const SCROLL_STATE_SAVE_THROTTLE_MS = 120;
 
 export type TAiConversationTitleStatus = 'temporary' | 'generating' | 'generated' | 'failed';
 
@@ -330,6 +331,77 @@ export const useAiConversationStore = defineStore(
       activeThreadId.value = resolvedState.activeThreadId;
     };
 
+    const normalizeScrollStateForPersist = (
+      scrollState: IAiConversationScrollState,
+    ): IAiConversationScrollState => ({
+      ...scrollState,
+      scrollTop: Math.round(scrollState.scrollTop),
+      scrollHeight: Math.round(scrollState.scrollHeight),
+      clientHeight: Math.round(scrollState.clientHeight),
+      distanceFromBottom: Math.round(scrollState.distanceFromBottom),
+    });
+
+    const isSamePersistedScrollState = (
+      left: IAiConversationScrollState | undefined,
+      right: IAiConversationScrollState,
+    ): boolean =>
+      Boolean(left) &&
+      left.scrollTop === right.scrollTop &&
+      left.scrollHeight === right.scrollHeight &&
+      left.clientHeight === right.clientHeight &&
+      left.distanceFromBottom === right.distanceFromBottom;
+
+    const pendingScrollStates = new Map<string, IAiConversationScrollState>();
+    let scrollStateSaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const clearScrollStateSaveTimer = (): void => {
+      if (scrollStateSaveTimer !== null) {
+        clearTimeout(scrollStateSaveTimer);
+        scrollStateSaveTimer = null;
+      }
+    };
+
+    const flushPendingScrollStateUpdates = (): void => {
+      clearScrollStateSaveTimer();
+      if (pendingScrollStates.size === 0) {
+        return;
+      }
+
+      const updates = new Map(pendingScrollStates);
+      pendingScrollStates.clear();
+      let changed = false;
+      const nextThreads = threads.value.map((thread) => {
+        const nextScrollState = updates.get(thread.id);
+        if (!nextScrollState || isSamePersistedScrollState(thread.scrollState, nextScrollState)) {
+          return thread;
+        }
+        changed = true;
+        return syncThreadMeta({
+          ...thread,
+          scrollState: nextScrollState,
+        });
+      });
+
+      if (!changed) {
+        return;
+      }
+
+      replaceThreadsState({
+        activeThreadId: activeThreadId.value,
+        threads: nextThreads,
+      });
+    };
+
+    const scheduleScrollStateSave = (): void => {
+      if (scrollStateSaveTimer !== null) {
+        return;
+      }
+      scrollStateSaveTimer = setTimeout(() => {
+        scrollStateSaveTimer = null;
+        flushPendingScrollStateUpdates();
+      }, SCROLL_STATE_SAVE_THROTTLE_MS);
+    };
+
     /**
      * 把 updater 应用到当前 active thread;若不存在 active thread 则先创建一个。
      * (原实现用递归 self-call,改成显式串联以杜绝边界条件下的递归风险。)
@@ -437,11 +509,13 @@ export const useAiConversationStore = defineStore(
     // ── Actions: thread lifecycle
     const switchThread = (threadId: string): void => {
       if (!threads.value.some((thread) => thread.id === threadId)) return;
+      flushPendingScrollStateUpdates();
       activeThreadId.value = threadId;
       resolveThreadAttachmentPreviews(threadId);
     };
 
     const startNewThread = (): void => {
+      flushPendingScrollStateUpdates();
       const nextThread = createThread();
       replaceThreadsState({
         activeThreadId: nextThread.id,
@@ -454,6 +528,7 @@ export const useAiConversationStore = defineStore(
      * 不是《清空当前 thread 的消息》。 (与原实现一致, 此处保留以免破坏调用方。)
      */
     const clearActiveThread = (): void => {
+      flushPendingScrollStateUpdates();
       const currentThread = activeThread.value;
       if (!currentThread) {
         startNewThread();
@@ -471,13 +546,21 @@ export const useAiConversationStore = defineStore(
       threadId: string,
       scrollState: IAiConversationScrollState,
     ): void => {
-      patchThread(threadId, (thread) => ({
-        ...thread,
-        scrollState,
-      }));
+      const thread = threads.value.find((item) => item.id === threadId);
+      if (!thread) return;
+
+      const normalizedScrollState = normalizeScrollStateForPersist(scrollState);
+      const currentScrollState = pendingScrollStates.get(threadId) ?? thread.scrollState;
+      if (isSamePersistedScrollState(currentScrollState, normalizedScrollState)) {
+        return;
+      }
+
+      pendingScrollStates.set(threadId, normalizedScrollState);
+      scheduleScrollStateSave();
     };
 
     const deleteThread = (threadId: string): boolean => {
+      flushPendingScrollStateUpdates();
       if (!threads.value.some((thread) => thread.id === threadId)) {
         return false;
       }

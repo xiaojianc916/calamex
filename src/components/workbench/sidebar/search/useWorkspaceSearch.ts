@@ -36,6 +36,7 @@ const SEARCH_SCOPE_LABELS: Record<TWorkspaceSearchScope, string> = {
 
 const SEARCH_DEBOUNCE_MS = 180;
 const SEARCH_RESULT_LIMIT = 50000;
+const SEARCH_STREAM_FLUSH_INTERVAL_MS = 48;
 
 type TSearchLifecycle = {
   requestId: number;
@@ -77,6 +78,8 @@ export const useWorkspaceSearch = (options: IUseWorkspaceSearchOptions) => {
   // 当前接受流式事件的关联标识：与传给后端的 streamToken 一致，过期搜索的残留事件据此忽略。
   let streamingSearchId = 0;
   let disposeSearchStream: (() => void) | null = null;
+  let pendingStreamResults: IWorkspaceSearchResult[] = [];
+  let streamResultsFlushTimer: ReturnType<typeof setTimeout> | null = null;
 
   const isWorkspaceRootCurrent = (candidate: string | null | undefined): boolean =>
     !candidate || areFileSystemPathsEqual(candidate, workspaceRootPath.value);
@@ -246,14 +249,47 @@ export const useWorkspaceSearch = (options: IUseWorkspaceSearchOptions) => {
     }
   };
 
+  const clearPendingStreamResults = (): void => {
+    if (streamResultsFlushTimer) {
+      clearTimeout(streamResultsFlushTimer);
+      streamResultsFlushTimer = null;
+    }
+    pendingStreamResults = [];
+  };
+
+  const flushPendingStreamResults = (): void => {
+    if (streamResultsFlushTimer) {
+      clearTimeout(streamResultsFlushTimer);
+      streamResultsFlushTimer = null;
+    }
+    if (pendingStreamResults.length === 0) {
+      return;
+    }
+    const nextResults = pendingStreamResults;
+    pendingStreamResults = [];
+    backendResults.value = [...backendResults.value, ...nextResults];
+  };
+
+  const scheduleStreamResultsFlush = (): void => {
+    if (streamResultsFlushTimer) {
+      return;
+    }
+    streamResultsFlushTimer = setTimeout(() => {
+      streamResultsFlushTimer = null;
+      flushPendingStreamResults();
+    }, SEARCH_STREAM_FLUSH_INTERVAL_MS);
+  };
+
   const invalidateInFlightSearch = (): void => {
     searchRequestId += 1;
     activeAbortController?.abort();
     activeAbortController = null;
     streamingSearchId = 0;
+    clearPendingStreamResults();
   };
 
   const clearSearchResults = (): void => {
+    clearPendingStreamResults();
     scannedFileCount.value = 0;
     backendResults.value = [];
     searchIndexing.value = false;
@@ -263,7 +299,8 @@ export const useWorkspaceSearch = (options: IUseWorkspaceSearchOptions) => {
   const handleSearchStreamEvent = (event: IWorkspaceSearchStreamEvent): void => {
     // 仅接收当前搜索（streamToken 匹配）按发现顺序分批推送的内容命中，逐批追加形成渐进式结果。
     if (event.searchId !== streamingSearchId || event.results.length === 0) return;
-    backendResults.value = [...backendResults.value, ...event.results];
+    pendingStreamResults.push(...event.results);
+    scheduleStreamResultsFlush();
   };
 
   const runSearch = async (): Promise<void> => {
@@ -281,6 +318,7 @@ export const useWorkspaceSearch = (options: IUseWorkspaceSearchOptions) => {
     const lifecycle = beginSearchLifecycle(query);
     // 关联本次搜索的流式事件：后端按文件发现顺序分批回推内容命中，事件回带同一 streamToken。
     streamingSearchId = lifecycle.requestId;
+    clearPendingStreamResults();
     scannedFileCount.value = 0;
     backendResults.value = [];
     searchIndexing.value = true;
@@ -306,11 +344,13 @@ export const useWorkspaceSearch = (options: IUseWorkspaceSearchOptions) => {
       if (!isSearchLifecycleCurrent(lifecycle)) return;
       // 一次性返回的权威结果（已排序、含文件名/符号命中）覆盖流式累积的预览。
       streamingSearchId = 0;
+      clearPendingStreamResults();
       scannedFileCount.value = payload.scannedFileCount;
       backendResults.value = payload.results;
     } catch (error) {
       if (lifecycle.signal.aborted || !isSearchLifecycleCurrent(lifecycle)) return;
       streamingSearchId = 0;
+      clearPendingStreamResults();
       backendResults.value = [];
       searchError.value = toErrorMessage(error, '搜索失败。');
     } finally {
@@ -331,6 +371,9 @@ export const useWorkspaceSearch = (options: IUseWorkspaceSearchOptions) => {
   };
 
   const cancelPendingSearch = (): void => {
+    searchRequestId += 1;
+    streamingSearchId = 0;
+    clearPendingStreamResults();
     if (searchTimer) {
       clearTimeout(searchTimer);
       searchTimer = null;
@@ -376,12 +419,17 @@ export const useWorkspaceSearch = (options: IUseWorkspaceSearchOptions) => {
   }
 
   watch(activeResults, (results) => {
-    const availableKeys = new Set(results.map((result) => result.resultKey));
-    if (selectedResultKey.value && !availableKeys.has(selectedResultKey.value))
+    const selectedKey = selectedResultKey.value;
+    if (!selectedKey) {
+      return;
+    }
+    if (!results.some((result) => result.resultKey === selectedKey)) {
       selectedResultKey.value = null;
+    }
   });
 
   onScopeDispose(() => {
+    clearPendingStreamResults();
     disposeSearchStream?.();
     disposeSearchStream = null;
   });

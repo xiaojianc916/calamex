@@ -55,7 +55,7 @@ export function useThreadEntryExpansion(
 
       autoExpandedReasoningId = streamingReasoningId;
     },
-    { immediate: true, deep: true },
+    { immediate: true },
   );
 
   const isExpanded = (entry: TAiThreadEntry): boolean => {

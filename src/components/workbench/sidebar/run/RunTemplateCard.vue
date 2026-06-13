@@ -20,8 +20,8 @@ const emit = defineEmits<{
 <template>
   <div class="template-snip" @click="emit('insert', props.item)">
     <LucideIcon :name="getIcon(item.icon)" class="template-snip-ic" />
-    <span class="template-snip-trigger"> item.trigger </span>
-    <span class="template-snip-desc"> item.description </span>
+    <span class="template-snip-trigger">{{ item.trigger }}</span>
+    <span class="template-snip-desc">{{ item.description }}</span>
     <span class="template-snip-actions">
       <button class="template-snip-btn" title="插入到光标" @click.stop="emit('insert', props.item)">
         <Plus class="template-snip-btn-svg" />

@@ -40,6 +40,7 @@ const IDB_DB_NAME = 'shell-ide.ai-conversation';
 const IDB_STORE_NAME = 'persist';
 const ATTACHMENT_PREVIEW_POINTER_PREFIX = 'idb://ai-conversation-attachment-preview/';
 const ATTACHMENT_PREVIEW_KEY_PREFIX = 'ai-conversation-attachment-preview:';
+const DATA_IMAGE_URL_MARKER = 'data:image/';
 const DATA_IMAGE_URL_PATTERN = /^data:image\/[a-z0-9.+-]+;base64,/iu;
 const ATTACHMENT_PREVIEW_POINTER_PATTERN = /^idb:\/\/ai-conversation-attachment-preview\//u;
 
@@ -223,6 +224,14 @@ const restoreAttachmentPreviewPayloads = async (value: unknown): Promise<boolean
 };
 
 const preparePersistValue = async (value: string): Promise<string> => {
+  // Fast path: most conversation writes are text/scroll/status updates. If no fresh
+  // inline image payload exists, avoid parsing and recursively walking the whole
+  // conversation snapshot on every debounced persist. Existing idb:// pointers do
+  // not need re-extraction.
+  if (!value.includes(DATA_IMAGE_URL_MARKER)) {
+    return value;
+  }
+
   try {
     const parsed: unknown = JSON.parse(value);
     await extractAttachmentPreviewPayloads(parsed);
@@ -243,6 +252,12 @@ const isConversationPersistShape = (
 const restorePersistValue = async (value: string | null): Promise<string | null> => {
   if (value === null) {
     return null;
+  }
+
+  // Fast path: if the snapshot has no attachment-preview pointer, there is nothing
+  // to restore here. The store's Zod hydrate still validates the unchanged JSON.
+  if (!value.includes(ATTACHMENT_PREVIEW_POINTER_PREFIX)) {
+    return value;
   }
 
   try {
