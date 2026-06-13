@@ -180,7 +180,6 @@ export const projectRuntimeEventToAcp = (
 		case "acontext.envelope.injected":
 		case "acontext.envelope.replaced":
 		case "acontext.token.checked":
-		case "acontext.provider_payload.checked":
 		case "acontext.tool_summary.recorded":
 		case "acontext.memory.compressed":
 		case "acontext.context_compaction.started":
