@@ -57,8 +57,8 @@ const scheduleIdle = (task: () => void, timeoutMs = 1500): void => {
     return;
   }
 
-  // fallback：尽量让出首帧/输入事件
-  setTimeout(task, 0);
+  // fallback：不要在首帧前用 setTimeout(0) 抢主线程；给首屏、输入和窗口显示让路。
+  setTimeout(task, timeoutMs);
 };
 
 const bootstrap = async (): Promise<void> => {
@@ -91,20 +91,31 @@ const bootstrap = async (): Promise<void> => {
     getThemeManager().init();
     markStartup('theme-manager-ready');
 
-    // 命令目录预热可能涉及较重的动态 import/解析;放到 idle 时间，避免与首屏渲染抢主线程。
-    scheduleIdle(() => {
-      markStartup('shell-catalog-prefetch-start');
-      void import('./services/shell/command-catalog')
-        .then(({ listShellCommandLabels }) => listShellCommandLabels())
-        .then(() => {
-          markStartup('shell-catalog-prefetch-done');
-        })
-        .catch((error: unknown) => {
-          markStartup('shell-catalog-prefetch-failed');
-          console.warn('命令目录预热失败', error);
+    const prefetchShellCatalogAfterBootstrap = (): void => {
+      // 命令目录预热涉及动态 import/解析，属于 P2：必须等 Vue mount 和首屏任务让路后再 idle。
+      scheduleIdle(() => {
+        markStartup('shell-catalog-prefetch-start');
+        void import('./services/shell/command-catalog')
+          .then(({ listShellCommandLabels }) => listShellCommandLabels())
+          .then(() => {
+            markStartup('shell-catalog-prefetch-done');
+          })
+          .catch((error: unknown) => {
+            markStartup('shell-catalog-prefetch-failed');
+            console.warn('命令目录预热失败', error);
+          });
+      }, 2500);
+      markStartup('shell-catalog-prefetch-scheduled');
+    };
+
+    const hydrateAiConversationAfterBootstrap = (): void => {
+      // AI 历史不是首屏必需：延后到首屏后 idle，避免和 session hydrate / Vue mount 抢 IO。
+      scheduleIdle(() => {
+        void hydrateAiConversationStorage().catch((error: unknown) => {
+          console.warn('AI 会话历史后台 hydrate 失败', error);
         });
-    });
-    markStartup('shell-catalog-prefetch-scheduled');
+      }, 2500);
+    };
 
     // session 快照是首屏(编辑器/工作区状态)恢复所必需的，仍在挂载前阻塞 await。
     // 而 ai-conversation 历史只有懒加载的 AI 面板才会用到——首屏并不需要它就位。
@@ -112,9 +123,6 @@ const bootstrap = async (): Promise<void> => {
     // 与 reconcile 数据安全逻辑，会在用户真正打开 AI 面板前完成，且绝不会用空态覆盖
     // 磁盘上的历史(详见 debouncedPersistStorage)。
     markStartup('session-storage-hydrate-start');
-    void hydrateAiConversationStorage().catch((error: unknown) => {
-      console.warn('AI 会话历史后台 hydrate 失败', error);
-    });
     await hydrateSessionStorage();
     markStartup('session-storage-hydrated');
 
@@ -139,6 +147,9 @@ const bootstrap = async (): Promise<void> => {
     initAppTooltipSystem();
     initEditorScrollbarActivity();
     markStartup('tooltip-system-ready');
+
+    prefetchShellCatalogAfterBootstrap();
+    hydrateAiConversationAfterBootstrap();
 
     markStartup('bootstrap-done');
   } catch (error) {

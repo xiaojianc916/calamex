@@ -31,6 +31,7 @@ const EMPTY_ENVIRONMENT: IExecutionEnvironment = {
   executors: [],
 };
 const WORKBENCH_RUNTIME_WAIT_MS = 160;
+const EXECUTION_ENVIRONMENT_STARTUP_DELAY_MS = 900;
 // Git 状态刷新通常来自保存文件、工作区 watcher、Git 面板操作等高频入口。
 // 用短 debounce 聚合同一波文件系统事件；若已有刷新在途，则只排队最新一次，避免
 // N 个 watcher 事件触发 N 次完整 git status。
@@ -300,7 +301,7 @@ export const useWorkbench = () => {
     cancelExecutionEnvironmentSyncTimer = runtimeScope.setTimeout(() => {
       cancelExecutionEnvironmentSyncTimer = null;
       void syncExecutionEnvironment();
-    }, 0);
+    }, EXECUTION_ENVIRONMENT_STARTUP_DELAY_MS);
 
     return {
       startupWorkspaceDirectory,

@@ -20,6 +20,8 @@ const AUTO_RESTART_BASE_DELAY_MS = 1000;
 const AUTO_RESTART_WINDOW_MS = 3 * 60 * 1000;
 /** 稳定运行超过此时长视为“健康”，重置自动重启计数（毫秒） */
 const STABILITY_RESET_MS = 30_000;
+// 启动期 LSP 属于 P2 后台任务：诊断/补全很重要，但不应该抢首屏、session restore、编辑器 mount。
+const STARTUP_LSP_INITIAL_DELAY_MS = 1600;
 
 const status = ref<LspStatus>('idle');
 const error = ref<string | null>(null);
@@ -258,16 +260,53 @@ export const useLsp = (workspaceRootPath: MaybeRefOrGetter<string | null>) => {
   const hasError = computed(() => status.value === 'error');
   const isActive = computed(() => isRunning.value || isStarting.value);
 
+  let pendingInitialLspTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
+  let hasScheduledInitialLspStart = false;
+
+  const clearPendingInitialLspStart = (): void => {
+    if (pendingInitialLspTimer === null) {
+      return;
+    }
+
+    globalThis.clearTimeout(pendingInitialLspTimer);
+    pendingInitialLspTimer = null;
+  };
+
+  const applyWorkspaceRootForLsp = (newRoot: string | null): void => {
+    if (!newRoot) {
+      clearPendingInitialLspStart();
+      void setWorkspaceRoot(null);
+      return;
+    }
+
+    // 首次启动时延后 LSP：让首帧、窗口显示、session restore、active document mount 先完成。
+    // 后续工作区切换不再延后，避免用户主动切换后诊断长时间不可用。
+    if (!hasScheduledInitialLspStart && activeWorkspaceRoot === null && status.value === 'idle') {
+      hasScheduledInitialLspStart = true;
+      clearPendingInitialLspStart();
+      pendingInitialLspTimer = globalThis.setTimeout(() => {
+        pendingInitialLspTimer = null;
+        void setWorkspaceRoot(rootRef.value);
+      }, STARTUP_LSP_INITIAL_DELAY_MS);
+      return;
+    }
+
+    hasScheduledInitialLspStart = true;
+    clearPendingInitialLspStart();
+    void setWorkspaceRoot(newRoot);
+  };
+
   const stopWatch = watch(
     rootRef,
     (newRoot) => {
-      void setWorkspaceRoot(newRoot);
+      applyWorkspaceRootForLsp(newRoot);
     },
     { immediate: true },
   );
 
   onScopeDispose(() => {
     // 组件销毁不再停止 LSP；只取消这个 composable 实例的 root 监听。
+    clearPendingInitialLspStart();
     stopWatch();
   });
 

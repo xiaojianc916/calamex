@@ -145,7 +145,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, defineAsyncComponent, nextTick, ref } from 'vue';
+import { computed, defineAsyncComponent, nextTick, onMounted, ref } from 'vue';
 import EmptyEditorState from '@/components/editor/EmptyEditorState.vue';
 import { Card, CardContent } from '@/components/ui/card';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
@@ -214,10 +214,12 @@ const prefetchAiSurfaceWhenIdle = (): void => {
     return;
   }
 
-  window.setTimeout(prefetch, 0);
+  window.setTimeout(prefetch, 2000);
 };
 
-prefetchAiSurfaceWhenIdle();
+onMounted(() => {
+  prefetchAiSurfaceWhenIdle();
+});
 
 const emit = defineEmits<{
   ready: [];

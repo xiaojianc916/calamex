@@ -104,6 +104,7 @@ const gitHubAuthRepositoryRootPath = computed(() => gitStore.status.repositoryRo
 const isMaximized = ref(false);
 let isLayoutUnmounted = false;
 let unlistenWindowResized: (() => void) | null = null;
+let windowStateSyncTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
 
 const resizeHandles: Array<{ direction: TResizeDirection; className: string }> = [
   { direction: 'North', className: 'is-top' },
@@ -219,8 +220,7 @@ const startWindowResize = async (direction: TResizeDirection, event: MouseEvent)
   }
 };
 
-onMounted(async () => {
-  isLayoutUnmounted = false;
+const bindNativeWindowStateListeners = async (): Promise<void> => {
   const appWindow = await getAppWindow();
   if (!appWindow || isLayoutUnmounted) {
     return;
@@ -237,10 +237,24 @@ onMounted(async () => {
   }
 
   unlistenWindowResized = unlisten;
+};
+
+onMounted(() => {
+  isLayoutUnmounted = false;
+  // 原生窗口状态同步不是首帧必需：延后 import('@tauri-apps/api/window') 与 IPC，
+  // 避免 AppShellLayout mount 时和工作台首屏争抢主线程/桥接资源。
+  windowStateSyncTimer = globalThis.setTimeout(() => {
+    windowStateSyncTimer = null;
+    void bindNativeWindowStateListeners();
+  }, 1600);
 });
 
 onBeforeUnmount(() => {
   isLayoutUnmounted = true;
+  if (windowStateSyncTimer !== null) {
+    globalThis.clearTimeout(windowStateSyncTimer);
+    windowStateSyncTimer = null;
+  }
   unlistenWindowResized?.();
   unlistenWindowResized = null;
 });

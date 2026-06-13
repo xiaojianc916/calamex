@@ -43,6 +43,19 @@ const isPrimaryModifierShortcut = (event: KeyboardEvent, code: string, key: stri
   !event.shiftKey &&
   (event.code === code || event.key.toLowerCase() === key);
 
+const scheduleStartupNonCriticalTask = (task: () => void, timeoutMs = 1600): void => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  if (typeof window.requestIdleCallback === 'function') {
+    window.requestIdleCallback(() => task(), { timeout: timeoutMs });
+    return;
+  }
+
+  window.setTimeout(task, timeoutMs);
+};
+
 const waitForInitialWorkbenchPaint = async (): Promise<void> =>
   new Promise((resolve) => {
     let settled = false;
@@ -709,7 +722,9 @@ export const useShellWorkbenchView = (onReady: () => void) => {
     mountViewportState();
 
     bindGlobalKeydownCapture();
-    void bindNativeWindowCloseRequest();
+    scheduleStartupNonCriticalTask(() => {
+      void bindNativeWindowCloseRequest();
+    }, 1800);
     void initializeWorkbench();
   });
 
