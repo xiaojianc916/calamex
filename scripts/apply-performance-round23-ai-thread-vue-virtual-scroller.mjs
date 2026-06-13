@@ -1,4 +1,65 @@
-<script setup lang="ts">
+import fs from 'node:fs';
+import path from 'node:path';
+
+const repoRoot = process.cwd();
+
+const aiThreadFile = path.join(
+  repoRoot,
+  'src/components/business/ai/chat/AiChatThread.vue',
+);
+
+const packageJsonFile = path.join(repoRoot, 'package.json');
+
+const typeDeclFile = path.join(repoRoot, 'src/types/vue-virtual-scroller.d.ts');
+
+const fail = (message) => {
+  throw new Error(message);
+};
+
+const writeFile = (file, content) => {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, content);
+};
+
+if (!fs.existsSync(aiThreadFile)) {
+  fail(`[missing] ${path.relative(repoRoot, aiThreadFile)}`);
+}
+
+if (!fs.existsSync(packageJsonFile)) {
+  fail(`[missing] package.json`);
+}
+
+const packageJson = JSON.parse(fs.readFileSync(packageJsonFile, 'utf8'));
+
+packageJson.dependencies ??= {};
+
+if (!packageJson.dependencies['vue-virtual-scroller']) {
+  packageJson.dependencies['vue-virtual-scroller'] = '^2.0.0-beta.8';
+}
+
+const sortedPackageJson = {
+  ...packageJson,
+  dependencies: Object.fromEntries(
+    Object.entries(packageJson.dependencies).sort(([a], [b]) => a.localeCompare(b)),
+  ),
+};
+
+fs.writeFileSync(packageJsonFile, `${JSON.stringify(sortedPackageJson, null, 2)}\n`);
+
+const typeDecl = `declare module 'vue-virtual-scroller' {
+  import type { DefineComponent } from 'vue';
+
+  export const DynamicScroller: DefineComponent<Record<string, unknown>, Record<string, unknown>, unknown>;
+  export const DynamicScrollerItem: DefineComponent<Record<string, unknown>, Record<string, unknown>, unknown>;
+  export const RecycleScroller: DefineComponent<Record<string, unknown>, Record<string, unknown>, unknown>;
+}
+
+declare module 'vue-virtual-scroller/dist/vue-virtual-scroller.css';
+`;
+
+writeFile(typeDeclFile, typeDecl);
+
+const component = `<script setup lang="ts">
 import { MessageSquare } from '@lucide/vue';
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { DynamicScroller, DynamicScrollerItem } from 'vue-virtual-scroller';
@@ -154,7 +215,7 @@ const virtualItems = computed<TAiThreadVirtualItem[]>(() => {
   if (shouldRenderStandaloneTyping.value) {
     items.push({
       type: 'typing',
-      id: `typing:${props.conversationId ?? 'active'}`,
+      id: \`typing:\${props.conversationId ?? 'active'}\`,
     });
   }
 
@@ -587,3 +648,18 @@ onBeforeUnmount(() => {
   align-items: flex-start;
 }
 </style>
+`;
+
+writeFile(aiThreadFile, component);
+
+console.log('✅ Applied Round 23: AiChatThread now uses vue-virtual-scroller DynamicScroller');
+console.log('✅ Removed handwritten virtual window / spacer / height-cache logic from AiChatThread.vue');
+console.log('✅ Added dependency: vue-virtual-scroller');
+console.log('✅ Added local type declaration for vue-virtual-scroller');
+console.log('');
+console.log('Next commands:');
+console.log('  pnpm install');
+console.log('  pnpm typecheck');
+console.log('  pnpm test src/components/business/ai/shell/AiAssistantPanel.spec.ts');
+console.log('  pnpm test src/store/aiConversation.store.spec.ts');
+console.log('  pnpm test src/composables/ai/useAiConversationHistory.spec.ts');

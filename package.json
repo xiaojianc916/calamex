@@ -106,6 +106,7 @@
     "vue-router": "^5.1.0",
     "vue-sonner": "^2.0.9",
     "vue-stick-to-bottom": "^1.0.0",
+    "vue-virtual-scroller": "^2.0.0-beta.8",
     "web-tree-sitter": "^0.26.9",
     "zod": "^4.4.3"
   },
