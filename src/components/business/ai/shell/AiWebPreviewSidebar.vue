@@ -17,13 +17,18 @@ import {
   WebPreviewNavigationButton,
   WebPreviewUrl,
 } from '@/components/ai-elements/web-preview';
+import AiWebPreviewSelectBubble from '@/components/business/ai/shell/AiWebPreviewSelectBubble.vue';
 import {
   backAgentWebview,
+  cancelSelectAgentWebview,
   forwardAgentWebview,
   onAgentWebviewConsole,
+  onAgentWebviewElementPicked,
   onAgentWebviewNavigated,
   openExternalAgentWebview,
   reloadAgentWebview,
+  startSelectAgentWebview,
+  type TAgentWebviewElementPickedEvent,
 } from '@/services/ipc/agent-webview.service';
 
 const MAX_CONSOLE_LOGS = 200;
@@ -41,17 +46,28 @@ const emit = defineEmits<{
   'url-change': [url: string];
   'open-external': [url: string];
   'close-sidebar': [];
-  select: [url: string];
+  'select-context': [
+    payload: {
+      url: string;
+      label: string;
+      outerHtml: string;
+      screenshotBase64: string;
+      comment: string;
+    },
+  ];
 }>();
 
 const previewUrl = ref(props.defaultUrl);
 const canGoBack = ref(false);
 const canGoForward = ref(false);
 const logs = ref<IWebPreviewConsoleLog[]>([]);
+const pickedElement = ref<TAgentWebviewElementPickedEvent | null>(null);
+const isSelecting = ref(false);
 
 type UnlistenFn = () => void;
 let unlistenNavigated: UnlistenFn | null = null;
 let unlistenConsole: UnlistenFn | null = null;
+let unlistenElementPicked: UnlistenFn | null = null;
 
 watch(
   () => props.defaultUrl,
@@ -66,11 +82,12 @@ const appendLog = (level: IWebPreviewConsoleLog['level'], message: string): void
   logs.value = [...logs.value, { level, message, timestamp: new Date() }].slice(-MAX_CONSOLE_LOGS);
 };
 
-// CDP \u4e0b\u53d1\u7684 level \u5df2\u89c4\u8303\u4e3a log/warn/error\uff1b\u8fd9\u91cc\u505a\u4e00\u6b21\u9632\u5fa1\u6027\u6536\u655b\u3002
+// CDP console levels are already normalized to log/warn/error; defensive fallback only.
 const mapConsoleLevel = (level: string): IWebPreviewConsoleLog['level'] =>
   level === 'error' ? 'error' : level === 'warn' ? 'warn' : 'log';
 
-// \u5bfc\u822a\u7c7b\u547d\u4ee4\u5931\u8d25(\u5982 CDP \u4ecd\u5728\u8fde\u63a5)\u65f6\u843d\u5230\u63a7\u5236\u53f0\u9762\u677f\uff0c\u800c\u4e0d\u662f\u5192\u6ce1\u6210\u5168\u5c40\u672a\u5904\u7406\u5f02\u5e38\u3002
+// Navigation command failures (e.g. CDP still connecting) fall back to the console panel
+// instead of bubbling up as an unhandled async rejection.
 const runNavAction = (action: () => Promise<void>): void => {
   action().catch((error: unknown) => {
     appendLog('error', error instanceof Error ? error.message : String(error));
@@ -94,8 +111,44 @@ const handleRefresh = (): void => {
   runNavAction(reloadAgentWebview);
 };
 
+// Enter element-picking mode: the native CDP overlay highlights nodes, and the first
+// inspected node comes back through onAgentWebviewElementPicked.
 const handleSelect = (): void => {
-  emit('select', previewUrl.value);
+  if (isSelecting.value || pickedElement.value) {
+    return;
+  }
+
+  isSelecting.value = true;
+  startSelectAgentWebview().catch((error: unknown) => {
+    isSelecting.value = false;
+    appendLog('error', error instanceof Error ? error.message : String(error));
+  });
+};
+
+const handleSelectSubmit = (comment: string): void => {
+  const picked = pickedElement.value;
+
+  if (!picked) {
+    return;
+  }
+
+  emit('select-context', {
+    url: picked.url,
+    label: picked.label,
+    outerHtml: picked.outerHtml,
+    screenshotBase64: picked.screenshotBase64,
+    comment,
+  });
+  pickedElement.value = null;
+  isSelecting.value = false;
+};
+
+const handleSelectCancel = (): void => {
+  pickedElement.value = null;
+  isSelecting.value = false;
+  cancelSelectAgentWebview().catch((error: unknown) => {
+    appendLog('error', error instanceof Error ? error.message : String(error));
+  });
 };
 
 const handleOpenExternal = (): void => {
@@ -116,7 +169,7 @@ onMounted(() => {
       unlistenNavigated = unlisten;
     })
     .catch(() => {
-      // \u975e\u684c\u9762\u8fd0\u884c\u65f6(\u6d4b\u8bd5/\u7eaf\u524d\u7aef)\u65e0 Tauri \u4e8b\u4ef6\u603b\u7ebf\uff0c\u5ffd\u7565\u8ba2\u9605\u5931\u8d25\u3002
+      // No Tauri event bus outside the desktop runtime (tests/web); ignore.
     });
 
   void onAgentWebviewConsole((payload) => {
@@ -126,13 +179,25 @@ onMounted(() => {
       unlistenConsole = unlisten;
     })
     .catch(() => {
-      // \u540c\u4e0a\u3002
+      // Same as above.
+    });
+
+  void onAgentWebviewElementPicked((payload) => {
+    pickedElement.value = payload;
+    isSelecting.value = false;
+  })
+    .then((unlisten) => {
+      unlistenElementPicked = unlisten;
+    })
+    .catch(() => {
+      // Same as above.
     });
 });
 
 onBeforeUnmount(() => {
   unlistenNavigated?.();
   unlistenConsole?.();
+  unlistenElementPicked?.();
 });
 </script>
 
@@ -152,7 +217,7 @@ onBeforeUnmount(() => {
 
         <WebPreviewUrl />
 
-        <WebPreviewNavigationButton tooltip="Select" @click="handleSelect">
+        <WebPreviewNavigationButton tooltip="Select element" :disabled="isSelecting" @click="handleSelect">
           <MousePointerClickIcon class="size-4" />
         </WebPreviewNavigationButton>
         <WebPreviewNavigationButton tooltip="Open in new tab" @click="handleOpenExternal">
@@ -171,12 +236,24 @@ onBeforeUnmount(() => {
 
       <WebPreviewConsole :logs="logs" />
     </WebPreview>
+
+    <AiWebPreviewSelectBubble
+      v-if="pickedElement"
+      class="ai-web-preview-sidebar__bubble"
+      :label="pickedElement.label"
+      :url="pickedElement.url"
+      :outer-html="pickedElement.outerHtml"
+      :screenshot-base64="pickedElement.screenshotBase64"
+      @submit="handleSelectSubmit"
+      @cancel="handleSelectCancel"
+    />
   </section>
 </template>
 
 <style scoped>
 .ai-web-preview-sidebar {
   display: flex;
+  position: relative;
   min-width: 0;
   min-height: 0;
   flex: 1;
@@ -190,5 +267,12 @@ onBeforeUnmount(() => {
 .ai-web-preview-sidebar__body {
   min-height: 0;
   flex: 1;
+}
+
+.ai-web-preview-sidebar__bubble {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 5;
 }
 </style>
