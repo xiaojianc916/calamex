@@ -106,7 +106,7 @@ cap-std = { version = "4.0.2", optional = true }
 normpath = { version = "1.5.1", optional = true }
 specta = { version = "2.0.0-rc.25", features = ["serde_json"] }
 specta-typescript = "0.0.12"
-tauri-specta = { version = "2.0.0-rc.25", features = ["typescript"] }
+tauri-specta = { version = "2.0.0-rc.25", features = ["derive", "typescript"] }
 log = "0.4.30"
 jiff = "0.2.25"
 backon = "1.6.0"
