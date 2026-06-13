@@ -14,6 +14,15 @@ const flushRender = async (): Promise<void> => {
   await nextTick();
 };
 
+const waitForText = async (wrapper: ReturnType<typeof mount>, text: string): Promise<void> => {
+  await vi.waitFor(
+    () => {
+      expect(wrapper.text()).toContain(text);
+    },
+    { timeout: 2000, interval: 50 },
+  );
+};
+
 describe('AiMarkdown rendering', () => {
   it('renders Markdown content through markstream-vue', async () => {
     const wrapper = mount(AiMarkdown, {
@@ -42,21 +51,18 @@ describe('AiMarkdown rendering', () => {
 
     await flushRender();
 
-    expect(wrapper.text()).toContain('前文');
-    expect(wrapper.text()).toContain('const pending = true');
+    // active streams are now paced by markstream-vue's smooth controller, so the DOM is allowed to
+    // start empty briefly; assert that the visible output catches up instead of requiring sync render.
+    await waitForText(wrapper, '前文');
+    await waitForText(wrapper, 'const pending = true');
 
     await wrapper.setProps({
       content: '前文 **markdown**\n\n```ts\nconst pending = true;\n```\n后文 **done**',
       streamStatus: 'completed',
     });
     await flushRender();
-    await vi.waitFor(
-      () => {
-        expect(wrapper.text()).toContain('后文');
-        expect(wrapper.text()).toContain('done');
-      },
-      { timeout: 2000, interval: 50 },
-    );
+    await waitForText(wrapper, '后文');
+    await waitForText(wrapper, 'done');
 
     expect(wrapper.text()).toContain('后文');
     expect(wrapper.text()).toContain('done');
