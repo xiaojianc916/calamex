@@ -18,6 +18,9 @@ test('resolveAgentModelCapabilitiesFromModelId：解析 provider/model 并填充
   assert.equal(capabilities.supportsThinking, true);
   assert.equal(capabilities.supportsImages, false);
   assert.equal(capabilities.toolSchemaFormat, 'openai-compatible');
+  assert.equal(capabilities.contextWindowTokens, 1_000_000);
+  assert.equal(capabilities.maxOutputTokens, 384_000);
+  assert.equal(capabilities.defaultThinkingEffort, 'high');
   assert.equal(selectPreferredBackgroundModelId(capabilities), 'deepseek/deepseek-v4-flash');
 });
 

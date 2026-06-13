@@ -1,11 +1,9 @@
-import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
+import { createDeepSeek } from '@ai-sdk/deepseek';
 import {
   MastraModelGateway,
   type GatewayLanguageModel,
   type ProviderConfig,
 } from '@mastra/core/llm';
-
-import { deepseekReasoningFetch } from './deepseek-reasoning-fetch.js';
 
 // ---------------------------------------------------------------------------
 // 常量
@@ -213,14 +211,15 @@ export class DeepSeekMastraGateway extends MastraModelGateway {
       throw new Error('[deepseek-mastra-gateway] modelId 不能为空。');
     }
 
-    return createOpenAICompatible({
-      name: args.providerId,
+    // 官方 @ai-sdk/deepseek provider 原生处理 thinking 模式下的 reasoning_content
+    // 回传（vercel/ai#10778 / #10785）、将 reasoning 作为一等流式分片输出，并
+    // 通过 providerMetadata.deepseek 暴露 promptCacheHit/MissTokens。因此不再需要
+    // 自定义 fetch shim 手工 capture / inject reasoning_content。
+    return createDeepSeek({
       apiKey: effectiveApiKey,
       baseURL: this.baseUrl,
       ...(args.headers ? { headers: args.headers } : {}),
-      fetch: deepseekReasoningFetch,
-      supportsStructuredOutputs: true,
-    }).chatModel(nativeModelId);
+    }).chat(nativeModelId);
   }
 
   override serializeForSpan(): {

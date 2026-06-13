@@ -91,8 +91,8 @@ const PROVIDER_DEFAULTS: Readonly<Record<string, IProviderCapabilityDefaults>> =
     supportsThinking: true,
     supportsNetworkTools: false,
     supportsPromptCacheKey: false,
-    contextWindowTokens: 128_000,
-    maxOutputTokens: 64_000,
+    contextWindowTokens: 1_000_000,
+    maxOutputTokens: 384_000,
     toolSchemaFormat: 'openai-compatible',
     preferredSmallModelId: 'deepseek/deepseek-v4-flash',
   },
@@ -225,6 +225,13 @@ const resolveDefaultThinkingEffort = (
   }
   if (provider === 'anthropic' && isAnthropicThinkingModel(model)) {
     return 'medium';
+  }
+  // DeepSeek V4 hybrid-thinking models accept low|medium|high|xhigh|max; per
+  // DeepSeek's docs low/medium collapse to high server-side, so 'high' is the
+  // lowest effort that is actually honored. This matches Zed's into_deepseek
+  // default (reasoning_effort = High).
+  if (provider === 'deepseek') {
+    return 'high';
   }
   return undefined;
 };
