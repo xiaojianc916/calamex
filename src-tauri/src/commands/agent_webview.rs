@@ -1,31 +1,32 @@
-//! 内置浏览器的「原生承载」实现(阶段1:后端骨架)。
+//! Built-in browser native hosting + CDP control plane.
 //!
-//! 方案:用 Tauri 官方 multiwebview 能力(`Window::add_child`,需 `tauri/unstable`)
-//! 把侧边栏内置浏览器做成主窗口的一个**子 webview**;配合**独立 user-data-folder**
-//! 让它跑在独立的 WebView2 进程/环境里,并通过 `additional_browser_args` 打开
-//! **独立的 CDP 远程调试端口**(默认绑 127.0.0.1)。这样:
-//!   - CDP 端口只存在于 agent 浏览器进程上,主 UI 进程没有调试端口 → agent 物理上够不到主 UI(硬隔离);
-//!   - 全程走框架配置,**不手写 COM**;
-//!   - agent-sidecar 用 Playwright/Mastra `connectOverCDP(ws://127.0.0.1:<port>)` 驱动它。
+//! Hosting: Tauri multiwebview child webview (Window::add_child, needs tauri/unstable)
+//! with an isolated user-data-folder and a CDP remote-debugging port.
 //!
-//! 门控:真实实现编译在 `native_webview` feature 之下;默认构建编译为「返回错误」的 stub,
-//! 因此命令可无条件注册(生成的 TS 绑定始终存在),而默认 `main` 构建零影响、整步可逆。
+//! CDP control plane (final design): after the webview is created, the backend opens a
+//! persistent chromiumoxide connection (Browser::connect(http://127.0.0.1:<port>) auto-resolves
+//! the webSocketDebuggerUrl from /json/version). It powers:
+//!   - back/forward = Page.getNavigationHistory + Page.navigateToHistoryEntry (real history),
+//!   - reload = Page.reload,
+//!   - console = subscribe Runtime.consoleAPICalled + Log.entryAdded,
+//!   - navigation state = subscribe Page.frameNavigated -> recompute url + canGoBack/canGoForward.
+//! The CDP connection is initiated from Rust (frontend never touches ws://, CSP unchanged).
+//!
+//! Gating: real impl compiles under `native_webview`; default build is an error stub.
+//! Event structs compile unconditionally so generated TS bindings always exist.
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use tauri::AppHandle;
 
-/// 内置浏览器子 webview 的唯一 label(全应用范围内唯一)。
 #[cfg(feature = "native_webview")]
 const AGENT_WEBVIEW_LABEL: &str = "agent-browser";
 
-/// 宿主主窗口 label(与 main.rs 的 MAIN_WINDOW_LABEL 保持一致)。
 #[cfg(feature = "native_webview")]
 const HOST_WINDOW_LABEL: &str = "main";
 
-/// wry 注入的默认 WebView2 参数。
-/// 注意:设置 `additional_browser_args` 会**整体覆盖** wry 默认值,不带上会触发
-/// WebView2 白屏(tauri#13092 / WebView2Feedback#3704),所以必须把默认值一起追加回去。
+// Default wry browser args; additional_browser_args overrides defaults entirely, so we must
+// re-append them or WebView2 white-screens.
 #[cfg(feature = "native_webview")]
 const WRY_DEFAULT_BROWSER_ARGS: &str =
     "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection";
@@ -33,17 +34,11 @@ const WRY_DEFAULT_BROWSER_ARGS: &str =
 #[derive(Debug, Deserialize, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentWebviewCreateInput {
-    /// 初始加载的 URL。
     pub url: String,
-    /// CDP 远程调试端口(默认绑 127.0.0.1)。agent-sidecar 用它 connectOverCDP。
     pub remote_debugging_port: u16,
-    /// 相对宿主窗口左上角的逻辑横坐标(CSS 像素),来自前端占位元素 getBoundingClientRect。
     pub x: f64,
-    /// 相对宿主窗口左上角的逻辑纵坐标(CSS 像素)。
     pub y: f64,
-    /// 逻辑宽度(CSS 像素)。
     pub width: f64,
-    /// 逻辑高度(CSS 像素)。
     pub height: f64,
 }
 
@@ -68,9 +63,311 @@ pub struct AgentWebviewNavigateInput {
     pub url: String,
 }
 
-/// 通过设置顶层 `location` 实现导航。
-/// `Webview` 句柄没有 `navigate()`,但 `eval` 是宿主级 JS 注入,对跨域页面同样生效。
-/// 用 serde_json 序列化 URL,避免 JS 注入。
+// === CDP event payloads (compiled unconditionally for TS bindings) ===
+
+/// Main-frame navigation completed -> push latest url + back/forward availability.
+#[derive(Debug, Clone, Deserialize, Serialize, Type, tauri_specta::Event)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentWebviewNavigatedEvent {
+    pub url: String,
+    pub can_go_back: bool,
+    pub can_go_forward: bool,
+}
+
+/// One console line (console.* call or browser-level log entry).
+#[derive(Debug, Clone, Deserialize, Serialize, Type, tauri_specta::Event)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentWebviewConsoleEvent {
+    /// "log" | "warn" | "error"
+    pub level: String,
+    pub message: String,
+    /// epoch milliseconds
+    pub timestamp: f64,
+}
+
+// === CDP session (native_webview only) ===
+
+#[cfg(feature = "native_webview")]
+struct CdpSession {
+    // Keep the connection alive; dropping Browser closes CDP.
+    _browser: chromiumoxide::Browser,
+    page: chromiumoxide::Page,
+    // handler driver + 3 listener tasks; aborted on teardown.
+    tasks: Vec<tauri::async_runtime::JoinHandle<()>>,
+}
+
+#[cfg(feature = "native_webview")]
+fn cdp_session() -> &'static tokio::sync::Mutex<Option<CdpSession>> {
+    static SESSION: std::sync::OnceLock<tokio::sync::Mutex<Option<CdpSession>>> =
+        std::sync::OnceLock::new();
+    SESSION.get_or_init(|| tokio::sync::Mutex::new(None))
+}
+
+#[cfg(feature = "native_webview")]
+fn now_ms() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as f64)
+        .unwrap_or(0.0)
+}
+
+// Map console.* type -> frontend level via serde string (avoids depending on enum variant idents).
+#[cfg(feature = "native_webview")]
+fn map_console_level(
+    ty: &chromiumoxide::cdp::js_protocol::runtime::ConsoleApiCalledType,
+) -> &'static str {
+    match serde_json::to_value(ty)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_string))
+        .as_deref()
+    {
+        Some("error") | Some("assert") => "error",
+        Some("warning") => "warn",
+        _ => "log",
+    }
+}
+
+#[cfg(feature = "native_webview")]
+fn map_log_level(level: &chromiumoxide::cdp::browser_protocol::log::LogEntryLevel) -> &'static str {
+    match serde_json::to_value(level)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_string))
+        .as_deref()
+    {
+        Some("error") => "error",
+        Some("warning") => "warn",
+        _ => "log",
+    }
+}
+
+// Join console args into one line via serialized JSON (stable CDP keys).
+#[cfg(feature = "native_webview")]
+fn stringify_console_args(
+    args: &[chromiumoxide::cdp::js_protocol::runtime::RemoteObject],
+) -> String {
+    let mut parts = Vec::with_capacity(args.len());
+    for arg in args {
+        let v = serde_json::to_value(arg).unwrap_or(serde_json::Value::Null);
+        let part = if let Some(val) = v.get("value") {
+            match val {
+                serde_json::Value::String(s) => s.clone(),
+                other => other.to_string(),
+            }
+        } else if let Some(desc) = v.get("description").and_then(|d| d.as_str()) {
+            desc.to_string()
+        } else if let Some(ty) = v.get("type").and_then(|t| t.as_str()) {
+            ty.to_string()
+        } else {
+            String::new()
+        };
+        parts.push(part);
+    }
+    parts.join(" ")
+}
+
+// Query navigation history -> emit navigated event (url + canGoBack/canGoForward).
+#[cfg(feature = "native_webview")]
+async fn emit_navigated(app: &AppHandle, page: &chromiumoxide::Page) {
+    use chromiumoxide::cdp::browser_protocol::page::GetNavigationHistoryParams;
+    use tauri_specta::Event;
+
+    if let Ok(resp) = page.execute(GetNavigationHistoryParams::default()).await {
+        let hist = resp.result;
+        let idx = hist.current_index;
+        let len = hist.entries.len() as i64;
+        let url = hist
+            .entries
+            .get(idx.max(0) as usize)
+            .map(|e| e.url.clone())
+            .unwrap_or_default();
+        let _ = AgentWebviewNavigatedEvent {
+            url,
+            can_go_back: idx > 0,
+            can_go_forward: idx + 1 < len,
+        }
+        .emit(app);
+    }
+}
+
+// Establish persistent CDP session (background task, with retries: debug port needs a moment).
+#[cfg(feature = "native_webview")]
+async fn establish_cdp_session(app: AppHandle, port: u16) {
+    use futures::StreamExt;
+
+    // Drop any stale session first.
+    {
+        let mut guard = cdp_session().lock().await;
+        if let Some(old) = guard.take() {
+            for t in old.tasks {
+                t.abort();
+            }
+        }
+    }
+
+    let url = format!("http://127.0.0.1:{port}");
+    let mut connected = None;
+    for _ in 0..40 {
+        match chromiumoxide::Browser::connect(url.clone()).await {
+            Ok(pair) => {
+                connected = Some(pair);
+                break;
+            }
+            Err(_) => tokio::time::sleep(std::time::Duration::from_millis(250)).await,
+        }
+    }
+    let (browser, mut handler) = match connected {
+        Some(pair) => pair,
+        None => {
+            tracing::warn!(event = "agent_webview.cdp.connect_timeout", port = port);
+            return;
+        }
+    };
+
+    let handler_task = tauri::async_runtime::spawn(async move {
+        while handler.next().await.is_some() {}
+    });
+
+    let mut page_opt = None;
+    for _ in 0..40 {
+        if let Ok(pages) = browser.pages().await {
+            if let Some(first) = pages.into_iter().next() {
+                page_opt = Some(first);
+                break;
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+    let page = match page_opt {
+        Some(p) => p,
+        None => {
+            tracing::warn!(event = "agent_webview.cdp.no_page");
+            handler_task.abort();
+            return;
+        }
+    };
+
+    // Enable Runtime/Log/Page domains so the events fire.
+    let _ = page
+        .execute(chromiumoxide::cdp::js_protocol::runtime::EnableParams::default())
+        .await;
+    let _ = page
+        .execute(chromiumoxide::cdp::browser_protocol::log::EnableParams::default())
+        .await;
+    let _ = page
+        .execute(chromiumoxide::cdp::browser_protocol::page::EnableParams::default())
+        .await;
+
+    let mut tasks = vec![handler_task];
+
+    // console.* calls
+    {
+        let app = app.clone();
+        let page = page.clone();
+        tasks.push(tauri::async_runtime::spawn(async move {
+            use tauri_specta::Event;
+            if let Ok(mut stream) = page
+                .event_listener::<chromiumoxide::cdp::js_protocol::runtime::EventConsoleApiCalled>()
+                .await
+            {
+                while let Some(ev) = stream.next().await {
+                    let _ = AgentWebviewConsoleEvent {
+                        level: map_console_level(&ev.r#type).to_string(),
+                        message: stringify_console_args(&ev.args),
+                        timestamp: now_ms(),
+                    }
+                    .emit(&app);
+                }
+            }
+        }));
+    }
+
+    // browser-level log entries (network errors, CSP, deprecations)
+    {
+        let app = app.clone();
+        let page = page.clone();
+        tasks.push(tauri::async_runtime::spawn(async move {
+            use tauri_specta::Event;
+            if let Ok(mut stream) = page
+                .event_listener::<chromiumoxide::cdp::browser_protocol::log::EventEntryAdded>()
+                .await
+            {
+                while let Some(ev) = stream.next().await {
+                    let _ = AgentWebviewConsoleEvent {
+                        level: map_log_level(&ev.entry.level).to_string(),
+                        message: ev.entry.text.clone(),
+                        timestamp: now_ms(),
+                    }
+                    .emit(&app);
+                }
+            }
+        }));
+    }
+
+    // main-frame navigation -> recompute url + canGoBack/canGoForward
+    {
+        let app = app.clone();
+        let page = page.clone();
+        tasks.push(tauri::async_runtime::spawn(async move {
+            use futures::StreamExt;
+            if let Ok(mut stream) = page
+                .event_listener::<chromiumoxide::cdp::browser_protocol::page::EventFrameNavigated>()
+                .await
+            {
+                while let Some(ev) = stream.next().await {
+                    let frame = serde_json::to_value(&ev.frame).unwrap_or(serde_json::Value::Null);
+                    let is_main_frame = match frame.get("parentId") {
+                        None => true,
+                        Some(v) => v.is_null(),
+                    };
+                    if is_main_frame {
+                        emit_navigated(&app, &page).await;
+                    }
+                }
+            }
+        }));
+    }
+
+    // initial state so buttons start correct
+    emit_navigated(&app, &page).await;
+
+    let mut guard = cdp_session().lock().await;
+    *guard = Some(CdpSession {
+        _browser: browser,
+        page,
+        tasks,
+    });
+}
+
+// CDP history jump (delta=-1 back, +1 forward). Out-of-range is a silent success.
+#[cfg(feature = "native_webview")]
+async fn cdp_history_go(delta: i64) -> Result<(), String> {
+    use chromiumoxide::cdp::browser_protocol::page::{
+        GetNavigationHistoryParams, NavigateToHistoryEntryParams,
+    };
+    let guard = cdp_session().lock().await;
+    let session = guard
+        .as_ref()
+        .ok_or_else(|| "CDP session not ready (browser still connecting)".to_string())?;
+    let resp = session
+        .page
+        .execute(GetNavigationHistoryParams::default())
+        .await
+        .map_err(|e| format!("getNavigationHistory failed: {e}"))?;
+    let hist = resp.result;
+    let target = hist.current_index + delta;
+    if target < 0 || target >= hist.entries.len() as i64 {
+        return Ok(());
+    }
+    let entry_id = hist.entries[target as usize].id;
+    session
+        .page
+        .execute(NavigateToHistoryEntryParams::new(entry_id))
+        .await
+        .map_err(|e| format!("navigateToHistoryEntry failed: {e}"))?;
+    Ok(())
+}
+
+// Webview handle has no navigate(); eval is host-level injection that works cross-origin.
 #[cfg(feature = "native_webview")]
 fn navigate_via_eval(webview: &tauri::webview::Webview, url: &str) -> Result<(), String> {
     let encoded = serde_json::to_string(url).map_err(|e| format!("serialize url failed: {e}"))?;
@@ -80,8 +377,7 @@ fn navigate_via_eval(webview: &tauri::webview::Webview, url: &str) -> Result<(),
         .map_err(|e| format!("navigate eval failed: {e}"))
 }
 
-/// 创建(或复用)内置浏览器子 webview。
-/// 幂等:若已存在则只更新位置/尺寸并导航,不重复创建。
+/// Create (or reuse) the child webview and start the CDP control plane. Idempotent.
 #[tauri::command]
 #[specta::specta]
 pub async fn agent_webview_create(
@@ -101,7 +397,6 @@ pub async fn agent_webview_create(
             traceId = trace,
         );
 
-        // 已存在 -> 复用:更新 bounds + 导航,避免重复创建。
         if let Some(existing) = app.get_webview(AGENT_WEBVIEW_LABEL) {
             existing
                 .set_position(LogicalPosition::new(input.x, input.y))
@@ -113,14 +408,10 @@ pub async fn agent_webview_create(
             return Ok(());
         }
 
-        // WebviewWindow 没有公开的 window() 方法(window 是私有字段);
-        // 直接用 Manager::get_window(label) 拿宿主 Window 用于 add_child。
         let window = app
             .get_window(HOST_WINDOW_LABEL)
             .ok_or_else(|| format!("host window `{HOST_WINDOW_LABEL}` not found"))?;
 
-        // 独立 user-data-folder -> 独立 WebView2 进程/环境 -> CDP 端口只开在该进程上,
-        // 主 UI 进程没有调试端口,实现与主 UI 的硬隔离。
         let profile_dir = app
             .path()
             .app_local_data_dir()
@@ -132,8 +423,6 @@ pub async fn agent_webview_create(
             .parse()
             .map_err(|e| format!("invalid url `{}`: {e}", input.url))?;
 
-        // 必须把 wry 默认参数一起追加(否则白屏);
-        // --remote-debugging-port 默认绑 127.0.0.1;--remote-allow-origins=* 让 CDP 客户端可连(Chromium 111+ 要求)。
         let browser_args = format!(
             "{WRY_DEFAULT_BROWSER_ARGS} --remote-debugging-port={} --remote-allow-origins=*",
             input.remote_debugging_port
@@ -152,20 +441,23 @@ pub async fn agent_webview_create(
             )
             .map_err(|e| format!("add_child failed: {e}"))?;
 
+        let cdp_app = app.clone();
+        let cdp_port = input.remote_debugging_port;
+        tauri::async_runtime::spawn(async move {
+            establish_cdp_session(cdp_app, cdp_port).await;
+        });
+
         Ok(())
     }
 
     #[cfg(not(feature = "native_webview"))]
     {
         let _ = (&app, &input, &trace_id);
-        Err(
-            "native_webview feature is disabled; rebuild with `--features native_webview`"
-                .to_string(),
-        )
+        Err("native_webview feature is disabled; rebuild with `--features native_webview`".to_string())
     }
 }
 
-/// 同步子 webview 的位置/尺寸(阶段2 由前端占位元素 ResizeObserver 驱动)。
+/// Sync child webview bounds.
 #[tauri::command]
 #[specta::specta]
 pub async fn agent_webview_set_bounds(
@@ -192,14 +484,11 @@ pub async fn agent_webview_set_bounds(
     #[cfg(not(feature = "native_webview"))]
     {
         let _ = (&app, &input, &trace_id);
-        Err(
-            "native_webview feature is disabled; rebuild with `--features native_webview`"
-                .to_string(),
-        )
+        Err("native_webview feature is disabled; rebuild with `--features native_webview`".to_string())
     }
 }
 
-/// 显示/隐藏子 webview(切走侧边栏、最小化、关闭时用)。
+/// Show/hide the child webview.
 #[tauri::command]
 #[specta::specta]
 pub async fn agent_webview_set_visible(
@@ -225,14 +514,11 @@ pub async fn agent_webview_set_visible(
     #[cfg(not(feature = "native_webview"))]
     {
         let _ = (&app, &input, &trace_id);
-        Err(
-            "native_webview feature is disabled; rebuild with `--features native_webview`"
-                .to_string(),
-        )
+        Err("native_webview feature is disabled; rebuild with `--features native_webview`".to_string())
     }
 }
 
-/// 导航到新 URL(地址栏 / 前进后退用)。
+/// Navigate to a new URL (address bar).
 #[tauri::command]
 #[specta::specta]
 pub async fn agent_webview_navigate(
@@ -253,29 +539,18 @@ pub async fn agent_webview_navigate(
     #[cfg(not(feature = "native_webview"))]
     {
         let _ = (&app, &input, &trace_id);
-        Err(
-            "native_webview feature is disabled; rebuild with `--features native_webview`"
-                .to_string(),
-        )
+        Err("native_webview feature is disabled; rebuild with `--features native_webview`".to_string())
     }
 }
 
-/// 后退一步(地址栏后退按钮)。
-/// CDP 化之前先用宿主级 `eval` 调用标准 History API:`eval` 对跨域外部页同样生效,
-/// 零新依赖即可让按钮即时可用。canGoBack/canGoForward 的禁用态留待 CDP 阶段补齐。
+/// Back one entry (CDP real history).
 #[tauri::command]
 #[specta::specta]
 pub async fn agent_webview_back(app: AppHandle, trace_id: Option<String>) -> Result<(), String> {
     #[cfg(feature = "native_webview")]
     {
-        use tauri::Manager;
-        let _ = &trace_id;
-        let webview = app
-            .get_webview(AGENT_WEBVIEW_LABEL)
-            .ok_or_else(|| "agent webview not found".to_string())?;
-        webview
-            .eval("window.history.back();")
-            .map_err(|e| format!("history.back eval failed: {e}"))
+        let _ = (&app, &trace_id);
+        cdp_history_go(-1).await
     }
 
     #[cfg(not(feature = "native_webview"))]
@@ -285,20 +560,14 @@ pub async fn agent_webview_back(app: AppHandle, trace_id: Option<String>) -> Res
     }
 }
 
-/// 前进一步(地址栏前进按钮)。
+/// Forward one entry (CDP real history).
 #[tauri::command]
 #[specta::specta]
 pub async fn agent_webview_forward(app: AppHandle, trace_id: Option<String>) -> Result<(), String> {
     #[cfg(feature = "native_webview")]
     {
-        use tauri::Manager;
-        let _ = &trace_id;
-        let webview = app
-            .get_webview(AGENT_WEBVIEW_LABEL)
-            .ok_or_else(|| "agent webview not found".to_string())?;
-        webview
-            .eval("window.history.forward();")
-            .map_err(|e| format!("history.forward eval failed: {e}"))
+        let _ = (&app, &trace_id);
+        cdp_history_go(1).await
     }
 
     #[cfg(not(feature = "native_webview"))]
@@ -308,20 +577,23 @@ pub async fn agent_webview_forward(app: AppHandle, trace_id: Option<String>) -> 
     }
 }
 
-/// 刷新当前页(替代前端 refreshKey 重建,直接命中原生页)。
+/// Reload current page (CDP Page.reload).
 #[tauri::command]
 #[specta::specta]
 pub async fn agent_webview_reload(app: AppHandle, trace_id: Option<String>) -> Result<(), String> {
     #[cfg(feature = "native_webview")]
     {
-        use tauri::Manager;
-        let _ = &trace_id;
-        let webview = app
-            .get_webview(AGENT_WEBVIEW_LABEL)
-            .ok_or_else(|| "agent webview not found".to_string())?;
-        webview
-            .eval("window.location.reload();")
-            .map_err(|e| format!("location.reload eval failed: {e}"))
+        let _ = (&app, &trace_id);
+        let guard = cdp_session().lock().await;
+        let session = guard
+            .as_ref()
+            .ok_or_else(|| "CDP session not ready (browser still connecting)".to_string())?;
+        session
+            .page
+            .reload()
+            .await
+            .map_err(|e| format!("reload failed: {e}"))?;
+        Ok(())
     }
 
     #[cfg(not(feature = "native_webview"))]
@@ -331,8 +603,7 @@ pub async fn agent_webview_reload(app: AppHandle, trace_id: Option<String>) -> R
     }
 }
 
-/// 在系统默认浏览器中打开指定 URL(官方 tauri-plugin-opener;从 Rust 侧调用,无需额外前端授权)。
-/// 与原生承载无关,不门控在 native_webview 之下。
+/// Open the given URL in the system default browser (official tauri-plugin-opener, Rust-side).
 #[tauri::command]
 #[specta::specta]
 pub async fn agent_webview_open_external(
@@ -347,7 +618,7 @@ pub async fn agent_webview_open_external(
         .map_err(|e| format!("open_url failed: {e}"))
 }
 
-/// 销毁子 webview(整步可逆:关闭即回到无原生承载状态)。幂等:不存在则视作成功。
+/// Destroy the child webview and tear down the CDP session. Idempotent.
 #[tauri::command]
 #[specta::specta]
 pub async fn agent_webview_destroy(app: AppHandle, trace_id: Option<String>) -> Result<(), String> {
@@ -358,15 +629,18 @@ pub async fn agent_webview_destroy(app: AppHandle, trace_id: Option<String>) -> 
         if let Some(webview) = app.get_webview(AGENT_WEBVIEW_LABEL) {
             webview.close().map_err(|e| format!("close failed: {e}"))?;
         }
+        let mut guard = cdp_session().lock().await;
+        if let Some(session) = guard.take() {
+            for t in session.tasks {
+                t.abort();
+            }
+        }
         Ok(())
     }
 
     #[cfg(not(feature = "native_webview"))]
     {
         let _ = (&app, &trace_id);
-        Err(
-            "native_webview feature is disabled; rebuild with `--features native_webview`"
-                .to_string(),
-        )
+        Err("native_webview feature is disabled; rebuild with `--features native_webview`".to_string())
     }
 }
