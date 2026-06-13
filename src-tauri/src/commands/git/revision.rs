@@ -4,6 +4,7 @@
 //! 把目标提交 C 的改动反向应用到工作区与索引，让用户自行检查后提交。
 //! 前提：工作区干净（等价于 ours == HEAD == base），因此所有改动均可无冲突落地。
 use super::*;
+use super::worktree_io::*;
 use gix::bstr::ByteSlice;
 
 #[derive(Debug, Deserialize, specta::Type)]
@@ -86,14 +87,14 @@ pub fn revert_git_commit(
                     continue;
                 }
                 let path = location.to_str_lossy().into_owned();
-                let mode = revert_resolve_mode(entry_mode);
-                revert_write_blob(&repository, &repository_root, &path, id, mode)?;
-                revert_upsert_index(&mut index, &path, id, mode);
+                let mode = index_mode_from_tree_mode(entry_mode);
+                restore_worktree_from_index_blob(&repository, &repository_root, &path, id, mode)?;
+                upsert_index_entry(&mut index, &path, id, mode);
             }
             Change::Deletion { location, .. } => {
                 let path = location.to_str_lossy().into_owned();
-                revert_remove_worktree(&repository_root, &path);
-                revert_remove_index(&mut index, &path);
+                remove_worktree_path(&repository_root, &path);
+                remove_index_path(&mut index, &path);
             }
             Change::Modification {
                 location,
@@ -105,9 +106,9 @@ pub fn revert_git_commit(
                     continue;
                 }
                 let path = location.to_str_lossy().into_owned();
-                let mode = revert_resolve_mode(entry_mode);
-                revert_write_blob(&repository, &repository_root, &path, id, mode)?;
-                revert_upsert_index(&mut index, &path, id, mode);
+                let mode = index_mode_from_tree_mode(entry_mode);
+                restore_worktree_from_index_blob(&repository, &repository_root, &path, id, mode)?;
+                upsert_index_entry(&mut index, &path, id, mode);
             }
             Change::Rewrite {
                 source_location,
@@ -117,13 +118,13 @@ pub fn revert_git_commit(
                 ..
             } => {
                 let source = source_location.to_str_lossy().into_owned();
-                revert_remove_worktree(&repository_root, &source);
-                revert_remove_index(&mut index, &source);
+                remove_worktree_path(&repository_root, &source);
+                remove_index_path(&mut index, &source);
                 if !(entry_mode.is_tree() || entry_mode.is_commit()) {
                     let path = location.to_str_lossy().into_owned();
-                    let mode = revert_resolve_mode(entry_mode);
-                    revert_write_blob(&repository, &repository_root, &path, id, mode)?;
-                    revert_upsert_index(&mut index, &path, id, mode);
+                    let mode = index_mode_from_tree_mode(entry_mode);
+                    restore_worktree_from_index_blob(&repository, &repository_root, &path, id, mode)?;
+                    upsert_index_entry(&mut index, &path, id, mode);
                 }
             }
         }
@@ -145,80 +146,4 @@ fn revert_change_order(change: &gix::diff::tree_with_rewrites::Change) -> u8 {
         Change::Rewrite { .. } => 1,
         _ => 2,
     }
-}
-
-fn revert_resolve_mode(entry_mode: gix::objs::tree::EntryMode) -> gix::index::entry::Mode {
-    use gix::index::entry::Mode;
-    if entry_mode.is_link() {
-        Mode::SYMLINK
-    } else if entry_mode.is_executable() {
-        Mode::FILE_EXECUTABLE
-    } else {
-        Mode::FILE
-    }
-}
-
-/// blob 写入工作区（兼容符号链接与可执行位）。
-fn revert_write_blob(
-    repository: &Repository,
-    repository_root: &Path,
-    relative_path: &str,
-    object_id: gix::ObjectId,
-    mode: gix::index::entry::Mode,
-) -> Result<(), String> {
-    use gix::index::entry::Mode;
-    let object = repository
-        .find_object(object_id)
-        .map_err(|error| format!("读取 Git 对象失败：{error}"))?;
-    let bytes = object.data.as_slice();
-    let target = repository_root.join(Path::new(relative_path));
-    if let Some(parent) = target.parent() {
-        fs::create_dir_all(parent).map_err(|error| format!("创建目录失败：{error}"))?;
-    }
-    if mode == Mode::SYMLINK {
-        let link_target = String::from_utf8_lossy(bytes).into_owned();
-        let _ = fs::remove_file(&target);
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(&link_target, &target)
-            .map_err(|error| format!("创建符号链接失败：{error}"))?;
-        #[cfg(windows)]
-        fs::write(&target, link_target.as_bytes())
-            .map_err(|error| format!("写入符号链接占位失败：{error}"))?;
-    } else {
-        let _ = fs::remove_file(&target);
-        fs::write(&target, bytes).map_err(|error| format!("写入工作区文件失败：{error}"))?;
-        #[cfg(unix)]
-        if mode == Mode::FILE_EXECUTABLE {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = fs::set_permissions(&target, fs::Permissions::from_mode(0o755));
-        }
-    }
-    Ok(())
-}
-
-/// 从工作区删除指定路径（忽略不存在的情况）。
-fn revert_remove_worktree(repository_root: &Path, relative_path: &str) {
-    let target = repository_root.join(Path::new(relative_path));
-    if fs::symlink_metadata(&target).is_ok() {
-        let _ = fs::remove_file(&target);
-    }
-}
-
-/// 插入或替换 stage-0 索引条目。
-fn revert_upsert_index(
-    index: &mut gix::index::File,
-    relative_path: &str,
-    object_id: gix::ObjectId,
-    mode: gix::index::entry::Mode,
-) {
-    use gix::index::entry::{Flags, Stat};
-    revert_remove_index(index, relative_path);
-    let path = gix::bstr::BStr::new(relative_path.as_bytes());
-    let flags = Flags::from_bits_retain(relative_path.len().min(0xFFF) as _);
-    index.dangerously_push_entry(Stat::default(), object_id, flags, mode, path);
-}
-
-/// 从索引中移除指定路径的所有条目（含冲突阶段）。
-fn revert_remove_index(index: &mut gix::index::File, relative_path: &str) {
-    index.remove_entries(|_, entry_path, _| entry_path.to_str_lossy().as_ref() == relative_path);
 }

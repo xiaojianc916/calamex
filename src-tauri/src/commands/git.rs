@@ -14,6 +14,7 @@ pub(crate) mod pull_request;
 pub(crate) mod revision;
 pub(crate) mod stash;
 pub(crate) mod status;
+pub(crate) mod worktree_io;
 
 #[cfg(test)]
 mod tests;
@@ -331,7 +332,7 @@ pub struct GitRemoteSetRequest {
     remote_url: String,
 }
 
-// ── commit file diff ──────────────────────────────────────────────────────────
+// ── commit file diff ──────────────────────────────────────────────────
 #[derive(Debug, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct GitCommitFileDiffRequest {
@@ -369,7 +370,7 @@ pub struct GitCommitFileDiffPayload {
     is_binary: bool,
     is_empty: bool,
 }
-// ─────────────────────────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────────
 
 fn open_repository_from_root(root: &str) -> Result<Repository, String> {
     let root = normalize_path_for_git(Path::new(root));
