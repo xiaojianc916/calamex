@@ -14,6 +14,8 @@ pub fn builder() -> Builder<tauri::Wry> {
         .events(collect_events![
             workspace_watcher::WorkspaceFsEvent,
             search::WorkspaceSearchStreamEvent,
+            agent_webview::AgentWebviewNavigatedEvent,
+            agent_webview::AgentWebviewConsoleEvent,
         ])
         .commands(collect_commands![
             script_run::detect_execution_environment,
