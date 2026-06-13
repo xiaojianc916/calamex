@@ -1,12 +1,12 @@
 import type {
   IAiAgentClassifyTaskPayload,
   IAiAgentClassifyTaskRequest,
+  IAiCancelRequest,
   IAiAgentNetworkPermissionPayload,
   IAiAgentSetNetworkPermissionRequest,
   IAiApplyPatchPayload,
   IAiApplyPatchRequest,
   IAiChatRequest,
-  IAiChatStreamEventPayload,
   IAiChatStreamPayload,
   IAiConfigPayload,
   IAiConversationTitlePayload,
@@ -283,8 +283,7 @@ export interface ITauriService {
     payload: IAgentSidecarApprovalResolveRequest,
   ): Promise<IAgentSidecarResponsePayload>;
   agentSidecarRestoreCheckpoint(
-    payload: IAgentSidecarCheckpointRestoreRequest,
-  ): Promise<IAgentSidecarResponsePayload>;
+    payload: IAgentSidecarCheckpointRestoreRequest): Promise<IAgentSidecarResponsePayload>;
   agentSidecarOrchestrate(
     payload: IAgentSidecarOrchestrateRequest,
   ): Promise<IAgentSidecarOrchestratePayload>;
@@ -379,8 +378,7 @@ export interface ITauriService {
   aiGetSuggestionPoolCache(): Promise<IAiSuggestionPoolPayload | null>;
   aiGenerateSuggestionPool(payload: IAiSuggestionPoolRequest): Promise<IAiSuggestionPoolPayload>;
   aiChatStream(payload: IAiChatRequest): Promise<IAiChatStreamPayload>;
-  aiCancel(payload: { streamId: string }): Promise<void>;
-  onAiChatStream(handler: (payload: IAiChatStreamEventPayload) => void): Promise<() => void>;
+  aiCancel(payload: IAiCancelRequest): Promise<void>;
   aiInlineComplete(payload: IAiInlineCompletionRequest): Promise<IAiInlineCompletionResult>;
   aiAgentClassifyTask(payload: IAiAgentClassifyTaskRequest): Promise<IAiAgentClassifyTaskPayload>;
   aiWebSearch(payload: IAiWebSearchInput): Promise<IAiWebSearchPayload>;

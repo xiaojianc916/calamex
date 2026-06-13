@@ -8,7 +8,6 @@ import type {
   IAiApplyPatchRequest,
   IAiCancelRequest,
   IAiChatRequest,
-  IAiChatStreamEventPayload,
   IAiChatStreamPayload,
   IAiConfigPayload,
   IAiConversationTitlePayload,
@@ -260,9 +259,6 @@ export const aiService = {
   },
   cancel(payload: IAiCancelRequest): Promise<void> {
     return tauriService.aiCancel(payload);
-  },
-  onChatStream(handler: (payload: IAiChatStreamEventPayload) => void): Promise<() => void> {
-    return tauriService.onAiChatStream(handler);
   },
   inlineComplete(payload: IAiInlineCompletionRequest): Promise<IAiInlineCompletionResult> {
     return tauriService.aiInlineComplete(payload);

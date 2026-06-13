@@ -1,22 +1,20 @@
 import { commands } from '@/bindings/tauri';
-import { aiChatStreamEventPayloadSchema } from '@/types/ai/schema';
 import type { ITauriService } from '@/types/tauri';
-import { assertDesktopRuntime } from '@/utils/desktop-runtime';
 import {
   buildPayloadMetrics,
   buildPayloadMetricsOmittingTextFields,
   measureAiChatInput,
   measureAiInlineCompletionInput,
 } from './tauri.ipc-metrics';
-import { callSpectaCommand, loadTauriEvent } from './tauri.ipc-runtime';
+import { callSpectaCommand } from './tauri.ipc-runtime';
 import type { IIpcCallOptions } from './tauri.ipc-types';
 
 /**
  * AI invoke 层：从手写 Zod 契约迁入 tauri-specta 生成绑定（commands.*）。
  *
  * - 入参 / 出参类型以 Rust 为单一事实源，经 src/bindings/tauri.ts 生成。
- * - 仍保留薄仪表化外壳（callSpectaCommand：审计 / 超时 / 取消 / 错误归一化）。
- * - 流式响应仍由 listen('ai:chat-stream') + Zod safeParse 兜底校验。
+ * - 保留薄仪表化外壳（callSpectaCommand：审计 / 超时 / 取消 / 错误归一化）。
+ * - Chat 流式事件不再走旧 `ai:chat-stream`，统一由 ACP `ai:sidecar-stream` 消费。
  */
 
 type TAiRequest<K extends keyof ITauriService> = Parameters<ITauriService[K]>[0];
@@ -338,7 +336,6 @@ type TAiTauriService = Pick<
   | 'aiGenerateSuggestionPool'
   | 'aiChatStream'
   | 'aiCancel'
-  | 'onAiChatStream'
   | 'aiInlineComplete'
   | 'aiAgentClassifyTask'
   | 'aiAgentSetNetworkPermission'
@@ -372,18 +369,6 @@ export const aiTauriService: TAiTauriService = {
   aiChatStream: aiChatStreamIpc,
 
   aiCancel: aiCancelIpc,
-
-  async onAiChatStream(handler) {
-    await assertDesktopRuntime('监听 AI 流式响应');
-    const { listen } = await loadTauriEvent();
-    return listen('ai:chat-stream', (event) => {
-      const parsed = aiChatStreamEventPayloadSchema.safeParse(event.payload);
-      if (!parsed.success) {
-        return;
-      }
-      handler(parsed.data);
-    });
-  },
 
   aiInlineComplete: aiInlineCompleteIpc,
 
