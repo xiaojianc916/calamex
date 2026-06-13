@@ -51,19 +51,19 @@ import type {
 import type { IGitDiffPreviewRequest } from '@/types/git';
 
 const SourceControlPanel = defineAsyncComponent({
-  loader: () => import('@/components/workbench/SourceControlPanel.vue'),
+  loader: () => import('@/components/workbench/sidebar/source-control/SourceControlPanel.vue'),
   suspensible: false,
 });
 const DeferredSearchSidebarPanel = defineAsyncComponent({
-  loader: () => import('@/components/workbench/SearchSidebarPanel.vue'),
+  loader: () => import('@/components/workbench/sidebar/search/SearchSidebarPanel.vue'),
   suspensible: false,
 });
 const DeferredRunSidebarPanel = defineAsyncComponent({
-  loader: () => import('@/components/workbench/RunSidebarPanel.vue'),
+  loader: () => import('@/components/workbench/sidebar/run/RunSidebarPanel.vue'),
   suspensible: false,
 });
 const DeferredSshSidebarPanel = defineAsyncComponent({
-  loader: () => import('@/components/workbench/SshSidebarPanel.vue'),
+  loader: () => import('@/components/workbench/sidebar/ssh/SshSidebarPanel.vue'),
   suspensible: false,
 });
 
