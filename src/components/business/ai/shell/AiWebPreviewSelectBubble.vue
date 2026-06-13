@@ -1,12 +1,11 @@
 <script setup lang="ts">
 import { XIcon } from '@lucide/vue';
-import { computed, ref } from 'vue';
+import { ref } from 'vue';
 
-const props = defineProps<{
+defineProps<{
   label: string;
   url: string;
   outerHtml: string;
-  screenshotBase64: string;
 }>();
 
 const emit = defineEmits<{
@@ -15,10 +14,6 @@ const emit = defineEmits<{
 }>();
 
 const comment = ref('');
-
-const screenshotSrc = computed(() =>
-  props.screenshotBase64 ? `data:image/png;base64,${props.screenshotBase64}` : '',
-);
 
 const handleSubmit = (): void => {
   emit('submit', comment.value.trim());
@@ -54,10 +49,6 @@ const handleKeydown = (event: KeyboardEvent): void => {
         <XIcon class="size-4" />
       </button>
     </header>
-
-    <figure v-if="screenshotSrc" class="select-bubble__figure">
-      <img class="select-bubble__thumb" :src="screenshotSrc" :alt="label" />
-    </figure>
 
     <pre class="select-bubble__html"><code v-text="outerHtml" /></pre>
 
@@ -141,20 +132,6 @@ const handleKeydown = (event: KeyboardEvent): void => {
 .select-bubble__close:hover {
   background: #f1f5f9;
   color: #0f172a;
-}
-
-.select-bubble__figure {
-  margin: 0;
-  overflow: hidden;
-  border: 1px solid rgba(15, 23, 42, 0.08);
-  border-radius: 10px;
-}
-
-.select-bubble__thumb {
-  display: block;
-  width: 100%;
-  max-height: 160px;
-  object-fit: cover;
 }
 
 .select-bubble__html {
