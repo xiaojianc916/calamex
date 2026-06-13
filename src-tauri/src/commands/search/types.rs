@@ -92,10 +92,10 @@ pub struct WorkspaceSearchResult {
 
 /// 内容搜索流式推送事件。
 ///
-/// 仿照 workspace_watcher::WorkspaceFsEvent，通过手动 impl tauri_specta::Event 让该类型
+/// 仿照 workspace_watcher::WorkspaceFsEvent，通过官方 derive tauri_specta::Event 让该类型
 /// 既出现在生成的 TS 绑定 events.workspaceSearchStreamEvent 中，又提供类型化的 .emit(app)。
-/// 事件名固定为 workspace-search-stream。
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+/// 派生宏默认把 NAME 取为结构体名的 kebab-case，即 workspace-search-stream。
+#[derive(Debug, Clone, Serialize, Deserialize, Type, tauri_specta::Event)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceSearchStreamEvent {
     /// 关联的请求标识，对应 WorkspaceSearchRequest.stream_token；前端据此对账当前在途搜索。
@@ -104,10 +104,6 @@ pub struct WorkspaceSearchStreamEvent {
     pub root_path: String,
     /// 本批次的内容命中（按发现顺序，未做全局排序）。
     pub results: Vec<WorkspaceSearchResult>,
-}
-
-impl tauri_specta::Event for WorkspaceSearchStreamEvent {
-    const NAME: &'static str = "workspace-search-stream";
 }
 
 #[derive(Debug, Deserialize, Clone, Type)]
