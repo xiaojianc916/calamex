@@ -7,7 +7,7 @@ import {
   PanelRightIcon,
   RefreshCcwIcon,
 } from '@lucide/vue';
-import { ref, watch } from 'vue';
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import {
   type IWebPreviewConsoleLog,
   WebPreview,
@@ -17,8 +17,16 @@ import {
   WebPreviewNavigationButton,
   WebPreviewUrl,
 } from '@/components/ai-elements/web-preview';
+import {
+  backAgentWebview,
+  forwardAgentWebview,
+  onAgentWebviewConsole,
+  onAgentWebviewNavigated,
+  openExternalAgentWebview,
+  reloadAgentWebview,
+} from '@/services/ipc/agent-webview.service';
 
-const MAX_CONSOLE_LOGS = 20;
+const MAX_CONSOLE_LOGS = 200;
 
 const props = withDefaults(
   defineProps<{
@@ -37,24 +45,13 @@ const emit = defineEmits<{
 }>();
 
 const previewUrl = ref(props.defaultUrl);
-const refreshKey = ref(0);
-const logs = ref<IWebPreviewConsoleLog[]>([
-  {
-    level: 'log',
-    message: 'Page loaded successfully',
-    timestamp: new Date(Date.now() - 10_000),
-  },
-  {
-    level: 'warn',
-    message: 'Deprecated API usage detected',
-    timestamp: new Date(Date.now() - 5_000),
-  },
-  {
-    level: 'error',
-    message: 'Failed to load resource',
-    timestamp: new Date(),
-  },
-]);
+const canGoBack = ref(false);
+const canGoForward = ref(false);
+const logs = ref<IWebPreviewConsoleLog[]>([]);
+
+type UnlistenFn = () => void;
+let unlistenNavigated: UnlistenFn | null = null;
+let unlistenConsole: UnlistenFn | null = null;
 
 watch(
   () => props.defaultUrl,
@@ -66,50 +63,80 @@ watch(
 );
 
 const appendLog = (level: IWebPreviewConsoleLog['level'], message: string): void => {
-  logs.value = [
-    ...logs.value,
-    {
-      level,
-      message,
-      timestamp: new Date(),
-    },
-  ].slice(-MAX_CONSOLE_LOGS);
+  logs.value = [...logs.value, { level, message, timestamp: new Date() }].slice(-MAX_CONSOLE_LOGS);
 };
+
+// CDP 下发的 level 已规范为 log/warn/error；这里做一次防御性收敛。
+const mapConsoleLevel = (level: string): IWebPreviewConsoleLog['level'] =>
+  level === 'error' ? 'error' : level === 'warn' ? 'warn' : 'log';
 
 const handleUrlChange = (url: string): void => {
   previewUrl.value = url;
-  appendLog('log', `URL changed to: ${url}`);
   emit('url-change', url);
 };
 
-const handleNavigationPlaceholder = (action: string): void => {
-  appendLog('warn', `${action} is not wired yet`);
+const handleBack = (): void => {
+  void backAgentWebview();
+};
+
+const handleForward = (): void => {
+  void forwardAgentWebview();
 };
 
 const handleRefresh = (): void => {
-  refreshKey.value += 1;
-  appendLog('log', 'Preview reloaded');
+  void reloadAgentWebview();
 };
 
 const handleSelect = (): void => {
-  appendLog('log', 'Select mode requested');
   emit('select', previewUrl.value);
 };
 
 const handleOpenExternal = (): void => {
-  appendLog('log', 'Open in new tab requested');
-  emit('open-external', previewUrl.value);
+  const url = previewUrl.value;
+  if (url) {
+    void openExternalAgentWebview({ url });
+  }
+  emit('open-external', url);
 };
+
+onMounted(() => {
+  void onAgentWebviewNavigated((payload) => {
+    previewUrl.value = payload.url;
+    canGoBack.value = payload.canGoBack;
+    canGoForward.value = payload.canGoForward;
+  })
+    .then((unlisten) => {
+      unlistenNavigated = unlisten;
+    })
+    .catch(() => {
+      // 非桌面运行时(测试/纯前端)无 Tauri 事件总线，忽略订阅失败。
+    });
+
+  void onAgentWebviewConsole((payload) => {
+    appendLog(mapConsoleLevel(payload.level), payload.message);
+  })
+    .then((unlisten) => {
+      unlistenConsole = unlisten;
+    })
+    .catch(() => {
+      // 同上。
+    });
+});
+
+onBeforeUnmount(() => {
+  unlistenNavigated?.();
+  unlistenConsole?.();
+});
 </script>
 
 <template>
   <section class="ai-web-preview-sidebar" data-testid="ai-web-preview-sidebar">
     <WebPreview class="ai-web-preview-sidebar__preview" :default-url="previewUrl" @url-change="handleUrlChange">
       <WebPreviewNavigation>
-        <WebPreviewNavigationButton tooltip="Go back" @click="handleNavigationPlaceholder('Go back')">
+        <WebPreviewNavigationButton tooltip="Go back" :disabled="!canGoBack" @click="handleBack">
           <ArrowLeftIcon class="size-4" />
         </WebPreviewNavigationButton>
-        <WebPreviewNavigationButton tooltip="Go forward" @click="handleNavigationPlaceholder('Go forward')">
+        <WebPreviewNavigationButton tooltip="Go forward" :disabled="!canGoForward" @click="handleForward">
           <ArrowRightIcon class="size-4" />
         </WebPreviewNavigationButton>
         <WebPreviewNavigationButton tooltip="Reload" @click="handleRefresh">
@@ -130,7 +157,6 @@ const handleOpenExternal = (): void => {
       </WebPreviewNavigation>
 
       <WebPreviewBody
-        :key="refreshKey"
         class="ai-web-preview-sidebar__body"
         :src="previewUrl"
         title="AI Web preview"
