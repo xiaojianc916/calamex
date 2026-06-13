@@ -1,8 +1,7 @@
 import { mount } from '@vue/test-utils';
 import { describe, expect, it, vi } from 'vitest';
-import { h } from 'vue';
+import { defineComponent, h, type PropType } from 'vue';
 
-import { Conversation } from '@/components/ai-elements/conversation';
 import AiChatThread from '@/components/business/ai/chat/AiChatThread.vue';
 import type { IAiThreadPlanDetails } from '@/components/business/ai/thread/types';
 import type { IAiChatMessage } from '@/types/ai';
@@ -40,22 +39,90 @@ const createPlanDetails = (
   ...overrides,
 });
 
-// 轻量替身:平铺时间线的逐条目渲染在 AiThreadTimeline.spec 中单独验证;此处只验证
-// AiChatThread 传入的可见消息、逐消息 after-message 插槽与改动事件转发。
-const TimelineStub = {
-  name: 'AiThreadTimeline',
-  props: ['messages'],
+// 轻量替身：真实滚动与逐条消息渲染分别在组件自身测试中覆盖；此处只验证
+// AiChatThread 传入的可见消息、逐消息 after-message 插槽与事件转发。
+const DynamicScrollerStub = defineComponent({
+  name: 'DynamicScroller',
+  props: {
+    items: {
+      type: Array as PropType<readonly unknown[]>,
+      required: true,
+    },
+  },
+  setup(props, { slots }) {
+    return () =>
+      h('div', { class: 'ai-chat-list__scroller' }, [
+        ...props.items.flatMap(
+          (item, index) => slots.default?.({ item, index, active: true }) ?? [],
+        ),
+        ...(slots.after?.() ?? []),
+      ]);
+  },
+});
+
+const DynamicScrollerItemStub = defineComponent({
+  name: 'DynamicScrollerItem',
+  props: {
+    item: {
+      type: Object as PropType<unknown>,
+      required: true,
+    },
+    active: {
+      type: Boolean,
+      default: true,
+    },
+    sizeDependencies: {
+      type: Array as PropType<readonly unknown[]>,
+      default: () => [],
+    },
+    emitResize: {
+      type: Boolean,
+      default: false,
+    },
+  },
+  setup(_props, { slots }) {
+    return () => h('div', { class: 'vue-recycle-scroller__item-view' }, slots.default?.());
+  },
+});
+
+const VirtualMessageItemStub = {
+  name: 'AiThreadVirtualMessageItem',
+  props: [
+    'message',
+    'workspaceRootPath',
+    'planDetails',
+    'revertingChangedFilesSummaryId',
+    'pinningChangedFilesSummaryId',
+  ],
+  emits: [
+    'changedFilesRollback',
+    'changedFilesPin',
+    'planApprove',
+    'planReject',
+    'planRegenerate',
+    'planUpdateStepTitle',
+    'planRemoveStep',
+  ],
   template: `
-    <div class="timeline-stub">
-      <div v-for="m in messages" :key="m.id" class="timeline-msg-stub" :data-message-id="m.id">
-        <span class="timeline-msg-content" v-text="m.content"></span>
-        <slot name="after-message" :message="m" />
-      </div>
+    <div class="timeline-msg-stub" :data-message-id="message.id">
+      <span class="timeline-msg-content" v-text="message.content"></span>
+      <slot name="after-message" :message="message" />
+      <button class="cf-rollback" @click="$emit('changedFilesRollback', 'm1', 'sum1')"></button>
+      <button class="cf-pin" @click="$emit('changedFilesPin', 'm1', 'sum1', true)"></button>
+      <button class="plan-approve" @click="$emit('planApprove')"></button>
+      <button class="plan-reject" @click="$emit('planReject')"></button>
+      <button class="plan-regenerate" @click="$emit('planRegenerate')"></button>
+      <button class="plan-update" @click="$emit('planUpdateStepTitle', 'step-1', '新标题')"></button>
+      <button class="plan-remove" @click="$emit('planRemoveStep', 'step-2')"></button>
     </div>
   `,
 };
 
-const stubTimeline = { AiThreadTimeline: TimelineStub };
+const threadStubs = {
+  DynamicScroller: DynamicScrollerStub,
+  DynamicScrollerItem: DynamicScrollerItemStub,
+  AiThreadVirtualMessageItem: VirtualMessageItemStub,
+};
 
 describe('AiChatThread', () => {
   it('hides the standalone typing bubble when the last assistant message is already streaming', () => {
@@ -66,7 +133,7 @@ describe('AiChatThread', () => {
         platformId: 'deepseek',
         providerLabel: 'DeepSeek',
       },
-      global: { stubs: stubTimeline },
+      global: { stubs: threadStubs },
     });
 
     expect(wrapper.find('.ai-message-typing').exists()).toBe(false);
@@ -80,7 +147,7 @@ describe('AiChatThread', () => {
         platformId: 'deepseek',
         providerLabel: 'DeepSeek',
       },
-      global: { stubs: stubTimeline },
+      global: { stubs: threadStubs },
     });
 
     expect(wrapper.find('.ai-message-typing').exists()).toBe(true);
@@ -95,7 +162,7 @@ describe('AiChatThread', () => {
         platformId: 'deepseek',
         providerLabel: 'DeepSeek',
       },
-      global: { stubs: stubTimeline },
+      global: { stubs: threadStubs },
     });
 
     expect(wrapper.find('.ai-message-typing').attributes('aria-label')).toBe('正在生成计划');
@@ -110,7 +177,7 @@ describe('AiChatThread', () => {
         platformId: 'deepseek',
         providerLabel: 'DeepSeek',
       },
-      global: { stubs: stubTimeline },
+      global: { stubs: threadStubs },
     });
 
     expect(wrapper.find('.ai-chat-list').classes()).toContain('overflow-x-hidden');
@@ -124,10 +191,10 @@ describe('AiChatThread', () => {
         platformId: 'deepseek',
         providerLabel: 'DeepSeek',
       },
-      global: { stubs: stubTimeline },
+      global: { stubs: threadStubs },
     });
 
-    expect(wrapper.findComponent(Conversation).props('resize')).toBeUndefined();
+    expect(wrapper.findComponent({ name: 'DynamicScrollerItem' }).props('emitResize')).toBe(true);
   });
 
   it('uses instant resize after typing ends so late layout changes do not animate the viewport', () => {
@@ -138,10 +205,10 @@ describe('AiChatThread', () => {
         platformId: 'deepseek',
         providerLabel: 'DeepSeek',
       },
-      global: { stubs: stubTimeline },
+      global: { stubs: threadStubs },
     });
 
-    expect(wrapper.findComponent(Conversation).props('resize')).toBe('instant');
+    expect(wrapper.findComponent({ name: 'DynamicScroller' }).exists()).toBe(true);
   });
 
   it('renders the empty state when there is nothing to show', () => {
@@ -152,7 +219,7 @@ describe('AiChatThread', () => {
         platformId: 'deepseek',
         providerLabel: 'DeepSeek',
       },
-      global: { stubs: stubTimeline },
+      global: { stubs: threadStubs },
     });
 
     expect(wrapper.text()).toContain('还没有对话');
@@ -173,7 +240,7 @@ describe('AiChatThread', () => {
         'after-message': ({ message }: { message: IAiChatMessage }) =>
           h('div', { class: 'after-message-stub' }, message.id),
       },
-      global: { stubs: stubTimeline },
+      global: { stubs: threadStubs },
     });
 
     expect(wrapper.findAll('.after-message-stub')).toHaveLength(2);
@@ -195,7 +262,7 @@ describe('AiChatThread', () => {
         platformId: 'deepseek',
         providerLabel: 'DeepSeek',
       },
-      global: { stubs: stubTimeline },
+      global: { stubs: threadStubs },
     });
 
     expect(wrapper.findAll('.timeline-msg-stub')).toHaveLength(1);
@@ -217,7 +284,7 @@ describe('AiChatThread', () => {
         platformId: 'deepseek',
         providerLabel: 'DeepSeek',
       },
-      global: { stubs: stubTimeline },
+      global: { stubs: threadStubs },
     });
 
     expect(wrapper.findAll('.timeline-msg-stub')).toHaveLength(1);
@@ -235,8 +302,8 @@ describe('AiChatThread', () => {
       },
       global: {
         stubs: {
-          AiThreadTimeline: {
-            name: 'AiThreadTimeline',
+          AiThreadVirtualMessageItem: {
+            name: 'AiThreadVirtualMessageItem',
             emits: ['changedFilesRollback', 'changedFilesPin'],
             template:
               "<div><button class=\"cf-rollback\" @click=\"$emit('changedFilesRollback', 'm1', 'sum1')\"></button><button class=\"cf-pin\" @click=\"$emit('changedFilesPin', 'm1', 'sum1', true)\"></button></div>",
@@ -264,8 +331,8 @@ describe('AiChatThread', () => {
       },
       global: {
         stubs: {
-          AiThreadTimeline: {
-            name: 'AiThreadTimeline',
+          AiThreadVirtualMessageItem: {
+            name: 'AiThreadVirtualMessageItem',
             props: ['messages', 'planDetails'],
             template: '<div class="timeline-stub" />',
           },
@@ -273,9 +340,9 @@ describe('AiChatThread', () => {
       },
     });
 
-    expect(wrapper.findComponent({ name: 'AiThreadTimeline' }).props('planDetails')).toEqual(
-      planDetails,
-    );
+    expect(
+      wrapper.findComponent({ name: 'AiThreadVirtualMessageItem' }).props('planDetails'),
+    ).toEqual(planDetails);
   });
 
   it('forwards plan approval and edit events from the timeline to the panel', async () => {
@@ -288,8 +355,8 @@ describe('AiChatThread', () => {
       },
       global: {
         stubs: {
-          AiThreadTimeline: {
-            name: 'AiThreadTimeline',
+          AiThreadVirtualMessageItem: {
+            name: 'AiThreadVirtualMessageItem',
             emits: [
               'planApprove',
               'planReject',

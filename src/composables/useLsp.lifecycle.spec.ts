@@ -33,6 +33,11 @@ const flush = async (): Promise<void> => {
   await Promise.resolve();
 };
 
+const startInitialLsp = async (): Promise<void> => {
+  await vi.advanceTimersByTimeAsync(1600);
+  await flush();
+};
+
 describe('useLsp lifecycle', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -56,7 +61,7 @@ describe('useLsp lifecycle', () => {
     scope.run(() => {
       lsp = useLsp(root);
     });
-    await flush();
+    await startInitialLsp();
 
     expect(lspBridgeMock.start).toHaveBeenCalledWith('D:/repo');
     expect(lsp.status.value).toBe('running');
@@ -79,7 +84,7 @@ describe('useLsp lifecycle', () => {
     scope.run(() => {
       lsp = useLsp(root);
     });
-    await flush();
+    await startInitialLsp();
     expect(lsp.status.value).toBe('starting');
 
     root.value = 'D:/repo-b';
@@ -99,7 +104,7 @@ describe('useLsp lifecycle', () => {
     scope.run(() => {
       useLsp(root);
     });
-    await flush();
+    await startInitialLsp();
 
     lspBridgeMock.emit({ type: 'crashed', exitStatus: '1' });
     root.value = null;
@@ -119,7 +124,7 @@ describe('useLsp lifecycle', () => {
     scope.run(() => {
       useLsp(root);
     });
-    await flush();
+    await startInitialLsp();
 
     lspBridgeMock.emit({ type: 'crashed', exitStatus: '1' });
     await vi.advanceTimersByTimeAsync(1000);
@@ -142,7 +147,7 @@ describe('useLsp lifecycle', () => {
     scope.run(() => {
       useLsp(root);
     });
-    await flush();
+    await startInitialLsp();
 
     lspBridgeMock.emit({ type: 'crashed', exitStatus: '1' });
     await vi.advanceTimersByTimeAsync(1000);

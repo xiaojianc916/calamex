@@ -401,7 +401,7 @@ onBeforeUnmount(() => {
 
 <template>
   <section
-    class="ai-chat-list"
+    class="ai-chat-list overflow-x-hidden"
     :class="{ 'is-scrollbar-active': isScrollbarActive }"
     aria-label="AI 对话记录"
   >
