@@ -16,7 +16,7 @@ describe('splitSuggestionsIntoRows', () => {
     expect(rows[0]).not.toBe(items);
   });
 
-  it('固定 9 个建议时动态选择 3 行或 4 行，且每行至少 2 个', () => {
+  it('固定 9 个建议时即使调用点传 3，也会动态评估 3 行或 4 行', () => {
     const items = [
       { title: '如何培养阅读习惯' },
       { title: '介绍一部经典的治愈电影' },
@@ -29,7 +29,7 @@ describe('splitSuggestionsIntoRows', () => {
       { title: '哪些食物最健康？' },
     ];
 
-    const rows = splitSuggestionsIntoRows(items, 4);
+    const rows = splitSuggestionsIntoRows(items, 3);
 
     expect([3, 4]).toContain(rows.length);
     expect(rows.every((row) => row.length >= 2)).toBe(true);
@@ -37,7 +37,7 @@ describe('splitSuggestionsIntoRows', () => {
     expect(new Set(rows.flat())).toEqual(new Set(items));
   });
 
-  it('固定 9 个建议时会根据长度重排而不是按原顺序硬切', () => {
+  it('固定 9 个建议时会根据长度重排，不按原顺序硬切', () => {
     const items = [
       { title: '短1' },
       { title: '非常非常非常长的建议标题一' },
@@ -50,7 +50,7 @@ describe('splitSuggestionsIntoRows', () => {
       { title: '非常非常非常长的建议标题三' },
     ];
 
-    const rows = splitSuggestionsIntoRows(items, 4);
+    const rows = splitSuggestionsIntoRows(items, 3);
 
     expect([3, 4]).toContain(rows.length);
     expect(rows.every((row) => row.length >= 2)).toBe(true);
@@ -58,7 +58,7 @@ describe('splitSuggestionsIntoRows', () => {
     expect(rows.flat()).not.toEqual(items);
   });
 
-  it('短标题且 3 行已经均衡时，不会无脑固定成 4 行', () => {
+  it('短标题且 3 行已经均衡时动态选择 3 行', () => {
     const items = [
       { title: '建议1' },
       { title: '建议2' },
@@ -71,13 +71,13 @@ describe('splitSuggestionsIntoRows', () => {
       { title: '建议9' },
     ];
 
-    const rows = splitSuggestionsIntoRows(items, 4);
+    const rows = splitSuggestionsIntoRows(items, 3);
 
     expect(rows).toHaveLength(3);
     expect(rows.map((row) => row.length)).toEqual([3, 3, 3]);
   });
 
-  it('长短差距明显时，可以动态选择 4 行降低单行最大宽度', () => {
+  it('长短差距明显时动态选择 4 行降低单行最大宽度', () => {
     const items = [
       { title: '非常非常非常长的建议标题一' },
       { title: '非常非常非常长的建议标题二' },
@@ -90,7 +90,7 @@ describe('splitSuggestionsIntoRows', () => {
       { title: '短5' },
     ];
 
-    const rows = splitSuggestionsIntoRows(items, 4);
+    const rows = splitSuggestionsIntoRows(items, 3);
 
     expect(rows).toHaveLength(4);
     expect(rows.every((row) => row.length >= 2)).toBe(true);

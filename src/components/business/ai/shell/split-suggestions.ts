@@ -1,19 +1,22 @@
 /**
- * 建议区布局算法。
+ * AI 建议区动态布局算法。
  *
  * 需求：
- * - 建议数量固定 9 个时，不固定死 3 行或 4 行；
- * - 同时评估 3 行与 4 行候选布局；
- * - 每行至少 2 个建议；
- * - 根据标题视觉长度重新排序；
- * - 选择视觉宽度更均衡、整体更自然的布局。
- *
- * 算法：
- * - 使用 LPT(Longest Processing Time first) 做长度均衡分配；
- * - 9 个建议候选布局为：
+ * - 当前产品建议数量固定为 9；
+ * - 不能固定死 3 行或 4 行；
+ * - 9 个建议时同时评估：
  *   - 3 行：3 + 3 + 3
  *   - 4 行：3 + 2 + 2 + 2
- * - 分别计算评分，动态选择更优布局。
+ * - 每行至少 2 个建议；
+ * - 根据建议标题视觉长度重新排序；
+ * - 动态选择视觉更均衡的布局。
+ *
+ * 算法：
+ * - 使用 LPT(Longest Processing Time first) 标准调度算法；
+ * - 把每个建议 chip 的视觉宽度视为任务权重；
+ * - 长建议优先分配到当前最短行；
+ * - 对候选布局评分，选单行最大宽度更小、行宽更均衡的布局；
+ * - 3 行足够均衡时优先 3 行，避免无意义增加高度。
  */
 
 type TSuggestionLike = { title: string };
@@ -37,8 +40,7 @@ interface ILayoutCandidate<T extends TSuggestionLike> {
 }
 
 const FIXED_SUGGESTION_COUNT = 9;
-const NINE_SUGGESTION_MIN_ROWS = 3;
-const NINE_SUGGESTION_MAX_ROWS = 4;
+const NINE_SUGGESTION_ROW_COUNTS = [3, 4] as const;
 
 const isCjkCharacter = (char: string): boolean =>
   /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\u3040-\u30ff\uac00-\ud7af]/u.test(char);
@@ -60,7 +62,7 @@ const resolveSuggestionVisualWeight = (title: string): number => {
     }
   }
 
-  // chip 左右 padding / 最小宽度的基础权重，避免短文本被低估。
+  // chip 自身 padding / 最小宽度基础权重。
   return weight + 6;
 };
 
@@ -75,7 +77,7 @@ const buildRowCapacities = (itemCount: number, rowCount: number): number[] => {
   return Array.from({ length: rowCount }, (_, index) => base + (index < remainder ? 1 : 0));
 };
 
-const buildDynamicCandidateRowCounts = (itemCount: number, maxRowCount: number): number[] => {
+const buildCandidateRowCounts = (itemCount: number, maxRowCount: number): number[] => {
   if (itemCount <= 0) {
     return [];
   }
@@ -84,11 +86,13 @@ const buildDynamicCandidateRowCounts = (itemCount: number, maxRowCount: number):
     return [1];
   }
 
-  // 当前产品固定 9 个建议：动态评估 3 行和 4 行，而不是固定其中一种。
+  /**
+   * 关键点：
+   * 9 个建议是产品固定数量。
+   * 这里必须动态评估 3 行和 4 行，不能受外部调用点传 3 还是 4 影响。
+   */
   if (itemCount === FIXED_SUGGESTION_COUNT) {
-    return [NINE_SUGGESTION_MIN_ROWS, NINE_SUGGESTION_MAX_ROWS].filter(
-      (rowCount) => rowCount <= maxRowCount && rowCount * 2 <= itemCount,
-    );
+    return NINE_SUGGESTION_ROW_COUNTS.filter((rowCount) => rowCount * 2 <= itemCount);
   }
 
   const maxFeasibleRows = Math.min(maxRowCount, Math.floor(itemCount / 2));
@@ -129,8 +133,8 @@ const findBestRow = <T extends TSuggestionLike>(rows: ISuggestionRow<T>[]): ISug
       return row.weight < best.weight ? row : best;
     }
 
-    const bestRemainingCapacity = best.capacity - best.items.length;
     const rowRemainingCapacity = row.capacity - row.items.length;
+    const bestRemainingCapacity = best.capacity - best.items.length;
 
     if (rowRemainingCapacity !== bestRemainingCapacity) {
       return rowRemainingCapacity > bestRemainingCapacity ? row : best;
@@ -144,8 +148,7 @@ const buildRowsByLpt = <T extends TSuggestionLike>(
   weightedItems: readonly IWeightedSuggestion<T>[],
   rowCount: number,
 ): ISuggestionRow<T>[] => {
-  const capacities = buildRowCapacities(weightedItems.length, rowCount);
-  const rows = createRows<T>(capacities);
+  const rows = createRows<T>(buildRowCapacities(weightedItems.length, rowCount));
 
   for (const weightedItem of weightedItems) {
     const row = findBestRow(rows);
@@ -166,16 +169,7 @@ const scoreRows = <T extends TSuggestionLike>(rows: readonly ISuggestionRow<T>[]
     weights.reduce((sum, weight) => sum + (weight - averageWeight) ** 2, 0) / weights.length;
   const standardDeviation = Math.sqrt(variance);
 
-  /**
-   * 评分目标：
-   * - maxWeight：避免任何一行太宽；
-   * - spread/stddev：避免行宽差异太大；
-   * - verticalPenalty：避免在 3 行已经足够均衡时，无脑变成 4 行。
-   *
-   * 所以最终会根据长度动态选择：
-   * - 标题都比较短 / 均衡：倾向 3 行；
-   * - 长短差距明显 / 3 行会过宽：倾向 4 行。
-   */
+  // 行数惩罚：3 行已经足够均衡时，不要无脑变 4 行。
   const verticalPenalty = rows.length > 3 ? averageWeight * 0.14 * (rows.length - 3) : 0;
 
   return maxWeight + spread * 0.36 + standardDeviation * 0.58 + verticalPenalty;
@@ -201,20 +195,10 @@ const chooseBestCandidate = <T extends TSuggestionLike>(
       return candidate.score < best.score ? candidate : best;
     }
 
-    // 评分相同则选行数少的，减少垂直占用。
+    // 分数相同选更少行，减少垂直占用。
     return candidate.rows.length < best.rows.length ? candidate : best;
   }, candidates[0]!);
 
-/**
- * 把建议按视觉长度动态均衡分行。
- *
- * 对 9 个建议：
- * - 动态评估 3 行：3 + 3 + 3；
- * - 动态评估 4 行：3 + 2 + 2 + 2；
- * - 选择视觉评分更优的一种；
- * - 每行至少 2 个；
- * - 根据长度重排，不按原始顺序硬切。
- */
 export const splitSuggestionsIntoRows = <T extends TSuggestionLike>(
   items: readonly T[],
   maxRowCount: number,
@@ -223,7 +207,7 @@ export const splitSuggestionsIntoRows = <T extends TSuggestionLike>(
     return [];
   }
 
-  const candidateRowCounts = buildDynamicCandidateRowCounts(items.length, maxRowCount);
+  const candidateRowCounts = buildCandidateRowCounts(items.length, maxRowCount);
 
   if (candidateRowCounts.length === 0 || candidateRowCounts[0] === 1) {
     return [items.slice()];
