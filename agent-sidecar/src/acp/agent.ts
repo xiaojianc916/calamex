@@ -36,7 +36,6 @@ import {
 	type PromptResponse,
 	type RequestPermissionRequest,
 	type RequestPermissionResponse,
-	type SessionNotification,
 	type SetSessionModeRequest,
 	type SetSessionModeResponse,
 } from "@agentclientprotocol/sdk"
@@ -90,7 +89,7 @@ import type { IUsageSnapshotInput } from "./usage.js"
  * SDK 的 AgentSideConnection 结构上满足本接口；抽象出来便于单测注入假连接。
  */
 export interface IAcpAgentConnection {
-	sessionUpdate(params: SessionNotification): Promise<void>
+	sessionUpdate(params: import("@agentclientprotocol/sdk").SessionNotification): Promise<void>
 	requestPermission(
 		params: RequestPermissionRequest,
 	): Promise<RequestPermissionResponse>
