@@ -111,7 +111,7 @@ pub enum FsChangeKind {
 /// derive `tauri_specta::Event` 让此类型同时：
 /// - 出现在生成的 TS 绑定 `events.workspaceFsEvent.listen(...)` 中
 /// - 提供类型化的 `.emit(app)` 方法（事件名自动为 `workspace-fs-event`）
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type, tauri_specta::Event)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceFsEvent {
     /// 本批次的变更列表
@@ -121,10 +121,6 @@ pub struct WorkspaceFsEvent {
     pub changes: Vec<FsChange>,
     /// 监听根目录的绝对路径
     pub root_path: String,
-}
-
-impl tauri_specta::Event for WorkspaceFsEvent {
-    const NAME: &'static str = "workspace-fs-event";
 }
 
 // ============================================================================
