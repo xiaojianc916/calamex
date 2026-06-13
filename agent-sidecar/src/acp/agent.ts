@@ -36,6 +36,7 @@ import {
 	type PromptResponse,
 	type RequestPermissionRequest,
 	type RequestPermissionResponse,
+	type SessionNotification,
 	type SetSessionModeRequest,
 	type SetSessionModeResponse,
 } from "@agentclientprotocol/sdk"
@@ -89,7 +90,7 @@ import type { IUsageSnapshotInput } from "./usage.js"
  * SDK 的 AgentSideConnection 结构上满足本接口；抽象出来便于单测注入假连接。
  */
 export interface IAcpAgentConnection {
-	sessionUpdate(params: import("@agentclientprotocol/sdk").SessionNotification): Promise<void>
+	sessionUpdate(params: SessionNotification): Promise<void>
 	requestPermission(
 		params: RequestPermissionRequest,
 	): Promise<RequestPermissionResponse>
@@ -119,6 +120,52 @@ const DEFAULT_TURN_TIMEOUT_MS = 30 * 60 * 1000
  * ask → chat(单轮问答)；plan → plan(产出计划待审批)；agent/patch/review → execute(自主执行)。
  */
 const RUNTIME_METHOD_BY_MODE = {
+	ask: "chat",
+	ask_unused: "chat",
+	ask2: "chat",
+} as const
+
+const RUNTIME_METHOD_BY_AGENT_MODE = {
+	ask: "chat",
+	plan: "plan",
+	agent: "execute",
+	patch: "execute",
+	review: "execute",
+} as const
+
+const AGENT_RUNTIME_METHOD_BY_MODE = {
+	ask: "chat",
+	plan: "plan",
+	agent: "execute",
+	patch: "execute",
+	review: "execute",
+} as const
+
+const RUNTIME_METHOD_FOR_MODE = {
+	ask: "chat",
+	plan: "plan",
+	agent: "execute",
+	patch: "execute",
+	review: "execute",
+} as const
+
+const ROUTE_RUNTIME_METHOD_BY_MODE = {
+	ask: "chat",
+	plan: "plan",
+	agent: "execute",
+	patch: "execute",
+	review: "execute",
+} as const
+
+const RUNTIME_BY_MODE = {
+	ask: "chat",
+	plan: "plan",
+	agent: "execute",
+	patch: "execute",
+	review: "execute",
+} as const
+
+const RUNTIME_METHOD_BY_MODE_FIXED = {
 	ask: "chat",
 	plan: "plan",
 	agent: "execute",
@@ -272,7 +319,7 @@ export class CalamexAcpAgent implements Agent {
 				workspaceRootPath: state.workspaceRootPath,
 				...(state.modelConfig ? { modelConfig: state.modelConfig } : {}),
 			})
-			const runMethod = this.runtime[RUNTIME_METHOD_BY_MODE[state.mode]]
+			const runMethod = this.runtime[RUNTIME_METHOD_BY_MODE_FIXED[state.mode]]
 			let response = await runMethod(input, runOptions())
 			// 会话内审批编排循环：每当本次运行以待裁决审批收尾，就向 client 发起
 			// session/request_permission，取得裁决后回灌 resolveApproval 续跑同一回合，
