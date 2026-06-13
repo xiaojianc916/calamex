@@ -1,4 +1,4 @@
-import { type ComputedRef, computed, type Ref, ref } from 'vue';
+import { type ComputedRef, computed, onScopeDispose, type Ref, ref } from 'vue';
 import { useMessage } from '@/composables/useMessage';
 import {
   type IRefreshSidecarChangedDocumentsResult,
@@ -511,6 +511,10 @@ export const useWorkspaceReplacement = (options: IUseWorkspaceReplacementOptions
     activeReplacementPreviewAbortController = null;
     invalidateReplacementApplyLifecycle();
   };
+
+  onScopeDispose(() => {
+    resetReplacementPreview();
+  });
 
   return {
     replacementQuery,

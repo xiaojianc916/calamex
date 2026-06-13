@@ -314,7 +314,7 @@ export const useWorkspaceSearch = (options: IUseWorkspaceSearchOptions) => {
     }
     const nextResults = pendingStreamResults;
     pendingStreamResults = [];
-    backendResults.value = [...backendResults.value, ...nextResults];
+    appendBackendResults(nextResults);
   };
 
   const scheduleStreamResultsFlush = (): void => {
@@ -338,7 +338,7 @@ export const useWorkspaceSearch = (options: IUseWorkspaceSearchOptions) => {
   const clearSearchResults = (): void => {
     clearPendingStreamResults();
     scannedFileCount.value = 0;
-    backendResults.value = [];
+    replaceBackendResults([]);
     searchIndexing.value = false;
     searchError.value = '';
   };
@@ -367,7 +367,7 @@ export const useWorkspaceSearch = (options: IUseWorkspaceSearchOptions) => {
     streamingSearchId = lifecycle.requestId;
     clearPendingStreamResults();
     scannedFileCount.value = 0;
-    backendResults.value = [];
+    replaceBackendResults([]);
     searchIndexing.value = true;
     searchError.value = '';
     try {
@@ -393,12 +393,12 @@ export const useWorkspaceSearch = (options: IUseWorkspaceSearchOptions) => {
       streamingSearchId = 0;
       clearPendingStreamResults();
       scannedFileCount.value = payload.scannedFileCount;
-      backendResults.value = payload.results;
+      replaceBackendResults(payload.results);
     } catch (error) {
       if (lifecycle.signal.aborted || !isSearchLifecycleCurrent(lifecycle)) return;
       streamingSearchId = 0;
       clearPendingStreamResults();
-      backendResults.value = [];
+      replaceBackendResults([]);
       searchError.value = toErrorMessage(error, '搜索失败。');
     } finally {
       if (lifecycle.requestId === searchRequestId) {
