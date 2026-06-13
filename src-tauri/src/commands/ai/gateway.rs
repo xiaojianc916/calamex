@@ -1,6 +1,5 @@
 use crate::ai::audit::{self, AiAuditEventKind};
 use crate::ai::gateway;
-use crate::ai::stream as stream_manager;
 use crate::commands::contracts::{
     AiCancelRequest, AiChatRequest, AiChatStreamPayload, AiConfigPayload,
     AiConversationTitlePayload, AiConversationTitleRequest, AiInlineCompletionRangePayload,
@@ -192,29 +191,15 @@ pub async fn ai_chat_stream(
 #[tauri::command]
 #[specta::specta]
 pub fn ai_cancel(app: AppHandle, payload: AiCancelRequest) -> Result<(), String> {
-    #[cfg(feature = "acp_client")]
-    {
-        if let Some(thread_id) = payload
-            .thread_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
-            use tauri::Manager as _;
-            app.state::<crate::acp::AcpRuntime>().cancel_thread(thread_id);
-            return Ok(());
-        }
-    }
-    #[cfg(not(feature = "acp_client"))]
-    {
-        let _ = &app;
-    }
+    let thread_id = payload
+        .thread_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "AI_REQUEST_CANCELLED: threadId 不能为空。".to_string())?;
 
-    let stream_id = payload.stream_id.trim();
-    if stream_id.is_empty() {
-        return Err("AI_REQUEST_CANCELLED: streamId 不能为空。".to_string());
-    }
-    stream_manager::cancel(stream_id);
+    use tauri::Manager as _;
+    app.state::<crate::acp::AcpRuntime>().cancel_thread(thread_id);
     Ok(())
 }
 
