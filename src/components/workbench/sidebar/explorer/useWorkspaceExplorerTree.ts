@@ -3,7 +3,7 @@ import { useMessage } from '@/composables/useMessage';
 import { tauriService } from '@/services/tauri';
 import type { IWorkspaceDirectoryPayload, IWorkspaceEntry } from '@/types/editor';
 import { toErrorMessage } from '@/utils/error';
-import { getRelativeFileSystemPath } from '@/utils/path';
+import { getRelativeFileSystemPath, normalizeFileSystemPath } from '@/utils/path';
 
 export interface IUseWorkspaceExplorerTreeOptions {
   /** Resolves the currently loaded workspace root payload, or null. */
@@ -18,6 +18,9 @@ export interface IUseWorkspaceExplorerTreeOptions {
     selectedPath: string | null;
   }) => void;
 }
+
+// 刚被主动刷新过的目录在该时间窗内被视为“新鲜”，文件系统事件可跳过其重复重载。
+const RECENTLY_REFRESHED_TTL_MS = 250;
 
 /**
  * Owns the workspace explorer tree state beneath the root: cached directory
@@ -35,6 +38,30 @@ export function useWorkspaceExplorerTree(options: IUseWorkspaceExplorerTreeOptio
   const manualExpandedPaths = ref<Set<string>>(new Set());
   const loadingPaths = reactive<Record<string, boolean>>({});
   const pendingReloadAgainPaths = new Set<string>();
+  const recentlyRefreshedAt = new Map<string, number>();
+
+  const normalizeRefreshedKey = (path: string): string =>
+    normalizeFileSystemPath(path, {
+      collapseDuplicateSeparators: true,
+      trimTrailingSeparator: true,
+    });
+
+  const markDirectoryRecentlyRefreshed = (path: string): void => {
+    recentlyRefreshedAt.set(normalizeRefreshedKey(path), Date.now());
+  };
+
+  const wasDirectoryRecentlyRefreshed = (path: string): boolean => {
+    const key = normalizeRefreshedKey(path);
+    const at = recentlyRefreshedAt.get(key);
+    if (at === undefined) {
+      return false;
+    }
+    if (Date.now() - at > RECENTLY_REFRESHED_TTL_MS) {
+      recentlyRefreshedAt.delete(key);
+      return false;
+    }
+    return true;
+  };
 
   const emitExplorerStateChange = (
     selectedPath: string | null | undefined = getSelectedPath(),
@@ -53,6 +80,7 @@ export function useWorkspaceExplorerTree(options: IUseWorkspaceExplorerTreeOptio
       delete loadingPaths[path];
     });
     pendingReloadAgainPaths.clear();
+    recentlyRefreshedAt.clear();
     manualExpandedPaths.value = new Set();
   };
 
@@ -195,5 +223,7 @@ export function useWorkspaceExplorerTree(options: IUseWorkspaceExplorerTreeOptio
     toggleExplorerPath,
     resolveParentPathForMutation,
     pruneWorkspaceSubtreeState,
+    markDirectoryRecentlyRefreshed,
+    wasDirectoryRecentlyRefreshed,
   };
 }

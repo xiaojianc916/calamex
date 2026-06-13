@@ -29,6 +29,8 @@ export interface IUseWorkspaceFileWatcherOptions {
   pruneWorkspaceSubtreeState: (path: string) => void;
   /** Resolves the parent directory path for a mutated entry. */
   resolveParentPathForMutation: (path: string) => string | null;
+  /** Reports whether a directory was just reloaded by an explicit mutation. */
+  wasDirectoryRecentlyRefreshed: (path: string) => boolean;
 }
 
 export interface IUseWorkspaceFileWatcherReturn {
@@ -51,6 +53,7 @@ export function useWorkspaceFileWatcher(
     loadDirectoryEntries,
     pruneWorkspaceSubtreeState,
     resolveParentPathForMutation,
+    wasDirectoryRecentlyRefreshed,
   } = options;
   const gitStore = useGitStore();
 
@@ -63,6 +66,8 @@ export function useWorkspaceFileWatcher(
     pendingFsReloadDirs.clear();
     for (const dir of dirs) {
       if (childrenMap[dir] === undefined) continue;
+      // 若该目录刚因显式增删改主动刷新过，跳过这次由文件系统事件触发的重复重载，避免闪烁。
+      if (wasDirectoryRecentlyRefreshed(dir)) continue;
       await loadDirectoryEntries(dir);
     }
   }, 80);

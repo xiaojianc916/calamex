@@ -3,8 +3,13 @@ import type { IExplorerContextTarget } from '@/components/workbench/sidebar/expl
 import { useDialog } from '@/composables/useDialog';
 import { useMessage } from '@/composables/useMessage';
 import { tauriService } from '@/services/tauri';
-import type { IWorkspaceDirectoryPayload, TWorkbenchOpenFilePayload } from '@/types/editor';
+import type {
+  IWorkspaceDirectoryPayload,
+  IWorkspaceEntry,
+  TWorkbenchOpenFilePayload,
+} from '@/types/editor';
 import { toErrorMessage } from '@/utils/error';
+import { areFileSystemPathsEqual } from '@/utils/path';
 
 export interface IUseWorkspaceExplorerMutationsOptions {
   /** Resolves the currently loaded workspace root payload, or null. */
@@ -13,6 +18,8 @@ export interface IUseWorkspaceExplorerMutationsOptions {
   getWorkspaceRootPath: () => string | null;
   /** Resolves the explorer section host element used for inline-input focus. */
   getSectionElement: () => HTMLElement | null;
+  /** Resolves already-loaded child entries for a directory, used for duplicate-name pre-checks. */
+  getDirectoryEntries: (path: string) => IWorkspaceEntry[] | undefined;
   /** Ensures the given directory path is expanded (and its entries loaded). */
   expandExplorerPath: (path: string) => Promise<void>;
   /** Reloads the entries for a single directory. */
@@ -21,6 +28,8 @@ export interface IUseWorkspaceExplorerMutationsOptions {
   refreshExplorer: () => Promise<void>;
   /** Drops cached state for a path and everything beneath it. */
   pruneWorkspaceSubtreeState: (path: string) => void;
+  /** Marks a directory as just reloaded so the fs watcher can skip a redundant reload. */
+  markDirectoryRecentlyRefreshed: (path: string) => void;
   /** Resolves the parent directory path for a mutated entry. */
   resolveParentPathForMutation: (path: string) => string | null;
   /** Opens a file in the editor. */
@@ -38,10 +47,12 @@ export function useWorkspaceExplorerMutations(options: IUseWorkspaceExplorerMuta
     getRoot,
     getWorkspaceRootPath,
     getSectionElement,
+    getDirectoryEntries,
     expandExplorerPath,
     loadDirectoryEntries,
     refreshExplorer,
     pruneWorkspaceSubtreeState,
+    markDirectoryRecentlyRefreshed,
     resolveParentPathForMutation,
     onOpenFile,
   } = options;
@@ -60,9 +71,21 @@ export function useWorkspaceExplorerMutations(options: IUseWorkspaceExplorerMuta
   const isInlineCreateSubmitting = ref(false);
   const isInlineRenamePriming = ref(false);
 
+  const waitNextFrame = (): Promise<void> => {
+    return new Promise((resolve) => {
+      requestAnimationFrame(() => resolve());
+    });
+  };
+
   const resolveCreationParentPath = (target: IExplorerContextTarget | null): string | null => {
     if (target?.kind === 'directory') {
       return target.path;
+    }
+    if (target?.kind === 'file') {
+      // 右键文件时，在该文件所在目录创建“同级”条目。
+      return (
+        resolveParentPathForMutation(target.path) ?? getRoot()?.rootPath ?? getWorkspaceRootPath()
+      );
     }
     return getRoot()?.rootPath ?? getWorkspaceRootPath();
   };
@@ -75,12 +98,20 @@ export function useWorkspaceExplorerMutations(options: IUseWorkspaceExplorerMuta
     isInlineCreateSubmitting.value = false;
   };
 
+  // 可靠地聚焦内联“新建”输入框：等待一次 DOM 更新与一帧绘制后，把输入框滚入视口并聚焦。
+  // 虚拟滚动场景下，行的真正挂载与滚动由 WorkspaceTreeNode 负责，这里作为兜底；
+  // 两处都聚焦同一个输入框且彼此幂等。
   const focusInlineCreateInput = async (): Promise<void> => {
     await nextTick();
+    await waitNextFrame();
     const input = (getSectionElement()?.querySelector('.explorer-inline-create-input') ??
       null) as HTMLInputElement | null;
-    input?.focus();
-    input?.select();
+    if (!input) {
+      return;
+    }
+    input.scrollIntoView({ block: 'nearest' });
+    input.focus();
+    input.select();
   };
 
   const openInlineCreateDraft = async (
@@ -96,12 +127,16 @@ export function useWorkspaceExplorerMutations(options: IUseWorkspaceExplorerMuta
       message.error('无法解析新建位置。');
       return;
     }
+    // 复用同一个草稿前先关闭旧草稿，避免旧输入框失焦时把内容提交到旧目录。
+    if (inlineCreateDraft.open) {
+      closeInlineCreateDraft();
+    }
     await expandExplorerPath(parentPath);
     inlineCreateDraft.open = true;
     inlineCreateDraft.parentPath = parentPath;
     inlineCreateDraft.kind = kind;
     inlineCreateDraft.value = '';
-    inlineCreateDraft.placeholder = '';
+    inlineCreateDraft.placeholder = kind === 'directory' ? '文件夹名称' : '文件名称';
     await focusInlineCreateInput();
   };
 
@@ -110,6 +145,26 @@ export function useWorkspaceExplorerMutations(options: IUseWorkspaceExplorerMuta
   };
   const cancelInlineCreateWorkspaceEntry = (): void => {
     closeInlineCreateDraft();
+  };
+
+  // 轻量的前置校验：拦截路径分隔符 / 保留名，并基于已加载的同级条目做重名预检查；
+  // 后端仍是最终权威（会再次校验并报错）。
+  const validateInlineCreateName = (name: string, parentPath: string): string | null => {
+    if (/[\\/]/.test(name)) {
+      return '名称不能包含路径分隔符。';
+    }
+    if (name === '.' || name === '..') {
+      return '名称无效。';
+    }
+    const siblings = getDirectoryEntries(parentPath);
+    if (siblings) {
+      const candidatePath = `${parentPath.replace(/[\\/]+$/, '')}/${name}`;
+      const exists = siblings.some((entry) => areFileSystemPathsEqual(entry.path, candidatePath));
+      if (exists) {
+        return '同名文件或文件夹已存在。';
+      }
+    }
+    return null;
   };
 
   const confirmInlineCreateWorkspaceEntry = async (): Promise<void> => {
@@ -130,6 +185,12 @@ export function useWorkspaceExplorerMutations(options: IUseWorkspaceExplorerMuta
     const parentPath = inlineCreateDraft.parentPath;
     const kind = inlineCreateDraft.kind;
     const rootPath = root.rootPath;
+    const validationError = validateInlineCreateName(name, parentPath);
+    if (validationError) {
+      // 保持草稿打开，方便用户直接修正名称。
+      message.error(validationError);
+      return;
+    }
     isInlineCreateSubmitting.value = true;
     try {
       const payload = await tauriService.createWorkspacePath({ parentPath, rootPath, name, kind });
@@ -149,7 +210,23 @@ export function useWorkspaceExplorerMutations(options: IUseWorkspaceExplorerMuta
     if (!inlineCreateDraft.open || isInlineCreateSubmitting.value) {
       return;
     }
-    void confirmInlineCreateWorkspaceEntry();
+    const parentPathAtBlur = inlineCreateDraft.parentPath;
+    // 延后一帧再处理失焦：虚拟列表重渲染 / 滚动会让输入框瞬时失焦。
+    // 若一帧后焦点又回到新建输入框，或草稿已被关闭 / 切换到别的目录，则忽略本次失焦，
+    // 避免误把内容提交到错误的位置或意外取消草稿。
+    void waitNextFrame().then(() => {
+      if (!inlineCreateDraft.open || isInlineCreateSubmitting.value) {
+        return;
+      }
+      if (inlineCreateDraft.parentPath !== parentPathAtBlur) {
+        return;
+      }
+      const input = getSectionElement()?.querySelector('.explorer-inline-create-input') ?? null;
+      if (input && input === document.activeElement) {
+        return;
+      }
+      void confirmInlineCreateWorkspaceEntry();
+    });
   };
 
   let resolveInlineRename: ((value: string | null) => void) | null = null;
@@ -175,12 +252,6 @@ export function useWorkspaceExplorerMutations(options: IUseWorkspaceExplorerMuta
     const resolver = resolveInlineRename;
     resolveInlineRename = null;
     resolver(value || null);
-  };
-
-  const waitNextFrame = (): Promise<void> => {
-    return new Promise((resolve) => {
-      requestAnimationFrame(() => resolve());
-    });
   };
 
   const focusInlineRenameInput = async (): Promise<boolean> => {
@@ -226,6 +297,8 @@ export function useWorkspaceExplorerMutations(options: IUseWorkspaceExplorerMuta
       return;
     }
     await loadDirectoryEntries(path);
+    // 标记该目录刚被主动刷新，文件系统监听器会在短时间内跳过对同一目录的重复重载。
+    markDirectoryRecentlyRefreshed(path);
   };
 
   const handleCreateWorkspaceEntry = async (

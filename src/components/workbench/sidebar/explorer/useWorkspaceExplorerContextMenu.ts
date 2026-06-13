@@ -72,7 +72,8 @@ export function useWorkspaceExplorerContextMenu(options: IUseWorkspaceExplorerCo
   const explorerContextMenuGroups = computed<ILinearContextMenuGroup<IExplorerContextMenuItem>[]>(
     () => {
       const target = explorerContextTarget.value;
-      const canCreate = target?.kind === 'directory';
+      // 目录、文件、空白区域（根）右键都允许新建：文件目标会在其父目录创建“同级”条目。
+      const canCreate = Boolean(target);
       const canMutate = Boolean(target && !target.isRoot);
       return [
         {
