@@ -197,6 +197,12 @@
   text-align: left;
 }
 
+.source-control-github-menu-item > svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+
 .source-control-github-menu-item:hover:not(:disabled) {
   background: rgba(15, 23, 42, 0.06);
   color: rgba(15, 23, 42, 0.95);
