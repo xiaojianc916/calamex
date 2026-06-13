@@ -9,9 +9,11 @@ import { finder } from '@medv/finder';
  * @medv/finder only turns a node into a CSS selector — it draws no UI — so this
  * script renders its own DevTools-style overlay: a highlight box plus a label
  * badge (tag#id.class + live width × height) that follows the cursor, so the user
- * can see exactly which element is under the pointer. Clicking captures a robust
- * CSS selector (@medv/finder) plus a truncated outerHTML and the page url, then
- * ships them back through the binding. Pressing Escape — or calling
+ * can see exactly which element is under the pointer. The overlay/badge are
+ * colored by element category (layout/text/media/link/form/table/list) so the
+ * kind of node is obvious at a glance. Clicking captures a robust CSS selector
+ * (@medv/finder) plus a truncated outerHTML and the page url, then ships them
+ * back through the binding. Pressing Escape — or calling
  * `__calamexTeardownPicker` — cancels without picking.
  */
 
@@ -32,6 +34,36 @@ type PickerWindow = Window & {
   __calamexTeardownPicker?: () => void;
   __calamexPickerActive?: boolean;
 };
+
+// Element category -> accent palette for the hover overlay + badge.
+type Category = 'layout' | 'text' | 'media' | 'link' | 'form' | 'table' | 'list' | 'other';
+
+interface CategoryStyle {
+  border: string;
+  fill: string;
+  badge: string;
+}
+
+const CATEGORY_STYLES: Record<Category, CategoryStyle> = {
+  layout: { border: '#3b82f6', fill: 'rgba(59, 130, 246, 0.18)', badge: '#1d4ed8' },
+  text: { border: '#22c55e', fill: 'rgba(34, 197, 94, 0.16)', badge: '#15803d' },
+  media: { border: '#f59e0b', fill: 'rgba(245, 158, 11, 0.18)', badge: '#b45309' },
+  link: { border: '#06b6d4', fill: 'rgba(6, 182, 212, 0.16)', badge: '#0e7490' },
+  form: { border: '#ec4899', fill: 'rgba(236, 72, 153, 0.16)', badge: '#be185d' },
+  table: { border: '#a855f7', fill: 'rgba(168, 85, 247, 0.16)', badge: '#7e22ce' },
+  list: { border: '#14b8a6', fill: 'rgba(20, 184, 166, 0.16)', badge: '#0f766e' },
+  other: { border: '#6366f1', fill: 'rgba(99, 102, 241, 0.16)', badge: '#4338ca' },
+};
+
+const CATEGORY_TAGS: Array<[Category, string[]]> = [
+  ['layout', ['div', 'section', 'article', 'aside', 'header', 'footer', 'main', 'nav', 'body']],
+  ['text', ['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'span', 'strong', 'em', 'label']],
+  ['media', ['img', 'picture', 'svg', 'canvas', 'video', 'audio', 'iframe']],
+  ['link', ['a']],
+  ['form', ['button', 'input', 'select', 'textarea', 'option', 'form']],
+  ['table', ['table', 'thead', 'tbody', 'tr', 'td', 'th']],
+  ['list', ['ul', 'ol', 'li', 'dl', 'dt', 'dd']],
+];
 
 const pickerWindow = window as unknown as PickerWindow;
 
@@ -56,13 +88,26 @@ const shortLabel = (element: Element): string => {
   return `${tag}${id}${cls}`;
 };
 
+// Map a tag to its accent category (defaults to 'other').
+const categoryOf = (element: Element): Category => {
+  const tag = element.tagName.toLowerCase();
+  for (const [category, tags] of CATEGORY_TAGS) {
+    if (tags.includes(tag)) {
+      return category;
+    }
+  }
+  return 'other';
+};
+
 const createOverlay = (): HTMLDivElement => {
   const overlay = document.createElement('div');
   overlay.id = OVERLAY_ID;
   overlay.style.position = 'fixed';
   overlay.style.zIndex = '2147483646';
   overlay.style.pointerEvents = 'none';
-  overlay.style.border = '2px solid #6366f1';
+  overlay.style.borderWidth = '2px';
+  overlay.style.borderStyle = 'solid';
+  overlay.style.borderColor = '#6366f1';
   overlay.style.borderRadius = '2px';
   overlay.style.background = 'rgba(99, 102, 241, 0.16)';
   overlay.style.boxShadow = '0 0 0 1px rgba(255, 255, 255, 0.6)';
@@ -81,7 +126,7 @@ const createBadge = (): BadgeParts => {
   badge.style.maxWidth = '360px';
   badge.style.padding = '3px 8px';
   badge.style.borderRadius = '6px';
-  badge.style.background = '#1e1b4b';
+  badge.style.background = '#4338ca';
   badge.style.font = '500 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace';
   badge.style.whiteSpace = 'nowrap';
   badge.style.overflow = 'hidden';
@@ -89,11 +134,11 @@ const createBadge = (): BadgeParts => {
   badge.style.boxShadow = '0 2px 10px rgba(15, 23, 42, 0.35)';
 
   const selSpan = document.createElement('span');
-  selSpan.style.color = '#c7d2fe';
+  selSpan.style.color = '#ffffff';
   badge.appendChild(selSpan);
 
   const sizeSpan = document.createElement('span');
-  sizeSpan.style.color = '#818cf8';
+  sizeSpan.style.color = 'rgba(255, 255, 255, 0.7)';
   sizeSpan.style.marginLeft = '8px';
   badge.appendChild(sizeSpan);
 
@@ -115,8 +160,11 @@ const activate = (): void => {
 
   const highlight = (element: Element): void => {
     const rect = element.getBoundingClientRect();
+    const style = CATEGORY_STYLES[categoryOf(element)];
 
     overlay.style.display = 'block';
+    overlay.style.borderColor = style.border;
+    overlay.style.background = style.fill;
     overlay.style.left = `${rect.left}px`;
     overlay.style.top = `${rect.top}px`;
     overlay.style.width = `${rect.width}px`;
@@ -126,6 +174,7 @@ const activate = (): void => {
     sizeSpan.textContent = `${Math.round(rect.width)} \u00d7 ${Math.round(rect.height)}`;
 
     badge.style.display = 'block';
+    badge.style.background = style.badge;
     const badgeTop = rect.top > 26 ? rect.top - 26 : rect.bottom + 6;
     const maxLeft = window.innerWidth - badge.offsetWidth - 4;
     const badgeLeft = Math.max(4, Math.min(rect.left, maxLeft));
