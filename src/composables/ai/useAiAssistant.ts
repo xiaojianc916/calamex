@@ -23,7 +23,10 @@ import {
 import { subscribeSidecarSessionStream } from '@/composables/ai/sidecar-stream-listener';
 import { useAiAgentPlan } from '@/composables/ai/useAiAgentPlan';
 import { useAiStream } from '@/composables/ai/useAiStream';
-import { type IAiWebSelectionContext, useAiWebSelectionInbox } from '@/composables/ai/useAiWebSelectionInbox';
+import {
+  type IAiWebSelectionContext,
+  useAiWebSelectionInbox,
+} from '@/composables/ai/useAiWebSelectionInbox';
 import { useSidecarChangedDocumentRefresh } from '@/composables/useSidecarChangedDocumentRefresh';
 import { aiService } from '@/services/ipc/ai.service';
 import { buildCurrentFileReference } from '@/services/ipc/ai-context.service';
@@ -110,7 +113,6 @@ import {
   resolveSidecarWaitingStreamStatus,
   type TSidecarStreamTokenSnapshot,
 } from './useAiAssistant.stream';
-import { createStreamPipeline } from './useAiAssistant.stream-pipeline';
 
 type TAiQuickActionId = 'explain' | 'fix' | 'review';
 
@@ -1757,12 +1759,16 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     references: IAiContextReference[],
     threadId: string | null,
   ): Promise<void> => {
+    // chat 模式现走 ACP:后端 chat_stream_via_acp 回填 sessionId,投影事件
+    // (message_delta / done / error)落在 ai:sidecar-stream,复用 agent 同款消费机制。
     errorMessage.value = '';
     isSending.value = true;
     activeBufferedThreadId.value = threadId;
 
-    const assistantMessage: IAiChatMessage = {
-      id: createMessageId('assistant'),
+    const assistantMessageId = createMessageId('assistant');
+    const targetThreadId = threadId;
+    const placeholderMessage: IAiChatMessage = {
+      id: assistantMessageId,
       role: 'assistant',
       content: '',
       createdAt: new Date().toISOString(),
@@ -1772,40 +1778,51 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       },
     };
 
-    activeAssistantMessage.value = assistantMessage;
-    activeAssistantBaseMessages.value = visibleMessages;
-    messages.value = [...visibleMessages, assistantMessage];
+    messages.value = [...visibleMessages, placeholderMessage];
+    commitDisplayMessagesToStore(targetThreadId);
+    activeAgentMessageId.value = assistantMessageId;
+    activeAbortController.value = new AbortController();
 
-    let unlisten: (() => void) | null = null;
     let hasSettledStream = false;
-
     const settle = (): void => {
       hasSettledStream = true;
       activeStreamResolve.value?.();
     };
 
-    const pipeline = createStreamPipeline(
-      {
-        aiStream,
-        activeStreamId,
-        errorMessage,
-        syncActiveAssistantMessage,
-        clearAttachedFiles,
-      },
-      assistantMessage,
-      settle,
-    );
+    const liveEventBuffer = createSidecarLiveEventBuffer((events, freshEvents) => {
+      appendVisibleRuntimeTimelineEvents(extractVisibleAgentRuntimeEvents(freshEvents));
+      applySidecarLiveEventsToAgentMessage(assistantMessageId, targetThreadId, '', events);
+
+      const { doneEvent, errorEvent } = getLatestSidecarLiveEvents(events);
+
+      if (errorEvent) {
+        errorMessage.value = errorEvent.message;
+      }
+
+      if (doneEvent || errorEvent) {
+        settle();
+      }
+    });
+    let unlistenSidecarStream: (() => void) | null = null;
 
     try {
-      unlisten = await aiService.onChatStream(pipeline.handleEvent);
-
       const stream = await aiService.chatStream({
         threadId,
         messages: requestMessages,
         references,
       });
 
-      pipeline.startAssistantStream(stream.streamId, stream.assistantMessageId);
+      activeStreamId.value = stream.streamId;
+
+      const sessionId = stream.sessionId;
+
+      if (!sessionId) {
+        throw new Error('AI 流式响应缺少 sessionId,无法订阅 ACP 流。');
+      }
+
+      unlistenSidecarStream = await subscribeSidecarSessionStream(sessionId, (event) => {
+        liveEventBuffer.push(event);
+      });
 
       await new Promise<void>((resolve) => {
         if (hasSettledStream) {
@@ -1815,17 +1832,27 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
 
         activeStreamResolve.value = resolve;
       });
-    } finally {
-      pipeline.flushBufferedText();
-      commitDisplayMessagesToStore(threadId);
-      unlisten?.();
 
+      liveEventBuffer.flush();
+
+      if (!errorMessage.value) {
+        clearAttachedFiles({ revokePreviews: false });
+      }
+    } catch (error) {
+      if (activeAbortController.value?.signal.aborted) {
+        disposeSidecarAnswerStream(assistantMessageId);
+      } else {
+        failSidecarAgentMessage(assistantMessageId, toErrorMessage(error, MSG_CALL_FAILED));
+      }
+    } finally {
+      liveEventBuffer.dispose();
+      unlistenSidecarStream?.();
       activeStreamResolve.value = null;
       activeStreamId.value = null;
       activeAbortController.value = null;
-      activeAssistantMessage.value = null;
-      activeAssistantBaseMessages.value = [];
-      clearActiveBufferedThread(threadId);
+      activeAgentMessageId.value = null;
+      commitDisplayMessagesToStore(targetThreadId);
+      clearActiveBufferedThread(targetThreadId);
       isSending.value = false;
       syncDisplayMessagesFromActiveThread();
     }
@@ -2327,7 +2354,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     const streamId = activeStreamId.value;
 
     if (streamId) {
-      void aiService.cancel({ streamId });
+      void aiService.cancel({ streamId, threadId: targetThreadId ?? null });
     }
 
     activeAbortController.value?.abort();

@@ -259,6 +259,12 @@ export interface IAiSaveConfigRequest {
 
 export interface IAiCancelRequest {
   streamId: string;
+  /**
+   * ACP 取消按 thread 维度:`ai_cancel` 在 `acp_client` 下调用
+   * `AcpRuntime.cancel_thread(thread_id)`(thread_id 为空则回退 stream_manager)。
+   * 与生成绑定的 `Option<String>` 对齐,使用 `string | null`。
+   */
+  threadId: string | null;
 }
 
 export interface IAiInlineCompletionRequest {

@@ -6,6 +6,7 @@ import type {
   IAiAgentSetNetworkPermissionRequest,
   IAiApplyPatchPayload,
   IAiApplyPatchRequest,
+  IAiCancelRequest,
   IAiChatRequest,
   IAiChatStreamEventPayload,
   IAiChatStreamPayload,
@@ -257,7 +258,7 @@ export const aiService = {
   chatStream(payload: IAiChatRequest): Promise<IAiChatStreamPayload> {
     return tauriService.aiChatStream(payload);
   },
-  cancel(payload: { streamId: string }): Promise<void> {
+  cancel(payload: IAiCancelRequest): Promise<void> {
     return tauriService.aiCancel(payload);
   },
   onChatStream(handler: (payload: IAiChatStreamEventPayload) => void): Promise<() => void> {

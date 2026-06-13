@@ -491,6 +491,7 @@ export type AiApplyPatchRequest = {
 
 export type AiCancelRequest = {
 	streamId: string,
+	threadId: string | null,
 };
 
 export type AiChatMessagePayload = {
@@ -513,6 +514,7 @@ export type AiChatStreamPayload = {
 	assistantMessageId: string,
 	providerType: string,
 	model: string,
+	sessionId: string | null,
 };
 
 export type AiConfigPayload = {
