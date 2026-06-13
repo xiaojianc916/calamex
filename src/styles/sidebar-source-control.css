@@ -5,8 +5,8 @@
 .source-control-sidebar {
   --scm-bg: #fafafa;
   --scm-bg-elev: #fafafa;
-  --scm-bg-hover: var(--bg-h);
-  --scm-bg-active: var(--bg-s);
+  --scm-bg-hover: #f0f0f0;
+  --scm-bg-active: #e8e8e8;
   --scm-border: var(--border-subtle);
   --scm-text: var(--text-primary);
   --scm-text-dim: var(--text-tertiary);
@@ -1025,9 +1025,12 @@
 }
 
 .source-control-file:hover,
-.source-control-file.is-active,
 .source-control-file.is-context-target {
   background: var(--scm-bg-hover);
+}
+
+.source-control-file.is-active {
+  background: var(--scm-bg-active);
 }
 
 .source-control-file-main {
