@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { Copy, UserRound } from '@lucide/vue';
-import { computed, ref } from 'vue';
+import { Check, Copy, UserRound } from '@lucide/vue';
+import { computed, onBeforeUnmount, ref } from 'vue';
 import Github from '@/components/ui/icon/GithubIcon.vue';
 import type { IGitHubCommitAuthorSnapshot } from '@/services/github-author';
 import type { IGitCommitDetailPayload, IGitCommitSummaryPayload } from '@/types/git';
@@ -25,6 +25,20 @@ const emit = defineEmits<{
 
 const rootEl = ref<HTMLElement | null>(null);
 defineExpose({ getRootEl: (): HTMLElement | null => rootEl.value });
+
+// 复制提交哈希成功后短暂显示对勾，1.6s 后自动恢复复制图标。
+const commitIdCopied = ref(false);
+let commitIdCopiedTimer: ReturnType<typeof setTimeout> | null = null;
+
+const handleCopyClick = (): void => {
+  emit('copy-sha');
+  commitIdCopied.value = true;
+  if (commitIdCopiedTimer !== null) clearTimeout(commitIdCopiedTimer);
+  commitIdCopiedTimer = setTimeout(() => {
+    commitIdCopied.value = false;
+    commitIdCopiedTimer = null;
+  }, 1600);
+};
 
 const authorName = computed<string>(
   () => props.detail?.authorName ?? props.commit?.authorName ?? '',
@@ -69,6 +83,13 @@ const formatAbsolute = (value: string | null | undefined): string => {
   const minutes = String(date.getMinutes()).padStart(2, '0');
   return `${year}年${month}月${day}日 ${hours}:${minutes}`;
 };
+
+onBeforeUnmount(() => {
+  if (commitIdCopiedTimer !== null) {
+    clearTimeout(commitIdCopiedTimer);
+    commitIdCopiedTimer = null;
+  }
+});
 </script>
 
 <template>
@@ -124,11 +145,13 @@ const formatAbsolute = (value: string | null | undefined): string => {
           <button
             type="button"
             class="git-history-graph-hovercard-action"
+            :class="{ 'is-copied': commitIdCopied }"
             title="复制完整提交哈希"
             aria-label="复制完整提交哈希"
-            @click="emit('copy-sha')"
+            @click="handleCopyClick"
           >
-            <Copy aria-hidden="true" />
+            <Check v-if="commitIdCopied" aria-hidden="true" />
+            <Copy v-else aria-hidden="true" />
           </button>
           <button
             v-if="githubUrl"
@@ -299,6 +322,12 @@ const formatAbsolute = (value: string | null | undefined): string => {
 .git-history-graph-hovercard-open:hover {
   background: rgba(129, 139, 152, 0.15);
   color: #1f2328;
+}
+
+/* 复制成功后的对勾用绿色强调，1.6s 后恢复 */
+.git-history-graph-hovercard-action.is-copied,
+.git-history-graph-hovercard-action.is-copied:hover {
+  color: #1a7f37;
 }
 
 .git-history-graph-hovercard-open > span:first-child {
