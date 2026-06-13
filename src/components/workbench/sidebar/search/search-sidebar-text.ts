@@ -3,9 +3,9 @@ import type {
   IHighlightedSegment,
   IReplacementLineSegment,
   ISearchMatcher,
+  ISnippetSegment,
+  TSnippetSegmentPart,
 } from './search-sidebar.types';
-
-const COMPACT_PREVIEW_ELLIPSIS = '…';
 
 export interface ICreateSearchMatcherOptions {
   query: string;
@@ -170,43 +170,55 @@ export const buildHighlightedSegments = (
   return segments.filter((segment) => segment.text.length > 0);
 };
 
-export const buildCompactHighlightedSegments = (
+// 按后端码点命中区间切出「完整前缀 + 命中 + 完整后缀」三段，全部按码点（Array.from）切片，
+// 与后端 byte_to_char_offset（码点偏移）对齐。不做固定字符窗口、不拼省略号——长度收拢与
+// 省略号完全交给 CSS，避免把中文从词中间斩断造成的乱码观感。
+export const buildMatchSegments = (
   value: string,
   range: [number, number] | null,
-  contextSize: number,
 ): IHighlightedSegment[] => {
   if (!range) {
-    return [{ text: value, matched: false }];
+    return value ? [{ text: value, matched: false }] : [];
   }
 
   const characters = Array.from(value);
   const [matchStart, matchEnd] = range;
   const safeStart = Math.max(0, Math.min(matchStart, characters.length));
   const safeEnd = Math.max(safeStart, Math.min(matchEnd, characters.length));
-  const previewStart = Math.max(0, safeStart - contextSize);
-  const previewEnd = Math.min(characters.length, safeEnd + contextSize);
-  const prefixText = `${previewStart > 0 ? COMPACT_PREVIEW_ELLIPSIS : ''}${characters
-    .slice(previewStart, safeStart)
-    .join('')}`;
-  const matchText = characters.slice(safeStart, safeEnd).join('');
-  const suffixText = `${characters.slice(safeEnd, previewEnd).join('')}${
-    previewEnd < characters.length ? COMPACT_PREVIEW_ELLIPSIS : ''
-  }`;
-  const segments: IHighlightedSegment[] = [];
 
-  if (prefixText) {
-    segments.push({ text: prefixText, matched: false });
+  return [
+    { text: characters.slice(0, safeStart).join(''), matched: false },
+    { text: characters.slice(safeStart, safeEnd).join(''), matched: true },
+    { text: characters.slice(safeEnd).join(''), matched: false },
+  ].filter((segment) => segment.text.length > 0);
+};
+
+// 把高亮分段标注成命中锚定的 prefix / core / suffix：首个命中之前全部为 prefix（左侧截断），
+// 末个命中之后全部为 suffix（右侧截断），命中及其之间为 core（不收缩、始终可见）。
+// 整行无命中（文件名/符号行可能没有可高亮片段）时整段视为 suffix，交给 CSS 右侧省略。
+export const toAnchoredSnippetSegments = (segments: IHighlightedSegment[]): ISnippetSegment[] => {
+  const visible = segments.filter((segment) => segment.text.length > 0);
+  if (visible.length === 0) {
+    return [];
   }
 
-  if (matchText) {
-    segments.push({ text: matchText, matched: true });
+  const firstMatch = visible.findIndex((segment) => segment.matched);
+  if (firstMatch === -1) {
+    return visible.map((segment) => ({ text: segment.text, matched: false, part: 'suffix' }));
   }
 
-  if (suffixText) {
-    segments.push({ text: suffixText, matched: false });
-  }
+  const reversedIndex = [...visible].reverse().findIndex((segment) => segment.matched);
+  const lastMatch = reversedIndex === -1 ? firstMatch : visible.length - 1 - reversedIndex;
 
-  return segments.filter((segment) => segment.text.length > 0);
+  return visible.map((segment, index) => {
+    let part: TSnippetSegmentPart = 'core';
+    if (index < firstMatch) {
+      part = 'prefix';
+    } else if (index > lastMatch) {
+      part = 'suffix';
+    }
+    return { text: segment.text, matched: segment.matched, part };
+  });
 };
 
 export const getFileName = (relativePath: string): string => {
@@ -225,49 +237,28 @@ export const getParentPath = (relativePath: string): string => {
   return segments.slice(0, -1).join('/');
 };
 
+// 依据后端单命中替换预览切出 prefix / removed / added / suffix 四段。
+// beforeLine 已由后端去掉行首缩进并规整换行；matchStart/matchEnd 是基于 beforeLine 的
+// UTF-16 code unit 偏移（与后端 utf16_len 对齐），因此这里用原生 slice（UTF-16）切片，
+// 不能用 Array.from（码点）——否则星体字符场景会与后端偏移错位、切出乱码。
+// 不在数据层拼省略号：过长前后缀的视觉截断（含省略号）交给 CSS。
 export const buildReplacementLineSegments = (
   beforeLine: string,
-  afterLine: string,
+  insertedText: string,
+  matchStart: number,
+  matchEnd: number,
 ): IReplacementLineSegment[] => {
-  if (beforeLine === afterLine) {
-    return [{ text: beforeLine, kind: 'equal', part: 'whole' }];
-  }
-
-  const beforeCharacters = Array.from(beforeLine);
-  const afterCharacters = Array.from(afterLine);
-  let prefixLength = 0;
-
-  while (
-    prefixLength < beforeCharacters.length &&
-    prefixLength < afterCharacters.length &&
-    beforeCharacters[prefixLength] === afterCharacters[prefixLength]
-  ) {
-    prefixLength += 1;
-  }
-
-  let suffixLength = 0;
-  while (
-    suffixLength < beforeCharacters.length - prefixLength &&
-    suffixLength < afterCharacters.length - prefixLength &&
-    beforeCharacters[beforeCharacters.length - 1 - suffixLength] ===
-      afterCharacters[afterCharacters.length - 1 - suffixLength]
-  ) {
-    suffixLength += 1;
-  }
-
-  const prefixText = beforeCharacters.slice(0, prefixLength).join('');
-  const removedText = beforeCharacters
-    .slice(prefixLength, beforeCharacters.length - suffixLength)
-    .join('');
-  const addedText = afterCharacters
-    .slice(prefixLength, afterCharacters.length - suffixLength)
-    .join('');
-  const suffixText = beforeCharacters.slice(beforeCharacters.length - suffixLength).join('');
+  const length = beforeLine.length;
+  const safeStart = Math.max(0, Math.min(matchStart, length));
+  const safeEnd = Math.max(safeStart, Math.min(matchEnd, length));
+  const prefixText = beforeLine.slice(0, safeStart);
+  const removedText = beforeLine.slice(safeStart, safeEnd);
+  const suffixText = beforeLine.slice(safeEnd);
 
   return [
     { text: prefixText, kind: prefixText ? 'equal' : 'empty', part: 'prefix' },
     { text: removedText, kind: removedText ? 'removed' : 'empty', part: 'removed' },
-    { text: addedText, kind: addedText ? 'added' : 'empty', part: 'added' },
+    { text: insertedText, kind: insertedText ? 'added' : 'empty', part: 'added' },
     { text: suffixText, kind: suffixText ? 'equal' : 'empty', part: 'suffix' },
   ];
 };

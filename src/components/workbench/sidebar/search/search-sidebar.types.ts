@@ -12,11 +12,21 @@ export type TSearchToggleOption =
   | 'contentFuzzy'
   | 'showPathFilters';
 export type TReplacementSegmentKind = 'equal' | 'removed' | 'added' | 'empty';
-export type TReplacementSegmentPart = 'whole' | 'prefix' | 'removed' | 'added' | 'suffix';
+export type TReplacementSegmentPart = 'prefix' | 'removed' | 'added' | 'suffix';
+
+// 命中锚定片段在整行中的角色：前缀（命中之前，左侧按真实像素截断）、命中区（始终完整可见）、
+// 后缀（命中之后，右侧按真实像素截断）。视觉截断与省略号完全交给 CSS，数据层不再拼省略号。
+export type TSnippetSegmentPart = 'prefix' | 'core' | 'suffix';
 
 export interface IHighlightedSegment {
   text: string;
   matched: boolean;
+}
+
+export interface ISnippetSegment {
+  text: string;
+  matched: boolean;
+  part: TSnippetSegmentPart;
 }
 
 export interface ISearchResultItem {
@@ -24,7 +34,7 @@ export interface ISearchResultItem {
   relativePath: string;
   resultKey: string;
   reason: TSearchReason;
-  snippetSegments: IHighlightedSegment[];
+  snippetSegments: ISnippetSegment[];
   score: number;
   lineNumber: number | null;
   matchStart: number | null;
