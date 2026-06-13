@@ -100,7 +100,7 @@
           <Github class="source-control-github-menu-mark" aria-hidden="true" />
           <span class="source-control-github-menu-profile-copy">
             <strong>GitHub</strong>
-            <span v-text="authStore.status.message || '连接账号后可查看 Pull Request 与远程信息。'" />
+            <span v-text="authStore.status.message || ''" />
           </span>
         </header>
 
