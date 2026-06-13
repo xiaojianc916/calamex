@@ -66,9 +66,16 @@ const appendLog = (level: IWebPreviewConsoleLog['level'], message: string): void
   logs.value = [...logs.value, { level, message, timestamp: new Date() }].slice(-MAX_CONSOLE_LOGS);
 };
 
-// CDP 下发的 level 已规范为 log/warn/error；这里做一次防御性收敛。
+// CDP \u4e0b\u53d1\u7684 level \u5df2\u89c4\u8303\u4e3a log/warn/error\uff1b\u8fd9\u91cc\u505a\u4e00\u6b21\u9632\u5fa1\u6027\u6536\u655b\u3002
 const mapConsoleLevel = (level: string): IWebPreviewConsoleLog['level'] =>
   level === 'error' ? 'error' : level === 'warn' ? 'warn' : 'log';
+
+// \u5bfc\u822a\u7c7b\u547d\u4ee4\u5931\u8d25(\u5982 CDP \u4ecd\u5728\u8fde\u63a5)\u65f6\u843d\u5230\u63a7\u5236\u53f0\u9762\u677f\uff0c\u800c\u4e0d\u662f\u5192\u6ce1\u6210\u5168\u5c40\u672a\u5904\u7406\u5f02\u5e38\u3002
+const runNavAction = (action: () => Promise<void>): void => {
+  action().catch((error: unknown) => {
+    appendLog('error', error instanceof Error ? error.message : String(error));
+  });
+};
 
 const handleUrlChange = (url: string): void => {
   previewUrl.value = url;
@@ -76,15 +83,15 @@ const handleUrlChange = (url: string): void => {
 };
 
 const handleBack = (): void => {
-  void backAgentWebview();
+  runNavAction(backAgentWebview);
 };
 
 const handleForward = (): void => {
-  void forwardAgentWebview();
+  runNavAction(forwardAgentWebview);
 };
 
 const handleRefresh = (): void => {
-  void reloadAgentWebview();
+  runNavAction(reloadAgentWebview);
 };
 
 const handleSelect = (): void => {
@@ -94,7 +101,7 @@ const handleSelect = (): void => {
 const handleOpenExternal = (): void => {
   const url = previewUrl.value;
   if (url) {
-    void openExternalAgentWebview({ url });
+    runNavAction(() => openExternalAgentWebview({ url }));
   }
   emit('open-external', url);
 };
@@ -109,7 +116,7 @@ onMounted(() => {
       unlistenNavigated = unlisten;
     })
     .catch(() => {
-      // 非桌面运行时(测试/纯前端)无 Tauri 事件总线，忽略订阅失败。
+      // \u975e\u684c\u9762\u8fd0\u884c\u65f6(\u6d4b\u8bd5/\u7eaf\u524d\u7aef)\u65e0 Tauri \u4e8b\u4ef6\u603b\u7ebf\uff0c\u5ffd\u7565\u8ba2\u9605\u5931\u8d25\u3002
     });
 
   void onAgentWebviewConsole((payload) => {
@@ -119,7 +126,7 @@ onMounted(() => {
       unlistenConsole = unlisten;
     })
     .catch(() => {
-      // 同上。
+      // \u540c\u4e0a\u3002
     });
 });
 
