@@ -1,12 +1,12 @@
 .activity-button.is-active,
 .activity-settings-trigger.is-active {
-  background: var(--surface-soft);
+  background: #e8e8e8;
   color: var(--text-primary);
 }
 
 .activity-button.is-active:hover,
 .activity-settings-trigger.is-active:hover {
-  background: var(--surface-hover);
+  background: #f0f0f0;
   color: var(--text-primary);
 }
 
@@ -33,7 +33,7 @@
 }
 
 .icon-button:hover {
-  background: var(--surface-hover);
+  background: #f0f0f0;
   color: var(--text-primary);
 }
 

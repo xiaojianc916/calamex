@@ -51,18 +51,21 @@
 }
 
 .source-control-file:hover,
-.source-control-file.is-active,
 .source-control-file.is-context-target {
-  background: #eceff2;
+  background: #f0f0f0;
+}
+
+.source-control-file.is-active {
+  background: #e8e8e8;
 }
 
 /* 源代码管理导航按钮（变更/历史/分支/拉取请求/贮藏）：
-   hover 底色 #eceff2，彻底选中(is-active)底色 #dcdee0。
+   hover 底色 #f0f0f0，彻底选中(is-active)底色 #e8e8e8。
    仅覆盖 background，文字颜色沿用原规则。 */
 .source-control-nav-item.is-inactive:hover {
-  background: #eceff2;
+  background: #f0f0f0;
 }
 
 .source-control-nav-item.is-active {
-  background: #dcdee0;
+  background: #e8e8e8;
 }
