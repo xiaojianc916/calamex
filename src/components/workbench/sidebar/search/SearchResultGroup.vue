@@ -25,8 +25,10 @@
           <span class="search-panel-result-snippet">
             <template v-for="(segment, index) in result.snippetSegments"
               :key="`${result.resultKey}-snippet-${index}`">
-              <mark v-if="segment.matched" class="search-panel-result-snippet-match" v-text="segment.text" />
-              <span v-else class="search-panel-result-snippet-context" v-text="segment.text" />
+              <mark v-if="segment.matched" class="search-panel-result-snippet-match"
+                :class="`is-${segment.part}`" v-text="segment.text" />
+              <span v-else class="search-panel-result-snippet-context"
+                :class="`is-${segment.part}`" v-text="segment.text" />
             </template>
           </span>
         </span>

@@ -52,7 +52,7 @@
         <p class="search-panel-empty-text">先打开一个目录，再在这里按文件名或路径快速定位。</p>
       </div>
 
-      <div v-else-if="searchIndexing && scannedFileCount === 0" class="search-panel-empty-state">
+      <div v-else-if="searchIndexing && activeResults.length === 0" class="search-panel-empty-state">
         <LoaderCircle class="search-panel-spin" aria-hidden="true" />
         <p class="search-panel-empty-text">正在搜索工作区…</p>
       </div>
@@ -133,7 +133,6 @@ const {
   searchIndexing,
   searchError,
   selectedResultKey,
-  scannedFileCount,
   resultsScrollRef,
   matcherError,
   hasSearchQuery,
