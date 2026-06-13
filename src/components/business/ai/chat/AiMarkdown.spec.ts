@@ -62,7 +62,7 @@ describe('AiMarkdown rendering', () => {
     expect(wrapper.text()).toContain('done');
   });
 
-  it('保持平滑流式(auto)且关闭打字机光标、max-live-nodes 不跳变', async () => {
+  it('active streamed messages force smooth streaming from first render and through final catch-up', async () => {
     const wrapper = mount(AiMarkdown, {
       props: {
         messageId: 'm-smooth-stream',
@@ -74,9 +74,15 @@ describe('AiMarkdown rendering', () => {
     await nextTick();
 
     const streamingRenderer = wrapper.getComponent(MarkdownRender);
-    // 流式阶段：smooth-streaming="auto"（backlog-aware 平滑分发）、关闭打字机光标(typewriter=false)、
-    // max-live-nodes=0 启用增量渲染、关闭与高频更新冲突的淡入动画。
-    expect(streamingRenderer.props('smoothStreaming')).toBe('auto');
+    // 流式阶段：smooth-streaming=true 强制首屏 backlog 也进入 markstream-vue smooth controller；
+    // 关闭打字机光标(typewriter=false)，max-live-nodes=0 保持增量渲染，fade=false 避免高频闪烁。
+    expect(streamingRenderer.props('smoothStreaming')).toBe(true);
+    expect(streamingRenderer.props('smoothStreamingOptions')).toMatchObject({
+      startDelayMs: 0,
+      flushOnFinish: false,
+    });
+    expect(streamingRenderer.props('parseCoalesceMs')).toBe(0);
+    expect(streamingRenderer.props('mode')).toBe('chat');
     expect(streamingRenderer.props('fade')).toBe(false);
     expect(streamingRenderer.props('typewriter')).toBe(false);
     expect(streamingRenderer.props('maxLiveNodes')).toBe(0);
@@ -92,9 +98,15 @@ describe('AiMarkdown rendering', () => {
     await nextTick();
 
     const finalRenderer = wrapper.getComponent(MarkdownRender);
-    // 完成后：smooth-streaming 仍为 "auto"、typewriter 仍为 false、max-live-nodes 仍为 0（均不跳变）；
-    // final 仅负责让未闭合结构定型。
-    expect(finalRenderer.props('smoothStreaming')).toBe('auto');
+    // 同一个组件实例见过 live stream 后，final 阶段仍保持 smooth-streaming=true；
+    // markstream-vue 会 finish 但不 flush，等 visible 追上 source 后再 final 定型。
+    expect(finalRenderer.props('smoothStreaming')).toBe(true);
+    expect(finalRenderer.props('smoothStreamingOptions')).toMatchObject({
+      startDelayMs: 0,
+      flushOnFinish: false,
+    });
+    expect(finalRenderer.props('parseCoalesceMs')).toBe(0);
+    expect(finalRenderer.props('mode')).toBe('chat');
     expect(finalRenderer.props('fade')).toBe(false);
     expect(finalRenderer.props('typewriter')).toBe(false);
     expect(finalRenderer.props('maxLiveNodes')).toBe(0);
@@ -104,6 +116,23 @@ describe('AiMarkdown rendering', () => {
     expect(finalRenderer.props('renderBatchSize')).toBe(16);
     expect(finalRenderer.props('renderBatchDelay')).toBe(8);
     expect(finalRenderer.props('renderBatchBudgetMs')).toBe(4);
+  });
+
+  it('renders recovered completed history without replaying smooth streaming', async () => {
+    const wrapper = mount(AiMarkdown, {
+      props: {
+        messageId: 'm-history',
+        content: '这是一条已经完成的历史消息',
+        streamStatus: 'completed',
+      },
+    });
+
+    await nextTick();
+
+    const renderer = wrapper.getComponent(MarkdownRender);
+    expect(renderer.props('smoothStreaming')).toBe(false);
+    expect(renderer.props('final')).toBe(true);
+    expect(renderer.props('mode')).toBe('chat');
   });
 
   it('renders custom code blocks with copy actions and code content', async () => {

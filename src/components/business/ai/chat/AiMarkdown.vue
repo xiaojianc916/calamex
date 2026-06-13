@@ -53,10 +53,22 @@ const AI_MARKDOWN_COMPONENTS = {
   table: AiMarkdownTable,
 } satisfies Partial<CustomComponents>;
 
-const AI_MARKDOWN_STREAM_UPDATE_INTERVAL_MS = 48;
+const AI_MARKDOWN_STREAM_UPDATE_INTERVAL_MS = 16;
 const AI_MARKDOWN_FINAL_NORMALIZE_CACHE_LIMIT = 500;
 const AI_MARKDOWN_LONG_CONTENT_HEAD_SIGNATURE = 96;
 const AI_MARKDOWN_LONG_CONTENT_TAIL_SIGNATURE = 512;
+const AI_MARKDOWN_PARSE_COALESCE_MS = 0;
+const AI_MARKDOWN_SMOOTH_STREAMING_OPTIONS = {
+  minCharsPerSecond: 60,
+  maxCharsPerSecond: 1400,
+  targetLatencyMs: 700,
+  catchUpLatencyMs: 250,
+  catchUpThreshold: 400,
+  maxCommitFps: 60,
+  startDelayMs: 0,
+  maxCharsPerCommit: 96,
+  flushOnFinish: false,
+} as const;
 
 interface IAiMarkdownNormalizeCacheRecord {
   content: string;
@@ -131,30 +143,46 @@ const props = defineProps<{
 }>();
 
 const isShellWindowResizing = ref(false);
-const isFinal = computed(
-  () => props.streamStatus !== 'streaming' && props.streamStatus !== 'waiting-confirmation',
+const isLiveStream = computed(
+  () => props.streamStatus === 'streaming' || props.streamStatus === 'waiting-confirmation',
 );
+const isFinal = computed(() => !isLiveStream.value);
+const hasSeenLiveStream = ref(isLiveStream.value);
 const normalizedContent = computed(() =>
   normalizeMarkdownContent(props.messageId, props.content, isFinal.value),
 );
 const renderContent = ref(normalizedContent.value);
 
-// 保留 markstream-vue 的平滑流式（smooth-streaming），但按用户要求关闭打字机光标效果。
-//
-//  - smooth-streaming 用 "auto"：backlog-aware 平滑分发，待显示文本堆积时自动加速追平。
-//    注意：当 max-live-nodes<=0 时，"auto" 依旧启用平滑分发，因此关闭 typewriter 不会影响
-//    “文本连续平滑揭示”，只是去掉逐字蹦出的打字光标。
-//  - max-live-nodes 始终为 0：启用增量/批量渲染，且不在 final 时跳变。
-//  - typewriter 关闭：不再显示一个字一个字蹦出的打字光标；平滑输出仍由 smooth-streaming +
-//    max-live-nodes=0 提供。final 只负责让未闭合的 Markdown 结构（如未闭合代码块/公式）定型。
-const smoothStreaming = computed(() => (isShellWindowResizing.value ? 'off' : ('auto' as const)));
+// markstream-vue 1.x 的 `smooth-streaming="auto"` 会在首次客户端渲染时避免 pacing 静态内容；
+// 这对历史消息是对的，但对正在流式输出、且可能被虚拟列表重新挂载的消息会把当前 backlog 一次性渲染出来。
+// 官方源码里只有 `smooth-streaming=true` 会强制首屏也进入 smooth stream controller，因此：
+//  - 当前组件只要见过 live stream，就保持 smooth-streaming=true，直到组件卸载；final 只触发 finish，
+//    不 flush，避免“先空白、最后整段突然出现”。
+//  - 历史/恢复消息没有见过 live stream，smooth-streaming=false，完整内容立即渲染，不慢放旧消息。
+//  - typewriter=false 只关闭光标；平滑揭示由 smooth streaming + max-live-nodes=0 负责。
+const smoothStreaming = computed(() => {
+  if (isShellWindowResizing.value) {
+    return false;
+  }
+
+  return hasSeenLiveStream.value;
+});
 const typewriter = false as const;
-// 始终关闭虚拟化(max-live-nodes=0)：既启用增量/批量渲染，也保证 final 收尾时平滑分发不被中断。
 const maxLiveNodes = 0;
 const rendererId = computed(() => `ai-message-${props.messageId}`);
 let pendingRenderContent: string | null = null;
 let pendingRenderContentTimer: ReturnType<typeof window.setTimeout> | null = null;
 let resizeLifecycleCleanup: (() => void) | null = null;
+
+watch(
+  isLiveStream,
+  (live) => {
+    if (live) {
+      hasSeenLiveStream.value = true;
+    }
+  },
+  { immediate: true },
+);
 
 const clearPendingRenderContentTimer = (): void => {
   if (pendingRenderContentTimer === null) {
@@ -271,8 +299,11 @@ onBeforeUnmount(() => {
       :content="renderContent"
       :custom-id="rendererId"
       :final="isFinal"
+      mode="chat"
       :defer-nodes-until-visible="false"
       :smooth-streaming="smoothStreaming"
+      :smooth-streaming-options="AI_MARKDOWN_SMOOTH_STREAMING_OPTIONS"
+      :parse-coalesce-ms="AI_MARKDOWN_PARSE_COALESCE_MS"
       :fade="false"
       :max-live-nodes="maxLiveNodes"
       :batch-rendering="true"
