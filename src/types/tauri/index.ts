@@ -1,11 +1,11 @@
 import type {
   IAiAgentClassifyTaskPayload,
   IAiAgentClassifyTaskRequest,
-  IAiCancelRequest,
   IAiAgentNetworkPermissionPayload,
   IAiAgentSetNetworkPermissionRequest,
   IAiApplyPatchPayload,
   IAiApplyPatchRequest,
+  IAiCancelRequest,
   IAiChatRequest,
   IAiChatStreamPayload,
   IAiConfigPayload,
@@ -283,7 +283,8 @@ export interface ITauriService {
     payload: IAgentSidecarApprovalResolveRequest,
   ): Promise<IAgentSidecarResponsePayload>;
   agentSidecarRestoreCheckpoint(
-    payload: IAgentSidecarCheckpointRestoreRequest): Promise<IAgentSidecarResponsePayload>;
+    payload: IAgentSidecarCheckpointRestoreRequest,
+  ): Promise<IAgentSidecarResponsePayload>;
   agentSidecarOrchestrate(
     payload: IAgentSidecarOrchestrateRequest,
   ): Promise<IAgentSidecarOrchestratePayload>;
