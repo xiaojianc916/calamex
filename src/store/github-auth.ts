@@ -142,6 +142,7 @@ export const useGitHubAuthStore = defineStore('github-auth', () => {
   const loadStatus = async (options?: {
     force?: boolean;
     visibleLoading?: boolean;
+    preserveAuthenticatedOnError?: boolean;
   }): Promise<IGitHubAuthStatusPayload> => {
     const rootPath = repositoryRootPath.value;
     if (!rootPath) {
@@ -155,6 +156,8 @@ export const useGitHubAuthStore = defineStore('github-auth', () => {
     if (pendingStatusRequest) return pendingStatusRequest;
 
     const requestId = ++statusRequestId;
+    const fallbackStatus =
+      options?.preserveAuthenticatedOnError && status.value.authenticated ? status.value : null;
     if (options?.visibleLoading || !status.value.authenticated) {
       isLoading.value = true;
     }
@@ -164,13 +167,20 @@ export const useGitHubAuthStore = defineStore('github-auth', () => {
         if (requestId !== statusRequestId) return status.value;
         return applyStatus(payload);
       })
-      .catch((error: unknown) =>
-        applyStatus(
+      .catch((error: unknown) => {
+        if (fallbackStatus) {
+          return applyStatus({
+            ...fallbackStatus,
+            message: error instanceof Error ? error.message : '读取 GitHub 登录状态失败',
+          });
+        }
+
+        return applyStatus(
           createEmptyGithubAuthStatus(
             error instanceof Error ? error.message : '读取 GitHub 登录状态失败',
           ),
-        ),
-      )
+        );
+      })
       .finally(() => {
         pendingStatusRequest = null;
         if (requestId === statusRequestId) isLoading.value = false;
@@ -199,9 +209,14 @@ export const useGitHubAuthStore = defineStore('github-auth', () => {
     const cached = readCachedStatus(rootPath);
     if (cached) {
       status.value = cached.status;
+      statusUpdatedAt = cached.updatedAt;
     }
 
-    void loadStatus({ force: true, visibleLoading: !cached });
+    void loadStatus({
+      force: true,
+      preserveAuthenticatedOnError: Boolean(cached),
+      visibleLoading: !cached,
+    });
   };
 
   const copyDeviceCode = async (): Promise<boolean> => {
