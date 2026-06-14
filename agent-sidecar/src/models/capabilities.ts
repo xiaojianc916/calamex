@@ -1,3 +1,5 @@
+import { getModelContextWindow, getModelMaxOutputTokens } from './model-catalog.js';
+
 export type TAgentModelProviderId =
   | 'openai'
   | 'anthropic'
@@ -56,6 +58,10 @@ interface IProviderCapabilityDefaults {
 const DEFAULT_CONTEXT_WINDOW_TOKENS = 128_000;
 const DEFAULT_MAX_OUTPUT_TOKENS = 8_192;
 
+// 说明:以下表是"种子兜底"值。运行时 contextWindowTokens / maxOutputTokens 优先
+// 走 ./model-catalog(models.dev),仅当目录未收录该模型(如刚发布)或离线时
+// 才回退到这里。其余能力字段(是否支持工具/流式/思考/缓存、toolSchemaFormat、
+// preferredSmallModelId 等)是**应用策略**,与 models.dev 的"模型事实"无关,仍由此处手写。
 const PROVIDER_DEFAULTS: Readonly<Record<string, IProviderCapabilityDefaults>> = {
   openai: {
     supportsTools: true,
@@ -255,6 +261,10 @@ export const resolveAgentModelCapabilities = (
     ? resolveDefaultThinkingEffort(providerId, providerModelId)
     : undefined;
 
+  // 模型事实(上下文/最大输出)优先取自 models.dev 目录,未命中时回退到手写种子。
+  const contextWindowTokens = getModelContextWindow(modelId) ?? defaults.contextWindowTokens;
+  const maxOutputTokens = getModelMaxOutputTokens(modelId) ?? defaults.maxOutputTokens;
+
   return {
     providerId,
     providerModelId,
@@ -266,8 +276,8 @@ export const resolveAgentModelCapabilities = (
     supportsThinking,
     supportsNetworkTools: defaults.supportsNetworkTools,
     supportsPromptCacheKey: defaults.supportsPromptCacheKey,
-    contextWindowTokens: defaults.contextWindowTokens,
-    maxOutputTokens: defaults.maxOutputTokens,
+    contextWindowTokens,
+    maxOutputTokens,
     toolSchemaFormat: defaults.toolSchemaFormat,
     ...(defaultThinkingEffort ? { defaultThinkingEffort } : {}),
     ...(defaults.preferredSmallModelId ? { preferredSmallModelId: defaults.preferredSmallModelId } : {}),
