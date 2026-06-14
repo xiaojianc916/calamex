@@ -13,19 +13,17 @@ use std::{
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpListener,
-    time::{sleep, timeout},
+    time::timeout,
 };
 
 const GITHUB_AUTH_CREDENTIAL_CACHE_TTL: Duration = Duration::from_secs(5 * 60);
 const GITHUB_BROWSER_AUTH_MAX_WAIT: Duration = Duration::from_secs(180);
-const GITHUB_DEVICE_AUTH_MAX_WAIT: Duration = Duration::from_secs(120);
-const GITHUB_DEVICE_AUTH_SCOPE: &str = "read:user user:email repo";
+const GITHUB_OAUTH_SCOPE: &str = "read:user user:email repo";
 const GITHUB_KEYRING_SERVICE: &str = "calamex.github";
 const GITHUB_OAUTH_CALLBACK_PATH: &str = "/github/oauth/callback";
 
-// GitHub OAuth client IDs are public identifiers. This mirrors VS Code's
-// device-code strategy: use a native-app flow that does not require a client
-// secret, then store the resulting token in the OS keyring.
+// GitHub OAuth client IDs are public identifiers. Calamex uses browser-based
+// Authorization Code + PKCE and stores the resulting token in the OS keyring.
 const GITHUB_OAUTH_CLIENT_ID: &str = "01ab8ac9400c4e429b23";
 
 #[derive(Debug, Deserialize, specta::Type)]
@@ -39,15 +37,6 @@ pub struct GitHubAuthRequest {
 pub struct GitHubBrowserAuthCompleteRequest {
     repository_root_path: String,
     state: String,
-}
-
-#[derive(Debug, Deserialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct GitHubDeviceAuthCompleteRequest {
-    repository_root_path: String,
-    device_code: String,
-    #[specta(type = u32)]
-    interval: u64,
 }
 
 #[derive(Debug, Serialize, Clone, specta::Type)]
@@ -68,18 +57,6 @@ pub struct GitHubAuthStatusPayload {
 pub struct GitHubBrowserAuthPayload {
     authorization_url: String,
     state: String,
-    #[specta(type = u32)]
-    expires_in: u64,
-}
-
-#[derive(Debug, Serialize, Clone, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct GitHubDeviceAuthPayload {
-    device_code: String,
-    user_code: String,
-    verification_uri: String,
-    #[specta(type = u32)]
-    interval: u64,
     #[specta(type = u32)]
     expires_in: u64,
 }
@@ -142,15 +119,6 @@ struct GitHubUserEmail {
 }
 
 #[derive(Deserialize)]
-struct GitHubDeviceCodeResponse {
-    device_code: String,
-    user_code: String,
-    verification_uri: String,
-    interval: u64,
-    expires_in: u64,
-}
-
-#[derive(Deserialize)]
 struct GitHubOAuthTokenResponse {
     #[serde(default)]
     access_token: Option<String>,
@@ -167,8 +135,7 @@ static GITHUB_BROWSER_AUTH_SESSIONS: OnceLock<
     Mutex<HashMap<String, GitHubBrowserAuthSession>>,
 > = OnceLock::new();
 
-fn github_auth_credential_cache() -> &'static Mutex<HashMap<String, GitHubAuthCredentialCacheEntry>>
-{
+fn github_auth_credential_cache() -> &'static Mutex<HashMap<String, GitHubAuthCredentialCacheEntry>> {
     GITHUB_AUTH_CREDENTIAL_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -230,8 +197,6 @@ fn find_preferred_remote_url(repository: &Repository) -> Result<Option<String>, 
     Ok(None)
 }
 
-/// 使用 gix 官方 Git URL 解析器提取 host（支持 scp 风格 git@host:path 及 ssh/https/git 等 scheme），
-/// 避免手写 scheme/authority 拆分。
 fn parse_github_remote_host(url: &str) -> Option<String> {
     let trimmed = url.trim();
     if trimmed.is_empty() {
@@ -568,7 +533,7 @@ fn build_browser_authorization_url(
     let params = [
         ("client_id", GITHUB_OAUTH_CLIENT_ID),
         ("redirect_uri", redirect_uri),
-        ("scope", GITHUB_DEVICE_AUTH_SCOPE),
+        ("scope", GITHUB_OAUTH_SCOPE),
         ("state", state),
         ("code_challenge", code_challenge),
         ("code_challenge_method", "S256"),
@@ -818,101 +783,6 @@ async fn fetch_github_auth_status(
     Ok(authenticated(user, credential.source))
 }
 
-async fn request_github_device_code(
-    target: &GitHubAuthTarget,
-) -> Result<GitHubDeviceAuthPayload, String> {
-    let client = build_github_oauth_client()?;
-    let response = client
-        .post(format!("{}/login/device/code", target.auth_base))
-        .header(ACCEPT, "application/json")
-        .form(&[
-            ("client_id", GITHUB_OAUTH_CLIENT_ID),
-            ("scope", GITHUB_DEVICE_AUTH_SCOPE),
-        ])
-        .send()
-        .await
-        .map_err(|error| format!("请求 GitHub 设备授权码失败：{error}"))?;
-
-    let status = response.status();
-    let body = response
-        .text()
-        .await
-        .map_err(|error| format!("读取 GitHub 设备授权码失败：{error}"))?;
-
-    if !status.is_success() {
-        return Err(format!(
-            "请求 GitHub 设备授权码失败（{}）：{body}",
-            status.as_u16()
-        ));
-    }
-
-    let payload: GitHubDeviceCodeResponse = serde_json::from_str(&body)
-        .map_err(|error| format!("解析 GitHub 设备授权码失败：{error}"))?;
-
-    Ok(GitHubDeviceAuthPayload {
-        device_code: payload.device_code,
-        user_code: payload.user_code,
-        verification_uri: payload.verification_uri,
-        interval: payload.interval.max(1),
-        expires_in: payload.expires_in,
-    })
-}
-
-async fn poll_github_device_token(
-    target: &GitHubAuthTarget,
-    request: &GitHubDeviceAuthCompleteRequest,
-) -> Result<String, String> {
-    let client = build_github_oauth_client()?;
-    let started_at = Instant::now();
-    let mut interval = request.interval.max(1);
-
-    while started_at.elapsed() < GITHUB_DEVICE_AUTH_MAX_WAIT {
-        sleep(Duration::from_secs(interval)).await;
-
-        let response = client
-            .post(format!("{}/login/oauth/access_token", target.auth_base))
-            .header(ACCEPT, "application/json")
-            .form(&[
-                ("client_id", GITHUB_OAUTH_CLIENT_ID),
-                ("device_code", request.device_code.as_str()),
-                ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
-            ])
-            .send()
-            .await
-            .map_err(|error| format!("请求 GitHub 访问令牌失败：{error}"))?;
-
-        let body = response
-            .text()
-            .await
-            .map_err(|error| format!("读取 GitHub 访问令牌失败：{error}"))?;
-        let token_response: GitHubOAuthTokenResponse = serde_json::from_str(&body)
-            .map_err(|error| format!("解析 GitHub 访问令牌失败：{error}"))?;
-
-        if let Some(token) = token_response.access_token
-            && !token.trim().is_empty()
-        {
-            return Ok(token);
-        }
-
-        match token_response.error.as_deref() {
-            Some("authorization_pending") => continue,
-            Some("slow_down") => {
-                interval += 5;
-            }
-            Some("expired_token") => return Err("GitHub 授权码已过期，请重新连接。".to_string()),
-            Some("access_denied") => return Err("GitHub 授权已取消。".to_string()),
-            Some(error) => {
-                return Err(token_response
-                    .error_description
-                    .unwrap_or_else(|| format!("GitHub 授权失败：{error}")));
-            }
-            None => return Err("GitHub 授权响应缺少访问令牌。".to_string()),
-        }
-    }
-
-    Err("GitHub 授权等待超时，请重新连接。".to_string())
-}
-
 #[tauri::command]
 #[specta::specta]
 pub async fn get_github_auth_status(
@@ -985,32 +855,6 @@ pub async fn complete_github_browser_auth(
         .filter(|code| !code.trim().is_empty())
         .ok_or_else(|| "GitHub 浏览器回调缺少授权码。".to_string())?;
     let token = exchange_github_browser_code(&target, &redirect_uri, &code_verifier, &code).await?;
-    let host = target.host.clone();
-    tokio::task::spawn_blocking(move || save_keyring_token(&host, &token))
-        .await
-        .map_err(|error| format!("保存 GitHub 凭据任务异常终止：{error}"))??;
-    clear_github_auth_credential_cache_for_host(&target.host);
-    fetch_github_auth_status(&target).await
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn begin_github_device_auth(
-    payload: GitHubAuthRequest,
-) -> Result<GitHubDeviceAuthPayload, String> {
-    let target = resolve_github_auth_target(&payload.repository_root_path)?;
-    clear_github_auth_credential_cache_for_host(&target.host);
-    request_github_device_code(&target).await
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn complete_github_device_auth(
-    payload: GitHubDeviceAuthCompleteRequest,
-) -> Result<GitHubAuthStatusPayload, String> {
-    let target = resolve_github_auth_target(&payload.repository_root_path)?;
-    clear_github_auth_credential_cache_for_host(&target.host);
-    let token = poll_github_device_token(&target, &payload).await?;
     let host = target.host.clone();
     tokio::task::spawn_blocking(move || save_keyring_token(&host, &token))
         .await
