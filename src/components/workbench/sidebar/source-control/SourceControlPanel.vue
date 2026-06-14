@@ -94,8 +94,6 @@
           <span v-if="status.ahead > 0">↑  status.ahead </span>
           <span v-if="status.ahead === 0 && status.behind === 0" v-text="workspaceStateLabel" />
         </div>
-
-        <GitHubAuthPill :repository-root-path="status.repositoryRootPath" />
       </div>
 
       <nav class="source-control-nav" aria-label="源代码管理导航">
@@ -185,7 +183,6 @@ import { toErrorMessage } from '@/utils/error';
 import { getPathBaseName } from '@/utils/path';
 import SourceControlBranchesTab from './SourceControlBranchesTab.vue';
 import SourceControlChangesTab from './SourceControlChangesTab.vue';
-import GitHubAuthPill from './GitHubAuthPill.vue';
 import SourceControlHistoryTab from './SourceControlHistoryTab.vue';
 import SourceControlPullRequestsTab from './SourceControlPullRequestsTab.vue';
 import SourceControlStashTab from './SourceControlStashTab.vue';

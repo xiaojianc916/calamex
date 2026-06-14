@@ -6,7 +6,9 @@
   background: transparent;
 }
 
-.source-control-branch-sync.is-github-auth-slot {
+.source-control-branch-sync.is-github-auth-slot,
+.source-control-github-auth-native-slot,
+.source-control-branch .source-control-github-auth-wrap {
   display: none;
 }
 
@@ -14,7 +16,6 @@
   position: relative;
   display: inline-flex;
   align-items: center;
-  margin-left: 4px;
 }
 
 .source-control-github-auth {
