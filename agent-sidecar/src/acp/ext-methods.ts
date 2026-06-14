@@ -15,8 +15,11 @@
  * - web/search、web/fetch：应用级网络检索/抓取（由宿主的 ai::tools 调用，非 agent 工具）。
  * - warmup：LLM 连接预热（宿主启动时显式调用，缩短首 prompt 首字延迟）。
  * - health：健康/活性探活 + MCP 运行状态快照。
+ * - plan/orchestrate、plan/orchestrate/resume：原生计划编排（runtime.buildPlanOrchestrationWorkflow）
+ *   的启动与挂起恢复；过程事件经会话的 session/update 流式下发，挂起/终态信封
+ *   { runId, status, result } 作为方法返回值（由 acp/orchestration.ts 的 runner 执行）。
  *
- * 模型代理輎谈（model-proxy）与叙述生成（narrator）不在此列：二者在旧 http 期即与
+ * 模型代理谈（model-proxy）与叙述生成（narrator）不在此列：二者在旧 http 期即与
  * `/agent/chat` 共用同一 `runtime.chat`(ask) 处理器，在 ACP 下天然归为 ask 模式的 prompt 回合，
  * 无需单独扩展。检查点长期可像 Zed 那样归到宿主侧 git_store，届时该扩展整体退役。
  * 本模块为纯函数 + 常量（及类型投影），无 I/O、无状态；I/O 由 agent.ts 的 ext 处理器承担。
@@ -32,6 +35,7 @@ import {
 import type {
 	IAgentMessageInput,
 	IAgentRuntimeInput,
+	IAgentRuntimeModelConfigInput,
 	ICheckpointRestoreInput,
 } from "../engines/contracts/runtime-input.js"
 import type { TAgentSidecarResponse } from "../schemas/events.js"
@@ -58,8 +62,13 @@ export const WARMUP_METHOD = `${CALAMEX_EXT_NAMESPACE}/warmup`
 /** 健康/活性探活扩展方法名。 */
 export const HEALTH_METHOD = `${CALAMEX_EXT_NAMESPACE}/health`
 
+/** 原生计划编排扩展方法名（跑到挂起/终态，过程事件经 session/update 流式下发）。 */
+export const ORCHESTRATE_METHOD = `${CALAMEX_EXT_NAMESPACE}/plan/orchestrate`
+/** 编排挂起点恢复扩展方法名（计划审批门 / 工具审批 / 逐步闸门通用）。 */
+export const ORCHESTRATE_RESUME_METHOD = `${CALAMEX_EXT_NAMESPACE}/plan/orchestrate/resume`
+
 /**
- * sidecar 构建身份版本（从旧 http server.ts 迁入，使其在 server.ts 删除后仍成立）。
+ * sidecar 构建身份版本号（从旧 http server.ts 迁入，使其在 server.ts 删除后仍成立）。
  * 这是 sidecar *实现* 的版本标记，与 ACP 协议本身的 PROTOCOL_VERSION 解耦；仅用于 health
  * 投影中填充宿主侧 AgentSidecarHealthPayload 的 protocol/implementation 字段，保持契约稳定。
  */
@@ -80,6 +89,8 @@ export const CALAMEX_AGENT_CAPABILITY_META: Record<string, unknown> = {
 			webFetch: WEB_FETCH_METHOD,
 			warmup: WARMUP_METHOD,
 			health: HEALTH_METHOD,
+			orchestrate: ORCHESTRATE_METHOD,
+			orchestrateResume: ORCHESTRATE_RESUME_METHOD,
 		},
 	},
 }
@@ -225,4 +236,111 @@ export const buildHealthExtResult = (
 	protocolVersion: SIDECAR_PROTOCOL_VERSION,
 	implementationVersion: SIDECAR_IMPLEMENTATION_VERSION,
 	mcp: { ...input.mcp },
+})
+
+/**
+ * 执行模式 schema（interactive 人值守逐步 / autonomous 自主闭环）；缺省归一为 interactive，
+ * 与旧 http server/request-schemas 的 executionModeRequestSchema 一致。
+ */
+const executionModeParamsSchema = z
+	.enum(["interactive", "autonomous"])
+	.default("interactive")
+
+/**
+ * 原生编排扩展方法（start）的入参 schema。镜像旧 http 的 agentSidecarOrchestrateRequestSchema，
+ * 额外携带可选 sessionId：ACP 下过程事件经该会话的 session/update 流式下发（缺省则不下发，
+ * 仅返回终态信封）。此处自包含重述，以便删除 server/ 后本扩展独立成立。
+ */
+export const orchestrateParamsSchema = z.object({
+	goal: z.string().trim().min(1),
+	threadId: z.string().trim().min(1).optional(),
+	executionMode: executionModeParamsSchema,
+	sessionId: z.string().trim().min(1).optional(),
+	modelConfig: modelConfigParamsSchema.optional(),
+})
+
+/**
+ * 编排恢复扩展方法（resume）的入参 schema。镜像旧 http 的
+ * agentSidecarOrchestrateResumeRequestSchema，额外携带可选 sessionId（同 start，用于续跑阶段
+ * 的 session/update 流式下发）。decision 覆盖三类挂起点，与旧 http 同语义。
+ */
+export const orchestrateResumeParamsSchema = z.object({
+	runId: z.string().trim().min(1),
+	decision: z.enum(["approve", "reject", "continue", "cancel"]),
+	reason: z.string().trim().min(1).optional(),
+	sessionId: z.string().trim().min(1).optional(),
+	modelConfig: modelConfigParamsSchema.optional(),
+})
+
+/** parseOrchestrateParams 的返回型：编排 start 入参 + 可选流式会话 id。 */
+export interface IOrchestrateParams {
+	goal: string
+	executionMode: "interactive" | "autonomous"
+	threadId?: string
+	sessionId?: string
+	modelConfig?: IAgentRuntimeModelConfigInput
+}
+
+/** parseOrchestrateResumeParams 的返回型：编排 resume 入参 + 可选流式会话 id。 */
+export interface IOrchestrateResumeParams {
+	runId: string
+	decision: "approve" | "reject" | "continue" | "cancel"
+	reason?: string
+	sessionId?: string
+	modelConfig?: IAgentRuntimeModelConfigInput
+}
+
+/**
+ * 校验并投影编排 start 入参。可选字段仅在提供时写入，与 checkpoint/modelChat 同风格。
+ * 入参非法时抛出 ZodError，由 SDK 连接层映射为 JSON-RPC error。
+ */
+export const parseOrchestrateParams = (
+	params: Record<string, unknown>,
+): IOrchestrateParams => {
+	const parsed = orchestrateParamsSchema.parse(params)
+	const input: IOrchestrateParams = {
+		goal: parsed.goal,
+		executionMode: parsed.executionMode,
+	}
+	if (parsed.threadId !== undefined) input.threadId = parsed.threadId
+	if (parsed.sessionId !== undefined) input.sessionId = parsed.sessionId
+	if (parsed.modelConfig !== undefined) input.modelConfig = parsed.modelConfig
+	return input
+}
+
+/**
+ * 校验并投影编排 resume 入参。可选字段仅在提供时写入。
+ * 入参非法时抛出 ZodError，由 SDK 连接层映射为 JSON-RPC error。
+ */
+export const parseOrchestrateResumeParams = (
+	params: Record<string, unknown>,
+): IOrchestrateResumeParams => {
+	const parsed = orchestrateResumeParamsSchema.parse(params)
+	const input: IOrchestrateResumeParams = {
+		runId: parsed.runId,
+		decision: parsed.decision,
+	}
+	if (parsed.reason !== undefined) input.reason = parsed.reason
+	if (parsed.sessionId !== undefined) input.sessionId = parsed.sessionId
+	if (parsed.modelConfig !== undefined) input.modelConfig = parsed.modelConfig
+	return input
+}
+
+/** 编排切片结果投影的入参：与 server.ts 流式终帧 { runId, status, result } 同形。 */
+export interface IOrchestrateExtResultInput {
+	runId: string
+	status: string
+	result: unknown
+}
+
+/**
+ * 装配编排扩展方法结果。与旧 http /stream 路由的终帧 { runId, status, result } 同形，
+ * 宿主可直接解析 runId/status 并透传 result（含挂起 suspend payload 供审批 UI）。
+ */
+export const toOrchestrateExtResult = (
+	input: IOrchestrateExtResultInput,
+): Record<string, unknown> => ({
+	runId: input.runId,
+	status: input.status,
+	result: input.result,
 })
