@@ -1,127 +1,78 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 
-const replaceOnce = (content, from, to, path) => {
-  const count = content.split(from).length - 1;
-  if (count !== 1) {
-    throw new Error(`${path}: expected exactly one match for ${JSON.stringify(from)}, got ${count}`);
-  }
-  return content.replace(from, to);
-};
+const files = [
+  'agent-sidecar/src/engines/chat/chat.ts',
+  'agent-sidecar/src/engines/approval-client/client.ts',
+];
 
-const replaceRegexOnce = (content, pattern, to, path, label) => {
-  const matches = content.match(pattern);
-  if (!matches) {
-    throw new Error(`${path}: cannot locate ${label}`);
-  }
-  return content.replace(pattern, to);
-};
+const staleNames = [
+  'createDeepSeekPayloadEventSink',
+  'runWithDeepSeekReasoningContext',
+  'createDeepSeekReasoningRunPrefix',
+  'evictDeepSeekReasoningByPrefix',
+  'deepseek-reasoning-fetch',
+];
 
-const writeIfChanged = (path, content, original) => {
-  if (content !== original) {
-    writeFileSync(path, content);
-    console.log(`patched ${path}`);
-  } else {
+const read = (path) => readFileSync(path, 'utf8');
+
+const writeIfChanged = (path, next, prev) => {
+  if (next === prev) {
     console.log(`unchanged ${path}`);
+    return;
   }
+  writeFileSync(path, next);
+  console.log(`patched ${path}`);
 };
 
-const patchChat = () => {
-  const path = 'agent-sidecar/src/engines/chat/chat.ts';
-  let content = readFileSync(path, 'utf8');
-  const original = content;
-
-  content = content.replace(
-    "import { createDeepSeekReasoningRunPrefix, evictDeepSeekReasoningByPrefix, runWithDeepSeekReasoningContext } from '../../models/providers/deepseek-reasoning-fetch.js';\n",
-    '',
-  );
-  content = content.replace(
-    "import { createAcontextTokenEventDraft, createDeepSeekPayloadEventSink } from '../budget/budget.js';",
+const stripStaleImportLines = (content) => content
+  .replace(/^import \{ createDeepSeekReasoningRunPrefix, evictDeepSeekReasoningByPrefix, runWithDeepSeekReasoningContext \} from ['"]\.\.\/\.\.\/models\/providers\/deepseek-reasoning-fetch\.js['"];\r?\n/mg, '')
+  .replace(/^import \{ createDeepSeekPayloadEventSink \} from ['"]\.\.\/budget\/budget\.js['"];\r?\n/mg, '')
+  .replace(
+    /^import \{ createAcontextTokenEventDraft, createDeepSeekPayloadEventSink \} from ['"]\.\.\/budget\/budget\.js['"];$/m,
     "import { createAcontextTokenEventDraft } from '../budget/budget.js';",
   );
-  content = content.replace(
-    "        const payloadEventSink = createDeepSeekPayloadEventSink(events, options);\n",
-    '',
-  );
-  content = replaceRegexOnce(
-    content,
-    /            return await runWithDeepSeekReasoningContext\(\{\n                sessionId,\n                runId: requestedRunId,\n                onRequestPayload: payloadEventSink\.onRequestPayload,\n            \}, async \(\) => \{/,
-    '            return await (async () => {',
-    path,
-    'runWithDeepSeekReasoningContext wrapper',
-  );
-  content = replaceOnce(
-    content,
-    "                payloadEventSink.attachRuntimeEventFactory(createRuntimeEvent);\n",
-    '',
-    path,
-  );
-  content = replaceRegexOnce(
-    content,
-    /\n            \}\);\n        \} catch \(error\) \{/,
-    '\n            })();\n        } catch (error) {',
-    path,
-    'closing wrapper before catch',
-  );
-  content = content.replace(
-    "                evictDeepSeekReasoningByPrefix(createDeepSeekReasoningRunPrefix(sessionId, requestedRunId));\n",
-    '',
-  );
 
-  if (content.includes('deepseek-reasoning-fetch') || content.includes('createDeepSeekPayloadEventSink')) {
-    throw new Error(`${path}: stale DeepSeek shim references remain`);
+const stripSimpleLines = (content) => content
+  .replace(/^\s*const payloadEventSink = createDeepSeekPayloadEventSink\(events, options\);\r?\n/mg, '')
+  .replace(/^\s*payloadEventSink\.attachRuntimeEventFactory\(createRuntimeEvent\);\r?\n/mg, '')
+  .replace(/^\s*evictDeepSeekReasoningByPrefix\(createDeepSeekReasoningRunPrefix\(sessionId, requestedRunId\)\);\r?\n/mg, '')
+  .replace(/\r?\n\s*evictDeepSeekReasoningByPrefix\(\r?\n\s*createDeepSeekReasoningRunPrefix\(sessionId, decodedRequest\.runId\),\r?\n\s*\);/g, '');
+
+const unwrapReasoningContext = (content) => {
+  let next = content;
+  next = next.replace(
+    /return await runWithDeepSeekReasoningContext\(\{\s*sessionId,\s*runId: requestedRunId,\s*onRequestPayload: payloadEventSink\.onRequestPayload,\s*\}, async \(\) => \{/s,
+    'return await (async () => {',
+  );
+  next = next.replace(
+    /return await runWithDeepSeekReasoningContext\(\{\s*sessionId,\s*runId: decodedRequest\.runId,\s*onRequestPayload: payloadEventSink\.onRequestPayload,\s*\}, async \(\) => \{/s,
+    'return await (async () => {',
+  );
+  if (next.includes('return await (async () => {')) {
+    next = next.replace(/\n\s*\}\);\n\s*\} catch \(error\) \{/s, '\n            })();\n        } catch (error) {');
   }
-  writeIfChanged(path, content, original);
+  return next;
 };
 
-const patchApproval = () => {
-  const path = 'agent-sidecar/src/engines/approval-client/client.ts';
-  let content = readFileSync(path, 'utf8');
-  const original = content;
+for (const path of files) {
+  const original = read(path);
+  let next = original;
 
-  content = content.replace(
-    "import { createDeepSeekReasoningRunPrefix, evictDeepSeekReasoningByPrefix, runWithDeepSeekReasoningContext } from '../../models/providers/deepseek-reasoning-fetch.js';\n",
-    '',
-  );
-  content = content.replace(
-    "import { createDeepSeekPayloadEventSink } from '../budget/budget.js';\n",
-    '',
-  );
-  content = content.replace(
-    "        const payloadEventSink = createDeepSeekPayloadEventSink(events, options);\n",
-    '',
-  );
-  content = replaceRegexOnce(
-    content,
-    /            return await runWithDeepSeekReasoningContext\(\{\n                sessionId,\n                runId: decodedRequest\.runId,\n                onRequestPayload: payloadEventSink\.onRequestPayload,\n            \}, async \(\) => \{/,
-    '            return await (async () => {',
-    path,
-    'runWithDeepSeekReasoningContext wrapper',
-  );
-  content = replaceOnce(
-    content,
-    "                payloadEventSink.attachRuntimeEventFactory(createRuntimeEvent);\n",
-    '',
-    path,
-  );
-  content = replaceRegexOnce(
-    content,
-    /\n            \}\);\n        \} catch \(error\) \{/,
-    '\n            })();\n        } catch (error) {',
-    path,
-    'closing wrapper before catch',
-  );
-  content = content.replace(
-    /\n                evictDeepSeekReasoningByPrefix\(\n                    createDeepSeekReasoningRunPrefix\(sessionId, decodedRequest\.runId\),\n                \);/,
-    '',
-  );
-
-  if (content.includes('deepseek-reasoning-fetch') || content.includes('createDeepSeekPayloadEventSink')) {
-    throw new Error(`${path}: stale DeepSeek shim references remain`);
+  if (!staleNames.some((name) => next.includes(name))) {
+    console.log(`already repaired ${path}`);
+    continue;
   }
-  writeIfChanged(path, content, original);
-};
 
-patchChat();
-patchApproval();
+  next = stripStaleImportLines(next);
+  next = stripSimpleLines(next);
+  next = unwrapReasoningContext(next);
 
-console.log('已移除 agent-sidecar 残留 DeepSeek reasoning shim 引用；请重新 build sidecar 并重启桌面端。');
+  const remaining = staleNames.filter((name) => next.includes(name));
+  if (remaining.length > 0) {
+    throw new Error(`${path}: stale DeepSeek shim references remain after repair: ${remaining.join(', ')}`);
+  }
+
+  writeIfChanged(path, next, original);
+}
+
+console.log('DeepSeek reasoning 旧 shim 残留检查/修复完成。现在请重新 build sidecar 并重启桌面端。');
