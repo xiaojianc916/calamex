@@ -10,7 +10,6 @@ import type {
   IAiApplyPatchPayload,
   IAiApplyPatchRequest,
   IAiChatRequest,
-  IAiChatStreamEventPayload,
   IAiPatchSet,
   IAiTaskPlanStep,
 } from '@/types/ai';
@@ -42,6 +41,7 @@ import type { IGitRepositoryStatusPayload } from '@/types/git';
 
 const STREAM_ID = 'stream-1' as const;
 const ASSISTANT_MESSAGE_ID = 'assistant-1' as const;
+const CHAT_SESSION_ID = 'acp-chat-session-1' as const;
 const MOCK_MODEL = 'mock-ide-assistant' as const;
 const WORKSPACE_ROOT = 'd:/com.xiaojianc/my_desktop_app' as const;
 
@@ -50,78 +50,101 @@ const WORKSPACE_ROOT = 'd:/com.xiaojianc/my_desktop_app' as const;
 // ---------------------------------------------------------------------------
 
 const aiServiceMock = vi.hoisted(() => {
-  type StreamHandler = (payload: IAiChatStreamEventPayload) => void;
   type SidecarStreamHandler = (payload: IAgentSidecarStreamEventPayload) => void;
-
-  let streamHandler: StreamHandler | null = null;
   let sidecarStreamHandler: SidecarStreamHandler | null = null;
   let streamSequence = 0;
+  let sidecarSequence = 0;
+  let activeChatSessionId: string = CHAT_SESSION_ID;
   const queuedStreamResponses: Array<{
     streamId: string;
     assistantMessageId: string;
+    sessionId: string;
     content: string;
     terminalKind: 'done' | 'error';
     terminalMessage: string | null;
   }> = [];
 
-  const onChatStream = vi.fn(async (handler: StreamHandler) => {
-    streamHandler = handler;
-    return vi.fn(); // unsubscribe
-  });
+  const emitSidecarEvent = (
+    sessionId: string,
+    event: IAgentSidecarStreamEventPayload['event'],
+  ): void => {
+    sidecarStreamHandler?.({
+      sessionId,
+      seq: sidecarSequence,
+      event,
+    });
+    sidecarSequence += 1;
+  };
+
+  const emitChatDelta = (delta: string, sessionId = activeChatSessionId): void => {
+    emitSidecarEvent(sessionId, {
+      type: 'message_delta',
+      text: delta,
+      phase: 'final',
+    });
+  };
+
+  const emitChatDone = (
+    result: string,
+    sessionId = activeChatSessionId,
+    usage?: Extract<IAgentSidecarStreamEventPayload['event'], { type: 'done' }>['usage'],
+  ): void => {
+    emitSidecarEvent(sessionId, {
+      type: 'done',
+      result,
+      ...(usage ? { usage } : {}),
+    });
+  };
+
+  const emitChatError = (message: string, sessionId = activeChatSessionId): void => {
+    emitSidecarEvent(sessionId, {
+      type: 'error',
+      message,
+    });
+  };
 
   const chatStream = vi.fn<
     (payload: IAiChatRequest) => Promise<{
       streamId: string;
       assistantMessageId: string;
-      providerType: 'mock';
+      providerType: 'mastra';
       model: string;
+      sessionId: string;
     }>
   >(async (payload) => {
     void payload;
     const queued = queuedStreamResponses.shift();
     if (!queued) {
+      activeChatSessionId = CHAT_SESSION_ID;
       return {
         streamId: STREAM_ID,
         assistantMessageId: ASSISTANT_MESSAGE_ID,
-        providerType: 'mock',
+        providerType: 'mastra',
         model: MOCK_MODEL,
+        sessionId: activeChatSessionId,
       };
     }
 
+    activeChatSessionId = queued.sessionId;
     queueMicrotask(() => {
-      streamHandler?.({
-        streamId: queued.streamId,
-        assistantMessageId: queued.assistantMessageId,
-        kind: 'start',
-        delta: null,
-        message: null,
-        model: MOCK_MODEL,
-      });
       for (const chunk of queued.content.match(/.{1,24}/g) ?? []) {
-        streamHandler?.({
-          streamId: queued.streamId,
-          assistantMessageId: queued.assistantMessageId,
-          kind: 'delta',
-          delta: chunk,
-          message: null,
-          model: MOCK_MODEL,
-        });
+        emitChatDelta(chunk, queued.sessionId);
       }
-      streamHandler?.({
-        streamId: queued.streamId,
-        assistantMessageId: queued.assistantMessageId,
-        kind: queued.terminalKind,
-        delta: null,
-        message: queued.terminalMessage,
-        model: MOCK_MODEL,
-      });
+
+      if (queued.terminalKind === 'error') {
+        emitChatError(queued.terminalMessage ?? 'AI 流式响应失败', queued.sessionId);
+        return;
+      }
+
+      emitChatDone(queued.content, queued.sessionId);
     });
 
     return {
       streamId: queued.streamId,
       assistantMessageId: queued.assistantMessageId,
-      providerType: 'mock',
+      providerType: 'mastra',
       model: MOCK_MODEL,
+      sessionId: queued.sessionId,
     };
   });
 
@@ -130,7 +153,7 @@ const aiServiceMock = vi.hoisted(() => {
     model: MOCK_MODEL,
   }));
 
-  const cancel = vi.fn(async (payload: { streamId: string }) => {
+  const cancel = vi.fn(async (payload: { streamId: string; threadId: string | null }) => {
     void payload;
   });
 
@@ -278,7 +301,6 @@ const aiServiceMock = vi.hoisted(() => {
   });
 
   return {
-    onChatStream,
     generateConversationTitle,
     chatStream,
     cancel,
@@ -302,33 +324,30 @@ const aiServiceMock = vi.hoisted(() => {
       queuedStreamResponses.push({
         streamId: `${STREAM_ID}-${streamSequence}`,
         assistantMessageId: `${ASSISTANT_MESSAGE_ID}-${streamSequence}`,
+        sessionId: `${CHAT_SESSION_ID}-${streamSequence}`,
         content,
         terminalKind,
         terminalMessage,
       });
     },
-    emit(event: IAiChatStreamEventPayload): void {
-      streamHandler?.(event);
-    },
     emitSidecar(event: IAgentSidecarStreamEventPayload): void {
       sidecarStreamHandler?.(event);
     },
     emitDelta(delta: string): void {
-      streamHandler?.({
-        streamId: STREAM_ID,
-        assistantMessageId: ASSISTANT_MESSAGE_ID,
-        kind: 'delta',
-        delta,
-        message: null,
-        model: MOCK_MODEL,
-      });
+      emitChatDelta(delta);
+    },
+    emitDone(
+      result: string,
+      usage?: Extract<IAgentSidecarStreamEventPayload['event'], { type: 'done' }>['usage'],
+    ): void {
+      emitChatDone(result, activeChatSessionId, usage);
     },
     reset(): void {
-      streamHandler = null;
       sidecarStreamHandler = null;
       streamSequence = 0;
+      sidecarSequence = 0;
+      activeChatSessionId = CHAT_SESSION_ID;
       queuedStreamResponses.length = 0;
-      onChatStream.mockClear();
       generateConversationTitle.mockClear();
       chatStream.mockClear();
       cancel.mockClear();
@@ -348,7 +367,6 @@ const aiServiceMock = vi.hoisted(() => {
 
 vi.mock('@/services/ipc/ai.service', () => ({
   aiService: {
-    onChatStream: aiServiceMock.onChatStream,
     generateConversationTitle: aiServiceMock.generateConversationTitle,
     chatStream: aiServiceMock.chatStream,
     cancel: aiServiceMock.cancel,
@@ -546,17 +564,18 @@ const createDeferred = <T>() => {
 
 const waitForStartedStream = async (
   resolveMessageId: () => string | undefined,
-  expectedId: string = ASSISTANT_MESSAGE_ID,
+  expectedId?: string,
   maxAttempts = 8,
 ): Promise<void> => {
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    if (resolveMessageId() === expectedId) {
+    const messageId = resolveMessageId();
+    if (messageId && (!expectedId || messageId === expectedId)) {
       return;
     }
     await flushMicrotasks();
   }
   throw new Error(
-    `assistant stream did not start in time (expected id="${expectedId}" within ${maxAttempts} ticks)`,
+    `assistant stream did not start in time (expected id="${expectedId ?? '<any>'}" within ${maxAttempts} ticks)`,
   );
 };
 
@@ -748,7 +767,10 @@ describe('useAiAssistant streaming integration', () => {
     assistant.stopCurrentRequest();
 
     const cancelledMessage = assistant.messages.value.at(-1);
-    expect(aiServiceMock.cancel).toHaveBeenCalledWith({ streamId: STREAM_ID });
+    expect(aiServiceMock.cancel).toHaveBeenCalledWith({
+      streamId: STREAM_ID,
+      threadId: expect.any(String),
+    });
     expect(cancelledMessage?.stream?.status).toBe('cancelled');
     expect(cancelledMessage?.content).toBe(openFence);
     expect(assistant.errorMessage.value).toBe('');
@@ -773,15 +795,7 @@ describe('useAiAssistant streaming integration', () => {
     const sendPromise = assistant.sendMessage();
 
     await waitForStartedStream(() => assistant.messages.value.at(-1)?.id);
-
-    aiServiceMock.emit({
-      streamId: STREAM_ID,
-      assistantMessageId: ASSISTANT_MESSAGE_ID,
-      kind: 'cancelled',
-      delta: null,
-      message: 'AI 流已被取消',
-      model: MOCK_MODEL,
-    });
+    assistant.stopCurrentRequest();
     await flushMicrotasks();
 
     expect(assistant.errorMessage.value).toBe('');
@@ -798,53 +812,28 @@ describe('useAiAssistant streaming integration', () => {
     const sendPromise = assistant.sendMessage();
 
     await waitForStartedStream(() => assistant.messages.value.at(-1)?.id);
-
-    aiServiceMock.emit({
-      streamId: STREAM_ID,
-      assistantMessageId: ASSISTANT_MESSAGE_ID,
-      kind: 'delta',
-      delta: '你好',
-      message: null,
-      model: MOCK_MODEL,
-      promptTokens: 12,
-      completionTokens: 2,
-      totalTokens: 14,
-    });
+    aiServiceMock.emitDelta('你好');
     await flushMicrotasks();
 
     expect(assistant.messages.value.at(-1)?.stream).toMatchObject({
       status: 'streaming',
-      promptTokens: 12,
-      completionTokens: 2,
-      totalTokens: 14,
     });
 
-    aiServiceMock.emit({
-      streamId: STREAM_ID,
-      assistantMessageId: ASSISTANT_MESSAGE_ID,
-      kind: 'done',
-      delta: null,
-      message: null,
-      model: MOCK_MODEL,
-      promptTokens: 13,
-      completionTokens: 5,
-      totalTokens: 18,
-      usage: {
-        inputTokens: 13,
-        inputTokenDetails: {
-          noCacheTokens: 13,
-          cacheReadTokens: 0,
-          cacheWriteTokens: 0,
-        },
-        outputTokens: 5,
-        outputTokenDetails: {
-          textTokens: 4,
-          reasoningTokens: 1,
-        },
-        totalTokens: 18,
-        cachedInputTokens: 0,
+    aiServiceMock.emitDone('你好', {
+      inputTokens: 13,
+      inputTokenDetails: {
+        noCacheTokens: 13,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+      },
+      outputTokens: 5,
+      outputTokenDetails: {
+        textTokens: 4,
         reasoningTokens: 1,
       },
+      totalTokens: 18,
+      cachedInputTokens: 0,
+      reasoningTokens: 1,
     });
 
     await sendPromise;
