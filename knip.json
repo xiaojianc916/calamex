@@ -1,30 +1,26 @@
 {
-  "$schema": "https://unpkg.com/knip@5/schema.json",
-  "entry": ["src/router/**/*.ts", "scripts/**/*.{ts,mjs,js}"],
-  "project": ["src/**/*.{ts,tsx,vue}"],
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": [
+    "src/router/**/*.ts",
+    "scripts/**/*.{ts,mjs,js}",
+    "agent-sidecar/src/server.ts",
+    "agent-sidecar/build.mjs"
+  ],
+  "project": ["src/**/*.{ts,tsx,vue}", "agent-sidecar/src/**/*.{ts,tsx}"],
   "ignore": [
     "src/env.d.ts",
     "src/shims-icons.d.ts",
     "src/types/window.d.ts",
     "src/types/monaco-shims.d.ts",
-    "src/**/*.d.ts",
-    "agent-sidecar/**"
+    "src/**/*.d.ts"
   ],
   "ignoreDependencies": [
     "tailwindcss",
     "tw-animate-css",
-    "@iconify-json/lucide",
-    "@tauri-apps/cli",
-    "@withfig/autocomplete-tools",
     "@commitlint/cli",
-    "@commitlint/types",
-    "lint-staged",
     "shellcheck",
     "bash-language-server",
-    "stylelint",
-    "stylelint-config-tailwindcss",
     "@axe-core/playwright",
-    "dpdm",
     "@xterm/addon-search",
     "@xterm/addon-web-links"
   ],
