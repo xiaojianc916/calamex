@@ -316,7 +316,7 @@ fn resolve_workspace_child_path(workspace_root: &Path, raw_path: &str) -> Result
 }
 
 fn validate_workspace_entry_name(raw_name: &str) -> Result<String, String> {
-    let name = raw_name.trim();
+    let name = raw_name.trim_start();
     if name.is_empty() {
         return Err("名称不能为空。".into());
     }
