@@ -289,6 +289,27 @@ export const aiChatStreamPayloadSchema = z.object({
   sessionId: z.string().min(1),
 });
 
+/**
+ * @deprecated Legacy chat stream events were replaced by ACP `ai:sidecar-stream` events.
+ * Keep this export temporarily so stale/lazy-loaded modules fail closed at runtime instead
+ * of crashing during ESM linking while the app migrates fully to sidecar stream events.
+ */
+export const aiChatStreamEventPayloadSchema = z.object({
+  streamId: z.string().min(1),
+  assistantMessageId: z.string().min(1),
+  kind: z.enum(['start', 'delta', 'done', 'error', 'cancelled']),
+  delta: z.string().nullable(),
+  message: z.string().nullable(),
+  model: z.string().nullable(),
+  /** @deprecated 优先使用 `usage.inputTokens`。 */
+  promptTokens: z.number().nonnegative().optional(),
+  /** @deprecated 优先使用 `usage.outputTokens`。 */
+  completionTokens: z.number().nonnegative().optional(),
+  /** @deprecated 优先使用 `usage.totalTokens`。 */
+  totalTokens: z.number().nonnegative().optional(),
+  usage: aiLanguageModelUsageSchema.optional(),
+});
+
 /* ============================================================================
  * Conversation title generation
  * ============================================================================ */
