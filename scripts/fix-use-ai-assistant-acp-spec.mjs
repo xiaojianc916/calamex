@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const specPath = path.resolve('src/composables/ai/useAiAssistant.spec.ts');
+const assistantPath = path.resolve('src/composables/ai/useAiAssistant.ts');
 const tauriTypesPath = path.resolve('src/types/tauri/index.ts');
 let content = fs.readFileSync(specPath, 'utf8');
 
@@ -122,10 +123,11 @@ if (!content.includes('const emitSidecarEvent = (sessionId: string')) {
 if (content.includes("providerType: 'mock'") || !content.includes('sessionId: activeChatSessionId')) {
   replaceOrThrow(
     /  const chatStream = vi\.fn<[\s\S]*?\n  \}\);\n\n  const generateConversationTitle =/,
-    `  const chatStream = vi.fn<\n    (payload: IAiChatRequest) => Promise<{\n      streamId: string;\n      assistantMessageId: string;\n      providerType: 'mastra';\n      model: string;\n      sessionId: string;\n    }>\n  >(async (payload) => {\n    void payload;\n    const queued = queuedStreamResponses.shift();\n    if (!queued) {\n      activeChatSessionId = CHAT_SESSION_ID;\n      return {\n        streamId: STREAM_ID,\n        assistantMessageId: ASSISTANT_MESSAGE_ID,\n        providerType: 'mastra',\n        model: MOCK_MODEL,\n        sessionId: activeChatSessionId,\n      };\n    }\n\n    activeChatSessionId = queued.sessionId;\n    queueMicrotask(() => {\n      for (const chunk of queued.content.match(/.{1,24}/g) ?? []) {\n        emitChatDelta(chunk, queued.sessionId);\n      }\n\n      if (queued.terminalKind === 'error') {\n        emitChatError(queued.terminalMessage ?? 'AI 流式响应失败', queued.sessionId);\n        return;\n      }\n\n      emitChatDone(queued.content, queued.sessionId);\n    });\n\n    return {\n      streamId: queued.streamId,\n      assistantMessageId: queued.assistantMessageId,\n      providerType: 'mastra',\n      model: MOCK_MODEL,\n      sessionId: queued.sessionId,\n    };\n  });\n\n  const generateConversationTitle =`,
+    `  const chatStream = vi.fn<\n    (payload: IAiChatRequest) => Promise<{\n      streamId: string;\n      assistantMessageId: string;\n      providerType: 'mastra';\n      model: string;\n      sessionId: string;\n    }>\n  >(async (payload) => {\n    void payload;\n    const queued = queuedStreamResponses.shift();\n    if (!queued) {\n      activeChatSessionId = CHAT_SESSION_ID;\n      return {\n        streamId: STREAM_ID,\n        assistantMessageId: ASSISTANT_MESSAGE_ID,\n        providerType: 'mastra',\n        model: MOCK_MODEL,\n        sessionId: activeChatSessionId,\n      };\n    }\n\n    activeChatSessionId = queued.sessionId;\n    void Promise.resolve().then(() => {\n      for (const chunk of queued.content.match(/.{1,24}/g) ?? []) {\n        emitChatDelta(chunk, queued.sessionId);\n      }\n\n      if (queued.terminalKind === 'error') {\n        emitChatError(queued.terminalMessage ?? 'AI 流式响应失败', queued.sessionId);\n        return;\n      }\n\n      emitChatDone(queued.content, queued.sessionId);\n    });\n\n    return {\n      streamId: queued.streamId,\n      assistantMessageId: queued.assistantMessageId,\n      providerType: 'mastra',\n      model: MOCK_MODEL,\n      sessionId: queued.sessionId,\n    };\n  });\n\n  const generateConversationTitle =`,
     '替换 chatStream mock',
   );
 }
+content = content.replace('queueMicrotask(() => {', 'void Promise.resolve().then(() => {');
 
 content = content.replace(
   /const cancel = vi\.fn\(async \(payload: \{ streamId: string \}\) => \{/,
@@ -171,14 +173,22 @@ content = content.replace(
   'sidecarSequence = 0;',
 );
 
-// 5) waitForStartedStream 不再假设后端 assistantMessageId 就是前端 placeholder id。
-if (content.includes('expectedId: string = ASSISTANT_MESSAGE_ID')) {
-  replaceOrThrow(
-    /const waitForStartedStream = async \([\s\S]*?\n\};\n\nconst createDocument =/,
-    `const waitForStartedStream = async (\n  resolveMessageId: () => string | undefined,\n  expectedId?: string,\n  maxAttempts = 8,\n): Promise<void> => {\n  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {\n    const messageId = resolveMessageId();\n    if (messageId && (!expectedId || messageId === expectedId)) {\n      return;\n    }\n    await flushMicrotasks();\n  }\n  throw new Error(\n    \`assistant stream did not start in time (expected id=\"\${expectedId ?? '<any>'}\" within \${maxAttempts} ticks)\`,\n  );\n};\n\nconst createDocument =`,
-    '替换 waitForStartedStream',
-  );
-}
+// 5) waitForStartedStream 不再把刚插入的 user message 误判为 assistant 流已启动；同时确保 chatStream 已完成启动。
+replaceOrThrow(
+  /const waitForStartedStream = async \([\s\S]*?\n\};\n\nconst createDocument =/,
+  `const waitForStartedStream = async (\n  resolveMessageId: () => string | undefined,\n  expectedId?: string,\n  maxAttempts = 16,\n): Promise<void> => {\n  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {\n    const messageId = resolveMessageId();\n    if (messageId && (!expectedId || messageId === expectedId) && aiServiceMock.chatStream.mock.calls.length > 0) {\n      await flushMicrotasks();\n      return;\n    }\n    await flushMicrotasks();\n  }\n  throw new Error(\n    \`assistant stream did not start in time (expected id=\"\${expectedId ?? '<any>'}\" within \${maxAttempts} ticks)\`,\n  );\n};\n\nconst createDocument =`,
+  '替换 waitForStartedStream',
+);
+
+content = content.replaceAll(
+  'waitForStartedStream(() => assistant.messages.value.at(-1)?.id)',
+  `waitForStartedStream(() => {
+      const message = assistant.messages.value.at(-1);
+      return message?.role === 'assistant' && message.stream?.status === 'streaming'
+        ? message.id
+        : undefined;
+    })`,
+);
 
 // 6) 调整仍然引用旧 chat-stream emit 的断言块。
 content = content.replace(
@@ -209,7 +219,58 @@ if (helperMatches.length !== 1) {
 
 fs.writeFileSync(specPath, content);
 
-// 顺手修复已知格式回归。
+// 7) 修复生产代码：chat stop 不能复用 Agent 取消文案覆盖已流出的回答；并处理 stop 早于 bind 的竞态。
+if (fs.existsSync(assistantPath)) {
+  let assistantContent = fs.readFileSync(assistantPath, 'utf8');
+
+  if (!assistantContent.includes('const requestAbortController = activeAbortController.value;')) {
+    assistantContent = assistantContent.replace(
+      '    activeAgentMessageId.value = assistantMessageId;\n    activeAbortController.value = new AbortController();\n\n    let hasSettledStream = false;',
+      '    activeAgentMessageId.value = assistantMessageId;\n    activeAbortController.value = new AbortController();\n    const requestAbortController = activeAbortController.value;\n\n    let hasSettledStream = false;',
+    );
+  }
+
+  if (!assistantContent.includes('if (requestAbortController.signal.aborted)')) {
+    assistantContent = assistantContent.replace(
+      '      sidecarStream.bind(sessionId);\n\n      await new Promise<void>((resolve) => {',
+      '      sidecarStream.bind(sessionId);\n\n      if (requestAbortController.signal.aborted) {\n        settle();\n      }\n\n      await new Promise<void>((resolve) => {',
+    );
+  }
+
+  assistantContent = assistantContent.replace(
+    '      if (activeAbortController.value?.signal.aborted) {\n        disposeSidecarAnswerStream(assistantMessageId);\n      } else {',
+    '      if (requestAbortController.signal.aborted) {\n        disposeSidecarAnswerStream(assistantMessageId);\n      } else {',
+  );
+
+  assistantContent = assistantContent.replace(
+    `    if (activeAgentMessageId.value) {
+      updateAgentExecutionMessage({
+        messageId: activeAgentMessageId.value,
+        content: 'Agent 执行已取消。',
+        toolCalls: [],
+        streamStatus: 'cancelled',
+      });
+      activeAgentMessageId.value = null;
+    }`,
+    `    if (activeAgentMessageId.value) {
+      const activeMessageId = activeAgentMessageId.value;
+      const currentMessage = findMessageById(activeMessageId);
+      const isChatStreamCancellation = Boolean(streamId);
+
+      updateAgentExecutionMessage({
+        messageId: activeMessageId,
+        content: isChatStreamCancellation ? (currentMessage?.content ?? '') : 'Agent 执行已取消。',
+        toolCalls: isChatStreamCancellation ? (currentMessage?.toolCalls ?? []) : [],
+        streamStatus: 'cancelled',
+      });
+      activeAgentMessageId.value = null;
+    }`,
+  );
+
+  fs.writeFileSync(assistantPath, assistantContent);
+}
+
+// 8) 顺手修复已知格式回归。
 if (fs.existsSync(tauriTypesPath)) {
   let tauriTypes = fs.readFileSync(tauriTypesPath, 'utf8');
   tauriTypes = tauriTypes.replace(
@@ -219,4 +280,4 @@ if (fs.existsSync(tauriTypesPath)) {
   fs.writeFileSync(tauriTypesPath, tauriTypes);
 }
 
-console.log('已把 useAiAssistant.spec.ts 的 Chat 流 mock 迁移到 ACP sidecar-stream，并修复重复 helper/tauri 类型格式。');
+console.log('已迁移 useAiAssistant.spec.ts 的 Chat 流 mock 到 ACP sidecar-stream，并修复 chat 取消竞态/tauri 类型格式。');
