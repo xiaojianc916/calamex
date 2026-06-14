@@ -33,6 +33,14 @@ export type TStartupMarkName =
   | 'window-stage-main-done'
   | 'window-stage-main-failed'
   | 'window-stage-main-skipped'
+  | 'ai-copilotkit-import-start'
+  | 'ai-copilotkit-import-done'
+  | 'ai-copilotkit-provider-setup'
+  | 'ai-workspace-surface-import-start'
+  | 'ai-workspace-surface-import-done'
+  | 'ai-workspace-surface-setup'
+  | 'ai-workspace-surface-mounted'
+  | 'ai-surface-summary-reported'
   | 'startup-summary-reported';
 
 type TStartupMeasureStart = TStartupMarkName | 'navigation-start';
@@ -132,6 +140,36 @@ const STARTUP_MEASUREMENTS: readonly IStartupMeasureDefinition[] = [
     label: '前端启动总段',
     start: 'bootstrap-start',
     end: 'bootstrap-done',
+  },
+];
+
+// AI 主界面真身（CopilotKit Provider + AiWorkspaceSurface + AiAssistantPanel）是
+// 启动关键路径之外的延迟挂载链路，其分段不在上面的总览里。这里单独定义一组测量,
+// 由 reportAiSurfaceStartupTimings 在真身首帧后输出,用于定位「AI 首屏异常缓慢」。
+const AI_SURFACE_STARTUP_MEASUREMENTS: readonly IStartupMeasureDefinition[] = [
+  {
+    key: 'ai-copilotkit-import',
+    label: 'CopilotKit Provider 动态加载',
+    start: 'ai-copilotkit-import-start',
+    end: 'ai-copilotkit-import-done',
+  },
+  {
+    key: 'ai-workspace-surface-import',
+    label: 'AI 工作区真身动态加载',
+    start: 'ai-workspace-surface-import-start',
+    end: 'ai-workspace-surface-import-done',
+  },
+  {
+    key: 'ai-workspace-surface-mount',
+    label: 'AI 工作区 setup + 挂载',
+    start: 'ai-workspace-surface-setup',
+    end: 'ai-workspace-surface-mounted',
+  },
+  {
+    key: 'ai-surface-total',
+    label: 'AI 首屏真身总段',
+    start: 'ai-copilotkit-import-start',
+    end: 'ai-workspace-surface-mounted',
   },
 ];
 
@@ -239,6 +277,30 @@ export const reportStartupTimings = (): void => {
 
   emitStartupLog({
     event: 'frontend.summary',
+    totalMs,
+    timings,
+  });
+
+  if (shouldEmitStartupLogs() && typeof console.table === 'function') {
+    console.table(timings);
+  }
+};
+
+// 输出 AI 主界面真身的延迟挂载分段。由 AiWorkspaceSurface 在首帧绘制后调用,
+// 因此与启动总览（reportStartupTimings,挂在窗口显示阶段）相互独立、互不覆盖。
+export const reportAiSurfaceStartupTimings = (): void => {
+  if (!hasPerformanceMark() || readMarkTime('ai-surface-summary-reported') !== null) {
+    return;
+  }
+
+  markStartup('ai-surface-summary-reported');
+
+  const timings = AI_SURFACE_STARTUP_MEASUREMENTS.map(buildTimingRow);
+  const endAt = readMarkTime('ai-workspace-surface-mounted');
+  const totalMs = endAt === null ? null : roundDuration(endAt);
+
+  emitStartupLog({
+    event: 'frontend.ai-surface-summary',
     totalMs,
     timings,
   });

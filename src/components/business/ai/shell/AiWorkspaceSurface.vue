@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { PanelRight, RotateCw } from '@lucide/vue';
-import { computed, defineAsyncComponent, onBeforeUnmount, ref } from 'vue';
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref } from 'vue';
 import AiAssistantPanel from '@/components/business/ai/shell/AiAssistantPanel.vue';
 import { Card, CardContent } from '@/components/ui/card';
 import { useMessage } from '@/composables/useMessage';
@@ -13,6 +13,10 @@ import type {
 } from '@/types/editor';
 import type { IGitDiffPreviewPayload, IGitRepositoryStatusPayload } from '@/types/git';
 import { toErrorMessage } from '@/utils/error';
+import { markStartup, reportAiSurfaceStartupTimings } from '@/utils/startup-profiler';
+
+// 启动诊断打点：AI 工作区真身 setup 进入（含子组件 AiAssistantPanel 的同步 setup）。
+markStartup('ai-workspace-surface-setup');
 
 const DEFAULT_RIGHT_SIDEBAR_WIDTH = 480;
 const RIGHT_SIDEBAR_MIN_WIDTH = 360;
@@ -155,6 +159,21 @@ const startRightSidebarResize = (event: MouseEvent): void => {
     window.removeEventListener('blur', handleMouseUp);
   };
 };
+
+onMounted(() => {
+  // 首帧绘制后打点，捕捉 AI 主界面真身可见时刻，并输出聚焦的启动分段报告（B4 首屏定位）。
+  const finalize = (): void => {
+    markStartup('ai-workspace-surface-mounted');
+    reportAiSurfaceStartupTimings();
+  };
+
+  if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+    window.requestAnimationFrame(finalize);
+    return;
+  }
+
+  finalize();
+});
 
 onBeforeUnmount(() => {
   stopRightSidebarResize();

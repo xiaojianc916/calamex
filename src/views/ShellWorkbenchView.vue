@@ -154,11 +154,18 @@ import { useLsp } from '@/composables/useLsp';
 import { useShellWorkbenchView } from '@/composables/useShellWorkbenchView';
 import AppShellLayout from '@/layouts/AppShellLayout.vue';
 import { useAiAgentStore } from '@/store/aiAgent';
+import { markStartup } from '@/utils/startup-profiler';
 import type { TWorkbenchOpenFilePayload } from '@/types/editor';
 import type { IGitDiffPreviewRequest } from '@/types/git';
 
 const DeferredAiWorkspaceSurface = defineAsyncComponent({
-  loader: () => import('@/components/business/ai/shell/AiWorkspaceSurface.vue'),
+  loader: () => {
+    markStartup('ai-workspace-surface-import-start');
+    return import('@/components/business/ai/shell/AiWorkspaceSurface.vue').then((loaded) => {
+      markStartup('ai-workspace-surface-import-done');
+      return loaded;
+    });
+  },
   suspensible: false,
 });
 
@@ -185,7 +192,13 @@ const DeferredSmartScriptEditor = defineAsyncComponent({
 // CopilotKit 运行时（含 @copilotkit/vue）改为按需懒加载：仅当进入/固定 AI 工作区时
 // 才加载，并作为 AI 子树的上下文 Provider 挂载，使「首屏为编辑器」时彻底不进入启动关键路径。
 const DeferredCopilotKitProvider = defineAsyncComponent({
-  loader: () => import('@/copilotkit/CopilotKitProvider.vue'),
+  loader: () => {
+    markStartup('ai-copilotkit-import-start');
+    return import('@/copilotkit/CopilotKitProvider.vue').then((loaded) => {
+      markStartup('ai-copilotkit-import-done');
+      return loaded;
+    });
+  },
   suspensible: false,
 });
 
