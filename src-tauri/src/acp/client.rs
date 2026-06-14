@@ -206,7 +206,9 @@ pub struct HealthExtRequest {}
 /// sidecar 的 `ORCHESTRATE_METHOD`(`calamex.dev/plan/orchestrate`)逐字一致;字段镜像
 /// sidecar `ext-methods.ts` 的 `orchestrateParamsSchema`。`execution_mode` 的合法取值
 /// (interactive/autonomous)由 sidecar 端 zod 统一校验,宿主侧以字符串原样透传、不在此
-/// 重复其取值表(同 `WebSearchExtRequest.intent` 的处理),避免与 sidecar 单一来源漂移。
+/// 重复其取值表(同 `WebSearchExtRequest.intent` 的处理);取值为空(None)时整字段省略,
+/// 交由 sidecar 套用其默认值(interactive),宿主侧不臆造默认(镜像契约
+/// `AgentSidecarOrchestrateRequest.execution_mode` 的 omit-when-blank 语义)。
 /// 响应为编排终帧 `{ runId, status, result }`,以 `serde_json::Value` 原样回传,交由宿主侧
 /// 解析(`status` 字段冗余,按 serde 默认忽略,同 HTTP orchestrate)。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, JsonRpcRequest)]
@@ -216,7 +218,8 @@ pub struct OrchestrateExtRequest {
     pub goal: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thread_id: Option<String>,
-    pub execution_mode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution_mode: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -901,7 +904,7 @@ mod tests {
         let request = OrchestrateExtRequest {
             goal: "实现登录页".to_string(),
             thread_id: Some("thread_1".to_string()),
-            execution_mode: "interactive".to_string(),
+            execution_mode: Some("interactive".to_string()),
             session_id: Some("sess_1".to_string()),
             model_config: None,
         };
@@ -918,13 +921,13 @@ mod tests {
         let request = OrchestrateExtRequest {
             goal: "g".to_string(),
             thread_id: None,
-            execution_mode: "autonomous".to_string(),
+            execution_mode: None,
             session_id: None,
             model_config: None,
         };
         let value = serde_json::to_value(&request).unwrap();
         assert_eq!(value["goal"], "g");
-        assert_eq!(value["executionMode"], "autonomous");
+        assert!(value.get("executionMode").is_none());
         assert!(value.get("threadId").is_none());
         assert!(value.get("sessionId").is_none());
         assert!(value.get("modelConfig").is_none());
