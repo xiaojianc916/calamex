@@ -21,6 +21,25 @@ const structurallyShareSerializableData = (oldData: unknown, newData: unknown): 
   }
 };
 
+class CalamexQueryClient extends QueryClient {
+  override fetchQuery(
+    options: Parameters<QueryClient['fetchQuery']>[0],
+  ): ReturnType<QueryClient['fetchQuery']> {
+    const previousData = this.getQueryData(options.queryKey);
+
+    return super.fetchQuery(options).then((data) => {
+      const cachedData = this.getQueryData(options.queryKey) ?? data;
+      const sharedData = structurallyShareSerializableData(previousData, cachedData);
+
+      if (sharedData !== cachedData) {
+        this.setQueryData(options.queryKey, sharedData);
+      }
+
+      return sharedData as Awaited<ReturnType<QueryClient['fetchQuery']>>;
+    }) as ReturnType<QueryClient['fetchQuery']>;
+  }
+}
+
 /**
  * 全局共享的 TanStack QueryClient。
  *
@@ -28,7 +47,7 @@ const structurallyShareSerializableData = (oldData: unknown, newData: unknown): 
  * PULL_REQUEST_*_REVALIDATE_INTERVAL_MS 的手写 TTL;后台失焦不自动重取,
  * 由各 composable/调用方按需 invalidate,保持与原有“显式刷新”语义一致。
  */
-export const queryClient = new QueryClient({
+export const queryClient = new CalamexQueryClient({
   defaultOptions: {
     queries: {
       staleTime: 30_000,
