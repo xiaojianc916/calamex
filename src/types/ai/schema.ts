@@ -284,35 +284,9 @@ export const aiChatStreamPayloadSchema = z.object({
   model: z.string().min(1),
   /**
    * ACP 会话标识。chat 模式走 ACP host 时由后端 `chat_stream_via_acp` 回填,
-   * 前端据此订阅 `ai:sidecar-stream` 上属于本轮的投影事件。legacy 路径不设置,
-   * 故为 `.nullable().optional()`:对齐生成绑定的 `Option<String>` → `string | null`,
-   * 同时兼容旧后端不回填的情况。
+   * 前端据此订阅 `ai:sidecar-stream` 上属于本轮的投影事件。
    */
-  sessionId: z.string().min(1).nullable().optional(),
-});
-
-/**
- * 流式 chat event payload。
- *
- * 字段 nullable 政策(与 `aiChatMessageStreamSnapshotSchema` 一致,均使用
- * `.optional()` 而不混 `.nullable()`):
- * - 未提供 → undefined
- * - "明确清零" 语义请用 0 / 空 usage,避免 null/undefined 二义。
- */
-export const aiChatStreamEventPayloadSchema = z.object({
-  streamId: z.string().min(1),
-  assistantMessageId: z.string().min(1),
-  kind: z.enum(['start', 'delta', 'done', 'error', 'cancelled']),
-  delta: z.string().nullable(),
-  message: z.string().nullable(),
-  model: z.string().nullable(),
-  /** @deprecated 优先使用 `usage.inputTokens`。 */
-  promptTokens: z.number().nonnegative().optional(),
-  /** @deprecated 优先使用 `usage.outputTokens`。 */
-  completionTokens: z.number().nonnegative().optional(),
-  /** @deprecated 优先使用 `usage.totalTokens`。 */
-  totalTokens: z.number().nonnegative().optional(),
-  usage: aiLanguageModelUsageSchema.optional(),
+  sessionId: z.string().min(1),
 });
 
 /* ============================================================================

@@ -10,7 +10,6 @@ import type {
   aiChatMessageStreamSnapshotSchema,
   aiChatMessageToolCallSchema,
   aiChatRequestSchema,
-  aiChatStreamEventPayloadSchema,
   aiChatStreamPayloadSchema,
   aiConfigPayloadSchema,
   aiConversationTitlePayloadSchema,
@@ -188,7 +187,6 @@ export type IAiSuggestionPoolRequest = z.infer<typeof aiSuggestionPoolRequestSch
 export type IAiSuggestionPoolPayload = z.infer<typeof aiSuggestionPoolPayloadSchema>;
 
 export type IAiChatStreamPayload = z.infer<typeof aiChatStreamPayloadSchema>;
-export type IAiChatStreamEventPayload = z.infer<typeof aiChatStreamEventPayloadSchema>;
 
 export type IAiSaveCredentialsRequest = z.infer<typeof aiSaveCredentialsRequestSchema>;
 export type IAiProviderConnectionRequest = z.infer<typeof aiProviderConnectionRequestSchema>;
