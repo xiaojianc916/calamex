@@ -44,6 +44,11 @@ const GIT_COMMIT_STATS_QUERY_PREFIX = ['git', 'commitStats'];
 const GIT_COMMIT_STATS_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const GIT_COMMIT_STATS_BACKGROUND_BATCH_LIMIT = 30;
 const GIT_COMMIT_STATS_BACKGROUND_DELAY_MS = 320;
+// 提交详情/文件 diff/diff 预览均按 commit-id(及路径)寻址,内容不可变:
+// 交由 vue-query 缓存 + fetchQuery 去重,替代手写 Record 缓存与 pending 请求表。
+const GIT_COMMIT_DETAIL_QUERY_PREFIX = ['git', 'commitDetail'];
+const GIT_COMMIT_FILE_DIFF_QUERY_PREFIX = ['git', 'commitFileDiff'];
+const GIT_COMMIT_FILE_DIFF_PREVIEW_QUERY_PREFIX = ['git', 'commitFileDiffPreview'];
 
 const formatGitInitMismatch = (expectedPath: string, actualPath: string): string =>
   `Git 初始化目标不一致:期望 ${expectedPath},实际 ${actualPath}。`;
@@ -146,11 +151,8 @@ export const useGitStore = defineStore('git', () => {
   const pullRequestDetail = ref<IGitPullRequestDetailPayload | null>(null);
   const isPullRequestDetailLoading = ref(false);
 
-  const commitDetailCache = ref<Record<string, IGitCommitDetailPayload>>({});
   // commit-stats 的权威缓存在 vue-query;此 ref 仅作响应式镜像,供同步的 getCommitStats 读取并驱动 UI。
   const commitStatsCache = ref<Record<string, TGitCommitStatsPayload>>({});
-  const commitFileDiffCache = ref<Record<string, IGitCommitFileDiffPayload>>({});
-  const commitFileDiffPreviewCache = ref<Record<string, IGitDiffPreviewPayload>>({});
 
   // commit-stats 是不可变的 per-commit 统计:大 staleTime 避免重取,gcTime≈30d 作为保留窗口,
   // meta.persist 让官方 persister 仅持久化这一类查询(见 src/lib/query-client.ts)。
@@ -168,9 +170,44 @@ export const useGitStore = defineStore('git', () => {
     meta: { persist: true },
   });
 
+  // 提交详情/文件 diff/diff 预览按 commit-id(及路径)寻址,内容不可变:
+  // staleTime=Infinity 命中即复用、永不后台重取;不持久化(无 meta.persist,仅内存),
+  // 切换工作树/提交时由 clearBaselineCache 通过 removeQueries 清空。
+  queryClient.setQueryDefaults(GIT_COMMIT_DETAIL_QUERY_PREFIX, { staleTime: Infinity });
+  queryClient.setQueryDefaults(GIT_COMMIT_FILE_DIFF_QUERY_PREFIX, { staleTime: Infinity });
+  queryClient.setQueryDefaults(GIT_COMMIT_FILE_DIFF_PREVIEW_QUERY_PREFIX, { staleTime: Infinity });
+
   const commitStatsQueryKey = (cacheKey: string): string[] => [
     ...GIT_COMMIT_STATS_QUERY_PREFIX,
     cacheKey,
+  ];
+
+  const commitDetailQueryKey = (repositoryRootPath: string, commitId: string): string[] => [
+    ...GIT_COMMIT_DETAIL_QUERY_PREFIX,
+    normalizeFileSystemPath(repositoryRootPath),
+    commitId,
+  ];
+
+  const commitFileDiffQueryKey = (
+    repositoryRootPath: string,
+    commitId: string,
+    relativePath: string,
+  ): string[] => [
+    ...GIT_COMMIT_FILE_DIFF_QUERY_PREFIX,
+    normalizeFileSystemPath(repositoryRootPath),
+    commitId,
+    relativePath,
+  ];
+
+  const commitFileDiffPreviewQueryKey = (
+    repositoryRootPath: string,
+    commitId: string,
+    relativePath: string,
+  ): string[] => [
+    ...GIT_COMMIT_FILE_DIFF_PREVIEW_QUERY_PREFIX,
+    normalizeFileSystemPath(repositoryRootPath),
+    commitId,
+    relativePath,
   ];
 
   let statusRequestId = 0;
@@ -192,9 +229,6 @@ export const useGitStore = defineStore('git', () => {
   const pullRequestBackgroundPreloadAttemptedAt = new Map<string, number>();
 
   const pendingBaselineRequests = new Map<string, Promise<IGitFileBaselinePayload>>();
-  const pendingCommitDetailRequests = new Map<string, Promise<IGitCommitDetailPayload>>();
-  const pendingCommitFileDiffRequests = new Map<string, Promise<IGitCommitFileDiffPayload>>();
-  const pendingCommitFileDiffPreviewRequests = new Map<string, Promise<IGitDiffPreviewPayload>>();
   let pendingPullRequestSupportRequest: Promise<IGitPullRequestSupportPayload> | null = null;
 
   const hasRepository = computed(
@@ -232,9 +266,10 @@ export const useGitStore = defineStore('git', () => {
   const clearBaselineCache = (): void => {
     baselineCache.value = {};
     baselineEpoch.value += 1;
-    commitDetailCache.value = {};
-    commitFileDiffCache.value = {};
-    commitFileDiffPreviewCache.value = {};
+    // 以 vue-query 为唯一缓存:切换工作树/提交时清空提交详情与文件 diff 查询(含进行中的请求)。
+    queryClient.removeQueries({ queryKey: [...GIT_COMMIT_DETAIL_QUERY_PREFIX] });
+    queryClient.removeQueries({ queryKey: [...GIT_COMMIT_FILE_DIFF_QUERY_PREFIX] });
+    queryClient.removeQueries({ queryKey: [...GIT_COMMIT_FILE_DIFF_PREVIEW_QUERY_PREFIX] });
     clearCommitStatsBackgroundQueue();
   };
 
@@ -387,124 +422,58 @@ export const useGitStore = defineStore('git', () => {
   };
 
   const loadCommitDetail = async (commitId: string): Promise<IGitCommitDetailPayload> => {
-    const cached = commitDetailCache.value[commitId];
-    if (cached) return cached;
-
-    const pending = pendingCommitDetailRequests.get(commitId);
-    if (pending) return pending;
-
-    const request = tauriService
-      .getGitCommitDetail({
-        repositoryRootPath: requireRepositoryRootPath(),
-        commitId,
-      })
-      .then((payload) => {
-        commitDetailCache.value = {
-          ...commitDetailCache.value,
-          [commitId]: payload,
-        };
-        rememberCommitStats(payload);
-        return payload;
-      })
-      .finally(() => {
-        pendingCommitDetailRequests.delete(commitId);
-      });
-
-    pendingCommitDetailRequests.set(commitId, request);
-    return request;
+    const repositoryRootPath = requireRepositoryRootPath();
+    // fetchQuery 复用进行中的请求,并按 staleTime=Infinity 永久复用已取详情(commit 内容不可变)。
+    const payload = await queryClient.fetchQuery<IGitCommitDetailPayload>({
+      queryKey: commitDetailQueryKey(repositoryRootPath, commitId),
+      queryFn: () => tauriService.getGitCommitDetail({ repositoryRootPath, commitId }),
+    });
+    if (!getCommitStats(commitId)) {
+      rememberCommitStats(payload);
+    }
+    return payload;
   };
 
   const loadCommitStatsOnly = async (commitId: string): Promise<void> => {
     if (getCommitStats(commitId)) return;
 
-    const pending = pendingCommitDetailRequests.get(commitId);
-    if (pending) {
-      const payload = await pending;
-      rememberCommitStats(payload);
+    const repositoryRootPath = requireRepositoryRootPath();
+    // 复用用户已展开缓存的完整详情(若有);否则后台直取,仅记录轻量统计,
+    // 不写入 commitDetail 查询缓存,避免把整段历史的 files[] 灌进内存。
+    const cachedDetail = queryClient.getQueryData<IGitCommitDetailPayload>(
+      commitDetailQueryKey(repositoryRootPath, commitId),
+    );
+    if (cachedDetail) {
+      rememberCommitStats(cachedDetail);
       return;
     }
 
-    const request = tauriService
-      .getGitCommitDetail({
-        repositoryRootPath: requireRepositoryRootPath(),
-        commitId,
-      })
-      .then((payload) => {
-        // 后台 stats 只保存轻量统计，不污染完整 commitDetailCache。
-        // 完整 files[] 仍然只在用户点击展开 commit 时由 loadCommitDetail 写入缓存。
-        rememberCommitStats(payload);
-        return payload;
-      })
-      .finally(() => {
-        pendingCommitDetailRequests.delete(commitId);
-      });
-
-    pendingCommitDetailRequests.set(commitId, request);
-    await request;
+    const payload = await tauriService.getGitCommitDetail({ repositoryRootPath, commitId });
+    rememberCommitStats(payload);
   };
 
   const loadCommitFileDiff = async (
     commitId: string,
     relativePath: string,
   ): Promise<IGitCommitFileDiffPayload> => {
-    const cacheKey = `${commitId}:${relativePath}`;
-    const cached = commitFileDiffCache.value[cacheKey];
-    if (cached) return cached;
-
-    const pending = pendingCommitFileDiffRequests.get(cacheKey);
-    if (pending) return pending;
-
-    const request = tauriService
-      .getGitCommitFileDiff({
-        repositoryRootPath: requireRepositoryRootPath(),
-        commitId,
-        relativePath,
-      })
-      .then((payload) => {
-        commitFileDiffCache.value = {
-          ...commitFileDiffCache.value,
-          [cacheKey]: payload,
-        };
-        return payload;
-      })
-      .finally(() => {
-        pendingCommitFileDiffRequests.delete(cacheKey);
-      });
-
-    pendingCommitFileDiffRequests.set(cacheKey, request);
-    return request;
+    const repositoryRootPath = requireRepositoryRootPath();
+    return queryClient.fetchQuery<IGitCommitFileDiffPayload>({
+      queryKey: commitFileDiffQueryKey(repositoryRootPath, commitId, relativePath),
+      queryFn: () =>
+        tauriService.getGitCommitFileDiff({ repositoryRootPath, commitId, relativePath }),
+    });
   };
 
   const loadCommitFileDiffPreview = async (
     commitId: string,
     relativePath: string,
   ): Promise<IGitDiffPreviewPayload> => {
-    const cacheKey = `${commitId}:${relativePath}`;
-    const cached = commitFileDiffPreviewCache.value[cacheKey];
-    if (cached) return cached;
-
-    const pending = pendingCommitFileDiffPreviewRequests.get(cacheKey);
-    if (pending) return pending;
-
-    const request = tauriService
-      .getGitCommitFileDiffPreview({
-        repositoryRootPath: requireRepositoryRootPath(),
-        commitId,
-        relativePath,
-      })
-      .then((payload) => {
-        commitFileDiffPreviewCache.value = {
-          ...commitFileDiffPreviewCache.value,
-          [cacheKey]: payload,
-        };
-        return payload;
-      })
-      .finally(() => {
-        pendingCommitFileDiffPreviewRequests.delete(cacheKey);
-      });
-
-    pendingCommitFileDiffPreviewRequests.set(cacheKey, request);
-    return request;
+    const repositoryRootPath = requireRepositoryRootPath();
+    return queryClient.fetchQuery<IGitDiffPreviewPayload>({
+      queryKey: commitFileDiffPreviewQueryKey(repositoryRootPath, commitId, relativePath),
+      queryFn: () =>
+        tauriService.getGitCommitFileDiffPreview({ repositoryRootPath, commitId, relativePath }),
+    });
   };
 
   const drainCommitStatsBackgroundQueue = async (): Promise<void> => {
@@ -1029,7 +998,7 @@ export const useGitStore = defineStore('git', () => {
       return updateActive && requestId === pullRequestsRequestId ? pullRequests.value : payload;
     } catch (error) {
       if (cached) {
-        // 重验证失败时降级为以旧缓存侜服务。
+        // 重验证失败时降级为以旧缓存继续服务。
         return cached;
       }
       throw error;
@@ -1287,10 +1256,7 @@ export const useGitStore = defineStore('git', () => {
     pullRequestStateFilter,
     pullRequestDetail,
     isPullRequestDetailLoading,
-    commitDetailCache,
     commitStatsCache,
-    commitFileDiffCache,
-    commitFileDiffPreviewCache,
     hasRepository,
     totalChangeCount,
     canLoadMoreCommitHistory,
