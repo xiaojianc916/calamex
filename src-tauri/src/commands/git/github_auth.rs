@@ -693,7 +693,8 @@ async fn request_github_browser_auth(
 
 async fn exchange_github_browser_code(
     target: &GitHubAuthTarget,
-    session: &GitHubBrowserAuthSession,
+    redirect_uri: &str,
+    code_verifier: &str,
     code: &str,
 ) -> Result<String, String> {
     let client = build_github_oauth_client()?;
@@ -703,8 +704,8 @@ async fn exchange_github_browser_code(
         .form(&[
             ("client_id", GITHUB_OAUTH_CLIENT_ID),
             ("code", code),
-            ("redirect_uri", session.redirect_uri.as_str()),
-            ("code_verifier", session.code_verifier.as_str()),
+            ("redirect_uri", redirect_uri),
+            ("code_verifier", code_verifier),
         ])
         .send()
         .await
@@ -943,14 +944,23 @@ pub async fn complete_github_browser_auth(
         .remove(&payload.state)
         .ok_or_else(|| "GitHub 浏览器授权会话已过期，请重新连接。".to_string())?;
 
-    if session.host.to_ascii_lowercase() != target.host.to_ascii_lowercase()
-        || session.repository_root != target.repository_root
+    let GitHubBrowserAuthSession {
+        host,
+        repository_root,
+        redirect_uri,
+        code_verifier,
+        callback_task,
+        ..
+    } = session;
+
+    if host.to_ascii_lowercase() != target.host.to_ascii_lowercase()
+        || repository_root != target.repository_root
     {
-        session.callback_task.abort();
+        callback_task.abort();
         return Err("GitHub 浏览器授权会话与当前仓库不匹配。".to_string());
     }
 
-    let mut callback_task = session.callback_task;
+    let mut callback_task = callback_task;
     let callback = match timeout(GITHUB_BROWSER_AUTH_MAX_WAIT, &mut callback_task).await {
         Ok(join_result) => join_result
             .map_err(|error| format!("GitHub 浏览器授权任务异常终止：{error}"))??,
@@ -974,7 +984,7 @@ pub async fn complete_github_browser_auth(
         .code
         .filter(|code| !code.trim().is_empty())
         .ok_or_else(|| "GitHub 浏览器回调缺少授权码。".to_string())?;
-    let token = exchange_github_browser_code(&target, &session, &code).await?;
+    let token = exchange_github_browser_code(&target, &redirect_uri, &code_verifier, &code).await?;
     let host = target.host.clone();
     tokio::task::spawn_blocking(move || save_keyring_token(&host, &token))
         .await
