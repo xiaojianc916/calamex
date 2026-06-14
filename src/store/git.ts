@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia';
-import { computed, ref } from 'vue';
+import { computed, ref, shallowRef } from 'vue';
 import { queryClient } from '@/lib/query-client';
 import { tauriService } from '@/services/tauri';
 import type {
@@ -131,7 +131,7 @@ export const useGitStore = defineStore('git', () => {
   const baselineCache = ref<Record<string, IGitFileBaselinePayload>>({});
   const baselineEpoch = ref(0);
 
-  const commitHistory = ref<IGitCommitSummaryPayload[]>([]);
+  const commitHistory = shallowRef<IGitCommitSummaryPayload[]>([]);
   const commitHistoryHasMore = ref(false);
   const commitHistoryNextOffset = ref<number | null>(0);
   const isCommitHistoryLoading = ref(false);
@@ -766,7 +766,8 @@ export const useGitStore = defineStore('git', () => {
       });
       if (requestId !== commitHistoryRequestId) return commitHistory.value;
       if (append) {
-        commitHistory.value.push(...payload.entries);
+        // shallowRef 不追踪原地 mutate,必须整体替换以触发响应性。
+        commitHistory.value = commitHistory.value.concat(payload.entries);
       } else {
         commitHistory.value = payload.entries;
       }

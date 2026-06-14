@@ -1,5 +1,6 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { watch } from 'vue';
 import type {
   IGitCommitSummaryPayload,
   IGitPullRequestDetailPayload,
@@ -183,7 +184,7 @@ describe('useGitStore', () => {
     expect(gitStore.isLoading).toBe(false);
   });
 
-  it('提交历史分页追加会复用现有数组并避免复制旧列表', async () => {
+  it('提交历史分页追加会保留已有条目并触发响应式更新', async () => {
     const gitStore = useGitStore();
     tauriServiceMock.getGitRepositoryStatus.mockResolvedValueOnce(createStatus());
     await gitStore.refreshRepositoryStatus(WORKSPACE_ROOT);
@@ -195,14 +196,29 @@ describe('useGitStore', () => {
       .mockResolvedValueOnce({ entries: [secondCommit], hasMore: false, nextOffset: null });
 
     await expect(gitStore.loadCommitHistory({ limit: 1 })).resolves.toEqual([firstCommit]);
-    const existingHistory = gitStore.commitHistory;
+
+    // commitHistory 现为 shallowRef：追踪其引用变化以验证 append 触发响应式更新。
+    const historyRefs: readonly IGitCommitSummaryPayload[][] = [];
+    const stop = watch(
+      () => gitStore.commitHistory,
+      (next) => {
+        historyRefs.push(next);
+      },
+    );
 
     await expect(gitStore.loadCommitHistory({ append: true, limit: 1 })).resolves.toEqual([
       firstCommit,
       secondCommit,
     ]);
 
-    expect(gitStore.commitHistory).toBe(existingHistory);
+    stop();
+
+    // append 后内容正确(保留旧条目 + 追加新条目,无重复)
+    expect(gitStore.commitHistory).toEqual([firstCommit, secondCommit]);
+    // shallowRef 整体替换触发响应式更新
+    expect(historyRefs.length).toBe(1);
+    expect(historyRefs[0]).toEqual([firstCommit, secondCommit]);
+
     expect(tauriServiceMock.listGitCommitHistory).toHaveBeenNthCalledWith(1, {
       repositoryRootPath: WORKSPACE_ROOT,
       offset: 0,
