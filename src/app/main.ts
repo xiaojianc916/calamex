@@ -1,4 +1,5 @@
 import '@/assets/fonts/inter/inter.css';
+import { queryClient, setupQueryPersistence } from '@/lib/query-client';
 import { applyWindowStage } from '@/services/ipc/window.service';
 import { pinia } from '@/store';
 import { hydrateAiConversationStorage } from '@/store/plugins/debouncedPersistStorage';
@@ -131,7 +132,14 @@ const bootstrap = async (): Promise<void> => {
 
     app.use(pinia);
     app.use(router);
+    app.use(VueQueryPlugin, { queryClient });
     markStartup('vue-plugins-installed');
+
+    // 恢复 vue-query 持久化缓存(PR 列表/详情、commit stats)，等价于原 git store
+    // 的 readPersisted* 预读；sync-storage persister 是同步读取，开销与原来一次
+    // localStorage 读取相当，放在挂载前以保证首屏能读到快照。
+    await setupQueryPersistence();
+    markStartup('vue-query-persistence-ready');
 
     app.config.errorHandler = (error) => {
       setRuntimeError(MESSAGES.vueErrorLabel, error);
