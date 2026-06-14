@@ -85,6 +85,10 @@ export interface IGitHubAuthRequest {
   repositoryRootPath: string;
 }
 
+export interface IGitHubBrowserAuthCompleteRequest extends IGitHubAuthRequest {
+  state: string;
+}
+
 export interface IGitHubDeviceAuthCompleteRequest extends IGitHubAuthRequest {
   deviceCode: string;
   interval: number;
@@ -99,6 +103,12 @@ export interface IGitHubAuthStatusPayload {
   email: string | null;
   source: string | null;
   message: string | null;
+}
+
+export interface IGitHubBrowserAuthPayload {
+  authorizationUrl: string;
+  state: string;
+  expiresIn: number;
 }
 
 export interface IGitHubDeviceAuthPayload {

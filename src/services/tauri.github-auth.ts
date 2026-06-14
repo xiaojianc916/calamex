@@ -1,9 +1,14 @@
+import { invoke } from '@tauri-apps/api/core';
 import { commands } from '@/bindings/tauri';
 import { callSpectaCommand } from './tauri.ipc-runtime';
 import type { IIpcCallOptions } from './tauri.ipc-types';
 
 export interface IGitHubAuthRequest {
   repositoryRootPath: string;
+}
+
+export interface IGitHubBrowserAuthCompleteRequest extends IGitHubAuthRequest {
+  state: string;
 }
 
 export interface IGitHubDeviceAuthCompleteRequest extends IGitHubAuthRequest {
@@ -20,6 +25,12 @@ export interface IGitHubAuthStatusPayload {
   email: string | null;
   source: string | null;
   message: string | null;
+}
+
+export interface IGitHubBrowserAuthPayload {
+  authorizationUrl: string;
+  state: string;
+  expiresIn: number;
 }
 
 export interface IGitHubDeviceAuthPayload {
@@ -48,6 +59,44 @@ export const getGithubAuthStatus = (
       signal: options?.signal,
     },
     () => commands.getGithubAuthStatus(createRequest(repositoryRootPath)),
+  );
+
+export const beginGithubBrowserAuth = (
+  repositoryRootPath: string,
+  options?: IIpcCallOptions,
+): Promise<IGitHubBrowserAuthPayload> =>
+  callSpectaCommand(
+    {
+      command: 'begin_github_browser_auth',
+      guardHint: '发起 GitHub 浏览器授权',
+      audit: 'sensitive',
+      timeoutMs: 15_000,
+      input: { repositoryRootPath },
+      signal: options?.signal,
+    },
+    () =>
+      invoke<IGitHubBrowserAuthPayload>('begin_github_browser_auth', {
+        payload: createRequest(repositoryRootPath),
+      }),
+  );
+
+export const completeGithubBrowserAuth = (
+  payload: IGitHubBrowserAuthCompleteRequest,
+  options?: IIpcCallOptions,
+): Promise<IGitHubAuthStatusPayload> =>
+  callSpectaCommand(
+    {
+      command: 'complete_github_browser_auth',
+      guardHint: '完成 GitHub 浏览器授权',
+      audit: 'sensitive',
+      timeoutMs: 200_000,
+      input: {
+        repositoryRootPath: payload.repositoryRootPath,
+        state: payload.state,
+      },
+      signal: options?.signal,
+    },
+    () => invoke<IGitHubAuthStatusPayload>('complete_github_browser_auth', { payload }),
   );
 
 export const beginGithubDeviceAuth = (
