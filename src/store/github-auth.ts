@@ -1,7 +1,9 @@
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 import {
+  beginGithubBrowserAuth,
   beginGithubDeviceAuth,
+  completeGithubBrowserAuth,
   completeGithubDeviceAuth,
   getGithubAuthStatus,
 } from '@/services/tauri.github-auth';
@@ -250,6 +252,29 @@ export const useGitHubAuthStore = defineStore('github-auth', () => {
     void loadStatus({ force: true, visibleLoading: false });
   };
 
+  const runDeviceAuthFallback = async (
+    rootPath: string,
+    mode: TDeviceAuthMode,
+    requestId: number,
+  ): Promise<IGitHubAuthStatusPayload> => {
+    const payload = await beginGithubDeviceAuth(rootPath);
+    if (requestId !== deviceAuthRequestId) return status.value;
+
+    deviceAuth.value = payload;
+    status.value = createEmptyGithubAuthStatus(
+      mode === 'switch' ? '请在浏览器选择 GitHub 账号。' : '请在浏览器完成 GitHub 授权。',
+    );
+    statusUpdatedAt = Date.now();
+    void copyDeviceCode();
+    reopenVerificationPage();
+    const nextStatus = await completeGithubDeviceAuth({
+      repositoryRootPath: rootPath,
+      deviceCode: payload.deviceCode,
+      interval: payload.interval,
+    });
+    return requestId === deviceAuthRequestId ? nextStatus : status.value;
+  };
+
   const startDeviceAuth = async (
     mode: TDeviceAuthMode = 'connect',
   ): Promise<IGitHubAuthStatusPayload> => {
@@ -263,23 +288,27 @@ export const useGitHubAuthStore = defineStore('github-auth', () => {
     isAuthorizing.value = true;
     deviceAuth.value = null;
 
-    pendingDeviceAuthRequest = beginGithubDeviceAuth(rootPath)
+    pendingDeviceAuthRequest = beginGithubBrowserAuth(rootPath)
       .then(async (payload) => {
         if (requestId !== deviceAuthRequestId) return status.value;
 
-        deviceAuth.value = payload;
         status.value = createEmptyGithubAuthStatus(
-          mode === 'switch' ? '请在浏览器选择 GitHub 账号。' : '请在浏览器完成 GitHub 授权。',
+          mode === 'switch'
+            ? '请在系统浏览器选择 GitHub 账号。'
+            : '请在系统浏览器完成 GitHub 授权。',
         );
         statusUpdatedAt = Date.now();
-        void copyDeviceCode();
-        reopenVerificationPage();
-        const nextStatus = await completeGithubDeviceAuth({
+        openExternalUrl(payload.authorizationUrl);
+        const nextStatus = await completeGithubBrowserAuth({
           repositoryRootPath: rootPath,
-          deviceCode: payload.deviceCode,
-          interval: payload.interval,
+          state: payload.state,
         });
         return requestId === deviceAuthRequestId ? nextStatus : status.value;
+      })
+      .catch((browserError: unknown) => {
+        if (requestId !== deviceAuthRequestId) return status.value;
+        console.warn('GitHub 浏览器授权不可用，回退到 Device Flow', browserError);
+        return runDeviceAuthFallback(rootPath, mode, requestId);
       })
       .then((payload) => {
         if (requestId !== deviceAuthRequestId) return status.value;

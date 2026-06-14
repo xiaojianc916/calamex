@@ -1,19 +1,27 @@
 use super::*;
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use gix::bstr::ByteSlice;
 use reqwest::header::{ACCEPT, AUTHORIZATION, HeaderMap, HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     path::PathBuf,
     sync::{Mutex, OnceLock},
     time::{Duration, Instant},
 };
-use tokio::{io::AsyncWriteExt, time::sleep};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::TcpListener,
+    time::{sleep, timeout},
+};
 
 const GITHUB_AUTH_CREDENTIAL_CACHE_TTL: Duration = Duration::from_secs(5 * 60);
+const GITHUB_BROWSER_AUTH_MAX_WAIT: Duration = Duration::from_secs(180);
 const GITHUB_DEVICE_AUTH_MAX_WAIT: Duration = Duration::from_secs(120);
 const GITHUB_DEVICE_AUTH_SCOPE: &str = "read:user user:email repo";
 const GITHUB_KEYRING_SERVICE: &str = "calamex.github";
+const GITHUB_OAUTH_CALLBACK_PATH: &str = "/github/oauth/callback";
 
 // GitHub OAuth client IDs are public identifiers. This mirrors VS Code's
 // device-code strategy: use a native-app flow that does not require a client
@@ -24,6 +32,13 @@ const GITHUB_OAUTH_CLIENT_ID: &str = "01ab8ac9400c4e429b23";
 #[serde(rename_all = "camelCase")]
 pub struct GitHubAuthRequest {
     repository_root_path: String,
+}
+
+#[derive(Debug, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubBrowserAuthCompleteRequest {
+    repository_root_path: String,
+    state: String,
 }
 
 #[derive(Debug, Deserialize, specta::Type)]
@@ -46,6 +61,15 @@ pub struct GitHubAuthStatusPayload {
     email: Option<String>,
     source: Option<String>,
     message: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubBrowserAuthPayload {
+    authorization_url: String,
+    state: String,
+    #[specta(type = u32)]
+    expires_in: u64,
 }
 
 #[derive(Debug, Serialize, Clone, specta::Type)]
@@ -77,6 +101,22 @@ struct GitHubAuthTarget {
     api_base: String,
     auth_base: String,
     repository_root: PathBuf,
+}
+
+struct GitHubBrowserAuthSession {
+    host: String,
+    repository_root: PathBuf,
+    redirect_uri: String,
+    code_verifier: String,
+    expires_at: Instant,
+    callback_task: tokio::task::JoinHandle<Result<GitHubBrowserCallback, String>>,
+}
+
+struct GitHubBrowserCallback {
+    state: String,
+    code: Option<String>,
+    error: Option<String>,
+    error_description: Option<String>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -123,10 +163,17 @@ struct GitHubOAuthTokenResponse {
 static GITHUB_AUTH_CREDENTIAL_CACHE: OnceLock<
     Mutex<HashMap<String, GitHubAuthCredentialCacheEntry>>,
 > = OnceLock::new();
+static GITHUB_BROWSER_AUTH_SESSIONS: OnceLock<
+    Mutex<HashMap<String, GitHubBrowserAuthSession>>,
+> = OnceLock::new();
 
 fn github_auth_credential_cache() -> &'static Mutex<HashMap<String, GitHubAuthCredentialCacheEntry>>
 {
     GITHUB_AUTH_CREDENTIAL_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn github_browser_auth_sessions() -> &'static Mutex<HashMap<String, GitHubBrowserAuthSession>> {
+    GITHUB_BROWSER_AUTH_SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn unauthenticated(message: impl Into<String>) -> GitHubAuthStatusPayload {
@@ -446,6 +493,242 @@ fn build_github_oauth_client() -> Result<reqwest::Client, String> {
         .map_err(|error| format!("创建 GitHub 授权客户端失败：{error}"))
 }
 
+fn random_base64_url(byte_len: usize) -> Result<String, String> {
+    let mut bytes = vec![0_u8; byte_len];
+    getrandom::fill(&mut bytes).map_err(|error| format!("生成 GitHub 授权随机数失败：{error}"))?;
+    Ok(URL_SAFE_NO_PAD.encode(bytes))
+}
+
+fn build_pkce_challenge(code_verifier: &str) -> String {
+    let digest = Sha256::digest(code_verifier.as_bytes());
+    URL_SAFE_NO_PAD.encode(digest)
+}
+
+fn percent_encode_query_value(value: &str) -> String {
+    let mut encoded = String::new();
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                encoded.push(byte as char);
+            }
+            _ => encoded.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    encoded
+}
+
+fn percent_decode_query_value(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut output = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+
+    while index < bytes.len() {
+        match bytes[index] {
+            b'+' => {
+                output.push(b' ');
+                index += 1;
+            }
+            b'%' if index + 2 < bytes.len() => {
+                let hex = &value[index + 1..index + 3];
+                if let Ok(byte) = u8::from_str_radix(hex, 16) {
+                    output.push(byte);
+                    index += 3;
+                } else {
+                    output.push(bytes[index]);
+                    index += 1;
+                }
+            }
+            byte => {
+                output.push(byte);
+                index += 1;
+            }
+        }
+    }
+
+    String::from_utf8_lossy(&output).into_owned()
+}
+
+fn extract_query_param(query: &str, name: &str) -> Option<String> {
+    query.split('&').find_map(|pair| {
+        let (key, value) = pair.split_once('=')?;
+        if key == name {
+            Some(percent_decode_query_value(value))
+        } else {
+            None
+        }
+    })
+}
+
+fn build_browser_authorization_url(
+    target: &GitHubAuthTarget,
+    redirect_uri: &str,
+    state: &str,
+    code_challenge: &str,
+) -> String {
+    let params = [
+        ("client_id", GITHUB_OAUTH_CLIENT_ID),
+        ("redirect_uri", redirect_uri),
+        ("scope", GITHUB_DEVICE_AUTH_SCOPE),
+        ("state", state),
+        ("code_challenge", code_challenge),
+        ("code_challenge_method", "S256"),
+        ("prompt", "select_account"),
+    ];
+    let query = params
+        .iter()
+        .map(|(key, value)| format!("{key}={}", percent_encode_query_value(value)))
+        .collect::<Vec<_>>()
+        .join("&");
+
+    format!("{}/login/oauth/authorize?{query}", target.auth_base)
+}
+
+fn build_oauth_callback_response(title: &str, message: &str) -> String {
+    format!(
+        "HTTP/1.1 200 OK\r\ncontent-type: text/html; charset=utf-8\r\nconnection: close\r\n\r\n<!doctype html><html lang=\"zh-CN\"><meta charset=\"utf-8\"><title>{title}</title><body style=\"font-family:system-ui,sans-serif;padding:32px;line-height:1.6\"><h1>{title}</h1><p>{message}</p><p>可以关闭此页面并返回 Calamex。</p></body></html>"
+    )
+}
+
+async fn receive_github_oauth_callback(
+    listener: TcpListener,
+) -> Result<GitHubBrowserCallback, String> {
+    let (mut stream, _) = listener
+        .accept()
+        .await
+        .map_err(|error| format!("接收 GitHub 浏览器回调失败：{error}"))?;
+    let mut buffer = [0_u8; 8192];
+    let bytes_read = stream
+        .read(&mut buffer)
+        .await
+        .map_err(|error| format!("读取 GitHub 浏览器回调失败：{error}"))?;
+    let request = String::from_utf8_lossy(&buffer[..bytes_read]);
+    let request_target = request
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .ok_or_else(|| "GitHub 浏览器回调请求格式无效。".to_string())?;
+
+    if !request_target.starts_with(GITHUB_OAUTH_CALLBACK_PATH) {
+        let response = build_oauth_callback_response("GitHub 授权失败", "收到的回调路径无效。");
+        let _ = stream.write_all(response.as_bytes()).await;
+        return Err("GitHub 浏览器回调路径无效。".to_string());
+    }
+
+    let query = request_target
+        .split_once('?')
+        .map(|(_, query)| query)
+        .unwrap_or_default();
+    let callback = GitHubBrowserCallback {
+        state: extract_query_param(query, "state").unwrap_or_default(),
+        code: extract_query_param(query, "code"),
+        error: extract_query_param(query, "error"),
+        error_description: extract_query_param(query, "error_description"),
+    };
+
+    let (title, message) = if callback.error.is_some() {
+        (
+            "GitHub 授权失败",
+            callback
+                .error_description
+                .as_deref()
+                .unwrap_or("GitHub 返回了授权错误。"),
+        )
+    } else if callback.code.as_deref().unwrap_or_default().trim().is_empty() {
+        ("GitHub 授权失败", "GitHub 回调缺少授权码。")
+    } else {
+        ("GitHub 授权完成", "Calamex 正在完成连接。")
+    };
+    let response = build_oauth_callback_response(title, message);
+    let _ = stream.write_all(response.as_bytes()).await;
+    let _ = stream.shutdown().await;
+
+    Ok(callback)
+}
+
+async fn request_github_browser_auth(
+    target: &GitHubAuthTarget,
+) -> Result<GitHubBrowserAuthPayload, String> {
+    let listener = TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .map_err(|error| format!("启动 GitHub 本地授权回调失败：{error}"))?;
+    let local_addr = listener
+        .local_addr()
+        .map_err(|error| format!("读取 GitHub 本地授权回调端口失败：{error}"))?;
+    let redirect_uri = format!(
+        "http://127.0.0.1:{}{}",
+        local_addr.port(),
+        GITHUB_OAUTH_CALLBACK_PATH
+    );
+    let state = random_base64_url(32)?;
+    let code_verifier = random_base64_url(32)?;
+    let code_challenge = build_pkce_challenge(&code_verifier);
+    let authorization_url =
+        build_browser_authorization_url(target, &redirect_uri, &state, &code_challenge);
+    let expires_at = Instant::now() + GITHUB_BROWSER_AUTH_MAX_WAIT;
+    let callback_task = tokio::spawn(receive_github_oauth_callback(listener));
+
+    if let Ok(mut sessions) = github_browser_auth_sessions().lock() {
+        sessions.retain(|_, session| session.expires_at > Instant::now());
+        sessions.insert(
+            state.clone(),
+            GitHubBrowserAuthSession {
+                host: target.host.clone(),
+                repository_root: target.repository_root.clone(),
+                redirect_uri,
+                code_verifier,
+                expires_at,
+                callback_task,
+            },
+        );
+    } else {
+        return Err("GitHub 浏览器授权会话不可用。".to_string());
+    }
+
+    Ok(GitHubBrowserAuthPayload {
+        authorization_url,
+        state,
+        expires_in: GITHUB_BROWSER_AUTH_MAX_WAIT.as_secs(),
+    })
+}
+
+async fn exchange_github_browser_code(
+    target: &GitHubAuthTarget,
+    session: &GitHubBrowserAuthSession,
+    code: &str,
+) -> Result<String, String> {
+    let client = build_github_oauth_client()?;
+    let response = client
+        .post(format!("{}/login/oauth/access_token", target.auth_base))
+        .header(ACCEPT, "application/json")
+        .form(&[
+            ("client_id", GITHUB_OAUTH_CLIENT_ID),
+            ("code", code),
+            ("redirect_uri", session.redirect_uri.as_str()),
+            ("code_verifier", session.code_verifier.as_str()),
+        ])
+        .send()
+        .await
+        .map_err(|error| format!("请求 GitHub 访问令牌失败：{error}"))?;
+
+    let body = response
+        .text()
+        .await
+        .map_err(|error| format!("读取 GitHub 访问令牌失败：{error}"))?;
+    let token_response: GitHubOAuthTokenResponse = serde_json::from_str(&body)
+        .map_err(|error| format!("解析 GitHub 访问令牌失败：{error}"))?;
+
+    if let Some(token) = token_response.access_token
+        && !token.trim().is_empty()
+    {
+        return Ok(token);
+    }
+
+    Err(token_response
+        .error_description
+        .or(token_response.error)
+        .unwrap_or_else(|| "GitHub 授权响应缺少访问令牌。".to_string()))
+}
+
 async fn fetch_github_primary_email(
     client: &reqwest::Client,
     target: &GitHubAuthTarget,
@@ -640,6 +923,68 @@ pub async fn get_github_auth_status(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn begin_github_browser_auth(
+    payload: GitHubAuthRequest,
+) -> Result<GitHubBrowserAuthPayload, String> {
+    let target = resolve_github_auth_target(&payload.repository_root_path)?;
+    clear_github_auth_credential_cache_for_host(&target.host);
+    request_github_browser_auth(&target).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn complete_github_browser_auth(
+    payload: GitHubBrowserAuthCompleteRequest,
+) -> Result<GitHubAuthStatusPayload, String> {
+    let target = resolve_github_auth_target(&payload.repository_root_path)?;
+    let session = github_browser_auth_sessions()
+        .lock()
+        .map_err(|_| "GitHub 浏览器授权会话不可用。".to_string())?
+        .remove(&payload.state)
+        .ok_or_else(|| "GitHub 浏览器授权会话已过期，请重新连接。".to_string())?;
+
+    if session.host.to_ascii_lowercase() != target.host.to_ascii_lowercase()
+        || session.repository_root != target.repository_root
+    {
+        session.callback_task.abort();
+        return Err("GitHub 浏览器授权会话与当前仓库不匹配。".to_string());
+    }
+
+    let mut callback_task = session.callback_task;
+    let callback = match timeout(GITHUB_BROWSER_AUTH_MAX_WAIT, &mut callback_task).await {
+        Ok(join_result) => join_result
+            .map_err(|error| format!("GitHub 浏览器授权任务异常终止：{error}"))??,
+        Err(_) => {
+            callback_task.abort();
+            return Err("GitHub 浏览器授权等待超时，请重新连接。".to_string());
+        }
+    };
+
+    if callback.state != payload.state {
+        return Err("GitHub 浏览器授权状态校验失败，请重新连接。".to_string());
+    }
+
+    if let Some(error) = callback.error {
+        return Err(callback
+            .error_description
+            .unwrap_or_else(|| format!("GitHub 浏览器授权失败：{error}")));
+    }
+
+    let code = callback
+        .code
+        .filter(|code| !code.trim().is_empty())
+        .ok_or_else(|| "GitHub 浏览器回调缺少授权码。".to_string())?;
+    let token = exchange_github_browser_code(&target, &session, &code).await?;
+    let host = target.host.clone();
+    tokio::task::spawn_blocking(move || save_keyring_token(&host, &token))
+        .await
+        .map_err(|error| format!("保存 GitHub 凭据任务异常终止：{error}"))??;
+    clear_github_auth_credential_cache_for_host(&target.host);
+    fetch_github_auth_status(&target).await
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn begin_github_device_auth(
     payload: GitHubAuthRequest,
 ) -> Result<GitHubDeviceAuthPayload, String> {
@@ -762,5 +1107,22 @@ mod tests {
             Some("gho_token".to_string())
         );
         assert_eq!(parse_git_credential_password("username=x\n"), None);
+    }
+
+    #[test]
+    fn pkce_challenge_uses_sha256_base64url_without_padding() {
+        assert_eq!(
+            build_pkce_challenge("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"),
+            "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+        );
+    }
+
+    #[test]
+    fn query_percent_encoding_round_trips_callback_values() {
+        let value = "http://127.0.0.1:49152/github/oauth/callback?x=a b";
+        assert_eq!(
+            percent_decode_query_value(&percent_encode_query_value(value)),
+            value
+        );
     }
 }
