@@ -1433,7 +1433,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
         },
       });
     } catch (error) {
-      if (requestAbortController.signal.aborted) {
+      if (activeAbortController.value?.signal.aborted) {
         disposeSidecarAnswerStream(assistantMessageId);
       } else {
         failSidecarAgentMessage(assistantMessageId, toErrorMessage(error, MSG_CALL_FAILED));
@@ -1794,6 +1794,9 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     };
 
     const liveEventBuffer = createSidecarLiveEventBuffer((events, freshEvents) => {
+      if (requestAbortController.signal.aborted) {
+        return;
+      }
       appendVisibleRuntimeTimelineEvents(extractVisibleAgentRuntimeEvents(freshEvents));
       applySidecarLiveEventsToAgentMessage(assistantMessageId, targetThreadId, '', events);
 
@@ -1808,6 +1811,9 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       }
     });
     const sidecarStream = await subscribeSidecarStreamWithPrebuffer((event) => {
+      if (requestAbortController.signal.aborted) {
+        return;
+      }
       liveEventBuffer.push(event);
     });
 
@@ -1847,7 +1853,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
         clearAttachedFiles({ revokePreviews: false });
       }
     } catch (error) {
-      if (activeAbortController.value?.signal.aborted) {
+      if (requestAbortController.signal.aborted) {
         disposeSidecarAnswerStream(assistantMessageId);
       } else {
         failSidecarAgentMessage(assistantMessageId, toErrorMessage(error, MSG_CALL_FAILED));

@@ -1112,6 +1112,10 @@ describe('useAiAssistant streaming integration', () => {
 
   it('会话标题首次失败后会自动重试', async () => {
     vi.useFakeTimers();
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback): number => {
+      callback(0);
+      return 1;
+    });
     const assistant = createAssistantHarness();
     const conversationStore = useAiConversationStore();
 
@@ -2876,7 +2880,7 @@ describe('useAiAssistant streaming integration', () => {
     aiServiceMock.sidecarExecute.mockImplementationOnce(async (payload) => {
       const sessionId = payload.sessionId ?? 'sidecar-live-patch';
 
-      queueMicrotask(() => {
+      void Promise.resolve().then(() => {
         aiServiceMock.emitSidecar({
           sessionId,
           seq: 0,
