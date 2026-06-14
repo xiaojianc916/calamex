@@ -35,7 +35,6 @@ const SIDECAR_STARTUP_TIMEOUT_MAX_SECONDS: u64 = 600;
 const SIDECAR_STARTUP_ATTEMPTS: u32 = 2;
 const SIDECAR_LOG_MAX_BYTES: u64 = 4 * 1024 * 1024;
 const SIDECAR_LOG_TAIL_CHARS: usize = 1200;
-const NARRATOR_CHAT_RETRY_DELAYS_MS: &[u64] = &[1500, 3000, 5000, 9000, 16000, 30000, 60000];
 const SIDECAR_PROTOCOL_VERSION: &str = "7";
 const SIDECAR_IMPLEMENTATION_VERSION: &str = "deepseek-reasoning-transport-v6-plan-history";
 const DEFAULT_SIDECAR_PORT: u16 = 39871;
@@ -248,57 +247,6 @@ where
     decode_response(response, endpoint).await
 }
 
-fn is_retryable_narrator_sidecar_error(error: &str) -> bool {
-    let normalized = error.to_ascii_lowercase();
-
-    normalized.contains(" http 429")
-        || normalized.contains(" too many requests")
-        || normalized.contains(" rate limit")
-        || normalized.contains(" retry later")
-        || normalized.contains("temporarily unavailable")
-        || normalized.contains(" timeout")
-        || normalized.contains(" timed out")
-        || normalized.contains("就绪")
-        || normalized.contains(" connection reset")
-        || normalized.contains(" connection aborted")
-        || normalized.contains(" broken pipe")
-        || normalized.contains(" eof")
-        || normalized.contains(" http 500")
-        || normalized.contains(" http 502")
-        || normalized.contains(" http 503")
-        || normalized.contains(" http 504")
-}
-
-async fn post_json_with_narrator_retry<TRequest, TResponse>(
-    endpoint: &str,
-    payload: &TRequest,
-) -> Result<TResponse, String>
-where
-    TRequest: Serialize,
-    TResponse: DeserializeOwned,
-{
-    let total_attempts = NARRATOR_CHAT_RETRY_DELAYS_MS.len() + 1;
-    let mut last_retryable_error: Option<String> = None;
-
-    for attempt_index in 0..total_attempts {
-        match post_json(endpoint, payload).await {
-            Ok(response) => return Ok(response),
-            Err(error) if is_retryable_narrator_sidecar_error(&error) => {
-                last_retryable_error = Some(error);
-            }
-            Err(error) => return Err(error),
-        }
-
-        if let Some(&retry_delay_ms) = NARRATOR_CHAT_RETRY_DELAYS_MS.get(attempt_index) {
-            tokio::time::sleep(Duration::from_millis(retry_delay_ms)).await;
-        }
-    }
-
-    Err(last_retryable_error.unwrap_or_else(|| {
-        format!("AGENT_SIDECAR_UNAVAILABLE: Narrator sidecar 重试 {total_attempts} 次后仍未成功。")
-    }))
-}
-
 fn create_sidecar_session_id(prefix: &str) -> String {
     format!("{prefix}-{}", { jiff::Timestamp::now().as_nanosecond() })
 }
@@ -332,29 +280,6 @@ fn emit_sidecar_stream_event(
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.emit("ai:sidecar-stream", payload);
     }
-}
-
-/// 从 sidecar UI 事件中提取“最终回答”阶段的增量文本。
-///
-/// 仅当事件为 `message_delta` 且 `phase` 为 `final` 或缺省时返回其 `text`；
-/// `stage` 阶段（过渡性内容）、空文本以及其它事件类型一律返回 `None`，
-/// 以便聊天网关只把真正属于回答的增量实时下发到 `ai:chat-stream`。
-pub fn answer_delta_text(event: &serde_json::Value) -> Option<String> {
-    if event.get("type").and_then(|value| value.as_str()) != Some("message_delta") {
-        return None;
-    }
-
-    if let Some(phase) = event.get("phase").and_then(|value| value.as_str())
-        && phase != "final"
-    {
-        return None;
-    }
-
-    event
-        .get("text")
-        .and_then(|value| value.as_str())
-        .filter(|text| !text.is_empty())
-        .map(|text| text.to_string())
 }
 
 fn decode_sidecar_stream_line(
@@ -1389,49 +1314,10 @@ pub async fn restore_checkpoint(
     .await
 }
 
-/// 流式聊天：在读取 sidecar NDJSON 事件流的同时，把每个 UI 事件交给
-/// `on_event` 回调（聊天网关据此把 `message_delta` 增量实时下发到
-/// `ai:chat-stream`），最终返回完整响应。除回调外，行为与既有流式路径一致。
-pub async fn model_chat_streaming<F>(
-    app: AppHandle,
-    mut payload: AgentSidecarChatRequest,
-    mut on_event: F,
-) -> Result<AgentSidecarResponsePayload, String>
-where
-    F: FnMut(&serde_json::Value),
-{
-    let session_id = ensure_request_session_id(&mut payload.session_id, "sidecar-model-chat");
-    ensure_model_config!(payload, current_sidecar_model_config());
-    post_json_streaming_events_with_handler(
-        &app,
-        "/model/chat",
-        "/model/chat/stream",
-        &payload,
-        &session_id,
-        &mut on_event,
-    )
-    .await
-}
-
 #[allow(
     dead_code,
     reason = "reserved ACP/model bridge entrypoint; currently unused by the Rust call graph"
 )]
-pub async fn model_chat_once(
-    mut payload: AgentSidecarChatRequest,
-) -> Result<AgentSidecarResponsePayload, String> {
-    let _session_id = ensure_request_session_id(&mut payload.session_id, "sidecar-model-chat");
-    ensure_model_config!(payload, current_sidecar_model_config());
-    post_json("/model/chat", &payload).await
-}
-
-pub async fn narrator_model_chat_once(
-    mut payload: AgentSidecarChatRequest,
-) -> Result<AgentSidecarResponsePayload, String> {
-    let _session_id = ensure_request_session_id(&mut payload.session_id, "sidecar-narrator-chat");
-    ensure_model_config!(payload, narrator_sidecar_model_config());
-    post_json_with_narrator_retry("/model/chat", &payload).await
-}
 
 pub async fn web_search(payload: AiWebSearchInput) -> Result<AiWebSearchPayload, String> {
     post_json("/web/search", &payload).await
@@ -1447,12 +1333,12 @@ mod tests {
         DEFAULT_AGENT_WEBVIEW_CDP_PORT, DEFAULT_SIDECAR_URL,
         SIDECAR_STARTUP_TIMEOUT_DEFAULT_SECONDS, SIDECAR_STARTUP_TIMEOUT_MAX_SECONDS,
         SIDECAR_STARTUP_TIMEOUT_MIN_SECONDS, SIDECAR_STREAM_MAX_LINE_BYTES,
-        SidecarHealthProbePayload, SidecarHealthStatus, answer_delta_text, build_sidecar_url,
+        SidecarHealthProbePayload, SidecarHealthStatus, build_sidecar_url,
         canonicalize_local_base_url, clamp_startup_timeout_seconds, classify_sidecar_health,
         client, crashed_sidecar_error_message, drain_complete_sidecar_stream_lines,
         ensure_sidecar_stream_buffer_within_limit, has_non_whitespace_bytes, health_client,
         inject_sidecar_dotenv_key_if_present, is_crashed_sidecar_error,
-        is_default_local_sidecar_url, is_retryable_narrator_sidecar_error, model_provider_id,
+        is_default_local_sidecar_url, model_provider_id,
         normalize_base_url, parse_netstat_listening_pids, resolve_agent_webview_cdp_port,
         shared_client, sidecar_runtime_dir,
     };
@@ -1555,35 +1441,6 @@ mod tests {
             DEFAULT_AGENT_WEBVIEW_CDP_PORT
         );
         assert_eq!(resolve_agent_webview_cdp_port(Some("9444")), 9444);
-    }
-
-    #[test]
-    fn startup_not_ready_error_is_retryable() {
-        let error = "AGENT_SIDECAR_UNAVAILABLE: Node sidecar 已尝试启动，但未在 20 秒内就绪。";
-        assert!(is_retryable_narrator_sidecar_error(error));
-        assert!(!is_retryable_narrator_sidecar_error(
-            "AGENT_SIDECAR_CONTRACT_ERROR: sidecar 响应无法解析"
-        ));
-    }
-
-    #[test]
-    fn answer_delta_text_extracts_only_final_phase_message_deltas() {
-        let implicit_final = serde_json::json!({ "type": "message_delta", "text": "你好" });
-        assert_eq!(answer_delta_text(&implicit_final).as_deref(), Some("你好"));
-
-        let explicit_final =
-            serde_json::json!({ "type": "message_delta", "text": "世界", "phase": "final" });
-        assert_eq!(answer_delta_text(&explicit_final).as_deref(), Some("世界"));
-
-        let stage_event =
-            serde_json::json!({ "type": "message_delta", "text": "思考中", "phase": "stage" });
-        assert_eq!(answer_delta_text(&stage_event), None);
-
-        let empty_event = serde_json::json!({ "type": "message_delta", "text": "" });
-        assert_eq!(answer_delta_text(&empty_event), None);
-
-        let other_event = serde_json::json!({ "type": "tool_start", "toolName": "x", "input": {} });
-        assert_eq!(answer_delta_text(&other_event), None);
     }
 
     #[test]
@@ -1739,14 +1596,6 @@ mod tests {
         )));
         assert!(!is_crashed_sidecar_error(
             "AGENT_SIDECAR_UNAVAILABLE: Node sidecar 已尝试启动，但未在 20 秒内就绪。"
-        ));
-    }
-
-    #[test]
-    fn crashed_sidecar_error_is_not_narrator_retryable() {
-        // 启动即崩溃是确定性故障，narrator 重试路径不应把它当作可重试错误。
-        assert!(!is_retryable_narrator_sidecar_error(
-            &crashed_sidecar_error_message(Some(1))
         ));
     }
 
