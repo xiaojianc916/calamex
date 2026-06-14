@@ -59,7 +59,6 @@
                         </div>
 
                         <DeferredSmartScriptEditor v-else-if="editorStore.document.kind === 'text'" :ref="bindEditorRef"
-                          :key="editorStore.document.id"
                           :document-id="editorStore.document.id" :document-path="editorStore.document.path"
                           :document-name="editorStore.document.name" :model-value="editorStore.document.content"
                           theme="light" :editor-settings="appStore.settings.editor" :can-run="canRun"
@@ -111,7 +110,6 @@
                     </div>
 
                     <DeferredSmartScriptEditor v-else-if="editorStore.document.kind === 'text'" :ref="bindEditorRef"
-                      :key="editorStore.document.id"
                       :document-id="editorStore.document.id" :document-path="editorStore.document.path"
                       :document-name="editorStore.document.name" :model-value="editorStore.document.content" theme="light"
                       :editor-settings="appStore.settings.editor" :can-run="canRun" @update:model-value="updateContent"

@@ -534,6 +534,25 @@ const restoreViewStateForPath = (path: string | null | undefined): void => {
   }
 };
 
+// 单实例复用：切换文档标签页时整体替换文档内容，而非走 modelValue watcher 的
+// Myers 差分（新旧文档差异巨大，差分会算出大量碎片区间，不如整体替换）。
+// 同时整体替换会清除上一文档的折叠区间(foldEffect 范围因 doc 变化失效)，
+// 避免折叠状态残留到新文档。更新 lastSyncedModelValue 哨兵，使紧随其后的
+// modelValue watcher 命中回声判定直接跳过，不再重复 dispatch。
+const replaceDocumentForPathSwitch = (): void => {
+  const view = editorView;
+  if (!view) return;
+  const nextContent = props.modelValue;
+  const currentLength = view.state.doc.length;
+  view.dispatch({
+    changes: { from: 0, to: currentLength, insert: nextContent },
+    selection: EditorSelection.single(0),
+    effects: EditorView.scrollIntoView(0, { y: 'start' }),
+  });
+  lastSyncedModelValue = nextContent;
+  lastDocumentMetrics = computeDocumentMetrics(nextContent);
+};
+
 // ──────────────────────────────
 // Diagnostics
 // ──────────────────────────────
@@ -1066,6 +1085,7 @@ watch(
   () => [props.documentPath, props.documentName] as const,
   ([nextPath], [previousPath]) => {
     if (previousPath) persistViewState(previousPath);
+    replaceDocumentForPathSwitch();
     reconfigureLanguage();
     reconfigureLsp();
     restoreViewStateForPath(nextPath);
