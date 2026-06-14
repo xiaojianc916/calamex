@@ -100,6 +100,57 @@ const measureGitDiffPayloadOutput = (output: unknown) => {
   return { bytes };
 };
 
+/**
+ * git log（提交历史）出参的浅层字节度量。与 measureGitCommitDetailOutput /
+ * measureGitDiffPayloadOutput 同口径：只累加已知标量字段与 parentIds/refs 的字节，
+ * 避免对整份提交列表做一次纯统计用途的 JSON.stringify。导出以便单测覆盖。
+ */
+export const measureGitCommitHistoryOutput = (output: unknown) => {
+  if (!output || typeof output !== 'object') return buildPayloadMetrics(output);
+
+  const payload = output as {
+    entries?: Array<{
+      id?: string;
+      shortId?: string;
+      summary?: string;
+      authorName?: string;
+      authorEmail?: string;
+      authoredAt?: string;
+      parentIds?: string[];
+      refs?: Array<Record<string, unknown>>;
+    }>;
+  };
+
+  const entriesBytes = Array.isArray(payload.entries)
+    ? payload.entries.reduce((total, entry) => {
+        let entryBytes =
+          textByteLength(entry.id) +
+          textByteLength(entry.shortId) +
+          textByteLength(entry.summary) +
+          textByteLength(entry.authorName) +
+          textByteLength(entry.authorEmail) +
+          textByteLength(entry.authoredAt) +
+          24;
+
+        if (Array.isArray(entry.parentIds)) {
+          for (const parentId of entry.parentIds) {
+            entryBytes += textByteLength(parentId) + 8;
+          }
+        }
+
+        if (Array.isArray(entry.refs)) {
+          for (const ref of entry.refs) {
+            entryBytes += shallowStringBytes(ref) + 16;
+          }
+        }
+
+        return total + entryBytes;
+      }, 0)
+    : 0;
+
+  return { bytes: entriesBytes + 32 };
+};
+
 type TGitTauriService = Pick<
   ITauriService,
   | 'getGitRepositoryStatus'
@@ -151,6 +202,7 @@ const GIT_COMMAND_META = {
     guardHint: '读取 Git 提交历史',
     idempotent: true,
     timeoutMs: 20_000,
+    measureOutput: measureGitCommitHistoryOutput,
   },
   getGitCommitDetail: {
     command: 'get_git_commit_detail',

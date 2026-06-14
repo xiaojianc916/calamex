@@ -222,3 +222,25 @@
 - 正确性：severity 规则保持不变；最终仍按 path 排序。新增单测覆盖同一路径多事件时保留最高 severity、
   多路径输出按 path 稳定排序。
 - 验证：`cargo test -p calamex workspace_watcher`、`cargo clippy`、`cargo test`。
+
+## listGitCommitHistory 出参度量：避免对 git log 结果整树 JSON.stringify
+
+- 文件：`src/services/tauri.git.ts`（新增并导出 `measureGitCommitHistoryOutput`，接入
+  `GIT_COMMAND_META.listGitCommitHistory.measureOutput`）。
+- 问题：IPC 审计默认级别为 `info`，每次命令调用都会对出参做一次体量度量。`listGitCommitHistory`
+  （git log）此前未提供 `measureOutput`，回退到通用 `buildPayloadMetrics`，对整份提交历史列表做一次
+  完整 `JSON.stringify` 仅为统计字节数。提交多、连续翻页加载时，这次纯统计用途的整树序列化（及
+  等长字符串分配）是一次性可观开销。同模块的 git diff / commit-detail 命令早已分别接入
+  `measureGitDiffPayloadOutput` / `measureGitCommitDetailOutput`，本条补齐 git log 这一缺口。
+- 算法：浅层字节累加（与既有 git diff / commit-detail 度量同口径）。仅对 `entries[]` 中每条提交的
+  已知标量字段（id/shortId/summary/authorName/authorEmail/authoredAt）、`parentIds[]` 与 `refs[]`
+  做 `TextEncoder` 字节累加，外加固定结构开销常数，完全不构造整份 JSON 字符串。
+- 复杂度（设提交条目数 N）：
+  - 之前：一次 `JSON.stringify` 整树 → O(总字节) 时间，并额外分配一份与出参等长的字符串。
+  - 之后：O(N × 字段数) 字节累加，无整树字符串分配；度量值与原 stringify 字节数同量级（仅用于审计
+    体量统计，非精确等值）。
+- 正确性：度量仅用于审计日志的 `bytes` 体量统计，不参与任何业务逻辑或出参校验；命令返回值、Zod 校验
+  与错误归一化路径均不变。新增单测覆盖：非对象回退、空历史固定开销、按已知字段累计、多条目线性累加、
+  未知大字段不计入（证明度量有界、不做整树序列化）。
+- 验证：`pnpm test src/services/tauri.git.spec.ts`、`pnpm typecheck`、`pnpm lint`；真实耗时请在本机
+  用大仓库（数千条提交）`listGitCommitHistory` 连续翻页前后对比后补录。
