@@ -1,6 +1,5 @@
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
-
 import { queryClient } from '@/lib/query-client';
 import { tauriService } from '@/services/tauri';
 import type {
