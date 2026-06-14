@@ -1,4 +1,5 @@
 import type { TAiProviderType } from '@/types/ai';
+import { getModelContextWindow } from '@/lib/model-catalog';
 
 /* ============================================================================
  * Global defaults (供 ai-config.ts / store / UI 等下游 import)
@@ -47,6 +48,8 @@ export interface IAiServicePlatformModel {
    * - 数值为官方/权威来源核实的窗口大小;部分按"默认窗口"而非"可选上限"取值(见各模型注释)。
    * - 留空(undefined)表示窗口**真正未知**(如 ollama 本地模型,取决于运行时 num_ctx),
    *   此时 UI 应显示"未知"而不是猜一个错误数字。
+   * - 注意:此字段现在是"种子兜底"值。运行时优先走 `@/lib/model-catalog`
+   *   (models.dev),仅当目录未收录该模型(如刚发布)或离线时才回退到这里。
    */
   contextWindow?: number;
 }
@@ -298,15 +301,32 @@ export const isAiServicePlatformModel = (
 
 /**
  * 解析某个 model id 的上下文窗口(token 数)。
- * - 命中目录且配置了 contextWindow:返回该数值。
- * - 命中目录但未配置(如 ollama 本地模型):返回 undefined(窗口未知)。
- * - 未命中任何 model:返回 undefined。
+ *
+ * 优先级:
+ * 1. ollama 本地模型 → 直接 undefined(窗口取决于运行时 num_ctx,不可静态确定,
+ *    更不能让目录瞎猜一个云端口径的值)。
+ * 2. models.dev 目录(`@/lib/model-catalog`)→ 维护良好、随模型发布自动更新。
+ * 3. 手写种子兜底 → 目录未收录(如刚发布)或离线时使用。
+ * 4. 都没有 → undefined。
  */
 export const findModelContextWindow = (modelId: string | null | undefined): number | undefined => {
   const normalizedModelId = modelId?.trim() ?? '';
   if (!normalizedModelId) {
     return undefined;
   }
+
+  // 本地模型:真实窗口取决于运行时 num_ctx,保持"未知"语义。
+  if (normalizedModelId.startsWith('ollama/')) {
+    return undefined;
+  }
+
+  // 优先用维护中的 models.dev 目录(随模型发布自动更新)。
+  const fromCatalog = getModelContextWindow(normalizedModelId);
+  if (typeof fromCatalog === 'number') {
+    return fromCatalog;
+  }
+
+  // 回退:目录尚未收录(如刚发布的新模型)或离线时,用手写种子值。
   for (const platform of AI_SERVICE_PLATFORM_PRESETS) {
     const matched = platform.models.find((model) => model.id === normalizedModelId);
     if (matched) {
