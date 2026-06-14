@@ -6,7 +6,6 @@ import {
 import type { useAiStream } from '@/composables/ai/useAiStream';
 import type {
   IAiChatMessage,
-  IAiChatStreamEventPayload,
   IAiChatStreamRenderState,
   TAiToolConfirmationDecision,
 } from '@/types/ai';
@@ -35,40 +34,6 @@ export const mapStreamStatus = (
 
 export const isNonNegativeFiniteNumber = (value: number | null | undefined): value is number =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0;
-
-export const hasStreamTokenSnapshot = (event: IAiChatStreamEventPayload): boolean =>
-  isNonNegativeFiniteNumber(event.promptTokens) ||
-  isNonNegativeFiniteNumber(event.completionTokens) ||
-  isNonNegativeFiniteNumber(event.totalTokens) ||
-  (event.usage !== undefined && event.usage !== null);
-
-export const mergeStreamTokenSnapshot = (
-  stream: IAiChatStreamRenderState | undefined,
-  event: IAiChatStreamEventPayload,
-): IAiChatStreamRenderState => {
-  const nextStream: IAiChatStreamRenderState = {
-    ...stream,
-    status: stream?.status ?? 'streaming',
-  };
-
-  if (isNonNegativeFiniteNumber(event.promptTokens)) {
-    nextStream.promptTokens = event.promptTokens;
-  }
-
-  if (isNonNegativeFiniteNumber(event.completionTokens)) {
-    nextStream.completionTokens = event.completionTokens;
-  }
-
-  if (isNonNegativeFiniteNumber(event.totalTokens)) {
-    nextStream.totalTokens = event.totalTokens;
-  }
-
-  if (event.usage !== undefined && event.usage !== null) {
-    nextStream.usage = event.usage;
-  }
-
-  return nextStream;
-};
 
 export const hasMeaningfulAssistantText = (value: string | null | undefined): value is string =>
   typeof value === 'string' && value.trim().length > 0;
