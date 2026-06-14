@@ -131,11 +131,11 @@ struct GitHubOAuthTokenResponse {
 static GITHUB_AUTH_CREDENTIAL_CACHE: OnceLock<
     Mutex<HashMap<String, GitHubAuthCredentialCacheEntry>>,
 > = OnceLock::new();
-static GITHUB_BROWSER_AUTH_SESSIONS: OnceLock<
-    Mutex<HashMap<String, GitHubBrowserAuthSession>>,
-> = OnceLock::new();
+static GITHUB_BROWSER_AUTH_SESSIONS: OnceLock<Mutex<HashMap<String, GitHubBrowserAuthSession>>> =
+    OnceLock::new();
 
-fn github_auth_credential_cache() -> &'static Mutex<HashMap<String, GitHubAuthCredentialCacheEntry>> {
+fn github_auth_credential_cache() -> &'static Mutex<HashMap<String, GitHubAuthCredentialCacheEntry>>
+{
     GITHUB_AUTH_CREDENTIAL_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -598,7 +598,13 @@ async fn receive_github_oauth_callback(
                 .as_deref()
                 .unwrap_or("GitHub 返回了授权错误。"),
         )
-    } else if callback.code.as_deref().unwrap_or_default().trim().is_empty() {
+    } else if callback
+        .code
+        .as_deref()
+        .unwrap_or_default()
+        .trim()
+        .is_empty()
+    {
         ("GitHub 授权失败", "GitHub 回调缺少授权码。")
     } else {
         ("GitHub 授权完成", "Calamex 正在完成连接。")
@@ -832,8 +838,9 @@ pub async fn complete_github_browser_auth(
 
     let mut callback_task = callback_task;
     let callback = match timeout(GITHUB_BROWSER_AUTH_MAX_WAIT, &mut callback_task).await {
-        Ok(join_result) => join_result
-            .map_err(|error| format!("GitHub 浏览器授权任务异常终止：{error}"))??,
+        Ok(join_result) => {
+            join_result.map_err(|error| format!("GitHub 浏览器授权任务异常终止：{error}"))??
+        }
         Err(_) => {
             callback_task.abort();
             return Err("GitHub 浏览器授权等待超时，请重新连接。".to_string());

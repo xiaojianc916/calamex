@@ -151,7 +151,9 @@ pub(super) fn scan_workspace_files(
     ))
 }
 
-pub(super) fn workspace_cached_files_for_index(root: &Path) -> Result<Arc<Vec<ScannedFile>>, String> {
+pub(super) fn workspace_cached_files_for_index(
+    root: &Path,
+) -> Result<Arc<Vec<ScannedFile>>, String> {
     workspace_cache_files(root)
 }
 

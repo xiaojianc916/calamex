@@ -68,7 +68,12 @@ pub(super) fn filter_literal_content_candidates(
         .cloned()
         .collect::<Vec<_>>();
 
-    if narrowed.len() >= files.len().saturating_mul(100 - MIN_FILTER_REDUCTION_PERCENT) / 100 {
+    if narrowed.len()
+        >= files
+            .len()
+            .saturating_mul(100 - MIN_FILTER_REDUCTION_PERCENT)
+            / 100
+    {
         return Ok(None);
     }
 
@@ -168,7 +173,10 @@ fn normalize_ascii_bytes(value: &str, match_case: bool) -> Vec<u8> {
     if match_case {
         value.as_bytes().to_vec()
     } else {
-        value.bytes().map(|byte| byte.to_ascii_lowercase()).collect()
+        value
+            .bytes()
+            .map(|byte| byte.to_ascii_lowercase())
+            .collect()
     }
 }
 
@@ -218,8 +226,8 @@ fn intersect_candidate_paths(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::types::{WorkspaceSearchRequest, WorkspaceSearchScope};
+    use super::*;
 
     fn request(query: &str) -> WorkspaceSearchRequest {
         WorkspaceSearchRequest {

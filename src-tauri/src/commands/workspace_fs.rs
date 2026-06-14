@@ -682,7 +682,6 @@ mod tests {
         assert!(error.contains("二进制"));
     }
 
-
     #[test]
     fn rejects_reserved_workspace_entry_names() {
         for name in ["CON", "con.txt", "NUL", "COM1", "LPT9.md"] {

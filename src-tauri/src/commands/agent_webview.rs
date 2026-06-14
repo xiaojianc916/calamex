@@ -260,9 +260,8 @@ async fn establish_cdp_session(app: AppHandle, port: u16) {
         }
     };
 
-    let handler_task = tauri::async_runtime::spawn(async move {
-        while handler.next().await.is_some() {}
-    });
+    let handler_task =
+        tauri::async_runtime::spawn(async move { while handler.next().await.is_some() {} });
 
     let mut page_opt = None;
     for _ in 0..40 {
@@ -296,9 +295,9 @@ async fn establish_cdp_session(app: AppHandle, port: u16) {
 
     // Expose window.__calamexPickerResult so the injected picker can ship results back.
     let _ = page
-        .execute(chromiumoxide::cdp::js_protocol::runtime::AddBindingParams::new(
-            RESULT_BINDING_NAME,
-        ))
+        .execute(
+            chromiumoxide::cdp::js_protocol::runtime::AddBindingParams::new(RESULT_BINDING_NAME),
+        )
         .await;
 
     let mut tasks = vec![handler_task];

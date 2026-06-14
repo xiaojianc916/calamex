@@ -1338,9 +1338,9 @@ mod tests {
         client, crashed_sidecar_error_message, drain_complete_sidecar_stream_lines,
         ensure_sidecar_stream_buffer_within_limit, has_non_whitespace_bytes, health_client,
         inject_sidecar_dotenv_key_if_present, is_crashed_sidecar_error,
-        is_default_local_sidecar_url, model_provider_id,
-        normalize_base_url, parse_netstat_listening_pids, resolve_agent_webview_cdp_port,
-        shared_client, sidecar_runtime_dir,
+        is_default_local_sidecar_url, model_provider_id, normalize_base_url,
+        parse_netstat_listening_pids, resolve_agent_webview_cdp_port, shared_client,
+        sidecar_runtime_dir,
     };
     use std::fs;
     use std::process::Command;

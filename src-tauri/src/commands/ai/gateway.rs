@@ -200,7 +200,8 @@ pub fn ai_cancel(app: AppHandle, payload: AiCancelRequest) -> Result<(), String>
         .ok_or_else(|| "AI_REQUEST_CANCELLED: threadId 不能为空。".to_string())?;
 
     use tauri::Manager as _;
-    app.state::<crate::acp::AcpRuntime>().cancel_thread(thread_id);
+    app.state::<crate::acp::AcpRuntime>()
+        .cancel_thread(thread_id);
     Ok(())
 }
 

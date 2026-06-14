@@ -1,5 +1,5 @@
-use super::*;
 use super::worktree_io::*;
+use super::*;
 use crate::commands::workspace_fs::workspace_name;
 use gix::bstr::ByteSlice;
 

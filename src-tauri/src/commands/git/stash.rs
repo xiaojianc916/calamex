@@ -1,5 +1,5 @@
-use super::*;
 use super::worktree_io::*;
+use super::*;
 use atomic_write_file::AtomicWriteFile;
 use gix::bstr::ByteSlice;
 use std::io::Write;

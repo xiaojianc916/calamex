@@ -229,9 +229,11 @@ async fn download_file_inner(
 
     let partial_for_replace = partial.clone();
     let target = local_path.to_path_buf();
-    tokio::task::spawn_blocking(move || replace_local_partial_onto_target(&partial_for_replace, &target))
-        .await
-        .map_err(|e| format!("重命名任务异常终止：{e}"))??;
+    tokio::task::spawn_blocking(move || {
+        replace_local_partial_onto_target(&partial_for_replace, &target)
+    })
+    .await
+    .map_err(|e| format!("重命名任务异常终止：{e}"))??;
 
     Ok(written)
 }
@@ -363,7 +365,10 @@ fn local_backup_path(local: &Path) -> PathBuf {
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    p.set_file_name(format!("{name}.{token}{SFTP_BACKUP_SUFFIX}", token = unique_transfer_token()));
+    p.set_file_name(format!(
+        "{name}.{token}{SFTP_BACKUP_SUFFIX}",
+        token = unique_transfer_token()
+    ));
     p
 }
 
@@ -463,9 +468,8 @@ fn replace_local_partial_onto_target(partial: &Path, target: &Path) -> Result<()
 
     let backup = local_backup_path(target);
     let had_backup = if target.exists() {
-        std_fs::rename(target, &backup).map_err(|e| {
-            format!("无法备份已有本地文件 {target:?} -> {backup:?}：{e}")
-        })?;
+        std_fs::rename(target, &backup)
+            .map_err(|e| format!("无法备份已有本地文件 {target:?} -> {backup:?}：{e}"))?;
         true
     } else {
         false
@@ -482,7 +486,9 @@ fn replace_local_partial_onto_target(partial: &Path, target: &Path) -> Result<()
             if had_backup {
                 let _ = std_fs::rename(&backup, target);
             }
-            Err(format!("重命名本地文件 {partial:?} -> {target:?} 失败：{error}"))
+            Err(format!(
+                "重命名本地文件 {partial:?} -> {target:?} 失败：{error}"
+            ))
         }
     }
 }
@@ -922,7 +928,6 @@ mod tests {
         .await;
         assert_eq!(res, Err("操作超时。".to_string()));
     }
-
 
     #[test]
     fn local_backup_path_keeps_target_parent_and_suffix() {

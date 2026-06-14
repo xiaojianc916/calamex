@@ -3,8 +3,8 @@
 //! `revert_git_commit` 等价于 `git revert --no-commit <commit>`：
 //! 把目标提交 C 的改动反向应用到工作区与索引，让用户自行检查后提交。
 //! 前提：工作区干净（等价于 ours == HEAD == base），因此所有改动均可无冲突落地。
-use super::*;
 use super::worktree_io::*;
+use super::*;
 use gix::bstr::ByteSlice;
 
 #[derive(Debug, Deserialize, specta::Type)]
@@ -123,7 +123,13 @@ pub fn revert_git_commit(
                 if !(entry_mode.is_tree() || entry_mode.is_commit()) {
                     let path = location.to_str_lossy().into_owned();
                     let mode = index_mode_from_tree_mode(entry_mode);
-                    restore_worktree_from_index_blob(&repository, &repository_root, &path, id, mode)?;
+                    restore_worktree_from_index_blob(
+                        &repository,
+                        &repository_root,
+                        &path,
+                        id,
+                        mode,
+                    )?;
                     upsert_index_entry(&mut index, &path, id, mode);
                 }
             }

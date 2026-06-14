@@ -1,5 +1,5 @@
-use super::*;
 use super::worktree_io::collect_tree_file_changes;
+use super::*;
 use gix::bstr::ByteSlice;
 use std::collections::HashMap;
 

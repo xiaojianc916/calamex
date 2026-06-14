@@ -140,7 +140,6 @@ fn record_new_known_host_key(
         .map_err(|e| format!("写入 known_hosts 失败：{e}"))
 }
 
-
 pub(crate) fn replace_known_host_key(
     host: &str,
     port: u16,
@@ -279,13 +278,10 @@ mod tests {
         let _ = std_fs::remove_dir_all(&dir);
     }
 
-
     #[test]
     fn ensure_known_hosts_parent_dir_creates_missing_parent() {
-        let dir = std::env::temp_dir().join(format!(
-            "calamex_known_hosts_parent_{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("calamex_known_hosts_parent_{}", std::process::id()));
         let nested = dir.join(".ssh").join("known_hosts");
         let _ = std_fs::remove_dir_all(&dir);
 

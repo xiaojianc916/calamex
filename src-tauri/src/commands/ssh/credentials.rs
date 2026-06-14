@@ -6,8 +6,6 @@ use crate::commands::{
 
 const SSH_KEYRING_SERVICE: &str = "calamex.ssh";
 
-
-
 fn scrub_secret_string(value: &mut String) {
     unsafe {
         for b in value.as_bytes_mut() {

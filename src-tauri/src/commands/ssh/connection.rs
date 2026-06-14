@@ -517,7 +517,6 @@ mod tests {
         );
     }
 
-
     #[test]
     fn validate_ssh_endpoint_rejects_control_characters() {
         assert!(validate_ssh_endpoint("example.com", "root").is_ok());
