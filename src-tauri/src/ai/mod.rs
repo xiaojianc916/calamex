@@ -7,4 +7,3 @@ pub mod errors;
 pub mod gateway;
 pub mod provider;
 pub mod security;
-pub mod stream;
