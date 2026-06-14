@@ -450,6 +450,36 @@ export const useDocumentPersistence = ({
   };
 
   const saveDocumentAs = async (documentId = editorStore.document.id): Promise<boolean> => {
+    const currentDocument = editorStore.getDocumentById(documentId);
+    if (!currentDocument) {
+      return false;
+    }
+
+    if (currentDocument.kind === 'text' && currentDocument.bufferLoaded === false) {
+      return warnAndReturnFalse('当前文件内容尚未加载，请先切换到该标签页后再另存为。');
+    }
+
+    if (!isLoadedTextDocument(currentDocument)) {
+      return warnAndReturnFalse('当前图片预览为只读模式，暂不支持另存为。');
+    }
+
+    const initialSnapshot = createLoadedTextDocumentSnapshot(currentDocument);
+    if (!initialSnapshot) {
+      return false;
+    }
+
+    let targetPath: string | null;
+    try {
+      targetPath = await tauriService.pickSavePath(initialSnapshot.path ?? initialSnapshot.name);
+    } catch (error) {
+      return reportPersistenceError('另存为失败', '另存为失败', error);
+    }
+
+    // 用户取消保存对话框：不应产生任何编辑器内容副作用。
+    if (!targetPath) {
+      return false;
+    }
+
     const targetDocument = await prepareDocumentForSave(documentId);
     if (!targetDocument) {
       return false;
@@ -461,17 +491,6 @@ export const useDocumentPersistence = ({
 
     const snapshot = createLoadedTextDocumentSnapshot(targetDocument);
     if (!snapshot) {
-      return false;
-    }
-
-    let targetPath: string | null;
-    try {
-      targetPath = await tauriService.pickSavePath(snapshot.path ?? snapshot.name);
-    } catch (error) {
-      return reportPersistenceError('另存为失败', '另存为失败', error);
-    }
-
-    if (!targetPath) {
       return false;
     }
 
@@ -490,6 +509,21 @@ export const useDocumentPersistence = ({
   };
 
   const saveDocument = async (documentId = editorStore.document.id): Promise<boolean> => {
+    const currentDocument = editorStore.getDocumentById(documentId);
+    if (!currentDocument) {
+      return false;
+    }
+
+    // 新建未落盘文档先走另存为路径选择。
+    // 只有用户确认了保存路径后，saveDocumentAs 才会 prepare/format/normalize。
+    if (
+      currentDocument.kind === 'text' &&
+      currentDocument.bufferLoaded !== false &&
+      !currentDocument.path
+    ) {
+      return saveDocumentAs(documentId);
+    }
+
     const targetDocument = await prepareDocumentForSave(documentId);
     if (!targetDocument) {
       return false;

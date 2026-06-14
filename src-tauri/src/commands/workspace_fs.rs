@@ -111,7 +111,17 @@ pub fn create_workspace_path(
 
     match payload.kind {
         WorkspacePathKind::File => {
-            fs::File::create(&target_path).map_err(|error| format!("创建文件失败：{error}"))?;
+            fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&target_path)
+                .map_err(|error| {
+                    if error.kind() == std::io::ErrorKind::AlreadyExists {
+                        "同名文件或文件夹已存在。".to_string()
+                    } else {
+                        format!("创建文件失败：{error}")
+                    }
+                })?;
         }
         WorkspacePathKind::Directory => {
             fs::create_dir(&target_path).map_err(|error| format!("创建文件夹失败：{error}"))?;
@@ -315,6 +325,14 @@ fn validate_workspace_entry_name(raw_name: &str) -> Result<String, String> {
         return Err("名称不能为 . 或 ..。".into());
     }
 
+    if name.ends_with([' ', '.']) {
+        return Err("名称不能以空格或点结尾。".into());
+    }
+
+    if is_windows_reserved_device_name(name) {
+        return Err("名称不能使用 Windows 保留设备名。".into());
+    }
+
     let candidate = Path::new(name);
     if candidate.file_name().and_then(|value| value.to_str()) != Some(name) {
         return Err("名称不能包含路径分隔符。".into());
@@ -329,6 +347,41 @@ fn validate_workspace_entry_name(raw_name: &str) -> Result<String, String> {
     }
 
     Ok(name.to_string())
+}
+
+fn is_windows_reserved_device_name(name: &str) -> bool {
+    let stem = name
+        .split('.')
+        .next()
+        .unwrap_or(name)
+        .trim_end_matches([' ', '.'])
+        .to_ascii_uppercase();
+
+    matches!(
+        stem.as_str(),
+        "CON"
+            | "PRN"
+            | "AUX"
+            | "NUL"
+            | "COM1"
+            | "COM2"
+            | "COM3"
+            | "COM4"
+            | "COM5"
+            | "COM6"
+            | "COM7"
+            | "COM8"
+            | "COM9"
+            | "LPT1"
+            | "LPT2"
+            | "LPT3"
+            | "LPT4"
+            | "LPT5"
+            | "LPT6"
+            | "LPT7"
+            | "LPT8"
+            | "LPT9"
+    )
 }
 
 /// 校验文件大小未超过上限并返回其字节数，避免一次性读入超大文件耗尽内存。
@@ -627,6 +680,25 @@ mod tests {
         let bytes = [0x68, 0x00, 0x69];
         let error = decode_script_bytes(&bytes).expect_err("binary content should be rejected");
         assert!(error.contains("二进制"));
+    }
+
+
+    #[test]
+    fn rejects_reserved_workspace_entry_names() {
+        for name in ["CON", "con.txt", "NUL", "COM1", "LPT9.md"] {
+            let error = super::validate_workspace_entry_name(name)
+                .expect_err("reserved device name should be rejected");
+            assert!(error.contains("Windows 保留设备名"));
+        }
+    }
+
+    #[test]
+    fn rejects_trailing_space_or_dot_workspace_entry_names() {
+        for name in ["foo.", "foo "] {
+            let error = super::validate_workspace_entry_name(name)
+                .expect_err("trailing space/dot should be rejected");
+            assert!(error.contains("空格或点"));
+        }
     }
 
     #[test]

@@ -25,6 +25,15 @@ export const useSshConnection = (options: IUseSshConnectionOptions) => {
   const isConnecting = ref(false);
   const connectionStatusText = ref('');
   const connectionErrorText = ref('');
+  const connectionAttemptVersion = ref(0);
+
+  const nextConnectionAttemptVersion = (): number => {
+    connectionAttemptVersion.value += 1;
+    return connectionAttemptVersion.value;
+  };
+
+  const isLatestConnectionAttempt = (version: number): boolean =>
+    version === connectionAttemptVersion.value;
 
   const isTabActive = (tab: TSshPanelTab): boolean => {
     if (tab === 'connect') {
@@ -74,11 +83,12 @@ export const useSshConnection = (options: IUseSshConnectionOptions) => {
   };
 
   const handleConnect = async (connectionId = MANUAL_CONNECTION_ID): Promise<void> => {
+    const attemptVersion = nextConnectionAttemptVersion();
     connectionErrorText.value = '';
     connectionStatusText.value = '';
 
     const validation = await form.validateConnection();
-    if (!validation.valid) return;
+    if (!validation.valid || !isLatestConnectionAttempt(attemptVersion)) return;
 
     isConnecting.value = true;
     connectionStatusText.value = '正在验证 SSH 连接…';
@@ -86,6 +96,7 @@ export const useSshConnection = (options: IUseSshConnectionOptions) => {
     try {
       const connectionRequest = form.createSshConnectionTestRequest();
       const testResult = await tauriService.testSshConnection(connectionRequest);
+      if (!isLatestConnectionAttempt(attemptVersion)) return;
 
       if (!testResult.ok) {
         connectionErrorText.value = testResult.message;
@@ -96,25 +107,31 @@ export const useSshConnection = (options: IUseSshConnectionOptions) => {
       connectionStatusText.value = '正在读取远端目录…';
       form.activeSshConnectionRequest.value = connectionRequest;
       await session.loadRemoteDirectorySnapshot('.');
+      if (!isLatestConnectionAttempt(attemptVersion)) return;
       try {
         await form.saveCurrentSshPassword();
       } catch (error) {
+        if (!isLatestConnectionAttempt(attemptVersion)) return;
         const errorMessage = error instanceof Error ? error.message : '保存 SSH 密码失败。';
         message.error(`连接已成功，但保存密码失败：${errorMessage}`);
       }
+      if (!isLatestConnectionAttempt(attemptVersion)) return;
       form.syncFormToStore();
       const rememberedConnectionId = sshStore.rememberCurrentConnection(connectionId);
       applyConnectionState(rememberedConnectionId);
       message.success('SSH 连接验证成功，已打开远端会话。');
       void terminal.openTerminalSessionBestEffort();
     } catch (error) {
+      if (!isLatestConnectionAttempt(attemptVersion)) return;
       form.activeSshConnectionRequest.value = null;
       const errorMessage = error instanceof Error ? error.message : 'SSH 连接失败。';
       connectionErrorText.value = errorMessage;
       message.error(errorMessage);
     } finally {
-      isConnecting.value = false;
-      connectionStatusText.value = '';
+      if (isLatestConnectionAttempt(attemptVersion)) {
+        isConnecting.value = false;
+        connectionStatusText.value = '';
+      }
     }
   };
 
@@ -157,6 +174,7 @@ export const useSshConnection = (options: IUseSshConnectionOptions) => {
   };
 
   const disconnectSshSession = (): void => {
+    connectionAttemptVersion.value += 1;
     session.resetSessionState();
     form.activeSshConnectionRequest.value = null;
     sshStore.clearConnectionState();

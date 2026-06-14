@@ -40,6 +40,7 @@ import type {
   TAiModelRole,
   TAiToolConfirmationDecision,
 } from '@/types/ai';
+import type { TAiExecutionMode } from '@/types/ai/execution-mode';
 import type {
   IActiveRunSummary,
   IAnalyzeScriptPayload,
@@ -202,6 +203,7 @@ const planSteps = computed<IAiTaskPlanStep[]>(() => planStore.value.steps);
 const planActiveGoal = computed(() => planStore.value.activeGoal);
 const planActiveRunId = computed<string | null>(() => planStore.value.activeRunId);
 const networkPermission = computed(() => agentNetwork.store.networkPermission);
+const executionMode = computed(() => planStore.value.executionMode);
 const setPlanErrorMessage = (message: string): void => {
   planStore.value.errorMessage = message;
 };
@@ -739,6 +741,10 @@ const openPromptPersonalization = (): void => {
   openSettings();
 };
 
+const handlePromptExecutionModeChange = (mode: TAiExecutionMode): void => {
+  planStore.value.setExecutionMode(mode);
+};
+
 let aiConnectionPrewarmStarted = false;
 
 const handlePromptPrewarm = (): void => {
@@ -1093,11 +1099,13 @@ onMounted(() => {
           :disabled="composerDisabled" :stop-visible="assistant.isSending.value"
           :error-message="assistant.errorMessage.value" :submit-label="submitLabel" :config="assistant.config.value"
           :is-model-saving="isPromptModelSaving" :network-permission="networkPermission"
+          :execution-mode="executionMode"
           :is-network-permission-saving="agentNetwork.pending.value" :attachments="assistant.attachedFiles.value"
           :has-attachments="assistant.attachedFiles.value.length > 0" :token-context="tokenContextProps"
           @submit="handleSubmitMessage" @stop="assistant.stopCurrentRequest" :resolve-attachment="assistant.attachFile"
           @remove-file="assistant.removeAttachedFile" @model-change="handlePromptModelChange"
           @network-permission-change="handlePromptNetworkPermissionChange"
+          @execution-mode-change="handlePromptExecutionModeChange"
           @information-sources-open="openPromptInformationSources" @personalization-open="openPromptPersonalization"
           @prewarm="handlePromptPrewarm" />
       </div>

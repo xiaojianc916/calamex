@@ -180,6 +180,40 @@ export function useWorkspaceExplorerMutations(options: IUseWorkspaceExplorerMuta
     if (name === '.' || name === '..') {
       return '名称无效。';
     }
+    if ([...name].some((char) => '<>"|?*:'.includes(char) || char.charCodeAt(0) < 32)) {
+      return '名称包含非法字符。';
+    }
+    if (/[ .]$/.test(name)) {
+      return '名称不能以空格或点结尾。';
+    }
+    const WINDOWS_RESERVED_ENTRY_NAMES = new Set([
+      'CON',
+      'PRN',
+      'AUX',
+      'NUL',
+      'COM1',
+      'COM2',
+      'COM3',
+      'COM4',
+      'COM5',
+      'COM6',
+      'COM7',
+      'COM8',
+      'COM9',
+      'LPT1',
+      'LPT2',
+      'LPT3',
+      'LPT4',
+      'LPT5',
+      'LPT6',
+      'LPT7',
+      'LPT8',
+      'LPT9',
+    ]);
+    const windowsReservedStem = name.split('.')[0]?.toUpperCase();
+    if (windowsReservedStem && WINDOWS_RESERVED_ENTRY_NAMES.has(windowsReservedStem)) {
+      return '名称不能使用 Windows 保留设备名。';
+    }
     const siblings = getDirectoryEntries(parentPath);
     if (siblings) {
       const candidatePath = `${parentPath.replace(/[\\/]+$/, '')}/${name}`;

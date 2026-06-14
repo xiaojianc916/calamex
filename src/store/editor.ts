@@ -661,6 +661,17 @@ export const useEditorStore = defineStore(
     ): { document: IEditorDocument; reusedExisting: boolean } => {
       const existingDocument = findDocumentByPath(payload.path);
       if (existingDocument) {
+        if (
+          existingDocument.kind === 'text' &&
+          existingDocument.bufferLoaded !== false &&
+          existingDocument.isDirty
+        ) {
+          setActiveDocument(existingDocument.id);
+          pushRecentFile(payload.path);
+          syncSessionOpenTabs();
+          touchSessionSnapshot();
+          return { document: existingDocument, reusedExisting: true };
+        }
         existingDocument.path = payload.path;
         existingDocument.name = payload.name;
         existingDocument.kind = 'text';

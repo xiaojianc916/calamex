@@ -4,7 +4,6 @@ import { useMessage } from '@/composables/useMessage';
 import type { SshConnectionFormValues } from '@/types/ssh/connection.schema';
 import {
   DEFAULT_SSH_PORT,
-  SSH_PASSWORD_SEND_DELAY_MS,
   SSH_TERMINAL_HOST_KEY_POLICY,
   TERMINAL_OPEN_DELAY_MS,
 } from './ssh-sidebar.constants';
@@ -63,9 +62,10 @@ export const useSshTerminalBridge = (
       emitOpenTerminal();
       await new Promise((resolve) => window.setTimeout(resolve, TERMINAL_OPEN_DELAY_MS));
       await terminalControls.sendCommand(sshCommandPreview.value);
-      if (connectionForm.authMode === 'password' && connectionForm.password) {
-        await new Promise((resolve) => window.setTimeout(resolve, SSH_PASSWORD_SEND_DELAY_MS));
-        await terminalControls.sendInput(`${connectionForm.password}\n`);
+      if (connectionForm.authMode === 'password') {
+        message.info(
+          'SSH 终端已打开。为避免密码误输入到本地 shell，请在终端提示出现后手动输入密码。',
+        );
       }
     } catch {
       message.info('文件连接已建立，终端会话暂未打开。');

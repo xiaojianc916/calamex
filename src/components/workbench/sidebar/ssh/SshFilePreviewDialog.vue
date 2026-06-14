@@ -706,8 +706,8 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="ssh-preview-dialog__title-group">
-            <div class="ssh-preview-dialog__filename"> props.fileItem.name </div>
-            <div class="ssh-preview-dialog__filepath"> props.fileItem.path </div>
+            <div class="ssh-preview-dialog__filename">{{ props.fileItem.name }}</div>
+            <div class="ssh-preview-dialog__filepath">{{ props.fileItem.path }}</div>
           </div>
 
           <div class="ssh-preview-dialog__actions">
@@ -744,7 +744,7 @@ onBeforeUnmount(() => {
               class="ssh-preview-dialog__action-button ssh-preview-dialog__action-button--primary" :disabled="!canSave"
               @click="requestSave">
               <Save aria-hidden="true" />
-              <span> props.isSaving ? '保存中…' : '保存' </span>
+              <span>{{ props.isSaving ? '保存中…' : '保存' }}</span>
             </button>
             <button v-else type="button"
               class="ssh-preview-dialog__action-button ssh-preview-dialog__action-button--primary"
@@ -766,42 +766,40 @@ onBeforeUnmount(() => {
           <span class="ssh-preview-dialog__meta-item">
             <HardDrive aria-hidden="true" />
             <span class="ssh-preview-dialog__meta-label">大小</span>
-            <b> byteSizeLabel </b>
+            <b>{{ byteSizeLabel }}</b>
           </span>
           <span class="ssh-preview-dialog__meta-item">
             <ListOrdered aria-hidden="true" />
             <span class="ssh-preview-dialog__meta-label">行数</span>
-            <b> lineCountLabel </b>
+            <b>{{ lineCountLabel }}</b>
           </span>
           <span class="ssh-preview-dialog__meta-item">
             <Languages aria-hidden="true" />
             <span class="ssh-preview-dialog__meta-label">编码</span>
-            <span class="ssh-preview-dialog__badge"> encodingLabel </span>
+            <span class="ssh-preview-dialog__badge">{{ encodingLabel }}</span>
           </span>
           <span class="ssh-preview-dialog__meta-item">
             <CornerDownLeft aria-hidden="true" />
             <span class="ssh-preview-dialog__meta-label">换行</span>
-            <span class="ssh-preview-dialog__badge"> lineEndingLabel </span>
+            <span class="ssh-preview-dialog__badge">{{ lineEndingLabel }}</span>
           </span>
           <span class="ssh-preview-dialog__meta-item">
             <ShieldCheck aria-hidden="true" />
             <span class="ssh-preview-dialog__meta-label">权限</span>
-            <span class="ssh-preview-dialog__mono"> props.payload?.permission ?? '—' </span>
+            <span class="ssh-preview-dialog__mono">{{ props.payload?.permission ?? '—' }}</span>
           </span>
           <span class="ssh-preview-dialog__meta-item">
             <UserRound aria-hidden="true" />
             <span class="ssh-preview-dialog__meta-label">所有者</span>
-            <b> props.payload?.owner ?? '—' </b>
+            <b>{{ props.payload?.owner ?? '—' }}</b>
           </span>
           <span class="ssh-preview-dialog__meta-item">
             <Clock3 aria-hidden="true" />
             <span class="ssh-preview-dialog__meta-label">修改</span>
-            <b> modifiedAtLabel </b>
+            <b>{{ modifiedAtLabel }}</b>
           </span>
 
-          <span class="ssh-preview-dialog__status" :class="{ 'is-editing': isEditing }">
-             statusLabel 
-          </span>
+          <span class="ssh-preview-dialog__status" :class="{ 'is-editing': isEditing }">{{ statusLabel }}</span>
         </div>
 
         <div class="ssh-preview-dialog__toolbar" :class="{ 'is-open': isSearchOpen }">
@@ -809,7 +807,7 @@ onBeforeUnmount(() => {
             <Search aria-hidden="true" />
             <input ref="searchInputRef" v-model="searchQuery" type="text" placeholder="在文件中查找…" autocomplete="off"
               @keydown="handleSearchInputKeydown">
-            <span class="ssh-preview-dialog__search-count"> findCountLabel </span>
+            <span class="ssh-preview-dialog__search-count">{{ findCountLabel }}</span>
           </div>
 
           <button type="button" class="ssh-preview-dialog__icon-button" :disabled="indexedHits.length === 0"
@@ -838,9 +836,7 @@ onBeforeUnmount(() => {
             <div v-if="isEditing" class="ssh-preview-dialog__editor-grid">
               <div class="ssh-preview-dialog__gutter ssh-preview-dialog__editor-gutter" aria-hidden="true">
                 <div class="ssh-preview-dialog__editor-gutter-lines" :style="editorGutterStyle">
-                  <span v-for="lineIndex in currentContentLines.length" :key="`editor-line-${lineIndex}`">
-                     lineIndex 
-                  </span>
+                  <span v-for="lineIndex in currentContentLines.length" :key="`editor-line-${lineIndex}`">{{ lineIndex }}</span>
                 </div>
               </div>
 
@@ -858,9 +854,7 @@ onBeforeUnmount(() => {
                         :class="{
                           'is-match': segment.matched,
                           'is-active-match': segment.active,
-                        }" :data-ssh-preview-active-hit="segment.active ? 'true' : undefined" :style="segment.style">
-                         segment.text 
-                      </span>
+                        }" :data-ssh-preview-active-hit="segment.active ? 'true' : undefined" :style="segment.style">{{ segment.text }}</span>
                     </template>
                   </div>
                 </div>
@@ -879,7 +873,7 @@ onBeforeUnmount(() => {
                 :data-index="line.lineIndex" class="ssh-preview-dialog__line"
                 :data-ssh-preview-line-index="line.lineIndex">
                 <div class="ssh-preview-dialog__gutter" aria-hidden="true">
-                  <span>  line.lineIndex + 1  </span>
+                  <span>{{ line.lineIndex + 1 }}</span>
                 </div>
 
                 <div class="ssh-preview-dialog__line-code" data-ssh-preview-line-code="true">
@@ -892,7 +886,7 @@ onBeforeUnmount(() => {
                       :class="{
                         'is-match': segment.matched,
                         'is-active-match': segment.active,
-                      }" :data-ssh-preview-active-hit="segment.active ? 'true' : undefined" :style="segment.style">  segment.text  </span>
+                      }" :data-ssh-preview-active-hit="segment.active ? 'true' : undefined" :style="segment.style">{{ segment.text }}</span>
                   </template>
                 </div>
               </div>
@@ -905,11 +899,11 @@ onBeforeUnmount(() => {
         <footer class="ssh-preview-dialog__footer">
           <span class="ssh-preview-dialog__footer-segment">
             <Terminal aria-hidden="true" />
-            <span> languageInfo.label </span>
+            <span>{{ languageInfo.label }}</span>
           </span>
           <span class="ssh-preview-dialog__footer-segment">
             <MapPin aria-hidden="true" />
-            <b>行  cursorPosition.line , 列  cursorPosition.column </b>
+            <b>行  cursorPosition.line ，列  cursorPosition.column </b>
           </span>
 
           <div class="ssh-preview-dialog__footer-spacer" />
@@ -917,14 +911,14 @@ onBeforeUnmount(() => {
           <button type="button" class="ssh-preview-dialog__footer-segment ssh-preview-dialog__footer-segment--button"
             @click="isWrapped = !isWrapped">
             <TextWrap aria-hidden="true" />
-            <span>换行  isWrapped ? '开' : '关' </span>
+            <span>换行 {{ isWrapped ? '开' : '关' }}</span>
           </button>
           <span class="ssh-preview-dialog__footer-segment">
             <IndentIncrease aria-hidden="true" />
             <span>Tab=2</span>
           </span>
-          <span class="ssh-preview-dialog__footer-segment"> encodingLabel </span>
-          <span class="ssh-preview-dialog__footer-segment"> lineEndingLabel </span>
+          <span class="ssh-preview-dialog__footer-segment">{{ encodingLabel }}</span>
+          <span class="ssh-preview-dialog__footer-segment">{{ lineEndingLabel }}</span>
         </footer>
       </section>
     </div>

@@ -1810,14 +1810,17 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
         settle();
       }
     });
-    const sidecarStream = await subscribeSidecarStreamWithPrebuffer((event) => {
-      if (requestAbortController.signal.aborted) {
-        return;
-      }
-      liveEventBuffer.push(event);
-    });
+    let sidecarStream: Awaited<ReturnType<typeof subscribeSidecarStreamWithPrebuffer>> | null =
+      null;
 
     try {
+      sidecarStream = await subscribeSidecarStreamWithPrebuffer((event) => {
+        if (requestAbortController.signal.aborted) {
+          return;
+        }
+        liveEventBuffer.push(event);
+      });
+
       const stream = await aiService.chatStream({
         threadId,
         messages: requestMessages,
@@ -1860,7 +1863,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       }
     } finally {
       liveEventBuffer.dispose();
-      sidecarStream.dispose();
+      sidecarStream?.dispose();
       activeStreamResolve.value = null;
       activeStreamId.value = null;
       activeAbortController.value = null;

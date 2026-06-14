@@ -377,6 +377,52 @@ fn join_remote_path(dir: &str, name: &str) -> String {
     }
 }
 
+/// 解析“在原路径所在目录内改名”的目标路径。
+///
+/// 前端传入的是 newName，而不是完整 newPath。旧实现直接 rename(old, newName)，
+/// 会把 /home/app/a.txt -> b.txt 解释成服务端当前工作目录下的 b.txt，导致文件
+/// 被挪到错误位置。这里对纯文件名保持 sibling rename；若调用方已经传入完整路径，
+/// 则保留完整路径语义。
+fn resolve_rename_target_path(old_path: &str, raw_new_name: &str) -> Result<String, String> {
+    let new_path = safe_remote_path(raw_new_name).map_err(|e| format!("新路径不合法：{e}"))?;
+    validate_remote_mutation_name(&new_path)?;
+
+    if new_path.contains('/') {
+        return Ok(new_path);
+    }
+
+    let target = match old_path.rsplit_once('/') {
+        Some(("", _)) => format!("/{new_path}"),
+        Some((parent, _)) => join_remote_path(parent, &new_path),
+        None => new_path,
+    };
+    validate_remote_mutation_name(&target)?;
+    Ok(target)
+}
+
+/// 解析“在当前目录下创建 name”的最终目录路径。
+///
+/// 为兼容旧调用方：如果 name 为空，则 remote_directory 仍被视为完整目标路径。
+fn resolve_create_directory_path(remote_directory: &str, name: &str) -> Result<String, String> {
+    let parent = safe_remote_path(remote_directory).map_err(|e| format!("远程路径不合法：{e}"))?;
+    let name = name.trim();
+
+    if name.is_empty() {
+        validate_remote_mutation_name(&parent)?;
+        return Ok(parent);
+    }
+
+    if name.contains('/') || name.contains('\\') {
+        return Err("目录名称不能包含路径分隔符。".into());
+    }
+
+    validate_remote_mutation_name(name)?;
+    let target = safe_remote_path(&join_remote_path(&parent, name))
+        .map_err(|e| format!("远程路径不合法：{e}"))?;
+    validate_remote_mutation_name(&target)?;
+    Ok(target)
+}
+
 fn remote_partial_path(remote: &str) -> String {
     format!("{remote}.{}{SFTP_PARTIAL_SUFFIX}", unique_transfer_token())
 }
@@ -668,9 +714,8 @@ pub async fn rename_ssh_path(
 ) -> Result<SshPathRenamePayload, String> {
     let params = SshConnectionParams::from_rename_request(&payload);
     let old = safe_remote_path(&payload.remote_path).map_err(|e| format!("原路径不合法：{e}"))?;
-    let new = safe_remote_path(&payload.new_name).map_err(|e| format!("新路径不合法：{e}"))?;
     validate_remote_mutation_name(&old)?;
-    validate_remote_mutation_name(&new)?;
+    let new = resolve_rename_target_path(&old, &payload.new_name)?;
 
     match timeout(SSH_CONNECT_TIMEOUT, open_authenticated_sftp(&params)).await {
         Ok(Ok(conn)) => {
@@ -705,8 +750,7 @@ pub async fn create_ssh_directory(
     payload: SshDirectoryCreateRequest,
 ) -> Result<SshDirectoryCreatePayload, String> {
     let params = SshConnectionParams::from_create_directory_request(&payload);
-    let remote_path =
-        safe_remote_path(&payload.remote_directory).map_err(|e| format!("远程路径不合法：{e}"))?;
+    let remote_path = resolve_create_directory_path(&payload.remote_directory, &payload.name)?;
 
     match timeout(SSH_CONNECT_TIMEOUT, open_authenticated_sftp(&params)).await {
         Ok(Ok(conn)) => {
@@ -775,6 +819,32 @@ mod tests {
             preview_read_limit(Some(SSH_FILE_PREVIEW_MAX_BYTES + 5)),
             SSH_FILE_PREVIEW_MAX_BYTES
         );
+    }
+
+    #[test]
+    fn ssh_rename_and_create_directory_paths_resolve_to_expected_targets() {
+        assert_eq!(
+            resolve_rename_target_path("/home/app/old.txt", "new.txt").unwrap(),
+            "/home/app/new.txt"
+        );
+        assert_eq!(
+            resolve_rename_target_path("/old.txt", "new.txt").unwrap(),
+            "/new.txt"
+        );
+        assert_eq!(
+            resolve_rename_target_path("/home/app/old.txt", "/tmp/new.txt").unwrap(),
+            "/tmp/new.txt"
+        );
+
+        assert_eq!(
+            resolve_create_directory_path("/home/app", "logs").unwrap(),
+            "/home/app/logs"
+        );
+        assert_eq!(
+            resolve_create_directory_path("/home/app/", "logs").unwrap(),
+            "/home/app/logs"
+        );
+        assert!(resolve_create_directory_path("/home/app", "../bad").is_err());
     }
 
     #[tokio::test]

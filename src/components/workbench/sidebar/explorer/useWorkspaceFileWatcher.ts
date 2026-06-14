@@ -73,15 +73,23 @@ export function useWorkspaceFileWatcher(
     }
   }, 80);
 
-  const refreshGitStatusAfterFsEvent = useDebounceFn(async (): Promise<void> => {
-    const rootPath = root.value?.rootPath ?? getWorkspaceRootPath();
-    if (!rootPath) return;
-    try {
-      await gitStore.refreshRepositoryStatus(rootPath);
-    } catch (error) {
-      console.warn('[AppSidebar] Failed to refresh Git status after workspace file change.', error);
-    }
-  }, 120);
+  const refreshGitStatusAfterFsEvent = useDebounceFn(
+    async (eventRootPath: string): Promise<void> => {
+      const currentRootPath = root.value?.rootPath ?? getWorkspaceRootPath();
+      if (!currentRootPath || !areFileSystemPathsEqual(currentRootPath, eventRootPath)) {
+        return;
+      }
+      try {
+        await gitStore.refreshRepositoryStatus(eventRootPath);
+      } catch (error) {
+        console.warn(
+          '[AppSidebar] Failed to refresh Git status after workspace file change.',
+          error,
+        );
+      }
+    },
+    120,
+  );
 
   function handleFileSystemEvent(payload: WorkspaceFsEvent): void {
     if (!root.value || !areFileSystemPathsEqual(payload.rootPath, root.value.rootPath)) return;
@@ -93,7 +101,7 @@ export function useWorkspaceFileWatcher(
       if (parent) pendingFsReloadDirs.add(parent);
     }
     void flushPendingFsReloads();
-    void refreshGitStatusAfterFsEvent();
+    void refreshGitStatusAfterFsEvent(payload.rootPath);
   }
 
   function stopWorkspaceFileWatcher(): void {

@@ -88,6 +88,7 @@ export const useSshRemoteSession = (options: IUseSshRemoteSessionOptions) => {
   const renameInputValue = ref('');
   const createDirectoryName = ref('');
   const remoteDirectoryRequestVersion = ref(0);
+  const previewRequestVersion = ref(0);
   const contextMenu = reactive({ open: false, x: 0, y: 0 });
 
   const selectedFile = computed<ISshFileItem>(
@@ -321,15 +322,23 @@ export const useSshRemoteSession = (options: IUseSshRemoteSessionOptions) => {
     options: { preservePayload?: boolean } = {},
   ): Promise<void> => {
     if (isPreviewLoading.value) return;
+
+    const requestVersion = previewRequestVersion.value + 1;
+    previewRequestVersion.value = requestVersion;
+
     previewFileItem.value = fileItem;
     if (!options.preservePayload) {
       previewPayload.value = null;
     }
+
     isPreviewLoading.value = true;
     try {
       const result = await tauriService.readSshFile(createSshFileReadRequest(fileItem.path));
+      if (requestVersion !== previewRequestVersion.value) return;
+      if (previewFileItem.value?.path !== fileItem.path) return;
       previewPayload.value = result;
     } catch (error) {
+      if (requestVersion !== previewRequestVersion.value) return;
       const errorMessage =
         error instanceof Error
           ? error.message
@@ -338,7 +347,9 @@ export const useSshRemoteSession = (options: IUseSshRemoteSessionOptions) => {
       previewFileItem.value = null;
       previewPayload.value = null;
     } finally {
-      isPreviewLoading.value = false;
+      if (requestVersion === previewRequestVersion.value) {
+        isPreviewLoading.value = false;
+      }
     }
   };
 
@@ -641,6 +652,7 @@ export const useSshRemoteSession = (options: IUseSshRemoteSessionOptions) => {
 
   const resetSessionState = (): void => {
     remoteDirectoryRequestVersion.value += 1;
+    previewRequestVersion.value += 1;
     isRemoteDirectoryLoading.value = false;
     isPathMutating.value = false;
     isPreviewLoading.value = false;
