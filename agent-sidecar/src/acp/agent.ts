@@ -12,7 +12,7 @@
  *                       回灌 resolveApproval 续跑(见 approval-bridge.ts)，直至无待裁决审批，
  *                       回合收尾经 turn-egress 发可选 usage_update + 返回 PromptResponse。
  * - cancel            → 中止该会话当前回合的 AbortController(映射 runtime context.signal)。
- * - extMethod         → 受理本 Agent 公示的带外能力(检查点回滚 / 模型透传 / web 检索抓取 / 预热 / 健康探活 / 计划编排)。
+ * - extMethod         → 受理本 Agent 公示的带外能力(检查点回滚 / 模型透传 / web 检索抓取 / 预热 / 健康探活 / 计划编排 / agent 对话回合)。
  *
  * 设计要点：
  * - 依赖注入(connection / runtime / registry / 生成器)，与 JSON-RPC 传输解耦，可单测。
@@ -64,6 +64,8 @@ import {
 	toRequestPermissionRequest,
 } from "./approval-bridge.js"
 import {
+	AGENT_CHAT_METHOD,
+	AGENT_CHAT_RESOLVE_METHOD,
 	buildHealthExtResult,
 	CALAMEX_AGENT_CAPABILITY_META,
 	CHECKPOINT_RESTORE_METHOD,
@@ -71,10 +73,13 @@ import {
 	MODEL_CHAT_METHOD,
 	ORCHESTRATE_METHOD,
 	ORCHESTRATE_RESUME_METHOD,
+	parseAgentChatParams,
+	parseAgentChatResolveParams,
 	parseCheckpointRestoreParams,
 	parseModelChatParams,
 	parseOrchestrateParams,
 	parseOrchestrateResumeParams,
+	toAgentChatExtResult,
 	toCheckpointRestoreExtResult,
 	toModelChatExtResult,
 	toOrchestrateExtResult,
@@ -219,7 +224,7 @@ export class CalamexAcpAgent implements Agent {
 			protocolVersion: PROTOCOL_VERSION,
 			agentCapabilities: {
 				loadSession: false,
-				// 带外能力(检查点回滚 / 模型透传 / web 检索抓取 / 预热 / 健康探活 / 计划编排)以命名空间扩展方法公示；见 ext-methods.ts。
+				// 带外能力(检查点回滚 / 模型透传 / web 检索抓取 / 预热 / 健康探活 / 计划编排 / agent 对话回合)以命名空间扩展方法公示；见 ext-methods.ts。
 				_meta: CALAMEX_AGENT_CAPABILITY_META,
 			},
 		}
@@ -379,6 +384,10 @@ export class CalamexAcpAgent implements Agent {
 				return this.handleOrchestrate(params)
 			case ORCHESTRATE_RESUME_METHOD:
 				return this.handleOrchestrateResume(params)
+			case AGENT_CHAT_METHOD:
+				return this.handleAgentChat(params)
+			case AGENT_CHAT_RESOLVE_METHOD:
+				return this.handleAgentChatResolve(params)
 			default:
 				throw RequestError.methodNotFound(method)
 		}
@@ -444,6 +453,75 @@ export class CalamexAcpAgent implements Agent {
 			throw new Error(response.errorMessage)
 		}
 		return toModelChatExtResult(response)
+	}
+
+	/**
+	 * 受理 agent 模式对话回合扩展方法(agent/chat)。镜像旧 http /agent/chat 的
+	 * runChat = runtime.chat(toAgentInput(payload), options)：调用 runtime.chat(而非 execute)，
+	 * mode 随入参携带，引擎走到审批门挂起或跑到终态。run-to-gate：本 handler 不走原生
+	 * session/request_permission 反向循环(与 prompt() 的原生审批环区分)；审批请求随
+	 * approval_required 事件写进返回信封，由前端调 agent/chat/resolve 续跑。携带 sessionId 时
+	 * 过程增量经 emitOutputEvent 作实时预览下发(仅文本/思考)；权威富事件由返回信封承载。
+	 * 已知限制：本扩展不受理原生 session/cancel（registry 不跟踪该调用作用域 controller）；
+	 * run-to-gate 每到闸门即返回，可接受。失败依 ACP 约定映射为 JSON-RPC error(由 SDK 包装)。
+	 */
+	private async handleAgentChat(
+		params: Record<string, unknown>,
+	): Promise<Record<string, unknown>> {
+		const input = parseAgentChatParams(params)
+		const controller = new AbortController()
+		const { sessionId } = input
+		const options: IAgentRuntimeRunOptions = {
+			context: {
+				requestId: this.generateRequestId(),
+				signal: controller.signal,
+				timeoutMs: this.turnTimeoutMs,
+			},
+			...(sessionId !== undefined
+				? {
+						onEvent: (event: TAgentRuntimeOutputEvent) =>
+							this.emitOutputEvent(sessionId, event),
+					}
+				: {}),
+		}
+		const response = await this.runtime.chat(input, options)
+		if (response.errorMessage) {
+			throw new Error(response.errorMessage)
+		}
+		return toAgentChatExtResult(response)
+	}
+
+	/**
+	 * 受理 agent 对话审批恢复扩展方法(agent/chat/resolve)。镜像旧 http /approval/resolve 的
+	 * runtime.resolveApproval(parse(body), options)：携带上一段返回信封里的 approval_required
+	 * requestId 与裁决，续跑同一回合并返回下一段响应信封（若再遇审批门则信封再携 approval_required）。
+	 * 选项/状态同 handleAgentChat：调用作用域 AbortController + 携带 sessionId 时实时预览。
+	 * 失败依 ACP 约定映射为 JSON-RPC error(由 SDK 包装)。
+	 */
+	private async handleAgentChatResolve(
+		params: Record<string, unknown>,
+	): Promise<Record<string, unknown>> {
+		const input = parseAgentChatResolveParams(params)
+		const controller = new AbortController()
+		const { sessionId } = input
+		const options: IAgentRuntimeRunOptions = {
+			context: {
+				requestId: this.generateRequestId(),
+				signal: controller.signal,
+				timeoutMs: this.turnTimeoutMs,
+			},
+			...(sessionId !== undefined
+				? {
+						onEvent: (event: TAgentRuntimeOutputEvent) =>
+							this.emitOutputEvent(sessionId, event),
+					}
+				: {}),
+		}
+		const response = await this.runtime.resolveApproval(input, options)
+		if (response.errorMessage) {
+			throw new Error(response.errorMessage)
+		}
+		return toAgentChatExtResult(response)
 	}
 
 	/**
