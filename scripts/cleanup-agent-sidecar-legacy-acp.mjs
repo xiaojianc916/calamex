@@ -18,7 +18,8 @@ const legacySymbols = [
 const read = (file) => fs.readFileSync(file, 'utf8');
 const write = (file, content) => fs.writeFileSync(file, content);
 
-const normalizePath = (file) => path.resolve(file).replaceAll('\\\\', '/');
+const normalizePath = (file) => path.resolve(file).replaceAll('\\', '/');
+const normalizeLineEndings = (content) => content.replaceAll('\r\n', '\n');
 const targetKey = normalizePath(targetPath);
 
 const walkFiles = (directory) => {
@@ -170,7 +171,6 @@ const removeRustFunction = (content, functionStart) => {
       depth -= 1;
       if (depth === 0) {
         let end = index + 1;
-        if (content[end] === '\r') end += 1;
         if (content[end] === '\n') end += 1;
         return `${content.slice(0, start)}${content.slice(end)}`;
       }
@@ -182,13 +182,7 @@ const removeRustFunction = (content, functionStart) => {
   throw new Error(`未找到函数体终点：${functionStart}`);
 };
 
-const removeTestFunction = (content, testName) => {
-  const escaped = testName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return removeRustFunction(content, `fn ${testName}(`).replace(
-    new RegExp(`\\n\\s*#\\[test\\]\\n\\s*fn ${escaped}\\(`),
-    `\n    fn ${testName}(`,
-  );
-};
+const removeTestFunction = (content, testName) => removeRustFunction(content, `fn ${testName}(`);
 
 if (!fs.existsSync(targetPath)) {
   throw new Error(`未找到目标文件：${path.relative(root, targetPath)}`);
@@ -200,11 +194,11 @@ for (const symbol of legacySymbols) {
   assertNoExternalUsage(symbol);
 }
 
-let content = read(targetPath);
+let content = normalizeLineEndings(read(targetPath));
 const before = content;
 
 content = content.replace(
-  /const NARRATOR_CHAT_RETRY_DELAYS_MS: &\[u64\] = &\[[^\n]+\];\n/,
+  /^const NARRATOR_CHAT_RETRY_DELAYS_MS: &\[u64\] = &\[[^\n]+\];\n/m,
   '',
 );
 
@@ -244,10 +238,21 @@ if (content === before) {
   throw new Error('没有发生任何变更，拒绝写入。');
 }
 
-for (const forbidden of legacySymbols) {
-  if (content.includes(forbidden)) {
-    throw new Error(`清理后仍残留：${forbidden}`);
-  }
+const remainingSymbols = legacySymbols.filter((symbol) => content.includes(symbol));
+if (remainingSymbols.length > 0) {
+  const diagnostics = remainingSymbols
+    .map((symbol) => {
+      const lines = content
+        .split('\n')
+        .map((line, index) => ({ line, number: index + 1 }))
+        .filter((item) => item.line.includes(symbol))
+        .slice(0, 6)
+        .map((item) => `${item.number}: ${item.line.trim()}`)
+        .join('\n');
+      return `${symbol}\n${lines}`;
+    })
+    .join('\n\n');
+  throw new Error(`清理后仍残留旧符号：\n${diagnostics}`);
 }
 
 write(targetPath, content);
