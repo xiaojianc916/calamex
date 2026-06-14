@@ -5,5 +5,6 @@ export type {
   IAskUserResult,
   IQuestionAnswer,
   IQuestionOption,
-  TQuestionOptionKind,
+  TAskUserOutcome,
+  TQuestionType,
 } from './types';
