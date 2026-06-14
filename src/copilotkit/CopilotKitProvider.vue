@@ -8,6 +8,10 @@
 import { CopilotKitProvider } from '@copilotkit/vue';
 import { onBeforeUnmount, shallowRef } from 'vue';
 import { SidecarAgent } from '@/copilotkit/sidecar-agent';
+import { markStartup } from '@/utils/startup-profiler';
+
+// 启动诊断打点：标记 CopilotKit Provider setup 进入时刻（B4 AI 首屏定位）。
+markStartup('ai-copilotkit-provider-setup');
 
 // Build agents synchronously during setup — the v2 provider registers them
 // immediately, so child components can use useAgent/useCopilotKit right away.
