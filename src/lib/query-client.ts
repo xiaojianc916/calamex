@@ -1,4 +1,7 @@
-import { persistQueryClientRestore, persistQueryClientSubscribe } from '@tanstack/query-persist-client-core';
+import {
+  persistQueryClientRestore,
+  persistQueryClientSubscribe,
+} from '@tanstack/query-persist-client-core';
 import { createSyncStoragePersister } from '@tanstack/query-sync-storage-persister';
 import { QueryClient } from '@tanstack/vue-query';
 
@@ -22,9 +25,11 @@ const structurallyShareSerializableData = (oldData: unknown, newData: unknown): 
 };
 
 class CalamexQueryClient extends QueryClient {
-  override fetchQuery(
-    options: Parameters<QueryClient['fetchQuery']>[0],
-  ): ReturnType<QueryClient['fetchQuery']> {
+  // QueryClient.fetchQuery 是带泛型的重载(fetchQuery<TQueryFnData, TError, TData, ...>)。
+  // override 必须同样声明泛型 <T>,否则调用方写 fetchQuery<IGitCommitDetailPayload>(...)
+  // 会触发 ts(2558)「应有 0 个类型参数但获得 1 个」。这里把 T 透传给 super.fetchQuery
+  // 并作为返回类型,保持与原生签名一致的泛型推断。
+  override fetchQuery<T>(options: Parameters<QueryClient['fetchQuery']>[0]): Promise<T> {
     const previousData = this.getQueryData(options.queryKey);
 
     return super.fetchQuery(options).then((data) => {
@@ -35,8 +40,8 @@ class CalamexQueryClient extends QueryClient {
         this.setQueryData(options.queryKey, sharedData);
       }
 
-      return sharedData as Awaited<ReturnType<QueryClient['fetchQuery']>>;
-    }) as ReturnType<QueryClient['fetchQuery']>;
+      return sharedData as T;
+    });
   }
 }
 
@@ -93,8 +98,10 @@ export const setupQueryPersistence = async (): Promise<void> => {
     maxAge: PERSIST_MAX_AGE_MS,
     buster: PERSIST_BUSTER,
     dehydrateOptions: {
-      shouldDehydrateQuery: (query: { meta?: Record<string, unknown>; state: { status: string } }) =>
-        query.meta?.persist === true && query.state.status === 'success',
+      shouldDehydrateQuery: (query: {
+        meta?: Record<string, unknown>;
+        state: { status: string };
+      }) => query.meta?.persist === true && query.state.status === 'success',
     },
   };
 
