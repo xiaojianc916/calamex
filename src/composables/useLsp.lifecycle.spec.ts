@@ -93,9 +93,10 @@ describe('useLsp lifecycle', () => {
     root.value = 'D:/repo-b';
     await flush();
     resolveFirstStart();
-    await flush();
 
-    expect(lspBridgeMock.start).toHaveBeenLastCalledWith('D:/repo-b');
+    await vi.waitFor(() => {
+      expect(lspBridgeMock.start).toHaveBeenLastCalledWith('D:/repo-b');
+    });
     expect(lsp.status.value).toBe('running');
     scope.stop();
   });

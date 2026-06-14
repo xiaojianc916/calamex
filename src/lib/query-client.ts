@@ -9,6 +9,18 @@ const PERSIST_STORAGE_KEY = 'calamex.vue-query';
 // 缓存结构/键规则变化时递增,等价于原来的 versioned cache key。
 const PERSIST_BUSTER = '1';
 
+const structurallyShareSerializableData = (oldData: unknown, newData: unknown): unknown => {
+  if (oldData === undefined || oldData === newData) {
+    return newData;
+  }
+
+  try {
+    return JSON.stringify(oldData) === JSON.stringify(newData) ? oldData : newData;
+  } catch {
+    return newData;
+  }
+};
+
 /**
  * 全局共享的 TanStack QueryClient。
  *
@@ -23,6 +35,7 @@ export const queryClient = new QueryClient({
       gcTime: PERSIST_MAX_AGE_MS,
       retry: 1,
       refetchOnWindowFocus: false,
+      structuralSharing: structurallyShareSerializableData,
     },
   },
 });
