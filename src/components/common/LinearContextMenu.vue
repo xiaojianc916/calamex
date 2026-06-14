@@ -150,16 +150,12 @@ onMounted(async () => {
 });
 
 const resetPendingPointerKey = (): void => {
-  if (typeof queueMicrotask === 'function') {
-    queueMicrotask(() => {
-      pendingPointerKey.value = null;
-    });
-    return;
-  }
-
-  Promise.resolve().then(() => {
+  // pointerdown 会先于 reka-ui 的 select 事件触发。
+  // 这里不能用 queueMicrotask 清理，否则后续 pointerup/click 阶段的 select
+  // 可能已经看不到 pendingPointerKey，导致同一个菜单项重复 emit select。
+  window.setTimeout(() => {
     pendingPointerKey.value = null;
-  });
+  }, 0);
 };
 
 const emitSelection = (item: ILinearContextMenuItem): void => {

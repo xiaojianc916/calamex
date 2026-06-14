@@ -253,8 +253,7 @@ const isExplorerContentReady = computed(
     !loadError.value &&
     !(rootLoading.value && !root.value) &&
     Boolean(props.workspaceRootPath) &&
-    Boolean(root.value) &&
-    !isExplorerWorkspaceEmpty.value,
+    Boolean(root.value),
 );
 
 watch(

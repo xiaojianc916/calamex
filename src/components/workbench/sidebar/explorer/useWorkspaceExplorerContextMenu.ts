@@ -5,6 +5,7 @@ import type {
   ILinearContextMenuItem,
 } from '@/components/common/linear-context-menu.types';
 import type { IWorkspaceEntry } from '@/types/editor';
+import { areFileSystemPathsEqual } from '@/utils/path';
 
 export type TExplorerContextMenuAction =
   | 'open'
@@ -157,7 +158,7 @@ export function useWorkspaceExplorerContextMenu(options: IUseWorkspaceExplorerCo
       path: payload.entry.path,
       name: payload.entry.name,
       kind: payload.entry.kind,
-      isRoot: payload.entry.path === resolveRootPath(),
+      isRoot: areFileSystemPathsEqual(payload.entry.path, resolveRootPath()),
     });
   };
 

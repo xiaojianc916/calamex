@@ -3,6 +3,11 @@
     class="explorer-inline-create-input"
     :value="value"
     :placeholder="placeholder"
+    type="text"
+    aria-label="新建文件或文件夹"
+    @pointerdown.stop
+    @click.stop
+    @contextmenu.stop
     @input="onInput"
     @blur="emit('blur')"
     @keydown.enter.prevent.stop="emit('confirm')"

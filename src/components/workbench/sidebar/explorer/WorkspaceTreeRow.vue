@@ -104,6 +104,7 @@
     v-else-if="row.type === 'inline-create'"
     class="explorer-tree-row explorer-tree-inline-create"
     :style="inlineCreateStyle"
+    @contextmenu.stop
   >
     <span class="explorer-chevron is-placeholder"></span>
 

@@ -4,6 +4,7 @@
     type="text"
     aria-label="重命名文件"
     :value="value"
+    @contextmenu.stop
     @input="onInput"
     @blur="emit('confirm')"
     @pointerdown.stop
