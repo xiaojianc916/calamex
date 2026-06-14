@@ -1596,4 +1596,310 @@ export const useGitStore = defineStore('git', () => {
       }
 
       if (!pending && shouldRevalidate && !isRevalidateFailureCoolingDown) {
-        void load
+        void loadPullRequestDetail(number, {
+          force: true,
+          updateActive,
+          visibleLoading: false,
+        }).catch(() => undefined);
+      }
+
+      return cached;
+    }
+    if (pending) {
+      if (!updateActive) return pending;
+      const requestId = ++pullRequestDetailRequestId;
+      if (visibleLoading) isPullRequestDetailLoading.value = true;
+      try {
+        const payload = await pending;
+        if (requestId === pullRequestDetailRequestId) {
+          pullRequestDetail.value = payload;
+        }
+        return payload;
+      } finally {
+        if (visibleLoading && requestId === pullRequestDetailRequestId) {
+          isPullRequestDetailLoading.value = false;
+        }
+      }
+    }
+
+    const requestId = updateActive ? ++pullRequestDetailRequestId : pullRequestDetailRequestId;
+    if (visibleLoading) isPullRequestDetailLoading.value = true;
+    const request = tauriService
+      .getGitPullRequestDetail({
+        repositoryRootPath,
+        number,
+      })
+      .then((payload) => {
+        if (detailCacheEpochAtRequest !== pullRequestCacheEpoch) {
+          return payload;
+        }
+
+        rememberPullRequestDetail(cacheKey, payload);
+        clearPullRequestDetailRevalidateFailure(cacheKey);
+        if (updateActive && requestId === pullRequestDetailRequestId) {
+          pullRequestDetail.value = payload;
+        }
+        return payload;
+      })
+      .catch((error) => {
+        if (cached) {
+          markPullRequestDetailRevalidateFailed(cacheKey);
+          return cached;
+        }
+        throw error;
+      })
+      .finally(() => {
+        pendingPullRequestDetailRequests.delete(cacheKey);
+        if (visibleLoading && requestId === pullRequestDetailRequestId) {
+          isPullRequestDetailLoading.value = false;
+        }
+      });
+
+    pendingPullRequestDetailRequests.set(cacheKey, request);
+    return request;
+  };
+
+  const ensurePullRequestsLoaded = async (
+    state?: string,
+  ): Promise<IGitPullRequestSummaryPayload[]> => {
+    const support = await loadPullRequestSupport();
+    if (!support.available) return [];
+    return loadPullRequests(state, {
+      preloadDetails: false,
+      updateActive: true,
+      visibleLoading: true,
+    });
+  };
+
+  const refreshPullRequests = async (state?: string): Promise<IGitPullRequestSummaryPayload[]> => {
+    const support = await loadPullRequestSupport();
+    if (!support.available) return [];
+    return loadPullRequests(state, {
+      force: true,
+      preloadDetails: false,
+      updateActive: true,
+      visibleLoading: true,
+    });
+  };
+
+  const preloadPullRequestsInBackground = async (): Promise<void> => {
+    if (!hasRepository.value) return;
+    try {
+      const support = await loadPullRequestSupport();
+      if (!support.available) return;
+      await loadPullRequests('open', {
+        preloadDetails: false,
+        updateActive: false,
+        visibleLoading: false,
+      });
+    } catch {
+      // Background PR preloading is best-effort only.
+    }
+  };
+
+  const createPullRequest = async (payload: {
+    title: string;
+    body: string | null;
+    base: string;
+    head: string;
+    draft: boolean | null;
+  }): Promise<IGitPullRequestSummaryPayload> => {
+    const result = await tauriService.createGitPullRequest({
+      repositoryRootPath: requireRepositoryRootPath(),
+      ...payload,
+    });
+    applyPullRequestSummaryMutation(result);
+    return result;
+  };
+
+  const mergePullRequest = async (
+    number: number,
+    mergeMethod: string | null,
+  ): Promise<IGitPullRequestSummaryPayload> => {
+    const result = await tauriService.mergeGitPullRequest({
+      repositoryRootPath: requireRepositoryRootPath(),
+      number,
+      mergeMethod,
+    });
+    applyPullRequestSummaryMutation(result);
+    return result;
+  };
+
+  const closePullRequest = async (number: number): Promise<IGitPullRequestSummaryPayload> => {
+    const result = await tauriService.closeGitPullRequest({
+      repositoryRootPath: requireRepositoryRootPath(),
+      number,
+    });
+    applyPullRequestSummaryMutation(result);
+    return result;
+  };
+
+  const setRemote = async (
+    remoteName: string,
+    remoteUrl: string,
+  ): Promise<IGitPullRequestSupportPayload> => {
+    isSettingRemote.value = true;
+    try {
+      const payload = await tauriService.setGitRemote({
+        repositoryRootPath: requireRepositoryRootPath(),
+        remoteName,
+        remoteUrl,
+      });
+      pullRequestSupportRequestId += 1;
+      pendingPullRequestSupportRequest = null;
+      pullRequestSupport.value = payload;
+      removePersistedPullRequestCachesForRepository(status.value.repositoryRootPath);
+      resetPullRequests();
+      return pullRequestSupport.value;
+    } finally {
+      isSettingRemote.value = false;
+    }
+  };
+
+  const checkoutBranch = async (branchName: string): Promise<IGitRepositoryStatusPayload> => {
+    const payload = await tauriService.checkoutGitBranch({
+      repositoryRootPath: requireRepositoryRootPath(),
+      branchName,
+    });
+    clearBaselineCache();
+    resetBranches();
+    return applyStatusFromMutation(payload);
+  };
+
+  const checkoutCommit = async (commitId: string): Promise<IGitRepositoryStatusPayload> => {
+    const payload = await tauriService.checkoutGitCommit({
+      repositoryRootPath: requireRepositoryRootPath(),
+      commitId,
+    });
+    clearBaselineCache();
+    resetBranches();
+    void loadCommitHistory();
+    return applyStatusFromMutation(payload);
+  };
+
+  const revertCommit = async (commitId: string): Promise<IGitRepositoryStatusPayload> => {
+    const payload = await tauriService.revertGitCommit({
+      repositoryRootPath: requireRepositoryRootPath(),
+      commitId,
+    });
+    clearBaselineCache();
+    return applyStatusFromMutation(payload);
+  };
+
+  const createBranch = async (
+    branchName: string,
+    checkout: boolean,
+  ): Promise<IGitRepositoryStatusPayload> => {
+    const payload = await tauriService.createGitBranch({
+      repositoryRootPath: requireRepositoryRootPath(),
+      branchName,
+      checkout,
+    });
+    if (checkout) clearBaselineCache();
+    resetBranches();
+    return applyStatusFromMutation(payload);
+  };
+
+  const saveStash = async (
+    message: string | null,
+    includeUntracked: boolean,
+  ): Promise<IGitRepositoryStatusPayload> => {
+    const payload = await tauriService.saveGitStash({
+      repositoryRootPath: requireRepositoryRootPath(),
+      message,
+      includeUntracked,
+    });
+    clearBaselineCache();
+    resetStashes();
+    return applyStatusFromMutation(payload);
+  };
+
+  const applyStash = async (
+    stashIndex: number,
+    pop: boolean,
+  ): Promise<IGitRepositoryStatusPayload> => {
+    const payload = await tauriService.applyGitStash({
+      repositoryRootPath: requireRepositoryRootPath(),
+      stashIndex,
+      pop,
+    });
+    clearBaselineCache();
+    resetStashes();
+    return applyStatusFromMutation(payload);
+  };
+
+  const dropStash = async (stashIndex: number): Promise<IGitRepositoryStatusPayload> => {
+    const payload = await tauriService.dropGitStash({
+      repositoryRootPath: requireRepositoryRootPath(),
+      stashIndex,
+    });
+    resetStashes();
+    return applyStatusFromMutation(payload);
+  };
+
+  return {
+    status,
+    isLoading,
+    isCommitting,
+    baselineEpoch,
+    commitHistory,
+    commitHistoryHasMore,
+    commitHistoryNextOffset,
+    isCommitHistoryLoading,
+    branches,
+    isBranchesLoading,
+    stashes,
+    isStashesLoading,
+    pullRequestSupport,
+    isPullRequestSupportLoading,
+    isSettingRemote,
+    pullRequests,
+    isPullRequestsLoading,
+    pullRequestStateFilter,
+    pullRequestDetail,
+    isPullRequestDetailLoading,
+    commitDetailCache,
+    commitStatsCache,
+    commitFileDiffCache,
+    commitFileDiffPreviewCache,
+    hasRepository,
+    totalChangeCount,
+    canLoadMoreCommitHistory,
+    getFileBaseline,
+    invalidateFileBaseline,
+    clearBaselineCache,
+    refreshRepositoryStatus,
+    initRepository,
+    stagePaths,
+    unstagePaths,
+    discardPaths,
+    commitIndex,
+    loadCommitHistory,
+    loadCommitDetail,
+    getCommitStats,
+    enqueueCommitStats,
+    enqueueCommitStatsForCommits,
+    loadCommitFileDiff,
+    loadCommitFileDiffPreview,
+    loadBranches,
+    loadStashes,
+    loadPullRequestSupport,
+    loadPullRequests,
+    loadPullRequestDetail,
+    ensurePullRequestsLoaded,
+    refreshPullRequests,
+    preloadPullRequestsInBackground,
+    createPullRequest,
+    mergePullRequest,
+    closePullRequest,
+    setRemote,
+    checkoutBranch,
+    checkoutCommit,
+    revertCommit,
+    createBranch,
+    saveStash,
+    applyStash,
+    dropStash,
+    reset,
+  };
+});
