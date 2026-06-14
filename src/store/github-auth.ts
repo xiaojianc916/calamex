@@ -168,6 +168,8 @@ export const useGitHubAuthStore = defineStore('github-auth', () => {
         return applyStatus(payload);
       })
       .catch((error: unknown) => {
+        if (requestId !== statusRequestId) return status.value;
+
         if (fallbackStatus) {
           return applyStatus({
             ...fallbackStatus,
@@ -182,8 +184,10 @@ export const useGitHubAuthStore = defineStore('github-auth', () => {
         );
       })
       .finally(() => {
+        if (requestId !== statusRequestId) return;
+
         pendingStatusRequest = null;
-        if (requestId === statusRequestId) isLoading.value = false;
+        isLoading.value = false;
       });
 
     return pendingStatusRequest;
