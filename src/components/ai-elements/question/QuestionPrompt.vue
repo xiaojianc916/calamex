@@ -21,6 +21,9 @@ import type {
  *   choice 型 2-4 个 radio/checkbox 选项，yesno 型渲染 是/否，text 型仅一个输入框；
  *   自由填写不是数组里的假选项，而是每题底部恒在的「Other」输入框（由 placeholder 提示）。
  * - 结果形态对齐 ACP request_permission：submit => outcome:'selected'；cancel => outcome:'cancelled'。
+ *
+ * 注：动态文案均走 v-text 绑定 computed，不使用 Vue mustache 插值 ——
+ * 双花括号会与作者管道的压缩 URL 占位符语法冲突。
  */
 const props = withDefaults(
   defineProps<{
@@ -59,6 +62,15 @@ const freeInputEl = ref<HTMLInputElement | null>(null);
 const total = computed((): number => props.questions.length);
 const current = computed((): IAskUserQuestion | undefined => props.questions[pageIndex.value]);
 const isLast = computed((): boolean => pageIndex.value >= total.value - 1);
+
+/** 页码指示：N / M。 */
+const pageLabel = computed((): string => `${pageIndex.value + 1} / ${total.value}`);
+
+/** 主按钮文案：最后一题提交，否则继续。 */
+const primaryLabel = computed((): string => (isLast.value ? '提交' : '继续'));
+
+/** 底部键位提示。 */
+const hintText = computed((): string => `Tab / ↑↓ 选择 · Enter ${primaryLabel.value} · Esc 取消`);
 
 /** choice => 配置选项；yesno => 合成是/否；text => 无选项（仅自由填写）。 */
 const optionsFor = (question: IAskUserQuestion): readonly IQuestionOption[] => {
@@ -290,7 +302,7 @@ onMounted(() => {
     <InputGroup class="question-prompt__box !h-auto flex-col items-stretch gap-2 p-3">
       <header class="question-prompt__head">
         <span v-if="current" class="question-prompt__kind" v-text="current.header" />
-        <span v-if="total > 1" class="question-prompt__page"> pageIndex + 1  /  total </span>
+        <span v-if="total > 1" class="question-prompt__page" v-text="pageLabel" />
       </header>
 
       <p v-if="current" class="question-prompt__title" v-text="current.question" />
@@ -363,7 +375,7 @@ onMounted(() => {
       </ul>
 
       <footer class="question-prompt__foot">
-        <span class="question-prompt__hint">Tab / ↑↓ 选择 · Enter  isLast ? '提交' : '继续'  · Esc 取消</span>
+        <span class="question-prompt__hint" v-text="hintText" />
         <div class="question-prompt__actions">
           <button
             type="button"
@@ -378,9 +390,8 @@ onMounted(() => {
             class="question-prompt__btn is-primary"
             :disabled="disabled"
             @click="goNext"
-          >
-             isLast ? '提交' : '继续' 
-          </button>
+            v-text="primaryLabel"
+          />
         </div>
       </footer>
     </InputGroup>
