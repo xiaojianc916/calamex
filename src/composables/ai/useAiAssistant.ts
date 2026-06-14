@@ -1433,7 +1433,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
         },
       });
     } catch (error) {
-      if (activeAbortController.value?.signal.aborted) {
+      if (requestAbortController.signal.aborted) {
         disposeSidecarAnswerStream(assistantMessageId);
       } else {
         failSidecarAgentMessage(assistantMessageId, toErrorMessage(error, MSG_CALL_FAILED));
@@ -1785,6 +1785,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     commitDisplayMessagesToStore(targetThreadId);
     activeAgentMessageId.value = assistantMessageId;
     activeAbortController.value = new AbortController();
+    const requestAbortController = activeAbortController.value;
 
     let hasSettledStream = false;
     const settle = (): void => {
@@ -1826,6 +1827,10 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       }
 
       sidecarStream.bind(sessionId);
+
+      if (requestAbortController.signal.aborted) {
+        settle();
+      }
 
       await new Promise<void>((resolve) => {
         if (hasSettledStream) {
@@ -2381,10 +2386,14 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     }
 
     if (activeAgentMessageId.value) {
+      const activeMessageId = activeAgentMessageId.value;
+      const currentMessage = findMessageById(activeMessageId);
+      const isChatStreamCancellation = Boolean(streamId);
+
       updateAgentExecutionMessage({
-        messageId: activeAgentMessageId.value,
-        content: 'Agent 执行已取消。',
-        toolCalls: [],
+        messageId: activeMessageId,
+        content: isChatStreamCancellation ? (currentMessage?.content ?? '') : 'Agent 执行已取消。',
+        toolCalls: isChatStreamCancellation ? (currentMessage?.toolCalls ?? []) : [],
         streamStatus: 'cancelled',
       });
       activeAgentMessageId.value = null;

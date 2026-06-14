@@ -126,7 +126,7 @@ const aiServiceMock = vi.hoisted(() => {
     }
 
     activeChatSessionId = queued.sessionId;
-    queueMicrotask(() => {
+    void Promise.resolve().then(() => {
       for (const chunk of queued.content.match(/.{1,24}/g) ?? []) {
         emitChatDelta(chunk, queued.sessionId);
       }
@@ -565,11 +565,16 @@ const createDeferred = <T>() => {
 const waitForStartedStream = async (
   resolveMessageId: () => string | undefined,
   expectedId?: string,
-  maxAttempts = 8,
+  maxAttempts = 16,
 ): Promise<void> => {
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const messageId = resolveMessageId();
-    if (messageId && (!expectedId || messageId === expectedId)) {
+    if (
+      messageId &&
+      (!expectedId || messageId === expectedId) &&
+      aiServiceMock.chatStream.mock.calls.length > 0
+    ) {
+      await flushMicrotasks();
       return;
     }
     await flushMicrotasks();
@@ -731,7 +736,12 @@ describe('useAiAssistant streaming integration', () => {
     assistant.draft.value = '瑙ｉ噴杩欐浠ｇ爜';
     const sendPromise = assistant.sendMessage();
 
-    await waitForStartedStream(() => assistant.messages.value.at(-1)?.id);
+    await waitForStartedStream(() => {
+      const message = assistant.messages.value.at(-1);
+      return message?.role === 'assistant' && message.stream?.status === 'streaming'
+        ? message.id
+        : undefined;
+    });
 
     const fence = String.fromCharCode(96).repeat(3);
     const partialFence = ['鍓嶆枃 **markdown**', '', `${fence}ts`, 'const pending = true;'].join(
@@ -756,7 +766,12 @@ describe('useAiAssistant streaming integration', () => {
     assistant.draft.value = '缁х画';
     const sendPromise = assistant.sendMessage();
 
-    await waitForStartedStream(() => assistant.messages.value.at(-1)?.id);
+    await waitForStartedStream(() => {
+      const message = assistant.messages.value.at(-1);
+      return message?.role === 'assistant' && message.stream?.status === 'streaming'
+        ? message.id
+        : undefined;
+    });
 
     const fence = String.fromCharCode(96).repeat(3);
     const openFence = [`${fence}ts`, 'const pending = true;', ''].join(String.fromCharCode(10));
@@ -794,7 +809,12 @@ describe('useAiAssistant streaming integration', () => {
     assistant.draft.value = '停止后不要弹提示';
     const sendPromise = assistant.sendMessage();
 
-    await waitForStartedStream(() => assistant.messages.value.at(-1)?.id);
+    await waitForStartedStream(() => {
+      const message = assistant.messages.value.at(-1);
+      return message?.role === 'assistant' && message.stream?.status === 'streaming'
+        ? message.id
+        : undefined;
+    });
     assistant.stopCurrentRequest();
     await flushMicrotasks();
 
@@ -811,7 +831,12 @@ describe('useAiAssistant streaming integration', () => {
     assistant.draft.value = '统计 token';
     const sendPromise = assistant.sendMessage();
 
-    await waitForStartedStream(() => assistant.messages.value.at(-1)?.id);
+    await waitForStartedStream(() => {
+      const message = assistant.messages.value.at(-1);
+      return message?.role === 'assistant' && message.stream?.status === 'streaming'
+        ? message.id
+        : undefined;
+    });
     aiServiceMock.emitDelta('你好');
     await flushMicrotasks();
 
@@ -888,7 +913,12 @@ describe('useAiAssistant streaming integration', () => {
     assistant.draft.value = '';
     const sendPromise = assistant.sendMessage();
 
-    await waitForStartedStream(() => assistant.messages.value.at(-1)?.id);
+    await waitForStartedStream(() => {
+      const message = assistant.messages.value.at(-1);
+      return message?.role === 'assistant' && message.stream?.status === 'streaming'
+        ? message.id
+        : undefined;
+    });
     expect(assistant.attachedFiles.value).toHaveLength(0);
 
     expect(aiServiceMock.chatStream).toHaveBeenCalledTimes(1);
