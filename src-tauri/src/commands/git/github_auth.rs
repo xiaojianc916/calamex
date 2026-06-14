@@ -285,6 +285,15 @@ fn delete_keyring_token(host: &str) -> Result<(), String> {
     }
 }
 
+async fn delete_keyring_token_for_host(host: &str) {
+    let host = host.to_string();
+    let _ = tokio::task::spawn_blocking(move || delete_keyring_token(&host)).await;
+}
+
+fn is_app_oauth_credential_source(source: &str) -> bool {
+    source == "calamex-oauth"
+}
+
 async fn resolve_keyring_credential(host: &str) -> Option<GitHubResolvedCredential> {
     let host = host.to_string();
     tokio::task::spawn_blocking(move || get_keyring_token(&host))
@@ -490,6 +499,9 @@ async fn fetch_github_auth_status(
 
     if !status.is_success() {
         clear_github_auth_credential_cache_for_host(&target.host);
+        if is_app_oauth_credential_source(&credential.source) {
+            delete_keyring_token_for_host(&target.host).await;
+        }
         let message = serde_json::from_str::<serde_json::Value>(&body)
             .ok()
             .and_then(|value| {
@@ -732,6 +744,13 @@ mod tests {
     #[test]
     fn github_keyring_account_scopes_by_host() {
         assert_eq!(github_keyring_account("GitHub.com"), "oauth:github.com");
+    }
+
+    #[test]
+    fn app_oauth_source_is_the_only_keyring_cleanup_source() {
+        assert!(is_app_oauth_credential_source("calamex-oauth"));
+        assert!(!is_app_oauth_credential_source("github-cli"));
+        assert!(!is_app_oauth_credential_source("git-credential"));
     }
 
     #[test]
