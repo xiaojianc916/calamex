@@ -214,7 +214,7 @@ async fn chat_stream_via_acp(
         assistant_message_id,
         provider_type: response_provider_type,
         model,
-        session_id: Some(session_key),
+        session_id: session_key,
     })
 }
 

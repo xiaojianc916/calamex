@@ -82,7 +82,7 @@ pub struct AiChatStreamPayload {
     pub(crate) assistant_message_id: String,
     pub(crate) provider_type: String,
     pub(crate) model: String,
-    pub(crate) session_id: Option<String>,
+    pub(crate) session_id: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Type)]

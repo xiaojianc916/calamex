@@ -118,7 +118,7 @@ pub struct AiChatStreamStart {
     pub assistant_message_id: String,
     pub provider_type: String,
     pub model: String,
-    pub session_id: Option<String>,
+    pub session_id: String,
 }
 
 fn config_state() -> &'static Mutex<AiRuntimeConfig> {
