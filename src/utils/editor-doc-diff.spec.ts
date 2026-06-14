@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { applyDocChanges, computeDocChanges, type IDocChange } from './editor-doc-diff';
+import { __test__, applyDocChanges, computeDocChanges, type IDocChange } from './editor-doc-diff';
 
 const expectSortedNonOverlapping = (changes: readonly IDocChange[]): void => {
   let previousTo = -1;
@@ -77,6 +77,15 @@ describe('computeDocChanges', () => {
     const current = 'A'.repeat(20000);
     const next = 'B'.repeat(20000);
     const changes = computeDocChanges(current, next);
+    expect(changes.length).toBe(1);
+    expect(applyDocChanges(current, changes)).toBe(next);
+  });
+
+  it('超大文本经 CodeMirror override 回退为线性单区间替换', () => {
+    const current = `p${'A'.repeat(85_000)}q${'B'.repeat(85_000)}r`;
+    const next = `P${'A'.repeat(85_000)}q${'B'.repeat(85_000)}R`;
+    const changes = computeDocChanges(current, next);
+    expect(changes).toEqual(__test__.computeSingleRangeChange(current, next));
     expect(changes.length).toBe(1);
     expect(applyDocChanges(current, changes)).toBe(next);
   });
