@@ -1,4 +1,5 @@
-use std::{collections::HashSet, fs, path::PathBuf};
+use fs_err as fs;
+use std::{collections::HashSet, path::PathBuf};
 
 use super::*;
 use crate::agent_sidecar;

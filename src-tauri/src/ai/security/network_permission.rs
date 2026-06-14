@@ -1,6 +1,7 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 
+use parking_lot::Mutex;
 use crate::ai::audit::{self, AiAuditEventKind};
 use crate::ai::errors;
 use crate::commands::contracts::{
@@ -14,13 +15,7 @@ fn network_permission_state() -> &'static Mutex<String> {
 }
 
 pub fn current_permission() -> Result<String, String> {
-    let guard = network_permission_state().lock().map_err(|_| {
-        errors::error(
-            "AI_AGENT_RUN_FAILED",
-            "AI Agent 网络权限状态锁定失败，请稍后重试。",
-        )
-    })?;
-
+    let guard = network_permission_state().lock();
     Ok(guard.clone())
 }
 
@@ -36,13 +31,7 @@ pub fn set_network_permission(
         ));
     }
 
-    let mut guard = network_permission_state().lock().map_err(|_| {
-        errors::error(
-            "AI_AGENT_RUN_FAILED",
-            "AI Agent 网络权限状态锁定失败，请稍后重试。",
-        )
-    })?;
-
+    let mut guard = network_permission_state().lock();
     *guard = permission.to_string();
     audit::emit(AiAuditEventKind::AgentPermissionChanged);
 

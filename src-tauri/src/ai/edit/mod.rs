@@ -22,9 +22,9 @@ use crate::commands::contracts::{
 };
 use jiff::Timestamp;
 use std::collections::HashSet;
-use std::fs;
+use fs_err as fs;
 use std::path::Path;
-use std::sync::Mutex;
+use parking_lot::Mutex;
 
 const OPERATION_METADATA_TTL_DAYS: i64 = 30;
 
@@ -97,7 +97,7 @@ impl Default for AiEditState {
 }
 
 pub fn get_auth_level(state: &AiEditState) -> Result<AiEditAuthStatePayload, String> {
-    let guard = state.auth.lock().map_err(|_| errors::state_poisoned())?;
+    let guard = state.auth.lock();
     Ok(build_auth_payload(&guard))
 }
 
@@ -106,7 +106,7 @@ pub fn set_auth_level(
     state: &AiEditState,
 ) -> Result<AiEditAuthStatePayload, String> {
     let next_level = AiEditAuthLevel::parse(&payload.level)?;
-    let mut guard = state.auth.lock().map_err(|_| errors::state_poisoned())?;
+    let mut guard = state.auth.lock();
     let previous_level = guard.level.as_str().to_string();
 
     guard.level = next_level;
@@ -154,8 +154,7 @@ pub(crate) fn mark_snapshot_scope(
 ) -> Result<bool, String> {
     let mut guard = state
         .snapshot_markers
-        .lock()
-        .map_err(|_| errors::state_poisoned())?;
+        .lock();
     Ok(guard.insert(key.into()))
 }
 
@@ -168,8 +167,7 @@ pub fn list_timeline_with_state(
     let entries = {
         let guard = state
             .timeline
-            .lock()
-            .map_err(|_| errors::state_poisoned())?;
+            .lock();
         let known_snapshot_ids = guard
             .iter()
             .filter_map(|entry| match entry {
@@ -227,8 +225,7 @@ pub fn append_snapshot(
     {
         let mut guard = state
             .timeline
-            .lock()
-            .map_err(|_| errors::state_poisoned())?;
+            .lock();
         guard.push(AiEditTimelineEntryPayload::Snapshot(snapshot));
     }
     run_retention_policy_best_effort(state, storage_root);
@@ -313,8 +310,7 @@ fn apply_retention_policy_with_policy(
     {
         let mut guard = state
             .timeline
-            .lock()
-            .map_err(|_| errors::state_poisoned())?;
+            .lock();
         guard.retain(|entry| match entry {
             AiEditTimelineEntryPayload::Snapshot(snapshot) => {
                 !snapshot_outcome.removed_snapshot_ids.contains(&snapshot.id)
@@ -501,7 +497,7 @@ fn ensure_write_authorized(
     action: &str,
     request_task_id: Option<&str>,
 ) -> Result<(), String> {
-    let guard = state.auth.lock().map_err(|_| errors::state_poisoned())?;
+    let guard = state.auth.lock();
     let configured_task_id = normalize_optional_str(guard.task_id.as_deref());
 
     match guard.level {
@@ -565,8 +561,7 @@ fn refresh_timeline_pin_state(state: &AiEditState, storage_root: &Path) -> Resul
     let pin_index = pins::build_pin_index(&pin_records);
     let mut guard = state
         .timeline
-        .lock()
-        .map_err(|_| errors::state_poisoned())?;
+        .lock();
     for entry in &mut *guard {
         match entry {
             AiEditTimelineEntryPayload::Snapshot(snapshot) => {
@@ -676,7 +671,7 @@ mod tests {
         .expect("retention should prune stale snapshots");
         let stored_snapshots =
             snapshot::list_stored_snapshots(&storage_root).expect("snapshots should be listed");
-        let guard = state.timeline.lock().expect("timeline lock should succeed");
+        let guard = state.timeline.lock();
         let timeline_snapshot_ids = guard
             .iter()
             .filter_map(|entry| match entry {

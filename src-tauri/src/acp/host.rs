@@ -34,9 +34,10 @@
 // 过渡期：本模块尚未接线到宿主命令（公开 API 暂无调用点）。接线后移除该 allow。
 #![allow(dead_code)]
 
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use agent_client_protocol::schema::{SessionId, SessionModeId, ToolCallId};
 
@@ -149,7 +150,6 @@ impl AcpHost {
             && let Some(existing) = self
                 .sessions
                 .lock()
-                .expect("acp host sessions mutex poisoned")
                 .get(thread_key)
                 .cloned()
         {
@@ -161,7 +161,6 @@ impl AcpHost {
         if !thread_key.is_empty() {
             self.sessions
                 .lock()
-                .expect("acp host sessions mutex poisoned")
                 .insert(thread_key.to_string(), session_id.clone());
         }
         Ok(session_id)
@@ -340,7 +339,6 @@ impl AcpHost {
         let session_id = self
             .sessions
             .lock()
-            .expect("acp host sessions mutex poisoned")
             .get(thread_key)
             .cloned();
         match session_id {
@@ -359,7 +357,6 @@ impl AcpHost {
     fn begin_turn(&self, session_key: &str) {
         self.turns
             .lock()
-            .expect("acp host turns mutex poisoned")
             .insert(session_key.to_string(), TurnAccumulator::new());
     }
 
@@ -367,7 +364,6 @@ impl AcpHost {
     fn end_turn(&self, session_key: &str) -> TurnAccumulator {
         self.turns
             .lock()
-            .expect("acp host turns mutex poisoned")
             .remove(session_key)
             .unwrap_or_default()
     }
@@ -380,9 +376,8 @@ fn record_frame(turns: &Mutex<HashMap<String, TurnAccumulator>>, frame: &AcpStre
         return;
     };
     // let-chain（edition 2024）：仅在拿到锁且该会话有活动回合累积器时记录。
-    if let Ok(mut map) = turns.lock()
-        && let Some(accumulator) = map.get_mut(session_id)
-    {
+    let mut map = turns.lock();
+    if let Some(accumulator) = map.get_mut(session_id) {
         accumulator.record(frame.event.clone());
     }
 }
@@ -430,13 +425,12 @@ mod tests {
         let turns = new_turns();
         turns
             .lock()
-            .unwrap()
             .insert("s1".to_string(), TurnAccumulator::new());
 
         record_frame(&turns, &message_frame("s1", "你好"));
         record_frame(&turns, &message_frame("s1", "，世界"));
 
-        let accumulator = turns.lock().unwrap().remove("s1").unwrap();
+        let accumulator = turns.lock().remove("s1").unwrap();
         let response = accumulator.into_response("s1".to_string());
         assert_eq!(response.session_id, "s1");
         assert_eq!(response.result.as_deref(), Some("你好，世界"));
@@ -448,14 +442,13 @@ mod tests {
         let turns = new_turns();
         turns
             .lock()
-            .unwrap()
             .insert("s1".to_string(), TurnAccumulator::new());
 
         // 另一个会话当前无活动回合：安全忽略，不创建条目、不 panic。
         record_frame(&turns, &message_frame("other", "丢弃"));
         record_frame(&turns, &message_frame("s1", "保留"));
 
-        let map = turns.lock().unwrap();
+        let map = turns.lock();
         assert!(!map.contains_key("other"));
         assert_eq!(map.get("s1").map(TurnAccumulator::len), Some(1));
     }
@@ -465,7 +458,6 @@ mod tests {
         let turns = new_turns();
         turns
             .lock()
-            .unwrap()
             .insert("s1".to_string(), TurnAccumulator::new());
 
         let frame = AcpStreamFrame {
@@ -478,7 +470,6 @@ mod tests {
         assert_eq!(
             turns
                 .lock()
-                .unwrap()
                 .get("s1")
                 .map(TurnAccumulator::is_empty),
             Some(true)

@@ -13,7 +13,7 @@ use crate::commands::contracts::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fs;
+use fs_err as fs;
 use std::path::PathBuf;
 use std::sync::{
     Mutex, OnceLock,

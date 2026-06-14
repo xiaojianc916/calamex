@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import { clearSession, loadSession, saveSession } from '@/services/session/store';
 import { SessionSnapshotSchema, type TSessionSnapshot } from '@/types/session';
+import { logger } from '@/utils/logger';
 
 // ---------------------------------------------------------------------------
 // Constants & types
@@ -98,41 +99,14 @@ const withTimeout = async <T>(
       });
   });
 
-const stringifyError = (error: unknown): string => {
-  if (error instanceof Error) {
-    return error.stack ?? `${error.name}: ${error.message}`;
-  }
-  return String(error);
-};
-
-const logSessionPersistError = (event: string, error: unknown): void => {
-  const payload = {
-    timestamp: new Date().toISOString(),
-    level: 'error',
-    scope: 'session',
-    event,
-    detail: stringifyError(error),
-  };
-  console.error(JSON.stringify(payload));
-};
-
-const logSessionPersistWarn = (event: string, detail: string): void => {
-  const payload = {
-    timestamp: new Date().toISOString(),
-    level: 'warn',
-    scope: 'session',
-    event,
-    detail,
-  };
-  console.warn(JSON.stringify(payload));
-};
+const sessionLogger = logger.child({ scope: 'session' });
 
 const enqueuePersistOperation = (operation: () => Promise<void>, errorEvent: string): void => {
   persistQueue = persistQueue
     .catch(() => undefined)
     .then(operation)
     .catch((error) => {
-      logSessionPersistError(errorEvent, error);
+      sessionLogger.error({ event: errorEvent, err: error });
     });
 };
 
@@ -233,7 +207,7 @@ export const hydrateSessionStorage = async (): Promise<THydrateStatus> => {
   // 后台对账:无论是否在 timeout 窗口内返回,真正 settle 后都对账一次。
   void loadPromise.then(reconcileAfterHydrate).catch((error) => {
     hydrationSettled = true;
-    logSessionPersistError('snapshot-hydrate-reconcile-failed', error);
+    sessionLogger.error({ event: 'snapshot-hydrate-reconcile-failed', err: error });
   });
   const result = await withTimeout(loadPromise, HYDRATE_TIMEOUT_MS);
   isReady = true;
@@ -241,10 +215,10 @@ export const hydrateSessionStorage = async (): Promise<THydrateStatus> => {
     // 占位空态:getItem 暂时返回 null,但 setItem 会 defer,最终处置交给
     // reconcileAfterHydrate,绝不在此用空态覆盖磁盘快照。
     cache = null;
-    logSessionPersistWarn(
-      'snapshot-hydrate-timeout',
-      `loadSession did not resolve within ${HYDRATE_TIMEOUT_MS}ms; deferring writes until settle`,
-    );
+    sessionLogger.warn({
+      event: 'snapshot-hydrate-timeout',
+      detail: `loadSession did not resolve within ${HYDRATE_TIMEOUT_MS}ms; deferring writes until settle`,
+    });
     return 'timeout';
   }
   // 命中:reconcileAfterHydrate 通常已先行设置 cache,这里再确保一次。
@@ -272,10 +246,7 @@ export const tauriSessionStorage: ITauriSessionStorage = {
     } catch (error) {
       // schema 校验失败:既不写盘也不更新 cache。这是安全选择
       // (避免写入坏数据),但用户感知是 "改的东西没存"——必须留痕。
-      logSessionPersistWarn(
-        'snapshot-validation-failed',
-        `dropped invalid setItem payload: ${stringifyError(error)}`,
-      );
+      sessionLogger.warn({ event: 'snapshot-validation-failed', err: error });
       return;
     }
     cache = snapshot;

@@ -60,6 +60,9 @@ ast-grep-language = { version = "0.42.2", default-features = false, features = [
 chromiumoxide = { version = "0.7", default-features = false, features = ["tokio-runtime"], optional = true }
 diffy-imara = { version = "0.3.2", optional = true }
 encoding_rs = { version = "0.8.35", optional = true }
+# 已是 reqwest/url 的传递依赖，此处显式声明以替换 src-tauri 内的手写 percent-encode/decode。
+form_urlencoded = "1.2"
+percent-encoding = "2.3"
 futures = { version = "0.3", optional = true }
 gix = { version = "0.84", default-features = false, features = ["max-performance-safe", "sha1", "revision", "index", "status", "blob-diff", "excludes", "tree-editor"], optional = true }
 globset = { version = "0.4.18", optional = true }

@@ -316,8 +316,7 @@ fn record_committed_operations(
 ) -> Result<(), String> {
     let mut guard = state
         .timeline
-        .lock()
-        .map_err(|_| ai_edit::errors::state_poisoned())?;
+        .lock();
     guard.extend(
         operations
             .iter()

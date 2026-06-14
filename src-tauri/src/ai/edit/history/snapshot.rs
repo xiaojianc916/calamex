@@ -6,7 +6,7 @@ use fjall::{Database, Keyspace, KeyspaceCreateOptions, PersistMode};
 use jiff::{SignedDuration, Timestamp};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::fs;
+use fs_err as fs;
 use std::path::{Path, PathBuf};
 
 const AED_DB_DIR: &str = "fjall";

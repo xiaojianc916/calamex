@@ -15,8 +15,8 @@ use crate::commands::{
 };
 use jiff::Timestamp;
 use russh_sftp::{client::SftpSession, protocol::OpenFlags};
+use fs_err as std_fs;
 use std::{
-    fs as std_fs,
     io::{Read, Write},
     path::{Path, PathBuf},
     time::Duration,

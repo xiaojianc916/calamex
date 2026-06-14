@@ -2,7 +2,8 @@
 
 use super::DEFAULT_SSH_PORT;
 use crate::commands::SshConfigHostPayload;
-use std::{env, fs as std_fs, path::PathBuf};
+use fs_err as std_fs;
+use std::{env, path::PathBuf};
 
 const SSH_CONFIG_IMPORTED_LABEL: &str = "SSH config";
 

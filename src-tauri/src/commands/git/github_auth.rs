@@ -1,5 +1,6 @@
 use super::*;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use form_urlencoded::{byte_serialize, parse};
 use gix::bstr::ByteSlice;
 use reqwest::header::{ACCEPT, AUTHORIZATION, HeaderMap, HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
@@ -469,59 +470,16 @@ fn build_pkce_challenge(code_verifier: &str) -> String {
     URL_SAFE_NO_PAD.encode(digest)
 }
 
+// OAuth query value 的 percent-encode 走 application/x-www-form-urlencoded 语义
+// （form_urlencoded crate）：空格 → `+`，与 GitHub OAuth 回调的编码一致；解码侧
+// 由 extract_query_param 通过 parse 统一完成（`+`→空格、%XX 解码）。
 fn percent_encode_query_value(value: &str) -> String {
-    let mut encoded = String::new();
-    for byte in value.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
-                encoded.push(byte as char);
-            }
-            _ => encoded.push_str(&format!("%{byte:02X}")),
-        }
-    }
-    encoded
-}
-
-fn percent_decode_query_value(value: &str) -> String {
-    let bytes = value.as_bytes();
-    let mut output = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-
-    while index < bytes.len() {
-        match bytes[index] {
-            b'+' => {
-                output.push(b' ');
-                index += 1;
-            }
-            b'%' if index + 2 < bytes.len() => {
-                let hex = &value[index + 1..index + 3];
-                if let Ok(byte) = u8::from_str_radix(hex, 16) {
-                    output.push(byte);
-                    index += 3;
-                } else {
-                    output.push(bytes[index]);
-                    index += 1;
-                }
-            }
-            byte => {
-                output.push(byte);
-                index += 1;
-            }
-        }
-    }
-
-    String::from_utf8_lossy(&output).into_owned()
+    byte_serialize(value.as_bytes()).collect()
 }
 
 fn extract_query_param(query: &str, name: &str) -> Option<String> {
-    query.split('&').find_map(|pair| {
-        let (key, value) = pair.split_once('=')?;
-        if key == name {
-            Some(percent_decode_query_value(value))
-        } else {
-            None
-        }
-    })
+    parse(query.as_bytes())
+        .find_map(|(key, value)| (key == name).then_some(value.into_owned()))
 }
 
 fn build_browser_authorization_url(
@@ -981,9 +939,8 @@ mod tests {
     #[test]
     fn query_percent_encoding_round_trips_callback_values() {
         let value = "http://127.0.0.1:49152/github/oauth/callback?x=a b";
-        assert_eq!(
-            percent_decode_query_value(&percent_encode_query_value(value)),
-            value
-        );
+        // encode 后拼进 query，再用 extract_query_param 取回，验证 round-trip。
+        let query = format!("code={}", percent_encode_query_value(value));
+        assert_eq!(extract_query_param(&query, "code").as_deref(), Some(value));
     }
 }

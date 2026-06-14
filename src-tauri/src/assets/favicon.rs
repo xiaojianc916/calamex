@@ -8,7 +8,7 @@ use reqwest::redirect::Policy as RedirectPolicy;
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
 use tauri::http::{Request, Response, StatusCode};
-use tokio::fs;
+use fs_err::tokio as fs;
 use tokio::net::lookup_host;
 use tokio::task::JoinSet;
 

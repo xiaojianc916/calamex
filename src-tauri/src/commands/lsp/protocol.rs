@@ -1,5 +1,6 @@
-//! JSON-RPC 帧编解码与 file path ↔ uri 转换（纯函数，零依赖）。
+//! JSON-RPC 帧编解码与 file path ↔ uri 转换（纯函数）。
 
+use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, percent_decode_str, utf8_percent_encode};
 use serde_json::Value;
 
 pub(crate) fn jsonrpc_request(id: i64, method: &str, params: Value) -> String {
@@ -27,44 +28,27 @@ pub(crate) fn frame_message(content: &str) -> Vec<u8> {
     format!("Content-Length: {}\r\n\r\n{}", content.len(), content).into_bytes()
 }
 
-// --- 极简 percent-encoding（纯 Rust，零依赖）-------------------------------
+// --- file path ↔ uri percent-encoding ---------------------------------------
+// 用 percent-encoding crate 替换手写实现：在 NON_ALPHANUMERIC 基础上放开 `/` 与 `:`，
+// 与原手写逻辑（保留 unreserved + `/` + `:`）完全一致；decode 走标准
+// percent_decode_str（file URI 不含 `+`→空格语义）。
 
-/// 对 file path 做 percent-encoding。保留 `unreserved` 字符 + `/` + `:`。
-/// 其它字节 (空格、`#`、中文 UTF-8 字节等) 编码成 `%XX`。
+/// 编码集合：除字母数字外全部编码，但放开 unreserved 标点（`- _ . ~`）、
+/// 路径分隔符 `/` 与 Windows 盘符 `:`，与原手写逻辑（unreserved + `/` + `:`）一致。
+const FILE_PATH_ENCODE_SET: &AsciiSet = &NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'_')
+    .remove(b'.')
+    .remove(b'~')
+    .remove(b'/')
+    .remove(b':');
+
 fn percent_encode_path(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for &b in s.as_bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/' | b':' => {
-                out.push(b as char)
-            }
-            _ => {
-                use std::fmt::Write;
-                let _ = write!(out, "%{:02X}", b);
-            }
-        }
-    }
-    out
+    utf8_percent_encode(s, FILE_PATH_ENCODE_SET).to_string()
 }
 
 fn percent_decode(s: &str) -> String {
-    let bytes = s.as_bytes();
-    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            let h = (bytes[i + 1] as char).to_digit(16);
-            let l = (bytes[i + 2] as char).to_digit(16);
-            if let (Some(h), Some(l)) = (h, l) {
-                out.push((h * 16 + l) as u8);
-                i += 3;
-                continue;
-            }
-        }
-        out.push(bytes[i]);
-        i += 1;
-    }
-    String::from_utf8_lossy(&out).into_owned()
+    percent_decode_str(s).decode_utf8_lossy().into_owned()
 }
 
 pub(crate) fn path_to_uri(path: &str) -> Result<String, String> {

@@ -20,7 +20,6 @@ use crate::ai::errors::error;
 // ============================================================================
 
 pub const AI_EDIT_INVALID_AUTH_LEVEL: &str = "AI_EDIT_INVALID_AUTH_LEVEL";
-pub const AI_EDIT_STATE_POISONED: &str = "AI_EDIT_STATE_POISONED";
 pub const AI_EDIT_AUTH_BLOCKED: &str = "AI_EDIT_AUTH_BLOCKED";
 pub const AI_EDIT_STORAGE_PATH_UNAVAILABLE: &str = "AI_EDIT_STORAGE_PATH_UNAVAILABLE";
 pub const AI_EDIT_STORAGE_LOCKED: &str = "AI_EDIT_STORAGE_LOCKED";
@@ -46,11 +45,6 @@ pub fn invalid_auth_level(level: &str) -> String {
         AI_EDIT_INVALID_AUTH_LEVEL,
         format!("不支持的 AED 授权等级：{level}"),
     )
-}
-
-/// AED 内部 `RwLock`/`Mutex` 在持锁线程 panic 时被毒化，状态不可信。
-pub fn state_poisoned() -> String {
-    error(AI_EDIT_STATE_POISONED, "AED 内部状态锁损坏。")
 }
 
 /// 当前会话授权不足或被显式拒绝，AI 自动写盘已被阻止。

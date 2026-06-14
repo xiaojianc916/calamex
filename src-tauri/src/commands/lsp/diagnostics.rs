@@ -52,7 +52,7 @@ fn extract_diag_code(d: &Value) -> Option<String> {
 
 pub(crate) fn handle_diagnostics(app: &AppHandle, uri: &str, diags: &[Value]) {
     use std::collections::HashMap;
-    use std::sync::Mutex;
+    use parking_lot::Mutex;
     use std::sync::atomic::{AtomicBool, Ordering};
 
     static PENDING: std::sync::LazyLock<Mutex<HashMap<String, Vec<Value>>>> =
@@ -60,7 +60,7 @@ pub(crate) fn handle_diagnostics(app: &AppHandle, uri: &str, diags: &[Value]) {
     static FLUSH_SCHEDULED: AtomicBool = AtomicBool::new(false);
 
     {
-        let mut guard = PENDING.lock().unwrap();
+        let mut guard = PENDING.lock();
         guard.insert(uri.to_string(), diags.to_vec());
     }
 
@@ -70,7 +70,7 @@ pub(crate) fn handle_diagnostics(app: &AppHandle, uri: &str, diags: &[Value]) {
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             // 关键：先清标志再 take，防止 take→emit→清标志之间插入的诊断被 stranded
             let batch = {
-                let mut guard = PENDING.lock().unwrap();
+                let mut guard = PENDING.lock();
                 FLUSH_SCHEDULED.store(false, Ordering::Release);
                 std::mem::take(&mut *guard)
             };

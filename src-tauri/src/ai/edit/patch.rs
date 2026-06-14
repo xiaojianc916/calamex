@@ -9,7 +9,7 @@ use crate::commands::contracts::{
     AiPatchSetPayload, AiProposePatchPayload, AiProposePatchRequest,
 };
 use diffy_imara::Patch;
-use std::fs;
+use fs_err as fs;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 

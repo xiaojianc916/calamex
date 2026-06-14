@@ -6,7 +6,7 @@
 //! `workspace-search-stream` 推给前端，实现「边搜边出」的流水式体感。最终的全局排序结果
 //! 仍由命令返回值兜底（前端在命令 resolve 后用其整体替换流式列表）。
 
-use std::sync::Mutex;
+use parking_lot::Mutex;
 use std::time::{Duration, Instant};
 
 use tauri::AppHandle;
@@ -126,9 +126,7 @@ impl ContentBatchSink for SearchStreamSink<'_> {
             return;
         }
         let batch = {
-            let Ok(mut throttle) = self.throttle.lock() else {
-                return;
-            };
+            let mut throttle = self.throttle.lock();
             throttle.offer(results, Instant::now())
         };
         if let Some(batch) = batch {
@@ -138,9 +136,7 @@ impl ContentBatchSink for SearchStreamSink<'_> {
 
     fn finish(&self) {
         let batch = {
-            let Ok(mut throttle) = self.throttle.lock() else {
-                return;
-            };
+            let mut throttle = self.throttle.lock();
             throttle.drain(Instant::now())
         };
         self.emit(batch);

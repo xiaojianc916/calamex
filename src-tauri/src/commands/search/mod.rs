@@ -23,7 +23,7 @@ use scan::{
     scanned_file_from_path,
 };
 use std::collections::{HashMap, HashSet};
-use std::fs;
+use fs_err as fs;
 use stream::{ContentBatchSink, SearchStreamSink};
 use tauri::AppHandle;
 use util::{count_to_u32, require_replacement_query, u64_to_u32};

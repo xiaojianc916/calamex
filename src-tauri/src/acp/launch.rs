@@ -23,7 +23,7 @@
 #![allow(dead_code)]
 
 use std::env;
-use std::fs;
+use fs_err as fs;
 use std::path::{Path, PathBuf};
 
 use super::client::AcpClientConfig;

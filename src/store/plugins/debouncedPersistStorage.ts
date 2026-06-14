@@ -1,6 +1,8 @@
 import { createStore, del, get, set, type UseStore } from 'idb-keyval';
 import type { StorageLike } from 'pinia-plugin-persistedstate';
 
+import { logger } from '@/utils/logger';
+
 /**
  * ai-conversation 专用持久化 storage：底层从 localStorage 换成 IndexedDB(idb-keyval)。
  *
@@ -90,32 +92,7 @@ let flushListenersRegistered = false;
 // Logging helpers
 // ---------------------------------------------------------------------------
 
-const stringifyError = (error: unknown): string =>
-  error instanceof Error ? (error.stack ?? `${error.name}: ${error.message}`) : String(error);
-
-const logWarn = (event: string, detail: string): void => {
-  console.warn(
-    JSON.stringify({
-      timestamp: new Date().toISOString(),
-      level: 'warn',
-      scope: 'ai-conversation-persist',
-      event,
-      detail,
-    }),
-  );
-};
-
-const logError = (event: string, error: unknown): void => {
-  console.error(
-    JSON.stringify({
-      timestamp: new Date().toISOString(),
-      level: 'error',
-      scope: 'ai-conversation-persist',
-      event,
-      detail: stringifyError(error),
-    }),
-  );
-};
+const persistLogger = logger.child({ scope: 'ai-conversation-persist' });
 
 // ---------------------------------------------------------------------------
 // idb helpers
@@ -238,7 +215,7 @@ const preparePersistValue = async (value: string): Promise<string> => {
 
     return JSON.stringify(parsed);
   } catch (error) {
-    logWarn('ai-conversation-attachment-preview-extract-failed', stringifyError(error));
+    persistLogger.warn({ event: 'ai-conversation-attachment-preview-extract-failed', err: error });
     return value;
   }
 };
@@ -285,7 +262,7 @@ const restorePersistValue = async (value: string | null): Promise<string | null>
 
     return JSON.stringify(parsed);
   } catch (error) {
-    logWarn('ai-conversation-attachment-preview-restore-failed', stringifyError(error));
+    persistLogger.warn({ event: 'ai-conversation-attachment-preview-restore-failed', err: error });
     return value;
   }
 };
@@ -400,7 +377,7 @@ const enqueuePersist = (operation: () => Promise<void>, errorEvent: string): voi
     .catch(() => undefined)
     .then(operation)
     .catch((error) => {
-      logError(errorEvent, error);
+      persistLogger.error({ event: errorEvent, err: error });
     });
 };
 
@@ -504,7 +481,7 @@ export const hydrateAiConversationStorage = async (): Promise<TAiConversationHyd
   // 后台对账:无论是否在 timeout 窗口内返回,真正 settle 后都对账一次。
   void loadPromise.then(reconcileAfterHydrate).catch((error) => {
     hydrationSettled = true;
-    logError('ai-conversation-hydrate-failed', error);
+    persistLogger.error({ event: 'ai-conversation-hydrate-failed', err: error });
   });
   const result = await withTimeout(loadPromise, HYDRATE_TIMEOUT_MS);
   isReady = true;
@@ -512,10 +489,10 @@ export const hydrateAiConversationStorage = async (): Promise<TAiConversationHyd
     // 占位空态:getItem 暂时返回 null,但 setItem 会 defer,最终处置交给
     // reconcileAfterHydrate,绝不在此用空态覆盖磁盘历史。
     cache = null;
-    logWarn(
-      'ai-conversation-hydrate-timeout',
-      `idb did not resolve within ${HYDRATE_TIMEOUT_MS}ms; deferring writes until settle`,
-    );
+    persistLogger.warn({
+      event: 'ai-conversation-hydrate-timeout',
+      detail: `idb did not resolve within ${HYDRATE_TIMEOUT_MS}ms; deferring writes until settle`,
+    });
     return 'timeout';
   }
   // 命中:reconcileAfterHydrate 通常已先行设置 cache,这里再确保一次。

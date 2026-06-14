@@ -1,6 +1,7 @@
 use super::decision::ApprovalDecision;
 use crate::ai::errors;
-use std::fs::{self, OpenOptions};
+use fs_err as fs;
+use fs_err::OpenOptions;
 use std::io::Write;
 use std::path::Path;
 

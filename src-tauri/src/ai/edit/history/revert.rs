@@ -38,7 +38,7 @@ use crate::commands::contracts::{
     AiSnapshotPayload,
 };
 use std::collections::HashSet;
-use std::fs;
+use fs_err as fs;
 use std::path::{Path, PathBuf};
 
 /// 单条 undo 路径的内部产物。
@@ -455,8 +455,7 @@ fn resolve_operation(
     {
         let guard = state
             .timeline
-            .lock()
-            .map_err(|_| errors::state_poisoned())?;
+            .lock();
         if let Some(operation) = guard.iter().find_map(|entry| match entry {
             AiEditTimelineEntryPayload::Operation(operation) if operation.id == operation_id => {
                 Some(operation.clone())

@@ -29,7 +29,8 @@
 
 #![allow(dead_code)]
 
-use std::sync::{Arc, Mutex};
+use parking_lot::Mutex;
+use std::sync::Arc;
 
 use tauri::{AppHandle, Emitter, Runtime};
 
@@ -67,7 +68,7 @@ impl AcpRuntime {
         &self,
         app: &AppHandle<R>,
     ) -> Result<Arc<AcpHost>, AcpClientError> {
-        let mut guard = self.host.lock().expect("acp runtime mutex poisoned");
+        let mut guard = self.host.lock();
         if let Some(host) = guard.as_ref() {
             return Ok(host.clone());
         }
@@ -91,7 +92,6 @@ impl AcpRuntime {
         if let Some(host) = self
             .host
             .lock()
-            .expect("acp runtime mutex poisoned")
             .as_ref()
         {
             host.cancel_thread(thread_id);
@@ -100,7 +100,7 @@ impl AcpRuntime {
 
     /// 关停并释放常驻连接（App 统一退出清理调用）。幂等：未建立时为安全的空操作。
     pub fn shutdown(&self) {
-        let host = self.host.lock().expect("acp runtime mutex poisoned").take();
+        let host = self.host.lock().take();
         if let Some(host) = host {
             host.shutdown();
         }
@@ -147,7 +147,7 @@ mod tests {
         // 未建立连接时关停应为安全的空操作（不 panic、不阻塞）；且可重复调用（幂等）。
         runtime.shutdown();
         runtime.shutdown();
-        assert!(runtime.host.lock().unwrap().is_none());
+        assert!(runtime.host.lock().is_none());
     }
 
     #[test]

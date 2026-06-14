@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { reactiveOmit } from '@vueuse/core';
+import { reactiveOmit, useTimeoutFn } from '@vueuse/core';
 import type { HTMLAttributes } from 'vue';
-import { computed, onBeforeUnmount, ref } from 'vue';
+import { computed, ref } from 'vue';
 import { Button } from '@/components/ui/button';
 import LucideIcon from '@/components/ui/icon/LucideIcon.vue';
 import { cn } from '@/lib/utils';
@@ -30,7 +30,15 @@ const delegatedProps = reactiveOmit(props, 'timeout', 'class');
 const { code } = useCodeBlockContext();
 
 const isCopied = ref(false);
-let resetTimer: ReturnType<typeof setTimeout> | undefined;
+// immediate: false —— 仅在复制成功后手动 start()，到期复位 isCopied；
+// 组件卸载时 vueuse 自动 stop，无需 onBeforeUnmount 清理。
+const { start: scheduleReset } = useTimeoutFn(
+  () => {
+    isCopied.value = false;
+  },
+  () => props.timeout,
+  { immediate: false },
+);
 
 const icon = computed(() => (isCopied.value ? 'check' : 'copy'));
 
@@ -44,24 +52,11 @@ async function copyToClipboard(): Promise<void> {
     await navigator.clipboard.writeText(code.value);
     isCopied.value = true;
     emit('copy');
-
-    if (resetTimer) {
-      clearTimeout(resetTimer);
-    }
-
-    resetTimer = setTimeout(() => {
-      isCopied.value = false;
-    }, props.timeout);
+    scheduleReset();
   } catch (error) {
     emit('error', error instanceof Error ? error : new Error('复制代码失败'));
   }
 }
-
-onBeforeUnmount(() => {
-  if (resetTimer) {
-    clearTimeout(resetTimer);
-  }
-});
 </script>
 
 <template>
