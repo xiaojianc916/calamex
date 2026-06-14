@@ -2,18 +2,8 @@
  * 8. Tooltip / dropdown
  * ============================================================ */
 
-.app-tooltip-target {
-  position: relative;
-}
-
-.app-global-tooltip {
-  position: fixed;
-  left: -9999px;
-  top: -9999px;
+.app-tooltip-content {
   z-index: 1200;
-  pointer-events: none;
-  opacity: 0;
-  visibility: hidden;
   max-width: min(420px, calc(100vw - 24px));
   overflow: hidden;
   border: 1px solid var(--border-strong);
@@ -26,47 +16,58 @@
   font-weight: 500;
   letter-spacing: 0.01em;
   line-height: 1.4;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  transition:
-    opacity 0.14s ease,
-    transform 0.14s ease,
-    visibility 0.14s ease;
-}
-
-.app-global-tooltip.is-visible {
-  opacity: 1;
-  visibility: visible;
-}
-
-.app-global-tooltip.is-top {
-  transform: translateY(2px);
-}
-
-.app-global-tooltip.is-bottom {
-  transform: translateY(-2px);
-}
-
-.app-global-tooltip.is-left {
-  transform: translateX(2px);
-}
-
-.app-global-tooltip.is-right {
-  transform: translateX(-2px);
-}
-
-.app-global-tooltip.is-visible.is-top,
-.app-global-tooltip.is-visible.is-bottom,
-.app-global-tooltip.is-visible.is-left,
-.app-global-tooltip.is-visible.is-right {
-  transform: translate(0, 0);
-}
-
-.app-global-tooltip.is-multiline {
-  overflow: visible;
   white-space: normal;
-  text-overflow: clip;
   word-break: break-word;
+  text-overflow: clip;
+}
+
+.app-tooltip-content[data-state='delayed-open'],
+.app-tooltip-content[data-state='instant-open'] {
+  animation: app-tooltip-in 140ms ease-out;
+}
+
+.app-tooltip-content[data-state='closed'] {
+  animation: app-tooltip-out 100ms ease-in;
+}
+
+.app-tooltip-content[data-side='top'] {
+  transform-origin: bottom center;
+}
+
+.app-tooltip-content[data-side='bottom'] {
+  transform-origin: top center;
+}
+
+.app-tooltip-content[data-side='left'] {
+  transform-origin: right center;
+}
+
+.app-tooltip-content[data-side='right'] {
+  transform-origin: left center;
+}
+
+@keyframes app-tooltip-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(2px);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes app-tooltip-out {
+  from {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+
+  to {
+    opacity: 0;
+    transform: scale(0.96) translateY(2px);
+  }
 }
 
 @keyframes dropdown-motion-in {
@@ -170,4 +171,12 @@
 .dropdown-menu-item.is-menubar.is-disabled:hover {
   background: transparent;
   color: color-mix(in srgb, var(--text-quaternary) 62%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-tooltip-content[data-state='delayed-open'],
+  .app-tooltip-content[data-state='instant-open'],
+  .app-tooltip-content[data-state='closed'] {
+    animation: none;
+  }
 }
