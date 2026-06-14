@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ArrowDown } from '@lucide/vue';
+import { useEventListener } from '@vueuse/core';
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import type { ILinearContextMenuItem } from '@/components/common/linear-context-menu.types';
 import LucideIcon from '@/components/ui/icon/LucideIcon.vue';
@@ -265,20 +266,16 @@ watch(
   { immediate: true },
 );
 
+useEventListener(window, 'pointerdown', handleWindowPointerDown, { capture: true });
+useEventListener(window, 'keydown', handleWindowKeydown);
+useEventListener(window, 'resize', handleWindowResize);
+
 onMounted(() => {
-  if (typeof window === 'undefined') return;
-  window.addEventListener('pointerdown', handleWindowPointerDown, true);
-  window.addEventListener('keydown', handleWindowKeydown);
-  window.addEventListener('resize', handleWindowResize);
   setupHistoryObserver();
 });
 
 onBeforeUnmount(() => {
   disconnectHistoryObserver();
-  if (typeof window === 'undefined') return;
-  window.removeEventListener('pointerdown', handleWindowPointerDown, true);
-  window.removeEventListener('keydown', handleWindowKeydown);
-  window.removeEventListener('resize', handleWindowResize);
 });
 </script>
 

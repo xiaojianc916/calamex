@@ -40,6 +40,7 @@
 </template>
 
 <script setup lang="ts">
+import { useDebounceFn } from '@vueuse/core';
 import { computed, nextTick, ref, watch } from 'vue';
 import ExplorerEntryIcon from '@/components/workbench/sidebar/explorer/ExplorerEntryIcon.vue';
 import { tauriService } from '@/services/tauri';
@@ -68,7 +69,6 @@ const isFocused = ref(false);
 const isSuggestionsOpen = ref(false);
 const suggestions = ref<IWorkspaceEntrySuggestion[]>([]);
 const activeSuggestionIndex = ref(0);
-let suggestionTimer: ReturnType<typeof setTimeout> | null = null;
 let suggestionRequestId = 0;
 
 const placeholder = computed(() =>
@@ -143,13 +143,11 @@ const fetchSuggestions = async (fragment: string): Promise<void> => {
   }
 };
 
-const scheduleSuggestions = (fragment: string): void => {
-  if (suggestionTimer) clearTimeout(suggestionTimer);
-  suggestionTimer = setTimeout(() => {
-    suggestionTimer = null;
-    void fetchSuggestions(fragment);
-  }, SUGGESTION_DEBOUNCE_MS);
-};
+// trailing debounce：高频输入只取最后一次；vueuse 自动 onScopeDispose 取消。
+const scheduleSuggestions = useDebounceFn(
+  (fragment: string) => void fetchSuggestions(fragment),
+  SUGGESTION_DEBOUNCE_MS,
+);
 
 watch(draft, (value) => {
   emit('update:modelValue', value);

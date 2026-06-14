@@ -1,3 +1,4 @@
+import { useDebounceFn } from '@vueuse/core';
 import { computed, onScopeDispose, type Ref, ref, shallowRef, watch } from 'vue';
 import { tauriService } from '@/services/tauri';
 import type { IWorkbenchOpenFileRequest } from '@/types/editor';
@@ -75,7 +76,6 @@ export const useWorkspaceSearch = (options: IUseWorkspaceSearchOptions) => {
   const resultChunks = shallowRef<ReadonlyArray<ReadonlyArray<IWorkspaceSearchResult>>>([]);
 
   let searchRequestId = 0;
-  let searchTimer: ReturnType<typeof setTimeout> | null = null;
   let activeAbortController: AbortController | null = null;
   // 当前接受流式事件的关联标识：与传给后端的 streamToken 一致，过期搜索的残留事件据此忽略。
   let streamingSearchId = 0;
@@ -408,23 +408,19 @@ export const useWorkspaceSearch = (options: IUseWorkspaceSearchOptions) => {
     }
   };
 
+  // trailing debounce：高频触发只取最后一次；vueuse 自动 onScopeDispose 取消。
+  const debouncedRunSearch = useDebounceFn(() => void runSearch(), SEARCH_DEBOUNCE_MS);
+
   const scheduleSearch = (): void => {
     invalidateInFlightSearch();
-    if (searchTimer) clearTimeout(searchTimer);
-    searchTimer = setTimeout(() => {
-      searchTimer = null;
-      void runSearch();
-    }, SEARCH_DEBOUNCE_MS);
+    debouncedRunSearch();
   };
 
   const cancelPendingSearch = (): void => {
     searchRequestId += 1;
     streamingSearchId = 0;
     clearPendingStreamResults();
-    if (searchTimer) {
-      clearTimeout(searchTimer);
-      searchTimer = null;
-    }
+    debouncedRunSearch.cancel();
     activeAbortController?.abort();
     activeAbortController = null;
   };

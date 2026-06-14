@@ -56,7 +56,7 @@ import {
   rectangularSelection,
   type ViewUpdate,
 } from '@codemirror/view';
-import { useResizeObserver } from '@vueuse/core';
+import { useEventListener, useResizeObserver } from '@vueuse/core';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import EditorContextMenu from '@/components/editor/EditorContextMenu.vue';
 import type { IEditorContextMenuItem } from '@/components/editor/editor-context-menu.types';
@@ -1112,12 +1112,13 @@ watch(
 // ──────────────────────────────
 // Mount / unmount
 // ──────────────────────────────
+useEventListener(window, 'pointerdown', handleWindowPointerDown, { capture: true });
+useEventListener(window, 'keydown', handleWindowKeydown);
+useEventListener(window, 'resize', closeMenuOnWindowChange);
+useEventListener(window, 'blur', closeMenuOnWindowChange);
+
 onMounted(() => {
   createEditor();
-  window.addEventListener('pointerdown', handleWindowPointerDown, true);
-  window.addEventListener('keydown', handleWindowKeydown);
-  window.addEventListener('resize', closeMenuOnWindowChange);
-  window.addEventListener('blur', closeMenuOnWindowChange);
 
   useResizeObserver(containerRef, () => {
     if (!containerRef.value) return;
@@ -1131,10 +1132,6 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
-  window.removeEventListener('pointerdown', handleWindowPointerDown, true);
-  window.removeEventListener('keydown', handleWindowKeydown);
-  window.removeEventListener('resize', closeMenuOnWindowChange);
-  window.removeEventListener('blur', closeMenuOnWindowChange);
   persistViewState(props.documentPath);
   clearViewStateSaveTimer();
   inlineCompletionController.destroy();

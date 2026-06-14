@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { Check, Copy, UserRound } from '@lucide/vue';
-import { computed, onBeforeUnmount, ref } from 'vue';
+import { useTimeoutFn } from '@vueuse/core';
+import { computed, ref } from 'vue';
 import Github from '@/components/ui/icon/GithubIcon.vue';
 import type { IGitHubCommitAuthorSnapshot } from '@/services/github-author';
 import type { IGitCommitDetailPayload, IGitCommitSummaryPayload } from '@/types/git';
@@ -28,16 +29,18 @@ defineExpose({ getRootEl: (): HTMLElement | null => rootEl.value });
 
 // 复制提交哈希成功后短暂显示对勾，1.6s 后自动恢复复制图标。
 const commitIdCopied = ref(false);
-let commitIdCopiedTimer: ReturnType<typeof setTimeout> | null = null;
+const { start: scheduleCommitIdCopiedReset } = useTimeoutFn(
+  () => {
+    commitIdCopied.value = false;
+  },
+  1600,
+  { immediate: false },
+);
 
 const handleCopyClick = (): void => {
   emit('copy-sha');
   commitIdCopied.value = true;
-  if (commitIdCopiedTimer !== null) clearTimeout(commitIdCopiedTimer);
-  commitIdCopiedTimer = setTimeout(() => {
-    commitIdCopied.value = false;
-    commitIdCopiedTimer = null;
-  }, 1600);
+  scheduleCommitIdCopiedReset();
 };
 
 const authorName = computed<string>(
@@ -83,13 +86,6 @@ const formatAbsolute = (value: string | null | undefined): string => {
   const minutes = String(date.getMinutes()).padStart(2, '0');
   return `${year}年${month}月${day}日 ${hours}:${minutes}`;
 };
-
-onBeforeUnmount(() => {
-  if (commitIdCopiedTimer !== null) {
-    clearTimeout(commitIdCopiedTimer);
-    commitIdCopiedTimer = null;
-  }
-});
 </script>
 
 <template>

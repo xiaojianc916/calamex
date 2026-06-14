@@ -1,4 +1,5 @@
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { useEventListener } from '@vueuse/core';
+import { computed, ref } from 'vue';
 
 import { formatHistoryTimestamp } from '@/components/business/ai/shell/history-format';
 import type { useAiAssistant } from '@/composables/ai/useAiAssistant';
@@ -166,13 +167,7 @@ export const useAiConversationHistory = (assistant: AiAssistantApi) => {
     assistant.deleteConversation(threadId);
   };
 
-  onMounted(() => {
-    document.addEventListener('pointerdown', handleHistoryPointerDown);
-  });
-
-  onBeforeUnmount(() => {
-    document.removeEventListener('pointerdown', handleHistoryPointerDown);
-  });
+  useEventListener(document, 'pointerdown', handleHistoryPointerDown);
 
   return {
     isHistoryOpen,

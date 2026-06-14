@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { MessageSquare } from '@lucide/vue';
+import { useTimeoutFn } from '@vueuse/core';
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { DynamicScroller, DynamicScrollerItem } from 'vue-virtual-scroller';
 import 'vue-virtual-scroller/dist/vue-virtual-scroller.css';
@@ -89,7 +90,14 @@ const isScrollbarActive = ref(false);
 const showScrollButton = ref(false);
 
 let pendingBottomScrollFrame: number | null = null;
-let scrollbarTimer: ReturnType<typeof window.setTimeout> | null = null;
+// 滚动条激活后 SCROLLBAR_ACTIVE_MS 自动隐藏；immediate: false 仅在 activateScrollbar 时 start。
+const { start: scheduleScrollbarHide } = useTimeoutFn(
+  () => {
+    isScrollbarActive.value = false;
+  },
+  SCROLLBAR_ACTIVE_MS,
+  { immediate: false },
+);
 let lastScrollStateEmitAt = 0;
 let shouldFollowBottomAfterResize = true;
 let lastKnownDistanceFromBottom = 0;
@@ -286,15 +294,7 @@ const restoreScrollState = async (): Promise<void> => {
 
 const activateScrollbar = (): void => {
   isScrollbarActive.value = true;
-
-  if (scrollbarTimer !== null) {
-    window.clearTimeout(scrollbarTimer);
-  }
-
-  scrollbarTimer = window.setTimeout(() => {
-    isScrollbarActive.value = false;
-    scrollbarTimer = null;
-  }, SCROLLBAR_ACTIVE_MS);
+  scheduleScrollbarHide();
 };
 
 const handleScrollerScroll = (event: Event): void => {
@@ -454,11 +454,6 @@ watch(
 
 onBeforeUnmount(() => {
   cancelPendingBottomScroll();
-
-  if (scrollbarTimer !== null) {
-    window.clearTimeout(scrollbarTimer);
-    scrollbarTimer = null;
-  }
 });
 </script>
 

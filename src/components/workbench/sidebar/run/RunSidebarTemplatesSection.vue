@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { Check, Copy, Eye, Pencil, Pin, Plus, Search, Trash2 } from '@lucide/vue';
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { useEventListener, useTimeoutFn } from '@vueuse/core';
+import { computed, ref } from 'vue';
 import RunTemplateCategory from './RunTemplateCategory.vue';
 import {
   type IPhase,
@@ -20,7 +21,14 @@ const contextMenuPos = ref({ x: 0, y: 0 });
 const contextMenuTarget = ref<ISnippetItem | null>(null);
 const toastVisible = ref(false);
 const toastMessage = ref('');
-let toastTimer: ReturnType<typeof setTimeout> | null = null;
+// 1.5s 后自动隐藏 toast；immediate: false 仅在 showToast 时手动 start。
+const { start: scheduleToastHide } = useTimeoutFn(
+  () => {
+    toastVisible.value = false;
+  },
+  1500,
+  { immediate: false },
+);
 
 // ── 搜索 ──
 const normalizeText = (value: string): string =>
@@ -122,10 +130,7 @@ function handleMenuAction(action: string): void {
 function showToast(message: string): void {
   toastMessage.value = message;
   toastVisible.value = true;
-  if (toastTimer) clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => {
-    toastVisible.value = false;
-  }, 1500);
+  scheduleToastHide();
 }
 
 // ── 片段点击（直接插入） ──
@@ -160,16 +165,8 @@ function handleDocumentClick(event: MouseEvent): void {
   }
 }
 
-onMounted(() => {
-  document.addEventListener('keydown', handleGlobalKeydown);
-  document.addEventListener('click', handleDocumentClick);
-});
-
-onBeforeUnmount(() => {
-  if (toastTimer) clearTimeout(toastTimer);
-  document.removeEventListener('keydown', handleGlobalKeydown);
-  document.removeEventListener('click', handleDocumentClick);
-});
+useEventListener(document, 'keydown', handleGlobalKeydown);
+useEventListener(document, 'click', handleDocumentClick);
 </script>
 
 <template>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { reactiveOmit } from '@vueuse/core';
+import { reactiveOmit, useDebounceFn, useTimeoutFn } from '@vueuse/core';
 import type { HTMLAttributes } from 'vue';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { StickToBottom } from 'vue-stick-to-bottom';
@@ -65,8 +65,6 @@ const isShellWindowResizing = ref(false);
 const isScrollbarActive = ref(false);
 const resolvedResize = computed(() => (isShellWindowResizing.value ? 'instant' : props.resize));
 let scrollListenerCleanup: (() => void) | null = null;
-let pendingScrollStateTimer: ReturnType<typeof setTimeout> | null = null;
-let scrollbarIdleTimer: ReturnType<typeof setTimeout> | null = null;
 let scrollbarPointerCleanup: (() => void) | null = null;
 let restoreFrame: number | null = null;
 let resizeLifecycleCleanup: (() => void) | null = null;
@@ -79,20 +77,19 @@ const cancelRestoreFrame = (): void => {
   restoreFrame = null;
 };
 
-const clearScrollbarIdleTimer = (): void => {
-  if (scrollbarIdleTimer !== null) {
-    clearTimeout(scrollbarIdleTimer);
-    scrollbarIdleTimer = null;
-  }
-};
+// 滚动后 SCROLLBAR_IDLE_HIDE_DELAY_MS 自动隐藏滚动条高亮；
+// immediate: false 仅在 showScrollbarTemporarily 时 start。
+const { start: scheduleScrollbarIdleHide, stop: clearScrollbarIdleTimer } = useTimeoutFn(
+  () => {
+    isScrollbarActive.value = false;
+  },
+  SCROLLBAR_IDLE_HIDE_DELAY_MS,
+  { immediate: false },
+);
 
 const showScrollbarTemporarily = (): void => {
-  clearScrollbarIdleTimer();
   isScrollbarActive.value = true;
-  scrollbarIdleTimer = setTimeout(() => {
-    scrollbarIdleTimer = null;
-    isScrollbarActive.value = false;
-  }, SCROLLBAR_IDLE_HIDE_DELAY_MS);
+  scheduleScrollbarIdleHide();
 };
 
 const getScrollElement = (): HTMLElement | null => stickToBottomRef.value?.scrollRef ?? null;
@@ -117,16 +114,11 @@ const emitScrollState = (scrollElement: HTMLElement): void => {
   });
 };
 
-const queueScrollStateEmit = (scrollElement: HTMLElement): void => {
-  if (pendingScrollStateTimer !== null) {
-    clearTimeout(pendingScrollStateTimer);
-  }
-
-  pendingScrollStateTimer = setTimeout(() => {
-    pendingScrollStateTimer = null;
-    emitScrollState(scrollElement);
-  }, 120);
-};
+// trailing debounce：高频滚动只取最后一次；vueuse 自动 onScopeDispose 取消。
+const queueScrollStateEmit = useDebounceFn(
+  (scrollElement: HTMLElement) => emitScrollState(scrollElement),
+  120,
+);
 
 const resolveRestoredScrollTop = (scrollElement: HTMLElement): number => {
   const maxScrollTop = Math.max(0, scrollElement.scrollHeight - scrollElement.clientHeight);
@@ -264,13 +256,7 @@ onBeforeUnmount(() => {
   scrollListenerCleanup?.();
   scrollbarPointerCleanup?.();
   resizeLifecycleCleanup?.();
-  clearScrollbarIdleTimer();
   cancelRestoreFrame();
-
-  if (pendingScrollStateTimer !== null) {
-    clearTimeout(pendingScrollStateTimer);
-    pendingScrollStateTimer = null;
-  }
 });
 </script>
 

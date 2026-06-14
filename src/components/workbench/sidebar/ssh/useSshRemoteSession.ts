@@ -1,5 +1,6 @@
+import { useEventListener } from '@vueuse/core';
 import { storeToRefs } from 'pinia';
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
+import { computed, nextTick, reactive, ref } from 'vue';
 import type { ILinearContextMenuItem } from '@/components/common/linear-context-menu.types';
 import { useMessage } from '@/composables/useMessage';
 import { tauriService } from '@/services/tauri';
@@ -684,17 +685,9 @@ export const useSshRemoteSession = (options: IUseSshRemoteSessionOptions) => {
     closeContextMenu();
   };
 
-  onMounted(() => {
-    window.addEventListener('click', handleWindowClick);
-    window.addEventListener('contextmenu', handleWindowContextMenu);
-    window.addEventListener('keydown', handleWindowKeydown);
-  });
-
-  onBeforeUnmount(() => {
-    window.removeEventListener('click', handleWindowClick);
-    window.removeEventListener('contextmenu', handleWindowContextMenu);
-    window.removeEventListener('keydown', handleWindowKeydown);
-  });
+  useEventListener(window, 'click', handleWindowClick);
+  useEventListener(window, 'contextmenu', handleWindowContextMenu);
+  useEventListener(window, 'keydown', handleWindowKeydown);
 
   return {
     isRemoteDirectoryLoading,

@@ -16,6 +16,7 @@ import {
   Square,
   Workflow,
 } from '@lucide/vue';
+import { useTimeoutFn } from '@vueuse/core';
 import { computed, onBeforeUnmount, onMounted, ref, useAttrs, watch } from 'vue';
 import {
   Context,
@@ -140,7 +141,6 @@ const pendingAttachmentDrafts = ref<IAiAttachedFile[]>([]);
 
 // 编辑器内容程序化写入时为 true，避免输入事件回环。
 let isApplyingExternalValue = false;
-let modeSubmenuCloseTimer: ReturnType<typeof setTimeout> | null = null;
 
 // 技能 / 斜杠菜单状态。
 const skills = ref<ISkillSummary[]>([]);
@@ -337,14 +337,15 @@ const queueAttachmentFile = async (file: File): Promise<void> => {
 // -------------------------------------------------------------------------
 // 二级菜单 hover intent：安全走廊算法
 // -------------------------------------------------------------------------
-const clearModeSubmenuCloseTimer = (): void => {
-  if (modeSubmenuCloseTimer === null) {
-    return;
-  }
-
-  clearTimeout(modeSubmenuCloseTimer);
-  modeSubmenuCloseTimer = null;
-};
+// immediate: false —— 仅在 scheduleModeSubmenuClose 时手动 start；
+// openModeSubmenu / closeModeSubmenu / 进入意图区域时 stop 取消待关。
+const { start: startModeSubmenuCloseTimer, stop: clearModeSubmenuCloseTimer } = useTimeoutFn(
+  () => {
+    isModeSubmenuOpen.value = false;
+  },
+  MODE_SUBMENU_CLOSE_DELAY_MS,
+  { immediate: false },
+);
 
 const closeModeSubmenu = (): void => {
   clearModeSubmenuCloseTimer();
@@ -358,10 +359,7 @@ const openModeSubmenu = (): void => {
 
 const scheduleModeSubmenuClose = (): void => {
   clearModeSubmenuCloseTimer();
-  modeSubmenuCloseTimer = setTimeout(() => {
-    isModeSubmenuOpen.value = false;
-    modeSubmenuCloseTimer = null;
-  }, MODE_SUBMENU_CLOSE_DELAY_MS);
+  startModeSubmenuCloseTimer();
 };
 
 const isPointInsideRect = (point: IPoint, rect: DOMRect, padding = 0): boolean =>
@@ -916,8 +914,6 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
-  clearModeSubmenuCloseTimer();
-
   if (typeof document !== 'undefined') {
     document.removeEventListener('pointermove', handleModeSubmenuDocumentPointerMove);
   }

@@ -12,7 +12,8 @@ import {
   X,
   Zap,
 } from '@lucide/vue';
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { useEventListener } from '@vueuse/core';
+import { computed, nextTick, ref, watch } from 'vue';
 import AiProviderIcon from '@/components/business/ai/provider/AiProviderIcon.vue';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -475,15 +476,8 @@ watch(
   },
 );
 
-onMounted(() => {
-  document.addEventListener('pointerdown', handleOutsidePointerDown, true);
-  document.addEventListener('keydown', handleDialogKeydown);
-});
-
-onBeforeUnmount(() => {
-  document.removeEventListener('pointerdown', handleOutsidePointerDown, true);
-  document.removeEventListener('keydown', handleDialogKeydown);
-});
+useEventListener(document, 'pointerdown', handleOutsidePointerDown, { capture: true });
+useEventListener(document, 'keydown', handleDialogKeydown);
 
 watch(
   () => props.open,

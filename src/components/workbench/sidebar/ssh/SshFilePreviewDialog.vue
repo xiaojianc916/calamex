@@ -22,12 +22,12 @@ import {
   X,
 } from '@lucide/vue';
 import { useVirtualizer } from '@tanstack/vue-virtual';
+import { useEventListener } from '@vueuse/core';
 import {
   type ComponentPublicInstance,
   type CSSProperties,
   computed,
   nextTick,
-  onBeforeUnmount,
   onMounted,
   ref,
   watch,
@@ -686,13 +686,10 @@ function handlePreviewMouseUp(): void {
   updateCursorFromPreviewSelection();
 }
 
-onMounted(() => {
-  window.addEventListener('keydown', handleKeydown);
-  void nextTick(recomputePreviewScrollMargin);
-});
+useEventListener(window, 'keydown', handleKeydown);
 
-onBeforeUnmount(() => {
-  window.removeEventListener('keydown', handleKeydown);
+onMounted(() => {
+  void nextTick(recomputePreviewScrollMargin);
 });
 </script>
 

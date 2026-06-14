@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { Check, CircleAlert } from '@lucide/vue';
-import { computed, onBeforeUnmount, ref } from 'vue';
+import { useTimeoutFn } from '@vueuse/core';
+import { computed, ref } from 'vue';
 import { tryWriteClipboardText } from '@/utils/clipboard';
 
 const props = defineProps<{
@@ -9,9 +10,18 @@ const props = defineProps<{
 
 const normalizedMessage = computed(() => props.message.trim());
 const copied = ref(false);
-let copiedResetTimer: ReturnType<typeof setTimeout> | null = null;
 
 const copyHint = computed(() => (copied.value ? '已复制完整错误信息' : '点击复制完整错误信息'));
+
+// immediate: false —— 仅在复制成功后手动 start()；到期复位 copied，
+// 组件卸载时 vueuse 自动 stop。
+const { start: scheduleCopiedReset } = useTimeoutFn(
+  () => {
+    copied.value = false;
+  },
+  1600,
+  { immediate: false },
+);
 
 const handleCopy = async (): Promise<void> => {
   const message = normalizedMessage.value;
@@ -27,23 +37,8 @@ const handleCopy = async (): Promise<void> => {
   }
 
   copied.value = true;
-
-  if (copiedResetTimer) {
-    clearTimeout(copiedResetTimer);
-  }
-
-  copiedResetTimer = setTimeout(() => {
-    copied.value = false;
-    copiedResetTimer = null;
-  }, 1600);
+  scheduleCopiedReset();
 };
-
-onBeforeUnmount(() => {
-  if (copiedResetTimer) {
-    clearTimeout(copiedResetTimer);
-    copiedResetTimer = null;
-  }
-});
 </script>
 
 <template>

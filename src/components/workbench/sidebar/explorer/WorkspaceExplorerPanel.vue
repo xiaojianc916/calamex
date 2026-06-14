@@ -56,7 +56,7 @@
 </template>
 
 <script setup lang="ts">
-import { useEventListener } from '@vueuse/core';
+import { useEventListener, useTimeoutFn } from '@vueuse/core';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useWorkspaceExplorerContextMenu } from '@/components/workbench/sidebar/explorer/useWorkspaceExplorerContextMenu';
 import { useWorkspaceExplorerMutations } from '@/components/workbench/sidebar/explorer/useWorkspaceExplorerMutations';
@@ -100,22 +100,19 @@ const appStore = useAppStore();
 const explorerSectionRef = ref<HTMLElement | null>(null);
 const isExplorerScrollbarActive = ref(false);
 
-let explorerScrollbarIdleTimer: ReturnType<typeof setTimeout> | null = null;
-
-const clearExplorerScrollbarIdleTimer = (): void => {
-  if (explorerScrollbarIdleTimer !== null) {
-    clearTimeout(explorerScrollbarIdleTimer);
-    explorerScrollbarIdleTimer = null;
-  }
-};
+// 滚动后 EXPLORER_SCROLLBAR_IDLE_HIDE_DELAY_MS 自动隐藏滚动条高亮；
+// immediate: false 仅在 handleExplorerTreeScroll 时 start。
+const { start: scheduleExplorerScrollbarIdleHide } = useTimeoutFn(
+  () => {
+    isExplorerScrollbarActive.value = false;
+  },
+  EXPLORER_SCROLLBAR_IDLE_HIDE_DELAY_MS,
+  { immediate: false },
+);
 
 const handleExplorerTreeScroll = (): void => {
-  clearExplorerScrollbarIdleTimer();
   isExplorerScrollbarActive.value = true;
-  explorerScrollbarIdleTimer = setTimeout(() => {
-    explorerScrollbarIdleTimer = null;
-    isExplorerScrollbarActive.value = false;
-  }, EXPLORER_SCROLLBAR_IDLE_HIDE_DELAY_MS);
+  scheduleExplorerScrollbarIdleHide();
 };
 
 const selectedExplorerPath = computed(
@@ -292,7 +289,6 @@ onMounted(() => {
 onBeforeUnmount(() => {
   closeInlineCreateDraft();
   cancelInlineRename();
-  clearExplorerScrollbarIdleTimer();
   stopWorkspaceFileWatcher();
 });
 </script>

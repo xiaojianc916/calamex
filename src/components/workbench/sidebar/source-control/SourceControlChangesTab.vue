@@ -78,7 +78,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import { useEventListener } from '@vueuse/core';
+import { computed, reactive, ref, watch } from 'vue';
 import LinearContextMenu from '@/components/common/LinearContextMenu.vue';
 import type { ILinearContextMenuItem } from '@/components/common/linear-context-menu.types';
 import { useDialog } from '@/composables/useDialog';
@@ -583,25 +584,10 @@ const handleWindowResize = (): void => {
   }
 };
 
-onMounted(() => {
-  if (typeof window === 'undefined') {
-    return;
-  }
-  window.addEventListener('pointerdown', handleWindowPointerDown, true);
-  window.addEventListener('keydown', handleWindowKeydown);
-  window.addEventListener('resize', handleWindowResize);
-  window.addEventListener('blur', handleWindowResize);
-});
-
-onBeforeUnmount(() => {
-  if (typeof window === 'undefined') {
-    return;
-  }
-  window.removeEventListener('pointerdown', handleWindowPointerDown, true);
-  window.removeEventListener('keydown', handleWindowKeydown);
-  window.removeEventListener('resize', handleWindowResize);
-  window.removeEventListener('blur', handleWindowResize);
-});
+useEventListener(window, 'pointerdown', handleWindowPointerDown, { capture: true });
+useEventListener(window, 'keydown', handleWindowKeydown);
+useEventListener(window, 'resize', handleWindowResize);
+useEventListener(window, 'blur', handleWindowResize);
 
 watch(
   () => props.workspaceRootPath,

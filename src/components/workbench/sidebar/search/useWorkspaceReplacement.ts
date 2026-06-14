@@ -1,3 +1,4 @@
+import { useDebounceFn } from '@vueuse/core';
 import { type ComputedRef, computed, onScopeDispose, type Ref, ref } from 'vue';
 import { useMessage } from '@/composables/useMessage';
 import {
@@ -85,7 +86,6 @@ export const useWorkspaceReplacement = (options: IUseWorkspaceReplacementOptions
 
   let replacementPreviewRequestId = 0;
   let replacementApplyRequestId = 0;
-  let replacementPreviewTimer: ReturnType<typeof setTimeout> | null = null;
   let activeReplacementPreviewAbortController: AbortController | null = null;
   let activeReplacementApplyAbortController: AbortController | null = null;
 
@@ -179,10 +179,7 @@ export const useWorkspaceReplacement = (options: IUseWorkspaceReplacementOptions
   };
 
   const resetReplacementPreview = (): void => {
-    if (replacementPreviewTimer) {
-      clearTimeout(replacementPreviewTimer);
-      replacementPreviewTimer = null;
-    }
+    debouncedPreviewReplacement.cancel();
     replacementPreviewRequestId += 1;
     activeReplacementPreviewAbortController?.abort();
     activeReplacementPreviewAbortController = null;
@@ -431,12 +428,14 @@ export const useWorkspaceReplacement = (options: IUseWorkspaceReplacementOptions
     if (hasPreview) await confirmReplacementPreview();
   };
 
+  // trailing debounce：高频触发只取最后一次；vueuse 自动 onScopeDispose 取消。
+  const debouncedPreviewReplacement = useDebounceFn(
+    () => void previewReplacementToSearch('auto'),
+    SEARCH_DEBOUNCE_MS,
+  );
+
   const scheduleReplacementPreview = (): void => {
-    if (replacementPreviewTimer) clearTimeout(replacementPreviewTimer);
-    replacementPreviewTimer = setTimeout(() => {
-      replacementPreviewTimer = null;
-      void previewReplacementToSearch('auto');
-    }, SEARCH_DEBOUNCE_MS);
+    debouncedPreviewReplacement();
   };
 
   const skipReplacementLine = (lineId: string): void => {
@@ -505,10 +504,7 @@ export const useWorkspaceReplacement = (options: IUseWorkspaceReplacementOptions
   };
 
   const cancelPendingReplacement = (): void => {
-    if (replacementPreviewTimer) {
-      clearTimeout(replacementPreviewTimer);
-      replacementPreviewTimer = null;
-    }
+    debouncedPreviewReplacement.cancel();
     activeReplacementPreviewAbortController?.abort();
     activeReplacementPreviewAbortController = null;
     invalidateReplacementApplyLifecycle();
