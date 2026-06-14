@@ -64,22 +64,25 @@ pub(crate) fn verify_known_host(
 ) -> HostKeyVerdict {
     match russh::keys::check_known_hosts(host, port, key) {
         Ok(true) => HostKeyVerdict::Accept,
-        Ok(false) => {
-            match russh::keys::known_hosts::learn_known_hosts(host, port, key) {
-                Ok(()) => tracing::info!(
+        Ok(false) => match record_new_known_host_key(host, port, key) {
+            Ok(()) => {
+                tracing::info!(
                     %host,
                     port,
                     "ssh: recorded new host key (trust on first use)"
-                ),
-                Err(e) => tracing::warn!(
+                );
+                HostKeyVerdict::Accept
+            }
+            Err(e) => {
+                tracing::error!(
                     %host,
                     port,
                     error = %e,
-                    "ssh: failed to record host key to known_hosts"
-                ),
+                    "ssh: failed to record new host key – refusing connection"
+                );
+                HostKeyVerdict::Reject
             }
-            HostKeyVerdict::Accept
-        }
+        },
         // A known host presenting a different key surfaces as the typed
         // `KeyChanged` variant (possible MITM, but often a legitimate
         // rotation). Match the variant structurally instead of substring-
@@ -116,6 +119,28 @@ fn known_hosts_file_path() -> Result<PathBuf, String> {
     Ok(PathBuf::from(home).join(".ssh").join("known_hosts"))
 }
 
+fn ensure_known_hosts_parent_dir(path: &Path) -> Result<(), String> {
+    let Some(parent) = path.parent() else {
+        return Ok(());
+    };
+    if parent.as_os_str().is_empty() {
+        return Ok(());
+    }
+    std_fs::create_dir_all(parent).map_err(|e| format!("创建 known_hosts 目录失败：{e}"))
+}
+
+fn record_new_known_host_key(
+    host: &str,
+    port: u16,
+    key: &russh::keys::PublicKey,
+) -> Result<(), String> {
+    let path = known_hosts_file_path()?;
+    ensure_known_hosts_parent_dir(&path)?;
+    russh::keys::known_hosts::learn_known_hosts_path(host, port, key, &path)
+        .map_err(|e| format!("写入 known_hosts 失败：{e}"))
+}
+
+
 pub(crate) fn replace_known_host_key(
     host: &str,
     port: u16,
@@ -131,6 +156,8 @@ fn replace_known_host_key_in(
     port: u16,
     key: &russh::keys::PublicKey,
 ) -> Result<(), String> {
+    ensure_known_hosts_parent_dir(path)?;
+
     if path.exists() {
         let content =
             std_fs::read_to_string(path).map_err(|e| format!("读取 known_hosts 失败：{e}"))?;
@@ -249,6 +276,22 @@ mod tests {
             std_fs::read_to_string(&path).expect("read back"),
             "fresh-a\nfresh-b\n"
         );
+        let _ = std_fs::remove_dir_all(&dir);
+    }
+
+
+    #[test]
+    fn ensure_known_hosts_parent_dir_creates_missing_parent() {
+        let dir = std::env::temp_dir().join(format!(
+            "calamex_known_hosts_parent_{}",
+            std::process::id()
+        ));
+        let nested = dir.join(".ssh").join("known_hosts");
+        let _ = std_fs::remove_dir_all(&dir);
+
+        ensure_known_hosts_parent_dir(&nested).expect("create parent dir");
+
+        assert!(nested.parent().is_some_and(Path::exists));
         let _ = std_fs::remove_dir_all(&dir);
     }
 }

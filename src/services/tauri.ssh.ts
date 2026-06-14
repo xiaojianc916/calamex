@@ -34,6 +34,32 @@ const SSH_MUTATION_TIMEOUT_MS = SSH_CONNECT_BUDGET_MS + 45_000; // 后端写/删
 const isCanceledIpcError = (error: unknown): boolean =>
   isAppError(error) && error.code === 'ipc.canceled';
 
+const SSH_SENSITIVE_INPUT_FIELDS = [
+  'password',
+  'identityPath',
+  'localPath',
+  'remotePath',
+  'remoteDirectory',
+  'path',
+  'content',
+] as const;
+
+const measureSshSensitiveInput = (value: Record<string, unknown>) =>
+  buildPayloadMetricsOmittingTextFields(value, SSH_SENSITIVE_INPUT_FIELDS);
+
+const measureSshPasswordOutput = (value: unknown) =>
+  value && typeof value === 'object' && !Array.isArray(value)
+    ? buildPayloadMetricsOmittingTextFields(value as Record<string, unknown>, ['password'])
+    : { bytes: 0 };
+
+const measureSshFileReadOutput = (value: unknown) =>
+  value && typeof value === 'object' && !Array.isArray(value)
+    ? buildPayloadMetricsOmittingTextFields(value as Record<string, unknown>, [
+        'content',
+        'remotePath',
+      ])
+    : { bytes: 0 };
+
 const testSshConnectionIpc = (
   payload: TSshRequest<'testSshConnection'>,
   options?: IIpcCallOptions,
@@ -46,6 +72,7 @@ const testSshConnectionIpc = (
       timeoutMs: 15_000,
       audit: 'sensitive',
       input: payload,
+      measureInput: measureSshSensitiveInput,
       signal: options?.signal,
     },
     () => commands.testSshConnection(payload),
@@ -61,6 +88,7 @@ const saveSshPasswordIpc = (
       guardHint: '保存 SSH 密码',
       audit: 'sensitive',
       input: payload,
+      measureInput: measureSshSensitiveInput,
       signal: options?.signal,
     },
     () => commands.saveSshPassword(payload),
@@ -77,6 +105,8 @@ const getSshPasswordIpc = (
       idempotent: true,
       audit: 'sensitive',
       input: payload,
+      measureInput: measureSshSensitiveInput,
+      measureOutput: measureSshPasswordOutput,
       signal: options?.signal,
     },
     () => commands.getSshPassword(payload),
@@ -108,6 +138,7 @@ const listSshDirectoryIpc = (
       timeoutMs: SSH_LIST_TIMEOUT_MS,
       audit: 'sensitive',
       input: payload,
+      measureInput: measureSshSensitiveInput,
       signal: options?.signal,
     },
     () => commands.listSshDirectory(payload),
@@ -124,6 +155,7 @@ const downloadSshFileIpc = (
       audit: 'sensitive',
       timeoutMs: SSH_TRANSFER_TIMEOUT_MS,
       input: payload,
+      measureInput: measureSshSensitiveInput,
       signal: options?.signal,
     },
     () => commands.downloadSshFile(payload),
@@ -140,6 +172,7 @@ const uploadSshFileIpc = (
       audit: 'sensitive',
       timeoutMs: SSH_TRANSFER_TIMEOUT_MS,
       input: payload,
+      measureInput: measureSshSensitiveInput,
       signal: options?.signal,
     },
     () => commands.uploadSshFile(payload),
@@ -157,6 +190,8 @@ const readSshFileIpc = (
       audit: 'sensitive',
       timeoutMs: SSH_PREVIEW_READ_TIMEOUT_MS,
       input: payload,
+      measureInput: measureSshSensitiveInput,
+      measureOutput: measureSshFileReadOutput,
       signal: options?.signal,
     },
     () => commands.readSshFile(payload),
@@ -173,7 +208,7 @@ const writeSshFileIpc = (
       audit: 'sensitive',
       timeoutMs: SSH_MUTATION_TIMEOUT_MS,
       input: payload,
-      measureInput: (value) => buildPayloadMetricsOmittingTextFields(value, ['content']),
+      measureInput: measureSshSensitiveInput,
       signal: options?.signal,
     },
     () => commands.writeSshFile(payload),
@@ -190,6 +225,7 @@ const deleteSshPathIpc = (
       audit: 'sensitive',
       timeoutMs: SSH_MUTATION_TIMEOUT_MS,
       input: payload,
+      measureInput: measureSshSensitiveInput,
       signal: options?.signal,
     },
     () => commands.deleteSshPath(payload),
@@ -206,6 +242,7 @@ const renameSshPathIpc = (
       audit: 'sensitive',
       timeoutMs: SSH_MUTATION_TIMEOUT_MS,
       input: payload,
+      measureInput: measureSshSensitiveInput,
       signal: options?.signal,
     },
     () => commands.renameSshPath(payload),
@@ -222,6 +259,7 @@ const createSshDirectoryIpc = (
       audit: 'sensitive',
       timeoutMs: SSH_MUTATION_TIMEOUT_MS,
       input: payload,
+      measureInput: measureSshSensitiveInput,
       signal: options?.signal,
     },
     () => commands.createSshDirectory(payload),
@@ -253,6 +291,7 @@ const trustSshHostKeyIpc = (
       audit: 'sensitive',
       timeoutMs: 15_000,
       input: endpoint,
+      measureInput: measureSshSensitiveInput,
       signal: options?.signal,
     },
     () => commands.trustSshHostKey(endpoint.host, endpoint.port),

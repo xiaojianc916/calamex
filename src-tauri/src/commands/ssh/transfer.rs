@@ -172,6 +172,12 @@ async fn download_file_inner(
 
     let partial_for_write = partial.clone();
     let write_handle = tokio::task::spawn_blocking(move || -> Result<u64, String> {
+        if let Some(parent) = partial_for_write.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            std_fs::create_dir_all(parent)
+                .map_err(|e| format!("无法创建本地目录 {parent:?}：{e}"))?;
+        }
         let mut local = std_fs::File::create(&partial_for_write)
             .map_err(|e| format!("无法创建本地文件 {partial_for_write:?}：{e}"))?;
         let mut total: u64 = 0;
@@ -221,13 +227,11 @@ async fn download_file_inner(
         ensure_expected_transfer_size(written, expected, "下载远程文件")?;
     }
 
-    let partial_for_rename = partial.clone();
+    let partial_for_replace = partial.clone();
     let target = local_path.to_path_buf();
-    tokio::task::spawn_blocking(move || {
-        std_fs::rename(&partial_for_rename, &target).map_err(|e| format!("重命名本地文件失败：{e}"))
-    })
-    .await
-    .map_err(|e| format!("重命名任务异常终止：{e}"))??;
+    tokio::task::spawn_blocking(move || replace_local_partial_onto_target(&partial_for_replace, &target))
+        .await
+        .map_err(|e| format!("重命名任务异常终止：{e}"))??;
 
     Ok(written)
 }
@@ -353,6 +357,16 @@ fn local_partial_path(local: &Path) -> PathBuf {
     p
 }
 
+fn local_backup_path(local: &Path) -> PathBuf {
+    let mut p = local.to_path_buf();
+    let name = p
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    p.set_file_name(format!("{name}.{token}{SFTP_BACKUP_SUFFIX}", token = unique_transfer_token()));
+    p
+}
+
 /// 生成进程内唯一的传输令牌（pid + 纳秒时间戳 + 单调计数器）。
 /// 用于远端临时 / 备份文件名，避免并发上传或写入时固定后缀互相覆盖。
 fn unique_transfer_token() -> String {
@@ -434,6 +448,43 @@ fn remote_backup_path(target: &str) -> String {
 fn cleanup_local_partial(local_path: &Path) {
     let partial = local_partial_path(local_path);
     let _ = std_fs::remove_file(partial);
+}
+
+fn replace_local_partial_onto_target(partial: &Path, target: &Path) -> Result<(), String> {
+    if let Some(parent) = target.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std_fs::create_dir_all(parent).map_err(|e| format!("无法创建本地目录 {parent:?}：{e}"))?;
+    }
+
+    if std_fs::rename(partial, target).is_ok() {
+        return Ok(());
+    }
+
+    let backup = local_backup_path(target);
+    let had_backup = if target.exists() {
+        std_fs::rename(target, &backup).map_err(|e| {
+            format!("无法备份已有本地文件 {target:?} -> {backup:?}：{e}")
+        })?;
+        true
+    } else {
+        false
+    };
+
+    match std_fs::rename(partial, target) {
+        Ok(()) => {
+            if had_backup {
+                let _ = std_fs::remove_file(&backup);
+            }
+            Ok(())
+        }
+        Err(error) => {
+            if had_backup {
+                let _ = std_fs::rename(&backup, target);
+            }
+            Err(format!("重命名本地文件 {partial:?} -> {target:?} 失败：{error}"))
+        }
+    }
 }
 
 fn ensure_expected_transfer_size(
@@ -870,5 +921,19 @@ mod tests {
         })
         .await;
         assert_eq!(res, Err("操作超时。".to_string()));
+    }
+
+
+    #[test]
+    fn local_backup_path_keeps_target_parent_and_suffix() {
+        let target = Path::new("dir").join("download.txt");
+        let backup = local_backup_path(&target);
+        assert_eq!(backup.parent(), Some(Path::new("dir")));
+        let name = backup
+            .file_name()
+            .map(|value| value.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        assert!(name.starts_with("download.txt."));
+        assert!(name.ends_with(SFTP_BACKUP_SUFFIX));
     }
 }
