@@ -12,14 +12,14 @@ const agentPath = 'agent-sidecar/src/acp/agent.ts';
 let agent = readFileSync(agentPath, 'utf8');
 agent = replaceOnce(
   agent,
-  '\ttask: "chat",\n\tplan: "plan",',
-  '\task: "chat",\n\tplan: "plan",'.replace('\\task', '\task'.replace('task', 'ask')),
+  'ask: "chat",'.replace('ask', 'task'),
+  'ask: "chat",',
   agentPath,
 );
-if (!agent.includes('\task: "chat",'.replace('\\task', '\task'.replace('task', 'ask')))) {
+if (!agent.includes('ask: "chat",')) {
   throw new Error(`${agentPath}: ask mode route was not repaired`);
 }
-if (agent.includes('\ttask: "chat",')) {
+if (agent.includes('task: "chat",')) {
   throw new Error(`${agentPath}: stale task mode route still exists`);
 }
 writeFileSync(agentPath, agent);
