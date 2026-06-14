@@ -6,8 +6,10 @@ export type SshAuthMode = (typeof SSH_AUTH_MODES)[number];
 // 跟旧代码完全一致的字符规则
 const HOST_PATTERN = /^[a-zA-Z0-9.\-_:]+$/;
 const USER_PATTERN = /^[a-zA-Z0-9.\-_]+$/;
-const SAFE_PATH_PATTERN = /^[^\r\n]+$/;
 const PORT_PATTERN = /^\d+$/;
+
+const hasControlCharacter = (value: string): boolean =>
+  [...value].some((char) => char.charCodeAt(0) < 32);
 
 /** 表单值类型:全部 string,跟 <input type="text"> 的 v-model 对齐 */
 export interface SshConnectionFormValues {
@@ -52,22 +54,28 @@ const sshConnectionObjectSchema = z.object({
 /** 完整 schema:含条件校验(authMode === 'password' 时密码必填,路径不能含换行) */
 export const sshConnectionSchema = sshConnectionObjectSchema.superRefine((val, ctx) => {
   const identityPath = val.identityPath.trim();
-  if (identityPath && !SAFE_PATH_PATTERN.test(identityPath)) {
+  if (val.authMode === 'key' && !identityPath) {
     ctx.addIssue({
       code: 'custom',
       path: ['identityPath'],
-      message: '私钥路径不能包含换行符。',
+      message: '请填写私钥路径。',
+    });
+  } else if (identityPath && hasControlCharacter(identityPath)) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['identityPath'],
+      message: '私钥路径不能包含控制字符。',
     });
   }
 
   if (val.authMode === 'password') {
     if (!val.password) {
       ctx.addIssue({ code: 'custom', path: ['password'], message: '请填写登录密码。' });
-    } else if (!SAFE_PATH_PATTERN.test(val.password)) {
+    } else if (hasControlCharacter(val.password)) {
       ctx.addIssue({
         code: 'custom',
         path: ['password'],
-        message: '登录密码不能包含换行符。',
+        message: '登录密码不能包含控制字符。',
       });
     }
   }

@@ -338,11 +338,10 @@ fn io_error_is_connection_level(io: &std::io::Error) -> bool {
 
 // ---- validate SSH endpoint ----
 fn validate_ssh_endpoint(host: &str, username: &str) -> Result<(), String> {
-    if host.contains('\r')
-        || host.contains('\n')
-        || username.contains('\r')
-        || username.contains('\n')
-    {
+    if host.is_empty() || username.is_empty() {
+        return Err("主机地址或用户名不能为空。".into());
+    }
+    if host.chars().any(char::is_control) || username.chars().any(char::is_control) {
         return Err("主机地址或用户名包含非法控制字符。".into());
     }
     if host.starts_with('-') || username.starts_with('-') {
@@ -516,5 +515,15 @@ mod tests {
             !expanded.starts_with('~'),
             "tilde should be expanded: {expanded}"
         );
+    }
+
+
+    #[test]
+    fn validate_ssh_endpoint_rejects_control_characters() {
+        assert!(validate_ssh_endpoint("example.com", "root").is_ok());
+        assert!(validate_ssh_endpoint("example.com\0bad", "root").is_err());
+        assert!(validate_ssh_endpoint("example.com", "ro\tot").is_err());
+        assert!(validate_ssh_endpoint("", "root").is_err());
+        assert!(validate_ssh_endpoint("example.com", "").is_err());
     }
 }

@@ -175,6 +175,7 @@ export const useSshRemoteSession = (options: IUseSshRemoteSessionOptions) => {
     try {
       const result = await tauriService.listSshDirectory(createSshDirectoryRequest(path));
       if (requestVersion !== remoteDirectoryRequestVersion.value) return;
+
       currentRemotePath.value = result.path;
       sshFileItems.value = result.entries.map((entry) => {
         const isDirectory = entry.kind === 'directory';
@@ -188,6 +189,9 @@ export const useSshRemoteSession = (options: IUseSshRemoteSessionOptions) => {
         };
       });
       selectedFileId.value = sshFileItems.value[0]?.id ?? '';
+    } catch (error) {
+      if (requestVersion !== remoteDirectoryRequestVersion.value) return;
+      throw error;
     } finally {
       if (requestVersion === remoteDirectoryRequestVersion.value) {
         isRemoteDirectoryLoading.value = false;
@@ -271,11 +275,15 @@ export const useSshRemoteSession = (options: IUseSshRemoteSessionOptions) => {
     transferItems.value.unshift(transferItem);
     isUploading.value = true;
 
+    const directoryAtStart = currentRemotePath.value;
+
     try {
       const result = await tauriService.uploadSshFile(
         createSshFileUploadRequest(localPath, remoteDirectory),
       );
-      await loadRemoteDirectory(currentRemotePath.value);
+      if (isConnected.value && currentRemotePath.value === directoryAtStart) {
+        await loadRemoteDirectory(directoryAtStart);
+      }
       updateTransferItem(transferItem.id, {
         sizeLabel: formatRemoteFileSize(result.byteSize),
         progressLabel: '\u5df2\u5b8c\u6210',
@@ -463,11 +471,15 @@ export const useSshRemoteSession = (options: IUseSshRemoteSessionOptions) => {
       return;
     }
 
+    const directoryAtStart = currentRemotePath.value;
+
     isPathMutating.value = true;
     try {
       await tauriService.renameSshPath(createSshPathRenameRequest(fileItem.path, newName));
       closeRenameDialog();
-      await loadRemoteDirectory(currentRemotePath.value);
+      if (isConnected.value && currentRemotePath.value === directoryAtStart) {
+        await loadRemoteDirectory(directoryAtStart);
+      }
       message.success('\u8fdc\u7aef\u8def\u5f84\u5df2\u91cd\u547d\u540d\u3002');
     } catch (error) {
       const errorMessage =
@@ -493,14 +505,18 @@ export const useSshRemoteSession = (options: IUseSshRemoteSessionOptions) => {
       return;
     }
 
+    const directoryAtStart = currentRemotePath.value;
+
     isPathMutating.value = true;
     try {
       const result = await tauriService.createSshDirectory(
-        createSshDirectoryCreateRequest(currentRemotePath.value, directoryName),
+        createSshDirectoryCreateRequest(directoryAtStart, directoryName),
       );
       resetCreateDirectoryDialog(true);
-      await loadRemoteDirectory(currentRemotePath.value);
-      selectedFileId.value = result.remotePath;
+      if (isConnected.value && currentRemotePath.value === directoryAtStart) {
+        await loadRemoteDirectory(directoryAtStart);
+        selectedFileId.value = result.remotePath;
+      }
       message.success('\u8fdc\u7aef\u76ee\u5f55\u5df2\u521b\u5efa\u3002');
     } catch (error) {
       const errorMessage =
@@ -517,11 +533,15 @@ export const useSshRemoteSession = (options: IUseSshRemoteSessionOptions) => {
     const fileItem = pendingDeleteItem.value;
     if (!fileItem) return;
 
+    const directoryAtStart = currentRemotePath.value;
+
     isPathMutating.value = true;
     try {
       await tauriService.deleteSshPath(createSshPathDeleteRequest(fileItem.path));
       resetDeleteDialog(true);
-      await loadRemoteDirectory(currentRemotePath.value);
+      if (isConnected.value && currentRemotePath.value === directoryAtStart) {
+        await loadRemoteDirectory(directoryAtStart);
+      }
       message.success('\u8fdc\u7aef\u8def\u5f84\u5df2\u5220\u9664\u3002');
     } catch (error) {
       const errorMessage =

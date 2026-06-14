@@ -41,11 +41,14 @@ impl SecretString {
 /// 析构时尽力清零明文字节，避免密钥在释放后仍残留于堆内存。
 impl Drop for SecretString {
     fn drop(&mut self) {
+        // 用 volatile 写 + 编译屏障逐字节覆盖敏感内容，避免编译器把
+        // “写后即释放”的清零当作死存储优化掉。
         unsafe {
             for b in self.0.as_bytes_mut() {
-                *b = 0;
+                std::ptr::write_volatile(b, 0u8);
             }
         }
+        std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
         self.0.clear();
     }
 }

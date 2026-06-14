@@ -55,8 +55,12 @@ pub(crate) fn truncate_at_utf8_boundary(mut raw: Vec<u8>) -> Vec<u8> {
     match std::str::from_utf8(&raw) {
         Ok(_) => raw,
         Err(error) => {
-            let valid = error.valid_up_to();
-            raw.truncate(valid);
+            // 只处理“预览读取上限刚好切在 UTF-8 多字节字符中间”的尾部不完整情况。
+            // 如果 error_len() 为 Some，说明是文件内容中存在真正非法 UTF-8 字节；
+            // 这时不能吞掉错误并截断显示，否则用户保存预览内容会把远端文件静默截坏。
+            if error.error_len().is_none() {
+                raw.truncate(error.valid_up_to());
+            }
             raw
         }
     }
@@ -108,17 +112,27 @@ pub(crate) fn encode_remote_preview_text(
 ) -> Result<Vec<u8>, String> {
     let lf_only = content.replace("\r\n", "\n").replace('\r', "\n");
     let normalized = match line_ending {
+        "lf" | "none" => lf_only,
         "crlf" => lf_only.replace('\n', "\r\n"),
         "cr" => lf_only.replace('\n', "\r"),
-        _ => lf_only,
+        "mixed" => {
+            return Err(
+                "当前文件包含混合换行符，暂不支持直接保存；请先在本地编辑器统一换行格式后再保存。"
+                    .into(),
+            );
+        }
+        other => return Err(format!("不支持的换行格式：{other}")),
     };
-    let mut bytes = normalized.into_bytes();
-    if encoding == "utf-8-bom" {
-        let mut bom = vec![0xef, 0xbb, 0xbf];
-        bom.append(&mut bytes);
-        Ok(bom)
-    } else {
-        Ok(bytes)
+
+    match encoding {
+        "utf-8" => Ok(normalized.into_bytes()),
+        "utf-8-bom" => {
+            let mut bytes = normalized.into_bytes();
+            let mut bom = vec![0xef, 0xbb, 0xbf];
+            bom.append(&mut bytes);
+            Ok(bom)
+        }
+        other => Err(format!("不支持的文本编码：{other}")),
     }
 }
 

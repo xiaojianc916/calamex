@@ -6,19 +6,32 @@ use crate::commands::{
 
 const SSH_KEYRING_SERVICE: &str = "calamex.ssh";
 
+
+
+fn scrub_secret_string(value: &mut String) {
+    unsafe {
+        for b in value.as_bytes_mut() {
+            std::ptr::write_volatile(b, 0u8);
+        }
+    }
+    std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
+    value.clear();
+}
 #[tauri::command]
 #[specta::specta]
 pub async fn save_ssh_password(
     payload: SshPasswordSaveRequest,
 ) -> Result<SshPasswordStatusPayload, String> {
     let account = ssh_password_account(&payload.host, payload.port, &payload.username)?;
-    let password = payload.password.expose().to_string();
+    let mut password = payload.password.expose().to_string();
     tokio::task::spawn_blocking(move || {
         let entry = keyring::Entry::new(SSH_KEYRING_SERVICE, &account)
             .map_err(|e| format!("无法创建凭据条目：{e}"))?;
-        entry
+        let result = entry
             .set_password(&password)
-            .map_err(|e| format!("无法保存 SSH 密码：{e}"))?;
+            .map_err(|e| format!("无法保存 SSH 密码：{e}"));
+        scrub_secret_string(&mut password);
+        result?;
         Ok::<(), String>(())
     })
     .await
