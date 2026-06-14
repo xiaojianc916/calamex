@@ -12,7 +12,7 @@
  *                       回灌 resolveApproval 续跑(见 approval-bridge.ts)，直至无待裁决审批，
  *                       回合收尾经 turn-egress 发可选 usage_update + 返回 PromptResponse。
  * - cancel            → 中止该会话当前回合的 AbortController(映射 runtime context.signal)。
- * - extMethod         → 受理本 Agent 公示的带外能力(检查点回滚 / 模型透传 / web 检索抓取 / 预热 / 健康探活)。
+ * - extMethod         → 受理本 Agent 公示的带外能力(检查点回滚 / 模型透传 / web 检索抓取 / 预热 / 健康探活 / 计划编排)。
  *
  * 设计要点：
  * - 依赖注入(connection / runtime / registry / 生成器)，与 JSON-RPC 传输解耦，可单测。
@@ -69,16 +69,25 @@ import {
 	CHECKPOINT_RESTORE_METHOD,
 	HEALTH_METHOD,
 	MODEL_CHAT_METHOD,
+	ORCHESTRATE_METHOD,
+	ORCHESTRATE_RESUME_METHOD,
 	parseCheckpointRestoreParams,
 	parseModelChatParams,
+	parseOrchestrateParams,
+	parseOrchestrateResumeParams,
 	toCheckpointRestoreExtResult,
 	toModelChatExtResult,
+	toOrchestrateExtResult,
 	toWarmupExtResult,
 	WARMUP_METHOD,
 	WEB_FETCH_METHOD,
 	WEB_SEARCH_METHOD,
 } from "./ext-methods.js"
 import { promptResponse } from "./helpers.js"
+import {
+	AcpOrchestrationRunner,
+	type TOrchestrationEventSink,
+} from "./orchestration.js"
 import { toSessionNotificationsFromOutputEvent } from "./output-event-stream.js"
 import { AcpSessionRegistry } from "./session-registry.js"
 import { buildPromptRuntimeInput } from "./to-runtime-input.js"
@@ -186,6 +195,8 @@ export class CalamexAcpAgent implements Agent {
 	private readonly defaultMode: TAgentMode
 	private readonly turnTimeoutMs: number
 	private readonly generateRequestId: () => string
+	/** 原生计划编排 runner：持有运行中编排运行句柄与 TTL，支撑 orchestrate/resume 挂起恢复。 */
+	private readonly orchestration: AcpOrchestrationRunner
 
 	constructor(
 		connection: IAcpAgentConnection,
@@ -198,6 +209,7 @@ export class CalamexAcpAgent implements Agent {
 		this.defaultMode = options.defaultMode ?? "agent"
 		this.turnTimeoutMs = options.turnTimeoutMs ?? DEFAULT_TURN_TIMEOUT_MS
 		this.generateRequestId = options.generateRequestId ?? randomUUID
+		this.orchestration = new AcpOrchestrationRunner(runtime)
 	}
 
 	async initialize(
@@ -207,7 +219,7 @@ export class CalamexAcpAgent implements Agent {
 			protocolVersion: PROTOCOL_VERSION,
 			agentCapabilities: {
 				loadSession: false,
-				// 带外能力(检查点回滚 / 模型透传 / web 检索抓取 / 预热 / 健康探活)以命名空间扩展方法公示；见 ext-methods.ts。
+				// 带外能力(检查点回滚 / 模型透传 / web 检索抓取 / 预热 / 健康探活 / 计划编排)以命名空间扩展方法公示；见 ext-methods.ts。
 				_meta: CALAMEX_AGENT_CAPABILITY_META,
 			},
 		}
@@ -363,6 +375,10 @@ export class CalamexAcpAgent implements Agent {
 				return this.handleWarmup(params)
 			case HEALTH_METHOD:
 				return this.handleHealth()
+			case ORCHESTRATE_METHOD:
+				return this.handleOrchestrate(params)
+			case ORCHESTRATE_RESUME_METHOD:
+				return this.handleOrchestrateResume(params)
 			default:
 				throw RequestError.methodNotFound(method)
 		}
@@ -452,6 +468,68 @@ export class CalamexAcpAgent implements Agent {
 			version: this.runtime.version ?? null,
 			mcp: getMcpRuntimeStatus(),
 		})
+	}
+
+	/**
+	 * 受理原生计划编排启动扩展方法(plan/orchestrate)。编排不是 prompt 回合，不经会话登记表
+	 * 的回合管理；过程事件由 runner 经传入的 sink 投影。携带 sessionId 时 sink 经
+	 * emitOutputEvent 将编排内部事件经 session/update 下发(与 chat 同一投影路径，仅 agent_event
+	 * 成帧)；无 sessionId 时 sink 为空操作(仅返回终态信封)。返回 { runId, status, result }
+	 * 与旧 http /stream 终帧同形，挂起时 result 携带 suspend payload 供宿主审批 UI。
+	 * 失败依 ACP 约定映射为 JSON-RPC error(由 SDK 包装)。
+	 */
+	private async handleOrchestrate(
+		params: Record<string, unknown>,
+	): Promise<Record<string, unknown>> {
+		const parsed = parseOrchestrateParams(params)
+		const { sessionId } = parsed
+		const sink: TOrchestrationEventSink =
+			sessionId !== undefined
+				? (event) => this.emitOutputEvent(sessionId, event)
+				: () => {}
+		const result = await this.orchestration.start(
+			{
+				goal: parsed.goal,
+				executionMode: parsed.executionMode,
+				...(parsed.threadId !== undefined
+					? { threadId: parsed.threadId }
+					: {}),
+				...(parsed.modelConfig !== undefined
+					? { modelConfig: parsed.modelConfig }
+					: {}),
+			},
+			sink,
+		)
+		return toOrchestrateExtResult(result)
+	}
+
+	/**
+	 * 受理编排挂起点恢复扩展方法(plan/orchestrate/resume)。语义同 handleOrchestrate：
+	 * 续跑阶段过程事件同样经 session/update 流式下发(若携带 sessionId)，返回终态
+	 * { runId, status, result }；若再次挂起则 status 仍为 suspended 且 result 携带新的
+	 * suspend payload。失败依 ACP 约定映射为 JSON-RPC error(由 SDK 包装)。
+	 */
+	private async handleOrchestrateResume(
+		params: Record<string, unknown>,
+	): Promise<Record<string, unknown>> {
+		const parsed = parseOrchestrateResumeParams(params)
+		const { sessionId } = parsed
+		const sink: TOrchestrationEventSink =
+			sessionId !== undefined
+				? (event) => this.emitOutputEvent(sessionId, event)
+				: () => {}
+		const result = await this.orchestration.resume(
+			{
+				runId: parsed.runId,
+				decision: parsed.decision,
+				...(parsed.reason !== undefined ? { reason: parsed.reason } : {}),
+				...(parsed.modelConfig !== undefined
+					? { modelConfig: parsed.modelConfig }
+					: {}),
+			},
+			sink,
+		)
+		return toOrchestrateExtResult(result)
 	}
 
 	/**
