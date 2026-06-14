@@ -31,17 +31,20 @@ if (agent !== originalAgent) {
 const tauriTypesPath = 'src/types/tauri/index.ts';
 let tauriTypes = readFileSync(tauriTypesPath, 'utf8');
 const originalTauriTypes = tauriTypes;
-const badRestoreSignature = '  agentSidecarRestoreCheckpoint(\n    payload: IAgentSidecarCheckpointRestoreRequest): Promise<IAgentSidecarResponsePayload>;';
+
+const restoreSignaturePattern = /  agentSidecarRestoreCheckpoint\(\s*payload:\s*IAgentSidecarCheckpointRestoreRequest,?\s*\):\s*Promise<IAgentSidecarResponsePayload>;/m;
 const goodRestoreSignature = '  agentSidecarRestoreCheckpoint(\n    payload: IAgentSidecarCheckpointRestoreRequest,\n  ): Promise<IAgentSidecarResponsePayload>;';
 
-if (tauriTypes.includes(badRestoreSignature)) {
-  tauriTypes = tauriTypes.replace(badRestoreSignature, goodRestoreSignature);
-} else if (!tauriTypes.includes(goodRestoreSignature)) {
-  throw new Error(`${tauriTypesPath}: cannot locate agentSidecarRestoreCheckpoint signature`);
+if (restoreSignaturePattern.test(tauriTypes)) {
+  tauriTypes = tauriTypes.replace(restoreSignaturePattern, goodRestoreSignature);
+} else if (tauriTypes.includes('agentSidecarRestoreCheckpoint')) {
+  console.warn(`${tauriTypesPath}: agentSidecarRestoreCheckpoint already uses an unrecognized/non-target format; skipped formatting repair.`);
+} else {
+  console.warn(`${tauriTypesPath}: agentSidecarRestoreCheckpoint not found; skipped formatting repair.`);
 }
 
 if (tauriTypes !== originalTauriTypes) {
   writeFileSync(tauriTypesPath, tauriTypes);
 }
 
-console.log('已修复 ACP ask 模式路由残留与 tauri 类型格式；若本地已经修过则保持不变。');
+console.log('已修复 ACP ask 模式路由残留；tauri 类型格式若已修过或形态不同则安全跳过。');
