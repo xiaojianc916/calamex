@@ -1,6 +1,10 @@
-use super::config::{ AiProviderConnectionCandidate, build_provider_connection_candidate, save_connected_model, };
+use super::config::{
+    AiProviderConnectionCandidate, build_provider_connection_candidate, save_connected_model,
+};
 use super::*;
-use crate::commands::contracts::{ AgentSidecarChatRequest, AgentSidecarMessagePayload, AgentSidecarResponsePayload, };
+use crate::commands::contracts::{
+    AgentSidecarChatRequest, AgentSidecarMessagePayload, AgentSidecarResponsePayload,
+};
 use tauri::Manager as _;
 
 fn build_test_request(
@@ -12,7 +16,6 @@ fn build_test_request(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| errors::error("AI_PROVIDER_NOT_CONFIGURED", "请先选择模型。"))?;
-
     let api_key = candidate.api_key_for_test.trim();
     if api_key.is_empty() {
         return Err(errors::error("AI_PROVIDER_AUTH_FAILED", "请填写 API Key。"));
@@ -112,7 +115,6 @@ pub async fn test_provider(app: &AppHandle) -> Result<String, String> {
         .clone()
         .or_else(|| default_model(&config.provider_type));
     let provider_id = validate_model_provider(selected_model.as_deref(), None)?;
-
     let candidate = AiProviderConnectionCandidate {
         provider_id,
         provider_type: config.provider_type.clone(),
@@ -183,5 +185,6 @@ pub async fn connect_provider(
     )?;
 
     test_provider_connection_candidate(app, &candidate).await?;
+
     save_connected_model(role, candidate)
 }
