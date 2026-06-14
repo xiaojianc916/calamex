@@ -13,6 +13,52 @@ const replaceOrThrow = (pattern, replacement, label) => {
   content = next;
 };
 
+const helperBlock = `
+  const emitSidecarEvent = (
+    sessionId: string,
+    event: IAgentSidecarStreamEventPayload['event'],
+  ): void => {
+    sidecarStreamHandler?.({
+      sessionId,
+      seq: sidecarSequence,
+      event,
+    });
+    sidecarSequence += 1;
+  };
+
+  const emitChatDelta = (delta: string, sessionId = activeChatSessionId): void => {
+    emitSidecarEvent(sessionId, {
+      type: 'message_delta',
+      text: delta,
+      phase: 'final',
+    });
+  };
+
+  const emitChatDone = (
+    result: string,
+    sessionId = activeChatSessionId,
+    usage?: Extract<IAgentSidecarStreamEventPayload['event'], { type: 'done' }>['usage'],
+  ): void => {
+    emitSidecarEvent(sessionId, {
+      type: 'done',
+      result,
+      ...(usage ? { usage } : {}),
+    });
+  };
+
+  const emitChatError = (message: string, sessionId = activeChatSessionId): void => {
+    emitSidecarEvent(sessionId, {
+      type: 'error',
+      message,
+    });
+  };
+`;
+
+const helperBlockPattern = /\n\s*const emitSidecarEvent = \(\n\s*sessionId: string,\n\s*event: IAgentSidecarStreamEventPayload\['event'\],\n\s*\): void => \{[\s\S]*?\n\s*const emitChatError = \(message: string, sessionId = activeChatSessionId\): void => \{[\s\S]*?\n\s*\};\n/g;
+
+// 0) 先清掉上一版脚本可能重复插入的 helper block，再统一插入一次。
+content = content.replace(helperBlockPattern, '\n');
+
 // 1) 类型和常量：Chat 启动结果现在必须带 ACP sessionId，旧 ai:chat-stream 事件类型已删除。
 content = content.replace(/\n\s*IAiChatStreamEventPayload,/, '');
 if (!content.includes("const CHAT_SESSION_ID = 'acp-chat-session-1' as const;")) {
@@ -47,13 +93,12 @@ if (!content.includes('let activeChatSessionId')) {
 }
 
 // vi.hoisted 的工厂会早于模块顶层 const 初始化执行，不能在初始化表达式里读 CHAT_SESSION_ID。
-// 保留顶层 CHAT_SESSION_ID 给后续普通测试代码用，hoisted mock 的立即初始化只用字面量。
 content = content.replace(
   'let activeChatSessionId: string = CHAT_SESSION_ID;',
   "let activeChatSessionId = 'acp-chat-session-1';",
 );
 content = content.replace(
-  /let sidecarSequence = 0;\n\s*let sidecarSequence = 0;/,
+  /let sidecarSequence = 0;\n\s*let sidecarSequence = 0;/g,
   'let sidecarSequence = 0;',
 );
 
@@ -68,7 +113,7 @@ if (!content.includes('    sessionId: string;')) {
 if (!content.includes('const emitSidecarEvent = (sessionId: string')) {
   replaceOrThrow(
     '  const queuedStreamResponses: Array<{\n    streamId: string;\n    assistantMessageId: string;\n    sessionId: string;\n    content: string;\n    terminalKind: \'done\' | \'error\';\n    terminalMessage: string | null;\n  }> = [];\n',
-    `  const queuedStreamResponses: Array<{\n    streamId: string;\n    assistantMessageId: string;\n    sessionId: string;\n    content: string;\n    terminalKind: 'done' | 'error';\n    terminalMessage: string | null;\n  }> = [];\n\n  const emitSidecarEvent = (\n    sessionId: string,\n    event: IAgentSidecarStreamEventPayload['event'],\n  ): void => {\n    sidecarStreamHandler?.({\n      sessionId,\n      seq: sidecarSequence,\n      event,\n    });\n    sidecarSequence += 1;\n  };\n\n  const emitChatDelta = (delta: string, sessionId = activeChatSessionId): void => {\n    emitSidecarEvent(sessionId, {\n      type: 'message_delta',\n      text: delta,\n      phase: 'final',\n    });\n  };\n\n  const emitChatDone = (\n    result: string,\n    sessionId = activeChatSessionId,\n    usage?: Extract<IAgentSidecarStreamEventPayload['event'], { type: 'done' }>['usage'],\n  ): void => {\n    emitSidecarEvent(sessionId, {\n      type: 'done',\n      result,\n      ...(usage ? { usage } : {}),\n    });\n  };\n\n  const emitChatError = (message: string, sessionId = activeChatSessionId): void => {\n    emitSidecarEvent(sessionId, {\n      type: 'error',\n      message,\n    });\n  };\n`,
+    `  const queuedStreamResponses: Array<{\n    streamId: string;\n    assistantMessageId: string;\n    sessionId: string;\n    content: string;\n    terminalKind: 'done' | 'error';\n    terminalMessage: string | null;\n  }> = [];\n${helperBlock}`,
     '新增 sidecar chat emit helpers',
   );
 }
@@ -105,6 +150,14 @@ if (content.includes('streamHandler?.({')) {
   );
 }
 
+if (!content.includes('emitDone(')) {
+  replaceOrThrow(
+    "    emitDelta(delta: string): void {\n      emitChatDelta(delta);\n    },",
+    "    emitDelta(delta: string): void {\n      emitChatDelta(delta);\n    },\n    emitDone(\n      result: string,\n      usage?: Extract<IAgentSidecarStreamEventPayload['event'], { type: 'done' }>['usage'],\n    ): void {\n      emitChatDone(result, activeChatSessionId, usage);\n    },",
+    '补充 emitDone helper',
+  );
+}
+
 content = content.replace(
   '      streamSequence = 0;\n      queuedStreamResponses.length = 0;',
   "      streamSequence = 0;\n      sidecarSequence = 0;\n      activeChatSessionId = 'acp-chat-session-1';\n      queuedStreamResponses.length = 0;",
@@ -112,6 +165,10 @@ content = content.replace(
 content = content.replace(
   /activeChatSessionId = CHAT_SESSION_ID;\n\s*activeChatSessionId = CHAT_SESSION_ID;/g,
   'activeChatSessionId = CHAT_SESSION_ID;',
+);
+content = content.replace(
+  /sidecarSequence = 0;\n\s*sidecarSequence = 0;/g,
+  'sidecarSequence = 0;',
 );
 
 // 5) waitForStartedStream 不再假设后端 assistantMessageId 就是前端 placeholder id。
@@ -123,7 +180,7 @@ if (content.includes('expectedId: string = ASSISTANT_MESSAGE_ID')) {
   );
 }
 
-// 6) 调整仍然引用旧 chat-stream emit 的三个断言块。
+// 6) 调整仍然引用旧 chat-stream emit 的断言块。
 content = content.replace(
   "    expect(aiServiceMock.cancel).toHaveBeenCalledWith({ streamId: STREAM_ID });",
   "    expect(aiServiceMock.cancel).toHaveBeenCalledWith({\n      streamId: STREAM_ID,\n      threadId: expect.any(String),\n    });",
@@ -145,6 +202,11 @@ for (const forbidden of ['IAiChatStreamEventPayload', 'onChatStream', 'aiService
   }
 }
 
+const helperMatches = content.match(/const emitSidecarEvent = \(/g) ?? [];
+if (helperMatches.length !== 1) {
+  throw new Error(`ACP helper block 数量异常：${helperMatches.length}`);
+}
+
 fs.writeFileSync(specPath, content);
 
 // 顺手修复已知格式回归。
@@ -157,4 +219,4 @@ if (fs.existsSync(tauriTypesPath)) {
   fs.writeFileSync(tauriTypesPath, tauriTypes);
 }
 
-console.log('已把 useAiAssistant.spec.ts 的 Chat 流 mock 迁移到 ACP sidecar-stream，并修复 tauri 类型格式。');
+console.log('已把 useAiAssistant.spec.ts 的 Chat 流 mock 迁移到 ACP sidecar-stream，并修复重复 helper/tauri 类型格式。');
