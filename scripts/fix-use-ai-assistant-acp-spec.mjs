@@ -38,13 +38,24 @@ content = content.replace(/\n\s*onChatStream\.mockClear\(\);/, '');
 content = content.replace(/\n\s*streamHandler = null;/, '');
 content = content.replace(/\n\s*onChatStream: aiServiceMock\.onChatStream,/, '');
 
-if (!content.includes('let activeChatSessionId: string = CHAT_SESSION_ID;')) {
+if (!content.includes('let activeChatSessionId')) {
   replaceOrThrow(
     '  let sidecarStreamHandler: SidecarStreamHandler | null = null;\n  let streamSequence = 0;',
-    '  let sidecarStreamHandler: SidecarStreamHandler | null = null;\n  let streamSequence = 0;\n  let sidecarSequence = 0;\n  let activeChatSessionId: string = CHAT_SESSION_ID;',
+    "  let sidecarStreamHandler: SidecarStreamHandler | null = null;\n  let streamSequence = 0;\n  let sidecarSequence = 0;\n  let activeChatSessionId = 'acp-chat-session-1';",
     '新增 ACP chat session 状态',
   );
 }
+
+// vi.hoisted 的工厂会早于模块顶层 const 初始化执行，不能在初始化表达式里读 CHAT_SESSION_ID。
+// 保留顶层 CHAT_SESSION_ID 给后续普通测试代码用，hoisted mock 的立即初始化只用字面量。
+content = content.replace(
+  'let activeChatSessionId: string = CHAT_SESSION_ID;',
+  "let activeChatSessionId = 'acp-chat-session-1';",
+);
+content = content.replace(
+  /let sidecarSequence = 0;\n\s*let sidecarSequence = 0;/,
+  'let sidecarSequence = 0;',
+);
 
 if (!content.includes('    sessionId: string;')) {
   replaceOrThrow(
@@ -63,11 +74,13 @@ if (!content.includes('const emitSidecarEvent = (sessionId: string')) {
 }
 
 // 3) chatStream mock：返回 mastra + sessionId，并把 queued 回答发成 ACP message_delta/done/error。
-replaceOrThrow(
-  /  const chatStream = vi\.fn<[\s\S]*?\n  \}\);\n\n  const generateConversationTitle =/,
-  `  const chatStream = vi.fn<\n    (payload: IAiChatRequest) => Promise<{\n      streamId: string;\n      assistantMessageId: string;\n      providerType: 'mastra';\n      model: string;\n      sessionId: string;\n    }>\n  >(async (payload) => {\n    void payload;\n    const queued = queuedStreamResponses.shift();\n    if (!queued) {\n      activeChatSessionId = CHAT_SESSION_ID;\n      return {\n        streamId: STREAM_ID,\n        assistantMessageId: ASSISTANT_MESSAGE_ID,\n        providerType: 'mastra',\n        model: MOCK_MODEL,\n        sessionId: activeChatSessionId,\n      };\n    }\n\n    activeChatSessionId = queued.sessionId;\n    queueMicrotask(() => {\n      for (const chunk of queued.content.match(/.{1,24}/g) ?? []) {\n        emitChatDelta(chunk, queued.sessionId);\n      }\n\n      if (queued.terminalKind === 'error') {\n        emitChatError(queued.terminalMessage ?? 'AI 流式响应失败', queued.sessionId);\n        return;\n      }\n\n      emitChatDone(queued.content, queued.sessionId);\n    });\n\n    return {\n      streamId: queued.streamId,\n      assistantMessageId: queued.assistantMessageId,\n      providerType: 'mastra',\n      model: MOCK_MODEL,\n      sessionId: queued.sessionId,\n    };\n  });\n\n  const generateConversationTitle =`,
-  '替换 chatStream mock',
-);
+if (content.includes("providerType: 'mock'") || !content.includes('sessionId: activeChatSessionId')) {
+  replaceOrThrow(
+    /  const chatStream = vi\.fn<[\s\S]*?\n  \}\);\n\n  const generateConversationTitle =/,
+    `  const chatStream = vi.fn<\n    (payload: IAiChatRequest) => Promise<{\n      streamId: string;\n      assistantMessageId: string;\n      providerType: 'mastra';\n      model: string;\n      sessionId: string;\n    }>\n  >(async (payload) => {\n    void payload;\n    const queued = queuedStreamResponses.shift();\n    if (!queued) {\n      activeChatSessionId = CHAT_SESSION_ID;\n      return {\n        streamId: STREAM_ID,\n        assistantMessageId: ASSISTANT_MESSAGE_ID,\n        providerType: 'mastra',\n        model: MOCK_MODEL,\n        sessionId: activeChatSessionId,\n      };\n    }\n\n    activeChatSessionId = queued.sessionId;\n    queueMicrotask(() => {\n      for (const chunk of queued.content.match(/.{1,24}/g) ?? []) {\n        emitChatDelta(chunk, queued.sessionId);\n      }\n\n      if (queued.terminalKind === 'error') {\n        emitChatError(queued.terminalMessage ?? 'AI 流式响应失败', queued.sessionId);\n        return;\n      }\n\n      emitChatDone(queued.content, queued.sessionId);\n    });\n\n    return {\n      streamId: queued.streamId,\n      assistantMessageId: queued.assistantMessageId,\n      providerType: 'mastra',\n      model: MOCK_MODEL,\n      sessionId: queued.sessionId,\n    };\n  });\n\n  const generateConversationTitle =`,
+    '替换 chatStream mock',
+  );
+}
 
 content = content.replace(
   /const cancel = vi\.fn\(async \(payload: \{ streamId: string \}\) => \{/,
@@ -84,20 +97,31 @@ content = content.replace(
   /\n\s*emit\(event: IAiChatStreamEventPayload\): void \{\n\s*streamHandler\?\.\(event\);\n\s*\},/,
   '',
 );
-replaceOrThrow(
-  /    emitDelta\(delta: string\): void \{\n\s*streamHandler\?\.\(\{[\s\S]*?\n\s*\}\);\n\s*\},/,
-  `    emitDelta(delta: string): void {\n      emitChatDelta(delta);\n    },\n    emitDone(\n      result: string,\n      usage?: Extract<IAgentSidecarStreamEventPayload['event'], { type: 'done' }>['usage'],\n    ): void {\n      emitChatDone(result, activeChatSessionId, usage);\n    },`,
-  '替换 emitDelta',
-);
+if (content.includes('streamHandler?.({')) {
+  replaceOrThrow(
+    /    emitDelta\(delta: string\): void \{\n\s*streamHandler\?\.\(\{[\s\S]*?\n\s*\}\);\n\s*\},/,
+    `    emitDelta(delta: string): void {\n      emitChatDelta(delta);\n    },\n    emitDone(\n      result: string,\n      usage?: Extract<IAgentSidecarStreamEventPayload['event'], { type: 'done' }>['usage'],\n    ): void {\n      emitChatDone(result, activeChatSessionId, usage);\n    },`,
+    '替换 emitDelta',
+  );
+}
 
-content = content.replace('      streamSequence = 0;\n', '      streamSequence = 0;\n      sidecarSequence = 0;\n      activeChatSessionId = CHAT_SESSION_ID;\n');
+content = content.replace(
+  '      streamSequence = 0;\n      queuedStreamResponses.length = 0;',
+  "      streamSequence = 0;\n      sidecarSequence = 0;\n      activeChatSessionId = 'acp-chat-session-1';\n      queuedStreamResponses.length = 0;",
+);
+content = content.replace(
+  /activeChatSessionId = CHAT_SESSION_ID;\n\s*activeChatSessionId = CHAT_SESSION_ID;/g,
+  'activeChatSessionId = CHAT_SESSION_ID;',
+);
 
 // 5) waitForStartedStream 不再假设后端 assistantMessageId 就是前端 placeholder id。
-replaceOrThrow(
-  /const waitForStartedStream = async \([\s\S]*?\n\};\n\nconst createDocument =/,
-  `const waitForStartedStream = async (\n  resolveMessageId: () => string | undefined,\n  expectedId?: string,\n  maxAttempts = 8,\n): Promise<void> => {\n  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {\n    const messageId = resolveMessageId();\n    if (messageId && (!expectedId || messageId === expectedId)) {\n      return;\n    }\n    await flushMicrotasks();\n  }\n  throw new Error(\n    \`assistant stream did not start in time (expected id=\"\${expectedId ?? '<any>'}\" within \${maxAttempts} ticks)\`,\n  );\n};\n\nconst createDocument =`,
-  '替换 waitForStartedStream',
-);
+if (content.includes('expectedId: string = ASSISTANT_MESSAGE_ID')) {
+  replaceOrThrow(
+    /const waitForStartedStream = async \([\s\S]*?\n\};\n\nconst createDocument =/,
+    `const waitForStartedStream = async (\n  resolveMessageId: () => string | undefined,\n  expectedId?: string,\n  maxAttempts = 8,\n): Promise<void> => {\n  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {\n    const messageId = resolveMessageId();\n    if (messageId && (!expectedId || messageId === expectedId)) {\n      return;\n    }\n    await flushMicrotasks();\n  }\n  throw new Error(\n    \`assistant stream did not start in time (expected id=\"\${expectedId ?? '<any>'}\" within \${maxAttempts} ticks)\`,\n  );\n};\n\nconst createDocument =`,
+    '替换 waitForStartedStream',
+  );
+}
 
 // 6) 调整仍然引用旧 chat-stream emit 的三个断言块。
 content = content.replace(
@@ -115,7 +139,7 @@ content = content.replace(
   `\n    aiServiceMock.emitDelta('你好');\n    await flushMicrotasks();\n\n    expect(assistant.messages.value.at(-1)?.stream).toMatchObject({\n      status: 'streaming',\n    });\n\n    aiServiceMock.emitDone('你好', {\n      inputTokens: 13,\n      inputTokenDetails: {\n        noCacheTokens: 13,\n        cacheReadTokens: 0,\n        cacheWriteTokens: 0,\n      },\n      outputTokens: 5,\n      outputTokenDetails: {\n        textTokens: 4,\n        reasoningTokens: 1,\n      },\n      totalTokens: 18,\n      cachedInputTokens: 0,\n      reasoningTokens: 1,\n    });`,
 );
 
-for (const forbidden of ['IAiChatStreamEventPayload', 'onChatStream', 'aiServiceMock.emit({']) {
+for (const forbidden of ['IAiChatStreamEventPayload', 'onChatStream', 'aiServiceMock.emit({', 'streamHandler']) {
   if (content.includes(forbidden)) {
     throw new Error(`迁移后仍残留旧实现标记：${forbidden}`);
   }
