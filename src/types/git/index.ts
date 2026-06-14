@@ -89,11 +89,6 @@ export interface IGitHubBrowserAuthCompleteRequest extends IGitHubAuthRequest {
   state: string;
 }
 
-export interface IGitHubDeviceAuthCompleteRequest extends IGitHubAuthRequest {
-  deviceCode: string;
-  interval: number;
-}
-
 export interface IGitHubAuthStatusPayload {
   authenticated: boolean;
   login: string | null;
@@ -108,14 +103,6 @@ export interface IGitHubAuthStatusPayload {
 export interface IGitHubBrowserAuthPayload {
   authorizationUrl: string;
   state: string;
-  expiresIn: number;
-}
-
-export interface IGitHubDeviceAuthPayload {
-  deviceCode: string;
-  userCode: string;
-  verificationUri: string;
-  interval: number;
   expiresIn: number;
 }
 

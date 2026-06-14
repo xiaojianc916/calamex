@@ -2,14 +2,11 @@ import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 import {
   beginGithubBrowserAuth,
-  beginGithubDeviceAuth,
   completeGithubBrowserAuth,
-  completeGithubDeviceAuth,
   getGithubAuthStatus,
 } from '@/services/tauri.github-auth';
-import type { IGitHubAuthStatusPayload, IGitHubDeviceAuthPayload } from '@/types/git';
+import type { IGitHubAuthStatusPayload } from '@/types/git';
 import { openExternalUrl } from '@/utils/browser';
-import { tryWriteClipboardText } from '@/utils/clipboard';
 
 const AUTH_CACHE_PREFIX = 'calamex.githubAuth.';
 const AUTH_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -19,8 +16,6 @@ interface ICachedGitHubAuthStatus {
   status: IGitHubAuthStatusPayload;
   updatedAt: number;
 }
-
-type TDeviceAuthMode = 'connect' | 'switch';
 
 const createEmptyGithubAuthStatus = (message: string | null = null): IGitHubAuthStatusPayload => ({
   authenticated: false,
@@ -79,11 +74,6 @@ const writeCachedStatus = (repositoryRootPath: string, status: IGitHubAuthStatus
   }
 };
 
-const buildVerificationUri = (deviceAuth: IGitHubDeviceAuthPayload): string => {
-  const separator = deviceAuth.verificationUri.includes('?') ? '&' : '?';
-  return `${deviceAuth.verificationUri}${separator}prompt=select_account`;
-};
-
 const resolveCredentialSourceLabel = (source: string | null): string => {
   switch (source) {
     case 'calamex-oauth':
@@ -100,28 +90,24 @@ const resolveCredentialSourceLabel = (source: string | null): string => {
 export const useGitHubAuthStore = defineStore('github-auth', () => {
   const repositoryRootPath = ref<string | null>(null);
   const status = ref<IGitHubAuthStatusPayload>(createEmptyGithubAuthStatus());
-  const deviceAuth = ref<IGitHubDeviceAuthPayload | null>(null);
   const isLoading = ref(false);
   const isAuthorizing = ref(false);
   let statusUpdatedAt = 0;
   let statusRequestId = 0;
-  let deviceAuthRequestId = 0;
+  let authRequestId = 0;
   let pendingStatusRequest: Promise<IGitHubAuthStatusPayload> | null = null;
-  let pendingDeviceAuthRequest: Promise<IGitHubAuthStatusPayload> | null = null;
-  let statusBeforeDeviceAuth: IGitHubAuthStatusPayload | null = null;
+  let pendingAuthRequest: Promise<IGitHubAuthStatusPayload> | null = null;
+  let statusBeforeAuth: IGitHubAuthStatusPayload | null = null;
 
   const isAuthenticated = computed(() => status.value.authenticated);
-  const verificationUrl = computed(() =>
-    deviceAuth.value ? buildVerificationUri(deviceAuth.value) : null,
-  );
   const displayLabel = computed(() => {
-    if (deviceAuth.value) return '等待授权';
+    if (isAuthorizing.value) return '等待授权';
     if (isLoading.value && !status.value.authenticated) return '连接中';
     return status.value.login ?? 'GitHub';
   });
   const title = computed(() => {
-    if (deviceAuth.value) {
-      return `GitHub 验证码 ${deviceAuth.value.userCode} 已复制，浏览器完成授权后会自动连接。`;
+    if (isAuthorizing.value) {
+      return '请在系统浏览器完成 GitHub 授权。';
     }
 
     if (status.value.authenticated) {
@@ -200,11 +186,10 @@ export const useGitHubAuthStore = defineStore('github-auth', () => {
 
     repositoryRootPath.value = rootPath;
     statusRequestId += 1;
-    deviceAuthRequestId += 1;
+    authRequestId += 1;
     pendingStatusRequest = null;
-    pendingDeviceAuthRequest = null;
-    statusBeforeDeviceAuth = null;
-    deviceAuth.value = null;
+    pendingAuthRequest = null;
+    statusBeforeAuth = null;
     isLoading.value = false;
     isAuthorizing.value = false;
     statusUpdatedAt = 0;
@@ -225,75 +210,37 @@ export const useGitHubAuthStore = defineStore('github-auth', () => {
     });
   };
 
-  const copyDeviceCode = async (): Promise<boolean> => {
-    const userCode = deviceAuth.value?.userCode;
-    if (!userCode) return false;
-    return tryWriteClipboardText(userCode);
-  };
-
-  const reopenVerificationPage = (): void => {
-    const url = verificationUrl.value;
-    if (url) openExternalUrl(url);
-  };
-
-  const cancelDeviceAuth = (): void => {
-    deviceAuthRequestId += 1;
-    pendingDeviceAuthRequest = null;
-    deviceAuth.value = null;
+  const cancelAuth = (): void => {
+    authRequestId += 1;
+    pendingAuthRequest = null;
     isAuthorizing.value = false;
     isLoading.value = false;
 
-    if (statusBeforeDeviceAuth) {
-      applyStatus(statusBeforeDeviceAuth);
-      statusBeforeDeviceAuth = null;
+    if (statusBeforeAuth) {
+      applyStatus(statusBeforeAuth);
+      statusBeforeAuth = null;
       return;
     }
 
     void loadStatus({ force: true, visibleLoading: false });
   };
 
-  const runDeviceAuthFallback = async (
-    rootPath: string,
-    mode: TDeviceAuthMode,
-    requestId: number,
-  ): Promise<IGitHubAuthStatusPayload> => {
-    const payload = await beginGithubDeviceAuth(rootPath);
-    if (requestId !== deviceAuthRequestId) return status.value;
-
-    deviceAuth.value = payload;
-    status.value = createEmptyGithubAuthStatus(
-      mode === 'switch' ? '请在浏览器选择 GitHub 账号。' : '请在浏览器完成 GitHub 授权。',
-    );
-    statusUpdatedAt = Date.now();
-    void copyDeviceCode();
-    reopenVerificationPage();
-    const nextStatus = await completeGithubDeviceAuth({
-      repositoryRootPath: rootPath,
-      deviceCode: payload.deviceCode,
-      interval: payload.interval,
-    });
-    return requestId === deviceAuthRequestId ? nextStatus : status.value;
-  };
-
-  const startDeviceAuth = async (
-    mode: TDeviceAuthMode = 'connect',
-  ): Promise<IGitHubAuthStatusPayload> => {
+  const startAuth = async (options?: { switchAccount?: boolean }): Promise<IGitHubAuthStatusPayload> => {
     const rootPath = repositoryRootPath.value;
     if (!rootPath) return applyStatus(createEmptyGithubAuthStatus('当前工作区未检测到 Git 仓库。'));
-    if (pendingDeviceAuthRequest) return pendingDeviceAuthRequest;
+    if (pendingAuthRequest) return pendingAuthRequest;
 
-    const requestId = ++deviceAuthRequestId;
-    statusBeforeDeviceAuth = status.value.authenticated ? status.value : null;
+    const requestId = ++authRequestId;
+    statusBeforeAuth = status.value.authenticated ? status.value : null;
     isLoading.value = true;
     isAuthorizing.value = true;
-    deviceAuth.value = null;
 
-    pendingDeviceAuthRequest = beginGithubBrowserAuth(rootPath)
+    pendingAuthRequest = beginGithubBrowserAuth(rootPath)
       .then(async (payload) => {
-        if (requestId !== deviceAuthRequestId) return status.value;
+        if (requestId !== authRequestId) return status.value;
 
         status.value = createEmptyGithubAuthStatus(
-          mode === 'switch'
+          options?.switchAccount
             ? '请在系统浏览器选择 GitHub 账号。'
             : '请在系统浏览器完成 GitHub 授权。',
         );
@@ -303,25 +250,23 @@ export const useGitHubAuthStore = defineStore('github-auth', () => {
           repositoryRootPath: rootPath,
           state: payload.state,
         });
-        return requestId === deviceAuthRequestId ? nextStatus : status.value;
-      })
-      .catch((browserError: unknown) => {
-        if (requestId !== deviceAuthRequestId) return status.value;
-        console.warn('GitHub 浏览器授权不可用，回退到 Device Flow', browserError);
-        return runDeviceAuthFallback(rootPath, mode, requestId);
+        return requestId === authRequestId ? nextStatus : status.value;
       })
       .then((payload) => {
-        if (requestId !== deviceAuthRequestId) return status.value;
-        statusBeforeDeviceAuth = null;
+        if (requestId !== authRequestId) return status.value;
+        statusBeforeAuth = null;
         return applyStatus(payload);
       })
       .catch((error: unknown) => {
-        if (requestId !== deviceAuthRequestId) return status.value;
+        if (requestId !== authRequestId) return status.value;
 
-        const fallback = statusBeforeDeviceAuth;
-        statusBeforeDeviceAuth = null;
+        const fallback = statusBeforeAuth;
+        statusBeforeAuth = null;
         if (fallback) {
-          return applyStatus(fallback);
+          return applyStatus({
+            ...fallback,
+            message: error instanceof Error ? error.message : 'GitHub 授权失败',
+          });
         }
 
         return applyStatus(
@@ -329,18 +274,18 @@ export const useGitHubAuthStore = defineStore('github-auth', () => {
         );
       })
       .finally(() => {
-        if (requestId !== deviceAuthRequestId) return;
+        if (requestId !== authRequestId) return;
 
-        pendingDeviceAuthRequest = null;
-        deviceAuth.value = null;
+        pendingAuthRequest = null;
         isLoading.value = false;
         isAuthorizing.value = false;
       });
 
-    return pendingDeviceAuthRequest;
+    return pendingAuthRequest;
   };
 
-  const switchAccount = async (): Promise<IGitHubAuthStatusPayload> => startDeviceAuth('switch');
+  const switchAccount = async (): Promise<IGitHubAuthStatusPayload> =>
+    startAuth({ switchAccount: true });
 
   const openProfile = (): void => {
     if (status.value.htmlUrl) {
@@ -354,19 +299,15 @@ export const useGitHubAuthStore = defineStore('github-auth', () => {
 
   return {
     status,
-    deviceAuth,
     isLoading,
     isAuthorizing,
     isAuthenticated,
-    verificationUrl,
     displayLabel,
     title,
     setRepositoryRootPath,
     loadStatus,
-    copyDeviceCode,
-    reopenVerificationPage,
-    cancelDeviceAuth,
-    startDeviceAuth,
+    cancelAuth,
+    startAuth,
     switchAccount,
     openProfile,
     reset,

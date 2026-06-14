@@ -11,11 +11,6 @@ export interface IGitHubBrowserAuthCompleteRequest extends IGitHubAuthRequest {
   state: string;
 }
 
-export interface IGitHubDeviceAuthCompleteRequest extends IGitHubAuthRequest {
-  deviceCode: string;
-  interval: number;
-}
-
 export interface IGitHubAuthStatusPayload {
   authenticated: boolean;
   login: string | null;
@@ -30,14 +25,6 @@ export interface IGitHubAuthStatusPayload {
 export interface IGitHubBrowserAuthPayload {
   authorizationUrl: string;
   state: string;
-  expiresIn: number;
-}
-
-export interface IGitHubDeviceAuthPayload {
-  deviceCode: string;
-  userCode: string;
-  verificationUri: string;
-  interval: number;
   expiresIn: number;
 }
 
@@ -97,41 +84,6 @@ export const completeGithubBrowserAuth = (
       signal: options?.signal,
     },
     () => invoke<IGitHubAuthStatusPayload>('complete_github_browser_auth', { payload }),
-  );
-
-export const beginGithubDeviceAuth = (
-  repositoryRootPath: string,
-  options?: IIpcCallOptions,
-): Promise<IGitHubDeviceAuthPayload> =>
-  callSpectaCommand(
-    {
-      command: 'begin_github_device_auth',
-      guardHint: '发起 GitHub 设备授权',
-      audit: 'sensitive',
-      timeoutMs: 15_000,
-      input: { repositoryRootPath },
-      signal: options?.signal,
-    },
-    () => commands.beginGithubDeviceAuth(createRequest(repositoryRootPath)),
-  );
-
-export const completeGithubDeviceAuth = (
-  payload: IGitHubDeviceAuthCompleteRequest,
-  options?: IIpcCallOptions,
-): Promise<IGitHubAuthStatusPayload> =>
-  callSpectaCommand(
-    {
-      command: 'complete_github_device_auth',
-      guardHint: '完成 GitHub 设备授权',
-      audit: 'sensitive',
-      timeoutMs: 140_000,
-      input: {
-        repositoryRootPath: payload.repositoryRootPath,
-        interval: payload.interval,
-      },
-      signal: options?.signal,
-    },
-    () => commands.completeGithubDeviceAuth(payload),
   );
 
 export const connectGithub = (
