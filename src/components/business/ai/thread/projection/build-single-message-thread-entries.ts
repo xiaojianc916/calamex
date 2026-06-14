@@ -1,6 +1,7 @@
 import type { IAiChatMessage } from '@/types/ai';
 import { buildThreadEntries } from './build-thread-entries';
 import type { TAiThreadEntry } from './entry-types';
+import { reconcileThreadEntries } from './reconcile-thread-entries';
 
 const SINGLE_MESSAGE_ENTRY_CACHE_LIMIT = 600;
 const LONG_TEXT_TAIL_SIGNATURE_LENGTH = 512;
@@ -109,7 +110,12 @@ export const buildSingleMessageThreadEntries = (message: IAiChatMessage): TAiThr
     return cached.entries;
   }
 
-  const entries = buildThreadEntries([message]);
+  const projected = buildThreadEntries([message]);
+  // 条目级结构共享:签名变化时(典型为流式 delta)沿用上一轮中内容未变的条目对象引用,
+  // 仅让真正变化的条目(通常只有正在生长的文本块)获得新引用,从而把同一条消息内的
+  // 全量子组件重渲染收敛为单条目更新。
+  const entries =
+    cached !== undefined ? reconcileThreadEntries(cached.entries, projected) : projected;
 
   singleMessageEntryCache.delete(message.id);
   singleMessageEntryCache.set(message.id, {
