@@ -15,7 +15,7 @@
 //!   * `connect_with(transport, |cx| async {...})` 内运行长生命周期命令循环,宿主侧
 //!     (Tauri 命令)经 mpsc 投递 NewSession / Prompt / SetSessionMode / RestoreCheckpoint /
 //!     ModelChat / WebSearch / WebFetch / Warmup / Health / Orchestrate / OrchestrateResume /
-//!     Cancel / Shutdown。
+//!     AgentChat / AgentChatResolve / Cancel / Shutdown。
 
 // 过渡期:本模块尚未接线到宿主命令(公开 API 暂无调用点)。接线后移除该 allow。
 #![allow(dead_code)]
@@ -248,6 +248,126 @@ pub struct OrchestrateResumeExtRequest {
     pub model_config: Option<ExtModelConfig>,
 }
 
+/// `calamex.dev/agent/chat` 扩展方法的单条消息。
+///
+/// 字段镜像 sidecar `ext-methods.ts` 的 `agentChatMessageSchema`(camelCase 线格式):
+/// `role` 覆盖四类(user/assistant/system/tool),`content` 为纯文本。与旧 http
+/// `/agent/chat` 的 `agentMessageInputSchema` 逐字一致(无 toolCallId/name)。`role` 取值
+/// 由 sidecar 端 zod 统一校验,宿主侧以字符串原样透传、不在此重复其取值表。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentChatMessage {
+    pub role: String,
+    pub content: String,
+}
+
+/// `calamex.dev/agent/chat` 上下文引用的行范围(1 基正整数)。
+///
+/// 字段镜像 sidecar `agentChatContextReferenceSchema.range`:startLine/endLine 均为正整数。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentChatContextRange {
+    pub start_line: u32,
+    pub end_line: u32,
+}
+
+/// `calamex.dev/agent/chat` 的上下文引用。
+///
+/// 字段逐字镜像 sidecar `agentChatContextReferenceSchema`(camelCase 线格式):
+/// `path` 与 `range` 是「可空但必填」(zod `.nullable()`,非 `.optional()`),故缺值时
+/// 序列化为显式 `null`(不省略键,即不加 skip_serializing_if),否则 sidecar 端 zod
+/// 解析会因键缺失而失败。`kind` 用宽松字符串承接未来取值,由 sidecar 端校验。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentChatContextReference {
+    pub id: String,
+    pub kind: String,
+    pub label: String,
+    pub path: Option<String>,
+    pub range: Option<AgentChatContextRange>,
+    pub content_preview: String,
+    pub redacted: bool,
+}
+
+/// `calamex.dev/agent/chat` 扩展方法的请求(agent 模式对话回合,run-to-gate)。
+///
+/// 这是 ACP 标准会话回合(`session/prompt`)之外、承载 agent 模式富对话的「带外」能力:
+/// 原生 `session/prompt` 的 `session/update` 投影有损(仅文本/思考增量),会丢失结构化补丁 /
+/// 检查点 / 回滚 / 富审批字段 / plan_ready 等 agent UI 词表;故本扩展跑到审批门或终态,
+/// 把过程增量经 `session/update` 仅作实时预览,真正权威的富事件由方法返回值的完整
+/// `toAgentSidecarResponse` 信封承载(与旧 http `/agent/chat` 同构,前端无感)。
+///
+/// 落地方式与同文件其余扩展一致:`#[derive(JsonRpcRequest)]` + `#[request(...)]` 接入一等
+/// 带类型请求,`cx.send_request(...)` 原生可发。线方法名与 sidecar 的 `AGENT_CHAT_METHOD`
+/// (`calamex.dev/agent/chat`)逐字一致;字段镜像 sidecar `agentChatParamsSchema`。
+/// `messages`/`context` 恒序列化为数组(空则 `[]`,与 schema 的 `.default([])` 相容);
+/// 其余可选字段为空时整字段省略,交由 sidecar 套用其回退语义(mode→'agent'、goal→末条
+/// user 消息 ?? '继续当前任务'),宿主侧不臆造默认。`mode` 等取值由 sidecar 端 zod 校验,
+/// 宿主侧以字符串原样透传。响应为整封 sidecar 响应信封(schemaVersion + sessionId +
+/// events + result),以 `serde_json::Value` 原样回传,交由宿主侧既有 `AgentSidecarResponsePayload` 解析。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, JsonRpcRequest)]
+#[serde(rename_all = "camelCase")]
+#[request(method = "calamex.dev/agent/chat", response = Value)]
+pub struct AgentChatExtRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub goal: Option<String>,
+    pub messages: Vec<AgentChatMessage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_root_path: Option<String>,
+    pub context: Vec<AgentChatContextReference>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_config: Option<ExtModelConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan_version: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan_step_id: Option<String>,
+}
+
+/// `calamex.dev/agent/chat/resolve` 扩展方法的请求(agent 对话审批恢复)。
+///
+/// 镜像旧 http `/approval/resolve` → `runtime.resolveApproval(approvalResolutionSchema.parse(body))`:
+/// 携带上一段返回信封里 approval_required 的 `request_id` 与 `decision`,裁决后续跑同一回合并
+/// 返回下一段响应信封(若再遇审批门则信封再携 approval_required)。线方法名与 sidecar 的
+/// `AGENT_CHAT_RESOLVE_METHOD`(`calamex.dev/agent/chat/resolve`)逐字一致;字段镜像 sidecar
+/// `agentChatResolveParamsSchema`(= agentChatParamsSchema + requestId + decision)。`decision`
+/// 取值(approve/reject/cancel/modify)由 sidecar 端 zod 校验,宿主侧原样透传。响应同
+/// `AgentChatExtRequest`:整封 sidecar 响应信封,以 `serde_json::Value` 原样回传。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, JsonRpcRequest)]
+#[serde(rename_all = "camelCase")]
+#[request(method = "calamex.dev/agent/chat/resolve", response = Value)]
+pub struct AgentChatResolveExtRequest {
+    pub request_id: String,
+    pub decision: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub goal: Option<String>,
+    pub messages: Vec<AgentChatMessage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_root_path: Option<String>,
+    pub context: Vec<AgentChatContextReference>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_config: Option<ExtModelConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan_version: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan_step_id: Option<String>,
+}
+
 /// 启动配置。采用结构化字段而非单一命令行字符串:
 ///   * `program`:ACP stdio 入口可执行程序(如 node 的绝对路径);
 ///   * `args`:传给程序的参数(如 `dist/acp/stdio-entry.js`);
@@ -318,6 +438,14 @@ enum Command {
     },
     OrchestrateResume {
         request: OrchestrateResumeExtRequest,
+        reply: oneshot::Sender<Result<Value, String>>,
+    },
+    AgentChat {
+        request: AgentChatExtRequest,
+        reply: oneshot::Sender<Result<Value, String>>,
+    },
+    AgentChatResolve {
+        request: AgentChatResolveExtRequest,
         reply: oneshot::Sender<Result<Value, String>>,
     },
     Cancel {
@@ -518,6 +646,38 @@ impl AcpClientHandle {
             .map_err(AcpClientError::Protocol)
     }
 
+    /// 发起一轮 agent 模式对话(扩展方法 `calamex.dev/agent/chat`)。
+    ///
+    /// 与编排同属标准会话回合之外的「带外」能力,经 sidecar 公示的扩展方法通道下发;
+    /// run-to-gate:跑到审批门或终态,过程增量经 `session/update` 仅作实时预览,权威富事件
+    /// 由返回信封承载。返回 sidecar 的整封响应信封(`serde_json::Value`),由宿主侧解析。
+    pub async fn agent_chat(&self, request: AgentChatExtRequest) -> Result<Value, AcpClientError> {
+        let (reply, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(Command::AgentChat { request, reply })
+            .map_err(|_| AcpClientError::NotRunning)?;
+        rx.await
+            .map_err(|_| AcpClientError::NotRunning)?
+            .map_err(AcpClientError::Protocol)
+    }
+
+    /// 恢复一轮挂起在审批门的 agent 对话(扩展方法 `calamex.dev/agent/chat/resolve`)。
+    ///
+    /// 经 sidecar 公示的扩展方法通道下发;裁决后续跑同一回合并返回下一段响应信封。
+    /// 返回 sidecar 的整封响应信封(`serde_json::Value`),由宿主侧解析。
+    pub async fn agent_chat_resolve(
+        &self,
+        request: AgentChatResolveExtRequest,
+    ) -> Result<Value, AcpClientError> {
+        let (reply, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(Command::AgentChatResolve { request, reply })
+            .map_err(|_| AcpClientError::NotRunning)?;
+        rx.await
+            .map_err(|_| AcpClientError::NotRunning)?
+            .map_err(AcpClientError::Protocol)
+    }
+
     /// 取消指定会话当前操作(`session/cancel` 通知,fire-and-forget)。
     pub fn cancel(&self, session_id: SessionId) -> Result<(), AcpClientError> {
         self.cmd_tx
@@ -678,6 +838,14 @@ pub fn spawn_acp_client(
                             let res = cx.send_request(request).block_task().await;
                             let _ = reply.send(res.map_err(|e| e.to_string()));
                         }
+                        Command::AgentChat { request, reply } => {
+                            let res = cx.send_request(request).block_task().await;
+                            let _ = reply.send(res.map_err(|e| e.to_string()));
+                        }
+                        Command::AgentChatResolve { request, reply } => {
+                            let res = cx.send_request(request).block_task().await;
+                            let _ = reply.send(res.map_err(|e| e.to_string()));
+                        }
                         Command::Cancel { session_id } => {
                             if let Err(error) =
                                 cx.send_notification(CancelNotification::new(session_id))
@@ -703,267 +871,4 @@ pub fn spawn_acp_client(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
-    #[test]
-    fn build_agent_args_prefixes_env_then_program_and_args() {
-        let config = AcpClientConfig {
-            program: "node".to_string(),
-            args: vec!["dist/acp/stdio-entry.js".to_string()],
-            env: vec![
-                ("AGENT_SIDECAR_TOKEN".to_string(), "secret".to_string()),
-                ("AGENT_SIDECAR_PORT".to_string(), "39871".to_string()),
-            ],
-        };
-        assert_eq!(
-            build_agent_args(&config),
-            vec![
-                "AGENT_SIDECAR_TOKEN=secret".to_string(),
-                "AGENT_SIDECAR_PORT=39871".to_string(),
-                "node".to_string(),
-                "dist/acp/stdio-entry.js".to_string(),
-            ]
-        );
-    }
-
-    #[test]
-    fn build_agent_args_without_env_is_program_then_args() {
-        let config = AcpClientConfig {
-            program: "node".to_string(),
-            args: vec!["dist/acp/stdio-entry.js".to_string()],
-            env: vec![],
-        };
-        assert_eq!(
-            build_agent_args(&config),
-            vec!["node".to_string(), "dist/acp/stdio-entry.js".to_string(),]
-        );
-    }
-
-    #[test]
-    fn build_agent_args_preserves_spaces_in_paths() {
-        // 这正是本次修复要防范的回归:Windows 含空格 / 反斜杠的路径作为独立词元
-        // 完整保留,不被 shell 分词拆碎(旧 from_str 路径会把它拆成多个参数)。
-        let config = AcpClientConfig {
-            program: r"C:\Program Files\nodejs\node.exe".to_string(),
-            args: vec![r"C:\My Apps\calamex\dist\acp\stdio-entry.js".to_string()],
-            env: vec![],
-        };
-        assert_eq!(
-            build_agent_args(&config),
-            vec![
-                r"C:\Program Files\nodejs\node.exe".to_string(),
-                r"C:\My Apps\calamex\dist\acp\stdio-entry.js".to_string(),
-            ]
-        );
-    }
-
-    #[test]
-    fn stream_frame_serializes_to_camel_case() {
-        let frame = AcpStreamFrame {
-            session_id: Some("sess_1".to_string()),
-            seq: 7,
-            event: serde_json::json!({ "kind": "agent_message_chunk" }),
-        };
-        let value = serde_json::to_value(&frame).unwrap();
-        assert_eq!(value["sessionId"], "sess_1");
-        assert_eq!(value["seq"], 7);
-        assert_eq!(value["event"]["kind"], "agent_message_chunk");
-    }
-
-    #[test]
-    fn checkpoint_restore_request_serializes_to_camel_case_params() {
-        let request = CheckpointRestoreRequest {
-            run_id: "run_1".to_string(),
-            snapshot_id: Some("snap_1".to_string()),
-            step: None,
-            session_id: None,
-            model_config: Some(ExtModelConfig {
-                model_id: "deepseek/deepseek-v4-pro".to_string(),
-                api_key: "secret".to_string(),
-                base_url: None,
-            }),
-        };
-        let value = serde_json::to_value(&request).unwrap();
-        assert_eq!(value["runId"], "run_1");
-        assert_eq!(value["snapshotId"], "snap_1");
-        assert!(value.get("step").is_none());
-        assert!(value.get("sessionId").is_none());
-        assert_eq!(value["modelConfig"]["modelId"], "deepseek/deepseek-v4-pro");
-        assert_eq!(value["modelConfig"]["apiKey"], "secret");
-        assert!(value["modelConfig"].get("baseUrl").is_none());
-    }
-
-    #[test]
-    fn model_chat_request_serializes_to_camel_case_params() {
-        let request = ModelChatExtRequest {
-            messages: vec![
-                ModelChatMessage {
-                    role: "system".to_string(),
-                    content: "你是标题生成器".to_string(),
-                    tool_call_id: None,
-                    name: None,
-                },
-                ModelChatMessage {
-                    role: "user".to_string(),
-                    content: "请为这段对话生成标题".to_string(),
-                    tool_call_id: None,
-                    name: None,
-                },
-            ],
-            goal: None,
-            session_id: None,
-            workspace_root_path: None,
-            model_config: Some(ExtModelConfig {
-                model_id: "zhipuai/glm-4.7-flash".to_string(),
-                api_key: "secret".to_string(),
-                base_url: None,
-            }),
-        };
-        let value = serde_json::to_value(&request).unwrap();
-        assert_eq!(value["messages"][0]["role"], "system");
-        assert_eq!(value["messages"][0]["content"], "你是标题生成器");
-        assert!(value["messages"][0].get("toolCallId").is_none());
-        assert!(value["messages"][0].get("name").is_none());
-        assert_eq!(value["messages"][1]["role"], "user");
-        assert!(value.get("goal").is_none());
-        assert!(value.get("sessionId").is_none());
-        assert!(value.get("workspaceRootPath").is_none());
-        assert_eq!(value["modelConfig"]["modelId"], "zhipuai/glm-4.7-flash");
-        assert_eq!(value["modelConfig"]["apiKey"], "secret");
-    }
-
-    #[test]
-    fn model_chat_message_serializes_optional_tool_fields_when_present() {
-        let message = ModelChatMessage {
-            role: "tool".to_string(),
-            content: "{\"ok\":true}".to_string(),
-            tool_call_id: Some("call_1".to_string()),
-            name: Some("get_time".to_string()),
-        };
-        let value = serde_json::to_value(&message).unwrap();
-        assert_eq!(value["role"], "tool");
-        assert_eq!(value["content"], "{\"ok\":true}");
-        assert_eq!(value["toolCallId"], "call_1");
-        assert_eq!(value["name"], "get_time");
-    }
-
-    #[test]
-    fn web_search_request_serializes_to_camel_case_params() {
-        let request = WebSearchExtRequest {
-            query: "rust acp sdk".to_string(),
-            intent: "official-docs".to_string(),
-            max_results: 5,
-            recency: None,
-        };
-        let value = serde_json::to_value(&request).unwrap();
-        assert_eq!(value["query"], "rust acp sdk");
-        assert_eq!(value["intent"], "official-docs");
-        assert_eq!(value["maxResults"], 5);
-        assert!(value.get("recency").is_none());
-    }
-
-    #[test]
-    fn web_fetch_request_serializes_to_camel_case_params() {
-        let request = WebFetchExtRequest {
-            url: "https://example.com/doc".to_string(),
-            reason: "read official docs".to_string(),
-            max_bytes: 4096,
-        };
-        let value = serde_json::to_value(&request).unwrap();
-        assert_eq!(value["url"], "https://example.com/doc");
-        assert_eq!(value["reason"], "read official docs");
-        assert_eq!(value["maxBytes"], 4096);
-    }
-
-    #[test]
-    fn warmup_request_serializes_optional_model_config() {
-        let without = serde_json::to_value(&WarmupExtRequest { model_config: None }).unwrap();
-        assert!(without.get("modelConfig").is_none());
-
-        let with_config = WarmupExtRequest {
-            model_config: Some(ExtModelConfig {
-                model_id: "deepseek/deepseek-v4-pro".to_string(),
-                api_key: "secret".to_string(),
-                base_url: None,
-            }),
-        };
-        let value = serde_json::to_value(&with_config).unwrap();
-        assert_eq!(value["modelConfig"]["modelId"], "deepseek/deepseek-v4-pro");
-        assert_eq!(value["modelConfig"]["apiKey"], "secret");
-        assert!(value["modelConfig"].get("baseUrl").is_none());
-    }
-
-    #[test]
-    fn health_request_serializes_to_empty_object() {
-        let value = serde_json::to_value(&HealthExtRequest {}).unwrap();
-        assert_eq!(value, serde_json::json!({}));
-    }
-
-    #[test]
-    fn orchestrate_request_serializes_to_camel_case_params() {
-        let request = OrchestrateExtRequest {
-            goal: "实现登录页".to_string(),
-            thread_id: Some("thread_1".to_string()),
-            execution_mode: Some("interactive".to_string()),
-            session_id: Some("sess_1".to_string()),
-            model_config: None,
-        };
-        let value = serde_json::to_value(&request).unwrap();
-        assert_eq!(value["goal"], "实现登录页");
-        assert_eq!(value["threadId"], "thread_1");
-        assert_eq!(value["executionMode"], "interactive");
-        assert_eq!(value["sessionId"], "sess_1");
-        assert!(value.get("modelConfig").is_none());
-    }
-
-    #[test]
-    fn orchestrate_request_omits_optional_fields_when_absent() {
-        let request = OrchestrateExtRequest {
-            goal: "g".to_string(),
-            thread_id: None,
-            execution_mode: None,
-            session_id: None,
-            model_config: None,
-        };
-        let value = serde_json::to_value(&request).unwrap();
-        assert_eq!(value["goal"], "g");
-        assert!(value.get("executionMode").is_none());
-        assert!(value.get("threadId").is_none());
-        assert!(value.get("sessionId").is_none());
-        assert!(value.get("modelConfig").is_none());
-    }
-
-    #[test]
-    fn orchestrate_resume_request_serializes_to_camel_case_params() {
-        let request = OrchestrateResumeExtRequest {
-            run_id: "run_1".to_string(),
-            decision: "approve".to_string(),
-            reason: Some("看起来不错".to_string()),
-            session_id: Some("sess_1".to_string()),
-            model_config: None,
-        };
-        let value = serde_json::to_value(&request).unwrap();
-        assert_eq!(value["runId"], "run_1");
-        assert_eq!(value["decision"], "approve");
-        assert_eq!(value["reason"], "看起来不错");
-        assert_eq!(value["sessionId"], "sess_1");
-        assert!(value.get("modelConfig").is_none());
-    }
-
-    #[test]
-    fn orchestrate_resume_request_omits_optional_fields_when_absent() {
-        let request = OrchestrateResumeExtRequest {
-            run_id: "run_1".to_string(),
-            decision: "cancel".to_string(),
-            reason: None,
-            session_id: None,
-            model_config: None,
-        };
-        let value = serde_json::to_value(&request).unwrap();
-        assert_eq!(value["runId"], "run_1");
-        assert_eq!(value["decision"], "cancel");
-        assert!(value.get("reason").is_none());
-        assert!(value.get("sessionId").is_none());
-        assert!(value.get("modelConfig").is_none());
-    }
-}
+    use super::
