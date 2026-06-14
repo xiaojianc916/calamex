@@ -13,11 +13,13 @@ mod runtime;
 mod turn;
 mod ui_event;
 
-// 过渡期：本模块尚未接线到宿主命令，公开项暂时无人引用。接线后移除该 allow。
+// 过渡期：本模块部分公开项已接线到宿主命令；仍有部分（如 spawn_acp_client / 权限决策等
+// 仅在 acp 模块内经 `super::` 直接消费的项）在 crate 外暂无消费者，故保留该 allow。
 #[allow(unused_imports)]
 pub use client::{
-    AcpClientConfig, AcpClientError, AcpClientHandle, AcpStreamFrame, EventSink,
-    PermissionDecision, PermissionResolver, spawn_acp_client,
+    AcpClientConfig, AcpClientError, AcpClientHandle, AcpStreamFrame, CheckpointRestoreRequest,
+    EventSink, ExtModelConfig, PermissionDecision, PermissionResolver, WarmupExtRequest,
+    WebFetchExtRequest, WebSearchExtRequest, spawn_acp_client,
 };
 
 #[allow(unused_imports)]
@@ -35,7 +37,10 @@ pub use bridge::{chat_request_to_model_chat_ext, user_turn_to_content_blocks};
 pub use turn::TurnAccumulator;
 
 #[allow(unused_imports)]
-pub use host::{AcpChatTurn, AcpHost, ApprovalEmitter, StreamEmitter};
+pub use host::{
+    AcpChatTurn, AcpHost, AcpOrchestrateResume, AcpOrchestrateStart, ApprovalEmitter,
+    StreamEmitter,
+};
 
 // 进程级生命周期：把单一 AcpHost 作为 Tauri 托管状态持有（对齐 Zed 连接持有模型）。
 #[allow(unused_imports)]
