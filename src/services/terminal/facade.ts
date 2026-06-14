@@ -134,6 +134,7 @@ export const useTerminalFacade = (options: ITerminalFacadeOptions = {}): ITermin
     const handle = buildRunStartedHandle(payload, pendingHandle);
     runStore.startRun(handle);
     runtimeStore.markRunStarted(handle);
+    pendingRunHandles.delete(payload.runId);
     pendingRunStartedPayloads.delete(payload.runId);
   };
 

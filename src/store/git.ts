@@ -31,8 +31,8 @@ import {
   PULL_REQUEST_STALE_TIME_MS,
   pullRequestDetailQueryKey,
   pullRequestListQueryKey,
-  updatePullRequestListForState,
   type TPullRequestState,
+  updatePullRequestListForState,
 } from './git-pull-request-helpers';
 
 const MSG_GIT_INIT_NO_REPOSITORY = 'Git 初始化后仍未检测到仓库。';
@@ -514,13 +514,28 @@ export const useGitStore = defineStore('git', () => {
     };
 
     if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
-      const idleId = window.requestIdleCallback(run, {
+      let didRun = false;
+      let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
+
+      const runOnce = (): void => {
+        if (didRun) return;
+        didRun = true;
+        if (fallbackTimer !== null) {
+          clearTimeout(fallbackTimer);
+          fallbackTimer = null;
+        }
+        run();
+      };
+
+      const idleId = window.requestIdleCallback(runOnce, {
         timeout: GIT_COMMIT_STATS_BACKGROUND_DELAY_MS * 4,
       });
-      commitStatsBackgroundTimer = setTimeout(() => {
+
+      fallbackTimer = setTimeout(() => {
         window.cancelIdleCallback?.(idleId);
-        run();
+        runOnce();
       }, GIT_COMMIT_STATS_BACKGROUND_DELAY_MS * 4);
+      commitStatsBackgroundTimer = fallbackTimer;
       return;
     }
 

@@ -99,6 +99,11 @@ export function useWorkspaceExplorerMutations(options: IUseWorkspaceExplorerMuta
     return getRoot()?.rootPath ?? getWorkspaceRootPath();
   };
 
+  const isCurrentWorkspaceRoot = (rootPath: string): boolean => {
+    const currentRootPath = getRoot()?.rootPath ?? getWorkspaceRootPath();
+    return Boolean(currentRootPath) && areFileSystemPathsEqual(currentRootPath, rootPath);
+  };
+
   const closeInlineCreateDraft = (): void => {
     inlineCreateDraft.open = false;
     inlineCreateDraft.parentPath = null;
@@ -137,10 +142,18 @@ export function useWorkspaceExplorerMutations(options: IUseWorkspaceExplorerMuta
       return;
     }
     // 复用同一个草稿前先关闭旧草稿，避免旧输入框失焦时把内容提交到旧目录。
+    const rootPathAtOpen = getRoot()?.rootPath;
+    if (!rootPathAtOpen) {
+      message.error('无法解析工作区。');
+      return;
+    }
     if (inlineCreateDraft.open) {
       closeInlineCreateDraft();
     }
     await expandExplorerPath(parentPath);
+    if (!isCurrentWorkspaceRoot(rootPathAtOpen)) {
+      return;
+    }
     inlineCreateDraft.open = true;
     inlineCreateDraft.parentPath = parentPath;
     inlineCreateDraft.kind = kind;
@@ -205,6 +218,10 @@ export function useWorkspaceExplorerMutations(options: IUseWorkspaceExplorerMuta
     isInlineCreateSubmitting.value = true;
     try {
       const payload = await tauriService.createWorkspacePath({ parentPath, rootPath, name, kind });
+      if (!isCurrentWorkspaceRoot(rootPath)) {
+        closeInlineCreateDraft();
+        return;
+      }
       await refreshDirectoryAfterMutation(parentPath);
       message.success(kind === 'file' ? '已创建文件' : '已创建文件夹');
       closeInlineCreateDraft();
@@ -251,6 +268,16 @@ export function useWorkspaceExplorerMutations(options: IUseWorkspaceExplorerMuta
         return;
       }
       // 真实失焦：按既定语义处理（有内容则提交，空则取消）。
+      // 刚打开新建草稿时，右键菜单关闭 / 焦点还原 / 文件树 row 重新获得焦点
+      // 都可能造成一次伪 blur。此时如果用户尚未输入内容，不应把空名称当成
+      // 真实失焦去关闭草稿；重新夺回输入框焦点即可。
+      const withinInitialCreateFocusWindow =
+        Date.now() - inlineCreateOpenedAt < INLINE_CREATE_FOCUS_GRACE_MS;
+      if (input && withinInitialCreateFocusWindow && inlineCreateDraft.value.trim().length === 0) {
+        input.focus();
+        input.select();
+        return;
+      }
       void confirmInlineCreateWorkspaceEntry();
     });
   };
@@ -343,12 +370,16 @@ export function useWorkspaceExplorerMutations(options: IUseWorkspaceExplorerMuta
     if (!newName || newName === target.name) {
       return;
     }
+    const rootPath = root.rootPath;
     try {
       await tauriService.renameWorkspacePath({
         path: target.path,
-        rootPath: root.rootPath,
+        rootPath,
         newName,
       });
+      if (!isCurrentWorkspaceRoot(rootPath)) {
+        return;
+      }
       pruneWorkspaceSubtreeState(target.path);
       await refreshDirectoryAfterMutation(resolveParentPathForMutation(target.path));
       message.success('已重命名');
@@ -373,8 +404,12 @@ export function useWorkspaceExplorerMutations(options: IUseWorkspaceExplorerMuta
     if (action !== 'confirm') {
       return;
     }
+    const rootPath = root.rootPath;
     try {
-      await tauriService.deleteWorkspacePath({ path: target.path, rootPath: root.rootPath });
+      await tauriService.deleteWorkspacePath({ path: target.path, rootPath });
+      if (!isCurrentWorkspaceRoot(rootPath)) {
+        return;
+      }
       pruneWorkspaceSubtreeState(target.path);
       await refreshDirectoryAfterMutation(resolveParentPathForMutation(target.path));
       message.success('已移动到回收站');

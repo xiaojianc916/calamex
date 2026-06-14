@@ -914,6 +914,7 @@ export class TerminalSession {
 
   async dispose(): Promise<void> {
     this.detach();
+    this._disposeWebglRenderer();
     this._terminalRef.value?.dispose();
     this._terminalRef.value = null;
     this._fitAddonRef.value = null;
@@ -1783,8 +1784,11 @@ export class TerminalSession {
 
   private _runWithProgrammaticScrollLock(callback: () => void): void {
     this._isProgrammaticScrollSync = true;
-    callback();
-    this._releaseProgrammaticScrollLock();
+    try {
+      callback();
+    } finally {
+      this._releaseProgrammaticScrollLock();
+    }
   }
 
   private _beginLayoutScrollGuard(shouldKeepViewportAtBottom: boolean): void {

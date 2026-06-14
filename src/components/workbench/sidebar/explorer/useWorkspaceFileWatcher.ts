@@ -59,6 +59,7 @@ export function useWorkspaceFileWatcher(
 
   let fsEventUnlisten: (() => void) | null = null;
   let isFsWatcherStarting = false;
+  let fsWatcherStartVersion = 0;
   const pendingFsReloadDirs = new Set<string>();
 
   const flushPendingFsReloads = useDebounceFn(async (): Promise<void> => {
@@ -96,6 +97,7 @@ export function useWorkspaceFileWatcher(
   }
 
   function stopWorkspaceFileWatcher(): void {
+    fsWatcherStartVersion += 1;
     const wasWatching = fsEventUnlisten !== null || isFsWatcherStarting;
     fsEventUnlisten?.();
     fsEventUnlisten = null;
@@ -110,27 +112,53 @@ export function useWorkspaceFileWatcher(
     const rootPath = root.value?.rootPath;
     if (!rootPath) return;
     if (fsEventUnlisten || isFsWatcherStarting) return;
+
+    const startVersion = fsWatcherStartVersion + 1;
+    fsWatcherStartVersion = startVersion;
     isFsWatcherStarting = true;
+
+    const isStaleStart = (): boolean =>
+      fsWatcherStartVersion !== startVersion ||
+      !areFileSystemPathsEqual(root.value?.rootPath ?? null, rootPath);
+
     try {
       if (!fsEventUnlisten) {
-        fsEventUnlisten = await events.workspaceFsEvent.listen((e) => {
+        const unlisten = await events.workspaceFsEvent.listen((e) => {
           handleFileSystemEvent(e.payload);
         });
+
+        if (isStaleStart()) {
+          unlisten();
+          return;
+        }
+
+        fsEventUnlisten = unlisten;
       }
-      if (!areFileSystemPathsEqual(root.value?.rootPath ?? null, rootPath)) {
+
+      if (isStaleStart()) {
         fsEventUnlisten?.();
         fsEventUnlisten = null;
         return;
       }
+
       try {
         await tauriService.startWorkspaceWatching(rootPath);
+
+        if (isStaleStart()) {
+          fsEventUnlisten?.();
+          fsEventUnlisten = null;
+          await tauriService.stopWorkspaceWatching();
+          return;
+        }
       } catch (error) {
         console.warn('[AppSidebar] Failed to start workspace file watcher.', error);
         fsEventUnlisten?.();
         fsEventUnlisten = null;
       }
     } finally {
-      isFsWatcherStarting = false;
+      if (fsWatcherStartVersion === startVersion) {
+        isFsWatcherStarting = false;
+      }
     }
   }
 

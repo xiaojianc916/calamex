@@ -172,6 +172,10 @@ export class TerminalRunOrchestrator {
   resetActiveRunLifecycle(): void {
     this.resetBufferedTerminalOutput();
     this.clearTerminalRunFallbackTimer();
+    if (this.binding) {
+      this.clearActiveTerminalRunState();
+      return;
+    }
     this.activeTerminalRunMeta = null;
   }
 
@@ -179,6 +183,7 @@ export class TerminalRunOrchestrator {
     this.terminalRunListenerVersion += 1;
     this.clearTerminalRunEventListeners();
     this.terminalFacade.dispose();
+    this.hasEnsuredTerminalSession = false;
     this.resetActiveRunLifecycle();
     if (this.binding) {
       this.clearActiveTerminalRunState();
@@ -565,6 +570,11 @@ export class TerminalRunOrchestrator {
       } catch (error) {
         void listeners.dispose();
         throw error;
+      }
+
+      if (this.terminalRunListenerVersion !== version) {
+        void listeners.dispose();
+        return;
       }
 
       this.terminalRunListeners.set(() => listeners.dispose());

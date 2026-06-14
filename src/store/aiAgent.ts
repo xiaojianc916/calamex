@@ -407,6 +407,8 @@ export const useAiAgentStore = defineStore(
       isClassifying.value = false;
       isPlanning.value = false;
       isApproving.value = false;
+      pendingToolConfirmation.value = null;
+      pendingSidecarAgentSession.value = null;
       errorMessage.value = '';
     };
 
