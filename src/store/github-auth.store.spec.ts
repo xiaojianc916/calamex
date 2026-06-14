@@ -47,26 +47,22 @@ const flushPromises = async (): Promise<void> => {
 
 const githubAuthServiceMock = vi.hoisted(() => ({
   beginGithubBrowserAuth: vi.fn(),
-  beginGithubDeviceAuth: vi.fn(),
   completeGithubBrowserAuth: vi.fn(),
-  completeGithubDeviceAuth: vi.fn(),
   getGithubAuthStatus: vi.fn(),
+}));
+
+const browserMock = vi.hoisted(() => ({
+  openExternalUrl: vi.fn(),
 }));
 
 vi.mock('@/services/tauri.github-auth', () => ({
   beginGithubBrowserAuth: githubAuthServiceMock.beginGithubBrowserAuth,
-  beginGithubDeviceAuth: githubAuthServiceMock.beginGithubDeviceAuth,
   completeGithubBrowserAuth: githubAuthServiceMock.completeGithubBrowserAuth,
-  completeGithubDeviceAuth: githubAuthServiceMock.completeGithubDeviceAuth,
   getGithubAuthStatus: githubAuthServiceMock.getGithubAuthStatus,
 }));
 
 vi.mock('@/utils/browser', () => ({
-  openExternalUrl: vi.fn(),
-}));
-
-vi.mock('@/utils/clipboard', () => ({
-  tryWriteClipboardText: vi.fn(),
+  openExternalUrl: browserMock.openExternalUrl,
 }));
 
 describe('useGitHubAuthStore', () => {
@@ -126,7 +122,7 @@ describe('useGitHubAuthStore', () => {
     expect(authStore.isLoading).toBe(false);
   });
 
-  it('连接 GitHub 时优先使用系统浏览器 PKCE 授权', async () => {
+  it('连接 GitHub 只使用系统浏览器 PKCE 授权', async () => {
     const authStore = useGitHubAuthStore();
     githubAuthServiceMock.getGithubAuthStatus.mockResolvedValueOnce(
       createAuthStatus({ authenticated: false, login: null }),
@@ -141,18 +137,20 @@ describe('useGitHubAuthStore', () => {
     );
 
     authStore.setRepositoryRootPath(WORKSPACE_ROOT);
-    await authStore.startDeviceAuth();
+    await authStore.startAuth();
 
     expect(githubAuthServiceMock.beginGithubBrowserAuth).toHaveBeenCalledWith(WORKSPACE_ROOT);
+    expect(browserMock.openExternalUrl).toHaveBeenCalledWith(
+      'https://github.com/login/oauth/authorize?state=abc',
+    );
     expect(githubAuthServiceMock.completeGithubBrowserAuth).toHaveBeenCalledWith({
       repositoryRootPath: WORKSPACE_ROOT,
       state: 'abc',
     });
-    expect(githubAuthServiceMock.beginGithubDeviceAuth).not.toHaveBeenCalled();
     expect(authStore.status.login).toBe('browser-octocat');
   });
 
-  it('系统浏览器 PKCE 不可用时回退到 Device Flow', async () => {
+  it('浏览器 PKCE 授权失败时不回退旧 Device Flow', async () => {
     const authStore = useGitHubAuthStore();
     githubAuthServiceMock.getGithubAuthStatus.mockResolvedValueOnce(
       createAuthStatus({ authenticated: false, login: null }),
@@ -160,27 +158,14 @@ describe('useGitHubAuthStore', () => {
     githubAuthServiceMock.beginGithubBrowserAuth.mockRejectedValueOnce(
       new Error('redirect_uri mismatch'),
     );
-    githubAuthServiceMock.beginGithubDeviceAuth.mockResolvedValueOnce({
-      deviceCode: 'device-code',
-      userCode: 'ABCD-EFGH',
-      verificationUri: 'https://github.com/login/device',
-      interval: 1,
-      expiresIn: 900,
-    });
-    githubAuthServiceMock.completeGithubDeviceAuth.mockResolvedValueOnce(
-      createAuthStatus({ login: 'device-octocat' }),
-    );
 
     authStore.setRepositoryRootPath(WORKSPACE_ROOT);
-    await authStore.startDeviceAuth();
+    await authStore.startAuth();
 
     expect(githubAuthServiceMock.beginGithubBrowserAuth).toHaveBeenCalledWith(WORKSPACE_ROOT);
-    expect(githubAuthServiceMock.beginGithubDeviceAuth).toHaveBeenCalledWith(WORKSPACE_ROOT);
-    expect(githubAuthServiceMock.completeGithubDeviceAuth).toHaveBeenCalledWith({
-      repositoryRootPath: WORKSPACE_ROOT,
-      deviceCode: 'device-code',
-      interval: 1,
-    });
-    expect(authStore.status.login).toBe('device-octocat');
+    expect(githubAuthServiceMock.completeGithubBrowserAuth).not.toHaveBeenCalled();
+    expect(browserMock.openExternalUrl).not.toHaveBeenCalled();
+    expect(authStore.status.authenticated).toBe(false);
+    expect(authStore.status.message).toBe('redirect_uri mismatch');
   });
 });

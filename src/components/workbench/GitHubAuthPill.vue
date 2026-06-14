@@ -6,7 +6,7 @@
       :class="{
         'is-connected': authStore.isAuthenticated,
         'is-loading': authStore.isLoading && !authStore.status.authenticated,
-        'is-authorizing': Boolean(authStore.deviceAuth),
+        'is-authorizing': authStore.isAuthorizing,
       }"
       :disabled="isButtonDisabled"
       :title="authStore.title"
@@ -40,7 +40,7 @@
     </button>
 
     <section
-      v-if="isMenuOpen && !authStore.deviceAuth"
+      v-if="isMenuOpen"
       class="source-control-github-menu"
       role="menu"
       aria-label="GitHub 登录信息"
@@ -114,54 +114,6 @@
         </button>
       </template>
     </section>
-
-    <section
-      v-if="authStore.deviceAuth"
-      class="source-control-github-device-card"
-      aria-live="polite"
-      @click.stop
-    >
-      <div class="source-control-github-device-head">
-        <Github class="source-control-github-device-mark" aria-hidden="true" />
-        <div class="source-control-github-device-title-group">
-          <p class="source-control-github-device-title">GitHub 授权</p>
-          <p class="source-control-github-device-subtitle">验证码已复制，浏览器完成后会自动连接</p>
-        </div>
-      </div>
-
-      <button
-        type="button"
-        class="source-control-github-device-code"
-        title="复制验证码"
-        aria-label="复制 GitHub 验证码"
-        @click="handleCopyCode"
-      >
-        <span v-text="authStore.deviceAuth.userCode" />
-      </button>
-
-      <div class="source-control-github-device-actions">
-        <button type="button" class="source-control-github-device-btn" @click="handleCopyCode">
-          复制验证码
-        </button>
-        <button
-          type="button"
-          class="source-control-github-device-btn is-primary"
-          @click="handleReopenPage"
-        >
-          打开 GitHub
-        </button>
-      </div>
-
-      <div class="source-control-github-device-footer">
-        <div class="source-control-github-device-status">
-          <span class="source-control-github-device-pulse" aria-hidden="true" />
-          <span>等待授权确认</span>
-        </div>
-        <button type="button" class="source-control-github-device-cancel" @click="handleCancelAuth">
-          取消
-        </button>
-      </div>
-    </section>
   </div>
 </template>
 
@@ -185,10 +137,10 @@ const authAvatarLoadFailed = ref(false);
 const menuAvatarLoadFailed = ref(false);
 
 const isButtonDisabled = computed(
-  () => authStore.isLoading && !authStore.status.authenticated && !authStore.deviceAuth,
+  () => authStore.isLoading && !authStore.status.authenticated && !authStore.isAuthorizing,
 );
 const canStartAuth = computed(() => Boolean(props.repositoryRootPath) && !authStore.isLoading);
-const isPopoverOpen = computed(() => isMenuOpen.value || Boolean(authStore.deviceAuth));
+const isPopoverOpen = computed(() => isMenuOpen.value);
 const displayName = computed(() => authStore.status.name || authStore.status.login || 'GitHub');
 const profileSubtitle = computed(() => authStore.status.email || authStore.status.login || '');
 const rawAvatarUrl = computed(() =>
@@ -231,7 +183,7 @@ const handleMenuAvatarError = (): void => {
 const handleStartAuth = async (): Promise<void> => {
   if (!canStartAuth.value) return;
   closeMenu();
-  await authStore.startDeviceAuth();
+  await authStore.startAuth();
 };
 
 const handleSwitchAccount = async (): Promise<void> => {
@@ -243,18 +195,6 @@ const handleSwitchAccount = async (): Promise<void> => {
 const handleOpenProfile = (): void => {
   closeMenu();
   authStore.openProfile();
-};
-
-const handleCopyCode = async (): Promise<void> => {
-  await authStore.copyDeviceCode();
-};
-
-const handleReopenPage = (): void => {
-  authStore.reopenVerificationPage();
-};
-
-const handleCancelAuth = (): void => {
-  authStore.cancelDeviceAuth();
 };
 
 const handleWindowPointerDown = (event: PointerEvent): void => {
