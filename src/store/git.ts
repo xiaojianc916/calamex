@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 
+import { queryClient } from '@/lib/query-client';
 import { tauriService } from '@/services/tauri';
 import type {
   IGitBranchPayload,
@@ -31,10 +32,11 @@ const PULL_REQUEST_DETAIL_CACHE_LIMIT = 20;
 const PULL_REQUEST_PERSISTED_CACHE_PREFIX = 'calamex.gitPullRequests.';
 const PULL_REQUEST_PERSISTED_CACHE_VERSION = 1;
 const PULL_REQUEST_PERSISTED_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
-const GIT_COMMIT_STATS_PERSISTED_CACHE_PREFIX = 'calamex.gitCommitStats.';
-const GIT_COMMIT_STATS_PERSISTED_CACHE_VERSION = 1;
-const GIT_COMMIT_STATS_PERSISTED_CACHE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
-const GIT_COMMIT_STATS_CACHE_LIMIT = 500;
+// commit-stats 的内存缓存/持久化/gc 现由 @tanstack/vue-query 承担(见 src/lib/query-client.ts)。
+// 这里只保留后台批量队列(产品逻辑)与 vue-query 的接线参数。
+const GIT_COMMIT_STATS_QUERY_PREFIX = ['git', 'commitStats'];
+// 保留窗口:作为 commit-stats 查询的 gcTime,使不可变的 commit 统计在缓存/持久化中留存约 30 天。
+const GIT_COMMIT_STATS_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const GIT_COMMIT_STATS_BACKGROUND_BATCH_LIMIT = 30;
 const GIT_COMMIT_STATS_BACKGROUND_DELAY_MS = 320;
 
@@ -256,124 +258,6 @@ const writePersistedPullRequestDetail = (
   }
 };
 
-const createGitCommitStatsPersistedCacheKey = (cacheKey: string): string =>
-  `${GIT_COMMIT_STATS_PERSISTED_CACHE_PREFIX}${GIT_COMMIT_STATS_PERSISTED_CACHE_VERSION}.${encodeURIComponent(cacheKey)}`;
-
-const readPersistedGitCommitStats = (cacheKey: string): TPersistedGitCommitStatsCache | null => {
-  const storage = getPullRequestPersistentStorage();
-  if (!storage) return null;
-
-  try {
-    const rawValue = storage.getItem(createGitCommitStatsPersistedCacheKey(cacheKey));
-    if (!rawValue) return null;
-
-    const parsed = JSON.parse(rawValue) as Partial<TPersistedGitCommitStatsCache>;
-    if (
-      parsed.version !== GIT_COMMIT_STATS_PERSISTED_CACHE_VERSION ||
-      typeof parsed.fetchedAt !== 'number' ||
-      !parsed.payload ||
-      parsed.payload.commitId.length === 0 ||
-      Date.now() - parsed.fetchedAt > GIT_COMMIT_STATS_PERSISTED_CACHE_MAX_AGE_MS
-    ) {
-      return null;
-    }
-
-    return {
-      version: GIT_COMMIT_STATS_PERSISTED_CACHE_VERSION,
-      fetchedAt: parsed.fetchedAt,
-      payload: parsed.payload,
-    };
-  } catch {
-    return null;
-  }
-};
-
-const writePersistedGitCommitStats = (
-  cacheKey: string,
-  payload: TGitCommitStatsPayload,
-  fetchedAt: number,
-): void => {
-  const storage = getPullRequestPersistentStorage();
-  if (!storage) return;
-
-  prunePersistedGitCommitStatsCaches();
-
-  try {
-    storage.setItem(
-      createGitCommitStatsPersistedCacheKey(cacheKey),
-      JSON.stringify({
-        version: GIT_COMMIT_STATS_PERSISTED_CACHE_VERSION,
-        fetchedAt,
-        payload,
-      } satisfies TPersistedGitCommitStatsCache),
-    );
-  } catch {
-    // Best-effort cache snapshot only.
-  }
-};
-
-const removePersistedGitCommitStats = (cacheKey: string): void => {
-  const storage = getPullRequestPersistentStorage();
-  if (!storage) return;
-
-  try {
-    storage.removeItem(createGitCommitStatsPersistedCacheKey(cacheKey));
-  } catch {
-    // Best-effort cache cleanup only.
-  }
-};
-
-const prunePersistedGitCommitStatsCaches = (): void => {
-  const storage = getPullRequestPersistentStorage();
-  if (!storage) return;
-
-  const currentVersionPrefix = `${GIT_COMMIT_STATS_PERSISTED_CACHE_PREFIX + GIT_COMMIT_STATS_PERSISTED_CACHE_VERSION}.`;
-  const keysToRemove: string[] = [];
-
-  try {
-    for (let index = 0; index < storage.length; index += 1) {
-      const key = storage.key(index);
-      if (!key?.startsWith(GIT_COMMIT_STATS_PERSISTED_CACHE_PREFIX)) {
-        continue;
-      }
-
-      if (!key.startsWith(currentVersionPrefix)) {
-        keysToRemove.push(key);
-        continue;
-      }
-
-      const rawValue = storage.getItem(key);
-      if (!rawValue) {
-        keysToRemove.push(key);
-        continue;
-      }
-
-      try {
-        const parsed = JSON.parse(rawValue) as {
-          version?: unknown;
-          fetchedAt?: unknown;
-        };
-
-        if (
-          parsed.version !== GIT_COMMIT_STATS_PERSISTED_CACHE_VERSION ||
-          typeof parsed.fetchedAt !== 'number' ||
-          Date.now() - parsed.fetchedAt > GIT_COMMIT_STATS_PERSISTED_CACHE_MAX_AGE_MS
-        ) {
-          keysToRemove.push(key);
-        }
-      } catch {
-        keysToRemove.push(key);
-      }
-    }
-
-    keysToRemove.forEach((key) => {
-      storage.removeItem(key);
-    });
-  } catch {
-    // Best-effort cache pruning only.
-  }
-};
-
 const prunePersistedPullRequestCaches = (): void => {
   const storage = getPullRequestPersistentStorage();
   if (!storage) return;
@@ -554,12 +438,6 @@ type TGitCommitStatsPayload = {
   computedAt: number;
 };
 
-type TPersistedGitCommitStatsCache = {
-  version: number;
-  fetchedAt: number;
-  payload: TGitCommitStatsPayload;
-};
-
 export const useGitStore = defineStore('git', () => {
   const status = ref<IGitRepositoryStatusPayload>(createEmptyGitRepositoryStatus());
   const isLoading = ref(false);
@@ -596,10 +474,23 @@ export const useGitStore = defineStore('git', () => {
   const pullRequestDetailCacheOrder = ref<string[]>([]);
 
   const commitDetailCache = ref<Record<string, IGitCommitDetailPayload>>({});
+  // commit-stats 的权威缓存在 vue-query;此 ref 仅作响应式镜像,供同步的 getCommitStats 读取并驱动 UI。
   const commitStatsCache = ref<Record<string, TGitCommitStatsPayload>>({});
-  const commitStatsCacheOrder = ref<string[]>([]);
   const commitFileDiffCache = ref<Record<string, IGitCommitFileDiffPayload>>({});
   const commitFileDiffPreviewCache = ref<Record<string, IGitDiffPreviewPayload>>({});
+
+  // commit-stats 是不可变的 per-commit 统计:大 staleTime 避免重取,gcTime≈30d 作为保留窗口,
+  // meta.persist 让官方 persister 仅持久化这一类查询(见 src/lib/query-client.ts)。
+  queryClient.setQueryDefaults(GIT_COMMIT_STATS_QUERY_PREFIX, {
+    staleTime: GIT_COMMIT_STATS_RETENTION_MS,
+    gcTime: GIT_COMMIT_STATS_RETENTION_MS,
+    meta: { persist: true },
+  });
+
+  const commitStatsQueryKey = (cacheKey: string): string[] => [
+    ...GIT_COMMIT_STATS_QUERY_PREFIX,
+    cacheKey,
+  ];
 
   let statusRequestId = 0;
   let commitHistoryRequestId = 0;
@@ -928,71 +819,45 @@ export const useGitStore = defineStore('git', () => {
     );
   };
 
-  const touchCommitStatsCache = (cacheKey: string): void => {
-    if (!commitStatsCache.value[cacheKey]) return;
-    commitStatsCacheOrder.value = [
-      cacheKey,
-      ...commitStatsCacheOrder.value.filter((key) => key !== cacheKey),
-    ];
-  };
-
   const rememberCommitStats = (detail: IGitCommitDetailPayload): void => {
     const cacheKey = resolveCommitStatsCacheKey(detail.id);
     if (!cacheKey) return;
 
-    const computedAt = Date.now();
     const payload: TGitCommitStatsPayload = {
       commitId: detail.id,
       fileCount: detail.fileCount,
       additions: detail.additions,
       deletions: detail.deletions,
-      computedAt,
+      computedAt: Date.now(),
     };
 
-    const nextCache = {
+    // vue-query 承担缓存/gc/持久化;同时写穿响应式镜像,驱动 UI 在后台队列填充时即时更新。
+    queryClient.setQueryData(commitStatsQueryKey(cacheKey), payload);
+    commitStatsCache.value = {
       ...commitStatsCache.value,
       [cacheKey]: payload,
     };
-    const nextOrder = [cacheKey, ...commitStatsCacheOrder.value.filter((key) => key !== cacheKey)];
-
-    while (nextOrder.length > GIT_COMMIT_STATS_CACHE_LIMIT) {
-      const evicted = nextOrder.pop();
-      if (evicted) {
-        delete nextCache[evicted];
-        removePersistedGitCommitStats(evicted);
-      }
-    }
-
-    commitStatsCache.value = nextCache;
-    commitStatsCacheOrder.value = nextOrder;
-    writePersistedGitCommitStats(cacheKey, payload, computedAt);
-  };
-
-  const hydrateCommitStatsCache = (cacheKey: string): void => {
-    if (commitStatsCache.value[cacheKey]) {
-      touchCommitStatsCache(cacheKey);
-      return;
-    }
-
-    const persisted = readPersistedGitCommitStats(cacheKey);
-    if (!persisted) return;
-
-    commitStatsCache.value = {
-      ...commitStatsCache.value,
-      [cacheKey]: persisted.payload,
-    };
-    commitStatsCacheOrder.value = [
-      cacheKey,
-      ...commitStatsCacheOrder.value.filter((key) => key !== cacheKey),
-    ].slice(0, GIT_COMMIT_STATS_CACHE_LIMIT);
   };
 
   const getCommitStats = (commitId: string): TGitCommitStatsPayload | null => {
     const cacheKey = resolveCommitStatsCacheKey(commitId);
     if (!cacheKey) return null;
 
-    hydrateCommitStatsCache(cacheKey);
-    return commitStatsCache.value[cacheKey] ?? null;
+    const mirrored = commitStatsCache.value[cacheKey];
+    if (mirrored) return mirrored;
+
+    // 启动时官方 persister 已把快照恢复进 queryClient;首次读取时回填响应式镜像。
+    const restored = queryClient.getQueryData<TGitCommitStatsPayload>(
+      commitStatsQueryKey(cacheKey),
+    );
+    if (restored) {
+      commitStatsCache.value = {
+        ...commitStatsCache.value,
+        [cacheKey]: restored,
+      };
+      return restored;
+    }
+    return null;
   };
 
   const getFileBaseline = async (path: string): Promise<IGitFileBaselinePayload> => {
@@ -1731,310 +1596,4 @@ export const useGitStore = defineStore('git', () => {
       }
 
       if (!pending && shouldRevalidate && !isRevalidateFailureCoolingDown) {
-        void loadPullRequestDetail(number, {
-          force: true,
-          updateActive,
-          visibleLoading: false,
-        }).catch(() => undefined);
-      }
-
-      return cached;
-    }
-    if (pending) {
-      if (!updateActive) return pending;
-      const requestId = ++pullRequestDetailRequestId;
-      if (visibleLoading) isPullRequestDetailLoading.value = true;
-      try {
-        const payload = await pending;
-        if (requestId === pullRequestDetailRequestId) {
-          pullRequestDetail.value = payload;
-        }
-        return payload;
-      } finally {
-        if (visibleLoading && requestId === pullRequestDetailRequestId) {
-          isPullRequestDetailLoading.value = false;
-        }
-      }
-    }
-
-    const requestId = updateActive ? ++pullRequestDetailRequestId : pullRequestDetailRequestId;
-    if (visibleLoading) isPullRequestDetailLoading.value = true;
-    const request = tauriService
-      .getGitPullRequestDetail({
-        repositoryRootPath,
-        number,
-      })
-      .then((payload) => {
-        if (detailCacheEpochAtRequest !== pullRequestCacheEpoch) {
-          return payload;
-        }
-
-        rememberPullRequestDetail(cacheKey, payload);
-        clearPullRequestDetailRevalidateFailure(cacheKey);
-        if (updateActive && requestId === pullRequestDetailRequestId) {
-          pullRequestDetail.value = payload;
-        }
-        return payload;
-      })
-      .catch((error) => {
-        if (cached) {
-          markPullRequestDetailRevalidateFailed(cacheKey);
-          return cached;
-        }
-        throw error;
-      })
-      .finally(() => {
-        pendingPullRequestDetailRequests.delete(cacheKey);
-        if (visibleLoading && requestId === pullRequestDetailRequestId) {
-          isPullRequestDetailLoading.value = false;
-        }
-      });
-
-    pendingPullRequestDetailRequests.set(cacheKey, request);
-    return request;
-  };
-
-  const ensurePullRequestsLoaded = async (
-    state?: string,
-  ): Promise<IGitPullRequestSummaryPayload[]> => {
-    const support = await loadPullRequestSupport();
-    if (!support.available) return [];
-    return loadPullRequests(state, {
-      preloadDetails: false,
-      updateActive: true,
-      visibleLoading: true,
-    });
-  };
-
-  const refreshPullRequests = async (state?: string): Promise<IGitPullRequestSummaryPayload[]> => {
-    const support = await loadPullRequestSupport();
-    if (!support.available) return [];
-    return loadPullRequests(state, {
-      force: true,
-      preloadDetails: false,
-      updateActive: true,
-      visibleLoading: true,
-    });
-  };
-
-  const preloadPullRequestsInBackground = async (): Promise<void> => {
-    if (!hasRepository.value) return;
-    try {
-      const support = await loadPullRequestSupport();
-      if (!support.available) return;
-      await loadPullRequests('open', {
-        preloadDetails: false,
-        updateActive: false,
-        visibleLoading: false,
-      });
-    } catch {
-      // Background PR preloading is best-effort only.
-    }
-  };
-
-  const createPullRequest = async (payload: {
-    title: string;
-    body: string | null;
-    base: string;
-    head: string;
-    draft: boolean | null;
-  }): Promise<IGitPullRequestSummaryPayload> => {
-    const result = await tauriService.createGitPullRequest({
-      repositoryRootPath: requireRepositoryRootPath(),
-      ...payload,
-    });
-    applyPullRequestSummaryMutation(result);
-    return result;
-  };
-
-  const mergePullRequest = async (
-    number: number,
-    mergeMethod: string | null,
-  ): Promise<IGitPullRequestSummaryPayload> => {
-    const result = await tauriService.mergeGitPullRequest({
-      repositoryRootPath: requireRepositoryRootPath(),
-      number,
-      mergeMethod,
-    });
-    applyPullRequestSummaryMutation(result);
-    return result;
-  };
-
-  const closePullRequest = async (number: number): Promise<IGitPullRequestSummaryPayload> => {
-    const result = await tauriService.closeGitPullRequest({
-      repositoryRootPath: requireRepositoryRootPath(),
-      number,
-    });
-    applyPullRequestSummaryMutation(result);
-    return result;
-  };
-
-  const setRemote = async (
-    remoteName: string,
-    remoteUrl: string,
-  ): Promise<IGitPullRequestSupportPayload> => {
-    isSettingRemote.value = true;
-    try {
-      const payload = await tauriService.setGitRemote({
-        repositoryRootPath: requireRepositoryRootPath(),
-        remoteName,
-        remoteUrl,
-      });
-      pullRequestSupportRequestId += 1;
-      pendingPullRequestSupportRequest = null;
-      pullRequestSupport.value = payload;
-      removePersistedPullRequestCachesForRepository(status.value.repositoryRootPath);
-      resetPullRequests();
-      return pullRequestSupport.value;
-    } finally {
-      isSettingRemote.value = false;
-    }
-  };
-
-  const checkoutBranch = async (branchName: string): Promise<IGitRepositoryStatusPayload> => {
-    const payload = await tauriService.checkoutGitBranch({
-      repositoryRootPath: requireRepositoryRootPath(),
-      branchName,
-    });
-    clearBaselineCache();
-    resetBranches();
-    return applyStatusFromMutation(payload);
-  };
-
-  const checkoutCommit = async (commitId: string): Promise<IGitRepositoryStatusPayload> => {
-    const payload = await tauriService.checkoutGitCommit({
-      repositoryRootPath: requireRepositoryRootPath(),
-      commitId,
-    });
-    clearBaselineCache();
-    resetBranches();
-    void loadCommitHistory();
-    return applyStatusFromMutation(payload);
-  };
-
-  const revertCommit = async (commitId: string): Promise<IGitRepositoryStatusPayload> => {
-    const payload = await tauriService.revertGitCommit({
-      repositoryRootPath: requireRepositoryRootPath(),
-      commitId,
-    });
-    clearBaselineCache();
-    return applyStatusFromMutation(payload);
-  };
-
-  const createBranch = async (
-    branchName: string,
-    checkout: boolean,
-  ): Promise<IGitRepositoryStatusPayload> => {
-    const payload = await tauriService.createGitBranch({
-      repositoryRootPath: requireRepositoryRootPath(),
-      branchName,
-      checkout,
-    });
-    if (checkout) clearBaselineCache();
-    resetBranches();
-    return applyStatusFromMutation(payload);
-  };
-
-  const saveStash = async (
-    message: string | null,
-    includeUntracked: boolean,
-  ): Promise<IGitRepositoryStatusPayload> => {
-    const payload = await tauriService.saveGitStash({
-      repositoryRootPath: requireRepositoryRootPath(),
-      message,
-      includeUntracked,
-    });
-    clearBaselineCache();
-    resetStashes();
-    return applyStatusFromMutation(payload);
-  };
-
-  const applyStash = async (
-    stashIndex: number,
-    pop: boolean,
-  ): Promise<IGitRepositoryStatusPayload> => {
-    const payload = await tauriService.applyGitStash({
-      repositoryRootPath: requireRepositoryRootPath(),
-      stashIndex,
-      pop,
-    });
-    clearBaselineCache();
-    resetStashes();
-    return applyStatusFromMutation(payload);
-  };
-
-  const dropStash = async (stashIndex: number): Promise<IGitRepositoryStatusPayload> => {
-    const payload = await tauriService.dropGitStash({
-      repositoryRootPath: requireRepositoryRootPath(),
-      stashIndex,
-    });
-    resetStashes();
-    return applyStatusFromMutation(payload);
-  };
-
-  return {
-    status,
-    isLoading,
-    isCommitting,
-    baselineEpoch,
-    commitHistory,
-    commitHistoryHasMore,
-    commitHistoryNextOffset,
-    isCommitHistoryLoading,
-    branches,
-    isBranchesLoading,
-    stashes,
-    isStashesLoading,
-    pullRequestSupport,
-    isPullRequestSupportLoading,
-    isSettingRemote,
-    pullRequests,
-    isPullRequestsLoading,
-    pullRequestStateFilter,
-    pullRequestDetail,
-    isPullRequestDetailLoading,
-    commitDetailCache,
-    commitStatsCache,
-    commitFileDiffCache,
-    commitFileDiffPreviewCache,
-    hasRepository,
-    totalChangeCount,
-    canLoadMoreCommitHistory,
-    getFileBaseline,
-    invalidateFileBaseline,
-    clearBaselineCache,
-    refreshRepositoryStatus,
-    initRepository,
-    stagePaths,
-    unstagePaths,
-    discardPaths,
-    commitIndex,
-    loadCommitHistory,
-    loadCommitDetail,
-    getCommitStats,
-    enqueueCommitStats,
-    enqueueCommitStatsForCommits,
-    loadCommitFileDiff,
-    loadCommitFileDiffPreview,
-    loadBranches,
-    loadStashes,
-    loadPullRequestSupport,
-    loadPullRequests,
-    loadPullRequestDetail,
-    ensurePullRequestsLoaded,
-    refreshPullRequests,
-    preloadPullRequestsInBackground,
-    createPullRequest,
-    mergePullRequest,
-    closePullRequest,
-    setRemote,
-    checkoutBranch,
-    checkoutCommit,
-    revertCommit,
-    createBranch,
-    saveStash,
-    applyStash,
-    dropStash,
-    reset,
-  };
-});
+        void load
