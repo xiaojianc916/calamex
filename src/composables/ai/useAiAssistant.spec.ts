@@ -54,7 +54,7 @@ const aiServiceMock = vi.hoisted(() => {
   let sidecarStreamHandler: SidecarStreamHandler | null = null;
   let streamSequence = 0;
   let sidecarSequence = 0;
-  let activeChatSessionId: string = CHAT_SESSION_ID;
+  let activeChatSessionId = 'acp-chat-session-1';
   const queuedStreamResponses: Array<{
     streamId: string;
     assistantMessageId: string;
