@@ -14,7 +14,8 @@
 //!     `shell_words::split` 对含空格 / 反斜杠路径(尤其 Windows)的误分词。
 //!   * `connect_with(transport, |cx| async {...})` 内运行长生命周期命令循环,宿主侧
 //!     (Tauri 命令)经 mpsc 投递 NewSession / Prompt / SetSessionMode / RestoreCheckpoint /
-//!     ModelChat / WebSearch / WebFetch / Warmup / Health / Cancel / Shutdown。
+//!     ModelChat / WebSearch / WebFetch / Warmup / Health / Orchestrate / OrchestrateResume /
+//!     Cancel / Shutdown。
 
 // 过渡期:本模块尚未接线到宿主命令(公开 API 暂无调用点)。接线后移除该 allow。
 #![allow(dead_code)]
@@ -197,6 +198,56 @@ pub struct WarmupExtRequest {
 #[request(method = "calamex.dev/health", response = Value)]
 pub struct HealthExtRequest {}
 
+/// `calamex.dev/plan/orchestrate` 扩展方法的请求(原生计划编排启动)。
+///
+/// 标准会话回合(`session/prompt`)之外的「带外」编排能力:跑到审批挂起或终态,
+/// 过程中的工作流事件经会话的 `session/update` 流式下发(故携带 `session_id` 以便
+/// sidecar 在该会话上投影内部事件,见 agent.ts `handleOrchestrate`)。线方法名与
+/// sidecar 的 `ORCHESTRATE_METHOD`(`calamex.dev/plan/orchestrate`)逐字一致;字段镜像
+/// sidecar `ext-methods.ts` 的 `orchestrateParamsSchema`。`execution_mode` 的合法取值
+/// (interactive/autonomous)由 sidecar 端 zod 统一校验,宿主侧以字符串原样透传、不在此
+/// 重复其取值表(同 `WebSearchExtRequest.intent` 的处理);取值为空(None)时整字段省略,
+/// 交由 sidecar 套用其默认值(interactive),宿主侧不臆造默认(镜像契约
+/// `AgentSidecarOrchestrateRequest.execution_mode` 的 omit-when-blank 语义)。
+/// 响应为编排终帧 `{ runId, status, result }`,以 `serde_json::Value` 原样回传,交由宿主侧
+/// 解析(`status` 字段冗余,按 serde 默认忽略,同 HTTP orchestrate)。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, JsonRpcRequest)]
+#[serde(rename_all = "camelCase")]
+#[request(method = "calamex.dev/plan/orchestrate", response = Value)]
+pub struct OrchestrateExtRequest {
+    pub goal: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_config: Option<ExtModelConfig>,
+}
+
+/// `calamex.dev/plan/orchestrate/resume` 扩展方法的请求(编排挂起点恢复)。
+///
+/// 恢复一个挂起在审批门(approve/reject/continue/cancel)的编排运行,按 `run_id` 定位;
+/// 续跑阶段的工作流事件同样经会话的 `session/update` 流式下发(携带 `session_id` 以便
+/// sidecar 在该会话上投影,见 agent.ts `handleOrchestrateResume`)。线方法名与 sidecar 的
+/// `ORCHESTRATE_RESUME_METHOD`(`calamex.dev/plan/orchestrate/resume`)逐字一致;字段镜像
+/// sidecar `orchestrateResumeParamsSchema`。`decision` 的合法取值由 sidecar 端 zod 统一校验,
+/// 宿主侧以字符串原样透传。响应同 `OrchestrateExtRequest`:编排终帧 `{ runId, status, result }`。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, JsonRpcRequest)]
+#[serde(rename_all = "camelCase")]
+#[request(method = "calamex.dev/plan/orchestrate/resume", response = Value)]
+pub struct OrchestrateResumeExtRequest {
+    pub run_id: String,
+    pub decision: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_config: Option<ExtModelConfig>,
+}
+
 /// 启动配置。采用结构化字段而非单一命令行字符串:
 ///   * `program`:ACP stdio 入口可执行程序(如 node 的绝对路径);
 ///   * `args`:传给程序的参数(如 `dist/acp/stdio-entry.js`);
@@ -259,6 +310,14 @@ enum Command {
     },
     Health {
         request: HealthExtRequest,
+        reply: oneshot::Sender<Result<Value, String>>,
+    },
+    Orchestrate {
+        request: OrchestrateExtRequest,
+        reply: oneshot::Sender<Result<Value, String>>,
+    },
+    OrchestrateResume {
+        request: OrchestrateResumeExtRequest,
         reply: oneshot::Sender<Result<Value, String>>,
     },
     Cancel {
@@ -422,6 +481,43 @@ impl AcpClientHandle {
             .map_err(AcpClientError::Protocol)
     }
 
+    /// 启动一次原生计划编排(扩展方法 `calamex.dev/plan/orchestrate`)。
+    ///
+    /// 与检查点回滚同属标准会话回合之外的「带外」能力,经 sidecar 公示的扩展方法通道下发;
+    /// 跑到审批挂起或终态,过程中的工作流事件经 `session/update` 流式下发(由 sidecar 在
+    /// `session_id` 指定会话上投影)。返回 sidecar 的编排终帧 `{runId,status,result}`
+    /// (`serde_json::Value`),由宿主侧解析。
+    pub async fn orchestrate(
+        &self,
+        request: OrchestrateExtRequest,
+    ) -> Result<Value, AcpClientError> {
+        let (reply, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(Command::Orchestrate { request, reply })
+            .map_err(|_| AcpClientError::NotRunning)?;
+        rx.await
+            .map_err(|_| AcpClientError::NotRunning)?
+            .map_err(AcpClientError::Protocol)
+    }
+
+    /// 恢复一个挂起的编排运行(扩展方法 `calamex.dev/plan/orchestrate/resume`)。
+    ///
+    /// 经 sidecar 公示的扩展方法通道下发;续跑阶段的工作流事件同样经 `session/update`
+    /// 流式下发。返回 sidecar 的编排终帧 `{runId,status,result}`(`serde_json::Value`),
+    /// 由宿主侧解析。
+    pub async fn orchestrate_resume(
+        &self,
+        request: OrchestrateResumeExtRequest,
+    ) -> Result<Value, AcpClientError> {
+        let (reply, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(Command::OrchestrateResume { request, reply })
+            .map_err(|_| AcpClientError::NotRunning)?;
+        rx.await
+            .map_err(|_| AcpClientError::NotRunning)?
+            .map_err(AcpClientError::Protocol)
+    }
+
     /// 取消指定会话当前操作(`session/cancel` 通知,fire-and-forget)。
     pub fn cancel(&self, session_id: SessionId) -> Result<(), AcpClientError> {
         self.cmd_tx
@@ -571,6 +667,14 @@ pub fn spawn_acp_client(
                             let _ = reply.send(res.map_err(|e| e.to_string()));
                         }
                         Command::Health { request, reply } => {
+                            let res = cx.send_request(request).block_task().await;
+                            let _ = reply.send(res.map_err(|e| e.to_string()));
+                        }
+                        Command::Orchestrate { request, reply } => {
+                            let res = cx.send_request(request).block_task().await;
+                            let _ = reply.send(res.map_err(|e| e.to_string()));
+                        }
+                        Command::OrchestrateResume { request, reply } => {
                             let res = cx.send_request(request).block_task().await;
                             let _ = reply.send(res.map_err(|e| e.to_string()));
                         }
@@ -793,5 +897,73 @@ mod tests {
     fn health_request_serializes_to_empty_object() {
         let value = serde_json::to_value(&HealthExtRequest {}).unwrap();
         assert_eq!(value, serde_json::json!({}));
+    }
+
+    #[test]
+    fn orchestrate_request_serializes_to_camel_case_params() {
+        let request = OrchestrateExtRequest {
+            goal: "实现登录页".to_string(),
+            thread_id: Some("thread_1".to_string()),
+            execution_mode: Some("interactive".to_string()),
+            session_id: Some("sess_1".to_string()),
+            model_config: None,
+        };
+        let value = serde_json::to_value(&request).unwrap();
+        assert_eq!(value["goal"], "实现登录页");
+        assert_eq!(value["threadId"], "thread_1");
+        assert_eq!(value["executionMode"], "interactive");
+        assert_eq!(value["sessionId"], "sess_1");
+        assert!(value.get("modelConfig").is_none());
+    }
+
+    #[test]
+    fn orchestrate_request_omits_optional_fields_when_absent() {
+        let request = OrchestrateExtRequest {
+            goal: "g".to_string(),
+            thread_id: None,
+            execution_mode: None,
+            session_id: None,
+            model_config: None,
+        };
+        let value = serde_json::to_value(&request).unwrap();
+        assert_eq!(value["goal"], "g");
+        assert!(value.get("executionMode").is_none());
+        assert!(value.get("threadId").is_none());
+        assert!(value.get("sessionId").is_none());
+        assert!(value.get("modelConfig").is_none());
+    }
+
+    #[test]
+    fn orchestrate_resume_request_serializes_to_camel_case_params() {
+        let request = OrchestrateResumeExtRequest {
+            run_id: "run_1".to_string(),
+            decision: "approve".to_string(),
+            reason: Some("看起来不错".to_string()),
+            session_id: Some("sess_1".to_string()),
+            model_config: None,
+        };
+        let value = serde_json::to_value(&request).unwrap();
+        assert_eq!(value["runId"], "run_1");
+        assert_eq!(value["decision"], "approve");
+        assert_eq!(value["reason"], "看起来不错");
+        assert_eq!(value["sessionId"], "sess_1");
+        assert!(value.get("modelConfig").is_none());
+    }
+
+    #[test]
+    fn orchestrate_resume_request_omits_optional_fields_when_absent() {
+        let request = OrchestrateResumeExtRequest {
+            run_id: "run_1".to_string(),
+            decision: "cancel".to_string(),
+            reason: None,
+            session_id: None,
+            model_config: None,
+        };
+        let value = serde_json::to_value(&request).unwrap();
+        assert_eq!(value["runId"], "run_1");
+        assert_eq!(value["decision"], "cancel");
+        assert!(value.get("reason").is_none());
+        assert!(value.get("sessionId").is_none());
+        assert!(value.get("modelConfig").is_none());
     }
 }
