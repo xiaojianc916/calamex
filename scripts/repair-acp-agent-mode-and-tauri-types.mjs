@@ -13,10 +13,10 @@ let agent = readFileSync(agentPath, 'utf8');
 agent = replaceOnce(
   agent,
   '\ttask: "chat",\n\tplan: "plan",',
-  '\task: "chat",\n\tplan: "plan",',
+  '\task: "chat",\n\tplan: "plan",'.replace('\\task', '\task'.replace('task', 'ask')),
   agentPath,
 );
-if (!agent.includes('ask: "chat"')) {
+if (!agent.includes('\task: "chat",'.replace('\\task', '\task'.replace('task', 'ask')))) {
   throw new Error(`${agentPath}: ask mode route was not repaired`);
 }
 if (agent.includes('\ttask: "chat",')) {
