@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia';
-import { computed, ref } from 'vue';
+import { computed, ref, shallowRef } from 'vue';
 import { z } from 'zod';
 import type {
   IAiAgentClassifyTaskPayload,
@@ -295,7 +295,7 @@ export const useAiAgentStore = defineStore(
     // 原生编排单条 run 的 runId(计划阶段产生,执行阶段 resume 复用)。
     const orchestrationRunId = ref<string | null>(null);
     const activeRunId = ref<string | null>(null);
-    const runs = ref<IAiAgentRun[]>([]);
+    const runs = shallowRef<IAiAgentRun[]>([]);
     const latestOfficialUsageResolved = ref<boolean>(false);
     const latestOfficialUsage = ref<IAiLanguageModelUsage | null>(null);
     const totalOfficialUsageResolved = ref<boolean>(false);

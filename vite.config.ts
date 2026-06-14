@@ -90,6 +90,14 @@ export default defineConfig(({ command }) => ({
             return 'vendor-shiki';
           }
 
+          // ── zod(契约校验)──────────────────────
+          // zod 是首屏核心路径(tauri.contracts / store / IPC 工厂都用),但 @copilotkit
+          // 也引用它,默认会被 Rollup 合进最大消费者 vendor-ai(2MB),导致首屏把整个
+          // CopilotKit 也拽进来。这里单独拆出,既避免重复,也让 vendor-ai 退出首屏。
+          if (normalizedId.includes('/node_modules/zod/')) {
+            return 'vendor-zod';
+          }
+
           // ── AI 运行时(CopilotKit / ai SDK)───────────────
           if (
             normalizedId.includes('/node_modules/@copilotkit/') ||

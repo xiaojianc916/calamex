@@ -1,8 +1,7 @@
 <script setup lang="ts">
-import { onMounted, watch } from 'vue';
+import { defineAsyncComponent, onMounted, watch } from 'vue';
 import AppDialogHost from '@/components/common/AppDialogHost.vue';
 import BrowserContextMenuHost from '@/components/common/BrowserContextMenuHost.vue';
-import FatalErrorScreen from '@/components/common/FatalErrorScreen.vue';
 import { Toaster } from '@/components/ui/sonner';
 import { useWindowResizeState } from '@/composables/useWindowResizeState';
 import { applyWindowStage, setWindowBackground } from '@/services/ipc/window.service';
@@ -13,6 +12,12 @@ import 'vue-sonner/style.css';
 interface ITauriInternals {
   invoke?: unknown;
 }
+
+// 致命错误界面受 runtimeErrorState 控制,仅在出错时挂载;异步加载让它(及其 lucide
+// 图标、ErrorDetails、Button 等依赖)退出首屏 chunk。出错本就罕见,异步加载的延迟可接受。
+const FatalErrorScreen = defineAsyncComponent(
+  () => import('@/components/common/FatalErrorScreen.vue'),
+);
 
 let hasAppliedMainWindowStage = false;
 let hasSyncedNativeWindowBackground = false;

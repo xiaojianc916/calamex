@@ -28,17 +28,16 @@ export const useTheme = () => {
     }
   };
 
+  // appStore.settings 在 patchSettings/replaceSettings 时整体替换引用,
+  // effectiveTheme 是计算后的字符串;两者用浅比较即可捕获变化,无需 deep 遍历。
   const stop = watch(
-    () => ({
-      settings: appStore.settings,
-      effectiveTheme: appStore.effectiveTheme,
-    }),
-    ({ settings, effectiveTheme }) => {
+    () => [appStore.settings, appStore.effectiveTheme] as const,
+    ([settings, effectiveTheme]) => {
       const resolved = resolveTheme(effectiveTheme);
       applyResolvedThemeEffect(settings, resolved.variant);
       void syncNativeWindowBackground();
     },
-    { deep: true, immediate: true, flush: 'post' },
+    { immediate: true, flush: 'post' },
   );
 
   onScopeDispose(stop);

@@ -191,13 +191,10 @@ export const useIntegratedTerminal = ({
 
   // --- Watchers ---
 
-  watch(
-    () => ({ settings: settings.value, theme: theme.value }),
-    () => {
-      session.applySettings(theme.value, settings.value);
-    },
-    { deep: true },
-  );
+  // settings/theme 均来自 appStore 整体替换引用(patchSettings),浅比较即可捕获。
+  watch([settings, theme], () => {
+    session.applySettings(theme.value, settings.value);
+  });
 
   watch(
     () => visible.value,
