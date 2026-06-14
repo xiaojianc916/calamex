@@ -807,8 +807,7 @@ pub async fn create_ssh_directory(
     payload: SshDirectoryCreateRequest,
 ) -> Result<SshDirectoryCreatePayload, String> {
     let params = SshConnectionParams::from_create_directory_request(&payload);
-    let remote_path = resolve_create_directory_path(&payload.remote_directory, &payload.name)?;
-
+    let remote_path = resolve_create_directory_path(&payload.remote_directory, "")?;
     match timeout(SSH_CONNECT_TIMEOUT, open_authenticated_sftp(&params)).await {
         Ok(Ok(conn)) => {
             let result =

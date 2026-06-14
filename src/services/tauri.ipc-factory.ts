@@ -10,12 +10,7 @@ import {
   runInstrumentedIpc,
   TAURI_IPC_DEFAULT_TIMEOUT_MS,
 } from './tauri.ipc-runtime';
-import type {
-  IDefineIpcOptions,
-  IIpcCallOptions,
-  IIpcContract,
-  TIpcFactoryOptions,
-} from './tauri.ipc-types';
+import type { IDefineIpcOptions, IIpcCallOptions } from './tauri.ipc-types';
 
 /**
  * 定义一个带运行时契约校验的 Tauri IPC 调用。
@@ -123,28 +118,3 @@ export const defineIpc = <TInSchema extends z.ZodTypeAny, TOutSchema extends z.Z
       },
     );
 };
-
-export const defineContractIpc = <TInSchema extends z.ZodTypeAny, TOutSchema extends z.ZodTypeAny>(
-  name: string,
-  guardHint: string,
-  contract: IIpcContract<TInSchema, TOutSchema>,
-  options: TIpcFactoryOptions<TInSchema, TOutSchema> = {},
-) =>
-  defineIpc({
-    name,
-    guardHint,
-    inSchema: contract.inSchema,
-    outSchema: contract.outSchema,
-    ...options,
-  });
-
-export const definePayloadIpc = <TInSchema extends z.ZodTypeAny, TOutSchema extends z.ZodTypeAny>(
-  name: string,
-  guardHint: string,
-  contract: IIpcContract<TInSchema, TOutSchema>,
-  options: TIpcFactoryOptions<TInSchema, TOutSchema> = {},
-) =>
-  defineContractIpc(name, guardHint, contract, {
-    ...options,
-    mapArgs: (payload) => ({ payload }),
-  });

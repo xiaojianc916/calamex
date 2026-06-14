@@ -496,19 +496,6 @@ const existingLspBridge = globalThis.__lspBridge__ ?? new LspBridge();
 globalThis.__lspBridge__ = existingLspBridge;
 export const lspBridge: LspBridge = existingLspBridge;
 
-// --- 兼容旧的命名导出 -------------------------------------------------------
-/** @deprecated 用 `lspBridge.start(...)` */
-export const lspStartBridge = (workspaceRoot: string) => lspBridge.start(workspaceRoot);
-/** @deprecated 用 `lspBridge.stop()` */
-export const lspStopBridge = () => lspBridge.stop();
-/** @deprecated 用 `lspBridge.didOpen(...)` */
-export const lspDidOpenBridge = (f: string, c: string, l: string) => lspBridge.didOpen(f, c, l);
-/** @deprecated 用 `lspBridge.didChange(...)` */
-export const lspDidChangeBridge = (f: string, c: string, v: number) =>
-  lspBridge.didChange(f, c, v).then(() => undefined);
-/** @deprecated 用 `lspBridge.didClose(...)` */
-export const lspDidCloseBridge = (f: string) => lspBridge.didClose(f);
-
 // ============================================================================
 // 严重度 / 种类映射
 // ============================================================================

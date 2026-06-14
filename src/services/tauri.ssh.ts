@@ -47,19 +47,6 @@ const SSH_SENSITIVE_INPUT_FIELDS = [
 const measureSshSensitiveInput = (value: Record<string, unknown>) =>
   buildPayloadMetricsOmittingTextFields(value, SSH_SENSITIVE_INPUT_FIELDS);
 
-const measureSshPasswordOutput = (value: unknown) =>
-  value && typeof value === 'object' && !Array.isArray(value)
-    ? buildPayloadMetricsOmittingTextFields(value as Record<string, unknown>, ['password'])
-    : { bytes: 0 };
-
-const measureSshFileReadOutput = (value: unknown) =>
-  value && typeof value === 'object' && !Array.isArray(value)
-    ? buildPayloadMetricsOmittingTextFields(value as Record<string, unknown>, [
-        'content',
-        'remotePath',
-      ])
-    : { bytes: 0 };
-
 const testSshConnectionIpc = (
   payload: TSshRequest<'testSshConnection'>,
   options?: IIpcCallOptions,
@@ -106,7 +93,10 @@ const getSshPasswordIpc = (
       audit: 'sensitive',
       input: payload,
       measureInput: measureSshSensitiveInput,
-      measureOutput: measureSshPasswordOutput,
+      measureOutput: (value) =>
+        value && typeof value === 'object' && !Array.isArray(value)
+          ? buildPayloadMetricsOmittingTextFields(value as Record<string, unknown>, ['password'])
+          : { bytes: 0 },
       signal: options?.signal,
     },
     () => commands.getSshPassword(payload),
@@ -191,7 +181,13 @@ const readSshFileIpc = (
       timeoutMs: SSH_PREVIEW_READ_TIMEOUT_MS,
       input: payload,
       measureInput: measureSshSensitiveInput,
-      measureOutput: measureSshFileReadOutput,
+      measureOutput: (value) =>
+        value && typeof value === 'object' && !Array.isArray(value)
+          ? buildPayloadMetricsOmittingTextFields(value as Record<string, unknown>, [
+              'content',
+              'remotePath',
+            ])
+          : { bytes: 0 },
       signal: options?.signal,
     },
     () => commands.readSshFile(payload),

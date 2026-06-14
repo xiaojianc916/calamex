@@ -70,8 +70,8 @@ export const commands = {
 	 */
 	getGitCommitFileDiffPreview: (payload: GitCommitFileDiffRequest) => __TAURI_INVOKE<GitDiffPreviewPayload>("get_git_commit_file_diff_preview", { payload }),
 	getGithubAuthStatus: (payload: GitHubAuthRequest) => __TAURI_INVOKE<GitHubAuthStatusPayload>("get_github_auth_status", { payload }),
-	beginGithubDeviceAuth: (payload: GitHubAuthRequest) => __TAURI_INVOKE<GitHubDeviceAuthPayload>("begin_github_device_auth", { payload }),
-	completeGithubDeviceAuth: (payload: GitHubDeviceAuthCompleteRequest) => __TAURI_INVOKE<GitHubAuthStatusPayload>("complete_github_device_auth", { payload }),
+	beginGithubBrowserAuth: (payload: GitHubAuthRequest) => __TAURI_INVOKE<GitHubBrowserAuthPayload>("begin_github_browser_auth", { payload }),
+	completeGithubBrowserAuth: (payload: GitHubBrowserAuthCompleteRequest) => __TAURI_INVOKE<GitHubAuthStatusPayload>("complete_github_browser_auth", { payload }),
 	connectGithub: (payload: GitHubAuthRequest) => __TAURI_INVOKE<GitHubAuthStatusPayload>("connect_github", { payload }),
 	disconnectGithub: (payload: GitHubAuthRequest) => __TAURI_INVOKE<GitHubAuthStatusPayload>("disconnect_github", { payload }),
 	listGitCommitHistory: (payload: GitCommitHistoryRequest) => __TAURI_INVOKE<GitCommitHistoryPayload>("list_git_commit_history", { payload }),
@@ -1226,17 +1226,14 @@ export type GitHubAuthStatusPayload = {
 	message: string | null,
 };
 
-export type GitHubDeviceAuthCompleteRequest = {
+export type GitHubBrowserAuthCompleteRequest = {
 	repositoryRootPath: string,
-	deviceCode: string,
-	interval: number,
+	state: string,
 };
 
-export type GitHubDeviceAuthPayload = {
-	deviceCode: string,
-	userCode: string,
-	verificationUri: string,
-	interval: number,
+export type GitHubBrowserAuthPayload = {
+	authorizationUrl: string,
+	state: string,
 	expiresIn: number,
 };
 
