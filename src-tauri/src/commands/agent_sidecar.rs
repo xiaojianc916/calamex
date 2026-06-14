@@ -1,10 +1,10 @@
 use crate::agent_sidecar;
 use crate::commands::contracts::{
     AgentSidecarApprovalResolveRequest, AgentSidecarChatRequest,
-    AgentSidecarCheckpointRestoreRequest, AgentSidecarHealthPayload, AgentSidecarModelConfigPayload,
-    AgentSidecarOrchestratePayload, AgentSidecarOrchestrateRequest,
-    AgentSidecarOrchestrateResumeRequest, AgentSidecarResponsePayload, AgentSidecarRollbackStepPath,
-    AgentSidecarWarmupPayload,
+    AgentSidecarCheckpointRestoreRequest, AgentSidecarHealthPayload,
+    AgentSidecarModelConfigPayload, AgentSidecarOrchestratePayload, AgentSidecarOrchestrateRequest,
+    AgentSidecarOrchestrateResumeRequest, AgentSidecarResponsePayload,
+    AgentSidecarRollbackStepPath, AgentSidecarWarmupPayload,
 };
 use tauri::{AppHandle, Manager};
 

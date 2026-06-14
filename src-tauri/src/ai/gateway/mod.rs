@@ -11,9 +11,9 @@ use crate::commands::contracts::{
     AiInlineCompletionResult, AiModelEndpointConfigPayload, AiSuggestionPoolPayload,
     AiSuggestionPoolRequest,
 };
+use fs_err as fs;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use fs_err as fs;
 use std::path::PathBuf;
 use std::sync::{
     Mutex, OnceLock,

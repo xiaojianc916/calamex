@@ -20,11 +20,11 @@ use crate::commands::contracts::{
     AiEditSetPinPayload, AiEditSetPinRequest, AiEditTimelineEntryPayload,
     AiEditUndoOperationPayload, AiEditUndoOperationRequest, AiSnapshotPayload,
 };
-use jiff::Timestamp;
-use std::collections::HashSet;
 use fs_err as fs;
-use std::path::Path;
+use jiff::Timestamp;
 use parking_lot::Mutex;
+use std::collections::HashSet;
+use std::path::Path;
 
 const OPERATION_METADATA_TTL_DAYS: i64 = 30;
 
@@ -152,9 +152,7 @@ pub(crate) fn mark_snapshot_scope(
     state: &AiEditState,
     key: impl Into<String>,
 ) -> Result<bool, String> {
-    let mut guard = state
-        .snapshot_markers
-        .lock();
+    let mut guard = state.snapshot_markers.lock();
     Ok(guard.insert(key.into()))
 }
 
@@ -165,9 +163,7 @@ pub fn list_timeline_with_state(
     stored_operations: Vec<AiEditOperationPayload>,
 ) -> Result<AiEditListTimelinePayload, String> {
     let entries = {
-        let guard = state
-            .timeline
-            .lock();
+        let guard = state.timeline.lock();
         let known_snapshot_ids = guard
             .iter()
             .filter_map(|entry| match entry {
@@ -223,9 +219,7 @@ pub fn append_snapshot(
     snapshot: AiSnapshotPayload,
 ) -> Result<(), String> {
     {
-        let mut guard = state
-            .timeline
-            .lock();
+        let mut guard = state.timeline.lock();
         guard.push(AiEditTimelineEntryPayload::Snapshot(snapshot));
     }
     run_retention_policy_best_effort(state, storage_root);
@@ -308,9 +302,7 @@ fn apply_retention_policy_with_policy(
     }
 
     {
-        let mut guard = state
-            .timeline
-            .lock();
+        let mut guard = state.timeline.lock();
         guard.retain(|entry| match entry {
             AiEditTimelineEntryPayload::Snapshot(snapshot) => {
                 !snapshot_outcome.removed_snapshot_ids.contains(&snapshot.id)
@@ -559,9 +551,7 @@ fn operation_is_pinned(operation: &AiEditOperationPayload, pin_index: &pins::Pin
 fn refresh_timeline_pin_state(state: &AiEditState, storage_root: &Path) -> Result<(), String> {
     let pin_records = pins::list_pin_records(storage_root)?;
     let pin_index = pins::build_pin_index(&pin_records);
-    let mut guard = state
-        .timeline
-        .lock();
+    let mut guard = state.timeline.lock();
     for entry in &mut *guard {
         match entry {
             AiEditTimelineEntryPayload::Snapshot(snapshot) => {

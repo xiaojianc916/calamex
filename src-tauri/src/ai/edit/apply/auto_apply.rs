@@ -314,9 +314,7 @@ fn record_committed_operations(
     state: &AiEditState,
     operations: &[AiEditOperationPayload],
 ) -> Result<(), String> {
-    let mut guard = state
-        .timeline
-        .lock();
+    let mut guard = state.timeline.lock();
     guard.extend(
         operations
             .iter()

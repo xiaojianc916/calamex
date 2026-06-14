@@ -51,8 +51,8 @@ fn extract_diag_code(d: &Value) -> Option<String> {
 }
 
 pub(crate) fn handle_diagnostics(app: &AppHandle, uri: &str, diags: &[Value]) {
-    use std::collections::HashMap;
     use parking_lot::Mutex;
+    use std::collections::HashMap;
     use std::sync::atomic::{AtomicBool, Ordering};
 
     static PENDING: std::sync::LazyLock<Mutex<HashMap<String, Vec<Value>>>> =

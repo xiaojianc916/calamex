@@ -1,12 +1,12 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::OnceLock;
 
-use parking_lot::Mutex;
 use crate::ai::audit::{self, AiAuditEventKind};
 use crate::ai::errors;
 use crate::commands::contracts::{
     AiAgentNetworkPermissionPayload, AiAgentSetNetworkPermissionRequest,
 };
+use parking_lot::Mutex;
 
 static NETWORK_PERMISSION: OnceLock<Mutex<String>> = OnceLock::new();
 

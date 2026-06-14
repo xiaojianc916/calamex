@@ -89,11 +89,7 @@ impl AcpRuntime {
     ///
     /// 缺省（宿主尚未懒建立）时为安全的空操作：取消本身绝不应触发 node 子进程派生。
     pub fn cancel_thread(&self, thread_id: &str) {
-        if let Some(host) = self
-            .host
-            .lock()
-            .as_ref()
-        {
+        if let Some(host) = self.host.lock().as_ref() {
             host.cancel_thread(thread_id);
         }
     }

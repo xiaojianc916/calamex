@@ -7,8 +7,8 @@
 
 use super::DEFAULT_SSH_PORT;
 use atomic_write_file::AtomicWriteFile;
-use russh::keys::HashAlg;
 use fs_err as std_fs;
+use russh::keys::HashAlg;
 use std::{
     collections::HashMap,
     env,

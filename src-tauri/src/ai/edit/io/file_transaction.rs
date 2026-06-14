@@ -6,8 +6,8 @@ use crate::commands::contracts::AiEditOperationPayload;
 use jiff::Timestamp;
 
 use fjall::{Database, Keyspace, KeyspaceCreateOptions, PersistMode};
-use serde::{Deserialize, Serialize};
 use fs_err as fs;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 const AED_DB_DIR: &str = "fjall";

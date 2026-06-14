@@ -3,10 +3,10 @@ use crate::ai::edit::history::pins::PinIndex;
 use crate::ai::edit::io::{atomic_write, storage_lock};
 use crate::commands::contracts::{AiApplyPatchMetadataRequest, AiSnapshotPayload};
 use fjall::{Database, Keyspace, KeyspaceCreateOptions, PersistMode};
+use fs_err as fs;
 use jiff::{SignedDuration, Timestamp};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use fs_err as fs;
 use std::path::{Path, PathBuf};
 
 const AED_DB_DIR: &str = "fjall";

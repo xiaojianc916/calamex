@@ -478,8 +478,7 @@ fn percent_encode_query_value(value: &str) -> String {
 }
 
 fn extract_query_param(query: &str, name: &str) -> Option<String> {
-    parse(query.as_bytes())
-        .find_map(|(key, value)| (key == name).then_some(value.into_owned()))
+    parse(query.as_bytes()).find_map(|(key, value)| (key == name).then_some(value.into_owned()))
 }
 
 fn build_browser_authorization_url(

@@ -38,8 +38,7 @@ pub use turn::TurnAccumulator;
 
 #[allow(unused_imports)]
 pub use host::{
-    AcpChatTurn, AcpHost, AcpOrchestrateResume, AcpOrchestrateStart, ApprovalEmitter,
-    StreamEmitter,
+    AcpChatTurn, AcpHost, AcpOrchestrateResume, AcpOrchestrateStart, ApprovalEmitter, StreamEmitter,
 };
 
 // 进程级生命周期：把单一 AcpHost 作为 Tauri 托管状态持有（对齐 Zed 连接持有模型）。

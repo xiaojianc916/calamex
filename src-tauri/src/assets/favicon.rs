@@ -2,13 +2,13 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use fs_err::tokio as fs;
 use reqwest::Url;
 use reqwest::header::{ACCEPT, CONTENT_LENGTH, CONTENT_TYPE};
 use reqwest::redirect::Policy as RedirectPolicy;
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
 use tauri::http::{Request, Response, StatusCode};
-use fs_err::tokio as fs;
 use tokio::net::lookup_host;
 use tokio::task::JoinSet;
 

@@ -196,11 +196,7 @@ impl AcpHost {
     ) -> Result<SessionId, AcpClientError> {
         let thread_key = thread_id.trim();
         if !thread_key.is_empty()
-            && let Some(existing) = self
-                .sessions
-                .lock()
-                .get(thread_key)
-                .cloned()
+            && let Some(existing) = self.sessions.lock().get(thread_key).cloned()
         {
             return Ok(existing);
         }
@@ -450,11 +446,7 @@ impl AcpHost {
             log::warn!("acp host cancel_thread: empty thread_id");
             return;
         }
-        let session_id = self
-            .sessions
-            .lock()
-            .get(thread_key)
-            .cloned();
+        let session_id = self.sessions.lock().get(thread_key).cloned();
         match session_id {
             Some(session_id) => self.cancel(&session_id.to_string()),
             None => log::warn!("acp host cancel_thread: no session bound for thread {thread_key}"),
@@ -476,10 +468,7 @@ impl AcpHost {
 
     /// 取出并移除某会话的回合累积器；若期间未收到任何帧则返回空累积器。
     fn end_turn(&self, session_key: &str) -> TurnAccumulator {
-        self.turns
-            .lock()
-            .remove(session_key)
-            .unwrap_or_default()
+        self.turns.lock().remove(session_key).unwrap_or_default()
     }
 }
 
@@ -582,10 +571,7 @@ mod tests {
         record_frame(&turns, &frame);
 
         assert_eq!(
-            turns
-                .lock()
-                .get("s1")
-                .map(TurnAccumulator::is_empty),
+            turns.lock().get("s1").map(TurnAccumulator::is_empty),
             Some(true)
         );
     }

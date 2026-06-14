@@ -13,6 +13,7 @@ pub use types::*;
 use super::{encode_script_content, resolve_workspace_root};
 use content_index::{filter_literal_content_candidates, prewarm_workspace_content_index};
 use find::{search_file_contents, search_file_names, search_structural_contents, search_symbols};
+use fs_err as fs;
 use ranking::sort_ranked_search_results;
 use replace::{
     apply_replacement_edits, build_file_replacement_preview, build_replacement_plan,
@@ -23,7 +24,6 @@ use scan::{
     scanned_file_from_path,
 };
 use std::collections::{HashMap, HashSet};
-use fs_err as fs;
 use stream::{ContentBatchSink, SearchStreamSink};
 use tauri::AppHandle;
 use util::{count_to_u32, require_replacement_query, u64_to_u32};
