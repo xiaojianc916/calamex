@@ -18,20 +18,26 @@ import type {
   IGitStashEntryPayload,
 } from '@/types/git';
 import { areFileSystemPathsEqual, normalizeFileSystemPath } from '@/utils/path';
+import {
+  createEmptyPullRequestSupport,
+  createPullRequestRepositoryScope,
+  normalizePullRequestState,
+  PULL_REQUEST_BACKGROUND_PRELOAD_DELAY_MS,
+  PULL_REQUEST_BACKGROUND_PRELOAD_RETRY_INTERVAL_MS,
+  PULL_REQUEST_DETAIL_PRELOAD_CONCURRENCY,
+  PULL_REQUEST_DETAIL_PRELOAD_LIMIT,
+  PULL_REQUEST_LIST_QUERY_PREFIX,
+  PULL_REQUEST_QUERY_PREFIX,
+  PULL_REQUEST_RETENTION_MS,
+  PULL_REQUEST_STALE_TIME_MS,
+  pullRequestDetailQueryKey,
+  pullRequestListQueryKey,
+  updatePullRequestListForState,
+  type TPullRequestState,
+} from './git-pull-request-helpers';
 
 const MSG_GIT_INIT_NO_REPOSITORY = 'Git 初始化后仍未检测到仓库。';
 const MSG_GIT_NO_REPOSITORY_IN_WORKSPACE = '当前工作区未检测到 Git 仓库。';
-const PULL_REQUEST_BACKGROUND_PRELOAD_DELAY_MS = 1200;
-const PULL_REQUEST_BACKGROUND_PRELOAD_RETRY_INTERVAL_MS = 60_000;
-const PULL_REQUEST_LIST_REVALIDATE_INTERVAL_MS = 30_000;
-const PULL_REQUEST_DETAIL_REVALIDATE_INTERVAL_MS = 30_000;
-const PULL_REQUEST_REVALIDATE_FAILURE_RETRY_INTERVAL_MS = 60_000;
-const PULL_REQUEST_DETAIL_PRELOAD_LIMIT = 20;
-const PULL_REQUEST_DETAIL_PRELOAD_CONCURRENCY = 4;
-const PULL_REQUEST_DETAIL_CACHE_LIMIT = 20;
-const PULL_REQUEST_PERSISTED_CACHE_PREFIX = 'calamex.gitPullRequests.';
-const PULL_REQUEST_PERSISTED_CACHE_VERSION = 1;
-const PULL_REQUEST_PERSISTED_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 // commit-stats 的内存缓存/持久化/gc 现由 @tanstack/vue-query 承担(见 src/lib/query-client.ts)。
 // 这里只保留后台批量队列(产品逻辑)与 vue-query 的接线参数。
 const GIT_COMMIT_STATS_QUERY_PREFIX = ['git', 'commitStats'];
@@ -64,15 +70,6 @@ const createEmptyGitRepositoryStatus = (): IGitRepositoryStatusPayload => ({
   lastCommit: null,
 });
 
-const createEmptyPullRequestSupport = (): IGitPullRequestSupportPayload => ({
-  available: false,
-  remoteName: null,
-  provider: 'unknown',
-  repositoryUrl: null,
-  pullRequestsUrl: null,
-  createPullRequestUrl: null,
-});
-
 const deduplicatePaths = (paths: string[]): string[] => {
   const seen = new Set<string>();
   const result: string[] = [];
@@ -85,328 +82,12 @@ const deduplicatePaths = (paths: string[]): string[] => {
   return result;
 };
 
-const normalizePullRequestState = (state?: string): 'open' | 'closed' | 'all' => {
-  if (state === 'closed' || state === 'all') {
-    return state;
-  }
-  return 'open';
-};
-
-const createPullRequestRepositoryScope = (repositoryUrl?: string | null): string => {
-  const normalizedRepositoryUrl = repositoryUrl?.trim().toLowerCase();
-  return normalizedRepositoryUrl || 'unknown';
-};
-
-const createPullRequestCacheKey = (
-  repositoryRootPath: string,
-  state: string,
-  repositoryUrl?: string | null,
-): string =>
-  `${normalizeFileSystemPath(repositoryRootPath)}|${createPullRequestRepositoryScope(repositoryUrl)}|${state}`;
-
-const createPullRequestDetailCacheKey = (
-  repositoryRootPath: string,
-  number: number,
-  repositoryUrl?: string | null,
-): string =>
-  `${normalizeFileSystemPath(repositoryRootPath)}|${createPullRequestRepositoryScope(repositoryUrl)}|${number}`;
-
 const createGitCommitStatsCacheKey = (
   repositoryRootPath: string,
   commitId: string,
   repositoryUrl?: string | null,
 ): string =>
   `${normalizeFileSystemPath(repositoryRootPath)}|${createPullRequestRepositoryScope(repositoryUrl)}|${commitId}`;
-
-type TPersistedPullRequestListCache = {
-  version: number;
-  fetchedAt: number;
-  payload: IGitPullRequestSummaryPayload[];
-};
-
-type TPersistedPullRequestDetailCache = {
-  version: number;
-  fetchedAt: number;
-  payload: IGitPullRequestDetailPayload;
-};
-
-const createPullRequestPersistedCacheKey = (kind: 'list' | 'detail', cacheKey: string): string =>
-  `${PULL_REQUEST_PERSISTED_CACHE_PREFIX}${PULL_REQUEST_PERSISTED_CACHE_VERSION}.${kind}.${encodeURIComponent(cacheKey)}`;
-
-const getPullRequestPersistentStorage = (): Storage | null => {
-  if (typeof window === 'undefined') return null;
-  try {
-    return window.localStorage;
-  } catch {
-    return null;
-  }
-};
-
-const getPersistedPullRequestSnapshotSavedAt = (value: {
-  savedAt?: unknown;
-  fetchedAt?: unknown;
-}): number | null => {
-  if (typeof value.savedAt === 'number') return value.savedAt;
-  if (typeof value.fetchedAt === 'number') return value.fetchedAt;
-  return null;
-};
-
-const isPersistedPullRequestSnapshotFreshEnough = (savedAt: number): boolean =>
-  Number.isFinite(savedAt) && Date.now() - savedAt <= PULL_REQUEST_PERSISTED_CACHE_MAX_AGE_MS;
-
-const readPersistedPullRequestList = (cacheKey: string): TPersistedPullRequestListCache | null => {
-  const storage = getPullRequestPersistentStorage();
-  if (!storage) return null;
-
-  try {
-    const rawValue = storage.getItem(createPullRequestPersistedCacheKey('list', cacheKey));
-    if (!rawValue) return null;
-
-    const parsed = JSON.parse(rawValue) as Partial<TPersistedPullRequestListCache>;
-    if (
-      parsed.version !== PULL_REQUEST_PERSISTED_CACHE_VERSION ||
-      typeof parsed.fetchedAt !== 'number' ||
-      !Array.isArray(parsed.payload)
-    ) {
-      return null;
-    }
-
-    return {
-      version: PULL_REQUEST_PERSISTED_CACHE_VERSION,
-      fetchedAt: parsed.fetchedAt,
-      payload: parsed.payload,
-    };
-  } catch {
-    return null;
-  }
-};
-
-const writePersistedPullRequestList = (
-  cacheKey: string,
-  payload: IGitPullRequestSummaryPayload[],
-  fetchedAt: number,
-): void => {
-  const storage = getPullRequestPersistentStorage();
-  if (!storage) return;
-
-  prunePersistedPullRequestCaches();
-
-  try {
-    storage.setItem(
-      createPullRequestPersistedCacheKey('list', cacheKey),
-      JSON.stringify({
-        version: PULL_REQUEST_PERSISTED_CACHE_VERSION,
-        fetchedAt,
-        payload,
-      } satisfies TPersistedPullRequestListCache),
-    );
-  } catch {
-    // Best-effort cache snapshot only.
-  }
-};
-
-const readPersistedPullRequestDetail = (
-  cacheKey: string,
-): TPersistedPullRequestDetailCache | null => {
-  const storage = getPullRequestPersistentStorage();
-  if (!storage) return null;
-
-  try {
-    const rawValue = storage.getItem(createPullRequestPersistedCacheKey('detail', cacheKey));
-    if (!rawValue) return null;
-
-    const parsed = JSON.parse(rawValue) as Partial<TPersistedPullRequestDetailCache>;
-    if (
-      parsed.version !== PULL_REQUEST_PERSISTED_CACHE_VERSION ||
-      typeof parsed.fetchedAt !== 'number' ||
-      !parsed.payload
-    ) {
-      return null;
-    }
-
-    return {
-      version: PULL_REQUEST_PERSISTED_CACHE_VERSION,
-      fetchedAt: parsed.fetchedAt,
-      payload: parsed.payload,
-    };
-  } catch {
-    return null;
-  }
-};
-
-const writePersistedPullRequestDetail = (
-  cacheKey: string,
-  payload: IGitPullRequestDetailPayload,
-  fetchedAt: number,
-): void => {
-  const storage = getPullRequestPersistentStorage();
-  if (!storage) return;
-
-  prunePersistedPullRequestCaches();
-
-  try {
-    storage.setItem(
-      createPullRequestPersistedCacheKey('detail', cacheKey),
-      JSON.stringify({
-        version: PULL_REQUEST_PERSISTED_CACHE_VERSION,
-        fetchedAt,
-        payload,
-      } satisfies TPersistedPullRequestDetailCache),
-    );
-  } catch {
-    // Best-effort cache snapshot only.
-  }
-};
-
-const prunePersistedPullRequestCaches = (): void => {
-  const storage = getPullRequestPersistentStorage();
-  if (!storage) return;
-
-  const currentVersionPrefix = `${PULL_REQUEST_PERSISTED_CACHE_PREFIX + PULL_REQUEST_PERSISTED_CACHE_VERSION}.`;
-  const keysToRemove: string[] = [];
-
-  try {
-    for (let index = 0; index < storage.length; index += 1) {
-      const key = storage.key(index);
-      if (!key?.startsWith(PULL_REQUEST_PERSISTED_CACHE_PREFIX)) {
-        continue;
-      }
-
-      if (!key.startsWith(currentVersionPrefix)) {
-        keysToRemove.push(key);
-        continue;
-      }
-
-      const rawValue = storage.getItem(key);
-      if (!rawValue) {
-        keysToRemove.push(key);
-        continue;
-      }
-
-      try {
-        const parsed = JSON.parse(rawValue) as {
-          version?: unknown;
-          savedAt?: unknown;
-          fetchedAt?: unknown;
-        };
-        const savedAt = getPersistedPullRequestSnapshotSavedAt(parsed);
-
-        if (
-          parsed.version !== PULL_REQUEST_PERSISTED_CACHE_VERSION ||
-          savedAt === null ||
-          !isPersistedPullRequestSnapshotFreshEnough(savedAt)
-        ) {
-          keysToRemove.push(key);
-        }
-      } catch {
-        keysToRemove.push(key);
-      }
-    }
-
-    keysToRemove.forEach((key) => {
-      storage.removeItem(key);
-    });
-  } catch {
-    // Best-effort cache pruning only.
-  }
-};
-
-const removePersistedPullRequestCache = (kind: 'list' | 'detail', cacheKey: string): void => {
-  const storage = getPullRequestPersistentStorage();
-  if (!storage) return;
-
-  try {
-    storage.removeItem(createPullRequestPersistedCacheKey(kind, cacheKey));
-  } catch {
-    // Best-effort cache cleanup only.
-  }
-};
-
-const removePersistedPullRequestCachesForRepository = (
-  repositoryRootPath?: string | null,
-): void => {
-  const storage = getPullRequestPersistentStorage();
-  const normalizedRepositoryRootPath = normalizeFileSystemPath(repositoryRootPath);
-  if (!storage || !normalizedRepositoryRootPath) return;
-
-  const encodedRepositoryPrefix = encodeURIComponent(`${normalizedRepositoryRootPath}|`);
-  const listPrefix = `${PULL_REQUEST_PERSISTED_CACHE_PREFIX}${PULL_REQUEST_PERSISTED_CACHE_VERSION}.list.${encodedRepositoryPrefix}`;
-  const detailPrefix = `${PULL_REQUEST_PERSISTED_CACHE_PREFIX}${PULL_REQUEST_PERSISTED_CACHE_VERSION}.detail.${encodedRepositoryPrefix}`;
-  const keysToRemove: string[] = [];
-
-  try {
-    for (let index = 0; index < storage.length; index += 1) {
-      const key = storage.key(index);
-      if (key && (key.startsWith(listPrefix) || key.startsWith(detailPrefix))) {
-        keysToRemove.push(key);
-      }
-    }
-
-    keysToRemove.forEach((key) => {
-      storage.removeItem(key);
-    });
-  } catch {
-    // Best-effort cache cleanup only.
-  }
-};
-
-const shouldIncludePullRequestInState = (
-  pullRequest: IGitPullRequestSummaryPayload,
-  state: 'open' | 'closed' | 'all',
-): boolean => {
-  if (state === 'all') return true;
-  if (state === 'open') return pullRequest.state === 'open';
-  return pullRequest.state !== 'open';
-};
-
-const upsertPullRequestSummary = (
-  entries: IGitPullRequestSummaryPayload[],
-  pullRequest: IGitPullRequestSummaryPayload,
-): IGitPullRequestSummaryPayload[] => {
-  const existingIndex = entries.findIndex((entry) => entry.number === pullRequest.number);
-  if (existingIndex === -1) return [pullRequest, ...entries];
-  const nextEntries = [...entries];
-  nextEntries[existingIndex] = pullRequest;
-  return nextEntries;
-};
-
-const updatePullRequestListForState = (
-  entries: IGitPullRequestSummaryPayload[],
-  pullRequest: IGitPullRequestSummaryPayload,
-  state: 'open' | 'closed' | 'all',
-): IGitPullRequestSummaryPayload[] => {
-  if (shouldIncludePullRequestInState(pullRequest, state)) {
-    return upsertPullRequestSummary(entries, pullRequest);
-  }
-  return entries.filter((entry) => entry.number !== pullRequest.number);
-};
-
-const arePullRequestSummariesEqual = (
-  left: IGitPullRequestSummaryPayload,
-  right: IGitPullRequestSummaryPayload,
-): boolean =>
-  left.number === right.number &&
-  left.title === right.title &&
-  left.state === right.state &&
-  left.isDraft === right.isDraft &&
-  left.author === right.author &&
-  left.headRef === right.headRef &&
-  left.baseRef === right.baseRef &&
-  left.htmlUrl === right.htmlUrl &&
-  left.createdAt === right.createdAt &&
-  left.updatedAt === right.updatedAt &&
-  left.comments === right.comments;
-
-const arePullRequestSummaryListsEqual = (
-  left: IGitPullRequestSummaryPayload[] | undefined,
-  right: IGitPullRequestSummaryPayload[],
-): left is IGitPullRequestSummaryPayload[] => {
-  if (!left || left.length !== right.length) return false;
-  return left.every((entry, index) => arePullRequestSummariesEqual(entry, right[index]));
-};
-
-const isPullRequestRevalidateFailureCoolingDown = (failedAt: number | undefined): boolean =>
-  Boolean(failedAt && Date.now() - failedAt < PULL_REQUEST_REVALIDATE_FAILURE_RETRY_INTERVAL_MS);
 
 type TStatusFetcher = (workspaceRootPath: string) => Promise<IGitRepositoryStatusPayload>;
 
@@ -462,16 +143,9 @@ export const useGitStore = defineStore('git', () => {
   const isSettingRemote = ref(false);
   const pullRequests = ref<IGitPullRequestSummaryPayload[]>([]);
   const isPullRequestsLoading = ref(false);
-  const pullRequestStateFilter = ref<'open' | 'closed' | 'all'>('open');
+  const pullRequestStateFilter = ref<TPullRequestState>('open');
   const pullRequestDetail = ref<IGitPullRequestDetailPayload | null>(null);
   const isPullRequestDetailLoading = ref(false);
-  const pullRequestListCache = ref<Record<string, IGitPullRequestSummaryPayload[]>>({});
-  const pullRequestListFetchedAt = ref<Record<string, number>>({});
-  const pullRequestDetailCache = ref<Record<string, IGitPullRequestDetailPayload>>({});
-  const pullRequestDetailFetchedAt = ref<Record<string, number>>({});
-  const pullRequestListRevalidateFailedAt = ref<Record<string, number>>({});
-  const pullRequestDetailRevalidateFailedAt = ref<Record<string, number>>({});
-  const pullRequestDetailCacheOrder = ref<string[]>([]);
 
   const commitDetailCache = ref<Record<string, IGitCommitDetailPayload>>({});
   // commit-stats 的权威缓存在 vue-query;此 ref 仅作响应式镜像,供同步的 getCommitStats 读取并驱动 UI。
@@ -484,6 +158,14 @@ export const useGitStore = defineStore('git', () => {
   queryClient.setQueryDefaults(GIT_COMMIT_STATS_QUERY_PREFIX, {
     staleTime: GIT_COMMIT_STATS_RETENTION_MS,
     gcTime: GIT_COMMIT_STATS_RETENTION_MS,
+    meta: { persist: true },
+  });
+
+  // PR 列表/详情:列表视为 30s 内新鲜,gcTime≈7d 作为保留窗口(替代原手写 maxAge),
+  // meta.persist 交由官方 persister 持久化(替代原手写的 localStorage 缓存)。
+  queryClient.setQueryDefaults(PULL_REQUEST_QUERY_PREFIX, {
+    staleTime: PULL_REQUEST_STALE_TIME_MS,
+    gcTime: PULL_REQUEST_RETENTION_MS,
     meta: { persist: true },
   });
 
@@ -500,6 +182,7 @@ export const useGitStore = defineStore('git', () => {
   let pullRequestsRequestId = 0;
   let pullRequestDetailRequestId = 0;
   let pullRequestDetailPreloadEpoch = 0;
+  // 仅用于守卫异步结果写回活动 ref:当 reset/setRemote/作用域变更推进 epoch 后,旧请求不再生效。
   let pullRequestCacheEpoch = 0;
   let pullRequestPreloadTimer: ReturnType<typeof setTimeout> | null = null;
   let scheduledPullRequestPreloadRepositoryKey: string | null = null;
@@ -513,11 +196,6 @@ export const useGitStore = defineStore('git', () => {
   const pendingCommitDetailRequests = new Map<string, Promise<IGitCommitDetailPayload>>();
   const pendingCommitFileDiffRequests = new Map<string, Promise<IGitCommitFileDiffPayload>>();
   const pendingCommitFileDiffPreviewRequests = new Map<string, Promise<IGitDiffPreviewPayload>>();
-  const pendingPullRequestListRequests = new Map<
-    string,
-    Promise<IGitPullRequestSummaryPayload[]>
-  >();
-  const pendingPullRequestDetailRequests = new Map<string, Promise<IGitPullRequestDetailPayload>>();
   let pendingPullRequestSupportRequest: Promise<IGitPullRequestSupportPayload> | null = null;
 
   const hasRepository = computed(
@@ -595,172 +273,6 @@ export const useGitStore = defineStore('git', () => {
     pullRequestSupport.value = createEmptyPullRequestSupport();
   };
 
-  const invalidatePullRequestListCache = (): void => {
-    pullRequestListCache.value = {};
-    pullRequestListFetchedAt.value = {};
-    pullRequestListRevalidateFailedAt.value = {};
-    pendingPullRequestListRequests.clear();
-  };
-
-  const hydratePullRequestListCache = (cacheKey: string): void => {
-    if (pullRequestListCache.value[cacheKey]) return;
-
-    const persisted = readPersistedPullRequestList(cacheKey);
-    if (!persisted) return;
-
-    pullRequestListCache.value = {
-      ...pullRequestListCache.value,
-      [cacheKey]: persisted.payload,
-    };
-    pullRequestListFetchedAt.value = {
-      ...pullRequestListFetchedAt.value,
-      [cacheKey]: persisted.fetchedAt,
-    };
-  };
-
-  const hydratePullRequestDetailCache = (cacheKey: string): void => {
-    if (pullRequestDetailCache.value[cacheKey]) return;
-
-    const persisted = readPersistedPullRequestDetail(cacheKey);
-    if (!persisted) return;
-
-    pullRequestDetailCache.value = {
-      ...pullRequestDetailCache.value,
-      [cacheKey]: persisted.payload,
-    };
-    pullRequestDetailFetchedAt.value = {
-      ...pullRequestDetailFetchedAt.value,
-      [cacheKey]: persisted.fetchedAt,
-    };
-    pullRequestDetailCacheOrder.value = [
-      cacheKey,
-      ...pullRequestDetailCacheOrder.value.filter((key) => key !== cacheKey),
-    ];
-  };
-
-  const invalidatePullRequestDetailCache = (pullRequestNumber?: number): void => {
-    if (pullRequestNumber === undefined) {
-      pullRequestDetailCache.value = {};
-      pullRequestDetailFetchedAt.value = {};
-      pullRequestDetailRevalidateFailedAt.value = {};
-      pullRequestDetailCacheOrder.value = [];
-      pendingPullRequestDetailRequests.clear();
-      return;
-    }
-    const repositoryRootPath = status.value.repositoryRootPath;
-    if (!repositoryRootPath) return;
-    const cacheKey = createPullRequestDetailCacheKey(
-      repositoryRootPath,
-      pullRequestNumber,
-      pullRequestSupport.value.repositoryUrl,
-    );
-    const nextCache = { ...pullRequestDetailCache.value };
-    const nextFetchedAt = { ...pullRequestDetailFetchedAt.value };
-    const nextFailedAt = { ...pullRequestDetailRevalidateFailedAt.value };
-    delete nextCache[cacheKey];
-    delete nextFetchedAt[cacheKey];
-    delete nextFailedAt[cacheKey];
-    pullRequestDetailCache.value = nextCache;
-    pullRequestDetailFetchedAt.value = nextFetchedAt;
-    pullRequestDetailRevalidateFailedAt.value = nextFailedAt;
-    pullRequestDetailCacheOrder.value = pullRequestDetailCacheOrder.value.filter(
-      (key) => key !== cacheKey,
-    );
-    pendingPullRequestDetailRequests.delete(cacheKey);
-  };
-
-  const touchPullRequestDetailCache = (cacheKey: string): void => {
-    if (!pullRequestDetailCache.value[cacheKey]) return;
-    pullRequestDetailCacheOrder.value = [
-      cacheKey,
-      ...pullRequestDetailCacheOrder.value.filter((key) => key !== cacheKey),
-    ];
-  };
-
-  const shouldPreloadPullRequestDetail = (
-    repositoryRootPath: string,
-    pullRequestNumber: number,
-  ): boolean => {
-    const cacheKey = createPullRequestDetailCacheKey(
-      repositoryRootPath,
-      pullRequestNumber,
-      pullRequestSupport.value.repositoryUrl,
-    );
-
-    hydratePullRequestDetailCache(cacheKey);
-
-    if (pendingPullRequestDetailRequests.has(cacheKey)) {
-      return false;
-    }
-
-    const cached = pullRequestDetailCache.value[cacheKey];
-    if (!cached) {
-      return true;
-    }
-
-    const fetchedAt = pullRequestDetailFetchedAt.value[cacheKey] ?? 0;
-    return Date.now() - fetchedAt >= PULL_REQUEST_DETAIL_REVALIDATE_INTERVAL_MS;
-  };
-
-  const rememberPullRequestDetail = (
-    cacheKey: string,
-    payload: IGitPullRequestDetailPayload,
-  ): void => {
-    const fetchedAt = Date.now();
-    const nextCache = {
-      ...pullRequestDetailCache.value,
-      [cacheKey]: payload,
-    };
-    const nextFetchedAt = {
-      ...pullRequestDetailFetchedAt.value,
-      [cacheKey]: fetchedAt,
-    };
-    const nextOrder = [
-      cacheKey,
-      ...pullRequestDetailCacheOrder.value.filter((key) => key !== cacheKey),
-    ];
-    while (nextOrder.length > PULL_REQUEST_DETAIL_CACHE_LIMIT) {
-      const evicted = nextOrder.pop();
-      if (evicted) {
-        delete nextCache[evicted];
-        delete nextFetchedAt[evicted];
-        removePersistedPullRequestCache('detail', evicted);
-      }
-    }
-    pullRequestDetailCache.value = nextCache;
-    pullRequestDetailFetchedAt.value = nextFetchedAt;
-    pullRequestDetailCacheOrder.value = nextOrder;
-    writePersistedPullRequestDetail(cacheKey, payload, fetchedAt);
-  };
-
-  const markPullRequestListRevalidateFailed = (cacheKey: string): void => {
-    pullRequestListRevalidateFailedAt.value = {
-      ...pullRequestListRevalidateFailedAt.value,
-      [cacheKey]: Date.now(),
-    };
-  };
-
-  const clearPullRequestListRevalidateFailure = (cacheKey: string): void => {
-    if (!pullRequestListRevalidateFailedAt.value[cacheKey]) return;
-    const nextFailedAt = { ...pullRequestListRevalidateFailedAt.value };
-    delete nextFailedAt[cacheKey];
-    pullRequestListRevalidateFailedAt.value = nextFailedAt;
-  };
-
-  const markPullRequestDetailRevalidateFailed = (cacheKey: string): void => {
-    pullRequestDetailRevalidateFailedAt.value = {
-      ...pullRequestDetailRevalidateFailedAt.value,
-      [cacheKey]: Date.now(),
-    };
-  };
-
-  const clearPullRequestDetailRevalidateFailure = (cacheKey: string): void => {
-    if (!pullRequestDetailRevalidateFailedAt.value[cacheKey]) return;
-    const nextFailedAt = { ...pullRequestDetailRevalidateFailedAt.value };
-    delete nextFailedAt[cacheKey];
-    pullRequestDetailRevalidateFailedAt.value = nextFailedAt;
-  };
-
   const resetPullRequests = (): void => {
     pullRequestsRequestId += 1;
     pullRequestDetailRequestId += 1;
@@ -770,21 +282,8 @@ export const useGitStore = defineStore('git', () => {
     pullRequests.value = [];
     pullRequestStateFilter.value = 'open';
     pullRequestDetail.value = null;
-    invalidatePullRequestListCache();
-    invalidatePullRequestDetailCache();
-  };
-
-  const resetPullRequestDataForSupportChange = (): void => {
-    pullRequestsRequestId += 1;
-    pullRequestDetailRequestId += 1;
-    pullRequestDetailPreloadEpoch += 1;
-    pullRequestCacheEpoch += 1;
-    clearPullRequestPreloadTimer();
-    pullRequests.value = [];
-    pullRequestStateFilter.value = 'open';
-    pullRequestDetail.value = null;
-    invalidatePullRequestListCache();
-    invalidatePullRequestDetailCache();
+    // 以 vue-query 为唯一缓存:移除所有 PR 列表/详情查询(以及其持久化快照)。
+    queryClient.removeQueries({ queryKey: [...PULL_REQUEST_QUERY_PREFIX] });
   };
 
   const resetSupplementaryData = (): void => {
@@ -1346,8 +845,8 @@ export const useGitStore = defineStore('git', () => {
         if (requestId === pullRequestSupportRequestId) {
           const previousSupport = pullRequestSupport.value;
           if (hasPullRequestSupportIdentityChanged(previousSupport, payload)) {
-            removePersistedPullRequestCachesForRepository(status.value.repositoryRootPath);
-            resetPullRequestDataForSupportChange();
+            // 远端/作用域变更:清空旧 PR 查询(removeQueries 会一并清理持久化快照)。
+            resetPullRequests();
           }
           pullRequestSupport.value = payload;
         }
@@ -1369,46 +868,76 @@ export const useGitStore = defineStore('git', () => {
     if (!repositoryRootPath) return;
 
     pullRequestsRequestId += 1;
-    pendingPullRequestListRequests.clear();
-    invalidatePullRequestDetailCache(pullRequest.number);
+    const repositoryUrl = pullRequestSupport.value.repositoryUrl;
 
-    const repositoryCachePrefix = `${normalizeFileSystemPath(repositoryRootPath)}|`;
-    const cacheKeys = new Set<string>(
-      Object.keys(pullRequestListCache.value).filter((key) =>
-        key.startsWith(repositoryCachePrefix),
-      ),
-    );
-    cacheKeys.add(
-      createPullRequestCacheKey(
-        repositoryRootPath,
-        pullRequestStateFilter.value,
-        pullRequestSupport.value.repositoryUrl,
-      ),
-    );
-    cacheKeys.add(
-      createPullRequestCacheKey(repositoryRootPath, 'all', pullRequestSupport.value.repositoryUrl),
-    );
+    // 该 PR 的详情可能已变;移除详情查询,下次访问重取。
+    queryClient.removeQueries({
+      queryKey: pullRequestDetailQueryKey(repositoryRootPath, pullRequest.number, repositoryUrl),
+    });
 
-    const nextCache = { ...pullRequestListCache.value };
-    const nextFetchedAt = { ...pullRequestListFetchedAt.value };
-    const now = Date.now();
-    for (const cacheKey of cacheKeys) {
-      const state = normalizePullRequestState(cacheKey.split('|').pop());
-      nextCache[cacheKey] = updatePullRequestListForState(
-        nextCache[cacheKey] ?? [],
-        pullRequest,
-        state,
+    const normalizedRepositoryRoot = normalizeFileSystemPath(repositoryRootPath);
+    const repositoryScope = createPullRequestRepositoryScope(repositoryUrl);
+
+    // 对当前仓库+远端作用域下已缓存的所有列表查询,按状态合并/移除该 PR。
+    const existingLists = queryClient.getQueriesData<IGitPullRequestSummaryPayload[]>({
+      queryKey: [...PULL_REQUEST_LIST_QUERY_PREFIX],
+    });
+    const touchedStates = new Set<TPullRequestState>();
+    for (const [queryKey, existing] of existingLists) {
+      const keyParts = queryKey as Array<string | number>;
+      const keyRepositoryRoot = keyParts[3];
+      const keyScope = keyParts[4];
+      if (keyRepositoryRoot !== normalizedRepositoryRoot || keyScope !== repositoryScope) {
+        continue;
+      }
+      const state = normalizePullRequestState(
+        typeof keyParts[5] === 'string' ? keyParts[5] : undefined,
       );
-      nextFetchedAt[cacheKey] = now;
-      writePersistedPullRequestList(cacheKey, nextCache[cacheKey], now);
+      queryClient.setQueryData<IGitPullRequestSummaryPayload[]>(
+        queryKey,
+        updatePullRequestListForState(existing ?? [], pullRequest, state),
+      );
+      touchedStates.add(state);
     }
 
-    pullRequestListCache.value = nextCache;
-    pullRequestListFetchedAt.value = nextFetchedAt;
+    // 保证当前过滤状态与 'all' 即使未缓存也被种子,供 UI 立即反映。
+    const seedStates: TPullRequestState[] = [pullRequestStateFilter.value, 'all'];
+    for (const state of seedStates) {
+      if (touchedStates.has(state)) continue;
+      const queryKey = pullRequestListQueryKey(repositoryRootPath, state, repositoryUrl);
+      const existing = queryClient.getQueryData<IGitPullRequestSummaryPayload[]>(queryKey);
+      queryClient.setQueryData<IGitPullRequestSummaryPayload[]>(
+        queryKey,
+        updatePullRequestListForState(existing ?? [], pullRequest, state),
+      );
+    }
+
     pullRequests.value = updatePullRequestListForState(
       pullRequests.value,
       pullRequest,
       pullRequestStateFilter.value,
+    );
+  };
+
+  const shouldPreloadPullRequestDetail = (
+    repositoryRootPath: string,
+    pullRequestNumber: number,
+  ): boolean => {
+    const queryKey = pullRequestDetailQueryKey(
+      repositoryRootPath,
+      pullRequestNumber,
+      pullRequestSupport.value.repositoryUrl,
+    );
+    const queryState = queryClient.getQueryState<IGitPullRequestDetailPayload>(queryKey);
+    if (!queryState || queryState.data === undefined) {
+      return true;
+    }
+    if (queryState.fetchStatus === 'fetching') {
+      return false;
+    }
+    return (
+      queryState.isInvalidated ||
+      Date.now() - queryState.dataUpdatedAt >= PULL_REQUEST_STALE_TIME_MS
     );
   };
 
@@ -1456,114 +985,60 @@ export const useGitStore = defineStore('git', () => {
     const updateActive = options?.updateActive ?? true;
     const visibleLoading = options?.visibleLoading ?? updateActive;
     const shouldPreloadDetails = options?.preloadDetails ?? true;
+    const force = options?.force ?? false;
 
     if (updateActive) {
       pullRequestStateFilter.value = selectedState;
     }
 
     const repositoryRootPath = requireRepositoryRootPath();
-    const cacheKey = createPullRequestCacheKey(
+    const queryKey = pullRequestListQueryKey(
       repositoryRootPath,
       selectedState,
       pullRequestSupport.value.repositoryUrl,
     );
-    hydratePullRequestListCache(cacheKey);
+
+    // 先用已缓存/持久化恢复的数据即时填充 UI(SWR 的 stale 部分)。
+    const cached = queryClient.getQueryData<IGitPullRequestSummaryPayload[]>(queryKey);
+    if (cached && updateActive) {
+      pullRequests.value = cached;
+    }
+
     const cacheEpochAtRequest = pullRequestCacheEpoch;
-    const cached = pullRequestListCache.value[cacheKey];
-    if (cached && updateActive) pullRequests.value = cached;
-
-    const fetchedAt = pullRequestListFetchedAt.value[cacheKey] ?? 0;
-    const isFresh = Date.now() - fetchedAt < PULL_REQUEST_LIST_REVALIDATE_INTERVAL_MS;
-    const isRevalidateFailureCoolingDown = isPullRequestRevalidateFailureCoolingDown(
-      pullRequestListRevalidateFailedAt.value[cacheKey],
-    );
-
-    if (cached && !options?.force && (isFresh || isRevalidateFailureCoolingDown)) {
-      if (shouldPreloadDetails) {
-        preloadTopPullRequestDetails(cached);
-      }
-      return cached;
-    }
-
-    if (options?.force) {
-      pendingPullRequestListRequests.delete(cacheKey);
-    } else {
-      const pending = pendingPullRequestListRequests.get(cacheKey);
-      if (pending) {
-        if (!updateActive) return pending.catch(() => cached ?? []);
-        const requestId = ++pullRequestsRequestId;
-        if (visibleLoading) isPullRequestsLoading.value = true;
-        try {
-          const payload = await pending;
-          if (requestId === pullRequestsRequestId) {
-            pullRequests.value = pullRequestListCache.value[cacheKey] ?? payload;
-          }
-          return requestId === pullRequestsRequestId ? pullRequests.value : payload;
-        } catch (error) {
-          if (cached) return cached;
-          throw error;
-        } finally {
-          if (visibleLoading && requestId === pullRequestsRequestId) {
-            isPullRequestsLoading.value = false;
-          }
-        }
-      }
-    }
-
     const requestId = updateActive ? ++pullRequestsRequestId : pullRequestsRequestId;
     if (visibleLoading) isPullRequestsLoading.value = true;
-    const request = tauriService
-      .listGitPullRequests({
-        repositoryRootPath,
-        state: selectedState,
-      })
-      .then((payload) => {
-        if (cacheEpochAtRequest !== pullRequestCacheEpoch) {
-          return updateActive && requestId === pullRequestsRequestId ? pullRequests.value : payload;
-        }
 
-        const previousCachedPullRequests = pullRequestListCache.value[cacheKey];
-        const nextPayload = arePullRequestSummaryListsEqual(previousCachedPullRequests, payload)
-          ? previousCachedPullRequests
-          : payload;
-
-        pullRequestListCache.value = {
-          ...pullRequestListCache.value,
-          [cacheKey]: nextPayload,
-        };
-        const fetchedAt = Date.now();
-        pullRequestListFetchedAt.value = {
-          ...pullRequestListFetchedAt.value,
-          [cacheKey]: fetchedAt,
-        };
-        writePersistedPullRequestList(cacheKey, nextPayload, fetchedAt);
-        clearPullRequestListRevalidateFailure(cacheKey);
-        if (updateActive && requestId === pullRequestsRequestId) {
-          pullRequests.value = nextPayload;
-        }
-        if (shouldPreloadDetails) {
-          preloadTopPullRequestDetails(nextPayload);
-        }
-        return updateActive && requestId === pullRequestsRequestId
-          ? pullRequests.value
-          : nextPayload;
-      })
-      .catch((error) => {
-        if (cached) {
-          markPullRequestListRevalidateFailed(cacheKey);
-          return cached;
-        }
-        throw error;
-      })
-      .finally(() => {
-        pendingPullRequestListRequests.delete(cacheKey);
-        if (visibleLoading && requestId === pullRequestsRequestId) {
-          isPullRequestsLoading.value = false;
-        }
+    try {
+      // fetchQuery 会复用进行中的请求并尊重 staleTime;force 时置 0 强制重取。
+      const payload = await queryClient.fetchQuery<IGitPullRequestSummaryPayload[]>({
+        queryKey,
+        queryFn: () =>
+          tauriService.listGitPullRequests({ repositoryRootPath, state: selectedState }),
+        staleTime: force ? 0 : PULL_REQUEST_STALE_TIME_MS,
       });
 
-    pendingPullRequestListRequests.set(cacheKey, request);
-    return request;
+      if (cacheEpochAtRequest !== pullRequestCacheEpoch) {
+        return updateActive && requestId === pullRequestsRequestId ? pullRequests.value : payload;
+      }
+
+      if (updateActive && requestId === pullRequestsRequestId) {
+        pullRequests.value = payload;
+      }
+      if (shouldPreloadDetails) {
+        preloadTopPullRequestDetails(payload);
+      }
+      return updateActive && requestId === pullRequestsRequestId ? pullRequests.value : payload;
+    } catch (error) {
+      if (cached) {
+        // 重验证失败时降级为以旧缓存侜服务。
+        return cached;
+      }
+      throw error;
+    } finally {
+      if (visibleLoading && requestId === pullRequestsRequestId) {
+        isPullRequestsLoading.value = false;
+      }
+    }
   };
 
   const loadPullRequestDetail = async (
@@ -1574,89 +1049,45 @@ export const useGitStore = defineStore('git', () => {
     const visibleLoading = options?.visibleLoading ?? updateActive;
     const force = options?.force ?? false;
     const repositoryRootPath = requireRepositoryRootPath();
-    const cacheKey = createPullRequestDetailCacheKey(
+    const queryKey = pullRequestDetailQueryKey(
       repositoryRootPath,
       number,
       pullRequestSupport.value.repositoryUrl,
     );
-    hydratePullRequestDetailCache(cacheKey);
-    const detailCacheEpochAtRequest = pullRequestCacheEpoch;
-    const pending = pendingPullRequestDetailRequests.get(cacheKey);
-    const cached = pullRequestDetailCache.value[cacheKey];
-    const fetchedAt = pullRequestDetailFetchedAt.value[cacheKey] ?? 0;
-    const shouldRevalidate = Date.now() - fetchedAt >= PULL_REQUEST_DETAIL_REVALIDATE_INTERVAL_MS;
-    const isRevalidateFailureCoolingDown = isPullRequestRevalidateFailureCoolingDown(
-      pullRequestDetailRevalidateFailedAt.value[cacheKey],
-    );
-    if (cached && !force) {
-      touchPullRequestDetailCache(cacheKey);
 
-      if (updateActive) {
-        pullRequestDetail.value = cached;
-      }
-
-      if (!pending && shouldRevalidate && !isRevalidateFailureCoolingDown) {
-        void loadPullRequestDetail(number, {
-          force: true,
-          updateActive,
-          visibleLoading: false,
-        }).catch(() => undefined);
-      }
-
-      return cached;
-    }
-    if (pending) {
-      if (!updateActive) return pending;
-      const requestId = ++pullRequestDetailRequestId;
-      if (visibleLoading) isPullRequestDetailLoading.value = true;
-      try {
-        const payload = await pending;
-        if (requestId === pullRequestDetailRequestId) {
-          pullRequestDetail.value = payload;
-        }
-        return payload;
-      } finally {
-        if (visibleLoading && requestId === pullRequestDetailRequestId) {
-          isPullRequestDetailLoading.value = false;
-        }
-      }
+    const cached = queryClient.getQueryData<IGitPullRequestDetailPayload>(queryKey);
+    if (cached && updateActive) {
+      pullRequestDetail.value = cached;
     }
 
+    const cacheEpochAtRequest = pullRequestCacheEpoch;
     const requestId = updateActive ? ++pullRequestDetailRequestId : pullRequestDetailRequestId;
     if (visibleLoading) isPullRequestDetailLoading.value = true;
-    const request = tauriService
-      .getGitPullRequestDetail({
-        repositoryRootPath,
-        number,
-      })
-      .then((payload) => {
-        if (detailCacheEpochAtRequest !== pullRequestCacheEpoch) {
-          return payload;
-        }
 
-        rememberPullRequestDetail(cacheKey, payload);
-        clearPullRequestDetailRevalidateFailure(cacheKey);
-        if (updateActive && requestId === pullRequestDetailRequestId) {
-          pullRequestDetail.value = payload;
-        }
-        return payload;
-      })
-      .catch((error) => {
-        if (cached) {
-          markPullRequestDetailRevalidateFailed(cacheKey);
-          return cached;
-        }
-        throw error;
-      })
-      .finally(() => {
-        pendingPullRequestDetailRequests.delete(cacheKey);
-        if (visibleLoading && requestId === pullRequestDetailRequestId) {
-          isPullRequestDetailLoading.value = false;
-        }
+    try {
+      const payload = await queryClient.fetchQuery<IGitPullRequestDetailPayload>({
+        queryKey,
+        queryFn: () => tauriService.getGitPullRequestDetail({ repositoryRootPath, number }),
+        staleTime: force ? 0 : PULL_REQUEST_STALE_TIME_MS,
       });
 
-    pendingPullRequestDetailRequests.set(cacheKey, request);
-    return request;
+      if (cacheEpochAtRequest !== pullRequestCacheEpoch) {
+        return payload;
+      }
+      if (updateActive && requestId === pullRequestDetailRequestId) {
+        pullRequestDetail.value = payload;
+      }
+      return payload;
+    } catch (error) {
+      if (cached) {
+        return cached;
+      }
+      throw error;
+    } finally {
+      if (visibleLoading && requestId === pullRequestDetailRequestId) {
+        isPullRequestDetailLoading.value = false;
+      }
+    }
   };
 
   const ensurePullRequestsLoaded = async (
@@ -1748,7 +1179,6 @@ export const useGitStore = defineStore('git', () => {
       pullRequestSupportRequestId += 1;
       pendingPullRequestSupportRequest = null;
       pullRequestSupport.value = payload;
-      removePersistedPullRequestCachesForRepository(status.value.repositoryRootPath);
       resetPullRequests();
       return pullRequestSupport.value;
     } finally {
