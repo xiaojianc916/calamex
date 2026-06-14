@@ -1,10 +1,9 @@
 import { MastraRuntimeBase } from '../base.js';
-import { createDeepSeekReasoningRunPrefix, evictDeepSeekReasoningByPrefix, runWithDeepSeekReasoningContext } from '../../models/providers/deepseek-reasoning-fetch.js';
 import { createMcpGatewayRunBundle } from '../../tools/mcp-gateway.js';
 import { buildSystemPrompt } from '../prompts/system-prompt.js';
 import { createMastraMemoryReference, createMastraMemoryScope } from '../context/memory.js';
 import { createMastraMemoryForModel, createMastraModelConfig, resolveMastraModelConfig } from '../agent/factory.js';
-import { createAcontextTokenEventDraft, createDeepSeekPayloadEventSink } from '../budget/budget.js';
+import { createAcontextTokenEventDraft } from '../budget/budget.js';
 import { createExecutionRequestContext } from '../context/context.js';
 import { normalizeMastraError } from '../errors.js';
 import { buildMastraMessages, hasImageAttachmentParts, isVisionModelId } from '../session/session-messages.js';
@@ -103,32 +102,13 @@ export class MastraRuntimeChat extends MastraRuntimeBase {
             ? createMastraMemoryForModel(modelConfig)
             : undefined;
         const systemPrompt = buildSystemPrompt(normalizedInput, modelConfig.modelId);
-        const payloadEventSink = createDeepSeekPayloadEventSink(events, options);
         let shouldDisconnectBundle = true;
 
         try {
-            return await runWithDeepSeekReasoningContext({
-                sessionId,
-                runId: requestedRunId,
-                onRequestPayload: payloadEventSink.onRequestPayload,
-            }, async () => {
-                const resumableAgentHandle = hasAgentTools && this.shouldUseRegisteredAgentForTools
-                    ? await this.createResumableAgentHandle({
-                        id: DEFAULT_EXECUTION_AGENT_ID,
-                        name: DEFAULT_EXECUTION_AGENT_NAME,
-                        instructions: systemPrompt,
-                        model: createMastraModelConfig(modelConfig),
-                        ...(agentMemory ? { memory: agentMemory } : {}),
-                        ...(hasTools ? { tools: mastraTools } : {}),
-                        ...(workspace ? { workspace } : {}),
-                        ...(browser ? { browser } : {}),
-                        inputProcessors: createMastraAgentInputProcessors(),
-                        outputProcessors: createMastraAgentOutputProcessors(),
-                    })
-                    : null;
-                const agent = resumableAgentHandle?.agent ?? this.createAgent({
-                    id: 'calamex-agent-sidecar',
-                    name: 'Calamex Agent Sidecar',
+            const resumableAgentHandle = hasAgentTools && this.shouldUseRegisteredAgentForTools
+                ? await this.createResumableAgentHandle({
+                    id: DEFAULT_EXECUTION_AGENT_ID,
+                    name: DEFAULT_EXECUTION_AGENT_NAME,
                     instructions: systemPrompt,
                     model: createMastraModelConfig(modelConfig),
                     ...(agentMemory ? { memory: agentMemory } : {}),
@@ -137,88 +117,99 @@ export class MastraRuntimeChat extends MastraRuntimeBase {
                     ...(browser ? { browser } : {}),
                     inputProcessors: createMastraAgentInputProcessors(),
                     outputProcessors: createMastraAgentOutputProcessors(),
-                });
-                const toolChoice: IMastraGenerateOptions['toolChoice'] = hasAgentTools ? 'auto' : 'none';
-                const streamOptions: IMastraGenerateOptions = {
-                    maxSteps: hasAgentTools ? 10 : 1,
-                    toolChoice,
-                    ...(memory ? { memory } : {}),
-                    ...(options.context?.signal ? { abortSignal: options.context.signal } : {}),
-                    ...(resumableAgentHandle || options.context?.requestId ? { runId: requestedRunId } : {}),
-                    ...(resumableAgentHandle && memory ? {
-                        requestContext: createExecutionRequestContext(
-                            normalizedInput,
-                            systemPrompt,
-                            memory,
-                        ),
-                    } : {}),
-                };
-                const mastraMessages = buildMastraMessages(normalizedInput);
-                const stream = await agent.stream(mastraMessages, {
-                    ...streamOptions,
-                });
-                const createRuntimeEvent = createRuntimeEventFactory({
-                    runId: stream.runId ?? requestedRunId,
+                })
+                : null;
+            const agent = resumableAgentHandle?.agent ?? this.createAgent({
+                id: 'calamex-agent-sidecar',
+                name: 'Calamex Agent Sidecar',
+                instructions: systemPrompt,
+                model: createMastraModelConfig(modelConfig),
+                ...(agentMemory ? { memory: agentMemory } : {}),
+                ...(hasTools ? { tools: mastraTools } : {}),
+                ...(workspace ? { workspace } : {}),
+                ...(browser ? { browser } : {}),
+                inputProcessors: createMastraAgentInputProcessors(),
+                outputProcessors: createMastraAgentOutputProcessors(),
+            });
+            const toolChoice: IMastraGenerateOptions['toolChoice'] = hasAgentTools ? 'auto' : 'none';
+            const streamOptions: IMastraGenerateOptions = {
+                maxSteps: hasAgentTools ? 10 : 1,
+                toolChoice,
+                ...(memory ? { memory } : {}),
+                ...(options.context?.signal ? { abortSignal: options.context.signal } : {}),
+                ...(resumableAgentHandle || options.context?.requestId ? { runId: requestedRunId } : {}),
+                ...(resumableAgentHandle && memory ? {
+                    requestContext: createExecutionRequestContext(
+                        normalizedInput,
+                        systemPrompt,
+                        memory,
+                    ),
+                } : {}),
+            };
+            const mastraMessages = buildMastraMessages(normalizedInput);
+            const stream = await agent.stream(mastraMessages, {
+                ...streamOptions,
+            });
+            const createRuntimeEvent = createRuntimeEventFactory({
+                runId: stream.runId ?? requestedRunId,
+                sessionId,
+                agentId: DEFAULT_EXECUTION_AGENT_ID,
+                ...(stream.traceId ? { traceId: stream.traceId } : {}),
+                ...(this.now ? { now: this.now } : {}),
+            });
+            attachMcpGatewayMetrics(mcpGatewayMetrics, console);
+            pushUiEvent(events, createRuntimeEvent(createAcontextTokenEventDraft({
+                systemPrompt,
+                messages: mastraMessages,
+                contextReferences: normalizedInput.context ?? [],
+                tools: mastraTools,
+                toolStats,
+                workspaceEnabled: Boolean(workspace),
+                browserEnabled: Boolean(browser),
+                memoryEnabled: Boolean(memory),
+                maxSteps: streamOptions.maxSteps ?? 1,
+                toolChoice,
+            })), options);
+            const streamSummary = await this.consumeTextStream(
+                agent,
+                mcpBundle,
+                sessionId,
+                stream,
+                events,
+                options,
+                createRuntimeEvent,
+                workspace,
+                browser,
+            );
+            shouldDisconnectBundle = streamSummary.releaseResources;
+
+            if (streamSummary.streamErrorMessage) {
+                return createErrorResponse(
                     sessionId,
-                    agentId: DEFAULT_EXECUTION_AGENT_ID,
-                    ...(stream.traceId ? { traceId: stream.traceId } : {}),
-                    ...(this.now ? { now: this.now } : {}),
-                });
-                payloadEventSink.attachRuntimeEventFactory(createRuntimeEvent);
-                attachMcpGatewayMetrics(mcpGatewayMetrics, console);
-                pushUiEvent(events, createRuntimeEvent(createAcontextTokenEventDraft({
-                    systemPrompt,
-                    messages: mastraMessages,
-                    contextReferences: normalizedInput.context ?? [],
-                    tools: mastraTools,
-                    toolStats,
-                    workspaceEnabled: Boolean(workspace),
-                    browserEnabled: Boolean(browser),
-                    memoryEnabled: Boolean(memory),
-                    maxSteps: streamOptions.maxSteps ?? 1,
-                    toolChoice,
-                })), options);
-                const streamSummary = await this.consumeTextStream(
-                    agent,
-                    mcpBundle,
-                    sessionId,
-                    stream,
+                    `Mastra Agent 执行失败：${streamSummary.streamErrorMessage}`,
                     events,
                     options,
-                    createRuntimeEvent,
-                    workspace,
-                    browser,
                 );
-                shouldDisconnectBundle = streamSummary.releaseResources;
+            }
 
-                if (streamSummary.streamErrorMessage) {
-                    return createErrorResponse(
-                        sessionId,
-                        `Mastra Agent 执行失败：${streamSummary.streamErrorMessage}`,
-                        events,
-                        options,
-                    );
-                }
-
-                if (streamSummary.pendingApproval) {
-                    return {
-                        sessionId,
-                        events,
-                        result: null,
-                    };
-                }
-
-                const result = streamSummary.visibleText.trim().length > 0
-                    ? streamSummary.visibleText
-                    : 'Agent 已完成。';
-
+            if (streamSummary.pendingApproval) {
                 return {
                     sessionId,
                     events,
-                    result,
-                    ...(streamSummary.doneTokenSnapshot ? { usage: streamSummary.doneTokenSnapshot } : {}),
+                    result: null,
                 };
-            });
+            }
+
+            const result = streamSummary.visibleText.trim().length > 0
+                ? streamSummary.visibleText
+                : 'Agent 已完成。';
+
+            return {
+                sessionId,
+                events,
+                result,
+                ...(streamSummary.doneTokenSnapshot ? { usage: streamSummary.doneTokenSnapshot } : {}),
+            };
         } catch (error) {
             return createErrorResponse(
                 sessionId,
@@ -228,7 +219,6 @@ export class MastraRuntimeChat extends MastraRuntimeBase {
             );
         } finally {
             if (shouldDisconnectBundle) {
-                evictDeepSeekReasoningByPrefix(createDeepSeekReasoningRunPrefix(sessionId, requestedRunId));
                 await mcpBundle.disconnectAll();
                 await destroyMastraWorkspace(workspace);
                 await destroyMastraBrowser(browser);

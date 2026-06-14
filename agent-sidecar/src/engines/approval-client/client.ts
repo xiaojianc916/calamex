@@ -1,7 +1,5 @@
 import { MastraRuntimeExecution } from '../execution.js';
-import { createDeepSeekReasoningRunPrefix, evictDeepSeekReasoningByPrefix, runWithDeepSeekReasoningContext } from '../../models/providers/deepseek-reasoning-fetch.js';
 import { decodeApprovalRequestId, isApprovedDecision } from './utils.js';
-import { createDeepSeekPayloadEventSink } from '../budget/budget.js';
 import { createExecutionRequestContext } from '../context/context.js';
 import { normalizeMastraError } from '../errors.js';
 import { createErrorResponse } from '../responses.js';
@@ -63,7 +61,6 @@ export class MastraRuntimeApproval extends MastraRuntimeExecution {
         }
 
         const events: TAgentRuntimeOutputEvent[] = [];
-        const payloadEventSink = createDeepSeekPayloadEventSink(events, options);
         let shouldDisconnectBundle = true;
         let streamCleanup: (() => void) | undefined;
         const continueSuspendedStream = resumeContinueStream;
@@ -88,141 +85,134 @@ export class MastraRuntimeApproval extends MastraRuntimeExecution {
         const resumeApprovalTool = approvalContinueStream;
 
         try {
-            return await runWithDeepSeekReasoningContext({
-                sessionId,
+            let stream: IMastraAgentStreamLike;
+            const resumeOptions: IMastraApprovalOptions = {
                 runId: decodedRequest.runId,
-                onRequestPayload: payloadEventSink.onRequestPayload,
-            }, async () => {
-                let stream: IMastraAgentStreamLike;
-                const resumeOptions: IMastraApprovalOptions = {
-                    runId: decodedRequest.runId,
-                    toolCallId: decodedRequest.toolCallId,
-                    ...(options.context?.signal ? { abortSignal: options.context.signal } : {}),
-                    ...(approvalContext.memory ? { memory: approvalContext.memory } : {}),
-                    ...(approvalContext.memory && approvalContext.systemPrompt ? {
-                        requestContext: createExecutionRequestContext(
-                            {
-                                mode: 'agent',
-                                goal: input.goal?.trim() || '继续当前任务',
-                                messages: input.messages ?? [],
-                                context: input.context ?? [],
-                                ...(input.workspaceRootPath ? { workspaceRootPath: input.workspaceRootPath } : {}),
-                                ...(input.threadId ? { threadId: input.threadId } : {}),
-                                ...(input.planId ? { planId: input.planId } : {}),
-                                ...(input.planVersion ? { planVersion: input.planVersion } : {}),
-                                ...(input.planStepId ? { planStepId: input.planStepId } : {}),
-                            },
-                            approvalContext.systemPrompt,
-                            approvalContext.memory,
-                            approvalContext.approvedPlanRecord,
-                        ),
-                    } : {}),
-                };
+                toolCallId: decodedRequest.toolCallId,
+                ...(options.context?.signal ? { abortSignal: options.context.signal } : {}),
+                ...(approvalContext.memory ? { memory: approvalContext.memory } : {}),
+                ...(approvalContext.memory && approvalContext.systemPrompt ? {
+                    requestContext: createExecutionRequestContext(
+                        {
+                            mode: 'agent',
+                            goal: input.goal?.trim() || '继续当前任务',
+                            messages: input.messages ?? [],
+                            context: input.context ?? [],
+                            ...(input.workspaceRootPath ? { workspaceRootPath: input.workspaceRootPath } : {}),
+                            ...(input.threadId ? { threadId: input.threadId } : {}),
+                            ...(input.planId ? { planId: input.planId } : {}),
+                            ...(input.planVersion ? { planVersion: input.planVersion } : {}),
+                            ...(input.planStepId ? { planStepId: input.planStepId } : {}),
+                        },
+                        approvalContext.systemPrompt,
+                        approvalContext.memory,
+                        approvalContext.approvedPlanRecord,
+                    ),
+                } : {}),
+            };
 
-                if (isApprovedDecision(input.decision)) {
-                    await allowWorkspaceWriteAfterVerifiedRead(pending.workspace, pending.approvedPath);
+            if (isApprovedDecision(input.decision)) {
+                await allowWorkspaceWriteAfterVerifiedRead(pending.workspace, pending.approvedPath);
+            }
+
+            if (pending.kind === 'suspended') {
+                if (typeof resumeSuspendedTool !== 'function') {
+                    throw new Error('Mastra suspended tool resumeStream 不可用。');
                 }
 
-                if (pending.kind === 'suspended') {
-                    if (typeof resumeSuspendedTool !== 'function') {
-                        throw new Error('Mastra suspended tool resumeStream 不可用。');
-                    }
-
-                    stream = await resumeSuspendedTool({
-                        approved: isApprovedDecision(input.decision),
-                    }, resumeOptions);
-                } else if (typeof resumeApprovalRun === 'function') {
-                    stream = await resumeApprovalRun({
-                        approved: isApprovedDecision(input.decision),
-                    }, resumeOptions);
-                } else {
-                    if (typeof resumeApprovalTool !== 'function') {
-                        throw new Error('Mastra approval resume 不可用。');
-                    }
-
-                    stream = await resumeApprovalTool(resumeOptions);
-                }
-                streamCleanup = stream.cleanup;
-                const resumedRunId = stream.runId ?? decodedRequest.runId;
-                const createRuntimeEvent = createRuntimeEventFactory({
-                    runId: resumedRunId,
-                    sessionId,
-                    agentId: DEFAULT_EXECUTION_AGENT_ID,
-                    ...(this.now ? { now: this.now } : {}),
-                });
-                payloadEventSink.attachRuntimeEventFactory(createRuntimeEvent);
-                const streamSummary = await this.consumeTextStream(
-                    pending.agent,
-                    pending.bundle,
-                    sessionId,
-                    stream,
-                    events,
-                    options,
-                    createRuntimeEvent,
-                    pending.workspace,
-                    pending.browser,
-                    workflowTracker ?? undefined,
-                );
-                shouldDisconnectBundle = streamSummary.releaseResources;
-
-                if (streamSummary.streamErrorMessage) {
-                    if (workflowTracker) {
-                        await this.planWorkflowStore.failStep({
-                            ...workflowTracker,
-                            error: streamSummary.streamErrorMessage,
-                            retryable: true,
-                        }).catch(() => undefined);
-                    }
-                    return createErrorResponse(
-                        sessionId,
-                        `Mastra Approval 执行失败：${streamSummary.streamErrorMessage}`,
-                        events,
-                        options,
-                    );
+                stream = await resumeSuspendedTool({
+                    approved: isApprovedDecision(input.decision),
+                }, resumeOptions);
+            } else if (typeof resumeApprovalRun === 'function') {
+                stream = await resumeApprovalRun({
+                    approved: isApprovedDecision(input.decision),
+                }, resumeOptions);
+            } else {
+                if (typeof resumeApprovalTool !== 'function') {
+                    throw new Error('Mastra approval resume 不可用。');
                 }
 
-                if (streamSummary.pendingApproval) {
-                    // 链式审批：又有工具需要批准，与 execute() 一致地重新挂起工作流步骤。
-                    if (workflowTracker) {
-                        await this.planWorkflowStore.suspend({
-                            planId: workflowTracker.planId,
-                            version: workflowTracker.version,
-                            reason: 'tool_external_wait',
-                            payload: {
-                                stepId: workflowTracker.stepId,
-                                runId: resumedRunId,
-                            },
-                            allowedFields: ['decision', 'requestId'],
-                        }).catch(() => undefined);
-                    }
-                    return {
-                        sessionId,
-                        events,
-                        result: null,
-                    };
-                }
+                stream = await resumeApprovalTool(resumeOptions);
+            }
+            streamCleanup = stream.cleanup;
+            const resumedRunId = stream.runId ?? decodedRequest.runId;
+            const createRuntimeEvent = createRuntimeEventFactory({
+                runId: resumedRunId,
+                sessionId,
+                agentId: DEFAULT_EXECUTION_AGENT_ID,
+                ...(this.now ? { now: this.now } : {}),
+            });
+            const streamSummary = await this.consumeTextStream(
+                pending.agent,
+                pending.bundle,
+                sessionId,
+                stream,
+                events,
+                options,
+                createRuntimeEvent,
+                pending.workspace,
+                pending.browser,
+                workflowTracker ?? undefined,
+            );
+            shouldDisconnectBundle = streamSummary.releaseResources;
 
-                const result = streamSummary.visibleText.trim().length > 0
-                    ? streamSummary.visibleText
-                    : 'Agent 已完成。';
-
-                // 闭环关键：审批恢复后必须对称地推进 libSQL 工作流，完成该步骤、前移
-                // executionCursor，否则计划主线永远停在 executing/tool_external_wait。
-                // 工作流协调采用尽力而为：其失败不得影响用户已成功获得的工具执行结果。
+            if (streamSummary.streamErrorMessage) {
                 if (workflowTracker) {
-                    await this.planWorkflowStore.completeStep({
+                    await this.planWorkflowStore.failStep({
                         ...workflowTracker,
-                        resultRef: resumedRunId,
+                        error: streamSummary.streamErrorMessage,
+                        retryable: true,
                     }).catch(() => undefined);
                 }
+                return createErrorResponse(
+                    sessionId,
+                    `Mastra Approval 执行失败：${streamSummary.streamErrorMessage}`,
+                    events,
+                    options,
+                );
+            }
 
+            if (streamSummary.pendingApproval) {
+                // 链式审批：又有工具需要批准，与 execute() 一致地重新挂起工作流步骤。
+                if (workflowTracker) {
+                    await this.planWorkflowStore.suspend({
+                        planId: workflowTracker.planId,
+                        version: workflowTracker.version,
+                        reason: 'tool_external_wait',
+                        payload: {
+                            stepId: workflowTracker.stepId,
+                            runId: resumedRunId,
+                        },
+                        allowedFields: ['decision', 'requestId'],
+                    }).catch(() => undefined);
+                }
                 return {
                     sessionId,
                     events,
-                    result,
-                    ...(streamSummary.doneTokenSnapshot ? { usage: streamSummary.doneTokenSnapshot } : {}),
+                    result: null,
                 };
-            });
+            }
+
+            const result = streamSummary.visibleText.trim().length > 0
+                ? streamSummary.visibleText
+                : 'Agent 已完成。';
+
+            // 闭环关键：审批恢复后必须对称地推进 libSQL 工作流，完成该步骤、前移
+            // executionCursor，否则计划主线永远停在 executing/tool_external_wait。
+            // 工作流协调采用尽力而为：其失败不得影响用户已成功获得的工具执行结果。
+            if (workflowTracker) {
+                await this.planWorkflowStore.completeStep({
+                    ...workflowTracker,
+                    resultRef: resumedRunId,
+                }).catch(() => undefined);
+            }
+
+            return {
+                sessionId,
+                events,
+                result,
+                ...(streamSummary.doneTokenSnapshot ? { usage: streamSummary.doneTokenSnapshot } : {}),
+            };
         } catch (error) {
             if (workflowTracker) {
                 await this.planWorkflowStore.failStep({
@@ -239,9 +229,6 @@ export class MastraRuntimeApproval extends MastraRuntimeExecution {
             );
         } finally {
             if (shouldDisconnectBundle) {
-                evictDeepSeekReasoningByPrefix(
-                    createDeepSeekReasoningRunPrefix(sessionId, decodedRequest.runId),
-                );
                 streamCleanup?.();
                 await pending.bundle.disconnectAll();
                 await destroyMastraWorkspace(pending.workspace);
