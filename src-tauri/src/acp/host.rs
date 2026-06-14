@@ -8,7 +8,7 @@
 //! 不自创协议语义：
 //!   * `client`   —— 常驻 stdio 连接 + 命令句柄（new_session / prompt /
 //!     set_session_mode / restore_checkpoint / model_chat / web_search / web_fetch /
-//!     warmup / health / cancel / shutdown）；
+//!     warmup / health / orchestrate / orchestrate_resume / cancel / shutdown）；
 //!   * `approval` —— 回合内反向 `session/request_permission` 的挂起登记表；
 //!   * `turn`     —— 把一回合的 `session/update` 通知重建为既有响应信封。
 //!
@@ -30,6 +30,13 @@
 //!     webview 的标识，无需解码任何旁路令牌。
 //!   * **流式即累积**：单一 `EventSink` 既把每条帧转发给 webview（`ai:sidecar-stream`
 //!     契约），又按 `sessionId` 写入当前回合累积器；回合结束后落为响应信封。
+//!   * **编排即带外**：`orchestrate` / `orchestrate_resume` 是标准会话回合（`prompt`）
+//!     之外的「带外」编排能力，经 sidecar 公示的扩展方法通道下发（标准客户端不识别
+//!     会安全忽略）。二者均先 `ensure_session(thread_id)` 拿到稳定 `SessionId` 并随
+//!     请求透传，使内部工作流事件经该会话的 `session/update` 流式下发（与 chat 同一
+//!     下沉路径，见 agent.ts `handleOrchestrate`）；但编排帧不做回合累积——不调用
+//!     `begin_turn`/`end_turn`，`record_frame` 对无活动回合的会话安全忽略，帧仍转发
+//!     webview。同 chat，编排不在回合内注入模型配置（sidecar 启动期解析）。
 
 // 过渡期：本模块尚未接线到宿主命令（公开 API 暂无调用点）。接线后移除该 allow。
 #![allow(dead_code)]
@@ -42,15 +49,16 @@ use std::sync::Arc;
 use agent_client_protocol::schema::{SessionId, SessionModeId, ToolCallId};
 
 use crate::commands::contracts::{
-    AgentSidecarHealthPayload, AgentSidecarResponsePayload, AgentSidecarWarmupPayload,
-    AiContextReferencePayload, AiWebFetchPayload, AiWebSearchPayload,
+    AgentSidecarHealthPayload, AgentSidecarOrchestratePayload, AgentSidecarResponsePayload,
+    AgentSidecarWarmupPayload, AiContextReferencePayload, AiWebFetchPayload, AiWebSearchPayload,
 };
 
 use super::approval::{ApprovalError, ApprovalRegistry, ApprovalRequestInfo};
 use super::client::{
     AcpClientConfig, AcpClientError, AcpClientHandle, AcpStreamFrame, CheckpointRestoreRequest,
-    EventSink, HealthExtRequest, ModelChatExtRequest, WarmupExtRequest, WebFetchExtRequest,
-    WebSearchExtRequest, spawn_acp_client,
+    EventSink, HealthExtRequest, ModelChatExtRequest, OrchestrateExtRequest,
+    OrchestrateResumeExtRequest, WarmupExtRequest, WebFetchExtRequest, WebSearchExtRequest,
+    spawn_acp_client,
 };
 use super::turn::TurnAccumulator;
 
@@ -82,6 +90,47 @@ pub struct AcpChatTurn {
     /// `resource` / `resource_link` 内容块附加到 prompt。空切片表示无附加上下文，
     /// 此时仅投影用户文本块（与既有行为等价）。
     pub context: Vec<AiContextReferencePayload>,
+}
+
+/// 一次 `orchestrate` 编排启动的宿主侧入参。
+///
+/// 接线层负责把 `AgentSidecarOrchestrateRequest` 投影到此：`goal` 原样透传，
+/// `thread_id` 用于 `ensure_session` 拿到稳定会话并随请求透传，`execution_mode`
+/// 以字符串原样透传（合法取值由 sidecar zod 校验；为空时整字段省略交由 sidecar
+/// 套默认），`workspace_root_path` 仅在新建会话时作为 cwd。`model_config` 不在此
+/// 出现——同 chat，模型配置在 sidecar 启动期由环境变量解析，不入编排请求。
+#[derive(Debug, Clone, Default)]
+pub struct AcpOrchestrateStart {
+    /// 编排目标（自然语言），原样透传给 sidecar。
+    pub goal: String,
+    /// 稳定线程标识：用于 `ensure_session` 复用/新建会话，并随请求透传以便内部
+    /// 工作流事件经该会话的 `session/update` 流式下发。为空白时退化为「新建、不登记」。
+    pub thread_id: Option<String>,
+    /// 每次运行的执行偏好（interactive/autonomous）；合法取值由 sidecar zod 统一校验，
+    /// 宿主以字符串原样透传、不在此重复取值表，为空白时整字段省略交由 sidecar 套默认。
+    pub execution_mode: Option<String>,
+    /// 新建会话时作为 cwd（→ sidecar workspaceRootPath）；复用会话时忽略。
+    pub workspace_root_path: Option<String>,
+}
+
+/// 一次 `orchestrate_resume` 编排续跑的宿主侧入参。
+///
+/// 接线层负责把 `AgentSidecarOrchestrateResumeRequest` 投影到此：`run_id` 定位被
+/// 审批门挂起的编排运行，`decision`（approve/reject/continue/cancel）与可选 `reason`
+/// 以字符串原样透传（合法取值由 sidecar zod 校验）。`thread_id` 用于 `ensure_session`
+/// 复用同一会话，使续跑阶段的工作流事件仍经该会话的 `session/update` 流式下发。
+/// `model_config` 同 chat 不在此出现。
+#[derive(Debug, Clone, Default)]
+pub struct AcpOrchestrateResume {
+    /// 被挂起编排运行的标识，原样透传给 sidecar 以定位续跑目标。
+    pub run_id: String,
+    /// 审批决策（approve/reject/continue/cancel）；合法取值由 sidecar zod 校验，原样透传。
+    pub decision: String,
+    /// 可选的决策理由；为空白时整字段省略。
+    pub reason: Option<String>,
+    /// 稳定线程标识：用于 `ensure_session` 复用同一会话并随请求透传，使续跑阶段的
+    /// 工作流事件仍经该会话的 `session/update` 流式下发。为空白时退化为「新建、不登记」。
+    pub thread_id: Option<String>,
 }
 
 /// 宿主侧 ACP 编排句柄。可作为 Tauri 托管状态长驻：内部协作件均为
@@ -314,6 +363,71 @@ impl AcpHost {
         let value = self.handle.health(HealthExtRequest {}).await?;
         serde_json::from_value(value).map_err(|error| {
             AcpClientError::Protocol(format!("invalid health response payload: {error}"))
+        })
+    }
+
+    /// 启动一次原生计划编排（扩展方法 `calamex.dev/plan/orchestrate`）。
+    ///
+    /// 标准会话回合（`prompt`）之外的「带外」编排能力，经 sidecar 公示的扩展方法通道
+    /// 下发。先 `ensure_session(thread_id)` 拿到稳定 `SessionId` 并随请求透传，使内部
+    /// 工作流事件经该会话的 `session/update` 流式下发（与 chat 同一 `EventSink` 下沉
+    /// 路径，见 agent.ts `handleOrchestrate`）；但编排不在此累积回合（无
+    /// `begin_turn`/`end_turn`），帧仅经 `EventSink` 转发 webview，`record_frame` 对
+    /// 无活动回合的会话安全忽略。`execution_mode` 以字符串原样透传（合法取值由 sidecar
+    /// zod 校验），为空白时整字段省略交由 sidecar 套默认；`model_config` 同 chat 不注入
+    /// （sidecar 启动期解析）。sidecar 回传编排终帧 `{ runId, status, result }`，此处
+    /// 解析为既有 `AgentSidecarOrchestratePayload` 契约（多余的 `status` 字段按 serde
+    /// 默认忽略），与原 HTTP `orchestrate` 的返回同形（前端无感）。
+    pub async fn orchestrate(
+        &self,
+        start: AcpOrchestrateStart,
+    ) -> Result<AgentSidecarOrchestratePayload, AcpClientError> {
+        let session_id = self
+            .ensure_session(
+                start.thread_id.as_deref().unwrap_or_default(),
+                start.workspace_root_path.as_deref(),
+            )
+            .await?;
+        let request = OrchestrateExtRequest {
+            goal: start.goal,
+            thread_id: non_empty(start.thread_id.as_deref()).map(str::to_string),
+            execution_mode: non_empty(start.execution_mode.as_deref()).map(str::to_string),
+            session_id: Some(session_id.to_string()),
+            model_config: None,
+        };
+        let value = self.handle.orchestrate(request).await?;
+        serde_json::from_value(value).map_err(|error| {
+            AcpClientError::Protocol(format!("invalid orchestrate response payload: {error}"))
+        })
+    }
+
+    /// 恢复一个被审批门挂起的编排运行（扩展方法 `calamex.dev/plan/orchestrate/resume`）。
+    ///
+    /// 经 sidecar 公示的扩展方法通道下发；先 `ensure_session(thread_id)` 复用同一会话
+    /// 并随请求透传，使续跑阶段的工作流事件仍经该会话的 `session/update` 流式下发（见
+    /// agent.ts `handleOrchestrateResume`）；同 `orchestrate` 不累积回合。`decision`/
+    /// `reason` 以字符串原样透传（合法取值由 sidecar zod 校验）；`model_config` 同 chat
+    /// 不注入。响应同 `orchestrate`：编排终帧 `{ runId, status, result }` 解析为既有
+    /// `AgentSidecarOrchestratePayload` 契约。
+    pub async fn orchestrate_resume(
+        &self,
+        resume: AcpOrchestrateResume,
+    ) -> Result<AgentSidecarOrchestratePayload, AcpClientError> {
+        let session_id = self
+            .ensure_session(resume.thread_id.as_deref().unwrap_or_default(), None)
+            .await?;
+        let request = OrchestrateResumeExtRequest {
+            run_id: resume.run_id,
+            decision: resume.decision,
+            reason: non_empty(resume.reason.as_deref()).map(str::to_string),
+            session_id: Some(session_id.to_string()),
+            model_config: None,
+        };
+        let value = self.handle.orchestrate_resume(request).await?;
+        serde_json::from_value(value).map_err(|error| {
+            AcpClientError::Protocol(format!(
+                "invalid orchestrate resume response payload: {error}"
+            ))
         })
     }
 
