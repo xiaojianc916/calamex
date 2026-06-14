@@ -1103,10 +1103,11 @@ watch(
 
 watch(analysisDiagnosticsSignature, () => syncDiagnostics());
 
+// app store 的 patchSettings/replaceSettings 每次都整体替换 settings 引用,
+// editor 子对象随之成为新引用,故浅 watch 即可捕获所有偏好改动,无需 deep 遍历。
 watch(
   () => props.editorSettings,
   () => reconfigureSettings(),
-  { deep: true },
 );
 
 // ──────────────────────────────

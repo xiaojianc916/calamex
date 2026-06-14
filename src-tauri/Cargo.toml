@@ -127,4 +127,12 @@ windows-core = "=0.61.2"
 tower = { version = "0.5", features = ["util"] }
 
 [profile.release]
-debug = true
+# 发布构建优化：缩小二进制体积并提升运行时性能。
+# - lto = "thin"：跨 crate 链接时优化(thin 是性能与编译时间的平衡点)
+# - codegen-units = 1：单编译单元,最大优化空间(代价是 release 编译变慢,发布构建可接受)
+# - panic = "abort"：省去 unwinding 代码(应用不依赖 catch_unwind 恢复,见 deny.toml / 源码无使用)
+# - strip = "debuginfo"：剥离调试信息体积,但保留符号名以保留可读的 panic 栈
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = "debuginfo"

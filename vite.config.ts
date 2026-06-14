@@ -46,6 +46,9 @@ export default defineConfig(({ command }) => ({
   },
   build: {
     chunkSizeWarningLimit: 1500,
+    // 关闭每次构建对全部产物的 gzip/brotli 体积计算(开销随产物数线性增长);
+    // 压缩体积数据仍由 visualizer 按需产出在 dist/stats.html。
+    reportCompressedSize: false,
     rollupOptions: {
       input: {
         index: fileURLToPath(new URL('./index.html', import.meta.url)),
@@ -73,9 +76,16 @@ export default defineConfig(({ command }) => ({
           }
 
           // ── 语法高亮(Shiki)───────────────────────
+          // 只收核心(core/engine/wasm)与主题进 vendor-shiki；放行 @shikijs/langs。
+          // langs 走 shiki-shared.ts 里逐语言动态 import('@shikijs/langs/<lang>')，
+          // 让每种语言由 Rollup 自然产出独立小 chunk，按需下载——否则 32 种语言的
+          // TextMate 语法 JSON 会被合并进单个 vendor-shiki(~3.9MB)，首次高亮 bash
+          // 也要整块下载解析。
           if (
-            normalizedId.includes('/node_modules/shiki/') ||
-            normalizedId.includes('/node_modules/@shikijs/')
+            normalizedId.includes('/node_modules/shiki/core') ||
+            normalizedId.includes('/node_modules/shiki/engine') ||
+            normalizedId.includes('/node_modules/shiki/wasm') ||
+            normalizedId.includes('/node_modules/@shikijs/themes/')
           ) {
             return 'vendor-shiki';
           }

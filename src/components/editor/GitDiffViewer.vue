@@ -164,14 +164,29 @@ onBeforeUnmount(() => {
 
 // 不监听 props.theme —— diff 视图(与主编辑器一致)刻意恒为 github-light，buildMergeView
 // 不读取 theme，监听它只会在每次主题切换时整块 remount 出一个完全相同的视图。
+// 拆分 watch：originalContent/modifiedContent 可能是整文件内容大字符串，
+// 之前合并进数组 + deep watch 会对它们逐字符深比较。改为各字段独立 watch，
+// 字符串/布尔/原始类型走默认浅比较(引用变化才触发),仅 editorSettings 嵌套对象保留 deep。
 watch(
-  () => [
-    props.preview.id,
-    props.preview.originalContent,
-    props.preview.modifiedContent,
-    props.preview.isEmpty,
-    props.editorSettings,
-  ],
+  () => [props.preview.id, props.preview.isEmpty],
+  () => {
+    void remountDiffEditor();
+  },
+);
+watch(
+  () => props.preview.originalContent,
+  () => {
+    void remountDiffEditor();
+  },
+);
+watch(
+  () => props.preview.modifiedContent,
+  () => {
+    void remountDiffEditor();
+  },
+);
+watch(
+  () => props.editorSettings,
   () => {
     void remountDiffEditor();
   },

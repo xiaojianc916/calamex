@@ -1,0 +1,44 @@
+[
+  {
+    "name": "入口 chunk(index)",
+    "path": "dist/assets/index-*.js",
+    "limit": "50 KB",
+    "gzip": true
+  },
+  {
+    "name": "Shiki 核心(core/engine/themes)",
+    "path": "dist/assets/vendor-shiki-*.js",
+    "limit": "4 KB",
+    "gzip": true
+  },
+  {
+    "name": "Vue 全家桶(vue/router/pinia)",
+    "path": "dist/assets/vendor-core-*.js",
+    "limit": "80 KB",
+    "gzip": true
+  },
+  {
+    "name": "CodeMirror 内核",
+    "path": "dist/assets/vendor-codemirror-*.js",
+    "limit": "460 KB",
+    "gzip": true
+  },
+  {
+    "name": "Markdown + KaTeX",
+    "path": "dist/assets/vendor-markdown-*.js",
+    "limit": "430 KB",
+    "gzip": true
+  },
+  {
+    "name": "AI 运行时(CopilotKit / ai SDK)",
+    "path": "dist/assets/vendor-ai-*.js",
+    "limit": "720 KB",
+    "gzip": true
+  },
+  {
+    "name": "xterm 终端",
+    "path": "dist/assets/vendor-xterm-*.js",
+    "limit": "155 KB",
+    "gzip": true
+  }
+]
