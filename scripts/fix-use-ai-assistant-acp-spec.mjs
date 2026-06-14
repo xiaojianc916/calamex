@@ -206,6 +206,15 @@ content = content.replace(
   `\n    aiServiceMock.emitDelta('你好');\n    await flushMicrotasks();\n\n    expect(assistant.messages.value.at(-1)?.stream).toMatchObject({\n      status: 'streaming',\n    });\n\n    aiServiceMock.emitDone('你好', {\n      inputTokens: 13,\n      inputTokenDetails: {\n        noCacheTokens: 13,\n        cacheReadTokens: 0,\n        cacheWriteTokens: 0,\n      },\n      outputTokens: 5,\n      outputTokenDetails: {\n        textTokens: 4,\n        reasoningTokens: 1,\n      },\n      totalTokens: 18,\n      cachedInputTokens: 0,\n      reasoningTokens: 1,\n    });`,
 );
 
+// Fake timers replace the synchronous RAF stub from beforeEach. Re-stub RAF after enabling fake timers
+// so the chat sidecar event buffer can flush before sendMessage resolves.
+if (!content.includes("vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback): number => {\n      callback(0);\n      return 1;\n    });\n    const assistant = createAssistantHarness();")) {
+  content = content.replace(
+    "    vi.useFakeTimers();\n    const assistant = createAssistantHarness();",
+    "    vi.useFakeTimers();\n    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback): number => {\n      callback(0);\n      return 1;\n    });\n    const assistant = createAssistantHarness();",
+  );
+}
+
 for (const forbidden of ['IAiChatStreamEventPayload', 'onChatStream', 'aiServiceMock.emit({', 'streamHandler']) {
   if (content.includes(forbidden)) {
     throw new Error(`迁移后仍残留旧实现标记：${forbidden}`);
@@ -219,7 +228,7 @@ if (helperMatches.length !== 1) {
 
 fs.writeFileSync(specPath, content);
 
-// 7) 修复生产代码：chat stop 不能复用 Agent 取消文案覆盖已流出的回答；并处理 stop 早于 bind 的竞态。
+// 7) 修复生产代码：chat stop 不能复用 Agent 取消文案覆盖已流出的回答；并处理 stop 早于 bind / late delta 的竞态。
 if (fs.existsSync(assistantPath)) {
   let assistantContent = fs.readFileSync(assistantPath, 'utf8');
 
@@ -230,10 +239,17 @@ if (fs.existsSync(assistantPath)) {
     );
   }
 
-  if (!assistantContent.includes('if (requestAbortController.signal.aborted)')) {
+  if (!assistantContent.includes('if (requestAbortController.signal.aborted) {\n        settle();\n      }')) {
     assistantContent = assistantContent.replace(
       '      sidecarStream.bind(sessionId);\n\n      await new Promise<void>((resolve) => {',
       '      sidecarStream.bind(sessionId);\n\n      if (requestAbortController.signal.aborted) {\n        settle();\n      }\n\n      await new Promise<void>((resolve) => {',
+    );
+  }
+
+  if (!assistantContent.includes('if (requestAbortController.signal.aborted) {\n        return;\n      }\n      appendVisibleRuntimeTimelineEvents')) {
+    assistantContent = assistantContent.replace(
+      '    const liveEventBuffer = createSidecarLiveEventBuffer((events, freshEvents) => {\n      appendVisibleRuntimeTimelineEvents(extractVisibleAgentRuntimeEvents(freshEvents));',
+      '    const liveEventBuffer = createSidecarLiveEventBuffer((events, freshEvents) => {\n      if (requestAbortController.signal.aborted) {\n        return;\n      }\n      appendVisibleRuntimeTimelineEvents(extractVisibleAgentRuntimeEvents(freshEvents));',
     );
   }
 
@@ -280,4 +296,4 @@ if (fs.existsSync(tauriTypesPath)) {
   fs.writeFileSync(tauriTypesPath, tauriTypes);
 }
 
-console.log('已迁移 useAiAssistant.spec.ts 的 Chat 流 mock 到 ACP sidecar-stream，并修复 chat 取消竞态/tauri 类型格式。');
+console.log('已迁移 useAiAssistant.spec.ts 的 Chat 流 mock 到 ACP sidecar-stream，并修复 chat 取消 late frame / 标题重试 fake timer / tauri 类型格式。');
