@@ -32,6 +32,7 @@ desktop = [
   "dep:ast-grep-language",
   "dep:ignore",
   "dep:keyring",
+  "dep:mime_guess",
   "dep:normpath",
   "dep:nucleo-matcher",
   "dep:portable-pty",
@@ -70,6 +71,7 @@ grep-matcher = { version = "0.1.8", optional = true }
 grep-regex = { version = "0.1.14", optional = true }
 grep-searcher = { version = "0.1.16", optional = true }
 ignore = { version = "0.4.25", optional = true }
+mime_guess = { version = "2.0.5", optional = true }
 notify = { version = "8.2.0" }
 notify-debouncer-full = "0.5"
 nucleo-matcher = { version = "0.3.1", optional = true }

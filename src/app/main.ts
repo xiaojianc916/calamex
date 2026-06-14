@@ -5,7 +5,6 @@ import { applyWindowStage } from '@/services/ipc/window.service';
 import { pinia } from '@/store';
 import { hydrateAiConversationStorage } from '@/store/plugins/debouncedPersistStorage';
 import { hydrateSessionStorage } from '@/store/plugins/tauriSessionStorage';
-import { initAppTooltipSystem } from '@/utils/app-tooltip';
 import { MAIN_WINDOW_LABEL } from '@/utils/app-window';
 import { renderFatalBootstrapError } from '@/utils/bootstrap-fatal-error';
 import { initEditorScrollbarActivity } from '@/utils/editor-scrollbar-activity';
@@ -153,9 +152,7 @@ const bootstrap = async (): Promise<void> => {
     markStartup('vue-mounted');
 
     initGitHubAuthHeaderEnhancement();
-    initAppTooltipSystem();
     initEditorScrollbarActivity();
-    markStartup('tooltip-system-ready');
 
     prefetchShellCatalogAfterBootstrap();
     hydrateAiConversationAfterBootstrap();
