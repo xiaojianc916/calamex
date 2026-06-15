@@ -77,8 +77,7 @@ const revealMainWindow = async (): Promise<void> => {
 };
 
 // 首帧绘制后尽早显示窗口：窗口默认 visible:false，用以根除「透明窗口先于 WebView2
-// 首帧合成」造成的透明边框闪烁；同时让启动骨架屏第一时间可见，而无需等到工作台
-// ready(workbench.initialize 完成)。双 requestAnimationFrame 确保首帧已绘制后再显示。
+// 首帧合成」造成的透明边框闪烁；双 requestAnimationFrame 确保首帧已绘制后再显示。
 const scheduleInitialWindowReveal = (): void => {
   if (typeof window === 'undefined') {
     return;
