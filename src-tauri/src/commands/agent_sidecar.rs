@@ -1,4 +1,3 @@
-use crate::agent_sidecar;
 use crate::commands::contracts::{
     AgentSidecarApprovalResolveRequest, AgentSidecarChatRequest,
     AgentSidecarCheckpointRestoreRequest, AgentSidecarHealthPayload, AgentSidecarModelConfigPayload,
@@ -45,10 +44,14 @@ pub async fn agent_sidecar_health(app: AppHandle) -> Result<AgentSidecarHealthPa
 
 #[tauri::command]
 #[specta::specta]
-pub async fn agent_sidecar_restart() -> Result<AgentSidecarHealthPayload, String> {
-    // restart 仍走旧 HTTP 路径：ACP stdio 宿主尚无等价的「重启」语义（需新增
-    // AcpRuntime::restart），下一步处理。
-    agent_sidecar::restart().await
+pub async fn agent_sidecar_restart(app: AppHandle) -> Result<AgentSidecarHealthPayload, String> {
+    // 重启常驻 ACP 宿主：关停旧 stdio 子进程/连接并重新派生，再探测健康作为重启
+    // 结果（对齐旧 HTTP restart 返回 health 的契约）。
+    let host = app
+        .state::<crate::acp::AcpRuntime>()
+        .restart(&app)
+        .map_err(|error| error.to_string())?;
+    host.health().await.map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -68,8 +71,20 @@ pub async fn agent_sidecar_chat(
     app: AppHandle,
     payload: AgentSidecarChatRequest,
 ) -> Result<AgentSidecarResponsePayload, String> {
-    // chat 暂留 HTTP：与 resolve_approval 的回合内挂起审批流强耦合，统一切换在下一步处理。
-    agent_sidecar::chat(app, payload).await
+    // 会话连续性对齐 Zed session_id = thread.id()：先以 thread_id（缺省回退空串→host 内
+    // 按工作区新建）解析稳定 SessionId，再投影为 agent/chat 扩展请求经 stdio 下发。
+    let host = acp_host(&app)?;
+    let session_id = host
+        .ensure_session(
+            payload.thread_id.as_deref().unwrap_or_default(),
+            payload.workspace_root_path.as_deref(),
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+    let request = crate::acp::chat_request_to_agent_chat_ext(payload, session_id.to_string());
+    host.agent_chat(request)
+        .await
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -78,9 +93,21 @@ pub async fn agent_sidecar_resolve_approval(
     app: AppHandle,
     payload: AgentSidecarApprovalResolveRequest,
 ) -> Result<AgentSidecarResponsePayload, String> {
-    // resolve_approval 暂留 HTTP：ACP host.resolve_approval 返回 ()（与本命令的
-    // AgentSidecarResponsePayload 契约不一致），且与 chat 的挂起 prompt 耦合，下一步统一处理。
-    agent_sidecar::resolve_approval(app, payload).await
+    // 同 chat：先解析稳定会话，再投影为 agent/chat/resolve 扩展请求；裁决在同一回合
+    // 内唤醒挂起审批并续跑，返回下一段响应信封（与旧 HTTP /approval/resolve 返回同形）。
+    let host = acp_host(&app)?;
+    let session_id = host
+        .ensure_session(
+            payload.thread_id.as_deref().unwrap_or_default(),
+            payload.workspace_root_path.as_deref(),
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+    let request =
+        crate::acp::approval_resolve_to_agent_chat_resolve_ext(payload, session_id.to_string());
+    host.agent_chat_resolve(request)
+        .await
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
