@@ -1,6 +1,6 @@
 //! 宿主侧 ACP(Agent Client Protocol)stdio 客户端。
 //!
-//! 这是「先加新模块 → cargo 验证 → 绻了再删旧」迁移路径中新增、可逆、按 cargo
+//! 这是「先加新模块 → cargo 验证 → 绿了再删旧」迁移路径中新增、可逆、按 cargo
 //! feature `acp_client` 门控的模块。默认构建(`default = ["desktop"]`)不会编译它,
 //! 因此落地阶段不影响现有 HTTP/NDJSON sidecar。
 
@@ -254,6 +254,57 @@ pub struct AgentChatResolveExtRequest {
     pub plan_step_id: Option<String>,
 }
 
+/// `calamex.dev/agent/ask-user/resume` 单题作答。
+/// 字段镜像 sidecar `askUserAnswerParamsSchema`：questionId(min 1)、
+/// optionIds(string[]，缺省 [])、text(可选)。
+/// optionIds 恒序列化为数组(空则 [])；text 为空时整字段省略。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AskUserAnswer {
+    pub question_id: String,
+    pub option_ids: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+}
+
+/// `calamex.dev/agent/ask-user/resume` 扩展方法的请求(ask_user 反向提问恢复)。
+///
+/// = agentChatParamsSchema + requestId + outcome + answers?。
+/// 镜像 AgentChatResolveExtRequest 的「base + requestId」结构,但以 outcome + 结构化
+/// answers 取代 decision：
+///   * outcome 取值(selected/cancelled)由 sidecar zod 校验,宿主侧原样透传;
+///   * answers 为每题作答,outcome=cancelled 时整字段省略(对齐 zod `.optional()`)。
+/// 响应同 AgentChatResolveExtRequest：整封 sidecar 信封,Value 原样回传。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, JsonRpcRequest)]
+#[serde(rename_all = "camelCase")]
+#[request(method = "calamex.dev/agent/ask-user/resume", response = Value)]
+pub struct AgentAskUserResumeExtRequest {
+    pub request_id: String,
+    pub outcome: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub answers: Option<Vec<AskUserAnswer>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub goal: Option<String>,
+    pub messages: Vec<AgentChatMessage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_root_path: Option<String>,
+    pub context: Vec<AgentChatContextReference>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_config: Option<ExtModelConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan_version: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan_step_id: Option<String>,
+}
+
 pub struct AcpClientConfig {
     pub program: String,
     pub args: Vec<String>,
@@ -323,6 +374,10 @@ enum Command {
     },
     AgentChatResolve {
         request: AgentChatResolveExtRequest,
+        reply: oneshot::Sender<Result<Value, String>>,
+    },
+    AgentAskUserResume {
+        request: AgentAskUserResumeExtRequest,
         reply: oneshot::Sender<Result<Value, String>>,
     },
     Cancel {
@@ -491,6 +546,21 @@ impl AcpClientHandle {
             .map_err(AcpClientError::Protocol)
     }
 
+    /// 恢复一轮挂起在 ask_user 反向提问的 agent 对话(扩展方法 `calamex.dev/agent/ask-user/resume`).
+    /// 回灌 outcome + 结构化 answers 后续跑同一回合并返回下一段响应信封;响应为整封 sidecar 信封(Value),由宿主侧解析。
+    pub async fn agent_ask_user_resume(
+        &self,
+        request: AgentAskUserResumeExtRequest,
+    ) -> Result<Value, AcpClientError> {
+        let (reply, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(Command::AgentAskUserResume { request, reply })
+            .map_err(|_| AcpClientError::NotRunning)?;
+        rx.await
+            .map_err(|_| AcpClientError::NotRunning)?
+            .map_err(AcpClientError::Protocol)
+    }
+
     pub fn cancel(&self, session_id: SessionId) -> Result<(), AcpClientError> {
         self.cmd_tx
             .send(Command::Cancel { session_id })
@@ -629,6 +699,10 @@ pub fn spawn_acp_client(
                             let _ = reply.send(res.map_err(|e| e.to_string()));
                         }
                         Command::AgentChatResolve { request, reply } => {
+                            let res = cx.send_request(request).block_task().await;
+                            let _ = reply.send(res.map_err(|e| e.to_string()));
+                        }
+                        Command::AgentAskUserResume { request, reply } => {
                             let res = cx.send_request(request).block_task().await;
                             let _ = reply.send(res.map_err(|e| e.to_string()));
                         }
@@ -844,5 +918,82 @@ mod tests {
         assert_eq!(value["context"], serde_json::json!([]));
         assert!(value.get("goal").is_none());
         assert!(value.get("planVersion").is_none());
+    }
+
+    // ---- AgentAskUserResume 新增测试 ----
+
+    #[test]
+    fn agent_ask_user_resume_request_serializes_to_camel_case_params() {
+        let request = AgentAskUserResumeExtRequest {
+            request_id: "ask_1".to_string(),
+            outcome: "selected".to_string(),
+            answers: Some(vec![AskUserAnswer {
+                question_id: "q1".to_string(),
+                option_ids: vec!["opt_a".to_string()],
+                text: Some("自定义答案".to_string()),
+            }]),
+            session_id: Some("sess_1".to_string()),
+            mode: Some("agent".to_string()),
+            goal: None,
+            messages: vec![],
+            workspace_root_path: None,
+            context: vec![],
+            model_config: None,
+            thread_id: None,
+            plan_id: None,
+            plan_version: None,
+            plan_step_id: None,
+        };
+        let value = serde_json::to_value(&request).unwrap();
+        assert_eq!(value["requestId"], "ask_1");
+        assert_eq!(value["outcome"], "selected");
+        assert_eq!(value["answers"][0]["questionId"], "q1");
+        assert_eq!(value["answers"][0]["optionIds"][0], "opt_a");
+        assert_eq!(value["answers"][0]["text"], "自定义答案");
+        assert_eq!(value["sessionId"], "sess_1");
+        assert_eq!(value["mode"], "agent");
+        assert_eq!(value["messages"], serde_json::json!([]));
+        assert_eq!(value["context"], serde_json::json!([]));
+        assert!(value.get("goal").is_none());
+        assert!(value.get("planVersion").is_none());
+    }
+
+    #[test]
+    fn agent_ask_user_resume_request_omits_answers_when_cancelled() {
+        let request = AgentAskUserResumeExtRequest {
+            request_id: "ask_1".to_string(),
+            outcome: "cancelled".to_string(),
+            answers: None,
+            session_id: None,
+            mode: None,
+            goal: None,
+            messages: vec![],
+            workspace_root_path: None,
+            context: vec![],
+            model_config: None,
+            thread_id: None,
+            plan_id: None,
+            plan_version: None,
+            plan_step_id: None,
+        };
+        let value = serde_json::to_value(&request).unwrap();
+        assert_eq!(value["outcome"], "cancelled");
+        assert!(value.get("answers").is_none());
+        assert_eq!(value["messages"], serde_json::json!([]));
+        assert_eq!(value["context"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn ask_user_answer_serializes_option_ids_as_array_and_omits_empty_text() {
+        let answer = AskUserAnswer {
+            question_id: "q1".to_string(),
+            option_ids: vec![],
+            text: None,
+        };
+        let value = serde_json::to_value(&answer).unwrap();
+        assert_eq!(value["questionId"], "q1");
+        // optionIds 恒为数组,空则 []
+        assert_eq!(value["optionIds"], serde_json::json!([]));
+        assert!(value.get("text").is_none());
     }
 }
