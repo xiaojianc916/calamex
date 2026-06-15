@@ -52,6 +52,35 @@ export const approvalRequestSchema = z.object({
   expiresAt: z.string().datetime().optional(),
 });
 
+/**
+ * ask_user HITL 反向提问的结构化载荷（surface 版，带稳定 id）。
+ *
+ * 镜像 ask_user 工具 suspendSchema 的 surfaced 形态：每个问题/选项都带 sidecar
+ * 赋予的稳定 id，供前端表单渲染与回传答案时引用。choice 题 2-4 个选项的上下限
+ * 由工具入参 schema 负责校验，本 wire-schema 仅保证形状正确，避免对既有发射端
+ * 过度约束。
+ */
+export const askUserOptionSchema = z.object({
+  optionId: z.string().min(1),
+  label: z.string(),
+  description: z.string(),
+});
+
+export const askUserQuestionSchema = z.object({
+  questionId: z.string().min(1),
+  question: z.string().min(1),
+  header: z.string().min(1),
+  type: z.enum(['choice', 'text', 'yesno']),
+  options: z.array(askUserOptionSchema).optional(),
+  multiSelect: z.boolean().optional(),
+  placeholder: z.string().optional(),
+});
+
+export const askUserRequestSchema = z.object({
+  kind: z.literal('user_question'),
+  questions: z.array(askUserQuestionSchema).min(1),
+});
+
 export const diffHunkSchema = z.object({
   oldStart: z.number().int().nonnegative(),
   oldLines: z.number().int().nonnegative(),
@@ -171,6 +200,19 @@ export const agentUiEventSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('approval_required'),
     request: approvalRequestSchema,
+  }),
+  /**
+   * ask_user HITL 反向提问。
+   *
+   * 与 `approval_required` 同为带外承载（随 prompt 响应信封下发，不作为
+   * session/update 线帧），但携带结构化多问表单；`requestId` 是 resume 令牌
+   * （encodeApprovalRequestId(runId, toolCallId)），前端答完经专用 ext 方法回传
+   * 富答案续跑被挂起的工具，而非 approve/reject。
+   */
+  z.object({
+    type: z.literal('ask_user_required'),
+    requestId: z.string().min(1),
+    request: askUserRequestSchema,
   }),
   z.object({
     type: z.literal('diff_ready'),

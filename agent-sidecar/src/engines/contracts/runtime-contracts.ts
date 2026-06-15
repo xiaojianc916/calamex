@@ -41,13 +41,20 @@ type TRuntimeUiEvent<TType extends TAgentUiEvent['type']> = Extract<
  * {@link IAgentRuntimeResponse.errorMessage} 承载，并在 egress 映射为 JSON-RPC
  * error / 带外信号，运行时不再发射独立的错误 UI 事件；遗留 wire 帧由 http 边界
  * shim（{@link toAgentSidecarResponse} 与 handlePostStream）临时重建，待前端迁移
- * 至 ACP（U4）后连同 shim 一并删除。至此白名单精确收敛为实际发射的 4 种。
+ * 至 ACP（U4）后连同 shim 一并删除。至此白名单精确收敛为实际发射的核心变体。
+ *
+ * NOTE（ask_user HITL）：`ask_user_required` 是 ask_user 工具挂起时投影的结构化
+ * 反向提问事件。与 `approval_required` 同属带外承载（随 prompt 响应信封下发、不作为
+ * session/update 通知），但携带多问多选的结构化表单而非单一批准请求；恢复经专用
+ * ext 方法回传富答案（见 acp/ext-methods 的 ask-user resume），而非 approve/reject。
+ * 发射端随 base.ts 的挂起分支特化落地（2b）；本提交仅纳入契约与出口投影。
  */
 export const AGENT_RUNTIME_OUTPUT_EVENT_TYPES = [
     'agent_event',
     'plan_ready',
     'plan_record',
     'approval_required',
+    'ask_user_required',
 ] as const satisfies ReadonlyArray<TAgentUiEvent['type']>;
 
 export type TAgentRuntimeOutputEventType = (typeof AGENT_RUNTIME_OUTPUT_EVENT_TYPES)[number];
