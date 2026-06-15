@@ -12,14 +12,78 @@ import { normalizeGeneratedAgentPlan } from './plan-utils.js';
 import { createErrorResponse, createPlanRecordResponse, createPlanResponse } from '../responses.js';
 import { loadMastraMcpTools } from '../tools/tools.js';
 import { DEFAULT_EXECUTION_AGENT_ID } from '../types.js';
-import type { IMastraGenerateOptions } from '../types.js';
+import type { IMastraAgentLike, IMastraGenerateOptions, IMastraMcpBundle, TMastraChatMessage, TRuntimeEventFactory } from '../types.js';
 import { attachMcpGatewayMetrics, createRuntimeEventFactory, createSessionId, pushUiEvent } from '../utils.js';
 import { createMastraAgentInputProcessors, createMastraAgentOutputProcessors, destroyMastraBrowser, destroyMastraWorkspace } from '../workspace.js';
 import type { IAgentRuntimeResponse, IAgentRuntimeRunOptions, TAgentRuntimeOutputEvent } from '../contracts/runtime-contracts.js';
 import type { IAgentRuntimeInput, IPlanApprovalInput, IPlanFinishInput, IPlanQueryInput, IPlanRejectInput } from '../contracts/runtime-input.js';
+import type { AnyWorkspace } from '@mastra/core/workspace';
+import type { MastraBrowser } from '@mastra/core/browser';
 
+/**
+ * 计划族（plan / validate / replan）共享的「结构化输出流式脊柱」单次消费结果。
+ * - object：fullStream 正常消费完成，object 为 Mastra MastraModelOutput.object 的解析值
+ *   （未配置 schema 或解析失败时为 undefined，由各调用方按自身语义降级）。
+ * - pending：出现工具审批 / ask_user 反向提问挂起（仅 plan() 这类持可恢复 handle 的
+ *   调用方支持续跑；validate/replan 视为不支持的挂起并降级为错误）。
+ * - error：流内错误 / 中止。
+ * releaseResources 透传自 consumeTextStream，交由调用方决定是否在 finally 释放重型资源。
+ */
+type TStreamStructuredPlanResult =
+    | { status: 'object'; object: unknown; releaseResources: boolean }
+    | { status: 'pending'; releaseResources: boolean }
+    | { status: 'error'; message: string; releaseResources: boolean };
 
 export class MastraRuntimePlan extends MastraRuntimeChat {
+    /**
+     * 计划族唯一的流式脊柱：先经 consumeTextStream 消费 fullStream（投影推理/正文/工具
+     * 事件，并让工具审批 / ask_user 反向提问得以挂起），再读取 Mastra 官方
+     * MastraModelOutput.object 取结构化结果。plan() / validatePlan() / replanPlan() 共用，
+     * 杜绝 agent.generate 旧路径与流式新路径并存的新旧杂糅。
+     */
+    protected async streamStructuredPlanObject(args: {
+        agent: IMastraAgentLike;
+        bundle: IMastraMcpBundle;
+        sessionId: string;
+        messages: TMastraChatMessage[];
+        streamOptions: IMastraGenerateOptions;
+        events: TAgentRuntimeOutputEvent[];
+        options: IAgentRuntimeRunOptions;
+        createRuntimeEvent: TRuntimeEventFactory;
+        workspace?: AnyWorkspace | undefined;
+        browser?: MastraBrowser | undefined;
+    }): Promise<TStreamStructuredPlanResult> {
+        const stream = await args.agent.stream(args.messages, args.streamOptions);
+        const summary = await this.consumeTextStream(
+            args.agent,
+            args.bundle,
+            args.sessionId,
+            stream,
+            args.events,
+            args.options,
+            args.createRuntimeEvent,
+            args.workspace,
+            args.browser,
+        );
+
+        if (summary.streamErrorMessage) {
+            return { status: 'error', message: summary.streamErrorMessage, releaseResources: summary.releaseResources };
+        }
+        if (summary.pendingApproval) {
+            return { status: 'pending', releaseResources: summary.releaseResources };
+        }
+
+        let object: unknown;
+        try {
+            object = stream.object ? await stream.object : undefined;
+        } catch {
+            // 结构化对象解析失败（模型未产出合规对象）：返回 undefined，由调用方降级为
+            // 各自精确的「没有返回有效结构化结果」错误，而非抛给外层泛化错误。
+            object = undefined;
+        }
+        return { status: 'object', object, releaseResources: summary.releaseResources };
+    }
+
     async plan(
         input: IAgentRuntimeInput,
         options: IAgentRuntimeRunOptions = {},
@@ -150,33 +214,32 @@ export class MastraRuntimePlan extends MastraRuntimeChat {
                     toolChoice,
                     modelCapabilities: modelConfig.capabilities,
                 })), options);
-                // 先经 consumeTextStream 消费 fullStream（投影推理/正文/工具事件，并让
-                // ask_user 反向提问得以挂起），再读取 Mastra 官方 MastraModelOutput.object
-                // 取最终计划对象；计划持久化一律后置到对象解析成功之后，避免半成品计划落库。
-                const stream = await agent.stream(mastraMessages, streamOptions);
-                const streamSummary = await this.consumeTextStream(
+                // 共享流式脊柱：消费 fullStream（含 ask_user 挂起投影）后读取结构化计划对象；
+                // 计划持久化一律后置到对象解析成功之后，避免半成品计划落库。
+                const streamed = await this.streamStructuredPlanObject({
                     agent,
-                    mcpBundle,
+                    bundle: mcpBundle,
                     sessionId,
-                    stream,
+                    messages: mastraMessages,
+                    streamOptions,
                     events,
                     options,
                     createRuntimeEvent,
                     workspace,
                     browser,
-                );
-                shouldDisconnectBundle = streamSummary.releaseResources;
+                });
+                shouldDisconnectBundle = streamed.releaseResources;
 
-                if (streamSummary.streamErrorMessage) {
+                if (streamed.status === 'error') {
                     return createErrorResponse(
                         sessionId,
-                        `Mastra Plan 执行失败：${streamSummary.streamErrorMessage}`,
+                        `Mastra Plan 执行失败：${streamed.message}`,
                         events,
                         options,
                     );
                 }
 
-                if (streamSummary.pendingApproval) {
+                if (streamed.status === 'pending') {
                     // 规划阶段触发 ask_user 反向提问（或其它挂起工具）：事件流已带出
                     // ask_user_required，所持 bundle/workspace/browser 不在此回收，待用户经
                     // ask-user resume 续跑后再完成计划生成。
@@ -187,15 +250,7 @@ export class MastraRuntimePlan extends MastraRuntimeChat {
                     };
                 }
 
-                let planObject: unknown;
-                try {
-                    planObject = stream.object ? await stream.object : undefined;
-                } catch {
-                    // 结构化对象解析失败（模型未产出合规对象）：降级到统一的
-                    // “没有返回有效 AgentPlan” 错误，保留精确语义而非抛给外层泛化错误。
-                    planObject = undefined;
-                }
-                const parsedPlan = normalizeGeneratedAgentPlan(planObject, input.goal);
+                const parsedPlan = normalizeGeneratedAgentPlan(streamed.object, input.goal);
 
                 if (!parsedPlan) {
                     return createErrorResponse(
