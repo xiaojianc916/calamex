@@ -1,144 +1,252 @@
 <template>
-  <AppShellLayout :is-desktop-runtime="isDesktopRuntime" :sidebar-visible="isSidebarVisible"
-    :sidebar-width="sidebarWidth" @close-request="handleRequestCloseApplication">
+  <AppShellLayout
+    :is-desktop-runtime="isDesktopRuntime"
+    :sidebar-visible="isSidebarVisible"
+    :sidebar-width="sidebarWidth"
+    @close-request="handleRequestCloseApplication"
+  >
     <template #sidebar>
-      <WorkbenchDashboardSidebar :active-view="activeSidebarView" :document="editorStore.document"
-        :is-ai-mode="isAiMode" :is-desktop-runtime="isDesktopRuntime" :workspace-root-path="visibleWorkspaceRootPath"
+      <WorkbenchDashboardSidebar
+        :active-view="activeSidebarView"
+        :document="editorStore.document"
+        :is-ai-mode="isAiMode"
+        :is-desktop-runtime="isDesktopRuntime"
+        :workspace-root-path="visibleWorkspaceRootPath"
         :preloaded-workspace-root="startupWorkspaceRoot"
-        :startup-explorer-expanded-paths="startupShellState?.explorerExpandedPaths ?? []"
-        :startup-explorer-selected-path="startupShellState?.explorerSelectedPath ?? null" :can-run="canRun"
-        :is-running="editorStore.isRunning" :has-run-artifacts="editorStore.hasRunArtifacts"
-        :active-run="editorStore.activeRunSummary" :run-history="editorStore.runHistory"
-        :command-templates="commandTemplates" :executor="editorStore.selectedExecutor"
-        @select-view="handleSelectSidebarView" @toggle-primary-mode="handleTogglePrimaryMode"
-        @open-file="handleSidebarOpenFile" @open-folder="openFolder" @open-git-diff="handleSidebarOpenGitDiff"
-        @run="handleRunScript" @create-document="createNewDocument" @open-terminal="handleOpenTerminal"
-        @insert-template="handleInsertTemplate" @clear-run-history="handleClearRunHistory"
-        @explorer-state-change="handleExplorerSessionStateChange" />
+        :startup-explorer-expanded-paths="startupExplorerExpandedPaths"
+        :startup-explorer-selected-path="startupExplorerSelectedPath"
+        :can-run="canRun"
+        :is-running="editorStore.isRunning"
+        :has-run-artifacts="editorStore.hasRunArtifacts"
+        :active-run="editorStore.activeRunSummary"
+        :run-history="editorStore.runHistory"
+        :command-templates="commandTemplates"
+        :executor="editorStore.selectedExecutor"
+        @select-view="handleSelectSidebarView"
+        @toggle-primary-mode="handleTogglePrimaryMode"
+        @open-file="handleSidebarOpenFile"
+        @open-folder="openFolder"
+        @open-git-diff="handleSidebarOpenGitDiff"
+        @run="handleRunScript"
+        @create-document="createNewDocument"
+        @open-terminal="handleOpenTerminal"
+        @insert-template="handleInsertTemplate"
+        @clear-run-history="handleClearRunHistory"
+        @explorer-state-change="handleExplorerSessionStateChange"
+      />
     </template>
 
-    <section :ref="bindEditorViewportRef" data-testid="workbench-root"
+    <section
+      :ref="bindEditorViewportRef"
+      data-testid="workbench-root"
       class="workbench-editor-viewport relative flex h-full min-h-0 flex-col overflow-hidden bg-(--app-bg)"
-      :data-diagnostics-resizing="diagnosticsTransitionsEnabled ? 'false' : 'true'">
+      :data-diagnostics-resizing="diagnosticsTransitionsEnabled ? 'false' : 'true'"
+    >
       <div class="@container/main workbench-content-stage">
         <div class="workbench-content-dock">
           <div class="workbench-content-frame flex min-h-0 flex-1 flex-col workbench-content-card">
-            <template v-if="isStartupShellVisible && startupShellState">
-              <StartupAiWorkbenchShell v-if="isAiMode" />
+            <DeferredCopilotKitProvider v-if="isAiMode || hasPinnedAiWorkspace">
+              <DeferredAiWorkspaceSurface
+                v-show="isAiMode"
+                class="min-w-0 flex-1"
+                :aria-hidden="!isAiMode"
+                :document="editorStore.document"
+                :active-run="editorStore.activeRunSummary"
+                :analysis="editorStore.activeScriptAnalysis"
+                :selection="editorStore.activeSelectionSummary"
+                :git-status="gitStore.status"
+                :workspace-root-path="editorStore.workspaceRootPath"
+                @open-patch-diff="openGitDiffPreviewPayload"
+              />
+            </DeferredCopilotKitProvider>
 
-              <StartupWorkbenchShell v-else :state="startupShellState" :show-terminal="isTerminalPanelVisible"
-                :terminal-height="terminalHeight" />
-            </template>
+            <Card
+              v-show="!isAiMode"
+              class="flex h-full min-h-0 flex-1 flex-col gap-0 rounded-none border-0 py-0 shadow-none bg-transparent"
+            >
+              <!-- 终端可见：官方 reka-ui Splitter 垂直分栏（磁吸折叠/全屏） -->
+              <ResizablePanelGroup
+                v-if="isTerminalPanelVisible"
+                key="with-terminal"
+                direction="vertical"
+                class="min-h-0 flex-1"
+              >
+                <ResizablePanel
+                  id="workbench-editor-panel"
+                  :order="1"
+                  :ref="bindEditorPanel"
+                  :min-size="20"
+                  collapsible
+                  :collapsed-size="0"
+                  :default-size="68"
+                  class="min-h-0"
+                  @collapse="handleEditorCollapse"
+                  @expand="handleEditorExpand"
+                >
+                  <CardContent class="flex h-full min-h-0 flex-1 px-0 pb-0 pt-0">
+                    <div class="flex h-full min-h-0 flex-1 flex-col">
+                      <EmptyEditorState
+                        v-if="!editorStore.hasActiveDocument"
+                        :has-workspace="Boolean(editorStore.workspaceRootPath)"
+                        :is-desktop-runtime="isDesktopRuntime"
+                        @create="createNewDocument"
+                        @open="openDocument"
+                        @open-folder="openFolder"
+                      />
 
-            <template v-else>
-              <DeferredCopilotKitProvider v-if="isAiMode || hasPinnedAiWorkspace">
-                <DeferredAiWorkspaceSurface v-show="isAiMode" class="min-w-0 flex-1"
-                  :aria-hidden="!isAiMode" :document="editorStore.document" :active-run="editorStore.activeRunSummary"
-                  :analysis="editorStore.activeScriptAnalysis" :selection="editorStore.activeSelectionSummary"
-                  :git-status="gitStore.status" :workspace-root-path="editorStore.workspaceRootPath"
-                  @open-patch-diff="openGitDiffPreviewPayload" />
-              </DeferredCopilotKitProvider>
+                      <div
+                        v-else-if="isActiveTextBufferLoading"
+                        class="flex h-full min-h-0 flex-1 items-center justify-center px-6 text-sm text-muted-foreground"
+                      >
+                        <span>正在加载 </span
+                        ><span class="font-medium text-foreground" v-text="editorStore.document.name" /><span>…</span>
+                      </div>
 
-              <Card v-show="!isAiMode"
-                class="flex h-full min-h-0 flex-1 flex-col gap-0 rounded-none border-0 py-0 shadow-none bg-transparent">
-                <!-- 终端可见：官方 reka-ui Splitter 垂直分栏（磁吸折叠/全屏） -->
-                <ResizablePanelGroup v-if="isTerminalPanelVisible" key="with-terminal" direction="vertical"
-                  class="min-h-0 flex-1">
-                  <ResizablePanel id="workbench-editor-panel" :order="1" :ref="bindEditorPanel" :min-size="20"
-                    collapsible :collapsed-size="0" :default-size="68" class="min-h-0"
-                    @collapse="handleEditorCollapse" @expand="handleEditorExpand">
-                    <CardContent class="flex h-full min-h-0 flex-1 px-0 pb-0 pt-0">
-                      <div class="flex h-full min-h-0 flex-1 flex-col">
-                        <EmptyEditorState v-if="!editorStore.hasActiveDocument"
-                          :has-workspace="Boolean(editorStore.workspaceRootPath)" :is-desktop-runtime="isDesktopRuntime"
-                          @create="createNewDocument" @open="openDocument" @open-folder="openFolder" />
+                      <DeferredSmartScriptEditor
+                        v-else-if="editorStore.document.kind === 'text'"
+                        :ref="bindEditorRef"
+                        :key="editorStore.document.id"
+                        :document-id="editorStore.document.id"
+                        :document-path="editorStore.document.path"
+                        :document-name="editorStore.document.name"
+                        :model-value="editorStore.document.content"
+                        theme="light"
+                        :editor-settings="appStore.settings.editor"
+                        :can-run="canRun"
+                        @update:model-value="updateContent"
+                        @cursor-position-change="handleCursorPositionChange"
+                        @diagnostics-change="handleDiagnosticsChange"
+                        @selection-change="handleSelectionChange"
+                        @format-request="handleFormatDocument"
+                        @command-palette-request="handleOpenCommandPalette"
+                        @open-terminal-request="handleOpenTerminal"
+                        @run-request="handleRunScript"
+                      />
 
-                        <div v-else-if="isActiveTextBufferLoading"
-                          class="flex h-full min-h-0 flex-1 items-center justify-center px-6 text-sm text-muted-foreground">
-                          <span>正在加载 </span><span class="font-medium text-foreground" v-text="editorStore.document.name" /><span>…</span>
-                        </div>
-
-                        <DeferredSmartScriptEditor v-else-if="editorStore.document.kind === 'text'" :ref="bindEditorRef"
-                          :document-id="editorStore.document.id" :document-path="editorStore.document.path"
-                          :document-name="editorStore.document.name" :model-value="editorStore.document.content"
-                          theme="light" :editor-settings="appStore.settings.editor" :can-run="canRun"
-                          @update:model-value="updateContent" @cursor-position-change="handleCursorPositionChange"
-                          @diagnostics-change="handleDiagnosticsChange" @selection-change="handleSelectionChange"
-                          @format-request="handleFormatDocument" @command-palette-request="handleOpenCommandPalette"
-                          @open-terminal-request="handleOpenTerminal" @run-request="handleRunScript" />
-
-                        <DeferredAiDiffPreviewEditor v-else-if="
+                      <DeferredAiDiffPreviewEditor
+                        v-else-if="
                           editorStore.document.kind === 'ai-diff' &&
                           editorStore.document.aiDiffPreview
-                        " :preview="editorStore.document.aiDiffPreview" />
+                        "
+                        :preview="editorStore.document.aiDiffPreview"
+                      />
 
-                        <DeferredGitDiffViewer v-else-if="
+                      <DeferredGitDiffViewer
+                        v-else-if="
                           editorStore.document.kind === 'git-diff' &&
                           editorStore.document.gitDiffPreview
-                        " :preview="editorStore.document.gitDiffPreview" theme="light"
-                          :editor-settings="appStore.settings.editor" />
+                        "
+                        :preview="editorStore.document.gitDiffPreview"
+                        theme="light"
+                        :editor-settings="appStore.settings.editor"
+                      />
 
-                        <DeferredImageAssetPreview v-else-if="editorStore.document.path"
-                          :path="editorStore.document.path" :name="editorStore.document.name" />
-                      </div>
-                    </CardContent>
-                  </ResizablePanel>
-
-                  <ResizableHandle
-                    :class="['workbench-terminal-handle', { 'workbench-terminal-handle--fullscreen': isEditorCollapsed }]" />
-
-                  <ResizablePanel id="workbench-terminal-panel" :order="2" :min-size="12" collapsible
-                    :collapsed-size="0" :default-size="32" class="min-h-0 overflow-hidden"
-                    @collapse="handleHideTerminal">
-                    <DeferredRunPanel theme="light" :terminal-settings="appStore.settings.terminal"
-                      :visible="isTerminalPanelVisible" :is-maximized="isEditorCollapsed" @hide="handleHideTerminal"
-                      @toggle-maximize="toggleTerminalFullscreen"
-                      @terminal-run-completed="handleIntegratedTerminalRunCompleted" />
-                  </ResizablePanel>
-                </ResizablePanelGroup>
-
-                <!-- 终端隐藏：不挂分割器，直接渲染编辑器 -->
-                <CardContent v-else class="flex min-h-0 flex-1 px-0 pb-0 pt-0">
-                  <div class="flex h-full min-h-0 flex-1 flex-col">
-                    <EmptyEditorState v-if="!editorStore.hasActiveDocument"
-                      :has-workspace="Boolean(editorStore.workspaceRootPath)" :is-desktop-runtime="isDesktopRuntime"
-                      @create="createNewDocument" @open="openDocument" @open-folder="openFolder" />
-
-                    <div v-else-if="isActiveTextBufferLoading"
-                      class="flex h-full min-h-0 flex-1 items-center justify-center px-6 text-sm text-muted-foreground">
-                      <span>正在加载 </span><span class="font-medium text-foreground" v-text="editorStore.document.name" /><span>…</span>
+                      <DeferredImageAssetPreview
+                        v-else-if="editorStore.document.path"
+                        :path="editorStore.document.path"
+                        :name="editorStore.document.name"
+                      />
                     </div>
+                  </CardContent>
+                </ResizablePanel>
 
-                    <DeferredSmartScriptEditor v-else-if="editorStore.document.kind === 'text'" :ref="bindEditorRef"
-                      :document-id="editorStore.document.id" :document-path="editorStore.document.path"
-                      :document-name="editorStore.document.name" :model-value="editorStore.document.content" theme="light"
-                      :editor-settings="appStore.settings.editor" :can-run="canRun" @update:model-value="updateContent"
-                      @cursor-position-change="handleCursorPositionChange" @diagnostics-change="handleDiagnosticsChange"
-                      @selection-change="handleSelectionChange" @format-request="handleFormatDocument"
-                      @command-palette-request="handleOpenCommandPalette" @open-terminal-request="handleOpenTerminal"
-                      @run-request="handleRunScript" />
+                <ResizableHandle
+                  :class="[
+                    'workbench-terminal-handle',
+                    { 'workbench-terminal-handle--fullscreen': isEditorCollapsed },
+                  ]"
+                />
 
-                    <DeferredAiDiffPreviewEditor v-else-if="
-                      editorStore.document.kind === 'ai-diff' && editorStore.document.aiDiffPreview
-                    " :preview="editorStore.document.aiDiffPreview" />
+                <ResizablePanel
+                  id="workbench-terminal-panel"
+                  :order="2"
+                  :min-size="12"
+                  collapsible
+                  :collapsed-size="0"
+                  :default-size="32"
+                  class="min-h-0 overflow-hidden"
+                  @collapse="handleHideTerminal"
+                >
+                  <DeferredRunPanel
+                    theme="light"
+                    :terminal-settings="appStore.settings.terminal"
+                    :visible="isTerminalPanelVisible"
+                    :is-maximized="isEditorCollapsed"
+                    @hide="handleHideTerminal"
+                    @toggle-maximize="toggleTerminalFullscreen"
+                    @terminal-run-completed="handleIntegratedTerminalRunCompleted"
+                  />
+                </ResizablePanel>
+              </ResizablePanelGroup>
 
-                    <DeferredGitDiffViewer v-else-if="
+              <!-- 终端隐藏：不挂分割器，直接渲染编辑器 -->
+              <CardContent v-else class="flex min-h-0 flex-1 px-0 pb-0 pt-0">
+                <div class="flex h-full min-h-0 flex-1 flex-col">
+                  <EmptyEditorState
+                    v-if="!editorStore.hasActiveDocument"
+                    :has-workspace="Boolean(editorStore.workspaceRootPath)"
+                    :is-desktop-runtime="isDesktopRuntime"
+                    @create="createNewDocument"
+                    @open="openDocument"
+                    @open-folder="openFolder"
+                  />
+
+                  <div
+                    v-else-if="isActiveTextBufferLoading"
+                    class="flex h-full min-h-0 flex-1 items-center justify-center px-6 text-sm text-muted-foreground"
+                  >
+                    <span>正在加载 </span
+                    ><span class="font-medium text-foreground" v-text="editorStore.document.name" /><span>…</span>
+                  </div>
+
+                  <DeferredSmartScriptEditor
+                    v-else-if="editorStore.document.kind === 'text'"
+                    :ref="bindEditorRef"
+                    :key="editorStore.document.id"
+                    :document-id="editorStore.document.id"
+                    :document-path="editorStore.document.path"
+                    :document-name="editorStore.document.name"
+                    :model-value="editorStore.document.content"
+                    theme="light"
+                    :editor-settings="appStore.settings.editor"
+                    :can-run="canRun"
+                    @update:model-value="updateContent"
+                    @cursor-position-change="handleCursorPositionChange"
+                    @diagnostics-change="handleDiagnosticsChange"
+                    @selection-change="handleSelectionChange"
+                    @format-request="handleFormatDocument"
+                    @command-palette-request="handleOpenCommandPalette"
+                    @open-terminal-request="handleOpenTerminal"
+                    @run-request="handleRunScript"
+                  />
+
+                  <DeferredAiDiffPreviewEditor
+                    v-else-if="editorStore.document.kind === 'ai-diff' && editorStore.document.aiDiffPreview"
+                    :preview="editorStore.document.aiDiffPreview"
+                  />
+
+                  <DeferredGitDiffViewer
+                    v-else-if="
                       editorStore.document.kind === 'git-diff' &&
                       editorStore.document.gitDiffPreview
-                    " :preview="editorStore.document.gitDiffPreview" theme="light"
-                      :editor-settings="appStore.settings.editor" />
+                    "
+                    :preview="editorStore.document.gitDiffPreview"
+                    theme="light"
+                    :editor-settings="appStore.settings.editor"
+                  />
 
-                    <DeferredImageAssetPreview v-else-if="editorStore.document.path" :path="editorStore.document.path"
-                      :name="editorStore.document.name" />
-                  </div>
-                </CardContent>
-              </Card>
-            </template>
+                  <DeferredImageAssetPreview
+                    v-else-if="editorStore.document.path"
+                    :path="editorStore.document.path"
+                    :name="editorStore.document.name"
+                  />
+                </div>
+              </CardContent>
+            </Card>
           </div>
         </div>
       </div>
     </section>
-
   </AppShellLayout>
 </template>
 
@@ -147,25 +255,16 @@ import { computed, defineAsyncComponent, nextTick, onMounted, ref } from 'vue';
 import EmptyEditorState from '@/components/editor/EmptyEditorState.vue';
 import { Card, CardContent } from '@/components/ui/card';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
-import StartupAiWorkbenchShell from '@/components/workbench/StartupAiWorkbenchShell.vue';
-import StartupWorkbenchShell from '@/components/workbench/StartupWorkbenchShell.vue';
 import WorkbenchDashboardSidebar from '@/components/workbench/sidebar/WorkbenchDashboardSidebar.vue';
 import { useLsp } from '@/composables/useLsp';
 import { useShellWorkbenchView } from '@/composables/useShellWorkbenchView';
 import AppShellLayout from '@/layouts/AppShellLayout.vue';
 import { useAiAgentStore } from '@/store/aiAgent';
-import { markStartup } from '@/utils/startup-profiler';
 import type { TWorkbenchOpenFilePayload } from '@/types/editor';
 import type { IGitDiffPreviewRequest } from '@/types/git';
 
 const DeferredAiWorkspaceSurface = defineAsyncComponent({
-  loader: () => {
-    markStartup('ai-workspace-surface-import-start');
-    return import('@/components/business/ai/shell/AiWorkspaceSurface.vue').then((loaded) => {
-      markStartup('ai-workspace-surface-import-done');
-      return loaded;
-    });
-  },
+  loader: () => import('@/components/business/ai/shell/AiWorkspaceSurface.vue'),
   suspensible: false,
 });
 
@@ -192,13 +291,7 @@ const DeferredSmartScriptEditor = defineAsyncComponent({
 // CopilotKit 运行时（含 @copilotkit/vue）改为按需懒加载：仅当进入/固定 AI 工作区时
 // 才加载，并作为 AI 子树的上下文 Provider 挂载，使「首屏为编辑器」时彻底不进入启动关键路径。
 const DeferredCopilotKitProvider = defineAsyncComponent({
-  loader: () => {
-    markStartup('ai-copilotkit-import-start');
-    return import('@/copilotkit/CopilotKitProvider.vue').then((loaded) => {
-      markStartup('ai-copilotkit-import-done');
-      return loaded;
-    });
-  },
+  loader: () => import('@/copilotkit/CopilotKitProvider.vue'),
   suspensible: false,
 });
 
@@ -258,11 +351,11 @@ const {
   terminalHeight,
   activeSidebarView,
   sidebarWidth,
-  startupShellState,
-  isStartupShellVisible,
+  startupWorkspaceRoot,
+  startupExplorerExpandedPaths,
+  startupExplorerSelectedPath,
   visibleWorkspaceRootPath,
   diagnosticsTransitionsEnabled,
-  startupWorkspaceRoot,
   handleFormatDocument,
   handleCursorPositionChange,
   handleSelectionChange,

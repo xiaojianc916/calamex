@@ -9,9 +9,7 @@
   <style>
     /* 基础重置：窗口默认 visible:false，挂载后才显示（见 App.vue）；
      * 此处仅铺底色与布局，避免万一早期可见时出现白屏。
-     * 静态首屏骨架已退役——真实首屏由 Vue 的 StartupWorkbenchShell /
-     * StartupAiWorkbenchShell 提供，与真实界面同源，不再单独维护一份
-     * 易漂移的静态副本。最终透明背景交由 styles.css 统一接管。 */
+     * 最终透明背景交由 styles.css 统一接管。 */
     html,
     body,
     #app {
@@ -32,7 +30,7 @@
   </style>
   <script>
     (function () {
-      // 仅保留启动埋点（HTML 主题预设段）；模式选择与静态骨架已交由 Vue 同源骨架处理。
+      // 仅保留启动埋点（HTML 主题预设段）
       try { performance.mark('calamex:startup:index-theme-start'); } catch (_) { }
       try { performance.mark('calamex:startup:index-theme-ready'); } catch (_) { }
     })();
