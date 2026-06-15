@@ -187,12 +187,11 @@ export function getModelFacts(modelId: string): IModelFacts {
     inputUsdPerMillion !== undefined ||
     outputUsdPerMillion !== undefined;
   return {
-    contextWindow,
-    maxOutputTokens,
-    inputUsdPerMillion,
-    outputUsdPerMillion,
+    ...(contextWindow !== undefined ? { contextWindow } : {}),
+    ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
+    ...(inputUsdPerMillion !== undefined ? { inputUsdPerMillion } : {}),
+    ...(outputUsdPerMillion !== undefined ? { outputUsdPerMillion } : {}),
     source: known ? 'catalog' : 'unknown',
-  };
 }
 
 /**

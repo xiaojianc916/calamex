@@ -208,7 +208,7 @@ const buildAskUserRequest = (input: TAskUserInput): TAskUserRequest => ({
 // 把单题答案拼成可读文本：所选项 label + 自由文本（Other），多行用换行连接。
 const answerTextForQuestion = (
     question: TSurfacedQuestion,
-    answer: { optionIds: string[]; text?: string } | undefined,
+    answer: { optionIds: string[]; text?: string | undefined } | undefined,
 ): string => {
     if (!answer) {
         return '';
