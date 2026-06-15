@@ -192,6 +192,7 @@ export function getModelFacts(modelId: string): IModelFacts {
     ...(inputUsdPerMillion !== undefined ? { inputUsdPerMillion } : {}),
     ...(outputUsdPerMillion !== undefined ? { outputUsdPerMillion } : {}),
     source: known ? 'catalog' : 'unknown',
+  };
 }
 
 /**
