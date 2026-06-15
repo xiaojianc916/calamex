@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { MessageSquare } from '@lucide/vue';
 import { useTimeoutFn } from '@vueuse/core';
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, provide, ref, watch } from 'vue';
+import type { MarkstreamVirtualMetrics } from 'markstream-vue';
 import { DynamicScroller, DynamicScrollerItem } from 'vue-virtual-scroller';
 import 'vue-virtual-scroller/dist/vue-virtual-scroller.css';
 import { ConversationEmptyState } from '@/components/ai-elements/conversation';
@@ -11,6 +12,7 @@ import type { TAiServicePlatformId } from '@/constants/ai/providers';
 import type { IAiChatMessage } from '@/types/ai';
 import AiThinkingStatus from './AiThinkingStatus.vue';
 import AiThreadVirtualMessageItem from './AiThreadVirtualMessageItem.vue';
+import { AI_MARKDOWN_VIRTUAL_SCROLL_KEY } from './markstream-virtual-scroll';
 
 interface IAiChatScrollState {
   scrollTop: number;
@@ -84,6 +86,12 @@ const BOTTOM_FOLLOW_THRESHOLD_PX = 56;
 const SCROLL_STATE_EMIT_THROTTLE_MS = 100;
 const SCROLLBAR_ACTIVE_MS = 900;
 const MESSAGE_SIZE_DEPENDENCY_CACHE_LIMIT = 300;
+const AI_MARKDOWN_VIRTUAL_MEASUREMENT_KEY = 'calamex-ai-markdown:v1';
+
+type TDynamicScrollerExpose = {
+  $el?: unknown;
+  forceUpdate?: (clear?: boolean) => void;
+};
 
 const virtualScrollerRef = ref<unknown>(null);
 const isScrollbarActive = ref(false);
@@ -101,6 +109,7 @@ const { start: scheduleScrollbarHide } = useTimeoutFn(
 let lastScrollStateEmitAt = 0;
 let shouldFollowBottomAfterResize = true;
 let lastKnownDistanceFromBottom = 0;
+let pendingMarkdownHeightReconcileFrame: number | null = null;
 
 const isErrorReplyMessage = (message: IAiChatMessage): boolean => {
   if (message.role !== 'assistant') {
@@ -191,6 +200,47 @@ const getScrollerElement = (): HTMLElement | null => {
   return null;
 };
 
+const isDynamicScrollerExpose = (value: unknown): value is TDynamicScrollerExpose =>
+  typeof value === 'object' &&
+  value !== null &&
+  (!('forceUpdate' in value) || typeof value.forceUpdate === 'function');
+
+const getDynamicScrollerExpose = (): TDynamicScrollerExpose | null => {
+  const candidate = virtualScrollerRef.value;
+  return isDynamicScrollerExpose(candidate) ? candidate : null;
+};
+
+const virtualScrollRoot = computed<HTMLElement | null>(() => getScrollerElement());
+const virtualThreadKey = computed(() => props.conversationId ?? 'active');
+const virtualMeasurementKey = computed(() => AI_MARKDOWN_VIRTUAL_MEASUREMENT_KEY);
+
+const scheduleMarkdownHeightReconcile = (metrics: MarkstreamVirtualMetrics): void => {
+  if (!Number.isFinite(metrics.totalHeight) || metrics.totalHeight <= 0) {
+    return;
+  }
+
+  if (pendingMarkdownHeightReconcileFrame !== null) {
+    return;
+  }
+
+  pendingMarkdownHeightReconcileFrame = window.requestAnimationFrame(() => {
+    pendingMarkdownHeightReconcileFrame = null;
+
+    getDynamicScrollerExpose()?.forceUpdate?.(false);
+
+    if (shouldFollowBottomAfterResize) {
+      void scrollToBottom('auto');
+    }
+  });
+};
+
+provide(AI_MARKDOWN_VIRTUAL_SCROLL_KEY, {
+  scrollRoot: virtualScrollRoot,
+  threadKey: virtualThreadKey,
+  measurementKey: virtualMeasurementKey,
+  onHeightChange: scheduleMarkdownHeightReconcile,
+});
+
 const getDistanceFromBottom = (element: HTMLElement): number =>
   Math.max(0, element.scrollHeight - element.scrollTop - element.clientHeight);
 
@@ -241,6 +291,15 @@ const cancelPendingBottomScroll = (): void => {
 
   window.cancelAnimationFrame(pendingBottomScrollFrame);
   pendingBottomScrollFrame = null;
+};
+
+const cancelPendingMarkdownHeightReconcile = (): void => {
+  if (pendingMarkdownHeightReconcileFrame === null) {
+    return;
+  }
+
+  window.cancelAnimationFrame(pendingMarkdownHeightReconcileFrame);
+  pendingMarkdownHeightReconcileFrame = null;
 };
 
 const scrollToBottom = async (behavior: ScrollBehavior = 'auto'): Promise<void> => {
@@ -454,6 +513,7 @@ watch(
 
 onBeforeUnmount(() => {
   cancelPendingBottomScroll();
+  cancelPendingMarkdownHeightReconcile();
 });
 </script>
 
@@ -491,6 +551,7 @@ onBeforeUnmount(() => {
         <DynamicScrollerItem
           :item="item"
           :active="active"
+          :index="index"
           :data-index="index"
           :size-dependencies="
             item.type === 'message' ? getMessageSizeDependencies(item.message) : [props.isTyping]
