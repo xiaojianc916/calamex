@@ -141,6 +141,89 @@ export interface IDiffFile {
 }
 
 /* ============================================================================
+ * Ask-user (reverse questioning / Human-in-the-Loop)
+ *
+ * 前端镜像 agent-sidecar `schemas/events.ts` 的 askUser* wire schema,作为单一来源
+ * (single source of truth):ask_user 工具挂起时,后端把 askUserRequestSchema 负载随
+ * `ask_user_required` UI 事件写进响应信封;前端据此渲染 QuestionPrompt,用户作答后经
+ * 扩展方法 `calamex.dev/agent/ask-user/resume` 回灌 outcome + 结构化 answers,续跑同一回合。
+ *
+ * 取长补短(与组件层 question/types.ts 的设计注记同源):
+ * - 问题结构(header / question / type / options / multiSelect / placeholder)取自
+ *   Gemini CLI ask_user(google-gemini/gemini-cli, packages/core/src/tools/ask-user.ts);
+ * - 结果形态(outcome: 'selected' | 'cancelled' + 每选项稳定 optionId)取自 ACP
+ *   request_permission(agentclientprotocol.com/protocol/tool-calls),与本仓库
+ *   acp/approval-bridge.ts 的 allow-once / reject-once 同源。
+ *
+ * 组件层 `@/components/ai-elements/question/types.ts` 从本文件 re-export 这些类型,
+ * 不再重复定义(避免双 SoT / 新旧杂糅)。
+ * ========================================================================== */
+
+/** Gemini ask_user 的问题类型(QuestionType)。 */
+export type TQuestionType = 'choice' | 'text' | 'yesno';
+
+/** ACP RequestPermissionOutcome 的判别值。 */
+export type TAskUserOutcome = 'selected' | 'cancelled';
+
+/**
+ * 单个候选项。
+ * - `optionId` 取自 ACP PermissionOption.optionId:稳定标识,原样回传到答案。
+ * - `label` / `description` 取自 Gemini QuestionOption:label 为 1-5 词短标签,
+ *   description 为简短补充说明。
+ */
+export interface IQuestionOption {
+  optionId: string;
+  label: string;
+  description?: string;
+}
+
+export interface IAskUserQuestion {
+  /** 稳定标识,原样回传到对应答案的 questionId。 */
+  questionId: string;
+  /** 完整问题文本(Gemini: question)。 */
+  question: string;
+  /** ≤16 字符的 chip 短标签(Gemini: header)。 */
+  header: string;
+  /** choice(默认)| text | yesno(Gemini: type)。 */
+  type: TQuestionType;
+  /** choice 型必填,2-4 项;text / yesno 型忽略(Gemini: options)。 */
+  options?: IQuestionOption[];
+  /** 仅 choice 型有效:true => 多选(checkbox);否则单选(radio)(Gemini: multiSelect)。 */
+  multiSelect?: boolean;
+  /**
+   * 自由填写输入框的占位提示(Gemini: placeholder)。
+   * - text 型:作为唯一输入框的提示。
+   * - choice / yesno 型:作为选项列表底部「Other」输入框的提示。
+   */
+  placeholder?: string;
+}
+
+export interface IAskUserRequest {
+  kind: 'user_question';
+  /** 1-4 个问题(对齐 Gemini ask_user 上限)。 */
+  questions: IAskUserQuestion[];
+}
+
+/** 单题作答。 */
+export interface IQuestionAnswer {
+  questionId: string;
+  /** 已选 optionId(单选时 0-1 个;text 型恒为空)。 */
+  optionIds: string[];
+  /** 自由填写文本:text 型答案,或 choice/yesno 的「Other」输入(无则省略)。 */
+  text?: string;
+}
+
+/**
+ * 恢复(resume)时上抛的结果,形态对齐 ACP RequestPermissionOutcome:
+ * - outcome: 'cancelled'(用户 Esc / 当前回合被取消)=> answers 省略。
+ * - outcome: 'selected' => answers 为每题作答。
+ */
+export interface IAskUserResult {
+  outcome: TAskUserOutcome;
+  answers?: IQuestionAnswer[];
+}
+
+/* ============================================================================
  * Runtime events (backend → frontend, manual discriminated union)
  *
  * ⚠️ 这是高漂移风险区域。新增事件类型务必同步更新:
@@ -531,6 +614,7 @@ export type TAgentUiEvent =
   | { type: 'tool_start'; toolName: string; input: TJsonValue }
   | { type: 'tool_result'; toolName: string; output: TJsonValue }
   | { type: 'approval_required'; request: IApprovalRequest }
+  | { type: 'ask_user_required'; requestId: string; request: IAskUserRequest }
   | { type: 'diff_ready'; files: IDiffFile[] }
   | TAgentUiEventDone
   | { type: 'error'; message: string };
@@ -577,6 +661,22 @@ export interface IAgentSidecarApprovalResolveRequest extends Partial<IAgentSidec
   sessionId?: string;
   requestId: string;
   decision: string;
+}
+
+/**
+ * ask_user 反向提问恢复请求。镜像 `IAgentSidecarApprovalResolveRequest` 的
+ * 「Partial base + requestId」结构,但以 outcome + 结构化 answers 取代 decision ——
+ * 对应后端 agentAskUserResumeParamsSchema(= agentChatParamsSchema + requestId +
+ * outcome + answers?)与扩展方法 `calamex.dev/agent/ask-user/resume`。
+ *
+ * outcome: 'cancelled' 时省略 answers(用户 Esc / 回合取消);'selected' 时 answers
+ * 为每题作答(空答案数组等价于用户跳过全部问题,语义合法)。
+ */
+export interface IAgentSidecarAskUserResumeRequest extends Partial<IAgentSidecarBaseRequest> {
+  sessionId?: string;
+  requestId: string;
+  outcome: TAskUserOutcome;
+  answers?: IQuestionAnswer[];
 }
 
 export type TAgentSidecarRollbackStepPath = string | string[];
