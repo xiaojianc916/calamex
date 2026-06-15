@@ -8,35 +8,27 @@
 //! 不自创协议语义：
 //!   * `client`   —— 常驻 stdio 连接 + 命令句柄（new_session / prompt /
 //!     set_session_mode / restore_checkpoint / model_chat / web_search / web_fetch /
-//!     warmup / health / orchestrate / orchestrate_resume / cancel / shutdown）；
+//!     warmup / health / orchestrate / orchestrate_resume / agent_chat /
+//!     agent_chat_resolve / cancel / shutdown）；
 //!   * `approval` —— 回合内反向 `session/request_permission` 的挂起登记表；
 //!   * `turn`     —— 把一回合的 `session/update` 通知重建为既有响应信封。
 //!
 //! 设计要点（均据一手源码核对，不臆造）：
 //!   * **会话即线程**：对齐 Zed `session_id = thread.id()`——前端传稳定 `thread_id`，
 //!     宿主持有 `thread_id ↔ SessionId` 映射并跨回合复用同一 ACP 会话
-//!     （`ensure_session`）。该映射同时为「取消重键」提供回合中途即可用的稳定
-//!     `SessionId` 查找（`cancel_thread`），不再依赖前端回传 sessionId。ACP
-//!     `SessionId` 仍由 sidecar `newSession` 生成（见 agent.ts `newSession` /
-//!     `prompt`）；`chat` 仍接受显式 `session_id` 透传，接线层先 `ensure_session`
-//!     拿到稳定会话再投影回合入参。
-//!   * **模型配置不入 prompt**：模型凭据由 sidecar 进程环境变量在启动期解析
-//!     （见 agent.ts 头注与 models/config.ts、warmup-into-startup），故 `chat` 不在
-//!     回合内注入模型配置——不另立 ACP 之外的注入通道。
+//!     （`ensure_session`）。
+//!   * **模型配置不入 prompt**：模型凭据由 sidecar 进程环境变量在启动期解析。
 //!   * **审批即回合内挂起**：危险工具经反向 `session/request_permission` 在回合内
-//!     挂起，`prompt` 的 future 自然延后；`resolve_approval` 经登记表唤醒同一回合
-//!     续跑，最终由原 `chat` 调用返回完整响应（Zed 做法）。审批以 ACP 原生
-//!     `(SessionId, ToolCallId)` 定位——这正是宿主经 `ApprovalRequestInfo` 抹给
-//!     webview 的标识，无需解码任何旁路令牌。
-//!   * **流式即累积**：单一 `EventSink` 既把每条帧转发给 webview（`ai:sidecar-stream`
-//!     契约），又按 `sessionId` 写入当前回合累积器；回合结束后落为响应信封。
-//!   * **编排即带外**：`orchestrate` / `orchestrate_resume` 是标准会话回合（`prompt`）
-//!     之外的「带外」编排能力，经 sidecar 公示的扩展方法通道下发（标准客户端不识别
-//!     会安全忽略）。二者均先 `ensure_session(thread_id)` 拿到稳定 `SessionId` 并随
-//!     请求透传，使内部工作流事件经该会话的 `session/update` 流式下发（与 chat 同一
-//!     下沉路径，见 agent.ts `handleOrchestrate`）；但编排帧不做回合累积——不调用
-//!     `begin_turn`/`end_turn`，`record_frame` 对无活动回合的会话安全忽略，帧仍转发
-//!     webview。同 chat，编排不在回合内注入模型配置（sidecar 启动期解析）。
+//!     挂起，`resolve_approval` 经登记表唤醒同一回合续跑。
+//!   * **流式即累积**：单一 `EventSink` 既转发帧给 webview，又按 `sessionId` 写入
+//!     当前回合累积器；回合结束后落为响应信封。
+//!   * **编排/对话即带外**：`orchestrate` / `orchestrate_resume` / `agent_chat` /
+//!     `agent_chat_resolve` 是标准会话回合（`prompt`）之外的「带外」能力，经
+//!     sidecar 公示的扩展方法通道下发（标准客户端不识别会安全忽略）。agent_chat
+//!     承载 agent 模式富对话回合：原生 `session/prompt` 的 `session/update` 投影有损
+//!     （仅文本/思考增量，丢结构化补丁/检查点/回滚/富审批/plan_ready 等 agent UI
+//!     词表），故 agent_chat 跑到审批门或终态，过程增量经 `session/update` 仅作实时
+//!     预览，真正权威的富事件由返回信封承载（与旧 http /agent/chat 同构，前端无感）。
 
 // 过渡期：本模块尚未接线到宿主命令（公开 API 暂无调用点）。接线后移除该 allow。
 #![allow(dead_code)]
@@ -55,10 +47,10 @@ use crate::commands::contracts::{
 
 use super::approval::{ApprovalError, ApprovalRegistry, ApprovalRequestInfo};
 use super::client::{
-    AcpClientConfig, AcpClientError, AcpClientHandle, AcpStreamFrame, CheckpointRestoreRequest,
-    EventSink, HealthExtRequest, ModelChatExtRequest, OrchestrateExtRequest,
-    OrchestrateResumeExtRequest, WarmupExtRequest, WebFetchExtRequest, WebSearchExtRequest,
-    spawn_acp_client,
+    AcpClientConfig, AcpClientError, AcpClientHandle, AcpStreamFrame, AgentChatExtRequest,
+    AgentChatResolveExtRequest, CheckpointRestoreRequest, EventSink, HealthExtRequest,
+    ModelChatExtRequest, OrchestrateExtRequest, OrchestrateResumeExtRequest, WarmupExtRequest,
+    WebFetchExtRequest, WebSearchExtRequest, spawn_acp_client,
 };
 use super::turn::TurnAccumulator;
 
@@ -71,10 +63,6 @@ pub type StreamEmitter = Arc<dyn Fn(AcpStreamFrame) + Send + Sync>;
 pub type ApprovalEmitter = Arc<dyn Fn(ApprovalRequestInfo) + Send + Sync>;
 
 /// 一次 `chat` 回合的宿主侧入参（已从 Tauri 契约/凭据类型解耦的最小面）。
-///
-/// 接线层负责把 `AgentSidecarChatRequest` 投影到此：`prompt` 取自其 messages 的
-/// 文本归并，`session_id`/`mode`/`workspace_root_path` 原样透传；`model_config`
-/// 不在此出现——模型配置在 sidecar 启动期由环境变量解析，不入 ACP prompt 回合。
 #[derive(Debug, Clone, Default)]
 pub struct AcpChatTurn {
     /// 复用既有会话的 ACP `SessionId`（前端从上一回合响应回传）；缺省则新建会话。
@@ -85,51 +73,33 @@ pub struct AcpChatTurn {
     pub prompt: String,
     /// 新建会话时作为 cwd（→ sidecar workspaceRootPath）；复用会话时忽略。
     pub workspace_root_path: Option<String>,
-    /// 本回合随附的上下文引用（@文件 / 选区 / 符号等），由接线层从
-    /// `AgentSidecarChatRequest.context` 投影而来；经 `bridge` 进一步投影为 ACP
-    /// `resource` / `resource_link` 内容块附加到 prompt。空切片表示无附加上下文，
-    /// 此时仅投影用户文本块（与既有行为等价）。
+    /// 本回合随附的上下文引用（@文件 / 选区 / 符号等）。
     pub context: Vec<AiContextReferencePayload>,
 }
 
 /// 一次 `orchestrate` 编排启动的宿主侧入参。
-///
-/// 接线层负责把 `AgentSidecarOrchestrateRequest` 投影到此：`goal` 原样透传，
-/// `thread_id` 用于 `ensure_session` 拿到稳定会话并随请求透传，`execution_mode`
-/// 以字符串原样透传（合法取值由 sidecar zod 校验；为空时整字段省略交由 sidecar
-/// 套默认），`workspace_root_path` 仅在新建会话时作为 cwd。`model_config` 不在此
-/// 出现——同 chat，模型配置在 sidecar 启动期由环境变量解析，不入编排请求。
 #[derive(Debug, Clone, Default)]
 pub struct AcpOrchestrateStart {
     /// 编排目标（自然语言），原样透传给 sidecar。
     pub goal: String,
-    /// 稳定线程标识：用于 `ensure_session` 复用/新建会话，并随请求透传以便内部
-    /// 工作流事件经该会话的 `session/update` 流式下发。为空白时退化为「新建、不登记」。
+    /// 稳定线程标识：用于 `ensure_session` 复用/新建会话。
     pub thread_id: Option<String>,
-    /// 每次运行的执行偏好（interactive/autonomous）；合法取值由 sidecar zod 统一校验，
-    /// 宿主以字符串原样透传、不在此重复取值表，为空白时整字段省略交由 sidecar 套默认。
+    /// 每次运行的执行偏好（interactive/autonomous）；取值由 sidecar zod 校验。
     pub execution_mode: Option<String>,
     /// 新建会话时作为 cwd（→ sidecar workspaceRootPath）；复用会话时忽略。
     pub workspace_root_path: Option<String>,
 }
 
 /// 一次 `orchestrate_resume` 编排续跑的宿主侧入参。
-///
-/// 接线层负责把 `AgentSidecarOrchestrateResumeRequest` 投影到此：`run_id` 定位被
-/// 审批门挂起的编排运行，`decision`（approve/reject/continue/cancel）与可选 `reason`
-/// 以字符串原样透传（合法取值由 sidecar zod 校验）。`thread_id` 用于 `ensure_session`
-/// 复用同一会话，使续跑阶段的工作流事件仍经该会话的 `session/update` 流式下发。
-/// `model_config` 同 chat 不在此出现。
 #[derive(Debug, Clone, Default)]
 pub struct AcpOrchestrateResume {
     /// 被挂起编排运行的标识，原样透传给 sidecar 以定位续跑目标。
     pub run_id: String,
-    /// 审批决策（approve/reject/continue/cancel）；合法取值由 sidecar zod 校验，原样透传。
+    /// 审批决策（approve/reject/continue/cancel）；取值由 sidecar zod 校验，原样透传。
     pub decision: String,
     /// 可选的决策理由；为空白时整字段省略。
     pub reason: Option<String>,
-    /// 稳定线程标识：用于 `ensure_session` 复用同一会话并随请求透传，使续跑阶段的
-    /// 工作流事件仍经该会话的 `session/update` 流式下发。为空白时退化为「新建、不登记」。
+    /// 稳定线程标识：用于 `ensure_session` 复用同一会话并随请求透传。
     pub thread_id: Option<String>,
 }
 
@@ -138,20 +108,14 @@ pub struct AcpOrchestrateResume {
 pub struct AcpHost {
     handle: AcpClientHandle,
     approvals: ApprovalRegistry,
-    /// 按 ACP `SessionId` 字符串键入的「当前回合」累积器。`EventSink` 据帧的
-    /// `sessionId` 写入；`chat` 在 prompt 前 `begin_turn`、返回后 `end_turn`。
+    /// 按 ACP `SessionId` 字符串键入的「当前回合」累积器。
     turns: Arc<Mutex<HashMap<String, TurnAccumulator>>>,
     /// `thread_id ↔ ACP SessionId` 映射（对齐 Zed `session_id = thread.id()`）。
-    /// 前端传稳定 `thread_id`，宿主据此跨回合复用同一 ACP 会话（`ensure_session`），
-    /// 并为「取消重键」提供回合中途可用的稳定 `SessionId` 查找（`cancel_thread`）。
     sessions: Arc<Mutex<HashMap<String, SessionId>>>,
 }
 
 impl AcpHost {
     /// 启动常驻 ACP 连接并装配编排面。
-    ///
-    /// `emit` 接收每条流式帧（转发 webview）；`on_approval` 接收回合内挂起的权限
-    /// 请求详情（弹出审批 UI）。二者均由宿主接线层提供，与 Tauri 事件解耦以便单测。
     pub fn spawn(
         config: AcpClientConfig,
         emit: StreamEmitter,
@@ -182,13 +146,6 @@ impl AcpHost {
 
     /// 解析某 thread 对应的 ACP 会话（`thread_id ↔ SessionId`，贴 Zed 做法）：
     /// 命中映射则跨回合复用既有 `SessionId`；否则按工作区根新建会话并登记。
-    ///
-    /// 这是「取消重键」的基石——回合开始前 `thread_id` 即已绑定稳定 `SessionId`，
-    /// 故 `cancel_thread` 可在回合中途定位会话下发 `session/cancel`。`thread_id`
-    /// 为空白时退化为「每次新建、不登记」（与无身份回合等价）。
-    ///
-    /// 锁不跨 `await` 持有：命中分支在表达式内即释放锁；未命中时先释放锁再
-    /// `new_session().await`，回来后再短暂持锁登记。
     pub async fn ensure_session(
         &self,
         thread_id: &str,
@@ -217,9 +174,6 @@ impl AcpHost {
 
     /// 运行一次 `chat` 回合：复用/新建会话 → 可选切换模式 → prompt（阻塞至回合结束，
     /// 含回合内审批挂起→唤醒续跑）→ 把累积的 `session/update` 落为响应信封。
-    ///
-    /// 流式增量在 prompt 期间已经 `EventSink` 实时下发；本调用的返回值是该回合的
-    /// 完整重建信封（`{ sessionId, events, result }`），与既有命令契约同形。
     pub async fn chat(
         &self,
         turn: AcpChatTurn,
@@ -241,9 +195,6 @@ impl AcpHost {
         }
 
         self.begin_turn(&session_key);
-        // 把本回合用户输入投影为 ACP prompt 内容块（经接线层 `bridge` 统一构造，
-        // 与 client 层「只下发、不臆造内容块形态」的分层一致）：用户文本块 +
-        // 本回合随附的上下文引用（@文件 / 选区 / 符号等）一并投影。
         let blocks = super::bridge::user_turn_to_content_blocks(&turn.prompt, &turn.context);
         let prompt_result = self.handle.prompt(session_id, blocks).await;
         let accumulator = self.end_turn(&session_key);
@@ -254,10 +205,6 @@ impl AcpHost {
     }
 
     /// 投递一个审批决策，唤醒回合内挂起的权限请求（其 `prompt` 随后续跑并最终返回）。
-    ///
-    /// `session_id` / `tool_call_id` 即宿主经 `ApprovalRequestInfo` 抹给 webview 的
-    /// ACP 原生标识；`decision` 取上层线值（`allow-once` / `reject-once` / `approve`
-    /// / `reject` / `cancel` 等），映射规则见 `approval` 模块。
     pub fn resolve_approval(
         &self,
         session_id: &str,
@@ -272,11 +219,6 @@ impl AcpHost {
     }
 
     /// 触发检查点回滚（扩展方法 `calamex.dev/checkpoint/restore`）。
-    ///
-    /// sidecar 把回滚响应投影为与 chat 同构的信封（`schemaVersion + sessionId +
-    /// events + result`，见 ext-methods.ts `toCheckpointRestoreExtResult`），故此处
-    /// 直接复用既有 `AgentSidecarResponsePayload` 解析（多余的 `schemaVersion` 字段
-    /// 按 serde 默认忽略）。
     pub async fn restore_checkpoint(
         &self,
         request: CheckpointRestoreRequest,
@@ -290,13 +232,6 @@ impl AcpHost {
     }
 
     /// 原始模型透传（扩展方法 `calamex.dev/model/chat`）。
-    ///
-    /// 标准会话回合之外的「带外」工具型模型调用，经 sidecar 公示的扩展方法通道下发；
-    /// 承载标题生成 / 行内补全 / 连接测试等一次性请求（仿 Zed 把这类 model-backed 功能
-    /// 与 Agent Panel 智能体回合分离为独立模型请求）。sidecar 把响应投影为与 chat 同构的
-    /// 信封（`toModelChatExtResult = toAgentSidecarResponse`，schemaVersion + sessionId +
-    /// events + result），故此处直接复用既有 `AgentSidecarResponsePayload` 解析（同
-    /// restore_checkpoint，多余的 `schemaVersion` 字段按 serde 默认忽略）。
     pub async fn model_chat(
         &self,
         request: ModelChatExtRequest,
@@ -308,12 +243,6 @@ impl AcpHost {
     }
 
     /// 联网搜索（扩展方法 `calamex.dev/web/search`）。
-    ///
-    /// 与检查点回滚同属标准会话回合之外的「带外」能力，经 sidecar 公示的扩展方法
-    /// 通道下发；标准客户端不识别该方法会安全忽略。入参为客户端层扩展请求类型
-    /// （与 contract 的转换由接线层负责，同 restore_checkpoint）；sidecar 按
-    /// `aiWebSearchPayloadSchema` 回传，此处解析为既有 `AiWebSearchPayload` 契约，与原
-    /// HTTP `web_search` 的返回同形（前端无感）。
     pub async fn web_search(
         &self,
         request: WebSearchExtRequest,
@@ -325,10 +254,6 @@ impl AcpHost {
     }
 
     /// 联网抓取（扩展方法 `calamex.dev/web/fetch`）。
-    ///
-    /// 经 sidecar 公示的扩展方法通道下发。入参为客户端层扩展请求类型；sidecar 按
-    /// `aiWebFetchPayloadSchema` 回传，此处解析为既有 `AiWebFetchPayload` 契约，与原
-    /// HTTP `web_fetch` 的返回同形。
     pub async fn web_fetch(
         &self,
         request: WebFetchExtRequest,
@@ -340,10 +265,6 @@ impl AcpHost {
     }
 
     /// 预热模型连接（扩展方法 `calamex.dev/warmup`）。
-    ///
-    /// 经 sidecar 公示的扩展方法通道下发；`request` 可携带可选 `modelConfig`，缺省时
-    /// sidecar 退回到启动期由环境变量解析的默认模型配置。sidecar 按 `toWarmupExtResult`
-    /// 回传，此处解析为既有 `AgentSidecarWarmupPayload` 契约，与原 HTTP `warmup` 的返回同形。
     pub async fn warmup(
         &self,
         request: WarmupExtRequest,
@@ -355,10 +276,6 @@ impl AcpHost {
     }
 
     /// 探测 sidecar 健康状态（扩展方法 `calamex.dev/health`）。
-    ///
-    /// 该方法无入参（线形序列化为 `{}`），故宿主侧内部构造空请求。sidecar 按
-    /// `buildHealthExtResult` 回传，此处解析为既有 `AgentSidecarHealthPayload` 契约，与原
-    /// HTTP `health` 的返回同形。
     pub async fn health(&self) -> Result<AgentSidecarHealthPayload, AcpClientError> {
         let value = self.handle.health(HealthExtRequest {}).await?;
         serde_json::from_value(value).map_err(|error| {
@@ -367,17 +284,6 @@ impl AcpHost {
     }
 
     /// 启动一次原生计划编排（扩展方法 `calamex.dev/plan/orchestrate`）。
-    ///
-    /// 标准会话回合（`prompt`）之外的「带外」编排能力，经 sidecar 公示的扩展方法通道
-    /// 下发。先 `ensure_session(thread_id)` 拿到稳定 `SessionId` 并随请求透传，使内部
-    /// 工作流事件经该会话的 `session/update` 流式下发（与 chat 同一 `EventSink` 下沉
-    /// 路径，见 agent.ts `handleOrchestrate`）；但编排不在此累积回合（无
-    /// `begin_turn`/`end_turn`），帧仅经 `EventSink` 转发 webview，`record_frame` 对
-    /// 无活动回合的会话安全忽略。`execution_mode` 以字符串原样透传（合法取值由 sidecar
-    /// zod 校验），为空白时整字段省略交由 sidecar 套默认；`model_config` 同 chat 不注入
-    /// （sidecar 启动期解析）。sidecar 回传编排终帧 `{ runId, status, result }`，此处
-    /// 解析为既有 `AgentSidecarOrchestratePayload` 契约（多余的 `status` 字段按 serde
-    /// 默认忽略），与原 HTTP `orchestrate` 的返回同形（前端无感）。
     pub async fn orchestrate(
         &self,
         start: AcpOrchestrateStart,
@@ -402,13 +308,6 @@ impl AcpHost {
     }
 
     /// 恢复一个被审批门挂起的编排运行（扩展方法 `calamex.dev/plan/orchestrate/resume`）。
-    ///
-    /// 经 sidecar 公示的扩展方法通道下发；先 `ensure_session(thread_id)` 复用同一会话
-    /// 并随请求透传，使续跑阶段的工作流事件仍经该会话的 `session/update` 流式下发（见
-    /// agent.ts `handleOrchestrateResume`）；同 `orchestrate` 不累积回合。`decision`/
-    /// `reason` 以字符串原样透传（合法取值由 sidecar zod 校验）；`model_config` 同 chat
-    /// 不注入。响应同 `orchestrate`：编排终帧 `{ runId, status, result }` 解析为既有
-    /// `AgentSidecarOrchestratePayload` 契约。
     pub async fn orchestrate_resume(
         &self,
         resume: AcpOrchestrateResume,
@@ -431,8 +330,49 @@ impl AcpHost {
         })
     }
 
-    /// 取消指定会话的当前回合：先清除其全部挂起审批（令任何挂起 `prompt` 收到
-    /// 取消），再下发 ACP `session/cancel` 通知。
+    /// 发起一轮 agent 模式对话（扩展方法 `calamex.dev/agent/chat`）。
+    ///
+    /// 标准会话回合（`prompt`）之外的「带外」能力，承载 agent 模式富对话回合：
+    /// run-to-gate（跑到审批门或终态），过程增量经 `session/update` 仅作实时预览，权威
+    /// 的富事件（结构化补丁/检查点/回滚/富审批/plan_ready 等）由返回信封承载。同
+    /// `orchestrate` 不在此累积回合（无 `begin_turn`/`end_turn`），帧仅经 `EventSink`
+    /// 转发 webview，`record_frame` 对无活动回合的会话安全忽略。入参为已构造的扩展
+    /// 请求（与 contract 的转换、及 `ensure_session(thread_id)` 的会话连续性由接线层
+    /// 负责，同 restore_checkpoint / model_chat 的薄宿主方法 + 命令层组装划分）。sidecar 把
+    /// 响应投影为与 chat 同构的信封（`toAgentChatExtResult = toAgentSidecarResponse`，
+    /// schemaVersion + sessionId + events + result），故此处直接复用既有
+    /// `AgentSidecarResponsePayload` 解析（同 restore_checkpoint，多余 `schemaVersion` 字段
+    /// 按 serde 默认忽略），与旧 HTTP `/agent/chat` 的返回同形（前端无感）。
+    pub async fn agent_chat(
+        &self,
+        request: AgentChatExtRequest,
+    ) -> Result<AgentSidecarResponsePayload, AcpClientError> {
+        let value = self.handle.agent_chat(request).await?;
+        serde_json::from_value(value).map_err(|error| {
+            AcpClientError::Protocol(format!("invalid agent chat response envelope: {error}"))
+        })
+    }
+
+    /// 恢复一轮挂起在审批门的 agent 对话（扩展方法 `calamex.dev/agent/chat/resolve`）。
+    ///
+    /// 镜像旧 http `/approval/resolve` → `runtime.resolveApproval(...)`：携带上一段返回信封里
+    /// approval_required 的 `request_id` 与 `decision`，裁决后续跑同一回合并返回下一段
+    /// 响应信封（若再遇审批门则信封再携 approval_required）。入参为已构造的扩展请求
+    /// （同 agent_chat 由接线层负责 contract 转换与会话解析）。响应同 agent_chat：整封
+    /// sidecar 信封解析为既有 `AgentSidecarResponsePayload`，与旧 HTTP `/approval/resolve` 返回同形。
+    pub async fn agent_chat_resolve(
+        &self,
+        request: AgentChatResolveExtRequest,
+    ) -> Result<AgentSidecarResponsePayload, AcpClientError> {
+        let value = self.handle.agent_chat_resolve(request).await?;
+        serde_json::from_value(value).map_err(|error| {
+            AcpClientError::Protocol(format!(
+                "invalid agent chat resolve response envelope: {error}"
+            ))
+        })
+    }
+
+    /// 取消指定会话的当前回合：先清除其全部挂起审批，再下发 ACP `session/cancel` 通知。
     pub fn cancel(&self, session_id: &str) {
         let session_id = SessionId::from(session_id.to_string());
         self.approvals.cancel_session(&session_id);
@@ -441,9 +381,7 @@ impl AcpHost {
         }
     }
 
-    /// 按 `thread_id` 取消当前回合（「取消重键」入口）：解析其绑定的 ACP
-    /// `SessionId` 后复用 `cancel`。该 thread 尚未绑定会话（从未发起过回合）或
-    /// `thread_id` 为空白时安全空操作，仅记一条 warn。
+    /// 按 `thread_id` 取消当前回合（「取消重键」入口）。
     pub fn cancel_thread(&self, thread_id: &str) {
         let thread_key = thread_id.trim();
         if thread_key.is_empty() {
