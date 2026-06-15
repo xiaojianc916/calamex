@@ -117,7 +117,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <TooltipProvider :delay-duration="700">
+  <TooltipProvider :delay-duration="700" :disable-hoverable-content="true">
     <div class="app-root-stage">
       <AppDialogHost />
       <BrowserContextMenuHost />
