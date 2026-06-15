@@ -1,4 +1,4 @@
-import { bundledLanguages } from '@shikijs/langs';
+import { bundledLanguages } from 'shiki/langs';
 import { createHighlighterCore, type HighlighterCore } from 'shiki/core';
 import { createOnigurumaEngine } from 'shiki/engine/oniguruma';
 import {
@@ -48,7 +48,7 @@ const ensureLanguage = async (language: string): Promise<string | null> => {
 
   let pending = pendingLanguages.get(shikiId);
   if (!pending) {
-    // 全量按需：直接取 @shikijs/langs 暴露的惰性 loader 全量表（覆盖 Shiki 全部语言）。
+    // 全量按需：直接取 shiki/langs 暴露的惰性 loader 全量表（覆盖 Shiki 全部语言）。
     // 每种语言 grammar 由 Vite 切成独立 async chunk，仅在首次用到时才下载；未知语言
     // （不在 bundledLanguages 中）loader 为 undefined，回退纯文本。
     const loader = bundledLanguages[shikiId as keyof typeof bundledLanguages];
