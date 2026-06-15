@@ -105,6 +105,7 @@ const isMaximized = ref(false);
 let isLayoutUnmounted = false;
 let unlistenWindowResized: (() => void) | null = null;
 let windowStateSyncTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
+let removeResizeFinishListeners: (() => void) | null = null;
 
 const resizeHandles: Array<{ direction: TResizeDirection; className: string }> = [
   { direction: 'North', className: 'is-top' },
@@ -204,19 +205,44 @@ const startWindowDrag = async (event: MouseEvent): Promise<void> => {
   }
 };
 
+// 保证交互式 resize 的 START 一定配对 END：派发 END 并解绑收尾监听。
+const finishWindowResizeInteraction = (): void => {
+  if (!removeResizeFinishListeners) {
+    return;
+  }
+
+  removeResizeFinishListeners();
+  removeResizeFinishListeners = null;
+  window.dispatchEvent(new Event(SHELL_WINDOW_RESIZE_END_EVENT));
+};
+
 const startWindowResize = async (direction: TResizeDirection, event: MouseEvent): Promise<void> => {
   if (!props.isDesktopRuntime || event.button !== 0) {
     return;
   }
 
+  // 先收尾上一次可能遗留的交互，避免重复绑定监听。
+  finishWindowResizeInteraction();
   window.dispatchEvent(new Event(SHELL_WINDOW_RESIZE_START_EVENT));
+
+  // 关键修复：原生 startResizeDragging 接管后，鼠标释放发生在 OS 层，webview 通常
+  // 收不到对应的 mouseup，过去仅在出错路径派发 END，成功路径上 END 永不触发，导致
+  // resize frame pump 空跑、is-resizing 长期挂起、界面假死、点击失效。这里在下一次
+  // mouseup 时补发 END，确保交互式 resize 状态被及时收尾。
+  const handleResizeFinish = (): void => {
+    finishWindowResizeInteraction();
+  };
+  window.addEventListener('mouseup', handleResizeFinish, { once: true });
+  removeResizeFinishListeners = () => {
+    window.removeEventListener('mouseup', handleResizeFinish);
+  };
 
   try {
     const appWindow = await getAppWindow();
     await appWindow?.startResizeDragging(direction);
   } catch (error) {
     console.warn('窗口边缘拉伸失败', error);
-    window.dispatchEvent(new Event(SHELL_WINDOW_RESIZE_END_EVENT));
+    finishWindowResizeInteraction();
   }
 };
 
@@ -257,5 +283,8 @@ onBeforeUnmount(() => {
   }
   unlistenWindowResized?.();
   unlistenWindowResized = null;
+  // 卸载时仅解绑收尾监听，不再额外派发 END。
+  removeResizeFinishListeners?.();
+  removeResizeFinishListeners = null;
 });
 </script>
