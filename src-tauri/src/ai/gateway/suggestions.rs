@@ -2,7 +2,6 @@ use fs_err as fs;
 use std::{collections::HashSet, path::PathBuf};
 
 use super::*;
-use crate::agent_sidecar;
 use crate::commands::contracts::{AgentSidecarChatRequest, AgentSidecarMessagePayload};
 use tauri::Manager as _;
 
@@ -49,7 +48,7 @@ async fn run_suggestion_model_chat(
 ) -> Result<crate::commands::contracts::AgentSidecarResponsePayload, String> {
     request
         .model_config
-        .get_or_insert(agent_sidecar::narrator_sidecar_model_config()?);
+        .get_or_insert(narrator_sidecar_model_config()?);
     let host = app
         .state::<crate::acp::AcpRuntime>()
         .get_or_spawn(app)
@@ -233,10 +232,10 @@ fn build_suggestion_pool_system_prompt(count: usize) -> String {
          [硬约束]\n\
          - 每条恰好 {min_chars}-{max_chars} 个汉字字符,不计空格,超出或不足都视为不合格\
          - 简体中文,严禁涉及代码、编程、命令行、API、调试、配置、框架等开发话题\
-         - 末尾带 ? ? ! ! 等标点的条目数 ≤ {punct_max}(整批 30% 上限)\
+         - 末尾带 ? ？ ! ！ 等标点的条目数 ≤ {punct_max}(整批 30% 上限)\
          - 任意\"前两个字\"在整批中出现 ≤ {head_max} 次\n\n\
          [句式配额]\n\
-         - 疑问句(\"如何/为什么/哪些/能否/怎么\" 等开头,或以 ? 结尾) ≥ {q_min} 条\
+         - 疑问句(\"如何/为什么/哪些/能否/怎么\" 等开头,或以 ？ 结尾) ≥ {q_min} 条\
          - 祈使句(\"帮我/推荐/列出/解释/讲讲/介绍/聊聊/比较\" 等动词开头) ≥ {imp_min} 条\
          - 陈述句(以名词、数字、场景词开头,既不疑问也不祈使) ≥ {stmt_min} 条\n\n\
          [长度配额]\n\
@@ -456,19 +455,19 @@ pub(super) fn normalize_suggestion_text(value: &str) -> Option<String> {
             || matches!(
                 item,
                 '"' | '\''
-                    | '“'
-                    | '”'
-                    | '‘'
-                    | '’'
-                    | '《'
-                    | '》'
-                    | '【'
-                    | '】'
-                    | '「'
-                    | '」'
-                    | '『'
-                    | '』'
-                    | '。'
+                    | '\u{201c}'
+                    | '\u{201d}'
+                    | '\u{2018}'
+                    | '\u{2019}'
+                    | '\u{300a}'
+                    | '\u{300b}'
+                    | '\u{3010}'
+                    | '\u{3011}'
+                    | '\u{300c}'
+                    | '\u{300d}'
+                    | '\u{300e}'
+                    | '\u{300f}'
+                    | '\u{3002}'
                     | ','
                     | '.'
                     | ':'
@@ -485,7 +484,7 @@ pub(super) fn normalize_suggestion_text(value: &str) -> Option<String> {
 fn strip_leading_list_marker(value: &str) -> &str {
     let mut text = value
         .trim()
-        .trim_start_matches(['-', '*', '•', '·'])
+        .trim_start_matches(['-', '*', '\u{2022}', '\u{00b7}'])
         .trim_start();
 
     let mut digit_end = 0;
@@ -496,7 +495,7 @@ fn strip_leading_list_marker(value: &str) -> &str {
             digit_end = index + item.len_utf8();
             continue;
         }
-        if has_digit && matches!(item, '.' | '、' | ')') {
+        if has_digit && matches!(item, '.' | '\u{3001}' | ')') {
             digit_end = index + item.len_utf8();
             break;
         }
