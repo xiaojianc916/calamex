@@ -36,9 +36,15 @@ import type { TAgentRuntimeOutputEvent } from '../contracts/runtime-contracts.js
  *   与 Cline 人驱动 plan→act（无自动重规划循环）。
  * - autonomous：自主执行——在 interactive 的基础上，额外启用「validate→按需 replan」闭环（外层 .dountil）。
  * executionMode 在计划生成时随 workflow 输入确定，并贯穿整个 cycleContext（执行期不可变）。
+ *
+ * 有界重规划环路升级（P1–P4，均在 autonomous 闭环内，interactive 路径不受影响）：
+ * - P1（OpenHands critic）：deps.validate 返回 replanViable；验证需重规划但 findings 无一可重试时快速失败。
+ * - P2（ADK LoopAgent max_iterations）：maxReplans 为 workflow 输入（默认 MAX_REPLANS=3），贯穿 cycleContext。
+ * - P3（ADK escalate）：deps.replan 返回 changed；无实质变化（空 delta / 未生成新版本）时终止避免空转。
+ * - P4（增量复用）：重规划后 cursor 从 deps.replan 的 resumeCursor 起跳，跳过前导未改动的已完成步骤。
  */
 
-// 重规划次数上限，防止验证反复失败时无限循环。
+// 重规划次数默认上限（P2：现可由 workflow 输入 maxReplans 覆盖），防止验证反复失败时无限循环。
 const MAX_REPLANS = 3;
 
 // ---------------------------------------------------------------------------
@@ -81,12 +87,18 @@ export interface IPlanOrchestrationDeps {
 	validate(input: { planId: string; version: number }, emit?: TOrchestrationEmit): Promise<{
 		needsReplan: boolean;
 		summary: string;
+		/** P1：findings 是否存在可重试项；false 表示重规划无法修复，应快速失败。 */
+		replanViable: boolean;
 	}>;
 	/** 生成新版本计划（delta 应用后），返回新 version + 新 stepIds。 */
 	replan(input: { planId: string; version: number }, emit?: TOrchestrationEmit): Promise<{
 		planId: string;
 		version: number;
 		stepIds: string[];
+		/** P3：本次重规划是否产生实质变化（空 delta / 未生成新版本时为 false）。 */
+		changed: boolean;
+		/** P4：新版本可跳过的前导「已完成且未改动」步骤数；执行从该 cursor 起跳。 */
+		resumeCursor: number;
 	}>;
 	finish(input: { planId: string; version: number; status: 'completed' | 'failed' }): Promise<void>;
 }
@@ -104,6 +116,8 @@ const cycleContextSchema = z.object({
 	threadId: z.string().min(1),
 	// 执行模式贯穿整轮编排，执行期不可变（计划生成时确定）。
 	executionMode: executionModeSchema,
+	// P2：重规划次数上限，随计划生成确定并贯穿整轮（执行期不可变）。
+	maxReplans: z.number().int().nonnegative(),
 	stepIds: z.array(z.string().min(1)),
 	cursor: z.number().int().nonnegative(), // 下一个待执行 step 的下标
 	rejected: z.boolean(),
@@ -139,6 +153,8 @@ const workflowInputSchema = z.object({
 	threadId: z.string().min(1).nullable(),
 	// 默认 interactive：未携带该字段的旧调用方退化为人值守轻量模式（无自动重规划）。
 	executionMode: executionModeSchema.default('interactive'),
+	// P2：重规划次数上限，默认 MAX_REPLANS。.default() 保证未携带该字段的旧调用方/服务路由向后兼容。
+	maxReplans: z.number().int().nonnegative().default(MAX_REPLANS),
 });
 const workflowOutputSchema = z.object({
 	planId: z.string().min(1),
@@ -182,6 +198,7 @@ export const createPlanOrchestrationWorkflow = (deps: IPlanOrchestrationDeps) =>
 			return {
 				...plan,
 				executionMode: inputData.executionMode,
+				maxReplans: inputData.maxReplans,
 				cursor: 0,
 				rejected: false,
 				validationPassed: false,
@@ -349,20 +366,40 @@ export const createPlanOrchestrationWorkflow = (deps: IPlanOrchestrationDeps) =>
 				return { ...advanced, validationPassed: true, lastSummary: report.summary };
 			}
 
-			// 3) 需要重规划（autonomous）
-			if (advanced.replanCount >= MAX_REPLANS) {
+			// 2b) 可重构性护栏（P1·OpenHands critic）：findings 不可重试 → 重规划无法修复，快速失败而非空转。
+			if (!report.replanViable) {
 				return {
 					...advanced,
 					failed: true,
-					lastSummary: `重规划次数超过上限(${MAX_REPLANS})：${report.summary}`,
+					lastSummary: `验证未通过且重规划无法修复（findings 不可重试）：${report.summary}`,
+				};
+			}
+
+			// 3) 需要重规划（autonomous）：先判可配置上限（P2）。
+			if (advanced.replanCount >= advanced.maxReplans) {
+				return {
+					...advanced,
+					failed: true,
+					lastSummary: `重规划次数超过上限(${advanced.maxReplans})：${report.summary}`,
 				};
 			}
 			const next = await deps.replan({ planId: advanced.planId, version: advanced.version }, emit);
+
+			// 3b) 无进展护栏（P3·ADK escalate）：重规划未产生实质变化（空 delta 或未生成新版本）→ 终止避免空转。
+			if (!next.changed) {
+				return {
+					...advanced,
+					failed: true,
+					lastSummary: `重规划无实质变化（无进展），终止以避免空转：${report.summary}`,
+				};
+			}
+
+			// 3c) 增量复用（P4）：cursor 从 resumeCursor 起跳，跳过新版本中前导且未改动的已完成步骤。
 			return {
 				...advanced,
 				version: next.version,
 				stepIds: next.stepIds,
-				cursor: 0,
+				cursor: next.resumeCursor,
 				replanCount: advanced.replanCount + 1,
 				validationPassed: false,
 				lastSummary: report.summary,
