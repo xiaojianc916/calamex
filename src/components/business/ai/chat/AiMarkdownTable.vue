@@ -1,4 +1,6 @@
 <script setup lang="ts">
+// markdown 节点样式仅 AI 面板需要：随本组件（懒加载）按需加载，不再进首屏 styles.css。
+import 'markstream-vue/index.css';
 import MarkdownRender from 'markstream-vue';
 import { computed } from 'vue';
 import {

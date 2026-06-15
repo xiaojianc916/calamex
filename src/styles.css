@@ -1,7 +1,6 @@
 /* 入口：仅保留 vendor @import 与分片清单；具体样式见 src/styles/。 */
 @import 'tailwindcss';
 @import './assets/css/tailwind.css';
-@import 'markstream-vue/index.css';
 @import 'tw-animate-css';
 @import './styles/theme.css';
 @import './styles/root-variables-dark-default.css';

@@ -136,7 +136,6 @@ export default defineConfig(({ command }) => ({
             normalizedId.includes('/node_modules/@wasm-fmt/shfmt/') ||
             normalizedId.includes('/src/utils/shell-completion.ts') ||
             normalizedId.includes('/src/constants/shell/command-catalog.ts') ||
-            normalizedId.includes('/src/generated/fig-shell-command-catalog.ts') ||
             normalizedId.includes('/src/utils/shfmt.ts')
           ) {
             return 'vendor-shell-analysis';

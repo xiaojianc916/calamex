@@ -48,13 +48,16 @@ export const loadTauriEvent = (): Promise<TauriEventModule> => {
 const createTraceId = (): string => crypto.randomUUID();
 
 const emitIpcLog = (record: IIpcLogRecord): void => {
-  const serialized = JSON.stringify(record);
+  // 错误始终输出；常规 info 审计日志仅在开发环境序列化并打印，避免生产环境
+  // 每次 IPC 调用都对整条 record 做 JSON.stringify 并写 console。
   if (record.outcome === 'error') {
-    console.error(serialized);
+    console.error(JSON.stringify(record));
     return;
   }
 
-  console.info(serialized);
+  if (import.meta.env.DEV) {
+    console.info(JSON.stringify(record));
+  }
 };
 
 const normalizeDialogResult = (value: unknown): string | null =>
