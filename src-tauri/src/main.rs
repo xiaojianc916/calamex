@@ -3,7 +3,6 @@
 
 #[cfg(feature = "acp_client")]
 mod acp;
-mod agent_sidecar;
 mod ai;
 mod assets;
 #[macro_use]
@@ -106,7 +105,7 @@ fn reveal_main_window<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>) {
     let _ = window.set_focus();
 }
 
-/// 统一退出清理：幂等地收口所有后台资源（终端会话、LSP、SSH 连接池、默认 sidecar）。
+/// 统一退出清理：幂等地收口所有后台资源（终端会话、LSP、SSH 连接池、ACP 宿主连接）。
 /// 由用户主动退出（托盘 / 快捷键 → request_app_exit）与运行时退出事件
 /// (RunEvent::ExitRequested / Exit) 共同入口，begin_cleanup 的 CAS 保证只执行一次。
 fn run_exit_cleanup<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>) {
@@ -132,11 +131,9 @@ fn run_exit_cleanup<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>) {
         commands::shutdown_ssh_pool().await;
     });
 
-    // 3) 默认 agent-sidecar：杀掉其进程树（连同派生的 Node / MCP / uvx 子进程）
-    agent_sidecar::shutdown_default_sidecar();
-
-    // 4) ACP 宿主连接（feature `acp_client`）：关停常驻 stdio 连接，子进程随之回收。
+    // 3) ACP 宿主连接（feature `acp_client`）：关停常驻 stdio 连接，子进程随之回收。
     //    对齐 Zed「连接实体 drop 即关停」语义；幂等，未建立时为空操作。
+    //    自此 ACP stdio 宿主是唯一的 sidecar 进程，旧 HTTP sidecar 已移除，无需额外清理。
     #[cfg(feature = "acp_client")]
     app_handle.state::<acp::AcpRuntime>().shutdown();
 }
