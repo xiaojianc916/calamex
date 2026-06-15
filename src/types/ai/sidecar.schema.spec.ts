@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  agentSidecarAskUserResumeRequestSchema,
   agentSidecarChatRequestSchema,
   agentSidecarCheckpointRestoreRequestSchema,
   agentSidecarExecuteRequestSchema,
@@ -148,6 +149,121 @@ describe('agent sidecar event contract', () => {
     expect(parsedResponse.events.at(-1)).toMatchObject({
       type: 'done',
       result: expect.stringContaining('Agent 默认不生成计划'),
+    });
+  });
+
+  it('validates an ask_user_required reverse-questioning event in the response envelope', () => {
+    const parsed = agentSidecarResponsePayloadSchema.parse({
+      sessionId: 'agent-session-ask-user',
+      events: [
+        {
+          type: 'ask_user_required',
+          requestId: 'ask-1',
+          request: {
+            kind: 'user_question',
+            questions: [
+              {
+                questionId: 'q1',
+                question: '选择部署目标？',
+                header: '部署目标',
+                type: 'choice',
+                multiSelect: false,
+                options: [
+                  { optionId: 'o1', label: '生产环境' },
+                  { optionId: 'o2', label: '预发环境', description: 'staging' },
+                ],
+                placeholder: '或自行说明',
+              },
+              {
+                questionId: 'q2',
+                question: '补充说明？',
+                header: '说明',
+                type: 'text',
+                placeholder: '随便写点',
+              },
+            ],
+          },
+        },
+      ],
+      result: null,
+    });
+
+    expect(parsed.events[0]).toMatchObject({ type: 'ask_user_required', requestId: 'ask-1' });
+  });
+
+  it('rejects an ask_user_required event with no questions', () => {
+    expect(() =>
+      agentSidecarResponsePayloadSchema.parse({
+        sessionId: 'agent-session-ask-user-empty',
+        events: [
+          {
+            type: 'ask_user_required',
+            requestId: 'ask-empty',
+            request: { kind: 'user_question', questions: [] },
+          },
+        ],
+        result: null,
+      }),
+    ).toThrow();
+  });
+
+  it('rejects an ask_user_required event whose header exceeds the chip budget', () => {
+    expect(() =>
+      agentSidecarResponsePayloadSchema.parse({
+        sessionId: 'agent-session-ask-user-long-header',
+        events: [
+          {
+            type: 'ask_user_required',
+            requestId: 'ask-long',
+            request: {
+              kind: 'user_question',
+              questions: [
+                {
+                  questionId: 'q1',
+                  question: '问题？',
+                  header: '这个标签实在是太长太长太长了一定会超出十六个字符上限',
+                  type: 'text',
+                },
+              ],
+            },
+          },
+        ],
+        result: null,
+      }),
+    ).toThrow();
+  });
+
+  it('builds ask-user resume requests for selected and cancelled outcomes', () => {
+    const selected = agentSidecarAskUserResumeRequestSchema.parse({
+      requestId: 'ask-1',
+      outcome: 'selected',
+      answers: [{ questionId: 'q1', optionIds: ['o1'] }],
+    });
+    expect(selected).toMatchObject({
+      requestId: 'ask-1',
+      outcome: 'selected',
+      answers: [{ questionId: 'q1', optionIds: ['o1'] }],
+    });
+
+    const cancelled = agentSidecarAskUserResumeRequestSchema.parse({
+      requestId: 'ask-1',
+      outcome: 'cancelled',
+    });
+    expect(cancelled.outcome).toBe('cancelled');
+    expect(cancelled.answers).toBeUndefined();
+  });
+
+  it('defaults ask-user answer optionIds to an empty array for free-text replies', () => {
+    const parsed = agentSidecarAskUserResumeRequestSchema.parse({
+      requestId: 'ask-1',
+      outcome: 'selected',
+      answers: [{ questionId: 'q2', text: '我的自由作答' }],
+    });
+
+    expect(parsed.answers?.[0]).toEqual({
+      questionId: 'q2',
+      optionIds: [],
+      text: '我的自由作答',
     });
   });
 

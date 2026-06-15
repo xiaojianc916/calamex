@@ -21,8 +21,8 @@ import {
 /**
  * Recursive JSON value schema.
  *
- * 注意:Zod v4 把 `z.record(value)` 改成了 `z.record(key, value)` —— 强制
- * 显式 key type。我们的 JSON object 总是 string keys,所以传 `z.string()`。
+ * 注意：Zod v4 把 `z.record(value)` 改成了 `z.record(key, value)` —— 强制
+ * 显式 key type。我们的 JSON object 总是 string keys，所以传 `z.string()`。
  */
 export const jsonValueSchema: z.ZodType<TJsonValue> = z.lazy(() =>
   z.union([
@@ -45,11 +45,11 @@ export const agentPlanStatusSchema = z.enum(AGENT_PLAN_STATUSES);
 /* ============================================================================
  * String helpers
  *
- * 这些 helper 把"空白字符串 / null / undefined"都归一化成 `undefined`,以便
- * caller 传任意一种都可以,backend 收到的只有 undefined 或非空字符串两种状态。
+ * 这些 helper 把"空白字符串 / null / undefined"都归一化成 `undefined`，以便
+ * caller 传任意一种都可以，backend 收到的只有 undefined 或非空字符串两种状态。
  *
- * `optionalWorkspaceRootPathSchema` 是特例:保留 `null`(显式"无工作区") vs
- * `undefined`(未指定)的区分,不归一化 null → undefined。
+ * `optionalWorkspaceRootPathSchema` 是特例：保留 `null`（显式"无工作区"） vs
+ * `undefined`（未指定）的区分，不归一化 null → undefined。
  * ========================================================================== */
 
 const optionalNonEmptyStringSchema = z.preprocess((value) => {
@@ -75,7 +75,7 @@ const optionalAgentModeSchema = z.preprocess((value) => {
 }, agentSidecarModeSchema.optional());
 
 const optionalWorkspaceRootPathSchema = z.preprocess((value) => {
-  // 保留 null 语义("用户显式声明无工作区根目录"),与 undefined 区分。
+  // 保留 null 语义（"用户显式声明无工作区根目录"），与 undefined 区分。
   if (value === null || value === undefined) {
     return value;
   }
@@ -187,19 +187,60 @@ export const diffFileSchema = z.object({
 });
 
 /* ============================================================================
+ * Ask-user (reverse questioning / Human-in-the-Loop)
+ *
+ * 运行时校验 schema，镜像 sidecar.ts 的手写类型（handwritten types 为该域 SoT）。
+ * 字段约束对齐 agent-sidecar/src/schemas/events.ts 的 askUser* wire schema：
+ * header ≤8 中文/≤16 字符的 chip 短标签；questions 1-4 题（对齐 Gemini ask_user
+ * 上限）；仅 choice 型携带 options。
+ * ========================================================================== */
+
+export const questionOptionSchema = z.object({
+  optionId: z.string().min(1),
+  label: z.string().min(1),
+  description: z.string().min(1).optional(),
+});
+
+export const askUserQuestionSchema = z.object({
+  questionId: z.string().min(1),
+  question: z.string().min(1),
+  header: z.string().min(1).max(16),
+  type: z.enum(['choice', 'text', 'yesno']),
+  options: z.array(questionOptionSchema).optional(),
+  multiSelect: z.boolean().optional(),
+  placeholder: z.string().min(1).optional(),
+});
+
+export const askUserRequestSchema = z.object({
+  kind: z.literal('user_question'),
+  questions: z.array(askUserQuestionSchema).min(1).max(4),
+});
+
+export const questionAnswerSchema = z.object({
+  questionId: z.string().min(1),
+  optionIds: z.array(z.string().min(1)).default([]),
+  text: z.string().min(1).optional(),
+});
+
+export const askUserResultSchema = z.object({
+  outcome: z.enum(['selected', 'cancelled']),
+  answers: z.array(questionAnswerSchema).optional(),
+});
+
+/* ============================================================================
  * Runtime events (base + passthrough)
  *
- * 🚧 TODO(schema-first refactor): 当前 schema 只校验 21 种 event 的**公共字段**,
+ * 🚧 TODO(schema-first refactor): 当前 schema 只校验 21 种 event 的**公共字段**，
  * 用 `.passthrough()` 兜底变体特有字段。这意味着 `z.infer<typeof
- * agentRuntimeEventSchema>` 会带 `[k: string]: unknown` 索引签名,**无法**直接
+ * agentRuntimeEventSchema>` 会带 `[k: string]: unknown` 索引签名，**无法**直接
  * 当作 handwritten `TAgentRuntimeEvent` 联合用。
  *
- * 等 agent-sidecar.ts 切到 schema 派生时(类似 ai.ts 的重构),需要把这里展开
- * 成 21 个变体的 `z.discriminatedUnion('type', [...])`,删掉 passthrough。
- * 这是较大工作量,暂列 TODO。
+ * 等 agent-sidecar.ts 切到 schema 派生时（类似 ai.ts 的重构），需要把这里展开
+ * 成 21 个变体的 `z.discriminatedUnion('type', [...])`，删掉 passthrough。
+ * 这是较大工作量，暂列 TODO。
  *
- * 在那之前,**handwritten `TAgentRuntimeEvent` 是该域的类型层 SoT**,本 schema
- * 仅做 runtime 校验,不参与 TS 推断链路。
+ * 在那之前，**handwritten `TAgentRuntimeEvent` 是该域的类型层 SoT**，本 schema
+ * 仅做 runtime 校验，不参与 TS 推断链路。
  * ========================================================================== */
 
 export const agentRuntimeEventSchema = z
@@ -268,6 +309,11 @@ export const agentUiEventSchema = z.discriminatedUnion('type', [
     request: approvalRequestSchema,
   }),
   z.object({
+    type: z.literal('ask_user_required'),
+    requestId: z.string().min(1),
+    request: askUserRequestSchema,
+  }),
+  z.object({
     type: z.literal('diff_ready'),
     files: z.array(diffFileSchema),
   }),
@@ -280,7 +326,7 @@ export const agentUiEventSchema = z.discriminatedUnion('type', [
     completionTokens: z.number().nonnegative().optional(),
     /** @deprecated 使用 `usage.totalTokens`。 */
     totalTokens: z.number().nonnegative().optional(),
-    // 复用 ai.schema 的共享 schema,避免双 SoT 与 passthrough 索引签名。
+    // 复用 ai.schema 的共享 schema，避免双 SoT 与 passthrough 索引签名。
     usage: z
       .lazy(() => aiLanguageModelUsageSchema)
       .nullable()
@@ -353,15 +399,29 @@ export const agentSidecarExecuteRequestSchema = agentSidecarBaseRequestSchema.ex
 });
 
 /**
- * Approval resolve:大部分 base 字段都可不传(只需 sessionId + requestId + decision)。
- * 用 `.partial()` 把 base 全部变 optional,然后 `.extend` 只重新声明必填字段。
- * `sessionId` 在 partial 后已经 optional,这里不再重复声明,保持精简。
+ * Approval resolve：大部分 base 字段都可不传（只需 sessionId + requestId + decision）。
+ * 用 `.partial()` 把 base 全部变 optional，然后 `.extend` 只重新声明必填字段。
+ * `sessionId` 在 partial 后已经 optional，这里不再重复声明，保持精简。
  */
 export const agentSidecarApprovalResolveRequestSchema = agentSidecarBaseRequestSchema
   .partial()
   .extend({
     requestId: z.string().min(1),
     decision: z.string().min(1),
+  });
+
+/**
+ * ask_user 反向提问恢复请求。镜像 approval resolve 的「partial base + requestId」，
+ * 但以 outcome + 结构化 answers 取代 decision（对应后端 agentAskUserResumeParamsSchema
+ * 与扩展方法 calamex.dev/agent/ask-user/resume）。outcome='cancelled' 时省略 answers；
+ * 'selected' 时 answers 为每题作答（空数组等价于跳过全部问题，语义合法）。
+ */
+export const agentSidecarAskUserResumeRequestSchema = agentSidecarBaseRequestSchema
+  .partial()
+  .extend({
+    requestId: z.string().min(1),
+    outcome: z.enum(['selected', 'cancelled']),
+    answers: z.array(questionAnswerSchema).optional(),
   });
 
 export const agentSidecarRollbackStepSchema = z.union([
