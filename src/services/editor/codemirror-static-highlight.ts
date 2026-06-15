@@ -1,12 +1,10 @@
 import { resolveCodeMirrorLanguageId } from '@/services/editor/codemirror-language';
 import {
-  ensureShikiLanguage,
   type IShikiThemedToken,
   resolveShikiLanguageId,
   SHIKI_BACKGROUND,
   SHIKI_FOREGROUND,
-  tokenizeWithShiki,
-  tokenizeWithShikiSync,
+  tokenizeWithShikiWorker,
 } from '@/services/editor/shiki-highlighter';
 
 export interface ICodeMirrorHighlightToken {
@@ -84,8 +82,9 @@ export const createRawTokens = (code: string): ITokenizedCode => ({
 });
 
 /**
- * 同步高亮：仅当目标语法已按需加载时返回结果，否则返回 null。
- * 调用方应先用 createRawTokens 兜底，并通过 highlightCodeAsync 在语法加载后升级。
+ * 同步高亮：worker-only 下主线程不再同步 tokenize，仅返回 highlightCodeAsync
+ * 已写入的缓存命中；未命中时返回 null。
+ * 调用方应先用 createRawTokens 兜底，并通过 highlightCodeAsync 在后台升级为高亮。
  */
 export const highlightCodeSync = (code: string, language: string): ITokenizedCode | null => {
   const languageId = resolveCodeMirrorLanguageId(language);
@@ -93,24 +92,11 @@ export const highlightCodeSync = (code: string, language: string): ITokenizedCod
     return null;
   }
 
-  const tokensCacheKey = getTokensCacheKey(code, languageId);
-  const cached = tokensCache.get(tokensCacheKey);
-  if (cached) {
-    return cached;
-  }
-
-  const lines = tokenizeWithShikiSync(code, language);
-  if (!lines) {
-    return null;
-  }
-
-  const tokenized = toTokenizedCode(lines);
-  rememberTokens(tokensCacheKey, tokenized);
-  return tokenized;
+  return tokensCache.get(getTokensCacheKey(code, languageId)) ?? null;
 };
 
 /**
- * 异步高亮：按需加载目标语法后再解析高亮。语法包通过动态 import 代码分割。
+ * 异步高亮：在独立 worker 线程执行 Shiki tokenize，完成后写入缓存供同步路径命中。
  */
 export const highlightCodeAsync = async (
   code: string,
@@ -127,7 +113,7 @@ export const highlightCodeAsync = async (
     return cached;
   }
 
-  const lines = await tokenizeWithShiki(code, language);
+  const lines = await tokenizeWithShikiWorker(code, language);
   if (!lines) {
     return null;
   }
@@ -169,13 +155,13 @@ const tokenToHtml = (token: ICodeMirrorHighlightToken): string =>
 
 /**
  * 同步生成高亮 HTML(供 LSP 文档等同步渲染场景)。
- * 若语法尚未加载，本次先用原始文本兜底，同时后台预热加载，下次渲染即可高亮。
+ * 若缓存尚未命中，本次先用原始文本兜底，同时后台用 worker 预热，下次渲染即可高亮。
  */
 export const highlightCodeToHtml = (code: string, language: string): string => {
   const tokenized = highlightCodeSync(code, language);
   if (!tokenized && resolveShikiLanguageId(language)) {
-    // 后台按需加载，预热缓存(本次仍用兜底)。
-    void ensureShikiLanguage(language);
+    // 后台用 worker tokenize 并写入缓存(本次仍用兜底)。
+    void highlightCodeAsync(code, language);
   }
 
   const finalTokenized = tokenized ?? createRawTokens(code);
