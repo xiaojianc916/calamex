@@ -124,6 +124,14 @@ export interface IMastraAgentStreamLike {
      * 仅在 Mastra 提供时存在；透传给运行时事件供前端深链 observability。
      */
     traceId?: string;
+    /**
+     * 结构化输出的承诺式访问入口，对应 Mastra `MastraModelOutput.object`
+     * （由 `agent.stream()` 返回）：仅当传入 `structuredOutput.schema` 时有意义，解析为
+     * 符合该 schema 的对象；未配置 schema 时为 undefined。须在 `fullStream` 消费完成后再
+     * await（计划模式据此取最终计划对象，见 plan.ts），与官方“先消费流、再读 promise
+     * 属性”的用法一致。
+     */
+    object?: Promise<unknown>;
     cleanup?: () => void;
 }
 
