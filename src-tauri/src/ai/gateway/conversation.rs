@@ -143,12 +143,15 @@ async fn chat_stream_via_acp(
 
     let input_references = payload.references.clone();
     let messages = collect_messages(payload.messages, input_references.clone())?;
-    let prompt = messages
-        .into_iter()
-        .rev()
-        .find(|message| message.role == "user")
-        .map(|message| message.content)
-        .ok_or_else(|| errors::error("AI_RESPONSE_INVALID", "请输入要发送给 AI 的内容。"))?;
+
+    // 保留旧路径的「至少一条 user 消息」前置校验：collect_messages 仅保证结果非空且
+    // 角色合法，不保证存在 user 消息；缺失时与旧路径一致地拒绝。
+    if !messages.iter().any(|message| message.role == "user") {
+        return Err(errors::error(
+            "AI_RESPONSE_INVALID",
+            "请输入要发送给 AI 的内容。",
+        ));
+    }
 
     let thread_id = payload.thread_id.clone().unwrap_or_default();
 
@@ -173,20 +176,30 @@ async fn chat_stream_via_acp(
         })?;
     let session_key = session_id.to_string();
 
+    // Batch 2c 接线：主聊天回合改走 agent/chat 扩展方法（满信封），替代原生 host.chat
+    // 的有损 session/update 累积路径。ask 模式语义不变；过程增量仍经同一 EventSink
+    // 实时预览，权威结果（result + usage）由返回信封承载，由下方 done 合成补发。
+    //
+    // 上下文已由 collect_messages 注入末条 user 消息并随之脱敏（secret 检测覆盖引用
+    // 内容），故结构化 context 置空：既避免重复注入，也不绕过脱敏。model_config 不
+    // 注入——模型配置在 sidecar 启动期由环境解析（与旧 chat / orchestrate 一致）。
+    let chat_request = AgentSidecarChatRequest {
+        session_id: None,
+        mode: Some("ask".to_string()),
+        goal: None,
+        messages: to_sidecar_message_payloads(messages),
+        workspace_root_path: None,
+        context: Vec::new(),
+        model_config: None,
+        thread_id: payload.thread_id.clone(),
+    };
+    let request = crate::acp::chat_request_to_agent_chat_ext(chat_request, session_key.clone());
+
     let task_app = app.clone();
     let task_session_key = session_key.clone();
-    let task_context = input_references;
 
     tokio::spawn(async move {
-        let turn = crate::acp::AcpChatTurn {
-            session_id: Some(task_session_key.clone()),
-            mode: Some("ask".to_string()),
-            prompt,
-            workspace_root_path: None,
-            context: task_context,
-        };
-
-        match host.chat(turn).await {
+        match host.agent_chat(request).await {
             Ok(response) => {
                 audit::emit(AiAuditEventKind::ChatCompleted);
                 let result_text = response.result.clone().unwrap_or_default();
