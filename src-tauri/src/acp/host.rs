@@ -3,15 +3,14 @@
 //! 这是「先加新模块 → cargo 验证 → 绿了再删旧」迁移路径中按 cargo feature
 //! `acp_client` 门控的新增模块，落地阶段不影响现有 HTTP/NDJSON sidecar。
 //!
-//! 把同目录三层装配成单一编排面，对齐 sidecar 自身的 ACP Agent（见
+//! 把同目录两层装配成单一编排面，对齐 sidecar 自身的 ACP Agent（见
 //! `agent-sidecar/src/acp/agent.ts`）与 Zed `agent_ui/acp_thread.rs` 的回合模型，
 //! 不自创协议语义：
 //!   * `client`   —— 常驻 stdio 连接 + 命令句柄（new_session / prompt /
 //!     set_session_mode / restore_checkpoint / model_chat / web_search / web_fetch /
 //!     warmup / health / orchestrate / orchestrate_resume / agent_chat /
 //!     agent_chat_resolve / cancel / shutdown）；
-//!   * `approval` —— 回合内反向 `session/request_permission` 的挂起登记表；
-//!   * `turn`     —— 把一回合的 `session/update` 通知重建为既有响应信封。
+//!   * `approval` —— 回合内反向 `session/request_permission` 的挂起登记表。
 //!
 //! 设计要点（均据一手源码核对，不臆造）：
 //!   * **会话即线程**：对齐 Zed `session_id = thread.id()`——前端传稳定 `thread_id`，
@@ -20,8 +19,8 @@
 //!   * **模型配置不入 prompt**：模型凭据由 sidecar 进程环境变量在启动期解析。
 //!   * **审批即回合内挂起**：危险工具经反向 `session/request_permission` 在回合内
 //!     挂起，`resolve_approval` 经登记表唤醒同一回合续跑。
-//!   * **流式即累积**：单一 `EventSink` 既转发帧给 webview，又按 `sessionId` 写入
-//!     当前回合累积器；回合结束后落为响应信封。
+//!   * **流式即转发**：单一 `EventSink` 把每条 `session/update` 帧转发给 webview 作
+//!     实时预览；权威结果由各扩展方法（agent_chat / orchestrate 等）的返回信封承载。
 //!   * **编排/对话即带外**：`orchestrate` / `orchestrate_resume` / `agent_chat` /
 //!     `agent_chat_resolve` 是标准会话回合（`prompt`）之外的「带外」能力，经
 //!     sidecar 公示的扩展方法通道下发（标准客户端不识别会安全忽略）。agent_chat
@@ -30,7 +29,8 @@
 //!     词表），故 agent_chat 跑到审批门或终态，过程增量经 `session/update` 仅作实时
 //!     预览，真正权威的富事件由返回信封承载（与旧 http /agent/chat 同构，前端无感）。
 
-// 过渡期：本模块尚未接线到宿主命令（公开 API 暂无调用点）。接线后移除该 allow。
+// 过渡期：本模块部分薄宿主方法（web_search / web_fetch / restore_checkpoint 等）尚未
+// 全部接线到宿主命令，crate 外暂无调用点；接线后移除该 allow。
 #![allow(dead_code)]
 
 use parking_lot::Mutex;
@@ -38,11 +38,11 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use agent_client_protocol::schema::{SessionId, SessionModeId, ToolCallId};
+use agent_client_protocol::schema::{SessionId, ToolCallId};
 
 use crate::commands::contracts::{
     AgentSidecarHealthPayload, AgentSidecarOrchestratePayload, AgentSidecarResponsePayload,
-    AgentSidecarWarmupPayload, AiContextReferencePayload, AiWebFetchPayload, AiWebSearchPayload,
+    AgentSidecarWarmupPayload, AiWebFetchPayload, AiWebSearchPayload,
 };
 
 use super::approval::{ApprovalError, ApprovalRegistry, ApprovalRequestInfo};
@@ -52,7 +52,6 @@ use super::client::{
     ModelChatExtRequest, OrchestrateExtRequest, OrchestrateResumeExtRequest, WarmupExtRequest,
     WebFetchExtRequest, WebSearchExtRequest, spawn_acp_client,
 };
-use super::turn::TurnAccumulator;
 
 /// 流式帧下沉口：把每条 `session/update` 帧转发给 webview（对齐 `ai:sidecar-stream`
 /// 的 `{sessionId, seq, event}` 契约）。由宿主接线层提供 emit 闭包。
@@ -61,21 +60,6 @@ pub type StreamEmitter = Arc<dyn Fn(AcpStreamFrame) + Send + Sync>;
 /// 待决审批下沉口：把回合内挂起的权限请求详情推给 webview 渲染审批 UI。
 /// 由宿主接线层提供 emit 闭包；其回传决策经 `resolve_approval` 唤醒回合。
 pub type ApprovalEmitter = Arc<dyn Fn(ApprovalRequestInfo) + Send + Sync>;
-
-/// 一次 `chat` 回合的宿主侧入参（已从 Tauri 契约/凭据类型解耦的最小面）。
-#[derive(Debug, Clone, Default)]
-pub struct AcpChatTurn {
-    /// 复用既有会话的 ACP `SessionId`（前端从上一回合响应回传）；缺省则新建会话。
-    pub session_id: Option<String>,
-    /// 会话运行模式（ask/plan/agent/patch/review）；仅在显式提供且非空时切换。
-    pub mode: Option<String>,
-    /// 本回合新输入文本（历史由 sidecar 按 sessionId 自持，不在此重放）。
-    pub prompt: String,
-    /// 新建会话时作为 cwd（→ sidecar workspaceRootPath）；复用会话时忽略。
-    pub workspace_root_path: Option<String>,
-    /// 本回合随附的上下文引用（@文件 / 选区 / 符号等）。
-    pub context: Vec<AiContextReferencePayload>,
-}
 
 /// 一次 `orchestrate` 编排启动的宿主侧入参。
 #[derive(Debug, Clone, Default)]
@@ -108,8 +92,6 @@ pub struct AcpOrchestrateResume {
 pub struct AcpHost {
     handle: AcpClientHandle,
     approvals: ApprovalRegistry,
-    /// 按 ACP `SessionId` 字符串键入的「当前回合」累积器。
-    turns: Arc<Mutex<HashMap<String, TurnAccumulator>>>,
     /// `thread_id ↔ ACP SessionId` 映射（对齐 Zed `session_id = thread.id()`）。
     sessions: Arc<Mutex<HashMap<String, SessionId>>>,
 }
@@ -123,23 +105,16 @@ impl AcpHost {
     ) -> Result<Self, AcpClientError> {
         let approvals = ApprovalRegistry::new();
         let resolver = approvals.resolver(on_approval);
-        let turns: Arc<Mutex<HashMap<String, TurnAccumulator>>> =
-            Arc::new(Mutex::new(HashMap::new()));
 
-        // 单一下沉口：先按 sessionId 写入当前回合累积器，再转发给 webview。
-        let sink: EventSink = {
-            let turns = turns.clone();
-            Arc::new(move |frame: AcpStreamFrame| {
-                record_frame(&turns, &frame);
-                emit(frame);
-            })
-        };
+        // 单一下沉口：把每条 `session/update` 帧转发给 webview 作实时预览。
+        let sink: EventSink = Arc::new(move |frame: AcpStreamFrame| {
+            emit(frame);
+        });
 
         let handle = spawn_acp_client(config, sink, resolver)?;
         Ok(Self {
             handle,
             approvals,
-            turns,
             sessions: Arc::new(Mutex::new(HashMap::new())),
         })
     }
@@ -166,38 +141,6 @@ impl AcpHost {
                 .insert(thread_key.to_string(), session_id.clone());
         }
         Ok(session_id)
-    }
-
-    /// 运行一次 `chat` 回合：复用/新建会话 → 可选切换模式 → prompt（阻塞至回合结束，
-    /// 含回合内审批挂起→唤醒续跑）→ 把累积的 `session/update` 落为响应信封。
-    pub async fn chat(
-        &self,
-        turn: AcpChatTurn,
-    ) -> Result<AgentSidecarResponsePayload, AcpClientError> {
-        let session_id = match non_empty(turn.session_id.as_deref()) {
-            Some(existing) => SessionId::from(existing.to_string()),
-            None => {
-                let cwd = workspace_cwd(turn.workspace_root_path.as_deref());
-                self.handle.new_session(cwd).await?
-            }
-        };
-        let session_key = session_id.to_string();
-
-        // 仅在显式提供且非空时切换模式；sidecar 负责校验非法模式（见 agent.ts）。
-        if let Some(mode) = non_empty(turn.mode.as_deref()) {
-            self.handle
-                .set_session_mode(session_id.clone(), SessionModeId::new(mode.to_string()))
-                .await?;
-        }
-
-        self.begin_turn(&session_key);
-        let blocks = super::bridge::user_turn_to_content_blocks(&turn.prompt, &turn.context);
-        let prompt_result = self.handle.prompt(session_id, blocks).await;
-        let accumulator = self.end_turn(&session_key);
-
-        // 无论回合成败都已回收累积器，避免泄漏；失败时错误上抛由宿主映射。
-        prompt_result?;
-        Ok(accumulator.into_response(session_key))
     }
 
     /// 投递一个审批决策，唤醒回合内挂起的权限请求（其 `prompt` 随后续跑并最终返回）。
@@ -331,9 +274,8 @@ impl AcpHost {
     /// 标准会话回合（`prompt`）之外的「带外」能力，承载 agent 模式富对话回合：
     /// run-to-gate（跑到审批门或终态），过程增量经 `session/update` 仅作实时预览，权威
     /// 的富事件（结构化补丁/检查点/回滚/富审批/plan_ready 等）由返回信封承载。同
-    /// `orchestrate` 不在此累积回合（无 `begin_turn`/`end_turn`），帧仅经 `EventSink`
-    /// 转发 webview，`record_frame` 对无活动回合的会话安全忽略。入参为已构造的扩展
-    /// 请求（与 contract 的转换、及 `ensure_session(thread_id)` 的会话连续性由接线层
+    /// `orchestrate` 不在此累积回合，帧仅经 `EventSink` 转发 webview。入参为已构造的
+    /// 扩展请求（与 contract 的转换、及 `ensure_session(thread_id)` 的会话连续性由接线层
     /// 负责，同 restore_checkpoint / model_chat 的薄宿主方法 + 命令层组装划分）。sidecar 把
     /// 响应投影为与 chat 同构的信封（`toAgentChatExtResult = toAgentSidecarResponse`，
     /// schemaVersion + sessionId + events + result），故此处直接复用既有
@@ -396,31 +338,6 @@ impl AcpHost {
         self.approvals.clear();
         self.handle.shutdown();
     }
-
-    /// 为某会话开启一个新的回合累积器（覆盖同会话遗留的累积器，安全侧）。
-    fn begin_turn(&self, session_key: &str) {
-        self.turns
-            .lock()
-            .insert(session_key.to_string(), TurnAccumulator::new());
-    }
-
-    /// 取出并移除某会话的回合累积器；若期间未收到任何帧则返回空累积器。
-    fn end_turn(&self, session_key: &str) -> TurnAccumulator {
-        self.turns.lock().remove(session_key).unwrap_or_default()
-    }
-}
-
-/// 把一条流式帧按 `sessionId` 写入当前回合累积器。无 `sessionId`、或该会话当前
-/// 无活动回合时安全忽略（仍会经 `EventSink` 转发给 webview）。
-fn record_frame(turns: &Mutex<HashMap<String, TurnAccumulator>>, frame: &AcpStreamFrame) {
-    let Some(session_id) = frame.session_id.as_deref() else {
-        return;
-    };
-    // let-chain（edition 2024）：仅在拿到锁且该会话有活动回合累积器时记录。
-    let mut map = turns.lock();
-    if let Some(accumulator) = map.get_mut(session_id) {
-        accumulator.record(frame.event.clone());
-    }
 }
 
 /// 修剪并过滤空白可选字符串：`None` / 空 / 全空白 → `None`，否则返回修剪后切片。
@@ -439,80 +356,6 @@ fn workspace_cwd(workspace_root_path: Option<&str>) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
-
-    /// 构造一条 agent_message_chunk 通知帧，线形对齐 turn.rs 的既有 wire 形状
-    /// （`{ sessionId, update: { sessionUpdate, content } }`）。
-    fn message_frame(session_id: &str, text: &str) -> AcpStreamFrame {
-        AcpStreamFrame {
-            session_id: Some(session_id.to_string()),
-            seq: 0,
-            event: json!({
-                "sessionId": session_id,
-                "update": {
-                    "sessionUpdate": "agent_message_chunk",
-                    "content": { "type": "text", "text": text }
-                }
-            }),
-        }
-    }
-
-    fn new_turns() -> Arc<Mutex<HashMap<String, TurnAccumulator>>> {
-        Arc::new(Mutex::new(HashMap::new()))
-    }
-
-    #[test]
-    fn record_frame_accumulates_into_active_turn_by_session() {
-        let turns = new_turns();
-        turns
-            .lock()
-            .insert("s1".to_string(), TurnAccumulator::new());
-
-        record_frame(&turns, &message_frame("s1", "你好"));
-        record_frame(&turns, &message_frame("s1", "，世界"));
-
-        let accumulator = turns.lock().remove("s1").unwrap();
-        let response = accumulator.into_response("s1".to_string());
-        assert_eq!(response.session_id, "s1");
-        assert_eq!(response.result.as_deref(), Some("你好，世界"));
-        assert_eq!(response.events.len(), 2);
-    }
-
-    #[test]
-    fn record_frame_ignores_frames_for_sessions_without_active_turn() {
-        let turns = new_turns();
-        turns
-            .lock()
-            .insert("s1".to_string(), TurnAccumulator::new());
-
-        // 另一个会话当前无活动回合：安全忽略，不创建条目、不 panic。
-        record_frame(&turns, &message_frame("other", "丢弃"));
-        record_frame(&turns, &message_frame("s1", "保留"));
-
-        let map = turns.lock();
-        assert!(!map.contains_key("other"));
-        assert_eq!(map.get("s1").map(TurnAccumulator::len), Some(1));
-    }
-
-    #[test]
-    fn record_frame_ignores_frames_without_session_id() {
-        let turns = new_turns();
-        turns
-            .lock()
-            .insert("s1".to_string(), TurnAccumulator::new());
-
-        let frame = AcpStreamFrame {
-            session_id: None,
-            seq: 0,
-            event: json!({ "update": { "sessionUpdate": "agent_message_chunk" } }),
-        };
-        record_frame(&turns, &frame);
-
-        assert_eq!(
-            turns.lock().get("s1").map(TurnAccumulator::is_empty),
-            Some(true)
-        );
-    }
 
     #[test]
     fn non_empty_trims_and_filters_blank() {

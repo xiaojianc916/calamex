@@ -10,7 +10,6 @@ mod client;
 mod host;
 mod launch;
 mod runtime;
-mod turn;
 mod ui_event;
 
 // 过渡期：本模块部分公开项已接线到宿主命令；仍有部分（如 spawn_acp_client / 权限决策等
@@ -38,11 +37,8 @@ pub use bridge::{
 };
 
 #[allow(unused_imports)]
-pub use turn::TurnAccumulator;
-
-#[allow(unused_imports)]
 pub use host::{
-    AcpChatTurn, AcpHost, AcpOrchestrateResume, AcpOrchestrateStart, ApprovalEmitter, StreamEmitter,
+    AcpHost, AcpOrchestrateResume, AcpOrchestrateStart, ApprovalEmitter, StreamEmitter,
 };
 
 // 进程级生命周期：把单一 AcpHost 作为 Tauri 托管状态持有（对齐 Zed 连接持有模型）。
@@ -53,6 +49,8 @@ pub use runtime::AcpRuntime;
 #[allow(unused_imports)]
 pub(crate) use runtime::ACP_STREAM_EVENT;
 
-// ACP session/update 通知 → 前端 TAgentUiEvent 的纯映射适配（接线前暂无调用点）。
+// ACP session/update 通知 → 前端 TAgentUiEvent 的纯映射适配。build_done_ui_event /
+// build_error_ui_event 已由主聊天路径 live 调用（合成终态 done/error）；
+// session_notification_to_ui_event 为后续 agent/plan 切流预留投影点，暂无调用。
 #[allow(unused_imports)]
 pub use ui_event::{build_done_ui_event, build_error_ui_event, session_notification_to_ui_event};
