@@ -1,12 +1,5 @@
-import { createHighlighterCore, type HighlighterCore } from 'shiki/core';
-import { createOnigurumaEngine } from 'shiki/engine/oniguruma';
 import { logger } from '@/utils/logger';
-import {
-  type IShikiThemedToken,
-  resolveShikiLanguageId,
-  SHIKI_LANG_LOADERS,
-  SHIKI_THEME_NAME,
-} from './shiki-shared';
+import { type IShikiThemedToken, resolveShikiLanguageId } from './shiki-shared';
 
 export {
   type IShikiThemedToken,
@@ -17,117 +10,32 @@ export {
 } from './shiki-shared';
 
 /**
- * 专业版 Shiki 高亮服务。
+ * Shiki 高亮服务（worker-only）。
  *
- * 设计要点：
- * - 使用 fine-grained 的 `shiki/core`，主题/语法全部按需动态 import，配合打包器做
- *   代码分割，初始 bundle 不含任何语法。
- * - 正则引擎采用官方 Oniguruma WASM（`shiki/engine/oniguruma` + `shiki/wasm`）。
- *   JS 正则引擎虽然更小，但与 Oniguruma 并非 100% 兼容，Vue/HTML 等重度内嵌
- *   语法会出现大片不高亮；WASM 通过 `import('shiki/wasm')` 动态加载、被 Vite 单独
- *   切 chunk，只在首次高亮时拉一次，不影响初始包体积与按需加载。
- * - 只接入 github-light 一个主题，保持与编辑器整体浅色风格一致。
- * - 语言语法用显式静态 import 字面量声明（而非模板字符串），保证 Vite 能静态分析、
- *   为每个语法生成独立 chunk，真正做到按需加载。
+ * 所有 Shiki/Oniguruma tokenize 一律在独立 Worker 线程执行；主线程不再创建
+ * highlighter、不再静态依赖 shiki/core 与 oniguruma 引擎，也不再动态加载任何
+ * 语法/wasm/主题——这些只存在于 Worker 模块图里，彻底消除“主线程 + worker 各打
+ * 一份 shiki（core/engine/wasm/langs，约数 MB）”的重复打包。
+ *
+ * 取舍：去掉了主线程同步 tokenize 快路径。已着色（命中按行缓存）的行仍同步重建、
+ * 零闪烁；尚未缓存的新行在 Worker 回包前以纯文本渲染约一帧后补色。
  */
 
-// CodeMirror 调用方已经把单次切片限制在 200 KiB 内；这里再加 LRU 条目上限，避免
-// 滚动/布局重复触发同一窗口 tokenize 时反复跑 Oniguruma，同时避免缓存无界增长。
 const MAX_TOKENIZE_CACHE_ENTRIES = 32;
 const MAX_TOKENIZE_CACHE_CODE_LENGTH = 200_000;
 const SHIKI_WORKER_TIMEOUT_MS = 4000;
 
-type TShikiWorkerRequest = {
-  id: number;
-  code: string;
-  language: string;
-};
-
-type TShikiWorkerResponse = {
-  id: number;
-  tokens: IShikiThemedToken[][] | null;
-  error?: string;
-};
-
+type TShikiWorkerRequest = { id: number; code: string; language: string };
+type TShikiWorkerResponse = { id: number; tokens: IShikiThemedToken[][] | null; error?: string };
 type TShikiWorkerTokenizeResult =
   | { status: 'tokens'; tokens: IShikiThemedToken[][] }
   | { status: 'unavailable' | 'failed' | 'timeout' };
 
-let highlighterPromise: Promise<HighlighterCore> | null = null;
-let highlighterInstance: HighlighterCore | null = null;
 let shikiWorker: Worker | null = null;
 let shikiWorkerBroken = false;
 let nextWorkerRequestId = 1;
 
-const loadedLanguages = new Set<string>();
-const pendingLanguages = new Map<string, Promise<boolean>>();
 const tokenizeCache = new Map<string, IShikiThemedToken[][]>();
-
-/** 创建（或复用）highlighter 单例，仅加载 github-light 主题，语法后续按需注入。 */
-export const ensureHighlighter = (): Promise<HighlighterCore> => {
-  if (!highlighterPromise) {
-    highlighterPromise = createHighlighterCore({
-      themes: [import('@shikijs/themes/github-light')],
-      langs: [],
-      engine: createOnigurumaEngine(import('shiki/wasm')),
-    })
-      .then((highlighter) => {
-        highlighterInstance = highlighter;
-        return highlighter;
-      })
-      .catch((error) => {
-        // 初始化失败不能缓存被拒绝的 Promise，否则后续所有高亮调用都会拿到
-        // 同一个失败结果、整会话高亮永久失效；置空以便下次调用重新尝试创建。
-        highlighterPromise = null;
-        logger.error({ event: 'shiki.highlighter.init_failed', err: error });
-        throw error;
-      });
-  }
-  return highlighterPromise;
-};
-
-/** 指定语言对应的语法是否已加载（用于同步高亮判定）。 */
-export const isShikiLanguageLoaded = (language: string): boolean => {
-  const shikiId = resolveShikiLanguageId(language);
-  return shikiId !== null && loadedLanguages.has(shikiId);
-};
-
-/** 按需加载语言语法；返回最终可用的 Shiki 语言 id（失败或不支持时返回 null）。 */
-export const ensureShikiLanguage = async (language: string): Promise<string | null> => {
-  const shikiId = resolveShikiLanguageId(language);
-  if (!shikiId) {
-    return null;
-  }
-  if (loadedLanguages.has(shikiId)) {
-    return shikiId;
-  }
-
-  let pending = pendingLanguages.get(shikiId);
-  if (!pending) {
-    const loader = SHIKI_LANG_LOADERS[shikiId];
-    if (!loader) {
-      return null;
-    }
-    pending = (async () => {
-      try {
-        const highlighter = await ensureHighlighter();
-        const mod = (await loader()) as { default?: unknown };
-        await highlighter.loadLanguage((mod.default ?? mod) as never);
-        loadedLanguages.add(shikiId);
-        return true;
-      } catch (error) {
-        logger.error({ event: 'shiki.language.load_failed', err: error, language });
-        return false;
-      } finally {
-        pendingLanguages.delete(shikiId);
-      }
-    })();
-    pendingLanguages.set(shikiId, pending);
-  }
-
-  const loaded = await pending;
-  return loaded ? shikiId : null;
-};
 
 const tokenCacheKey = (code: string, shikiId: string): string => `${shikiId}\u0000${code}`;
 
@@ -136,7 +44,6 @@ const getCachedTokens = (cacheKey: string): IShikiThemedToken[][] | null => {
   if (!cached) {
     return null;
   }
-  // Map 删除后重插入即可维护 LRU 最近访问顺序。
   tokenizeCache.delete(cacheKey);
   tokenizeCache.set(cacheKey, cached);
   return cached;
@@ -173,29 +80,6 @@ const cachedTokensFor = (code: string, shikiId: string): IShikiThemedToken[][] |
   return getCachedTokens(tokenCacheKey(code, shikiId));
 };
 
-const tokenize = (
-  highlighter: HighlighterCore,
-  code: string,
-  shikiId: string,
-): IShikiThemedToken[][] | null => {
-  const cached = cachedTokensFor(code, shikiId);
-  if (cached) {
-    return cached;
-  }
-
-  try {
-    const tokens = highlighter.codeToTokensBase(code, {
-      lang: shikiId,
-      theme: SHIKI_THEME_NAME,
-    }) as unknown as IShikiThemedToken[][];
-    cacheTokensIfEligible(code, shikiId, tokens);
-    return tokens;
-  } catch (error) {
-    logger.error({ event: 'shiki.tokenize_failed', err: error, shikiId });
-    return null;
-  }
-};
-
 const getShikiWorker = (): Worker | null => {
   if (shikiWorkerBroken || typeof Worker === 'undefined') {
     return null;
@@ -229,11 +113,7 @@ const tokenizeWithWorkerOnly = (
     return Promise.resolve({ status: 'unavailable' });
   }
 
-  const request: TShikiWorkerRequest = {
-    id: nextWorkerRequestId++,
-    code,
-    language,
-  };
+  const request: TShikiWorkerRequest = { id: nextWorkerRequestId++, code, language };
 
   return new Promise((resolve) => {
     let settled = false;
@@ -284,31 +164,9 @@ const tokenizeWithWorkerOnly = (
   });
 };
 
-/** 同步高亮：仅当语法已加载时返回 token 行，否则返回 null。 */
-export const tokenizeWithShikiSync = (
-  code: string,
-  language: string,
-): IShikiThemedToken[][] | null => {
-  const shikiId = resolveShikiLanguageId(language);
-  if (!shikiId) {
-    return null;
-  }
-
-  const cached = cachedTokensFor(code, shikiId);
-  if (cached) {
-    return cached;
-  }
-
-  if (!highlighterInstance || !loadedLanguages.has(shikiId)) {
-    return null;
-  }
-  return tokenize(highlighterInstance, code, shikiId);
-};
-
 /**
- * Worker 优先高亮：将 Shiki/Oniguruma tokenize 放到独立线程执行。
- * Worker 不可用或运行失败时回退到主线程异步路径，保证功能可用；单次 Worker 超时则
- * 直接放弃本轮高亮，避免把疑似重任务重新搬回 UI 线程造成卡顿。
+ * Worker 高亮：在独立线程执行 Shiki/Oniguruma tokenize。
+ * Worker 不可用 / 失败 / 超时时返回 null，调用方据此保留现有装饰、跳过本轮高亮。
  */
 export const tokenizeWithShikiWorker = async (
   code: string,
@@ -329,23 +187,21 @@ export const tokenizeWithShikiWorker = async (
     cacheTokensIfEligible(code, shikiId, workerResult.tokens);
     return workerResult.tokens;
   }
-  if (workerResult.status === 'timeout') {
-    return null;
-  }
-
-  // Worker 不可用或运行失败时才退回主线程。这里仍走异步入口，避免调用方关心 fallback 细节。
-  return tokenizeWithShiki(code, language);
+  return null;
 };
 
-/** 异步高亮：按需加载语法后再 tokenize。 */
-export const tokenizeWithShiki = async (
-  code: string,
-  language: string,
-): Promise<IShikiThemedToken[][] | null> => {
-  const shikiId = await ensureShikiLanguage(language);
-  if (!shikiId) {
-    return null;
-  }
-  const highlighter = await ensureHighlighter();
-  return tokenize(highlighter, code, shikiId);
-};
+// —— 兼容旧调用点的主线程接口（worker-only 模式下均为空实现）——
+// 主线程不再加载任何语法：故“已加载”恒为 false、同步 tokenize 恒为 null，所有高亮
+// 都会走 Worker。保留这些导出以避免改动 codemirror-shiki-highlight.ts；待 worker-only
+// 验证稳定后，可在 codemirror 侧删除已静态不可达的同步快路径，再移除这些 stub。
+export const isShikiLanguageLoaded = (_language: string): boolean => false;
+
+export const tokenizeWithShikiSync = (
+  _code: string,
+  _language: string,
+): IShikiThemedToken[][] | null => null;
+
+// 仅解析受支持的语言 id（不在主线程加载语法）。返回非 null 让调用方的“预热完成”
+// 逻辑仅触发一次重算后即稳定，不会反复重试。
+export const ensureShikiLanguage = async (language: string): Promise<string | null> =>
+  resolveShikiLanguageId(language);
