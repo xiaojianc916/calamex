@@ -85,6 +85,33 @@ impl AcpRuntime {
         Ok(host)
     }
 
+    /// 强制重启常驻 `AcpHost`：关停现有宿主（若有）后立即用给定 `AppHandle` 重新
+    /// 派生、缓存一个新宿主。语义对齐旧 HTTP sidecar 的「重启」（`agent_sidecar::restart`）：
+    /// 不论当前连接状态如何，丢弃并重建。
+    ///
+    /// 与 `get_or_spawn` 一致由 `AppHandle` 装配真实 emit 闭包；`AcpHost::spawn` 同步返回
+    /// 句柄，故在持锁期间「先关停旧者再派生新者」不跨 await 持锁；先 `take` 并 `shutdown`
+    /// 旧宿主（结束其常驻连接任务、回收 stdio 子进程），保证重建后不残留两份连接。
+    pub fn restart<R: Runtime>(
+        &self,
+        app: &AppHandle<R>,
+    ) -> Result<Arc<AcpHost>, AcpClientError> {
+        let mut guard = self.host.lock();
+        // 先关停旧宿主：结束其常驻连接任务并回收 stdio 子进程，避免重建后残留两份连接。
+        if let Some(previous) = guard.take() {
+            previous.shutdown();
+        }
+
+        let config = build_acp_client_config().map_err(AcpClientError::Transport)?;
+        let host = Arc::new(AcpHost::spawn(
+            config,
+            stream_emitter(app.clone()),
+            approval_emitter(app.clone()),
+        )?);
+        *guard = Some(host.clone());
+        Ok(host)
+    }
+
     /// 取消指定线程（thread_id）当前进行中的回合；仅在 ACP 宿主已建立时生效。
     ///
     /// 缺省（宿主尚未懒建立）时为安全的空操作：取消本身绝不应触发 node 子进程派生。
