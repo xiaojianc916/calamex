@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppError } from '@/types/app-error';
 import {
   registerRuntimeDiagnostics,
+  reportRuntimeError,
   runtimeErrorState,
   setRuntimeError,
 } from '@/utils/runtime-diagnostics';
@@ -54,6 +55,29 @@ describe('runtime-diagnostics', () => {
     });
   });
 
+  describe('reportRuntimeError', () => {
+    it('忽略可恢复的递归更新告警，不写入诊断态', () => {
+      reportRuntimeError(
+        'Vue render failed',
+        new Error('Maximum recursive updates exceeded in component <TooltipProvider>.'),
+      );
+      expect(runtimeErrorState.value).toBeNull();
+    });
+
+    it('忽略只有字符串消息的递归更新告警', () => {
+      reportRuntimeError('Vue render failed', 'Maximum recursive updates exceeded.');
+      expect(runtimeErrorState.value).toBeNull();
+    });
+
+    it('普通错误仍写入诊断态', () => {
+      reportRuntimeError('Vue render failed', new Error('真实渲染错误'));
+      expect(runtimeErrorState.value).toMatchObject({
+        title: 'Vue render failed',
+        message: '真实渲染错误',
+      });
+    });
+  });
+
   describe('registerRuntimeDiagnostics', () => {
     it('注册后在 window 上保存清理函数', () => {
       registerRuntimeDiagnostics();
@@ -78,6 +102,18 @@ describe('runtime-diagnostics', () => {
       const event = Object.assign(new Event('error'), {
         error: undefined,
         message: 'ResizeObserver loop completed with undelivered notifications.',
+      });
+      const preventDefault = vi.spyOn(event, 'preventDefault');
+      window.dispatchEvent(event);
+      expect(preventDefault).toHaveBeenCalledTimes(1);
+      expect(runtimeErrorState.value).toBeNull();
+    });
+
+    it('忽略可恢复的递归更新告警错误事件', () => {
+      registerRuntimeDiagnostics();
+      const event = Object.assign(new Event('error'), {
+        error: new Error('Maximum recursive updates exceeded in component <TooltipProvider>.'),
+        message: 'Maximum recursive updates exceeded.',
       });
       const preventDefault = vi.spyOn(event, 'preventDefault');
       window.dispatchEvent(event);
