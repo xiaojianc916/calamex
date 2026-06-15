@@ -36,7 +36,7 @@ export const createToolErrorCircuitBreaker = (
         }
 
         const wrappedTool = { ...tool };
-        wrappedTool.execute = async (inputData: unknown): Promise<unknown> => {
+        wrappedTool.execute = async (inputData: unknown, ...rest: unknown[]): Promise<unknown> => {
             const failureBucket = resolveToolFailureBucket(toolName, inputData);
             const failureCount = consecutiveErrorCounts.get(failureBucket) ?? 0;
 
@@ -47,7 +47,7 @@ export const createToolErrorCircuitBreaker = (
             }
 
             try {
-                const result = await tool.execute(inputData);
+                const result = await tool.execute(inputData, ...rest);
                 consecutiveErrorCounts.delete(failureBucket);
                 return result;
             } catch (error) {

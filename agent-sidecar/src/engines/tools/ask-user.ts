@@ -24,7 +24,7 @@ import { createJsonToolModelOutput } from '../budget/budget.js';
  */
 
 // 字符上限对齐 Gemini ask_user：header 是紧凑分类标签。
-const HEADER_MAX_CHARS = 16;
+export const HEADER_MAX_CHARS = 16;
 
 export type TQuestionType = 'choice' | 'text' | 'yesno';
 export type TAskUserOutcome = 'selected' | 'cancelled';
@@ -72,7 +72,7 @@ const questionInputSchema = z.object({
 
 // 等价于 Gemini validateToolParamValues 的跨字段约束：
 // choice 必须带 2-4 个选项（数量上限由 array.min/max 把关，此处补「choice 必须有 options」）。
-const askUserInputSchema = z.object({
+export const askUserInputSchema = z.object({
     questions: z
         .array(questionInputSchema)
         .min(1, 'At least one question is required.')
@@ -111,7 +111,7 @@ const surfacedQuestionSchema = z.object({
     placeholder: z.string().optional(),
 });
 
-const askUserRequestSchema = z.object({
+export const askUserRequestSchema = z.object({
     kind: z.literal('user_question'),
     questions: z.array(surfacedQuestionSchema).min(1),
 });
@@ -128,7 +128,7 @@ const answerSchema = z.object({
     text: z.string().optional(),
 });
 
-const askUserResultSchema = z.object({
+export const askUserResultSchema = z.object({
     outcome: z.enum(['selected', 'cancelled']),
     answers: z.array(answerSchema).optional(),
 });
@@ -136,7 +136,7 @@ const askUserResultSchema = z.object({
 export type TAskUserResult = z.infer<typeof askUserResultSchema>;
 
 // 返回给运行时/模型的结果结构。
-const askUserOutputSchema = z.object({
+export const askUserOutputSchema = z.object({
     outcome: z.enum(['selected', 'cancelled']),
     display: z.string(),
     answers: z
@@ -157,19 +157,19 @@ const askUserOutputSchema = z.object({
 // ---------------------------------------------------------------------------
 
 // 对标 Gemini ask_user 的 unescape：把字面量 \r\n / \n 归一为真实换行。
-const unescape = (value: string): string => value.replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n');
+export const unescape = (value: string): string => value.replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n');
 
-const questionIdOf = (index: number): string => `q${index + 1}`;
-const optionIdOf = (questionId: string, index: number): string => `${questionId}-o${index + 1}`;
+export const questionIdOf = (index: number): string => `q${index + 1}`;
+export const optionIdOf = (questionId: string, index: number): string => `${questionId}-o${index + 1}`;
 
 // 是/否合成两个稳定 optionId（仍走 ACP optionId 答案模型，前端渲染为 是/否）。
-const YESNO_OPTIONS: ReadonlyArray<{ optionId: string; label: string }> = Object.freeze([
+export const YESNO_OPTIONS: ReadonlyArray<{ optionId: string; label: string }> = Object.freeze([
     { optionId: 'yes', label: '是' },
     { optionId: 'no', label: '否' },
 ]);
 
 // 把模型入参规范化为带稳定 id 的挂起请求（含 unescape 归一）。
-const buildAskUserRequest = (input: TAskUserInput): TAskUserRequest => ({
+export const buildAskUserRequest = (input: TAskUserInput): TAskUserRequest => ({
     kind: 'user_question',
     questions: input.questions.map((question, questionIndex) => {
         const questionId = questionIdOf(questionIndex);
@@ -206,7 +206,7 @@ const buildAskUserRequest = (input: TAskUserInput): TAskUserRequest => ({
 });
 
 // 把单题答案拼成可读文本：所选项 label + 自由文本（Other），多行用换行连接。
-const answerTextForQuestion = (
+export const answerTextForQuestion = (
     question: TSurfacedQuestion,
     answer: { optionIds: string[]; text?: string | undefined } | undefined,
 ): string => {

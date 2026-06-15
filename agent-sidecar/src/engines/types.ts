@@ -359,7 +359,7 @@ export interface IMastraToolBudgetStats {
 }
 
 export interface IMastraExecutableToolLike {
-    execute: (inputData: unknown) => Promise<unknown> | unknown;
+    execute: (inputData: unknown, ...rest: unknown[]) => Promise<unknown> | unknown;
 }
 
 export interface IMastraDurableAgentLike {
