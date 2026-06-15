@@ -27,24 +27,24 @@ const TOOL_POLICY_SHARED = [
 ].join('\n');
 
 const PLAN_MODE_SECTION = [
-    '## 模式:Plan',
-    '当前为 **Plan 模式**:仅产出"下一步做什么"的简短计划,不执行任何变更。',
+    '## 模式：Plan',
+    '当前为 **Plan 模式**:通过 `update_plan` 工具把方案写入一份活体 `PLAN.md`,规划完成后调用 `exit_plan` 交付审批。本模式只读:除经 `update_plan` 写 `PLAN.md` 外,不得改动任何文件或产生副作用。',
     '',
-    '### 输出契约(MUST)',
-    '- 仅返回一个 JSON 对象,无 Markdown、代码栅栏或前后缀。',
-    '- 根字段:`goal: string`、`steps: Step[]`。',
-    '- `Step` 字段:`id`、`title`、`goal`、`status`、`tools`、`riskLevel`、`requiresApproval`、`expectedOutput`。',
-    '- 不主动生成 `description`、`files`、`commands`、`risks`、`acceptanceCriteria` 等扩展字段,除非用户明确要求详细方案。',
+    '### 工作流(MUST)',
+    '- **先调研**:需要项目上下文时,先用只读工具(读文件、grep、检索等)了解现状,不得臆测项目结构。',
+    '- **写计划**:用 `update_plan`(command="write")把完整方案写入 `PLAN.md`,可多次调用迭代;写前可用 command="view" 查看当前内容或结构骨架。',
+    '- **缺信息就提问**:关键决策无法确定时,用 `ask_user` 向用户提问,得到答复后再继续规划。',
+    '- **收尾交付**:`PLAN.md` 的 Steps 区已列全可执行步骤后,调用 `exit_plan` 结束规划并交付审批;在此之前不要空转。',
     '',
-    '### 步骤规范(MUST)',
-    '- **title**:8–18 中文字符(或等长英文),动词开头、具体可执行,不写背景与验收语。',
-    '- **数量**:依复杂度自定,通常 3–5 步,简单任务可 2 步,不得凑数拆步。',
-    '- **goal / expectedOutput**:与 `title` 同样精简,一句话即可。',
-    '- **id**:稳定可读的小写短横线,如 `read-config`、`apply-migration`。',
+    '### PLAN.md 结构(MUST)',
+    '- 固定章节(用 `# N. 标题`):1. Goal、2. Context & Constraints、3. Approach、4. Steps、5. Verification。',
+    '- **Steps 区**:用有序列表逐条写出可执行步骤,每个列表项即一个步骤——这些条目将被解析为执行阶段的步骤,务必具体、可执行、按序。',
+    '- **每步措辞**:动词开头、具体可执行,一行一步;背景与验收分别归入 Context、Verification 章节,不要塞进步骤标题。',
+    '- **数量**:依复杂度自定,通常 3–5 步,简单任务可 2 步,不为凑数而拆步。',
     '',
     '### 安全护栏(MUST NOT)',
-    '- 只读阶段:禁止写文件、跑命令、装依赖、提交推送 Git 或调用任何副作用工具。',
-    '- 规划前需上下文时,先用只读工具读取再生成 `steps`,不得凭空臆测项目结构。',
+    '- 只读阶段:禁止写文件(`PLAN.md` 除外,且只能经 `update_plan`)、跑命令、装依赖、提交推送 Git 或调用任何副作用工具。',
+    '- 不要在聊天正文里另附一份 JSON 或纯文本计划;`PLAN.md` 是计划的唯一载体。',
 ].join('\n');
 
 const AGENT_MODE_SECTION = [
