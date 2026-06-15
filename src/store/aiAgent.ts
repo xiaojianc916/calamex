@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia';
 import { computed, ref, shallowRef } from 'vue';
 import { z } from 'zod';
+import type { IAgentSidecarPendingAskUser } from '@/composables/ai/sidecar-ask-user';
 import type {
   IAiAgentClassifyTaskPayload,
   IAiAgentPatchSummary,
@@ -37,6 +38,7 @@ import {
 } from '@/types/ai/execution-mode';
 import { aiChatMessageSchema, aiLanguageModelUsageSchema } from '@/types/ai/schema';
 import { AGENT_PLAN_STATUSES } from '@/types/ai/sidecar';
+import { askUserQuestionSchema } from '@/types/ai/sidecar.schema';
 import { aiToolActivityInlineSchema } from '@/types/ai/stream.schema';
 
 // ---------------------------------------------------------------------------
@@ -82,6 +84,13 @@ const aiPersistedSidecarAgentSessionSchema = z.object({
   references: z.array(aiContextReferenceSchema).max(20),
 });
 
+// ask_user 反向提问的待作答门。镜像 pendingToolConfirmation 的持久化形态,
+// 复用共享的 askUserQuestionSchema(单一来源,避免双 SoT),requestId 用于 resume。
+const agentSidecarPendingAskUserSchema = z.object({
+  requestId: z.string().min(1),
+  questions: z.array(askUserQuestionSchema).min(1).max(4),
+});
+
 const aiAgentPersistSchema = z.object({
   mode: aiAgentPanelModeSchema,
   networkPermission: aiAgentNetworkPermissionSchema,
@@ -118,6 +127,8 @@ const aiAgentPersistSchema = z.object({
   stepFinalAnswers: z.record(z.string(), z.array(aiAgentStepFinalAnswerSchema).max(50)),
   toolActivities: z.record(z.string(), z.array(aiToolActivityInlineSchema).max(50)),
   pendingToolConfirmation: aiToolConfirmationRequestSchema.nullable(),
+  // default(null) 兼容尚未写入该字段的旧持久化数据。
+  pendingUserQuestion: agentSidecarPendingAskUserSchema.nullable().default(null),
   pendingSidecarAgentSession: aiPersistedSidecarAgentSessionSchema.nullable(),
   errorMessage: z.string(),
 });
@@ -165,10 +176,12 @@ const normalizeHydratedAgentState = (state: TAiAgentPersistState): TAiAgentPersi
     ...state,
     activeRunId,
     runs,
-    // 没有待确认工具时,顺手清掉 pending sidecar session,避免「确认窗口已关但 session 残留」
-    pendingSidecarAgentSession: state.pendingToolConfirmation
-      ? state.pendingSidecarAgentSession
-      : null,
+    // 没有待确认工具、也没有待作答提问时,顺手清掉 pending sidecar session,
+    // 避免「门已关但 session 残留」(两类挂起门共用同一条 resume session)。
+    pendingSidecarAgentSession:
+      state.pendingToolConfirmation || state.pendingUserQuestion
+        ? state.pendingSidecarAgentSession
+        : null,
   };
 };
 
@@ -305,6 +318,8 @@ export const useAiAgentStore = defineStore(
     const patchSummaries = ref<Record<string, IAiAgentPatchSummary[]>>({});
     const toolActivities = ref<Record<string, IAiToolActivityInline[]>>({});
     const pendingToolConfirmation = ref<IAiToolConfirmationRequest | null>(null);
+    // ask_user 反向提问的待作答门(与 pendingToolConfirmation 互斥地占用同一回合)。
+    const pendingUserQuestion = ref<IAgentSidecarPendingAskUser | null>(null);
     const pendingSidecarAgentSession = ref<IAiPersistedSidecarAgentSession | null>(null);
     const errorMessage = ref<string>('');
 
@@ -316,7 +331,8 @@ export const useAiAgentStore = defineStore(
     );
 
     const activeToolActivity = computed(() => {
-      if (pendingToolConfirmation.value) {
+      // 任一挂起门(工具审批 / 反向提问)打开时,隐藏工具活动指示器,让位给门 UI。
+      if (pendingToolConfirmation.value || pendingUserQuestion.value) {
         return null;
       }
       const runId = activeRunId.value;
@@ -384,6 +400,7 @@ export const useAiAgentStore = defineStore(
       classificationReason.value = '';
       shouldEnterPlanMode.value = false;
       pendingToolConfirmation.value = null;
+      pendingUserQuestion.value = null;
       pendingSidecarAgentSession.value = null;
       errorMessage.value = '';
     };
@@ -393,6 +410,7 @@ export const useAiAgentStore = defineStore(
       activeGoal.value = goal;
       shouldEnterPlanMode.value = false;
       pendingToolConfirmation.value = null;
+      pendingUserQuestion.value = null;
       pendingSidecarAgentSession.value = null;
       errorMessage.value = message;
       mode.value = 'plan';
@@ -408,6 +426,7 @@ export const useAiAgentStore = defineStore(
       isPlanning.value = false;
       isApproving.value = false;
       pendingToolConfirmation.value = null;
+      pendingUserQuestion.value = null;
       pendingSidecarAgentSession.value = null;
       errorMessage.value = '';
     };
@@ -651,6 +670,19 @@ export const useAiAgentStore = defineStore(
       }
     };
 
+    // ask_user 反向提问门的 setter / clearer,镜像 pendingToolConfirmation:
+    // 提问与工具审批互斥地占用同一回合,clear 时连带回收共用的 resume session。
+    const setPendingUserQuestion = (question: IAgentSidecarPendingAskUser): void => {
+      pendingUserQuestion.value = question;
+    };
+
+    const clearPendingUserQuestion = (requestId?: string): void => {
+      if (!requestId || pendingUserQuestion.value?.requestId === requestId) {
+        pendingUserQuestion.value = null;
+        pendingSidecarAgentSession.value = null;
+      }
+    };
+
     const setPendingSidecarAgentSession = (session: IAiPersistedSidecarAgentSession): void => {
       pendingSidecarAgentSession.value = session;
     };
@@ -697,6 +729,7 @@ export const useAiAgentStore = defineStore(
       patchSummaries,
       toolActivities,
       pendingToolConfirmation,
+      pendingUserQuestion,
       pendingSidecarAgentSession,
       errorMessage,
       // getters
@@ -735,6 +768,8 @@ export const useAiAgentStore = defineStore(
       appendToolActivity,
       setPendingToolConfirmation,
       clearPendingToolConfirmation,
+      setPendingUserQuestion,
+      clearPendingUserQuestion,
       setPendingSidecarAgentSession,
       clearPendingSidecarAgentSession,
     };
@@ -774,6 +809,7 @@ export const useAiAgentStore = defineStore(
         'stepFinalAnswers',
         'toolActivities',
         'pendingToolConfirmation',
+        'pendingUserQuestion',
         'pendingSidecarAgentSession',
         'errorMessage',
       ],
