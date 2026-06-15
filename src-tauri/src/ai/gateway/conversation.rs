@@ -3,7 +3,6 @@ use super::prompt::{
     build_inline_prompt, clip_title_source,
 };
 use super::*;
-use crate::agent_sidecar;
 use crate::commands::contracts::{AgentSidecarChatRequest, AgentSidecarMessagePayload};
 use tauri::{Emitter as _, Manager as _};
 
@@ -98,7 +97,7 @@ pub async fn generate_conversation_title(
     let sidecar_response = run_model_chat_via_acp(
         app,
         request_payload,
-        agent_sidecar::narrator_sidecar_model_config()?,
+        narrator_sidecar_model_config()?,
     )
     .await?;
     let title = normalize_conversation_title(&sidecar_events_result_text(&sidecar_response));
@@ -275,7 +274,7 @@ pub async fn inline_complete(
     let response = run_model_chat_via_acp(
         app,
         request_payload,
-        agent_sidecar::current_sidecar_model_config()?,
+        current_sidecar_model_config()?,
     )
     .await?;
 
