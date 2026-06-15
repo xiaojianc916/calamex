@@ -1,5 +1,5 @@
-import type { InjectionKey, Readonly, Ref } from 'vue';
 import type { MarkstreamVirtualMetrics } from 'markstream-vue';
+import type { InjectionKey, Ref } from 'vue';
 
 export interface IAiMarkdownVirtualScrollContext {
   scrollRoot: Readonly<Ref<HTMLElement | null>>;
