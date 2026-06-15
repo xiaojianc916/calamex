@@ -507,7 +507,7 @@ fn build_image_asset_payload(path: PathBuf, byte_size: u64) -> Result<ImageAsset
     Ok(ImageAssetPayload {
         path: path.to_string_lossy().to_string(),
         name,
-        mime_type: mime_type.to_string(),
+        mime_type,
         byte_size: count_to_u32(byte_size as usize, "图片字节数")?,
     })
 }
@@ -516,23 +516,22 @@ fn count_to_u32(value: usize, label: &str) -> Result<u32, String> {
     u32::try_from(value).map_err(|_| format!("{label}超出支持范围。"))
 }
 
-fn resolve_image_mime_type(path: &Path) -> Result<&'static str, String> {
+fn resolve_image_mime_type(path: &Path) -> Result<String, String> {
     let extension = path
         .extension()
         .and_then(|value| value.to_str())
         .map(|value| value.to_ascii_lowercase())
         .ok_or_else(|| "无法识别图片格式。".to_string())?;
 
-    match extension.as_str() {
-        "png" => Ok("image/png"),
-        "jpg" | "jpeg" => Ok("image/jpeg"),
-        "gif" => Ok("image/gif"),
-        "webp" => Ok("image/webp"),
-        "bmp" => Ok("image/bmp"),
-        "svg" => Ok("image/svg+xml"),
-        "ico" => Ok("image/x-icon"),
-        _ => Err(format!("暂不支持预览该图片格式：{extension}")),
+    let mime_type = mime_guess::from_path(path)
+        .first()
+        .ok_or_else(|| format!("暂不支持预览该图片格式：{extension}"))?;
+
+    if mime_type.type_() != mime_guess::mime::IMAGE {
+        return Err(format!("暂不支持预览该图片格式：{extension}"));
     }
+
+    Ok(mime_type.essence_str().to_string())
 }
 
 fn is_workspace_directory_entry(path: &Path, file_type: &fs::FileType) -> bool {
@@ -628,10 +627,10 @@ fn encode_with_encoding_name(content: &str, label: &str) -> Result<Vec<u8>, Stri
 #[cfg(test)]
 mod tests {
     use super::{
-        atomic_write, decode_script_bytes, read_workspace_entries, resolve_save_script_path,
-        resolve_script_file_path,
+        atomic_write, decode_script_bytes, read_workspace_entries, resolve_image_mime_type,
+        resolve_save_script_path, resolve_script_file_path,
     };
-    use std::{fs, thread};
+    use std::{fs, path::Path, thread};
 
     #[test]
     fn decodes_utf8_bom_and_strips_marker() {
@@ -680,6 +679,26 @@ mod tests {
         let bytes = [0x68, 0x00, 0x69];
         let error = decode_script_bytes(&bytes).expect_err("binary content should be rejected");
         assert!(error.contains("二进制"));
+    }
+
+    #[test]
+    fn resolves_image_mime_types_with_mime_guess() {
+        for (path, expected) in [
+            ("preview.png", "image/png"),
+            ("preview.jpg", "image/jpeg"),
+            ("preview.svg", "image/svg+xml"),
+            ("preview.avif", "image/avif"),
+        ] {
+            let mime_type = resolve_image_mime_type(Path::new(path)).expect("image mime");
+            assert_eq!(mime_type, expected);
+        }
+    }
+
+    #[test]
+    fn rejects_non_image_mime_types_from_mime_guess() {
+        let error = resolve_image_mime_type(Path::new("script.sh"))
+            .expect_err("non-image mime should be rejected");
+        assert!(error.contains("暂不支持预览该图片格式：sh"));
     }
 
     #[test]
