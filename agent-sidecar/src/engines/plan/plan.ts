@@ -3,6 +3,7 @@ import { createDeepSeekReasoningRunPrefix, evictDeepSeekReasoningByPrefix, runWi
 import { agentPlanGenerationSchema } from '../../schemas/plan.js';
 import { buildSystemPrompt } from '../prompts/system-prompt.js';
 import { createMastraMemoryReference, createMastraMemoryScope, resolveObservationalMemoryEnabled, resolveSemanticRecallEnabled } from '../context/memory.js';
+import { createExecutionRequestContext } from '../context/context.js';
 import { createMastraMemoryForModel, createMastraModelConfig, resolveMastraModelConfig } from '../agent/factory.js';
 import { createAcontextTokenEventDraft, createDeepSeekPayloadEventSink } from '../budget/budget.js';
 import { normalizeMastraError } from '../errors.js';
@@ -69,6 +70,7 @@ export class MastraRuntimePlan extends MastraRuntimeChat {
         const observationalMemoryEnabled = resolveObservationalMemoryEnabled();
         const semanticRecallEnabled = resolveSemanticRecallEnabled();
         const payloadEventSink = createDeepSeekPayloadEventSink(events, options);
+        let shouldDisconnectBundle = true;
 
         try {
             return await runWithDeepSeekReasoningContext({
@@ -77,7 +79,23 @@ export class MastraRuntimePlan extends MastraRuntimeChat {
                 onRequestPayload: payloadEventSink.onRequestPayload,
             }, async () => {
                 const systemPrompt = buildSystemPrompt(planInput, modelConfig.modelId);
-                const agent = this.createAgent({
+                // 计划模式与 chat/agent 共用同一条流式脊柱：当存在工具（含 ask_user 反向提问）时，
+                // 复用 chat.ts 同款可恢复 agent handle，使 ask_user 在规划阶段也能挂起/恢复。
+                const resumableAgentHandle = hasAgentTools && this.shouldUseRegisteredAgentForTools
+                    ? await this.createResumableAgentHandle({
+                        id: 'calamex-agent-sidecar-plan',
+                        name: 'Calamex Agent Plan Sidecar',
+                        instructions: systemPrompt,
+                        model: createMastraModelConfig(modelConfig),
+                        memory: agentMemory,
+                        ...(hasTools ? { tools: mastraTools } : {}),
+                        ...(workspace ? { workspace } : {}),
+                        ...(browser ? { browser } : {}),
+                        inputProcessors: createMastraAgentInputProcessors(),
+                        outputProcessors: createMastraAgentOutputProcessors(),
+                    })
+                    : null;
+                const agent = resumableAgentHandle?.agent ?? this.createAgent({
                     id: 'calamex-agent-sidecar-plan',
                     name: 'Calamex Agent Plan Sidecar',
                     instructions: systemPrompt,
@@ -90,7 +108,7 @@ export class MastraRuntimePlan extends MastraRuntimeChat {
                     outputProcessors: createMastraAgentOutputProcessors(),
                 });
                 const toolChoice: IMastraGenerateOptions['toolChoice'] = hasAgentTools ? 'auto' : 'none';
-                const generateOptions: IMastraGenerateOptions = {
+                const streamOptions: IMastraGenerateOptions = {
                     maxSteps: hasAgentTools ? 10 : 1,
                     toolChoice,
                     structuredOutput: {
@@ -100,6 +118,13 @@ export class MastraRuntimePlan extends MastraRuntimeChat {
                     memory,
                     ...(options.context?.signal ? { abortSignal: options.context.signal } : {}),
                     runId: requestedRunId,
+                    ...(resumableAgentHandle ? {
+                        requestContext: createExecutionRequestContext(
+                            planInput,
+                            systemPrompt,
+                            memory,
+                        ),
+                    } : {}),
                 };
                 const mastraMessages = buildMastraMessages(planInput);
                 const createRuntimeEvent = createRuntimeEventFactory({
@@ -121,12 +146,56 @@ export class MastraRuntimePlan extends MastraRuntimeChat {
                     memoryEnabled: true,
                     observationalMemoryEnabled,
                     semanticRecallEnabled,
-                    maxSteps: generateOptions.maxSteps ?? 1,
+                    maxSteps: streamOptions.maxSteps ?? 1,
                     toolChoice,
                     modelCapabilities: modelConfig.capabilities,
                 })), options);
-                const generated = await agent.generate(mastraMessages, generateOptions);
-                const parsedPlan = normalizeGeneratedAgentPlan(generated.object, input.goal);
+                // 先经 consumeTextStream 消费 fullStream（投影推理/正文/工具事件，并让
+                // ask_user 反向提问得以挂起），再读取 Mastra 官方 MastraModelOutput.object
+                // 取最终计划对象；计划持久化一律后置到对象解析成功之后，避免半成品计划落库。
+                const stream = await agent.stream(mastraMessages, streamOptions);
+                const streamSummary = await this.consumeTextStream(
+                    agent,
+                    mcpBundle,
+                    sessionId,
+                    stream,
+                    events,
+                    options,
+                    createRuntimeEvent,
+                    workspace,
+                    browser,
+                );
+                shouldDisconnectBundle = streamSummary.releaseResources;
+
+                if (streamSummary.streamErrorMessage) {
+                    return createErrorResponse(
+                        sessionId,
+                        `Mastra Plan 执行失败：${streamSummary.streamErrorMessage}`,
+                        events,
+                        options,
+                    );
+                }
+
+                if (streamSummary.pendingApproval) {
+                    // 规划阶段触发 ask_user 反向提问（或其它挂起工具）：事件流已带出
+                    // ask_user_required，所持 bundle/workspace/browser 不在此回收，待用户经
+                    // ask-user resume 续跑后再完成计划生成。
+                    return {
+                        sessionId,
+                        events,
+                        result: null,
+                    };
+                }
+
+                let planObject: unknown;
+                try {
+                    planObject = stream.object ? await stream.object : undefined;
+                } catch {
+                    // 结构化对象解析失败（模型未产出合规对象）：降级到统一的
+                    // “没有返回有效 AgentPlan” 错误，保留精确语义而非抛给外层泛化错误。
+                    planObject = undefined;
+                }
+                const parsedPlan = normalizeGeneratedAgentPlan(planObject, input.goal);
 
                 if (!parsedPlan) {
                     return createErrorResponse(
@@ -156,9 +225,11 @@ export class MastraRuntimePlan extends MastraRuntimeChat {
             );
         } finally {
             evictDeepSeekReasoningByPrefix(createDeepSeekReasoningRunPrefix(sessionId, requestedRunId));
-            await mcpBundle.disconnectAll();
-            await destroyMastraWorkspace(workspace);
-            await destroyMastraBrowser(browser);
+            if (shouldDisconnectBundle) {
+                await mcpBundle.disconnectAll();
+                await destroyMastraWorkspace(workspace);
+                await destroyMastraBrowser(browser);
+            }
         }
     }
 
