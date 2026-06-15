@@ -18,8 +18,8 @@ const props = defineProps<{
   isDesktopRuntime: boolean;
   workspaceRootPath: string | null;
   preloadedWorkspaceRoot: IWorkspaceDirectoryPayload | null;
-  initialExplorerExpandedPaths: string[];
-  initialExplorerSelectedPath: string | null;
+  startupExplorerExpandedPaths: string[];
+  startupExplorerSelectedPath: string | null;
   canRun: boolean;
   isRunning: boolean;
   hasRunArtifacts: boolean;
@@ -49,8 +49,8 @@ const emit = defineEmits<{
     :is-desktop-runtime="props.isDesktopRuntime"
     :workspace-root-path="props.workspaceRootPath"
     :preloaded-workspace-root="props.preloadedWorkspaceRoot"
-    :initial-explorer-expanded-paths="props.initialExplorerExpandedPaths"
-    :initial-explorer-selected-path="props.initialExplorerSelectedPath"
+    :startup-explorer-expanded-paths="props.startupExplorerExpandedPaths"
+    :startup-explorer-selected-path="props.startupExplorerSelectedPath"
     :can-run="props.canRun"
     :is-running="props.isRunning"
     :has-run-artifacts="props.hasRunArtifacts"

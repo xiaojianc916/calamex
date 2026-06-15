@@ -9,11 +9,11 @@ export interface IUseWorkspaceExplorerRootOptions {
   isDesktopRuntime: () => boolean;
   getWorkspaceRootPath: () => string | null;
   getPreloadedWorkspaceRoot: () => IWorkspaceDirectoryPayload | null;
-  getInitialExpandedPaths: () => string[];
+  getStartupExpandedPaths: () => string[];
   childrenMap: Record<string, IWorkspaceEntry[]>;
   clearTreeState: () => void;
-  resetTreeForRoot: (payload: IWorkspaceDirectoryPayload, initialExpandedPaths: string[]) => void;
-  loadInitialExpandedDirectories: () => Promise<void>;
+  resetTreeForRoot: (payload: IWorkspaceDirectoryPayload, startupExpandedPaths: string[]) => void;
+  loadStartupExpandedDirectories: () => Promise<void>;
   startWorkspaceFileWatcher: () => void;
 }
 
@@ -64,7 +64,7 @@ export function useWorkspaceExplorerRoot(options: IUseWorkspaceExplorerRootOptio
     loadError.value = '';
     root.value = payload;
     loadedWorkspaceKey.value = workspaceKey;
-    options.resetTreeForRoot(payload, options.getInitialExpandedPaths());
+    options.resetTreeForRoot(payload, options.getStartupExpandedPaths());
   };
 
   const loadWorkspaceRoot = async (workspaceKey: string): Promise<void> => {
@@ -97,7 +97,7 @@ export function useWorkspaceExplorerRoot(options: IUseWorkspaceExplorerRootOptio
         return;
       }
       applyWorkspaceRootPayload(payload, workspaceKey);
-      void options.loadInitialExpandedDirectories();
+      void options.loadStartupExpandedDirectories();
       options.startWorkspaceFileWatcher();
     } catch (error) {
       if (requestId !== rootRequestId) {

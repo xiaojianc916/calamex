@@ -86,11 +86,11 @@ export function useWorkspaceExplorerTree(options: IUseWorkspaceExplorerTreeOptio
 
   const resetTreeForRoot = (
     payload: IWorkspaceDirectoryPayload,
-    initialExpandedPaths: string[],
+    startupExpandedPaths: string[],
   ): void => {
     clearTreeState();
     childrenMap[payload.rootPath] = payload.entries;
-    const scopedExpandedPaths = initialExpandedPaths.filter(
+    const scopedExpandedPaths = startupExpandedPaths.filter(
       (path) => getRelativeFileSystemPath(path, payload.rootPath) !== null,
     );
     manualExpandedPaths.value = new Set([payload.rootPath, ...scopedExpandedPaths]);
@@ -131,7 +131,7 @@ export function useWorkspaceExplorerTree(options: IUseWorkspaceExplorerTreeOptio
     }
   };
 
-  const loadInitialExpandedDirectories = async (): Promise<void> => {
+  const loadStartupExpandedDirectories = async (): Promise<void> => {
     const root = getRoot();
     if (!root) {
       return;
@@ -218,7 +218,7 @@ export function useWorkspaceExplorerTree(options: IUseWorkspaceExplorerTreeOptio
     clearTreeState,
     resetTreeForRoot,
     loadDirectoryEntries,
-    loadInitialExpandedDirectories,
+    loadStartupExpandedDirectories,
     expandExplorerPath,
     toggleExplorerPath,
     resolveParentPathForMutation,
