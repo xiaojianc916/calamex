@@ -13,7 +13,6 @@ import type {
 import type { ITerminalRunCompletedPayload } from '@/types/terminal';
 import { waitForDesktopRuntime } from '@/utils/desktop-runtime';
 import { markStartup } from '@/utils/startup-profiler';
-import { createStartupShellState } from '@/utils/startup-shell';
 import { consumeProgrammaticWindowCloseAllowance } from '@/utils/window-close';
 import {
   SHELL_WINDOW_RESIZE_END_EVENT,
@@ -115,7 +114,6 @@ export const useShellWorkbenchView = (onReady: () => void) => {
   );
   const startupWorkspaceRoot = ref<IWorkspaceDirectoryPayload | null>(null);
   const hasEmittedReady = ref(false);
-  const isStartupShellPrimed = ref(false);
   const isRestoringWorkbenchSession = ref(false);
   const documentBackStack = ref<string[]>([]);
   const documentForwardStack = ref<string[]>([]);
@@ -128,16 +126,13 @@ export const useShellWorkbenchView = (onReady: () => void) => {
   let globalKeydownCleanup: (() => void) | null = null;
 
   const sidebarWidth = computed(() => DASHBOARD_SIDEBAR_WIDTH);
-  const startupShellState = computed(() =>
-    createStartupShellState(workbench.editorStore.sessionSnapshot),
+  const visibleWorkspaceRootPath = computed(() => workbench.editorStore.workspaceRootPath);
+
+  const startupExplorerExpandedPaths = computed(
+    () => workbench.editorStore.sessionSnapshot.workbench.explorerExpandedPaths ?? [],
   );
-  const isStartupShellVisible = computed(
-    () => isStartupShellPrimed.value && !workbench.editorStore.hasActiveDocument,
-  );
-  const visibleWorkspaceRootPath = computed(() =>
-    isStartupShellVisible.value
-      ? (startupShellState.value?.workspaceRoot ?? workbench.editorStore.workspaceRootPath)
-      : workbench.editorStore.workspaceRootPath,
+  const startupExplorerSelectedPath = computed(
+    () => workbench.editorStore.sessionSnapshot.workbench.explorerSelectedPath ?? null,
   );
 
   const clampAiPanelWidth = (value: number): number =>
@@ -576,13 +571,11 @@ export const useShellWorkbenchView = (onReady: () => void) => {
       );
     } finally {
       isRestoringWorkbenchSession.value = false;
-      isStartupShellPrimed.value = false;
     }
   };
 
   const initializeWorkbench = async (): Promise<void> => {
     markStartup('workbench-initialize-start');
-    isStartupShellPrimed.value = true;
 
     let result: Awaited<ReturnType<typeof workbench.initialize>>;
     try {
@@ -712,7 +705,6 @@ export const useShellWorkbenchView = (onReady: () => void) => {
 
   onMounted(() => {
     isUnmounted = false;
-    isStartupShellPrimed.value = true;
     markStartup('shell-workbench-mounted');
     window.addEventListener(SHELL_WINDOW_RESIZE_START_EVENT, handleShellWindowResizeStart);
     window.addEventListener(SHELL_WINDOW_RESIZE_FRAME_EVENT, handleShellWindowResizeFrameEvent);
@@ -766,11 +758,11 @@ export const useShellWorkbenchView = (onReady: () => void) => {
     isTerminalMaximized,
     activeSidebarView,
     sidebarWidth,
-    startupShellState,
-    isStartupShellVisible,
+    startupWorkspaceRoot,
+    startupExplorerExpandedPaths,
+    startupExplorerSelectedPath,
     visibleWorkspaceRootPath,
     diagnosticsTransitionsEnabled,
-    startupWorkspaceRoot,
     canNavigateDocumentBack,
     canNavigateDocumentForward,
     navigateDocumentBack,
