@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { FolderTree, GitBranch, LibraryBig, Search, TerminalSquare } from '@lucide/vue';
 import { computed, ref, watch } from 'vue';
+import { AppTooltip } from '@/components/ui/tooltip';
 import AppSidebar from '@/components/workbench/AppSidebar.vue';
 import type { TWorkbenchSidebarView } from '@/types/app';
 import type {
@@ -70,6 +71,7 @@ const activeTabIndex = computed(() =>
     sidebarTabs.findIndex((item) => item.view === props.activeView),
   ),
 );
+const brandTooltip = computed(() => (props.isAiMode ? '切换到编辑区' : '切换到 AI 界面'));
 const switchDirection = ref<TSidebarSwitchDirection>('none');
 
 watch(
@@ -87,61 +89,80 @@ watch(
 </script>
 
 <template>
-    <aside class="workbench-dashboard-sidebar flex h-full min-h-0 flex-col overflow-hidden bg-(--sidebar-bg)">
-        <div class="workbench-dashboard-sidebar__brand-slot">
-            <button
-type="button" class="workbench-dashboard-sidebar__brand-button"
-                :aria-label="props.isAiMode ? '切换到编辑区' : '切换到 AI 界面'" :title="props.isAiMode ? '切换到编辑区' : '切换到 AI 界面'"
-                @click="emit('toggle-primary-mode')">
-                <img class="workbench-dashboard-sidebar__brand-icon" :src="appBrandIcon" alt="软件图标">
-            </button>
-        </div>
+  <aside class="workbench-dashboard-sidebar flex h-full min-h-0 flex-col overflow-hidden bg-(--sidebar-bg)">
+    <div class="workbench-dashboard-sidebar__brand-slot">
+      <AppTooltip :content="brandTooltip" side="right">
+        <button
+          type="button"
+          class="workbench-dashboard-sidebar__brand-button"
+          :aria-label="brandTooltip"
+          @click="emit('toggle-primary-mode')"
+        >
+          <img class="workbench-dashboard-sidebar__brand-icon" :src="appBrandIcon" alt="软件图标">
+        </button>
+      </AppTooltip>
+    </div>
 
-        <header class="workbench-dashboard-sidebar__toolbar-shell border-b border-(--shell-divider) px-3 py-3">
-            <nav class="workbench-dashboard-sidebar__toolbar" aria-label="工作台侧边栏切换">
-                <button
-v-for="item in sidebarTabs" :key="item.view" type="button"
-                    class="workbench-dashboard-sidebar__toolbar-button"
-                    :class="{ 'is-active': props.activeView === item.view }" :aria-label="item.label"
-                    :aria-pressed="props.activeView === item.view" @click="emit('select-view', item.view)">
-                    <span class="workbench-dashboard-sidebar__toolbar-icon" aria-hidden="true">
-                        <FolderTree v-if="item.view === 'explorer'" />
-                        <Search v-else-if="item.view === 'search'" />
-                        <GitBranch v-else-if="item.view === 'source-control'" />
-                        <LibraryBig v-else-if="item.view === 'run'" />
-                        <TerminalSquare v-else />
-                    </span>
+    <header class="workbench-dashboard-sidebar__toolbar-shell border-b border-(--shell-divider) px-3 py-3">
+      <nav class="workbench-dashboard-sidebar__toolbar" aria-label="工作台侧边栏切换">
+        <AppTooltip v-for="item in sidebarTabs" :key="item.view" :content="item.label" side="bottom">
+          <button
+            type="button"
+            class="workbench-dashboard-sidebar__toolbar-button"
+            :class="{ 'is-active': props.activeView === item.view }"
+            :aria-label="item.label"
+            :aria-pressed="props.activeView === item.view"
+            @click="emit('select-view', item.view)"
+          >
+            <span class="workbench-dashboard-sidebar__toolbar-icon" aria-hidden="true">
+              <FolderTree v-if="item.view === 'explorer'" />
+              <Search v-else-if="item.view === 'search'" />
+              <GitBranch v-else-if="item.view === 'source-control'" />
+              <LibraryBig v-else-if="item.view === 'run'" />
+              <TerminalSquare v-else />
+            </span>
 
-                    <span class="workbench-dashboard-sidebar__toolbar-label-wrap" aria-hidden="true">
-                        <span class="workbench-dashboard-sidebar__toolbar-label">
-                            {{ item.label }}
-                        </span>
-                    </span>
-                </button>
-            </nav>
-        </header>
+            <span class="workbench-dashboard-sidebar__toolbar-label-wrap" aria-hidden="true">
+              <span class="workbench-dashboard-sidebar__toolbar-label" v-text="item.label" />
+            </span>
+          </button>
+        </AppTooltip>
+      </nav>
+    </header>
 
-        <div
-class="workbench-dashboard-sidebar__panel-host min-h-0 flex-1 overflow-hidden"
-            :data-switch-direction="switchDirection">
-            <Transition name="workbench-sidebar-panel">
-                <AppSidebar
-:document="props.document" :view="props.activeView"
-                    :is-desktop-runtime="props.isDesktopRuntime" :workspace-root-path="props.workspaceRootPath"
-                    :preloaded-workspace-root="props.preloadedWorkspaceRoot"
-                    :startup-explorer-expanded-paths="props.startupExplorerExpandedPaths"
-                    :startup-explorer-selected-path="props.startupExplorerSelectedPath" :can-run="props.canRun"
-                    :is-running="props.isRunning" :has-run-artifacts="props.hasRunArtifacts"
-                    :active-run="props.activeRun" :run-history="props.runHistory"
-                    :command-templates="props.commandTemplates" :executor="props.executor"
-                    @open-file="emit('open-file', $event)" @open-folder="emit('open-folder')"
-                    @open-git-diff="emit('open-git-diff', $event)" @run="emit('run')"
-                    @create-document="emit('create-document')" @open-terminal="emit('open-terminal')"
-                    @insert-template="emit('insert-template', $event)" @clear-run-history="emit('clear-run-history')"
-                    @explorer-state-change="emit('explorer-state-change', $event)" />
-            </Transition>
-        </div>
-    </aside>
+    <div
+      class="workbench-dashboard-sidebar__panel-host min-h-0 flex-1 overflow-hidden"
+      :data-switch-direction="switchDirection"
+    >
+      <Transition name="workbench-sidebar-panel">
+        <AppSidebar
+          :document="props.document"
+          :view="props.activeView"
+          :is-desktop-runtime="props.isDesktopRuntime"
+          :workspace-root-path="props.workspaceRootPath"
+          :preloaded-workspace-root="props.preloadedWorkspaceRoot"
+          :startup-explorer-expanded-paths="props.startupExplorerExpandedPaths"
+          :startup-explorer-selected-path="props.startupExplorerSelectedPath"
+          :can-run="props.canRun"
+          :is-running="props.isRunning"
+          :has-run-artifacts="props.hasRunArtifacts"
+          :active-run="props.activeRun"
+          :run-history="props.runHistory"
+          :command-templates="props.commandTemplates"
+          :executor="props.executor"
+          @open-file="emit('open-file', $event)"
+          @open-folder="emit('open-folder')"
+          @open-git-diff="emit('open-git-diff', $event)"
+          @run="emit('run')"
+          @create-document="emit('create-document')"
+          @open-terminal="emit('open-terminal')"
+          @insert-template="emit('insert-template', $event)"
+          @clear-run-history="emit('clear-run-history')"
+          @explorer-state-change="emit('explorer-state-change', $event)"
+        />
+      </Transition>
+    </div>
+  </aside>
 </template>
 
 <style scoped>
