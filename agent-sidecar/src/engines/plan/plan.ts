@@ -1,6 +1,6 @@
+import { existsSync, readFileSync } from 'node:fs';
 import { MastraRuntimeChat } from '../chat/chat.js';
 import { createDeepSeekReasoningRunPrefix, evictDeepSeekReasoningByPrefix, runWithDeepSeekReasoningContext } from '../../models/providers/deepseek-reasoning-fetch.js';
-import { agentPlanGenerationSchema } from '../../schemas/plan.js';
 import { buildSystemPrompt } from '../prompts/system-prompt.js';
 import { createMastraMemoryReference, createMastraMemoryScope, resolveObservationalMemoryEnabled, resolveSemanticRecallEnabled } from '../context/memory.js';
 import { createExecutionRequestContext } from '../context/context.js';
@@ -11,6 +11,7 @@ import { buildMastraMessages } from '../session/session-messages.js';
 import { normalizeGeneratedAgentPlan } from './plan-utils.js';
 import { createErrorResponse, createPlanRecordResponse, createPlanResponse } from '../responses.js';
 import { loadMastraMcpTools } from '../tools/tools.js';
+import { parsePlanSteps, resolvePlanFilePath } from '../tools/update-plan.js';
 import { DEFAULT_EXECUTION_AGENT_ID } from '../types.js';
 import type { IMastraAgentLike, IMastraGenerateOptions, IMastraMcpBundle, TMastraChatMessage, TRuntimeEventFactory } from '../types.js';
 import { attachMcpGatewayMetrics, createRuntimeEventFactory, createSessionId, pushUiEvent } from '../utils.js';
@@ -34,12 +35,20 @@ type TStreamStructuredPlanResult =
     | { status: 'pending'; releaseResources: boolean }
     | { status: 'error'; message: string; releaseResources: boolean };
 
+/**
+ * Plan 模式 agent 循环的最大步数：需覆盖「只读调研 → 多次 update_plan 迭代 →
+ * 可选 ask_user 反向提问 → exit_plan 收尾」。取一个宽裕上界，正常会在模型调用
+ * exit_plan 后自然收束；即便触顶，update_plan 已落盘的 PLAN.md 仍可作为草稿桥接。
+ */
+const PLAN_AGENT_MAX_STEPS = 32;
+
 export class MastraRuntimePlan extends MastraRuntimeChat {
     /**
      * 计划族唯一的流式脊柱：先经 consumeTextStream 消费 fullStream（投影推理/正文/工具
      * 事件，并让工具审批 / ask_user 反向提问得以挂起），再读取 Mastra 官方
-     * MastraModelOutput.object 取结构化结果。plan() / validatePlan() / replanPlan() 共用，
-     * 杜绝 agent.generate 旧路径与流式新路径并存的新旧杂糅。
+     * MastraModelOutput.object 取结构化结果。validatePlan() / replanPlan() 依赖其结构化
+     * object；plan() 仅复用其 pending/error/done 的统一处理（计划改由 PLAN.md 承载，object
+     * 在 plan() 中被有意忽略），杜绝 agent.generate 旧路径与流式新路径并存的新旧杂糅。
      */
     protected async streamStructuredPlanObject(args: {
         agent: IMastraAgentLike;
@@ -143,8 +152,9 @@ export class MastraRuntimePlan extends MastraRuntimeChat {
                 onRequestPayload: payloadEventSink.onRequestPayload,
             }, async () => {
                 const systemPrompt = buildSystemPrompt(planInput, modelConfig.modelId);
-                // 计划模式与 chat/agent 共用同一条流式脊柱：当存在工具（含 ask_user 反向提问）时，
-                // 复用 chat.ts 同款可恢复 agent handle，使 ask_user 在规划阶段也能挂起/恢复。
+                // 计划模式与 chat/agent 共用同一条流式脊柱：plan 模式始终挂载规划工具
+                // （update_plan / exit_plan）与 ask_user，故复用 chat.ts 同款可恢复 agent handle，
+                // 使 ask_user 在规划阶段也能挂起/恢复。
                 const resumableAgentHandle = hasAgentTools && this.shouldUseRegisteredAgentForTools
                     ? await this.createResumableAgentHandle({
                         id: 'calamex-agent-sidecar-plan',
@@ -172,13 +182,11 @@ export class MastraRuntimePlan extends MastraRuntimeChat {
                     outputProcessors: createMastraAgentOutputProcessors(),
                 });
                 const toolChoice: IMastraGenerateOptions['toolChoice'] = hasAgentTools ? 'auto' : 'none';
+                // planning-as-tool：不再用 structuredOutput.schema 让模型直接吐 JSON 计划；
+                // 模型改为在多步循环中用只读工具调研、用 update_plan 写活体 PLAN.md、用 exit_plan 收尾。
                 const streamOptions: IMastraGenerateOptions = {
-                    maxSteps: hasAgentTools ? 10 : 1,
+                    maxSteps: hasAgentTools ? PLAN_AGENT_MAX_STEPS : 1,
                     toolChoice,
-                    structuredOutput: {
-                        schema: agentPlanGenerationSchema,
-                        ...(hasAgentTools ? { jsonPromptInjection: true } : {}),
-                    },
                     memory,
                     ...(options.context?.signal ? { abortSignal: options.context.signal } : {}),
                     runId: requestedRunId,
@@ -214,8 +222,9 @@ export class MastraRuntimePlan extends MastraRuntimeChat {
                     toolChoice,
                     modelCapabilities: modelConfig.capabilities,
                 })), options);
-                // 共享流式脊柱：消费 fullStream（含 ask_user 挂起投影）后读取结构化计划对象；
-                // 计划持久化一律后置到对象解析成功之后，避免半成品计划落库。
+                // 共享流式脊柱：消费 fullStream（含 ask_user 挂起投影、工具事件）。Plan 模式不读取
+                // 结构化对象——计划改由 update_plan 写入的活体 PLAN.md 承载，streamed.object 在此
+                // 被有意忽略，仅复用 pending/error/done 的统一处理。
                 const streamed = await this.streamStructuredPlanObject({
                     agent,
                     bundle: mcpBundle,
@@ -250,12 +259,39 @@ export class MastraRuntimePlan extends MastraRuntimeChat {
                     };
                 }
 
-                const parsedPlan = normalizeGeneratedAgentPlan(streamed.object, input.goal);
+                // agent 规划循环正常结束。活体 PLAN.md 是计划的唯一事实源（update_plan 写入、
+                // exit_plan 校验交付）；据其 canonical Steps 区解析出有序步骤文本，再经
+                // normalizeGeneratedAgentPlan 补齐严格 step 字段，桥接到既有计划存储与编排。
+                const planFilePath = resolvePlanFilePath({
+                    workspaceRootPath: input.workspaceRootPath,
+                    threadId: input.threadId,
+                });
+                const planMarkdown = existsSync(planFilePath)
+                    ? readFileSync(planFilePath, 'utf-8')
+                    : '';
+                const planSteps = parsePlanSteps(planMarkdown);
+
+                if (planSteps.length === 0) {
+                    return createErrorResponse(
+                        sessionId,
+                        '规划未产出有效 PLAN.md：应先用 update_plan 写入计划（含可解析的有序 Steps 区）再调用 exit_plan 收尾。',
+                        events,
+                        options,
+                    );
+                }
+
+                const parsedPlan = normalizeGeneratedAgentPlan(
+                    {
+                        goal: input.goal,
+                        steps: planSteps.map((stepText) => ({ title: stepText, goal: stepText })),
+                    },
+                    input.goal,
+                );
 
                 if (!parsedPlan) {
                     return createErrorResponse(
                         sessionId,
-                        'Mastra structured output 没有返回有效 AgentPlan，计划未生成。',
+                        '从 PLAN.md 解析出的步骤无法构建有效 AgentPlan，计划未生成。',
                         events,
                         options,
                     );
