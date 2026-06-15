@@ -223,8 +223,8 @@ const TestHost = defineComponent({
       terminalHeight,
       openEditorMode,
       openTerminal,
-      startupShellState,
-      isStartupShellVisible,
+      startupExplorerExpandedPaths,
+      startupExplorerSelectedPath,
       visibleWorkspaceRootPath,
     } = useShellWorkbenchView(props.onReady);
     return {
@@ -241,8 +241,8 @@ const TestHost = defineComponent({
       terminalHeight,
       openEditorMode,
       openTerminal,
-      startupShellState,
-      isStartupShellVisible,
+      startupExplorerExpandedPaths,
+      startupExplorerSelectedPath,
       visibleWorkspaceRootPath,
     };
   },
@@ -334,14 +334,10 @@ describe('useShellWorkbenchView', () => {
     wrapper.unmount();
   });
 
-  it('ready 前会把结构化会话状态作为启动骨架首帧', async () => {
+  it('ready 前直接保留真实工作台状态', async () => {
     const restoreDeferred = createDeferred();
     restoreSessionMock.mockReturnValue(restoreDeferred.promise);
     sessionSnapshotState.workspaceRoot = '/workspace';
-    sessionSnapshotState.openTabs = [
-      { path: '/workspace/a.sh', pinned: false, order: 0, kind: 'text' },
-    ];
-    sessionSnapshotState.activeTabPath = '/workspace/a.sh';
     sessionSnapshotState.workbench = {
       activeSidebarView: 'source-control',
       explorerExpandedPaths: ['/workspace', '/workspace/src'],
@@ -356,37 +352,14 @@ describe('useShellWorkbenchView', () => {
     await flushPromises();
 
     expect(onReady).toHaveBeenCalledOnce();
-    expect(wrapper.vm.isStartupShellVisible).toBe(true);
-    expect(wrapper.vm.visibleWorkspaceRootPath).toBe('/workspace');
-    expect(wrapper.vm.startupShellState?.openTabs[0]?.title).toBe('a.sh');
+    expect(wrapper.vm.visibleWorkspaceRootPath).toBeNull();
+    expect(wrapper.vm.startupExplorerExpandedPaths).toEqual(['/workspace', '/workspace/src']);
+    expect(wrapper.vm.startupExplorerSelectedPath).toBe('/workspace/src/a.sh');
     expect(wrapper.vm.activeSidebarView).toBe('source-control');
     expect(wrapper.vm.isTerminalVisible).toBe(false);
 
     restoreDeferred.resolve();
     await flushPromises();
-
-    expect(wrapper.vm.isStartupShellVisible).toBe(false);
-
-    wrapper.unmount();
-  });
-
-  it('没有历史会话时也会显示默认启动骨架', async () => {
-    const restoreDeferred = createDeferred();
-    restoreSessionMock.mockReturnValue(restoreDeferred.promise);
-
-    const wrapper = mount(TestHost, {
-      props: { onReady: vi.fn() },
-    });
-    await flushPromises();
-
-    expect(wrapper.vm.isStartupShellVisible).toBe(true);
-    expect(wrapper.vm.startupShellState?.openTabs).toEqual([]);
-    expect(wrapper.vm.startupShellState?.workspaceRoot).toBeNull();
-
-    restoreDeferred.resolve();
-    await flushPromises();
-
-    expect(wrapper.vm.isStartupShellVisible).toBe(false);
 
     wrapper.unmount();
   });

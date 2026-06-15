@@ -9,7 +9,7 @@
 //!   * `client`   —— 常驻 stdio 连接 + 命令句柄（new_session / prompt /
 //!     set_session_mode / restore_checkpoint / model_chat / web_search / web_fetch /
 //!     warmup / health / orchestrate / orchestrate_resume / agent_chat /
-//!     agent_chat_resolve / cancel / shutdown）；
+//!     agent_chat_resolve / agent_ask_user_resume / cancel / shutdown）；
 //!   * `approval` —— 回合内反向 `session/request_permission` 的挂起登记表。
 //!
 //! 设计要点（均据一手源码核对，不臆造）：
@@ -47,10 +47,10 @@ use crate::commands::contracts::{
 
 use super::approval::{ApprovalError, ApprovalRegistry, ApprovalRequestInfo};
 use super::client::{
-    AcpClientConfig, AcpClientError, AcpClientHandle, AcpStreamFrame, AgentChatExtRequest,
-    AgentChatResolveExtRequest, CheckpointRestoreRequest, EventSink, HealthExtRequest,
-    ModelChatExtRequest, OrchestrateExtRequest, OrchestrateResumeExtRequest, WarmupExtRequest,
-    WebFetchExtRequest, WebSearchExtRequest, spawn_acp_client,
+    AcpClientConfig, AcpClientError, AcpClientHandle, AcpStreamFrame, AgentAskUserResumeExtRequest,
+    AgentChatExtRequest, AgentChatResolveExtRequest, CheckpointRestoreRequest, EventSink,
+    HealthExtRequest, ModelChatExtRequest, OrchestrateExtRequest, OrchestrateResumeExtRequest,
+    WarmupExtRequest, WebFetchExtRequest, WebSearchExtRequest, spawn_acp_client,
 };
 
 /// 流式帧下沉口：把每条 `session/update` 帧转发给 webview（对齐 `ai:sidecar-stream`
@@ -306,6 +306,26 @@ impl AcpHost {
         serde_json::from_value(value).map_err(|error| {
             AcpClientError::Protocol(format!(
                 "invalid agent chat resolve response envelope: {error}"
+            ))
+        })
+    }
+
+    /// 恢复一轮挂起在 ask_user 反向提问的 agent 对话（扩展方法 `calamex.dev/agent/ask-user/resume`）。
+    ///
+    /// 与 agent_chat_resolve 同构，但以 ask_user 套件的 outcome + 结构化 answers 取代审批 decision：
+    /// 携带上一段返回信封里 ask_user_required 的 `request_id`、用户选择的 `outcome`（selected/
+    /// cancelled）与逐题 `answers`，回灌给 sidecar 工具的 resumeSchema 后续跑同一回合并返回
+    /// 下一段响应信封（若再遇提问门或审批门则信封再携对应事件）。入参为已构造的扩展请求
+    /// （同 agent_chat_resolve 由接线层负责 contract 转换与会话解析）。响应同 agent_chat_resolve：
+    /// 整封 sidecar 信封解析为既有 `AgentSidecarResponsePayload`，与旧 HTTP 对话恢复返回同形（前端无感）。
+    pub async fn agent_ask_user_resume(
+        &self,
+        request: AgentAskUserResumeExtRequest,
+    ) -> Result<AgentSidecarResponsePayload, AcpClientError> {
+        let value = self.handle.agent_ask_user_resume(request).await?;
+        serde_json::from_value(value).map_err(|error| {
+            AcpClientError::Protocol(format!(
+                "invalid agent ask-user resume response envelope: {error}"
             ))
         })
     }
