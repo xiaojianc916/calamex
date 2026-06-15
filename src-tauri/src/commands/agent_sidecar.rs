@@ -1,5 +1,5 @@
 use crate::commands::contracts::{
-    AgentSidecarApprovalResolveRequest, AgentSidecarChatRequest,
+    AgentSidecarApprovalResolveRequest, AgentSidecarAskUserResumeRequest, AgentSidecarChatRequest,
     AgentSidecarCheckpointRestoreRequest, AgentSidecarHealthPayload,
     AgentSidecarModelConfigPayload, AgentSidecarOrchestratePayload, AgentSidecarOrchestrateRequest,
     AgentSidecarOrchestrateResumeRequest, AgentSidecarResponsePayload,
@@ -106,6 +106,29 @@ pub async fn agent_sidecar_resolve_approval(
     let request =
         crate::acp::approval_resolve_to_agent_chat_resolve_ext(payload, session_id.to_string());
     host.agent_chat_resolve(request)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn agent_sidecar_resolve_ask_user(
+    app: AppHandle,
+    payload: AgentSidecarAskUserResumeRequest,
+) -> Result<AgentSidecarResponsePayload, String> {
+    // 同 resolve_approval：先解析稳定会话，再投影为 agent/ask-user/resume 扩展请求；
+    // 回灌 outcome + 结构化 answers 在同一回合内唤醒挂起的反向提问并续跑，返回下一段响应信封。
+    let host = acp_host(&app)?;
+    let session_id = host
+        .ensure_session(
+            payload.thread_id.as_deref().unwrap_or_default(),
+            payload.workspace_root_path.as_deref(),
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+    let request =
+        crate::acp::ask_user_resume_to_agent_ask_user_resume_ext(payload, session_id.to_string());
+    host.agent_ask_user_resume(request)
         .await
         .map_err(|error| error.to_string())
 }

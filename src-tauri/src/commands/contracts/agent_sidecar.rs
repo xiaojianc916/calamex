@@ -86,6 +86,55 @@ pub struct AgentSidecarApprovalResolveRequest {
     pub(crate) plan_step_id: Option<String>,
 }
 
+/// `calamex.dev/agent/ask-user/resume` 单题作答（契约层）。
+/// 镜像 sidecar `askUserAnswerParamsSchema`：questionId、optionIds（缺省 []）、text（可选）。
+/// optionIds 恒序列化为数组（空则 []）；text 空白修剪由接线层负责，契约层仅在 None 时省略键。
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSidecarAskUserAnswerPayload {
+    pub(crate) question_id: String,
+    #[serde(default)]
+    pub(crate) option_ids: Vec<String>,
+    #[serde(skip_serializing_if = "is_blank_optional_string")]
+    pub(crate) text: Option<String>,
+}
+
+/// `calamex.dev/agent/ask-user/resume` 恢复请求（契约层）。
+///
+/// 结构镜像 `AgentSidecarApprovalResolveRequest` 的「agentChat 基底 + requestId」，但以
+/// `outcome` + 结构化 `answers` 取代 `decision`：
+///   * outcome 取值（selected/cancelled）由 sidecar zod 校验，原样透传；
+///   * answers 为每题作答，outcome=cancelled 时通常缺省（serde 整字段省略，对齐 zod `.optional()`）。
+/// 与 approval 恢复一致地携带 plan_*（plan 续跑定位），不含 `mode`（恢复不切换模式）。
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSidecarAskUserResumeRequest {
+    #[serde(skip_serializing_if = "is_blank_optional_string")]
+    pub(crate) session_id: Option<String>,
+    pub(crate) request_id: String,
+    pub(crate) outcome: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) answers: Option<Vec<AgentSidecarAskUserAnswerPayload>>,
+    #[serde(skip_serializing_if = "is_blank_optional_string")]
+    pub(crate) goal: Option<String>,
+    #[serde(default)]
+    pub(crate) messages: Vec<AgentSidecarMessagePayload>,
+    #[serde(skip_serializing_if = "is_blank_optional_string")]
+    pub(crate) workspace_root_path: Option<String>,
+    #[serde(default)]
+    pub(crate) context: Vec<AiContextReferencePayload>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) model_config: Option<AgentSidecarModelConfigPayload>,
+    #[serde(skip_serializing_if = "is_blank_optional_string")]
+    pub(crate) thread_id: Option<String>,
+    #[serde(skip_serializing_if = "is_blank_optional_string")]
+    pub(crate) plan_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) plan_version: Option<u32>,
+    #[serde(skip_serializing_if = "is_blank_optional_string")]
+    pub(crate) plan_step_id: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(untagged)]
 pub enum AgentSidecarRollbackStepPath {
@@ -159,7 +208,8 @@ mod agent_sidecar_contract_tests {
     use serde_json::{Map, Value};
 
     use super::{
-        AgentSidecarChatRequest, AgentSidecarCheckpointRestoreRequest, AgentSidecarMessagePayload,
+        AgentSidecarAskUserAnswerPayload, AgentSidecarAskUserResumeRequest, AgentSidecarChatRequest,
+        AgentSidecarCheckpointRestoreRequest, AgentSidecarMessagePayload,
         AgentSidecarRollbackStepPath,
     };
 
@@ -278,5 +328,92 @@ mod agent_sidecar_contract_tests {
                 Value::String("durable-llm-execution".to_string()),
             ]))
         );
+    }
+
+    #[test]
+    fn ask_user_resume_request_omits_blank_optionals_and_serializes_answers() {
+        let request = AgentSidecarAskUserResumeRequest {
+            session_id: None,
+            request_id: "ask-1".to_string(),
+            outcome: "selected".to_string(),
+            answers: Some(vec![AgentSidecarAskUserAnswerPayload {
+                question_id: "q1".to_string(),
+                option_ids: vec!["opt_a".to_string()],
+                text: Some("自定义".to_string()),
+            }]),
+            goal: Some("  ".to_string()),
+            messages: Vec::new(),
+            workspace_root_path: None,
+            context: Vec::new(),
+            model_config: None,
+            thread_id: Some(" ".to_string()),
+            plan_id: None,
+            plan_version: None,
+            plan_step_id: None,
+        };
+
+        let object = serialize_object(&request);
+
+        assert!(!object.contains_key("sessionId"));
+        assert!(!object.contains_key("goal"));
+        assert!(!object.contains_key("threadId"));
+        assert_eq!(
+            object.get("requestId"),
+            Some(&Value::String("ask-1".to_string()))
+        );
+        assert_eq!(
+            object.get("outcome"),
+            Some(&Value::String("selected".to_string()))
+        );
+        let answers = object
+            .get("answers")
+            .and_then(Value::as_array)
+            .expect("answers should be an array");
+        assert_eq!(answers[0]["questionId"], Value::String("q1".to_string()));
+        assert_eq!(answers[0]["optionIds"][0], Value::String("opt_a".to_string()));
+        assert_eq!(answers[0]["text"], Value::String("自定义".to_string()));
+        assert!(object.contains_key("messages"));
+        assert!(object.contains_key("context"));
+    }
+
+    #[test]
+    fn ask_user_resume_request_omits_answers_when_cancelled() {
+        let request = AgentSidecarAskUserResumeRequest {
+            session_id: None,
+            request_id: "ask-1".to_string(),
+            outcome: "cancelled".to_string(),
+            answers: None,
+            goal: None,
+            messages: Vec::new(),
+            workspace_root_path: None,
+            context: Vec::new(),
+            model_config: None,
+            thread_id: None,
+            plan_id: None,
+            plan_version: None,
+            plan_step_id: None,
+        };
+
+        let object = serialize_object(&request);
+
+        assert_eq!(
+            object.get("outcome"),
+            Some(&Value::String("cancelled".to_string()))
+        );
+        assert!(!object.contains_key("answers"));
+    }
+
+    #[test]
+    fn ask_user_answer_payload_emits_empty_option_ids_array_and_omits_blank_text() {
+        let answer = AgentSidecarAskUserAnswerPayload {
+            question_id: "q1".to_string(),
+            option_ids: Vec::new(),
+            text: Some("  ".to_string()),
+        };
+
+        let object = serialize_object(&answer);
+
+        assert_eq!(object.get("optionIds"), Some(&Value::Array(vec![])));
+        assert!(!object.contains_key("text"));
     }
 }

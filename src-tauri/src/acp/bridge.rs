@@ -13,22 +13,25 @@
 //!      Prediction、Git commit message）与 Agent Panel 智能体回合分离为独立模型请求的
 //!      做法（`calamex.dev/model/chat`），而非塞进标准会话回合（`session/prompt`）。
 //!   2. agent 模式对话回合（run-to-gate）的请求投影：`agent/chat` 与其审批恢复
-//!      `agent/chat/resolve`（见 `chat_request_to_agent_chat_ext` /
-//!      `approval_resolve_to_agent_chat_resolve_ext`）。与「工具型」一次性模型透传不同，
+//!      `agent/chat/resolve`、反向提问恢复 `agent/ask-user/resume`（见
+//!      `chat_request_to_agent_chat_ext` / `approval_resolve_to_agent_chat_resolve_ext` /
+//!      `ask_user_resume_to_agent_ask_user_resume_ext`）。与「工具型」一次性模型透传不同，
 //!      agent 对话是标准回合之外的「带外」富回合能力，会话连续性由命令层经
 //!      `host.ensure_session` 解析后以 session_id 传入。
 //!
-//! 上述三条投影（model/chat、agent/chat、agent/chat/resolve）均已由网关 /
+//! 上述投影（model/chat、agent/chat、agent/chat/resolve、agent/ask-user/resume）均已由网关 /
 //! 命令层 live 调用（见 `ai::gateway::conversation` 与 `commands::agent_sidecar`）。
 
 use crate::commands::contracts::{
-    AgentSidecarApprovalResolveRequest, AgentSidecarChatRequest, AgentSidecarMessagePayload,
+    AgentSidecarApprovalResolveRequest, AgentSidecarAskUserAnswerPayload,
+    AgentSidecarAskUserResumeRequest, AgentSidecarChatRequest, AgentSidecarMessagePayload,
     AgentSidecarModelConfigPayload, AiContextReferencePayload,
 };
 
 use super::client::{
-    AgentChatContextRange, AgentChatContextReference, AgentChatExtRequest, AgentChatMessage,
-    AgentChatResolveExtRequest, ExtModelConfig, ModelChatExtRequest, ModelChatMessage,
+    AgentAskUserResumeExtRequest, AgentChatContextRange, AgentChatContextReference,
+    AgentChatExtRequest, AgentChatMessage, AgentChatResolveExtRequest, AskUserAnswer,
+    ExtModelConfig, ModelChatExtRequest, ModelChatMessage,
 };
 
 /// 修剪并过滤空白可选字符串：`None` / 空 / 全空白 → `None`，否则返回修剪后的 owned 串。
@@ -184,6 +187,58 @@ pub fn approval_resolve_to_agent_chat_resolve_ext(
     }
 }
 
+/// 单题作答投影：`question_id` / `option_ids` 原样透传（option_ids 恒为数组，空则 []），
+/// `text` 空白修剪为 `None`（serde 整字段省略，对齐 sidecar `askUserAnswerParamsSchema.text`
+/// 的 `.optional()`）。
+fn answer_to_ext(answer: AgentSidecarAskUserAnswerPayload) -> AskUserAnswer {
+    AskUserAnswer {
+        question_id: answer.question_id,
+        option_ids: answer.option_ids,
+        text: trimmed_non_empty(answer.text),
+    }
+}
+
+/// 把一轮 ask_user 反向提问恢复请求 + 已解析的稳定会话 → `calamex.dev/agent/ask-user/resume`
+/// 扩展请求。
+///
+/// `request_id` / `outcome` 为恢复必填（裁决哪个挂起提问、整体结果 selected/cancelled），
+/// 原样透传，取值由 sidecar zod 校验。`answers` 仅在 outcome=selected 时携带每题作答；
+/// outcome=cancelled 时通常为 `None`（serde 整字段省略，对齐 zod `.optional()`）。
+/// `session_id` 同 `approval_resolve_to_agent_chat_resolve_ext` 由命令层解析后传入。结构与
+/// approval 恢复同构（messages/context 恒为数组、空白可选字段修剪为 `None`、携带 plan_*、
+/// 不切换 `mode`），仅以 outcome + 结构化 answers 取代 decision。
+pub fn ask_user_resume_to_agent_ask_user_resume_ext(
+    request: AgentSidecarAskUserResumeRequest,
+    session_id: String,
+) -> AgentAskUserResumeExtRequest {
+    AgentAskUserResumeExtRequest {
+        request_id: request.request_id,
+        outcome: request.outcome,
+        answers: request
+            .answers
+            .map(|answers| answers.into_iter().map(answer_to_ext).collect()),
+        session_id: Some(session_id),
+        mode: None,
+        goal: trimmed_non_empty(request.goal),
+        messages: request
+            .messages
+            .into_iter()
+            .map(message_to_agent_chat)
+            .collect(),
+        workspace_root_path: trimmed_non_empty(request.workspace_root_path),
+        context: request
+            .context
+            .into_iter()
+            .map(context_reference_to_agent_chat)
+            .collect(),
+        model_config: request.model_config.map(model_config_to_ext),
+        thread_id: trimmed_non_empty(request.thread_id),
+        plan_id: trimmed_non_empty(request.plan_id),
+        plan_version: request.plan_version,
+        plan_step_id: trimmed_non_empty(request.plan_step_id),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -233,6 +288,36 @@ mod tests {
             session_id: None,
             request_id: "appr-1".to_string(),
             decision: "approve".to_string(),
+            goal: Some("继续".to_string()),
+            messages: vec![message("user", "ok")],
+            workspace_root_path: None,
+            context: Vec::new(),
+            model_config: None,
+            thread_id: Some("thread-1".to_string()),
+            plan_id: Some("plan-1".to_string()),
+            plan_version: Some(2),
+            plan_step_id: Some("step-1".to_string()),
+        }
+    }
+
+    fn ask_user_answer(
+        question_id: &str,
+        option_ids: &[&str],
+        text: Option<&str>,
+    ) -> AgentSidecarAskUserAnswerPayload {
+        AgentSidecarAskUserAnswerPayload {
+            question_id: question_id.to_string(),
+            option_ids: option_ids.iter().map(|item| item.to_string()).collect(),
+            text: text.map(str::to_string),
+        }
+    }
+
+    fn ask_user_resume_request() -> AgentSidecarAskUserResumeRequest {
+        AgentSidecarAskUserResumeRequest {
+            session_id: None,
+            request_id: "ask-1".to_string(),
+            outcome: "selected".to_string(),
+            answers: Some(vec![ask_user_answer("q1", &["opt_a"], Some("自定义"))]),
             goal: Some("继续".to_string()),
             messages: vec![message("user", "ok")],
             workspace_root_path: None,
@@ -409,5 +494,55 @@ mod tests {
         assert!(value["context"][0]["range"].is_null());
         // 无 mode 字段
         assert!(value.get("mode").is_none());
+    }
+
+    #[test]
+    fn ask_user_resume_projects_request_id_outcome_answers_and_omits_mode() {
+        let ext = ask_user_resume_to_agent_ask_user_resume_ext(
+            ask_user_resume_request(),
+            "sess-1".to_string(),
+        );
+        assert_eq!(ext.request_id, "ask-1");
+        assert_eq!(ext.outcome, "selected");
+        assert_eq!(ext.session_id.as_deref(), Some("sess-1"));
+        // resume 不切换模式
+        assert_eq!(ext.mode, None);
+        assert_eq!(ext.goal.as_deref(), Some("继续"));
+        let answers = ext.answers.as_ref().expect("answers 应保留");
+        assert_eq!(answers.len(), 1);
+        assert_eq!(answers[0].question_id, "q1");
+        assert_eq!(answers[0].option_ids, vec!["opt_a".to_string()]);
+        assert_eq!(answers[0].text.as_deref(), Some("自定义"));
+        assert_eq!(ext.plan_id.as_deref(), Some("plan-1"));
+        assert_eq!(ext.plan_version, Some(2));
+        assert_eq!(ext.plan_step_id.as_deref(), Some("step-1"));
+    }
+
+    #[test]
+    fn ask_user_resume_cancelled_keeps_answers_none_and_serializes_without_mode() {
+        let mut req = ask_user_resume_request();
+        req.outcome = "cancelled".to_string();
+        req.answers = None;
+        let ext = ask_user_resume_to_agent_ask_user_resume_ext(req, "s".to_string());
+        assert_eq!(ext.outcome, "cancelled");
+        assert!(ext.answers.is_none());
+        let value = serde_json::to_value(&ext).expect("应可序列化");
+        assert!(value.get("answers").is_none());
+        assert!(value.get("mode").is_none());
+        assert_eq!(value["requestId"], "ask-1");
+        assert_eq!(value["outcome"], "cancelled");
+    }
+
+    #[test]
+    fn ask_user_resume_trims_blank_text_to_none_and_keeps_empty_option_ids_array() {
+        let mut req = ask_user_resume_request();
+        req.answers = Some(vec![ask_user_answer("q1", &[], Some("  "))]);
+        let ext = ask_user_resume_to_agent_ask_user_resume_ext(req, "s".to_string());
+        let answers = ext.answers.as_ref().expect("answers 应保留");
+        assert!(answers[0].text.is_none());
+        assert!(answers[0].option_ids.is_empty());
+        let value = serde_json::to_value(&ext).expect("应可序列化");
+        assert_eq!(value["answers"][0]["optionIds"], serde_json::json!([]));
+        assert!(value["answers"][0].get("text").is_none());
     }
 }
