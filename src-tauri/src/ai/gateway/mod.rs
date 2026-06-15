@@ -24,6 +24,7 @@ use tauri::AppHandle;
 mod config;
 mod connection;
 mod conversation;
+mod model_config;
 mod prompt;
 mod suggestions;
 
@@ -33,6 +34,7 @@ mod tests;
 pub use config::{clear_credentials, get_config, save_config, save_credentials};
 pub use connection::{connect_provider, test_provider, test_provider_config};
 pub use conversation::{chat_stream, classify_task, generate_conversation_title, inline_complete};
+pub(crate) use model_config::{current_sidecar_model_config, narrator_sidecar_model_config};
 pub use suggestions::{generate_suggestion_pool, get_suggestion_pool_cache};
 
 const MAX_AI_MESSAGES: usize = 32;
