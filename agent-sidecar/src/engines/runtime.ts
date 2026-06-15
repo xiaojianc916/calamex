@@ -8,6 +8,7 @@ import type {
     IAgentRuntimeInput,
     IAgentRuntimeModelConfigInput,
     IApprovalResolutionInput,
+    IAskUserResolutionInput,
     ICheckpointRestoreInput,
     IPlanApprovalInput,
     IPlanFinishInput,
@@ -89,6 +90,16 @@ export interface IAgentSidecarRuntime {
     finishPlan: TRuntimeMethod<IPlanFinishInput>;
 
     resolveApproval: TRuntimeMethod<IApprovalResolutionInput>;
+
+    /**
+     * 可选：恢复一个被 ask_user（HITL 反向提问）挂起的工具调用。携带用户回填的
+     * outcome + 结构化 answers（见 IAskUserResolutionInput），运行时原样经
+     * agent.resumeStream 回灌挂起工具续跑同一回合。与 resolveApproval 互补：后者
+     * 仅承载 approve/reject 二元裁决，无法表达多问多选 + 自由文本的富答案。不实现时
+     * 对应带外扩展方法返回 methodNotFound（与 modelChat 同约定）。
+     */
+    resolveAskUser?: TRuntimeMethod<IAskUserResolutionInput>;
+
     restoreCheckpoint: TRuntimeMethod<ICheckpointRestoreInput>;
 
     /**

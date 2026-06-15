@@ -143,6 +143,49 @@ export interface IApprovalResolutionInput {
 }
 
 /**
+ * Allowed outcomes for an ask_user (HITL reverse-question) resolution.
+ * Mirrors the ask_user tool's resumeSchema `outcome` (see engines/tools/ask-user.ts)
+ * and the selected/cancelled discriminant used by the frontend question prompt.
+ */
+export const ASK_USER_OUTCOMES = ['selected', 'cancelled'] as const;
+export type TAskUserResolutionOutcome = (typeof ASK_USER_OUTCOMES)[number];
+
+/**
+ * One answered question, addressed by the stable questionId / optionId the
+ * ask_user tool assigned when it surfaced the request. Free text — the
+ * always-present "other" row, or a text-type question — rides in `text`.
+ */
+export interface IAskUserAnswerInput {
+    questionId: string;
+    optionIds: string[];
+    text?: string | undefined;
+}
+
+/**
+ * Resolution payload for a suspended ask_user tool call: the dedicated sibling
+ * of {@link IApprovalResolutionInput}. Instead of an approve/reject `decision`,
+ * it carries the user's structured `outcome` + `answers`, which the runtime
+ * forwards verbatim to the suspended tool via `agent.resumeStream` (the tool's
+ * resumeSchema shape). The conversation fields and plan-continuation triple
+ * mirror the approval input so a rebuilt (cache-miss) context resumes identically.
+ */
+export interface IAskUserResolutionInput {
+    requestId: string;
+    outcome: TAskUserResolutionOutcome;
+    answers?: IAskUserAnswerInput[] | undefined;
+    sessionId?: string | undefined;
+    goal?: string | undefined;
+    messages?: IAgentMessageInput[] | undefined;
+    workspaceRootPath?: string | null | undefined;
+    context?: IAgentContextReferenceInput[] | undefined;
+    modelConfig?: IAgentRuntimeModelConfigInput | undefined;
+    threadId?: string | undefined;
+    planId?: string | undefined;
+    planVersion?: number | undefined;
+    planStepId?: string | undefined;
+}
+
+/**
  * Path into a nested step tree for rollback (`['step-1', 'sub-2']`).
  * Empty array means "roll back the whole run".
  */

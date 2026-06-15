@@ -15,6 +15,7 @@ import type { IAgentPlanStore, TAgentPlanRecord } from './plan/plan-store.js';
 import type { IAgentPlanWorkflowStore } from './plan/plan-workflow-store.js';
 import type { IAgentTokenUsageSnapshot, TAgentRuntimeOutputEvent } from './contracts/runtime-contracts.js';
 import type { TRollbackStepPath } from './contracts/runtime-input.js';
+import type { TAskUserResult } from './tools/ask-user.js';
 
 export const DEFAULT_MASTRA_LOG_FILE = './.agent-sidecar/mastra.log';
 export const DEFAULT_EXECUTION_AGENT_ID = 'calamex-agent-sidecar';
@@ -82,7 +83,13 @@ export type TMastraToolCallSuspendedChunk = Extract<TMastraAgentChunk, { type: '
 export type TMastraToolErrorChunk = Extract<TMastraAgentChunk, { type: 'tool-error' }>;
 export type TMastraErrorChunk = Extract<TMastraAgentChunk, { type: 'error' }>;
 export type TMastraFinishChunk = Extract<TMastraAgentChunk, { type: 'finish' }>;
-export type TMastraToolResumeData = { approved: boolean };
+/**
+ * 工具级 suspend 的恢复负载。审批类工具走 `{ approved }`（approve/decline 二元裁决）；
+ * ask_user 反向提问走 {@link TAskUserResult}（outcome + 结构化 answers，即 ask_user 工具
+ * resumeSchema 的形状）。二者结构互斥，resumeStream 据实际传入的成员分发；新增成员时此处
+ * 扩展联合即可，调用方按结构匹配（见 approval-client/client.ts 的 resolveApproval / resolveAskUser）。
+ */
+export type TMastraToolResumeData = { approved: boolean } | TAskUserResult;
 export type TOmDataChunk = DataChunkType & {
     type: 'data-om-activation' | 'data-om-observation-end';
 };
