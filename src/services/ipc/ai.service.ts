@@ -31,6 +31,7 @@ import type {
 import type { IAiEditGetDiffPayload, IAiEditGetDiffRequest } from '@/types/ai/edit';
 import type {
   IAgentSidecarApprovalResolveRequest,
+  IAgentSidecarAskUserResumeRequest,
   IAgentSidecarChatRequest,
   IAgentSidecarCheckpointRestoreRequest,
   IAgentSidecarHealthPayload,
@@ -201,6 +202,11 @@ export const aiService = {
     payload: IAgentSidecarApprovalResolveRequest,
   ): Promise<IAgentSidecarResponsePayload> {
     return tauriService.agentSidecarResolveApproval(payload);
+  },
+  sidecarResolveAskUser(
+    payload: IAgentSidecarAskUserResumeRequest,
+  ): Promise<IAgentSidecarResponsePayload> {
+    return tauriService.agentSidecarResolveAskUser(payload);
   },
   sidecarRestoreCheckpoint(
     payload: IAgentSidecarCheckpointRestoreRequest,
