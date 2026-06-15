@@ -121,6 +121,7 @@ export const commands = {
 	agentSidecarWarmup: () => __TAURI_INVOKE<AgentSidecarWarmupPayload>("agent_sidecar_warmup"),
 	agentSidecarChat: (payload: AgentSidecarChatRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarResponsePayload>("agent_sidecar_chat", { payload }),
 	agentSidecarResolveApproval: (payload: AgentSidecarApprovalResolveRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarResponsePayload>("agent_sidecar_resolve_approval", { payload }),
+	agentSidecarResolveAskUser: (payload: AgentSidecarAskUserResumeRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarResponsePayload>("agent_sidecar_resolve_ask_user", { payload }),
 	agentSidecarRestoreCheckpoint: (payload: AgentSidecarCheckpointRestoreRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarResponsePayload>("agent_sidecar_restore_checkpoint", { payload }),
 	agentSidecarOrchestrate: (payload: AgentSidecarOrchestrateRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarOrchestratePayload>("agent_sidecar_orchestrate", { payload }),
 	agentSidecarOrchestrateResume: (payload: AgentSidecarOrchestrateResumeRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarOrchestratePayload>("agent_sidecar_orchestrate_resume", { payload }),
@@ -225,6 +226,96 @@ export type AgentSidecarApprovalResolveRequest_Serialize = {
 	sessionId?: string | null,
 	requestId: string,
 	decision: string,
+	goal?: string | null,
+	messages: AgentSidecarMessagePayload[],
+	workspaceRootPath?: string | null,
+	context: AiContextReferencePayload[],
+	modelConfig?: AgentSidecarModelConfigPayload_Serialize | null,
+	threadId?: string | null,
+	planId?: string | null,
+	planVersion?: number | null,
+	planStepId?: string | null,
+};
+
+/**
+ *  `calamex.dev/agent/ask-user/resume` 单题作答（契约层）。
+ *  镜像 sidecar `askUserAnswerParamsSchema`：questionId、optionIds（缺省 []）、text（可选）。
+ *  optionIds 恒序列化为数组（空则 []）；text 空白修剪由接线层负责，契约层仅在 None 时省略键。
+ */
+export type AgentSidecarAskUserAnswerPayload = AgentSidecarAskUserAnswerPayload_Serialize | AgentSidecarAskUserAnswerPayload_Deserialize;
+
+/**
+ *  `calamex.dev/agent/ask-user/resume` 单题作答（契约层）。
+ *  镜像 sidecar `askUserAnswerParamsSchema`：questionId、optionIds（缺省 []）、text（可选）。
+ *  optionIds 恒序列化为数组（空则 []）；text 空白修剪由接线层负责，契约层仅在 None 时省略键。
+ */
+export type AgentSidecarAskUserAnswerPayload_Deserialize = {
+	questionId: string,
+	optionIds?: string[],
+	text: string | null,
+};
+
+/**
+ *  `calamex.dev/agent/ask-user/resume` 单题作答（契约层）。
+ *  镜像 sidecar `askUserAnswerParamsSchema`：questionId、optionIds（缺省 []）、text（可选）。
+ *  optionIds 恒序列化为数组（空则 []）；text 空白修剪由接线层负责，契约层仅在 None 时省略键。
+ */
+export type AgentSidecarAskUserAnswerPayload_Serialize = {
+	questionId: string,
+	optionIds: string[],
+	text?: string | null,
+};
+
+/**
+ *  `calamex.dev/agent/ask-user/resume` 恢复请求（契约层）。
+ * 
+ *  结构镜像 `AgentSidecarApprovalResolveRequest` 的「agentChat 基底 + requestId」，但以
+ *  `outcome` + 结构化 `answers` 取代 `decision`：
+ *    * outcome 取值（selected/cancelled）由 sidecar zod 校验，原样透传；
+ *    * answers 为每题作答，outcome=cancelled 时通常缺省（serde 整字段省略，对齐 zod `.optional()`）。
+ *  与 approval 恢复一致地携带 plan_*（plan 续跑定位），不含 `mode`（恢复不切换模式）。
+ */
+export type AgentSidecarAskUserResumeRequest = AgentSidecarAskUserResumeRequest_Serialize | AgentSidecarAskUserResumeRequest_Deserialize;
+
+/**
+ *  `calamex.dev/agent/ask-user/resume` 恢复请求（契约层）。
+ * 
+ *  结构镜像 `AgentSidecarApprovalResolveRequest` 的「agentChat 基底 + requestId」，但以
+ *  `outcome` + 结构化 `answers` 取代 `decision`：
+ *    * outcome 取值（selected/cancelled）由 sidecar zod 校验，原样透传；
+ *    * answers 为每题作答，outcome=cancelled 时通常缺省（serde 整字段省略，对齐 zod `.optional()`）。
+ *  与 approval 恢复一致地携带 plan_*（plan 续跑定位），不含 `mode`（恢复不切换模式）。
+ */
+export type AgentSidecarAskUserResumeRequest_Deserialize = {
+	sessionId: string | null,
+	requestId: string,
+	outcome: string,
+	answers: AgentSidecarAskUserAnswerPayload_Deserialize[] | null,
+	goal: string | null,
+	messages?: AgentSidecarMessagePayload[],
+	workspaceRootPath: string | null,
+	context?: AiContextReferencePayload[],
+	modelConfig: AgentSidecarModelConfigPayload_Deserialize | null,
+	threadId: string | null,
+	planId: string | null,
+	planVersion: number | null,
+	planStepId: string | null,
+};
+
+/**
+ *  `calamex.dev/agent/ask-user/resume` 恢复请求（契约层）。
+ * 
+ *  结构镜像 `AgentSidecarApprovalResolveRequest` 的「agentChat 基底 + requestId」，但以
+ *  `outcome` + 结构化 `answers` 取代 `decision`：
+ *    * outcome 取值（selected/cancelled）由 sidecar zod 校验，原样透传；
+ *    * answers 为每题作答，outcome=cancelled 时通常缺省（serde 整字段省略，对齐 zod `.optional()`）。
+ *  与 approval 恢复一致地携带 plan_*（plan 续跑定位），不含 `mode`（恢复不切换模式）。
+ */
+export type AgentSidecarAskUserResumeRequest_Serialize = {
+	sessionId?: string | null,
+	requestId: string,
+	outcome: string,
+	answers?: AgentSidecarAskUserAnswerPayload_Serialize[] | null,
 	goal?: string | null,
 	messages: AgentSidecarMessagePayload[],
 	workspaceRootPath?: string | null,
