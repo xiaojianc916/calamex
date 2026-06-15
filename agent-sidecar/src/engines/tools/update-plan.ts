@@ -89,7 +89,8 @@ const collectHeadingTitles = (markdown: string): string[] =>
         .split('\n')
         .map((line) => {
             const match = HEADING_LINE.exec(line);
-            return match ? match[1].trim().toLowerCase() : null;
+            const title = match?.[1];
+            return title === undefined ? null : title.trim().toLowerCase();
         })
         .filter((title): title is string => title !== null);
 
@@ -112,7 +113,8 @@ export const parsePlanSteps = (markdown: string): string[] => {
         const heading = HEADING_LINE.exec(line);
         if (heading) {
             // 进入/离开 Steps 区：遇到下一个标题（标题不含 Steps）即自动结束本区。
-            inStepsSection = heading[1].trim().toLowerCase().includes(target);
+            const headingTitle = heading[1] ?? '';
+            inStepsSection = headingTitle.trim().toLowerCase().includes(target);
             continue;
         }
         if (!inStepsSection) {
@@ -120,7 +122,9 @@ export const parsePlanSteps = (markdown: string): string[] => {
         }
         const item = PLAN_STEP_LINE.exec(line);
         if (item) {
-            collected.push({ indent: item[1].length, text: item[2].trim() });
+            const indent = item[1] ?? '';
+            const text = item[2] ?? '';
+            collected.push({ indent: indent.length, text: text.trim() });
         }
     }
 
