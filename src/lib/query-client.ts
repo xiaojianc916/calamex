@@ -1,9 +1,11 @@
 import {
+  type PersistedClient,
+  type Persister,
   persistQueryClientRestore,
   persistQueryClientSubscribe,
 } from '@tanstack/query-persist-client-core';
-import { createSyncStoragePersister } from '@tanstack/query-sync-storage-persister';
 import { QueryClient } from '@tanstack/vue-query';
+import { del, get, set } from 'idb-keyval';
 
 // 30 天:对齐原 src/store/git.ts 中 commit stats 落盘的最长保留窗口,
 // 也覆盖 PR 列表/详情的 7 天窗口。单条 TTL 由各 domain 的 staleTime/gcTime 控制。
@@ -11,6 +13,9 @@ const PERSIST_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const PERSIST_STORAGE_KEY = 'calamex.vue-query';
 // 缓存结构/键规则变化时递增,等价于原来的 versioned cache key。
 const PERSIST_BUSTER = '1';
+// 写盘节流窗口:把启动期与刷新期密集的缓存写入(removeQueries/setQueryData)
+// 合并为一次 IndexedDB 写,避免逐次落盘阻塞。
+const PERSIST_THROTTLE_MS = 2_000;
 
 const structurallyShareSerializableData = (oldData: unknown, newData: unknown): unknown => {
   if (oldData === undefined || oldData === newData) {
@@ -64,33 +69,99 @@ export const queryClient = new CalamexQueryClient({
   },
 });
 
-const getPersistStorage = (): Storage | null => {
-  if (typeof window === 'undefined') return null;
+/**
+ * 基于 IndexedDB(idb-keyval)的异步持久化器。
+ *
+ * 取代旧的 createSyncStoragePersister + localStorage 方案:后者在启动时同步
+ * JSON.parse 整块缓存、并在每次缓存变动时同步全量序列化写回 localStorage,
+ * 随历史数据累积会把主线程钉死(表现为进入应用后界面整体卡死)。
+ *
+ * IndexedDB 走结构化克隆且 I/O 异步,序列化不再阻塞主线程;写入再叠加节流,
+ * 把启动/刷新期的密集写入合并为一次落盘。
+ */
+const createIdbPersister = (): Persister => {
+  let pendingClient: PersistedClient | null = null;
+  let flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const flush = async (): Promise<void> => {
+    flushTimer = null;
+    if (pendingClient === null) return;
+    const client = pendingClient;
+    pendingClient = null;
+    try {
+      await set(PERSIST_STORAGE_KEY, client);
+    } catch (error) {
+      console.warn('vue-query 持久化写入失败', error);
+    }
+  };
+
+  return {
+    persistClient: (client: PersistedClient): void => {
+      pendingClient = client;
+      if (flushTimer === null) {
+        flushTimer = setTimeout(() => {
+          void flush();
+        }, PERSIST_THROTTLE_MS);
+      }
+    },
+    restoreClient: async (): Promise<PersistedClient | undefined> => {
+      try {
+        return (await get<PersistedClient>(PERSIST_STORAGE_KEY)) ?? undefined;
+      } catch (error) {
+        console.warn('vue-query 持久化恢复失败', error);
+        return undefined;
+      }
+    },
+    removeClient: async (): Promise<void> => {
+      if (flushTimer !== null) {
+        clearTimeout(flushTimer);
+        flushTimer = null;
+      }
+      pendingClient = null;
+      try {
+        await del(PERSIST_STORAGE_KEY);
+      } catch (error) {
+        console.warn('vue-query 持久化清理失败', error);
+      }
+    },
+  };
+};
+
+/**
+ * 清理旧版本遗留在 localStorage 的整块缓存。
+ * 旧实现把所有可持久化查询塞进单个 localStorage key,跨会话只增不减,
+ * 既是本次卡死的根因,也会拖慢其它同步 localStorage 读取(如 pinia 持久化)。
+ */
+const cleanupLegacyLocalStoragePersist = (): void => {
+  if (typeof window === 'undefined') return;
   try {
-    return window.localStorage;
+    window.localStorage.removeItem(PERSIST_STORAGE_KEY);
   } catch {
-    return null;
+    // localStorage 不可用时忽略。
   }
 };
+
+const isPersistenceAvailable = (): boolean =>
+  typeof window !== 'undefined' && typeof indexedDB !== 'undefined';
 
 let persistenceUnsubscribe: (() => void) | null = null;
 
 /**
- * 接入官方 sync-storage 持久化,替代 git store 里手写的
- * localStorage 序列化/版本校验/prune/removeItem 样板。
+ * 接入官方 persist-client 持久化,落盘介质为 IndexedDB(异步)。
  *
  * 仅持久化显式标记 `meta: { persist: true }` 且已成功的查询(PR 列表、PR 详情、
  * commit stats),其余 server-state 仅驻留内存——与原实现“只有这几类缓存落盘”一致。
  * 幂等:重复调用不会重复订阅。
  */
 export const setupQueryPersistence = async (): Promise<void> => {
-  const storage = getPersistStorage();
-  if (!storage || persistenceUnsubscribe) return;
+  if (persistenceUnsubscribe) return;
 
-  const persister = createSyncStoragePersister({
-    storage,
-    key: PERSIST_STORAGE_KEY,
-  });
+  // 迁移:先清掉旧的 localStorage 膨胀块(根因),再切换到异步 IndexedDB。
+  cleanupLegacyLocalStoragePersist();
+
+  if (!isPersistenceAvailable()) return;
+
+  const persister = createIdbPersister();
 
   const persistOptions = {
     queryClient,
