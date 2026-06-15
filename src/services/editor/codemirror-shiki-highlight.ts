@@ -6,12 +6,7 @@ import {
   ViewPlugin,
   type ViewUpdate,
 } from '@codemirror/view';
-import {
-  ensureShikiLanguage,
-  isShikiLanguageLoaded,
-  tokenizeWithShikiSync,
-  tokenizeWithShikiWorker,
-} from '@/services/editor/shiki-highlighter';
+import { tokenizeWithShikiWorker } from '@/services/editor/shiki-highlighter';
 import {
   type IShikiThemedToken,
   resolveShikiLanguageId,
@@ -23,15 +18,10 @@ import {
 export const EDITOR_FONT_FAMILY =
   "Consolas, 'Cascadia Mono', 'SF Mono', 'JetBrains Mono', Menlo, Monaco, 'Courier New', monospace";
 
-// 单次 tokenize 切片的字节上限：Worker 回退路径默认从文档开头切到可见区下沿，超过
+// 单次 tokenize 切片的字节上限：Worker 路径默认从文档开头切到可见区下沿，超过
 // 此上限时退化为仅切可见区窗口；窗口切片仍超限（极端长行，如压缩成一行的文件）
 // 则放弃高亮，避免 Worker 任务过重。注意这是“切片”上限而非“整文档”上限。
 const MAX_HIGHLIGHT_SLICE_LENGTH = 200_000;
-
-// 同步着色的切片字节上限：语法已在主线程加载、且可见区窗口切片不超过此值时，
-// 直接在主线程 tokenize 并即时着色。取值远小于 Worker 切片上限，保证单帧同步
-// tokenize 的耗时可控（可见区窗口仅几百行，典型远小于此值）。超过则回退到 Worker。
-const MAX_SYNC_HIGHLIGHT_SLICE_LENGTH = 28_000;
 
 // 可见区下方额外着色的行数：平滑滚动时的下方衔接缓冲。取较大值以覆盖快速滚动
 // 单帧的跨度，减少滚动越界触发重算的频率，降低闪烁概率。
@@ -40,17 +30,6 @@ const HIGHLIGHT_OVERSCAN_LINES = 72;
 // DecorationSet 只需要覆盖真实视口附近。
 // token 预取/缓存范围可以大，但 RangeSetBuilder 不应为大量屏幕外行重复创建 Decoration。
 const DECORATION_RENDER_MARGIN_LINES = 8;
-
-// 同步着色时可见区上方的 lead-in 行数：不从文档开头切片时，从可见区上沿向上多取
-// 这些行作为语法状态的“启动上下文”，使块注释/heredoc/多行字符串等跨行结构在
-// 可见区配色尽量正确。取较大值以覆盖绝大多数现实代码的跨行跨度；极端超长跨行
-// 结构（距视口上千行的块注释）是专业编辑器靠“每行状态缓存”解决的罕见场景，
-// 此处以“零闪烁”为优先权衡，从文档开头的完全正确着色由 Worker 回退路径提供。
-const SYNC_HIGHLIGHT_LEAD_IN_LINES = 120;
-
-// 滚动同步补色预算：只有少量新行进入视口时才在当前 update 内同步 tokenize。
-// 这接近 VS Code / Monaco 的体验取向：小滚动不牺牲高亮，大跨度跳滚不阻塞滚动首帧。
-const SCROLL_SYNC_UNCACHED_LINE_LIMIT = 32;
 
 // 输入停顿后过多久触发一次重算（毫秒）；过小会让连续输入仍频繁重算，过大高亮滞后明显。
 const HIGHLIGHT_RECOMPUTE_DEBOUNCE_MS = 90;
@@ -79,7 +58,7 @@ const tokenDecorationCache = new Map<string, Decoration>();
 const setShikiLanguageEffect = StateEffect.define<string>();
 // Worker 异步 tokenize 完成后借此 effect 应用 decorations。
 const shikiWorkerResultEffect = StateEffect.define<TShikiWorkerHighlightResult>();
-// 防抖超时 / 语法预热完成触发的重算信号。
+// 防抖超时 / post-paint 触发的重算信号。
 const shikiRecomputeEffect = StateEffect.define<null>();
 
 /** 供外部在语言切换时派发，通知高亮插件更新语言。 */
@@ -235,18 +214,6 @@ export const findUncachedLineRange = (input: {
   return { startLine: firstMissing, endLine: lastMissing };
 };
 
-/**
- * 纯函数：判断本次重算是否走“主线程同步着色”快路径。
- * 仅当目标语法已在主线程加载、且切片体积不超过上限时返回 true：此时可在当前 update 内
- * 同步 tokenize 并立即着色，避免滚动暴露的新行先以无色渲染、等 Worker 回包才补色的闪烁。
- * 语法未加载或切片过大时返回 false，回退到 Worker 异步路径，避免阻塞 UI 线程。
- */
-export const shouldHighlightSynchronously = (input: {
-  languageLoaded: boolean;
-  sliceCodeLength: number;
-  maxSyncSliceLength: number;
-}): boolean => input.languageLoaded && input.sliceCodeLength <= input.maxSyncSliceLength;
-
 const shikiLanguageField = StateField.define<string>({
   create: () => 'text',
   update(value, tr) {
@@ -301,10 +268,9 @@ const tokenDecoration = (style: string): Decoration => {
 
 /**
  * 截取需要 tokenize 的切片，单次成本与可见行数相关而非文档总长。
- * - fromDocumentStart=true（Worker 回退）：从文档首行切起，跨行结构完全正确；超过体积
- *   上限则退化为可见区窗口。
- * - fromDocumentStart=false（同步快路径）：仅切 [视口顶 - leadInLines .. 视口底 + overscan]
- *   的有界窗口，切片恒小，使主线程同步 tokenize 耗时可控。
+ * - fromDocumentStart=true（Worker 路径）：从文档首行切起，跨行结构完全正确；超过体积
+ *   上限则退化为可见区窗口（fromDocumentStart=false 模式）。
+ * - fromDocumentStart=false：仅切 [视口顶 - leadInLines .. 视口底 + overscan] 的有界窗口。
  * 窗口切片仍超体积上限（极端长行）时返回 null，调用方据此放弃高亮。返回所用行范围供复用判定。
  */
 const computeShikiHighlightSlice = (
@@ -363,7 +329,7 @@ const computeShikiHighlightSlice = (
 
 /**
  * 从按行 token 缓存构建 [startLine, endLine] 区间的装饰集合。
- * 仅渲染缓存命中的行；未命中的行不产生装饰（呈纯文本），由调用方在同步/Worker 路径补齐后
+ * 仅渲染缓存命中的行；未命中的行不产生装饰（呈纯文本），由调用方在 Worker 路径补齐后
  * 重建。RangeSetBuilder 要求按位置升序添加：按行升序、行内 token 顺序累加可天然满足。
  */
 const buildDecorationsFromLineCache = (
@@ -422,8 +388,6 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
     private pendingRequest: TShikiHighlightRequestIdentity | null = null;
     private activeWorkerRequestId: number | null = null;
     private queuedWorkerRequest: TQueuedShikiWorkerRequest | null = null;
-    // 已发起主线程预热的语言；避免每次 recompute 重复创建微任务，失败则复位以允许重试。
-    private warmedLanguage: string | null = null;
     // 按行 token 缓存：key=文档行号(1-based)，value=该行 token。仅对 (cacheLanguage,
     // cacheDocVersion) 有效；语言或文档版本变化时整体作废。命中缓存的可见区可零 tokenize
     // 同步重建装饰，是“滚动零闪烁”的核心：来回滚动看过的行无需重算，新行一出现即着色。
@@ -466,26 +430,16 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
 
       if (action === 'recompute') {
         if (update.viewportChanged && !languageChanged && !recomputeRequested) {
-          // 专业编辑器的滚动策略不是“牺牲高亮”，而是“预算内同步，超预算让路给滚动”：
-          // - 慢速/小范围滚动：新进入视口的未缓存行很少，当前 update 内同步补高亮；
-          // - 快速/大跨度滚动：先让 CodeMirror 虚拟滚动把文本首帧画出来，下一帧补高亮。
-          if (this.canFillScrollViewportSynchronously(update.view)) {
-            this.cancelScheduledRecompute();
-            this.recompute(update.view, { allowReuse: true });
-            return;
-          }
-
+          // 纯滚动：先用按行缓存同步重建装饰（命中缓存的行零闪烁、不清空），再让 CodeMirror
+          // 虚拟滚动把新行文本画出来，下一帧（post-paint）对新进入视口的未缓存行补算高亮。
           this.renderViewportFromCache(update.view);
           this.schedulePostPaintRecompute(update.view);
           return;
         }
 
-        // 滚动（viewportChanged）此处同步重算，而非旧实现的 rAF 合帧：rAF 会让 CM 当帧先用
-        // 旧装饰画出新滚出来的行（无色），下一帧才补色，造成每次滚动必现 1 帧露白闪烁。
-        // 借助按行缓存，同步重算在命中缓存时仅重建装饰（极廉价），未命中也只同步 tokenize
-        // 一个有界窗口，故可安全地在 update() 内同步完成，使新行首帧即着色。
+        // 语言切换 / 收到重算请求（防抖超时、post-paint）：对当前视口重算。
         this.cancelScheduledRecompute();
-        // 语言切换 / 防抖重算请求需强制重建；仅滚动则允许复用缓存与在途 Worker 请求。
+        // 语言切换 / 防抖重算请求需强制重建；其余允许复用缓存与在途 Worker 请求。
         const allowReuse = !languageChanged && !recomputeRequested;
         this.recompute(update.view, { allowReuse });
         return;
@@ -561,36 +515,6 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
           this.recomputeTimer = null;
           this.dispatchRecompute(view);
         }, 0);
-      });
-    }
-
-    // 主线程语法预热（幂等）：Worker 有独立 highlighter 实例，主线程 loadedLanguages 仅在显式
-    // 预热后才会填充，而这是同步快路径可用的前提。借鉴 VS Code / Monaco——语法在初始化时加载，
-    // 而非等到滚动时才异步拉取。预热完成后派发一次重算，使当前视口立即切到同步路径。
-    private warmMainThreadLanguage(view: EditorView, language: string): void {
-      if (this.warmedLanguage === language) {
-        return;
-      }
-      this.warmedLanguage = language;
-      void ensureShikiLanguage(language).then((shikiId) => {
-        if (this.destroyed) {
-          return;
-        }
-        if (!shikiId) {
-          // 预热失败（不支持/加载出错）：复位以便后续重试，避免永久停留在 Worker 路径。
-          if (this.warmedLanguage === language) {
-            this.warmedLanguage = null;
-          }
-          return;
-        }
-        if (view.state.field(shikiLanguageField, false) !== language) {
-          return;
-        }
-        try {
-          view.dispatch({ effects: shikiRecomputeEffect.of(null) });
-        } catch {
-          // view 已销毁，忽略。
-        }
       });
     }
 
@@ -675,58 +599,6 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
       this.decorations = decorations;
     }
 
-    private canFillScrollViewportSynchronously(view: EditorView): boolean {
-      const language = view.state.field(shikiLanguageField, false) ?? 'text';
-      if (!resolveShikiLanguageId(language) || !isShikiLanguageLoaded(language)) {
-        return false;
-      }
-
-      this.ensureCacheContext(language);
-
-      const visible = this.getVisibleLineRange(view);
-      if (!visible) {
-        return false;
-      }
-
-      const renderRange = computeShikiHighlightRange({
-        firstVisibleLine: visible.first,
-        lastVisibleLine: visible.last,
-        totalLines: view.state.doc.lines,
-        overscanLines: HIGHLIGHT_OVERSCAN_LINES,
-        leadInLines: HIGHLIGHT_OVERSCAN_LINES,
-        fromDocumentStart: false,
-      });
-
-      const uncached = findUncachedLineRange({
-        startLine: renderRange.startLine,
-        endLine: renderRange.endLine,
-        isCached: (lineNumber) => this.lineTokenCache.has(lineNumber),
-      });
-
-      if (uncached === null) {
-        return true;
-      }
-
-      const uncachedLineCount = uncached.endLine - uncached.startLine + 1;
-      if (uncachedLineCount > SCROLL_SYNC_UNCACHED_LINE_LIMIT) {
-        return false;
-      }
-
-      const syncSlice = computeShikiHighlightSlice(view, {
-        fromDocumentStart: false,
-        leadInLines: SYNC_HIGHLIGHT_LEAD_IN_LINES,
-      });
-
-      return Boolean(
-        syncSlice &&
-          shouldHighlightSynchronously({
-            languageLoaded: true,
-            sliceCodeLength: syncSlice.code.length,
-            maxSyncSliceLength: MAX_SYNC_HIGHLIGHT_SLICE_LENGTH,
-          }),
-      );
-    }
-
     private recompute(view: EditorView, options: { allowReuse: boolean }): void {
       const language = view.state.field(shikiLanguageField, false) ?? 'text';
       if (!resolveShikiLanguageId(language)) {
@@ -741,8 +613,6 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
         return;
       }
 
-      // 预热主线程语法，使后续滚动能走同步快路径。
-      this.warmMainThreadLanguage(view, language);
       // 语言/文档版本变化时作废按行缓存。
       this.ensureCacheContext(language);
 
@@ -771,40 +641,9 @@ const shikiHighlightPlugin = ViewPlugin.fromClass(
         return;
       }
 
-      // —— 同步快路径（主线程、可见区窗口、即时着色，零闪烁/零露白）——
-      // 借鉴 CodeMirror 6 / VS Code：高亮采用主线程小增量同步解析。对“可见区窗口”（含
-      // lead-in 上下文）同步 tokenize，切片有界且小，主线程耗时可控；结果按行入缓存，新行
-      // 在当前 update 即着色，绝不晚一帧。
-      if (isShikiLanguageLoaded(language)) {
-        const syncSlice = computeShikiHighlightSlice(view, {
-          fromDocumentStart: false,
-          leadInLines: SYNC_HIGHLIGHT_LEAD_IN_LINES,
-        });
-        if (
-          syncSlice &&
-          shouldHighlightSynchronously({
-            languageLoaded: true,
-            sliceCodeLength: syncSlice.code.length,
-            maxSyncSliceLength: MAX_SYNC_HIGHLIGHT_SLICE_LENGTH,
-          })
-        ) {
-          const tokens = tokenizeWithShikiSync(syncSlice.code, language);
-          if (tokens) {
-            this.cacheSliceLines(syncSlice.startLine, tokens);
-            // 作废仍在途的旧 Worker 请求，避免其回包覆盖本次同步结果。
-            this.latestRequestId = this.nextRequestId;
-            this.nextRequestId += 1;
-            this.pendingRequest = null;
-            this.renderViewportFromCache(view);
-            return;
-          }
-        }
-      }
-
-      // —— Worker 回退 ——
-      // 仅在首屏语法尚未预热完成、或极端长行切片过大无法同步时走此路。先用现有缓存（可能为
-      // 部分命中）同步重建，已着色的行保持不变、不清空、不露白；再从文档开头切片交给 Worker，
-      // 保证跨行结构配色正确，回包后入缓存重建。预热完成后的后续滚动都会走上面的同步快路径。
+      // —— Worker tokenize ——
+      // 先用现有缓存（可能为部分命中）同步重建，已着色的行保持不变、不清空、不露白；再从
+      // 文档开头切片交给 Worker，保证跨行结构配色正确，回包后入缓存重建。
       this.renderViewportFromCache(view);
 
       const slice = computeShikiHighlightSlice(view, { fromDocumentStart: true });

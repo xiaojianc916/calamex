@@ -189,19 +189,3 @@ export const tokenizeWithShikiWorker = async (
   }
   return null;
 };
-
-// —— 兼容旧调用点的主线程接口（worker-only 模式下均为空实现）——
-// 主线程不再加载任何语法：故“已加载”恒为 false、同步 tokenize 恒为 null，所有高亮
-// 都会走 Worker。保留这些导出以避免改动 codemirror-shiki-highlight.ts；待 worker-only
-// 验证稳定后，可在 codemirror 侧删除已静态不可达的同步快路径，再移除这些 stub。
-export const isShikiLanguageLoaded = (_language: string): boolean => false;
-
-export const tokenizeWithShikiSync = (
-  _code: string,
-  _language: string,
-): IShikiThemedToken[][] | null => null;
-
-// 仅解析受支持的语言 id（不在主线程加载语法）。返回非 null 让调用方的“预热完成”
-// 逻辑仅触发一次重算后即稳定，不会反复重试。
-export const ensureShikiLanguage = async (language: string): Promise<string | null> =>
-  resolveShikiLanguageId(language);
