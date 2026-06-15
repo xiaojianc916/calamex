@@ -53,6 +53,18 @@ const isBenignResizeObserverError = (error: unknown): boolean => {
   );
 };
 
+// Vue 在开发模式下的递归更新保护(checkRecursiveUpdates)抛出的告警是可恢复的:
+// 它表示某次重渲染在一轮调度内被触发过多次,Vue 会自行中断该轮 flush,应用并未崩溃。
+// 绝不能把它升级为致命错误界面 —— 否则 setRuntimeError 会替换整个 router-view,
+// 而这次替换又落在同一轮超预算 flush 中再次抛出同样的告警,形成
+// 「设错误态 → 重渲染 → 再抛错」的死循环,最终界面全白卡死。
+const isRecoverableSchedulerWarning = (error: unknown): boolean => {
+  const errorMessage = readErrorLikeField(error, 'message') ?? '';
+  const mergedText = `${errorMessage}\n${String(error)}`.toLowerCase();
+
+  return mergedText.includes('maximum recursive updates exceeded');
+};
+
 const normalizeErrorDetail = (error: unknown): string => {
   if (error instanceof Error) {
     return error.stack ?? error.message;
@@ -70,14 +82,35 @@ const normalizeErrorDetail = (error: unknown): string => {
   }
 };
 
+const isSameRuntimeError = (
+  current: IRuntimeErrorState | null,
+  next: IRuntimeErrorState,
+): boolean => {
+  return (
+    current !== null &&
+    current.title === next.title &&
+    current.message === next.message &&
+    current.detail === next.detail &&
+    current.code === next.code &&
+    current.traceId === next.traceId
+  );
+};
+
 export const setRuntimeError = (title: string, error: unknown): void => {
-  runtimeErrorState.value = {
+  const next: IRuntimeErrorState = {
     title,
     message: toErrorMessage(error, '发生未知错误'),
     detail: normalizeErrorDetail(error),
     code: isAppError(error) ? error.code : undefined,
     traceId: isAppError(error) ? error.traceId : undefined,
   };
+
+  // 重复上报同一错误时保持引用不变,避免反复触发重渲染并叠加成递归更新风暴。
+  if (isSameRuntimeError(runtimeErrorState.value, next)) {
+    return;
+  }
+
+  runtimeErrorState.value = next;
 };
 
 const disposeRuntimeDiagnostics = (): void => {
@@ -109,6 +142,11 @@ export const registerRuntimeDiagnostics = (): void => {
       return;
     }
 
+    if (isRecoverableSchedulerWarning(event.error) || isRecoverableSchedulerWarning(event.message)) {
+      event.preventDefault();
+      return;
+    }
+
     setRuntimeError('应用运行时错误', event.error ?? event.message);
   };
 
@@ -119,6 +157,11 @@ export const registerRuntimeDiagnostics = (): void => {
     }
 
     if (isBenignResizeObserverError(event.reason)) {
+      event.preventDefault();
+      return;
+    }
+
+    if (isRecoverableSchedulerWarning(event.reason)) {
       event.preventDefault();
       return;
     }
