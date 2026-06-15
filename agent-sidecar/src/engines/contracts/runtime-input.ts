@@ -6,7 +6,7 @@
  * Runtime modes the agent supports.
  *
  * - `ask`     — single-shot Q&A; no tools, no plan.
- * - `plan`    — produce a structured plan JSON, wait for human approval.
+ * - `plan`    — produce a PLAN.md-backed executable plan, wait for human approval.
  * - `agent`   — autonomous tool-using execution.
  * - `patch`   — code-mod oriented; emits diffs/patches.
  * - `review`  — code review; emits review comments / verdict.

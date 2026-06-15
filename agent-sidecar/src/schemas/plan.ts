@@ -13,13 +13,11 @@ export const AGENT_PLAN_RECORD_SCHEMA_VERSION = 1 as const;
 export type TAgentPlanRecordSchemaVersion = typeof AGENT_PLAN_RECORD_SCHEMA_VERSION;
 
 // ----------------------------------------------------------------------
-// Step defaults (normalizer 用 / 文档用)
+// Step defaults (PLAN.md → strict plan bridge 用 / 文档用)
 // ----------------------------------------------------------------------
 
 /**
- * 当 LLM 输出的 step 缺省某些字段时，normalizer 应当填充的默认值。
- * `agentPlanGenerationStepSchema` 是宽松版（这些都 optional），
- * `agentPlanStepSchema` 是严格版（必填）—— normalizer 桥接两者。
+ * 当 PLAN.md 的 Steps 区只提供步骤标题时，桥接到严格 step schema 所需的默认值。
  */
 export const PLAN_STEP_DEFAULTS = {
   riskLevel: 'low',
@@ -101,69 +99,6 @@ export const agentPlanSchema = z.object({
 });
 
 // ----------------------------------------------------------------------
-// Lenient generation schemas (LLM 输出解析用)
-// ----------------------------------------------------------------------
-
-const stringOrStringArraySchema = z.union([
-  z.string().min(1),
-  z.array(z.string().min(1)),
-]);
-
-const booleanOrStringSchema = z.union([
-  z.boolean(),
-  z.string().min(1),
-]);
-
-/**
- * LLM 输出的 step 形态。比严格 schema **宽松**：
- * - 所有字段 optional（normalizer 用 `PLAN_STEP_DEFAULTS` 补齐）。
- * - `tools` / `files` / ... 接受单个字符串或数组（normalizer 归一化为数组）。
- * - `status` / `riskLevel` 接受任意非空字符串（normalizer 做模糊映射）。
- * - `requiresApproval` 接受 boolean 或字符串（`"true"` / `"是"` 等，normalizer 解析）。
- * - `.passthrough()` 保留未知字段以便 forward-compat。
- */
-export const agentPlanGenerationStepSchema = z.object({
-  id: z.string().min(1).optional(),
-  title: z.string().min(1).optional(),
-  goal: z.string().min(1).optional(),
-  description: z.string().min(1).optional(),
-  status: z.string().min(1).optional(),
-  tools: stringOrStringArraySchema.optional(),
-  files: stringOrStringArraySchema.optional(),
-  commands: stringOrStringArraySchema.optional(),
-  risks: stringOrStringArraySchema.optional(),
-  acceptanceCriteria: stringOrStringArraySchema.optional(),
-  riskLevel: z.string().min(1).optional(),
-  requiresApproval: booleanOrStringSchema.optional(),
-  expectedOutput: z.string().min(1).optional(),
-}).passthrough();
-
-export const agentPlanGenerationPlanSchema = z.object({
-  goal: z.string().min(1).optional(),
-  summary: z.string().min(1).optional(),
-  requiresApproval: booleanOrStringSchema.optional(),
-  steps: z.array(agentPlanGenerationStepSchema).min(1).optional(),
-}).passthrough();
-
-/**
- * **LLM 输出顶层信封解码**。
- *
- * 接受三种形态：
- * 1. **裸 plan**：`{ goal, steps, ... }` 直接在顶层。
- * 2. **包装 plan**：`{ plan: { goal, steps, ... } }`。
- * 3. **包装在其它键里**：`{ result: { ... } }` 或 `{ data: { ... } }`
- *    （某些 LLM 工具调用约定）。
- *
- * normalizer 应当按 `['plan', 'result', 'data']` 顺序优先取包装内部，
- * 退化到顶层裸 plan。
- */
-export const agentPlanGenerationSchema = agentPlanGenerationPlanSchema.extend({
-  plan: agentPlanGenerationPlanSchema.optional(),
-  result: agentPlanGenerationPlanSchema.optional(),
-  data: agentPlanGenerationPlanSchema.optional(),
-});
-
-// ----------------------------------------------------------------------
 // Plan record (持久化)
 // ----------------------------------------------------------------------
 
@@ -240,7 +175,4 @@ export type TAgentPlanStatus = z.infer<typeof agentPlanStatusSchema>;
 export type TAgentPlanStepStatus = z.infer<typeof agentPlanStepStatusSchema>;
 export type TAgentPlanStep = z.infer<typeof agentPlanStepSchema>;
 export type TAgentPlan = z.infer<typeof agentPlanSchema>;
-export type TAgentPlanGeneration = z.infer<typeof agentPlanGenerationSchema>;
-export type TAgentPlanGenerationStep = z.infer<typeof agentPlanGenerationStepSchema>;
-export type TAgentPlanGenerationPlan = z.infer<typeof agentPlanGenerationPlanSchema>;
 export type TAgentPlanRecord = z.infer<typeof agentPlanRecordSchema>;

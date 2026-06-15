@@ -8,7 +8,7 @@ import { createMastraMemoryForModel, createMastraModelConfig, resolveMastraModel
 import { createAcontextTokenEventDraft, createDeepSeekPayloadEventSink } from '../budget/budget.js';
 import { normalizeMastraError } from '../errors.js';
 import { buildMastraMessages } from '../session/session-messages.js';
-import { normalizeGeneratedAgentPlan } from './plan-utils.js';
+import { buildAgentPlanFromPlanSteps } from './plan-utils.js';
 import { createErrorResponse, createPlanRecordResponse, createPlanResponse } from '../responses.js';
 import { loadMastraMcpTools } from '../tools/tools.js';
 import { parsePlanSteps, resolvePlanFilePath } from '../tools/update-plan.js';
@@ -22,9 +22,9 @@ import type { AnyWorkspace } from '@mastra/core/workspace';
 import type { MastraBrowser } from '@mastra/core/browser';
 
 /**
- * 计划族（plan / validate / replan）共享的「结构化输出流式脊柱」单次消费结果。
- * - object：fullStream 正常消费完成，object 为 Mastra MastraModelOutput.object 的解析值
- *   （未配置 schema 或解析失败时为 undefined，由各调用方按自身语义降级）。
+ * 计划族（plan / validate / replan）共享的「流式消费 + 可选结构化对象」结果。
+ * - object：fullStream 正常消费完成后的 Mastra MastraModelOutput.object；validate/replan
+ *   依赖它读取结构化结果，plan() 不使用它（计划唯一事实源是 PLAN.md）。
  * - pending：出现工具审批 / ask_user 反向提问挂起（仅 plan() 这类持可恢复 handle 的
  *   调用方支持续跑；validate/replan 视为不支持的挂起并降级为错误）。
  * - error：流内错误 / 中止。
@@ -44,11 +44,10 @@ const PLAN_AGENT_MAX_STEPS = 32;
 
 export class MastraRuntimePlan extends MastraRuntimeChat {
     /**
-     * 计划族唯一的流式脊柱：先经 consumeTextStream 消费 fullStream（投影推理/正文/工具
-     * 事件，并让工具审批 / ask_user 反向提问得以挂起），再读取 Mastra 官方
-     * MastraModelOutput.object 取结构化结果。validatePlan() / replanPlan() 依赖其结构化
-     * object；plan() 仅复用其 pending/error/done 的统一处理（计划改由 PLAN.md 承载，object
-     * 在 plan() 中被有意忽略），杜绝 agent.generate 旧路径与流式新路径并存的新旧杂糅。
+     * 计划族共享的流式脊柱：先经 consumeTextStream 消费 fullStream（投影推理/正文/工具
+     * 事件，并让工具审批 / ask_user 反向提问得以挂起），再按需读取 Mastra 官方
+     * MastraModelOutput.object。validatePlan() / replanPlan() 仍使用结构化 object；plan()
+     * 已切到 planning-as-tool，只复用 pending/error/done 的统一处理，不再兼容旧 JSON 计划生成。
      */
     protected async streamStructuredPlanObject(args: {
         agent: IMastraAgentLike;
@@ -260,8 +259,8 @@ export class MastraRuntimePlan extends MastraRuntimeChat {
                 }
 
                 // agent 规划循环正常结束。活体 PLAN.md 是计划的唯一事实源（update_plan 写入、
-                // exit_plan 校验交付）；据其 canonical Steps 区解析出有序步骤文本，再经
-                // normalizeGeneratedAgentPlan 补齐严格 step 字段，桥接到既有计划存储与编排。
+                // exit_plan 校验交付）；据其 canonical Steps 区解析出有序步骤文本，再桥接到
+                // 既有严格计划存储与编排结构。
                 const planFilePath = resolvePlanFilePath({
                     workspaceRootPath: input.workspaceRootPath,
                     threadId: input.threadId,
@@ -280,13 +279,7 @@ export class MastraRuntimePlan extends MastraRuntimeChat {
                     );
                 }
 
-                const parsedPlan = normalizeGeneratedAgentPlan(
-                    {
-                        goal: input.goal,
-                        steps: planSteps.map((stepText) => ({ title: stepText, goal: stepText })),
-                    },
-                    input.goal,
-                );
+                const parsedPlan = buildAgentPlanFromPlanSteps(input.goal, planSteps);
 
                 if (!parsedPlan) {
                     return createErrorResponse(
