@@ -9,7 +9,7 @@ import { MAIN_WINDOW_LABEL } from '@/utils/app-window';
 import { renderFatalBootstrapError } from '@/utils/bootstrap-fatal-error';
 import { initEditorScrollbarActivity } from '@/utils/editor-scrollbar-activity';
 import { initGitHubAuthHeaderEnhancement } from '@/utils/github-auth-header';
-import { registerRuntimeDiagnostics, setRuntimeError } from '@/utils/runtime-diagnostics';
+import { registerRuntimeDiagnostics, reportRuntimeError, setRuntimeError } from '@/utils/runtime-diagnostics';
 import { markStartup, reportStartupTimings } from '@/utils/startup-profiler';
 
 registerRuntimeDiagnostics();
@@ -142,7 +142,7 @@ const bootstrap = async (): Promise<void> => {
     markStartup('vue-query-persistence-ready');
 
     app.config.errorHandler = (error) => {
-      setRuntimeError(MESSAGES.vueErrorLabel, error);
+      reportRuntimeError(MESSAGES.vueErrorLabel, error);
     };
 
     await router.isReady();
