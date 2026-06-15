@@ -4,7 +4,7 @@
  * ACP 是围绕「会话回合」(session/prompt)的固定协议：那些真正「带外」的能力——
  * 不属于任何 prompt 回合——没有标准 wire 形态。遵循 SDK 指引（扩展方法用域名前缀
  * 避免冲突）与 Zed 的 _meta 纪律，这类能力经 AgentSideConnection 的 ext 通道暴露，
- * 并在 initialize 的 `agentCapabilities._meta` 下以命名空间公示供我方宿主发现；
+ * 并在 initialize 的 `agentCapabilities._meta` 下以命名空间公示供我方宙主发现；
  * 一个不识别这些扩展的标准客户端（如 Zed）会安全忽略，核心会话流不受影响。
  *
  * 扩展清单（均挂在同一 calamex.dev 命名空间下，镜像 checkpoint/restore 先例）：
@@ -17,8 +17,13 @@
  *   增量），会丢失结构化补丁 / 检查点 / 回滚 / 富审批字段 / plan_ready 等 agent UI 词表；
  *   故这两个扩展把过程增量经 session/update 仅作实时预览下发，真正权威的富事件由方法
  *   返回值的完整 toAgentSidecarResponse 信封承载（与旧 HTTP /agent/chat 同构，前端无感）。
- * - web/search、web/fetch：应用级网络检索/抓取（由宿主的 ai::tools 调用，非 agent 工具）。
- * - warmup：LLM 连接预热（宿主启动时显式调用，缩短首 prompt 首字延迟）。
+ * - agent/ask-user/resume：ask_user 反向提问（HITL）挂起恢复（runtime.resolveAskUser）。
+ *   agent/chat/resolve 的姊妹方法：上一段信封里的 ask_user_required 事件携 requestId，
+ *   本方法携用户回填的 outcome + 结构化 answers 回灌挂起的 ask_user 工具续跑同一回合。
+ *   不复用 session/request_permission（扁平 approve/reject 选项无法表达多问多选表单），
+ *   也不复用 agent/chat/resolve（其 decision-only 入参无法承载富答案）。
+ * - web/search、web/fetch：应用级网络检索/抓取（由宙主的 ai::tools 调用，非 agent 工具）。
+ * - warmup：LLM 连接预热（宙主启动时显式调用，缩短首 prompt 首字延迟）。
  * - health：健康/活性探活 + MCP 运行状态快照。
  * - plan/orchestrate、plan/orchestrate/resume：原生计划编排（runtime.buildPlanOrchestrationWorkflow）
  *   的启动与挂起恢复；过程事件经会话的 session/update 流式下发，挂起/终态信封
@@ -26,7 +31,7 @@
  *
  * 模型代理谈（model-proxy）与叙述生成（narrator）不在此列：二者在旧 http 期即与
  * `/agent/chat` 共用同一 `runtime.chat`(ask) 处理器，在 ACP 下天然归为 ask 模式的 prompt 回合，
- * 无需单独扩展。检查点长期可像 Zed 那样归到宿主侧 git_store，届时该扩展整体退役。
+ * 无需单独扩展。检查点长期可像 Zed 那样归到宙主侧 git_store，届时该扩展整体退役。
  * 本模块为纯函数 + 常量（及类型投影），无 I/O、无状态；I/O 由 agent.ts 的 ext 处理器承担。
  */
 import { z } from "zod"
@@ -40,6 +45,7 @@ import {
 import type {
 	IAgentMessageInput,
 	IApprovalResolutionInput,
+	IAskUserResolutionInput,
 	IAgentRuntimeInput,
 	IAgentRuntimeModelConfigInput,
 	ICheckpointRestoreInput,
@@ -84,11 +90,17 @@ export const AGENT_CHAT_METHOD = `${CALAMEX_EXT_NAMESPACE}/agent/chat`
  * 镜像旧 HTTP `/approval/resolve` → `runtime.resolveApproval(parse(body), options)`。
  */
 export const AGENT_CHAT_RESOLVE_METHOD = `${CALAMEX_EXT_NAMESPACE}/agent/chat/resolve`
+/**
+ * ask_user 反向提问（HITL）恢复扩展方法名。agent/chat/resolve 的姊妹方法：携上一段
+ * 信封里 ask_user_required 事件的 requestId 与用户回填的 outcome + 结构化 answers，
+ * 经 `runtime.resolveAskUser` 回灌挂起的 ask_user 工具续跑同一回合。
+ */
+export const AGENT_ASK_USER_RESUME_METHOD = `${CALAMEX_EXT_NAMESPACE}/agent/ask-user/resume`
 
 /**
  * sidecar 构建身份版本号（从旧 http server.ts 迁入，使其在 server.ts 删除后仍成立）。
  * 这是 sidecar *实现* 的版本标记，与 ACP 协议本身的 PROTOCOL_VERSION 解耦；仅用于 health
- * 投影中填充宿主侧 AgentSidecarHealthPayload 的 protocol/implementation 字段，保持契约稳定。
+ * 投影中填充宙主侧 AgentSidecarHealthPayload 的 protocol/implementation 字段，保持契约稳定。
  */
 export const SIDECAR_PROTOCOL_VERSION = "7"
 export const SIDECAR_IMPLEMENTATION_VERSION =
@@ -96,7 +108,7 @@ export const SIDECAR_IMPLEMENTATION_VERSION =
 
 /**
  * initialize 时挂在 `agentCapabilities._meta` 下的扩展公示。
- * 宿主据 `_meta["calamex.dev"].extMethods` 发现可用扩展；标准客户端忽略本键。
+ * 宙主据 `_meta["calamex.dev"].extMethods` 发现可用扩展；标准客户端忽略本键。
  */
 export const CALAMEX_AGENT_CAPABILITY_META: Record<string, unknown> = {
 	[CALAMEX_EXT_NAMESPACE]: {
@@ -111,6 +123,7 @@ export const CALAMEX_AGENT_CAPABILITY_META: Record<string, unknown> = {
 			orchestrateResume: ORCHESTRATE_RESUME_METHOD,
 			agentChat: AGENT_CHAT_METHOD,
 			agentChatResolve: AGENT_CHAT_RESOLVE_METHOD,
+			agentAskUserResume: AGENT_ASK_USER_RESUME_METHOD,
 		},
 	},
 }
@@ -160,7 +173,7 @@ export const parseCheckpointRestoreParams = (
 
 /**
  * 把回滚运行的响应投影为扩展方法结果。复用 toAgentSidecarResponse，使回滚返回与
- * chat 完全同构的响应信封（schemaVersion + sessionId + events + result），宿主可
+ * chat 完全同构的响应信封（schemaVersion + sessionId + events + result），宙主可
  * 直接复用既有解析器。过程事件（若有可投影者）已在调用期经 session/update 下发。
  */
 export const toCheckpointRestoreExtResult = (
@@ -223,7 +236,7 @@ export const parseModelChatParams = (
 
 /**
  * 把原始模型透传的响应投影为扩展方法结果。复用 toAgentSidecarResponse，与 chat/checkpoint
- * 完全同构（schemaVersion + sessionId + events + result），宿主可直接复用既有解析器。
+ * 完全同构（schemaVersion + sessionId + events + result），宙主可直接复用既有解析器。
  */
 export const toModelChatExtResult = (
 	response: IAgentRuntimeResponse,
@@ -372,9 +385,74 @@ export const parseAgentChatResolveParams = (
  * 把 agent 对话回合（含审批恢复段）的响应投影为扩展方法结果。复用 toAgentSidecarResponse，
  * 与 chat/checkpoint/modelChat 完全同构（schemaVersion + sessionId + events + result）：
  * 富事件（结构化补丁 / 检查点 / 回滚 / 富审批字段 / plan_ready 等）零损失地随返回信封下发，
- * 宿主可直接复用既有 AgentSidecarResponsePayload 解析，前端 finalizeSidecarTurn 零改动消费。
+ * 宙主可直接复用既有 AgentSidecarResponsePayload 解析，前端 finalizeSidecarTurn 零改动消费。
  */
 export const toAgentChatExtResult = (
+	response: IAgentRuntimeResponse,
+): TAgentSidecarResponse => toAgentSidecarResponse(response)
+
+/**
+ * ask_user 单条回答 schema（自包含，承接前端 IQuestionAnswer）。answer 用工具在 surface
+ * 时分配的稳定 questionId / optionId 寻址；自由文本（恒在的「其他」行，或 text 型问题）
+ * 走 text。与 IAskUserAnswerInput 结构兼容，也与 ask_user 工具 resumeSchema 的 answer 同形。
+ */
+const askUserAnswerParamsSchema = z.object({
+	questionId: z.string().trim().min(1),
+	optionIds: z.array(z.string().trim().min(1)).default([]),
+	text: z.string().optional(),
+})
+
+/**
+ * ask_user 反向提问恢复扩展方法的入参 schema。复用 agentChatParamsSchema 的会话/计划基底
+ * （sessionId/messages/context/plan 三元组等），额外携带 requestId + outcome + 可选 answers。
+ * 与 agentChatResolveParamsSchema 同构（仅以 outcome+answers 替换 decision）。
+ */
+export const agentAskUserResumeParamsSchema = agentChatParamsSchema.extend({
+	requestId: z.string().min(1),
+	outcome: z.enum(["selected", "cancelled"]),
+	answers: z.array(askUserAnswerParamsSchema).optional(),
+})
+
+/**
+ * 校验并投影 ask_user 恢复入参为 ask_user 裁决输入。与 parseAgentChatResolveParams 同风格：
+ * requestId/outcome 必填，messages/context 随默认值透传，answers 逐项规范化（text 仅在提供
+ * 时写入），其余可选字段仅在 truthy 时写入。入参非法时抛出 ZodError，由 SDK 连接层映射为
+ * JSON-RPC error。
+ */
+export const parseAgentAskUserResumeParams = (
+	params: Record<string, unknown>,
+): IAskUserResolutionInput => {
+	const parsed = agentAskUserResumeParamsSchema.parse(params)
+	const input: IAskUserResolutionInput = {
+		requestId: parsed.requestId,
+		outcome: parsed.outcome,
+		messages: parsed.messages,
+		context: parsed.context,
+	}
+	if (parsed.answers !== undefined) {
+		input.answers = parsed.answers.map((answer) => ({
+			questionId: answer.questionId,
+			optionIds: answer.optionIds,
+			...(answer.text !== undefined ? { text: answer.text } : {}),
+		}))
+	}
+	if (parsed.sessionId) input.sessionId = parsed.sessionId
+	if (parsed.goal) input.goal = parsed.goal
+	if (parsed.workspaceRootPath) input.workspaceRootPath = parsed.workspaceRootPath
+	if (parsed.modelConfig) input.modelConfig = parsed.modelConfig
+	if (parsed.threadId) input.threadId = parsed.threadId
+	if (parsed.planId) input.planId = parsed.planId
+	if (parsed.planVersion) input.planVersion = parsed.planVersion
+	if (parsed.planStepId) input.planStepId = parsed.planStepId
+	return input
+}
+
+/**
+ * 把 ask_user 恢复回合的响应投影为扩展方法结果。复用 toAgentSidecarResponse，与
+ * agent/chat、agent/chat/resolve 完全同构（schemaVersion + sessionId + events + result）：
+ * 续跑产生的富事件零损失随返回信封下发，宙主复用既有解析器，前端零改动消费。
+ */
+export const toAgentAskUserResumeExtResult = (
 	response: IAgentRuntimeResponse,
 ): TAgentSidecarResponse => toAgentSidecarResponse(response)
 
@@ -392,7 +470,7 @@ export interface IHealthExtResultInput {
 
 /**
  * 装配 health 投影结果，逐字节镜像旧 http `/health` 负载形状（ok/status/engine/version/
- * protocolVersion/implementationVersion/mcp），使宿主侧 AgentSidecarHealthPayload 解析不变。
+ * protocolVersion/implementationVersion/mcp），使宙主侧 AgentSidecarHealthPayload 解析不变。
  * 返回匿名对象字面量，天然可赋值为 Record<string, unknown>。
  */
 export const buildHealthExtResult = (
@@ -504,7 +582,7 @@ export interface IOrchestrateExtResultInput {
 
 /**
  * 装配编排扩展方法结果。与旧 http /stream 路由的终帧 { runId, status, result } 同形，
- * 宿主可直接解析 runId/status 并透传 result（含挂起 suspend payload 供审批 UI）。
+ * 宙主可直接解析 runId/status 并透传 result（含挂起 suspend payload 供审批 UI）。
  */
 export const toOrchestrateExtResult = (
 	input: IOrchestrateExtResultInput,
