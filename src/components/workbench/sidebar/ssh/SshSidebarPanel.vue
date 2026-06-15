@@ -3,6 +3,7 @@ import { Server } from '@lucide/vue';
 import '@/assets/css/ssh-sidebar.css';
 import { storeToRefs } from 'pinia';
 import { computed } from 'vue';
+import { AppTooltip } from '@/components/ui/tooltip';
 import { useSshStore } from '@/store/ssh';
 import SshConnectForm from './SshConnectForm.vue';
 import SshFilePreviewDialog from './SshFilePreviewDialog.vue';
@@ -132,22 +133,26 @@ const togglePasswordVisibility = (): void => {
   <section class="ssh-sidebar-panel" aria-label="SSH 连接侧边栏">
     <div class="ssh-tabs" :class="{ 'ssh-tabs--disconnected': isDisconnected }" role="tablist"
       aria-label="SSH 侧边栏分组">
-      <button type="button" class="ssh-tab" :class="{
-        'ssh-tab--disconnected': isDisconnected,
-        'is-active': isTabActive('explorer'),
-        'is-disabled': isDisconnected,
-      }" role="tab" :aria-selected="isTabActive('explorer')" :aria-disabled="isDisconnected" :disabled="isDisconnected"
-        title="连接后可用" @click="setContentTab('explorer')">
-        文件
-      </button>
-      <button type="button" class="ssh-tab" :class="{
-        'ssh-tab--disconnected': isDisconnected,
-        'is-active': isTabActive('transfer'),
-        'is-disabled': isDisconnected,
-      }" role="tab" :aria-selected="isTabActive('transfer')" :aria-disabled="isDisconnected" :disabled="isDisconnected"
-        title="连接后可用" @click="setContentTab('transfer')">
-        传输
-      </button>
+      <AppTooltip :content="isDisconnected ? '连接后可用' : null">
+        <button type="button" class="ssh-tab" :class="{
+          'ssh-tab--disconnected': isDisconnected,
+          'is-active': isTabActive('explorer'),
+          'is-disabled': isDisconnected,
+        }" role="tab" :aria-selected="isTabActive('explorer')" :aria-disabled="isDisconnected" :disabled="isDisconnected"
+          @click="setContentTab('explorer')">
+          文件
+        </button>
+      </AppTooltip>
+      <AppTooltip :content="isDisconnected ? '连接后可用' : null">
+        <button type="button" class="ssh-tab" :class="{
+          'ssh-tab--disconnected': isDisconnected,
+          'is-active': isTabActive('transfer'),
+          'is-disabled': isDisconnected,
+        }" role="tab" :aria-selected="isTabActive('transfer')" :aria-disabled="isDisconnected" :disabled="isDisconnected"
+          @click="setContentTab('transfer')">
+          传输
+        </button>
+      </AppTooltip>
       <button type="button" class="ssh-tab" :class="{
         'ssh-tab--disconnected': isDisconnected,
         'is-active': isTabActive('connect'),

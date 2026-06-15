@@ -9,10 +9,12 @@
         :placeholder="useStructural ? '输入 ast-grep 模式…' : '输入关键字搜索…'" autocomplete="off" spellcheck="false"
         @update:model-value="emit('update:searchQuery', $event)" />
 
-      <button v-if="hasSearchQuery" type="button" class="search-panel-clear-btn" aria-label="清空搜索" title="清空搜索"
-        @click.stop="emit('update:searchQuery', '')">
-        <X aria-hidden="true" />
-      </button>
+      <AppTooltip content="清空搜索">
+        <button v-if="hasSearchQuery" type="button" class="search-panel-clear-btn" aria-label="清空搜索"
+          @click.stop="emit('update:searchQuery', '')">
+          <X aria-hidden="true" />
+        </button>
+      </AppTooltip>
     </div>
 
     <div class="search-panel-input-shell search-panel-replace-shell">
@@ -24,11 +26,13 @@
         :placeholder="useStructural ? '输入 ast-grep 替换…' : '输入替换内容…'" autocomplete="off" spellcheck="false"
         @update:model-value="emit('update:replacementQuery', $event)" @keydown.enter="emit('replacement-action')" />
 
-      <button type="button" class="search-panel-apply-btn" :disabled="!canApplyReplacement" aria-label="全部替换"
-        title="全部替换" @click.stop="emit('replacement-action')">
-        <LoaderCircle class="search-panel-spin" v-if="replaceRunning" aria-hidden="true" />
-        <Check v-else aria-hidden="true" />
-      </button>
+      <AppTooltip content="全部替换">
+        <button type="button" class="search-panel-apply-btn" :disabled="!canApplyReplacement" aria-label="全部替换"
+          @click.stop="emit('replacement-action')">
+          <LoaderCircle class="search-panel-spin" v-if="replaceRunning" aria-hidden="true" />
+          <Check v-else aria-hidden="true" />
+        </button>
+      </AppTooltip>
     </div>
   </div>
 
@@ -42,36 +46,48 @@
   </div>
 
   <div class="search-panel-option-row" aria-label="搜索选项">
-    <button type="button" class="search-panel-option-btn" :class="{ 'is-active': matchCase }"
-      :aria-pressed="matchCase" title="区分大小写" @click="emit('toggle-option', 'matchCase')">
-      <CaseSensitive aria-hidden="true" />
-    </button>
+    <AppTooltip content="区分大小写">
+      <button type="button" class="search-panel-option-btn" :class="{ 'is-active': matchCase }"
+        :aria-pressed="matchCase" aria-label="区分大小写" @click="emit('toggle-option', 'matchCase')">
+        <CaseSensitive aria-hidden="true" />
+      </button>
+    </AppTooltip>
 
-    <button type="button" class="search-panel-option-btn" :class="{ 'is-active': wholeWord }"
-      :aria-pressed="wholeWord" title="全字匹配" @click="emit('toggle-option', 'wholeWord')">
-      <WholeWord aria-hidden="true" />
-    </button>
+    <AppTooltip content="全字匹配">
+      <button type="button" class="search-panel-option-btn" :class="{ 'is-active': wholeWord }"
+        :aria-pressed="wholeWord" aria-label="全字匹配" @click="emit('toggle-option', 'wholeWord')">
+        <WholeWord aria-hidden="true" />
+      </button>
+    </AppTooltip>
 
-    <button type="button" class="search-panel-option-btn" :class="{ 'is-active': useRegex }" :aria-pressed="useRegex"
-      title="正则表达式" @click="emit('toggle-option', 'useRegex')">
-      <Regex aria-hidden="true" />
-    </button>
+    <AppTooltip content="正则表达式">
+      <button type="button" class="search-panel-option-btn" :class="{ 'is-active': useRegex }" :aria-pressed="useRegex"
+        aria-label="正则表达式" @click="emit('toggle-option', 'useRegex')">
+        <Regex aria-hidden="true" />
+      </button>
+    </AppTooltip>
 
-    <button type="button" class="search-panel-option-btn" :class="{ 'is-active': contentFuzzy }"
-      :aria-pressed="contentFuzzy" title="内容模糊匹配" @click="emit('toggle-option', 'contentFuzzy')">
-      <Waves aria-hidden="true" />
-    </button>
+    <AppTooltip content="内容模糊匹配">
+      <button type="button" class="search-panel-option-btn" :class="{ 'is-active': contentFuzzy }"
+        :aria-pressed="contentFuzzy" aria-label="内容模糊匹配" @click="emit('toggle-option', 'contentFuzzy')">
+        <Waves aria-hidden="true" />
+      </button>
+    </AppTooltip>
 
-    <button type="button" class="search-panel-option-btn" :class="{ 'is-active': showPathFilters }"
-      :aria-pressed="showPathFilters" title="包含 / 排除路径" @click="emit('toggle-option', 'showPathFilters')">
-      <ListFilter aria-hidden="true" />
-    </button>
+    <AppTooltip content="包含 / 排除路径">
+      <button type="button" class="search-panel-option-btn" :class="{ 'is-active': showPathFilters }"
+        :aria-pressed="showPathFilters" aria-label="包含 / 排除路径" @click="emit('toggle-option', 'showPathFilters')">
+        <ListFilter aria-hidden="true" />
+      </button>
+    </AppTooltip>
 
-    <button type="button" class="search-panel-option-btn search-panel-option-structural"
-      :class="{ 'is-active': useStructural }" :aria-pressed="useStructural" title="结构化搜索与替换"
-      @click="emit('toggle-structural')">
-      <Braces aria-hidden="true" />
-    </button>
+    <AppTooltip content="结构化搜索与替换">
+      <button type="button" class="search-panel-option-btn search-panel-option-structural"
+        :class="{ 'is-active': useStructural }" :aria-pressed="useStructural" aria-label="结构化搜索与替换"
+        @click="emit('toggle-structural')">
+        <Braces aria-hidden="true" />
+      </button>
+    </AppTooltip>
   </div>
 </template>
 
@@ -90,6 +106,7 @@ import {
   X,
 } from '@lucide/vue';
 import { Input } from '@/components/ui/input';
+import { AppTooltip } from '@/components/ui/tooltip';
 import type { TWorkspaceSearchScope } from '@/types/search';
 import type { TSearchToggleOption } from './search-sidebar.types';
 

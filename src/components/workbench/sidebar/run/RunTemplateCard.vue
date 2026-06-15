@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { MoreHorizontal, Plus } from '@lucide/vue';
 import LucideIcon from '@/components/ui/icon/LucideIcon.vue';
+import { AppTooltip } from '@/components/ui/tooltip';
 import type { ISnippetItem } from './run-sidebar.types';
 import { getIcon } from './templateIconMap';
 
@@ -20,15 +21,19 @@ const emit = defineEmits<{
 <template>
   <div class="template-snip" @click="emit('insert', props.item)">
     <LucideIcon :name="getIcon(item.icon)" class="template-snip-ic" />
-    <span class="template-snip-trigger">{{ item.trigger }}</span>
-    <span class="template-snip-desc">{{ item.description }}</span>
+    <span class="template-snip-trigger" v-text="item.trigger" />
+    <span class="template-snip-desc" v-text="item.description" />
     <span class="template-snip-actions">
-      <button class="template-snip-btn" title="插入到光标" @click.stop="emit('insert', props.item)">
-        <Plus class="template-snip-btn-svg" />
-      </button>
-      <button class="template-snip-btn" title="更多" @click.stop="emit('context-menu', $event, props.item)">
-        <MoreHorizontal class="template-snip-btn-svg" />
-      </button>
+      <AppTooltip content="插入到光标">
+        <button class="template-snip-btn" aria-label="插入到光标" @click.stop="emit('insert', props.item)">
+          <Plus class="template-snip-btn-svg" />
+        </button>
+      </AppTooltip>
+      <AppTooltip content="更多">
+        <button class="template-snip-btn" aria-label="更多" @click.stop="emit('context-menu', $event, props.item)">
+          <MoreHorizontal class="template-snip-btn-svg" />
+        </button>
+      </AppTooltip>
     </span>
   </div>
 </template>

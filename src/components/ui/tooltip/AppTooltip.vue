@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import Tooltip from './Tooltip.vue';
+import TooltipContent from './TooltipContent.vue';
+import TooltipTrigger from './TooltipTrigger.vue';
 
 type TTooltipSide = 'top' | 'right' | 'bottom' | 'left';
 
@@ -30,7 +32,7 @@ withDefaults(
       :side-offset="sideOffset"
       class="app-tooltip-content"
     >
-       content 
+      <span v-text="content" />
     </TooltipContent>
   </Tooltip>
   <slot v-else />
