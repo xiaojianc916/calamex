@@ -17,10 +17,9 @@
 //!      `approval_resolve_to_agent_chat_resolve_ext`）。与「工具型」一次性模型透传不同，
 //!      agent 对话是标准回合之外的「带外」富回合能力，会话连续性由命令层经
 //!      `host.ensure_session` 解析后以 session_id 传入。
-
-// 过渡期：投影函数部分已接线到宿主命令（agent/chat 两条经命令层 live 调用）；
-// 一次性 model/chat 投影仍待接线，故暂留 allow，全量切换后移除。
-#![allow(dead_code)]
+//!
+//! 上述三条投影（model/chat、agent/chat、agent/chat/resolve）均已由网关 /
+//! 命令层 live 调用（见 `ai::gateway::conversation` 与 `commands::agent_sidecar`）。
 
 use crate::commands::contracts::{
     AgentSidecarApprovalResolveRequest, AgentSidecarChatRequest, AgentSidecarMessagePayload,

@@ -27,9 +27,8 @@ pub use approval::{ApprovalError, ApprovalOptionInfo, ApprovalRegistry, Approval
 #[allow(unused_imports)]
 pub use launch::build_acp_client_config;
 
-// 接线层：把 Tauri 契约请求投影为客户端层 ACP 扩展请求。agent/chat 两条投影已由命令层
-// live 调用；一次性 model/chat 投影接线前暂无调用点，故保留 allow。
-#[allow(unused_imports)]
+// 接线层：把 Tauri 契约请求投影为客户端层 ACP 扩展请求。三条投影（agent/chat、
+// agent/chat/resolve、一次性 model/chat）均已由命令层 / 网关 live 调用。
 pub use bridge::{
     approval_resolve_to_agent_chat_resolve_ext, chat_request_to_agent_chat_ext,
     chat_request_to_model_chat_ext,
