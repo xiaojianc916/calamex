@@ -739,7 +739,7 @@ const handlePromptModelChange = async (modelId: string): Promise<void> => {
     });
     settingsDraft.value = cloneAiConfigPayload(assistant.config.value);
   } catch (error) {
-    assistant.errorMessage.value = toErrorMessage(error, '模型切换失败');
+    assistant.error.value = toErrorMessage(error, '模型切换失败');
   } finally {
     isPromptModelSaving.value = false;
   }
@@ -1143,7 +1143,7 @@ onMounted(() => {
           @cancel="handleCancelUserQuestion" />
         <AiPromptInput v-else v-model="assistant.draft.value" v-model:active-mode="assistant.activeMode.value"
           :disabled="composerDisabled" :stop-visible="assistant.isSending.value"
-          :error-message="assistant.errorMessage.value" :submit-label="submitLabel" :config="assistant.config.value"
+          :error-message="assistant.error.value" :submit-label="submitLabel" :config="assistant.config.value"
           :is-model-saving="isPromptModelSaving" :network-permission="networkPermission"
           :execution-mode="executionMode"
           :is-network-permission-saving="agentNetwork.pending.value" :attachments="assistant.attachedFiles.value"
