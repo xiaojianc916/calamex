@@ -14,6 +14,7 @@ import { normalizeMastraError } from './errors.js';
 import { createApprovalRequest, createApprovedPlanExecutionContext, deriveApprovalRisk } from './responses.js';
 import { aggregateDoneTokenSnapshot, createOmMemoryCompressedEventDraft, createSandboxToolProgressPreview, extractFinishTokenSnapshot, getReasoningDelta, getTextDelta, isErrorChunk, isSandboxDataChunk, isTextDeltaChunk, isToolCallChunk, isToolCallSuspendedChunk, isToolErrorChunk, isToolResultChunk } from './stream/stream-utils.js';
 import { loadMastraMcpTools } from './tools/tools.js';
+import { askUserRequestSchema } from '../schemas/events.js';
 import { DEFAULT_EXECUTION_AGENT_ID, DEFAULT_EXECUTION_AGENT_NAME } from './types.js';
 import type { IMastraAgentConfig, IMastraAgentLike, IMastraAgentStreamLike, IMastraApprovalExecutionContext, IMastraExecutionHandle, IMastraMcpBundle, IMastraPendingApproval, IMastraResumableAgentHandle, IMastraRuntimeDeps, IMastraStorageLike, IMastraTextStreamSummary, IMastraWorkflowSnapshotLike, IPlanWorkflowStepTracker, TDoneTokenSnapshot, TMastraStreamChunk, TMastraToolCallApprovalChunk, TMastraToolCallSuspendedChunk, TRuntimeEventFactory } from './types.js';
 import { createRuntimeEventFactory, createRuntimePreview, createWorkspaceRuntimeInputPreview, createWorkspaceRuntimeResultPreview, isNodeTestProcess, pushUiEvent, toJsonValue } from './utils.js';
@@ -41,6 +42,13 @@ const PENDING_APPROVAL_TTL_MS = 10 * 60_000;
  * maxWarm 立刻淘汰造成的反复 spawn/evict 抖动。其余服务保持按需懒加载。
  */
 const STARTUP_PRIME_SERVER_NAMES: readonly TMcpServerName[] = ['memory', 'sequential-thinking'];
+
+/**
+ * ask_user 工具的 id（与 engines/tools/ask-user.ts 的 createTool id 对齐——该工具
+ * 模块是其名称的权威来源；此处仅为在挂起分支识别反向提问工具而镜像一份常量，
+ * 避免为去重单一字符串而重写含正则的工具文件，重命名时两处需同步）。
+ */
+const ASK_USER_TOOL_NAME = 'ask_user' as const;
 
 export class MastraRuntimeBase {
     readonly name = 'mastra' as const;
@@ -498,6 +506,24 @@ export class MastraRuntimeBase {
 
                 if (pendingRequestId) {
                     releaseResources = false;
+                }
+
+                // ask_user：反向提问工具挂起时，surface 为结构化 ask_user_required（带外承载，
+                // 镜像 approval_required），而非降级成单一 approve/reject 气泡；恢复经专用 ext
+                // 方法回传富答案续跑（见 acp/ext-methods 的 ask-user resume，2c 落地）。其余挂起
+                // 工具仍走下方通用 approval_required 兜底。
+                if (chunk.payload.toolName === ASK_USER_TOOL_NAME) {
+                    const surfacedRequest = askUserRequestSchema.safeParse(chunk.payload.suspendPayload);
+                    if (surfacedRequest.success) {
+                        pushUiEvent(events, {
+                            type: 'ask_user_required',
+                            requestId: pendingRequestId ?? chunk.payload.toolCallId,
+                            request: surfacedRequest.data,
+                        }, options);
+                        continue;
+                    }
+                    // suspendPayload 形状异常（理论上不会发生，载荷由本工具自身构造）：
+                    // 优雅降级到下方通用 approval_required，避免回合卡死。
                 }
 
                 const suspendedRisk = deriveApprovalRisk(chunk.payload);
