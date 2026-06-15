@@ -16,6 +16,11 @@ import {
   parseAiAedPatchRef,
 } from '@/components/business/ai/edit/patch-summary';
 import {
+  buildAskUserResumeRequest,
+  extractPendingAskUser,
+  type IAgentSidecarPendingAskUser,
+} from '@/composables/ai/sidecar-ask-user';
+import {
   extractVisibleAgentRuntimeEvents,
   projectSidecarEventsToToolState,
   projectSidecarExecuteResponse,
@@ -49,7 +54,12 @@ import type {
 } from '@/types/ai';
 import type { TAiAssistantMode } from '@/types/ai/assistant-mode';
 import type { IAiEditGetDiffPayload, IAiEditOperation } from '@/types/ai/edit';
-import type { IAgentSidecarMessage, TAgentRuntimeEvent, TAgentUiEvent } from '@/types/ai/sidecar';
+import type {
+  IAgentSidecarMessage,
+  IAskUserResult,
+  TAgentRuntimeEvent,
+  TAgentUiEvent,
+} from '@/types/ai/sidecar';
 import type {
   IActiveRunSummary,
   IAnalyzeScriptPayload,
@@ -343,6 +353,31 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     }
 
     clearSidecarToolConfirmation();
+  };
+
+  const persistSidecarUserQuestion = (
+    question: IAgentSidecarPendingAskUser,
+    session: IAiPersistedSidecarAgentSession,
+  ): void => {
+    agentStore.setPendingUserQuestion(question);
+    agentStore.setPendingSidecarAgentSession(session);
+  };
+
+  const clearSidecarUserQuestion = (requestId?: string): void => {
+    agentStore.clearPendingUserQuestion(requestId);
+
+    if (!requestId || !agentStore.pendingUserQuestion) {
+      agentStore.clearPendingSidecarAgentSession();
+      activeSidecarAgentSession.value = null;
+    }
+  };
+
+  const clearSidecarUserQuestionForThread = (threadId: string | null): void => {
+    if (agentStore.pendingSidecarAgentSession?.threadId !== threadId) {
+      return;
+    }
+
+    clearSidecarUserQuestion();
   };
 
   const syncDisplayMessagesFromActiveThread = (): void => {
@@ -1220,6 +1255,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     patchSessionId: string;
     updateSteps: boolean;
     onPendingConfirmation: (pendingConfirmation: IAiToolConfirmationRequest) => void;
+    onPendingUserQuestion: (pendingUserQuestion: IAgentSidecarPendingAskUser) => void;
   }
 
   const finalizeSidecarTurn = async (
@@ -1332,7 +1368,15 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       return;
     }
 
+    const pendingUserQuestion = extractPendingAskUser(payload);
+
+    if (pendingUserQuestion) {
+      ctx.onPendingUserQuestion(pendingUserQuestion);
+      return;
+    }
+
     clearSidecarToolConfirmation();
+    clearSidecarUserQuestion();
 
     if (!projection.errorMessage) {
       clearAttachedFiles({ revokePreviews: false });
@@ -1366,6 +1410,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     agentSteps.value = [];
     runtimeTimelineEvents.value = [];
     clearSidecarToolConfirmation();
+    clearSidecarUserQuestion();
 
     const assistantMessageId = createMessageId('assistant');
     const targetThreadId = threadId;
@@ -1422,6 +1467,17 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
         updateSteps: true,
         onPendingConfirmation: (pendingConfirmation) => {
           persistSidecarToolConfirmation(pendingConfirmation, {
+            sessionId: payload.sessionId,
+            assistantMessageId,
+            threadId: targetThreadId,
+            turnId,
+            baseMessages: visibleMessages,
+            messageContent,
+            references: sidecarContextReferences,
+          });
+        },
+        onPendingUserQuestion: (pendingUserQuestion) => {
+          persistSidecarUserQuestion(pendingUserQuestion, {
             sessionId: payload.sessionId,
             assistantMessageId,
             threadId: targetThreadId,
@@ -1507,11 +1563,98 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
             sessionId: payload.sessionId,
           });
         },
+        onPendingUserQuestion: (pendingUserQuestion) => {
+          persistSidecarUserQuestion(pendingUserQuestion, {
+            ...session,
+            sessionId: payload.sessionId,
+          });
+        },
       });
     } catch (error) {
       failSidecarAgentMessage(
         session.assistantMessageId,
         toErrorMessage(error, '处理 Agent 工具确认失败。'),
+      );
+    } finally {
+      liveEventBuffer.dispose();
+      unlistenSidecarStream?.();
+      activeAgentMessageId.value = null;
+      activeSidecarAgentSession.value = null;
+      commitDisplayMessagesToStore(session.threadId);
+      clearActiveBufferedThread(session.threadId);
+      isSending.value = false;
+      syncDisplayMessagesFromActiveThread();
+    }
+  };
+
+  const resolveSidecarUserQuestion = async (result: IAskUserResult): Promise<void> => {
+    const session = agentStore.pendingSidecarAgentSession;
+    const question = agentStore.pendingUserQuestion;
+
+    if (!session || !question) {
+      errorMessage.value = '当前没有可继续的反向提问。';
+      return;
+    }
+
+    isSending.value = true;
+    activeSidecarAgentSession.value = session;
+    activeAgentMessageId.value = session.assistantMessageId;
+    activeBufferedThreadId.value = session.threadId;
+    const liveEventBuffer = createSidecarLiveEventBuffer((events, freshEvents) => {
+      appendVisibleRuntimeTimelineEvents(extractVisibleAgentRuntimeEvents(freshEvents));
+      applySidecarLiveEventsToAgentMessage(
+        session.assistantMessageId,
+        session.threadId,
+        '',
+        events,
+      );
+    });
+    let unlistenSidecarStream: (() => void) | null = null;
+
+    try {
+      unlistenSidecarStream = await subscribeSidecarSessionStream(session.sessionId, (event) => {
+        liveEventBuffer.push(event);
+      });
+      const payload = await aiService.sidecarResolveAskUser({
+        ...buildAskUserResumeRequest({
+          requestId: question.requestId,
+          result,
+          sessionId: session.sessionId,
+        }),
+        goal: session.messageContent,
+        messages: toSidecarMessages(session.baseMessages),
+        workspaceRootPath: options.workspaceRootPath.value,
+        context: session.references,
+        ...(session.threadId ? { threadId: session.threadId } : {}),
+      });
+      liveEventBuffer.flush();
+      unlistenSidecarStream?.();
+      unlistenSidecarStream = null;
+      clearSidecarUserQuestion(question.requestId);
+      await finalizeSidecarTurn(payload, {
+        assistantMessageId: session.assistantMessageId,
+        threadId: session.threadId,
+        fallbackActivityText: session.messageContent,
+        patchTaskId: session.turnId ?? session.assistantMessageId,
+        patchSessionId: payload.sessionId,
+        updateSteps: false,
+        onPendingConfirmation: (pendingConfirmation) => {
+          persistSidecarToolConfirmation(pendingConfirmation, {
+            ...session,
+            sessionId: payload.sessionId,
+          });
+        },
+        onPendingUserQuestion: (pendingUserQuestion) => {
+          persistSidecarUserQuestion(pendingUserQuestion, {
+            ...session,
+            sessionId: payload.sessionId,
+          });
+        },
+      });
+    } catch (error) {
+      failSidecarAgentMessage(
+        session.assistantMessageId,
+        toErrorMessage(error, '处理反向提问失败。'),
       );
     } finally {
       liveEventBuffer.dispose();
@@ -1909,6 +2052,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       fileRollbackPrompt.value = null;
       agentSteps.value = [];
       clearSidecarToolConfirmation();
+      clearSidecarUserQuestion();
       activeAgentMessageId.value = null;
       agentPlan.resetPlan();
       errorMessage.value = '';
@@ -2097,6 +2241,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
 
   const clearConversation = (): void => {
     clearSidecarToolConfirmationForThread(unref(conversationStore.activeThreadId));
+    clearSidecarUserQuestionForThread(unref(conversationStore.activeThreadId));
     conversationStore.clearActiveThread();
     resetConversationUiState();
     agentPlan.resetPlan();
@@ -2111,6 +2256,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     }
 
     clearSidecarToolConfirmationForThread(threadId);
+    clearSidecarUserQuestionForThread(threadId);
 
     if (wasActiveThread) {
       resetConversationUiState();
@@ -2409,6 +2555,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     }
 
     clearSidecarToolConfirmation();
+    clearSidecarUserQuestion();
     commitDisplayMessagesToStore(targetThreadId);
     clearActiveBufferedThread(targetThreadId);
     isSending.value = false;
@@ -2516,6 +2663,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     sendMessage,
     restoreConversationCheckpoint,
     resolveSidecarToolConfirmation,
+    resolveSidecarUserQuestion,
     clearConversation,
     deleteConversation,
     startNewConversation,

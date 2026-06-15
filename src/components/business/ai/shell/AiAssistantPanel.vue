@@ -3,6 +3,7 @@ import { useFrontendTool } from '@copilotkit/vue';
 import { SquarePen, Trash2 } from '@lucide/vue';
 import { computed, defineAsyncComponent, onMounted, ref } from 'vue';
 import { z } from 'zod';
+import QuestionPrompt from '@/components/ai-elements/question/QuestionPrompt.vue';
 import AiChatThread from '@/components/business/ai/chat/AiChatThread.vue';
 import AiPromptInput from '@/components/business/ai/chat/AiPromptInput.vue';
 import AiProviderIcon from '@/components/business/ai/provider/AiProviderIcon.vue';
@@ -41,6 +42,7 @@ import type {
   TAiToolConfirmationDecision,
 } from '@/types/ai';
 import type { TAiExecutionMode } from '@/types/ai/execution-mode';
+import type { IAskUserResult } from '@/types/ai/sidecar';
 import type {
   IActiveRunSummary,
   IAnalyzeScriptPayload,
@@ -199,6 +201,23 @@ const visibleDirectToolConfirmation = computed(() => {
 
   return confirmation;
 });
+const planPendingUserQuestion = computed(() => planStore.value.pendingUserQuestion);
+const visibleUserQuestion = computed(() => {
+  const question = planPendingUserQuestion.value;
+
+  if (!question) {
+    return null;
+  }
+
+  const session = planPendingSidecarSession.value;
+
+  if (session?.threadId && session.threadId !== assistant.activeConversationId.value) {
+    return null;
+  }
+
+  return question;
+});
+const isResolvingUserQuestion = ref(false);
 const planSteps = computed<IAiTaskPlanStep[]>(() => planStore.value.steps);
 const planActiveGoal = computed(() => planStore.value.activeGoal);
 const planActiveRunId = computed<string | null>(() => planStore.value.activeRunId);
@@ -277,7 +296,10 @@ const planProgressVisible = computed(() => {
   );
 });
 const composerDisabled = computed(
-  () => assistant.isSending.value || Boolean(visibleDirectToolConfirmation.value),
+  () =>
+    assistant.isSending.value ||
+    Boolean(visibleDirectToolConfirmation.value) ||
+    Boolean(visibleUserQuestion.value),
 );
 const activePlanStep = computed(() => {
   const currentStepId = planActiveRun.value?.currentStepId;
@@ -916,6 +938,27 @@ const handleResolveToolConfirmation = async (
   setPlanErrorMessage('Legacy Agent 工具确认链已移除，请使用官方 sidecar 审批链。');
 };
 
+const handleResolveUserQuestion = async (result: IAskUserResult): Promise<void> => {
+  if (!visibleUserQuestion.value) {
+    return;
+  }
+
+  isResolvingUserQuestion.value = true;
+  setPlanErrorMessage('');
+
+  try {
+    await assistant.resolveSidecarUserQuestion(result);
+  } catch (error) {
+    setPlanError(error, '处理反向提问失败。');
+  } finally {
+    isResolvingUserQuestion.value = false;
+  }
+};
+
+const handleCancelUserQuestion = async (): Promise<void> => {
+  await handleResolveUserQuestion({ outcome: 'cancelled' });
+};
+
 const saveSettings = async (
   config: IAiConfigPayload,
   apiKey: string,
@@ -1095,7 +1138,10 @@ onMounted(() => {
         <AiThreadRunStatusBar :run="planActiveRun" :confirmation="visibleDirectToolConfirmation"
           :busy="isAgentRunActionPending" @pause="handlePauseRun" @resume="handleResumeRun" @cancel="handleCancelRun"
           @resolve="handleResolveToolConfirmation" />
-        <AiPromptInput v-model="assistant.draft.value" v-model:active-mode="assistant.activeMode.value"
+        <QuestionPrompt v-if="visibleUserQuestion" :questions="visibleUserQuestion.questions"
+          :disabled="isResolvingUserQuestion" @submit="handleResolveUserQuestion"
+          @cancel="handleCancelUserQuestion" />
+        <AiPromptInput v-else v-model="assistant.draft.value" v-model:active-mode="assistant.activeMode.value"
           :disabled="composerDisabled" :stop-visible="assistant.isSending.value"
           :error-message="assistant.errorMessage.value" :submit-label="submitLabel" :config="assistant.config.value"
           :is-model-saving="isPromptModelSaving" :network-permission="networkPermission"
