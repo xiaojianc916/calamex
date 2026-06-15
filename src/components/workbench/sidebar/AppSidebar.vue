@@ -1,11 +1,11 @@
 <template>
 <aside class="app-sidebar-shell flex h-full min-h-0 min-w-0 flex-col overflow-hidden" :class="{ 'source-control-sidebar-host': isSourceControlView, 'explorer-sidebar-host': isExplorerView, 'search-sidebar-host': isSearchView, 'ssh-sidebar-host': isSshView, }" >
-  <!-- 性能保护：资源管理器作为默认面板常驻；搜索、Git、运行、SSH 等较重面板首次访问时再挂载，之后用 v-show 保持状态。 避免隐藏面板在启动阶段一次性初始化 watchers / IPC / 终端桥接等副作用，导致切换一段时间后主线程被拖死。 -->
-  <SourceControlPanel v-if="hasMountedSourceControl" v-show="isSourceControlView" class="h-full min-h-0 w-full flex-1" :is-active="isSourceControlView" :is-desktop-runtime="isDesktopRuntime" :workspace-root-path="workspaceRootPath" :active-path="document.path" @open-file="handleOpenFile" @open-diff="handleOpenGitDiff" />
+  <!-- 性能优化：所有侧边栏面板全常驻挂载，仅用 v-show 切换可见性，彻底避免切换时的 mount/unmount 与同步渲染开销。 各面板内部的数据加载仍由 is-active 等条件控制（例如仅在对应 view 激活时才加载/刷新），隐藏时不空跑。 -->
+  <SourceControlPanel v-show="isSourceControlView" class="h-full min-h-0 w-full flex-1" :is-active="isSourceControlView" :is-desktop-runtime="isDesktopRuntime" :workspace-root-path="workspaceRootPath" :active-path="document.path" @open-file="handleOpenFile" @open-diff="handleOpenGitDiff" />
   <WorkspaceExplorerPanel v-show="isExplorerView" :document="document" :is-active="isExplorerView" :is-desktop-runtime="isDesktopRuntime" :workspace-root-path="workspaceRootPath" :preloaded-workspace-root="preloadedWorkspaceRoot" :startup-explorer-expanded-paths="startupExplorerExpandedPaths" :startup-explorer-selected-path="startupExplorerSelectedPath" @open-file="handleOpenFile" @open-folder="emit('open-folder')" @explorer-state-change="emit('explorer-state-change', $event)" />
-  <DeferredSearchSidebarPanel v-if="hasMountedSearch" v-show="isSearchView" :is-active="isSearchView" :document-path="document.path" :is-desktop-runtime="isDesktopRuntime" :workspace-root-path="workspaceRootPath" :preloaded-workspace-root="preloadedWorkspaceRoot" @open-file="handleOpenFile" />
-  <DeferredRunSidebarPanel v-if="hasMountedRun" v-show="isRunView" />
-  <div v-if="hasMountedSsh" v-show="isSshView" class="ssh-sidebar-host-shell flex min-h-0 w-full flex-1 flex-col overflow-hidden" >
+  <DeferredSearchSidebarPanel v-show="isSearchView" :is-active="isSearchView" :document-path="document.path" :is-desktop-runtime="isDesktopRuntime" :workspace-root-path="workspaceRootPath" :preloaded-workspace-root="preloadedWorkspaceRoot" @open-file="handleOpenFile" />
+  <DeferredRunSidebarPanel v-show="isRunView" />
+  <div v-show="isSshView" class="ssh-sidebar-host-shell flex min-h-0 w-full flex-1 flex-col overflow-hidden" >
     <DeferredSshSidebarPanel @open-terminal="emit('open-terminal')" />
   </div>
   <!-- fallback placeholder (rare) -->
@@ -35,7 +35,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, defineAsyncComponent, ref, watch } from 'vue';
+import { computed, defineAsyncComponent } from 'vue';
 import { Button } from '@/components/ui/button';
 import WorkspaceExplorerPanel from '@/components/workbench/sidebar/explorer/WorkspaceExplorerPanel.vue';
 import type { TWorkbenchSidebarView } from '@/types/app';
@@ -54,17 +54,14 @@ const SourceControlPanel = defineAsyncComponent({
   loader: () => import('@/components/workbench/sidebar/source-control/SourceControlPanel.vue'),
   suspensible: false,
 });
-
 const DeferredSearchSidebarPanel = defineAsyncComponent({
   loader: () => import('@/components/workbench/sidebar/search/SearchSidebarPanel.vue'),
   suspensible: false,
 });
-
 const DeferredRunSidebarPanel = defineAsyncComponent({
   loader: () => import('@/components/workbench/sidebar/run/RunSidebarPanel.vue'),
   suspensible: false,
 });
-
 const DeferredSshSidebarPanel = defineAsyncComponent({
   loader: () => import('@/components/workbench/sidebar/ssh/SshSidebarPanel.vue'),
   suspensible: false,
@@ -178,34 +175,11 @@ const isSearchView = computed(() => props.view === 'search');
 const isSourceControlView = computed(() => props.view === 'source-control');
 const isRunView = computed(() => props.view === 'run');
 const isSshView = computed(() => props.view === 'extensions');
-
 const panelMeta = computed(() => SIDEBAR_META[props.view] ?? SIDEBAR_META.ai);
-
-const hasMountedSourceControl = ref(false);
-const hasMountedSearch = ref(false);
-const hasMountedRun = ref(false);
-const hasMountedSsh = ref(false);
-
-watch(
-  () => props.view,
-  (view) => {
-    if (view === 'source-control') {
-      hasMountedSourceControl.value = true;
-    } else if (view === 'search') {
-      hasMountedSearch.value = true;
-    } else if (view === 'run') {
-      hasMountedRun.value = true;
-    } else if (view === 'extensions') {
-      hasMountedSsh.value = true;
-    }
-  },
-  { immediate: true },
-);
 
 const handleOpenFile = (payload: TWorkbenchOpenFilePayload): void => {
   emit('open-file', payload);
 };
-
 const handleOpenGitDiff = (payload: IGitDiffPreviewRequest): void => {
   emit('open-git-diff', payload);
 };
