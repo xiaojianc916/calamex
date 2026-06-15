@@ -77,9 +77,12 @@ export const resolvePlanFilePath = (args: {
 };
 
 // ---------------------------------------------------------------------------
-// 结构软校验：按章节标题判断 PLAN.md 是否覆盖了 canonical 结构（缺失仅告警，不硬失败）。
+// 结构软校验 + 步骤解析：按章节标题判断 PLAN.md 是否覆盖 canonical 结构；并把 Steps 区的
+// 顶层列表项解析为有序步骤文本（exit_plan 校验 + T3.4 执行桥共用）。
 // ---------------------------------------------------------------------------
 const HEADING_LINE = /^#{1,6}\s+(?:\d+\.\s+)?(.+?)\s*$/u;
+// 列表项：支持 -/*/+ 与有序 N. / N)，可带 GFM 复选框 [ ]/[x]。
+const PLAN_STEP_LINE = /^(\s*)(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?(.+?)\s*$/u;
 
 const collectHeadingTitles = (markdown: string): string[] =>
     markdown
@@ -95,6 +98,39 @@ export const findMissingPlanSections = (markdown: string): string[] => {
     return PLAN_STRUCTURE.filter(
         (section) => !headingTitles.some((title) => title.includes(section.title.toLowerCase())),
     ).map((section) => section.title);
+};
+
+// 把 PLAN.md 的 Steps 区解析为有序步骤文本列表（PLAN→stepIds 桥的核心）。
+// 规则：定位标题含 canonical Steps 的小节 → 收集到下一个标题之前的列表项 → 仅取最浅缩进层级
+//（顶层项 = 步骤，更深缩进视为该步骤的细节/子项，不另算步骤）。
+export const parsePlanSteps = (markdown: string): string[] => {
+    const target = PLAN_STEPS_SECTION_TITLE.toLowerCase();
+    let inStepsSection = false;
+    const collected: Array<{ indent: number; text: string }> = [];
+
+    for (const line of markdown.split('\n')) {
+        const heading = HEADING_LINE.exec(line);
+        if (heading) {
+            // 进入/离开 Steps 区：遇到下一个标题（标题不含 Steps）即自动结束本区。
+            inStepsSection = heading[1].trim().toLowerCase().includes(target);
+            continue;
+        }
+        if (!inStepsSection) {
+            continue;
+        }
+        const item = PLAN_STEP_LINE.exec(line);
+        if (item) {
+            collected.push({ indent: item[1].length, text: item[2].trim() });
+        }
+    }
+
+    if (collected.length === 0) {
+        return [];
+    }
+    const minIndent = Math.min(...collected.map((entry) => entry.indent));
+    return collected
+        .filter((entry) => entry.indent === minIndent && entry.text.length > 0)
+        .map((entry) => entry.text);
 };
 
 // ---------------------------------------------------------------------------
