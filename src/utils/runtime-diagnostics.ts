@@ -65,6 +65,18 @@ const isRecoverableSchedulerWarning = (error: unknown): boolean => {
   return mergedText.includes('maximum recursive updates exceeded');
 };
 
+// 汇总「不应升级为致命错误界面」的可忽略错误:取消类错误、良性 ResizeObserver 噪声、
+// 以及可恢复的调度器递归告警。集中判定,确保 window 监听器与 Vue 的
+// app.config.errorHandler 走完全一致的过滤逻辑(后者此前漏过滤,导致一次可恢复的
+// 递归告警就把整个工作台切到致命错误界面,表现为点击卡死、界面变白)。
+const isIgnorableRuntimeError = (error: unknown): boolean => {
+  return (
+    isExpectedCancellationError(error) ||
+    isBenignResizeObserverError(error) ||
+    isRecoverableSchedulerWarning(error)
+  );
+};
+
 const normalizeErrorDetail = (error: unknown): string => {
   if (error instanceof Error) {
     return error.stack ?? error.message;
@@ -113,6 +125,18 @@ export const setRuntimeError = (title: string, error: unknown): void => {
   runtimeErrorState.value = next;
 };
 
+// 带过滤的运行时错误上报入口,供 Vue app.config.errorHandler 等调用方使用:在落入
+// 致命错误界面前,先剔除可忽略/可恢复错误。Vue 调度器的「Maximum recursive updates
+// exceeded」经由 app.config.errorHandler 上报(而非 window.onerror),因此必须在此过滤,
+// 否则一次可恢复的递归告警会替换整个 router-view、让界面卡死变白。
+export const reportRuntimeError = (title: string, error: unknown): void => {
+  if (isIgnorableRuntimeError(error)) {
+    return;
+  }
+
+  setRuntimeError(title, error);
+};
+
 const disposeRuntimeDiagnostics = (): void => {
   if (typeof window === 'undefined') {
     return;
@@ -137,12 +161,7 @@ export const registerRuntimeDiagnostics = (): void => {
   disposeRuntimeDiagnostics();
 
   const handleError = (event: ErrorEvent): void => {
-    if (isBenignResizeObserverError(event.error) || isBenignResizeObserverError(event.message)) {
-      event.preventDefault();
-      return;
-    }
-
-    if (isRecoverableSchedulerWarning(event.error) || isRecoverableSchedulerWarning(event.message)) {
+    if (isIgnorableRuntimeError(event.error) || isIgnorableRuntimeError(event.message)) {
       event.preventDefault();
       return;
     }
@@ -151,17 +170,7 @@ export const registerRuntimeDiagnostics = (): void => {
   };
 
   const handleUnhandledRejection = (event: PromiseRejectionEvent): void => {
-    if (isExpectedCancellationError(event.reason)) {
-      event.preventDefault();
-      return;
-    }
-
-    if (isBenignResizeObserverError(event.reason)) {
-      event.preventDefault();
-      return;
-    }
-
-    if (isRecoverableSchedulerWarning(event.reason)) {
+    if (isIgnorableRuntimeError(event.reason)) {
       event.preventDefault();
       return;
     }
