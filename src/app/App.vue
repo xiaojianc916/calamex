@@ -3,6 +3,7 @@ import { defineAsyncComponent, onMounted, watch } from 'vue';
 import AppDialogHost from '@/components/common/AppDialogHost.vue';
 import BrowserContextMenuHost from '@/components/common/BrowserContextMenuHost.vue';
 import { Toaster } from '@/components/ui/sonner';
+import { TooltipProvider } from '@/components/ui/tooltip';
 import { useWindowResizeState } from '@/composables/useWindowResizeState';
 import { applyWindowStage, setWindowBackground } from '@/services/ipc/window.service';
 import { runtimeErrorState } from '@/utils/runtime-diagnostics';
@@ -117,26 +118,28 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="app-root-stage">
-    <AppDialogHost />
-    <BrowserContextMenuHost />
-    <Toaster
-      position="top-right"
-      close-button
-      rich-colors
-      :duration="6000"
-      container-aria-label="应用通知"
-    />
-    <FatalErrorScreen
-      v-if="runtimeErrorState"
-      :title="runtimeErrorState.title"
-      :message="runtimeErrorState.message"
-      :detail="runtimeErrorState.detail"
-      :code="runtimeErrorState.code"
-      :trace-id="runtimeErrorState.traceId"
-    />
-    <router-view v-else v-slot="{ Component: RouteComponent, route: routeRecord }">
-      <component :is="RouteComponent" :key="routeRecord.fullPath" @ready="handleWorkbenchReady" />
-    </router-view>
-  </div>
+  <TooltipProvider :delay-duration="700">
+    <div class="app-root-stage">
+      <AppDialogHost />
+      <BrowserContextMenuHost />
+      <Toaster
+        position="top-right"
+        close-button
+        rich-colors
+        :duration="6000"
+        container-aria-label="应用通知"
+      />
+      <FatalErrorScreen
+        v-if="runtimeErrorState"
+        :title="runtimeErrorState.title"
+        :message="runtimeErrorState.message"
+        :detail="runtimeErrorState.detail"
+        :code="runtimeErrorState.code"
+        :trace-id="runtimeErrorState.traceId"
+      />
+      <router-view v-else v-slot="{ Component: RouteComponent, route: routeRecord }">
+        <component :is="RouteComponent" :key="routeRecord.fullPath" @ready="handleWorkbenchReady" />
+      </router-view>
+    </div>
+  </TooltipProvider>
 </template>
