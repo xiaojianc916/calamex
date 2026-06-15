@@ -512,6 +512,11 @@ export class MastraRuntimeBase {
                 // 镜像 approval_required），而非降级成单一 approve/reject 气泡；恢复经专用 ext
                 // 方法回传富答案续跑（见 acp/ext-methods 的 ask-user resume，2c 落地）。其余挂起
                 // 工具仍走下方通用 approval_required 兜底。
+                // ask_user：反向提问工具挂起 —— 始终 surface 结构化 ask_user_required，绝不降级到旧的
+                // approve/reject 审批气泡（杜绝新旧杂糅）。挂起负载由本工具按 suspendSchema 自构造；权威的跨进程
+                // 校验在 sidecar→renderer 边界（前端 extractPendingAskUser 再行 zod 解析），此处 safeParse 仅作
+                // 进程内类型收窄。万一（按契约不可达）失败：既不回灌审批链、也不终结回合，仅跳过本次 surface，
+                // 挂起句柄交由 TTL 回收。
                 if (chunk.payload.toolName === ASK_USER_TOOL_NAME) {
                     const surfacedRequest = askUserRequestSchema.safeParse(chunk.payload.suspendPayload);
                     if (surfacedRequest.success) {
@@ -520,10 +525,8 @@ export class MastraRuntimeBase {
                             requestId: pendingRequestId ?? chunk.payload.toolCallId,
                             request: surfacedRequest.data,
                         }, options);
-                        continue;
                     }
-                    // suspendPayload 形状异常（理论上不会发生，载荷由本工具自身构造）：
-                    // 优雅降级到下方通用 approval_required，避免回合卡死。
+                    continue;
                 }
 
                 const suspendedRisk = deriveApprovalRisk(chunk.payload);
