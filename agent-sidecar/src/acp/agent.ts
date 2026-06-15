@@ -12,7 +12,7 @@
  *                       回灌 resolveApproval 续跑(见 approval-bridge.ts)，直至无待裁决审批，
  *                       回合收尾经 turn-egress 发可选 usage_update + 返回 PromptResponse。
  * - cancel            → 中止该会话当前回合的 AbortController(映射 runtime context.signal)。
- * - extMethod         → 受理本 Agent 公示的带外能力(检查点回滚 / 模型透传 / web 检索抓取 / 预热 / 健康探活 / 计划编排 / agent 对话回合)。
+ * - extMethod         → 受理本 Agent 公示的带外能力(检查点回滚 / 模型透传 / web 检索抓取 / 预热 / 健康探活 / 计划编排 / agent 对话回合 / ask_user 反向提问恢复)。
  *
  * 设计要点：
  * - 依赖注入(connection / runtime / registry / 生成器)，与 JSON-RPC 传输解耦，可单测。
@@ -227,7 +227,7 @@ export class CalamexAcpAgent implements Agent {
 			protocolVersion: PROTOCOL_VERSION,
 			agentCapabilities: {
 				loadSession: false,
-				// 带外能力(检查点回滚 / 模型透传 / web 检索抓取 / 预热 / 健康探活 / 计划编排 / agent 对话回合)以命名空间扩展方法公示；见 ext-methods.ts。
+				// 带外能力(检查点回滚 / 模型透传 / web 检索抓取 / 预热 / 健康探活 / 计划编排 / agent 对话回合 / ask_user 反向提问恢复)以命名空间扩展方法公示；见 ext-methods.ts。
 				_meta: CALAMEX_AGENT_CAPABILITY_META,
 			},
 		}
@@ -364,7 +364,7 @@ export class CalamexAcpAgent implements Agent {
 	/**
 	 * ACP 扩展方法分发(SDK Agent.extMethod)：仅受理本 Agent 公示的命名空间方法，
 	 * 其余一律以 methodNotFound 拒绝(与 SDK 连接层 default 分支同义，显式化以便扩展)。
-	 * 标准客户端不会调用这些方法；我方宙主据 initialize 的 _meta 发现后才调用。
+	 * 标准客户端不会调用这些方法；我方宿主据 initialize 的 _meta 发现后才调用。
 	 */
 	async extMethod(
 		method: string,
@@ -383,4 +383,291 @@ export class CalamexAcpAgent implements Agent {
 				return this.handleWarmup(params)
 			case HEALTH_METHOD:
 				return this.handleHealth()
-			case ORCHESTRATE
+			case ORCHESTRATE_METHOD:
+				return this.handleOrchestrate(params)
+			case ORCHESTRATE_RESUME_METHOD:
+				return this.handleOrchestrateResume(params)
+			case AGENT_CHAT_METHOD:
+				return this.handleAgentChat(params)
+			case AGENT_CHAT_RESOLVE_METHOD:
+				return this.handleAgentChatResolve(params)
+			case AGENT_ASK_USER_RESUME_METHOD:
+				return this.handleAgentAskUserResume(params)
+			default:
+				throw RequestError.methodNotFound(method)
+		}
+	}
+
+	/**
+	 * 受理检查点回滚扩展方法。回滚不是 prompt 回合，故不经会话登记表的回合管理，
+	 * 用本调用作用域的 AbortController；携带 sessionId 时，过程中可投影的输出事件
+	 * 经 session/update 即时下发(回滚遥测 rollback.* 按既有投影约定不成帧)。
+	 * 失败的回滚依 ACP 约定映射为 JSON-RPC error(由 SDK 包装)，不返回成功信封。
+	 */
+	private async handleCheckpointRestore(
+		params: Record<string, unknown>,
+	): Promise<Record<string, unknown>> {
+		const input = parseCheckpointRestoreParams(params)
+		const controller = new AbortController()
+		const { sessionId } = input
+		const options: IAgentRuntimeRunOptions = {
+			context: {
+				requestId: this.generateRequestId(),
+				signal: controller.signal,
+				timeoutMs: this.turnTimeoutMs,
+			},
+			...(sessionId !== undefined
+				? {
+						onEvent: (event: TAgentRuntimeOutputEvent) =>
+							this.emitOutputEvent(sessionId, event),
+					}
+				: {}),
+		}
+		const response = await this.runtime.restoreCheckpoint(input, options)
+		if (response.errorMessage) {
+			throw new Error(response.errorMessage)
+		}
+		return toCheckpointRestoreExtResult(response)
+	}
+
+	/**
+	 * 受理原始模型透传扩展方法(model/chat)。这是「工具型」一次性模型调用
+	 * (标题生成 / 行内补全 / 连接测试)的带外入口，仿 Zed 的独立模型请求：
+	 * 不属于任何 prompt 回合，故不经会话登记表、不投影 session/update，用本调用作用域的
+	 * AbortController。调用方 messages(含 system)由 runtime.modelChat 原样下发，绝不套
+	 * ask 模式自建的 Calamex 助手系统提示。运行时未实现该可选能力时以 methodNotFound 拒绝；
+	 * 失败依 ACP 约定映射为 JSON-RPC error(由 SDK 包装)。
+	 */
+	private async handleModelChat(
+		params: Record<string, unknown>,
+	): Promise<Record<string, unknown>> {
+		if (!this.runtime.modelChat) {
+			throw RequestError.methodNotFound(MODEL_CHAT_METHOD)
+		}
+		const input = parseModelChatParams(params)
+		const controller = new AbortController()
+		const options: IAgentRuntimeRunOptions = {
+			context: {
+				requestId: this.generateRequestId(),
+				signal: controller.signal,
+				timeoutMs: this.turnTimeoutMs,
+			},
+		}
+		const response = await this.runtime.modelChat(input, options)
+		if (response.errorMessage) {
+			throw new Error(response.errorMessage)
+		}
+		return toModelChatExtResult(response)
+	}
+
+	/**
+	 * 受理 agent 模式对话回合扩展方法(agent/chat)。镜像旧 http /agent/chat 的
+	 * runChat = runtime.chat(toAgentInput(payload), options)：调用 runtime.chat(而非 execute)，
+	 * mode 随入参携带，引擎走到审批门挂起或跑到终态。run-to-gate：本 handler 不走原生
+	 * session/request_permission 反向循环(与 prompt() 的原生审批环区分)；审批请求随
+	 * approval_required 事件写进返回信封，由前端调 agent/chat/resolve 续跑。携带 sessionId 时
+	 * 过程增量经 emitOutputEvent 作实时预览下发(仅文本/思考)；权威富事件由返回信封承载。
+	 * 已知限制：本扩展不受理原生 session/cancel（registry 不跟踪该调用作用域 controller）；
+	 * run-to-gate 每到闸门即返回，可接受。失败依 ACP 约定映射为 JSON-RPC error(由 SDK 包装)。
+	 */
+	private async handleAgentChat(
+		params: Record<string, unknown>,
+	): Promise<Record<string, unknown>> {
+		const input = parseAgentChatParams(params)
+		const controller = new AbortController()
+		const { sessionId } = input
+		const options: IAgentRuntimeRunOptions = {
+			context: {
+				requestId: this.generateRequestId(),
+				signal: controller.signal,
+				timeoutMs: this.turnTimeoutMs,
+			},
+			...(sessionId !== undefined
+				? {
+						onEvent: (event: TAgentRuntimeOutputEvent) =>
+							this.emitOutputEvent(sessionId, event),
+					}
+				: {}),
+		}
+		const response = await this.runtime.chat(input, options)
+		if (response.errorMessage) {
+			throw new Error(response.errorMessage)
+		}
+		return toAgentChatExtResult(response)
+	}
+
+	/**
+	 * 受理 agent 对话审批恢复扩展方法(agent/chat/resolve)。镜像旧 http /approval/resolve 的
+	 * runtime.resolveApproval(parse(body), options)：携带上一段返回信封里的 approval_required
+	 * requestId 与裁决，续跑同一回合并返回下一段响应信封（若再遇审批门则信封再携 approval_required）。
+	 * 选项/状态同 handleAgentChat：调用作用域 AbortController + 携带 sessionId 时实时预览。
+	 * 失败依 ACP 约定映射为 JSON-RPC error(由 SDK 包装)。
+	 */
+	private async handleAgentChatResolve(
+		params: Record<string, unknown>,
+	): Promise<Record<string, unknown>> {
+		const input = parseAgentChatResolveParams(params)
+		const controller = new AbortController()
+		const { sessionId } = input
+		const options: IAgentRuntimeRunOptions = {
+			context: {
+				requestId: this.generateRequestId(),
+				signal: controller.signal,
+				timeoutMs: this.turnTimeoutMs,
+			},
+			...(sessionId !== undefined
+				? {
+						onEvent: (event: TAgentRuntimeOutputEvent) =>
+							this.emitOutputEvent(sessionId, event),
+					}
+				: {}),
+		}
+		const response = await this.runtime.resolveApproval(input, options)
+		if (response.errorMessage) {
+			throw new Error(response.errorMessage)
+		}
+		return toAgentChatExtResult(response)
+	}
+
+	/**
+	 * 受理 ask_user 反向提问恢复扩展方法(agent/ask-user/resume)。这是 agent/chat/resolve 的
+	 * 姊妹方法：携带上一段返回信封里 ask_user_required 事件的 requestId 与用户回填的
+	 * outcome + 结构化 answers，经 runtime.resolveAskUser 原样回灌挂起的 ask_user 工具续跑
+	 * 同一回合并返回下一段响应信封(若再遇审批门或再次 ask_user，则信封再携相应事件)。
+	 * 选项/状态同 handleAgentChatResolve：调用作用域 AbortController + 携带 sessionId 时实时
+	 * 预览。运行时未实现该可选能力时以 methodNotFound 拒绝(与 handleModelChat 同约定)；
+	 * 失败依 ACP 约定映射为 JSON-RPC error(由 SDK 包装)。
+	 */
+	private async handleAgentAskUserResume(
+		params: Record<string, unknown>,
+	): Promise<Record<string, unknown>> {
+		if (!this.runtime.resolveAskUser) {
+			throw RequestError.methodNotFound(AGENT_ASK_USER_RESUME_METHOD)
+		}
+		const input = parseAgentAskUserResumeParams(params)
+		const controller = new AbortController()
+		const { sessionId } = input
+		const options: IAgentRuntimeRunOptions = {
+			context: {
+				requestId: this.generateRequestId(),
+				signal: controller.signal,
+				timeoutMs: this.turnTimeoutMs,
+			},
+			...(sessionId !== undefined
+				? {
+						onEvent: (event: TAgentRuntimeOutputEvent) =>
+							this.emitOutputEvent(sessionId, event),
+					}
+				: {}),
+		}
+		const response = await this.runtime.resolveAskUser(input, options)
+		if (response.errorMessage) {
+			throw new Error(response.errorMessage)
+		}
+		return toAgentAskUserResumeExtResult(response)
+	}
+
+	/**
+	 * 受理 LLM 连接预热扩展方法。预热与 prompt 回合无关，是宿主启动时的一次性带外调用；
+	 * 复用 warmupLlmConnection 的内部 zod 校验，并沿用旧 /agent/warmup 端点的 explicit 触发日志。
+	 */
+	private async handleWarmup(
+		params: Record<string, unknown>,
+	): Promise<Record<string, unknown>> {
+		const result = await warmupLlmConnection(params)
+		logWarmupResult("explicit", result)
+		return toWarmupExtResult(result)
+	}
+
+	/**
+	 * 受理健康/活性探活扩展方法。逐字节镜像旧 http `/health` 负载：运行时引擎身份 +
+	 * 当前 MCP 配置快照(getMcpRuntimeStatus 按环境重新推导，与旧探活同语义)。
+	 */
+	private handleHealth(): Record<string, unknown> {
+		return buildHealthExtResult({
+			engine: this.runtime.name,
+			version: this.runtime.version ?? null,
+			mcp: getMcpRuntimeStatus(),
+		})
+	}
+
+	/**
+	 * 受理原生计划编排启动扩展方法(plan/orchestrate)。编排不是 prompt 回合，不经会话登记表
+	 * 的回合管理；过程事件由 runner 经传入的 sink 投影。携带 sessionId 时 sink 经
+	 * emitOutputEvent 将编排内部事件经 session/update 下发(与 chat 同一投影路径，仅 agent_event
+	 * 成帧)；无 sessionId 时 sink 为空操作(仅返回终态信封)。返回 { runId, status, result }
+	 * 与旧 http /stream 终帧同形，挂起时 result 携带 suspend payload 供宿主审批 UI。
+	 * 失败依 ACP 约定映射为 JSON-RPC error(由 SDK 包装)。
+	 */
+	private async handleOrchestrate(
+		params: Record<string, unknown>,
+	): Promise<Record<string, unknown>> {
+		const parsed = parseOrchestrateParams(params)
+		const { sessionId } = parsed
+		const sink: TOrchestrationEventSink =
+			sessionId !== undefined
+				? (event) => this.emitOutputEvent(sessionId, event)
+				: () => {}
+		const result = await this.orchestration.start(
+			{
+				goal: parsed.goal,
+				executionMode: parsed.executionMode,
+				...(parsed.threadId !== undefined
+					? { threadId: parsed.threadId }
+					: {}),
+				...(parsed.modelConfig !== undefined
+					? { modelConfig: parsed.modelConfig }
+					: {}),
+			},
+			sink,
+		)
+		return toOrchestrateExtResult(result)
+	}
+
+	/**
+	 * 受理编排挂起点恢复扩展方法(plan/orchestrate/resume)。语义同 handleOrchestrate：
+	 * 续跑阶段过程事件同样经 session/update 流式下发(若携带 sessionId)，返回终态
+	 * { runId, status, result }；若再次挂起则 status 仍为 suspended 且 result 携带新的
+	 * suspend payload。失败依 ACP 约定映射为 JSON-RPC error(由 SDK 包装)。
+	 */
+	private async handleOrchestrateResume(
+		params: Record<string, unknown>,
+	): Promise<Record<string, unknown>> {
+		const parsed = parseOrchestrateResumeParams(params)
+		const { sessionId } = parsed
+		const sink: TOrchestrationEventSink =
+			sessionId !== undefined
+				? (event) => this.emitOutputEvent(sessionId, event)
+				: () => {}
+		const result = await this.orchestration.resume(
+			{
+				runId: parsed.runId,
+				decision: parsed.decision,
+				...(parsed.reason !== undefined ? { reason: parsed.reason } : {}),
+				...(parsed.modelConfig !== undefined
+					? { modelConfig: parsed.modelConfig }
+					: {}),
+			},
+			sink,
+		)
+		return toOrchestrateExtResult(result)
+	}
+
+	/**
+	 * 把一条运行时输出事件投影为 0..n 条 session/update 通知并下发。
+	 * 采用 fire-and-forget：SDK 连接内部用写队列串行化发送，顺序天然保序；
+	 * 不 await 以免阻塞 runtime 的事件环。连接已关闭时吞掉 rejection。
+	 */
+	private emitOutputEvent(
+		sessionId: string,
+		outputEvent: TAgentRuntimeOutputEvent,
+	): void {
+		const notifications = toSessionNotificationsFromOutputEvent(
+			sessionId,
+			outputEvent,
+		)
+		for (const notification of notifications) {
+			void this.connection.sessionUpdate(notification).catch(() => {})
+		}
+	}
+}
