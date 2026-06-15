@@ -49,6 +49,10 @@ const MIN_RENDERABLE_TERMINAL_WIDTH = 24;
 const MIN_RENDERABLE_TERMINAL_HEIGHT = 24;
 const TERMINAL_ENABLE_WEBGL_RENDERER = true;
 const TERMINAL_WEBGL_RECOVERY_DELAY_MS = 180;
+// 限制同时持有 WebGL 上下文的终端数：浏览器对同时存活的 WebGL context 有硬上限，
+// 多终端 tab 各占一个 context 触顶后会整体丢失，故超过阈值的终端回退到默认渲染。
+const MAX_WEBGL_TERMINAL_CONTEXTS = 8;
+let activeWebglTerminalContexts = 0;
 const TERMINAL_LAYOUT_SETTLE_DELAY_MS = 72;
 const TERMINAL_OUTPUT_FLUSH_DELAY_MS = 16;
 const TERMINAL_RUN_COMPLETED_FLUSH_TIMEOUT_MS = 160;
@@ -879,6 +883,10 @@ export class TerminalSession {
 
     this._bellUnsubscribe?.();
     this._bellUnsubscribe = null;
+
+    // 隐藏/卸载时释放 WebGL 上下文，避免多终端 tab 各占一个 context；再次可见时经
+    // handleBecomeVisible → _createTerminal → _attachTerminalToHost → _ensurePreferredRenderer 重新获取。
+    this._disposeWebglRenderer();
 
     this._clearLayoutFrame();
     this._clearLayoutSettleTimeout();
@@ -1726,6 +1734,7 @@ export class TerminalSession {
     return (
       TERMINAL_ENABLE_WEBGL_RENDERER &&
       !this._webglRendererBlocked &&
+      activeWebglTerminalContexts < MAX_WEBGL_TERMINAL_CONTEXTS &&
       typeof window !== 'undefined' &&
       'WebGL2RenderingContext' in window
     );
@@ -1750,6 +1759,7 @@ export class TerminalSession {
       });
       terminal.loadAddon(addon);
       this._webglAddonRef.value = addon;
+      activeWebglTerminalContexts += 1;
     } catch (error) {
       this._webglRendererBlocked = true;
       console.warn('WebGL 终端渲染器初始化失败，已回退默认渲染。', error);
@@ -1757,10 +1767,14 @@ export class TerminalSession {
   }
 
   private _disposeWebglRenderer(): void {
+    const hadAddon = this._webglAddonRef.value !== null;
     this._webglContextLossCleanup?.dispose();
     this._webglContextLossCleanup = null;
     this._webglAddonRef.value?.dispose();
     this._webglAddonRef.value = null;
+    if (hadAddon) {
+      activeWebglTerminalContexts = Math.max(0, activeWebglTerminalContexts - 1);
+    }
   }
 
   private _clearTerminalTextureAtlas(): void {
@@ -2022,6 +2036,9 @@ export class TerminalSession {
     } else if (terminal.element.parentElement !== host) {
       host.replaceChildren(terminal.element);
     }
+    // WebGL 渲染器必须在 terminal.open(host) 之后接线，否则没有可用的 canvas 上下文。
+    // 这是 _ensurePreferredRenderer 此前缺失的正常调用点（context-loss 恢复路径之外）。
+    this._ensurePreferredRenderer();
     this._previousHostSize = {
       width: Math.round(host.clientWidth),
       height: Math.round(host.clientHeight),
