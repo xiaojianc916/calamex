@@ -12,46 +12,10 @@ export interface IShikiThemedToken {
   fontStyle?: number;
 }
 
-// 语法按需加载器：key = Shiki 语言 id，value = 动态 import。
-// 仅声明确定存在于 @shikijs/langs 的语言，避免 Vite 构建期解析失败。
-export const SHIKI_LANG_LOADERS: Record<string, () => Promise<unknown>> = {
-  bash: () => import('@shikijs/langs/bash'),
-  c: () => import('@shikijs/langs/c'),
-  cpp: () => import('@shikijs/langs/cpp'),
-  csharp: () => import('@shikijs/langs/csharp'),
-  css: () => import('@shikijs/langs/css'),
-  diff: () => import('@shikijs/langs/diff'),
-  docker: () => import('@shikijs/langs/docker'),
-  go: () => import('@shikijs/langs/go'),
-  html: () => import('@shikijs/langs/html'),
-  ini: () => import('@shikijs/langs/ini'),
-  java: () => import('@shikijs/langs/java'),
-  javascript: () => import('@shikijs/langs/javascript'),
-  json: () => import('@shikijs/langs/json'),
-  jsonc: () => import('@shikijs/langs/jsonc'),
-  jsx: () => import('@shikijs/langs/jsx'),
-  kotlin: () => import('@shikijs/langs/kotlin'),
-  less: () => import('@shikijs/langs/less'),
-  lua: () => import('@shikijs/langs/lua'),
-  markdown: () => import('@shikijs/langs/markdown'),
-  powershell: () => import('@shikijs/langs/powershell'),
-  python: () => import('@shikijs/langs/python'),
-  ruby: () => import('@shikijs/langs/ruby'),
-  rust: () => import('@shikijs/langs/rust'),
-  scala: () => import('@shikijs/langs/scala'),
-  scss: () => import('@shikijs/langs/scss'),
-  sql: () => import('@shikijs/langs/sql'),
-  swift: () => import('@shikijs/langs/swift'),
-  toml: () => import('@shikijs/langs/toml'),
-  tsx: () => import('@shikijs/langs/tsx'),
-  typescript: () => import('@shikijs/langs/typescript'),
-  vue: () => import('@shikijs/langs/vue'),
-  xml: () => import('@shikijs/langs/xml'),
-  yaml: () => import('@shikijs/langs/yaml'),
-};
-
-// 这里故意不 import CodeMirror 的语言解析模块：该文件也会被 Worker import，必须保持
-// Shiki-only 依赖，避免 Worker bundle 间接拉入 CodeMirror registry / HighlightStyle。
+// 这里故意不 import CodeMirror 的语言解析模块，也不 import 任何 @shikijs/langs：
+// 该文件会被主线程与 Worker 同时 import，必须保持零 shiki 依赖，避免把语法 grammar
+// 重新拉回主线程模块图（破坏 worker-only 去重）。语言是否真正可加载，统一由 Worker
+// 端依据 @shikijs/langs 的 bundledLanguages 判定。
 const SHIKI_LANGUAGE_ALIAS: Record<string, string> = {
   'c++': 'cpp',
   bat: 'text',
@@ -92,11 +56,15 @@ const normalizeShikiLanguageTag = (language: string): string => {
   return SHIKI_LANGUAGE_ALIAS[tag] ?? tag;
 };
 
-/** 把传入语言解析成受支持的 Shiki 语言 id；不支持时返回 null。 */
+/**
+ * 把传入语言归一化为 Shiki 语言 id 候选；纯文本/空串返回 null（不高亮）。
+ * 不再用硬编码白名单做存在性校验——是否真正受支持交由 Worker 端按 bundledLanguages
+ * 判定，未命中时回退纯文本。这样可在保持「按需加载」的同时支持 Shiki 全部语言。
+ */
 export const resolveShikiLanguageId = (language: string): string | null => {
   const shikiId = normalizeShikiLanguageTag(language);
   if (shikiId === 'text') {
     return null;
   }
-  return shikiId in SHIKI_LANG_LOADERS ? shikiId : null;
+  return shikiId;
 };
