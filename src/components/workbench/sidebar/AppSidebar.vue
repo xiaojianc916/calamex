@@ -1,41 +1,50 @@
 <template>
-<aside class="app-sidebar-shell flex h-full min-h-0 min-w-0 flex-col overflow-hidden" :class="{ 'source-control-sidebar-host': isSourceControlView, 'explorer-sidebar-host': isExplorerView, 'search-sidebar-host': isSearchView, 'ssh-sidebar-host': isSshView, }" >
-  <!-- 性能优化：所有侧边栏面板全常驻挂载，仅用 v-show 切换可见性，彻底避免切换时的 mount/unmount 与同步渲染开销。 各面板内部的数据加载仍由 is-active 等条件控制（例如仅在对应 view 激活时才加载/刷新），隐藏时不空跑。 -->
-  <SourceControlPanel v-show="isSourceControlView" class="h-full min-h-0 w-full flex-1" :is-active="isSourceControlView" :is-desktop-runtime="isDesktopRuntime" :workspace-root-path="workspaceRootPath" :active-path="document.path" @open-file="handleOpenFile" @open-diff="handleOpenGitDiff" />
-  <WorkspaceExplorerPanel v-show="isExplorerView" :document="document" :is-active="isExplorerView" :is-desktop-runtime="isDesktopRuntime" :workspace-root-path="workspaceRootPath" :preloaded-workspace-root="preloadedWorkspaceRoot" :startup-explorer-expanded-paths="startupExplorerExpandedPaths" :startup-explorer-selected-path="startupExplorerSelectedPath" @open-file="handleOpenFile" @open-folder="emit('open-folder')" @explorer-state-change="emit('explorer-state-change', $event)" />
-  <DeferredSearchSidebarPanel v-show="isSearchView" :is-active="isSearchView" :document-path="document.path" :is-desktop-runtime="isDesktopRuntime" :workspace-root-path="workspaceRootPath" :preloaded-workspace-root="preloadedWorkspaceRoot" @open-file="handleOpenFile" />
-  <DeferredRunSidebarPanel v-show="isRunView" />
-  <div v-show="isSshView" class="ssh-sidebar-host-shell flex min-h-0 w-full flex-1 flex-col overflow-hidden" >
-    <DeferredSshSidebarPanel @open-terminal="emit('open-terminal')" />
-  </div>
-  <!-- fallback placeholder (rare) -->
-  <template v-if="!isExplorerView && !isSearchView && !isSourceControlView && !isRunView && !isSshView">
-    <div class="border-b border-(--shell-divider) px-3 py-3"> <p class="sidebar-section-title" v-text="panelMeta.title"></p> </div>
-    <div class="workbench-scroll-region min-h-0 flex-1 overflow-auto py-2">
-      <div class="space-y-3 px-3 py-2">
-        <section class="rounded-xl border border-(--border-subtle) bg-white/3 p-3">
-          <p class="text-[10px] font-semibold uppercase tracking-[0.12em] text-(--text-quaternary)"> 侧边栏页面 </p>
-          <h3 class="mt-2 text-[13px] font-semibold text-(--text-primary)" v-text="panelMeta.headline"></h3>
-          <p class="mt-2 text-[12px] leading-6 text-(--text-secondary)" v-text="panelMeta.description"></p>
-          <div class="mt-3 flex items-center gap-2"> <Button variant="outline" size="sm"><span v-text="panelMeta.actionLabel"></span></Button> <span class="text-[11px] text-(--text-quaternary)">交互面板预留位</span> </div>
-        </section>
-        <section class="rounded-xl border border-(--border-subtle) bg-(--panel-muted)/50 p-3">
-          <p class="text-[10px] font-semibold uppercase tracking-[0.12em] text-(--text-quaternary)"> 将展示 </p>
-          <div class="mt-3 space-y-2">
-            <article v-for="item in panelMeta.items" :key="item.title" class="rounded-lg border border-white/5 bg-white/3 px-3 py-2" >
-              <p class="text-[12px] font-medium text-(--text-primary)" v-text="item.title"></p>
-              <p class="mt-1 text-[11px] leading-5 text-(--text-secondary)" v-text="item.description"></p>
-            </article>
-          </div>
-        </section>
-      </div>
+  <aside class="app-sidebar-shell flex h-full min-h-0 min-w-0 flex-col overflow-hidden" :class="{ 'source-control-sidebar-host': isSourceControlView, 'explorer-sidebar-host': isExplorerView, 'search-sidebar-host': isSearchView, 'ssh-sidebar-host': isSshView, }" >
+    <!-- 性能修复：重面板按需首挂载，避免启动时同时加载 Git/Search/Run/SSH 抢占主线程，造成左侧侧栏点击迟滞或点不动。首挂载后仍用 v-show 保留状态，切换回来不重建。 -->
+    <SourceControlPanel v-if="hasMountedSourceControl" v-show="isSourceControlView" class="h-full min-h-0 w-full flex-1" :is-active="isSourceControlView" :is-desktop-runtime="isDesktopRuntime" :workspace-root-path="workspaceRootPath" :active-path="document.path" @open-file="handleOpenFile" @open-diff="handleOpenGitDiff" />
+    <WorkspaceExplorerPanel v-show="isExplorerView" :document="document" :is-active="isExplorerView" :is-desktop-runtime="isDesktopRuntime" :workspace-root-path="workspaceRootPath" :preloaded-workspace-root="preloadedWorkspaceRoot" :startup-explorer-expanded-paths="startupExplorerExpandedPaths" :startup-explorer-selected-path="startupExplorerSelectedPath" @open-file="handleOpenFile" @open-folder="emit('open-folder')" @explorer-state-change="emit('explorer-state-change', $event)" />
+    <DeferredSearchSidebarPanel v-if="hasMountedSearch" v-show="isSearchView" :is-active="isSearchView" :document-path="document.path" :is-desktop-runtime="isDesktopRuntime" :workspace-root-path="workspaceRootPath" :preloaded-workspace-root="preloadedWorkspaceRoot" @open-file="handleOpenFile" />
+    <DeferredRunSidebarPanel v-if="hasMountedRun" v-show="isRunView" />
+    <div v-if="hasMountedSsh" v-show="isSshView" class="ssh-sidebar-host-shell flex min-h-0 w-full flex-1 flex-col overflow-hidden" >
+      <DeferredSshSidebarPanel @open-terminal="emit('open-terminal')" />
     </div>
-  </template>
-</aside>
+    <!-- fallback placeholder (rare) -->
+    <template v-if="!isExplorerView && !isSearchView && !isSourceControlView && !isRunView && !isSshView">
+      <div class="border-b border-(--shell-divider) px-3 py-3">
+        <p class="sidebar-section-title" v-text="panelMeta.title"></p>
+      </div>
+      <div class="workbench-scroll-region min-h-0 flex-1 overflow-auto py-2">
+        <div class="space-y-3 px-3 py-2">
+          <section class="rounded-xl border border-(--border-subtle) bg-white/3 p-3">
+            <p class="text-[10px] font-semibold uppercase tracking-[0.12em] text-(--text-quaternary)">
+              侧边栏页面
+            </p>
+            <h3 class="mt-2 text-[13px] font-semibold text-(--text-primary)" v-text="panelMeta.headline"></h3>
+            <p class="mt-2 text-[12px] leading-6 text-(--text-secondary)" v-text="panelMeta.description"></p>
+            <div class="mt-3 flex items-center gap-2">
+              <Button variant="outline" size="sm"><span v-text="panelMeta.actionLabel"></span></Button>
+              <span class="text-[11px] text-(--text-quaternary)">交互面板预留位</span>
+            </div>
+          </section>
+          <section class="rounded-xl border border-(--border-subtle) bg-(--panel-muted)/50 p-3">
+            <p class="text-[10px] font-semibold uppercase tracking-[0.12em] text-(--text-quaternary)">
+              将展示
+            </p>
+            <div class="mt-3 space-y-2">
+              <article v-for="item in panelMeta.items" :key="item.title" class="rounded-lg border border-white/5 bg-white/3 px-3 py-2" >
+                <p class="text-[12px] font-medium text-(--text-primary)" v-text="item.title"></p>
+                <p class="mt-1 text-[11px] leading-5 text-(--text-secondary)" v-text="item.description"></p>
+              </article>
+            </div>
+          </section>
+        </div>
+      </div>
+    </template>
+  </aside>
 </template>
 
 <script setup lang="ts">
-import { computed, defineAsyncComponent } from 'vue';
+import { computed, defineAsyncComponent, ref, watch } from 'vue';
 import { Button } from '@/components/ui/button';
 import WorkspaceExplorerPanel from '@/components/workbench/sidebar/explorer/WorkspaceExplorerPanel.vue';
 import type { TWorkbenchSidebarView } from '@/types/app';
@@ -54,14 +63,17 @@ const SourceControlPanel = defineAsyncComponent({
   loader: () => import('@/components/workbench/sidebar/source-control/SourceControlPanel.vue'),
   suspensible: false,
 });
+
 const DeferredSearchSidebarPanel = defineAsyncComponent({
   loader: () => import('@/components/workbench/sidebar/search/SearchSidebarPanel.vue'),
   suspensible: false,
 });
+
 const DeferredRunSidebarPanel = defineAsyncComponent({
   loader: () => import('@/components/workbench/sidebar/run/RunSidebarPanel.vue'),
   suspensible: false,
 });
+
 const DeferredSshSidebarPanel = defineAsyncComponent({
   loader: () => import('@/components/workbench/sidebar/ssh/SshSidebarPanel.vue'),
   suspensible: false,
@@ -175,11 +187,35 @@ const isSearchView = computed(() => props.view === 'search');
 const isSourceControlView = computed(() => props.view === 'source-control');
 const isRunView = computed(() => props.view === 'run');
 const isSshView = computed(() => props.view === 'extensions');
+
 const panelMeta = computed(() => SIDEBAR_META[props.view] ?? SIDEBAR_META.ai);
+
+// Explorer 是默认工作台面板，直接常驻；其余重面板只在首次访问时挂载，之后用 v-show 保留内部状态。
+const hasMountedSourceControl = ref(false);
+const hasMountedSearch = ref(false);
+const hasMountedRun = ref(false);
+const hasMountedSsh = ref(false);
+
+watch(
+  () => props.view,
+  (view) => {
+    if (view === 'source-control') {
+      hasMountedSourceControl.value = true;
+    } else if (view === 'search') {
+      hasMountedSearch.value = true;
+    } else if (view === 'run') {
+      hasMountedRun.value = true;
+    } else if (view === 'extensions') {
+      hasMountedSsh.value = true;
+    }
+  },
+  { immediate: true },
+);
 
 const handleOpenFile = (payload: TWorkbenchOpenFilePayload): void => {
   emit('open-file', payload);
 };
+
 const handleOpenGitDiff = (payload: IGitDiffPreviewRequest): void => {
   emit('open-git-diff', payload);
 };
