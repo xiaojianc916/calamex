@@ -16,8 +16,8 @@
  *     永久持有被放弃的 run（与 server.ts 同值同语义）。
  *
  * 纯执行核心：不耦合 JSON-RPC / 传输，sink 由 dispatcher(agent.ts) 注入，便于单测。
- * 过渡期从 ../server/orchestration-events.js 复用 extractOrchestrationAgentEvent 与
- * TPlanOrchestrationRun；批次 2 删除 server/ 时该文件迁入本 acp/ 目录，仅需改本处 import。
+ * 复用同目录 ./orchestration-events.js 的 extractOrchestrationAgentEvent 与
+ * TPlanOrchestrationRun（已随 server/ 删除从旧 HTTP server 迁入本 acp/ 目录）。
  */
 import { randomUUID } from "node:crypto"
 
@@ -29,7 +29,7 @@ import type {
 import {
 	extractOrchestrationAgentEvent,
 	type TPlanOrchestrationRun,
-} from "../server/orchestration-events.js"
+} from "./orchestration-events.js"
 
 /**
  * 内存中保留的「已挂起、等待审批 resume」编排 run 的最长存活时间（与 server.ts 同值）。
