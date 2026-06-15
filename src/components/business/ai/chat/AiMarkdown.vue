@@ -3,7 +3,12 @@
 import 'markstream-vue/index.css';
 import 'katex/dist/katex.min.css';
 
-import type { CustomComponents } from 'markstream-vue';
+import type {
+  CustomComponents,
+  MarkstreamVirtualMetrics,
+  MarkstreamVirtualScrollOptions,
+  MarkstreamVirtualState,
+} from 'markstream-vue';
 import MarkdownRender, {
   enableKatex,
   isKatexEnabled,
@@ -11,9 +16,10 @@ import MarkdownRender, {
   setCustomComponents,
   setDefaultI18nMap,
 } from 'markstream-vue';
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import AiMarkdownCodeBlock from '@/components/business/ai/chat/AiMarkdownCodeBlock.vue';
 import AiMarkdownTable from '@/components/business/ai/chat/AiMarkdownTable.vue';
+import { AI_MARKDOWN_VIRTUAL_SCROLL_KEY } from '@/components/business/ai/chat/markstream-virtual-scroll';
 import { normalizeAiMath } from '@/components/business/ai/chat/normalize-math';
 import type { IAiChatStreamRenderState } from '@/types/ai';
 import {
@@ -60,6 +66,10 @@ const AI_MARKDOWN_FINAL_NORMALIZE_CACHE_LIMIT = 500;
 const AI_MARKDOWN_LONG_CONTENT_HEAD_SIGNATURE = 96;
 const AI_MARKDOWN_LONG_CONTENT_TAIL_SIGNATURE = 512;
 const AI_MARKDOWN_PARSE_COALESCE_MS = 0;
+const AI_MARKDOWN_HISTORY_MAX_LIVE_NODES = 320;
+const AI_MARKDOWN_LIVE_NODE_BUFFER = 60;
+const AI_MARKDOWN_VIRTUAL_EMIT_INTERVAL_MS = 96;
+const AI_MARKDOWN_VIRTUAL_HEIGHT_DIFF_THRESHOLD_PX = 4;
 const AI_MARKDOWN_SMOOTH_STREAMING_OPTIONS = {
   minCharsPerSecond: 60,
   maxCharsPerSecond: 1400,
@@ -144,6 +154,13 @@ const props = defineProps<{
   streamStatus?: IAiChatStreamRenderState['status'];
 }>();
 
+const emit = defineEmits<{
+  heightChange: [metrics: MarkstreamVirtualMetrics];
+  virtualStateChange: [state: MarkstreamVirtualState];
+}>();
+
+const virtualScrollContext = inject(AI_MARKDOWN_VIRTUAL_SCROLL_KEY, null);
+const virtualState = ref<MarkstreamVirtualState | null>(null);
 const isShellWindowResizing = ref(false);
 const isLiveStream = computed(
   () => props.streamStatus === 'streaming' || props.streamStatus === 'waiting-confirmation',
@@ -170,8 +187,31 @@ const smoothStreaming = computed(() => {
   return hasSeenLiveStream.value;
 });
 const typewriter = false as const;
-const maxLiveNodes = 0;
+const maxLiveNodes = computed(() =>
+  hasSeenLiveStream.value ? 0 : AI_MARKDOWN_HISTORY_MAX_LIVE_NODES,
+);
 const rendererId = computed(() => `ai-message-${props.messageId}`);
+const virtualSessionKey = computed(
+  () => `${virtualScrollContext?.threadKey.value ?? 'active'}:${props.messageId}`,
+);
+const virtualScroll = computed<MarkstreamVirtualScrollOptions>(() => {
+  const sessionKey = virtualSessionKey.value;
+  const state = virtualState.value?.sessionKey === sessionKey ? virtualState.value : null;
+
+  return {
+    enabled: Boolean(virtualScrollContext),
+    sessionKey,
+    threadKey: virtualScrollContext?.threadKey.value,
+    scrollRoot: () => virtualScrollContext?.scrollRoot.value ?? null,
+    restoreState: state,
+    restoreAnchor: false,
+    measurementKey: virtualScrollContext?.measurementKey.value,
+    settleMode: 'manual',
+    settledToken: isFinal.value,
+    emitIntervalMs: AI_MARKDOWN_VIRTUAL_EMIT_INTERVAL_MS,
+    heightDiffThresholdPx: AI_MARKDOWN_VIRTUAL_HEIGHT_DIFF_THRESHOLD_PX,
+  };
+});
 let pendingRenderContent: string | null = null;
 let pendingRenderContentTimer: ReturnType<typeof window.setTimeout> | null = null;
 let resizeLifecycleCleanup: (() => void) | null = null;
@@ -185,6 +225,12 @@ watch(
   },
   { immediate: true },
 );
+
+watch(virtualSessionKey, (sessionKey) => {
+  if (virtualState.value?.sessionKey !== sessionKey) {
+    virtualState.value = null;
+  }
+});
 
 const clearPendingRenderContentTimer = (): void => {
   if (pendingRenderContentTimer === null) {
@@ -251,6 +297,24 @@ watch(
   { flush: 'pre' },
 );
 
+const handleVirtualHeightChange = (metrics: MarkstreamVirtualMetrics): void => {
+  if (metrics.sessionKey !== virtualSessionKey.value) {
+    return;
+  }
+
+  emit('heightChange', metrics);
+  virtualScrollContext?.onHeightChange(metrics);
+};
+
+const handleVirtualStateChange = (state: MarkstreamVirtualState): void => {
+  if (state.sessionKey !== virtualSessionKey.value) {
+    return;
+  }
+
+  virtualState.value = state;
+  emit('virtualStateChange', state);
+};
+
 const bindResizeLifecycle = (): void => {
   const handleResizeStart = (): void => {
     isShellWindowResizing.value = true;
@@ -308,6 +372,8 @@ onBeforeUnmount(() => {
       :parse-coalesce-ms="AI_MARKDOWN_PARSE_COALESCE_MS"
       :fade="false"
       :max-live-nodes="maxLiveNodes"
+      :live-node-buffer="AI_MARKDOWN_LIVE_NODE_BUFFER"
+      :virtual-scroll="virtualScroll"
       :batch-rendering="true"
       :initial-render-batch-size="24"
       :render-batch-size="16"
@@ -315,6 +381,8 @@ onBeforeUnmount(() => {
       :render-batch-budget-ms="4"
       :show-tooltips="false"
       :typewriter="typewriter"
+      @height-change="handleVirtualHeightChange"
+      @virtual-state-change="handleVirtualStateChange"
     />
   </div>
 </template>
@@ -354,9 +422,9 @@ onBeforeUnmount(() => {
   --ms-flow-heading-4-mt: var(--ai-chat-space-subheading, 12px);
   --ms-flow-heading-4-mb: 6px;
   --ms-flow-heading-5-mt: var(--ai-chat-space-subheading, 12px);
-  --ms-flow-heading-5-mb: 6px;
-  --ms-flow-heading-6-mt: var(--ai-chat-space-subheading, 12px);
   --ms-flow-heading-6-mb: 6px;
+  --ms-flow-heading-6-mt: var(--ai-chat-space-subheading, 12px);
+  --ms-flow-codeblock-y: var(--ms-space-3);
   --ms-flow-table-y: var(--ai-chat-space-paragraph, 12px);
   --link-color: var(--accent-strong);
   --inline-code-bg: color-mix(in srgb, var(--panel-bg) 72%, transparent);
@@ -374,7 +442,6 @@ onBeforeUnmount(() => {
   --blockquote-fg: var(--text-tertiary);
   --hr-border: var(--shell-divider);
   --focus-ring: color-mix(in srgb, var(--accent-strong) 60%, transparent);
-  --ms-flow-codeblock-y: var(--ms-space-3);
   --stream-update-fade-duration: var(--motion-duration-slow);
   --stream-update-fade-ease: var(--motion-easing-standard);
   --markstream-code-font-family: var(--font-mono);
