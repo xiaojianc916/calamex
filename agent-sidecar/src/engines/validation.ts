@@ -180,7 +180,7 @@ export class MastraRuntimeValidation extends MastraRuntimePlan {
             ].join('\n');
             const toolChoice: IMastraGenerateOptions['toolChoice'] =
                 hasTools || Boolean(workspace) || Boolean(browser) ? 'auto' : 'none';
-            const generateOptions: IMastraGenerateOptions = {
+            const streamOptions: IMastraGenerateOptions = {
                 maxSteps: hasTools || Boolean(workspace) || Boolean(browser) ? 8 : 1,
                 toolChoice,
                 structuredOutput: {
@@ -207,11 +207,43 @@ export class MastraRuntimeValidation extends MastraRuntimePlan {
                 workspaceEnabled: Boolean(workspace),
                 browserEnabled: Boolean(browser),
                 memoryEnabled: true,
-                maxSteps: generateOptions.maxSteps ?? 1,
+                maxSteps: streamOptions.maxSteps ?? 1,
                 toolChoice,
             })), options);
-            const generated = await agent.generate(mastraMessages, generateOptions);
-            const report = parseValidationReport(generated.object);
+            // 共享流式脊柱：消费 fullStream（投影推理/工具事件）后读取结构化验证报告。
+            const streamed = await this.streamStructuredPlanObject({
+                agent,
+                bundle: toolBundle.bundle,
+                sessionId,
+                messages: mastraMessages,
+                streamOptions,
+                events,
+                options,
+                createRuntimeEvent,
+                workspace,
+                browser,
+            });
+
+            if (streamed.status === 'error') {
+                return createErrorResponse(
+                    sessionId,
+                    `Validator 执行失败：${streamed.message}`,
+                    events,
+                    options,
+                );
+            }
+            if (streamed.status === 'pending') {
+                // Validator 使用非可恢复 agent + 只读工具，理论上不应挂起；一旦出现工具审批 /
+                // ask_user 反向提问挂起，本阶段不支持续跑，降级为精确错误而非静默卡死。
+                return createErrorResponse(
+                    sessionId,
+                    'Validator 意外挂起（只读校验不支持工具审批 / 反向提问），未产出验证报告。',
+                    events,
+                    options,
+                );
+            }
+
+            const report = parseValidationReport(streamed.object);
 
             if (!report) {
                 return createErrorResponse(
@@ -332,7 +364,7 @@ export class MastraRuntimeValidation extends MastraRuntimePlan {
             ].join('\n');
             const toolChoice: IMastraGenerateOptions['toolChoice'] =
                 hasTools || Boolean(workspace) || Boolean(browser) ? 'auto' : 'none';
-            const generateOptions: IMastraGenerateOptions = {
+            const streamOptions: IMastraGenerateOptions = {
                 maxSteps: hasTools || Boolean(workspace) || Boolean(browser) ? 8 : 1,
                 toolChoice,
                 structuredOutput: {
@@ -359,11 +391,41 @@ export class MastraRuntimeValidation extends MastraRuntimePlan {
                 workspaceEnabled: Boolean(workspace),
                 browserEnabled: Boolean(browser),
                 memoryEnabled: true,
-                maxSteps: generateOptions.maxSteps ?? 1,
+                maxSteps: streamOptions.maxSteps ?? 1,
                 toolChoice,
             })), options);
-            const generated = await agent.generate(mastraMessages, generateOptions);
-            const delta = parsePlanDelta(generated.object);
+            // 共享流式脊柱：消费 fullStream（投影推理/工具事件）后读取结构化 delta plan。
+            const streamed = await this.streamStructuredPlanObject({
+                agent,
+                bundle: toolBundle.bundle,
+                sessionId,
+                messages: mastraMessages,
+                streamOptions,
+                events,
+                options,
+                createRuntimeEvent,
+                workspace,
+                browser,
+            });
+
+            if (streamed.status === 'error') {
+                return createErrorResponse(
+                    sessionId,
+                    `Replanner 执行失败：${streamed.message}`,
+                    events,
+                    options,
+                );
+            }
+            if (streamed.status === 'pending') {
+                return createErrorResponse(
+                    sessionId,
+                    'Replanner 意外挂起（只读重规划不支持工具审批 / 反向提问），未产出 delta plan。',
+                    events,
+                    options,
+                );
+            }
+
+            const delta = parsePlanDelta(streamed.object);
 
             if (!delta) {
                 return createErrorResponse(
