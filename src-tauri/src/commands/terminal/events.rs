@@ -18,9 +18,10 @@ use crate::terminal::{
     state_machine::StateMachine,
     tauri_events::{
         TerminalDataEvent, TerminalDataSource, TerminalExitEvent, TerminalRunChunkEvent,
-        TerminalRunCompletedEvent, TerminalRunStartedEvent, TerminalStateChangedEvent,
-        emit_terminal_data, emit_terminal_exit, emit_terminal_run_chunk,
-        emit_terminal_run_completed, emit_terminal_run_started, emit_terminal_state_changed,
+        TerminalRunCompletedEvent, TerminalRunStartedEvent, TerminalSessionStateChangedEvent,
+        TerminalStateChangedEvent, emit_terminal_data, emit_terminal_exit,
+        emit_terminal_run_chunk, emit_terminal_run_completed, emit_terminal_run_started,
+        emit_terminal_session_state_changed, emit_terminal_state_changed,
     },
     types::TerminalState,
     visual::{
@@ -71,6 +72,51 @@ pub(super) fn transition_terminal_state(app: &AppHandle, to: TerminalState) -> R
         },
     );
     Ok(())
+}
+
+fn emit_session_state_transitions(
+    app: &AppHandle,
+    session_id: &str,
+    transitions: impl IntoIterator<Item = (TerminalState, TerminalState)>,
+) {
+    let at_ms = terminal_now_ms();
+    for (from, to) in transitions {
+        emit_terminal_session_state_changed(
+            app,
+            TerminalSessionStateChangedEvent {
+                session_id: session_id.to_string(),
+                from,
+                to,
+                at_ms,
+            },
+        );
+    }
+}
+
+/// 改写会话状态的同时向前端发 `terminal:session-state-changed`，让 UI 能按会话维度观察
+/// 状态流转。全局 `terminal:state-changed` 仍并存，迁移期不破坏既有读取方。无实际转移
+/// （无变化 / 非法 / 锁中毒）时不发事件。
+pub(super) fn set_session_state_and_emit(
+    app: &AppHandle,
+    state: &TerminalSessionState,
+    session_id: &str,
+    to: TerminalState,
+) {
+    emit_session_state_transitions(app, session_id, set_session_state(state, session_id, to));
+}
+
+/// 回收该会话的运行态并逐步发事件：`Running -> SwitchingToIdle -> IdleInteractive` 两步都会
+/// 作为独立的 session-state-changed 发出，与全局完成转移并存。
+pub(super) fn complete_session_run_state_and_emit(
+    app: &AppHandle,
+    state: &TerminalSessionState,
+    session_id: &str,
+) {
+    emit_session_state_transitions(
+        app,
+        session_id,
+        complete_session_run_state(state, session_id),
+    );
 }
 
 pub(super) fn mark_terminal_interactive_ready(app: &AppHandle) {
@@ -361,7 +407,7 @@ pub(super) fn handle_local_wsl_interactive_terminal_event(
             mark_terminal_interactive_ready(app);
             // 每会话态：交互 shell 就绪即把「这个会话」置为 IdleInteractive（每会话各自从
             // Booting 起步，与全局态无关），作为后续 dispatch -> SwitchingToRun 的合法起点。
-            set_session_state(state, session_id, TerminalState::IdleInteractive);
+            set_session_state_and_emit(app, state, session_id, TerminalState::IdleInteractive);
         }
         LocalWslTerminalServerPayload::InteractiveData(payload) => {
             emit_terminal_interactive_output(app, state, session_id, payload.data);
@@ -421,7 +467,7 @@ pub(super) fn handle_local_run_event(
         LocalWslTerminalServerPayload::RunStarted(payload) => {
             emit_terminal_run_started_state(app, session_id, run_id, payload.pid, started_at);
             // 每会话态：该会话由 SwitchingToRun 进入 Running，输入据此路由到本会话的 run。
-            set_session_state(state, session_id, TerminalState::Running);
+            set_session_state_and_emit(app, state, session_id, TerminalState::Running);
         }
         LocalWslTerminalServerPayload::RunChunk(payload) => {
             let has_prior_output = current_visual_tracker(visual_tracker).has_output;
@@ -495,7 +541,7 @@ fn finalize_local_run(
     clear_active_terminal_run(state, run_id);
     // 每会话态：该会话的运行结束后回收其状态（Running -> SwitchingToIdle -> IdleInteractive），
     // 不受其它会话是否仍在运行影响；全局态仍按既有计数门控在下方完成转移。
-    complete_session_run_state(state, session_id);
+    complete_session_run_state_and_emit(app, state, session_id);
     emit_terminal_run_completed_with_state(
         app,
         state,

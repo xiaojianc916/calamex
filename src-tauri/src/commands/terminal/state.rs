@@ -214,23 +214,29 @@ pub(super) fn remove_session_geometry(state: &TerminalSessionState, session_id: 
 ///
 /// 每会话各自是一台从 `Booting` 起步的状态机：无记录时以 `Booting` 为基线做合法性判定，与全局
 /// 态无关（全局可能因其它会话而处于 `Running`，不应阻断本会话的初始 Idle 化）。复用全局状态机
-/// 的转移约束，保持与 registry 单源一致；非法转移就地忽略（与全局 `transition_terminal_state`
-/// 出错即跳过的语义一致）。
-pub(super) fn set_session_state(state: &TerminalSessionState, session_id: &str, to: TerminalState) {
-    let Ok(mut states) = state.session_states.lock() else {
-        return;
-    };
+/// 的转移约束，保持与 registry 单源一致；非法/无变化的转移就地忽略（与全局
+/// `transition_terminal_state` 出错即跳过的语义一致）。
+///
+/// 返回实际发生的转移 `Some((from, to))`，供上层发 `terminal:session-state-changed`；无变化、
+/// 非法转移或锁中毒时返回 `None`（不发事件）。
+pub(super) fn set_session_state(
+    state: &TerminalSessionState,
+    session_id: &str,
+    to: TerminalState,
+) -> Option<(TerminalState, TerminalState)> {
+    let mut states = state.session_states.lock().ok()?;
     let from = states
         .get(session_id)
         .copied()
         .unwrap_or(TerminalState::Booting);
     if from == to {
-        return;
+        return None;
     }
     if !StateMachine::can_transition(from, to) {
-        return;
+        return None;
     }
     states.insert(session_id.to_string(), to);
+    Some((from, to))
 }
 
 /// 取指定会话的状态；该会话尚无记录时回退到全局 `current_state()`，保证迁移期行为与改动前
@@ -254,17 +260,36 @@ pub(super) fn remove_session_state(state: &TerminalSessionState, session_id: &st
 /// 该会话、不受其它会话是否仍在运行影响（全局计数门控仅用于全局态）。`Running` 经
 /// `SwitchingToIdle` 回到 `IdleInteractive`；若运行在真正启动前就结束（仍处 `SwitchingToRun`），
 /// 直接回 `IdleInteractive`。
-pub(super) fn complete_session_run_state(state: &TerminalSessionState, session_id: &str) {
+///
+/// 按发生顺序返回实际转移序列，供上层逐步发 `terminal:session-state-changed`。
+pub(super) fn complete_session_run_state(
+    state: &TerminalSessionState,
+    session_id: &str,
+) -> Vec<(TerminalState, TerminalState)> {
+    let mut transitions = Vec::new();
     match get_session_state(state, session_id) {
         TerminalState::Running => {
-            set_session_state(state, session_id, TerminalState::SwitchingToIdle);
-            set_session_state(state, session_id, TerminalState::IdleInteractive);
+            transitions.extend(set_session_state(
+                state,
+                session_id,
+                TerminalState::SwitchingToIdle,
+            ));
+            transitions.extend(set_session_state(
+                state,
+                session_id,
+                TerminalState::IdleInteractive,
+            ));
         }
         TerminalState::SwitchingToRun => {
-            set_session_state(state, session_id, TerminalState::IdleInteractive);
+            transitions.extend(set_session_state(
+                state,
+                session_id,
+                TerminalState::IdleInteractive,
+            ));
         }
         _ => {}
     }
+    transitions
 }
 
 fn lock_active_terminal_runs(
