@@ -30,8 +30,12 @@
 //!     （仅文本/思考增量，丢结构化补丁/检查点/回滚/富审批/plan_ready 等 agent UI
 //!     词表），故 agent_chat 跑到审批门或终态，过程增量经 `session/update` 仅作实时
 //!     预览，真正权威的富事件由返回信封承载（与旧 http /agent/chat 同构，前端无感）。
+//!
+//! 外部 ACP 编码 agent（Kimi Code / Codex 等，见 ADR-0015）走的是标准回合 `prompt`
+//! 而非上述带外扩展方法：它们不认识 `calamex.dev/*`，只实现标准 session/prompt；
+//! 过程增量全部经 `session/update` 帧由 `EventSink` 转发（投影见 `ui_event`）。
 
-// 过渡期：本模块部分薄宿主方法（web_search / web_fetch / restore_checkpoint 等）尚未
+// 过渡期：本模块部分薄宿主方法（web_search / web_fetch / restore_checkpoint / prompt 等）尚未
 // 全部接线到宿主命令，crate 外暂无调用点；接线后移除该 allow。
 #![allow(dead_code)]
 
@@ -40,7 +44,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use agent_client_protocol::schema::{SessionId, ToolCallId};
+use agent_client_protocol::schema::{ContentBlock, SessionId, StopReason, ToolCallId};
 
 use crate::commands::contracts::{
     AgentSidecarHealthPayload, AgentSidecarOrchestratePayload, AgentSidecarResponsePayload,
@@ -147,6 +151,24 @@ impl AcpHost {
                 .insert(thread_key.to_string(), session_id.clone());
         }
         Ok(session_id)
+    }
+
+    /// 驱动一轮**标准 ACP 回合**（`session/prompt`）：解析/复用 thread 的会话后，把内容块
+    /// 直接交给标准 `prompt`，返回回合终止原因 `StopReason`。
+    ///
+    /// 与带外的 `agent_chat` / `orchestrate`（自家 sidecar 扩展方法）不同，本方法走的是
+    /// ACP 标准回合通道，供**外部 ACP 编码 agent**（Kimi Code / Codex 等，见 ADR-0015）使用——
+    /// 它们不认识 `calamex.dev/*` 扩展方法，只实现标准 `prompt`。过程增量（文本/思考/工具
+    /// 调用/计划等）经 `session/update` 帧由 `EventSink` 转发（投影见 `ui_event`），本方法仅
+    /// 返回终态原因，不承载富信封（外部 agent 无自家信封）。
+    pub async fn prompt(
+        &self,
+        thread_id: &str,
+        workspace_root_path: Option<&str>,
+        blocks: Vec<ContentBlock>,
+    ) -> Result<StopReason, AcpClientError> {
+        let session_id = self.ensure_session(thread_id, workspace_root_path).await?;
+        self.handle.prompt(session_id, blocks).await
     }
 
     /// 投递一个审批决策，唤醒回合内挂起的权限请求（其 `prompt` 随后续跑并最终返回）。
