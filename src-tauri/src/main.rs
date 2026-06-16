@@ -305,12 +305,6 @@ storage_paths::migrate_legacy_storage();
             // 挂载 specta 强类型事件;让前端 events.workspaceFsEvent.listen(...) 拿到 typed payload
             specta_bindings.mount_events(app);
 
-            timed_step!("tauri.setup.terminal-events-attached", app_started_at, {
-                terminal::registry::registry()
-                    .event_bus
-                    .attach_app(app.handle().clone());
-            });
-
             let tray_started_at = Instant::now();
             setup_system_tray(app)?;
             emit_startup_step("tauri.setup.tray-ready", app_started_at, tray_started_at);
