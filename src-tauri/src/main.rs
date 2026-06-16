@@ -217,6 +217,34 @@ fn harden_webview_settings<R: tauri::Runtime>(_webview_window: &tauri::WebviewWi
 // === main ================================================================
 
 fn main() {
+    // === WebView2 原生遮挡计算修复（Windows）==============================
+    // 现象：启动几秒后（有时一进入即触发）整窗点击全部失效——侧边栏、编辑器、
+    // 右上角 GitHub 登录同时点不动；但 :hover 仍有反馈、原生窗口仍可拖动/缩放，
+    // 控制台无任何报错、无递归更新告警、运行时诊断抓不到现场，rAF=0 而主线程空闲。
+    //
+    // 根因：并非 JS 死循环 / 覆盖层 / pointer-events / resize 帧泵（均已逐条排除），
+    // 而是 Chromium/WebView2 的 CalculateNativeWinOcclusion（原生窗口遮挡计算）在
+    // Windows 上把 WebView 子 HWND 误判为“被遮挡”——尤其在窗口由隐藏态(visible:false)
+    // show() 之后或一次 resize 之后——于是暂停合成器与计时器(rAF 归零)、停止向“隐藏”
+    // 页面派发输入；而 :hover 走合成器缓存、拖窗/缩放走 OS 层故仍有反应，主线程未被
+    // 占住故探针测得“线程空闲”，全程不走 JS 错误通道故控制台干净、warnHandler 不触发。
+    // 本工程窗口正是 visible:false 延迟显示（见下方 setup 内 fallback-reveal 注释，
+    // 作者已记录 WebView2 在不可见窗口下挂起渲染/计时），最易触发该误判。
+    //
+    // 修复：在任何 WebView2 环境创建之前关闭该特性。必须在 app.build() 之前设置，
+    // wry 创建 WebView2 环境时会读取该环境变量。零行为副作用，仅 Windows 生效。
+    #[cfg(windows)]
+    {
+        // SAFETY: 处于 main 最早期、WebView2 环境/任何额外线程创建之前的单线程阶段，
+        // 无并发读写环境变量的风险。
+        unsafe {
+            std::env::set_var(
+                "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
+                "--disable-features=CalculateNativeWinOcclusion",
+            );
+        }
+    }
+
     let app_started_at = Instant::now();
     emit_startup_event("tauri.main.start", app_started_at);
 
