@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { createAcontextTokenEventDraft } from './budget.js';
-import type { IMastraToolBudgetStats, TMastraChatMessage } from '../types.js';
+import type { IMastraToolBudgetStats, TMastraChatMessage } from '../shared/types.js';
 
 const emptyToolStats: IMastraToolBudgetStats = {
   toolCount: 0,

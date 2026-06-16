@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { createErrorResponse, deriveApprovalRisk } from './responses.js';
-import type { TAgentRuntimeOutputEvent } from './contracts/runtime-contracts.js';
+import type { TAgentRuntimeOutputEvent } from '../contracts/runtime-contracts.js';
 
 test('deriveApprovalRisk：不可逆的 git 操作判定为 high / 不可逆', () => {
     for (const toolName of ['git_push', 'push_files', 'merge_pull_request', 'delete_file']) {

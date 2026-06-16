@@ -1,5 +1,5 @@
 import { createMcpToolDescriptor, resolveDescriptorApprovalDefault, type IAgentToolDescriptor } from '../../../engines/policy/tool-descriptor.js';
-import { toRecord } from '../../../engines/utils.js';
+import { toRecord } from '../../../engines/shared/utils.js';
 import type { TMcpServerName } from '../client.js';
 
 // ── MCP 工具能力模型（capability model）─────────────────────────────

@@ -6,13 +6,13 @@ import type {
 	SessionNotification,
 } from "@agentclientprotocol/sdk"
 
-import { encodeApprovalRequestId } from "../engines/approval-client/utils.js"
+import { encodeApprovalRequestId } from "../engines/approval/utils.js"
 import type {
 	IAgentRuntimeResponse,
 	IAgentRuntimeRunOptions,
 } from "../engines/contracts/runtime-contracts.js"
 import type { IAgentRuntimeInput } from "../engines/contracts/runtime-input.js"
-import type { IAgentSidecarRuntime } from "../engines/runtime.js"
+import type { IAgentSidecarRuntime } from "../engines/runtime/runtime.js"
 import { createAgentRuntimeEvent } from "../streaming/stream-types.js"
 import { CalamexAcpAgent, type IAcpAgentConnection } from "./agent.js"
 

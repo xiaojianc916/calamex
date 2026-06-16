@@ -1,5 +1,5 @@
 import { Buffer } from 'node:buffer';
-import { APPROVAL_TOKEN_PREFIX, toRecord } from '../utils.js';
+import { APPROVAL_TOKEN_PREFIX, toRecord } from '../shared/utils.js';
 
 export interface IEncodedApprovalRequestPayload {
     runId: string;

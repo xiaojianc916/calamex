@@ -1,12 +1,12 @@
-import { MastraRuntimeExecution } from '../execution.js';
+import { MastraRuntimeExecution } from '../modes/execution.js';
 import { decodeApprovalRequestId, isApprovedDecision } from './utils.js';
 import { createExecutionRequestContext } from '../context/context.js';
-import { normalizeMastraError } from '../errors.js';
-import { createErrorResponse } from '../responses.js';
-import { DEFAULT_EXECUTION_AGENT_ID } from '../types.js';
-import type { IMastraAgentStreamLike, IMastraApprovalOptions, IPlanWorkflowStepTracker, TMastraToolResumeData } from '../types.js';
-import { createRuntimeEventFactory, createRuntimePreview, createSessionId, pushUiEvent, toNonEmptyString } from '../utils.js';
-import { allowWorkspaceWriteAfterVerifiedRead, destroyMastraBrowser, destroyMastraWorkspace } from '../workspace.js';
+import { normalizeMastraError } from '../shared/errors.js';
+import { createErrorResponse } from '../responses/responses.js';
+import { DEFAULT_EXECUTION_AGENT_ID } from '../shared/types.js';
+import type { IMastraAgentStreamLike, IMastraApprovalOptions, IPlanWorkflowStepTracker, TMastraToolResumeData } from '../shared/types.js';
+import { createRuntimeEventFactory, createRuntimePreview, createSessionId, pushUiEvent, toNonEmptyString } from '../shared/utils.js';
+import { allowWorkspaceWriteAfterVerifiedRead, destroyMastraBrowser, destroyMastraWorkspace } from '../workspace/workspace.js';
 import type { IAgentRuntimeResponse, IAgentRuntimeRunOptions, TAgentRuntimeOutputEvent } from '../contracts/runtime-contracts.js';
 import type { IApprovalResolutionInput, IAskUserResolutionInput } from '../contracts/runtime-input.js';
 

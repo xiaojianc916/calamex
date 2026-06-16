@@ -1,4 +1,4 @@
-import type { TMastraChatMessage } from '../types.js';
+import type { TMastraChatMessage } from '../shared/types.js';
 import { COMPACTION_RETAINED_USER_MESSAGES_BYTE_BUDGET, retainRecentUserMessageTexts } from '../budget/context-budget-policy.js';
 import {
   buildCompactionResumeUserPrompt,

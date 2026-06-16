@@ -9,7 +9,7 @@ import {
   resolveContextCompactionRemainingTokenBudget,
   retainRecentUserMessageTexts,
 } from './context-budget-policy.js';
-import type { TMastraChatMessage } from '../types.js';
+import type { TMastraChatMessage } from '../shared/types.js';
 
 const createCapabilities = (overrides: {
   contextWindowTokens?: number;

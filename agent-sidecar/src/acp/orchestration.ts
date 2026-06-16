@@ -25,7 +25,7 @@ import type { IAgentRuntimeModelConfigInput } from "../engines/contracts/runtime
 import type {
 	IAgentSidecarRuntime,
 	TAgentRuntimeOutputEvent,
-} from "../engines/runtime.js"
+} from "../engines/runtime/runtime.js"
 import {
 	extractOrchestrationAgentEvent,
 	type TPlanOrchestrationRun,

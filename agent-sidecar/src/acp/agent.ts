@@ -53,7 +53,7 @@ import {
 import type {
 	IAgentSidecarRuntime,
 	TAgentRuntimeOutputEvent,
-} from "../engines/runtime.js"
+} from "../engines/runtime/runtime.js"
 import { resolveAgentModelCapabilitiesFromModelId } from "../models/capabilities.js"
 import { logWarmupResult, warmupLlmConnection } from "../models/llm-warmup.js"
 import { getMcpRuntimeStatus } from "../tools/mcp/client.js"

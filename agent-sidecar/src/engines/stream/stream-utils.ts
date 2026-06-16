@@ -1,7 +1,7 @@
 import type { ToolCallChunk, ToolResultChunk } from '@mastra/core/stream';
-import { createRuntimePreview } from '../utils.js';
-import { type TDoneTokenSnapshot, type TCompatibleReasoningDeltaChunk, type TCompatibleToolResultPayload, type TMastraErrorChunk, type TMastraFinishChunk, type TMastraStreamChunk, type TMastraTextDeltaChunk, type TMastraToolCallApprovalChunk, type TMastraToolCallSuspendedChunk, type TMastraToolErrorChunk, type TOmDataChunk, type TOmMemoryCompressedEventDraft, type TSandboxDataChunk } from '../types.js';
-import { toJsonValue, toRecord } from '../utils.js';
+import { createRuntimePreview } from '../shared/utils.js';
+import { type TDoneTokenSnapshot, type TCompatibleReasoningDeltaChunk, type TCompatibleToolResultPayload, type TMastraErrorChunk, type TMastraFinishChunk, type TMastraStreamChunk, type TMastraTextDeltaChunk, type TMastraToolCallApprovalChunk, type TMastraToolCallSuspendedChunk, type TMastraToolErrorChunk, type TOmDataChunk, type TOmMemoryCompressedEventDraft, type TSandboxDataChunk } from '../shared/types.js';
+import { toJsonValue, toRecord } from '../shared/utils.js';
 
 export const getTextDelta = (chunk: TMastraTextDeltaChunk): string => chunk.payload.text;
 

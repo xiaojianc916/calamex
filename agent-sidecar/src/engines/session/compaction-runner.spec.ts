@@ -7,7 +7,7 @@ import {
   COMPACTION_HANDOFF_PROMPT,
   COMPACTION_RESUME_USER_MESSAGE_PREFIX,
 } from './session-messages.js';
-import type { TMastraChatMessage } from '../types.js';
+import type { TMastraChatMessage } from '../shared/types.js';
 
 async function* streamSummaryDeltas(): AsyncIterable<string> {
   yield 'Goal: continue the refactor\n';

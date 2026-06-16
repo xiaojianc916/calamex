@@ -1,9 +1,9 @@
 import { createRequire } from 'node:module';
-import { MastraRuntime } from './rollback.js';
+import { MastraRuntime } from './composition.js';
 import type {
     IAgentRuntimeResponse,
     IAgentRuntimeRunOptions,
-} from './contracts/runtime-contracts.js';
+} from '../contracts/runtime-contracts.js';
 import type {
     IAgentRuntimeInput,
     IAgentRuntimeModelConfigInput,
@@ -14,15 +14,15 @@ import type {
     IPlanFinishInput,
     IPlanQueryInput,
     IPlanRejectInput,
-} from './contracts/runtime-input.js';
-import type { TPlanOrchestrationWorkflow } from './plan/orchestration-workflow.js';
+} from '../contracts/runtime-input.js';
+import type { TPlanOrchestrationWorkflow } from '../plan/orchestration-workflow.js';
 
 export type {
     IAgentRuntimeContext,
     IAgentRuntimeResponse,
     IAgentRuntimeRunOptions,
     TAgentRuntimeOutputEvent
-} from './contracts/runtime-contracts.js';
+} from '../contracts/runtime-contracts.js';
 
 // -----------------------------------------------------------------------------
 // Constants

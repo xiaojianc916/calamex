@@ -2,8 +2,8 @@ import { existsSync, realpathSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { TAgentPlanRecord } from '../plan/plan-store.js';
 import type { IAgentRuntimeInput } from '../contracts/runtime-input.js';
-import { createMastraRequestContext, requestContextToRecord, toJsonValue, toNonEmptyString, toRecord } from '../utils.js';
-import type { IMastraWorkflowSnapshotLike, TMastraRequestContext } from '../types.js';
+import { createMastraRequestContext, requestContextToRecord, toJsonValue, toNonEmptyString, toRecord } from '../shared/utils.js';
+import type { IMastraWorkflowSnapshotLike, TMastraRequestContext } from '../shared/types.js';
 
 export const createExecutionRequestContext = (
     input: IAgentRuntimeInput,

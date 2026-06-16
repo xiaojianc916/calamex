@@ -1,5 +1,5 @@
 import type { IAgentModelCapabilities } from '../../models/capabilities.js';
-import type { TMastraChatMessage, TMastraTextPart } from '../types.js';
+import type { TMastraChatMessage, TMastraTextPart } from '../shared/types.js';
 
 export const AGENT_CONTEXT_COMPACTION_REMAINING_TOKEN_BUDGET_ENV = 'AGENT_COMPACTION_REMAINING_TOKEN_BUDGET';
 export const DEFAULT_CONTEXT_COMPACTION_REMAINING_TOKEN_BUDGET = 40_000;

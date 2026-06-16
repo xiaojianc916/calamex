@@ -10,7 +10,7 @@
 import { AgentSideConnection, ndJsonStream } from "@agentclientprotocol/sdk"
 import { Readable, Writable } from "node:stream"
 
-import { createConfiguredRuntime } from "../engines/runtime.js"
+import { createConfiguredRuntime } from "../engines/runtime/runtime.js"
 import { createMastraModelConfigFromEnv } from "../models/config.js"
 import {
 	disposeWarmupScheduler,

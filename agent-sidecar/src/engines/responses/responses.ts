@@ -1,10 +1,10 @@
 import { WORKSPACE_TOOLS } from '@mastra/core/workspace';
 import type { ToolCallPayload } from '@mastra/core/stream';
-import type { TAgentPlan } from '../schemas/plan.js';
-import type { TAgentPlanRecord } from './plan/plan-store.js';
-import type { IAgentRuntimeResponse, IAgentRuntimeRunOptions, TAgentRuntimeOutputEvent } from './contracts/runtime-contracts.js';
-import { pushUiEvent, toNonEmptyString, toRecord } from './utils.js';
-import { encodeApprovalRequestId, extractApprovalToolPath } from './approval-client/utils.js';
+import type { TAgentPlan } from '../../schemas/plan.js';
+import type { TAgentPlanRecord } from '../plan/plan-store.js';
+import type { IAgentRuntimeResponse, IAgentRuntimeRunOptions, TAgentRuntimeOutputEvent } from '../contracts/runtime-contracts.js';
+import { pushUiEvent, toNonEmptyString, toRecord } from '../shared/utils.js';
+import { encodeApprovalRequestId, extractApprovalToolPath } from '../approval/utils.js';
 
 export type TApprovalRiskLevel = 'low' | 'medium' | 'high';
 

@@ -9,7 +9,7 @@ import {
   COMPACTION_HANDOFF_PROMPT,
   COMPACTION_RESUME_USER_MESSAGE_PREFIX,
 } from './session-messages.js';
-import type { TMastraChatMessage } from '../types.js';
+import type { TMastraChatMessage } from '../shared/types.js';
 
 const createMessages = (): TMastraChatMessage[] => [
   { role: 'user', content: 'first user request' },

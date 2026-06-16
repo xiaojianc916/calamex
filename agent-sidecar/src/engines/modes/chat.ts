@@ -1,18 +1,18 @@
-import { MastraRuntimeBase } from '../base.js';
+import { MastraRuntimeBase } from '../runtime/base.js';
 import { createMcpGatewayRunBundle } from '../../tools/mcp/index.js';
 import { buildSystemPrompt } from '../prompts/system-prompt.js';
 import { createMastraMemoryReference, createMastraMemoryScope } from '../context/memory.js';
 import { createMastraMemoryForModel, createMastraModelConfig, resolveMastraModelConfig } from '../agent/factory.js';
 import { createAcontextTokenEventDraft } from '../budget/budget.js';
 import { createExecutionRequestContext } from '../context/context.js';
-import { normalizeMastraError } from '../errors.js';
+import { normalizeMastraError } from '../shared/errors.js';
 import { buildMastraMessages, hasImageAttachmentParts, isVisionModelId } from '../session/session-messages.js';
-import { createErrorResponse } from '../responses.js';
+import { createErrorResponse } from '../responses/responses.js';
 import { loadMastraMcpTools } from '../../tools/index.js';
-import { DEFAULT_EXECUTION_AGENT_ID, DEFAULT_EXECUTION_AGENT_NAME } from '../types.js';
-import type { IMastraGenerateOptions } from '../types.js';
-import { attachMcpGatewayMetrics, createRuntimeEventFactory, createSessionId, pushUiEvent } from '../utils.js';
-import { createMastraAgentInputProcessors, createMastraAgentOutputProcessors, createMastraTextModeExecutionPlan, destroyMastraBrowser, destroyMastraWorkspace } from '../workspace.js';
+import { DEFAULT_EXECUTION_AGENT_ID, DEFAULT_EXECUTION_AGENT_NAME } from '../shared/types.js';
+import type { IMastraGenerateOptions } from '../shared/types.js';
+import { attachMcpGatewayMetrics, createRuntimeEventFactory, createSessionId, pushUiEvent } from '../shared/utils.js';
+import { createMastraAgentInputProcessors, createMastraAgentOutputProcessors, createMastraTextModeExecutionPlan, destroyMastraBrowser, destroyMastraWorkspace } from '../workspace/workspace.js';
 import type { IAgentRuntimeResponse, IAgentRuntimeRunOptions, TAgentRuntimeOutputEvent } from '../contracts/runtime-contracts.js';
 import type { IAgentRuntimeInput } from '../contracts/runtime-input.js';
 

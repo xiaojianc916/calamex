@@ -6,7 +6,7 @@ import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { createJsonToolModelOutput } from '../../engines/budget/budget.js';
 import { resolveWorkspaceDirectory } from '../../engines/context/context.js';
-import { toNonEmptyString } from '../../engines/utils.js';
+import { toNonEmptyString } from '../../engines/shared/utils.js';
 
 /**
  * update_plan —— Plan 模式「活体 PLAN.md」编辑工具（方案 A，纯 OpenHands 式）。

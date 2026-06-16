@@ -1,22 +1,22 @@
 import { MastraRuntimeValidation } from './validation.js';
-import { buildSystemPrompt } from './prompts/system-prompt.js';
-import { createMastraMemoryReference, createMastraMemoryScope, resolveObservationalMemoryEnabled, resolveSemanticRecallEnabled } from './context/memory.js';
-import { createMastraMemoryForModel, createMastraModelConfig, resolveMastraModelConfig } from './agent/factory.js';
-import { createAcontextTokenEventDraft } from './budget/budget.js';
-import { createExecutionRequestContext } from './context/context.js';
-import { normalizeMastraError } from './errors.js';
-import { resolveAgentExecutionPolicy } from './policy/execution-policy.js';
-import { createApprovedPlanExecutionContext, createErrorResponse } from './responses.js';
-import { createAgentExecutionSession } from './session/agent-session.js';
-import { buildMastraMessagesFromSessionMessages, createAgentSessionMessagesFromRuntimeInput } from './session/session-messages.js';
-import { loadMastraMcpTools } from '../tools/index.js';
-import { DEFAULT_EXECUTION_AGENT_ID, DEFAULT_EXECUTION_AGENT_NAME } from './types.js';
-import type { IMastraGenerateOptions } from './types.js';
-import { attachMcpGatewayMetrics, toNonEmptyString } from './utils.js';
-import { createMastraAgentInputProcessors, createMastraAgentOutputProcessors, destroyMastraBrowser, destroyMastraWorkspace } from './workspace.js';
-import type { TAgentPlanRecord } from './plan/plan-store.js';
-import type { IAgentRuntimeResponse, IAgentRuntimeRunOptions } from './contracts/runtime-contracts.js';
-import type { IAgentRuntimeInput } from './contracts/runtime-input.js';
+import { buildSystemPrompt } from '../prompts/system-prompt.js';
+import { createMastraMemoryReference, createMastraMemoryScope, resolveObservationalMemoryEnabled, resolveSemanticRecallEnabled } from '../context/memory.js';
+import { createMastraMemoryForModel, createMastraModelConfig, resolveMastraModelConfig } from '../agent/factory.js';
+import { createAcontextTokenEventDraft } from '../budget/budget.js';
+import { createExecutionRequestContext } from '../context/context.js';
+import { normalizeMastraError } from '../shared/errors.js';
+import { resolveAgentExecutionPolicy } from '../policy/execution-policy.js';
+import { createApprovedPlanExecutionContext, createErrorResponse } from '../responses/responses.js';
+import { createAgentExecutionSession } from '../session/agent-session.js';
+import { buildMastraMessagesFromSessionMessages, createAgentSessionMessagesFromRuntimeInput } from '../session/session-messages.js';
+import { loadMastraMcpTools } from '../../tools/index.js';
+import { DEFAULT_EXECUTION_AGENT_ID, DEFAULT_EXECUTION_AGENT_NAME } from '../shared/types.js';
+import type { IMastraGenerateOptions } from '../shared/types.js';
+import { attachMcpGatewayMetrics, toNonEmptyString } from '../shared/utils.js';
+import { createMastraAgentInputProcessors, createMastraAgentOutputProcessors, destroyMastraBrowser, destroyMastraWorkspace } from '../workspace/workspace.js';
+import type { TAgentPlanRecord } from '../plan/plan-store.js';
+import type { IAgentRuntimeResponse, IAgentRuntimeRunOptions } from '../contracts/runtime-contracts.js';
+import type { IAgentRuntimeInput } from '../contracts/runtime-input.js';
 
 export class MastraRuntimeExecution extends MastraRuntimeValidation {
     async execute(

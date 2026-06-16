@@ -1,6 +1,6 @@
 import type { TContextCompactionReason } from '../../streaming/stream-types.js';
 import type { IAgentRuntimeRunOptions } from '../contracts/runtime-contracts.js';
-import type { TMastraChatMessage } from '../types.js';
+import type { TMastraChatMessage } from '../shared/types.js';
 import type { AgentExecutionSession, IAgentSessionContextCompaction } from './agent-session.js';
 import {
   buildContextCompactionContinuationMessages,

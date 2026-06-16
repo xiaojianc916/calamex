@@ -4,9 +4,9 @@ import {
   type TMastraImagePart,
   type TMastraTextPart,
   type TMastraUserContent,
-} from '../types.js';
+} from '../shared/types.js';
 import type { IAgentContextReferenceInput, IAgentMessageInput, IAgentRuntimeInput } from '../contracts/runtime-input.js';
-import { toRecord } from '../utils.js';
+import { toRecord } from '../shared/utils.js';
 
 const IMAGE_ATTACHMENT_MODEL_PART_MARKER = 'AI_SDK_IMAGE_PART_JSON:';
 const SUPPORTED_IMAGE_PART_SOURCE_PATTERN = /^(?:data:image\/[a-z0-9.+-]+;base64,|https?:\/\/|file:\/\/)/iu;

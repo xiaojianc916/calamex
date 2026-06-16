@@ -24,7 +24,7 @@ import type {
 	RequestPermissionRequest,
 	RequestPermissionResponse,
 } from "@agentclientprotocol/sdk"
-import { decodeApprovalRequestId } from "../engines/approval-client/utils.js"
+import { decodeApprovalRequestId } from "../engines/approval/utils.js"
 import type { TAgentRuntimeOutputEvent } from "../engines/contracts/runtime-contracts.js"
 import type { TApprovalDecision } from "../engines/contracts/runtime-input.js"
 import { inferToolKind } from "./from-runtime-event.js"

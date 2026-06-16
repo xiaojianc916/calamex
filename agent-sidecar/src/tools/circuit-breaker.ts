@@ -1,6 +1,6 @@
 import type { ToolsInput } from '@mastra/core/agent';
-import { MAX_CONSECUTIVE_SIMILAR_TOOL_ERRORS } from '../engines/types.js';
-import { isExecutableToolLike, toNonEmptyString, toRecord } from '../engines/utils.js';
+import { MAX_CONSECUTIVE_SIMILAR_TOOL_ERRORS } from '../engines/shared/types.js';
+import { isExecutableToolLike, toNonEmptyString, toRecord } from '../engines/shared/utils.js';
 
 // 为同一类工具的连续失败设熔断阈值，避免模型对同一失败反复重试浪费上下文与时间。
 export const resolveToolFailureBucket = (

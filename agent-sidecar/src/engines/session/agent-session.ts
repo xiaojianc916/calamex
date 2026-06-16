@@ -1,8 +1,8 @@
 import type { TAgentRuntimeEventDraft, TContextCompactionReason } from '../../streaming/stream-types.js';
 import type { IAgentRuntimeRunOptions, TAgentRuntimeOutputEvent } from '../contracts/runtime-contracts.js';
 import type { TAgentMode } from '../contracts/runtime-input.js';
-import { createRuntimeEventFactory, createSessionId, pushUiEvent } from '../utils.js';
-import { DEFAULT_EXECUTION_AGENT_ID } from '../types.js';
+import { createRuntimeEventFactory, createSessionId, pushUiEvent } from '../shared/utils.js';
+import { DEFAULT_EXECUTION_AGENT_ID } from '../shared/types.js';
 import { createAgentSessionCompactionMessage, type TAgentSessionMessage } from './session-messages.js';
 
 export interface ICreateAgentExecutionSessionOptions {

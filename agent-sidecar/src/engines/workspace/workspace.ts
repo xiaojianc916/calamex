@@ -8,12 +8,12 @@ import type { MastraBrowser } from '@mastra/core/browser';
 import { TokenLimiterProcessor, UnicodeNormalizer, type InputProcessorOrWorkflow, type OutputProcessorOrWorkflow } from '@mastra/core/processors';
 import { LocalFilesystem, LocalSandbox, Workspace, WORKSPACE_TOOLS, type AnyWorkspace, type CommandResult, type ExecuteCommandOptions, type WorkspaceToolsConfig } from '@mastra/core/workspace';
 import { MastraStorageExporter, Observability, SensitiveDataFilter } from '@mastra/observability';
-import type { IAgentContextReferenceInput, IAgentRuntimeInput } from './contracts/runtime-input.js';
-import type { IMastraTextModeExecutionPlan, IMastraToolLoadPlan, TMastraToolProfile } from './types.js';
-import { MASTRA_WORKSPACE_REDACTED_PREVIEW_TOOL_NAMES, WINDOWS_POWERSHELL_CORE_RELATIVE_PATH, WINDOWS_POWERSHELL_RELATIVE_PATH } from './types.js';
-import { toNonEmptyString } from './utils.js';
-import { resolveWorkspaceDirectory } from './context/context.js';
-import { decideSensitivePathToolPermission, type IToolPermissionPolicy } from './policy/tool-permission-policy.js';
+import type { IAgentContextReferenceInput, IAgentRuntimeInput } from '../contracts/runtime-input.js';
+import type { IMastraTextModeExecutionPlan, IMastraToolLoadPlan, TMastraToolProfile } from '../shared/types.js';
+import { MASTRA_WORKSPACE_REDACTED_PREVIEW_TOOL_NAMES, WINDOWS_POWERSHELL_CORE_RELATIVE_PATH, WINDOWS_POWERSHELL_RELATIVE_PATH } from '../shared/types.js';
+import { toNonEmptyString } from '../shared/utils.js';
+import { resolveWorkspaceDirectory } from '../context/context.js';
+import { decideSensitivePathToolPermission, type IToolPermissionPolicy } from '../policy/tool-permission-policy.js';
 import { warmWorkspaceSearchIndex } from './search-index.js';
 
 export const isWindowsRuntime = (): boolean => process.platform === 'win32';
