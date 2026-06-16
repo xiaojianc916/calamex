@@ -1,10 +1,12 @@
 use crate::commands::contracts::{
+    AgentBackendKind, AgentExternalChatRequest, AgentExternalChatResultPayload,
     AgentSidecarApprovalResolveRequest, AgentSidecarAskUserResumeRequest, AgentSidecarChatRequest,
     AgentSidecarCheckpointRestoreRequest, AgentSidecarHealthPayload,
     AgentSidecarModelConfigPayload, AgentSidecarOrchestratePayload, AgentSidecarOrchestrateRequest,
     AgentSidecarOrchestrateResumeRequest, AgentSidecarResponsePayload,
     AgentSidecarRollbackStepPath, AgentSidecarWarmupPayload,
 };
+use agent_client_protocol::schema::{ContentBlock, TextContent};
 use tauri::{AppHandle, Manager};
 
 /// 取常驻 ACP 宿主：未建立时经 `AcpRuntime::get_or_spawn` 懒派生 stdio 子进程并缓存。
@@ -13,6 +15,15 @@ fn acp_host(app: &AppHandle) -> Result<std::sync::Arc<crate::acp::AcpHost>, Stri
     app.state::<crate::acp::AcpRuntime>()
         .get_or_spawn(app)
         .map_err(|error| error.to_string())
+}
+
+/// 把契约层后端类型投影为 `acp` 层后端标识（ADR-0015）。match 穷尽：新增后端会触发编译错误。
+fn backend_kind_to_acp(kind: AgentBackendKind) -> crate::acp::AcpBackendId {
+    match kind {
+        AgentBackendKind::Builtin => crate::acp::AcpBackendId::Builtin,
+        AgentBackendKind::Kimi => crate::acp::AcpBackendId::Kimi,
+        AgentBackendKind::Codex => crate::acp::AcpBackendId::Codex,
+    }
 }
 
 /// 修剪并过滤空白可选字符串（与契约 `is_blank_optional_string` 跳过语义一致）：
@@ -138,6 +149,48 @@ pub async fn agent_sidecar_chat(
     host.agent_chat(request)
         .await
         .map_err(|error| error.to_string())
+}
+
+/// 外部 ACP 编码 agent（Kimi Code / Codex 等，ADR-0015）的标准回合命令（`session/prompt`）。
+///
+/// 与 `agent_sidecar_chat`（走自家边车的带外 `agent_chat` 扩展回合）不同：按后端类型经
+/// `get_or_spawn_backend` 解析/派生对应的独立常驻宿主，解析稳定会话后以纯文本内容块驱动
+/// 一轮标准 prompt。**不补齐 model_config**——外部 agent 的凭据由其自身 CLI 自管（见
+/// acp/launch.rs；如 Kimi 需先在终端 `kimi` 内 `/login`）。过程增量经 session/update 帧转发
+/// （投影见 acp/ui_event.rs），本命令仅返回终态：会话标识 + 回合终止原因。
+#[tauri::command]
+#[specta::specta]
+pub async fn agent_sidecar_external_chat(
+    app: AppHandle,
+    payload: AgentExternalChatRequest,
+) -> Result<AgentExternalChatResultPayload, String> {
+    let backend = backend_kind_to_acp(payload.backend);
+    let host = app
+        .state::<crate::acp::AcpRuntime>()
+        .get_or_spawn_backend(&app, backend)
+        .map_err(|error| error.to_string())?;
+
+    let session_id = host
+        .ensure_session(
+            payload.thread_id.as_deref().unwrap_or_default(),
+            payload.workspace_root_path.as_deref(),
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+
+    let stop_reason = host
+        .prompt(
+            payload.thread_id.as_deref().unwrap_or_default(),
+            payload.workspace_root_path.as_deref(),
+            vec![ContentBlock::Text(TextContent::new(payload.text))],
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+
+    Ok(AgentExternalChatResultPayload {
+        session_id: session_id.to_string(),
+        stop_reason: format!("{stop_reason:?}"),
+    })
 }
 
 #[tauri::command]

@@ -204,6 +204,51 @@ pub struct AgentSidecarResponsePayload {
     pub(crate) result: Option<String>,
 }
 
+// ============================================================================
+// 外部 ACP 编码 agent（ADR-0015 阶段 2b）
+// ============================================================================
+
+/// 可挂载的外部 ACP 编码 agent 后端类型（ADR-0015）。
+///
+/// 作为 specta 契约类型导出给前端选择，运行时由命令层映射到 `acp::AcpBackendId`：
+///   * `Builtin` —— 自家 Node Mastra 边车（默认后端，走带外 `agent_chat` 扩展回合）；
+///   * `Kimi`    —— Kimi Code（`kimi acp`，原生 ACP，凭终端 `/login` 自鉴权）；
+///   * `Codex`   —— Codex CLI（社区 `codex-acp` 适配器，凭 `OPENAI_API_KEY`）。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum AgentBackendKind {
+    Builtin,
+    Kimi,
+    Codex,
+}
+
+/// 外部 ACP 编码 agent 的标准回合（`session/prompt`）请求（契约层）。
+///
+/// 与自家 `AgentSidecarChatRequest` 不同：外部 agent 只实现标准 `prompt`、不认识
+/// `calamex.dev/*` 扩展方法，也不接收逐请求 `model_config`（凭据由其自身 CLI 自管，见
+/// ADR-0015 / `acp/launch.rs`），故仅携带后端类型、纯文本提示与会话定位字段。
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentExternalChatRequest {
+    pub(crate) backend: AgentBackendKind,
+    pub(crate) text: String,
+    #[serde(skip_serializing_if = "is_blank_optional_string")]
+    pub(crate) thread_id: Option<String>,
+    #[serde(skip_serializing_if = "is_blank_optional_string")]
+    pub(crate) workspace_root_path: Option<String>,
+}
+
+/// 外部 ACP 回合的终态结果（契约层）。
+///
+/// 外部 agent 无自家富信封：过程增量经 `session/update` 帧由 `EventSink` 转发（投影见
+/// `acp/ui_event.rs`），本结果仅承载会话标识与回合终止原因（`StopReason` 的字符串化）。
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentExternalChatResultPayload {
+    pub(crate) session_id: String,
+    pub(crate) stop_reason: String,
+}
+
 #[cfg(test)]
 mod agent_sidecar_contract_tests {
     use serde::Serialize;

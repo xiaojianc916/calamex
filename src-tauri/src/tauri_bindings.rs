@@ -97,6 +97,7 @@ pub fn builder() -> Builder<tauri::Wry> {
             agent_sidecar::agent_sidecar_restart,
             agent_sidecar::agent_sidecar_warmup,
             agent_sidecar::agent_sidecar_chat,
+            agent_sidecar::agent_sidecar_external_chat,
             agent_sidecar::agent_sidecar_resolve_approval,
             agent_sidecar::agent_sidecar_resolve_ask_user,
             agent_sidecar::agent_sidecar_restore_checkpoint,
