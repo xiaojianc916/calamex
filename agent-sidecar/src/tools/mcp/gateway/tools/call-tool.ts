@@ -1,8 +1,8 @@
 import { createTool } from '@mastra/core/tools';
 import type { z } from 'zod';
-import { compactModelOutput } from '../../../../../models/output-budget.js';
-import { createJsonToolModelOutput } from '../../../../../engines/budget/budget.js';
-import { mcpGatewayCallInputSchema, unwrapGatewayToolInput } from '../../../mcp-gateway/helpers.js';
+import { compactModelOutput } from '../../../../models/output-budget.js';
+import { createJsonToolModelOutput } from '../../../../engines/budget/budget.js';
+import { mcpGatewayCallInputSchema, unwrapGatewayToolInput } from '../helpers.js';
 import type { McpGatewayWarmPool } from '../warm-pool.js';
 import type { IMcpGatewayToolOptions } from './list-tools.js';
 

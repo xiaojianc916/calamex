@@ -1,4 +1,4 @@
-import * as Handlebars from 'handlebars';
+import Handlebars from 'handlebars';
 
 /**
  * 一个已编译、可复用的提示词模板。渲染输入受 TContext 静态约束，

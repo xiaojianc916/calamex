@@ -27,7 +27,7 @@ export const buildAgentPlanFromPlanSteps = (
                 expectedOutput: title,
             };
         })
-        .filter((step): step is Record<string, unknown> => Boolean(step));
+        .filter((step): step is NonNullable<typeof step> => step !== null);
 
     if (steps.length === 0) {
         return null;

@@ -1,11 +1,11 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { MastraRuntimeChat } from '../chat/chat.js';
-import { createDeepSeekReasoningRunPrefix, evictDeepSeekReasoningByPrefix, runWithDeepSeekReasoningContext } from '../../models/providers/deepseek-reasoning-fetch.js';
+
 import { buildSystemPrompt } from '../prompts/system-prompt.js';
 import { createMastraMemoryReference, createMastraMemoryScope, resolveObservationalMemoryEnabled, resolveSemanticRecallEnabled } from '../context/memory.js';
 import { createExecutionRequestContext } from '../context/context.js';
 import { createMastraMemoryForModel, createMastraModelConfig, resolveMastraModelConfig } from '../agent/factory.js';
-import { createAcontextTokenEventDraft, createDeepSeekPayloadEventSink } from '../budget/budget.js';
+import { createAcontextTokenEventDraft } from '../budget/budget.js';
 import { normalizeMastraError } from '../errors.js';
 import { buildMastraMessages } from '../session/session-messages.js';
 import { buildAgentPlanFromPlanSteps } from './plan-utils.js';
@@ -141,15 +141,11 @@ export class MastraRuntimePlan extends MastraRuntimeChat {
         const agentMemory = createMastraMemoryForModel(modelConfig);
         const observationalMemoryEnabled = resolveObservationalMemoryEnabled();
         const semanticRecallEnabled = resolveSemanticRecallEnabled();
-        const payloadEventSink = createDeepSeekPayloadEventSink(events, options);
+        
         let shouldDisconnectBundle = true;
 
         try {
-            return await runWithDeepSeekReasoningContext({
-                sessionId,
-                runId: requestedRunId,
-                onRequestPayload: payloadEventSink.onRequestPayload,
-            }, async () => {
+            
                 const systemPrompt = buildSystemPrompt(planInput, modelConfig.modelId);
                 // 计划模式与 chat/agent 共用同一条流式脊柱：plan 模式始终挂载规划工具
                 // （update_plan / exit_plan）与 ask_user，故复用 chat.ts 同款可恢复 agent handle，
@@ -204,7 +200,7 @@ export class MastraRuntimePlan extends MastraRuntimeChat {
                     agentId: DEFAULT_EXECUTION_AGENT_ID,
                     ...(this.now ? { now: this.now } : {}),
                 });
-                payloadEventSink.attachRuntimeEventFactory(createRuntimeEvent);
+                
                 attachMcpGatewayMetrics(mcpGatewayMetrics, console);
                 pushUiEvent(events, createRuntimeEvent(createAcontextTokenEventDraft({
                     systemPrompt,
@@ -299,7 +295,7 @@ export class MastraRuntimePlan extends MastraRuntimeChat {
                 await this.planWorkflowStore.createForPlan({ record });
 
                 return createPlanResponse(sessionId, record, events, options);
-            });
+            
         } catch (error) {
             return createErrorResponse(
                 sessionId,
@@ -308,7 +304,7 @@ export class MastraRuntimePlan extends MastraRuntimeChat {
                 options,
             );
         } finally {
-            evictDeepSeekReasoningByPrefix(createDeepSeekReasoningRunPrefix(sessionId, requestedRunId));
+            
             if (shouldDisconnectBundle) {
                 await mcpBundle.disconnectAll();
                 await destroyMastraWorkspace(workspace);
