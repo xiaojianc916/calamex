@@ -9,7 +9,7 @@ import { MAIN_WINDOW_LABEL } from '@/utils/app-window';
 import { renderFatalBootstrapError } from '@/utils/bootstrap-fatal-error';
 import { initEditorScrollbarActivity } from '@/utils/editor-scrollbar-activity';
 import { initGitHubAuthHeaderEnhancement } from '@/utils/github-auth-header';
-import { registerRuntimeDiagnostics, reportRuntimeError, setRuntimeError } from '@/utils/runtime-diagnostics';
+import { recordRecursiveUpdateCulprit, registerRuntimeDiagnostics, reportRuntimeError, setRuntimeError } from '@/utils/runtime-diagnostics';
 import { markStartup, reportStartupTimings } from '@/utils/startup-profiler';
 
 registerRuntimeDiagnostics();
@@ -149,6 +149,7 @@ const bootstrap = async (): Promise<void> => {
     // Vue 的“Maximum recursive updates exceeded”是通过 warnHandler(而非 errorHandler)路由的：
     // 默认仅 console.warn、且不含触发组件名，在“无报错卡死”场景里极易被忽略，也不会被
     // runtime-diagnostics 的 errorHandler 捕获。这里显式拦截该告警并打印出触发组件名，
+    // 并把肇事组件喂给自动埋点(recordRecursiveUpdateCulprit),由其落盘现场、供下次启动读出，
     // 把“某个常驻组件自触发递归更新、反复占满主线程”从黑盒变成可定位的问题。
     app.config.warnHandler = (message: string, instance: unknown, trace: string) => {
       if (message.includes('Maximum recursive updates')) {
@@ -158,6 +159,7 @@ const bootstrap = async (): Promise<void> => {
         const componentName =
           componentType?.__name ?? componentType?.name ?? '<unknown component>';
         console.error(`${MESSAGES.recursiveUpdateLabel} @ ${componentName}`, { trace });
+        recordRecursiveUpdateCulprit(componentName);
         return;
       }
 
