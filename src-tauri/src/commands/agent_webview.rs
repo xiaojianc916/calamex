@@ -11,6 +11,7 @@
 //!   - console = subscribe Runtime.consoleAPICalled + Log.entryAdded,
 //!   - navigation state = subscribe Page.frameNavigated -> recompute url + canGoBack/canGoForward,
 //!   - select = inject @medv/finder picker (Runtime.evaluate) + Runtime.addBinding callback.
+//!
 //! The CDP connection is initiated from Rust (frontend never touches ws://, CSP unchanged).
 //!
 //! Gating: real impl compiles under `native_webview`; default build is an error stub.
@@ -265,11 +266,11 @@ async fn establish_cdp_session(app: AppHandle, port: u16) {
 
     let mut page_opt = None;
     for _ in 0..40 {
-        if let Ok(pages) = browser.pages().await {
-            if let Some(first) = pages.into_iter().next() {
-                page_opt = Some(first);
-                break;
-            }
+        if let Ok(pages) = browser.pages().await
+            && let Some(first) = pages.into_iter().next()
+        {
+            page_opt = Some(first);
+            break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
     }

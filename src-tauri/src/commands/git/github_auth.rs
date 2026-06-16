@@ -786,8 +786,7 @@ pub async fn complete_github_browser_auth(
         ..
     } = session;
 
-    if host.to_ascii_lowercase() != target.host.to_ascii_lowercase()
-        || repository_root != target.repository_root
+    if !host.eq_ignore_ascii_case(&target.host) || repository_root != target.repository_root
     {
         callback_task.abort();
         return Err("GitHub 浏览器授权会话与当前仓库不匹配。".to_string());

@@ -24,6 +24,7 @@ pub struct AgentSidecarModelConfigPayload {
     pub(crate) base_url: Option<String>,
 }
 
+#[expect(dead_code, reason = "kept for sidecar warmup request contract compatibility")]
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentSidecarWarmupRequest {
@@ -105,6 +106,7 @@ pub struct AgentSidecarAskUserAnswerPayload {
 /// `outcome` + 结构化 `answers` 取代 `decision`：
 ///   * outcome 取值（selected/cancelled）由 sidecar zod 校验，原样透传；
 ///   * answers 为每题作答，outcome=cancelled 时通常缺省（serde 整字段省略，对齐 zod `.optional()`）。
+///
 /// 与 approval 恢复一致地携带 plan_*（plan 续跑定位），不含 `mode`（恢复不切换模式）。
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]

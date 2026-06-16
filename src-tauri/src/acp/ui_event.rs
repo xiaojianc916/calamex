@@ -11,6 +11,7 @@
 //! 设计对齐 sidecar 出站投影 `from-runtime-event.ts` 的对偶：
 //! - `agent_message_chunk`（模型文本增量）→ message_delta{phase:"final"}
 //! - `agent_thought_chunk`（推理增量）   → message_delta{phase:"stage"}
+//!
 //! 其余 session/update 变体在「ask 主聊天」回合不会出现（tool_call(_update)/plan 属
 //! agent/plan 模式，且 approval/plan_ready 不进 session/update，见 output-event-stream.ts），
 //! 故此处显式返回 None 作为可扩展接入点：后续 agent/plan 模式切流时再按 toolCallId
@@ -82,10 +83,10 @@ pub fn session_notification_to_ui_event(notification: &Value) -> Option<Value> {
 /// `IAiLanguageModelUsage` JSON；缺失或为 null 时省略该字段（对齐前端 `usage?: ... | null`）。
 pub fn build_done_ui_event(result: &str, usage: Option<Value>) -> Value {
     let mut event = json!({ "type": "done", "result": result });
-    if let Some(usage) = usage {
-        if !usage.is_null() {
-            event["usage"] = usage;
-        }
+    if let Some(usage) = usage
+        && !usage.is_null()
+    {
+        event["usage"] = usage;
     }
     event
 }

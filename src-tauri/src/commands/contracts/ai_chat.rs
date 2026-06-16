@@ -88,6 +88,7 @@ pub struct AiChatStreamPayload {
 #[derive(Debug, Clone, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AiCancelRequest {
+    #[expect(dead_code, reason = "stream_id remains part of the public cancel request payload")]
     pub(crate) stream_id: String,
     pub(crate) thread_id: Option<String>,
 }

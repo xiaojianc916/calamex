@@ -274,6 +274,7 @@ pub struct AskUserAnswer {
 /// answers 取代 decision：
 ///   * outcome 取值(selected/cancelled)由 sidecar zod 校验,宿主侧原样透传;
 ///   * answers 为每题作答,outcome=cancelled 时整字段省略(对齐 zod `.optional()`)。
+///
 /// 响应同 AgentChatResolveExtRequest：整封 sidecar 信封,Value 原样回传。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, JsonRpcRequest)]
 #[serde(rename_all = "camelCase")]
