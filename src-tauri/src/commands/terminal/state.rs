@@ -227,15 +227,21 @@ pub(super) fn set_session_state(
     Some((from, to))
 }
 
-/// 取指定会话的状态；该会话尚无记录时回退到全局 `current_state()`，保证迁移期行为与改动前
-/// 一致（旧会话、或尚未经由每会话态转移的路径，仍按全局态判定）。
+/// 取指定会话的状态；该会话尚无记录时回退到 `Booting`——每会话各自是一台从 `Booting` 起步的
+/// 状态机，与全局态无关。此前回退到全局 `current_state()` 是迁移期权宜：在「已有活动运行但尚未
+/// 置位会话态」的极小窗口里，若另一会话正处于 `Running`，全局回退会把本会话输入误判为应进
+/// run stdin（跨会话串台）；改回 `Booting` 后该窗口一律按交互处理，更正确，且与
+/// `set_session_state` 的 `Booting` 基线一致。
+///
+/// 对照 VSCode `ptyService.ts`：每个 `PersistentTerminalProcess` 依据自身 `_interactionState`
+/// 判定，不存在跨会话共享的全局态。
 pub(super) fn get_session_state(state: &TerminalSessionState, session_id: &str) -> TerminalState {
     if let Ok(states) = state.session_states.lock()
         && let Some(current) = states.get(session_id)
     {
         return *current;
     }
-    crate::terminal::registry::registry().current_state()
+    TerminalState::Booting
 }
 
 pub(super) fn remove_session_state(state: &TerminalSessionState, session_id: &str) {
