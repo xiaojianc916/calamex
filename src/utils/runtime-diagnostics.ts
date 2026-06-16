@@ -18,6 +18,135 @@ declare global {
 
 export const runtimeErrorState = ref<IRuntimeErrorState | null>(null);
 
+// ---------------------------------------------------------------------------
+// 自动埋点(automatic instrumentation)
+//
+// 设计目标:把「进入应用几秒后点击无反应 / 界面静默卡死」从黑盒变成事后可定位。
+// 卡死时主线程被占满、点击无效,用户无法在现场操作控制台;且 WebView 可能并不会
+// 真正 unload。因此这里维护一个常驻的内存事件时间线(环形缓冲),并在捕获到
+// 「会钉死主线程的循环告警(递归更新 / ResizeObserver 回环)」或「页面隐藏」时,
+// 自动把「肇事组件 + 最近事件时间线」落盘到 localStorage;下次启动自动读出并高亮
+// 打印,然后清除。整个过程无需用户在卡死时做任何操作。
+//
+// 性能与安全约束:
+// - 时间线为定长环形缓冲(DIAGNOSTIC_TIMELINE_LIMIT),连续相同事件合并计数,
+//   即使循环高频触发埋点也不会无限增长、不会刷屏。
+// - 落盘有节流:同一肇事组件只在首次出现时写一次 localStorage,避免在紧密循环中
+//   反复同步写盘反而加剧卡顿。
+// - 所有 localStorage / performance 访问都做了存在性与异常兜底,失败时静默忽略,
+//   绝不影响主流程。
+// ---------------------------------------------------------------------------
+
+const DIAGNOSTIC_TIMELINE_LIMIT = 200;
+const PERSISTED_DIAGNOSTIC_KEY = 'shell-ide.diagnostics.last-freeze';
+
+interface IDiagnosticEvent {
+  /** 相对启动的高精度毫秒数(performance.now,四舍五入)。 */
+  at: number;
+  /** 墙上时钟 ISO 时间,便于人读与跨重启对账。 */
+  wall: string;
+  category: string;
+  detail?: string;
+  /** 连续相同事件被合并的次数(>=2 时存在),用于在不刷屏的前提下表征循环强度。 */
+  repeat?: number;
+}
+
+const diagnosticTimeline: IDiagnosticEvent[] = [];
+const recursiveUpdateCulprits = new Set<string>();
+
+const nowMs = (): number =>
+  typeof performance !== 'undefined' && typeof performance.now === 'function'
+    ? Math.round(performance.now())
+    : Date.now();
+
+// 记录一次诊断事件。连续相同(category+detail)的事件会被合并计数,而非堆满缓冲,
+// 这样即便某个自触发循环高频打点,也只占用一条记录并以 repeat 表征其强度。
+export const recordDiagnosticEvent = (category: string, detail?: string): void => {
+  const last = diagnosticTimeline[diagnosticTimeline.length - 1];
+  if (last && last.category === category && last.detail === detail) {
+    last.repeat = (last.repeat ?? 1) + 1;
+    last.at = nowMs();
+    return;
+  }
+
+  diagnosticTimeline.push({ at: nowMs(), wall: new Date().toISOString(), category, detail });
+
+  if (diagnosticTimeline.length > DIAGNOSTIC_TIMELINE_LIMIT) {
+    diagnosticTimeline.splice(0, diagnosticTimeline.length - DIAGNOSTIC_TIMELINE_LIMIT);
+  }
+};
+
+const persistDiagnosticSnapshot = (reason: string): void => {
+  if (typeof window === 'undefined' || typeof window.localStorage === 'undefined') {
+    return;
+  }
+
+  try {
+    const snapshot = {
+      savedAt: new Date().toISOString(),
+      reason,
+      culprits: [...recursiveUpdateCulprits],
+      loopCount: recoverableLoopCount,
+      timeline: diagnosticTimeline.slice(-DIAGNOSTIC_TIMELINE_LIMIT),
+    };
+    window.localStorage.setItem(PERSISTED_DIAGNOSTIC_KEY, JSON.stringify(snapshot));
+  } catch {
+    // localStorage 配额 / 隐私模式 / 序列化失败时忽略:诊断落盘失败绝不能影响主流程。
+  }
+};
+
+// 启动时读出上一次运行留存的卡死现场快照并高亮打印,然后清除。这是「自动埋点」闭环的
+// 关键一步:静默卡死后用户只需重启,现场即自动呈现在控制台,无需在卡死时操作。
+const flushPersistedDiagnosticToConsole = (): void => {
+  if (typeof window === 'undefined' || typeof window.localStorage === 'undefined') {
+    return;
+  }
+
+  let raw: string | null = null;
+  try {
+    raw = window.localStorage.getItem(PERSISTED_DIAGNOSTIC_KEY);
+  } catch {
+    return;
+  }
+
+  if (!raw) {
+    return;
+  }
+
+  try {
+    window.localStorage.removeItem(PERSISTED_DIAGNOSTIC_KEY);
+  } catch {
+    // 清除失败不影响打印;下次启动至多重复打印一次同一快照。
+  }
+
+  try {
+    const snapshot: unknown = JSON.parse(raw);
+    console.error(
+      '[runtime-diagnostics] 检测到上次运行留存的「卡死现场」快照(自动埋点)。' +
+        '其中 culprits 为自触发递归更新的肇事组件,timeline 为卡死前的事件时间线,' +
+        '请将以下完整对象反馈以便定位:',
+      snapshot,
+    );
+  } catch {
+    console.error(
+      '[runtime-diagnostics] 上次运行留存的卡死现场快照无法解析,原始内容如下:',
+      raw,
+    );
+  }
+};
+
+// 由 main.ts 的 app.config.warnHandler 在捕获到「Maximum recursive updates exceeded」时调用,
+// 传入 Vue 点名的肇事组件。这里记录事件并(对每个新出现的组件)落盘一次现场快照。
+// 节流:同一组件只在首次出现时写盘,避免紧密循环里反复同步写 localStorage 加剧卡顿。
+export const recordRecursiveUpdateCulprit = (componentName: string): void => {
+  recordDiagnosticEvent('vue:recursive-update', componentName);
+
+  if (!recursiveUpdateCulprits.has(componentName)) {
+    recursiveUpdateCulprits.add(componentName);
+    persistDiagnosticSnapshot(`recursive-update@${componentName}`);
+  }
+};
+
 const readErrorLikeField = (error: unknown, field: 'name' | 'message'): string | null => {
   if (error instanceof Error) {
     return error[field];
@@ -95,6 +224,8 @@ const isRecoverableLoopWarning = (error: unknown): boolean =>
 
 const logRecoverableLoopForDiagnosis = (error: unknown): void => {
   recoverableLoopCount += 1;
+  // 自动埋点:把可恢复回环计入时间线(连续相同事件会合并计数,不会刷爆缓冲)。
+  recordDiagnosticEvent('recoverable-loop', readErrorLikeField(error, 'message') ?? String(error));
 
   if (hasLoggedRecoverableLoop) {
     if (recoverableLoopCount % 50 === 0) {
@@ -107,6 +238,9 @@ const logRecoverableLoopForDiagnosis = (error: unknown): void => {
   }
 
   hasLoggedRecoverableLoop = true;
+  // 首次检出即落盘一次现场快照:此时主线程虽被钉死,但本次同步调用仍能完成一次写盘,
+  // 确保即使页面随后彻底无响应、也已留存可供下次启动读出的现场。
+  persistDiagnosticSnapshot('recoverable-loop-first-detected');
   console.error(
     '[runtime-diagnostics] 捕获到可恢复但会钉死主线程的循环告警,' +
       '这是「进入应用几秒后点击无反应 / 界面卡死」的直接根因。' +
@@ -154,6 +288,9 @@ export const setRuntimeError = (title: string, error: unknown): void => {
     code: isAppError(error) ? error.code : undefined,
     traceId: isAppError(error) ? error.traceId : undefined,
   };
+
+  // 自动埋点:升级为致命错误界面前先记一笔,便于在时间线里看到「错误界面」出现的时点。
+  recordDiagnosticEvent('runtime-error', `${title}: ${next.message}`);
 
   // 重复上报同一错误时保持引用不变,避免反复触发重渲染并叠加成递归更新风暴。
   if (isSameRuntimeError(runtimeErrorState.value, next)) {
@@ -204,6 +341,9 @@ export const registerRuntimeDiagnostics = (): void => {
 
   disposeRuntimeDiagnostics();
 
+  // 自动埋点闭环:启动即读出并高亮打印上一次运行留存的卡死现场快照,然后清除。
+  flushPersistedDiagnosticToConsole();
+
   const handleError = (event: ErrorEvent): void => {
     if (isIgnorableRuntimeError(event.error) || isIgnorableRuntimeError(event.message)) {
       const candidate = event.error ?? event.message;
@@ -214,6 +354,7 @@ export const registerRuntimeDiagnostics = (): void => {
       return;
     }
 
+    recordDiagnosticEvent('window:error', readErrorLikeField(event.error ?? event.message, 'message') ?? String(event.message));
     setRuntimeError('应用运行时错误', event.error ?? event.message);
   };
 
@@ -226,15 +367,25 @@ export const registerRuntimeDiagnostics = (): void => {
       return;
     }
 
+    recordDiagnosticEvent('window:unhandledrejection', readErrorLikeField(event.reason, 'message') ?? String(event.reason));
     setRuntimeError('未处理的异步错误', event.reason);
+  };
+
+  // 页面隐藏 / 卸载时,若本次运行曾检出可恢复回环,补落一次现场快照作为兜底。
+  const handlePageHide = (): void => {
+    if (hasLoggedRecoverableLoop) {
+      persistDiagnosticSnapshot('pagehide-after-loop');
+    }
   };
 
   window.addEventListener('error', handleError);
   window.addEventListener('unhandledrejection', handleUnhandledRejection);
+  window.addEventListener('pagehide', handlePageHide);
 
   const cleanup = (): void => {
     window.removeEventListener('error', handleError);
     window.removeEventListener('unhandledrejection', handleUnhandledRejection);
+    window.removeEventListener('pagehide', handlePageHide);
   };
 
   window.__SH_RUNTIME_DIAGNOSTICS_CLEANUP__ = cleanup;
