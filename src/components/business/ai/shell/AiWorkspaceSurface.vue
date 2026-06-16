@@ -12,8 +12,8 @@ import type {
   IEditorSelectionSummary,
 } from '@/types/editor';
 import type { IGitDiffPreviewPayload, IGitRepositoryStatusPayload } from '@/types/git';
-import { toErrorMessage } from '@/utils/error';
-import { markStartup, reportAiSurfaceStartupTimings } from '@/utils/startup-profiler';
+import { toErrorMessage } from '@/utils/error/error';
+import { markStartup, reportAiSurfaceStartupTimings } from '@/utils/platform/startup-profiler';
 
 // 启动诊断打点：AI 工作区真身 setup 进入（含子组件 AiAssistantPanel 的同步 setup）。
 markStartup('ai-workspace-surface-setup');

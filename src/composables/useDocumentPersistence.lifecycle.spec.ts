@@ -28,7 +28,7 @@ vi.mock('@/services/tauri', () => ({
   tauriService: mockTauriService,
 }));
 
-vi.mock('@/utils/shfmt', () => ({
+vi.mock('@/utils/terminal/shfmt', () => ({
   formatShellScript: mockFormatShellScript,
 }));
 

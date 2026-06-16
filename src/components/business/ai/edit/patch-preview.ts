@@ -6,8 +6,8 @@ import type {
   IAiPatchSet,
 } from '@/types/ai';
 import type { IGitDiffPreviewPayload } from '@/types/git';
-import { fnv1a32 } from '@/utils/hash';
-import { areFileSystemPathsEqual, normalizeFileSystemPath } from '@/utils/path';
+import { fnv1a32 } from '@/utils/core/hash';
+import { areFileSystemPathsEqual, normalizeFileSystemPath } from '@/utils/file/path';
 
 export interface IAiPatchPreviewFile {
   path: string;

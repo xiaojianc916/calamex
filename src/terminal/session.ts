@@ -30,16 +30,16 @@ import type {
   TTerminalConnectionState,
   TTerminalInputRoute,
 } from '@/types/terminal';
-import { readClipboardText, writeClipboardText } from '@/utils/clipboard';
-import { waitForDesktopRuntime } from '@/utils/desktop-runtime';
-import { toErrorMessage } from '@/utils/error';
-import { createHiddenWriteBacklog } from '@/utils/hidden-write-backlog';
+import { readClipboardText, writeClipboardText } from '@/utils/platform/clipboard';
+import { waitForDesktopRuntime } from '@/utils/platform/desktop-runtime';
+import { toErrorMessage } from '@/utils/error/error';
+import { createHiddenWriteBacklog } from '@/utils/run/hidden-write-backlog';
 import {
   SHELL_WINDOW_RESIZE_END_EVENT,
   SHELL_WINDOW_RESIZE_FRAME_EVENT,
   SHELL_WINDOW_RESIZE_SETTLED_EVENT,
   SHELL_WINDOW_RESIZE_START_EVENT,
-} from '@/utils/window-resize-events';
+} from '@/utils/window/window-resize-events';
 
 // ─── 本地常量 ─────────────────────────────────────────────────────────────────
 

@@ -3,11 +3,11 @@ import { useMessage } from '@/composables/useMessage';
 import type { useEditorStore } from '@/store/editor';
 import type { useGitStore } from '@/store/git';
 import type { IEditorDocument } from '@/types/editor';
-import { waitForDesktopRuntime } from '@/utils/desktop-runtime';
+import { waitForDesktopRuntime } from '@/utils/platform/desktop-runtime';
 import {
   allowNextProgrammaticWindowClose,
   clearProgrammaticWindowCloseAllowance,
-} from '@/utils/window-close';
+} from '@/utils/window/window-close';
 
 type TEditorStore = ReturnType<typeof useEditorStore>;
 type TGitStore = ReturnType<typeof useGitStore>;

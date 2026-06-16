@@ -134,9 +134,9 @@ export default defineConfig(({ command }) => ({
             normalizedId.includes('/node_modules/web-tree-sitter/') ||
             normalizedId.includes('/node_modules/tree-sitter-bash/') ||
             normalizedId.includes('/node_modules/@wasm-fmt/shfmt/') ||
-            normalizedId.includes('/src/utils/shell-completion.ts') ||
+            normalizedId.includes('/src/utils/terminal/shell-completion.ts') ||
             normalizedId.includes('/src/constants/shell/command-catalog.ts') ||
-            normalizedId.includes('/src/utils/shfmt.ts')
+            normalizedId.includes('/src/utils/terminal/shfmt.ts')
           ) {
             return 'vendor-shell-analysis';
           }

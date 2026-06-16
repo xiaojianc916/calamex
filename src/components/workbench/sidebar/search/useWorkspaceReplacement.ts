@@ -13,7 +13,7 @@ import type {
   IWorkspaceReplacementPreviewPayload,
   IWorkspaceReplacementRequest,
 } from '@/types/search';
-import { toErrorMessage } from '@/utils/error';
+import { toErrorMessage } from '@/utils/error/error';
 import type { IReplacementFileView, IReplacementLineView } from './search-sidebar.types';
 import {
   buildReplacementLineSegments,

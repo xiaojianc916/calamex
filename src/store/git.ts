@@ -16,7 +16,7 @@ import type {
   IGitRepositoryStatusPayload,
   IGitStashEntryPayload,
 } from '@/types/git';
-import { areFileSystemPathsEqual, normalizeFileSystemPath } from '@/utils/path';
+import { areFileSystemPathsEqual, normalizeFileSystemPath } from '@/utils/file/path';
 import {
   createEmptyPullRequestSupport,
   createPullRequestRepositoryScope,

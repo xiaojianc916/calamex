@@ -7,7 +7,7 @@ import {
   aiConversationPersistSchema,
   aiConversationThreadSchema,
 } from '@/types/ai/conversation.schema';
-import { createUniqueId } from '@/utils/id';
+import { createUniqueId } from '@/utils/core/id';
 import {
   getAiConversationPersistStorage,
   restoreAttachmentPreviewPointers,

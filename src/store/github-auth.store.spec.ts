@@ -61,7 +61,7 @@ vi.mock('@/services/tauri.github-auth', () => ({
   getGithubAuthStatus: githubAuthServiceMock.getGithubAuthStatus,
 }));
 
-vi.mock('@/utils/browser', () => ({
+vi.mock('@/utils/platform/browser', () => ({
   openExternalUrl: browserMock.openExternalUrl,
 }));
 

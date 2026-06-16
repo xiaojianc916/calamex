@@ -92,7 +92,7 @@ import { useDialog } from '@/composables/useDialog';
 import { useMessage } from '@/composables/useMessage';
 import { useGitStore } from '@/store/git';
 import type { IGitStashEntryPayload } from '@/types/git';
-import { toErrorMessage } from '@/utils/error';
+import { toErrorMessage } from '@/utils/error/error';
 
 const props = defineProps<{
   searchQuery: string;

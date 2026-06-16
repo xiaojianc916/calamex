@@ -23,8 +23,8 @@ vi.mock('@/composables/useIntegratedTerminal', () => ({
   useIntegratedTerminalControls: () => mockTerminalControls,
 }));
 
-vi.mock('@/utils/clipboard', () => mockClipboard);
-vi.mock('@/utils/browser', () => ({
+vi.mock('@/utils/platform/clipboard', () => mockClipboard);
+vi.mock('@/utils/platform/browser', () => ({
   openExternalUrl: vi.fn(),
 }));
 

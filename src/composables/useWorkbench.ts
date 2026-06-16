@@ -18,12 +18,12 @@ import type {
   IWorkspaceDirectoryPayload,
   TDocumentEncoding,
 } from '@/types/editor';
-import { desktopRuntimeReady, waitForDesktopRuntime } from '@/utils/desktop-runtime';
-import type { IDocumentMetrics } from '@/utils/document-metrics';
-import { toErrorMessage } from '@/utils/error';
-import { isShellScriptPath } from '@/utils/file-assets';
-import { createRuntimeScope } from '@/utils/runtime-scope';
-import { COMMAND_TEMPLATES, COMMENT_TEMPLATES, DEFAULT_EXECUTOR } from '@/utils/templates';
+import { desktopRuntimeReady, waitForDesktopRuntime } from '@/utils/platform/desktop-runtime';
+import type { IDocumentMetrics } from '@/utils/editor/document-metrics';
+import { toErrorMessage } from '@/utils/error/error';
+import { isShellScriptPath } from '@/utils/file/file-assets';
+import { createRuntimeScope } from '@/utils/platform/runtime-scope';
+import { COMMAND_TEMPLATES, COMMENT_TEMPLATES, DEFAULT_EXECUTOR } from '@/utils/core/templates';
 
 const EMPTY_ENVIRONMENT: IExecutionEnvironment = {
   recommended: DEFAULT_EXECUTOR,

@@ -8,7 +8,7 @@ import {
   type IAppDialogOptions,
   type TAppDialogAction,
 } from '@/types/dialog';
-import { createPrefixedId } from '@/utils/id';
+import { createPrefixedId } from '@/utils/core/id';
 
 export interface DialogConfirmExtraOptions {
   /** 透传一个 AbortSignal；abort 时 Promise 以 'dismiss' 结算。 */

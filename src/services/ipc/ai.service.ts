@@ -42,7 +42,7 @@ import type {
   IAgentSidecarStreamEventPayload,
   IAgentSidecarWarmupPayload,
 } from '@/types/ai/sidecar';
-import { normalizeFileSystemPath } from '@/utils/path';
+import { normalizeFileSystemPath } from '@/utils/file/path';
 
 /**
  * Tavily(信息源)API Key 的落盘策略 —— 与厂商 API Key 不同的「受控例外」。

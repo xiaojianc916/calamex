@@ -42,7 +42,7 @@ import { useMessage } from '@/composables/useMessage';
 import { light as lightThemeRoles } from '@/themes/variants/light';
 import type { ISshFileItem } from '@/types/ssh';
 import type { ISshFileReadPayload } from '@/types/tauri';
-import { writeClipboardText } from '@/utils/clipboard';
+import { writeClipboardText } from '@/utils/platform/clipboard';
 import {
   buildSshPreviewMatchHits,
   countSshPreviewLines,
@@ -55,8 +55,8 @@ import {
   resolveSshPreviewLanguageInfo,
   type TSshPreviewEncoding,
   type TSshPreviewLineEnding,
-} from '@/utils/ssh-file-preview';
-import { splitTextGraphemes } from '@/utils/text-preview';
+} from '@/utils/file/ssh-file-preview';
+import { splitTextGraphemes } from '@/utils/file/text-preview';
 import {
   buildRenderedLineSegments,
   formatRemoteFileSize,

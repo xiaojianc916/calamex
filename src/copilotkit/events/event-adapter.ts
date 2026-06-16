@@ -11,7 +11,7 @@ import { z } from 'zod';
 
 import type { IAiLanguageModelUsage } from '@/types/ai';
 import type { IAgentSidecarChatRequest } from '@/types/ai/sidecar';
-import { logger } from '@/utils/logger';
+import { logger } from '@/utils/platform/logger';
 
 // ===========================================================================
 // ID generation

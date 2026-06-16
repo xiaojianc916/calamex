@@ -6,8 +6,8 @@ import {
 } from '@/services/github-author';
 import type { useGitStore } from '@/store/git';
 import type { IGitCommitDetailPayload, IGitCommitSummaryPayload } from '@/types/git';
-import { openExternalUrl } from '@/utils/browser';
-import { writeClipboardText } from '@/utils/clipboard';
+import { openExternalUrl } from '@/utils/platform/browser';
+import { writeClipboardText } from '@/utils/platform/clipboard';
 
 const HOVER_OPEN_DELAY = 320;
 const HOVER_CLOSE_DELAY = 160;

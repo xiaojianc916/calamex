@@ -1,5 +1,5 @@
 import type { IGitPullRequestSummaryPayload, IGitPullRequestSupportPayload } from '@/types/git';
-import { normalizeFileSystemPath } from '@/utils/path';
+import { normalizeFileSystemPath } from '@/utils/file/path';
 
 /**
  * PR 域的纯函数与 vue-query 接线常量。

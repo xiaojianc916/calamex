@@ -11,15 +11,15 @@ import type {
   IWorkspaceDirectoryPayload,
 } from '@/types/editor';
 import type { ITerminalRunCompletedPayload } from '@/types/terminal';
-import { waitForDesktopRuntime } from '@/utils/desktop-runtime';
-import { markStartup } from '@/utils/startup-profiler';
-import { consumeProgrammaticWindowCloseAllowance } from '@/utils/window-close';
+import { waitForDesktopRuntime } from '@/utils/platform/desktop-runtime';
+import { markStartup } from '@/utils/platform/startup-profiler';
+import { consumeProgrammaticWindowCloseAllowance } from '@/utils/window/window-close';
 import {
   SHELL_WINDOW_RESIZE_END_EVENT,
   SHELL_WINDOW_RESIZE_FRAME_EVENT,
   SHELL_WINDOW_RESIZE_SETTLED_EVENT,
   SHELL_WINDOW_RESIZE_START_EVENT,
-} from '@/utils/window-resize-events';
+} from '@/utils/window/window-resize-events';
 
 export type TEditorExpose = {
   focusEditor: () => void;

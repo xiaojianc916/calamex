@@ -50,7 +50,7 @@ import type {
   IEditorSelectionSummary,
 } from '@/types/editor';
 import type { IGitDiffPreviewPayload, IGitRepositoryStatusPayload } from '@/types/git';
-import { toErrorMessage } from '@/utils/error';
+import { toErrorMessage } from '@/utils/error/error';
 
 const props = defineProps<{
   document: IEditorDocument;

@@ -127,14 +127,14 @@ vi.mock('@/services/tauri', () => ({
 // ─────────────────────────────────────────────
 // Mock：desktop-runtime（始终就绪）
 // ─────────────────────────────────────────────
-vi.mock('@/utils/desktop-runtime', () => ({
+vi.mock('@/utils/platform/desktop-runtime', () => ({
   waitForDesktopRuntime: vi.fn(() => Promise.resolve(true)),
   desktopRuntimeReady: { value: true },
 }));
 
 // ─────────────────────────────────────────────
 // Mock：clipboard（避免 jsdom 剪切板 API 错误）
-vi.mock('@/utils/clipboard', () => ({
+vi.mock('@/utils/platform/clipboard', () => ({
   writeClipboardText: vi.fn(() => Promise.resolve()),
 }));
 

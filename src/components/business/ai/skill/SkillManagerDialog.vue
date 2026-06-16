@@ -15,7 +15,7 @@ import {
 import { computed, reactive, ref, watch } from 'vue';
 import { skillsTauriService } from '@/services/tauri.skills';
 import type { ISkillSummary } from '@/types/ai/skill';
-import { toErrorMessage } from '@/utils/error';
+import { toErrorMessage } from '@/utils/error/error';
 
 type TDialogMode = 'list' | 'editor';
 

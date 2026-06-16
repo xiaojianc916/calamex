@@ -1,4 +1,4 @@
-import { logger } from '@/utils/logger';
+import { logger } from '@/utils/platform/logger';
 import { type IShikiThemedToken, resolveShikiLanguageId } from './shiki-shared';
 
 export {

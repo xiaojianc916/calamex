@@ -100,8 +100,8 @@ import type {
   TGitChangeKind,
   TGitDiffMode,
 } from '@/types/git';
-import { writeFileSystemPathToClipboard } from '@/utils/clipboard';
-import { areFileSystemPathsEqual, getPathBaseName, getPathDirectory } from '@/utils/path';
+import { writeFileSystemPathToClipboard } from '@/utils/platform/clipboard';
+import { areFileSystemPathsEqual, getPathBaseName, getPathDirectory } from '@/utils/file/path';
 
 const SOURCE_CONTROL_MENU_WIDTH = 240;
 const SOURCE_CONTROL_MENU_HEIGHT = 320;

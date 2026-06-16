@@ -186,7 +186,7 @@ vi.mock('@/store/git', () => ({
   }),
 }));
 
-vi.mock('@/utils/desktop-runtime', () => ({
+vi.mock('@/utils/platform/desktop-runtime', () => ({
   waitForDesktopRuntime: waitForDesktopRuntimeMock,
 }));
 

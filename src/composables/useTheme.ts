@@ -3,8 +3,8 @@ import { setWindowBackground } from '@/services/ipc/window.service';
 import { useAppStore } from '@/store/app';
 import { applyResolvedThemeEffect } from '@/themes/runtime/effects';
 import { resolveTheme } from '@/themes/runtime/manager';
-import { readCssVarAsRgba } from '@/utils/color';
-import { logger } from '@/utils/logger';
+import { readCssVarAsRgba } from '@/utils/core/color';
+import { logger } from '@/utils/platform/logger';
 
 export const useTheme = () => {
   const appStore = useAppStore();

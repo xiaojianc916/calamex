@@ -178,9 +178,9 @@ import type {
   IGitPullRequestSupportPayload,
   IGitStashEntryPayload,
 } from '@/types/git';
-import { openExternalUrl } from '@/utils/browser';
-import { toErrorMessage } from '@/utils/error';
-import { getPathBaseName } from '@/utils/path';
+import { openExternalUrl } from '@/utils/platform/browser';
+import { toErrorMessage } from '@/utils/error/error';
+import { getPathBaseName } from '@/utils/file/path';
 import SourceControlBranchesTab from './SourceControlBranchesTab.vue';
 import SourceControlChangesTab from './SourceControlChangesTab.vue';
 import SourceControlHistoryTab from './SourceControlHistoryTab.vue';

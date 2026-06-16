@@ -5,7 +5,7 @@ import type {
   ILinearContextMenuItem,
 } from '@/components/common/linear-context-menu.types';
 import type { IWorkspaceEntry } from '@/types/editor';
-import { areFileSystemPathsEqual } from '@/utils/path';
+import { areFileSystemPathsEqual } from '@/utils/file/path';
 
 export type TExplorerContextMenuAction =
   | 'open'

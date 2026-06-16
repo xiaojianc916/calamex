@@ -8,7 +8,7 @@
 import { computed } from 'vue';
 import { useAppStore } from '@/store/app';
 import type { TFileIconEntryKind } from '@/types/file-icon';
-import { resolveFileIconAsset } from '@/utils/file-icons';
+import { resolveFileIconAsset } from '@/utils/file/file-icons';
 
 const props = withDefaults(
   defineProps<{

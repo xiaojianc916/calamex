@@ -22,11 +22,11 @@ import type {
 } from '@/types/editor';
 import type { IGitDiffPreviewPayload } from '@/types/git';
 import type { TDocumentDraft, TSessionSnapshot, TSessionWorkbenchState } from '@/types/session';
-import { computeDocumentMetrics, type IDocumentMetrics } from '@/utils/document-metrics';
-import { createUniqueId } from '@/utils/id';
-import { formatFileSystemTextForDisplay, normalizeFileSystemPath } from '@/utils/path';
-import { DEFAULT_EXECUTOR, DEFAULT_SCRIPT } from '@/utils/templates';
-import { createTerminalOutputBuffer } from '@/utils/terminal-output-buffer';
+import { computeDocumentMetrics, type IDocumentMetrics } from '@/utils/editor/document-metrics';
+import { createUniqueId } from '@/utils/core/id';
+import { formatFileSystemTextForDisplay, normalizeFileSystemPath } from '@/utils/file/path';
+import { DEFAULT_EXECUTOR, DEFAULT_SCRIPT } from '@/utils/core/templates';
+import { createTerminalOutputBuffer } from '@/utils/terminal/terminal-output-buffer';
 
 // ---------------------------------------------------------------------------
 // Constants

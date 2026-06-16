@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { AppError } from '@/types/app-error';
-import { assertDesktopRuntime } from '@/utils/desktop-runtime';
+import { assertDesktopRuntime } from '@/utils/platform/desktop-runtime';
 import { buildPayloadMetrics, formatZodIssueSummary } from './tauri.ipc-metrics';
 import {
   createCanceledError,

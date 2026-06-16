@@ -74,7 +74,7 @@ import { useTerminalRegistryStore } from '@/terminal/registry';
 import type { TThemeMode } from '@/types/app';
 import type { ITerminalSettings } from '@/types/settings';
 import type { ITerminalRunChunkPayload, ITerminalRunCompletedPayload } from '@/types/terminal';
-import { toErrorMessage } from '@/utils/error';
+import { toErrorMessage } from '@/utils/error/error';
 
 const props = defineProps<{
   theme: TThemeMode;

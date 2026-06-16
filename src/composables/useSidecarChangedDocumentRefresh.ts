@@ -1,8 +1,8 @@
 import { tauriService } from '@/services/tauri';
 import { useEditorStore } from '@/store/editor';
 import type { IEditorDocument, IScriptFilePayload } from '@/types/editor';
-import { computeDocumentMetrics } from '@/utils/document-metrics';
-import { areFileSystemPathsEqual } from '@/utils/path';
+import { computeDocumentMetrics } from '@/utils/editor/document-metrics';
+import { areFileSystemPathsEqual } from '@/utils/file/path';
 
 interface IRefreshSidecarChangedDocumentsRequest {
   changedFilePaths: readonly string[];

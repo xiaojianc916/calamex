@@ -19,7 +19,7 @@ import type {
   TAiToolConfirmationDecision,
 } from '@/types/ai';
 import type { TAgentSidecarOrchestrateDecision, TAgentUiEvent } from '@/types/ai/sidecar';
-import { toErrorMessage } from '@/utils/error';
+import { toErrorMessage } from '@/utils/error/error';
 
 interface ISidecarStepLoopOptions {
   goal?: string;

@@ -1,5 +1,5 @@
 import type { IWorkspaceEntry } from '@/types/editor';
-import { areFileSystemPathsEqual } from '@/utils/path';
+import { areFileSystemPathsEqual } from '@/utils/file/path';
 import type { TWorkspaceTreeRow } from './workspace-tree.types';
 
 export type TWorkspaceTreeInlineCreateDraft = {

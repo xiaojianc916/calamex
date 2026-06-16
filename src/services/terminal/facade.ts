@@ -15,8 +15,8 @@ import {
   type TTerminalCancelMode,
   type TTerminalRuntimeState,
 } from '@/types/terminal';
-import { createDisposableBag, createMutableDisposable } from '@/utils/disposable';
-import { requestDisposableTimeout } from '@/utils/dom-lifecycle';
+import { createDisposableBag, createMutableDisposable } from '@/utils/core/disposable';
+import { requestDisposableTimeout } from '@/utils/platform/dom-lifecycle';
 
 // ---------------------------------------------------------------------------
 // Constants

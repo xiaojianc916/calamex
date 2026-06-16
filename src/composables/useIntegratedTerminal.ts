@@ -25,7 +25,7 @@ import type {
   ITerminalVisualWritePayload,
 } from '@/types/terminal';
 import { DEFAULT_TERMINAL_SESSION_ID } from '@/types/terminal';
-import { toErrorMessage } from '@/utils/error';
+import { toErrorMessage } from '@/utils/error/error';
 
 // --- 类型定义 ---
 

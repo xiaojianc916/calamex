@@ -133,7 +133,7 @@ import WorkspaceInlineCreateInput from '@/components/workbench/sidebar/explorer/
 import WorkspaceInlineRenameInput from '@/components/workbench/sidebar/explorer/WorkspaceInlineRenameInput.vue';
 import type { TWorkspaceTreeRow } from '@/components/workbench/sidebar/explorer/workspace-tree.types';
 import type { IWorkspaceEntry } from '@/types/editor';
-import { areFileSystemPathsEqual } from '@/utils/path';
+import { areFileSystemPathsEqual } from '@/utils/file/path';
 
 const props = defineProps<{
   row: TWorkspaceTreeRow;

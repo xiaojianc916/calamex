@@ -1,6 +1,6 @@
 import { LanguageDescription, LanguageSupport, StreamLanguage } from '@codemirror/language';
 import type { Extension } from '@codemirror/state';
-import { logger } from '@/utils/logger';
+import { logger } from '@/utils/platform/logger';
 
 export type TCodeMirrorLanguageId = string;
 

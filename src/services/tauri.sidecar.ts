@@ -1,7 +1,7 @@
 import { commands } from '@/bindings/tauri';
 import { agentSidecarStreamEventPayloadSchema } from '@/types/ai/sidecar.schema';
 import type { ITauriService } from '@/types/tauri';
-import { assertDesktopRuntime } from '@/utils/desktop-runtime';
+import { assertDesktopRuntime } from '@/utils/platform/desktop-runtime';
 import { measureAiChatInput } from './tauri.ipc-metrics';
 import { callSpectaCommand, loadTauriEvent } from './tauri.ipc-runtime';
 import type { IIpcCallOptions } from './tauri.ipc-types';

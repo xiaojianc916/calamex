@@ -8,7 +8,7 @@ import type {
   IAiTaskPlanStep,
   IAiToolCall,
 } from '@/types/ai';
-import { toErrorMessage } from '@/utils/error';
+import { toErrorMessage } from '@/utils/error/error';
 
 const MIN_PLAN_STEPS = 2;
 const MAX_PLAN_STEPS = 6;

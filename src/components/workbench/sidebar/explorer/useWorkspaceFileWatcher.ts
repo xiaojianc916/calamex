@@ -4,7 +4,7 @@ import { events } from '@/bindings/tauri';
 import { tauriService } from '@/services/tauri';
 import { useGitStore } from '@/store/git';
 import type { IWorkspaceDirectoryPayload, IWorkspaceEntry } from '@/types/editor';
-import { areFileSystemPathsEqual } from '@/utils/path';
+import { areFileSystemPathsEqual } from '@/utils/file/path';
 
 interface FsChange {
   path: string;

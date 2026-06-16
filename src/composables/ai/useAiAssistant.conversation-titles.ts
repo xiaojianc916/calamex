@@ -1,7 +1,7 @@
 import { getCurrentScope, onScopeDispose } from 'vue';
 import { aiService } from '@/services/ipc/ai.service';
 import type { useAiConversationStore } from '@/store/aiConversation';
-import { logger } from '@/utils/logger';
+import { logger } from '@/utils/platform/logger';
 
 const CONVERSATION_TITLE_RETRY_DELAYS_MS = [1500, 3000, 5000, 9000, 16000, 30000, 60000] as const;
 

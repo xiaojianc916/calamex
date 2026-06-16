@@ -20,8 +20,8 @@ import type {
   TJsonValue,
 } from '@/types/ai/sidecar';
 import { AI_AGENT_TOOL_NAMES, type TAiAgentToolName } from '@/types/ai/tools';
-import { normalizeFileSystemPath } from '@/utils/path';
-import { clipTextPreview } from '@/utils/text-preview';
+import { normalizeFileSystemPath } from '@/utils/file/path';
+import { clipTextPreview } from '@/utils/file/text-preview';
 
 /* ============================================================================
  * Plan validation status

@@ -11,8 +11,8 @@ import type {
   IGitCommitFileChangePayload,
   IGitCommitSummaryPayload,
 } from '@/types/git';
-import { openExternalUrl } from '@/utils/browser';
-import { writeClipboardText } from '@/utils/clipboard';
+import { openExternalUrl } from '@/utils/platform/browser';
+import { writeClipboardText } from '@/utils/platform/clipboard';
 import GitCommitFileList from './GitCommitFileList.vue';
 import GitHistoryGraphContextMenu from './GitHistoryGraphContextMenu.vue';
 import type GitHistoryGraphHoverCard from './GitHistoryGraphHoverCard.vue';

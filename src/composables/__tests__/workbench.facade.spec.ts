@@ -114,7 +114,7 @@ vi.mock('@/composables/useMessage', () => ({
 // ─────────────────────────────────────────────
 // Mock：desktop-runtime（始终返回 true）
 // ─────────────────────────────────────────────
-vi.mock('@/utils/desktop-runtime', () => ({
+vi.mock('@/utils/platform/desktop-runtime', () => ({
   waitForDesktopRuntime: vi.fn(() => Promise.resolve(true)),
   desktopRuntimeReady: { value: true },
 }));
@@ -129,7 +129,7 @@ vi.mock('@tauri-apps/api/window', () => ({
 // ─────────────────────────────────────────────
 // Mock：window-close 工具
 // ─────────────────────────────────────────────
-vi.mock('@/utils/window-close', () => ({
+vi.mock('@/utils/window/window-close', () => ({
   allowNextProgrammaticWindowClose: vi.fn(),
   clearProgrammaticWindowCloseAllowance: vi.fn(),
 }));
@@ -137,7 +137,7 @@ vi.mock('@/utils/window-close', () => ({
 // ─────────────────────────────────────────────
 // Mock：shfmt（格式化 wasm，动态导入）
 // ─────────────────────────────────────────────
-vi.mock('@/utils/shfmt', () => ({
+vi.mock('@/utils/terminal/shfmt', () => ({
   formatShellScript: vi.fn((source: string) => Promise.resolve(source)),
 }));
 

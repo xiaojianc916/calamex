@@ -8,8 +8,8 @@ import type {
   IWorkspaceEntry,
   TWorkbenchOpenFilePayload,
 } from '@/types/editor';
-import { toErrorMessage } from '@/utils/error';
-import { areFileSystemPathsEqual } from '@/utils/path';
+import { toErrorMessage } from '@/utils/error/error';
+import { areFileSystemPathsEqual } from '@/utils/file/path';
 
 // 新建草稿刚打开后的“焦点保护窗口”。
 // 右键菜单（reka-ui ContextMenu）关闭时会把焦点还原到它的隐藏触发器上，

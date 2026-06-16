@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 import { DEFAULT_TERMINAL_SESSION_ID } from '@/types/terminal';
-import { createPrefixedId } from '@/utils/id';
+import { createPrefixedId } from '@/utils/core/id';
 
 /** 单个终端 tab 描述（视图层），后端会话由 registry 按 sessionId 持有。 */
 export interface ITerminalTab {
@@ -18,7 +18,7 @@ export interface ITerminalTab {
  *  - 面板重新开启时调用 ensurePrimaryTab() 补一个首会话。
  *  - 首会话固定用 DEFAULT_TERMINAL_SESSION_ID（'main-terminal'），以保证运行管线
  *    （facade / run-chunk / trackRun）始终有归属终端。
- *  - 额外会话的 sessionId 由 crypto.randomUUID() 生成（见 @/utils/id），全局唯一、
+ *  - 额外会话的 sessionId 由 crypto.randomUUID() 生成（见 @/utils/core/id），全局唯一、
  *    不依赖进程内状态，跨重载 / 多窗口不碍撞。
  *  - `+` 直接新建一个独立的 WSL2 交互会话（生成新 sessionId），不弹菜单。
  *  - 后端会话的 dispose 由调用方（RunPanel）负责。
@@ -34,7 +34,7 @@ export const useTerminalTabsStore = defineStore('terminal-tabs', () => {
     () => tabs.value.find((tab) => tab.sessionId === activeSessionId.value) ?? null,
   );
 
-  // 会话唯一编号：使用 UUID v4（见 @/utils/id），与终端显示序号（终端 N）解耦。
+  // 会话唯一编号：使用 UUID v4（见 @/utils/core/id），与终端显示序号（终端 N）解耦。
   const createSessionId = (): string => createPrefixedId('terminal');
 
   const setActive = (sessionId: string): void => {

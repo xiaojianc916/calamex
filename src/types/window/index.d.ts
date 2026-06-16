@@ -1,4 +1,4 @@
-import type { TAppWindowLabel } from '@/utils/app-window';
+import type { TAppWindowLabel } from '@/utils/window/app-window';
 
 declare global {
   interface Window {

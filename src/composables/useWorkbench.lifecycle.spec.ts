@@ -20,7 +20,7 @@ vi.mock('@/composables/useMessage', () => ({
   useMessage: () => mockMessages,
 }));
 
-vi.mock('@/utils/desktop-runtime', () => ({
+vi.mock('@/utils/platform/desktop-runtime', () => ({
   waitForDesktopRuntime: vi.fn(() => Promise.resolve(true)),
   desktopRuntimeReady: { value: true },
 }));

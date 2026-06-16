@@ -13,12 +13,12 @@ import {
   type ITerminalRunChunkPayload,
   type ITerminalRunCompletedPayload,
 } from '@/types/terminal';
-import { waitForDesktopRuntime } from '@/utils/desktop-runtime';
-import { createDisposableBag, createMutableDisposable } from '@/utils/disposable';
-import { requestDisposableTimeout } from '@/utils/dom-lifecycle';
-import { toErrorMessage } from '@/utils/error';
-import { isShellScriptPath } from '@/utils/file-assets';
-import { DEFAULT_EXECUTOR, getExecutorLabel } from '@/utils/templates';
+import { waitForDesktopRuntime } from '@/utils/platform/desktop-runtime';
+import { createDisposableBag, createMutableDisposable } from '@/utils/core/disposable';
+import { requestDisposableTimeout } from '@/utils/platform/dom-lifecycle';
+import { toErrorMessage } from '@/utils/error/error';
+import { isShellScriptPath } from '@/utils/file/file-assets';
+import { DEFAULT_EXECUTOR, getExecutorLabel } from '@/utils/core/templates';
 import {
   buildDispatchedTerminalRunSummary,
   buildPendingTerminalRunSummary,
@@ -31,7 +31,7 @@ import {
   isTerminalRunFinalLog,
   TERMINAL_RUN_LOG_CODES,
   TERMINAL_RUN_LOG_TITLES,
-} from '@/utils/terminal-run';
+} from '@/utils/terminal/terminal-run';
 
 const TERMINAL_OUTPUT_BATCH_INTERVAL_MS = 120;
 const TERMINAL_RUN_COMPLETION_TIMEOUT_MS = 30 * 60 * 1000;

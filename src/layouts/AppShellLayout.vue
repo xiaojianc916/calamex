@@ -68,7 +68,7 @@ import { useGitStore } from '@/store/git';
 import {
   SHELL_WINDOW_RESIZE_END_EVENT,
   SHELL_WINDOW_RESIZE_START_EVENT,
-} from '@/utils/window-resize-events';
+} from '@/utils/window/window-resize-events';
 
 type TResizeDirection =
   | 'North'

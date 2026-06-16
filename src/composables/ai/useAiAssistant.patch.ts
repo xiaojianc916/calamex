@@ -1,7 +1,7 @@
 import type { IAiAgentPatchSummary, IAiPatchSet } from '@/types/ai';
 import type { TAgentUiEvent } from '@/types/ai/sidecar';
 import type { IEditorDocument } from '@/types/editor';
-import { areFileSystemPathsEqual, normalizeFileSystemPath } from '@/utils/path';
+import { areFileSystemPathsEqual, normalizeFileSystemPath } from '@/utils/file/path';
 
 // ---------------------------------------------------------------------------
 // Patch reverse / materialize / sidecar patch parsing (extracted from useAiAssistant.ts).

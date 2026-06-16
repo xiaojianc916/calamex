@@ -7,9 +7,9 @@ import { isAppError } from '@/types/app-error';
 import type { IEditorDocument, IWorkspaceDirectoryPayload } from '@/types/editor';
 import type { IGitDiffPreviewPayload, IGitDiffPreviewRequest } from '@/types/git';
 import type { TSessionSnapshot, TSessionTabKind } from '@/types/session';
-import { waitForDesktopRuntime } from '@/utils/desktop-runtime';
-import { isImageAssetPath } from '@/utils/file-assets';
-import { areFileSystemPathsEqual, getPathBaseName, getRelativeFileSystemPath } from '@/utils/path';
+import { waitForDesktopRuntime } from '@/utils/platform/desktop-runtime';
+import { isImageAssetPath } from '@/utils/file/file-assets';
+import { areFileSystemPathsEqual, getPathBaseName, getRelativeFileSystemPath } from '@/utils/file/path';
 
 // ---------------------------------------------------------------------------
 // Local types

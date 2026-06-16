@@ -1,9 +1,9 @@
 import { computed, ref } from 'vue';
 import { tauriService } from '@/services/tauri';
 import type { IWorkspaceDirectoryPayload, IWorkspaceEntry } from '@/types/editor';
-import { toErrorMessage } from '@/utils/error';
-import { formatFileSystemPathForDisplay, getPathBaseName } from '@/utils/path';
-import { resolveWorkspaceKey, resolveWorkspaceRootPayload } from '@/utils/workspace';
+import { toErrorMessage } from '@/utils/error/error';
+import { formatFileSystemPathForDisplay, getPathBaseName } from '@/utils/file/path';
+import { resolveWorkspaceKey, resolveWorkspaceRootPayload } from '@/utils/file/workspace';
 
 export interface IUseWorkspaceExplorerRootOptions {
   isDesktopRuntime: () => boolean;

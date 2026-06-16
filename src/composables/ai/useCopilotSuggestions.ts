@@ -2,7 +2,7 @@ import type { Suggestion } from '@copilotkit/core';
 import { useConfigureSuggestions, useSuggestions } from '@copilotkit/vue';
 import { computed, onBeforeUnmount, onMounted, type Ref, ref } from 'vue';
 import { aiService } from '@/services/ipc/ai.service';
-import { logger } from '@/utils/logger';
+import { logger } from '@/utils/platform/logger';
 import { computeBackoffDelayMs, SUGGESTION_POOL_MAX_ATTEMPTS } from './suggestionPoolBackoff';
 
 /**

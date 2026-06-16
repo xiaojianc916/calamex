@@ -5,10 +5,10 @@ import {
   SHELL_WINDOW_RESIZE_FRAME_EVENT,
   SHELL_WINDOW_RESIZE_SETTLED_EVENT,
   SHELL_WINDOW_RESIZE_START_EVENT,
-} from '@/utils/window-resize-events';
+} from '@/utils/window/window-resize-events';
 import { useWindowResizeState } from './useWindowResizeState';
 
-vi.mock('@/utils/logger', () => ({
+vi.mock('@/utils/platform/logger', () => ({
   logger: {
     warn: vi.fn(),
     info: vi.fn(),

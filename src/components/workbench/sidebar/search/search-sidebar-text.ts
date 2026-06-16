@@ -1,4 +1,4 @@
-import { toErrorMessage } from '@/utils/error';
+import { toErrorMessage } from '@/utils/error/error';
 import type {
   IHighlightedSegment,
   IReplacementLineSegment,

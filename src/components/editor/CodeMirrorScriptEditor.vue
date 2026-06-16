@@ -85,10 +85,10 @@ import type {
   TScriptDiagnosticSeverity,
 } from '@/types/editor';
 import type { IEditorSettings } from '@/types/settings';
-import { tryReadClipboardText, writeClipboardText } from '@/utils/clipboard';
-import { computeDocumentMetrics, type IDocumentMetrics } from '@/utils/document-metrics';
-import { computeDocChanges } from '@/utils/editor-doc-diff';
-import { resolveLanguageForPath } from '@/utils/editor-language';
+import { tryReadClipboardText, writeClipboardText } from '@/utils/platform/clipboard';
+import { computeDocumentMetrics, type IDocumentMetrics } from '@/utils/editor/document-metrics';
+import { computeDocChanges } from '@/utils/editor/editor-doc-diff';
+import { resolveLanguageForPath } from '@/utils/editor/editor-language';
 
 interface IEditorExpose {
   focusEditor: () => void;
@@ -121,13 +121,13 @@ const createEmptyAnalysis = (): IAnalyzeScriptPayload => ({
 // ──────────────────────────────
 // Lazy / cached shell completion source
 // ──────────────────────────────
-// `import('@/utils/shell-completion')` 自身会被打包器缓存，但每次 completion 都
+// `import('@/utils/terminal/shell-completion')` 自身会被打包器缓存，但每次 completion 都
 // 重新 `.then(...)` 并重新 `createShellCodeMirrorCompletionSource()` 仍有不必要的
 // 微开销，且每次都拿到一个新的 source 实例，影响内部可能的状态复用。
 let cachedShellCompletionSourcePromise: Promise<CompletionSource> | null = null;
 const getShellCompletionSource = (): Promise<CompletionSource> => {
   if (!cachedShellCompletionSourcePromise) {
-    cachedShellCompletionSourcePromise = import('@/utils/shell-completion').then((mod) =>
+    cachedShellCompletionSourcePromise = import('@/utils/terminal/shell-completion').then((mod) =>
       mod.createShellCodeMirrorCompletionSource(),
     );
   }
@@ -1109,7 +1109,7 @@ watch(
     }
     // 外部真正改了内容（载入文件 / 格式化 / AI 补丁等）：只替换最小变化区间,保留未变
     // 区域的折叠/选区,避免整篇替换清空这些状态。Myers 最短编辑脚本可产出多个
-    // 互不相邻的最小变更区间，详见 utils/editor-doc-diff。
+    // 互不相邻的最小变更区间，详见 utils/editor/editor-doc-diff。
     lastSyncedModelValue = value;
     lastDocumentMetrics = computeDocumentMetrics(value);
     suppressModelValueEmit = true;

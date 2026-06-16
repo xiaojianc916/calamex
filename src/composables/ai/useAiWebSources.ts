@@ -8,7 +8,7 @@ import type {
   IAiWebSourceEntry,
   TAiWebActivityState,
 } from '@/types/ai';
-import { toErrorMessage } from '@/utils/error';
+import { toErrorMessage } from '@/utils/error/error';
 
 const DEFAULT_WEB_FETCH_BYTES = 128 * 1024;
 const QUERY_PREVIEW_CHARS = 48;

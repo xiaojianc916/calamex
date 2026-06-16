@@ -6,8 +6,8 @@ import type {
   IWorkspaceSearchStreamEvent,
   TWorkspaceSearchScope,
 } from '@/types/search';
-import { toErrorMessage } from '@/utils/error';
-import { areFileSystemPathsEqual } from '@/utils/path';
+import { toErrorMessage } from '@/utils/error/error';
+import { areFileSystemPathsEqual } from '@/utils/file/path';
 import type {
   IFlatSearchRow,
   ISearchResultGroup,

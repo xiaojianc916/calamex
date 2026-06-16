@@ -30,7 +30,7 @@ import {
 } from '@/copilotkit/events/event-adapter';
 import { aiService } from '@/services/ipc/ai.service';
 import type { IAgentSidecarStreamEventPayload } from '@/types/ai/sidecar';
-import { logger } from '@/utils/logger';
+import { logger } from '@/utils/platform/logger';
 
 // ---------------------------------------------------------------------------
 // Constants

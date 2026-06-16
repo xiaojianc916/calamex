@@ -6,8 +6,8 @@ import type {
   IAiAgentPatchSummary,
   TAiAgentChangedFileStatus,
 } from '@/types/ai/patch';
-import { fnv1a32Base36 } from '@/utils/hash';
-import { areFileSystemPathsEqual, normalizeFileSystemPath } from '@/utils/path';
+import { fnv1a32Base36 } from '@/utils/core/hash';
+import { areFileSystemPathsEqual, normalizeFileSystemPath } from '@/utils/file/path';
 
 const AED_PATCH_REF_PREFIX = 'aed-patch:';
 const PATCH_SUMMARY_ID_PREFIX = 'patch-summary';

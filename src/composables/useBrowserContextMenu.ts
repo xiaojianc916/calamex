@@ -3,8 +3,8 @@ import type {
   ILinearContextMenuGroup,
   ILinearContextMenuItem,
 } from '@/components/common/linear-context-menu.types';
-import { openExternalUrl } from '@/utils/browser';
-import { tryReadClipboardText, tryWriteClipboardText, writeClipboardText } from '@/utils/clipboard';
+import { openExternalUrl } from '@/utils/platform/browser';
+import { tryReadClipboardText, tryWriteClipboardText, writeClipboardText } from '@/utils/platform/clipboard';
 
 const MENU_WIDTH = 224;
 const MENU_HEIGHT = 320;

@@ -1,7 +1,7 @@
 import { createStore, del, get, set, type UseStore } from 'idb-keyval';
 import type { StorageLike } from 'pinia-plugin-persistedstate';
 
-import { logger } from '@/utils/logger';
+import { logger } from '@/utils/platform/logger';
 
 /**
  * ai-conversation 专用持久化 storage：底层从 localStorage 换成 IndexedDB(idb-keyval)。

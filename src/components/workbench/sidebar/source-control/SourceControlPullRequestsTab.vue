@@ -197,7 +197,7 @@ import type {
   IGitPullRequestSummaryPayload,
   IGitPullRequestSupportPayload,
 } from '@/types/git';
-import { toErrorMessage } from '@/utils/error';
+import { toErrorMessage } from '@/utils/error/error';
 
 const props = defineProps<{
   isBusy: boolean;

@@ -5,17 +5,17 @@ import { applyWindowStage } from '@/services/ipc/window.service';
 import { pinia } from '@/store';
 import { hydrateAiConversationStorage } from '@/store/plugins/debouncedPersistStorage';
 import { hydrateSessionStorage } from '@/store/plugins/tauriSessionStorage';
-import { MAIN_WINDOW_LABEL } from '@/utils/app-window';
-import { renderFatalBootstrapError } from '@/utils/bootstrap-fatal-error';
-import { initEditorScrollbarActivity } from '@/utils/editor-scrollbar-activity';
-import { initGitHubAuthHeaderEnhancement } from '@/utils/github-auth-header';
+import { MAIN_WINDOW_LABEL } from '@/utils/window/app-window';
+import { renderFatalBootstrapError } from '@/utils/error/bootstrap-fatal-error';
+import { initEditorScrollbarActivity } from '@/utils/editor/editor-scrollbar-activity';
+import { initGitHubAuthHeaderEnhancement } from '@/utils/git/github-auth-header';
 import {
   recordRecursiveUpdateCulprit,
   registerRuntimeDiagnostics,
   reportRuntimeError,
   setRuntimeError,
-} from '@/utils/runtime-diagnostics';
-import { markStartup, reportStartupTimings } from '@/utils/startup-profiler';
+} from '@/utils/platform/runtime-diagnostics';
+import { markStartup, reportStartupTimings } from '@/utils/platform/startup-profiler';
 
 registerRuntimeDiagnostics();
 markStartup('main-module-ready');

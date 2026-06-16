@@ -27,7 +27,7 @@ import {
 import type { TThemeMode } from '@/types/app';
 import type { IGitDiffPreviewPayload } from '@/types/git';
 import type { IEditorSettings } from '@/types/settings';
-import { resolveLanguageForPath } from '@/utils/editor-language';
+import { resolveLanguageForPath } from '@/utils/editor/editor-language';
 
 const props = defineProps<{
   preview: IGitDiffPreviewPayload;

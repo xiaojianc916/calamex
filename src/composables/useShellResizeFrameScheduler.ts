@@ -1,13 +1,13 @@
 import { useEventListener } from '@vueuse/core';
 import { onBeforeUnmount } from 'vue';
-import { createMutableDisposable } from '@/utils/disposable';
-import { requestDisposableAnimationFrame } from '@/utils/dom-lifecycle';
+import { createMutableDisposable } from '@/utils/core/disposable';
+import { requestDisposableAnimationFrame } from '@/utils/platform/dom-lifecycle';
 import {
   SHELL_WINDOW_RESIZE_END_EVENT,
   SHELL_WINDOW_RESIZE_FRAME_EVENT,
   SHELL_WINDOW_RESIZE_SETTLED_EVENT,
   SHELL_WINDOW_RESIZE_START_EVENT,
-} from '@/utils/window-resize-events';
+} from '@/utils/window/window-resize-events';
 
 type TShellResizeFrameCallback = () => void;
 

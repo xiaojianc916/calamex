@@ -6,7 +6,7 @@ import {
   getGithubAuthStatus,
 } from '@/services/tauri.github-auth';
 import type { IGitHubAuthStatusPayload } from '@/types/git';
-import { openExternalUrl } from '@/utils/browser';
+import { openExternalUrl } from '@/utils/platform/browser';
 
 const AUTH_CACHE_PREFIX = 'calamex.githubAuth.';
 const AUTH_CACHE_TTL_MS = 5 * 60 * 1000;

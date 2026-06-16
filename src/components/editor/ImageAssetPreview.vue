@@ -53,8 +53,8 @@ import { computed, onMounted, ref, watch } from 'vue';
 import InlineError from '@/components/common/InlineError.vue';
 import { tauriService } from '@/services/tauri';
 import type { IImageAssetPayload } from '@/types/editor';
-import { toErrorMessage } from '@/utils/error';
-import { formatBytes } from '@/utils/file-assets';
+import { toErrorMessage } from '@/utils/error/error';
+import { formatBytes } from '@/utils/file/file-assets';
 
 const props = defineProps<{
   path: string;

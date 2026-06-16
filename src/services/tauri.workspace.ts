@@ -1,7 +1,7 @@
 import { commands } from '@/bindings/tauri';
 import type { IWorkspaceSearchStreamEvent } from '@/types/search';
 import type { ITauriService } from '@/types/tauri';
-import { assertDesktopRuntime } from '@/utils/desktop-runtime';
+import { assertDesktopRuntime } from '@/utils/platform/desktop-runtime';
 import { type ICommandMeta, runCommand } from './tauri.ipc-define';
 import { measureScriptContentInput } from './tauri.ipc-metrics';
 import { loadTauriEvent, pickDialogPath } from './tauri.ipc-runtime';

@@ -6,8 +6,8 @@ import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { useWindowResizeState } from '@/composables/useWindowResizeState';
 import { applyWindowStage, setWindowBackground } from '@/services/ipc/window.service';
-import { runtimeErrorState } from '@/utils/runtime-diagnostics';
-import { markStartup, reportStartupTimings } from '@/utils/startup-profiler';
+import { runtimeErrorState } from '@/utils/platform/runtime-diagnostics';
+import { markStartup, reportStartupTimings } from '@/utils/platform/startup-profiler';
 import 'vue-sonner/style.css';
 
 interface ITauriInternals {

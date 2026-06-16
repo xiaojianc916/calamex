@@ -3,7 +3,7 @@ import { z } from 'zod';
 
 import { clearSession, loadSession, saveSession } from '@/services/session/store';
 import { SessionSnapshotSchema, type TSessionSnapshot } from '@/types/session';
-import { logger } from '@/utils/logger';
+import { logger } from '@/utils/platform/logger';
 
 // ---------------------------------------------------------------------------
 // Constants & types

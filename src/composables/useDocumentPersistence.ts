@@ -13,10 +13,10 @@ import {
   buildDocumentSaveFeedback,
   buildWorkspaceDocumentFormatFeedback,
   type IEditorOperationFeedback,
-} from '@/utils/document-persistence';
-import { resolveLanguageForPath } from '@/utils/editor-language';
-import { toErrorMessage } from '@/utils/error';
-import { getRelativeFileSystemPath } from '@/utils/path';
+} from '@/utils/editor/document-persistence';
+import { resolveLanguageForPath } from '@/utils/editor/editor-language';
+import { toErrorMessage } from '@/utils/error/error';
+import { getRelativeFileSystemPath } from '@/utils/file/path';
 
 type TAppStore = ReturnType<typeof useAppStore>;
 type TEditorStore = ReturnType<typeof useEditorStore>;

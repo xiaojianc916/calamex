@@ -5,8 +5,8 @@ import {
   isItalic,
   isUnderline,
 } from '@/components/ai-elements/code-block/utils';
-import type { ISshPreviewMatchHit } from '@/utils/ssh-file-preview';
-import { splitTextGraphemes } from '@/utils/text-preview';
+import type { ISshPreviewMatchHit } from '@/utils/file/ssh-file-preview';
+import { splitTextGraphemes } from '@/utils/file/text-preview';
 
 export interface IRenderedPreviewSegment {
   key: string;

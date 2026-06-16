@@ -2,8 +2,8 @@ import { tauriService } from '@/services/tauri';
 import type { IAiPatchSet } from '@/types/ai';
 import { AGENT_RUNTIME_EVENT_SCHEMA_VERSION, type TAgentRuntimeEvent } from '@/types/ai/sidecar';
 import type { IAnalyzeScriptPayload } from '@/types/editor';
-import { toErrorMessage } from '@/utils/error';
-import { areFileSystemPathsEqual } from '@/utils/path';
+import { toErrorMessage } from '@/utils/error/error';
+import { areFileSystemPathsEqual } from '@/utils/file/path';
 
 import { materializePatchedContent, normalizePatchDisplayPath } from './useAiAssistant.patch';
 import { createScopedId } from './useAiAssistant.runtime-events';

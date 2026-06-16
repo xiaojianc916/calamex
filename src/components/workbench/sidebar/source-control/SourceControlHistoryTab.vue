@@ -33,7 +33,7 @@ import { computed } from 'vue';
 import { useMessage } from '@/composables/useMessage';
 import { useGitStore } from '@/store/git';
 import type { IGitCommitSummaryPayload } from '@/types/git';
-import { toErrorMessage } from '@/utils/error';
+import { toErrorMessage } from '@/utils/error/error';
 import GitHistoryGraph from './GitHistoryGraph.vue';
 
 const props = defineProps<{

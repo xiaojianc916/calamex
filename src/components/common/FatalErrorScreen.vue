@@ -3,7 +3,7 @@ import { RotateCcw, ShieldAlert } from '@lucide/vue';
 import { computed, ref } from 'vue';
 import ErrorDetails from '@/components/common/ErrorDetails.vue';
 import { Button } from '@/components/ui/button';
-import { writeClipboardText } from '@/utils/clipboard';
+import { writeClipboardText } from '@/utils/platform/clipboard';
 
 const props = withDefaults(
   defineProps<{

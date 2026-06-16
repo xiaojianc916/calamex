@@ -3,7 +3,7 @@ import { type ComputedRef, computed, type Ref, readonly, ref } from 'vue';
 import { aiService } from '@/services/ipc/ai.service';
 import { useAiAgentStore } from '@/store/aiAgent';
 import type { TAiAgentNetworkPermission } from '@/types/ai';
-import { toErrorMessage } from '@/utils/error';
+import { toErrorMessage } from '@/utils/error/error';
 
 const DEFAULT_ERROR_MESSAGE = '设置 AI Agent 网络权限失败。';
 

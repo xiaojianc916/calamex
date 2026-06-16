@@ -2,7 +2,7 @@
 import { Check, CircleAlert } from '@lucide/vue';
 import { useTimeoutFn } from '@vueuse/core';
 import { computed, ref } from 'vue';
-import { tryWriteClipboardText } from '@/utils/clipboard';
+import { tryWriteClipboardText } from '@/utils/platform/clipboard';
 
 const props = defineProps<{
   message: string;

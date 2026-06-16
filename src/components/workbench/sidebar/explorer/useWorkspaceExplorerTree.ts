@@ -2,8 +2,8 @@ import { reactive, ref } from 'vue';
 import { useMessage } from '@/composables/useMessage';
 import { tauriService } from '@/services/tauri';
 import type { IWorkspaceDirectoryPayload, IWorkspaceEntry } from '@/types/editor';
-import { toErrorMessage } from '@/utils/error';
-import { getRelativeFileSystemPath, normalizeFileSystemPath } from '@/utils/path';
+import { toErrorMessage } from '@/utils/error/error';
+import { getRelativeFileSystemPath, normalizeFileSystemPath } from '@/utils/file/path';
 
 export interface IUseWorkspaceExplorerTreeOptions {
   /** Resolves the currently loaded workspace root payload, or null. */

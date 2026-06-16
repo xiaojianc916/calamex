@@ -95,7 +95,7 @@ import { computed, nextTick, ref } from 'vue';
 import { useMessage } from '@/composables/useMessage';
 import { useGitStore } from '@/store/git';
 import type { IGitBranchPayload } from '@/types/git';
-import { toErrorMessage } from '@/utils/error';
+import { toErrorMessage } from '@/utils/error/error';
 
 const props = defineProps<{
   searchQuery: string;
