@@ -19,8 +19,10 @@
 //!   * **模型配置不入 prompt**：模型凭据由 sidecar 进程环境变量在启动期解析。
 //!   * **审批即回合内挂起**：危险工具经反向 `session/request_permission` 在回合内
 //!     挂起，`resolve_approval` 经登记表唤醒同一回合续跑。
-//!   * **流式即转发**：单一 `EventSink` 把每条 `session/update` 帧转发给 webview 作
-//!     实时预览；权威结果由各扩展方法（agent_chat / orchestrate 等）的返回信封承载。
+//!   * **流式即转发**：单一 `EventSink` 把每条 `session/update` 帧原样转发给接线层的
+//!     emit（`runtime::stream_emitter`）；帧 → 前端 `TAgentUiEvent` 的投影由该 emit
+//!     单点负责（见 `ui_event`），本层不投影。权威结果由各扩展方法（agent_chat /
+//!     orchestrate 等）的返回信封承载。
 //!   * **编排/对话即带外**：`orchestrate` / `orchestrate_resume` / `agent_chat` /
 //!     `agent_chat_resolve` 是标准会话回合（`prompt`）之外的「带外」能力，经
 //!     sidecar 公示的扩展方法通道下发（标准客户端不识别会安全忽略）。agent_chat
@@ -106,17 +108,14 @@ impl AcpHost {
         let approvals = ApprovalRegistry::new();
         let resolver = approvals.resolver(on_approval);
 
-        // 单一下沉口：把每条 `session/update` 帧先投影为前端 TAgentUiEvent 再转发 webview 作实时预览。
-        // 线上 ACP 下发官方 SessionNotification（`update.sessionUpdate` 判别式），而前端消费端
-        // （onSidecarStream → IAgentSidecarStreamEventPayload.event）吃 TAgentUiEvent（`type` 判别式）：
-        // 二者词表不同，不投影则前端按 `type` 解析失败而全量丢弃，导致各模式 live 增量为零、气泡空白。
-        // 投影为 None 的链路外/未接入变体（tool_call(_update)/plan/usage_update/current_mode_update 等）
-        // 跳过、不向 webview 下发；终态 done/error 不走 session/update，由 chat_stream 合成补发。
-        let sink: EventSink = Arc::new(move |frame: AcpStreamFrame| {
-            if let Some(projected) = project_stream_frame(frame) {
-                emit(projected);
-            }
-        });
+        // 单一下沉口：把每条 `session/update` 帧原样转发给 emit 闭包。
+        // 帧 → 前端 TAgentUiEvent 的投影由接线层的 emit（runtime::stream_emitter）统一负责：
+        // 它经 ui_event::session_notification_to_ui_event 投影，并对无对应 UI 事件的变体
+        // （tool_call(_update)/plan/usage_update/current_mode_update 等）返回 None 跳过、不下发。
+        // 此处不得再投影，否则会对已投影帧二次投影（其 event 已无 update.sessionUpdate 字段）
+        // 必返回 None 而被丢弃，导致各模式 live 增量为零、气泡无流式。
+        // 终态 done/error 不走 session/update，由 chat_stream 经 app.emit 直接合成补发。
+        let sink: EventSink = Arc::new(move |frame: AcpStreamFrame| emit(frame));
 
         let handle = spawn_acp_client(config, sink, resolver)?;
         Ok(Self {
@@ -367,16 +366,6 @@ impl AcpHost {
     }
 }
 
-/// 把一条 client 层原始流式帧（`event` 为官方 `SessionNotification` 的 camelCase JSON）投影为
-/// 前端可消费的 `TAgentUiEvent` 帧（`event` 改为 `message_delta` 等以 `type` 为判别式的 JSON），
-/// `session_id` / `seq` 原样保留。返回 `None` 表示该通知在主聊天流无对应 UI 事件（链路外 /
-/// 未接入变体），调用方据此跳过、不向 webview 下发。投影规则见
-/// `super::ui_event::session_notification_to_ui_event`。
-fn project_stream_frame(frame: AcpStreamFrame) -> Option<AcpStreamFrame> {
-    let event = super::ui_event::session_notification_to_ui_event(&frame.event)?;
-    Some(AcpStreamFrame { event, ..frame })
-}
-
 /// 修剪并过滤空白可选字符串：`None` / 空 / 全空白 → `None`，否则返回修剪后切片。
 fn non_empty(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|s| !s.is_empty())
@@ -415,43 +404,5 @@ mod tests {
         // 空白工作区路径 → 回退到进程当前目录（或最终退到 "."）；至少非空。
         let cwd = workspace_cwd(Some("   "));
         assert!(!cwd.as_os_str().is_empty());
-    }
-
-    #[test]
-    fn project_stream_frame_maps_agent_message_chunk_and_preserves_envelope() {
-        // 原始 SessionNotification（agent_message_chunk）应投影为前端 message_delta，
-        // 且 session_id / seq 原样保留——这是「live 增量能到达前端」的接线回归点。
-        let frame = AcpStreamFrame {
-            session_id: Some("sess_1".to_string()),
-            seq: 7,
-            event: serde_json::json!({
-                "sessionId": "sess_1",
-                "update": {
-                    "sessionUpdate": "agent_message_chunk",
-                    "content": { "type": "text", "text": "你好" }
-                }
-            }),
-        };
-        let projected =
-            project_stream_frame(frame).expect("agent_message_chunk 应投影出 UI 事件帧");
-        assert_eq!(projected.session_id.as_deref(), Some("sess_1"));
-        assert_eq!(projected.seq, 7);
-        assert_eq!(projected.event["type"], "message_delta");
-        assert_eq!(projected.event["text"], "你好");
-        assert_eq!(projected.event["phase"], "final");
-    }
-
-    #[test]
-    fn project_stream_frame_skips_unmapped_session_update() {
-        // 链路外变体（tool_call 等）投影为 None → 不下发（避免前端 Zod 拒绝的噪声帧）。
-        let frame = AcpStreamFrame {
-            session_id: Some("sess_1".to_string()),
-            seq: 1,
-            event: serde_json::json!({
-                "sessionId": "sess_1",
-                "update": { "sessionUpdate": "tool_call", "toolCallId": "t1" }
-            }),
-        };
-        assert!(project_stream_frame(frame).is_none());
     }
 }
