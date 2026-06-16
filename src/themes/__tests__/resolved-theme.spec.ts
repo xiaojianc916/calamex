@@ -10,9 +10,9 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { buildComponentTokens } from '@/themes/components';
+import { buildComponentTokens } from '@/themes/tokens/components';
 import { buildTerminalTheme } from '@/themes/derive/terminal';
-import { ACCENT_STYLE_MAP, RADIUS_VALUE_MAP, UI_DENSITY_SCALE_MAP } from '@/themes/resolved-theme';
+import { ACCENT_STYLE_MAP, RADIUS_VALUE_MAP, UI_DENSITY_SCALE_MAP } from '@/themes/runtime/resolved-theme';
 import { dark } from '@/themes/variants/dark';
 import { light } from '@/themes/variants/light';
 

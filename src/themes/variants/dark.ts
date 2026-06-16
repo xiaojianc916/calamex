@@ -4,8 +4,8 @@
  * 将 Primer Dark functional color tokens 映射为 IRoles 语义角色。
  * 此文件是本系统中唯一允许 import primitives 的地方（variants/ 目录）。
  */
-import { P } from '../primitives';
-import type { IRoles } from '../types';
+import { P } from '../tokens/primitives';
+import type { IRoles } from '../tokens/types';
 
 export const dark: IRoles = {
   surface: {
