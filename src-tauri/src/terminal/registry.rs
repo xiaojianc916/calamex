@@ -2,11 +2,10 @@ use std::sync::{OnceLock, RwLock};
 
 use super::{
     event_bus::EventBus,
-    types::{Geometry, RunHandle, TerminalState},
+    types::{RunHandle, TerminalState},
 };
 
 pub struct Registry {
-    pub geometry: RwLock<Geometry>,
     pub state: RwLock<TerminalState>,
     pub active_run: RwLock<Option<RunHandle>>,
     pub event_bus: EventBus,
@@ -16,7 +15,6 @@ impl Registry {
     pub fn global() -> &'static Self {
         static REGISTRY: OnceLock<Registry> = OnceLock::new();
         REGISTRY.get_or_init(|| Self {
-            geometry: RwLock::new(Geometry::default()),
             state: RwLock::new(TerminalState::Booting),
             active_run: RwLock::new(None),
             event_bus: EventBus::default(),

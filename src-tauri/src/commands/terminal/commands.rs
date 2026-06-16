@@ -40,7 +40,7 @@ use super::state::{
     remove_terminal_session, remove_terminal_snapshot, resolve_terminal_start_directory,
     set_session_geometry, set_terminal_snapshot, should_recreate_terminal_session,
     take_active_terminal_run_for_session, take_and_prepend_pending_switch_input,
-    terminate_terminal_session, try_mark_active_terminal_run, update_terminal_geometry,
+    terminate_terminal_session, try_mark_active_terminal_run,
 };
 use super::to_wsl_path;
 
@@ -54,7 +54,6 @@ pub async fn ensure_terminal_session(
     payload: EnsureTerminalSessionRequest,
 ) -> Result<TerminalSessionPayload, String> {
     let terminal_state = state.inner().clone();
-    update_terminal_geometry(payload.cols, payload.rows);
     set_session_geometry(&terminal_state, &payload.session_id, payload.cols, payload.rows);
 
     // 在持有创建保护锁之前完成工作目录规整：canonicalize 会触达文件系统，慢盘 / 网络盘上
@@ -215,7 +214,6 @@ pub fn resize_terminal_session(
     payload: TerminalResizeRequest,
 ) -> Result<(), String> {
     let terminal_state = state.inner().clone();
-    update_terminal_geometry(payload.cols, payload.rows);
     set_session_geometry(&terminal_state, &payload.session_id, payload.cols, payload.rows);
 
     let session = get_terminal_session(&terminal_state, &payload.session_id)?

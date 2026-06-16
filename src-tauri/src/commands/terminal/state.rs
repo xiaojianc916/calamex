@@ -152,18 +152,10 @@ pub(super) fn mark_terminal_resize_repaint_suppression(
         Some(Instant::now() + TERMINAL_RESIZE_REPAINT_SUPPRESSION);
 }
 
-pub(super) fn update_terminal_geometry(cols: u16, rows: u16) {
-    let Ok(mut geometry) = crate::terminal::registry::registry().geometry.write() else {
-        return;
-    };
-    geometry.cols = cols.max(2);
-    geometry.rows = rows.max(1);
-}
-
 /// 每会话 geometry：作为「单一 SessionRegistry」绞杀式重构的第一步，让会话各自持有自己的
 /// 列宽/行高。运行 PTY 不再统一从全局 `registry().geometry` 取尺寸，避免多开时会话 A 的运行
-/// 被会话 B 最后一次 resize 的尺寸创建。迁移期全局 geometry 暂保留（双写），待所有读取方
-/// 迁移完毕后再于绞杀收尾统一删除。
+/// 被会话 B 最后一次 resize 的尺寸创建。全局 geometry 已删除，每会话 geometry 成为唯一来源
+/// （绞杀式重构 BE-1）。
 ///
 /// 对照 VSCode `src/vs/platform/terminal/node/ptyService.ts`：每个 `PersistentTerminalProcess`
 /// 各自持有 cols/rows（经其 `XtermSerializer`），`PtyService.resize(id, cols, rows)` 仅作用于
@@ -182,19 +174,15 @@ pub(super) fn set_session_geometry(
     geometry.rows = rows.max(1);
 }
 
-/// 取指定会话的 geometry；该会话尚无记录时回退到全局 geometry（再回退到默认），保证迁移期
-/// 行为与改动前一致。
+/// 取指定会话的 geometry；该会话尚无记录时回退到默认尺寸。每会话 geometry 已是唯一真相源，
+/// 不再回退到全局 `registry().geometry`（全局几何已于 BE-1 删除）。
 pub(super) fn get_session_geometry(state: &TerminalSessionState, session_id: &str) -> Geometry {
     if let Ok(geometries) = state.session_geometry.lock()
         && let Some(geometry) = geometries.get(session_id)
     {
         return *geometry;
     }
-    crate::terminal::registry::registry()
-        .geometry
-        .read()
-        .map(|geometry| *geometry)
-        .unwrap_or_default()
+    Geometry::default()
 }
 
 pub(super) fn remove_session_geometry(state: &TerminalSessionState, session_id: &str) {
