@@ -188,16 +188,14 @@ html.is-resizing .cm-tooltip-hover {
 }
 
 .app-window-controls {
-  position: absolute;
-  top: -1px;
-  right: -1px;
+  position: fixed;
+  top: 0;
+  right: 0;
   z-index: var(--workbench-motion-layer-overlay);
   display: flex;
-  height: calc(var(--workbench-content-top-offset) + 1px);
+  height: var(--workbench-content-top-offset);
   align-items: stretch;
   background: transparent;
-  overflow: hidden;
-  border-top-right-radius: var(--window-corner-radius);
 }
 
 .app-window-control-button {
@@ -237,7 +235,6 @@ html.is-resizing .cm-tooltip-hover {
 
 .app-window-shell .app-window-control-button.is-close {
   border: 0 !important;
-  border-top-right-radius: var(--window-corner-radius) !important;
   padding: 0 !important;
   appearance: none !important;
   -webkit-appearance: none !important;
