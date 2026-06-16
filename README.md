@@ -172,7 +172,7 @@
 - **操作系统**：Windows 10/11
 - **WSL2**：已安装并配置可用的 Linux 发行版（脚本执行环境）
 - **Node.js** ≥ 26
-- **pnpm** 11.5（项目锁定 `pnpm@11.5.2`；推荐 `corepack enable && corepack prepare pnpm@latest --activate`）
+- **pnpm** 11.5（项目锁定 `pnpm@11.7.0`；推荐 `corepack enable && corepack prepare pnpm@latest --activate`）
 - **Rust** 工具链（通过 [rustup](https://rustup.rs)）
 - WSL 内建议具备 `shellcheck`、`shfmt`、`bash-language-server` 以获得完整体验
 
