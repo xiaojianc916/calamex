@@ -37,7 +37,7 @@
   "dependencies": {
     "@ag-ui/client": "^0.0.57",
     "@ag-ui/core": "^0.0.57",
-    "@agentclientprotocol/sdk": "^0.25.1",
+    "@agentclientprotocol/sdk": "^0.26.0",
     "@ai-sdk/deepseek": "^2.0.38",
     "@codemirror/autocomplete": "^6.20.3",
     "@codemirror/commands": "^6.10.3",
@@ -64,7 +64,7 @@
     "@copilotkit/core": "^1.60.1",
     "@copilotkit/vue": "^1.60.1",
     "@lezer/highlight": "^1.2.3",
-    "@lucide/vue": "^1.18.0",
+    "@lucide/vue": "^1.20.0",
     "@medv/finder": "^4.0.2",
     "@replit/codemirror-indentation-markers": "^6.5.3",
     "@shikijs/langs": "^4.2.0",
