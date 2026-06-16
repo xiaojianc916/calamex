@@ -1,4 +1,3 @@
-import { useDebounceFn } from '@vueuse/core';
 import { type ComputedRef, computed, onScopeDispose, type Ref, ref } from 'vue';
 import { useMessage } from '@/composables/useMessage';
 import {
@@ -428,10 +427,31 @@ export const useWorkspaceReplacement = (options: IUseWorkspaceReplacementOptions
     if (hasPreview) await confirmReplacementPreview();
   };
 
-  // trailing debounce：高频触发只取最后一次；vueuse 自动 onScopeDispose 取消。
-  const debouncedPreviewReplacement = useDebounceFn(
-    () => void previewReplacementToSearch('auto'),
-    SEARCH_DEBOUNCE_MS,
+  // 自实现的 trailing debounce：与 useWorkspaceSearch 同样的修复 —— @vueuse 的 useDebounceFn
+  // 返回值没有 .cancel() 方法，而 resetReplacementPreview() 与 cancelPendingReplacement() 都会
+  // 调用 debouncedPreviewReplacement.cancel()，其中 cancelPendingReplacement 在 SearchSidebarPanel
+  // 挂载/更新时的 watch 中触发，会让该次回调抛 TypeError → app.config.errorHandler →
+  // setRuntimeError('Vue render failed') → 升级到致命错误态，表现为切到“搜索”侧边栏即卡死。
+  // 改为自带 cancel() 的最小 trailing debounce 实现，并在 cancel / scope dispose 时清理定时器。
+  let replacementPreviewDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  const debouncedPreviewReplacement: (() => void) & { cancel: () => void } = Object.assign(
+    (): void => {
+      if (replacementPreviewDebounceTimer) {
+        clearTimeout(replacementPreviewDebounceTimer);
+      }
+      replacementPreviewDebounceTimer = setTimeout(() => {
+        replacementPreviewDebounceTimer = null;
+        void previewReplacementToSearch('auto');
+      }, SEARCH_DEBOUNCE_MS);
+    },
+    {
+      cancel: (): void => {
+        if (replacementPreviewDebounceTimer) {
+          clearTimeout(replacementPreviewDebounceTimer);
+          replacementPreviewDebounceTimer = null;
+        }
+      },
+    },
   );
 
   const scheduleReplacementPreview = (): void => {
