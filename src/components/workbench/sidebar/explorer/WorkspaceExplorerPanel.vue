@@ -73,8 +73,8 @@ import type {
   IWorkspaceDirectoryPayload,
   TWorkbenchOpenFilePayload,
 } from '@/types/editor';
-import { writeFileSystemPathToClipboard } from '@/utils/platform/clipboard';
 import { resolveWorkspaceKey } from '@/utils/file/workspace';
+import { writeFileSystemPathToClipboard } from '@/utils/platform/clipboard';
 
 const EXPLORER_SCROLLBAR_IDLE_HIDE_DELAY_MS = 900;
 

@@ -5,9 +5,8 @@ import { applyWindowStage } from '@/services/ipc/window.service';
 import { pinia } from '@/store';
 import { hydrateAiConversationStorage } from '@/store/plugins/debouncedPersistStorage';
 import { hydrateSessionStorage } from '@/store/plugins/tauriSessionStorage';
-import { MAIN_WINDOW_LABEL } from '@/utils/window/app-window';
-import { renderFatalBootstrapError } from '@/utils/error/bootstrap-fatal-error';
 import { initEditorScrollbarActivity } from '@/utils/editor/editor-scrollbar-activity';
+import { renderFatalBootstrapError } from '@/utils/error/bootstrap-fatal-error';
 import { initGitHubAuthHeaderEnhancement } from '@/utils/git/github-auth-header';
 import {
   recordRecursiveUpdateCulprit,
@@ -16,6 +15,7 @@ import {
   setRuntimeError,
 } from '@/utils/platform/runtime-diagnostics';
 import { markStartup, reportStartupTimings } from '@/utils/platform/startup-profiler';
+import { MAIN_WINDOW_LABEL } from '@/utils/window/app-window';
 
 registerRuntimeDiagnostics();
 markStartup('main-module-ready');

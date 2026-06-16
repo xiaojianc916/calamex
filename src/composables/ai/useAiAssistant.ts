@@ -69,8 +69,8 @@ import type {
 import type { IGitRepositoryStatusPayload } from '@/types/git';
 
 import { toErrorMessage } from '@/utils/error/error';
-import { logger } from '@/utils/platform/logger';
 import { areFileSystemPathsEqual, normalizeFileSystemPath } from '@/utils/file/path';
+import { logger } from '@/utils/platform/logger';
 
 // ---------------------------------------------------------------------------
 // Public types

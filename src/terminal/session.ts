@@ -30,9 +30,9 @@ import type {
   TTerminalConnectionState,
   TTerminalInputRoute,
 } from '@/types/terminal';
+import { toErrorMessage } from '@/utils/error/error';
 import { readClipboardText, writeClipboardText } from '@/utils/platform/clipboard';
 import { waitForDesktopRuntime } from '@/utils/platform/desktop-runtime';
-import { toErrorMessage } from '@/utils/error/error';
 import { createHiddenWriteBacklog } from '@/utils/run/hidden-write-backlog';
 import {
   SHELL_WINDOW_RESIZE_END_EVENT,

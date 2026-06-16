@@ -298,9 +298,7 @@ export const useTerminalRuntimeStore = defineStore('terminal-runtime', () => {
     const next = new Map(sessionStates.value);
     next.set(payload.sessionId, payload.to);
     sessionStates.value = next;
-    markEvent(
-      `terminal:session-state-changed:${payload.sessionId}:${payload.from}->${payload.to}`,
-    );
+    markEvent(`terminal:session-state-changed:${payload.sessionId}:${payload.from}->${payload.to}`);
   };
 
   /** 会话退出 / 关闭时清除其镜像态,避免遗留陈旧会话。 */

@@ -85,10 +85,10 @@ import type {
   TScriptDiagnosticSeverity,
 } from '@/types/editor';
 import type { IEditorSettings } from '@/types/settings';
-import { tryReadClipboardText, writeClipboardText } from '@/utils/platform/clipboard';
 import { computeDocumentMetrics, type IDocumentMetrics } from '@/utils/editor/document-metrics';
 import { computeDocChanges } from '@/utils/editor/editor-doc-diff';
 import { resolveLanguageForPath } from '@/utils/editor/editor-language';
+import { tryReadClipboardText, writeClipboardText } from '@/utils/platform/clipboard';
 
 interface IEditorExpose {
   focusEditor: () => void;

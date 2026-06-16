@@ -102,9 +102,7 @@ export interface ITerminalEventBus {
   onInteractiveReady(handler: TEventHandler<void>): UnlistenFn;
   onInteractiveExited(handler: TEventHandler<ITerminalExitEvent>): UnlistenFn;
   onStateChanged(handler: TEventHandler<ITerminalStateChangedPayload>): UnlistenFn;
-  onSessionStateChanged(
-    handler: TEventHandler<ITerminalSessionStateChangedPayload>,
-  ): UnlistenFn;
+  onSessionStateChanged(handler: TEventHandler<ITerminalSessionStateChangedPayload>): UnlistenFn;
 }
 
 // ---------------------------------------------------------------------------
@@ -143,9 +141,7 @@ export const createTerminalEventBus = (listenFn: TTerminalListen = listen): ITer
   const interactiveReadyHandlers = new Set<TEventHandler<void>>();
   const interactiveExitedHandlers = new Set<TEventHandler<ITerminalExitEvent>>();
   const stateChangedHandlers = new Set<TEventHandler<ITerminalStateChangedPayload>>();
-  const sessionStateChangedHandlers = new Set<
-    TEventHandler<ITerminalSessionStateChangedPayload>
-  >();
+  const sessionStateChangedHandlers = new Set<TEventHandler<ITerminalSessionStateChangedPayload>>();
 
   let unlisteners: UnlistenFn[] = [];
   let startPromise: Promise<void> | null = null;

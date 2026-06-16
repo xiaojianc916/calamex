@@ -22,10 +22,10 @@ import type {
 } from '@/types/editor';
 import type { IGitDiffPreviewPayload } from '@/types/git';
 import type { TDocumentDraft, TSessionSnapshot, TSessionWorkbenchState } from '@/types/session';
-import { computeDocumentMetrics, type IDocumentMetrics } from '@/utils/editor/document-metrics';
 import { createUniqueId } from '@/utils/core/id';
-import { formatFileSystemTextForDisplay, normalizeFileSystemPath } from '@/utils/file/path';
 import { DEFAULT_EXECUTOR, DEFAULT_SCRIPT } from '@/utils/core/templates';
+import { computeDocumentMetrics, type IDocumentMetrics } from '@/utils/editor/document-metrics';
+import { formatFileSystemTextForDisplay, normalizeFileSystemPath } from '@/utils/file/path';
 import { createTerminalOutputBuffer } from '@/utils/terminal/terminal-output-buffer';
 
 // ---------------------------------------------------------------------------

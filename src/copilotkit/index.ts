@@ -1,4 +1,4 @@
-export { default as CopilotKitProvider } from './provider/CopilotKitProvider.vue';
+export { SidecarAgent } from './agent/sidecar-agent';
 export type { ISidecarEventAdapter, ISidecarUiEvent } from './events/event-adapter';
 export {
   convertSidecarUiEvent,
@@ -20,4 +20,4 @@ export {
   toAguiMessages,
   toSidecarChatRequest,
 } from './events/event-adapter';
-export { SidecarAgent } from './agent/sidecar-agent';
+export { default as CopilotKitProvider } from './provider/CopilotKitProvider.vue';

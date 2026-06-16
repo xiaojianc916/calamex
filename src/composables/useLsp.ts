@@ -1,6 +1,10 @@
 import { computed, type MaybeRefOrGetter, onScopeDispose, ref, toRef, watch } from 'vue';
 import { type BridgeStateEvent, lspBridge } from '@/services/editor/lsp-bridge';
-import { createRunOnceScheduler, createSequencer, type Sequencer } from '@/utils/core/async-lifecycle';
+import {
+  createRunOnceScheduler,
+  createSequencer,
+  type Sequencer,
+} from '@/utils/core/async-lifecycle';
 
 /**
  * LSP 状态枚举

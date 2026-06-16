@@ -1,6 +1,6 @@
 import { AppError, isAppError } from '@/types/app-error';
-import { assertDesktopRuntime } from '@/utils/platform/desktop-runtime';
 import { toErrorMessage } from '@/utils/error/error';
+import { assertDesktopRuntime } from '@/utils/platform/desktop-runtime';
 import { buildPayloadMetrics } from './tauri.ipc-metrics';
 import type {
   IIpcErrorMapping,

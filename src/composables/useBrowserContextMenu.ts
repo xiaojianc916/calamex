@@ -4,7 +4,11 @@ import type {
   ILinearContextMenuItem,
 } from '@/components/common/linear-context-menu.types';
 import { openExternalUrl } from '@/utils/platform/browser';
-import { tryReadClipboardText, tryWriteClipboardText, writeClipboardText } from '@/utils/platform/clipboard';
+import {
+  tryReadClipboardText,
+  tryWriteClipboardText,
+  writeClipboardText,
+} from '@/utils/platform/clipboard';
 
 const MENU_WIDTH = 224;
 const MENU_HEIGHT = 320;

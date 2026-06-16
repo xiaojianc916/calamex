@@ -15,9 +15,9 @@ import { tauriService } from '@/services/tauri';
 import type { TThemeMode } from '@/types/app';
 import type { IAnalyzeScriptPayload, IEditorSelectionSummary } from '@/types/editor';
 import type { IEditorSettings } from '@/types/settings';
-import { waitForDesktopRuntime } from '@/utils/platform/desktop-runtime';
 import type { IDocumentMetrics } from '@/utils/editor/document-metrics';
 import { toErrorMessage } from '@/utils/error/error';
+import { waitForDesktopRuntime } from '@/utils/platform/desktop-runtime';
 
 const ANALYSIS_INITIAL_DELAY_MS = 90;
 const ANALYSIS_TYPING_DELAY_MS = 420;

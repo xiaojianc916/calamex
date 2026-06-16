@@ -13,12 +13,12 @@ import {
   type ITerminalRunChunkPayload,
   type ITerminalRunCompletedPayload,
 } from '@/types/terminal';
-import { waitForDesktopRuntime } from '@/utils/platform/desktop-runtime';
 import { createDisposableBag, createMutableDisposable } from '@/utils/core/disposable';
-import { requestDisposableTimeout } from '@/utils/platform/dom-lifecycle';
+import { DEFAULT_EXECUTOR, getExecutorLabel } from '@/utils/core/templates';
 import { toErrorMessage } from '@/utils/error/error';
 import { isShellScriptPath } from '@/utils/file/file-assets';
-import { DEFAULT_EXECUTOR, getExecutorLabel } from '@/utils/core/templates';
+import { waitForDesktopRuntime } from '@/utils/platform/desktop-runtime';
+import { requestDisposableTimeout } from '@/utils/platform/dom-lifecycle';
 import {
   buildDispatchedTerminalRunSummary,
   buildPendingTerminalRunSummary,

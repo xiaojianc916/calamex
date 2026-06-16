@@ -15,9 +15,10 @@
  *  2. createApp().mount()
  *  3. 其他消费者订阅 theme-changed 事件
  */
-import { buildComponentTokens } from '../tokens/components';
+
 import { emitCssVars } from '../derive/cssVars';
 import { buildTerminalTheme, type IXtermTheme } from '../derive/terminal';
+import { buildComponentTokens } from '../tokens/components';
 import type {
   IComponentTokens,
   IRoles,

@@ -14,6 +14,11 @@
 
 export type { IXtermTheme } from './derive/terminal';
 export { buildTerminalTheme } from './derive/terminal';
-export type { IComponentTokens, IThemeChangedDetail, IThemeVariant, TVariantId } from './runtime/manager';
+export type {
+  IComponentTokens,
+  IThemeChangedDetail,
+  IThemeVariant,
+  TVariantId,
+} from './runtime/manager';
 export { createThemeManager, getThemeManager, onThemeChanged } from './runtime/manager';
 export type { IRoles } from './tokens/types';
