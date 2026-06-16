@@ -67,6 +67,15 @@ pub(crate) struct TerminalStateChangedEvent {
     pub(crate) at_ms: i64,
 }
 
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TerminalSessionStateChangedEvent {
+    pub(crate) session_id: String,
+    pub(crate) from: TerminalState,
+    pub(crate) to: TerminalState,
+    pub(crate) at_ms: i64,
+}
+
 pub(crate) fn emit_terminal_data(app: &AppHandle, payload: TerminalDataEvent) {
     emit_to_main(app, "terminal:data", payload);
 }
@@ -89,6 +98,13 @@ pub(crate) fn emit_terminal_run_started(app: &AppHandle, payload: TerminalRunSta
 
 pub(crate) fn emit_terminal_state_changed(app: &AppHandle, payload: TerminalStateChangedEvent) {
     emit_to_main(app, "terminal:state-changed", payload);
+}
+
+pub(crate) fn emit_terminal_session_state_changed(
+    app: &AppHandle,
+    payload: TerminalSessionStateChangedEvent,
+) {
+    emit_to_main(app, "terminal:session-state-changed", payload);
 }
 
 fn emit_to_main<T>(app: &AppHandle, event: &str, payload: T)
