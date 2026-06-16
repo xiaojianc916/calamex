@@ -1,5 +1,4 @@
 /* eslint-disable */
-// 本文件由 scripts/gen-tools.mjs 生成，请勿手改。
 
 export interface IAiRuntimeToolManifestEntry {
   id: string;

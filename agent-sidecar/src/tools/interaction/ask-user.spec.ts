@@ -15,8 +15,8 @@ import {
     optionIdOf,
     questionIdOf,
     unescape,
-} from '../../tools/interaction/ask-user.js';
-import type { TSurfacedQuestion } from '../../tools/interaction/ask-user.js';
+} from './ask-user.js';
+import type { TSurfacedQuestion } from './ask-user.js';
 
 const surfacedChoice: TSurfacedQuestion = {
     questionId: 'q1',
