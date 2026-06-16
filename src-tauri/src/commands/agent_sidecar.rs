@@ -71,20 +71,36 @@ pub async fn agent_sidecar_chat(
     app: AppHandle,
     mut payload: AgentSidecarChatRequest,
 ) -> Result<AgentSidecarResponsePayload, String> {
+    // 会话连续性对齐 Zed session_id = thread.id()：先以 thread_id（缺省回退空串→host 内
+    // 按工作区新建）解析稳定 ACP SessionId，维持 thread 级别的会话连续性。
     let host = acp_host(&app)?;
-
-    if payload.model_config.is_none() {
-        payload.model_config = Some(crate::ai::gateway::current_sidecar_model_config()?);
-    }
-
-    let session_id = host
+    let acp_session_id = host
         .ensure_session(
             payload.thread_id.as_deref().unwrap_or_default(),
             payload.workspace_root_path.as_deref(),
         )
         .await
         .map_err(|error| error.to_string())?;
-    let request = crate::acp::chat_request_to_agent_chat_ext(payload, session_id.to_string());
+
+    // 流式帧关联键：使用前端提供的 session_id（= `sidecar:${assistantMessageId}`）
+    // 而非 ACP ensure_session UUID。
+    //
+    // 根因：sidecar handleAgentChat 以 input.sessionId 标记发出的 session/update 帧；
+    // 若此字段为 ACP UUID，前端 subscribeSidecarSessionStream 按前端自造的
+    // `sidecar:${assistantMessageId}` 过滤时永远不匹配，整轮 live 帧全被丢弃，
+    // 导致整轮空白、末尾一次性渲染。
+    //
+    // handleAgentChat 不依赖 session_id 做 ACP 路由（extMethod 不经标准 session/prompt），
+    // 该字段仅用于标记下发的帧，可安全替换为前端已知的关联键。
+    // 回退到 ACP session_id 以兼容 payload.session_id 未传的场景。
+    let stream_session_id = payload
+        .session_id
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| acp_session_id.to_string());
+
+    let request = crate::acp::chat_request_to_agent_chat_ext(payload, stream_session_id);
     host.agent_chat(request)
         .await
         .map_err(|error| error.to_string())
@@ -98,6 +114,8 @@ pub async fn agent_sidecar_resolve_approval(
 ) -> Result<AgentSidecarResponsePayload, String> {
     // 同 chat：先解析稳定会话，再投影为 agent/chat/resolve 扩展请求；裁决在同一回合
     // 内唤醒挂起审批并续跑，返回下一段响应信封（与旧 HTTP /approval/resolve 返回同形）。
+    // 注：resolve 路径前端以上一轮信封里的 ACP session_id 订阅，ensure_session 对同
+    // thread_id 返回同一 ACP id，两者已对齐，无需额外处理。
     let host = acp_host(&app)?;
     let session_id = host
         .ensure_session(
