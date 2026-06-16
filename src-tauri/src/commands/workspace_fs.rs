@@ -103,10 +103,18 @@ pub fn create_workspace_path(
         return Err("目标父目录不是有效目录。".into());
     }
 
-    let name = validate_workspace_entry_name(&payload.name)?;
-    let target_path = parent_path.join(&name);
+    // 支持嵌套路径（如 a/b/c.txt）：逐段校验后拼出相对路径，缺失的中间目录会被补建。
+    // 每一段都复用与单段相同的命名校验（含 . / .. / 保留名 / 非法字符），因此 `..`
+    // 无法用于越权穿越，最终目标始终落在已校验的父目录之内。
+    let (relative_path, leaf_name) = validate_workspace_entry_relative_path(&payload.name)?;
+    let target_path = parent_path.join(&relative_path);
     if target_path.exists() {
         return Err("同名文件或文件夹已存在。".into());
+    }
+
+    if let Some(intermediate_parent) = target_path.parent() {
+        fs::create_dir_all(intermediate_parent)
+            .map_err(|error| format!("创建目录失败：{error}"))?;
     }
 
     match payload.kind {
@@ -124,13 +132,14 @@ pub fn create_workspace_path(
                 })?;
         }
         WorkspacePathKind::Directory => {
-            fs::create_dir(&target_path).map_err(|error| format!("创建文件夹失败：{error}"))?;
+            fs::create_dir_all(&target_path)
+                .map_err(|error| format!("创建文件夹失败：{error}"))?;
         }
     }
 
     Ok(WorkspacePathCreatePayload {
         path: target_path.to_string_lossy().to_string(),
-        name,
+        name: leaf_name,
         kind: payload.kind,
     })
 }
@@ -347,6 +356,31 @@ fn validate_workspace_entry_name(raw_name: &str) -> Result<String, String> {
     }
 
     Ok(name.to_string())
+}
+
+/// 校验“新建”时允许的相对路径：按 `/` 与 `\\` 拆分为多段，逐段套用单段命名校验，
+/// 并跳过空段（容忍重复分隔符与结尾分隔符）。返回拼好的相对路径与叶子段名称。
+/// 任意一段为 `.` / `..` 或含非法字符都会被拒绝，从而杜绝路径穿越。
+fn validate_workspace_entry_relative_path(raw_name: &str) -> Result<(PathBuf, String), String> {
+    let mut relative_path = PathBuf::new();
+    let mut leaf_name = String::new();
+    let mut segment_count = 0_usize;
+
+    for segment in raw_name.split(['/', '\\']) {
+        if segment.is_empty() {
+            continue;
+        }
+        let name = validate_workspace_entry_name(segment)?;
+        relative_path.push(&name);
+        leaf_name = name;
+        segment_count += 1;
+    }
+
+    if segment_count == 0 {
+        return Err("名称不能为空。".into());
+    }
+
+    Ok((relative_path, leaf_name))
 }
 
 fn is_windows_reserved_device_name(name: &str) -> bool {
@@ -717,6 +751,36 @@ mod tests {
                 .expect_err("trailing space/dot should be rejected");
             assert!(error.contains("空格或点"));
         }
+    }
+
+    #[test]
+    fn accepts_nested_create_path_and_returns_leaf_name() {
+        let (relative_path, leaf_name) =
+            super::validate_workspace_entry_relative_path("a/b/c.txt").expect("nested path ok");
+        assert_eq!(relative_path, Path::new("a").join("b").join("c.txt"));
+        assert_eq!(leaf_name, "c.txt");
+    }
+
+    #[test]
+    fn collapses_redundant_separators_in_create_path() {
+        let (relative_path, leaf_name) =
+            super::validate_workspace_entry_relative_path("a//b/").expect("collapsed path ok");
+        assert_eq!(relative_path, Path::new("a").join("b"));
+        assert_eq!(leaf_name, "b");
+    }
+
+    #[test]
+    fn rejects_parent_traversal_in_create_path() {
+        let error = super::validate_workspace_entry_relative_path("a/../b")
+            .expect_err("parent traversal should be rejected");
+        assert!(error.contains("不能为 . 或 .."));
+    }
+
+    #[test]
+    fn rejects_empty_create_path() {
+        let error = super::validate_workspace_entry_relative_path("///")
+            .expect_err("empty path should be rejected");
+        assert!(error.contains("名称不能为空"));
     }
 
     #[test]
