@@ -151,3 +151,240 @@ pub async fn ensure_terminal_session(
             }
         };
         sessions.insert(payload.session_id.clone(), Arc::clone(&session));
+        set_terminal_snapshot(&terminal_state, &payload.session_id, String::new())?;
+        remove_terminal_interactive_visual_state(&terminal_state, &payload.session_id)?;
+
+        (terminal_cwd, true)
+    };
+
+    mark_terminal_interactive_ready(&app);
+
+    Ok(TerminalSessionPayload {
+        session_id: payload.session_id,
+        cwd: terminal_cwd,
+        shell_label: "WSL2".into(),
+        created,
+        initial_output: None,
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn write_terminal_input(
+    state: State<'_, TerminalSessionState>,
+    payload: TerminalInputRequest,
+) -> Result<(), String> {
+    let terminal_state = state.inner().clone();
+
+    match get_active_terminal_run_input_target(&terminal_state, &payload.session_id)? {
+        ActiveRunInputTarget::Pending => {
+            buffer_pending_switch_input(&terminal_state, &payload.session_id, &payload.data)?;
+            return Ok(());
+        }
+        ActiveRunInputTarget::Run(run_id) => {
+            let data = take_and_prepend_pending_switch_input(
+                &terminal_state,
+                &payload.session_id,
+                payload.data,
+            )?;
+            let handle = get_active_terminal_run_handle(&terminal_state, &run_id)?
+                .ok_or_else(|| "目标运行任务不存在或已结束。".to_string())?;
+            return handle
+                .write_input(data)
+                .await
+                .map_err(|error| error.to_string());
+        }
+        ActiveRunInputTarget::None => {}
+    }
+
+    let data =
+        take_and_prepend_pending_switch_input(&terminal_state, &payload.session_id, payload.data)?;
+    let session = get_terminal_session(&terminal_state, &payload.session_id)?
+        .ok_or_else(|| "目标终端会话不存在。".to_string())?;
+    session
+        .handle
+        .write_input(data)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn resize_terminal_session(
+    state: State<TerminalSessionState>,
+    payload: TerminalResizeRequest,
+) -> Result<(), String> {
+    let terminal_state = state.inner().clone();
+    update_terminal_geometry(payload.cols, payload.rows);
+    set_session_geometry(&terminal_state, &payload.session_id, payload.cols, payload.rows);
+
+    let session = get_terminal_session(&terminal_state, &payload.session_id)?
+        .ok_or_else(|| "目标终端会话不存在。".to_string())?;
+    session
+        .handle
+        .resize(payload.cols, payload.rows)
+        .map_err(|error| error.to_string())?;
+    mark_terminal_resize_repaint_suppression(&terminal_state, &payload.session_id);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn close_terminal_session(
+    state: State<TerminalSessionState>,
+    payload: CloseTerminalSessionRequest,
+) -> Result<(), String> {
+    let terminal_state = state.inner().clone();
+    // Pair close with ensure_terminal_session's create guard so close cannot miss a
+    // session that is between process spawn and registry insertion.
+    let _creation_guard = terminal_state
+        .creation_guard
+        .lock()
+        .map_err(|_| "终端会话创建锁已损坏。".to_string())?;
+    let removed_session = remove_terminal_session(&terminal_state, &payload.session_id)?;
+    remove_terminal_snapshot(&terminal_state, &payload.session_id)?;
+    remove_terminal_interactive_visual_state(&terminal_state, &payload.session_id)?;
+    remove_pending_switch_input(&terminal_state, &payload.session_id);
+    remove_session_geometry(&terminal_state, &payload.session_id);
+    if let Some(run_handle) =
+        take_active_terminal_run_for_session(&terminal_state, &payload.session_id)
+    {
+        let _ = run_handle.cancel(SIGNAL_MODE_KILL);
+    }
+    let Some(session) = removed_session else {
+        return Ok(());
+    };
+    terminate_terminal_session(session.as_ref())
+}
+
+pub fn shutdown_all_terminal_sessions(state: &TerminalSessionState) -> Result<(), String> {
+    let _creation_guard = state
+        .creation_guard
+        .lock()
+        .map_err(|_| "终端会话创建锁已损坏。".to_string())?;
+    // 先 kill 所有仍在运行的脚本：脚本走独立的运行 PTY，与交互会话句柄无关，仅 drain
+    // sessions 无法终止它们，会在应用退出后遗留无人管理的孤儿 wsl.exe。
+    for run_handle in drain_active_terminal_runs(state) {
+        let _ = run_handle.cancel(SIGNAL_MODE_KILL);
+    }
+    let sessions = {
+        let mut sessions_map = lock_terminal_sessions(state)?;
+        sessions_map
+            .drain()
+            .map(|(_, session)| session)
+            .collect::<Vec<_>>()
+    };
+    for session in sessions {
+        terminate_terminal_session(session.as_ref())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn dispatch_script_to_terminal(
+    app: AppHandle,
+    state: State<TerminalSessionState>,
+    payload: DispatchTerminalScriptRequest,
+) -> Result<DispatchTerminalScriptPayload, String> {
+    let terminal_state = state.inner().clone();
+    let session = get_terminal_session(&terminal_state, &payload.session_id)?
+        .ok_or_else(|| "目标终端会话不存在，请先打开集成终端。".to_string())?;
+    let started_at_ts = Timestamp::now();
+    let (command, script_content) =
+        build_terminal_run_command_for_local_wsl(&payload, &session.working_directory)?;
+    let command_line = command.display_command.clone();
+    let used_temp_file = command.used_temp_file;
+    let prompt_snapshot = get_terminal_snapshot(&terminal_state, &payload.session_id)?;
+    let prompt = extract_prompt_from_terminal_snapshot(&prompt_snapshot);
+
+    // 运行 PTY 按「发起该 run 的会话」自身尺寸创建，而非全局共享尺寸；多开时不会被其它
+    // 会话最后一次 resize 串台。对照 VSCode ptyService.ts：每个 PersistentTerminalProcess
+    // 持有各自的尺寸，resize 仅作用于指定 id。
+    let geometry = get_session_geometry(&terminal_state, &payload.session_id);
+    let request = LocalWslTerminalRunScriptRequest {
+        run_id: payload.run_id.clone(),
+        working_directory: command.working_directory.clone(),
+        execution_path: command.execution_path.clone(),
+        script_content,
+        cleanup_paths: command.cleanup_paths.clone(),
+        cols: geometry.cols,
+        rows: geometry.rows,
+    };
+
+    try_mark_active_terminal_run(&terminal_state, &payload.session_id, &payload.run_id)?;
+    // 每会话态：紧跟 try_mark 之后置位，发起脚本的「这个会话」立即进入 SwitchingToRun，
+    // 使其切换窗口内的输入被缓冲为 Pending；无论是否为全局首个活动运行都置位（多开时 B
+    // 不依赖被 A 卡住的全局态）。紧贴 try_mark 之后置位，避免与并发的 write_terminal_input
+    // 之间出现「有活动运行但无会话态记录」的窗口。对照 VSCode：每个 PersistentTerminalProcess
+    // 各自维护其运行/交互态，互不影响。同时向前端发 per-session 状态事件。
+    set_session_state_and_emit(
+        &app,
+        &terminal_state,
+        &payload.session_id,
+        TerminalState::SwitchingToRun,
+    );
+    let is_first_active_run = active_terminal_run_count(&terminal_state) == 1;
+    if is_first_active_run
+        && let Err(error) = transition_terminal_state(&app, TerminalState::SwitchingToRun)
+    {
+        clear_active_terminal_run(&terminal_state, &payload.run_id);
+        complete_session_run_state_and_emit(&app, &terminal_state, &payload.session_id);
+        return Err(error);
+    }
+
+    let started_at = Instant::now();
+    let visual_tracker = Arc::new(Mutex::new(TerminalRunVisualTracker::default()));
+    let event_app = app.clone();
+    let event_state = terminal_state.clone();
+    let event_session_id = payload.session_id.clone();
+    let event_run_id = payload.run_id.clone();
+    let event_prompt = prompt;
+
+    let run_handle = match run_terminal_script_local(request, move |event| {
+        handle_local_run_event(
+            &event_app,
+            &event_state,
+            &event_session_id,
+            &event_run_id,
+            &visual_tracker,
+            started_at,
+            event_prompt.clone(),
+            event,
+        );
+    }) {
+        Ok(handle) => handle,
+        Err(error) => {
+            clear_active_terminal_run(&terminal_state, &payload.run_id);
+            complete_session_run_state_and_emit(&app, &terminal_state, &payload.session_id);
+            if active_terminal_run_count(&terminal_state) == 0 {
+                let _ = transition_terminal_state(&app, TerminalState::IdleInteractive);
+            }
+            return Err(error.to_string());
+        }
+    };
+
+    let _ = attach_active_terminal_run_handle(&terminal_state, &payload.run_id, run_handle);
+
+    Ok(DispatchTerminalScriptPayload {
+        session_id: payload.session_id,
+        cwd: session.working_directory.clone(),
+        command_line,
+        used_temp_file,
+        started_at: started_at_ts.to_string(),
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn cancel_terminal_run(
+    state: State<'_, TerminalSessionState>,
+    payload: CancelTerminalRunRequest,
+) -> Result<(), String> {
+    let terminal_state = state.inner().clone();
+    let mode = payload.mode.as_deref().unwrap_or("graceful");
+
+    let handle = get_active_terminal_run_handle(&terminal_state, &payload.run_id)?
+        .ok_or_else(|| format!("未找到正在运行的脚本：{}", payload.run_id))?;
+    handle.cancel(mode).map_err(|error| error.to_string())
+}
