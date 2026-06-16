@@ -187,6 +187,39 @@ fn input_target_uses_per_session_state_not_global() {
 }
 
 #[test]
+fn session_state_transitions_are_returned_for_emission() {
+    let state = TerminalSessionState::default();
+    // 无记录基线为 Booting：非法转移（Booting -> Running）被忽略，返回 None（不发事件）。
+    assert!(set_session_state(&state, "emit-session", TerminalState::Running).is_none());
+    // Booting -> IdleInteractive 合法，返回实际转移。
+    assert_eq!(
+        set_session_state(&state, "emit-session", TerminalState::IdleInteractive),
+        Some((TerminalState::Booting, TerminalState::IdleInteractive))
+    );
+    // 相同态：无变化，返回 None。
+    assert!(set_session_state(&state, "emit-session", TerminalState::IdleInteractive).is_none());
+    // 进入运行链，逐跳返回实际转移。
+    assert_eq!(
+        set_session_state(&state, "emit-session", TerminalState::SwitchingToRun),
+        Some((TerminalState::IdleInteractive, TerminalState::SwitchingToRun))
+    );
+    assert_eq!(
+        set_session_state(&state, "emit-session", TerminalState::Running),
+        Some((TerminalState::SwitchingToRun, TerminalState::Running))
+    );
+    // 运行完成回收：Running -> SwitchingToIdle -> IdleInteractive，两步都按序返回。
+    assert_eq!(
+        complete_session_run_state(&state, "emit-session"),
+        vec![
+            (TerminalState::Running, TerminalState::SwitchingToIdle),
+            (TerminalState::SwitchingToIdle, TerminalState::IdleInteractive),
+        ]
+    );
+    // 已回到 IdleInteractive，再次回收无转移、返回空。
+    assert!(complete_session_run_state(&state, "emit-session").is_empty());
+}
+
+#[test]
 fn interactive_exit_takes_active_run_only_for_owning_session() {
     let state = TerminalSessionState::default();
     try_mark_active_terminal_run(&state, "session-A", "run-A").expect("active run should mark");
