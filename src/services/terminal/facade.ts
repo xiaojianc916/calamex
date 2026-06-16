@@ -412,7 +412,14 @@ export const useTerminalFacade = (options: ITerminalFacadeOptions = {}): ITermin
       return interactiveSessionId;
     }
     if (sessionState === 'running') {
-      return currentActiveRun?.sessionId ?? null;
+      // FE-1 多会话:优先读「本会话自己的」活动运行句柄,避免多开并发时全局
+      // activeRun 被其它会话覆盖导致本会话输入被误投到别的会话的 run stdin。本会话
+      // 尚无 per-session 运行镜像时回退到全局 activeRun,与改动前单会话语义一致。
+      return (
+        runtimeStore.getSessionActiveRun(interactiveSessionId)?.sessionId ??
+        currentActiveRun?.sessionId ??
+        null
+      );
     }
     return null;
   };

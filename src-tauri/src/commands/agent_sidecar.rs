@@ -33,6 +33,33 @@ fn model_config_to_ext(config: AgentSidecarModelConfigPayload) -> crate::acp::Ex
     }
 }
 
+/// 逐请求模型配置补齐（可注入 fetch 版，供测试）：`cfg` 为 `None` 时调 `fetch`
+/// 组装并填入；已携带时原样保留且不调 `fetch`。`fetch` 出错时错误原样上抛，
+/// 不写入半成品配置。
+fn ensure_model_config_with<F>(
+    cfg: &mut Option<AgentSidecarModelConfigPayload>,
+    fetch: F,
+) -> Result<(), String>
+where
+    F: FnOnce() -> Result<AgentSidecarModelConfigPayload, String>,
+{
+    if cfg.is_none() {
+        *cfg = Some(fetch()?);
+    }
+    Ok(())
+}
+
+/// 逐请求模型配置补齐的生产入口：驱动回合的命令（chat / resolve_approval /
+/// resolve_ask_user）在 payload 未携带 `model_config` 时，统一从已保存的 AI 配置补齐。
+///
+/// 为何必要：launch 层有意不向 ACP 子进程注入模型 env（模型配置走逐请求通道，
+/// 见 acp/launch.rs）。若回合不携带 model_config，sidecar 会退回环境兜底并因
+/// AGENT_SIDECAR_MODEL/AGENT_SIDECAR_API_KEY 未注入而报“AI 模型未配置”。集中于此单点
+/// 补齐，避免各命令重复书写、也避免未来改写时静默漏掉某条路径。
+fn ensure_model_config(cfg: &mut Option<AgentSidecarModelConfigPayload>) -> Result<(), String> {
+    ensure_model_config_with(cfg, crate::ai::gateway::current_sidecar_model_config)
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn agent_sidecar_health(app: AppHandle) -> Result<AgentSidecarHealthPayload, String> {
@@ -57,8 +84,10 @@ pub async fn agent_sidecar_restart(app: AppHandle) -> Result<AgentSidecarHealthP
 #[tauri::command]
 #[specta::specta]
 pub async fn agent_sidecar_warmup(app: AppHandle) -> Result<AgentSidecarWarmupPayload, String> {
-    // model_config 缺省：sidecar 退回到从启动期环境解析的默认模型配置（与 chat / orchestrate
-    // 一致，模型配置在 ACP 子进程派生时即注入其环境）。
+    // warmup 仅预热提供方连接，不需要真实回合模型，故此处不补齐 model_config。
+    // sidecar 端在缺省时尝试从启动期环境解析（launch 层当前有意不注入模型 env，
+    // 见 acp/launch.rs），无凭证时优雅跳过。注意：与 chat / resolve 不同——后者经命令层
+    // ensure_model_config 从已保存配置逐请求补齐，不依赖进程环境。
     acp_host(&app)?
         .warmup(crate::acp::WarmupExtRequest { model_config: None })
         .await
@@ -75,13 +104,9 @@ pub async fn agent_sidecar_chat(
     // 按工作区新建）解析稳定 ACP SessionId，维持 thread 级别的会话连续性。
     let host = acp_host(&app)?;
 
-    // 补齐模型配置：payload 未携带时，从已保存的 AI 配置组装。
-    // launch 层有意不向 ACP 子进程注入模型 env（模型配置走逐请求通道），故 chat 回合
-    // 必须经此逐请求补齐；否则 sidecar 退回环境兜底失败并抛“AI 模型未配置”，导致整轮
-    // 空白、回合秒结束（warmup 不需模型故正常，chat 必崩）。
-    if payload.model_config.is_none() {
-        payload.model_config = Some(crate::ai::gateway::current_sidecar_model_config()?);
-    }
+    // 补齐模型配置（单点，见 ensure_model_config）：payload 未携带时从已保存配置补齐，
+    // 否则 sidecar 退回未注入的环境兜底并报“AI 模型未配置”，导致整轮空白、回合秒结束。
+    ensure_model_config(&mut payload.model_config)?;
 
     let acp_session_id = host
         .ensure_session(
@@ -119,13 +144,18 @@ pub async fn agent_sidecar_chat(
 #[specta::specta]
 pub async fn agent_sidecar_resolve_approval(
     app: AppHandle,
-    payload: AgentSidecarApprovalResolveRequest,
+    mut payload: AgentSidecarApprovalResolveRequest,
 ) -> Result<AgentSidecarResponsePayload, String> {
     // 同 chat：先解析稳定会话，再投影为 agent/chat/resolve 扩展请求；裁决在同一回合
     // 内唤醒挂起审批并续跑，返回下一段响应信封（与旧 HTTP /approval/resolve 返回同形）。
     // 注：resolve 路径前端以上一轮信封里的 ACP session_id 订阅，ensure_session 对同
     // thread_id 返回同一 ACP id，两者已对齐，无需额外处理。
     let host = acp_host(&app)?;
+
+    // 与 chat 同源：续跑同一回合仍需主模型，payload 缺省 model_config 时从已保存配置补齐，
+    // 避免 sidecar 退回未注入的环境而报“AI 模型未配置”。
+    ensure_model_config(&mut payload.model_config)?;
+
     let session_id = host
         .ensure_session(
             payload.thread_id.as_deref().unwrap_or_default(),
@@ -144,11 +174,15 @@ pub async fn agent_sidecar_resolve_approval(
 #[specta::specta]
 pub async fn agent_sidecar_resolve_ask_user(
     app: AppHandle,
-    payload: AgentSidecarAskUserResumeRequest,
+    mut payload: AgentSidecarAskUserResumeRequest,
 ) -> Result<AgentSidecarResponsePayload, String> {
     // 同 resolve_approval：先解析稳定会话，再投影为 agent/ask-user/resume 扩展请求；
     // 回灌 outcome + 结构化 answers 在同一回合内唤醒挂起的反向提问并续跑，返回下一段响应信封。
     let host = acp_host(&app)?;
+
+    // 与 chat / resolve_approval 同源：续跑仍需主模型，缺省时从已保存配置补齐。
+    ensure_model_config(&mut payload.model_config)?;
+
     let session_id = host
         .ensure_session(
             payload.thread_id.as_deref().unwrap_or_default(),
@@ -190,8 +224,11 @@ pub async fn agent_sidecar_orchestrate(
     app: AppHandle,
     payload: AgentSidecarOrchestrateRequest,
 ) -> Result<AgentSidecarOrchestratePayload, String> {
-    // session_id / model_config 不注入：host 以 thread_id 解析/建立会话，模型配置由 sidecar
-    // 启动期环境解析（与主聊天一致）。
+    // session_id 不注入：host 以 thread_id 解析/建立会话。
+    // 注意：编排路径目前未逐请求补齐 model_config（AcpOrchestrateStart 无该字段），
+    // sidecar 端会退回启动期环境解析，而 launch 层当前不注入模型 env；编排在
+    // feature flag 后面、主聊天不走此路。若后续启用编排，需比照 chat 补齐
+    // model_config（需扩展 AcpOrchestrateStart，独立改动）。
     acp_host(&app)?
         .orchestrate(crate::acp::AcpOrchestrateStart {
             goal: payload.goal,
@@ -219,4 +256,50 @@ pub async fn agent_sidecar_orchestrate_resume(
         })
         .await
         .map_err(|error| error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_config(model_id: &str) -> AgentSidecarModelConfigPayload {
+        AgentSidecarModelConfigPayload {
+            model_id: model_id.to_string(),
+            api_key: "secret-key".into(),
+            base_url: None,
+        }
+    }
+
+    #[test]
+    fn ensure_model_config_fills_when_absent() {
+        let mut cfg: Option<AgentSidecarModelConfigPayload> = None;
+        ensure_model_config_with(&mut cfg, || Ok(sample_config("deepseek/deepseek-v4-pro")))
+            .expect("缺省时应补齐成功");
+        let filled = cfg.expect("缺省时应被补齐");
+        assert_eq!(filled.model_id, "deepseek/deepseek-v4-pro");
+    }
+
+    #[test]
+    fn ensure_model_config_keeps_existing_without_invoking_fetch() {
+        let mut cfg = Some(sample_config("zhipuai/glm-4.7-flash"));
+        let mut fetch_called = false;
+        ensure_model_config_with(&mut cfg, || {
+            fetch_called = true;
+            Ok(sample_config("deepseek/deepseek-v4-pro"))
+        })
+        .expect("已有配置时应直接返回");
+        assert!(!fetch_called, "已携带 model_config 时不应再读取已保存配置");
+        assert_eq!(
+            cfg.expect("应保留原配置").model_id,
+            "zhipuai/glm-4.7-flash"
+        );
+    }
+
+    #[test]
+    fn ensure_model_config_propagates_fetch_error() {
+        let mut cfg: Option<AgentSidecarModelConfigPayload> = None;
+        let result = ensure_model_config_with(&mut cfg, || Err("AI 模型未配置".to_string()));
+        assert_eq!(result, Err("AI 模型未配置".to_string()));
+        assert!(cfg.is_none(), "补齐失败时不应写入半成品配置");
+    }
 }
