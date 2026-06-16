@@ -172,7 +172,7 @@ export const useTerminalFacade = (options: ITerminalFacadeOptions = {}): ITermin
       switchingInputBufferBytes = 0;
       return;
     }
-    const targetSessionId = routeInput(state.value, activeRun.value);
+    const targetSessionId = routeInput(currentSessionState(), activeRun.value);
     if (!targetSessionId) {
       scheduleSwitchingInputFlush();
       return;
@@ -287,7 +287,7 @@ export const useTerminalFacade = (options: ITerminalFacadeOptions = {}): ITermin
     listeners.add(
       eventBus.onStateChanged((payload) => {
         runtimeStore.applyStateChanged(payload);
-        if (switchingInputBuffer.length > 0 && routeInput(state.value, activeRun.value)) {
+        if (switchingInputBuffer.length > 0 && routeInput(currentSessionState(), activeRun.value)) {
           void flushSwitchingInputBuffer();
         }
       }),
@@ -302,7 +302,7 @@ export const useTerminalFacade = (options: ITerminalFacadeOptions = {}): ITermin
         if (
           payload.sessionId === interactiveSessionId &&
           switchingInputBuffer.length > 0 &&
-          routeInput(state.value, activeRun.value)
+          routeInput(currentSessionState(), activeRun.value)
         ) {
           void flushSwitchingInputBuffer();
         }
@@ -424,14 +424,26 @@ export const useTerminalFacade = (options: ITerminalFacadeOptions = {}): ITermin
     return null;
   };
 
+  /**
+   * 「本 facade 自己会话」的有效运行态:优先读 per-session 镜像,未命中回退全局态。
+   * 与 routeInput 内部口径一致——全局 state 是单例,多开并发时会被其它会话覆盖,不能
+   * 用来判定本会话的输入归属 / 缓冲。
+   */
+  const currentSessionState = (): TTerminalRuntimeState =>
+    runtimeStore.getSessionState(interactiveSessionId) ?? state.value;
+
   const writeInputForCurrentState = async (data: Uint8Array): Promise<void> => {
-    const targetSessionId = routeInput(state.value, activeRun.value);
+    // FE-1 多会话:输入分流改用「本会话」有效态,不再读全局 state.value。否则会话 A 在
+    // switching_to_run、而全局 state 已被会话 B 覆盖成别的态时,A 的输入会被错误丢弃 /
+    // 错分流,而不是按 A 自己的切换态缓冲。
+    const sessionState = currentSessionState();
+    const targetSessionId = routeInput(sessionState, activeRun.value);
     if (targetSessionId) {
-      runtimeStore.recordInputRoute(state.value === 'running' ? 'run' : 'interactive', data);
+      runtimeStore.recordInputRoute(sessionState === 'running' ? 'run' : 'interactive', data);
       await writeInput(targetSessionId, data);
       return;
     }
-    if (state.value === 'switching_to_run' || state.value === 'switching_to_idle') {
+    if (sessionState === 'switching_to_run' || sessionState === 'switching_to_idle') {
       if (queueSwitchingInput(data)) {
         runtimeStore.recordInputRoute('buffered', data);
       } else {
