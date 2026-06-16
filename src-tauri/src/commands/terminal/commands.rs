@@ -28,19 +28,18 @@ use crate::terminal::{
 use super::events::{
     complete_session_run_state_and_emit, handle_local_run_event,
     handle_local_wsl_interactive_terminal_event, mark_terminal_interactive_ready,
-    set_session_state_and_emit, transition_terminal_state,
+    set_session_state_and_emit,
 };
 use super::state::{
-    ActiveRunInputTarget, TerminalSession, TerminalSessionState, active_terminal_run_count,
-    attach_active_terminal_run_handle, buffer_pending_switch_input, clear_active_terminal_run,
-    drain_active_terminal_runs, get_active_terminal_run_handle,
-    get_active_terminal_run_input_target, get_session_geometry, get_terminal_session,
-    get_terminal_snapshot, lock_terminal_sessions, mark_terminal_resize_repaint_suppression,
-    remove_pending_switch_input, remove_session_geometry, remove_terminal_interactive_visual_state,
-    remove_terminal_session, remove_terminal_snapshot, resolve_terminal_start_directory,
-    set_session_geometry, set_terminal_snapshot, should_recreate_terminal_session,
-    take_active_terminal_run_for_session, take_and_prepend_pending_switch_input,
-    terminate_terminal_session, try_mark_active_terminal_run,
+    ActiveRunInputTarget, TerminalSession, TerminalSessionState, attach_active_terminal_run_handle,
+    buffer_pending_switch_input, clear_active_terminal_run, drain_active_terminal_runs,
+    get_active_terminal_run_handle, get_active_terminal_run_input_target, get_session_geometry,
+    get_terminal_session, get_terminal_snapshot, lock_terminal_sessions,
+    mark_terminal_resize_repaint_suppression, remove_pending_switch_input, remove_session_geometry,
+    remove_terminal_interactive_visual_state, remove_terminal_session, remove_terminal_snapshot,
+    resolve_terminal_start_directory, set_session_geometry, set_terminal_snapshot,
+    should_recreate_terminal_session, take_active_terminal_run_for_session,
+    take_and_prepend_pending_switch_input, terminate_terminal_session, try_mark_active_terminal_run,
 };
 use super::to_wsl_path;
 
@@ -312,24 +311,17 @@ pub fn dispatch_script_to_terminal(
 
     try_mark_active_terminal_run(&terminal_state, &payload.session_id, &payload.run_id)?;
     // 每会话态：紧跟 try_mark 之后置位，发起脚本的「这个会话」立即进入 SwitchingToRun，
-    // 使其切换窗口内的输入被缓冲为 Pending；无论是否为全局首个活动运行都置位（多开时 B
-    // 不依赖被 A 卡住的全局态）。紧贴 try_mark 之后置位，避免与并发的 write_terminal_input
-    // 之间出现「有活动运行但无会话态记录」的窗口。对照 VSCode：每个 PersistentTerminalProcess
-    // 各自维护其运行/交互态，互不影响。同时向前端发 per-session 状态事件。
+    // 使其切换窗口内的输入被缓冲为 Pending。紧贴 try_mark 之后置位，避免与并发的
+    // write_terminal_input 之间出现「有活动运行但无会话态记录」的窗口。全局 FSM 已移除
+    // （BE-2b），不再有「首个活动运行」的全局门控；多开时 B 不依赖被 A 卡住的全局态。
+    // 对照 VSCode：每个 PersistentTerminalProcess 各自维护其运行/交互态，互不影响。同时
+    // 向前端发 per-session 状态事件。
     set_session_state_and_emit(
         &app,
         &terminal_state,
         &payload.session_id,
         TerminalState::SwitchingToRun,
     );
-    let is_first_active_run = active_terminal_run_count(&terminal_state) == 1;
-    if is_first_active_run
-        && let Err(error) = transition_terminal_state(&app, TerminalState::SwitchingToRun)
-    {
-        clear_active_terminal_run(&terminal_state, &payload.run_id);
-        complete_session_run_state_and_emit(&app, &terminal_state, &payload.session_id);
-        return Err(error);
-    }
 
     let started_at = Instant::now();
     let visual_tracker = Arc::new(Mutex::new(TerminalRunVisualTracker::default()));
@@ -355,9 +347,6 @@ pub fn dispatch_script_to_terminal(
         Err(error) => {
             clear_active_terminal_run(&terminal_state, &payload.run_id);
             complete_session_run_state_and_emit(&app, &terminal_state, &payload.session_id);
-            if active_terminal_run_count(&terminal_state) == 0 {
-                let _ = transition_terminal_state(&app, TerminalState::IdleInteractive);
-            }
             return Err(error.to_string());
         }
     };
