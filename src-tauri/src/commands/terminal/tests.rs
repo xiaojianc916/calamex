@@ -91,33 +91,38 @@ fn active_run_does_not_block_input_outside_switching_states() {
     let state = TerminalSessionState::default();
     try_mark_active_terminal_run(&state, "session-1", "run-1").expect("active run should mark");
 
-    set_test_terminal_state(TerminalState::IdleInteractive);
+    // 输入路由按「会话自身」的状态判定，不再读全局 registry().state；用每会话态驱动，
+    // 避免与其它并行测试争抢共享的全局单例。会话从 Booting 基线走合法转移链。
+    set_session_state(&state, "session-1", TerminalState::IdleInteractive);
     assert!(matches!(
         get_active_terminal_run_input_target(&state, "session-1"),
         Ok(ActiveRunInputTarget::None)
     ));
 
-    set_test_terminal_state(TerminalState::SwitchingToRun);
+    set_session_state(&state, "session-1", TerminalState::SwitchingToRun);
     assert!(matches!(
         get_active_terminal_run_input_target(&state, "session-1"),
         Ok(ActiveRunInputTarget::Pending)
     ));
 
-    set_test_terminal_state(TerminalState::Running);
+    set_session_state(&state, "session-1", TerminalState::Running);
     assert!(matches!(
         get_active_terminal_run_input_target(&state, "session-1"),
         Ok(ActiveRunInputTarget::Run(run_id)) if run_id == "run-1"
     ));
 
     clear_active_terminal_run(&state, "run-1");
-    set_test_terminal_state(TerminalState::IdleInteractive);
 }
 
 #[test]
 fn active_run_input_routes_only_to_owning_session() {
     let state = TerminalSessionState::default();
     try_mark_active_terminal_run(&state, "session-A", "run-A").expect("active run should mark");
-    set_test_terminal_state(TerminalState::Running);
+
+    // 会话 A 自身走完整每会话转移进入 Running（不触碰全局，并行确定）。
+    set_session_state(&state, "session-A", TerminalState::IdleInteractive);
+    set_session_state(&state, "session-A", TerminalState::SwitchingToRun);
+    set_session_state(&state, "session-A", TerminalState::Running);
 
     assert!(matches!(
         get_active_terminal_run_input_target(&state, "session-A"),
@@ -130,7 +135,6 @@ fn active_run_input_routes_only_to_owning_session() {
     ));
 
     clear_active_terminal_run(&state, "run-A");
-    set_test_terminal_state(TerminalState::IdleInteractive);
 }
 
 #[test]
