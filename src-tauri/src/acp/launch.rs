@@ -43,6 +43,14 @@ const KIMI_EXE_ENV: &str = "XIAOJIANC_KIMI_EXE";
 const CODEX_ACP_EXE_ENV: &str = "XIAOJIANC_CODEX_ACP_EXE";
 const OPENAI_API_KEY_ENV: &str = "OPENAI_API_KEY";
 
+// Kimi Code 的 provider 级凭证 env 名与默认端点(官方文档核对:moonshotai.github.io/kimi-code)。
+// 注意:`kimi acp` 服务经终端 `/login` 自持久化凭证(Kimi Code OAuth 或 Moonshot 开放平台
+// API key,落 `~/.kimi`),并不从启动环境读取这些变量;故 build_kimi_client_config 有意不注入
+// 它们(env 为空)。此处仅作文档与未来「托管直连」之用,不改变任何运行时行为。
+const KIMI_API_KEY_ENV: &str = "KIMI_API_KEY";
+const KIMI_BASE_URL_ENV: &str = "KIMI_BASE_URL";
+const KIMI_DEFAULT_BASE_URL: &str = "https://api.moonshot.ai/v1";
+
 /// 可挂载的 ACP 后端标识(ADR-0015)。`Builtin` 为自家 Node 边车(默认后端,
 /// 行为与历史一致);其余为外部 ACP 编码 agent。本阶段仅提供启动配置,接线在阶段 2。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
