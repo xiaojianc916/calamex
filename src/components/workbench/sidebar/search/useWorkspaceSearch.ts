@@ -1,4 +1,3 @@
-import { useDebounceFn } from '@vueuse/core';
 import { computed, onScopeDispose, type Ref, ref, shallowRef, watch } from 'vue';
 import { tauriService } from '@/services/tauri';
 import type { IWorkbenchOpenFileRequest } from '@/types/editor';
@@ -408,8 +407,35 @@ export const useWorkspaceSearch = (options: IUseWorkspaceSearchOptions) => {
     }
   };
 
-  // trailing debounce：高频触发只取最后一次；vueuse 自动 onScopeDispose 取消。
-  const debouncedRunSearch = useDebounceFn(() => void runSearch(), SEARCH_DEBOUNCE_MS);
+  // 自实现的 trailing debounce：高频触发只执行最后一次，并显式暴露 cancel()。
+  // 此前用 @vueuse/core 的 useDebounceFn，但它的返回值并没有 .cancel() 方法（旧注释
+  // “vueuse 自动 onScopeDispose 取消”是错误假设）。cancelPendingSearch() 里调用
+  // debouncedRunSearch.cancel() 会必抛 “debouncedRunSearch.cancel is not a function”，
+  // 而该调用又发生在 SearchSidebarPanel 挂载时的 immediate watch（!isActive 分支）中，
+  // 于是异常发生在 setup 阶段 → app.config.errorHandler → setRuntimeError('Vue render
+  // failed') → 升级到致命错误态。在 App.vue 覆盖层修复之前，这会拆掉整个工作台，
+  // 表现为“切到搜索侧边栏、来回切几次后点击彻底卡死”。改为自带 cancel() 的最小 trailing
+  // debounce 实现，从根上修复，并在 cancel / scope dispose 时正确清理待执行的定时器。
+  let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  const debouncedRunSearch: (() => void) & { cancel: () => void } = Object.assign(
+    (): void => {
+      if (searchDebounceTimer) {
+        clearTimeout(searchDebounceTimer);
+      }
+      searchDebounceTimer = setTimeout(() => {
+        searchDebounceTimer = null;
+        void runSearch();
+      }, SEARCH_DEBOUNCE_MS);
+    },
+    {
+      cancel: (): void => {
+        if (searchDebounceTimer) {
+          clearTimeout(searchDebounceTimer);
+          searchDebounceTimer = null;
+        }
+      },
+    },
+  );
 
   const scheduleSearch = (): void => {
     invalidateInFlightSearch();
