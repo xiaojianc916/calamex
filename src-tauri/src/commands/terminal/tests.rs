@@ -20,11 +20,11 @@ use super::events::{
 use super::state::{
     ActiveRunInputTarget, TerminalSessionState, active_terminal_run_count,
     append_terminal_snapshot, buffer_pending_switch_input, clear_active_terminal_run,
-    get_active_terminal_run_input_target, get_session_geometry, get_terminal_snapshot,
-    mark_terminal_resize_repaint_suppression, remove_session_geometry, set_session_geometry,
-    set_terminal_snapshot, should_skip_snapshot_for_interactive_resize_repaint,
-    take_active_terminal_run_for_session, take_and_prepend_pending_switch_input,
-    try_mark_active_terminal_run,
+    complete_session_run_state, get_active_terminal_run_input_target, get_session_geometry,
+    get_session_state, get_terminal_snapshot, mark_terminal_resize_repaint_suppression,
+    remove_session_geometry, set_session_geometry, set_session_state, set_terminal_snapshot,
+    should_skip_snapshot_for_interactive_resize_repaint, take_active_terminal_run_for_session,
+    take_and_prepend_pending_switch_input, try_mark_active_terminal_run,
 };
 use super::to_wsl_path;
 
@@ -131,6 +131,55 @@ fn active_run_input_routes_only_to_owning_session() {
 
     clear_active_terminal_run(&state, "run-A");
     set_test_terminal_state(TerminalState::IdleInteractive);
+}
+
+#[test]
+fn input_target_uses_per_session_state_not_global() {
+    let state = TerminalSessionState::default();
+    // 输入路由现在只依据「每会话各自的状态」，不再读全局 registry().state；本测试因此完全
+    // 不触碰全局态，仅通过每会话态驱动断言，验证多开互不串台。
+    try_mark_active_terminal_run(&state, "session-A", "run-A").expect("mark A");
+    try_mark_active_terminal_run(&state, "session-B", "run-B").expect("mark B");
+
+    // 会话 A 走完整每会话转移进入 Running。
+    set_session_state(&state, "session-A", TerminalState::IdleInteractive);
+    set_session_state(&state, "session-A", TerminalState::SwitchingToRun);
+    set_session_state(&state, "session-A", TerminalState::Running);
+    // 会话 B 仅处于交互态。
+    set_session_state(&state, "session-B", TerminalState::IdleInteractive);
+
+    // A 命中自身 Running -> 输入进 A 的 run。
+    assert!(matches!(
+        get_active_terminal_run_input_target(&state, "session-A"),
+        Ok(ActiveRunInputTarget::Run(run_id)) if run_id == "run-A"
+    ));
+    // B 自身处于 IdleInteractive -> None：即便 A 在 Running、且 B 也有活动运行，
+    // B 的输入也绝不串进任何 run（修复跨会话输入串台）。
+    assert!(matches!(
+        get_active_terminal_run_input_target(&state, "session-B"),
+        Ok(ActiveRunInputTarget::None)
+    ));
+
+    // B 自己进入 SwitchingToRun -> Pending（仅作用于 B，不影响 A）。
+    set_session_state(&state, "session-B", TerminalState::SwitchingToRun);
+    assert!(matches!(
+        get_active_terminal_run_input_target(&state, "session-B"),
+        Ok(ActiveRunInputTarget::Pending)
+    ));
+    assert!(matches!(
+        get_active_terminal_run_input_target(&state, "session-A"),
+        Ok(ActiveRunInputTarget::Run(run_id)) if run_id == "run-A"
+    ));
+
+    // 运行完成回收会话态：Running -> SwitchingToIdle -> IdleInteractive。
+    complete_session_run_state(&state, "session-A");
+    assert_eq!(
+        get_session_state(&state, "session-A"),
+        TerminalState::IdleInteractive
+    );
+
+    clear_active_terminal_run(&state, "run-A");
+    clear_active_terminal_run(&state, "run-B");
 }
 
 #[test]
