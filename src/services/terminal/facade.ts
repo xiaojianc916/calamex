@@ -294,10 +294,18 @@ export const useTerminalFacade = (options: ITerminalFacadeOptions = {}): ITermin
     );
     listeners.add(
       eventBus.onSessionStateChanged((payload) => {
-        // P0 多会话地基:按会话镜像运行态。不触碰全局 state / 输入路由,
-        // 那些仍由 onStateChanged 驱动;这里仅为多标签 UI / 后续 per-session
-        // 路由提供数据。
+        // P0 多会话:按会话镜像运行态。输入路由的事实来源已迁到 per-session 态
+        // (见 routeInput),故本会话切到可写态时也要补冲切换期缓冲的输入——多开时
+        // 第二个并发运行只发 per-session 事件、不发全局事件,仅靠 onStateChanged
+        // 无法触发补冲。仅响应「本 facade 自己会话」的转移,避免被其它会话误触发。
         runtimeStore.applySessionStateChanged(payload);
+        if (
+          payload.sessionId === interactiveSessionId &&
+          switchingInputBuffer.length > 0 &&
+          routeInput(state.value, activeRun.value)
+        ) {
+          void flushSwitchingInputBuffer();
+        }
       }),
     );
     eventBridgeListeners.set(() => listeners.dispose());
@@ -392,10 +400,18 @@ export const useTerminalFacade = (options: ITerminalFacadeOptions = {}): ITermin
     currentState: TTerminalRuntimeState,
     currentActiveRun: ITerminalRunHandle | null,
   ): string | null => {
-    if (currentState === 'idle_interactive') {
+    // P0 多会话:输入路由的事实来源迁到「本 facade 自己会话」的 per-session 态镜像,
+    // 不再读单一全局 FSM(全局态无法同时表达多个会话:A 在 Running、B 在 Idle)。
+    // 本会话的 per-session 镜像尚无记录时回退到全局态,保证迁移期 / 首个事件到达前的
+    // 行为与改动前一致——与后端 get_session_state 无记录回退到全局 current_state 的语义
+    // 对齐。对照 VSCode ptyService.ts:输入经 PtyService.input(id, data) 按 id 路由到对应
+    // PersistentTerminalProcess,各进程依据自身交互 / 生命周期态收发,不存在跨会话共享的
+    // 全局终端态。
+    const sessionState = runtimeStore.getSessionState(interactiveSessionId) ?? currentState;
+    if (sessionState === 'idle_interactive') {
       return interactiveSessionId;
     }
-    if (currentState === 'running') {
+    if (sessionState === 'running') {
       return currentActiveRun?.sessionId ?? null;
     }
     return null;
