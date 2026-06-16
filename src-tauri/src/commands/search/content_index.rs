@@ -1,4 +1,3 @@
-use super::super::decode_script_bytes;
 use super::scan::{ScannedFile, workspace_cached_files_for_index};
 use super::types::WorkspaceSearchRequest;
 use std::{
@@ -105,7 +104,7 @@ fn workspace_content_index(root: &Path) -> Result<Arc<WorkspaceContentIndex>, St
     }
 
     let files = workspace_cached_files_for_index(root)?;
-    let index = Arc::new(build_workspace_content_index(files.as_slice()));
+    let index = Arc::new(build_workspace_content_index(root, files.as_slice()));
 
     let mut guard = indexes
         .lock()
@@ -117,12 +116,12 @@ fn workspace_content_index(root: &Path) -> Result<Arc<WorkspaceContentIndex>, St
     Ok(index)
 }
 
-fn build_workspace_content_index(files: &[ScannedFile]) -> WorkspaceContentIndex {
+fn build_workspace_content_index(root: &Path, files: &[ScannedFile]) -> WorkspaceContentIndex {
     let mut trigram_to_files: HashMap<Trigram, Vec<String>> = HashMap::new();
     let mut unindexed_files = Vec::new();
 
     for file in files {
-        match collect_file_trigrams(file) {
+        match collect_file_trigrams(root, file) {
             Some(trigrams) => {
                 for trigram in trigrams {
                     trigram_to_files
@@ -148,14 +147,14 @@ fn build_workspace_content_index(files: &[ScannedFile]) -> WorkspaceContentIndex
     }
 }
 
-fn collect_file_trigrams(file: &ScannedFile) -> Option<HashSet<Trigram>> {
+fn collect_file_trigrams(root: &Path, file: &ScannedFile) -> Option<HashSet<Trigram>> {
     let metadata = fs::metadata(&file.path).ok()?;
     if metadata.len() > MAX_TRIGRAM_INDEXED_FILE_BYTES {
         return None;
     }
 
-    let bytes = fs::read(&file.path).ok()?;
-    let (content, _encoding) = decode_script_bytes(&bytes).ok()?;
+    // 复用按 (len, mtime) 缓存的已解码文本：索引构建与结构化/模糊搜索共用同一份解码结果。
+    let content = super::content_cache::workspace_file_text(root, &file.relative_path, &file.path)?;
     Some(trigram_keys_from_bytes(
         fold_ascii_case_bytes(&content).as_slice(),
     ))

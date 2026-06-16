@@ -1,4 +1,3 @@
-use super::super::decode_script_bytes;
 use super::preview::line_range_at_byte_offset;
 use super::replace::build_structural_pattern;
 use super::scan::{
@@ -16,7 +15,7 @@ use nucleo_matcher::{
     pattern::{CaseMatching, Normalization, Pattern as NucleoPattern},
 };
 use rayon::prelude::*;
-use std::{fs, io, path::Path};
+use std::{io, path::Path};
 
 /// 内容模糊搜索的轻量预过滤器。
 ///
@@ -258,6 +257,7 @@ pub(super) fn search_file_names(
 }
 
 pub(super) fn search_file_contents(
+    root: &Path,
     files: &[ScannedFile],
     query: &str,
     payload: &WorkspaceSearchRequest,
@@ -269,7 +269,7 @@ pub(super) fn search_file_contents(
     }
 
     if payload.content_fuzzy {
-        return search_fuzzy_file_contents(files, query, payload.match_case, limit, sink);
+        return search_fuzzy_file_contents(root, files, query, payload.match_case, limit, sink);
     }
 
     let pattern = if payload.use_regex {
@@ -308,6 +308,7 @@ pub(super) fn search_file_contents(
 /// 内容模糊搜索：逐文件、逐行用 nucleo 做子序列模糊匹配。与精确/正则路径一样
 /// 并行化，但这是“功能”而非“性能”路径：逐行模糊比 ripgrep 更贵，仅在用户显式开启时生效。
 fn search_fuzzy_file_contents(
+    root: &Path,
     files: &[ScannedFile],
     query: &str,
     match_case: bool,
@@ -325,7 +326,7 @@ fn search_fuzzy_file_contents(
     let per_file = files
         .par_iter()
         .map(|file| {
-            let local = search_one_file_fuzzy(file, &pattern, prefilter.as_ref(), limit)?;
+            let local = search_one_file_fuzzy(root, file, &pattern, prefilter.as_ref(), limit)?;
             // 流式推送：与精确/正则路径一致，按文件发现顺序把命中交给 sink。
             if let Some(sink) = sink {
                 sink.push(&local);
@@ -338,24 +339,25 @@ fn search_fuzzy_file_contents(
 }
 
 fn search_one_file_fuzzy(
+    root: &Path,
     file: &ScannedFile,
     pattern: &NucleoPattern,
     prefilter: Option<&FuzzyLinePrefilter>,
     limit: usize,
 ) -> Result<Vec<WorkspaceSearchResult>, String> {
     let mut local = Vec::new();
-    let bytes = match fs::read(&file.path) {
-        Ok(bytes) => bytes,
-        Err(_) => return Ok(local),
+    // 复用按 (len, mtime) 缓存的已解码文本：避免同一文件在多次模糊搜索中重复读盘 + 解码。
+    let Some(content) =
+        super::content_cache::workspace_file_text(root, &file.relative_path, &file.path)
+    else {
+        return Ok(local);
     };
-    // 文件级候选筛除：query 要求的 ASCII 字符若整文件都没有，逐行必然全部落空，
-    // 在更贵的解码（编码探测 + 转码）之前整文件跳过。
-    if prefilter.is_some_and(|prefilter| !prefilter.bytes_may_match(&bytes)) {
+    // 文件级候选筛除：在已解码文本的字节上检查 query 要求的 ASCII 字符是否整文件存在
+    // （ASCII 字节在解码前后一致，等价于原先对原始字节的判断）；缺任意一个则整文件不可能
+    // 命中，在更贵的逐行 nucleo 之前整文件跳过。非 ASCII（如 CJK）的存在性仍只在下方逐行阶段判断。
+    if prefilter.is_some_and(|prefilter| !prefilter.bytes_may_match(content.as_bytes())) {
         return Ok(local);
     }
-    let Ok((content, _encoding)) = decode_script_bytes(&bytes) else {
-        return Ok(local);
-    };
 
     // 路径字符串每文件只转换一次：避免对每条命中重复做 to_string_lossy 的全路径扫描。
     let path_display = file.path.to_string_lossy().into_owned();
@@ -412,6 +414,7 @@ fn search_one_file_fuzzy(
 }
 
 pub(super) fn search_structural_contents(
+    root: &Path,
     files: &[ScannedFile],
     query: &str,
     limit: usize,
@@ -431,18 +434,17 @@ pub(super) fn search_structural_contents(
         .filter(|(_, file)| is_shell_like_file(file))
         .map(|(index, file)| {
             let mut local = Vec::new();
-            let bytes = match fs::read(&file.path) {
-                Ok(bytes) => bytes,
-                Err(_) => return Ok((index, local)),
-            };
-            let Ok((content, _encoding)) = decode_script_bytes(&bytes) else {
+            // 复用按 (len, mtime) 缓存的已解码文本：避免同一文件在多次结构化搜索中重复读盘 + 解码。
+            let Some(content) =
+                super::content_cache::workspace_file_text(root, &file.relative_path, &file.path)
+            else {
                 return Ok((index, local));
             };
             // 路径字符串每文件只转换一次：避免对每条命中重复做 to_string_lossy 的全路径扫描。
             let path_display = file.path.to_string_lossy().into_owned();
-            let root = lang.ast_grep(&content);
+            let ast_root = lang.ast_grep(&content);
 
-            for node_match in root.root().find_all(&pattern) {
+            for node_match in ast_root.root().find_all(&pattern) {
                 let start = node_match.start_pos();
                 let line_range = line_range_at_byte_offset(&content, node_match.range().start);
                 let line = &content[line_range.clone()];
