@@ -18,6 +18,7 @@ markStartup('main-module-ready');
 const MESSAGES = {
   vueErrorLabel: 'Vue render failed',
   bootstrapErrorLabel: 'Application bootstrap failed',
+  recursiveUpdateLabel: 'Vue recursive update loop detected',
 } as const;
 
 // 窗口默认 visible:false。正常路径由 App.vue 在首帧后显示窗口；但若启动早期(App.vue
@@ -143,6 +144,25 @@ const bootstrap = async (): Promise<void> => {
 
     app.config.errorHandler = (error) => {
       reportRuntimeError(MESSAGES.vueErrorLabel, error);
+    };
+
+    // Vue 的“Maximum recursive updates exceeded”是通过 warnHandler(而非 errorHandler)路由的：
+    // 默认仅 console.warn、且不含触发组件名，在“无报错卡死”场景里极易被忽略，也不会被
+    // runtime-diagnostics 的 errorHandler 捕获。这里显式拦截该告警并打印出触发组件名，
+    // 把“某个常驻组件自触发递归更新、反复占满主线程”从黑盒变成可定位的问题。
+    app.config.warnHandler = (message: string, instance: unknown, trace: string) => {
+      if (message.includes('Maximum recursive updates')) {
+        const componentType = (
+          instance as { $?: { type?: { __name?: string; name?: string } } } | null
+        )?.$?.type;
+        const componentName =
+          componentType?.__name ?? componentType?.name ?? '<unknown component>';
+        console.error(`${MESSAGES.recursiveUpdateLabel} @ ${componentName}`, { trace });
+        return;
+      }
+
+      // 其余告警维持开发期默认可见性(设置 warnHandler 后 Vue 不再自行打印)。
+      console.warn(`[Vue warn] ${message}${trace ? `\n${trace}` : ''}`);
     };
 
     await router.isReady();
