@@ -5,7 +5,7 @@ use std::{fs, time::Duration};
 use crate::terminal::{
     command_contracts::DispatchTerminalScriptRequest,
     dispatch::build_terminal_run_command_for_local_wsl,
-    types::TerminalState,
+    types::{Geometry, TerminalState},
     visual::{
         TERMINAL_ANSI_EXIT_ALT_SCREEN, TERMINAL_ANSI_RESET_SCROLL_REGION_PRESERVE_CURSOR,
         TERMINAL_ANSI_SAFE_RESET, TerminalRunVisualTracker, build_terminal_ansi_reset,
@@ -20,10 +20,11 @@ use super::events::{
 use super::state::{
     ActiveRunInputTarget, TerminalSessionState, active_terminal_run_count,
     append_terminal_snapshot, buffer_pending_switch_input, clear_active_terminal_run,
-    get_active_terminal_run_input_target, get_terminal_snapshot,
-    mark_terminal_resize_repaint_suppression, set_terminal_snapshot,
-    should_skip_snapshot_for_interactive_resize_repaint, take_active_terminal_run_for_session,
-    take_and_prepend_pending_switch_input, try_mark_active_terminal_run,
+    get_active_terminal_run_input_target, get_session_geometry, get_terminal_snapshot,
+    mark_terminal_resize_repaint_suppression, remove_session_geometry, set_session_geometry,
+    set_terminal_snapshot, should_skip_snapshot_for_interactive_resize_repaint,
+    take_active_terminal_run_for_session, take_and_prepend_pending_switch_input,
+    try_mark_active_terminal_run,
 };
 use super::to_wsl_path;
 
@@ -48,6 +49,41 @@ fn local_wsl_active_run_is_serialized_per_session() {
     assert_eq!(active_terminal_run_count(&state), 0);
     assert!(try_mark_active_terminal_run(&state, "session-1", "run-2").is_ok());
     clear_active_terminal_run(&state, "run-2");
+}
+
+#[test]
+fn session_geometry_is_tracked_and_isolated_per_session() {
+    let state = TerminalSessionState::default();
+    // 未记录的会话回退到共享的全局 geometry。
+    let fallback = get_session_geometry(&state, "geometry-unset-session");
+
+    set_session_geometry(&state, "geometry-session-a", 100, 30);
+    set_session_geometry(&state, "geometry-session-b", 200, 50);
+    assert_eq!(
+        get_session_geometry(&state, "geometry-session-a"),
+        Geometry {
+            cols: 100,
+            rows: 30
+        }
+    );
+    assert_eq!(
+        get_session_geometry(&state, "geometry-session-b"),
+        Geometry {
+            cols: 200,
+            rows: 50
+        }
+    );
+
+    // 下限钳制：列至少 2、行至少 1，避免 0 尺寸导致 PTY 异常。
+    set_session_geometry(&state, "geometry-session-a", 0, 0);
+    assert_eq!(
+        get_session_geometry(&state, "geometry-session-a"),
+        Geometry { cols: 2, rows: 1 }
+    );
+
+    // 清理后回退到全局 geometry（与未记录时一致）。
+    remove_session_geometry(&state, "geometry-session-a");
+    assert_eq!(get_session_geometry(&state, "geometry-session-a"), fallback);
 }
 
 #[test]

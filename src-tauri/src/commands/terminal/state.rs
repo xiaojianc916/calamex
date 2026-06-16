@@ -14,7 +14,7 @@ use crate::terminal::{
         TerminalInteractiveVisualState, is_likely_interactive_resize_repaint_frame,
         trim_terminal_snapshot,
     },
-    types::TerminalState,
+    types::{Geometry, TerminalState},
     vte_detect::scan_ansi_csi_events,
     wsl_pty::{LocalWslPtyHandle, LocalWslRunHandle},
 };
@@ -46,6 +46,7 @@ pub struct TerminalSessionState {
     interactive_visual: Arc<Mutex<HashMap<String, TerminalInteractiveVisualState>>>,
     active_runs: Arc<Mutex<HashMap<String, TerminalActiveRun>>>,
     pending_switch_input: Arc<Mutex<HashMap<String, String>>>,
+    session_geometry: Arc<Mutex<HashMap<String, Geometry>>>,
     pub(super) creation_guard: Arc<Mutex<()>>,
 }
 
@@ -155,6 +156,49 @@ pub(super) fn update_terminal_geometry(cols: u16, rows: u16) {
     };
     geometry.cols = cols.max(2);
     geometry.rows = rows.max(1);
+}
+
+/// 每会话 geometry：作为「单一 SessionRegistry」绞杀式重构的第一步，让会话各自持有自己的
+/// 列宽/行高。运行 PTY 不再统一从全局 `registry().geometry` 取尺寸，避免多开时会话 A 的运行
+/// 被会话 B 最后一次 resize 的尺寸创建。迁移期全局 geometry 暂保留（双写），待所有读取方
+/// 迁移完毕后再于绞杀收尾统一删除。
+///
+/// 对照 VSCode `src/vs/platform/terminal/node/ptyService.ts`：每个 `PersistentTerminalProcess`
+/// 各自持有 cols/rows（经其 `XtermSerializer`），`PtyService.resize(id, cols, rows)` 仅作用于
+/// 指定 id 的进程，不存在跨会话共享的全局尺寸。
+pub(super) fn set_session_geometry(
+    state: &TerminalSessionState,
+    session_id: &str,
+    cols: u16,
+    rows: u16,
+) {
+    let Ok(mut geometries) = state.session_geometry.lock() else {
+        return;
+    };
+    let geometry = geometries.entry(session_id.to_string()).or_default();
+    geometry.cols = cols.max(2);
+    geometry.rows = rows.max(1);
+}
+
+/// 取指定会话的 geometry；该会话尚无记录时回退到全局 geometry（再回退到默认），保证迁移期
+/// 行为与改动前一致。
+pub(super) fn get_session_geometry(state: &TerminalSessionState, session_id: &str) -> Geometry {
+    if let Ok(geometries) = state.session_geometry.lock()
+        && let Some(geometry) = geometries.get(session_id)
+    {
+        return *geometry;
+    }
+    crate::terminal::registry::registry()
+        .geometry
+        .read()
+        .map(|geometry| *geometry)
+        .unwrap_or_default()
+}
+
+pub(super) fn remove_session_geometry(state: &TerminalSessionState, session_id: &str) {
+    if let Ok(mut geometries) = state.session_geometry.lock() {
+        geometries.remove(session_id);
+    }
 }
 
 fn lock_active_terminal_runs(
@@ -412,4 +456,5 @@ pub(super) fn remove_interactive_terminal_after_exit(
     let _ = remove_terminal_snapshot(state, session_id);
     let _ = remove_terminal_interactive_visual_state(state, session_id);
     remove_pending_switch_input(state, session_id);
+    remove_session_geometry(state, session_id);
 }
