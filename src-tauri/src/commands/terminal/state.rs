@@ -14,6 +14,7 @@ use crate::terminal::{
         TerminalInteractiveVisualState, is_likely_interactive_resize_repaint_frame,
         trim_terminal_snapshot,
     },
+    state_machine::StateMachine,
     types::{Geometry, TerminalState},
     vte_detect::scan_ansi_csi_events,
     wsl_pty::{LocalWslPtyHandle, LocalWslRunHandle},
@@ -47,6 +48,7 @@ pub struct TerminalSessionState {
     active_runs: Arc<Mutex<HashMap<String, TerminalActiveRun>>>,
     pending_switch_input: Arc<Mutex<HashMap<String, String>>>,
     session_geometry: Arc<Mutex<HashMap<String, Geometry>>>,
+    session_states: Arc<Mutex<HashMap<String, TerminalState>>>,
     pub(super) creation_guard: Arc<Mutex<()>>,
 }
 
@@ -201,6 +203,70 @@ pub(super) fn remove_session_geometry(state: &TerminalSessionState, session_id: 
     }
 }
 
+/// 每会话状态机：作为「单一 SessionRegistry」绞杀式重构的第二块砖，让会话各自持有自己的
+/// 运行/交互状态。输入路由不再读全局 `registry().state`，避免多开时会话 A 处于 Running 导致
+/// 会话 B 的输入被误判为应进 run stdin（跨会话输入串台）。迁移期全局 state 暂保留（双写），
+/// 待所有读取方迁移完毕后再于绞杀收尾统一删除。
+///
+/// 对照 VSCode `src/vs/platform/terminal/node/ptyService.ts`：每个 `PersistentTerminalProcess`
+/// 各自持有交互/生命周期态（`_interactionState`），`PtyService` 的 input/resize/shutdown 全按 id
+/// 路由到对应进程，不存在跨会话共享的全局终端状态。
+///
+/// 每会话各自是一台从 `Booting` 起步的状态机：无记录时以 `Booting` 为基线做合法性判定，与全局
+/// 态无关（全局可能因其它会话而处于 `Running`，不应阻断本会话的初始 Idle 化）。复用全局状态机
+/// 的转移约束，保持与 registry 单源一致；非法转移就地忽略（与全局 `transition_terminal_state`
+/// 出错即跳过的语义一致）。
+pub(super) fn set_session_state(state: &TerminalSessionState, session_id: &str, to: TerminalState) {
+    let Ok(mut states) = state.session_states.lock() else {
+        return;
+    };
+    let from = states
+        .get(session_id)
+        .copied()
+        .unwrap_or(TerminalState::Booting);
+    if from == to {
+        return;
+    }
+    if !StateMachine::can_transition(from, to) {
+        return;
+    }
+    states.insert(session_id.to_string(), to);
+}
+
+/// 取指定会话的状态；该会话尚无记录时回退到全局 `current_state()`，保证迁移期行为与改动前
+/// 一致（旧会话、或尚未经由每会话态转移的路径，仍按全局态判定）。
+pub(super) fn get_session_state(state: &TerminalSessionState, session_id: &str) -> TerminalState {
+    if let Ok(states) = state.session_states.lock()
+        && let Some(current) = states.get(session_id)
+    {
+        return *current;
+    }
+    crate::terminal::registry::registry().current_state()
+}
+
+pub(super) fn remove_session_state(state: &TerminalSessionState, session_id: &str) {
+    if let Ok(mut states) = state.session_states.lock() {
+        states.remove(session_id);
+    }
+}
+
+/// 运行完成时回收该会话的状态：与全局 `begin/finish_terminal_run_completion` 同构，但只作用于
+/// 该会话、不受其它会话是否仍在运行影响（全局计数门控仅用于全局态）。`Running` 经
+/// `SwitchingToIdle` 回到 `IdleInteractive`；若运行在真正启动前就结束（仍处 `SwitchingToRun`），
+/// 直接回 `IdleInteractive`。
+pub(super) fn complete_session_run_state(state: &TerminalSessionState, session_id: &str) {
+    match get_session_state(state, session_id) {
+        TerminalState::Running => {
+            set_session_state(state, session_id, TerminalState::SwitchingToIdle);
+            set_session_state(state, session_id, TerminalState::IdleInteractive);
+        }
+        TerminalState::SwitchingToRun => {
+            set_session_state(state, session_id, TerminalState::IdleInteractive);
+        }
+        _ => {}
+    }
+}
+
 fn lock_active_terminal_runs(
     state: &TerminalSessionState,
 ) -> Result<std::sync::MutexGuard<'_, HashMap<String, TerminalActiveRun>>, String> {
@@ -324,17 +390,22 @@ pub(super) fn get_active_terminal_run_input_target(
     state: &TerminalSessionState,
     session_id: &str,
 ) -> Result<ActiveRunInputTarget, String> {
-    let active_runs = lock_active_terminal_runs(state)?;
-    let Some(active_run) = active_runs
-        .values()
-        .find(|active_run| active_run.session_id == session_id)
-    else {
-        return Ok(ActiveRunInputTarget::None);
+    // 先确定该会话是否有活动运行；有则取出 run_id 后立即释放 active_runs 锁，避免与
+    // session_states 锁叠加持有（保持单一加锁顺序，杜绝潜在死锁）。
+    let run_id = {
+        let active_runs = lock_active_terminal_runs(state)?;
+        match active_runs
+            .values()
+            .find(|active_run| active_run.session_id == session_id)
+        {
+            Some(active_run) => active_run.run_id.clone(),
+            None => return Ok(ActiveRunInputTarget::None),
+        }
     };
-    // 输入必须按会话路由：只有发起该 run 的会话才把输入送进 run 的 stdin；
-    // 其它会话的输入应进入各自的交互 shell，避免跨会话输入串台。
-    match crate::terminal::registry::registry().current_state() {
-        TerminalState::Running => Ok(ActiveRunInputTarget::Run(active_run.run_id.clone())),
+    // 输入必须按会话路由：依据「该会话自身」的状态判定去向，不再读全局 registry().state，
+    // 避免其它会话的运行态把本会话输入误导进 run stdin（跨会话输入串台）。
+    match get_session_state(state, session_id) {
+        TerminalState::Running => Ok(ActiveRunInputTarget::Run(run_id)),
         TerminalState::SwitchingToRun | TerminalState::SwitchingToIdle => {
             Ok(ActiveRunInputTarget::Pending)
         }
@@ -457,4 +528,5 @@ pub(super) fn remove_interactive_terminal_after_exit(
     let _ = remove_terminal_interactive_visual_state(state, session_id);
     remove_pending_switch_input(state, session_id);
     remove_session_geometry(state, session_id);
+    remove_session_state(state, session_id);
 }

@@ -32,7 +32,8 @@ use crate::terminal::{
 
 use super::state::{
     TerminalSessionState, active_terminal_run_count, append_terminal_snapshot,
-    clear_active_terminal_run, remove_interactive_terminal_after_exit,
+    clear_active_terminal_run, complete_session_run_state,
+    remove_interactive_terminal_after_exit, set_session_state,
     should_skip_snapshot_for_interactive_resize_repaint, take_active_terminal_run_for_session,
 };
 
@@ -358,6 +359,9 @@ pub(super) fn handle_local_wsl_interactive_terminal_event(
     match event {
         LocalWslTerminalServerPayload::InteractiveOpened(_) => {
             mark_terminal_interactive_ready(app);
+            // 每会话态：交互 shell 就绪即把「这个会话」置为 IdleInteractive（每会话各自从
+            // Booting 起步，与全局态无关），作为后续 dispatch -> SwitchingToRun 的合法起点。
+            set_session_state(state, session_id, TerminalState::IdleInteractive);
         }
         LocalWslTerminalServerPayload::InteractiveData(payload) => {
             emit_terminal_interactive_output(app, state, session_id, payload.data);
@@ -416,6 +420,8 @@ pub(super) fn handle_local_run_event(
     match event {
         LocalWslTerminalServerPayload::RunStarted(payload) => {
             emit_terminal_run_started_state(app, session_id, run_id, payload.pid, started_at);
+            // 每会话态：该会话由 SwitchingToRun 进入 Running，输入据此路由到本会话的 run。
+            set_session_state(state, session_id, TerminalState::Running);
         }
         LocalWslTerminalServerPayload::RunChunk(payload) => {
             let has_prior_output = current_visual_tracker(visual_tracker).has_output;
@@ -487,6 +493,9 @@ fn finalize_local_run(
         prompt,
     });
     clear_active_terminal_run(state, run_id);
+    // 每会话态：该会话的运行结束后回收其状态（Running -> SwitchingToIdle -> IdleInteractive），
+    // 不受其它会话是否仍在运行影响；全局态仍按既有计数门控在下方完成转移。
+    complete_session_run_state(state, session_id);
     emit_terminal_run_completed_with_state(
         app,
         state,
