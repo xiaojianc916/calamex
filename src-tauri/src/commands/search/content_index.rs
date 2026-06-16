@@ -48,7 +48,7 @@ pub(super) fn filter_literal_content_candidates(
         return Ok(None);
     }
 
-    let query_trigrams = query_trigram_keys(query, payload.match_case);
+    let query_trigrams = query_trigram_keys(query);
     if query_trigrams.is_empty() {
         return Ok(None);
     }
@@ -80,13 +80,15 @@ pub(super) fn filter_literal_content_candidates(
     Ok(Some(narrowed))
 }
 
+/// 字面量内容搜索才可用 trigram 预筛：排除正则 / 结构化 / 模糊，且查询字节数 >= 3
+/// （单个 CJK 字符为 3 字节，故 CJK 查询同样满足）。
+///
+/// 不再要求 ASCII 或不区分大小写：索引建立在「ASCII 折叠小写」的 UTF-8 字节上，
+/// 折叠只会合并大小写、不会拆分，因此用折叠后的查询去探测，对区分大小写查询而言
+/// 得到的候选集必为真实命中的超集（多出的误报由 grep 精确剔除），绝不漏命中；
+/// CJK 字节 >127，折叠时原样保留，字节三元组天然覆盖。
 fn can_use_literal_trigram_index(query: &str, payload: &WorkspaceSearchRequest) -> bool {
-    !payload.use_regex
-        && !payload.use_structural
-        && !payload.content_fuzzy
-        && !payload.match_case
-        && query.len() >= 3
-        && query.is_ascii()
+    !payload.use_regex && !payload.use_structural && !payload.content_fuzzy && query.len() >= 3
 }
 
 fn workspace_content_index(root: &Path) -> Result<Arc<WorkspaceContentIndex>, String> {
@@ -154,14 +156,15 @@ fn collect_file_trigrams(file: &ScannedFile) -> Option<HashSet<Trigram>> {
 
     let bytes = fs::read(&file.path).ok()?;
     let (content, _encoding) = decode_script_bytes(&bytes).ok()?;
-    Some(trigram_keys_from_ascii_bytes(
-        normalize_ascii_bytes(&content, false).as_slice(),
+    Some(trigram_keys_from_bytes(
+        fold_ascii_case_bytes(&content).as_slice(),
     ))
 }
 
-fn query_trigram_keys(query: &str, match_case: bool) -> Vec<Trigram> {
-    let normalized = normalize_ascii_bytes(query, match_case);
-    let mut trigrams = trigram_keys_from_ascii_bytes(&normalized)
+/// 查询的 trigram 始终用「折叠小写」形式生成，与索引一致；区分大小写的最终判定交给 grep。
+fn query_trigram_keys(query: &str) -> Vec<Trigram> {
+    let folded = fold_ascii_case_bytes(query);
+    let mut trigrams = trigram_keys_from_bytes(&folded)
         .into_iter()
         .collect::<Vec<_>>();
     trigrams.sort_unstable();
@@ -169,18 +172,16 @@ fn query_trigram_keys(query: &str, match_case: bool) -> Vec<Trigram> {
     trigrams
 }
 
-fn normalize_ascii_bytes(value: &str, match_case: bool) -> Vec<u8> {
-    if match_case {
-        value.as_bytes().to_vec()
-    } else {
-        value
-            .bytes()
-            .map(|byte| byte.to_ascii_lowercase())
-            .collect()
-    }
+/// 仅折叠 ASCII 大小写；非 ASCII 字节（含 CJK 的 UTF-8 编码）原样保留，
+/// 使索引与查询落在同一字节空间。
+fn fold_ascii_case_bytes(value: &str) -> Vec<u8> {
+    value
+        .bytes()
+        .map(|byte| byte.to_ascii_lowercase())
+        .collect()
 }
 
-fn trigram_keys_from_ascii_bytes(bytes: &[u8]) -> HashSet<Trigram> {
+fn trigram_keys_from_bytes(bytes: &[u8]) -> HashSet<Trigram> {
     let mut keys = HashSet::new();
     if bytes.len() < 3 {
         return keys;
@@ -246,20 +247,79 @@ mod tests {
         }
     }
 
+    /// 用与生产一致的折叠规则，从 (路径, 内容) 列表构建一个内存内容索引，便于在不触盘的
+    /// 情况下断言「候选集筛除」的不漏命中性质。
+    fn index_from(files: &[(&str, &str)]) -> WorkspaceContentIndex {
+        let mut trigram_to_files: HashMap<Trigram, Vec<String>> = HashMap::new();
+        for (path, content) in files {
+            for trigram in trigram_keys_from_bytes(fold_ascii_case_bytes(content).as_slice()) {
+                trigram_to_files
+                    .entry(trigram)
+                    .or_default()
+                    .push((*path).to_string());
+            }
+        }
+        for paths in trigram_to_files.values_mut() {
+            paths.sort();
+            paths.dedup();
+        }
+        WorkspaceContentIndex {
+            trigram_to_files,
+            unindexed_files: Vec::new(),
+        }
+    }
+
+    fn candidates(index: &WorkspaceContentIndex, query: &str) -> HashSet<String> {
+        intersect_candidate_paths(index, &query_trigram_keys(query)).unwrap_or_default()
+    }
+
     #[test]
-    fn packs_distinct_ascii_trigrams() {
-        let keys = trigram_keys_from_ascii_bytes(b"hello");
+    fn packs_distinct_trigrams() {
+        let keys = trigram_keys_from_bytes(b"hello");
         assert!(keys.contains(&pack_trigram(b"hel")));
         assert!(keys.contains(&pack_trigram(b"ell")));
         assert!(keys.contains(&pack_trigram(b"llo")));
     }
 
     #[test]
-    fn only_uses_safe_literal_ascii_queries() {
+    fn allows_literal_cjk_and_case_sensitive_queries() {
+        // 字面量且足够长的查询都应走索引，包括 CJK 与区分大小写。
         assert!(can_use_literal_trigram_index("needle", &request("needle")));
+        assert!(can_use_literal_trigram_index("中文检索", &request("中文检索")));
+        let mut case_sensitive = request("Needle");
+        case_sensitive.match_case = true;
+        assert!(can_use_literal_trigram_index("Needle", &case_sensitive));
+        // 仍排除：正则 / 结构化 / 过短查询。
         let mut regex = request("needle");
         regex.use_regex = true;
         assert!(!can_use_literal_trigram_index("needle", &regex));
-        assert!(!can_use_literal_trigram_index("中", &request("中")));
+        assert!(!can_use_literal_trigram_index("ab", &request("ab")));
+    }
+
+    #[test]
+    fn cjk_query_keeps_only_files_containing_it() {
+        let index = index_from(&[("a.sh", "echo 部署完成"), ("b.sh", "echo done")]);
+        let hits = candidates(&index, "部署");
+        assert!(hits.contains("a.sh"));
+        assert!(!hits.contains("b.sh"));
+    }
+
+    #[test]
+    fn case_sensitive_query_never_drops_matching_file() {
+        // 区分大小写查询用「折叠小写」索引做预筛：候选必为超集，绝不漏命中。
+        let index = index_from(&[("up.sh", "value = CONFIG_PATH")]);
+        assert!(candidates(&index, "CONFIG").contains("up.sh"));
+    }
+
+    #[test]
+    fn case_insensitive_query_matches_regardless_of_file_case() {
+        let index = index_from(&[("mix.sh", "Export NEEDLE here")]);
+        assert!(candidates(&index, "needle").contains("mix.sh"));
+    }
+
+    #[test]
+    fn query_absent_from_corpus_is_filtered_out() {
+        let index = index_from(&[("a.sh", "alpha beta")]);
+        assert!(candidates(&index, "zzz").is_empty());
     }
 }

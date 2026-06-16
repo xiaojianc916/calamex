@@ -21,12 +21,14 @@ use std::{fs, io, path::Path};
 /// 内容模糊搜索的轻量预过滤器。
 ///
 /// 只检查不会造成误杀的必要条件：行长度至少能容纳 query 的非空白字符，
-/// 且 query 中出现过的 ASCII 字母/数字必须也出现在候选行里。真正的排序与子序列
-/// 匹配仍交给 nucleo；这里仅在进入较贵 matcher 前剪掉明显不可能命中的行。
+/// query 中出现过的 ASCII 字母/数字必须也出现在候选行里，且 query 中无大小写之分的
+/// 非 ASCII 字符（如 CJK）也必须出现在候选行里。真正的排序与子序列匹配仍交给 nucleo；
+/// 这里仅在进入较贵 matcher 前剪掉明显不可能命中的行。
 #[derive(Clone)]
 struct FuzzyLinePrefilter {
     min_chars: usize,
     required_ascii: Vec<u8>,
+    required_non_ascii: Vec<char>,
     match_case: bool,
 }
 
@@ -34,24 +36,41 @@ impl FuzzyLinePrefilter {
     fn new(query: &str, match_case: bool) -> Option<Self> {
         let min_chars = query.chars().filter(|ch| !ch.is_whitespace()).count();
         let mut required_ascii = Vec::new();
+        let mut required_non_ascii = Vec::new();
 
-        for byte in query.bytes() {
-            if !byte.is_ascii_alphanumeric() {
+        for ch in query.chars() {
+            if ch.is_whitespace() {
                 continue;
             }
-            let normalized = normalize_prefilter_ascii(byte, match_case);
-            if !required_ascii.contains(&normalized) {
-                required_ascii.push(normalized);
+            if ch.is_ascii() {
+                let byte = ch as u8;
+                if !byte.is_ascii_alphanumeric() {
+                    continue;
+                }
+                let normalized = normalize_prefilter_ascii(byte, match_case);
+                if !required_ascii.contains(&normalized) {
+                    required_ascii.push(normalized);
+                }
+                continue;
+            }
+            // 非 ASCII：仅在区分大小写、或该字符本身无大小写之分（如 CJK）时要求其出现，
+            // 避免在不区分大小写时对有大小写的脚本（希腊 / 西里尔等）造成误杀。
+            if !match_case && (ch.is_uppercase() || ch.is_lowercase()) {
+                continue;
+            }
+            if !required_non_ascii.contains(&ch) {
+                required_non_ascii.push(ch);
             }
         }
 
-        if min_chars == 0 && required_ascii.is_empty() {
+        if min_chars == 0 && required_ascii.is_empty() && required_non_ascii.is_empty() {
             return None;
         }
 
         Some(Self {
             min_chars,
             required_ascii,
+            required_non_ascii,
             match_case,
         })
     }
@@ -78,22 +97,41 @@ impl FuzzyLinePrefilter {
         false
     }
 
+    /// 在已解码的行文本上检查 query 要求的全部非 ASCII（无大小写之分，如 CJK）字符是否都出现。
+    /// 仅对解码后的文本调用；文件级原始字节阶段不做此检查，以免对非 UTF-8 编码误杀。
+    fn all_required_non_ascii_present(&self, line: &str) -> bool {
+        let mut missing = self.required_non_ascii.clone();
+        for ch in line.chars() {
+            if let Some(index) = missing.iter().position(|candidate| *candidate == ch) {
+                missing.swap_remove(index);
+                if missing.is_empty() {
+                    return true;
+                }
+            }
+        }
+        missing.is_empty()
+    }
+
     fn may_match(&self, line: &str) -> bool {
         if line.chars().count() < self.min_chars {
             return false;
         }
-        if self.required_ascii.is_empty() {
-            return true;
+        if !self.required_ascii.is_empty() && !self.all_required_ascii_present(line.bytes()) {
+            return false;
         }
-        self.all_required_ascii_present(line.bytes())
+        if !self.required_non_ascii.is_empty() && !self.all_required_non_ascii_present(line) {
+            return false;
+        }
+        true
     }
 
-    /// 文件级候选筛除（第 4 点两阶段检索的「andidate generation」轻量版）：
+    /// 文件级候选筛除（第 4 点两阶段检索的「candidate generation」轻量版）：
     /// 直接在原始字节上检查 query 要求的 ASCII 字符是否全部出现；缺任意一个，
     /// 则整文件不可能有命中行，可在更贵的解码 / 逐行 nucleo 之前整文件跳过。
     ///
     /// 只看 ASCII 字节，且 ASCII 在 UTF-8 / Latin1 等超集编码里编码一致，故无需先解码，
-    /// 也不会误杀（required_ascii 为空时返回 true，交回逐行阶段处理）。
+    /// 也不会误杀（required_ascii 为空时返回 true，交回逐行阶段处理）。非 ASCII（如 CJK）
+    /// 字符的存在性检查只放在解码后的逐行阶段，避免对非 UTF-8 编码的文件误杀。
     fn bytes_may_match(&self, bytes: &[u8]) -> bool {
         if self.required_ascii.is_empty() {
             return true;
@@ -319,6 +357,9 @@ fn search_one_file_fuzzy(
         return Ok(local);
     };
 
+    // 路径字符串每文件只转换一次：避免对每条命中重复做 to_string_lossy 的全路径扫描。
+    let path_display = file.path.to_string_lossy().into_owned();
+
     let mut matcher = NucleoMatcher::new(Config::DEFAULT);
     let mut utf32_buffer = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
@@ -353,7 +394,7 @@ fn search_one_file_fuzzy(
         let line_number = count_to_u32(line_index + 1, "行号")?;
 
         local.push(WorkspaceSearchResult {
-            path: file.path.to_string_lossy().to_string(),
+            path: path_display.clone(),
             relative_path: file.relative_path.clone(),
             name: file.name.clone(),
             kind: WorkspaceSearchResultKind::Content,
@@ -397,6 +438,8 @@ pub(super) fn search_structural_contents(
             let Ok((content, _encoding)) = decode_script_bytes(&bytes) else {
                 return Ok((index, local));
             };
+            // 路径字符串每文件只转换一次：避免对每条命中重复做 to_string_lossy 的全路径扫描。
+            let path_display = file.path.to_string_lossy().into_owned();
             let root = lang.ast_grep(&content);
 
             for node_match in root.root().find_all(&pattern) {
@@ -415,7 +458,7 @@ pub(super) fn search_structural_contents(
                     .min(line.len())
                     .max(match_start);
                 local.push(WorkspaceSearchResult {
-                    path: file.path.to_string_lossy().to_string(),
+                    path: path_display.clone(),
                     relative_path: file.relative_path.clone(),
                     name: file.name.clone(),
                     kind: WorkspaceSearchResultKind::Content,
@@ -519,6 +562,9 @@ fn search_one_file_content(
 ) -> Result<(), String> {
     let mut matched_in_file = 0usize;
     let mut conversion_error: Option<String> = None;
+    // 路径字符串每文件只转换一次：单个文件可能产生大量命中，避免对每条命中重复执行
+    // to_string_lossy 的全路径扫描与转换。
+    let path_display = file.path.to_string_lossy().into_owned();
     let mut searcher = SearcherBuilder::new()
         .line_number(true)
         .binary_detection(BinaryDetection::quit(b'\x00'))
@@ -570,7 +616,7 @@ fn search_one_file_content(
                             }
                         };
                         results.push(WorkspaceSearchResult {
-                            path: file.path.to_string_lossy().to_string(),
+                            path: path_display.clone(),
                             relative_path: file.relative_path.clone(),
                             name: file.name.clone(),
                             kind: WorkspaceSearchResultKind::Content,
@@ -701,10 +747,23 @@ mod tests {
     }
 
     #[test]
-    fn fuzzy_prefilter_ignores_non_ascii_for_safety() {
+    fn fuzzy_prefilter_requires_cjk_chars_at_line_level() {
         let prefilter = FuzzyLinePrefilter::new("部署a", false).expect("应创建预过滤器");
-        assert!(prefilter.may_match("xxa"));
-        assert!(!prefilter.may_match("部署"));
+        // 行内需同时含 CJK「部」「署」与 ASCII「a」。
+        assert!(prefilter.may_match("调用部署模块 a"));
+        assert!(!prefilter.may_match("xxa")); // 缺 CJK
+        assert!(!prefilter.may_match("部署模块")); // 缺 a
+        // 文件级仍只看 ASCII：含 a 即不跳过，避免对非 UTF-8 编码的 CJK 内容误杀。
+        assert!(prefilter.bytes_may_match("plain ascii a".as_bytes()));
+    }
+
+    #[test]
+    fn fuzzy_prefilter_handles_pure_cjk_queries() {
+        let prefilter = FuzzyLinePrefilter::new("部署", false).expect("应创建预过滤器");
+        assert!(prefilter.may_match("开始部署流程"));
+        assert!(!prefilter.may_match("开始流程"));
+        // 文件级无 ASCII 要求 -> 不跳过，留待逐行精筛。
+        assert!(prefilter.bytes_may_match("任意内容".as_bytes()));
     }
 
     #[test]
