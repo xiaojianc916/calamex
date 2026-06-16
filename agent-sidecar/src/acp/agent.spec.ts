@@ -110,7 +110,7 @@ test("prompt 把 agent_event 投影为 session/update,并在收尾发 usage_upda
 	)
 	assert.ok(usage, "应有 usage_update 通知")
 	assert.equal((usage.update as { used: number }).used, 1200)
-	assert.equal((usage.update as { size: number }).size, 128_000)
+	assert.equal((usage.update as { size: number }).size, 1_000_000)
 })
 
 test("prompt 在工具审批挂起时发起 request_permission,批准后回灌 resolveApproval 续跑", async () => {

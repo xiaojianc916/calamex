@@ -66,7 +66,7 @@ export interface IMcpConfigOptions {
 
 // ───────────────────────────────────────────────────────────────────
 // Constants
-const SIDECAR_ROOT = resolve(fileURLToPath(new URL('../../', import.meta.url)));
+const SIDECAR_ROOT = resolve(fileURLToPath(new URL('../../../', import.meta.url)));
 const PROJECT_ROOT = resolve(SIDECAR_ROOT, '..');
 const NODE_BIN_DIRECTORY = join(SIDECAR_ROOT, 'node_modules', '.bin');
 const DEFAULT_MEMORY_FILENAME = 'mcp-memory.jsonl';

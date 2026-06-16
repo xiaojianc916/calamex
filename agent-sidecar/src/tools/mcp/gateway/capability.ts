@@ -47,7 +47,7 @@ export const readMcpToolAnnotations = (tool: unknown): IMcpToolAnnotations | und
   const fromMcp = mcpMeta ? toRecord(mcpMeta.annotations) : undefined;
   const fromRaw = toRecord(record.annotations);
   const annotations = fromMcp ?? fromRaw;
-  return annotations as IMcpToolAnnotations | undefined;
+  return (annotations ?? undefined) as IMcpToolAnnotations | undefined;
 };
 
 // 能力判定（逻辑链条）：

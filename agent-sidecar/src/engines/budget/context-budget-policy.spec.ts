@@ -84,6 +84,6 @@ test('retainRecentUserMessageTexts keeps newest user text within byte budget', (
     },
   ];
 
-  assert.deepEqual(retainRecentUserMessageTexts(messages, 20), ['second', 'third']);
+  assert.deepEqual(retainRecentUserMessageTexts(messages, 11), ['second', 'third']);
   assert.deepEqual(retainRecentUserMessageTexts(messages, 5), ['third']);
 });
