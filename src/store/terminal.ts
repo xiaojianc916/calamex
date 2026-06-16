@@ -187,6 +187,16 @@ export const useTerminalRuntimeStore = defineStore('terminal-runtime', () => {
    * per-session 输入路由消费。与全局 `state` 并存——全局态会在后续 slice 退役。
    */
   const sessionStates = ref<Map<string, TTerminalRuntimeState>>(new Map());
+  /**
+   * 每会话活动运行句柄镜像 (FE-1 多会话)。全局 `activeRun` 仅能表达「最后一个」
+   * 运行,多开并发运行时会互相覆盖,导致 routeInput 把会话 A 的输入误投到会话 B 的
+   * run stdin。这里按 run 归属的 session_id 存句柄,使每个会话的输入路由读到「自己的」
+   * 运行。与全局 `activeRun` 并存——全局态会在后续 slice 退役。
+   *
+   * 对照 VSCode ptyService.ts:每个 PersistentTerminalProcess 各自持有运行/交互态,
+   * input/resize 全按 id 路由,不存在跨会话共享的单一活动运行。
+   */
+  const sessionActiveRuns = ref<Map<string, ITerminalRunHandle>>(new Map());
 
   // -- getters ---------------------------------------------------------------
 
@@ -199,6 +209,33 @@ export const useTerminalRuntimeStore = defineStore('terminal-runtime', () => {
     diagnostics.value.lastEventName = eventName;
     diagnostics.value.lastEventAt = nowIso();
   };
+
+  // -- per-session active run helpers (FE-1 多会话) ---------------------------
+
+  /** 写入/更新某会话的活动运行镜像。重新赋值 Map 以可靠触发依赖它的 computed/watcher。 */
+  const setSessionActiveRun = (run: ITerminalRunHandle): void => {
+    const next = new Map(sessionActiveRuns.value);
+    next.set(run.sessionId, run);
+    sessionActiveRuns.value = next;
+  };
+
+  /** 按 runId 移除活动运行镜像（运行完成/派发失败）。 */
+  const removeSessionActiveRunByRunId = (runId: string): void => {
+    let mutated = false;
+    const next = new Map(sessionActiveRuns.value);
+    for (const [sessionId, handle] of next) {
+      if (handle.runId === runId) {
+        next.delete(sessionId);
+        mutated = true;
+      }
+    }
+    if (mutated) {
+      sessionActiveRuns.value = next;
+    }
+  };
+
+  const getSessionActiveRun = (sessionId: string): ITerminalRunHandle | null =>
+    sessionActiveRuns.value.get(sessionId) ?? null;
 
   // -- interactive lifecycle -------------------------------------------------
 
@@ -223,6 +260,7 @@ export const useTerminalRuntimeStore = defineStore('terminal-runtime', () => {
     // Same run id arriving again — patch the handle and bump diagnostics.
     if (activeRun.value?.runId === run.runId) {
       activeRun.value = mergeRunHandle(activeRun.value, run);
+      setSessionActiveRun(activeRun.value);
       diagnostics.value.lastRunId = run.runId;
       markEvent('terminal:run-started');
       return;
@@ -235,6 +273,7 @@ export const useTerminalRuntimeStore = defineStore('terminal-runtime', () => {
     const preRunBufferDiagnostics = diagnostics.value.bufferDiagnostics.slice();
 
     activeRun.value = run;
+    setSessionActiveRun(run);
     diagnostics.value = {
       ...createEmptyDiagnostics(),
       preRunTerminalData,
@@ -249,6 +288,7 @@ export const useTerminalRuntimeStore = defineStore('terminal-runtime', () => {
   const updateActiveRun = (run: ITerminalRunHandle): void => {
     if (activeRun.value?.runId !== run.runId) return;
     activeRun.value = mergeRunHandle(activeRun.value, run);
+    setSessionActiveRun(activeRun.value);
   };
 
   const markSwitchingToIdle = (): void => {
@@ -261,6 +301,7 @@ export const useTerminalRuntimeStore = defineStore('terminal-runtime', () => {
     if (activeRun.value?.runId === runId) {
       activeRun.value = null;
     }
+    removeSessionActiveRunByRunId(runId);
     diagnostics.value.lastRunId = runId;
     diagnostics.value.lastExitCode = exitCode;
     diagnostics.value.lastCompletedAt = finishedAt;
@@ -271,6 +312,7 @@ export const useTerminalRuntimeStore = defineStore('terminal-runtime', () => {
     if (activeRun.value?.runId === runId) {
       activeRun.value = null;
     }
+    removeSessionActiveRunByRunId(runId);
     diagnostics.value.lastRunId = runId;
     diagnostics.value.lastExitCode = null;
     diagnostics.value.lastCompletedAt = null;
@@ -303,10 +345,17 @@ export const useTerminalRuntimeStore = defineStore('terminal-runtime', () => {
 
   /** 会话退出 / 关闭时清除其镜像态,避免遗留陈旧会话。 */
   const clearSessionState = (sessionId: string): void => {
-    if (!sessionStates.value.has(sessionId)) return;
-    const next = new Map(sessionStates.value);
-    next.delete(sessionId);
-    sessionStates.value = next;
+    if (sessionStates.value.has(sessionId)) {
+      const next = new Map(sessionStates.value);
+      next.delete(sessionId);
+      sessionStates.value = next;
+    }
+    // 同步清理该会话的活动运行镜像 (FE-1)：会话退出后其运行不可能再收输入。
+    if (sessionActiveRuns.value.has(sessionId)) {
+      const nextRuns = new Map(sessionActiveRuns.value);
+      nextRuns.delete(sessionId);
+      sessionActiveRuns.value = nextRuns;
+    }
   };
 
   const getSessionState = (sessionId: string): TTerminalRuntimeState | null =>
@@ -400,6 +449,7 @@ export const useTerminalRuntimeStore = defineStore('terminal-runtime', () => {
     activeRun.value = null;
     interactiveReady.value = false;
     sessionStates.value = new Map();
+    sessionActiveRuns.value = new Map();
     diagnostics.value = createEmptyDiagnostics();
   };
 
@@ -411,6 +461,7 @@ export const useTerminalRuntimeStore = defineStore('terminal-runtime', () => {
     deepDiagnosticsEnabled,
     diagnostics,
     sessionStates,
+    sessionActiveRuns,
     isRunning,
     markInteractiveReady,
     markInteractiveExited,
@@ -424,6 +475,7 @@ export const useTerminalRuntimeStore = defineStore('terminal-runtime', () => {
     applySessionStateChanged,
     clearSessionState,
     getSessionState,
+    getSessionActiveRun,
     recordTerminalData,
     recordVisualWrite,
     recordBufferDiagnostic,
