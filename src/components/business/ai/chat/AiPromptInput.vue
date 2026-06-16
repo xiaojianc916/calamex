@@ -90,6 +90,19 @@ interface IPoint {
   y: number;
 }
 
+/**
+ * 当前会话可用的 Agent 后端：
+ * - builtin：本应用自研 Agent（默认）。
+ * - kimi：Moonshot Kimi（月之暗面）外部 Agent CLI。
+ * 一个会话只使用一种 Agent。
+ */
+type TAiPromptAgentKind = 'builtin' | 'kimi';
+
+interface IAiPromptAgentOption {
+  key: TAiPromptAgentKind;
+  label: string;
+}
+
 /** 输入框纯文本（不含技能胶囊） */
 const modelValue = defineModel<string>({ required: true });
 
@@ -99,6 +112,14 @@ const activeMode = defineModel<TAiAssistantMode>('activeMode', { required: true 
 /** 已选中的技能胶囊（内联显示在输入框中，独立于纯文本） */
 const selectedSkills = defineModel<ISelectedSkill[]>('selectedSkills', {
   default: () => [],
+});
+
+/**
+ * 当前会话使用的 Agent 后端（自研 / Kimi）。
+ * 默认 builtin；父级未绑定时仍可独立工作（用于先把 UI 做上）。
+ */
+const selectedAgent = defineModel<TAiPromptAgentKind>('agentBackend', {
+  default: 'builtin',
 });
 
 const props = defineProps<{
@@ -126,6 +147,7 @@ const emit = defineEmits<{
   executionModeChange: [mode: TAiExecutionMode];
   informationSourcesOpen: [];
   personalizationOpen: [];
+  agentChange: [agent: TAiPromptAgentKind];
   prewarm: [];
 }>();
 
@@ -156,6 +178,11 @@ const modeOptions: IAiPromptModeOption[] = [
   { key: 'chat', label: 'chat' },
   { key: 'agent', label: 'agent' },
   { key: 'plan', label: 'plan' },
+];
+
+const agentOptions: IAiPromptAgentOption[] = [
+  { key: 'builtin', label: '自研 Agent' },
+  { key: 'kimi', label: 'Kimi' },
 ];
 
 const emptyTokenContext: IAiTokenContextProps = {
@@ -275,6 +302,10 @@ const executionAutonomous = computed(() => props.executionMode === 'autonomous')
 
 const activeModeOption = computed(
   () => modeOptions.find((option) => option.key === activeMode.value) ?? modeOptions[0],
+);
+
+const selectedAgentOption = computed(
+  () => agentOptions.find((option) => option.key === selectedAgent.value) ?? agentOptions[0],
 );
 
 const networkPermissionLabel = computed(() => (networkPermissionEnabled.value ? '已允许' : '询问'));
@@ -770,6 +801,19 @@ const handleModelChange = (value: unknown): void => {
   emit('modelChange', value);
 };
 
+const isAgentKind = (value: unknown): value is TAiPromptAgentKind =>
+  value === 'builtin' || value === 'kimi';
+
+// 切换会话使用的 Agent 后端。一个会话只用一种 Agent；
+// 这里仅维护选择态并向外发事件，发送链路接入留待后续。
+const handleAgentChange = (value: unknown): void => {
+  if (!isAgentKind(value) || value === selectedAgent.value) {
+    return;
+  }
+  selectedAgent.value = value;
+  emit('agentChange', value);
+};
+
 const toggleNetworkPermission = (): void => {
   if (props.disabled || props.isNetworkPermissionSaving) {
     return;
@@ -1090,6 +1134,47 @@ onBeforeUnmount(() => {
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
+            <Select
+              :model-value="selectedAgent"
+              :disabled="disabled"
+              @update:model-value="handleAgentChange"
+            >
+              <SelectTrigger aria-label="选择 Agent" class="ai-agent-trigger">
+                <AiProviderIcon
+                  v-if="selectedAgent === 'kimi'"
+                  class="ai-agent-trigger__icon"
+                  platform-id="moonshotai"
+                  decorative
+                />
+                <Bot v-else class="ai-agent-trigger__icon" :stroke-width="1.6" />
+                <span class="ai-agent-trigger__label" v-text="selectedAgentOption.label"></span>
+              </SelectTrigger>
+              <SelectContent
+                side="top"
+                align="start"
+                :side-offset="8"
+                class="ai-agent-content"
+              >
+                <SelectLabel class="ai-agent-section-label">选择 Agent</SelectLabel>
+                <SelectGroup>
+                  <SelectItem
+                    v-for="agent in agentOptions"
+                    :key="agent.key"
+                    class="ai-agent-item"
+                    :value="agent.key"
+                  >
+                    <AiProviderIcon
+                      v-if="agent.key === 'kimi'"
+                      class="ai-agent-item__icon"
+                      platform-id="moonshotai"
+                      decorative
+                    />
+                    <Bot v-else class="ai-agent-item__icon" :stroke-width="1.6" />
+                    <span class="ai-agent-item__label" v-text="agent.label"></span>
+                  </SelectItem>
+                </SelectGroup>
+              </SelectContent>
+            </Select>
           </div>
           <div class="ai-toolbar-spacer" aria-hidden="true"></div>
           <Select
@@ -1511,6 +1596,92 @@ onBeforeUnmount(() => {
   display: none;
 }
 
+.ai-agent-trigger {
+  display: inline-flex;
+  width: auto;
+  min-width: 0;
+  max-width: 200px;
+  height: var(--ai-composer-control-size);
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-secondary);
+  padding: 0 8px;
+  box-shadow: none;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1;
+  transition: background-color 140ms cubic-bezier(0.23, 1, 0.32, 1),
+    color 140ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.ai-agent-trigger:hover,
+.ai-agent-trigger[data-state='open'] {
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  color: var(--text-primary);
+}
+
+.ai-agent-trigger__icon,
+.ai-agent-item__icon {
+  width: var(--ai-composer-icon-size);
+  height: var(--ai-composer-icon-size);
+  flex: 0 0 auto;
+}
+
+.ai-agent-trigger__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-agent-content {
+  width: min(240px, calc(100vw - 24px));
+  padding: 8px;
+  border: 1px solid var(--ai-menu-border);
+  border-radius: 10px;
+  box-shadow: var(--ai-menu-shadow);
+}
+
+.ai-agent-content [data-slot='select-scroll-up-button'],
+.ai-agent-content [data-slot='select-scroll-down-button'] {
+  display: none;
+}
+
+.ai-agent-section-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ai-menu-muted);
+  font-size: 12px;
+  padding: 6px 3px 7px;
+}
+
+.ai-agent-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  border-radius: 7px;
+  color: var(--ai-menu-text);
+  font-size: 14px;
+  padding: 0 28px 0 7px;
+}
+
+.ai-agent-item[data-highlighted],
+.ai-agent-item[data-state='checked'] {
+  background: var(--ai-menu-hover);
+}
+
+.ai-agent-item__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 @media (max-width: 960px) {
   .ai-composer {
     width: min(100%, 720px);
@@ -1540,6 +1711,7 @@ onBeforeUnmount(() => {
 <style>
 .ai-settings-menu,
 .ai-model-content,
+.ai-agent-content,
 .ai-token-content {
   --ai-menu-bg: var(--workbench-content-bg);
   --ai-menu-text: #1f2328;
