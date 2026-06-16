@@ -128,17 +128,33 @@ onMounted(() => {
         :duration="6000"
         container-aria-label="应用通知"
       />
-      <FatalErrorScreen
-        v-if="runtimeErrorState"
-        :title="runtimeErrorState.title"
-        :message="runtimeErrorState.message"
-        :detail="runtimeErrorState.detail"
-        :code="runtimeErrorState.code"
-        :trace-id="runtimeErrorState.traceId"
-      />
-      <router-view v-else v-slot="{ Component: RouteComponent, route: routeRecord }">
+      <!--
+        工作台(router-view)始终挂载,绝不再被错误态卸载。
+        历史缺陷:此前用 v-if=runtimeErrorState / v-else=router-view 在出错时整棵替换工作台。
+        一旦置错误态,Vue 会同步 scope.stop() 掉 RouterView + ShellWorkbenchView 整棵子树;
+        由于拆卸发生在活树上、且会与异步 FatalErrorScreen 竞态/重入,可能拆到一半卡住:
+        组件作用域已停(scope.active=false、render effect 失活),但 DOM 仍挂在屏幕上、
+        isUnmounted 仍为 false、错误页也没真正挂出——形成一具「僵尸工作台」:响应式状态在变
+        (activeSidebarView 已切换)但 DOM 永不重渲染,于是点击全部落在死 DOM 上(侧边栏不切换、
+        编辑器空白、标题栏 GitHub 登录点不动),而窗口仍可拖动缩放、AI 面板(detached 子作用域)仍可点。
+        修复:工作台永远挂载,错误页改为全屏覆盖层呈现,从根上消除该僵尸态(无论由哪条错误触发)。
+      -->
+      <router-view v-slot="{ Component: RouteComponent, route: routeRecord }">
         <component :is="RouteComponent" :key="routeRecord.fullPath" @ready="handleWorkbenchReady" />
       </router-view>
+      <div
+        v-if="runtimeErrorState"
+        class="app-fatal-error-overlay"
+        style="position: fixed; inset: 0; z-index: 2147483646; background: #fafafa"
+      >
+        <FatalErrorScreen
+          :title="runtimeErrorState.title"
+          :message="runtimeErrorState.message"
+          :detail="runtimeErrorState.detail"
+          :code="runtimeErrorState.code"
+          :trace-id="runtimeErrorState.traceId"
+        />
+      </div>
     </div>
   </TooltipProvider>
 </template>
