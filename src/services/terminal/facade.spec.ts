@@ -9,6 +9,7 @@ import {
 import { useTerminalFacade } from '@/services/terminal/facade';
 import { createTerminalRunStore } from '@/services/terminal/runStore';
 import { createTerminalShadowCompareStore } from '@/services/terminal/shadowCompare';
+import { useTerminalRuntimeStore } from '@/services/terminal/state';
 import type { ITauriService } from '@/types/tauri';
 import type {
   ITerminalDataEvent,
@@ -16,6 +17,7 @@ import type {
   ITerminalRunChunkPayload,
   ITerminalRunCompletedPayload,
   ITerminalRunStartedPayload,
+  ITerminalSessionStateChangedPayload,
   ITerminalStateChangedPayload,
 } from '@/types/terminal';
 
@@ -42,6 +44,9 @@ class FakeTerminalEventBus implements ITerminalEventBus {
   private readonly interactiveExitedHandlers = new Set<(payload: ITerminalExitEvent) => void>();
   private readonly stateChangedHandlers = new Set<
     (payload: ITerminalStateChangedPayload) => void
+  >();
+  private readonly sessionStateChangedHandlers = new Set<
+    (payload: ITerminalSessionStateChangedPayload) => void
   >();
 
   onTerminalData(handler: (payload: ITerminalDataEvent) => void): UnlistenFn {
@@ -93,6 +98,15 @@ class FakeTerminalEventBus implements ITerminalEventBus {
     };
   }
 
+  onSessionStateChanged(
+    handler: (payload: ITerminalSessionStateChangedPayload) => void,
+  ): UnlistenFn {
+    this.sessionStateChangedHandlers.add(handler);
+    return () => {
+      this.sessionStateChangedHandlers.delete(handler);
+    };
+  }
+
   emitRunStarted(payload: ITerminalRunStartedPayload): void {
     for (const handler of this.runStartedHandlers) {
       handler(payload);
@@ -119,6 +133,12 @@ class FakeTerminalEventBus implements ITerminalEventBus {
 
   emitStateChanged(payload: ITerminalStateChangedPayload): void {
     for (const handler of this.stateChangedHandlers) {
+      handler(payload);
+    }
+  }
+
+  emitSessionStateChanged(payload: ITerminalSessionStateChangedPayload): void {
+    for (const handler of this.sessionStateChangedHandlers) {
       handler(payload);
     }
   }
@@ -408,6 +428,36 @@ describe('terminal facade suite 1', () => {
     }
   });
 
+  it('per-session 状态事件按会话存储,交互退出后清除', async () => {
+    const tauri = createTauriMock();
+    const eventBus = new FakeTerminalEventBus();
+    const facade = useTerminalFacade({ tauri, eventBus });
+
+    await facade.ensureView();
+    const runtimeStore = useTerminalRuntimeStore();
+
+    eventBus.emitSessionStateChanged({
+      sessionId: 'session-A',
+      from: 'booting',
+      to: 'idle_interactive',
+      atMs: 1777104000000,
+    });
+    eventBus.emitSessionStateChanged({
+      sessionId: 'session-B',
+      from: 'idle_interactive',
+      to: 'running',
+      atMs: 1777104000100,
+    });
+
+    expect(runtimeStore.getSessionState('session-A')).toBe('idle_interactive');
+    expect(runtimeStore.getSessionState('session-B')).toBe('running');
+
+    // 会话 A 退出 → 仅清除 A 的镜像态,B 不受影响。
+    eventBus.emitInteractiveExited({ sessionId: 'session-A', exitCode: 0 });
+    expect(runtimeStore.getSessionState('session-A')).toBeNull();
+    expect(runtimeStore.getSessionState('session-B')).toBe('running');
+  });
+
   it('clears switching input retry timer on dispose', async () => {
     vi.useFakeTimers();
     const eventBus = new FakeTerminalEventBus();
@@ -533,6 +583,39 @@ describe('terminal facade suite 2', () => {
     expect(interactiveExitedHandler).toHaveBeenCalledWith({
       sessionId: 'main-terminal',
       exitCode: 0,
+    });
+  });
+
+  it('terminal facade case 10', async () => {
+    const handlers = new Map<string, (event: Event<unknown>) => void>();
+    const listenMock: TTerminalListen = vi.fn(async (eventName, handler) => {
+      handlers.set(eventName, handler as (event: Event<unknown>) => void);
+      return () => {
+        handlers.delete(eventName);
+      };
+    });
+    const eventBus = createTerminalEventBus(listenMock);
+    const sessionStateChangedHandler = vi.fn();
+
+    eventBus.onSessionStateChanged(sessionStateChangedHandler);
+    await eventBus.start();
+
+    handlers.get('terminal:session-state-changed')?.({
+      event: 'terminal:session-state-changed',
+      id: 6,
+      payload: {
+        sessionId: 'main-terminal',
+        from: 'switching_to_run',
+        to: 'running',
+        atMs: 1777104000002,
+      },
+    });
+
+    expect(sessionStateChangedHandler).toHaveBeenCalledWith({
+      sessionId: 'main-terminal',
+      from: 'switching_to_run',
+      to: 'running',
+      atMs: 1777104000002,
     });
   });
 });

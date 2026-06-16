@@ -280,6 +280,7 @@ export const useTerminalFacade = (options: ITerminalFacadeOptions = {}): ITermin
         if (payload.sessionId === interactiveSessionId) {
           runtimeStore.markInteractiveExited();
         }
+        runtimeStore.clearSessionState(payload.sessionId);
         clearInputDecoder(payload.sessionId);
       }),
     );
@@ -289,6 +290,14 @@ export const useTerminalFacade = (options: ITerminalFacadeOptions = {}): ITermin
         if (switchingInputBuffer.length > 0 && routeInput(state.value, activeRun.value)) {
           void flushSwitchingInputBuffer();
         }
+      }),
+    );
+    listeners.add(
+      eventBus.onSessionStateChanged((payload) => {
+        // P0 多会话地基:按会话镜像运行态。不触碰全局 state / 输入路由,
+        // 那些仍由 onStateChanged 驱动;这里仅为多标签 UI / 后续 per-session
+        // 路由提供数据。
+        runtimeStore.applySessionStateChanged(payload);
       }),
     );
     eventBridgeListeners.set(() => listeners.dispose());
