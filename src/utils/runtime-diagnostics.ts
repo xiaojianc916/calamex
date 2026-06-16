@@ -281,6 +281,17 @@ const isSameRuntimeError = (
 };
 
 export const setRuntimeError = (title: string, error: unknown): void => {
+  // 诊断埋点:打印究竟是哪段代码、携带什么错误把应用升级到致命错误界面。
+  // 全局 handler(window error/unhandledrejection、Vue errorHandler)在卡死前一条都没捕获,
+  // 说明 setRuntimeError 是被某段业务代码「直接」调用的。这里在置错误态之前(故意放在去重
+  // 提前返回之前,确保每次调用都留痕)打印错误本身与完整调用栈,定位真正的触发源。
+  console.error(
+    `[runtime-diagnostics] setRuntimeError 被调用 → 即将置 runtimeErrorState。title=${title}`,
+    error,
+  );
+  // eslint-disable-next-line no-console
+  console.trace('[runtime-diagnostics] setRuntimeError 调用栈(谁升级了致命错误界面)');
+
   const next: IRuntimeErrorState = {
     title,
     message: toErrorMessage(error, '发生未知错误'),
