@@ -33,10 +33,11 @@ use super::state::{
     ActiveRunInputTarget, TerminalSession, TerminalSessionState, active_terminal_run_count,
     attach_active_terminal_run_handle, buffer_pending_switch_input, clear_active_terminal_run,
     drain_active_terminal_runs, get_active_terminal_run_handle,
-    get_active_terminal_run_input_target, get_terminal_session, get_terminal_snapshot,
-    lock_terminal_sessions, mark_terminal_resize_repaint_suppression, remove_pending_switch_input,
-    remove_terminal_interactive_visual_state, remove_terminal_session, remove_terminal_snapshot,
-    resolve_terminal_start_directory, set_terminal_snapshot, should_recreate_terminal_session,
+    get_active_terminal_run_input_target, get_session_geometry, get_terminal_session,
+    get_terminal_snapshot, lock_terminal_sessions, mark_terminal_resize_repaint_suppression,
+    remove_pending_switch_input, remove_session_geometry, remove_terminal_interactive_visual_state,
+    remove_terminal_session, remove_terminal_snapshot, resolve_terminal_start_directory,
+    set_session_geometry, set_terminal_snapshot, should_recreate_terminal_session,
     take_active_terminal_run_for_session, take_and_prepend_pending_switch_input,
     terminate_terminal_session, try_mark_active_terminal_run, update_terminal_geometry,
 };
@@ -53,6 +54,7 @@ pub async fn ensure_terminal_session(
 ) -> Result<TerminalSessionPayload, String> {
     let terminal_state = state.inner().clone();
     update_terminal_geometry(payload.cols, payload.rows);
+    set_session_geometry(&terminal_state, &payload.session_id, payload.cols, payload.rows);
 
     // 在持有创建保护锁之前完成工作目录规整：canonicalize 会触达文件系统，慢盘 / 网络盘上
     // 可能阻塞。把它挪到锁外可缩短临界区，避免无谓拉长 close / shutdown 等需与创建串行的
@@ -213,6 +215,7 @@ pub fn resize_terminal_session(
 ) -> Result<(), String> {
     let terminal_state = state.inner().clone();
     update_terminal_geometry(payload.cols, payload.rows);
+    set_session_geometry(&terminal_state, &payload.session_id, payload.cols, payload.rows);
 
     let session = get_terminal_session(&terminal_state, &payload.session_id)?
         .ok_or_else(|| "目标终端会话不存在。".to_string())?;
@@ -241,6 +244,7 @@ pub fn close_terminal_session(
     remove_terminal_snapshot(&terminal_state, &payload.session_id)?;
     remove_terminal_interactive_visual_state(&terminal_state, &payload.session_id)?;
     remove_pending_switch_input(&terminal_state, &payload.session_id);
+    remove_session_geometry(&terminal_state, &payload.session_id);
     if let Some(run_handle) =
         take_active_terminal_run_for_session(&terminal_state, &payload.session_id)
     {
@@ -293,11 +297,10 @@ pub fn dispatch_script_to_terminal(
     let prompt_snapshot = get_terminal_snapshot(&terminal_state, &payload.session_id)?;
     let prompt = extract_prompt_from_terminal_snapshot(&prompt_snapshot);
 
-    let geometry = crate::terminal::registry::registry()
-        .geometry
-        .read()
-        .map(|geometry| *geometry)
-        .unwrap_or_default();
+    // 运行 PTY 按「发起该 run 的会话」自身尺寸创建，而非全局共享尺寸；多开时不会被其它
+    // 会话最后一次 resize 串台。对照 VSCode ptyService.ts：每个 PersistentTerminalProcess
+    // 持有各自的尺寸，resize 仅作用于指定 id。
+    let geometry = get_session_geometry(&terminal_state, &payload.session_id);
     let request = LocalWslTerminalRunScriptRequest {
         run_id: payload.run_id.clone(),
         working_directory: command.working_directory.clone(),
