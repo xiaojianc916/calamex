@@ -181,8 +181,10 @@ async fn chat_stream_via_acp(
     // 实时预览，权威结果（result + usage）由返回信封承载，由下方 done 合成补发。
     //
     // 上下文已由 collect_messages 注入末条 user 消息并随之脱敏（secret 检测覆盖引用
-    // 内容），故结构化 context 置空：既避免重复注入，也不绕过脱敏。model_config 不
-    // 注入——模型配置在 sidecar 启动期由环境解析（与旧 chat / orchestrate 一致）。
+    // 内容），故结构化 context 置空：既避免重复注入，也不绕过脱敏。model_config 按
+    // launch.rs 约定的「逐请求通道」注入当前已保存的主模型配置（model + key）——
+    // launch 层刻意不注入模型 env（env 仅作可选预热），故此处必须逐请求携带，
+    // 否则 sidecar 解析不到模型配置会直接返回错误、回合空转。
     let chat_request = AgentSidecarChatRequest {
         session_id: None,
         mode: Some("ask".to_string()),
@@ -190,7 +192,7 @@ async fn chat_stream_via_acp(
         messages: to_sidecar_message_payloads(messages),
         workspace_root_path: None,
         context: Vec::new(),
-        model_config: None,
+        model_config: Some(current_sidecar_model_config()?),
         thread_id: payload.thread_id.clone(),
     };
     let request = crate::acp::chat_request_to_agent_chat_ext(chat_request, session_key.clone());
