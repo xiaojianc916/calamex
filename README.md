@@ -40,7 +40,7 @@
 | 🌿 **Git 集成** | 基于 `gix`（gitoxide）实现状态、差异、版本信息等仓库操作。 |
 | 🔐 **SSH / SFTP** | 基于 `russh` / `russh-sftp` 的远程连接与文件传输，连接池化管理。 |
 | 🤖 **AI 辅助** | 前端集成 CopilotKit、AG-UI 协议与 `ai` SDK，支持脚本理解、补全与对话式辅助；模型调用统一收敛到 Node 边车（OpenAI 兼容接口），Rust 侧仅作为凭证 / 策略 / 审计网关并桥接边车，不直连模型。 |
-| 🧩 **AI Agent 边车** | 独立的 Node 边车 `agent-sidecar/`，基于 **Mastra** 编排智能体与工具（顺序思考、Context7、Tavily 网络搜索、TypeScript 语言服务等），经 MCP 接入。状态推进中，详见 `agent-sidecar/MATURITY.md`。 |
+| 🧩 **AI Agent 边车** | 独立的 Node 边车 `agent-sidecar/`，基于 **Mastra** 编排智能体与工具（顺序思考、Context7、Tavily 网络搜索、TypeScript 语言服务、浏览器自动化等），经 MCP 接入，并通过 Agent Client Protocol（ACP）与宿主通信。状态推进中，详见 `agent-sidecar/MATURITY.md`。 |
 | 📁 **工作区** | 安全的文件系统命令与实时文件监听（`notify`），所有 I/O 经 Rust 命令出口。 |
 
 ## 技术栈
@@ -54,18 +54,18 @@
 
 **桌面 / 后端**
 - Tauri 2.x（`tray-icon`、dialog、store 插件）
-- Rust（edition 2021），按域拆分的命令模块（terminal / lsp / git / ssh / search / workspace / ai / shell_tools / script_run / agent_sidecar / window / contracts 等）
+- Rust（edition 2021），按域拆分的命令模块（terminal / lsp / git / ssh / search / workspace / ai / shell_tools / script_run / format / skills / agent_sidecar / agent_webview / window / contracts 等）
 - IPC 类型由 `tauri-specta` 自动生成，前后端契约强类型对齐
 - 异步运行时 Tokio
 
 **AI 边车（`agent-sidecar/`，Node）**
-- 基于 Mastra 的智能体运行时，经 MCP 集成顺序思考、Context7、Tavily、TypeScript 语言服务等工具
-- 模型走 OpenAI 兼容接口（`@ai-sdk/openai-compatible`），对外提供 HTTP / 流式服务
+- 基于 Mastra 的智能体运行时，经 MCP 集成顺序思考、Context7、Tavily、TypeScript 语言服务、浏览器自动化等工具
+- 模型走 OpenAI 兼容接口（`@ai-sdk/openai-compatible`）；通过 Agent Client Protocol（ACP，`@agentclientprotocol/sdk`）经 stdio 与宿主通信，支持流式响应
 - 会话与记忆基于 libSQL；当前为推进中状态（见 `agent-sidecar/MATURITY.md`）
 
 **工程化**
 - 包管理：pnpm（workspace）
-- 代码质量：Biome（lint/format）、Knip（死代码）、commitlint（Conventional Commits）、lefthook（git hooks）
+- 代码质量：Biome（lint/format）、oxlint（附加 lint）、Knip（死代码）、commitlint（Conventional Commits）、lefthook（git hooks）
 - 测试：Vitest（单测 + 覆盖率）、Playwright（E2E + a11y）
 - 体积守护：size-limit
 
@@ -88,7 +88,8 @@
 │                  Rust 后端                      │
 │  commands: terminal · lsp · git · ssh(+pool) ·  │
 │  search · workspace_fs · workspace_watcher ·    │
-│  ai · shell_tools · script_run · agent_sidecar ·│
+│  ai · shell_tools · script_run · format ·       │
+│  skills · agent_sidecar · agent_webview ·       │
 │  window(+stage) · contracts                     │
 └───────────────┬───────────────────────────────┘
                 │  PTY / WSL 调用
@@ -98,7 +99,7 @@
 └─────────────────────────────────────────────────┘
 ```
 
-> AI Agent 能力由独立的 Node 边车 `agent-sidecar/` 承载，Rust 侧经 `commands/agent_sidecar` 桥接其生命周期与 HTTP / 流式接口。
+> AI Agent 能力由独立的 Node 边车 `agent-sidecar/` 承载，Rust 侧经 `commands/agent_sidecar` 与 `commands/agent_webview` 桥接其生命周期，并通过 Agent Client Protocol（ACP）与之通信。
 
 **约束要点**
 - 组件 **不** 直接 `fetch` / `invoke` / 读写存储；I/O 唯一出口为 `services/`。
@@ -111,6 +112,7 @@
 ```text
 .
 ├── src/                      # 前端（Vue 3 + TS）
+│   ├── app/                  # 应用入口（main.ts、App.vue、router.ts）
 │   ├── components/           # UI 组件（含 Shadcn / reka-ui）
 │   ├── composables/          # 组合式逻辑
 │   ├── copilotkit/           # CopilotKit / AG-UI 集成
@@ -118,7 +120,7 @@
 │   ├── services/             # IPC / shell / terminal / session 等服务（反腐层）
 │   ├── views/                # 页面视图（如 ShellWorkbenchView）
 │   ├── layouts/              # 布局组件
-│   ├── router/               # Vue Router 路由
+│   ├── content/              # 注入式脚本（如 Web 元素选择器）
 │   ├── terminal/             # 终端前端集成（xterm.js）
 │   ├── themes/               # 主题派生
 │   ├── styles/               # 全局样式（Tailwind）
@@ -128,18 +130,16 @@
 │   ├── types/                # 前端类型定义
 │   ├── bindings/             # tauri-specta 生成的类型绑定
 │   ├── generated/            # 其他生成产物（如 shell 命令目录）
-│   ├── __tests__/            # 前端单元测试
-│   ├── App.vue               # 根组件
-│   └── main.ts               # 应用入口
+│   └── __tests__/            # 前端单元测试
 ├── src-tauri/                # 桌面 / Rust 后端
 │   ├── src/
-│   │   ├── commands/         # 按域拆分的 Tauri 命令
+│   │   ├── commands/         # 按域拆分的 Tauri 命令（含 agent_sidecar / agent_webview / skills / format 等）
 │   │   ├── terminal/         # PTY / 终端后端
 │   │   ├── ai/               # AI 网关（凭证 / 策略 / 审计 + 边车桥接，不直连模型）
-│   │   ├── agent_sidecar/    # AI 边车的宿主侧桥接
+│   │   ├── acp/              # Agent Client Protocol 宿主侧实现
 │   │   ├── assets/           # 后端内置资源
-│   │   ├── bin/              # 辅助二进制（如导出 IPC 绑定）
 │   │   ├── main.rs           # 应用入口
+│   │   ├── storage_paths.rs  # 存储路径解析
 │   │   └── tauri_bindings.rs # tauri-specta 绑定导出
 │   ├── capabilities/         # Tauri 能力清单（最小授权）
 │   ├── gen/                  # Tauri 生成产物
@@ -149,15 +149,15 @@
 │   └── tauri.conf.json       # Tauri 配置
 ├── agent-sidecar/            # 基于 Mastra 的 AI Agent 边车（Node）
 │   ├── src/
+│   │   ├── acp/              # Agent Client Protocol 服务（入口 stdio-entry.ts）
 │   │   ├── engines/          # 智能体 / 编排引擎
 │   │   ├── tools/            # MCP 工具（顺序思考、Context7、Tavily 等）
 │   │   ├── models/           # 模型接入（OpenAI 兼容）
-│   │   ├── http/             # HTTP 服务
 │   │   ├── streaming/        # 流式响应
 │   │   ├── schemas/          # 数据校验 schema
 │   │   ├── web/              # Web 相关能力
 │   │   ├── types/            # 类型定义
-│   │   └── server.ts         # 边车服务入口
+│   │   └── test-support/     # 测试支撑
 │   └── MATURITY.md           # 成熟度 / 推进状态说明
 ├── e2e/                      # Playwright 端到端测试
 ├── scripts/                  # 构建与开发辅助脚本
@@ -172,7 +172,7 @@
 - **操作系统**：Windows 10/11
 - **WSL2**：已安装并配置可用的 Linux 发行版（脚本执行环境）
 - **Node.js** ≥ 26
-- **pnpm** 11.4（推荐 `corepack enable && corepack prepare pnpm@latest --activate`）
+- **pnpm** 11.5（项目锁定 `pnpm@11.5.2`；推荐 `corepack enable && corepack prepare pnpm@latest --activate`）
 - **Rust** 工具链（通过 [rustup](https://rustup.rs)）
 - WSL 内建议具备 `shellcheck`、`shfmt`、`bash-language-server` 以获得完整体验
 
@@ -208,11 +208,13 @@ pnpm build
 
 | 命令 | 作用 |
 | --- | --- |
-| `pnpm dev` | 生成 shell 命令目录并启动 Vite 前端开发服务器 |
+| `pnpm dev` | 生成 shell 命令目录与 Web 元素选择器并启动 Vite 前端开发服务器 |
 | `pnpm tauri:dev` | 启动 Tauri 桌面应用（开发模式） |
 | `pnpm tauri:build` | 打包桌面安装包 |
 | `pnpm lint` | Biome 代码检查 |
+| `pnpm lint:all` | Biome + oxlint 全量检查 |
 | `pnpm format` | Biome 自动修复 / 格式化 |
+| `pnpm fix` | Biome 格式化 + oxlint 自动修复 |
 | `pnpm typecheck` | `vue-tsc` 类型检查 |
 | `pnpm test` | Vitest 单元测试 |
 | `pnpm test:coverage` | 单测 + 覆盖率 |
