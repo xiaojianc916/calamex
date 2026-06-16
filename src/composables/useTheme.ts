@@ -1,8 +1,8 @@
 import { computed, onScopeDispose, watch } from 'vue';
 import { setWindowBackground } from '@/services/ipc/window.service';
 import { useAppStore } from '@/store/app';
-import { applyResolvedThemeEffect } from '@/themes/effects';
-import { resolveTheme } from '@/themes/manager';
+import { applyResolvedThemeEffect } from '@/themes/runtime/effects';
+import { resolveTheme } from '@/themes/runtime/manager';
 import { readCssVarAsRgba } from '@/utils/color';
 import { logger } from '@/utils/logger';
 

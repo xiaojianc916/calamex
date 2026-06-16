@@ -10,7 +10,7 @@
  *  - 变量名遵循现有约定（向后兼容）
  *  - 不注入非颜色令牌（--radius、字号等由用户设置覆盖）
  */
-import type { IComponentTokens, IRoles } from '../types';
+import type { IComponentTokens, IRoles } from '../tokens/types';
 
 /**
  * 将组件令牌作为 CSS 变量注入 :root（即 `<html>` 元素的 style 属性）。

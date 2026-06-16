@@ -8,7 +8,7 @@
  *  - 仅接受 IRoles，不 import primitives，不写颜色字面量
  *  - terminal.* namespace 直接来自 IRoles.terminal（L2 已完整归纳所有 ANSI 颜色）
  */
-import type { IRoles } from '../types';
+import type { IRoles } from '../tokens/types';
 
 /** xterm.js ITheme 的精简定义（避免强依赖 @xterm/xterm 类型包） */
 export interface IXtermTheme {
