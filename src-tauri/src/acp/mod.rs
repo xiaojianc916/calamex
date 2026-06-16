@@ -1,6 +1,6 @@
 //! 宿主侧 ACP（Agent Client Protocol）接入。
 //!
-//! 迁移期（"先加新模块 → cargo 验证 → 绿了再删旧"）的新增模块，按 cargo feature
+//! 迁移期（\"先加新模块 → cargo 验证 → 绿了再删旧\"）的新增模块，按 cargo feature
 //! `acp_client` 门控。完成全量切换后，本目录将成为 agent-sidecar 唯一的接入层，
 //! 旧 HTTP/NDJSON 实现随之删除。
 
@@ -24,8 +24,11 @@ pub use client::{
 #[allow(unused_imports)]
 pub use approval::{ApprovalError, ApprovalOptionInfo, ApprovalRegistry, ApprovalRequestInfo};
 
+// 启动配置解析：默认后端（自家边车）与多后端注册表（ADR-0015 阶段 1）。
+// build_acp_client_config_for / AcpBackendId 为外部 ACP agent（Kimi/Codex 等）的启动配置
+// 源，接线在阶段 2（runtime 多 host），故迁移期暂无消费者。
 #[allow(unused_imports)]
-pub use launch::build_acp_client_config;
+pub use launch::{AcpBackendId, build_acp_client_config, build_acp_client_config_for};
 
 // 接线层：把 Tauri 契约请求投影为客户端层 ACP 扩展请求。四条投影（agent/chat、
 // agent/chat/resolve、agent/ask-user/resume、一次性 model/chat）均已由命令层 / 网关 live 调用。
