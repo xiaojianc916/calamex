@@ -291,7 +291,7 @@ const DeferredSmartScriptEditor = defineAsyncComponent({
 // CopilotKit 运行时（含 @copilotkit/vue）改为按需懒加载：仅当进入/固定 AI 工作区时
 // 才加载，并作为 AI 子树的上下文 Provider 挂载，使「首屏为编辑器」时彻底不进入启动关键路径。
 const DeferredCopilotKitProvider = defineAsyncComponent({
-  loader: () => import('@/copilotkit/CopilotKitProvider.vue'),
+  loader: () => import('@/copilotkit/provider/CopilotKitProvider.vue'),
   suspensible: false,
 });
 
@@ -309,7 +309,7 @@ const prefetchAiSurfaceWhenIdle = (): void => {
   }
 
   const prefetch = (): void => {
-    void import('@/copilotkit/CopilotKitProvider.vue');
+    void import('@/copilotkit/provider/CopilotKitProvider.vue');
     void import('@/components/business/ai/shell/AiWorkspaceSurface.vue');
   };
 
