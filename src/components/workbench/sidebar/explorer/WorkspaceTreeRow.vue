@@ -14,6 +14,14 @@
     @click="emit('activate', row.entry)"
     @contextmenu.prevent.stop="emit('contextmenu', { event: $event, entry: row.entry })"
   >
+    <span
+      v-for="i in row.level"
+      :key="`guide-${i}`"
+      class="explorer-indent-guide"
+      :style="{ left: `${32 + (i - 1) * 18}px` }"
+      aria-hidden="true"
+    />
+
     <span class="explorer-chevron" :class="{ 'is-placeholder': !row.showChevron }">
       <svg
         v-if="row.showChevron"
@@ -52,6 +60,14 @@
     :aria-selected="isActive"
     @contextmenu.prevent.stop="emit('contextmenu', { event: $event, entry: row.entry })"
   >
+    <span
+      v-for="i in row.level"
+      :key="`guide-${i}`"
+      class="explorer-indent-guide"
+      :style="{ left: `${32 + (i - 1) * 18}px` }"
+      aria-hidden="true"
+    />
+
     <span class="explorer-chevron" :class="{ 'is-placeholder': !row.showChevron }">
       <svg
         v-if="row.showChevron"

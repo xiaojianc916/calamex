@@ -69,11 +69,14 @@ pub async fn agent_sidecar_warmup(app: AppHandle) -> Result<AgentSidecarWarmupPa
 #[specta::specta]
 pub async fn agent_sidecar_chat(
     app: AppHandle,
-    payload: AgentSidecarChatRequest,
+    mut payload: AgentSidecarChatRequest,
 ) -> Result<AgentSidecarResponsePayload, String> {
-    // 会话连续性对齐 Zed session_id = thread.id()：先以 thread_id（缺省回退空串→host 内
-    // 按工作区新建）解析稳定 SessionId，再投影为 agent/chat 扩展请求经 stdio 下发。
     let host = acp_host(&app)?;
+
+    if payload.model_config.is_none() {
+        payload.model_config = Some(crate::ai::gateway::current_sidecar_model_config()?);
+    }
+
     let session_id = host
         .ensure_session(
             payload.thread_id.as_deref().unwrap_or_default(),

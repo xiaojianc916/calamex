@@ -218,6 +218,12 @@ export const runInstrumentedIpc = async <TResult>(
   } catch (error) {
     const normalizedError = normalizeIpcError(error, { traceId, errorMap: options.errorMap });
     emit('error', normalizedError.code);
+    console.error(
+      '[ipc-error]',
+      options.command,
+      normalizedError.message,
+      normalizedError.cause ?? error,
+    );
     throw normalizedError;
   }
 };

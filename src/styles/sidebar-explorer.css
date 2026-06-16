@@ -97,7 +97,17 @@
 }
 
 .explorer-tree-row {
+  position: relative;
   padding-left: calc(8px + var(--explorer-indent, 0px));
+}
+
+.explorer-indent-guide {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: color-mix(in srgb, var(--shell-divider) 55%, transparent);
+  pointer-events: none;
 }
 
 .explorer-root-row:hover,
