@@ -1,10 +1,10 @@
 import { createTool } from '@mastra/core/tools';
-import { createJsonToolModelOutput } from '../../../../../engines/budget/budget.js';
+import { createJsonToolModelOutput } from '../../../../engines/budget/budget.js';
 import {
   mcpGatewayListInputSchema,
   mcpGatewayListLegacyInputSchema,
   unwrapGatewayToolInput,
-} from '../../../mcp-gateway/helpers.js';
+} from '../helpers.js';
 import type { McpGatewayWarmPool } from '../warm-pool.js';
 import type { IMcpGatewayMetricSink, TMcpGatewayToolProfile } from '../types.js';
 
