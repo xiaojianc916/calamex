@@ -4,6 +4,7 @@ import type {
   ITerminalBufferDiagnostic,
   ITerminalDataEvent,
   ITerminalRunHandle,
+  ITerminalSessionStateChangedPayload,
   ITerminalStateChangedPayload,
   ITerminalVisualWritePayload,
   TTerminalCancelMode,
@@ -180,6 +181,12 @@ export const useTerminalRuntimeStore = defineStore('terminal-runtime', () => {
   const showRunSeparator = ref(true);
   const deepDiagnosticsEnabled = ref(false);
   const diagnostics = ref<ITerminalFlowDiagnostics>(createEmptyDiagnostics());
+  /**
+   * 每会话运行态镜像 (P0 多会话地基)。后端按 session_id 发
+   * `terminal:session-state-changed`,前端按会话存储,供未来多标签 UI 与
+   * per-session 输入路由消费。与全局 `state` 并存——全局态会在后续 slice 退役。
+   */
+  const sessionStates = ref<Map<string, TTerminalRuntimeState>>(new Map());
 
   // -- getters ---------------------------------------------------------------
 
@@ -280,6 +287,33 @@ export const useTerminalRuntimeStore = defineStore('terminal-runtime', () => {
     markEvent(`terminal:state-changed:${payload.from}->${payload.to}`);
   };
 
+  // -- per-session state (P0 多会话地基) ---------------------------------------
+
+  /**
+   * 收到某会话的状态转移。重新赋值新 Map,确保依赖 sessionStates 的
+   * computed / watcher 可靠触发。后端仅在发生合法转移时发事件,所以这
+   * 里不再校验转移合法性,只记录目标态。
+   */
+  const applySessionStateChanged = (payload: ITerminalSessionStateChangedPayload): void => {
+    const next = new Map(sessionStates.value);
+    next.set(payload.sessionId, payload.to);
+    sessionStates.value = next;
+    markEvent(
+      `terminal:session-state-changed:${payload.sessionId}:${payload.from}->${payload.to}`,
+    );
+  };
+
+  /** 会话退出 / 关闭时清除其镜像态,避免遗留陈旧会话。 */
+  const clearSessionState = (sessionId: string): void => {
+    if (!sessionStates.value.has(sessionId)) return;
+    const next = new Map(sessionStates.value);
+    next.delete(sessionId);
+    sessionStates.value = next;
+  };
+
+  const getSessionState = (sessionId: string): TTerminalRuntimeState | null =>
+    sessionStates.value.get(sessionId) ?? null;
+
   // -- raw data ingest -------------------------------------------------------
 
   const recordTerminalData = (payload: ITerminalDataEvent): void => {
@@ -367,6 +401,7 @@ export const useTerminalRuntimeStore = defineStore('terminal-runtime', () => {
     state.value = 'booting';
     activeRun.value = null;
     interactiveReady.value = false;
+    sessionStates.value = new Map();
     diagnostics.value = createEmptyDiagnostics();
   };
 
@@ -377,6 +412,7 @@ export const useTerminalRuntimeStore = defineStore('terminal-runtime', () => {
     showRunSeparator,
     deepDiagnosticsEnabled,
     diagnostics,
+    sessionStates,
     isRunning,
     markInteractiveReady,
     markInteractiveExited,
@@ -387,6 +423,9 @@ export const useTerminalRuntimeStore = defineStore('terminal-runtime', () => {
     markRunCompleted,
     markRunDispatchFailed,
     applyStateChanged,
+    applySessionStateChanged,
+    clearSessionState,
+    getSessionState,
     recordTerminalData,
     recordVisualWrite,
     recordBufferDiagnostic,
