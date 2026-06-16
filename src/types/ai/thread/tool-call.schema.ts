@@ -1,11 +1,8 @@
 import { z } from 'zod';
 
 import { aiDiffEditorPreviewSchema } from '@/types/ai/patch.schema';
+import { AI_TOOL_CALL_STATUSES, AI_TOOL_KINDS } from '@/types/ai/thread/constants';
 import { aiThreadContentBlockSchema } from '@/types/ai/thread/content-block.schema';
-import {
-  AI_TOOL_CALL_STATUSES,
-  AI_TOOL_KINDS,
-} from '@/types/ai/thread/constants';
 
 /* ============================================================================
  * ToolCall（对标 Zed `ToolCall` / `ToolCallStatus` / `ToolCallContent`）

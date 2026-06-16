@@ -1,6 +1,6 @@
 import { commands } from '@/bindings/tauri';
 import type { ITauriService } from '@/types/tauri';
-import { runCommand, type ICommandMeta } from './tauri.ipc-define';
+import { type ICommandMeta, runCommand } from './tauri.ipc-define';
 import type { IIpcCallOptions } from './tauri.ipc-types';
 
 /**

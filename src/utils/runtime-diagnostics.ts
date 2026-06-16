@@ -128,10 +128,7 @@ const flushPersistedDiagnosticToConsole = (): void => {
       snapshot,
     );
   } catch {
-    console.error(
-      '[runtime-diagnostics] 上次运行留存的卡死现场快照无法解析,原始内容如下:',
-      raw,
-    );
+    console.error('[runtime-diagnostics] 上次运行留存的卡死现场快照无法解析,原始内容如下:', raw);
   }
 };
 
@@ -365,7 +362,10 @@ export const registerRuntimeDiagnostics = (): void => {
       return;
     }
 
-    recordDiagnosticEvent('window:error', readErrorLikeField(event.error ?? event.message, 'message') ?? String(event.message));
+    recordDiagnosticEvent(
+      'window:error',
+      readErrorLikeField(event.error ?? event.message, 'message') ?? String(event.message),
+    );
     setRuntimeError('应用运行时错误', event.error ?? event.message);
   };
 
@@ -378,7 +378,10 @@ export const registerRuntimeDiagnostics = (): void => {
       return;
     }
 
-    recordDiagnosticEvent('window:unhandledrejection', readErrorLikeField(event.reason, 'message') ?? String(event.reason));
+    recordDiagnosticEvent(
+      'window:unhandledrejection',
+      readErrorLikeField(event.reason, 'message') ?? String(event.reason),
+    );
     setRuntimeError('未处理的异步错误', event.reason);
   };
 

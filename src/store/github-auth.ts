@@ -225,7 +225,9 @@ export const useGitHubAuthStore = defineStore('github-auth', () => {
     void loadStatus({ force: true, visibleLoading: false });
   };
 
-  const startAuth = async (options?: { switchAccount?: boolean }): Promise<IGitHubAuthStatusPayload> => {
+  const startAuth = async (options?: {
+    switchAccount?: boolean;
+  }): Promise<IGitHubAuthStatusPayload> => {
     const rootPath = repositoryRootPath.value;
     if (!rootPath) return applyStatus(createEmptyGithubAuthStatus('当前工作区未检测到 Git 仓库。'));
     if (pendingAuthRequest) return pendingAuthRequest;

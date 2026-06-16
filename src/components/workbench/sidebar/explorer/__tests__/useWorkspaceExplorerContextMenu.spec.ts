@@ -31,7 +31,9 @@ const createMenu = () => {
 type TMenuApi = ReturnType<typeof createMenu>['api'];
 
 const findItem = (api: TMenuApi, key: string) =>
-  api.explorerContextMenuGroups.value.flatMap((group) => group.items).find((item) => item.key === key);
+  api.explorerContextMenuGroups.value
+    .flatMap((group) => group.items)
+    .find((item) => item.key === key);
 
 describe('useWorkspaceExplorerContextMenu', () => {
   it('右键文件时允许新建文件 / 文件夹，也允许重命名 / 删除', () => {

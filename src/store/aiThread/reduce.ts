@@ -9,6 +9,12 @@
  * - upsert_tool_call：按 id upsert，绝不重复 append
  * - ToolCallStatus：终态不可回退的单向收敛
  * ========================================================================== */
+
+import type {
+  TAiAssistantChannel,
+  TAiThreadReduceEvent,
+  TAiThreadReduceEventByKind,
+} from '@/store/aiThread/events';
 import type {
   IAiThread,
   IAiThreadAssistantChunk,
@@ -18,11 +24,6 @@ import type {
   IAiThreadToolCall,
   TAiThreadToolCallStatus,
 } from '@/types/ai/thread';
-import type {
-  TAiAssistantChannel,
-  TAiThreadReduceEvent,
-  TAiThreadReduceEventByKind,
-} from '@/store/aiThread/events';
 
 /* ----- Tool-call status state machine ------------------------------------ */
 const TERMINAL_TOOL_STATUSES: ReadonlySet<TAiThreadToolCallStatus> = new Set([

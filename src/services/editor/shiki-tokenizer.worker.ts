@@ -1,11 +1,7 @@
-import { bundledLanguages } from 'shiki/langs';
 import { createHighlighterCore, type HighlighterCore } from 'shiki/core';
 import { createOnigurumaEngine } from 'shiki/engine/oniguruma';
-import {
-  type IShikiThemedToken,
-  resolveShikiLanguageId,
-  SHIKI_THEME_NAME,
-} from './shiki-shared';
+import { bundledLanguages } from 'shiki/langs';
+import { type IShikiThemedToken, resolveShikiLanguageId, SHIKI_THEME_NAME } from './shiki-shared';
 
 type TShikiWorkerRequest = {
   id: number;

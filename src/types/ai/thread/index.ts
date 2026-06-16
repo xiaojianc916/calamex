@@ -52,33 +52,12 @@ export type IAiThreadContextCompactionEntry = z.infer<typeof aiThreadContextComp
 export type IAiThreadEntry = z.infer<typeof aiThreadEntrySchema>;
 export type IAiThread = z.infer<typeof aiThreadSchema>;
 
-/* ----- Schema value re-exports ------------------------------------------- */
-export {
-  aiThreadContentBlockSchema,
-  aiThreadImageBlockSchema,
-  aiThreadResourceLinkBlockSchema,
-  aiThreadSourceBlockSchema,
-  aiThreadTextBlockSchema,
-} from '@/types/ai/thread/content-block.schema';
-export {
-  aiThreadToolCallContentBlockSchema,
-  aiThreadToolCallContentSchema,
-  aiThreadToolCallDiffSchema,
-  aiThreadToolCallSchema,
-  aiThreadToolCallStatusSchema,
-  aiThreadToolCallTerminalSchema,
-  aiThreadToolKindSchema,
-} from '@/types/ai/thread/tool-call.schema';
-export {
-  aiThreadAssistantChunkSchema,
-  aiThreadAssistantMessageEntrySchema,
-  aiThreadContextCompactionEntrySchema,
-  aiThreadEntrySchema,
-  aiThreadPlanEntrySchema,
-  aiThreadSchema,
-  aiThreadUserMessageEntrySchema,
-} from '@/types/ai/thread/entry.schema';
-
+export type {
+  TAiAssistantChunkType,
+  TAiContentBlockType,
+  TAiThreadEntryType,
+  TAiThreadToolCallContentType,
+} from '@/types/ai/thread/constants';
 /* ----- Constant value + literal-union type re-exports -------------------- */
 export {
   AI_ASSISTANT_CHUNK_TYPES,
@@ -88,9 +67,29 @@ export {
   AI_TOOL_CALL_STATUSES,
   AI_TOOL_KINDS,
 } from '@/types/ai/thread/constants';
-export type {
-  TAiAssistantChunkType,
-  TAiContentBlockType,
-  TAiThreadEntryType,
-  TAiThreadToolCallContentType,
-} from '@/types/ai/thread/constants';
+/* ----- Schema value re-exports ------------------------------------------- */
+export {
+  aiThreadContentBlockSchema,
+  aiThreadImageBlockSchema,
+  aiThreadResourceLinkBlockSchema,
+  aiThreadSourceBlockSchema,
+  aiThreadTextBlockSchema,
+} from '@/types/ai/thread/content-block.schema';
+export {
+  aiThreadAssistantChunkSchema,
+  aiThreadAssistantMessageEntrySchema,
+  aiThreadContextCompactionEntrySchema,
+  aiThreadEntrySchema,
+  aiThreadPlanEntrySchema,
+  aiThreadSchema,
+  aiThreadUserMessageEntrySchema,
+} from '@/types/ai/thread/entry.schema';
+export {
+  aiThreadToolCallContentBlockSchema,
+  aiThreadToolCallContentSchema,
+  aiThreadToolCallDiffSchema,
+  aiThreadToolCallSchema,
+  aiThreadToolCallStatusSchema,
+  aiThreadToolCallTerminalSchema,
+  aiThreadToolKindSchema,
+} from '@/types/ai/thread/tool-call.schema';

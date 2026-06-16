@@ -94,7 +94,8 @@ export const useWindowResizeState = () => {
       requestDisposableTimeout(() => {
         resizeClassRemovalTimer.clear();
         const wasResizing = html.classList.contains('is-resizing');
-        const pumpElapsedMs = resizeFramePumpStartedAt > 0 ? Date.now() - resizeFramePumpStartedAt : 0;
+        const pumpElapsedMs =
+          resizeFramePumpStartedAt > 0 ? Date.now() - resizeFramePumpStartedAt : 0;
         const pumpFrames = resizeFramePumpFrames;
         cancelResizeFramePump();
         html.classList.remove('is-resizing');

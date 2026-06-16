@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { MessageSquare } from '@lucide/vue';
 import { useTimeoutFn } from '@vueuse/core';
-import { computed, nextTick, onBeforeUnmount, provide, ref, watch } from 'vue';
 import type { MarkstreamVirtualMetrics } from 'markstream-vue';
+import { computed, nextTick, onBeforeUnmount, provide, ref, watch } from 'vue';
 import { DynamicScroller, DynamicScrollerItem } from 'vue-virtual-scroller';
 import 'vue-virtual-scroller/dist/vue-virtual-scroller.css';
 import { ConversationEmptyState } from '@/components/ai-elements/conversation';

@@ -9,7 +9,12 @@ import { MAIN_WINDOW_LABEL } from '@/utils/app-window';
 import { renderFatalBootstrapError } from '@/utils/bootstrap-fatal-error';
 import { initEditorScrollbarActivity } from '@/utils/editor-scrollbar-activity';
 import { initGitHubAuthHeaderEnhancement } from '@/utils/github-auth-header';
-import { recordRecursiveUpdateCulprit, registerRuntimeDiagnostics, reportRuntimeError, setRuntimeError } from '@/utils/runtime-diagnostics';
+import {
+  recordRecursiveUpdateCulprit,
+  registerRuntimeDiagnostics,
+  reportRuntimeError,
+  setRuntimeError,
+} from '@/utils/runtime-diagnostics';
 import { markStartup, reportStartupTimings } from '@/utils/startup-profiler';
 
 registerRuntimeDiagnostics();
@@ -156,8 +161,7 @@ const bootstrap = async (): Promise<void> => {
         const componentType = (
           instance as { $?: { type?: { __name?: string; name?: string } } } | null
         )?.$?.type;
-        const componentName =
-          componentType?.__name ?? componentType?.name ?? '<unknown component>';
+        const componentName = componentType?.__name ?? componentType?.name ?? '<unknown component>';
         console.error(`${MESSAGES.recursiveUpdateLabel} @ ${componentName}`, { trace });
         recordRecursiveUpdateCulprit(componentName);
         return;

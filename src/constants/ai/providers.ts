@@ -1,5 +1,5 @@
-import type { TAiProviderType } from '@/types/ai';
 import { getModelContextWindow } from '@/lib/model-catalog';
+import type { TAiProviderType } from '@/types/ai';
 
 /* ============================================================================
  * Global defaults (供 ai-config.ts / store / UI 等下游 import)

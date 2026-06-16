@@ -4,12 +4,7 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { InputGroup } from '@/components/ui/input-group';
 import { cn } from '@/lib/utils';
 
-import type {
-  IAskUserQuestion,
-  IAskUserResult,
-  IQuestionAnswer,
-  IQuestionOption,
-} from './types';
+import type { IAskUserQuestion, IAskUserResult, IQuestionAnswer, IQuestionOption } from './types';
 
 /**
  * AI 反向提问浮层（纯展示 + 键鼠交互，无取数 / 业务逻辑）。

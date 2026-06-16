@@ -36,7 +36,9 @@ const sourceLabelMap: Record<TWebPreviewLogSource, string> = {
 const sourceLabel = computed<string>(() => sourceLabelMap[activeSource.value]);
 
 const sourceToggleLabel = computed<string>(() =>
-  activeSource.value === 'app' ? '当前：应用日志（点击查看网页日志）' : '当前：网页日志（点击查看应用日志）',
+  activeSource.value === 'app'
+    ? '当前：应用日志（点击查看网页日志）'
+    : '当前：网页日志（点击查看应用日志）',
 );
 
 const toggleSource = (): void => {

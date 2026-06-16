@@ -272,7 +272,8 @@ const focusInlineCreateRow = async (): Promise<void> => {
 
 // 新建草稿打开（或切换到另一个父目录）时，把行内输入框滚入视口并聚焦。
 watch(
-  () => (props.inlineCreateDraft?.open === true ? (props.inlineCreateDraft.parentPath ?? '') : null),
+  () =>
+    props.inlineCreateDraft?.open === true ? (props.inlineCreateDraft.parentPath ?? '') : null,
   (openParentPath) => {
     if (openParentPath !== null) {
       void focusInlineCreateRow();

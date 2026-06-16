@@ -1,6 +1,6 @@
 import { commands } from '@/bindings/tauri';
 import type { ITauriService } from '@/types/tauri';
-import { runCommand, type ICommandMeta } from './tauri.ipc-define';
+import { type ICommandMeta, runCommand } from './tauri.ipc-define';
 import { measureScriptContentInput } from './tauri.ipc-metrics';
 
 type TTerminalTauriService = Pick<
@@ -59,26 +59,46 @@ export const terminalTauriService: TTerminalTauriService = {
   },
 
   writeTerminalInput(payload) {
-    return runCommand<void>(TERMINAL_COMMAND_META.writeTerminalInput, payload, undefined, async () => {
-      await commands.writeTerminalInput(payload);
-    });
+    return runCommand<void>(
+      TERMINAL_COMMAND_META.writeTerminalInput,
+      payload,
+      undefined,
+      async () => {
+        await commands.writeTerminalInput(payload);
+      },
+    );
   },
 
   resizeTerminalSession(payload) {
-    return runCommand<void>(TERMINAL_COMMAND_META.resizeTerminalSession, payload, undefined, async () => {
-      await commands.resizeTerminalSession(payload);
-    });
+    return runCommand<void>(
+      TERMINAL_COMMAND_META.resizeTerminalSession,
+      payload,
+      undefined,
+      async () => {
+        await commands.resizeTerminalSession(payload);
+      },
+    );
   },
 
   closeTerminalSession(payload) {
-    return runCommand<void>(TERMINAL_COMMAND_META.closeTerminalSession, payload, undefined, async () => {
-      await commands.closeTerminalSession(payload);
-    });
+    return runCommand<void>(
+      TERMINAL_COMMAND_META.closeTerminalSession,
+      payload,
+      undefined,
+      async () => {
+        await commands.closeTerminalSession(payload);
+      },
+    );
   },
 
   cancelTerminalRun(payload) {
-    return runCommand<void>(TERMINAL_COMMAND_META.cancelTerminalRun, payload, undefined, async () => {
-      await commands.cancelTerminalRun({ runId: payload.runId, mode: payload.mode ?? null });
-    });
+    return runCommand<void>(
+      TERMINAL_COMMAND_META.cancelTerminalRun,
+      payload,
+      undefined,
+      async () => {
+        await commands.cancelTerminalRun({ runId: payload.runId, mode: payload.mode ?? null });
+      },
+    );
   },
 };

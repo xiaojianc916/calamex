@@ -96,8 +96,6 @@ describe('AI thread entry schema', () => {
   });
 
   it('entry 联合拒绝未知 type', () => {
-    expect(() =>
-      aiThreadEntrySchema.parse({ type: 'mystery', id: 'x', createdAt: ISO }),
-    ).toThrow();
+    expect(() => aiThreadEntrySchema.parse({ type: 'mystery', id: 'x', createdAt: ISO })).toThrow();
   });
 });

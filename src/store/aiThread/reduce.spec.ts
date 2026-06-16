@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest';
 
 import type { TAiThreadReduceEvent } from '@/store/aiThread/events';
 import { nextToolStatus, reduceThread, reduceThreadAll } from '@/store/aiThread/reduce';
-import type { IAiThread, IAiThreadAssistantMessageEntry, IAiThreadToolCall } from '@/types/ai/thread';
+import type {
+  IAiThread,
+  IAiThreadAssistantMessageEntry,
+  IAiThreadToolCall,
+} from '@/types/ai/thread';
 
 const ISO = '2026-06-14T09:00:00.000Z';
 
@@ -18,13 +22,40 @@ const createThread = (): IAiThread => ({
 describe('reduceThread', () => {
   it('回放一整段流：user / 思维+正文交织 / tool / 完成', () => {
     const events: TAiThreadReduceEvent[] = [
-      { kind: 'user_message', id: 'u1', createdAt: ISO, blocks: [{ type: 'text', text: '为什么丝滑？' }] },
-      { kind: 'assistant_delta', messageId: 'a1', createdAt: ISO, channel: 'thought', text: '思考' },
+      {
+        kind: 'user_message',
+        id: 'u1',
+        createdAt: ISO,
+        blocks: [{ type: 'text', text: '为什么丝滑？' }],
+      },
+      {
+        kind: 'assistant_delta',
+        messageId: 'a1',
+        createdAt: ISO,
+        channel: 'thought',
+        text: '思考',
+      },
       { kind: 'assistant_delta', messageId: 'a1', createdAt: ISO, channel: 'thought', text: '中' },
-      { kind: 'assistant_delta', messageId: 'a1', createdAt: ISO, channel: 'message', text: '根因' },
-      { kind: 'assistant_delta', messageId: 'a1', createdAt: ISO, channel: 'message', text: '在数据模型' },
+      {
+        kind: 'assistant_delta',
+        messageId: 'a1',
+        createdAt: ISO,
+        channel: 'message',
+        text: '根因',
+      },
+      {
+        kind: 'assistant_delta',
+        messageId: 'a1',
+        createdAt: ISO,
+        channel: 'message',
+        text: '在数据模型',
+      },
       { kind: 'tool_started', id: 't1', createdAt: ISO, title: 'Search', toolKind: 'search' },
-      { kind: 'tool_progress', id: 't1', appendContent: [{ type: 'content', block: { type: 'text', text: 'hit' } }] },
+      {
+        kind: 'tool_progress',
+        id: 't1',
+        appendContent: [{ type: 'content', block: { type: 'text', text: 'hit' } }],
+      },
       { kind: 'tool_completed', id: 't1', ok: true },
       { kind: 'stream_completed' },
     ];
@@ -41,7 +72,10 @@ describe('reduceThread', () => {
     // 同通道连续 delta 合并：2 thought-delta 合 1，2 message-delta 合 1
     expect(assistant.chunks).toHaveLength(2);
     expect(assistant.chunks[0]).toMatchObject({ type: 'thought', block: { text: '思考中' } });
-    expect(assistant.chunks[1]).toMatchObject({ type: 'message', block: { text: '根因在数据模型' } });
+    expect(assistant.chunks[1]).toMatchObject({
+      type: 'message',
+      block: { text: '根因在数据模型' },
+    });
 
     const tool = result.entries[2] as IAiThreadToolCall;
     expect(tool.status).toBe('completed');
@@ -63,15 +97,33 @@ describe('reduceThread', () => {
 
   it('tool_call 按 id upsert，不重复 append', () => {
     let thread = createThread();
-    thread = reduceThread(thread, { kind: 'tool_started', id: 't1', createdAt: ISO, title: 'A', toolKind: 'read' });
+    thread = reduceThread(thread, {
+      kind: 'tool_started',
+      id: 't1',
+      createdAt: ISO,
+      title: 'A',
+      toolKind: 'read',
+    });
     thread = reduceThread(thread, { kind: 'tool_progress', id: 't1' });
-    thread = reduceThread(thread, { kind: 'tool_started', id: 't1', createdAt: ISO, title: 'A', toolKind: 'read' });
+    thread = reduceThread(thread, {
+      kind: 'tool_started',
+      id: 't1',
+      createdAt: ISO,
+      title: 'A',
+      toolKind: 'read',
+    });
     expect(thread.entries.filter((e) => e.type === 'tool_call')).toHaveLength(1);
   });
 
   it('终态不可回退：completed 后的 progress 不降级', () => {
     let thread = createThread();
-    thread = reduceThread(thread, { kind: 'tool_started', id: 't1', createdAt: ISO, title: 'A', toolKind: 'execute' });
+    thread = reduceThread(thread, {
+      kind: 'tool_started',
+      id: 't1',
+      createdAt: ISO,
+      title: 'A',
+      toolKind: 'execute',
+    });
     thread = reduceThread(thread, { kind: 'tool_completed', id: 't1', ok: true });
     thread = reduceThread(thread, { kind: 'tool_progress', id: 't1' });
     expect((thread.entries[0] as IAiThreadToolCall).status).toBe('completed');
@@ -79,8 +131,20 @@ describe('reduceThread', () => {
 
   it('stream_cancelled 把所有非终态 tool 收敛为 canceled', () => {
     let thread = createThread();
-    thread = reduceThread(thread, { kind: 'tool_started', id: 't1', createdAt: ISO, title: 'A', toolKind: 'execute' });
-    thread = reduceThread(thread, { kind: 'tool_started', id: 't2', createdAt: ISO, title: 'B', toolKind: 'search' });
+    thread = reduceThread(thread, {
+      kind: 'tool_started',
+      id: 't1',
+      createdAt: ISO,
+      title: 'A',
+      toolKind: 'execute',
+    });
+    thread = reduceThread(thread, {
+      kind: 'tool_started',
+      id: 't2',
+      createdAt: ISO,
+      title: 'B',
+      toolKind: 'search',
+    });
     thread = reduceThread(thread, { kind: 'tool_completed', id: 't2', ok: true });
     thread = reduceThread(thread, { kind: 'stream_cancelled' });
     expect((thread.entries[0] as IAiThreadToolCall).status).toBe('canceled');

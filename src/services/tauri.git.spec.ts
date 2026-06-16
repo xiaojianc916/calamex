@@ -20,9 +20,9 @@ describe('measureGitCommitHistoryOutput', () => {
   });
 
   it('空历史只计入固定结构开销', () => {
-    expect(measureGitCommitHistoryOutput({ entries: [], hasMore: false, nextOffset: null })).toEqual(
-      { bytes: 32 },
-    );
+    expect(
+      measureGitCommitHistoryOutput({ entries: [], hasMore: false, nextOffset: null }),
+    ).toEqual({ bytes: 32 });
   });
 
   it('entries 缺失或非数组时视为零条目', () => {

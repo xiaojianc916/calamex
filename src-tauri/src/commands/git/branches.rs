@@ -193,7 +193,7 @@ fn resolve_branch_sort_key(branch: &GitBranchPayload) -> (usize, usize, &str) {
 
 fn build_git_branch_payload_from_ref(
     repository: &Repository,
-    repository_root: &Path,
+    _repository_root: &Path,
     reference: &gix::Reference<'_>,
     kind: &str,
     shorthand: &str,

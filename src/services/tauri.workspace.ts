@@ -2,7 +2,7 @@ import { commands } from '@/bindings/tauri';
 import type { IWorkspaceSearchStreamEvent } from '@/types/search';
 import type { ITauriService } from '@/types/tauri';
 import { assertDesktopRuntime } from '@/utils/desktop-runtime';
-import { runCommand, type ICommandMeta } from './tauri.ipc-define';
+import { type ICommandMeta, runCommand } from './tauri.ipc-define';
 import { measureScriptContentInput } from './tauri.ipc-metrics';
 import { loadTauriEvent, pickDialogPath } from './tauri.ipc-runtime';
 import type { IIpcCallOptions } from './tauri.ipc-types';
@@ -236,8 +236,11 @@ export const workspaceTauriService: TWorkspaceTauriService = {
   },
 
   listWorkspaceEntries(path, rootPath, options?: IIpcCallOptions) {
-    return runCommand(WORKSPACE_COMMAND_META.listWorkspaceEntries, { path, rootPath }, options, () =>
-      commands.listWorkspaceEntries(path ?? null, rootPath ?? null),
+    return runCommand(
+      WORKSPACE_COMMAND_META.listWorkspaceEntries,
+      { path, rootPath },
+      options,
+      () => commands.listWorkspaceEntries(path ?? null, rootPath ?? null),
     );
   },
 
@@ -260,15 +263,25 @@ export const workspaceTauriService: TWorkspaceTauriService = {
   },
 
   startWorkspaceWatching(rootPath: string, options?: IIpcCallOptions) {
-    return runCommand<void>(WORKSPACE_COMMAND_META.startWorkspaceWatching, rootPath, options, async () => {
-      await commands.startWorkspaceWatching(rootPath);
-    });
+    return runCommand<void>(
+      WORKSPACE_COMMAND_META.startWorkspaceWatching,
+      rootPath,
+      options,
+      async () => {
+        await commands.startWorkspaceWatching(rootPath);
+      },
+    );
   },
 
   stopWorkspaceWatching(options?: IIpcCallOptions) {
-    return runCommand<void>(WORKSPACE_COMMAND_META.stopWorkspaceWatching, undefined, options, async () => {
-      await commands.stopWorkspaceWatching();
-    });
+    return runCommand<void>(
+      WORKSPACE_COMMAND_META.stopWorkspaceWatching,
+      undefined,
+      options,
+      async () => {
+        await commands.stopWorkspaceWatching();
+      },
+    );
   },
 
   searchWorkspace(payload, options) {
@@ -301,8 +314,11 @@ export const workspaceTauriService: TWorkspaceTauriService = {
       excludePatterns: payload.excludePatterns,
       limit: payload.limit ?? null,
     };
-    return runCommand(WORKSPACE_COMMAND_META.previewWorkspaceReplacement, commandPayload, options, () =>
-      commands.previewWorkspaceReplacement(commandPayload),
+    return runCommand(
+      WORKSPACE_COMMAND_META.previewWorkspaceReplacement,
+      commandPayload,
+      options,
+      () => commands.previewWorkspaceReplacement(commandPayload),
     );
   },
 
@@ -316,8 +332,11 @@ export const workspaceTauriService: TWorkspaceTauriService = {
       },
       expectedFiles: payload.expectedFiles,
     };
-    return runCommand(WORKSPACE_COMMAND_META.applyWorkspaceReplacement, commandPayload, options, () =>
-      commands.applyWorkspaceReplacement(commandPayload),
+    return runCommand(
+      WORKSPACE_COMMAND_META.applyWorkspaceReplacement,
+      commandPayload,
+      options,
+      () => commands.applyWorkspaceReplacement(commandPayload),
     );
   },
 };

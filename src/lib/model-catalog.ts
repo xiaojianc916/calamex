@@ -51,11 +51,7 @@ interface TokenlensLike {
   getModels?: () => ProvidersRegistry;
   fetchModels?: (arg?: unknown) => Promise<ProvidersRegistry>;
   getContext?: (modelId: string, providers?: ProvidersRegistry) => unknown;
-  getTokenCosts?: (
-    modelId: string,
-    usage: unknown,
-    providers?: ProvidersRegistry,
-  ) => unknown;
+  getTokenCosts?: (modelId: string, usage: unknown, providers?: ProvidersRegistry) => unknown;
 }
 
 const tl = tokenlens as unknown as TokenlensLike;
@@ -96,9 +92,7 @@ function getContextCaps(modelId: string): Record<string, unknown> | undefined {
   }
   try {
     const caps = tl.getContext(modelId, activeProviders());
-    return caps && typeof caps === 'object'
-      ? (caps as Record<string, unknown>)
-      : undefined;
+    return caps && typeof caps === 'object' ? (caps as Record<string, unknown>) : undefined;
   } catch {
     return undefined;
   }
@@ -136,10 +130,7 @@ export function getModelMaxOutputTokens(modelId: string): number | undefined {
  * Estimate unit price (USD per 1M tokens) by asking tokenlens for the cost of a
  * 1M-token usage. This avoids depending on tokenlens' raw pricing field names.
  */
-function estimateUsdPerMillion(
-  modelId: string,
-  kind: 'input' | 'output',
-): number | undefined {
+function estimateUsdPerMillion(modelId: string, kind: 'input' | 'output'): number | undefined {
   if (!modelId || typeof tl.getTokenCosts !== 'function') {
     return undefined;
   }
@@ -153,9 +144,7 @@ function estimateUsdPerMillion(
       return undefined;
     }
     const record = costs as Record<string, unknown>;
-    return firstPositiveNumber(
-      kind === 'input' ? record.inputUSD : record.outputUSD,
-    );
+    return firstPositiveNumber(kind === 'input' ? record.inputUSD : record.outputUSD);
   } catch {
     return undefined;
   }
@@ -174,9 +163,7 @@ export function getModelFacts(modelId: string): IModelFacts {
         caps.maxInput,
       )
     : undefined;
-  const maxOutputTokens = caps
-    ? firstPositiveNumber(caps.outputMax, caps.maxOutput)
-    : undefined;
+  const maxOutputTokens = caps ? firstPositiveNumber(caps.outputMax, caps.maxOutput) : undefined;
   const inputUsdPerMillion = estimateUsdPerMillion(id, 'input');
   const outputUsdPerMillion = estimateUsdPerMillion(id, 'output');
   const known =

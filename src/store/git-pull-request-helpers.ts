@@ -1,7 +1,4 @@
-import type {
-  IGitPullRequestSummaryPayload,
-  IGitPullRequestSupportPayload,
-} from '@/types/git';
+import type { IGitPullRequestSummaryPayload, IGitPullRequestSupportPayload } from '@/types/git';
 import { normalizeFileSystemPath } from '@/utils/path';
 
 /**

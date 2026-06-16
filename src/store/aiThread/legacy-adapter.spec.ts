@@ -1,9 +1,16 @@
 import { describe, expect, it } from 'vitest';
-
-import { inferToolKind, legacyMessageToEntries, legacyThreadToThread } from '@/store/aiThread/legacy-adapter';
-import type { IAiChatMessage } from '@/types/ai';
 import type { IAiConversationThread } from '@/store/aiConversation';
-import type { IAiThreadAssistantMessageEntry, IAiThreadToolCall, IAiThreadUserMessageEntry } from '@/types/ai/thread';
+import {
+  inferToolKind,
+  legacyMessageToEntries,
+  legacyThreadToThread,
+} from '@/store/aiThread/legacy-adapter';
+import type { IAiChatMessage } from '@/types/ai';
+import type {
+  IAiThreadAssistantMessageEntry,
+  IAiThreadToolCall,
+  IAiThreadUserMessageEntry,
+} from '@/types/ai/thread';
 
 const ISO = '2026-06-14T09:00:00.000Z';
 
@@ -60,7 +67,9 @@ describe('legacyMessageToEntries', () => {
     expect(tool.content).toHaveLength(3); // targetPreview + 2 detailItems
 
     const assistant = entries[1] as IAiThreadAssistantMessageEntry;
-    expect(assistant.chunks).toEqual([{ type: 'message', block: { type: 'text', text: '最终回答' } }]);
+    expect(assistant.chunks).toEqual([
+      { type: 'message', block: { type: 'text', text: '最终回答' } },
+    ]);
   });
 
   it('状态映射覆盖全部 5 种 legacy 状态', () => {

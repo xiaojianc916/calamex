@@ -15,12 +15,7 @@ import type {
 } from '@/types/ai/thread';
 
 /** 线程级流式状态（由 store 层持有，不进持久化 Thread）。 */
-export type TAiThreadStreamStatus =
-  | 'idle'
-  | 'streaming'
-  | 'completed'
-  | 'cancelled'
-  | 'error';
+export type TAiThreadStreamStatus = 'idle' | 'streaming' | 'completed' | 'cancelled' | 'error';
 
 /** 助手消息通道：正文 / 思维链。 */
 export type TAiAssistantChannel = 'message' | 'thought';
@@ -76,5 +71,7 @@ export type TAiThreadReduceEvent =
   | { kind: 'stream_error'; message: string };
 
 /** 按 `kind` 字面量取窄类型。 */
-export type TAiThreadReduceEventByKind<TKind extends TAiThreadReduceEvent['kind']> =
-  Extract<TAiThreadReduceEvent, { kind: TKind }>;
+export type TAiThreadReduceEventByKind<TKind extends TAiThreadReduceEvent['kind']> = Extract<
+  TAiThreadReduceEvent,
+  { kind: TKind }
+>;
