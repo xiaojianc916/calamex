@@ -1,6 +1,7 @@
-//! 集成终端事件与状态机：驱动状态转移、向前端发射交互/运行事件。
+//! 集成终端事件：向前端发射交互/运行/会话状态事件。
 //!
 //! 本模块不持有状态容器，只通过 state 模块的接口读写快照与活动运行。
+//! 全局终端状态机已于 BE-2b 移除，状态完全按会话维度（session-state-changed）维护。
 
 use jiff::Timestamp;
 use std::{
@@ -15,13 +16,12 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use crate::terminal::{
     local_wsl_protocol::{LocalWslTerminalServerPayload, SIGNAL_MODE_KILL},
-    state_machine::StateMachine,
     tauri_events::{
         TerminalDataEvent, TerminalDataSource, TerminalExitEvent, TerminalRunChunkEvent,
         TerminalRunCompletedEvent, TerminalRunStartedEvent, TerminalSessionStateChangedEvent,
-        TerminalStateChangedEvent, emit_terminal_data, emit_terminal_exit,
-        emit_terminal_run_chunk, emit_terminal_run_completed, emit_terminal_run_started,
-        emit_terminal_session_state_changed, emit_terminal_state_changed,
+        emit_terminal_data, emit_terminal_exit, emit_terminal_run_chunk,
+        emit_terminal_run_completed, emit_terminal_run_started,
+        emit_terminal_session_state_changed,
     },
     types::TerminalState,
     visual::{
@@ -32,9 +32,8 @@ use crate::terminal::{
 };
 
 use super::state::{
-    TerminalSessionState, active_terminal_run_count, append_terminal_snapshot,
-    clear_active_terminal_run, complete_session_run_state,
-    remove_interactive_terminal_after_exit, set_session_state,
+    TerminalSessionState, append_terminal_snapshot, clear_active_terminal_run,
+    complete_session_run_state, remove_interactive_terminal_after_exit, set_session_state,
     should_skip_snapshot_for_interactive_resize_repaint, take_active_terminal_run_for_session,
 };
 
@@ -47,31 +46,6 @@ fn terminal_now_ms() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| i64::try_from(duration.as_millis()).unwrap_or(i64::MAX))
         .unwrap_or(0)
-}
-
-pub(super) fn transition_terminal_state(app: &AppHandle, to: TerminalState) -> Result<(), String> {
-    let registry = crate::terminal::registry::registry();
-    let mut state = registry
-        .state
-        .write()
-        .map_err(|_| "终端状态机已损坏。".to_string())?;
-    let from = *state;
-    if from == to {
-        return Ok(());
-    }
-    if !StateMachine::can_transition(from, to) {
-        return Err(format!("非法终端状态转移：{from:?} -> {to:?}"));
-    }
-    *state = to;
-    emit_terminal_state_changed(
-        app,
-        TerminalStateChangedEvent {
-            from,
-            to,
-            at_ms: terminal_now_ms(),
-        },
-    );
-    Ok(())
 }
 
 fn emit_session_state_transitions(
@@ -94,8 +68,8 @@ fn emit_session_state_transitions(
 }
 
 /// 改写会话状态的同时向前端发 `terminal:session-state-changed`，让 UI 能按会话维度观察
-/// 状态流转。全局 `terminal:state-changed` 仍并存，迁移期不破坏既有读取方。无实际转移
-/// （无变化 / 非法 / 锁中毒）时不发事件。
+/// 状态流转。全局状态机已移除（BE-2b），状态完全按会话维护。无实际转移（无变化 / 非法 /
+/// 锁中毒）时不发事件。
 pub(super) fn set_session_state_and_emit(
     app: &AppHandle,
     state: &TerminalSessionState,
@@ -106,7 +80,7 @@ pub(super) fn set_session_state_and_emit(
 }
 
 /// 回收该会话的运行态并逐步发事件：`Running -> SwitchingToIdle -> IdleInteractive` 两步都会
-/// 作为独立的 session-state-changed 发出，与全局完成转移并存。
+/// 作为独立的 session-state-changed 发出。
 pub(super) fn complete_session_run_state_and_emit(
     app: &AppHandle,
     state: &TerminalSessionState,
@@ -120,7 +94,6 @@ pub(super) fn complete_session_run_state_and_emit(
 }
 
 pub(super) fn mark_terminal_interactive_ready(app: &AppHandle) {
-    let _ = transition_terminal_state(app, TerminalState::IdleInteractive);
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.emit("terminal:interactive-ready", ());
     }
@@ -136,9 +109,6 @@ fn mark_terminal_interactive_exited(
     // （既丢失取消/输入入口，又遗留挂起的 wsl.exe）。
     if let Some(run_handle) = take_active_terminal_run_for_session(state, &payload.session_id) {
         let _ = run_handle.cancel(SIGNAL_MODE_KILL);
-    }
-    if crate::terminal::registry::registry().current_state() == TerminalState::IdleInteractive {
-        let _ = transition_terminal_state(app, TerminalState::Booting);
     }
     emit_terminal_exit(app, payload);
 }
@@ -160,43 +130,6 @@ fn emit_terminal_run_started_state(
             pid,
         },
     );
-    let _ = transition_terminal_state(app, TerminalState::Running);
-}
-
-fn begin_terminal_run_completion(app: &AppHandle, state: &TerminalSessionState) {
-    if active_terminal_run_count(state) > 0 {
-        return;
-    }
-    let current = crate::terminal::registry::registry().current_state();
-    match current {
-        TerminalState::Running => {
-            let _ = transition_terminal_state(app, TerminalState::SwitchingToIdle);
-        }
-        TerminalState::SwitchingToRun => {
-            let _ = transition_terminal_state(app, TerminalState::IdleInteractive);
-        }
-        _ => {}
-    }
-}
-
-fn finish_terminal_run_completion(app: &AppHandle, state: &TerminalSessionState) {
-    if active_terminal_run_count(state) > 0 {
-        return;
-    }
-    let current = crate::terminal::registry::registry().current_state();
-    if current == TerminalState::SwitchingToIdle {
-        let _ = transition_terminal_state(app, TerminalState::IdleInteractive);
-    }
-}
-
-fn emit_terminal_run_completed_with_state(
-    app: &AppHandle,
-    state: &TerminalSessionState,
-    payload: TerminalRunCompletedEvent,
-) {
-    begin_terminal_run_completion(app, state);
-    emit_terminal_run_completed(app, payload);
-    finish_terminal_run_completion(app, state);
 }
 
 pub(super) fn next_terminal_data_seq() -> u64 {
@@ -406,7 +339,7 @@ pub(super) fn handle_local_wsl_interactive_terminal_event(
         LocalWslTerminalServerPayload::InteractiveOpened(_) => {
             mark_terminal_interactive_ready(app);
             // 每会话态：交互 shell 就绪即把「这个会话」置为 IdleInteractive（每会话各自从
-            // Booting 起步，与全局态无关），作为后续 dispatch -> SwitchingToRun 的合法起点。
+            // Booting 起步），作为后续 dispatch -> SwitchingToRun 的合法起点。
             set_session_state_and_emit(app, state, session_id, TerminalState::IdleInteractive);
         }
         LocalWslTerminalServerPayload::InteractiveData(payload) => {
@@ -540,11 +473,10 @@ fn finalize_local_run(
     });
     clear_active_terminal_run(state, run_id);
     // 每会话态：该会话的运行结束后回收其状态（Running -> SwitchingToIdle -> IdleInteractive），
-    // 不受其它会话是否仍在运行影响；全局态仍按既有计数门控在下方完成转移。
+    // 不受其它会话是否仍在运行影响。全局状态机已于 BE-2b 移除，运行完成事件直接发出。
     complete_session_run_state_and_emit(app, state, session_id);
-    emit_terminal_run_completed_with_state(
+    emit_terminal_run_completed(
         app,
-        state,
         TerminalRunCompletedEvent {
             session_id: session_id.to_string(),
             run_id: run_id.to_string(),
