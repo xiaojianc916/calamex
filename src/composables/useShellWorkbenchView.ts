@@ -669,10 +669,9 @@ export const useShellWorkbenchView = (onReady: () => void) => {
         return;
       }
 
-      if (!isRestoringWorkbenchSession.value) {
-        openEditorMode();
-      }
-
+      // 注意：这里不再强制 openEditorMode。仅切换 activeDocumentId（切换已打开的标签、
+      // 文档前进后退）不应强制切到编辑模式；“新打开并激活文档”才进编辑模式的逻辑
+      // 已下沉到 documents watch（依据旧值快照判定是否新增了文档）。
       if (isApplyingDocumentNavigation) {
         isApplyingDocumentNavigation = false;
         return;
@@ -691,7 +690,7 @@ export const useShellWorkbenchView = (onReady: () => void) => {
 
   watch(
     () => (workbench.editorStore.documents ?? []).map((item) => item.id),
-    (documentIds) => {
+    (documentIds, previousDocumentIds) => {
       const documentIdSet = new Set(documentIds);
       documentBackStack.value = documentBackStack.value.filter((documentId) =>
         documentIdSet.has(documentId),
@@ -699,6 +698,25 @@ export const useShellWorkbenchView = (onReady: () => void) => {
       documentForwardStack.value = documentForwardStack.value.filter((documentId) =>
         documentIdSet.has(documentId),
       );
+
+      // 仅当“新打开了一个文档并将其激活”时才进入编辑模式。
+      // 依据 watcher 提供的旧值快照判定是否新增了文档，读取实时 activeDocumentId，
+      // 与 activeDocumentId watch 的执行顺序无关。切换已打开标签 / 前进后退不会新增文档，
+      // 因此不会再被强制切到编辑模式（修复 activeDocumentId 变化即强制 openEditorMode 的回归）。
+      if (previousDocumentIds === undefined || isRestoringWorkbenchSession.value) {
+        return;
+      }
+
+      const previousDocumentIdSet = new Set(previousDocumentIds);
+      const activeDocumentId = workbench.editorStore.activeDocumentId;
+      const hasOpenedAndActivatedNewDocument =
+        Boolean(activeDocumentId) &&
+        documentIdSet.has(activeDocumentId as string) &&
+        !previousDocumentIdSet.has(activeDocumentId as string);
+
+      if (hasOpenedAndActivatedNewDocument) {
+        openEditorMode();
+      }
     },
     { immediate: true },
   );
