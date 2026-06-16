@@ -8,7 +8,6 @@ pub mod dispatch;
 pub mod event_bus;
 pub mod local_wsl_protocol;
 pub mod multiplexer;
-pub mod registry;
 pub mod snapshot;
 pub mod state_machine;
 pub mod tauri_events;
