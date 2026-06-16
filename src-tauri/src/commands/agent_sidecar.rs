@@ -74,6 +74,15 @@ pub async fn agent_sidecar_chat(
     // 会话连续性对齐 Zed session_id = thread.id()：先以 thread_id（缺省回退空串→host 内
     // 按工作区新建）解析稳定 ACP SessionId，维持 thread 级别的会话连续性。
     let host = acp_host(&app)?;
+
+    // 补齐模型配置：payload 未携带时，从已保存的 AI 配置组装。
+    // launch 层有意不向 ACP 子进程注入模型 env（模型配置走逐请求通道），故 chat 回合
+    // 必须经此逐请求补齐；否则 sidecar 退回环境兜底失败并抛“AI 模型未配置”，导致整轮
+    // 空白、回合秒结束（warmup 不需模型故正常，chat 必崩）。
+    if payload.model_config.is_none() {
+        payload.model_config = Some(crate::ai::gateway::current_sidecar_model_config()?);
+    }
+
     let acp_session_id = host
         .ensure_session(
             payload.thread_id.as_deref().unwrap_or_default(),
