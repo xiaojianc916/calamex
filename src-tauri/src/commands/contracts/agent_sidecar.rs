@@ -208,8 +208,8 @@ mod agent_sidecar_contract_tests {
     use serde_json::{Map, Value};
 
     use super::{
-        AgentSidecarAskUserAnswerPayload, AgentSidecarAskUserResumeRequest, AgentSidecarChatRequest,
-        AgentSidecarCheckpointRestoreRequest, AgentSidecarMessagePayload,
+        AgentSidecarAskUserAnswerPayload, AgentSidecarAskUserResumeRequest,
+        AgentSidecarChatRequest, AgentSidecarCheckpointRestoreRequest, AgentSidecarMessagePayload,
         AgentSidecarRollbackStepPath,
     };
 
@@ -370,7 +370,10 @@ mod agent_sidecar_contract_tests {
             .and_then(Value::as_array)
             .expect("answers should be an array");
         assert_eq!(answers[0]["questionId"], Value::String("q1".to_string()));
-        assert_eq!(answers[0]["optionIds"][0], Value::String("opt_a".to_string()));
+        assert_eq!(
+            answers[0]["optionIds"][0],
+            Value::String("opt_a".to_string())
+        );
         assert_eq!(answers[0]["text"], Value::String("自定义".to_string()));
         assert!(object.contains_key("messages"));
         assert!(object.contains_key("context"));

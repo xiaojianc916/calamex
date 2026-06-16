@@ -93,12 +93,8 @@ pub async fn generate_conversation_title(
         model_config: None,
         thread_id: None,
     };
-    let sidecar_response = run_model_chat_via_acp(
-        app,
-        request_payload,
-        narrator_sidecar_model_config()?,
-    )
-    .await?;
+    let sidecar_response =
+        run_model_chat_via_acp(app, request_payload, narrator_sidecar_model_config()?).await?;
     let title = normalize_conversation_title(&sidecar_events_result_text(&sidecar_response));
 
     if title.chars().count() < MIN_GENERATED_TITLE_CHARS {
@@ -285,12 +281,8 @@ pub async fn inline_complete(
         model_config: None,
         thread_id: None,
     };
-    let response = run_model_chat_via_acp(
-        app,
-        request_payload,
-        current_sidecar_model_config()?,
-    )
-    .await?;
+    let response =
+        run_model_chat_via_acp(app, request_payload, current_sidecar_model_config()?).await?;
 
     Ok(AiInlineCompletionResult {
         insert_text: sidecar_events_result_text(&response),

@@ -409,7 +409,11 @@ impl AcpClientHandle {
     ) -> Result<StopReason, AcpClientError> {
         let (reply, rx) = oneshot::channel();
         self.cmd_tx
-            .send(Command::Prompt { session_id, blocks, reply })
+            .send(Command::Prompt {
+                session_id,
+                blocks,
+                reply,
+            })
             .map_err(|_| AcpClientError::NotRunning)?;
         rx.await
             .map_err(|_| AcpClientError::NotRunning)?
@@ -423,7 +427,11 @@ impl AcpClientHandle {
     ) -> Result<(), AcpClientError> {
         let (reply, rx) = oneshot::channel();
         self.cmd_tx
-            .send(Command::SetSessionMode { session_id, mode_id, reply })
+            .send(Command::SetSessionMode {
+                session_id,
+                mode_id,
+                reply,
+            })
             .map_err(|_| AcpClientError::NotRunning)?;
         rx.await
             .map_err(|_| AcpClientError::NotRunning)?
@@ -608,7 +616,11 @@ pub fn spawn_acp_client(
                             .and_then(|v| v.as_str())
                             .map(|s| s.to_string());
                         let n = seq.fetch_add(1, Ordering::SeqCst);
-                        sink(AcpStreamFrame { session_id, seq: n, event });
+                        sink(AcpStreamFrame {
+                            session_id,
+                            seq: n,
+                            event,
+                        });
                         Ok::<(), agent_client_protocol::Error>(())
                     }
                 },
@@ -622,9 +634,9 @@ pub fn spawn_acp_client(
                     async move {
                         let outcome = match resolver(req).await {
                             PermissionDecision::Selected(option_id) => {
-                                RequestPermissionOutcome::Selected(
-                                    SelectedPermissionOutcome::new(option_id),
-                                )
+                                RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(
+                                    option_id,
+                                ))
                             }
                             PermissionDecision::Cancelled => RequestPermissionOutcome::Cancelled,
                         };
@@ -649,13 +661,21 @@ pub fn spawn_acp_client(
                             let _ =
                                 reply.send(res.map(|r| r.session_id).map_err(|e| e.to_string()));
                         }
-                        Command::Prompt { session_id, blocks, reply } => {
+                        Command::Prompt {
+                            session_id,
+                            blocks,
+                            reply,
+                        } => {
                             let req = PromptRequest::new(session_id, blocks);
                             let res = cx.send_request(req).block_task().await;
                             let _ =
                                 reply.send(res.map(|r| r.stop_reason).map_err(|e| e.to_string()));
                         }
-                        Command::SetSessionMode { session_id, mode_id, reply } => {
+                        Command::SetSessionMode {
+                            session_id,
+                            mode_id,
+                            reply,
+                        } => {
                             let res = cx
                                 .send_request(SetSessionModeRequest::new(session_id, mode_id))
                                 .block_task()
@@ -822,7 +842,10 @@ mod tests {
                 kind: "file".to_string(),
                 label: "login.vue".to_string(),
                 path: Some("src/login.vue".to_string()),
-                range: Some(AgentChatContextRange { start_line: 1, end_line: 20 }),
+                range: Some(AgentChatContextRange {
+                    start_line: 1,
+                    end_line: 20,
+                }),
                 content_preview: "<template>".to_string(),
                 redacted: false,
             }],

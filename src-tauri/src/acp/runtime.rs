@@ -92,10 +92,7 @@ impl AcpRuntime {
     /// 与 `get_or_spawn` 一致由 `AppHandle` 装配真实 emit 闭包；`AcpHost::spawn` 同步返回
     /// 句柄，故在持锁期间「先关停旧者再派生新者」不跨 await 持锁；先 `take` 并 `shutdown`
     /// 旧宿主（结束其常驻连接任务、回收 stdio 子进程），保证重建后不残留两份连接。
-    pub fn restart<R: Runtime>(
-        &self,
-        app: &AppHandle<R>,
-    ) -> Result<Arc<AcpHost>, AcpClientError> {
+    pub fn restart<R: Runtime>(&self, app: &AppHandle<R>) -> Result<Arc<AcpHost>, AcpClientError> {
         let mut guard = self.host.lock();
         // 先关停旧宿主：结束其常驻连接任务并回收 stdio 子进程，避免重建后残留两份连接。
         if let Some(previous) = guard.take() {

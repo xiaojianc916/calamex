@@ -54,7 +54,12 @@ pub async fn ensure_terminal_session(
 ) -> Result<TerminalSessionPayload, String> {
     let terminal_state = state.inner().clone();
     update_terminal_geometry(payload.cols, payload.rows);
-    set_session_geometry(&terminal_state, &payload.session_id, payload.cols, payload.rows);
+    set_session_geometry(
+        &terminal_state,
+        &payload.session_id,
+        payload.cols,
+        payload.rows,
+    );
 
     // 在持有创建保护锁之前完成工作目录规整：canonicalize 会触达文件系统，慢盘 / 网络盘上
     // 可能阻塞。把它挪到锁外可缩短临界区，避免无谓拉长 close / shutdown 等需与创建串行的
@@ -215,7 +220,12 @@ pub fn resize_terminal_session(
 ) -> Result<(), String> {
     let terminal_state = state.inner().clone();
     update_terminal_geometry(payload.cols, payload.rows);
-    set_session_geometry(&terminal_state, &payload.session_id, payload.cols, payload.rows);
+    set_session_geometry(
+        &terminal_state,
+        &payload.session_id,
+        payload.cols,
+        payload.rows,
+    );
 
     let session = get_terminal_session(&terminal_state, &payload.session_id)?
         .ok_or_else(|| "目标终端会话不存在。".to_string())?;
