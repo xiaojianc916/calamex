@@ -273,6 +273,7 @@ export type AgentSidecarAskUserAnswerPayload_Serialize = {
  *  `outcome` + 结构化 `answers` 取代 `decision`：
  *    * outcome 取值（selected/cancelled）由 sidecar zod 校验，原样透传；
  *    * answers 为每题作答，outcome=cancelled 时通常缺省（serde 整字段省略，对齐 zod `.optional()`）。
+ * 
  *  与 approval 恢复一致地携带 plan_*（plan 续跑定位），不含 `mode`（恢复不切换模式）。
  */
 export type AgentSidecarAskUserResumeRequest = AgentSidecarAskUserResumeRequest_Serialize | AgentSidecarAskUserResumeRequest_Deserialize;
@@ -284,6 +285,7 @@ export type AgentSidecarAskUserResumeRequest = AgentSidecarAskUserResumeRequest_
  *  `outcome` + 结构化 `answers` 取代 `decision`：
  *    * outcome 取值（selected/cancelled）由 sidecar zod 校验，原样透传；
  *    * answers 为每题作答，outcome=cancelled 时通常缺省（serde 整字段省略，对齐 zod `.optional()`）。
+ * 
  *  与 approval 恢复一致地携带 plan_*（plan 续跑定位），不含 `mode`（恢复不切换模式）。
  */
 export type AgentSidecarAskUserResumeRequest_Deserialize = {
@@ -309,6 +311,7 @@ export type AgentSidecarAskUserResumeRequest_Deserialize = {
  *  `outcome` + 结构化 `answers` 取代 `decision`：
  *    * outcome 取值（selected/cancelled）由 sidecar zod 校验，原样透传；
  *    * answers 为每题作答，outcome=cancelled 时通常缺省（serde 整字段省略，对齐 zod `.optional()`）。
+ * 
  *  与 approval 恢复一致地携带 plan_*（plan 续跑定位），不含 `mode`（恢复不切换模式）。
  */
 export type AgentSidecarAskUserResumeRequest_Serialize = {
