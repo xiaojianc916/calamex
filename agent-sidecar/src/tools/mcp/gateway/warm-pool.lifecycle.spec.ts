@@ -5,8 +5,8 @@ import { describe, it } from 'node:test';
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 
-import { makeToolExecutionContext } from '../../test-support/tool-context.js';
-import { type IMcpServerConfig } from '../mcp.js';
+import { makeToolExecutionContext } from '../../../test-support/tool-context.js';
+import { type IMcpServerConfig } from '../client.js';
 import { createMcpGatewayWarmPool } from './warm-pool.js';
 
 const createMockStdioConfig = (name: string): IMcpServerConfig => ({

@@ -6,13 +6,13 @@ export type {
     IMastraLogToolsRef,
     ICreateMastraFileLoggerOptions,
     TLogLevel,
-} from './log/file-logger.js';
+} from './file-logger.js';
 
 export {
     LOG_LEVEL_VALUES,
     createMastraLoggerRef,
     ensureMastraLogFile,
     createMastraFileLogger,
-} from './log/file-logger.js';
+} from './file-logger.js';
 
-export { createMastraLogTools } from './log/list-logs.js';
+export { createMastraLogTools } from './list-logs.js';

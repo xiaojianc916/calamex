@@ -1,9 +1,9 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { compactModelOutput, truncateModelOutputText } from '../../models/output-budget.js';
-import { createJsonToolModelOutput } from '../budget/budget.js';
-import type { IAgentContextReferenceInput } from '../contracts/runtime-input.js';
-import { CURRENT_FILE_TOOL_CONTENT_MAX_CHARS, CURRENT_FILE_TOOL_MODEL_OUTPUT_MAX_CHARS } from '../types.js';
+import { createJsonToolModelOutput } from '../../engines/budget/budget.js';
+import type { IAgentContextReferenceInput } from '../../engines/contracts/runtime-input.js';
+import { CURRENT_FILE_TOOL_CONTENT_MAX_CHARS, CURRENT_FILE_TOOL_MODEL_OUTPUT_MAX_CHARS } from '../../engines/types.js';
 
 /** 行号列宽，对齐 Mastra 内置 read_file 的 `cat -n` 输出（行号右对齐到 6 列 + 单个制表符）。 */
 const LINE_NUMBER_COLUMN_WIDTH = 6;

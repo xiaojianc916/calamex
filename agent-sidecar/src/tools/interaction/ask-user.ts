@@ -1,7 +1,7 @@
 import type { ToolsInput } from '@mastra/core/agent';
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
-import { createJsonToolModelOutput } from '../budget/budget.js';
+import { createJsonToolModelOutput } from '../../engines/budget/budget.js';
 
 /**
  * ask_user —— AI 反向提问（HITL）原生工具。

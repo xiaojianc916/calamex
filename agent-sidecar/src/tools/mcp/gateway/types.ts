@@ -1,5 +1,5 @@
 import type { ToolsInput } from '@mastra/core/agent';
-import type { IMcpServerConfig, TMcpServerName } from '../mcp.js';
+import type { IMcpServerConfig, TMcpServerName } from '../client.js';
 
 export type TMcpGatewayToolProfile = 'readonly' | 'write';
 

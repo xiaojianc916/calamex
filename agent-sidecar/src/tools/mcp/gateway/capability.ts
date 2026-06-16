@@ -1,6 +1,6 @@
-import { createMcpToolDescriptor, resolveDescriptorApprovalDefault, type IAgentToolDescriptor } from '../../engines/policy/tool-descriptor.js';
-import { toRecord } from '../../engines/utils.js';
-import type { TMcpServerName } from '../mcp.js';
+import { createMcpToolDescriptor, resolveDescriptorApprovalDefault, type IAgentToolDescriptor } from '../../../engines/policy/tool-descriptor.js';
+import { toRecord } from '../../../engines/utils.js';
+import type { TMcpServerName } from '../client.js';
 
 // ── MCP 工具能力模型（capability model）─────────────────────────────
 // MCP 工具不再维护一套独立的“审批判断逻辑”。能力判定只负责把 MCP 协议层

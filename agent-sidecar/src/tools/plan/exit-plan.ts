@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import type { ToolsInput } from '@mastra/core/agent';
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
-import { createJsonToolModelOutput } from '../budget/budget.js';
+import { createJsonToolModelOutput } from '../../engines/budget/budget.js';
 import { parsePlanSteps } from './update-plan.js';
 
 /**

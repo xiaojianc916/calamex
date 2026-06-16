@@ -11,12 +11,12 @@ export type {
   TMcpGatewayCreateBundle,
   TMcpGatewayMetric,
   TMcpGatewayToolProfile,
-} from './mcp-gateway/types.js';
+} from './gateway/types.js';
 
 export type {
   IMcpToolAnnotations,
   TMcpToolCapability,
-} from './mcp-gateway/capability.js';
+} from './gateway/capability.js';
 
 export {
   createMcpGatewayToolDescriptor,
@@ -24,16 +24,16 @@ export {
   requiresMcpToolApproval,
   resolveMcpToolApprovalDefault,
   resolveMcpToolCapability,
-} from './mcp-gateway/capability.js';
+} from './gateway/capability.js';
 
 export {
   MCP_GATEWAY_TOOL_NAMES,
   createMcpGatewayRunBundle,
-} from './mcp-gateway/tool-helpers.js';
+} from './gateway/helpers.js';
 
-export { McpGatewayMetricBuffer } from './mcp-gateway/metrics.js';
+export { McpGatewayMetricBuffer } from './gateway/metrics.js';
 
 export {
   McpGatewayWarmPool,
   createMcpGatewayWarmPool,
-} from './mcp-gateway/warm-pool.js';
+} from './gateway/warm-pool.js';

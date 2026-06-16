@@ -4,7 +4,7 @@ import type { MastraModelConfig } from '@mastra/core/llm';
 import { Mastra } from '@mastra/core/mastra';
 import { LibSQLStore } from '@mastra/libsql';
 import { createMastraModelConfigFromRequest, createMastraObserverModelConfig, createMastraReflectorModelConfig, type IMastraResolvedModelConfig } from '../../models/config.js';
-import { createMastraFileLogger, type IMastraLogToolsRef } from '../../tools/log.js';
+import { createMastraFileLogger, type IMastraLogToolsRef } from '../../tools/log/index.js';
 import { createMastraAgentMemory, resolveMastraStorageUrl } from '../context/memory.js';
 import { createMastraObservability } from '../workspace.js';
 import { DEFAULT_MASTRA_LOG_FILE, type IMastraAgentConfig, type IMastraAgentLike, type IMastraAgentStreamLike, type IMastraApprovalOptions, type IMastraDurableAgentLike, type IMastraExecutionHandle, type IMastraRegisteredAgentLike, type IMastraResumableAgentHandle, type IMastraStorageLike, type TMastraStreamChunk, type TMastraToolResumeData } from '../types.js';

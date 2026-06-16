@@ -8,14 +8,14 @@ import type { AgentChunkType, DataChunkType, DynamicToolResultPayload, Reasoning
 import { WORKSPACE_TOOLS, type AnyWorkspace } from '@mastra/core/workspace';
 import type { IMastraResolvedModelConfig } from '../models/config.js';
 import type { TAgentRuntimeEventDraft } from '../streaming/stream-types.js';
-import type { IMcpGatewayBundle, TMcpGatewayToolProfile } from '../tools/mcp-gateway.js';
-import type { TMcpServerName } from '../tools/mcp.js';
+import type { IMcpGatewayBundle, TMcpGatewayToolProfile } from '../tools/mcp/index.js';
+import type { TMcpServerName } from '../tools/mcp/client.js';
 import type { createMastraAgentMemory } from './context/memory.js';
 import type { IAgentPlanStore, TAgentPlanRecord } from './plan/plan-store.js';
 import type { IAgentPlanWorkflowStore } from './plan/plan-workflow-store.js';
 import type { IAgentTokenUsageSnapshot, TAgentRuntimeOutputEvent } from './contracts/runtime-contracts.js';
 import type { TRollbackStepPath } from './contracts/runtime-input.js';
-import type { TAskUserResult } from './tools/ask-user.js';
+import type { TAskUserResult } from '../tools/interaction/ask-user.js';
 
 export const DEFAULT_MASTRA_LOG_FILE = './.agent-sidecar/mastra.log';
 export const DEFAULT_EXECUTION_AGENT_ID = 'calamex-agent-sidecar';

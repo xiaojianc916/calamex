@@ -56,7 +56,7 @@ import type {
 } from "../engines/runtime.js"
 import { resolveAgentModelCapabilitiesFromModelId } from "../models/capabilities.js"
 import { logWarmupResult, warmupLlmConnection } from "../models/llm-warmup.js"
-import { getMcpRuntimeStatus } from "../tools/mcp.js"
+import { getMcpRuntimeStatus } from "../tools/mcp/client.js"
 import { fetchWeb, searchWeb } from "../web/service.js"
 import {
 	findPendingApproval,

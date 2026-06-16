@@ -15,8 +15,18 @@ if (!existsSync(join(ROOT, SRC))) {
 const abs = (relUnderSrc) => resolve(ROOT, SRC, relUnderSrc);
 const git = (cmd) => execSync(`git ${cmd}`, { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] }).toString();
 const ensureDir = (p) => mkdirSync(dirname(p), { recursive: true });
-const read = (p) => readFileSync(p, 'utf8');
-const write = (p, c) => { ensureDir(p); writeFileSync(p, c, 'utf8'); };
+// EOL 感知：在 LF 空间做匹配/替换，写回时还原各文件原本的换行符（兼容 Windows CRLF）。
+const eolByFile = new Map();
+const read = (p) => {
+  const raw = readFileSync(p, 'utf8');
+  eolByFile.set(p, /\r\n/.test(raw) ? '\r\n' : '\n');
+  return raw.replace(/\r\n/g, '\n');
+};
+const write = (p, c) => {
+  ensureDir(p);
+  const eol = eolByFile.get(p) ?? '\n';
+  writeFileSync(p, eol === '\r\n' ? c.replace(/\n/g, '\r\n') : c, 'utf8');
+};
 
 // ── 精确替换（必须命中 expected 次，否则中止；防止文件漂移后静默改坏）──
 function replaceExactly(file, find, repl, label, expected = 1) {

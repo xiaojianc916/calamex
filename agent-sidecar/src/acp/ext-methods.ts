@@ -37,7 +37,7 @@
 import { z } from "zod"
 
 import type { IWarmupResult } from "../models/llm-warmup.js"
-import type { IMcpRuntimeStatus } from "../tools/mcp.js"
+import type { IMcpRuntimeStatus } from "../tools/mcp/client.js"
 import {
 	toAgentSidecarResponse,
 	type IAgentRuntimeResponse,

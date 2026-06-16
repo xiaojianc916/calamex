@@ -5,7 +5,7 @@ import {
   readMcpToolAnnotations,
   requiresMcpToolApproval,
   resolveMcpToolCapability,
-} from './mcp-gateway.js';
+} from '../index.js';
 
 // 审批判定完全基于 server 在 tools/list 自报的 annotations（经 @mastra/mcp
 // 透传到 tool.mcp.annotations），不依赖工具名形态。

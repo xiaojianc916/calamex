@@ -1,30 +1,42 @@
+// ─────────────────────────────────────────────────────────────────
+// agent-sidecar 工具中心（按域组织）。
+// 工具来源分三类：
+//   A. 自研工具（本目录，一工具一文件，可拆）：
+//      time/（get_current_time, convert_time）、log/（mastra_list_logs）、
+//      editor/（read_current_file）、interaction/（ask_user）、plan/（update_plan, exit_plan）、
+//      mcp/gateway/tools/（mcp_list_tools, mcp_call_tool）。
+//   B. 官方/SDK 工具（不在本仓库，无法拆文件）：workspace fs/sandbox/LSP/search、browser。
+//      装配点保留在 engines/workspace.ts（createMastraWorkspace / createMastraBrowser）。
+//   C. 外部 MCP 工具（运行时动态拉取）：经 mcp/ 网关聚合，详见 tools/README.md。
+// 本文件 = 总装配器 loadMastraMcpTools，把 A 自研工具 + B 官方装配 + C 网关 统一组装。
+// ─────────────────────────────────────────────────────────────────
 import type { ToolsInput } from '@mastra/core/agent';
 import type { MastraBrowser } from '@mastra/core/browser';
 import type { AnyWorkspace } from '@mastra/core/workspace';
-import { createMcpGatewayRunBundle, type McpGatewayMetricBuffer, type McpGatewayWarmPool } from '../../tools/mcp-gateway.js';
-import { createMastraLogTools, type IMastraLogToolsRef } from '../../tools/log.js';
-import { createMastraTimeTools } from '../../tools/time.js';
-import type { IAgentContextReferenceInput, IAgentRuntimeInput } from '../contracts/runtime-input.js';
-import { countProviderToolSchemaChars } from '../budget/budget.js';
-import { createMastraBrowser, createMastraToolLoadPlan, createMastraWorkspace } from '../workspace.js';
-import type { IMastraMcpBundle, IMastraToolBudgetStats, TMastraToolProfile } from '../types.js';
+import { createMcpGatewayRunBundle, type McpGatewayMetricBuffer, type McpGatewayWarmPool } from './mcp/index.js';
+import { createMastraLogTools, type IMastraLogToolsRef } from './log/index.js';
+import { createMastraTimeTools } from './time/index.js';
+import type { IAgentContextReferenceInput, IAgentRuntimeInput } from '../engines/contracts/runtime-input.js';
+import { countProviderToolSchemaChars } from '../engines/budget/budget.js';
+import { createMastraBrowser, createMastraToolLoadPlan, createMastraWorkspace } from '../engines/workspace.js';
+import type { IMastraMcpBundle, IMastraToolBudgetStats, TMastraToolProfile } from '../engines/types.js';
 import { createToolErrorCircuitBreaker } from './circuit-breaker.js';
-import { createUiContextTools } from './read-current-file.js';
-import { createAskUserTools } from './ask-user.js';
-import { createUpdatePlanTools, resolvePlanFilePath } from './update-plan.js';
-import { createExitPlanTools } from './exit-plan.js';
+import { createUiContextTools } from './editor/read-current-file.js';
+import { createAskUserTools } from './interaction/ask-user.js';
+import { createUpdatePlanTools, resolvePlanFilePath } from './plan/update-plan.js';
+import { createExitPlanTools } from './plan/exit-plan.js';
 
 // 工具层装配入口：MCP 网关 + UI 上下文（read_current_file）+ 反向提问（ask_user, 仅 plan/agent）
 // + 规划工具（update_plan / exit_plan, 仅 plan）+ 原生时间 + 日志工具，统一套上「同类连续失败熔断」。
 // 各工具实现各自独立成文件（read-current-file / ask-user / update-plan / exit-plan / circuit-breaker /
 // ../tools/time / ../tools/log / ../tools/mcp-gateway），本文件只负责编排与预算统计。
-export { createUiContextTools, findCurrentFileReference } from './read-current-file.js';
-export { createAskUserTools } from './ask-user.js';
-export type { TAskUserInput, TAskUserRequest, TAskUserResult, TSurfacedQuestion, TQuestionType, TAskUserOutcome } from './ask-user.js';
-export { createUpdatePlanTools, resolvePlanFilePath } from './update-plan.js';
-export type { TUpdatePlanInput, TUpdatePlanResult } from './update-plan.js';
-export { createExitPlanTools } from './exit-plan.js';
-export type { TExitPlanInput, TExitPlanResult } from './exit-plan.js';
+export { createUiContextTools, findCurrentFileReference } from './editor/read-current-file.js';
+export { createAskUserTools } from './interaction/ask-user.js';
+export type { TAskUserInput, TAskUserRequest, TAskUserResult, TSurfacedQuestion, TQuestionType, TAskUserOutcome } from './interaction/ask-user.js';
+export { createUpdatePlanTools, resolvePlanFilePath } from './plan/update-plan.js';
+export type { TUpdatePlanInput, TUpdatePlanResult } from './plan/update-plan.js';
+export { createExitPlanTools } from './plan/exit-plan.js';
+export type { TExitPlanInput, TExitPlanResult } from './plan/exit-plan.js';
 export { createToolErrorCircuitBreaker, resolveToolFailureBucket } from './circuit-breaker.js';
 
 // ask_user（AI 反向提问 / HITL）仅在 plan 与 agent 模式启用：

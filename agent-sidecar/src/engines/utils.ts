@@ -2,7 +2,7 @@ import { RequestContext } from '@mastra/core/request-context';
 import type { TJsonValue } from '../schemas/events.js';
 import { RUNTIME_TOOL_PREVIEW_CHARS, TOOL_PREVIEW_REDACTED_TEXT, type IMastraExecutableToolLike, type IMcpGatewayMetricLogger, type TMastraRequestContext, type TMastraRequestContextValues } from './types.js';
 import { WORKSPACE_TOOLS } from '@mastra/core/workspace';
-import type { McpGatewayMetricBuffer } from '../tools/mcp-gateway.js';
+import type { McpGatewayMetricBuffer } from '../tools/mcp/index.js';
 import { createAgentRuntimeEvent, type IAgentRuntimeEventContext, type TAgentRuntimeEventDraft } from '../streaming/stream-types.js';
 import type { IAgentRuntimeRunOptions, TAgentRuntimeOutputEvent } from './contracts/runtime-contracts.js';
 import { shouldRedactWorkspacePreview } from './workspace.js';

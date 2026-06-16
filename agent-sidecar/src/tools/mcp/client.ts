@@ -5,8 +5,8 @@ import { fileURLToPath } from 'node:url';
 import type { ToolsInput } from '@mastra/core/agent';
 import { MCPClient, type LogMessage, type MastraMCPServerDefinition } from '@mastra/mcp';
 
-import { resolveMastraStorageDirectory } from '../engines/context/memory.js';
-import { withTimeout, withTimeoutFallback } from '../timeout.js';
+import { resolveMastraStorageDirectory } from '../../engines/context/memory.js';
+import { withTimeout, withTimeoutFallback } from '../../timeout.js';
 
 // ───────────────────────────────────────────────────────────────────
 // Types

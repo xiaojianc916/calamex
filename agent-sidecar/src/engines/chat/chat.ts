@@ -1,5 +1,5 @@
 import { MastraRuntimeBase } from '../base.js';
-import { createMcpGatewayRunBundle } from '../../tools/mcp-gateway.js';
+import { createMcpGatewayRunBundle } from '../../tools/mcp/index.js';
 import { buildSystemPrompt } from '../prompts/system-prompt.js';
 import { createMastraMemoryReference, createMastraMemoryScope } from '../context/memory.js';
 import { createMastraMemoryForModel, createMastraModelConfig, resolveMastraModelConfig } from '../agent/factory.js';
@@ -8,7 +8,7 @@ import { createExecutionRequestContext } from '../context/context.js';
 import { normalizeMastraError } from '../errors.js';
 import { buildMastraMessages, hasImageAttachmentParts, isVisionModelId } from '../session/session-messages.js';
 import { createErrorResponse } from '../responses.js';
-import { loadMastraMcpTools } from '../tools/tools.js';
+import { loadMastraMcpTools } from '../../tools/index.js';
 import { DEFAULT_EXECUTION_AGENT_ID, DEFAULT_EXECUTION_AGENT_NAME } from '../types.js';
 import type { IMastraGenerateOptions } from '../types.js';
 import { attachMcpGatewayMetrics, createRuntimeEventFactory, createSessionId, pushUiEvent } from '../utils.js';

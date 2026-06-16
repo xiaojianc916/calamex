@@ -1,11 +1,11 @@
 import { createMastraModelConfigFromEnv } from '../models/config.js';
 import type { IMastraResolvedModelConfig } from '../models/config.js';
-import { createMastraLoggerRef } from '../tools/log.js';
-import type { IMastraLogToolsRef } from '../tools/log.js';
-import { createMcpGatewayWarmPool } from '../tools/mcp-gateway.js';
-import type { McpGatewayWarmPool } from '../tools/mcp-gateway.js';
-import { createMastraMcpClientBundle } from '../tools/mcp.js';
-import type { TMcpServerName } from '../tools/mcp.js';
+import { createMastraLoggerRef } from '../tools/log/index.js';
+import type { IMastraLogToolsRef } from '../tools/log/index.js';
+import { createMcpGatewayWarmPool } from '../tools/mcp/index.js';
+import type { McpGatewayWarmPool } from '../tools/mcp/index.js';
+import { createMastraMcpClientBundle } from '../tools/mcp/client.js';
+import type { TMcpServerName } from '../tools/mcp/client.js';
 import { buildSystemPrompt } from './prompts/system-prompt.js';
 import { createMastraMemoryReference, createMastraMemoryScope } from './context/memory.js';
 import { createMastraMemoryForModel, createMastraModelConfig, defaultCreateAgent, defaultCreateExecutionHandle, defaultCreateResumableAgentHandle, defaultCreateStorage, resolveMastraModelConfig } from './agent/factory.js';
@@ -13,7 +13,7 @@ import { decodeApprovalRequestId, encodeApprovalRequestId, extractApprovalToolPa
 import { normalizeMastraError } from './errors.js';
 import { createApprovalRequest, createApprovedPlanExecutionContext, deriveApprovalRisk } from './responses.js';
 import { aggregateDoneTokenSnapshot, createOmMemoryCompressedEventDraft, createSandboxToolProgressPreview, extractFinishTokenSnapshot, getReasoningDelta, getTextDelta, isErrorChunk, isSandboxDataChunk, isTextDeltaChunk, isToolCallChunk, isToolCallSuspendedChunk, isToolErrorChunk, isToolResultChunk } from './stream/stream-utils.js';
-import { loadMastraMcpTools } from './tools/tools.js';
+import { loadMastraMcpTools } from '../tools/index.js';
 import { askUserRequestSchema } from '../schemas/events.js';
 import { DEFAULT_EXECUTION_AGENT_ID, DEFAULT_EXECUTION_AGENT_NAME } from './types.js';
 import type { IMastraAgentConfig, IMastraAgentLike, IMastraAgentStreamLike, IMastraApprovalExecutionContext, IMastraExecutionHandle, IMastraMcpBundle, IMastraPendingApproval, IMastraResumableAgentHandle, IMastraRuntimeDeps, IMastraStorageLike, IMastraTextStreamSummary, IMastraWorkflowSnapshotLike, IPlanWorkflowStepTracker, TDoneTokenSnapshot, TMastraStreamChunk, TMastraToolCallApprovalChunk, TMastraToolCallSuspendedChunk, TRuntimeEventFactory } from './types.js';

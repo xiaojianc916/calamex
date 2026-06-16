@@ -11,11 +11,11 @@ const PIERRE_MONOCHROME_DARK_FILL = '#adadb1';
 const PIERRE_MONOCHROME_LIGHT_FILL = '#6c6c71';
 const PIERRE_COLOR_CACHE = new Map<string, IFileIconAsset>();
 
-const FILE_ICON_ASSET_MODULES = import.meta.glob('../assets/icons/pierre/*.svg', {
+const FILE_ICON_ASSET_MODULES = import.meta.glob('../../assets/icons/pierre/*.svg', {
   eager: true,
   import: 'default',
 }) as Record<string, string>;
-const FILE_ICON_RAW_MODULES = import.meta.glob('../assets/icons/pierre/*.svg', {
+const FILE_ICON_RAW_MODULES = import.meta.glob('../../assets/icons/pierre/*.svg', {
   eager: true,
   query: '?raw',
   import: 'default',
@@ -140,7 +140,7 @@ const resolveNamedFileIconKey = (fileName: string): string | null => {
 };
 
 const resolveAssetModuleKey = (iconPath: string): string =>
-  `../assets/icons/pierre/${iconPath.replace(/^\.\//, '')}`;
+  `../../assets/icons/pierre/${iconPath.replace(/^\.\//, '')}`;
 
 const hashText = (value: string): number => {
   let hash = 5381;

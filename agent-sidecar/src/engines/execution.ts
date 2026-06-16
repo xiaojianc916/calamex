@@ -9,7 +9,7 @@ import { resolveAgentExecutionPolicy } from './policy/execution-policy.js';
 import { createApprovedPlanExecutionContext, createErrorResponse } from './responses.js';
 import { createAgentExecutionSession } from './session/agent-session.js';
 import { buildMastraMessagesFromSessionMessages, createAgentSessionMessagesFromRuntimeInput } from './session/session-messages.js';
-import { loadMastraMcpTools } from './tools/tools.js';
+import { loadMastraMcpTools } from '../tools/index.js';
 import { DEFAULT_EXECUTION_AGENT_ID, DEFAULT_EXECUTION_AGENT_NAME } from './types.js';
 import type { IMastraGenerateOptions } from './types.js';
 import { attachMcpGatewayMetrics, toNonEmptyString } from './utils.js';

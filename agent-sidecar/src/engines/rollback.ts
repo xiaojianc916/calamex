@@ -6,7 +6,7 @@ import { createErrorResponse } from './responses.js';
 import { createMastraPlanOrchestrationDeps } from './plan/orchestration-deps.js';
 import { PLAN_ORCHESTRATION_WORKFLOW_ID, createPlanOrchestrationWorkflow, type TPlanOrchestrationWorkflow } from './plan/orchestration-workflow.js';
 import { getSessionMessageText } from './session/session-messages.js';
-import { loadMastraMcpTools } from './tools/tools.js';
+import { loadMastraMcpTools } from '../tools/index.js';
 import { DEFAULT_EXECUTION_AGENT_ID, DEFAULT_EXECUTION_AGENT_NAME, DEFAULT_ROLLBACK_STEP, type TMastraChatMessage } from './types.js';
 import { createMastraRequestContext, createRuntimeEventFactory, createSessionId, pushUiEvent, requestContextToRecord } from './utils.js';
 import { createMastraAgentInputProcessors, createMastraAgentOutputProcessors, destroyMastraBrowser, destroyMastraWorkspace } from './workspace.js';

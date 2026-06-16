@@ -6,7 +6,7 @@ import { createAcontextTokenEventDraft } from './budget/budget.js';
 import { normalizeMastraError } from './errors.js';
 import { applyAgentPlanDelta, parsePlanDelta, parseValidationReport } from './plan/plan-utils.js';
 import { createErrorResponse, createPlanResponse } from './responses.js';
-import { loadMastraMcpTools } from './tools/tools.js';
+import { loadMastraMcpTools } from '../tools/index.js';
 import { DEFAULT_REPLANNER_AGENT_ID, DEFAULT_VALIDATOR_AGENT_ID } from './types.js';
 import type { IMastraGenerateOptions, TMastraChatMessage } from './types.js';
 import { attachMcpGatewayMetrics, createRuntimeEventFactory, createRuntimePreview, createSessionId, pushUiEvent, toNonEmptyString } from './utils.js';

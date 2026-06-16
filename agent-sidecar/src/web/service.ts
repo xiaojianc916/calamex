@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 
 import { withTimeout as withTimeoutOrReject } from '../timeout.js'
-import { createMastraMcpClientBundle } from '../tools/mcp.js'
+import { createMastraMcpClientBundle } from '../tools/mcp/client.js'
 import {
   aiWebFetchInputSchema,
   aiWebFetchPayloadSchema,

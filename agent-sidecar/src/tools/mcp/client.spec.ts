@@ -3,19 +3,19 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { describe, it } from 'node:test';
-import { makeToolExecutionContext } from '../test-support/tool-context.js';
+import { makeToolExecutionContext } from '../../test-support/tool-context.js';
 
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 
-import { createMcpGatewayWarmPool } from './mcp-gateway.js';
+import { createMcpGatewayWarmPool } from './index.js';
 import {
   createMastraMcpClientBundle,
   getMcpRuntimeStatus,
   loadMcpServerConfigs,
   MCP_SERVER_NAMES,
   type IMcpServerConfig,
-} from './mcp.js';
+} from './client.js';
 
 const WORKSPACE_ROOT = resolve('D:/com.xiaojianc/my_desktop_app');
 const MEMORY_FILE_PATH = join(WORKSPACE_ROOT, 'tmp', 'mcp-memory-test.jsonl');

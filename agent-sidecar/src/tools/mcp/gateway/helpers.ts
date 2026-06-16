@@ -1,13 +1,13 @@
 import type { ToolsInput } from '@mastra/core/agent';
 import { resolve } from 'node:path';
 import { z } from 'zod';
-import { toRecord } from '../../engines/utils.js';
-import { withTimeout } from '../../timeout.js';
+import { toRecord } from '../../../engines/utils.js';
+import { withTimeout } from '../../../timeout.js';
 import {
   MCP_SERVER_NAMES,
   type IMcpServerConfig,
   type TMcpServerName,
-} from '../mcp.js';
+} from '../client.js';
 import type {
   IMcpGatewayBundle,
   IMcpGatewayCatalog,

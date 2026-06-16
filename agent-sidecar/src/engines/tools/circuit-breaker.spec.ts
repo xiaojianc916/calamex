@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { createToolErrorCircuitBreaker, resolveToolFailureBucket } from './circuit-breaker.js';
+import { createToolErrorCircuitBreaker, resolveToolFailureBucket } from '../../tools/circuit-breaker.js';
 
 type TStubTool = { execute: (...args: unknown[]) => unknown };
 

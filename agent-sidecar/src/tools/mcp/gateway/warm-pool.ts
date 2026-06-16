@@ -1,9 +1,6 @@
 import { createTool } from '@mastra/core/tools';
 import { resolve } from 'node:path';
-import { z } from 'zod';
-import { compactModelOutput } from '../../models/output-budget.js';
-import { createJsonToolModelOutput } from '../../engines/budget/budget.js';
-import { MCP_SERVER_NAMES, type TMcpServerName } from '../mcp.js';
+import { MCP_SERVER_NAMES, type TMcpServerName } from '../client.js';
 import type {
   IMcpGatewayBundle,
   IMcpGatewayCatalog,
@@ -27,14 +24,12 @@ import {
   createToolUnavailableError,
   executeMcpGatewayToolWithTimeout,
   filterMcpToolsForProfile,
-  mcpGatewayCallInputSchema,
-  mcpGatewayListInputSchema,
-  mcpGatewayListLegacyInputSchema,
   readErrors,
   resolveMcpGatewayTool,
-  unwrapGatewayToolInput,
-} from './tool-helpers.js';
+} from './helpers.js';
 import { McpGatewayMetricBuffer } from './metrics.js';
+import { createMcpListTool } from './tools/list-tools.js';
+import { createMcpCallTool } from './tools/call-tool.js';
 
 const DEFAULT_MCP_GATEWAY_MAX_WARM = 4;
 const DEFAULT_MCP_GATEWAY_TTL_IDLE_MS = 5 * 60_000;
@@ -42,11 +37,6 @@ const DEFAULT_MCP_GATEWAY_PINNED_SERVERS: readonly TMcpServerName[] = ['memory']
 const DEFAULT_MCP_GATEWAY_PINNED_SERVERS_IGNORE_WORKSPACE: readonly TMcpServerName[] = ['memory'];
 const DEFAULT_MCP_CALL_TIMEOUT_MS = 60_000;
 
-const MCP_GATEWAY_MODEL_OUTPUT_MAX_CHARS = 4_000;
-const MCP_GATEWAY_MODEL_OUTPUT_MAX_STRING_CHARS = 1_500;
-const MCP_GATEWAY_MODEL_OUTPUT_MAX_ARRAY_ITEMS = 20;
-const MCP_GATEWAY_MODEL_OUTPUT_MAX_OBJECT_KEYS = 40;
-const MCP_GATEWAY_MODEL_OUTPUT_MAX_DEPTH = 6;
 
 export class McpGatewayWarmPool {
   private readonly createBundle: TMcpGatewayCreateBundle;
@@ -85,70 +75,8 @@ export class McpGatewayWarmPool {
     metricSink?: IMcpGatewayMetricSink;
   }): Record<typeof MCP_GATEWAY_TOOL_NAMES[number], ReturnType<typeof createTool>> {
     return {
-      mcp_list_tools: createTool({
-        id: 'mcp_list_tools',
-        description: [
-          '一次性列出所有 MCP server 的工具目录。',
-          '这是无参数工具；不要为不同 server 重复调用，也不要传 serverName。',
-          '目录来自 sidecar 缓存，完整返回所有可用工具名和描述，不暴露完整 schema。',
-          '首次调用可能触发 MCP server 冷启动（可能数秒），后续调用走缓存。',
-          '已知 tool 名称时应直接用 mcp_call_tool 调用，避免不必要的目录浏览。',
-        ].join('\n'),
-        inputSchema: mcpGatewayListInputSchema,
-        execute: async (inputData) => {
-          mcpGatewayListLegacyInputSchema.parse(unwrapGatewayToolInput(inputData));
-          const baseInput = {
-            profile: options.profile,
-            ...(options.workspaceRootPath ? { workspaceRootPath: options.workspaceRootPath } : {}),
-            ...(options.metricSink ? { metricSink: options.metricSink } : {}),
-          };
-
-          return await this.listAllTools(baseInput);
-        },
-        toModelOutput: (output) => createJsonToolModelOutput(output),
-      }),
-      mcp_call_tool: createTool({
-        id: 'mcp_call_tool',
-        description: [
-          '直接按 serverName 和 toolName 调用 MCP 工具。',
-          '已知道 tool 名称时应直接调用，只有不确定名称时才先用 mcp_list_tools 探索。',
-        ].join('\n'),
-        inputSchema: mcpGatewayCallInputSchema,
-        requireApproval: async (rawInput) => {
-          let parsed: z.infer<typeof mcpGatewayCallInputSchema>;
-          try {
-            parsed = mcpGatewayCallInputSchema.parse(unwrapGatewayToolInput(rawInput));
-          } catch {
-            // 无法解析调用目标 → 无法判定能力 → fail-closed。
-            return true;
-          }
-          return await this.requiresToolApproval({
-            serverName: parsed.serverName,
-            toolName: parsed.toolName,
-            profile: options.profile,
-            ...(options.workspaceRootPath ? { workspaceRootPath: options.workspaceRootPath } : {}),
-            ...(options.metricSink ? { metricSink: options.metricSink } : {}),
-          });
-        },
-        execute: async (inputData) => {
-          const parsed = mcpGatewayCallInputSchema.parse(unwrapGatewayToolInput(inputData));
-          return await this.callTool({
-            serverName: parsed.serverName,
-            toolName: parsed.toolName,
-            arguments: parsed.arguments,
-            profile: options.profile,
-            ...(options.workspaceRootPath ? { workspaceRootPath: options.workspaceRootPath } : {}),
-            ...(options.metricSink ? { metricSink: options.metricSink } : {}),
-          });
-        },
-        toModelOutput: (output) => createJsonToolModelOutput(compactModelOutput(output, {
-          maxTotalChars: MCP_GATEWAY_MODEL_OUTPUT_MAX_CHARS,
-          maxStringChars: MCP_GATEWAY_MODEL_OUTPUT_MAX_STRING_CHARS,
-          maxArrayItems: MCP_GATEWAY_MODEL_OUTPUT_MAX_ARRAY_ITEMS,
-          maxObjectKeys: MCP_GATEWAY_MODEL_OUTPUT_MAX_OBJECT_KEYS,
-          maxDepth: MCP_GATEWAY_MODEL_OUTPUT_MAX_DEPTH,
-        })),
-      }),
+      mcp_list_tools: createMcpListTool(this, options),
+      mcp_call_tool: createMcpCallTool(this, options),
     };
   }
 
