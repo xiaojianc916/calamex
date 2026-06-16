@@ -18,6 +18,11 @@
 //! SDK 的 `AcpAgent::spawn_process` 只设置 command / args / env,不设 `cwd`;故 `program`
 //! 与入口路径均采用绝对路径,保证与工作目录无关。
 //!
+//! 多后端注册表(ADR-0015 阶段 1):`build_acp_client_config_for(AcpBackendId)` 按后端标识
+//! 解析启动配置。`Builtin` 复用上述自家边车解析(行为与历史一致);外部 ACP
+//! 编码 agent(Kimi Code / Codex 等)给出「程序 + 参数 + env」描述。本阶段仅产出启动
+//! 配置,尚未接入 runtime(接线见阶段 2)。
+//!
 //! 按 cargo feature `acp_client` 门控;接线前不影响现有路径。
 
 #![allow(dead_code)]
@@ -33,11 +38,47 @@ const NODE_EXE_ENV: &str = "XIAOJIANC_NODE_EXE";
 const MCP_UVX_PATH_ENV: &str = "AGENT_MCP_UVX_PATH";
 const TAVILY_API_KEY_ENV: &str = "TAVILY_API_KEY";
 
-/// 解析启动 ACP stdio 子进程所需的完整配置。
+// 外部 ACP 后端的可执行路径覆盖与凭证 env 键(ADR-0015 阶段 1)。
+const KIMI_EXE_ENV: &str = "XIAOJIANC_KIMI_EXE";
+const CODEX_ACP_EXE_ENV: &str = "XIAOJIANC_CODEX_ACP_EXE";
+const OPENAI_API_KEY_ENV: &str = "OPENAI_API_KEY";
+
+/// 可挂载的 ACP 后端标识(ADR-0015)。`Builtin` 为自家 Node 边车(默认后端,
+/// 行为与历史一致);其余为外部 ACP 编码 agent。本阶段仅提供启动配置,接线在阶段 2。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AcpBackendId {
+    /// 自家 Node Mastra 边车(默认后端,行为与历史一致)。
+    Builtin,
+    /// Kimi Code(Kimi CLI):`kimi acp`,原生 ACP;需先在终端 `kimi` 内 `/login`。
+    Kimi,
+    /// Codex CLI:经社区适配器 `codex-acp`,凭 `OPENAI_API_KEY`。
+    Codex,
+}
+
+/// 解析「默认后端(自家边车)」的启动配置。保持历史签名与行为不变:
+/// 等价于 `build_acp_client_config_for(AcpBackendId::Builtin)`。
+pub fn build_acp_client_config() -> Result<AcpClientConfig, String> {
+    build_acp_client_config_for(AcpBackendId::Builtin)
+}
+
+/// 按后端标识解析 ACP stdio 子进程启动配置(ADR-0015 阶段 1:多后端启动注册表)。
+///
+/// `Builtin` 复用自家边车解析(node + ACP 入口 + 工具 env),行为与历史一致;
+/// 外部后端给出「程序 + 参数 + env」描述,凭证经 env 注入(遵守 ADR-0009:密钥仅在
+/// Rust/边车侧)。注意:本函数仅产出启动配置,尚未接入 runtime(接线见阶段 2)。
+pub fn build_acp_client_config_for(backend: AcpBackendId) -> Result<AcpClientConfig, String> {
+    match backend {
+        AcpBackendId::Builtin => build_builtin_client_config(),
+        AcpBackendId::Kimi => Ok(build_kimi_client_config()),
+        AcpBackendId::Codex => Ok(build_codex_client_config()),
+    }
+}
+
+/// 自家 Node 边车启动配置(原 `build_acp_client_config` 主体,逐字保留)。
 ///
 /// `program` = 解析出的 node 绝对路径;`args` = ACP 入口(优先预编译产物,否则 tsx + 源码);
 /// `env` = 子进程环境变量(工具所需 + 编译缓存)。
-pub fn build_acp_client_config() -> Result<AcpClientConfig, String> {
+fn build_builtin_client_config() -> Result<AcpClientConfig, String> {
     let sidecar_root = resolve_sidecar_root()?;
     let node = resolve_node_executable()?;
     let args = resolve_entry_args(&sidecar_root)?;
@@ -48,6 +89,36 @@ pub fn build_acp_client_config() -> Result<AcpClientConfig, String> {
         args,
         env,
     })
+}
+
+/// Kimi Code(Kimi CLI)启动配置:`kimi acp`(原生 ACP)。
+///
+/// 可执行名默认 `kimi`,可经 `XIAOJIANC_KIMI_EXE` 覆盖为绝对路径(便于随包/非 PATH 安装)。
+/// 鉴权由 Kimi CLI 自身负责(需先在终端 `kimi` 内 `/login`),故此处不注入模型 env。
+fn build_kimi_client_config() -> AcpClientConfig {
+    let program = env_or_user_env(KIMI_EXE_ENV).unwrap_or_else(|| "kimi".to_string());
+    AcpClientConfig {
+        program,
+        args: vec!["acp".to_string()],
+        env: Vec::new(),
+    }
+}
+
+/// Codex CLI 启动配置:经社区适配器 `codex-acp`(非原生 ACP)。
+///
+/// 可执行名默认 `codex-acp`,可经 `XIAOJIANC_CODEX_ACP_EXE` 覆盖。凭 `OPENAI_API_KEY`
+/// 鉴权:优先进程/用户环境读取后注入子进程 env(遵守 ADR-0009:密钥仅在 Rust 侧)。
+fn build_codex_client_config() -> AcpClientConfig {
+    let program = env_or_user_env(CODEX_ACP_EXE_ENV).unwrap_or_else(|| "codex-acp".to_string());
+    let mut env: Vec<(String, String)> = Vec::new();
+    if let Some(key) = env_or_user_env(OPENAI_API_KEY_ENV) {
+        env.push((OPENAI_API_KEY_ENV.to_string(), key));
+    }
+    AcpClientConfig {
+        program,
+        args: Vec::new(),
+        env,
+    }
 }
 
 /// 解析 ACP stdio 入口参数:优先预编译 `dist/acp/stdio-entry.js`(无需运行时 tsx 转译,
@@ -327,6 +398,32 @@ fn path_to_string(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn kimi_client_config_uses_acp_subcommand() {
+        // Kimi Code 原生 ACP:固定 `kimi acp`(可执行名可经 env 覆盖,但始终非空)。
+        let config = build_kimi_client_config();
+        assert_eq!(config.args, vec!["acp".to_string()]);
+        assert!(!config.program.trim().is_empty());
+    }
+
+    #[test]
+    fn codex_client_config_has_no_positional_args() {
+        // Codex 适配器 `codex-acp` 无位置参数;凭证经 env 注入(此处不断言 env 内容,
+        // 因其依赖真实进程环境)。
+        let config = build_codex_client_config();
+        assert!(config.args.is_empty());
+        assert!(!config.program.trim().is_empty());
+    }
+
+    #[test]
+    fn backend_dispatch_routes_external_agents() {
+        // 后端调度:Kimi/Codex 均不依赖 node/边车解析,故总能产出配置。
+        let kimi = build_acp_client_config_for(AcpBackendId::Kimi).expect("kimi config");
+        assert_eq!(kimi.args, vec!["acp".to_string()]);
+        let codex = build_acp_client_config_for(AcpBackendId::Codex).expect("codex config");
+        assert!(codex.args.is_empty());
+    }
 
     #[test]
     fn find_dotenv_value_extracts_key_skipping_comments_and_blanks() {
