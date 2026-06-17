@@ -69,6 +69,28 @@ const buildToolCallsSignature = (message: IAiChatMessage): string => {
     .join('|');
 };
 
+const buildAcpToolCallsSignature = (message: IAiChatMessage): string => {
+  const acpToolCalls = message.acpToolCalls;
+
+  if (!acpToolCalls || acpToolCalls.length === 0) {
+    return '0';
+  }
+
+  return acpToolCalls
+    .map((toolCall) =>
+      [
+        toolCall.id,
+        toolCall.kind,
+        toolCall.status,
+        boundedTextSignature(toolCall.title),
+        toolCall.content.length,
+        safeJsonSignature(toolCall.content.at(-1)),
+        boundedTextSignature(toolCall.rawOutput),
+      ].join(':'),
+    )
+    .join('|');
+};
+
 const buildMessageSignature = (message: IAiChatMessage): string => {
   const runtimeEvents = message.stream?.runtimeEvents;
   const changedFiles = message.changedFilesSummary?.files;
@@ -80,6 +102,7 @@ const buildMessageSignature = (message: IAiChatMessage): string => {
     message.stream?.status ?? '',
     arrayTailSignature(runtimeEvents),
     buildToolCallsSignature(message),
+    buildAcpToolCallsSignature(message),
     safeJsonSignature(message.actions),
     safeJsonSignature(message.agentConfirmation),
     message.changedFilesSummary?.id ?? '',
