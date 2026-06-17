@@ -118,6 +118,13 @@ const settingsTavilyApiKey = ref('');
 const isAgentRunActionPending = ref(false);
 const isPromptModelSaving = ref(false);
 
+// 当前会话使用的 Agent 后端（自研 / Kimi）。会话级单选，一个会话只用一种 Agent。
+// 注意：Kimi 等外部 Agent 的实际发送链路依赖自动生成的 Tauri 绑定
+// agentSidecarExternalChat（由 tauri-specta 在本地构建时重新导出后才可用），
+// 打通前此处先接住选择态。
+type TSessionAgentBackend = 'builtin' | 'kimi';
+const sessionAgentBackend = ref<TSessionAgentBackend>('builtin');
+
 const {
   isHistoryOpen,
   historyAnchorRef,
@@ -255,8 +262,8 @@ const planConfirmationVisible = computed(() => {
     isPlanConfirmationStatus.value
   );
 });
-// Plan 审批不再是输入框上方的独立面板,而是平铺时间线里的一条 plan-control 条目:
-// 这里把它合成成一条 assistant 消息追加进可见时间线,运行态明细由投影层派生。
+// Plan 审批不再是输入框上方的独立面板，而是平铺时间线里的一条 plan-control 条目：
+// 这里把它合成成一条 assistant 消息追加进可见时间线，运行态明细由投影层派生。
 const planControlMessage = computed(() =>
   buildPlanControlMessage({
     goal: planActiveGoal.value,
@@ -277,8 +284,8 @@ const threadPlanDetails = computed(() =>
     hasActiveRun: Boolean(planActiveRun.value),
   }),
 );
-// 运行进度/工具确认收敛到输入框上方的 Codex 风格细条;只在计划真正执行(有 run)或
-// 出现工具确认时显示,用于抑制 Web 来源面板里重复的活动指示。
+// 运行进度/工具确认收敛到输入框上方的 Codex 风格细条；只在计划真正执行（有 run）或
+// 出现工具确认时显示，用于抑制 Web 来源面板里重复的活动指示。
 const planProgressVisible = computed(() => {
   if (assistant.activeMode.value !== 'plan') {
     return false;
@@ -501,7 +508,7 @@ const activeAgentFlowMessage = computed<IAiChatMessage | null>(() => {
   };
 });
 
-// 旧的 agent-flow synthetic message 仅用于 token usage 估算,不再进入可见时间线;
+// 旧的 agent-flow synthetic message 仅用于 token usage 估算，不再进入可见时间线；
 // AiChatThread 会按 `agent-flow:` 前缀将其过滤掉。
 const threadMessages = computed<IAiChatMessage[]>(() => {
   const flowMessage = activeAgentFlowMessage.value;
@@ -515,7 +522,7 @@ const threadMessages = computed<IAiChatMessage[]>(() => {
     flowMessage,
   ];
 });
-// 真正喂给平铺时间线的消息:真实会话消息 + 可选的 plan-control 审批条目。
+// 真正喂给平铺时间线的消息：真实会话消息 + 可选的 plan-control 审批条目。
 const visibleThreadMessages = computed<IAiChatMessage[]>(() => {
   const controlMessage = planControlMessage.value;
 
@@ -669,12 +676,31 @@ const handleSuggestionSelect = async (suggestion: string): Promise<void> => {
     return;
   }
 
+  // Kimi 等外部 Agent 尚未接入发送链路，不静默走自研 Agent。
+  if (sessionAgentBackend.value !== 'builtin') {
+    assistant.error.value = 'Kimi Agent 接入开发中，当前请切换回「自研 Agent」后再发送。';
+    return;
+  }
+
   assistant.draft.value = suggestion;
   await assistant.sendMessage();
 };
 
+// 切换会话 Agent 后端时，清掉上一条（可能是 Kimi 未接入）的错误提示。
+const handleAgentBackendChange = (): void => {
+  assistant.error.value = '';
+};
+
 const handleSubmitMessage = async (): Promise<void> => {
   if (!assistant.draft.value.trim() || assistant.isSending.value) {
+    return;
+  }
+
+  // Kimi 等外部 Agent CLI 的发送链路尚未接入（依赖自动生成的
+  // agentSidecarExternalChat 绑定与发送管线集成）；在打通前不静默走自研
+  // Agent，而是明确提示用户切回自研 Agent。
+  if (sessionAgentBackend.value !== 'builtin') {
+    assistant.error.value = 'Kimi Agent 接入开发中，当前请切换回「自研 Agent」后再发送。';
     return;
   }
 
@@ -1142,6 +1168,7 @@ onMounted(() => {
           :disabled="isResolvingUserQuestion" @submit="handleResolveUserQuestion"
           @cancel="handleCancelUserQuestion" />
         <AiPromptInput v-else v-model="assistant.draft.value" v-model:active-mode="assistant.activeMode.value"
+          v-model:agent-backend="sessionAgentBackend"
           :disabled="composerDisabled" :stop-visible="assistant.isSending.value"
           :error-message="assistant.error.value" :submit-label="submitLabel" :config="assistant.config.value"
           :is-model-saving="isPromptModelSaving" :network-permission="networkPermission"
@@ -1152,6 +1179,7 @@ onMounted(() => {
           @remove-file="assistant.removeAttachedFile" @model-change="handlePromptModelChange"
           @network-permission-change="handlePromptNetworkPermissionChange"
           @execution-mode-change="handlePromptExecutionModeChange"
+          @agent-change="handleAgentBackendChange"
           @information-sources-open="openPromptInformationSources" @personalization-open="openPromptPersonalization"
           @prewarm="handlePromptPrewarm" />
       </div>

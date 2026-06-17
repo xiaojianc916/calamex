@@ -28,18 +28,9 @@ use super::state::{
 };
 use super::to_wsl_path;
 
-fn set_test_terminal_state(state: TerminalState) {
-    let mut machine_state = crate::terminal::registry::registry()
-        .state
-        .write()
-        .expect("terminal state lock should be healthy");
-    *machine_state = state;
-}
-
 #[test]
 fn local_wsl_active_run_is_serialized_per_session() {
     let state = TerminalSessionState::default();
-    set_test_terminal_state(TerminalState::IdleInteractive);
     assert!(try_mark_active_terminal_run(&state, "session-1", "run-1").is_ok());
     assert!(try_mark_active_terminal_run(&state, "session-1", "run-2").is_err());
     assert!(try_mark_active_terminal_run(&state, "session-2", "run-3").is_ok());
