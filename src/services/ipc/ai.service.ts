@@ -20,6 +20,7 @@ import type {
   IAiProviderConnectionPayload,
   IAiProviderConnectionRequest,
   IAiProviderTestPayload,
+  IAiResolveApprovalRequest,
   IAiSaveConfigRequest,
   IAiSaveCredentialsRequest,
   IAiSuggestionPoolPayload,
@@ -233,6 +234,9 @@ export const aiService = {
     handler: (payload: IAcpPermissionRequestPayload) => void,
   ): Promise<() => void> {
     return tauriService.onAcpApproval(handler);
+  },
+  resolveAcpApproval(payload: IAiResolveApprovalRequest): Promise<boolean> {
+    return tauriService.aiResolveApproval(payload);
   },
   getConfig(): Promise<IAiConfigPayload> {
     return tauriService.aiGetConfig();

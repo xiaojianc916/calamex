@@ -99,6 +99,13 @@ const AI_COMMAND_META = {
     timeoutMs: 15_000,
     measureInput: buildPayloadMetrics,
   },
+  aiResolveApproval: {
+    command: 'ai_resolve_approval',
+    guardHint: '回投 ACP 工具调用审批决策',
+    audit: 'sensitive',
+    timeoutMs: 15_000,
+    measureInput: buildPayloadMetrics,
+  },
   aiInlineComplete: {
     command: 'ai_inline_complete',
     guardHint: '请求 AI 内联补全',
@@ -164,6 +171,7 @@ type TAiTauriService = Pick<
   | 'aiGenerateSuggestionPool'
   | 'aiChatStream'
   | 'aiCancel'
+  | 'aiResolveApproval'
   | 'aiInlineComplete'
   | 'aiAgentClassifyTask'
   | 'aiAgentSetNetworkPermission'
@@ -238,6 +246,12 @@ export const aiTauriService: TAiTauriService = {
     return runCommand<void>(AI_COMMAND_META.aiCancel, payload, options, async () => {
       await commands.aiCancel(payload);
     });
+  },
+
+  aiResolveApproval(payload, options?: IIpcCallOptions) {
+    return runCommand(AI_COMMAND_META.aiResolveApproval, payload, options, () =>
+      commands.aiResolveApproval(payload),
+    );
   },
 
   aiInlineComplete(payload, options?: IIpcCallOptions) {

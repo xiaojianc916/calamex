@@ -18,6 +18,7 @@ import type {
   IAiProviderConnectionPayload,
   IAiProviderConnectionRequest,
   IAiProviderTestPayload,
+  IAiResolveApprovalRequest,
   IAiSaveConfigRequest,
   IAiSaveCredentialsRequest,
   IAiSuggestionPoolPayload,
@@ -384,6 +385,7 @@ export interface ITauriService {
   aiGenerateSuggestionPool(payload: IAiSuggestionPoolRequest): Promise<IAiSuggestionPoolPayload>;
   aiChatStream(payload: IAiChatRequest): Promise<IAiChatStreamPayload>;
   aiCancel(payload: IAiCancelRequest): Promise<void>;
+  aiResolveApproval(payload: IAiResolveApprovalRequest): Promise<boolean>;
   aiInlineComplete(payload: IAiInlineCompletionRequest): Promise<IAiInlineCompletionResult>;
   aiAgentClassifyTask(payload: IAiAgentClassifyTaskRequest): Promise<IAiAgentClassifyTaskPayload>;
   aiWebSearch(payload: IAiWebSearchInput): Promise<IAiWebSearchPayload>;
