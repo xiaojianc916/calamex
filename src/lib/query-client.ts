@@ -17,13 +17,23 @@ const PERSIST_BUSTER = '1';
 // 合并为一次 IndexedDB 写,避免逐次落盘阻塞。
 const PERSIST_THROTTLE_MS = 2_000;
 
+// 结构共享前先单次序列化 newData:超过该体积阈值的载荷(如带 base64 预览的大快照)
+// 直接跳过结构共享比较,避免对超大对象连做两次 JSON.stringify 阻塞主线程。
+const STRUCTURAL_SHARING_MAX_SERIALIZED_LENGTH = 100_000;
+
 const structurallyShareSerializableData = (oldData: unknown, newData: unknown): unknown => {
   if (oldData === undefined || oldData === newData) {
     return newData;
   }
 
   try {
-    return JSON.stringify(oldData) === JSON.stringify(newData) ? oldData : newData;
+    const newSerialized = JSON.stringify(newData);
+    // 超大载荷:跳过结构共享,直接返回新值,省去对 oldData 的二次全量序列化。
+    if (newSerialized.length > STRUCTURAL_SHARING_MAX_SERIALIZED_LENGTH) {
+      return newData;
+    }
+    // 复用 newSerialized,只需再序列化 oldData 一次即可比较。
+    return JSON.stringify(oldData) === newSerialized ? oldData : newData;
   } catch {
     return newData;
   }
