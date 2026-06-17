@@ -176,6 +176,15 @@ export const commands = {
 	aiGenerateSuggestionPool: (payload: AiSuggestionPoolRequest) => __TAURI_INVOKE<AiSuggestionPoolPayload>("ai_generate_suggestion_pool", { payload }),
 	aiChatStream: (payload: AiChatRequest) => __TAURI_INVOKE<AiChatStreamPayload>("ai_chat_stream", { payload }),
 	aiCancel: (payload: AiCancelRequest) => __TAURI_INVOKE<null>("ai_cancel", { payload }),
+	/**
+	 *  投递 ACP 反向权限请求（`session/request_permission`）的审批决策，唤醒回合内挂起的工具调用。
+	 * 
+	 *  与 `ai_cancel` 同构地委托给 Tauri 托管的 `AcpRuntime`：会话归属哪个后端宿主对命令层透明，
+	 *  由 runtime 向全部已建立宿主广播投递。三字段先行空白校验（前端总能从已渲染审批气泡取得）；
+	 *  返回是否命中某挂起审批——`false` 表示无匹配（多为已超时/被取消/重复投递的良性竞态，
+	 *  命令层不视作错误，交前端自行决定是否提示），与 runtime 的「安全空操作」语义一致。
+	 */
+	aiResolveApproval: (payload: AiResolveApprovalRequest) => __TAURI_INVOKE<boolean>("ai_resolve_approval", { payload }),
 	aiInlineComplete: (payload: AiInlineCompletionRequest) => __TAURI_INVOKE<AiInlineCompletionResult>("ai_inline_complete", { payload }),
 	aiAgentClassifyTask: (payload: AiAgentClassifyTaskRequest) => __TAURI_INVOKE<AiAgentClassifyTaskPayload>("ai_agent_classify_task", { payload }),
 	aiAgentSetNetworkPermission: (payload: AiAgentSetNetworkPermissionRequest) => __TAURI_INVOKE<AiAgentNetworkPermissionPayload>("ai_agent_set_network_permission", { payload }),
@@ -985,6 +994,21 @@ export type AiProviderTestPayload = {
 	/**  已知值："ok" | "unauthorized" | "rate-limited" | "network" | …。 */
 	code: string,
 	message: string,
+};
+
+/**
+ *  ACP 反向 `session/request_permission` 的审批投递请求（契约层）。
+ * 
+ *  对齐 `acp::AcpRuntime::resolve_approval(session_id, tool_call_id, decision)`：
+ *    * `session_id` / `tool_call_id` —— 定位挂起审批所属的会话与工具调用（ACP 原值，逐字透传）；
+ *    * `decision` —— 选中项 `optionId`（ACP `RequestPermissionRequest.options[].optionId` 原值，
+ *      逐字回填，绝不本地映射，对齐 `approval.rs` 的逐字匹配）。
+ *  三者均必填且非空（前端总能从已渲染的审批气泡取得），空白校验由接线层负责。
+ */
+export type AiResolveApprovalRequest = {
+	sessionId: string,
+	toolCallId: string,
+	decision: string,
 };
 
 export type AiSaveConfigRequest = {
