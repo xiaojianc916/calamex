@@ -2,6 +2,7 @@
 
 - 状态：已采纳（Accepted）
 - 日期：2026-06-17
+- 修订：2026-06-17 · 范围扩展——除工具调用外，Kimi/ACP 的会话级能力（斜杠命令、模式切换、live 终端、图片/资源内容块、文件 locations、usage）一并纳入「完全接入」范围，见 D7 与落地清单第二段。
 - 相关：ADR-20260614（ask_user / HITL，复用其 `request_permission`→approval 同源结论）；
   本 ADR 同时**正式 consolidate** 此前散落在 `src/types/ai/thread/*` 代码注释里、
   但从未落盘的「thread 协议模型」决策（注释中以 `ADR-0011 / 0012 / 0013` 指代，
@@ -45,6 +46,8 @@ ACP 的 `session/update` 会推送 `tool_call` / `tool_call_update`，自带：
 
 > 依赖名以 `package.json` 为准：**`@agentclientprotocol/sdk`（无连字符）`^0.26.0`**。
 > 复用其 `ToolCall` / `ToolCallUpdate` / `ToolCallContent`，不要自造结构体。
+> 实现注：已落地 `src/types/ai/acp-tool-call.ts`，以 `Extract<SessionUpdate, { sessionUpdate: 'tool_call' }>`
+> 从 SDK 的 `SessionUpdate` 判别联合取变体（零手写、零漂移）。
 
 ### D2 · Rust host 最小透传，不伪造 base 字段
 
@@ -71,18 +74,46 @@ ACP 的 `session/update` 会推送 `tool_call` / `tool_call_update`，自带：
 下游（store / 组件）**只认协议 VM**，不再感知事件来源。归约以 **ACP `toolCallId` 为合并键**
 （不是 `toolName`），把 started → update(N) → completed 收敛为同一条 `ThreadEntry`
 （`projection/reconcile-thread-entries.ts` 已有骨架，按此键改写）。
+> 依据：sidecar 出站投影 `agent-sidecar/src/acp/from-runtime-event.ts` 已用 `toolUseId` 充当
+> `toolCallId`，故「按 toolCallId 合并」在 egress 侧已成立；Kimi（原生 ACP）与 Mastra（经此投影）
+> 可走同一归一路径。
 
 ### D5 · content 判别联合驱动渲染；kind 驱动开放目录
 
 - 渲染按 `content[]` 的 `type` 分派：`diff` → code-block(merge 视图) / `terminal` → ai-elements `Terminal`
   / `content`(text) → markdown。`AiThreadToolCall.vue` 现有分派保留，改为消费协议 VM 的 `content`。
-- 工具图标/标签改为 **`kind` 驱动的开放目录**：未知工具按 `kind` 兜底（`.catch('other')`），
+- 工具图标/标签改为 **`kind` 驱动的开放目录**：未知工具按 `kind` 兑底（`.catch('other')`），
   `mapSidecarToolNameToAiToolName` 由「决定项」降级为「增强层」（命中则美化，未命中不致错）。
 
 ### D6 · 权限：ACP `request_permission` → 既有 approval
 
 ACP `request_permission` 复用 `src/components/ai-elements/approval` 与 `acp/approval-bridge.ts`
 的 allow-once / reject-once 通道（与 ADR-20260614 同源），不另起 UI。
+
+### D7 · 会话级能力一并接入（不止工具调用）
+
+「完全接入」目标 = Kimi/ACP 经 `session/update` 能表达的能力都有归一 VM + UI。已对
+`src-tauri/src/acp/ui_event.rs` 模块文档与 `client.rs` 核实官方 `SessionNotification` 的
+`update.sessionUpdate` 判别式取值，逐项规划：
+
+| ACP 能力（`sessionUpdate` / 方法） | 现状 | 归一/渲染落点 |
+| --- | --- | --- |
+| `agent_message_chunk` | ✅ 已投影 message_delta(final) | 助手文本 `AiThreadAssistantText` |
+| `agent_thought_chunk` | ✅ 已投影 message_delta(stage) | 推理 `AiThreadReasoning` |
+| `tool_call` / `tool_call_update` | ❌ ui_event 返 None | 协议 VM tool_call（D1–D5） |
+| `plan` | ❌ ui_event 返 None | 协议 VM plan → `AiThreadPlanControl` |
+| `request_permission`（请求） | 部分 | approval（D6） |
+| 图片/资源内容块（content `type≠text`） | ❌ ui_event 返 None | content 分派补 image/resource 支（`ai-elements/image`） |
+| `locations[]` | ❌ 丢弃 | 工具条目可点击文件跳转（增强） |
+| `usage_update` | 经信封合 done | 用量展示（已有 done.usage） |
+| `current_mode_update` + `session/set_mode` | 请求侧 `SetSessionMode` 已就绪 | 模式指示/切换 UI（新增小组件） |
+| 斜杠命令 `available_commands_update` | ❌ 未建模 | 命令面板（新增；wiring 时按 SDK 确认确切字面量） |
+| live 终端 `terminal/*` 方法 | ❌ 未接 | 复用 `ai-elements/terminal` 接流（新增；按 SDK 确认方法名） |
+
+原则不变：均走 D4 的 ACL 单点归一 + D5 的 schema 驱动分派，新增能力只是在归一层多认一个
+`sessionUpdate` 变体、在渲染层多挂一个既有 `ai-elements` 组件，不改已建结构。凡
+`Extract<SessionUpdate, { sessionUpdate: '…' }>` 的确切字面量，wiring 时以 SDK 类型为准核实
+（错值会静默成 `never`）。
 
 ## 数据契约（新增 UI 事件变体）
 
@@ -108,10 +139,21 @@ ACP `request_permission` 复用 `src/components/ai-elements/approval` 与 `acp/a
 - [ ] **权限**：ACP `request_permission` 接 `ai-elements/approval`
 - [ ] **质量门**：`pnpm lint && pnpm typecheck && pnpm test`（大改跑 `guard` / `size-limit`）；`cd src-tauri && cargo clippy && cargo test`；覆盖率 ≥80% 全局 / ≥90% 核心
 
+**会话级增量（D7，在以上 7 项打通后接续；同样自底向上、可独立合并）**
+
+- [ ] **内容块扩展**：ui_event 透传非 text 内容块；content 分派补 image/resource 渲染
+- [ ] **locations**：协议 VM 带 `locations[]`；工具条目支持文件跳转
+- [ ] **模式切换**：投影 `current_mode_update`；接 `session/set_mode`（请求侧 `SetSessionMode` 已就绪）；模式指示/切换组件
+- [ ] **斜杠命令**：投影 `available_commands_update`；命令面板 UI（字面量按 SDK 核实）
+- [ ] **live 终端**：接 ACP `terminal/*` 方法，复用 `ai-elements/terminal` 流式渲染（方法名按 SDK 核实）
+- [ ] **usage**：`usage_update` → 用量展示对齐
+
 ## 取舍
 
 - 选「彻底归一」而非「增量并存」：一次性消除两套 VM 漂移、让 ACP 与 Mastra 投影到同一协议模型；
   代价是动 reduce / store / 全部 thread 组件，改动面大，故自底向上分步可合并以控风险。
 - ACP 平级新增而非复用 `tool_start` / `tool_result`：保留 ACP 富信息（kind / 结构化 content / locations），
   不被旧的扁平 input/output 契约稀释。
-- Rust 只透传不规整：宿主层薄、防腐归一收敛在前端 ACL 单点，便于演进与测试。
+- Rust 只透传不规整：宿主层薄，防腐归一收敛在前端 ACL 单点，便于演进与测试。
+- 范围一次性拉满到「会话级能力」而非只做工具调用：因架构是 schema 驱动、能力间正交，增量项
+  边际成本低，且避免日后二次重构；代价是总工期 +约 2–4 人日（命令面板 / 模式 / live 终端 各自的 UI 小件）。
