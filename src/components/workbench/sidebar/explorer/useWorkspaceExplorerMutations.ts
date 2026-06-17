@@ -18,6 +18,51 @@ import { areFileSystemPathsEqual } from '@/utils/file/path';
 // 重新夺回输入框焦点，而不是据此提交 / 取消草稿（否则会出现“打开即消失”）。
 const INLINE_CREATE_FOCUS_GRACE_MS = 300;
 
+// Windows 保留设备名：作为文件/文件夹名（忽略扩展名后的主名部分）会引发系统级问题，
+// 与后端 validate_workspace_entry_name 的校验保持一致。
+const WINDOWS_RESERVED_ENTRY_NAMES = new Set([
+  'CON',
+  'PRN',
+  'AUX',
+  'NUL',
+  'COM1',
+  'COM2',
+  'COM3',
+  'COM4',
+  'COM5',
+  'COM6',
+  'COM7',
+  'COM8',
+  'COM9',
+  'LPT1',
+  'LPT2',
+  'LPT3',
+  'LPT4',
+  'LPT5',
+  'LPT6',
+  'LPT7',
+  'LPT8',
+  'LPT9',
+]);
+
+// 校验单段名称（不含路径分隔符）。返回错误信息，或 null 表示通过。
+const validateInlineCreateNameSegment = (segment: string): string | null => {
+  if (segment === '.' || segment === '..') {
+    return '名称无效。';
+  }
+  if ([...segment].some((char) => '<>"|?*:'.includes(char) || char.charCodeAt(0) < 32)) {
+    return '名称包含非法字符。';
+  }
+  if (/[ .]$/.test(segment)) {
+    return '名称不能以空格或点结尾。';
+  }
+  const windowsReservedStem = segment.split('.')[0]?.toUpperCase();
+  if (windowsReservedStem && WINDOWS_RESERVED_ENTRY_NAMES.has(windowsReservedStem)) {
+    return '名称不能使用 Windows 保留设备名。';
+  }
+  return null;
+};
+
 export interface IUseWorkspaceExplorerMutationsOptions {
   /** Resolves the currently loaded workspace root payload, or null. */
   getRoot: () => IWorkspaceDirectoryPayload | null;
@@ -171,55 +216,28 @@ export function useWorkspaceExplorerMutations(options: IUseWorkspaceExplorerMuta
     closeInlineCreateDraft();
   };
 
-  // 轻量的前置校验：拦截路径分隔符 / 保留名，并基于已加载的同级条目做重名预检查；
-  // 后端仍是最终权威（会再次校验并报错）。
+  // 轻量的前置校验：支持嵌套路径（如 a/b/c）。按分隔符拆成多段后逐段校验；
+  // 仅在单段（非嵌套）时基于已加载的同级条目做重名预检查，避免对中间目录误判。
+  // 后端仍是最终权威（会再次校验并按需补建中间目录）。
   const validateInlineCreateName = (name: string, parentPath: string): string | null => {
-    if (/[\\/]/.test(name)) {
-      return '名称不能包含路径分隔符。';
-    }
-    if (name === '.' || name === '..') {
+    const segments = name.split(/[\\/]+/).filter((segment) => segment.length > 0);
+    if (segments.length === 0) {
       return '名称无效。';
     }
-    if ([...name].some((char) => '<>"|?*:'.includes(char) || char.charCodeAt(0) < 32)) {
-      return '名称包含非法字符。';
+    for (const segment of segments) {
+      const segmentError = validateInlineCreateNameSegment(segment);
+      if (segmentError) {
+        return segmentError;
+      }
     }
-    if (/[ .]$/.test(name)) {
-      return '名称不能以空格或点结尾。';
-    }
-    const WINDOWS_RESERVED_ENTRY_NAMES = new Set([
-      'CON',
-      'PRN',
-      'AUX',
-      'NUL',
-      'COM1',
-      'COM2',
-      'COM3',
-      'COM4',
-      'COM5',
-      'COM6',
-      'COM7',
-      'COM8',
-      'COM9',
-      'LPT1',
-      'LPT2',
-      'LPT3',
-      'LPT4',
-      'LPT5',
-      'LPT6',
-      'LPT7',
-      'LPT8',
-      'LPT9',
-    ]);
-    const windowsReservedStem = name.split('.')[0]?.toUpperCase();
-    if (windowsReservedStem && WINDOWS_RESERVED_ENTRY_NAMES.has(windowsReservedStem)) {
-      return '名称不能使用 Windows 保留设备名。';
-    }
-    const siblings = getDirectoryEntries(parentPath);
-    if (siblings) {
-      const candidatePath = `${parentPath.replace(/[\\/]+$/, '')}/${name}`;
-      const exists = siblings.some((entry) => areFileSystemPathsEqual(entry.path, candidatePath));
-      if (exists) {
-        return '同名文件或文件夹已存在。';
+    if (segments.length === 1) {
+      const siblings = getDirectoryEntries(parentPath);
+      if (siblings) {
+        const candidatePath = `${parentPath.replace(/[\\/]+$/, '')}/${segments[0]}`;
+        const exists = siblings.some((entry) => areFileSystemPathsEqual(entry.path, candidatePath));
+        if (exists) {
+          return '同名文件或文件夹已存在。';
+        }
       }
     }
     return null;
@@ -428,9 +446,9 @@ export function useWorkspaceExplorerMutations(options: IUseWorkspaceExplorerMuta
       return;
     }
     const action = await dialog.confirm({
-      title: '确认删除',
-      description: `确认删除“${target.name}”？此操作不可撤销。`,
-      confirmText: '删除',
+      title: '移动到回收站',
+      description: `确认将“${target.name}”移动到回收站？可从系统回收站恢复。`,
+      confirmText: '移到回收站',
       cancelText: '取消',
       dismissText: '返回',
       variant: 'danger',

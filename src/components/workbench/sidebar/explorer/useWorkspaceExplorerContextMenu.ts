@@ -14,6 +14,7 @@ export type TExplorerContextMenuAction =
   | 'rename'
   | 'delete'
   | 'copy-path'
+  | 'copy-relative-path'
   | 'refresh'
   | 'open-folder';
 
@@ -44,6 +45,8 @@ export interface IUseWorkspaceExplorerContextMenuOptions {
   onDelete: (target: IExplorerContextTarget) => void | Promise<void>;
   /** Copies the target entry's filesystem path. */
   onCopyPath: (target: IExplorerContextTarget) => void | Promise<void>;
+  /** Copies the target entry's path relative to the workspace root. */
+  onCopyRelativePath: (target: IExplorerContextTarget) => void | Promise<void>;
   /** Opens the workspace folder picker. */
   onOpenFolder: () => void;
 }
@@ -64,6 +67,7 @@ export function useWorkspaceExplorerContextMenu(options: IUseWorkspaceExplorerCo
     onRename,
     onDelete,
     onCopyPath,
+    onCopyRelativePath,
     onOpenFolder,
   } = options;
 
@@ -123,6 +127,13 @@ export function useWorkspaceExplorerContextMenu(options: IUseWorkspaceExplorerCo
               icon: 'copy',
               shortcut: ['Ctrl', 'Shift', 'C'],
               action: 'copy-path',
+              disabled: !target,
+            },
+            {
+              key: 'copy-relative-path',
+              label: '复制相对路径',
+              icon: 'copy',
+              action: 'copy-relative-path',
               disabled: !target,
             },
             {
@@ -192,6 +203,9 @@ export function useWorkspaceExplorerContextMenu(options: IUseWorkspaceExplorerCo
         return;
       case 'copy-path':
         if (target) await onCopyPath(target);
+        return;
+      case 'copy-relative-path':
+        if (target) await onCopyRelativePath(target);
         return;
       case 'open-folder':
         onOpenFolder();

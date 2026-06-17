@@ -73,8 +73,9 @@ import type {
   IWorkspaceDirectoryPayload,
   TWorkbenchOpenFilePayload,
 } from '@/types/editor';
+import { normalizeFileSystemPath } from '@/utils/file/path';
 import { resolveWorkspaceKey } from '@/utils/file/workspace';
-import { writeFileSystemPathToClipboard } from '@/utils/platform/clipboard';
+import { writeClipboardText, writeFileSystemPathToClipboard } from '@/utils/platform/clipboard';
 
 const EXPLORER_SCROLLBAR_IDLE_HIDE_DELAY_MS = 900;
 
@@ -218,6 +219,37 @@ const {
   onCopyPath: async (target) => {
     await writeFileSystemPathToClipboard(target.path);
     message.success('已复制路径');
+  },
+  onCopyRelativePath: async (target) => {
+    // 复制相对于工作区根的路径。getRelativeFileSystemPath 会在 Windows 上整体转小写
+    // （仅适合相等/包含判断），这里需要保留文件名原始大小写，因此用 foldWindowsCase: false
+    // 归一化后自行做（Windows 上大小写不敏感的）前缀匹配，并还原平台原生分隔符。
+    const rootPath = root.value?.rootPath ?? props.workspaceRootPath;
+    const normalizeOptions = {
+      collapseDuplicateSeparators: true,
+      trimTrailingSeparator: true,
+      foldWindowsCase: false,
+    } as const;
+    const normalizedFull = normalizeFileSystemPath(target.path, normalizeOptions);
+    const normalizedRoot = normalizeFileSystemPath(rootPath, normalizeOptions);
+    const windowsStyle = /^[a-zA-Z]:\//.test(normalizedFull) || normalizedFull.startsWith('//');
+    const rootWithSep =
+      !normalizedRoot || normalizedRoot.endsWith('/') ? normalizedRoot : `${normalizedRoot}/`;
+    const hasRelative =
+      Boolean(normalizedFull) &&
+      Boolean(rootWithSep) &&
+      (windowsStyle
+        ? normalizedFull.toLowerCase().startsWith(rootWithSep.toLowerCase())
+        : normalizedFull.startsWith(rootWithSep));
+    if (!hasRelative) {
+      // 不在工作区根之下（或解析失败 / 即根目录本身）时回退到绝对路径。
+      await writeFileSystemPathToClipboard(target.path);
+      message.success('已复制路径');
+      return;
+    }
+    const relativePath = normalizedFull.slice(rootWithSep.length);
+    await writeClipboardText(windowsStyle ? relativePath.replace(/\//g, '\\') : relativePath);
+    message.success('已复制相对路径');
   },
   onOpenFolder: () => emit('open-folder'),
 });
