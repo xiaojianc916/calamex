@@ -32,7 +32,7 @@ const SAVE_DEBOUNCE_MS = 300;
 /**
  * 防抖最大等待:即使 setItem 持续高频触发(如长篇流式输出每帧都写),也必须
  * 至少每 SAVE_MAX_WAIT_MS 落盘一次。否则 trailing-only 防抖会被持续活动
- * "饿死",整段进行中的会话长时间不落盘,崩溃/退出即全部丢失。
+ * "饥死",整段进行中的会话长时间不落盘,崩溃/退出即全部丢失。
  */
 const SAVE_MAX_WAIT_MS = 1000;
 /** hydrate 读取 idb 的超时;超时则以空态启动，避免阻塞首屏。 */
@@ -416,6 +416,10 @@ const flushPendingPersist = (): void => {
 const registerFlushListeners = (): void => {
   if (flushListenersRegistered || typeof window === 'undefined') return;
   flushListenersRegistered = true;
+  // 常驻不解绑（刻意为之，非泄漏）：这三个监听器是应用级生命周期单例，仅在
+  // hydrate 时注册一次（flushListenersRegistered 幂等守卫），用于在页面隐藏/卸载
+  // 前把未落盘的 cache 立即 flush。它们需要在整个应用存活期持续生效，因此不提供
+  // 解绑——进程退出时由浏览器/WebView 统一回收，不会造成监听器堆积。
   window.addEventListener('pagehide', flushPendingPersist);
   window.addEventListener('beforeunload', flushPendingPersist);
   if (typeof document !== 'undefined') {
