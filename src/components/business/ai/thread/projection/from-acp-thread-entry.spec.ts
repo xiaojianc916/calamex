@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import type { IAiDiffHunkPreview } from '@/types/ai/patch';
 import type { IAiThreadToolCall, IAiThreadToolCallContent } from '@/types/ai/thread';
 import {
   buildAcpThreadToolEntries,
@@ -97,7 +98,21 @@ describe('mapAcpToolCallToThreadEntry — 内容映射', () => {
     expect(done.content[0]).toMatchObject({ type: 'terminal', streaming: false });
   });
 
-  it('diff 内容 → 修改文件,按 hunk 行计增删', () => {
+  it('diff 内容 → 修改文件,按 hunk 行计增删,并携带内联 hunk', () => {
+    const hunks: IAiDiffHunkPreview[] = [
+      {
+        id: 'h',
+        filePath: 'm.ts',
+        diffRef: 'acp-diff:t:m.ts',
+        header: '@@ -1,3 +1,3 @@',
+        lines: [
+          { id: 'l1', kind: 'context', content: 'l1' },
+          { id: 'l2', kind: 'delete', content: 'l2' },
+          { id: 'l3', kind: 'add', content: 'X' },
+          { id: 'l4', kind: 'context', content: 'l3' },
+        ],
+      },
+    ];
     const content: IAiThreadToolCallContent[] = [
       {
         type: 'diff',
@@ -106,20 +121,7 @@ describe('mapAcpToolCallToThreadEntry — 内容映射', () => {
           title: 'm.ts',
           filePath: 'm.ts',
           diffRef: 'acp-diff:t:m.ts',
-          hunks: [
-            {
-              id: 'h',
-              filePath: 'm.ts',
-              diffRef: 'acp-diff:t:m.ts',
-              header: '@@ -1,3 +1,3 @@',
-              lines: [
-                { id: 'l1', kind: 'context', content: 'l1' },
-                { id: 'l2', kind: 'delete', content: 'l2' },
-                { id: 'l3', kind: 'add', content: 'X' },
-                { id: 'l4', kind: 'context', content: 'l3' },
-              ],
-            },
-          ],
+          hunks,
         },
       },
     ];
@@ -135,6 +137,7 @@ describe('mapAcpToolCallToThreadEntry — 内容映射', () => {
         deletions: 1,
         diffRef: 'acp-diff:t:m.ts',
       },
+      hunks,
     });
   });
 

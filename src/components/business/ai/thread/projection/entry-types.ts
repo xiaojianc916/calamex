@@ -15,7 +15,7 @@ import type {
   TTaskIcon,
 } from '@/components/business/ai/plan/runtime-timeline';
 import type { IAiContextReference } from '@/types/ai/context';
-import type { IAiAgentChangedFile, IAiAgentPatchSummary } from '@/types/ai/patch';
+import type { IAiAgentChangedFile, IAiAgentPatchSummary, IAiDiffHunkPreview } from '@/types/ai/patch';
 
 /**
  * 工具调用条目的展开内容。对齐 Zed `acp_thread::ToolCallContent`:
@@ -25,7 +25,18 @@ import type { IAiAgentChangedFile, IAiAgentPatchSummary } from '@/types/ai/patch
 export type TAiThreadToolContent =
   | { type: 'raw'; id: string; title: 'Raw Input' | 'Output'; code: string }
   | { type: 'text'; id: string; markdown: string }
-  | { type: 'diff'; id: string; file: IAiAgentChangedFile; patchSummaryId: string }
+  | {
+      type: 'diff';
+      id: string;
+      file: IAiAgentChangedFile;
+      patchSummaryId: string;
+      /**
+       * 协议自带的内联 diff hunk(ACP 路径)。存在时 `.vue` 直接渲染,
+       * 不再经 `patches` prop 按路径反查;缺省时(Mastra 路径)回退到
+       * `patches` 查询,保持向后兼容。
+       */
+      hunks?: IAiDiffHunkPreview[];
+    }
   | { type: 'terminal'; id: string; title: string; output: string; streaming: boolean };
 
 /**

@@ -11,9 +11,9 @@
  *
  * 纯函数:无副作用、不读时钟、对同一入参恒定输出,便于单测与结构化复用。
  *
- * 已知边界(slice 4a):现有 `.vue` 的 diff 行体经 `patches` prop 按路径查 hunk,
- * 因此本层产出的 ACP diff 仅渲染「路径 + 增删计数」头部,行体在 slice 4c 改
- * `.vue` 直接消费协议 hunk 时补齐。
+ * 行体渲染(slice 4c-a):本层把协议 hunk 一并放进 diff 内容项的 `hunks` 字段,
+ * `.vue` 优先直接渲染协议 hunk。`patches` prop 仅作为 Mastra 路径(无内联 hunk)
+ * 的回退来源,两路不再出现「只显示文件头」的差异。
  */
 import type { TTaskIcon } from '@/components/business/ai/plan/runtime-timeline';
 import type {
@@ -100,7 +100,7 @@ const contentBlockToMarkdown = (block: IAiThreadContentBlock): string => {
   }
 };
 
-/** 按 hunk 行类型统计增删行数(行体渲染在 4c,这里仅用于头部计数)。 */
+/** 按 hunk 行类型统计增删行数。 */
 const countDiffLines = (
   hunks: readonly IAiDiffHunkPreview[],
 ): { additions: number; deletions: number } => {
@@ -149,7 +149,14 @@ const mapContentItem = (
         diffRef: item.diff.diffRef,
       };
 
-      return { type: 'diff', id, file, patchSummaryId: item.diff.diffRef };
+      // 携带协议自带的内联 hunk:`.vue` 优先直接渲染,无需再经 `patches` 反查。
+      return {
+        type: 'diff',
+        id,
+        file,
+        patchSummaryId: item.diff.diffRef,
+        hunks: item.diff.hunks,
+      };
     }
     case 'terminal':
       // ACP 终端以 id 引用,真实输出经 `terminal/*` 实时下发(D7);此处先占位。

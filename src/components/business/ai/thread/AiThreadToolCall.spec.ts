@@ -151,7 +151,7 @@ describe('AiThreadToolCall', () => {
     expect(wrapper.findComponent(Terminal).exists()).toBe(true);
   });
 
-  it('按补丁解析并复用 diff 卡片渲染 hunks', () => {
+  it('按补丁解析并复用 diff 卡片渲染 hunks(Mastra 路径,无内联 hunk)', () => {
     const patch: IAiPatchSet = {
       summary: 'x',
       files: [
@@ -186,6 +186,44 @@ describe('AiThreadToolCall', () => {
     });
 
     expect(wrapper.text()).toContain('src/a.ts');
+    expect(wrapper.findAllComponents(AiDiffHunkViewer).length).toBe(1);
+  });
+
+  it('diff 内容自带内联 hunk 时直接渲染,无需 patches prop(ACP 路径)', () => {
+    const wrapper = mount(AiThreadToolCall, {
+      props: {
+        entry: baseEntry([
+          {
+            type: 'diff',
+            id: 'c1',
+            file: {
+              path: 'src/b.ts',
+              status: 'modified',
+              additions: 1,
+              deletions: 1,
+              diffRef: 'd2',
+            },
+            patchSummaryId: 'sum2',
+            hunks: [
+              {
+                id: 'hb1',
+                filePath: 'src/b.ts',
+                diffRef: 'd2',
+                header: '@@ -1,2 +1,2 @@',
+                lines: [
+                  { id: 'lb1', kind: 'delete', content: 'old', oldLineNumber: 1 },
+                  { id: 'lb2', kind: 'add', content: 'new', newLineNumber: 1 },
+                ],
+              },
+            ],
+          },
+        ]),
+        open: true,
+      },
+      global: { stubs },
+    });
+
+    expect(wrapper.text()).toContain('src/b.ts');
     expect(wrapper.findAllComponents(AiDiffHunkViewer).length).toBe(1);
   });
 });

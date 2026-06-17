@@ -61,7 +61,8 @@ const rawLanguage = (code: string): string => {
 };
 
 // 复用「已更改文件」汇总完全一致的 hunk 解析:按多种路径键归一化后匹配,避免内联
-// diff 与汇总卡片出现行为差异(不另造一套解析逻辑)。
+// diff 与汇总卡片出现行为差异(不另造一套解析逻辑)。仅用于无内联 hunk 的
+// Mastra 路径回退;ACP 路径的 diff 自带 `hunks`,不走这里。
 const patchHunksByPath = computed(() => {
   const entries = new Map<string, IAiDiffHunkPreview[]>();
 
@@ -169,7 +170,7 @@ const resolveHunks = (filePath: string): IAiDiffHunkPreview[] =>
           </div>
           <div class="ai-thread-tool-call__diff-body">
             <AiDiffHunkViewer
-              v-for="hunk in resolveHunks(item.file.path)"
+              v-for="hunk in (item.hunks ?? resolveHunks(item.file.path))"
               :key="hunk.id"
               :hunk="hunk"
             />
