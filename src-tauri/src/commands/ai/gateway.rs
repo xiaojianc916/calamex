@@ -4,8 +4,8 @@ use crate::commands::contracts::{
     AiCancelRequest, AiChatRequest, AiChatStreamPayload, AiConfigPayload,
     AiConversationTitlePayload, AiConversationTitleRequest, AiInlineCompletionRangePayload,
     AiInlineCompletionRequest, AiInlineCompletionResult, AiProviderConnectionPayload,
-    AiProviderConnectionRequest, AiProviderTestPayload, AiSaveConfigRequest,
-    AiSaveCredentialsRequest, AiSuggestionPoolPayload, AiSuggestionPoolRequest,
+    AiProviderConnectionRequest, AiProviderTestPayload, AiResolveApprovalRequest,
+    AiSaveConfigRequest, AiSaveCredentialsRequest, AiSuggestionPoolPayload, AiSuggestionPoolRequest,
 };
 use tauri::AppHandle;
 
@@ -203,6 +203,38 @@ pub fn ai_cancel(app: AppHandle, payload: AiCancelRequest) -> Result<(), String>
     app.state::<crate::acp::AcpRuntime>()
         .cancel_thread(thread_id);
     Ok(())
+}
+
+/// 投递 ACP 反向权限请求（`session/request_permission`）的审批决策，唤醒回合内挂起的工具调用。
+///
+/// 与 `ai_cancel` 同构地委托给 Tauri 托管的 `AcpRuntime`：会话归属哪个后端宿主对命令层透明，
+/// 由 runtime 向全部已建立宿主广播投递。三字段先行空白校验（前端总能从已渲染审批气泡取得）；
+/// 返回是否命中某挂起审批——`false` 表示无匹配（多为已超时/被取消/重复投递的良性竞态，
+/// 命令层不视作错误，交前端自行决定是否提示），与 runtime 的「安全空操作」语义一致。
+#[tauri::command]
+#[specta::specta]
+pub fn ai_resolve_approval(
+    app: AppHandle,
+    payload: AiResolveApprovalRequest,
+) -> Result<bool, String> {
+    let session_id = payload.session_id.trim();
+    if session_id.is_empty() {
+        return Err("AI_APPROVAL_RESOLVE_INVALID: sessionId 不能为空。".to_string());
+    }
+    let tool_call_id = payload.tool_call_id.trim();
+    if tool_call_id.is_empty() {
+        return Err("AI_APPROVAL_RESOLVE_INVALID: toolCallId 不能为空。".to_string());
+    }
+    let decision = payload.decision.trim();
+    if decision.is_empty() {
+        return Err("AI_APPROVAL_RESOLVE_INVALID: decision 不能为空。".to_string());
+    }
+
+    use tauri::Manager as _;
+    let resolved = app
+        .state::<crate::acp::AcpRuntime>()
+        .resolve_approval(session_id, tool_call_id, decision);
+    Ok(resolved)
 }
 
 #[tauri::command]
