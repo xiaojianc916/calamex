@@ -1,3 +1,4 @@
+import { consola } from 'consola';
 import { AppError, isAppError } from '@/types/app-error';
 import { toErrorMessage } from '@/utils/error/error';
 import { assertDesktopRuntime } from '@/utils/platform/desktop-runtime';
@@ -16,6 +17,9 @@ type TauriDialogModule = typeof import('@tauri-apps/plugin-dialog');
 type TauriEventModule = typeof import('@tauri-apps/api/event');
 
 export const TAURI_IPC_DEFAULT_TIMEOUT_MS = 10_000;
+
+/** IPC 专用日志通道：统一走项目既有的 consola，便于按 tag 过滤与结构化输出。 */
+const ipcLogger = consola.withTag('ipc');
 
 let tauriCorePromise: Promise<TauriCoreModule> | null = null;
 let tauriDialogPromise: Promise<TauriDialogModule> | null = null;
@@ -48,15 +52,15 @@ export const loadTauriEvent = (): Promise<TauriEventModule> => {
 const createTraceId = (): string => crypto.randomUUID();
 
 const emitIpcLog = (record: IIpcLogRecord): void => {
-  // 错误始终输出；常规 info 审计日志仅在开发环境序列化并打印，避免生产环境
-  // 每次 IPC 调用都对整条 record 做 JSON.stringify 并写 console。
+  // 错误始终通过 consola 上报（即使 audit 关闭也会输出）；常规 info 审计日志仅在
+  // 开发环境打印，避免生产环境每次 IPC 调用都写一条日志。consola 负责对象序列化。
   if (record.outcome === 'error') {
-    console.error(JSON.stringify(record));
+    ipcLogger.error(record);
     return;
   }
 
   if (import.meta.env.DEV) {
-    console.info(JSON.stringify(record));
+    ipcLogger.info(record);
   }
 };
 
@@ -178,7 +182,8 @@ export const runInstrumentedIpc = async <TResult>(
   let outputBytes = 0;
 
   const emit = (outcome: 'ok' | 'error', errorCode?: string): void => {
-    if (!shouldAudit) {
+    // 成功路径遵循 audit 配置；错误始终上报，便于排查 audit:'none' 命令的失败。
+    if (outcome === 'ok' && !shouldAudit) {
       return;
     }
 
@@ -218,12 +223,6 @@ export const runInstrumentedIpc = async <TResult>(
   } catch (error) {
     const normalizedError = normalizeIpcError(error, { traceId, errorMap: options.errorMap });
     emit('error', normalizedError.code);
-    console.error(
-      '[ipc-error]',
-      options.command,
-      normalizedError.message,
-      normalizedError.cause ?? error,
-    );
     throw normalizedError;
   }
 };
