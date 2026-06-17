@@ -15,7 +15,7 @@ import { openExternalUrl } from '@/utils/platform/browser';
 import { writeClipboardText } from '@/utils/platform/clipboard';
 import GitCommitFileList from './GitCommitFileList.vue';
 import GitHistoryGraphContextMenu from './GitHistoryGraphContextMenu.vue';
-import type GitHistoryGraphHoverCard from './GitHistoryGraphHoverCard.vue';
+import GitHistoryGraphHoverCard from './GitHistoryGraphHoverCard.vue';
 import GitHistoryGraphRow from './GitHistoryGraphRow.vue';
 import { useGitHistoryGraph } from './useGitHistoryGraph';
 import { useGitHistoryHoverCard } from './useGitHistoryHoverCard';
