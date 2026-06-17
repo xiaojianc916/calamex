@@ -1,6 +1,7 @@
 import type { IAiLanguageModelUsage } from '@/types/ai';
 import type { IAiContextReference } from '@/types/ai/context';
 import type { TAiExecutionMode } from '@/types/ai/execution-mode';
+import type { TAcpToolCall, TAcpToolCallUpdate } from '@/types/ai/acp-tool-call';
 
 /* ============================================================================
  * Mode / role / status enums
@@ -606,6 +607,26 @@ export type TAgentUiEventPlanReady = {
   plan: IAgentPlan;
 };
 
+/* ----------------------------------------------------------------------------
+ * ACP-native 工具调用 UI 事件（ADR-20260617 · D1/D2）
+ *
+ * 与 Mastra 域的 `agent_event` 平级的「第二语言」：外部 ACP agent（如 Kimi）经
+ * Rust host(`src-tauri/src/acp/ui_event.rs`) 最小透传，ACP `session/update` 的
+ * `tool_call` / `tool_call_update` 原始负载以 `acpUpdate` 整体挂载，**不**伪造
+ * Mastra 遥测 base 字段（runId / agentId / timestamp / seq / schemaVersion …）。
+ * `acpUpdate` 直接复用 `@agentclientprotocol/sdk` 的 SessionUpdate 变体（见
+ * `@/types/ai/acp-tool-call`）。前端 ACL 据此按 `toolCallId` 归一到 thread 协议 VM。
+ * -------------------------------------------------------------------------- */
+export type TAgentUiEventToolCall = {
+  type: 'tool_call';
+  acpUpdate: TAcpToolCall;
+};
+
+export type TAgentUiEventToolCallUpdate = {
+  type: 'tool_call_update';
+  acpUpdate: TAcpToolCallUpdate;
+};
+
 export type TAgentUiEvent =
   | { type: 'message_delta'; text: string; phase?: 'stage' | 'final' }
   | { type: 'agent_event'; event: TAgentRuntimeEvent }
@@ -613,6 +634,8 @@ export type TAgentUiEvent =
   | { type: 'plan_record'; record: IAgentPlanRecord; versions: IAgentPlanRecord[] }
   | { type: 'tool_start'; toolName: string; input: TJsonValue }
   | { type: 'tool_result'; toolName: string; output: TJsonValue }
+  | TAgentUiEventToolCall
+  | TAgentUiEventToolCallUpdate
   | { type: 'approval_required'; request: IApprovalRequest }
   | { type: 'ask_user_required'; requestId: string; request: IAskUserRequest }
   | { type: 'diff_ready'; files: IDiffFile[] }
