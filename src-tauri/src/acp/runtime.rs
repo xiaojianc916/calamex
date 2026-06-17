@@ -189,6 +189,25 @@ impl AcpRuntime {
         }
     }
 
+    /// 投递一个审批决策，唤醒回合内挂起的权限请求（反向 `session/request_permission`）。
+    /// 挂起项落在发起该请求的那个后端宿主的登记表里，故向全部**已建立**宿主广播投递：
+    /// 命中（成功唤醒某挂起回合）任一宿主即返回 `true`；无匹配挂起项或无任何宿主时返回
+    /// `false`（安全空操作——审批解决绝不应触发 node 子进程派生）。
+    pub fn resolve_approval(&self, session_id: &str, tool_call_id: &str, decision: &str) -> bool {
+        // 先取出 Arc 列表并释放锁，避免在广播投递期间持有 runtime 锁。
+        let hosts = self.hosts.lock().all();
+        let mut resolved = false;
+        for host in hosts {
+            if host
+                .resolve_approval(session_id, tool_call_id, decision)
+                .is_ok()
+            {
+                resolved = true;
+            }
+        }
+        resolved
+    }
+
     /// 关停并释放全部后端的常驻连接（App 统一退出清理调用）。幂等：无宿主时为安全空操作。
     pub fn shutdown(&self) {
         // 先取走全部 Arc 并释放锁，避免在逐个关停期间持有 runtime 锁。
@@ -239,6 +258,14 @@ mod tests {
         // 未建立连接时关停应为安全的空操作（不 panic、不阻塞）；且可重复调用（幂等）。
         runtime.shutdown();
         runtime.shutdown();
+        assert!(runtime.hosts.lock().is_empty());
+    }
+
+    #[test]
+    fn resolve_approval_on_unestablished_runtime_is_noop() {
+        let runtime = AcpRuntime::new();
+        // 无任何宿主时，审批解决为安全空操作：返回 false 且绝不派生子进程。
+        assert!(!runtime.resolve_approval("sess-1", "tool-1", "allow-once"));
         assert!(runtime.hosts.lock().is_empty());
     }
 
