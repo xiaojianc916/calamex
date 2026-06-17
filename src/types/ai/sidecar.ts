@@ -1,7 +1,7 @@
 import type { IAiLanguageModelUsage } from '@/types/ai';
+import type { TAcpToolCall, TAcpToolCallUpdate } from '@/types/ai/acp-tool-call';
 import type { IAiContextReference } from '@/types/ai/context';
 import type { TAiExecutionMode } from '@/types/ai/execution-mode';
-import type { TAcpToolCall, TAcpToolCallUpdate } from '@/types/ai/acp-tool-call';
 
 /* ============================================================================
  * Mode / role / status enums

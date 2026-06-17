@@ -18,7 +18,8 @@
  * 的内部字段可选性强耦合（SDK 升级时随之跟随）；不伪造 Mastra 遥测 base 字段
  * （runId / agentId / timestamp / seq …）。纯函数，不修改入参。
  * ========================================================================== */
-import { AI_TOOL_CALL_STATUSES, AI_TOOL_KINDS } from '@/types/ai/thread';
+
+import type { TAcpToolCall, TAcpToolCallUpdate } from '@/types/ai/acp-tool-call';
 import type {
   IAiThreadContentBlock,
   IAiThreadToolCall,
@@ -26,7 +27,7 @@ import type {
   TAiThreadToolCallStatus,
   TAiThreadToolKind,
 } from '@/types/ai/thread';
-import type { TAcpToolCall, TAcpToolCallUpdate } from '@/types/ai/acp-tool-call';
+import { AI_TOOL_CALL_STATUSES, AI_TOOL_KINDS } from '@/types/ai/thread';
 
 export type TAcpAnyToolCall = TAcpToolCall | TAcpToolCallUpdate;
 
@@ -42,8 +43,7 @@ interface IAcpToolCallView {
   rawOutput?: unknown;
 }
 
-const asView = (update: TAcpAnyToolCall): IAcpToolCallView =>
-  update as unknown as IAcpToolCallView;
+const asView = (update: TAcpAnyToolCall): IAcpToolCallView => update as unknown as IAcpToolCallView;
 
 const asString = (value: unknown): string | undefined =>
   typeof value === 'string' && value.length > 0 ? value : undefined;
@@ -252,10 +252,7 @@ interface IAcpToolCallContentView {
   newText?: unknown;
 }
 
-const mapContentItem = (
-  item: unknown,
-  toolCallId: string,
-): IAiThreadToolCallContent | null => {
+const mapContentItem = (item: unknown, toolCallId: string): IAiThreadToolCallContent | null => {
   if (item === null || typeof item !== 'object') return null;
   const view = item as IAcpToolCallContentView;
 

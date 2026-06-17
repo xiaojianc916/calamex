@@ -1,10 +1,9 @@
 import { describe, expect, it } from 'vitest';
-
-import type { TAcpToolCall, TAcpToolCallUpdate } from '@/types/ai/acp-tool-call';
 import {
   getAcpToolCallId,
   reduceAcpToolCall,
 } from '@/components/business/ai/thread/projection/from-acp-tool-call';
+import type { TAcpToolCall, TAcpToolCallUpdate } from '@/types/ai/acp-tool-call';
 
 const NOW = '2026-06-17T00:00:00.000Z';
 
@@ -59,9 +58,13 @@ describe('reduceAcpToolCall — 按 toolCallId 合并', () => {
       toolCall({ toolCallId: 't', title: 'Run', kind: 'execute', status: 'pending' }),
       { now: NOW },
     );
-    const next = reduceAcpToolCall(first, toolCallUpdate({ toolCallId: 't', status: 'completed' }), {
-      now: '2026-06-17T00:01:00.000Z',
-    });
+    const next = reduceAcpToolCall(
+      first,
+      toolCallUpdate({ toolCallId: 't', status: 'completed' }),
+      {
+        now: '2026-06-17T00:01:00.000Z',
+      },
+    );
     expect(next.status).toBe('completed');
     expect(next.title).toBe('Run');
     expect(next.kind).toBe('execute');
@@ -79,7 +82,10 @@ describe('reduceAcpToolCall — 按 toolCallId 合并', () => {
     );
     expect(first.content).toHaveLength(1);
 
-    const keep = reduceAcpToolCall(first, toolCallUpdate({ toolCallId: 't', status: 'in_progress' }));
+    const keep = reduceAcpToolCall(
+      first,
+      toolCallUpdate({ toolCallId: 't', status: 'in_progress' }),
+    );
     expect(keep.content).toBe(first.content);
 
     const replaced = reduceAcpToolCall(

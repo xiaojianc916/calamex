@@ -1,13 +1,12 @@
 import { describe, expect, it } from 'vitest';
-
-import type { TAgentUiEvent } from '@/types/ai/sidecar';
-import type { TAcpToolCall, TAcpToolCallUpdate } from '@/types/ai/acp-tool-call';
 import {
   applyAcpUiEvent,
   createAcpToolCallAccumulator,
   reduceAcpUiEventsToToolCalls,
   selectAcpToolCalls,
 } from '@/components/business/ai/thread/projection/from-acp-events';
+import type { TAcpToolCall, TAcpToolCallUpdate } from '@/types/ai/acp-tool-call';
+import type { TAgentUiEvent } from '@/types/ai/sidecar';
 
 const NOW = '2026-06-17T00:00:00.000Z';
 

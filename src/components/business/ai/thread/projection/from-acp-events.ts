@@ -17,17 +17,14 @@
  * 不伪造 Mastra 遥测 base 字段；不抢占 Mastra 路径（`runtimeEvents` / `message.toolCalls`
  * 依旧）。纯函数，不改入参。
  * ========================================================================== */
+
+import type { TAcpToolCall, TAcpToolCallUpdate } from '@/types/ai/acp-tool-call';
 import type { TAgentUiEvent } from '@/types/ai/sidecar';
 import type { IAiThreadToolCall } from '@/types/ai/thread';
-import type { TAcpToolCall, TAcpToolCallUpdate } from '@/types/ai/acp-tool-call';
-
-import { getAcpToolCallId, reduceAcpToolCall } from './from-acp-tool-call';
 import type { IReduceAcpToolCallOptions } from './from-acp-tool-call';
+import { getAcpToolCallId, reduceAcpToolCall } from './from-acp-tool-call';
 
-type TAcpToolCallUiEvent = Extract<
-  TAgentUiEvent,
-  { type: 'tool_call' | 'tool_call_update' }
->;
+type TAcpToolCallUiEvent = Extract<TAgentUiEvent, { type: 'tool_call' | 'tool_call_update' }>;
 
 const isAcpToolCallUiEvent = (event: TAgentUiEvent): event is TAcpToolCallUiEvent =>
   event.type === 'tool_call' || event.type === 'tool_call_update';
@@ -70,15 +67,12 @@ export const applyAcpUiEvent = (
   const reduced = reduceAcpToolCall(previous, update, options);
   const byId = new Map(accumulator.byId);
   byId.set(id, reduced);
-  const order =
-    previous === undefined ? [...accumulator.order, id] : accumulator.order;
+  const order = previous === undefined ? [...accumulator.order, id] : accumulator.order;
   return { order, byId };
 };
 
 /** 累加器 → 按首次出现顺序的 `IAiThreadToolCall[]`。 */
-export const selectAcpToolCalls = (
-  accumulator: IAcpToolCallAccumulator,
-): IAiThreadToolCall[] => {
+export const selectAcpToolCalls = (accumulator: IAcpToolCallAccumulator): IAiThreadToolCall[] => {
   const calls: IAiThreadToolCall[] = [];
   for (const id of accumulator.order) {
     const call = accumulator.byId.get(id);

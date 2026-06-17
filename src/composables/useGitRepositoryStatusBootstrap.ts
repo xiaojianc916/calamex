@@ -1,4 +1,4 @@
-import { watch, type ComputedRef, type Ref } from 'vue';
+import { type ComputedRef, type Ref, watch } from 'vue';
 import { useGitStore } from '@/store/git';
 
 type TReactiveValue<T> = Ref<T> | ComputedRef<T>;
