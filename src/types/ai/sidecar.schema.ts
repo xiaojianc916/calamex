@@ -304,6 +304,28 @@ export const agentUiEventSchema = z.discriminatedUnion('type', [
     toolName: z.string().min(1),
     output: jsonValueSchema,
   }),
+  /* ACP-native 工具调用（ADR-20260617 · D1/D2）。
+   * 浅校验：@agentclientprotocol/sdk 类型为 SoT，不在 zod 里重建 ACP（与
+   * agentRuntimeEventSchema 的 passthrough 同理）。仅锁 discriminator + toolCallId，
+   * acpUpdate 其余字段以 .passthrough() 原样透传给前端 ACL 归一。 */
+  z.object({
+    type: z.literal('tool_call'),
+    acpUpdate: z
+      .object({
+        sessionUpdate: z.literal('tool_call'),
+        toolCallId: z.string().min(1),
+      })
+      .passthrough(),
+  }),
+  z.object({
+    type: z.literal('tool_call_update'),
+    acpUpdate: z
+      .object({
+        sessionUpdate: z.literal('tool_call_update'),
+        toolCallId: z.string().min(1),
+      })
+      .passthrough(),
+  }),
   z.object({
     type: z.literal('approval_required'),
     request: approvalRequestSchema,
