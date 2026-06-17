@@ -492,4 +492,287 @@ pub(super) fn search_structural_contents(
     per_file.sort_by_key(|(index, _)| *index);
 
     let ordered: Vec<Vec<WorkspaceSearchResult>> = per_file
-        .into
+        .into_iter()
+        .map(|(_, file_results)| file_results)
+        .collect();
+
+    Ok(merge_per_file_results(ordered, limit))
+}
+
+pub(super) fn search_symbols(
+    root: &Path,
+    filters: &PathFilters,
+    query: &str,
+    match_case: bool,
+    limit: usize,
+) -> Result<Vec<WorkspaceSearchResult>, String> {
+    if limit == 0 {
+        return Ok(Vec::new());
+    }
+
+    let symbols = workspace_cache_symbols(root)?;
+    let case_matching = if match_case {
+        CaseMatching::Respect
+    } else {
+        CaseMatching::Ignore
+    };
+    let pattern = NucleoPattern::parse(query, case_matching, Normalization::Smart);
+
+    // 与文件名搜索一致：先按路径过滤，再用 map_init 在各线程本地 matcher 上并行打分，
+    // 最后统一排序截断。symbols 为 Arc<Vec<SymbolEntry>>，par_iter 经 Deref 解析。
+    let mut scored = symbols
+        .par_iter()
+        .filter(|symbol| passes_path_filters(&symbol.relative_path, filters))
+        .map_init(
+            || {
+                (
+                    NucleoMatcher::new(Config::DEFAULT.match_paths()),
+                    Vec::<char>::new(),
+                )
+            },
+            |(matcher, utf32_buffer), symbol| -> Result<Option<WorkspaceSearchResult>, String> {
+                let haystack = Utf32Str::new(symbol.search_text.as_str(), utf32_buffer);
+                let Some(score) = pattern.score(haystack, matcher) else {
+                    return Ok(None);
+                };
+                Ok(Some(WorkspaceSearchResult {
+                    path: symbol.path.to_string_lossy().to_string(),
+                    relative_path: symbol.relative_path.clone(),
+                    name: symbol.name.clone(),
+                    kind: WorkspaceSearchResultKind::Symbol,
+                    line_number: Some(symbol.line_number),
+                    line_text: Some(format!("函数 {}", symbol.name)),
+                    match_start: None,
+                    match_end: None,
+                    score: i64_to_i32(-(score as i64) + symbol.line_number as i64, "搜索评分")?,
+                }))
+            },
+        )
+        .filter_map(|result| result.transpose())
+        .collect::<Result<Vec<WorkspaceSearchResult>, String>>()?;
+
+    sort_and_truncate_results(&mut scored, limit);
+    Ok(scored)
+}
+
+fn search_one_file_content(
+    file: &ScannedFile,
+    matcher: &grep_regex::RegexMatcher,
+    limit: usize,
+    results: &mut Vec<WorkspaceSearchResult>,
+) -> Result<(), String> {
+    let mut matched_in_file = 0usize;
+    let mut conversion_error: Option<String> = None;
+    // 路径字符串每文件只转换一次：单个文件可能产生大量命中，避免对每条命中重复执行
+    // to_string_lossy 的全路径扫描与转换。
+    let path_display = file.path.to_string_lossy().into_owned();
+    let mut searcher = SearcherBuilder::new()
+        .line_number(true)
+        .binary_detection(BinaryDetection::quit(b'\x00'))
+        .build();
+
+    searcher
+        .search_path(
+            matcher,
+            &file.path,
+            Lossy(|line_number, line| {
+                let line_text = trim_line(line);
+                let mut keep_going = true;
+                matcher
+                    .find_iter(line.as_bytes(), |found| {
+                        let column = found.start() as i64;
+                        let line_number = match u64_to_u32(line_number, "行号") {
+                            Ok(value) => value,
+                            Err(error) => {
+                                conversion_error = Some(error);
+                                return false;
+                            }
+                        };
+                        let match_start = match count_to_u32(
+                            byte_to_char_offset(line, found.start()),
+                            "匹配起始列",
+                        ) {
+                            Ok(value) => value,
+                            Err(error) => {
+                                conversion_error = Some(error);
+                                return false;
+                            }
+                        };
+                        let match_end = match count_to_u32(
+                            byte_to_char_offset(line, found.end()),
+                            "匹配结束列",
+                        ) {
+                            Ok(value) => value,
+                            Err(error) => {
+                                conversion_error = Some(error);
+                                return false;
+                            }
+                        };
+                        let score = match i64_to_i32((line_number as i64 * 4) + column, "搜索评分")
+                        {
+                            Ok(value) => value,
+                            Err(error) => {
+                                conversion_error = Some(error);
+                                return false;
+                            }
+                        };
+                        results.push(WorkspaceSearchResult {
+                            path: path_display.clone(),
+                            relative_path: file.relative_path.clone(),
+                            name: file.name.clone(),
+                            kind: WorkspaceSearchResultKind::Content,
+                            line_number: Some(line_number),
+                            line_text: Some(line_text.clone()),
+                            match_start: Some(match_start),
+                            match_end: Some(match_end),
+                            score,
+                        });
+                        matched_in_file += 1;
+                        keep_going = matched_in_file < limit;
+                        keep_going
+                    })
+                    .map_err(io::Error::other)?;
+                Ok(keep_going)
+            }),
+        )
+        .map_err(|error| format!("内容搜索失败：{error}"))?;
+
+    if let Some(error) = conversion_error {
+        return Err(error);
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_result(score: i32, relative_path: &str) -> WorkspaceSearchResult {
+        WorkspaceSearchResult {
+            path: relative_path.to_string(),
+            relative_path: relative_path.to_string(),
+            name: relative_path.to_string(),
+            kind: WorkspaceSearchResultKind::FileName,
+            line_number: None,
+            line_text: None,
+            match_start: None,
+            match_end: None,
+            score,
+        }
+    }
+
+    #[test]
+    fn sort_and_truncate_results_orders_by_score_then_path_and_caps() {
+        let mut results = vec![
+            make_result(40, "d"),
+            make_result(10, "a"),
+            make_result(30, "c"),
+            make_result(20, "b"),
+        ];
+        sort_and_truncate_results(&mut results, 2);
+        let observed: Vec<(i32, String)> = results
+            .into_iter()
+            .map(|result| (result.score, result.relative_path))
+            .collect();
+        assert_eq!(observed, vec![(10, "a".to_string()), (20, "b".to_string())]);
+    }
+
+    #[test]
+    fn sort_and_truncate_results_breaks_ties_by_relative_path() {
+        let mut results = vec![
+            make_result(10, "y"),
+            make_result(10, "x"),
+            make_result(10, "z"),
+        ];
+        sort_and_truncate_results(&mut results, 2);
+        let observed: Vec<String> = results
+            .into_iter()
+            .map(|result| result.relative_path)
+            .collect();
+        assert_eq!(observed, vec!["x".to_string(), "y".to_string()]);
+    }
+
+    #[test]
+    fn merge_per_file_results_flattens_in_file_order_within_limit() {
+        let per_file = vec![
+            vec![make_result(1, "a"), make_result(2, "a")],
+            vec![make_result(3, "b")],
+        ];
+        let observed: Vec<(i32, String)> = merge_per_file_results(per_file, 10)
+            .into_iter()
+            .map(|result| (result.score, result.relative_path))
+            .collect();
+        assert_eq!(
+            observed,
+            vec![
+                (1, "a".to_string()),
+                (2, "a".to_string()),
+                (3, "b".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn merge_per_file_results_round_robins_when_over_limit() {
+        // 第一个文件命中很多、第二个文件只有一条；超出 limit 时仍应给小文件留出名额，
+        // 而不是被大文件按顺序占满后整体挤掉。
+        let big_file: Vec<WorkspaceSearchResult> = (0..10).map(|_| make_result(1, "big")).collect();
+        let small_file = vec![make_result(1, "small")];
+        let merged = merge_per_file_results(vec![big_file, small_file], 3);
+        assert_eq!(merged.len(), 3);
+        assert!(
+            merged.iter().any(|result| result.relative_path == "small"),
+            "轮转合并应保证小文件也能进入结果"
+        );
+    }
+
+    #[test]
+    fn merge_per_file_results_with_zero_limit_is_empty() {
+        let per_file = vec![vec![make_result(1, "a")]];
+        assert!(merge_per_file_results(per_file, 0).is_empty());
+    }
+
+    #[test]
+    fn fuzzy_prefilter_rejects_lines_missing_required_ascii() {
+        let prefilter = FuzzyLinePrefilter::new("dapnow", false).expect("应创建预过滤器");
+        assert!(prefilter.may_match("deploy_app_now"));
+        assert!(!prefilter.may_match("deploy_app"));
+    }
+
+    #[test]
+    fn fuzzy_prefilter_respects_case_sensitive_queries() {
+        let prefilter = FuzzyLinePrefilter::new("API", true).expect("应创建预过滤器");
+        assert!(prefilter.may_match("call API now"));
+        assert!(!prefilter.may_match("call api now"));
+    }
+
+    #[test]
+    fn fuzzy_prefilter_requires_cjk_chars_at_line_level() {
+        let prefilter = FuzzyLinePrefilter::new("部署a", false).expect("应创建预过滤器");
+        // 行内需同时含 CJK「部」「署」与 ASCII「a」。
+        assert!(prefilter.may_match("调用部署模块 a"));
+        assert!(!prefilter.may_match("xxa")); // 缺 CJK
+        assert!(!prefilter.may_match("部署模块")); // 缺 a
+        // 文件级仍只看 ASCII：含 a 即不跳过，避免对非 UTF-8 编码的 CJK 内容误杀。
+        assert!(prefilter.bytes_may_match("plain ascii a".as_bytes()));
+    }
+
+    #[test]
+    fn fuzzy_prefilter_handles_pure_cjk_queries() {
+        let prefilter = FuzzyLinePrefilter::new("部署", false).expect("应创建预过滤器");
+        assert!(prefilter.may_match("开始部署流程"));
+        assert!(!prefilter.may_match("开始流程"));
+        // 文件级无 ASCII 要求 -> 不跳过，留待逐行精筛。
+        assert!(prefilter.bytes_may_match("任意内容".as_bytes()));
+    }
+
+    #[test]
+    fn fuzzy_prefilter_rejects_whole_file_missing_required_ascii() {
+        let prefilter = FuzzyLinePrefilter::new("dapnow", false).expect("应创建预过滤器");
+        // 整文件含全部要求字符 -> 不跳过（交给逐行精筛）
+        assert!(prefilter.bytes_may_match(b"deploy_app_now run"));
+        // 整文件缺少字符 w -> 直接整文件跳过
+        assert!(!prefilter.bytes_may_match(b"deploy app on prod"));
+    }
+}
