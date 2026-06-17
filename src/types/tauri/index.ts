@@ -27,6 +27,7 @@ import type {
   IAiWebSearchInput,
   IAiWebSearchPayload,
 } from '../ai';
+import type { IAcpPermissionRequestPayload } from '../ai/acp-permission.schema';
 import type {
   IAiEditAuthState,
   IAiEditCreateSnapshotPayload,
@@ -293,6 +294,9 @@ export interface ITauriService {
   ): Promise<IAgentSidecarOrchestratePayload>;
   onAgentSidecarStream(
     handler: (payload: IAgentSidecarStreamEventPayload) => void,
+  ): Promise<() => void>;
+  onAcpApproval(
+    handler: (payload: IAcpPermissionRequestPayload) => void,
   ): Promise<() => void>;
   analyzeScript(payload: IAnalyzeScriptRequest): Promise<IAnalyzeScriptPayload>;
   formatScript(payload: IFormatScriptRequest): Promise<IFormatScriptPayload>;
