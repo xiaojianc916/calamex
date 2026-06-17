@@ -6,6 +6,7 @@ pub mod ansi;
 pub mod command_contracts;
 pub mod dispatch;
 pub mod event_bus;
+pub mod flow_control;
 pub mod local_wsl_protocol;
 pub mod multiplexer;
 pub mod snapshot;
