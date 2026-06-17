@@ -11,3 +11,4 @@ export * from './from-acp-events';
 export * from './from-acp-thread-entry';
 export * from './from-acp-tool-call';
 export * from './reconcile-thread-entries';
+export * from './tool-view';
