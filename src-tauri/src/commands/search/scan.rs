@@ -5,8 +5,9 @@ use globset::{Glob, GlobSet, GlobSetBuilder};
 use ignore::WalkBuilder;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use rayon::prelude::*;
+use rustc_hash::FxHasher;
 use std::{
-    collections::{HashMap, hash_map::DefaultHasher},
+    collections::HashMap,
     ffi::OsStr,
     fs,
     hash::{Hash, Hasher},
@@ -81,6 +82,7 @@ pub(super) struct WorkspaceFileCache {
 pub(super) struct SymbolEntry {
     pub(super) path: PathBuf,
     pub(super) relative_path: String,
+    pub(super) search_text: String,
     pub(super) name: String,
     pub(super) line_number: u32,
 }
@@ -388,11 +390,9 @@ fn refresh_workspace_files(
         return scan_workspace_files_uncached(root);
     }
 
-    let mut files = current
-        .iter()
-        .cloned()
-        .map(|file| (file.relative_path.clone(), file))
-        .collect::<HashMap<_, _>>();
+    // current 始终按 relative_path 升序（缓存不变量）。在其副本上按二分查找做增量增删，
+    // 避免每次文件变更都重建整张 HashMap 并对全量文件列表重新排序。
+    let mut files = current.to_vec();
 
     for path in changed_paths {
         let path = path.canonicalize().unwrap_or(path);
@@ -404,10 +404,19 @@ fn refresh_workspace_files(
             return scan_workspace_files_uncached(root);
         }
 
+        let position = files.binary_search_by(|file| file.relative_path.cmp(&relative_path));
+
         if !path.exists() {
-            files.remove(&relative_path);
+            // 命中则删除；若被删路径是某条目的目录前缀（其下仍有子文件），回退全量重扫。
+            if let Ok(index) = position {
+                files.remove(index);
+            }
             let prefix = format!("{relative_path}/");
-            if files.keys().any(|key| key.starts_with(&prefix)) {
+            let insertion = position.unwrap_or_else(|index| index);
+            if files
+                .get(insertion)
+                .is_some_and(|file| file.relative_path.starts_with(&prefix))
+            {
                 return scan_workspace_files_uncached(root);
             }
             continue;
@@ -418,7 +427,9 @@ fn refresh_workspace_files(
         }
 
         if is_unsearchable_workspace_path(root, &path, false) || !path.is_file() {
-            files.remove(&relative_path);
+            if let Ok(index) = position {
+                files.remove(index);
+            }
             continue;
         }
 
@@ -427,19 +438,18 @@ fn refresh_workspace_files(
             .and_then(|value| value.to_str())
             .unwrap_or_default()
             .to_string();
-        files.insert(
-            relative_path.clone(),
-            ScannedFile {
-                path,
-                relative_path,
-                name,
-            },
-        );
+        let scanned = ScannedFile {
+            path,
+            relative_path,
+            name,
+        };
+        match position {
+            Ok(index) => files[index] = scanned,
+            Err(index) => files.insert(index, scanned),
+        }
     }
 
-    let mut refreshed = files.into_values().collect::<Vec<_>>();
-    refreshed.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
-    Ok(refreshed)
+    Ok(files)
 }
 
 fn is_unsearchable_workspace_path(root: &Path, path: &Path, is_dir: bool) -> bool {
@@ -666,7 +676,7 @@ fn collect_symbols_from_file(
 }
 
 fn hash_symbol_file_bytes(bytes: &[u8]) -> u64 {
-    let mut hasher = DefaultHasher::new();
+    let mut hasher = FxHasher::default();
     bytes.hash(&mut hasher);
     hasher.finish()
 }
@@ -706,6 +716,7 @@ fn collect_symbols_from_node(
         symbols.push(SymbolEntry {
             path: file.path.clone(),
             relative_path: file.relative_path.clone(),
+            search_text: format!("{} {}", name, file.relative_path),
             name: name.to_string(),
             line_number,
         });
@@ -816,6 +827,36 @@ mod tests {
         let files = refresh_workspace_files(&root, &[child], vec![root.join("scripts")])
             .expect("应安全回退到全量扫描");
         assert!(files.is_empty());
+    }
+
+    #[test]
+    fn refresh_workspace_files_keeps_sorted_order_on_incremental_add() {
+        let root = temp_root();
+        fs::create_dir_all(&root).expect("应创建临时目录");
+        let m = root.join("m.sh");
+        fs::write(&m, "echo hi\n").expect("应写入测试文件");
+
+        // 已排序列表中增量插入中间项 m.sh，结果应保持 relative_path 字典序。
+        let current = vec![
+            ScannedFile {
+                path: root.join("a.sh"),
+                relative_path: "a.sh".to_string(),
+                name: "a.sh".to_string(),
+            },
+            ScannedFile {
+                path: root.join("z.sh"),
+                relative_path: "z.sh".to_string(),
+                name: "z.sh".to_string(),
+            },
+        ];
+        let files = refresh_workspace_files(&root, &current, vec![m]).expect("应增量插入文件");
+        let order: Vec<String> = files.into_iter().map(|file| file.relative_path).collect();
+        assert_eq!(
+            order,
+            vec!["a.sh".to_string(), "m.sh".to_string(), "z.sh".to_string()]
+        );
+
+        fs::remove_dir_all(&root).expect("应清理临时目录");
     }
 
     #[test]
@@ -930,6 +971,7 @@ mod tests {
         SymbolEntry {
             path: p(relative_path),
             relative_path: relative_path.to_string(),
+            search_text: format!("{name} {relative_path}"),
             name: name.to_string(),
             line_number,
         }
