@@ -4,25 +4,32 @@
 //! 吃的是 Mastra 域的 `TAgentUiEvent`（`message_delta` / `done` / `error` / ...，以
 //! `type` 为判别式），而 ACP 线上协议下发的是官方 `SessionNotification`
 //! （`update.sessionUpdate` 为判别式：`agent_message_chunk` / `agent_thought_chunk` /
-//! `tool_call(_update)` / `plan` / `usage_update` ...）。两套词表不同，本模块在宿主侧把
-//! 后者投影为前者，使 ACP 主聊天流可直接复用既有前端消费端
+//! `tool_call(_update)` / `plan` / `usage_update` ...）。两套词表不同，本模块在
+//! 宿主侧把后者投影为前者，使 ACP 主聊天流可直接复用既有前端消费端
 //! （见 src/composables/ai/sidecar-events.ts）。
 //!
 //! 设计对齐 sidecar 出站投影 `from-runtime-event.ts` 的对偶：
 //! - `agent_message_chunk`（模型文本增量）→ message_delta{phase:"final"}
 //! - `agent_thought_chunk`（推理增量）   → message_delta{phase:"stage"}
 //!
-//! 其余 session/update 变体在「ask 主聊天」回合不会出现（tool_call(_update)/plan 属
-//! agent/plan 模式，且 approval/plan_ready 不进 session/update，见 output-event-stream.ts），
-//! 故此处显式返回 None 作为可扩展接入点：后续 agent/plan 模式切流时再按 toolCallId
-//! 投影为 agent_event（复用 from-runtime-event.ts 的 toolUseId 关联策略）。
+//! 工具调用（ADR-20260617 · D1/D2）：ACP `tool_call` / `tool_call_update` 经**最小透传**
+//! 投影为同名 `TAgentUiEvent`，整个 ACP `update` 对象（toolCallId/title/kind/status/
+//! content[]/locations/rawInput/rawOutput 等）原样挂在 `acpUpdate` 下——宿主侧不解读
+//! 其结构、不压平为文本、不伪造 Mastra 遥测 base 字段（runId/agentId/timestamp/seq…），
+//! 交前端 ACL 按 `toolCallId` 归一到 thread 协议 VM（见 src/types/ai/sidecar.ts 的
+//! tool_call(_update) 变体与 acp-tool-call.ts 的 SDK 类型）。
+//!
+//! 其余 session/update 变体（`plan` / `usage_update` / `current_mode_update` /
+//! `available_commands_update` 等）暂未投影：plan/usage 经信封回宿主，会话元数据
+//! 待后续 slice 接入，故此处显式返回 None 作为可扩展接入点。
 //!
 //! `done` / `error` 不是 session/update 通知：ACP prompt 回合不流式发 done，最终答案经
 //! agent_message_chunk 增量送达、信封（result+usage）回到宿主（见 turn-egress.ts）。故终态
 //! 由宿主侧 chat_stream 在 host.chat() 返回后用 build_done_ui_event / build_error_ui_event
 //! 合成并补发。本模块纯函数、无 I/O、无状态，便于单测。
 
-// 过渡期：本模块尚未接线到宿主流式发射点（接线在后续 slice）。接线后移除该 allow。
+// 过渡期：终态合成 helper（build_done_ui_event / build_error_ui_event）尚未接线到宿主
+// chat_stream 补发点（接线在后续 slice）。接线后移除该 allow。
 #![allow(dead_code)]
 
 use serde_json::{Value, json};
@@ -51,6 +58,16 @@ fn message_delta(text: String, phase: &str) -> Value {
     json!({ "type": "message_delta", "text": text, "phase": phase })
 }
 
+/// 构造 ACP 工具调用 `TAgentUiEvent`（`type` 为 `tool_call` / `tool_call_update`）。
+///
+/// 最小透传（ADR-20260617 · D1/D2）：整个 ACP `update` 对象原样作为 `acpUpdate`，宿主侧
+/// 不解读其结构、不压平为文本、不伪造 Mastra 遥测 base 字段（runId/agentId/timestamp/seq…）。
+/// `update` 自带 `sessionUpdate`（== `kind`）与 `toolCallId`，满足前端 wire schema 的浅校验；
+/// 前端 ACL 据 `toolCallId` 归一到 thread 协议 VM（见 src/types/ai/sidecar.ts）。
+fn tool_call_ui_event(kind: &str, update: &Value) -> Value {
+    json!({ "type": kind, "acpUpdate": update.clone() })
+}
+
 /// 将单条 ACP `SessionNotification` JSON 投影为 0..1 条 `TAgentUiEvent` JSON。
 ///
 /// 入参为 client 层 `AcpStreamFrame.event`（官方 `SessionNotification` 的 camelCase JSON：
@@ -68,9 +85,12 @@ pub fn session_notification_to_ui_event(notification: &Value) -> Option<Value> {
             let text = text_from_content_block(update.get("content")?)?;
             Some(message_delta(text, PHASE_STAGE))
         }
-        // 其余变体不在 ask 主聊天回合出现（tool_call(_update)/plan 属 agent/plan 模式；
-        // usage_update 经信封回宿主用于合成 done；current_mode_update 等为会话元数据）。
-        // 作为可扩展接入点显式返回 None，后续 agent/plan 切流时在此扩充投影。
+        // ACP 原生工具调用（ADR-20260617 · D1/D2）：最小透传，不解读/不压平。
+        // 整个 ACP `update`（toolCallId/title/kind/status/content[]/locations/rawInput/
+        // rawOutput 等）原样作为 `acpUpdate`，交前端 ACL 按 toolCallId 归一到 thread 协议 VM。
+        "tool_call" | "tool_call_update" => Some(tool_call_ui_event(kind, update)),
+        // 其余变体暂未投影（plan/usage_update 经信封回宿主；current_mode_update /
+        // available_commands_update 等会话元数据待后续 slice）。显式 None 作为接入点。
         _ => None,
     }
 }
@@ -138,13 +158,41 @@ mod tests {
     }
 
     #[test]
-    fn unmapped_session_update_yields_none() {
-        let n = notif(json!({
+    fn tool_call_passes_through_whole_update_as_acp_update() {
+        // 最小透传：整个 ACP update 原样落在 acpUpdate，不解读/不压平/不伪造 base 字段。
+        let update = json!({
             "sessionUpdate": "tool_call",
             "toolCallId": "t1",
             "title": "read_file",
             "kind": "read",
-            "status": "in_progress"
+            "status": "in_progress",
+            "content": [{ "type": "content", "content": { "type": "text", "text": "..." } }],
+            "locations": [{ "path": "/a/b.rs" }],
+            "rawInput": { "path": "/a/b.rs" }
+        });
+        let ui = session_notification_to_ui_event(&notif(update.clone())).unwrap();
+        assert_eq!(ui["type"], "tool_call");
+        assert_eq!(ui["acpUpdate"], update);
+    }
+
+    #[test]
+    fn tool_call_update_passes_through_whole_update_as_acp_update() {
+        let update = json!({
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": "t1",
+            "status": "completed",
+            "rawOutput": { "ok": true }
+        });
+        let ui = session_notification_to_ui_event(&notif(update.clone())).unwrap();
+        assert_eq!(ui["type"], "tool_call_update");
+        assert_eq!(ui["acpUpdate"], update);
+    }
+
+    #[test]
+    fn unmapped_session_update_yields_none() {
+        let n = notif(json!({
+            "sessionUpdate": "plan",
+            "entries": []
         }));
         assert!(session_notification_to_ui_event(&n).is_none());
     }
