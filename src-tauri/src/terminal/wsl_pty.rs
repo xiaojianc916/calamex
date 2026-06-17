@@ -414,6 +414,7 @@ where
                     opened_at_unix_ms: now_unix_ms(),
                 },
             ));
+            log::debug!("WSL 交互终端读线程已启动（session_id={session_id}, pid={pid}）。");
 
             let mut decoder = LocalWslUtf8ChunkDecoder::default();
             let mut buffer = [0u8; TERMINAL_READ_BUFFER_BYTES];
@@ -469,6 +470,7 @@ where
             }
 
             // 读取错误退出：先终止可能仍存活的子进程，保证 child.wait() 有界返回、不留孤儿 wsl.exe。
+            let exit_reason = if read_error.is_some() { "读取错误" } else { "EOF" };
             if let Some(error) = read_error {
                 log::warn!(
                     "WSL 交互终端读线程因读取错误退出（session_id={session_id}）：{error}；强制终止子进程以避免阻塞与孤儿。"
@@ -476,6 +478,9 @@ where
                 let _ = child.clone_killer().kill();
             }
             let exit_code = child.wait().ok().map(|status| status.exit_code() as i32);
+            log::debug!(
+                "WSL 交互终端读线程退出（session_id={session_id}, 原因={exit_reason}, exit_code={exit_code:?}）。"
+            );
             on_event(LocalWslTerminalServerPayload::InteractiveClosed(
                 LocalWslTerminalInteractiveClosed {
                     session_id,
@@ -515,6 +520,7 @@ where
                     started_at_unix_ms: now_unix_ms(),
                 },
             ));
+            log::debug!("WSL 运行任务读线程已启动（run_id={run_id}, pid={pid}）。");
 
             let mut decoder = LocalWslUtf8ChunkDecoder::default();
             let mut buffer = [0u8; TERMINAL_READ_BUFFER_BYTES];
@@ -567,6 +573,7 @@ where
             }
 
             // 读取错误退出：先终止可能仍存活的子进程，保证 child.wait() 有界返回、不留孤儿 wsl.exe。
+            let exit_reason = if read_error.is_some() { "读取错误" } else { "EOF" };
             if let Some(error) = read_error {
                 log::warn!(
                     "WSL 运行任务读线程因读取错误退出（run_id={run_id}）：{error}；强制终止子进程以避免阻塞与孤儿。"
@@ -578,6 +585,9 @@ where
             // 标记运行已结束：即便随后的 RunCompleted 完成事件未能让上层清理 active_runs，
             // 上层仍可据此（is_finished）确证该运行确已结束、安全回收陈旧条目。
             finished.store(true, Ordering::SeqCst);
+            log::debug!(
+                "WSL 运行任务读线程退出（run_id={run_id}, 原因={exit_reason}, exit_code={exit_code:?}）。"
+            );
             on_event(LocalWslTerminalServerPayload::RunCompleted(
                 LocalWslTerminalRunCompleted {
                     run_id,
