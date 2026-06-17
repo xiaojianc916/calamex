@@ -47,6 +47,7 @@ pub fn builder() -> Builder<tauri::Wry> {
             terminal_commands::close_terminal_session,
             terminal_commands::dispatch_script_to_terminal,
             terminal_commands::cancel_terminal_run,
+            terminal_commands::acknowledge_terminal_data,
             git::branches::list_git_branches,
             git::branches::checkout_git_branch,
             git::branches::checkout_git_commit,
