@@ -109,7 +109,7 @@ describe('buildThreadEntries', () => {
     expect(kinds).toContain('tool-call');
     expect(kinds).toContain('context-compaction');
     expect(kinds[kinds.length - 1]).toBe('assistant-text');
-    expect(findToolCallEntry(entries)?.status).toBe('succeeded');
+    expect(findToolCallEntry(entries)?.toolCall.status).toBe('completed');
   });
 
   it('在缺少运行时事件时映射 wire 工具调用(Chat 模式)', () => {
@@ -128,11 +128,12 @@ describe('buildThreadEntries', () => {
       }),
     ]);
 
-    expect(findToolCallEntry(entries)).toMatchObject({
-      kind: 'tool-call',
+    const toolEntry = findToolCallEntry(entries);
+    expect(toolEntry).toMatchObject({ kind: 'tool-call' });
+    expect(toolEntry?.toolCall).toMatchObject({
       title: '已查看 foo.ts',
-      status: 'succeeded',
-      toolName: 'read_file',
+      status: 'completed',
+      kind: 'read',
     });
   });
 
@@ -172,8 +173,11 @@ describe('buildThreadEntries', () => {
     ]);
 
     const toolEntry = findToolCallEntry(entries);
-    expect(toolEntry?.content).toHaveLength(1);
-    expect(toolEntry?.content[0]).toMatchObject({ type: 'diff', patchSummaryId: 'patch-1' });
+    expect(toolEntry?.toolCall.content).toHaveLength(1);
+    expect(toolEntry?.toolCall.content[0]).toMatchObject({
+      type: 'diff',
+      diff: { filePath: 'src/foo.ts' },
+    });
     expect(entries.some((entry) => entry.kind === 'changed-files-summary')).toBe(true);
   });
 

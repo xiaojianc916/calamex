@@ -2,318 +2,163 @@
  * 把 `IAiChatMessage[]` 投影成平铺会话时间线条目 `TAiThreadEntry[]`。
  *
  * 核心思路(对齐 Zed `acp_thread`):一条 assistant 消息被展开成多条按时间顺序
- * 排列的条目——推理、工具调用、上下文整理、最终文本、Plan 控制、改动汇总——
- * 而不是塞进一个气泡 / 卡片。运行时活动复用既有 `buildTimelineItems`(推理缓冲、
- * 工具 `toolUseId` 关联、终端重建等复杂逻辑全部沿用,不重新发明);ACP openWorld
- * 后端(如 Kimi)的工具调用经 from-acp-* 累加器归一到协议 VM 后,由适配器复用同一
- * 渲染管线;Chat 模式下无运行时事件,则直接映射 `message.toolCalls`,从而多种模式
- * 共用同一渲染管线。
+ * 排列的条目——推理、工具调用、上下文整理、最终文本、Plan 控制、改动汇总。三种
+ * 工具来源(运行时 / ACP / wire)统一收敛到协议 VM `IAiThreadToolCall`,经
+ * `toAiThreadToolView` 渲染,不再并存渲染 VM:
+ * - 运行时:复用 `buildTimelineItems`(推理缓冲、`toolUseId` 关联、终端重建等),
+ *   再经 `fromRuntimeToolCall` 收敛到协议 VM;
+ * - ACP:`message.acpToolCalls` 已是协议 VM(from-acp-* 累加器归一),直接包裹;
+ * - Chat(wire):`message.toolCalls` 经 `fromWireToolCall` 映射。
  */
 import {
-  APPLY_FILE_EDIT_TOOL_NAMES,
+  buildAiPatchPreviewFiles,
+  formatAiPatchDisplayPath,
+} from '@/components/business/ai/edit/patch-preview';
+import {
   buildTimelineItems,
   describeRunEvent,
-  type ITaskNodeItem,
-  resolveRuntimeToolIcon,
   type TTimelineItem,
-  WAITING_DECISION_LABEL,
-  WRITE_FILE_TOOL_NAMES,
 } from '@/components/business/ai/plan/runtime-timeline';
-import type { IAiChatMessage, IAiToolCall } from '@/types/ai';
-import type { IAiAgentPatchSummary } from '@/types/ai/patch';
+import type { IAiChatMessage, IAiPatchSet, IAiToolCall } from '@/types/ai';
+import type {
+  IAiAgentChangedFile,
+  IAiAgentPatchSummary,
+  IAiDiffEditorPreview,
+  IAiDiffHunkPreview,
+} from '@/types/ai/patch';
 import type { TAgentRuntimeEvent } from '@/types/ai/sidecar';
+import type { IAiThreadToolCall } from '@/types/ai/thread';
 
 import type {
   IAiThreadContextCompactionEntry,
   IAiThreadToolCallEntry,
   TAiThreadEntry,
-  TAiThreadToolContent,
-  TAiThreadToolStatus,
 } from './entry-types';
-import { buildAcpThreadToolEntries } from './from-acp-thread-entry';
+import { fromRuntimeToolCall } from './from-runtime-tool-call';
+import { fromWireToolCall } from './from-wire-tool-call';
 
-/** 取文件路径的末段(文件名),用于把改动 diff 关联到对应工具调用条目。 */
-const fileNameOf = (filePath: string): string => {
-  const segments = filePath.split(/[\\/]/u);
-  return segments[segments.length - 1] ?? filePath;
+/** 工具调用是否引用某文件(标题里出现完整路径或文件名)。 */
+const toolCallReferencesPath = (toolCall: IAiThreadToolCall, filePath: string): boolean => {
+  const fileName = filePath.split(/[\\/]/u).pop() ?? filePath;
+  return toolCall.title.includes(filePath) || toolCall.title.includes(fileName);
 };
 
-const isNonEmpty = (value: string | undefined): value is string => Boolean(value?.trim());
-
-const parseJsonRecord = (value: string | undefined): Record<string, unknown> | null => {
-  if (!isNonEmpty(value)) {
-    return null;
-  }
-
-  try {
-    const parsed: unknown = JSON.parse(value);
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : null;
-  } catch {
-    return null;
-  }
-};
-
-const stringifyCandidate = (value: unknown): string | undefined =>
-  typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
-
-const getFirstStringField = (
-  record: Record<string, unknown> | null,
-  keys: readonly string[],
-): string | undefined => {
-  if (!record) {
-    return undefined;
-  }
-
-  for (const key of keys) {
-    const value = stringifyCandidate(record[key]);
-
-    if (value) {
-      return value;
-    }
-  }
-
-  return undefined;
-};
-
-const humanizeToolName = (toolName: string): string =>
-  toolName
-    .replace(/^mcp_/u, '')
-    .replace(/[_-]+/gu, ' ')
-    .replace(/\s+/gu, ' ')
-    .trim()
-    .replace(/^./u, (character) => character.toUpperCase());
+/** 编辑类工具(协议 kind=edit);用于无法按路径关联时的兜底归属。 */
+const isEditLikeToolCall = (toolCall: IAiThreadToolCall): boolean => toolCall.kind === 'edit';
 
 /**
- * Zed 风格工具标题的结构化表示:`verb` 为动作动词,`argument` 为其参数
- * (路径 / 命令 / 正则等)。渲染层据此作“动词 + 参数 code chip”两段式展示。
+ * 从本消息补丁集中解析「路径 → hunk」。复用「已更改文件」汇总卡片完全一致的
+ * `buildAiPatchPreviewFiles`,避免内联 diff 与汇总卡片行为漂移(不另造解析)。
+ * 仅按路径键匹配,不依赖 workspaceRootPath(其只影响展示路径,不影响 hunk 与键)。
  */
-interface IZedToolLabel {
-  verb: string;
-  argument?: string;
-}
-
-/** 结构化标题 → 完整标题字符串(作为可访问名称与按路径关联 diff 的唯一依据)。 */
-const labelTitle = (label: IZedToolLabel): string =>
-  label.argument === undefined ? label.verb : `${label.verb} ${label.argument}`;
-
-const buildZedToolLabel = (
-  toolName: string | undefined,
-  fallback: string,
-  rawInput?: string,
-): IZedToolLabel => {
-  if (!toolName) {
-    return { verb: fallback };
-  }
-
-  const normalized = toolName.toLowerCase();
-  const input = parseJsonRecord(rawInput);
-  const regex = getFirstStringField(input, ['regex', 'pattern']);
-  const query = getFirstStringField(input, ['query', 'search', 'text']);
-  const path = getFirstStringField(input, [
-    'path',
-    'filePath',
-    'file',
-    'include_pattern',
-    'includePattern',
-  ]);
-  const command = getFirstStringField(input, ['command', 'cmd', 'script']);
-  const url = getFirstStringField(input, ['url', 'href']);
-
-  if (
-    /(grep|search_text|search_files|file_search|semantic_search|mastra_workspace_grep)/u.test(
-      normalized,
-    )
-  ) {
-    if (regex) {
-      return { verb: 'Search files for regex', argument: regex };
-    }
-
-    if (query) {
-      return { verb: 'Search files for', argument: query };
+const resolveHunksByPath = (
+  patches: readonly IAiPatchSet[],
+): Map<string, IAiDiffHunkPreview[]> => {
+  const byPath = new Map<string, IAiDiffHunkPreview[]>();
+  for (const patch of patches) {
+    for (const previewFile of buildAiPatchPreviewFiles(patch, undefined)) {
+      for (const key of [previewFile.path, previewFile.displayPath]) {
+        const normalized = formatAiPatchDisplayPath(key);
+        byPath.set(normalized, [...(byPath.get(normalized) ?? []), ...previewFile.hunks]);
+      }
     }
   }
-
-  if (/search_symbols|listcodeusages|renamesymbol/u.test(normalized)) {
-    return {
-      verb: 'Search symbols for',
-      argument: query ?? regex ?? path ?? humanizeToolName(toolName),
-    };
-  }
-
-  if (/read.*file|read_text_file|read_file_window|get_file_info/u.test(normalized)) {
-    return { verb: 'Read file', argument: path ?? query ?? humanizeToolName(toolName) };
-  }
-
-  if (/list_dir|list_directory|directory_tree|list_workspace_entries/u.test(normalized)) {
-    return { verb: 'List directory', argument: path ?? humanizeToolName(toolName) };
-  }
-
-  if (
-    /write_file|create_file|edit_file|apply_patch|apply_file_edits|workspace_edit|workspace_write/u.test(
-      normalized,
-    )
-  ) {
-    return { verb: 'Edit file', argument: path ?? query ?? humanizeToolName(toolName) };
-  }
-
-  if (/run_command|run_in_terminal|execute_command|send_to_terminal/u.test(normalized)) {
-    return { verb: 'Run command', argument: command ?? humanizeToolName(toolName) };
-  }
-
-  if (/web_search|tavily|search_web/u.test(normalized)) {
-    return { verb: 'Search the web for', argument: query ?? regex ?? humanizeToolName(toolName) };
-  }
-
-  if (/fetch|browser|navigate/u.test(normalized)) {
-    return { verb: 'Open', argument: url ?? query ?? humanizeToolName(toolName) };
-  }
-
-  return { verb: humanizeToolName(toolName) };
+  return byPath;
 };
 
-/** 工具名是否属于“写入 / 编辑”类(用于无法按路径关联时的兜底归属)。 */
-const isEditLikeToolName = (toolName: string | undefined): boolean => {
-  if (toolName === undefined) {
-    return false;
-  }
-  const normalized = toolName.toLowerCase();
-  return WRITE_FILE_TOOL_NAMES.has(normalized) || APPLY_FILE_EDIT_TOOL_NAMES.has(normalized);
-};
-
-/** 工具调用条目是否引用了某文件路径(标题或标签里出现完整路径 / 文件名)。 */
-const entryReferencesPath = (entry: IAiThreadToolCallEntry, filePath: string): boolean => {
-  const name = fileNameOf(filePath);
-  if (entry.title.includes(filePath) || entry.title.includes(name)) {
-    return true;
-  }
-  return entry.tags.some((tag) => tag.includes(filePath) || tag.includes(name));
-};
+/** 改动文件 → 协议 diff 预览(复用 `aiDiffEditorPreview`,不另造 diff 模型)。 */
+const buildDiffPreview = (
+  file: IAiAgentChangedFile,
+  summary: IAiAgentPatchSummary,
+  hunksByPath: Map<string, IAiDiffHunkPreview[]>,
+): IAiDiffEditorPreview => ({
+  id: `${summary.id}:${file.path}`,
+  title: file.path,
+  filePath: file.path,
+  diffRef: file.diffRef,
+  patchRef: summary.patchRef,
+  runId: summary.runId,
+  stepId: summary.stepId,
+  hunks: hunksByPath.get(formatAiPatchDisplayPath(file.path)) ?? [],
+});
 
 /**
- * 把改动文件作为内联 Diff 内容挂到产生它的工具调用条目上(对齐 Zed:Diff 是
- * ToolCall 的子内容)。优先按路径精确关联;关联不上时归到最后一个写入类工具
+ * 把改动文件作为内联 diff 内容挂到产生它的工具调用上(对齐 Zed:Diff 是 ToolCall
+ * 的子内容,且自带 hunks)。优先按路径精确关联;关联不上时归到最后一个编辑类工具
  * 调用;再不行则仅在末尾汇总条目中呈现。
  */
 const attachDiffsToToolEntries = (
-  toolEntries: IAiThreadToolCallEntry[],
+  toolEntries: readonly IAiThreadToolCallEntry[],
   summary: IAiAgentPatchSummary,
+  patches: readonly IAiPatchSet[],
 ): void => {
   if (toolEntries.length === 0) {
     return;
   }
-  const editEntries = toolEntries.filter((entry) => isEditLikeToolName(entry.toolName));
-  const fallbackEntry = editEntries.length > 0 ? editEntries[editEntries.length - 1] : undefined;
+  const hunksByPath = resolveHunksByPath(patches);
+  const editEntries = toolEntries.filter((entry) => isEditLikeToolCall(entry.toolCall));
+  const fallback = editEntries.at(-1);
 
   for (const file of summary.files) {
     const target =
-      toolEntries.find((entry) => entryReferencesPath(entry, file.path)) ?? fallbackEntry;
+      toolEntries.find((entry) => toolCallReferencesPath(entry.toolCall, file.path)) ?? fallback;
     if (target === undefined) {
       continue;
     }
-    target.content.push({
+    target.toolCall.content.push({
       type: 'diff',
-      id: `${summary.id}:${file.path}`,
-      file,
-      patchSummaryId: summary.id,
+      diff: buildDiffPreview(file, summary, hunksByPath),
     });
   }
 };
 
-/** 运行时任务节点 → 工具调用状态。等待决策对应 Zed `WaitingForConfirmation`。 */
-const resolveToolStatusFromNode = (node: ITaskNodeItem): TAiThreadToolStatus => {
-  if (node.shimmerAction === true && node.action === WAITING_DECISION_LABEL) {
-    return 'awaiting-confirmation';
-  }
-  return node.status;
-};
-
-const pushRawContent = (
-  content: TAiThreadToolContent[],
-  id: string,
-  title: 'Raw Input' | 'Output',
-  code: string | undefined,
-): void => {
-  if (!isNonEmpty(code)) {
-    return;
-  }
-
-  content.push({
-    type: 'raw',
-    id,
-    title,
-    code,
-  });
-};
-
-/** 运行时任务节点 → 工具调用展开内容(原始输入输出 / 终端;Diff 另行按改动汇总关联)。 */
-const buildToolContentFromNode = (node: ITaskNodeItem): TAiThreadToolContent[] => {
-  const content: TAiThreadToolContent[] = [];
-
-  pushRawContent(content, `${node.id}:raw-input`, 'Raw Input', node.rawInput);
-  pushRawContent(content, `${node.id}:raw-output`, 'Output', node.rawOutput);
-
-  if (node.terminalOutput !== undefined && node.terminalOutput.length > 0) {
-    content.push({
-      type: 'terminal',
-      id: `${node.id}:terminal`,
-      title: node.terminalTitle ?? 'Terminal',
-      output: node.terminalOutput,
-      streaming: node.terminalStreaming ?? false,
-    });
-  }
-  return content;
-};
-
-/** 运行时时间线 task 项 → 工具调用条目。 */
+/** 运行时时间线 task 项 → 工具调用条目(收敛到协议 VM)。 */
 const mapTaskItemToToolEntry = (
   messageId: string,
+  createdAt: string,
   item: Extract<TTimelineItem, { type: 'task' }>,
 ): IAiThreadToolCallEntry => {
-  const { node } = item;
-  const label = buildZedToolLabel(node.toolName, node.action, node.rawInput);
+  const { toolCall, terminals, awaiting } = fromRuntimeToolCall(item.node, { createdAt });
   return {
     kind: 'tool-call',
     id: `${messageId}:${item.id}`,
     messageId,
-    toolName: node.toolName,
-    icon: node.icon,
-    title: labelTitle(label),
-    titleVerb: label.verb,
-    titleArgument: label.argument,
-    tags: node.tags,
-    tail: node.tail,
-    status: resolveToolStatusFromNode(node),
-    content: buildToolContentFromNode(node),
-    webSearchSources: node.webSearchSources,
-    suppressMeta: node.suppressMeta,
+    toolCall,
+    terminals,
+    awaiting,
   };
 };
 
 /** Chat 模式 wire 工具调用 → 工具调用条目(无运行时事件时使用)。 */
 const mapWireToolCallToToolEntry = (
   messageId: string,
-  toolCall: IAiToolCall,
-): IAiThreadToolCallEntry => {
-  const summary = toolCall.summary.trim();
-  const fallback = summary.length > 0 ? summary : toolCall.name;
-  const label = summary.length > 0 ? { verb: summary } : buildZedToolLabel(toolCall.name, fallback);
-  return {
-    kind: 'tool-call',
-    id: `${messageId}:tool:${toolCall.id}`,
-    messageId,
-    toolName: toolCall.name,
-    // 复用项目既有图标解析;'system' 是合法的运行时工具大类兜底。
-    icon: resolveRuntimeToolIcon(toolCall.name, 'system'),
-    title: labelTitle(label),
-    titleVerb: label.verb,
-    titleArgument: label.argument,
-    tags: toolCall.targetPreview !== undefined ? [toolCall.targetPreview] : [],
-    status: toolCall.status,
-    content: [],
-  };
-};
+  createdAt: string,
+  wireToolCall: IAiToolCall,
+): IAiThreadToolCallEntry => ({
+  kind: 'tool-call',
+  id: `${messageId}:tool:${wireToolCall.id}`,
+  messageId,
+  toolCall: fromWireToolCall(wireToolCall, { createdAt }),
+  terminals: {},
+  awaiting: false,
+});
+
+/**
+ * ACP 工具调用 → 工具调用条目。`message.acpToolCalls` 已是协议 VM(from-acp-* 累加
+ * 器归一),直接包裹即可,与 runtime / wire 汇流到同一渲染管线。复制 content 数组
+ * 以免内联 diff 时回写共享输入对象。
+ */
+const mapAcpToolCallToToolEntry = (
+  messageId: string,
+  toolCall: IAiThreadToolCall,
+): IAiThreadToolCallEntry => ({
+  kind: 'tool-call',
+  id: `${messageId}:acp:${toolCall.id}`,
+  messageId,
+  toolCall: { ...toolCall, content: [...toolCall.content] },
+  terminals: {},
+  awaiting: false,
+});
 
 /**
  * 从运行时事件中提取“上下文整理完成”为独立条目(对齐 Zed ContextCompaction)。
@@ -365,7 +210,7 @@ const buildAssistantEntries = (message: IAiChatMessage): TAiThreadEntry[] => {
           streaming,
         });
       } else if (item.type === 'task') {
-        const toolEntry = mapTaskItemToToolEntry(message.id, item);
+        const toolEntry = mapTaskItemToToolEntry(message.id, message.createdAt, item);
         toolEntries.push(toolEntry);
         entries.push(toolEntry);
       }
@@ -373,16 +218,16 @@ const buildAssistantEntries = (message: IAiChatMessage): TAiThreadEntry[] => {
     }
     entries.push(...extractContextCompactionEntries(message.id, runtimeEvents));
   } else if (message.acpToolCalls !== undefined && message.acpToolCalls.length > 0) {
-    // ACP openWorld 后端:工具调用已由 from-acp-* 累加器归一到协议 VM,经适配器复用
-    // 同一渲染 VM(对齐 Mastra 路径,不重复造解析)。优先于 wire toolCalls:ACP
-    // 源更富(kind / diff / terminal)。
-    for (const toolEntry of buildAcpThreadToolEntries(message.id, message.acpToolCalls)) {
+    // ACP openWorld 后端:工具调用已由 from-acp-* 累加器归一到协议 VM,直接包裹复用
+    // 同一渲染管线。优先于 wire toolCalls:ACP 源更富(kind / diff / terminal)。
+    for (const acpToolCall of message.acpToolCalls) {
+      const toolEntry = mapAcpToolCallToToolEntry(message.id, acpToolCall);
       toolEntries.push(toolEntry);
       entries.push(toolEntry);
     }
   } else if (message.toolCalls !== undefined) {
     for (const toolCall of message.toolCalls) {
-      const toolEntry = mapWireToolCallToToolEntry(message.id, toolCall);
+      const toolEntry = mapWireToolCallToToolEntry(message.id, message.createdAt, toolCall);
       toolEntries.push(toolEntry);
       entries.push(toolEntry);
     }
@@ -410,7 +255,7 @@ const buildAssistantEntries = (message: IAiChatMessage): TAiThreadEntry[] => {
   }
 
   if (message.changedFilesSummary !== undefined) {
-    attachDiffsToToolEntries(toolEntries, message.changedFilesSummary);
+    attachDiffsToToolEntries(toolEntries, message.changedFilesSummary, message.patches ?? []);
     entries.push({
       kind: 'changed-files-summary',
       id: `${message.id}:changed-files`,

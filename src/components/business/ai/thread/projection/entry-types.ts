@@ -3,58 +3,18 @@
  *
  * 设计对齐 Zed `acp_thread::AgentThreadEntry`(UserMessage / AssistantMessage /
  * ToolCall / CompletedPlan / ContextCompaction):整条会话被拍扁成一串自上而下、
- * 按时间顺序排列的条目,每个条目类型独立渲染。工具调用条目自身持有其展开内容
- * (文本 / Diff / 终端),对齐 Zed `ToolCall.content: Vec<ToolCallContent>`,而不是
- * 把这些内容塞进独立的面板 / 仪表盘卡片。
+ * 按时间顺序排列的条目,每个条目类型独立渲染。工具调用条目持有协议 VM
+ * `IAiThreadToolCall`(对标 Zed `ToolCall`),渲染所需的派生信息(图标 / 展示态 /
+ * 终端输出 / diff 行数)由 `toAiThreadToolView` 投影,不回灌污染协议契约。
  *
  * 本模型是纯 UI 投影:不改动任何 wire schema,字段全部从既有的 `IAiChatMessage`
  * 推导而来。
  */
-import type {
-  IWebSearchSourceChip,
-  TTaskIcon,
-} from '@/components/business/ai/plan/runtime-timeline';
 import type { IAiContextReference } from '@/types/ai/context';
-import type { IAiAgentChangedFile, IAiAgentPatchSummary, IAiDiffHunkPreview } from '@/types/ai/patch';
+import type { IAiAgentPatchSummary } from '@/types/ai/patch';
+import type { IAiThreadToolCall } from '@/types/ai/thread';
 
-/**
- * 工具调用条目的展开内容。对齐 Zed `acp_thread::ToolCallContent`:
- * `ContentBlock`(markdown) / `Diff` / `Terminal` 均作为工具调用的子内容,
- * 由工具调用条目自身懒展开,而不是独立卡片。
- */
-export type TAiThreadToolContent =
-  | { type: 'raw'; id: string; title: 'Raw Input' | 'Output'; code: string }
-  | { type: 'text'; id: string; markdown: string }
-  | {
-      type: 'diff';
-      id: string;
-      file: IAiAgentChangedFile;
-      patchSummaryId: string;
-      /**
-       * 协议自带的内联 diff hunk(ACP 路径)。存在时 `.vue` 直接渲染,
-       * 不再经 `patches` prop 按路径反查;缺省时(Mastra 路径)回退到
-       * `patches` 查询,保持向后兼容。
-       */
-      hunks?: IAiDiffHunkPreview[];
-    }
-  | { type: 'terminal'; id: string; title: string; output: string; streaming: boolean };
-
-/**
- * 工具调用状态。对齐 Zed `acp_thread::ToolCallStatus`,但仅保留本项目数据真实
- * 可产生的状态(不臆造):
- * - `pending` / `running` / `succeeded` / `failed`:来自运行时任务节点或 wire 工具调用
- * - `awaiting-confirmation`:运行时进入等待决策(对应 Zed `WaitingForConfirmation`)
- * - `denied`:wire 工具调用被拒绝
- * - `canceled`:运行被取消
- */
-export type TAiThreadToolStatus =
-  | 'pending'
-  | 'running'
-  | 'awaiting-confirmation'
-  | 'succeeded'
-  | 'failed'
-  | 'denied'
-  | 'canceled';
+import type { IAiThreadTerminalSnapshot } from './tool-view';
 
 /** Plan 控制条目的阶段。控制条作为时间线中的一条普通条目呈现,而非独立仪表盘。 */
 export type TAiThreadPlanPhase = 'awaiting-approval' | 'running';
@@ -90,27 +50,19 @@ export interface IAiThreadReasoningEntry extends IAiThreadEntryBase {
   streaming: boolean;
 }
 
-/** 工具调用条目(对应 Zed ToolCall);自身持有展开内容,默认折叠。 */
+/**
+ * 工具调用条目(对应 Zed ToolCall);持有协议 VM,默认折叠。
+ *
+ * 渲染契约:`.vue` 经 `toAiThreadToolView(toolCall, { resolveTerminal,
+ * isAwaitingApproval })` 派生渲染视图。`terminals` 是本条目铸造的终端快照
+ * (键 = `toolCall.content` 中引用的 terminalId);`awaiting` 为 Mastra HITL 等待
+ * 决策标志,渲染层据此派生 `awaiting-confirmation`(协议状态集不含该态,不臆造)。
+ */
 export interface IAiThreadToolCallEntry extends IAiThreadEntryBase {
   kind: 'tool-call';
-  toolName?: string;
-  icon: TTaskIcon;
-  title: string;
-  /**
-   * 结构化标题(对齐 Zed 工具行的「动词 + 参数」两段式展示):`titleVerb` 为动作
-   * 动词(如 “Read file” / “Edit file” / “Run command”),`titleArgument` 为其参数
-   * (路径 / 命令 / 正则等)。两者均可缺省;缺省时渲染层回退到整段 `title` 字符串。
-   * `title` 仍保留为完整字符串,作为可访问名称与按路径关联 diff 的依据(单一数据源)。
-   */
-  titleVerb?: string;
-  titleArgument?: string;
-  tags: string[];
-  tail?: string;
-  status: TAiThreadToolStatus;
-  content: TAiThreadToolContent[];
-  webSearchSources?: IWebSearchSourceChip[];
-  /** 抑制把原始 JSON / 工具名当作标签泄露(沿用运行时时间线语义)。 */
-  suppressMeta?: boolean;
+  toolCall: IAiThreadToolCall;
+  terminals: Record<string, IAiThreadTerminalSnapshot>;
+  awaiting: boolean;
 }
 
 /**
