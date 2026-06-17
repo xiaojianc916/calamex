@@ -1,4 +1,5 @@
 import { commands } from '@/bindings/tauri';
+import { acpPermissionRequestPayloadSchema } from '@/types/ai/acp-permission.schema';
 import { agentSidecarStreamEventPayloadSchema } from '@/types/ai/sidecar.schema';
 import type { ITauriService } from '@/types/tauri';
 import { assertDesktopRuntime } from '@/utils/platform/desktop-runtime';
@@ -155,6 +156,7 @@ type TSidecarTauriService = Pick<
   | 'agentSidecarOrchestrate'
   | 'agentSidecarOrchestrateResume'
   | 'onAgentSidecarStream'
+  | 'onAcpApproval'
 >;
 
 export const sidecarTauriService: TSidecarTauriService = {
@@ -179,6 +181,18 @@ export const sidecarTauriService: TSidecarTauriService = {
     const { listen } = await loadTauriEvent();
     return listen('ai:sidecar-stream', (event) => {
       const parsed = agentSidecarStreamEventPayloadSchema.safeParse(event.payload);
+      if (!parsed.success) {
+        return;
+      }
+      handler(parsed.data);
+    });
+  },
+
+  async onAcpApproval(handler) {
+    await assertDesktopRuntime('监听 ACP 工具审批请求');
+    const { listen } = await loadTauriEvent();
+    return listen('ai:sidecar-approval', (event) => {
+      const parsed = acpPermissionRequestPayloadSchema.safeParse(event.payload);
       if (!parsed.success) {
         return;
       }

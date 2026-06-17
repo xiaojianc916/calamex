@@ -1,4 +1,5 @@
 import { tauriService } from '@/services/tauri';
+import type { IAcpPermissionRequestPayload } from '@/types/ai/acp-permission.schema';
 import type {
   IAiAgentClassifyTaskPayload,
   IAiAgentClassifyTaskRequest,
@@ -45,15 +46,15 @@ import type {
 import { normalizeFileSystemPath } from '@/utils/file/path';
 
 /**
- * Tavily(信息源)API Key 的落盘策略 —— 与厂商 API Key 不同的「受控例外」。
+ * Tavily（信息源）API Key 的落盘策略 —— 与厂商 API Key 不同的「受控例外」。
  *
- * 厂商 API Key 走 `ai_save_credentials`/`ai_connect_provider` 存入操作系统 keyring,
- * store 与前端不持有明文。但 Tavily Key 由 agent-sidecar(独立子进程)在启动时从
- * **进程环境变量**读取,拿不到桌面端的 OS keyring,因此只能以明文写入 sidecar 的
- * `agent-sidecar/.env`(下方常量)。
+ * 厂商 API Key 走 `ai_save_credentials`/`ai_connect_provider` 存入操作系统 keyring，
+ * store 与前端不持有明文。但 Tavily Key 由 agent-sidecar（独立子进程）在启动时从
+ * **进程环境变量**读取，拿不到桌面端的 OS keyring，因此只能以明文写入 sidecar 的
+ * `agent-sidecar/.env`（下方常量）。
  *
- * 安全前提:仓库根 `.gitignore` 已忽略 `.env` 与 `.env.*`,该明文 Key 不会被提交,
- * 只存在于用户本地工作区。改动此处时务必维持上述 gitignore 约束,不要把 Tavily Key
+ * 安全前提：仓库根 `.gitignore` 已忽略 `.env` 与 `.env.*`，该明文 Key 不会被提交，
+ * 只存在于用户本地工作区。改动此处时务必维持上述 gitignore 约束，不要把 Tavily Key
  * 写到任何会被纳入版本控制的路径。
  */
 const SIDECAR_DOTENV_RELATIVE_PATH = 'agent-sidecar/.env';
@@ -227,6 +228,11 @@ export const aiService = {
     handler: (payload: IAgentSidecarStreamEventPayload) => void,
   ): Promise<() => void> {
     return tauriService.onAgentSidecarStream(handler);
+  },
+  onAcpApproval(
+    handler: (payload: IAcpPermissionRequestPayload) => void,
+  ): Promise<() => void> {
+    return tauriService.onAcpApproval(handler);
   },
   getConfig(): Promise<IAiConfigPayload> {
     return tauriService.aiGetConfig();
