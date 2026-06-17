@@ -10,6 +10,7 @@ use std::{
 };
 
 use crate::terminal::{
+    flow_control::FlowController,
     snapshot::{
         TerminalInteractiveVisualState, is_likely_interactive_resize_repaint_frame,
         trim_terminal_snapshot,
@@ -49,6 +50,10 @@ pub struct TerminalSessionState {
     pending_switch_input: Arc<Mutex<HashMap<String, String>>>,
     session_geometry: Arc<Mutex<HashMap<String, Geometry>>>,
     session_states: Arc<Mutex<HashMap<String, TerminalState>>>,
+    /// 每会话输出流控器（P2 ack 背压）。键为 session_id；交互读线程与该会话发起的运行读线程
+    /// 共享同一控制器（都汇入前端同一个 xterm，由前端按会话回 ack）。会话创建时重置为全新实例，
+    /// 关闭 / 退出时取消并移除，避免复用到已 cancel 的陈旧控制器而失去背压。
+    flow_controllers: Arc<Mutex<HashMap<String, FlowController>>>,
     pub(super) creation_guard: Arc<Mutex<()>>,
 }
 
@@ -247,6 +252,42 @@ pub(super) fn get_session_state(state: &TerminalSessionState, session_id: &str) 
 pub(super) fn remove_session_state(state: &TerminalSessionState, session_id: &str) {
     if let Ok(mut states) = state.session_states.lock() {
         states.remove(session_id);
+    }
+}
+
+/// 会话创建时重置该会话的输出流控器为全新实例（覆盖任何陈旧 / 已取消的旧控制器），返回其克隆。
+/// P2：交互读线程在创建时拿到它；该会话发起的运行读线程随后经 get_flow_controller 复用同一个。
+/// 之所以「重置」而非「取或建」：旧会话关闭时会 cancel 控制器（永久解除暂停），若复用到这个已
+/// cancel 的实例，新会话的读线程将永不背压——必须换上全新实例。
+#[allow(dead_code)] // 命令层（下一提交）接入后即为活跃。
+pub(super) fn reset_flow_controller(
+    state: &TerminalSessionState,
+    session_id: &str,
+) -> Option<FlowController> {
+    let mut controllers = state.flow_controllers.lock().ok()?;
+    let controller = FlowController::new();
+    controllers.insert(session_id.to_string(), controller.clone());
+    Some(controller)
+}
+
+/// 取该会话已存在的输出流控器：供该会话的运行读线程复用、以及前端 ack 命令查找。
+#[allow(dead_code)] // 命令层（下一提交）接入后即为活跃。
+pub(super) fn get_flow_controller(
+    state: &TerminalSessionState,
+    session_id: &str,
+) -> Option<FlowController> {
+    let controllers = state.flow_controllers.lock().ok()?;
+    controllers.get(session_id).cloned()
+}
+
+/// 取消并移除该会话的输出流控器：cancel 释放任何处于背压暂停态的读线程（使其能继续读到 EOF），
+/// 移除则保证下次创建同名会话时得到全新实例。锁中毒时尽力而为忽略。
+pub(super) fn remove_flow_controller(state: &TerminalSessionState, session_id: &str) {
+    let Ok(mut controllers) = state.flow_controllers.lock() else {
+        return;
+    };
+    if let Some(controller) = controllers.remove(session_id) {
+        controller.cancel();
     }
 }
 
@@ -548,4 +589,5 @@ pub(super) fn remove_interactive_terminal_after_exit(
     remove_pending_switch_input(state, session_id);
     remove_session_geometry(state, session_id);
     remove_session_state(state, session_id);
+    remove_flow_controller(state, session_id);
 }
