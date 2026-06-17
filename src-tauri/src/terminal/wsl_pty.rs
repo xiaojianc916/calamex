@@ -419,6 +419,9 @@ where
             let mut buffer = [0u8; TERMINAL_READ_BUFFER_BYTES];
             // 攒批缓冲：多次 read 的解码结果先累加在这里，按启发式决定何时发事件。
             let mut pending_out = String::new();
+            // 读线程因读取错误（而非正常 EOF）退出时记于此：底层 wsl.exe 可能仍存活，
+            // 需在 wait 前主动 kill，避免 child.wait() 永久阻塞、拖死关闭事件并遗留孤儿。
+            let mut read_error: Option<std::io::Error> = None;
             loop {
                 // P2 背压：读下一批前先等待「可写」（未确认字符超高水位时在此阻塞）；
                 // 不读即使 OS 管道缓冲填满，ConPTY 随之对 WSL 侧自然回压。flow 为 None 时为空操作。
@@ -444,9 +447,7 @@ where
                         }
                     }
                     Err(error) => {
-                        log::warn!(
-                            "WSL 交互终端读线程异常退出（session_id={session_id}）：{error}"
-                        );
+                        read_error = Some(error);
                         break;
                     }
                 }
@@ -467,6 +468,13 @@ where
                 ));
             }
 
+            // 读取错误退出：先终止可能仍存活的子进程，保证 child.wait() 有界返回、不留孤儿 wsl.exe。
+            if let Some(error) = read_error {
+                log::warn!(
+                    "WSL 交互终端读线程因读取错误退出（session_id={session_id}）：{error}；强制终止子进程以避免阻塞与孤儿。"
+                );
+                let _ = child.clone_killer().kill();
+            }
             let exit_code = child.wait().ok().map(|status| status.exit_code() as i32);
             on_event(LocalWslTerminalServerPayload::InteractiveClosed(
                 LocalWslTerminalInteractiveClosed {
@@ -512,6 +520,8 @@ where
             let mut buffer = [0u8; TERMINAL_READ_BUFFER_BYTES];
             // 攒批缓冲：多次 read 的解码结果先累加在这里，按启发式决定何时发事件。
             let mut pending_out = String::new();
+            // 同交互读线程：记录读取错误退出，以便在 wait 前先 kill。
+            let mut read_error: Option<std::io::Error> = None;
             loop {
                 // P2 背压：同交互读线程，读下一批前先等待「可写」。flow 为 None 时为空操作。
                 if let Some(flow) = &flow {
@@ -535,7 +545,7 @@ where
                         }
                     }
                     Err(error) => {
-                        log::warn!("WSL 运行任务读线程异常退出（run_id={run_id}）：{error}");
+                        read_error = Some(error);
                         break;
                     }
                 }
@@ -556,6 +566,13 @@ where
                 ));
             }
 
+            // 读取错误退出：先终止可能仍存活的子进程，保证 child.wait() 有界返回、不留孤儿 wsl.exe。
+            if let Some(error) = read_error {
+                log::warn!(
+                    "WSL 运行任务读线程因读取错误退出（run_id={run_id}）：{error}；强制终止子进程以避免阻塞与孤儿。"
+                );
+                let _ = child.clone_killer().kill();
+            }
             let exit_code = child.wait().ok().map(|status| status.exit_code() as i32);
             cleanup_wsl_paths(&cleanup_paths);
             // 标记运行已结束：即便随后的 RunCompleted 完成事件未能让上层清理 active_runs，
