@@ -47,6 +47,7 @@ desktop = [
   "dep:tauri-plugin-dialog",
   "dep:tauri-plugin-store",
   "dep:tracing",
+  "dep:tracing-subscriber",
   "dep:tree-sitter",
   "dep:tree-sitter-bash",
 ]
@@ -101,6 +102,7 @@ tokio = { version = "1.52.0", features = ["fs", "io-util", "macros", "net", "pro
 tokio-stream = { version = "0.1.18", features = ["sync"] }
 tokio-util = "0.7"
 tracing = { version = "0.1.44", optional = true }
+tracing-subscriber = { version = "0.3", optional = true, features = ["env-filter"] }
 tree-sitter = { version = "0.26.8", optional = true }
 tree-sitter-bash = { version = "0.25.1", optional = true }
 snow = "0.10.0"

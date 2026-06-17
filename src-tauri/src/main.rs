@@ -38,27 +38,15 @@ fn elapsed_ms(since: Instant) -> f64 {
 }
 
 fn emit_startup_event(event: &str, app_started_at: Instant) {
-    eprintln!(
-        "{}",
-        serde_json::json!({
-            "level": "info",
-            "scope": "startup",
-            "event": event,
-            "elapsedMs": elapsed_ms(app_started_at),
-        })
-    );
+    tracing::info!(scope = "startup", event, elapsed_ms = elapsed_ms(app_started_at));
 }
 
 fn emit_startup_step(event: &str, app_started_at: Instant, step_started_at: Instant) {
-    eprintln!(
-        "{}",
-        serde_json::json!({
-            "level": "info",
-            "scope": "startup",
-            "event": event,
-            "elapsedMs": elapsed_ms(app_started_at),
-            "durationMs": elapsed_ms(step_started_at),
-        })
+    tracing::info!(
+        scope = "startup",
+        event,
+        elapsed_ms = elapsed_ms(app_started_at),
+        duration_ms = elapsed_ms(step_started_at)
     );
 }
 
@@ -68,6 +56,19 @@ macro_rules! timed_step {
         $body
         emit_startup_step($event, $app_started_at, __step_started_at);
     };
+}
+
+/// 初始化全局 tracing 订阅者：统一结构化日志经 fmt 层输出到 stderr（与原 eprintln 渠道一致）。
+/// 启用 env-filter，默认 info 级，可用 RUST_LOG 覆盖；默认的 tracing-log 桥接会捕获 log::* 调用（如 workspace_watcher），不再被静默丢弃。
+/// try_init 失败（已存在全局订阅者，如测试）时静默跳过，避免 panic。
+fn init_tracing() {
+    use tracing_subscriber::{EnvFilter, fmt};
+
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let _ = fmt()
+        .with_env_filter(filter)
+        .with_writer(std::io::stderr)
+        .try_init();
 }
 
 // === 生命周期 ============================================================
@@ -118,7 +119,7 @@ fn run_exit_cleanup<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>) {
     // 1) 终端会话（同步收口 PTY 子进程）
     let terminal_state = app_handle.state::<TerminalSessionState>();
     if let Err(error) = shutdown_all_terminal_sessions(terminal_state.inner()) {
-        eprintln!("failed to shutdown terminal sessions: {error}");
+        tracing::error!("failed to shutdown terminal sessions: {error}");
     }
 
     // 2) LSP 服务与 SSH 连接池（异步，阻塞等待其优雅退出，
@@ -126,7 +127,7 @@ fn run_exit_cleanup<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>) {
     let lsp_manager = app_handle.state::<LspManager>();
     tauri::async_runtime::block_on(async move {
         if let Err(error) = commands::lsp_stop(lsp_manager).await {
-            eprintln!("failed to stop LSP server: {error}");
+            tracing::error!("failed to stop LSP server: {error}");
         }
         commands::shutdown_ssh_pool().await;
     });
@@ -156,7 +157,7 @@ fn setup_system_tray<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<()
         .build()?;
 
     let Some(icon) = app.default_window_icon().cloned() else {
-        eprintln!("missing default window icon, tray setup skipped");
+        tracing::warn!("missing default window icon, tray setup skipped");
         return Ok(());
     };
 
@@ -203,11 +204,11 @@ fn harden_webview_settings<R: tauri::Runtime>(webview_window: &tauri::WebviewWin
                 Ok(())
             });
         if let Err(error) = outcome {
-            eprintln!("failed to harden WebView2 settings for window {label_for_inner}: {error}");
+            tracing::warn!("failed to harden WebView2 settings for window {label_for_inner}: {error}");
         }
     });
     if let Err(error) = access_result {
-        eprintln!("failed to access platform webview for window {label}: {error}");
+        tracing::warn!("failed to access platform webview for window {label}: {error}");
     }
 }
 
@@ -217,6 +218,8 @@ fn harden_webview_settings<R: tauri::Runtime>(_webview_window: &tauri::WebviewWi
 // === main ================================================================
 
 fn main() {
+    init_tracing();
+
     // === WebView2 原生遮挡计算修复（Windows）==============================
     // 现象：启动几秒后（有时一进入即触发）整窗点击全部失效——侧边栏、编辑器、
     // 右上角 GitHub 登录同时点不动；但 :hover 仍有反馈、原生窗口仍可拖动/缩放，
@@ -285,7 +288,7 @@ fn main() {
             }
             api.prevent_close();
             if let Err(error) = window.hide() {
-                eprintln!("failed to hide main window to tray: {error}");
+                tracing::error!("failed to hide main window to tray: {error}");
             }
         })
         .invoke_handler(specta_bindings.invoke_handler())
@@ -337,14 +340,10 @@ storage_paths::migrate_legacy_storage();
                     if window.is_visible().unwrap_or(false) {
                         return;
                     }
-                    eprintln!(
-                        "{}",
-                        serde_json::json!({
-                            "level": "warn",
-                            "scope": "startup",
-                            "event": "tauri.window.fallback-reveal",
-                            "detail": "main window still hidden ~2500ms after setup; revealing from native side",
-                        })
+                    tracing::warn!(
+                        scope = "startup",
+                        event = "tauri.window.fallback-reveal",
+                        "main window still hidden ~2500ms after setup; revealing from native side"
                     );
                     // 兜底前先把原生底色同步为应用底色(#fafafa)，尽量减小首帧纯白。
                     let _ =
@@ -364,7 +363,7 @@ storage_paths::migrate_legacy_storage();
     let app = match app.build(tauri::generate_context!()) {
         Ok(app) => app,
         Err(error) => {
-            eprintln!("failed to run SH editor: {error}");
+            tracing::error!("failed to run SH editor: {error}");
             std::process::exit(1);
         }
     };
