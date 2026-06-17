@@ -19,6 +19,7 @@ use std::{
 use portable_pty::{Child, ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use thiserror::Error;
 
+use super::flow_control::{FlowController, utf16_len};
 use super::local_wsl_protocol::{
     LocalWslTerminalInteractiveClosed, LocalWslTerminalInteractiveData,
     LocalWslTerminalInteractiveOpened, LocalWslTerminalOpenInteractiveRequest,
@@ -61,6 +62,8 @@ pub struct LocalWslPtyHandle {
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
     master: Arc<Mutex<Box<dyn MasterPty + Send>>>,
     killer: Arc<Mutex<Box<dyn ChildKiller + Send + Sync>>>,
+    /// 该会话的输出流控器（P2 ack 背压）。close() 时取消，确保读线程不被暂停态卡住、能读到 EOF。
+    flow: Option<FlowController>,
 }
 
 impl LocalWslPtyHandle {
@@ -97,6 +100,10 @@ impl LocalWslPtyHandle {
     }
 
     pub fn close(&self) -> Result<(), LocalWslPtyError> {
+        // 先取消流控：若读线程正处于背压暂停态，需解除以便其读到 EOF 并完成收尾。
+        if let Some(flow) = &self.flow {
+            flow.cancel();
+        }
         let mut killer = self
             .killer
             .lock()
@@ -117,6 +124,8 @@ pub struct LocalWslRunHandle {
     /// active_runs」的异常路径下，确证该运行确已结束、可安全回收陈旧条目，
     /// 而不必依赖一定会送达的完成事件。
     finished: Arc<AtomicBool>,
+    /// 该运行所属会话的输出流控器（P2 ack 背压）。cancel() 时取消，确保读线程能读到 EOF。
+    flow: Option<FlowController>,
 }
 
 impl LocalWslRunHandle {
@@ -145,6 +154,10 @@ impl LocalWslRunHandle {
     /// graceful：向 PTY 写入 Ctrl-C(ETX)，由 ConPTY 转成 SIGINT 投递给前台进程组；
     /// kill：直接终止子进程。
     pub fn cancel(&self, mode: &str) -> Result<(), LocalWslPtyError> {
+        // 先取消流控：无论 graceful / kill，运行都将走向结束，需解除背压暂停以便读线程读到 EOF。
+        if let Some(flow) = &self.flow {
+            flow.cancel();
+        }
         if mode.trim() == SIGNAL_MODE_KILL {
             let mut killer = self
                 .killer
@@ -173,6 +186,19 @@ impl LocalWslRunHandle {
 /// InteractiveOpened → 若干 InteractiveData → InteractiveClosed。
 pub fn open_interactive_terminal_local<F>(
     request: LocalWslTerminalOpenInteractiveRequest,
+    on_event: F,
+) -> Result<LocalWslPtyHandle, LocalWslPtyError>
+where
+    F: FnMut(LocalWslTerminalServerPayload) + Send + 'static,
+{
+    open_interactive_terminal_local_with_flow(request, None, on_event)
+}
+
+/// 同 open_interactive_terminal_local，但接入每会话输出流控器（P2 ack 背压）。
+/// flow 为 None 时行为与原函数完全一致（无背压）。
+pub fn open_interactive_terminal_local_with_flow<F>(
+    request: LocalWslTerminalOpenInteractiveRequest,
+    flow: Option<FlowController>,
     on_event: F,
 ) -> Result<LocalWslPtyHandle, LocalWslPtyError>
 where
@@ -229,6 +255,7 @@ where
         pid,
         reader,
         child,
+        flow.clone(),
         on_event,
     )
     .inspect_err(|_error| {
@@ -241,6 +268,7 @@ where
         writer: Arc::new(Mutex::new(writer)),
         master: Arc::new(Mutex::new(pair.master)),
         killer: Arc::new(Mutex::new(killer)),
+        flow,
     })
 }
 
@@ -250,6 +278,19 @@ where
 /// RunStarted → 若干 RunChunk → RunCompleted。
 pub fn run_terminal_script_local<F>(
     request: LocalWslTerminalRunScriptRequest,
+    on_event: F,
+) -> Result<LocalWslRunHandle, LocalWslPtyError>
+where
+    F: FnMut(LocalWslTerminalServerPayload) + Send + 'static,
+{
+    run_terminal_script_local_with_flow(request, None, on_event)
+}
+
+/// 同 run_terminal_script_local，但接入每会话输出流控器（P2 ack 背压）。
+/// flow 为 None 时行为与原函数完全一致（无背压）。
+pub fn run_terminal_script_local_with_flow<F>(
+    request: LocalWslTerminalRunScriptRequest,
+    flow: Option<FlowController>,
     on_event: F,
 ) -> Result<LocalWslRunHandle, LocalWslPtyError>
 where
@@ -331,6 +372,7 @@ where
         child,
         pair.master,
         Arc::clone(&finished),
+        flow.clone(),
         on_event,
     )
     .inspect_err(|_error| {
@@ -344,15 +386,18 @@ where
         writer: Arc::new(Mutex::new(writer)),
         killer: Arc::new(Mutex::new(killer)),
         finished,
+        flow,
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_interactive_reader<F>(
     session_id: String,
     working_directory: String,
     pid: u32,
     mut reader: Box<dyn Read + Send>,
     mut child: Box<dyn Child + Send + Sync>,
+    flow: Option<FlowController>,
     mut on_event: F,
 ) -> Result<(), LocalWslPtyError>
 where
@@ -375,15 +420,25 @@ where
             // 攒批缓冲：多次 read 的解码结果先累加在这里，按启发式决定何时发事件。
             let mut pending_out = String::new();
             loop {
+                // P2 背压：读下一批前先等待「可写」（未确认字符超高水位时在此阻塞）；
+                // 不读即使 OS 管道缓冲填满，ConPTY 随之对 WSL 侧自然回压。flow 为 None 时为空操作。
+                if let Some(flow) = &flow {
+                    flow.wait_until_writable();
+                }
                 match reader.read(&mut buffer) {
                     Ok(0) => break,
                     Ok(read) => {
                         decoder.decode_into(&buffer[..read], &mut pending_out, false);
                         if should_flush_terminal_output(pending_out.len(), read, buffer.len()) {
+                            let chunk = std::mem::take(&mut pending_out);
+                            // 记录已发往前端的字符数（UTF-16 码元，与前端 ack 同尺）。
+                            if let Some(flow) = &flow {
+                                flow.record_produced(utf16_len(&chunk));
+                            }
                             on_event(LocalWslTerminalServerPayload::InteractiveData(
                                 LocalWslTerminalInteractiveData {
                                     session_id: session_id.clone(),
-                                    data: std::mem::take(&mut pending_out),
+                                    data: chunk,
                                 },
                             ));
                         }
@@ -400,10 +455,14 @@ where
             // 收尾：补全解码器残尾，并把最后攒批的输出一次性发出。
             decoder.decode_into(&[], &mut pending_out, true);
             if !pending_out.is_empty() {
+                let chunk = std::mem::take(&mut pending_out);
+                if let Some(flow) = &flow {
+                    flow.record_produced(utf16_len(&chunk));
+                }
                 on_event(LocalWslTerminalServerPayload::InteractiveData(
                     LocalWslTerminalInteractiveData {
                         session_id: session_id.clone(),
-                        data: pending_out,
+                        data: chunk,
                     },
                 ));
             }
@@ -430,6 +489,7 @@ fn spawn_run_reader<F>(
     mut child: Box<dyn Child + Send + Sync>,
     master: Box<dyn MasterPty + Send>,
     finished: Arc<AtomicBool>,
+    flow: Option<FlowController>,
     mut on_event: F,
 ) -> Result<(), LocalWslPtyError>
 where
@@ -453,15 +513,23 @@ where
             // 攒批缓冲：多次 read 的解码结果先累加在这里，按启发式决定何时发事件。
             let mut pending_out = String::new();
             loop {
+                // P2 背压：同交互读线程，读下一批前先等待「可写」。flow 为 None 时为空操作。
+                if let Some(flow) = &flow {
+                    flow.wait_until_writable();
+                }
                 match reader.read(&mut buffer) {
                     Ok(0) => break,
                     Ok(read) => {
                         decoder.decode_into(&buffer[..read], &mut pending_out, false);
                         if should_flush_terminal_output(pending_out.len(), read, buffer.len()) {
+                            let chunk = std::mem::take(&mut pending_out);
+                            if let Some(flow) = &flow {
+                                flow.record_produced(utf16_len(&chunk));
+                            }
                             on_event(LocalWslTerminalServerPayload::RunChunk(
                                 LocalWslTerminalRunChunk {
                                     run_id: run_id.clone(),
-                                    data: std::mem::take(&mut pending_out),
+                                    data: chunk,
                                 },
                             ));
                         }
@@ -476,10 +544,14 @@ where
             // 收尾：补全解码器残尾，并把最后攒批的输出一次性发出。
             decoder.decode_into(&[], &mut pending_out, true);
             if !pending_out.is_empty() {
+                let chunk = std::mem::take(&mut pending_out);
+                if let Some(flow) = &flow {
+                    flow.record_produced(utf16_len(&chunk));
+                }
                 on_event(LocalWslTerminalServerPayload::RunChunk(
                     LocalWslTerminalRunChunk {
                         run_id: run_id.clone(),
-                        data: pending_out,
+                        data: chunk,
                     },
                 ));
             }
