@@ -15,6 +15,7 @@ import {
   mergeAiAgentPatchSummaries,
   parseAiAedPatchRef,
 } from '@/components/business/ai/edit/patch-summary';
+import { reduceAcpUiEventsToToolCalls } from '@/components/business/ai/thread/projection';
 import {
   buildAskUserResumeRequest,
   extractPendingAskUser,
@@ -577,6 +578,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     messageId: string;
     content: string;
     toolCalls?: IAiChatMessage['toolCalls'];
+    acpToolCalls?: IAiChatMessage['acpToolCalls'];
     streamStatus?: NonNullable<IAiChatMessage['stream']>['status'];
     activityText?: string;
     runtimeEvents?: NonNullable<IAiChatMessage['stream']>['runtimeEvents'];
@@ -590,6 +592,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       messageId,
       content,
       toolCalls = [],
+      acpToolCalls,
       streamStatus,
       activityText,
       runtimeEvents,
@@ -637,6 +640,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
         content,
         toolCalls,
         stream,
+        ...(acpToolCalls?.length ? { acpToolCalls } : {}),
         ...(patchState?.patches ? { patches: [...patchState.patches] } : {}),
         ...(patchState?.changedFilesSummary !== undefined
           ? { changedFilesSummary: patchState.changedFilesSummary ?? undefined }
@@ -1084,6 +1088,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       messageId: assistantMessageId,
       threadId,
       toolCalls: toolProjection.toolCalls,
+      acpToolCalls: reduceAcpUiEventsToToolCalls(events),
       streamStatus,
       activityText: toolProjection.activityText,
       runtimeEvents,
@@ -1274,6 +1279,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       messageId: ctx.assistantMessageId,
       threadId: ctx.threadId,
       toolCalls: toolProjection.toolCalls,
+      acpToolCalls: reduceAcpUiEventsToToolCalls(payload.events),
       streamStatus: sidecarStreamStatus,
       activityText: toolProjection.activityText,
       runtimeEvents: compactRuntimeEvents(extractVisibleAgentRuntimeEvents(payload.events)),

@@ -123,9 +123,8 @@ export function useWorkspaceExplorerContextMenu(options: IUseWorkspaceExplorerCo
             },
             {
               key: 'copy-path',
-              label: '复制路径',
+              label: '复制绝对路径',
               icon: 'copy',
-              shortcut: ['Ctrl', 'Shift', 'C'],
               action: 'copy-path',
               disabled: !target,
             },
@@ -138,7 +137,7 @@ export function useWorkspaceExplorerContextMenu(options: IUseWorkspaceExplorerCo
             },
             {
               key: 'open-folder',
-              label: '打开文件夹',
+              label: '切换工作区',
               icon: 'open-external',
               action: 'open-folder',
             },
