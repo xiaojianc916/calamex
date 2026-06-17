@@ -1,7 +1,8 @@
 use super::scan::{ScannedFile, workspace_cached_files_for_index};
 use super::types::WorkspaceSearchRequest;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     fs,
     path::Path,
     sync::{Arc, Mutex, OnceLock},
@@ -17,8 +18,11 @@ type Trigram = u32;
 
 #[derive(Clone)]
 struct WorkspaceContentIndex {
-    trigram_to_files: HashMap<Trigram, Vec<String>>,
-    unindexed_files: Vec<String>,
+    /// 所有可被检索的相对路径；倒排表与未索引集合都用其下标（u32）引用，
+    /// 避免在大量 trigram 列表里重复存整条路径字符串。
+    paths: Vec<String>,
+    trigram_to_files: FxHashMap<Trigram, Vec<u32>>,
+    unindexed_files: Vec<u32>,
 }
 
 static WORKSPACE_CONTENT_INDEXES: OnceLock<Mutex<HashMap<String, Arc<WorkspaceContentIndex>>>> =
@@ -53,17 +57,22 @@ pub(super) fn filter_literal_content_candidates(
     }
 
     let index = workspace_content_index(root)?;
-    let Some(mut candidate_paths) = intersect_candidate_paths(&index, &query_trigrams) else {
+    let Some(candidate_files) = intersect_candidate_files(&index, &query_trigrams) else {
         return Ok(Some(Vec::new()));
     };
 
-    for path in &index.unindexed_files {
-        candidate_paths.insert(path.clone());
+    // 把命中的文件下标（含始终入选的未索引大文件）映射回相对路径；用 &str 借用 index.paths，
+    // 避免克隆路径字符串。
+    let mut candidate_paths: FxHashSet<&str> = FxHashSet::default();
+    for file_index in candidate_files.iter().chain(index.unindexed_files.iter()) {
+        if let Some(path) = index.paths.get(*file_index as usize) {
+            candidate_paths.insert(path.as_str());
+        }
     }
 
     let narrowed = files
         .iter()
-        .filter(|file| candidate_paths.contains(&file.relative_path))
+        .filter(|file| candidate_paths.contains(file.relative_path.as_str()))
         .cloned()
         .collect::<Vec<_>>();
 
@@ -117,37 +126,43 @@ fn workspace_content_index(root: &Path) -> Result<Arc<WorkspaceContentIndex>, St
 }
 
 fn build_workspace_content_index(root: &Path, files: &[ScannedFile]) -> WorkspaceContentIndex {
-    let mut trigram_to_files: HashMap<Trigram, Vec<String>> = HashMap::new();
+    let mut paths: Vec<String> = Vec::new();
+    let mut trigram_to_files: FxHashMap<Trigram, Vec<u32>> = FxHashMap::default();
     let mut unindexed_files = Vec::new();
 
     for file in files {
+        // 用文件下标（u32）替代在每个 trigram 倒排列表里重复存整条路径字符串。
+        let Ok(file_index) = u32::try_from(paths.len()) else {
+            // 文件数超过 u32::MAX（实际不可能）时停止扩充索引；已建部分仍是真实命中的超集。
+            break;
+        };
+
         match collect_file_trigrams(root, file) {
             Some(trigrams) => {
                 for trigram in trigrams {
-                    trigram_to_files
-                        .entry(trigram)
-                        .or_default()
-                        .push(file.relative_path.clone());
+                    trigram_to_files.entry(trigram).or_default().push(file_index);
                 }
             }
-            None => unindexed_files.push(file.relative_path.clone()),
+            None => unindexed_files.push(file_index),
         }
+        paths.push(file.relative_path.clone());
     }
 
-    for paths in trigram_to_files.values_mut() {
-        paths.sort();
-        paths.dedup();
+    for indices in trigram_to_files.values_mut() {
+        indices.sort_unstable();
+        indices.dedup();
     }
-    unindexed_files.sort();
+    unindexed_files.sort_unstable();
     unindexed_files.dedup();
 
     WorkspaceContentIndex {
+        paths,
         trigram_to_files,
         unindexed_files,
     }
 }
 
-fn collect_file_trigrams(root: &Path, file: &ScannedFile) -> Option<HashSet<Trigram>> {
+fn collect_file_trigrams(root: &Path, file: &ScannedFile) -> Option<FxHashSet<Trigram>> {
     let metadata = fs::metadata(&file.path).ok()?;
     if metadata.len() > MAX_TRIGRAM_INDEXED_FILE_BYTES {
         return None;
@@ -180,8 +195,8 @@ fn fold_ascii_case_bytes(value: &str) -> Vec<u8> {
         .collect()
 }
 
-fn trigram_keys_from_bytes(bytes: &[u8]) -> HashSet<Trigram> {
-    let mut keys = HashSet::new();
+fn trigram_keys_from_bytes(bytes: &[u8]) -> FxHashSet<Trigram> {
+    let mut keys = FxHashSet::default();
     if bytes.len() < 3 {
         return keys;
     }
@@ -195,27 +210,26 @@ fn pack_trigram(bytes: &[u8]) -> Trigram {
     ((bytes[0] as Trigram) << 16) | ((bytes[1] as Trigram) << 8) | bytes[2] as Trigram
 }
 
-fn intersect_candidate_paths(
+fn intersect_candidate_files(
     index: &WorkspaceContentIndex,
     query_trigrams: &[Trigram],
-) -> Option<HashSet<String>> {
+) -> Option<Vec<u32>> {
     let mut lists = query_trigrams
         .iter()
         .filter_map(|trigram| index.trigram_to_files.get(trigram))
         .collect::<Vec<_>>();
 
     if lists.len() != query_trigrams.len() {
-        return Some(HashSet::new());
+        return Some(Vec::new());
     }
 
-    lists.sort_by_key(|paths| paths.len());
-    let mut candidates = lists
-        .first()
-        .map(|paths| paths.iter().cloned().collect::<HashSet<_>>())?;
+    // 从最短倒排列表出发，逐表用二分查找求交集（各列表已排序去重），
+    // 避免为每个 trigram 重建 HashSet 并克隆其内容。
+    lists.sort_by_key(|indices| indices.len());
+    let mut candidates = lists.first().map(|indices| indices.to_vec())?;
 
-    for paths in lists.iter().skip(1) {
-        let lookup = paths.iter().collect::<HashSet<_>>();
-        candidates.retain(|path| lookup.contains(path));
+    for indices in lists.iter().skip(1) {
+        candidates.retain(|candidate| indices.binary_search(candidate).is_ok());
         if candidates.is_empty() {
             break;
         }
@@ -228,6 +242,7 @@ fn intersect_candidate_paths(
 mod tests {
     use super::super::types::{WorkspaceSearchRequest, WorkspaceSearchScope};
     use super::*;
+    use rustc_hash::{FxHashMap, FxHashSet};
 
     fn request(query: &str) -> WorkspaceSearchRequest {
         WorkspaceSearchRequest {
@@ -249,27 +264,35 @@ mod tests {
     /// 用与生产一致的折叠规则，从 (路径, 内容) 列表构建一个内存内容索引，便于在不触盘的
     /// 情况下断言「候选集筛除」的不漏命中性质。
     fn index_from(files: &[(&str, &str)]) -> WorkspaceContentIndex {
-        let mut trigram_to_files: HashMap<Trigram, Vec<String>> = HashMap::new();
+        let mut paths: Vec<String> = Vec::new();
+        let mut trigram_to_files: FxHashMap<Trigram, Vec<u32>> = FxHashMap::default();
         for (path, content) in files {
+            let file_index = u32::try_from(paths.len()).expect("测试文件数应在 u32 范围内");
             for trigram in trigram_keys_from_bytes(fold_ascii_case_bytes(content).as_slice()) {
-                trigram_to_files
-                    .entry(trigram)
-                    .or_default()
-                    .push((*path).to_string());
+                trigram_to_files.entry(trigram).or_default().push(file_index);
             }
+            paths.push((*path).to_string());
         }
-        for paths in trigram_to_files.values_mut() {
-            paths.sort();
-            paths.dedup();
+        for indices in trigram_to_files.values_mut() {
+            indices.sort_unstable();
+            indices.dedup();
         }
         WorkspaceContentIndex {
+            paths,
             trigram_to_files,
             unindexed_files: Vec::new(),
         }
     }
 
-    fn candidates(index: &WorkspaceContentIndex, query: &str) -> HashSet<String> {
-        intersect_candidate_paths(index, &query_trigram_keys(query)).unwrap_or_default()
+    fn candidates(index: &WorkspaceContentIndex, query: &str) -> FxHashSet<String> {
+        let Some(indices) = intersect_candidate_files(index, &query_trigram_keys(query)) else {
+            return FxHashSet::default();
+        };
+        indices
+            .iter()
+            .chain(index.unindexed_files.iter())
+            .filter_map(|file_index| index.paths.get(*file_index as usize).cloned())
+            .collect()
     }
 
     #[test]
@@ -305,7 +328,7 @@ mod tests {
 
     #[test]
     fn case_sensitive_query_never_drops_matching_file() {
-        // 区分大小写查询用「折叠小写」索引做预筛：候选必为超集，绝不漏命中。
+        // 区分大小写查询用「折叠小写」索引��预筛：候选必为超集，绝不漏命中。
         let index = index_from(&[("up.sh", "value = CONFIG_PATH")]);
         assert!(candidates(&index, "CONFIG").contains("up.sh"));
     }
