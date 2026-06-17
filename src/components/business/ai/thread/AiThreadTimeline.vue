@@ -113,8 +113,6 @@ const entryClass = (entry: TAiThreadEntry, index: number) => [
         :class="entryClass(entry, index)"
         :entry="entry"
         :open="expansion.isExpanded(entry)"
-        :patches="patchesFor(entry.messageId)"
-        :workspace-root-path="workspaceRootPath"
         @update:open="expansion.setExpanded(entry, $event)"
       />
       <AiThreadPlanControl

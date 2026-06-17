@@ -1,31 +1,12 @@
 import { mount } from '@vue/test-utils';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import CodeBlock from '@/components/ai-elements/code-block/CodeBlock.vue';
 import { Terminal } from '@/components/ai-elements/terminal';
 import AiMarkdown from '@/components/business/ai/chat/AiMarkdown.vue';
 import { AiDiffHunkViewer } from '@/components/business/ai/edit';
-import type { IAiPatchSet } from '@/types/ai';
+import type { IAiThreadToolCall, IAiThreadToolCallContent } from '@/types/ai/thread';
 import AiThreadToolCall from './AiThreadToolCall.vue';
-import type { IAiThreadToolCallEntry, TAiThreadToolContent } from './projection';
-
-vi.mock('@/components/business/ai/edit/patch-preview', () => ({
-  buildAiPatchPreviewFiles: () => [
-    {
-      path: 'src/a.ts',
-      displayPath: 'src/a.ts',
-      hunks: [
-        {
-          id: 'h1',
-          filePath: 'src/a.ts',
-          diffRef: 'd1',
-          header: '@@ -1 +1 @@',
-          lines: [{ id: 'l1', kind: 'add', content: 'const a = 1;', newLineNumber: 1 }],
-        },
-      ],
-    },
-  ],
-  formatAiPatchDisplayPath: (path: string) => path,
-}));
+import type { IAiThreadToolCallEntry } from './projection';
 
 const stubs = {
   AiMarkdown: true,
@@ -37,21 +18,40 @@ const stubs = {
   CodeBlock: true,
 };
 
-const baseEntry = (content: TAiThreadToolContent[]): IAiThreadToolCallEntry => ({
+const makeToolCall = (overrides: Partial<IAiThreadToolCall> = {}): IAiThreadToolCall => ({
+  type: 'tool_call',
+  id: 't1',
+  createdAt: '2026-04-28T10:00:00.000Z',
+  title: 'Search files for regex shikiLanguage',
+  kind: 'search',
+  status: 'completed',
+  content: [],
+  ...overrides,
+});
+
+const makeEntry = (
+  toolCall: IAiThreadToolCall,
+  extra: Partial<IAiThreadToolCallEntry> = {},
+): IAiThreadToolCallEntry => ({
   kind: 'tool-call',
   id: 't1',
   messageId: 'm1',
-  icon: 'search',
-  title: 'Search files for regex shikiLanguage',
-  tags: [],
-  status: 'succeeded',
-  content,
+  toolCall,
+  terminals: {},
+  awaiting: false,
+  ...extra,
 });
+
+const withContent = (content: IAiThreadToolCallContent[]): IAiThreadToolCallEntry =>
+  makeEntry(makeToolCall({ content }));
 
 describe('AiThreadToolCall', () => {
   it('渲染 Zed 风格工具行标题与文本内容', () => {
     const wrapper = mount(AiThreadToolCall, {
-      props: { entry: baseEntry([{ type: 'text', id: 'c1', markdown: 'done' }]), open: true },
+      props: {
+        entry: withContent([{ type: 'content', block: { type: 'text', text: 'done' } }]),
+        open: true,
+      },
       global: { stubs },
     });
 
@@ -61,45 +61,21 @@ describe('AiThreadToolCall', () => {
     expect(wrapper.findComponent(AiMarkdown).exists()).toBe(true);
   });
 
-  it('缺省结构化字段时回退渲染整段 title,不出现参数 chip', () => {
+  it('以单段式渲染工具标题(Zed label)', () => {
     const wrapper = mount(AiThreadToolCall, {
-      props: { entry: baseEntry([]), open: false },
+      props: { entry: makeEntry(makeToolCall()), open: false },
       global: { stubs },
     });
 
     expect(wrapper.find('.ai-thread-tool-call__action').text()).toBe(
       'Search files for regex shikiLanguage',
     );
-    expect(wrapper.find('.ai-thread-tool-call__argument').exists()).toBe(false);
-  });
-
-  it('以两段式渲染工具动词与参数 code chip', () => {
-    const wrapper = mount(AiThreadToolCall, {
-      props: {
-        entry: {
-          ...baseEntry([]),
-          title: 'Read file src/services/editor/codemirror-language.ts',
-          titleVerb: 'Read file',
-          titleArgument: 'src/services/editor/codemirror-language.ts',
-        },
-        open: false,
-      },
-      global: { stubs },
-    });
-
-    expect(wrapper.find('.ai-thread-tool-call__action').text()).toBe('Read file');
-    const argument = wrapper.find('.ai-thread-tool-call__argument');
-    expect(argument.exists()).toBe(true);
-    expect(argument.text()).toBe('src/services/editor/codemirror-language.ts');
   });
 
   it('渲染 Raw Input / Output 展开块', () => {
     const wrapper = mount(AiThreadToolCall, {
       props: {
-        entry: baseEntry([
-          { type: 'raw', id: 'raw-input', title: 'Raw Input', code: '{"regex":"abc"}' },
-          { type: 'raw', id: 'raw-output', title: 'Output', code: 'matches' },
-        ]),
+        entry: makeEntry(makeToolCall({ rawInput: '{"regex":"abc"}', rawOutput: 'matches' })),
         open: true,
       },
       global: { stubs },
@@ -112,10 +88,7 @@ describe('AiThreadToolCall', () => {
 
   it('点击 header 时切换展开状态', async () => {
     const wrapper = mount(AiThreadToolCall, {
-      props: {
-        entry: baseEntry([{ type: 'raw', id: 'raw-input', title: 'Raw Input', code: '{}' }]),
-        open: false,
-      },
+      props: { entry: makeEntry(makeToolCall({ rawInput: '{}' })), open: false },
       global: { stubs },
     });
 
@@ -126,7 +99,7 @@ describe('AiThreadToolCall', () => {
 
   it('无内容时作为静态工具块并禁用 header', async () => {
     const wrapper = mount(AiThreadToolCall, {
-      props: { entry: baseEntry([]), open: false },
+      props: { entry: makeEntry(makeToolCall()), open: false },
       global: { stubs },
     });
 
@@ -140,9 +113,9 @@ describe('AiThreadToolCall', () => {
   it('渲染终端内容', () => {
     const wrapper = mount(AiThreadToolCall, {
       props: {
-        entry: baseEntry([
-          { type: 'terminal', id: 'c1', title: '$ ls', output: 'a.txt', streaming: false },
-        ]),
+        entry: makeEntry(makeToolCall({ content: [{ type: 'terminal', terminalId: 'term-1' }] }), {
+          terminals: { 'term-1': { title: '$ ls', output: 'a.txt', streaming: false } },
+        }),
         open: true,
       },
       global: { stubs },
@@ -151,71 +124,30 @@ describe('AiThreadToolCall', () => {
     expect(wrapper.findComponent(Terminal).exists()).toBe(true);
   });
 
-  it('按补丁解析并复用 diff 卡片渲染 hunks(Mastra 路径,无内联 hunk)', () => {
-    const patch: IAiPatchSet = {
-      summary: 'x',
-      files: [
-        {
-          path: 'src/a.ts',
-          originalHash: 'h',
-          hunks: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ['+const a = 1;'] }],
-        },
-      ],
-    };
+  it('diff 内容自带内联 hunk 时直接渲染', () => {
     const wrapper = mount(AiThreadToolCall, {
       props: {
-        entry: baseEntry([
+        entry: withContent([
           {
             type: 'diff',
-            id: 'c1',
-            file: {
-              path: 'src/a.ts',
-              status: 'modified',
-              additions: 1,
-              deletions: 0,
-              diffRef: 'd1',
-            },
-            patchSummaryId: 'sum1',
-          },
-        ]),
-        open: true,
-        patches: [patch],
-        workspaceRootPath: null,
-      },
-      global: { stubs },
-    });
-
-    expect(wrapper.text()).toContain('src/a.ts');
-    expect(wrapper.findAllComponents(AiDiffHunkViewer).length).toBe(1);
-  });
-
-  it('diff 内容自带内联 hunk 时直接渲染,无需 patches prop(ACP 路径)', () => {
-    const wrapper = mount(AiThreadToolCall, {
-      props: {
-        entry: baseEntry([
-          {
-            type: 'diff',
-            id: 'c1',
-            file: {
-              path: 'src/b.ts',
-              status: 'modified',
-              additions: 1,
-              deletions: 1,
+            diff: {
+              id: 'd2',
+              title: 'src/b.ts',
+              filePath: 'src/b.ts',
               diffRef: 'd2',
+              hunks: [
+                {
+                  id: 'hb1',
+                  filePath: 'src/b.ts',
+                  diffRef: 'd2',
+                  header: '@@ -1,2 +1,2 @@',
+                  lines: [
+                    { id: 'lb1', kind: 'delete', content: 'old', oldLineNumber: 1 },
+                    { id: 'lb2', kind: 'add', content: 'new', newLineNumber: 1 },
+                  ],
+                },
+              ],
             },
-            patchSummaryId: 'sum2',
-            hunks: [
-              {
-                id: 'hb1',
-                filePath: 'src/b.ts',
-                diffRef: 'd2',
-                header: '@@ -1,2 +1,2 @@',
-                lines: [
-                  { id: 'lb1', kind: 'delete', content: 'old', oldLineNumber: 1 },
-                  { id: 'lb2', kind: 'add', content: 'new', newLineNumber: 1 },
-                ],
-              },
-            ],
           },
         ]),
         open: true,
@@ -225,5 +157,17 @@ describe('AiThreadToolCall', () => {
 
     expect(wrapper.text()).toContain('src/b.ts');
     expect(wrapper.findAllComponents(AiDiffHunkViewer).length).toBe(1);
+  });
+
+  it('Mastra HITL 等待确认时派生 awaiting-confirmation 状态', () => {
+    const wrapper = mount(AiThreadToolCall, {
+      props: {
+        entry: makeEntry(makeToolCall({ status: 'pending' }), { awaiting: true }),
+        open: false,
+      },
+      global: { stubs },
+    });
+
+    expect(wrapper.find('[data-status="awaiting-confirmation"]').exists()).toBe(true);
   });
 });

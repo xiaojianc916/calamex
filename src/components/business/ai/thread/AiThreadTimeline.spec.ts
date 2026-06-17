@@ -55,11 +55,17 @@ const toolEntry: IAiThreadToolCallEntry = {
   kind: 'tool-call',
   id: 't1',
   messageId: 'm1',
-  icon: 'file',
-  title: '读取文件',
-  tags: ['src/a.ts'],
-  status: 'succeeded',
-  content: [{ type: 'text', id: 'c1', markdown: 'done' }],
+  toolCall: {
+    type: 'tool_call',
+    id: 't1',
+    createdAt: '2026-04-28T10:00:00.000Z',
+    title: '读取文件',
+    kind: 'read',
+    status: 'completed',
+    content: [],
+  },
+  terminals: {},
+  awaiting: false,
 };
 const planEntry: IAiThreadPlanControlEntry = {
   kind: 'plan-control',

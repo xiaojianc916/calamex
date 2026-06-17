@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ChevronDown, FileCode, Globe } from '@lucide/vue';
+import { ChevronDown, FileCode } from '@lucide/vue';
 import { computed } from 'vue';
 import CodeBlock from '@/components/ai-elements/code-block/CodeBlock.vue';
 import {
@@ -11,35 +11,32 @@ import {
 import { ThreadToolStatusIcon } from '@/components/ai-elements/thread-entry';
 import AiMarkdown from '@/components/business/ai/chat/AiMarkdown.vue';
 import { AiDiffHunkViewer } from '@/components/business/ai/edit';
-import {
-  buildAiPatchPreviewFiles,
-  formatAiPatchDisplayPath,
-} from '@/components/business/ai/edit/patch-preview';
 import { TASK_ICON_MAP } from '@/components/business/ai/plan/runtime-timeline';
 import LucideIcon from '@/components/ui/icon/LucideIcon.vue';
-import type { IAiDiffHunkPreview, IAiPatchSet } from '@/types/ai';
-import type { IAiThreadToolCallEntry } from './projection';
+import { toAiThreadToolView, type IAiThreadToolCallEntry } from './projection';
 
 const props = defineProps<{
   entry: IAiThreadToolCallEntry;
   open: boolean;
-  patches?: readonly IAiPatchSet[];
-  workspaceRootPath?: string | null;
 }>();
 
 const emit = defineEmits<{
   'update:open': [value: boolean];
 }>();
 
-const hasContent = computed(() => props.entry.content.length > 0);
-const isExpanded = computed(() => hasContent.value && props.open);
-const toolIconClass = computed(() => TASK_ICON_MAP[props.entry.icon] ?? TASK_ICON_MAP.system);
-const webSourceCount = computed(() => props.entry.webSearchSources?.length ?? 0);
+// 统一渲染入口:协议 VM 经 toAiThreadToolView 派生渲染视图(图标 / 标题 / 展示态 /
+// 内容)。终端与等待确认依赖本条目的运行期快照(terminals / awaiting),经依赖注入
+// 回灌,协议 VM 自身保持纯净不被污染。
+const view = computed(() =>
+  toAiThreadToolView(props.entry.toolCall, {
+    resolveTerminal: (terminalId) => props.entry.terminals[terminalId],
+    isAwaitingApproval: () => props.entry.awaiting,
+  }),
+);
 
-// Zed 风格两段式标题:动词(verb)与参数(argument)分开展示;缺省结构化字段时
-// 回退到整段 title 字符串,保证向后兼容。
-const labelVerb = computed(() => props.entry.titleVerb ?? props.entry.title);
-const labelArgument = computed(() => props.entry.titleArgument);
+const hasContent = computed(() => view.value.content.length > 0);
+const isExpanded = computed(() => hasContent.value && props.open);
+const toolIconClass = computed(() => TASK_ICON_MAP[view.value.icon] ?? TASK_ICON_MAP.system);
 
 const toggleOpen = (): void => {
   if (!hasContent.value) {
@@ -59,35 +56,6 @@ const rawLanguage = (code: string): string => {
   }
   return 'text';
 };
-
-// 复用「已更改文件」汇总完全一致的 hunk 解析:按多种路径键归一化后匹配,避免内联
-// diff 与汇总卡片出现行为差异(不另造一套解析逻辑)。仅用于无内联 hunk 的
-// Mastra 路径回退;ACP 路径的 diff 自带 `hunks`,不走这里。
-const patchHunksByPath = computed(() => {
-  const entries = new Map<string, IAiDiffHunkPreview[]>();
-
-  for (const patch of props.patches ?? []) {
-    for (const previewFile of buildAiPatchPreviewFiles(patch, props.workspaceRootPath)) {
-      const keys = new Set([
-        previewFile.path,
-        previewFile.displayPath,
-        formatAiPatchDisplayPath(previewFile.path),
-      ]);
-
-      for (const key of keys) {
-        const normalizedKey = formatAiPatchDisplayPath(key);
-        const existing = entries.get(normalizedKey) ?? [];
-
-        entries.set(normalizedKey, [...existing, ...previewFile.hunks]);
-      }
-    }
-  }
-
-  return entries;
-});
-
-const resolveHunks = (filePath: string): IAiDiffHunkPreview[] =>
-  patchHunksByPath.value.get(formatAiPatchDisplayPath(filePath)) ?? [];
 </script>
 
 <template>
@@ -101,37 +69,22 @@ const resolveHunks = (filePath: string): IAiDiffHunkPreview[] =>
       class="ai-thread-tool-call__header"
       :disabled="!hasContent"
       :aria-expanded="isExpanded"
-      :title="entry.title"
+      :title="view.title"
       @click="toggleOpen"
     >
       <LucideIcon :name="toolIconClass" class="ai-thread-tool-call__tool-icon size-4" aria-hidden="true" />
       <span class="ai-thread-tool-call__label">
-        <span class="ai-thread-tool-call__action" v-text="labelVerb" />
-        <code
-          v-if="labelArgument"
-          class="ai-thread-tool-call__argument"
-          :title="labelArgument"
-          v-text="labelArgument"
-        />
+        <span class="ai-thread-tool-call__action" v-text="view.title" />
       </span>
       <span class="ai-thread-tool-call__meta">
-        <span
-          v-if="webSourceCount > 0"
-          class="ai-thread-tool-call__web-pill"
-          :aria-label="`${webSourceCount} 个网络来源`"
-        >
-          <Globe class="ai-thread-tool-call__web-icon size-3" aria-hidden="true" />
-          <span v-text="`${webSourceCount} 个来源`" />
-        </span>
-        <span v-if="entry.tail" class="ai-thread-tool-call__tail" v-text="entry.tail" />
-        <ThreadToolStatusIcon class="ai-thread-tool-call__status" :status="entry.status" />
+        <ThreadToolStatusIcon class="ai-thread-tool-call__status" :status="view.status" />
       </span>
       <ChevronDown class="ai-thread-tool-call__chevron size-4" v-if="hasContent" aria-hidden="true" />
       <span v-else class="ai-thread-tool-call__chevron-spacer" aria-hidden="true" />
     </button>
 
     <div v-if="isExpanded" class="ai-thread-tool-call__panel">
-      <template v-for="item in entry.content" :key="item.id">
+      <template v-for="item in view.content" :key="item.id">
         <div v-if="item.type === 'raw'" class="ai-thread-tool-call__raw">
           <div class="ai-thread-tool-call__raw-label"><span v-text="`${item.title}:`" /></div>
           <CodeBlock
@@ -162,18 +115,14 @@ const resolveHunks = (filePath: string): IAiDiffHunkPreview[] =>
             <FileCode class="ai-thread-tool-call__diff-icon size-3.5" aria-hidden="true" />
             <span
               class="ai-thread-tool-call__diff-path"
-              :title="item.file.path"
-              v-text="item.file.path"
+              :title="item.filePath"
+              v-text="item.filePath"
             />
-            <span class="ai-thread-tool-call__diff-stat is-add">+<span v-text="item.file.additions" /></span>
-            <span class="ai-thread-tool-call__diff-stat is-delete">-<span v-text="item.file.deletions" /></span>
+            <span class="ai-thread-tool-call__diff-stat is-add">+<span v-text="item.additions" /></span>
+            <span class="ai-thread-tool-call__diff-stat is-delete">-<span v-text="item.deletions" /></span>
           </div>
           <div class="ai-thread-tool-call__diff-body">
-            <AiDiffHunkViewer
-              v-for="hunk in (item.hunks ?? resolveHunks(item.file.path))"
-              :key="hunk.id"
-              :hunk="hunk"
-            />
+            <AiDiffHunkViewer v-for="hunk in item.hunks" :key="hunk.id" :hunk="hunk" />
           </div>
         </div>
       </template>
@@ -251,54 +200,12 @@ const resolveHunks = (filePath: string): IAiDiffHunkPreview[] =>
   white-space: nowrap;
 }
 
-/* Zed 风格:工具参数(路径 / 命令 / 正则)以浅灰圆角 code chip 呈现,与动词区分。 */
-.ai-thread-tool-call__argument {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--surface-soft, #f6f6f6) 80%, transparent);
-  padding: 0 6px;
-  color: var(--text-primary);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 18px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .ai-thread-tool-call__meta {
   display: inline-flex;
   min-width: 0;
   flex: 0 0 auto;
   align-items: center;
   gap: 6px;
-}
-
-.ai-thread-tool-call__web-pill {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 4px;
-  border: 1px solid color-mix(in srgb, var(--shell-divider) 70%, transparent);
-  border-radius: 999px;
-  background: color-mix(in srgb, #ffffff 76%, transparent);
-  padding: 1px 8px;
-  color: var(--text-secondary);
-  font-size: 11px;
-  line-height: 16px;
-  white-space: nowrap;
-}
-
-.ai-thread-tool-call__web-icon {
-  flex: 0 0 auto;
-  color: var(--text-tertiary, #6b7280);
-}
-
-.ai-thread-tool-call__tail {
-  color: var(--text-tertiary, #6b7280);
-  font-size: 11px;
-  white-space: nowrap;
 }
 
 .ai-thread-tool-call__status {
