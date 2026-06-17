@@ -25,6 +25,7 @@ import type {
   aiSuggestionPoolPayloadSchema,
   aiSuggestionPoolRequestSchema,
 } from '@/types/ai/schema';
+import type { IAiThreadToolCall } from '@/types/ai/thread';
 
 /* ============================================================================
  * Plain enums / unions (no schema needed — primitive literal unions)
@@ -209,14 +210,18 @@ export type IAiApplyPatchMetadata = z.infer<typeof aiApplyPatchMetadataSchema>;
  *
  * - `patches`:UI 当前显示的已应用 patch 列表
  * - `changedFilesSummary`:Agent 改动文件汇总,sidebar / diff viewer 渲染用
+ * - `acpToolCalls`:ACP openWorld 后端(如 Kimi)的工具调用投影,由 from-acp-*
+ *   累加器从 `tool_call` / `tool_call_update` UI 事件归一到协议 VM;渲染层经
+ *   适配器复用同一工具调用渲染管线。
  *
- * 这两个字段**绝对不要**发到 IPC。store 把 `IAiChatMessage[]` 赋给
+ * 这些字段**绝对不要**发到 IPC。store 把 `IAiChatMessage[]` 赋给
  * `IAiChatRequest.messages`(`IAiChatMessageWire[]`)时,structural subtyping
- * 自动接受;schema parse 时会 strip 这两个字段,backend 不感知。
+ * 自动接受;schema parse 时会 strip 这些字段,backend 不感知。
  */
 export interface IAiChatMessage extends IAiChatMessageWire {
   patches?: IAiPatchSet[];
   changedFilesSummary?: IAiAgentPatchSummary;
+  acpToolCalls?: IAiThreadToolCall[];
 }
 
 export type TAiAttachmentStatus = 'processing' | 'ready' | 'failed';

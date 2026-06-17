@@ -4,8 +4,10 @@
  * 核心思路(对齐 Zed `acp_thread`):一条 assistant 消息被展开成多条按时间顺序
  * 排列的条目——推理、工具调用、上下文整理、最终文本、Plan 控制、改动汇总——
  * 而不是塞进一个气泡 / 卡片。运行时活动复用既有 `buildTimelineItems`(推理缓冲、
- * 工具 `toolUseId` 关联、终端重建等复杂逻辑全部沿用,不重新发明);Chat 模式下无
- * 运行时事件,则直接映射 `message.toolCalls`,从而三种模式共用同一渲染管线。
+ * 工具 `toolUseId` 关联、终端重建等复杂逻辑全部沿用,不重新发明);ACP openWorld
+ * 后端(如 Kimi)的工具调用经 from-acp-* 累加器归一到协议 VM 后,由适配器复用同一
+ * 渲染管线;Chat 模式下无运行时事件,则直接映射 `message.toolCalls`,从而多种模式
+ * 共用同一渲染管线。
  */
 import {
   APPLY_FILE_EDIT_TOOL_NAMES,
@@ -28,6 +30,7 @@ import type {
   TAiThreadToolContent,
   TAiThreadToolStatus,
 } from './entry-types';
+import { buildAcpThreadToolEntries } from './from-acp-thread-entry';
 
 /** 取文件路径的末段(文件名),用于把改动 diff 关联到对应工具调用条目。 */
 const fileNameOf = (filePath: string): string => {
@@ -369,6 +372,14 @@ const buildAssistantEntries = (message: IAiChatMessage): TAiThreadEntry[] => {
       // item.type === 'event':运行生命周期噪声,详见 extractContextCompactionEntries 注释。
     }
     entries.push(...extractContextCompactionEntries(message.id, runtimeEvents));
+  } else if (message.acpToolCalls !== undefined && message.acpToolCalls.length > 0) {
+    // ACP openWorld 后端:工具调用已由 from-acp-* 累加器归一到协议 VM,经适配器复用
+    // 同一渲染 VM(对齐 Mastra 路径,不重复造解析)。优先于 wire toolCalls:ACP
+    // 源更富(kind / diff / terminal)。
+    for (const toolEntry of buildAcpThreadToolEntries(message.id, message.acpToolCalls)) {
+      toolEntries.push(toolEntry);
+      entries.push(toolEntry);
+    }
   } else if (message.toolCalls !== undefined) {
     for (const toolCall of message.toolCalls) {
       const toolEntry = mapWireToolCallToToolEntry(message.id, toolCall);
