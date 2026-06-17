@@ -97,9 +97,9 @@ interface IEditorExpose {
   layoutEditor: () => void;
 }
 
-// ───────────────────────────────
+// ──────────────────────────────
 // Constants
-// ───────────────────────────────
+// ──────────────────────────────
 const VIEW_STATE_SAVE_DEBOUNCE_MS = 500;
 const MENU_WIDTH = 224;
 const MENU_MAX_HEIGHT = 320;
@@ -118,9 +118,9 @@ const createEmptyAnalysis = (): IAnalyzeScriptPayload => ({
   diagnostics: [],
 });
 
-// ───────────────────────────────
+// ──────────────────────────────
 // Lazy / cached shell completion source
-// ───────────────────────────────
+// ──────────────────────────────
 // `import('@/utils/terminal/shell-completion')` 自身会被打包器缓存，但每次 completion 都
 // 重新 `.then(...)` 并重新 `createShellCodeMirrorCompletionSource()` 仍有不必要的
 // 微开销，且每次都拿到一个新的 source 实例，影响内部可能的状态复用。
@@ -220,9 +220,9 @@ const inlineCompletionController = createCodeMirrorInlineCompletionController({
   getLanguage: () => getCurrentLanguage(),
 });
 
-// ───────────────────────────────
+// ──────────────────────────────
 // Completion / language
-// ───────────────────────────────
+// ──────────────────────────────
 const buildCompletionExtension = (
   editorSettings: IEditorSettings,
   language: string,
@@ -284,9 +284,9 @@ const applyDocumentMetricsFromChanges = (update: ViewUpdate): IDocumentMetrics =
   return lastDocumentMetrics;
 };
 
-// ───────────────────────────────
+// ──────────────────────────────
 // Selection helpers
-// ───────────────────────────────
+// ──────────────────────────────
 const lineColumnToOffset = (view: EditorView, line: number, column: number): number => {
   const lineInfo = view.state.doc.line(Math.min(Math.max(1, line), view.state.doc.lines));
   return Math.min(lineInfo.to, lineInfo.from + Math.max(0, column - 1));
@@ -469,9 +469,9 @@ const emitSelectionSummary = (): void => {
   emit('selection-change', resolveSelectionSummary());
 };
 
-// ───────────────────────────────
+// ──────────────────────────────
 // View state persist / restore
-// ───────────────────────────────
+// ──────────────────────────────
 const clearViewStateSaveTimer = (): void => {
   if (viewStateSaveTimerId !== null) {
     window.clearTimeout(viewStateSaveTimerId);
@@ -560,9 +560,9 @@ const replaceDocumentForPathSwitch = (): void => {
   lastDocumentMetrics = computeDocumentMetrics(nextContent);
 };
 
-// ───────────────────────────────
+// ──────────────────────────────
 // Diagnostics
-// ───────────────────────────────
+// ──────────────────────────────
 const toDiagnosticSeverity = (level: TScriptDiagnosticSeverity): Diagnostic['severity'] => {
   switch (level) {
     case 'error':
@@ -618,9 +618,9 @@ const syncDiagnostics = (): void => {
   applyDiagnostics();
 };
 
-// ───────────────────────────────
+// ──────────────────────────────
 // Layout / window resize coordination
-// ───────────────────────────────
+// ──────────────────────────────
 const layoutEditor = (): void => {
   editorView?.requestMeasure();
 };
@@ -658,9 +658,9 @@ useShellResizeFrameScheduler({
   settledFrames: 3,
 });
 
-// ───────────────────────────────
+// ──────────────────────────────
 // Context menu
-// ───────────────────────────────
+// ──────────────────────────────
 const closeContextMenu = (): void => {
   contextMenuState.value.open = false;
   contextMenuGroups.value = [];
@@ -795,9 +795,9 @@ const closeMenuOnWindowChange = (): void => {
   if (contextMenuState.value.open) closeContextMenu();
 };
 
-// ───────────────────────────────
+// ──────────────────────────────
 // Clipboard
-// ───────────────────────────────
+// ──────────────────────────────
 const copyEditorSelection = async (): Promise<void> => {
   const text = resolveSelectedText();
   if (text.trim()) await writeClipboardText(text);
@@ -830,9 +830,9 @@ const pasteIntoEditor = async (): Promise<void> => {
   view.focus();
 };
 
-// ───────────────────────────────
+// ──────────────────────────────
 // Context menu item dispatch
-// ───────────────────────────────
+// ──────────────────────────────
 const handleContextMenuItemSelect = async (item: IEditorContextMenuItem): Promise<void> => {
   const view = editorView;
   closeContextMenu();
@@ -880,9 +880,9 @@ const handleContextMenuItemSelect = async (item: IEditorContextMenuItem): Promis
   }
 };
 
-// ───────────────────────────────
+// ──────────────────────────────
 // Editor lifecycle
-// ───────────────────────────────
+// ──────────────────────────────
 const flushModelValueEmit = (): void => {
   pendingModelValueEmit = false;
   const view = editorView;
@@ -978,493 +978,4 @@ const createBaseExtensions = (language: string): Extension[] => [
   crosshairCursor(),
   highlightSelectionMatches(),
   search({ top: true }),
-  lintGutter(),
-  editorBottomPaddingTheme,
-  ...inlineCompletionController.extensions,
-  keymap.of([
-    indentWithTab,
-    {
-      key: 'Alt-Shift-f',
-      run: () => {
-        emit('format-request');
-        return true;
-      },
-    },
-    {
-      key: 'Mod-Enter',
-      run: () => {
-        emit('run-request');
-        return true;
-      },
-    },
-    { key: 'Ctrl-Space', run: acceptCompletion },
-    ...defaultKeymap,
-    ...historyKeymap,
-    ...searchKeymap,
-  ]),
-  lspCompartment.of(buildLspExtension()),
-  languageCompartment.of(resolveCodeMirrorLanguageExtension(language)),
-  settingsCompartment.of(buildCodeMirrorSettingsExtensions(props.editorSettings)),
-  completionCompartment.of(
-    buildCompletionExtension(props.editorSettings, language, currentLsp?.completionSource),
-  ),
-  EditorView.updateListener.of(handleEditorUpdate),
-  shikiEditorChromeTheme,
-];
-
-const createEditor = (): void => {
-  if (!containerRef.value || editorView) return;
-  const language = getCurrentLanguage();
-  editorView = new EditorView({
-    parent: containerRef.value,
-    state: EditorState.create({
-      doc: props.modelValue,
-      extensions: createBaseExtensions(language),
-    }),
-  });
-  // 初始文档串与父组件 v-model 已对齐,记录为同步基线,避免首个 echo 误判。
-  lastSyncedModelValue = props.modelValue;
-  lastDocumentMetrics = computeDocumentMetrics(props.modelValue);
-  emitCursorPosition(editorView);
-  applyLanguageExtension(language);
-  currentLsp?.attach(editorView);
-  syncDiagnostics();
-  restoreViewStateForPath(props.documentPath);
-  requestAnimationFrame(() => scheduleEditorLayout());
-};
-
-const reconfigureLsp = (): void => {
-  const view = editorView;
-  if (!view) return;
-  view.dispatch({
-    effects: [
-      lspCompartment.reconfigure(buildLspExtension()),
-      completionCompartment.reconfigure(
-        buildCompletionExtension(
-          props.editorSettings,
-          getCurrentLanguage(),
-          currentLsp?.completionSource,
-        ),
-      ),
-    ],
-  });
-  // 文件切换后重新 attach（didOpen 新文件，didClose 旧文件已在 buildLspExtension 中处理）
-  if (currentLsp) {
-    currentLsp.attach(view);
-  }
-};
-
-// 语言语法按需加载：先用已缓存（或空）占位，加载完成后再 reconfigure 进编辑器，
-// 避免把全部语法打进初始 bundle。
-const applyLanguageExtension = (language: string): void => {
-  void loadCodeMirrorLanguageSupport(language).then((support) => {
-    const view = editorView;
-    // 加载期间文档可能已切换语言，过期结果直接丢弃。
-    if (!view || getCurrentLanguage() !== language) return;
-    view.dispatch({ effects: languageCompartment.reconfigure(support ?? []) });
-  });
-};
-
-const reconfigureLanguage = (): void => {
-  const view = editorView;
-  if (!view) return;
-  const language = getCurrentLanguage();
-  inlineCompletionController.clear();
-  // 不在此处 reconfigure 补全：紧随其后调用的 reconfigureLsp 会用「新」LSP 的 completionSource
-  // 统一重配补全。这里若先配一次，用的还是旧文件的 LSP 源，纯属多余 dispatch。
-  view.dispatch({
-    effects: [
-      languageCompartment.reconfigure(resolveCodeMirrorLanguageExtension(language)),
-      setShikiLanguage(language),
-    ],
-  });
-  applyLanguageExtension(language);
-};
-
-const reconfigureSettings = (): void => {
-  const view = editorView;
-  if (!view) return;
-  view.dispatch({
-    effects: [
-      settingsCompartment.reconfigure(buildCodeMirrorSettingsExtensions(props.editorSettings)),
-      completionCompartment.reconfigure(
-        buildCompletionExtension(
-          props.editorSettings,
-          getCurrentLanguage(),
-          currentLsp?.completionSource,
-        ),
-      ),
-    ],
-  });
-  scheduleEditorLayout();
-};
-
-// ───────────────────────────────
-// Watchers
-// ───────────────────────────────
-watch(
-  () => [props.documentPath, props.documentName] as const,
-  ([nextPath], [previousPath]) => {
-    if (previousPath) persistViewState(previousPath);
-    replaceDocumentForPathSwitch();
-    reconfigureLanguage();
-    reconfigureLsp();
-    restoreViewStateForPath(nextPath);
-  },
-  { flush: 'sync' },
-);
-
-watch(
-  () => props.modelValue,
-  (value) => {
-    const view = editorView;
-    if (!view) return;
-    // 自身 emit 的 v-model 回声:用上次同步串做廉价比较,命中即跳过,不再每次按键
-    // 对整篇文档 toString()。
-    if (value === lastSyncedModelValue) return;
-    const current = view.state.doc.toString();
-    if (current === value) {
-      lastSyncedModelValue = value;
-      lastDocumentMetrics = computeDocumentMetrics(value);
-      return;
-    }
-    // 外部真正改了内容（载入文件 / 格式化 / AI 补丁等）：只替换最小变化区间,保留未变
-    // 区域的折叠/选区,避免整篇替换清空这些状态。Myers 最短编辑脚本可产出多个
-    // 互不相邻的最小变更区间，详见 utils/editor/editor-doc-diff。
-    lastSyncedModelValue = value;
-    lastDocumentMetrics = computeDocumentMetrics(value);
-    suppressModelValueEmit = true;
-    try {
-      view.dispatch({ changes: computeDocChanges(current, value) });
-    } finally {
-      suppressModelValueEmit = false;
-    }
-  },
-);
-
-watch(analysisDiagnosticsSignature, () => syncDiagnostics());
-
-// app store 的 patchSettings/replaceSettings 每次都整体替换 settings 引用,
-// editor 子对象随之成为新引用,故浅 watch 即可捕获所有偏好改动,无需 deep 遍历。
-watch(
-  () => props.editorSettings,
-  () => reconfigureSettings(),
-);
-
-// ───────────────────────────────
-// Mount / unmount
-// ───────────────────────────────
-useEventListener(window, 'pointerdown', handleWindowPointerDown, { capture: true });
-useEventListener(window, 'keydown', handleWindowKeydown);
-useEventListener(window, 'resize', closeMenuOnWindowChange);
-useEventListener(window, 'blur', closeMenuOnWindowChange);
-
-onMounted(() => {
-  createEditor();
-
-  useResizeObserver(containerRef, () => {
-    if (!containerRef.value) return;
-    const nextWidth = Math.round(containerRef.value.clientWidth);
-    const nextHeight = Math.round(containerRef.value.clientHeight);
-    if (previousContainerSize.width === nextWidth && previousContainerSize.height === nextHeight)
-      return;
-    previousContainerSize = { width: nextWidth, height: nextHeight };
-    scheduleEditorLayout();
-  });
-});
-
-onBeforeUnmount(() => {
-  // 卸载前先冲刷待发送的 v-model,避免丢失最后一次合并中的文档变更。
-  if (pendingModelValueEmit) {
-    flushModelValueEmit();
-  }
-  persistViewState(props.documentPath);
-  clearViewStateSaveTimer();
-  inlineCompletionController.destroy();
-  currentLsp?.detach();
-  if (editorLayoutFrameId !== null) {
-    window.cancelAnimationFrame(editorLayoutFrameId);
-    editorLayoutFrameId = null;
-  }
-  closeContextMenu();
-  editorView?.destroy();
-  editorView = null;
-});
-
-// ───────────────────────────────
-// Public methods
-// ───────────────────────────────
-const focusEditor = (): void => {
-  editorView?.focus();
-};
-
-const insertSnippet = (snippetText: string): void => {
-  const view = editorView;
-  if (!view) return;
-  const range = view.state.selection.main;
-  snippet(snippetText)(view, null, range.from, range.to);
-  view.focus();
-};
-
-const revealPosition = (line: number, column: number): void => {
-  const view = editorView;
-  if (!view) return;
-  const position = lineColumnToOffset(view, line, column);
-  view.dispatch({
-    selection: EditorSelection.cursor(position),
-    effects: EditorView.scrollIntoView(position, { y: 'center' }),
-  });
-  view.focus();
-};
-
-defineExpose<IEditorExpose>({
-  focusEditor,
-  insertSnippet,
-  revealPosition,
-  layoutEditor,
-});
-</script>
-
-<style scoped>
-.codemirror-editor-surface :deep(.cm-editor) {
-  height: 100%;
-  min-height: 0;
-}
-
-.codemirror-editor-surface :deep(.cm-content) {
-  min-height: 100%;
-}
-
-.codemirror-editor-surface :deep(.cm-scroller) {
-  overflow: auto;
-}
-</style>
-
-<style>
-/* CM6 补全 / hover 全局样式(非 scoped — 弹窗在 body，不在组件 DOM 内)
-   编辑器整体刻意恒为 github-light(见 shikiEditorChromeTheme)，弹窗同样恒为浅色，
-   与应用深浅主题无关。重复的卡片表面/描边/阴影集中为变量，便于统一维护。 */
-.cm-tooltip-autocomplete,
-.cm-tooltip-hover,
-.cm-completionInfo {
-  --cm-popup-surface: #ffffff;
-  --cm-popup-border: #e6e8eb;
-  --cm-popup-shadow: 0 10px 30px rgba(15, 23, 42, 0.12);
-}
-
-/* 弹窗：纯白卡片 */
-.cm-tooltip.cm-tooltip.cm-tooltip-autocomplete {
-  background: var(--cm-popup-surface);
-  border: 1px solid var(--cm-popup-border);
-  border-radius: 12px;
-  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.12), 0 0 0 0.5px rgba(15, 23, 42, 0.04);
-  padding: 4px;
-}
-
-.cm-tooltip.cm-tooltip.cm-tooltip-autocomplete>ul {
-  background: var(--cm-popup-surface);
-}
-
-.cm-tooltip.cm-tooltip-hover,
-.cm-tooltip-autocomplete {
-  max-width: none;
-}
-
-/* 隐藏补全弹窗滚动条(仍可滚动) */
-.cm-tooltip-autocomplete>ul,
-.cm-tooltip-autocomplete .cm-completionInfo {
-  scrollbar-width: none;
-  /* Firefox */
-  -ms-overflow-style: none;
-  /* 旧 Edge */
-}
-
-.cm-tooltip-autocomplete>ul::-webkit-scrollbar,
-.cm-tooltip-autocomplete .cm-completionInfo::-webkit-scrollbar {
-  width: 0;
-  height: 0;
-  display: none;
-  /* Chromium / Tauri */
-}
-
-/* 选中行圆角：与外框同心(外 12 − 内边距 4 = 8) */
-.cm-tooltip.cm-tooltip.cm-tooltip-autocomplete>ul>li[aria-selected] {
-  border-radius: 8px;
-}
-
-/* 列表项 */
-.cm-tooltip-autocomplete>ul {
-  max-height: 320px;
-  font-family: var(--font-mono);
-}
-
-.cm-tooltip-autocomplete>ul>li {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 30px;
-  padding: 4px 10px;
-  border-radius: 8px;
-  color: #1f2937;
-}
-
-.cm-tooltip-autocomplete>ul>li[aria-selected] {
-  background: #f1f5f9;
-  color: #111827;
-}
-
-/* Lucide 图标(addToOptions 注入，类名 cm-lsp-icon) */
-.cm-lsp-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  flex-shrink: 0;
-  color: #98a2b3;
-}
-
-.cm-lsp-icon svg {
-  width: 16px;
-  height: 16px;
-}
-
-.cm-lsp-icon[data-type="function"],
-.cm-lsp-icon[data-type="method"] {
-  color: #8b5cf6;
-}
-
-.cm-lsp-icon[data-type="keyword"] {
-  color: #e0457b;
-}
-
-.cm-lsp-icon[data-type="variable"],
-.cm-lsp-icon[data-type="field"] {
-  color: #2f80ed;
-}
-
-.cm-lsp-icon[data-type="property"] {
-  color: #0ea5b7;
-}
-
-.cm-lsp-icon[data-type="constant"],
-.cm-lsp-icon[data-type="value"],
-.cm-lsp-icon[data-type="enum"] {
-  color: #0f9d58;
-}
-
-.cm-lsp-icon[data-type="class"],
-.cm-lsp-icon[data-type="interface"],
-.cm-lsp-icon[data-type="namespace"] {
-  color: #d97706;
-}
-
-.cm-lsp-icon[data-type="snippet"] {
-  color: #f59e0b;
-}
-
-.cm-lsp-icon[data-type="operator"] {
-  color: #6366f1;
-}
-
-.cm-lsp-icon[data-type="text"] {
-  color: #98a2b3;
-}
-
-/* 文字 */
-.cm-tooltip-autocomplete .cm-completionLabel {
-  flex: 1 1 auto;
-  min-width: 0;
-  font-size: 13px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.cm-tooltip-autocomplete .cm-completionDetail {
-  flex-shrink: 0;
-  margin-left: auto;
-  padding-left: 12px;
-  font-size: 11px;
-  font-style: normal;
-  color: #98a2b3;
-}
-
-.cm-tooltip-autocomplete .cm-completionMatchedText {
-  color: #4f46e5;
-  font-weight: 600;
-  text-decoration: none;
-}
-
-/* 详情 / 文档面板：同样纯白 */
-.cm-tooltip.cm-completionInfo,
-.cm-tooltip-autocomplete .cm-completionInfo {
-  margin-left: 6px;
-  padding: 10px 12px;
-  max-width: none;
-  background: var(--cm-popup-surface);
-  border: 1px solid var(--cm-popup-border);
-  border-radius: 10px;
-  box-shadow: var(--cm-popup-shadow);
-  color: #475467;
-}
-
-/* 滚动条 */
-.cm-tooltip-autocomplete>ul::-webkit-scrollbar {
-  width: 8px;
-}
-
-.cm-tooltip-autocomplete>ul::-webkit-scrollbar-thumb {
-  background: #d0d5dd;
-  border-radius: 8px;
-}
-
-/* hover 卡片 */
-.cm-tooltip.cm-tooltip-hover {
-  background: var(--cm-popup-surface);
-  border: 1px solid var(--cm-popup-border);
-  border-radius: 10px;
-  box-shadow: var(--cm-popup-shadow);
-}
-
-.cm-lsp-hover {
-  padding: 8px 10px;
-  font-size: 12.5px;
-  line-height: 1.55;
-  color: #1f2937;
-}
-
-/* LSP 文档 markdown */
-.cm-lsp-doc {
-  font-size: 12px;
-  line-height: 1.55;
-  color: #475467;
-}
-
-.cm-lsp-para {
-  margin: 4px 0;
-}
-
-.cm-lsp-inline-code {
-  background: #f2f4f7;
-  border-radius: 3px;
-  padding: 1px 5px;
-  font-family: var(--font-mono);
-  font-size: 0.92em;
-}
-
-.cm-lsp-code-block {
-  margin: 6px 0;
-  border-radius: 6px;
-  overflow: hidden;
-}
-
-.cm-lsp-code-block pre {
-  margin: 0;
-  padding: 8px 10px;
-  background: #f7f8fa;
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-  line-height: 1.45;
-}
-</style>
+  lint
