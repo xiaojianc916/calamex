@@ -97,9 +97,9 @@ interface IEditorExpose {
   layoutEditor: () => void;
 }
 
-// ──────────────────────────────
+// ───────────────────────────────
 // Constants
-// ──────────────────────────────
+// ───────────────────────────────
 const VIEW_STATE_SAVE_DEBOUNCE_MS = 500;
 const MENU_WIDTH = 224;
 const MENU_MAX_HEIGHT = 320;
@@ -118,9 +118,9 @@ const createEmptyAnalysis = (): IAnalyzeScriptPayload => ({
   diagnostics: [],
 });
 
-// ──────────────────────────────
+// ───────────────────────────────
 // Lazy / cached shell completion source
-// ──────────────────────────────
+// ───────────────────────────────
 // `import('@/utils/terminal/shell-completion')` 自身会被打包器缓存，但每次 completion 都
 // 重新 `.then(...)` 并重新 `createShellCodeMirrorCompletionSource()` 仍有不必要的
 // 微开销，且每次都拿到一个新的 source 实例，影响内部可能的状态复用。
@@ -201,6 +201,13 @@ let suppressModelValueEmit = false;
 // 都对整篇文档 toString() 比较一次。
 let lastSyncedModelValue: string | null = null;
 let lastDocumentMetrics: IDocumentMetrics = computeDocumentMetrics(props.modelValue);
+// 把同一同步 tick 内的多次文档变更(IME 组合、批量/多光标 dispatch)合并为一次 v-model
+// emit:每次变更仍增量维护 metrics,但整篇 toString() 与 emit 推迟到 tick 末尾的微任务执行
+// 一次。注意:单次按键的整篇 toString() 是 v-model「全文字符串」契约的固有成本,此处只消除
+// 同一 tick 内的重复全文 emit,不改变单次按键语义;flush 始终读取当前文档,emit 的内容恒为
+// 真实文档串,不会损坏内容。
+let pendingModelValueEmit = false;
+let pendingModelValueMetrics: IDocumentMetrics | null = null;
 let previousContainerSize = { width: 0, height: 0 };
 
 const languageCompartment = new Compartment();
@@ -213,9 +220,9 @@ const inlineCompletionController = createCodeMirrorInlineCompletionController({
   getLanguage: () => getCurrentLanguage(),
 });
 
-// ──────────────────────────────
+// ───────────────────────────────
 // Completion / language
-// ──────────────────────────────
+// ───────────────────────────────
 const buildCompletionExtension = (
   editorSettings: IEditorSettings,
   language: string,
@@ -277,9 +284,9 @@ const applyDocumentMetricsFromChanges = (update: ViewUpdate): IDocumentMetrics =
   return lastDocumentMetrics;
 };
 
-// ──────────────────────────────
+// ───────────────────────────────
 // Selection helpers
-// ──────────────────────────────
+// ───────────────────────────────
 const lineColumnToOffset = (view: EditorView, line: number, column: number): number => {
   const lineInfo = view.state.doc.line(Math.min(Math.max(1, line), view.state.doc.lines));
   return Math.min(lineInfo.to, lineInfo.from + Math.max(0, column - 1));
@@ -462,9 +469,9 @@ const emitSelectionSummary = (): void => {
   emit('selection-change', resolveSelectionSummary());
 };
 
-// ──────────────────────────────
+// ───────────────────────────────
 // View state persist / restore
-// ──────────────────────────────
+// ───────────────────────────────
 const clearViewStateSaveTimer = (): void => {
   if (viewStateSaveTimerId !== null) {
     window.clearTimeout(viewStateSaveTimerId);
@@ -553,9 +560,9 @@ const replaceDocumentForPathSwitch = (): void => {
   lastDocumentMetrics = computeDocumentMetrics(nextContent);
 };
 
-// ──────────────────────────────
+// ───────────────────────────────
 // Diagnostics
-// ──────────────────────────────
+// ───────────────────────────────
 const toDiagnosticSeverity = (level: TScriptDiagnosticSeverity): Diagnostic['severity'] => {
   switch (level) {
     case 'error':
@@ -611,9 +618,9 @@ const syncDiagnostics = (): void => {
   applyDiagnostics();
 };
 
-// ──────────────────────────────
+// ───────────────────────────────
 // Layout / window resize coordination
-// ──────────────────────────────
+// ───────────────────────────────
 const layoutEditor = (): void => {
   editorView?.requestMeasure();
 };
@@ -651,9 +658,9 @@ useShellResizeFrameScheduler({
   settledFrames: 3,
 });
 
-// ──────────────────────────────
+// ───────────────────────────────
 // Context menu
-// ──────────────────────────────
+// ───────────────────────────────
 const closeContextMenu = (): void => {
   contextMenuState.value.open = false;
   contextMenuGroups.value = [];
@@ -788,9 +795,9 @@ const closeMenuOnWindowChange = (): void => {
   if (contextMenuState.value.open) closeContextMenu();
 };
 
-// ──────────────────────────────
+// ───────────────────────────────
 // Clipboard
-// ──────────────────────────────
+// ───────────────────────────────
 const copyEditorSelection = async (): Promise<void> => {
   const text = resolveSelectedText();
   if (text.trim()) await writeClipboardText(text);
@@ -823,9 +830,9 @@ const pasteIntoEditor = async (): Promise<void> => {
   view.focus();
 };
 
-// ──────────────────────────────
+// ───────────────────────────────
 // Context menu item dispatch
-// ──────────────────────────────
+// ───────────────────────────────
 const handleContextMenuItemSelect = async (item: IEditorContextMenuItem): Promise<void> => {
   const view = editorView;
   closeContextMenu();
@@ -873,17 +880,31 @@ const handleContextMenuItemSelect = async (item: IEditorContextMenuItem): Promis
   }
 };
 
-// ──────────────────────────────
+// ───────────────────────────────
 // Editor lifecycle
-// ──────────────────────────────
+// ───────────────────────────────
+const flushModelValueEmit = (): void => {
+  pendingModelValueEmit = false;
+  const view = editorView;
+  if (!view) return;
+  // 读取「当前」文档,合并后只对外同步最终内容;始终是真实文档串,不会损坏内容。
+  const value = view.state.doc.toString();
+  // 记录本次对外同步的串,作为 v-model 回声的廉价判定依据(见 modelValue watcher)。
+  lastSyncedModelValue = value;
+  emit('update:modelValue', value, pendingModelValueMetrics ?? lastDocumentMetrics);
+};
+
 const handleEditorUpdate = (update: ViewUpdate): void => {
   if (update.docChanged && !suppressModelValueEmit) {
     closeContextMenu();
-    const nextMetrics = applyDocumentMetricsFromChanges(update);
-    const nextValue = update.state.doc.toString();
-    // 记录本次对外同步的串,作为 v-model 回声的廉价判定依据(见 modelValue watcher)。
-    lastSyncedModelValue = nextValue;
-    emit('update:modelValue', nextValue, nextMetrics);
+    // metrics 内部状态依赖逐次变更,不能跳过,故每次变更都增量维护。
+    pendingModelValueMetrics = applyDocumentMetricsFromChanges(update);
+    // 把整篇 toString() 与 emit 合并到本 tick 末尾执行一次,避免同一 tick 内多次变更
+    // (IME 组合 / 批量 dispatch)重复全文 emit。
+    if (!pendingModelValueEmit) {
+      pendingModelValueEmit = true;
+      queueMicrotask(flushModelValueEmit);
+    }
   }
   if (update.selectionSet || update.docChanged) {
     emitCursorPosition(update.view);
@@ -1078,9 +1099,9 @@ const reconfigureSettings = (): void => {
   scheduleEditorLayout();
 };
 
-// ──────────────────────────────
+// ───────────────────────────────
 // Watchers
-// ──────────────────────────────
+// ───────────────────────────────
 watch(
   () => [props.documentPath, props.documentName] as const,
   ([nextPath], [previousPath]) => {
@@ -1130,9 +1151,9 @@ watch(
   () => reconfigureSettings(),
 );
 
-// ──────────────────────────────
+// ───────────────────────────────
 // Mount / unmount
-// ──────────────────────────────
+// ───────────────────────────────
 useEventListener(window, 'pointerdown', handleWindowPointerDown, { capture: true });
 useEventListener(window, 'keydown', handleWindowKeydown);
 useEventListener(window, 'resize', closeMenuOnWindowChange);
@@ -1153,6 +1174,10 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  // 卸载前先冲刷待发送的 v-model,避免丢失最后一次合并中的文档变更。
+  if (pendingModelValueEmit) {
+    flushModelValueEmit();
+  }
   persistViewState(props.documentPath);
   clearViewStateSaveTimer();
   inlineCompletionController.destroy();
@@ -1166,9 +1191,9 @@ onBeforeUnmount(() => {
   editorView = null;
 });
 
-// ──────────────────────────────
+// ───────────────────────────────
 // Public methods
-// ──────────────────────────────
+// ───────────────────────────────
 const focusEditor = (): void => {
   editorView?.focus();
 };
