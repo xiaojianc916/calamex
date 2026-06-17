@@ -3,8 +3,11 @@
     <div class="source-control-pull-requests-header">
       <p class="source-control-pull-requests-heading">Pull requests</p>
       <div class="source-control-pull-requests-header-actions">
-        <span v-if="pullRequestSupport.available" class="source-control-pull-requests-provider"
-          v-text="pullRequestProviderLabel" />
+        <button v-if="pullRequestSupport.available && pullRequestView === 'list'" type="button"
+          class="source-control-pr-action-btn is-primary source-control-pull-requests-create"
+          :disabled="isPullRequestsLoading || isBusy" @click="handleStartCreatePullRequest">
+          新建 PR
+        </button>
         <button type="button" class="source-control-pull-requests-refresh" aria-label="刷新 Pull Request"
           title="刷新 Pull Request"
           :disabled="isPullRequestSupportLoading || isPullRequestsLoading || isSettingRemote || isBusy"
@@ -23,28 +26,14 @@
     <template v-else>
       <template v-if="pullRequestSupport.available">
         <template v-if="pullRequestView === 'list'">
-          <div class="source-control-pr-toolbar">
-            <div class="source-control-pr-filter" role="tablist">
-              <button v-for="filter in pullRequestFilters" :key="filter.key" type="button"
-                class="source-control-pr-filter-btn"
-                :class="{ 'is-active': pullRequestStateFilter === filter.key }"
-                :disabled="isPullRequestsLoading" @click="handleSelectPullRequestFilter(filter.key)"
-                v-text="filter.label" />
-            </div>
-            <button type="button" class="source-control-pr-action-btn is-primary"
-              :disabled="isPullRequestsLoading || isBusy" @click="handleStartCreatePullRequest">
-              新建 PR
-            </button>
-          </div>
-
           <div v-if="isPullRequestsLoading && pullRequests.length === 0" class="source-control-pr-skeleton">
             <span class="source-control-pr-skeleton-row is-title" />
             <span class="source-control-pr-skeleton-row" />
             <span class="source-control-pr-skeleton-row is-short" />
           </div>
 
-          <div v-else-if="pullRequests.length > 0" class="source-control-pr-list">
-            <button v-for="pullRequest in pullRequests" :key="pullRequest.number" type="button"
+          <div v-else-if="sortedPullRequests.length > 0" class="source-control-pr-list">
+            <button v-for="pullRequest in sortedPullRequests" :key="pullRequest.number" type="button"
               class="source-control-pr-item" @click="handleOpenPullRequest(pullRequest.number)">
               <span class="source-control-pr-item-head">
                 <span class="source-control-pr-item-title" v-text="pullRequest.title" />
@@ -206,6 +195,10 @@ const props = defineProps<{
 
 type TPullRequestView = 'list' | 'detail' | 'create';
 
+// 移除筛选维度后,PR 列表统一以 'all' 拉取并展示。
+const PULL_REQUEST_LIST_STATE = 'all';
+const PULL_REQUESTS_EMPTY_TEXT = '这个仓库还没有任何 Pull Request。';
+
 const gitStore = useGitStore();
 const message = useMessage();
 const dialog = useDialog();
@@ -218,11 +211,17 @@ const isPullRequestSupportLoading = computed(() => gitStore.isPullRequestSupport
 const isSettingRemote = computed(() => gitStore.isSettingRemote);
 const pullRequests = computed<IGitPullRequestSummaryPayload[]>(() => gitStore.pullRequests);
 const isPullRequestsLoading = computed(() => gitStore.isPullRequestsLoading);
-const pullRequestStateFilter = computed(() => gitStore.pullRequestStateFilter);
 const pullRequestDetail = computed<IGitPullRequestDetailPayload | null>(
   () => gitStore.pullRequestDetail,
 );
 const isPullRequestDetailLoading = computed(() => gitStore.isPullRequestDetailLoading);
+
+// 按最新顺序从上而下展示:PR 编号单调递增,编号越大越新,故按编号降序排序。
+const sortedPullRequests = computed<IGitPullRequestSummaryPayload[]>(() =>
+  [...pullRequests.value].sort((a, b) => b.number - a.number),
+);
+
+const pullRequestsEmptyText = PULL_REQUESTS_EMPTY_TEXT;
 
 const isRemoteFormOpen = ref(false);
 const remoteNameInput = ref('');
@@ -245,28 +244,12 @@ const createPullRequestDraft = ref(false);
 const createPullRequestError = ref<string | null>(null);
 const isCreatingPullRequest = ref(false);
 
-const pullRequestFilters: Array<{ key: 'open' | 'closed' | 'all'; label: string }> = [
-  { key: 'open', label: '进行中' },
-  { key: 'closed', label: '已关闭' },
-  { key: 'all', label: '全部' },
-];
-
 const canSubmitCreatePullRequest = computed(
   () =>
     createPullRequestTitle.value.trim().length > 0 &&
     createPullRequestBase.value.trim().length > 0 &&
     createPullRequestHead.value.trim().length > 0,
 );
-
-const pullRequestsEmptyText = computed(() => {
-  if (pullRequestStateFilter.value === 'closed') {
-    return '当前没有已关闭的 Pull Request。';
-  }
-  if (pullRequestStateFilter.value === 'all') {
-    return '这个仓库还没有任何 Pull Request。';
-  }
-  return '当前没有进行中的 Pull Request。';
-});
 
 const resolvePullRequestStateLabel = (pullRequest: IGitPullRequestSummaryPayload): string => {
   if (pullRequest.isDraft) {
@@ -340,19 +323,6 @@ const pullRequestPanelText = computed(() => {
   return '先为仓库配置远程地址，再在这里打开 PR 列表或创建入口。';
 });
 
-const handleSelectPullRequestFilter = async (
-  stateKey: 'open' | 'closed' | 'all',
-): Promise<void> => {
-  if (isPullRequestsLoading.value || stateKey === pullRequestStateFilter.value) {
-    return;
-  }
-  try {
-    await gitStore.ensurePullRequestsLoaded(stateKey);
-  } catch (error) {
-    message.error(toErrorMessage(error, '读取 Pull Request 列表失败'));
-  }
-};
-
 const handleOpenPullRequest = async (pullRequestNumber: number): Promise<void> => {
   activePullRequestNumber.value = pullRequestNumber;
   pullRequestView.value = 'detail';
@@ -392,7 +362,7 @@ const handleSubmitCreatePullRequest = async (): Promise<void> => {
       head: createPullRequestHead.value.trim(),
       draft: createPullRequestDraft.value,
     });
-    await gitStore.refreshPullRequests(pullRequestStateFilter.value);
+    await gitStore.refreshPullRequests(PULL_REQUEST_LIST_STATE);
     pullRequestView.value = 'list';
     message.success('已创建 Pull Request');
   } catch (error) {
@@ -418,7 +388,7 @@ const handleMergePullRequest = async (
   isMutatingPullRequest.value = true;
   try {
     await gitStore.mergePullRequest(pullRequest.number, mergeMethod.value);
-    await gitStore.refreshPullRequests(pullRequestStateFilter.value);
+    await gitStore.refreshPullRequests(PULL_REQUEST_LIST_STATE);
     pullRequestView.value = 'list';
     activePullRequestNumber.value = null;
     message.success(`已合并 #${pullRequest.number}`);
@@ -445,7 +415,7 @@ const handleClosePullRequest = async (
   isMutatingPullRequest.value = true;
   try {
     await gitStore.closePullRequest(pullRequest.number);
-    await gitStore.refreshPullRequests(pullRequestStateFilter.value);
+    await gitStore.refreshPullRequests(PULL_REQUEST_LIST_STATE);
     pullRequestView.value = 'list';
     activePullRequestNumber.value = null;
     message.success(`已关闭 #${pullRequest.number}`);
@@ -458,7 +428,7 @@ const handleClosePullRequest = async (
 
 const handleReloadPullRequestSupport = async (): Promise<void> => {
   try {
-    await gitStore.refreshPullRequests(pullRequestStateFilter.value);
+    await gitStore.refreshPullRequests(PULL_REQUEST_LIST_STATE);
   } catch (error) {
     message.error(toErrorMessage(error, '读取 Pull Request 列表失败'));
   }
