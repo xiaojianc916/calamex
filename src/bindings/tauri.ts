@@ -53,6 +53,14 @@ export const commands = {
 	closeTerminalSession: (payload: CloseTerminalSessionRequest) => __TAURI_INVOKE<null>("close_terminal_session", { payload }),
 	dispatchScriptToTerminal: (payload: DispatchTerminalScriptRequest) => __TAURI_INVOKE<DispatchTerminalScriptPayload>("dispatch_script_to_terminal", { payload }),
 	cancelTerminalRun: (payload: CancelTerminalRunRequest) => __TAURI_INVOKE<null>("cancel_terminal_run", { payload }),
+	/**
+	 *  P2 ack 背压：前端每消费约 `CHAR_COUNT_ACK_SIZE` 个字符回一次 ack，未确认字符数回落到
+	 *  低水位以下即解除暂停、唤醒被背压的读线程。会话已关闭 / 无流控器时为安全 no-op。
+	 * 
+	 *  对照 VSCode `src/vs/platform/terminal/common/terminalProcess.ts` 的 `acknowledgeDataEvent`：
+	 *  前端 xterm 写入后按累计字符数回 ack，pty 侧据此增减 `_unacknowledgedCharCount`。
+	 */
+	acknowledgeTerminalData: (sessionId: string, charCount: number) => __TAURI_INVOKE<null>("acknowledge_terminal_data", { sessionId, charCount }),
 	listGitBranches: (payload: GitRepositoryRootRequest) => __TAURI_INVOKE<GitBranchListPayload>("list_git_branches", { payload }),
 	checkoutGitBranch: (payload: GitBranchCheckoutRequest) => __TAURI_INVOKE<GitRepositoryStatusPayload>("checkout_git_branch", { payload }),
 	/**
