@@ -22,7 +22,8 @@ const SHIKI_LANGUAGE_ALIAS: Record<string, string> = {
   cmd: 'text',
   conf: 'ini',
   cs: 'csharp',
-  docker: 'dockerfile',
+  // Shiki 的 bundled 语言 id 为 'docker'（'dockerfile' 是其别名）。把 dockerfile 归一到
+  // canonical 'docker'，避免 docker / dockerfile 两种拼写各自加载并缓存一份同一 grammar。
   dockerfile: 'docker',
   h: 'c',
   htm: 'html',
