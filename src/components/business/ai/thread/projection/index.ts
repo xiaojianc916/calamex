@@ -10,5 +10,6 @@ export * from './entry-types';
 export * from './from-acp-events';
 export * from './from-acp-thread-entry';
 export * from './from-acp-tool-call';
+export * from './from-runtime-tool-call';
 export * from './reconcile-thread-entries';
 export * from './tool-view';
