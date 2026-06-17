@@ -270,6 +270,20 @@ export interface IAiCancelRequest {
   threadId: string | null;
 }
 
+/**
+ * ACP 工具调用审批的回投决策(ADR-20260617 D6)。
+ *
+ * 由前端 approval UI 在用户选择后回投到 Rust `ai_resolve_approval`,唤醒被挂起的
+ * 反向 `session/request_permission` JSON-RPC。`decision` 为用户所选 ACP 选项的
+ * `optionId` 原文(VERBATIM),Rust / sidecar 不做语义解释,原样回传给外部 agent。
+ * 与生成绑定 `AiResolveApprovalRequest` 结构一致(全 camelCase、全必填)。
+ */
+export interface IAiResolveApprovalRequest {
+  sessionId: string;
+  toolCallId: string;
+  decision: string;
+}
+
 export interface IAiInlineCompletionRequest {
   filePath: string;
   language: string;
