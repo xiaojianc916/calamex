@@ -120,6 +120,16 @@ export const commands = {
 	agentSidecarRestart: () => __TAURI_INVOKE<AgentSidecarHealthPayload>("agent_sidecar_restart"),
 	agentSidecarWarmup: () => __TAURI_INVOKE<AgentSidecarWarmupPayload>("agent_sidecar_warmup"),
 	agentSidecarChat: (payload: AgentSidecarChatRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarResponsePayload>("agent_sidecar_chat", { payload }),
+	/**
+	 *  外部 ACP 编码 agent（Kimi Code / Codex 等，ADR-0015）的标准回合命令（`session/prompt`）。
+	 * 
+	 *  与 `agent_sidecar_chat`（走自家边车的带外 `agent_chat` 扩展回合）不同：按后端类型经
+	 *  `get_or_spawn_backend` 解析/派生对应的独立常驻宿主，解析稳定会话后以纯文本内容块驱动
+	 *  一轮标准 prompt。**不补齐 model_config**——外部 agent 的凭据由其自身 CLI 自管（见
+	 *  acp/launch.rs；如 Kimi 需先在终端 `kimi` 内 `/login`）。过程增量经 session/update 帧转发
+	 *  （投影见 acp/ui_event.rs），本命令仅返回终态：会话标识 + 回合终止原因。
+	 */
+	agentSidecarExternalChat: (payload: AgentExternalChatRequest_Deserialize) => __TAURI_INVOKE<AgentExternalChatResultPayload>("agent_sidecar_external_chat", { payload }),
 	agentSidecarResolveApproval: (payload: AgentSidecarApprovalResolveRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarResponsePayload>("agent_sidecar_resolve_approval", { payload }),
 	agentSidecarResolveAskUser: (payload: AgentSidecarAskUserResumeRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarResponsePayload>("agent_sidecar_resolve_ask_user", { payload }),
 	agentSidecarRestoreCheckpoint: (payload: AgentSidecarCheckpointRestoreRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarResponsePayload>("agent_sidecar_restore_checkpoint", { payload }),
@@ -205,6 +215,64 @@ export const events = {
 };
 
 /* Types */
+/**
+ *  可挂载的外部 ACP 编码 agent 后端类型（ADR-0015）。
+ * 
+ *  作为 specta 契约类型导出给前端选择，运行时由命令层映射到 `acp::AcpBackendId`：
+ *    * `Builtin` —— 自家 Node Mastra 边车（默认后端，走带外 `agent_chat` 扩展回合）；
+ *    * `Kimi`    —— Kimi Code（`kimi acp`，原生 ACP，凭终端 `/login` 自鉴权）；
+ *    * `Codex`   —— Codex CLI（社区 `codex-acp` 适配器，凭 `OPENAI_API_KEY`）。
+ */
+export type AgentBackendKind = "builtin" | "kimi" | "codex";
+
+/**
+ *  外部 ACP 编码 agent 的标准回合（`session/prompt`）请求（契约层）。
+ * 
+ *  与自家 `AgentSidecarChatRequest` 不同：外部 agent 只实现标准 `prompt`、不认识
+ *  `calamex.dev/*` 扩展方法，也不接收逐请求 `model_config`（凭据由其自身 CLI 自管，见
+ *  ADR-0015 / `acp/launch.rs`），故仅携带后端类型、纯文本提示与会话定位字段。
+ */
+export type AgentExternalChatRequest = AgentExternalChatRequest_Serialize | AgentExternalChatRequest_Deserialize;
+
+/**
+ *  外部 ACP 编码 agent 的标准回合（`session/prompt`）请求（契约层）。
+ * 
+ *  与自家 `AgentSidecarChatRequest` 不同：外部 agent 只实现标准 `prompt`、不认识
+ *  `calamex.dev/*` 扩展方法，也不接收逐请求 `model_config`（凭据由其自身 CLI 自管，见
+ *  ADR-0015 / `acp/launch.rs`），故仅携带后端类型、纯文本提示与会话定位字段。
+ */
+export type AgentExternalChatRequest_Deserialize = {
+	backend: AgentBackendKind,
+	text: string,
+	threadId: string | null,
+	workspaceRootPath: string | null,
+};
+
+/**
+ *  外部 ACP 编码 agent 的标准回合（`session/prompt`）请求（契约层）。
+ * 
+ *  与自家 `AgentSidecarChatRequest` 不同：外部 agent 只实现标准 `prompt`、不认识
+ *  `calamex.dev/*` 扩展方法，也不接收逐请求 `model_config`（凭据由其自身 CLI 自管，见
+ *  ADR-0015 / `acp/launch.rs`），故仅携带后端类型、纯文本提示与会话定位字段。
+ */
+export type AgentExternalChatRequest_Serialize = {
+	backend: AgentBackendKind,
+	text: string,
+	threadId?: string | null,
+	workspaceRootPath?: string | null,
+};
+
+/**
+ *  外部 ACP 回合的终态结果（契约层）。
+ * 
+ *  外部 agent 无自家富信封：过程增量经 `session/update` 帧由 `EventSink` 转发（投影见
+ *  `acp/ui_event.rs`），本结果仅承载会话标识与回合终止原因（`StopReason` 的字符串化）。
+ */
+export type AgentExternalChatResultPayload = {
+	sessionId: string,
+	stopReason: string,
+};
+
 export type AgentSidecarApprovalResolveRequest = AgentSidecarApprovalResolveRequest_Serialize | AgentSidecarApprovalResolveRequest_Deserialize;
 
 export type AgentSidecarApprovalResolveRequest_Deserialize = {
