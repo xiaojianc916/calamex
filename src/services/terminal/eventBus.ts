@@ -1,6 +1,7 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { z } from 'zod';
 
+import { commands } from '@/bindings/tauri';
 import type {
   ITerminalDataEvent,
   ITerminalExitEvent,
@@ -23,6 +24,17 @@ const TERMINAL_INTERACTIVE_READY_EVENT = 'terminal:interactive-ready';
 const TERMINAL_INTERACTIVE_EXITED_EVENT = 'terminal:interactive-exited';
 const TERMINAL_STATE_CHANGED_EVENT = 'terminal:state-changed';
 const TERMINAL_SESSION_STATE_CHANGED_EVENT = 'terminal:session-state-changed';
+
+// ---------------------------------------------------------------------------
+// Flow control (ack 背压)
+// ---------------------------------------------------------------------------
+
+/**
+ * 前端每消费这么多字符(UTF-16 码元)回一次 ack。必须与后端 `flow_control.rs` 的
+ * `CHAR_COUNT_ACK_SIZE` 同值,两侧用同一把尺子加减。对照 VSCode
+ * `FlowControlConstants.CharCountAckSize`(`src/vs/platform/terminal/common/terminalProcess.ts`)。
+ */
+export const CHAR_COUNT_ACK_SIZE = 5000;
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -92,6 +104,12 @@ type TEventHandler<TPayload> = (payload: TPayload) => void;
 
 export type TTerminalListen = typeof listen;
 
+/**
+ * 向后端回报「已消费 charCount 个字符」的 ack 函数。抽成可注入依赖,便于测试断言,
+ * 生产环境默认走生成的 `acknowledge_terminal_data` 命令。
+ */
+export type TTerminalAcknowledge = (sessionId: string, charCount: number) => void;
+
 export interface ITerminalEventBus {
   start(): Promise<void>;
   stop(): void;
@@ -104,6 +122,16 @@ export interface ITerminalEventBus {
   onStateChanged(handler: TEventHandler<ITerminalStateChangedPayload>): UnlistenFn;
   onSessionStateChanged(handler: TEventHandler<ITerminalSessionStateChangedPayload>): UnlistenFn;
 }
+
+/**
+ * 默认 ack 实现:即发即弃地调用后端命令。ack 失败不应中断事件分发——最坏只是少一次
+ * 背压解除,由后端防御性暂停上限兜底;会话已关闭时后端为安全 no-op。
+ */
+const defaultAcknowledge: TTerminalAcknowledge = (sessionId, charCount) => {
+  void commands.acknowledgeTerminalData(sessionId, charCount).catch((error: unknown) => {
+    console.warn('[terminal-event] ack 回报失败,已忽略', error);
+  });
+};
 
 // ---------------------------------------------------------------------------
 // Bus factory
@@ -133,7 +161,10 @@ const emitToHandlers = <TPayload>(
   }
 };
 
-export const createTerminalEventBus = (listenFn: TTerminalListen = listen): ITerminalEventBus => {
+export const createTerminalEventBus = (
+  listenFn: TTerminalListen = listen,
+  acknowledge: TTerminalAcknowledge = defaultAcknowledge,
+): ITerminalEventBus => {
   const terminalDataHandlers = new Set<TEventHandler<ITerminalDataEvent>>();
   const runChunkHandlers = new Set<TEventHandler<ITerminalRunChunkPayload>>();
   const runStartedHandlers = new Set<TEventHandler<ITerminalRunStartedPayload>>();
@@ -142,6 +173,34 @@ export const createTerminalEventBus = (listenFn: TTerminalListen = listen): ITer
   const interactiveExitedHandlers = new Set<TEventHandler<ITerminalExitEvent>>();
   const stateChangedHandlers = new Set<TEventHandler<ITerminalStateChangedPayload>>();
   const sessionStateChangedHandlers = new Set<TEventHandler<ITerminalSessionStateChangedPayload>>();
+
+  /**
+   * 每会话「已收到但尚未回报」的字符数(UTF-16 码元)。仅在本单例总线的唯一 IPC 监听里
+   * 累计,保证每条 terminal:data 只计一次——即便多个 facade / 多窗口共享同一总线,也不会
+   * 重复 ack(重复 ack 会让后端 unacked 提前归零、背压形同虚设)。
+   */
+  const unackedCharsBySession = new Map<string, number>();
+
+  /**
+   * 累计并在跨过阈值时回报 ack。无论是否有 data handler 订阅都会执行:数据已离开后端
+   * (读线程已 record_produced),只有回报「已收到」才能让被背压暂停的读线程恢复;若因
+   * 无订阅者而不 ack,后端 unacked 会单调累积直至永久暂停。
+   */
+  const accumulateAndAck = (event: ITerminalDataEvent): void => {
+    const pending = (unackedCharsBySession.get(event.sessionId) ?? 0) + event.data.length;
+    if (pending >= CHAR_COUNT_ACK_SIZE) {
+      unackedCharsBySession.set(event.sessionId, 0);
+      acknowledge(event.sessionId, pending);
+    } else {
+      unackedCharsBySession.set(event.sessionId, pending);
+    }
+  };
+
+  // 内部清理:会话交互退出后丢弃其 ack 累计,避免 map 长期增长。注册在工厂创建时,随单例
+  // 存活、不对外暴露;未达阈值的残余无需补 ack(会话关闭后端会一并移除其流控器)。
+  interactiveExitedHandlers.add((payload) => {
+    unackedCharsBySession.delete(payload.sessionId);
+  });
 
   let unlisteners: UnlistenFn[] = [];
   let startPromise: Promise<void> | null = null;
@@ -176,6 +235,24 @@ export const createTerminalEventBus = (listenFn: TTerminalListen = listen): ITer
       parseAndEmit(eventName, schema, handlers, payload);
     });
 
+  /**
+   * terminal:data 专用监听:解包校验 + 分发后,额外做 ack 累计。ack 不依赖订阅者存在,
+   * 见 accumulateAndAck 说明。
+   */
+  const wireTerminalDataListener = (): Promise<UnlistenFn> =>
+    listenFn<unknown>(TERMINAL_DATA_EVENT, ({ payload }) => {
+      const parsed = terminalDataEventSchema.safeParse(payload);
+      if (!parsed.success) {
+        console.warn(
+          `[terminal-event] ${TERMINAL_DATA_EVENT} payload 校验失败`,
+          z.treeifyError(parsed.error),
+        );
+        return;
+      }
+      emitToHandlers(terminalDataHandlers, parsed.data);
+      accumulateAndAck(parsed.data);
+    });
+
   /** 无 payload 的事件 (当前仅 interactive-ready)。 */
   const wireValuelessListener = (
     eventName: string,
@@ -197,7 +274,7 @@ export const createTerminalEventBus = (listenFn: TTerminalListen = listen): ITer
 
     startPromise = (async () => {
       const settled = await Promise.allSettled([
-        wireListener(TERMINAL_DATA_EVENT, terminalDataEventSchema, terminalDataHandlers),
+        wireTerminalDataListener(),
         wireListener(TERMINAL_RUN_CHUNK_EVENT, terminalRunChunkEventSchema, runChunkHandlers),
         wireListener(TERMINAL_RUN_STARTED_EVENT, terminalRunStartedEventSchema, runStartedHandlers),
         wireListener(
