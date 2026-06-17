@@ -8,7 +8,7 @@
  *
  * 设计取舍(对齐 Zed,不自创启发式):
  * - 图标由 `kind` 派生:协议 VM 不持 toolName,kind 驱动是唯一干净解,且与 ACP
- *   路径一致;故此处只需把 runtime kind 收敛到协议 ToolKind。
+ *   路径一致;故此处只需把 runtime kind 收敛到协议 ToolKind(见 tool-kind)。
  * - 标题取 `node.action`:运行时 presenter 产出的单段中文文案已折入资源名,直接
  *   作为 Zed `label`,不再从 rawInput 反解动词 / 参数(退役 buildZedToolLabel)。
  * - 终端:运行时把输出内联在节点上,这里改注册到终端快照表(键 `${id}:terminal`),
@@ -16,36 +16,19 @@
  * - 等待决策(Mastra HITL)经 `awaiting` 标志上抛,由渲染层派生
  *   `awaiting-confirmation`,不臆造协议状态(Zed 等待权限时工具停在 pending)。
  */
-import { type ITaskNodeItem, WAITING_DECISION_LABEL } from '@/components/business/ai/plan/runtime-timeline';
-import type { TAiRuntimeToolKind } from '@/constants/ai/runtime-tools';
-import type { TTaskStatus } from '@/components/business/ai/plan/runtime-timeline';
+import {
+  type ITaskNodeItem,
+  type TTaskStatus,
+  WAITING_DECISION_LABEL,
+} from '@/components/business/ai/plan/runtime-timeline';
 import type {
   IAiThreadToolCall,
   IAiThreadToolCallContent,
   TAiThreadToolCallStatus,
-  TAiThreadToolKind,
 } from '@/types/ai/thread';
 
+import { RUNTIME_KIND_TO_TOOL_KIND } from './tool-kind';
 import type { IAiThreadTerminalSnapshot } from './tool-view';
-
-/** runtime 工具大类 → 协议 ToolKind(Zed `ToolKind` 取值)。 */
-const RUNTIME_KIND_TO_TOOL_KIND: Record<TAiRuntimeToolKind, TAiThreadToolKind> = {
-  search: 'search',
-  read: 'read',
-  write: 'edit',
-  git: 'other',
-  browser: 'fetch',
-  terminal: 'execute',
-  task: 'other',
-  network: 'fetch',
-  diagram: 'other',
-  symbol: 'search',
-  python: 'execute',
-  java: 'execute',
-  memory: 'other',
-  thinking: 'think',
-  system: 'other',
-};
 
 /** runtime 任务状态 → 协议工具状态(runtime 无 canceled)。 */
 const RUNTIME_STATUS_TO_TOOL_STATUS: Record<TTaskStatus, TAiThreadToolCallStatus> = {
