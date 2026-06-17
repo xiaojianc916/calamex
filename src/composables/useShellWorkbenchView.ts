@@ -1,4 +1,5 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { useGitRepositoryStatusBootstrap } from '@/composables/useGitRepositoryStatusBootstrap';
 import { useShellWorkbenchAiBridge } from '@/composables/useShellWorkbenchAiBridge';
 import { useShellWorkbenchViewportState } from '@/composables/useShellWorkbenchViewportState';
 import { useWorkbench } from '@/composables/useWorkbench';
@@ -127,6 +128,10 @@ export const useShellWorkbenchView = (onReady: () => void) => {
 
   const sidebarWidth = computed(() => DASHBOARD_SIDEBAR_WIDTH);
   const visibleWorkspaceRootPath = computed(() => workbench.editorStore.workspaceRootPath);
+
+  // 工作台层级 Git 仓库状态初始化：打开工作区时即加载，与左侧 git 侧边栏是否激活解耦，
+  // 确保右上角 GitHub 登录控件在工作区打开后立即可用（详见 useGitRepositoryStatusBootstrap）。
+  useGitRepositoryStatusBootstrap(workbench.isDesktopRuntime, visibleWorkspaceRootPath);
 
   const startupExplorerExpandedPaths = computed(
     () => workbench.editorStore.sessionSnapshot.workbench.explorerExpandedPaths ?? [],
