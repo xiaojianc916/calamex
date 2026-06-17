@@ -22,7 +22,7 @@ use crate::terminal::{
     },
     types::TerminalState,
     visual::{TerminalRunVisualTracker, extract_prompt_from_terminal_snapshot},
-    wsl_pty::{open_interactive_terminal_local, run_terminal_script_local},
+    wsl_pty::{open_interactive_terminal_local_with_flow, run_terminal_script_local_with_flow},
 };
 
 use super::events::{
@@ -33,13 +33,14 @@ use super::events::{
 use super::state::{
     ActiveRunInputTarget, TerminalSession, TerminalSessionState, attach_active_terminal_run_handle,
     buffer_pending_switch_input, clear_active_terminal_run, drain_active_terminal_runs,
-    get_active_terminal_run_handle, get_active_terminal_run_input_target, get_session_geometry,
-    get_terminal_session, get_terminal_snapshot, lock_terminal_sessions,
-    mark_terminal_resize_repaint_suppression, remove_pending_switch_input, remove_session_geometry,
-    remove_terminal_interactive_visual_state, remove_terminal_session, remove_terminal_snapshot,
-    resolve_terminal_start_directory, set_session_geometry, set_terminal_snapshot,
-    should_recreate_terminal_session, take_active_terminal_run_for_session,
-    take_and_prepend_pending_switch_input, terminate_terminal_session, try_mark_active_terminal_run,
+    get_active_terminal_run_handle, get_active_terminal_run_input_target, get_flow_controller,
+    get_session_geometry, get_terminal_session, get_terminal_snapshot, lock_terminal_sessions,
+    mark_terminal_resize_repaint_suppression, remove_flow_controller, remove_pending_switch_input,
+    remove_session_geometry, remove_terminal_interactive_visual_state, remove_terminal_session,
+    remove_terminal_snapshot, reset_flow_controller, resolve_terminal_start_directory,
+    set_session_geometry, set_terminal_snapshot, should_recreate_terminal_session,
+    take_active_terminal_run_for_session, take_and_prepend_pending_switch_input,
+    terminate_terminal_session, try_mark_active_terminal_run,
 };
 use super::to_wsl_path;
 
@@ -108,13 +109,18 @@ pub async fn ensure_terminal_session(
         let event_app = app.clone();
         let event_state = terminal_state.clone();
         let event_session_id = payload.session_id.clone();
-        let handle = open_interactive_terminal_local(
+        // P2：会话创建时为其安装全新的输出流控器（覆盖任何陈旧 / 已 cancel 的旧实例），交给
+        // 交互读线程；该会话发起的运行读线程随后经 get_flow_controller 复用同一个。前端按会话
+        // 回 ack，未确认字符回落到低水位即恢复读取。
+        let flow = reset_flow_controller(&terminal_state, &payload.session_id);
+        let handle = open_interactive_terminal_local_with_flow(
             LocalWslTerminalOpenInteractiveRequest {
                 session_id: payload.session_id.clone(),
                 working_directory: terminal_cwd.clone(),
                 cols: payload.cols,
                 rows: payload.rows,
             },
+            flow,
             move |event| {
                 handle_local_wsl_interactive_terminal_event(
                     &event_app,
@@ -128,6 +134,9 @@ pub async fn ensure_terminal_session(
 
         if get_terminal_session(&terminal_state, &payload.session_id)?.is_some() {
             let _ = handle.close();
+            // 让步给已存在的会话：撤销刚安装的流控器（handle.close() 已 cancel 它），避免
+            // 在 map 中留下与本次失败创建相关的陈旧条目。
+            remove_flow_controller(&terminal_state, &payload.session_id);
             return Ok(TerminalSessionPayload {
                 session_id: payload.session_id,
                 cwd: terminal_cwd.clone(),
@@ -243,6 +252,8 @@ pub fn close_terminal_session(
     remove_terminal_interactive_visual_state(&terminal_state, &payload.session_id)?;
     remove_pending_switch_input(&terminal_state, &payload.session_id);
     remove_session_geometry(&terminal_state, &payload.session_id);
+    // P2：取消并移除该会话的输出流控器，释放任何处于背压暂停态的读线程（使其能读到 EOF）。
+    remove_flow_controller(&terminal_state, &payload.session_id);
     if let Some(run_handle) =
         take_active_terminal_run_for_session(&terminal_state, &payload.session_id)
     {
@@ -331,7 +342,10 @@ pub fn dispatch_script_to_terminal(
     let event_run_id = payload.run_id.clone();
     let event_prompt = prompt;
 
-    let run_handle = match run_terminal_script_local(request, move |event| {
+    // P2：运行读线程复用「发起该 run 的会话」的输出流控器，与交互读线程共享同一计数，
+    // 一并受前端 ack 背压（运行输出同样汇入该会话的 xterm）。
+    let flow = get_flow_controller(&terminal_state, &payload.session_id);
+    let run_handle = match run_terminal_script_local_with_flow(request, flow, move |event| {
         handle_local_run_event(
             &event_app,
             &event_state,
@@ -374,4 +388,24 @@ pub async fn cancel_terminal_run(
     let handle = get_active_terminal_run_handle(&terminal_state, &payload.run_id)?
         .ok_or_else(|| format!("未找到正在运行的脚本：{}", payload.run_id))?;
     handle.cancel(mode).map_err(|error| error.to_string())
+}
+
+/// P2 ack 背压：前端每消费约 `CHAR_COUNT_ACK_SIZE` 个字符回一次 ack，未确认字符数回落到
+/// 低水位以下即解除暂停、唤醒被背压的读线程。会话已关闭 / 无流控器时为安全 no-op。
+///
+/// 对照 VSCode `src/vs/platform/terminal/common/terminalProcess.ts` 的 `acknowledgeDataEvent`：
+/// 前端 xterm 写入后按累计字符数回 ack，pty 侧据此增减 `_unacknowledgedCharCount`。
+#[tauri::command]
+#[specta::specta]
+#[allow(dead_code)] // 注册于下一提交（tauri_bindings）后即为活跃。
+pub fn acknowledge_terminal_data(
+    state: State<TerminalSessionState>,
+    session_id: String,
+    char_count: u32,
+) -> Result<(), String> {
+    let terminal_state = state.inner().clone();
+    if let Some(flow) = get_flow_controller(&terminal_state, &session_id) {
+        flow.acknowledge(char_count as usize);
+    }
+    Ok(())
 }
