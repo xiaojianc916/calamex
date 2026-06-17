@@ -319,7 +319,7 @@ async function ensureActiveTabData(tabKey: TGitNavKey): Promise<void> {
       return;
     }
 
-    await gitStore.ensurePullRequestsLoaded(pullRequestStateFilter.value);
+    await gitStore.ensurePullRequestsLoaded('all');
   } catch (error) {
     const fallbackMessage =
       tabKey === 'history'
@@ -340,7 +340,6 @@ const pullRequestSupport = computed<IGitPullRequestSupportPayload>(
   () => gitStore.pullRequestSupport,
 );
 const pullRequests = computed<IGitPullRequestSummaryPayload[]>(() => gitStore.pullRequests);
-const pullRequestStateFilter = computed(() => gitStore.pullRequestStateFilter);
 
 const branchLabel = computed(() => {
   if (status.value.isDetached) {
