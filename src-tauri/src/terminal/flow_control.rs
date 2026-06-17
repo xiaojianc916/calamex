@@ -226,7 +226,7 @@ mod tests {
     #[test]
     fn utf16_len_matches_js_string_length() {
         assert_eq!(utf16_len("hello"), 5);
-        assert_eq!(utf16_len("caf\u00e9"), 4);
+        assert_eq!(utf16_len("caf\u{00e9}"), 4);
         // 超出 BMP 的字符（代理对）计为 2 个 UTF-16 码元，与 JS `.length` 一致。
         assert_eq!(utf16_len("\u{1f980}"), 2);
         assert_eq!(utf16_len("a\u{1f980}b"), 4);
