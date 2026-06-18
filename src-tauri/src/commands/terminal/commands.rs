@@ -476,7 +476,7 @@ pub fn dispatch_script_to_terminal(
 #[tauri::command]
 #[specta::specta]
 pub async fn cancel_terminal_run(
-    app: AppHandle,
+    _app: AppHandle,
     state: State<'_, TerminalSessionState>,
     payload: CancelTerminalRunRequest,
 ) -> Result<(), String> {

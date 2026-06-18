@@ -23,6 +23,7 @@ pub use ai_config::*;
 pub use ai_edit::*;
 pub use format::*;
 pub use script::*;
+pub use secret::*;
 pub use skills::*;
 pub use ssh::*;
 pub use workspace::*;

@@ -298,7 +298,7 @@ pub fn apply_workspace_replacement(
 /// 不影响工作区打开流程或向用户报错。通过 resolve_workspace_root 复用与 search_workspace
 /// 完全一致的根解析逻辑，确保预热写入的缓存键与后续搜索查找的键完全一致。
 pub fn prewarm_workspace_search_index(workspace_root_path: String) {
-    std::thread::Builder::new()
+    if let Err(error) = std::thread::Builder::new()
         .name("search-index-prewarm".into())
         .spawn(move || {
             let Ok(workspace_root) = resolve_workspace_root(Some(workspace_root_path)) else {
