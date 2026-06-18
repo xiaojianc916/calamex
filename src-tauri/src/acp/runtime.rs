@@ -196,6 +196,26 @@ impl AcpRuntime {
         resolved
     }
 
+    /// 切换指定线程当前 ACP 会话的模式（标准 session/set_mode）。线程绑定的会话可能落在
+    /// 任一后端宿主，故向全部**已建立**宿主广播下发：命中（某宿主确有该线程会话并下发成功）
+    /// 即记为已应用并返回 true。无任何宿主 / 无匹配线程时返回 Ok(false)（安全空操作——模式
+    /// 切换绝不应触发 node 子进程派生）。至多一个宿主持有该线程，故某宿主下发失败即整体失败。
+    pub async fn set_session_mode(
+        &self,
+        thread_id: &str,
+        mode_id: &str,
+    ) -> Result<bool, AcpClientError> {
+        // 先取出 Arc 列表并释放锁，避免在广播下发（跨 await）期间持有 runtime 锁。
+        let hosts = self.hosts.lock().all();
+        let mut applied = false;
+        for host in hosts {
+            if host.set_session_mode(thread_id, mode_id).await? {
+                applied = true;
+            }
+        }
+        Ok(applied)
+    }
+
     /// 关停并释放全部后端的常驻连接（App 统一退出清理调用）。幂等：无宿主时为安全空操作。
     pub fn shutdown(&self) {
         // 先取走全部 Arc 并释放锁，避免在逐个关停期间持有 runtime 锁。
@@ -254,6 +274,16 @@ mod tests {
         let runtime = AcpRuntime::default();
         // 无任何宿主时，审批解决为安全空操作：返回 false 且绝不派生子进程。
         assert!(!runtime.resolve_approval("sess-1", "tool-1", "allow-once"));
+        assert!(runtime.hosts.lock().all().is_empty());
+    }
+
+    #[test]
+    fn set_session_mode_on_unestablished_runtime_is_noop() {
+        let runtime = AcpRuntime::default();
+        // 无任何宿主时，模式切换为安全空操作：返回 Ok(false) 且绝不派生子进程。
+        let applied = tauri::async_runtime::block_on(runtime.set_session_mode("thread-1", "code"))
+            .expect("set_session_mode on empty runtime should not error");
+        assert!(!applied);
         assert!(runtime.hosts.lock().all().is_empty());
     }
 

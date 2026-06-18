@@ -44,7 +44,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use agent_client_protocol::schema::{ContentBlock, SessionId, StopReason, ToolCallId};
+use agent_client_protocol::schema::{ContentBlock, SessionId, SessionModeId, StopReason, ToolCallId};
 
 use crate::commands::contracts::{
     AgentSidecarHealthPayload, AgentSidecarOrchestratePayload, AgentSidecarResponsePayload,
@@ -183,6 +183,31 @@ impl AcpHost {
             ToolCallId::from(tool_call_id.to_string()),
             decision,
         )
+    }
+
+    /// 切换指定线程当前 ACP 会话的模式（标准 session/set_mode 请求）。
+    ///
+    /// 仅在本宿主已绑定该 thread_id 的会话时执行：命中则下发 session/set_mode 并返回
+    /// Ok(true)；未绑定（空 thread / 无映射）则返回 Ok(false) 作为安全空操作，交由 runtime
+    /// 广播给真正持有该线程的后端宿主。绝不在此 ensure_session 新建会话——模式切换只对既有
+    /// 会话有意义（对齐 cancel_thread 的「无会话即空操作」语义）。纯转发，不修改本地状态。
+    pub async fn set_session_mode(
+        &self,
+        thread_id: &str,
+        mode_id: &str,
+    ) -> Result<bool, AcpClientError> {
+        let thread_key = thread_id.trim();
+        if thread_key.is_empty() {
+            return Ok(false);
+        }
+        let session_id = self.sessions.lock().get(thread_key).cloned();
+        let Some(session_id) = session_id else {
+            return Ok(false);
+        };
+        self.handle
+            .set_session_mode(session_id, SessionModeId::from(mode_id.to_string()))
+            .await?;
+        Ok(true)
     }
 
     /// 触发检查点回滚（扩展方法 `calamex.dev/checkpoint/restore`）。

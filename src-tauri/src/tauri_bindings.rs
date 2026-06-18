@@ -128,6 +128,7 @@ pub fn builder() -> Builder<tauri::Wry> {
             ai::gateway::ai_chat_stream,
             ai::gateway::ai_cancel,
             ai::gateway::ai_resolve_approval,
+            ai::gateway::ai_set_session_mode,
             ai::gateway::ai_inline_complete,
             ai::agent::ai_agent_classify_task,
             ai::agent::ai_agent_set_network_permission,

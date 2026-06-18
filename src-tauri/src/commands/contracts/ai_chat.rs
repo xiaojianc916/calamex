@@ -109,6 +109,20 @@ pub struct AiResolveApprovalRequest {
     pub(crate) decision: String,
 }
 
+/// ACP 标准 session/set_mode 的模式切换请求（契约层）。
+///
+/// 对齐 acp::AcpRuntime::set_session_mode(thread_id, mode_id)：
+///   * thread_id —— 定位目标会话（宿主持有 thread_id ↔ SessionId 映射，跨回合复用）；
+///   * mode_id —— 目标模式的 ACP SessionMode.id 原值，逐字透传，绝不本地映射。
+///
+/// 两者均必填且非空（前端总能从已渲染的模式选择器取得），空白校验由接线层负责。
+#[derive(Debug, Clone, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AiSetSessionModeRequest {
+    pub(crate) thread_id: String,
+    pub(crate) mode_id: String,
+}
+
 // ============================================================================
 // AI – inline completion
 // ============================================================================
