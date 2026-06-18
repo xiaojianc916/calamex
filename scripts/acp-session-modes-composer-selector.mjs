@@ -7,13 +7,11 @@
 // 了可用模式时显示。VM 由父级经 useAcpSessionModes 下传，选择时回投 modeId 原文。
 // 对现有调用方零行为变化（可选 props 缺省 undefined => 选择器隐藏）。
 //
-// 幂等 + EOL 容忍。导入用正则，容忍 biome 导入重排 / 引号差异。
+// 幂等。为免疫 CRLF/LF 混用，先将全文归一为 LF 再区配，写回时按原 EOL 还原。
 
 import { readFileSync, writeFileSync } from 'node:fs';
 
 const FILE = 'src/components/business/ai/chat/AiPromptInput.vue';
-
-const detectEol = (t) => (t.includes('\r\n') ? '\r\n' : '\n');
 
 const main = () => {
   const original = readFileSync(FILE, 'utf8');
@@ -23,14 +21,13 @@ const main = () => {
     return;
   }
 
-  const eol = detectEol(original);
-  const withEol = (s) => s.replace(/\n/g, eol);
-
-  let text = original;
+  const hadCrlf = original.includes('\r\n');
+  // 归一为 LF，免疫行尾符混用导致多行锚点失配。
+  let text = original.replace(/\r\n/g, '\n');
 
   const dumpContext = (keyword) => {
     console.error(`--- 上下文 "${keyword}" ---`);
-    text.split(/\r?\n/).forEach((line, idx) => {
+    text.split('\n').forEach((line, idx) => {
       if (line.includes(keyword)) {
         console.error(`${idx + 1}: ${line}`);
       }
@@ -38,14 +35,13 @@ const main = () => {
     console.error('--- end ---');
   };
 
-  const replaceOnce = (anchorLf, replacementLf, keyword) => {
-    const anchor = withEol(anchorLf);
+  const replaceOnce = (anchor, replacement, keyword) => {
     const count = text.split(anchor).length - 1;
     if (count !== 1) {
       dumpContext(keyword);
       throw new Error(`[${keyword}] expected exactly 1 match but found ${count}`);
     }
-    text = text.replace(anchor, () => withEol(replacementLf));
+    text = text.replace(anchor, () => replacement);
   };
 
   // 1) import：稳健合并/插入 IAcpSessionModeState（容忍 biome 导入重排/引号差异）。
@@ -70,9 +66,9 @@ const main = () => {
       const execRe =
         /([ \t]*import\s+(?:type\s+)?\{[^}]*\}\s*from\s*['"]@\/types\/ai\/execution-mode['"];)/;
       if (skillRe.test(text)) {
-        text = text.replace(skillRe, (_m, indent, line) => `${indent}${newImport}${eol}${indent}${line}`);
+        text = text.replace(skillRe, (_m, indent, line) => `${indent}${newImport}\n${indent}${line}`);
       } else if (execRe.test(text)) {
-        text = text.replace(execRe, (m) => `${m}${eol}${newImport}`);
+        text = text.replace(execRe, (m) => `${m}\n${newImport}`);
       } else {
         dumpContext('@/types/ai/');
         throw new Error('[import] 找不到可插入 sidecar 类型导入的锚点。');
@@ -173,11 +169,12 @@ const main = () => {
     'ai-toolbar-spacer',
   );
 
-  if (text === original) {
+  if (text === original.replace(/\r\n/g, '\n')) {
     throw new Error('no changes produced — anchors may have drifted.');
   }
 
-  writeFileSync(FILE, text, 'utf8');
+  const out = hadCrlf ? text.replace(/\n/g, '\r\n') : text;
+  writeFileSync(FILE, out, 'utf8');
   console.log('[done] AiPromptInput.vue 已接入 ACP 会话模式选择器。');
 };
 
