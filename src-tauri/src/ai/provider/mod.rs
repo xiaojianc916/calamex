@@ -37,7 +37,6 @@ impl AiProviderChatRequest {
     }
 }
 
-#[expect(dead_code, reason = "kept for provider usage payload compatibility")]
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AiProviderInputTokenDetails {
@@ -46,7 +45,6 @@ pub struct AiProviderInputTokenDetails {
     pub cache_write_tokens: u64,
 }
 
-#[expect(dead_code, reason = "kept for provider usage payload compatibility")]
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AiProviderOutputTokenDetails {

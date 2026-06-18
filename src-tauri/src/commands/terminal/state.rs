@@ -336,6 +336,7 @@ fn lock_active_terminal_runs(
         .map_err(|_| "终端运行状态已损坏。".to_string())
 }
 
+#[cfg(test)]
 pub(super) fn active_terminal_run_count(state: &TerminalSessionState) -> usize {
     state
         .active_runs

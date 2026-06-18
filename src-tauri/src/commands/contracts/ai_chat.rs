@@ -99,6 +99,7 @@ pub struct AiCancelRequest {
 ///   * `session_id` / `tool_call_id` —— 定位挂起审批所属的会话与工具调用（ACP 原值，逐字透传）；
 ///   * `decision` —— 选中项 `optionId`（ACP `RequestPermissionRequest.options[].optionId` 原值，
 ///     逐字回填，绝不本地映射，对齐 `approval.rs` 的逐字匹配）。
+///
 /// 三者均必填且非空（前端总能从已渲染的审批气泡取得），空白校验由接线层负责。
 #[derive(Debug, Clone, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
