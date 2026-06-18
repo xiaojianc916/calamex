@@ -2,15 +2,16 @@ import { commands } from '@/bindings/tauri';
 import { useDialog } from '@/composables/useDialog';
 import { type AppError, isAppError } from '@/types/app-error';
 import type { ITauriService } from '@/types/tauri';
+import { type ICommandMeta, runCommand } from './tauri.ipc-define';
 import { buildPayloadMetricsOmittingTextFields } from './tauri.ipc-metrics';
-import { callSpectaCommand } from './tauri.ipc-runtime';
 import type { IIpcCallOptions } from './tauri.ipc-types';
 
 /**
  * SSH invoke 层：从手写 Zod 契约迁入 tauri-specta 生成绑定（commands.*）。
  *
  * - 入参 / 出参类型以 Rust 为单一事实源，经 src/bindings/tauri.ts 生成。
- * - 仍保留薄仪表化外壳（callSpectaCommand：审计 / 超时 / 取消 / 错误归一化）。
+ * - 仪表化外壳改用声明式 metadata 表（SSH_COMMAND_META + runCommand），运行期行为与原
+ *   手写 callSpectaCommand 逐字段一致：审计 / 超时 / 取消 / 错误归一 / 入参出参度量。
  * - 主机密钥变更（host-key-changed）的确认弹窗与无感重试逻辑原样保留。
  */
 
@@ -47,218 +48,208 @@ const SSH_SENSITIVE_INPUT_FIELDS = [
 const measureSshSensitiveInput = (value: Record<string, unknown>) =>
   buildPayloadMetricsOmittingTextFields(value, SSH_SENSITIVE_INPUT_FIELDS);
 
+/**
+ * SSH Tauri 命令的声明式包装元数据表。每条语义与原手写 callSpectaCommand 逐字段对齐。
+ */
+const SSH_COMMAND_META = {
+  testSshConnection: {
+    command: 'test_ssh_connection',
+    guardHint: '测试 SSH 连接',
+    idempotent: true,
+    timeoutMs: 15_000,
+    audit: 'sensitive',
+    measureInput: measureSshSensitiveInput,
+  },
+  saveSshPassword: {
+    command: 'save_ssh_password',
+    guardHint: '保存 SSH 密码',
+    audit: 'sensitive',
+    measureInput: measureSshSensitiveInput,
+  },
+  getSshPassword: {
+    command: 'get_ssh_password',
+    guardHint: '读取 SSH 密码',
+    idempotent: true,
+    audit: 'sensitive',
+    measureInput: measureSshSensitiveInput,
+    measureOutput: (value) =>
+      value && typeof value === 'object' && !Array.isArray(value)
+        ? buildPayloadMetricsOmittingTextFields(value as Record<string, unknown>, ['password'])
+        : { bytes: 0 },
+  },
+  listSshConfigHosts: {
+    command: 'list_ssh_config_hosts',
+    guardHint: '读取 SSH 配置主机',
+    idempotent: true,
+    audit: 'sensitive',
+  },
+  listSshDirectory: {
+    command: 'list_ssh_directory',
+    guardHint: '读取 SSH 远端目录',
+    idempotent: true,
+    timeoutMs: SSH_LIST_TIMEOUT_MS,
+    audit: 'sensitive',
+    measureInput: measureSshSensitiveInput,
+  },
+  downloadSshFile: {
+    command: 'download_ssh_file',
+    guardHint: '下载 SSH 远端文件',
+    audit: 'sensitive',
+    timeoutMs: SSH_TRANSFER_TIMEOUT_MS,
+    measureInput: measureSshSensitiveInput,
+  },
+  uploadSshFile: {
+    command: 'upload_ssh_file',
+    guardHint: '上传 SSH 远端文件',
+    audit: 'sensitive',
+    timeoutMs: SSH_TRANSFER_TIMEOUT_MS,
+    measureInput: measureSshSensitiveInput,
+  },
+  readSshFile: {
+    command: 'read_ssh_file',
+    guardHint: '读取 SSH 远端文件',
+    idempotent: true,
+    audit: 'sensitive',
+    timeoutMs: SSH_PREVIEW_READ_TIMEOUT_MS,
+    measureInput: measureSshSensitiveInput,
+    measureOutput: (value) =>
+      value && typeof value === 'object' && !Array.isArray(value)
+        ? buildPayloadMetricsOmittingTextFields(value as Record<string, unknown>, [
+            'content',
+            'remotePath',
+          ])
+        : { bytes: 0 },
+  },
+  writeSshFile: {
+    command: 'write_ssh_file',
+    guardHint: '写入 SSH 远端文件',
+    audit: 'sensitive',
+    timeoutMs: SSH_MUTATION_TIMEOUT_MS,
+    measureInput: measureSshSensitiveInput,
+  },
+  deleteSshPath: {
+    command: 'delete_ssh_path',
+    guardHint: '删除 SSH 远端路径',
+    audit: 'sensitive',
+    timeoutMs: SSH_MUTATION_TIMEOUT_MS,
+    measureInput: measureSshSensitiveInput,
+  },
+  renameSshPath: {
+    command: 'rename_ssh_path',
+    guardHint: '重命名 SSH 远端路径',
+    audit: 'sensitive',
+    timeoutMs: SSH_MUTATION_TIMEOUT_MS,
+    measureInput: measureSshSensitiveInput,
+  },
+  createSshDirectory: {
+    command: 'create_ssh_directory',
+    guardHint: '创建 SSH 远端目录',
+    audit: 'sensitive',
+    timeoutMs: SSH_MUTATION_TIMEOUT_MS,
+    measureInput: measureSshSensitiveInput,
+  },
+  trustSshHostKey: {
+    command: 'trust_ssh_host_key',
+    guardHint: '信任变更后的 SSH 主机密钥',
+    audit: 'sensitive',
+    timeoutMs: 15_000,
+    measureInput: measureSshSensitiveInput,
+  },
+} satisfies Record<string, ICommandMeta>;
+
 const testSshConnectionIpc = (
   payload: TSshRequest<'testSshConnection'>,
   options?: IIpcCallOptions,
 ): Promise<TSshResult<'testSshConnection'>> =>
-  callSpectaCommand(
-    {
-      command: 'test_ssh_connection',
-      guardHint: '测试 SSH 连接',
-      idempotent: true,
-      timeoutMs: 15_000,
-      audit: 'sensitive',
-      input: payload,
-      measureInput: measureSshSensitiveInput,
-      signal: options?.signal,
-    },
-    () => commands.testSshConnection(payload),
+  runCommand(SSH_COMMAND_META.testSshConnection, payload, options, () =>
+    commands.testSshConnection(payload),
   );
 
 const saveSshPasswordIpc = (
   payload: TSshRequest<'saveSshPassword'>,
   options?: IIpcCallOptions,
 ): Promise<TSshResult<'saveSshPassword'>> =>
-  callSpectaCommand(
-    {
-      command: 'save_ssh_password',
-      guardHint: '保存 SSH 密码',
-      audit: 'sensitive',
-      input: payload,
-      measureInput: measureSshSensitiveInput,
-      signal: options?.signal,
-    },
-    () => commands.saveSshPassword(payload),
+  runCommand(SSH_COMMAND_META.saveSshPassword, payload, options, () =>
+    commands.saveSshPassword(payload),
   );
 
 const getSshPasswordIpc = (
   payload: TSshRequest<'getSshPassword'>,
   options?: IIpcCallOptions,
 ): Promise<TSshResult<'getSshPassword'>> =>
-  callSpectaCommand(
-    {
-      command: 'get_ssh_password',
-      guardHint: '读取 SSH 密码',
-      idempotent: true,
-      audit: 'sensitive',
-      input: payload,
-      measureInput: measureSshSensitiveInput,
-      measureOutput: (value) =>
-        value && typeof value === 'object' && !Array.isArray(value)
-          ? buildPayloadMetricsOmittingTextFields(value as Record<string, unknown>, ['password'])
-          : { bytes: 0 },
-      signal: options?.signal,
-    },
-    () => commands.getSshPassword(payload),
+  runCommand(SSH_COMMAND_META.getSshPassword, payload, options, () =>
+    commands.getSshPassword(payload),
   );
 
 const listSshConfigHostsIpc = (
   options?: IIpcCallOptions,
 ): Promise<TSshResult<'listSshConfigHosts'>> =>
-  callSpectaCommand(
-    {
-      command: 'list_ssh_config_hosts',
-      guardHint: '读取 SSH 配置主机',
-      idempotent: true,
-      audit: 'sensitive',
-      signal: options?.signal,
-    },
-    () => commands.listSshConfigHosts(),
+  runCommand(SSH_COMMAND_META.listSshConfigHosts, undefined, options, () =>
+    commands.listSshConfigHosts(),
   );
 
 const listSshDirectoryIpc = (
   payload: TSshRequest<'listSshDirectory'>,
   options?: IIpcCallOptions,
 ): Promise<TSshResult<'listSshDirectory'>> =>
-  callSpectaCommand(
-    {
-      command: 'list_ssh_directory',
-      guardHint: '读取 SSH 远端目录',
-      idempotent: true,
-      timeoutMs: SSH_LIST_TIMEOUT_MS,
-      audit: 'sensitive',
-      input: payload,
-      measureInput: measureSshSensitiveInput,
-      signal: options?.signal,
-    },
-    () => commands.listSshDirectory(payload),
+  runCommand(SSH_COMMAND_META.listSshDirectory, payload, options, () =>
+    commands.listSshDirectory(payload),
   );
 
 const downloadSshFileIpc = (
   payload: TSshRequest<'downloadSshFile'>,
   options?: IIpcCallOptions,
 ): Promise<TSshResult<'downloadSshFile'>> =>
-  callSpectaCommand(
-    {
-      command: 'download_ssh_file',
-      guardHint: '下载 SSH 远端文件',
-      audit: 'sensitive',
-      timeoutMs: SSH_TRANSFER_TIMEOUT_MS,
-      input: payload,
-      measureInput: measureSshSensitiveInput,
-      signal: options?.signal,
-    },
-    () => commands.downloadSshFile(payload),
+  runCommand(SSH_COMMAND_META.downloadSshFile, payload, options, () =>
+    commands.downloadSshFile(payload),
   );
 
 const uploadSshFileIpc = (
   payload: TSshRequest<'uploadSshFile'>,
   options?: IIpcCallOptions,
 ): Promise<TSshResult<'uploadSshFile'>> =>
-  callSpectaCommand(
-    {
-      command: 'upload_ssh_file',
-      guardHint: '上传 SSH 远端文件',
-      audit: 'sensitive',
-      timeoutMs: SSH_TRANSFER_TIMEOUT_MS,
-      input: payload,
-      measureInput: measureSshSensitiveInput,
-      signal: options?.signal,
-    },
-    () => commands.uploadSshFile(payload),
+  runCommand(SSH_COMMAND_META.uploadSshFile, payload, options, () =>
+    commands.uploadSshFile(payload),
   );
 
 const readSshFileIpc = (
   payload: TSshRequest<'readSshFile'>,
   options?: IIpcCallOptions,
 ): Promise<TSshResult<'readSshFile'>> =>
-  callSpectaCommand(
-    {
-      command: 'read_ssh_file',
-      guardHint: '读取 SSH 远端文件',
-      idempotent: true,
-      audit: 'sensitive',
-      timeoutMs: SSH_PREVIEW_READ_TIMEOUT_MS,
-      input: payload,
-      measureInput: measureSshSensitiveInput,
-      measureOutput: (value) =>
-        value && typeof value === 'object' && !Array.isArray(value)
-          ? buildPayloadMetricsOmittingTextFields(value as Record<string, unknown>, [
-              'content',
-              'remotePath',
-            ])
-          : { bytes: 0 },
-      signal: options?.signal,
-    },
-    () => commands.readSshFile(payload),
+  runCommand(SSH_COMMAND_META.readSshFile, payload, options, () =>
+    commands.readSshFile(payload),
   );
 
 const writeSshFileIpc = (
   payload: TSshRequest<'writeSshFile'>,
   options?: IIpcCallOptions,
 ): Promise<TSshResult<'writeSshFile'>> =>
-  callSpectaCommand(
-    {
-      command: 'write_ssh_file',
-      guardHint: '写入 SSH 远端文件',
-      audit: 'sensitive',
-      timeoutMs: SSH_MUTATION_TIMEOUT_MS,
-      input: payload,
-      measureInput: measureSshSensitiveInput,
-      signal: options?.signal,
-    },
-    () => commands.writeSshFile(payload),
+  runCommand(SSH_COMMAND_META.writeSshFile, payload, options, () =>
+    commands.writeSshFile(payload),
   );
 
 const deleteSshPathIpc = (
   payload: TSshRequest<'deleteSshPath'>,
   options?: IIpcCallOptions,
 ): Promise<TSshResult<'deleteSshPath'>> =>
-  callSpectaCommand(
-    {
-      command: 'delete_ssh_path',
-      guardHint: '删除 SSH 远端路径',
-      audit: 'sensitive',
-      timeoutMs: SSH_MUTATION_TIMEOUT_MS,
-      input: payload,
-      measureInput: measureSshSensitiveInput,
-      signal: options?.signal,
-    },
-    () => commands.deleteSshPath(payload),
+  runCommand(SSH_COMMAND_META.deleteSshPath, payload, options, () =>
+    commands.deleteSshPath(payload),
   );
 
 const renameSshPathIpc = (
   payload: TSshRequest<'renameSshPath'>,
   options?: IIpcCallOptions,
 ): Promise<TSshResult<'renameSshPath'>> =>
-  callSpectaCommand(
-    {
-      command: 'rename_ssh_path',
-      guardHint: '重命名 SSH 远端路径',
-      audit: 'sensitive',
-      timeoutMs: SSH_MUTATION_TIMEOUT_MS,
-      input: payload,
-      measureInput: measureSshSensitiveInput,
-      signal: options?.signal,
-    },
-    () => commands.renameSshPath(payload),
+  runCommand(SSH_COMMAND_META.renameSshPath, payload, options, () =>
+    commands.renameSshPath(payload),
   );
 
 const createSshDirectoryIpc = (
   payload: TSshRequest<'createSshDirectory'>,
   options?: IIpcCallOptions,
 ): Promise<TSshResult<'createSshDirectory'>> =>
-  callSpectaCommand(
-    {
-      command: 'create_ssh_directory',
-      guardHint: '创建 SSH 远端目录',
-      audit: 'sensitive',
-      timeoutMs: SSH_MUTATION_TIMEOUT_MS,
-      input: payload,
-      measureInput: measureSshSensitiveInput,
-      signal: options?.signal,
-    },
-    () => commands.createSshDirectory(payload),
+  runCommand(SSH_COMMAND_META.createSshDirectory, payload, options, () =>
+    commands.createSshDirectory(payload),
   );
 
 /**
@@ -280,17 +271,8 @@ const trustSshHostKeyIpc = (
   endpoint: ISshHostKeyEndpoint,
   options?: IIpcCallOptions,
 ): Promise<{ trusted: boolean }> =>
-  callSpectaCommand(
-    {
-      command: 'trust_ssh_host_key',
-      guardHint: '信任变更后的 SSH 主机密钥',
-      audit: 'sensitive',
-      timeoutMs: 15_000,
-      input: endpoint,
-      measureInput: measureSshSensitiveInput,
-      signal: options?.signal,
-    },
-    () => commands.trustSshHostKey(endpoint.host, endpoint.port),
+  runCommand(SSH_COMMAND_META.trustSshHostKey, endpoint, options, () =>
+    commands.trustSshHostKey(endpoint.host, endpoint.port),
   );
 
 const extractChangedHostKeyFingerprint = (message: string): string | null => {

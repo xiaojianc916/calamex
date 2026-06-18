@@ -37,7 +37,7 @@ use std::{
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
-        mpsc::{Receiver, RecvTimeoutError, channel},
+        mpsc::{Receiver, RecvTimeoutError, sync_channel},
     },
     thread,
     time::{Duration, Instant},
@@ -51,6 +51,12 @@ const DEBOUNCE_DURATION: Duration = Duration::from_millis(200);
 /// 事件风暴下的强制吐出上限：即使事件持续不断，攒满这个时长也先吐一批，
 /// 避免「构建/git 操作刷屏」时前端长时间收不到任何更新。
 const MAX_DEBOUNCE: Duration = Duration::from_secs(1);
+
+/// 监听事件 channel 的有界容量：用 sync_channel 替代无界 channel 提供背压。
+/// notify 回调线程在缓冲填满时阻塞于 send，避免 Win/Mac 递归监听把被忽略目录
+/// （node_modules / target / .git objects 等）的海量事件无界堆积、撑爆内存。
+/// 容量取够大（8192）以吸收正常构建 / git 操作的突发，仅在真正失控时才施加回压。
+const WATCH_EVENT_CHANNEL_CAPACITY: usize = 8192;
 
 /// 当前平台是否提供廉价的内核级递归监听。
 ///
@@ -188,7 +194,7 @@ pub fn start_workspace_watching(
     // 2. 构造裸 watcher（不使用 debouncer-full，避免 FileIdMap 的递归树遍历）。
     //    回调只把原始事件投递到 channel，去抖与处理全在后台线程完成。
     //    构造失败时不要触碰 state，旧监听（若有）保持不动。
-    let (tx, rx) = channel::<notify::Result<Event>>();
+    let (tx, rx) = sync_channel::<notify::Result<Event>>(WATCH_EVENT_CHANNEL_CAPACITY);
     let watcher = recommended_watcher(move |result: notify::Result<Event>| {
         // 后台线程退出后 rx 被 Drop，send 失败可安全忽略。
         let _ = tx.send(result);
