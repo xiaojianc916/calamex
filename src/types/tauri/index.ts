@@ -1,22 +1,26 @@
 import type {
-  IAiAgentClassifyTaskPayload,
+  AiAgentClassifyTaskPayload,
+  AiApplyPatchRequest,
+  AiChatStreamPayload,
+  AiConfigPayload,
+  AiInlineCompletionResult,
+  AiProviderConnectionPayload,
+  AiWebSearchInput,
+  AiWebSearchPayload,
+} from '@/bindings/tauri';
+import type {
   IAiAgentClassifyTaskRequest,
   IAiAgentNetworkPermissionPayload,
   IAiAgentSetNetworkPermissionRequest,
   IAiApplyPatchPayload,
-  IAiApplyPatchRequest,
   IAiCancelRequest,
   IAiChatRequest,
-  IAiChatStreamPayload,
-  IAiConfigPayload,
   IAiConversationTitlePayload,
   IAiConversationTitleRequest,
   IAiGetSessionModesRequest,
   IAiInlineCompletionRequest,
-  IAiInlineCompletionResult,
   IAiProposePatchPayload,
   IAiProposePatchRequest,
-  IAiProviderConnectionPayload,
   IAiProviderConnectionRequest,
   IAiProviderTestPayload,
   IAiResolveApprovalRequest,
@@ -28,8 +32,6 @@ import type {
   IAiSuggestionPoolRequest,
   IAiWebFetchInput,
   IAiWebFetchPayload,
-  IAiWebSearchInput,
-  IAiWebSearchPayload,
 } from '../ai';
 import type { IAcpPermissionRequestPayload } from '../ai/acp-permission.schema';
 import type {
@@ -372,32 +374,32 @@ export interface ITauriService {
   deleteSshPath(payload: ISshPathDeleteRequest): Promise<ISshPathDeletePayload>;
   renameSshPath(payload: ISshPathRenameRequest): Promise<ISshPathRenamePayload>;
   createSshDirectory(payload: ISshDirectoryCreateRequest): Promise<ISshDirectoryCreatePayload>;
-  aiGetConfig(): Promise<IAiConfigPayload>;
-  aiSaveConfig(payload: IAiSaveConfigRequest): Promise<IAiConfigPayload>;
-  aiSaveCredentials(payload: IAiSaveCredentialsRequest): Promise<IAiConfigPayload>;
+  aiGetConfig(): Promise<AiConfigPayload>;
+  aiSaveConfig(payload: IAiSaveConfigRequest): Promise<AiConfigPayload>;
+  aiSaveCredentials(payload: IAiSaveCredentialsRequest): Promise<AiConfigPayload>;
   aiClearCredentials(): Promise<void>;
   aiTestProvider(): Promise<IAiProviderTestPayload>;
   aiTestProviderConfig(payload: IAiProviderConnectionRequest): Promise<IAiProviderTestPayload>;
-  aiConnectProvider(payload: IAiProviderConnectionRequest): Promise<IAiProviderConnectionPayload>;
+  aiConnectProvider(payload: IAiProviderConnectionRequest): Promise<AiProviderConnectionPayload>;
   aiGenerateConversationTitle(
     payload: IAiConversationTitleRequest,
   ): Promise<IAiConversationTitlePayload>;
   aiGetSuggestionPoolCache(): Promise<IAiSuggestionPoolPayload | null>;
   aiGenerateSuggestionPool(payload: IAiSuggestionPoolRequest): Promise<IAiSuggestionPoolPayload>;
-  aiChatStream(payload: IAiChatRequest): Promise<IAiChatStreamPayload>;
+  aiChatStream(payload: IAiChatRequest): Promise<AiChatStreamPayload>;
   aiCancel(payload: IAiCancelRequest): Promise<void>;
   aiResolveApproval(payload: IAiResolveApprovalRequest): Promise<boolean>;
   aiGetSessionModes(payload: IAiGetSessionModesRequest): Promise<IAiSessionModesPayload | null>;
   aiSetSessionMode(payload: IAiSetSessionModeRequest): Promise<boolean>;
-  aiInlineComplete(payload: IAiInlineCompletionRequest): Promise<IAiInlineCompletionResult>;
-  aiAgentClassifyTask(payload: IAiAgentClassifyTaskRequest): Promise<IAiAgentClassifyTaskPayload>;
-  aiWebSearch(payload: IAiWebSearchInput): Promise<IAiWebSearchPayload>;
+  aiInlineComplete(payload: IAiInlineCompletionRequest): Promise<AiInlineCompletionResult>;
+  aiAgentClassifyTask(payload: IAiAgentClassifyTaskRequest): Promise<AiAgentClassifyTaskPayload>;
+  aiWebSearch(payload: AiWebSearchInput): Promise<AiWebSearchPayload>;
   aiWebFetch(payload: IAiWebFetchInput): Promise<IAiWebFetchPayload>;
   aiAgentSetNetworkPermission(
     payload: IAiAgentSetNetworkPermissionRequest,
   ): Promise<IAiAgentNetworkPermissionPayload>;
   aiProposePatch(payload: IAiProposePatchRequest): Promise<IAiProposePatchPayload>;
-  aiApplyPatch(payload: IAiApplyPatchRequest): Promise<IAiApplyPatchPayload>;
+  aiApplyPatch(payload: AiApplyPatchRequest): Promise<IAiApplyPatchPayload>;
   aiEditGetAuthLevel(): Promise<IAiEditAuthState>;
   aiEditSetAuthLevel(payload: IAiEditSetAuthLevelRequest): Promise<IAiEditAuthState>;
   aiEditListTimeline(payload: IAiEditListTimelineRequest): Promise<IAiEditListTimelinePayload>;

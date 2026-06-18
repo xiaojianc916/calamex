@@ -1,23 +1,27 @@
+import type {
+  AiAgentClassifyTaskPayload,
+  AiApplyPatchRequest,
+  AiChatStreamPayload,
+  AiConfigPayload,
+  AiInlineCompletionResult,
+  AiProviderConnectionPayload,
+  AiWebSearchInput,
+  AiWebSearchPayload,
+} from '@/bindings/tauri';
 import { tauriService } from '@/services/tauri';
 import type {
-  IAiAgentClassifyTaskPayload,
   IAiAgentClassifyTaskRequest,
   IAiAgentNetworkPermissionPayload,
   IAiAgentSetNetworkPermissionRequest,
   IAiApplyPatchPayload,
-  IAiApplyPatchRequest,
   IAiCancelRequest,
   IAiChatRequest,
-  IAiChatStreamPayload,
-  IAiConfigPayload,
   IAiConversationTitlePayload,
   IAiConversationTitleRequest,
   IAiGetSessionModesRequest,
   IAiInlineCompletionRequest,
-  IAiInlineCompletionResult,
   IAiProposePatchPayload,
   IAiProposePatchRequest,
-  IAiProviderConnectionPayload,
   IAiProviderConnectionRequest,
   IAiProviderTestPayload,
   IAiResolveApprovalRequest,
@@ -29,8 +33,6 @@ import type {
   IAiSuggestionPoolRequest,
   IAiWebFetchInput,
   IAiWebFetchPayload,
-  IAiWebSearchInput,
-  IAiWebSearchPayload,
 } from '@/types/ai';
 import type { IAcpPermissionRequestPayload } from '@/types/ai/acp-permission.schema';
 import type { IAiEditGetDiffPayload, IAiEditGetDiffRequest } from '@/types/ai/edit';
@@ -245,13 +247,13 @@ export const aiService = {
   setSessionMode(payload: IAiSetSessionModeRequest): Promise<boolean> {
     return tauriService.aiSetSessionMode(payload);
   },
-  getConfig(): Promise<IAiConfigPayload> {
+  getConfig(): Promise<AiConfigPayload> {
     return tauriService.aiGetConfig();
   },
-  saveConfig(payload: IAiSaveConfigRequest): Promise<IAiConfigPayload> {
+  saveConfig(payload: IAiSaveConfigRequest): Promise<AiConfigPayload> {
     return tauriService.aiSaveConfig(payload);
   },
-  saveCredentials(payload: IAiSaveCredentialsRequest): Promise<IAiConfigPayload> {
+  saveCredentials(payload: IAiSaveCredentialsRequest): Promise<AiConfigPayload> {
     return tauriService.aiSaveCredentials(payload);
   },
   clearCredentials(): Promise<void> {
@@ -263,7 +265,7 @@ export const aiService = {
   testProviderConfig(payload: IAiProviderConnectionRequest): Promise<IAiProviderTestPayload> {
     return tauriService.aiTestProviderConfig(payload);
   },
-  connectProvider(payload: IAiProviderConnectionRequest): Promise<IAiProviderConnectionPayload> {
+  connectProvider(payload: IAiProviderConnectionRequest): Promise<AiProviderConnectionPayload> {
     return tauriService.aiConnectProvider(payload);
   },
   generateConversationTitle(
@@ -277,16 +279,16 @@ export const aiService = {
   generateSuggestionPool(payload: IAiSuggestionPoolRequest): Promise<IAiSuggestionPoolPayload> {
     return tauriService.aiGenerateSuggestionPool(payload);
   },
-  chatStream(payload: IAiChatRequest): Promise<IAiChatStreamPayload> {
+  chatStream(payload: IAiChatRequest): Promise<AiChatStreamPayload> {
     return tauriService.aiChatStream(payload);
   },
   cancel(payload: IAiCancelRequest): Promise<void> {
     return tauriService.aiCancel(payload);
   },
-  inlineComplete(payload: IAiInlineCompletionRequest): Promise<IAiInlineCompletionResult> {
+  inlineComplete(payload: IAiInlineCompletionRequest): Promise<AiInlineCompletionResult> {
     return tauriService.aiInlineComplete(payload);
   },
-  classifyTask(payload: IAiAgentClassifyTaskRequest): Promise<IAiAgentClassifyTaskPayload> {
+  classifyTask(payload: IAiAgentClassifyTaskRequest): Promise<AiAgentClassifyTaskPayload> {
     return tauriService.aiAgentClassifyTask(payload);
   },
   setNetworkPermission(
@@ -294,7 +296,7 @@ export const aiService = {
   ): Promise<IAiAgentNetworkPermissionPayload> {
     return tauriService.aiAgentSetNetworkPermission(payload);
   },
-  webSearch(payload: IAiWebSearchInput): Promise<IAiWebSearchPayload> {
+  webSearch(payload: AiWebSearchInput): Promise<AiWebSearchPayload> {
     return tauriService.aiWebSearch(payload);
   },
   webFetch(payload: IAiWebFetchInput): Promise<IAiWebFetchPayload> {
@@ -303,7 +305,7 @@ export const aiService = {
   proposePatch(payload: IAiProposePatchRequest): Promise<IAiProposePatchPayload> {
     return tauriService.aiProposePatch(payload);
   },
-  applyPatch(payload: IAiApplyPatchRequest): Promise<IAiApplyPatchPayload> {
+  applyPatch(payload: AiApplyPatchRequest): Promise<IAiApplyPatchPayload> {
     return tauriService.aiApplyPatch(payload);
   },
   getEditDiff(payload: IAiEditGetDiffRequest): Promise<IAiEditGetDiffPayload> {
