@@ -1,5 +1,16 @@
-import { commands } from '@/bindings/tauri';
+import {
+  type AgentSidecarApprovalResolveRequest_Deserialize,
+  type AgentSidecarChatRequest_Deserialize,
+  type AgentSidecarCheckpointRestoreRequest_Deserialize,
+  type AgentSidecarOrchestrateRequest_Deserialize,
+  type AgentSidecarOrchestrateResumeRequest_Deserialize,
+  commands,
+} from '@/bindings/tauri';
 import { acpPermissionRequestPayloadSchema } from '@/types/ai/acp-permission.schema';
+import type {
+  IAgentSidecarOrchestratePayload,
+  IAgentSidecarResponsePayload,
+} from '@/types/ai/sidecar';
 import { agentSidecarStreamEventPayloadSchema } from '@/types/ai/sidecar.schema';
 import type { ITauriService } from '@/types/tauri';
 import { assertDesktopRuntime } from '@/utils/platform/desktop-runtime';
@@ -91,6 +102,18 @@ type TSidecarTauriService = Pick<
   | 'onAcpApproval'
 >;
 
+/**
+ * 入参/出参的 wire(生成绑定) ↔ domain(手写) 桥接说明：
+ *
+ * tauri-specta 重新生成后，commands.* 的入参采用 `_Deserialize` wire 形状——可空字段为
+ * `T | null` 且为必填，枚举退化为 `string`；而 domain 请求类型保留可选 `?:` 字段与字面量联合。
+ * 二者互不可赋值，故入参用 `as unknown as X_Deserialize` 桥接。运行期安全：serde 的
+ * `Option` + `#[serde(default)]` 使省略/undefined 在反序列化时等价于 null。
+ *
+ * 出参方面，生成绑定将 `events` 映射为 `unknown[]`、`result` 为 `unknown`，domain 侧分别是
+ * `TAgentUiEvent[]` 与 `TJsonValue | null`（domain 可赋值给 wire，故单次 `as` 即可）。实际
+ * 事件/结果由前端 Zod schema 兜底校验，类型断言不影响运行期。
+ */
 export const sidecarTauriService: TSidecarTauriService = {
   agentSidecarHealth: () =>
     runCommand(SIDECAR_COMMAND_META.agentSidecarHealth, undefined, undefined, () =>
@@ -109,32 +132,40 @@ export const sidecarTauriService: TSidecarTauriService = {
 
   agentSidecarChat(payload, options?: IIpcCallOptions) {
     return runCommand(SIDECAR_COMMAND_META.agentSidecarChat, payload, options, () =>
-      commands.agentSidecarChat(payload),
-    );
+      commands.agentSidecarChat(payload as unknown as AgentSidecarChatRequest_Deserialize),
+    ) as Promise<IAgentSidecarResponsePayload>;
   },
 
   agentSidecarResolveApproval(payload, options?: IIpcCallOptions) {
     return runCommand(SIDECAR_COMMAND_META.agentSidecarResolveApproval, payload, options, () =>
-      commands.agentSidecarResolveApproval(payload),
-    );
+      commands.agentSidecarResolveApproval(
+        payload as unknown as AgentSidecarApprovalResolveRequest_Deserialize,
+      ),
+    ) as Promise<IAgentSidecarResponsePayload>;
   },
 
   agentSidecarRestoreCheckpoint(payload, options?: IIpcCallOptions) {
     return runCommand(SIDECAR_COMMAND_META.agentSidecarRestoreCheckpoint, payload, options, () =>
-      commands.agentSidecarRestoreCheckpoint(payload),
-    );
+      commands.agentSidecarRestoreCheckpoint(
+        payload as unknown as AgentSidecarCheckpointRestoreRequest_Deserialize,
+      ),
+    ) as Promise<IAgentSidecarResponsePayload>;
   },
 
   agentSidecarOrchestrate(payload, options?: IIpcCallOptions) {
     return runCommand(SIDECAR_COMMAND_META.agentSidecarOrchestrate, payload, options, () =>
-      commands.agentSidecarOrchestrate(payload),
-    );
+      commands.agentSidecarOrchestrate(
+        payload as unknown as AgentSidecarOrchestrateRequest_Deserialize,
+      ),
+    ) as Promise<IAgentSidecarOrchestratePayload>;
   },
 
   agentSidecarOrchestrateResume(payload, options?: IIpcCallOptions) {
     return runCommand(SIDECAR_COMMAND_META.agentSidecarOrchestrateResume, payload, options, () =>
-      commands.agentSidecarOrchestrateResume(payload),
-    );
+      commands.agentSidecarOrchestrateResume(
+        payload as unknown as AgentSidecarOrchestrateResumeRequest_Deserialize,
+      ),
+    ) as Promise<IAgentSidecarOrchestratePayload>;
   },
 
   async onAgentSidecarStream(handler) {
