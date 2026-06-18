@@ -583,7 +583,6 @@ fn wait_until_run_finished(handle: &LocalWslRunHandle, budget: Duration) -> bool
 /// 前端 xterm 写入后按累计字符数回 ack，pty 侧据此增减 `_unacknowledgedCharCount`。
 #[tauri::command]
 #[specta::specta]
-#[allow(dead_code)] // 注册于下一提交（tauri_bindings）后即为活跃。
 pub fn acknowledge_terminal_data(
     state: State<TerminalSessionState>,
     session_id: String,
