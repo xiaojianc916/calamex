@@ -447,6 +447,18 @@ pub(super) fn get_active_terminal_run_handle(
         .and_then(|run| run.run_handle.clone()))
 }
 
+/// 取指定运行所属的会话 id：供取消看门狗在「读线程卡死、完成事件不会送达」的异常路径下，
+/// 合成运行完成事件并回收该会话的运行态时定位会话。运行不存在时返回 None。锁中毒时返回 None
+/// （尽力而为）。
+#[allow(dead_code)] // 命令层取消看门狗（下一提交）接入后即为活跃。
+pub(super) fn get_active_terminal_run_session(
+    state: &TerminalSessionState,
+    run_id: &str,
+) -> Option<String> {
+    let active_runs = state.active_runs.lock().ok()?;
+    active_runs.get(run_id).map(|run| run.session_id.clone())
+}
+
 pub(super) fn get_active_terminal_run_input_target(
     state: &TerminalSessionState,
     session_id: &str,
