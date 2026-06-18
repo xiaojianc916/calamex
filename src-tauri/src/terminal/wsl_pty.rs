@@ -12,6 +12,7 @@ use std::{
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
+        mpsc::{self, Receiver, RecvTimeoutError, Sender},
     },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -34,6 +35,11 @@ const TERMINAL_READ_BUFFER_BYTES: usize = 8192;
 /// 持续高吞吐输出时，把多次 read 的解码结果攒批到该字节阈值再发一次事件，
 /// 减少 Tauri IPC 事件数（前端已有 16ms 写入合批，这里在源头做合批）。
 const TERMINAL_OUTPUT_COALESCE_BYTES: usize = 32 * 1024;
+
+/// resize 合批静默窗口：窗口拖拽期间会高频触发 resize，逐次直接驱动 ConPTY 既浪费又可能在
+/// Windows 上引发抖动 / 竞争。对照 VSCode src/vs/platform/terminal/node/terminalProcess.ts 的
+/// DelayedResizer：合并一串快速 resize，仅在尺寸“安定”后把最后一次应用到底层 PTY。
+const TERMINAL_RESIZE_DEBOUNCE: Duration = Duration::from_millis(50);
 
 /// 同步驱动 wsl.exe 写脚本 / 清理临时文件时的硬超时。
 /// 某些 Windows 环境下 wsl.exe 可能长时间挂起（参见 script_run.rs 对健康探测的刻意规避），
@@ -58,7 +64,8 @@ pub enum LocalWslPtyError {
 pub struct LocalWslPtyHandle {
     session_id: String,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
-    master: Arc<Mutex<Box<dyn MasterPty + Send>>>,
+    /// resize 合批通道发送端：所有 resize 经此投递给该会话独占的合批线程串行应用（见 spawn_resize_worker）。
+    resize_tx: Sender<(u16, u16)>,
     killer: Arc<Mutex<Box<dyn ChildKiller + Send + Sync>>>,
     /// 读线程在交互 shell 结束（child.wait 返回）后置位。供关闭看门狗确证「读线程确已收尾」：
     /// 若 kill 后 wsl.exe 仍卡死、child.wait() 永久阻塞，则该标志持续为 false，看门狗据此升级
@@ -105,19 +112,13 @@ impl LocalWslPtyHandle {
             .map_err(|error| LocalWslPtyError::Write(error.to_string()))
     }
 
+    /// 提交一次尺寸调整。不直接驱动 ConPTY，而是投递到该会话独占的 resize 合批线程：窗口拖拽
+    /// 等高频 resize 会被合并，仅在尺寸安定后把最后一次应用到底层 PTY（见 spawn_resize_worker）。
+    /// 通道断开（会话已销毁）时返回错误，由命令层按尽力而为处理。
     pub fn resize(&self, cols: u16, rows: u16) -> Result<(), LocalWslPtyError> {
-        let master = self
-            .master
-            .lock()
-            .map_err(|_| LocalWslPtyError::Resize("终端尺寸锁已损坏。".to_string()))?;
-        master
-            .resize(PtySize {
-                rows: rows.max(1),
-                cols: cols.max(2),
-                pixel_width: 0,
-                pixel_height: 0,
-            })
-            .map_err(|error| LocalWslPtyError::Resize(error.to_string()))
+        self.resize_tx
+            .send((cols, rows))
+            .map_err(|_| LocalWslPtyError::Resize("终端尺寸合批通道已关闭。".to_string()))
     }
 
     pub fn close(&self) -> Result<(), LocalWslPtyError> {
@@ -274,10 +275,14 @@ where
         let _ = cleanup_killer.kill();
     })?;
 
+    let (resize_tx, resize_rx) = mpsc::channel::<(u16, u16)>();
+    // 为该会话挂一条独占的 resize 合批线程，移交 MasterPty 所有权并串行化全部尺寸调整。
+    spawn_resize_worker(session_id.clone(), pair.master, resize_rx);
+
     Ok(LocalWslPtyHandle {
         session_id,
         writer: Arc::new(Mutex::new(writer)),
-        master: Arc::new(Mutex::new(pair.master)),
+        resize_tx,
         killer: Arc::new(Mutex::new(killer)),
         finished,
         flow,
@@ -724,6 +729,58 @@ fn cleanup_wsl_paths(paths: &[String]) {
         }
         Err(error) => {
             log::warn!("清理 WSL 临时文件失败：{error}");
+        }
+    }
+}
+
+/// resize 合批工作线程：拥有该会话的 MasterPty，串行化所有 resize，并在静默窗口内合并一串快速
+/// resize，仅把最后一次尺寸应用到 ConPTY。句柄及其所有克隆释放（发送端全部 drop、通道断开）后
+/// 线程自动退出。对照 VSCode terminalProcess.ts 的 DelayedResizer 合并快速 resize 的思路。
+fn spawn_resize_worker(
+    session_id: String,
+    master: Box<dyn MasterPty + Send>,
+    resize_rx: Receiver<(u16, u16)>,
+) {
+    let spawn_result = std::thread::Builder::new()
+        .name(format!("wsl-pty-resize-{session_id}"))
+        .spawn(move || {
+            // 阻塞等待第一条 resize；所有发送端释放后通道断开，recv 返回 Err，线程退出。
+            while let Ok(mut latest) = resize_rx.recv() {
+                // 合批：静默窗口内持续吸收后续 resize，只保留最后一次；窗口内无新 resize 即安定。
+                loop {
+                    match resize_rx.recv_timeout(TERMINAL_RESIZE_DEBOUNCE) {
+                        Ok(next) => latest = next,
+                        Err(RecvTimeoutError::Timeout) => break,
+                        Err(RecvTimeoutError::Disconnected) => {
+                            apply_pty_resize(&session_id, &*master, latest);
+                            return;
+                        }
+                    }
+                }
+                apply_pty_resize(&session_id, &*master, latest);
+            }
+        });
+    if let Err(error) = spawn_result {
+        // 合批线程创建失败极罕见（资源耗尽）；此时通道无接收端，后续 resize 的 send 将返回错误，
+        // 由命令层按尽力而为处理，不阻断会话创建。
+        log::warn!("WSL 交互终端 resize 合批线程创建失败（session_id={session_id}）：{error}");
+    }
+}
+
+/// 把一次尺寸应用到底层 ConPTY；失败仅记录告警（resize 为尽力而为，不应阻断交互）。
+fn apply_pty_resize(session_id: &str, master: &(dyn MasterPty + Send), size: (u16, u16)) {
+    let (cols, rows) = size;
+    match master.resize(PtySize {
+        rows: rows.max(1),
+        cols: cols.max(2),
+        pixel_width: 0,
+        pixel_height: 0,
+    }) {
+        Ok(()) => log::trace!(
+            "WSL 交互终端尺寸已应用（session_id={session_id}, cols={cols}, rows={rows}）。"
+        ),
+        Err(error) => {
+            log::warn!("WSL 交互终端调整尺寸失败（session_id={session_id}）：{error}")
         }
     }
 }

@@ -103,10 +103,20 @@ pub async fn ensure_terminal_session(
         {
             if payload.cwd.is_none() && should_recreate_terminal_session(existing_session.as_ref())
             {
+                log::debug!(
+                    "既有 WSL 交互会话已不可复用，将重建（session_id={}）。",
+                    payload.session_id
+                );
                 remove_terminal_session(&terminal_state, &payload.session_id)?;
                 remove_terminal_snapshot(&terminal_state, &payload.session_id)?;
                 terminate_terminal_session(existing_session.as_ref())?;
             } else {
+                log::debug!(
+                    "复用既有 WSL 交互会话并同步尺寸（session_id={}, cols={}, rows={}）。",
+                    payload.session_id,
+                    payload.cols,
+                    payload.rows
+                );
                 existing_session
                     .handle
                     .resize(payload.cols, payload.rows)
@@ -126,6 +136,12 @@ pub async fn ensure_terminal_session(
 
         // 进入创建分支后才暴露工作目录解析错误（与改动前的 `?` 时机一致）。
         let terminal_cwd = pre_resolved_terminal_cwd?;
+        log::debug!(
+            "创建新的 WSL 交互会话（session_id={}, cwd={terminal_cwd}, cols={}, rows={}）。",
+            payload.session_id,
+            payload.cols,
+            payload.rows
+        );
 
         let event_app = app.clone();
         let event_state = terminal_state.clone();
@@ -186,6 +202,10 @@ pub async fn ensure_terminal_session(
     };
 
     mark_terminal_interactive_ready(&app);
+    log::trace!(
+        "WSL 交互会话就绪事件已发出（session_id={}, created={created}）。",
+        payload.session_id
+    );
 
     Ok(TerminalSessionPayload {
         session_id: payload.session_id,
