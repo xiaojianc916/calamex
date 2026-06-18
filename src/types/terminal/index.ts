@@ -91,13 +91,6 @@ export interface ITerminalDataEvent {
   runSeq?: number;
 }
 
-export interface ITerminalRunChunkPayload {
-  sessionId: string;
-  runId: string;
-  data: string;
-  seq?: number;
-}
-
 export interface ITerminalExitEvent {
   sessionId: string;
   exitCode: number | null;

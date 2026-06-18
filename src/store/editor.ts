@@ -26,14 +26,11 @@ import { createUniqueId } from '@/utils/core/id';
 import { DEFAULT_EXECUTOR, DEFAULT_SCRIPT } from '@/utils/core/templates';
 import { computeDocumentMetrics, type IDocumentMetrics } from '@/utils/editor/document-metrics';
 import { formatFileSystemTextForDisplay, normalizeFileSystemPath } from '@/utils/file/path';
-import { createTerminalOutputBuffer } from '@/utils/terminal/terminal-output-buffer';
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-const MAX_TERMINAL_OUTPUT_LENGTH = 120_000;
-const MAX_TERMINAL_OUTPUT_CHUNK_LENGTH = 4_096;
 const MAX_RUN_LOG_ENTRIES = 500;
 const MAX_RUN_HISTORY_ENTRIES = 30;
 const MAX_OPEN_TABS = WORKBENCH_TAB_LIMITS.maxOpenTabs;
@@ -229,12 +226,6 @@ export const useEditorStore = defineStore(
     const cursorColumn = ref(1);
     const activeSelectionSummary = ref<IEditorSelectionSummary | null>(null);
     const selectedExecutor = ref<TExecutorKind>(DEFAULT_EXECUTOR);
-    const terminalOutputBuffer = createTerminalOutputBuffer({
-      maxLength: MAX_TERMINAL_OUTPUT_LENGTH,
-      maxChunkLength: MAX_TERMINAL_OUTPUT_CHUNK_LENGTH,
-    });
-    const terminalOutputLength = ref(0);
-    const terminalOutputVersion = ref(0);
     const runLogs = ref<IRunLogEntry[]>([]);
     const runHistory = ref<IRunHistoryEntry[]>([]);
     const lastRunResult = ref<IRunResult | null>(null);
@@ -436,8 +427,7 @@ export const useEditorStore = defineStore(
         activeRunSummary.value !== null ||
         lastRunResult.value !== null ||
         runLogs.value.length > 0 ||
-        runHistory.value.length > 0 ||
-        terminalOutputLength.value > 0,
+        runHistory.value.length > 0,
     );
 
     /**
@@ -570,37 +560,6 @@ export const useEditorStore = defineStore(
           : {}),
       };
       touchSessionSnapshot();
-    };
-
-    // Actions: terminal output
-
-    const syncTerminalOutputMetadata = (): void => {
-      terminalOutputLength.value = terminalOutputBuffer.length;
-      terminalOutputVersion.value += 1;
-    };
-
-    const getTerminalOutputSnapshot = (): string => terminalOutputBuffer.toString();
-
-    const setTerminalOutputChunks = (chunks: readonly string[]): void => {
-      terminalOutputBuffer.replaceWithChunks(chunks);
-      syncTerminalOutputMetadata();
-    };
-
-    const appendTerminalOutputChunk = (value: string): void => {
-      if (!terminalOutputBuffer.append(value)) {
-        return;
-      }
-      syncTerminalOutputMetadata();
-    };
-
-    const setTerminalOutput = (value: string): void => {
-      terminalOutputBuffer.replaceWithText(value);
-      syncTerminalOutputMetadata();
-    };
-
-    /** 历史 API 别名;与 appendTerminalOutputChunk 完全同义。新代码可任选其一。 */
-    const appendTerminalOutput = (value: string): void => {
-      appendTerminalOutputChunk(value);
     };
 
     // Actions: document open / close
@@ -1093,7 +1052,6 @@ export const useEditorStore = defineStore(
     const clearLogs = (): void => {
       runLogs.value = [];
       runHistory.value = [];
-      setTerminalOutputChunks([]);
       lastRunResult.value = null;
     };
 
@@ -1126,8 +1084,6 @@ export const useEditorStore = defineStore(
       cursorColumn,
       activeSelectionSummary,
       selectedExecutor,
-      terminalOutputLength,
-      terminalOutputVersion,
       runLogs,
       runHistory,
       lastRunResult,
@@ -1156,7 +1112,6 @@ export const useEditorStore = defineStore(
       getDocumentById,
       findDocumentByPath,
       getEditorViewState,
-      getTerminalOutputSnapshot,
       // actions
       saveEditorViewState,
       clearDocumentDraft,
@@ -1180,8 +1135,6 @@ export const useEditorStore = defineStore(
       updateActiveDocumentEncoding,
       closeDocument,
       setEnvironment,
-      setTerminalOutput,
-      appendTerminalOutput,
       setCursorPosition,
       setActiveSelectionSummary,
       appendLog,

@@ -1,12 +1,15 @@
 #!/usr/bin/env node
-// apply-optionc-batch4.mjs
-// Option C 收尾(C4): 删除"运行输出捕获"遗留的死代码。
+// apply-optionc-batch4.mjs (v2)
+// Option C 收尾(C4): 清理"运行输出捕获"遗留的死代码。
 // 在仓库根目录运行:  node apply-optionc-batch4.mjs
 //
+// 说明: terminal-output-buffer.ts 是通用环形缓冲区, 仍被活着的 hidden-write-backlog.ts 使用,
+// 因此不删除它; 仅清理 editor store 对该缓冲区的消费, 以及已死的 run-chunk 事件/类型。
+//
 // 先跑"残留消费者守卫"扫描整个 src/; 若仍有人引用将被移除的符号, 不写入任何文件直接退出。
-// 守卫通过后才应用编辑并删除文件。CRLF 安全、逐文件全有或全无、可重复执行(已应用则跳过)。
+// CRLF 安全、逐文件全有或全无、可重复执行(已应用则跳过)。
 
-import { readFileSync, writeFileSync, existsSync, rmSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { sep } from 'node:path';
 
 const edits = [
@@ -128,15 +131,52 @@ const edits = [
       '    expect(store.hasRunArtifacts).toBe(false);\n' +
       '  });\n',
   },
+
+  // ---- src/composables/useShellWorkbenchView.spec.ts ----
+  {
+    file: 'src/composables/useShellWorkbenchView.spec.ts',
+    find:
+      '      terminalOutputLength: 0,\n' +
+      '      terminalOutputVersion: 0,\n' +
+      "      getTerminalOutputSnapshot: () => '',\n",
+    replace: '',
+  },
+  {
+    file: 'src/composables/useShellWorkbenchView.spec.ts',
+    find: '    appendTerminalOutput: vi.fn(),\n',
+    replace: '',
+  },
+
+  // ---- src/composables/useWorkbench.lifecycle.spec.ts ----
+  {
+    file: 'src/composables/useWorkbench.lifecycle.spec.ts',
+    find: '    appendTerminalOutput: vi.fn(),\n',
+    replace: '',
+  },
+
+  // ---- src/components/workbench/sidebar/run/RunPanel.vue ----
+  {
+    file: 'src/components/workbench/sidebar/run/RunPanel.vue',
+    find: "import type { ITerminalRunChunkPayload, ITerminalRunCompletedPayload } from '@/types/terminal';\n",
+    replace: "import type { ITerminalRunCompletedPayload } from '@/types/terminal';\n",
+  },
+  {
+    file: 'src/components/workbench/sidebar/run/RunPanel.vue',
+    find: "  'terminal-run-chunk': [payload: ITerminalRunChunkPayload];\n",
+    replace: '',
+  },
+  {
+    file: 'src/components/workbench/sidebar/run/RunPanel.vue',
+    find: "    @terminal-run-chunk=\"emit('terminal-run-chunk', $event)\"\n",
+    replace: '',
+  },
 ];
 
-const deletes = [
-  'src/utils/terminal/terminal-output-buffer.ts',
-  'src/utils/terminal/terminal-output-buffer.spec.ts',
-];
+// terminal-output-buffer.ts 是活着的通用工具(hidden-write-backlog 在用), 不删除。
+const deletes = [];
 
+// 不包含 createTerminalOutputBuffer / terminal-output-buffer: 这些是活着的通用缓冲区 API。
 const guardIdentifiers = [
-  'createTerminalOutputBuffer',
   'terminalOutputBuffer',
   'getTerminalOutputSnapshot',
   'setTerminalOutputChunks',
@@ -148,7 +188,6 @@ const guardIdentifiers = [
   'MAX_TERMINAL_OUTPUT_LENGTH',
   'MAX_TERMINAL_OUTPUT_CHUNK_LENGTH',
   'ITerminalRunChunkPayload',
-  'terminal-output-buffer',
 ];
 
 const norm = (p) => p.split('/').join(sep);
@@ -157,6 +196,9 @@ const guardExcluded = new Set(
     'src/store/editor.ts',
     'src/store/editor.store.spec.ts',
     'src/types/terminal/index.ts',
+    'src/composables/useShellWorkbenchView.spec.ts',
+    'src/composables/useWorkbench.lifecycle.spec.ts',
+    'src/components/workbench/sidebar/run/RunPanel.vue',
     ...deletes,
   ].map(norm),
 );
@@ -277,19 +319,10 @@ const applyEdits = () => {
   return !hadFailure;
 };
 
-const applyDeletes = () => {
-  for (const file of deletes) {
-    const path = norm(file);
-    if (existsSync(path)) { rmSync(path); console.log(`[del]  ${file}  已删除`); }
-    else { console.log(`[skip] ${file}(不存在, 视为已删除)`); }
-  }
-};
-
 runGuard();
 const editsOk = applyEdits();
 if (!editsOk) {
-  console.error('\n[fail] 编辑阶段存在失败项, 删除阶段已跳过。请回贴上面的 [fail] 行。');
+  console.error('\n[fail] 编辑阶段存在失败项。请回贴上面的 [fail] 行。');
   process.exit(1);
 }
-applyDeletes();
 console.log('\nBatch C4 完成。请运行校验: pnpm vue-tsc --noEmit && pnpm vitest run');

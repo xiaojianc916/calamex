@@ -156,9 +156,6 @@ describe('editor store session state', () => {
 
     store.clearLogs();
     expect(store.hasRunArtifacts).toBe(false);
-
-    store.setTerminalOutput('hello');
-    expect(store.hasRunArtifacts).toBe(true);
   });
 
   it('appendLog 会清洗 Windows 扩展路径前缀，避免运行日志展示异常路径', () => {
