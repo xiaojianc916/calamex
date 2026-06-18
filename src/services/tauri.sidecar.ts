@@ -10,6 +10,7 @@ import { acpPermissionRequestPayloadSchema } from '@/types/ai/acp-permission.sch
 import type {
   IAgentSidecarOrchestratePayload,
   IAgentSidecarResponsePayload,
+  IAgentSidecarStreamEventPayload,
 } from '@/types/ai/sidecar';
 import { agentSidecarStreamEventPayloadSchema } from '@/types/ai/sidecar.schema';
 import type { ITauriService } from '@/types/tauri';
@@ -176,7 +177,9 @@ export const sidecarTauriService: TSidecarTauriService = {
       if (!parsed.success) {
         return;
       }
-      handler(parsed.data);
+      // wire→domain：schema 仅浅校验 ACP tool_call/tool_call_update（acpUpdate 走 passthrough），
+      // @agentclientprotocol/sdk 类型为 SoT，校验通过后回断言手写 domain 类型。
+      handler(parsed.data as unknown as IAgentSidecarStreamEventPayload);
     });
   },
 
