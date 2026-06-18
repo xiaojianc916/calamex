@@ -1119,7 +1119,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       messageId: assistantMessageId,
       threadId,
       toolCalls: toolProjection.toolCalls,
-      acpToolCalls: reduceAcpUiEventsToToolCalls(events),
       streamStatus,
       activityText: toolProjection.activityText,
       runtimeEvents,
@@ -1151,6 +1150,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       messageId: assistantMessageId,
       content: displayContent,
       toolCalls: toolProjection.toolCalls,
+      acpToolCalls: reduceAcpUiEventsToToolCalls(events),
       streamStatus: resolveSidecarAnswerDisplayStatus(streamMetadata),
       activityText: toolProjection.activityText,
       runtimeEvents: runtimeEvents,
@@ -1213,7 +1213,8 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
               toolCallId: 'apply_file_edits',
               confirmedByUser: true,
               workspaceRootPath: options.workspaceRootPath.value,
-              ...patchMetadata,
+              agentRunId: patchMetadata?.agentRunId ?? null,
+              agentStepId: patchMetadata?.agentStepId ?? null,
             },
           });
       const currentAppliedPaths = result.appliedFiles.map((file) => file.path);
@@ -1310,7 +1311,6 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       messageId: ctx.assistantMessageId,
       threadId: ctx.threadId,
       toolCalls: toolProjection.toolCalls,
-      acpToolCalls: reduceAcpUiEventsToToolCalls(payload.events),
       streamStatus: sidecarStreamStatus,
       activityText: toolProjection.activityText,
       runtimeEvents: compactRuntimeEvents(extractVisibleAgentRuntimeEvents(payload.events)),
@@ -1380,6 +1380,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
       messageId: ctx.assistantMessageId,
       content: displayContent,
       toolCalls: toolProjection.toolCalls,
+      acpToolCalls: reduceAcpUiEventsToToolCalls(payload.events),
       streamStatus: projection.errorMessage
         ? 'completed'
         : resolveSidecarAnswerDisplayStatus(streamMetadata),
@@ -2467,6 +2468,8 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
             toolCallId: 'rollback_changed_files_summary',
             confirmedByUser: true,
             workspaceRootPath: options.workspaceRootPath.value,
+            agentRunId: null,
+            agentStepId: null,
           },
         });
 
