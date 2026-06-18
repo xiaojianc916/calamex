@@ -130,9 +130,11 @@ const closeTerminalTab = async (sessionId: string): Promise<void> => {
     await stopRun();
   }
 
-  // 先移除 tab（触发 EmbeddedTerminal 卸载 / detach），再彻底销毁后端会话。
+  // 先移除 tab（触发 EmbeddedTerminal 卸载 / detach），再彻底销毁后端会话与其运行态镜像。
   if (!tabsStore.closeTab(sessionId)) return;
   void nextTick().then(() => registry.dispose(sessionId));
+  // 清理该会话的 per-session 运行态镜像，避免 sessionStates / sessionActiveRuns 残留陈旧条目。
+  terminalRuntimeStore.clearSessionState(sessionId);
   // 关掉最后一个 tab → 整个终端界面关闭（交给父级隐藏面板）。
   if (tabs.value.length === 0) {
     emit('hide');

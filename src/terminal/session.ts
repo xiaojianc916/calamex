@@ -926,6 +926,16 @@ export class TerminalSession {
   // -- Public: dispose terminal instance -----------------------------------
 
   async dispose(): Promise<void> {
+    // 显式销毁（关闭 tab）：先终止后端 PTY，再做前端拆卸。
+    // detach() 仅释放 DOM/监听并保留 PTY（用于隐藏切换与重载重连）；dispose() 是彻底销毁，
+    // 唯一触发点是用户主动关闭 tab，故必须连带关闭后端会话，避免 PTY 泄漏成孤儿进程。
+    if (this.session.value) {
+      try {
+        await this._tauri.closeTerminalSession({ sessionId: this.id });
+      } catch {
+        // 通道可能已断开或会话已退出；继续前端拆卸即可。
+      }
+    }
     this.detach();
     this._disposeWebglRenderer();
     this._terminalRef.value?.dispose();
