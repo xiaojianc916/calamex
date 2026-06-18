@@ -5,7 +5,7 @@
     <div v-if="showOverlay" class="embedded-terminal-overlay" :class="{ 'is-error': isUnavailable }">
       <div class="embedded-terminal-overlay-body">
         <section v-if="!isUnavailable" class="embedded-terminal-loading" aria-live="polite">
-          <p class="embedded-terminal-loading-title">终端加载中</p>
+          <p class="embedded-terminal-loading-title" v-text="statusMessage || '终端加载中'" />
           <span class="embedded-terminal-loading-dots" aria-hidden="true">
             <span class="embedded-terminal-loading-dot" />
             <span class="embedded-terminal-loading-dot" />

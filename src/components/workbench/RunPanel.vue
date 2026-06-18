@@ -6,6 +6,7 @@
         :tabs="tabs"
         :active-session-id="activeSessionId"
         :running-session-ids="runningSessionIds"
+        :status-by-session="sessionStatusById"
         @select="handleSelectTab"
         @close="handleCloseTab"
         @new="handleNewTab"
@@ -108,6 +109,16 @@ const runningSessionIds = computed<string[]>(() =>
     .filter((tab) => sessionStates.value.get(tab.sessionId) === 'running')
     .map((tab) => tab.sessionId),
 );
+
+// 每 tab 的连接状态镜像：来源是 registry 持有的 per-session 共享 status ref（会话创建前后同源）。
+// 供 tab 栏在后台 tab 掉线 / 出错时给出可见提示，实现「每 tab 独立状态显示」。
+const sessionStatusById = computed<Record<string, string>>(() => {
+  const map: Record<string, string> = {};
+  for (const tab of tabs.value) {
+    map[tab.sessionId] = registry.getStatusRefs(tab.sessionId).status.value;
+  }
+  return map;
+});
 
 // 工具栏作用于当前激活会话；状态来自 registry 共享 refs（会话创建前后同源）。
 const isTerminalReady = computed(

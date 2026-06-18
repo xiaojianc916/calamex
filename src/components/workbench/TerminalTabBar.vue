@@ -2,7 +2,7 @@
   <div class="terminal-tabbar">
     <div class="terminal-tabbar-list" role="tablist">
       <div
-        v-for="(tab, index) in tabs"
+        v-for="tab in tabs"
         :key="tab.sessionId"
         class="terminal-tab"
         :class="{ 'is-active': tab.sessionId === activeSessionId }"
@@ -26,7 +26,13 @@
           aria-label="运行中"
           title="运行中"
         />
-        <span class="terminal-tab-label" v-text="'终端 ' + (index + 1)" />
+        <span
+          v-else-if="isSessionUnhealthy(tab.sessionId)"
+          class="terminal-tab-status-dot terminal-tab-status-dot--error"
+          aria-label="终端连接中断"
+          title="连接中断，点击该终端可重连"
+        />
+        <span class="terminal-tab-label" v-text="tab.title" />
       </div>
     </div>
 
@@ -45,11 +51,18 @@
 import { Plus, SquareTerminal, X } from '@lucide/vue';
 import type { ITerminalTab } from '@/store/terminalTabs';
 
-defineProps<{
+const props = defineProps<{
   tabs: ITerminalTab[];
   activeSessionId: string;
   runningSessionIds: string[];
+  statusBySession?: Record<string, string>;
 }>();
+
+/** 非激活 tab 的连接异常（error / closed）也要在 tab 上给出可见提示，便于发现后台终端掉线。 */
+const isSessionUnhealthy = (sessionId: string): boolean => {
+  const status = props.statusBySession?.[sessionId];
+  return status === 'error' || status === 'closed';
+};
 
 const emit = defineEmits<{
   select: [sessionId: string];
@@ -163,6 +176,18 @@ const emit = defineEmits<{
   background: var(--success, #22c55e);
   box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.18);
   animation: terminal-tab-running-pulse 1.6s ease-in-out infinite;
+}
+
+.terminal-tab-status-dot {
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.terminal-tab-status-dot--error {
+  background: var(--danger, #ef4444);
+  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.18);
 }
 
 @keyframes terminal-tab-running-pulse {

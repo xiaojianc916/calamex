@@ -56,6 +56,9 @@ let activeWebglTerminalContexts = 0;
 // 前端存活心跳间隔：每个挂载中的会话周期性向后端上报存活。后端宽限期（30s，约 3 个心跳周期）
 // 远大于此间隔，连续多次漏报（页面重载 / 崩溃后 VM 销毁、心跳停止）才会被孤儿收割线程回收，健康会话零误杀。
 const TERMINAL_HEARTBEAT_INTERVAL_MS = 10_000;
+// 冷启动状态升级延迟：WSL 首次冷启动（发行版 VM 冷）可能需十余秒。连接超过此延迟仍未就绪时，
+// 把状态文案升级为「首次启动可能较慢」，让用户知道仍在启动而非卡死。对照 VSCode 终端「正在启动…」反馈。
+const TERMINAL_COLD_START_HINT_DELAY_MS = 6_000;
 const TERMINAL_LAYOUT_SETTLE_DELAY_MS = 72;
 const TERMINAL_OUTPUT_FLUSH_DELAY_MS = 16;
 const TERMINAL_RUN_COMPLETED_FLUSH_TIMEOUT_MS = 160;
@@ -617,10 +620,20 @@ export class TerminalSession {
       return;
     }
 
-    this._emitStatus('connecting', '正在连接 WSL2 终端…');
+    this._emitStatus('connecting', '正在启动 WSL…');
     await nextTick();
     this._emitBufferDiagnostic('ensure-connect:before-initial-layout');
     this._syncTerminalLayout();
+    // 冷启动状态升级：连接迟迟未就绪时（WSL 首次冷启动可能十余秒）把文案升级，让用户知道仍在
+    // 启动而非卡死；无论成功 / 失败都会在 finally 清除该定时器，避免覆盖最终的 ready / error 文案。
+    const coldStartHintTimerId =
+      typeof window !== 'undefined'
+        ? window.setTimeout(() => {
+            if (this.status.value === 'connecting') {
+              this._emitStatus('connecting', '正在启动 WSL…（首次启动可能较慢，请稍候）');
+            }
+          }, TERMINAL_COLD_START_HINT_DELAY_MS)
+        : null;
     try {
       let payload = await this._tauri.ensureTerminalSession({
         sessionId: this.id,
@@ -676,6 +689,10 @@ export class TerminalSession {
       terminal.writeln(`\x1b[31m${message}\x1b[0m`, () => {
         this._scheduleViewportSync({ scrollToBottom: true });
       });
+    } finally {
+      if (coldStartHintTimerId !== null) {
+        window.clearTimeout(coldStartHintTimerId);
+      }
     }
   }
 
