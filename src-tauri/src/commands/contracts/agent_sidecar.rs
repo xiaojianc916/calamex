@@ -202,6 +202,12 @@ pub struct AgentSidecarResponsePayload {
     #[specta(type = Vec<specta_typescript::Unknown>)]
     pub(crate) events: Vec<serde_json::Value>,
     pub(crate) result: Option<String>,
+    /// sidecar 结构化错误消息（来自 IAgentRuntimeResponse.errorMessage）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) error_message: Option<String>,
+    /// 稳定的 provider 错误分类码（如 AI_PROVIDER_AUTH_FAILED）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) error_code: Option<String>,
 }
 
 // ============================================================================

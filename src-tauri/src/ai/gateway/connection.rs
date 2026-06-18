@@ -80,6 +80,14 @@ async fn test_provider_connection_candidate(
 ) -> Result<String, String> {
     let started_at = std::time::Instant::now();
     let response = run_test_model_chat(app, build_test_request(candidate)?).await?;
+
+    // 优先检查 sidecar 返回的结构化错误（如 401 认证失败），
+    // 避免将 provider 错误误分类为 AI_RESPONSE_INVALID。
+    if let Some(error_message) = &response.error_message {
+        let code = response.error_code.as_deref().unwrap_or("AI_PROVIDER_UNAVAILABLE");
+        return Err(errors::error(code, error_message.clone()));
+    }
+
     let reply = response.result.unwrap_or_default();
     let reply = reply.trim();
 

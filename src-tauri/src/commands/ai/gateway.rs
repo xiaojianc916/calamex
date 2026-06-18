@@ -10,25 +10,32 @@ use crate::commands::contracts::{
 };
 use tauri::AppHandle;
 
-fn classify_provider_test_error_code(error: &str) -> &'static str {
+fn classify_provider_test_error_code(error: &str) -> String {
+    // 优先解析结构化错误 JSON（由 errors::error() 构造的 AiErrorPayload）。
+    if let Ok(payload) = serde_json::from_str::<serde_json::Value>(error) {
+        if let Some(code) = payload.get("code").and_then(|v| v.as_str()) {
+            return code.to_string();
+        }
+    }
+
     let normalized = error.to_ascii_lowercase();
     if normalized.contains("http 401")
         || normalized.contains("http 403")
         || normalized.contains("unauthorized")
         || normalized.contains("ai_provider_auth_failed")
     {
-        "AI_PROVIDER_AUTH_FAILED"
+        "AI_PROVIDER_AUTH_FAILED".to_string()
     } else if normalized.contains("http 429")
         || normalized.contains("too many requests")
         || normalized.contains("rate limit")
     {
-        "AI_PROVIDER_RATE_LIMITED"
+        "AI_PROVIDER_RATE_LIMITED".to_string()
     } else if normalized.contains("ai_provider_not_configured") || normalized.contains("http 404") {
-        "AI_PROVIDER_NOT_CONFIGURED"
+        "AI_PROVIDER_NOT_CONFIGURED".to_string()
     } else if normalized.contains("ai_response_invalid") {
-        "AI_RESPONSE_INVALID"
+        "AI_RESPONSE_INVALID".to_string()
     } else {
-        "AI_PROVIDER_UNAVAILABLE"
+        "AI_PROVIDER_UNAVAILABLE".to_string()
     }
 }
 
@@ -89,7 +96,7 @@ pub async fn ai_test_provider_config(
         }),
         Err(error) => Ok(AiProviderTestPayload {
             ok: false,
-            code: classify_provider_test_error_code(&error).to_string(),
+            code: classify_provider_test_error_code(&error),
             message: error,
         }),
     }
@@ -144,7 +151,7 @@ pub async fn ai_test_provider(app: AppHandle) -> Result<AiProviderTestPayload, S
         }),
         Err(error) => Ok(AiProviderTestPayload {
             ok: false,
-            code: classify_provider_test_error_code(&error).to_string(),
+            code: classify_provider_test_error_code(&error),
             message: error,
         }),
     }

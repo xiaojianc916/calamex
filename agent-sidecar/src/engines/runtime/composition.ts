@@ -1,7 +1,7 @@
 import { MastraRuntimeApproval } from '../approval/client.js';
 import { createMastraModelConfig, resolveMastraModelConfig } from '../agent/factory.js';
 import { extractRestoreResultText, resolveSystemPromptFromSnapshot, resolveWorkspaceRootPathFromSnapshot } from '../context/context.js';
-import { normalizeMastraError } from '../shared/errors.js';
+import { normalizeMastraError, classifyProviderErrorCode } from '../shared/errors.js';
 import { createErrorResponse } from '../responses/responses.js';
 import { createMastraPlanOrchestrationDeps } from '../plan/orchestration-deps.js';
 import { PLAN_ORCHESTRATION_WORKFLOW_ID, createPlanOrchestrationWorkflow, type TPlanOrchestrationWorkflow } from '../plan/orchestration-workflow.js';
@@ -146,6 +146,7 @@ export class MastraRuntime extends MastraRuntimeApproval {
                 `原始模型透传失败：${normalizeMastraError(error)}`,
                 events,
                 options,
+                classifyProviderErrorCode(error),
             );
         }
     }

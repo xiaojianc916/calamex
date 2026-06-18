@@ -15,6 +15,8 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::commands::contracts::SecretString;
 
+use crate::commands::contracts::SecretString;
+
 use agent_client_protocol::schema::{
     CancelNotification, ContentBlock, InitializeRequest, NewSessionRequest, PermissionOptionId,
     PromptRequest, ProtocolVersion, RequestPermissionOutcome, RequestPermissionRequest,
