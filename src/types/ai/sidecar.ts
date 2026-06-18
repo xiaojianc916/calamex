@@ -686,6 +686,21 @@ export type TAgentUiEventAvailableCommandsUpdate = {
   availableCommands: TJsonValue[];
 };
 
+/* ----------------------------------------------------------------------------
+ * ACP 回合用量 UI 事件（ADR-20260617 · D7-⑦）
+ *
+ * 投影 ACP session/update 的 usage_update（外部 agent 上报本回合 token 用量，见 Rust host
+ * src-tauri/src/acp/ui_event.rs）。事件逐字透传 ACP usage 原始对象（TJsonValue，不在 Rust
+ * 侧解读/折算），前端 ACL（components/business/ai/thread/projection/from-acp-usage）经
+ * aiLanguageModelUsageSchema safeParse 为共享 IAiLanguageModelUsage VM（与 done.usage 同一
+ * SoT schema，避免双 SoT）；UI 只消费该结构，不直接触碰 ACP 原始负载。
+ * -------------------------------------------------------------------------- */
+export type TAgentUiEventUsageUpdate = {
+  type: 'usage_update';
+  /** ACP usage_update 的原始 usage 对象，逐字透传，前端 ACL 归一。 */
+  usage: TJsonValue;
+};
+
 export type TAgentUiEvent =
   | { type: 'message_delta'; text: string; phase?: 'stage' | 'final' }
   | { type: 'agent_event'; event: TAgentRuntimeEvent }
@@ -697,6 +712,7 @@ export type TAgentUiEvent =
   | TAgentUiEventToolCallUpdate
   | TAgentUiEventModeUpdate
   | TAgentUiEventAvailableCommandsUpdate
+  | TAgentUiEventUsageUpdate
   | { type: 'approval_required'; request: IApprovalRequest }
   | { type: 'ask_user_required'; requestId: string; request: IAskUserRequest }
   | { type: 'diff_ready'; files: IDiffFile[] }

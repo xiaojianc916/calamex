@@ -46,6 +46,10 @@ const TERMINAL_RESIZE_DEBOUNCE: Duration = Duration::from_millis(50);
 // 这里给同步子进程加超时兜底，避免命令线程被永久阻塞、反复触发后耗尽线程池导致 UI 冻结。
 const WSL_SYNC_COMMAND_TIMEOUT: Duration = Duration::from_secs(15);
 
+/// 子进程退出后、关闭伪控制台前的冲刷窗口：给读线程排空 ConPTY 残留输出的时间，避免截断运行
+/// 尾部（最后几行输出 / 退出码）。对照 node-pty 退出后延迟关闭 conpty 以冲刷数据的做法。
+const RUN_EXIT_FLUSH_GRACE: Duration = Duration::from_millis(50);
+
 #[derive(Debug, Error)]
 pub enum LocalWslPtyError {
     #[error("打开本地 WSL 终端失败：{0}")]
@@ -517,11 +521,31 @@ fn spawn_run_reader<F>(
 where
     F: FnMut(LocalWslTerminalServerPayload) + Send + 'static,
 {
+    // 子进程退出后，ConPTY 输出管道在 master 仍存活时不会自行 EOF（Windows 伪控制台已知行为）：
+    // 必须由独立的进程退出信号关闭伪控制台，读线程才能读到 EOF 并收尾。对照 VSCode/node-pty——
+    // 以子进程 onExit（而非数据管道 EOF）作为运行结束信号，退出后再关闭 pty 冲刷尾部输出。
+    // 故把「等待子进程退出 → 写回退出码 → 关闭 master」下沉到独立退出监护线程；读线程只管读到 EOF。
+    let (exit_code_tx, exit_code_rx) = mpsc::channel::<Option<i32>>();
+    let mut read_error_killer = child.clone_killer();
+    let watch_run_id = run_id.clone();
+    std::thread::Builder::new()
+        .name(format!("wsl-run-exit-{run_id}"))
+        .spawn(move || {
+            // master 移交本线程：运行期间保活 stdin/输出通道；子进程退出后关闭它强制读线程 EOF。
+            let master = master;
+            let exit_code = child.wait().ok().map(|status| status.exit_code() as i32);
+            // 先把退出码发给读线程，再关闭 master：保证读线程拿到退出码先于 EOF 就绪（跨平台无竞态）。
+            let _ = exit_code_tx.send(exit_code);
+            // 关闭前留一小段冲刷窗口，让读线程排空 ConPTY 残留输出，避免截断运行尾部。
+            std::thread::sleep(RUN_EXIT_FLUSH_GRACE);
+            drop(master);
+            log::trace!("WSL 运行任务退出监护线程已关闭伪控制台（run_id={watch_run_id}）。");
+        })
+        .map_err(|error| LocalWslPtyError::Open(error.to_string()))?;
+
     std::thread::Builder::new()
         .name(format!("wsl-run-{run_id}"))
         .spawn(move || {
-            // master 在本线程内保活，确保运行期间 stdin/输出通道有效；运行结束后随线程释放。
-            let _master = master;
             on_event(LocalWslTerminalServerPayload::RunStarted(
                 LocalWslTerminalRunStarted {
                     run_id: run_id.clone(),
@@ -581,15 +605,16 @@ where
                 ));
             }
 
-            // 读取错误退出：先终止可能仍存活的子进程，保证 child.wait() 有界返回、不留孤儿 wsl.exe。
+            // 读取错误退出：主动 kill 可能仍存活的子进程，确保退出监护线程的 child.wait() 有界返回。
             let exit_reason = if read_error.is_some() { "读取错误" } else { "EOF" };
             if let Some(error) = read_error {
                 log::warn!(
                     "WSL 运行任务读线程因读取错误退出（run_id={run_id}）：{error}；强制终止子进程以避免阻塞与孤儿。"
                 );
-                let _ = child.clone_killer().kill();
+                let _ = read_error_killer.kill();
             }
-            let exit_code = child.wait().ok().map(|status| status.exit_code() as i32);
+            // 退出码由退出监护线程在关闭 master（触发本线程 EOF）之前发来，跨平台均先于 EOF 就绪。
+            let exit_code = exit_code_rx.recv().unwrap_or(None);
             cleanup_wsl_paths(&cleanup_paths);
             // 标记运行已结束：即便随后的 RunCompleted 完成事件未能让上层清理 active_runs，
             // 上层仍可据此（is_finished）确证该运行确已结束、安全回收陈旧条目。

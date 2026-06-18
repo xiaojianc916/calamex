@@ -11,6 +11,7 @@ export * from './from-acp-available-commands';
 export * from './from-acp-events';
 export * from './from-acp-terminal';
 export * from './from-acp-tool-call';
+export * from './from-acp-usage';
 export * from './from-runtime-tool-call';
 export * from './from-wire-tool-call';
 export * from './reconcile-thread-entries';

@@ -6,7 +6,6 @@
 
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { FitAddon } from '@xterm/addon-fit';
-import { WebglAddon } from '@xterm/addon-webgl';
 import { Terminal } from '@xterm/xterm';
 import { markRaw, nextTick, type Ref, ref, shallowRef } from 'vue';
 import { resolveTerminalFontFamily } from '@/constants/terminal';
@@ -47,12 +46,6 @@ const DEFAULT_COLS = 120;
 const DEFAULT_ROWS = 28;
 const MIN_RENDERABLE_TERMINAL_WIDTH = 24;
 const MIN_RENDERABLE_TERMINAL_HEIGHT = 24;
-const TERMINAL_ENABLE_WEBGL_RENDERER = true;
-const TERMINAL_WEBGL_RECOVERY_DELAY_MS = 180;
-// 限制同时持有 WebGL 上下文的终端数：浏览器对同时存活的 WebGL context 有硬上限，
-// 多终端 tab 各占一个 context 触顶后会整体丢失，故超过阈值的终端回退到默认渲染。
-const MAX_WEBGL_TERMINAL_CONTEXTS = 8;
-let activeWebglTerminalContexts = 0;
 // 前端存活心跳间隔：每个挂载中的会话周期性向后端上报存活。后端宽限期（30s，约 3 个心跳周期）
 // 远大于此间隔，连续多次漏报（页面重载 / 崩溃后 VM 销毁、心跳停止）才会被孤儿收割线程回收，健康会话零误杀。
 const TERMINAL_HEARTBEAT_INTERVAL_MS = 10_000;
@@ -373,7 +366,6 @@ export class TerminalSession {
   // ── 私有：xterm 实例 ────────────────────────────────────────────────────────
   private _terminalRef = shallowRef<Terminal | null>(null);
   private _fitAddonRef = shallowRef<FitAddon | null>(null);
-  private _webglAddonRef = shallowRef<WebglAddon | null>(null);
 
   // ── 私有：DOM ───────────────────────────────────────────────────────────────
   private _hostEl: HTMLElement | null = null;
@@ -418,7 +410,6 @@ export class TerminalSession {
   private _windowFocusCleanup: (() => void) | null = null;
   private _windowResizeCleanup: (() => void) | null = null;
   private _shellWindowResizeCleanup: (() => void) | null = null;
-  private _webglContextLossCleanup: { dispose(): void } | null = null;
   private _resizeObserver: ResizeObserver | null = null;
 
   // ── 私有：bell ─────────────────────────────────────────────────────────────
@@ -461,8 +452,6 @@ export class TerminalSession {
   // -- Private: liveness heartbeat -----------------------------------------
   private _heartbeatTimerId: number | null = null;
 
-  // -- Private: renderer state ---------------------------------------------
-  private _webglRendererBlocked = false;
   private _previousHostSize = { width: 0, height: 0 };
   private _previousTerminalSize = { cols: 0, rows: 0 };
 
@@ -915,10 +904,6 @@ export class TerminalSession {
     this._bellUnsubscribe?.();
     this._bellUnsubscribe = null;
 
-    // 隐藏/卸载时释放 WebGL 上下文，避免多终端 tab 各占一个 context；再次可见时经
-    // handleBecomeVisible → _createTerminal → _attachTerminalToHost → _ensurePreferredRenderer 重新获取。
-    this._disposeWebglRenderer();
-
     this._clearLayoutFrame();
     this._clearLayoutSettleTimeout();
     this._clearViewportFrame();
@@ -964,7 +949,6 @@ export class TerminalSession {
       }
     }
     this.detach();
-    this._disposeWebglRenderer();
     this._terminalRef.value?.dispose();
     this._terminalRef.value = null;
     this._fitAddonRef.value = null;
@@ -1796,55 +1780,6 @@ export class TerminalSession {
     this._clearTrackedRunState();
   }
 
-  // ── 私有：渲染器 ─────────────────────────────────────────────────────────────
-
-  private _canUseWebglRenderer(): boolean {
-    return (
-      TERMINAL_ENABLE_WEBGL_RENDERER &&
-      !this._webglRendererBlocked &&
-      activeWebglTerminalContexts < MAX_WEBGL_TERMINAL_CONTEXTS &&
-      typeof window !== 'undefined' &&
-      'WebGL2RenderingContext' in window
-    );
-  }
-
-  private _ensurePreferredRenderer(): void {
-    const terminal = this._terminalRef.value;
-    if (!terminal || this._webglAddonRef.value || !this._canUseWebglRenderer()) return;
-    try {
-      const addon = markRaw(new WebglAddon());
-      this._webglContextLossCleanup = addon.onContextLoss(() => {
-        this._disposeWebglRenderer();
-        window.setTimeout(() => {
-          this._ensurePreferredRenderer();
-          this._scheduleLayoutSync();
-          this._scheduleViewportSync({
-            clearTextureAtlas: true,
-            refresh: true,
-            scrollToBottom: true,
-          });
-        }, TERMINAL_WEBGL_RECOVERY_DELAY_MS);
-      });
-      terminal.loadAddon(addon);
-      this._webglAddonRef.value = addon;
-      activeWebglTerminalContexts += 1;
-    } catch (error) {
-      this._webglRendererBlocked = true;
-      console.warn('WebGL 终端渲染器初始化失败，已回退默认渲染。', error);
-    }
-  }
-
-  private _disposeWebglRenderer(): void {
-    const hadAddon = this._webglAddonRef.value !== null;
-    this._webglContextLossCleanup?.dispose();
-    this._webglContextLossCleanup = null;
-    this._webglAddonRef.value?.dispose();
-    this._webglAddonRef.value = null;
-    if (hadAddon) {
-      activeWebglTerminalContexts = Math.max(0, activeWebglTerminalContexts - 1);
-    }
-  }
-
   private _clearTerminalTextureAtlas(): void {
     this._terminalRef.value?.clearTextureAtlas();
   }
@@ -2104,9 +2039,6 @@ export class TerminalSession {
     } else if (terminal.element.parentElement !== host) {
       host.replaceChildren(terminal.element);
     }
-    // WebGL 渲染器必须在 terminal.open(host) 之后接线，否则没有可用的 canvas 上下文。
-    // 这是 _ensurePreferredRenderer 此前缺失的正常调用点（context-loss 恢复路径之外）。
-    this._ensurePreferredRenderer();
     this._previousHostSize = {
       width: Math.round(host.clientWidth),
       height: Math.round(host.clientHeight),
