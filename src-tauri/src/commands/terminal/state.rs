@@ -259,7 +259,6 @@ pub(super) fn remove_session_state(state: &TerminalSessionState, session_id: &st
 /// P2：交互读线程在创建时拿到它；该会话发起的运行读线程随后经 get_flow_controller 复用同一个。
 /// 之所以「重置」而非「取或建」：旧会话关闭时会 cancel 控制器（永久解除暂停），若复用到这个已
 /// cancel 的实例，新会话的读线程将永不背压——必须换上全新实例。
-#[allow(dead_code)] // 命令层（下一提交）接入后即为活跃。
 pub(super) fn reset_flow_controller(
     state: &TerminalSessionState,
     session_id: &str,
@@ -271,7 +270,6 @@ pub(super) fn reset_flow_controller(
 }
 
 /// 取该会话已存在的输出流控器：供该会话的运行读线程复用、以及前端 ack 命令查找。
-#[allow(dead_code)] // 命令层（下一提交）接入后即为活跃。
 pub(super) fn get_flow_controller(
     state: &TerminalSessionState,
     session_id: &str,
@@ -450,7 +448,6 @@ pub(super) fn get_active_terminal_run_handle(
 /// 取指定运行所属的会话 id：供取消看门狗在「读线程卡死、完成事件不会送达」的异常路径下，
 /// 合成运行完成事件并回收该会话的运行态时定位会话。运行不存在时返回 None。锁中毒时返回 None
 /// （尽力而为）。
-#[allow(dead_code)] // 命令层取消看门狗（下一提交）接入后即为活跃。
 pub(super) fn get_active_terminal_run_session(
     state: &TerminalSessionState,
     run_id: &str,
