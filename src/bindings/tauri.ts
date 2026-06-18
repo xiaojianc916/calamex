@@ -61,6 +61,12 @@ export const commands = {
 	 *  前端 xterm 写入后按累计字符数回 ack，pty 侧据此增减 `_unacknowledgedCharCount`。
 	 */
 	acknowledgeTerminalData: (sessionId: string, charCount: number) => __TAURI_INVOKE<null>("acknowledge_terminal_data", { sessionId, charCount }),
+	/**
+	 *  前端心跳：每个挂载中的前端终端会话周期性上报自身存活，后端据此刷新该会话「最近可见」时刻。
+	 *  收割线程只回收长时间无心跳（页面重载 / 崩溃后前端 VM 销毁、心跳停止）且无活动运行的孤儿会话。
+	 *  会话不存在时也安全（仅记录时刻、不创建会话）。
+	 */
+	heartbeatTerminalSession: (payload: HeartbeatTerminalSessionRequest) => __TAURI_INVOKE<null>("heartbeat_terminal_session", { payload }),
 	listGitBranches: (payload: GitRepositoryRootRequest) => __TAURI_INVOKE<GitBranchListPayload>("list_git_branches", { payload }),
 	checkoutGitBranch: (payload: GitBranchCheckoutRequest) => __TAURI_INVOKE<GitRepositoryStatusPayload>("checkout_git_branch", { payload }),
 	/**
@@ -1642,6 +1648,11 @@ export type GitStashSaveRequest = {
 	repositoryRootPath: string,
 	message: string | null,
 	includeUntracked: boolean,
+};
+
+/**  前端存活心跳请求：每个挂载中的前端终端会话周期性上报，后端据此判定哪些会话已无前端照管。 */
+export type HeartbeatTerminalSessionRequest = {
+	sessionId: string,
 };
 
 export type ImageAssetPayload = {
