@@ -85,6 +85,7 @@ const buildAcpToolCallsSignature = (message: IAiChatMessage): string => {
         boundedTextSignature(toolCall.title),
         toolCall.content.length,
         safeJsonSignature(toolCall.content.at(-1)),
+        safeJsonSignature(toolCall.locations),
         boundedTextSignature(toolCall.rawOutput),
       ].join(':'),
     )

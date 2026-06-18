@@ -2,8 +2,8 @@
  * 工具调用「渲染视图」投影(ADR-20260617 B 方案)。
  *
  * 协议 VM(`IAiThreadToolCall`,对标 Zed `ToolCall`)保持纯净;渲染所需的派生
- * 信息(图标 / 展示态 / 终端输出 / diff 行数)全部由本纯函数从协议 VM + 终端
- * 注册表 + 审批队列**派生**,不回灌污染协议契约,也不引入并行真源。
+ * 信息(图标 / 展示态 / 终端输出 / diff 行数 / 受影响文件)全部由本纯函数从协议
+ * VM + 终端注册表 + 审批队列**派生**,不回灌污染协议契约,也不引入并行真源。
  *
  * 设计要点(对齐 Zed,不自创启发式):
  * - 图标由 `kind` 决定(Zed `ToolKind` → 图标),不再按 toolName 正则猜测;
@@ -11,6 +11,8 @@
  * - 展示态在协议 5 态之上,由审批队列派生 `awaiting-confirmation`(Zed 等待
  *   权限时工具停在 pending,审批是独立流);`denied` 由协议落到 failed /
  *   canceled,本投影不臆造;
+ * - locations 为工具触及文件(Zed follow-along),按 path+line 去重后透传,供
+ *   组件渲染受影响文件 chips;
  * - 终端内容仅持 `terminalId`,输出经注册表按 id 查得(对接 D7 终端流式)。
  */
 import type { TTaskIcon } from '@/components/business/ai/plan/runtime-timeline';
@@ -19,6 +21,7 @@ import type {
   IAiThreadContentBlock,
   IAiThreadToolCall,
   IAiThreadToolCallContent,
+  IAiThreadToolCallLocation,
   TAiThreadToolCallStatus,
   TAiThreadToolKind,
 } from '@/types/ai/thread';
@@ -79,6 +82,8 @@ export interface IAiThreadToolView {
   title: string;
   status: TAiThreadToolViewStatus;
   content: TAiThreadToolViewContent[];
+  /** 受影响文件(已按 path+line 去重);无则空数组。 */
+  locations: IAiThreadToolCallLocation[];
 }
 
 /** 终端快照:由终端注册表按 `terminalId` 提供(对接 D7 `terminal/*` 流式)。 */
@@ -227,6 +232,25 @@ const toViewContent = (
   return content;
 };
 
+/** 受影响文件:按 path+line 去重(保序),缺省为空数组。 */
+const toViewLocations = (toolCall: IAiThreadToolCall): IAiThreadToolCallLocation[] => {
+  const locations = toolCall.locations;
+  if (locations === undefined || locations.length === 0) {
+    return [];
+  }
+  const seen = new Set<string>();
+  const result: IAiThreadToolCallLocation[] = [];
+  for (const loc of locations) {
+    const key = JSON.stringify([loc.path, loc.line ?? null]);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    result.push(loc.line === undefined ? { path: loc.path } : { path: loc.path, line: loc.line });
+  }
+  return result;
+};
+
 const toViewStatus = (
   toolCall: IAiThreadToolCall,
   deps: IAiThreadToolViewDeps,
@@ -251,4 +275,5 @@ export const toAiThreadToolView = (
   title: toolCall.title,
   status: toViewStatus(toolCall, deps),
   content: toViewContent(toolCall, deps),
+  locations: toViewLocations(toolCall),
 });

@@ -39,6 +39,17 @@ export const aiThreadToolCallContentSchema = z.discriminatedUnion('type', [
   aiThreadToolCallTerminalSchema,
 ]);
 
+/* ----- ToolCallLocation --------------------------------------------------- */
+/**
+ * 工具触及的文件位置（对标 ACP `ToolCallLocation` / Zed follow-along）。
+ * `line` 为可选行号（缺省表示仅定位到文件）。仅 ACP 源会携带 locations；
+ * runtime / wire 源不产出，故在 ToolCall 上整体可选。
+ */
+export const aiThreadToolCallLocationSchema = z.object({
+  path: z.string().min(1),
+  line: z.number().int().nonnegative().optional(),
+});
+
 /* ----- ToolCall entry ----------------------------------------------------- */
 export const aiThreadToolCallSchema = z.object({
   type: z.literal('tool_call'),
@@ -50,6 +61,8 @@ export const aiThreadToolCallSchema = z.object({
   kind: aiThreadToolKindSchema,
   status: aiThreadToolCallStatusSchema,
   content: z.array(aiThreadToolCallContentSchema),
+  /** 工具触及的文件位置；出现即整体替换（对齐 content 的 ACP upsert 语义）。 */
+  locations: z.array(aiThreadToolCallLocationSchema).optional(),
   /** 透传工具原始入/出参（任意形状，仅调试/详情展示用）。 */
   rawInput: z.unknown().optional(),
   rawOutput: z.unknown().optional(),

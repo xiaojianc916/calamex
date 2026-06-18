@@ -25,8 +25,8 @@ const emit = defineEmits<{
 }>();
 
 // 统一渲染入口:协议 VM 经 toAiThreadToolView 派生渲染视图(图标 / 标题 / 展示态 /
-// 内容)。终端与等待确认依赖本条目的运行期快照(terminals / awaiting),经依赖注入
-// 回灌,协议 VM 自身保持纯净不被污染。
+// 内容 / 受影响文件)。终端与等待确认依赖本条目的运行期快照(terminals / awaiting),
+// 经依赖注入回灌,协议 VM 自身保持纯净不被污染。
 const view = computed(() =>
   toAiThreadToolView(props.entry.toolCall, {
     resolveTerminal: (terminalId) => props.entry.terminals[terminalId],
@@ -35,6 +35,7 @@ const view = computed(() =>
 );
 
 const hasContent = computed(() => view.value.content.length > 0);
+const hasLocations = computed(() => view.value.locations.length > 0);
 const isExpanded = computed(() => hasContent.value && props.open);
 const toolIconClass = computed(() => TASK_ICON_MAP[view.value.icon] ?? TASK_ICON_MAP.system);
 
@@ -82,6 +83,21 @@ const rawLanguage = (code: string): string => {
       <ChevronDown class="ai-thread-tool-call__chevron size-4" v-if="hasContent" aria-hidden="true" />
       <span v-else class="ai-thread-tool-call__chevron-spacer" aria-hidden="true" />
     </button>
+
+    <ul v-if="hasLocations" class="ai-thread-tool-call__locations">
+      <li
+        v-for="loc in view.locations"
+        :key="`${loc.path}:${loc.line ?? ''}`"
+        class="ai-thread-tool-call__location"
+      >
+        <FileCode class="ai-thread-tool-call__location-icon size-3.5" aria-hidden="true" />
+        <span
+          class="ai-thread-tool-call__location-path"
+          :title="loc.path"
+          v-text="loc.line === undefined ? loc.path : `${loc.path}:${loc.line}`"
+        />
+      </li>
+    </ul>
 
     <div v-if="isExpanded" class="ai-thread-tool-call__panel">
       <template v-for="item in view.content" :key="item.id">
@@ -210,6 +226,39 @@ const rawLanguage = (code: string): string => {
 
 .ai-thread-tool-call__status {
   flex: 0 0 auto;
+}
+
+.ai-thread-tool-call__locations {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  min-width: 0;
+  margin: 0;
+  padding: 0 0 2px 24px;
+  list-style: none;
+}
+
+.ai-thread-tool-call__location {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-tertiary, #6b7280);
+}
+
+.ai-thread-tool-call__location-icon {
+  flex: 0 0 auto;
+}
+
+.ai-thread-tool-call__location-path {
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ai-thread-tool-call__panel {
