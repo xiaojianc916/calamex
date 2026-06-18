@@ -2,11 +2,11 @@ use crate::ai::audit::{self, AiAuditEventKind};
 use crate::ai::gateway;
 use crate::commands::contracts::{
     AiCancelRequest, AiChatRequest, AiChatStreamPayload, AiConfigPayload,
-    AiConversationTitlePayload, AiConversationTitleRequest, AiInlineCompletionRangePayload,
-    AiInlineCompletionRequest, AiInlineCompletionResult, AiProviderConnectionPayload,
-    AiProviderConnectionRequest, AiProviderTestPayload, AiResolveApprovalRequest,
-    AiSaveConfigRequest, AiSaveCredentialsRequest, AiSetSessionModeRequest,
-    AiSuggestionPoolPayload, AiSuggestionPoolRequest,
+    AiConversationTitlePayload, AiConversationTitleRequest, AiGetSessionModesRequest,
+    AiInlineCompletionRangePayload, AiInlineCompletionRequest, AiInlineCompletionResult,
+    AiProviderConnectionPayload, AiProviderConnectionRequest, AiProviderTestPayload,
+    AiResolveApprovalRequest, AiSaveConfigRequest, AiSaveCredentialsRequest, AiSessionModesPayload,
+    AiSetSessionModeRequest, AiSuggestionPoolPayload, AiSuggestionPoolRequest,
 };
 use tauri::AppHandle;
 
@@ -267,6 +267,32 @@ pub async fn ai_set_session_mode(
         .await
         .map_err(|error| format!("AI_SET_SESSION_MODE_FAILED: {error}"))?;
     Ok(applied)
+}
+
+/// 取某线程会话建立时 agent 公示的可用模式清单（ACP session/new 的 NewSessionResponse.modes
+/// 原样 JSON：currentModeId + availableModes[]），供前端模式选择器在会话建立后填充候选模式。
+///
+/// 与 ai_set_session_mode 同构地委托给 Tauri 托管的 AcpRuntime：线程归属哪个后端宿主对命令层
+/// 透明，由 runtime 向全部已建立宿主查询并返回首个命中。thread_id 先行空白校验；返回 None 表示
+/// 尚无该线程会话或 agent 未公示模式（前端据此隐藏选择器）。modes 为最小透传的原样 JSON（导出
+/// TS 为 unknown），交前端 ACL 解释（对齐 acpUpdate 整体透传）。
+#[tauri::command]
+#[specta::specta]
+pub fn ai_get_session_modes(
+    app: AppHandle,
+    payload: AiGetSessionModesRequest,
+) -> Result<Option<AiSessionModesPayload>, String> {
+    let thread_id = payload.thread_id.trim();
+    if thread_id.is_empty() {
+        return Err("AI_GET_SESSION_MODES_INVALID: threadId 不能为空。".to_string());
+    }
+
+    use tauri::Manager as _;
+    let modes = app
+        .state::<crate::acp::AcpRuntime>()
+        .session_modes(thread_id)
+        .map(|modes| AiSessionModesPayload { modes });
+    Ok(modes)
 }
 
 #[tauri::command]

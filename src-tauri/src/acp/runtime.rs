@@ -216,6 +216,19 @@ impl AcpRuntime {
         Ok(applied)
     }
 
+    /// 取某线程会话建立时 agent 公示的可用模式清单（ACP NewSessionResponse.modes 原样 JSON：
+    /// currentModeId + availableModes[]）。线程绑定的会话可能落在任一后端宿主，故向全部**已建立**
+    /// 宿主查询并返回首个命中（Some）。无任何宿主 / 无匹配线程 / agent 未公示模式时返回 None
+    /// （安全空操作——查询绝不应触发 node 子进程派生）。最小透传，宿主侧不重建 SDK 类型，交前端
+    /// ACL 解释（供 D7-③-c 模式选择器消费）。
+    pub fn session_modes(&self, thread_id: &str) -> Option<serde_json::Value> {
+        // 先取出 Arc 列表并释放锁，避免在逐宿主查询期间持有 runtime 锁。
+        let hosts = self.hosts.lock().all();
+        hosts
+            .into_iter()
+            .find_map(|host| host.session_modes(thread_id))
+    }
+
     /// 关停并释放全部后端的常驻连接（App 统一退出清理调用）。幂等：无宿主时为安全空操作。
     pub fn shutdown(&self) {
         // 先取走全部 Arc 并释放锁，避免在逐个关停期间持有 runtime 锁。
@@ -284,6 +297,14 @@ mod tests {
         let applied = tauri::async_runtime::block_on(runtime.set_session_mode("thread-1", "code"))
             .expect("set_session_mode on empty runtime should not error");
         assert!(!applied);
+        assert!(runtime.hosts.lock().all().is_empty());
+    }
+
+    #[test]
+    fn session_modes_on_unestablished_runtime_is_none() {
+        let runtime = AcpRuntime::default();
+        // 无任何宿主时，模式查询为安全空操作：返回 None 且绝不派生子进程。
+        assert!(runtime.session_modes("thread-1").is_none());
         assert!(runtime.hosts.lock().all().is_empty());
     }
 

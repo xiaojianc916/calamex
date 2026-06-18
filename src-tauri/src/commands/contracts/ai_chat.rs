@@ -123,6 +123,31 @@ pub struct AiSetSessionModeRequest {
     pub(crate) mode_id: String,
 }
 
+/// ACP 会话可用模式清单的查询请求（契约层）。
+///
+/// 对齐 acp::AcpRuntime::session_modes(thread_id)：thread_id 定位目标会话（宿主持有
+/// thread_id ↔ SessionId 映射，并在会话建立时登记 agent 公示的可用模式）。必填且非空（前端
+/// 总能从当前线程取得），空白校验由接线层负责。
+#[derive(Debug, Clone, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AiGetSessionModesRequest {
+    pub(crate) thread_id: String,
+}
+
+/// ACP 会话可用模式清单的响应载荷（契约层）。
+///
+/// modes 为 agent 在 NewSessionResponse 公示的可用模式清单原样 JSON（SessionModeState：
+/// currentModeId + availableModes[]）。最小透传，宿主侧不重建 SDK 类型，交前端 ACL 解释（对齐
+/// tool_call 的 acpUpdate 整体透传）。用 specta_typescript::Unknown 将导出 TS 映射为 unknown，
+/// 避开 serde_json::Number 的 i64/u64 触发 specta BigInt-forbidden（对齐
+/// AgentSidecarResponsePayload.events）；serde 运行时仍为 serde_json::Value，行为不变。
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AiSessionModesPayload {
+    #[specta(type = specta_typescript::Unknown)]
+    pub(crate) modes: serde_json::Value,
+}
+
 // ============================================================================
 // AI – inline completion
 // ============================================================================
