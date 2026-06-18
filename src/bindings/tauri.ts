@@ -193,6 +193,16 @@ export const commands = {
 	 *  命令层不视作错误，交前端自行决定是否提示），与 runtime 的「安全空操作」语义一致。
 	 */
 	aiResolveApproval: (payload: AiResolveApprovalRequest) => __TAURI_INVOKE<boolean>("ai_resolve_approval", { payload }),
+	/**
+	 *  切换 ACP 会话模式（标准 session/set_mode），令外部 agent（Kimi Code / Codex 等）在
+	 *  code / plan 等模式间切换。
+	 * 
+	 *  与 ai_cancel 同构地委托给 Tauri 托管的 AcpRuntime：线程归属哪个后端宿主对命令层透明，由
+	 *  runtime 向全部已建立宿主广播下发。两字段先行空白校验（前端总能从已渲染的模式选择器取得）；
+	 *  返回是否命中某已绑定会话——false 表示无匹配（多为会话尚未建立/已结束的良性竞态，命令层不
+	 *  视作错误，交前端自行决定是否提示），与 runtime 的「安全空操作」语义一致。
+	 */
+	aiSetSessionMode: (payload: AiSetSessionModeRequest) => __TAURI_INVOKE<boolean>("ai_set_session_mode", { payload }),
 	aiInlineComplete: (payload: AiInlineCompletionRequest) => __TAURI_INVOKE<AiInlineCompletionResult>("ai_inline_complete", { payload }),
 	aiAgentClassifyTask: (payload: AiAgentClassifyTaskRequest) => __TAURI_INVOKE<AiAgentClassifyTaskPayload>("ai_agent_classify_task", { payload }),
 	aiAgentSetNetworkPermission: (payload: AiAgentSetNetworkPermissionRequest) => __TAURI_INVOKE<AiAgentNetworkPermissionPayload>("ai_agent_set_network_permission", { payload }),
@@ -1011,6 +1021,7 @@ export type AiProviderTestPayload = {
  *    * `session_id` / `tool_call_id` —— 定位挂起审批所属的会话与工具调用（ACP 原值，逐字透传）；
  *    * `decision` —— 选中项 `optionId`（ACP `RequestPermissionRequest.options[].optionId` 原值，
  *      逐字回填，绝不本地映射，对齐 `approval.rs` 的逐字匹配）。
+ * 
  *  三者均必填且非空（前端总能从已渲染的审批气泡取得），空白校验由接线层负责。
  */
 export type AiResolveApprovalRequest = {
@@ -1037,6 +1048,20 @@ export type AiSaveCredentialsRequest = {
 	providerId: string,
 	alias?: string | null,
 	apiKey: SecretString,
+};
+
+/**
+ *  ACP 标准 session/set_mode 的模式切换请求（契约层）。
+ * 
+ *  对齐 acp::AcpRuntime::set_session_mode(thread_id, mode_id)：
+ *    * thread_id —— 定位目标会话（宿主持有 thread_id ↔ SessionId 映射，跨回合复用）；
+ *    * mode_id —— 目标模式的 ACP SessionMode.id 原值，逐字透传，绝不本地映射。
+ * 
+ *  两者均必填且非空（前端总能从已渲染的模式选择器取得），空白校验由接线层负责。
+ */
+export type AiSetSessionModeRequest = {
+	threadId: string,
+	modeId: string,
 };
 
 export type AiSnapshotPayload = {
