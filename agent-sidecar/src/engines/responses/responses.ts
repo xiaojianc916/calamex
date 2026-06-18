@@ -9,15 +9,15 @@ import { encodeApprovalRequestId, extractApprovalToolPath } from '../approval/ut
 export type TApprovalRiskLevel = 'low' | 'medium' | 'high';
 
 const APPROVAL_IRREVERSIBLE_PATTERNS: readonly RegExp[] = [
-    /push/, /merge/, /rebase/, /\breset\b/, /revert/, /delete/, /destroy/, /\bdrop\b/,
-    /\brm\b/, /remove/, /truncate/, /overwrite/, /format/, /publish/, /deploy/, /release/,
-    /\bexec\b/, /execute[-_ ]?command/, /shell/, /terminal/, /run[-_ ]?command/,
-    /\bcommand\b/, /\bkill\b/,
+    /push/, /merge/, /rebase/, /\breset\b/, /revert/, /delete/, /destroy/,
+    /\bdrop\b/, /\brm\b/, /remove/, /truncate/, /overwrite/, /format/,
+    /publish/, /deploy/, /release/, /\bexec\b/, /execute[-_ ]?command/,
+    /shell/, /terminal/, /run[-_ ]?command/, /\bcommand\b/, /\bkill\b/,
 ];
 
 const APPROVAL_WRITE_PATTERNS: readonly RegExp[] = [
-    /write/, /create/, /update/, /edit/, /modify/, /patch/, /commit/, /\badd\b/, /\bset\b/,
-    /move/, /rename/, /apply/, /save/, /upsert/, /insert/,
+    /write/, /create/, /update/, /edit/, /modify/, /patch/, /commit/,
+    /\badd\b/, /\bset\b/, /move/, /rename/, /apply/, /save/, /upsert/, /insert/,
 ];
 
 const MAX_APPROVAL_SIGNAL_DEPTH = 4;
@@ -96,17 +96,14 @@ export const createApprovalRequest = (payload: ToolCallPayload, runId?: string |
         toolName: payload.toolName,
         question: `${payload.toolName} 需要你的确认后才能继续执行`,
         summary: formatApprovalSummary(payload),
-        riskLevel, reversible,
-        createdAt: new Date().toISOString(),
+        riskLevel, reversible, createdAt: new Date().toISOString(),
     };
 };
 
 export const createDoneResultFromPlan = (plan: TAgentPlan): string =>
     `已生成计划：${plan.steps.length} 个待办事项`;
 
-export const createApprovedPlanExecutionContext = (
-    record: TAgentPlanRecord, stepId: string,
-): string => [
+export const createApprovedPlanExecutionContext = (record: TAgentPlanRecord, stepId: string): string => [
     '已批准计划快照（来自 sidecar 数据库，执行阶段必须以此为准）：',
     `planId: ${record.planId}`, `version: ${record.version}`, `status: ${record.status}`,
     `planStepId: ${stepId}`,
@@ -122,9 +119,8 @@ export const createPlanResponse = (
     const planEvent: TAgentRuntimeOutputEvent = {
         type: 'plan_ready', planId: record.planId, threadId: record.threadId,
         version: record.version, status: record.status, createdAt: record.createdAt,
-        updatedAt: record.updatedAt, approvedAt: record.approvedAt,
-        executedAt: record.executedAt, rejectionReason: record.rejectionReason,
-        errorMessage: record.errorMessage, plan: record.plan,
+        updatedAt: record.updatedAt, approvedAt: record.approvedAt, executedAt: record.executedAt,
+        rejectionReason: record.rejectionReason, errorMessage: record.errorMessage, plan: record.plan,
     };
     pushUiEvent(events, planEvent, options);
     return { sessionId, events, result: doneResult };
@@ -132,15 +128,15 @@ export const createPlanResponse = (
 
 export const createPlanRecordResponse = (
     sessionId: string, record: TAgentPlanRecord, versions: TAgentPlanRecord[],
-    message: string, events: TAgentRuntimeOutputEvent[] = [],
-    options: IAgentRuntimeRunOptions = {},
+    message: string, events: TAgentRuntimeOutputEvent[] = [], options: IAgentRuntimeRunOptions = {},
 ): IAgentRuntimeResponse => {
     pushUiEvent(events, { type: 'plan_record', record, versions }, options);
     return { sessionId, events, result: message };
 };
 
 export const createErrorResponse = (
-    sessionId: string, message: string,
+    sessionId: string,
+    message: string,
     events: TAgentRuntimeOutputEvent[] = [],
     _options: IAgentRuntimeRunOptions = {},
     errorCode?: string,
