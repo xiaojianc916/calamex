@@ -51,7 +51,7 @@ fn trimmed_non_empty(value: Option<String>) -> Option<String> {
 fn model_config_to_ext(config: AgentSidecarModelConfigPayload) -> ExtModelConfig {
     ExtModelConfig {
         model_id: config.model_id,
-        api_key: config.api_key.into_inner(),
+        api_key: config.api_key,
         base_url: trimmed_non_empty(config.base_url),
     }
 }
@@ -351,7 +351,7 @@ mod tests {
 
         let model_config = ext.model_config.expect("应投影出逐请求模型配置");
         assert_eq!(model_config.model_id, "zhipuai/glm-4.7-flash");
-        assert_eq!(model_config.api_key, "secret-key");
+        assert_eq!(model_config.api_key.expose(), "secret-key");
         assert_eq!(model_config.base_url, None);
     }
 

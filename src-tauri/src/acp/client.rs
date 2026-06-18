@@ -13,6 +13,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
 
+use crate::commands::contracts::SecretString;
+
 use agent_client_protocol::schema::{
     CancelNotification, ContentBlock, InitializeRequest, NewSessionRequest, PermissionOptionId,
     PromptRequest, ProtocolVersion, RequestPermissionOutcome, RequestPermissionRequest,
@@ -46,7 +48,7 @@ pub type PermissionResolver =
 #[serde(rename_all = "camelCase")]
 pub struct ExtModelConfig {
     pub model_id: String,
-    pub api_key: String,
+    pub api_key: SecretString,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub base_url: Option<String>,
 }
