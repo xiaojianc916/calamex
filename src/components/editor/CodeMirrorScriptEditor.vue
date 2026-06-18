@@ -26,10 +26,11 @@ import {
   historyKeymap,
   indentWithTab,
   redo,
+  selectParentSyntax,
   toggleLineComment,
   undo,
 } from '@codemirror/commands';
-import { bracketMatching, indentOnInput } from '@codemirror/language';
+import { bracketMatching, foldAll, foldKeymap, indentOnInput, unfoldAll } from '@codemirror/language';
 import { type Diagnostic, lintGutter, setDiagnostics } from '@codemirror/lint';
 import {
   gotoLine,
@@ -72,6 +73,11 @@ import {
   shikiEditorChromeTheme,
   shikiHighlightExtension,
 } from '@/services/editor/codemirror-shiki-highlight';
+import {
+  expandStructuralSelection,
+  shrinkStructuralSelection,
+  structuralSelectionHistoryField,
+} from '@/services/editor/codemirror-structural-selection';
 import {
   createLspExtension,
   createLucideCompletionIcon,
@@ -202,7 +208,7 @@ let suppressModelValueEmit = false;
 let lastSyncedModelValue: string | null = null;
 let lastDocumentMetrics: IDocumentMetrics = computeDocumentMetrics(props.modelValue);
 // 把同一同步 tick 内的多次文档变更(IME 组合、批量/多光标 dispatch)合并为一次 v-model
-// emit:每次变更仍增量维护 metrics,但整篇 toString() 与 emit 推迟到 tick 末尾的微任务执行
+// emit:每次变更仍增量维护 metrics,但整篇 toString() 与 emit 推迟到 tick 末的微任务执行
 // 一次。注意:单次按键的整篇 toString() 是 v-model「全文字符串」契约的固有成本,此处只消除
 // 同一 tick 内的重复全文 emit,不改变单次按键语义;flush 始终读取当前文档,emit 的内容恒为
 // 真实文档串,不会损坏内容。
@@ -748,6 +754,25 @@ const buildMenuGroups = (): Array<{ key: string; items: IEditorContextMenuItem[]
       ],
     },
     {
+      key: 'fold-actions',
+      items: [
+        {
+          key: 'fold-all',
+          label: '折叠全部',
+          icon: 'minus',
+          action: 'fold-all',
+          disabled: !hasDocument,
+        },
+        {
+          key: 'unfold-all',
+          label: '展开全部',
+          icon: 'plus',
+          action: 'unfold-all',
+          disabled: !hasDocument,
+        },
+      ],
+    },
+    {
       key: 'edit-actions',
       items: [
         { key: 'cut', label: '剪切', icon: 'cut', action: 'cut', disabled: !hasDocument },
@@ -856,6 +881,12 @@ const handleContextMenuItemSelect = async (item: IEditorContextMenuItem): Promis
       return;
     case 'goto-line':
       gotoLine(view);
+      return;
+    case 'fold-all':
+      foldAll(view);
+      return;
+    case 'unfold-all':
+      unfoldAll(view);
       return;
     case 'quick-command':
       emit('command-palette-request');
@@ -974,6 +1005,7 @@ const createBaseExtensions = (language: string): Extension[] => [
   nativeSelectionWithDrawnCursorTheme,
   indentOnInput(),
   bracketMatching(),
+  structuralSelectionHistoryField,
   rectangularSelection(),
   crosshairCursor(),
   highlightSelectionMatches(),
@@ -998,9 +1030,14 @@ const createBaseExtensions = (language: string): Extension[] => [
       },
     },
     { key: 'Ctrl-Space', run: acceptCompletion },
-    ...defaultKeymap,
+    // 结构化选区(扩大/缩小)由 codemirror-structural-selection 统一实现:
+    // 同时从 defaultKeymap 过滤掉内置的 selectParentSyntax(原 Mod-i),避免与本地扩选命令双重绑定。
+    { key: 'Mod-i', run: expandStructuralSelection, preventDefault: true },
+    { key: 'Shift-Mod-i', run: shrinkStructuralSelection, preventDefault: true },
+    ...defaultKeymap.filter((binding) => binding.run !== selectParentSyntax),
     ...historyKeymap,
     ...searchKeymap,
+    ...foldKeymap,
   ]),
   lspCompartment.of(buildLspExtension()),
   languageCompartment.of(resolveCodeMirrorLanguageExtension(language)),

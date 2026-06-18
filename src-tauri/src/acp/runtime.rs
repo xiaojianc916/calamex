@@ -29,10 +29,7 @@
 //! 请求，故二者在工具型调用期保持静默；待 Layer 6 接入 agentic 主回合（`session/prompt`）
 //! 的实时流式与审批 UI 时即自然生效，无需重建连接——故此处一次装配到位，并非过渡脚手架。
 //!
-//! 按 cargo feature `acp_client` 门控；`get_or_spawn` 的调用点在 Layer 5 接线，故迁移期
-//! 公开项暂无消费者，dead_code 警告为预期之内（与姊妹模块一致）。
-
-#![allow(dead_code)]
+//! 按 cargo feature `acp_client` 门控。
 
 use parking_lot::Mutex;
 use std::sync::Arc;
@@ -86,11 +83,6 @@ impl BackendHosts {
             .flatten()
             .collect()
     }
-
-    /// 是否尚无任何已建立的宿主。
-    fn is_empty(&self) -> bool {
-        self.builtin.is_none() && self.kimi.is_none() && self.codex.is_none()
-    }
 }
 
 /// 宿主侧 ACP 连接的进程级持有者（Tauri 托管状态）。
@@ -104,10 +96,6 @@ pub struct AcpRuntime {
 }
 
 impl AcpRuntime {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// 获取**默认后端（自家边车）**的常驻 `AcpHost`。语义与历史一致：
     /// 等价于 `get_or_spawn_backend(app, AcpBackendId::Builtin)`。
     pub fn get_or_spawn<R: Runtime>(
@@ -254,19 +242,19 @@ mod tests {
 
     #[test]
     fn shutdown_on_unestablished_runtime_is_noop() {
-        let runtime = AcpRuntime::new();
+        let runtime = AcpRuntime::default();
         // 未建立连接时关停应为安全的空操作（不 panic、不阻塞）；且可重复调用（幂等）。
         runtime.shutdown();
         runtime.shutdown();
-        assert!(runtime.hosts.lock().is_empty());
+        assert!(runtime.hosts.lock().all().is_empty());
     }
 
     #[test]
     fn resolve_approval_on_unestablished_runtime_is_noop() {
-        let runtime = AcpRuntime::new();
+        let runtime = AcpRuntime::default();
         // 无任何宿主时，审批解决为安全空操作：返回 false 且绝不派生子进程。
         assert!(!runtime.resolve_approval("sess-1", "tool-1", "allow-once"));
-        assert!(runtime.hosts.lock().is_empty());
+        assert!(runtime.hosts.lock().all().is_empty());
     }
 
     #[test]

@@ -7,7 +7,8 @@
  *
  * 设计（对齐 ADR 四设计点）：
  *  ① 合并键 = ACP `toolCallId`：`reduceAcpToolCall` 以它 upsert，首帧建条目，
- *     后续 update 仅覆盖出现的字段；`content` 一旦出现即整体替换（ACP 语义）。
+ *     后续 update 仅覆盖出现的字段；`content` / `locations` 一旦出现即整体替换
+ *     （ACP 语义）。
  *  ② content 判别联合：ACP `ToolCallContent`（content | terminal | diff）→ VM
  *     `{ type: 'content' | 'diff' | 'terminal' }`；ACP `ContentBlock` → VM 富块，
  *     audio / 未知块无对应 VM 形态时安全丢弃（绝不伪造）。
@@ -24,6 +25,7 @@ import type {
   IAiThreadContentBlock,
   IAiThreadToolCall,
   IAiThreadToolCallContent,
+  IAiThreadToolCallLocation,
   TAiThreadToolCallStatus,
   TAiThreadToolKind,
 } from '@/types/ai/thread';
@@ -39,6 +41,7 @@ interface IAcpToolCallView {
   kind?: unknown;
   status?: unknown;
   content?: unknown;
+  locations?: unknown;
   rawInput?: unknown;
   rawOutput?: unknown;
 }
@@ -285,6 +288,35 @@ const mapContent = (content: unknown, toolCallId: string): IAiThreadToolCallCont
   return mapped;
 };
 
+/* ---------- 4.5) ToolCallLocation 归一 ----------------------------------- */
+
+interface IAcpLocationView {
+  path?: unknown;
+  line?: unknown;
+}
+
+/**
+ * ACP `locations[]`（`{ path, line? }`）→ VM `IAiThreadToolCallLocation[]`。
+ * 非数组返回 undefined（= 本帧未携带，调用方保留旧值）；空数组合法（清空）。
+ * 过滤无 path 的项；`line` 仅接受非负整数。
+ */
+const mapLocations = (locations: unknown): IAiThreadToolCallLocation[] | undefined => {
+  if (!Array.isArray(locations)) return undefined;
+  const mapped: IAiThreadToolCallLocation[] = [];
+  for (const item of locations) {
+    if (item === null || typeof item !== 'object') continue;
+    const view = item as IAcpLocationView;
+    const path = asString(view.path);
+    if (path === undefined) continue;
+    mapped.push(
+      typeof view.line === 'number' && Number.isInteger(view.line) && view.line >= 0
+        ? { path, line: view.line }
+        : { path },
+    );
+  }
+  return mapped;
+};
+
 /* ---------- 5) 公开 API -------------------------------------------------- */
 
 /** 取 ACP 工具调用的稳定主键；缺失时返回空串（调用方应据此跳过）。 */
@@ -299,7 +331,7 @@ export interface IReduceAcpToolCallOptions {
 /**
  * ACP `tool_call` / `tool_call_update` → 协议 VM `IAiThreadToolCall` 的归并器。
  * 以 `toolCallId` 为键 upsert：`previous` 为空建条目，否则仅覆盖本次出现的字段；
- * `content` 一旦出现即整体替换（对齐 ACP 语义）。纯函数，不修改入参。
+ * `content` / `locations` 一旦出现即整体替换（对齐 ACP 语义）。纯函数，不修改入参。
  */
 export const reduceAcpToolCall = (
   previous: IAiThreadToolCall | undefined,
@@ -312,6 +344,8 @@ export const reduceAcpToolCall = (
   const status = mapStatus(view.status);
   const hasKind = typeof view.kind === 'string';
   const hasContent = view.content !== undefined;
+  const locations = mapLocations(view.locations);
+  const locationsPatch = locations !== undefined ? { locations } : {};
   const rawInputPatch = view.rawInput !== undefined ? { rawInput: view.rawInput } : {};
   const rawOutputPatch = view.rawOutput !== undefined ? { rawOutput: view.rawOutput } : {};
 
@@ -324,6 +358,7 @@ export const reduceAcpToolCall = (
       kind: mapKind(view.kind),
       status: status ?? 'pending',
       content: hasContent ? mapContent(view.content, id) : [],
+      ...locationsPatch,
       ...rawInputPatch,
       ...rawOutputPatch,
     };
@@ -336,6 +371,7 @@ export const reduceAcpToolCall = (
     kind: hasKind ? mapKind(view.kind) : previous.kind,
     status: status ?? previous.status,
     content: hasContent ? mapContent(view.content, id) : previous.content,
+    ...locationsPatch,
     ...rawInputPatch,
     ...rawOutputPatch,
   };

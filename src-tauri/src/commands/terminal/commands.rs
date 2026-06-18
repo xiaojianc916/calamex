@@ -5,7 +5,7 @@
 use jiff::Timestamp;
 use std::{
     sync::{Arc, Mutex},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use tauri::{AppHandle, State};
@@ -20,9 +20,13 @@ use crate::terminal::{
     local_wsl_protocol::{
         LocalWslTerminalOpenInteractiveRequest, LocalWslTerminalRunScriptRequest, SIGNAL_MODE_KILL,
     },
+    tauri_events::{TerminalExitEvent, emit_terminal_exit},
     types::TerminalState,
     visual::{TerminalRunVisualTracker, extract_prompt_from_terminal_snapshot},
-    wsl_pty::{open_interactive_terminal_local_with_flow, run_terminal_script_local_with_flow},
+    wsl_pty::{
+        LocalWslPtyHandle, open_interactive_terminal_local_with_flow,
+        run_terminal_script_local_with_flow,
+    },
 };
 
 use super::events::{
@@ -35,16 +39,24 @@ use super::state::{
     buffer_pending_switch_input, clear_active_terminal_run, drain_active_terminal_runs,
     get_active_terminal_run_handle, get_active_terminal_run_input_target, get_flow_controller,
     get_session_geometry, get_terminal_session, get_terminal_snapshot, lock_terminal_sessions,
-    mark_terminal_resize_repaint_suppression, remove_flow_controller, remove_pending_switch_input,
-    remove_session_geometry, remove_terminal_interactive_visual_state, remove_terminal_session,
-    remove_terminal_snapshot, reset_flow_controller, resolve_terminal_start_directory,
-    set_session_geometry, set_terminal_snapshot, should_recreate_terminal_session,
-    take_active_terminal_run_for_session, take_and_prepend_pending_switch_input,
-    terminate_terminal_session, try_mark_active_terminal_run,
+    mark_terminal_resize_repaint_suppression, remove_flow_controller,
+    remove_interactive_terminal_after_exit, remove_pending_switch_input, remove_session_geometry,
+    remove_terminal_interactive_visual_state, remove_terminal_session, remove_terminal_snapshot,
+    reset_flow_controller, resolve_terminal_start_directory, set_session_geometry,
+    set_terminal_snapshot, should_recreate_terminal_session, take_active_terminal_run_for_session,
+    take_and_prepend_pending_switch_input, terminate_terminal_session, try_mark_active_terminal_run,
 };
 use super::to_wsl_path;
 
 const DEFAULT_WSL_INTERACTIVE_CWD: &str = "~";
+
+/// 关闭看门狗——宽限期：发出 kill 后等待读线程正常收尾（EOF → InteractiveClosed）的时长。
+/// 超过未收尾则升级重发 kill。
+const INTERACTIVE_TEARDOWN_GRACE: Duration = Duration::from_secs(3);
+/// 关闭看门狗——硬超时：升级 kill 后再等这么久；仍未收尾则判定 wsl.exe 卡死，合成退出事件。
+const INTERACTIVE_TEARDOWN_HARD_DEADLINE: Duration = Duration::from_secs(5);
+/// 关闭看门狗——轮询间隔：周期性复检读线程是否已收尾，避免忙等。
+const INTERACTIVE_TEARDOWN_POLL: Duration = Duration::from_millis(250);
 
 #[tauri::command]
 #[specta::specta]
@@ -237,6 +249,7 @@ pub fn resize_terminal_session(
 #[tauri::command]
 #[specta::specta]
 pub fn close_terminal_session(
+    app: AppHandle,
     state: State<TerminalSessionState>,
     payload: CloseTerminalSessionRequest,
 ) -> Result<(), String> {
@@ -262,7 +275,80 @@ pub fn close_terminal_session(
     let Some(session) = removed_session else {
         return Ok(());
     };
-    terminate_terminal_session(session.as_ref())
+    // 句柄是 Arc<Mutex<...>> 克隆共享，克隆后交给看门狗线程，与 terminate 发出的 kill 共用同一
+    // killer / finished 标志。
+    let handle = session.handle.clone();
+    let result = terminate_terminal_session(session.as_ref());
+    // 关闭看门狗：已请求关闭后，若读线程在宽限期内未收尾（wsl.exe 卡死等），升级重发
+    // kill；硬超时仍未收尾则合成退出事件通知前端、回收会话状态，避免 UI 永久卡在僵尸会话
+    // 上。只在关闭路径介入，不触碰健康的空闲会话（零误杀）。
+    spawn_interactive_teardown_watch(app, terminal_state, payload.session_id, handle);
+    result
+}
+
+/// 关闭看门狗：在交互会话关闭发出 kill 后挂一次性的监护线程。正常路径下读线程会迅速读到
+/// EOF 并发出 InteractiveClosed，看门狗观察到 is_finished 即静静退出，不做任何多余动作。
+/// 仅当底层 wsl.exe 在 OS 层卡死、kill 不生效、读线程阻在 read()/child.wait() 时，才会升级
+/// 重发 kill 并最终合成退出事件。只在关闭路径介入，不会误杀正常发呆等输入的空闲会话。
+fn spawn_interactive_teardown_watch(
+    app: AppHandle,
+    state: TerminalSessionState,
+    session_id: String,
+    handle: LocalWslPtyHandle,
+) {
+    let spawn_result = std::thread::Builder::new()
+        .name(format!("wsl-teardown-watch-{session_id}"))
+        .spawn(move || {
+            // 宽限期内等待读线程正常收尾（读到 EOF 后已由读线程自行发出 InteractiveClosed）。
+            if wait_until_finished(&handle, INTERACTIVE_TEARDOWN_GRACE) {
+                return;
+            }
+            // 宽限期内未收尾：升级重发 kill，强制终止可能仍卡死的 wsl.exe。
+            log::warn!(
+                "WSL 交互终端关闭后 {:?} 内读线程仍未收尾（session_id={session_id}），升级重发 kill。",
+                INTERACTIVE_TEARDOWN_GRACE
+            );
+            if let Err(error) = handle.force_kill() {
+                log::warn!(
+                    "WSL 交互终端关闭看门狗升级 kill 失败（session_id={session_id}）：{error}"
+                );
+            }
+            // 升级后再硬等一段；仍未收尾则合成退出事件，避免 UI 永久卡在僵尸会话上。
+            if wait_until_finished(&handle, INTERACTIVE_TEARDOWN_HARD_DEADLINE) {
+                return;
+            }
+            log::error!(
+                "WSL 交互终端关闭后读线程在硬超时内仍未收尾（session_id={session_id}），合成退出事件通知前端并回收会话状态。"
+            );
+            // 读线程已确认卡死、不会再发 InteractiveClosed，这里代为回收会话状态并合成退出事件。
+            remove_interactive_terminal_after_exit(&state, &session_id);
+            emit_terminal_exit(
+                &app,
+                TerminalExitEvent {
+                    session_id,
+                    exit_code: None,
+                },
+            );
+        });
+    if let Err(error) = spawn_result {
+        // 看门狗线程创建失败是极罕见的资源耗尽场景；关闭本身已发出 kill，这里仅警告，
+        // 不阻断关闭流程。
+        log::warn!("WSL 交互终端关闭看门狗线程创建失败：{error}");
+    }
+}
+
+/// 在 `budget` 内轮询等待句柄标记已收尾；收尾返回 true，超预算仍未收尾返回 false。
+fn wait_until_finished(handle: &LocalWslPtyHandle, budget: Duration) -> bool {
+    let deadline = Instant::now() + budget;
+    loop {
+        if handle.is_finished() {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(INTERACTIVE_TEARDOWN_POLL);
+    }
 }
 
 pub fn shutdown_all_terminal_sessions(state: &TerminalSessionState) -> Result<(), String> {

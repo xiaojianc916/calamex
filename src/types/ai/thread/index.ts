@@ -27,6 +27,7 @@ import type {
 } from '@/types/ai/thread/entry.schema';
 import type {
   aiThreadToolCallContentSchema,
+  aiThreadToolCallLocationSchema,
   aiThreadToolCallSchema,
   aiThreadToolCallStatusSchema,
   aiThreadToolKindSchema,
@@ -41,6 +42,7 @@ export type IAiThreadSourceBlock = z.infer<typeof aiThreadSourceBlockSchema>;
 
 export type IAiThreadToolCall = z.infer<typeof aiThreadToolCallSchema>;
 export type IAiThreadToolCallContent = z.infer<typeof aiThreadToolCallContentSchema>;
+export type IAiThreadToolCallLocation = z.infer<typeof aiThreadToolCallLocationSchema>;
 export type TAiThreadToolCallStatus = z.infer<typeof aiThreadToolCallStatusSchema>;
 export type TAiThreadToolKind = z.infer<typeof aiThreadToolKindSchema>;
 
@@ -88,6 +90,7 @@ export {
   aiThreadToolCallContentBlockSchema,
   aiThreadToolCallContentSchema,
   aiThreadToolCallDiffSchema,
+  aiThreadToolCallLocationSchema,
   aiThreadToolCallSchema,
   aiThreadToolCallStatusSchema,
   aiThreadToolCallTerminalSchema,

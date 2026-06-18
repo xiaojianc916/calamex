@@ -40,12 +40,14 @@ export interface ICommandMeta {
  * - `options`：调用方透传的 AbortSignal 等。
  * - `invoke`：具体的 tauri-specta 绑定闭包。命令名与位置参数各命令不同，无法泛化，
  *   故由调用方提供（这也是本文件不做成「一行 define 自动生成」的原因）。
+ *   闭包会收到本次调用的插桩上下文 `{ traceId }`，供需要把 traceId 透传给后端绑定
+ *   （如 webview/window 命令的第二个位置参数）的命令使用；无需该参数的命令可忽略。
  */
 export const runCommand = <T>(
   meta: ICommandMeta,
   input: unknown,
   options: IIpcCallOptions | undefined,
-  invoke: () => Promise<T>,
+  invoke: (context: { traceId: string }) => Promise<T>,
 ): Promise<T> =>
   callSpectaCommand<T>(
     {

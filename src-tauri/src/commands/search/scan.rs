@@ -390,13 +390,19 @@ fn refresh_workspace_files(
         return scan_workspace_files_uncached(root);
     }
 
+    // changed path 经 canonicalize 归一（解析 .. / 符号链接，Windows 上还会带上 \\?\
+    // verbatim 前缀），因此必须用同样 canonicalize 后的 root 做相对化；否则前缀形态不一致
+    // （如 root 为 C:\… 而 path 为 \\?\C:\…）会让 relativize 始终返回 None，增量刷新被迫
+    // 每次退化为全量重扫。root 无法 canonicalize（如已被删除）时回退到原始 root。
+    let canonical_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+
     // current 始终按 relative_path 升序（缓存不变量）。在其副本上按二分查找做增量增删，
     // 避免每次文件变更都重建整张 HashMap 并对全量文件列表重新排序。
     let mut files = current.to_vec();
 
     for path in changed_paths {
         let path = path.canonicalize().unwrap_or(path);
-        let Some(relative) = relativize(root, &path) else {
+        let Some(relative) = relativize(&canonical_root, &path) else {
             return scan_workspace_files_uncached(root);
         };
         let relative_path = relative.to_string_lossy().replace('\\', "/");

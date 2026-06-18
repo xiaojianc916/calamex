@@ -1,97 +1,35 @@
 import { stripWindowsVerbatimPrefix } from '@/utils/file/path';
+import { LANGUAGE_DEFINITIONS } from './language-registry';
 
 /**
  * 根据文件路径或文件名推断编辑器语言 ID。
  * 仅在确认为 shell 脚本时返回 shell,未知类型统一回退为 plaintext。
+ *
+ * 扩展名 / 精确文件名映射由 language-registry 派生(单一数据源),与 CodeMirror
+ * 标签映射共用同一份语言定义,避免两张表漂移。
  */
-const LANGUAGE_BY_EXTENSION: Readonly<Record<string, string>> = {
-  bat: 'bat',
-  bash: 'shell',
-  c: 'c',
-  cc: 'cpp',
-  cjs: 'javascript',
-  clj: 'clojure',
-  cls: 'apex',
-  conf: 'ini',
-  cpp: 'cpp',
-  cs: 'csharp',
-  css: 'css',
-  cts: 'typescript',
-  cxx: 'cpp',
-  dart: 'dart',
-  env: 'ini',
-  ex: 'elixir',
-  exs: 'elixir',
-  fs: 'fsharp',
-  gemspec: 'ruby',
-  gql: 'graphql',
-  go: 'go',
-  graphql: 'graphql',
-  h: 'c',
-  hh: 'cpp',
-  hpp: 'cpp',
-  hs: 'haskell',
-  htm: 'html',
-  html: 'html',
-  ini: 'ini',
-  java: 'java',
-  jl: 'julia',
-  js: 'javascript',
-  json: 'json',
-  jsonc: 'json',
-  jsx: 'jsx',
-  kt: 'kotlin',
-  kts: 'kotlin',
-  ksh: 'shell',
-  less: 'less',
-  lua: 'lua',
-  m: 'objective-c',
-  makefile: 'make',
-  md: 'markdown',
-  mdx: 'markdown',
-  mermaid: 'mermaid',
-  mjs: 'javascript',
-  mm: 'objective-c',
-  mts: 'typescript',
-  php: 'php',
-  proto: 'proto',
-  protobuf: 'proto',
-  ps1: 'powershell',
-  psd1: 'powershell',
-  psm1: 'powershell',
-  py: 'python',
-  pyi: 'python',
-  pyw: 'python',
-  r: 'r',
-  rake: 'ruby',
-  rb: 'ruby',
-  rbw: 'ruby',
-  rs: 'rust',
-  scala: 'scala',
-  scss: 'scss',
-  sh: 'shell',
-  sql: 'sql',
-  svelte: 'svelte',
-  svg: 'xml',
-  swift: 'swift',
-  tf: 'terraform',
-  toml: 'toml',
-  ts: 'typescript',
-  tsx: 'tsx',
-  vue: 'vue',
-  xml: 'xml',
-  xsd: 'xml',
-  xsl: 'xml',
-  yaml: 'yaml',
-  yml: 'yaml',
-  zig: 'zig',
-} as const;
+const buildExtensionMap = (): Readonly<Record<string, string>> => {
+  const map: Record<string, string> = {};
+  for (const def of LANGUAGE_DEFINITIONS) {
+    for (const extension of def.extensions ?? []) {
+      map[extension] = def.id;
+    }
+  }
+  return map;
+};
 
-const LANGUAGE_BY_EXACT_NAME: Readonly<Record<string, string>> = {
-  dockerfile: 'dockerfile',
-  gnumakefile: 'make',
-  makefile: 'make',
-} as const;
+const buildExactNameMap = (): Readonly<Record<string, string>> => {
+  const map: Record<string, string> = {};
+  for (const def of LANGUAGE_DEFINITIONS) {
+    for (const fileName of def.filenames ?? []) {
+      map[fileName] = def.id;
+    }
+  }
+  return map;
+};
+
+const LANGUAGE_BY_EXTENSION = buildExtensionMap();
+const LANGUAGE_BY_EXACT_NAME = buildExactNameMap();
 
 const resolveCandidateFileName = (
   filePath: string | null | undefined,

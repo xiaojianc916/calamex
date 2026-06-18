@@ -19,10 +19,6 @@
 //!      语义匹配，别名取自 sidecar `approval-client/utils.ts` 的判定白名单；
 //!   3. 同族兜底（allow / reject），仍无则视为取消授权（安全侧）。
 
-// 过渡期：与姊妹模块 `client.rs` 一致——本模块公开项在 Layer 4 接线到宿主命令前
-// 暂无消费者，故迁移期的 dead_code 警告为预期之内。接线后移除该 allow。
-#![allow(dead_code)]
-
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
