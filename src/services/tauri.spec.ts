@@ -115,7 +115,6 @@ describe('tauriService', () => {
             matchCase: false,
             includePatterns: [],
             excludePatterns: [],
-            limit: null,
           },
           expectedFiles: [],
         },
