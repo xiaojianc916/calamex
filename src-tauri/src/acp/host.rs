@@ -151,6 +151,13 @@ impl AcpHost {
         let cwd = workspace_cwd(workspace_root_path);
         let outcome = self.handle.new_session(cwd).await?;
         let session_id = outcome.session_id;
+        // 诊断：打印 agent 在 session/new 公示的可切换项（含模型 / 模式），用于确认外部 agent
+        // （如 Kimi）是否通过 ACP modes 暴露模型切换——决定走 set_session_mode 无感切换还是兜底。
+        log::info!(
+            target: "acp",
+            "ACP session/new 完成（thread={thread_id}）：session_id={session_id}，agent 公示 modes={:?}",
+            outcome.modes
+        );
         if !thread_key.is_empty() {
             self.sessions
                 .lock()

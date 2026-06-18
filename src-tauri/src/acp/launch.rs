@@ -488,6 +488,116 @@ fn path_to_string(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
 
+// ── Kimi Code 凭证预置（复用项目已保存的网关模型配置）────────────────────────────
+//
+// `kimi acp` 默认从 `~/.kimi/config.toml` 读取 provider / model / 凭证（见 kimi-cli「Config
+// Files」文档）。本项目已在 AI 设置里保存了网关模型（selected_model + base_url）与逐厂商
+// API Key（CredentialStore），统一由 `crate::ai::gateway::current_sidecar_model_config()`
+// 组装。这里把它映射为一个 OpenAI 兼容（`openai_legacy`）provider 写入 `~/.kimi/config.toml`，
+// 免去用户在终端 `/login`，直接复用项目内既有 Key——解决「acp protocol error:
+// Authentication required」。
+//
+// 安全：仅在该文件「不存在」或「由本程序托管（含下方 marker）」时才写，绝不覆盖用户手动
+// 维护 / OAuth 登录得到的 config.toml（无 marker 即视为用户自管，跳过并保留其既有登录）。
+const KIMI_MANAGED_MARKER: &str = "# managed-by: calamex (ACP gateway bridge)";
+
+/// 外部 ACP 后端拉起前的凭证预置（ADR-0015 / ADR-0009）。Kimi 之外为 no-op。
+///
+/// 副作用（FS 写）有意放在「真正拉起子进程」的 runtime spawn 路径，而非纯启动配置解析
+/// `build_acp_client_config_for`（后者被单测覆盖，应保持无副作用）。失败仅记录、不阻断
+/// 启动（回退 Kimi 自身既有登录）。
+pub(crate) fn prepare_external_backend_launch(backend: AcpBackendId) {
+    if backend != AcpBackendId::Kimi {
+        return;
+    }
+    match ensure_kimi_managed_config() {
+        Ok(true) => log::info!(
+            target: "acp",
+            "已用项目网关配置写入 ~/.kimi/config.toml（Kimi 复用项目内既有 Key）。"
+        ),
+        Ok(false) => log::info!(
+            target: "acp",
+            "跳过写入 ~/.kimi/config.toml（用户自管配置已存在，或项目未配置网关地址）；沿用 Kimi 既有登录。"
+        ),
+        Err(error) => log::warn!(
+            target: "acp",
+            "预置 ~/.kimi/config.toml 失败（回退 Kimi 既有登录）：{error}"
+        ),
+    }
+}
+
+/// 解析 `~/.kimi` 目录：优先 `KIMI_HOME`，否则用户主目录下 `.kimi`。
+fn kimi_home_dir() -> Option<PathBuf> {
+    if let Some(custom) = env_or_user_env("KIMI_HOME") {
+        return Some(PathBuf::from(custom));
+    }
+    #[cfg(windows)]
+    let home = env_or_user_env("USERPROFILE");
+    #[cfg(not(windows))]
+    let home = env_or_user_env("HOME");
+    home.map(|value| PathBuf::from(value).join(".kimi"))
+}
+
+/// 用 Rust Debug 产出带引号且转义合法的字符串，等价于 TOML 基本字符串字面量。
+fn toml_str(value: &str) -> String {
+    format!("{value:?}")
+}
+
+/// 用项目已保存的网关模型配置渲染一份 Kimi `config.toml`（单 provider + 单 model）。
+/// 固定内部名 `calamex-gateway` 作 provider/model 键，避免 model_id 里的 `/` 触发 TOML 路径解析。
+fn render_kimi_config_toml(model_id: &str, api_key: &str, base_url: &str) -> String {
+    let entry = "calamex-gateway";
+    format!(
+        "{marker}\ndefault_model = {entry_q}\n\n[providers.{entry}]\ntype = \"openai_legacy\"\nbase_url = {base_url_q}\napi_key = {api_key_q}\n\n[models.{entry}]\nprovider = {entry_q}\nmodel = {model_q}\nmax_context_size = 262144\n",
+        marker = KIMI_MANAGED_MARKER,
+        entry = entry,
+        entry_q = toml_str(entry),
+        base_url_q = toml_str(base_url),
+        api_key_q = toml_str(api_key),
+        model_q = toml_str(model_id),
+    )
+}
+
+/// 在拉起 `kimi acp` 前确保 `~/.kimi/config.toml` 含可用凭证（复用项目已存网关配置）。
+///
+/// 返回 `Ok(true)`：已写入/刷新托管配置；`Ok(false)`：有意跳过（用户自管配置已存在，或项目
+/// 尚无可桥接的网关地址）；`Err`：IO / 配置获取失败（调用方仅记录，不阻断启动）。
+fn ensure_kimi_managed_config() -> Result<bool, String> {
+    let Some(kimi_dir) = kimi_home_dir() else {
+        return Err("无法定位用户主目录（~/.kimi）。".to_string());
+    };
+    let config_path = kimi_dir.join("config.toml");
+
+    // 已存在且非本程序托管 → 视为用户自管（含 OAuth / 手动 Key），保留不动。
+    if config_path.is_file() {
+        let existing = fs::read_to_string(&config_path)
+            .map_err(|error| format!("读取 ~/.kimi/config.toml 失败：{error}"))?;
+        if !existing.contains(KIMI_MANAGED_MARKER) {
+            return Ok(false);
+        }
+    }
+
+    // 取项目已保存的主模型网关配置（selected_model + base_url + 逐厂商 Key）。
+    let model_config = crate::ai::gateway::current_sidecar_model_config()?;
+    let Some(base_url) = model_config
+        .base_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        // 无显式网关地址时无法构造 openai_legacy provider；交回 Kimi 自身登录。
+        return Ok(false);
+    };
+
+    let rendered =
+        render_kimi_config_toml(&model_config.model_id, model_config.api_key.expose(), base_url);
+
+    fs::create_dir_all(&kimi_dir).map_err(|error| format!("创建 ~/.kimi 目录失败：{error}"))?;
+    fs::write(&config_path, rendered)
+        .map_err(|error| format!("写入 ~/.kimi/config.toml 失败：{error}"))?;
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

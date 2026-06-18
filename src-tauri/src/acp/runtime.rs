@@ -123,6 +123,8 @@ impl AcpRuntime {
         // 启动配置解析失败（未找到 node / ACP 入口等）等价于「无法建立传输」，
         // 故归入 Transport 错误，与连接派生失败同类上抛。
         let config = build_acp_client_config_for(backend).map_err(AcpClientError::Transport)?;
+        // 外部后端拉起前的凭证预置（Kimi：用项目已存网关配置写 ~/.kimi/config.toml；其余 no-op）。
+        super::launch::prepare_external_backend_launch(backend);
         let host = Arc::new(AcpHost::spawn(
             config,
             stream_emitter(app.clone()),
@@ -157,6 +159,8 @@ impl AcpRuntime {
         }
 
         let config = build_acp_client_config_for(backend).map_err(AcpClientError::Transport)?;
+        // 重建外部后端前同样刷新凭证预置（Kimi 切模型 / 重启时随之刷新 ~/.kimi/config.toml）。
+        super::launch::prepare_external_backend_launch(backend);
         let host = Arc::new(AcpHost::spawn(
             config,
             stream_emitter(app.clone()),
