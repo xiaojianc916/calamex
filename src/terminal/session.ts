@@ -53,9 +53,9 @@ const TERMINAL_WEBGL_RECOVERY_DELAY_MS = 180;
 // 多终端 tab 各占一个 context 触顶后会整体丢失，故超过阈值的终端回退到默认渲染。
 const MAX_WEBGL_TERMINAL_CONTEXTS = 8;
 let activeWebglTerminalContexts = 0;
-// 前端存活心跳间隔：每个挂载中的会话周期性向后端上报存活。后端宽限期（约 60s）远大于此间隔，
-// 连续多次漏报（页面重载 / 崩溃后 VM 销毁、心跳停止）才会被孤儿收割线程回收，健康会话零误杀。
-const TERMINAL_HEARTBEAT_INTERVAL_MS = 15_000;
+// 前端存活心跳间隔：每个挂载中的会话周期性向后端上报存活。后端宽限期（30s，约 3 个心跳周期）
+// 远大于此间隔，连续多次漏报（页面重载 / 崩溃后 VM 销毁、心跳停止）才会被孤儿收割线程回收，健康会话零误杀。
+const TERMINAL_HEARTBEAT_INTERVAL_MS = 10_000;
 const TERMINAL_LAYOUT_SETTLE_DELAY_MS = 72;
 const TERMINAL_OUTPUT_FLUSH_DELAY_MS = 16;
 const TERMINAL_RUN_COMPLETED_FLUSH_TIMEOUT_MS = 160;

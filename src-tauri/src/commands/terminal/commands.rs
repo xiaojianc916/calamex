@@ -70,12 +70,12 @@ const RUN_CANCEL_TEARDOWN_HARD_DEADLINE: Duration = Duration::from_secs(5);
 /// 收尾看门狗——轮询间隔：周期性复检读线程是否已收尾，避免忙等。关闭 / 取消两条看门狗共用。
 const TEARDOWN_WATCH_POLL: Duration = Duration::from_millis(250);
 
-/// 孤儿会话收割——心跳宽限期：前端每个挂载中的会话周期性上报心跳（前端侧约 15s/次）。连续多次
-/// 未上报（超过此宽限期）即判定该后端会话已无前端照管（页面重载 / 崩溃后前端 VM 销毁、心跳停止），
-/// 可作孤儿回收。宽限期远大于心跳间隔，健康会话偶发抖动绝不会被误杀（零误杀）。
-const ORPHAN_SESSION_REAP_GRACE: Duration = Duration::from_secs(60);
+/// 孤儿会话收割——心跳宽限期：前端每个挂载中的会话周期性上报心跳（前端侧约 10s/次）。连续多次
+/// 未上报（超过此宽限期，约 3 个心跳周期）即判定该后端会话已无前端照管（页面重载 / 崩溃后前端
+/// VM 销毁、心跳停止），可作孤儿回收。宽限期为心跳间隔的约 3 倍，健康会话偶发抖动绝不会被误杀。
+const ORPHAN_SESSION_REAP_GRACE: Duration = Duration::from_secs(30);
 /// 孤儿会话收割——巡检间隔：收割线程每隔这么久扫描一次心跳表。
-const ORPHAN_SESSION_REAP_POLL: Duration = Duration::from_secs(20);
+const ORPHAN_SESSION_REAP_POLL: Duration = Duration::from_secs(10);
 
 #[tauri::command]
 #[specta::specta]
