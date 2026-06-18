@@ -197,12 +197,13 @@ pub fn extract_prompt_from_terminal_snapshot(snapshot: &str) -> Option<String> {
 
     let prefix = &snapshot[..=marker_index];
 
-    // 修正：移除了原先的 `rfind('[')` fallback —— bash ANSI 颜色码里大量包含 `[`，
-    // 会把 prompt 从颜色码中段截断造成残缺。
+    // 锚点只回溯到 marker 所在行的行首:shell prompt 总位于其所在行行首。
+    // 旧实现在整个 prefix 上 rfind ANSI 颜色码,会被更早输出(如上一次运行的绿色日志)里的
+    // 颜色码劫持起点,再 split 到下一个换行,取到一行不含 $/# 的输出而提取失败 —— 即
+    // 「第一次运行正常、第二次只剩空白行+光标」。行内锚点同时完整保留 prompt 自身颜色码。
     let start = prefix
-        .rfind("\x1b[32m")
-        .or_else(|| prefix.rfind("\x1b[1m"))
-        .or_else(|| prefix.rfind('\n').map(|i| i + 1))
+        .rfind('\n')
+        .map(|i| i + 1)
         .or_else(|| prefix.rfind('\r').map(|i| i + 1))
         .unwrap_or(0);
 
