@@ -40,6 +40,10 @@ export type TStartupMarkName =
   | 'ai-workspace-surface-import-done'
   | 'ai-workspace-surface-setup'
   | 'ai-workspace-surface-mounted'
+  | 'ai-assistant-panel-setup-start'
+  | 'ai-assistant-panel-composables-ready'
+  | 'ai-assistant-panel-setup-done'
+  | 'ai-assistant-panel-mounted'
   | 'ai-surface-summary-reported'
   | 'startup-summary-reported';
 
@@ -164,6 +168,24 @@ const AI_SURFACE_STARTUP_MEASUREMENTS: readonly IStartupMeasureDefinition[] = [
     label: 'AI 工作区 setup + 挂载',
     start: 'ai-workspace-surface-setup',
     end: 'ai-workspace-surface-mounted',
+  },
+  {
+    key: 'ai-assistant-panel-composables',
+    label: 'AI 面板核心 composable 初始化',
+    start: 'ai-assistant-panel-setup-start',
+    end: 'ai-assistant-panel-composables-ready',
+  },
+  {
+    key: 'ai-assistant-panel-derivations',
+    label: 'AI 面板派生计算构建',
+    start: 'ai-assistant-panel-composables-ready',
+    end: 'ai-assistant-panel-setup-done',
+  },
+  {
+    key: 'ai-assistant-panel-children-mount',
+    label: 'AI 面板子组件渲染挂载',
+    start: 'ai-assistant-panel-setup-done',
+    end: 'ai-assistant-panel-mounted',
   },
   {
     key: 'ai-surface-total',
