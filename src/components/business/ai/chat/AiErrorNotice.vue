@@ -5,10 +5,10 @@ import { computed, ref } from 'vue';
 import { tryWriteClipboardText } from '@/utils/platform/clipboard';
 
 const props = defineProps<{
-  message: string;
+  message?: string;
 }>();
 
-const normalizedMessage = computed(() => props.message.trim());
+const normalizedMessage = computed(() => (props.message ?? '').trim());
 const copied = ref(false);
 
 const copyHint = computed(() => (copied.value ? '已复制完整错误信息' : '点击复制完整错误信息'));

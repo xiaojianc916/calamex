@@ -10,3 +10,6 @@ allowBuilds:
   edgedriver: true
   geckodriver: true
   lefthook: false
+  '@moonshot-ai/kimi-code': true
+  koffi: true
+  node-pty: true
