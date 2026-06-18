@@ -521,9 +521,7 @@ watch(
                   aria-label="返回" @click="openList">
                   <ArrowLeft aria-hidden="true" />
                 </Button>
-                <h2 id="ai-credential-title" class="ai-credential-title">
-                    pane === 'form' ? '编辑凭证' : 'AI 凭证'  
-                </h2>
+                <h2 id="ai-credential-title" class="ai-credential-title"> pane === 'form' ? '编辑凭证' : 'AI 凭证' </h2>
                 <Button v-if="pane === 'list'" class="ai-credential-head-action" variant="outline" size="sm" type="button"
                   @click="openForm()">
                   <Plus aria-hidden="true" />
@@ -553,9 +551,7 @@ watch(
                               <Gauge class="ai-credential-default-mark__icon" aria-hidden="true" />
                             </span>
                           </div>
-                          <div class="ai-credential-row__key">
-                              row.preset.id  /  row.keyPreview  
-                          </div>
+                          <div class="ai-credential-row__key"> row.preset.id  /  row.keyPreview </div>
                         </div>
                         <div class="ai-credential-row__acts">
                           <TooltipProvider>
@@ -586,12 +582,8 @@ watch(
                     </section>
                   </div>
                   <div v-else class="ai-credential-empty">
-                    <div class="ai-credential-empty__title">
-                        providerRows.length ? '没有匹配的凭证' : '还没有 AI 凭证'  
-                    </div>
-                    <div class="ai-credential-empty__desc">
-                        providerRows.length ? '换个关键词再试试' : '点击右上角添加厂商 Key'  
-                    </div>
+                    <div class="ai-credential-empty__title"> providerRows.length ? '没有匹配的凭证' : '还没有 AI 凭证' </div>
+                    <div class="ai-credential-empty__desc"> providerRows.length ? '换个关键词再试试' : '点击右上角添加厂商 Key' </div>
                   </div>
                 </div>
                 <div v-if="feedbackText" class="ai-credential-list-status" :class="`is-${feedbackTone}`">
@@ -643,7 +635,7 @@ watch(
                   <div class="ai-credential-field">
                     <label class="ai-credential-label" for="ai-provider-key">
                       API Key
-                      <span>   selectedProviderHasCredentials ? '留空则不修改已保存 Key' : '按厂商保存'   </span>
+                      <span> selectedProviderHasCredentials ? '留空则不修改已保存 Key' : '按厂商保存' </span>
                     </label>
                     <div class="ai-credential-key-wrap">
                       <Input id="ai-provider-key" v-model="providerKey" class="ai-credential-input ai-credential-key-input"
@@ -656,9 +648,7 @@ watch(
                         <Eye v-else aria-hidden="true" />
                       </Button>
                     </div>
-                    <p class="ai-credential-field-msg" :class="{ 'is-error': providerKeyError }">
-                        providerKeyError || '本地加密保存，不会上传。'  
-                    </p>
+                    <p class="ai-credential-field-msg" :class="{ 'is-error': providerKeyError }"> providerKeyError || '本地加密保存，不会上传。' </p>
                   </div>
 
                   <div class="ai-credential-field">
@@ -744,9 +734,7 @@ watch(
                   <Button variant="outline" size="sm" type="button" @click="openList">
                     取消
                   </Button>
-                  <Button class="ai-credential-save" size="sm" type="button" :disabled="!canSaveProviderKey" @click="saveProviderSettings">
-                      isSaving ? '保存中' : '保存'  
-                  </Button>
+                  <Button class="ai-credential-save" size="sm" type="button" :disabled="!canSaveProviderKey" @click="saveProviderSettings"> isSaving ? '保存中' : '保存' </Button>
                 </footer>
               </section>
             </section>
