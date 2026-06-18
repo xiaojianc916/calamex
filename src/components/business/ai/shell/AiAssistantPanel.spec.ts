@@ -11,6 +11,7 @@ import type {
   IAiChatMessage,
   IAiConfigPayload,
   IAiContextReference,
+  IAiLanguageModelUsage,
   IAiTaskPlanStep,
   IAiToolActivityInline,
   IAiToolConfirmationRequest,
@@ -78,6 +79,7 @@ interface IAiConversationThreadMock {
 interface ITokenContextArgs {
   messages: { value: IAiChatMessage[] };
   estimationMessages: { value: IAiChatMessage[] };
+  officialUsage?: { value: IAiLanguageModelUsage | null | undefined };
 }
 
 let latestTokenContextArgs: ITokenContextArgs | null = null;
@@ -215,6 +217,8 @@ const createAssistantMock = (messagesList: IAiChatMessage[] = []) => {
   const revertingChangedFilesSummaryId = ref<string | null>(null);
   const pinningChangedFilesSummaryId = ref<string | null>(null);
   const fileRollbackPrompt = ref(null);
+  const acpUsageRef = ref<IAiLanguageModelUsage | null>(null);
+
   const agentPlanStore = {
     mode: 'chat' as 'chat' | 'plan',
     activeGoal: '',
@@ -258,6 +262,30 @@ const createAssistantMock = (messagesList: IAiChatMessage[] = []) => {
   };
 
   return {
+    acpSessionModes: {
+      state: computed(() => null),
+      availableModes: computed(() => []),
+      currentMode: computed(() => null),
+      hasModes: computed(() => false),
+      isSwitching: computed(() => false),
+      loadModes: vi.fn().mockResolvedValue(undefined),
+      selectMode: vi.fn().mockResolvedValue(undefined),
+      applyModeUpdate: vi.fn(),
+      reset: vi.fn(),
+    },
+    acpAvailableCommands: {
+      state: computed(() => null),
+      commands: computed(() => []),
+      hasCommands: computed(() => false),
+      applyCommandsUpdate: vi.fn(),
+      reset: vi.fn(),
+    },
+    acpUsage: {
+      usage: acpUsageRef,
+      hasUsage: computed(() => acpUsageRef.value !== null),
+      applyUsageUpdate: vi.fn(),
+      reset: vi.fn(),
+    },
     config,
     messages,
     historyThreads,
@@ -650,5 +678,34 @@ describe('AiAssistantPanel', () => {
 
     expect(assistantMock.draft.value).toBe('讲一个科学小知识');
     expect(assistantMock.sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('prefers ACP usage_update over plan-store usage for the token context (chat mode)', () => {
+    const assistantMock = createAssistantMock([createMessage('message-user', 'user', 'hi')]);
+    assistantMock.activeMode.value = 'chat';
+    assistantMock.acpUsage.usage.value = {
+      inputTokens: 120,
+      outputTokens: 45,
+      totalTokens: 165,
+    };
+    useAiAssistantMock.mockReturnValue(assistantMock);
+
+    mountPanel(assistantMock);
+
+    expect(latestTokenContextArgs?.officialUsage?.value).toEqual({
+      inputTokens: 120,
+      outputTokens: 45,
+      totalTokens: 165,
+    });
+  });
+
+  it('exposes no official usage when neither ACP nor plan usage is present (chat mode)', () => {
+    const assistantMock = createAssistantMock([createMessage('message-user', 'user', 'hi')]);
+    assistantMock.activeMode.value = 'chat';
+    useAiAssistantMock.mockReturnValue(assistantMock);
+
+    mountPanel(assistantMock);
+
+    expect(latestTokenContextArgs?.officialUsage?.value ?? null).toBeNull();
   });
 });
