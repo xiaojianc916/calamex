@@ -16,6 +16,7 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use crate::terminal::{
     local_wsl_protocol::{LocalWslTerminalServerPayload, SIGNAL_MODE_KILL},
+    shell_integration::ShellIntegrationMark,
     tauri_events::{
         TerminalDataEvent, TerminalDataSource, TerminalExitEvent, TerminalRunChunkEvent,
         TerminalRunCompletedEvent, TerminalRunStartedEvent, TerminalSessionStateChangedEvent,
@@ -33,9 +34,10 @@ use crate::terminal::{
 
 use super::state::{
     TerminalSessionState, append_terminal_snapshot, clear_active_terminal_run,
-    complete_session_run_state, remove_interactive_terminal_after_exit,
-    set_active_terminal_run_started_meta, set_session_state,
-    should_skip_snapshot_for_interactive_resize_repaint, take_active_terminal_run_for_session,
+    complete_session_run_state, get_active_run_snapshot_for_session, get_session_state,
+    remove_interactive_terminal_after_exit, set_active_terminal_run_started_meta,
+    set_session_state, should_skip_snapshot_for_interactive_resize_repaint,
+    take_active_terminal_run_for_session,
 };
 
 static TERMINAL_DATA_SEQUENCE: AtomicU64 = AtomicU64::new(1);
@@ -380,10 +382,64 @@ pub(super) fn handle_local_wsl_interactive_terminal_event(
             );
         }
         LocalWslTerminalServerPayload::InteractiveAck(_) => {}
+        LocalWslTerminalServerPayload::InteractiveMark(payload) => {
+            handle_interactive_shell_mark(app, state, session_id, payload.mark);
+        }
         LocalWslTerminalServerPayload::RunStarted(_)
         | LocalWslTerminalServerPayload::RunChunk(_)
         | LocalWslTerminalServerPayload::RunCompleted(_)
         | LocalWslTerminalServerPayload::RunError(_) => {}
+    }
+}
+
+/// 消费交互 shell 上报的 OSC 133 生命周期标记，合成运行的 RunStarted/RunCompleted：
+/// - C（命令开始执行）：该会话若有处于 SwitchingToRun 的活动运行 → 进入 Running 并发 RunStarted。
+/// - D[;exit]（命令完成）：该会话若有处于 Running 的活动运行 → 回收会话态并发 RunCompleted。
+/// 无活动运行（用户在终端里手动敲的命令）一律忽略，不为手输命令合成 run 事件。
+/// 单命令/会话模型下 pid 不再有独立含义，取 0。
+fn handle_interactive_shell_mark(
+    app: &AppHandle,
+    state: &TerminalSessionState,
+    session_id: &str,
+    mark: ShellIntegrationMark,
+) {
+    match mark {
+        ShellIntegrationMark::CommandExecuted => {
+            let Some((run_id, _, _)) = get_active_run_snapshot_for_session(state, session_id)
+            else {
+                return;
+            };
+            if get_session_state(state, session_id) != TerminalState::SwitchingToRun {
+                return;
+            }
+            let started_at_ms = terminal_now_ms();
+            set_active_terminal_run_started_meta(state, &run_id, 0, started_at_ms);
+            emit_terminal_run_started_state(app, session_id, &run_id, 0, started_at_ms);
+            set_session_state_and_emit(app, state, session_id, TerminalState::Running);
+        }
+        ShellIntegrationMark::CommandFinished { exit_code } => {
+            let Some((run_id, _, _)) = get_active_run_snapshot_for_session(state, session_id)
+            else {
+                return;
+            };
+            if get_session_state(state, session_id) != TerminalState::Running {
+                return;
+            }
+            clear_active_terminal_run(state, &run_id);
+            complete_session_run_state_and_emit(app, state, session_id);
+            emit_terminal_run_completed(
+                app,
+                TerminalRunCompletedEvent {
+                    session_id: session_id.to_string(),
+                    run_id,
+                    exit_code,
+                    finished_at: Timestamp::now().to_string(),
+                },
+            );
+        }
+        ShellIntegrationMark::PromptStart
+        | ShellIntegrationMark::CommandStart
+        | ShellIntegrationMark::Cwd(_) => {}
     }
 }
 
@@ -454,7 +510,8 @@ pub(super) fn handle_local_run_event(
         | LocalWslTerminalServerPayload::InteractiveData(_)
         | LocalWslTerminalServerPayload::InteractiveClosed(_)
         | LocalWslTerminalServerPayload::InteractiveAck(_)
-        | LocalWslTerminalServerPayload::InteractiveError(_) => {}
+        | LocalWslTerminalServerPayload::InteractiveError(_)
+        | LocalWslTerminalServerPayload::InteractiveMark(_) => {}
     }
 }
 

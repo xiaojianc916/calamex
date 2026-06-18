@@ -28,8 +28,8 @@ use crate::terminal::{
     types::TerminalState,
     visual::{TerminalRunVisualTracker, extract_prompt_from_terminal_snapshot},
     wsl_pty::{
-        LocalWslPtyHandle, LocalWslRunHandle, open_interactive_terminal_local_with_flow,
-        run_terminal_script_local_with_flow,
+        LocalWslPtyHandle, LocalWslRunHandle, materialize_wsl_script,
+        open_interactive_terminal_local_with_flow, run_terminal_script_local_with_flow,
     },
 };
 
@@ -261,15 +261,18 @@ pub async fn write_terminal_input(
             buffer_pending_switch_input(&terminal_state, &payload.session_id, &payload.data)?;
             return Ok(());
         }
-        ActiveRunInputTarget::Run(run_id) => {
+        ActiveRunInputTarget::Run(_run_id) => {
+            // Shell Integration：运行就是交互 shell 的前台命令，运行期输入（含切换窗口缓冲的
+            // Pending 输入）直接写入交互 stdin，不再经由独立运行 PTY。
             let data = take_and_prepend_pending_switch_input(
                 &terminal_state,
                 &payload.session_id,
                 payload.data,
             )?;
-            let handle = get_active_terminal_run_handle(&terminal_state, &run_id)?
-                .ok_or_else(|| "目标运行任务不存在或已结束。".to_string())?;
-            return handle
+            let session = get_terminal_session(&terminal_state, &payload.session_id)?
+                .ok_or_else(|| "目标终端会话不存在。".to_string())?;
+            return session
+                .handle
                 .write_input(data)
                 .await
                 .map_err(|error| error.to_string());
@@ -459,30 +462,19 @@ pub fn dispatch_script_to_terminal(
         build_terminal_run_command_for_local_wsl(&payload, &session.working_directory)?;
     let command_line = command.display_command.clone();
     let used_temp_file = command.used_temp_file;
-    let prompt_snapshot = get_terminal_snapshot(&terminal_state, &payload.session_id)?;
-    let prompt = extract_prompt_from_terminal_snapshot(&prompt_snapshot);
-
-    // 运行 PTY 按「发起该 run 的会话」自身尺寸创建，而非全局共享尺寸；多开时不会被其它
-    // 会话最后一次 resize 串台。对照 VSCode ptyService.ts：每个 PersistentTerminalProcess
-    // 持有各自的尺寸，resize 仅作用于指定 id。
-    let geometry = get_session_geometry(&terminal_state, &payload.session_id);
-    let request = LocalWslTerminalRunScriptRequest {
-        run_id: payload.run_id.clone(),
-        working_directory: command.working_directory.clone(),
-        execution_path: command.execution_path.clone(),
-        script_content,
-        cleanup_paths: command.cleanup_paths.clone(),
-        cols: geometry.cols,
-        rows: geometry.rows,
-    };
+    // Shell Integration：命令直接写入交互 shell 的 stdin，由真实 shell 执行并绘制其自身提示符，
+    // 不再派生独立运行 PTY、不再抓取/合成提示符。运行生命周期由交互流中的 OSC 133 标记在
+    // events 层合成（C=输出开始 → RunStarted/Running，D[;exit]=完成 → RunCompleted/回收）。
+    // 并发以多开会话实现：同一会话同一时刻只跑一条命令（try_mark 串行化）。
+    if let Some(content) = script_content.as_ref() {
+        // 行内/未保存脚本：先把内容落到 WSL 临时文件，再以 bash <path> 运行。
+        materialize_wsl_script(&command.execution_path, content)
+            .map_err(|error| error.to_string())?;
+    }
 
     try_mark_active_terminal_run(&terminal_state, &payload.session_id, &payload.run_id)?;
-    // 每会话态：紧跟 try_mark 之后置位，发起脚本的「这个会话」立即进入 SwitchingToRun，
-    // 使其切换窗口内的输入被缓冲为 Pending。紧贴 try_mark 之后置位，避免与并发的
-    // write_terminal_input 之间出现「有活动运行但无会话态记录」的窗口。全局 FSM 已移除
-    // （BE-2b），不再有「首个活动运行」的全局门控；多开时 B 不依赖被 A 卡住的全局态。
-    // 对照 VSCode：每个 PersistentTerminalProcess 各自维护其运行/交互态，互不影响。同时
-    // 向前端发 per-session 状态事件。
+    // 紧跟 try_mark 置位 SwitchingToRun：切换窗口内的输入缓冲为 Pending；待交互流的 C 标记
+    // 到达后再由 events 层切到 Running（届时合成 RunStarted）。
     set_session_state_and_emit(
         &app,
         &terminal_state,
@@ -490,38 +482,12 @@ pub fn dispatch_script_to_terminal(
         TerminalState::SwitchingToRun,
     );
 
-    let started_at = Instant::now();
-    let visual_tracker = Arc::new(Mutex::new(TerminalRunVisualTracker::default()));
-    let event_app = app.clone();
-    let event_state = terminal_state.clone();
-    let event_session_id = payload.session_id.clone();
-    let event_run_id = payload.run_id.clone();
-    let event_prompt = prompt;
-
-    // P2：运行读线程复用「发起该 run 的会话」的输出流控器，与交互读线程共享同一计数，
-    // 一并受前端 ack 背压（运行输出同样汇入该会话的 xterm）。
-    let flow = get_flow_controller(&terminal_state, &payload.session_id);
-    let run_handle = match run_terminal_script_local_with_flow(request, flow, move |event| {
-        handle_local_run_event(
-            &event_app,
-            &event_state,
-            &event_session_id,
-            &event_run_id,
-            &visual_tracker,
-            started_at,
-            event_prompt.clone(),
-            event,
-        );
-    }) {
-        Ok(handle) => handle,
-        Err(error) => {
-            clear_active_terminal_run(&terminal_state, &payload.run_id);
-            complete_session_run_state_and_emit(&app, &terminal_state, &payload.session_id);
-            return Err(error.to_string());
-        }
-    };
-
-    let _ = attach_active_terminal_run_handle(&terminal_state, &payload.run_id, run_handle);
+    // 写入命令行 + 换行触发交互 shell 执行；失败则回收本会话运行态。
+    if let Err(error) = session.handle.write_input_sync(&format!("{command_line}\n")) {
+        clear_active_terminal_run(&terminal_state, &payload.run_id);
+        complete_session_run_state_and_emit(&app, &terminal_state, &payload.session_id);
+        return Err(error.to_string());
+    }
 
     Ok(DispatchTerminalScriptPayload {
         session_id: payload.session_id,
@@ -540,27 +506,18 @@ pub async fn cancel_terminal_run(
     payload: CancelTerminalRunRequest,
 ) -> Result<(), String> {
     let terminal_state = state.inner().clone();
-    let mode = payload.mode.as_deref().unwrap_or("graceful");
-    // 取消看门狗只在 kill 模式下武装：graceful（Ctrl-C / ETX）只是「请求」，目标进程可能合法地
-    // 继续运行，自动升级 graceful→kill 会破坏 graceful 语义、违反零误杀原则，故 graceful 永不
-    // 武装看门狗。kill 模式才需兜底卡死的 wsl.exe。
-    let arm_kill_watchdog = mode.trim() == SIGNAL_MODE_KILL;
-
-    let handle = get_active_terminal_run_handle(&terminal_state, &payload.run_id)?
+    // Shell Integration：运行即交互 shell 的前台命令。取消 = 向交互 stdin 写入 Ctrl-C(ETX)，
+    // 由 ConPTY 转成 SIGINT 投递给前台进程组；运行结束仍由交互流中的 OSC 133 D 标记驱动收尾。
+    // 单命令/会话模型下不再有独立运行 PTY 与 kill 看门狗（graceful / kill 同样发 Ctrl-C）。
+    let session_id = get_active_terminal_run_session(&terminal_state, &payload.run_id)
         .ok_or_else(|| format!("未找到正在运行的脚本：{}", payload.run_id))?;
-    // 在发出 cancel 之前解析归属会话（此刻 run 仍在 active_runs 中，cancel 后可能被读线程清走）；
-    // 合成 run-completed 事件需要 session_id。
-    let watchdog_session_id = if arm_kill_watchdog {
-        get_active_terminal_run_session(&terminal_state, &payload.run_id)
-    } else {
-        None
-    };
-    handle.cancel(mode).map_err(|error| error.to_string())?;
-    if let Some(session_id) = watchdog_session_id {
-        // 句柄是 Clone 共享，移交看门狗线程后与本次 kill 共用同一 killer / finished 标志。
-        spawn_run_cancel_teardown_watch(app, terminal_state, session_id, payload.run_id, handle);
-    }
-    Ok(())
+    let session = get_terminal_session(&terminal_state, &session_id)?
+        .ok_or_else(|| "目标终端会话不存在。".to_string())?;
+    session
+        .handle
+        .write_input("\u{0003}".to_string())
+        .await
+        .map_err(|error| error.to_string())
 }
 
 /// 取消看门狗：在 kill 模式取消运行、发出 kill 后挂一次性的监护线程。正常路径下运行读线程会

@@ -23,10 +23,10 @@ use thiserror::Error;
 use super::flow_control::{FlowController, utf16_len};
 use super::local_wsl_protocol::{
     LocalWslTerminalInteractiveClosed, LocalWslTerminalInteractiveData,
-    LocalWslTerminalInteractiveOpened, LocalWslTerminalOpenInteractiveRequest,
-    LocalWslTerminalRunChunk, LocalWslTerminalRunCompleted, LocalWslTerminalRunScriptRequest,
-    LocalWslTerminalRunStarted, LocalWslTerminalServerPayload, LocalWslUtf8ChunkDecoder,
-    SIGNAL_MODE_KILL,
+    LocalWslTerminalInteractiveMark, LocalWslTerminalInteractiveOpened,
+    LocalWslTerminalOpenInteractiveRequest, LocalWslTerminalRunChunk, LocalWslTerminalRunCompleted,
+    LocalWslTerminalRunScriptRequest, LocalWslTerminalRunStarted, LocalWslTerminalServerPayload,
+    LocalWslUtf8ChunkDecoder, SIGNAL_MODE_KILL,
 };
 use super::wsl::bash_quote;
 
@@ -103,7 +103,8 @@ impl LocalWslPtyHandle {
             .map_err(|error| LocalWslPtyError::Close(error.to_string()))
     }
 
-    pub async fn write_input(&self, data: String) -> Result<(), LocalWslPtyError> {
+    /// 同步写入交互 stdin：供命令派发等非 async 路径直接调用（写入即返回，无 await）。
+    pub fn write_input_sync(&self, data: &str) -> Result<(), LocalWslPtyError> {
         let mut writer = self
             .writer
             .lock()
@@ -114,6 +115,10 @@ impl LocalWslPtyHandle {
         writer
             .flush()
             .map_err(|error| LocalWslPtyError::Write(error.to_string()))
+    }
+
+    pub async fn write_input(&self, data: String) -> Result<(), LocalWslPtyError> {
+        self.write_input_sync(&data)
     }
 
     /// 提交一次尺寸调整。不直接驱动 ConPTY，而是投递到该会话独占的 resize 合批线程：窗口拖拽
@@ -461,7 +466,16 @@ where
                         decoder.decode_into(&buffer[..read], &mut pending_out, false);
                         if should_flush_terminal_output(pending_out.len(), read, buffer.len()) {
                             let chunk = std::mem::take(&mut pending_out);
-                            let (clean, _marks) = shell_filter.filter(&chunk);
+                            let (clean, marks) = shell_filter.filter(&chunk);
+                            // 先把本批解析出的 OSC 133/633 标记上抛（clean 为空时标记也不能丢）。
+                            for mark in marks {
+                                on_event(LocalWslTerminalServerPayload::InteractiveMark(
+                                    LocalWslTerminalInteractiveMark {
+                                        session_id: session_id.clone(),
+                                        mark,
+                                    },
+                                ));
+                            }
                             if clean.is_empty() {
                                 continue;
                             }
@@ -486,7 +500,15 @@ where
 
             // 收尾：补全解码器残尾，并把最后攒批的输出一次性发出。
             decoder.decode_into(&[], &mut pending_out, true);
-            let mut tail = shell_filter.filter(&std::mem::take(&mut pending_out)).0;
+            let (mut tail, tail_marks) = shell_filter.filter(&std::mem::take(&mut pending_out));
+            for mark in tail_marks {
+                on_event(LocalWslTerminalServerPayload::InteractiveMark(
+                    LocalWslTerminalInteractiveMark {
+                        session_id: session_id.clone(),
+                        mark,
+                    },
+                ));
+            }
             tail.push_str(&shell_filter.flush_remaining());
             if !tail.is_empty() {
                 if let Some(flow) = &flow {
@@ -691,7 +713,10 @@ fn wait_child_with_timeout(
 }
 
 /// 把脚本内容写入 WSL 侧的 execution_path（通过 `bash -c 'cat > <path>'` + stdin）。
-fn materialize_wsl_script(execution_path: &str, content: &str) -> Result<(), LocalWslPtyError> {
+pub(crate) fn materialize_wsl_script(
+    execution_path: &str,
+    content: &str,
+) -> Result<(), LocalWslPtyError> {
     let mut command = std::process::Command::new("wsl.exe");
     command
         .arg("--")

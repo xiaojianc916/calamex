@@ -111,6 +111,14 @@ pub struct LocalWslTerminalInteractiveError {
     pub finished_at_unix_ms: i64,
 }
 
+/// 交互 shell 经 OSC 133/633 上报的生命周期标记（Shell Integration）。由交互读线程从输出流中
+/// 剥离后上抛，events 层据此合成运行的 RunStarted/RunCompleted，取代旧的抓取/合成提示符方案。
+#[derive(Debug, Clone)]
+pub struct LocalWslTerminalInteractiveMark {
+    pub session_id: String,
+    pub mark: super::shell_integration::ShellIntegrationMark,
+}
+
 #[derive(Debug, Clone)]
 pub enum LocalWslTerminalServerPayload {
     RunStarted(LocalWslTerminalRunStarted),
@@ -122,6 +130,7 @@ pub enum LocalWslTerminalServerPayload {
     InteractiveClosed(LocalWslTerminalInteractiveClosed),
     InteractiveAck(LocalWslTerminalInteractiveAck),
     InteractiveError(LocalWslTerminalInteractiveError),
+    InteractiveMark(LocalWslTerminalInteractiveMark),
 }
 
 fn ensure_field_non_empty(
