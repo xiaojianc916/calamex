@@ -291,7 +291,10 @@ pub fn close_terminal_session(
     // 关闭看门狗：已请求关闭后，若读线程在宽限期内未收尾（wsl.exe 卡死等），升级重发
     // kill；硬超时仍未收尾则合成退出事件通知前端、回收会话状态，避免 UI 永久卡在僵尸会话
     // 上。只在关闭路径介入，不触碰健康的空闲会话（零误杀）。
-    spawn_interactive_teardown_watch(app, terminal_state, payload.session_id, handle);
+    // 传入克隆：本函数末尾仍持有 `_creation_guard`（借用 terminal_state.creation_guard），
+    // 其 Drop 在返回时才运行，故不能把 terminal_state 整体 move 进看门狗线程；克隆共享同一
+    // Arc 态、开销可忽略，且保持创建锁持有至函数结束的原语义不变。
+    spawn_interactive_teardown_watch(app, terminal_state.clone(), payload.session_id, handle);
     result
 }
 
