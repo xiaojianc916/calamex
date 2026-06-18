@@ -5,7 +5,7 @@ use super::{
     WorkspacePathKind, WorkspacePathRenamePayload, WorkspacePathRenameRequest, line_count,
 };
 use atomic_write_file::AtomicWriteFile;
-use encoding_rs::{GB18030, UTF_8, UTF_16BE, UTF_16LE};
+use encoding_rs::{GB18030, GBK, UTF_8, UTF_16BE, UTF_16LE};
 use std::{
     borrow::Cow,
     env, fs,
@@ -270,6 +270,8 @@ fn resolve_save_script_path(
     raw_path: &str,
     workspace_root_path: Option<String>,
 ) -> Result<PathBuf, String> {
+    // --- v4 patch: boundary check BEFORE create_dir_all ---
+    let raw_path = PathBuf::from(raw_path);
     // 先拆出文件名与父目录（缺省父目录视为当前目录），创建父目录后再对父目录做
     // canonicalize，使最终写入路径中的 `..` 等被解析为真实目录，避免路径穿越写盘。
     let raw_path = PathBuf::from(raw_path);
@@ -459,6 +461,12 @@ pub(crate) fn decode_script_bytes(bytes: &[u8]) -> Result<(String, DocumentEncod
     let (utf8, _, utf8_errors) = UTF_8.decode(bytes);
     if !utf8_errors {
         return Ok((utf8.into_owned(), DocumentEncoding::Utf8));
+    }
+
+    // GBK first (subset of GB18030): decode GBK files as Gbk, not Gb18030.
+    let (gbk, _, gbk_errors) = GBK.decode(bytes);
+    if !gbk_errors {
+        return Ok((gbk.into_owned(), DocumentEncoding::Gbk));
     }
 
     let (gb18030, _, gb_errors) = GB18030.decode(bytes);
@@ -700,12 +708,12 @@ mod tests {
     }
 
     #[test]
-    fn falls_back_to_gb18030_for_non_utf8_bytes() {
+    fn falls_back_to_gbk_for_non_utf8_bytes() {
         // GB18030 编码的“中”（0xD6 0xD0）不是合法 UTF-8，且不含 BOM / NUL，应回退到 GB18030。
         let bytes = [0xD6, 0xD0];
-        let (content, encoding) = decode_script_bytes(&bytes).expect("decode gb18030");
+        let (content, encoding) = decode_script_bytes(&bytes).expect("decode gbk");
         assert_eq!(content, "中");
-        assert_eq!(encoding.as_str(), "gb18030");
+        assert_eq!(encoding.as_str(), "gbk");
     }
 
     #[test]
