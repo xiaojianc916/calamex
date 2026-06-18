@@ -41,7 +41,12 @@ pub async fn analyze_script(payload: AnalyzeScriptRequest) -> Result<AnalyzeScri
 #[tauri::command]
 #[specta::specta]
 pub async fn format_script(payload: FormatScriptRequest) -> Result<FormatScriptPayload, String> {
-    let Some(shfmt) = resolve_shfmt_candidate() else {
+    // resolve_shfmt_candidate 在 WSL 兜底分支会同步执行 `wsl.exe -- shfmt --version`，
+    // 阻塞调用线程（WSL 冷启动可能数秒）。放进 spawn_blocking 避免阻塞 tokio worker。
+    let shfmt = tokio::task::spawn_blocking(resolve_shfmt_candidate)
+        .await
+        .map_err(|error| format!("探测 shfmt 失败：{error}"))?;
+    let Some(shfmt) = shfmt else {
         return Err(
             "未检测到可用的 shfmt，请先在 Windows 或 WSL 中安装 shfmt，或配置 SHFMT_BIN。".into(),
         );
@@ -234,16 +239,16 @@ async fn run_shfmt(
         .spawn()
         .map_err(|error| format!("启动 shfmt 失败：{error}"))?;
 
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin
-            .write_all(content.as_bytes())
-            .await
-            .map_err(|error| format!("写入 shfmt 输入失败：{error}"))?;
-        stdin
-            .shutdown()
-            .await
-            .map_err(|error| format!("关闭 shfmt 输入失败：{error}"))?;
-    }
+    // 并发写 stdin：与排空 stdout 同时进行，避免大脚本触发 stdin/stdout 双向管道死锁。
+    let stdin = child.stdin.take();
+    let input = content.as_bytes().to_vec();
+    let writer = tokio::spawn(async move {
+        if let Some(mut stdin) = stdin {
+            stdin.write_all(&input).await?;
+            stdin.shutdown().await?;
+        }
+        Ok::<(), std::io::Error>(())
+    });
 
     let output = match timeout(SHFMT_TIMEOUT, child.wait_with_output()).await {
         Ok(Ok(output)) => output,
@@ -255,6 +260,17 @@ async fn run_shfmt(
             ));
         }
     };
+
+    // 回收写入任务：stdin 写入失败通常是 shfmt 提前退出（解析错误时会关闭 stdin）
+    // 的副作用，其 stderr / 退出码才是权威信号；故仅在子进程成功时才追究写入错误。
+    match writer.await {
+        Ok(Ok(())) => {}
+        Ok(Err(write_error)) if output.status.success() => {
+            return Err(format!("写入 shfmt 输入失败：{write_error}"));
+        }
+        Ok(Err(_)) => {}
+        Err(join_error) => return Err(format!("shfmt 输入任务异常退出：{join_error}")),
+    }
 
     if output.status.success() {
         return String::from_utf8(output.stdout)

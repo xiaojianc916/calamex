@@ -318,7 +318,10 @@ pub(crate) static POOL: LazyLock<SshConnectionPool> = LazyLock::new(SshConnectio
 /// 与进程直接退出相比,这里主动断开池内长连接,避免远端遗留半开会话。
 pub(crate) async fn shutdown_ssh_pool() {
     POOL_SHUTDOWN.store(true, Ordering::Relaxed);
-    POOL_SHUTDOWN_NOTIFY.notify_waiters();
+    // notify_one（而非 notify_waiters）：即使清理任务此刻不在 notified() 挂起点，
+    // 也会存下一枚许可，下一次 select 立即命中退出分支，不丢唤醒、不必等满一个清理周期。
+    // 仅一个清理任务等待，notify_one 语义正确。
+    POOL_SHUTDOWN_NOTIFY.notify_one();
     POOL.shutdown().await;
 }
 
