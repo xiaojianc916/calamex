@@ -11,6 +11,7 @@ import type {
   IAiConfigPayload,
   IAiConversationTitlePayload,
   IAiConversationTitleRequest,
+  IAiGetSessionModesRequest,
   IAiInlineCompletionRequest,
   IAiInlineCompletionResult,
   IAiProposePatchPayload,
@@ -21,6 +22,8 @@ import type {
   IAiResolveApprovalRequest,
   IAiSaveConfigRequest,
   IAiSaveCredentialsRequest,
+  IAiSessionModesPayload,
+  IAiSetSessionModeRequest,
   IAiSuggestionPoolPayload,
   IAiSuggestionPoolRequest,
   IAiWebFetchInput,
@@ -296,9 +299,7 @@ export interface ITauriService {
   onAgentSidecarStream(
     handler: (payload: IAgentSidecarStreamEventPayload) => void,
   ): Promise<() => void>;
-  onAcpApproval(
-    handler: (payload: IAcpPermissionRequestPayload) => void,
-  ): Promise<() => void>;
+  onAcpApproval(handler: (payload: IAcpPermissionRequestPayload) => void): Promise<() => void>;
   analyzeScript(payload: IAnalyzeScriptRequest): Promise<IAnalyzeScriptPayload>;
   formatScript(payload: IFormatScriptRequest): Promise<IFormatScriptPayload>;
   formatDocument(payload: IFormatDocumentRequest): Promise<IFormatDocumentPayload>;
@@ -386,6 +387,8 @@ export interface ITauriService {
   aiChatStream(payload: IAiChatRequest): Promise<IAiChatStreamPayload>;
   aiCancel(payload: IAiCancelRequest): Promise<void>;
   aiResolveApproval(payload: IAiResolveApprovalRequest): Promise<boolean>;
+  aiGetSessionModes(payload: IAiGetSessionModesRequest): Promise<IAiSessionModesPayload | null>;
+  aiSetSessionMode(payload: IAiSetSessionModeRequest): Promise<boolean>;
   aiInlineComplete(payload: IAiInlineCompletionRequest): Promise<IAiInlineCompletionResult>;
   aiAgentClassifyTask(payload: IAiAgentClassifyTaskRequest): Promise<IAiAgentClassifyTaskPayload>;
   aiWebSearch(payload: IAiWebSearchInput): Promise<IAiWebSearchPayload>;

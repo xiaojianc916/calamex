@@ -155,6 +155,21 @@ const AI_COMMAND_META = {
     timeoutMs: 30_000,
     measureInput: measureAiChatInput,
   },
+  aiGetSessionModes: {
+    command: 'ai_get_session_modes',
+    guardHint: '读取 ACP 会话可用模式',
+    idempotent: true,
+    audit: 'info',
+    timeoutMs: 15_000,
+    measureInput: buildPayloadMetrics,
+  },
+  aiSetSessionMode: {
+    command: 'ai_set_session_mode',
+    guardHint: '切换 ACP 会话模式',
+    audit: 'sensitive',
+    timeoutMs: 15_000,
+    measureInput: buildPayloadMetrics,
+  },
 } satisfies Record<string, ICommandMeta>;
 
 type TAiTauriService = Pick<
@@ -172,6 +187,8 @@ type TAiTauriService = Pick<
   | 'aiChatStream'
   | 'aiCancel'
   | 'aiResolveApproval'
+  | 'aiGetSessionModes'
+  | 'aiSetSessionMode'
   | 'aiInlineComplete'
   | 'aiAgentClassifyTask'
   | 'aiAgentSetNetworkPermission'
@@ -251,6 +268,18 @@ export const aiTauriService: TAiTauriService = {
   aiResolveApproval(payload, options?: IIpcCallOptions) {
     return runCommand(AI_COMMAND_META.aiResolveApproval, payload, options, () =>
       commands.aiResolveApproval(payload),
+    );
+  },
+
+  aiGetSessionModes(payload, options?: IIpcCallOptions) {
+    return runCommand(AI_COMMAND_META.aiGetSessionModes, payload, options, () =>
+      commands.aiGetSessionModes(payload),
+    );
+  },
+
+  aiSetSessionMode(payload, options?: IIpcCallOptions) {
+    return runCommand(AI_COMMAND_META.aiSetSessionMode, payload, options, () =>
+      commands.aiSetSessionMode(payload),
     );
   },
 

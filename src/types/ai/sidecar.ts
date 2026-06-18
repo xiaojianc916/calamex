@@ -641,6 +641,25 @@ export type TAgentUiEventModeUpdate = {
   modeId: string;
 };
 
+/* ----------------------------------------------------------------------------
+ * ACP 会话模式选择器 VM（ADR-20260617 · D7-③-c）
+ *
+ * 由前端 ACL（components/business/ai/thread/projection/from-acp-session-modes）从
+ * `ai_get_session_modes` 的原始 `modes`（ACP SessionModeState）解析而来；
+ * `mode_update` UI 事件仅更新 `currentModeId`。VM 与 ACP wire 解耦：UI 只消费
+ * 此结构，不直接触碰 ACP 原始负载。
+ * -------------------------------------------------------------------------- */
+export interface IAcpSessionModeOption {
+  id: string;
+  name: string;
+  description?: string;
+}
+
+export interface IAcpSessionModeState {
+  currentModeId: string | null;
+  availableModes: IAcpSessionModeOption[];
+}
+
 export type TAgentUiEvent =
   | { type: 'message_delta'; text: string; phase?: 'stage' | 'final' }
   | { type: 'agent_event'; event: TAgentRuntimeEvent }

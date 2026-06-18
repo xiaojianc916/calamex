@@ -1,5 +1,4 @@
 import { tauriService } from '@/services/tauri';
-import type { IAcpPermissionRequestPayload } from '@/types/ai/acp-permission.schema';
 import type {
   IAiAgentClassifyTaskPayload,
   IAiAgentClassifyTaskRequest,
@@ -13,6 +12,7 @@ import type {
   IAiConfigPayload,
   IAiConversationTitlePayload,
   IAiConversationTitleRequest,
+  IAiGetSessionModesRequest,
   IAiInlineCompletionRequest,
   IAiInlineCompletionResult,
   IAiProposePatchPayload,
@@ -23,6 +23,8 @@ import type {
   IAiResolveApprovalRequest,
   IAiSaveConfigRequest,
   IAiSaveCredentialsRequest,
+  IAiSessionModesPayload,
+  IAiSetSessionModeRequest,
   IAiSuggestionPoolPayload,
   IAiSuggestionPoolRequest,
   IAiWebFetchInput,
@@ -30,6 +32,7 @@ import type {
   IAiWebSearchInput,
   IAiWebSearchPayload,
 } from '@/types/ai';
+import type { IAcpPermissionRequestPayload } from '@/types/ai/acp-permission.schema';
 import type { IAiEditGetDiffPayload, IAiEditGetDiffRequest } from '@/types/ai/edit';
 import type {
   IAgentSidecarApprovalResolveRequest,
@@ -230,13 +233,17 @@ export const aiService = {
   ): Promise<() => void> {
     return tauriService.onAgentSidecarStream(handler);
   },
-  onAcpApproval(
-    handler: (payload: IAcpPermissionRequestPayload) => void,
-  ): Promise<() => void> {
+  onAcpApproval(handler: (payload: IAcpPermissionRequestPayload) => void): Promise<() => void> {
     return tauriService.onAcpApproval(handler);
   },
   resolveAcpApproval(payload: IAiResolveApprovalRequest): Promise<boolean> {
     return tauriService.aiResolveApproval(payload);
+  },
+  getSessionModes(payload: IAiGetSessionModesRequest): Promise<IAiSessionModesPayload | null> {
+    return tauriService.aiGetSessionModes(payload);
+  },
+  setSessionMode(payload: IAiSetSessionModeRequest): Promise<boolean> {
+    return tauriService.aiSetSessionMode(payload);
   },
   getConfig(): Promise<IAiConfigPayload> {
     return tauriService.aiGetConfig();
