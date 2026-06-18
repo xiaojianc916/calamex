@@ -3,147 +3,79 @@ import { acpPermissionRequestPayloadSchema } from '@/types/ai/acp-permission.sch
 import { agentSidecarStreamEventPayloadSchema } from '@/types/ai/sidecar.schema';
 import type { ITauriService } from '@/types/tauri';
 import { assertDesktopRuntime } from '@/utils/platform/desktop-runtime';
+import { type ICommandMeta, runCommand } from './tauri.ipc-define';
 import { measureAiChatInput } from './tauri.ipc-metrics';
-import { callSpectaCommand, loadTauriEvent } from './tauri.ipc-runtime';
+import { loadTauriEvent } from './tauri.ipc-runtime';
 import type { IIpcCallOptions } from './tauri.ipc-types';
 
 /**
  * Agent sidecar invoke 层：从手写 Zod 契约迁入 tauri-specta 生成绑定（commands.*）。
  *
  * - 入参 / 出参类型以 Rust 为单一事实源，经 src/bindings/tauri.ts 生成。
- * - 仍保留薄仪表化外壳（callSpectaCommand：审计 / 超时 / 取消 / 错误归一化）。
- * - 流式事件仍由 listen('ai:sidecar-stream') + Zod safeParse 兜底校验。
+ * - 仪表化外壳改用声明式 metadata 表（SIDECAR_COMMAND_META + runCommand），运行期行为与原
+ *   手写 callSpectaCommand 逐字段一致：审计 / 超时 / 取消 / 错误归一 / 入参度量。
+ * - 流式事件仍由 listen('ai:sidecar-stream') + Zod safeParse 兑底校验。
  */
 
 const AGENT_SIDECAR_TASK_TIMEOUT_MS = 30 * 60 * 1000;
 
-type TSidecarRequest<K extends keyof ITauriService> = Parameters<ITauriService[K]>[0];
-type TSidecarResult<K extends keyof ITauriService> = Awaited<ReturnType<ITauriService[K]>>;
-
-const agentSidecarHealthIpc = (
-  options?: IIpcCallOptions,
-): Promise<TSidecarResult<'agentSidecarHealth'>> =>
-  callSpectaCommand(
-    {
-      command: 'agent_sidecar_health',
-      guardHint: '读取 Agent sidecar 健康状态',
-      idempotent: true,
-      audit: 'sensitive',
-      timeoutMs: 10_000,
-      signal: options?.signal,
-    },
-    () => commands.agentSidecarHealth(),
-  );
-
-const agentSidecarRestartIpc = (
-  options?: IIpcCallOptions,
-): Promise<TSidecarResult<'agentSidecarRestart'>> =>
-  callSpectaCommand(
-    {
-      command: 'agent_sidecar_restart',
-      guardHint: '重启 Agent sidecar 进程',
-      audit: 'sensitive',
-      timeoutMs: 30_000,
-      signal: options?.signal,
-    },
-    () => commands.agentSidecarRestart(),
-  );
-
-const agentSidecarWarmupIpc = (
-  options?: IIpcCallOptions,
-): Promise<TSidecarResult<'agentSidecarWarmup'>> =>
-  callSpectaCommand(
-    {
-      command: 'agent_sidecar_warmup',
-      guardHint: '预热 Agent sidecar 模型连接',
-      audit: 'sensitive',
-      timeoutMs: 8_000,
-      signal: options?.signal,
-    },
-    () => commands.agentSidecarWarmup(),
-  );
-
-const agentSidecarChatIpc = (
-  payload: TSidecarRequest<'agentSidecarChat'>,
-  options?: IIpcCallOptions,
-): Promise<TSidecarResult<'agentSidecarChat'>> =>
-  callSpectaCommand(
-    {
-      command: 'agent_sidecar_chat',
-      guardHint: '通过 Node sidecar 执行 Agent Ask',
-      audit: 'sensitive',
-      timeoutMs: AGENT_SIDECAR_TASK_TIMEOUT_MS,
-      input: payload,
-      measureInput: measureAiChatInput,
-      signal: options?.signal,
-    },
-    () => commands.agentSidecarChat(payload),
-  );
-
-const agentSidecarResolveApprovalIpc = (
-  payload: TSidecarRequest<'agentSidecarResolveApproval'>,
-  options?: IIpcCallOptions,
-): Promise<TSidecarResult<'agentSidecarResolveApproval'>> =>
-  callSpectaCommand(
-    {
-      command: 'agent_sidecar_resolve_approval',
-      guardHint: '处理 Agent sidecar 工具审批',
-      audit: 'sensitive',
-      timeoutMs: AGENT_SIDECAR_TASK_TIMEOUT_MS,
-      input: payload,
-      signal: options?.signal,
-    },
-    () => commands.agentSidecarResolveApproval(payload),
-  );
-
-const agentSidecarRestoreCheckpointIpc = (
-  payload: TSidecarRequest<'agentSidecarRestoreCheckpoint'>,
-  options?: IIpcCallOptions,
-): Promise<TSidecarResult<'agentSidecarRestoreCheckpoint'>> =>
-  callSpectaCommand(
-    {
-      command: 'agent_sidecar_restore_checkpoint',
-      guardHint: '通过 Node sidecar 恢复 Agent 回滚检查点',
-      audit: 'sensitive',
-      timeoutMs: AGENT_SIDECAR_TASK_TIMEOUT_MS,
-      input: payload,
-      signal: options?.signal,
-    },
-    () => commands.agentSidecarRestoreCheckpoint(payload),
-  );
-
-const agentSidecarOrchestrateIpc = (
-  payload: TSidecarRequest<'agentSidecarOrchestrate'>,
-  options?: IIpcCallOptions,
-): Promise<TSidecarResult<'agentSidecarOrchestrate'>> =>
-  callSpectaCommand(
-    {
-      command: 'agent_sidecar_orchestrate',
-      guardHint: 'Start native orchestration workflow via Node sidecar',
-      audit: 'sensitive',
-      timeoutMs: AGENT_SIDECAR_TASK_TIMEOUT_MS,
-      input: payload,
-      measureInput: measureAiChatInput,
-      signal: options?.signal,
-    },
-    () => commands.agentSidecarOrchestrate(payload),
-  );
-
-const agentSidecarOrchestrateResumeIpc = (
-  payload: TSidecarRequest<'agentSidecarOrchestrateResume'>,
-  options?: IIpcCallOptions,
-): Promise<TSidecarResult<'agentSidecarOrchestrateResume'>> =>
-  callSpectaCommand(
-    {
-      command: 'agent_sidecar_orchestrate_resume',
-      guardHint: 'Resume Agent sidecar orchestration workflow (approval gate)',
-      audit: 'sensitive',
-      timeoutMs: AGENT_SIDECAR_TASK_TIMEOUT_MS,
-      input: payload,
-      signal: options?.signal,
-    },
-    () => commands.agentSidecarOrchestrateResume(payload),
-  );
+/**
+ * Agent sidecar Tauri 命令的声明式包装元数据表。每条语义与原手写 callSpectaCommand
+ * 逐字段对齐，运行期行为不变。
+ */
+const SIDECAR_COMMAND_META = {
+  agentSidecarHealth: {
+    command: 'agent_sidecar_health',
+    guardHint: '读取 Agent sidecar 健康状态',
+    idempotent: true,
+    audit: 'sensitive',
+    timeoutMs: 10_000,
+  },
+  agentSidecarRestart: {
+    command: 'agent_sidecar_restart',
+    guardHint: '重启 Agent sidecar 进程',
+    audit: 'sensitive',
+    timeoutMs: 30_000,
+  },
+  agentSidecarWarmup: {
+    command: 'agent_sidecar_warmup',
+    guardHint: '预热 Agent sidecar 模型连接',
+    audit: 'sensitive',
+    timeoutMs: 8_000,
+  },
+  agentSidecarChat: {
+    command: 'agent_sidecar_chat',
+    guardHint: '通过 Node sidecar 执行 Agent Ask',
+    audit: 'sensitive',
+    timeoutMs: AGENT_SIDECAR_TASK_TIMEOUT_MS,
+    measureInput: measureAiChatInput,
+  },
+  agentSidecarResolveApproval: {
+    command: 'agent_sidecar_resolve_approval',
+    guardHint: '处理 Agent sidecar 工具审批',
+    audit: 'sensitive',
+    timeoutMs: AGENT_SIDECAR_TASK_TIMEOUT_MS,
+  },
+  agentSidecarRestoreCheckpoint: {
+    command: 'agent_sidecar_restore_checkpoint',
+    guardHint: '通过 Node sidecar 恢复 Agent 回滚检查点',
+    audit: 'sensitive',
+    timeoutMs: AGENT_SIDECAR_TASK_TIMEOUT_MS,
+  },
+  agentSidecarOrchestrate: {
+    command: 'agent_sidecar_orchestrate',
+    guardHint: 'Start native orchestration workflow via Node sidecar',
+    audit: 'sensitive',
+    timeoutMs: AGENT_SIDECAR_TASK_TIMEOUT_MS,
+    measureInput: measureAiChatInput,
+  },
+  agentSidecarOrchestrateResume: {
+    command: 'agent_sidecar_orchestrate_resume',
+    guardHint: 'Resume Agent sidecar orchestration workflow (approval gate)',
+    audit: 'sensitive',
+    timeoutMs: AGENT_SIDECAR_TASK_TIMEOUT_MS,
+  },
+} satisfies Record<string, ICommandMeta>;
 
 type TSidecarTauriService = Pick<
   ITauriService,
@@ -160,21 +92,50 @@ type TSidecarTauriService = Pick<
 >;
 
 export const sidecarTauriService: TSidecarTauriService = {
-  agentSidecarHealth: () => agentSidecarHealthIpc(),
+  agentSidecarHealth: () =>
+    runCommand(SIDECAR_COMMAND_META.agentSidecarHealth, undefined, undefined, () =>
+      commands.agentSidecarHealth(),
+    ),
 
-  agentSidecarRestart: () => agentSidecarRestartIpc(),
+  agentSidecarRestart: () =>
+    runCommand(SIDECAR_COMMAND_META.agentSidecarRestart, undefined, undefined, () =>
+      commands.agentSidecarRestart(),
+    ),
 
-  agentSidecarWarmup: () => agentSidecarWarmupIpc(),
+  agentSidecarWarmup: () =>
+    runCommand(SIDECAR_COMMAND_META.agentSidecarWarmup, undefined, undefined, () =>
+      commands.agentSidecarWarmup(),
+    ),
 
-  agentSidecarChat: agentSidecarChatIpc,
+  agentSidecarChat(payload, options?: IIpcCallOptions) {
+    return runCommand(SIDECAR_COMMAND_META.agentSidecarChat, payload, options, () =>
+      commands.agentSidecarChat(payload),
+    );
+  },
 
-  agentSidecarResolveApproval: agentSidecarResolveApprovalIpc,
+  agentSidecarResolveApproval(payload, options?: IIpcCallOptions) {
+    return runCommand(SIDECAR_COMMAND_META.agentSidecarResolveApproval, payload, options, () =>
+      commands.agentSidecarResolveApproval(payload),
+    );
+  },
 
-  agentSidecarRestoreCheckpoint: agentSidecarRestoreCheckpointIpc,
+  agentSidecarRestoreCheckpoint(payload, options?: IIpcCallOptions) {
+    return runCommand(SIDECAR_COMMAND_META.agentSidecarRestoreCheckpoint, payload, options, () =>
+      commands.agentSidecarRestoreCheckpoint(payload),
+    );
+  },
 
-  agentSidecarOrchestrate: agentSidecarOrchestrateIpc,
+  agentSidecarOrchestrate(payload, options?: IIpcCallOptions) {
+    return runCommand(SIDECAR_COMMAND_META.agentSidecarOrchestrate, payload, options, () =>
+      commands.agentSidecarOrchestrate(payload),
+    );
+  },
 
-  agentSidecarOrchestrateResume: agentSidecarOrchestrateResumeIpc,
+  agentSidecarOrchestrateResume(payload, options?: IIpcCallOptions) {
+    return runCommand(SIDECAR_COMMAND_META.agentSidecarOrchestrateResume, payload, options, () =>
+      commands.agentSidecarOrchestrateResume(payload),
+    );
+  },
 
   async onAgentSidecarStream(handler) {
     await assertDesktopRuntime('监听 Agent sidecar 流式事件');
