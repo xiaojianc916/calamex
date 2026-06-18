@@ -119,9 +119,8 @@ const isAgentRunActionPending = ref(false);
 const isPromptModelSaving = ref(false);
 
 // 当前会话使用的 Agent 后端（自研 / Kimi）。会话级单选，一个会话只用一种 Agent。
-// 注意：Kimi 等外部 Agent 的实际发送链路依赖自动生成的 Tauri 绑定
-// agentSidecarExternalChat（由 tauri-specta 在本地构建时重新导出后才可用），
-// 打通前此处先接住选择态。
+// Kimi 等外部 Agent 经 agent_sidecar_external_chat（标准 session/prompt）发送，由
+// useAiAssistant.sendMessage 据此 backend 分流到外部 ACP 发送链路。
 type TSessionAgentBackend = 'builtin' | 'kimi';
 const sessionAgentBackend = ref<TSessionAgentBackend>('builtin');
 
@@ -684,14 +683,8 @@ const handleSuggestionSelect = async (suggestion: string): Promise<void> => {
     return;
   }
 
-  // Kimi 等外部 Agent 尚未接入发送链路，不静默走自研 Agent。
-  if (sessionAgentBackend.value !== 'builtin') {
-    assistant.error.value = 'Kimi Agent 接入开发中，当前请切换回「自研 Agent」后再发送。';
-    return;
-  }
-
   assistant.draft.value = suggestion;
-  await assistant.sendMessage();
+  await assistant.sendMessage({ agentBackend: sessionAgentBackend.value });
 };
 
 // 切换会话 Agent 后端时，清掉上一条（可能是 Kimi 未接入）的错误提示。
@@ -722,15 +715,7 @@ const handleSubmitMessage = async (): Promise<void> => {
     return;
   }
 
-  // Kimi 等外部 Agent CLI 的发送链路尚未接入（依赖自动生成的
-  // agentSidecarExternalChat 绑定与发送管线集成）；在打通前不静默走自研
-  // Agent，而是明确提示用户切回自研 Agent。
-  if (sessionAgentBackend.value !== 'builtin') {
-    assistant.error.value = 'Kimi Agent 接入开发中，当前请切换回「自研 Agent」后再发送。';
-    return;
-  }
-
-  await assistant.sendMessage();
+  await assistant.sendMessage({ agentBackend: sessionAgentBackend.value });
 };
 
 const handleConversationScrollStateChange = (state: {

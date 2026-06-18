@@ -1007,6 +1007,7 @@ onBeforeUnmount(() => {
           @remove="handleRemoveAttachment"
         />
       </div>
+      <p v-if="errorMessage" class="ai-prompt-error" role="alert" v-text="errorMessage"></p>
       <InputGroup class="ai-prompt-shell">
         <div class="ai-prompt-editor-wrap">
           <div
@@ -1391,6 +1392,16 @@ onBeforeUnmount(() => {
 .ai-attachments {
   min-width: 0;
   padding: 0 2px;
+}
+
+.ai-prompt-error {
+  margin: 0 2px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .ai-prompt-editor-wrap {

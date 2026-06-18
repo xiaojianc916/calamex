@@ -37,6 +37,8 @@ import type {
 import type { IAcpPermissionRequestPayload } from '@/types/ai/acp-permission.schema';
 import type { IAiEditGetDiffPayload, IAiEditGetDiffRequest } from '@/types/ai/edit';
 import type {
+  IAgentExternalChatRequest,
+  IAgentExternalChatResultPayload,
   IAgentSidecarApprovalResolveRequest,
   IAgentSidecarAskUserResumeRequest,
   IAgentSidecarChatRequest,
@@ -204,6 +206,11 @@ export const aiService = {
   },
   sidecarChat(payload: IAgentSidecarChatRequest): Promise<IAgentSidecarResponsePayload> {
     return tauriService.agentSidecarChat(payload);
+  },
+  sidecarExternalChat(
+    payload: IAgentExternalChatRequest,
+  ): Promise<IAgentExternalChatResultPayload> {
+    return tauriService.agentSidecarExternalChat(payload);
   },
   sidecarResolveApproval(
     payload: IAgentSidecarApprovalResolveRequest,

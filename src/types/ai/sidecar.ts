@@ -868,3 +868,27 @@ export interface IAgentSidecarOrchestratePayload {
   runId: string;
   result: TJsonValue | null;
 }
+
+/* ============================================================================
+ * 外部 ACP 编码 agent（Kimi / Codex，ADR-0015）发送契约
+ *
+ * 镜像 Rust 契约 src-tauri/src/commands/contracts/agent_sidecar.rs 的
+ * AgentBackendKind / AgentExternalChatRequest / AgentExternalChatResultPayload
+ * （serde rename_all = "camelCase"）。外部 agent 只实现标准 session/prompt，不接收
+ * 逐请求 model_config（凭据由其自身 CLI 自管）；过程增量经 session/update 帧走既有
+ * sidecar 流投影，本结果仅承载会话标识 + 回合终止原因。
+ * ========================================================================== */
+
+export type TAgentBackendKind = 'builtin' | 'kimi' | 'codex';
+
+export interface IAgentExternalChatRequest {
+  backend: TAgentBackendKind;
+  text: string;
+  threadId?: string;
+  workspaceRootPath?: string | null;
+}
+
+export interface IAgentExternalChatResultPayload {
+  sessionId: string;
+  stopReason: string;
+}

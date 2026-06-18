@@ -61,6 +61,7 @@ import type { IAiEditGetDiffPayload, IAiEditOperation } from '@/types/ai/edit';
 import type {
   IAgentSidecarMessage,
   IAskUserResult,
+  TAgentBackendKind,
   TAgentRuntimeEvent,
   TAgentUiEvent,
 } from '@/types/ai/sidecar';
@@ -1937,6 +1938,110 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
   // Streaming pipeline
   // -----------------------------------------------------------------------
 
+  // 外部 ACP 编码 agent（Kimi / Codex，ADR-0015）发送链路：经 agent_sidecar_external_chat
+  // 驱动一轮标准 session/prompt。外部 agent 无富信封，过程增量经 session/update 帧走既有
+  // sidecar 流（subscribeSidecarStreamWithPrebuffer + applySidecarLiveEventsToAgentMessage）；
+  // prompt 返回即整轮结束，绑定会话并 flush 后把消息状态收口为 completed。
+  const executeExternalAgentRequest = async (
+    backend: TAgentBackendKind,
+    visibleMessages: IAiChatMessage[],
+    messageContent: string,
+    threadId: string | null,
+  ): Promise<void> => {
+    errorMessage.value = '';
+    isSending.value = true;
+    runtimeTimelineEvents.value = [];
+    activeBufferedThreadId.value = threadId;
+
+    const assistantMessageId = createMessageId('assistant');
+    const targetThreadId = threadId;
+    const initialActivityText = buildInitialAgentActivityText();
+    const placeholderMessage: IAiChatMessage = {
+      id: assistantMessageId,
+      role: 'assistant',
+      content: '',
+      createdAt: new Date().toISOString(),
+      references: [],
+      toolCalls: [],
+      stream: {
+        status: 'streaming',
+        activityText: initialActivityText,
+        runtimeEvents: [],
+      },
+    };
+
+    messages.value = [...visibleMessages, placeholderMessage];
+    commitDisplayMessagesToStore(targetThreadId);
+    activeAgentMessageId.value = assistantMessageId;
+    activeAbortController.value = new AbortController();
+    const requestAbortController = activeAbortController.value;
+
+    const liveEventBuffer = createSidecarLiveEventBuffer((events, freshEvents) => {
+      if (requestAbortController.signal.aborted) {
+        return;
+      }
+      appendVisibleRuntimeTimelineEvents(extractVisibleAgentRuntimeEvents(freshEvents));
+      applySidecarLiveEventsToAgentMessage(
+        assistantMessageId,
+        targetThreadId,
+        initialActivityText,
+        events,
+      );
+    });
+    let sidecarStream: Awaited<ReturnType<typeof subscribeSidecarStreamWithPrebuffer>> | null =
+      null;
+
+    try {
+      sidecarStream = await subscribeSidecarStreamWithPrebuffer((event) => {
+        if (requestAbortController.signal.aborted) {
+          return;
+        }
+        liveEventBuffer.push(event);
+      });
+
+      const result = await aiService.sidecarExternalChat({
+        backend,
+        text: messageContent,
+        workspaceRootPath: options.workspaceRootPath.value,
+        ...(targetThreadId ? { threadId: targetThreadId } : {}),
+      });
+
+      sidecarStream.bind(result.sessionId);
+      liveEventBuffer.flush();
+
+      if (!requestAbortController.signal.aborted) {
+        const currentMessage = findMessageById(assistantMessageId);
+        updateAgentExecutionMessage({
+          messageId: assistantMessageId,
+          content: currentMessage?.content ?? '',
+          toolCalls: currentMessage?.toolCalls ?? [],
+          streamStatus: 'completed',
+          finalAnswerStarted: hasMeaningfulAssistantText(currentMessage?.content),
+        });
+        commitDisplayMessagesToStore(targetThreadId);
+      }
+
+      if (!errorMessage.value) {
+        clearAttachedFiles({ revokePreviews: false });
+      }
+    } catch (error) {
+      if (requestAbortController.signal.aborted) {
+        disposeSidecarAnswerStream(assistantMessageId);
+      } else {
+        failSidecarAgentMessage(assistantMessageId, toErrorMessage(error, MSG_CALL_FAILED));
+      }
+    } finally {
+      liveEventBuffer.dispose();
+      sidecarStream?.dispose();
+      activeAbortController.value = null;
+      activeAgentMessageId.value = null;
+      commitDisplayMessagesToStore(targetThreadId);
+      clearActiveBufferedThread(targetThreadId);
+      isSending.value = false;
+      syncDisplayMessagesFromActiveThread();
+    }
+  };
+
   const executeAiRequest = async (
     requestMessages: IAiChatMessage[],
     visibleMessages: IAiChatMessage[],
@@ -2102,7 +2207,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     }
   };
 
-  const sendMessage = async (): Promise<void> => {
+  const sendMessage = async (sendOptions?: { agentBackend?: TAgentBackendKind }): Promise<void> => {
     const content = draft.value.trim();
 
     if ((!content && attachedFiles.value.length === 0) || isSending.value) {
@@ -2176,6 +2281,24 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
 
     messages.value = nextMessages;
     clearAttachedFiles({ revokePreviews: false });
+
+    // 外部 ACP 编码 agent（Kimi / Codex）走独立发送链路，与 activeMode（chat/agent/plan）无关：
+    // 外部 agent 自管会话与运行循环，不复用自研边车的 mode 分流。
+    const externalBackend = sendOptions?.agentBackend;
+    if (externalBackend && externalBackend !== 'builtin') {
+      await executeExternalAgentRequest(
+        externalBackend,
+        nextMessages,
+        messageContent,
+        titleThreadId,
+      );
+
+      if (!errorMessage.value) {
+        void maybeGenerateConversationTitle(titleThreadId);
+      }
+
+      return;
+    }
 
     if (activeMode.value === 'agent') {
       await executeSidecarAgentRequest(
