@@ -51,6 +51,7 @@ import type {
 } from '@/types/editor';
 import type { IGitDiffPreviewPayload, IGitRepositoryStatusPayload } from '@/types/git';
 import { toErrorMessage } from '@/utils/error/error';
+import { markStartup } from '@/utils/platform/startup-profiler';
 
 const props = defineProps<{
   document: IEditorDocument;
@@ -75,6 +76,8 @@ const DeferredAiWebSourcesPanel = defineAsyncComponent({
   suspensible: false,
 });
 
+// 启动打点（阶段0·量化）：AI 面板真身 setup 起点，用于定位首屏耗时分布。
+markStartup('ai-assistant-panel-setup-start');
 const documentRef = computed(() => props.document);
 const activeRunRef = computed(() => props.activeRun);
 const analysisRef = computed(() => props.analysis);
@@ -152,6 +155,9 @@ const {
   getConversationCheckpointLabel,
   handleRestoreConversationCheckpoint,
 } = useAiConversationCheckpoints(assistant);
+
+// 启动打点（阶段0·量化）：核心 composable 初始化完成。
+markStartup('ai-assistant-panel-composables-ready');
 
 const currentServicePlatform = computed(() =>
   findAiServicePlatformByModel(assistant.config.value.selectedModel),
@@ -595,7 +601,7 @@ const hasPendingTokenRequest = computed(
     (assistant.activeMode.value === 'plan' && tokenEstimationMessages.value.length > 0),
 );
 const tokenOfficialUsage = computed(() => {
-  // 接收侧 ACP usage_update 闭环（ADR-20260617 · D7-⑦）：宿主已把 usage_update 投影为
+  // 接收侧 ACP usage_update 闭环（ADR-20260617 · D7-⑦）：嬿主已把 usage_update 投影为
   // 共享 IAiLanguageModelUsage VM。任一模式只要本回合有 ACP 用量就优先采用（chat / agent
   // 经 ACP host 上报）；其形状与外部 LanguageModelUsage 赋值兼容，可直接作为官方用量来源。
   const acpTurnUsage = assistant.acpUsage.usage.value;
@@ -694,7 +700,7 @@ const handleSuggestionSelect = async (suggestion: string): Promise<void> => {
   await assistant.sendMessage();
 };
 
-// 切换会话 Agent 后端时，清掉上一条（可能是 Kimi 未接入）的错误提示。
+// 切换会话 Agent 后端后，清掉上一条（可能是 Kimi 未接入）的错误提示。
 const handleAgentBackendChange = (agent: TSessionAgentBackend): void => {
   assistant.error.value = '';
 
@@ -1062,7 +1068,12 @@ const restorePersistedPlanUiState = async (): Promise<void> => {
   await assistant.agentPlan.restorePersistedPlanState();
 };
 
+// 启动打点（阶段0·量化）：同步 setup（含派生计算）全部完成。
+markStartup('ai-assistant-panel-setup-done');
+
 onMounted(() => {
+  // 启动打点（阶段0·量化）：子组件渲染挂载完成（首帧）。
+  markStartup('ai-assistant-panel-mounted');
   restorePersistedPlanUiState().catch((error) => {
     setPlanError(error, '恢复计划状态失败。');
   });
