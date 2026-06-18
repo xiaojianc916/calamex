@@ -5,7 +5,7 @@
 // 与 VS Code、Windows Terminal 走同一套官方方案。
 //
 // 事件类型（LocalWslTerminalServerPayload）、运行/交互请求与 UTF-8 分块解码器定义在
-// 同域的 terminal::local_wsl_protocol；命令层与本模块共用这一套类型，不再依赖原 wsl_link 模块。
+// 同域的 terminal::local_wsl_protocol；命令层与本模块共用这一套类型。
 
 use std::{
     io::{Read, Write},
@@ -52,10 +52,8 @@ pub enum LocalWslPtyError {
     Close(String),
 }
 
-/// 本地 PTY 交互式终端句柄。
-///
-/// 对外方法签名与原 WslLinkInteractiveTerminalHandle 完全一致（session_id /
-/// write_input / resize / close），因此命令层可无差别替换。
+/// 本地 PTY 交互式终端句柄：对外提供 session_id / write_input / resize / close，
+/// 以及关闭看门狗所需的 is_finished / force_kill。
 #[derive(Clone)]
 pub struct LocalWslPtyHandle {
     session_id: String,
@@ -77,7 +75,6 @@ impl LocalWslPtyHandle {
 
     /// 底层交互 shell 是否已结束（读线程在 child.wait 返回后置位）。关闭看门狗据此判断
     /// kill 后读线程是否已正常收尾。
-    #[allow(dead_code)] // 关闭看门狗（下一提交）接入后即为活跃。
     pub fn is_finished(&self) -> bool {
         self.finished.load(Ordering::SeqCst)
     }
@@ -85,7 +82,6 @@ impl LocalWslPtyHandle {
     /// 升级回收：再次向子进程发 kill（不重复取消流控，close() 已取消）。用于关闭看门狗在
     /// 宽限期内未观察到读线程收尾时，强制重试终止可能仍卡死的 wsl.exe。锁中毒 / kill 失败
     /// 时返回错误，调用方按尽力而为处理。
-    #[allow(dead_code)] // 关闭看门狗（下一提交）接入后即为活跃。
     pub fn force_kill(&self) -> Result<(), LocalWslPtyError> {
         let mut killer = self
             .killer
@@ -205,22 +201,10 @@ impl LocalWslRunHandle {
     }
 }
 
-/// 打开一个本地 PTY 交互式 WSL2 终端。
+/// 打开一个本地 PTY 交互式 WSL2 终端，并接入每会话输出流控器（P2 ack 背压）。
 ///
-/// on_event 在独立读线程中被调用，事件序列与 WSL Link 路径一致：
-/// InteractiveOpened → 若干 InteractiveData → InteractiveClosed。
-pub fn open_interactive_terminal_local<F>(
-    request: LocalWslTerminalOpenInteractiveRequest,
-    on_event: F,
-) -> Result<LocalWslPtyHandle, LocalWslPtyError>
-where
-    F: FnMut(LocalWslTerminalServerPayload) + Send + 'static,
-{
-    open_interactive_terminal_local_with_flow(request, None, on_event)
-}
-
-/// 同 open_interactive_terminal_local，但接入每会话输出流控器（P2 ack 背压）。
-/// flow 为 None 时行为与原函数完全一致（无背压）。
+/// on_event 在独立读线程中被调用：InteractiveOpened → 若干 InteractiveData → InteractiveClosed。
+/// flow 为 None 时不施加背压。
 pub fn open_interactive_terminal_local_with_flow<F>(
     request: LocalWslTerminalOpenInteractiveRequest,
     flow: Option<FlowController>,
@@ -300,22 +284,10 @@ where
     })
 }
 
-/// 在本地 PTY 中运行一个脚本。
+/// 在本地 PTY 中运行一个脚本，并接入每会话输出流控器（P2 ack 背压）。
 ///
-/// on_event 在独立读线程中被调用，事件序列与 WSL Link 路径一致：
-/// RunStarted → 若干 RunChunk → RunCompleted。
-pub fn run_terminal_script_local<F>(
-    request: LocalWslTerminalRunScriptRequest,
-    on_event: F,
-) -> Result<LocalWslRunHandle, LocalWslPtyError>
-where
-    F: FnMut(LocalWslTerminalServerPayload) + Send + 'static,
-{
-    run_terminal_script_local_with_flow(request, None, on_event)
-}
-
-/// 同 run_terminal_script_local，但接入每会话输出流控器（P2 ack 背压）。
-/// flow 为 None 时行为与原函数完全一致（无背压）。
+/// on_event 在独立读线程中被调用：RunStarted → 若干 RunChunk → RunCompleted。
+/// flow 为 None 时不施加背压。
 pub fn run_terminal_script_local_with_flow<F>(
     request: LocalWslTerminalRunScriptRequest,
     flow: Option<FlowController>,
