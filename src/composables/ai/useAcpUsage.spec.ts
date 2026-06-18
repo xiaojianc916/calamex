@@ -9,7 +9,7 @@ const mount = () => {
   scope.run(() => {
     api = useAcpUsage();
   });
-  // biome-ignore lint/style/noNonNullAssertion: scope.run 同步赋值 api。
+
   return { api: api!, scope };
 };
 
