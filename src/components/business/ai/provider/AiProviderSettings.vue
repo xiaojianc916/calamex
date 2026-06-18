@@ -13,6 +13,7 @@ import {
   Zap,
 } from '@lucide/vue';
 import { useEventListener } from '@vueuse/core';
+import { AnimatePresence, Motion } from 'motion-v';
 import { computed, nextTick, ref, watch } from 'vue';
 import AiProviderIcon from '@/components/business/ai/provider/AiProviderIcon.vue';
 import { Button } from '@/components/ui/button';
@@ -400,7 +401,7 @@ const collectFocusable = (): HTMLElement[] => {
     return [];
   }
   const selector =
-    'a[href], button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])';
+    'a[href], button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex=\"-1\"])';
   return Array.from(dialogRef.value.querySelectorAll<HTMLElement>(selector)).filter(
     (element) => element.offsetParent !== null,
   );
@@ -507,243 +508,252 @@ watch(
 
 <template>
   <Teleport to="body">
-    <div v-if="open" class="ai-credential-shell" @click.self="handleClose">
-      <section ref="dialogRef" class="ai-credential-dialog" role="dialog" aria-modal="true" aria-labelledby="ai-credential-title" tabindex="-1">
-        <header class="ai-credential-head" :data-pane="pane">
-          <Button v-if="pane === 'form'" class="ai-credential-icon-button" variant="ghost" size="icon-sm" type="button"
-            aria-label="返回" @click="openList">
-            <ArrowLeft aria-hidden="true" />
-          </Button>
-          <h2 id="ai-credential-title" class="ai-credential-title">
-             {{ pane === 'form' ? '编辑凭证' : 'AI 凭证' }} 
-          </h2>
-          <Button v-if="pane === 'list'" class="ai-credential-head-action" variant="outline" size="sm" type="button"
-            @click="openForm()">
-            <Plus aria-hidden="true" />
-            添加
-          </Button>
-        </header>
+    <AnimatePresence>
+      <Motion v-if="open" as-child :initial="{ opacity: 0 }" :animate="{ opacity: 1 }"
+        :exit="{ opacity: 0 }" :transition="{ duration: 0.18, ease: [0.23, 1, 0.32, 1] }">
+        <div class="ai-credential-shell" @click.self="handleClose">
+          <Motion as-child :initial="{ opacity: 0, scale: 0.96, y: 8 }"
+            :animate="{ opacity: 1, scale: 1, y: 0 }" :exit="{ opacity: 0, scale: 0.98, y: 6 }"
+            :transition="{ duration: 0.2, ease: [0.23, 1, 0.32, 1] }">
+            <section ref="dialogRef" class="ai-credential-dialog" role="dialog" aria-modal="true" aria-labelledby="ai-credential-title" tabindex="-1">
+              <header class="ai-credential-head" :data-pane="pane">
+                <Button v-if="pane === 'form'" class="ai-credential-icon-button" variant="ghost" size="icon-sm" type="button"
+                  aria-label="返回" @click="openList">
+                  <ArrowLeft aria-hidden="true" />
+                </Button>
+                <h2 id="ai-credential-title" class="ai-credential-title">
+                    pane === 'form' ? '编辑凭证' : 'AI 凭证'  
+                </h2>
+                <Button v-if="pane === 'list'" class="ai-credential-head-action" variant="outline" size="sm" type="button"
+                  @click="openForm()">
+                  <Plus aria-hidden="true" />
+                  添加
+                </Button>
+              </header>
 
-        <section v-if="pane === 'list'" class="ai-credential-pane" aria-label="AI 凭证列表">
-          <div class="ai-credential-search">
-            <Search class="ai-credential-search__icon" aria-hidden="true" />
-            <Input v-model="searchText" class="ai-credential-search__input" placeholder="搜索厂商或模型"
-              aria-label="搜索厂商或模型" />
-          </div>
+              <section v-if="pane === 'list'" class="ai-credential-pane" aria-label="AI 凭证列表">
+                <div class="ai-credential-search">
+                  <Search class="ai-credential-search__icon" aria-hidden="true" />
+                  <Input v-model="searchText" class="ai-credential-search__input" placeholder="搜索厂商或模型"
+                    aria-label="搜索厂商或模型" />
+                </div>
 
-          <div class="ai-credential-body">
-            <div v-if="filteredProviderRows.length" class="ai-credential-groups">
-              <section v-for="row in filteredProviderRows" :key="row.preset.id" class="ai-credential-group">
-                <header class="ai-credential-group__head">
-                  <AiProviderIcon class="ai-credential-provider-icon" :platform-id="row.preset.id" decorative />
-                  <span class="ai-credential-group__name">{{ row.preset.label }}</span>
-                </header>
-                <div class="ai-credential-row">
-                  <div class="ai-credential-row__main">
-                    <div class="ai-credential-row__name">
-                      <span>{{ row.alias }}</span>
-                      <span v-if="row.isNarratorProvider" class="ai-credential-default-mark" aria-label="默认小模型厂商" title="默认小模型">
-                        <Gauge class="ai-credential-default-mark__icon" aria-hidden="true" />
-                      </span>
+                <div class="ai-credential-body">
+                  <div v-if="filteredProviderRows.length" class="ai-credential-groups">
+                    <section v-for="row in filteredProviderRows" :key="row.preset.id" class="ai-credential-group">
+                      <header class="ai-credential-group__head">
+                        <AiProviderIcon class="ai-credential-provider-icon" :platform-id="row.preset.id" decorative />
+                        <span class="ai-credential-group__name"> row.preset.label </span>
+                      </header>
+                      <div class="ai-credential-row">
+                        <div class="ai-credential-row__main">
+                          <div class="ai-credential-row__name">
+                            <span> row.alias </span>
+                            <span v-if="row.isNarratorProvider" class="ai-credential-default-mark" aria-label="默认小模型厂商" title="默认小模型">
+                              <Gauge class="ai-credential-default-mark__icon" aria-hidden="true" />
+                            </span>
+                          </div>
+                          <div class="ai-credential-row__key">
+                              row.preset.id  /  row.keyPreview  
+                          </div>
+                        </div>
+                        <div class="ai-credential-row__acts">
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger as-child>
+                                <Button class="ai-credential-icon-button" variant="ghost" size="icon-sm" type="button"
+                                  :disabled="isSaving" :aria-label="`设为小模型：${row.preset.label}`"
+                                  @click="setProviderAsRoleDefault(row.preset, 'narrator')">
+                                  <Gauge aria-hidden="true" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>设为小模型</TooltipContent>
+                            </Tooltip>
+                            <Tooltip>
+                              <TooltipTrigger as-child>
+                                <Button class="ai-credential-icon-button" variant="ghost" size="icon-sm" type="button"
+                                  :aria-label="row.hasCredentials ? `编辑 ${row.preset.label} 凭证` : `添加 ${row.preset.label} 凭证`"
+                                  @click="openForm(row.preset.id)">
+                                  <Pencil v-if="row.hasCredentials" aria-hidden="true" />
+                                  <Plus v-else aria-hidden="true" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent> row.hasCredentials ? '编辑' : '添加' </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+                        </div>
+                      </div>
+                    </section>
+                  </div>
+                  <div v-else class="ai-credential-empty">
+                    <div class="ai-credential-empty__title">
+                        providerRows.length ? '没有匹配的凭证' : '还没有 AI 凭证'  
                     </div>
-                    <div class="ai-credential-row__key">
-                       {{ row.preset.id }} / {{ row.keyPreview }} 
+                    <div class="ai-credential-empty__desc">
+                        providerRows.length ? '换个关键词再试试' : '点击右上角添加厂商 Key'  
                     </div>
                   </div>
-                  <div class="ai-credential-row__acts">
-                    <TooltipProvider>
-                      <Tooltip>
-                        <TooltipTrigger as-child>
-                          <Button class="ai-credential-icon-button" variant="ghost" size="icon-sm" type="button"
-                            :disabled="isSaving" :aria-label="`设为小模型：${row.preset.label}`"
-                            @click="setProviderAsRoleDefault(row.preset, 'narrator')">
-                            <Gauge aria-hidden="true" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>设为小模型</TooltipContent>
-                      </Tooltip>
-                      <Tooltip>
-                        <TooltipTrigger as-child>
-                          <Button class="ai-credential-icon-button" variant="ghost" size="icon-sm" type="button"
-                            :aria-label="row.hasCredentials ? `编辑 ${row.preset.label} 凭证` : `添加 ${row.preset.label} 凭证`"
-                            @click="openForm(row.preset.id)">
-                            <Pencil v-if="row.hasCredentials" aria-hidden="true" />
-                            <Plus v-else aria-hidden="true" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>{{ row.hasCredentials ? '编辑' : '添加' }}</TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                  </div>
+                </div>
+                <div v-if="feedbackText" class="ai-credential-list-status" :class="`is-${feedbackTone}`">
+                  <Check v-if="feedbackTone === 'success'" aria-hidden="true" />
+                  <X v-else-if="feedbackTone === 'error'" aria-hidden="true" />
+                  <TriangleAlert v-else aria-hidden="true" />
+                  <span> feedbackText </span>
                 </div>
               </section>
-            </div>
-            <div v-else class="ai-credential-empty">
-              <div class="ai-credential-empty__title">
-                 {{ providerRows.length ? '没有匹配的凭证' : '还没有 AI 凭证' }} 
-              </div>
-              <div class="ai-credential-empty__desc">
-                 {{ providerRows.length ? '换个关键词再试试' : '点击右上角添加厂商 Key' }} 
-              </div>
-            </div>
-          </div>
-          <div v-if="feedbackText" class="ai-credential-list-status" :class="`is-${feedbackTone}`">
-            <Check v-if="feedbackTone === 'success'" aria-hidden="true" />
-            <X v-else-if="feedbackTone === 'error'" aria-hidden="true" />
-            <TriangleAlert v-else aria-hidden="true" />
-            <span>{{ feedbackText }}</span>
-          </div>
-        </section>
 
-        <section v-else class="ai-credential-pane" aria-label="编辑 AI 凭证">
-          <form class="ai-credential-body ai-credential-form" autocomplete="off" novalidate
-            @submit.prevent="saveProviderSettings">
-            <div class="ai-credential-field">
-              <label class="ai-credential-label" for="ai-provider-select">厂商</label>
-              <div class="ai-credential-combobox" :class="{ 'is-open': isProviderMenuOpen }">
-                <Button id="ai-provider-select" class="ai-credential-combobox-trigger" variant="outline" type="button"
-                  data-field="provider" aria-haspopup="listbox" :aria-expanded="isProviderMenuOpen"
-                  @click="toggleProviderMenu">
-                  <span class="ai-credential-combobox-value">
-                    <AiProviderIcon class="ai-credential-select-icon" :platform-id="selectedProviderId" decorative />
-                    <span>{{ selectedProvider.label }}</span>
-                  </span>
-                  <span class="ai-credential-combobox-chev" aria-hidden="true"></span>
-                </Button>
-                <div v-if="isProviderMenuOpen" class="ai-credential-combobox-menu" role="listbox">
-                  <button v-for="provider in AI_SERVICE_PLATFORM_PRESETS" :key="provider.id" type="button"
-                    class="ai-credential-combobox-option" :class="{ 'is-selected': provider.id === selectedProviderId }"
-                    role="option" :aria-selected="provider.id === selectedProviderId"
-                    @click="handleProviderChange(provider.id)">
-                    <AiProviderIcon class="ai-credential-select-icon" :platform-id="provider.id" decorative />
-                    <span>{{ provider.label }}</span>
-                    <Check aria-hidden="true" />
-                  </button>
-                </div>
-              </div>
-            </div>
+              <section v-else class="ai-credential-pane" aria-label="编辑 AI 凭证">
+                <form class="ai-credential-body ai-credential-form" autocomplete="off" novalidate
+                  @submit.prevent="saveProviderSettings">
+                  <div class="ai-credential-field">
+                    <label class="ai-credential-label" for="ai-provider-select">厂商</label>
+                    <div class="ai-credential-combobox" :class="{ 'is-open': isProviderMenuOpen }">
+                      <Button id="ai-provider-select" class="ai-credential-combobox-trigger" variant="outline" type="button"
+                        data-field="provider" aria-haspopup="listbox" :aria-expanded="isProviderMenuOpen"
+                        @click="toggleProviderMenu">
+                        <span class="ai-credential-combobox-value">
+                          <AiProviderIcon class="ai-credential-select-icon" :platform-id="selectedProviderId" decorative />
+                          <span> selectedProvider.label </span>
+                        </span>
+                        <span class="ai-credential-combobox-chev" aria-hidden="true"></span>
+                      </Button>
+                      <div v-if="isProviderMenuOpen" class="ai-credential-combobox-menu" role="listbox">
+                        <button v-for="provider in AI_SERVICE_PLATFORM_PRESETS" :key="provider.id" type="button"
+                          class="ai-credential-combobox-option" :class="{ 'is-selected': provider.id === selectedProviderId }"
+                          role="option" :aria-selected="provider.id === selectedProviderId"
+                          @click="handleProviderChange(provider.id)">
+                          <AiProviderIcon class="ai-credential-select-icon" :platform-id="provider.id" decorative />
+                          <span> provider.label </span>
+                          <Check aria-hidden="true" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
 
-            <div class="ai-credential-field">
-              <label class="ai-credential-label" for="ai-credential-alias">
-                名称
-                <span>便于识别</span>
-              </label>
-              <Input id="ai-credential-alias" v-model="credentialAlias" class="ai-credential-input" placeholder="默认"
-                :aria-invalid="aliasError ? 'true' : 'false'" />
-              <p v-if="aliasError" class="ai-credential-field-msg is-error">{{ aliasError }}</p>
-            </div>
+                  <div class="ai-credential-field">
+                    <label class="ai-credential-label" for="ai-credential-alias">
+                      名称
+                      <span>便于识别</span>
+                    </label>
+                    <Input id="ai-credential-alias" v-model="credentialAlias" class="ai-credential-input" placeholder="默认"
+                      :aria-invalid="aliasError ? 'true' : 'false'" />
+                    <p v-if="aliasError" class="ai-credential-field-msg is-error"> aliasError </p>
+                  </div>
 
-            <div class="ai-credential-field">
-              <label class="ai-credential-label" for="ai-provider-key">
-                API Key
-                <span>  {{ selectedProviderHasCredentials ? '留空则不修改已保存 Key' : '按厂商保存' }}  </span>
-              </label>
-              <div class="ai-credential-key-wrap">
-                <Input id="ai-provider-key" v-model="providerKey" class="ai-credential-input ai-credential-key-input"
-                  :type="isKeyVisible ? 'text' : 'password'" autocomplete="off" spellcheck="false"
-                  :placeholder="selectedProviderHasCredentials ? '输入新 Key 后覆盖保存' : '粘贴厂商 API Key'"
-                  :aria-invalid="providerKeyError ? 'true' : 'false'" />
-                <Button class="ai-credential-key-toggle" variant="ghost" size="icon-sm" type="button"
-                  :aria-label="isKeyVisible ? '隐藏 API Key' : '显示 API Key'" @click="isKeyVisible = !isKeyVisible">
-                  <EyeOff v-if="isKeyVisible" aria-hidden="true" />
-                  <Eye v-else aria-hidden="true" />
-                </Button>
-              </div>
-              <p class="ai-credential-field-msg" :class="{ 'is-error': providerKeyError }">
-                 {{ providerKeyError || '本地加密保存，不会上传。' }} 
-              </p>
-            </div>
+                  <div class="ai-credential-field">
+                    <label class="ai-credential-label" for="ai-provider-key">
+                      API Key
+                      <span>   selectedProviderHasCredentials ? '留空则不修改已保存 Key' : '按厂商保存'   </span>
+                    </label>
+                    <div class="ai-credential-key-wrap">
+                      <Input id="ai-provider-key" v-model="providerKey" class="ai-credential-input ai-credential-key-input"
+                        :type="isKeyVisible ? 'text' : 'password'" autocomplete="off" spellcheck="false"
+                        :placeholder="selectedProviderHasCredentials ? '输入新 Key 后覆盖保存' : '粘贴厂商 API Key'"
+                        :aria-invalid="providerKeyError ? 'true' : 'false'" />
+                      <Button class="ai-credential-key-toggle" variant="ghost" size="icon-sm" type="button"
+                        :aria-label="isKeyVisible ? '隐藏 API Key' : '显示 API Key'" @click="isKeyVisible = !isKeyVisible">
+                        <EyeOff v-if="isKeyVisible" aria-hidden="true" />
+                        <Eye v-else aria-hidden="true" />
+                      </Button>
+                    </div>
+                    <p class="ai-credential-field-msg" :class="{ 'is-error': providerKeyError }">
+                        providerKeyError || '本地加密保存，不会上传。'  
+                    </p>
+                  </div>
 
-            <div class="ai-credential-field">
-              <label class="ai-credential-label" for="ai-small-model-select">
-                小模型默认模型
-                <span>随厂商切换</span>
-              </label>
-              <div class="ai-credential-combobox" :class="{ 'is-open': isSmallModelMenuOpen }">
-                <Button id="ai-small-model-select" class="ai-credential-combobox-trigger" variant="outline"
-                  type="button" data-small-model-select aria-haspopup="listbox" :aria-expanded="isSmallModelMenuOpen"
-                  @click="toggleSmallModelMenu">
-                  <span class="ai-credential-combobox-value">
-                    <AiProviderIcon class="ai-credential-select-icon" :platform-id="selectedProviderId" decorative />
-                    <span>{{ selectedSmallModel.label }}</span>
-                  </span>
-                  <span class="ai-credential-combobox-chev" aria-hidden="true"></span>
-                </Button>
-                <div v-if="isSmallModelMenuOpen" class="ai-credential-combobox-menu" role="listbox">
-                  <button v-for="model in selectedProviderModels" :key="model.id" type="button"
-                    class="ai-credential-combobox-option" :class="{ 'is-selected': model.id === selectedSmallModel.id }"
-                    role="option" :aria-selected="model.id === selectedSmallModel.id"
-                    @click="handleSmallModelChange(model.id)">
-                    <AiProviderIcon class="ai-credential-select-icon" :platform-id="selectedProviderId" decorative />
-                    <span>{{ model.label }}</span>
-                    <Check aria-hidden="true" />
-                  </button>
-                </div>
-              </div>
-            </div>
+                  <div class="ai-credential-field">
+                    <label class="ai-credential-label" for="ai-small-model-select">
+                      小模型默认模型
+                      <span>随厂商切换</span>
+                    </label>
+                    <div class="ai-credential-combobox" :class="{ 'is-open': isSmallModelMenuOpen }">
+                      <Button id="ai-small-model-select" class="ai-credential-combobox-trigger" variant="outline"
+                        type="button" data-small-model-select aria-haspopup="listbox" :aria-expanded="isSmallModelMenuOpen"
+                        @click="toggleSmallModelMenu">
+                        <span class="ai-credential-combobox-value">
+                          <AiProviderIcon class="ai-credential-select-icon" :platform-id="selectedProviderId" decorative />
+                          <span> selectedSmallModel.label </span>
+                        </span>
+                        <span class="ai-credential-combobox-chev" aria-hidden="true"></span>
+                      </Button>
+                      <div v-if="isSmallModelMenuOpen" class="ai-credential-combobox-menu" role="listbox">
+                        <button v-for="model in selectedProviderModels" :key="model.id" type="button"
+                          class="ai-credential-combobox-option" :class="{ 'is-selected': model.id === selectedSmallModel.id }"
+                          role="option" :aria-selected="model.id === selectedSmallModel.id"
+                          @click="handleSmallModelChange(model.id)">
+                          <AiProviderIcon class="ai-credential-select-icon" :platform-id="selectedProviderId" decorative />
+                          <span> model.label </span>
+                          <Check aria-hidden="true" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
 
-            <details class="ai-credential-advanced">
-              <summary>
-                <span class="ai-credential-advanced__chev" aria-hidden="true"></span>
-                高级
-              </summary>
-              <div class="ai-credential-field">
-                <label class="ai-credential-label" for="ai-base-url">
-                  Base URL
-                  <span>留空用默认路由</span>
-                </label>
-                <Input id="ai-base-url" v-model="baseUrlInput" class="ai-credential-input"
-                  placeholder="使用系统默认路由" autocomplete="off" spellcheck="false" />
-              </div>
-              <div class="ai-credential-field">
-                <label class="ai-credential-label" for="tavily-key">
-                  Tavily Key
-                  <span>可选</span>
-                </label>
-                <div class="ai-credential-key-wrap">
-                  <Input id="tavily-key" v-model="tavilyKey" class="ai-credential-input ai-credential-key-input"
-                    data-tavily-input :type="isTavilyKeyVisible ? 'text' : 'password'" autocomplete="off" spellcheck="false" placeholder="Tavily API Key"
-                    :aria-invalid="tavilyKeyError ? 'true' : 'false'" />
-                  <Button class="ai-credential-key-toggle ai-credential-key-toggle--tavily" variant="ghost"
-                    size="icon-sm" type="button"
-                    :aria-label="isTavilyKeyVisible ? '隐藏 Tavily API Key' : '显示 Tavily API Key'"
-                    @click="isTavilyKeyVisible = !isTavilyKeyVisible">
-                    <EyeOff v-if="isTavilyKeyVisible" aria-hidden="true" />
-                    <Eye v-else aria-hidden="true" />
+                  <details class="ai-credential-advanced">
+                    <summary>
+                      <span class="ai-credential-advanced__chev" aria-hidden="true"></span>
+                      高级
+                    </summary>
+                    <div class="ai-credential-field">
+                      <label class="ai-credential-label" for="ai-base-url">
+                        Base URL
+                        <span>留空用默认路由</span>
+                      </label>
+                      <Input id="ai-base-url" v-model="baseUrlInput" class="ai-credential-input"
+                        placeholder="使用系统默认路由" autocomplete="off" spellcheck="false" />
+                    </div>
+                    <div class="ai-credential-field">
+                      <label class="ai-credential-label" for="tavily-key">
+                        Tavily Key
+                        <span>可选</span>
+                      </label>
+                      <div class="ai-credential-key-wrap">
+                        <Input id="tavily-key" v-model="tavilyKey" class="ai-credential-input ai-credential-key-input"
+                          data-tavily-input :type="isTavilyKeyVisible ? 'text' : 'password'" autocomplete="off" spellcheck="false" placeholder="Tavily API Key"
+                          :aria-invalid="tavilyKeyError ? 'true' : 'false'" />
+                        <Button class="ai-credential-key-toggle ai-credential-key-toggle--tavily" variant="ghost"
+                          size="icon-sm" type="button"
+                          :aria-label="isTavilyKeyVisible ? '隐藏 Tavily API Key' : '显示 Tavily API Key'"
+                          @click="isTavilyKeyVisible = !isTavilyKeyVisible">
+                          <EyeOff v-if="isTavilyKeyVisible" aria-hidden="true" />
+                          <Eye v-else aria-hidden="true" />
+                        </Button>
+                        <Button class="ai-credential-inline-save" variant="ghost" size="sm" type="button" data-save-tavily
+                          :disabled="isSaving" @click="saveTavily">
+                          保存
+                        </Button>
+                      </div>
+                      <p v-if="tavilyKeyError" class="ai-credential-field-msg is-error"> tavilyKeyError </p>
+                    </div>
+                  </details>
+                </form>
+
+                <footer class="ai-credential-foot">
+                  <Button class="ai-credential-test" variant="outline" size="sm" type="button"
+                    :disabled="!canTestSelectedProvider" @click="testSelectedProvider">
+                    <Zap aria-hidden="true" />
+                    测试
                   </Button>
-                  <Button class="ai-credential-inline-save" variant="ghost" size="sm" type="button" data-save-tavily
-                    :disabled="isSaving" @click="saveTavily">
-                    保存
+                  <div v-if="feedbackText" class="ai-credential-status" :class="`is-${feedbackTone}`">
+                    <Check v-if="feedbackTone === 'success'" aria-hidden="true" />
+                    <X v-else-if="feedbackTone === 'error'" aria-hidden="true" />
+                    <TriangleAlert v-else aria-hidden="true" />
+                    <span> feedbackText </span>
+                  </div>
+                  <div class="ai-credential-spacer"></div>
+                  <Button variant="outline" size="sm" type="button" @click="openList">
+                    取消
                   </Button>
-                </div>
-                <p v-if="tavilyKeyError" class="ai-credential-field-msg is-error">{{ tavilyKeyError }}</p>
-              </div>
-            </details>
-          </form>
-
-          <footer class="ai-credential-foot">
-            <Button class="ai-credential-test" variant="outline" size="sm" type="button"
-              :disabled="!canTestSelectedProvider" @click="testSelectedProvider">
-              <Zap aria-hidden="true" />
-              测试
-            </Button>
-            <div v-if="feedbackText" class="ai-credential-status" :class="`is-${feedbackTone}`">
-              <Check v-if="feedbackTone === 'success'" aria-hidden="true" />
-              <X v-else-if="feedbackTone === 'error'" aria-hidden="true" />
-              <TriangleAlert v-else aria-hidden="true" />
-              <span>{{ feedbackText }}</span>
-            </div>
-            <div class="ai-credential-spacer"></div>
-            <Button variant="outline" size="sm" type="button" @click="openList">
-              取消
-            </Button>
-            <Button class="ai-credential-save" size="sm" type="button" :disabled="!canSaveProviderKey" @click="saveProviderSettings">
-               {{ isSaving ? '保存中' : '保存' }} 
-            </Button>
-          </footer>
-        </section>
-      </section>
-    </div>
+                  <Button class="ai-credential-save" size="sm" type="button" :disabled="!canSaveProviderKey" @click="saveProviderSettings">
+                      isSaving ? '保存中' : '保存'  
+                  </Button>
+                </footer>
+              </section>
+            </section>
+          </Motion>
+        </div>
+      </Motion>
+    </AnimatePresence>
   </Teleport>
 </template>
 
