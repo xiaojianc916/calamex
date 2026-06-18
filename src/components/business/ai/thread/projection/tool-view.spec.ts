@@ -160,4 +160,24 @@ describe('toAiThreadToolView', () => {
       code: 'ok',
     });
   });
+
+  it('locations 按 path+line 去重并透传;缺省为空数组', () => {
+    expect(toAiThreadToolView(baseToolCall()).locations).toEqual([]);
+
+    const view = toAiThreadToolView(
+      baseToolCall({
+        locations: [
+          { path: 'src/a.ts', line: 1 },
+          { path: 'src/a.ts', line: 1 },
+          { path: 'src/a.ts' },
+          { path: 'src/b.ts' },
+        ],
+      }),
+    );
+    expect(view.locations).toEqual([
+      { path: 'src/a.ts', line: 1 },
+      { path: 'src/a.ts' },
+      { path: 'src/b.ts' },
+    ]);
+  });
 });
