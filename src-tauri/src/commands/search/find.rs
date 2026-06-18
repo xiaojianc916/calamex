@@ -26,7 +26,10 @@ use std::{io, path::Path};
 #[derive(Clone)]
 struct FuzzyLinePrefilter {
     min_chars: usize,
-    required_ascii: Vec<u8>,
+    /// ASCII 字符存在性位掩码：索引为归一化后的 ASCII 字节值。
+    /// 替代原先的 Vec<u8>，避免 each-call clone 产生的堆分配。
+    required_ascii_mask: [bool; 256],
+    required_ascii_count: usize,
     required_non_ascii: Vec<char>,
     match_case: bool,
 }
@@ -34,7 +37,8 @@ struct FuzzyLinePrefilter {
 impl FuzzyLinePrefilter {
     fn new(query: &str, match_case: bool) -> Option<Self> {
         let min_chars = query.chars().filter(|ch| !ch.is_whitespace()).count();
-        let mut required_ascii = Vec::new();
+        let mut required_ascii_mask = [false; 256];
+        let mut required_ascii_count = 0usize;
         let mut required_non_ascii = Vec::new();
 
         for ch in query.chars() {
@@ -47,8 +51,9 @@ impl FuzzyLinePrefilter {
                     continue;
                 }
                 let normalized = normalize_prefilter_ascii(byte, match_case);
-                if !required_ascii.contains(&normalized) {
-                    required_ascii.push(normalized);
+                if !required_ascii_mask[normalized as usize] {
+                    required_ascii_mask[normalized as usize] = true;
+                    required_ascii_count += 1;
                 }
                 continue;
             }
@@ -62,33 +67,37 @@ impl FuzzyLinePrefilter {
             }
         }
 
-        if min_chars == 0 && required_ascii.is_empty() && required_non_ascii.is_empty() {
+        if min_chars == 0 && required_ascii_count == 0 && required_non_ascii.is_empty() {
             return None;
         }
 
         Some(Self {
             min_chars,
-            required_ascii,
+            required_ascii_mask,
+            required_ascii_count,
             required_non_ascii,
             match_case,
         })
     }
 
     /// 在给定字节序列中检查 query 要求的全部 ASCII 字符是否都出现（按 match_case 归一大小写）。
-    /// 非 ASCII 字节跳过；调用方需保证 required_ascii 非空时调用才有意义。
+    /// 非 ASCII 字节跳过。使用栈上 [bool; 256] 位掩码替代 Vec clone，零堆分配。
     fn all_required_ascii_present(&self, bytes: impl Iterator<Item = u8>) -> bool {
-        let mut missing = self.required_ascii.clone();
+        if self.required_ascii_count == 0 {
+            return true;
+        }
+        let mut present = [false; 256];
+        let mut found = 0usize;
         for byte in bytes {
             if !byte.is_ascii() {
                 continue;
             }
             let normalized = normalize_prefilter_ascii(byte, self.match_case);
-            if let Some(index) = missing
-                .iter()
-                .position(|candidate| *candidate == normalized)
-            {
-                missing.swap_remove(index);
-                if missing.is_empty() {
+            let idx = normalized as usize;
+            if self.required_ascii_mask[idx] && !present[idx] {
+                present[idx] = true;
+                found += 1;
+                if found == self.required_ascii_count {
                     return true;
                 }
             }
@@ -115,7 +124,7 @@ impl FuzzyLinePrefilter {
         if line.chars().count() < self.min_chars {
             return false;
         }
-        if !self.required_ascii.is_empty() && !self.all_required_ascii_present(line.bytes()) {
+        if self.required_ascii_count > 0 && !self.all_required_ascii_present(line.bytes()) {
             return false;
         }
         if !self.required_non_ascii.is_empty() && !self.all_required_non_ascii_present(line) {
@@ -132,7 +141,7 @@ impl FuzzyLinePrefilter {
     /// 也不会误杀（required_ascii 为空时返回 true，交回逐行阶段处理）。非 ASCII（如 CJK）
     /// 字符的存在性检查只放在解码后的逐行阶段，避免对非 UTF-8 编码的文件误杀。
     fn bytes_may_match(&self, bytes: &[u8]) -> bool {
-        if self.required_ascii.is_empty() {
+        if self.required_ascii_count == 0 {
             return true;
         }
         self.all_required_ascii_present(bytes.iter().copied())
@@ -632,7 +641,7 @@ fn search_one_file_content(
                         keep_going
                     })
                     .map_err(io::Error::other)?;
-                Ok(keep_going)
+                Ok(keep_going && conversion_error.is_none())
             }),
         )
         .map_err(|error| format!("内容搜索失败：{error}"))?;

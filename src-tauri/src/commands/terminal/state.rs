@@ -5,7 +5,7 @@
 use std::{
     collections::HashMap,
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, atomic::AtomicBool},
     time::{Duration, Instant},
 };
 
@@ -62,7 +62,12 @@ pub struct TerminalSessionState {
     /// 哪些会话已无前端照管（页面重载 / 崩溃后前端 VM 销毁、心跳停止）。收割线程只回收「心跳超过
     /// 宽限期 + 无活动运行」的孤儿交互会话，绝不碰仍在心跳的健康会话（零误杀）。
     session_liveness: Arc<Mutex<HashMap<String, Instant>>>,
+    /// 优雅关闭信号：设为 true 时孤儿收割线程退出循环。
+    pub(super) shutdown: Arc<AtomicBool>,
     pub(super) creation_guard: Arc<Mutex<()>>,
+    // TODO(design): 9 个独立 Arc<Mutex<HashMap>> 增加锁复杂度。
+    // remove_interactive_terminal_after_exit 串行获取 8 次锁。
+    // 可考虑将 snapshots + interactive_visual 等常同时访问的 map 合并为单一 struct。
 }
 
 pub(super) fn lock_terminal_sessions(
@@ -674,8 +679,17 @@ pub(super) fn should_recreate_terminal_session(session: &TerminalSession) -> boo
     let cwd = session.working_directory.trim();
     cwd.is_empty()
         || cwd.contains('\\')
-        || cwd.contains(':')
+        || looks_like_windows_drive_path(cwd)
         || (!cwd.starts_with('/') && cwd != "~")
+}
+
+/// 检测 Windows 驱动器号路径（如 `C:\` 或 `C:/`），避免误判含 `:` 的 Linux 路径。
+fn looks_like_windows_drive_path(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && (bytes[2] == b'\\' || bytes[2] == b'/')
 }
 
 pub(super) fn terminate_terminal_session(session: &TerminalSession) -> Result<(), String> {

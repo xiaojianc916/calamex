@@ -183,10 +183,12 @@ pub(super) fn next_terminal_run_chunk_seq() -> u64 {
 
 /// 运行输出预清洗：消除“独立运行 PTY 冷启动”带来的视觉噪声。
 pub(super) fn sanitize_terminal_run_chunk(data: &str, has_prior_output: bool) -> String {
-    let without_banner = strip_wsl_diagnostic_lines(data);
+    // WSL 诊断行（"wsl: ..."）仅在冷启动时出现，已有输出时不再剥离，
+    // 避免误删用户脚本中合法的 "wsl:" 前缀行。
     if has_prior_output {
-        return without_banner;
+        return data.to_string();
     }
+    let without_banner = strip_wsl_diagnostic_lines(data);
     strip_leading_screen_init(&without_banner)
 }
 

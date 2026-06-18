@@ -231,6 +231,7 @@ async fn emit_navigated(app: &AppHandle, page: &chromiumoxide::Page) {
 #[cfg(feature = "native_webview")]
 async fn establish_cdp_session(app: AppHandle, port: u16) {
     use futures::StreamExt;
+    use tauri::Manager;
 
     // Drop any stale session first.
     {
@@ -245,6 +246,11 @@ async fn establish_cdp_session(app: AppHandle, port: u16) {
     let url = format!("http://127.0.0.1:{port}");
     let mut connected = None;
     for _ in 0..40 {
+        // 检查 webview 是否已被关闭/销毁，避免在用户关闭后继续建立 CDP 会话。
+        if app.get_webview(AGENT_WEBVIEW_LABEL).is_none() {
+            tracing::info!(event = "agent_webview.cdp.cancelled", reason = "webview_closed");
+            return;
+        }
         match chromiumoxide::Browser::connect(url.clone()).await {
             Ok(pair) => {
                 connected = Some(pair);
@@ -266,6 +272,12 @@ async fn establish_cdp_session(app: AppHandle, port: u16) {
 
     let mut page_opt = None;
     for _ in 0..40 {
+        // 检查 webview 是否已被关闭/销毁。
+        if app.get_webview(AGENT_WEBVIEW_LABEL).is_none() {
+            tracing::info!(event = "agent_webview.cdp.cancelled", reason = "webview_closed");
+            handler_task.abort();
+            return;
+        }
         if let Ok(pages) = browser.pages().await
             && let Some(first) = pages.into_iter().next()
         {

@@ -317,7 +317,9 @@ pub fn prewarm_workspace_search_index(workspace_root_path: String) {
             let _ = scan::workspace_cache_symbols(&workspace_root);
             prewarm_workspace_content_index(&workspace_root);
         })
-        .ok();
+    {
+        log::warn!("搜索索引预热线程创建失败：{error}");
+    }
 }
 
 #[cfg(test)]

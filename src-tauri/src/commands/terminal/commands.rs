@@ -418,6 +418,10 @@ fn wait_until_finished(handle: &LocalWslPtyHandle, budget: Duration) -> bool {
 }
 
 pub fn shutdown_all_terminal_sessions(state: &TerminalSessionState) -> Result<(), String> {
+    // 通知孤儿收割线程退出循环。
+    state
+        .shutdown
+        .store(true, std::sync::atomic::Ordering::Relaxed);
     let _creation_guard = state
         .creation_guard
         .lock()
@@ -671,8 +675,11 @@ pub fn spawn_orphan_terminal_session_reaper(app: AppHandle, state: TerminalSessi
     let spawn_result = std::thread::Builder::new()
         .name("wsl-orphan-session-reaper".to_string())
         .spawn(move || {
-            loop {
+            while !state.shutdown.load(std::sync::atomic::Ordering::Relaxed) {
                 std::thread::sleep(ORPHAN_SESSION_REAP_POLL);
+                if state.shutdown.load(std::sync::atomic::Ordering::Relaxed) {
+                    break;
+                }
                 reap_idle_orphan_terminal_sessions(&app, &state, ORPHAN_SESSION_REAP_GRACE);
             }
         });

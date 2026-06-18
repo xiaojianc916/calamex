@@ -405,9 +405,15 @@ fn resolve_head_commit(repository: &Repository) -> Result<Option<gix::Commit<'_>
 }
 
 fn build_git_commit_summary(commit: &gix::Commit<'_>) -> GitCommitSummaryPayload {
-    let authored_at = jiff::Timestamp::from_second(commit.time().unwrap_or_default().seconds)
-        .unwrap_or_else(|_| jiff::Timestamp::now())
-        .to_string();
+    let time_seconds = commit.time().map(|t| t.seconds).unwrap_or(0);
+    let authored_at = if time_seconds == 0 {
+        // epoch 0 通常表示时间缺失，返回空串让前端区分"时间缺失"与"真实时间"。
+        String::new()
+    } else {
+        jiff::Timestamp::from_second(time_seconds)
+            .unwrap_or_else(|_| jiff::Timestamp::now())
+            .to_string()
+    };
 
     let summary = commit
         .message()
@@ -437,7 +443,7 @@ fn build_git_commit_summary(commit: &gix::Commit<'_>) -> GitCommitSummaryPayload
 }
 
 fn short_commit_id(id: gix::ObjectId) -> String {
-    id.to_string().chars().take(7).collect()
+    format!("{:.7}", id)
 }
 
 fn resolve_relative_path(repository_root: &Path, path: &Path) -> Result<PathBuf, String> {

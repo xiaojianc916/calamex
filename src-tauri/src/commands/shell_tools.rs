@@ -6,6 +6,7 @@ use std::{
     env,
     path::{Path, PathBuf},
     process::{Command as StdCommand, Stdio},
+    sync::Arc,
     time::Duration,
 };
 use tokio::{io::AsyncWriteExt, process::Command, time::timeout};
@@ -239,6 +240,27 @@ async fn run_shfmt(
         .spawn()
         .map_err(|error| format!("启动 shfmt 失败：{error}"))?;
 
+    // 独立读取 stderr：超时时 wait_with_output 的 future 被 drop，
+    // 已缓冲的 stderr 诊断信息会丢失。提前 take stderr 管道由独立任务持续读取，
+    // 超时后仍能获得部分诊断输出（如语法错误位置）。
+    let mut stderr_pipe = child.stderr.take().expect("stderr is piped");
+    let partial_stderr: Arc<std::sync::Mutex<Vec<u8>>> =
+        Arc::new(std::sync::Mutex::new(Vec::new()));
+    let partial_stderr_clone = partial_stderr.clone();
+    let stderr_reader = tokio::spawn(async move {
+        use tokio::io::AsyncReadExt;
+        let mut buf = [0u8; 4096];
+        loop {
+            match stderr_pipe.read(&mut buf).await {
+                Ok(0) | Err(_) => break,
+                Ok(n) => partial_stderr_clone
+                    .lock()
+                    .unwrap()
+                    .extend_from_slice(&buf[..n]),
+            }
+        }
+    });
+
     // 并发写 stdin：与排空 stdout 同时进行，避免大脚本触发 stdin/stdout 双向管道死锁。
     let stdin = child.stdin.take();
     let input = content.as_bytes().to_vec();
@@ -251,13 +273,28 @@ async fn run_shfmt(
     });
 
     let output = match timeout(SHFMT_TIMEOUT, child.wait_with_output()).await {
-        Ok(Ok(output)) => output,
+        Ok(Ok(mut output)) => {
+            // wait 返回后合并 stderr_reader 已捕获的完整 stderr。
+            let _ = stderr_reader.await;
+            output.stderr = std::mem::take(&mut *partial_stderr.lock().unwrap());
+            output
+        }
         Ok(Err(error)) => return Err(format!("运行 shfmt 失败：{error}")),
         Err(_) => {
-            return Err(format!(
+            // 超时：从 partial_stderr 获取已缓冲的 stderr 内容。
+            let stderr_text =
+                String::from_utf8_lossy(&partial_stderr.lock().unwrap())
+                    .trim()
+                    .to_string();
+            let base = format!(
                 "shfmt 格式化超时（超过 {} 秒）。",
                 SHFMT_TIMEOUT.as_secs()
-            ));
+            );
+            return Err(if stderr_text.is_empty() {
+                base
+            } else {
+                format!("{base} 部分诊断输出：{stderr_text}")
+            });
         }
     };
 
