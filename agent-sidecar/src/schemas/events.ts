@@ -8,72 +8,34 @@ import type { JSONValue } from '../types/json-value.js';
 import { languageModelUsageSchema, type TLanguageModelUsage } from '../models/usage.js';
 import { agentPlanRecordSchema, agentPlanSchema, agentPlanStatusSchema } from './plan.js';
 
-// ----------------------------------------------------------------------
-// Schema version
-// ----------------------------------------------------------------------
-
-/**
- * 顶层 sidecar → UI 协议版本。
- * - bump 时，新增/重命名字段也必须保证 client 能优雅降级。
- * - 不要为 narrow 改动 bump（比如缩窄字面量）。
- */
 export const AGENT_SIDECAR_RESPONSE_SCHEMA_VERSION = 2 as const;
 export type TAgentSidecarResponseSchemaVersion = typeof AGENT_SIDECAR_RESPONSE_SCHEMA_VERSION;
-
-// ----------------------------------------------------------------------
-// JSON value
-// ----------------------------------------------------------------------
 
 export type TJsonValue = JSONValue;
 
 export const jsonValueSchema: z.ZodType<TJsonValue> = z.lazy(() =>
   z.union([
-    z.string(),
-    z.number(),
-    z.boolean(),
-    z.null(),
-    z.array(jsonValueSchema),
-    z.record(z.string(), jsonValueSchema),
+    z.string(), z.number(), z.boolean(), z.null(),
+    z.array(jsonValueSchema), z.record(z.string(), jsonValueSchema),
   ]),
 );
 
-// ----------------------------------------------------------------------
-// Sub-schemas
-// ----------------------------------------------------------------------
-
 export const approvalRequestSchema = z.object({
-  id: z.string().min(1),
-  toolName: z.string().min(1),
-  question: z.string().min(1),
-  summary: z.string().min(1),
-  riskLevel: z.enum(['low', 'medium', 'high']),
-  reversible: z.boolean(),
-  createdAt: z.string().datetime(),
+  id: z.string().min(1), toolName: z.string().min(1), question: z.string().min(1),
+  summary: z.string().min(1), riskLevel: z.enum(['low', 'medium', 'high']),
+  reversible: z.boolean(), createdAt: z.string().datetime(),
   expiresAt: z.string().datetime().optional(),
 });
 
-/**
- * ask_user HITL 反向提问的结构化载荷（surface 版，带稳定 id）。
- *
- * 镜像 ask_user 工具 suspendSchema 的 surfaced 形态：每个问题/选项都带 sidecar
- * 赋予的稳定 id，供前端表单渲染与回传答案时引用。choice 题 2-4 个选项的上下限
- * 由工具入参 schema 负责校验，本 wire-schema 仅保证形状正确，避免对既有发射端
- * 过度约束。
- */
 export const askUserOptionSchema = z.object({
-  optionId: z.string().min(1),
-  label: z.string(),
-  description: z.string(),
+  optionId: z.string().min(1), label: z.string(), description: z.string(),
 });
 
 export const askUserQuestionSchema = z.object({
-  questionId: z.string().min(1),
-  question: z.string().min(1),
-  header: z.string().min(1),
+  questionId: z.string().min(1), question: z.string().min(1), header: z.string().min(1),
   type: z.enum(['choice', 'text', 'yesno']),
   options: z.array(askUserOptionSchema).optional(),
-  multiSelect: z.boolean().optional(),
-  placeholder: z.string().optional(),
+  multiSelect: z.boolean().optional(), placeholder: z.string().optional(),
 });
 
 export const askUserRequestSchema = z.object({
@@ -82,214 +44,83 @@ export const askUserRequestSchema = z.object({
 });
 
 export const diffHunkSchema = z.object({
-  oldStart: z.number().int().nonnegative(),
-  oldLines: z.number().int().nonnegative(),
-  newStart: z.number().int().nonnegative(),
-  newLines: z.number().int().nonnegative(),
-  // 每行可选地以 ` `、`+`、`-` 起始（标准 unified diff）；
-  // 这里不强制，因为内部生产端可能写不同变种。
+  oldStart: z.number().int().nonnegative(), oldLines: z.number().int().nonnegative(),
+  newStart: z.number().int().nonnegative(), newLines: z.number().int().nonnegative(),
   lines: z.array(z.string()),
 });
 
 export const diffFileSchema = z.object({
-  path: z.string().min(1),
-  hunks: z.array(diffHunkSchema),
+  path: z.string().min(1), hunks: z.array(diffHunkSchema),
 });
 
-/**
- * 注意：本 schema **保留** `.passthrough()`，所以 `z.infer` 出来的对象
- * 可能携带未列出的字段。下游 narrow 到 `TAgentRuntimeEvent` 时请使用
- * `TAgentUiEventNarrowed`（见文件底部），而不是 `z.infer` 出来的类型。
- */
 export const agentRuntimeEventSchema = z.object({
-  id: z.string().min(1),
-  type: z.enum(AGENT_RUNTIME_EVENT_TYPES),
-  runId: z.string().min(1),
-  sessionId: z.string().min(1),
-  agentId: z.string().min(1),
-  timestamp: z.string().datetime(),
-  seq: z.number().int().nonnegative(),
+  id: z.string().min(1), type: z.enum(AGENT_RUNTIME_EVENT_TYPES),
+  runId: z.string().min(1), sessionId: z.string().min(1), agentId: z.string().min(1),
+  timestamp: z.string().datetime(), seq: z.number().int().nonnegative(),
   schemaVersion: z.literal(AGENT_RUNTIME_EVENT_SCHEMA_VERSION),
-  redacted: z.literal(true),
-  visibility: z.enum(['user', 'debug']),
+  redacted: z.literal(true), visibility: z.enum(['user', 'debug']),
   level: z.enum(['debug', 'info', 'warn', 'error']).optional(),
-  parentId: z.string().min(1).optional(),
-  spanId: z.string().min(1).optional(),
+  parentId: z.string().min(1).optional(), spanId: z.string().min(1).optional(),
 }).passthrough();
 
-/**
- * 语言模型用量契约已上移到 `../models/usage.js`（canonical 单一真相源）。
- * 此处再导出，保持本 wire-schema 文件被淘汰前的公共导出面不变。
- * 传输翻转删除本文件时，依赖方应直接从 `../models/usage.js` 引入。
- */
 export { languageModelUsageSchema, type TLanguageModelUsage };
 
-// ----------------------------------------------------------------------
-// UI events
-// ----------------------------------------------------------------------
-
-/**
- * 工具事件契约：
- * - `tool_start.input` 和 `tool_result.output` 是 **JSON value** 类型。
- *   生产端必须先把 `Date` / `BigInt` / `undefined` / class 实例等非 JSON 类型
- *   通过 `compactModelOutput`（见 ../models/output-budget.js）
- *   或自定义 serializer 转换后再发出，否则 schema 会拒绝。
- */
 export const agentUiEventSchema = z.discriminatedUnion('type', [
-  /**
- * 文本增量。
- *
- * **delta 语义（v2+）**：`text` 是相对于已 emit 文本的**增量**，
- * UI 端必须 append 到当前缓冲，**不能**替换。
- *
- * 若需要清空当前缓冲（例如工具调用前），生产端会发 `message_clear`
- * 事件，而**不是** `message_delta` 携带空字符串。
- *
- * `phase`:
- * - `'final'`（或省略）：该增量属于最终回答的一部分。
- * - `'stage'`：该增量是过渡性的（保留以备将来分阶段流式场景）。
- */
+  z.object({ type: z.literal('message_delta'), text: z.string(), phase: z.enum(['stage', 'final']).optional() }),
+  z.object({ type: z.literal('message_clear') }),
+  z.object({ type: z.literal('agent_event'), event: agentRuntimeEventSchema }),
   z.object({
-    type: z.literal('message_delta'),
-    text: z.string(),
-    phase: z.enum(['stage', 'final']).optional(),
-  }),
-  /**
-   * 清空当前已显示的消息缓冲。
-   *
-   * 通常出现在工具调用前 —— 模型在工具调用前可能输出了一段过渡文本，
-   * 这部分不应保留在最终答案里。UI 端收到后应清空显示区，
-   * 准备接收后续 `message_delta`。
-   */
-  z.object({
-    type: z.literal('message_clear'),
-  }),
-  z.object({
-    type: z.literal('agent_event'),
-    event: agentRuntimeEventSchema,
-  }),
-  z.object({
-    type: z.literal('plan_ready'),
-    planId: z.string().min(1),
-    threadId: z.string().min(1).optional(),
-    version: z.number().int().positive(),
-    status: agentPlanStatusSchema,
-    createdAt: z.string().datetime().optional(),
+    type: z.literal('plan_ready'), planId: z.string().min(1),
+    threadId: z.string().min(1).optional(), version: z.number().int().positive(),
+    status: agentPlanStatusSchema, createdAt: z.string().datetime().optional(),
     updatedAt: z.string().datetime().optional(),
     approvedAt: z.string().datetime().nullable().optional(),
     executedAt: z.string().datetime().nullable().optional(),
     rejectionReason: z.string().min(1).nullable().optional(),
-    errorMessage: z.string().min(1).nullable().optional(),
-    plan: agentPlanSchema,
+    errorMessage: z.string().min(1).nullable().optional(), plan: agentPlanSchema,
   }),
+  z.object({ type: z.literal('plan_record'), record: agentPlanRecordSchema, versions: z.array(agentPlanRecordSchema) }),
+  z.object({ type: z.literal('tool_start'), toolName: z.string().min(1), input: jsonValueSchema }),
+  z.object({ type: z.literal('tool_result'), toolName: z.string().min(1), output: jsonValueSchema }),
+  z.object({ type: z.literal('approval_required'), request: approvalRequestSchema }),
   z.object({
-    type: z.literal('plan_record'),
-    record: agentPlanRecordSchema,
-    versions: z.array(agentPlanRecordSchema),
+    type: z.literal('ask_user_required'), requestId: z.string().min(1), request: askUserRequestSchema,
   }),
+  z.object({ type: z.literal('diff_ready'), files: z.array(diffFileSchema) }),
   z.object({
-    type: z.literal('tool_start'),
-    toolName: z.string().min(1),
-    input: jsonValueSchema,
-  }),
-  z.object({
-    type: z.literal('tool_result'),
-    toolName: z.string().min(1),
-    output: jsonValueSchema,
-  }),
-  z.object({
-    type: z.literal('approval_required'),
-    request: approvalRequestSchema,
-  }),
-  /**
-   * ask_user HITL 反向提问。
-   *
-   * 与 `approval_required` 同为带外承载（随 prompt 响应信封下发，不作为
-   * session/update 线帧），但携带结构化多问表单；`requestId` 是 resume 令牌
-   * （encodeApprovalRequestId(runId, toolCallId)），前端答完经专用 ext 方法回传
-   * 富答案续跑被挂起的工具，而非 approve/reject。
-   */
-  z.object({
-    type: z.literal('ask_user_required'),
-    requestId: z.string().min(1),
-    request: askUserRequestSchema,
-  }),
-  z.object({
-    type: z.literal('diff_ready'),
-    files: z.array(diffFileSchema),
-  }),
-  z.object({
-    type: z.literal('done'),
-    result: z.string(),
+    type: z.literal('done'), result: z.string(),
     usage: languageModelUsageSchema.nullable().optional(),
-    /** @deprecated 用 `usage.inputTokens` 代替 */
     promptTokens: z.number().nonnegative().optional(),
-    /** @deprecated 用 `usage.outputTokens` 代替 */
     completionTokens: z.number().nonnegative().optional(),
-    /** @deprecated 用 `usage.totalTokens` 代替 */
     totalTokens: z.number().nonnegative().optional(),
   }),
   z.object({
-    type: z.literal('error'),
-    message: z.string().min(1),
-    /** 错误分类，便于 client 决定是否重试 / 上报。 */
+    type: z.literal('error'), message: z.string().min(1),
     code: z.string().min(1).optional(),
-    /** 原始 cause 文本，仅诊断用，可能包含敏感信息（已过 redaction）。 */
-    cause: z.string().min(1).optional(),
-    retryable: z.boolean().optional(),
+    cause: z.string().min(1).optional(), retryable: z.boolean().optional(),
   }),
 ]);
-
-// ----------------------------------------------------------------------
-// Response envelope
-// ----------------------------------------------------------------------
 
 export const agentSidecarResponseSchema = z.object({
   schemaVersion: z.literal(AGENT_SIDECAR_RESPONSE_SCHEMA_VERSION),
   sessionId: z.string().min(1),
   events: z.array(agentUiEventSchema),
   result: z.string().nullable(),
+  errorMessage: z.string().optional(),
+  errorCode: z.string().optional(),
 });
 
-// ----------------------------------------------------------------------
-// Exported types
-// ----------------------------------------------------------------------
-
-/**
- * **`.parse()` 后的事件类型**。
- *
- * 注意 `agent_event` 分支里 `event` 的字段是宽松的（passthrough）—
- * 如果想拿到 narrow 过的 `TAgentRuntimeEvent`，请用 `TAgentUiEventNarrowed`
- * 并在 caller 处显式断言已经做过 stream-types 的二次校验。
- */
 export type TAgentUiEventParsed = z.infer<typeof agentUiEventSchema>;
-
-/**
- * **运行时使用的事件类型**，把 `agent_event.event` narrow 到 `TAgentRuntimeEvent`。
- *
- * 适用于：
- * - 在 sidecar 内部构造事件后直接 emit（你自己保证已经 narrow）；
- * - 给 IPC 收到后、经过 stream-types 二次校验的 caller 消费。
- *
- * 不适用于：
- * - 直接接收 `agentUiEventSchema.parse(...)` 的返回值 —— 那个是 `TAgentUiEventParsed`。
- */
 export type TAgentUiEvent =
   | Exclude<TAgentUiEventParsed, { type: 'agent_event' }>
   | { type: 'agent_event'; event: TAgentRuntimeEvent };
-
-/** 同时导出 narrow 版别名，便于 grep。 */
 export type TAgentUiEventNarrowed = TAgentUiEvent;
 
-/**
- * sidecar 响应信封（运行时使用版本，events 已 narrow）。
- *
- * 如果你需要直接消费 `agentSidecarResponseSchema.parse()` 的返回值，
- * 用 `z.infer<typeof agentSidecarResponseSchema>`。
- */
 export type TAgentSidecarResponse = {
   schemaVersion: TAgentSidecarResponseSchemaVersion;
   sessionId: string;
   events: TAgentUiEvent[];
   result: string | null;
+  errorMessage?: string;
+  errorCode?: string;
 };
