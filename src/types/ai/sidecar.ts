@@ -627,6 +627,20 @@ export type TAgentUiEventToolCallUpdate = {
   acpUpdate: TAcpToolCallUpdate;
 };
 
+/* ----------------------------------------------------------------------------
+ * ACP 会话模式切换 UI 事件（ADR-20260617 · D7-③-b）
+ *
+ * 投影 ACP `session/update` 的 `current_mode_update`（外部 agent 自行切换当前会话模式，
+ * 见 Rust host src-tauri/src/acp/ui_event.rs）：仅携带切换后的 `modeId`（ACP `currentModeId`
+ * 原值，逐字透传，不本地映射）。可用模式清单另由会话建立时的 `NewSessionResponse.modes`
+ * 提供（见后续 slice）；本事件只负责「当前模式已变更」信号，交前端模式选择器 VM 据
+ * `modeId` 高亮当前项。
+ * -------------------------------------------------------------------------- */
+export type TAgentUiEventModeUpdate = {
+  type: 'mode_update';
+  modeId: string;
+};
+
 export type TAgentUiEvent =
   | { type: 'message_delta'; text: string; phase?: 'stage' | 'final' }
   | { type: 'agent_event'; event: TAgentRuntimeEvent }
@@ -636,6 +650,7 @@ export type TAgentUiEvent =
   | { type: 'tool_result'; toolName: string; output: TJsonValue }
   | TAgentUiEventToolCall
   | TAgentUiEventToolCallUpdate
+  | TAgentUiEventModeUpdate
   | { type: 'approval_required'; request: IApprovalRequest }
   | { type: 'ask_user_required'; requestId: string; request: IAskUserRequest }
   | { type: 'diff_ready'; files: IDiffFile[] }

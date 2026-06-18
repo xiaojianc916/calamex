@@ -19,9 +19,10 @@
 //! 交前端 ACL 按 `toolCallId` 归一到 thread 协议 VM（见 src/types/ai/sidecar.ts 的
 //! tool_call(_update) 变体与 acp-tool-call.ts 的 SDK 类型）。
 //!
-//! 其余 session/update 变体（`plan` / `usage_update` / `current_mode_update` /
-//! `available_commands_update` 等）暂未投影：plan/usage 经信封回宿主，会话元数据
-//! 待后续 slice 接入，故此处显式返回 None 作为可扩展接入点。
+//! 其余 session/update 变体（`plan` / `usage_update` / `available_commands_update` 等）
+//! 暂未投影：plan/usage 经信封回宿主，会话元数据待后续 slice 接入，故此处显式返回 None
+//! 作为可扩展接入点。`current_mode_update`（外部 agent 自行切换当前会话模式）已投影为
+//! `mode_update` UI 事件（见 session_notification_to_ui_event 的对应分支）。
 //!
 //! `done` / `error` 不是 session/update 通知：ACP prompt 回合不流式发 done，最终答案经
 //! agent_message_chunk 增量送达、信封（result+usage）回到宿主（见 turn-egress.ts）。故终态
@@ -68,6 +69,14 @@ fn tool_call_ui_event(kind: &str, update: &Value) -> Value {
     json!({ "type": kind, "acpUpdate": update.clone() })
 }
 
+/// 构造模式切换 `TAgentUiEvent`（`type` 为 `mode_update`）。
+///
+/// 投影 ACP `current_mode_update`（外部 agent 自行切换当前会话模式）：仅透传 `modeId`
+/// （ACP `currentModeId` 原值，逐字透传，绝不本地映射），交前端归一到模式选择器 VM。
+fn mode_update_ui_event(mode_id: &str) -> Value {
+    json!({ "type": "mode_update", "modeId": mode_id })
+}
+
 /// 将单条 ACP `SessionNotification` JSON 投影为 0..1 条 `TAgentUiEvent` JSON。
 ///
 /// 入参为 client 层 `AcpStreamFrame.event`（官方 `SessionNotification` 的 camelCase JSON：
@@ -89,8 +98,14 @@ pub fn session_notification_to_ui_event(notification: &Value) -> Option<Value> {
         // 整个 ACP `update`（toolCallId/title/kind/status/content[]/locations/rawInput/
         // rawOutput 等）原样作为 `acpUpdate`，交前端 ACL 按 toolCallId 归一到 thread 协议 VM。
         "tool_call" | "tool_call_update" => Some(tool_call_ui_event(kind, update)),
-        // 其余变体暂未投影（plan/usage_update 经信封回宿主；current_mode_update /
-        // available_commands_update 等会话元数据待后续 slice）。显式 None 作为接入点。
+        // 外部 agent 自行切换当前会话模式（标准 current_mode_update）：取其 currentModeId
+        // 投影为 mode_update UI 事件，交前端归一到模式选择器 VM（D7-③-b）。
+        "current_mode_update" => {
+            let mode_id = update.get("currentModeId").and_then(Value::as_str)?;
+            Some(mode_update_ui_event(mode_id))
+        }
+        // 其余变体暂未投影（plan/usage_update 经信封回宿主；available_commands_update
+        // 等会话元数据待后续 slice）。显式 None 作为接入点。
         _ => None,
     }
 }
@@ -186,6 +201,23 @@ mod tests {
         let ui = session_notification_to_ui_event(&notif(update.clone())).unwrap();
         assert_eq!(ui["type"], "tool_call_update");
         assert_eq!(ui["acpUpdate"], update);
+    }
+
+    #[test]
+    fn current_mode_update_maps_to_mode_update_event() {
+        let n = notif(json!({
+            "sessionUpdate": "current_mode_update",
+            "currentModeId": "code"
+        }));
+        let ui = session_notification_to_ui_event(&n).unwrap();
+        assert_eq!(ui["type"], "mode_update");
+        assert_eq!(ui["modeId"], "code");
+    }
+
+    #[test]
+    fn current_mode_update_without_mode_id_yields_none() {
+        let n = notif(json!({ "sessionUpdate": "current_mode_update" }));
+        assert!(session_notification_to_ui_event(&n).is_none());
     }
 
     #[test]
