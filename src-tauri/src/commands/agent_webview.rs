@@ -505,8 +505,9 @@ pub async fn agent_webview_create(
             .map_err(|e| format!("invalid url `{}`: {e}", input.url))?;
 
         let browser_args = format!(
-            "{WRY_DEFAULT_BROWSER_ARGS} --remote-debugging-port={} --remote-allow-origins=*",
-            input.remote_debugging_port
+            "{WRY_DEFAULT_BROWSER_ARGS} --remote-debugging-port={} --remote-allow-origins=http://127.0.0.1:{}",
+            input.remote_debugging_port,
+            input.remote_debugging_port,
         );
 
         let builder =

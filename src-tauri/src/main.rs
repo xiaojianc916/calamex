@@ -220,8 +220,6 @@ fn harden_webview_settings<R: tauri::Runtime>(_webview_window: &tauri::WebviewWi
 // === main ================================================================
 
 fn main() {
-    init_tracing();
-
     // === WebView2 原生遮挡计算修复（Windows）==============================
     // 现象：启动几秒后（有时一进入即触发）整窗点击全部失效——侧边栏、编辑器、
     // 右上角 GitHub 登录同时点不动；但 :hover 仍有反馈、原生窗口仍可拖动/缩放，
@@ -240,8 +238,8 @@ fn main() {
     // wry 创建 WebView2 环境时会读取该环境变量。零行为副作用，仅 Windows 生效。
     #[cfg(windows)]
     {
-        // SAFETY: 处于 main 最早期、WebView2 环境/任何额外线程创建之前的单线程阶段，
-        // 无并发读写环境变量的风险。
+        // SAFETY: main() 的第一条语句，进程刚由 OS 启动，只有主线程存在，
+        // 尚未初始化任何 tracing subscriber / async runtime / 后台线程。
         unsafe {
             std::env::set_var(
                 "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
@@ -249,6 +247,8 @@ fn main() {
             );
         }
     }
+
+    init_tracing();
 
     let app_started_at = Instant::now();
     emit_startup_event("tauri.main.start", app_started_at);
