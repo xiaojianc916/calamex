@@ -19,7 +19,6 @@ import type { ITerminalSettings } from '@/types/settings';
 import type {
   ITerminalBufferDiagnostic,
   ITerminalDataEvent,
-  ITerminalRunChunkPayload,
   ITerminalRunCompletedPayload,
   ITerminalStatusChangePayload,
   ITerminalVisualWritePayload,
@@ -35,7 +34,6 @@ type TUseIntegratedTerminalOptions = {
   theme: Ref<TThemeMode>;
   sessionId?: string;
   onStatusChange?: (payload: ITerminalStatusChangePayload) => void;
-  onOutput?: (payload: ITerminalRunChunkPayload) => void;
   onRunCompleted?: (payload: ITerminalRunCompletedPayload) => void;
   onTerminalData?: (payload: ITerminalDataEvent) => void;
   onVisualWrite?: (payload: ITerminalVisualWritePayload) => void;
@@ -125,7 +123,6 @@ export const useIntegratedTerminal = ({
   theme,
   sessionId = DEFAULT_TERMINAL_SESSION_ID,
   onStatusChange,
-  onOutput,
   onRunCompleted,
   onTerminalData,
   onVisualWrite,
@@ -139,7 +136,6 @@ export const useIntegratedTerminal = ({
   const hostRef = ref<HTMLElement | null>(null);
   const buildSessionCallbacks = (): ITerminalSessionCallbacks => ({
     onStatusChange,
-    onOutput,
     onRunCompleted,
     onInputRoute: (payload) => {
       runtimeStore.recordInputRoute(payload.route, payload.data);

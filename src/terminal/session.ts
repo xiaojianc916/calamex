@@ -20,7 +20,6 @@ import type {
   ITerminalDataEvent,
   ITerminalExitEvent,
   ITerminalInputRoutePayload,
-  ITerminalRunChunkPayload,
   ITerminalRunCompletedPayload,
   ITerminalSessionPayload,
   ITerminalStateChangedPayload,
@@ -318,7 +317,6 @@ export interface ITerminalTauriService {
 
 export interface ITerminalSessionCallbacks {
   onStatusChange?: (payload: ITerminalStatusChangePayload) => void;
-  onOutput?: (payload: ITerminalRunChunkPayload) => void;
   onRunCompleted?: (payload: ITerminalRunCompletedPayload) => void;
   onInputRoute?: (payload: ITerminalInputRoutePayload) => void;
   onTerminalData?: (payload: ITerminalDataEvent) => void;
@@ -356,7 +354,6 @@ export class TerminalSession {
 
   // ── 私有：回调 ────────────────────────────────────────────────────────────
   private _onStatusChange: ((p: ITerminalStatusChangePayload) => void) | null = null;
-  private _onOutput: ((p: ITerminalRunChunkPayload) => void) | null = null;
   private _onRunCompleted: ((p: ITerminalRunCompletedPayload) => void) | null = null;
   private _onInputRoute: ((p: ITerminalInputRoutePayload) => void) | null = null;
   private _onTerminalData: ((p: ITerminalDataEvent) => void) | null = null;
@@ -393,7 +390,6 @@ export class TerminalSession {
 
   // -- Private: Tauri event listeners --------------------------------------
   private _dataUnlisten: UnlistenFn | null = null;
-  private _runChunkUnlisten: UnlistenFn | null = null;
   private _runCompletedUnlisten: UnlistenFn | null = null;
   private _exitUnlisten: UnlistenFn | null = null;
   private _stateChangedUnlisten: UnlistenFn | null = null;
@@ -466,7 +462,6 @@ export class TerminalSession {
     this._tauri = options.tauriService;
     this._resetOrphanedBackendSession = options.resetOrphanedBackendSession ?? false;
     this._onStatusChange = options.onStatusChange ?? null;
-    this._onOutput = options.onOutput ?? null;
     this._onRunCompleted = options.onRunCompleted ?? null;
     this._onInputRoute = options.onInputRoute ?? null;
     this._onTerminalData = options.onTerminalData ?? null;
@@ -478,7 +473,6 @@ export class TerminalSession {
 
   updateCallbacks(callbacks: ITerminalSessionCallbacks): void {
     this._onStatusChange = callbacks.onStatusChange ?? null;
-    this._onOutput = callbacks.onOutput ?? null;
     this._onRunCompleted = callbacks.onRunCompleted ?? null;
     this._onInputRoute = callbacks.onInputRoute ?? null;
     this._onTerminalData = callbacks.onTerminalData ?? null;
@@ -540,7 +534,6 @@ export class TerminalSession {
   registerEventListeners(): Promise<void> {
     if (
       this._dataUnlisten &&
-      this._runChunkUnlisten &&
       this._runCompletedUnlisten &&
       this._exitUnlisten &&
       this._stateChangedUnlisten
@@ -558,9 +551,8 @@ export class TerminalSession {
         return;
       }
 
-      const [dl, rl, cl, el, sl] = await Promise.all([
+      const [dl, cl, el, sl] = await Promise.all([
         listen<ITerminalDataEvent>('terminal:data', (e) => this._handleDataEvent(e)),
-        listen<ITerminalRunChunkPayload>('terminal:run-chunk', (e) => this._handleRunChunkEvent(e)),
         listen<ITerminalRunCompletedPayload>('terminal:run-completed', (e) =>
           this._handleRunCompletedEvent(e),
         ),
@@ -572,14 +564,12 @@ export class TerminalSession {
       if (this._listenerVersion !== version) {
         // detach 在注册期间被调用，立即释放这批监听器避免泄漏
         dl();
-        rl();
         cl();
         el();
         sl();
         return;
       }
       this._dataUnlisten = dl;
-      this._runChunkUnlisten = rl;
       this._runCompletedUnlisten = cl;
       this._exitUnlisten = el;
       this._stateChangedUnlisten = sl;
@@ -891,12 +881,10 @@ export class TerminalSession {
     this._fontLoadingCleanup?.();
 
     this._dataUnlisten?.();
-    this._runChunkUnlisten?.();
     this._runCompletedUnlisten?.();
     this._exitUnlisten?.();
     this._stateChangedUnlisten?.();
     this._dataUnlisten = null;
-    this._runChunkUnlisten = null;
     this._runCompletedUnlisten = null;
     this._exitUnlisten = null;
     this._stateChangedUnlisten = null;
@@ -987,10 +975,6 @@ export class TerminalSession {
     this.status.value = state;
     this.statusMessage.value = message;
     this._onStatusChange?.({ state, message });
-  }
-
-  private _emitOutput(payload: ITerminalRunChunkPayload): void {
-    this._onOutput?.(payload);
   }
 
   private _emitRunCompleted(payload: ITerminalRunCompletedPayload): void {
@@ -1686,11 +1670,6 @@ export class TerminalSession {
     }
 
     this._writeTerminalDataPayload(event.payload);
-  }
-
-  private _handleRunChunkEvent(event: { payload: ITerminalRunChunkPayload }): void {
-    if (event.payload.sessionId !== this.id || !event.payload.data) return;
-    this._emitOutput(event.payload);
   }
 
   private _handleRunCompletedEvent(event: { payload: ITerminalRunCompletedPayload }): void {

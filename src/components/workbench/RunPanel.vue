@@ -53,7 +53,6 @@
             :visible="props.visible && tab.sessionId === activeSessionId"
             :theme="props.theme"
             :terminal-settings="props.terminalSettings"
-            @run-chunk="$emit('terminal-run-chunk', $event)"
             @run-completed="$emit('terminal-run-completed', $event)"
           />
         </div>
@@ -76,7 +75,7 @@ import { useTerminalTabsStore } from '@/store/terminalTabs';
 import { useTerminalRegistryStore } from '@/terminal/registry';
 import type { TThemeMode } from '@/types/app';
 import type { ITerminalSettings } from '@/types/settings';
-import type { ITerminalRunChunkPayload, ITerminalRunCompletedPayload } from '@/types/terminal';
+import type { ITerminalRunCompletedPayload } from '@/types/terminal';
 import { toErrorMessage } from '@/utils/error/error';
 
 const props = defineProps<{
@@ -88,7 +87,6 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   hide: [];
-  'terminal-run-chunk': [payload: ITerminalRunChunkPayload];
   'terminal-run-completed': [payload: ITerminalRunCompletedPayload];
   'toggle-maximize': [];
 }>();

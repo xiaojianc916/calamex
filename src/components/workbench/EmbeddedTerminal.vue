@@ -38,11 +38,7 @@
 import { useIntegratedTerminal } from '@/composables/useIntegratedTerminal';
 import type { TThemeMode } from '@/types/app';
 import type { ITerminalSettings } from '@/types/settings';
-import type {
-  ITerminalRunChunkPayload,
-  ITerminalRunCompletedPayload,
-  ITerminalStatusChangePayload,
-} from '@/types/terminal';
+import type { ITerminalRunCompletedPayload, ITerminalStatusChangePayload } from '@/types/terminal';
 import { DEFAULT_TERMINAL_SESSION_ID } from '@/types/terminal';
 import '@xterm/xterm/css/xterm.css';
 import { computed } from 'vue';
@@ -61,7 +57,6 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   'status-change': [payload: ITerminalStatusChangePayload];
-  'run-chunk': [payload: ITerminalRunChunkPayload];
   'run-completed': [payload: ITerminalRunCompletedPayload];
 }>();
 
@@ -74,7 +69,6 @@ const { hostRef, status, statusMessage, retry, focusTerminal } = useIntegratedTe
   theme,
   settings: terminalSettings,
   onStatusChange: (payload) => emit('status-change', payload),
-  onOutput: (payload) => emit('run-chunk', payload),
   onRunCompleted: (payload) => emit('run-completed', payload),
 });
 

@@ -251,7 +251,7 @@ export const useWorkbench = () => {
     flushSession,
   });
 
-  const { runScript, appendTerminalOutput, handleIntegratedTerminalRunCompleted } = useTerminalRun({
+  const { runScript, handleIntegratedTerminalRunCompleted } = useTerminalRun({
     canRun,
     editorStore,
   });
@@ -371,7 +371,6 @@ export const useWorkbench = () => {
     runScript,
     handleIntegratedTerminalRunCompleted,
     updateContent,
-    appendTerminalOutput,
     updateEncoding,
     toggleTheme,
     notifyTemplateInserted,

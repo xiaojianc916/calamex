@@ -5,7 +5,7 @@ import {
   type TTerminalRunNotifier,
 } from '@/services/terminal/runOrchestrator';
 import type { useEditorStore } from '@/store/editor';
-import type { ITerminalRunChunkPayload, ITerminalRunCompletedPayload } from '@/types/terminal';
+import type { ITerminalRunCompletedPayload } from '@/types/terminal';
 
 type TEditorStore = ReturnType<typeof useEditorStore>;
 
@@ -31,8 +31,6 @@ export const useTerminalRun = ({ canRun, editorStore }: TUseTerminalRunOptions) 
 
   return {
     runScript: (): Promise<void> => orchestrator.runScript(),
-    appendTerminalOutput: (payload: ITerminalRunChunkPayload): void =>
-      orchestrator.appendTerminalOutput(payload),
     handleIntegratedTerminalRunCompleted: (payload: ITerminalRunCompletedPayload): void =>
       orchestrator.handleIntegratedTerminalRunCompleted(payload),
   };
