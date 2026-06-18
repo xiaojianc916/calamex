@@ -44,29 +44,91 @@ pub(super) enum ActiveRunInputTarget {
     Run(String),
 }
 
+/// 单个会话「按 session_id 归集」的全部叶子状态。
+///
+/// 历史上这些字段分散在 7 个独立的 `Arc<Mutex<HashMap<String, _>>>` 里，导致
+/// `remove_interactive_terminal_after_exit` 等拆解路径要串行获取多把锁，锁的数量本身也
+/// 增加心智负担与潜在加锁顺序风险。现合并为单一 `per_session` 表，按 session_id 一把锁取用。
+///
+/// 注意：`sessions`（PTY 句柄）与 `active_runs`（按 run_id 归集）刻意**不并入**本结构——
+/// 见 `TerminalSessionState` 各字段注释中的加锁顺序约束。
+///
+/// 所有字段都「可空 / 可空串」，从而：
+/// - 用 `None` / 空串表达「该会话尚无此项记录」，与原先「map 中无该 key」语义一致；
+/// - `is_empty()` 为真时整条目可被剪除，避免合并表随会话起灭而泄漏空条目。
+#[derive(Default)]
+struct PerSessionState {
+    /// 终端输出快照（裁剪后的回放缓冲）。空串表示无快照。
+    snapshot: String,
+    /// 切换态（Idle<->Run）期间缓冲的前端输入。空串表示无缓冲。
+    pending_switch_input: String,
+    /// 该会话的列宽/行高。`None` 表示尚无记录，取用时回退默认尺寸。
+    geometry: Option<Geometry>,
+    /// 该会话状态机的当前状态。`None` 表示尚无记录，以 `Booting` 为基线。
+    state: Option<TerminalState>,
+    /// 交互视觉态（alt-screen / resize 重绘抑制）。`None` 表示尚无记录。
+    interactive_visual: Option<TerminalInteractiveVisualState>,
+    /// 该会话的输出流控器（P2 ack 背压）。`None` 表示尚未重置过。
+    flow_controller: Option<FlowController>,
+    /// 该会话最近一次前端心跳时刻。`None` 表示无心跳记录。
+    liveness: Option<Instant>,
+}
+
+impl PerSessionState {
+    /// 所有叶子状态均为空：可安全从 `per_session` 表中剪除该会话条目。
+    fn is_empty(&self) -> bool {
+        self.snapshot.is_empty()
+            && self.pending_switch_input.is_empty()
+            && self.geometry.is_none()
+            && self.state.is_none()
+            && self.interactive_visual.is_none()
+            && self.flow_controller.is_none()
+            && self.liveness.is_none()
+    }
+}
+
 #[derive(Clone, Default)]
 pub struct TerminalSessionState {
+    /// 会话 PTY 句柄。**独立保留**：`ensure_terminal_session` 创建分支会在持有本表锁期间，
+    /// 调用 `set_terminal_snapshot` / `remove_terminal_interactive_visual_state`（二者现取
+    /// `per_session` 锁）。若把 `sessions` 并入 `per_session`，将在同一线程重入同一把锁导致自
+    /// 死锁（std `Mutex` 不可重入）。故 `sessions` 必须是独立的一把锁。
     sessions: Arc<Mutex<HashMap<String, Arc<TerminalSession>>>>,
-    snapshots: Arc<Mutex<HashMap<String, String>>>,
-    interactive_visual: Arc<Mutex<HashMap<String, TerminalInteractiveVisualState>>>,
+    /// 活动运行。**独立保留**：键为 `run_id`（非 `session_id`），与 `per_session` 键空间不同；
+    /// 且 `get_active_terminal_run_input_target` 刻意先取本锁拿到 run_id 后立即释放，再取
+    /// `per_session`（会话状态）锁，维持单一加锁顺序。并入会破坏该顺序约束。
     active_runs: Arc<Mutex<HashMap<String, TerminalActiveRun>>>,
-    pending_switch_input: Arc<Mutex<HashMap<String, String>>>,
-    session_geometry: Arc<Mutex<HashMap<String, Geometry>>>,
-    session_states: Arc<Mutex<HashMap<String, TerminalState>>>,
-    /// 每会话输出流控器（P2 ack 背压）。键为 session_id；交互读线程与该会话发起的运行读线程
-    /// 共享同一控制器（都汇入前端同一个 xterm，由前端按会话回 ack）。会话创建时重置为全新实例，
-    /// 关闭 / 退出时取消并移除，避免复用到已 cancel 的陈旧控制器而失去背压。
-    flow_controllers: Arc<Mutex<HashMap<String, FlowController>>>,
-    /// 每会话最近一次「前端心跳」时刻。每个挂载中的前端 TerminalSession 周期性上报，后端据此判定
-    /// 哪些会话已无前端照管（页面重载 / 崩溃后前端 VM 销毁、心跳停止）。收割线程只回收「心跳超过
-    /// 宽限期 + 无活动运行」的孤儿交互会话，绝不碰仍在心跳的健康会话（零误杀）。
-    session_liveness: Arc<Mutex<HashMap<String, Instant>>>,
+    /// 其余「按 session_id 归集」的叶子状态（快照 / 交互视觉态 / 切换态输入 / geometry /
+    /// 状态机 / 流控器 / 心跳）合并到单一表，按 session_id 一把锁取用。相比原先 7 张独立 map，
+    /// 显著降低 `remove_interactive_terminal_after_exit` 等路径的取锁次数（7 把锁 -> 1 把）。
+    per_session: Arc<Mutex<HashMap<String, PerSessionState>>>,
     /// 优雅关闭信号：设为 true 时孤儿收割线程退出循环。
     pub(super) shutdown: Arc<AtomicBool>,
     pub(super) creation_guard: Arc<Mutex<()>>,
-    // TODO(design): 9 个独立 Arc<Mutex<HashMap>> 增加锁复杂度。
-    // remove_interactive_terminal_after_exit 串行获取 8 次锁。
-    // 可考虑将 snapshots + interactive_visual 等常同时访问的 map 合并为单一 struct。
+}
+
+/// 锁定合并后的 per-session 表；中毒时返回带上下文的错误串（沿用各原始辅助的提示文案）。
+fn lock_per_session<'a>(
+    state: &'a TerminalSessionState,
+    poisoned_message: &str,
+) -> Result<std::sync::MutexGuard<'a, HashMap<String, PerSessionState>>, String> {
+    state
+        .per_session
+        .lock()
+        .map_err(|_| poisoned_message.to_string())
+}
+
+/// 清空某字段后，若该会话条目已无任何状态则剪除整条目，避免空条目在合并表里泄漏。
+fn prune_session_entry_if_empty(
+    per_session: &mut HashMap<String, PerSessionState>,
+    session_id: &str,
+) {
+    if per_session
+        .get(session_id)
+        .is_some_and(PerSessionState::is_empty)
+    {
+        per_session.remove(session_id);
+    }
 }
 
 pub(super) fn lock_terminal_sessions(
@@ -94,21 +156,15 @@ pub(super) fn remove_terminal_session(
     Ok(sessions.remove(session_id))
 }
 
-fn lock_terminal_snapshots(
-    state: &TerminalSessionState,
-) -> Result<std::sync::MutexGuard<'_, HashMap<String, String>>, String> {
-    state
-        .snapshots
-        .lock()
-        .map_err(|_| "终端快照状态已损坏。".to_string())
-}
-
 pub(super) fn get_terminal_snapshot(
     state: &TerminalSessionState,
     session_id: &str,
 ) -> Result<String, String> {
-    let snapshots = lock_terminal_snapshots(state)?;
-    Ok(snapshots.get(session_id).cloned().unwrap_or_default())
+    let per_session = lock_per_session(state, "终端快照状态已损坏。")?;
+    Ok(per_session
+        .get(session_id)
+        .map(|entry| entry.snapshot.clone())
+        .unwrap_or_default())
 }
 
 pub(super) fn set_terminal_snapshot(
@@ -116,8 +172,11 @@ pub(super) fn set_terminal_snapshot(
     session_id: &str,
     value: String,
 ) -> Result<(), String> {
-    let mut snapshots = lock_terminal_snapshots(state)?;
-    snapshots.insert(session_id.to_string(), value);
+    let mut per_session = lock_per_session(state, "终端快照状态已损坏。")?;
+    per_session
+        .entry(session_id.to_string())
+        .or_default()
+        .snapshot = value;
     Ok(())
 }
 
@@ -125,8 +184,11 @@ pub(super) fn remove_terminal_snapshot(
     state: &TerminalSessionState,
     session_id: &str,
 ) -> Result<(), String> {
-    let mut snapshots = lock_terminal_snapshots(state)?;
-    snapshots.remove(session_id);
+    let mut per_session = lock_per_session(state, "终端快照状态已损坏。")?;
+    if let Some(entry) = per_session.get_mut(session_id) {
+        entry.snapshot.clear();
+    }
+    prune_session_entry_if_empty(&mut per_session, session_id);
     Ok(())
 }
 
@@ -138,8 +200,11 @@ pub(super) fn append_terminal_snapshot(
     if chunk.is_empty() {
         return Ok(());
     }
-    let mut snapshots = lock_terminal_snapshots(state)?;
-    let snapshot = snapshots.entry(session_id.to_string()).or_default();
+    let mut per_session = lock_per_session(state, "终端快照状态已损坏。")?;
+    let snapshot = &mut per_session
+        .entry(session_id.to_string())
+        .or_default()
+        .snapshot;
     snapshot.push_str(chunk);
     trim_terminal_snapshot(snapshot);
     Ok(())
@@ -149,11 +214,11 @@ pub(super) fn remove_terminal_interactive_visual_state(
     state: &TerminalSessionState,
     session_id: &str,
 ) -> Result<(), String> {
-    let mut visual_states = state
-        .interactive_visual
-        .lock()
-        .map_err(|_| "终端交互视觉状态已损坏。".to_string())?;
-    visual_states.remove(session_id);
+    let mut per_session = lock_per_session(state, "终端交互视觉状态已损坏。")?;
+    if let Some(entry) = per_session.get_mut(session_id) {
+        entry.interactive_visual = None;
+    }
+    prune_session_entry_if_empty(&mut per_session, session_id);
     Ok(())
 }
 
@@ -161,10 +226,14 @@ pub(super) fn mark_terminal_resize_repaint_suppression(
     state: &TerminalSessionState,
     session_id: &str,
 ) {
-    let Ok(mut visual_states) = state.interactive_visual.lock() else {
+    let Ok(mut per_session) = state.per_session.lock() else {
         return;
     };
-    let visual_state = visual_states.entry(session_id.to_string()).or_default();
+    let visual_state = per_session
+        .entry(session_id.to_string())
+        .or_default()
+        .interactive_visual
+        .get_or_insert_with(TerminalInteractiveVisualState::default);
     visual_state.resize_repaint_suppress_until =
         Some(Instant::now() + TERMINAL_RESIZE_REPAINT_SUPPRESSION);
 }
@@ -175,7 +244,7 @@ pub(super) fn mark_terminal_resize_repaint_suppression(
 /// （绞杀式重构 BE-1）。
 ///
 /// 对照 VSCode `src/vs/platform/terminal/node/ptyService.ts`：每个 `PersistentTerminalProcess`
-/// 各自持有 cols/rows（经其 `XtermSerializer`），`PtyService.resize(id, cols, rows)` 仅作用于
+/// 各自持有 cols/rows（尤其 `XtermSerializer`），`PtyService.resize(id, cols, rows)` 仅作用于
 /// 指定 id 的进程，不存在跨会话共享的全局尺寸。
 pub(super) fn set_session_geometry(
     state: &TerminalSessionState,
@@ -183,10 +252,14 @@ pub(super) fn set_session_geometry(
     cols: u16,
     rows: u16,
 ) {
-    let Ok(mut geometries) = state.session_geometry.lock() else {
+    let Ok(mut per_session) = state.per_session.lock() else {
         return;
     };
-    let geometry = geometries.entry(session_id.to_string()).or_default();
+    let geometry = per_session
+        .entry(session_id.to_string())
+        .or_default()
+        .geometry
+        .get_or_insert_with(Geometry::default);
     geometry.cols = cols.max(2);
     geometry.rows = rows.max(1);
 }
@@ -194,18 +267,23 @@ pub(super) fn set_session_geometry(
 /// 取指定会话的 geometry；该会话尚无记录时回退到默认尺寸。每会话 geometry 已是唯一真相源，
 /// 不再回退到全局 `registry().geometry`（全局几何已于 BE-1 删除）。
 pub(super) fn get_session_geometry(state: &TerminalSessionState, session_id: &str) -> Geometry {
-    if let Ok(geometries) = state.session_geometry.lock()
-        && let Some(geometry) = geometries.get(session_id)
+    if let Ok(per_session) = state.per_session.lock()
+        && let Some(entry) = per_session.get(session_id)
+        && let Some(geometry) = entry.geometry
     {
-        return *geometry;
+        return geometry;
     }
     Geometry::default()
 }
 
 pub(super) fn remove_session_geometry(state: &TerminalSessionState, session_id: &str) {
-    if let Ok(mut geometries) = state.session_geometry.lock() {
-        geometries.remove(session_id);
+    let Ok(mut per_session) = state.per_session.lock() else {
+        return;
+    };
+    if let Some(entry) = per_session.get_mut(session_id) {
+        entry.geometry = None;
     }
+    prune_session_entry_if_empty(&mut per_session, session_id);
 }
 
 /// 每会话状态机：作为「单一 SessionRegistry」绞杀式重构的第二块砖，让会话各自持有自己的
@@ -232,8 +310,8 @@ pub(super) fn set_session_state(
     session_id: &str,
     to: TerminalState,
 ) -> Option<(TerminalState, TerminalState)> {
-    let mut states = match state.session_states.lock() {
-        Ok(states) => states,
+    let mut per_session = match state.per_session.lock() {
+        Ok(per_session) => per_session,
         Err(_) => {
             // 锁中毒属不可恢复的内部错误：记录后丢弃本次转移，保持「尽力而为、不 panic」。
             log::warn!(
@@ -242,9 +320,9 @@ pub(super) fn set_session_state(
             return None;
         }
     };
-    let from = states
+    let from = per_session
         .get(session_id)
-        .copied()
+        .and_then(|entry| entry.state)
         .unwrap_or(TerminalState::Booting);
     if from == to {
         // 无变化：常见且无害（如交互就绪重复置 IdleInteractive），仅 trace 备查，不发事件。
@@ -260,7 +338,7 @@ pub(super) fn set_session_state(
         );
         return None;
     }
-    states.insert(session_id.to_string(), to);
+    per_session.entry(session_id.to_string()).or_default().state = Some(to);
     log::debug!("[session-fsm] 会话状态转移（session_id={session_id}, {from:?} -> {to:?}）。");
     Some((from, to))
 }
@@ -274,18 +352,28 @@ pub(super) fn set_session_state(
 /// 对照 VSCode `ptyService.ts`：每个 `PersistentTerminalProcess` 依据自身 `_interactionState`
 /// 判定，不存在跨会话共享的全局态。
 pub(super) fn get_session_state(state: &TerminalSessionState, session_id: &str) -> TerminalState {
-    if let Ok(states) = state.session_states.lock()
-        && let Some(current) = states.get(session_id)
+    if let Ok(per_session) = state.per_session.lock()
+        && let Some(entry) = per_session.get(session_id)
+        && let Some(current) = entry.state
     {
-        return *current;
+        return current;
     }
     TerminalState::Booting
 }
 
 pub(super) fn remove_session_state(state: &TerminalSessionState, session_id: &str) {
-    if let Ok(mut states) = state.session_states.lock()
-        && states.remove(session_id).is_some()
-    {
+    let Ok(mut per_session) = state.per_session.lock() else {
+        return;
+    };
+    let removed = if let Some(entry) = per_session.get_mut(session_id) {
+        let had = entry.state.is_some();
+        entry.state = None;
+        had
+    } else {
+        false
+    };
+    prune_session_entry_if_empty(&mut per_session, session_id);
+    if removed {
         // P1：会话 FSM 生命终结，记一条 debug 以便日志中能完整追踪一个会话的起灭。
         log::debug!("[session-fsm] 会话状态机回收（session_id={session_id}）。");
     }
@@ -299,9 +387,12 @@ pub(super) fn reset_flow_controller(
     state: &TerminalSessionState,
     session_id: &str,
 ) -> Option<FlowController> {
-    let mut controllers = state.flow_controllers.lock().ok()?;
+    let mut per_session = state.per_session.lock().ok()?;
     let controller = FlowController::new();
-    controllers.insert(session_id.to_string(), controller.clone());
+    per_session
+        .entry(session_id.to_string())
+        .or_default()
+        .flow_controller = Some(controller.clone());
     Some(controller)
 }
 
@@ -310,53 +401,75 @@ pub(super) fn get_flow_controller(
     state: &TerminalSessionState,
     session_id: &str,
 ) -> Option<FlowController> {
-    let controllers = state.flow_controllers.lock().ok()?;
-    controllers.get(session_id).cloned()
+    let per_session = state.per_session.lock().ok()?;
+    per_session
+        .get(session_id)
+        .and_then(|entry| entry.flow_controller.clone())
 }
 
 /// 取消并移除该会话的输出流控器：cancel 释放任何处于背压暂停态的读线程（使其能继续读到 EOF），
 /// 移除则保证下次创建同名会话时得到全新实例。锁中毒时尽力而为忽略。
 pub(super) fn remove_flow_controller(state: &TerminalSessionState, session_id: &str) {
-    let Ok(mut controllers) = state.flow_controllers.lock() else {
-        return;
+    // 先在锁内取出控制器并剪除空条目，再于锁外 cancel：cancel 释放被背压暂停的读线程，
+    // 无需也不应持有 per_session 锁，避免无谓扩大锁临界区。
+    let controller = {
+        let Ok(mut per_session) = state.per_session.lock() else {
+            return;
+        };
+        let controller = per_session
+            .get_mut(session_id)
+            .and_then(|entry| entry.flow_controller.take());
+        prune_session_entry_if_empty(&mut per_session, session_id);
+        controller
     };
-    if let Some(controller) = controllers.remove(session_id) {
+    if let Some(controller) = controller {
         controller.cancel();
     }
 }
 
 /// 记录 / 刷新某会话的前端心跳时刻。会话连接（ensure）与每次前端心跳时调用。
 pub(super) fn touch_session_liveness(state: &TerminalSessionState, session_id: &str) {
-    let Ok(mut liveness) = state.session_liveness.lock() else {
+    let Ok(mut per_session) = state.per_session.lock() else {
         return;
     };
-    liveness.insert(session_id.to_string(), Instant::now());
+    per_session
+        .entry(session_id.to_string())
+        .or_default()
+        .liveness = Some(Instant::now());
 }
 
 /// 移除某会话的心跳记录（会话拆解 / 关闭时），避免心跳表泄漏已消亡会话的陈旧条目。
 pub(super) fn remove_session_liveness(state: &TerminalSessionState, session_id: &str) {
-    if let Ok(mut liveness) = state.session_liveness.lock() {
-        liveness.remove(session_id);
+    let Ok(mut per_session) = state.per_session.lock() else {
+        return;
+    };
+    if let Some(entry) = per_session.get_mut(session_id) {
+        entry.liveness = None;
     }
+    prune_session_entry_if_empty(&mut per_session, session_id);
 }
 
 /// 收集「已超过宽限期未收到前端心跳、且当前无活动运行」的孤儿交互会话 id。
 /// 仅返回仍存在于 sessions 表中的会话；带活动运行的会话一律跳过（绝不经收割线程终止仍在运行的
 /// 脚本，那类清理交由应用退出时的 shutdown_all 处理），最大化零误杀。先在锁内仅取候选 id 即释放
-/// 心跳锁，再做 sessions / active_runs 复核，避免跨锁持有。
+/// per_session 锁，再做 sessions / active_runs 复核，避免跨锁持有。
 pub(super) fn collect_idle_orphan_session_ids(
     state: &TerminalSessionState,
     grace: Duration,
 ) -> Vec<String> {
     let candidates: Vec<String> = {
-        let Ok(liveness) = state.session_liveness.lock() else {
+        let Ok(per_session) = state.per_session.lock() else {
             return Vec::new();
         };
         let now = Instant::now();
-        liveness
+        per_session
             .iter()
-            .filter(|(_, last_seen)| now.duration_since(**last_seen) > grace)
-            .map(|(session_id, _)| session_id.clone())
+            .filter_map(|(session_id, entry)| {
+                entry
+                    .liveness
+                    .filter(|last_seen| now.duration_since(*last_seen) > grace)
+                    .map(|_| session_id.clone())
+            })
             .collect()
     };
     candidates
@@ -510,7 +623,7 @@ pub(super) fn get_active_terminal_run_input_target(
     session_id: &str,
 ) -> Result<ActiveRunInputTarget, String> {
     // 先确定该会话是否有活动运行；有则取出 run_id 后立即释放 active_runs 锁，避免与
-    // session_states 锁叠加持有（保持单一加锁顺序，杜绝潜在死锁）。
+    // per_session（会话状态）锁叠加持有（保持单一加锁顺序，杜绝潜在死锁）。
     let run_id = {
         let active_runs = lock_active_terminal_runs(state)?;
         match active_runs
@@ -540,11 +653,11 @@ pub(super) fn buffer_pending_switch_input(
     if data.is_empty() {
         return Ok(());
     }
-    let mut pending = state
-        .pending_switch_input
-        .lock()
-        .map_err(|_| "终端切换态输入缓冲已损坏。".to_string())?;
-    let buffer = pending.entry(session_id.to_string()).or_default();
+    let mut per_session = lock_per_session(state, "终端切换态输入缓冲已损坏。")?;
+    let buffer = &mut per_session
+        .entry(session_id.to_string())
+        .or_default()
+        .pending_switch_input;
     // 防御：切换窗口异常拉长时避免缓冲无限增长。超限则整体清空再写入，
     // 既保留最新输入，也保证不会在 UTF-8 字符边界中间截断。
     if buffer.len() + data.len() > MAX_PENDING_SWITCH_INPUT_BYTES {
@@ -559,20 +672,27 @@ pub(super) fn take_and_prepend_pending_switch_input(
     session_id: &str,
     data: String,
 ) -> Result<String, String> {
-    let mut pending = state
-        .pending_switch_input
-        .lock()
-        .map_err(|_| "终端切换态输入缓冲已损坏。".to_string())?;
-    match pending.remove(session_id) {
-        Some(buffered) if !buffered.is_empty() => Ok(format!("{buffered}{data}")),
-        _ => Ok(data),
+    let mut per_session = lock_per_session(state, "终端切换态输入缓冲已损坏。")?;
+    let buffered = per_session
+        .get_mut(session_id)
+        .map(|entry| std::mem::take(&mut entry.pending_switch_input))
+        .unwrap_or_default();
+    prune_session_entry_if_empty(&mut per_session, session_id);
+    if buffered.is_empty() {
+        Ok(data)
+    } else {
+        Ok(format!("{buffered}{data}"))
     }
 }
 
 pub(super) fn remove_pending_switch_input(state: &TerminalSessionState, session_id: &str) {
-    if let Ok(mut pending) = state.pending_switch_input.lock() {
-        pending.remove(session_id);
+    let Ok(mut per_session) = state.per_session.lock() else {
+        return;
+    };
+    if let Some(entry) = per_session.get_mut(session_id) {
+        entry.pending_switch_input.clear();
     }
+    prune_session_entry_if_empty(&mut per_session, session_id);
 }
 
 pub(super) fn should_skip_snapshot_for_interactive_resize_repaint(
@@ -583,10 +703,14 @@ pub(super) fn should_skip_snapshot_for_interactive_resize_repaint(
     if chunk.is_empty() {
         return false;
     }
-    let Ok(mut visual_states) = state.interactive_visual.lock() else {
+    let Ok(mut per_session) = state.per_session.lock() else {
         return false;
     };
-    let visual_state = visual_states.entry(session_id.to_string()).or_default();
+    let visual_state = per_session
+        .entry(session_id.to_string())
+        .or_default()
+        .interactive_visual
+        .get_or_insert_with(TerminalInteractiveVisualState::default);
     let was_alt_screen_active = visual_state.alt_screen_active;
     // 单次 vte 扫描同时得出「本段是否含 alt-screen 切换」与「应用后最终 alt-screen 状态」，
     // 避免对同一段数据解析两遍（原先分别调用 contains_alt_screen_switch 与
@@ -612,7 +736,7 @@ pub(super) fn should_skip_snapshot_for_interactive_resize_repaint(
 pub(super) fn should_recreate_terminal_session(session: &TerminalSession) -> bool {
     let cwd = session.working_directory.trim();
     cwd.is_empty()
-        || cwd.contains('\\')
+        || cwd.contains('\')
         || looks_like_windows_drive_path(cwd)
         || (!cwd.starts_with('/') && cwd != "~")
 }
@@ -623,7 +747,7 @@ fn looks_like_windows_drive_path(path: &str) -> bool {
     bytes.len() >= 3
         && bytes[0].is_ascii_alphabetic()
         && bytes[1] == b':'
-        && (bytes[2] == b'\\' || bytes[2] == b'/')
+        && (bytes[2] == b'\' || bytes[2] == b'/')
 }
 
 pub(super) fn terminate_terminal_session(session: &TerminalSession) -> Result<(), String> {
@@ -649,14 +773,20 @@ pub(super) fn remove_interactive_terminal_after_exit(
     state: &TerminalSessionState,
     session_id: &str,
 ) {
-    // 尽力而为地清理该会话的全部状态，复用各自的 remove_* 辅助；
-    // 锁中毒时这些辅助返回 Err，这里一律忽略（与原先 if let Ok 的语义一致）。
+    // sessions 表独立：单独移除其 PTY 句柄。
     let _ = remove_terminal_session(state, session_id);
-    let _ = remove_terminal_snapshot(state, session_id);
-    let _ = remove_terminal_interactive_visual_state(state, session_id);
-    remove_pending_switch_input(state, session_id);
-    remove_session_geometry(state, session_id);
-    remove_session_state(state, session_id);
-    remove_flow_controller(state, session_id);
-    remove_session_liveness(state, session_id);
+    // 其余按会话归集的状态都在 per_session 合并表里：一次取锁整体移除该会话条目
+    // （原先逐项串行获取 7 把锁，现合并为 1 把）。同时取出流控器，于锁外 cancel
+    // 以释放任何处于背压暂停态的读线程。锁中毒时尽力而为忽略。
+    let flow_controller = {
+        let Ok(mut per_session) = state.per_session.lock() else {
+            return;
+        };
+        per_session
+            .remove(session_id)
+            .and_then(|entry| entry.flow_controller)
+    };
+    if let Some(controller) = flow_controller {
+        controller.cancel();
+    }
 }
