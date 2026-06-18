@@ -133,7 +133,7 @@ pub async fn ensure_terminal_session(
                 .map(|(run_id, pid, started_at_ms)| TerminalActiveRunSnapshot {
                     run_id,
                     pid,
-                    started_at_ms,
+                    started_at_ms: started_at_ms.map(|value| value as f64),
                 });
                 let session_state = get_session_state(&terminal_state, &payload.session_id);
                 mark_terminal_interactive_ready(&app);

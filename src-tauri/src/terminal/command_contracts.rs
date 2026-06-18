@@ -20,7 +20,7 @@ pub struct EnsureTerminalSessionRequest {
 pub struct TerminalActiveRunSnapshot {
     pub(crate) run_id: String,
     pub(crate) pid: Option<u32>,
-    pub(crate) started_at_ms: Option<i64>,
+    pub(crate) started_at_ms: Option<f64>,
 }
 
 #[derive(Debug, Serialize, Type)]

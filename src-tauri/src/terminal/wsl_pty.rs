@@ -741,9 +741,13 @@ fn spawn_resize_worker(
     master: Box<dyn MasterPty + Send>,
     resize_rx: Receiver<(u16, u16)>,
 ) {
+    // 把 session_id 克隆给合批线程闭包持有；原值留给下方 spawn 失败时的告警日志，
+    // 避免「move 进闭包后又借用」(E0382)。
+    let worker_session_id = session_id.clone();
     let spawn_result = std::thread::Builder::new()
         .name(format!("wsl-pty-resize-{session_id}"))
         .spawn(move || {
+            let session_id = worker_session_id;
             // 阻塞等待第一条 resize；所有发送端释放后通道断开，recv 返回 Err，线程退出。
             while let Ok(mut latest) = resize_rx.recv() {
                 // 合批：静默窗口内持续吸收后续 resize，只保留最后一次；窗口内无新 resize 即安定。

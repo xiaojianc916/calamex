@@ -55,7 +55,7 @@ use super::approval::{ApprovalError, ApprovalRegistry, ApprovalRequestInfo};
 use super::client::{
     AcpClientConfig, AcpClientError, AcpClientHandle, AcpStreamFrame, AgentAskUserResumeExtRequest,
     AgentChatExtRequest, AgentChatResolveExtRequest, CheckpointRestoreRequest, EventSink,
-    HealthExtRequest, ModelChatExtRequest, NewSessionOutcome, OrchestrateExtRequest,
+    HealthExtRequest, ModelChatExtRequest, OrchestrateExtRequest,
     OrchestrateResumeExtRequest, WarmupExtRequest, WebFetchExtRequest, WebSearchExtRequest,
     spawn_acp_client,
 };
