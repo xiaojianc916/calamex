@@ -26,14 +26,14 @@ const patchFile = (file, marker, edits) => {
   for (const [anchor, replacement, keyword] of edits) {
     const count = text.split(anchor).length - 1;
     if (count !== 1) {
-      console.error(`--- ${file} 上下文 \"${keyword}\" ---`);
+      console.error(`--- ${file} 上下文 "${keyword}" ---`);
       text.split('\n').forEach((line, idx) => {
         if (line.includes(keyword)) {
           console.error(`${idx + 1}: ${line}`);
         }
       });
       console.error('--- end ---');
-      throw new Error(`[${file}] anchor \"${keyword}\": expected 1 match but found ${count}`);
+      throw new Error(`[${file}] anchor "${keyword}": expected 1 match but found ${count}`);
     }
     text = text.replace(anchor, () => replacement);
   }

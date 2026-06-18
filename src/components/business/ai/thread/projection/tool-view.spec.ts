@@ -45,7 +45,9 @@ describe('toAiThreadToolView', () => {
     expect(toAiThreadToolView(baseToolCall({ status: 'in_progress' }), deps).status).toBe(
       'awaiting-confirmation',
     );
-    expect(toAiThreadToolView(baseToolCall({ status: 'completed' }), deps).status).toBe('succeeded');
+    expect(toAiThreadToolView(baseToolCall({ status: 'completed' }), deps).status).toBe(
+      'succeeded',
+    );
   });
 
   it('content 文本块 → text,并合成稳定 id', () => {

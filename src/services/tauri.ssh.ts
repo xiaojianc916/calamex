@@ -216,17 +216,13 @@ const readSshFileIpc = (
   payload: TSshRequest<'readSshFile'>,
   options?: IIpcCallOptions,
 ): Promise<TSshResult<'readSshFile'>> =>
-  runCommand(SSH_COMMAND_META.readSshFile, payload, options, () =>
-    commands.readSshFile(payload),
-  );
+  runCommand(SSH_COMMAND_META.readSshFile, payload, options, () => commands.readSshFile(payload));
 
 const writeSshFileIpc = (
   payload: TSshRequest<'writeSshFile'>,
   options?: IIpcCallOptions,
 ): Promise<TSshResult<'writeSshFile'>> =>
-  runCommand(SSH_COMMAND_META.writeSshFile, payload, options, () =>
-    commands.writeSshFile(payload),
-  );
+  runCommand(SSH_COMMAND_META.writeSshFile, payload, options, () => commands.writeSshFile(payload));
 
 const deleteSshPathIpc = (
   payload: TSshRequest<'deleteSshPath'>,

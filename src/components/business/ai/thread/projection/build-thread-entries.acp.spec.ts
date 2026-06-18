@@ -1,8 +1,7 @@
 import { describe, expect, it } from 'vitest';
-
+import { buildThreadEntries } from '@/components/business/ai/thread/projection/build-thread-entries';
 import type { IAiChatMessage, IAiToolCall } from '@/types/ai';
 import type { IAiThreadToolCall } from '@/types/ai/thread';
-import { buildThreadEntries } from '@/components/business/ai/thread/projection/build-thread-entries';
 
 const acpCall = (overrides: Partial<IAiThreadToolCall> = {}): IAiThreadToolCall => ({
   type: 'tool_call',

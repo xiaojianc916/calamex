@@ -261,8 +261,7 @@ const migrateFromLegacyBlob = async (): Promise<{
   if (!isConversationBlobShape(parsed)) {
     return null;
   }
-  const activeThreadId =
-    typeof parsed.activeThreadId === 'string' ? parsed.activeThreadId : null;
+  const activeThreadId = typeof parsed.activeThreadId === 'string' ? parsed.activeThreadId : null;
   const threads = (parsed.threads as unknown[]).filter(
     (thread): thread is IAiConversationThread =>
       isRecord(thread) && typeof (thread as { id?: unknown }).id === 'string',

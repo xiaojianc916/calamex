@@ -13,7 +13,7 @@ import AiMarkdown from '@/components/business/ai/chat/AiMarkdown.vue';
 import { AiDiffHunkViewer } from '@/components/business/ai/edit';
 import { TASK_ICON_MAP } from '@/components/business/ai/plan/runtime-timeline';
 import LucideIcon from '@/components/ui/icon/LucideIcon.vue';
-import { toAiThreadToolView, type IAiThreadToolCallEntry } from './projection';
+import { type IAiThreadToolCallEntry, toAiThreadToolView } from './projection';
 
 const props = defineProps<{
   entry: IAiThreadToolCallEntry;

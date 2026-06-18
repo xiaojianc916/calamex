@@ -30,7 +30,13 @@ import {
   toggleLineComment,
   undo,
 } from '@codemirror/commands';
-import { bracketMatching, foldAll, foldKeymap, indentOnInput, unfoldAll } from '@codemirror/language';
+import {
+  bracketMatching,
+  foldAll,
+  foldKeymap,
+  indentOnInput,
+  unfoldAll,
+} from '@codemirror/language';
 import { type Diagnostic, lintGutter, setDiagnostics } from '@codemirror/lint';
 import {
   gotoLine,

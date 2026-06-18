@@ -24,7 +24,11 @@ describe('buildAcpPermissionApproval', () => {
       'reject-once',
       'reject-always',
     ]);
-    expect(approval.options[0]).toMatchObject({ label: '允许一次', shortcut: 'y', tone: 'default' });
+    expect(approval.options[0]).toMatchObject({
+      label: '允许一次',
+      shortcut: 'y',
+      tone: 'default',
+    });
     expect(approval.options[1]).toMatchObject({ shortcut: 'a', tone: 'default' });
     expect(approval.options[2]).toMatchObject({ shortcut: 'n', tone: 'danger' });
     expect(approval.options[3]).toMatchObject({ tone: 'danger' });

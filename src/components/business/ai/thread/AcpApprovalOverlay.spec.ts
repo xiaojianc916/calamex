@@ -29,13 +29,15 @@ interface IApprovalOptionStub {
   tone?: 'default' | 'danger';
 }
 
-const buildPending = (overrides: {
-  toolCallId?: string;
-  options?: IApprovalOptionStub[];
-  title?: string;
-  summary?: string | null;
-  impact?: string | null;
-} = {}) => ({
+const buildPending = (
+  overrides: {
+    toolCallId?: string;
+    options?: IApprovalOptionStub[];
+    title?: string;
+    summary?: string | null;
+    impact?: string | null;
+  } = {},
+) => ({
   sessionId: 'session-1',
   toolCallId: overrides.toolCallId ?? 'tool-1',
   request: { sessionId: 'session-1', toolCallId: overrides.toolCallId ?? 'tool-1', options: [] },

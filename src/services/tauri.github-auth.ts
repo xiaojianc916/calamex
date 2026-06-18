@@ -72,25 +72,18 @@ export const getGithubAuthStatus = (
   repositoryRootPath: string,
   options?: IIpcCallOptions,
 ): Promise<IGitHubAuthStatusPayload> =>
-  runCommand(
-    GITHUB_AUTH_COMMAND_META.getGithubAuthStatus,
-    { repositoryRootPath },
-    options,
-    () => commands.getGithubAuthStatus(createRequest(repositoryRootPath)),
+  runCommand(GITHUB_AUTH_COMMAND_META.getGithubAuthStatus, { repositoryRootPath }, options, () =>
+    commands.getGithubAuthStatus(createRequest(repositoryRootPath)),
   );
 
 export const beginGithubBrowserAuth = (
   repositoryRootPath: string,
   options?: IIpcCallOptions,
 ): Promise<IGitHubBrowserAuthPayload> =>
-  runCommand(
-    GITHUB_AUTH_COMMAND_META.beginGithubBrowserAuth,
-    { repositoryRootPath },
-    options,
-    () =>
-      invoke<IGitHubBrowserAuthPayload>('begin_github_browser_auth', {
-        payload: createRequest(repositoryRootPath),
-      }),
+  runCommand(GITHUB_AUTH_COMMAND_META.beginGithubBrowserAuth, { repositoryRootPath }, options, () =>
+    invoke<IGitHubBrowserAuthPayload>('begin_github_browser_auth', {
+      payload: createRequest(repositoryRootPath),
+    }),
   );
 
 export const completeGithubBrowserAuth = (
@@ -111,20 +104,14 @@ export const connectGithub = (
   repositoryRootPath: string,
   options?: IIpcCallOptions,
 ): Promise<IGitHubAuthStatusPayload> =>
-  runCommand(
-    GITHUB_AUTH_COMMAND_META.connectGithub,
-    { repositoryRootPath },
-    options,
-    () => commands.connectGithub(createRequest(repositoryRootPath)),
+  runCommand(GITHUB_AUTH_COMMAND_META.connectGithub, { repositoryRootPath }, options, () =>
+    commands.connectGithub(createRequest(repositoryRootPath)),
   );
 
 export const disconnectGithub = (
   repositoryRootPath: string,
   options?: IIpcCallOptions,
 ): Promise<IGitHubAuthStatusPayload> =>
-  runCommand(
-    GITHUB_AUTH_COMMAND_META.disconnectGithub,
-    { repositoryRootPath },
-    options,
-    () => commands.disconnectGithub(createRequest(repositoryRootPath)),
+  runCommand(GITHUB_AUTH_COMMAND_META.disconnectGithub, { repositoryRootPath }, options, () =>
+    commands.disconnectGithub(createRequest(repositoryRootPath)),
   );

@@ -51,9 +51,7 @@ const isEditLikeToolCall = (toolCall: IAiThreadToolCall): boolean => toolCall.ki
  * `buildAiPatchPreviewFiles`,避免内联 diff 与汇总卡片行为漂移(不另造解析)。
  * 仅按路径键匹配,不依赖 workspaceRootPath(其只影响展示路径,不影响 hunk 与键)。
  */
-const resolveHunksByPath = (
-  patches: readonly IAiPatchSet[],
-): Map<string, IAiDiffHunkPreview[]> => {
+const resolveHunksByPath = (patches: readonly IAiPatchSet[]): Map<string, IAiDiffHunkPreview[]> => {
   const byPath = new Map<string, IAiDiffHunkPreview[]>();
   for (const patch of patches) {
     for (const previewFile of buildAiPatchPreviewFiles(patch, undefined)) {

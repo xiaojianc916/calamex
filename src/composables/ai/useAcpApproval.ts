@@ -1,4 +1,4 @@
-import { computed, onScopeDispose, ref, type ComputedRef } from 'vue';
+import { type ComputedRef, computed, onScopeDispose, ref } from 'vue';
 
 import {
   buildAcpPermissionApproval,
@@ -56,9 +56,7 @@ export interface IUseAcpApprovalReturn {
   dismiss: (toolCallId: string) => void;
 }
 
-export const useAcpApproval = (
-  options: IUseAcpApprovalOptions = {},
-): IUseAcpApprovalReturn => {
+export const useAcpApproval = (options: IUseAcpApprovalOptions = {}): IUseAcpApprovalReturn => {
   const queue = ref<IPendingAcpApproval[]>([]);
 
   const enqueue = (payload: IAcpPermissionRequestPayload): void => {
@@ -71,9 +69,7 @@ export const useAcpApproval = (
       approval: buildAcpPermissionApproval(request, options.resolveContext?.(request)),
     };
 
-    const existingIndex = queue.value.findIndex(
-      (item) => item.toolCallId === payload.toolCallId,
-    );
+    const existingIndex = queue.value.findIndex((item) => item.toolCallId === payload.toolCallId);
     if (existingIndex >= 0) {
       const next = queue.value.slice();
       next[existingIndex] = entry;
@@ -106,10 +102,7 @@ export const useAcpApproval = (
         decision,
       });
     } catch (error) {
-      queue.value = [
-        entry,
-        ...queue.value.filter((item) => item.toolCallId !== toolCallId),
-      ];
+      queue.value = [entry, ...queue.value.filter((item) => item.toolCallId !== toolCallId)];
       throw error;
     }
   };

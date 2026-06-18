@@ -81,10 +81,8 @@ describe('fromRuntimeToolCall', () => {
 
   it('等待决策返回 awaiting 标志', () => {
     expect(
-      fromRuntimeToolCall(
-        baseNode({ shimmerAction: true, action: WAITING_DECISION_LABEL }),
-        opts,
-      ).awaiting,
+      fromRuntimeToolCall(baseNode({ shimmerAction: true, action: WAITING_DECISION_LABEL }), opts)
+        .awaiting,
     ).toBe(true);
     expect(fromRuntimeToolCall(baseNode(), opts).awaiting).toBe(false);
   });
@@ -93,7 +91,9 @@ describe('fromRuntimeToolCall', () => {
     expect(fromRuntimeToolCall(baseNode({ status: 'pending' }), opts).toolCall.status).toBe(
       'pending',
     );
-    expect(fromRuntimeToolCall(baseNode({ status: 'failed' }), opts).toolCall.status).toBe('failed');
+    expect(fromRuntimeToolCall(baseNode({ status: 'failed' }), opts).toolCall.status).toBe(
+      'failed',
+    );
     expect(fromRuntimeToolCall(baseNode({ kind: 'terminal' }), opts).toolCall.kind).toBe('execute');
     expect(fromRuntimeToolCall(baseNode({ kind: 'browser' }), opts).toolCall.kind).toBe('fetch');
     expect(fromRuntimeToolCall(baseNode({ kind: 'git' }), opts).toolCall.kind).toBe('other');

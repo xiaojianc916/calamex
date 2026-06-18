@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { effectScope } from 'vue';
 
-import { useAcpSessionModes, type IUseAcpSessionModesReturn } from './useAcpSessionModes';
+import { type IUseAcpSessionModesReturn, useAcpSessionModes } from './useAcpSessionModes';
 
 const { getSessionModes, setSessionMode } = vi.hoisted(() => ({
   getSessionModes: vi.fn(),

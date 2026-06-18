@@ -3,7 +3,7 @@ import { effectScope } from 'vue';
 
 import type { IAcpPermissionRequestPayload } from '@/types/ai/acp-permission.schema';
 
-import { useAcpApproval, type IUseAcpApprovalReturn } from './useAcpApproval';
+import { type IUseAcpApprovalReturn, useAcpApproval } from './useAcpApproval';
 
 const { onAcpApproval, resolveAcpApproval } = vi.hoisted(() => ({
   onAcpApproval: vi.fn(),
@@ -44,12 +44,10 @@ describe('useAcpApproval', () => {
     vi.clearAllMocks();
     capturedHandler = undefined;
     unlisten = vi.fn();
-    onAcpApproval.mockImplementation(
-      (handler: (payload: IAcpPermissionRequestPayload) => void) => {
-        capturedHandler = handler;
-        return Promise.resolve(unlisten);
-      },
-    );
+    onAcpApproval.mockImplementation((handler: (payload: IAcpPermissionRequestPayload) => void) => {
+      capturedHandler = handler;
+      return Promise.resolve(unlisten);
+    });
     resolveAcpApproval.mockResolvedValue(true);
   });
 

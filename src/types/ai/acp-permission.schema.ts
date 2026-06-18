@@ -26,9 +26,7 @@ export const ACP_PERMISSION_OPTION_KINDS = [
   'other',
 ] as const;
 
-export const acpPermissionOptionKindSchema = z
-  .enum(ACP_PERMISSION_OPTION_KINDS)
-  .catch('other');
+export const acpPermissionOptionKindSchema = z.enum(ACP_PERMISSION_OPTION_KINDS).catch('other');
 
 export const acpPermissionOptionPayloadSchema = z.object({
   optionId: z.string().min(1),
