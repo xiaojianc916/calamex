@@ -20,11 +20,14 @@ use crate::terminal::{
     local_wsl_protocol::{
         LocalWslTerminalOpenInteractiveRequest, LocalWslTerminalRunScriptRequest, SIGNAL_MODE_KILL,
     },
-    tauri_events::{TerminalExitEvent, emit_terminal_exit},
+    tauri_events::{
+        TerminalExitEvent, TerminalRunCompletedEvent, emit_terminal_exit,
+        emit_terminal_run_completed,
+    },
     types::TerminalState,
     visual::{TerminalRunVisualTracker, extract_prompt_from_terminal_snapshot},
     wsl_pty::{
-        LocalWslPtyHandle, open_interactive_terminal_local_with_flow,
+        LocalWslPtyHandle, LocalWslRunHandle, open_interactive_terminal_local_with_flow,
         run_terminal_script_local_with_flow,
     },
 };
@@ -37,8 +40,9 @@ use super::events::{
 use super::state::{
     ActiveRunInputTarget, TerminalSession, TerminalSessionState, attach_active_terminal_run_handle,
     buffer_pending_switch_input, clear_active_terminal_run, drain_active_terminal_runs,
-    get_active_terminal_run_handle, get_active_terminal_run_input_target, get_flow_controller,
-    get_session_geometry, get_terminal_session, get_terminal_snapshot, lock_terminal_sessions,
+    get_active_terminal_run_handle, get_active_terminal_run_input_target,
+    get_active_terminal_run_session, get_flow_controller, get_session_geometry,
+    get_terminal_session, get_terminal_snapshot, lock_terminal_sessions,
     mark_terminal_resize_repaint_suppression, remove_flow_controller,
     remove_interactive_terminal_after_exit, remove_pending_switch_input, remove_session_geometry,
     remove_terminal_interactive_visual_state, remove_terminal_session, remove_terminal_snapshot,
@@ -55,8 +59,13 @@ const DEFAULT_WSL_INTERACTIVE_CWD: &str = "~";
 const INTERACTIVE_TEARDOWN_GRACE: Duration = Duration::from_secs(3);
 /// 关闭看门狗——硬超时：升级 kill 后再等这么久；仍未收尾则判定 wsl.exe 卡死，合成退出事件。
 const INTERACTIVE_TEARDOWN_HARD_DEADLINE: Duration = Duration::from_secs(5);
-/// 关闭看门狗——轮询间隔：周期性复检读线程是否已收尾，避免忙等。
-const INTERACTIVE_TEARDOWN_POLL: Duration = Duration::from_millis(250);
+/// 取消看门狗——宽限期：kill 模式取消运行后等待运行读线程正常收尾（child.wait 返回 →
+/// RunCompleted）的时长。超过未收尾则升级重发 kill。
+const RUN_CANCEL_TEARDOWN_GRACE: Duration = Duration::from_secs(3);
+/// 取消看门狗——硬超时：升级重发 kill 后再等这么久；仍未收尾则判定 wsl.exe 卡死，合成完成事件。
+const RUN_CANCEL_TEARDOWN_HARD_DEADLINE: Duration = Duration::from_secs(5);
+/// 收尾看门狗——轮询间隔：周期性复检读线程是否已收尾，避免忙等。关闭 / 取消两条看门狗共用。
+const TEARDOWN_WATCH_POLL: Duration = Duration::from_millis(250);
 
 #[tauri::command]
 #[specta::specta]
@@ -337,7 +346,7 @@ fn spawn_interactive_teardown_watch(
     }
 }
 
-/// 在 `budget` 内轮询等待句柄标记已收尾；收尾返回 true，超预算仍未收尾返回 false。
+/// 在 `budget` 内轮询等待交互句柄标记已收尾；收尾返回 true，超预算仍未收尾返回 false。
 fn wait_until_finished(handle: &LocalWslPtyHandle, budget: Duration) -> bool {
     let deadline = Instant::now() + budget;
     loop {
@@ -347,7 +356,7 @@ fn wait_until_finished(handle: &LocalWslPtyHandle, budget: Duration) -> bool {
         if Instant::now() >= deadline {
             return false;
         }
-        std::thread::sleep(INTERACTIVE_TEARDOWN_POLL);
+        std::thread::sleep(TEARDOWN_WATCH_POLL);
     }
 }
 
@@ -465,15 +474,103 @@ pub fn dispatch_script_to_terminal(
 #[tauri::command]
 #[specta::specta]
 pub async fn cancel_terminal_run(
+    app: AppHandle,
     state: State<'_, TerminalSessionState>,
     payload: CancelTerminalRunRequest,
 ) -> Result<(), String> {
     let terminal_state = state.inner().clone();
     let mode = payload.mode.as_deref().unwrap_or("graceful");
+    // 取消看门狗只在 kill 模式下武装：graceful（Ctrl-C / ETX）只是「请求」，目标进程可能合法地
+    // 继续运行，自动升级 graceful→kill 会破坏 graceful 语义、违反零误杀原则，故 graceful 永不
+    // 武装看门狗。kill 模式才需兜底卡死的 wsl.exe。
+    let arm_kill_watchdog = mode.trim() == SIGNAL_MODE_KILL;
 
     let handle = get_active_terminal_run_handle(&terminal_state, &payload.run_id)?
         .ok_or_else(|| format!("未找到正在运行的脚本：{}", payload.run_id))?;
-    handle.cancel(mode).map_err(|error| error.to_string())
+    // 在发出 cancel 之前解析归属会话（此刻 run 仍在 active_runs 中，cancel 后可能被读线程清走）；
+    // 合成 run-completed 事件需要 session_id。
+    let watchdog_session_id = if arm_kill_watchdog {
+        get_active_terminal_run_session(&terminal_state, &payload.run_id)
+    } else {
+        None
+    };
+    handle.cancel(mode).map_err(|error| error.to_string())?;
+    if let Some(session_id) = watchdog_session_id {
+        // 句柄是 Clone 共享，移交看门狗线程后与本次 kill 共用同一 killer / finished 标志。
+        spawn_run_cancel_teardown_watch(app, terminal_state, session_id, payload.run_id, handle);
+    }
+    Ok(())
+}
+
+/// 取消看门狗：在 kill 模式取消运行、发出 kill 后挂一次性的监护线程。正常路径下运行读线程会
+/// 迅速在 child.wait() 返回后置位 finished 并发出 RunCompleted，看门狗观察到 is_finished 即静静
+/// 退出，不做任何多余动作。仅当底层 wsl.exe 卡死、kill 不生效、读线程阻在 read()/child.wait()
+/// 时，才升级重发 kill 并最终合成完成事件，避免 UI 永久卡在「运行中」的僵尸 run 上。只在 kill
+/// 取消路径介入，graceful 取消永不到达这里（零误杀）。
+fn spawn_run_cancel_teardown_watch(
+    app: AppHandle,
+    state: TerminalSessionState,
+    session_id: String,
+    run_id: String,
+    handle: LocalWslRunHandle,
+) {
+    let spawn_result = std::thread::Builder::new()
+        .name(format!("wsl-run-cancel-watch-{run_id}"))
+        .spawn(move || {
+            // 宽限期内等待运行读线程正常收尾（child.wait 返回后已由读线程自行发出 RunCompleted）。
+            if wait_until_run_finished(&handle, RUN_CANCEL_TEARDOWN_GRACE) {
+                return;
+            }
+            // 宽限期内未收尾：升级重发 kill，强制终止可能仍卡死的 wsl.exe。
+            log::warn!(
+                "WSL 运行任务 kill 取消后 {:?} 内读线程仍未收尾（run_id={run_id}），升级重发 kill。",
+                RUN_CANCEL_TEARDOWN_GRACE
+            );
+            if let Err(error) = handle.cancel(SIGNAL_MODE_KILL) {
+                log::warn!("WSL 运行任务取消看门狗升级 kill 失败（run_id={run_id}）：{error}");
+            }
+            // 升级后再硬等一段；仍未收尾则合成完成事件，避免 UI 永久卡在「运行中」。
+            if wait_until_run_finished(&handle, RUN_CANCEL_TEARDOWN_HARD_DEADLINE) {
+                return;
+            }
+            log::error!(
+                "WSL 运行任务 kill 取消后读线程在硬超时内仍未收尾（run_id={run_id}），合成完成事件通知前端并回收运行状态。"
+            );
+            // 读线程已确认卡死、不会再发 RunCompleted，这里代为回收运行状态并合成完成事件。
+            // 注意：此处跳过 finalize_local_run 的视觉重置 / 分隔符注入（那些需要 visual_tracker /
+            // prompt / started_at，仅在 dispatch 闭包内可得），属降级但正确的 UI 释放；前端按
+            // run_id 去重，重复的 run-completed 可被安全忽略。
+            clear_active_terminal_run(&state, &run_id);
+            complete_session_run_state_and_emit(&app, &state, &session_id);
+            emit_terminal_run_completed(
+                &app,
+                TerminalRunCompletedEvent {
+                    session_id,
+                    run_id,
+                    exit_code: None,
+                    finished_at: Timestamp::now().to_string(),
+                },
+            );
+        });
+    if let Err(error) = spawn_result {
+        // 看门狗线程创建失败是极罕见的资源耗尽场景；取消本身已发出 kill，这里仅警告，
+        // 不阻断取消流程。
+        log::warn!("WSL 运行任务取消看门狗线程创建失败：{error}");
+    }
+}
+
+/// 在 `budget` 内轮询等待运行句柄标记已收尾；收尾返回 true，超预算仍未收尾返回 false。
+fn wait_until_run_finished(handle: &LocalWslRunHandle, budget: Duration) -> bool {
+    let deadline = Instant::now() + budget;
+    loop {
+        if handle.is_finished() {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(TEARDOWN_WATCH_POLL);
+    }
 }
 
 /// P2 ack 背压：前端每消费约 `CHAR_COUNT_ACK_SIZE` 个字符回一次 ack，未确认字符数回落到
