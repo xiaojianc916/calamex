@@ -541,11 +541,6 @@ export class TerminalRunOrchestrator {
       }
 
       const listeners = createDisposableBag();
-      const runChunkUnlisten = this.terminalEventBus.onRunChunk(
-        (payload: ITerminalRunChunkPayload) => {
-          this.appendTerminalOutput(payload);
-        },
-      );
       const runCompletedUnlisten = this.terminalEventBus.onRunCompleted(
         (payload: ITerminalRunCompletedPayload) => {
           this.handleIntegratedTerminalRunCompleted(payload);
@@ -556,7 +551,6 @@ export class TerminalRunOrchestrator {
           this.handleIntegratedTerminalExit(payload);
         },
       );
-      listeners.add(runChunkUnlisten);
       listeners.add(runCompletedUnlisten);
       listeners.add(exitUnlisten);
 

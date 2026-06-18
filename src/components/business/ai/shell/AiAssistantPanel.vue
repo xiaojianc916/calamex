@@ -595,6 +595,14 @@ const hasPendingTokenRequest = computed(
     (assistant.activeMode.value === 'plan' && tokenEstimationMessages.value.length > 0),
 );
 const tokenOfficialUsage = computed(() => {
+  // 接收侧 ACP usage_update 闭环（ADR-20260617 · D7-⑦）：宿主已把 usage_update 投影为
+  // 共享 IAiLanguageModelUsage VM。任一模式只要本回合有 ACP 用量就优先采用（chat / agent
+  // 经 ACP host 上报）；其形状与外部 LanguageModelUsage 赋值兼容，可直接作为官方用量来源。
+  const acpTurnUsage = assistant.acpUsage.usage.value;
+  if (acpTurnUsage) {
+    return acpTurnUsage;
+  }
+
   if (assistant.activeMode.value !== 'plan') {
     return null;
   }

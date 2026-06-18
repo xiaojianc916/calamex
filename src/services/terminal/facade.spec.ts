@@ -7,14 +7,12 @@ import {
   type TTerminalListen,
 } from '@/services/terminal/eventBus';
 import { useTerminalFacade } from '@/services/terminal/facade';
-import { createTerminalRunStore } from '@/services/terminal/runStore';
 import { createTerminalShadowCompareStore } from '@/services/terminal/shadowCompare';
 import { useTerminalRuntimeStore } from '@/services/terminal/state';
 import type { ITauriService } from '@/types/tauri';
 import type {
   ITerminalDataEvent,
   ITerminalExitEvent,
-  ITerminalRunChunkPayload,
   ITerminalRunCompletedPayload,
   ITerminalRunStartedPayload,
   ITerminalSessionStateChangedPayload,
@@ -35,7 +33,6 @@ class FakeTerminalEventBus implements ITerminalEventBus {
   readonly stop = vi.fn();
 
   private readonly dataHandlers = new Set<(payload: ITerminalDataEvent) => void>();
-  private readonly runChunkHandlers = new Set<(payload: ITerminalRunChunkPayload) => void>();
   private readonly runStartedHandlers = new Set<(payload: ITerminalRunStartedPayload) => void>();
   private readonly runCompletedHandlers = new Set<
     (payload: ITerminalRunCompletedPayload) => void
@@ -53,13 +50,6 @@ class FakeTerminalEventBus implements ITerminalEventBus {
     this.dataHandlers.add(handler);
     return () => {
       this.dataHandlers.delete(handler);
-    };
-  }
-
-  onRunChunk(handler: (payload: ITerminalRunChunkPayload) => void): UnlistenFn {
-    this.runChunkHandlers.add(handler);
-    return () => {
-      this.runChunkHandlers.delete(handler);
     };
   }
 
@@ -359,25 +349,6 @@ describe('terminal facade suite 1', () => {
     expect(facade.activeRun.value).toBeNull();
   });
 
-  it('terminal facade case 5', () => {
-    const runStore = createTerminalRunStore();
-    runStore.appendChunk({ sessionId: 'main-terminal', runId: 'run-1', data: 'world', seq: 2 });
-    runStore.appendChunk({ sessionId: 'main-terminal', runId: 'run-1', data: 'hello ', seq: 1 });
-    runStore.completeRun({
-      sessionId: 'main-terminal',
-      runId: 'run-1',
-      exitCode: 0,
-      finishedAt: '2026-04-25T00:00:01.000Z',
-    });
-
-    expect(runStore.getOutput('run-1')).toBe('hello world');
-    expect(runStore.getRecord('run-1')).toMatchObject({
-      runId: 'run-1',
-      exitCode: 0,
-      chunkCount: 2,
-    });
-  });
-
   it('terminal facade case 6', () => {
     const shadowCompare = createTerminalShadowCompareStore();
     shadowCompare.start('run-1', 'legacy', 100);
@@ -481,38 +452,6 @@ describe('terminal facade suite 1', () => {
 describe('terminal facade suite 2', () => {
   afterEach(() => {
     vi.useRealTimers();
-  });
-
-  it('terminal facade case 8', async () => {
-    const handlers = new Map<string, (event: Event<unknown>) => void>();
-    const listenMock: TTerminalListen = vi.fn(async (eventName, handler) => {
-      handlers.set(eventName, handler as (event: Event<unknown>) => void);
-      return () => {
-        handlers.delete(eventName);
-      };
-    });
-    const eventBus = createTerminalEventBus(listenMock);
-    const outputHandler = vi.fn();
-
-    eventBus.onRunChunk(outputHandler);
-    await eventBus.start();
-    handlers.get('terminal:run-chunk')?.({
-      event: 'terminal:run-chunk',
-      id: 1,
-      payload: {
-        sessionId: 'main-terminal',
-        runId: 'run-1',
-        data: 'hello',
-        seq: 1,
-      },
-    });
-
-    expect(outputHandler).toHaveBeenCalledWith({
-      sessionId: 'main-terminal',
-      runId: 'run-1',
-      data: 'hello',
-      seq: 1,
-    });
   });
 
   it('terminal facade case 9', async () => {

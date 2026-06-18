@@ -5,7 +5,6 @@ import { commands } from '@/bindings/tauri';
 import type {
   ITerminalDataEvent,
   ITerminalExitEvent,
-  ITerminalRunChunkPayload,
   ITerminalRunCompletedPayload,
   ITerminalRunStartedPayload,
   ITerminalSessionStateChangedPayload,
@@ -17,7 +16,6 @@ import type {
 // ---------------------------------------------------------------------------
 
 const TERMINAL_DATA_EVENT = 'terminal:data';
-const TERMINAL_RUN_CHUNK_EVENT = 'terminal:run-chunk';
 const TERMINAL_RUN_STARTED_EVENT = 'terminal:run-started';
 const TERMINAL_RUN_COMPLETED_EVENT = 'terminal:run-completed';
 const TERMINAL_INTERACTIVE_READY_EVENT = 'terminal:interactive-ready';
@@ -47,13 +45,6 @@ const terminalDataEventSchema = z.object({
   seq: z.number().int().nonnegative().optional(),
   runId: z.string().optional(),
   runSeq: z.number().int().positive().optional(),
-});
-
-const terminalRunChunkEventSchema = z.object({
-  sessionId: z.string(),
-  runId: z.string(),
-  data: z.string(),
-  seq: z.number().int().nonnegative().optional(),
 });
 
 const terminalRunCompletedEventSchema = z.object({
@@ -114,7 +105,6 @@ export interface ITerminalEventBus {
   start(): Promise<void>;
   stop(): void;
   onTerminalData(handler: TEventHandler<ITerminalDataEvent>): UnlistenFn;
-  onRunChunk(handler: TEventHandler<ITerminalRunChunkPayload>): UnlistenFn;
   onRunStarted(handler: TEventHandler<ITerminalRunStartedPayload>): UnlistenFn;
   onRunCompleted(handler: TEventHandler<ITerminalRunCompletedPayload>): UnlistenFn;
   onInteractiveReady(handler: TEventHandler<void>): UnlistenFn;
@@ -166,7 +156,6 @@ export const createTerminalEventBus = (
   acknowledge: TTerminalAcknowledge = defaultAcknowledge,
 ): ITerminalEventBus => {
   const terminalDataHandlers = new Set<TEventHandler<ITerminalDataEvent>>();
-  const runChunkHandlers = new Set<TEventHandler<ITerminalRunChunkPayload>>();
   const runStartedHandlers = new Set<TEventHandler<ITerminalRunStartedPayload>>();
   const runCompletedHandlers = new Set<TEventHandler<ITerminalRunCompletedPayload>>();
   const interactiveReadyHandlers = new Set<TEventHandler<void>>();
@@ -275,7 +264,6 @@ export const createTerminalEventBus = (
     startPromise = (async () => {
       const settled = await Promise.allSettled([
         wireTerminalDataListener(),
-        wireListener(TERMINAL_RUN_CHUNK_EVENT, terminalRunChunkEventSchema, runChunkHandlers),
         wireListener(TERMINAL_RUN_STARTED_EVENT, terminalRunStartedEventSchema, runStartedHandlers),
         wireListener(
           TERMINAL_RUN_COMPLETED_EVENT,
@@ -366,10 +354,6 @@ export const createTerminalEventBus = (
     onTerminalData(handler) {
       terminalDataHandlers.add(handler);
       return () => removeHandler(terminalDataHandlers, handler);
-    },
-    onRunChunk(handler) {
-      runChunkHandlers.add(handler);
-      return () => removeHandler(runChunkHandlers, handler);
     },
     onRunStarted(handler) {
       runStartedHandlers.add(handler);

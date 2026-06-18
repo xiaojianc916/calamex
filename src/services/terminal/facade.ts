@@ -3,7 +3,6 @@ import { type DeepReadonly, type Ref, readonly } from 'vue';
 
 import { tauriService } from '@/services/tauri';
 import { getTerminalEventBus, type ITerminalEventBus } from '@/services/terminal/eventBus';
-import { createTerminalRunStore, type TerminalRunStore } from '@/services/terminal/runStore';
 import { useTerminalRuntimeStore } from '@/services/terminal/state';
 import type { ITauriService } from '@/types/tauri';
 import {
@@ -60,7 +59,6 @@ export interface ITerminalFacadeOptions {
     | 'resizeTerminalSession'
   >;
   eventBus?: ITerminalEventBus;
-  runStore?: TerminalRunStore;
   sessionId?: string;
 }
 
@@ -74,7 +72,6 @@ export const useTerminalFacade = (options: ITerminalFacadeOptions = {}): ITermin
 
   const tauri = options.tauri ?? tauriService;
   const eventBus = options.eventBus ?? getTerminalEventBus();
-  const runStore = options.runStore ?? createTerminalRunStore();
   const interactiveSessionId = options.sessionId ?? DEFAULT_TERMINAL_SESSION_ID;
 
   const terminalDataHandlers = new Set<TTerminalDataHandler>();
@@ -133,7 +130,6 @@ export const useTerminalFacade = (options: ITerminalFacadeOptions = {}): ITermin
       return;
     }
     const handle = buildRunStartedHandle(payload, pendingHandle);
-    runStore.startRun(handle);
     runtimeStore.markRunStarted(handle);
     pendingRunHandles.delete(payload.runId);
     pendingRunStartedPayloads.delete(payload.runId);
@@ -246,12 +242,6 @@ export const useTerminalFacade = (options: ITerminalFacadeOptions = {}): ITermin
     const listeners = createDisposableBag();
     listeners.add(eventBus.onTerminalData(emitTerminalData));
     listeners.add(
-      eventBus.onRunChunk((payload) => {
-        runtimeStore.recordRunChunk(payload.runId, payload.data);
-        runStore.appendChunk(payload);
-      }),
-    );
-    listeners.add(
       eventBus.onRunStarted((payload) => {
         // R1+R2 修复:只在 dispatch 已返回 (pending handle 存在) 时才
         // activate;否则只缓存 payload,等 dispatchScript 完成后处理。
@@ -264,7 +254,6 @@ export const useTerminalFacade = (options: ITerminalFacadeOptions = {}): ITermin
     );
     listeners.add(
       eventBus.onRunCompleted((payload) => {
-        runStore.completeRun(payload);
         runtimeStore.markRunCompleted(payload.runId, payload.exitCode, payload.finishedAt);
         pendingRunHandles.delete(payload.runId);
         pendingRunStartedPayloads.delete(payload.runId);

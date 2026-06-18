@@ -27,15 +27,6 @@ pub(crate) struct TerminalDataEvent {
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct TerminalRunChunkEvent {
-    pub(crate) session_id: String,
-    pub(crate) run_id: String,
-    pub(crate) data: String,
-    pub(crate) seq: u64,
-}
-
-#[derive(Debug, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
 pub(crate) struct TerminalExitEvent {
     pub(crate) session_id: String,
     pub(crate) exit_code: Option<i32>,
@@ -78,10 +69,6 @@ pub(crate) struct TerminalSessionStateChangedEvent {
 
 pub(crate) fn emit_terminal_data(app: &AppHandle, payload: TerminalDataEvent) {
     emit_to_main(app, "terminal:data", payload);
-}
-
-pub(crate) fn emit_terminal_run_chunk(app: &AppHandle, payload: TerminalRunChunkEvent) {
-    emit_to_main(app, "terminal:run-chunk", payload);
 }
 
 pub(crate) fn emit_terminal_exit(app: &AppHandle, payload: TerminalExitEvent) {

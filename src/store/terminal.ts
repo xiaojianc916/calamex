@@ -31,8 +31,6 @@ export interface ITerminalFrameDiagnostic {
 }
 
 export interface ITerminalFlowDiagnostics {
-  runChunkCount: number;
-  runChunkBytes: number;
   terminalDataChunks: number;
   terminalDataBytes: number;
   visualWriteChunks: number;
@@ -141,8 +139,6 @@ const mergeRunHandle = (
 });
 
 const createEmptyDiagnostics = (): ITerminalFlowDiagnostics => ({
-  runChunkCount: 0,
-  runChunkBytes: 0,
   terminalDataChunks: 0,
   terminalDataBytes: 0,
   visualWriteChunks: 0,
@@ -406,14 +402,6 @@ export const useTerminalRuntimeStore = defineStore('terminal-runtime', () => {
     markEvent(`xterm:buffer:${payload.label}`);
   };
 
-  const recordRunChunk = (runId: string, data: string): void => {
-    if (!deepDiagnosticsEnabled.value) return;
-    diagnostics.value.lastRunId = runId;
-    diagnostics.value.runChunkCount += 1;
-    diagnostics.value.runChunkBytes += measureBytes(data);
-    markEvent('terminal:run-chunk');
-  };
-
   const recordCancelRequested = (mode: TTerminalCancelMode): void => {
     if (!deepDiagnosticsEnabled.value) return;
     diagnostics.value.cancelMode = mode;
@@ -479,7 +467,6 @@ export const useTerminalRuntimeStore = defineStore('terminal-runtime', () => {
     recordTerminalData,
     recordVisualWrite,
     recordBufferDiagnostic,
-    recordRunChunk,
     recordCancelRequested,
     recordInputRoute,
     setRunSeparatorVisible,
