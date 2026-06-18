@@ -30,6 +30,9 @@ import {
   subscribeSidecarSessionStream,
   subscribeSidecarStreamWithPrebuffer,
 } from '@/composables/ai/sidecar-stream-listener';
+import { useAcpAvailableCommands } from '@/composables/ai/useAcpAvailableCommands';
+import { useAcpSessionModes } from '@/composables/ai/useAcpSessionModes';
+import { useAcpUsage } from '@/composables/ai/useAcpUsage';
 import { useAiAgentPlan } from '@/composables/ai/useAiAgentPlan';
 import { useAiStream } from '@/composables/ai/useAiStream';
 import {
@@ -422,6 +425,9 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
   const aiStream = useAiStream();
   const sidecarAnswerStream = useAiStream();
   const agentPlan = useAiAgentPlan();
+  const acpSessionModes = useAcpSessionModes();
+  const acpAvailableCommands = useAcpAvailableCommands();
+  const acpUsage = useAcpUsage();
   const { refreshSidecarChangedDocuments } = useSidecarChangedDocumentRefresh();
   let sidecarAnswerStreamState: ISidecarAnswerStreamState | null = null;
   let isSidecarAnswerStreamSyncSuppressed = false;
@@ -1044,12 +1050,37 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     }
   };
 
+  const applyAcpReceiveSideEvents = (events: readonly TAgentUiEvent[]): void => {
+    // 接收侧宿主接线（ADR-20260617 · D7 接收侧）：把宿主唯一 onSidecarStream 路由到的
+    // ACP session/update UI 事件分发到各 ACP composable VM。终端走客户端方法、审批走
+    // finalizeSidecarTurn 的 pendingConfirmation，均不经本事件流，故不在此路由。
+    // 累计事件每 tick 整份重扫，与既有 reduceAcpUiEventsToToolCalls / projectSidecarEventsToToolState
+    // 同构；各 applier 均「整份替换、后者胜」，故重扫幂等。非穷尽 switch（default 兜底），
+    // 新增 TAgentUiEvent 成员不会在此触发编译错误。
+    for (const event of events) {
+      switch (event.type) {
+        case 'mode_update':
+          acpSessionModes.applyModeUpdate(event.modeId);
+          break;
+        case 'available_commands_update':
+          acpAvailableCommands.applyCommandsUpdate(event.availableCommands);
+          break;
+        case 'usage_update':
+          acpUsage.applyUsageUpdate(event.usage);
+          break;
+        default:
+          break;
+      }
+    }
+  };
+
   const applySidecarLiveEventsToAgentMessage = (
     assistantMessageId: string,
     threadId: string | null,
     fallbackContent: string,
     events: readonly TAgentUiEvent[],
   ): void => {
+    applyAcpReceiveSideEvents(events);
     const currentMessage = findMessageById(assistantMessageId);
     const { errorEvent, doneEvent, messageEvent, finalMessageEvent } =
       getLatestSidecarLiveEvents(events);
@@ -2242,6 +2273,9 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     activeAssistantBaseMessages.value = [];
     activeAgentMessageId.value = null;
     disposeSidecarAnswerStream();
+    acpSessionModes.reset();
+    acpAvailableCommands.reset();
+    acpUsage.reset();
     isClearDialogOpen.value = false;
   };
 
@@ -2630,6 +2664,9 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
 
   return {
     agentPlan,
+    acpSessionModes,
+    acpAvailableCommands,
+    acpUsage,
     config,
     messages,
     historyThreads,

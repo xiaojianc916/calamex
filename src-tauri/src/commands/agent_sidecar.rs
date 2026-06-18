@@ -39,7 +39,7 @@ fn trimmed_non_empty(value: Option<String>) -> Option<String> {
 fn model_config_to_ext(config: AgentSidecarModelConfigPayload) -> crate::acp::ExtModelConfig {
     crate::acp::ExtModelConfig {
         model_id: config.model_id,
-        api_key: config.api_key.into_inner(),
+        api_key: config.api_key,
         base_url: trimmed_non_empty(config.base_url),
     }
 }

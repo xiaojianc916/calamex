@@ -133,7 +133,7 @@ export const commands = {
 	agentSidecarHealth: () => __TAURI_INVOKE<AgentSidecarHealthPayload>("agent_sidecar_health"),
 	agentSidecarRestart: () => __TAURI_INVOKE<AgentSidecarHealthPayload>("agent_sidecar_restart"),
 	agentSidecarWarmup: () => __TAURI_INVOKE<AgentSidecarWarmupPayload>("agent_sidecar_warmup"),
-	agentSidecarChat: (payload: AgentSidecarChatRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarResponsePayload>("agent_sidecar_chat", { payload }),
+	agentSidecarChat: (payload: AgentSidecarChatRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarResponsePayload_Serialize>("agent_sidecar_chat", { payload }),
 	/**
 	 *  外部 ACP 编码 agent（Kimi Code / Codex 等，ADR-0015）的标准回合命令（`session/prompt`）。
 	 * 
@@ -144,9 +144,9 @@ export const commands = {
 	 *  （投影见 acp/ui_event.rs），本命令仅返回终态：会话标识 + 回合终止原因。
 	 */
 	agentSidecarExternalChat: (payload: AgentExternalChatRequest_Deserialize) => __TAURI_INVOKE<AgentExternalChatResultPayload>("agent_sidecar_external_chat", { payload }),
-	agentSidecarResolveApproval: (payload: AgentSidecarApprovalResolveRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarResponsePayload>("agent_sidecar_resolve_approval", { payload }),
-	agentSidecarResolveAskUser: (payload: AgentSidecarAskUserResumeRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarResponsePayload>("agent_sidecar_resolve_ask_user", { payload }),
-	agentSidecarRestoreCheckpoint: (payload: AgentSidecarCheckpointRestoreRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarResponsePayload>("agent_sidecar_restore_checkpoint", { payload }),
+	agentSidecarResolveApproval: (payload: AgentSidecarApprovalResolveRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarResponsePayload_Serialize>("agent_sidecar_resolve_approval", { payload }),
+	agentSidecarResolveAskUser: (payload: AgentSidecarAskUserResumeRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarResponsePayload_Serialize>("agent_sidecar_resolve_ask_user", { payload }),
+	agentSidecarRestoreCheckpoint: (payload: AgentSidecarCheckpointRestoreRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarResponsePayload_Serialize>("agent_sidecar_restore_checkpoint", { payload }),
 	agentSidecarOrchestrate: (payload: AgentSidecarOrchestrateRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarOrchestratePayload>("agent_sidecar_orchestrate", { payload }),
 	agentSidecarOrchestrateResume: (payload: AgentSidecarOrchestrateResumeRequest_Deserialize) => __TAURI_INVOKE<AgentSidecarOrchestratePayload>("agent_sidecar_orchestrate_resume", { payload }),
 	/**  Create (or reuse) the child webview and start the CDP control plane. Idempotent. */
@@ -576,7 +576,9 @@ export type AgentSidecarOrchestrateResumeRequest_Serialize = {
 	modelConfig?: AgentSidecarModelConfigPayload_Serialize | null,
 };
 
-export type AgentSidecarResponsePayload = {
+export type AgentSidecarResponsePayload = AgentSidecarResponsePayload_Serialize | AgentSidecarResponsePayload_Deserialize;
+
+export type AgentSidecarResponsePayload_Deserialize = {
 	sessionId: string,
 	/**
 	 *  逐事件透传的任意 JSON，由前端自行 Zod 校验；
@@ -586,6 +588,26 @@ export type AgentSidecarResponsePayload = {
 	 */
 	events: unknown[],
 	result: string | null,
+	/**  sidecar 结构化错误消息（来自 IAgentRuntimeResponse.errorMessage）。 */
+	errorMessage: string | null,
+	/**  稳定的 provider 错误分类码（如 AI_PROVIDER_AUTH_FAILED）。 */
+	errorCode: string | null,
+};
+
+export type AgentSidecarResponsePayload_Serialize = {
+	sessionId: string,
+	/**
+	 *  逐事件透传的任意 JSON，由前端自行 Zod 校验；
+	 *  用 specta_typescript::Unknown 将导出类型映射为 TS `unknown[]`，
+	 *  避开 serde_json::Number 的 i64/u64 触发 specta BigInt-forbidden；
+	 *  serde 运行时仍为 Vec<serde_json::Value>，行为不变。
+	 */
+	events: unknown[],
+	result: string | null,
+	/**  sidecar 结构化错误消息（来自 IAgentRuntimeResponse.errorMessage）。 */
+	errorMessage?: string | null,
+	/**  稳定的 provider 错误分类码（如 AI_PROVIDER_AUTH_FAILED）。 */
+	errorCode?: string | null,
 };
 
 export type AgentSidecarRollbackStepPath = string | string[];
