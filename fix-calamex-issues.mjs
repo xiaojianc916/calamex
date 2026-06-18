@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
- * calamex 源码修复脚本 v4
- * - storage_paths.rs 已由 v2 应用，跳过
- * - 其余文件均为原始状态，全部重新应用
- * - 所有匹配只用 ASCII 子串，避免中文编码问题
+ * calamex 源码修复脚本 v5
+ * - storage_paths.rs: 已由 v2 修复，跳过
+ * - workspace_fs.rs: GBK 补丁已由 v4 应用；resolve_save_script_path 用行级替换修复
+ * - launch.rs / tauri.sidecar.ts / git.ts: 首次应用
  * 用法: node fix-calamex-issues.mjs [仓库根目录]
  */
 
@@ -12,163 +12,134 @@ import { join, resolve } from 'node:path';
 
 const repoRoot = resolve(process.argv[2] ?? 'D:\\com.xiaojianc\\my_desktop_app');
 
-function patch(filePath, finds, replaces) {
+function getEol(raw) {
+  return raw.includes('\r\n') ? '\r\n' : '\n';
+}
+function writeFile(fullPath, content, eol) {
+  writeFileSync(fullPath, content.replace(/\n/g, eol), 'utf-8');
+}
+
+// ─── 行级函数替换：按 fn 名定位 → 找到行首 } 结束 → 整体替换 ───
+function replaceFunction(filePath, funcName, newFuncLines) {
   const fullPath = join(repoRoot, filePath);
-  let content = readFileSync(fullPath, 'utf-8').replace(/\r\n/g, '\n');
-  for (let i = 0; i < finds.length; i++) {
-    const find = finds[i].replace(/\r\n/g, '\n');
-    const replace = replaces[i].replace(/\r\n/g, '\n');
-    const idx = content.indexOf(find);
-    if (idx === -1) {
-      throw new Error(`Patch ${i + 1} failed: substring not found in ${filePath}`);
-    }
-    if (content.indexOf(find, idx + 1) !== -1) {
-      throw new Error(`Patch ${i + 1} failed: multiple matches in ${filePath}`);
-    }
-    content = content.slice(0, idx) + replace + content.slice(idx + find.length);
-    console.log(`  [${filePath}] patch ${i + 1} ok`);
+  const raw = readFileSync(fullPath, 'utf-8');
+  const eol = getEol(raw);
+  const lines = raw.replace(/\r\n/g, '\n').split('\n');
+  const startIdx = lines.findIndex(l => l.includes(`fn ${funcName}(`));
+  if (startIdx === -1) throw new Error(`Function ${funcName} not found in ${filePath}`);
+  let endIdx = startIdx + 1;
+  while (endIdx < lines.length && lines[endIdx] !== '}') endIdx++;
+  if (endIdx >= lines.length) throw new Error(`End brace not found for ${funcName}`);
+  lines.splice(startIdx, endIdx - startIdx + 1, ...newFuncLines);
+  writeFile(fullPath, lines.join('\n'), eol);
+  console.log(`  ✓ [${filePath}] replaced function ${funcName}`);
+}
+
+// ─── 行级注释替换：按 ASCII 前缀定位行 → 整行替换 ───
+function patchLine(filePath, matchPrefix, newLine) {
+  const fullPath = join(repoRoot, filePath);
+  const raw = readFileSync(fullPath, 'utf-8');
+  const eol = getEol(raw);
+  const lines = raw.replace(/\r\n/g, '\n').split('\n');
+  const idx = lines.findIndex(l => l.includes(matchPrefix));
+  if (idx === -1) throw new Error(`Line with "${matchPrefix}" not found in ${filePath}`);
+  lines[idx] = newLine;
+  writeFile(fullPath, lines.join('\n'), eol);
+  console.log(`  ✓ [${filePath}] patched comment line`);
+}
+
+// ─── ASCII-only 精确字符串替换 ───
+function patchAscii(filePath, patches) {
+  const fullPath = join(repoRoot, filePath);
+  const raw = readFileSync(fullPath, 'utf-8');
+  const eol = getEol(raw);
+  let content = raw.replace(/\r\n/g, '\n');
+  for (const { name, find, replace } of patches) {
+    const f = find.replace(/\r\n/g, '\n');
+    const r = replace.replace(/\r\n/g, '\n');
+    const idx = content.indexOf(f);
+    if (idx === -1) throw new Error(`✗ ${name}: not found in ${filePath}`);
+    if (content.indexOf(f, idx + 1) !== -1) throw new Error(`✗ ${name}: multiple matches in ${filePath}`);
+    content = content.slice(0, idx) + r + content.slice(idx + f.length);
+    console.log(`  ✓ [${filePath}] ${name}`);
   }
-  writeFileSync(fullPath, content, 'utf-8');
+  writeFile(fullPath, content, eol);
 }
 
 // ═══════════════════════════════════════════
-// workspace_fs.rs — 全部 4 个补丁（文件未修改过）
+// 1. workspace_fs.rs — 行级替换 resolve_save_script_path 整个函数
 // ═══════════════════════════════════════════
 
-patch('src-tauri/src/commands/workspace_fs.rs', [
-  // Patch 1: resolve_save_script_path — 匹配 ASCII 函数体
-  `fn resolve_save_script_path(
-    raw_path: &str,
-    workspace_root_path: Option<String>,
-) -> Result<PathBuf, String> {`,
-  // Patch 2: GBK import
-  `use encoding_rs::{GB18030, UTF_8, UTF_16BE, UTF_16LE};`,
-  // Patch 3: GBK decode — 只匹配这三行 ASCII 代码
-  `    let (gb18030, _, gb_errors) = GB18030.decode(bytes);
-    if !gb_errors {
-        return Ok((gb18030.into_owned(), DocumentEncoding::Gb18030));
-    }`,
-  // Patch 4: 测试函数名 (ASCII only)
-  `fn falls_back_to_gb18030_for_non_utf8_bytes() {`,
-  // Patch 5: 测试 expect 字符串
-  `decode_script_bytes(&bytes).expect("decode gb18030")`,
-  // Patch 6: 测试断言
-  `assert_eq!(encoding.as_str(), "gb18030");`,
-], [
-  // Replace 1
-  `fn resolve_save_script_path(
-    raw_path: &str,
-    workspace_root_path: Option<String>,
-) -> Result<PathBuf, String> {
-    // --- v4 patch: boundary check BEFORE create_dir_all ---
-    let raw_path = PathBuf::from(raw_path);`,
-  // Replace 2
-  `use encoding_rs::{GB18030, GBK, UTF_8, UTF_16BE, UTF_16LE};`,
-  // Replace 3
-  `    // GBK first (subset of GB18030): decode GBK files as Gbk, not Gb18030.
-    let (gbk, _, gbk_errors) = GBK.decode(bytes);
-    if !gbk_errors {
-        return Ok((gbk.into_owned(), DocumentEncoding::Gbk));
-    }
-
-    let (gb18030, _, gb_errors) = GB18030.decode(bytes);
-    if !gb_errors {
-        return Ok((gb18030.into_owned(), DocumentEncoding::Gb18030));
-    }`,
-  // Replace 4
-  `fn falls_back_to_gbk_for_non_utf8_bytes() {`,
-  // Replace 5
-  `decode_script_bytes(&bytes).expect("decode gbk")`,
-  // Replace 6
-  `assert_eq!(encoding.as_str(), "gbk");`,
+replaceFunction('src-tauri/src/commands/workspace_fs.rs', 'resolve_save_script_path', [
+  'fn resolve_save_script_path(',
+  '    raw_path: &str,',
+  '    workspace_root_path: Option<String>,',
+  ') -> Result<PathBuf, String> {',
+  '    let raw_path = PathBuf::from(raw_path);',
+  '    let file_name = raw_path',
+  '        .file_name()',
+  '        .ok_or_else(|| "无法解析目标文件名。".to_string())?',
+  '        .to_owned();',
+  '    let parent = raw_path',
+  '        .parent()',
+  '        .filter(|parent| !parent.as_os_str().is_empty())',
+  '        .map(Path::to_path_buf)',
+  '        .unwrap_or_else(|| PathBuf::from("."));',
+  '',
+  '    // 先对父目录（或其最近的已存在祖先）做 canonicalize + 工作区边界检查，',
+  '    // 确认安全后再创建缺失的中间目录，避免在边界外创建目录结构。',
+  '    let boundary_check_path = parent.canonicalize().unwrap_or_else(|_| {',
+  '        let mut ancestor = parent.as_path();',
+  '        while let Some(grandparent) = ancestor.parent() {',
+  '            if let Ok(canon) = grandparent.canonicalize() {',
+  '                return canon;',
+  '            }',
+  '            ancestor = grandparent;',
+  '        }',
+  '        parent.clone()',
+  '    });',
+  '    ensure_optional_workspace_boundary(&boundary_check_path, workspace_root_path.clone())?;',
+  '',
+  '    fs::create_dir_all(&parent).map_err(|error| format!("创建目录失败：{error}"))?;',
+  '',
+  '    let file_path = parent',
+  '        .canonicalize()',
+  '        .map_err(|error| format!("解析目标目录失败：{error}"))?',
+  '        .join(&file_name);',
+  '',
+  '    ensure_optional_workspace_boundary(&file_path, workspace_root_path)',
+  '}',
 ]);
 
-// Patch 1 needs the function body replaced too — do it as a second pass
-// on the same file, matching the old body (ASCII-only lines up to the boundary check)
-patch('src-tauri/src/commands/workspace_fs.rs', [
-  // Match from the v4 marker to the end of the old function body (ASCII only)
-  `    // --- v4 patch: boundary check BEFORE create_dir_all ---
-    let raw_path = PathBuf::from(raw_path);
-    let file_name = raw_path
-        .file_name()
-        .ok_or_else(|| "\u{65e0}\u{6cd5}\u{89e3}\u{6790}\u{76ee}\u{6807}\u{6587}\u{4ef6}\u{540d}\u{3002}".to_string())?
-        .to_owned();
-    let parent = raw_path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("."));
-
-    fs::create_dir_all(&parent).map_err(|error| format!("\u{521b}\u{5efa}\u{76ee}\u{5f55}\u{5931}\u{8d25}\u{ff1a}{error}"))?;
-
-    let file_path = parent
-        .canonicalize()
-        .map_err(|error| format!("\u{89e3}\u{6790}\u{76ee}\u{6807}\u{76ee}\u{5f55}\u{5931}\u{8d25}\u{ff1a}{error}"))?
-        .join(&file_name);
-
-    ensure_optional_workspace_boundary(&file_path, workspace_root_path)
-}`,
-], [
-  `    // --- v4 patch: boundary check BEFORE create_dir_all ---
-    let raw_path = PathBuf::from(raw_path);
-    let file_name = raw_path
-        .file_name()
-        .ok_or_else(|| "\u{65e0}\u{6cd5}\u{89e3}\u{6790}\u{76ee}\u{6807}\u{6587}\u{4ef6}\u{540d}\u{3002}".to_string())?
-        .to_owned();
-    let parent = raw_path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("."));
-
-    // Canonicalize parent or its nearest existing ancestor, then boundary-check
-    // BEFORE creating any directories, to prevent writing outside workspace.
-    let boundary_check_path = parent.canonicalize().unwrap_or_else(|_| {
-        let mut ancestor = parent.as_path();
-        while let Some(grandparent) = ancestor.parent() {
-            if let Ok(canon) = grandparent.canonicalize() {
-                return canon;
-            }
-            ancestor = grandparent;
-        }
-        parent.clone()
-    });
-    ensure_optional_workspace_boundary(&boundary_check_path, workspace_root_path.clone())?;
-
-    fs::create_dir_all(&parent).map_err(|error| format!("\u{521b}\u{5efa}\u{76ee}\u{5f55}\u{5931}\u{8d25}\u{ff1a}{error}"))?;
-
-    let file_path = parent
-        .canonicalize()
-        .map_err(|error| format!("\u{89e3}\u{6790}\u{76ee}\u{6807}\u{76ee}\u{5f55}\u{5931}\u{8d25}\u{ff1a}{error}"))?
-        .join(&file_name);
-
-    ensure_optional_workspace_boundary(&file_path, workspace_root_path)
-}`,
-]);
+// 修复测试注释（v4 改了函数名和断言，但注释仍写 GB18030）
+patchLine('src-tauri/src/commands/workspace_fs.rs',
+  '// GB18030 ',
+  '        // GBK 编码的"中"（0xD6 0xD0）不是合法 UTF-8，且不含 BOM / NUL，应回退到 GBK。'
+);
 
 // ═══════════════════════════════════════════
-// acp/launch.rs — 2 patches
+// 2. acp/launch.rs — export 前缀 + 测试
 // ═══════════════════════════════════════════
 
-patch('src-tauri/src/acp/launch.rs', [
-  // Patch 1: export prefix — match ASCII-only code
-  `        if name.trim() != key {
+patchAscii('src-tauri/src/acp/launch.rs', [
+  {
+    name: '#4 export prefix',
+    find: `        if name.trim() != key {
             continue;
         }`,
-  // Patch 2: add test before existing test (ASCII match)
-  `    #[test]
-    fn find_dotenv_value_returns_none_for_missing_or_empty() {`,
-], [
-  // Replace 1
-  `        // Strip "export " prefix for Unix shell convention: export KEY=value
+    replace: `        // Strip "export " prefix for Unix shell convention: export KEY=value
         let name = name.trim();
         let name = name.strip_prefix("export ").unwrap_or(name).trim();
 
         if name != key {
             continue;
         }`,
-  // Replace 2
-  `    #[test]
+  },
+  {
+    name: '#4 export test',
+    find: `    #[test]
+    fn find_dotenv_value_returns_none_for_missing_or_empty() {`,
+    replace: `    #[test]
     fn find_dotenv_value_strips_export_prefix() {
         assert_eq!(
             find_dotenv_value("export TAVILY_API_KEY=tvly-exported", "TAVILY_API_KEY")
@@ -179,79 +150,83 @@ patch('src-tauri/src/acp/launch.rs', [
 
     #[test]
     fn find_dotenv_value_returns_none_for_missing_or_empty() {`,
+  },
 ]);
 
 // ═══════════════════════════════════════════
-// tauri.sidecar.ts — 3 patches
+// 3. tauri.sidecar.ts — 超时注释 + dev 警告
 // ═══════════════════════════════════════════
 
-patch('src/services/tauri.sidecar.ts', [
-  // Patch 1: timeout constant (ASCII)
-  `const AGENT_SIDECAR_TASK_TIMEOUT_MS = 30 * 60 * 1000;`,
-  // Patch 2: stream event (ASCII)
-  `      if (!parsed.success) {
+patchAscii('src/services/tauri.sidecar.ts', [
+  {
+    name: '#7 timeout comment',
+    find: `const AGENT_SIDECAR_TASK_TIMEOUT_MS = 30 * 60 * 1000;`,
+    replace: `/** 30min timeout: AI agent tasks may run long; this is an IPC safety net,
+ * not a business timeout. Server has its own task timeout. */
+const AGENT_SIDECAR_TASK_TIMEOUT_MS = 30 * 60 * 1000;`,
+  },
+  {
+    name: '#5 stream dev warn',
+    find: `      if (!parsed.success) {
         return;
       }
       // wire`,
-  // Patch 3: ACP approval (ASCII)
-  `      if (!parsed.success) {
-        return;
-      }
-      handler(parsed.data);`,
-], [
-  // Replace 1
-  `/** 30min timeout: AI agent tasks may run long; this is an IPC safety net,
- * not a business timeout. Server has its own task timeout. Frontend only
- * holds a Promise reference during this period. */
-const AGENT_SIDECAR_TASK_TIMEOUT_MS = 30 * 60 * 1000;`,
-  // Replace 2
-  `      if (!parsed.success) {
+    replace: `      if (!parsed.success) {
         if (import.meta.env.DEV) {
           console.warn('[sidecar] stream event schema validation failed', parsed.error);
         }
         return;
       }
       // wire`,
-  // Replace 3
-  `      if (!parsed.success) {
+  },
+  {
+    name: '#5 approval dev warn',
+    find: `      if (!parsed.success) {
+        return;
+      }
+      handler(parsed.data);`,
+    replace: `      if (!parsed.success) {
         if (import.meta.env.DEV) {
           console.warn('[sidecar] ACP approval schema validation failed', parsed.error);
         }
         return;
       }
       handler(parsed.data);`,
+  },
 ]);
 
 // ═══════════════════════════════════════════
-// git.ts — 3 patches
+// 4. git.ts — 错误日志
 // ═══════════════════════════════════════════
 
-patch('src/store/git.ts', [
-  // Patch 1: commit stats catch (ASCII)
-  `        } catch {
+patchAscii('src/store/git.ts', [
+  {
+    name: '#6 commit stats log',
+    find: `        } catch {
           // Commit stats are pure background optimization.
         } finally {`,
-  // Patch 2: PR detail preload catch (ASCII)
-  `        }).catch(() => undefined);`,
-  // Patch 3: PR preload catch (ASCII)
-  `    } catch {
-      // Background PR preloading is best-effort only.
-    }`,
-], [
-  // Replace 1
-  `        } catch (error) {
+    replace: `        } catch (error) {
           console.warn('[git] background commit stats load failed', error);
         } finally {`,
-  // Replace 2
-  `        }).catch((error) => {
+  },
+  {
+    name: '#6 PR detail preload log',
+    find: `        }).catch(() => undefined);`,
+    replace: `        }).catch((error) => {
           console.warn('[git] background PR detail preload failed', pullRequest.number, error);
         });`,
-  // Replace 3
-  `    } catch (error) {
+  },
+  {
+    name: '#6 PR preload log',
+    find: `    } catch {
+      // Background PR preloading is best-effort only.
+    }`,
+    replace: `    } catch (error) {
       console.warn('[git] background PR preload failed', error);
     }`,
+  },
 ]);
 
-console.log('\nDone. Verify with:');
+console.log('\n✅ Done. Verify with:');
 console.log('  pnpm typecheck');
 console.log('  cd src-tauri && cargo test');

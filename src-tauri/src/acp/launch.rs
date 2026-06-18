@@ -331,7 +331,11 @@ fn find_dotenv_value(content: &str, key: &str) -> Option<String> {
             continue;
         };
 
-        if name.trim() != key {
+        // Strip "export " prefix for Unix shell convention: export KEY=value
+        let name = name.trim();
+        let name = name.strip_prefix("export ").unwrap_or(name).trim();
+
+        if name != key {
             continue;
         }
 
@@ -451,6 +455,15 @@ mod tests {
         assert_eq!(
             find_dotenv_value("TAVILY_API_KEY='single'", "TAVILY_API_KEY").as_deref(),
             Some("single")
+        );
+    }
+
+    #[test]
+    fn find_dotenv_value_strips_export_prefix() {
+        assert_eq!(
+            find_dotenv_value("export TAVILY_API_KEY=tvly-exported", "TAVILY_API_KEY")
+                .as_deref(),
+            Some("tvly-exported")
         );
     }
 

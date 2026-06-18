@@ -29,6 +29,8 @@ import type { IIpcCallOptions } from './tauri.ipc-types';
  * - 流式事件仍由 listen('ai:sidecar-stream') + Zod safeParse 兑底校验。
  */
 
+/** 30min timeout: AI agent tasks may run long; this is an IPC safety net,
+ * not a business timeout. Server has its own task timeout. */
 const AGENT_SIDECAR_TASK_TIMEOUT_MS = 30 * 60 * 1000;
 
 /**
@@ -175,6 +177,9 @@ export const sidecarTauriService: TSidecarTauriService = {
     return listen('ai:sidecar-stream', (event) => {
       const parsed = agentSidecarStreamEventPayloadSchema.safeParse(event.payload);
       if (!parsed.success) {
+        if (import.meta.env.DEV) {
+          console.warn('[sidecar] stream event schema validation failed', parsed.error);
+        }
         return;
       }
       // wire→domain：schema 仅浅校验 ACP tool_call/tool_call_update（acpUpdate 走 passthrough），
@@ -189,6 +194,9 @@ export const sidecarTauriService: TSidecarTauriService = {
     return listen('ai:sidecar-approval', (event) => {
       const parsed = acpPermissionRequestPayloadSchema.safeParse(event.payload);
       if (!parsed.success) {
+        if (import.meta.env.DEV) {
+          console.warn('[sidecar] ACP approval schema validation failed', parsed.error);
+        }
         return;
       }
       handler(parsed.data);

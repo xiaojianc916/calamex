@@ -494,8 +494,8 @@ export const useGitStore = defineStore('git', () => {
         pendingCommitStatsRequests.add(commitId);
         try {
           await loadCommitStatsOnly(commitId);
-        } catch {
-          // Commit stats are pure background optimization.
+        } catch (error) {
+          console.warn('[git] background commit stats load failed', error);
         } finally {
           pendingCommitStatsRequests.delete(commitId);
         }
@@ -946,7 +946,9 @@ export const useGitStore = defineStore('git', () => {
         await loadPullRequestDetail(pullRequest.number, {
           updateActive: false,
           visibleLoading: false,
-        }).catch(() => undefined);
+        }).catch((error) => {
+          console.warn('[git] background PR detail preload failed', pullRequest.number, error);
+        });
       }
     };
 
@@ -1107,8 +1109,8 @@ export const useGitStore = defineStore('git', () => {
         updateActive: false,
         visibleLoading: false,
       });
-    } catch {
-      // Background PR preloading is best-effort only.
+    } catch (error) {
+      console.warn('[git] background PR preload failed', error);
     }
   };
 

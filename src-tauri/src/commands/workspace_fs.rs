@@ -270,10 +270,6 @@ fn resolve_save_script_path(
     raw_path: &str,
     workspace_root_path: Option<String>,
 ) -> Result<PathBuf, String> {
-    // --- v4 patch: boundary check BEFORE create_dir_all ---
-    let raw_path = PathBuf::from(raw_path);
-    // 先拆出文件名与父目录（缺省父目录视为当前目录），创建父目录后再对父目录做
-    // canonicalize，使最终写入路径中的 `..` 等被解析为真实目录，避免路径穿越写盘。
     let raw_path = PathBuf::from(raw_path);
     let file_name = raw_path
         .file_name()
@@ -284,6 +280,20 @@ fn resolve_save_script_path(
         .filter(|parent| !parent.as_os_str().is_empty())
         .map(Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from("."));
+
+    // 先对父目录（或其最近的已存在祖先）做 canonicalize + 工作区边界检查，
+    // 确认安全后再创建缺失的中间目录，避免在边界外创建目录结构。
+    let boundary_check_path = parent.canonicalize().unwrap_or_else(|_| {
+        let mut ancestor = parent.as_path();
+        while let Some(grandparent) = ancestor.parent() {
+            if let Ok(canon) = grandparent.canonicalize() {
+                return canon;
+            }
+            ancestor = grandparent;
+        }
+        parent.clone()
+    });
+    ensure_optional_workspace_boundary(&boundary_check_path, workspace_root_path.clone())?;
 
     fs::create_dir_all(&parent).map_err(|error| format!("创建目录失败：{error}"))?;
 
@@ -709,7 +719,7 @@ mod tests {
 
     #[test]
     fn falls_back_to_gbk_for_non_utf8_bytes() {
-        // GB18030 编码的“中”（0xD6 0xD0）不是合法 UTF-8，且不含 BOM / NUL，应回退到 GB18030。
+        // GBK 编码的"中"（0xD6 0xD0）不是合法 UTF-8，且不含 BOM / NUL，应回退到 GBK。
         let bytes = [0xD6, 0xD0];
         let (content, encoding) = decode_script_bytes(&bytes).expect("decode gbk");
         assert_eq!(content, "中");
