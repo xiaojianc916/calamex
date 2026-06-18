@@ -79,6 +79,13 @@ pub struct CloseTerminalSessionRequest {
     pub(crate) session_id: String,
 }
 
+/// 前端存活心跳请求：每个挂载中的前端终端会话周期性上报，后端据此判定哪些会话已无前端照管。
+#[derive(Debug, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct HeartbeatTerminalSessionRequest {
+    pub(crate) session_id: String,
+}
+
 #[derive(Debug, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct CancelTerminalRunRequest {

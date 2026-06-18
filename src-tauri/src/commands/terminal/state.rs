@@ -58,6 +58,10 @@ pub struct TerminalSessionState {
     /// 共享同一控制器（都汇入前端同一个 xterm，由前端按会话回 ack）。会话创建时重置为全新实例，
     /// 关闭 / 退出时取消并移除，避免复用到已 cancel 的陈旧控制器而失去背压。
     flow_controllers: Arc<Mutex<HashMap<String, FlowController>>>,
+    /// 每会话最近一次「前端心跳」时刻。每个挂载中的前端 TerminalSession 周期性上报，后端据此判定
+    /// 哪些会话已无前端照管（页面重载 / 崩溃后前端 VM 销毁、心跳停止）。收割线程只回收「心跳超过
+    /// 宽限期 + 无活动运行」的孤儿交互会话，绝不碰仍在心跳的健康会话（零误杀）。
+    session_liveness: Arc<Mutex<HashMap<String, Instant>>>,
     pub(super) creation_guard: Arc<Mutex<()>>,
 }
 
@@ -315,6 +319,52 @@ pub(super) fn remove_flow_controller(state: &TerminalSessionState, session_id: &
     if let Some(controller) = controllers.remove(session_id) {
         controller.cancel();
     }
+}
+
+/// 记录 / 刷新某会话的前端心跳时刻。会话连接（ensure）与每次前端心跳时调用。
+pub(super) fn touch_session_liveness(state: &TerminalSessionState, session_id: &str) {
+    let Ok(mut liveness) = state.session_liveness.lock() else {
+        return;
+    };
+    liveness.insert(session_id.to_string(), Instant::now());
+}
+
+/// 移除某会话的心跳记录（会话拆解 / 关闭时），避免心跳表泄漏已消亡会话的陈旧条目。
+pub(super) fn remove_session_liveness(state: &TerminalSessionState, session_id: &str) {
+    if let Ok(mut liveness) = state.session_liveness.lock() {
+        liveness.remove(session_id);
+    }
+}
+
+/// 收集「已超过宽限期未收到前端心跳、且当前无活动运行」的孤儿交互会话 id。
+/// 仅返回仍存在于 sessions 表中的会话；带活动运行的会话一律跳过（绝不经收割线程终止仍在运行的
+/// 脚本，那类清理交由应用退出时的 shutdown_all 处理），最大化零误杀。先在锁内仅取候选 id 即释放
+/// 心跳锁，再做 sessions / active_runs 复核，避免跨锁持有。
+pub(super) fn collect_idle_orphan_session_ids(
+    state: &TerminalSessionState,
+    grace: Duration,
+) -> Vec<String> {
+    let candidates: Vec<String> = {
+        let Ok(liveness) = state.session_liveness.lock() else {
+            return Vec::new();
+        };
+        let now = Instant::now();
+        liveness
+            .iter()
+            .filter(|(_, last_seen)| now.duration_since(**last_seen) > grace)
+            .map(|(session_id, _)| session_id.clone())
+            .collect()
+    };
+    candidates
+        .into_iter()
+        .filter(|session_id| {
+            get_terminal_session(state, session_id)
+                .ok()
+                .flatten()
+                .is_some()
+                && get_active_run_snapshot_for_session(state, session_id).is_none()
+        })
+        .collect()
 }
 
 /// 运行完成时回收该会话的状态：与全局 `begin/finish_terminal_run_completion` 同构，但只作用于
@@ -660,4 +710,5 @@ pub(super) fn remove_interactive_terminal_after_exit(
     remove_session_geometry(state, session_id);
     remove_session_state(state, session_id);
     remove_flow_controller(state, session_id);
+    remove_session_liveness(state, session_id);
 }

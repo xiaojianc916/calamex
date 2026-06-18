@@ -129,6 +129,7 @@ import type {
   IDispatchTerminalScriptPayload,
   IDispatchTerminalScriptRequest,
   IEnsureTerminalSessionRequest,
+  IHeartbeatTerminalSessionRequest,
   IResizeTerminalSessionRequest,
   ITerminalSessionPayload,
   IWriteTerminalInputRequest,
@@ -361,6 +362,7 @@ export interface ITauriService {
   writeTerminalInput(payload: IWriteTerminalInputRequest): Promise<void>;
   resizeTerminalSession(payload: IResizeTerminalSessionRequest): Promise<void>;
   closeTerminalSession(payload: ICloseTerminalSessionRequest): Promise<void>;
+  heartbeatTerminalSession(payload: IHeartbeatTerminalSessionRequest): Promise<void>;
   cancelTerminalRun(payload: ICancelTerminalRunRequest): Promise<void>;
   testSshConnection(payload: ISshConnectionTestRequest): Promise<ISshConnectionTestPayload>;
   saveSshPassword(payload: ISshPasswordSaveRequest): Promise<ISshPasswordStatusPayload>;

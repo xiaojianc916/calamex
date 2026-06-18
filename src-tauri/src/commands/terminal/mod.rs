@@ -15,6 +15,7 @@ mod tests;
 // 其余终端命令经 `tauri_bindings.rs` 以 `terminal::commands::*` 路径直接登记；
 // 此处仅保留 `main.rs` 仍按 `commands::*` 引用的两项。
 pub use commands::shutdown_all_terminal_sessions;
+pub use commands::spawn_orphan_terminal_session_reaper;
 pub use state::TerminalSessionState;
 
 pub(crate) fn to_wsl_path(path: &std::path::Path) -> Result<String, String> {

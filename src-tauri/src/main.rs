@@ -14,7 +14,9 @@ mod terminal;
 use ai::edit::AiEditState;
 use commands::LspManager;
 use commands::WorkspaceWatcher;
-use commands::{TerminalSessionState, shutdown_all_terminal_sessions};
+use commands::{
+    TerminalSessionState, shutdown_all_terminal_sessions, spawn_orphan_terminal_session_reaper,
+};
 use std::{
     sync::atomic::{AtomicBool, Ordering},
     time::Instant,
@@ -323,6 +325,15 @@ storage_paths::migrate_legacy_storage();
                     let _ = window.unminimize();
                 }
             });
+
+            // 孤儿会话收割：启动后台线程，周期性回收页面重载 / 崩溃后被前端遗弃（长时间无心跳）
+            // 且无活动运行的交互终端会话，终止其 PTY，避免遗留无人照管的 wsl.exe 进程。只做拆解、
+            // 零误杀（带活动运行的会话交由退出清理）。对照 VSCode ptyService.ts 的 orphan 回收。
+            {
+                let reaper_app = app.handle().clone();
+                let reaper_state = app.state::<TerminalSessionState>().inner().clone();
+                spawn_orphan_terminal_session_reaper(reaper_app, reaper_state);
+            }
 
             // 兜底显示：窗口配置 visible:false，正常路径由前端 App.vue 挂载后调用
             // apply_window_stage 显示窗口。但若前端在隐藏态停滞（如 WebView2 在不可见

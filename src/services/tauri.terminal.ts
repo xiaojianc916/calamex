@@ -10,6 +10,7 @@ type TTerminalTauriService = Pick<
   | 'writeTerminalInput'
   | 'resizeTerminalSession'
   | 'closeTerminalSession'
+  | 'heartbeatTerminalSession'
   | 'cancelTerminalRun'
 >;
 
@@ -37,6 +38,11 @@ const TERMINAL_COMMAND_META = {
     command: 'close_terminal_session',
     guardHint: '关闭终端会话',
     audit: 'sensitive',
+  },
+  heartbeatTerminalSession: {
+    command: 'heartbeat_terminal_session',
+    guardHint: '上报终端会话存活心跳',
+    audit: 'none',
   },
   cancelTerminalRun: {
     command: 'cancel_terminal_run',
@@ -87,6 +93,17 @@ export const terminalTauriService: TTerminalTauriService = {
       undefined,
       async () => {
         await commands.closeTerminalSession(payload);
+      },
+    );
+  },
+
+  heartbeatTerminalSession(payload) {
+    return runCommand<void>(
+      TERMINAL_COMMAND_META.heartbeatTerminalSession,
+      payload,
+      undefined,
+      async () => {
+        await commands.heartbeatTerminalSession(payload);
       },
     );
   },

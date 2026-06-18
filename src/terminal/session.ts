@@ -53,6 +53,9 @@ const TERMINAL_WEBGL_RECOVERY_DELAY_MS = 180;
 // 多终端 tab 各占一个 context 触顶后会整体丢失，故超过阈值的终端回退到默认渲染。
 const MAX_WEBGL_TERMINAL_CONTEXTS = 8;
 let activeWebglTerminalContexts = 0;
+// 前端存活心跳间隔：每个挂载中的会话周期性向后端上报存活。后端宽限期（约 60s）远大于此间隔，
+// 连续多次漏报（页面重载 / 崩溃后 VM 销毁、心跳停止）才会被孤儿收割线程回收，健康会话零误杀。
+const TERMINAL_HEARTBEAT_INTERVAL_MS = 15_000;
 const TERMINAL_LAYOUT_SETTLE_DELAY_MS = 72;
 const TERMINAL_OUTPUT_FLUSH_DELAY_MS = 16;
 const TERMINAL_RUN_COMPLETED_FLUSH_TIMEOUT_MS = 160;
@@ -311,6 +314,8 @@ export interface ITerminalTauriService {
   writeTerminalInput(params: { sessionId: string; data: string }): Promise<void>;
   resizeTerminalSession(params: { sessionId: string; cols: number; rows: number }): Promise<void>;
   closeTerminalSession(params: { sessionId: string }): Promise<void>;
+  /** 可选：上报会话存活心跳。注入完整 tauriService 时实现；测试 fake 可省略。 */
+  heartbeatTerminalSession?(params: { sessionId: string }): Promise<void>;
 }
 
 // ─── 回调接口 ─────────────────────────────────────────────────────────────────
@@ -449,6 +454,9 @@ export class TerminalSession {
 
   // -- Private: run tracking ------------------------------------------------
   private _activeRunId: string | null = null;
+
+  // -- Private: liveness heartbeat -----------------------------------------
+  private _heartbeatTimerId: number | null = null;
 
   // -- Private: renderer state ---------------------------------------------
   private _webglRendererBlocked = false;
@@ -630,6 +638,7 @@ export class TerminalSession {
         });
       }
       this.session.value = payload;
+      this._startHeartbeat();
       this._emitBufferDiagnostic(
         payload.created
           ? 'ensure-connect:created-session'
@@ -926,7 +935,8 @@ export class TerminalSession {
   // -- Public: dispose terminal instance -----------------------------------
 
   async dispose(): Promise<void> {
-    // 显式销毁（关闭 tab）：先终止后端 PTY，再做前端拆卸。
+    // 显式销毁（关闭 tab）：先停止存活心跳，再终止后端 PTY，最后做前端拆卸。
+    this._stopHeartbeat();
     // detach() 仅释放 DOM/监听并保留 PTY（用于隐藏切换与重载重连）；dispose() 是彻底销毁，
     // 唯一触发点是用户主动关闭 tab，故必须连带关闭后端会话，避免 PTY 泄漏成孤儿进程。
     if (this.session.value) {
@@ -942,6 +952,32 @@ export class TerminalSession {
     this._terminalRef.value = null;
     this._fitAddonRef.value = null;
     this.session.value = null;
+  }
+
+  // ── 私有：存活心跳 ───────────────────────────────────────────────────────────
+
+  /**
+   * 启动存活心跳：周期性向后端上报本会话仍有前端照管。幂等——重复调用不会叠加定时器。
+   * 心跳贯穿会话生命周期（连接后启动，dispose 时停止）；detach（隐藏 / 切换 tab）不停止，
+   * 因为隐藏的会话仍逻辑存活、不应被孤儿收割。注入的服务未实现该方法时静默跳过。
+   */
+  private _startHeartbeat(): void {
+    if (this._heartbeatTimerId !== null) return;
+    if (typeof window === 'undefined') return;
+    this._heartbeatTimerId = window.setInterval(() => {
+      if (!this.session.value) return;
+      const pending = this._tauri.heartbeatTerminalSession?.({ sessionId: this.id });
+      // 心跳是尽力而为的存活上报：偶发失败无需上抛，下个周期自然重试。
+      void pending?.catch(() => {});
+    }, TERMINAL_HEARTBEAT_INTERVAL_MS);
+  }
+
+  /** 停止存活心跳：清除定时器。dispose（关闭 tab）时调用。 */
+  private _stopHeartbeat(): void {
+    if (this._heartbeatTimerId !== null) {
+      window.clearInterval(this._heartbeatTimerId);
+      this._heartbeatTimerId = null;
+    }
   }
 
   // ── 私有：emit 方法 ──────────────────────────────────────────────────────────

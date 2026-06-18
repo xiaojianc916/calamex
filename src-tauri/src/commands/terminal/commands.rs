@@ -13,8 +13,9 @@ use tauri::{AppHandle, State};
 use crate::terminal::{
     command_contracts::{
         CancelTerminalRunRequest, CloseTerminalSessionRequest, DispatchTerminalScriptPayload,
-        DispatchTerminalScriptRequest, EnsureTerminalSessionRequest, TerminalActiveRunSnapshot,
-        TerminalInputRequest, TerminalResizeRequest, TerminalSessionPayload,
+        DispatchTerminalScriptRequest, EnsureTerminalSessionRequest, HeartbeatTerminalSessionRequest,
+        TerminalActiveRunSnapshot, TerminalInputRequest, TerminalResizeRequest,
+        TerminalSessionPayload,
     },
     dispatch::build_terminal_run_command_for_local_wsl,
     local_wsl_protocol::{
@@ -39,17 +40,18 @@ use super::events::{
 };
 use super::state::{
     ActiveRunInputTarget, TerminalSession, TerminalSessionState, attach_active_terminal_run_handle,
-    buffer_pending_switch_input, clear_active_terminal_run, drain_active_terminal_runs,
-    get_active_terminal_run_handle, get_active_terminal_run_input_target,
-    get_active_run_snapshot_for_session, get_active_terminal_run_session, get_flow_controller,
-    get_session_geometry, get_session_state, get_terminal_session, get_terminal_snapshot,
-    lock_terminal_sessions,
+    buffer_pending_switch_input, clear_active_terminal_run, collect_idle_orphan_session_ids,
+    drain_active_terminal_runs, get_active_terminal_run_handle,
+    get_active_terminal_run_input_target, get_active_run_snapshot_for_session,
+    get_active_terminal_run_session, get_flow_controller, get_session_geometry, get_session_state,
+    get_terminal_session, get_terminal_snapshot, lock_terminal_sessions,
     mark_terminal_resize_repaint_suppression, remove_flow_controller,
     remove_interactive_terminal_after_exit, remove_pending_switch_input, remove_session_geometry,
-    remove_terminal_interactive_visual_state, remove_terminal_session, remove_terminal_snapshot,
-    reset_flow_controller, resolve_terminal_start_directory, set_session_geometry,
-    set_terminal_snapshot, should_recreate_terminal_session, take_active_terminal_run_for_session,
-    take_and_prepend_pending_switch_input, terminate_terminal_session, try_mark_active_terminal_run,
+    remove_session_liveness, remove_terminal_interactive_visual_state, remove_terminal_session,
+    remove_terminal_snapshot, reset_flow_controller, resolve_terminal_start_directory,
+    set_session_geometry, set_terminal_snapshot, should_recreate_terminal_session,
+    take_active_terminal_run_for_session, take_and_prepend_pending_switch_input,
+    terminate_terminal_session, touch_session_liveness, try_mark_active_terminal_run,
 };
 use super::to_wsl_path;
 
@@ -68,6 +70,13 @@ const RUN_CANCEL_TEARDOWN_HARD_DEADLINE: Duration = Duration::from_secs(5);
 /// 收尾看门狗——轮询间隔：周期性复检读线程是否已收尾，避免忙等。关闭 / 取消两条看门狗共用。
 const TEARDOWN_WATCH_POLL: Duration = Duration::from_millis(250);
 
+/// 孤儿会话收割——心跳宽限期：前端每个挂载中的会话周期性上报心跳（前端侧约 15s/次）。连续多次
+/// 未上报（超过此宽限期）即判定该后端会话已无前端照管（页面重载 / 崩溃后前端 VM 销毁、心跳停止），
+/// 可作孤儿回收。宽限期远大于心跳间隔，健康会话偶发抖动绝不会被误杀（零误杀）。
+const ORPHAN_SESSION_REAP_GRACE: Duration = Duration::from_secs(60);
+/// 孤儿会话收割——巡检间隔：收割线程每隔这么久扫描一次心跳表。
+const ORPHAN_SESSION_REAP_POLL: Duration = Duration::from_secs(20);
+
 #[tauri::command]
 #[specta::specta]
 pub async fn ensure_terminal_session(
@@ -77,6 +86,8 @@ pub async fn ensure_terminal_session(
 ) -> Result<TerminalSessionPayload, String> {
     let terminal_state = state.inner().clone();
     set_session_geometry(&terminal_state, &payload.session_id, payload.cols, payload.rows);
+    // 刷新该会话的前端存活心跳：连接 / 重连即视为「有前端照管」，孤儿收割线程据此放行该会话。
+    touch_session_liveness(&terminal_state, &payload.session_id);
 
     // 在持有创建保护锁之前完成工作目录规整：canonicalize 会触达文件系统，慢盘 / 网络盘上
     // 可能阻塞。把它挪到锁外可缩短临界区，避免无谓拉长 close / shutdown 等需与创建串行的
@@ -317,6 +328,8 @@ pub fn close_terminal_session(
     remove_session_geometry(&terminal_state, &payload.session_id);
     // P2：取消并移除该会话的输出流控器，释放任何处于背压暂停态的读线程（使其能读到 EOF）。
     remove_flow_controller(&terminal_state, &payload.session_id);
+    // 关闭即彻底拆解：一并移除该会话的存活心跳记录，避免心跳表泄漏已关闭会话的陈旧条目。
+    remove_session_liveness(&terminal_state, &payload.session_id);
     if let Some(run_handle) =
         take_active_terminal_run_for_session(&terminal_state, &payload.session_id)
     {
@@ -634,4 +647,78 @@ pub fn acknowledge_terminal_data(
         flow.acknowledge(char_count as usize);
     }
     Ok(())
+}
+
+/// 前端心跳：每个挂载中的前端终端会话周期性上报自身存活，后端据此刷新该会话「最近可见」时刻。
+/// 收割线程只回收长时间无心跳（页面重载 / 崩溃后前端 VM 销毁、心跳停止）且无活动运行的孤儿会话。
+/// 会话不存在时也安全（仅记录时刻、不创建会话）。
+#[tauri::command]
+#[specta::specta]
+pub fn heartbeat_terminal_session(
+    state: State<TerminalSessionState>,
+    payload: HeartbeatTerminalSessionRequest,
+) -> Result<(), String> {
+    let terminal_state = state.inner().clone();
+    touch_session_liveness(&terminal_state, &payload.session_id);
+    Ok(())
+}
+
+/// 启动孤儿会话收割线程：周期性回收「长时间无前端心跳 + 无活动运行」的交互会话并终止其 PTY，
+/// 避免页面重载 / 崩溃后被前端遗弃的会话遗留无人照管的 wsl.exe 进程。只做拆解、绝不空闲探测，
+/// 带活动运行的会话一律跳过（交由应用退出清理 shutdown_all 处理），最大化零误杀。对照 VSCode
+/// `ptyService.ts` 的 reduceGraceTime / orphan 检测：以连接存活性判定持久终端进程是否应被回收。
+pub fn spawn_orphan_terminal_session_reaper(app: AppHandle, state: TerminalSessionState) {
+    let spawn_result = std::thread::Builder::new()
+        .name("wsl-orphan-session-reaper".to_string())
+        .spawn(move || {
+            loop {
+                std::thread::sleep(ORPHAN_SESSION_REAP_POLL);
+                reap_idle_orphan_terminal_sessions(&app, &state, ORPHAN_SESSION_REAP_GRACE);
+            }
+        });
+    if let Err(error) = spawn_result {
+        log::warn!("WSL 孤儿会话收割线程创建失败：{error}");
+    }
+}
+
+/// 单次收割：回收所有「无前端心跳超过 grace + 当前无活动运行」的孤儿交互会话。与
+/// close_terminal_session 复用同一创建保护锁，确保回收与创建 / 关闭串行，绝不在会话正处于
+/// 「已派生进程、尚未插入注册表」的窗口里误判。持锁后重新计算孤儿集合：持锁期间任何重连
+/// （心跳刷新）/ 新增运行都会被排除，杜绝竞态误杀。
+fn reap_idle_orphan_terminal_sessions(
+    app: &AppHandle,
+    state: &TerminalSessionState,
+    grace: Duration,
+) {
+    // 先在不持创建锁时粗筛，避免无谓地与创建 / 关闭路径串行。
+    if collect_idle_orphan_session_ids(state, grace).is_empty() {
+        return;
+    }
+    let _creation_guard = match state.creation_guard.lock() {
+        Ok(guard) => guard,
+        Err(_) => {
+            log::warn!("WSL 孤儿会话收割：创建保护锁已损坏，跳过本轮。");
+            return;
+        }
+    };
+    // 持锁后重新计算「当前仍为孤儿」的集合：持锁期间的重连（心跳刷新）/ 新增运行都会被排除。
+    for session_id in collect_idle_orphan_session_ids(state, grace) {
+        let Some(session) = remove_terminal_session(state, &session_id).ok().flatten() else {
+            continue;
+        };
+        log::info!("回收无前端照管的孤儿 WSL 交互会话（session_id={session_id}）。");
+        // 句柄是 Arc 共享克隆，交给收尾看门狗与本次 terminate 共用同一 killer / finished 标志。
+        let handle = session.handle.clone();
+        let _ = terminate_terminal_session(session.as_ref());
+        remove_interactive_terminal_after_exit(state, &session_id);
+        // 与 close 路径一致挂收尾看门狗：若读线程未在宽限期内收尾（wsl.exe 卡死）则升级重发 kill。
+        spawn_interactive_teardown_watch(app.clone(), state.clone(), session_id.clone(), handle);
+        emit_terminal_exit(
+            app,
+            TerminalExitEvent {
+                session_id,
+                exit_code: None,
+            },
+        );
+    }
 }

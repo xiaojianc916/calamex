@@ -42,6 +42,10 @@ export interface ICloseTerminalSessionRequest {
   sessionId: string;
 }
 
+export interface IHeartbeatTerminalSessionRequest {
+  sessionId: string;
+}
+
 export interface ICancelTerminalRunRequest {
   runId: string;
   mode?: TTerminalCancelMode;
