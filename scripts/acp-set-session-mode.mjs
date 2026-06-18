@@ -9,6 +9,7 @@
 //   tauri_bindings.rs  登记 ai::gateway::ai_set_session_mode
 //
 // 幂等：每个文件先按 skipIf 标记跳过；每个锚点要求恰好命中 1 次，否则抛错中止。
+// EOL 容错：本地工作树可能是 CRLF，先归一到 LF 匹配，写回时还原文件原有 CRLF，避免行尾噪声。
 // 仓库根目录运行：node scripts/acp-set-session-mode.mjs
 import { readFileSync, writeFileSync } from 'node:fs';
 
@@ -201,11 +202,14 @@ pub async fn ai_inline_complete(`,
 
 let changed = 0;
 for (const edit of edits) {
-  let src = readFileSync(edit.file, 'utf8');
-  if (edit.skipIf && src.includes(edit.skipIf)) {
+  const raw = readFileSync(edit.file, 'utf8');
+  if (edit.skipIf && raw.includes(edit.skipIf)) {
     console.log(`skip (already applied): ${edit.file}`);
     continue;
   }
+  // EOL 归一：CRLF -> LF 匹配，写回时还原，避免行尾噪声污染 diff。
+  const hadCRLF = raw.includes('\r\n');
+  let src = hadCRLF ? raw.replace(/\r\n/g, '\n') : raw;
   for (const step of edit.steps) {
     const count = src.split(step.find).length - 1;
     if (count !== 1) {
@@ -215,8 +219,9 @@ for (const edit of edits) {
     }
     src = src.replace(step.find, () => step.replace);
   }
-  writeFileSync(edit.file, src, 'utf8');
+  const out = hadCRLF ? src.replace(/\n/g, '\r\n') : src;
+  writeFileSync(edit.file, out, 'utf8');
   changed += 1;
-  console.log(`patched: ${edit.file}`);
+  console.log(`patched: ${edit.file}${hadCRLF ? ' (CRLF preserved)' : ''}`);
 }
 console.log(`\ndone. files changed: ${changed}/${edits.length}`);
