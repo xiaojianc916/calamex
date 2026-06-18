@@ -15,7 +15,6 @@ pub mod state_machine;
 pub mod tauri_events;
 pub mod types;
 pub mod utf8_decoder;
-pub mod visual;
 pub mod vte_detect;
 pub mod wsl;
 pub mod wsl_pty;

@@ -4,7 +4,7 @@
 
 use jiff::Timestamp;
 use std::{
-    sync::{Arc, Mutex},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -18,39 +18,29 @@ use crate::terminal::{
         TerminalSessionPayload,
     },
     dispatch::build_terminal_run_command_for_local_wsl,
-    local_wsl_protocol::{
-        LocalWslTerminalOpenInteractiveRequest, LocalWslTerminalRunScriptRequest, SIGNAL_MODE_KILL,
-    },
-    tauri_events::{
-        TerminalExitEvent, TerminalRunCompletedEvent, emit_terminal_exit,
-        emit_terminal_run_completed,
-    },
+    local_wsl_protocol::LocalWslTerminalOpenInteractiveRequest,
+    tauri_events::{TerminalExitEvent, emit_terminal_exit},
     types::TerminalState,
-    visual::{TerminalRunVisualTracker, extract_prompt_from_terminal_snapshot},
     wsl_pty::{
-        LocalWslPtyHandle, LocalWslRunHandle, materialize_wsl_script,
-        open_interactive_terminal_local_with_flow, run_terminal_script_local_with_flow,
+        LocalWslPtyHandle, materialize_wsl_script, open_interactive_terminal_local_with_flow,
     },
 };
 
 use super::events::{
-    complete_session_run_state_and_emit, handle_local_run_event,
-    handle_local_wsl_interactive_terminal_event, mark_terminal_interactive_ready,
-    set_session_state_and_emit,
+    complete_session_run_state_and_emit, handle_local_wsl_interactive_terminal_event,
+    mark_terminal_interactive_ready, set_session_state_and_emit,
 };
 use super::state::{
-    ActiveRunInputTarget, TerminalSession, TerminalSessionState, attach_active_terminal_run_handle,
-    buffer_pending_switch_input, clear_active_terminal_run, collect_idle_orphan_session_ids,
-    drain_active_terminal_runs, get_active_terminal_run_handle,
+    ActiveRunInputTarget, TerminalSession, TerminalSessionState, buffer_pending_switch_input,
+    clear_active_terminal_run, collect_idle_orphan_session_ids,
     get_active_terminal_run_input_target, get_active_run_snapshot_for_session,
-    get_active_terminal_run_session, get_flow_controller, get_session_geometry, get_session_state,
-    get_terminal_session, get_terminal_snapshot, lock_terminal_sessions,
-    mark_terminal_resize_repaint_suppression, remove_flow_controller,
-    remove_interactive_terminal_after_exit, remove_pending_switch_input, remove_session_geometry,
-    remove_session_liveness, remove_terminal_interactive_visual_state, remove_terminal_session,
-    remove_terminal_snapshot, reset_flow_controller, resolve_terminal_start_directory,
-    set_session_geometry, set_terminal_snapshot, should_recreate_terminal_session,
-    take_active_terminal_run_for_session, take_and_prepend_pending_switch_input,
+    get_active_terminal_run_session, get_flow_controller, get_session_state, get_terminal_session,
+    get_terminal_snapshot, lock_terminal_sessions, mark_terminal_resize_repaint_suppression,
+    remove_flow_controller, remove_interactive_terminal_after_exit, remove_pending_switch_input,
+    remove_session_geometry, remove_session_liveness, remove_terminal_interactive_visual_state,
+    remove_terminal_session, remove_terminal_snapshot, reset_flow_controller,
+    resolve_terminal_start_directory, set_session_geometry, set_terminal_snapshot,
+    should_recreate_terminal_session, take_and_prepend_pending_switch_input,
     terminate_terminal_session, touch_session_liveness, try_mark_active_terminal_run,
 };
 use super::to_wsl_path;
@@ -62,12 +52,7 @@ const DEFAULT_WSL_INTERACTIVE_CWD: &str = "~";
 const INTERACTIVE_TEARDOWN_GRACE: Duration = Duration::from_secs(3);
 /// 关闭看门狗——硬超时：升级 kill 后再等这么久；仍未收尾则判定 wsl.exe 卡死，合成退出事件。
 const INTERACTIVE_TEARDOWN_HARD_DEADLINE: Duration = Duration::from_secs(5);
-/// 取消看门狗——宽限期：kill 模式取消运行后等待运行读线程正常收尾（child.wait 返回 →
-/// RunCompleted）的时长。超过未收尾则升级重发 kill。
-const RUN_CANCEL_TEARDOWN_GRACE: Duration = Duration::from_secs(3);
-/// 取消看门狗——硬超时：升级重发 kill 后再等这么久；仍未收尾则判定 wsl.exe 卡死，合成完成事件。
-const RUN_CANCEL_TEARDOWN_HARD_DEADLINE: Duration = Duration::from_secs(5);
-/// 收尾看门狗——轮询间隔：周期性复检读线程是否已收尾，避免忙等。关闭 / 取消两条看门狗共用。
+/// 收尾看门狗——轮询间隔：周期性复检读线程是否已收尾，避免忙等。
 const TEARDOWN_WATCH_POLL: Duration = Duration::from_millis(250);
 
 /// 孤儿会话收割——心跳宽限期：前端每个挂载中的会话周期性上报心跳（前端侧约 10s/次）。连续多次
@@ -333,11 +318,6 @@ pub fn close_terminal_session(
     remove_flow_controller(&terminal_state, &payload.session_id);
     // 关闭即彻底拆解：一并移除该会话的存活心跳记录，避免心跳表泄漏已关闭会话的陈旧条目。
     remove_session_liveness(&terminal_state, &payload.session_id);
-    if let Some(run_handle) =
-        take_active_terminal_run_for_session(&terminal_state, &payload.session_id)
-    {
-        let _ = run_handle.cancel(SIGNAL_MODE_KILL);
-    }
     let Some(session) = removed_session else {
         return Ok(());
     };
@@ -429,11 +409,6 @@ pub fn shutdown_all_terminal_sessions(state: &TerminalSessionState) -> Result<()
         .creation_guard
         .lock()
         .map_err(|_| "终端会话创建锁已损坏。".to_string())?;
-    // 先 kill 所有仍在运行的脚本：脚本走独立的运行 PTY，与交互会话句柄无关，仅 drain
-    // sessions 无法终止它们，会在应用退出后遗留无人管理的孤儿 wsl.exe。
-    for run_handle in drain_active_terminal_runs(state) {
-        let _ = run_handle.cancel(SIGNAL_MODE_KILL);
-    }
     let sessions = {
         let mut sessions_map = lock_terminal_sessions(state)?;
         sessions_map
@@ -518,77 +493,6 @@ pub async fn cancel_terminal_run(
         .write_input("\u{0003}".to_string())
         .await
         .map_err(|error| error.to_string())
-}
-
-/// 取消看门狗：在 kill 模式取消运行、发出 kill 后挂一次性的监护线程。正常路径下运行读线程会
-/// 迅速在 child.wait() 返回后置位 finished 并发出 RunCompleted，看门狗观察到 is_finished 即静静
-/// 退出，不做任何多余动作。仅当底层 wsl.exe 卡死、kill 不生效、读线程阻在 read()/child.wait()
-/// 时，才升级重发 kill 并最终合成完成事件，避免 UI 永久卡在「运行中」的僵尸 run 上。只在 kill
-/// 取消路径介入，graceful 取消永不到达这里（零误杀）。
-fn spawn_run_cancel_teardown_watch(
-    app: AppHandle,
-    state: TerminalSessionState,
-    session_id: String,
-    run_id: String,
-    handle: LocalWslRunHandle,
-) {
-    let spawn_result = std::thread::Builder::new()
-        .name(format!("wsl-run-cancel-watch-{run_id}"))
-        .spawn(move || {
-            // 宽限期内等待运行读线程正常收尾（child.wait 返回后已由读线程自行发出 RunCompleted）。
-            if wait_until_run_finished(&handle, RUN_CANCEL_TEARDOWN_GRACE) {
-                return;
-            }
-            // 宽限期内未收尾：升级重发 kill，强制终止可能仍卡死的 wsl.exe。
-            log::warn!(
-                "WSL 运行任务 kill 取消后 {:?} 内读线程仍未收尾（run_id={run_id}），升级重发 kill。",
-                RUN_CANCEL_TEARDOWN_GRACE
-            );
-            if let Err(error) = handle.cancel(SIGNAL_MODE_KILL) {
-                log::warn!("WSL 运行任务取消看门狗升级 kill 失败（run_id={run_id}）：{error}");
-            }
-            // 升级后再硬等一段；仍未收尾则合成完成事件，避免 UI 永久卡在「运行中」。
-            if wait_until_run_finished(&handle, RUN_CANCEL_TEARDOWN_HARD_DEADLINE) {
-                return;
-            }
-            log::error!(
-                "WSL 运行任务 kill 取消后读线程在硬超时内仍未收尾（run_id={run_id}），合成完成事件通知前端并回收运行状态。"
-            );
-            // 读线程已确认卡死、不会再发 RunCompleted，这里代为回收运行状态并合成完成事件。
-            // 注意：此处跳过 finalize_local_run 的视觉重置 / 分隔符注入（那些需要 visual_tracker /
-            // prompt / started_at，仅在 dispatch 闭包内可得），属降级但正确的 UI 释放；前端按
-            // run_id 去重，重复的 run-completed 可被安全忽略。
-            clear_active_terminal_run(&state, &run_id);
-            complete_session_run_state_and_emit(&app, &state, &session_id);
-            emit_terminal_run_completed(
-                &app,
-                TerminalRunCompletedEvent {
-                    session_id,
-                    run_id,
-                    exit_code: None,
-                    finished_at: Timestamp::now().to_string(),
-                },
-            );
-        });
-    if let Err(error) = spawn_result {
-        // 看门狗线程创建失败是极罕见的资源耗尽场景；取消本身已发出 kill，这里仅警告，
-        // 不阻断取消流程。
-        log::warn!("WSL 运行任务取消看门狗线程创建失败：{error}");
-    }
-}
-
-/// 在 `budget` 内轮询等待运行句柄标记已收尾；收尾返回 true，超预算仍未收尾返回 false。
-fn wait_until_run_finished(handle: &LocalWslRunHandle, budget: Duration) -> bool {
-    let deadline = Instant::now() + budget;
-    loop {
-        if handle.is_finished() {
-            return true;
-        }
-        if Instant::now() >= deadline {
-            return false;
-        }
-        std::thread::sleep(TEARDOWN_WATCH_POLL);
-    }
 }
 
 /// P2 ack 背压：前端每消费约 `CHAR_COUNT_ACK_SIZE` 个字符回一次 ack，未确认字符数回落到

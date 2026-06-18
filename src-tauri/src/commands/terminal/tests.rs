@@ -1,29 +1,21 @@
 //! 集成终端模块单元测试。
 
-use std::{fs, time::Duration};
+use std::fs;
 
 use crate::terminal::{
     command_contracts::DispatchTerminalScriptRequest,
     dispatch::build_terminal_run_command_for_local_wsl,
     types::{Geometry, TerminalState},
-    visual::{
-        TERMINAL_ANSI_EXIT_ALT_SCREEN, TERMINAL_ANSI_RESET_SCROLL_REGION_PRESERVE_CURSOR,
-        TERMINAL_ANSI_SAFE_RESET, TerminalRunVisualTracker, build_terminal_ansi_reset,
-        build_terminal_run_separator, extract_prompt_from_terminal_snapshot,
-    },
     wsl as terminal_wsl,
 };
 
-use super::events::{
-    next_terminal_data_seq, next_terminal_run_chunk_seq, sanitize_terminal_run_chunk,
-};
+use super::events::next_terminal_data_seq;
 use super::state::{
     ActiveRunInputTarget, TerminalSessionState, active_terminal_run_count,
-    append_terminal_snapshot, buffer_pending_switch_input, clear_active_terminal_run,
-    complete_session_run_state, get_active_terminal_run_input_target, get_session_geometry,
-    get_session_state, get_terminal_snapshot, mark_terminal_resize_repaint_suppression,
-    remove_session_geometry, set_session_geometry, set_session_state, set_terminal_snapshot,
-    should_skip_snapshot_for_interactive_resize_repaint, take_active_terminal_run_for_session,
+    buffer_pending_switch_input, clear_active_terminal_run, complete_session_run_state,
+    get_active_terminal_run_input_target, get_session_geometry, get_session_state,
+    mark_terminal_resize_repaint_suppression, remove_session_geometry, set_session_geometry,
+    set_session_state, should_skip_snapshot_for_interactive_resize_repaint,
     take_and_prepend_pending_switch_input, try_mark_active_terminal_run,
 };
 use super::to_wsl_path;
@@ -211,34 +203,6 @@ fn session_state_transitions_are_returned_for_emission() {
 }
 
 #[test]
-fn interactive_exit_takes_active_run_only_for_owning_session() {
-    let state = TerminalSessionState::default();
-    try_mark_active_terminal_run(&state, "session-A", "run-A").expect("active run should mark");
-
-    assert!(take_active_terminal_run_for_session(&state, "session-B").is_none());
-    assert!(
-        try_mark_active_terminal_run(&state, "session-A", "run-A2").is_err(),
-        "session-A 的活动运行必须仍然在位"
-    );
-
-    assert!(take_active_terminal_run_for_session(&state, "session-A").is_none());
-    assert!(
-        try_mark_active_terminal_run(&state, "session-B", "run-B").is_ok(),
-        "归属会话退出后活动运行必须已被清空"
-    );
-
-    clear_active_terminal_run(&state, "run-B");
-}
-
-#[test]
-fn take_active_run_for_session_is_noop_when_no_active_run() {
-    let state = TerminalSessionState::default();
-    assert!(take_active_terminal_run_for_session(&state, "session-A").is_none());
-    assert!(try_mark_active_terminal_run(&state, "session-A", "run-A").is_ok());
-    clear_active_terminal_run(&state, "run-A");
-}
-
-#[test]
 fn pending_switch_input_is_buffered_and_prepended_not_dropped() {
     let state = TerminalSessionState::default();
     buffer_pending_switch_input(&state, "session-1", "ab").expect("buffer ok");
@@ -254,82 +218,12 @@ fn pending_switch_input_is_buffered_and_prepended_not_dropped() {
 }
 
 #[test]
-fn terminal_run_chunk_seq_is_monotonic() {
-    let first = next_terminal_run_chunk_seq();
-    let second = next_terminal_run_chunk_seq();
-    let third = next_terminal_run_chunk_seq();
-    assert!(first < second);
-    assert!(second < third);
-}
-
-#[test]
 fn terminal_data_seq_is_monotonic() {
     let first = next_terminal_data_seq();
     let second = next_terminal_data_seq();
     let third = next_terminal_data_seq();
     assert!(first < second);
     assert!(second < third);
-}
-
-#[test]
-fn terminal_run_visual_separator_does_not_add_blank_line_after_newline_output() {
-    let separator = build_terminal_run_separator(
-        7,
-        Some(0),
-        Duration::from_millis(1200),
-        TerminalRunVisualTracker {
-            has_output: true,
-            ended_at_line_start: true,
-            ..TerminalRunVisualTracker::default()
-        },
-        Some("[test@Predator ~]$ ".to_string()),
-    );
-    assert!(separator.starts_with("──── run #7 · exit 0 · 1.2s ────\r\n"));
-    assert!(separator.ends_with("[test@Predator ~]$ "));
-    assert!(!separator.starts_with("\r\n\r\n"));
-}
-
-#[test]
-fn terminal_run_visual_separator_starts_newline_for_no_newline_output() {
-    let separator = build_terminal_run_separator(
-        8,
-        Some(42),
-        Duration::from_millis(250),
-        TerminalRunVisualTracker {
-            has_output: true,
-            ended_at_line_start: false,
-            ..TerminalRunVisualTracker::default()
-        },
-        None,
-    );
-    assert!(separator.starts_with("\r\n──── run #8 · exit 42 · 0.2s ────\r\n"));
-}
-
-#[test]
-fn visual_reset_does_not_move_cursor_for_plain_output() {
-    let mut tracker = TerminalRunVisualTracker::default();
-    tracker.observe("Hello SH Editor\n");
-    let reset = build_terminal_ansi_reset(tracker);
-    assert!(!reset.contains("\x1b[?1049l"));
-    assert!(!reset.contains("\x1b[r"));
-    assert_eq!(reset, TERMINAL_ANSI_SAFE_RESET);
-}
-
-#[test]
-fn visual_reset_exits_alt_screen_only_when_run_entered_it() {
-    let mut tracker = TerminalRunVisualTracker::default();
-    tracker.observe("\x1b[?1049hinside alt screen");
-    let reset = build_terminal_ansi_reset(tracker);
-    assert!(reset.starts_with(TERMINAL_ANSI_EXIT_ALT_SCREEN));
-}
-
-#[test]
-fn visual_reset_preserves_cursor_when_resetting_scroll_region() {
-    let mut tracker = TerminalRunVisualTracker::default();
-    tracker.observe("\x1b[3;20rregion changed");
-    let reset = build_terminal_ansi_reset(tracker);
-    assert!(reset.contains(TERMINAL_ANSI_RESET_SCROLL_REGION_PRESERVE_CURSOR));
-    assert!(!reset.contains("\x1b[m\x1b[r"));
 }
 
 #[test]
@@ -365,40 +259,6 @@ fn interactive_resize_repaint_keeps_alt_screen_frames() {
         session_id,
         "\x1b[?25l\x1b[Hvim repaint\x1b[K"
     ));
-}
-
-#[test]
-fn terminal_run_extracts_last_prompt_from_interactive_snapshot() {
-    let snapshot = "To run a command as administrator\n\x1b[4;1H\x1b[?25h\x1b[?2004h\x1b[32m\x1b[1m[test@Predator my_desktop_app]$\x1b[m ";
-    let prompt = extract_prompt_from_terminal_snapshot(snapshot);
-    assert_eq!(
-        prompt.as_deref(),
-        Some("\x1b[32m\x1b[1m[test@Predator my_desktop_app]$\x1b[m ")
-    );
-}
-
-#[test]
-fn visual_completion_snapshot_keeps_prompt_after_run_chunk_with_dollar() {
-    let state = TerminalSessionState::default();
-    let session_id = "snapshot-prompt-session";
-    let prompt = "\x1b[32m\x1b[1m[test@Predator my_desktop_app]$\x1b[m ";
-    set_terminal_snapshot(&state, session_id, prompt.to_string()).expect("snapshot set");
-    append_terminal_snapshot(&state, session_id, "price is $5\n").expect("run output append");
-    let separator = build_terminal_run_separator(
-        9,
-        Some(0),
-        Duration::from_millis(900),
-        TerminalRunVisualTracker {
-            has_output: true,
-            ended_at_line_start: true,
-            ..TerminalRunVisualTracker::default()
-        },
-        Some(prompt.to_string()),
-    );
-    append_terminal_snapshot(&state, session_id, &separator).expect("separator append");
-    let snapshot = get_terminal_snapshot(&state, session_id).expect("snapshot get");
-    let extracted = extract_prompt_from_terminal_snapshot(&snapshot);
-    assert_eq!(extracted.as_deref(), Some(prompt));
 }
 
 #[test]
@@ -444,42 +304,4 @@ fn dirty_script_dispatch_keeps_inline_content_for_local_wsl() {
     assert_eq!(script_content.as_deref(), Some(payload.content.as_str()));
     assert!(command.used_temp_file);
     assert_eq!(command.cleanup_paths, vec![command.execution_path.clone()]);
-}
-
-#[test]
-fn run_chunk_strips_leading_conpty_screen_clear_on_first_output() {
-    let cleaned = sanitize_terminal_run_chunk("\x1b[2J\x1b[H\x1b[3;1Hclimate report\r\n", false);
-    assert_eq!(cleaned, "climate report\r\n");
-}
-
-#[test]
-fn run_chunk_strips_repeated_wsl_diagnostic_banner() {
-    let raw = "wsl: 检测到 localhost 代理配置，但未镜像到 WSL。\r\nclimate report\r\n";
-    let cleaned = sanitize_terminal_run_chunk(raw, false);
-    assert_eq!(cleaned, "climate report\r\n");
-}
-
-#[test]
-fn run_chunk_keeps_plain_output_and_dollar_signs() {
-    let raw = "total price is $5\n";
-    assert_eq!(sanitize_terminal_run_chunk(raw, true), raw);
-    assert_eq!(sanitize_terminal_run_chunk(raw, false), raw);
-}
-
-#[test]
-fn run_chunk_does_not_strip_leading_newline_without_control_prefix() {
-    let raw = "\r\nfirst real line\r\n";
-    assert_eq!(sanitize_terminal_run_chunk(raw, false), raw);
-}
-
-#[test]
-fn run_chunk_preserves_alt_screen_entry_for_tui_programs() {
-    let raw = "\x1b[?1049h\x1b[2J\x1b[Hvim ui";
-    assert_eq!(sanitize_terminal_run_chunk(raw, false), raw);
-}
-
-#[test]
-fn run_chunk_banner_strip_only_targets_line_start() {
-    let raw = "see docs at wsl: not a banner\r\n";
-    assert_eq!(sanitize_terminal_run_chunk(raw, true), raw);
 }

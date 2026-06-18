@@ -180,7 +180,25 @@ fn rename_within(dir: &Path, old_name: &str, new_name: &str) {
 }
 
 fn copy_recursively(from: &Path, to: &Path) -> std::io::Result<()> {
-    if from.is_dir() {
+    let metadata = fs::symlink_metadata(from)?;
+    if metadata.is_symlink() {
+        // 符号链接：复制链接本身而非跟随，避免循环 symlink 导致无限递归。
+        if let Some(parent) = to.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let target = fs::read_link(from)?;
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&target, to)?;
+        }
+        #[cfg(not(unix))]
+        {
+            // Windows 上创建 symlink 需要特权；安全起见跳过。
+            let _ = target;
+        }
+        return Ok(());
+    }
+    if metadata.is_dir() {
         fs::create_dir_all(to)?;
         for entry in fs::read_dir(from)? {
             let entry = entry?;
@@ -204,15 +222,12 @@ fn remove_path(path: &Path) -> std::io::Result<()> {
 }
 
 fn log_migration_warn(event: &str, path: &Path, detail: &str) {
-    eprintln!(
-        "{}",
-        serde_json::json!({
-            "level": "warn",
-            "scope": "storage-migration",
-            "event": event,
-            "path": path.display().to_string(),
-            "detail": detail,
-        })
+    tracing::warn!(
+        scope = "storage-migration",
+        event = event,
+        path = %path.display(),
+        detail = detail,
+        "storage migration warning"
     );
 }
 

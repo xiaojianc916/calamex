@@ -5,31 +5,22 @@
 
 use jiff::Timestamp;
 use std::{
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicU64, Ordering as AtomicOrdering},
-    },
-    time::{Instant, SystemTime, UNIX_EPOCH},
+    sync::atomic::{AtomicU64, Ordering as AtomicOrdering},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::terminal::{
-    local_wsl_protocol::{LocalWslTerminalServerPayload, SIGNAL_MODE_KILL},
+    local_wsl_protocol::LocalWslTerminalServerPayload,
     shell_integration::ShellIntegrationMark,
     tauri_events::{
-        TerminalDataEvent, TerminalDataSource, TerminalExitEvent, TerminalRunChunkEvent,
-        TerminalRunCompletedEvent, TerminalRunStartedEvent, TerminalSessionStateChangedEvent,
-        emit_terminal_data, emit_terminal_exit, emit_terminal_run_chunk,
-        emit_terminal_run_completed, emit_terminal_run_started,
+        TerminalDataEvent, TerminalDataSource, TerminalExitEvent, TerminalRunCompletedEvent,
+        TerminalRunStartedEvent, TerminalSessionStateChangedEvent, emit_terminal_data,
+        emit_terminal_exit, emit_terminal_run_completed, emit_terminal_run_started,
         emit_terminal_session_state_changed,
     },
     types::TerminalState,
-    visual::{
-        TerminalRunVisualObservation, TerminalRunVisualTracker, build_terminal_ansi_reset,
-        build_terminal_run_separator, current_visual_tracker, next_visual_run_seq,
-        observe_visual_output_and_prefix,
-    },
 };
 
 use super::state::{
@@ -37,12 +28,9 @@ use super::state::{
     complete_session_run_state, get_active_run_snapshot_for_session, get_session_state,
     remove_interactive_terminal_after_exit, set_active_terminal_run_started_meta,
     set_session_state, should_skip_snapshot_for_interactive_resize_repaint,
-    take_active_terminal_run_for_session,
 };
 
 static TERMINAL_DATA_SEQUENCE: AtomicU64 = AtomicU64::new(1);
-static TERMINAL_RUN_CHUNK_SEQUENCE: AtomicU64 = AtomicU64::new(1);
-static TERMINAL_RUN_VISUAL_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 fn terminal_now_ms() -> i64 {
     SystemTime::now()
@@ -104,15 +92,11 @@ pub(super) fn mark_terminal_interactive_ready(app: &AppHandle) {
 
 fn mark_terminal_interactive_exited(
     app: &AppHandle,
-    state: &TerminalSessionState,
+    _state: &TerminalSessionState,
     payload: TerminalExitEvent,
 ) {
-    // 仅接管归属于正在退出的这个会话的活动运行：多开场景下，关闭/退出某个会话绝不能
-    // 误清其它会话仍在进行的脚本。取出句柄后立即 kill，避免脚本进程沦为无人管理的孤儿
-    // （既丢失取消/输入入口，又遗留挂起的 wsl.exe）。
-    if let Some(run_handle) = take_active_terminal_run_for_session(state, &payload.session_id) {
-        let _ = run_handle.cancel(SIGNAL_MODE_KILL);
-    }
+    // Shell Integration 单命令/会话模型下运行就是交互 shell 的前台命令：交互 shell 退出即运行
+    // 终止，无需再单独接管/终止运行句柄。活动运行条目的清理由 OSC 133 D 标记或会话拆解负责。
     emit_terminal_exit(app, payload);
 }
 
@@ -136,176 +120,6 @@ fn emit_terminal_run_started_state(
 
 pub(super) fn next_terminal_data_seq() -> u64 {
     TERMINAL_DATA_SEQUENCE.fetch_add(1, AtomicOrdering::Relaxed)
-}
-
-fn next_terminal_run_visual_seq() -> u64 {
-    TERMINAL_RUN_VISUAL_SEQUENCE.fetch_add(1, AtomicOrdering::Relaxed)
-}
-
-fn emit_terminal_run_chunk_with_visual_prefix(
-    app: &AppHandle,
-    state: &TerminalSessionState,
-    session_id: &str,
-    run_id: &str,
-    data: String,
-    visual: TerminalRunVisualObservation,
-) {
-    if data.is_empty() {
-        return;
-    }
-    if !visual.prefix.is_empty() {
-        let _ = append_terminal_snapshot(state, session_id, visual.prefix);
-    }
-    let _ = append_terminal_snapshot(state, session_id, &data);
-    emit_terminal_data(
-        app,
-        TerminalDataEvent {
-            session_id: session_id.to_string(),
-            data: format!("{}{}", visual.prefix, data),
-            source: TerminalDataSource::Run,
-            seq: next_terminal_data_seq(),
-            run_id: Some(run_id.to_string()),
-            run_seq: (visual.run_seq > 0).then_some(visual.run_seq),
-        },
-    );
-    emit_terminal_run_chunk(
-        app,
-        TerminalRunChunkEvent {
-            session_id: session_id.to_string(),
-            run_id: run_id.to_string(),
-            data,
-            seq: next_terminal_run_chunk_seq(),
-        },
-    );
-}
-
-pub(super) fn next_terminal_run_chunk_seq() -> u64 {
-    TERMINAL_RUN_CHUNK_SEQUENCE.fetch_add(1, AtomicOrdering::Relaxed)
-}
-
-/// 运行输出预清洗：消除“独立运行 PTY 冷启动”带来的视觉噪声。
-pub(super) fn sanitize_terminal_run_chunk(data: &str, has_prior_output: bool) -> String {
-    // WSL 诊断行（"wsl: ..."）仅在冷启动时出现，已有输出时不再剥离，
-    // 避免误删用户脚本中合法的 "wsl:" 前缀行。
-    if has_prior_output {
-        return data.to_string();
-    }
-    let without_banner = strip_wsl_diagnostic_lines(data);
-    strip_leading_screen_init(&without_banner)
-}
-
-fn strip_wsl_diagnostic_lines(input: &str) -> String {
-    if !input.contains("wsl:") {
-        return input.to_string();
-    }
-    let mut out = String::with_capacity(input.len());
-    for segment in input.split_inclusive('\n') {
-        let trimmed = segment.trim_start_matches(['\r', ' ', '\t']);
-        if trimmed.starts_with("wsl:") {
-            continue;
-        }
-        out.push_str(segment);
-    }
-    out
-}
-
-fn strip_leading_screen_init(data: &str) -> String {
-    if match_screen_init_token(data).is_none() {
-        return data.to_string();
-    }
-    let mut rest = data;
-    loop {
-        if let Some(next) = match_screen_init_token(rest) {
-            rest = next;
-            continue;
-        }
-        if let Some(next) = rest.strip_prefix('\r').or_else(|| rest.strip_prefix('\n')) {
-            rest = next;
-            continue;
-        }
-        break;
-    }
-    rest.to_string()
-}
-
-fn match_screen_init_token(s: &str) -> Option<&str> {
-    if let Some(rest) = s.strip_prefix("\x1b[?25l") {
-        return Some(rest);
-    }
-    if let Some(rest) = s.strip_prefix("\x1b[?25h") {
-        return Some(rest);
-    }
-    let after = s.strip_prefix("\x1b[")?;
-    let mut byte_pos = 0usize;
-    for ch in after.chars() {
-        if ch.is_ascii_digit() || ch == ';' {
-            byte_pos += ch.len_utf8();
-        } else if matches!(ch, 'H' | 'J' | 'f') {
-            return Some(&after[byte_pos + ch.len_utf8()..]);
-        } else {
-            return None;
-        }
-    }
-    None
-}
-
-struct RunVisualCompletion<'a> {
-    app: &'a AppHandle,
-    state: &'a TerminalSessionState,
-    session_id: &'a str,
-    run_id: &'a str,
-    exit_code: Option<i32>,
-    started_at: Instant,
-    tracker: &'a Arc<Mutex<TerminalRunVisualTracker>>,
-    prompt: Option<String>,
-}
-
-fn emit_terminal_run_visual_completion(ctx: RunVisualCompletion<'_>) {
-    let RunVisualCompletion {
-        app,
-        state,
-        session_id,
-        run_id,
-        exit_code,
-        started_at,
-        tracker,
-        prompt,
-    } = ctx;
-    let tracker_snapshot = current_visual_tracker(tracker);
-    let reset_run_seq = next_visual_run_seq(tracker);
-    let separator_run_seq = next_visual_run_seq(tracker);
-    let reset = build_terminal_ansi_reset(tracker_snapshot);
-    let separator = build_terminal_run_separator(
-        next_terminal_run_visual_seq(),
-        exit_code,
-        started_at.elapsed(),
-        tracker_snapshot,
-        prompt,
-    );
-    let _ = append_terminal_snapshot(state, session_id, &reset);
-    let _ = append_terminal_snapshot(state, session_id, &separator);
-    emit_terminal_data(
-        app,
-        TerminalDataEvent {
-            session_id: session_id.to_string(),
-            data: reset,
-            source: TerminalDataSource::InjectedReset,
-            seq: next_terminal_data_seq(),
-            run_id: Some(run_id.to_string()),
-            run_seq: Some(reset_run_seq),
-        },
-    );
-    emit_terminal_data(
-        app,
-        TerminalDataEvent {
-            session_id: session_id.to_string(),
-            data: separator,
-            source: TerminalDataSource::InjectedSeparator,
-            seq: next_terminal_data_seq(),
-            run_id: Some(run_id.to_string()),
-            run_seq: Some(separator_run_seq),
-        },
-    );
 }
 
 fn emit_terminal_interactive_output(
@@ -385,10 +199,6 @@ pub(super) fn handle_local_wsl_interactive_terminal_event(
         LocalWslTerminalServerPayload::InteractiveMark(payload) => {
             handle_interactive_shell_mark(app, state, session_id, payload.mark);
         }
-        LocalWslTerminalServerPayload::RunStarted(_)
-        | LocalWslTerminalServerPayload::RunChunk(_)
-        | LocalWslTerminalServerPayload::RunCompleted(_)
-        | LocalWslTerminalServerPayload::RunError(_) => {}
     }
 }
 
@@ -441,112 +251,4 @@ fn handle_interactive_shell_mark(
         | ShellIntegrationMark::CommandStart
         | ShellIntegrationMark::Cwd(_) => {}
     }
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(super) fn handle_local_run_event(
-    app: &AppHandle,
-    state: &TerminalSessionState,
-    session_id: &str,
-    run_id: &str,
-    visual_tracker: &Arc<Mutex<TerminalRunVisualTracker>>,
-    started_at: Instant,
-    prompt: Option<String>,
-    event: LocalWslTerminalServerPayload,
-) {
-    match event {
-        LocalWslTerminalServerPayload::RunStarted(payload) => {
-            // 先据 started_at 推回绝对启动时刻（ms），一次算出、同时用于持久化与发事件，
-            // 避免回填与前端事件之间出现毫秒级漂移。
-            let started_at_ms = terminal_now_ms()
-                - i64::try_from(started_at.elapsed().as_millis()).unwrap_or(0);
-            // 回填活动运行的 pid / 启动时刻：供页面重载后经 ensure_terminal_session 复原运行态 UI。
-            set_active_terminal_run_started_meta(state, run_id, payload.pid, started_at_ms);
-            emit_terminal_run_started_state(app, session_id, run_id, payload.pid, started_at_ms);
-            // 每会话态：该会话由 SwitchingToRun 进入 Running，输入据此路由到本会话的 run。
-            set_session_state_and_emit(app, state, session_id, TerminalState::Running);
-        }
-        LocalWslTerminalServerPayload::RunChunk(payload) => {
-            let has_prior_output = current_visual_tracker(visual_tracker).has_output;
-            let cleaned = sanitize_terminal_run_chunk(&payload.data, has_prior_output);
-            if cleaned.is_empty() {
-                return;
-            }
-            let visual = observe_visual_output_and_prefix(visual_tracker, &cleaned);
-            emit_terminal_run_chunk_with_visual_prefix(
-                app, state, session_id, run_id, cleaned, visual,
-            );
-        }
-        LocalWslTerminalServerPayload::RunCompleted(payload) => {
-            finalize_local_run(
-                app,
-                state,
-                session_id,
-                run_id,
-                payload.exit_code,
-                started_at,
-                visual_tracker,
-                prompt,
-            );
-        }
-        LocalWslTerminalServerPayload::RunError(payload) => {
-            let output = format!("{}\n", payload.message);
-            let visual = observe_visual_output_and_prefix(visual_tracker, &output);
-            emit_terminal_run_chunk_with_visual_prefix(
-                app, state, session_id, run_id, output, visual,
-            );
-            finalize_local_run(
-                app,
-                state,
-                session_id,
-                run_id,
-                payload.exit_code.or(Some(127)),
-                started_at,
-                visual_tracker,
-                prompt,
-            );
-        }
-        LocalWslTerminalServerPayload::InteractiveOpened(_)
-        | LocalWslTerminalServerPayload::InteractiveData(_)
-        | LocalWslTerminalServerPayload::InteractiveClosed(_)
-        | LocalWslTerminalServerPayload::InteractiveAck(_)
-        | LocalWslTerminalServerPayload::InteractiveError(_)
-        | LocalWslTerminalServerPayload::InteractiveMark(_) => {}
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn finalize_local_run(
-    app: &AppHandle,
-    state: &TerminalSessionState,
-    session_id: &str,
-    run_id: &str,
-    exit_code: Option<i32>,
-    started_at: Instant,
-    visual_tracker: &Arc<Mutex<TerminalRunVisualTracker>>,
-    prompt: Option<String>,
-) {
-    emit_terminal_run_visual_completion(RunVisualCompletion {
-        app,
-        state,
-        session_id,
-        run_id,
-        exit_code,
-        started_at,
-        tracker: visual_tracker,
-        prompt,
-    });
-    clear_active_terminal_run(state, run_id);
-    // 每会话态：该会话的运行结束后回收其状态（Running -> SwitchingToIdle -> IdleInteractive），
-    // 不受其它会话是否仍在运行影响。全局状态机已于 BE-2b 移除，运行完成事件直接发出。
-    complete_session_run_state_and_emit(app, state, session_id);
-    emit_terminal_run_completed(
-        app,
-        TerminalRunCompletedEvent {
-            session_id: session_id.to_string(),
-            run_id: run_id.to_string(),
-            exit_code,
-            finished_at: Timestamp::now().to_string(),
-        },
-    );
 }
