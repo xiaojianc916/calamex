@@ -20,6 +20,12 @@
           <SquareTerminal class="terminal-tab-icon-glyph terminal-tab-icon-default" aria-hidden="true" />
           <X class="terminal-tab-icon-glyph terminal-tab-icon-close" aria-hidden="true" />
         </span>
+        <span
+          v-if="runningSessionIds.includes(tab.sessionId)"
+          class="terminal-tab-running-dot"
+          aria-label="运行中"
+          title="运行中"
+        />
         <span class="terminal-tab-label" v-text="'终端 ' + (index + 1)" />
       </div>
     </div>
@@ -42,6 +48,7 @@ import type { ITerminalTab } from '@/store/terminalTabs';
 defineProps<{
   tabs: ITerminalTab[];
   activeSessionId: string;
+  runningSessionIds: string[];
 }>();
 
 const emit = defineEmits<{
@@ -146,6 +153,26 @@ const emit = defineEmits<{
 
 .terminal-tab-icon:hover .terminal-tab-icon-close {
   color: var(--danger);
+}
+
+.terminal-tab-running-dot {
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--success, #22c55e);
+  box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.18);
+  animation: terminal-tab-running-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes terminal-tab-running-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
 }
 
 .terminal-tab-label {

@@ -5,6 +5,7 @@
         class="run-panel-tabbar"
         :tabs="tabs"
         :active-session-id="activeSessionId"
+        :running-session-ids="runningSessionIds"
         @select="handleSelectTab"
         @close="handleCloseTab"
         @new="handleNewTab"
@@ -68,6 +69,7 @@ import EmbeddedTerminal from '@/components/workbench/EmbeddedTerminal.vue';
 import TerminalTabBar from '@/components/workbench/TerminalTabBar.vue';
 import { useMessage } from '@/composables/useMessage';
 import { useTerminalRunControl } from '@/composables/useTerminalRunControl';
+import { useTerminalRuntimeStore } from '@/store/terminal';
 import { useTerminalRunRoutingStore } from '@/store/terminalRunRouting';
 import { useTerminalTabsStore } from '@/store/terminalTabs';
 import { useTerminalRegistryStore } from '@/terminal/registry';
@@ -96,6 +98,16 @@ const { tabs, activeSessionId } = storeToRefs(tabsStore);
 const registry = useTerminalRegistryStore();
 const runRoutingStore = useTerminalRunRoutingStore();
 const { canStopRun, isRunning, stopRun } = useTerminalRunControl();
+
+const terminalRuntimeStore = useTerminalRuntimeStore();
+const { sessionStates } = storeToRefs(terminalRuntimeStore);
+
+// 每个会话的「运行中」指示来源：后端 per-session FSM 的 running 态镜像。
+const runningSessionIds = computed<string[]>(() =>
+  tabs.value
+    .filter((tab) => sessionStates.value.get(tab.sessionId) === 'running')
+    .map((tab) => tab.sessionId),
+);
 
 // 工具栏作用于当前激活会话；状态来自 registry 共享 refs（会话创建前后同源）。
 const isTerminalReady = computed(

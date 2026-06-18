@@ -1,5 +1,6 @@
 import type {
   AiAgentClassifyTaskPayload,
+  AiAgentNetworkPermissionPayload,
   AiApplyPatchRequest,
   AiChatStreamPayload,
   AiConfigPayload,
@@ -11,7 +12,6 @@ import type {
 import { tauriService } from '@/services/tauri';
 import type {
   IAiAgentClassifyTaskRequest,
-  IAiAgentNetworkPermissionPayload,
   IAiAgentSetNetworkPermissionRequest,
   IAiApplyPatchPayload,
   IAiCancelRequest,
@@ -293,7 +293,7 @@ export const aiService = {
   },
   setNetworkPermission(
     payload: IAiAgentSetNetworkPermissionRequest,
-  ): Promise<IAiAgentNetworkPermissionPayload> {
+  ): Promise<AiAgentNetworkPermissionPayload> {
     return tauriService.aiAgentSetNetworkPermission(payload);
   },
   webSearch(payload: AiWebSearchInput): Promise<AiWebSearchPayload> {

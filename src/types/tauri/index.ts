@@ -1,5 +1,6 @@
 import type {
   AiAgentClassifyTaskPayload,
+  AiAgentNetworkPermissionPayload,
   AiApplyPatchRequest,
   AiChatStreamPayload,
   AiConfigPayload,
@@ -10,7 +11,6 @@ import type {
 } from '@/bindings/tauri';
 import type {
   IAiAgentClassifyTaskRequest,
-  IAiAgentNetworkPermissionPayload,
   IAiAgentSetNetworkPermissionRequest,
   IAiApplyPatchPayload,
   IAiCancelRequest,
@@ -397,7 +397,7 @@ export interface ITauriService {
   aiWebFetch(payload: IAiWebFetchInput): Promise<IAiWebFetchPayload>;
   aiAgentSetNetworkPermission(
     payload: IAiAgentSetNetworkPermissionRequest,
-  ): Promise<IAiAgentNetworkPermissionPayload>;
+  ): Promise<AiAgentNetworkPermissionPayload>;
   aiProposePatch(payload: IAiProposePatchRequest): Promise<IAiProposePatchPayload>;
   aiApplyPatch(payload: AiApplyPatchRequest): Promise<IAiApplyPatchPayload>;
   aiEditGetAuthLevel(): Promise<IAiEditAuthState>;
