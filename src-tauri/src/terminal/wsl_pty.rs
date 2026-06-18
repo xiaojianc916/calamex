@@ -235,14 +235,27 @@ where
         })
         .map_err(|error| LocalWslPtyError::Open(error.to_string()))?;
 
+    // Shell Integration（对照 VSCode shellIntegration-bash.sh）：把集成脚本落到 WSL 临时文件，
+    // 再以 bash --init-file <path> -i 注入。--init-file 不支持 -l，故脚本内部自行 source 登录
+    // 启动文件（/etc/profile + 首个 profile），等价于原 bash -il 的环境，随后装载 OSC 133/633 标记。
+    let integration_script_path = shell_integration_script_path(&session_id);
+    materialize_wsl_script(
+        &integration_script_path,
+        &super::shell_integration::build_bash_integration_script(),
+    )?;
+
     let mut command = CommandBuilder::new("wsl.exe");
     command.arg("--cd");
     command.arg(&working_directory);
     command.arg("--");
     command.arg("bash");
-    command.arg("-il");
+    command.arg("--init-file");
+    command.arg(&integration_script_path);
+    command.arg("-i");
     // 让 wsl.exe 自身的诊断信息以 UTF-8 输出，根治 UTF-16LE 造成的终端乱码。
     command.env("WSL_UTF8", "1");
+    // 标记集成脚本系由宿主注入（而非手动 source），脚本据此 source 登录启动文件。
+    command.env("CALAMEX_SHELL_INTEGRATION_INJECTION", "1");
 
     let child = pair
         .slave
@@ -426,6 +439,9 @@ where
             ));
             log::debug!("WSL 交互终端读线程已启动（session_id={session_id}, pid={pid}）。");
 
+            // Shell Integration 过滤器：从交互输出流中剥离注入的 OSC 133/633 标记（Batch 1 丢弃
+            // 标记，保持现有可视输出不变）。跨多次 read 维护状态，正确处理被切分的转义序列。
+            let mut shell_filter = super::shell_integration::ShellIntegrationFilter::new();
             let mut decoder = LocalWslUtf8ChunkDecoder::default();
             let mut buffer = [0u8; TERMINAL_READ_BUFFER_BYTES];
             // 攒批缓冲：多次 read 的解码结果先累加在这里，按启发式决定何时发事件。
@@ -445,14 +461,18 @@ where
                         decoder.decode_into(&buffer[..read], &mut pending_out, false);
                         if should_flush_terminal_output(pending_out.len(), read, buffer.len()) {
                             let chunk = std::mem::take(&mut pending_out);
+                            let (clean, _marks) = shell_filter.filter(&chunk);
+                            if clean.is_empty() {
+                                continue;
+                            }
                             // 记录已发往前端的字符数（UTF-16 码元，与前端 ack 同尺）。
                             if let Some(flow) = &flow {
-                                flow.record_produced(utf16_len(&chunk));
+                                flow.record_produced(utf16_len(&clean));
                             }
                             on_event(LocalWslTerminalServerPayload::InteractiveData(
                                 LocalWslTerminalInteractiveData {
                                     session_id: session_id.clone(),
-                                    data: chunk,
+                                    data: clean,
                                 },
                             ));
                         }
@@ -466,15 +486,16 @@ where
 
             // 收尾：补全解码器残尾，并把最后攒批的输出一次性发出。
             decoder.decode_into(&[], &mut pending_out, true);
-            if !pending_out.is_empty() {
-                let chunk = std::mem::take(&mut pending_out);
+            let mut tail = shell_filter.filter(&std::mem::take(&mut pending_out)).0;
+            tail.push_str(&shell_filter.flush_remaining());
+            if !tail.is_empty() {
                 if let Some(flow) = &flow {
-                    flow.record_produced(utf16_len(&chunk));
+                    flow.record_produced(utf16_len(&tail));
                 }
                 on_event(LocalWslTerminalServerPayload::InteractiveData(
                     LocalWslTerminalInteractiveData {
                         session_id: session_id.clone(),
-                        data: chunk,
+                        data: tail,
                     },
                 ));
             }
@@ -812,6 +833,16 @@ fn apply_pty_resize(session_id: &str, master: &(dyn MasterPty + Send), size: (u1
             log::warn!("WSL 交互终端调整尺寸失败（session_id={session_id}）：{error}")
         }
     }
+}
+
+/// 集成脚本在 WSL 侧的落地路径：每会话唯一，避免并发写入同一文件造成截断竞争。
+/// （会话结束后不主动清理；位于 /tmp，按系统惯例回收。）
+fn shell_integration_script_path(session_id: &str) -> String {
+    let sanitized: String = session_id
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    format!("/tmp/calamex-shell-integration-{sanitized}.bash")
 }
 
 fn normalize_interactive_cwd(working_directory: &str) -> String {
