@@ -19,6 +19,8 @@ export type TEditorContextMenuIcon = Extract<
   | 'terminal'
   | 'play'
   | 'sparkles'
+  | 'minus'
+  | 'plus'
 >;
 
 export type TEditorContextMenuAction =
@@ -31,6 +33,8 @@ export type TEditorContextMenuAction =
   | 'goto-line'
   | 'quick-command'
   | 'run-current-script'
+  | 'fold-all'
+  | 'unfold-all'
   | 'cut'
   | 'copy'
   | 'paste';
