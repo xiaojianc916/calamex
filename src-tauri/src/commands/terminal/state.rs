@@ -198,8 +198,8 @@ pub(super) fn remove_session_geometry(state: &TerminalSessionState, session_id: 
 
 /// 每会话状态机：作为「单一 SessionRegistry」绞杀式重构的第二块砖，让会话各自持有自己的
 /// 运行/交互状态。输入路由不再读全局 `registry().state`，避免多开时会话 A 处于 Running 导致
-/// 会话 B 的输入被误判为应进 run stdin（跨会话输入串台）。迁移期全局 state 暂保留（双写），
-/// 待所有读取方迁移完毕后再于绞杀收尾统一删除。
+/// 会话 B 的输入被误判为应进 run stdin（跨会话输入串台）。全局 state 已于 BE-2b 删除，状态完全
+/// 按会话维护。
 ///
 /// 对照 VSCode `src/vs/platform/terminal/node/ptyService.ts`：每个 `PersistentTerminalProcess`
 /// 各自持有交互/生命周期态（`_interactionState`），`PtyService` 的 input/resize/shutdown 全按 id
@@ -212,23 +212,44 @@ pub(super) fn remove_session_geometry(state: &TerminalSessionState, session_id: 
 ///
 /// 返回实际发生的转移 `Some((from, to))`，供上层发 `terminal:session-state-changed`；无变化、
 /// 非法转移或锁中毒时返回 `None`（不发事件）。
+///
+/// P1：每个分支都打上 `[session-fsm]` 结构化日志，使每会话 FSM 的流转可从日志追踪：
+/// 接受的转移 debug、无变化 trace、非法转移 warn（提示事件乱序 / 竞态）、锁中毒 warn。
 pub(super) fn set_session_state(
     state: &TerminalSessionState,
     session_id: &str,
     to: TerminalState,
 ) -> Option<(TerminalState, TerminalState)> {
-    let mut states = state.session_states.lock().ok()?;
+    let mut states = match state.session_states.lock() {
+        Ok(states) => states,
+        Err(_) => {
+            // 锁中毒属不可恢复的内部错误：记录后丢弃本次转移，保持「尽力而为、不 panic」。
+            log::warn!(
+                "[session-fsm] 会话状态锁中毒，丢弃状态转移（session_id={session_id}, 目标={to:?}）。"
+            );
+            return None;
+        }
+    };
     let from = states
         .get(session_id)
         .copied()
         .unwrap_or(TerminalState::Booting);
     if from == to {
+        // 无变化：常见且无害（如交互就绪重复置 IdleInteractive），仅 trace 备查，不发事件。
+        log::trace!(
+            "[session-fsm] 会话状态无变化，忽略（session_id={session_id}, 状态={to:?}）。"
+        );
         return None;
     }
     if !StateMachine::can_transition(from, to) {
+        // 非法转移通常意味着事件乱序 / 竞态：就地忽略并 warn，便于据日志定位异常时序。
+        log::warn!(
+            "[session-fsm] 忽略非法会话状态转移（session_id={session_id}, {from:?} -> {to:?}）。"
+        );
         return None;
     }
     states.insert(session_id.to_string(), to);
+    log::debug!("[session-fsm] 会话状态转移（session_id={session_id}, {from:?} -> {to:?}）。");
     Some((from, to))
 }
 
@@ -250,8 +271,11 @@ pub(super) fn get_session_state(state: &TerminalSessionState, session_id: &str) 
 }
 
 pub(super) fn remove_session_state(state: &TerminalSessionState, session_id: &str) {
-    if let Ok(mut states) = state.session_states.lock() {
-        states.remove(session_id);
+    if let Ok(mut states) = state.session_states.lock()
+        && states.remove(session_id).is_some()
+    {
+        // P1：会话 FSM 生命终结，记一条 debug 以便日志中能完整追踪一个会话的起灭。
+        log::debug!("[session-fsm] 会话状态机回收（session_id={session_id}）。");
     }
 }
 
