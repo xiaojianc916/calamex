@@ -203,6 +203,18 @@ export const commands = {
 	 *  视作错误，交前端自行决定是否提示），与 runtime 的「安全空操作」语义一致。
 	 */
 	aiSetSessionMode: (payload: AiSetSessionModeRequest) => __TAURI_INVOKE<boolean>("ai_set_session_mode", { payload }),
+	/**
+	 *  取某线程会话建立时 agent 公示的可用模式清单（ACP session/new 的 NewSessionResponse.modes
+	 *  原样 JSON：currentModeId + availableModes[]），供前端模式选择器在会话建立后填充候选模式。
+	 * 
+	 *  与 ai_set_session_mode 同构地委托给 Tauri 托管的 AcpRuntime：线程归属哪个后端宿主对命令层
+	 *  透明，由 runtime 向全部已建立宿主查询并返回首个命中。thread_id 先行空白校验；返回 None 表示
+	 *  尚无该线程会话或 agent 未公示模式（前端据此隐藏选择器）。modes 为最小透传的原样 JSON（导出
+	 *  TS 为 unknown），交前端 ACL 解释（对齐 acpUpdate 整体透传）。
+	 */
+	aiGetSessionModes: (payload: AiGetSessionModesRequest) => __TAURI_INVOKE<{
+	modes: unknown,
+} | null>("ai_get_session_modes", { payload }),
 	aiInlineComplete: (payload: AiInlineCompletionRequest) => __TAURI_INVOKE<AiInlineCompletionResult>("ai_inline_complete", { payload }),
 	aiAgentClassifyTask: (payload: AiAgentClassifyTaskRequest) => __TAURI_INVOKE<AiAgentClassifyTaskPayload>("ai_agent_classify_task", { payload }),
 	aiAgentSetNetworkPermission: (payload: AiAgentSetNetworkPermissionRequest) => __TAURI_INVOKE<AiAgentNetworkPermissionPayload>("ai_agent_set_network_permission", { payload }),
@@ -911,6 +923,17 @@ export type AiEditUndoOperationRequest = {
 	operationId: string,
 };
 
+/**
+ *  ACP 会话可用模式清单的查询请求（契约层）。
+ * 
+ *  对齐 acp::AcpRuntime::session_modes(thread_id)：thread_id 定位目标会话（宿主持有
+ *  thread_id ↔ SessionId 映射，并在会话建立时登记 agent 公示的可用模式）。必填且非空（前端
+ *  总能从当前线程取得），空白校验由接线层负责。
+ */
+export type AiGetSessionModesRequest = {
+	threadId: string,
+};
+
 export type AiInlineCompletionRangePayload = {
 	startOffset: number,
 	endOffset: number,
@@ -1048,6 +1071,19 @@ export type AiSaveCredentialsRequest = {
 	providerId: string,
 	alias?: string | null,
 	apiKey: SecretString,
+};
+
+/**
+ *  ACP 会话可用模式清单的响应载荷（契约层）。
+ * 
+ *  modes 为 agent 在 NewSessionResponse 公示的可用模式清单原样 JSON（SessionModeState：
+ *  currentModeId + availableModes[]）。最小透传，宿主侧不重建 SDK 类型，交前端 ACL 解释（对齐
+ *  tool_call 的 acpUpdate 整体透传）。用 specta_typescript::Unknown 将导出 TS 映射为 unknown，
+ *  避开 serde_json::Number 的 i64/u64 触发 specta BigInt-forbidden（对齐
+ *  AgentSidecarResponsePayload.events）；serde 运行时仍为 serde_json::Value，行为不变。
+ */
+export type AiSessionModesPayload = {
+	modes: unknown,
 };
 
 /**
@@ -1920,6 +1956,17 @@ export type SshPathRenameRequest = {
 	newName: string,
 };
 
+/**
+ *  重载恢复：某会话当前活动运行的快照，随 ensure_terminal_session 复用分支回传，
+ *  让前端在页面重载、运行态镜像被重置后仍能据此复原「运行中 / 取消」UI。
+ *  pid / started_at_ms 在 RunStarted 事件到达后才填充，故为 Option。
+ */
+export type TerminalActiveRunSnapshot = {
+	runId: string,
+	pid: number | null,
+	startedAtMs: number | null,
+};
+
 export type TerminalInputRequest = {
 	sessionId: string,
 	data: string,
@@ -1937,7 +1984,13 @@ export type TerminalSessionPayload = {
 	shellLabel: string,
 	created: boolean,
 	initialOutput: string | null,
+	/**  复用既有会话且该会话仍有活动运行时带回其快照；否则为 None。 */
+	activeRun: TerminalActiveRunSnapshot | null,
+	/**  该会话当前的每会话状态，供前端重载后复原全局 / 会话运行态镜像。 */
+	sessionState: TerminalState,
 };
+
+export type TerminalState = "booting" | "idle_interactive" | "switching_to_run" | "running" | "switching_to_idle";
 
 export type WindowStage = "main";
 
