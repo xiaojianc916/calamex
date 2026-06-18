@@ -33,6 +33,10 @@ pub(super) struct TerminalActiveRun {
     session_id: String,
     run_id: String,
     run_handle: Option<LocalWslRunHandle>,
+    /// RunStarted 事件到达后填充：运行进程 pid 与启动时刻（ms）。供重载恢复时经
+    /// ensure_terminal_session 回传给前端，复原「运行中」UI 的展示信息。
+    pid: Option<u32>,
+    started_at_ms: Option<i64>,
 }
 
 pub(super) enum ActiveRunInputTarget {
@@ -405,6 +409,8 @@ pub(super) fn try_mark_active_terminal_run(
             session_id: session_id.to_string(),
             run_id: run_id.to_string(),
             run_handle: None,
+            pid: None,
+            started_at_ms: None,
         },
     );
     Ok(())
@@ -421,6 +427,36 @@ pub(super) fn attach_active_terminal_run_handle(
     };
     active_run.run_handle = Some(handle);
     Ok(())
+}
+
+/// RunStarted 事件到达后回填该运行的 pid 与启动时刻（ms）。运行已被清理（如极快完成）
+/// 时静默忽略。供重载恢复经 ensure_terminal_session 回传给前端。
+pub(super) fn set_active_terminal_run_started_meta(
+    state: &TerminalSessionState,
+    run_id: &str,
+    pid: u32,
+    started_at_ms: i64,
+) {
+    let Ok(mut active_runs) = state.active_runs.lock() else {
+        return;
+    };
+    if let Some(active_run) = active_runs.get_mut(run_id) {
+        active_run.pid = Some(pid);
+        active_run.started_at_ms = Some(started_at_ms);
+    }
+}
+
+/// 取该会话当前活动运行的快照 (run_id, pid, started_at_ms)，供 ensure_terminal_session
+/// 复用分支在前端重载后复原运行态 UI。无活动运行或锁中毒时返回 None。
+pub(super) fn get_active_run_snapshot_for_session(
+    state: &TerminalSessionState,
+    session_id: &str,
+) -> Option<(String, Option<u32>, Option<i64>)> {
+    let active_runs = state.active_runs.lock().ok()?;
+    active_runs
+        .values()
+        .find(|run| run.session_id == session_id)
+        .map(|run| (run.run_id.clone(), run.pid, run.started_at_ms))
 }
 
 pub(super) fn clear_active_terminal_run(state: &TerminalSessionState, run_id: &str) {

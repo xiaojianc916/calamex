@@ -33,7 +33,8 @@ use crate::terminal::{
 
 use super::state::{
     TerminalSessionState, append_terminal_snapshot, clear_active_terminal_run,
-    complete_session_run_state, remove_interactive_terminal_after_exit, set_session_state,
+    complete_session_run_state, remove_interactive_terminal_after_exit,
+    set_active_terminal_run_started_meta, set_session_state,
     should_skip_snapshot_for_interactive_resize_repaint, take_active_terminal_run_for_session,
 };
 
@@ -118,15 +119,14 @@ fn emit_terminal_run_started_state(
     session_id: &str,
     run_id: &str,
     pid: u32,
-    started_at: Instant,
+    started_at_ms: i64,
 ) {
     emit_terminal_run_started(
         app,
         TerminalRunStartedEvent {
             session_id: session_id.to_string(),
             run_id: run_id.to_string(),
-            started_at_ms: terminal_now_ms()
-                - i64::try_from(started_at.elapsed().as_millis()).unwrap_or(0),
+            started_at_ms,
             pid,
         },
     );
@@ -398,7 +398,13 @@ pub(super) fn handle_local_run_event(
 ) {
     match event {
         LocalWslTerminalServerPayload::RunStarted(payload) => {
-            emit_terminal_run_started_state(app, session_id, run_id, payload.pid, started_at);
+            // 先据 started_at 推回绝对启动时刻（ms），一次算出、同时用于持久化与发事件，
+            // 避免回填与前端事件之间出现毫秒级漂移。
+            let started_at_ms = terminal_now_ms()
+                - i64::try_from(started_at.elapsed().as_millis()).unwrap_or(0);
+            // 回填活动运行的 pid / 启动时刻：供页面重载后经 ensure_terminal_session 复原运行态 UI。
+            set_active_terminal_run_started_meta(state, run_id, payload.pid, started_at_ms);
+            emit_terminal_run_started_state(app, session_id, run_id, payload.pid, started_at_ms);
             // 每会话态：该会话由 SwitchingToRun 进入 Running，输入据此路由到本会话的 run。
             set_session_state_and_emit(app, state, session_id, TerminalState::Running);
         }

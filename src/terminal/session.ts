@@ -651,6 +651,11 @@ export class TerminalSession {
       if (payload.created && !payload.initialOutput) {
         this._pendingInitialPaintRecovery = true;
       }
+      // 重载恢复：复用既有会话且后端仍有活动运行时，据快照复原本地运行跟踪，使运行期间的
+      // 交互帧抑制等逻辑在重载后继续生效（运行输出本身经 source==='run' 始终回放）。
+      if (!payload.created && payload.activeRun) {
+        this.trackRun(payload.activeRun.runId);
+      }
       this._emitStatus('ready', `${payload.shellLabel} 已连接`);
       this._scheduleViewportSync({ scrollToBottom: true });
       if (this._visible) {

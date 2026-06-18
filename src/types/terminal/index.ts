@@ -47,12 +47,27 @@ export interface ICancelTerminalRunRequest {
   mode?: TTerminalCancelMode;
 }
 
+/**
+ * 重载恢复：某会话当前活动运行的快照，随 ensureTerminalSession 复用分支回传。
+ * 页面重载后运行态镜像被重置，据此复原「运行中 / 取消」UI。pid / startedAtMs
+ * 在 RunStarted 事件到达后才有值，故可空。
+ */
+export interface ITerminalActiveRunSnapshot {
+  runId: string;
+  pid: number | null;
+  startedAtMs: number | null;
+}
+
 export interface ITerminalSessionPayload {
   sessionId: string;
   cwd: string;
   shellLabel: string;
   created: boolean;
   initialOutput?: string | null;
+  /** 复用既有会话且该会话仍有活动运行时带回其快照；否则为 null/缺省。 */
+  activeRun?: ITerminalActiveRunSnapshot | null;
+  /** 该会话当前的每会话运行态，供重载后复原全局 / 会话态镜像。 */
+  sessionState?: TTerminalRuntimeState;
 }
 
 export interface IDispatchTerminalScriptPayload {

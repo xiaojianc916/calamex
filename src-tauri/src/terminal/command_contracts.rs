@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
+use crate::terminal::types::TerminalState;
+
 #[derive(Debug, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct EnsureTerminalSessionRequest {
@@ -8,6 +10,17 @@ pub struct EnsureTerminalSessionRequest {
     pub(crate) cwd: Option<String>,
     pub(crate) cols: u16,
     pub(crate) rows: u16,
+}
+
+/// 重载恢复：某会话当前活动运行的快照，随 ensure_terminal_session 复用分支回传，
+/// 让前端在页面重载、运行态镜像被重置后仍能据此复原「运行中 / 取消」UI。
+/// pid / started_at_ms 在 RunStarted 事件到达后才填充，故为 Option。
+#[derive(Debug, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalActiveRunSnapshot {
+    pub(crate) run_id: String,
+    pub(crate) pid: Option<u32>,
+    pub(crate) started_at_ms: Option<i64>,
 }
 
 #[derive(Debug, Serialize, Type)]
@@ -18,6 +31,10 @@ pub struct TerminalSessionPayload {
     pub(crate) shell_label: String,
     pub(crate) created: bool,
     pub(crate) initial_output: Option<String>,
+    /// 复用既有会话且该会话仍有活动运行时带回其快照；否则为 None。
+    pub(crate) active_run: Option<TerminalActiveRunSnapshot>,
+    /// 该会话当前的每会话状态，供前端重载后复原全局 / 会话运行态镜像。
+    pub(crate) session_state: TerminalState,
 }
 
 #[derive(Debug, Deserialize, Type)]

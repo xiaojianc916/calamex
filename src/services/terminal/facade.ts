@@ -12,6 +12,7 @@ import {
   type ITerminalDataEvent,
   type ITerminalRunHandle,
   type ITerminalRunStartedPayload,
+  type ITerminalSessionPayload,
   type TTerminalCancelMode,
   type TTerminalRuntimeState,
 } from '@/types/terminal';
@@ -336,14 +337,51 @@ export const useTerminalFacade = (options: ITerminalFacadeOptions = {}): ITermin
     return eventBridgePromise;
   };
 
+  /**
+   * 重载恢复：页面重载后 Pinia 运行态被重置，但后端会话与运行仍存活。
+   * ensureTerminalSession 复用分支会带回该会话的活动运行快照与会话态；据此重建运行态
+   * 镜像，让「运行中 / 取消」UI 复原。对照 VSCode ptyService.ts 的 reviveTerminalProcesses：
+   * 重连后据持久化进程态恢复 UI。
+   */
+  const restoreRunStateFromSession = (payload: ITerminalSessionPayload): void => {
+    const snapshot = payload.activeRun;
+    if (!snapshot) {
+      return;
+    }
+    const handle: ITerminalRunHandle = {
+      runId: snapshot.runId,
+      sessionId: payload.sessionId,
+      cwd: payload.cwd,
+      commandLine: '',
+      usedTempFile: false,
+      startedAt: snapshot.startedAtMs != null ? new Date(snapshot.startedAtMs).toISOString() : '',
+      startedAtMs: snapshot.startedAtMs ?? undefined,
+      pid: snapshot.pid,
+    };
+    runtimeStore.markRunStarted(handle);
+    const sessionState = payload.sessionState;
+    if (sessionState) {
+      // 同步复原「本会话」镜像态与全局态：前者驱动输入路由，后者驱动 isRunning / 运行态 UI。
+      const atMs = Date.now();
+      runtimeStore.applySessionStateChanged({
+        sessionId: payload.sessionId,
+        from: sessionState,
+        to: sessionState,
+        atMs,
+      });
+      runtimeStore.applyStateChanged({ from: sessionState, to: sessionState, atMs });
+    }
+  };
+
   const ensureView = async (): Promise<void> => {
     await ensureEventBridge();
-    await tauri.ensureTerminalSession({
+    const payload = await tauri.ensureTerminalSession({
       sessionId: interactiveSessionId,
       cwd: null,
       cols: DEFAULT_TERMINAL_COLS,
       rows: DEFAULT_TERMINAL_ROWS,
     });
+    restoreRunStateFromSession(payload);
   };
 
   const dispatchScript = async (

@@ -13,8 +13,8 @@ use tauri::{AppHandle, State};
 use crate::terminal::{
     command_contracts::{
         CancelTerminalRunRequest, CloseTerminalSessionRequest, DispatchTerminalScriptPayload,
-        DispatchTerminalScriptRequest, EnsureTerminalSessionRequest, TerminalInputRequest,
-        TerminalResizeRequest, TerminalSessionPayload,
+        DispatchTerminalScriptRequest, EnsureTerminalSessionRequest, TerminalActiveRunSnapshot,
+        TerminalInputRequest, TerminalResizeRequest, TerminalSessionPayload,
     },
     dispatch::build_terminal_run_command_for_local_wsl,
     local_wsl_protocol::{
@@ -41,8 +41,9 @@ use super::state::{
     ActiveRunInputTarget, TerminalSession, TerminalSessionState, attach_active_terminal_run_handle,
     buffer_pending_switch_input, clear_active_terminal_run, drain_active_terminal_runs,
     get_active_terminal_run_handle, get_active_terminal_run_input_target,
-    get_active_terminal_run_session, get_flow_controller, get_session_geometry,
-    get_terminal_session, get_terminal_snapshot, lock_terminal_sessions,
+    get_active_run_snapshot_for_session, get_active_terminal_run_session, get_flow_controller,
+    get_session_geometry, get_session_state, get_terminal_session, get_terminal_snapshot,
+    lock_terminal_sessions,
     mark_terminal_resize_repaint_suppression, remove_flow_controller,
     remove_interactive_terminal_after_exit, remove_pending_switch_input, remove_session_geometry,
     remove_terminal_interactive_visual_state, remove_terminal_session, remove_terminal_snapshot,
@@ -123,6 +124,18 @@ pub async fn ensure_terminal_session(
                     .map_err(|error| error.to_string())?;
                 mark_terminal_resize_repaint_suppression(&terminal_state, &payload.session_id);
                 let initial_output = get_terminal_snapshot(&terminal_state, &payload.session_id)?;
+                // 重载恢复：复用既有会话时带回该会话当前活动运行快照与会话态，让前端在
+                // 页面重载、运行态镜像被重置后仍能复原「运行中 / 取消」UI。
+                let active_run = get_active_run_snapshot_for_session(
+                    &terminal_state,
+                    &payload.session_id,
+                )
+                .map(|(run_id, pid, started_at_ms)| TerminalActiveRunSnapshot {
+                    run_id,
+                    pid,
+                    started_at_ms,
+                });
+                let session_state = get_session_state(&terminal_state, &payload.session_id);
                 mark_terminal_interactive_ready(&app);
                 return Ok(TerminalSessionPayload {
                     session_id: payload.session_id,
@@ -130,6 +143,8 @@ pub async fn ensure_terminal_session(
                     shell_label: "WSL2".into(),
                     created: false,
                     initial_output: (!initial_output.is_empty()).then_some(initial_output),
+                    active_run,
+                    session_state,
                 });
             }
         }
@@ -174,12 +189,15 @@ pub async fn ensure_terminal_session(
             // 让步给已存在的会话：撤销刚安装的流控器（handle.close() 已 cancel 它），避免
             // 在 map 中留下与本次失败创建相关的陈旧条目。
             remove_flow_controller(&terminal_state, &payload.session_id);
+            let session_state = get_session_state(&terminal_state, &payload.session_id);
             return Ok(TerminalSessionPayload {
                 session_id: payload.session_id,
                 cwd: terminal_cwd.clone(),
                 shell_label: "WSL2".into(),
                 created: false,
                 initial_output: None,
+                active_run: None,
+                session_state,
             });
         }
 
@@ -207,12 +225,15 @@ pub async fn ensure_terminal_session(
         payload.session_id
     );
 
+    let session_state = get_session_state(&terminal_state, &payload.session_id);
     Ok(TerminalSessionPayload {
         session_id: payload.session_id,
         cwd: terminal_cwd,
         shell_label: "WSL2".into(),
         created,
         initial_output: None,
+        active_run: None,
+        session_state,
     })
 }
 
