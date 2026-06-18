@@ -62,6 +62,10 @@ pub struct LocalWslPtyHandle {
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
     master: Arc<Mutex<Box<dyn MasterPty + Send>>>,
     killer: Arc<Mutex<Box<dyn ChildKiller + Send + Sync>>>,
+    /// 读线程在交互 shell 结束（child.wait 返回）后置位。供关闭看门狗确证「读线程确已收尾」：
+    /// 若 kill 后 wsl.exe 仍卡死、child.wait() 永久阻塞，则该标志持续为 false，看门狗据此升级
+    /// 回收并合成退出事件通知前端，避免 UI 永久卡在僵尸会话上。
+    finished: Arc<AtomicBool>,
     /// 该会话的输出流控器（P2 ack 背压）。close() 时取消，确保读线程不被暂停态卡住、能读到 EOF。
     flow: Option<FlowController>,
 }
@@ -69,6 +73,27 @@ pub struct LocalWslPtyHandle {
 impl LocalWslPtyHandle {
     pub fn session_id(&self) -> &str {
         &self.session_id
+    }
+
+    /// 底层交互 shell 是否已结束（读线程在 child.wait 返回后置位）。关闭看门狗据此判断
+    /// kill 后读线程是否已正常收尾。
+    #[allow(dead_code)] // 关闭看门狗（下一提交）接入后即为活跃。
+    pub fn is_finished(&self) -> bool {
+        self.finished.load(Ordering::SeqCst)
+    }
+
+    /// 升级回收：再次向子进程发 kill（不重复取消流控，close() 已取消）。用于关闭看门狗在
+    /// 宽限期内未观察到读线程收尾时，强制重试终止可能仍卡死的 wsl.exe。锁中毒 / kill 失败
+    /// 时返回错误，调用方按尽力而为处理。
+    #[allow(dead_code)] // 关闭看门狗（下一提交）接入后即为活跃。
+    pub fn force_kill(&self) -> Result<(), LocalWslPtyError> {
+        let mut killer = self
+            .killer
+            .lock()
+            .map_err(|_| LocalWslPtyError::Close("终端终止锁已损坏。".to_string()))?;
+        killer
+            .kill()
+            .map_err(|error| LocalWslPtyError::Close(error.to_string()))
     }
 
     pub async fn write_input(&self, data: String) -> Result<(), LocalWslPtyError> {
@@ -248,6 +273,7 @@ where
     let killer = child.clone_killer();
     let mut cleanup_killer = child.clone_killer();
     let pid = child.process_id().unwrap_or_default();
+    let finished = Arc::new(AtomicBool::new(false));
 
     spawn_interactive_reader(
         session_id.clone(),
@@ -255,6 +281,7 @@ where
         pid,
         reader,
         child,
+        Arc::clone(&finished),
         flow.clone(),
         on_event,
     )
@@ -268,6 +295,7 @@ where
         writer: Arc::new(Mutex::new(writer)),
         master: Arc::new(Mutex::new(pair.master)),
         killer: Arc::new(Mutex::new(killer)),
+        finished,
         flow,
     })
 }
@@ -397,6 +425,7 @@ fn spawn_interactive_reader<F>(
     pid: u32,
     mut reader: Box<dyn Read + Send>,
     mut child: Box<dyn Child + Send + Sync>,
+    finished: Arc<AtomicBool>,
     flow: Option<FlowController>,
     mut on_event: F,
 ) -> Result<(), LocalWslPtyError>
@@ -478,6 +507,9 @@ where
                 let _ = child.clone_killer().kill();
             }
             let exit_code = child.wait().ok().map(|status| status.exit_code() as i32);
+            // 标记交互 shell 已收尾：关闭看门狗据此（is_finished）确证读线程已正常退出；
+            // 若上方 child.wait() 因 wsl.exe 卡死而永久阻塞，则此标志不会置位，看门狗将升级回收。
+            finished.store(true, Ordering::SeqCst);
             log::debug!(
                 "WSL 交互终端读线程退出（session_id={session_id}, 原因={exit_reason}, exit_code={exit_code:?}）。"
             );
