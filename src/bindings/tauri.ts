@@ -140,7 +140,7 @@ export const commands = {
 	 *  与 `agent_sidecar_chat`（走自家边车的带外 `agent_chat` 扩展回合）不同：按后端类型经
 	 *  `get_or_spawn_backend` 解析/派生对应的独立常驻宿主，解析稳定会话后以纯文本内容块驱动
 	 *  一轮标准 prompt。**不补齐 model_config**——外部 agent 的凭据由其自身 CLI 自管（见
-	 *  acp/launch.rs；如 Kimi 需先在终端 `kimi` 内 `/login`）。过程增量经 session/update 帧转发
+	 *  acp/launch.rs；如 Kimi 凭据落 ~/.kimi，登录由其自身流程处理）。过程增量经 session/update 帧转发
 	 *  （投影见 acp/ui_event.rs），本命令仅返回终态：会话标识 + 回合终止原因。
 	 */
 	agentSidecarExternalChat: (payload: AgentExternalChatRequest_Deserialize) => __TAURI_INVOKE<AgentExternalChatResultPayload>("agent_sidecar_external_chat", { payload }),

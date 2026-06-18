@@ -57,7 +57,7 @@ const KIMI_DEFAULT_BASE_URL: &str = "https://api.moonshot.ai/v1";
 pub enum AcpBackendId {
     /// 自家 Node Mastra 边车(默认后端,行为与历史一致)。
     Builtin,
-    /// Kimi Code(Kimi CLI):`kimi acp`,原生 ACP;需先在终端 `kimi` 内 `/login`。
+    /// Kimi Code(@moonshot-ai/kimi-code):原生 ACP;优先工程内置包(node <入口> acp),否则回退裸 kimi acp;可经 XIAOJIANC_KIMI_EXE 覆盖为绝对路径。
     Kimi,
     /// Codex CLI:经社区适配器 `codex-acp`,凭 `OPENAI_API_KEY`。
     Codex,
@@ -101,15 +101,96 @@ fn build_builtin_client_config() -> Result<AcpClientConfig, String> {
 
 /// Kimi Code(Kimi CLI)启动配置:`kimi acp`(原生 ACP)。
 ///
-/// 可执行名默认 `kimi`,可经 `XIAOJIANC_KIMI_EXE` 覆盖为绝对路径(便于随包/非 PATH 安装)。
-/// 鉴权由 Kimi CLI 自身负责(需先在终端 `kimi` 内 `/login`),故此处不注入模型 env。
+/// 优先工程内置包 @moonshot-ai/kimi-code(node <绝对入口> acp),否则回退 kimi acp;可经 XIAOJIANC_KIMI_EXE 覆盖为绝对路径。
+/// 鉴权由 Kimi CLI 自身负责(凭据落 ~/.kimi,登录由其自身流程处理),故此处不注入模型 env。
 fn build_kimi_client_config() -> AcpClientConfig {
-    let program = env_or_user_env(KIMI_EXE_ENV).unwrap_or_else(|| "kimi".to_string());
+    // 1) 绝对路径覆盖优先:随包/非 PATH 安装的逃生舱,直接作为 program 执行 <exe> acp。
+    if let Some(program) = env_or_user_env(KIMI_EXE_ENV) {
+        return AcpClientConfig {
+            program,
+            args: vec!["acp".to_string()],
+            env: Vec::new(),
+        };
+    }
+
+    // 2) 工程内置 npm 包(@moonshot-ai/kimi-code):以 node <绝对入口> acp 运行,
+    //    Windows 正确,绕开 node_modules/.bin/kimi shim 的 ENOENT。
+    if let Some(config) = resolve_bundled_kimi_client_config() {
+        return config;
+    }
+
+    // 3) 兜底:回退裸 kimi(系统 PATH);仅在既无 env 覆盖也未找到内置包时使用。
     AcpClientConfig {
-        program,
+        program: "kimi".to_string(),
         args: vec!["acp".to_string()],
         env: Vec::new(),
     }
+}
+
+/// 解析「工程内置」Kimi Code(@moonshot-ai/kimi-code,经 pnpm add -D 装入工程根 node_modules)
+/// 的启动配置:node <绝对入口> acp。形态为 npm 包(JS CLI),以 node 直接运行绝对入口脚本——
+/// 绝对入口绕开 Windows 上 node_modules/.bin/kimi.CMD shim 的 ENOENT(GUI 进程不继承终端
+/// PATH)。node 解析复用 builtin 的 resolve_node_executable(随包 node 优先,再常见安装位置,
+/// 最后 PATH)。任一步缺失则返回 None,交由上层兜底。
+fn resolve_bundled_kimi_client_config() -> Option<AcpClientConfig> {
+    let node = resolve_node_executable().ok()?;
+    let package_dir = find_kimi_package_dir()?;
+    let entry = resolve_package_bin_entry(&package_dir, "kimi")?;
+
+    Some(AcpClientConfig {
+        program: path_to_string(&node),
+        args: vec![path_to_string(&entry), "acp".to_string()],
+        env: Vec::new(),
+    })
+}
+
+/// 在候选根的 node_modules/@moonshot-ai/kimi-code 下定位含 package.json 的包目录。
+/// 候选根:随包资源根(打包态)在前,仓库工作区根(开发态,pnpm add -D 落此处的 node_modules)
+/// 兜底——与 sidecar/node 的「随包优先,源码树兜底」解析策略一致。
+fn find_kimi_package_dir() -> Option<PathBuf> {
+    for root in kimi_package_search_roots() {
+        let package_dir = root
+            .join("node_modules")
+            .join("@moonshot-ai")
+            .join("kimi-code");
+        if package_dir.join("package.json").is_file() {
+            return Some(package_dir);
+        }
+    }
+    None
+}
+
+/// 内置 Kimi 包的候选搜索根:随包资源根(打包态)在前,仓库工作区根(开发态)兜底。
+fn kimi_package_search_roots() -> Vec<PathBuf> {
+    let mut roots: Vec<PathBuf> = Vec::new();
+    for root in crate::commands::shell_tools::bundled_resource_roots() {
+        roots.push(root.to_path_buf());
+    }
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    if let Some(workspace_root) = manifest_dir.parent() {
+        roots.push(workspace_root.to_path_buf());
+    }
+    roots
+}
+
+/// 从包 package.json 的 bin 字段解析指定命令的入口脚本绝对路径。bin 可为字符串(单一入口)
+/// 或对象(优先 bin_name,否则取首个值);入口相对包目录解析。字段缺失或入口文件不存在时
+/// 返回 None。
+fn resolve_package_bin_entry(package_dir: &Path, bin_name: &str) -> Option<PathBuf> {
+    let manifest = fs::read_to_string(package_dir.join("package.json")).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&manifest).ok()?;
+    let relative = match value.get("bin")? {
+        serde_json::Value::String(path) => path.clone(),
+        serde_json::Value::Object(map) => map
+            .get(bin_name)
+            .or_else(|| map.values().next())
+            .and_then(|entry| entry.as_str())
+            .map(|entry| entry.to_string())?,
+        _ => return None,
+    };
+
+    let entry = package_dir.join(relative);
+    entry.is_file().then_some(entry)
 }
 
 /// Codex CLI 启动配置:经社区适配器 `codex-acp`(非原生 ACP)。
@@ -413,9 +494,9 @@ mod tests {
 
     #[test]
     fn kimi_client_config_uses_acp_subcommand() {
-        // Kimi Code 原生 ACP:固定 `kimi acp`(可执行名可经 env 覆盖,但始终非空)。
+        // Kimi Code 末位参数恒为 acp:env 覆盖 / 内置包(node <入口> acp)/ PATH 兜底三态统一,program 非空。
         let config = build_kimi_client_config();
-        assert_eq!(config.args, vec!["acp".to_string()]);
+        assert_eq!(config.args.last().map(String::as_str), Some("acp"));
         assert!(!config.program.trim().is_empty());
     }
 
@@ -430,9 +511,9 @@ mod tests {
 
     #[test]
     fn backend_dispatch_routes_external_agents() {
-        // 后端调度:Kimi/Codex 均不依赖 node/边车解析,故总能产出配置。
+        // 后端调度:Kimi 末位参数恒为 acp(三态统一),Codex 无位置参数,两者均能产出配置。
         let kimi = build_acp_client_config_for(AcpBackendId::Kimi).expect("kimi config");
-        assert_eq!(kimi.args, vec!["acp".to_string()]);
+        assert_eq!(kimi.args.last().map(String::as_str), Some("acp"));
         let codex = build_acp_client_config_for(AcpBackendId::Codex).expect("codex config");
         assert!(codex.args.is_empty());
     }

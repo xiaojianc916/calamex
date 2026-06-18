@@ -156,7 +156,7 @@ pub async fn agent_sidecar_chat(
 /// 与 `agent_sidecar_chat`（走自家边车的带外 `agent_chat` 扩展回合）不同：按后端类型经
 /// `get_or_spawn_backend` 解析/派生对应的独立常驻宿主，解析稳定会话后以纯文本内容块驱动
 /// 一轮标准 prompt。**不补齐 model_config**——外部 agent 的凭据由其自身 CLI 自管（见
-/// acp/launch.rs；如 Kimi 需先在终端 `kimi` 内 `/login`）。过程增量经 session/update 帧转发
+/// acp/launch.rs；如 Kimi 凭据落 ~/.kimi，登录由其自身流程处理）。过程增量经 session/update 帧转发
 /// （投影见 acp/ui_event.rs），本命令仅返回终态：会话标识 + 回合终止原因。
 #[tauri::command]
 #[specta::specta]
@@ -210,7 +210,7 @@ pub async fn agent_sidecar_external_chat(
 /// 把外部 agent 回合错误翻译为面向用户的可操作提示。
 ///
 /// NotRunning（"acp client task is not running"）= 该后端常驻 ACP 客户端任务已退出：多因外部
-/// agent 进程未运行或未就绪（最常见是 Kimi 尚未在终端 kimi 内执行 /login）。给出明确的下一步，
+/// agent 子进程启动/初始化失败或连接断开（如首次需登录授权、工程内置依赖缺失）。给出明确的下一步，
 /// 而非透传不透明的协议字符串；其余错误原样转字符串上抛。
 fn external_chat_error_message(
     backend: crate::acp::AcpBackendId,
@@ -218,7 +218,7 @@ fn external_chat_error_message(
 ) -> String {
     if matches!(error, crate::acp::AcpClientError::NotRunning) {
         return format!(
-            "{} 外部 agent 进程未在运行（可能尚未启动或未登录）。请先在终端启动该 agent 并完成登录（Kimi：先运行 kimi，再在其中执行 /login），然后重试。",
+            "{} agent 连接已断开或未能启动（可能正在初始化、首次需登录授权，或工程内置依赖未就绪）。请稍后重试。",
             external_backend_label(backend)
         );
     }
