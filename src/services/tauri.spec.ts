@@ -109,10 +109,12 @@ describe('tauriService', () => {
       applyReplacement(
         {
           request: {
-            rootPath: 'D:/repo',
+            workspaceRootPath: 'D:/repo',
             query: 'old',
             replacement: 'new',
             matchCase: false,
+            wholeWord: false,
+            useRegex: false,
             includePatterns: [],
             excludePatterns: [],
           },
