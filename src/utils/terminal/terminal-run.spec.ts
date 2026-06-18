@@ -60,7 +60,6 @@ describe('terminal-run helpers', () => {
       'wsl',
     );
     const runResult = buildTerminalRunResult({
-      output: 'done',
       exitCode: 0,
       finishedAt: '2026-04-22T10:00:03.500Z',
       executor: 'wsl',
@@ -75,7 +74,7 @@ describe('terminal-run helpers', () => {
     expect(runResult).toMatchObject({
       runId: 'run-1',
       success: true,
-      stdout: 'done',
+      stdout: '',
       stderr: '',
       commandLine: 'bash /tmp/run.sh',
       executorLabel: 'WSL2',

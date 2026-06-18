@@ -31,7 +31,6 @@ interface IBuildRunSummaryOptions {
 }
 
 interface IBuildRunResultOptions {
-  output: string;
   exitCode: number | null;
   finishedAt: string;
   executor: TExecutorKind;
@@ -145,7 +144,6 @@ export const buildDispatchedTerminalRunSummary = (
   });
 
 export const buildTerminalRunResult = ({
-  output,
   exitCode,
   finishedAt,
   executor,
@@ -159,9 +157,9 @@ export const buildTerminalRunResult = ({
   return {
     runId: activeRunMeta?.runId ?? activeRunSummary?.runId ?? null,
     success: exitCode === 0,
-    stdout: output,
-    stderr: exitCode === 0 ? '' : output,
-    combinedOutput: output,
+    stdout: '',
+    stderr: '',
+    combinedOutput: '',
     exitCode,
     executor,
     executorLabel: getExecutorLabel(executor),

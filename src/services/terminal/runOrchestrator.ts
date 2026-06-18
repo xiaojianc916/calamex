@@ -10,7 +10,6 @@ import {
   DEFAULT_TERMINAL_SESSION_ID,
   type IDispatchTerminalScriptRequest,
   type ITerminalExitEvent,
-  type ITerminalRunChunkPayload,
   type ITerminalRunCompletedPayload,
 } from '@/types/terminal';
 import { createDisposableBag, createMutableDisposable } from '@/utils/core/disposable';
@@ -33,7 +32,6 @@ import {
   TERMINAL_RUN_LOG_TITLES,
 } from '@/utils/terminal/terminal-run';
 
-const TERMINAL_OUTPUT_BATCH_INTERVAL_MS = 120;
 const TERMINAL_RUN_COMPLETION_TIMEOUT_MS = 30 * 60 * 1000;
 
 type TEditorStore = ReturnType<typeof useEditorStore>;
@@ -88,8 +86,6 @@ export class TerminalRunOrchestrator {
   private readonly runRoutingStore = useTerminalRunRoutingStore();
   private readonly tabsStore = useTerminalTabsStore();
 
-  private bufferedTerminalOutputChunks: string[] = [];
-  private readonly bufferedTerminalOutputTimer = createMutableDisposable();
   private readonly terminalRunFallbackTimer = createMutableDisposable();
   private readonly terminalRunListeners = createMutableDisposable();
   private activeTerminalRunMeta: IActiveTerminalRunMeta | null = null;
@@ -129,32 +125,8 @@ export class TerminalRunOrchestrator {
       await this.ensureTerminalRunEventListeners();
       await this.runScriptInIntegratedTerminal(editorStore.document);
     } catch (error) {
-      this.failTerminalRun('脚本执行失败', error, '脚本执行失败', TERMINAL_RUN_LOG_CODES.failed, {
-        writeMessageToTerminalOutput: true,
-      });
+      this.failTerminalRun('脚本执行失败', error, '脚本执行失败', TERMINAL_RUN_LOG_CODES.failed);
     }
-  }
-
-  appendTerminalOutput(payload: ITerminalRunChunkPayload): void {
-    if (
-      !this.isActiveRunSession(payload.sessionId) ||
-      !payload.data ||
-      !this.isCurrentTerminalRun(payload.runId)
-    ) {
-      return;
-    }
-
-    this.bufferedTerminalOutputChunks.push(payload.data);
-    if (this.bufferedTerminalOutputTimer.value !== null) {
-      return;
-    }
-
-    this.bufferedTerminalOutputTimer.set(
-      requestDisposableTimeout(() => {
-        this.bufferedTerminalOutputTimer.clearAndLeak();
-        this.flushBufferedTerminalOutput();
-      }, TERMINAL_OUTPUT_BATCH_INTERVAL_MS),
-    );
   }
 
   handleIntegratedTerminalRunCompleted(payload: ITerminalRunCompletedPayload): void {
@@ -170,7 +142,6 @@ export class TerminalRunOrchestrator {
    * gate after the user already chose Stop/Reset.
    */
   resetActiveRunLifecycle(): void {
-    this.resetBufferedTerminalOutput();
     this.clearTerminalRunFallbackTimer();
     if (this.binding) {
       this.clearActiveTerminalRunState();
@@ -206,29 +177,8 @@ export class TerminalRunOrchestrator {
     return this.requireBinding().notifier;
   }
 
-  private clearBufferedTerminalOutputTimer(): void {
-    this.bufferedTerminalOutputTimer.clear();
-  }
-
   private clearTerminalRunFallbackTimer(): void {
     this.terminalRunFallbackTimer.clear();
-  }
-
-  private flushBufferedTerminalOutput(): void {
-    this.clearBufferedTerminalOutputTimer();
-
-    if (this.bufferedTerminalOutputChunks.length === 0) {
-      return;
-    }
-
-    const output = this.bufferedTerminalOutputChunks.join('');
-    this.bufferedTerminalOutputChunks = [];
-    this.editorStore.appendTerminalOutput(output);
-  }
-
-  private resetBufferedTerminalOutput(): void {
-    this.clearBufferedTerminalOutputTimer();
-    this.bufferedTerminalOutputChunks = [];
   }
 
   private clearActiveTerminalRunState(): void {
@@ -314,9 +264,6 @@ export class TerminalRunOrchestrator {
     errorOrMessage: unknown,
     fallbackMessage: string,
     logCode: string,
-    options: {
-      writeMessageToTerminalOutput?: boolean;
-    } = {},
   ): void {
     const message =
       typeof errorOrMessage === 'string'
@@ -328,13 +275,8 @@ export class TerminalRunOrchestrator {
       return;
     }
 
-    this.resetBufferedTerminalOutput();
     this.clearTerminalRunFallbackTimer();
     this.clearActiveTerminalRunState();
-
-    if (options.writeMessageToTerminalOutput) {
-      this.editorStore.setTerminalOutput(message);
-    }
 
     this.appendRunLifecycleLog('error', title, message, failedRunId, logCode);
     this.notifier.error(message);
@@ -423,9 +365,7 @@ export class TerminalRunOrchestrator {
     this.editorStore.setActiveRunSummary(
       buildPendingTerminalRunSummary(document, runId, startedAt, DEFAULT_EXECUTOR, usedTempFile),
     );
-    this.resetBufferedTerminalOutput();
     this.editorStore.lastRunResult = null;
-    this.editorStore.setTerminalOutput('');
     this.activeTerminalRunMeta = createActiveTerminalRunMeta(
       runId,
       startedAt,
@@ -498,9 +438,7 @@ export class TerminalRunOrchestrator {
         return;
       }
 
-      this.failTerminalRun('脚本执行失败', error, '脚本执行失败', TERMINAL_RUN_LOG_CODES.failed, {
-        writeMessageToTerminalOutput: true,
-      });
+      this.failTerminalRun('脚本执行失败', error, '脚本执行失败', TERMINAL_RUN_LOG_CODES.failed);
     }
   }
 
@@ -600,10 +538,8 @@ export class TerminalRunOrchestrator {
     const activeRunSummary = this.editorStore.activeRunSummary;
 
     this.clearTerminalRunFallbackTimer();
-    this.flushBufferedTerminalOutput();
 
     const runResult = buildTerminalRunResult({
-      output: this.editorStore.getTerminalOutputSnapshot(),
       exitCode: normalizedPayload.exitCode,
       finishedAt: normalizedPayload.finishedAt,
       executor: DEFAULT_EXECUTOR,

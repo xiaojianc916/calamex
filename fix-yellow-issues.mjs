@@ -1,623 +1,206 @@
 #!/usr/bin/env node
-// fix-yellow-issues.mjs — 修复全部 🟡 级别问题（11 项，跨 8 个文件）
-import { readFileSync, writeFileSync } from 'node:fs';
+// apply-optionc-batch3.mjs
+// Option C — Batch 3: 切断运行输出的「独立捕获」喂入链。
+//   1) runOrchestrator.ts：删除 run-chunk 订阅 + appendTerminalOutput/缓冲区/批量定时器/
+//      flush/reset 及其在 prime/fail/finalize/reset 中的调用，failTerminalRun 去掉
+//      writeMessageToTerminalOutput 选项。
+//   2) terminal-run.ts：buildTerminalRunResult 去掉 output 入参，stdout/stderr/combinedOutput 置空
+//      （卡片只留元数据，输出只看终端）。
+//   3) terminal-run.spec.ts：同步去掉 output 用例输入与断言。
+//
+// 约定：CRLF 安全；逐文件「全有或全无」；幂等（已是目标状态则跳过）；
+//      非空替换默认要求恰好 N 处匹配（count，默认 1）；replace==='' 为整体删除。
 
-const ROOT = process.cwd();
-const P = 'src-tauri/src/';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 
-function nl(s) { return s.replace(/\r\n/g, '\n'); }
+const EDITS = [
+  // ===================== runOrchestrator.ts =====================
+  {
+    file: 'src/services/terminal/runOrchestrator.ts',
+    edits: [
+      // R1: 删除类型导入 ITerminalRunChunkPayload
+      {
+        find: `import {\n  DEFAULT_TERMINAL_SESSION_ID,\n  type IDispatchTerminalScriptRequest,\n  type ITerminalExitEvent,\n  type ITerminalRunChunkPayload,\n  type ITerminalRunCompletedPayload,\n} from '@/types/terminal';`,
+        replace: `import {\n  DEFAULT_TERMINAL_SESSION_ID,\n  type IDispatchTerminalScriptRequest,\n  type ITerminalExitEvent,\n  type ITerminalRunCompletedPayload,\n} from '@/types/terminal';`,
+      },
+      // R2: 删除批量间隔常量
+      {
+        find: `const TERMINAL_OUTPUT_BATCH_INTERVAL_MS = 120;\nconst TERMINAL_RUN_COMPLETION_TIMEOUT_MS = 30 * 60 * 1000;`,
+        replace: `const TERMINAL_RUN_COMPLETION_TIMEOUT_MS = 30 * 60 * 1000;`,
+      },
+      // R3: 删除缓冲区字段
+      {
+        find: `  private bufferedTerminalOutputChunks: string[] = [];\n  private readonly bufferedTerminalOutputTimer = createMutableDisposable();\n  private readonly terminalRunFallbackTimer = createMutableDisposable();`,
+        replace: `  private readonly terminalRunFallbackTimer = createMutableDisposable();`,
+      },
+      // R4: 删除 appendTerminalOutput 方法（含其后一空行）
+      {
+        find: `  appendTerminalOutput(payload: ITerminalRunChunkPayload): void {\n    if (\n      !this.isActiveRunSession(payload.sessionId) ||\n      !payload.data ||\n      !this.isCurrentTerminalRun(payload.runId)\n    ) {\n      return;\n    }\n\n    this.bufferedTerminalOutputChunks.push(payload.data);\n    if (this.bufferedTerminalOutputTimer.value !== null) {\n      return;\n    }\n\n    this.bufferedTerminalOutputTimer.set(\n      requestDisposableTimeout(() => {\n        this.bufferedTerminalOutputTimer.clearAndLeak();\n        this.flushBufferedTerminalOutput();\n      }, TERMINAL_OUTPUT_BATCH_INTERVAL_MS),\n    );\n  }\n\n`,
+        replace: ``,
+      },
+      // R5: resetActiveRunLifecycle 去掉 resetBufferedTerminalOutput 调用
+      {
+        find: `  resetActiveRunLifecycle(): void {\n    this.resetBufferedTerminalOutput();\n    this.clearTerminalRunFallbackTimer();`,
+        replace: `  resetActiveRunLifecycle(): void {\n    this.clearTerminalRunFallbackTimer();`,
+      },
+      // R6a: 删除 clearBufferedTerminalOutputTimer 方法（保留 clearTerminalRunFallbackTimer）
+      {
+        find: `  private clearBufferedTerminalOutputTimer(): void {\n    this.bufferedTerminalOutputTimer.clear();\n  }\n\n  private clearTerminalRunFallbackTimer(): void {`,
+        replace: `  private clearTerminalRunFallbackTimer(): void {`,
+      },
+      // R6b: 删除 flushBufferedTerminalOutput + resetBufferedTerminalOutput 方法
+      {
+        find: `  private flushBufferedTerminalOutput(): void {\n    this.clearBufferedTerminalOutputTimer();\n\n    if (this.bufferedTerminalOutputChunks.length === 0) {\n      return;\n    }\n\n    const output = this.bufferedTerminalOutputChunks.join('');\n    this.bufferedTerminalOutputChunks = [];\n    this.editorStore.appendTerminalOutput(output);\n  }\n\n  private resetBufferedTerminalOutput(): void {\n    this.clearBufferedTerminalOutputTimer();\n    this.bufferedTerminalOutputChunks = [];\n  }\n\n  private clearActiveTerminalRunState(): void {`,
+        replace: `  private clearActiveTerminalRunState(): void {`,
+      },
+      // R7: failTerminalRun 去掉 options 形参 + writeMessageToTerminalOutput 分支 + resetBufferedTerminalOutput
+      {
+        find: `  private failTerminalRun(\n    title: string,\n    errorOrMessage: unknown,\n    fallbackMessage: string,\n    logCode: string,\n    options: {\n      writeMessageToTerminalOutput?: boolean;\n    } = {},\n  ): void {\n    const message =\n      typeof errorOrMessage === 'string'\n        ? errorOrMessage\n        : toErrorMessage(errorOrMessage, fallbackMessage);\n    const failedRunId = this.getCurrentTerminalRunId();\n\n    if (this.hasFinalizedTerminalRun(failedRunId)) {\n      return;\n    }\n\n    this.resetBufferedTerminalOutput();\n    this.clearTerminalRunFallbackTimer();\n    this.clearActiveTerminalRunState();\n\n    if (options.writeMessageToTerminalOutput) {\n      this.editorStore.setTerminalOutput(message);\n    }\n\n    this.appendRunLifecycleLog('error', title, message, failedRunId, logCode);\n    this.notifier.error(message);\n  }`,
+        replace: `  private failTerminalRun(\n    title: string,\n    errorOrMessage: unknown,\n    fallbackMessage: string,\n    logCode: string,\n  ): void {\n    const message =\n      typeof errorOrMessage === 'string'\n        ? errorOrMessage\n        : toErrorMessage(errorOrMessage, fallbackMessage);\n    const failedRunId = this.getCurrentTerminalRunId();\n\n    if (this.hasFinalizedTerminalRun(failedRunId)) {\n      return;\n    }\n\n    this.clearTerminalRunFallbackTimer();\n    this.clearActiveTerminalRunState();\n\n    this.appendRunLifecycleLog('error', title, message, failedRunId, logCode);\n    this.notifier.error(message);\n  }`,
+      },
+      // R8: 两处 failTerminalRun 调用去掉 { writeMessageToTerminalOutput: true }（恰好 2 处）
+      {
+        find: `      this.failTerminalRun('脚本执行失败', error, '脚本执行失败', TERMINAL_RUN_LOG_CODES.failed, {\n        writeMessageToTerminalOutput: true,\n      });`,
+        replace: `      this.failTerminalRun('脚本执行失败', error, '脚本执行失败', TERMINAL_RUN_LOG_CODES.failed);`,
+        count: 2,
+      },
+      // R9: primeTerminalRun 去掉 resetBufferedTerminalOutput + setTerminalOutput('')
+      {
+        find: `    this.editorStore.setActiveRunSummary(\n      buildPendingTerminalRunSummary(document, runId, startedAt, DEFAULT_EXECUTOR, usedTempFile),\n    );\n    this.resetBufferedTerminalOutput();\n    this.editorStore.lastRunResult = null;\n    this.editorStore.setTerminalOutput('');\n    this.activeTerminalRunMeta = createActiveTerminalRunMeta(`,
+        replace: `    this.editorStore.setActiveRunSummary(\n      buildPendingTerminalRunSummary(document, runId, startedAt, DEFAULT_EXECUTOR, usedTempFile),\n    );\n    this.editorStore.lastRunResult = null;\n    this.activeTerminalRunMeta = createActiveTerminalRunMeta(`,
+      },
+      // R10a: ensureTerminalRunEventListeners 删除 run-chunk 监听
+      {
+        find: `      const listeners = createDisposableBag();\n      const runChunkUnlisten = this.terminalEventBus.onRunChunk(\n        (payload: ITerminalRunChunkPayload) => {\n          this.appendTerminalOutput(payload);\n        },\n      );\n      const runCompletedUnlisten = this.terminalEventBus.onRunCompleted(`,
+        replace: `      const listeners = createDisposableBag();\n      const runCompletedUnlisten = this.terminalEventBus.onRunCompleted(`,
+      },
+      // R10b: 删除 listeners.add(runChunkUnlisten)
+      {
+        find: `      listeners.add(runChunkUnlisten);\n      listeners.add(runCompletedUnlisten);\n      listeners.add(exitUnlisten);`,
+        replace: `      listeners.add(runCompletedUnlisten);\n      listeners.add(exitUnlisten);`,
+      },
+      // R11: finalizeTerminalRun 去掉 flush + buildTerminalRunResult 的 output 入参
+      {
+        find: `    this.clearTerminalRunFallbackTimer();\n    this.flushBufferedTerminalOutput();\n\n    const runResult = buildTerminalRunResult({\n      output: this.editorStore.getTerminalOutputSnapshot(),\n      exitCode: normalizedPayload.exitCode,`,
+        replace: `    this.clearTerminalRunFallbackTimer();\n\n    const runResult = buildTerminalRunResult({\n      exitCode: normalizedPayload.exitCode,`,
+      },
+    ],
+  },
 
-let results = [];
+  // ===================== terminal-run.ts =====================
+  {
+    file: 'src/utils/terminal/terminal-run.ts',
+    edits: [
+      // T1: IBuildRunResultOptions 去掉 output 字段
+      {
+        find: `interface IBuildRunResultOptions {\n  output: string;\n  exitCode: number | null;`,
+        replace: `interface IBuildRunResultOptions {\n  exitCode: number | null;`,
+      },
+      // T2: 解构去掉 output
+      {
+        find: `export const buildTerminalRunResult = ({\n  output,\n  exitCode,\n  finishedAt,\n  executor,\n  activeRunMeta,\n  activeRunSummary,\n}: IBuildRunResultOptions): IRunResult => {`,
+        replace: `export const buildTerminalRunResult = ({\n  exitCode,\n  finishedAt,\n  executor,\n  activeRunMeta,\n  activeRunSummary,\n}: IBuildRunResultOptions): IRunResult => {`,
+      },
+      // T3: stdout/stderr/combinedOutput 置空
+      {
+        find: `    success: exitCode === 0,\n    stdout: output,\n    stderr: exitCode === 0 ? '' : output,\n    combinedOutput: output,\n    exitCode,`,
+        replace: `    success: exitCode === 0,\n    stdout: '',\n    stderr: '',\n    combinedOutput: '',\n    exitCode,`,
+      },
+    ],
+  },
 
-function patch(relPath, oldStr, newStr, label) {
-  const full = ROOT + '/' + (relPath.startsWith('src-tauri') ? relPath : P + relPath);
-  let content = nl(readFileSync(full, 'utf8'));
-  const oldN = nl(oldStr);
-  const newN = nl(newStr);
+  // ===================== terminal-run.spec.ts =====================
+  {
+    file: 'src/utils/terminal/terminal-run.spec.ts',
+    edits: [
+      // S1: 去掉用例输入 output: 'done'
+      {
+        find: `    const runResult = buildTerminalRunResult({\n      output: 'done',\n      exitCode: 0,`,
+        replace: `    const runResult = buildTerminalRunResult({\n      exitCode: 0,`,
+      },
+      // S2: 断言 stdout 改为空串
+      {
+        find: `      stdout: 'done',`,
+        replace: `      stdout: '',`,
+      },
+    ],
+  },
+];
 
-  if (content.includes(newN)) {
-    results.push(`✅ ${label} (already applied)`);
-    return;
+const countOccurrences = (text, needle) => text.split(needle).length - 1;
+
+let anyFailure = false;
+const summary = [];
+
+for (const fileSpec of EDITS) {
+  const { file, edits } = fileSpec;
+  if (!existsSync(file)) {
+    summary.push(`[fail] 文件不存在: ${file}`);
+    anyFailure = true;
+    continue;
   }
-  if (!content.includes(oldN)) {
-    results.push(`❌ ${label} (old string not found)`);
-    return;
+
+  const raw = readFileSync(file, 'utf8');
+  const hadCRLF = raw.includes('\r\n');
+  let text = hadCRLF ? raw.replace(/\r\n/g, '\n') : raw;
+
+  let applied = 0;
+  let skipped = 0;
+  let failed = false;
+  let failReason = '';
+
+  for (const edit of edits) {
+    const { find, replace } = edit;
+    const count = edit.count ?? 1;
+    const occ = countOccurrences(text, find);
+
+    if (occ === count) {
+      let next = text;
+      for (let i = 0; i < count; i++) {
+        next = next.replace(find, () => replace);
+      }
+      text = next;
+      applied += 1;
+      continue;
+    }
+
+    if (occ === 0) {
+      // 幂等：整体删除（replace===''）或目标串已存在 => 视为已应用
+      if (replace === '' || text.includes(replace)) {
+        skipped += 1;
+        continue;
+      }
+      failed = true;
+      failReason = `锚点未找到（期望 ${count} 处，实际 0 处）`;
+      break;
+    }
+
+    failed = true;
+    failReason = `期望恰好 ${count} 处匹配，实际 ${occ} 处`;
+    break;
   }
-  content = content.replace(oldN, newN);
-  writeFileSync(full, content, 'utf8');
-  results.push(`✅ ${label}`);
+
+  if (failed) {
+    summary.push(`[fail] ${file} — ${failReason}（未改动该文件）`);
+    anyFailure = true;
+    continue;
+  }
+
+  if (applied === 0) {
+    summary.push(`[skip] ${file}（已是目标状态，未写入）`);
+    continue;
+  }
+
+  const out = hadCRLF ? text.replace(/\n/g, '\r\n') : text;
+  writeFileSync(file, out, 'utf8');
+  summary.push(`[ok]   ${file}  应用 ${applied} / 跳过 ${skipped}`);
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// terminal/state.rs — #1: 添加 shutdown 字段 + AtomicBool import
-// ═══════════════════════════════════════════════════════════════════════
+console.log('\n' + summary.join('\n'));
 
-patch('commands/terminal/state.rs',
-`use std::{
-    collections::HashMap,
-    path::PathBuf,
-    sync::{Arc, Mutex},
-    time::{Duration, Instant},
-};`,
-`use std::{
-    collections::HashMap,
-    path::PathBuf,
-    sync::{Arc, Mutex, atomic::AtomicBool},
-    time::{Duration, Instant},
-};`,
-'state.rs: import AtomicBool');
-
-patch('commands/terminal/state.rs',
-`    session_liveness: Arc<Mutex<HashMap<String, Instant>>>,
-    pub(super) creation_guard: Arc<Mutex<()>>,
-}`,
-`    session_liveness: Arc<Mutex<HashMap<String, Instant>>>,
-    /// 优雅关闭信号：设为 true 时孤儿收割线程退出循环。
-    pub(super) shutdown: Arc<AtomicBool>,
-    pub(super) creation_guard: Arc<Mutex<()>>,
-    // TODO(design): 9 个独立 Arc<Mutex<HashMap>> 增加锁复杂度。
-    // remove_interactive_terminal_after_exit 串行获取 8 次锁。
-    // 可考虑将 snapshots + interactive_visual 等常同时访问的 map 合并为单一 struct。
-}`,
-'state.rs: add shutdown field + TODO');
-
-// ═══════════════════════════════════════════════════════════════════════
-// terminal/state.rs — #11: should_recreate_terminal_session 精确匹配 Windows 驱动器号
-// ═══════════════════════════════════════════════════════════════════════
-
-patch('commands/terminal/state.rs',
-`pub(super) fn should_recreate_terminal_session(session: &TerminalSession) -> bool {
-    let cwd = session.working_directory.trim();
-    cwd.is_empty()
-        || cwd.contains('\\\\')
-        || cwd.contains(':')
-        || (!cwd.starts_with('/') && cwd != "~")
-}`,
-`pub(super) fn should_recreate_terminal_session(session: &TerminalSession) -> bool {
-    let cwd = session.working_directory.trim();
-    cwd.is_empty()
-        || cwd.contains('\\\\')
-        || looks_like_windows_drive_path(cwd)
-        || (!cwd.starts_with('/') && cwd != "~")
+if (anyFailure) {
+  console.log('\n存在失败项：失败文件未做任何写入。请把以上 [fail] 行原样回贴给我。');
+  process.exit(1);
 }
 
-/// 检测 Windows 驱动器号路径（如 \`C:\\\` 或 \`C:/\`），避免误判含 \`:\` 的 Linux 路径。
-fn looks_like_windows_drive_path(path: &str) -> bool {
-    let bytes = path.as_bytes();
-    bytes.len() >= 3
-        && bytes[0].is_ascii_alphabetic()
-        && bytes[1] == b':'
-        && (bytes[2] == b'\\\\' || bytes[2] == b'/')
-}`,
-'state.rs: precise Windows path detection');
-
-// ═══════════════════════════════════════════════════════════════════════
-// terminal/commands.rs — #1: 孤儿收割线程加 shutdown 检查
-// ═══════════════════════════════════════════════════════════════════════
-
-patch('commands/terminal/commands.rs',
-`pub fn shutdown_all_terminal_sessions(state: &TerminalSessionState) -> Result<(), String> {
-    let _creation_guard = state
-        .creation_guard
-        .lock()
-        .map_err(|_| "终端会话创建锁已损坏。".to_string())?;`,
-`pub fn shutdown_all_terminal_sessions(state: &TerminalSessionState) -> Result<(), String> {
-    // 通知孤儿收割线程退出循环。
-    state
-        .shutdown
-        .store(true, std::sync::atomic::Ordering::Relaxed);
-    let _creation_guard = state
-        .creation_guard
-        .lock()
-        .map_err(|_| "终端会话创建锁已损坏。".to_string())?;`,
-'commands.rs: signal shutdown in shutdown_all');
-
-patch('commands/terminal/commands.rs',
-`        .name("wsl-orphan-session-reaper".to_string())
-        .spawn(move || {
-            loop {
-                std::thread::sleep(ORPHAN_SESSION_REAP_POLL);
-                reap_idle_orphan_terminal_sessions(&app, &state, ORPHAN_SESSION_REAP_GRACE);
-            }
-        });`,
-`        .name("wsl-orphan-session-reaper".to_string())
-        .spawn(move || {
-            while !state.shutdown.load(std::sync::atomic::Ordering::Relaxed) {
-                std::thread::sleep(ORPHAN_SESSION_REAP_POLL);
-                if state.shutdown.load(std::sync::atomic::Ordering::Relaxed) {
-                    break;
-                }
-                reap_idle_orphan_terminal_sessions(&app, &state, ORPHAN_SESSION_REAP_GRACE);
-            }
-        });`,
-'commands.rs: reaper checks shutdown signal');
-
-// ═══════════════════════════════════════════════════════════════════════
-// terminal/events.rs — #7: sanitize 只在冷启动时剥离 "wsl:" 行
-// ═══════════════════════════════════════════════════════════════════════
-
-patch('commands/terminal/events.rs',
-`pub(super) fn sanitize_terminal_run_chunk(data: &str, has_prior_output: bool) -> String {
-    let without_banner = strip_wsl_diagnostic_lines(data);
-    if has_prior_output {
-        return without_banner;
-    }
-    strip_leading_screen_init(&without_banner)
-}`,
-`pub(super) fn sanitize_terminal_run_chunk(data: &str, has_prior_output: bool) -> String {
-    // WSL 诊断行（"wsl: ..."）仅在冷启动时出现，已有输出时不再剥离，
-    // 避免误删用户脚本中合法的 "wsl:" 前缀行。
-    if has_prior_output {
-        return data.to_string();
-    }
-    let without_banner = strip_wsl_diagnostic_lines(data);
-    strip_leading_screen_init(&without_banner)
-}`,
-'events.rs: only strip wsl: on cold start');
-
-// ═══════════════════════════════════════════════════════════════════════
-// search/find.rs — #6: FuzzyLinePrefilter 用栈上 [bool;256] 位掩码替代每行 clone Vec
-// ═══════════════════════════════════════════════════════════════════════
-
-patch('commands/search/find.rs',
-`#[derive(Clone)]
-struct FuzzyLinePrefilter {
-    min_chars: usize,
-    required_ascii: Vec<u8>,
-    required_non_ascii: Vec<char>,
-    match_case: bool,
-}
-
-impl FuzzyLinePrefilter {
-    fn new(query: &str, match_case: bool) -> Option<Self> {
-        let min_chars = query.chars().filter(|ch| !ch.is_whitespace()).count();
-        let mut required_ascii = Vec::new();
-        let mut required_non_ascii = Vec::new();
-
-        for ch in query.chars() {
-            if ch.is_whitespace() {
-                continue;
-            }
-            if ch.is_ascii() {
-                let byte = ch as u8;
-                if !byte.is_ascii_alphanumeric() {
-                    continue;
-                }
-                let normalized = normalize_prefilter_ascii(byte, match_case);
-                if !required_ascii.contains(&normalized) {
-                    required_ascii.push(normalized);
-                }
-                continue;
-            }
-            // 非 ASCII：仅在区分大小写、或该字符本身无大小写之分（如 CJK）时要求其出现，
-            // 避免在不区分大小写时对有大小写的脚本（希腊 / 西里尔等）造成误杀。
-            if !match_case && (ch.is_uppercase() || ch.is_lowercase()) {
-                continue;
-            }
-            if !required_non_ascii.contains(&ch) {
-                required_non_ascii.push(ch);
-            }
-        }
-
-        if min_chars == 0 && required_ascii.is_empty() && required_non_ascii.is_empty() {
-            return None;
-        }
-
-        Some(Self {
-            min_chars,
-            required_ascii,
-            required_non_ascii,
-            match_case,
-        })
-    }
-
-    /// 在给定字节序列中检查 query 要求的全部 ASCII 字符是否都出现（按 match_case 归一大小写）。
-    /// 非 ASCII 字节跳过；调用方需保证 required_ascii 非空时调用才有意义。
-    fn all_required_ascii_present(&self, bytes: impl Iterator<Item = u8>) -> bool {
-        let mut missing = self.required_ascii.clone();
-        for byte in bytes {
-            if !byte.is_ascii() {
-                continue;
-            }
-            let normalized = normalize_prefilter_ascii(byte, self.match_case);
-            if let Some(index) = missing
-                .iter()
-                .position(|candidate| *candidate == normalized)
-            {
-                missing.swap_remove(index);
-                if missing.is_empty() {
-                    return true;
-                }
-            }
-        }
-        false
-    }
-
-    /// 在已解码的行文本上检查 query 要求的全部非 ASCII（无大小写之分，如 CJK）字符是否都出现。
-    /// 仅对解码后的文本调用；文件级原始字节阶段不做此检查，以免对非 UTF-8 编码误杀。
-    fn all_required_non_ascii_present(&self, line: &str) -> bool {
-        let mut missing = self.required_non_ascii.clone();
-        for ch in line.chars() {
-            if let Some(index) = missing.iter().position(|candidate| *candidate == ch) {
-                missing.swap_remove(index);
-                if missing.is_empty() {
-                    return true;
-                }
-            }
-        }
-        missing.is_empty()
-    }
-
-    fn may_match(&self, line: &str) -> bool {
-        if line.chars().count() < self.min_chars {
-            return false;
-        }
-        if !self.required_ascii.is_empty() && !self.all_required_ascii_present(line.bytes()) {
-            return false;
-        }
-        if !self.required_non_ascii.is_empty() && !self.all_required_non_ascii_present(line) {
-            return false;
-        }
-        true
-    }
-
-    /// 文件级候选筛除（第 4 点两阶段检索的「candidate generation」轻量版）：
-    /// 直接在原始字节上检查 query 要求的 ASCII 字符是否全部出现；缺任意一个，
-    /// 则整文件不可能有命中行，可在更贵的解码 / 逐行 nucleo 之前整文件跳过。
-    ///
-    /// 只看 ASCII 字节，且 ASCII 在 UTF-8 / Latin1 等超集编码里编码一致，故无需先解码，
-    /// 也不会误杀（required_ascii 为空时返回 true，交回逐行阶段处理）。非 ASCII（如 CJK）
-    /// 字符的存在性检查只放在解码后的逐行阶段，避免对非 UTF-8 编码的文件误杀。
-    fn bytes_may_match(&self, bytes: &[u8]) -> bool {
-        if self.required_ascii.is_empty() {
-            return true;
-        }
-        self.all_required_ascii_present(bytes.iter().copied())
-    }
-}`,
-`#[derive(Clone)]
-struct FuzzyLinePrefilter {
-    min_chars: usize,
-    /// ASCII 字符存在性位掩码：索引为归一化后的 ASCII 字节值。
-    /// 替代原先的 Vec<u8>，避免 each-call clone 产生的堆分配。
-    required_ascii_mask: [bool; 256],
-    required_ascii_count: usize,
-    required_non_ascii: Vec<char>,
-    match_case: bool,
-}
-
-impl FuzzyLinePrefilter {
-    fn new(query: &str, match_case: bool) -> Option<Self> {
-        let min_chars = query.chars().filter(|ch| !ch.is_whitespace()).count();
-        let mut required_ascii_mask = [false; 256];
-        let mut required_ascii_count = 0usize;
-        let mut required_non_ascii = Vec::new();
-
-        for ch in query.chars() {
-            if ch.is_whitespace() {
-                continue;
-            }
-            if ch.is_ascii() {
-                let byte = ch as u8;
-                if !byte.is_ascii_alphanumeric() {
-                    continue;
-                }
-                let normalized = normalize_prefilter_ascii(byte, match_case);
-                if !required_ascii_mask[normalized as usize] {
-                    required_ascii_mask[normalized as usize] = true;
-                    required_ascii_count += 1;
-                }
-                continue;
-            }
-            // 非 ASCII：仅在区分大小写、或该字符本身无大小写之分（如 CJK）时要求其出现，
-            // 避免在不区分大小写时对有大小写的脚本（希腊 / 西里尔等）造成误杀。
-            if !match_case && (ch.is_uppercase() || ch.is_lowercase()) {
-                continue;
-            }
-            if !required_non_ascii.contains(&ch) {
-                required_non_ascii.push(ch);
-            }
-        }
-
-        if min_chars == 0 && required_ascii_count == 0 && required_non_ascii.is_empty() {
-            return None;
-        }
-
-        Some(Self {
-            min_chars,
-            required_ascii_mask,
-            required_ascii_count,
-            required_non_ascii,
-            match_case,
-        })
-    }
-
-    /// 在给定字节序列中检查 query 要求的全部 ASCII 字符是否都出现（按 match_case 归一大小写）。
-    /// 非 ASCII 字节跳过。使用栈上 [bool; 256] 位掩码替代 Vec clone，零堆分配。
-    fn all_required_ascii_present(&self, bytes: impl Iterator<Item = u8>) -> bool {
-        if self.required_ascii_count == 0 {
-            return true;
-        }
-        let mut present = [false; 256];
-        let mut found = 0usize;
-        for byte in bytes {
-            if !byte.is_ascii() {
-                continue;
-            }
-            let normalized = normalize_prefilter_ascii(byte, self.match_case);
-            let idx = normalized as usize;
-            if self.required_ascii_mask[idx] && !present[idx] {
-                present[idx] = true;
-                found += 1;
-                if found == self.required_ascii_count {
-                    return true;
-                }
-            }
-        }
-        false
-    }
-
-    /// 在已解码的行文本上检查 query 要求的全部非 ASCII（无大小写之分，如 CJK）字符是否都出现。
-    /// 仅对解码后的文本调用；文件级原始字节阶段不做此检查，以免对非 UTF-8 编码误杀。
-    fn all_required_non_ascii_present(&self, line: &str) -> bool {
-        let mut missing = self.required_non_ascii.clone();
-        for ch in line.chars() {
-            if let Some(index) = missing.iter().position(|candidate| *candidate == ch) {
-                missing.swap_remove(index);
-                if missing.is_empty() {
-                    return true;
-                }
-            }
-        }
-        missing.is_empty()
-    }
-
-    fn may_match(&self, line: &str) -> bool {
-        if line.chars().count() < self.min_chars {
-            return false;
-        }
-        if self.required_ascii_count > 0 && !self.all_required_ascii_present(line.bytes()) {
-            return false;
-        }
-        if !self.required_non_ascii.is_empty() && !self.all_required_non_ascii_present(line) {
-            return false;
-        }
-        true
-    }
-
-    /// 文件级候选筛除（第 4 点两阶段检索的「candidate generation」轻量版）：
-    /// 直接在原始字节上检查 query 要求的 ASCII 字符是否全部出现；缺任意一个，
-    /// 则整文件不可能有命中行，可在更贵的解码 / 逐行 nucleo 之前整文件跳过。
-    ///
-    /// 只看 ASCII 字节，且 ASCII 在 UTF-8 / Latin1 等超集编码里编码一致，故无需先解码，
-    /// 也不会误杀（required_ascii 为空时返回 true，交回逐行阶段处理）。非 ASCII（如 CJK）
-    /// 字符的存在性检查只放在解码后的逐行阶段，避免对非 UTF-8 编码的文件误杀。
-    fn bytes_may_match(&self, bytes: &[u8]) -> bool {
-        if self.required_ascii_count == 0 {
-            return true;
-        }
-        self.all_required_ascii_present(bytes.iter().copied())
-    }
-}`,
-'find.rs: FuzzyLinePrefilter bitmask (zero heap alloc)');
-
-// ═══════════════════════════════════════════════════════════════════════
-// search/find.rs — #2: conversion_error 设置后停止扫描
-// ═══════════════════════════════════════════════════════════════════════
-
-patch('commands/search/find.rs',
-`                    .map_err(io::Error::other)?;
-                Ok(keep_going)
-            }),`,
-`                    .map_err(io::Error::other)?;
-                Ok(keep_going && conversion_error.is_none())
-            }),`,
-'find.rs: stop scanning on conversion_error');
-
-// ═══════════════════════════════════════════════════════════════════════
-// search/mod.rs — #9: prewarm 静默吞掉线程创建失败 → log::warn
-// ═══════════════════════════════════════════════════════════════════════
-
-patch('commands/search/mod.rs',
-`        })
-        .ok();
-}`,
-`        })
-    {
-        log::warn!("搜索索引预热线程创建失败：{error}");
-    }
-}`,
-'search/mod.rs: log::warn on prewarm thread failure');
-
-// ═══════════════════════════════════════════════════════════════════════
-// commands/git.rs — #3: short_commit_id 单次分配
-// ═══════════════════════════════════════════════════════════════════════
-
-patch('commands/git.rs',
-`fn short_commit_id(id: gix::ObjectId) -> String {
-    id.to_string().chars().take(7).collect()
-}`,
-`fn short_commit_id(id: gix::ObjectId) -> String {
-    format!("{:.7}", id)
-}`,
-'git.rs: short_commit_id single allocation');
-
-// ═══════════════════════════════════════════════════════════════════════
-// commands/git.rs — #10: epoch 0 时间戳返回空串
-// ═══════════════════════════════════════════════════════════════════════
-
-patch('commands/git.rs',
-`    let authored_at = jiff::Timestamp::from_second(commit.time().unwrap_or_default().seconds)
-        .unwrap_or_else(|_| jiff::Timestamp::now())
-        .to_string();`,
-`    let time_seconds = commit.time().map(|t| t.seconds).unwrap_or(0);
-    let authored_at = if time_seconds == 0 {
-        // epoch 0 通常表示时间缺失，返回空串让前端区分"时间缺失"与"真实时间"。
-        String::new()
-    } else {
-        jiff::Timestamp::from_second(time_seconds)
-            .unwrap_or_else(|_| jiff::Timestamp::now())
-            .to_string()
-    };`,
-'git.rs: epoch 0 returns empty string');
-
-// ═══════════════════════════════════════════════════════════════════════
-// commands/shell_tools.rs — #8: 超时时捕获部分 stderr
-// ═══════════════════════════════════════════════════════════════════════
-
-patch('commands/shell_tools.rs',
-`use std::{
-    env,
-    path::{Path, PathBuf},
-    process::{Command as StdCommand, Stdio},
-    time::Duration,
-};`,
-`use std::{
-    env,
-    path::{Path, PathBuf},
-    process::{Command as StdCommand, Stdio},
-    sync::Arc,
-    time::Duration,
-};`,
-'shell_tools.rs: import Arc');
-
-patch('commands/shell_tools.rs',
-`    let mut child = command
-        .spawn()
-        .map_err(|error| format!("启动 shfmt 失败：{error}"))?;
-
-    // 并发写 stdin：与排空 stdout 同时进行，避免大脚本触发 stdin/stdout 双向管道死锁。
-    let stdin = child.stdin.take();
-    let input = content.as_bytes().to_vec();
-    let writer = tokio::spawn(async move {
-        if let Some(mut stdin) = stdin {
-            stdin.write_all(&input).await?;
-            stdin.shutdown().await?;
-        }
-        Ok::<(), std::io::Error>(())
-    });
-
-    let output = match timeout(SHFMT_TIMEOUT, child.wait_with_output()).await {
-        Ok(Ok(output)) => output,
-        Ok(Err(error)) => return Err(format!("运行 shfmt 失败：{error}")),
-        Err(_) => {
-            return Err(format!(
-                "shfmt 格式化超时（超过 {} 秒）。",
-                SHFMT_TIMEOUT.as_secs()
-            ));
-        }
-    };`,
-`    let mut child = command
-        .spawn()
-        .map_err(|error| format!("启动 shfmt 失败：{error}"))?;
-
-    // 独立读取 stderr：超时时 wait_with_output 的 future 被 drop，
-    // 已缓冲的 stderr 诊断信息会丢失。提前 take stderr 管道由独立任务持续读取，
-    // 超时后仍能获得部分诊断输出（如语法错误位置）。
-    let mut stderr_pipe = child.stderr.take().expect("stderr is piped");
-    let partial_stderr: Arc<std::sync::Mutex<Vec<u8>>> =
-        Arc::new(std::sync::Mutex::new(Vec::new()));
-    let partial_stderr_clone = partial_stderr.clone();
-    let stderr_reader = tokio::spawn(async move {
-        use tokio::io::AsyncReadExt;
-        let mut buf = [0u8; 4096];
-        loop {
-            match stderr_pipe.read(&mut buf).await {
-                Ok(0) | Err(_) => break,
-                Ok(n) => partial_stderr_clone
-                    .lock()
-                    .unwrap()
-                    .extend_from_slice(&buf[..n]),
-            }
-        }
-    });
-
-    // 并发写 stdin：与排空 stdout 同时进行，避免大脚本触发 stdin/stdout 双向管道死锁。
-    let stdin = child.stdin.take();
-    let input = content.as_bytes().to_vec();
-    let writer = tokio::spawn(async move {
-        if let Some(mut stdin) = stdin {
-            stdin.write_all(&input).await?;
-            stdin.shutdown().await?;
-        }
-        Ok::<(), std::io::Error>(())
-    });
-
-    let output = match timeout(SHFMT_TIMEOUT, child.wait_with_output()).await {
-        Ok(Ok(mut output)) => {
-            // wait 返回后合并 stderr_reader 已捕获的完整 stderr。
-            let _ = stderr_reader.await;
-            output.stderr = std::mem::take(&mut *partial_stderr.lock().unwrap());
-            output
-        }
-        Ok(Err(error)) => return Err(format!("运行 shfmt 失败：{error}")),
-        Err(_) => {
-            // 超时：从 partial_stderr 获取已缓冲的 stderr 内容。
-            let stderr_text =
-                String::from_utf8_lossy(&partial_stderr.lock().unwrap())
-                    .trim()
-                    .to_string();
-            let base = format!(
-                "shfmt 格式化超时（超过 {} 秒）。",
-                SHFMT_TIMEOUT.as_secs()
-            );
-            return Err(if stderr_text.is_empty() {
-                base
-            } else {
-                format!("{base} 部分诊断输出：{stderr_text}")
-            });
-        }
-    };`,
-'shell_tools.rs: capture partial stderr on timeout');
-
-// ═══════════════════════════════════════════════════════════════════════
-// commands/agent_webview.rs — #4: CDP 轮询循环中检查 webview 是否已关闭
-// ═══════════════════════════════════════════════════════════════════════
-
-patch('commands/agent_webview.rs',
-`async fn establish_cdp_session(app: AppHandle, port: u16) {
-    use futures::StreamExt;`,
-`async fn establish_cdp_session(app: AppHandle, port: u16) {
-    use futures::StreamExt;
-    use tauri::Manager;`,
-'agent_webview.rs: import Manager in establish_cdp_session');
-
-patch('commands/agent_webview.rs',
-`    for _ in 0..40 {
-        match chromiumoxide::Browser::connect(url.clone()).await {`,
-`    for _ in 0..40 {
-        // 检查 webview 是否已被关闭/销毁，避免在用户关闭后继续建立 CDP 会话。
-        if app.get_webview(AGENT_WEBVIEW_LABEL).is_none() {
-            tracing::info!(event = "agent_webview.cdp.cancelled", reason = "webview_closed");
-            return;
-        }
-        match chromiumoxide::Browser::connect(url.clone()).await {`,
-'agent_webview.rs: check webview in CDP connect loop');
-
-patch('commands/agent_webview.rs',
-`    let mut page_opt = None;
-    for _ in 0..40 {
-        if let Ok(pages) = browser.pages().await`,
-`    let mut page_opt = None;
-    for _ in 0..40 {
-        // 检查 webview 是否已被关闭/销毁。
-        if app.get_webview(AGENT_WEBVIEW_LABEL).is_none() {
-            tracing::info!(event = "agent_webview.cdp.cancelled", reason = "webview_closed");
-            handler_task.abort();
-            return;
-        }
-        if let Ok(pages) = browser.pages().await`,
-'agent_webview.rs: check webview in CDP page loop');
-
-// ═══════════════════════════════════════════════════════════════════════
-// 汇总
-// ═══════════════════════════════════════════════════════════════════════
-
-console.log('\n──────────────────────────────');
-console.log('Yellow issue fixes — Results:');
-console.log('──────────────────────────────');
-for (const r of results) console.log(r);
-const ok = results.filter(r => r.startsWith('✅')).length;
-const fail = results.filter(r => r.startsWith('❌')).length;
-console.log(`──────────────────────────────`);
-console.log(`${ok}/${results.length} succeeded, ${fail} failed`);
+console.log('\nBatch C3 完成。请运行校验：pnpm vue-tsc --noEmit && pnpm vitest run');
