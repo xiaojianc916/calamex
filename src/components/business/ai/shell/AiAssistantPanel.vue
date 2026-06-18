@@ -5,6 +5,7 @@ import { computed, defineAsyncComponent, onMounted, ref } from 'vue';
 import { z } from 'zod';
 import QuestionPrompt from '@/components/ai-elements/question/QuestionPrompt.vue';
 import AiChatThread from '@/components/business/ai/chat/AiChatThread.vue';
+import AiErrorNotice from '@/components/business/ai/chat/AiErrorNotice.vue';
 import AiPromptInput from '@/components/business/ai/chat/AiPromptInput.vue';
 import AiProviderIcon from '@/components/business/ai/provider/AiProviderIcon.vue';
 import AiAssistantCheckpointEntry from '@/components/business/ai/shell/AiAssistantCheckpointEntry.vue';
@@ -1162,6 +1163,9 @@ onMounted(() => {
             :restoring="isConversationCheckpointRestoring(message.id)"
             @restore="handleRestoreConversationCheckpoint(message.id)" />
         </template>
+        <template #after-messages>
+          <AiErrorNotice :message="assistant.error.value" />
+        </template>
       </AiChatThread>
     </template>
 
@@ -1194,7 +1198,7 @@ onMounted(() => {
           :session-modes="assistant.acpSessionModes.state.value"
           :is-session-mode-switching="assistant.acpSessionModes.isSwitching.value"
           :disabled="composerDisabled" :stop-visible="assistant.isSending.value"
-          :error-message="assistant.error.value" :submit-label="submitLabel" :config="assistant.config.value"
+          :submit-label="submitLabel" :config="assistant.config.value"
           :is-model-saving="isPromptModelSaving" :network-permission="networkPermission"
           :execution-mode="executionMode"
           :is-network-permission-saving="agentNetwork.pending.value" :attachments="assistant.attachedFiles.value"

@@ -1,4 +1,5 @@
 import {
+  type AgentExternalChatRequest_Deserialize,
   type AgentSidecarApprovalResolveRequest_Deserialize,
   type AgentSidecarChatRequest_Deserialize,
   type AgentSidecarCheckpointRestoreRequest_Deserialize,
@@ -8,6 +9,7 @@ import {
 } from '@/bindings/tauri';
 import { acpPermissionRequestPayloadSchema } from '@/types/ai/acp-permission.schema';
 import type {
+  IAgentExternalChatResultPayload,
   IAgentSidecarOrchestratePayload,
   IAgentSidecarResponsePayload,
   IAgentSidecarStreamEventPayload,
@@ -64,6 +66,13 @@ const SIDECAR_COMMAND_META = {
     timeoutMs: AGENT_SIDECAR_TASK_TIMEOUT_MS,
     measureInput: measureAiChatInput,
   },
+  agentSidecarExternalChat: {
+    command: 'agent_sidecar_external_chat',
+    guardHint: '通过外部 ACP agent 执行标准回合',
+    audit: 'sensitive',
+    timeoutMs: AGENT_SIDECAR_TASK_TIMEOUT_MS,
+    measureInput: measureAiChatInput,
+  },
   agentSidecarResolveApproval: {
     command: 'agent_sidecar_resolve_approval',
     guardHint: '处理 Agent sidecar 工具审批',
@@ -97,6 +106,7 @@ type TSidecarTauriService = Pick<
   | 'agentSidecarRestart'
   | 'agentSidecarWarmup'
   | 'agentSidecarChat'
+  | 'agentSidecarExternalChat'
   | 'agentSidecarResolveApproval'
   | 'agentSidecarRestoreCheckpoint'
   | 'agentSidecarOrchestrate'
@@ -137,6 +147,12 @@ export const sidecarTauriService: TSidecarTauriService = {
     return runCommand(SIDECAR_COMMAND_META.agentSidecarChat, payload, options, () =>
       commands.agentSidecarChat(payload as unknown as AgentSidecarChatRequest_Deserialize),
     ) as Promise<IAgentSidecarResponsePayload>;
+  },
+
+  agentSidecarExternalChat(payload, options?: IIpcCallOptions) {
+    return runCommand(SIDECAR_COMMAND_META.agentSidecarExternalChat, payload, options, () =>
+      commands.agentSidecarExternalChat(payload as unknown as AgentExternalChatRequest_Deserialize),
+    ) as Promise<IAgentExternalChatResultPayload>;
   },
 
   agentSidecarResolveApproval(payload, options?: IIpcCallOptions) {

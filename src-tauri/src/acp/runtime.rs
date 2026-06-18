@@ -166,6 +166,17 @@ impl AcpRuntime {
         Ok(host)
     }
 
+    /// 驱逐指定后端缓存的失效宿主：取出并关停（结束其常驻连接任务、回收 stdio 子进程）。
+    /// 用于「客户端任务已退出」（AcpClientError::NotRunning）后清除已死宿主，使下一次请求经
+    /// get_or_spawn_backend 重新派生一个新连接，而非永远复用同一个已死连接、反复报同一错。
+    /// 无宿主时为安全空操作（幂等）；驱逐只负责清除，绝不在此重新派生。
+    pub fn evict_backend(&self, backend: AcpBackendId) {
+        let host = self.hosts.lock().slot(backend).take();
+        if let Some(host) = host {
+            host.shutdown();
+        }
+    }
+
     /// 取消指定线程（thread_id）当前进行中的回合。线程绑定的会话可能落在任一后端宿主，
     /// 故向全部**已建立**宿主广播取消（未绑定该线程的宿主侧为安全空操作 + 一条告警日志）。
     /// 缺省（无任何宿主）时为安全空操作：取消本身绝不应触发 node 子进程派生。

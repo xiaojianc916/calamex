@@ -57,6 +57,8 @@ import type {
   IAiEditUndoOperationRequest,
 } from '../ai/edit';
 import type {
+  IAgentExternalChatRequest,
+  IAgentExternalChatResultPayload,
   IAgentSidecarApprovalResolveRequest,
   IAgentSidecarChatRequest,
   IAgentSidecarCheckpointRestoreRequest,
@@ -287,6 +289,9 @@ export interface ITauriService {
   agentSidecarRestart(): Promise<IAgentSidecarHealthPayload>;
   agentSidecarWarmup(): Promise<IAgentSidecarWarmupPayload>;
   agentSidecarChat(payload: IAgentSidecarChatRequest): Promise<IAgentSidecarResponsePayload>;
+  agentSidecarExternalChat(
+    payload: IAgentExternalChatRequest,
+  ): Promise<IAgentExternalChatResultPayload>;
   agentSidecarResolveApproval(
     payload: IAgentSidecarApprovalResolveRequest,
   ): Promise<IAgentSidecarResponsePayload>;

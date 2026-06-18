@@ -165,32 +165,73 @@ pub async fn agent_sidecar_external_chat(
     payload: AgentExternalChatRequest,
 ) -> Result<AgentExternalChatResultPayload, String> {
     let backend = backend_kind_to_acp(payload.backend);
-    let host = app
-        .state::<crate::acp::AcpRuntime>()
+    let runtime = app.state::<crate::acp::AcpRuntime>();
+    let host = runtime
         .get_or_spawn_backend(&app, backend)
         .map_err(|error| error.to_string())?;
 
-    let session_id = host
-        .ensure_session(
-            payload.thread_id.as_deref().unwrap_or_default(),
-            payload.workspace_root_path.as_deref(),
-        )
-        .await
-        .map_err(|error| error.to_string())?;
+    let AgentExternalChatRequest {
+        text,
+        thread_id,
+        workspace_root_path,
+        ..
+    } = payload;
+    let thread_id = thread_id.as_deref().unwrap_or_default();
+    let workspace_root_path = workspace_root_path.as_deref();
 
-    let stop_reason = host
-        .prompt(
-            payload.thread_id.as_deref().unwrap_or_default(),
-            payload.workspace_root_path.as_deref(),
-            vec![ContentBlock::Text(TextContent::new(payload.text))],
-        )
-        .await
-        .map_err(|error| error.to_string())?;
+    // 把一轮回合收敛成单个 Result，便于在命令边界统一处置失败：ensure_session / prompt 共享
+    // 同一条 ACP 连接，任一步失败都按同一策略（驱逐失效宿主 + 翻译提示）处理。
+    let outcome: Result<AgentExternalChatResultPayload, crate::acp::AcpClientError> = async {
+        let session_id = host.ensure_session(thread_id, workspace_root_path).await?;
+        let stop_reason = host
+            .prompt(
+                thread_id,
+                workspace_root_path,
+                vec![ContentBlock::Text(TextContent::new(text))],
+            )
+            .await?;
+        Ok(AgentExternalChatResultPayload {
+            session_id: session_id.to_string(),
+            stop_reason: format!("{stop_reason:?}"),
+        })
+    }
+    .await;
 
-    Ok(AgentExternalChatResultPayload {
-        session_id: session_id.to_string(),
-        stop_reason: format!("{stop_reason:?}"),
+    outcome.map_err(|error| {
+        // 客户端任务已退出（外部 agent 进程未运行 / 初始化失败 / 未登录）：驱逐缓存的失效宿主，
+        // 使下一次发送经 get_or_spawn_backend 重新派生新连接，而非永远卡在同一个已死连接上。
+        if matches!(error, crate::acp::AcpClientError::NotRunning) {
+            runtime.evict_backend(backend);
+        }
+        external_chat_error_message(backend, &error)
     })
+}
+
+/// 把外部 agent 回合错误翻译为面向用户的可操作提示。
+///
+/// NotRunning（"acp client task is not running"）= 该后端常驻 ACP 客户端任务已退出：多因外部
+/// agent 进程未运行或未就绪（最常见是 Kimi 尚未在终端 kimi 内执行 /login）。给出明确的下一步，
+/// 而非透传不透明的协议字符串；其余错误原样转字符串上抛。
+fn external_chat_error_message(
+    backend: crate::acp::AcpBackendId,
+    error: &crate::acp::AcpClientError,
+) -> String {
+    if matches!(error, crate::acp::AcpClientError::NotRunning) {
+        return format!(
+            "{} 外部 agent 进程未在运行（可能尚未启动或未登录）。请先在终端启动该 agent 并完成登录（Kimi：先运行 kimi，再在其中执行 /login），然后重试。",
+            external_backend_label(backend)
+        );
+    }
+    error.to_string()
+}
+
+/// 外部后端的用户可读名称（用于错误提示）。match 穷尽：新增后端会触发编译错误。
+fn external_backend_label(backend: crate::acp::AcpBackendId) -> &'static str {
+    match backend {
+        crate::acp::AcpBackendId::Builtin => "自研",
+        crate::acp::AcpBackendId::Kimi => "Kimi",
+        crate::acp::AcpBackendId::Codex => "Codex",
+    }
 }
 
 #[tauri::command]
