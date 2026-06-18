@@ -11,7 +11,7 @@ tauri-build = { version = "2.5.6", features = [], optional = true }
 
 [features]
 default = ["desktop", "native_webview", "acp_client"]
-acp_client = ["dep:agent-client-protocol"]
+acp_client = ["dep:agent-client-protocol", "agent-client-protocol/unstable_boolean_config"]
 # Native-hosted built-in browser (Tauri multiwebview child + isolated user-data-folder + CDP port).
 # CDP control plane needs chromiumoxide + futures (drives the event streams).
 native_webview = ["tauri?/unstable", "dep:chromiumoxide", "dep:futures"]

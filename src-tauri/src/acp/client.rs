@@ -18,8 +18,9 @@ use crate::commands::contracts::SecretString;
 use agent_client_protocol::schema::{
     CancelNotification, ContentBlock, InitializeRequest, NewSessionRequest, PermissionOptionId,
     PromptRequest, ProtocolVersion, RequestPermissionOutcome, RequestPermissionRequest,
-    RequestPermissionResponse, SelectedPermissionOutcome, SessionId, SessionModeId,
-    SessionNotification, SetSessionModeRequest, StopReason,
+    RequestPermissionResponse, SelectedPermissionOutcome, SessionConfigId, SessionConfigOptionValue,
+    SessionConfigValueId, SessionId, SessionModeId, SessionNotification,
+    SetSessionConfigOptionRequest, SetSessionModeRequest, StopReason,
 };
 use agent_client_protocol::{
     AcpAgent, Agent, BoxFuture, Client, ConnectionTo, JsonRpcRequest, Responder,
@@ -332,6 +333,12 @@ pub enum AcpClientError {
 pub struct NewSessionOutcome {
     pub session_id: SessionId,
     pub modes: Option<Value>,
+    /// ACP `NewSessionResponse.config_options`（`SessionConfigOption[]`：每项含
+    /// `id`/`name`/`kind`/`currentValue` 等）的原样 JSON——与 `modes` 同构、最小透传，
+    /// 交前端 ACL 解释。这是「模型/思考强度/模式等」可切换配置项的目录来源,对任意公示
+    /// configOptions 的 agent 通用；默认选中项即 agent 在 currentValue 中回填的当前模型。
+    /// `None` 表示 agent 未公示会话级配置项。
+    pub config_options: Option<Value>,
 }
 
 enum Command {
@@ -347,6 +354,12 @@ enum Command {
     SetSessionMode {
         session_id: SessionId,
         mode_id: SessionModeId,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
+    SetSessionConfigOption {
+        session_id: SessionId,
+        config_id: SessionConfigId,
+        value: SessionConfigOptionValue,
         reply: oneshot::Sender<Result<(), String>>,
     },
     RestoreCheckpoint {
@@ -443,6 +456,29 @@ impl AcpClientHandle {
             .send(Command::SetSessionMode {
                 session_id,
                 mode_id,
+                reply,
+            })
+            .map_err(|_| AcpClientError::NotRunning)?;
+        rx.await
+            .map_err(|_| AcpClientError::NotRunning)?
+            .map_err(AcpClientError::Protocol)
+    }
+
+    /// 设置一个会话级配置项（ACP `session/set_config_option`）。
+    /// `config_id` 路由到具体配置（如 "model"/"thinking"/"mode"），`value` 为所选值 id。
+    /// 对协议通用、与具体 agent 无关：任意公示 configOptions 的 agent 均可复用此通道。
+    pub async fn set_session_config_option(
+        &self,
+        session_id: SessionId,
+        config_id: String,
+        value: String,
+    ) -> Result<(), AcpClientError> {
+        let (reply, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(Command::SetSessionConfigOption {
+                session_id,
+                config_id: SessionConfigId::from(config_id),
+                value: SessionConfigOptionValue::from(SessionConfigValueId::from(value)),
                 reply,
             })
             .map_err(|_| AcpClientError::NotRunning)?;
@@ -676,6 +712,9 @@ pub fn spawn_acp_client(
                             let outcome = res.map(|r| NewSessionOutcome {
                                 session_id: r.session_id,
                                 modes: serde_json::to_value(&r.modes).ok().filter(|v| !v.is_null()),
+                                config_options: serde_json::to_value(&r.config_options)
+                                    .ok()
+                                    .filter(|v| !v.is_null()),
                             });
                             let _ = reply.send(outcome.map_err(|e| e.to_string()));
                         }
@@ -696,6 +735,20 @@ pub fn spawn_acp_client(
                         } => {
                             let res = cx
                                 .send_request(SetSessionModeRequest::new(session_id, mode_id))
+                                .block_task()
+                                .await;
+                            let _ = reply.send(res.map(|_| ()).map_err(|e| e.to_string()));
+                        }
+                        Command::SetSessionConfigOption {
+                            session_id,
+                            config_id,
+                            value,
+                            reply,
+                        } => {
+                            let res = cx
+                                .send_request(SetSessionConfigOptionRequest::new(
+                                    session_id, config_id, value,
+                                ))
                                 .block_task()
                                 .await;
                             let _ = reply.send(res.map(|_| ()).map_err(|e| e.to_string()));
