@@ -55,8 +55,9 @@ use super::approval::{ApprovalError, ApprovalRegistry, ApprovalRequestInfo};
 use super::client::{
     AcpClientConfig, AcpClientError, AcpClientHandle, AcpStreamFrame, AgentAskUserResumeExtRequest,
     AgentChatExtRequest, AgentChatResolveExtRequest, CheckpointRestoreRequest, EventSink,
-    HealthExtRequest, ModelChatExtRequest, OrchestrateExtRequest, OrchestrateResumeExtRequest,
-    WarmupExtRequest, WebFetchExtRequest, WebSearchExtRequest, spawn_acp_client,
+    HealthExtRequest, ModelChatExtRequest, NewSessionOutcome, OrchestrateExtRequest,
+    OrchestrateResumeExtRequest, WarmupExtRequest, WebFetchExtRequest, WebSearchExtRequest,
+    spawn_acp_client,
 };
 
 /// 流式帧下沉口：把每条 `session/update` 帧转发给 webview（对齐 `ai:sidecar-stream`
@@ -100,6 +101,9 @@ pub struct AcpHost {
     approvals: ApprovalRegistry,
     /// `thread_id ↔ ACP SessionId` 映射（对齐 Zed `session_id = thread.id()`）。
     sessions: Arc<Mutex<HashMap<String, SessionId>>>,
+    /// `thread_id ↔ 会话建立时 agent 公示的可用模式清单`（ACP `NewSessionResponse.modes`
+    /// 原样 JSON：`currentModeId` + `availableModes[]`）。最小透传，宿主侧不重建 SDK 类型。
+    modes_by_thread: Arc<Mutex<HashMap<String, serde_json::Value>>>,
 }
 
 impl AcpHost {
@@ -126,6 +130,7 @@ impl AcpHost {
             handle,
             approvals,
             sessions: Arc::new(Mutex::new(HashMap::new())),
+            modes_by_thread: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -144,11 +149,18 @@ impl AcpHost {
         }
 
         let cwd = workspace_cwd(workspace_root_path);
-        let session_id = self.handle.new_session(cwd).await?;
+        let outcome = self.handle.new_session(cwd).await?;
+        let session_id = outcome.session_id;
         if !thread_key.is_empty() {
             self.sessions
                 .lock()
                 .insert(thread_key.to_string(), session_id.clone());
+            // 仅在 agent 公示了模式时登记；缺省不占位（保持 None 语义）。
+            if let Some(modes) = outcome.modes {
+                self.modes_by_thread
+                    .lock()
+                    .insert(thread_key.to_string(), modes);
+            }
         }
         Ok(session_id)
     }
@@ -208,6 +220,17 @@ impl AcpHost {
             .set_session_mode(session_id, SessionModeId::from(mode_id.to_string()))
             .await?;
         Ok(true)
+    }
+
+    /// 取某线程会话建立时 agent 公示的可用模式清单（ACP `NewSessionResponse.modes` 原样
+    /// JSON：`currentModeId` + `availableModes[]`）。未绑定会话 / agent 未公示模式时为 `None`。
+    /// 最小透传：宿主侧不重建 SDK 类型，交前端 ACL 解释（供 D7-③-c 模式选择器消费）。
+    pub fn session_modes(&self, thread_id: &str) -> Option<serde_json::Value> {
+        let thread_key = thread_id.trim();
+        if thread_key.is_empty() {
+            return None;
+        }
+        self.modes_by_thread.lock().get(thread_key).cloned()
     }
 
     /// 触发检查点回滚（扩展方法 `calamex.dev/checkpoint/restore`）。

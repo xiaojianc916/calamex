@@ -322,10 +322,20 @@ pub enum AcpClientError {
     NotRunning,
 }
 
+/// `new_session` 的结果：会话标识 + 可选的可用模式清单。
+///
+/// `modes` 为 ACP `NewSessionResponse.modes`（`SessionModeState`：`currentModeId` +
+/// `availableModes[]`）的原样 JSON——最小透传，宿主侧不重建 SDK 类型，交前端 ACL 解释
+/// （对齐 tool_call 的 `acpUpdate` 整体透传）。`None` 表示 agent 未公示会话模式。
+pub struct NewSessionOutcome {
+    pub session_id: SessionId,
+    pub modes: Option<Value>,
+}
+
 enum Command {
     NewSession {
         cwd: PathBuf,
-        reply: oneshot::Sender<Result<SessionId, String>>,
+        reply: oneshot::Sender<Result<NewSessionOutcome, String>>,
     },
     Prompt {
         session_id: SessionId,
@@ -393,7 +403,7 @@ pub struct AcpClientHandle {
 }
 
 impl AcpClientHandle {
-    pub async fn new_session(&self, cwd: PathBuf) -> Result<SessionId, AcpClientError> {
+    pub async fn new_session(&self, cwd: PathBuf) -> Result<NewSessionOutcome, AcpClientError> {
         let (reply, rx) = oneshot::channel();
         self.cmd_tx
             .send(Command::NewSession { cwd, reply })
@@ -659,8 +669,13 @@ pub fn spawn_acp_client(
                                 .send_request(NewSessionRequest::new(cwd))
                                 .block_task()
                                 .await;
-                            let _ =
-                                reply.send(res.map(|r| r.session_id).map_err(|e| e.to_string()));
+                            // 最小透传：把 NewSessionResponse.modes（可用模式清单）原样序列化为
+                            // JSON 一并回传（null → None），宿主侧据 thread_id 登记，供模式选择器消费。
+                            let outcome = res.map(|r| NewSessionOutcome {
+                                session_id: r.session_id,
+                                modes: serde_json::to_value(&r.modes).ok().filter(|v| !v.is_null()),
+                            });
+                            let _ = reply.send(outcome.map_err(|e| e.to_string()));
                         }
                         Command::Prompt {
                             session_id,
