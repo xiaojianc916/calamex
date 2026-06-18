@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useFrontendTool } from '@copilotkit/vue';
 import { SquarePen, Trash2 } from '@lucide/vue';
+import { AnimatePresence, Motion } from 'motion-v';
 import { computed, defineAsyncComponent, onMounted, ref } from 'vue';
 import { z } from 'zod';
 import QuestionPrompt from '@/components/ai-elements/question/QuestionPrompt.vue';
@@ -1104,38 +1105,44 @@ onMounted(() => {
             <path d="M12 7v5l4 2" />
           </svg>
         </button>
-        <section v-if="isHistoryOpen" ref="historyPopoverRef" class="ai-history-popover" role="dialog"
-          aria-label="对话记录">
-          <header class="ai-history-header">
-            <div class="ai-history-title-group">
-              <strong>对话记录</strong>
-            </div>
-            <button v-if="activeHistoryThread" type="button" class="ai-history-clear-icon" aria-label="删除当前对话记录"
-              @click="openDeleteConversationDialog(activeHistoryThread.id)">
-              <Trash2 aria-hidden="true" />
-            </button>
-          </header>
-          <div v-if="historyThreads.length" class="ai-history-scroll-area" @scroll="handleHistoryScroll">
-            <div class="ai-history-list">
-              <article v-for="thread in historyThreads" :key="thread.id" class="ai-history-item"
-                :class="{ 'is-active': thread.id === assistant.activeConversationId.value }">
-                <button type="button" class="ai-history-button" @click="openHistoryThread(thread.id)">
-                  <div class="ai-history-meta">
-                    <strong class="ai-history-title" v-text="thread.title"></strong>
-                    <time v-text="getHistoryTimestampLabel(thread.updatedAt)"></time>
-                  </div>
-                  <div class="ai-history-subtitle" v-text="getHistoryMessageCountLabel(thread.messages)"></div>
-                </button>
-                <button type="button" class="ai-history-delete-button" aria-label="删除这条对话记录"
-                  @click.stop="openDeleteConversationDialog(thread.id)">
+        <AnimatePresence>
+          <Motion v-if="isHistoryOpen" as-child :initial="{ opacity: 0, scale: 0.96, y: -6 }"
+            :animate="{ opacity: 1, scale: 1, y: 0 }" :exit="{ opacity: 0, scale: 0.96, y: -6 }"
+            :transition="{ duration: 0.18, ease: [0.23, 1, 0.32, 1] }">
+            <section ref="historyPopoverRef" class="ai-history-popover" role="dialog"
+              aria-label="对话记录">
+              <header class="ai-history-header">
+                <div class="ai-history-title-group">
+                  <strong>对话记录</strong>
+                </div>
+                <button v-if="activeHistoryThread" type="button" class="ai-history-clear-icon" aria-label="删除当前对话记录"
+                  @click="openDeleteConversationDialog(activeHistoryThread.id)">
                   <Trash2 aria-hidden="true" />
                 </button>
-              </article>
-            </div>
-            <div v-if="hasMoreHistoryThreads" class="ai-history-load-sentinel" aria-hidden="true"></div>
-          </div>
-          <div v-else class="ai-history-empty">暂无对话记录</div>
-        </section>
+              </header>
+              <div v-if="historyThreads.length" class="ai-history-scroll-area" @scroll="handleHistoryScroll">
+                <div class="ai-history-list">
+                  <article v-for="thread in historyThreads" :key="thread.id" class="ai-history-item"
+                    :class="{ 'is-active': thread.id === assistant.activeConversationId.value }">
+                    <button type="button" class="ai-history-button" @click="openHistoryThread(thread.id)">
+                      <div class="ai-history-meta">
+                        <strong class="ai-history-title" v-text="thread.title"></strong>
+                        <time v-text="getHistoryTimestampLabel(thread.updatedAt)"></time>
+                      </div>
+                      <div class="ai-history-subtitle" v-text="getHistoryMessageCountLabel(thread.messages)"></div>
+                    </button>
+                    <button type="button" class="ai-history-delete-button" aria-label="删除这条对话记录"
+                      @click.stop="openDeleteConversationDialog(thread.id)">
+                      <Trash2 aria-hidden="true" />
+                    </button>
+                  </article>
+                </div>
+                <div v-if="hasMoreHistoryThreads" class="ai-history-load-sentinel" aria-hidden="true"></div>
+              </div>
+              <div v-else class="ai-history-empty">暂无对话记录</div>
+            </section>
+          </Motion>
+        </AnimatePresence>
       </div>
       <slot name="header-actions-after" />
     </template>
@@ -1317,6 +1324,7 @@ onMounted(() => {
   border-radius: 12px;
   background: #ffffff;
   box-shadow: 0 6px 18px rgba(15, 23, 42, 0.06) !important;
+  transform-origin: top right;
 }
 
 .ai-history-header {
