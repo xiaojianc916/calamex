@@ -660,6 +660,32 @@ export interface IAcpSessionModeState {
   availableModes: IAcpSessionModeOption[];
 }
 
+/* ----------------------------------------------------------------------------
+ * ACP 可用斜杠命令 VM（ADR-20260617 · D7-④）
+ *
+ * 投影 ACP session/update 的 available_commands_update（外部 agent 声明本会话可用的
+ * 斜杠命令，见 Rust host src-tauri/src/acp/ui_event.rs）。事件逐字透传 ACP
+ * availableCommands 原始数组（TJsonValue[]，不在 Rust 侧造结构），前端 ACL
+ * （components/business/ai/thread/projection/from-acp-available-commands）归一为此
+ * VM；UI 只消费该结构，不直接触碰 ACP 原始负载。
+ * -------------------------------------------------------------------------- */
+export interface IAcpAvailableCommand {
+  name: string;
+  description: string;
+  /** ACP AvailableCommandInput.hint（非结构化输入提示），无则省略。 */
+  inputHint?: string;
+}
+
+export interface IAcpAvailableCommandsState {
+  commands: IAcpAvailableCommand[];
+}
+
+export type TAgentUiEventAvailableCommandsUpdate = {
+  type: 'available_commands_update';
+  /** ACP available_commands_update 的原始 availableCommands 数组，逐字透传，前端 ACL 归一。 */
+  availableCommands: TJsonValue[];
+};
+
 export type TAgentUiEvent =
   | { type: 'message_delta'; text: string; phase?: 'stage' | 'final' }
   | { type: 'agent_event'; event: TAgentRuntimeEvent }
@@ -670,6 +696,7 @@ export type TAgentUiEvent =
   | TAgentUiEventToolCall
   | TAgentUiEventToolCallUpdate
   | TAgentUiEventModeUpdate
+  | TAgentUiEventAvailableCommandsUpdate
   | { type: 'approval_required'; request: IApprovalRequest }
   | { type: 'ask_user_required'; requestId: string; request: IAskUserRequest }
   | { type: 'diff_ready'; files: IDiffFile[] }
