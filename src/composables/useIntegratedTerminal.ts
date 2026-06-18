@@ -12,6 +12,7 @@ import { useTerminalFacade } from '@/services/terminal/facade';
 import { useEditorStore } from '@/store/editor';
 import { useTerminalRuntimeStore } from '@/store/terminal';
 import { useTerminalRunRoutingStore } from '@/store/terminalRunRouting';
+import { useTerminalTabsStore } from '@/store/terminalTabs';
 import { useTerminalRegistryStore } from '@/terminal/registry';
 import type { ITerminalSessionCallbacks } from '@/terminal/session';
 import type { TThemeMode } from '@/types/app';
@@ -133,10 +134,14 @@ export const useIntegratedTerminal = ({
   const runRoutingStore = useTerminalRunRoutingStore();
   const { showRunSeparator, deepDiagnosticsEnabled } = storeToRefs(runtimeStore);
   const registry = useTerminalRegistryStore();
+  const tabsStore = useTerminalTabsStore();
   const hostRef = ref<HTMLElement | null>(null);
   const buildSessionCallbacks = (): ITerminalSessionCallbacks => ({
     onStatusChange,
     onRunCompleted,
+    onTitleChange: (title) => {
+      tabsStore.setTabTitle(sessionId, title);
+    },
     onInputRoute: (payload) => {
       runtimeStore.recordInputRoute(payload.route, payload.data);
     },

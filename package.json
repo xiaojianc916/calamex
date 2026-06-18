@@ -37,7 +37,7 @@
   "dependencies": {
     "@ag-ui/client": "^0.0.57",
     "@ag-ui/core": "^0.0.57",
-    "@agentclientprotocol/sdk": "^0.26.0",
+    "@agentclientprotocol/sdk": "^0.28.0",
     "@ai-sdk/deepseek": "^2.0.39",
     "@codemirror/autocomplete": "^6.20.3",
     "@codemirror/commands": "^6.10.3",

@@ -322,6 +322,8 @@ export interface ITerminalSessionCallbacks {
   onTerminalData?: (payload: ITerminalDataEvent) => void;
   onVisualWrite?: (payload: ITerminalVisualWritePayload) => void;
   onBufferDiagnostic?: (payload: ITerminalBufferDiagnostic) => void;
+  /** xterm 标题序列（OSC 0/2）变更：默认 WSL bash 写「user@host: <cwd>」，前台程序写运行命令。对照 VSCode TerminalInstance.xterm.raw.onTitleChange。 */
+  onTitleChange?: (title: string) => void;
 }
 
 // ─── 构造选项 ─────────────────────────────────────────────────────────────────
@@ -359,6 +361,7 @@ export class TerminalSession {
   private _onTerminalData: ((p: ITerminalDataEvent) => void) | null = null;
   private _onVisualWrite: ((p: ITerminalVisualWritePayload) => void) | null = null;
   private _onBufferDiagnostic: ((p: ITerminalBufferDiagnostic) => void) | null = null;
+  private _onTitleChange: ((title: string) => void) | null = null;
 
   // ── 私有：xterm 实例 ────────────────────────────────────────────────────────
   private _terminalRef = shallowRef<Terminal | null>(null);
@@ -467,6 +470,7 @@ export class TerminalSession {
     this._onTerminalData = options.onTerminalData ?? null;
     this._onVisualWrite = options.onVisualWrite ?? null;
     this._onBufferDiagnostic = options.onBufferDiagnostic ?? null;
+    this._onTitleChange = options.onTitleChange ?? null;
   }
 
   // -- Public: update callbacks --------------------------------------------
@@ -478,6 +482,7 @@ export class TerminalSession {
     this._onTerminalData = callbacks.onTerminalData ?? null;
     this._onVisualWrite = callbacks.onVisualWrite ?? null;
     this._onBufferDiagnostic = callbacks.onBufferDiagnostic ?? null;
+    this._onTitleChange = callbacks.onTitleChange ?? null;
   }
 
   setRunSeparatorVisible(visible: boolean): void {
@@ -990,6 +995,10 @@ export class TerminalSession {
 
   private _emitVisualWrite(payload: ITerminalVisualWritePayload): void {
     this._onVisualWrite?.(payload);
+  }
+
+  private _emitTitleChange(title: string): void {
+    this._onTitleChange?.(title);
   }
 
   private _emitTerminalDataReceived(payload: ITerminalDataEvent): void {
@@ -2098,6 +2107,11 @@ export class TerminalSession {
       });
       terminal.onSelectionChange(() => {
         void this._writeSelectionToClipboard();
+      });
+      // 标签标题跟随 shell 标题序列（OSC 0/2）：对照 VSCode TerminalInstance 监听 xterm.raw.onTitleChange，
+      // 默认 WSL bash 写「user@host: <cwd>」，前台程序运行时写命令名 —— 让 tab 反映 cwd/运行命令。
+      terminal.onTitleChange((title) => {
+        this._emitTitleChange(title);
       });
     }
     this._attachTerminalToHost();

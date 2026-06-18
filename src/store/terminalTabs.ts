@@ -80,7 +80,8 @@ export const useTerminalTabsStore = defineStore('terminal-tabs', () => {
 
   const setTabTitle = (sessionId: string, title: string): void => {
     const tab = tabs.value.find((item) => item.sessionId === sessionId);
-    if (tab && title.trim()) tab.title = title;
+    const next = title.trim();
+    if (tab && next && tab.title !== next) tab.title = next;
   };
 
   return {
