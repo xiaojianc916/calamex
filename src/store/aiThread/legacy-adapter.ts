@@ -85,6 +85,7 @@ function legacyToolCallToEntry(toolCall: LegacyToolCall, createdAt: string): IAi
  * 把一条旧消息展开为 0..n 条 entries。
  * - user -> 单条 user_message（有文本才加 text block）
  * - 其余角色 -> tool_call entries（在前）+ assistant_message（有文本才生成）
+ *   + changed_files（assistant message 带 changedFilesSummary 时追加在末尾）
  */
 export function legacyMessageToEntries(message: IAiChatMessage): IAiThreadEntry[] {
   if (message.role === 'user') {
@@ -109,6 +110,15 @@ export function legacyMessageToEntries(message: IAiChatMessage): IAiThreadEntry[
       id: message.id,
       createdAt: message.createdAt,
       chunks: [{ type: 'message', block: { type: 'text', text: message.content } }],
+    });
+  }
+  if (message.changedFilesSummary) {
+    const summary = message.changedFilesSummary;
+    entries.push({
+      type: 'changed_files',
+      id: summary.id,
+      createdAt: summary.appliedAt ?? message.createdAt,
+      summary,
     });
   }
   return entries;
