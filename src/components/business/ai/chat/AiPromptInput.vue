@@ -186,7 +186,7 @@ const modeOptions: IAiPromptModeOption[] = [
 ];
 
 const agentOptions: IAiPromptAgentOption[] = [
-  { key: 'builtin', label: '自研 Agent' },
+  { key: 'builtin', label: 'Calamex Agent' },
   { key: 'kimi', label: 'Kimi' },
 ];
 

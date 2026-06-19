@@ -736,7 +736,7 @@ pub(super) fn should_skip_snapshot_for_interactive_resize_repaint(
 pub(super) fn should_recreate_terminal_session(session: &TerminalSession) -> bool {
     let cwd = session.working_directory.trim();
     cwd.is_empty()
-        || cwd.contains('\')
+        || cwd.contains('\\')
         || looks_like_windows_drive_path(cwd)
         || (!cwd.starts_with('/') && cwd != "~")
 }
@@ -747,7 +747,7 @@ fn looks_like_windows_drive_path(path: &str) -> bool {
     bytes.len() >= 3
         && bytes[0].is_ascii_alphabetic()
         && bytes[1] == b':'
-        && (bytes[2] == b'\' || bytes[2] == b'/')
+        && (bytes[2] == b'\\' || bytes[2] == b'/')
 }
 
 pub(super) fn terminate_terminal_session(session: &TerminalSession) -> Result<(), String> {
