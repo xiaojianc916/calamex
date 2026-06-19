@@ -1,33 +1,27 @@
-// fix-batch-1.mjs
-// Calamex 代码审查第一批修复：S-1 / S-2 / S-3
-// 用法: node fix-batch-1.mjs
+// fix-batch-2.mjs
+// Calamex 代码审查第二批修复：M-4 / M-2 / L-4 / L-7
+// 用法: node fix-batch-2.mjs
 // 在仓库根目录 D:\com.xiaojianc\my_desktop_app 下运行
 
 import { readFileSync, writeFileSync } from 'node:fs';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = process.cwd();
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // 工具函数
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-/**
- * 精确替换：要求 oldStr 在文件中唯一存在且只出现一次。
- * 替换失败（0 次或 >1 次）会抛异常，不静默写入。
- */
 function replaceExact(filePath, oldStr, newStr, label) {
   const abs = join(root, filePath);
   const content = readFileSync(abs, 'utf-8');
 
   const count = content.split(oldStr).length - 1;
   if (count === 0) {
-    throw new Error(`[${label}] 未找到匹配的原始代码块，文件可能已被修改:\n  ${filePath}`);
+    throw new Error(`[${label}] 未找到匹配的原始代码块:\n  ${filePath}`);
   }
   if (count > 1) {
-    throw new Error(`[${label}] 原始代码块匹配了 ${count} 处，需要更精确的上下文:\n  ${filePath}`);
+    throw new Error(`[${label}] 原始代码块匹配了 ${count} 处:\n  ${filePath}`);
   }
 
   const result = content.replace(oldStr, newStr);
@@ -36,174 +30,299 @@ function replaceExact(filePath, oldStr, newStr, label) {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// S-1: useShellWorkbenchView.ts — gitRemovedCount 恒为 0
+// M-4: git.ts — 简化 requestIdleCallback fallback 逻辑
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-// 修复内容：
-// 1. 删除 gitAddedCount + gitRemovedCount 两个 computed
-// 2. 新增 gitChangeSummary computed，按 Git status letter 精确分类
-// 3. 在 return 块中把 gitRemovedCount 改为 gitChangeSummary.deleted
-//    把 gitAddedCount 改为 gitChangeSummary.added
-//    并导出 gitChangeSummary 供模板使用
+const M4_FILE = 'src/store/git.ts';
 
-const S1_FILE = 'src/composables/useShellWorkbenchView.ts';
+const M4_OLD = `  const scheduleCommitStatsBackgroundQueue = (): void => {
+    if (commitStatsBackgroundTimer !== null || isCommitStatsBackgroundRunning) return;
 
-// --- 1) 替换 computed 定义 ---
-const S1_OLD_COMPUTED = `  const gitBranchName = computed(() => gitStore.status.headBranchName ?? null);
-  const gitAddedCount = computed(
-    () =>
-      gitStore.status.stagedCount + gitStore.status.unstagedCount + gitStore.status.untrackedCount,
-  );
-  const gitRemovedCount = computed(() => 0);`;
+    const run = (): void => {
+      commitStatsBackgroundTimer = null;
+      void drainCommitStatsBackgroundQueue();
+    };
 
-const S1_NEW_COMPUTED = `  const gitBranchName = computed(() => gitStore.status.headBranchName ?? null);
+    if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
+      let didRun = false;
+      let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
 
-  /**
-   * 按 Git status letter 精确分类统计文件变更数。
-   *
-   * 修复：此前 gitRemovedCount 恒为 0（写死），且 gitAddedCount 把 modified
-   * 文件也算进了「新增」。现在直接遍历 status.files 数组按 index/worktree
-   * status 分类：A=新增、D=删除、M/R=修改、?=未跟踪。
-   */
-  const gitChangeSummary = computed(() => {
-    const files = gitStore.status.files;
-    let added = 0;
-    let modified = 0;
-    let deleted = 0;
+      const runOnce = (): void => {
+        if (didRun) return;
+        didRun = true;
+        if (fallbackTimer !== null) {
+          clearTimeout(fallbackTimer);
+          fallbackTimer = null;
+        }
+        run();
+      };
 
-    for (const file of files) {
-      if (file.isUntracked) {
-        added++;
-        continue;
+      const idleId = window.requestIdleCallback(runOnce, {
+        timeout: GIT_COMMIT_STATS_BACKGROUND_DELAY_MS * 4,
+      });
+
+      fallbackTimer = setTimeout(() => {
+        window.cancelIdleCallback?.(idleId);
+        runOnce();
+      }, GIT_COMMIT_STATS_BACKGROUND_DELAY_MS * 4);
+      commitStatsBackgroundTimer = fallbackTimer;
+      return;
+    }
+
+    commitStatsBackgroundTimer = setTimeout(run, GIT_COMMIT_STATS_BACKGROUND_DELAY_MS);
+  };`;
+
+const M4_NEW = `  const scheduleCommitStatsBackgroundQueue = (): void => {
+    if (commitStatsBackgroundTimer !== null || isCommitStatsBackgroundRunning) return;
+
+    const run = (): void => {
+      commitStatsBackgroundTimer = null;
+      void drainCommitStatsBackgroundQueue();
+    };
+
+    if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
+      // requestIdleCallback 的 timeout 参数保证回调最终一定执行，
+      // 不需要额外加 setTimeout fallback（原双层超时是冗余的防御）。
+      // commitStatsBackgroundTimer 存 idleId，取消时用 cancelIdleCallback。
+      const idleId = window.requestIdleCallback(run, {
+        timeout: GIT_COMMIT_STATS_BACKGROUND_DELAY_MS * 4,
+      });
+      // 保存 idleId 以便 clearCommitStatsBackgroundQueue 取消。
+      // 不支持 cancelIdleCallback 的环境（旧 WebView2）退化为 no-op。
+      commitStatsBackgroundTimer = idleId as unknown as ReturnType<typeof setTimeout>;
+      return;
+    }
+
+    commitStatsBackgroundTimer = setTimeout(run, GIT_COMMIT_STATS_BACKGROUND_DELAY_MS);
+  };`;
+
+// clearCommitStatsBackgroundQueue 也需要修改，因为现在 timer 可能是 idleId
+const M4_OLD_CLEAR = `  const clearCommitStatsBackgroundQueue = (): void => {
+    if (commitStatsBackgroundTimer !== null) {
+      clearTimeout(commitStatsBackgroundTimer);
+      commitStatsBackgroundTimer = null;
+    }
+    queuedCommitStatsIds.clear();
+    pendingCommitStatsRequests.clear();
+    isCommitStatsBackgroundRunning = false;
+  };`;
+
+const M4_NEW_CLEAR = `  const clearCommitStatsBackgroundQueue = (): void => {
+    if (commitStatsBackgroundTimer !== null) {
+      // timer 可能是 setTimeout handle 或 requestIdleCallback handle。
+      // 两种都尝试取消：cancelIdleCallback 不支持时静默跳过。
+      if (typeof window !== 'undefined' && typeof window.cancelIdleCallback === 'function') {
+        window.cancelIdleCallback(commitStatsBackgroundTimer as unknown as number);
       }
-      const status = file.indexStatus ?? file.worktreeStatus;
-      switch (status) {
-        case 'A':
-        case '?':
-          added++;
-          break;
-        case 'D':
-          deleted++;
-          break;
-        case 'M':
-        case 'R':
-          modified++;
-          break;
-        default:
-          // C (copy)、T (type change) 等归入 modified
-          modified++;
-          break;
-      }
+      clearTimeout(commitStatsBackgroundTimer);
+      commitStatsBackgroundTimer = null;
     }
-
-    return { added, modified, deleted, total: files.length };
-  });`;
-
-// --- 2) 替换 return 块中的 gitAddedCount / gitRemovedCount ---
-const S1_OLD_RETURN = `    gitBranchName,
-    gitAddedCount,
-    gitRemovedCount,`;
-
-const S1_NEW_RETURN = `    gitBranchName,
-    gitChangeSummary,`;
+    queuedCommitStatsIds.clear();
+    pendingCommitStatsRequests.clear();
+    isCommitStatsBackgroundRunning = false;
+  };`;
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// S-2: workspace_fs.rs — load_image_asset TOCTOUR
+// M-2: useShellWorkbenchView.ts — 魔法数字提取为具名常量
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-// 修复内容：用一次 symlink_metadata 同时完成「是文件」和「大小检查」，
-// 缩小 TOCTOUR 窗口并拒绝 symlink。
+const M2_FILE = 'src/composables/useShellWorkbenchView.ts';
 
-const S2_FILE = 'src-tauri/src/commands/workspace_fs.rs';
+// 在已有常量区追加终端面板常量
+const M2_OLD_CONSTS = `const DASHBOARD_SIDEBAR_WIDTH = 288;`;
 
-const S2_OLD = `pub fn load_image_asset(app: tauri::AppHandle, path: String) -> Result<ImageAssetPayload, String> {
-    let file_path = PathBuf::from(&path)
-        .canonicalize()
-        .map_err(|error| format!("读取图片资源失败：{error}"))?;
+const M2_NEW_CONSTS = `const DASHBOARD_SIDEBAR_WIDTH = 288;
 
-    if !file_path.is_file() {
-        return Err("目标图片不存在或不是有效文件。".into());
-    }
+// 终端面板默认高度（约 8-10 行终端输出）。
+const TERMINAL_DEFAULT_HEIGHT = 236;
+// 终端最大化时使用的像素值：远超任何屏幕高度，撑满 flex 父容器。
+const TERMINAL_MAXIMIZED_PX = 100_000;`;
 
-    let byte_size = ensure_within_size_limit(&file_path, MAX_IMAGE_ASSET_BYTES, "图片资源")?;`;
+// 替换 ref(236) 为具名常量
+const M2_OLD_REFS = `  const terminalHeight = ref(236);
+  const terminalHeightBeforeMaximize = ref(236);`;
 
-const S2_NEW = `pub fn load_image_asset(app: tauri::AppHandle, path: String) -> Result<ImageAssetPayload, String> {
-    let file_path = PathBuf::from(&path)
-        .canonicalize()
-        .map_err(|error| format!("读取图片资源失败：{error}"))?;
+const M2_NEW_REFS = `  const terminalHeight = ref(TERMINAL_DEFAULT_HEIGHT);
+  const terminalHeightBeforeMaximize = ref(TERMINAL_DEFAULT_HEIGHT);`;
 
-    // 一次 symlink_metadata 同时完成「是否是文件」和「大小」检查，
-    // 缩小 TOCTOUR 窗口且拒绝通过符号链接加载图片资源。
-    let metadata = fs::symlink_metadata(&file_path)
-        .map_err(|error| format!("读取图片资源元数据失败：{error}"))?;
+// 替换终端最大化处的 100000
+const M2_OLD_MAXIMIZE = `    terminalHeightBeforeMaximize.value = terminalHeight.value;
+    isTerminalMaximized.value = true;
+    terminalHeight.value = 100000;`;
 
-    if metadata.is_symlink() {
-        return Err("不支持通过符号链接加载图片资源。".into());
-    }
+const M2_NEW_MAXIMIZE = `    terminalHeightBeforeMaximize.value = terminalHeight.value;
+    isTerminalMaximized.value = true;
+    terminalHeight.value = TERMINAL_MAXIMIZED_PX;`;
 
-    if !metadata.is_file() {
-        return Err("目标图片不存在或不是有效文件。".into());
-    }
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// L-4: agent_webview.rs — CDP 重试常量提取
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    let byte_size = metadata.len();
-    if byte_size > MAX_IMAGE_ASSET_BYTES {
-        return Err(format!(
-            "图片资源过大（{:.1} MB），超过 {} MB 上限，已取消读取。",
-            byte_size as f64 / (1024.0 * 1024.0),
-            MAX_IMAGE_ASSET_BYTES / (1024 * 1024)
-        ));
+const L4_FILE = 'src-tauri/src/commands/agent_webview.rs';
+
+// 在已有常量区追加 CDP 连接参数
+const L4_OLD_CONSTS = `#[cfg(feature = "native_webview")]
+const RESULT_BINDING_NAME: &str = "__calamexPickerResult";`;
+
+const L4_NEW_CONSTS = `#[cfg(feature = "native_webview")]
+const RESULT_BINDING_NAME: &str = "__calamexPickerResult";
+
+/// CDP 连接最大重试次数。
+/// 40 次 × 250ms = 最长 10 秒等待 agent-sidecar WebView 的调试端口就绪。
+#[cfg(feature = "native_webview")]
+const CDP_CONNECT_MAX_RETRIES: usize = 40;
+
+/// CDP 连接重试间隔。
+/// 250ms 在「快速感知就绪」与「避免忙等」之间取折中。
+#[cfg(feature = "native_webview")]
+const CDP_CONNECT_RETRY_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);`;
+
+// 第一处 for _ in 0..40（CDP Browser::connect）
+const L4_OLD_LOOP1 = `    let mut connected = None;
+    for _ in 0..40 {
+        // 检查 webview 是否已被关闭/销毁，避免在用户关闭后继续建立 CDP 会话。
+        if app.get_webview(AGENT_WEBVIEW_LABEL).is_none() {
+            tracing::info!(event = "agent_webview.cdp.cancelled", reason = "webview_closed");
+            return;
+        }
+        match chromiumoxide::Browser::connect(url.clone()).await {
+            Ok(pair) => {
+                connected = Some(pair);
+                break;
+            }
+            Err(_) => tokio::time::sleep(std::time::Duration::from_millis(250)).await,
+        }
+    }`;
+
+const L4_NEW_LOOP1 = `    let mut connected = None;
+    for _ in 0..CDP_CONNECT_MAX_RETRIES {
+        // 检查 webview 是否已被关闭/销毁，避免在用户关闭后继续建立 CDP 会话。
+        if app.get_webview(AGENT_WEBVIEW_LABEL).is_none() {
+            tracing::info!(event = "agent_webview.cdp.cancelled", reason = "webview_closed");
+            return;
+        }
+        match chromiumoxide::Browser::connect(url.clone()).await {
+            Ok(pair) => {
+                connected = Some(pair);
+                break;
+            }
+            Err(_) => tokio::time::sleep(CDP_CONNECT_RETRY_INTERVAL).await,
+        }
+    }`;
+
+// 第二处 for _ in 0..40（获取 Page）
+const L4_OLD_LOOP2 = `    let mut page_opt = None;
+    for _ in 0..40 {
+        // 检查 webview 是否已被关闭/销毁。
+        if app.get_webview(AGENT_WEBVIEW_LABEL).is_none() {
+            tracing::info!(event = "agent_webview.cdp.cancelled", reason = "webview_closed");
+            handler_task.abort();
+            return;
+        }
+        if let Ok(pages) = browser.pages().await
+            && let Some(first) = pages.into_iter().next()
+        {
+            page_opt = Some(first);
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }`;
+
+const L4_NEW_LOOP2 = `    let mut page_opt = None;
+    for _ in 0..CDP_CONNECT_MAX_RETRIES {
+        // 检查 webview 是否已被关闭/销毁。
+        if app.get_webview(AGENT_WEBVIEW_LABEL).is_none() {
+            tracing::info!(event = "agent_webview.cdp.cancelled", reason = "webview_closed");
+            handler_task.abort();
+            return;
+        }
+        if let Ok(pages) = browser.pages().await
+            && let Some(first) = pages.into_iter().next()
+        {
+            page_opt = Some(first);
+            break;
+        }
+        tokio::time::sleep(CDP_CONNECT_RETRY_INTERVAL).await;
     }`;
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// S-3: aiAgent.ts — addOfficialUsage 嵌套路径错误
+// L-7: shell_tools.rs + workspace_fs.rs — 合并重复的 count_to_u32
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-// 修复内容：outputTokenDetails.outputTokenDetails.reasoningTokens
-// 双层嵌套路径几乎肯定为 undefined，改为 outputTokenDetails?.reasoningTokens
+// workspace_fs.rs 中已有 count_to_u32 且被多处调用（build_script_payload / build_image_asset_payload）。
+// shell_tools.rs 中也有独立的 count_to_u32，被 format_script 调用。
+// 方案：把 shell_tools.rs 中的 count_to_u32 改为复用 workspace_fs 的 pub(crate) 版本。
+// 但 shell_tools.rs 和 workspace_fs.rs 在同一 mod（commands）下，
+// workspace_fs 的 count_to_u32 是 private fn——需要先改成 pub(crate)。
 
-const S3_FILE = 'src/store/aiAgent.ts';
+const L7_FS_FILE = 'src-tauri/src/commands/workspace_fs.rs';
+const L7_TOOLS_FILE = 'src-tauri/src/commands/shell_tools.rs';
 
-const S3_OLD = `    reasoningTokens:
-      addTokenCounts(
-        current?.outputTokenDetails.outputTokenDetails.reasoningTokens,
-        next.outputTokenDetails.outputTokenDetails.reasoningTokens,
-      ) ?? 0,`;
+// 1) workspace_fs.rs: fn count_to_u32 → pub(crate) fn count_to_u32
+const L7_OLD_FS_FN = `fn count_to_u32(value: usize, label: &str) -> Result<u32, String> {
+    u32::try_from(value).map_err(|_| format!("{label}超出支持范围。"))
+}`;
 
-const S3_NEW = `    reasoningTokens:
-      addTokenCounts(
-        current?.outputTokenDetails?.reasoningTokens,
-        next.outputTokenDetails?.reasoningTokens,
-      ) ?? 0,`;
+const L7_NEW_FS_FN = `pub(crate) fn count_to_u32(value: usize, label: &str) -> Result<u32, String> {
+    u32::try_from(value).map_err(|_| format!("{label}超出支持范围。"))
+}`;
+
+// 2) shell_tools.rs: 删除重复的 count_to_u32，改为引用 super::count_to_u32
+// 先改 use 语句加入 count_to_u32
+const L7_OLD_TOOLS_USE = `use super::{
+    AnalyzeScriptPayload, AnalyzeScriptRequest, FormatScriptPayload, FormatScriptRequest,
+    configure_std_command_for_background, configure_tokio_command_for_background,
+};`;
+
+const L7_NEW_TOOLS_USE = `use super::{
+    AnalyzeScriptPayload, AnalyzeScriptRequest, FormatScriptPayload, FormatScriptRequest,
+    configure_std_command_for_background, configure_tokio_command_for_background, count_to_u32,
+};`;
+
+// 删除 shell_tools.rs 中的 count_to_u32 定义
+const L7_OLD_TOOLS_FN = `fn count_to_u32(value: usize, label: &str) -> Result<u32, String> {
+    u32::try_from(value).map_err(|_| format!("{label}超出支持范围。"))
+}
+
+`;
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // 执行
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 console.log('══════════════════════════════════════════════');
-console.log('  Calamex 代码审查第一批修复 (S-1 / S-2 / S-3)');
+console.log('  Calamex 代码审查第二批修复 (M-4 / M-2 / L-4 / L-7)');
 console.log('  工作目录:', root);
 console.log('══════════════════════════════════════════════\\n');
 
 try {
-  // S-1: 修复 gitRemovedCount 恒为 0
-  replaceExact(S1_FILE, S1_OLD_COMPUTED, S1_NEW_COMPUTED, 'S-1 computed');
-  replaceExact(S1_FILE, S1_OLD_RETURN, S1_NEW_RETURN, 'S-1 return');
+  // M-4: 简化 requestIdleCallback fallback
+  replaceExact(M4_FILE, M4_OLD, M4_NEW, 'M-4 schedule');
+  replaceExact(M4_FILE, M4_OLD_CLEAR, M4_NEW_CLEAR, 'M-4 clear');
 
-  // S-2: 修复 load_image_asset TOCTOUR
-  replaceExact(S2_FILE, S2_OLD, S2_NEW, 'S-2');
+  // M-2: 魔法数字提取
+  replaceExact(M2_FILE, M2_OLD_CONSTS, M2_NEW_CONSTS, 'M-2 consts');
+  replaceExact(M2_FILE, M2_OLD_REFS, M2_NEW_REFS, 'M-2 refs');
+  replaceExact(M2_FILE, M2_OLD_MAXIMIZE, M2_NEW_MAXIMIZE, 'M-2 maximize');
 
-  // S-3: 修复 addOfficialUsage 嵌套路径
-  replaceExact(S3_FILE, S3_OLD, S3_NEW, 'S-3');
+  // L-4: CDP 重试常量
+  replaceExact(L4_FILE, L4_OLD_CONSTS, L4_NEW_CONSTS, 'L-4 consts');
+  replaceExact(L4_FILE, L4_OLD_LOOP1, L4_NEW_LOOP1, 'L-4 loop1');
+  replaceExact(L4_FILE, L4_OLD_LOOP2, L4_NEW_LOOP2, 'L-4 loop2');
+
+  // L-7: 合并重复 count_to_u32
+  replaceExact(L7_FS_FILE, L7_OLD_FS_FN, L7_NEW_FS_FN, 'L-7 fs fn');
+  replaceExact(L7_TOOLS_FILE, L7_OLD_TOOLS_USE, L7_NEW_TOOLS_USE, 'L-7 tools use');
+  replaceExact(L7_TOOLS_FILE, L7_OLD_TOOLS_FN, '', 'L-7 tools fn delete');
 
   console.log('\\n══════════════════════════════════════════════');
-  console.log('  ✓ 全部 3 项修复完成');
-  console.log('  请运行以下命令验证:');
+  console.log('  ✓ 全部第二批修复完成');
+  console.log('  验证命令:');
   console.log('    pnpm tsc --noEmit');
-  console.log('    cargo test --manifest-path src-tauri/Cargo.toml');
   console.log('    cargo clippy --manifest-path src-tauri/Cargo.toml');
+  console.log('    cargo test --manifest-path src-tauri/Cargo.toml');
   console.log('══════════════════════════════════════════════');
 } catch (error) {
   console.error('\\n✗ 修改失败:', error.message);
-  console.error('  请检查文件是否已被修改或手动应用。');
   process.exit(1);
 }

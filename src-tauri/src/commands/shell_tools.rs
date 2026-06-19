@@ -1,6 +1,6 @@
 use super::{
     AnalyzeScriptPayload, AnalyzeScriptRequest, FormatScriptPayload, FormatScriptRequest,
-    configure_std_command_for_background, configure_tokio_command_for_background,
+    configure_std_command_for_background, configure_tokio_command_for_background, count_to_u32,
 };
 use std::{
     env,
@@ -70,10 +70,6 @@ pub async fn format_script(payload: FormatScriptRequest) -> Result<FormatScriptP
         content: formatted,
         encoding: payload.encoding,
     })
-}
-
-fn count_to_u32(value: usize, label: &str) -> Result<u32, String> {
-    u32::try_from(value).map_err(|_| format!("{label}超出支持范围。"))
 }
 
 fn infer_script_name(path: Option<&str>, name: Option<&str>) -> String {

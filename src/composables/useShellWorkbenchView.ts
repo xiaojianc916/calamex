@@ -37,6 +37,11 @@ const AI_PANEL_MIN_WIDTH = 350;
 const AI_PANEL_MAX_WIDTH = 550;
 const DASHBOARD_SIDEBAR_WIDTH = 288;
 
+// 终端面板默认高度（约 8-10 行终端输出）。
+const TERMINAL_DEFAULT_HEIGHT = 236;
+// 终端最大化时使用的像素值：远超任何屏幕高度，撑满 flex 父容器。
+const TERMINAL_MAXIMIZED_PX = 100_000;
+
 const isPrimaryModifierShortcut = (event: KeyboardEvent, code: string, key: string): boolean =>
   (event.ctrlKey || event.metaKey) &&
   !event.altKey &&
@@ -107,8 +112,8 @@ export const useShellWorkbenchView = (onReady: () => void) => {
   const aiPanelWidth = ref(AI_PANEL_DEFAULT_WIDTH);
   const isDiagnosticsPanelVisible = ref(false);
   const activePrimaryMode = ref<TWorkbenchPrimaryMode>(workbench.appStore.workbenchPrimaryMode);
-  const terminalHeight = ref(236);
-  const terminalHeightBeforeMaximize = ref(236);
+  const terminalHeight = ref(TERMINAL_DEFAULT_HEIGHT);
+  const terminalHeightBeforeMaximize = ref(TERMINAL_DEFAULT_HEIGHT);
   const isTerminalMaximized = ref(false);
   const activeSidebarView = ref<TWorkbenchSidebarView>(
     workbench.editorStore.sessionSnapshot.workbench.activeSidebarView,
@@ -485,7 +490,7 @@ export const useShellWorkbenchView = (onReady: () => void) => {
 
     terminalHeightBeforeMaximize.value = terminalHeight.value;
     isTerminalMaximized.value = true;
-    terminalHeight.value = 100000;
+    terminalHeight.value = TERMINAL_MAXIMIZED_PX;
   };
 
   const scheduleEditorLayoutAfterSidebarChange = (): void => {

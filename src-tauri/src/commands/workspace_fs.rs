@@ -580,7 +580,7 @@ fn build_image_asset_payload(path: PathBuf, byte_size: u64) -> Result<ImageAsset
     })
 }
 
-fn count_to_u32(value: usize, label: &str) -> Result<u32, String> {
+pub(crate) fn count_to_u32(value: usize, label: &str) -> Result<u32, String> {
     u32::try_from(value).map_err(|_| format!("{label}超出支持范围。"))
 }
 
