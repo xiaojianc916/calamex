@@ -4,7 +4,7 @@ import type {
   IFileIconResolveOptions,
   IPierreFileIconTheme,
 } from '@/types/file-icon';
-import { fnv1a32Base36 } from '@/utils/hash';
+import { fnv1a32Base36 } from '@/utils/core/hash';
 import { getPathBaseName } from '@/utils/file/path';
 
 const PIERRE_ICON_THEME = pierreIconTheme as IPierreFileIconTheme;
