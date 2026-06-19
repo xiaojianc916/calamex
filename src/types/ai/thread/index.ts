@@ -19,6 +19,7 @@ import type {
 import type {
   aiThreadAssistantChunkSchema,
   aiThreadAssistantMessageEntrySchema,
+  aiThreadChangedFilesEntrySchema,
   aiThreadContextCompactionEntrySchema,
   aiThreadEntrySchema,
   aiThreadPlanEntrySchema,
@@ -51,6 +52,7 @@ export type IAiThreadUserMessageEntry = z.infer<typeof aiThreadUserMessageEntryS
 export type IAiThreadAssistantMessageEntry = z.infer<typeof aiThreadAssistantMessageEntrySchema>;
 export type IAiThreadPlanEntry = z.infer<typeof aiThreadPlanEntrySchema>;
 export type IAiThreadContextCompactionEntry = z.infer<typeof aiThreadContextCompactionEntrySchema>;
+export type IAiThreadChangedFilesEntry = z.infer<typeof aiThreadChangedFilesEntrySchema>;
 export type IAiThreadEntry = z.infer<typeof aiThreadEntrySchema>;
 export type IAiThread = z.infer<typeof aiThreadSchema>;
 
@@ -80,6 +82,7 @@ export {
 export {
   aiThreadAssistantChunkSchema,
   aiThreadAssistantMessageEntrySchema,
+  aiThreadChangedFilesEntrySchema,
   aiThreadContextCompactionEntrySchema,
   aiThreadEntrySchema,
   aiThreadPlanEntrySchema,

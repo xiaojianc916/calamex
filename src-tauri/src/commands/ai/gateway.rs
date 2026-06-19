@@ -2,10 +2,11 @@ use crate::ai::audit::{self, AiAuditEventKind};
 use crate::ai::gateway;
 use crate::commands::contracts::{
     AiCancelRequest, AiChatRequest, AiChatStreamPayload, AiConfigPayload,
-    AiConversationTitlePayload, AiConversationTitleRequest, AiGetSessionModesRequest,
-    AiInlineCompletionRangePayload, AiInlineCompletionRequest, AiInlineCompletionResult,
-    AiProviderConnectionPayload, AiProviderConnectionRequest, AiProviderTestPayload,
-    AiResolveApprovalRequest, AiSaveConfigRequest, AiSaveCredentialsRequest, AiSessionModesPayload,
+    AiConversationTitlePayload, AiConversationTitleRequest, AiGetSessionConfigOptionsRequest,
+    AiGetSessionModesRequest, AiInlineCompletionRangePayload, AiInlineCompletionRequest,
+    AiInlineCompletionResult, AiProviderConnectionPayload, AiProviderConnectionRequest,
+    AiProviderTestPayload, AiResolveApprovalRequest, AiSaveConfigRequest, AiSaveCredentialsRequest,
+    AiSessionConfigOptionsPayload, AiSessionModesPayload, AiSetSessionConfigOptionRequest,
     AiSetSessionModeRequest, AiSuggestionPoolPayload, AiSuggestionPoolRequest,
 };
 use tauri::AppHandle;
@@ -300,6 +301,66 @@ pub fn ai_get_session_modes(
         .session_modes(thread_id)
         .map(|modes| AiSessionModesPayload { modes });
     Ok(modes)
+}
+
+/// 切换 ACP 会话的某个配置项值（标准 session/set_config_option），令外部 agent（Kimi Code /
+/// Codex 等）在 agent 公示的模型 / 模式 / 思考强度等配置项间切换。
+///
+/// 与 ai_set_session_mode 同构地委托给 Tauri 托管的 AcpRuntime：线程归属哪个后端宿主对命令层
+/// 透明，由 runtime 向全部已建立宿主广播下发。三字段先行空白校验；返回是否命中某已绑定会话——
+/// false 表示无匹配（多为会话尚未建立/已结束的良性竞态，命令层不视作错误）。
+#[tauri::command]
+#[specta::specta]
+pub async fn ai_set_session_config_option(
+    app: AppHandle,
+    payload: AiSetSessionConfigOptionRequest,
+) -> Result<bool, String> {
+    let thread_id = payload.thread_id.trim();
+    if thread_id.is_empty() {
+        return Err("AI_SET_SESSION_CONFIG_OPTION_INVALID: threadId 不能为空。".to_string());
+    }
+    let config_id = payload.config_id.trim();
+    if config_id.is_empty() {
+        return Err("AI_SET_SESSION_CONFIG_OPTION_INVALID: configId 不能为空。".to_string());
+    }
+    let value_id = payload.value_id.trim();
+    if value_id.is_empty() {
+        return Err("AI_SET_SESSION_CONFIG_OPTION_INVALID: valueId 不能为空。".to_string());
+    }
+
+    use tauri::Manager as _;
+    let applied = app
+        .state::<crate::acp::AcpRuntime>()
+        .set_session_config_option(thread_id, config_id, value_id)
+        .await
+        .map_err(|error| format!("AI_SET_SESSION_CONFIG_OPTION_FAILED: {error}"))?;
+    Ok(applied)
+}
+
+/// 取某线程会话建立时 agent 公示的可用配置项清单（ACP session/new 的
+/// NewSessionResponse.config_options 原样 JSON：Vec SessionConfigOption），供前端配置项选择器在
+/// 会话建立后填充候选项。
+///
+/// 与 ai_get_session_modes 同构地委托给 Tauri 托管的 AcpRuntime：由 runtime 向全部已建立宿主
+/// 查询并返回首个命中。thread_id 先行空白校验；返回 None 表示尚无该线程会话或 agent 未公示
+/// 配置项（前端据此隐藏选择器）。config_options 为最小透传的原样 JSON（导出 TS 为 unknown）。
+#[tauri::command]
+#[specta::specta]
+pub fn ai_get_session_config_options(
+    app: AppHandle,
+    payload: AiGetSessionConfigOptionsRequest,
+) -> Result<Option<AiSessionConfigOptionsPayload>, String> {
+    let thread_id = payload.thread_id.trim();
+    if thread_id.is_empty() {
+        return Err("AI_GET_SESSION_CONFIG_OPTIONS_INVALID: threadId 不能为空。".to_string());
+    }
+
+    use tauri::Manager as _;
+    let config_options = app
+        .state::<crate::acp::AcpRuntime>()
+        .session_config_options(thread_id)
+        .map(|config_options| AiSessionConfigOptionsPayload { config_options });
+    Ok(config_options)
 }
 
 #[tauri::command]

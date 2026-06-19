@@ -104,6 +104,10 @@ pub struct AcpHost {
     /// `thread_id ↔ 会话建立时 agent 公示的可用模式清单`（ACP `NewSessionResponse.modes`
     /// 原样 JSON：`currentModeId` + `availableModes[]`）。最小透传，宿主侧不重建 SDK 类型。
     modes_by_thread: Arc<Mutex<HashMap<String, serde_json::Value>>>,
+    /// thread_id 到「会话建立时 agent 公示的可用配置项清单」的映射（ACP
+    /// NewSessionResponse.config_options 原样 JSON：Vec SessionConfigOption）。
+    /// 最小透传，宿主侧不重建 SDK 类型，与 modes_by_thread 同构。
+    config_options_by_thread: Arc<Mutex<HashMap<String, serde_json::Value>>>,
 }
 
 impl AcpHost {
@@ -131,6 +135,7 @@ impl AcpHost {
             approvals,
             sessions: Arc::new(Mutex::new(HashMap::new())),
             modes_by_thread: Arc::new(Mutex::new(HashMap::new())),
+            config_options_by_thread: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -167,6 +172,12 @@ impl AcpHost {
                 self.modes_by_thread
                     .lock()
                     .insert(thread_key.to_string(), modes);
+            }
+            // 与 modes 同构：仅在 agent 公示了配置项时登记；缺省不占位（保持 None 语义）。
+            if let Some(config_options) = outcome.config_options {
+                self.config_options_by_thread
+                    .lock()
+                    .insert(thread_key.to_string(), config_options);
             }
         }
         Ok(session_id)
@@ -238,6 +249,47 @@ impl AcpHost {
             return None;
         }
         self.modes_by_thread.lock().get(thread_key).cloned()
+    }
+
+    /// 切换指定线程当前 ACP 会话的某个配置项值（标准 session/set_config_option 请求）。
+    ///
+    /// 与 set_session_mode 同构：仅在本宿主已绑定该 thread_id 的会话时执行——命中则下发
+    /// session/set_config_option 并返回 Ok(true)；未绑定（空 thread / 无映射）则返回 Ok(false)
+    /// 作为安全空操作，交由 runtime 广播给真正持有该线程的后端宿主。绝不在此 ensure_session
+    /// 新建会话——配置项切换只对既有会话有意义。纯转发，不修改本地状态（最新值由 agent 经
+    /// config_option_update 帧回推，前端 ACL 据此更新）。
+    pub async fn set_session_config_option(
+        &self,
+        thread_id: &str,
+        config_id: &str,
+        value_id: &str,
+    ) -> Result<bool, AcpClientError> {
+        let thread_key = thread_id.trim();
+        if thread_key.is_empty() {
+            return Ok(false);
+        }
+        let session_id = self.sessions.lock().get(thread_key).cloned();
+        let Some(session_id) = session_id else {
+            return Ok(false);
+        };
+        self.handle
+            .set_session_config_option(session_id, config_id.to_string(), value_id.to_string())
+            .await?;
+        Ok(true)
+    }
+
+    /// 取某线程会话建立时 agent 公示的可用配置项清单（ACP NewSessionResponse.config_options
+    /// 原样 JSON：Vec SessionConfigOption）。未绑定会话 / agent 未公示配置项时为 None。
+    /// 最小透传：宿主侧不重建 SDK 类型，交前端 ACL 解释。与 session_modes 同构。
+    pub fn session_config_options(&self, thread_id: &str) -> Option<serde_json::Value> {
+        let thread_key = thread_id.trim();
+        if thread_key.is_empty() {
+            return None;
+        }
+        self.config_options_by_thread
+            .lock()
+            .get(thread_key)
+            .cloned()
     }
 
     /// 触发检查点回滚（扩展方法 `calamex.dev/checkpoint/restore`）。

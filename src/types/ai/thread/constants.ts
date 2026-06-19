@@ -19,6 +19,7 @@ export const AI_THREAD_ENTRY_TYPES = [
   'tool_call',
   'plan',
   'context_compaction',
+  'changed_files',
 ] as const;
 
 /** 助手消息 chunk 类型（正文 / 思维链，对标 `AssistantMessageChunk`）。 */

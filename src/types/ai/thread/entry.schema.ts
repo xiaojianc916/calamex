@@ -5,6 +5,7 @@ import {
   aiConversationScrollStateSchema,
   aiConversationTitleStatusSchema,
 } from '@/types/ai/conversation.schema';
+import { aiAgentPatchSummarySchema } from '@/types/ai/patch.schema';
 import { aiThreadContentBlockSchema } from '@/types/ai/thread/content-block.schema';
 import { aiThreadToolCallSchema } from '@/types/ai/thread/tool-call.schema';
 
@@ -63,12 +64,25 @@ export const aiThreadContextCompactionEntrySchema = z.object({
   message: z.string().optional(),
 });
 
+/**
+ * Changed-files entry：内嵌完整 patch 摘要快照，使 thread entries 自洽可持久化。
+ * 投影层据此渲染 changed-files-summary；应用/撤销同一 patch 按 id upsert，
+ * 避免与 aiAgent store 的 patch 摘要错位（位置由首次 createdAt 固定）。
+ */
+export const aiThreadChangedFilesEntrySchema = z.object({
+  type: z.literal('changed_files'),
+  id: z.string().min(1),
+  createdAt: z.string().min(1),
+  summary: aiAgentPatchSummarySchema,
+});
+
 export const aiThreadEntrySchema = z.discriminatedUnion('type', [
   aiThreadUserMessageEntrySchema,
   aiThreadAssistantMessageEntrySchema,
   aiThreadToolCallSchema,
   aiThreadPlanEntrySchema,
   aiThreadContextCompactionEntrySchema,
+  aiThreadChangedFilesEntrySchema,
 ]);
 
 /**
