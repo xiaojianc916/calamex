@@ -1,181 +1,152 @@
-// 3.mjs —— 修复最后 1 个失败用例：src/components/workbench/AppSidebar.spec.ts
-// 用法（仓库根目录 D:\com.xiaojianc\my_desktop_app 下）：
-//   node 3.mjs && pnpm format && pnpm test
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+// 1.mjs  —  P2 微优化（性能向，零行为变更，EOL 自适应）
+//
+//   ① src/services/editor/codemirror-static-highlight.ts
+//      escapeHtml：3 次 replace 全量扫描 → 单遍 replace(/[&<>]/gu, fn)
+//   ② src/utils/core/hash.ts
+//      computeFnv1a32CodePoints：for...of → 索引遍历 codePointAt（hash 输出逐位一致）
+//
+// 用法（默认 dry-run）：
+//   node 1.mjs            # 预览
+//   node 1.mjs --write    # 写入
+//   node 1.mjs --revert   # 回滚
 
-const REL = 'src/components/workbench/AppSidebar.spec.ts';
+import { readFile, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 
-if (!existsSync(REL)) {
-  console.error('✗ 找不到文件: ' + REL + '（请在仓库根目录运行）');
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+const MODE = process.argv.includes('--write')
+  ? 'write'
+  : process.argv.includes('--revert')
+    ? 'revert'
+    : 'dry';
+
+const findRepoRoot = (startDirs) => {
+  for (const start of startDirs) {
+    let dir = start;
+    for (let depth = 0; depth < 8; depth += 1) {
+      if (existsSync(join(dir, 'src', 'utils', 'core', 'hash.ts'))) return dir;
+      const parent = dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+  }
+  return null;
+};
+
+const REPO_ROOT = findRepoRoot([process.cwd(), __dirname]);
+if (!REPO_ROOT) {
+  console.error('✗ 未能定位仓库根目录（未找到 src/utils/core/hash.ts）。请在仓库内运行。');
   process.exit(1);
 }
+console.log(`仓库根：${REPO_ROOT}`);
 
-// 目标文件完整内容（用 \n 作为内部换行，稍后按原文件 EOL 落盘）
-const raw = `
-import { flushPromises, mount } from '@vue/test-utils';
-import { createPinia } from 'pinia';
-import { TooltipProvider } from 'reka-ui';
-import { defineComponent, h } from 'vue';
-import { describe, expect, it } from 'vitest';
-import type { IEditorDocument, IWorkspaceDirectoryPayload } from '@/types/editor';
-import AppSidebar from './AppSidebar.vue';
+// 锚点一律以 LF 书写，匹配/写回时按目标文件实际 EOL 自适应。
+const detectEol = (text) => (text.includes('\r\n') ? '\r\n' : '\n');
+const toEol = (s, eol) => s.replace(/\r\n/g, '\n').replace(/\n/g, eol);
 
-const documentFixture: IEditorDocument = {
-  id: 'doc-1',
-  path: null,
-  name: 'untitled.sh',
-  kind: 'text',
-  content: '',
-  encoding: 'utf-8',
-  savedContent: '',
-  savedEncoding: 'utf-8',
-  isDirty: false,
-  lineCount: 1,
-  charCount: 0,
+/** @type {{file: string, before: string, after: string}[]} */
+const EDITS = [
+  {
+    file: 'src/services/editor/codemirror-static-highlight.ts',
+    before: `const escapeHtml = (value: string): string =>
+  value.replace(/&/gu, '&amp;').replace(/</gu, '&lt;').replace(/>/gu, '&gt;');`,
+    after: `const escapeHtmlChar = (char: string): string =>
+  char === '&' ? '&amp;' : char === '<' ? '&lt;' : '&gt;';
+
+const escapeHtml = (value: string): string => value.replace(/[&<>]/gu, escapeHtmlChar);`,
+  },
+  {
+    file: 'src/utils/core/hash.ts',
+    before: `const computeFnv1a32CodePoints = (value: string): number => {
+  let hash = 0x811c9dc5;
+  // for...of 比 indexed loop 慢；但要正确处理 surrogate pair 又不破坏既有 hash 值，
+  // 这里保留 code-point 语义。如需更快路径，使用 fnv1a32Bytes 走 UTF-8。
+  for (const char of value) {
+    // codePointAt 在 for...of 产生的非空字符串上必返回 number，无需 ?? 兜底。
+    hash ^= char.codePointAt(0)!;
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return hash >>> 0;
+};`,
+    after: `const computeFnv1a32CodePoints = (value: string): number => {
+  let hash = 0x811c9dc5;
+  // 索引遍历替代 for...of：避免字符串迭代器协议开销与逐 code point 子串分配。
+  // 通过 codePointAt + 跳过低位代理项保持 code-point 语义，hash 输出与旧实现逐位一致。
+  for (let i = 0; i < value.length; i += 1) {
+    const codePoint = value.codePointAt(i)!;
+    hash ^= codePoint;
+    hash = Math.imul(hash, 0x01000193);
+    if (codePoint > 0xffff) {
+      // 完整 surrogate pair：跳过其低位代理项，避免重复计入。
+      i += 1;
+    }
+  }
+  return hash >>> 0;
+};`,
+  },
+];
+
+const countOccurrences = (haystack, needle) => {
+  let count = 0;
+  let from = 0;
+  for (;;) {
+    const idx = haystack.indexOf(needle, from);
+    if (idx === -1) break;
+    count += 1;
+    from = idx + needle.length;
+  }
+  return count;
 };
 
-const emptyWorkspaceRoot: IWorkspaceDirectoryPayload = {
-  rootPath: 'D:/repo',
-  rootName: 'repo',
-  entries: [],
-};
+let changed = 0;
+let skipped = 0;
+let failed = 0;
 
-const populatedWorkspaceRoot: IWorkspaceDirectoryPayload = {
-  rootPath: 'D:/repo',
-  rootName: 'repo',
-  entries: [
-    {
-      path: 'D:/repo/demo.c',
-      name: 'demo.c',
-      kind: 'file',
-      hasChildren: false,
-    },
-  ],
-};
+for (const edit of EDITS) {
+  const abs = join(REPO_ROOT, edit.file);
 
-const baseStubs = {
-  SourceControlPanel: true,
-  DeferredSearchSidebarPanel: true,
-  DeferredRunSidebarPanel: true,
-  DeferredSshSidebarPanel: true,
-  DeferredLinearContextMenu: true,
-};
+  let src;
+  try {
+    src = await readFile(abs, 'utf8');
+  } catch (err) {
+    console.error(`✗ 读取失败 ${edit.file}: ${err.message}`);
+    failed += 1;
+    continue;
+  }
 
-const buildSidebarProps = (
-  document: IEditorDocument,
-  preloadedWorkspaceRoot: IWorkspaceDirectoryPayload,
-) => ({
-  document,
-  view: 'explorer' as const,
-  isDesktopRuntime: true,
-  workspaceRootPath: 'D:/repo',
-  preloadedWorkspaceRoot,
-  startupExplorerExpandedPaths: [] as string[],
-  startupExplorerSelectedPath: null,
-  canRun: true,
-  isRunning: false,
-  hasRunArtifacts: false,
-  activeRun: null,
-  runHistory: [],
-  commandTemplates: [],
-  executor: 'wsl' as const,
-});
+  const eol = detectEol(src);
+  const from = toEol(MODE === 'revert' ? edit.after : edit.before, eol);
+  const to = toEol(MODE === 'revert' ? edit.before : edit.after, eol);
 
-// reka-ui 的 Tooltip 需要 TooltipProvider 注入上下文，
-// 因此所有挂载都包一层 TooltipProvider，避免 TooltipProviderContext 注入缺失报错。
-const mountSidebar = (
-  props: ReturnType<typeof buildSidebarProps>,
-  stubs: Record<string, unknown> = baseStubs,
-) =>
-  mount(
-    defineComponent({
-      setup() {
-        return () => h(TooltipProvider, null, { default: () => h(AppSidebar, props) });
-      },
-    }),
-    {
-      global: {
-        plugins: [createPinia()],
-        stubs,
-      },
-    },
-  );
+  if (!src.includes(from) && src.includes(to)) {
+    console.log(`• 已是目标状态，跳过：${edit.file}`);
+    skipped += 1;
+    continue;
+  }
 
-describe('AppSidebar', () => {
-  it('空工作区时显示 Empty 装饰并允许打开文件夹', async () => {
-    const wrapper = mountSidebar(buildSidebarProps(documentFixture, emptyWorkspaceRoot));
+  const hits = countOccurrences(src, from);
+  if (hits !== 1) {
+    console.error(`✗ 锚点未唯一命中（出现 ${hits} 次），跳过：${edit.file}（EOL=${eol === '\r\n' ? 'CRLF' : 'LF'}）`);
+    failed += 1;
+    continue;
+  }
 
-    await flushPromises();
+  const next = src.replace(from, to);
+  if (MODE === 'dry') {
+    console.log(`\n===== ${edit.file} (${MODE}, EOL=${eol === '\r\n' ? 'CRLF' : 'LF'}) =====`);
+    console.log('--- before ---\n' + from);
+    console.log('--- after ----\n' + to);
+    changed += 1;
+    continue;
+  }
 
-    // 空工作区由真实的 WorkspaceTreeNode 渲染“空文件夹”占位；
-    // 预加载了工作区根时不会进入 .explorer-empty-action 的空状态分支。
-    expect(wrapper.text()).toContain('空文件夹');
-    expect(wrapper.find('.explorer-empty-action').exists()).toBe(false);
-  });
+  await writeFile(abs, next, 'utf8');
+  console.log(`✓ ${MODE === 'revert' ? '已回滚' : '已写入'}：${edit.file}`);
+  changed += 1;
+}
 
-  it('右键未选中文件时会保留临时高亮，菜单关闭后清除', async () => {
-    const wrapper = mountSidebar(buildSidebarProps(documentFixture, populatedWorkspaceRoot));
-
-    await flushPromises();
-
-    const row = wrapper
-      .findAll('.explorer-tree-row')
-      .find((candidate) => candidate.text().includes('demo.c'));
-
-    expect(row).toBeDefined();
-
-    await row!.trigger('contextmenu', {
-      clientX: 80,
-      clientY: 120,
-    });
-    await flushPromises();
-
-    expect(row!.classes()).toContain('is-context-target');
-    expect(row!.classes()).not.toContain('is-active');
-
-    document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
-    await flushPromises();
-
-    expect(row!.classes()).not.toContain('is-context-target');
-  });
-
-  it('右键当前已选中文件时不叠加临时高亮类', async () => {
-    const wrapper = mountSidebar(
-      buildSidebarProps(
-        {
-          ...documentFixture,
-          path: 'D:/repo/demo.c',
-          name: 'demo.c',
-        },
-        populatedWorkspaceRoot,
-      ),
-    );
-
-    await flushPromises();
-
-    const row = wrapper
-      .findAll('.explorer-tree-row')
-      .find((candidate) => candidate.text().includes('demo.c'));
-
-    expect(row).toBeDefined();
-    expect(row!.classes()).toContain('is-active');
-
-    await row!.trigger('contextmenu', {
-      clientX: 80,
-      clientY: 120,
-    });
-    await flushPromises();
-
-    expect(row!.classes()).toContain('is-active');
-    expect(row!.classes()).not.toContain('is-context-target');
-  });
-});
-`;
-
-// 归一化脚本自身可能带的 CRLF，再按原文件 EOL 落盘
-const content = raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n').slice(1);
-const existing = readFileSync(REL, 'utf8');
-const eol = existing.includes('\r\n') ? '\r\n' : '\n';
-const out = content.replace(/\n/g, eol);
-writeFileSync(REL, out, 'utf8');
-console.log('✓ rewrote ' + REL + ' (eol=' + (eol === '\r\n' ? 'CRLF' : 'LF') + ')');
+console.log(`\n[${MODE}] 变更 ${changed} · 跳过 ${skipped} · 失败 ${failed}`);
+if (failed > 0) process.exitCode = 1;

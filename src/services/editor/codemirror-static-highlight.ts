@@ -126,8 +126,10 @@ export const highlightCodeAsync = async (
 /** @deprecated 使用 highlightCodeSync(同步缓存) 或 highlightCodeAsync(按需加载)。 */
 export const highlightCode = highlightCodeSync;
 
-const escapeHtml = (value: string): string =>
-  value.replace(/&/gu, '&amp;').replace(/</gu, '&lt;').replace(/>/gu, '&gt;');
+const escapeHtmlChar = (char: string): string =>
+  char === '&' ? '&amp;' : char === '<' ? '&lt;' : '&gt;';
+
+const escapeHtml = (value: string): string => value.replace(/[&<>]/gu, escapeHtmlChar);
 
 const tokenStyleToHtml = (token: ICodeMirrorHighlightToken): string => {
   const declarations: string[] = [];

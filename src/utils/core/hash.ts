@@ -21,12 +21,16 @@
  */
 const computeFnv1a32CodePoints = (value: string): number => {
   let hash = 0x811c9dc5;
-  // for...of 比 indexed loop 慢；但要正确处理 surrogate pair 又不破坏既有 hash 值，
-  // 这里保留 code-point 语义。如需更快路径，使用 fnv1a32Bytes 走 UTF-8。
-  for (const char of value) {
-    // codePointAt 在 for...of 产生的非空字符串上必返回 number，无需 ?? 兜底。
-    hash ^= char.codePointAt(0)!;
+  // 索引遍历替代 for...of：避免字符串迭代器协议开销与逐 code point 子串分配。
+  // 通过 codePointAt + 跳过低位代理项保持 code-point 语义，hash 输出与旧实现逐位一致。
+  for (let i = 0; i < value.length; i += 1) {
+    const codePoint = value.codePointAt(i)!;
+    hash ^= codePoint;
     hash = Math.imul(hash, 0x01000193);
+    if (codePoint > 0xffff) {
+      // 完整 surrogate pair：跳过其低位代理项，避免重复计入。
+      i += 1;
+    }
   }
   return hash >>> 0;
 };
