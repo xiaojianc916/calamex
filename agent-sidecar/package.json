@@ -19,7 +19,8 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.26.0",
-    "@ai-sdk/openai-compatible": "3.0.0-beta.57",
+    "@ai-sdk/deepseek": "^2.0.39",
+    "@ai-sdk/openai-compatible": "2.0.51",
     "@ast-grep/napi": "^0.43.0",
     "@libsql/client": "^0.17.4",
     "@mastra/agent-browser": "^0.3.3",

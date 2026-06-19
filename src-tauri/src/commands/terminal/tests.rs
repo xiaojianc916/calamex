@@ -23,14 +23,14 @@ use super::to_wsl_path;
 #[test]
 fn local_wsl_active_run_is_serialized_per_session() {
     let state = TerminalSessionState::default();
-    assert!(try_mark_active_terminal_run(&state, "session-1", "run-1").is_ok());
-    assert!(try_mark_active_terminal_run(&state, "session-1", "run-2").is_err());
-    assert!(try_mark_active_terminal_run(&state, "session-2", "run-3").is_ok());
+    assert!(try_mark_active_terminal_run(&state, "session-1", "run-1", Vec::new()).is_ok());
+    assert!(try_mark_active_terminal_run(&state, "session-1", "run-2", Vec::new()).is_err());
+    assert!(try_mark_active_terminal_run(&state, "session-2", "run-3", Vec::new()).is_ok());
     assert_eq!(active_terminal_run_count(&state), 2);
     clear_active_terminal_run(&state, "run-1");
     clear_active_terminal_run(&state, "run-3");
     assert_eq!(active_terminal_run_count(&state), 0);
-    assert!(try_mark_active_terminal_run(&state, "session-1", "run-2").is_ok());
+    assert!(try_mark_active_terminal_run(&state, "session-1", "run-2", Vec::new()).is_ok());
     clear_active_terminal_run(&state, "run-2");
 }
 
@@ -72,7 +72,7 @@ fn session_geometry_is_tracked_and_isolated_per_session() {
 #[test]
 fn active_run_does_not_block_input_outside_switching_states() {
     let state = TerminalSessionState::default();
-    try_mark_active_terminal_run(&state, "session-1", "run-1").expect("active run should mark");
+    try_mark_active_terminal_run(&state, "session-1", "run-1", Vec::new()).expect("active run should mark");
 
     // 输入路由按「会话自身」的状态判定，不再读全局 registry().state；用每会话态驱动，
     // 避免与其它并行测试争抢共享的全局单例。会话从 Booting 基线走合法转移链。
@@ -100,7 +100,7 @@ fn active_run_does_not_block_input_outside_switching_states() {
 #[test]
 fn active_run_input_routes_only_to_owning_session() {
     let state = TerminalSessionState::default();
-    try_mark_active_terminal_run(&state, "session-A", "run-A").expect("active run should mark");
+    try_mark_active_terminal_run(&state, "session-A", "run-A", Vec::new()).expect("active run should mark");
 
     // 会话 A 自身走完整每会话转移进入 Running（不触碰全局，并行确定）。
     set_session_state(&state, "session-A", TerminalState::IdleInteractive);
@@ -125,8 +125,8 @@ fn input_target_uses_per_session_state_not_global() {
     let state = TerminalSessionState::default();
     // 输入路由现在只依据「每会话各自的状态」，不再读全局 registry().state；本测试因此完全
     // 不触碰全局态，仅通过每会话态驱动断言，验证多开互不串台。
-    try_mark_active_terminal_run(&state, "session-A", "run-A").expect("mark A");
-    try_mark_active_terminal_run(&state, "session-B", "run-B").expect("mark B");
+    try_mark_active_terminal_run(&state, "session-A", "run-A", Vec::new()).expect("mark A");
+    try_mark_active_terminal_run(&state, "session-B", "run-B", Vec::new()).expect("mark B");
 
     // 会话 A 走完整每会话转移进入 Running。
     set_session_state(&state, "session-A", TerminalState::IdleInteractive);
@@ -304,4 +304,22 @@ fn dirty_script_dispatch_keeps_inline_content_for_local_wsl() {
     assert_eq!(script_content.as_deref(), Some(payload.content.as_str()));
     assert!(command.used_temp_file);
     assert_eq!(command.cleanup_paths, vec![command.execution_path.clone()]);
+}
+
+#[test]
+fn clearing_active_run_returns_registered_cleanup_paths() {
+    let state = TerminalSessionState::default();
+    // 登记带临时脚本的运行：clear 时应原样返回这些路径，供上层回收，根治 /tmp 泄漏。
+    try_mark_active_terminal_run(
+        &state,
+        "cleanup-session",
+        "cleanup-run",
+        vec!["/tmp/calamex-untitled-123.tmp.sh".to_string()],
+    )
+    .expect("active run should mark");
+    let cleaned = clear_active_terminal_run(&state, "cleanup-run");
+    assert_eq!(cleaned, vec!["/tmp/calamex-untitled-123.tmp.sh".to_string()]);
+    // 已移除：再次 clear 不存在的运行返回空列表（不 panic）。
+    assert!(clear_active_terminal_run(&state, "cleanup-run").is_empty());
+    assert_eq!(active_terminal_run_count(&state), 0);
 }

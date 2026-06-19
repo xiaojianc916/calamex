@@ -23,6 +23,7 @@ use crate::terminal::{
     types::TerminalState,
     wsl_pty::{
         LocalWslPtyHandle, materialize_wsl_script, open_interactive_terminal_local_with_flow,
+        spawn_wsl_script_cleanup,
     },
 };
 
@@ -437,6 +438,9 @@ pub fn dispatch_script_to_terminal(
         build_terminal_run_command_for_local_wsl(&payload, &session.working_directory)?;
     let command_line = command.display_command.clone();
     let used_temp_file = command.used_temp_file;
+    // #1 修复：把该运行落地的临时脚本路径随活动运行登记，待运行结束（OSC 133 D）或派发失败
+    // 回滚时统一回收，根治临时脚本在 WSL /tmp 泄漏（此前 cleanup_paths 被消费方直接丢弃）。
+    let cleanup_paths = command.cleanup_paths;
     // Shell Integration：命令直接写入交互 shell 的 stdin，由真实 shell 执行并绘制其自身提示符，
     // 不再派生独立运行 PTY、不再抓取/合成提示符。运行生命周期由交互流中的 OSC 133 标记在
     // events 层合成（C=输出开始 → RunStarted/Running，D[;exit]=完成 → RunCompleted/回收）。
@@ -447,7 +451,16 @@ pub fn dispatch_script_to_terminal(
             .map_err(|error| error.to_string())?;
     }
 
-    try_mark_active_terminal_run(&terminal_state, &payload.session_id, &payload.run_id)?;
+    if let Err(error) = try_mark_active_terminal_run(
+        &terminal_state,
+        &payload.session_id,
+        &payload.run_id,
+        cleanup_paths.clone(),
+    ) {
+        // 标记失败（如该会话已有运行）：回收上面可能已落地的临时脚本，避免泄漏。
+        spawn_wsl_script_cleanup(cleanup_paths);
+        return Err(error);
+    }
     // 紧跟 try_mark 置位 SwitchingToRun：切换窗口内的输入缓冲为 Pending；待交互流的 C 标记
     // 到达后再由 events 层切到 Running（届时合成 RunStarted）。
     set_session_state_and_emit(
@@ -459,7 +472,7 @@ pub fn dispatch_script_to_terminal(
 
     // 写入命令行 + 换行触发交互 shell 执行；失败则回收本会话运行态。
     if let Err(error) = session.handle.write_input_sync(&format!("{command_line}\n")) {
-        clear_active_terminal_run(&terminal_state, &payload.run_id);
+        spawn_wsl_script_cleanup(clear_active_terminal_run(&terminal_state, &payload.run_id));
         complete_session_run_state_and_emit(&app, &terminal_state, &payload.session_id);
         return Err(error.to_string());
     }

@@ -36,6 +36,9 @@ pub(super) struct TerminalActiveRun {
     /// ensure_terminal_session 回传给前端，复原「运行中」UI 的展示信息。
     pid: Option<u32>,
     started_at_ms: Option<i64>,
+    /// 该运行落在 WSL `/tmp` 下、需在运行结束后回收的临时脚本路径（行内/未保存脚本才有；
+    /// 直接运行已存在的文件时为空）。运行经 clear_active_terminal_run 收尾时返回给上层清理。
+    cleanup_paths: Vec<String>,
 }
 
 pub(super) enum ActiveRunInputTarget {
@@ -542,6 +545,7 @@ pub(super) fn try_mark_active_terminal_run(
     state: &TerminalSessionState,
     session_id: &str,
     run_id: &str,
+    cleanup_paths: Vec<String>,
 ) -> Result<(), String> {
     let mut active_runs = lock_active_terminal_runs(state)?;
     if active_runs.contains_key(run_id) {
@@ -565,6 +569,7 @@ pub(super) fn try_mark_active_terminal_run(
             run_id: run_id.to_string(),
             pid: None,
             started_at_ms: None,
+            cleanup_paths,
         },
     );
     Ok(())
@@ -600,11 +605,17 @@ pub(super) fn get_active_run_snapshot_for_session(
         .map(|run| (run.run_id.clone(), run.pid, run.started_at_ms))
 }
 
-pub(super) fn clear_active_terminal_run(state: &TerminalSessionState, run_id: &str) {
+/// 移除指定活动运行，并返回该运行登记的、需在 WSL 侧回收的临时脚本路径（无则空）。运行完成 /
+/// 派发失败回滚的调用方据此 spawn_wsl_script_cleanup 删除临时脚本，根治其在 /tmp 泄漏。锁中毒时
+/// 尽力而为返回空列表。
+pub(super) fn clear_active_terminal_run(state: &TerminalSessionState, run_id: &str) -> Vec<String> {
     let Ok(mut active_runs) = state.active_runs.lock() else {
-        return;
+        return Vec::new();
     };
-    active_runs.remove(run_id);
+    active_runs
+        .remove(run_id)
+        .map(|run| run.cleanup_paths)
+        .unwrap_or_default()
 }
 
 /// 取指定运行所属的会话 id：供取消看门狗在「读线程卡死、完成事件不会送达」的异常路径下，

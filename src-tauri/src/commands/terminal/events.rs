@@ -21,6 +21,7 @@ use crate::terminal::{
         emit_terminal_session_state_changed,
     },
     types::TerminalState,
+    wsl_pty::spawn_wsl_script_cleanup,
 };
 
 use super::state::{
@@ -235,7 +236,9 @@ fn handle_interactive_shell_mark(
             if get_session_state(state, session_id) != TerminalState::Running {
                 return;
             }
-            clear_active_terminal_run(state, &run_id);
+            // #1 修复：运行结束即回收其登记的临时脚本（行内/未保存脚本落到 WSL /tmp 的副本），
+            // 在独立线程上 rm，避免阻塞事件读线程的实时输出管道。
+            spawn_wsl_script_cleanup(clear_active_terminal_run(state, &run_id));
             complete_session_run_state_and_emit(app, state, session_id);
             emit_terminal_run_completed(
                 app,

@@ -489,6 +489,28 @@ fn cleanup_wsl_script(execution_path: &str) -> Result<(), LocalWslPtyError> {
     }
 }
 
+/// 在独立线程上回收一批 WSL `/tmp` 临时脚本（脚本运行结束 / 派发失败回滚时调用）。
+///
+/// 必须 fire-and-forget：清理走 wsl.exe，最坏受 WSL_SYNC_COMMAND_TIMEOUT 约束可达数秒，绝不能
+/// 在交互读线程 / 事件回调线程上同步执行，否则会阻塞实时输出管道。空列表为安全 no-op。
+pub(crate) fn spawn_wsl_script_cleanup(paths: Vec<String>) {
+    if paths.is_empty() {
+        return;
+    }
+    let spawn_result = std::thread::Builder::new()
+        .name("wsl-script-cleanup".to_string())
+        .spawn(move || {
+            for path in paths {
+                if let Err(error) = cleanup_wsl_script(&path) {
+                    log::warn!("清理 WSL 临时运行脚本失败（path={path}）：{error}");
+                }
+            }
+        });
+    if let Err(error) = spawn_result {
+        log::warn!("WSL 临时运行脚本清理线程创建失败：{error}");
+    }
+}
+
 /// resize 合批工作线程：拥有该会话的 MasterPty，串行化所有 resize，并在静默窗口内合并一串快速
 /// resize，仅把最后一次尺寸应用到 ConPTY。句柄及其所有克隆释放（发送端全部 drop、通道断开）后
 /// 线程自动退出。对照 VSCode terminalProcess.ts 的 DelayedResizer 合并快速 resize 的思路。
