@@ -1,22 +1,26 @@
 #!/usr/bin/env node
 /**
- * fix-batch-3-patch2.mjs — 补修 L-1 最后一个未匹配的 patch
- * 添加 GIT_FILE_BASELINE_QUERY_PREFIX 常量 + setQueryDefaults
+ * fix-batch-3-residual.mjs — 修复第三批残留问题
+ *
+ * 1. 移除 useShellWorkbenchView.ts 中引用已删除 MAX_DOCUMENT_NAV_HISTORY 的死代码
+ *    （trimDocumentNavHistory + pickNextNavigableDocumentId 两个函数已被 composable 吸收）
+ * 2. 修复 documents watcher 中关闭文档检测逻辑（遍历旧快照而非新快照）
  */
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 const ROOT = process.cwd();
 const ENCODING = 'utf-8';
+let changes = 0;
 
 function patchFile(relPath, patches) {
   const absPath = join(ROOT, relPath);
   if (!existsSync(absPath)) {
     console.warn(`  ⚠️ 文件不存在: ${relPath}`);
-    return 0;
+    return;
   }
   let content = readFileSync(absPath, ENCODING);
-  let changes = 0;
+  let modified = false;
   for (const { oldStr, newStr, description } of patches) {
     if (!content.includes(oldStr)) {
       console.warn(`  ⚠️ 未找到匹配 (跳过): ${description}`);
@@ -24,41 +28,77 @@ function patchFile(relPath, patches) {
     }
     content = content.replace(oldStr, newStr);
     console.log(`  ✅ ${description}`);
+    modified = true;
     changes++;
   }
-  if (changes > 0) {
+  if (modified) {
     writeFileSync(absPath, content, ENCODING);
   }
-  return changes;
 }
 
-const changes = patchFile('src/store/git.ts', [
+patchFile('src/composables/useShellWorkbenchView.ts', [
   {
-    description: 'L-1 补: 添加 GIT_FILE_BASELINE_QUERY_PREFIX 常量 + setQueryDefaults',
-    // 用文件中实际存在的精确文本（setQueryDefaults，不是 setQueryOptions）
+    description: '移除残留的 trimDocumentNavHistory 死代码（引用已删除的 MAX_DOCUMENT_NAV_HISTORY）',
     oldStr:
-`  queryClient.setQueryDefaults(GIT_COMMIT_FILE_DIFF_PREVIEW_QUERY_PREFIX, { staleTime: Infinity });
+`  const trimDocumentNavHistory = (stack: string[]): string[] =>
+    stack.slice(Math.max(0, stack.length - MAX_DOCUMENT_NAV_HISTORY));
 
-  const commitStatsQueryKey = (cacheKey: string): string[] => [`,
+  const pickNextNavigableDocumentId = (
+    stackRef: typeof documentBackStack,
+    currentDocumentId: string,
+  ): string | null => {
+    while (stackRef.value.length > 0) {
+      const candidate = stackRef.value.pop();
+      if (!candidate || candidate === currentDocumentId) {
+        continue;
+      }
+
+      if (hasDocumentInEditorStore(candidate)) {
+        return candidate;
+      }
+    }
+
+    return null;
+  };
+
+  const navigateDocument`,
     newStr:
-`  queryClient.setQueryDefaults(GIT_COMMIT_FILE_DIFF_PREVIEW_QUERY_PREFIX, { staleTime: Infinity });
-
-  // file baseline 查询：按文件路径寻址，文件被修改后需刷新，
-  // 交由 vue-query 的 fetchQuery 去重 + removeQueries 失效，替代手写缓存 + pending 表。
-  const GIT_FILE_BASELINE_QUERY_PREFIX = ['git', 'fileBaseline'];
-  queryClient.setQueryDefaults(GIT_FILE_BASELINE_QUERY_PREFIX, { staleTime: Infinity });
-
-  const commitStatsQueryKey = (cacheKey: string): string[] => [`,
+`  const navigateDocument`,
+  },
+  {
+    description: '修复 documents watcher 关闭文档检测逻辑（遍历旧快照而非新快照）',
+    oldStr:
+`      const documentIdSet = new Set(documentIds);
+      for (const id of documentIds) {
+        if (!documentIdSet.has(id)) {
+          docHistory.removeClosedDocument(id);
+        }
+      }
+      // 也清理栈中已不存在的文档
+      documentBackStack.value = documentBackStack.value.filter((documentId) =>
+        documentIdSet.has(documentId),
+      );
+      documentForwardStack.value = documentForwardStack.value.filter((documentId) =>
+        documentIdSet.has(documentId),
+      );`,
+    newStr:
+`      const documentIdSet = new Set(documentIds);
+      // 遍历旧快照：找出已不在新文档列表中的文档 ID（即被关闭的文档）。
+      if (previousDocumentIds) {
+        for (const id of previousDocumentIds) {
+          if (!documentIdSet.has(id)) {
+            docHistory.removeClosedDocument(id);
+          }
+        }
+      }
+      // 也清理栈中已不存在的文档
+      documentBackStack.value = documentBackStack.value.filter((documentId) =>
+        documentIdSet.has(documentId),
+      );
+      documentForwardStack.value = documentForwardStack.value.filter((documentId) =>
+        documentIdSet.has(documentId),
+      );`,
   },
 ]);
 
 console.log(`\nDone. ${changes} patches applied.`);
-if (changes === 0) {
-  console.log('\n仍未匹配。请手动在 src/store/git.ts 中操作：');
-  console.log('找到 queryClient.setQueryDefaults(GIT_COMMIT_FILE_DIFF_PREVIEW_QUERY_PREFIX, { staleTime: Infinity });');
-  console.log('在其下方、commitStatsQueryKey 定义之前，插入以下 3 行：');
-  console.log('');
-  console.log("  const GIT_FILE_BASELINE_QUERY_PREFIX = ['git', 'fileBaseline'];");
-  console.log('  queryClient.setQueryDefaults(GIT_FILE_BASELINE_QUERY_PREFIX, { staleTime: Infinity });');
-  console.log('（上方加一行注释：// file baseline 查询：按路径寻址，vue-query fetchQuery 去重 + removeQueries 失效）');
-}

@@ -239,27 +239,6 @@ export const useShellWorkbenchView = (onReady: () => void) => {
   const hasDocumentInEditorStore = (documentId: string): boolean =>
     Boolean(workbench.editorStore.getDocumentById(documentId));
 
-  const trimDocumentNavHistory = (stack: string[]): string[] =>
-    stack.slice(Math.max(0, stack.length - MAX_DOCUMENT_NAV_HISTORY));
-
-  const pickNextNavigableDocumentId = (
-    stackRef: typeof documentBackStack,
-    currentDocumentId: string,
-  ): string | null => {
-    while (stackRef.value.length > 0) {
-      const candidate = stackRef.value.pop();
-      if (!candidate || candidate === currentDocumentId) {
-        continue;
-      }
-
-      if (hasDocumentInEditorStore(candidate)) {
-        return candidate;
-      }
-    }
-
-    return null;
-  };
-
   const navigateDocument = (direction: 'back' | 'forward'): void => {
     const currentDocumentId = workbench.editorStore.activeDocumentId;
     if (!currentDocumentId) {
@@ -728,9 +707,12 @@ export const useShellWorkbenchView = (onReady: () => void) => {
     () => (workbench.editorStore.documents ?? []).map((item) => item.id),
     (documentIds, previousDocumentIds) => {
       const documentIdSet = new Set(documentIds);
-      for (const id of documentIds) {
-        if (!documentIdSet.has(id)) {
-          docHistory.removeClosedDocument(id);
+      // 遍历旧快照：找出已不在新文档列表中的文档 ID（即被关闭的文档）。
+      if (previousDocumentIds) {
+        for (const id of previousDocumentIds) {
+          if (!documentIdSet.has(id)) {
+            docHistory.removeClosedDocument(id);
+          }
         }
       }
       // 也清理栈中已不存在的文档
