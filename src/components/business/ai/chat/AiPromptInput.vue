@@ -331,7 +331,7 @@ const selectedAgentOption = computed(
 const sessionConfigOptionList = computed(() => props.sessionConfigOptions?.configOptions ?? []);
 
 const sessionConfigOptionsVisible = computed(
-  () => selectedAgent.value === 'kimi' && sessionConfigOptions.value.length > 0,
+  () => selectedAgent.value === 'kimi' && sessionConfigOptionList.value.length > 0,
 );
 
 const resolveSessionConfigOptionLabel = (option: IAcpSessionConfigOption): string => {
@@ -343,7 +343,7 @@ const handleSessionConfigOptionChange = (configId: string, value: unknown): void
   if (typeof value !== 'string' || !value.trim()) {
     return;
   }
-  const option = sessionConfigOptions.value.find((item) => item.id === configId);
+  const option = sessionConfigOptionList.value.find((item) => item.id === configId);
   if (!option || value === option.currentValue) {
     return;
   }
@@ -1220,7 +1220,7 @@ onBeforeUnmount(() => {
             </Select>
             <template v-if="sessionConfigOptionsVisible">
               <Select
-                v-for="configOption in sessionConfigOptions"
+                v-for="configOption in sessionConfigOptionList"
                 :key="configOption.id"
                 :model-value="configOption.currentValue"
                 :disabled="disabled || isSessionConfigOptionSwitching"

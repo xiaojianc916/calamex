@@ -129,8 +129,6 @@ pub fn builder() -> Builder<tauri::Wry> {
             ai::gateway::ai_chat_stream,
             ai::gateway::ai_cancel,
             ai::gateway::ai_resolve_approval,
-            ai::gateway::ai_set_session_mode,
-            ai::gateway::ai_get_session_modes,
             ai::gateway::ai_set_session_config_option,
             ai::gateway::ai_get_session_config_options,
             ai::gateway::ai_inline_complete,
