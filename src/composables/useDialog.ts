@@ -8,7 +8,7 @@ import {
   type IAppDialogOptions,
   type TAppDialogAction,
 } from '@/types/dialog';
-import { createPrefixedId } from '@/utils/core/id';
+import { createUniqueId } from '@/utils/core/id';
 
 export interface DialogConfirmExtraOptions {
   /** 透传一个 AbortSignal；abort 时 Promise 以 'dismiss' 结算。 */
@@ -37,7 +37,7 @@ export function useDialog() {
     extra?: DialogConfirmExtraOptions,
   ): Promise<TAppDialogAction> => {
     const { promise, resolve } = Promise.withResolvers<TAppDialogAction>();
-    const id = extra?.id ?? createPrefixedId('dlg');
+    const id = extra?.id ?? `dlg-${createUniqueId()}`;
 
     // 调用方在 options 里可能也传了 onAction，这里要保证两侧都被触发。
     const userOnAction = (
