@@ -79,7 +79,7 @@ import {
   resolveTerminalBellStyle,
 } from './session-helpers';
 import {
-  type IRerunVisualTransaction as IRunVisualTransaction,
+  type IRunVisualTransaction,
   type ITerminalSessionCallbacks,
   type ITerminalSessionOptions,
   type ITerminalTauriService,
