@@ -11,21 +11,23 @@ use tauri::Manager as _;
 /// 加上一次上游 LLM 往返。一旦超过即判定为超时并返回结构化错误，避免命令永挂、也避免
 /// 前端只能等到 IPC 层超时后抛出无法归因的「IPC 调用超时」。
 ///
-/// 重要约束：前端 `aiConnectProvider` / `aiTestProviderConfig` / `aiTestProvider` 的 IPC
-/// 超时（见 `src/services/tauri.ai.ts` 的 `AI_COMMAND_META`）必须 **大于** 此预算，否则会
-/// 在后端给出干净错误之前先行中断，用户又会看到无法归因的超时。
+/// 重要约束：前端 `aiTestProviderConfig` / `aiTestProvider` 的 IPC 超时（见
+/// `src/services/tauri.ai.ts` 的 `AI_COMMAND_META`）必须 **大于** 此预算，否则会在后端给出
+/// 干净错误之前先行中断，用户又会看到无法归因的超时。
 const PROVIDER_TEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
 
 /// `connect_provider` 的结果。
 ///
-/// 「凭证与配置已保存」是确定结论（只要返回 `Ok` 即已落盘）；「连通性验证」是附带的、
-/// 非致命的运行时状态。二者解耦——保存与否只取决于配置/凭证语义是否合法，而非一次在线
-/// 探测能否在预算内成功。命令层据此既能向前端确认「已保存」，又能如实回传验证结论。
+/// 「凭证与配置已保存」是确定结论（只要返回 `Ok` 即已落盘）。`connect_provider` 现为
+/// **纯保存**，不再附带在线连通性验证；`verification` 在此模式下恒为 `Ok(保存确认文案)`，
+/// 仅用于让命令层复用既有的 `verification_to_test_payload` 映射，向前端回传形状一致的
+/// 「已保存」反馈。真正的连通性测试由用户显式点击「测试」触发
+/// （见 `test_provider_config` / `test_provider`）。
 pub struct ProviderConnectionOutcome {
     /// 保存后的权威配置快照（含 `has_credentials` 等派生字段）。
     pub config: AiConfigPayload,
-    /// 连通性验证结果：`Ok(成功说明)` 或 `Err(结构化错误 JSON 文本)`。
-    /// 失败不影响已保存的凭证，仅用于前端展示验证状态。
+    /// 保存结果说明。纯保存模式下恒为 `Ok(保存确认文案)`；保留 `Result` 形状以复用
+    /// `verification_to_test_payload`，与「测试」路径回传给前端的载荷结构保持一致。
     pub verification: Result<String, String>,
 }
 
@@ -203,15 +205,20 @@ pub async fn test_provider_config(
     test_provider_connection_candidate(app, &candidate).await
 }
 
-/// 连接并保存一个 AI Provider。
+/// 保存一个 AI Provider 的连接配置与凭证（纯保存，不做在线验证）。
 ///
-/// 设计要点（修复「Key 测试失败/超时后不持久化」根因）：先持久化、再做非致命验证。
-/// `save_connected_model` 只要配置/凭证语义合法即落盘（写入 keyring 与 ai.json）；随后
-/// 对同一 `candidate` 做一次连通性验证，无论成功或失败都不回滚已保存的配置，仅把验证
-/// 结论放进 [`ProviderConnectionOutcome::verification`] 回传给上层展示。
-#[allow(clippy::too_many_arguments)]
+/// 设计要点：保存与「连通性验证」彻底解耦。是否保存只取决于配置/凭证语义是否合法
+/// （已由 `build_provider_connection_candidate` 校验），一旦合法即落盘（写入 keyring 与
+/// ai.json），刷新/重启后依然存在。连通性测试**不**在保存路径内触发——它会随网络/上游
+/// 波动，若把它当作能否保存的闸门，一次超时就会打断用户、甚至误报「连接测试未通过」，
+/// 还会把用户刚填的 Key 拖在一次慢请求后。
+///
+/// 连接测试改为仅由用户显式点击「测试」触发（见 [`test_provider_config`] / [`test_provider`]）。
+///
+/// `_app` 仅为与命令层签名保持一致而保留；纯保存不需要 ACP 宿主，故不触发任何网络往返。
+#[allow(clippy::too_many_arguments, clippy::unused_async)]
 pub async fn connect_provider(
-    app: &AppHandle,
+    _app: &AppHandle,
     role: Option<&str>,
     provider_id: Option<&str>,
     provider_type: &str,
@@ -235,16 +242,13 @@ pub async fn connect_provider(
         true,
     )?;
 
-    // 先落盘：保存只取决于「配置/凭证语义合法」（已由 build_provider_connection_candidate
-    // 校验），与「在线连通性」彻底解耦。连通性会随网络/上游波动，若把它当作能否保存的闸门，
-    // 一次超时就会丢掉用户已填的 Key（刷新/重启即消失）——这正是此前的根因。
+    // 仅落盘：保存只取决于「配置/凭证语义合法」（已由 build_provider_connection_candidate
+    // 校验），与「在线连通性」彻底解耦。
     let config = save_connected_model(role, &candidate)?;
-
-    // 已保存后再做一次「非致命」连通性验证；无论成功或失败，配置都已落盘，不再回滚。
-    let verification = test_provider_connection_candidate(app, &candidate).await;
 
     Ok(ProviderConnectionOutcome {
         config,
-        verification,
+        // 纯保存模式不做在线验证，这里返回保存确认文案；连通性请通过「测试」按钮验证。
+        verification: Ok("凭证与配置已保存。点击「测试」可验证连接。".to_string()),
     })
 }

@@ -81,29 +81,32 @@ describe('useAiProviderConfig.connectProvider', () => {
     vi.mocked(aiService.connectProvider).mockReset();
   });
 
-  it('persists the saved config and reports an honest message when verification fails', async () => {
+  it('persists the saved config without running a connection test on save', async () => {
     vi.mocked(aiService.connectProvider).mockResolvedValue({
       config: buildSavedConfig(),
-      test: { ok: false, code: 'AI_PROVIDER_TIMEOUT', message: '连接测试超时' },
+      test: {
+        ok: true,
+        code: 'AI_PROVIDER_READY',
+        message: '凭证与配置已保存。点击「测试」可验证连接。',
+      },
     } as TConnectResult);
 
     const { errorMessage, config, connectProvider } = setup();
 
     const message = await connectProvider(buildConfigInput(), 'sk-real-key');
 
-    // 即使在线验证失败，凭证/配置也必须已落盘（保证刷新/重启后 Key 仍在）。
+    // 纯保存：凭证/配置必须已落盘（刷新/重启后 Key 仍在）。
     expect(config.value.hasCredentials).toBe(true);
     expect(config.value.isConfigured).toBe(true);
-    // 如实告知：已保存但未通过验证，并写入 errorMessage 供 UI 呈现。
-    expect(message).toContain('已保存');
-    expect(message).toContain('连接测试超时');
-    expect(errorMessage.value).toBe('连接测试超时');
+    // 保存不做在线验证，返回后端的保存确认文案，且不写入任何错误。
+    expect(message).toBe('凭证与配置已保存。点击「测试」可验证连接。');
+    expect(errorMessage.value).toBe('');
   });
 
-  it('returns the verification message when the connection test passes', async () => {
+  it('returns the backend save acknowledgement message verbatim', async () => {
     vi.mocked(aiService.connectProvider).mockResolvedValue({
       config: buildSavedConfig(),
-      test: { ok: true, code: 'AI_PROVIDER_READY', message: '连接正常：DeepSeek 已成功响应。' },
+      test: { ok: true, code: 'AI_PROVIDER_READY', message: 'DeepSeek 凭证已保存。' },
     } as TConnectResult);
 
     const { errorMessage, config, connectProvider } = setup();
@@ -111,7 +114,7 @@ describe('useAiProviderConfig.connectProvider', () => {
     const message = await connectProvider(buildConfigInput(), 'sk-real-key');
 
     expect(config.value.hasCredentials).toBe(true);
-    expect(message).toBe('连接正常：DeepSeek 已成功响应。');
+    expect(message).toBe('DeepSeek 凭证已保存。');
     expect(errorMessage.value).toBe('');
   });
 });
