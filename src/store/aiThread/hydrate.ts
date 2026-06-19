@@ -16,8 +16,7 @@ import { aiThreadPersistSchema } from '@/types/ai/thread/persist.schema';
  *
  * activeThreadId 一律经 normalize 校正：指向不存在的线程时落到首个线程，空库则为 null。
  *
- * 注意：本模块尚未被任何地方 import（接线在 Step 7.4 的异步预热 hydrate + 双写完成），
- * 故对运行时行为零影响。旧 aiConversation store 仍是唯一权威，渲染仍走既有投影。
+ * 注意：normalizeActiveThreadId 同时被写侧投影 project.ts 复用（读/写对称），故导出为公共函数。
  * ========================================================================== */
 
 /** 命中的数据来源，便于接线层打点 / 灰度观测。 */
