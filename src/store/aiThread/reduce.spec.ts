@@ -5,6 +5,8 @@ import { nextToolStatus, reduceThread, reduceThreadAll } from '@/store/aiThread/
 import type {
   IAiThread,
   IAiThreadAssistantMessageEntry,
+  IAiThreadContextCompactionEntry,
+  IAiThreadPlanEntry,
   IAiThreadToolCall,
 } from '@/types/ai/thread';
 
@@ -155,6 +157,50 @@ describe('reduceThread', () => {
   it('对不存在的 tool 的 progress 被忽略（不创建条目）', () => {
     const thread = reduceThread(createThread(), { kind: 'tool_progress', id: 'ghost' });
     expect(thread.entries).toHaveLength(0);
+  });
+
+  it('plan_updated 创建 plan entry；再次同 id 整体替换 steps（不重复、不挪位、保留 createdAt）', () => {
+    let thread = createThread();
+    thread = reduceThread(thread, { kind: 'plan_updated', id: 'p1', createdAt: ISO, steps: [] });
+    expect(thread.entries.filter((e) => e.type === 'plan')).toHaveLength(1);
+
+    const step: IAiThreadPlanEntry['steps'][number] = {
+      id: 's1',
+      index: 0,
+      title: '读取入口',
+      goal: '定位 reduce 写入点',
+      kind: 'inspect',
+      status: 'pending',
+      expectedOutput: '入口清单',
+      tools: ['read_file'],
+      requiresUserApproval: false,
+      riskLevel: 'low',
+    };
+    thread = reduceThread(thread, {
+      kind: 'plan_updated',
+      id: 'p1',
+      createdAt: '2026-06-14T09:05:00.000Z',
+      steps: [step],
+    });
+
+    const plans = thread.entries.filter((e) => e.type === 'plan') as IAiThreadPlanEntry[];
+    expect(plans).toHaveLength(1);
+    expect(plans[0].steps).toHaveLength(1);
+    // 保留首次出现的 createdAt，位置稳定
+    expect(plans[0].createdAt).toBe(ISO);
+  });
+
+  it('context_compaction 追加一条整理条目（带 message）', () => {
+    const thread = reduceThread(createThread(), {
+      kind: 'context_compaction',
+      id: 'c1',
+      createdAt: ISO,
+      message: '已压缩历史上下文',
+    });
+    expect(thread.entries).toHaveLength(1);
+    const entry = thread.entries[0] as IAiThreadContextCompactionEntry;
+    expect(entry.type).toBe('context_compaction');
+    expect(entry.message).toBe('已压缩历史上下文');
   });
 
   it('nextToolStatus 状态机', () => {
