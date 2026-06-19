@@ -31,6 +31,7 @@ import {
   subscribeSidecarStreamWithPrebuffer,
 } from '@/composables/ai/sidecar-stream-listener';
 import { useAcpAvailableCommands } from '@/composables/ai/useAcpAvailableCommands';
+import { useAcpSessionConfigOptions } from '@/composables/ai/useAcpSessionConfigOptions';
 import { useAcpSessionModes } from '@/composables/ai/useAcpSessionModes';
 import { useAcpUsage } from '@/composables/ai/useAcpUsage';
 import { useAiAgentPlan } from '@/composables/ai/useAiAgentPlan';
@@ -429,6 +430,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
   const acpSessionModes = useAcpSessionModes();
   const acpAvailableCommands = useAcpAvailableCommands();
   const acpUsage = useAcpUsage();
+  const acpSessionConfigOptions = useAcpSessionConfigOptions();
   const { refreshSidecarChangedDocuments } = useSidecarChangedDocumentRefresh();
   let sidecarAnswerStreamState: ISidecarAnswerStreamState | null = null;
   let isSidecarAnswerStreamSyncSuppressed = false;
@@ -1068,6 +1070,9 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
           break;
         case 'usage_update':
           acpUsage.applyUsageUpdate(event.usage);
+          break;
+        case 'config_option_update':
+          acpSessionConfigOptions.applyConfigOptionUpdate(event.configOptions);
           break;
         default:
           break;
@@ -2400,6 +2405,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     acpSessionModes.reset();
     acpAvailableCommands.reset();
     acpUsage.reset();
+    acpSessionConfigOptions.reset();
     isClearDialogOpen.value = false;
   };
 
@@ -2793,6 +2799,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     acpSessionModes,
     acpAvailableCommands,
     acpUsage,
+    acpSessionConfigOptions,
     config,
     messages,
     historyThreads,
