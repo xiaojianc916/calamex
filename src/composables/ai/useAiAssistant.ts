@@ -2833,6 +2833,7 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
     draft,
     isSending,
     error: errorMessage,
+    errorMessage,
     providerLabel,
     isSettingsOpen,
     isClearDialogOpen,

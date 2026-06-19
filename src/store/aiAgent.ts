@@ -213,10 +213,13 @@ type TOfficialUsageLike =
       outputTokens?: number | null;
       totalTokens?: number | null;
       inputTokenDetails?: {
+        noCacheTokens?: number | null;
         cacheReadTokens?: number | null;
         cacheCreationTokens?: number | null;
+        cacheWriteTokens?: number | null;
       } | null;
       outputTokenDetails?: {
+        textTokens?: number | null;
         reasoningTokens?: number | null;
       } | null;
     }
@@ -228,10 +231,13 @@ const normalizeOfficialUsageForAccumulation = (usage: TOfficialUsageLike) => ({
   outputTokens: usage?.outputTokens ?? 0,
   totalTokens: usage?.totalTokens ?? 0,
   inputTokenDetails: {
+    noCacheTokens: usage?.inputTokenDetails?.noCacheTokens ?? 0,
     cacheReadTokens: usage?.inputTokenDetails?.cacheReadTokens ?? 0,
     cacheCreationTokens: usage?.inputTokenDetails?.cacheCreationTokens ?? 0,
+    cacheWriteTokens: usage?.inputTokenDetails?.cacheWriteTokens ?? 0,
   },
   outputTokenDetails: {
+    textTokens: usage?.outputTokenDetails?.textTokens ?? 0,
     reasoningTokens: usage?.outputTokenDetails?.reasoningTokens ?? 0,
   },
 });
