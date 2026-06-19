@@ -2,7 +2,8 @@
 //!
 //! 通过 bash --init-file 注入的集成脚本会在交互 shell 中发出 OSC 133 生命周期标记
 //! （A=提示符开始，B=提示符结束/命令行开始，C=命令输出开始，D=命令结束[;exit]）以及
-//! OSC 633;P;Cwd 工作目录上报。shell 自己绘制真实提示符，宿主不再抓取/合成提示符。
+//! OSC 633;P;Cwd 工作目录上报、OSC 633;P;ShellPid 交互 shell 自身 PID 上报。shell 自己绘制
+//! 真实提示符，宿主不再抓取/合成提示符。
 //!
 //! 本模块提供：
 //! - ShellIntegrationMark：解析出的标记。
@@ -28,6 +29,9 @@ pub enum ShellIntegrationMark {
     CommandFinished { exit_code: Option<i32> },
     /// OSC 633;P;Cwd=<path> —— 工作目录上报。
     Cwd(String),
+    /// OSC 633;P;ShellPid=<pid> —— 交互 shell 自身 PID 上报（供带外取消时读
+    /// `/proc/<shellpid>/stat` 定位前台进程组）。
+    ShellPid(u32),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -170,9 +174,14 @@ fn parse_mark(body: &str) -> Option<ShellIntegrationMark> {
                 return None;
             }
             let joined = parts.collect::<Vec<_>>().join(";");
-            joined
-                .strip_prefix("Cwd=")
-                .map(|cwd| ShellIntegrationMark::Cwd(cwd.to_string()))
+            if let Some(cwd) = joined.strip_prefix("Cwd=") {
+                Some(ShellIntegrationMark::Cwd(cwd.to_string()))
+            } else if let Some(pid) = joined.strip_prefix("ShellPid=") {
+                // 非法 / 非数字 PID 视为无效标记丢弃（与其它子格式不匹配即 None 的策略一致）。
+                pid.parse::<u32>().ok().map(ShellIntegrationMark::ShellPid)
+            } else {
+                None
+            }
         }
         _ => None,
     }
@@ -182,7 +191,8 @@ fn parse_mark(body: &str) -> Option<ShellIntegrationMark> {
 ///
 /// 经 bash --init-file 注入：--init-file 隐含交互非登录 shell 且不认 -l，故脚本在被宿主注入时
 /// 自行 source 登录启动文件（/etc/profile + 首个 profile），等价于原 bash -il 的环境；随后用
-/// PROMPT_COMMAND + PS1 包裹 + DEBUG trap 发出 OSC 133 生命周期标记与 OSC 633;P;Cwd。
+/// PROMPT_COMMAND + PS1 包裹 + DEBUG trap 发出 OSC 133 生命周期标记与 OSC 633;P;Cwd，并在启动时
+/// 经 OSC 633;P;ShellPid 上报自身 PID 一次。
 pub fn build_bash_integration_script() -> String {
     String::from(SHELL_INTEGRATION_BASH)
 }
@@ -210,6 +220,10 @@ if [ "$CALAMEX_SHELL_INTEGRATION_INJECTION" = "1" ]; then
 	fi
 	builtin unset CALAMEX_SHELL_INTEGRATION_INJECTION
 fi
+
+# Report this interactive shell's own PID once so the host can locate its
+# foreground process group (/proc/<pid>/stat) for out-of-band cancellation.
+builtin printf '\e]633;P;ShellPid=%s\a' "$$"
 
 __calamex_first_prompt=0
 __calamex_in_execution=0
@@ -332,6 +346,23 @@ mod tests {
     }
 
     #[test]
+    fn parses_shell_pid_633() {
+        let mut f = ShellIntegrationFilter::new();
+        let (clean, marks) = f.filter("\u{001b}]633;P;ShellPid=4242\u{0007}");
+        assert_eq!(clean, "");
+        assert_eq!(marks, vec![ShellIntegrationMark::ShellPid(4242)]);
+    }
+
+    #[test]
+    fn ignores_invalid_shell_pid_633() {
+        let mut f = ShellIntegrationFilter::new();
+        // 非数字 PID 既不外泄为可见文本，也不产出标记。
+        let (clean, marks) = f.filter("\u{001b}]633;P;ShellPid=abc\u{0007}");
+        assert_eq!(clean, "");
+        assert!(marks.is_empty());
+    }
+
+    #[test]
     fn handles_split_sequence_across_reads() {
         let mut f = ShellIntegrationFilter::new();
         let (c1, m1) = f.filter("abc\u{001b}]133;A");
@@ -354,6 +385,7 @@ mod tests {
     fn build_script_contains_markers() {
         let s = build_bash_integration_script();
         assert!(s.contains("]133;A"));
+        assert!(s.contains("]633;P;ShellPid="));
         assert!(s.contains("PROMPT_COMMAND=__calamex_prompt_cmd"));
         assert!(s.contains("trap '__calamex_debug_trap' DEBUG"));
     }
