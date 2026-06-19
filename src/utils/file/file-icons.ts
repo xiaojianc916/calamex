@@ -4,11 +4,13 @@ import type {
   IFileIconResolveOptions,
   IPierreFileIconTheme,
 } from '@/types/file-icon';
+import { fnv1a32Base36 } from '@/utils/hash';
 import { getPathBaseName } from '@/utils/file/path';
 
 const PIERRE_ICON_THEME = pierreIconTheme as IPierreFileIconTheme;
 const PIERRE_MONOCHROME_DARK_FILL = '#adadb1';
 const PIERRE_MONOCHROME_LIGHT_FILL = '#6c6c71';
+const PIERRE_COLOR_CACHE_LIMIT = 256;
 const PIERRE_COLOR_CACHE = new Map<string, IFileIconAsset>();
 
 const FILE_ICON_ASSET_MODULES = import.meta.glob('../../assets/icons/pierre/*.svg', {
@@ -66,11 +68,13 @@ const MONOCHROME_ICON_COLOR_SEED_OVERRIDES: Readonly<Record<string, string>> = O
   'folder-open-duo': 'folder-duo',
 });
 
-const normalizeThemeMap = (value: Record<string, string> | undefined): Record<string, string> => {
-  if (!value) {
-    return {};
-  }
+// ── 预编译正则（热路径不再每次 new RegExp）────────────────────
+const DARK_FILL_PATTERN = new RegExp(PIERRE_MONOCHROME_DARK_FILL, 'gi');
+const LIGHT_FILL_PATTERN = new RegExp(PIERRE_MONOCHROME_LIGHT_FILL, 'gi');
 
+// ── 主题映射预处理 ─────────────────────────────────────────────
+const normalizeThemeMap = (value: Record<string, string> | undefined): Record<string, string> => {
+  if (!value) return {};
   return Object.fromEntries(
     Object.entries(value).map(([key, iconKey]) => [key.toLowerCase(), iconKey]),
   );
@@ -88,214 +92,130 @@ const FILE_EXTENSION_ICON_MAP: Readonly<Record<string, string>> = Object.freeze(
 const hasThemeIconDefinition = (key: string): boolean =>
   Object.hasOwn(PIERRE_ICON_THEME.iconDefinitions, key);
 
-const getFileName = (path: string | null | undefined): string => {
-  if (!path) {
-    return '';
-  }
-
-  return getPathBaseName(path).toLowerCase();
-};
+// ── 路径/文件名工具 ───────────────────────────────────────────
+const getFileName = (path: string | null | undefined): string =>
+  path ? getPathBaseName(path).toLowerCase() : '';
 
 const getExtensionCandidates = (fileName: string): string[] => {
   const segments = fileName.split('.');
-  if (segments.length <= 1) {
-    return [];
-  }
-
+  if (segments.length <= 1) return [];
   const candidates: string[] = [];
-  for (let index = 1; index < segments.length; index += 1) {
-    candidates.push(segments.slice(index).join('.'));
-  }
-
+  for (let i = 1; i < segments.length; i++) candidates.push(segments.slice(i).join('.'));
   return candidates;
 };
 
-const resolveMappedKey = (value: string | undefined): string | null => {
-  if (!value || !hasThemeIconDefinition(value)) {
-    return null;
-  }
-
-  return value;
-};
+// ── 图标 key 解析 ──────────────────────────────────────────────
+const resolveMappedKey = (value: string | undefined): string | null =>
+  value && hasThemeIconDefinition(value) ? value : null;
 
 const resolveNamedFileIconKey = (fileName: string): string | null => {
-  if (fileName === '.env' || fileName.startsWith('.env.')) {
-    return 'file-text-duo';
-  }
-
-  if (fileName === 'readme' || fileName.startsWith('readme.')) {
-    return 'lang-markdown';
-  }
-
-  if (
-    fileName === 'license' ||
-    fileName.startsWith('license.') ||
-    fileName === 'licence' ||
-    fileName.startsWith('licence.')
-  ) {
-    return 'file-text-duo';
-  }
-
+  if (fileName === '.env' || fileName.startsWith('.env.')) return 'file-text-duo';
+  if (fileName === 'readme' || fileName.startsWith('readme.')) return 'lang-markdown';
+  if (fileName === 'license' || fileName.startsWith('license.') ||
+      fileName === 'licence' || fileName.startsWith('licence.')) return 'file-text-duo';
   return resolveMappedKey(FILE_NAME_ICON_MAP[fileName]);
 };
 
+const resolveFileIconKey = ({ kind, path, expanded = false }: IFileIconResolveOptions): string => {
+  if (kind === 'directory') return expanded ? PIERRE_ICON_THEME.folderExpanded : PIERRE_ICON_THEME.folder;
+  const fileName = getFileName(path);
+  if (!fileName) return PIERRE_ICON_THEME.file;
+  const namedKey = resolveNamedFileIconKey(fileName);
+  if (namedKey) return namedKey;
+  for (const candidate of getExtensionCandidates(fileName)) {
+    const mapped = resolveMappedKey(FILE_EXTENSION_ICON_MAP[candidate]);
+    if (mapped) return mapped;
+  }
+  return PIERRE_ICON_THEME.file;
+};
+
+// ── 资源解析 ───────────────────────────────────────────────────
 const resolveAssetModuleKey = (iconPath: string): string =>
   `../../assets/icons/pierre/${iconPath.replace(/^\.\//, '')}`;
-
-const hashText = (value: string): number => {
-  let hash = 5381;
-
-  for (const character of value) {
-    hash = ((hash << 5) + hash) ^ character.charCodeAt(0);
-  }
-
-  return hash >>> 0;
-};
 
 const encodeSvgDataUri = (svg: string): string =>
   `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
 
-const applyPierreFallbackColor = (svg: string, fillColor: string, monochromeFill: string): string =>
-  svg.replace(new RegExp(monochromeFill, 'gi'), fillColor);
+const applyPierreFallbackColor = (svg: string, fillColor: string, pattern: RegExp): string =>
+  svg.replace(pattern, fillColor);
 
 const resolveColorizedFallbackIconAsset = (key: string): IFileIconAsset | null => {
   const palettePool = MONOCHROME_ICON_COLOR_POOLS[key];
   const darkDefinition = PIERRE_ICON_THEME.iconDefinitions[key];
+  if (!palettePool || !darkDefinition) return null;
 
-  if (!palettePool || !darkDefinition) {
-    return null;
-  }
-
-  const cacheKey = key;
-  const cachedAsset = PIERRE_COLOR_CACHE.get(cacheKey);
-  if (cachedAsset) {
-    return cachedAsset;
+  // LRU 缓存：命中即返回。超限时淘汰最旧条目。
+  const cached = PIERRE_COLOR_CACHE.get(key);
+  if (cached) {
+    PIERRE_COLOR_CACHE.delete(key);
+    PIERRE_COLOR_CACHE.set(key, cached);
+    return cached;
   }
 
   const lightDefinition = PIERRE_ICON_THEME.iconDefinitions[`${key}_light`] ?? darkDefinition;
   const darkRaw = FILE_ICON_RAW_MODULES[resolveAssetModuleKey(darkDefinition.iconPath)] ?? null;
-  const lightRaw =
-    FILE_ICON_RAW_MODULES[resolveAssetModuleKey(lightDefinition.iconPath)] ?? darkRaw;
-
-  if (!darkRaw || !lightRaw) {
-    return null;
-  }
+  const lightRaw = FILE_ICON_RAW_MODULES[resolveAssetModuleKey(lightDefinition.iconPath)] ?? darkRaw;
+  if (!darkRaw || !lightRaw) return null;
 
   const paletteSeed = MONOCHROME_ICON_COLOR_SEED_OVERRIDES[key] ?? key;
-  const paletteHue = palettePool[hashText(paletteSeed) % palettePool.length];
+  const paletteHue = palettePool[Number.parseInt(fnv1a32Base36(paletteSeed), 36) % palettePool.length];
   const colors = PIERRE_PALETTE[paletteHue];
 
   const asset: IFileIconAsset = {
-    darkSrc: encodeSvgDataUri(
-      applyPierreFallbackColor(darkRaw, colors.dark, PIERRE_MONOCHROME_DARK_FILL),
-    ),
-    lightSrc: encodeSvgDataUri(
-      applyPierreFallbackColor(lightRaw, colors.light, PIERRE_MONOCHROME_LIGHT_FILL),
-    ),
+    darkSrc: encodeSvgDataUri(applyPierreFallbackColor(darkRaw, colors.dark, DARK_FILL_PATTERN)),
+    lightSrc: encodeSvgDataUri(applyPierreFallbackColor(lightRaw, colors.light, LIGHT_FILL_PATTERN)),
   };
 
-  PIERRE_COLOR_CACHE.set(cacheKey, asset);
+  PIERRE_COLOR_CACHE.set(key, asset);
+  while (PIERRE_COLOR_CACHE.size > PIERRE_COLOR_CACHE_LIMIT) {
+    const oldest = PIERRE_COLOR_CACHE.keys().next().value;
+    if (oldest === undefined) break;
+    PIERRE_COLOR_CACHE.delete(oldest);
+  }
 
   return asset;
 };
 
 const resolveThemeIconAssetByKey = (key: string): IFileIconAsset | null => {
-  const colorizedFallbackAsset = resolveColorizedFallbackIconAsset(key);
-  if (colorizedFallbackAsset) {
-    return colorizedFallbackAsset;
-  }
+  const colorized = resolveColorizedFallbackIconAsset(key);
+  if (colorized) return colorized;
 
   const darkDefinition = PIERRE_ICON_THEME.iconDefinitions[key];
-  if (!darkDefinition) {
-    return null;
-  }
-
+  if (!darkDefinition) return null;
   const lightDefinition = PIERRE_ICON_THEME.iconDefinitions[`${key}_light`] ?? darkDefinition;
-
   const darkSrc = FILE_ICON_ASSET_MODULES[resolveAssetModuleKey(darkDefinition.iconPath)] ?? null;
-  const lightSrc =
-    FILE_ICON_ASSET_MODULES[resolveAssetModuleKey(lightDefinition.iconPath)] ?? darkSrc;
-
-  if (!darkSrc && !lightSrc) {
-    return null;
-  }
-
-  const fallbackSrc = darkSrc ?? lightSrc;
-  if (!fallbackSrc) {
-    return null;
-  }
-
-  return {
-    darkSrc: darkSrc ?? fallbackSrc,
-    lightSrc: lightSrc ?? fallbackSrc,
-  };
+  const lightSrc = FILE_ICON_ASSET_MODULES[resolveAssetModuleKey(lightDefinition.iconPath)] ?? darkSrc;
+  const fallback = darkSrc ?? lightSrc;
+  if (!fallback) return null;
+  return { darkSrc: darkSrc ?? fallback, lightSrc: lightSrc ?? fallback };
 };
 
 const resolveRequiredThemeIconAsset = (key: string): IFileIconAsset => {
   const asset = resolveThemeIconAssetByKey(key);
-  if (!asset) {
-    throw new Error(`Pierre Icons 资源缺失：${key}`);
-  }
-
+  if (!asset) throw new Error(`Pierre Icons 资源缺失：${key}`);
   return asset;
 };
 
 const DEFAULT_FILE_ICON_ASSET = resolveRequiredThemeIconAsset(PIERRE_ICON_THEME.file);
 
-const resolveFileIconKey = ({ kind, path, expanded = false }: IFileIconResolveOptions): string => {
-  if (kind === 'directory') {
-    return expanded ? PIERRE_ICON_THEME.folderExpanded : PIERRE_ICON_THEME.folder;
-  }
-
-  const fileName = getFileName(path);
-  if (!fileName) {
-    return PIERRE_ICON_THEME.file;
-  }
-
-  const namedKey = resolveNamedFileIconKey(fileName);
-  if (namedKey) {
-    return namedKey;
-  }
-
-  for (const candidate of getExtensionCandidates(fileName)) {
-    const mappedKey = resolveMappedKey(FILE_EXTENSION_ICON_MAP[candidate]);
-    if (mappedKey) {
-      return mappedKey;
-    }
-  }
-
-  return PIERRE_ICON_THEME.file;
-};
-
-// 记忆化：文件树批量渲染时，同一 (kind, expanded, path) 与同一 icon key 会被
-// 反复解析。缓存可将重复解析降为 O(1)，避免重复的字符串处理、Map 查找与对象分配。
+// ── 记忆化缓存 ─────────────────────────────────────────────────
 const FILE_ICON_KEY_CACHE = new Map<string, string>();
 const FILE_ICON_ASSET_CACHE = new Map<string, IFileIconAsset>();
 
 const resolveFileIconKeyMemoized = (options: IFileIconResolveOptions): string => {
   const cacheKey = `${options.kind}\u0000${options.expanded ? '1' : '0'}\u0000${options.path ?? ''}`;
-  const cachedKey = FILE_ICON_KEY_CACHE.get(cacheKey);
-  if (cachedKey !== undefined) {
-    return cachedKey;
-  }
-
+  const cached = FILE_ICON_KEY_CACHE.get(cacheKey);
+  if (cached !== undefined) return cached;
   const iconKey = resolveFileIconKey(options);
   FILE_ICON_KEY_CACHE.set(cacheKey, iconKey);
-
   return iconKey;
 };
 
 const resolveFileIconAssetByKey = (iconKey: string): IFileIconAsset => {
-  const cachedAsset = FILE_ICON_ASSET_CACHE.get(iconKey);
-  if (cachedAsset) {
-    return cachedAsset;
-  }
-
-  // resolveThemeIconAssetByKey 内部已优先处理单色着色回退，因此无需再单独调用
-  // resolveColorizedFallbackIconAsset；其语义与旧实现等价。
+  const cached = FILE_ICON_ASSET_CACHE.get(iconKey);
+  if (cached) return cached;
   const asset = resolveThemeIconAssetByKey(iconKey) ?? DEFAULT_FILE_ICON_ASSET;
   FILE_ICON_ASSET_CACHE.set(iconKey, asset);
-
   return asset;
 };
 
