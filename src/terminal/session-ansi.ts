@@ -4,6 +4,7 @@
  * 从 session.ts 拆分。
  */
 
+import { TERMINAL_BUFFER_DIAGNOSTIC_PREVIEW_LENGTH, TERMINAL_RUN_SEPARATOR_PREFIX } from './session-constants';
 import type { ITerminalDataEvent, TThemeMode } from '@/types/terminal';
 
 // ─── ANSI 常量 ─────────────────────────────────────────────────────────────────
@@ -50,7 +51,7 @@ export const normalizeTerminalAnsiForTheme = (value: string, theme: TThemeMode):
 
 /** 去除注入的 run 分隔符标记行（如 `──── run #1 ────`），返回剩余数据。 */
 export const stripInjectedRunSeparatorForTerminalData = (data: string): string => {
-  const markerIndex = data.indexOf('──── run #');
+  const markerIndex = data.indexOf(TERMINAL_RUN_SEPARATOR_PREFIX);
   if (markerIndex < 0) return data;
 
   const crlfIndex = data.indexOf('\r\n', markerIndex);
@@ -153,7 +154,7 @@ export const previewTerminalDiagnosticText = (value: string): string =>
     .replaceAll('\r', '\\r')
     .replaceAll('\n', '\\n')
     .replace(ANSI_ESCAPE_CHARACTER_PATTERN, '\\x1b')
-    .slice(0, 160);
+    .slice(0, TERMINAL_BUFFER_DIAGNOSTIC_PREVIEW_LENGTH);
 
 /** 判断 run 数据帧是否为首次 run 的第一帧。 */
 export const isFirstRunChunkFrame = (payload: ITerminalDataEvent): boolean =>
