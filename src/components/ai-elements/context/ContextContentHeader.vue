@@ -14,8 +14,11 @@ const PERCENT_MAX = 100;
 
 const { usedTokens, maxTokens } = useContextValue();
 
+const hasKnownLimit = computed(() => maxTokens.value > 0);
+
 const usedPercent = computed(() => {
-  if (maxTokens.value <= 0) {
+  // 上限未知（undefined / NaN / <=0）时一律按 0 处理，避免渲染出 NaN% 这类脏值。
+  if (!hasKnownLimit.value) {
     return 0;
   }
 
@@ -30,7 +33,7 @@ const displayPercent = computed(() =>
 );
 
 const used = computed(() => formatTokensInK(usedTokens.value));
-const total = computed(() => (maxTokens.value > 0 ? formatTokensInK(maxTokens.value) : '未知'));
+const total = computed(() => (hasKnownLimit.value ? formatTokensInK(maxTokens.value) : '未知'));
 </script>
 
 <template>
@@ -39,9 +42,9 @@ const total = computed(() => (maxTokens.value > 0 ? formatTokensInK(maxTokens.va
 
     <template v-else>
       <div class="flex items-center justify-between gap-3 text-xs">
-        <p class="text-[#09090b]">{{ displayPercent }}</p>
+        <p class="text-[#09090b]"> displayPercent </p>
         <p class="font-mono text-[var(--text-secondary)]">
-          {{ used }} / {{ total }}
+           used  /  total 
         </p>
       </div>
       <Progress class="context-token-progress" :model-value="usedPercent * PERCENT_MAX" />

@@ -17,7 +17,7 @@ export interface IContextUsageCost {
 
 export interface IContextValue {
   usedTokens: ComputedRef<number>;
-  maxOutputTokens: ComputedRef<number>;
+  maxTokens: ComputedRef<number>;
   usage: ComputedRef<LanguageModelUsage | undefined>;
   usageSource: ComputedRef<TAiTokenUsageSource>;
   modelId: ComputedRef<TContextModelId | undefined>;

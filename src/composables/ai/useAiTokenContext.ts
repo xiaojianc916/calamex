@@ -9,7 +9,7 @@ import type { TAgentRuntimeEvent } from '@/types/ai/sidecar';
 
 export interface IAiTokenContextProps {
   usedTokens: number;
-  maxOutputTokens: number;
+  maxTokens: number;
   modelId?: string;
   usage: LanguageModelUsage;
   usageSource: TAiTokenUsageSource;
@@ -342,7 +342,7 @@ export const useAiTokenContext = (options: IUseAiTokenContextOptions) => {
 
   const contextProps = computed<IAiTokenContextProps>(() => ({
     usedTokens: usedTokens.value,
-    maxOutputTokens: maxTokens.value,
+    maxTokens: maxTokens.value,
     ...(normalizedModelId.value ? { modelId: normalizedModelId.value } : {}),
     usage: usage.value,
     usageSource: usageSource.value,

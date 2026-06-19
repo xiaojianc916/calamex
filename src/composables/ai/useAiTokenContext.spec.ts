@@ -74,7 +74,7 @@ describe('useAiTokenContext', () => {
       draft: computed(() => ''),
     });
 
-    expect(context.contextProps.value.maxOutputTokens).toBe(1_000_000);
+    expect(context.contextProps.value.maxTokens).toBe(1_000_000);
   });
 
   it('resolves the context window from the model catalog for GLM models', () => {
@@ -89,7 +89,7 @@ describe('useAiTokenContext', () => {
       draft: computed(() => ''),
     });
 
-    expect(context.contextProps.value.maxOutputTokens).toBe(128_000);
+    expect(context.contextProps.value.maxTokens).toBe(128_000);
   });
 
   it('reports zero usage before the model returns official usage', () => {
