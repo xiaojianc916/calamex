@@ -1,4 +1,4 @@
-import { z } from 'zod/v3';
+import { z } from 'zod';
 
 import {
   AI_EDIT_AUTH_LEVELS,
@@ -51,8 +51,8 @@ export const aiEditOperationSchema = z.object({
   sourceSnapshotId: z.string().min(1).nullable().optional(),
   beforeHash: z.string().min(1).nullable(),
   afterHash: z.string().min(1).nullable(),
-  bytesBefore: z.number().int().nonnegative().nullable(),
-  bytesAfter: z.number().int().nonnegative().nullable(),
+  bytesBefore: z.int().nonnegative().nullable(),
+  bytesAfter: z.int().nonnegative().nullable(),
   appliedAt: z.string().min(1),
   reason: z.string().min(1),
   toolCallId: z.string().min(1).nullable(),
@@ -71,7 +71,7 @@ export const aiSnapshotSchema = z.object({
   label: z.string().min(1),
   fileRefs: z.array(z.string().min(1)),
   storageKey: z.string().min(1),
-  sizeBytes: z.number().int().nonnegative(),
+  sizeBytes: z.int().nonnegative(),
   contentAvailable: z.boolean().default(true),
   pinned: z.boolean().default(false),
 });
@@ -112,7 +112,7 @@ export const aiEditSetAuthLevelRequestSchema = z.object({
  */
 export const aiEditListTimelineRequestSchema = z.object({
   taskId: z.string().min(1).nullable().optional(),
-  limit: z.number().int().positive().max(500).optional(),
+  limit: z.int().positive().max(500).optional(),
 });
 
 /**
@@ -226,11 +226,11 @@ const unifiedDiffHunkLineSchema = z
   );
 
 export const aiEditDiffHunkSchema = z.object({
-  hunkIndex: z.number().int().nonnegative(),
-  oldStart: z.number().int().nonnegative(),
-  oldLines: z.number().int().nonnegative(),
-  newStart: z.number().int().nonnegative(),
-  newLines: z.number().int().nonnegative(),
+  hunkIndex: z.int().nonnegative(),
+  oldStart: z.int().nonnegative(),
+  oldLines: z.int().nonnegative(),
+  newStart: z.int().nonnegative(),
+  newLines: z.int().nonnegative(),
   lines: z.array(unifiedDiffHunkLineSchema),
 });
 
@@ -250,8 +250,8 @@ export const aiEditGetDiffPayloadSchema = z.object({
   path: z.string().min(1),
   operationId: z.string().min(1),
   kind: aiEditOperationKindSchema,
-  additions: z.number().int().nonnegative(),
-  deletions: z.number().int().nonnegative(),
+  additions: z.int().nonnegative(),
+  deletions: z.int().nonnegative(),
   hunks: z.array(aiEditDiffHunkSchema),
 });
 
@@ -261,7 +261,7 @@ export const aiEditGetDiffPayloadSchema = z.object({
 export const aiEditRevertHunkRequestSchema = z.object({
   taskId: z.string().min(1),
   path: z.string().min(1),
-  hunkIndex: z.number().int().nonnegative(),
+  hunkIndex: z.int().nonnegative(),
 });
 
 /**
@@ -271,7 +271,7 @@ export const aiEditRevertHunkPayloadSchema = z.object({
   taskId: z.string().min(1),
   path: z.string().min(1),
   operationId: z.string().min(1),
-  hunkIndex: z.number().int().nonnegative(),
+  hunkIndex: z.int().nonnegative(),
   restoredFiles: z.array(z.string().min(1)),
   preRevertSnapshot: aiSnapshotSchema,
   restoredSnapshot: aiSnapshotSchema,
@@ -299,7 +299,7 @@ export const aiEditRevertTaskPayloadSchema = z.object({
  * AED 快照保留策略 schema。
  */
 export const aiEditStorageBudgetSchema = z.object({
-  maxTaskCount: z.number().int().positive(),
-  maxRetentionDays: z.number().int().positive(),
-  warnTaskSizeBytes: z.number().int().positive(),
+  maxTaskCount: z.int().positive(),
+  maxRetentionDays: z.int().positive(),
+  warnTaskSizeBytes: z.int().positive(),
 });

@@ -1,5 +1,5 @@
 import { createTool } from '@mastra/core/tools';
-import { z } from 'zod/v3';
+import { z } from 'zod';
 
 import { LOG_LEVEL_VALUES, type IMastraLogToolsRef } from './file-logger.js';
 

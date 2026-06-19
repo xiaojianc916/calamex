@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia';
 import { computed, ref, shallowRef } from 'vue';
-import { z } from 'zod/v3';
+import { z } from 'zod';
 import type { IAgentSidecarPendingAskUser } from '@/composables/ai/sidecar-ask-user';
 import type {
   IAiAgentClassifyTaskPayload,
@@ -104,7 +104,7 @@ const aiAgentPersistSchema = z.object({
   shouldEnterPlanMode: z.boolean(),
   approvedAt: nullablePersistedTextSchema,
   planId: nullablePersistedTextSchema,
-  planVersion: z.number().int().positive().nullable(),
+  planVersion: z.int().positive().nullable(),
   planStatus: agentPlanStatusSchema.nullable(),
   planSummary: z.string(),
   planRequiresApproval: z.boolean(),

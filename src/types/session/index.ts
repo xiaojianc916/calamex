@@ -1,4 +1,4 @@
-import { z } from 'zod/v3';
+import { z } from 'zod';
 import { WORKBENCH_TAB_LIMITS } from '@/constants/workbench';
 import { WORKBENCH_SIDEBAR_VIEWS } from '@/types/app';
 
@@ -10,14 +10,14 @@ export const SessionWorkbenchSidebarViewSchema = z.enum(WORKBENCH_SIDEBAR_VIEWS)
 export const TabStateSchema = z.object({
   path: z.string().min(1),
   pinned: z.boolean().default(false),
-  order: z.number().int().nonnegative(),
+  order: z.int().nonnegative(),
   kind: SessionTabKindSchema.optional(),
 });
 
 export const EditorViewStateEntrySchema = z.object({
   path: z.string().min(1),
   viewState: EditorViewStateSchema,
-  updatedAt: z.string().datetime(),
+  updatedAt: z.iso.datetime(),
 });
 
 /**
@@ -31,7 +31,7 @@ export const DocumentDraftSchema = z.object({
   path: z.string().min(1),
   content: z.string(),
   baselineContent: z.string(),
-  updatedAt: z.string().datetime(),
+  updatedAt: z.iso.datetime(),
 });
 
 export const SessionWorkbenchStateSchema = z
@@ -60,7 +60,7 @@ export const SessionSnapshotSchema = z.object({
   recentFiles: z.array(z.string()).max(50),
   // 可选 + 默认空数组：旧快照（无 drafts 字段）仍可解析，无需 schemaVersion 迁移。
   drafts: z.array(DocumentDraftSchema).max(WORKBENCH_TAB_LIMITS.maxDraftEntries).default([]),
-  savedAt: z.string().datetime(),
+  savedAt: z.iso.datetime(),
 });
 
 export type TSessionSnapshot = z.infer<typeof SessionSnapshotSchema>;

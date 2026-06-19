@@ -1,4 +1,4 @@
-import { z } from 'zod/v3';
+import { z } from 'zod';
 
 import { aiDiffEditorPreviewSchema } from '@/types/ai/patch.schema';
 import { AI_TOOL_CALL_STATUSES, AI_TOOL_KINDS } from '@/types/ai/thread/constants';
@@ -47,7 +47,7 @@ export const aiThreadToolCallContentSchema = z.discriminatedUnion('type', [
  */
 export const aiThreadToolCallLocationSchema = z.object({
   path: z.string().min(1),
-  line: z.number().int().nonnegative().optional(),
+  line: z.int().nonnegative().optional(),
 });
 
 /* ----- ToolCall entry ----------------------------------------------------- */

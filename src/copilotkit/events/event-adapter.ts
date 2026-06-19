@@ -7,7 +7,7 @@
 
 import type { Message, RunAgentInput } from '@ag-ui/core';
 import { EventType } from '@ag-ui/core';
-import { z } from 'zod/v3';
+import { z } from 'zod';
 
 import type { IAiLanguageModelUsage } from '@/types/ai';
 import type { IAgentSidecarChatRequest } from '@/types/ai/sidecar';

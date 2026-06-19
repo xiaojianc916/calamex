@@ -1,5 +1,5 @@
 import { createTool } from '@mastra/core/tools';
-import { z } from 'zod/v3';
+import { z } from 'zod';
 import { compactModelOutput, truncateModelOutputText } from '../../models/output-budget.js';
 import { createJsonToolModelOutput } from '../../engines/budget/budget.js';
 import type { IAgentContextReferenceInput } from '../../engines/contracts/runtime-input.js';

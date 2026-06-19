@@ -1,4 +1,4 @@
-import { z } from 'zod/v3';
+import { z } from 'zod';
 import { aiContextReferenceSchema } from '@/types/ai/context.schema';
 import {
   aiLanguageModelUsageSchema,
@@ -99,10 +99,10 @@ const unifiedDiffHunkLineSchema = z
   );
 
 const agentDiffHunkSchema = z.object({
-  oldStart: z.number().int().nonnegative(),
-  oldLines: z.number().int().nonnegative(),
-  newStart: z.number().int().nonnegative(),
-  newLines: z.number().int().nonnegative(),
+  oldStart: z.int().nonnegative(),
+  oldLines: z.int().nonnegative(),
+  newStart: z.int().nonnegative(),
+  newLines: z.int().nonnegative(),
   lines: z.array(unifiedDiffHunkLineSchema),
 });
 
@@ -155,7 +155,7 @@ export const agentPlanSchema = z.object({
 export const agentPlanRecordSchema = z.object({
   planId: z.string().min(1),
   threadId: z.string().min(1),
-  version: z.number().int().positive(),
+  version: z.int().positive(),
   status: agentPlanStatusSchema,
   userRequest: z.string(),
   plan: agentPlanSchema,
@@ -243,23 +243,21 @@ export const askUserResultSchema = z.object({
  * 仅做 runtime 校验，不参与 TS 推断链路。
  * ========================================================================== */
 
-export const agentRuntimeEventSchema = z
-  .object({
-    id: z.string().min(1),
-    type: z.enum(AGENT_RUNTIME_EVENT_TYPES),
-    runId: z.string().min(1),
-    sessionId: z.string().min(1),
-    agentId: z.string().min(1),
-    timestamp: z.string().min(1),
-    seq: z.number().int().nonnegative(),
-    schemaVersion: z.literal(AGENT_RUNTIME_EVENT_SCHEMA_VERSION),
-    redacted: z.literal(true),
-    visibility: z.enum(['user', 'debug']),
-    level: z.enum(['debug', 'info', 'warn', 'error']).optional(),
-    parentId: z.string().min(1).optional(),
-    spanId: z.string().min(1).optional(),
-  })
-  .passthrough() as unknown as z.ZodType<TAgentRuntimeEvent>;
+export const agentRuntimeEventSchema = z.looseObject({
+  id: z.string().min(1),
+  type: z.enum(AGENT_RUNTIME_EVENT_TYPES),
+  runId: z.string().min(1),
+  sessionId: z.string().min(1),
+  agentId: z.string().min(1),
+  timestamp: z.string().min(1),
+  seq: z.int().nonnegative(),
+  schemaVersion: z.literal(AGENT_RUNTIME_EVENT_SCHEMA_VERSION),
+  redacted: z.literal(true),
+  visibility: z.enum(['user', 'debug']),
+  level: z.enum(['debug', 'info', 'warn', 'error']).optional(),
+  parentId: z.string().min(1).optional(),
+  spanId: z.string().min(1).optional(),
+}) as unknown as z.ZodType<TAgentRuntimeEvent>;
 
 /* ============================================================================
  * UI events (sidecar response stream)
@@ -279,7 +277,7 @@ export const agentUiEventSchema = z.discriminatedUnion('type', [
     type: z.literal('plan_ready'),
     planId: z.string().min(1),
     threadId: z.string().min(1).optional(),
-    version: z.number().int().positive(),
+    version: z.int().positive(),
     status: agentPlanStatusSchema,
     createdAt: z.string().min(1).optional(),
     updatedAt: z.string().min(1).optional(),
@@ -310,21 +308,17 @@ export const agentUiEventSchema = z.discriminatedUnion('type', [
    * acpUpdate 其余字段以 .passthrough() 原样透传给前端 ACL 归一。 */
   z.object({
     type: z.literal('tool_call'),
-    acpUpdate: z
-      .object({
-        sessionUpdate: z.literal('tool_call'),
-        toolCallId: z.string().min(1),
-      })
-      .passthrough(),
+    acpUpdate: z.looseObject({
+      sessionUpdate: z.literal('tool_call'),
+      toolCallId: z.string().min(1),
+    }),
   }),
   z.object({
     type: z.literal('tool_call_update'),
-    acpUpdate: z
-      .object({
-        sessionUpdate: z.literal('tool_call_update'),
-        toolCallId: z.string().min(1),
-      })
-      .passthrough(),
+    acpUpdate: z.looseObject({
+      sessionUpdate: z.literal('tool_call_update'),
+      toolCallId: z.string().min(1),
+    }),
   }),
   z.object({
     type: z.literal('approval_required'),
@@ -372,7 +366,7 @@ export const agentSidecarHealthPayloadSchema = z.object({
   protocolVersion: z.string().min(1).nullable().optional(),
   implementationVersion: z.string().min(1).nullable().optional(),
   mcp: z.object({
-    configuredServers: z.number().int().nonnegative(),
+    configuredServers: z.int().nonnegative(),
     serverNames: z.array(z.string()),
     errors: z.array(z.string()),
   }),
@@ -382,8 +376,8 @@ export const agentSidecarWarmupPayloadSchema = z.object({
   ok: z.boolean(),
   providerId: z.string().min(1).nullable(),
   origin: z.string().min(1).nullable(),
-  statusCode: z.number().int().positive().nullable(),
-  durationMs: z.number().int().nonnegative(),
+  statusCode: z.int().positive().nullable(),
+  durationMs: z.int().nonnegative(),
   skipped: z.boolean(),
   reason: z.string().min(1).nullable().optional(),
 });
@@ -401,7 +395,7 @@ const agentSidecarBaseRequestSchema = z.object({
   modelConfig: requestScopedModelConfigSchema.optional(),
   threadId: optionalNonEmptyStringSchema,
   planId: optionalNonEmptyStringSchema,
-  planVersion: z.number().int().positive().optional(),
+  planVersion: z.int().positive().optional(),
   planStepId: optionalNonEmptyStringSchema,
 });
 
@@ -416,7 +410,7 @@ export const agentSidecarPlanRequestSchema = agentSidecarBaseRequestSchema.exten
 export const agentSidecarExecuteRequestSchema = agentSidecarBaseRequestSchema.extend({
   goal: requiredNonEmptyStringSchema,
   planId: requiredNonEmptyStringSchema,
-  planVersion: z.number().int().positive(),
+  planVersion: z.int().positive(),
   planStepId: requiredNonEmptyStringSchema,
 });
 
@@ -470,6 +464,6 @@ export const agentSidecarResponsePayloadSchema = z.object({
 
 export const agentSidecarStreamEventPayloadSchema = z.object({
   sessionId: z.string().min(1),
-  seq: z.number().int().nonnegative(),
+  seq: z.int().nonnegative(),
   event: agentUiEventSchema,
 });

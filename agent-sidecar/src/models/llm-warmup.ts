@@ -12,7 +12,7 @@
  */
 import { performance } from 'node:perf_hooks';
 import { getProviderConfig } from '@mastra/core/llm';
-import { z } from 'zod/v3';
+import { z } from 'zod';
 
 const WARMUP_TIMEOUT_MS = 5_000;
 const RECENT_WARMUP_TTL_MS = 60_000;

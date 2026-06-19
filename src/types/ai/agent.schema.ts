@@ -1,4 +1,4 @@
-import { z } from 'zod/v3';
+import { z } from 'zod';
 
 import {
   AI_AGENT_NETWORK_PERMISSIONS,
@@ -78,7 +78,7 @@ export const aiAgentToolResultStatusSchema = z.enum(AI_AGENT_TOOL_RESULT_STATUSE
  * 传 null / undefined / 不传 都视作"未提供",backend 只见到 undefined。
  * ========================================================================== */
 
-const nullishOptional = <T extends z.ZodTypeAny>(schema: T) =>
+const nullishOptional = <T extends z.ZodType>(schema: T) =>
   z.preprocess((value) => (value === null ? undefined : value), schema.optional());
 
 /** 非空字符串(trim 后),可选。常用于 ID / label / path / reason 等文本字段。 */
@@ -121,11 +121,7 @@ export const aiRunCommandToolInputSchema = z.object({
   reason: z.string().trim().min(1),
   cwdPolicy: z.literal('workspace-root'),
   timeoutMs: nullishOptional(
-    z
-      .number()
-      .int()
-      .min(AI_AGENT_RUN_COMMAND_MIN_TIMEOUT_MS)
-      .max(AI_AGENT_RUN_COMMAND_MAX_TIMEOUT_MS),
+    z.int().min(AI_AGENT_RUN_COMMAND_MIN_TIMEOUT_MS).max(AI_AGENT_RUN_COMMAND_MAX_TIMEOUT_MS),
   ),
 });
 
@@ -148,17 +144,17 @@ export const aiProposePatchToolInputSchema = z.object({
 });
 
 export const aiPatchHunkToolInputSchema = z.object({
-  oldStart: z.number().int().nonnegative(),
-  oldLines: z.number().int().nonnegative(),
-  newStart: z.number().int().nonnegative(),
-  newLines: z.number().int().nonnegative(),
+  oldStart: z.int().nonnegative(),
+  oldLines: z.int().nonnegative(),
+  newStart: z.int().nonnegative(),
+  newLines: z.int().nonnegative(),
   lines: z.array(unifiedDiffHunkLineSchema).min(1),
 });
 
 export const aiPatchFileToolInputSchema = z.object({
   path: z.string().trim().min(1),
   originalHash: z.string().trim().min(1),
-  originalModifiedAtMs: nullishOptional(z.number().int().nonnegative()),
+  originalModifiedAtMs: nullishOptional(z.int().nonnegative()),
   hunks: z.array(aiPatchHunkToolInputSchema).min(1),
 });
 
@@ -201,7 +197,7 @@ export const aiAgentToolInputsSchema = nullishOptional(
 
 export const aiTaskPlanStepSchema = z.object({
   id: z.string().trim().min(1),
-  index: z.number().int().nonnegative(),
+  index: z.int().nonnegative(),
   title: z.string().trim().min(1),
   goal: z.string().trim().min(1),
   kind: aiAgentPlanStepKindSchema,
@@ -280,7 +276,7 @@ export const aiAgentListRunsPayloadSchema = z.object({
 export const aiAgentStepWebSourceSummarySchema = z.object({
   id: z.string().trim().min(1),
   title: z.string().trim().min(1),
-  url: z.string().url(),
+  url: z.url(),
   sourceType: aiWebSourceTypeSchema,
   status: aiWebSourceEntryStatusSchema,
   queryPreview: z.string(),

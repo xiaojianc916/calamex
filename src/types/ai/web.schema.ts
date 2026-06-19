@@ -1,4 +1,4 @@
-import { z } from 'zod/v3';
+import { z } from 'zod';
 
 import {
   AI_WEB_ACTIVITY_STATES,
@@ -56,13 +56,13 @@ export const aiWebSourceEntryStatusSchema = z.enum(AI_WEB_SOURCE_ENTRY_STATUSES)
 export const aiWebSearchInputSchema = z.object({
   query: z.string().trim().min(1).max(240),
   intent: aiWebSearchIntentSchema,
-  maxResults: z.number().int().min(1).max(8),
+  maxResults: z.int().min(1).max(8),
   recency: aiWebSearchRecencySchema.optional(),
 });
 
 export const aiWebSearchResultSchema = z.object({
   title: z.string().min(1),
-  url: z.string().url(),
+  url: z.url(),
   snippet: z.string(),
   sourceType: aiWebSourceTypeSchema,
   fetchedAt: z.string().min(1),
@@ -74,22 +74,21 @@ export const aiWebSearchPayloadSchema = z.object({
 
 export const aiWebFetchInputSchema = z.object({
   url: z.string().trim().min(1).refine(isAllowedPublicHttpUrl, {
-    message: 'web_fetch 只允许访问公网 http/https URL。',
+    error: 'web_fetch 只允许访问公网 http/https URL。',
   }),
   reason: z.string().trim().min(1).max(240),
   maxBytes: z
-    .number()
     .int()
     .min(1)
     .max(512 * 1024),
 });
 
 export const aiWebFetchResultSchema = z.object({
-  url: z.string().url(),
+  url: z.url(),
   title: z.string(),
   textRef: z.string().min(1),
   excerpt: z.string(),
-  bytes: z.number().int().nonnegative(),
+  bytes: z.int().nonnegative(),
   fetchedAt: z.string().min(1),
   truncated: z.boolean(),
 });

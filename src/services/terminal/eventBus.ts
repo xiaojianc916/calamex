@@ -1,5 +1,5 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { z } from 'zod/v3';
+import { z } from 'zod';
 
 import { commands } from '@/bindings/tauri';
 import type {
@@ -40,23 +40,23 @@ const terminalDataEventSchema = z.object({
   sessionId: z.string(),
   data: z.string(),
   source: z.enum(['interactive', 'run', 'injected_reset', 'injected_separator']).optional(),
-  seq: z.number().int().nonnegative().optional(),
+  seq: z.int().nonnegative().optional(),
   runId: z.string().optional(),
-  runSeq: z.number().int().positive().optional(),
+  runSeq: z.int().positive().optional(),
 });
 
 const terminalRunCompletedEventSchema = z.object({
   sessionId: z.string(),
   runId: z.string(),
-  exitCode: z.number().int().nullable(),
+  exitCode: z.int().nullable(),
   finishedAt: z.string(),
 });
 
 const terminalRunStartedEventSchema = z.object({
   sessionId: z.string(),
   runId: z.string(),
-  startedAtMs: z.number().int().nonnegative(),
-  pid: z.number().int().nonnegative(),
+  startedAtMs: z.int().nonnegative(),
+  pid: z.int().nonnegative(),
 });
 
 const terminalRuntimeStateSchema = z.enum([
@@ -71,12 +71,12 @@ const terminalSessionStateChangedEventSchema = z.object({
   sessionId: z.string(),
   from: terminalRuntimeStateSchema,
   to: terminalRuntimeStateSchema,
-  atMs: z.number().int().nonnegative(),
+  atMs: z.int().nonnegative(),
 });
 
 const terminalExitEventSchema = z.object({
   sessionId: z.string(),
-  exitCode: z.number().int().nullable(),
+  exitCode: z.int().nullable(),
 });
 
 // ---------------------------------------------------------------------------

@@ -6,7 +6,7 @@ import { describe, it } from 'node:test';
 import { makeToolExecutionContext } from '../../test-support/tool-context.js';
 
 import { createTool } from '@mastra/core/tools';
-import { z } from 'zod/v3';
+import { z } from 'zod';
 
 import { createMcpGatewayWarmPool } from './index.js';
 import {

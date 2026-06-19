@@ -112,7 +112,7 @@ useCopilotContext({
 });
 
 try {
-  useFrontendTool({ name: '*', parameters: z.object({}).passthrough(), handler: async () => 'ok' });
+  useFrontendTool({ name: '*', parameters: z.looseObject({}), handler: async () => 'ok' });
 } catch {
   /* provider not ready */
 }

@@ -1,4 +1,4 @@
-import { z } from 'zod/v3';
+import { z } from 'zod';
 import {
   aiAgentClassifyTaskPayloadSchema,
   aiAgentClassifyTaskRequestSchema,
@@ -327,7 +327,7 @@ export const aiConversationTitlePayloadSchema = z.object({
  * Suggestion pool
  * ============================================================================ */
 export const aiSuggestionPoolRequestSchema = z.object({
-  count: z.number().int().min(SUGGESTION_POOL_MIN_COUNT).max(SUGGESTION_POOL_MAX_COUNT),
+  count: z.int().min(SUGGESTION_POOL_MIN_COUNT).max(SUGGESTION_POOL_MAX_COUNT),
   locale: z.string().min(1),
   topics: z.array(z.string().min(1)).min(1).max(SUGGESTION_POOL_TOPICS_MAX),
 });
@@ -354,13 +354,13 @@ export const aiPatchSetSchema = z.object({
     z.object({
       path: z.string(),
       originalHash: z.string(),
-      originalModifiedAtMs: z.number().int().nonnegative().optional().nullable(),
+      originalModifiedAtMs: z.int().nonnegative().optional().nullable(),
       hunks: z.array(
         z.object({
-          oldStart: z.number().int().nonnegative(),
-          oldLines: z.number().int().nonnegative(),
-          newStart: z.number().int().nonnegative(),
-          newLines: z.number().int().nonnegative(),
+          oldStart: z.int().nonnegative(),
+          oldLines: z.int().nonnegative(),
+          newStart: z.int().nonnegative(),
+          newLines: z.int().nonnegative(),
           lines: z.array(aiUnifiedDiffHunkLineSchema),
         }),
       ),

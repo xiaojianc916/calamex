@@ -1,4 +1,4 @@
-import { z } from 'zod/v3';
+import { z } from 'zod';
 import {
   AGENT_RUNTIME_EVENT_SCHEMA_VERSION,
   AGENT_RUNTIME_EVENT_TYPES,

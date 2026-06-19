@@ -1,4 +1,4 @@
-import { z } from 'zod/v3';
+import { z } from 'zod';
 import { WORKBENCH_SIDEBAR_VIEWS } from '@/types/app';
 
 export const StartupShellTabKindSchema = z.enum(['text', 'image']);
@@ -9,7 +9,7 @@ export const StartupShellTabSchema = z.object({
   path: z.string().min(1),
   title: z.string().min(1),
   kind: StartupShellTabKindSchema,
-  order: z.number().int().nonnegative(),
+  order: z.int().nonnegative(),
   isActive: z.boolean(),
 });
 

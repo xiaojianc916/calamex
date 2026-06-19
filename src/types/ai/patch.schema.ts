@@ -1,4 +1,4 @@
-import { z } from 'zod/v3';
+import { z } from 'zod';
 
 import { AI_AGENT_CHANGED_FILE_STATUSES, AI_DIFF_PREVIEW_LINE_KINDS } from '@/types/ai/patch';
 
@@ -9,8 +9,8 @@ export const aiDiffPreviewLineKindSchema = z.enum(AI_DIFF_PREVIEW_LINE_KINDS);
 export const aiAgentChangedFileSchema = z.object({
   path: z.string().min(1),
   status: aiAgentChangedFileStatusSchema,
-  additions: z.number().int().nonnegative(),
-  deletions: z.number().int().nonnegative(),
+  additions: z.int().nonnegative(),
+  deletions: z.int().nonnegative(),
   diffRef: z.string().min(1),
   rollbackRef: z.string().min(1).optional(),
 });
@@ -20,8 +20,8 @@ export const aiAgentPatchSummarySchema = z.object({
   runId: z.string().min(1),
   stepId: z.string().min(1),
   files: z.array(aiAgentChangedFileSchema),
-  totalAdditions: z.number().int().nonnegative(),
-  totalDeletions: z.number().int().nonnegative(),
+  totalAdditions: z.int().nonnegative(),
+  totalDeletions: z.int().nonnegative(),
   patchRef: z.string().min(1),
   appliedAt: z.string().min(1).optional(),
   revertedAt: z.string().min(1).optional(),
@@ -32,8 +32,8 @@ export const aiDiffPreviewLineSchema = z.object({
   id: z.string().min(1),
   kind: aiDiffPreviewLineKindSchema,
   content: z.string(),
-  oldLineNumber: z.number().int().nonnegative().optional(),
-  newLineNumber: z.number().int().nonnegative().optional(),
+  oldLineNumber: z.int().nonnegative().optional(),
+  newLineNumber: z.int().nonnegative().optional(),
 });
 
 export const aiDiffHunkPreviewSchema = z.object({

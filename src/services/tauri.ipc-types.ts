@@ -1,4 +1,4 @@
-import type { z } from 'zod/v3';
+import type { z } from 'zod';
 
 export type TIpcAuditLevel = 'none' | 'info' | 'sensitive';
 
@@ -33,10 +33,7 @@ export interface IPayloadMetrics {
   bytes: number;
 }
 
-export interface IDefineIpcOptions<
-  TInSchema extends z.ZodTypeAny,
-  TOutSchema extends z.ZodTypeAny,
-> {
+export interface IDefineIpcOptions<TInSchema extends z.ZodType, TOutSchema extends z.ZodType> {
   name: string;
   guardHint: string;
   inSchema: TInSchema;
@@ -53,15 +50,15 @@ export interface IDefineIpcOptions<
   ) => Record<string, unknown> | undefined;
 }
 
-export interface IIpcContract<TInSchema extends z.ZodTypeAny, TOutSchema extends z.ZodTypeAny> {
+export interface IIpcContract<TInSchema extends z.ZodType, TOutSchema extends z.ZodType> {
   inSchema: TInSchema;
   outSchema: TOutSchema;
 }
 
-export type TIpcFactoryOptions<
-  TInSchema extends z.ZodTypeAny,
-  TOutSchema extends z.ZodTypeAny,
-> = Omit<IDefineIpcOptions<TInSchema, TOutSchema>, 'name' | 'guardHint' | 'inSchema' | 'outSchema'>;
+export type TIpcFactoryOptions<TInSchema extends z.ZodType, TOutSchema extends z.ZodType> = Omit<
+  IDefineIpcOptions<TInSchema, TOutSchema>,
+  'name' | 'guardHint' | 'inSchema' | 'outSchema'
+>;
 
 export interface ISpectaCommandOptions {
   command: string;

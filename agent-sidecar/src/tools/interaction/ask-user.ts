@@ -1,6 +1,6 @@
 import type { ToolsInput } from '@mastra/core/agent';
 import { createTool } from '@mastra/core/tools';
-import { z } from 'zod/v3';
+import { z } from 'zod';
 import { createJsonToolModelOutput } from '../../engines/budget/budget.js';
 
 /**

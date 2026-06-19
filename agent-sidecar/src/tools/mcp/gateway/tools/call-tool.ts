@@ -1,5 +1,5 @@
 import { createTool } from '@mastra/core/tools';
-import { z } from 'zod/v3';
+import { z } from 'zod';
 import { compactModelOutput } from '../../../../models/output-budget.js';
 import { createJsonToolModelOutput } from '../../../../engines/budget/budget.js';
 import { mcpGatewayCallInputSchema, unwrapGatewayToolInput } from '../helpers.js';

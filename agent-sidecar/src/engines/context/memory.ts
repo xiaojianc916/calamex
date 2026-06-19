@@ -12,7 +12,7 @@ import {
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { z } from 'zod/v3';
+import { z } from 'zod';
 
 import type { IAgentRuntimeInput } from '../contracts/runtime-input.js';
 

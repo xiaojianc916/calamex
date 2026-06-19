@@ -1,4 +1,4 @@
-import { z } from 'zod/v3';
+import { z } from 'zod';
 
 export const aiContextKindSchema = z.enum([
   'current-file',
@@ -23,18 +23,18 @@ export const aiContextKindSchema = z.enum([
  */
 export const aiContextRangeSchema = z
   .object({
-    startLine: z.number().int().positive(),
-    endLine: z.number().int().positive(),
+    startLine: z.int().positive(),
+    endLine: z.int().positive(),
   })
   .refine((range) => range.endLine >= range.startLine, {
-    message: 'endLine must be greater than or equal to startLine.',
     path: ['endLine'],
+    error: 'endLine must be greater than or equal to startLine.',
   });
 
 export const aiImageAttachmentPreviewSchema = z.object({
   src: z.string().min(1),
-  width: z.number().int().positive().nullable(),
-  height: z.number().int().positive().nullable(),
+  width: z.int().positive().nullable(),
+  height: z.int().positive().nullable(),
   mimeType: z.string().min(1),
 });
 

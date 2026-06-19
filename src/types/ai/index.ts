@@ -1,4 +1,4 @@
-import type { z } from 'zod/v3';
+import type { z } from 'zod';
 
 import type { IAiContextReference, IAiImageAttachmentPreview } from '@/types/ai/context';
 import type { IAiAgentPatchSummary } from '@/types/ai/patch';
