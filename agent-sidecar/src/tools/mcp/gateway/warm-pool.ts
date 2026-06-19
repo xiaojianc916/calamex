@@ -151,10 +151,23 @@ export class McpGatewayWarmPool {
       this.emitCatalogMetric(input, true, startedAt, cached);
       return cached;
     }
-    const catalog = await this.withServer(input, (bundle) => {
-      this.cacheCatalogVariants(input.serverName, bundle);
-      return this.catalog.get(catalogKey) ?? createCatalogFromBundle(input.serverName, input.profile, bundle);
-    });
+    let catalog: IMcpGatewayCatalog;
+    try {
+      catalog = await this.withServer(input, (bundle) => {
+        this.cacheCatalogVariants(input.serverName, bundle);
+        return this.catalog.get(catalogKey) ?? createCatalogFromBundle(input.serverName, input.profile, bundle);
+      });
+    } catch (error) {
+      // bundle 可能在创建成功后、被本次 withServer 取用前，因并发 evictOverflow
+      // 抖动而断开（warm 上限 < server 总数时，刚建好但尚未标记 active 的 entry
+      // 会先成为「最旧」项被淘汰）。catalog 已在 bundle 创建时缓存，回退命中缓存，
+      // 与 listAllToolsUncached 注释承诺的「被 evict 的服务走缓存」契约一致。
+      const cachedAfterEvict = this.catalog.get(catalogKey);
+      if (!cachedAfterEvict) {
+        throw error;
+      }
+      catalog = cachedAfterEvict;
+    }
     this.emitCatalogMetric(input, false, startedAt, catalog);
     return catalog;
   }
