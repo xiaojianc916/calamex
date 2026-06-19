@@ -47,13 +47,10 @@ fn model_config_to_ext(config: AgentSidecarModelConfigPayload) -> crate::acp::Ex
 /// 逐请求模型配置补齐（可注入 fetch 版，供测试）：`cfg` 为 `None` 时调 `fetch`
 /// 组装并填入；已携带时原样保留且不调 `fetch`。`fetch` 出错时错误原样上抛，
 /// 不写入半成品配置。
-fn ensure_model_config_with<F>(
+fn ensure_model_config_with(
     cfg: &mut Option<AgentSidecarModelConfigPayload>,
-    fetch: F,
-) -> Result<(), String>
-where
-    F: FnOnce() -> Result<AgentSidecarModelConfigPayload, String>,
-{
+    fetch: impl FnOnce() -> Result<AgentSidecarModelConfigPayload, String>,
+) -> Result<(), String> {
     if cfg.is_none() {
         *cfg = Some(fetch()?);
     }

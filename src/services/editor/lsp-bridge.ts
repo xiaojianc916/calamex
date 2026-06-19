@@ -26,6 +26,7 @@ import type { Extension, Text } from '@codemirror/state';
 import { EditorView, hoverTooltip, type Tooltip, type ViewUpdate } from '@codemirror/view';
 import type { UnlistenFn } from '@tauri-apps/api/event';
 import { highlightCodeToHtml } from '@/services/editor/codemirror-static-highlight';
+import { normalizeFileSystemPath } from '@/utils/file/path';
 
 export const lspCompletionTheme = EditorView.theme({}, {});
 
@@ -188,18 +189,13 @@ export interface LspContentChange {
  * 这里统一剥掉前缀再归一化。
  */
 function normalizePath(p: string): string {
-  // 去掉 Windows 扩展路径前缀 \\?\ 或 \\.\ (含正斜杠变体)
-  let cleaned = p;
-  if (cleaned.startsWith('\\\\?\\UNC\\')) {
-    cleaned = `\\\\${cleaned.slice('\\\\?\\UNC\\'.length)}`;
-  } else if (cleaned.startsWith('\\\\?\\') || cleaned.startsWith('\\\\.\\')) {
-    cleaned = cleaned.slice('\\\\?\\'.length);
-  } else if (cleaned.startsWith('//?/UNC/')) {
-    cleaned = `//${cleaned.slice('//?/UNC/'.length)}`;
-  } else if (cleaned.startsWith('//?/') || cleaned.startsWith('//./')) {
-    cleaned = cleaned.slice('//?/'.length);
-  }
-  return cleaned.replace(/\\/g, '/');
+  // 复用 utils/file/path.ts 的统一路径归一化逻辑，消除跨模块重复实现。
+  // foldWindowsCase: false 保持与原函数一致——不做大小写折叠，仅剥前缀 + 反斜杠转正斜杠。
+  return normalizeFileSystemPath(p, {
+    collapseDuplicateSeparators: true,
+    trimTrailingSeparator: false,
+    foldWindowsCase: false,
+  });
 }
 
 const docPositionToLsp = (doc: Text, position: number): LspPosition => {
@@ -466,17 +462,18 @@ class LspBridge {
   /** 向(重新)启动的服务重放所有已打开文档的最新内容，恢复服务端文档状态。 */
   private async replayOpenDocuments(): Promise<void> {
     const docs = Array.from(this.openDocuments.values());
-    for (const doc of docs) {
-      try {
-        await tauriInvoke<void>('lsp_did_open', {
+    // 并发重放：崩溃恢复时多文档无需串行等待，Promise.all 全部并行发送 didOpen。
+    await Promise.all(
+      docs.map((doc) =>
+        tauriInvoke<void>('lsp_did_open', {
           filePath: doc.filePath,
           content: doc.content,
           languageId: doc.languageId,
-        });
-      } catch (err) {
-        console.warn('[lsp-bridge] replay didOpen failed', doc.filePath, err);
-      }
-    }
+        }).catch((err) => {
+          console.warn('[lsp-bridge] replay didOpen failed', doc.filePath, err);
+        }),
+      ),
+    );
   }
 
   private emitState(e: BridgeStateEvent) {

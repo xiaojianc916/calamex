@@ -176,6 +176,9 @@ importers:
       consola:
         specifier: ^3.4.2
         version: 3.4.2
+      dotenv:
+        specifier: ^17.4.2
+        version: 17.4.2
       idb-keyval:
         specifier: ^6.2.5
         version: 6.2.5

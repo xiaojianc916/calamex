@@ -91,6 +91,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "consola": "^3.4.2",
+    "dotenv": "^17.4.2",
     "idb-keyval": "^6.2.5",
     "katex": "^0.17.0",
     "markstream-vue": "1.0.3",

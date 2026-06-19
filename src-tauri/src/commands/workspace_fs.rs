@@ -633,12 +633,23 @@ fn read_workspace_entries(directory: &Path) -> Result<Vec<WorkspaceEntry>, Strin
         });
     }
 
-    entries.sort_by_cached_key(|entry| {
-        (
-            entry.kind.as_str() != "directory",
-            entry.name.to_lowercase(),
-            entry.name.clone(),
-        )
+    entries.sort_by(|a, b| {
+        // 目录在前："directory" 的 kind 应排在非 directory 之前。
+        let a_is_dir = a.kind.as_str() == "directory";
+        let b_is_dir = b.kind.as_str() == "directory";
+        match a_is_dir.cmp(&b_is_dir) {
+            std::cmp::Ordering::Equal => {
+                // 同类：先按 lowercase 比较，再按原始 name 比较保持稳定排序。
+                let lower_cmp = a.name.to_lowercase().cmp(&b.name.to_lowercase());
+                if lower_cmp == std::cmp::Ordering::Equal {
+                    a.name.cmp(&b.name)
+                } else {
+                    lower_cmp
+                }
+            }
+            // a_is_dir=true(目录) 应排在 b_is_dir=false(文件) 前面 => reverse
+            other => other.reverse(),
+        }
     });
     Ok(entries)
 }

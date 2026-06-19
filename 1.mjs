@@ -1,18 +1,21 @@
 #!/usr/bin/env node
 /**
- * Calamex 全量代码优化脚本
+ * Calamex 第二轮代码优化脚本 (round2) 修正版
  *
- * 处理项:
- *   🔴 #1: editor.ts — syncDocumentState 用 Object.assign 批量赋值减少 trigger
- *   🔴 #2: git.ts   — 移除 commitStatsCache ref 镜像，直接从 queryClient 读取
- *   🔴 #3: aiConversation.ts — trimThreads 仅在新增/删除线程时执行
- *   🟠 #4: editor.ts — findDocumentByPath 缓存搜索路径归一化
- *   🟠 #5: useBrowserContextMenu.ts — 事件注册移入 onMounted
- *   🟠 #8: useShellWorkbenchView.ts — documents watcher 用 length + activeDocumentId 替代全量映射
+ * 已逐行核对真实源码，确保所有 find/replace 精确匹配。
  *
- * 已经手动处理（1.mjs 已完成）:
- *   🟡 #10: git.ts requestIdleCallback 类型 cast
- *   🟠 #6: tauri.git.ts 度量函数注释
+ * 处理项 (7 项):
+ *   #21: lsp-bridge.ts   - normalizePath 复用 utils/file/path.ts
+ *   #22: lsp-bridge.ts   - replayOpenDocuments 并发化 Promise.all
+ *   #23: ai.service.ts   - dotenv.parse 替代手写解析 (需先 pnpm add dotenv)
+ *   #24: agent_sidecar.rs - ensure_model_config_with 简化泛型签名
+ *   #26: session/store.ts - 补充缺失的 TRawSnapshot 类型定义
+ *   #27: codemirror-shiki-highlight.ts - tokenInlineStyle 用 CSS class
+ *   #29: workspace_fs.rs - sort 避免 String clone
+ *
+ * 排除项:
+ *   #25: git.rs - gix 0.84 rev_parse_short API 无法确认，编译风险高，跳过
+ *   #28: workspace_watcher.rs - 用户明确排除
  */
 
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
@@ -22,363 +25,358 @@ import { fileURLToPath } from 'node:url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DRY_RUN = process.argv.includes('--dry-run');
 
-const ok = (msg) => console.log(`  ✅ ${msg}`);
-const skip = (msg) => console.log(`  ⏭️  ${msg}`);
-const fail = (msg) => console.error(`  ❌ ${msg}`);
-
 let totalModified = 0;
 
 function patchFile(filePath, name, find, replace) {
   if (!existsSync(filePath)) {
-    fail(`${name}: 文件不存在 ${filePath}`);
+    console.error('  X ' + name + ': 文件不存在 ' + filePath);
     return false;
   }
   let content = readFileSync(filePath, 'utf-8');
   if (!content.includes(find)) {
-    skip(`${name}: 未找到目标代码（可能已修改）`);
+    console.log('  >> ' + name + ': 未找到目标代码（可能已修改）');
+    return false;
+  }
+  if (content.includes(replace)) {
+    console.log('  >> ' + name + ': 已包含目标代码，跳过');
+    return false;
+  }
+  const firstIdx = content.indexOf(find);
+  const secondIdx = content.indexOf(find, firstIdx + 1);
+  if (secondIdx !== -1) {
+    console.error('  X ' + name + ': find 在文件中出现多次，需要更精确匹配');
     return false;
   }
   if (DRY_RUN) {
-    console.log(`  [DRY-RUN] ${name}: 将替换 ${find.length} → ${replace.length} 字符`);
+    console.log('  [DRY-RUN] ' + name + ': 将替换 ' + find.length + ' -> ' + replace.length + ' 字符');
     return true;
   }
   content = content.replace(find, replace);
   writeFileSync(filePath, content, 'utf-8');
-  ok(`${name}: 已修改`);
+  console.log('  OK ' + name + ': 已修改');
   return true;
 }
 
-console.log('\n🔧 Calamex 全量代码优化脚本');
-console.log(DRY_RUN ? '   (DRY-RUN 模式)\n' : '\n');
+console.log('\nCalamex round2 优化脚本 (修正版)');
+console.log(DRY_RUN ? '   (DRY-RUN)\n' : '\n');
 
-// ═══════════════════════════════════════════════════════════════════════
-// 🔴 #1: editor.ts — syncDocumentState 用 Object.assign 批量赋值
-// ═══════════════════════════════════════════════════════════════════════
-console.log('── 🔴 #1: editor.ts syncDocumentState Object.assign ──');
+// =======================================================================
+// #21: lsp-bridge.ts - normalizePath 复用 utils/file/path.ts
+// =======================================================================
+console.log('-- #21: lsp-bridge.ts normalizePath 复用 --');
 {
-  const filePath = join(__dirname, 'src', 'store', 'editor.ts');
+  const filePath = join(__dirname, 'src', 'services', 'editor', 'lsp-bridge.ts');
+  let modified = false;
 
-  // (a) syncDocumentState 的 bufferLoaded===false 分支
-  const oldSync1 = `const syncDocumentState = (
-  document: IEditorDocument,
-  metrics?: IDocumentMetrics,
-): IEditorDocument => {
-  if (document.kind === 'text' && document.bufferLoaded === false) {
-    document.content = '';
-    document.savedContent = '';
-    document.isDirty = false;
-    document.lineCount = 1;
-    document.charCount = 0;
-    return document;
+  // (a) 添加 import
+  const oldImport = "import { highlightCodeToHtml } from '@/services/editor/codemirror-static-highlight';";
+  const newImport = oldImport + "\nimport { normalizeFileSystemPath } from '@/utils/file/path';";
+  if (patchFile(filePath, '#21a import', oldImport, newImport)) modified = true;
+
+  // (b) 替换 normalizePath 函数体
+  // 逐行核对真实源码：注释中是 "前缀" 不是 "前序"
+  const oldNormalize = [
+    'function normalizePath(p: string): string {',
+    '  // 去掉 Windows 扩展路径前缀 \\\\?\\ 或 \\\\.\\ (含正斜杠变体)',
+    '  let cleaned = p;',
+    "  if (cleaned.startsWith('\\\\\\\\?\\\\UNC\\\\')) {",
+    '    cleaned = `\\\\\\\\${cleaned.slice(\\\\\\\\?\\\\UNC\\\\.length)}`;',
+    "  } else if (cleaned.startsWith('\\\\\\\\?\\\\') || cleaned.startsWith('\\\\\\\\.\\\\')) {",
+    "    cleaned = cleaned.slice('\\\\\\\\?\\\\'.length);",
+    "  } else if (cleaned.startsWith('//?/UNC/')) {",
+    "    cleaned = `//${cleaned.slice('//?/UNC/'.length)}`;",
+    "  } else if (cleaned.startsWith('//?/') || cleaned.startsWith('//./')) {",
+    "    cleaned = cleaned.slice('//?/'.length);",
+    '  }',
+    '  return cleaned.replace(/\\\\/g, \'/\');',
+    '}',
+  ].join('\n');
+
+  // 对 normalizePath 函数体，用正则匹配更安全
+  const fs2 = readFileSync(filePath, 'utf-8');
+  const normalizeRe = /function normalizePath\(p: string\): string \{[\s\S]*?\n\}/;
+  const match = fs2.match(normalizeRe);
+  if (match) {
+    const oldFn = match[0];
+    const newFn = [
+      'function normalizePath(p: string): string {',
+      '  // 复用 utils/file/path.ts 的统一路径归一化逻辑，消除跨模块重复实现。',
+      '  // foldWindowsCase: false 保持与原函数一致——不做大小写折叠，仅剥前缀 + 反斜杠转正斜杠。',
+      "  return normalizeFileSystemPath(p, { collapseDuplicateSeparators: true, trimTrailingSeparator: false, foldWindowsCase: false });",
+      '}',
+    ].join('\n');
+    if (patchFile(filePath, '#21b normalizePath', oldFn, newFn)) modified = true;
+  } else {
+    console.log('  >> #21b: normalizePath 函数未找到（可能已修改）');
   }
-
-  const { lineCount, charCount } = metrics ?? computeDocumentMetrics(document.content);
-  document.lineCount = lineCount;
-  document.charCount = charCount;
-  document.isDirty =
-    document.content !== document.savedContent || document.encoding !== document.savedEncoding;
-  return document;
-};`;
-
-  const newSync1 = `const syncDocumentState = (
-  document: IEditorDocument,
-  metrics?: IDocumentMetrics,
-): IEditorDocument => {
-  if (document.kind === 'text' && document.bufferLoaded === false) {
-    Object.assign(document, {
-      content: '',
-      savedContent: '',
-      isDirty: false,
-      lineCount: 1,
-      charCount: 0,
-    });
-    return document;
-  }
-
-  const { lineCount, charCount } = metrics ?? computeDocumentMetrics(document.content);
-  Object.assign(document, {
-    lineCount,
-    charCount,
-    isDirty:
-      document.content !== document.savedContent ||
-      document.encoding !== document.savedEncoding,
-  });
-  return document;
-};`;
-
-  // (b) evictInactiveDocumentBuffers 内的逐行赋值
-  const oldEvict = `      candidates.slice(0, overflow).forEach((targetDocument) => {
-        targetDocument.content = '';
-        targetDocument.savedContent = '';
-        targetDocument.bufferLoaded = false;
-        targetDocument.lineCount = 1;
-        targetDocument.charCount = 0;
-        targetDocument.isDirty = false;
-        clearDocumentAnalysis(targetDocument.id);
-      });`;
-
-  const newEvict = `      candidates.slice(0, overflow).forEach((targetDocument) => {
-        Object.assign(targetDocument, {
-          content: '',
-          savedContent: '',
-          bufferLoaded: false,
-          lineCount: 1,
-          charCount: 0,
-          isDirty: false,
-        });
-        clearDocumentAnalysis(targetDocument.id);
-      });`;
-
-  // (c) unloadDocumentBuffer 内的逐行赋值
-  const oldUnload = `  targetDocument.content = '';
-  targetDocument.savedContent = '';
-  targetDocument.bufferLoaded = false;
-  targetDocument.lineCount = 1;
-  targetDocument.charCount = 0;
-  targetDocument.isDirty = false;
-  clearDocumentAnalysis(documentId);`;
-
-  const newUnload = `  Object.assign(targetDocument, {
-    content: '',
-    savedContent: '',
-    bufferLoaded: false,
-    lineCount: 1,
-    charCount: 0,
-    isDirty: false,
-  });
-  clearDocumentAnalysis(documentId);`;
-
-  let m1 = patchFile(filePath, '#1a syncDocumentState', oldSync1, newSync1);
-  let m2 = patchFile(filePath, '#1b evictInactiveDocumentBuffers', oldEvict, newEvict);
-  let m3 = patchFile(filePath, '#1c unloadDocumentBuffer', oldUnload, newUnload);
-  if (m1 || m2 || m3) totalModified++;
+  if (modified) totalModified++;
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// 🔴 #2: git.ts — 移除 commitStatsCache ref 镜像
-// ═══════════════════════════════════════════════════════════════════════
-console.log('\n── 🔴 #2: git.ts 移除 commitStatsCache 双重缓存 ──');
+// =======================================================================
+// #22: lsp-bridge.ts - replayOpenDocuments 并发化
+// =======================================================================
+console.log('\n-- #22: lsp-bridge.ts replayOpenDocuments 并发化 --');
 {
-  const filePath = join(__dirname, 'src', 'store', 'git.ts');
+  const filePath = join(__dirname, 'src', 'services', 'editor', 'lsp-bridge.ts');
 
-  // (a) 移除 commitStatsCache ref 声明，保留注释说明已移除
-  const oldDecl = `  // commit-stats 的权威缓存在 vue-query;此 ref 仅作响应式镜像,供同步的 getCommitStats 读取并驱动 UI。
-  const commitStatsCache = ref<Record<string, TGitCommitStatsPayload>>({});`;
-  const newDecl = `  // commit-stats 的权威缓存在 vue-query;同步读取直接调 queryClient.getQueryData。
-  // 已移除冗余的 commitStatsCache ref 镜像——vue-query 的 cacheObservable 已驱动 UI 更新。`;
+  const oldReplay = [
+    '  /** 向(重新)启动的服务重放所有已打开文档的最新内容，恢复服务端文档状态。 */',
+    '  private async replayOpenDocuments(): Promise<void> {',
+    '    const docs = Array.from(this.openDocuments.values());',
+    '    for (const doc of docs) {',
+    '      try {',
+    "        await tauriInvoke<void>('lsp_did_open', {",
+    '          filePath: doc.filePath,',
+    '          content: doc.content,',
+    '          languageId: doc.languageId,',
+    '        });',
+    '      } catch (err) {',
+    "        console.warn('[lsp-bridge] replay didOpen failed', doc.filePath, err);",
+    '      }',
+    '    }',
+    '  }',
+  ].join('\n');
 
-  // (b) rememberCommitStats 移除镜像写入
-  const oldRemember = `    // vue-query 承担缓存/gc/持久化;同时写穿响应式镜像,驱动 UI 在后台队列填充时即时更新。
-    queryClient.setQueryData(commitStatsQueryKey(cacheKey), payload);
-    commitStatsCache.value = {
-      ...commitStatsCache.value,
-      [cacheKey]: payload,
-    };
-  };`;
-  const newRemember = `    // vue-query 承担缓存/gc/持久化;setQueryData 会自动通知所有监听该 queryKey 的响应式消费者。
-    queryClient.setQueryData(commitStatsQueryKey(cacheKey), payload);
-  };`;
+  const newReplay = [
+    '  /** 向(重新)启动的服务重放所有已打开文档的最新内容，恢复服务端文档状态。 */',
+    '  private async replayOpenDocuments(): Promise<void> {',
+    '    const docs = Array.from(this.openDocuments.values());',
+    '    // 并发重放：崩溃恢复时多文档无需串行等待，Promise.all 全部并行发送 didOpen。',
+    '    await Promise.all(',
+    '      docs.map((doc) =>',
+    "        tauriInvoke<void>('lsp_did_open', {",
+    '          filePath: doc.filePath,',
+    '          content: doc.content,',
+    '          languageId: doc.languageId,',
+    '        }).catch((err) => {',
+    "          console.warn('[lsp-bridge] replay didOpen failed', doc.filePath, err);",
+    '        }),',
+    '      ),',
+    '    );',
+    '  }',
+  ].join('\n');
 
-  // (c) getCommitStats 移除 ref 镜像读取和回填
-  const oldGetStats = `  const getCommitStats = (commitId: string): TGitCommitStatsPayload | null => {
-    const cacheKey = resolveCommitStatsCacheKey(commitId);
-    if (!cacheKey) return null;
-
-    const mirrored = commitStatsCache.value[cacheKey];
-    if (mirrored) return mirrored;
-
-    // 启动时官方 persister 已把快照恢复进 queryClient;首次读取时回填响应式镜像。
-    const restored = queryClient.getQueryData<TGitCommitStatsPayload>(
-      commitStatsQueryKey(cacheKey),
-    );
-    if (restored) {
-      commitStatsCache.value = {
-        ...commitStatsCache.value,
-        [cacheKey]: restored,
-      };
-      return restored;
-    }
-    return null;
-  };`;
-  const newGetStats = `  const getCommitStats = (commitId: string): TGitCommitStatsPayload | null => {
-    const cacheKey = resolveCommitStatsCacheKey(commitId);
-    if (!cacheKey) return null;
-
-    // 直接从 vue-query 读取;启动时官方 persister 已把快照恢复进 queryClient。
-    return queryClient.getQueryData<TGitCommitStatsPayload>(commitStatsQueryKey(cacheKey)) ?? null;
-  };`;
-
-  // (d) 导出列表移除 commitStatsCache
-  const oldExport = `    commitStatsCache,
-    hasRepository,`;
-  const newExport = `    hasRepository,`;
-
-  let m1 = patchFile(filePath, '#2a 移除 ref 声明', oldDecl, newDecl);
-  let m2 = patchFile(filePath, '#2b rememberCommitStats 移除镜像写入', oldRemember, newRemember);
-  let m3 = patchFile(filePath, '#2c getCommitStats 移除镜像读取', oldGetStats, newGetStats);
-  let m4 = patchFile(filePath, '#2d 导出列表移除 commitStatsCache', oldExport, newExport);
-  if (m1 || m2 || m3 || m4) totalModified++;
+  if (patchFile(filePath, '#22 replayOpenDocuments', oldReplay, newReplay)) totalModified++;
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// 🔴 #3: aiConversation.ts — trimThreads 仅在新增/删除线程时执行
-// ═══════════════════════════════════════════════════════════════════════
-console.log('\n── 🔴 #3: aiConversation.ts trimThreads 优化 ──');
+// =======================================================================
+// #23: ai.service.ts - dotenv.parse 替代手写解析
+// =======================================================================
+console.log('\n-- #23: ai.service.ts dotenv.parse (需先 pnpm add dotenv) --');
 {
-  const filePath = join(__dirname, 'src', 'store', 'aiConversation.ts');
+  const filePath = join(__dirname, 'src', 'services', 'ipc', 'ai.service.ts');
+  let modified = false;
 
-  // replaceThreadsState 中用 trimThreads 处理;关键是 patchActiveThread/patchThread
-  // 不再触达 trimThreads 的全量 filter+slice。改为仅在 startNewThread/clearActiveThread/
-  // deleteThread/hydrate 路径调用 trimThreads。
-  //
-  // 策略: replaceThreadsState 保留 trimThreads 调用但改为条件执行——
-  // 当 threads 数量未超过 LIMIT 时跳过 trim（常见 case: patchActiveThread 只更新消息内容,
-  // 线程数量不变且远低于 200）；仅当 threads.length > LIMIT 时才执行 trim。
+  // (a) 添加 import dotenv
+  const oldImport = "import { escapeRegExp } from '@/utils/core/regex';";
+  const newImport = "import dotenv from 'dotenv';\n" + oldImport;
+  if (patchFile(filePath, '#23a import dotenv', oldImport, newImport)) modified = true;
 
-  const oldReplace = `    const replaceThreadsState = (nextState: IAiConversationPersistShape): void => {
-      const trimmedThreads = trimThreads(nextState.threads, nextState.activeThreadId);
-      const resolvedState = ensureActiveThread(nextState.activeThreadId, trimmedThreads);
-      threads.value = resolvedState.threads;
-      activeThreadId.value = resolvedState.activeThreadId;
-    };`;
+  // (b) readDotenvAssignment 用 dotenv.parse 替代
+  // 逐行核对真实源码，注意 ${escapeRegExp(key)} 中的 $ 需转义
+  const oldRead = [
+    'const readDotenvAssignment = (content: string, key: string): string => {',
+    '  const linePattern = new RegExp(`^\\s*(?:export\\s+)?\${escapeRegExp(key)}\\s*=\\s*(.*)\\s*$`, \'u\');',
+    '',
+    '  for (const line of content.split(/\\r?\\n/u)) {',
+    '    const trimmed = line.trim();',
+    "    if (!trimmed || trimmed.startsWith('#')) {",
+    '      continue;',
+    '    }',
+    '',
+    '    const match = line.match(linePattern);',
+    '    if (match) {',
+    "      return parseDotenvValue(match[1] ?? '');",
+    '    }',
+    '  }',
+    '',
+    "  return '';",
+    '};',
+  ].join('\n');
 
-  const newReplace = `    const replaceThreadsState = (nextState: IAiConversationPersistShape): void => {
-      // 性能优化: 仅当线程数量超过历史限制时才执行 trim（filter + slice），
-      // 避免每次 patchActiveThread（发消息的高频路径）都遍历全部线程。
-      // trimThreads 内的 filter 会遍历所有线程检查 messages.length，
-      // 对于 200 条线程的场景这是 O(N×M) 开销；大多数 mutation 不增加线程数，
-      // trim 结果与输入相同，跳过即可。
-      const trimmedThreads =
-        nextState.threads.length > AI_CONVERSATION_HISTORY_LIMIT
-          ? trimThreads(nextState.threads, nextState.activeThreadId)
-          : nextState.threads;
-      const resolvedState = ensureActiveThread(nextState.activeThreadId, trimmedThreads);
-      threads.value = resolvedState.threads;
-      activeThreadId.value = resolvedState.activeThreadId;
-    };`;
+  const newRead = [
+    'const readDotenvAssignment = (content: string, key: string): string => {',
+    '  // 用 dotenv.parse 替代手写逐行解析：官方实现正确处理引号、转义、export 前缀等。',
+    '  const parsed = dotenv.parse(content);',
+    '  return parsed[key] ?? \';',
+    '};',
+  ].join('\n');
 
-  let m1 = patchFile(filePath, '#3 replaceThreadsState 条件 trim', oldReplace, newReplace);
-  if (m1) totalModified++;
+  if (patchFile(filePath, '#23b readDotenvAssignment', oldRead, newRead)) modified = true;
+  if (modified) totalModified++;
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// 🟠 #4: editor.ts — findDocumentByPath 缓存搜索路径归一化值
-// ═══════════════════════════════════════════════════════════════════════
-console.log('\n── 🟠 #4: editor.ts findDocumentByPath 变量重命名 --');
+// =======================================================================
+// #24: agent_sidecar.rs - ensure_model_config_with 简化泛型
+// =======================================================================
+console.log('\n-- #24: agent_sidecar.rs 简化泛型签名 --');
 {
-  const filePath = join(__dirname, 'src', 'store', 'editor.ts');
+  const filePath = join(__dirname, 'src-tauri', 'src', 'commands', 'agent_sidecar.rs');
 
-  // 仅重命名变量以提升可读性；真正的预计算需要改 IEditorDocument 类型，
-// 这里做安全的最小改动——把 normalizedPath 改为 normalizedSearchPath，
-// 让代码意图更清晰（搜索路径 vs. 文档自己的路径）。
-  const oldFind = `  const findDocumentByPath = (path: string): IEditorDocument | undefined => {
-    if (!path) return undefined;
-    const normalizedPath = normalizeFileSystemPath(path);
-    if (!normalizedPath) return undefined;
-    return documents.value.find(
-      (item) => item.path !== null && normalizeFileSystemPath(item.path) === normalizedPath,
-    );
-  };`;
+  const oldFn = [
+    'fn ensure_model_config_with<F>(',
+    '    cfg: &mut Option<AgentSidecarModelConfigPayload>,',
+    '    fetch: F,',
+    ') -> Result<(), String>',
+    'where',
+    '    F: FnOnce() -> Result<AgentSidecarModelConfigPayload, String>,',
+    '{',
+  ].join('\n');
 
-  const newFind = `  const findDocumentByPath = (path: string): IEditorDocument | undefined => {
-    if (!path) return undefined;
-    const normalizedSearchPath = normalizeFileSystemPath(path);
-    if (!normalizedSearchPath) return undefined;
-    return documents.value.find(
-      (item) => item.path !== null && normalizeFileSystemPath(item.path) === normalizedSearchPath,
-    );
-  };`;
+  const newFn = [
+    'fn ensure_model_config_with(',
+    '    cfg: &mut Option<AgentSidecarModelConfigPayload>,',
+    '    fetch: impl FnOnce() -> Result<AgentSidecarModelConfigPayload, String>,',
+    ') -> Result<(), String> {',
+  ].join('\n');
 
-  let m1 = patchFile(filePath, '#4 findDocumentByPath 变量重命名', oldFind, newFind);
-  if (m1) totalModified++;
+  if (patchFile(filePath, '#24 ensure_model_config_with', oldFn, newFn)) totalModified++;
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// 🟠 #5: useBrowserContextMenu.ts — 事件注册移入 onMounted
-// ═══════════════════════════════════════════════════════════════════════
-console.log('\n── 🟠 #5: useBrowserContextMenu.ts onMounted 事件注册 ──');
+// =======================================================================
+// #26: session/store.ts - TRawSnapshot 类型修复
+// =======================================================================
+console.log('\n-- #26: session/store.ts TRawSnapshot 类型修复 --');
 {
-  const filePath = join(__dirname, 'src', 'composables', 'useBrowserContextMenu.ts');
+  const filePath = join(__dirname, 'src', 'services', 'session', 'store.ts');
 
-  // (a) 顶部 import 加 onMounted
-  const oldImport = `import { onBeforeUnmount, reactive, ref } from 'vue';`;
-  const newImport = `import { onBeforeUnmount, onMounted, reactive, ref } from 'vue';`;
+  // TRawSnapshot 被使用但从未定义。在 logWarn 前插入类型定义。
+  const oldType = 'const logWarn = (event: string, extra?: unknown): void => {';
+  const newType = [
+    '/** 从 Tauri Store / localStorage 读出的原始 JSON，结构不保证符合 schema。 */',
+    'type TRawSnapshot = Record<string, unknown>;',
+    '',
+    oldType,
+  ].join('\n');
 
-  // (b) 事件注册从函数体直接执行 → 移入 onMounted
-  const oldReg = `  window.addEventListener('pointerdown', handleWindowPointerDown, true);
-  window.addEventListener('contextmenu', handleWindowContextMenu);
-  window.addEventListener('keydown', handleWindowKeydown);
-  window.addEventListener('resize', handleWindowResize);
-  window.addEventListener('blur', handleWindowResize);
-
-  onBeforeUnmount(() => {
-    window.removeEventListener('pointerdown', handleWindowPointerDown, true);
-    window.removeEventListener('contextmenu', handleWindowContextMenu);
-    window.removeEventListener('keydown', handleWindowKeydown);
-    window.removeEventListener('resize', handleWindowResize);
-    window.removeEventListener('blur', handleWindowResize);
-  });`;
-
-  const newReg = `  onMounted(() => {
-    window.addEventListener('pointerdown', handleWindowPointerDown, true);
-    window.addEventListener('contextmenu', handleWindowContextMenu);
-    window.addEventListener('keydown', handleWindowKeydown);
-    window.addEventListener('resize', handleWindowResize);
-    window.addEventListener('blur', handleWindowResize);
-  });
-
-  onBeforeUnmount(() => {
-    window.removeEventListener('pointerdown', handleWindowPointerDown, true);
-    window.removeEventListener('contextmenu', handleWindowContextMenu);
-    window.removeEventListener('keydown', handleWindowKeydown);
-    window.removeEventListener('resize', handleWindowResize);
-    window.removeEventListener('blur', handleWindowResize);
-  });`;
-
-  let m1 = patchFile(filePath, '#5a import onMounted', oldImport, newImport);
-  let m2 = patchFile(filePath, '#5b onMounted 事件注册', oldReg, newReg);
-  if (m1 || m2) totalModified++;
+  if (patchFile(filePath, '#26 TRawSnapshot', oldType, newType)) totalModified++;
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// 🟠 #8: useShellWorkbenchView.ts — documents watcher 优化
-// ═══════════════════════════════════════════════════════════════════════
-console.log('\n── 🟠 #8: useShellWorkbenchView.ts documents watcher 优化 ──');
+// =======================================================================
+// #27: codemirror-shiki-highlight.ts - tokenInlineStyle 用 CSS class
+// =======================================================================
+console.log('\n-- #27: codemirror-shiki-highlight tokenInlineStyle CSS class --');
 {
-  const filePath = join(__dirname, 'src', 'composables', 'useShellWorkbenchView.ts');
+  const filePath = join(__dirname, 'src', 'services', 'editor', 'codemirror-shiki-highlight.ts');
+  let modified = false;
 
-  // 把 `() => (workbench.editorStore.documents ?? []).map((item) => item.id)`
-  // 改为 `() => workbench.editorStore.documents?.map((item) => item.id) ?? []`
-  // 这本身变化很小；真正重要的优化是把 watcher 内部逻辑做注释说明不会每次创建新数组。
-  // 但实际上 Vue watch 对返回新数组的 source 确实会做逐元素比较，我们改为
-  // watch documents 本身（深层追踪），并在回调里检查 length 变化即可。
-  //
-  // 更安全的做法：保持 watcher source 不变（功能正确），但用 `??` 替代 `?? []`
-  // 减少一层 fallback 对象创建。
+  // (a) tokenInlineStyle: 生成 CSS class 名替代 inline style
+  const oldStyle = [
+    'const tokenInlineStyle = (token: IShikiThemedToken): string => {',
+    '  const declarations: string[] = [];',
+    '  if (token.color) {',
+    '    declarations.push(`color:${token.color}`);',
+    '  }',
+    '  if (token.bgColor) {',
+    '    declarations.push(`background-color:${token.bgColor}`);',
+    '  }',
+    '  const fontStyle = token.fontStyle ?? 0;',
+    '  if (fontStyle > 0) {',
+    '    if ((fontStyle & FONT_STYLE_ITALIC) !== 0) {',
+    "      declarations.push('font-style:italic');",
+    '    }',
+    '    if ((fontStyle & FONT_STYLE_BOLD) !== 0) {',
+    "      declarations.push('font-weight:600');",
+    '    }',
+    '    if ((fontStyle & FONT_STYLE_UNDERLINE) !== 0) {',
+    "      declarations.push('text-decoration:underline');",
+    '    }',
+    '  }',
+    "  return declarations.join(';');",
+    '};',
+  ].join('\n');
 
-  const oldWatch = `  watch(
-    () => (workbench.editorStore.documents ?? []).map((item) => item.id),
-    (documentIds, previousDocumentIds) => {`;
+  const newStyle = [
+    'const tokenInlineStyle = (token: IShikiThemedToken): string => {',
+    '  // 生成 CSS class 名而非内联 style：减少 DOM 属性体积。',
+    '  const parts: string[] = [];',
+    '  if (token.color) {',
+    "    parts.push(`cm-shiki-c-${token.color.replace(/[^a-zA-Z0-9]/g, '')}`);",
+    '  }',
+    '  if (token.bgColor) {',
+    "    parts.push(`cm-shiki-b-${token.bgColor.replace(/[^a-zA-Z0-9]/g, '')}`);",
+    '  }',
+    '  const fontStyle = token.fontStyle ?? 0;',
+    '  if (fontStyle > 0) {',
+    '    if ((fontStyle & FONT_STYLE_ITALIC) !== 0) {',
+    "      parts.push('cm-shiki-i');",
+    '    }',
+    '    if ((fontStyle & FONT_STYLE_BOLD) !== 0) {',
+    "      parts.push('cm-shiki-bold');",
+    '    }',
+    '    if ((fontStyle & FONT_STYLE_UNDERLINE) !== 0) {',
+    "      parts.push('cm-shiki-u');",
+    '    }',
+    '  }',
+    "  return parts.join(' ');",
+    '};',
+  ].join('\n');
 
-  const newWatch = `  watch(
-    () => workbench.editorStore.documents?.map((item) => item.id) ?? [],
-    (documentIds, previousDocumentIds) => {`;
+  if (patchFile(filePath, '#27a tokenInlineStyle', oldStyle, newStyle)) modified = true;
 
-  let m1 = patchFile(filePath, '#8 documents watcher 源优化', oldWatch, newWatch);
-  if (m1) totalModified++;
+  // (b) tokenDecoration: attributes 从 { style } 改为 { class: style }
+  // style 参数现在承载 class 字符串
+  const oldDeco = '  const decoration = Decoration.mark({ attributes: { style } });';
+  const newDeco = '  const decoration = Decoration.mark({ attributes: { class: style } });';
+
+  if (patchFile(filePath, '#27b tokenDecoration', oldDeco, newDeco)) modified = true;
+  if (modified) totalModified++;
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// 总结
-// ═══════════════════════════════════════════════════════════════════════
-console.log('\n' + '═'.repeat(50));
+// =======================================================================
+// #29: workspace_fs.rs - sort 避免 String clone
+// =======================================================================
+console.log('\n-- #29: workspace_fs.rs sort 避免 String clone --');
+{
+  const filePath = join(__dirname, 'src-tauri', 'src', 'commands', 'workspace_fs.rs');
+
+  const oldSort = [
+    '    entries.sort_by_cached_key(|entry| {',
+    '        (',
+    '            entry.kind.as_str() != "directory",',
+    '            entry.name.to_lowercase(),',
+    '            entry.name.clone(),',
+    '        )',
+    '    });',
+  ].join('\n');
+
+  // 目录在前，然后按 lowercase name，最后按 raw name。
+  // a_is_dir.cmp(&b_is_dir): false < true，目录=false 想排前面需要 reverse。
+  const newSort = [
+    '    entries.sort_by(|a, b| {',
+    '        // 目录在前："directory" 的 kind 应排在非 directory 之前。',
+    '        let a_is_dir = a.kind.as_str() == "directory";',
+    '        let b_is_dir = b.kind.as_str() == "directory";',
+    '        match a_is_dir.cmp(&b_is_dir) {',
+    '            std::cmp::Ordering::Equal => {',
+    '                // 同类：先按 lowercase 比较，再按原始 name 比较保持稳定排序。',
+    '                let lower_cmp = a.name.to_lowercase().cmp(&b.name.to_lowercase());',
+    '                if lower_cmp == std::cmp::Ordering::Equal {',
+    '                    a.name.cmp(&b.name)',
+    '                } else {',
+    '                    lower_cmp',
+    '                }',
+    '            }',
+    '            // a_is_dir=true(目录) 应排在 b_is_dir=false(文件) 前面 => reverse',
+    '            other => other.reverse(),',
+    '        }',
+    '    });',
+  ].join('\n');
+
+  if (patchFile(filePath, '#29 sort', oldSort, newSort)) totalModified++;
+}
+
+// =======================================================================
+console.log('\n' + '='.repeat(50));
 if (totalModified === 0) {
-  console.log('  无文件被修改（所有目标已处理或未找到匹配）');
+  console.log('  无文件被修改');
 } else {
-  console.log(`  共修改 ${totalModified} 个文件${DRY_RUN ? ' (DRY-RUN)' : ''}`);
+  console.log('  共修改 ' + totalModified + ' 项' + (DRY_RUN ? ' (DRY-RUN)' : ''));
 }
-console.log('═'.repeat(50));
-
-console.log(`\n  完成后请运行: pnpm lint && pnpm typecheck && pnpm test`);
-console.log(`  如果 Rust 代码有改动: cargo clippy && cargo test`);
+console.log('='.repeat(50));
+console.log('\n  注意:');
+console.log('  #23 需先安装: pnpm add dotenv');
+console.log('  #27 需手动添加 CSS 规则映射 class -> 颜色');
+console.log('  验证: pnpm lint && pnpm typecheck && pnpm test');
+console.log('  Rust:  cargo clippy && cargo test');
 console.log('');

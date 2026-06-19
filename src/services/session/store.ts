@@ -23,6 +23,9 @@ const LEGACY_SESSION_FALLBACK_STORAGE_KEY = 'shell-ide:session-snapshot';
 // Types
 // ---------------------------------------------------------------------------
 
+/** 从 Tauri Store / localStorage 读出的原始 JSON，结构不保证符合 schema。 */
+type TRawSnapshot = Record<string, unknown>;
+
 const logWarn = (event: string, extra?: unknown): void => {
   const payload = {
     timestamp: new Date().toISOString(),

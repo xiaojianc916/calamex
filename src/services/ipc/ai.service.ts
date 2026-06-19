@@ -1,3 +1,4 @@
+import dotenv from 'dotenv';
 import type {
   AiAgentClassifyTaskPayload,
   AiAgentNetworkPermissionPayload,
