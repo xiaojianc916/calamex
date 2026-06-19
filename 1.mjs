@@ -1,226 +1,233 @@
-#!/usr/bin/env node
-/* step7-5c-wire-persisted-read.mjs
- * ADR-0014 Step 7.5c —— 启动持久化读侧接线。
- *   新建 startupPersistedReadWiring.ts(+spec)：读旧 key 已 hydrate 的 legacy 快照
- *   -> 7.5a 组合器归一 entries -> 灌入 aiThread store 持久化回退槽(7.5b)。
- *   编辑 src/app/main.ts：在后台 hydrateAiConversationStorage() 完成后链式触发。
- * CREATE 默认拒绝覆盖(--force)；main.ts 编辑幂等(已接线则跳过)；--check 干跑；事务化。
- */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+// Step 8 slice 1（修订）：删除被 7.5 读接线取代的死函数 resolveMirrorOnHydrate
+// 及其级联死代码 + 对应 spec 用例。
+//
+// ⚠️ 原计划同时删 src/types/ai/conversation.schema.ts，经核查它不是死代码：
+//    src/store/aiConversation.ts 的 persist.afterHydrate 仍在用它做线上 hydrate 校验/救援。
+//    故本刀不动它，留待“清退 legacy key shell-ide.ai-conversation”那一刀。
+//
+// 用法：
+//   node 1.mjs           应用
+//   node 1.mjs --check   dry-run（只打印，不落盘）
+//   REPO_ROOT=/path node 1.mjs
+
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
 
 const REPO_ROOT = process.env.REPO_ROOT ?? process.cwd();
 const CHECK = process.argv.includes('--check');
-const FORCE = process.argv.includes('--force');
-const tag = '[step7-5c]';
-const log = (m) => console.log(tag + ' ' + m);
-const die = (m) => { console.error(tag + ' ✗ ' + m); process.exit(1); };
+const rel = (p) => join(REPO_ROOT, p);
 
-log('REPO_ROOT = ' + REPO_ROOT);
-log('模式: ' + (CHECK ? '检查' : '写入') + (FORCE ? '（--force 覆盖）' : ''));
+let changed = 0;
+let skipped = 0;
 
-const read = (rel) => {
-  const abs = join(REPO_ROOT, rel);
-  if (!existsSync(abs)) die('前置缺失：' + rel + ' 不存在。');
+const read = (p) => {
+  const abs = rel(p);
+  if (!existsSync(abs)) throw new Error(`找不到文件：${p}`);
   return readFileSync(abs, 'utf8');
 };
-const requireToken = (rel, token) => {
-  if (!read(rel).includes(token)) die('前置缺失：' + rel + ' 未找到 ' + token + '（请先应用上游步骤）。');
-};
 
-// ---- 前置：跨文件契约 ----
-requireToken('src/store/aiThread/entriesRenderHydrate.ts', 'export async function hydrateAiThreadEntriesForRender');
-requireToken('src/store/aiThread/index.ts', 'setPersistedThreads');
-
-const SOURCE = `/* ============================================================================
- * 启动持久化读侧接线（ADR-0014 Step 7.5c）
- *
- * 在启动后台 hydrate（旧 aiConversation key）完成后，再读新 entries key 并经
- * 7.5a 组合器归一，把结果灌入 aiThread store 的持久化回退槽（7.5b）。
- *
- * 顺序约束：必须在 hydrateAiConversationStorage() 之后调用，确保 legacy 回退源
- * （conversation.threads / activeThreadId）已就位；entries key 为空/损坏时，
- * 7.5a 会回退到这些 legacy 线程，保证「迁移失败不致空白」。
- *
- * 依赖注入：默认 deps 在调用时惰性取 store（需 pinia 已安装）；单测注入假 deps，
- * 无需 pinia / 真实存储。
- * ========================================================================== */
-import { useAiConversationStore } from '@/store/aiConversation';
-import { useAiThreadStore } from '@/store/aiThread';
-import {
-  hydrateAiThreadEntriesForRender,
-  type IHydrateAiThreadEntriesForRenderInput,
-} from '@/store/aiThread/entriesRenderHydrate';
-import type { IResolvedPersistedThreads } from '@/store/aiThread/hydrate';
-import type { IAiThread } from '@/types/ai/thread';
-
-export interface IRunStartupPersistedReadDeps {
-  /** 取旧 key 已 hydrate 的活动线程 id 与线程列表（entries 缺失时的回退源）。 */
-  readLegacy: () => IHydrateAiThreadEntriesForRenderInput;
-  /** 7.5a 组合器：读新 key 快照 -> 归一 -> 活动线程指针恢复。 */
-  hydrateForRender: (
-    input: IHydrateAiThreadEntriesForRenderInput,
-  ) => Promise<IResolvedPersistedThreads>;
-  /** 把归一结果灌入 aiThread store 持久化回退槽。 */
-  applyPersisted: (threads: IAiThread[], activeThreadId: string | null) => void;
-}
-
-const defaultDeps: IRunStartupPersistedReadDeps = {
-  readLegacy: () => {
-    const conversation = useAiConversationStore();
-    return {
-      legacyActiveThreadId: conversation.activeThreadId,
-      legacyThreads: conversation.threads,
-    };
-  },
-  hydrateForRender: hydrateAiThreadEntriesForRender,
-  applyPersisted: (threads, activeThreadId) => {
-    useAiThreadStore().setPersistedThreads(threads, activeThreadId);
-  },
-};
-
-/**
- * 执行一次启动持久化读：legacy 快照 -> entries 归一 -> 灌入回退槽。
- * 抛错交由调用方（main.ts 后台 hydrate 链）统一吞掉并告警，不阻断启动。
- */
-export async function runStartupPersistedRead(
-  deps: IRunStartupPersistedReadDeps = defaultDeps,
-): Promise<void> {
-  const { legacyActiveThreadId, legacyThreads } = deps.readLegacy();
-  const resolved = await deps.hydrateForRender({ legacyActiveThreadId, legacyThreads });
-  deps.applyPersisted(resolved.threads, resolved.activeThreadId);
-}
-`;
-
-const SPEC = `import { describe, expect, it } from 'vitest';
-
-import type { IAiConversationThread } from '@/store/aiConversation';
-import type { IHydrateAiThreadEntriesForRenderInput } from '@/store/aiThread/entriesRenderHydrate';
-import type { IResolvedPersistedThreads } from '@/store/aiThread/hydrate';
-import { runStartupPersistedRead } from '@/store/aiThread/startupPersistedReadWiring';
-import type { IAiThread } from '@/types/ai/thread';
-
-function makeThread(id: string): IAiThread {
-  return {
-    id,
-    title: 'Thread ' + id,
-    titleStatus: 'temporary',
-    createdAt: '2026-01-01T00:00:00.000Z',
-    updatedAt: '2026-01-01T00:00:00.000Z',
-    entries: [],
-  };
-}
-
-describe('runStartupPersistedRead', () => {
-  it('把 legacy 快照透传给 7.5a 组合器，并灌入归一结果', async () => {
-    const legacyThreads: IAiConversationThread[] = [];
-    let hydrateInput: IHydrateAiThreadEntriesForRenderInput | null = null;
-    const applied: Array<{ threads: IAiThread[]; activeThreadId: string | null }> = [];
-    const resolved: IResolvedPersistedThreads = {
-      source: 'entries',
-      activeThreadId: 't1',
-      threads: [makeThread('t1')],
-    };
-
-    await runStartupPersistedRead({
-      readLegacy: () => ({ legacyActiveThreadId: 'leg-1', legacyThreads }),
-      hydrateForRender: async (input) => {
-        hydrateInput = input;
-        return resolved;
-      },
-      applyPersisted: (threads, activeThreadId) => {
-        applied.push({ threads, activeThreadId });
-      },
-    });
-
-    expect(hydrateInput).toEqual({ legacyActiveThreadId: 'leg-1', legacyThreads });
-    expect(applied).toEqual([{ threads: resolved.threads, activeThreadId: 't1' }]);
-  });
-
-  it('先读 legacy 再 hydrate 再灌入，且只灌一次', async () => {
-    const order: string[] = [];
-    const resolved: IResolvedPersistedThreads = { source: 'empty', activeThreadId: null, threads: [] };
-
-    await runStartupPersistedRead({
-      readLegacy: () => {
-        order.push('read');
-        return { legacyActiveThreadId: null, legacyThreads: [] };
-      },
-      hydrateForRender: async () => {
-        order.push('hydrate');
-        return resolved;
-      },
-      applyPersisted: () => {
-        order.push('apply');
-      },
-    });
-
-    expect(order).toEqual(['read', 'hydrate', 'apply']);
-  });
-});
-`;
-
-const createFiles = [
-  { path: 'src/store/aiThread/startupPersistedReadWiring.ts', content: SOURCE },
-  { path: 'src/store/aiThread/startupPersistedReadWiring.spec.ts', content: SPEC },
-];
-for (const f of createFiles) {
-  if (existsSync(join(REPO_ROOT, f.path)) && !FORCE) {
-    die('目标已存在：' + f.path + '（如确需覆盖请加 --force）。');
+const write = (p, next, prev) => {
+  if (next === prev) {
+    console.log(`• 无变化，跳过：${p}`);
+    skipped += 1;
+    return;
   }
-}
+  if (CHECK) {
+    console.log(`• [check] 将更新：${p}`);
+  } else {
+    writeFileSync(rel(p), next, 'utf8');
+    console.log(`✓ 已更新：${p}`);
+  }
+  changed += 1;
+};
 
-// ---- main.ts 幂等编辑 ----
-const MAIN_REL = 'src/app/main.ts';
-let main = read(MAIN_REL);
-const alreadyWired = main.includes('runStartupPersistedRead');
-
-const IMPORT_FIND =
-  "import { pinia } from '@/store';\n" +
-  "import { hydrateAiConversationStorage } from '@/store/plugins/debouncedPersistStorage';";
-const IMPORT_REPLACE =
-  "import { pinia } from '@/store';\n" +
-  "import { runStartupPersistedRead } from '@/store/aiThread/startupPersistedReadWiring';\n" +
-  "import { hydrateAiConversationStorage } from '@/store/plugins/debouncedPersistStorage';";
-
-const BODY_FIND =
-  "        void hydrateAiConversationStorage().catch((error: unknown) => {\n" +
-  "          console.warn('AI 会话历史后台 hydrate 失败', error);\n" +
-  "        });";
-const BODY_REPLACE =
-  "        void hydrateAiConversationStorage()\n" +
-  "          .then(() => runStartupPersistedRead())\n" +
-  "          .catch((error: unknown) => {\n" +
-  "            console.warn('AI 会话历史后台 hydrate 失败', error);\n" +
-  "          });";
-
-const applyEdit = (content, find, replace, label) => {
+/** 精确单处替换：断言 find 恰好出现 1 次，杜绝歧义/漂移。 */
+const replaceOnce = (content, find, replace, label) => {
   const n = content.split(find).length - 1;
-  if (n !== 1) die('main.ts 锚点【' + label + '】期望命中 1 次，实际 ' + n + ' 次。');
+  if (n === 0) throw new Error(`匹配失败（0 处）：${label}`);
+  if (n > 1) throw new Error(`匹配歧义（${n} 处）：${label}`);
   return content.replace(find, () => replace);
 };
 
-if (alreadyWired) {
-  log('· main.ts 已接线 runStartupPersistedRead，跳过编辑。');
-} else {
-  main = applyEdit(main, IMPORT_FIND, IMPORT_REPLACE, 'import');
-  main = applyEdit(main, BODY_FIND, BODY_REPLACE, 'hydrate-chain');
+// ---------------------------------------------------------------------------
+// 1) entriesMirrorBridge.ts
+// ---------------------------------------------------------------------------
+const BRIDGE = 'src/store/aiThread/entriesMirrorBridge.ts';
+{
+  const prev = read(BRIDGE);
+  if (!prev.includes('resolveMirrorOnHydrate')) {
+    console.log(`• 已无 resolveMirrorOnHydrate，跳过：${BRIDGE}`);
+    skipped += 1;
+  } else {
+    let next = prev;
+
+    // 1a) 收窄 import：移除仅供死函数使用的 hydrate import 与 hydrateAiThreadEntriesSnapshot
+    next = replaceOnce(
+      next,
+      `import type { IAiConversationThread } from '@/store/aiConversation';\n` +
+        `import { type IResolvedPersistedThreads, resolvePersistedThreads } from '@/store/aiThread/hydrate';\n` +
+        `import { projectConversationToThreadPersist } from '@/store/aiThread/project';\n` +
+        `import {\n` +
+        `  hydrateAiThreadEntriesSnapshot,\n` +
+        `  scheduleAiThreadEntriesPersist,\n` +
+        `} from '@/store/plugins/aiThreadEntriesStorage';`,
+      `import type { IAiConversationThread } from '@/store/aiConversation';\n` +
+        `import { projectConversationToThreadPersist } from '@/store/aiThread/project';\n` +
+        `import { scheduleAiThreadEntriesPersist } from '@/store/plugins/aiThreadEntriesStorage';`,
+      'bridge: imports',
+    );
+
+    // 1b) 收窄 deps 接口 + defaultDeps（去 hydrateSnapshot），删 parseRawEntriesSnapshot
+    next = replaceOnce(
+      next,
+      `export interface IEntriesMirrorDeps {\n` +
+        `  schedulePersist: (value: string) => void;\n` +
+        `  hydrateSnapshot: () => Promise<{ raw: string | null }>;\n` +
+        `}\n\n` +
+        `const defaultDeps: IEntriesMirrorDeps = {\n` +
+        `  schedulePersist: scheduleAiThreadEntriesPersist,\n` +
+        `  hydrateSnapshot: hydrateAiThreadEntriesSnapshot,\n` +
+        `};\n\n` +
+        `const parseRawEntriesSnapshot = (raw: string | null): unknown => {\n` +
+        `  if (raw === null) return null;\n` +
+        `  try {\n` +
+        `    return JSON.parse(raw) as unknown;\n` +
+        `  } catch {\n` +
+        `    return null;\n` +
+        `  }\n` +
+        `};\n`,
+      `export interface IEntriesMirrorDeps {\n` +
+        `  schedulePersist: (value: string) => void;\n` +
+        `}\n\n` +
+        `const defaultDeps: IEntriesMirrorDeps = {\n` +
+        `  schedulePersist: scheduleAiThreadEntriesPersist,\n` +
+        `};\n`,
+      'bridge: deps + parseRawEntriesSnapshot',
+    );
+
+    // 1c) 删除 resolveMirrorOnHydrate 函数本体（含其前置 doc 与尾随空行）
+    next = replaceOnce(
+      next,
+      `/**\n` +
+        ` * 读取新 key 快照并经 7.3 resolver 解析 (读路径自检)。\n` +
+        ` * 新 key 有效 → source 'entries'; 否则回退到 legacy 投影。结果供 7.4d/7.5 接入,\n` +
+        ` * 当前不改变渲染 SoT。\n` +
+        ` */\n` +
+        `export const resolveMirrorOnHydrate = async (\n` +
+        `  store: IConversationStoreLike,\n` +
+        `  deps: IEntriesMirrorDeps = defaultDeps,\n` +
+        `): Promise<IResolvedPersistedThreads> => {\n` +
+        `  const { raw } = await deps.hydrateSnapshot();\n` +
+        `  return resolvePersistedThreads({\n` +
+        `    rawEntriesSnapshot: parseRawEntriesSnapshot(raw),\n` +
+        `    legacyActiveThreadId: store.activeThreadId,\n` +
+        `    legacyThreads: store.threads,\n` +
+        `  });\n` +
+        `};\n\n`,
+      ``,
+      'bridge: resolveMirrorOnHydrate fn',
+    );
+
+    write(BRIDGE, next, prev);
+  }
 }
 
-if (CHECK) {
-  log('✓ 检查通过：将创建 ' + createFiles.map((f) => f.path).join(', ') +
-    (alreadyWired ? '；main.ts 无需改动。' : '；并编辑 ' + MAIN_REL + '。'));
-  process.exit(0);
+// ---------------------------------------------------------------------------
+// 2) entriesMirrorBridge.spec.ts
+// ---------------------------------------------------------------------------
+const SPEC = 'src/store/aiThread/entriesMirrorBridge.spec.ts';
+{
+  const prev = read(SPEC);
+  if (!prev.includes('resolveMirrorOnHydrate')) {
+    console.log(`• 已无 resolveMirrorOnHydrate，跳过：${SPEC}`);
+    skipped += 1;
+  } else {
+    let next = prev;
+
+    // 2a) import：移除 resolveMirrorOnHydrate 与（随用例失活的）projectConversationToThreadPersist
+    next = replaceOnce(
+      next,
+      `import {\n` +
+        `  type IConversationStoreLike,\n` +
+        `  type IEntriesMirrorDeps,\n` +
+        `  installEntriesMirror,\n` +
+        `  mirrorConversationToEntries,\n` +
+        `  resolveMirrorOnHydrate,\n` +
+        `} from '@/store/aiThread/entriesMirrorBridge';\n` +
+        `import { projectConversationToThreadPersist } from '@/store/aiThread/project';`,
+      `import {\n` +
+        `  type IConversationStoreLike,\n` +
+        `  type IEntriesMirrorDeps,\n` +
+        `  installEntriesMirror,\n` +
+        `  mirrorConversationToEntries,\n` +
+        `} from '@/store/aiThread/entriesMirrorBridge';`,
+      'spec: imports',
+    );
+
+    // 2b) makeDeps：移除 raw / setRaw / hydrateSnapshot（仅死用例用到）
+    next = replaceOnce(
+      next,
+      `const makeDeps = () => {\n` +
+        `  const scheduled: string[] = [];\n` +
+        `  let raw: string | null = null;\n` +
+        `  const deps: IEntriesMirrorDeps = {\n` +
+        `    schedulePersist: (value: string) => {\n` +
+        `      scheduled.push(value);\n` +
+        `    },\n` +
+        `    hydrateSnapshot: async () => ({ raw }),\n` +
+        `  };\n` +
+        `  return {\n` +
+        `    deps,\n` +
+        `    scheduled,\n` +
+        `    setRaw: (value: string | null) => {\n` +
+        `      raw = value;\n` +
+        `    },\n` +
+        `  };\n` +
+        `};`,
+      `const makeDeps = () => {\n` +
+        `  const scheduled: string[] = [];\n` +
+        `  const deps: IEntriesMirrorDeps = {\n` +
+        `    schedulePersist: (value: string) => {\n` +
+        `      scheduled.push(value);\n` +
+        `    },\n` +
+        `  };\n` +
+        `  return {\n` +
+        `    deps,\n` +
+        `    scheduled,\n` +
+        `  };\n` +
+        `};`,
+      'spec: makeDeps',
+    );
+
+    // 2c) 删除两个 resolveMirrorOnHydrate 用例
+    next = replaceOnce(
+      next,
+      `\n\n  it('resolveMirrorOnHydrate: 新 key 有效 → source entries', async () => {\n` +
+        `    const { deps, setRaw } = makeDeps();\n` +
+        `    const store = makeStore([makeLegacyThread('a'), makeLegacyThread('b')], 'a');\n` +
+        `    const projected = projectConversationToThreadPersist({\n` +
+        `      activeThreadId: 'a',\n` +
+        `      threads: [makeLegacyThread('a'), makeLegacyThread('b')],\n` +
+        `    });\n` +
+        `    setRaw(JSON.stringify(projected));\n` +
+        `    const resolved = await resolveMirrorOnHydrate(store, deps);\n` +
+        `    expect(resolved.source).toBe('entries');\n` +
+        `    expect(resolved.threads.map((t) => t.id)).toEqual(['a', 'b']);\n` +
+        `  });\n\n` +
+        `  it('resolveMirrorOnHydrate: 新 key 为空 → 回退 legacy', async () => {\n` +
+        `    const { deps, setRaw } = makeDeps();\n` +
+        `    setRaw(null);\n` +
+        `    const store = makeStore([makeLegacyThread('x')], 'x');\n` +
+        `    const resolved = await resolveMirrorOnHydrate(store, deps);\n` +
+        `    expect(resolved.source).toBe('legacy');\n` +
+        `    expect(resolved.threads.map((t) => t.id)).toEqual(['x']);\n` +
+        `  });`,
+      ``,
+      'spec: resolveMirrorOnHydrate tests',
+    );
+
+    write(SPEC, next, prev);
+  }
 }
 
-for (const f of createFiles) {
-  const abs = join(REPO_ROOT, f.path);
-  mkdirSync(dirname(abs), { recursive: true });
-  writeFileSync(abs, f.content, 'utf8');
-  log('✓ 写入 ' + f.path);
-}
-if (!alreadyWired) {
-  writeFileSync(join(REPO_ROOT, MAIN_REL), main, 'utf8');
-  log('✓ 编辑 ' + MAIN_REL);
-}
-log('✓ 完成。');
+console.log(`\n完成：变更 ${changed} 个文件，跳过 ${skipped} 个。${CHECK ? '（dry-run）' : ''}`);

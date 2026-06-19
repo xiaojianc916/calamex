@@ -5,9 +5,7 @@ import {
   type IEntriesMirrorDeps,
   installEntriesMirror,
   mirrorConversationToEntries,
-  resolveMirrorOnHydrate,
 } from '@/store/aiThread/entriesMirrorBridge';
-import { projectConversationToThreadPersist } from '@/store/aiThread/project';
 
 const makeLegacyThread = (id: string): IAiConversationThread =>
   ({
@@ -39,19 +37,14 @@ const makeStore = (
 
 const makeDeps = () => {
   const scheduled: string[] = [];
-  let raw: string | null = null;
   const deps: IEntriesMirrorDeps = {
     schedulePersist: (value: string) => {
       scheduled.push(value);
     },
-    hydrateSnapshot: async () => ({ raw }),
   };
   return {
     deps,
     scheduled,
-    setRaw: (value: string | null) => {
-      raw = value;
-    },
   };
 };
 
@@ -79,27 +72,5 @@ describe('entriesMirrorBridge', () => {
     stop();
     store.fire();
     expect(scheduled).toHaveLength(2);
-  });
-
-  it('resolveMirrorOnHydrate: 新 key 有效 → source entries', async () => {
-    const { deps, setRaw } = makeDeps();
-    const store = makeStore([makeLegacyThread('a'), makeLegacyThread('b')], 'a');
-    const projected = projectConversationToThreadPersist({
-      activeThreadId: 'a',
-      threads: [makeLegacyThread('a'), makeLegacyThread('b')],
-    });
-    setRaw(JSON.stringify(projected));
-    const resolved = await resolveMirrorOnHydrate(store, deps);
-    expect(resolved.source).toBe('entries');
-    expect(resolved.threads.map((t) => t.id)).toEqual(['a', 'b']);
-  });
-
-  it('resolveMirrorOnHydrate: 新 key 为空 → 回退 legacy', async () => {
-    const { deps, setRaw } = makeDeps();
-    setRaw(null);
-    const store = makeStore([makeLegacyThread('x')], 'x');
-    const resolved = await resolveMirrorOnHydrate(store, deps);
-    expect(resolved.source).toBe('legacy');
-    expect(resolved.threads.map((t) => t.id)).toEqual(['x']);
   });
 });

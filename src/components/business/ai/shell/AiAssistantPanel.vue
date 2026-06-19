@@ -1779,3 +1779,42 @@ onMounted(() => {
   color: #ffffff;
 }
 </style>
+
+<style id="ai-agent-mark-global-overrides">
+/* 左上角 Agent 下拉：SelectContent 会 teleport 到 body，必须用全局样式覆盖 */
+.ai-agent-mark-content {
+  border: 1px solid #f0f0f2 !important;
+  background: #ffffff !important;
+  background-color: #ffffff !important;
+  color: #1f2328 !important;
+  box-shadow: 0 8px 24px rgb(15 23 42 / 8%) !important;
+  border-radius: 10px !important;
+  padding: 8px !important;
+}
+
+/* 覆盖内部可能继承的弹窗/菜单背景 */
+.ai-agent-mark-content *,
+.ai-agent-mark-content [data-radix-select-viewport],
+.ai-agent-mark-content [role='listbox'] {
+  background-color: transparent;
+}
+
+/* 删除/隐藏“选择 Agent”标题，双保险 */
+.ai-agent-mark-content .ai-agent-mark-section-label,
+.ai-agent-mark-content [data-slot='select-label'] {
+  display: none !important;
+}
+
+.ai-agent-mark-item {
+  background: transparent !important;
+}
+
+.ai-agent-mark-item[data-highlighted],
+.ai-agent-mark-item[data-state='checked'] {
+  background: #f4f4f5 !important;
+}
+
+.ai-agent-mark-item__label {
+  color: #1f2328 !important;
+}
+</style>

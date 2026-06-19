@@ -1,10 +1,6 @@
 import type { IAiConversationThread } from '@/store/aiConversation';
-import { type IResolvedPersistedThreads, resolvePersistedThreads } from '@/store/aiThread/hydrate';
 import { projectConversationToThreadPersist } from '@/store/aiThread/project';
-import {
-  hydrateAiThreadEntriesSnapshot,
-  scheduleAiThreadEntriesPersist,
-} from '@/store/plugins/aiThreadEntriesStorage';
+import { scheduleAiThreadEntriesPersist } from '@/store/plugins/aiThreadEntriesStorage';
 
 /**
  * entries 双写桥接 (Step 7.4c)。
@@ -24,21 +20,10 @@ export interface IConversationStoreLike {
 /** 可注入副作用 (默认绑定真实镜像引擎)。 */
 export interface IEntriesMirrorDeps {
   schedulePersist: (value: string) => void;
-  hydrateSnapshot: () => Promise<{ raw: string | null }>;
 }
 
 const defaultDeps: IEntriesMirrorDeps = {
   schedulePersist: scheduleAiThreadEntriesPersist,
-  hydrateSnapshot: hydrateAiThreadEntriesSnapshot,
-};
-
-const parseRawEntriesSnapshot = (raw: string | null): unknown => {
-  if (raw === null) return null;
-  try {
-    return JSON.parse(raw) as unknown;
-  } catch {
-    return null;
-  }
 };
 
 /** 投影当前 store 状态为 entries 快照并入双写队列。 */
@@ -51,23 +36,6 @@ export const mirrorConversationToEntries = (
     threads: store.threads,
   });
   deps.schedulePersist(JSON.stringify(snapshot));
-};
-
-/**
- * 读取新 key 快照并经 7.3 resolver 解析 (读路径自检)。
- * 新 key 有效 → source 'entries'; 否则回退到 legacy 投影。结果供 7.4d/7.5 接入,
- * 当前不改变渲染 SoT。
- */
-export const resolveMirrorOnHydrate = async (
-  store: IConversationStoreLike,
-  deps: IEntriesMirrorDeps = defaultDeps,
-): Promise<IResolvedPersistedThreads> => {
-  const { raw } = await deps.hydrateSnapshot();
-  return resolvePersistedThreads({
-    rawEntriesSnapshot: parseRawEntriesSnapshot(raw),
-    legacyActiveThreadId: store.activeThreadId,
-    legacyThreads: store.threads,
-  });
 };
 
 /**

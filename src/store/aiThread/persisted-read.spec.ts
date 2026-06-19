@@ -95,9 +95,12 @@ describe('aiThread store — 7.5b 持久化读路径', () => {
     const store = useAiThreadStore();
     const a = makeThread('a');
     store.setPersistedThreads([a], 'a');
+    // 灌入后元素已被 pinia 深层响应式代理；记录代理引用，
+    // 以「前后引用一致」验证 no-op 恢复不替换数组元素（reactive(a) !== 原始 a）。
+    const proxied = store.persistedThreads[0];
     await flush();
     expect(restoreMock).toHaveBeenCalledTimes(1);
-    expect(store.persistedThreads[0]).toBe(a);
+    expect(store.persistedThreads[0]).toBe(proxied);
   });
 
   it('setPersistedThreads 重置去重集：同 id 换库后再次恢复', async () => {
