@@ -201,7 +201,7 @@ export const useShellWorkbenchView = (onReady: () => void) => {
     }
 
     const adjacentIndex = direction === 'back' ? currentIndex - 1 : currentIndex + 1;
-    const adjacentDocument = workbench.editorStore.documents[adjacentDocument];
+    const adjacentDocument = workbench.editorStore.documents[adjacentIndex];
     return adjacentDocument?.id ?? null;
   };
 

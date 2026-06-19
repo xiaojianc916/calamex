@@ -1,59 +1,79 @@
-#!/usr/bin/env node
-/**
- * fix-round2.mjs — 第二轮审查修复
- * #14: useShellWorkbenchView.ts gitChangeSummary 空值防御
- * #15: useWorkspacePathSuggestions.ts import 提升到文件顶部
- *
- * 用法: node fix-round2.mjs
- * 前置: 在项目根目录 D:\com.xiaojianc\my_desktop_app 下运行
- */
-
+// fix-review-round.mjs
+// 用途：批量应用本轮代码审查中「零风险」的两处修复。
+//   1) useShellWorkbenchView.ts: documents[adjacentDocument] -> documents[adjacentIndex]（修 TDZ 崩溃）
+//   2) useWorkspacePathSuggestions.ts: 删除重复的 JSDoc 注释块
+// 特点：幂等（已修过则跳过）、无备份文件、有日志。跑完确认 git diff 无误后可删除本文件。
 import { readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 
-const ROOT = process.cwd();
+const root = dirname(fileURLToPath(import.meta.url));
 
-// ── #14: useShellWorkbenchView.ts — gitChangeSummary 空值防御 ──────────
-const wbViewPath = join(ROOT, 'src/composables/useShellWorkbenchView.ts');
-let wbViewContent = readFileSync(wbViewPath, 'utf-8');
-
-const wbViewOld = `  const gitChangeSummary = computed(() => {
-    const files = gitStore.status.files;`;
-const wbViewNew = `  const gitChangeSummary = computed(() => {
-    const files = gitStore.status.files ?? [];`;
-
-if (wbViewContent.includes(wbViewOld)) {
-  wbViewContent = wbViewContent.replace(wbViewOld, wbViewNew);
-  writeFileSync(wbViewPath, wbViewContent, 'utf-8');
-  console.log('✅ #14 useShellWorkbenchView.ts: gitChangeSummary 空值防御已添加');
-} else {
-  console.log('⏭️  #14 useShellWorkbenchView.ts: 模式未匹配（可能已修复）');
-}
-
-// ── #15: useWorkspacePathSuggestions.ts — import 提升到顶部 ─────────────
-const wsPathPath = join(ROOT, 'src/composables/useWorkspacePathSuggestions.ts');
-let wsPathContent = readFileSync(wsPathPath, 'utf-8');
-
-// 检查 import 是否在 export 之后
-const lateImportLine = `\nimport { joinFileSystemPath } from '@/utils/file/path';\n`;
-if (wsPathContent.includes(lateImportLine)) {
-  // 删除中间的 import 行
-  wsPathContent = wsPathContent.replace(lateImportLine, '\n');
-
-  // 在文件最前面添加（在第一个 export 之前）
-  // 找到第一个 export 的位置
-  const firstExportIndex = wsPathContent.indexOf('export const getBoundedCacheValue');
-  if (firstExportIndex > 0) {
-    const before = wsPathContent.slice(0, firstExportIndex);
-    const after = wsPathContent.slice(firstExportIndex);
-    // 确保前面有任何前导注释的话保持不变，import 加在空行之后
-    wsPathContent = `${before}import { joinFileSystemPath } from '@/utils/file/path';\n\n${after}`;
+/** 安全的单次字符串替换；找不到 from 时报错，避免静默失效。 */
+function replaceOnce(content, from, to, label) {
+  if (content.includes(to) && !content.includes(from)) {
+    console.log(`  ⏭  [${label}] 已是修复后状态，跳过`);
+    return { content, changed: false };
   }
-
-  writeFileSync(wsPathPath, wsPathContent, 'utf-8');
-  console.log('✅ #15 useWorkspacePathSuggestions.ts: import 已提升到文件顶部');
-} else {
-  console.log('⏭️  #15 useWorkspacePathSuggestions.ts: 模式未匹配（可能已修复）');
+  if (!content.includes(from)) {
+    console.warn(`  ⚠️  [${label}] 未找到目标文本，可能源码已变动，请人工核对`);
+    return { content, changed: false };
+  }
+  const occurrences = content.split(from).length - 1;
+  if (occurrences > 1) {
+    console.warn(`  ⚠️  [${label}] 目标文本出现 ${occurrences} 次，为安全起见跳过，请人工核对`);
+    return { content, changed: false };
+  }
+  console.log(`  ✅ [${label}] 已替换`);
+  return { content: content.replace(from, to), changed: true };
 }
 
-console.log('\n完成。请运行 pnpm biome check --write && pnpm typecheck 验证。');
+function patchFile(relPath, patches) {
+  const abs = join(root, relPath);
+  let content;
+  try {
+    content = readFileSync(abs, 'utf8');
+  } catch {
+    console.warn(`⚠️  找不到文件，跳过: ${relPath}`);
+    return;
+  }
+  console.log(`\n📄 ${relPath}`);
+  let changedAny = false;
+  for (const p of patches) {
+    const res = replaceOnce(content, p.from, p.to, p.label);
+    content = res.content;
+    changedAny = changedAny || res.changed;
+  }
+  if (changedAny) {
+    writeFileSync(abs, content, 'utf8');
+    console.log(`  💾 已写回`);
+  } else {
+    console.log(`  （无改动）`);
+  }
+}
+
+// ---- 修复 1：文档相邻导航 TDZ 崩溃 -------------------------------------------
+patchFile('src/composables/useShellWorkbenchView.ts', [
+  {
+    label: 'adjacentDocument -> adjacentIndex',
+    from: 'const adjacentDocument = workbench.editorStore.documents[adjacentDocument];',
+    to: 'const adjacentDocument = workbench.editorStore.documents[adjacentIndex];',
+  },
+]);
+
+// ---- 修复 2：删除重复 JSDoc 注释块 -------------------------------------------
+const dupComment =
+  `/**\n` +
+  ` * 以下三个辅助函数工作在相对路径段上，不经过 path.ts 的 normalizeFileSystemPath，\n` +
+  ` * 因为后者会额外做 verbatim 前缀剥离 + 大小写折叠，会改变相对段的语义。\n` +
+  ` * 仅做分隔符归一化和首尾修剪，保留原始段的内容。\n` +
+  ` */\n`;
+patchFile('src/composables/useWorkspacePathSuggestions.ts', [
+  {
+    label: '删除重复 JSDoc 块',
+    from: dupComment,
+    to: '',
+  },
+]);
+
+console.log('\n完成。请运行：pnpm biome check --write && pnpm typecheck 验证。');
