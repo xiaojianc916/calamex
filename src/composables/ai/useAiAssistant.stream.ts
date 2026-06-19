@@ -185,8 +185,8 @@ export const resolveSidecarDoneStreamTokenSnapshot = (
   }
 
   return {
-    ...(isNonNegativeFiniteNumber(promptTokens) ? { inputTokens } : {}),
-    ...(isNonNegativeFiniteNumber(completionTokens) ? { outputTokens } : {}),
+    ...(isNonNegativeFiniteNumber(promptTokens) ? { inputTokens: promptTokens } : {}),
+    ...(isNonNegativeFiniteNumber(completionTokens) ? { outputTokens: completionTokens } : {}),
     ...(isNonNegativeFiniteNumber(totalTokens) ? { totalTokens } : {}),
     ...(usage ? { usage } : {}),
   };

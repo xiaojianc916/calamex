@@ -95,6 +95,7 @@ watch(
         <button
           type="button"
           class="workbench-dashboard-sidebar__brand-button"
+          :title="brandTooltip"
           :aria-label="brandTooltip"
           @click="emit('toggle-primary-mode')"
         >

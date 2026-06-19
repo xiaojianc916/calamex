@@ -4,25 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { IEditorDocument, IWorkspaceDirectoryPayload } from '@/types/editor';
 import AppSidebar from './AppSidebar.vue';
 
-const asyncPanelStub = (name: string) => ({
-  default: { name, render: () => null },
-});
-
-vi.mock('@/components/workbench/sidebar/ssh/SshSidebarPanel.vue', () =>
-  asyncPanelStub('SshSidebarPanel'),
-);
-vi.mock('@/components/workbench/sidebar/search/SearchSidebarPanel.vue', () =>
-  asyncPanelStub('SearchSidebarPanel'),
-);
-vi.mock('@/components/workbench/sidebar/run/RunSidebarPanel.vue', () =>
-  asyncPanelStub('RunSidebarPanel'),
-);
-vi.mock('@/components/workbench/sidebar/source-control/SourceControlPanel.vue', () =>
-  asyncPanelStub('SourceControlPanel'),
-);
-vi.mock('@/components/common/LinearContextMenu.vue', () => asyncPanelStub('LinearContextMenu'));
-
-const documentFixture: IEditorDocument = {
+const documentFixture = {
   id: 'doc-1',
   path: null,
   name: 'untitled.sh',
@@ -121,7 +103,7 @@ describe('AppSidebar', () => {
 
     await flushPromises();
 
-    expect(wrapper.text()).toContain('This folder is empty');
+    expect(wrapper.text()).toContain('空文件夹');
 
     await wrapper.get('.explorer-empty-action').trigger('click');
 

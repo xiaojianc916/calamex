@@ -1,6 +1,15 @@
 import { mount } from '@vue/test-utils';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { IEditorDocument } from '@/types/editor';
+
+vi.mock('@/components/ui/tooltip', () => ({
+  AppTooltip: {
+    name: 'AppTooltip',
+    props: ['content', 'side'],
+    template: '<span><slot /></span>',
+  },
+}));
+
 import WorkbenchDashboardSidebar from './WorkbenchDashboardSidebar.vue';
 
 const documentFixture: IEditorDocument = {

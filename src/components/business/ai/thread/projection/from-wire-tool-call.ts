@@ -47,7 +47,7 @@ export const fromWireToolCall = (
     id: toolCall.id,
     createdAt: options.createdAt,
     title: summary.length > 0 ? summary : toolCall.name,
-    kind: RUNTIME_KIND_TO_TOOL_KIND[classifyRuntimeToolKind(toolCall.name)],
+    kind: RUNTIME_KIND_TO_TOOL_KIND[classifyRuntimeToolKind(toolCall.name)] ?? 'other',
     status: WIRE_STATUS_TO_TOOL_STATUS[toolCall.status],
     content: [],
   };

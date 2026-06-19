@@ -1,3 +1,26 @@
+export const getBoundedCacheValue = <K, V>(cache: Map<K, V>, key: K): V | undefined => {
+  if (!cache.has(key)) return undefined;
+  const value = cache.get(key);
+  cache.delete(key);
+  cache.set(key, value as V);
+  return value;
+};
+
+export const setBoundedCacheValue = <K, V>(
+  cache: Map<K, V>,
+  key: K,
+  value: V,
+  limit: number,
+): void => {
+  if (cache.has(key)) cache.delete(key);
+  cache.set(key, value);
+  while (cache.size > limit) {
+    const oldest = cache.keys().next().value as K | undefined;
+    if (oldest === undefined) break;
+    cache.delete(oldest);
+  }
+};
+
 import { joinFileSystemPath } from '@/utils/file/path';
 
 /** 建议项的种类，与文件图标组件保持一致。 */

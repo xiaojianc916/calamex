@@ -207,6 +207,35 @@ const addTokenCounts = (
   return (left ?? 0) + (right ?? 0);
 };
 
+type TOfficialUsageLike =
+  | {
+      inputTokens?: number | null;
+      outputTokens?: number | null;
+      totalTokens?: number | null;
+      inputTokenDetails?: {
+        cacheReadTokens?: number | null;
+        cacheCreationTokens?: number | null;
+      } | null;
+      outputTokenDetails?: {
+        reasoningTokens?: number | null;
+      } | null;
+    }
+  | null
+  | undefined;
+
+const normalizeOfficialUsageForAccumulation = (usage: TOfficialUsageLike) => ({
+  inputTokens: usage?.inputTokens ?? 0,
+  outputTokens: usage?.outputTokens ?? 0,
+  totalTokens: usage?.totalTokens ?? 0,
+  inputTokenDetails: {
+    cacheReadTokens: usage?.inputTokenDetails?.cacheReadTokens ?? 0,
+    cacheCreationTokens: usage?.inputTokenDetails?.cacheCreationTokens ?? 0,
+  },
+  outputTokenDetails: {
+    reasoningTokens: usage?.outputTokenDetails?.reasoningTokens ?? 0,
+  },
+});
+
 const addRequiredTokenCounts = (left: number | undefined, right: number | undefined): number =>
   (left ?? 0) + (right ?? 0);
 
@@ -214,49 +243,51 @@ const addOfficialUsage = (
   current: IAiLanguageModelUsage | null,
   next: IAiLanguageModelUsage,
 ): IAiLanguageModelUsage => {
+  const safeCurrent = normalizeOfficialUsageForAccumulation(current);
+  const safeNext = normalizeOfficialUsageForAccumulation(next);
   const inputTokenDetails = {
     noCacheTokens:
       addTokenCounts(
         current?.inputTokenDetails?.noCacheTokens,
-        next.inputTokenDetails?.noCacheTokens,
+        safeNext.inputTokenDetails?.noCacheTokens,
       ) ?? 0,
     cacheReadTokens:
       addTokenCounts(
         current?.inputTokenDetails?.cacheReadTokens,
-        next.inputTokenDetails?.cacheReadTokens,
+        safeNext.inputTokenDetails?.cacheReadTokens,
       ) ?? 0,
     cacheWriteTokens:
       addTokenCounts(
         current?.inputTokenDetails?.cacheWriteTokens,
-        next.inputTokenDetails?.cacheWriteTokens,
+        safeNext.inputTokenDetails?.cacheWriteTokens,
       ) ?? 0,
   };
   const outputTokenDetails = {
     textTokens:
       addTokenCounts(
         current?.outputTokenDetails?.textTokens,
-        next.outputTokenDetails?.textTokens,
+        safeNext.outputTokenDetails?.textTokens,
       ) ?? 0,
     reasoningTokens:
       addTokenCounts(
         current?.outputTokenDetails?.reasoningTokens,
-        next.outputTokenDetails?.reasoningTokens,
+        safeNext.outputTokenDetails?.reasoningTokens,
       ) ?? 0,
   };
   const cachedInputTokens = addTokenCounts(
-    current.inputTokenDetails.cacheReadTokens,
-    next.inputTokenDetails.cacheReadTokens,
+    safeCurrent.inputTokenDetails.cacheReadTokens,
+    safeNext.inputTokenDetails.cacheReadTokens,
   );
   const reasoningTokens = addTokenCounts(
-    current.outputTokenDetails.reasoningTokens,
-    next.outputTokenDetails.reasoningTokens,
+    safeCurrent.outputTokenDetails.reasoningTokens,
+    safeNext.outputTokenDetails.reasoningTokens,
   );
   return {
-    inputTokens: addRequiredTokenCounts(current?.inputTokens, next.inputTokens),
+    inputTokens: addRequiredTokenCounts(current?.inputTokens, safeNext.inputTokens),
     inputTokenDetails,
-    outputTokens: addRequiredTokenCounts(current?.outputTokens, next.outputTokens),
+    outputTokens: addRequiredTokenCounts(current?.outputTokens, safeNext.outputTokens),
     outputTokenDetails,
-    totalTokens: addRequiredTokenCounts(current?.totalTokens, next.totalTokens),
+    totalTokens: addRequiredTokenCounts(current?.totalTokens, safeNext.totalTokens),
     ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
     ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
   };

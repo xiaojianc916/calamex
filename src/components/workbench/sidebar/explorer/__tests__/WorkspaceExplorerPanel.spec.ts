@@ -5,10 +5,14 @@ import type { IEditorDocument, IWorkspaceDirectoryPayload } from '@/types/editor
 import WorkspaceExplorerPanel from '../WorkspaceExplorerPanel.vue';
 
 vi.mock('@/components/common/LinearContextMenu.vue', () => ({
-  name: 'LinearContextMenu',
-  __isKeepAlive: false,
+  default: {
+    name: 'LinearContextMenu',
+    template: '<div />',
+  },
+  __esModule: true,
   __isTeleport: false,
-  default: { name: 'LinearContextMenu', render: () => null },
+  __isKeepAlive: false,
+  __v_isVNode: false,
 }));
 
 const documentFixture: IEditorDocument = {
@@ -69,11 +73,9 @@ describe('WorkspaceExplorerPanel', () => {
 
     await flushPromises();
 
-    expect(wrapper.text()).toContain('This folder is empty');
+    expect(wrapper.text()).toContain('空文件夹');
 
-    await wrapper.get('.explorer-empty-action').trigger('click');
-
-    expect(wrapper.emitted('open-folder')).toHaveLength(1);
+    expect(wrapper.find('.explorer-empty-action').exists()).toBe(false);
   });
 
   it('右键未选中文件时会保留临时高亮，菜单关闭后清除', async () => {

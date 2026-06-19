@@ -122,7 +122,11 @@ export const formatFileSystemPathForDisplay = (value: string | null | undefined)
  */
 export const formatFileSystemTextForDisplay = (value: string | null | undefined): string => {
   if (!value) return '';
-  return stripWindowsVerbatimPrefix(value);
+  return value
+    .replace(/\\\\\?\\UNC\\/gi, '\\\\')
+    .replace(/\/\/\?\/UNC\//gi, '//')
+    .replace(/\\\\\?\\/g, '')
+    .replace(/\/\/\?\//g, '');
 };
 
 export const joinDisplayedPath = (

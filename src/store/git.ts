@@ -261,6 +261,11 @@ export const useGitStore = defineStore('git', () => {
     }
     scheduledPullRequestPreloadRepositoryKey = null;
   };
+  type TCommitStatsTimer =
+    | { kind: 'idle'; id: ReturnType<typeof requestIdleCallback> }
+    | { kind: 'timeout'; id: ReturnType<typeof setTimeout> };
+
+  let commitStatsTimer: TCommitStatsTimer | null = null;
 
   const clearCommitStatsBackgroundQueue = (): void => {
     if (commitStatsTimer !== null) {
@@ -500,27 +505,27 @@ export const useGitStore = defineStore('git', () => {
   };
 
   const scheduleCommitStatsBackgroundQueue = (): void => {
-    if (commitStatsBackgroundTimer !== null || isCommitStatsBackgroundRunning) return;
+    if (commitStatsTimer !== null || isCommitStatsBackgroundRunning) return;
 
     const run = (): void => {
-      commitStatsBackgroundTimer = null;
+      commitStatsTimer = null;
       void drainCommitStatsBackgroundQueue();
     };
 
     if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
       // requestIdleCallback 的 timeout 参数保证回调最终一定执行，
       // 不需要额外加 setTimeout fallback（原双层超时是冗余的防御）。
-      // commitStatsBackgroundTimer 存 idleId，取消时用 cancelIdleCallback。
+      // commitStatsTimer 存 idleId，取消时用 cancelIdleCallback。
       const idleId = window.requestIdleCallback(run, {
         timeout: GIT_COMMIT_STATS_BACKGROUND_DELAY_MS * 4,
       });
       // 保存 idleId 以便 clearCommitStatsBackgroundQueue 取消。
       // 不支持 cancelIdleCallback 的环境（旧 WebView2）退化为 no-op。
-      commitStatsBackgroundTimer = idleId as unknown as ReturnType<typeof setTimeout>;
+      commitStatsTimer = idleId as unknown as ReturnType<typeof setTimeout>;
       return;
     }
 
-    commitStatsBackgroundTimer = setTimeout(run, GIT_COMMIT_STATS_BACKGROUND_DELAY_MS);
+    commitStatsTimer = setTimeout(run, GIT_COMMIT_STATS_BACKGROUND_DELAY_MS);
   };
 
   const enqueueCommitStats = (commitId: string): void => {

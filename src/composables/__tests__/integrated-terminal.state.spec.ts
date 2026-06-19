@@ -51,6 +51,7 @@ const { capturedListeners, mockFitAddonInstance, mockTerminalInstance, mockTauri
       onScroll: vi.fn(),
       onResize: vi.fn(),
       onSelectionChange: vi.fn(),
+      onTitleChange: vi.fn(() => ({ dispose: vi.fn() })),
       scrollToBottom: vi.fn(),
       refresh: vi.fn(),
       clearTextureAtlas: vi.fn(),
@@ -311,7 +312,6 @@ describe('suite 1', () => {
 
       expect(mockTauriService.cancelTerminalRun).toHaveBeenCalledWith({
         runId: 'run-1',
-        mode: 'graceful',
       });
       expect(mockTauriService.writeTerminalInput).not.toHaveBeenCalled();
     });
@@ -337,7 +337,6 @@ describe('suite 1', () => {
 
       expect(mockTauriService.cancelTerminalRun).toHaveBeenCalledWith({
         runId: 'run-1',
-        mode: 'graceful',
       });
       expect(mockTauriService.writeTerminalInput).toHaveBeenCalledWith({
         sessionId: 'main-terminal',
@@ -543,7 +542,6 @@ describe('suite 1', () => {
 
       const { listen } = await import('@tauri-apps/api/event');
       expect(vi.mocked(listen)).toHaveBeenCalledWith('terminal:data', expect.any(Function));
-      expect(vi.mocked(listen)).toHaveBeenCalledWith('terminal:run-chunk', expect.any(Function));
       expect(vi.mocked(listen)).toHaveBeenCalledWith(
         'terminal:run-completed',
         expect.any(Function),

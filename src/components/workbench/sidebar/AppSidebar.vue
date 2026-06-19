@@ -3,10 +3,10 @@
   <!-- 性能优化：所有侧边栏面板全常驻挂载，仅用 v-show 切换可见性，彻底避免切换时的 mount/unmount 与同步渲染开销。 各面板内部的数据加载仍由 is-active 等条件控制（例如仅在对应 view 激活时才加载/刷新），隐藏时不空跑。 -->
   <SourceControlPanel v-show="isSourceControlView" class="h-full min-h-0 w-full flex-1" :is-active="isSourceControlView" :is-desktop-runtime="isDesktopRuntime" :workspace-root-path="workspaceRootPath" :active-path="document.path" @open-file="handleOpenFile" @open-diff="handleOpenGitDiff" />
   <WorkspaceExplorerPanel v-show="isExplorerView" :document="document" :is-active="isExplorerView" :is-desktop-runtime="isDesktopRuntime" :workspace-root-path="workspaceRootPath" :preloaded-workspace-root="preloadedWorkspaceRoot" :startup-explorer-expanded-paths="startupExplorerExpandedPaths" :startup-explorer-selected-path="startupExplorerSelectedPath" @open-file="handleOpenFile" @open-folder="emit('open-folder')" @explorer-state-change="emit('explorer-state-change', $event)" />
-  <DeferredSearchSidebarPanel v-show="isSearchView" :is-active="isSearchView" :document-path="document.path" :is-desktop-runtime="isDesktopRuntime" :workspace-root-path="workspaceRootPath" :preloaded-workspace-root="preloadedWorkspaceRoot" @open-file="handleOpenFile" />
-  <DeferredRunSidebarPanel v-show="isRunView" />
+  <SearchSidebarPanel v-show="isSearchView" :is-active="isSearchView" :document-path="document.path" :is-desktop-runtime="isDesktopRuntime" :workspace-root-path="workspaceRootPath" :preloaded-workspace-root="preloadedWorkspaceRoot" @open-file="handleOpenFile" />
+  <RunSidebarPanel v-show="isRunView" :is-active="isRunView" />
   <div v-show="isSshView" class="ssh-sidebar-host-shell flex min-h-0 w-full flex-1 flex-col overflow-hidden" >
-    <DeferredSshSidebarPanel @open-terminal="emit('open-terminal')" />
+    <SshSidebarPanel :is-active="isSshView" @open-terminal="emit('open-terminal')" />
   </div>
   <!-- fallback placeholder (rare) -->
   <template v-if="!isExplorerView && !isSearchView && !isSourceControlView && !isRunView && !isSshView">
@@ -35,9 +35,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, defineAsyncComponent } from 'vue';
+import { computed } from 'vue';
 import { Button } from '@/components/ui/button';
 import WorkspaceExplorerPanel from '@/components/workbench/sidebar/explorer/WorkspaceExplorerPanel.vue';
+import RunSidebarPanel from '@/components/workbench/sidebar/run/RunSidebarPanel.vue';
+import SearchSidebarPanel from '@/components/workbench/sidebar/search/SearchSidebarPanel.vue';
+import SourceControlPanel from '@/components/workbench/sidebar/source-control/SourceControlPanel.vue';
+import SshSidebarPanel from '@/components/workbench/sidebar/ssh/SshSidebarPanel.vue';
 import type { TWorkbenchSidebarView } from '@/types/app';
 import type {
   IActiveRunSummary,
@@ -49,23 +53,6 @@ import type {
   TWorkbenchOpenFilePayload,
 } from '@/types/editor';
 import type { IGitDiffPreviewRequest } from '@/types/git';
-
-const SourceControlPanel = defineAsyncComponent({
-  loader: () => import('@/components/workbench/sidebar/source-control/SourceControlPanel.vue'),
-  suspensible: false,
-});
-const DeferredSearchSidebarPanel = defineAsyncComponent({
-  loader: () => import('@/components/workbench/sidebar/search/SearchSidebarPanel.vue'),
-  suspensible: false,
-});
-const DeferredRunSidebarPanel = defineAsyncComponent({
-  loader: () => import('@/components/workbench/sidebar/run/RunSidebarPanel.vue'),
-  suspensible: false,
-});
-const DeferredSshSidebarPanel = defineAsyncComponent({
-  loader: () => import('@/components/workbench/sidebar/ssh/SshSidebarPanel.vue'),
-  suspensible: false,
-});
 
 const props = defineProps<{
   document: IEditorDocument;

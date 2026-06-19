@@ -21,7 +21,7 @@ vi.mock('@/components/workbench/sidebar/explorer/WorkspaceExplorerPanel.vue', ()
       panelMounts.explorer += 1;
     },
     template:
-      '<section data-testid="explorer-panel" :data-active="String(isActive)">Explorer</section>',
+      '<section data-testid="explorer-panel" :data-active="String(isActive)" :style="{ display: isActive === false ? \'none\' : \'\' }">Explorer</section>',
   },
 }));
 
@@ -33,7 +33,7 @@ vi.mock('@/components/workbench/sidebar/source-control/SourceControlPanel.vue', 
       panelMounts.sourceControl += 1;
     },
     template:
-      '<section data-testid="source-control-panel" :data-active="String(isActive)">Source Control</section>',
+      '<section data-testid="source-control-panel" :data-active="String(isActive)" :style="{ display: isActive === false ? \'none\' : \'\' }">Source Control</section>',
   },
 }));
 
@@ -48,27 +48,31 @@ vi.mock('@/components/workbench/sidebar/search/SearchSidebarPanel.vue', () => ({
       panelMounts.search += 1;
     },
     template:
-      '<section data-testid="search-panel" :data-active="String(isActive)"><input data-testid="search-query" v-model="query" /></section>',
+      '<section data-testid="search-panel" :data-active="String(isActive)" :style="{ display: isActive === false ? \'none\' : \'\' }"><input data-testid="search-query" v-model="query" /></section>',
   },
 }));
 
 vi.mock('@/components/workbench/sidebar/run/RunSidebarPanel.vue', () => ({
   default: {
     name: 'RunSidebarPanel',
+    props: ['isActive'],
     mounted() {
       panelMounts.run += 1;
     },
-    template: '<section data-testid="run-panel">Run</section>',
+    template:
+      '<section data-testid="run-panel" :data-active="String(isActive)" :style="{ display: isActive === false ? \'none\' : \'\' }">Run</section>',
   },
 }));
 
 vi.mock('@/components/workbench/sidebar/ssh/SshSidebarPanel.vue', () => ({
   default: {
     name: 'SshSidebarPanel',
+    props: ['isActive'],
     mounted() {
       panelMounts.ssh += 1;
     },
-    template: '<section data-testid="ssh-panel">SSH</section>',
+    template:
+      '<section data-testid="ssh-panel" :data-active="String(isActive)" :style="{ display: isActive === false ? \'none\' : \'\' }">SSH</section>',
   },
 }));
 
@@ -130,7 +134,9 @@ const expectOnlyPanelVisible = (
   >) {
     const panel = wrapper.find(`[data-testid="${testId}"]`);
     expect(panel.exists(), `${view} panel should stay mounted`).toBe(true);
-    expect(panel.isVisible(), `${view} panel visibility`).toBe(view === active);
+    expect(panel.attributes('data-active'), `${view} panel active flag`).toBe(
+      String(view === active),
+    );
   }
 };
 
