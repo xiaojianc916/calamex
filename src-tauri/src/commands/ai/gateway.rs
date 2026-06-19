@@ -40,6 +40,26 @@ fn classify_provider_test_error_code(error: &str) -> String {
     }
 }
 
+/// 将一次连接测试的 `Result<成功说明, 结构化错误>` 归一化为前端契约 `AiProviderTestPayload`。
+///
+/// 成功 → ok:true + AI_PROVIDER_READY；失败 → ok:false + 解析出的结构化错误码 + 原始消息。
+/// 供 ai_test_provider / ai_test_provider_config / ai_connect_provider 的验证结果共用，
+/// 保证三条路径对「连通性结论」的呈现完全一致。
+fn verification_to_test_payload(verification: Result<String, String>) -> AiProviderTestPayload {
+    match verification {
+        Ok(message) => AiProviderTestPayload {
+            ok: true,
+            code: "AI_PROVIDER_READY".to_string(),
+            message,
+        },
+        Err(error) => AiProviderTestPayload {
+            ok: false,
+            code: classify_provider_test_error_code(&error),
+            message: error,
+        },
+    }
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn ai_get_config() -> Result<AiConfigPayload, String> {
@@ -76,7 +96,7 @@ pub async fn ai_test_provider_config(
     app: AppHandle,
     payload: AiProviderConnectionRequest,
 ) -> Result<AiProviderTestPayload, String> {
-    match gateway::test_provider_config(
+    let verification = gateway::test_provider_config(
         &app,
         payload.role.as_deref(),
         payload.provider_id.as_deref(),
@@ -88,19 +108,9 @@ pub async fn ai_test_provider_config(
         payload.agent_enabled,
         payload.api_key.as_ref().map(|value| value.expose()),
     )
-    .await
-    {
-        Ok(message) => Ok(AiProviderTestPayload {
-            ok: true,
-            code: "AI_PROVIDER_READY".to_string(),
-            message,
-        }),
-        Err(error) => Ok(AiProviderTestPayload {
-            ok: false,
-            code: classify_provider_test_error_code(&error),
-            message: error,
-        }),
-    }
+    .await;
+
+    Ok(verification_to_test_payload(verification))
 }
 
 #[tauri::command]
@@ -109,7 +119,9 @@ pub async fn ai_connect_provider(
     app: AppHandle,
     payload: AiProviderConnectionRequest,
 ) -> Result<AiProviderConnectionPayload, String> {
-    let config = gateway::connect_provider(
+    // connect_provider 先持久化、再做非致命验证：返回 Ok 即代表凭证/配置已落盘，
+    // test 字段如实反映在线验证结论（不再硬编码 ok:true）。
+    let outcome = gateway::connect_provider(
         &app,
         payload.role.as_deref(),
         payload.provider_id.as_deref(),
@@ -124,12 +136,8 @@ pub async fn ai_connect_provider(
     .await?;
 
     Ok(AiProviderConnectionPayload {
-        config,
-        test: AiProviderTestPayload {
-            ok: true,
-            code: "AI_PROVIDER_READY".to_string(),
-            message: "AI Provider 可用。".to_string(),
-        },
+        config: outcome.config,
+        test: verification_to_test_payload(outcome.verification),
     })
 }
 
@@ -144,18 +152,8 @@ pub fn ai_clear_credentials() -> Result<(), String> {
 #[tauri::command]
 #[specta::specta]
 pub async fn ai_test_provider(app: AppHandle) -> Result<AiProviderTestPayload, String> {
-    match gateway::test_provider(&app).await {
-        Ok(message) => Ok(AiProviderTestPayload {
-            ok: true,
-            code: "AI_PROVIDER_READY".to_string(),
-            message,
-        }),
-        Err(error) => Ok(AiProviderTestPayload {
-            ok: false,
-            code: classify_provider_test_error_code(&error),
-            message: error,
-        }),
-    }
+    let verification = gateway::test_provider(&app).await;
+    Ok(verification_to_test_payload(verification))
 }
 
 #[tauri::command]
