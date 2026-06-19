@@ -178,6 +178,11 @@ export const useGitStore = defineStore('git', () => {
   queryClient.setQueryDefaults(GIT_COMMIT_FILE_DIFF_QUERY_PREFIX, { staleTime: Infinity });
   queryClient.setQueryDefaults(GIT_COMMIT_FILE_DIFF_PREVIEW_QUERY_PREFIX, { staleTime: Infinity });
 
+  // file baseline 查询：按文件路径寻址，文件被修改后需刷新，
+  // 交由 vue-query 的 fetchQuery 去重 + removeQueries 失效，替代手写缓存 + pending 表。
+  const GIT_FILE_BASELINE_QUERY_PREFIX = ['git', 'fileBaseline'];
+  queryClient.setQueryDefaults(GIT_FILE_BASELINE_QUERY_PREFIX, { staleTime: Infinity });
+
   const commitStatsQueryKey = (cacheKey: string): string[] => [
     ...GIT_COMMIT_STATS_QUERY_PREFIX,
     cacheKey,
@@ -234,7 +239,6 @@ export const useGitStore = defineStore('git', () => {
   const pendingCommitStatsRequests = new Set<string>();
   const pullRequestBackgroundPreloadAttemptedAt = new Map<string, number>();
 
-  const pendingBaselineRequests = new Map<string, Promise<IGitFileBaselinePayload>>();
   let pendingPullRequestSupportRequest: Promise<IGitPullRequestSupportPayload> | null = null;
 
   const hasRepository = computed(
