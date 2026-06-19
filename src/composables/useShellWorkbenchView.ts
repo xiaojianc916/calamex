@@ -247,7 +247,7 @@ export const useShellWorkbenchView = (onReady: () => void) => {
    * status 分类：A=新增、D=删除、M/R=修改、?=未跟踪。
    */
   const gitChangeSummary = computed(() => {
-    const files = gitStore.status.files;
+    const files = gitStore.status.files ?? [];
     let added = 0;
     let modified = 0;
     let deleted = 0;

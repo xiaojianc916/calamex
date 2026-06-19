@@ -21,8 +21,6 @@ export const setBoundedCacheValue = <K, V>(
   }
 };
 
-import { joinFileSystemPath } from '@/utils/file/path';
-
 /** 建议项的种类，与文件图标组件保持一致。 */
 export type TPathSuggestionKind = 'file' | 'directory';
 
