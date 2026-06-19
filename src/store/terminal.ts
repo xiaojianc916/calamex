@@ -5,7 +5,6 @@ import type {
   ITerminalDataEvent,
   ITerminalRunHandle,
   ITerminalSessionStateChangedPayload,
-  ITerminalStateChangedPayload,
   ITerminalVisualWritePayload,
   TTerminalCancelMode,
   TTerminalDataSource,
@@ -304,7 +303,11 @@ export const useTerminalRuntimeStore = defineStore('terminal-runtime', () => {
     markEvent('terminal:run-dispatch-failed');
   };
 
-  const applyStateChanged = (payload: ITerminalStateChangedPayload): void => {
+  const applyStateChanged = (payload: {
+    from: TTerminalRuntimeState;
+    to: TTerminalRuntimeState;
+    atMs: number;
+  }): void => {
     state.value = payload.to;
     if (payload.to === 'idle_interactive') {
       interactiveReady.value = true;
