@@ -20,4 +20,3 @@ export * from './reconcile-thread-entries';
 export * from './thread-entries-to-timeline';
 export * from './tool-kind';
 export * from './tool-view';
-export * from './use-entries-timeline';

@@ -23,6 +23,12 @@ export const EDITOR_FONT_FAMILY =
 // 则放弃高亮，避免 Worker 任务过重。注意这是“切片”上限而非“整文档”上限。
 const MAX_HIGHLIGHT_SLICE_LENGTH = 200_000;
 
+// 「从文档首行起」tokenize 切片下沿的块大小（行）。滚动/打字时把切片终点向上对齐到
+// 块边界，使相同区段的切片字符串稳定 → 命中 shiki-highlighter 的按串 token 缓存与按行
+// 缓存，把「向下滚动/打字时逐行重算整段前缀」从每行一次降到每跨一个块一次。512 行在
+// 常规代码下远低于 MAX_HIGHLIGHT_SLICE_LENGTH 体积上限。
+const HIGHLIGHT_SLICE_CHUNK_LINES = 512;
+
 // 可见区下方额外着色的行数：平滑滚动时的下方衔接缓冲。取较大值以覆盖快速滚动
 // 单帧的跨度，减少滚动越界触发重算的频率，降低闪烁概率。
 const HIGHLIGHT_OVERSCAN_LINES = 72;
@@ -160,9 +166,16 @@ export const computeShikiHighlightRange = (input: {
   overscanLines: number;
   fromDocumentStart: boolean;
   leadInLines?: number;
+  // 可选：把下沿向上取整到该行数的整数倍（夹取到末行）。用于让「从文档首行起」的
+  // tokenize 切片在滚动时按块稳定；不传 = 不量化（渲染/覆盖判定等调用点行为不变）。
+  chunkLines?: number;
 }): { startLine: number; endLine: number } => {
   const leadInLines = input.leadInLines ?? input.overscanLines;
-  const endLine = Math.min(input.totalLines, input.lastVisibleLine + input.overscanLines);
+  const rawEndLine = Math.min(input.totalLines, input.lastVisibleLine + input.overscanLines);
+  const endLine =
+    input.chunkLines && input.chunkLines > 0
+      ? Math.min(input.totalLines, Math.ceil(rawEndLine / input.chunkLines) * input.chunkLines)
+      : rawEndLine;
   const startLine = input.fromDocumentStart ? 1 : Math.max(1, input.firstVisibleLine - leadInLines);
   return { startLine, endLine };
 };
@@ -300,6 +313,7 @@ const computeShikiHighlightSlice = (
       overscanLines: HIGHLIGHT_OVERSCAN_LINES,
       leadInLines: options.leadInLines ?? HIGHLIGHT_OVERSCAN_LINES,
       fromDocumentStart,
+      chunkLines: fromDocumentStart ? HIGHLIGHT_SLICE_CHUNK_LINES : undefined,
     });
     return {
       range,

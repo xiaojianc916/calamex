@@ -180,6 +180,55 @@ describe('computeShikiHighlightRange', () => {
       }),
     ).toEqual({ startLine: 1, endLine: 480 });
   });
+
+  it('chunkLines 把下沿向上取整到块边界（滚动时切片按块稳定）', () => {
+    // 380 + 40 = 420 → 向上取整到 512 的整数倍 = 512
+    expect(
+      computeShikiHighlightRange({
+        firstVisibleLine: 300,
+        lastVisibleLine: 380,
+        totalLines: 5000,
+        overscanLines: 40,
+        fromDocumentStart: true,
+        chunkLines: 512,
+      }),
+    ).toEqual({ startLine: 1, endLine: 512 });
+  });
+
+  it('chunkLines 量化后的下沿仍夹取到文档末行', () => {
+    // 980 + 40 = 1020 → 取整到 1024 → 夹取到 1000
+    expect(
+      computeShikiHighlightRange({
+        firstVisibleLine: 900,
+        lastVisibleLine: 980,
+        totalLines: 1000,
+        overscanLines: 40,
+        fromDocumentStart: true,
+        chunkLines: 512,
+      }),
+    ).toEqual({ startLine: 1, endLine: 1000 });
+  });
+
+  it('同一块内视口移动产生相同量化下沿（切片串稳定的前提）', () => {
+    const a = computeShikiHighlightRange({
+      firstVisibleLine: 10,
+      lastVisibleLine: 60,
+      totalLines: 5000,
+      overscanLines: 40,
+      fromDocumentStart: true,
+      chunkLines: 512,
+    });
+    const b = computeShikiHighlightRange({
+      firstVisibleLine: 80,
+      lastVisibleLine: 130,
+      totalLines: 5000,
+      overscanLines: 40,
+      fromDocumentStart: true,
+      chunkLines: 512,
+    });
+    expect(a.endLine).toBe(b.endLine);
+    expect(a.endLine).toBe(512);
+  });
 });
 
 describe('isShikiHighlightRangeCovered', () => {
