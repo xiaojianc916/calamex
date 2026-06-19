@@ -2,17 +2,18 @@
  * src/terminal/session.ts
  * TerminalSession：终端会话核心实现（R-20.2.1 / R-20.2.3）。
  * 持有全部会话状态；与 UI 层解耦，可通过构造参数注入 fake 服务用于单测（R-20.2.6）。
+ *
+ * 模块级常量、ANSI 工具、类型定义、纯函数 helpers 已拆分至：
+ *   - session-constants.ts（常量与类型别名）
+ *   - session-ansi.ts    （ANSI 纯函数与预编译正则）
+ *   - session-types.ts   （接口定义）
+ *   - session-helpers.ts  （选项构建器、主题、诊断 helper）
  */
 
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
 import { markRaw, nextTick, type Ref, ref, shallowRef } from 'vue';
-import { resolveTerminalFontFamily } from '@/constants/terminal';
-import { getThemeManager } from '@/themes';
-import { buildTerminalTheme } from '@/themes/derive/terminal';
-import { dark } from '@/themes/variants/dark';
-import { light } from '@/themes/variants/light';
 import type { TThemeMode } from '@/types/app';
 import type { ITerminalSettings } from '@/types/settings';
 import type {
@@ -37,305 +38,57 @@ import {
   SHELL_WINDOW_RESIZE_SETTLED_EVENT,
   SHELL_WINDOW_RESIZE_START_EVENT,
 } from '@/utils/window/window-resize-events';
+import {
+  isFirstRunChunkFrame,
+  isLikelyInteractiveResizeRepaintFrame,
+  normalizeTerminalAnsiForTheme,
+  previewTerminalDiagnosticText,
+  scanInteractiveAltScreenSwitch,
+  stripInjectedRunSeparatorForTerminalData,
+} from './session-ansi';
+import {
+  DEFAULT_COLS,
+  DEFAULT_ROWS,
+  MIN_RENDERABLE_TERMINAL_HEIGHT,
+  MIN_RENDERABLE_TERMINAL_WIDTH,
+  TERMINAL_BELL_VISUAL_FLASH_MS,
+  TERMINAL_BUFFER_DIAGNOSTIC_LINE_COUNT,
+  TERMINAL_COLD_START_HINT_DELAY_MS,
+  TERMINAL_HEARTBEAT_INTERVAL_MS,
+  TERMINAL_HIDDEN_WRITE_BACKLOG_CHUNK_CHARS,
+  TERMINAL_HIDDEN_WRITE_BACKLOG_MAX_CHARS,
+  TERMINAL_HIDDEN_WRITE_BACKLOG_OMITTED_MARKER,
+  TERMINAL_LAYOUT_SCROLL_GUARD_RELEASE_MS,
+  TERMINAL_LAYOUT_SETTLE_DELAY_MS,
+  TERMINAL_LIVE_RESIZE_PTY_SYNC_DELAY_MS,
+  TERMINAL_LIVE_RESIZE_REFRESH_EVERY,
+  TERMINAL_OUTPUT_FLUSH_DELAY_MS,
+  TERMINAL_RENDERABLE_CONTENT_SCAN_ROWS,
+  TERMINAL_RESIZE_REPAINT_SUPPRESSION_MS,
+  TERMINAL_RUN_COMPLETED_FLUSH_TIMEOUT_MS,
+  TERMINAL_RUN_VISUAL_REORDER_TIMEOUT_MS,
+  type TTerminalLayoutSyncOptions,
+} from './session-constants';
+import {
+  buildTerminalOptions,
+  encodeTerminalInputForDiagnostics,
+  getXtermTheme,
+  isInteractiveChannelClosedError,
+  isPrintableTerminalInput,
+  resolveInteger,
+  resolveTerminalBellStyle,
+} from './session-helpers';
+import {
+  type IRerunVisualTransaction as IRunVisualTransaction,
+  type ITerminalSessionCallbacks,
+  type ITerminalSessionOptions,
+  type ITerminalTauriService,
+} from './session-types';
 
-// ─── 本地常量 ─────────────────────────────────────────────────────────────────
+// ─── Re-export 公共 API（保持消费者导入路径不变） ──────────────────────────────
 
-const DEFAULT_COLS = 120;
-const DEFAULT_ROWS = 28;
-const MIN_RENDERABLE_TERMINAL_WIDTH = 24;
-const MIN_RENDERABLE_TERMINAL_HEIGHT = 24;
-// 前端存活心跳间隔：每个挂载中的会话周期性向后端上报存活。后端宽限期（30s，约 3 个心跳周期）
-// 远大于此间隔，连续多次漏报（页面重载 / 崩溃后 VM 销毁、心跳停止）才会被孤儿收割线程回收，健康会话零误杀。
-const TERMINAL_HEARTBEAT_INTERVAL_MS = 10_000;
-// 冷启动状态升级延迟：WSL 首次冷启动（发行版 VM 冷）可能需十余秒。连接超过此延迟仍未就绪时，
-// 把状态文案升级为「首次启动可能较慢」，让用户知道仍在启动而非卡死。对照 VSCode 终端「正在启动…」反馈。
-const TERMINAL_COLD_START_HINT_DELAY_MS = 6_000;
-const TERMINAL_LAYOUT_SETTLE_DELAY_MS = 72;
-const TERMINAL_OUTPUT_FLUSH_DELAY_MS = 16;
-const TERMINAL_RUN_COMPLETED_FLUSH_TIMEOUT_MS = 160;
-const TERMINAL_RUN_VISUAL_REORDER_TIMEOUT_MS = 2000;
-const TERMINAL_LAYOUT_SCROLL_GUARD_RELEASE_MS = 180;
-const TERMINAL_RESIZE_REPAINT_SUPPRESSION_MS = 240;
-const TERMINAL_LIVE_RESIZE_PTY_SYNC_DELAY_MS = 96;
-const TERMINAL_LIVE_RESIZE_REFRESH_EVERY = 3;
-const TERMINAL_RUN_SEPARATOR_PREFIX = '──── run #';
-const TERMINAL_BUFFER_DIAGNOSTIC_LINE_COUNT = 14;
-const TERMINAL_BUFFER_DIAGNOSTIC_PREVIEW_LENGTH = 160;
-const TERMINAL_BELL_VISUAL_FLASH_MS = 120;
-// 初始绘制恢复时，从游标行向上有界扫描的最大行数，避免大 scrollback 下线性扫整缓冲。
-const TERMINAL_RENDERABLE_CONTENT_SCAN_ROWS = 256;
-// 离屏期间只保留最新输出，避免终端面板长时间隐藏时字符串 backlog 无界增长。
-const TERMINAL_HIDDEN_WRITE_BACKLOG_MAX_CHARS = 512 * 1024;
-const TERMINAL_HIDDEN_WRITE_BACKLOG_CHUNK_CHARS = 8 * 1024;
-const TERMINAL_HIDDEN_WRITE_BACKLOG_OMITTED_MARKER =
-  '\r\n\x1b[90m[已省略部分离屏终端输出以保持界面流畅]\x1b[0m\r\n';
-
-const ANSI_ESCAPE = String.fromCharCode(27);
-const ANSI_ESCAPE_CHARACTER_PATTERN = new RegExp(ANSI_ESCAPE, 'gu');
-const ANSI_CSI_HOME_CURSOR_PATTERN = new RegExp(
-  `${ANSI_ESCAPE}\\[(?:\\d{0,4}(?:;\\d{0,4})?)?H`,
-  'u',
-);
-const ANSI_CSI_ERASE_PATTERN = new RegExp(
-  `${ANSI_ESCAPE}\\[(?:\\??\\d{0,4}(?:;\\d{0,4})*)?[JK]`,
-  'u',
-);
-const ANSI_CSI_HIDE_CURSOR_PATTERN = new RegExp(`${ANSI_ESCAPE}\\[\\?25l`, 'u');
-const ANSI_ALT_SCREEN_SWITCH_PATTERN = new RegExp(
-  `${ANSI_ESCAPE}\\[\\?(?:47|1047|1049)([hl])`,
-  'gu',
-);
-const ANSI_SGR_PATTERN = new RegExp(`${ANSI_ESCAPE}\\[([0-9;]*)m`, 'gu');
-const ANSI_DEFAULT_FOREGROUND_CODE = 39;
-const ANSI_DEFAULT_BACKGROUND_CODE = 49;
-const ANSI_EXTENDED_FOREGROUND_CODE = 38;
-const ANSI_EXTENDED_BACKGROUND_CODE = 48;
-const ANSI_EXTENDED_INDEXED_COLOR_MODE = 5;
-const ANSI_EXTENDED_RGB_COLOR_MODE = 2;
-const ANSI_LIGHT_THEME_FORCED_FOREGROUND_CODES = new Set([37, 97]);
-const ANSI_LIGHT_THEME_FORCED_BACKGROUND_CODES = new Set([40, 100]);
-
-type TTerminalBellStyle = 'none' | 'sound' | 'visual';
-type TTerminalLayoutSyncOptions = { settle?: boolean };
-
-interface IRunVisualTransaction {
-  nextSeq: number;
-  pending: Map<number, ITerminalDataEvent>;
-  gapTimerId: number | null;
-}
-
-// ─── 终端主题 helper ───────────────────────────────────────────────────────────
-
-/**
- * 从 ThemeManager 获取当前 xterm 主题；未初始化时返回空对象，由 xterm 使用内置默认色。
- */
-const getXtermTheme = (theme?: TThemeMode) => {
-  if (theme === 'light') return buildTerminalTheme(light);
-  if (theme === 'dark') return buildTerminalTheme(dark);
-  return getThemeManager().getTerminalTheme() ?? {};
-};
-
-const resolveInteger = (
-  value: number | null | undefined,
-  fallback: number,
-  min: number,
-  max: number,
-): number => {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return fallback;
-  const integer = Math.trunc(numeric);
-  if (!Number.isFinite(integer)) return fallback;
-  return Math.min(max, Math.max(min, integer));
-};
-
-const resolveTerminalBellStyle = (bellMode: ITerminalSettings['bellMode']): TTerminalBellStyle => {
-  switch (bellMode) {
-    case 'sound':
-      return 'sound';
-    case 'flash':
-      return 'visual';
-    default:
-      return 'none';
-  }
-};
-
-const buildTerminalOptions = (s: ITerminalSettings, theme: TThemeMode) => ({
-  allowTransparency: false,
-  cols: DEFAULT_COLS,
-  convertEol: true,
-  cursorBlink: s.cursorBlink,
-  cursorStyle: s.cursorStyle,
-  drawBoldTextInBrightColors: true,
-  fastScrollSensitivity: 1,
-  fontFamily: resolveTerminalFontFamily(s.fontFamily),
-  fontSize: s.fontSize,
-  letterSpacing: 0,
-  lineHeight: Number(s.lineHeight),
-  rows: DEFAULT_ROWS,
-  scrollback: s.scrollback,
-  scrollOnUserInput: true,
-  scrollSensitivity: 1,
-  smoothScrollDuration: 0,
-  theme: getXtermTheme(theme),
-});
-
-const isPrintableTerminalInput = (data: string): boolean => {
-  if (data.length === 0) return false;
-  const code = data.charCodeAt(0);
-  return code >= 0x20 && code !== 0x7f;
-};
-
-const encodeTerminalInputForDiagnostics = (data: string): Uint8Array => {
-  if (typeof TextEncoder === 'undefined') {
-    return new Uint8Array();
-  }
-  return new TextEncoder().encode(data);
-};
-
-const isFirstRunChunkFrame = (payload: ITerminalDataEvent): boolean =>
-  payload.source === 'run' && typeof payload.runSeq === 'number' && payload.runSeq === 1;
-
-/**
- * 单次扫描即可同时得出：本段数据是否含 alt-screen 切换序列（switched），
- * 以及在 current 基础上应用所有切换后的最终 alt-screen 状态（activeAfter）。
- * 将同一段数据的 alt-screen 正则扫描从两遍合并为一遍。
- */
-const scanInteractiveAltScreenSwitch = (
-  current: boolean,
-  data: string,
-): { switched: boolean; activeAfter: boolean } => {
-  ANSI_ALT_SCREEN_SWITCH_PATTERN.lastIndex = 0;
-  let switched = false;
-  let activeAfter = current;
-  for (
-    let match = ANSI_ALT_SCREEN_SWITCH_PATTERN.exec(data);
-    match !== null;
-    match = ANSI_ALT_SCREEN_SWITCH_PATTERN.exec(data)
-  ) {
-    switched = true;
-    activeAfter = match[1] === 'h';
-  }
-  return { switched, activeAfter };
-};
-
-const isLikelyInteractiveResizeRepaintFrame = (data: string): boolean =>
-  ANSI_CSI_HOME_CURSOR_PATTERN.test(data) &&
-  ANSI_CSI_ERASE_PATTERN.test(data) &&
-  (ANSI_CSI_HIDE_CURSOR_PATTERN.test(data) || data.includes('\x1b[H'));
-
-const normalizeSgrParamsForLightTerminal = (params: string): string => {
-  if (!params) return params;
-  const parts = params.split(';');
-  const normalized: string[] = [];
-
-  for (let index = 0; index < parts.length; index += 1) {
-    const rawPart = parts[index] ?? '';
-    const code = rawPart === '' ? 0 : Number(rawPart);
-    if (!Number.isInteger(code)) {
-      normalized.push(rawPart);
-      continue;
-    }
-
-    if (code === ANSI_EXTENDED_FOREGROUND_CODE || code === ANSI_EXTENDED_BACKGROUND_CODE) {
-      normalized.push(rawPart);
-      const modeRaw = parts[index + 1];
-      const mode = modeRaw === undefined || modeRaw === '' ? 0 : Number(modeRaw);
-      if (modeRaw !== undefined) {
-        normalized.push(modeRaw);
-        index += 1;
-      }
-      if (mode === ANSI_EXTENDED_INDEXED_COLOR_MODE) {
-        const colorIndex = parts[index + 1];
-        if (colorIndex !== undefined) {
-          normalized.push(colorIndex);
-          index += 1;
-        }
-        continue;
-      }
-      if (mode === ANSI_EXTENDED_RGB_COLOR_MODE) {
-        for (let channel = 0; channel < 3; channel += 1) {
-          const channelValue = parts[index + 1];
-          if (channelValue === undefined) break;
-          normalized.push(channelValue);
-          index += 1;
-        }
-        continue;
-      }
-      continue;
-    }
-
-    if (ANSI_LIGHT_THEME_FORCED_FOREGROUND_CODES.has(code)) {
-      normalized.push(String(ANSI_DEFAULT_FOREGROUND_CODE));
-      continue;
-    }
-    if (ANSI_LIGHT_THEME_FORCED_BACKGROUND_CODES.has(code)) {
-      normalized.push(String(ANSI_DEFAULT_BACKGROUND_CODE));
-      continue;
-    }
-    normalized.push(rawPart);
-  }
-
-  return normalized.join(';');
-};
-
-export const normalizeTerminalAnsiForTheme = (value: string, theme: TThemeMode): string => {
-  if (theme !== 'light' || !value) return value;
-  ANSI_SGR_PATTERN.lastIndex = 0;
-  return value.replace(ANSI_SGR_PATTERN, (sequence: string, params: string) => {
-    const normalizedParams = normalizeSgrParamsForLightTerminal(params);
-    return normalizedParams === params ? sequence : `${ANSI_ESCAPE}[${normalizedParams}m`;
-  });
-};
-
-const previewTerminalDiagnosticText = (value: string): string =>
-  value
-    .replaceAll('\r', '\\r')
-    .replaceAll('\n', '\\n')
-    .replace(ANSI_ESCAPE_CHARACTER_PATTERN, '\\x1b')
-    .slice(0, TERMINAL_BUFFER_DIAGNOSTIC_PREVIEW_LENGTH);
-
-const isInteractiveChannelClosedError = (error: unknown): boolean => {
-  const message = toErrorMessage(error, '');
-  return (
-    message.includes('interactive command channel 已关闭') ||
-    message.includes('terminal duplex 已关闭')
-  );
-};
-
-export const stripInjectedRunSeparatorForTerminalData = (data: string): string => {
-  const markerIndex = data.indexOf(TERMINAL_RUN_SEPARATOR_PREFIX);
-  if (markerIndex < 0) {
-    return data;
-  }
-
-  const crlfIndex = data.indexOf('\r\n', markerIndex);
-  const lfIndex = data.indexOf('\n', markerIndex);
-  const separatorEndIndex =
-    crlfIndex >= 0 ? crlfIndex + 2 : lfIndex >= 0 ? lfIndex + 1 : data.length;
-
-  return `${data.slice(0, markerIndex)}${data.slice(separatorEndIndex)}`;
-};
-
-// ─── 可注入的 Tauri PTY 服务接口（使 TerminalSession 可测试） ─────────────────
-
-export interface ITerminalTauriService {
-  ensureTerminalSession(params: {
-    sessionId: string;
-    cwd: string | null;
-    cols: number;
-    rows: number;
-  }): Promise<ITerminalSessionPayload>;
-  writeTerminalInput(params: { sessionId: string; data: string }): Promise<void>;
-  resizeTerminalSession(params: { sessionId: string; cols: number; rows: number }): Promise<void>;
-  closeTerminalSession(params: { sessionId: string }): Promise<void>;
-  /** 可选：上报会话存活心跳。注入完整 tauriService 时实现；测试 fake 可省略。 */
-  heartbeatTerminalSession?(params: { sessionId: string }): Promise<void>;
-}
-
-// ─── 回调接口 ─────────────────────────────────────────────────────────────────
-
-export interface ITerminalSessionCallbacks {
-  onStatusChange?: (payload: ITerminalStatusChangePayload) => void;
-  onRunCompleted?: (payload: ITerminalRunCompletedPayload) => void;
-  onInputRoute?: (payload: ITerminalInputRoutePayload) => void;
-  onTerminalData?: (payload: ITerminalDataEvent) => void;
-  onVisualWrite?: (payload: ITerminalVisualWritePayload) => void;
-  onBufferDiagnostic?: (payload: ITerminalBufferDiagnostic) => void;
-  /** xterm 标题序列（OSC 0/2）变更：默认 WSL bash 写「user@host: <cwd>」，前台程序写运行命令。对照 VSCode TerminalInstance.xterm.raw.onTitleChange。 */
-  onTitleChange?: (title: string) => void;
-}
-
-// ─── 构造选项 ─────────────────────────────────────────────────────────────────
-
-export interface ITerminalSessionOptions extends ITerminalSessionCallbacks {
-  sessionId: string;
-  tauriService: ITerminalTauriService;
-  resetOrphanedBackendSession?: boolean;
-  /** 由 registry 注入的外部 status ref。 */
-  statusRef?: Ref<TTerminalConnectionState>;
-  /** 由 registry 注入的外部 statusMessage ref。 */
-  statusMessageRef?: Ref<string>;
-}
+export { normalizeTerminalAnsiForTheme, stripInjectedRunSeparatorForTerminalData } from './session-ansi';
+export { type ITerminalSessionCallbacks, type ITerminalSessionOptions, type ITerminalTauriService } from './session-types';
 
 // ─── TerminalSession 类 ───────────────────────────────────────────────────────
 
@@ -698,7 +451,7 @@ export class TerminalSession {
       return '';
     }
 
-    return this._settings?.trimFinalNewlineOnCopy ? selection.replace(/[\r\n]+$/u, '') : selection;
+    return this._settings?.trimFinalNewlinesOnCopy ? selection.replace(/[\r\n]+$/u, '') : selection;
   }
 
   async copySelection(): Promise<void> {
