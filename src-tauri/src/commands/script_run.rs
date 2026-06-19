@@ -40,6 +40,14 @@ pub(crate) fn line_count(content: &str) -> usize {
     }
 }
 
+/// 将 usize 计数安全转换为 u32（脚本行数 / 字符数等需填充 specta 协议的 u32 字段）。
+///
+/// 溢出时返回带标签的错误而非静默截断（`as u32` 会环绕），便于定位异常巨型输入；
+/// `label` 用于在错误信息中标明被转换的计数含义（如「脚本行数」「脚本字符数」）。
+pub(crate) fn count_to_u32(count: usize, label: &str) -> Result<u32, String> {
+    u32::try_from(count).map_err(|_| format!("{label}超出 u32 上限（{count}）。"))
+}
+
 pub(crate) fn find_command_path(file_name: &str, extra_candidates: &[&str]) -> Option<PathBuf> {
     if let Some(path_var) = env::var_os("PATH") {
         for directory in env::split_paths(&path_var) {
@@ -183,6 +191,23 @@ mod tests {
         assert_eq!(line_count("a\nb\n"), 3);
         // CRLF 不会被重复计数。
         assert_eq!(line_count("a\r\nb"), 2);
+    }
+
+    #[test]
+    fn count_to_u32_converts_and_reports_overflow() {
+        // 正常范围内等值转换。
+        assert_eq!(count_to_u32(0, "脚本行数"), Ok(0));
+        assert_eq!(count_to_u32(42, "脚本行数"), Ok(42));
+        assert_eq!(count_to_u32(u32::MAX as usize, "脚本字符数"), Ok(u32::MAX));
+        // 超出 u32 上限时返回带标签的错误，而非静默环绕截断。
+        // （usize 在 64 位平台上才能表达 > u32::MAX，故仅在此断言。）
+        #[cfg(target_pointer_width = "64")]
+        {
+            let overflow = u32::MAX as usize + 1;
+            let err = count_to_u32(overflow, "脚本行数").unwrap_err();
+            assert!(err.contains("脚本行数"));
+            assert!(err.contains("超出 u32 上限"));
+        }
     }
 
     #[test]
