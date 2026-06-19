@@ -1,18 +1,21 @@
 //! 集成终端共享状态：会话、快照、交互视觉态、活动运行与切换态输入缓冲。
 //!
 //! 本模块只负责状态容器与其存取，不发射事件、不驱动状态机。
-
 use std::{
     collections::HashMap,
     path::PathBuf,
-    sync::{Arc, Mutex, atomic::AtomicBool},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicU32},
+    },
     time::{Duration, Instant},
 };
 
 use crate::terminal::{
     flow_control::FlowController,
     snapshot::{
-        TerminalInteractiveVisualState, is_likely_interactive_resize_repaint_frame,
+        TerminalInteractiveVisualState,
+        is_likely_interactive_resize_repaint_frame,
         trim_terminal_snapshot,
     },
     state_machine::StateMachine,
@@ -27,6 +30,9 @@ const MAX_PENDING_SWITCH_INPUT_BYTES: usize = 64 * 1024;
 pub(super) struct TerminalSession {
     pub(super) handle: LocalWslPtyHandle,
     pub(super) working_directory: String,
+    /// 交互 shell 自身 PID（经 OSC 633;P;ShellPid 上报），0 表示尚未上报。
+    /// 供带外取消时读 `/proc/<shell_pid>/stat` 定位前台进程组。
+    pub(super) shell_pid: AtomicU32,
 }
 
 pub(super) struct TerminalActiveRun {
@@ -237,8 +243,7 @@ pub(super) fn mark_terminal_resize_repaint_suppression(
         .or_default()
         .interactive_visual
         .get_or_insert_with(TerminalInteractiveVisualState::default);
-    visual_state.resize_repaint_suppress_until =
-        Some(Instant::now() + TERMINAL_RESIZE_REPAINT_SUPPRESSION);
+    visual_state.resize_repaint_suppress_until = Some(Instant::now() + TERMINAL_RESIZE_REPAINT_SUPPRESSION);
 }
 
 /// 每会话 geometry：作为「单一 SessionRegistry」绞杀式重构的第一步，让会话各自持有自己的
@@ -270,10 +275,7 @@ pub(super) fn set_session_geometry(
 /// 取指定会话的 geometry；该会话尚无记录时回退到默认尺寸。每会话 geometry 已是唯一真相源，
 /// 不再回退到全局 `registry().geometry`（全局几何已于 BE-1 删除）。
 pub(super) fn get_session_geometry(state: &TerminalSessionState, session_id: &str) -> Geometry {
-    if let Ok(per_session) = state.per_session.lock()
-        && let Some(entry) = per_session.get(session_id)
-        && let Some(geometry) = entry.geometry
-    {
+    if let Ok(per_session) = state.per_session.lock() && let Some(entry) = per_session.get(session_id) && let Some(geometry) = entry.geometry {
         return geometry;
     }
     Geometry::default()
@@ -323,15 +325,20 @@ pub(super) fn set_session_state(
             return None;
         }
     };
+
     let from = per_session
         .get(session_id)
         .and_then(|entry| entry.state)
         .unwrap_or(TerminalState::Booting);
+
     if from == to {
         // 无变化：常见且无害（如交互就绪重复置 IdleInteractive），仅 trace 备查，不发事件。
-        log::trace!("[session-fsm] 会话状态无变化，忽略（session_id={session_id}, 状态={to:?}）。");
+        log::trace!(
+            "[session-fsm] 会话状态无变化，忽略（session_id={session_id}, 状态={to:?}）。"
+        );
         return None;
     }
+
     if !StateMachine::can_transition(from, to) {
         // 非法转移通常意味着事件乱序 / 竞态：就地忽略并 warn，便于据日志定位异常时序。
         log::warn!(
@@ -339,8 +346,11 @@ pub(super) fn set_session_state(
         );
         return None;
     }
+
     per_session.entry(session_id.to_string()).or_default().state = Some(to);
-    log::debug!("[session-fsm] 会话状态转移（session_id={session_id}, {from:?} -> {to:?}）。");
+    log::debug!(
+        "[session-fsm] 会话状态转移（session_id={session_id}, {from:?} -> {to:?}）。"
+    );
     Some((from, to))
 }
 
@@ -353,10 +363,7 @@ pub(super) fn set_session_state(
 /// 对照 VSCode `ptyService.ts`：每个 `PersistentTerminalProcess` 依据自身 `_interactionState`
 /// 判定，不存在跨会话共享的全局态。
 pub(super) fn get_session_state(state: &TerminalSessionState, session_id: &str) -> TerminalState {
-    if let Ok(per_session) = state.per_session.lock()
-        && let Some(entry) = per_session.get(session_id)
-        && let Some(current) = entry.state
-    {
+    if let Ok(per_session) = state.per_session.lock() && let Some(entry) = per_session.get(session_id) && let Some(current) = entry.state {
         return current;
     }
     TerminalState::Booting
@@ -473,6 +480,7 @@ pub(super) fn collect_idle_orphan_session_ids(
             })
             .collect()
     };
+
     candidates
         .into_iter()
         .filter(|session_id| {
@@ -555,8 +563,12 @@ pub(super) fn try_mark_active_terminal_run(
         .values()
         .find(|active_run| active_run.session_id == session_id)
     {
-        return Err(format!("当前终端已有脚本正在运行：{}", existing_run.run_id));
+        return Err(format!(
+            "当前终端已有脚本正在运行：{}",
+            existing_run.run_id
+        ));
     }
+
     active_runs.insert(
         run_id.to_string(),
         TerminalActiveRun {
@@ -640,6 +652,7 @@ pub(super) fn get_active_terminal_run_input_target(
             None => return Ok(ActiveRunInputTarget::None),
         }
     };
+
     // 输入必须按会话路由：依据「该会话自身」的状态判定去向，不再读全局 registry().state，
     // 避免其它会话的运行态把本会话输入误导进 run stdin（跨会话输入串台）。
     match get_session_state(state, session_id) {
@@ -718,6 +731,7 @@ pub(super) fn should_skip_snapshot_for_interactive_resize_repaint(
         .interactive_visual
         .get_or_insert_with(TerminalInteractiveVisualState::default);
     let was_alt_screen_active = visual_state.alt_screen_active;
+
     // 单次 vte 扫描同时得出「本段是否含 alt-screen 切换」与「应用后最终 alt-screen 状态」，
     // 避免对同一段数据解析两遍（原先分别调用 contains_alt_screen_switch 与
     // resolve_alt_screen_state_after_data，各做一次完整 vte 解析）。
@@ -726,9 +740,11 @@ pub(super) fn should_skip_snapshot_for_interactive_resize_repaint(
     if ansi_events.alt_screen_switched {
         visual_state.alt_screen_active = ansi_events.alt_screen_active;
     }
+
     if was_alt_screen_active || visual_state.alt_screen_active || has_alt_screen_control {
         return false;
     }
+
     let Some(suppress_until) = visual_state.resize_repaint_suppress_until else {
         return false;
     };
@@ -736,6 +752,7 @@ pub(super) fn should_skip_snapshot_for_interactive_resize_repaint(
         visual_state.resize_repaint_suppress_until = None;
         return false;
     }
+
     is_likely_interactive_resize_repaint_frame(chunk)
 }
 
@@ -781,6 +798,7 @@ pub(super) fn remove_interactive_terminal_after_exit(
 ) {
     // sessions 表独立：单独移除其 PTY 句柄。
     let _ = remove_terminal_session(state, session_id);
+
     // 其余按会话归集的状态都在 per_session 合并表里：一次取锁整体移除该会话条目
     // （原先逐项串行获取 7 把锁，现合并为 1 把）。同时取出流控器，于锁外 cancel
     // 以释放任何处于背压暂停态的读线程。锁中毒时尽力而为忽略。
