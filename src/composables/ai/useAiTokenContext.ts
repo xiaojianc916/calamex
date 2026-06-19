@@ -57,11 +57,8 @@ const hasUsableUsage = (
   resolveUsageInputTokens(usage ?? undefined) !== undefined ||
   toNonNegativeFiniteNumber(usage?.outputTokens) !== undefined ||
   toNonNegativeFiniteNumber(usage?.totalTokens) !== undefined ||
-  toNonNegativeFiniteNumber(usage.outputTokenDetails.reasoningTokens) !== undefined ||
-  toNonNegativeFiniteNumber(usage.inputTokenDetails.cacheReadTokens) !== undefined ||
-  toNonNegativeFiniteNumber(usage?.inputTokenDetails?.cacheReadTokens) !== undefined ||
-  toNonNegativeFiniteNumber(usage?.outputTokenDetails.outputTokenDetails.reasoningTokens) !==
-    undefined;
+  toNonNegativeFiniteNumber(usage?.outputTokenDetails?.reasoningTokens) !== undefined ||
+  toNonNegativeFiniteNumber(usage?.inputTokenDetails?.cacheReadTokens) !== undefined;
 
 const createUsage = (
   inputTokens: number,
@@ -73,7 +70,7 @@ const createUsage = (
 ): LanguageModelUsage => {
   const outputTokens = toNonNegativeFiniteNumber(options?.outputTokens) ?? 0;
   const reasoningTokens =
-    toNonNegativeFiniteNumber(options.outputTokenDetails.reasoningTokens) ?? 0;
+    toNonNegativeFiniteNumber(options?.reasoningTokens) ?? 0;
   const totalTokens = toNonNegativeFiniteNumber(options?.totalTokens) ?? inputTokens + outputTokens;
 
   return {
@@ -118,9 +115,7 @@ const resolveAggregationInputTokenDetails = (
 ): NonNullable<LanguageModelUsage['inputTokenDetails']> => {
   const inputTokens = resolveUsageInputTokens(usage) ?? 0;
   const cacheReadTokens =
-    toNonNegativeFiniteNumber(usage.inputTokenDetails?.cacheReadTokens) ??
-    toNonNegativeFiniteNumber(usage.inputTokenDetails.cacheReadTokens) ??
-    0;
+    toNonNegativeFiniteNumber(usage.inputTokenDetails?.cacheReadTokens) ?? 0;
 
   return {
     noCacheTokens:
@@ -136,9 +131,7 @@ const resolveAggregationOutputTokenDetails = (
 ): NonNullable<LanguageModelUsage['outputTokenDetails']> => {
   const outputTokens = toNonNegativeFiniteNumber(usage.outputTokens) ?? 0;
   const reasoningTokens =
-    toNonNegativeFiniteNumber(usage.outputTokenDetails.outputTokenDetails.reasoningTokens) ??
-    toNonNegativeFiniteNumber(usage.outputTokenDetails.reasoningTokens) ??
-    0;
+    toNonNegativeFiniteNumber(usage.outputTokenDetails?.reasoningTokens) ?? 0;
 
   return {
     textTokens:
@@ -157,13 +150,12 @@ const aggregateUsage = (
   const currentOutputDetails = current ? resolveAggregationOutputTokenDetails(current) : undefined;
   const nextOutputDetails = resolveAggregationOutputTokenDetails(next);
   const cachedInputTokens = sumTokenCounts(
-    current.inputTokenDetails.cacheReadTokens ?? currentInputDetails?.cacheReadTokens,
-    next.inputTokenDetails.cacheReadTokens ?? nextInputDetails.cacheReadTokens,
+    currentInputDetails?.cacheReadTokens,
+    nextInputDetails.cacheReadTokens,
   );
   const reasoningTokens = sumTokenCounts(
-    current.outputTokenDetails.reasoningTokens ??
-      currentOutputDetails.outputTokenDetails.reasoningTokens,
-    next.outputTokenDetails.reasoningTokens ?? nextOutputDetails.outputTokenDetails.reasoningTokens,
+    currentOutputDetails?.reasoningTokens,
+    nextOutputDetails.reasoningTokens,
   );
 
   return {
@@ -189,8 +181,8 @@ const aggregateUsage = (
         nextOutputDetails.textTokens,
       ),
       reasoningTokens: sumRequiredTokenCounts(
-        currentOutputDetails.outputTokenDetails.reasoningTokens,
-        nextOutputDetails.outputTokenDetails.reasoningTokens,
+        currentOutputDetails?.reasoningTokens,
+        nextOutputDetails.reasoningTokens,
       ),
     },
     totalTokens: sumRequiredTokenCounts(current?.totalTokens, next.totalTokens),
