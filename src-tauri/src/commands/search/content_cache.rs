@@ -118,9 +118,7 @@ pub(super) fn workspace_file_text(
     let (content, _encoding) = decode_script_bytes(&bytes).ok()?;
     let text: Arc<str> = Arc::from(content);
 
-    if cacheable
-        && let Ok(mut guard) = caches.lock()
-    {
+    if cacheable && let Ok(mut guard) = caches.lock() {
         let cache = guard
             .entry(cache_key)
             .or_insert_with(WorkspaceContentCache::new);

@@ -18,8 +18,8 @@ use crate::commands::contracts::SecretString;
 use agent_client_protocol::schema::{
     CancelNotification, ContentBlock, InitializeRequest, NewSessionRequest, PermissionOptionId,
     PromptRequest, ProtocolVersion, RequestPermissionOutcome, RequestPermissionRequest,
-    RequestPermissionResponse, SelectedPermissionOutcome, SessionConfigId, SessionConfigOptionValue,
-    SessionConfigValueId, SessionId, SessionModeId, SessionNotification,
+    RequestPermissionResponse, SelectedPermissionOutcome, SessionConfigId,
+    SessionConfigOptionValue, SessionConfigValueId, SessionId, SessionModeId, SessionNotification,
     SetSessionConfigOptionRequest, SetSessionModeRequest, StopReason,
 };
 use agent_client_protocol::{

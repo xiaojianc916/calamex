@@ -17,7 +17,7 @@ const ELLIPSIS = '...';
 const segmenterCache = new Map<string, Intl.Segmenter | null>();
 
 const getLocaleKey = (locale?: string | string[]): string =>
-  Array.isArray(locale) ? locale.join('\u0001') : locale ?? '';
+  Array.isArray(locale) ? locale.join('\u0001') : (locale ?? '');
 
 /** 创建（或从缓存取）grapheme 级 Segmenter。不支持时返回 null。 */
 const getSegmenter = (locale?: string | string[]): Intl.Segmenter | null => {
@@ -49,8 +49,9 @@ const splitGraphemes = (value: string, locale?: string | string[]): string[] => 
 // ── 公开 API ──────────────────────────────────────────────────
 
 /** 将字符串拆成字素数组（返回防御性拷贝，调用方可安全修改）。 */
-export const splitTextGraphemes = (value: string, locale?: string | string[]): string[] =>
-  [...splitGraphemes(value, locale)];
+export const splitTextGraphemes = (value: string, locale?: string | string[]): string[] => [
+  ...splitGraphemes(value, locale),
+];
 
 interface IClipOptions {
   maxGraphemes?: number;
@@ -169,15 +170,21 @@ const allocateBudgets = (
 ): number[] => {
   if (!fields.length || available <= 0) return fields.map(() => 0);
 
-  const totalPriority = Math.max(1, fields.reduce((s, f) => s + f.priority, 0));
+  const totalPriority = Math.max(
+    1,
+    fields.reduce((s, f) => s + f.priority, 0),
+  );
   const needs = fields.map((f) => {
     const raw = splitGraphemes(f.value, locale).length;
     return f.maxGraphemes !== undefined ? Math.min(raw, safeFloor(f.maxGraphemes, raw)) : raw;
   });
 
   // 初始分配 = max(minBudget, weighted)，但不超过 need
-  let budgets = fields.map((f, i) => {
-    const min = safeFloor(f.minGraphemes ?? DEFAULT_FIELD_MIN_GRAPHEMES, DEFAULT_FIELD_MIN_GRAPHEMES);
+  const budgets = fields.map((f, i) => {
+    const min = safeFloor(
+      f.minGraphemes ?? DEFAULT_FIELD_MIN_GRAPHEMES,
+      DEFAULT_FIELD_MIN_GRAPHEMES,
+    );
     const weighted = Math.floor((available * f.priority) / totalPriority);
     return Math.min(needs[i], Math.max(1, min, weighted));
   });
@@ -186,7 +193,9 @@ const allocateBudgets = (
   const total = budgets.reduce((s, b) => s + b, 0);
   if (total > available) {
     let surplus = total - available;
-    const order = fields.map((_, i) => ({ i, p: fields[i].priority })).sort((a, b) => a.p - b.p || b.i - a.i);
+    const order = fields
+      .map((_, i) => ({ i, p: fields[i].priority }))
+      .sort((a, b) => a.p - b.p || b.i - a.i);
     for (const { i } of order) {
       if (surplus <= 0) break;
       const take = Math.min(surplus, budgets[i]);
@@ -195,7 +204,9 @@ const allocateBudgets = (
     }
   } else if (total < available) {
     let deficit = available - total;
-    const order = fields.map((_, i) => ({ i, p: fields[i].priority })).sort((a, b) => b.p - a.p || a.i - b.i);
+    const order = fields
+      .map((_, i) => ({ i, p: fields[i].priority }))
+      .sort((a, b) => b.p - a.p || a.i - b.i);
     for (const { i } of order) {
       if (deficit <= 0) break;
       const capacity = needs[i] - budgets[i];
@@ -224,10 +235,16 @@ export const formatPrioritizedFieldPreview = (
   fields: readonly IPrioritizedPreviewField[],
   options: IFormatOptions = {},
 ): string => {
-  const maxGraphemes = safeFloor(options.maxGraphemes ?? DEFAULT_MAX_GRAPHEMES, DEFAULT_MAX_GRAPHEMES);
+  const maxGraphemes = safeFloor(
+    options.maxGraphemes ?? DEFAULT_MAX_GRAPHEMES,
+    DEFAULT_MAX_GRAPHEMES,
+  );
   const separator = options.separator ?? DEFAULT_FIELD_SEPARATOR;
   const labelSep = options.labelSeparator ?? DEFAULT_LABEL_SEPARATOR;
-  const maxFields = safeFloor(options.maxFields ?? DEFAULT_MAX_PREVIEW_FIELDS, DEFAULT_MAX_PREVIEW_FIELDS);
+  const maxFields = safeFloor(
+    options.maxFields ?? DEFAULT_MAX_PREVIEW_FIELDS,
+    DEFAULT_MAX_PREVIEW_FIELDS,
+  );
   const locale = options.locale;
   const ellipsis = options.ellipsis ?? ELLIPSIS;
 
@@ -236,11 +253,15 @@ export const formatPrioritizedFieldPreview = (
 
   // 逐个裁掉最低优先级字段，直到预算能容纳所有字段的最小需求
   while (selected.length > 1) {
-    const fixed = selected.reduce((s, f) => s + splitGraphemes(fieldPrefix(f, labelSep), locale).length, 0)
-      + Math.max(0, selected.length - 1) * splitGraphemes(separator, locale).length;
+    const fixed =
+      selected.reduce((s, f) => s + splitGraphemes(fieldPrefix(f, labelSep), locale).length, 0) +
+      Math.max(0, selected.length - 1) * splitGraphemes(separator, locale).length;
     const minRequired = selected.reduce((s, f) => {
       const need = splitGraphemes(f.value, locale).length;
-      const min = safeFloor(f.minGraphemes ?? DEFAULT_FIELD_MIN_GRAPHEMES, DEFAULT_FIELD_MIN_GRAPHEMES);
+      const min = safeFloor(
+        f.minGraphemes ?? DEFAULT_FIELD_MIN_GRAPHEMES,
+        DEFAULT_FIELD_MIN_GRAPHEMES,
+      );
       return s + Math.min(need, min);
     }, 0);
     if (maxGraphemes - fixed >= minRequired) break;
@@ -248,18 +269,30 @@ export const formatPrioritizedFieldPreview = (
   }
   if (!selected.length) return '';
 
-  const fixed = selected.reduce((s, f) => s + splitGraphemes(fieldPrefix(f, labelSep), locale).length, 0)
-    + Math.max(0, selected.length - 1) * splitGraphemes(separator, locale).length;
+  const fixed =
+    selected.reduce((s, f) => s + splitGraphemes(fieldPrefix(f, labelSep), locale).length, 0) +
+    Math.max(0, selected.length - 1) * splitGraphemes(separator, locale).length;
 
   // 固定开销已超预算 -> 退化到只有value的模式
   if (fixed >= maxGraphemes) {
     const available = maxGraphemes;
     const budgets = allocateBudgets(selected, available, locale);
-    const preview = selected.map((f, i) => clipTextPreview(f.value, { maxGraphemes: budgets[i], locale, ellipsis })).join(separator);
-    return splitGraphemes(preview, locale).length > maxGraphemes ? clipTextPreview(preview, { maxGraphemes, locale, ellipsis }) : preview;
+    const preview = selected
+      .map((f, i) => clipTextPreview(f.value, { maxGraphemes: budgets[i], locale, ellipsis }))
+      .join(separator);
+    return splitGraphemes(preview, locale).length > maxGraphemes
+      ? clipTextPreview(preview, { maxGraphemes, locale, ellipsis })
+      : preview;
   }
 
   const budgets = allocateBudgets(selected, Math.max(0, maxGraphemes - fixed), locale);
-  const preview = selected.map((f, i) => `${fieldPrefix(f, labelSep)}${clipTextPreview(f.value, { maxGraphemes: budgets[i], locale, ellipsis })}`).join(separator);
-  return splitGraphemes(preview, locale).length > maxGraphemes ? clipTextPreview(preview, { maxGraphemes, locale, ellipsis }) : preview;
+  const preview = selected
+    .map(
+      (f, i) =>
+        `${fieldPrefix(f, labelSep)}${clipTextPreview(f.value, { maxGraphemes: budgets[i], locale, ellipsis })}`,
+    )
+    .join(separator);
+  return splitGraphemes(preview, locale).length > maxGraphemes
+    ? clipTextPreview(preview, { maxGraphemes, locale, ellipsis })
+    : preview;
 };

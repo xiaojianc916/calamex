@@ -24,7 +24,10 @@ pub struct AgentSidecarModelConfigPayload {
     pub(crate) base_url: Option<String>,
 }
 
-#[expect(dead_code, reason = "kept for sidecar warmup request contract compatibility")]
+#[expect(
+    dead_code,
+    reason = "kept for sidecar warmup request contract compatibility"
+)]
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentSidecarWarmupRequest {

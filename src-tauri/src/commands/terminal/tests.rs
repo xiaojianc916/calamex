@@ -74,7 +74,8 @@ fn session_geometry_is_tracked_and_isolated_per_session() {
 #[test]
 fn active_run_does_not_block_input_outside_switching_states() {
     let state = TerminalSessionState::default();
-    try_mark_active_terminal_run(&state, "session-1", "run-1", Vec::new()).expect("active run should mark");
+    try_mark_active_terminal_run(&state, "session-1", "run-1", Vec::new())
+        .expect("active run should mark");
 
     // 输入路由按「会话自身」的状态判定，不再读全局 registry().state；用每会话态驱动，
     // 避免与其它并行测试争抢共享的全局单例。会话从 Booting 基线走合法转移链。
@@ -102,7 +103,8 @@ fn active_run_does_not_block_input_outside_switching_states() {
 #[test]
 fn active_run_input_routes_only_to_owning_session() {
     let state = TerminalSessionState::default();
-    try_mark_active_terminal_run(&state, "session-A", "run-A", Vec::new()).expect("active run should mark");
+    try_mark_active_terminal_run(&state, "session-A", "run-A", Vec::new())
+        .expect("active run should mark");
 
     // 会话 A 自身走完整每会话转移进入 Running（不触碰全局，并行确定）。
     set_session_state(&state, "session-A", TerminalState::IdleInteractive);
@@ -186,7 +188,10 @@ fn session_state_transitions_are_returned_for_emission() {
     // 进入运行链，逐跳返回实际转移。
     assert_eq!(
         set_session_state(&state, "emit-session", TerminalState::SwitchingToRun),
-        Some((TerminalState::IdleInteractive, TerminalState::SwitchingToRun))
+        Some((
+            TerminalState::IdleInteractive,
+            TerminalState::SwitchingToRun
+        ))
     );
     assert_eq!(
         set_session_state(&state, "emit-session", TerminalState::Running),
@@ -197,7 +202,10 @@ fn session_state_transitions_are_returned_for_emission() {
         complete_session_run_state(&state, "emit-session"),
         vec![
             (TerminalState::Running, TerminalState::SwitchingToIdle),
-            (TerminalState::SwitchingToIdle, TerminalState::IdleInteractive),
+            (
+                TerminalState::SwitchingToIdle,
+                TerminalState::IdleInteractive
+            ),
         ]
     );
     // 已回到 IdleInteractive，再次回收无转移、返回空。
@@ -320,7 +328,10 @@ fn clearing_active_run_returns_registered_cleanup_paths() {
     )
     .expect("active run should mark");
     let cleaned = clear_active_terminal_run(&state, "cleanup-run");
-    assert_eq!(cleaned, vec!["/tmp/calamex-untitled-123.tmp.sh".to_string()]);
+    assert_eq!(
+        cleaned,
+        vec!["/tmp/calamex-untitled-123.tmp.sh".to_string()]
+    );
     // 已移除：再次 clear 不存在的运行返回空列表（不 panic）。
     assert!(clear_active_terminal_run(&state, "cleanup-run").is_empty());
     assert_eq!(active_terminal_run_count(&state), 0);

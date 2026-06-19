@@ -44,7 +44,9 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use agent_client_protocol::schema::{ContentBlock, SessionId, SessionModeId, StopReason, ToolCallId};
+use agent_client_protocol::schema::{
+    ContentBlock, SessionId, SessionModeId, StopReason, ToolCallId,
+};
 
 use crate::commands::contracts::{
     AgentSidecarHealthPayload, AgentSidecarOrchestratePayload, AgentSidecarResponsePayload,
@@ -55,9 +57,8 @@ use super::approval::{ApprovalError, ApprovalRegistry, ApprovalRequestInfo};
 use super::client::{
     AcpClientConfig, AcpClientError, AcpClientHandle, AcpStreamFrame, AgentAskUserResumeExtRequest,
     AgentChatExtRequest, AgentChatResolveExtRequest, CheckpointRestoreRequest, EventSink,
-    HealthExtRequest, ModelChatExtRequest, OrchestrateExtRequest,
-    OrchestrateResumeExtRequest, WarmupExtRequest, WebFetchExtRequest, WebSearchExtRequest,
-    spawn_acp_client,
+    HealthExtRequest, ModelChatExtRequest, OrchestrateExtRequest, OrchestrateResumeExtRequest,
+    WarmupExtRequest, WebFetchExtRequest, WebSearchExtRequest, spawn_acp_client,
 };
 
 /// 流式帧下沉口：把每条 `session/update` 帧转发给 webview（对齐 `ai:sidecar-stream`

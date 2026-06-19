@@ -88,7 +88,10 @@ pub struct AiChatStreamPayload {
 #[derive(Debug, Clone, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AiCancelRequest {
-    #[expect(dead_code, reason = "stream_id remains part of the public cancel request payload")]
+    #[expect(
+        dead_code,
+        reason = "stream_id remains part of the public cancel request payload"
+    )]
     pub(crate) stream_id: String,
     pub(crate) thread_id: Option<String>,
 }
@@ -108,7 +111,6 @@ pub struct AiResolveApprovalRequest {
     pub(crate) tool_call_id: String,
     pub(crate) decision: String,
 }
-
 
 /// ACP 标准 session/set_config_option 的会话级配置项切换请求（契约层）。
 ///

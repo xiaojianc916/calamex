@@ -69,8 +69,7 @@ const createUsage = (
   },
 ): LanguageModelUsage => {
   const outputTokens = toNonNegativeFiniteNumber(options?.outputTokens) ?? 0;
-  const reasoningTokens =
-    toNonNegativeFiniteNumber(options?.reasoningTokens) ?? 0;
+  const reasoningTokens = toNonNegativeFiniteNumber(options?.reasoningTokens) ?? 0;
   const totalTokens = toNonNegativeFiniteNumber(options?.totalTokens) ?? inputTokens + outputTokens;
 
   return {
@@ -114,8 +113,7 @@ const resolveAggregationInputTokenDetails = (
   usage: LanguageModelUsage,
 ): NonNullable<LanguageModelUsage['inputTokenDetails']> => {
   const inputTokens = resolveUsageInputTokens(usage) ?? 0;
-  const cacheReadTokens =
-    toNonNegativeFiniteNumber(usage.inputTokenDetails?.cacheReadTokens) ?? 0;
+  const cacheReadTokens = toNonNegativeFiniteNumber(usage.inputTokenDetails?.cacheReadTokens) ?? 0;
 
   return {
     noCacheTokens:
@@ -130,8 +128,7 @@ const resolveAggregationOutputTokenDetails = (
   usage: LanguageModelUsage,
 ): NonNullable<LanguageModelUsage['outputTokenDetails']> => {
   const outputTokens = toNonNegativeFiniteNumber(usage.outputTokens) ?? 0;
-  const reasoningTokens =
-    toNonNegativeFiniteNumber(usage.outputTokenDetails?.reasoningTokens) ?? 0;
+  const reasoningTokens = toNonNegativeFiniteNumber(usage.outputTokenDetails?.reasoningTokens) ?? 0;
 
   return {
     textTokens:

@@ -104,7 +104,12 @@ fn search_workspace_impl(
 
         if payload.use_structural {
             // 结构化内容搜索保持一次性返回（AST 解析通常很快，且非本次流式收益重点）。
-            results.extend(search_structural_contents(&workspace_root, &files, &query, content_limit)?);
+            results.extend(search_structural_contents(
+                &workspace_root,
+                &files,
+                &query,
+                content_limit,
+            )?);
         } else {
             // 普通内容搜索是最慢、收益最大的路径：带上 sink 时按文件发现顺序分批流式推送，
             // 命令仍返回全局最终排序结果（前端在 resolve 后整体替换流式列表）。

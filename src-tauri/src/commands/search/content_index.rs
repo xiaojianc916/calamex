@@ -140,7 +140,10 @@ fn build_workspace_content_index(root: &Path, files: &[ScannedFile]) -> Workspac
         match collect_file_trigrams(root, file) {
             Some(trigrams) => {
                 for trigram in trigrams {
-                    trigram_to_files.entry(trigram).or_default().push(file_index);
+                    trigram_to_files
+                        .entry(trigram)
+                        .or_default()
+                        .push(file_index);
                 }
             }
             None => unindexed_files.push(file_index),
@@ -269,7 +272,10 @@ mod tests {
         for (path, content) in files {
             let file_index = u32::try_from(paths.len()).expect("测试文件数应在 u32 范围内");
             for trigram in trigram_keys_from_bytes(fold_ascii_case_bytes(content).as_slice()) {
-                trigram_to_files.entry(trigram).or_default().push(file_index);
+                trigram_to_files
+                    .entry(trigram)
+                    .or_default()
+                    .push(file_index);
             }
             paths.push((*path).to_string());
         }
@@ -307,7 +313,10 @@ mod tests {
     fn allows_literal_cjk_and_case_sensitive_queries() {
         // 字面量且足够长的查询都应走索引，包括 CJK 与区分大小写。
         assert!(can_use_literal_trigram_index("needle", &request("needle")));
-        assert!(can_use_literal_trigram_index("中文检索", &request("中文检索")));
+        assert!(can_use_literal_trigram_index(
+            "中文检索",
+            &request("中文检索")
+        ));
         let mut case_sensitive = request("Needle");
         case_sensitive.match_case = true;
         assert!(can_use_literal_trigram_index("Needle", &case_sensitive));

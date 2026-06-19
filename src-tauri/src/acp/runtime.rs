@@ -211,8 +211,6 @@ impl AcpRuntime {
         resolved
     }
 
-
-
     /// 切换指定线程当前 ACP 会话的某个配置项值（标准 session/set_config_option）。线程绑定的
     /// 会话可能落在任一后端宿主，故向全部已建立宿主广播下发：命中即记为已应用并返回 true。
     /// 无任何宿主 / 无匹配线程时返回 Ok(false)（安全空操作——配置项切换绝不应触发子进程派生）。
@@ -309,17 +307,13 @@ mod tests {
         assert!(runtime.hosts.lock().all().is_empty());
     }
 
-
-
     #[test]
     fn set_session_config_option_on_unestablished_runtime_is_noop() {
         let runtime = AcpRuntime::default();
         // 无任何宿主时，配置项切换为安全空操作：返回 Ok(false) 且绝不派生子进程。
-        let applied = tauri::async_runtime::block_on(runtime.set_session_config_option(
-            "thread-1",
-            "model",
-            "gpt-5",
-        ))
+        let applied = tauri::async_runtime::block_on(
+            runtime.set_session_config_option("thread-1", "model", "gpt-5"),
+        )
         .expect("set_session_config_option on empty runtime should not error");
         assert!(!applied);
         assert!(runtime.hosts.lock().all().is_empty());

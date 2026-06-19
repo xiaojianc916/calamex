@@ -68,7 +68,6 @@ fn tool_call_ui_event(kind: &str, update: &Value) -> Value {
     json!({ "type": kind, "acpUpdate": update.clone() })
 }
 
-
 /// 构造可用斜杠命令更新 `TAgentUiEvent`（`type` 为 `available_commands_update`）。
 ///
 /// 投影 ACP `available_commands_update`（外部 agent 声明本会话可用斜杠命令）：整份透传
@@ -218,8 +217,6 @@ mod tests {
         assert_eq!(ui["type"], "tool_call_update");
         assert_eq!(ui["acpUpdate"], update);
     }
-
-
 
     #[test]
     fn available_commands_update_passes_through_raw_array() {

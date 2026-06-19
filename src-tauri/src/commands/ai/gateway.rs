@@ -1,25 +1,12 @@
 use crate::ai::audit::{self, AiAuditEventKind};
 use crate::ai::gateway;
 use crate::commands::contracts::{
-    AiCancelRequest,
-    AiChatRequest,
-    AiChatStreamPayload,
-    AiConfigPayload,
-    AiConversationTitlePayload,
-    AiConversationTitleRequest,
-    AiGetSessionConfigOptionsRequest,
-    AiInlineCompletionRangePayload,
-    AiInlineCompletionRequest,
-    AiInlineCompletionResult,
-    AiProviderConnectionPayload,
-    AiProviderConnectionRequest,
-    AiProviderTestPayload,
-    AiResolveApprovalRequest,
-    AiSaveConfigRequest,
-    AiSaveCredentialsRequest,
-    AiSessionConfigOptionsPayload,
-    AiSetSessionConfigOptionRequest,
-    AiSuggestionPoolPayload,
+    AiCancelRequest, AiChatRequest, AiChatStreamPayload, AiConfigPayload,
+    AiConversationTitlePayload, AiConversationTitleRequest, AiGetSessionConfigOptionsRequest,
+    AiInlineCompletionRangePayload, AiInlineCompletionRequest, AiInlineCompletionResult,
+    AiProviderConnectionPayload, AiProviderConnectionRequest, AiProviderTestPayload,
+    AiResolveApprovalRequest, AiSaveConfigRequest, AiSaveCredentialsRequest,
+    AiSessionConfigOptionsPayload, AiSetSessionConfigOptionRequest, AiSuggestionPoolPayload,
     AiSuggestionPoolRequest,
 };
 use tauri::AppHandle;
@@ -253,13 +240,11 @@ pub fn ai_resolve_approval(
     }
 
     use tauri::Manager as _;
-    let resolved = app
-        .state::<crate::acp::AcpRuntime>()
-        .resolve_approval(session_id, tool_call_id, decision);
+    let resolved =
+        app.state::<crate::acp::AcpRuntime>()
+            .resolve_approval(session_id, tool_call_id, decision);
     Ok(resolved)
 }
-
-
 
 /// 切换 ACP 会话的某个配置项值（标准 session/set_config_option），令外部 agent（Kimi Code /
 /// Codex 等）在 agent 公示的模型 / 模式 / 思考强度等配置项间切换。

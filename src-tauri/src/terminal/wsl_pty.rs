@@ -485,7 +485,9 @@ fn cleanup_wsl_script(execution_path: &str) -> Result<(), LocalWslPtyError> {
         .map_err(|error| LocalWslPtyError::Close(format!("清理集成脚本失败：{error}")))?;
     match wait_child_with_timeout(&mut child, WSL_SYNC_COMMAND_TIMEOUT) {
         Ok(_) => Ok(()),
-        Err(error) => Err(LocalWslPtyError::Close(format!("清理集成脚本失败：{error}"))),
+        Err(error) => Err(LocalWslPtyError::Close(format!(
+            "清理集成脚本失败：{error}"
+        ))),
     }
 }
 

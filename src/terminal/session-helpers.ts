@@ -12,9 +12,9 @@ import { light } from '@/themes/variants/light';
 import type { TThemeMode } from '@/types/app';
 import type { ITerminalSettings } from '@/types/settings';
 import { toErrorMessage } from '@/utils/error/error';
+import { previewTerminalDiagnosticText } from './session-ansi';
 import type { TTerminalBellStyle } from './session-constants';
 import { DEFAULT_COLS, DEFAULT_ROWS } from './session-constants';
-import { previewTerminalDiagnosticText } from './session-ansi';
 
 /**
  * 从 ThemeManager 获取当前 xterm 主题；未初始化时返回空对象，由 xterm 使用内置默认色。

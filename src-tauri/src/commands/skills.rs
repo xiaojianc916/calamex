@@ -223,12 +223,11 @@ fn parse_skill_document(raw: &str) -> ParsedSkill {
             description: String,
         }
 
-        let parsed_front: SkillFrontmatter = serde_yaml::from_str(front).unwrap_or(
-            SkillFrontmatter {
+        let parsed_front: SkillFrontmatter =
+            serde_yaml::from_str(front).unwrap_or(SkillFrontmatter {
                 name: String::new(),
                 description: String::new(),
-            },
-        );
+            });
 
         return ParsedSkill {
             name: parsed_front.name,

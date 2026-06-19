@@ -130,12 +130,20 @@ impl FlowController {
 
     #[cfg(test)]
     fn is_paused(&self) -> bool {
-        self.inner.state.lock().map(|state| state.paused).unwrap_or(false)
+        self.inner
+            .state
+            .lock()
+            .map(|state| state.paused)
+            .unwrap_or(false)
     }
 
     #[cfg(test)]
     fn unacked(&self) -> usize {
-        self.inner.state.lock().map(|state| state.unacked).unwrap_or(0)
+        self.inner
+            .state
+            .lock()
+            .map(|state| state.unacked)
+            .unwrap_or(0)
     }
 }
 

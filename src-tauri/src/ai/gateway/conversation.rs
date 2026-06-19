@@ -1,9 +1,9 @@
+#[cfg(test)]
+use super::prompt::build_identity_system_message;
 use super::prompt::{
     build_context_block, build_conversation_title_prompt, build_inline_prompt, clip_title_source,
 };
 use super::*;
-#[cfg(test)]
-use super::prompt::build_identity_system_message;
 use crate::commands::contracts::{AgentSidecarChatRequest, AgentSidecarMessagePayload};
 use tauri::{Emitter as _, Manager as _};
 

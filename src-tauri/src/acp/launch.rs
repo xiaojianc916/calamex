@@ -629,7 +629,10 @@ fn push_kimi_entry(
     models: &mut Vec<KimiModelEntry>,
     entry: KimiSeedEntry,
 ) {
-    if !providers.iter().any(|item| item.name == entry.provider.name) {
+    if !providers
+        .iter()
+        .any(|item| item.name == entry.provider.name)
+    {
         providers.push(entry.provider);
     }
     if !models.iter().any(|item| item.name == entry.model.name) {
@@ -785,8 +788,7 @@ mod tests {
     #[test]
     fn find_dotenv_value_strips_export_prefix() {
         assert_eq!(
-            find_dotenv_value("export TAVILY_API_KEY=tvly-exported", "TAVILY_API_KEY")
-                .as_deref(),
+            find_dotenv_value("export TAVILY_API_KEY=tvly-exported", "TAVILY_API_KEY").as_deref(),
             Some("tvly-exported")
         );
     }

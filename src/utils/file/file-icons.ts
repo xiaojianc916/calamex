@@ -111,13 +111,19 @@ const resolveMappedKey = (value: string | undefined): string | null =>
 const resolveNamedFileIconKey = (fileName: string): string | null => {
   if (fileName === '.env' || fileName.startsWith('.env.')) return 'file-text-duo';
   if (fileName === 'readme' || fileName.startsWith('readme.')) return 'lang-markdown';
-  if (fileName === 'license' || fileName.startsWith('license.') ||
-      fileName === 'licence' || fileName.startsWith('licence.')) return 'file-text-duo';
+  if (
+    fileName === 'license' ||
+    fileName.startsWith('license.') ||
+    fileName === 'licence' ||
+    fileName.startsWith('licence.')
+  )
+    return 'file-text-duo';
   return resolveMappedKey(FILE_NAME_ICON_MAP[fileName]);
 };
 
 const resolveFileIconKey = ({ kind, path, expanded = false }: IFileIconResolveOptions): string => {
-  if (kind === 'directory') return expanded ? PIERRE_ICON_THEME.folderExpanded : PIERRE_ICON_THEME.folder;
+  if (kind === 'directory')
+    return expanded ? PIERRE_ICON_THEME.folderExpanded : PIERRE_ICON_THEME.folder;
   const fileName = getFileName(path);
   if (!fileName) return PIERRE_ICON_THEME.file;
   const namedKey = resolveNamedFileIconKey(fileName);
@@ -154,16 +160,20 @@ const resolveColorizedFallbackIconAsset = (key: string): IFileIconAsset | null =
 
   const lightDefinition = PIERRE_ICON_THEME.iconDefinitions[`${key}_light`] ?? darkDefinition;
   const darkRaw = FILE_ICON_RAW_MODULES[resolveAssetModuleKey(darkDefinition.iconPath)] ?? null;
-  const lightRaw = FILE_ICON_RAW_MODULES[resolveAssetModuleKey(lightDefinition.iconPath)] ?? darkRaw;
+  const lightRaw =
+    FILE_ICON_RAW_MODULES[resolveAssetModuleKey(lightDefinition.iconPath)] ?? darkRaw;
   if (!darkRaw || !lightRaw) return null;
 
   const paletteSeed = MONOCHROME_ICON_COLOR_SEED_OVERRIDES[key] ?? key;
-  const paletteHue = palettePool[Number.parseInt(fnv1a32Base36(paletteSeed), 36) % palettePool.length];
+  const paletteHue =
+    palettePool[Number.parseInt(fnv1a32Base36(paletteSeed), 36) % palettePool.length];
   const colors = PIERRE_PALETTE[paletteHue];
 
   const asset: IFileIconAsset = {
     darkSrc: encodeSvgDataUri(applyPierreFallbackColor(darkRaw, colors.dark, DARK_FILL_PATTERN)),
-    lightSrc: encodeSvgDataUri(applyPierreFallbackColor(lightRaw, colors.light, LIGHT_FILL_PATTERN)),
+    lightSrc: encodeSvgDataUri(
+      applyPierreFallbackColor(lightRaw, colors.light, LIGHT_FILL_PATTERN),
+    ),
   };
 
   PIERRE_COLOR_CACHE.set(key, asset);
@@ -184,7 +194,8 @@ const resolveThemeIconAssetByKey = (key: string): IFileIconAsset | null => {
   if (!darkDefinition) return null;
   const lightDefinition = PIERRE_ICON_THEME.iconDefinitions[`${key}_light`] ?? darkDefinition;
   const darkSrc = FILE_ICON_ASSET_MODULES[resolveAssetModuleKey(darkDefinition.iconPath)] ?? null;
-  const lightSrc = FILE_ICON_ASSET_MODULES[resolveAssetModuleKey(lightDefinition.iconPath)] ?? darkSrc;
+  const lightSrc =
+    FILE_ICON_ASSET_MODULES[resolveAssetModuleKey(lightDefinition.iconPath)] ?? darkSrc;
   const fallback = darkSrc ?? lightSrc;
   if (!fallback) return null;
   return { darkSrc: darkSrc ?? fallback, lightSrc: lightSrc ?? fallback };

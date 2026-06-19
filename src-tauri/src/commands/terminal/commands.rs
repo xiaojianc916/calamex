@@ -13,9 +13,9 @@ use tauri::{AppHandle, State};
 use crate::terminal::{
     command_contracts::{
         CancelTerminalRunRequest, CloseTerminalSessionRequest, DispatchTerminalScriptPayload,
-        DispatchTerminalScriptRequest, EnsureTerminalSessionRequest, HeartbeatTerminalSessionRequest,
-        TerminalActiveRunSnapshot, TerminalInputRequest, TerminalResizeRequest,
-        TerminalSessionPayload,
+        DispatchTerminalScriptRequest, EnsureTerminalSessionRequest,
+        HeartbeatTerminalSessionRequest, TerminalActiveRunSnapshot, TerminalInputRequest,
+        TerminalResizeRequest, TerminalSessionPayload,
     },
     dispatch::build_terminal_run_command_for_local_wsl,
     local_wsl_protocol::LocalWslTerminalOpenInteractiveRequest,
@@ -34,7 +34,7 @@ use super::events::{
 use super::state::{
     ActiveRunInputTarget, TerminalSession, TerminalSessionState, buffer_pending_switch_input,
     clear_active_terminal_run, collect_idle_orphan_session_ids,
-    get_active_terminal_run_input_target, get_active_run_snapshot_for_session,
+    get_active_run_snapshot_for_session, get_active_terminal_run_input_target,
     get_active_terminal_run_session, get_flow_controller, get_session_state, get_terminal_session,
     get_terminal_snapshot, lock_terminal_sessions, mark_terminal_resize_repaint_suppression,
     remove_flow_controller, remove_interactive_terminal_after_exit, remove_pending_switch_input,
@@ -80,7 +80,12 @@ pub async fn ensure_terminal_session(
     payload: EnsureTerminalSessionRequest,
 ) -> Result<TerminalSessionPayload, String> {
     let terminal_state = state.inner().clone();
-    set_session_geometry(&terminal_state, &payload.session_id, payload.cols, payload.rows);
+    set_session_geometry(
+        &terminal_state,
+        &payload.session_id,
+        payload.cols,
+        payload.rows,
+    );
     // 刷新该会话的前端存活心跳：连接 / 重连即视为「有前端照管」，孤儿收割线程据此放行该会话。
     touch_session_liveness(&terminal_state, &payload.session_id);
 
@@ -132,15 +137,14 @@ pub async fn ensure_terminal_session(
                 let initial_output = get_terminal_snapshot(&terminal_state, &payload.session_id)?;
                 // 重载恢复：复用既有会话时带回该会话当前活动运行快照与会话态，让前端在
                 // 页面重载、运行态镜像被重置后仍能复原「运行中 / 取消」UI。
-                let active_run = get_active_run_snapshot_for_session(
-                    &terminal_state,
-                    &payload.session_id,
-                )
-                .map(|(run_id, pid, started_at_ms)| TerminalActiveRunSnapshot {
-                    run_id,
-                    pid,
-                    started_at_ms: started_at_ms.map(|value| value as f64),
-                });
+                let active_run =
+                    get_active_run_snapshot_for_session(&terminal_state, &payload.session_id).map(
+                        |(run_id, pid, started_at_ms)| TerminalActiveRunSnapshot {
+                            run_id,
+                            pid,
+                            started_at_ms: started_at_ms.map(|value| value as f64),
+                        },
+                    );
                 let session_state = get_session_state(&terminal_state, &payload.session_id);
                 mark_terminal_interactive_ready(&app);
                 return Ok(TerminalSessionPayload {
@@ -293,7 +297,12 @@ pub fn resize_terminal_session(
     payload: TerminalResizeRequest,
 ) -> Result<(), String> {
     let terminal_state = state.inner().clone();
-    set_session_geometry(&terminal_state, &payload.session_id, payload.cols, payload.rows);
+    set_session_geometry(
+        &terminal_state,
+        &payload.session_id,
+        payload.cols,
+        payload.rows,
+    );
 
     let session = get_terminal_session(&terminal_state, &payload.session_id)?
         .ok_or_else(|| "目标终端会话不存在。".to_string())?;
@@ -480,7 +489,10 @@ pub fn dispatch_script_to_terminal(
     );
 
     // 写入命令行 + 换行触发交互 shell 执行；失败则回收本会话运行态。
-    if let Err(error) = session.handle.write_input_sync(&format!("{command_line}\n")) {
+    if let Err(error) = session
+        .handle
+        .write_input_sync(&format!("{command_line}\n"))
+    {
         spawn_wsl_script_cleanup(clear_active_terminal_run(&terminal_state, &payload.run_id));
         complete_session_run_state_and_emit(&app, &terminal_state, &payload.session_id);
         return Err(error.to_string());
@@ -623,9 +635,7 @@ fn resend_interactive_control(
     match get_terminal_session(state, session_id) {
         Ok(Some(session)) => {
             if let Err(error) = session.handle.write_input_sync(control) {
-                log::warn!(
-                    "WSL 取消升级写入控制字符失败（session_id={session_id}）：{error}"
-                );
+                log::warn!("WSL 取消升级写入控制字符失败（session_id={session_id}）：{error}");
             }
             true
         }

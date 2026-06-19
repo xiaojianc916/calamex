@@ -255,7 +255,10 @@ async fn establish_cdp_session(app: AppHandle, port: u16) {
     for _ in 0..CDP_CONNECT_MAX_RETRIES {
         // 检查 webview 是否已被关闭/销毁，避免在用户关闭后继续建立 CDP 会话。
         if app.get_webview(AGENT_WEBVIEW_LABEL).is_none() {
-            tracing::info!(event = "agent_webview.cdp.cancelled", reason = "webview_closed");
+            tracing::info!(
+                event = "agent_webview.cdp.cancelled",
+                reason = "webview_closed"
+            );
             return;
         }
         match chromiumoxide::Browser::connect(url.clone()).await {
@@ -281,7 +284,10 @@ async fn establish_cdp_session(app: AppHandle, port: u16) {
     for _ in 0..CDP_CONNECT_MAX_RETRIES {
         // 检查 webview 是否已被关闭/销毁。
         if app.get_webview(AGENT_WEBVIEW_LABEL).is_none() {
-            tracing::info!(event = "agent_webview.cdp.cancelled", reason = "webview_closed");
+            tracing::info!(
+                event = "agent_webview.cdp.cancelled",
+                reason = "webview_closed"
+            );
             handler_task.abort();
             return;
         }
@@ -525,8 +531,7 @@ pub async fn agent_webview_create(
 
         let browser_args = format!(
             "{WRY_DEFAULT_BROWSER_ARGS} --remote-debugging-port={} --remote-allow-origins=http://127.0.0.1:{}",
-            input.remote_debugging_port,
-            input.remote_debugging_port,
+            input.remote_debugging_port, input.remote_debugging_port,
         );
 
         let builder =

@@ -383,10 +383,7 @@ mod tests {
         })
         .expect("已有配置时应直接返回");
         assert!(!fetch_called, "已携带 model_config 时不应再读取已保存配置");
-        assert_eq!(
-            cfg.expect("应保留原配置").model_id,
-            "zhipuai/glm-4.7-flash"
-        );
+        assert_eq!(cfg.expect("应保留原配置").model_id, "zhipuai/glm-4.7-flash");
     }
 
     #[test]

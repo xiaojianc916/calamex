@@ -5,7 +5,6 @@
  */
 
 import type { Ref } from 'vue';
-import type { TTerminalConnectionState } from '@/types/terminal';
 import type {
   ITerminalBufferDiagnostic,
   ITerminalDataEvent,
@@ -14,6 +13,7 @@ import type {
   ITerminalSessionPayload,
   ITerminalStatusChangePayload,
   ITerminalVisualWritePayload,
+  TTerminalConnectionState,
   TTerminalInputRoute,
 } from '@/types/terminal';
 

@@ -148,8 +148,7 @@ pub fn create_workspace_path(
                 })?;
         }
         WorkspacePathKind::Directory => {
-            fs::create_dir_all(&target_path)
-                .map_err(|error| format!("创建文件夹失败：{error}"))?;
+            fs::create_dir_all(&target_path).map_err(|error| format!("创建文件夹失败：{error}"))?;
         }
     }
 

@@ -329,9 +329,7 @@ pub(super) fn set_session_state(
         .unwrap_or(TerminalState::Booting);
     if from == to {
         // 无变化：常见且无害（如交互就绪重复置 IdleInteractive），仅 trace 备查，不发事件。
-        log::trace!(
-            "[session-fsm] 会话状态无变化，忽略（session_id={session_id}, 状态={to:?}）。"
-        );
+        log::trace!("[session-fsm] 会话状态无变化，忽略（session_id={session_id}, 状态={to:?}）。");
         return None;
     }
     if !StateMachine::can_transition(from, to) {
@@ -557,10 +555,7 @@ pub(super) fn try_mark_active_terminal_run(
         .values()
         .find(|active_run| active_run.session_id == session_id)
     {
-        return Err(format!(
-            "当前终端已有脚本正在运行：{}",
-            existing_run.run_id
-        ));
+        return Err(format!("当前终端已有脚本正在运行：{}", existing_run.run_id));
     }
     active_runs.insert(
         run_id.to_string(),

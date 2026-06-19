@@ -325,7 +325,10 @@ mod tests {
         let mut f = ShellIntegrationFilter::new();
         let (clean, marks) = f.filter("\u{001b}]633;P;Cwd=/home/x\u{0007}");
         assert_eq!(clean, "");
-        assert_eq!(marks, vec![ShellIntegrationMark::Cwd("/home/x".to_string())]);
+        assert_eq!(
+            marks,
+            vec![ShellIntegrationMark::Cwd("/home/x".to_string())]
+        );
     }
 
     #[test]

@@ -4,8 +4,11 @@
  * 从 session.ts 拆分。
  */
 
-import { TERMINAL_BUFFER_DIAGNOSTIC_PREVIEW_LENGTH, TERMINAL_RUN_SEPARATOR_PREFIX } from './session-constants';
 import type { ITerminalDataEvent, TThemeMode } from '@/types/terminal';
+import {
+  TERMINAL_BUFFER_DIAGNOSTIC_PREVIEW_LENGTH,
+  TERMINAL_RUN_SEPARATOR_PREFIX,
+} from './session-constants';
 
 // ─── ANSI 常量 ─────────────────────────────────────────────────────────────────
 

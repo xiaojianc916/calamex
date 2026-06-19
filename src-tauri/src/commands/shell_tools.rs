@@ -286,14 +286,10 @@ async fn run_shfmt(
         Ok(Err(error)) => return Err(format!("运行 shfmt 失败：{error}")),
         Err(_) => {
             // 超时：从 partial_stderr 获取已缓冲的 stderr 内容。
-            let stderr_text =
-                String::from_utf8_lossy(&partial_stderr.lock().unwrap())
-                    .trim()
-                    .to_string();
-            let base = format!(
-                "shfmt 格式化超时（超过 {} 秒）。",
-                SHFMT_TIMEOUT.as_secs()
-            );
+            let stderr_text = String::from_utf8_lossy(&partial_stderr.lock().unwrap())
+                .trim()
+                .to_string();
+            let base = format!("shfmt 格式化超时（超过 {} 秒）。", SHFMT_TIMEOUT.as_secs());
             return Err(if stderr_text.is_empty() {
                 base
             } else {

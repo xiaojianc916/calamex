@@ -40,7 +40,11 @@ fn elapsed_ms(since: Instant) -> f64 {
 }
 
 fn emit_startup_event(event: &str, app_started_at: Instant) {
-    tracing::info!(scope = "startup", event, elapsed_ms = elapsed_ms(app_started_at));
+    tracing::info!(
+        scope = "startup",
+        event,
+        elapsed_ms = elapsed_ms(app_started_at)
+    );
 }
 
 fn emit_startup_step(event: &str, app_started_at: Instant, step_started_at: Instant) {
@@ -206,7 +210,9 @@ fn harden_webview_settings<R: tauri::Runtime>(webview_window: &tauri::WebviewWin
                 Ok(())
             });
         if let Err(error) = outcome {
-            tracing::warn!("failed to harden WebView2 settings for window {label_for_inner}: {error}");
+            tracing::warn!(
+                "failed to harden WebView2 settings for window {label_for_inner}: {error}"
+            );
         }
     });
     if let Err(error) = access_result {
@@ -305,7 +311,7 @@ fn main() {
             app.manage(acp::AcpRuntime::default());
 
             // 统一本地存储：首启把历史分散目录迁移到 .calamex 根（幂等、绝不阻断启动）。
-storage_paths::migrate_legacy_storage();
+            storage_paths::migrate_legacy_storage();
 
             // 挂载 specta 强类型事件;让前端 events.workspaceFsEvent.listen(...) 拿到 typed payload
             specta_bindings.mount_events(app);
