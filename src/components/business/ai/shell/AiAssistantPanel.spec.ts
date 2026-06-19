@@ -273,6 +273,16 @@ const createAssistantMock = (messagesList: IAiChatMessage[] = []) => {
       applyModeUpdate: vi.fn(),
       reset: vi.fn(),
     },
+    acpSessionConfigOptions: {
+      state: computed(() => null),
+      configOptions: computed(() => []),
+      hasConfigOptions: computed(() => false),
+      isSwitching: computed(() => false),
+      loadConfigOptions: vi.fn().mockResolvedValue(undefined),
+      selectConfigOption: vi.fn().mockResolvedValue(undefined),
+      applyConfigOptionUpdate: vi.fn(),
+      reset: vi.fn(),
+    },
     acpAvailableCommands: {
       state: computed(() => null),
       commands: computed(() => []),
@@ -396,9 +406,9 @@ const mountPanel = (_assistantMock: ReturnType<typeof createAssistantMock>) =>
             '<div v-if="run || confirmation" data-testid="run-status-bar"><strong v-if="confirmation" data-testid="tool-confirmation" v-text="confirmation.question" /><button v-if="confirmation" data-testid="resolve-confirmation" @click="$emit(\'resolve\', \'allow-once\')">允许</button></div>',
         }),
         AiPromptInput: defineComponent({
-          emits: ['submit', 'update:activeMode'],
+          emits: ['submit', 'update:activeMode', 'sessionConfigOptionChange'],
           template:
-            '<div data-testid="prompt-input"><button data-testid="switch-plan" @click="$emit(\'update:activeMode\', \'plan\')">切到 Plan</button><button data-testid="submit" @click="$emit(\'submit\')">发送</button></div>',
+            '<div data-testid="prompt-input"><button data-testid="switch-plan" @click="$emit(\'update:activeMode\', \'plan\')">切到 Plan</button><button data-testid="switch-config-option" @click="$emit(\'sessionConfigOptionChange\', \'model\', \'kimi-k2\')">切换配置</button><button data-testid="submit" @click="$emit(\'submit\')">发送</button></div>',
         }),
         AiProviderSettings: defineComponent({ template: '<div />' }),
         AiWebSourcesPanel: defineComponent({ template: '<div />' }),
@@ -707,5 +717,21 @@ describe('AiAssistantPanel', () => {
     mountPanel(assistantMock);
 
     expect(latestTokenContextArgs?.officialUsage?.value ?? null).toBeNull();
+  });
+
+  it('routes a session config option change from the prompt input to the assistant', async () => {
+    const assistantMock = createAssistantMock([createMessage('message-user', 'user', '切换模型')]);
+    assistantMock.activeMode.value = 'agent';
+    useAiAssistantMock.mockReturnValue(assistantMock);
+
+    const wrapper = mountPanel(assistantMock);
+
+    await wrapper.get('[data-testid="switch-config-option"]').trigger('click');
+
+    expect(assistantMock.acpSessionConfigOptions.selectConfigOption).toHaveBeenCalledWith(
+      'thread-active',
+      'model',
+      'kimi-k2',
+    );
   });
 });

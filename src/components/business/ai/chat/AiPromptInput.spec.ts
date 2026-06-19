@@ -4,6 +4,7 @@ import { nextTick } from 'vue';
 import AiPromptInput from '@/components/business/ai/chat/AiPromptInput.vue';
 import type { IAiTokenContextProps } from '@/composables/ai/useAiTokenContext';
 import { createDefaultAiConfigPayload } from '@/services/ipc/ai-config.service';
+import type { IAcpSessionConfigOptionsState } from '@/types/ai/sidecar';
 
 interface IAiPromptInputTestAttachment {
   id: string;
@@ -33,6 +34,9 @@ interface IAiPromptInputTestProps {
   networkPermission: 'ask' | 'allowed-this-run' | 'denied';
   executionMode: 'interactive' | 'autonomous';
   tokenContext?: IAiTokenContextProps;
+  agentBackend?: 'builtin' | 'kimi';
+  sessionConfigOptions?: IAcpSessionConfigOptionsState | null;
+  isSessionConfigOptionSwitching?: boolean;
   resolveAttachment: (file: File) => Promise<boolean>;
   'onUpdate:modelValue': (value: string) => void;
 }
@@ -290,5 +294,30 @@ describe('AiPromptInput', () => {
 
     expect(tokenTrigger.find('svg').exists()).toBe(true);
     expect(tokenTrigger.text()).toBe('');
+  });
+
+  it('renders a session config option selector per option only for the Kimi agent', () => {
+    const sessionConfigOptions: IAcpSessionConfigOptionsState = {
+      configOptions: [
+        {
+          id: 'model',
+          name: '模型',
+          currentValue: 'kimi-k2',
+          options: [{ value: 'kimi-k2', name: 'Kimi K2' }],
+        },
+        {
+          id: 'thinking',
+          name: '思考强度',
+          currentValue: 'low',
+          options: [{ value: 'low', name: '低' }],
+        },
+      ],
+    };
+
+    const builtinWrapper = mountPromptInput({ sessionConfigOptions });
+    expect(builtinWrapper.findAll('.ai-agent-trigger')).toHaveLength(1);
+
+    const kimiWrapper = mountPromptInput({ agentBackend: 'kimi', sessionConfigOptions });
+    expect(kimiWrapper.findAll('.ai-agent-trigger')).toHaveLength(3);
   });
 });
