@@ -543,6 +543,30 @@ fn toml_str(value: &str) -> String {
     format!("{value:?}")
 }
 
+/// 各受支持厂商的官方 OpenAI 兼容端点。当用户未在 AI 设置里显式填写「Provider 地址」时，
+/// 网关配置的 base_url 为空（Mastra 在主链路内部按 provider 解析端点，无需用户手填），但
+/// Kimi 的 `openai_legacy` provider 必须有一个 base_url 才能复用项目内既存 Key——否则
+/// `collect_kimi_model_entry` 返回 None、整份 config.toml 被跳过，`kimi acp` 启动无凭证而报
+/// 「acp protocol error: Authentication required」。此处按厂商补齐与 Mastra 同源的端点。
+///
+/// provider 键与 `crate::ai::credential::supported_provider_ids()` 对齐；deepseek 与 sidecar
+/// `agent-sidecar/src/models/providers/deepseek-mastra-gateway.ts` 的 DEFAULT_DEEPSEEK_BASE_URL、
+/// moonshotai 与本文件 `KIMI_DEFAULT_BASE_URL` 保持同值。注意：这是与 sidecar / Mastra 端点的
+/// 「双写」关系，调整任一厂商端点时两侧需同步（与 `DEFAULT_MASTRA_MODEL` 的跨语言同源约定一致）。
+fn default_gateway_base_url(platform: &str) -> Option<&'static str> {
+    match platform.trim() {
+        "openai" => Some("https://api.openai.com/v1"),
+        "anthropic" => Some("https://api.anthropic.com/v1"),
+        "deepseek" => Some("https://api.deepseek.com/v1"),
+        "google" => Some("https://generativelanguage.googleapis.com/v1beta/openai"),
+        "moonshotai" => Some(KIMI_DEFAULT_BASE_URL),
+        "alibaba" => Some("https://dashscope.aliyuncs.com/compatible-mode/v1"),
+        "zhipuai" => Some("https://open.bigmodel.cn/api/paas/v4"),
+        "ollama" => Some("http://localhost:11434/v1"),
+        _ => None,
+    }
+}
+
 /// 单个 Kimi provider 条目（openai_legacy：复用项目内某平台的网关地址 + Key）。
 struct KimiProviderEntry {
     /// TOML 安全的 provider 裸键（由平台名清洗而来）。
@@ -588,8 +612,9 @@ fn toml_key_sanitize(value: &str) -> String {
     }
 }
 
-/// 把一个 sidecar 模型配置解析成「provider + model」成对条目。缺 model_id 或缺网关地址
-/// （openai_legacy 必需 base_url）时返回 None，交由调用方决定跳过或回退。
+/// 把一个 sidecar 模型配置解析成「provider + model」成对条目。base_url 优先取用户显式保存的
+/// 网关地址，缺失时回退该厂商的默认 OpenAI 兼容端点（`default_gateway_base_url`）；仅当 model_id
+/// 为空，或厂商既无显式地址又无默认端点时返回 None，交由调用方决定跳过或回退。
 fn collect_kimi_model_entry(
     config: &crate::commands::contracts::AgentSidecarModelConfigPayload,
 ) -> Option<KimiSeedEntry> {
@@ -597,16 +622,19 @@ fn collect_kimi_model_entry(
     if model_id.is_empty() {
         return None;
     }
-    let base_url = config
-        .base_url
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())?;
     let platform = model_id
         .split_once('/')
         .map(|(platform, _)| platform.trim())
         .filter(|value| !value.is_empty())
         .unwrap_or(model_id);
+    // base_url：优先用户在 AI 设置里显式保存的网关地址；缺失时回退该厂商官方 OpenAI 兼容端点。
+    // 此前缺 base_url 会直接返回 None → 整份 config.toml 跳过 → Kimi 无凭证报 Authentication required。
+    let base_url = config
+        .base_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or_else(|| default_gateway_base_url(platform))?;
     let provider_name = toml_key_sanitize(platform);
     Some(KimiSeedEntry {
         provider: KimiProviderEntry {
@@ -706,11 +734,12 @@ fn ensure_kimi_managed_config() -> Result<bool, String> {
         }
     }
 
-    // 收集可桥接的网关模型：主模型必备（缺网关地址则整体跳过，交回 Kimi 登录），Narrator
-    // 为尽力而为的附加模型（解析失败仅跳过该条，不影响主模型 seed）。
+    // 收集可桥接的网关模型：主模型必备（缺网关地址且无默认端点则整体跳过，交回 Kimi 登录），
+    // Narrator 为尽力而为的附加模型（解析失败仅跳过该条，不影响主模型 seed）。
     let main_config = crate::ai::gateway::current_sidecar_model_config()?;
     let Some(default_entry) = collect_kimi_model_entry(&main_config) else {
-        // 主模型无显式网关地址时无法构造 openai_legacy provider；交回 Kimi 自身登录。
+        // 主模型既无显式网关地址、其厂商也无默认 OpenAI 兼容端点时，无法构造 openai_legacy
+        // provider；交回 Kimi 自身登录。
         return Ok(false);
     };
 
@@ -831,26 +860,69 @@ mod tests {
     }
 
     #[test]
-    fn push_kimi_entry_dedupes_providers_keeps_distinct_models() {
-        let mut providers: Vec<KimiProviderEntry> = Vec::new();
-        let mut models: Vec<KimiModelEntry> = Vec::new();
-        let make = |platform: &str, model: &str| KimiSeedEntry {
-            provider: KimiProviderEntry {
-                name: toml_key_sanitize(platform),
-                base_url: "https://gw.example/v1".to_string(),
-                api_key: "sk-xxx".to_string(),
-            },
-            model: KimiModelEntry {
-                name: toml_key_sanitize(model),
-                provider: toml_key_sanitize(platform),
-                model_id: model.to_string(),
-            },
+    fn default_gateway_base_url_covers_supported_providers() {
+        // 与 credential::supported_provider_ids() 对齐：每个受支持厂商都有默认 OpenAI 兼容端点，
+        // 避免出现「有 Key 却因无默认端点被跳过」的盲区。
+        for provider_id in crate::ai::credential::supported_provider_ids() {
+            assert!(
+                default_gateway_base_url(provider_id).is_some(),
+                "缺少厂商默认端点：{provider_id}"
+            );
+        }
+        // 关键厂商端点与同源常量保持一致。
+        assert_eq!(
+            default_gateway_base_url("deepseek"),
+            Some("https://api.deepseek.com/v1")
+        );
+        assert_eq!(default_gateway_base_url("moonshotai"), Some(KIMI_DEFAULT_BASE_URL));
+        // 前后空白容忍；未知厂商无默认端点。
+        assert_eq!(
+            default_gateway_base_url("  zhipuai  "),
+            Some("https://open.bigmodel.cn/api/paas/v4")
+        );
+        assert_eq!(default_gateway_base_url("unknown-vendor"), None);
+    }
+
+    #[test]
+    fn collect_kimi_model_entry_falls_back_to_default_endpoint() {
+        // 网关配置未携带 base_url（最常见：用户未手填 Provider 地址）时，按厂商回退默认端点而非
+        // 整体跳过——这是修复 Authentication required 的关键路径。
+        let config = crate::commands::contracts::AgentSidecarModelConfigPayload {
+            model_id: "zhipuai/glm-4-flash".to_string(),
+            api_key: "sk-zhipu".into(),
+            base_url: None,
         };
-        push_kimi_entry(&mut providers, &mut models, make("deepseek", "deepseek/a"));
-        push_kimi_entry(&mut providers, &mut models, make("deepseek", "deepseek/b"));
-        // 同平台 provider 只保留一次；两个不同模型都保留。
-        assert_eq!(providers.len(), 1);
-        assert_eq!(models.len(), 2);
+        let entry = collect_kimi_model_entry(&config).expect("应回退默认端点而非跳过");
+        assert_eq!(entry.provider.name, "zhipuai");
+        assert_eq!(
+            entry.provider.base_url,
+            "https://open.bigmodel.cn/api/paas/v4"
+        );
+        assert_eq!(entry.provider.api_key, "sk-zhipu");
+        assert_eq!(entry.model.model_id, "zhipuai/glm-4-flash");
+    }
+
+    #[test]
+    fn collect_kimi_model_entry_prefers_explicit_base_url() {
+        // 用户显式填写的网关地址优先于默认端点。
+        let config = crate::commands::contracts::AgentSidecarModelConfigPayload {
+            model_id: "deepseek/deepseek-v4-pro".to_string(),
+            api_key: "sk-deepseek".into(),
+            base_url: Some("https://gw.example/v1".to_string()),
+        };
+        let entry = collect_kimi_model_entry(&config).expect("有显式地址应能解析");
+        assert_eq!(entry.provider.base_url, "https://gw.example/v1");
+    }
+
+    #[test]
+    fn collect_kimi_model_entry_skips_unknown_provider_without_base_url() {
+        // 厂商既无显式地址也无默认端点时仍返回 None（交回 Kimi 自身登录）。
+        let config = crate::commands::contracts::AgentSidecarModelConfigPayload {
+            model_id: "mystery/some-model".to_string(),
+            api_key: "sk-x".into(),
+            base_url: None,
+        };
+        assert!(collect_kimi_model_entry(&config).is_none());
     }
 
     #[test]
@@ -874,6 +946,29 @@ mod tests {
         assert!(rendered.contains("[models.deepseek-deepseek-v4-pro]"));
         assert!(rendered.contains("deepseek/deepseek-v4-pro"));
         assert!(rendered.contains("max_context_size = 262144"));
+    }
+
+    #[test]
+    fn push_kimi_entry_dedupes_providers_keeps_distinct_models() {
+        let mut providers: Vec<KimiProviderEntry> = Vec::new();
+        let mut models: Vec<KimiModelEntry> = Vec::new();
+        let make = |platform: &str, model: &str| KimiSeedEntry {
+            provider: KimiProviderEntry {
+                name: toml_key_sanitize(platform),
+                base_url: "https://gw.example/v1".to_string(),
+                api_key: "sk-xxx".to_string(),
+            },
+            model: KimiModelEntry {
+                name: toml_key_sanitize(model),
+                provider: toml_key_sanitize(platform),
+                model_id: model.to_string(),
+            },
+        };
+        push_kimi_entry(&mut providers, &mut models, make("deepseek", "deepseek/a"));
+        push_kimi_entry(&mut providers, &mut models, make("deepseek", "deepseek/b"));
+        // 同平台 provider 只保留一次；两个不同模型都保留。
+        assert_eq!(providers.len(), 1);
+        assert_eq!(models.len(), 2);
     }
 
     #[cfg(windows)]
