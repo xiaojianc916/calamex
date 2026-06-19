@@ -23,7 +23,6 @@ import {
   SelectContent,
   SelectGroup,
   SelectItem,
-  SelectLabel,
   SelectTrigger,
 } from '@/components/ui/select';
 import { useAiAgentNetwork } from '@/composables/ai/useAiAgentNetwork';
@@ -1149,7 +1148,6 @@ onMounted(() => {
           </span>
         </SelectTrigger>
         <SelectContent side="bottom" align="start" :side-offset="8" class="ai-agent-mark-content">
-          <SelectLabel class="ai-agent-mark-section-label">选择 Agent</SelectLabel>
           <SelectGroup>
             <SelectItem
               v-for="agent in agentOptions"
@@ -1380,11 +1378,11 @@ onMounted(() => {
 .ai-agent-mark-content {
   width: min(240px, calc(100vw - 24px));
   padding: 8px;
-  border: 1px solid #d1d9e0b3;
+  border: 1px solid #f0f0f2;
   border-radius: 10px;
   background: #ffffff;
   color: #1f2328;
-  box-shadow: 0 12px 30px rgb(31 35 40 / 12%);
+  box-shadow: 0 8px 24px rgb(15 23 42 / 8%);
 }
 
 .ai-agent-mark-content [data-slot='select-scroll-up-button'],
@@ -1392,14 +1390,6 @@ onMounted(() => {
   display: none;
 }
 
-.ai-agent-mark-section-label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: #818b98;
-  font-size: 12px;
-  padding: 6px 3px 7px;
-}
 
 .ai-agent-mark-item {
   display: flex;

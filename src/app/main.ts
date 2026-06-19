@@ -3,6 +3,7 @@ import { VueQueryPlugin } from '@tanstack/vue-query';
 import { queryClient, setupQueryPersistence } from '@/lib/query-client';
 import { applyWindowStage } from '@/services/ipc/window.service';
 import { pinia } from '@/store';
+import { runStartupPersistedRead } from '@/store/aiThread/startupPersistedReadWiring';
 import { hydrateAiConversationStorage } from '@/store/plugins/debouncedPersistStorage';
 import { hydrateSessionStorage } from '@/store/plugins/tauriSessionStorage';
 import { initEditorScrollbarActivity } from '@/utils/editor/editor-scrollbar-activity';
@@ -118,9 +119,11 @@ const bootstrap = async (): Promise<void> => {
     const hydrateAiConversationAfterBootstrap = (): void => {
       // AI 历史不是首屏必需：延后到首屏后 idle，避免和 session hydrate / Vue mount 抢 IO。
       scheduleIdle(() => {
-        void hydrateAiConversationStorage().catch((error: unknown) => {
-          console.warn('AI 会话历史后台 hydrate 失败', error);
-        });
+        void hydrateAiConversationStorage()
+          .then(() => runStartupPersistedRead())
+          .catch((error: unknown) => {
+            console.warn('AI 会话历史后台 hydrate 失败', error);
+          });
       }, 2500);
     };
 
