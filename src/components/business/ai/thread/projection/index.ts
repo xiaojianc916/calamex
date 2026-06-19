@@ -15,5 +15,6 @@ export * from './from-acp-usage';
 export * from './from-runtime-tool-call';
 export * from './from-wire-tool-call';
 export * from './reconcile-thread-entries';
+export * from './thread-entries-to-timeline';
 export * from './tool-kind';
 export * from './tool-view';
