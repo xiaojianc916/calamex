@@ -131,6 +131,8 @@ const scheduleAutoRestart = (): void => {
   }
 
   const token = lifecycleToken;
+  // 指数退避：base × 2^attempt。当前仅此一处使用，暂不提取为共享函数。
+  // 若未来 IPC 重连 / SSH 重连等场景有同类需求，请提取到 utils/core/async-lifecycle.ts。
   const delay = AUTO_RESTART_BASE_DELAY_MS * 2 ** restartIndex;
   clearAutoRestartTimer();
   scheduledAutoRestart = { root, token };

@@ -1,9 +1,6 @@
 import { useResizeObserver } from '@vueuse/core';
 import { computed, type Ref, ref } from 'vue';
 
-const clampNumber = (value: number, min: number, max: number): number =>
-  Math.min(max, Math.max(min, value));
-
 interface IDiagnosticsPanelBreakpoint {
   minViewportWidth: number;
   ratio: number;
@@ -62,7 +59,7 @@ const resolveDiagnosticsPanelWidth = (availableWidth: number): number => {
   const resolvedMaxWidth = Math.min(hardMaxWidth, strategy.softMaxWidth);
   const resolvedMinWidth = Math.min(strategy.minWidth, resolvedMaxWidth);
   const preferredWidth = Math.round(normalizedWidth * strategy.ratio);
-  return clampNumber(preferredWidth, resolvedMinWidth, resolvedMaxWidth);
+  return clamp(preferredWidth, resolvedMinWidth, resolvedMaxWidth);
 };
 
 interface IUseShellWorkbenchViewportStateOptions {

@@ -1,5 +1,6 @@
 // composables/useMessage.ts
 import { type ExternalToast, toast } from 'vue-sonner';
+import { createPrefixedId } from '@/utils/core/id';
 
 export type TMessageType = 'success' | 'error' | 'warning' | 'info' | 'loading';
 
@@ -88,11 +89,8 @@ const emitToast = (
   toast.error(message, toastOptions);
 };
 
-let autoIdCounter = 0;
-const generateMessageId = (): string => {
-  autoIdCounter = (autoIdCounter + 1) >>> 0;
-  return `msg-${Date.now().toString(36)}-${autoIdCounter.toString(36)}`;
-};
+/** 生成消息唯一 ID，复用 utils/core/id.ts 的 UUID 标准实现。 */
+const generateMessageId = (): string => createPrefixedId('msg');
 
 const canDispatch = (): boolean =>
   typeof window !== 'undefined' && typeof window.dispatchEvent === 'function';

@@ -18,14 +18,22 @@ const resolveLocalStorage = (): Storage | null => {
   return localStorage;
 };
 
-const resolveGithubHost = (repoUrl: string): string | null => {
+/**
+ * 统一解析 repo URL 的 host / owner / repo，供所有 GitHub API 构造共用。
+ * 一个 URL 只做一次 new URL() 解析，不再各处重复正则后援。
+ */
+const parseRepoUrl = (repoUrl: string): { host: string; owner: string; repo: string } | null => {
   try {
-    return new URL(repoUrl).host.toLowerCase();
+    const url = new URL(repoUrl);
+    const [owner, repo] = url.pathname.split('/').filter(Boolean);
+    if (!owner || !repo) return null;
+    return { host: url.host.toLowerCase(), owner, repo: repo.replace(/\.git$/, '') };
   } catch {
-    const match = repoUrl.match(/^https:\/\/([^/]+)/);
-    return match?.[1]?.toLowerCase() ?? null;
+    return null;
   }
 };
+
+const resolveGithubHost = (repoUrl: string): string | null => parseRepoUrl(repoUrl)?.host ?? null;
 
 const resolveGithubAuthorIdentity = (commit: IGitCommitSummaryPayload): string | null => {
   const email = commit.authorEmail?.trim().toLowerCase();
@@ -80,16 +88,12 @@ const writeCachedGithubCommitAuthor = (
 };
 
 const resolveGithubCommitApiUrl = (repoUrl: string, commitId: string): string | null => {
-  const match = repoUrl.match(/^https:\/\/([^/]+)\/([^/]+)\/([^/]+)\/?$/);
-  if (!match) return null;
+  const parsed = parseRepoUrl(repoUrl);
+  if (!parsed) return null;
 
-  const [, host, owner, repo] = match;
-  const cleanRepo = repo.replace(/\.git$/, '');
   const apiBase =
-    host.toLowerCase() === 'github.com'
-      ? 'https://api.github.com'
-      : ['https://api.', host].join('');
-  return `${apiBase}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(cleanRepo)}/commits/${commitId}`;
+    parsed.host === 'github.com' ? 'https://api.github.com' : `https://api.${parsed.host}`;
+  return `${apiBase}/repos/${encodeURIComponent(parsed.owner)}/${encodeURIComponent(parsed.repo)}/commits/${commitId}`;
 };
 
 export const fetchGithubCommitAuthorSnapshot = async (

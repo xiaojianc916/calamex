@@ -2,7 +2,7 @@ import { tauriService } from '@/services/tauri';
 import { useEditorStore } from '@/store/editor';
 import type { IEditorDocument, IScriptFilePayload } from '@/types/editor';
 import { computeDocumentMetrics } from '@/utils/editor/document-metrics';
-import { areFileSystemPathsEqual } from '@/utils/file/path';
+import { areFileSystemPathsEqual, joinFileSystemPath } from '@/utils/file/path';
 
 interface IRefreshSidecarChangedDocumentsRequest {
   changedFilePaths: readonly string[];
@@ -26,12 +26,6 @@ const isAbsoluteFileSystemPath = (path: string): boolean =>
   UNC_ABSOLUTE_PATH_PATTERN.test(path) ||
   POSIX_ABSOLUTE_PATH_PATTERN.test(path);
 
-const joinWorkspacePath = (workspaceRootPath: string, path: string): string => {
-  const root = workspaceRootPath.replace(/[\\/]+$/u, '');
-  const child = path.replace(/^[\\/]+/u, '');
-  return `${root}/${child}`;
-};
-
 const resolveChangedFilePath = (
   path: string,
   workspaceRootPath: string | null | undefined,
@@ -46,7 +40,7 @@ const resolveChangedFilePath = (
     return trimmed;
   }
 
-  return joinWorkspacePath(workspaceRootPath, trimmed);
+  return joinFileSystemPath(workspaceRootPath, trimmed);
 };
 
 const appendUniquePath = (paths: string[], path: string): void => {

@@ -14,6 +14,9 @@ import { ref } from 'vue';
  */
 const MAX_HISTORY_SIZE = 120;
 
+/** 栈超出上限时只保留最尾部 MAX_HISTORY_SIZE 个条目。 */
+const trimStack = (stack: string[]): string[] =>
+  stack.length > MAX_HISTORY_SIZE ? stack.slice(stack.length - MAX_HISTORY_SIZE) : stack;
 export const useDocumentNavigationHistory = () => {
   const backStack = ref<string[]>([]);
   const forwardStack = ref<string[]>([]);
@@ -54,9 +57,7 @@ export const useDocumentNavigationHistory = () => {
       return;
     }
     if (previousDocumentId && checkExists(previousDocumentId)) {
-      backStack.value = [...backStack.value, previousDocumentId].slice(
-        Math.max(0, backStack.value.length + 1 - MAX_HISTORY_SIZE),
-      );
+      backStack.value = trimStack([...backStack.value, previousDocumentId]);
     }
     forwardStack.value = [];
   };
@@ -79,9 +80,7 @@ export const useDocumentNavigationHistory = () => {
       return null;
     }
 
-    targetStack.value = [...targetStack.value, currentDocumentId].slice(
-      Math.max(0, targetStack.value.length + 1 - MAX_HISTORY_SIZE),
-    );
+    targetStack.value = trimStack([...targetStack.value, currentDocumentId]);
 
     isNavigating.value = true;
     return targetId;

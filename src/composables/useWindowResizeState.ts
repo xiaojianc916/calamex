@@ -34,13 +34,10 @@ interface IResizeEventSource {
 
 type TInteractiveResizePhase = 'idle' | 'active' | 'settling';
 
-const readObjectProperty = (source: unknown, key: string): unknown => {
-  if (typeof source !== 'object' || source === null) {
-    return undefined;
-  }
-
-  return Reflect.get(source, key);
-};
+const readObjectProperty = (source: unknown, key: string): unknown =>
+  typeof source === 'object' && source !== null
+    ? (source as Record<string, unknown>)[key]
+    : undefined;
 
 const hasTauriWindowRuntime = (): boolean => {
   if (typeof window === 'undefined') {
