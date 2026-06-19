@@ -278,11 +278,47 @@ export const useShellWorkbenchView = (onReady: () => void) => {
   const navigateDocumentForward = (): void => navigateDocument('forward');
 
   const gitBranchName = computed(() => gitStore.status.headBranchName ?? null);
-  const gitAddedCount = computed(
-    () =>
-      gitStore.status.stagedCount + gitStore.status.unstagedCount + gitStore.status.untrackedCount,
-  );
-  const gitRemovedCount = computed(() => 0);
+
+  /**
+   * 按 Git status letter 精确分类统计文件变更数。
+   *
+   * 修复：此前 gitRemovedCount 恒为 0（写死），且 gitAddedCount 把 modified
+   * 文件也算进了「新增」。现在直接遍历 status.files 数组按 index/worktree
+   * status 分类：A=新增、D=删除、M/R=修改、?=未跟踪。
+   */
+  const gitChangeSummary = computed(() => {
+    const files = gitStore.status.files;
+    let added = 0;
+    let modified = 0;
+    let deleted = 0;
+
+    for (const file of files) {
+      if (file.isUntracked) {
+        added++;
+        continue;
+      }
+      const status = file.indexStatus ?? file.worktreeStatus;
+      switch (status) {
+        case 'A':
+        case '?':
+          added++;
+          break;
+        case 'D':
+          deleted++;
+          break;
+        case 'M':
+        case 'R':
+          modified++;
+          break;
+        default:
+          // C (copy)、T (type change) 等归入 modified
+          modified++;
+          break;
+      }
+    }
+
+    return { added, modified, deleted, total: files.length };
+  });
 
   const shouldRenderDiagnosticsPanel = computed(
     () => workbench.editorStore.hasActiveDocument && workbench.editorStore.document.kind === 'text',
@@ -791,8 +827,7 @@ export const useShellWorkbenchView = (onReady: () => void) => {
     navigateDocumentBack,
     navigateDocumentForward,
     gitBranchName,
-    gitAddedCount,
-    gitRemovedCount,
+    gitChangeSummary,
     shouldRenderDiagnosticsPanel,
     canToggleDiagnosticsPanel,
     diagnosticIssueCount,

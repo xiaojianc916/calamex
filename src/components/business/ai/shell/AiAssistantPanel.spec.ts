@@ -493,7 +493,7 @@ describe('AiAssistantPanel', () => {
 
     expect(wrapper.find('[data-testid="chat-thread"]').exists()).toBe(true);
     expect(wrapper.get('[data-testid="chat-thread"]').text()).toContain('Agent 最终回复');
-    expect(wrapper.get('[data-testid="run-status-bar"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="run-status-bar"]').exists()).toBe(true);
     expect(wrapper.get('[data-testid="tool-confirmation"]').text()).toContain(
       '允许执行 pnpm test 吗？',
     );

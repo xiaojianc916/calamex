@@ -39,11 +39,27 @@ pub fn load_image_asset(app: tauri::AppHandle, path: String) -> Result<ImageAsse
         .canonicalize()
         .map_err(|error| format!("读取图片资源失败：{error}"))?;
 
-    if !file_path.is_file() {
+    // 一次 symlink_metadata 同时完成「是否是文件」和「大小」检查，
+    // 缩小 TOCTOUR 窗口且拒绝通过符号链接加载图片资源。
+    let metadata = fs::symlink_metadata(&file_path)
+        .map_err(|error| format!("读取图片资源元数据失败：{error}"))?;
+
+    if metadata.is_symlink() {
+        return Err("不支持通过符号链接加载图片资源。".into());
+    }
+
+    if !metadata.is_file() {
         return Err("目标图片不存在或不是有效文件。".into());
     }
 
-    let byte_size = ensure_within_size_limit(&file_path, MAX_IMAGE_ASSET_BYTES, "图片资源")?;
+    let byte_size = metadata.len();
+    if byte_size > MAX_IMAGE_ASSET_BYTES {
+        return Err(format!(
+            "图片资源过大（{:.1} MB），超过 {} MB 上限，已取消读取。",
+            byte_size as f64 / (1024.0 * 1024.0),
+            MAX_IMAGE_ASSET_BYTES / (1024 * 1024)
+        ));
+    }
 
     // 仅把当前预览的这一个文件加入 asset 协议作用域，前端通过 convertFileSrc 按需流式读取：
     // 既避免把整张图 base64 编码后经 IPC 传输（约 1.37 倍膨胀 + 巨大 JS 字符串），

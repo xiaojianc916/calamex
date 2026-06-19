@@ -40,12 +40,11 @@ import {
   SHELL_WINDOW_RESIZE_SETTLED_EVENT,
   SHELL_WINDOW_RESIZE_START_EVENT,
 } from '@/utils/window/window-resize-events';
+import { RunVisualSequencer } from './run-visual-sequencer';
 import {
   isLikelyInteractiveResizeRepaintFrame,
-  normalizeTerminalAnsiForTheme,
   previewTerminalDiagnosticText,
   scanInteractiveAltScreenSwitch,
-  stripInjectedRunSeparatorForTerminalData,
 } from './session-ansi';
 import {
   DEFAULT_COLS,
@@ -74,18 +73,24 @@ import {
   resolveInteger,
   resolveTerminalBellStyle,
 } from './session-helpers';
-import {
-  type ITerminalSessionCallbacks,
-  type ITerminalSessionOptions,
-  type ITerminalTauriService,
+import type {
+  ITerminalSessionCallbacks,
+  ITerminalSessionOptions,
+  ITerminalTauriService,
 } from './session-types';
-import { RunVisualSequencer } from './run-visual-sequencer';
 import { TerminalWriteBuffer } from './terminal-write-buffer';
 
 // ─── Re-export 公共 API（保持消费者导入路径不变） ──────────────────────────────
 
-export { normalizeTerminalAnsiForTheme, stripInjectedRunSeparatorForTerminalData } from './session-ansi';
-export { type ITerminalSessionCallbacks, type ITerminalSessionOptions, type ITerminalTauriService } from './session-types';
+export {
+  normalizeTerminalAnsiForTheme,
+  stripInjectedRunSeparatorForTerminalData,
+} from './session-ansi';
+export type {
+  ITerminalSessionCallbacks,
+  ITerminalSessionOptions,
+  ITerminalTauriService,
+} from './session-types';
 
 // ─── TerminalSession 类 ───────────────────────────────────────────────────────
 
@@ -422,7 +427,7 @@ export class TerminalSession {
   getSelectionText(): string {
     const selection = this._terminalRef.value?.getSelection() ?? '';
     if (!selection) return '';
-    return this._settings?.trimFinalNewlinesOnCopy ? selection.replace(/[\r\n]+$/u, '') : selection;
+    return this._settings?.trimFinalNewlineOnCopy ? selection.replace(/[\r\n]+$/u, '') : selection;
   }
 
   async copySelection(): Promise<void> {
@@ -516,7 +521,11 @@ export class TerminalSession {
       const handleWindowFocus = (): void => {
         if (!this._visible) return;
         this._scheduleLayoutSync({ settle: true });
-        this._scheduleViewportSync({ clearTextureAtlas: true, refresh: true, scrollToBottom: true });
+        this._scheduleViewportSync({
+          clearTextureAtlas: true,
+          refresh: true,
+          scrollToBottom: true,
+        });
       };
       window.addEventListener('focus', handleWindowFocus);
       this._windowFocusCleanup = () => {
@@ -529,7 +538,11 @@ export class TerminalSession {
       const handleDocVisChange = (): void => {
         if (document.visibilityState !== 'visible' || !this._visible) return;
         this._scheduleLayoutSync({ settle: true });
-        this._scheduleViewportSync({ clearTextureAtlas: true, refresh: true, scrollToBottom: true });
+        this._scheduleViewportSync({
+          clearTextureAtlas: true,
+          refresh: true,
+          scrollToBottom: true,
+        });
       };
       document.addEventListener('visibilitychange', handleDocVisChange);
       this._visibilityChangeCleanup = () => {
@@ -797,7 +810,8 @@ export class TerminalSession {
     if (
       hostEl.clientWidth < MIN_RENDERABLE_TERMINAL_WIDTH ||
       hostEl.clientHeight < MIN_RENDERABLE_TERMINAL_HEIGHT
-    ) return;
+    )
+      return;
 
     try {
       const prevCols = terminal.cols;
@@ -893,7 +907,8 @@ export class TerminalSession {
     if (
       hostEl.clientWidth < MIN_RENDERABLE_TERMINAL_WIDTH ||
       hostEl.clientHeight < MIN_RENDERABLE_TERMINAL_HEIGHT
-    ) return;
+    )
+      return;
     try {
       const prevCols = terminal.cols;
       const prevRows = terminal.rows;
@@ -1274,7 +1289,10 @@ export class TerminalSession {
         window.removeEventListener(SHELL_WINDOW_RESIZE_START_EVENT, handleShellWindowResizeStart);
         window.removeEventListener(SHELL_WINDOW_RESIZE_FRAME_EVENT, handleShellWindowResizeFrame);
         window.removeEventListener(SHELL_WINDOW_RESIZE_END_EVENT, handleShellWindowResizeEnd);
-        window.removeEventListener(SHELL_WINDOW_RESIZE_SETTLED_EVENT, handleShellWindowResizeSettled);
+        window.removeEventListener(
+          SHELL_WINDOW_RESIZE_SETTLED_EVENT,
+          handleShellWindowResizeSettled,
+        );
         this._shellWindowResizeCleanup = null;
       };
     }
@@ -1312,7 +1330,8 @@ export class TerminalSession {
     const c = Math.max(0, Math.trunc(cols));
     const r = Math.max(0, Math.trunc(rows));
     if (c <= 0 || r <= 0) return false;
-    if (this._previousTerminalSize.cols === c && this._previousTerminalSize.rows === r) return false;
+    if (this._previousTerminalSize.cols === c && this._previousTerminalSize.rows === r)
+      return false;
     this._previousTerminalSize = { cols: c, rows: r };
     return true;
   }
@@ -1364,7 +1383,9 @@ export class TerminalSession {
               this.session.value = null;
               const message = 'WSL Link interactive command channel 已关闭。';
               this._emitStatus('closed', message);
-              this._writeBuffer.write(`\r\n\x1b[90m${message}\x1b[0m\r\n`, { scrollToBottom: true });
+              this._writeBuffer.write(`\r\n\x1b[90m${message}\x1b[0m\r\n`, {
+                scrollToBottom: true,
+              });
               this._writeBuffer.flushNow();
               this._scheduleViewportSync({ scrollToBottom: true });
               return;

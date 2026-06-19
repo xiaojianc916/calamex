@@ -239,8 +239,8 @@ const addOfficialUsage = (
       ) ?? 0,
     reasoningTokens:
       addTokenCounts(
-        current?.outputTokenDetails.outputTokenDetails.reasoningTokens,
-        next.outputTokenDetails.outputTokenDetails.reasoningTokens,
+        current?.outputTokenDetails?.reasoningTokens,
+        next.outputTokenDetails?.reasoningTokens,
       ) ?? 0,
   };
   const cachedInputTokens = addTokenCounts(
