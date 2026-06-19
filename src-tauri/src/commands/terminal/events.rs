@@ -250,6 +250,14 @@ fn handle_interactive_shell_mark(
                 },
             );
         }
+        ShellIntegrationMark::ShellPid(pid) => {
+            // 存储该会话的 bash shell PID，供带外取消时读取 /proc/<shellpid>/stat 定位前台进程组。
+            if let Ok(Some(session)) = super::state::get_terminal_session(state, session_id) {
+                session
+                    .shell_pid
+                    .store(pid, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
         ShellIntegrationMark::PromptStart
         | ShellIntegrationMark::CommandStart
         | ShellIntegrationMark::Cwd(_) => {}
