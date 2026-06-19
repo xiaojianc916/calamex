@@ -4,7 +4,10 @@
 
 use jiff::Timestamp;
 use std::{
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::AtomicU32,
+    },
     time::{Duration, Instant},
 };
 
@@ -212,9 +215,10 @@ pub async fn ensure_terminal_session(
         }
 
         let session = Arc::new(TerminalSession {
-            handle,
-            working_directory: terminal_cwd.clone(),
-        });
+    handle,
+    working_directory: terminal_cwd.clone(),
+    shell_pid: AtomicU32::new(0),
+});
         let mut sessions = match lock_terminal_sessions(&terminal_state) {
             Ok(sessions) => sessions,
             Err(error) => {
