@@ -85,10 +85,8 @@ const isUnloadableCleanTextDocument = (
 const pushRecentEntry = (list: readonly string[], path: string, max: number): string[] | null => {
   const normalized = normalizeFileSystemPath(path);
   if (!normalized) return null;
-  return [normalized, ...list.filter((item) => normalizeFileSystemPath(item) !== normalized)].slice(
-    0,
-    max,
-  );
+  // 列表中条目在写入时已规范化，比较时无需重复调用 normalizeFileSystemPath
+  return [normalized, ...list.filter((item) => item !== normalized)].slice(0, max);
 };
 
 const EMPTY_DOCUMENT: Readonly<IEditorDocument> = Object.freeze({
@@ -920,10 +918,7 @@ export const useEditorStore = defineStore(
     };
 
     const setDocumentAnalysis = (documentId: string, payload: IAnalyzeScriptPayload): void => {
-      documentAnalysis.value = {
-        ...documentAnalysis.value,
-        [documentId]: payload,
-      };
+      documentAnalysis.value[documentId] = payload;
     };
 
     const closeDocument = (documentId: string): IEditorDocument | null => {
