@@ -1,52 +1,44 @@
-// fix-warmpool.mjs — 放仓库根目录；在 agent-sidecar 内执行： node ..\fix-warmpool.mjs
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+
+const REL = 'src/tools/mcp/client.spec.ts';
+const BASE = existsSync(REL) ? '' : (existsSync('agent-sidecar/' + REL) ? 'agent-sidecar/' : '');
 
 function patch(rel, edits) {
-  const raw = readFileSync(rel, 'utf8');
+  const path = BASE + rel;
+  const raw = readFileSync(path, 'utf8');
   const hadCRLF = raw.includes('\r\n');
   let text = raw.replace(/\r\n/g, '\n');
-  let applied = 0, skipped = 0;
-  for (const { tag, oldStr, newStr } of edits) {
-    const n = text.split(oldStr).length - 1;
-    if (n === 0) { console.log(`- skip: ${tag}（0 匹配，可能已应用）`); skipped++; continue; }
-    if (n > 1)  { console.log(`- skip: ${tag}（${n} 处匹配，拒绝歧义替换）`); skipped++; continue; }
+  for (const { oldStr, newStr, label } of edits) {
+    const count = text.split(oldStr).length - 1;
+    if (count !== 1) {
+      console.log(`- skip [${label}]（${count} 匹配，期望 1）`);
+      continue;
+    }
     text = text.replace(oldStr, newStr);
-    console.log(`+ 应用: ${tag}`); applied++;
+    console.log(`+ 应用 [${label}]`);
   }
-  if (applied > 0) writeFileSync(rel, hadCRLF ? text.replace(/\n/g, '\r\n') : text, 'utf8');
-  console.log(`${rel}: ${applied} applied, ${skipped} skipped\n`);
+  writeFileSync(path, hadCRLF ? text.replace(/\n/g, '\r\n') : text, 'utf8');
 }
 
-patch('src/tools/mcp/gateway/warm-pool.ts', [
+patch(REL, [
   {
-    tag: 'listTools: withServer 抛错回退已缓存 catalog（兑现设计契约）',
+    label: 'narrow-integration-server-set',
     oldStr:
-`    const catalog = await this.withServer(input, (bundle) => {
-      this.cacheCatalogVariants(input.serverName, bundle);
-      return this.catalog.get(catalogKey) ?? createCatalogFromBundle(input.serverName, input.profile, bundle);
-    });
-    this.emitCatalogMetric(input, false, startedAt, catalog);
-    return catalog;`,
+      "    const bundle = await createMastraMcpClientBundle({\n" +
+      "      workspaceRootPath: WORKSPACE_ROOT,\n" +
+      "      env: defaultEnv,\n" +
+      "      platform: 'win32',\n" +
+      "    });",
     newStr:
-`    let catalog: IMcpGatewayCatalog;
-    try {
-      catalog = await this.withServer(input, (bundle) => {
-        this.cacheCatalogVariants(input.serverName, bundle);
-        return this.catalog.get(catalogKey) ?? createCatalogFromBundle(input.serverName, input.profile, bundle);
-      });
-    } catch (error) {
-      // bundle 可能在创建成功后、被本次 withServer 取用前，因并发 evictOverflow
-      // 抖动而断开（warm 上限 < server 总数时，刚建好但尚未标记 active 的 entry
-      // 会先成为「最旧」项被淘汰）。catalog 已在 bundle 创建时缓存，回退命中缓存，
-      // 与 listAllToolsUncached 注释承诺的「被 evict 的服务走缓存」契约一致。
-      const cachedAfterEvict = this.catalog.get(catalogKey);
-      if (!cachedAfterEvict) {
-        throw error;
-      }
-      catalog = cachedAfterEvict;
-    }
-    this.emitCatalogMetric(input, false, startedAt, catalog);
-    return catalog;`,
+      "    const bundle = await createMastraMcpClientBundle({\n" +
+      "      workspaceRootPath: WORKSPACE_ROOT,\n" +
+      "      env: defaultEnv,\n" +
+      "      platform: 'win32',\n" +
+      "      // 仅启动一个本地健康 server（sequential-thinking）+ 一个注定失败的 server（git，空 fixture → EFTYPE）。\n" +
+      "      // 关键：移除 github(HTTP)——其 getaddrinfo DNS 走 libuv 线程池，进程 teardown 时回调可能命中\n" +
+      "      // uv_async_send 对“正在关闭句柄”的断言（libuv async.c:94），导致原生 abort。收窄后仍满足本用例\n" +
+      "      // 意图：一个 server 不可用时健康工具仍保留，且 git 失败语义不变。\n" +
+      "      serverNames: ['git', 'sequential-thinking'],\n" +
+      "    });",
   },
 ]);
-console.log('done');

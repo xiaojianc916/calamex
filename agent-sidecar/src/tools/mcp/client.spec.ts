@@ -731,6 +731,11 @@ describe('MCP sidecar config', () => {
       workspaceRootPath: WORKSPACE_ROOT,
       env: defaultEnv,
       platform: 'win32',
+      // 仅启动一个本地健康 server（sequential-thinking）+ 一个注定失败的 server（git，空 fixture → EFTYPE）。
+      // 关键：移除 github(HTTP)——其 getaddrinfo DNS 走 libuv 线程池，进程 teardown 时回调可能命中
+      // uv_async_send 对“正在关闭句柄”的断言（libuv async.c:94），导致原生 abort。收窄后仍满足本用例
+      // 意图：一个 server 不可用时健康工具仍保留，且 git 失败语义不变。
+      serverNames: ['git', 'sequential-thinking'],
     });
 
     try {
