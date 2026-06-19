@@ -22,7 +22,12 @@ export const useAiProviderConfig = ({
   );
 
   const loadConfig = async (): Promise<void> => {
-    config.value = await aiService.getConfig();
+    // aiService.getConfig() 是 Tauri 生成的 IPC 绑定，类型标注为 AiConfigPayload，但后端在
+    // 配置文件尚未创建/反序列化为空时可能回传 null/undefined。直接赋值会让
+    // config.value 变为 nullish，导致面板里所有读取 config.value.selectedModel 的 computed
+    // 崩溃（Vue render failed）。这里用默认配置兜底，保证 config 永远是合法 payload，
+    // 正常返回值时行为不变。
+    config.value = (await aiService.getConfig()) ?? createDefaultAiConfigPayload();
   };
 
   const saveConfig = async (
