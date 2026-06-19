@@ -244,37 +244,6 @@ export class McpGatewayWarmPool {
       catalogs,
       errors,
     };
-  }): Promise<IMcpGatewayCatalogCollection> {
-    const catalogs: IMcpGatewayCatalog[] = [];
-    const errors: string[] = [];
-
-    for (const serverName of MCP_SERVER_NAMES) {
-      try {
-        const catalog = await this.listTools({
-          serverName,
-          profile: input.profile,
-          ...(input.workspaceRootPath ? { workspaceRootPath: input.workspaceRootPath } : {}),
-          ...(input.metricSink ? { metricSink: input.metricSink } : {}),
-        });
-        catalogs.push(catalog);
-        errors.push(...catalog.errors.map((message) => `${serverName}: ${message}`));
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        errors.push(`${serverName}: ${message}`);
-        catalogs.push({
-          serverName,
-          profile: input.profile,
-          tools: [],
-          errors: [message],
-        });
-      }
-    }
-
-    return {
-      profile: input.profile,
-      catalogs,
-      errors,
-    };
   }
 
   async callTool(input: {
