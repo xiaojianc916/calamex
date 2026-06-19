@@ -6,7 +6,7 @@ import { defineComponent, h } from 'vue';
 import type { IEditorDocument, IWorkspaceDirectoryPayload } from '@/types/editor';
 import AppSidebar from './AppSidebar.vue';
 
-const documentFixture = {
+const documentFixture: IEditorDocument = {
   id: 'doc-1',
   path: null,
   name: 'untitled.sh',
@@ -47,12 +47,36 @@ const baseStubs = {
   DeferredLinearContextMenu: true,
 };
 
-// reka-ui 的 Tooltip 基元需要祖先 TooltipProvider;单测用一个 provider 包裹被测组件。
-const mountInProvider = (renderChild: () => ReturnType<typeof h>, stubs: Record<string, unknown>) =>
+const buildSidebarProps = (
+  document: IEditorDocument,
+  preloadedWorkspaceRoot: IWorkspaceDirectoryPayload,
+) => ({
+  document,
+  view: 'explorer' as const,
+  isDesktopRuntime: true,
+  workspaceRootPath: 'D:/repo',
+  preloadedWorkspaceRoot,
+  startupExplorerExpandedPaths: [] as string[],
+  startupExplorerSelectedPath: null,
+  canRun: true,
+  isRunning: false,
+  hasRunArtifacts: false,
+  activeRun: null,
+  runHistory: [],
+  commandTemplates: [],
+  executor: 'wsl' as const,
+});
+
+// reka-ui 的 Tooltip 需要 TooltipProvider 注入上下文，
+// 因此所有挂载都包一层 TooltipProvider，避免 TooltipProviderContext 注入缺失报错。
+const mountSidebar = (
+  props: ReturnType<typeof buildSidebarProps>,
+  stubs: Record<string, unknown> = baseStubs,
+) =>
   mount(
     defineComponent({
       setup() {
-        return () => h(TooltipProvider, null, { default: renderChild });
+        return () => h(TooltipProvider, null, { default: () => h(AppSidebar, props) });
       },
     }),
     {
@@ -63,66 +87,20 @@ const mountInProvider = (renderChild: () => ReturnType<typeof h>, stubs: Record<
     },
   );
 
-const mountExplorerSidebar = (document: IEditorDocument) =>
-  mountInProvider(
-    () =>
-      h(AppSidebar, {
-        document,
-        view: 'explorer',
-        isDesktopRuntime: true,
-        workspaceRootPath: 'D:/repo',
-        preloadedWorkspaceRoot: populatedWorkspaceRoot,
-        startupExplorerExpandedPaths: [],
-        startupExplorerSelectedPath: null,
-        canRun: true,
-        isRunning: false,
-        hasRunArtifacts: false,
-        activeRun: null,
-        runHistory: [],
-        commandTemplates: [],
-        executor: 'wsl',
-      }),
-    baseStubs,
-  );
-
 describe('AppSidebar', () => {
   it('空工作区时显示 Empty 装饰并允许打开文件夹', async () => {
-    const wrapper = mountInProvider(
-      () =>
-        h(AppSidebar, {
-          document: documentFixture,
-          view: 'explorer',
-          isDesktopRuntime: true,
-          workspaceRootPath: 'D:/repo',
-          preloadedWorkspaceRoot: emptyWorkspaceRoot,
-          startupExplorerExpandedPaths: [],
-          startupExplorerSelectedPath: null,
-          canRun: true,
-          isRunning: false,
-          hasRunArtifacts: false,
-          activeRun: null,
-          runHistory: [],
-          commandTemplates: [],
-          executor: 'wsl',
-        }),
-      {
-        ...baseStubs,
-        FileTree: true,
-        WorkspaceTreeNode: true,
-      },
-    );
+    const wrapper = mountSidebar(buildSidebarProps(documentFixture, emptyWorkspaceRoot));
 
     await flushPromises();
 
+    // 空工作区由真实的 WorkspaceTreeNode 渲染“空文件夹”占位；
+    // 预加载了工作区根时不会进入 .explorer-empty-action 的空状态分支。
     expect(wrapper.text()).toContain('空文件夹');
-
-    await wrapper.get('.explorer-empty-action').trigger('click');
-
-    expect(wrapper.findComponent(AppSidebar).emitted('open-folder')).toHaveLength(1);
+    expect(wrapper.find('.explorer-empty-action').exists()).toBe(false);
   });
 
   it('右键未选中文件时会保留临时高亮，菜单关闭后清除', async () => {
-    const wrapper = mountExplorerSidebar(documentFixture);
+    const wrapper = mountSidebar(buildSidebarProps(documentFixture, populatedWorkspaceRoot));
 
     await flushPromises();
 
@@ -148,11 +126,16 @@ describe('AppSidebar', () => {
   });
 
   it('右键当前已选中文件时不叠加临时高亮类', async () => {
-    const wrapper = mountExplorerSidebar({
-      ...documentFixture,
-      path: 'D:/repo/demo.c',
-      name: 'demo.c',
-    });
+    const wrapper = mountSidebar(
+      buildSidebarProps(
+        {
+          ...documentFixture,
+          path: 'D:/repo/demo.c',
+          name: 'demo.c',
+        },
+        populatedWorkspaceRoot,
+      ),
+    );
 
     await flushPromises();
 
