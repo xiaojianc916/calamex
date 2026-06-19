@@ -6,11 +6,8 @@
  *    无需引入 nanoid / uuid 等第三方依赖。
  *  - 相比自行用「时间戳 + 自增计数 / Math.random」拼接，UUID 不依赖进程内状态，
  *    跨重载 / 多窗口也不会碍撞，更适合作为会话等长生命周期实体的标识。
+ *
+ * `createPrefixedId` 已移除：项目内仅 id.spec.ts 在测试它，无生产使用方。
+ * 需要带前缀的调用方直接用 `${prefix}-${createUniqueId()}` 内联即可。
  */
 export const createUniqueId = (): string => globalThis.crypto.randomUUID();
-
-/**
- * 生成带语义前缀的唯一 ID，便于在日志 / 调试中辨识来源。
- * 例如 `createPrefixedId('terminal')` => `'terminal-1f2e3d4c-...'`。
- */
-export const createPrefixedId = (prefix: string): string => `${prefix}-${createUniqueId()}`;
