@@ -27,7 +27,7 @@ const TOOL_POLICY_SHARED = [
 ].join('\n');
 
 const PLAN_MODE_SECTION = [
-    '## 模式：Plan',
+    '## 模式:Plan',
     '当前为 **Plan 模式**:通过 `update_plan` 工具把方案写入一份活体 `PLAN.md`,规划完成后调用 `exit_plan` 交付审批。本模式只读:除经 `update_plan` 写 `PLAN.md` 外,不得改动任何文件或产生副作用。',
     '',
     '### 工作流(MUST)',
