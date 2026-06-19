@@ -108,7 +108,7 @@ export const applyPatternSuggestion = (
 };
 
 export const useWorkspacePathSuggestions = (options: IUseWorkspacePathSuggestionsOptions) => {
-  const suggestions = ref<IPathSuggestion[]>();
+  const suggestions = ref<IPathSuggestion[]>([]);
   const open = ref(false);
   const loading = ref(false);
   const activeIndex = ref(-1);
