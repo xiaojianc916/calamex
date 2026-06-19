@@ -13,11 +13,13 @@
  * - 附件 / references 映射为富块的工作留到后续细化（双轨期旧 store 仍保留
  *   references 原数据，不会丢失）。
  * ========================================================================== */
+import { attachChangedFileDiffsToToolCalls } from '@/components/business/ai/thread/projection/attach-changed-file-diffs';
 import type { IAiConversationThread } from '@/store/aiConversation';
 import type { IAiChatMessage } from '@/types/ai';
 import type {
   IAiThread,
   IAiThreadEntry,
+  IAiThreadToolCall,
   IAiThreadToolCallContent,
   TAiThreadToolCallStatus,
   TAiThreadToolKind,
@@ -68,7 +70,7 @@ function legacyToolCallContent(toolCall: LegacyToolCall): IAiThreadToolCallConte
   return content;
 }
 
-function legacyToolCallToEntry(toolCall: LegacyToolCall, createdAt: string): IAiThreadEntry {
+function legacyToolCallToEntry(toolCall: LegacyToolCall, createdAt: string): IAiThreadToolCall {
   return {
     type: 'tool_call',
     id: toolCall.id,
@@ -86,6 +88,7 @@ function legacyToolCallToEntry(toolCall: LegacyToolCall, createdAt: string): IAi
  * - user -> 单条 user_message（有文本才加 text block）
  * - 其余角色 -> tool_call entries（在前）+ assistant_message（有文本才生成）
  *   + changed_files（assistant message 带 changedFilesSummary 时追加在末尾）
+ *   并把改动文件内联 diff 原地挂到对应 tool_call entry（与 build-thread-entries 同源）
  */
 export function legacyMessageToEntries(message: IAiChatMessage): IAiThreadEntry[] {
   if (message.role === 'user') {
@@ -101,8 +104,11 @@ export function legacyMessageToEntries(message: IAiChatMessage): IAiThreadEntry[
   }
 
   const entries: IAiThreadEntry[] = [];
+  const toolCallEntries: IAiThreadToolCall[] = [];
   for (const toolCall of message.toolCalls ?? []) {
-    entries.push(legacyToolCallToEntry(toolCall, message.createdAt));
+    const toolCallEntry = legacyToolCallToEntry(toolCall, message.createdAt);
+    toolCallEntries.push(toolCallEntry);
+    entries.push(toolCallEntry);
   }
   if (message.content.trim().length > 0) {
     entries.push({
@@ -114,6 +120,7 @@ export function legacyMessageToEntries(message: IAiChatMessage): IAiThreadEntry[
   }
   if (message.changedFilesSummary) {
     const summary = message.changedFilesSummary;
+    attachChangedFileDiffsToToolCalls(toolCallEntries, summary, message.patches ?? []);
     entries.push({
       type: 'changed_files',
       id: summary.id,

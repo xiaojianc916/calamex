@@ -200,28 +200,6 @@ export const commands = {
 	 */
 	aiResolveApproval: (payload: AiResolveApprovalRequest) => __TAURI_INVOKE<boolean>("ai_resolve_approval", { payload }),
 	/**
-	 *  切换 ACP 会话模式（标准 session/set_mode），令外部 agent（Kimi Code / Codex 等）在
-	 *  code / plan 等模式间切换。
-	 * 
-	 *  与 ai_cancel 同构地委托给 Tauri 托管的 AcpRuntime：线程归属哪个后端宿主对命令层透明，由
-	 *  runtime 向全部已建立宿主广播下发。两字段先行空白校验（前端总能从已渲染的模式选择器取得）；
-	 *  返回是否命中某已绑定会话——false 表示无匹配（多为会话尚未建立/已结束的良性竞态，命令层不
-	 *  视作错误，交前端自行决定是否提示），与 runtime 的「安全空操作」语义一致。
-	 */
-	aiSetSessionMode: (payload: AiSetSessionModeRequest) => __TAURI_INVOKE<boolean>("ai_set_session_mode", { payload }),
-	/**
-	 *  取某线程会话建立时 agent 公示的可用模式清单（ACP session/new 的 NewSessionResponse.modes
-	 *  原样 JSON：currentModeId + availableModes[]），供前端模式选择器在会话建立后填充候选模式。
-	 * 
-	 *  与 ai_set_session_mode 同构地委托给 Tauri 托管的 AcpRuntime：线程归属哪个后端宿主对命令层
-	 *  透明，由 runtime 向全部已建立宿主查询并返回首个命中。thread_id 先行空白校验；返回 None 表示
-	 *  尚无该线程会话或 agent 未公示模式（前端据此隐藏选择器）。modes 为最小透传的原样 JSON（导出
-	 *  TS 为 unknown），交前端 ACL 解释（对齐 acpUpdate 整体透传）。
-	 */
-	aiGetSessionModes: (payload: AiGetSessionModesRequest) => __TAURI_INVOKE<{
-	modes: unknown,
-} | null>("ai_get_session_modes", { payload }),
-	/**
 	 *  切换 ACP 会话的某个配置项值（标准 session/set_config_option），令外部 agent（Kimi Code /
 	 *  Codex 等）在 agent 公示的模型 / 模式 / 思考强度等配置项间切换。
 	 * 
@@ -983,17 +961,6 @@ export type AiGetSessionConfigOptionsRequest = {
 	threadId: string,
 };
 
-/**
- *  ACP 会话可用模式清单的查询请求（契约层）。
- * 
- *  对齐 acp::AcpRuntime::session_modes(thread_id)：thread_id 定位目标会话（宿主持有
- *  thread_id ↔ SessionId 映射，并在会话建立时登记 agent 公示的可用模式）。必填且非空（前端
- *  总能从当前线程取得），空白校验由接线层负责。
- */
-export type AiGetSessionModesRequest = {
-	threadId: string,
-};
-
 export type AiInlineCompletionRangePayload = {
 	startOffset: number,
 	endOffset: number,
@@ -1147,19 +1114,6 @@ export type AiSessionConfigOptionsPayload = {
 };
 
 /**
- *  ACP 会话可用模式清单的响应载荷（契约层）。
- * 
- *  modes 为 agent 在 NewSessionResponse 公示的可用模式清单原样 JSON（SessionModeState：
- *  currentModeId + availableModes[]）。最小透传，宿主侧不重建 SDK 类型，交前端 ACL 解释（对齐
- *  tool_call 的 acpUpdate 整体透传）。用 specta_typescript::Unknown 将导出 TS 映射为 unknown，
- *  避开 serde_json::Number 的 i64/u64 触发 specta BigInt-forbidden（对齐
- *  AgentSidecarResponsePayload.events）；serde 运行时仍为 serde_json::Value，行为不变。
- */
-export type AiSessionModesPayload = {
-	modes: unknown,
-};
-
-/**
  *  ACP 标准 session/set_config_option 的会话级配置项切换请求（契约层）。
  * 
  *  对齐 acp::AcpRuntime::set_session_config_option(thread_id, config_id, value_id)：
@@ -1173,20 +1127,6 @@ export type AiSetSessionConfigOptionRequest = {
 	threadId: string,
 	configId: string,
 	valueId: string,
-};
-
-/**
- *  ACP 标准 session/set_mode 的模式切换请求（契约层）。
- * 
- *  对齐 acp::AcpRuntime::set_session_mode(thread_id, mode_id)：
- *    * thread_id —— 定位目标会话（宿主持有 thread_id ↔ SessionId 映射，跨回合复用）；
- *    * mode_id —— 目标模式的 ACP SessionMode.id 原值，逐字透传，绝不本地映射。
- * 
- *  两者均必填且非空（前端总能从已渲染的模式选择器取得），空白校验由接线层负责。
- */
-export type AiSetSessionModeRequest = {
-	threadId: string,
-	modeId: string,
 };
 
 export type AiSnapshotPayload = {

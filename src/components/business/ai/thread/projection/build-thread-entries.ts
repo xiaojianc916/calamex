@@ -11,24 +11,16 @@
  * - Chat(wire):`message.toolCalls` 经 `fromWireToolCall` 映射。
  */
 import {
-  buildAiPatchPreviewFiles,
-  formatAiPatchDisplayPath,
-} from '@/components/business/ai/edit/patch-preview';
-import {
   buildTimelineItems,
   describeRunEvent,
   type TTimelineItem,
 } from '@/components/business/ai/plan/runtime-timeline';
 import type { IAiChatMessage, IAiPatchSet, IAiToolCall } from '@/types/ai';
-import type {
-  IAiAgentChangedFile,
-  IAiAgentPatchSummary,
-  IAiDiffEditorPreview,
-  IAiDiffHunkPreview,
-} from '@/types/ai/patch';
+import type { IAiAgentPatchSummary } from '@/types/ai/patch';
 import type { TAgentRuntimeEvent } from '@/types/ai/sidecar';
 import type { IAiThreadToolCall } from '@/types/ai/thread';
 
+import { attachChangedFileDiffsToToolCalls } from './attach-changed-file-diffs';
 import type {
   IAiThreadContextCompactionEntry,
   IAiThreadToolCallEntry,
@@ -37,77 +29,21 @@ import type {
 import { fromRuntimeToolCall } from './from-runtime-tool-call';
 import { fromWireToolCall } from './from-wire-tool-call';
 
-/** 工具调用是否引用某文件(标题里出现完整路径或文件名)。 */
-const toolCallReferencesPath = (toolCall: IAiThreadToolCall, filePath: string): boolean => {
-  const fileName = filePath.split(/[\\/]/u).pop() ?? filePath;
-  return toolCall.title.includes(filePath) || toolCall.title.includes(fileName);
-};
-
-/** 编辑类工具(协议 kind=edit);用于无法按路径关联时的兜底归属。 */
-const isEditLikeToolCall = (toolCall: IAiThreadToolCall): boolean => toolCall.kind === 'edit';
-
 /**
- * 从本消息补丁集中解析「路径 → hunk」。复用「已更改文件」汇总卡片完全一致的
- * `buildAiPatchPreviewFiles`,避免内联 diff 与汇总卡片行为漂移(不另造解析)。
- * 仅按路径键匹配,不依赖 workspaceRootPath(其只影响展示路径,不影响 hunk 与键)。
- */
-const resolveHunksByPath = (patches: readonly IAiPatchSet[]): Map<string, IAiDiffHunkPreview[]> => {
-  const byPath = new Map<string, IAiDiffHunkPreview[]>();
-  for (const patch of patches) {
-    for (const previewFile of buildAiPatchPreviewFiles(patch, undefined)) {
-      for (const key of [previewFile.path, previewFile.displayPath]) {
-        const normalized = formatAiPatchDisplayPath(key);
-        byPath.set(normalized, [...(byPath.get(normalized) ?? []), ...previewFile.hunks]);
-      }
-    }
-  }
-  return byPath;
-};
-
-/** 改动文件 → 协议 diff 预览(复用 `aiDiffEditorPreview`,不另造 diff 模型)。 */
-const buildDiffPreview = (
-  file: IAiAgentChangedFile,
-  summary: IAiAgentPatchSummary,
-  hunksByPath: Map<string, IAiDiffHunkPreview[]>,
-): IAiDiffEditorPreview => ({
-  id: `${summary.id}:${file.path}`,
-  title: file.path,
-  filePath: file.path,
-  diffRef: file.diffRef,
-  patchRef: summary.patchRef,
-  runId: summary.runId,
-  stepId: summary.stepId,
-  hunks: hunksByPath.get(formatAiPatchDisplayPath(file.path)) ?? [],
-});
-
-/**
- * 把改动文件作为内联 diff 内容挂到产生它的工具调用上(对齐 Zed:Diff 是 ToolCall
- * 的子内容,且自带 hunks)。优先按路径精确关联;关联不上时归到最后一个编辑类工具
- * 调用;再不行则仅在末尾汇总条目中呈现。
+ * 把改动文件内联 diff 挂到本消息的工具调用上。委托共享纯函数
+ * `attachChangedFileDiffsToToolCalls`,与遗留消息投影(legacy-adapter)复用同一
+ * 归属逻辑;工具条目持有协议 VM,取其 `toolCall` 传入即可。
  */
 const attachDiffsToToolEntries = (
   toolEntries: readonly IAiThreadToolCallEntry[],
   summary: IAiAgentPatchSummary,
   patches: readonly IAiPatchSet[],
 ): void => {
-  if (toolEntries.length === 0) {
-    return;
-  }
-  const hunksByPath = resolveHunksByPath(patches);
-  const editEntries = toolEntries.filter((entry) => isEditLikeToolCall(entry.toolCall));
-  const fallback = editEntries.at(-1);
-
-  for (const file of summary.files) {
-    const target =
-      toolEntries.find((entry) => toolCallReferencesPath(entry.toolCall, file.path)) ?? fallback;
-    if (target === undefined) {
-      continue;
-    }
-    target.toolCall.content.push({
-      type: 'diff',
-      diff: buildDiffPreview(file, summary, hunksByPath),
-    });
-  }
+  attachChangedFileDiffsToToolCalls(
+    toolEntries.map((entry) => entry.toolCall),
+    summary,
+    patches,
+  );
 };
 
 /** 运行时时间线 task 项 → 工具调用条目(收敛到协议 VM)。 */

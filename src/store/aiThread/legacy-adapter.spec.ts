@@ -142,6 +142,40 @@ describe('legacyMessageToEntries', () => {
       expect(changed.createdAt).toBe(ISO);
     }
   });
+  it('changedFilesSummary 时把内联 diff 挂到匹配的 tool_call entry', () => {
+    const summary: IAiAgentPatchSummary = {
+      id: 'patch-3',
+      runId: 'run-1',
+      stepId: 'step-1',
+      files: [
+        { path: 'src/foo.ts', status: 'modified', additions: 2, deletions: 0, diffRef: 'd3' },
+      ],
+      totalAdditions: 2,
+      totalDeletions: 0,
+      patchRef: 'pr-3',
+    };
+    const entries = legacyMessageToEntries({
+      id: 'a3',
+      role: 'assistant',
+      content: '已修改 foo.ts',
+      createdAt: ISO,
+      references: [],
+      toolCalls: [
+        {
+          id: 't1',
+          name: 'write_file',
+          status: 'succeeded',
+          summary: '编辑 src/foo.ts',
+          targetPreview: 'src/foo.ts',
+        },
+      ],
+      changedFilesSummary: summary,
+    });
+    expect(entries.map((e) => e.type)).toEqual(['tool_call', 'assistant_message', 'changed_files']);
+    const tool = entries[0] as IAiThreadToolCall;
+    expect(tool.content.some((c) => c.type === 'diff')).toBe(true);
+  });
+
   it('inferToolKind 启发式', () => {
     expect(inferToolKind('read_file')).toBe('read');
     expect(inferToolKind('apply_patch')).toBe('edit');
