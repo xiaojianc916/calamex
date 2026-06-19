@@ -227,27 +227,26 @@ const shikiLanguageField = StateField.define<string>({
 });
 
 const tokenInlineStyle = (token: IShikiThemedToken): string => {
-  // 生成 CSS class 名而非内联 style：减少 DOM 属性体积。
-  const parts: string[] = [];
+  const declarations: string[] = [];
   if (token.color) {
-    parts.push(`cm-shiki-c-${token.color.replace(/[^a-zA-Z0-9]/g, '')}`);
+    declarations.push(`color:${token.color}`);
   }
   if (token.bgColor) {
-    parts.push(`cm-shiki-b-${token.bgColor.replace(/[^a-zA-Z0-9]/g, '')}`);
+    declarations.push(`background-color:${token.bgColor}`);
   }
   const fontStyle = token.fontStyle ?? 0;
   if (fontStyle > 0) {
     if ((fontStyle & FONT_STYLE_ITALIC) !== 0) {
-      parts.push('cm-shiki-i');
+      declarations.push('font-style:italic');
     }
     if ((fontStyle & FONT_STYLE_BOLD) !== 0) {
-      parts.push('cm-shiki-bold');
+      declarations.push('font-weight:600');
     }
     if ((fontStyle & FONT_STYLE_UNDERLINE) !== 0) {
-      parts.push('cm-shiki-u');
+      declarations.push('text-decoration:underline');
     }
   }
-  return parts.join(' ');
+  return declarations.join(';');
 };
 
 const tokenDecoration = (style: string): Decoration => {
@@ -256,7 +255,7 @@ const tokenDecoration = (style: string): Decoration => {
     return cached;
   }
 
-  const decoration = Decoration.mark({ attributes: { class: style } });
+  const decoration = Decoration.mark({ attributes: { style } });
   if (tokenDecorationCache.size >= MAX_TOKEN_DECORATION_CACHE_SIZE) {
     const oldestKey = tokenDecorationCache.keys().next().value;
     if (oldestKey) {
