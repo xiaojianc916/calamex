@@ -45,12 +45,17 @@ const AI_COMMAND_META = {
     guardHint: '使用草稿配置测试 AI Provider',
     idempotent: true,
     audit: 'sensitive',
+    // 连接测试需冷启动 ACP sidecar + 一次上游 LLM 往返，远超默认 10s IPC 超时；
+    // 必须大于后端 PROVIDER_TEST_TIMEOUT(45s)，否则前端会在后端给出干净结果前误报“IPC 调用超时”。
+    timeoutMs: 60_000,
     measureInput: (value) => buildPayloadMetricsOmittingTextFields(value, ['apiKey']),
   },
   aiConnectProvider: {
     command: 'ai_connect_provider',
     guardHint: '连接并保存 AI Provider',
     audit: 'sensitive',
+    // 同 aiTestProviderConfig：连接即保存并做一次在线验证，需给足后端预算（>45s）。
+    timeoutMs: 60_000,
     measureInput: (value) => buildPayloadMetricsOmittingTextFields(value, ['apiKey']),
   },
   aiClearCredentials: {
@@ -63,6 +68,8 @@ const AI_COMMAND_META = {
     guardHint: '测试 AI Provider',
     idempotent: true,
     audit: 'sensitive',
+    // 同上：测试会触发 sidecar 冷启动 + 上游往返，需大于后端 45s 预算。
+    timeoutMs: 60_000,
   },
   aiGenerateConversationTitle: {
     command: 'ai_generate_conversation_title',

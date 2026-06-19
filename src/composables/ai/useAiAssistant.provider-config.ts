@@ -109,7 +109,17 @@ export const useAiProviderConfig = ({
       createProviderConnectionRequest(nextConfig, apiKey, role),
     );
 
+    // 关键不变量：后端是「先落盘、再做非致命验证」。只要 connectProvider 返回，
+    // 凭证与配置就已写入 keyring + ai.json（刷新/重启后依然存在），因此无论连接测试
+    // 是否通过都要把本地 config 刷新为已保存的快照。
     config.value = result.config;
+
+    if (!result.test.ok) {
+      // 已保存成功，但在线验证未通过：如实告知，而不是谎报成功，也不是抛错——
+      // 抛错会被上层误读为「保存失败」，与实际状态相悖。
+      errorMessage.value = result.test.message;
+      return `已保存凭证，但连接测试未通过：${result.test.message}`;
+    }
 
     return result.test.message;
   };
