@@ -416,8 +416,8 @@ export const useAiAssistant = (options: IUseAiAssistantOptions) => {
   const syncDisplayMessagesFromActiveThread = (): void => {
     if (!isConversationWriteBuffered()) {
       displayMessages.value = unref(conversationStore.activeMessages);
+      // Step 6 持久上线:回落到 projectedActiveThread(legacy->entries),不再退回旧 message 路径。
       aiThreadStore.setLiveThread(null);
-      aiThreadStore.setRenderFromEntries(false);
     }
   };
 

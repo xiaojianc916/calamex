@@ -20,7 +20,7 @@ export const useAiThreadStore = defineStore('ai-thread', () => {
    * 双轨期开关：渲染层据此在「旧 messages 路径」与「新 entries 路径」之间切换。
    * Step 8 收敛后移除。
    */
-  const renderFromEntries = ref(false);
+  const renderFromEntries = ref(true);
 
   /**
    * 活动流式线程：Step 5 起由边车监听 -> reduceThread 写入。为 null 时回落
